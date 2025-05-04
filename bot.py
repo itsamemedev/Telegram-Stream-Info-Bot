@@ -1,12 +1,14 @@
+# bot.py
 import logging
 import sqlite3
 import time
 import httpx
 import os
 import traceback
+import numpy as np
 from datetime import datetime, time as dt_time
-
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from openai import OpenAI
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto
 from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
@@ -24,6 +26,7 @@ TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TWITCH_CLIENT_ID = os.getenv("TWITCH_CLIENT_ID")
 TWITCH_CLIENT_SECRET = os.getenv("TWITCH_CLIENT_SECRET")
 YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 DB_FILE = os.getenv("DB_FILE", "streams.db")
 ADMIN_CHAT_ID = os.getenv("ADMIN_CHAT_ID")
 
@@ -39,35 +42,45 @@ logger = logging.getLogger(__name__)
 def init_db():
     try:
         with sqlite3.connect(DB_FILE) as conn:
-            conn.execute("""
-                CREATE TABLE IF NOT EXISTS tracked_streams (
-                    chat_id TEXT,
-                    streamer TEXT,
-                    user_id TEXT,
-                    platform TEXT DEFAULT 'twitch',
-                    last_status BOOLEAN,
-                    added_at TEXT,
-                    last_stream_start TEXT,
-                    last_stream_end TEXT,
-                    peak_viewers INTEGER DEFAULT 0,
-                    total_stream_time INTEGER DEFAULT 0,
-                    PRIMARY KEY (chat_id, streamer, platform)
-                )
-            """)
-            conn.execute("""
-                CREATE TABLE IF NOT EXISTS rate_limits (
-                    chat_id TEXT,
-                    command TEXT,
-                    count INTEGER,
-                    reset_ts REAL,
-                    PRIMARY KEY (chat_id, command)
-                )
-            """)
-            conn.execute("""
-                CREATE TABLE IF NOT EXISTS api_usage (
-                    date TEXT PRIMARY KEY,
-                    youtube_units INTEGER DEFAULT 0
-                )
+            conn.executescript("""
+            CREATE TABLE IF NOT EXISTS tracked_streams (
+                chat_id TEXT,
+                streamer TEXT,
+                user_id TEXT,
+                platform TEXT DEFAULT 'twitch',
+                last_status BOOLEAN,
+                added_at TEXT,
+                last_stream_start TEXT,
+                last_stream_end TEXT,
+                peak_viewers INTEGER DEFAULT 0,
+                total_stream_time INTEGER DEFAULT 0,
+                PRIMARY KEY (chat_id, streamer, platform)
+            );
+            
+            CREATE TABLE IF NOT EXISTS rate_limits (
+                chat_id TEXT,
+                command TEXT,
+                count INTEGER,
+                reset_ts REAL,
+                PRIMARY KEY (chat_id, command)
+            );
+            
+            CREATE TABLE IF NOT EXISTS api_usage (
+                date TEXT PRIMARY KEY,
+                youtube_units INTEGER DEFAULT 0
+            );
+            
+            CREATE TABLE IF NOT EXISTS user_settings (
+                user_id TEXT PRIMARY KEY,
+                theme TEXT DEFAULT 'dark'
+            );
+            
+            CREATE TABLE IF NOT EXISTS stream_stats (
+                streamer TEXT,
+                start_time TEXT,
+                end_time TEXT,
+                duration INTEGER
+            );
             """)
             logger.info("Datenbank initialisiert")
     except Exception as e:
@@ -76,14 +89,12 @@ def init_db():
 
 # Error-Handler
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
-    error_msg = f"⚠️ Fehler: {context.error}"
-    logger.error(error_msg, exc_info=context.error)
-    
+    logger.error("Fehler:", exc_info=context.error)
     if ADMIN_CHAT_ID:
-        full_error = f"Update: {update}\n\nFehler: {context.error}\n\nTraceback:\n{traceback.format_exc()}"
+        error_msg = f"⚠️ **Bot-Fehler**\n```\n{traceback.format_exc()}\n```"
         await context.bot.send_message(
-            chat_id=ADMIN_CHAT_ID,
-            text=f"🚨 Bot-Fehler:\n```\n{full_error[:4000]}\n```",
+            chat_id=int(ADMIN_CHAT_ID),
+            text=error_msg[:4096],  # Telegram Nachrichtenlimit
             parse_mode="Markdown"
         )
 
@@ -198,7 +209,6 @@ async def check_youtube_live(channel_id: str):
     if YouTubeQuota.get_remaining() < 100:
         logger.warning("YouTube API Quota erschöpft - überspringe Check")
         return None
-    
     try:
         async with httpx.AsyncClient() as client:
             response = await client.get(
@@ -349,16 +359,69 @@ async def list_streams(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
-async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    help_text = """
-📚 *Bot-Hilfe*:
-/track <twitch|youtube> <name> - Streamer hinzufügen
-/untrack <twitch|youtube> <name> - Streamer entfernen
-/list - Alle beobachteten Streamer anzeigen
-/help - Diese Hilfe anzeigen
-"""
-    await update.message.reply_text(help_text, parse_mode="Markdown")
+# KI-Funktionen
+client = OpenAI(api_key=OPENAI_API_KEY)
 
+async def recommend_streamers(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = str(update.message.chat.id)
+    with sqlite3.connect(DB_FILE) as conn:
+        tracked = conn.execute(
+            "SELECT streamer FROM tracked_streams WHERE chat_id = ?",
+            (chat_id,)
+        ).fetchall()
+    
+    if not tracked:
+        await update.message.reply_text("❌ Keine Streamer zum Analysieren vorhanden")
+        return
+    
+    response = client.chat.completions.create(
+        model="gpt-4",
+        messages=[{
+            "role": "system",
+            "content": f"Empfehle 5 ähnliche Streamer wie {', '.join([t[0] for t in tracked])}. Antwortformat: '1. Name - Plattform - Beschreibung'"
+        }]
+    )
+    await update.message.reply_text(f"🎮 KI-Empfehlungen:\n{response.choices[0].message.content}")
+
+async def generate_thumbnail(title: str):
+    response = client.images.generate(
+        model="dall-e-3",
+        prompt=f"Stream-Thumbnail im Gaming-Stil: {title}",
+        size="1024x1024"
+    )
+    return response.data[0].url
+
+# Zusätzliche Features
+async def tutorial(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    steps = [
+        ("tutorial1.jpg", "Schritt 1: Nutze /track <plattform> <name>"),
+        ("tutorial2.jpg", "Schritt 2: Erhalte Live-Benachrichtigungen")
+    ]
+    
+    media_group = [
+        InputMediaPhoto(media=open(file, "rb"), caption=text)
+        for file, text in steps
+    ]
+    
+    await context.bot.send_media_group(
+        chat_id=update.effective_chat.id,
+        media=media_group
+    )
+
+def predict_next_live(streamer: str):
+    with sqlite3.connect(DB_FILE) as conn:
+        times = conn.execute(
+            "SELECT strftime('%H:%M', last_stream_start) FROM tracked_streams WHERE streamer=?",
+            (streamer,)
+        ).fetchall()
+    
+    if not times:
+        return "⚠️ Keine Stream-Daten vorhanden"
+    
+    avg_time = np.median([datetime.strptime(t[0], "%H:%M") for t in times])
+    return f"⏱️ Voraussichtlich nächster Stream: {avg_time.strftime('%H:%M')}"
+
+# Hauptlogik
 async def check_streams(context: ContextTypes.DEFAULT_TYPE):
     logger.info("🚀 Starte Stream-Check...")
     try:
@@ -468,25 +531,24 @@ def schedule_report(app):
             await context.bot.send_message(chat_id=ADMIN_CHAT_ID, text=report, parse_mode="Markdown")
     app.job_queue.run_daily(daily_report, time=dt_time(hour=8, minute=0))
 
-if __name__ == "__main__":
+def main():
     init_db()
     application = ApplicationBuilder().token(TELEGRAM_TOKEN).rate_limiter(AIORateLimiter()).build()
     
-    try:
-        application.add_handler(CommandHandler("track", track))
-        application.add_handler(CommandHandler("untrack", untrack))
-        application.add_handler(CommandHandler("list", list_streams))
-        application.add_handler(CommandHandler("help", help_command))
-        application.add_handler(CallbackQueryHandler(untrack_callback, pattern="^untrack:"))
-        application.add_error_handler(error_handler)
-        
-        application.job_queue.run_repeating(check_streams, interval=60, first=10)
-        schedule_report(application)
-        
-        logger.info("🤖 Bot startet...")
-        application.run_polling()
-    except Exception as e:
-        logger.critical(f"Bot start fehlgeschlagen: {e}")
-        raise
-    finally:
-        logger.info("🤖 Bot gestoppt")
+    # Handler registrieren
+    application.add_handler(CommandHandler("track", track))
+    application.add_handler(CommandHandler("untrack", untrack))
+    application.add_handler(CommandHandler("list", list_streams))
+    application.add_handler(CommandHandler("recommend", recommend_streamers))
+    application.add_handler(CommandHandler("tutorial", tutorial))
+    application.add_handler(CallbackQueryHandler(untrack_callback, pattern="^untrack:"))
+    application.add_error_handler(error_handler)
+    
+    application.job_queue.run_repeating(check_streams, interval=60, first=10)
+    schedule_report(application)
+    
+    logger.info("🤖 Bot startet...")
+    application.run_polling()
+
+if __name__ == "__main__":
+    main()
