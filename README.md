@@ -1,74 +1,91 @@
-# Stream Monitor Bot
+# Telegram Stream Monitor Bot 🤖
 
-Telegram-Bot zur Überwachung von Twitch- und YouTube-Livestreams mit Live-Benachrichtigungen und Statistiken.
+Ein leistungsstarker Telegram-Bot zur Überwachung von Twitch- und YouTube-Streams mit Live-Benachrichtigungen, Statistiken und KI-Integration.
 
-## 📥 Installation (Debian/Ubuntu)
+[![MIT License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+[![Python 3.9+](https://img.shields.io/badge/Python-3.9%2B-blue.svg)](https://www.python.org/)
+
+![Bot Demo](https://via.placeholder.com/800x400.png?text=Bot+Demo+Preview)
+
+## ✨ Funktionen
+
+- 🔔 **Live-Benachrichtigungen** für Twitch & YouTube
+- 📊 **Stream-Statistiken** (Dauer, Zuschauerrekorde)
+- 🧠 **KI-Integration**: Streamer-Empfehlungen (GPT-4), Thumbnail-Generierung (DALL-E 3)
+- 💸 **Spendenunterstützung** mit PayPal & GoFundMe
+- ⚡ **Echtzeit-Checks** alle 60 Sekunden
+- 🛡️ **Rate-Limiting** gegen Missbrauch
+- 📈 **Datenbankunterstützung** (SQLite)
+- 🔄 **Automatisches Error-Recovery**
+
+## 🚀 Installation
 
 ### Voraussetzungen
-```bash
-sudo apt update && sudo apt install -y python3 python3-pip sqlite3
+- Python 3.9+
+- Telegram-Bot-Token ([@BotFather](https://t.me/BotFather))
+- API-Keys für [Twitch](https://dev.twitch.tv/) & [YouTube](https://console.cloud.google.com/)
 
-Schritt-für-Schritt Einrichtung
 
-    Repository klonen:
+# Repository klonen
+git clone https://github.com/dein-benutzername/telegram-stream-bot.git
+cd telegram-stream-bot
+
+# Virtuelle Umgebung erstellen
+python3 -m venv venv
+source venv/bin/activate
+
+# Abhängigkeiten installieren
+pip install -r requirements.txt
+
+## ⚙️ Konfiguration
+
+    .env-Datei erstellen:
+
+ini
+
+TELEGRAM_TOKEN="dein_telegram_token"
+TWITCH_CLIENT_ID="dein_twitch_client_id"
+TWITCH_CLIENT_SECRET="dein_twitch_secret"
+YOUTUBE_API_KEY="dein_youtube_key"
+OPENAI_API_KEY="dein_openai_key"  # Optional für KI-Features
+DONATION_LINK="https://gofundme.com/dein-projekt"
+PAYPAL_ME="https://paypal.me/dein-account"
+
+##     Datenbank initialisieren:
 
 bash
 
-git clone https://github.com/itsamemedev/Telegram-Stream-Info-Bot
-cd Telegram-Stream-Info-Bot
+python3 -c "from bot import init_db; init_db()"
 
-    Abhängigkeiten installieren:
-
-bash
-
-pip3 install -r requirements.txt
-
-    Umgebungsvariablen konfigurieren:
-
-bash
-
-cp .env.example .env
-nano .env  # Trage deine API-Keys ein
-
-    Datenbank initialisieren:
-
-bash
-
-python3 bot.py --init-db
-
-🚀 Nutzung
-Befehlsreferenz
-Befehl	Aktion	Beispiel
+## 🕹️ Nutzung
+Befehl	Beschreibung	Beispiel
 /track <pl> <name>	Streamer hinzufügen	/track youtube MrBeast
 /untrack <pl> <name>	Streamer entfernen	/untrack twitch shroud
 /list	Alle Streamer anzeigen	/list
-/help	Hilfemenü öffnen	/help
-Funktionsweise
+/donate	Spendenmöglichkeiten anzeigen	/donate
+/recommend	KI-Empfehlungen erhalten	/recommend
+## ❤️ Unterstützung
 
-    🔄 Automatische Überprüfung alle 60 Sekunden
+Unterstütze dieses Projekt:
 
-    📸 Twitch-Benachrichtigungen mit Thumbnail + Clip-Button
+    PayPal
 
-    📊 Statistik-Tracking (Stream-Dauer, Peak-Zuschauer)
+    GoFundMe
 
-    ⚠️ Rate-Limiting: 5 Anfragen/30 Sekunden pro Chat
+Jede Spende hilft bei der Weiterentwicklung!
 
-📜 Lizenz
+## 🤝 Beitragen
 
-MIT-Lizenz – Details siehe LICENSE.
+ -   Fork das Repository
 
-Hinweis:
+ -   Erstelle einen Feature-Branch: git checkout -b feature/mein-feature
 
-    Erforderliche API-Keys: Telegram, Twitch, YouTube
+ -   Commite deine Änderungen: git commit -m 'Add awesome feature'
 
-    Starten des Bots: python3 bot.py
- 
-Hinweise zur Beschaffung der Keys:
+ -   Pushe den Branch: git push origin feature/mein-feature
 
-    Telegram Token: Erstelle einen Bot über @BotFather
+ -   Öffne einen Pull Request
 
-    Twitch Keys: Registriere eine App unter Twitch Dev Console
+## 📄 Lizenz
 
-    YouTube API Key: Erstelle ein Projekt in der Google Cloud Console
-
-    Admin Chat ID: Sende /start an @userinfobot um deine Chat-ID zu erhalten
+Dieses Projekt ist unter der MIT-Lizenz lizenziert.

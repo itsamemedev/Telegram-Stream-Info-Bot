@@ -6,8 +6,9 @@ import httpx
 import os
 import traceback
 import numpy as np
+import asyncio
 from datetime import datetime, time as dt_time
-from openai import OpenAI
+from typing import Optional, List, Dict
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto
 from telegram.ext import (
     ApplicationBuilder,
@@ -19,6 +20,8 @@ from telegram.ext import (
     AIORateLimiter
 )
 from dotenv import load_dotenv
+from cachetools import TTLCache
+from openai import OpenAI
 
 # Konfiguration
 load_dotenv()
@@ -27,6 +30,8 @@ TWITCH_CLIENT_ID = os.getenv("TWITCH_CLIENT_ID")
 TWITCH_CLIENT_SECRET = os.getenv("TWITCH_CLIENT_SECRET")
 YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+DONATION_LINK = os.getenv("DONATION_LINK", "https://gofundme.com/your-project")
+PAYPAL_ME = os.getenv("PAYPAL_ME", "https://paypal.me/your-account")
 DB_FILE = os.getenv("DB_FILE", "streams.db")
 ADMIN_CHAT_ID = os.getenv("ADMIN_CHAT_ID")
 
@@ -34,9 +39,36 @@ ADMIN_CHAT_ID = os.getenv("ADMIN_CHAT_ID")
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     level=logging.INFO,
-    handlers=[logging.FileHandler("bot.log"), logging.StreamHandler()],
+    handlers=[
+        logging.FileHandler("bot.log", mode="a", encoding="utf-8"),
+        logging.StreamHandler()
+    ],
 )
 logger = logging.getLogger(__name__)
+
+# Error-Handler (nach der Logging-Konfiguration einfügen)
+async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
+    logger.error("Exception occurred:", exc_info=context.error)
+    
+    error_msg = (
+        f"⚠️ **Unbehandelter Fehler**\n"
+        f"Update: {update}\n"
+        f"Context: {context}\n"
+        f"Error: {context.error}"
+    )
+    
+    if ADMIN_CHAT_ID:
+        await context.bot.send_message(
+            chat_id=ADMIN_CHAT_ID,
+            text=error_msg[:4096],  # Telegram Nachrichtenlimit
+            parse_mode="Markdown"
+        )
+    
+    # Optional: Benutzer benachrichtigen
+    if update and hasattr(update, 'message'):
+        await update.message.reply_text("❌ Ein unerwarteter Fehler ist aufgetreten")
+# Caching
+cache = TTLCache(maxsize=1000, ttl=300)
 
 # Datenbank-Initialisierung
 def init_db():
@@ -70,205 +102,301 @@ def init_db():
                 youtube_units INTEGER DEFAULT 0
             );
             
+            CREATE TABLE IF NOT EXISTS donations (
+                donor_id TEXT PRIMARY KEY,
+                amount REAL,
+                donation_date TEXT
+            );
+            
             CREATE TABLE IF NOT EXISTS user_settings (
                 user_id TEXT PRIMARY KEY,
                 theme TEXT DEFAULT 'dark'
-            );
-            
-            CREATE TABLE IF NOT EXISTS stream_stats (
-                streamer TEXT,
-                start_time TEXT,
-                end_time TEXT,
-                duration INTEGER
-            );
-            """)
+            );""")
             logger.info("Datenbank initialisiert")
     except Exception as e:
         logger.critical(f"DB init error: {e}")
         raise
 
-# Error-Handler
-async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
-    logger.error("Fehler:", exc_info=context.error)
-    if ADMIN_CHAT_ID:
-        error_msg = f"⚠️ **Bot-Fehler**\n```\n{traceback.format_exc()}\n```"
-        await context.bot.send_message(
-            chat_id=int(ADMIN_CHAT_ID),
-            text=error_msg[:4096],
-            parse_mode="Markdown"
-        )
-
-# Twitch-API
-CACHED_TWITCH_TOKEN = None
-TWITCH_TOKEN_EXPIRY = 0
-
-async def get_twitch_token():
-    global CACHED_TWITCH_TOKEN, TWITCH_TOKEN_EXPIRY
-    if time.time() < TWITCH_TOKEN_EXPIRY and CACHED_TWITCH_TOKEN:
-        return CACHED_TWITCH_TOKEN
-    try:
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                "https://id.twitch.tv/oauth2/token",
-                params={
-                    "client_id": TWITCH_CLIENT_ID,
-                    "client_secret": TWITCH_CLIENT_SECRET,
-                    "grant_type": "client_credentials",
-                },
-            )
-            data = response.json()
-            CACHED_TWITCH_TOKEN = data["access_token"]
-            TWITCH_TOKEN_EXPIRY = time.time() + data["expires_in"] - 60
-            return CACHED_TWITCH_TOKEN
-    except Exception as e:
-        logger.error(f"Twitch-Token-Fehler: {e}")
-        return None
-
-async def get_twitch_user_id(name: str):
-    token = await get_twitch_token()
-    if not token:
-        return None
-    try:
-        async with httpx.AsyncClient() as client:
-            response = await client.get(
-                "https://api.twitch.tv/helix/users",
-                headers={"Client-ID": TWITCH_CLIENT_ID, "Authorization": f"Bearer {token}"},
-                params={"login": name},
-            )
-            return response.json()["data"][0]["id"] if response.json().get("data") else None
-    except Exception as e:
-        logger.error(f"Twitch-User-ID-Fehler: {e}")
-        return None
-
-async def get_twitch_clip(user_id: str):
-    token = await get_twitch_token()
-    if not token:
-        return None
-    try:
-        async with httpx.AsyncClient() as client:
-            response = await client.get(
-                "https://api.twitch.tv/helix/clips",
-                headers={"Client-ID": TWITCH_CLIENT_ID, "Authorization": f"Bearer {token}"},
-                params={"broadcaster_id": user_id, "first": 1},
-            )
-            return response.json()["data"][0]["url"] if response.json().get("data") else None
-    except Exception as e:
-        logger.error(f"Twitch-Clip-Fehler: {e}")
-        return None
-
-# YouTube-API
-class YouTubeQuota:
-    @staticmethod
-    def _today():
-        return datetime.utcnow().strftime("%Y-%m-%d")
+# Twitch-Service
+class TwitchService:
+    _token = None
+    _token_expiry = 0
+    _cache = TTLCache(maxsize=500, ttl=3600)
 
     @classmethod
-    def add_usage(cls, units: int):
-        today = cls._today()
-        with sqlite3.connect(DB_FILE) as conn:
-            conn.execute(
-                """INSERT INTO api_usage (date, youtube_units)
-                VALUES (?, ?)
-                ON CONFLICT(date) DO UPDATE SET
-                youtube_units = youtube_units + excluded.youtube_units""",
-                (today, units)
-            )
+    async def get_user_id(cls, name: str) -> Optional[str]:
+        cache_key = f"twitch_user_{name}"
+        if cached := cls._cache.get(cache_key):
+            return cached
+            
+        token = await cls._get_token()
+        if not token:
+            return None
+
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.get(
+                    "https://api.twitch.tv/helix/users",
+                    headers={
+                        "Client-ID": TWITCH_CLIENT_ID,
+                        "Authorization": f"Bearer {token}"
+                    },
+                    params={"login": name},
+                    timeout=10
+                )
+                response.raise_for_status()
+                if data := response.json().get("data"):
+                    cls._cache[cache_key] = data[0]["id"]
+                    return data[0]["id"]
+        except Exception as e:
+            logger.error(f"Twitch API Error: {e}")
+        return None
 
     @classmethod
-    def get_remaining(cls):
-        today = cls._today()
+    async def _get_token(cls):
+        if time.time() < cls._token_expiry and cls._token:
+            return cls._token
+            
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.post(
+                    "https://id.twitch.tv/oauth2/token",
+                    params={
+                        "client_id": TWITCH_CLIENT_ID,
+                        "client_secret": TWITCH_CLIENT_SECRET,
+                        "grant_type": "client_credentials",
+                    },
+                    timeout=5
+                )
+                data = response.json()
+                cls._token = data["access_token"]
+                cls._token_expiry = time.time() + data["expires_in"] - 60
+                return cls._token
+        except Exception as e:
+            logger.critical(f"Twitch Token Error: {e}")
+            return None
+
+# YouTube-Service
+class YouTubeService:
+    _quota_cache = TTLCache(maxsize=1, ttl=60)
+
+    @classmethod
+    async def get_channel_id(cls, name: str) -> Optional[str]:
+        cache_key = f"youtube_channel_{name}"
+        if cached := cache.get(cache_key):
+            return cached
+
+        if await cls._check_quota() < 100:
+            return None
+
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.get(
+                    "https://www.googleapis.com/youtube/v3/search",
+                    params={
+                        "part": "snippet",
+                        "q": name,
+                        "type": "channel",
+                        "key": YOUTUBE_API_KEY,
+                        "maxResults": 1,
+                    },
+                    timeout=15
+                )
+                response.raise_for_status()
+                
+                if items := response.json().get("items"):
+                    channel_id = items[0]["id"]["channelId"]
+                    await cls._update_quota(100)
+                    cache[cache_key] = channel_id
+                    return channel_id
+        except Exception as e:
+            logger.error(f"YouTube Channel ID Error: {e}")
+        return None
+
+    @classmethod
+    async def check_live(cls, channel_id: str) -> Optional[dict]:
+        for attempt in range(3):
+            try:
+                if await cls._check_quota() < 100:
+                    raise Exception("Insufficient YouTube quota")
+
+                async with httpx.AsyncClient() as client:
+                    response = await client.get(
+                        "https://www.googleapis.com/youtube/v3/search",
+                        params={
+                            "part": "snippet",
+                            "channelId": channel_id,
+                            "eventType": "live",
+                            "type": "video",
+                            "key": YOUTUBE_API_KEY,
+                        },
+                        timeout=15
+                    )
+                    response.raise_for_status()
+                    
+                    if items := response.json().get("items"):
+                        await cls._update_quota(100)
+                        return items[0]
+                    return None
+            except httpx.HTTPStatusError as e:
+                if e.response.status_code == 403:
+                    return await cls._fallback_check(channel_id)
+                logger.error(f"YouTube API Error: {e}")
+                await asyncio.sleep(2 ** attempt)
+            except Exception as e:
+                logger.error(f"YouTube Check Error: {e}")
+                return None
+        return None
+
+    @classmethod
+    async def _fallback_check(cls, channel_id: str) -> bool:
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.get(
+                    f"https://www.youtube.com/channel/{channel_id}/live",
+                    headers={"User-Agent": "Mozilla/5.0"},
+                    follow_redirects=True,
+                    timeout=10
+                )
+                return "isLiveBroadcast" in response.text
+        except Exception as e:
+            logger.error(f"YouTube Fallback Error: {e}")
+            return False
+
+    @classmethod
+    async def _check_quota(cls) -> int:
+        today = datetime.utcnow().strftime("%Y-%m-%d")
         with sqlite3.connect(DB_FILE) as conn:
             row = conn.execute(
                 "SELECT youtube_units FROM api_usage WHERE date = ?", 
                 (today,)
             ).fetchone()
             used = row[0] if row else 0
-        remaining = 10000 - used
-        logger.info(f"YouTube Quota: {remaining} units remaining")
-        return max(remaining, 0)
+            return max(10000 - used, 0)
 
-async def get_youtube_channel_id(name: str):
-    if YouTubeQuota.get_remaining() < 100:
-        logger.warning("YouTube-Kontingent erschöpft")
-        return None
-    try:
-        async with httpx.AsyncClient() as client:
-            response = await client.get(
-                "https://www.googleapis.com/youtube/v3/search",
-                params={
-                    "part": "snippet",
-                    "q": name,
-                    "type": "channel",
-                    "key": YOUTUBE_API_KEY,
-                    "maxResults": 1,
-                },
+    @classmethod
+    async def _update_quota(cls, units: int):
+        today = datetime.utcnow().strftime("%Y-%m-%d")
+        with sqlite3.connect(DB_FILE) as conn:
+            conn.execute(
+                """INSERT INTO api_usage (date, youtube_units)
+                VALUES (?, ?)
+                ON CONFLICT(date) DO UPDATE SET
+                youtube_units = youtube_units + ?""",
+                (today, units, units)
             )
-            YouTubeQuota.add_usage(100)
-            data = response.json()
-            return data["items"][0]["id"]["channelId"] if data.get("items") else None
-    except Exception as e:
-        logger.error(f"YouTube-Kanal-Fehler: {e}")
-        return None
-
-async def check_youtube_live(channel_id: str):
-    if YouTubeQuota.get_remaining() < 100:
-        logger.warning("YouTube API Quota erschöpft - überspringe Check")
-        return None
-    try:
-        async with httpx.AsyncClient() as client:
-            response = await client.get(
-                "https://www.googleapis.com/youtube/v3/search",
-                params={
-                    "part": "snippet",
-                    "channelId": channel_id,
-                    "eventType": "live",
-                    "type": "video",
-                    "key": YOUTUBE_API_KEY,
-                },
-            )
-            YouTubeQuota.add_usage(100)
-            return response.json().get("items", [])[0] if response.json().get("items") else None
-    except Exception as e:
-        logger.error(f"YouTube-Live-Check-Fehler: {e}")
-        return None
-
-# Rate-Limiting
-def rate_limited(command: str, max_requests=5, period=30):
+            
+# Rate-Limiting Decorator (vor den Befehlen einfügen)
+def rate_limited(command: str, max_requests: int = 5, period: int = 30):
     def decorator(func):
         async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if not update.message:
                 return
+
             chat_id = str(update.message.chat.id)
             now = time.time()
+            
             with sqlite3.connect(DB_FILE) as conn:
-                row = conn.execute(
+                cursor = conn.execute(
                     "SELECT count, reset_ts FROM rate_limits WHERE chat_id = ? AND command = ?",
-                    (chat_id, command),
-                ).fetchone()
-                if row:
-                    count, reset_ts = row
+                    (chat_id, command)
+                )
+                result = cursor.fetchone()
+
+                if result:
+                    count, reset_ts = result
                     if now > reset_ts:
                         count = 0
                         reset_ts = now + period
                     if count >= max_requests:
-                        await update.message.reply_text("🚫 Zu viele Anfragen. Bitte warte 30 Sekunden.")
+                        await update.message.reply_text(
+                            f"🚫 Zu viele Anfragen. Bitte warte {int(reset_ts - now)} Sekunden."
+                        )
                         return
                     count += 1
                 else:
                     count = 1
                     reset_ts = now + period
+
                 conn.execute(
-                    "INSERT OR REPLACE INTO rate_limits (chat_id, command, count, reset_ts) VALUES (?, ?, ?, ?)",
-                    (chat_id, command, count, reset_ts),
+                    """INSERT INTO rate_limits (chat_id, command, count, reset_ts)
+                    VALUES (?, ?, ?, ?)
+                    ON CONFLICT(chat_id, command) DO UPDATE SET
+                    count = excluded.count,
+                    reset_ts = excluded.reset_ts""",
+                    (chat_id, command, count, reset_ts)
                 )
+
             return await func(update, context)
         return wrapper
     return decorator
+    
+# KI-Service
+class AIService:
+    client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
 
-# Befehle
-@rate_limited("track")
+    @classmethod
+    async def generate_recommendations(cls, tracked: list) -> str:
+        if not cls.client:
+            return "❌ KI-Dienste aktuell nicht verfügbar"
+            
+        try:
+            response = cls.client.chat.completions.create(
+                model="gpt-4-1106-preview",
+                messages=[{
+                    "role": "system",
+                    "content": f"Empfehle 5 ähnliche Streamer wie {', '.join(tracked)}. Format: 1. Name - Plattform - Kurzbeschreibung"
+                }],
+                temperature=0.7,
+                max_tokens=500
+            )
+            return f"🎮 KI-Empfehlungen:\n{response.choices[0].message.content}"
+        except Exception as e:
+            logger.error(f"AI Error: {e}")
+            return "⚠️ KI-Service temporär nicht verfügbar"
+
+    @classmethod
+    async def generate_thumbnail(cls, title: str) -> Optional[str]:
+        if not cls.client:
+            return None
+            
+        try:
+            response = cls.client.images.generate(
+                model="dall-e-3",
+                prompt=f"Professional Gaming Stream Thumbnail: {title}",
+                size="1024x1024",
+                quality="hd"
+            )
+            return response.data[0].url
+        except Exception as e:
+            logger.error(f"Thumbnail Generation Error: {e}")
+            return None
+
+# Spenden-Service
+class DonationService:
+    @staticmethod
+    async def handle_donation(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        keyboard = [
+            [InlineKeyboardButton("💳 PayPal", url=PAYPAL_ME)],
+            [InlineKeyboardButton("🎗️ GoFundMe", url=DONATION_LINK)]
+        ]
+        await update.message.reply_text(
+            "❤️ Unterstütze dieses Projekt:\n"
+            "Deine Spende hilft bei der Weiterentwicklung!",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+            )
+        # Spende protokollieren
+        user_id = str(update.effective_user.id)
+        with sqlite3.connect(DB_FILE) as conn:
+            conn.execute(
+                "INSERT INTO donations (donor_id, donation_date) VALUES (?, ?)",
+                (user_id, datetime.utcnow().isoformat())
+            )
+
+# Hauptfunktionen
+@rate_limited("track", max_requests=5, period=30)
 async def track(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not update.message or not context.args or len(context.args) < 2:
+    if not context.args or len(context.args) < 2:
         await update.message.reply_text("❌ Format: /track <twitch|youtube> <name>")
         return
 
@@ -276,83 +404,76 @@ async def track(update: Update, context: ContextTypes.DEFAULT_TYPE):
     name = " ".join(context.args[1:]).lower()
 
     if platform not in ["twitch", "youtube"]:
-        await update.message.reply_text("❌ Ungültige Plattform. Nur 'twitch' oder 'youtube'.")
+        await update.message.reply_text("❌ Ungültige Plattform")
         return
 
-    if platform == "youtube" and YouTubeQuota.get_remaining() < 100:
-        await update.message.reply_text("❌ YouTube-Kontingent erschöpft. Bitte später versuchen.")
-        return
+    user_id = None
+    try:
+        if platform == "twitch":
+            user_id = await TwitchService.get_user_id(name)
+        else:
+            if await YouTubeService._check_quota() < 100:
+                await update.message.reply_text("❌ YouTube-Kontingent erschöpft")
+                return
+            user_id = await YouTubeService.get_channel_id(name)
 
-    user_id = await (get_twitch_user_id(name) if platform == "twitch" else get_youtube_channel_id(name))
-    if not user_id:
-        await update.message.reply_text("❌ Kanal nicht gefunden.")
-        return
+        if not user_id:
+            await update.message.reply_text("❌ Kanal nicht gefunden")
+            return
 
-    with sqlite3.connect(DB_FILE) as conn:
-        conn.execute(
-            """
-            INSERT OR IGNORE INTO tracked_streams 
-            (chat_id, streamer, user_id, platform, last_status, added_at)
-            VALUES (?, ?, ?, ?, 0, ?)
-            """,
-            (str(update.message.chat.id), name, user_id, platform, datetime.utcnow().isoformat()),
-        )
-    await update.message.reply_text(f"✅ {name} ({platform}) wird nun überwacht.")
+        chat_id = str(update.message.chat.id)
+        with sqlite3.connect(DB_FILE) as conn:
+            conn.execute(
+                """INSERT INTO tracked_streams 
+                (chat_id, streamer, user_id, platform, last_status, added_at)
+                VALUES (?, ?, ?, ?, 0, ?)
+                ON CONFLICT DO NOTHING""",
+                (chat_id, name, user_id, platform, datetime.utcnow().isoformat())
+            )
+        await update.message.reply_text(f"✅ {name} ({platform}) wird überwacht")
 
-@rate_limited("untrack")
+    except Exception as e:
+        logger.error(f"Track Error: {e}")
+        await update.message.reply_text("⚠️ Fehler beim Hinzufügen")
+
+@rate_limited("untrack", max_requests=5, period=30)
 async def untrack(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not update.message or not context.args or len(context.args) < 2:
+    if not context.args or len(context.args) < 2:
         await update.message.reply_text("❌ Format: /untrack <twitch|youtube> <name>")
         return
 
     platform = context.args[0].lower()
     name = " ".join(context.args[1:]).lower()
+    chat_id = str(update.message.chat.id)
 
     with sqlite3.connect(DB_FILE) as conn:
         cur = conn.execute(
             "DELETE FROM tracked_streams WHERE chat_id = ? AND streamer = ? AND platform = ?",
-            (str(update.message.chat.id), name, platform)
+            (chat_id, name, platform)
         )
-    
-    if cur.rowcount:
-        await update.message.reply_text(f"🗑 {name} ({platform}) entfernt.")
-    else:
-        await update.message.reply_text(f"❌ {name} ({platform}) nicht gefunden.")
 
-async def untrack_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    _, streamer, platform = query.data.split(":")
-    chat_id = str(query.message.chat.id)
-    with sqlite3.connect(DB_FILE) as conn:
-        cur = conn.execute(
-            "DELETE FROM tracked_streams WHERE chat_id = ? AND streamer = ? AND platform = ?",
-            (chat_id, streamer, platform),
-        )
-    if cur.rowcount:
-        await query.edit_message_text(f"✅ {streamer} ({platform}) entfernt.")
+    if cur.rowcount > 0:
+        await update.message.reply_text(f"🗑 {name} ({platform}) entfernt")
     else:
-        await query.answer("❌ Konnte nicht entfernt werden.")
-    await query.answer()
+        await update.message.reply_text("❌ Eintrag nicht gefunden")
 
 async def list_streams(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = str(update.message.chat.id)
     with sqlite3.connect(DB_FILE) as conn:
         streams = conn.execute(
             "SELECT streamer, platform, last_status, user_id FROM tracked_streams WHERE chat_id = ?",
-            (chat_id,),
+            (chat_id,)
         ).fetchall()
 
     if not streams:
-        await update.message.reply_text("🔍 Keine Streamer registriert.")
+        await update.message.reply_text("🔍 Keine Streamer registriert")
         return
 
     keyboard = []
     for streamer, platform, status, user_id in streams:
-        if platform == "twitch":
-            url = f"https://twitch.tv/{streamer}"
-        else:
-            url = f"https://youtube.com/channel/{user_id}"
-            
+        url = (f"https://twitch.tv/{streamer}" if platform == "twitch" 
+               else f"https://youtube.com/channel/{user_id}")
+        
         button = InlineKeyboardButton(
             text=f"{'🎮' if platform == 'twitch' else '📺'} {streamer} {'🟢' if status else '🔴'}",
             url=url
@@ -360,73 +481,10 @@ async def list_streams(update: Update, context: ContextTypes.DEFAULT_TYPE):
         keyboard.append([button])
 
     await update.message.reply_text(
-        "🎥 Registrierte Streamer (Tippe um zu öffnen):",
+        "🎥 Registrierte Streamer:",
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
-# KI-Funktionen
-client = OpenAI(api_key=OPENAI_API_KEY)
-
-async def recommend_streamers(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat_id = str(update.message.chat.id)
-    with sqlite3.connect(DB_FILE) as conn:
-        tracked = conn.execute(
-            "SELECT streamer FROM tracked_streams WHERE chat_id = ?",
-            (chat_id,)
-        ).fetchall()
-    
-    if not tracked:
-        await update.message.reply_text("❌ Keine Streamer zum Analysieren vorhanden")
-        return
-    
-    response = client.chat.completions.create(
-        model="gpt-4",
-        messages=[{
-            "role": "system",
-            "content": f"Empfehle 5 ähnliche Streamer wie {', '.join([t[0] for t in tracked])}. Antwortformat: '1. Name - Plattform - Beschreibung'"
-        }]
-    )
-    await update.message.reply_text(f"🎮 KI-Empfehlungen:\n{response.choices[0].message.content}")
-
-async def generate_thumbnail(title: str):
-    response = client.images.generate(
-        model="dall-e-3",
-        prompt=f"Stream-Thumbnail im Gaming-Stil: {title}",
-        size="1024x1024"
-    )
-    return response.data[0].url
-
-# Zusätzliche Features
-async def tutorial(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    steps = [
-        ("tutorial1.jpg", "Schritt 1: Nutze /track <plattform> <name>"),
-        ("tutorial2.jpg", "Schritt 2: Erhalte Live-Benachrichtigungen")
-    ]
-    
-    media_group = [
-        InputMediaPhoto(media=open(file, "rb"), caption=text)
-        for file, text in steps
-    ]
-    
-    await context.bot.send_media_group(
-        chat_id=update.effective_chat.id,
-        media=media_group
-    )
-
-def predict_next_live(streamer: str):
-    with sqlite3.connect(DB_FILE) as conn:
-        times = conn.execute(
-            "SELECT strftime('%H:%M', last_stream_start) FROM tracked_streams WHERE streamer=?",
-            (streamer,)
-        ).fetchall()
-    
-    if not times:
-        return "⚠️ Keine Stream-Daten vorhanden"
-    
-    avg_time = np.median([datetime.strptime(t[0], "%H:%M") for t in times])
-    return f"⏱️ Voraussichtlich nächster Stream: {avg_time.strftime('%H:%M')}"
-
-# Hauptlogik
 async def check_streams(context: ContextTypes.DEFAULT_TYPE):
     logger.info("🚀 Starte Stream-Check...")
     try:
@@ -439,133 +497,159 @@ async def check_streams(context: ContextTypes.DEFAULT_TYPE):
         twitch_streams = [s for s in tracked if s[3] == "twitch"]
         if twitch_streams:
             user_ids = [s[2] for s in twitch_streams]
-            token = await get_twitch_token()
+            token = await TwitchService._get_token()
             async with httpx.AsyncClient() as client:
                 response = await client.get(
                     "https://api.twitch.tv/helix/streams",
-                    headers={"Client-ID": TWITCH_CLIENT_ID, "Authorization": f"Bearer {token}"},
+                    headers={
+                        "Client-ID": TWITCH_CLIENT_ID,
+                        "Authorization": f"Bearer {token}"
+                    },
                     params={"user_id": user_ids},
                 )
                 live_data = {stream["user_id"]: stream for stream in response.json().get("data", [])}
 
             updates_start = []
             updates_end = []
-            for chat_id, streamer, user_id, platform, status, last_start in twitch_streams:
+            for stream in twitch_streams:
+                chat_id, streamer, user_id, platform, status, last_start = stream
                 stream_info = live_data.get(user_id)
                 is_live = stream_info is not None
+                
                 if is_live and not status:
-                    clip = await get_twitch_clip(user_id)
-                    keyboard = [
-                        [InlineKeyboardButton("🔴 LIVE", url=f"https://twitch.tv/{streamer}")],
-                        [InlineKeyboardButton("📊 Stats", callback_data=f"stats_{streamer}")]
-                    ]
-                    if clip:
-                        keyboard.append([InlineKeyboardButton("🎬 Clip", url=clip)])
+                    # Live-Benachrichtigung senden
+                    thumbnail_url = stream_info["thumbnail_url"].replace("{width}", "640").replace("{height}", "360")
+                    caption = f"🎮 {streamer} ist LIVE auf Twitch!\n{stream_info.get('title', '')}"
+                    
+                    # Thumbnail generieren
+                    if OPENAI_API_KEY:
+                        ai_thumbnail = await AIService.generate_thumbnail(stream_info.get('title', 'Live Stream'))
+                        if ai_thumbnail:
+                            thumbnail_url = ai_thumbnail
+                    
                     await context.bot.send_photo(
                         chat_id=chat_id,
-                        photo=stream_info["thumbnail_url"].replace("{width}", "640").replace("{height}", "360"),
-                        caption=f"🎮 {streamer} ist LIVE auf Twitch!\n{stream_info.get('title', '')}",
-                        reply_markup=InlineKeyboardMarkup(keyboard)
+                        photo=thumbnail_url,
+                        caption=caption,
+                        reply_markup=InlineKeyboardMarkup([
+                            [InlineKeyboardButton("🔴 LIVE", url=f"https://twitch.tv/{streamer}")]
+                        ])
                     )
-                    updates_start.append((1, datetime.utcnow().isoformat(), stream_info["viewer_count"], chat_id, streamer, platform))
+                    updates_start.append((
+                        1, 
+                        datetime.utcnow().isoformat(), 
+                        stream_info["viewer_count"], 
+                        chat_id, 
+                        streamer, 
+                        platform
+                    ))
+                
                 elif not is_live and status:
-                    dur = (datetime.utcnow() - datetime.fromisoformat(last_start)).total_seconds() if last_start else 0
-                    updates_end.append((0, datetime.utcnow().isoformat(), dur, chat_id, streamer, platform))
+                    duration = (datetime.utcnow() - datetime.fromisoformat(last_start)).total_seconds()
                     await context.bot.send_message(
                         chat_id=chat_id,
-                        text=f"🌙 {streamer} (Twitch) offline. Dauer: {int(dur // 60)} Minuten"
+                        text=f"🌙 {streamer} (Twitch) offline. Dauer: {int(duration // 60)} Minuten"
+                    )
+                    updates_end.append((
+                        0,
+                        datetime.utcnow().isoformat(),
+                        duration,
+                        chat_id,
+                        streamer,
+                        platform
+                    ))
+
+            # Batch-Updates
+            with sqlite3.connect(DB_FILE) as conn:
+                if updates_start:
+                    conn.executemany(
+                        """UPDATE tracked_streams 
+                        SET last_status = ?, last_stream_start = ?, peak_viewers = ?
+                        WHERE chat_id = ? AND streamer = ? AND platform = ?""",
+                        updates_start
+                    )
+                if updates_end:
+                    conn.executemany(
+                        """UPDATE tracked_streams 
+                        SET last_status = ?, last_stream_end = ?, total_stream_time = total_stream_time + ?
+                        WHERE chat_id = ? AND streamer = ? AND platform = ?""",
+                        updates_end
                     )
 
-            with sqlite3.connect(DB_FILE) as conn:
-                conn.executemany(
-                    "UPDATE tracked_streams SET last_status=?, last_stream_start=?, peak_viewers=? WHERE chat_id=? AND streamer=? AND platform=?",
-                    updates_start
-                )
-                conn.executemany(
-                    "UPDATE tracked_streams SET last_status=?, last_stream_end=?, total_stream_time=total_stream_time+? WHERE chat_id=? AND streamer=? AND platform=?",
-                    [(u[0], u[1], u[2], u[3], u[4], u[5]) for u in updates_end]
-                )
-
-        # YouTube-Check mit verbesserter Quota-Prüfung
+        # YouTube-Check
         youtube_streams = [s for s in tracked if s[3] == "youtube"]
-        if youtube_streams:
-            remaining_quota = YouTubeQuota.get_remaining()
-            needed_quota = 100 * len(youtube_streams)
+        for stream in youtube_streams:
+            chat_id, streamer, channel_id, platform, status, last_start = stream
+            live_info = await YouTubeService.check_live(channel_id)
+            is_live = live_info if isinstance(live_info, dict) else {"snippet": {"title": "Live Stream"}} if live_info else None
             
-            if remaining_quota >= needed_quota:
-                for chat_id, streamer, channel_id, platform, status, last_start in youtube_streams:
-                    live_info = await check_youtube_live(channel_id)
-                    is_live = live_info is not None
-                    if is_live and not status:
-                        video_id = live_info["id"]["videoId"]
-                        await context.bot.send_message(
-                            chat_id=chat_id,
-                            text=f"🎥 {streamer} ist LIVE auf YouTube!\n{live_info['snippet']['title']}\nhttps://youtu.be/{video_id}"
-                        )
-                        with sqlite3.connect(DB_FILE) as conn:
-                            conn.execute(
-                                "UPDATE tracked_streams SET last_status=1, last_stream_start=? WHERE chat_id=? AND streamer=? AND platform=?",
-                                (datetime.utcnow().isoformat(), chat_id, streamer, platform)
-                            )
-                    elif not is_live and status:
-                        dur = (datetime.utcnow() - datetime.fromisoformat(last_start)).total_seconds() if last_start else 0
-                        await context.bot.send_message(
-                            chat_id=chat_id,
-                            text=f"🌙 {streamer} (YouTube) offline. Dauer: {int(dur // 60)} Minuten"
-                        )
-                        with sqlite3.connect(DB_FILE) as conn:
-                            conn.execute(
-                                "UPDATE tracked_streams SET last_status=0, last_stream_end=?, total_stream_time=total_stream_time+? WHERE chat_id=? AND streamer=? AND platform=?",
-                                (datetime.utcnow().isoformat(), dur, chat_id, streamer, platform)
-                            )
-            else:
-                logger.warning(
-                    f"YouTube Quota zu niedrig: {remaining_quota}/"
-                    f"{needed_quota} benötigt. Überspringe Checks."
+            if is_live and not status:
+                video_id = live_info["id"]["videoId"]
+                await context.bot.send_message(
+                    chat_id=chat_id,
+                    text=f"🎥 {streamer} ist LIVE auf YouTube!\n{live_info['snippet']['title']}\nhttps://youtu.be/{video_id}"
                 )
-                if ADMIN_CHAT_ID:
-                    await context.bot.send_message(
-                        chat_id=ADMIN_CHAT_ID,
-                        text=f"⚠️ YouTube Quota erschöpft: {remaining_quota} übrig"
+                with sqlite3.connect(DB_FILE) as conn:
+                    conn.execute(
+                        """UPDATE tracked_streams 
+                        SET last_status = 1, last_stream_start = ?
+                        WHERE chat_id = ? AND streamer = ? AND platform = ?""",
+                        (datetime.utcnow().isoformat(), chat_id, streamer, platform)
+                    )
+
+            elif not is_live and status:
+                duration = (datetime.utcnow() - datetime.fromisoformat(last_start)).total_seconds()
+                await context.bot.send_message(
+                    chat_id=chat_id,
+                    text=f"🌙 {streamer} (YouTube) offline. Dauer: {int(duration // 60)} Minuten"
+                )
+                with sqlite3.connect(DB_FILE) as conn:
+                    conn.execute(
+                        """UPDATE tracked_streams 
+                        SET last_status = 0, last_stream_end = ?, total_stream_time = total_stream_time + ?
+                        WHERE chat_id = ? AND streamer = ? AND platform = ?""",
+                        (datetime.utcnow().isoformat(), duration, chat_id, streamer, platform)
                     )
 
         logger.info("✅ Stream-Check abgeschlossen")
+
     except Exception as e:
-        logger.error(f"Stream-Check-Fehler: {e}")
+        logger.error(f"Stream-Check Fehler: {e}")
         traceback.print_exc()
-
-def schedule_report(app):
-    async def daily_report(context: ContextTypes.DEFAULT_TYPE):
         if ADMIN_CHAT_ID:
-            with sqlite3.connect(DB_FILE) as conn:
-                rows = conn.execute(
-                    "SELECT streamer, SUM(total_stream_time) FROM tracked_streams GROUP BY streamer ORDER BY SUM(total_stream_time) DESC LIMIT 5"
-                ).fetchall()
-            report = "📊 **Top 5 Streamer**\n" + "\n".join(
-                f"• {streamer}: {int(total // 3600)}h {int((total % 3600) // 60)}m"
-                for streamer, total in rows
+            await context.bot.send_message(
+                chat_id=ADMIN_CHAT_ID,
+                text=f"🚨 Kritischer Fehler: {str(e)[:3000]}"
             )
-            await context.bot.send_message(chat_id=ADMIN_CHAT_ID, text=report, parse_mode="Markdown")
-    app.job_queue.run_daily(daily_report, time=dt_time(hour=8, minute=0))
 
+# Setup
 def main():
     init_db()
-    application = ApplicationBuilder().token(TELEGRAM_TOKEN).rate_limiter(AIORateLimiter()).build()
-    
-    # Handler registrieren
+    application = ApplicationBuilder() \
+        .token(TELEGRAM_TOKEN) \
+        .rate_limiter(AIORateLimiter()) \
+        .build()
+
+    # Handler
+    application.add_handler(CommandHandler("start", lambda u,c: u.message.reply_text("Willkommen beim Stream Monitor!")))
     application.add_handler(CommandHandler("track", track))
     application.add_handler(CommandHandler("untrack", untrack))
     application.add_handler(CommandHandler("list", list_streams))
-    application.add_handler(CommandHandler("recommend", recommend_streamers))
-    application.add_handler(CommandHandler("tutorial", tutorial))
-    application.add_handler(CallbackQueryHandler(untrack_callback, pattern="^untrack:"))
+    application.add_handler(CommandHandler("donate", DonationService.handle_donation))
+    application.add_handler(CommandHandler("recommend", 
+        lambda u,c: asyncio.create_task(AIService.generate_recommendations(u,c))))
+    
     application.add_error_handler(error_handler)
-    
     application.job_queue.run_repeating(check_streams, interval=60, first=10)
-    schedule_report(application)
-    
+
+    # Start
     logger.info("🤖 Bot startet...")
     application.run_polling()
 
 if __name__ == "__main__":
-    main()
+    try:
+        import uvloop
+        uvloop.install()
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        logger.info("🛑 Bot gestoppt")
