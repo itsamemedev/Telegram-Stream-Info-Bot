@@ -27,10 +27,12 @@ Ein leistungsstarker Telegram-Bot zur Überwachung von Twitch- und YouTube-Strea
 
 
 # Repository klonen
-git clone https://github.com/dein-benutzername/telegram-stream-bot.git
+bash
+git clone https://github.com/itsamemedev/Telegram-Stream-Info-Bot
 cd telegram-stream-bot
 
 # Virtuelle Umgebung erstellen
+bash
 python3 -m venv venv
 source venv/bin/activate
 
@@ -41,7 +43,7 @@ pip install -r requirements.txt
 
     .env-Datei erstellen:
 
-
+bash
 
 TELEGRAM_TOKEN="dein_telegram_token"
 TWITCH_CLIENT_ID="dein_twitch_client_id"
@@ -56,7 +58,7 @@ ini
 bash
 
 python3 -c "from bot import init_db; init_db()"
-ini
+
 ## 🕹️ Nutzung
 Befehl	Beschreibung	Beispiel
 /track <pl> <name>	Streamer hinzufügen	/track youtube MrBeast
