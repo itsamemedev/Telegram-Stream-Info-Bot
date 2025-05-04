@@ -63,3 +63,12 @@ Hinweis:
 
     Starten des Bots: python3 bot.py
  
+Hinweise zur Beschaffung der Keys:
+
+    Telegram Token: Erstelle einen Bot über @BotFather
+
+    Twitch Keys: Registriere eine App unter Twitch Dev Console
+
+    YouTube API Key: Erstelle ein Projekt in der Google Cloud Console
+
+    Admin Chat ID: Sende /start an @userinfobot um deine Chat-ID zu erhalten
