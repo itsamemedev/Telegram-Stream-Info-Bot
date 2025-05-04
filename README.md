@@ -15,7 +15,7 @@ Schritt-für-Schritt Einrichtung
 bash
 
 git clone https://github.com/itsamemedev/Telegram-Stream-Info-Bot
-cd stream-monitor-bot
+cd Telegram-Stream-Info-Bot
 
     Abhängigkeiten installieren:
 
