@@ -41,7 +41,7 @@ pip install -r requirements.txt
 
     .env-Datei erstellen:
 
-ini
+
 
 TELEGRAM_TOKEN="dein_telegram_token"
 TWITCH_CLIENT_ID="dein_twitch_client_id"
@@ -50,13 +50,13 @@ YOUTUBE_API_KEY="dein_youtube_key"
 OPENAI_API_KEY="dein_openai_key"  # Optional für KI-Features
 DONATION_LINK="https://gofundme.com/dein-projekt"
 PAYPAL_ME="https://paypal.me/dein-account"
-
+ini
 ##     Datenbank initialisieren:
 
 bash
 
 python3 -c "from bot import init_db; init_db()"
-
+ini
 ## 🕹️ Nutzung
 Befehl	Beschreibung	Beispiel
 /track <pl> <name>	Streamer hinzufügen	/track youtube MrBeast
