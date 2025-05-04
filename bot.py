@@ -94,7 +94,7 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
         error_msg = f"⚠️ **Bot-Fehler**\n```\n{traceback.format_exc()}\n```"
         await context.bot.send_message(
             chat_id=int(ADMIN_CHAT_ID),
-            text=error_msg[:4096],  # Telegram Nachrichtenlimit
+            text=error_msg[:4096],
             parse_mode="Markdown"
         )
 
@@ -167,9 +167,11 @@ class YouTubeQuota:
         today = cls._today()
         with sqlite3.connect(DB_FILE) as conn:
             conn.execute(
-                "INSERT INTO api_usage (date, youtube_units) VALUES (?, ?)"
-                "ON CONFLICT(date) DO UPDATE SET youtube_units = youtube_units + ?",
-                (today, units, units),
+                """INSERT INTO api_usage (date, youtube_units)
+                VALUES (?, ?)
+                ON CONFLICT(date) DO UPDATE SET
+                youtube_units = youtube_units + excluded.youtube_units""",
+                (today, units)
             )
 
     @classmethod
@@ -177,10 +179,13 @@ class YouTubeQuota:
         today = cls._today()
         with sqlite3.connect(DB_FILE) as conn:
             row = conn.execute(
-                "SELECT youtube_units FROM api_usage WHERE date = ?", (today,)
+                "SELECT youtube_units FROM api_usage WHERE date = ?", 
+                (today,)
             ).fetchone()
             used = row[0] if row else 0
-        return max(10000 - used, 0)
+        remaining = 10000 - used
+        logger.info(f"YouTube Quota: {remaining} units remaining")
+        return max(remaining, 0)
 
 async def get_youtube_channel_id(name: str):
     if YouTubeQuota.get_remaining() < 100:
@@ -481,36 +486,48 @@ async def check_streams(context: ContextTypes.DEFAULT_TYPE):
                     [(u[0], u[1], u[2], u[3], u[4], u[5]) for u in updates_end]
                 )
 
-        # YouTube-Check
+        # YouTube-Check mit verbesserter Quota-Prüfung
         youtube_streams = [s for s in tracked if s[3] == "youtube"]
-        if youtube_streams and YouTubeQuota.get_remaining() >= 100 * len(youtube_streams):
-            for chat_id, streamer, channel_id, platform, status, last_start in youtube_streams:
-                live_info = await check_youtube_live(channel_id)
-                is_live = live_info is not None
-                if is_live and not status:
-                    video_id = live_info["id"]["videoId"]
-                    await context.bot.send_message(
-                        chat_id=chat_id,
-                        text=f"🎥 {streamer} ist LIVE auf YouTube!\n{live_info['snippet']['title']}\nhttps://youtu.be/{video_id}"
-                    )
-                    with sqlite3.connect(DB_FILE) as conn:
-                        conn.execute(
-                            "UPDATE tracked_streams SET last_status=1, last_stream_start=? WHERE chat_id=? AND streamer=? AND platform=?",
-                            (datetime.utcnow().isoformat(), chat_id, streamer, platform)
+        if youtube_streams:
+            remaining_quota = YouTubeQuota.get_remaining()
+            needed_quota = 100 * len(youtube_streams)
+            
+            if remaining_quota >= needed_quota:
+                for chat_id, streamer, channel_id, platform, status, last_start in youtube_streams:
+                    live_info = await check_youtube_live(channel_id)
+                    is_live = live_info is not None
+                    if is_live and not status:
+                        video_id = live_info["id"]["videoId"]
+                        await context.bot.send_message(
+                            chat_id=chat_id,
+                            text=f"🎥 {streamer} ist LIVE auf YouTube!\n{live_info['snippet']['title']}\nhttps://youtu.be/{video_id}"
                         )
-                elif not is_live and status:
-                    dur = (datetime.utcnow() - datetime.fromisoformat(last_start)).total_seconds() if last_start else 0
-                    await context.bot.send_message(
-                        chat_id=chat_id,
-                        text=f"🌙 {streamer} (YouTube) offline. Dauer: {int(dur // 60)} Minuten"
-                    )
-                    with sqlite3.connect(DB_FILE) as conn:
-                        conn.execute(
-                            "UPDATE tracked_streams SET last_status=0, last_stream_end=?, total_stream_time=total_stream_time+? WHERE chat_id=? AND streamer=? AND platform=?",
-                            (datetime.utcnow().isoformat(), dur, chat_id, streamer, platform)
+                        with sqlite3.connect(DB_FILE) as conn:
+                            conn.execute(
+                                "UPDATE tracked_streams SET last_status=1, last_stream_start=? WHERE chat_id=? AND streamer=? AND platform=?",
+                                (datetime.utcnow().isoformat(), chat_id, streamer, platform)
+                            )
+                    elif not is_live and status:
+                        dur = (datetime.utcnow() - datetime.fromisoformat(last_start)).total_seconds() if last_start else 0
+                        await context.bot.send_message(
+                            chat_id=chat_id,
+                            text=f"🌙 {streamer} (YouTube) offline. Dauer: {int(dur // 60)} Minuten"
                         )
-        elif youtube_streams:
-            logger.warning("YouTube API Quota reicht nicht für alle Checks")
+                        with sqlite3.connect(DB_FILE) as conn:
+                            conn.execute(
+                                "UPDATE tracked_streams SET last_status=0, last_stream_end=?, total_stream_time=total_stream_time+? WHERE chat_id=? AND streamer=? AND platform=?",
+                                (datetime.utcnow().isoformat(), dur, chat_id, streamer, platform)
+                            )
+            else:
+                logger.warning(
+                    f"YouTube Quota zu niedrig: {remaining_quota}/"
+                    f"{needed_quota} benötigt. Überspringe Checks."
+                )
+                if ADMIN_CHAT_ID:
+                    await context.bot.send_message(
+                        chat_id=ADMIN_CHAT_ID,
+                        text=f"⚠️ YouTube Quota erschöpft: {remaining_quota} übrig"
+                    )
 
         logger.info("✅ Stream-Check abgeschlossen")
     except Exception as e:
