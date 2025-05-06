@@ -46,7 +46,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Error-Handler (nach der Logging-Konfiguration einfügen)
+# Error-Handler
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
     logger.error("Exception occurred:", exc_info=context.error)
     
@@ -60,13 +60,13 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
     if ADMIN_CHAT_ID:
         await context.bot.send_message(
             chat_id=ADMIN_CHAT_ID,
-            text=error_msg[:4096],  # Telegram Nachrichtenlimit
+            text=error_msg[:4096],
             parse_mode="Markdown"
         )
     
-    # Optional: Benutzer benachrichtigen
     if update and hasattr(update, 'message'):
         await update.message.reply_text("❌ Ein unerwarteter Fehler ist aufgetreten")
+
 # Caching
 cache = TTLCache(maxsize=1000, ttl=300)
 
@@ -179,6 +179,7 @@ class TwitchService:
 # YouTube-Service
 class YouTubeService:
     _quota_cache = TTLCache(maxsize=1, ttl=60)
+    _last_quota_check = datetime.utcnow().date()
 
     @classmethod
     async def get_channel_id(cls, name: str) -> Optional[str]:
@@ -187,6 +188,7 @@ class YouTubeService:
             return cached
 
         if await cls._check_quota() < 100:
+            logger.warning("Kontingent erschöpft für Channel ID Abfrage")
             return None
 
         try:
@@ -215,11 +217,12 @@ class YouTubeService:
 
     @classmethod
     async def check_live(cls, channel_id: str) -> Optional[dict]:
+        if await cls._check_quota() < 100:
+            logger.warning("Kontingent erschöpft für Live-Check")
+            return None
+
         for attempt in range(3):
             try:
-                if await cls._check_quota() < 100:
-                    raise Exception("Insufficient YouTube quota")
-
                 async with httpx.AsyncClient() as client:
                     response = await client.get(
                         "https://www.googleapis.com/youtube/v3/search",
@@ -240,6 +243,7 @@ class YouTubeService:
                     return None
             except httpx.HTTPStatusError as e:
                 if e.response.status_code == 403:
+                    await cls._update_quota(5)
                     return await cls._fallback_check(channel_id)
                 logger.error(f"YouTube API Error: {e}")
                 await asyncio.sleep(2 ** attempt)
@@ -265,28 +269,38 @@ class YouTubeService:
 
     @classmethod
     async def _check_quota(cls) -> int:
-        today = datetime.utcnow().strftime("%Y-%m-%d")
+        today = datetime.utcnow().date()
+        if today != cls._last_quota_check:
+            cls._quota_cache.clear()
+            cls._last_quota_check = today
+
         with sqlite3.connect(DB_FILE) as conn:
             row = conn.execute(
                 "SELECT youtube_units FROM api_usage WHERE date = ?", 
-                (today,)
+                (today.isoformat(),)
             ).fetchone()
             used = row[0] if row else 0
             return max(10000 - used, 0)
 
     @classmethod
     async def _update_quota(cls, units: int):
-        today = datetime.utcnow().strftime("%Y-%m-%d")
+        today = datetime.utcnow().isoformat()[:10]
         with sqlite3.connect(DB_FILE) as conn:
-            conn.execute(
-                """INSERT INTO api_usage (date, youtube_units)
-                VALUES (?, ?)
-                ON CONFLICT(date) DO UPDATE SET
-                youtube_units = youtube_units + ?""",
-                (today, units, units)
-            )
-            
-# Rate-Limiting Decorator (vor den Befehlen einfügen)
+            conn.execute("BEGIN TRANSACTION")
+            try:
+                conn.execute(
+                    """INSERT INTO api_usage (date, youtube_units)
+                    VALUES (?, ?)
+                    ON CONFLICT(date) DO UPDATE SET
+                    youtube_units = youtube_units + ?""",
+                    (today, units, units)
+                )
+                conn.commit()
+            except Exception as e:
+                conn.rollback()
+                logger.error(f"Quota update failed: {e}")
+
+# Rate-Limiting Decorator
 def rate_limited(command: str, max_requests: int = 5, period: int = 30):
     def decorator(func):
         async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -385,7 +399,6 @@ class DonationService:
             "Deine Spende hilft bei der Weiterentwicklung!",
             reply_markup=InlineKeyboardMarkup(keyboard)
             )
-        # Spende protokollieren
         user_id = str(update.effective_user.id)
         with sqlite3.connect(DB_FILE) as conn:
             conn.execute(
@@ -413,7 +426,7 @@ async def track(update: Update, context: ContextTypes.DEFAULT_TYPE):
             user_id = await TwitchService.get_user_id(name)
         else:
             if await YouTubeService._check_quota() < 100:
-                await update.message.reply_text("❌ YouTube-Kontingent erschöpft")
+                await update.message.reply_text("❌ Tägliches YouTube-Kontingent erschöpft")
                 return
             user_id = await YouTubeService.get_channel_id(name)
 
@@ -517,11 +530,9 @@ async def check_streams(context: ContextTypes.DEFAULT_TYPE):
                 is_live = stream_info is not None
                 
                 if is_live and not status:
-                    # Live-Benachrichtigung senden
                     thumbnail_url = stream_info["thumbnail_url"].replace("{width}", "640").replace("{height}", "360")
                     caption = f"🎮 {streamer} ist LIVE auf Twitch!\n{stream_info.get('title', '')}"
                     
-                    # Thumbnail generieren
                     if OPENAI_API_KEY:
                         ai_thumbnail = await AIService.generate_thumbnail(stream_info.get('title', 'Live Stream'))
                         if ai_thumbnail:
@@ -559,7 +570,6 @@ async def check_streams(context: ContextTypes.DEFAULT_TYPE):
                         platform
                     ))
 
-            # Batch-Updates
             with sqlite3.connect(DB_FILE) as conn:
                 if updates_start:
                     conn.executemany(
