@@ -118,7 +118,7 @@ reagiert live auf den gesendeten Stream und blendet sich ins Sendebild ein.
 <td valign="top">
 
 ### 📊 Auswerten
-Flask-Dashboard mit **318 API-Routen**, Wissensgraph-Visualisierung,
+Flask-Dashboard mit **345 API-Routen**, Wissensgraph-Visualisierung,
 Einnahmen-Journal (Finanzamt-tauglich, append-only mit Hash-Kette) und PWA
 fürs Handy.
 
@@ -142,7 +142,7 @@ fürs Handy.
 | **Sentinel-Flotte** | 12 Wächter-Agenten (health, recovery, scout, analytics, learning, sentinel, disk, restream, toxicity, uptime, recording, …) mit Telegram-Alarm, einzeln abschaltbar |
 | **Community** | Wiedererkennung von Stammzuschauern · Loyalty-Punkte & Ränge · Discord-XP, Level, Daily-Streak · Live-Ping · Highlight-Share · Community-Events |
 | **Geld** | Spenden-Telemetrie (Schätzwerte) · getrenntes Einnahmen-Journal (`nc/ledger.py`) mit Hash-Kette und CSV-Export fürs Finanzamt |
-| **Dashboard** | 318 Flask-Routen · Live-Panels · Gehirn-Visualisierung mit Lernkurve · Overlay für OBS · installierbare PWA (Android) · QR-Login |
+| **Dashboard** | 345 Flask-Routen · Live-Panels · Gehirn-Visualisierung mit Lernkurve · Overlay für OBS · installierbare PWA (Android) · QR-Login |
 | **Betrieb** | systemd-Dienst · Deploy-Skript mit Vorabprüfung und Auto-Rollback · Selbsttest-Route · Totmann-Meldung bei Prozesstod · CrowdSec-Anbindung · Log-Redaction für Cookies und Stream-Keys |
 | **Datenbank** | SQLite **oder** MariaDB · zentrales Schema-Modul · Export-Werkzeug · SQL-Guard |
 
@@ -181,7 +181,7 @@ flowchart TB
     DC --> BOT
     TT --> BOT
 
-    BOT["<b>bot_v37.py</b><br/>Monolith · 34.500 Zeilen<br/>Scraper · Recorder · Restream<br/>Flask-Dashboard mit 318 Routen"]:::core
+    BOT["<b>bot_v37.py</b><br/>Monolith · 34.500 Zeilen<br/>Scraper · Recorder · Restream<br/>Flask-Dashboard mit 345 Routen"]:::core
 
     BOT -->|configure| NC["<b>nc/</b> — 84 Fachmodule<br/>Schema · OAuth · Restream<br/>Ledger · Moderation · Intel"]:::lib
     BOT --> TPL["<b>templates/</b><br/>Dashboard · Overlay · PWA"]:::lib
@@ -604,7 +604,7 @@ Deterministische Erkennung **vor** Banned-Words und **vor** jeder KI:
 
 ## 🖥️ Dashboard
 
-Flask-Dashboard mit **318 Routen** unter `127.0.0.1:8050`.
+Flask-Dashboard mit **345 Routen** unter `127.0.0.1:8050`.
 
 ```bash
 # Von deinem Laptop — niemals den Port öffnen:
@@ -791,8 +791,8 @@ python3 tools/ncpatch.py verify patches/x.json         # Trockenlauf
 python3 tools/ncpatch.py apply  patches/x.json         # alles-oder-nichts, legt .bak an
 ```
 
-`find` antwortet aus **[`.claude/INDEX.md`](.claude/INDEX.md)** — 318 Routen,
-45 Slash-Commands, 520 Funktionen, jeweils mit Zeilennummer.
+`find` antwortet aus **[`.claude/INDEX.md`](.claude/INDEX.md)** — 345 Routen,
+45 Slash-Commands, 573 Funktionen, jeweils mit Zeilennummer.
 
 ---
 
@@ -960,7 +960,7 @@ ersten Imports geladen. Konfiguration deshalb immer als Funktion lesen
 | | |
 |---|---|
 | Aktuelle Version | **4.0** — „Restream Control Room" (2026.08) |
-| Flask-Routen | 318 |
+| Flask-Routen | 345 |
 | Discord-Slash-Commands | 45 |
 | Fachmodule | 84 in `nc/` (+4 in `nc/intel/`), 11 in `brain/` |
 | Sentinel-Agenten | 12 |

@@ -4095,9 +4095,16 @@ def test_v40_w54_inspectcache():
 
     src = open("bot_v37.py").read()
     assert "from nc import inspectcache as _nc_inspectcache" in src
-    assert "_nc_inspectcache.parse_row(row)" in src and "_nc_inspectcache.serialize(data)" in src
+    assert "_nc_inspectcache.serialize(data)" in src, "Serialisierung nicht delegiert"
+    # v4.0-W104: parse_row ist mit get_or_compute_inspect_sync nach nc/recdb.py
+    # gewandert (Welle 1 der Zerlegung). Der Vertrag gilt unveraendert, nur der
+    # Anker liegt jetzt eine Ebene tiefer: Bot -> recdb -> inspectcache.
+    _recdb = open("nc/recdb.py", encoding="utf-8").read()
+    assert "_nc_inspectcache.parse_row(row)" in _recdb, "Parse-Fallback nicht in nc.recdb"
+    assert "return _nc_recdb.get_or_compute_inspect_sync(" in src, "Bot delegiert nicht an recdb"
     assert "json.dumps(data, ensure_ascii=False)[:200000]" not in src, "alte Serialisierung noch im Monolithen"
-    ok("v4.0-w54: Bot delegiert (De-)Serialisierung, hält nur die DB-I/O")
+    assert "_nc_inspectcache.parse_row(row)" not in src, "Doppel-Logik: Parse noch im Monolithen"
+    ok("v4.0-w54: (De-)Serialisierung delegiert — Parse seit W104 ueber nc.recdb")
 
 
 def test_v40_w55_record_fail_backoff():

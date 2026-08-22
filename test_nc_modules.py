@@ -235,6 +235,86 @@ def _test_shield_harden():
     ok("shield: normale Wortgrenzen bleiben erhalten")
 
 
+def _test_recdb():
+    """Welle 1 der Zerlegung (v4.0-W104): die Aufnahmen-DB-Zugriffe liegen jetzt
+       in nc.recdb, bot_v37 haelt nur noch Delegationen. Geprueft wird beides —
+       dass das Modul arbeitet UND dass der Monolith wirklich delegiert, statt
+       eine zweite Kopie der Logik zu behalten."""
+    import sqlite3, tempfile, os as _os
+    from nc import recdb, dbwrap
+
+    db = _os.path.join(tempfile.mkdtemp(), "rec.sqlite")
+    con = sqlite3.connect(db)
+    con.executescript("""
+        CREATE TABLE recordings (id INTEGER PRIMARY KEY, username TEXT, filepath TEXT,
+            file_size INT, duration_secs INT, created_at TEXT, deleted_at TEXT,
+            fingerprint TEXT);
+        CREATE TABLE recording_notes (recording_id INT, note TEXT);
+        CREATE TABLE recording_annotations (id INTEGER PRIMARY KEY, recording_id INT,
+            timestamp_secs INT, label TEXT, created_at TEXT);
+        CREATE TABLE bookmarks (recording_id INT, created_at TEXT);
+        INSERT INTO recordings (id, username, filepath, deleted_at)
+            VALUES (1, 'a', '/x.mp4', NULL), (2, 'b', '/y.mp4', '2026-01-01');
+        INSERT INTO recording_notes VALUES (1, 'Notiz');
+        INSERT INTO recording_annotations VALUES (1, 1, 42, 'Marke', '2026-01-01');
+    """)
+    con.commit(); con.close()
+    dbwrap.configure_db(db_path=db, backend="sqlite")
+
+    # Soft-Delete-Filter: die geloeschte #2 darf nicht auftauchen
+    rows = recdb.get_all_recordings(limit=10)
+    assert [r["id"] for r in rows] == [1], [r["id"] for r in rows]
+    assert [r["id"] for r in recdb.get_all_recordings(limit=10, include_deleted=True)] == [2, 1]
+    ok("recdb.get_all_recordings filtert Soft-Delete")
+
+    assert recdb.get_recording_by_id(1)["username"] == "a"
+    assert recdb.get_recording_note(1) == "Notiz"
+    assert recdb.get_recording_note(999) is None
+    assert len(recdb.get_annotations_for_recording(1)) == 1
+    assert [r["id"] for r in recdb.get_trash_recordings()] == [2]
+    ok("recdb: by_id, note, annotations, trash")
+
+    # Papierkorb: der Rundlauf muss den Soft-Delete-Zustand wirklich umschalten
+    seen = []
+    recdb.configure(log_event=lambda *a, **k: seen.append(a[0]))
+    assert recdb.soft_delete_recording(1) is True
+    assert recdb.get_all_recordings(limit=10) == []
+    assert recdb.restore_recording(1) is True
+    assert [r["id"] for r in recdb.get_all_recordings(limit=10)] == [1]
+    assert recdb.soft_delete_recording(999) is False, "nicht vorhandene ID darf nicht True melden"
+    assert seen == ["recording.trashed", "recording.restored"], seen
+    ok("recdb: Papierkorb-Rundlauf + log_event-Injection")
+
+    # Ohne Injection darf nichts sterben — der Default ist ein No-Op, keine Ausnahme.
+    import importlib
+    fresh = importlib.reload(recdb)
+    assert fresh.soft_delete_recording(1) is True, "ohne log_event-Injection gestorben"
+    fresh.restore_recording(1)
+    ok("recdb bleibt ohne log_event-Injection funktionsfaehig")
+
+    # Fehlerpfad: eine fehlende Tabelle gibt [] zurueck, keinen 500er im Dashboard
+    assert recdb.get_manual_recordings() == []
+    assert recdb.get_bookmarked_recordings(limit=5) == []
+    ok("recdb: fehlende Tabelle -> leere Liste statt Ausnahme")
+
+    # --- und der Monolith delegiert wirklich ---
+    src = open("bot_v37.py", encoding="utf-8").read()
+    assert "from nc import recdb as _nc_recdb" in src, "recdb nicht importiert"
+    assert "_nc_recdb.configure(log_event=log_event)" in src, "log_event nicht injiziert"
+    for fn in ("get_all_recordings", "get_recording_by_id", "soft_delete_recording",
+               "restore_recording", "get_trash_recordings", "get_manual_recordings",
+               "get_recording_note", "get_annotations_for_recording",
+               "get_bookmarked_recordings", "get_recent_recording_attempts",
+               "update_recording_fingerprint", "find_recordings_by_fingerprint",
+               "get_or_compute_inspect_sync"):
+        assert ("return _nc_recdb.%s(" % fn) in src, "%s delegiert nicht" % fn
+    # Kein Rumpf-Rest: die SQL darf nur noch im Modul stehen, sonst laufen die
+    # beiden Kopien mit der Zeit auseinander.
+    assert "SELECT * FROM recordings WHERE deleted_at IS NULL" not in src, \
+        "alte SQL noch im Monolithen — Doppel-Logik"
+    ok("bot_v37 delegiert an nc.recdb (13 Funktionen, keine Doppel-Logik)")
+
+
 def main():
     tmp = tempfile.mkdtemp()
     configure_db(db_path=os.path.join(tmp, "t.db"), backend="sqlite")
@@ -319,6 +399,8 @@ def main():
     _test_dbexport()
 
     _test_procdiag()
+
+    _test_recdb()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)
 

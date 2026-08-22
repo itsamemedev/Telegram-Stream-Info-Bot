@@ -37,3 +37,6 @@ __pycache__/
 NIGHTCRAWLER_v37_*.zip
 *.tgz
 *.tar.gz
+
+# Test-Umgebung dieser Maschine, nie ins Repo
+.venv*/

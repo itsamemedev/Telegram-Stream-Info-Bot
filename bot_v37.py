@@ -588,6 +588,7 @@ from nc import netstat as _nc_netstat        # v4.0-W61b: Netzdurchsatz-Parsing/
 from nc import archivename as _nc_archivename  # v4.0-W62: kollisionsfreier atomarer Open (rein)
 from nc import journalperm as _nc_journalperm  # v4.0-W62b: Journal-Leserecht-Entscheidung (rein)
 from nc import cfgstore as _nc_cfgstore      # v4.0-W62c: app_config-Upsert (conn-injiziert)
+from nc import recdb as _nc_recdb        # v4.0-W104: Aufnahmen-DB-Zugriffe (extrahiert)
 from http.cookiejar import MozillaCookieJar
 from logging.handlers import RotatingFileHandler   # B4: war mid-file bei Z. 664
 from urllib.request import urlopen as _urlopen, Request as _UrlRequest
@@ -4303,17 +4304,10 @@ def finish_recording_attempt(attempt_id, *, returncode=None, file_path=None,
     except Exception as e:
         log.warning(f"finish_recording_attempt failed: {e}")
 
-def get_recent_recording_attempts(limit=50):
-    try:
-        with db_conn() as conn:
-            return conn.execute(
-                "SELECT id, tracking_id, username, recorder, started_at, "
-                "ended_at, duration_secs, returncode, file_path, file_size, "
-                "outcome, stderr_tail, error "
-                "FROM recording_attempts ORDER BY id DESC LIMIT ?", (limit,)
-            ).fetchall()
-    except Exception:
-        return []
+def get_recent_recording_attempts(limit = 50):
+    # v4.0-W104: verbatim nach nc/recdb.py geloest (Welle 1 der Zerlegung,
+    # docs/MODULARISIERUNG.md). Signatur unveraendert, Verhalten bitgenau.
+    return _nc_recdb.get_recent_recording_attempts(limit=limit)
 
 def get_last_recording_attempt(tid):
     """F22: liefert (outcome, recorder) der letzten Aufnahme für ein Tracking,
@@ -4824,21 +4818,15 @@ def add_recording(username: str, filepath: str, *,
                     f"(Upload läuft weiter, aber Dashboard zeigt diese Aufnahme nicht)")
         return None
 
-def get_all_recordings(limit=50, include_deleted=False):
-    with db_conn() as conn:
-        if include_deleted:
-            return conn.execute(
-                "SELECT * FROM recordings ORDER BY id DESC LIMIT ?",
-                (limit,)).fetchall()
-        # X-Series: Soft-Delete-Filter (deleted_at IS NULL)
-        return conn.execute(
-            "SELECT * FROM recordings WHERE deleted_at IS NULL "
-            "ORDER BY id DESC LIMIT ?",
-            (limit,)).fetchall()
+def get_all_recordings(limit = 50, include_deleted = False):
+    # v4.0-W104: verbatim nach nc/recdb.py geloest (Welle 1 der Zerlegung,
+    # docs/MODULARISIERUNG.md). Signatur unveraendert, Verhalten bitgenau.
+    return _nc_recdb.get_all_recordings(limit=limit, include_deleted=include_deleted)
 
 def get_recording_by_id(recording_id: int):
-    with db_conn() as conn:
-        return conn.execute("SELECT * FROM recordings WHERE id=?", (recording_id,)).fetchone()
+    # v4.0-W104: verbatim nach nc/recdb.py geloest (Welle 1 der Zerlegung,
+    # docs/MODULARISIERUNG.md). Signatur unveraendert, Verhalten bitgenau.
+    return _nc_recdb.get_recording_by_id(recording_id=recording_id)
 
 
 # ============================================================================
@@ -4873,6 +4861,12 @@ def log_event(kind: str, severity: str = "info", summary: str = "",
         _fire_webhooks(kind, severity, summary, payload)
     except Exception as e:
         log.debug(f"_fire_webhooks({kind}) dispatch failed: {e}")
+
+
+# v4.0-W104: nc.recdb braucht genau eine Bot-Funktion — das Ereignisprotokoll.
+# Direkt hinter log_event() verdrahtet, weil die Injection sonst von der
+# Importreihenfolge abhinge und die Papierkorb-Funktionen still blieben.
+_nc_recdb.configure(log_event=log_event)
 
 def get_event_log(limit: int = 100, kind: Optional[str] = None,
                   severity: Optional[str] = None):
@@ -4995,42 +4989,23 @@ def get_priority_poll_interval(tracking_id: int, default_interval: int) -> int:
 # ---------- X4: Recording-Notes ----------
 
 def get_recording_note(recording_id: int) -> Optional[str]:
-    try:
-        with db_conn() as conn:
-            row = conn.execute(
-                "SELECT note FROM recording_notes WHERE recording_id=?",
-                (recording_id,)).fetchone()
-        return row["note"] if row else None
-    except Exception:
-        return None
+    # v4.0-W104: verbatim nach nc/recdb.py geloest (Welle 1 der Zerlegung,
+    # docs/MODULARISIERUNG.md). Signatur unveraendert, Verhalten bitgenau.
+    return _nc_recdb.get_recording_note(recording_id=recording_id)
 
 # ---------- X5: Bookmarks ----------
 
 def get_bookmarked_recordings(limit: int = 50) -> list:
-    try:
-        with db_conn() as conn:
-            return conn.execute(
-                "SELECT r.id, r.username, r.filepath, r.file_size, r.duration_secs, "
-                "  r.created_at, b.created_at AS bookmarked_at "
-                "FROM bookmarks b JOIN recordings r ON r.id = b.recording_id "
-                "WHERE r.deleted_at IS NULL "
-                "ORDER BY b.created_at DESC LIMIT ?",
-                (limit,)).fetchall()
-    except Exception:
-        return []
+    # v4.0-W104: verbatim nach nc/recdb.py geloest (Welle 1 der Zerlegung,
+    # docs/MODULARISIERUNG.md). Signatur unveraendert, Verhalten bitgenau.
+    return _nc_recdb.get_bookmarked_recordings(limit=limit)
 
 # ---------- X6: Recording Annotations ----------
 
 def get_annotations_for_recording(recording_id: int) -> list:
-    try:
-        with db_conn() as conn:
-            return conn.execute(
-                "SELECT id, timestamp_secs, label, created_at "
-                "FROM recording_annotations WHERE recording_id=? "
-                "ORDER BY timestamp_secs ASC",
-                (recording_id,)).fetchall()
-    except Exception:
-        return []
+    # v4.0-W104: verbatim nach nc/recdb.py geloest (Welle 1 der Zerlegung,
+    # docs/MODULARISIERUNG.md). Signatur unveraendert, Verhalten bitgenau.
+    return _nc_recdb.get_annotations_for_recording(recording_id=recording_id)
 
 
 # ---------- X7: ffprobe-Inspect mit Cache ----------
@@ -5068,18 +5043,9 @@ async def ffprobe_inspect(filepath: str) -> Optional[dict]:
         return None
 
 def get_or_compute_inspect_sync(recording_id: int) -> Optional[dict]:
-    """Sync wrapper: Cache lookup, sonst gibt None zurück (Frontend kann
-       dann via POST eine Inspection triggern). Wir bauen den Cache lazy
-       beim Recording-Save oder explizitem User-Request."""
-    try:
-        with db_conn() as conn:
-            row = conn.execute(
-                "SELECT inspect_json, inspected_at FROM recording_inspect_cache "
-                "WHERE recording_id=?", (recording_id,)).fetchone()
-        # v4.0-W54: Parse-mit-Fallback nach nc/inspectcache.py extrahiert.
-        return _nc_inspectcache.parse_row(row)
-    except Exception:
-        return None
+    # v4.0-W104: verbatim nach nc/recdb.py geloest (Welle 1 der Zerlegung,
+    # docs/MODULARISIERUNG.md). Signatur unveraendert, Verhalten bitgenau.
+    return _nc_recdb.get_or_compute_inspect_sync(recording_id=recording_id)
 
 def store_inspect(recording_id: int, data: dict, file_hash: Optional[str] = None):
     try:
@@ -5104,31 +5070,14 @@ def store_inspect(recording_id: int, data: dict, file_hash: Optional[str] = None
 # ---------- X9: Hash-Fingerprint ----------
 
 def update_recording_fingerprint(recording_id: int) -> Optional[str]:
-    rec = get_recording_by_id(recording_id)
-    if not rec or not rec["filepath"]: return None
-    fp = rec["filepath"]
-    if not os.path.exists(fp): return None
-    h = compute_recording_fingerprint(fp)
-    if not h: return None
-    try:
-        with db_conn() as conn:
-            conn.execute(
-                "UPDATE recordings SET fingerprint=? WHERE id=?",
-                (h, recording_id))
-            conn.commit()
-    except Exception: pass
-    return h
+    # v4.0-W104: verbatim nach nc/recdb.py geloest (Welle 1 der Zerlegung,
+    # docs/MODULARISIERUNG.md). Signatur unveraendert, Verhalten bitgenau.
+    return _nc_recdb.update_recording_fingerprint(recording_id=recording_id)
 
 def find_recordings_by_fingerprint(h: str) -> list:
-    if not h or len(h) < 16: return []
-    try:
-        with db_conn() as conn:
-            return conn.execute(
-                "SELECT id, username, filepath, file_size, created_at "
-                "FROM recordings WHERE fingerprint=? AND deleted_at IS NULL "
-                "ORDER BY id ASC", (h,)).fetchall()
-    except Exception:
-        return []
+    # v4.0-W104: verbatim nach nc/recdb.py geloest (Welle 1 der Zerlegung,
+    # docs/MODULARISIERUNG.md). Signatur unveraendert, Verhalten bitgenau.
+    return _nc_recdb.find_recordings_by_fingerprint(h=h)
 
 # ---------- X10: Storage-Forecast ----------
 def compute_storage_forecast() -> dict:
@@ -5652,61 +5601,25 @@ def stop_manual_recording(manual_id: int) -> dict:
         return {"ok": False, "error": str(e)}
 
 def get_manual_recordings(limit: int = 50, only_active: bool = False) -> list:
-    where = "WHERE status='running'" if only_active else ""
-    try:
-        with db_conn() as conn:
-            return conn.execute(
-                f"SELECT id, username, max_duration_secs, started_at, ended_at, "
-                f"  recorder_pid, output_file, status, file_size, triggered_by "
-                f"FROM manual_recordings {where} ORDER BY id DESC LIMIT ?",
-                (limit,)).fetchall()
-    except Exception:
-        return []
+    # v4.0-W104: verbatim nach nc/recdb.py geloest (Welle 1 der Zerlegung,
+    # docs/MODULARISIERUNG.md). Signatur unveraendert, Verhalten bitgenau.
+    return _nc_recdb.get_manual_recordings(limit=limit, only_active=only_active)
 
 # ---------- X19: Soft-Delete (Trash/Restore) ----------
 def soft_delete_recording(recording_id: int) -> bool:
-    try:
-        with db_conn() as conn:
-            cur = conn.execute(
-                "UPDATE recordings SET deleted_at=? WHERE id=? AND deleted_at IS NULL",
-                (datetime.now(timezone.utc).isoformat(), recording_id))
-            conn.commit()
-            ok = cur.rowcount > 0
-        if ok:
-            log_event("recording.trashed", "info",
-                      f"Recording #{recording_id} in den Papierkorb verschoben",
-                      {"recording_id": recording_id})
-        return ok
-    except Exception:
-        return False
+    # v4.0-W104: verbatim nach nc/recdb.py geloest (Welle 1 der Zerlegung,
+    # docs/MODULARISIERUNG.md). Signatur unveraendert, Verhalten bitgenau.
+    return _nc_recdb.soft_delete_recording(recording_id=recording_id)
 
 def restore_recording(recording_id: int) -> bool:
-    try:
-        with db_conn() as conn:
-            cur = conn.execute(
-                "UPDATE recordings SET deleted_at=NULL "
-                "WHERE id=? AND deleted_at IS NOT NULL",
-                (recording_id,))
-            conn.commit()
-            ok = cur.rowcount > 0
-        if ok:
-            log_event("recording.restored", "info",
-                      f"Recording #{recording_id} aus Papierkorb wiederhergestellt",
-                      {"recording_id": recording_id})
-        return ok
-    except Exception:
-        return False
+    # v4.0-W104: verbatim nach nc/recdb.py geloest (Welle 1 der Zerlegung,
+    # docs/MODULARISIERUNG.md). Signatur unveraendert, Verhalten bitgenau.
+    return _nc_recdb.restore_recording(recording_id=recording_id)
 
 def get_trash_recordings(limit: int = 50) -> list:
-    try:
-        with db_conn() as conn:
-            return conn.execute(
-                "SELECT id, username, filepath, file_size, duration_secs, "
-                "  created_at, deleted_at FROM recordings "
-                "WHERE deleted_at IS NOT NULL ORDER BY deleted_at DESC LIMIT ?",
-                (limit,)).fetchall()
-    except Exception:
-        return []
+    # v4.0-W104: verbatim nach nc/recdb.py geloest (Welle 1 der Zerlegung,
+    # docs/MODULARISIERUNG.md). Signatur unveraendert, Verhalten bitgenau.
+    return _nc_recdb.get_trash_recordings(limit=limit)
 
 # ---------- X20: Universal Search ----------
 def universal_search(query: str, limit: int = 30) -> dict:

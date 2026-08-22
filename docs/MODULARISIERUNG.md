@@ -381,7 +381,7 @@ dashboard_app.register_blueprint(_rt_recordings.bp)
 |---|---|
 | `url_for` bricht durch neue Endpunkt-Namen | **0 Vorkommen im ganzen Projekt.** Das Dashboard spricht `/api/...` als Zeichenkette an. |
 | App-weite Hooks wandern versehentlich mit | Die 6 `before_request`/`after_request`/`errorhandler` bleiben **auf der App**. Ein Blueprint-Hook gilt nur für sein Blueprint — das wäre eine stille Verhaltensänderung. |
-| Route verschwindet unbemerkt | `ncpatch map` vor/nach vergleichen: **318 Routen vorher, 318 nachher.** Ein Diff mit weniger Zeilen ist ein Abbruchgrund. |
+| Route verschwindet unbemerkt | `ncpatch map` vor/nach vergleichen: **345 Routen vorher, 345 nachher.** Ein Diff mit weniger Zeilen ist ein Abbruchgrund. |
 
 **Zusätzlicher Vertrag** in `test_restream.py`: die Menge der registrierten
 Regeln muss vor und nach der Welle identisch sein — Pfad **und** `methods`
@@ -532,7 +532,7 @@ gewandert sind.
 
 Nach Welle 3. Bis dahin ist es Arbeit ohne spürbaren Gewinn; danach ist die
 Flask-Schicht — der Teil, an dem am häufigsten geändert wird — vollständig
-ausserhalb des Monolithen, mit 318 Routen in überschaubaren Dateien. Die
+ausserhalb des Monolithen, mit 345 Routen in überschaubaren Dateien. Die
 Wellen 4 bis 6 sind Aufräumen, kein Engpass mehr.
 
 **Ehrlich zum Aufwand:** Bei der Arbeitsweise des Projekts (eine Welle
