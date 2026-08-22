@@ -35,7 +35,7 @@ Der Monolith sieht schlimmer aus, als er ist. Vier Messungen entscheiden das.
 | **Flask-Routen** | 8.097 | 28 % | 345 |
 | **Discord-Schicht** | 2.134 | 7 % | 45 Commands + 4 Events |
 | **Zwei grosse Klassen** (`RestreamManager` 979, `KickModerator` 747) | 1.726 | 6 % | 2 |
-| **Global-freie Funktionen** (verstreut) | 2.189 | 8 % | 173 |
+| **Echte Blattfunktionen** (verstreut) | 867 | 3 % | 98 |
 | Rest (Scraper, Recorder, Loops, Helfer) | ~15.000 | 51 % | ~500 |
 | **Summe Symbolkörper** | **29.211** | | **920** |
 
@@ -324,10 +324,19 @@ exakt der „stille `except`"-Fehler aus `CLAUDE.md`, nur eine Ebene höher.
 
 ---
 
-### Welle 1 — Die 173 global-freien Funktionen
+### Welle 1 — Blattfunktionen und Domänen-Datenzugriff ✅ *erledigt (W104)*
 
-**2.189 Zeilen, Risiko praktisch null.** Diese Funktionen lesen kein einziges
-Modul-Global. Sie sind per Definition rein und können heute gehen.
+> [!WARNING]
+> **Korrektur an der ersten Fassung dieses Plans.** Dort stand „173 Funktionen,
+> 2.189 Zeilen, Risiko praktisch null". Diese Zahl mass nur, welche Funktionen
+> keine Modul-**Globals** lesen — Aufrufe an andere Top-Level-Funktionen des
+> Monolithen waren nicht erfasst. Damit galten auch Telegram-Handler wie
+> `brain_cmd` (123 Zeilen) als „rein", obwohl sie tief im Bot hängen.
+>
+> Streng gemessen (kein Modul-Global **und** kein Top-Level-Name):
+> **98 Funktionen, 867 Zeilen** — und davon sind etliche bereits Delegationen
+> aus früheren Wellen. `globals().get("…")` sieht auch dieser Filter nicht,
+> siehe `_screen_full`. Wer hier misst, muss beides prüfen.
 
 Nicht 173 Einzelmodule anlegen — nach Thema bündeln, so wie `nc/cfgnorm.py`
 („reine Config-Normalisierer, gebündelt") es vormacht. Grober Schnitt:
@@ -344,8 +353,29 @@ Nicht 173 Einzelmodule anlegen — nach Thema bündeln, so wie `nc/cfgnorm.py`
 funktioniert. Sie zahlt sofort ein, hält das Verfahren warm und liefert die
 Vertragswanderung in Serie, bevor es an die grossen Blöcke geht.
 
-**Abnahme:** −2.200 Zeilen, `.claude/INDEX.md` zeigt genau diese Symbole
-verschoben, sonst nichts.
+#### Was tatsächlich geliefert wurde (W104)
+
+`nc/recdb.py` — die dreizehn Aufnahmen-DB-Zugriffe, **93 Zeilen** aus dem
+Monolithen. Der Schnitt folgt nicht der Zeilenzahl, sondern der Nützlichkeit
+für Welle 2: es sind genau die Helfer, die nur die `/api/recordings`-Routen
+benutzen, und ihre Auslagerung drückt die Fremdbezüge des kommenden
+Blueprints **von 23 auf neun**.
+
+Die Vertragswanderung aus [Abschnitt 3.1](#31-die-vertragswanderung--der-punkt-an-dem-es-sonst-scheitert)
+kam sofort zum Tragen: `test_v40_w54_inspectcache` kippte, weil `parse_row`
+mit `get_or_compute_inspect_sync` mitwanderte. Geprüft, ob Vertrag oder Anker
+gebrochen war — es war der Anker. Der Vertrag gilt unverändert, verankert
+jetzt eine Ebene tiefer, plus eine neue Zusicherung gegen Doppel-Logik.
+
+**Nebenbefund:** `test_smoke.py` läuft sehr wohl auf einer Entwicklermaschine,
+sobald der Laufzeitstack in einem venv liegt (`flask`, `python-telegram-bot`,
+`discord.py`, `python-dotenv`, `psutil`, `aiohttp`, `orjson` — TikTokLive wird
+gestubbt). Damit ist jede Welle **echt** abnehmbar statt nur statisch geprüft:
+346 registrierte Routen, 196 wirklich aufgerufen. Das ist der grösste
+Risikogewinn des ganzen Umbaus — vor Welle 2 unbedingt einrichten.
+
+**Rest der Welle:** die übrigen Blattfunktionen (`_cscli_bin`, `_parse_eur`,
+`_cpu_load_snapshot` …) sind noch offen und lohnen erst gebündelt nach Thema.
 
 ---
 
@@ -513,9 +543,9 @@ Supervisor fahren.
 
 ## 8 · Zielbild und Messlatte
 
-| | heute | nach Welle 3 | Ziel |
-|---|---:|---:|---:|
-| `bot_v37.py` Zeilen | 34.487 | ~24.700 | **~8.000** |
+| | Start | heute (W104/W105) | nach Welle 3 | Ziel |
+|---|---:|---:|---:|---:|
+| `bot_v37.py` Zeilen | 34.487 | 34.447 | ~24.700 | **~8.000** |
 | `bot_v37.py` Grösse | 1,63 MB | ~1,15 MB | **~0,4 MB** |
 | Flask-Routen im Monolithen | 345 | ~30 | 0 |
 | `nc/`-Module | 83 | ~100 | ~115 |
