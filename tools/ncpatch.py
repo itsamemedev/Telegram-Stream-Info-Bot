@@ -39,6 +39,7 @@ import argparse
 import ast
 import json
 import os
+import tempfile
 import re
 import shutil
 import subprocess
@@ -181,26 +182,77 @@ def validate(root: str, files: list | None = None) -> int:
         else:
             print(f"  {tool}: OK")
 
-    # HTML-Templates: doppelte IDs + CSS-Klammerbilanz
-    tdir = os.path.join(root, "templates")
-    if os.path.isdir(tdir):
+    # HTML: doppelte IDs, CSS-Klammerbilanz, JS-Syntax.
+    #
+    # website/ war hier frueher NICHT dabei — die oeffentliche Seite lief damit
+    # durch keine einzige Pruefung, waehrend templates/ geprueft wurde. Beide
+    # sind ausgeliefertes HTML, beide gehoeren geprueft.
+    html_ok = True
+    for sub in ("templates", "website"):
+        tdir = os.path.join(root, sub)
+        if not os.path.isdir(tdir):
+            continue
         for name in sorted(os.listdir(tdir)):
             if not name.endswith(".html"):
                 continue
+            rel = f"{sub}/{name}"
             html = _read(os.path.join(tdir, name))
-            ids = re.findall(r'\bid="([^"]+)"', html)
+
+            # IDs nur im echten Markup zaehlen. Ohne das Strippen zaehlen
+            # id="..." aus HTML-Kommentaren und aus JS-Strings mit, die Markup
+            # bauen — beides erzeugt Fehlalarme statt Befunde.
+            markup = re.sub(r"<!--.*?-->", "", html, flags=re.S)
+            markup = re.sub(r"<script[^>]*>.*?</script>", "", markup, flags=re.S)
+            ids = re.findall(r'\bid="([^"]+)"', markup)
             dup = {x for x in ids if ids.count(x) > 1}
             if dup:
-                print(f"  {name}: DOPPELTE IDs -> {sorted(dup)[:10]}")
+                print(f"  {rel}: DOPPELTE IDs -> {sorted(dup)[:10]}")
                 rc = 1
+                html_ok = False
+
             for m in re.finditer(r"<style[^>]*>(.*?)</style>", html, re.S):
                 css = m.group(1)
                 if css.count("{") != css.count("}"):
-                    print(f"  {name}: CSS-Klammern unbalanciert "
+                    print(f"  {rel}: CSS-Klammern unbalanciert "
                           f"({css.count('{')} auf / {css.count('}')} zu)")
                     rc = 1
-        if rc == 0:
-            print("  templates: OK (IDs + CSS)")
+                    html_ok = False
+
+            # JS/JSON-LD in den Bloecken. Die Hausregel verlangt node --check
+            # von Hand; hier laeuft es automatisch mit, sonst wird es vergessen.
+            for i, m in enumerate(re.finditer(
+                    r"<script([^>]*)>(.*?)</script>", html, re.S), 1):
+                attrs, code = m.group(1), m.group(2)
+                if "src=" in attrs or not code.strip():
+                    continue
+                if "json" in attrs.lower():
+                    try:
+                        json.loads(code)
+                    except Exception as e:
+                        print(f"  {rel}: Script #{i} ist kein gueltiges JSON — {e}")
+                        rc = 1
+                        html_ok = False
+                    continue
+                if not shutil.which("node"):
+                    continue
+                with tempfile.NamedTemporaryFile("w", suffix=".js", delete=False,
+                                                 encoding="utf-8") as fh:
+                    fh.write(code)
+                    tmp = fh.name
+                try:
+                    pr = subprocess.run(["node", "--check", tmp],
+                                        capture_output=True, text=True)
+                    if pr.returncode != 0:
+                        first = (pr.stderr or "").strip().splitlines()
+                        print(f"  {rel}: Script #{i} JS-SYNTAXFEHLER — "
+                              f"{first[0] if first else '?'}")
+                        rc = 1
+                        html_ok = False
+                finally:
+                    os.unlink(tmp)
+    if html_ok:
+        node_note = "" if shutil.which("node") else ", JS uebersprungen (kein node)"
+        print(f"  html: OK (IDs + CSS + JS in templates/ und website/{node_note})")
     return rc
 
 

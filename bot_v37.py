@@ -8531,6 +8531,39 @@ def _spawn(coro, *, name: str = None):
     return task
 
 
+def _spawn_from_flask(coro, *, name: str = None):
+    """Feuert eine Coroutine aus dem FLASK-Thread auf dem Bot-Loop ab.
+
+    Warum es das braucht (v4.0-W105, Tiefenbughunt): _spawn() nutzt
+    asyncio.create_task() und verlangt damit einen laufenden Loop IM
+    AUFRUFENDEN THREAD. Das Dashboard laeuft aber in einem eigenen Thread
+    (threading.Thread(target=run_flask)) — dort gibt es keinen. create_task()
+    warf deshalb bei JEDEM Aufruf RuntimeError("no running event loop"), das
+    umgebende except verschluckte ihn, und die Coroutine blieb unerwartet
+    liegen ("coroutine was never awaited"): die Arbeit passierte nie.
+
+    Anders als _run_async_from_flask wird NICHT auf das Ergebnis gewartet —
+    der Aufrufer sitzt in after_request bzw. am Ende einer Route und darf die
+    Antwort nicht verzoegern. Fehler landen im Log statt im Nichts.
+    """
+    if _MAIN_LOOP is None or not _MAIN_LOOP.is_running():
+        try:
+            coro.close()        # kein "never awaited"-Warning und kein Leak
+        except Exception:
+            pass
+        raise RuntimeError("event loop not ready")
+    fut = asyncio.run_coroutine_threadsafe(coro, _MAIN_LOOP)
+
+    def _done_cb(f):
+        try:
+            f.result()
+        except Exception as e:
+            log.error("Hintergrundaufgabe %r aus dem Flask-Thread gescheitert: %s",
+                      name, e, exc_info=e)
+    fut.add_done_callback(_done_cb)
+    return fut
+
+
 # B138: gedrosselte Fehlermeldung fuer periodische Schleifen.
 _LOOP_FEHLER = {}          # name -> [letzte_meldung_monotonic, unterdrueckt]
 _LOOP_FEHLER_STILLE = 900  # 15 min
@@ -13370,10 +13403,13 @@ def api_restream_report():
     text = "\n".join(lines)
     sent_dc = False
     try:
-        _spawn(_discord_notify(text, "report"), name="report-dc")
+        # v4.0-W105 (Tiefenbughunt): _spawn() scheitert hier immer — diese Route
+        # laeuft im Flask-Thread ohne eigenen Loop. Die Meldung ging deshalb nie
+        # raus, und der Grund stand nur auf log.debug, also im Fehlerlog nie.
+        _spawn_from_flask(_discord_notify(text, "report"), name="report-dc")
         sent_dc = True
     except Exception as e:
-        log.debug("report discord: %s", e)
+        log.error("Sende-Report an Discord fehlgeschlagen: %s", e, exc_info=e)
     return jsonify(ok=True, text=text, sent_discord=sent_dc)
 
 
@@ -14978,9 +15014,20 @@ def _sec_headers(resp):
                                      (meth, pth, ip, stat, datetime.now(timezone.utc).isoformat()))
                 except Exception:
                     pass
-            _spawn(asyncio.to_thread(_aud), name="audit")
-    except Exception:
-        pass
+            # v4.0-W105 (Tiefenbughunt): frueher _spawn(asyncio.to_thread(_aud)).
+            # after_request laeuft im Flask-Thread, dort gibt es keinen laufenden
+            # Loop — create_task() warf jedes Mal, das except darunter schluckte
+            # es, und KEIN einziger Schreibzugriff wurde protokolliert. Nachweis
+            # war ein leeres audit_log nach drei POST/DELETE.
+            # Ein eigener Thread braucht gar keinen Loop und schreibt auch
+            # waehrend des Bot-Starts — bei einem Sicherheitsprotokoll ist das
+            # die richtige Abwaegung.
+            threading.Thread(target=_aud, name="audit-write", daemon=True).start()
+    except Exception as e:
+        # Nie propagieren: ein kaputtes Audit darf keine Antwort zerstoeren.
+        # Aber auch nicht schweigen — sonst faellt das Protokoll wieder
+        # jahrelang unbemerkt aus.
+        log.error("Audit-Log-Eintrag fehlgeschlagen: %s", e, exc_info=e)
     return resp
 
 

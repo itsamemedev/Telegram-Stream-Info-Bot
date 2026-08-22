@@ -49,9 +49,25 @@ Die Seite funktioniert auch OHNE die Dateien: `font-display:swap` sorgt
 dafuer, dass der Browser sofort die Fallback-Schrift zeigt. Es sieht nur
 weniger nach Terminal aus. Kaputt ist nichts.
 
-## og-card.png
+## og-card.png — erledigt
 
-Die Seite verweist jetzt auf `https://lafap.de/og-card.png` (1200x630).
-Ohne diese Datei zeigen Discord, WhatsApp und Telegram beim Teilen des
-Links eine graue Karte. Leg dort ein Bild ab — Logo auf dunklem Grund,
-Text gross genug, um in einer Vorschaukachel lesbar zu sein.
+Die Seite verweist auf `https://lafap.de/og-card.png` (1200x630). Ohne
+diese Datei zeigten Discord, WhatsApp und Telegram beim Teilen des Links
+eine graue Karte.
+
+Die Karte liegt jetzt bei: `website/og-card.png`, gebaut aus
+`website/og-card.svg` im Terminal-Look der Seite (Phosphor/Cyan, Akronym
+wie im Hero, Sentinel-Kern). Beim Ausrollen muss sie im **Wurzel-**
+Verzeichnis der Domain landen, nicht in einem Unterordner — der
+og:image-Verweis ist absolut.
+
+Neu bauen nach einer Aenderung an der SVG (beliebiger Renderer, hier
+Chromium headless):
+
+    chromium --headless --screenshot=og-card.png \
+             --window-size=1200,630 og-card.svg
+
+Aendert sich der Bildinhalt, muss der Cache der Plattformen brechen —
+Discord und WhatsApp halten OG-Bilder lange. Dafuer den Dateinamen
+versionieren (`og-card-2.png`) und den Verweis in `lafap_index.html`
+mitziehen.

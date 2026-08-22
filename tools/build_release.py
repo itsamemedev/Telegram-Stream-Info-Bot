@@ -114,7 +114,8 @@ def main():
             return 1
 
     gr = os.path.getsize(ZIEL)
-    h = hashlib.sha256(open(ZIEL, "rb").read()).hexdigest()[:16]
+    with open(ZIEL, "rb") as _fh:
+        h = hashlib.sha256(_fh.read()).hexdigest()[:16]
     print(f"{len(drin)} Dateien · {n} .py aus dem Archiv compiliert · 0 Fehler")
     print("Geheimnis-Gegenprobe: SAUBER")
     print(f"{os.path.basename(ZIEL)}  {gr/1024/1024:.2f} MB  sha256:{h}")

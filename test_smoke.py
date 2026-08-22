@@ -18,6 +18,7 @@ Verhalten und wird hier festgehalten.
 import os
 import sys
 import tempfile
+import time
 import types
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
@@ -163,6 +164,31 @@ def main():
                  "/api/channels/status", "/api/system/resilience"):
         assert want in paths, "Route fehlt: %s" % want
     ok("neue Routen registriert (db/export, db/import, db/summary, channels/status)")
+
+    # v4.0-W105 (Tiefenbughunt): das Audit-Log MUSS jeden Schreibzugriff
+    # protokollieren. Vorher tat es das nie: after_request feuerte den Eintrag
+    # per _spawn(asyncio.to_thread(...)) ab, was asyncio.create_task() nutzt und
+    # damit einen laufenden Loop IM Flask-Thread verlangt — den es dort nie
+    # gibt. Der RuntimeError landete im umgebenden `except: pass`, die Coroutine
+    # blieb unerwartet liegen, und audit_log blieb bei jedem POST/PUT/DELETE
+    # leer. Genau das haelt dieser Vertrag fest: ein Verhaltenstest, kein
+    # Quelltext-Anker, weil nur das Verhalten zaehlt.
+    def _audit_rows():
+        with m.db_conn() as _c:
+            return _c.execute("SELECT COUNT(*) AS n FROM audit_log").fetchone()["n"]
+
+    _before = _audit_rows()
+    client.post("/api/automation/toggle", json={"enabled": True})
+    client.delete("/api/annotations/999999")
+    for _ in range(50):                      # der Schreibvorgang laeuft nebenlaeufig
+        if _audit_rows() >= _before + 2:
+            break
+        time.sleep(0.1)
+    _after = _audit_rows()
+    assert _after >= _before + 2, (
+        "Audit-Log schreibt nicht: %d Eintraege nach 2 Schreibzugriffen "
+        "(erwartet >= %d). Regression von v4.0-W105." % (_after, _before + 2))
+    ok("Audit-Log protokolliert Schreibzugriffe (W105: kein create_task im Flask-Thread)")
 
     # Konfig-Wahrheit: greifen die Defaults, die wir gesetzt haben?
     assert m.RESTREAM_OVERLAY_MODE == "html", m.RESTREAM_OVERLAY_MODE

@@ -37,7 +37,8 @@ def collect():
     for f in files:
         p = f if os.path.isabs(f) else os.path.join(ROOT, f)
         try:
-            txt = open(p, encoding="utf-8").read()
+            with open(p, encoding="utf-8") as _fh:
+                txt = _fh.read()
         except OSError:
             continue
         for line in txt.splitlines():
@@ -91,14 +92,19 @@ def main():
     seen = collect()
     content = render(seen)
     if "--check" in sys.argv:
-        cur = open(OUT, encoding="utf-8").read() if os.path.exists(OUT) else ""
+        if os.path.exists(OUT):
+            with open(OUT, encoding="utf-8") as _fh:
+                cur = _fh.read()
+        else:
+            cur = ""
         if cur != content:
             print("VERALTET — bitte `python tools/gen_env_example.py` ausführen. "
                   "(%d Variablen erkannt)" % len(seen))
             sys.exit(1)
         print(".env.example aktuell (%d Variablen)" % len(seen))
         return
-    open(OUT, "w", encoding="utf-8").write(content)
+    with open(OUT, "w", encoding="utf-8") as _fh:
+        _fh.write(content)
     print("geschrieben: .env.example  (%d Variablen, %d Gruppen)" %
           (len(seen), len({n.split('_', 1)[0] for n in seen})))
 
