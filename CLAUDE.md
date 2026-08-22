@@ -1,0 +1,163 @@
+# NIGHTCRAWLER v37 — Arbeitsgrundlage
+
+TikTok-Live-Überwachung, Aufnahme, Multi-Ziel-Restream und KI-Moderation
+(AZRAEL). Ein Python-Monolith plus zwei bot-freie Bibliotheken, betrieben als
+systemd-Dienst auf einer 8-Kern-Ubuntu-Box. Kein Git-Repo — Auslieferung läuft
+per ZIP über den Bestand, siehe `skills/nc-betrieb`.
+
+## Die eine Regel
+
+`bot_v37.py` hat **30.582 Zeilen / 1,5 MB ≈ 400.000 Token**. Diese Datei wird
+**nie** ganz gelesen und **nie** blind durchsucht. Erst fragen wo etwas steht,
+dann den Ausschnitt holen:
+
+    python tools/ncpatch.py find "donations"               # wo ist X? (~100 Token)
+    python tools/ncpatch.py sym  bot_v37.py api_brain      # Zeilenbereich eines Symbols
+    python tools/ncpatch.py show bot_v37.py 24750 24810    # nur diesen Ausschnitt
+    python tools/ncpatch.py grep "tree.command" bot_v37.py -C 3
+    python tools/ncpatch.py map                            # Karte neu bauen
+    python tools/ncpatch.py verify patches/x.json          # Trockenlauf
+    python tools/ncpatch.py apply  patches/x.json          # alles-oder-nichts, legt .bak an
+    python tools/ncpatch.py check                          # Templates: doppelte IDs, CSS-Bilanz
+
+`find` antwortet aus `.claude/INDEX.md` — 283 Routen, 45 Slash-Commands, 450
+Funktionen mit Zeilennummern. Nach Änderungen an Routen, Commands oder
+Top-Level-Funktionen `map` neu laufen lassen. Details: Skill `nc-navigation`.
+
+Für „wer ruft das auf?" und „was ist der Typ?" ist der Sprachserver billiger als
+jede Suche: `findReferences`, `incomingCalls`, `goToDefinition`, `hover`.
+
+Auf diesem Windows-Rechner heißt der Interpreter **`python`** (3.13.12);
+`python3` existiert nicht. Auf dem Server ist es `python3`.
+
+## Aufbau
+
+    bot_v37.py           Monolith: Telegram + Discord (45 Slash-Commands),
+                         Flask-Dashboard (283 Routen), Scraper, Recorder,
+                         Restream, Schema (init_db)
+    brain_bridge.py      Adapter Bot ↔ brain/ (M2)
+    brain/               KI-Kern: state, rules, router, agents, memory,
+                         semantic, knowledge, scheduler, llm, report
+    nc/                  44 Fachmodule: db, scraping, restream, oauth, ledger, …
+    templates/           dashboard.html, brain.html, overlay.html, PWA
+    website/             lafap_index.html (öffentliche Seite)
+    tools/ncpatch.py     Patch- und Prüfwerkzeug
+    .claude/skills/      Arbeitsanweisungen — hier und nur hier findet Claude
+                         Code sie. Gehören mit ins Auslieferungs-Archiv
+                         (früher lagen sie unter skills/, dort wurden sie nie
+                         geladen).
+
+**Architektur-Grenze, die gilt:** `nc/*` und `brain/*` importieren **nie** aus
+`bot_v37`. Konfiguration kommt per `configure(...)`-Injection. Das hält beides
+isoliert testbar und verhindert Zirkularimporte. `brain/` ist thread-basiert und
+stdlib-only (`urllib`, kein `aiohttp`).
+
+## Pflicht-Prüfkette — vor JEDER Auslieferung
+
+    python -m py_compile <geänderte .py>
+    python -m pyflakes   <geänderte .py>        # 0 Befunde
+    python -m ruff check --select F,E9,B --ignore B905 <geänderte .py>
+    python tools/ncpatch.py check
+    python test_smoke.py ; python test_nc_modules.py ; python test_restream.py
+
+**Auf diesem Windows-Rechner gilt vorher `$env:PYTHONUTF8="1"`.** Die Tests
+öffnen `bot_v37.py` ohne `encoding=`; ohne UTF-8-Modus greift cp1252 und sie
+sterben mit `UnicodeDecodeError` statt zu prüfen. Auf dem Server ist UTF-8
+Default, dort ist nichts zu setzen.
+
+`test_smoke.py` läuft hier **nicht** — es führt `bot_v37.py` wirklich aus und
+braucht dafür den ganzen Laufzeitstack (flask, telegram, discord, dotenv,
+streamlink, yt-dlp, psutil), der auf der Autorenmaschine bewusst fehlt. Der
+Test gehört auf den Server. Was er abdeckt (NameError, Reihenfolge-Fallen),
+fangen hier `py_compile` und `pyflakes` weitgehend mit ab.
+
+Die statischen Verträge in `test_restream.py` verankern sich an **wörtlichem
+Quelltext** von `bot_v37.py`. Ändert sich eine Signatur, kippt der Vertrag,
+obwohl der Code stimmt — dreimal passiert (`stop(self, rid)` wurde
+`stop(self, rid, _keep_desired=False)`). Ebenso die Fenster der Form
+`src[i:i + 3000]`: wächst die Funktion darüber hinaus, meldet der Test etwas
+als fehlend, das zwei Zeilen weiter unten steht. **Vor jedem Fix am Code erst
+prüfen, ob der Vertrag oder nur sein Anker gebrochen ist.**
+
+Bei JS in `templates/*.html` zusätzlich Script-Blöcke extrahieren und
+`node --check` fahren (JSON-LD als JSON prüfen, nicht als JS).
+
+Zusätzlich immer: keine doppelten Top-Level-Defs (`ast.parse` → `module.body`),
+keine doppelten Flask-Routen **inklusive `methods=`** (gleicher Pfad mit
+GET und POST ist kein Duplikat — ein naiver Regex meldet Fehlalarm).
+
+## Fallstricke, die schon zugeschlagen haben
+
+**Stille `except`-Blöcke sind der Hauptfeind.** Der Bot fängt großflächig ab und
+loggt auf `warning`/`debug`. Ein `log.warning` erscheint in einem ERROR-Log
+**nie** — so blieb der Discord-Gateway-Tod monatelang unsichtbar. Wenn etwas
+„nicht mehr geht", suche zuerst das `except`, das den Grund frisst.
+
+Für periodische Schleifen gibt es dafür **`_loop_fehler(name, exc)`**: erste
+Meldung sofort auf `error` mit Traceback, danach höchstens alle 15 Minuten eine
+— mit der Zahl der unterdrückten Fälle. Jeder Dauerläufer-Wächter gehört
+dorthin, nie auf `log.debug` und nie auf `pass`. Legitim still bleiben nur
+Aufräumpfade, deren Fehlschlag bedeutungslos ist (`proc.terminate()` auf einen
+toten Prozess, `os.remove()` auf eine bereits gelöschte Datei) und der
+Fehlerkanal selbst — dort erzeugt Loggen eine Rekursion.
+
+**Modul-Konstanten frieren `.env` ein.** `.env` wird teils erst nach den ersten
+Imports geladen. Konfiguration als Funktion lesen (`_backend_conf()`), nie als
+Modul-Konstante.
+
+**Einmal-`await` ohne Supervisor.** Jeder Long-Running-Client braucht Reconnect
+mit Backoff **und** ein Abbruchkriterium für deterministische Fehler.
+
+**Guards als Objekt-Attribut.** `getattr(client, "_started", False)` bricht,
+sobald das Objekt neu erzeugt wird → parallele Endlosschleifen. Modul-global
+guarden.
+
+**Vertragsbrüche zum `brain/`.** Bei Änderungen an `router.route(topic, payload)`
+alle Callsites prüfen: `grep -n 'router.route('`. Ein Key-Drift (`prompt` vs.
+`question`) fiel nur im Telegram-Pfad aus, weil die Flask-Route den richtigen
+Key benutzte.
+
+## Geld — nicht vermischen
+
+`REVENUE_PLATFORMS = ("kick","twitch","youtube","manuell")`. **TikTok gehört nie
+dazu**: TikTok-Gifts gehen an den getrackten Streamer, nicht an eigene Kanäle.
+Sie werden als `kind="gift"` gespeichert, nie als `donation`, und laufen in keine
+Geldsumme.
+
+`/api/donations/summary` ist Live-Telemetrie aus **Schätzwerten**.
+`nc/ledger.py` sind gebuchte **Auszahlungen** für die Steuer. Niemals das eine
+aus dem anderen ableiten — Anzeigewert ≠ Auszahlung ≠ Zuflusszeitpunkt.
+Ledger-Einträge sind append-only mit Hash-Kette; Korrektur = Gegenbuchung.
+
+## Sicherheit
+
+`.env` hat 352 Variablen und enthält Cookies, OAuth-Tokens und Stream-Keys — sie
+liegt nie im Archiv und wird nie ausgegeben. Beim Logging von
+`streamlink`/`ffmpeg`-Kommandos werden Cookie-Header redacted (F4); dieser
+Redact-Pfad darf bei Änderungen an der Kommandozeile nicht umgangen werden. Das
+Dashboard bindet standardmäßig auf `127.0.0.1:8050`; Zugriff läuft über
+SSH-Tunnel, nicht über Öffnen des Ports.
+
+## Sprache und Ton
+
+Code-Kommentare und alle Ausgaben auf Deutsch. Kommentare erklären **warum**,
+nicht was — bevorzugt mit dem konkreten Fehlerbild, das die Zeile verhindert.
+Antworten an den Betreiber: knapp, entscheidungsfreudig, ohne Weichspüler.
+
+## Arbeitsweise
+
+In Wellen liefern, jede Welle validiert und abgeschlossen. Nach jeder Welle
+Zwischenstand melden und auf „weiter" warten. Deploy läuft direkt gegen
+Produktion mit anschließender Log- und Screenshot-Beobachtung — Änderungen
+müssen deshalb einzeln verifizierbar und rückrollbar sein.
+
+## Skills
+
+| Skill | Wofür |
+|---|---|
+| `nc-navigation` | **Zuerst.** Etwas finden, ohne den Monolithen zu durchsuchen |
+| `nightcrawler` | Änderungen an `bot_v37.py`, `nc/`, `brain/` — Anker-Patching, Validierung |
+| `html-templates` | `templates/*.html`, `website/*.html` — Themen Messing/Blaupause, Prüfkette |
+| `nc-betrieb` | Deploy, systemd, Log-Lesen, Rollback, CrowdSec, Kick-Störungen |
+| `nc-datenbank` | SQL und Schema unter SQLite **und** MariaDB |
+| `nc-ki-backends` | `nc/freeai`, `brain/llm`, AZRAEL, Tier-Modell, Budget |

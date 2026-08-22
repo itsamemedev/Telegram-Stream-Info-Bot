@@ -1,0 +1,66 @@
+name: "✨ Funktionswunsch"
+description: Eine neue Funktion oder eine Verbesserung vorschlagen
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Jede neue Funktion muss **per Env-Schalter abschaltbar** sein und mit
+        einem sinnvollen Default ohne Eintrag in der `.env` laufen. Denk das
+        beim Vorschlag gleich mit.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Welches Problem löst das
+      description: Welche Situation ist heute umständlich, unsichtbar oder unmöglich?
+    validations:
+      required: true
+
+  - type: textarea
+    id: vorschlag
+    attributes:
+      label: Vorschlag
+      description: Wie sollte es sich verhalten?
+    validations:
+      required: true
+
+  - type: dropdown
+    id: bereich
+    attributes:
+      label: Bereich
+      options:
+        - Live-Erkennung / Scraper
+        - Aufnahme / Recorder
+        - Restream (Kick / Twitch / YouTube)
+        - Chat & Moderation / SENTINEL-SHIELD
+        - KI / AZRAEL / brain
+        - Dashboard / Overlay / PWA
+        - Telegram
+        - Discord
+        - Community / Loyalty
+        - Datenbank / Schema
+        - Einnahmen / Ledger
+        - Deploy / Betrieb
+        - Dokumentation
+    validations:
+      required: true
+
+  - type: input
+    id: schalter
+    attributes:
+      label: Vorgeschlagener Env-Schalter
+      placeholder: "MEIN_FEATURE=1"
+
+  - type: textarea
+    id: alternativen
+    attributes:
+      label: Alternativen
+      description: Was hast du sonst erwogen, und warum reicht es nicht?
+
+  - type: checkboxes
+    id: mitarbeit
+    attributes:
+      label: Mitarbeit
+      options:
+        - label: Ich würde das selbst umsetzen und einen Pull Request stellen.

@@ -1,0 +1,147 @@
+# Die Pflicht-Prüfkette als CI — dieselben Schritte wie in CONTRIBUTING.md.
+#
+# Bewusst OHNE den vollen Laufzeitstack: test_smoke.py führt bot_v37.py wirklich
+# aus und braucht flask, telegram, discord, streamlink, yt-dlp, psutil und ein
+# konfiguriertes .env. Das gehört auf den Server, nicht in die CI. Was hier
+# läuft, deckt genau das ab, was ohne Laufzeitumgebung prüfbar ist: Syntax,
+# undefinierte Namen, die statischen Verträge und die bot-freien Bibliotheken.
+#
+# Python 3.12 ist Mindestversion: bot_v37.py nutzt f-strings mit Backslash
+# (PEP 701) — unter 3.11 stirbt schon ast.parse().
+
+name: CI
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: Lint (py_compile · pyflakes · ruff)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Prüfwerkzeuge installieren
+        run: python -m pip install --upgrade pip pyflakes ruff
+
+      # Der vendored QR-Encoder (nc/_vendor/segno) ist Fremdcode mit eigener
+      # Lizenz — er wird nicht gepflegt und deshalb auch nicht geprüft.
+      - name: Dateiliste bauen
+        run: |
+          find . -name '*.py' -not -path './nc/_vendor/*' -not -path './.git/*' \
+            > /tmp/pyfiles.txt
+          wc -l < /tmp/pyfiles.txt
+
+      - name: py_compile
+        run: xargs -a /tmp/pyfiles.txt python -m py_compile
+
+      - name: pyflakes (0 Befunde erwartet)
+        run: xargs -a /tmp/pyfiles.txt python -m pyflakes
+
+      - name: ruff
+        run: python -m ruff check --select F,E9,B --ignore B905 --exclude nc/_vendor .
+
+  templates:
+    name: Templates (doppelte IDs · CSS-Bilanz)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Prüfwerkzeuge installieren
+        run: python -m pip install --upgrade pip pyflakes ruff
+
+      - name: ncpatch check
+        run: python tools/ncpatch.py check
+
+  tests:
+    name: Verträge & Module (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      # orjson ist die einzige Fremdabhängigkeit, die die statischen Verträge
+      # wirklich importieren. Alles andere in nc/ und brain/ ist stdlib-only.
+      - name: Minimale Abhängigkeiten
+        run: python -m pip install --upgrade pip orjson
+
+      - name: Statische Restream-Verträge
+        run: python test_restream.py
+
+      - name: nc/ — Fachmodule
+        run: python test_nc_modules.py
+
+      - name: brain/ ↔ Bot — Brücke
+        run: python test_m2_bridge.py
+
+      # M6 (LLM-Runtime) und test_bughunt sind hier bewusst außen vor: M6
+      # erwartet ein NICHT erreichbares Backend und schlägt fehl, sobald der
+      # Runner ins Netz darf; test_bughunt braucht Flask.
+      - name: brain/ — Module M1, M3, M4, M5, M7
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+        run: |
+          python brain/test_m1.py
+          python brain/test_m3.py
+          python brain/test_m4.py
+          python brain/test_m5.py
+          python brain/test_m7.py
+
+      - name: nc/intel — Archiv, Transkripte, Reels
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+        run: python nc/intel/test_intel.py
+
+  secrets:
+    name: Kein Geheimnis im Diff
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Ein einmal committetes Geheimnis steht auch nach dem Löschen noch in
+      # der Historie. Dieser Job ist die letzte billige Chance, das zu merken.
+      - name: .env darf nicht versioniert sein
+        run: |
+          if git ls-files --error-unmatch .env >/dev/null 2>&1; then
+            echo "::error::.env ist versioniert — sofort entfernen und alle Schluessel neu ausstellen."
+            exit 1
+          fi
+          echo "OK — keine .env im Index."
+
+      - name: Offensichtliche Schlüsselmuster
+        run: |
+          set +e
+          PAT='(sk-[A-Za-z0-9]{20,}|gh[pousr]_[A-Za-z0-9]{20,}|AIza[0-9A-Za-z_-]{30,}|xox[baprs]-|[0-9]{9,10}:AA[A-Za-z0-9_-]{30,}|BEGIN (RSA|OPENSSH) PRIVATE KEY)'
+          HITS=$(git grep -InE "$PAT" -- . ':!nc/_vendor' ':!.github/workflows/ci.yml')
+          if [ -n "$HITS" ]; then
+            echo "::error::Moegliches Geheimnis im Repository:"
+            echo "$HITS"
+            exit 1
+          fi
+          echo "OK — kein Treffer."

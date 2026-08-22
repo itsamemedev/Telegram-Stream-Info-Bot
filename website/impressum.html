@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Impressum · LAFAP</title>
+<meta name="robots" content="noindex">
+<meta name="description" content="Impressum von LAFAP — Logik Absolut Fehl am Platz.">
+<!-- Schriften LOKAL (DSGVO): kein Request an externe Font-CDNs. -->
+<link rel="preload" href="fonts/orbitron-700.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="fonts/jetbrainsmono-400.woff2" as="font" type="font/woff2" crossorigin>
+<style>
+@font-face{font-family:'Orbitron';src:url('fonts/orbitron-700.woff2')format('woff2');font-weight:700;font-display:swap}
+@font-face{font-family:'Orbitron';src:url('fonts/orbitron-900.woff2')format('woff2');font-weight:900;font-display:swap}
+@font-face{font-family:'JetBrains Mono';src:url('fonts/jetbrainsmono-400.woff2')format('woff2');font-weight:400;font-display:swap}
+@font-face{font-family:'JetBrains Mono';src:url('fonts/jetbrainsmono-700.woff2')format('woff2');font-weight:700;font-display:swap}
+:root{
+  --void:#05080a; --panel:#0a0f12; --panel2:#0d1418; --line:#12211c;
+  --phos:#00ff9c; --cyan:#00e5ff; --amber:#ffb000;
+  --ash:#9fb4ac; --dim:#5c6f68; --white:#e8fff4;
+  --disp:'Orbitron',sans-serif; --mono:'JetBrains Mono',monospace;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{background:var(--void); color:var(--ash); font-family:var(--mono);
+  font-size:15px; line-height:1.75; overflow-x:hidden}
+body::before{content:""; position:fixed; inset:0; pointer-events:none; z-index:2;
+  background:repeating-linear-gradient(0deg,transparent 0 2px,rgba(0,255,156,.014) 2px 4px)}
+::selection{background:var(--phos); color:var(--void)}
+a{color:var(--phos); text-decoration:none} a:hover{text-decoration:underline}
+.skip{position:absolute;left:-999px;top:0;z-index:50;background:var(--phos);color:var(--void);
+  font-weight:700;font-size:.8rem;padding:10px 16px;border-radius:0 0 6px 0;letter-spacing:.06em}
+.skip:focus{left:0}
+header{position:sticky; top:0; z-index:20; background:rgba(5,8,10,.86);
+  backdrop-filter:blur(8px); border-bottom:1px solid var(--line)}
+.bar{max-width:960px; margin:0 auto; padding:16px 22px; display:flex;
+  align-items:center; justify-content:space-between; gap:16px}
+.logo{font-family:var(--disp); font-weight:900; letter-spacing:.22em; font-size:1.15rem;
+  color:var(--white)}
+.logo span{color:var(--phos)}
+header nav a{color:var(--ash); font-size:.72rem; letter-spacing:.14em; text-transform:uppercase}
+header nav a:hover{color:var(--phos)}
+.wrap{max-width:960px; margin:0 auto; padding:0 22px}
+main{padding:48px 0 40px}
+h1{font-family:var(--disp); font-weight:900; letter-spacing:.14em; color:var(--white);
+  font-size:1.9rem; margin-bottom:8px}
+.lead{color:var(--dim); font-size:.8rem; letter-spacing:.14em; text-transform:uppercase; margin-bottom:28px}
+h2{font-family:var(--disp); font-weight:700; letter-spacing:.06em; color:var(--white);
+  font-size:1.05rem; margin:30px 0 10px; padding-top:6px}
+h2::before{content:"▚ "; color:var(--phos)}
+p{margin:0 0 12px} .panel p:last-child{margin-bottom:0}
+.panel{background:linear-gradient(180deg,color-mix(in srgb,var(--panel) 92%,var(--phos) 3%),var(--panel));
+  border:1px solid var(--line); border-radius:10px; padding:20px 22px; margin:14px 0; position:relative; overflow:hidden}
+.panel::before{content:"";position:absolute;top:0;left:0;right:0;height:1px;
+  background:linear-gradient(90deg,transparent,var(--cyan),transparent);opacity:.5}
+.ph{color:var(--amber); font-weight:700}
+.muted{color:var(--dim)}
+.draft{border:1px solid var(--amber); border-radius:10px; padding:14px 18px; margin:0 0 26px;
+  background:color-mix(in srgb,var(--panel) 88%,var(--amber) 8%); color:var(--white); font-size:.86rem}
+.draft b{color:var(--amber); letter-spacing:.08em}
+footer{border-top:1px solid var(--line); margin-top:40px; padding:22px 0}
+.f{display:flex; flex-wrap:wrap; gap:12px 22px; align-items:center; justify-content:space-between;
+  font-size:.72rem; color:var(--dim)}
+.f nav a{color:var(--ash)} .f b{color:var(--white)}
+</style>
+</head>
+<body>
+<a class="skip" href="#inhalt">Zum Inhalt springen</a>
+<header>
+  <div class="bar">
+    <a class="logo" href="/">LAF<span>A</span>P</a>
+    <nav aria-label="Seitennavigation">
+      <a href="/">← Startseite</a>
+      <a href="/datenschutz.html">Datenschutz</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+  <div class="wrap">
+    <span id="inhalt" tabindex="-1"></span>
+    <h1>Impressum</h1>
+    <p class="lead">Angaben gemäß § 5 DDG</p>
+
+    <!-- ENTWURF-Banner: sichtbar, damit die Seite nicht halbfertig live geht. -->
+    <div class="draft"><b>⚠ ENTWURF — vor dem Live-Gang ausfüllen.</b> Alle
+      <span class="ph">[eckig markierten]</span> Felder müssen durch die echten
+      Angaben ersetzt werden. Ein unvollständiges Impressum ist abmahnfähig.
+      Bitte vor Veröffentlichung rechtlich prüfen lassen.</div>
+
+    <div class="panel">
+      <h2>Diensteanbieter</h2>
+      <p><span class="ph">[Vollständiger Name / Betreiber]</span><br>
+         <span class="ph">[Straße und Hausnummer]</span><br>
+         <span class="ph">[PLZ und Ort]</span><br>
+         <span class="ph">[Land]</span></p>
+    </div>
+
+    <div class="panel">
+      <h2>Kontakt</h2>
+      <p>E-Mail: <span class="ph">[kontakt@lafap.de]</span><br>
+         Telefon: <span class="ph">[optional — Nummer oder streichen]</span></p>
+      <p class="muted">Hinweis: Für rein digitale Angebote ist keine Telefonnummer
+         zwingend, aber eine zweite, schnelle Kontaktmöglichkeit muss bestehen.</p>
+    </div>
+
+    <div class="panel">
+      <h2>Verantwortlich für den Inhalt nach § 18 Abs. 2 MStV</h2>
+      <p><span class="ph">[Name]</span><br>
+         <span class="ph">[Anschrift wie oben]</span></p>
+    </div>
+
+    <div class="panel">
+      <h2>Haftung für Inhalte</h2>
+      <p>Als Diensteanbieter sind wir für eigene Inhalte auf diesen Seiten nach
+         den allgemeinen Gesetzen verantwortlich. Wir sind jedoch nicht
+         verpflichtet, übermittelte oder gespeicherte fremde Informationen zu
+         überwachen oder nach Umständen zu forschen, die auf eine rechtswidrige
+         Tätigkeit hinweisen. Verpflichtungen zur Entfernung oder Sperrung der
+         Nutzung von Informationen nach den allgemeinen Gesetzen bleiben hiervon
+         unberührt.</p>
+    </div>
+
+    <div class="panel">
+      <h2>Haftung für Links</h2>
+      <p>Unser Angebot enthält Links zu externen Websites Dritter, auf deren
+         Inhalte wir keinen Einfluss haben. Deshalb können wir für diese fremden
+         Inhalte auch keine Gewähr übernehmen. Für die Inhalte der verlinkten
+         Seiten ist stets der jeweilige Anbieter oder Betreiber verantwortlich.</p>
+    </div>
+
+    <div class="panel">
+      <h2>Urheberrecht</h2>
+      <p>Die durch die Seitenbetreiber erstellten Inhalte und Werke auf diesen
+         Seiten unterliegen dem deutschen Urheberrecht. Beiträge Dritter sind als
+         solche gekennzeichnet.</p>
+    </div>
+
+    <div class="panel">
+      <h2>EU-Streitschlichtung</h2>
+      <p>Die Europäische Kommission stellt eine Plattform zur
+         Online-Streitbeilegung (OS) bereit:
+         <a href="https://ec.europa.eu/consumers/odr/" rel="noopener">https://ec.europa.eu/consumers/odr/</a>.
+         Wir sind nicht bereit oder verpflichtet, an Streitbeilegungsverfahren vor
+         einer Verbraucherschlichtungsstelle teilzunehmen.</p>
+    </div>
+  </div>
+</main>
+
+<footer>
+  <div class="wrap f">
+    <span><b>LAFAP</b> · Logik Absolut Fehl am Platz</span>
+    <nav aria-label="Rechtliches">
+      <a href="/impressum.html">Impressum</a>
+      <a href="/datenschutz.html">Datenschutz</a>
+    </nav>
+    <span>Analysiert von Azrael Sentinel · lafap.de</span>
+  </div>
+</footer>
+</body>
+</html>

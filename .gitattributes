@@ -1,2 +1,26 @@
-# Auto detect text files and perform LF normalization
-* text=auto
+# Ziel ist ein Ubuntu-Server, entwickelt wird auf Windows. Ohne diese Datei
+# wandelt Git beim Auschecken LF nach CRLF — ein Shell-Skript mit CRLF
+# scheitert auf dem Server mit "bad interpreter: /bin/bash^M", und der Fehler
+# sieht aus wie ein kaputtes Skript statt wie ein Zeilenende-Problem.
+# Deshalb: alles textuelle bleibt LF, egal auf welchem Rechner.
+* text=auto eol=lf
+
+*.py    text eol=lf
+*.sh    text eol=lf
+*.md    text eol=lf
+*.txt   text eol=lf
+*.html  text eol=lf
+*.js    text eol=lf
+*.json  text eol=lf
+*.service text eol=lf
+*.webmanifest text eol=lf
+
+# Binaerdateien nie anfassen
+*.png   binary
+*.jpg   binary
+*.zip   binary
+*.tgz   binary
+
+# bot_v37.py ist 1,5 MB — Diffs darauf sind teuer, aber unverzichtbar.
+# Kein 'binary'-Marker: gerade hier ist der Diff die einzige Chance zu sehen,
+# was ein Build wirklich geaendert hat.

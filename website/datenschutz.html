@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Datenschutz · LAFAP</title>
+<meta name="robots" content="noindex">
+<meta name="description" content="Datenschutzerklärung von LAFAP — Logik Absolut Fehl am Platz.">
+<link rel="preload" href="fonts/orbitron-700.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="fonts/jetbrainsmono-400.woff2" as="font" type="font/woff2" crossorigin>
+<style>
+@font-face{font-family:'Orbitron';src:url('fonts/orbitron-700.woff2')format('woff2');font-weight:700;font-display:swap}
+@font-face{font-family:'Orbitron';src:url('fonts/orbitron-900.woff2')format('woff2');font-weight:900;font-display:swap}
+@font-face{font-family:'JetBrains Mono';src:url('fonts/jetbrainsmono-400.woff2')format('woff2');font-weight:400;font-display:swap}
+@font-face{font-family:'JetBrains Mono';src:url('fonts/jetbrainsmono-700.woff2')format('woff2');font-weight:700;font-display:swap}
+:root{
+  --void:#05080a; --panel:#0a0f12; --panel2:#0d1418; --line:#12211c;
+  --phos:#00ff9c; --cyan:#00e5ff; --amber:#ffb000;
+  --ash:#9fb4ac; --dim:#5c6f68; --white:#e8fff4;
+  --disp:'Orbitron',sans-serif; --mono:'JetBrains Mono',monospace;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{background:var(--void); color:var(--ash); font-family:var(--mono);
+  font-size:15px; line-height:1.75; overflow-x:hidden}
+body::before{content:""; position:fixed; inset:0; pointer-events:none; z-index:2;
+  background:repeating-linear-gradient(0deg,transparent 0 2px,rgba(0,255,156,.014) 2px 4px)}
+::selection{background:var(--phos); color:var(--void)}
+a{color:var(--phos); text-decoration:none} a:hover{text-decoration:underline}
+.skip{position:absolute;left:-999px;top:0;z-index:50;background:var(--phos);color:var(--void);
+  font-weight:700;font-size:.8rem;padding:10px 16px;border-radius:0 0 6px 0;letter-spacing:.06em}
+.skip:focus{left:0}
+header{position:sticky; top:0; z-index:20; background:rgba(5,8,10,.86);
+  backdrop-filter:blur(8px); border-bottom:1px solid var(--line)}
+.bar{max-width:960px; margin:0 auto; padding:16px 22px; display:flex;
+  align-items:center; justify-content:space-between; gap:16px}
+.logo{font-family:var(--disp); font-weight:900; letter-spacing:.22em; font-size:1.15rem; color:var(--white)}
+.logo span{color:var(--phos)}
+header nav a{color:var(--ash); font-size:.72rem; letter-spacing:.14em; text-transform:uppercase}
+header nav a:hover{color:var(--phos)}
+.wrap{max-width:960px; margin:0 auto; padding:0 22px}
+main{padding:48px 0 40px}
+h1{font-family:var(--disp); font-weight:900; letter-spacing:.14em; color:var(--white); font-size:1.9rem; margin-bottom:8px}
+.lead{color:var(--dim); font-size:.8rem; letter-spacing:.14em; text-transform:uppercase; margin-bottom:28px}
+h2{font-family:var(--disp); font-weight:700; letter-spacing:.06em; color:var(--white);
+  font-size:1.05rem; margin:30px 0 10px; padding-top:6px}
+h2::before{content:"▚ "; color:var(--phos)}
+p{margin:0 0 12px} .panel p:last-child{margin-bottom:0}
+ul{margin:6px 0 12px 22px} li{margin:4px 0}
+.panel{background:linear-gradient(180deg,color-mix(in srgb,var(--panel) 92%,var(--phos) 3%),var(--panel));
+  border:1px solid var(--line); border-radius:10px; padding:20px 22px; margin:14px 0; position:relative; overflow:hidden}
+.panel::before{content:"";position:absolute;top:0;left:0;right:0;height:1px;
+  background:linear-gradient(90deg,transparent,var(--cyan),transparent);opacity:.5}
+.ph{color:var(--amber); font-weight:700}
+.ok{color:var(--phos)} .muted{color:var(--dim)}
+.draft{border:1px solid var(--amber); border-radius:10px; padding:14px 18px; margin:0 0 26px;
+  background:color-mix(in srgb,var(--panel) 88%,var(--amber) 8%); color:var(--white); font-size:.86rem}
+.draft b{color:var(--amber); letter-spacing:.08em}
+footer{border-top:1px solid var(--line); margin-top:40px; padding:22px 0}
+.f{display:flex; flex-wrap:wrap; gap:12px 22px; align-items:center; justify-content:space-between;
+  font-size:.72rem; color:var(--dim)}
+.f nav a{color:var(--ash)} .f b{color:var(--white)}
+</style>
+</head>
+<body>
+<a class="skip" href="#inhalt">Zum Inhalt springen</a>
+<header>
+  <div class="bar">
+    <a class="logo" href="/">LAF<span>A</span>P</a>
+    <nav aria-label="Seitennavigation">
+      <a href="/">← Startseite</a>
+      <a href="/impressum.html">Impressum</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+  <div class="wrap">
+    <span id="inhalt" tabindex="-1"></span>
+    <h1>Datenschutzerklärung</h1>
+    <p class="lead">Informationen nach Art. 13 DSGVO</p>
+
+    <div class="draft"><b>⚠ ENTWURF — vor dem Live-Gang ausfüllen &amp; prüfen.</b>
+      Die <span class="ph">[eckigen]</span> Felder (Verantwortlicher, Hoster,
+      Speicherdauern) müssen mit den echten Angaben gefüllt werden. Die
+      technischen Aussagen unten beschreiben den Stand dieser Website, ersetzen
+      aber keine Rechtsberatung. Bitte vor Veröffentlichung prüfen lassen.</div>
+
+    <div class="panel">
+      <h2>Verantwortlicher</h2>
+      <p>Verantwortlich für die Datenverarbeitung auf dieser Website ist:</p>
+      <p><span class="ph">[Name / Betreiber]</span><br>
+         <span class="ph">[Anschrift]</span><br>
+         E-Mail: <span class="ph">[kontakt@lafap.de]</span></p>
+      <p class="muted">Die vollständigen Angaben stehen im
+         <a href="/impressum.html">Impressum</a>.</p>
+    </div>
+
+    <div class="panel">
+      <h2>Hosting &amp; Server-Logfiles</h2>
+      <p>Die Website wird bei <span class="ph">[Hosting-Anbieter, Anschrift]</span>
+         gehostet. Beim Aufruf der Seiten verarbeitet der Server automatisch
+         technisch notwendige Zugriffsdaten (Server-Logfiles): angefragte URL,
+         Datum und Uhrzeit, übertragene Datenmenge, Referrer, Browsertyp und
+         gekürzte bzw. vollständige IP-Adresse. Rechtsgrundlage ist das
+         berechtigte Interesse an einem sicheren, stabilen Betrieb
+         (Art. 6 Abs. 1 lit. f DSGVO). Speicherdauer:
+         <span class="ph">[z. B. 7 Tage, dann Löschung/Anonymisierung]</span>.</p>
+    </div>
+
+    <div class="panel">
+      <h2>Keine Tracker, keine externen Schriften</h2>
+      <p class="ok">Diese Website verzichtet bewusst auf Datenübermittlung an
+         Dritte für Analyse oder Werbung.</p>
+      <ul>
+        <li><span class="ok">Kein</span> Google Analytics, kein Tracking-Pixel, keine Werbenetzwerke.</li>
+        <li><span class="ok">Keine</span> Cookies für Analyse/Marketing; es werden keine nicht
+            notwendigen Cookies gesetzt.</li>
+        <li>Schriften (Orbitron, JetBrains&nbsp;Mono) werden <span class="ok">lokal</span> vom
+            eigenen Server geladen — <span class="ok">kein</span> Aufruf von Google&nbsp;Fonts.</li>
+        <li>Die Live-Kennzahlen und News werden vom <span class="ok">eigenen Server</span>
+            (gleiche Domain) geladen; dabei werden keine personenbezogenen Daten des
+            Besuchers an Dritte übertragen.</li>
+      </ul>
+    </div>
+
+    <div class="panel">
+      <h2>Externe Links</h2>
+      <p>Die Seite verlinkt auf externe Dienste (z. B. Discord sowie die
+         Streaming-Plattformen Kick, Twitch und YouTube). Erst beim Klick auf
+         einen solchen Link werden Daten an den jeweiligen Anbieter übertragen;
+         es gelten dann dessen Datenschutzbestimmungen. Vor dem Klick findet
+         keine Übertragung an diese Dienste statt.</p>
+    </div>
+
+    <div class="panel">
+      <h2>Kontaktaufnahme</h2>
+      <p>Wenn Sie uns per E-Mail kontaktieren, verarbeiten wir Ihre Angaben zur
+         Bearbeitung der Anfrage (Art. 6 Abs. 1 lit. b bzw. f DSGVO). Die Daten
+         werden gelöscht, sobald sie nicht mehr erforderlich sind, spätestens
+         <span class="ph">[Frist]</span>.</p>
+    </div>
+
+    <div class="panel">
+      <h2>Verschlüsselung</h2>
+      <p>Die Website wird über TLS/SSL (https) ausgeliefert, sodass die
+         Übertragung zwischen Ihrem Browser und dem Server verschlüsselt erfolgt.</p>
+    </div>
+
+    <div class="panel">
+      <h2>Ihre Rechte</h2>
+      <p>Sie haben gegenüber dem Verantwortlichen folgende Rechte hinsichtlich
+         der Sie betreffenden personenbezogenen Daten:</p>
+      <ul>
+        <li>Auskunft (Art. 15 DSGVO)</li>
+        <li>Berichtigung (Art. 16 DSGVO)</li>
+        <li>Löschung (Art. 17 DSGVO)</li>
+        <li>Einschränkung der Verarbeitung (Art. 18 DSGVO)</li>
+        <li>Datenübertragbarkeit (Art. 20 DSGVO)</li>
+        <li>Widerspruch gegen die Verarbeitung (Art. 21 DSGVO)</li>
+      </ul>
+      <p>Zudem besteht ein Beschwerderecht bei einer Datenschutz-Aufsichtsbehörde
+         (Art. 77 DSGVO). Zuständig ist u. a. die Behörde am Sitz des
+         Verantwortlichen: <span class="ph">[zuständige Aufsichtsbehörde]</span>.</p>
+    </div>
+
+    <p class="muted">Stand: <span class="ph">[Monat/Jahr]</span> · Bei Änderungen
+       an Funktionen oder Diensten ist diese Erklärung anzupassen.</p>
+  </div>
+</main>
+
+<footer>
+  <div class="wrap f">
+    <span><b>LAFAP</b> · Logik Absolut Fehl am Platz</span>
+    <nav aria-label="Rechtliches">
+      <a href="/impressum.html">Impressum</a>
+      <a href="/datenschutz.html">Datenschutz</a>
+    </nav>
+    <span>Analysiert von Azrael Sentinel · lafap.de</span>
+  </div>
+</footer>
+</body>
+</html>

@@ -1,0 +1,465 @@
+NIGHTCRAWLER v37 — B146 — START HIER
+=====================================
+
+Dieses Archiv ist der komplette Projektstand. Du legst es über deine
+bestehende Installation und startest den Dienst neu. Deine .env, Cookies,
+Aufnahmen und die Datenbank sind NICHT im Archiv und bleiben unangetastet.
+
+
+────────────────────────────────────────────────────────────────────
+EINSPIELEN — EIN BEFEHL
+────────────────────────────────────────────────────────────────────
+
+Lade NIGHTCRAWLER_v37_B146.zip per Termius/scp in dein Home-Verzeichnis
+(~) auf dem Server hoch. Dann:
+
+       unzip -o ~/NIGHTCRAWLER_v37_B146.zip -d /tmp/nc-deploy
+       bash /tmp/nc-deploy/tools/deploy.sh ~/NIGHTCRAWLER_v37_B146.zip
+
+Das Deploy-Skript (seit B138) ersetzt das alte "stoppen, entpacken,
+starten". Der Unterschied ist wichtig: das Skript packt den neuen Build
+zuerst in ein NEBENVERZEICHNIS und prüft ihn dort komplett durch —
+py_compile, pyflakes, ruff, test_smoke, test_nc_modules, test_restream,
+ncpatch check und node --check auf die Dashboard-Skripte. Dein laufender
+Bot wird dabei NICHT angefasst.
+
+Erst wenn alles grün ist, wird gestoppt, umgeschwenkt und gestartet.
+Danach prüft es selbst nach: läuft der Dienst, antwortet das Dashboard,
+und was sagt der Selbsttest. Geht dabei etwas schief, spielt es das
+Backup automatisch zurück.
+
+Scheitert die Vorabprüfung, passiert GAR NICHTS — dein Bot läuft
+unverändert weiter. Genau das war vorher nicht so: ein kaputter Build
+nahm dir den Bot herunter, und die einzige Rettung war ein Tarball.
+
+Andere Pfade oder Dienstnamen:
+
+       BOT_DIR=~/mein-bot SERVICE=meinbot bash .../deploy.sh <zip>
+
+Den Dienstnamen findest du mit:  systemctl list-units | grep -i tiktok
+
+
+DER ALTE WEG (falls du ihn brauchst)
+
+       cd ~/tiktok-bot && tar czf ../backup_$(date +%F_%H%M).tgz .
+       sudo systemctl stop tiktok-bot
+       unzip -o ~/NIGHTCRAWLER_v37_B146.zip -d ~/tiktok-bot
+       sudo systemctl start tiktok-bot
+
+
+LÄUFT ES?  Log mitlesen
+
+       journalctl -u tiktok-bot -f
+
+   Strg+C beendet nur das Mitlesen, NICHT den Bot.
+   Erwartete Zeilen: Discord verbunden … / Brain-LLM … / Dashboard läuft.
+
+
+WAS IST GERADE KAPUTT?  (neu in B138)
+
+       curl -s localhost:8050/api/selftest | python3 -m json.tool
+
+   Fasst zusammen, was vorher fünf verschiedene Log-Greps waren: tote
+   Sendeziele, YouTube-Grund, Abwehr-Rechte, gestörte Dauerschleifen,
+   schweigende Kern-Loops, Plattenfüllstand — jeder Befund mit dem
+   Befehl, der ihn behebt.
+
+
+EINMALIG EINRICHTEN — TOTMANN-MELDUNG  (dringend empfohlen)
+
+   Stirbt der Bot-Prozess ganz, sagt dir das heute NIEMAND. Die Anleitung
+   steht oben in tools/notify_failure.sh; in Kürze:
+
+       chmod +x ~/tiktok-bot/tools/notify_failure.sh
+       sudo systemctl edit tiktok-bot     → [Unit] OnFailure=nightcrawler-notify@%n.service
+
+   Danach bekommst du bei jedem Ausfall eine Telegram-/Discord-Nachricht
+   mit den letzten Logzeilen.
+
+
+────────────────────────────────────────────────────────────────────
+DASHBOARD ÖFFNEN  (von deinem Laptop, nicht vom Handy nötig)
+────────────────────────────────────────────────────────────────────
+
+       ssh -L 3000:localhost:8050 ubuntu@<server-ip>
+
+   Danach im Browser:  http://localhost:3000
+   (Das Dashboard läuft auf dem Server auf Port 8050; der Tunnel legt es
+    lokal auf 3000.)
+
+
+────────────────────────────────────────────────────────────────────
+WAS IN B146 NEU IST  (Aufnahme-Waechter + Dashboard aufgeraeumt)
+────────────────────────────────────────────────────────────────────
+
+recording — 11. Sentinel-Agent. Erkennt Aufnahmen, die als recording=1
+   markiert sind, deren Ausgabedatei aber ueber mehrere Runden NICHT
+   waechst — dann laeuft der Mitschnitt stumm/eingefroren (Prozess da,
+   0 Bytes). Der Reaper raeumt tote PIDs; die Luecke 'lebende PID, tote
+   Datei' deckt genau dieser Agent. Erscheint automatisch im Panel
+   „AZRAEL Sentinel-Flotte" (jetzt 11 Agenten). Abschaltbar:
+   BRAIN_AGENT_RECORDING=0.
+
+Dashboard aufgeraeumt: die tote Funktion sparkline() entfernt (einmal
+   definiert, nie aufgerufen, noch aus der alten Neon-Ära). Geprueft auf
+   doppelte Funktionen — die scheinbaren Treffer (set/row/dot/step) sind
+   korrekt gekapselte lokale Helfer in verschiedenen Funktionen, KEINE
+   Duplikate; bewusst unangetastet gelassen.
+
+Geändert gegenüber B145:  brain/agents.py, brain/__init__.py,
+brain_bridge.py, bot_v37.py, templates/dashboard.html.
+
+
+────────────────────────────────────────────────────────────────────
+AUS B145 ÜBERNOMMEN  (toxicity + uptime Agenten, weiterhin enthalten)
+────────────────────────────────────────────────────────────────────
+
+Zwei weitere Waechter, gleiches Framework, erscheinen automatisch im
+Panel „AZRAEL Sentinel-Flotte" (jetzt 10 Agenten):
+  • toxicity  — Chat-Toxizitaets-Trend: meldet nicht die Einzelaktion
+                (das macht die Moderation), sondern die WELLE — deutlicher
+                Anstieg der Moderations-Aktionen ggü. der Vorstunde oder
+                dauerhaft hoher Ø-toxic-Score (moeglicher Raid). Quelle:
+                kick_mod_log.
+  • uptime    — Chat-Verbindungs-Waechter: meldet je Plattform
+                (Kick/Twitch/YouTube) Trennungen und Reconnect-Flattern.
+                Bewusst ausgeschaltete Plattformen werden ignoriert.
+
+Abschaltbar: BRAIN_AGENT_TOXICITY/UPTIME=0.
+
+Geändert gegenüber B144:  brain/agents.py, brain/__init__.py,
+brain_bridge.py, bot_v37.py. (Dashboard-Panel unveraendert — es ist
+datengetrieben und zeigt neue Agenten von selbst.)
+
+
+────────────────────────────────────────────────────────────────────
+AUS B144 ÜBERNOMMEN  (Sentinel-Flotte + Dashboard-Panel, weiterhin enthalten)
+────────────────────────────────────────────────────────────────────
+
+Drei neue Waechter im bestehenden Agenten-Framework (Registry, Toggle,
+Isolation — ein toter Agent kann den Tick nie killen):
+  • sentinel          — CrowdSec-Waechter: meldet Angriffs-Spitzen
+                        (Ban-Anstieg/Runde) und wenn CrowdSec selbst
+                        nicht erreichbar ist (Abwehr blind → crit).
+  • disk              — Speicher-Reichweite: freier Platz auf dem
+                        Aufnahme-Volume + Schaetzung Stunden-bis-voll,
+                        warnt frueh (24/7-Recorder faehrt nie an die Wand).
+  • restream_sentinel — erkennt STILL scheiternde Restream-Ziele
+                        (Prozess lebt, tee-Slave abgelehnt — die Luecke,
+                        die RecoveryAgent nicht sieht) und geteilte
+                        Kick-Keys (Kollision).
+
+Neu im Dashboard: Tab „AZRAEL BRAIN" → Panel „AZRAEL Sentinel-Flotte".
+Zeigt alle 8 Agenten mit Takt/Laeufen/Fehlern/Befunden, jeder einzeln
+An/Aus schaltbar (persistent) und per „Jetzt" sofort ausloesbar; darunter
+der Befund-Verlauf der Flotte. crit-Befunde gehen zusaetzlich an notify.
+
+Optional per .env abschaltbar: BRAIN_AGENT_SENTINEL/DISK/RESTREAM_SENTINEL=0.
+
+Geändert gegenüber B143:  brain/agents.py, brain/__init__.py,
+brain_bridge.py, bot_v37.py, templates/dashboard.html.
+
+
+────────────────────────────────────────────────────────────────────
+AUS B143 ÜBERNOMMEN  (Chat-Senden-Toasts pro Plattform, weiterhin enthalten)
+────────────────────────────────────────────────────────────────────
+
+Das manuelle Chat-Senden (Panel „Nachricht in den eigenen Chat")
+zeigte bei „Alle" nur „Senden fehlgeschlagen" — die eigentliche
+Ursache pro Plattform wurde verworfen. Jetzt toastet es je Ziel:
+   kick: ✓ · twitch: ✗ (Grund) · youtube: ✗ (Grund)
+Auch bei Einzel-Auswahl steht jetzt der konkrete Grund im Toast
+statt eines generischen Fehlers. Damit siehst du direkt, ob Senden
+an einer Config haengt (Kick-Token/Broadcaster-ID, Twitch-IRC nicht
+verbunden, YouTube ohne OAuth) statt zu raten.
+
+Kein Verhalten am Senden selbst geaendert — nur die Rueckmeldung
+wird ehrlich. POST /api/chat/send liefert dazu zusaetzlich
+results{plattform:{ok,error}} (sent/failed bleiben erhalten).
+
+Geändert gegenüber B142:  bot_v37.py, templates/dashboard.html.
+
+
+────────────────────────────────────────────────────────────────────
+AUS B142 ÜBERNOMMEN  (Titel/Kategorie Kick+Twitch + Dropdown, weiterhin enthalten)
+────────────────────────────────────────────────────────────────────
+
+Das „TITEL/KATEGORIE SETZEN"-Panel setzt jetzt auf Kick UND Twitch
+gleichzeitig (vorher nur Kick), und die freie category_id-Nummer ist
+ein Auswahl-Dropdown mit kuratierten Breit-Kategorien geworden
+(Just Chatting, IRL, Music, Sports, ASMR, Pools/Hot Tubs, Food &
+Drink, Special Events). Kick- und Twitch-Kategorie-IDs werden zur
+Laufzeit per Namenssuche aufgeloest (nicht hartcodiert), YouTube nutzt
+feste Kategorie-IDs.
+
+WICHTIG — Twitch einmal NEU VERBINDEN:
+   Titel/Kategorie auf Twitch braucht den Scope
+   channel:manage:broadcast, der vorher nicht angefordert wurde.
+   Nach dem Deploy im Dashboard einmal Twitch-OAuth neu verbinden,
+   sonst antwortet Twitch mit „401 — Scope fehlt". Das Panel zeigt
+   das Ergebnis pro Plattform an (kick: ✓ · twitch: ✗ … ), du siehst
+   also sofort, ob's durchging.
+
+YouTube: Titel/Kategorie folgen erst, wenn du YouTube-OAuth verbindest
+   — bis dahin meldet das Panel dort ehrlich „OAuth nicht verbunden".
+   (Die YouTube-Setzung selbst ist ein eigener, dann testbarer Schritt.)
+
+Neue Endpoints: GET /api/channel/categories, POST /api/channel/set.
+Der alte POST /api/kick/channel bleibt bestehen (nichts bricht).
+
+Geändert gegenüber B141:  bot_v37.py, nc/twitchoauth.py,
+templates/dashboard.html.
+
+
+────────────────────────────────────────────────────────────────────
+AUS B141 ÜBERNOMMEN  (Restream-Label + Kollisions-Warnung, weiterhin enthalten)
+────────────────────────────────────────────────────────────────────
+
+WICHTIG ZUERST — falls im Log massenhaft „tee-Ziel … Input/output
+error" steht und mehrere Restreams gleichzeitig laufen: das ist KEIN
+Bug, sondern geteilte Keys. Ein Kick-Key = ein Slot; mehrere Quellen
+gleichzeitig kollidieren. Abhilfe ist eine .env-Zeile, KEIN Code:
+     RESTREAM_SINGLE=1        (dann: sudo systemctl restart tiktok-bot)
+Damit laeuft genau ein Restream, der Bot schaltet bei Offline zur
+naechsten Live-Quelle. Mehrere gleichzeitig gehen physikalisch nur
+mit eigenen Keys je Kick-/Twitch-Channel.
+
+Zwei Code-Verbesserungen dazu (nur bot_v37.py):
+  • tee-Fehler werden jetzt korrekt benannt (kick/twitch/youtube)
+    statt „unbekannt". Vorher wurde die Ziel-Liste im Fehlerpfad
+    frisch neu geraten (falscher #Index nach YouTube-Flap) und die
+    Kick-URL fehlte ganz — jeder Kick-Fehler hiess „unbekannt". Jetzt
+    nutzt der Parser die beim Start gespeicherte echte tee-Reihenfolge
+    und matcht primaer per URL-Host. Macht genau solche Log-Analysen
+    in Sekunden statt in mehreren Runden.
+  • Kollisions-Warnung: teilen sich zwei aktive Restreams denselben
+    Kick-Key, steht jetzt EINE klare Zeile im Log („Restream #X teilt
+    sich den Kick-Key mit #Y … RESTREAM_SINGLE=1 setzen …") statt dass
+    es sich stumm in einen Neuaufbau-Sturm frisst.
+
+Geändert gegenüber B140:  nur bot_v37.py. Alles andere identisch.
+
+
+────────────────────────────────────────────────────────────────────
+AUS B140 ÜBERNOMMEN  (AZRAEL/freeai-Fix, weiterhin enthalten)
+────────────────────────────────────────────────────────────────────
+
+AZRAEL / freeai — Live-Chat-Reaktionen kamen nicht mehr
+   Symptom im Log: „freeai: HTTP 400 … Model 'gpt-4o-mini-2024-07-18'
+   is currently unavailable … model_unavailable", danach „AZRAEL
+   reagiert NICHT … Fehler: auth" und der Watchdog meldete Minuten
+   ohne Reaktion. Zwei Ursachen, beide behoben in nc/freeai.py:
+     • Der Anbieter llm7.io hat das Modell gpt-4o-mini-2024-07-18
+       abgeschaltet. Es stand als erstes (Default-)Modell im Katalog
+       und wurde deshalb bei jedem Versuch zuerst gewaehlt → totes
+       Modell entfernt, Default ist jetzt gpt-4.1-nano.
+     • chat() probierte pro Base nur EIN Modell und sprang bei 400
+       sofort zur naechsten Base — die uebrigen Modelle derselben
+       Base blieben ungenutzt. Jetzt rotiert chat() bei
+       model_unavailable/HTTP 400 durch die restlichen Modelle der
+       Base, bevor es die Base wechselt. auth/429/Netzfehler bleiben
+       Base-Ebene (anderes Modell hilft da nicht) und ueberspringen
+       die Base wie bisher. Damit uebersteht AZRAEL das Sterben
+       einzelner Modelle kuenftig selbsttaetig.
+
+Geändert gegenüber B139:  nur nc/freeai.py. Alles andere identisch.
+
+
+────────────────────────────────────────────────────────────────────
+AUS B139 ÜBERNOMMEN  (F102-Schema-Fix, weiterhin enthalten)
+────────────────────────────────────────────────────────────────────
+
+Tiefengrund-Bughunt über den kompletten B138-Stand gelaufen. Ergebnis:
+im Kern sauber — voller Prüflauf und alle Test-Suiten grün, kein Live-
+Fehler. EIN latenter Befund wurde behoben:
+
+DB-SCHEMA F102 — auf MariaDB werden zwei Tabellen jetzt korrekt angelegt
+   Die Community-Tabellen discord_daily und community_events standen als
+   rohes SQLite-DDL da (INTEGER PRIMARY KEY AUTOINCREMENT, TEXT). Auf
+   MariaDB ist "AUTOINCREMENT" schon ein Syntaxfehler — die beiden
+   Tabellen entstanden dort nie, /daily und geplante Events/Countdowns
+   liefen erst beim ersten Zugriff in "no such table".
+   Jetzt sind sie aufs backend-aware Muster gezogen (dieselben Platzhalter
+   wie alle anderen Tabellen). Zwei Dinge dabei bewusst gesetzt:
+     • guild_id/user_id/created_by sind Discord-Snowflakes (64-bit) →
+       BIGINT statt INTEGER. Auf MariaDB ist INT nur 32-bit und würde die
+       IDs überlaufen lassen (gleiche Begründung wie telegram_user_id).
+     • starts_at ist indiziert → VARCHAR(255) auf MariaDB (TEXT lässt sich
+       dort nicht ohne Schlüssellänge indizieren).
+
+   Wenn du SQLite fährst (Standard): rein kosmetisch für dich, die
+   erzeugte SQLite-DDL ist verhaltensgleich — bestehende Tabellen bleiben
+   unangetastet (CREATE TABLE IF NOT EXISTS), Snowflakes passten dort
+   ohnehin. Der Fix greift nur, falls du je auf DB_BACKEND=mariadb gehst.
+
+Geändert gegenüber B138:  bot_v37.py  (nur init_db, ein Block). Sonst
+identisch zu B138 — alle B138-Behebungen unten sind weiterhin enthalten.
+
+
+────────────────────────────────────────────────────────────────────
+AUS B138 ÜBERNOMMEN  (weiterhin enthalten)
+────────────────────────────────────────────────────────────────────
+
+BITTE ZUERST LESEN — zwei Prüfungen laufen nur auf dem Server und stehen
+noch aus. Nach dem Einspielen bitte einmal ausführen:
+
+       cd ~/tiktok-bot
+       python3 test_smoke.py                         # muss durchlaufen
+       node --check <Script-Block aus templates/dashboard.html>
+
+Alles andere (py_compile, pyflakes, ruff, ncpatch check, test_nc_modules
+mit 26 Verträgen, test_restream mit 95 Verträgen) ist vorab grün.
+
+
+1) YOUTUBE-RESTREAM NACH BOT-NEUSTART — BEHOBEN
+   Ursache war keine OAuth-Sache, sondern eine Zeitkopplung: beim Start
+   löst der Bot den YouTube-Key auf, da sendest du aber noch nicht — es
+   gibt keinen aktiven Broadcast, der Fehlschlag landet im Cache. 25 s
+   später nimmt der Wiederanlauf die Ziele auf und bekam genau diesen
+   alten Fehlgrund zurück. YouTube fiel aus dem tee, und weil der tee nur
+   EINMAL gebaut wird, blieb es die ganze Sitzung weg.
+   Jetzt löst der Sendestart immer frisch auf, und ein Schloss verhindert,
+   dass Startlauf und Sendestart sich gegenseitig überschreiben.
+
+2) DER BOT ZIEHT KEINE TOTEN STREAM-URLS MEHR
+   Der Live-Status war 15 s pro Nutzer gecacht — nicht umgehbar. Starb
+   ffmpeg an einer abgelaufenen TikTok-CDN-URL, lieferte der Cache exakt
+   dieselbe tote URL zurück; der Reconnect starb sofort wieder und zählte
+   trotzdem gegen das Reconnect-Limit. Streams wurden aufgegeben, die mit
+   frischer URL weitergelaufen wären. Der Fehlerpfad umgeht den Cache
+   jetzt; beim ersten Start bleibt er aktiv (Schutz vor Rate-Limit).
+
+3) KICK — DIAGNOSE STATT RATEN
+   Beim Start steht jetzt im Log, WELCHES Kick-Ziel wirklich gesendet
+   wird: Ingest-URL, Herkunft (db/env) sowie Länge und Prüfsumme des
+   Keys (nie der Key selbst). Wichtig, weil die Werte am Restream-Ziel
+   in der Datenbank die .env schlagen — ein im Dashboard angelegtes Ziel
+   mit altem Key ignoriert jede .env-Änderung, auch nach Neustart. Genau
+   deshalb half der bisher empfohlene Schritt ".env aktualisieren" nicht.
+   Suche im Log nach:  Kick-Ziel:
+   Stimmt die Prüfsumme mit dem Kick-Dashboard überein und es kommt
+   trotzdem 'Input/output error' → es liegt an Kick, nicht am Bot.
+   Zusätzlich: ein toter Kick-Ausgang wird wieder neu gestartet. Seit
+   B137 stirbt der Prozess bei Kick-Ablehnung nicht mehr, und der Wächter
+   war für Kick blind — Kick klemmte einmal und wurde nie wieder versucht.
+
+4) ABWEHR-PANEL SAGT JETZT, WARUM ES LEER IST
+   Bisher sahen "niemand greift an", "CrowdSec fehlt" und "Rechte fehlen"
+   identisch aus: eine leere Liste. Der häufigste Fall war nicht sudo,
+   sondern journalctl — ohne Gruppenrecht antwortet es mit Rückgabecode 0
+   und "-- No entries --". Das wurde als gültiger Log gelesen. Auf Ubuntu
+   24.04 gibt es /var/log/auth.log gar nicht mehr, das war also der
+   Normalfall. Das Panel zeigt jetzt Grund UND den Befehl, der es behebt.
+
+5) STILLE STÖRUNGEN WERDEN SICHTBAR
+   24 Dauerschleifen fingen ihre Fehler auf log.debug oder mit 'pass' ab —
+   im ERROR-Log stand davon nichts. Betroffen waren unter anderem
+   Backup, Retention, Disk-Guard, Alarmierung, Scheduler und der Watchdog
+   selbst: Backups konnten ausfallen, die Platte volllaufen, Alarme nie
+   ankommen, ohne eine einzige Logzeile. Jetzt melden sie sich auf ERROR,
+   gedrosselt auf höchstens eine Meldung alle 15 Minuten je Schleife
+   (mit Zahl der unterdrückten Fälle), damit das Log lesbar bleibt.
+   Neue Logzeile, nach der du suchen kannst:  Schleife <name> gestoert
+
+Geändert gegenüber B137:  bot_v37.py, templates/dashboard.html,
+nc/ytoauth.py, nc/restream_guard.py, test_restream.py, CLAUDE.md
+
+
+────────────────────────────────────────────────────────────────────
+WAS IN B137 NEU WAR
+────────────────────────────────────────────────────────────────────
+
+- Dashboard: alle bisher toten Backend-Funktionen sind jetzt angeschlossen
+  * AZRAEL BRAIN:  KI-Cockpit (Bericht, Anomalien, Empfehlungen, Segmente,
+                   Datenfrage, Selbst-Diagnose, Selbstlern-Zyklen) und
+                   AZRAEL Live/Stimme + Prognosen
+  * STREAMS:       Recording-Tools (manuelle Aufnahme, Orphans, Retention,
+                   Dedup, Inspektor) + Trackings-Verwaltung (Export, Bulk-Add)
+                   + Archiv-Upload / Integritäts-Check / Mehrfach-Löschen
+  * Profil-Modal:  Tracking pausieren/fortsetzen, Max-Dauer setzen
+  * INSIGHTS:      Watchlist, Ruhende, Volumen/Trend, Streamer-Lupe,
+                   Vergleich, Live-Bulk-Check, Abwehr/Angriffe (GeoIP)
+  * BETRIEB:       System-Diagnose, Log-Viewer, Statistik, Speicher-Prognose,
+                   Config-Backup/Restore, Export, Bereinigung, Fenster planen
+- Heller „blaupause"-Look besser lesbar (keine milchigen Scanlines mehr)
+- Theme-Umschalter im Footer entfernt
+- Kick-„öffnen"-Buttons entfernt (Sendeleiste + Restream-Control)
+- CrowdSec/Abwehr-Panel gefixt (in bot_v37.py)
+- LOW-LATENCY-RESTREAM (B137): der Restream puffert deutlich weniger. Im
+  Transcode-Pfad (Multi-Ziel/Overlay/TTS) jetzt -tune zerolatency (x264 ohne
+  B-Frames/Lookahead), halber VBV-Puffer (1s statt 2s), muxdelay=0. Fuehlt
+  sich wie sehr niedrige Latenz an. Zurueckdrehen (mehr Puffer = robuster bei
+  Netz-Jitter): RESTREAM_LOW_LATENCY=0 in der .env. Hinweis: die inhaerente
+  TikTok-Quell-Latenz (HLS-Segmente) bleibt — die kann kein Re-Encode kuerzen.
+- RUHENDE STREAMER (B137): pro ruhendem Streamer ein Pruefen-Button — checkt
+  ueber den TikTok-Proxy, ob der Account noch existiert. Meldet TikTok ihn
+  eindeutig als weg, erscheint ein Loeschen-Button, der den Streamer samt
+  aller Trackings entfernt. Bei Block/Unklarheit wird NICHT geloescht
+  (Schutz vor versehentlichem Loeschen echter Accounts).
+- YOUTUBE-RESTREAM (B137): läuft jetzt ohne manuellen Stream-Key. Der Bot
+  holt den RTMP-Key automatisch über die YouTube-Data-API (nutzt deinen
+  bestehenden YouTube-OAuth-Login). Voraussetzung: YOUTUBE_ENABLED=1 in der
+  .env + YouTube im Dashboard verbunden + ein Live-Stream in YouTube Studio.
+  Status/Grund steht jetzt im Log ("YouTube-Restream bereit/NICHT aktiv: …")
+  und im Dashboard-Kanalstatus (Feld reason).
+- STREAM-STABILITÄT (B137): TikTok-Restream reißt nicht mehr ständig ab.
+  * Kick klemmt im tee nicht mehr den ganzen Prozess ab (onfail=ignore) —
+    ein Kick-Blip nimmt TikTok + die anderen Ziele nicht mehr mit runter.
+  * abgelaufene TikTok-CDN-URLs (404/403) werden nicht mehr 30s lang
+    angehämmert, sondern sofort frisch aufgelöst.
+  * Altes hartes Kick-Verhalten bei Bedarf zurück: RESTREAM_KICK_HARD=1 in .env
+
+Geändert gegenüber B132:  templates/dashboard.html  und  bot_v37.py
+Alles andere unverändert aus deinem Original.
+
+
+────────────────────────────────────────────────────────────────────
+FALLS DAS CROWDSEC-/ABWEHR-PANEL LEER BLEIBT
+────────────────────────────────────────────────────────────────────
+
+Das ist ein Server-Rechte-Thema, kein Bot-Fehler. cscli muss als root laufen
+(es liest root-only Zugangsdaten). Prüfe erst den echten Pfad:
+
+       which cscli
+       sudo systemctl status crowdsec        (muss "active (running)" sein)
+
+Trag DENSELBEN Pfad passwortlos in die sudoers ein (Beispiel für
+/usr/local/bin/cscli — nimm deinen Pfad aus "which cscli"):
+
+       echo 'ubuntu ALL=(root) NOPASSWD: /usr/local/bin/cscli' | sudo tee /etc/sudoers.d/nightcrawler
+       sudo chmod 440 /etc/sudoers.d/nightcrawler
+
+Test — muss sauberes JSON liefern:
+
+       sudo -n cscli decisions list -o json
+
+Für die „Angriffe"-Liste braucht der Bot-User zusätzlich Leserechte auf die
+Auth-Logs:
+
+       sudo usermod -aG adm ubuntu        (danach Dienst einmal neu starten)
+
+
+────────────────────────────────────────────────────────────────────
+FALLS KICK WEITER NICHT SENDET (nur Kick, Twitch/YouTube laufen)
+────────────────────────────────────────────────────────────────────
+
+Die 'Input/output error' auf die Kick-Ingest-URL (rtmps ...live-video.net)
+im error.log heißt: Kick nimmt die Verbindung nicht an. Das ist KEIN
+Code-Fehler — der Bot hält jetzt nur TikTok + die anderen Ziele stabil,
+während Kick klemmt. Prüfe Kick-seitig:
+  1. Stream-Key aktuell? (Kick-Dashboard → Stream-Key neu kopieren →
+     KICK_STREAM_KEY / Ingest in der .env aktualisieren)
+  2. Läuft schon woanders ein Stream auf denselben Key? (nur einer erlaubt)
+  3. Server-IP evtl. regional geblockt — Test von einer anderen IP.
+Danach Dienst neu starten.
+
+
+────────────────────────────────────────────────────────────────────
+WENN ETWAS SCHIEFGEHT
+────────────────────────────────────────────────────────────────────
+
+Backup aus Schritt 1 zurückspielen:
+
+       sudo systemctl stop tiktok-bot
+       cd ~/tiktok-bot && tar xzf ../nightcrawler_backup_<datum>.tgz
+       sudo systemctl start tiktok-bot

@@ -1,0 +1,633 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="description" content="NIGHTCRAWLER Stream-Overlay (OBS Browser-Source): Sendername, Donations, letzter Follower, KI-Moderator.">
+<meta name="robots" content="noindex, nofollow">
+<meta name="color-scheme" content="dark">
+<meta name="format-detection" content="telephone=no">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>NIGHTCRAWLER · Stream Overlay</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Orbitron:wght@500;700;900&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --neon:#00ff9c; --cyan:#00e5ff; --magenta:#ff2e88; --amber:#ffb000; --red:#ff3b5c;
+    --ink:#04080c; --text:#e7fff4; --dim:#7fbfa8; --faint:#3a5e52;
+    --mono:'JetBrains Mono',monospace; --display:'Orbitron',sans-serif;
+    --edge:color-mix(in srgb,var(--neon) 22%,transparent);
+    --glow:0 0 24px -6px color-mix(in srgb,var(--neon) 70%,transparent);
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  html,body{width:100%;height:100%;overflow:hidden;background:transparent;font-family:var(--mono);color:var(--text)}
+  /* 1920×1080-Bühne; wird per JS auf die Viewport-Größe skaliert (OBS @1920×1080
+     rendert 1:1, kleinere Viewports/Handy-Vorschau werden eingepasst). */
+  #stage{position:absolute;top:0;left:0;width:1920px;height:1080px;transform-origin:top left}
+  /* nichts darf die Kamera/das Game verdecken — nur Ränder bespielen */
+
+  /* ============ Panel-Grundlook (HUD) ============ */
+  .ov{
+    position:absolute;
+    background:linear-gradient(180deg, color-mix(in srgb,var(--neon) 6%, rgba(4,8,12,0.82)), rgba(3,6,9,0.88));
+    border:1px solid var(--edge);
+    box-shadow:var(--glow), inset 0 1px 0 color-mix(in srgb,var(--neon) 8%,transparent);
+    backdrop-filter:blur(3px);
+  }
+  .ov::before,.ov::after{content:'';position:absolute;width:18px;height:18px;pointer-events:none}
+  .ov::before{left:-1px;top:-1px;border-left:2px solid var(--neon);border-top:2px solid var(--neon)}
+  .ov::after{right:-1px;bottom:-1px;border-right:2px solid var(--neon);border-bottom:2px solid var(--neon)}
+
+  /* ============ Title / Name plate (oben links) ============ */
+  #title{left:40px;top:36px;padding:14px 22px 14px 20px;display:flex;align-items:center;gap:16px;min-width:360px}
+  #title .livedot{width:14px;height:14px;border-radius:50%;background:var(--red);box-shadow:0 0 12px var(--red),0 0 4px var(--red);animation:livePulse 1.4s ease-in-out infinite}
+  @keyframes livePulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.45;transform:scale(.82)}}
+  #title .tcol{display:flex;flex-direction:column;gap:5px;min-width:0}
+  #title .tname{font-family:var(--display);font-weight:900;font-size:26px;letter-spacing:.18em;color:var(--neon);text-shadow:0 0 20px color-mix(in srgb,var(--neon) 55%,transparent);line-height:1.14}
+  #title .tsub{font-size:10px;letter-spacing:.42em;text-transform:uppercase;color:var(--dim)}
+  #title .scan{position:absolute;left:0;right:0;bottom:-1px;height:1px;background:linear-gradient(90deg,transparent,var(--neon),transparent);opacity:.6;animation:scanX 3.4s linear infinite}
+  @keyframes scanX{0%{transform:translateX(-40%);opacity:0}30%{opacity:.7}100%{transform:translateX(40%);opacity:0}}
+
+  /* ============ Latest follower (oben rechts) ============ */
+  #follower{right:40px;top:36px;padding:12px 20px;min-width:280px;text-align:right}
+  #follower .flabel{font-family:var(--display);font-size:10px;letter-spacing:.34em;text-transform:uppercase;color:var(--cyan);text-shadow:0 0 12px color-mix(in srgb,var(--cyan) 50%,transparent)}
+  #follower .fname{font-size:22px;font-weight:700;color:var(--text);margin-top:4px;text-shadow:0 0 14px color-mix(in srgb,var(--neon) 40%,transparent);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  #follower .fglyph{display:inline-block;margin-left:8px;color:var(--neon)}
+
+  /* ============ Donations (oben links, unter dem Titel) ============ */
+  #don{left:40px;top:130px;width:380px;padding:16px 18px}
+  #don .dhead{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
+  #don .dtitle{font-family:var(--display);font-size:11px;letter-spacing:.28em;text-transform:uppercase;color:var(--magenta);text-shadow:0 0 12px color-mix(in srgb,var(--magenta) 50%,transparent)}
+  #don .dgoalv{font-size:11px;color:var(--dim);font-variant-numeric:tabular-nums}
+  #don .goal{height:8px;background:rgba(0,0,0,.5);border:1px solid var(--edge);position:relative;overflow:hidden;margin-bottom:12px}
+  #don .goal > i{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--magenta),var(--neon));box-shadow:0 0 12px var(--neon);transition:width .8s ease}
+  #don .dpurpose{font-size:10px;color:var(--dim);margin:-6px 0 12px;line-height:1.35;font-style:italic}
+  #don .dpurpose:empty{display:none;margin:0}
+  #don .dlist{display:flex;flex-direction:column;gap:5px;max-height:150px;overflow:hidden}
+  #don .drow{display:flex;align-items:baseline;gap:8px;font-size:13px;opacity:.92}
+  #don .drow .dn{color:var(--cyan);font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:200px}
+  #don .drow .da{color:var(--neon);font-variant-numeric:tabular-nums;margin-left:auto;font-weight:700}
+  #don .dempty{color:var(--faint);font-size:11px;letter-spacing:.1em}
+  /* ---- V37-OVMP: Plattform-Badges (Kick/Twitch/YouTube/TikTok) ---- */
+  .pbadge{display:inline-flex;align-items:center;justify-content:center;
+    font-family:var(--display);font-size:8px;font-weight:700;letter-spacing:.08em;
+    padding:2px 5px;border-radius:3px;text-transform:uppercase;flex:0 0 auto;
+    border:1px solid currentColor;line-height:1;opacity:.95}
+  .pf-kick{color:#53fc18;text-shadow:0 0 8px rgba(83,252,24,.55)}
+  .pf-twitch{color:#a970ff;text-shadow:0 0 8px rgba(169,112,255,.55)}
+  .pf-youtube{color:#ff4444;text-shadow:0 0 8px rgba(255,68,68,.5)}
+  .pf-tiktok{color:#25f4ee;text-shadow:0 0 8px rgba(37,244,238,.5)}
+  /* Bilanz je Plattform unter dem Zielbalken */
+  #don .dsplit{display:flex;gap:10px;flex-wrap:wrap;margin:-4px 0 10px;
+    font-size:9px;color:var(--dim);font-variant-numeric:tabular-nums}
+  #don .dsplit:empty{display:none;margin:0}
+  #don .dsplit .sp{display:flex;align-items:center;gap:4px}
+  #don .dsince{font-size:8px;letter-spacing:.16em;text-transform:uppercase;
+    color:var(--faint);margin-top:6px}
+  /* Follower-Panel: Badge + Ticker der letzten Follower aller Plattformen */
+  #follower .fplat{margin-left:8px;vertical-align:middle}
+  #follower .fticker{display:flex;gap:6px;justify-content:flex-end;flex-wrap:wrap;
+    margin-top:6px;font-size:9px;color:var(--dim)}
+  #follower .fticker:empty{display:none}
+  #follower .fticker .ft{display:flex;align-items:center;gap:3px;opacity:.75}
+
+  /* ============ Virtueller Moderator (unten rechts, "vor der Kamera") ============ */
+  #mod{right:40px;bottom:40px;width:300px;padding:18px 16px 16px;display:flex;flex-direction:column;align-items:center;gap:10px}
+  #mod .orbwrap{position:relative;width:200px;height:200px}
+  #mod canvas{position:absolute;inset:0}
+  #mod .plate{font-family:var(--display);font-size:11px;letter-spacing:.26em;text-transform:uppercase;color:var(--neon);text-shadow:0 0 14px color-mix(in srgb,var(--neon) 55%,transparent);text-align:center}
+  #mod .pstate{font-size:9px;letter-spacing:.3em;text-transform:uppercase;color:var(--dim)}
+  #mod .pstate.on{color:var(--neon)}
+  /* Sprechblase über dem Orb */
+  #bubble{
+    position:absolute;bottom:230px;right:0;width:440px;max-width:44vw;padding:16px 18px;
+    background:linear-gradient(180deg, color-mix(in srgb,var(--neon) 10%, rgba(4,8,12,0.92)), rgba(3,6,9,0.95));
+    border:1px solid var(--neon);box-shadow:var(--glow);
+    font-size:15px;line-height:1.55;color:var(--text);
+    max-height:none;overflow:visible;word-break:break-word;overflow-wrap:anywhere;
+    opacity:0;transform:translateY(8px);transition:opacity .3s,transform .3s;pointer-events:none;
+  }
+  #bubble.show{opacity:1;transform:none}
+  #bubble::after{content:'';position:absolute;right:90px;bottom:-9px;width:16px;height:16px;
+    background:rgba(4,8,12,0.95);border-right:1px solid var(--neon);border-bottom:1px solid var(--neon);transform:rotate(45deg)}
+  #bubble .bwho{font-family:var(--display);font-size:8px;letter-spacing:.28em;text-transform:uppercase;color:var(--neon);margin-bottom:4px;display:block}
+
+  /* ============ Alert (Follower/Donation fliegt ein) ============ */
+  #alert{
+    position:absolute;left:50%;top:120px;transform:translateX(-50%) translateY(-40px);
+    min-width:480px;max-width:760px;padding:22px 40px;text-align:center;
+    background:linear-gradient(180deg, color-mix(in srgb,var(--neon) 12%, rgba(4,8,12,0.9)), rgba(3,6,9,0.94));
+    border:1px solid var(--neon);box-shadow:0 0 60px -10px var(--neon), inset 0 1px 0 color-mix(in srgb,var(--neon) 14%,transparent);
+    opacity:0;pointer-events:none;backdrop-filter:blur(4px);
+  }
+  #alert.show{animation:alertIn 5.4s ease forwards}
+  @keyframes alertIn{
+    0%{opacity:0;transform:translateX(-50%) translateY(-60px) scale(.94)}
+    8%{opacity:1;transform:translateX(-50%) translateY(0) scale(1)}
+    88%{opacity:1;transform:translateX(-50%) translateY(0) scale(1)}
+    100%{opacity:0;transform:translateX(-50%) translateY(-30px) scale(.98)}
+  }
+  #alert .akind{font-family:var(--display);font-weight:900;font-size:15px;letter-spacing:.4em;text-transform:uppercase;margin-bottom:8px}
+  #alert .aname{font-size:34px;font-weight:700;color:var(--text);text-shadow:0 0 24px color-mix(in srgb,var(--neon) 50%,transparent)}
+  #alert .amsg{font-size:14px;color:var(--dim);margin-top:8px;font-style:italic}
+  #alert .acorner{position:absolute;width:22px;height:22px}
+  #alert .acorner.tl{left:-1px;top:-1px;border-left:2px solid var(--neon);border-top:2px solid var(--neon)}
+  #alert .acorner.tr{right:-1px;top:-1px;border-right:2px solid var(--neon);border-top:2px solid var(--neon)}
+  #alert .acorner.bl{left:-1px;bottom:-1px;border-left:2px solid var(--neon);border-bottom:2px solid var(--neon)}
+  #alert .acorner.br{right:-1px;bottom:-1px;border-right:2px solid var(--neon);border-bottom:2px solid var(--neon)}
+  #alert.kind-follow{--neon:#00e5ff}
+  #alert.kind-donation{--neon:#ff2e88}
+
+  /* dezente Eck-Marker am ganzen Frame (stören Kamera nicht) */
+  .framecorner{position:absolute;width:46px;height:46px;pointer-events:none;opacity:.5}
+  .framecorner.tl{left:18px;top:18px;border-left:2px solid var(--neon);border-top:2px solid var(--neon)}
+  .framecorner.tr{right:18px;top:18px;border-right:2px solid var(--neon);border-top:2px solid var(--neon)}
+  .framecorner.bl{left:18px;bottom:18px;border-left:2px solid var(--neon);border-bottom:2px solid var(--neon)}
+  .framecorner.br{right:18px;bottom:18px;border-right:2px solid var(--neon);border-bottom:2px solid var(--neon)}
+
+  .offline{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);font-family:var(--display);letter-spacing:.3em;color:var(--faint);font-size:12px;text-transform:uppercase;display:none}
+  /* ===== AZRAEL — KI-Reaktions-Avatar (dunkler Erzengel-Ritter, vor der Kamera) =====
+     Position bei Bedarf anpassen: #azrael { left / bottom }. */
+  #azrael{position:absolute;left:50%;bottom:40px;transform:translateX(-50%);
+    display:none;align-items:center;gap:18px;z-index:6;max-width:80vw}
+  #azrael .az-avatar{width:260px;height:auto;flex:0 0 auto;opacity:.74;
+    filter:drop-shadow(0 6px 20px rgba(0,0,0,.65)) drop-shadow(0 0 12px rgba(0,229,255,.22));animation:azFloat 6s ease-in-out infinite;transition:opacity .5s ease}
+  #azrael.active .az-avatar{opacity:1;
+    filter:drop-shadow(0 6px 22px rgba(0,0,0,.7)) drop-shadow(0 0 16px rgba(255,59,92,.4)) drop-shadow(0 0 9px rgba(0,229,255,.5))}
+  #azrael .aura{transform-box:fill-box;transform-origin:center;animation:azAura 4.5s ease-in-out infinite}
+  #azrael.active .aura{animation-duration:2.3s}
+  #azrael .az-eye{fill:var(--cyan);filter:drop-shadow(0 0 5px var(--cyan));animation:azEye 3.6s ease-in-out infinite}
+  #azrael.active .az-eye{fill:#eafdff;filter:drop-shadow(0 0 9px var(--cyan)) drop-shadow(0 0 16px var(--cyan))}
+  #azrael .az-glow{opacity:.5;animation:azEye 3.6s ease-in-out infinite}
+  #azrael.active .az-glow{opacity:1}
+  #azrael .wing-l{transform-box:fill-box;transform-origin:90% 0;animation:azWingL 7s ease-in-out infinite}
+  #azrael .wing-r{transform-box:fill-box;transform-origin:10% 0;animation:azWingR 7s ease-in-out infinite}
+  #azrael .az-ring{opacity:0;transform-box:fill-box;transform-origin:center}
+  #azrael.active .az-ring{animation:azRing 2.4s ease-out infinite}
+  #az-panel{max-width:560px;min-width:0;background:linear-gradient(180deg,rgba(22,7,11,.93),rgba(8,4,6,.96));
+    border:1px solid color-mix(in srgb,var(--red) 50%,transparent);border-left:3px solid var(--red);border-radius:4px;
+    padding:12px 16px;box-shadow:0 0 30px -8px var(--red), inset 0 1px 0 rgba(255,255,255,.04);
+    opacity:0;transform:translateY(8px);transition:opacity .35s ease,transform .35s ease;pointer-events:none}
+  #azrael.active #az-panel{opacity:1;transform:translateY(0)}
+  /* V37-B103: im Leerlauf GANZ raus aus dem Layout, nicht nur unsichtbar —
+     sonst drückt das leere Panel den Avatar aus der Mitte. */
+  #azrael:not(.active) #az-panel{display:none}
+  #az-panel .azwho{font-family:var(--display);font-size:10px;letter-spacing:.32em;text-transform:uppercase;
+    color:var(--red);margin-bottom:6px;display:flex;align-items:center;gap:8px}
+  #az-panel .azdot{width:7px;height:7px;border-radius:50%;background:var(--red);box-shadow:0 0 8px var(--red);animation:azBlink 1.4s steps(2) infinite}
+  #az-panel .azdis{font-size:8px;letter-spacing:.16em;color:var(--faint);margin-left:auto;text-transform:none}
+  /* V37-B101: harte Deckelung als zweite Sicherung. Die API kappt bereits auf
+     AZRAEL_OVERLAY_MAXLEN — falls doch ein langer Text durchkommt (alter
+     Client-Cache), bricht das Panel hier nach 4 Zeilen sauber ab statt das
+     halbe Sendebild mit einer Textwand zu füllen. */
+  #az-panel .aztext{font-size:21px;line-height:1.45;color:var(--text);
+    text-shadow:0 0 10px rgba(255,59,92,.25);
+    display:-webkit-box;-webkit-line-clamp:4;-webkit-box-orient:vertical;
+    overflow:hidden;max-height:130px}
+  @keyframes azFloat{0%,100%{translate:0 0}50%{translate:0 -6px}}
+  @keyframes azAura{0%,100%{opacity:.5;scale:.96}50%{opacity:.82;scale:1.06}}
+  @keyframes azEye{0%,100%{opacity:.85}45%{opacity:.5}55%{opacity:1}}
+  @keyframes azWingL{0%,100%{transform:rotate(0deg)}50%{transform:rotate(-3deg)}}
+  @keyframes azWingR{0%,100%{transform:rotate(0deg)}50%{transform:rotate(3deg)}}
+  @keyframes azRing{0%{opacity:.5;scale:.5}80%{opacity:0;scale:1.3}100%{opacity:0}}
+  @keyframes azBlink{0%{opacity:1}50%{opacity:.25}100%{opacity:1}}
+
+/* ═══════════ V37-B100: 9:16-Bühne (1080×1920) ═══════════
+   WICHTIG: hier wird in ECHTEN Bühnen-Pixeln gerechnet, nicht in vw/vh.
+   Die Bühne ist im Portrait-Modus exakt 1080×1920 groß (fit() setzt das) und
+   wird als Ganzes skaliert — vw/vh würden gegen den Viewport zählen und wären
+   um den Skalierungsfaktor daneben. Genau daran ist die erste Fassung
+   gescheitert.
+   Vertikale Aufteilung (von 1920px): Titel 36–126 · Follower 150–260 ·
+   [Kameramitte 260–600 FREI] · AZRAEL 620–900 · Moderator 980–1180 ·
+   Donations 1490–1872. Kollisionsfrei, Gesicht bleibt unverdeckt. */
+html.portrait #title{left:32px;right:32px;top:36px;min-width:0;padding:18px 28px;
+  justify-content:flex-start}
+html.portrait #title .tname{font-size:40px;letter-spacing:.08em;line-height:1.16;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+html.portrait #title .tsub{font-size:15px;letter-spacing:.26em}
+html.portrait #title .livedot{width:20px;height:20px}
+
+html.portrait #follower{right:32px;left:auto;top:150px;min-width:0;max-width:620px;
+  padding:16px 26px}
+html.portrait #follower .flabel{font-size:15px;letter-spacing:.22em}
+html.portrait #follower .fname{font-size:34px}
+html.portrait #follower .fticker{font-size:15px;gap:10px;margin-top:8px}
+html.portrait .pbadge{font-size:13px;padding:3px 7px}
+
+/* AZRAEL — der wichtigste Block: hier stehen seine Antworten */
+html.portrait #azrael{left:28px;right:28px;bottom:auto;top:620px;transform:none;
+  max-width:none;gap:24px;justify-content:center;align-items:flex-start}
+html.portrait #azrael .az-avatar{width:210px}
+html.portrait #az-panel{max-width:780px;padding:20px 26px;border-left-width:5px}
+html.portrait #az-panel .azwho{font-size:15px;letter-spacing:.2em;margin-bottom:10px}
+html.portrait #az-panel .aztext{font-size:27px;line-height:1.38;
+  -webkit-line-clamp:5;max-height:200px}
+html.portrait #az-panel .azdis{font-size:12px}
+
+html.portrait #mod{right:auto;left:50%;transform:translateX(-50%);bottom:auto;
+  top:980px;width:auto;padding:18px 26px 16px;flex-direction:row;gap:24px;
+  align-items:center}
+html.portrait #mod .orbwrap{width:170px;height:170px}
+html.portrait #mod .plate{font-size:19px;letter-spacing:.16em}
+html.portrait #mod .pstate{font-size:14px}
+
+html.portrait #don{left:32px;right:32px;bottom:48px;width:auto;padding:24px 28px}
+html.portrait #don .dtitle{font-size:19px;letter-spacing:.18em}
+html.portrait #don .dgoalv{font-size:19px}
+html.portrait #don .goal{height:14px}
+html.portrait #don .dpurpose{font-size:18px;opacity:.9}
+html.portrait #don .dsplit{font-size:15px;gap:18px}
+html.portrait #don .dsince{font-size:14px;opacity:.75}
+html.portrait #don .drow{font-size:25px;gap:14px}
+html.portrait #don .drow .dn{max-width:430px}
+html.portrait #don .dlist{max-height:230px;gap:8px}
+html.portrait #don .dempty{font-size:20px;opacity:.85}
+
+/* Alert: transform NICHT anfassen — die alertIn-Keyframes steuern ihn */
+html.portrait #alert{min-width:0;width:900px;max-width:900px;padding:34px 44px;top:300px}
+html.portrait #alert .akind{font-size:20px}
+html.portrait #alert .aname{font-size:52px}
+html.portrait #alert .amsg{font-size:22px}
+
+</style>
+</head>
+<body>
+<div id="stage">
+  <div class="framecorner tl"></div><div class="framecorner tr"></div>
+  <div class="framecorner bl"></div><div class="framecorner br"></div>
+
+  <!-- Name / Title -->
+  <div class="ov" id="title">
+    <span class="livedot"></span>
+    <div class="tcol">
+      <span class="tname" id="t_name">NIGHTCRAWLER</span>
+      <span class="tsub">live · surveillance grid</span>
+    </div>
+    <span class="scan"></span>
+  </div>
+
+  <!-- Latest follower -->
+  <div class="ov" id="follower">
+    <div class="flabel">Neuer Follower</div>
+    <div class="fname" id="f_name">—<span class="fglyph">▸</span></div>
+    <div class="fticker" id="f_ticker"></div>
+  </div>
+
+  <!-- Donations -->
+  <div class="ov" id="don">
+    <div class="dhead">
+      <span class="dtitle" id="d_label">Spendenziel</span>
+      <span class="dgoalv" id="d_goalv"></span>
+    </div>
+    <div class="goal"><i id="d_goalbar"></i></div>
+    <div class="dsplit" id="d_split"></div>
+    <div class="dpurpose" id="d_purpose"></div>
+    <div class="dlist" id="d_list"><div class="dempty">noch keine Donations</div></div>
+    <div class="dsince" id="d_since"></div>
+  </div>
+
+  <!-- Virtueller Moderator -->
+  <div class="ov" id="mod">
+    <div class="orbwrap">
+      <canvas id="orb" width="200" height="200"></canvas>
+    </div>
+    <div class="plate">NIGHTCRAWLER // AI-MOD</div>
+    <div class="pstate" id="m_state">standby</div>
+  </div>
+  <div id="bubble"><span class="bwho">AI-MOD</span><span id="b_text"></span></div>
+
+  <!-- Alert -->
+  <div id="alert">
+    <span class="acorner tl"></span><span class="acorner tr"></span>
+    <span class="acorner bl"></span><span class="acorner br"></span>
+    <div class="akind" id="a_kind">Neuer Follower</div>
+    <div class="aname" id="a_name"></div>
+    <div class="amsg" id="a_msg"></div>
+  </div>
+
+  <!-- AZRAEL — KI-Reaktions-Avatar (vor der Kamera): dunkler Erzengel-Ritter mit Aura -->
+  <audio id="az_audio" preload="auto" style="display:none"></audio>
+  <div id="azrael">
+    <svg class="az-avatar" viewBox="0 0 200 196" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+      <defs>
+        <radialGradient id="azAura" cx="50%" cy="48%" r="55%">
+          <stop offset="0%" stop-color="#ff3b5c" stop-opacity=".55"/>
+          <stop offset="55%" stop-color="#ff3b5c" stop-opacity=".18"/>
+          <stop offset="100%" stop-color="#ff3b5c" stop-opacity="0"/>
+        </radialGradient>
+        <linearGradient id="azSteel" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stop-color="#3a424c"/><stop offset="55%" stop-color="#1a1f25"/><stop offset="100%" stop-color="#090b0f"/>
+        </linearGradient>
+        <linearGradient id="azBody" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stop-color="#20262e"/><stop offset="70%" stop-color="#0c0f13"/><stop offset="100%" stop-color="#0c0f13" stop-opacity="0"/>
+        </linearGradient>
+        <linearGradient id="azCape" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stop-color="#7e1326"/><stop offset="100%" stop-color="#2a0610"/>
+        </linearGradient>
+        <radialGradient id="azVisor" cx="50%" cy="50%" r="50%">
+          <stop offset="0%" stop-color="#eafdff"/><stop offset="40%" stop-color="#00e5ff"/><stop offset="100%" stop-color="#00e5ff" stop-opacity="0"/>
+        </radialGradient>
+        <filter id="azBlur" x="-60%" y="-60%" width="220%" height="220%"><feGaussianBlur stdDeviation="12"/></filter>
+      </defs>
+      <circle class="aura" cx="100" cy="92" r="78" fill="url(#azAura)" filter="url(#azBlur)"/>
+      <ellipse cx="100" cy="56" rx="56" ry="15" fill="none" stroke="#00e5ff" stroke-opacity=".30" stroke-width="1.5"/>
+      <ellipse cx="100" cy="56" rx="40" ry="10" fill="none" stroke="#ff3b5c" stroke-opacity=".22" stroke-width="1"/>
+      <circle class="az-ring" cx="100" cy="92" r="58" fill="none" stroke="#ff3b5c" stroke-width="2"/>
+      <g class="wing-l" fill="url(#azSteel)" stroke="#8a9cb0" stroke-opacity=".52" stroke-width="1">
+        <path d="M70,120 C42,112 20,96 9,60 C20,80 22,92 17,118 C29,99 37,97 43,120 C49,105 55,105 61,124 C64,115 67,115 70,120 Z"/>
+      </g>
+      <g class="wing-r" fill="url(#azSteel)" stroke="#8a9cb0" stroke-opacity=".52" stroke-width="1">
+        <path d="M130,120 C158,112 180,96 191,60 C180,80 178,92 183,118 C171,99 163,97 157,120 C151,105 145,105 139,124 C136,115 133,115 130,120 Z"/>
+      </g>
+      <path d="M118,120 C140,126 141,160 135,190 L150,190 C150,150 146,128 126,116 Z" fill="url(#azCape)" stroke="#3a0810" stroke-width="1"/>
+      <path d="M76,140 C76,127 88,124 100,124 C112,124 124,127 124,140 L130,194 L70,194 Z" fill="url(#azBody)"/>
+      <path d="M118,126 C140,123 156,132 159,151 C150,145 130,141 118,145 Z" fill="url(#azSteel)" stroke="#8a9cb0" stroke-opacity=".52" stroke-width="1"/>
+      <path d="M82,126 C60,123 44,132 41,151 C50,145 70,141 82,145 Z" fill="url(#azSteel)" stroke="#8a9cb0" stroke-opacity=".52" stroke-width="1"/>
+      <path d="M88,118 L112,118 L108,133 L92,133 Z" fill="#14181d" stroke="#6b7d90" stroke-opacity=".5" stroke-width="1"/>
+      <path d="M120,46 C131,31 144,25 156,25 C145,33 139,46 138,59 C131,50 125,48 120,52 Z" fill="url(#azSteel)" stroke="#8a9cb0" stroke-opacity=".52" stroke-width="1"/>
+      <path d="M80,46 C69,31 56,25 44,25 C55,33 61,46 62,59 C69,50 75,48 80,52 Z" fill="url(#azSteel)" stroke="#8a9cb0" stroke-opacity=".52" stroke-width="1"/>
+      <path d="M100,38 C121,38 133,53 133,76 C133,91 128,101 119,111 C112,119 104,125 100,129 C96,125 88,119 81,111 C72,101 67,91 67,76 C67,53 79,38 100,38 Z" fill="url(#azSteel)" stroke="#a6b8cc" stroke-opacity=".7" stroke-width="1.5"/>
+      <path d="M100,40 L100,128" stroke="#05070a" stroke-opacity=".6" stroke-width="2"/>
+      <ellipse class="az-glow" cx="100" cy="84" rx="30" ry="15" fill="url(#azVisor)"/>
+      <path class="az-eye" d="M84,80 L97,86 L95,90.5 L82,85 Z"/>
+      <path class="az-eye" d="M116,80 L103,86 L105,90.5 L118,85 Z"/>
+      <rect class="az-eye" x="98.9" y="90" width="2.2" height="22" rx="1"/>
+    </svg>
+    <div id="az-panel">
+      <div class="azwho"><span class="azdot"></span>AZRAEL · Live-Reaktion<span class="azdis">KI · kann irren</span></div>
+      <div class="aztext" id="az_text"></div>
+    </div>
+  </div>
+
+  <div class="offline" id="offline">// overlay offline · keine Verbindung</div>
+</div><!-- /#stage -->
+
+<script>
+/* Bühne auf die Viewport-Größe einpassen (OBS @1920×1080 → Faktor 1.0;
+   Handy/Browser-Vorschau wird proportional eingepasst). */
+(function(){
+  var stage=document.getElementById('stage');
+  /* V37-B100: Die Bühne folgt dem SEITENVERHÄLTNIS des Viewports.
+     Vorher war sie hart 1920x1080 und wurde per min(vw/1920, vh/1080)
+     eingepasst — bei einer 9:16-Quelle (1080x1920) ergab das scale=0.5625
+     und die komplette Bühne schrumpfte auf ein 1080x608-Band in der
+     Bildmitte: 32% der Höhe bespielt, der Rest leer. Jetzt bekommt Portrait
+     eine eigene 1080x1920-Bühne; die Layout-Regeln dafür hängen an
+     html.portrait und rechnen in ECHTEN Bühnen-Pixeln (vw/vh wären falsch,
+     weil sie gegen den Viewport zählen, nicht gegen die skalierte Bühne). */
+  function fit(){
+    if(!stage) return;
+    var vw=window.innerWidth, vh=window.innerHeight;
+    var portrait = vh > vw;
+    var W = portrait ? 1080 : 1920, H = portrait ? 1920 : 1080;
+    document.documentElement.classList.toggle('portrait', portrait);
+    stage.style.width  = W+'px';
+    stage.style.height = H+'px';
+    var s=Math.min(vw/W, vh/H);
+    var x=Math.round((vw-W*s)/2);
+    var y=Math.round((vh-H*s)/2);
+    stage.style.transform='translate('+x+'px,'+y+'px) scale('+s+')';
+  }
+  window.addEventListener('resize', fit);
+  window.addEventListener('orientationchange', fit);
+  fit();
+})();
+</script>
+<script>
+const $=s=>document.querySelector(s);
+
+/* ============ AI-MOD ORB (canvas, audio-reaktiv) ============ */
+const orb=$('#orb'), octx=orb.getContext('2d');
+let speaking=false, speakUntil=0, amp=new Array(72).fill(0.5);
+function orbDraw(ts){
+  const W=orb.width,H=orb.height,cx=W/2,cy=H/2,R=58;
+  octx.clearRect(0,0,W,H);
+  const neon='#00ff9c', cyan='#00e5ff';
+  const isSpk = performance.now()<speakUntil;
+  // rotierende äußere Ticks
+  octx.save(); octx.translate(cx,cy); octx.rotate(ts*0.0004);
+  for(let a=0;a<360;a+=15){
+    const r=a*Math.PI/180; octx.strokeStyle='rgba(0,255,156,'+(a%45===0?0.5:0.18)+')'; octx.lineWidth=a%45===0?2:1;
+    octx.beginPath(); octx.moveTo(Math.cos(r)*(R+14),Math.sin(r)*(R+14)); octx.lineTo(Math.cos(r)*(R+20),Math.sin(r)*(R+20)); octx.stroke();
+  }
+  octx.restore();
+  // reaktiver Wellenring
+  const target = isSpk ? 1 : 0.18;
+  const speed  = isSpk ? 0.35 : 0.08;
+  for(let i=0;i<amp.length;i++){
+    const drive = isSpk ? (0.5+0.5*Math.sin(ts*0.012+i*0.7)+Math.random()*0.5) : (0.5+0.5*Math.sin(ts*0.003+i*0.5));
+    amp[i] += ((drive*target) - amp[i]) * speed;
+    if(amp[i]<0) amp[i]=0; else if(amp[i]>1.2) amp[i]=1.2;   // clamp → bleibt im Canvas
+  }
+  octx.beginPath();
+  for(let i=0;i<=amp.length;i++){
+    const idx=i%amp.length; const ang=(i/amp.length)*Math.PI*2 - Math.PI/2;
+    const rr=R + amp[idx]*20;
+    const x=cx+Math.cos(ang)*rr, y=cy+Math.sin(ang)*rr;
+    i===0?octx.moveTo(x,y):octx.lineTo(x,y);
+  }
+  octx.closePath();
+  octx.strokeStyle=isSpk?neon:cyan; octx.lineWidth=2;
+  octx.shadowColor=isSpk?neon:cyan; octx.shadowBlur=isSpk?14:7; octx.stroke(); octx.shadowBlur=0;
+  // Kern
+  const pulse=R*0.46 + Math.sin(ts*(isSpk?0.01:0.004))*4 + (isSpk?5:0);
+  const g=octx.createRadialGradient(cx,cy,0,cx,cy,pulse);
+  g.addColorStop(0, isSpk?'rgba(0,255,156,0.95)':'rgba(0,229,255,0.7)');
+  g.addColorStop(0.6,'rgba(0,255,156,0.15)'); g.addColorStop(1,'rgba(0,0,0,0)');
+  octx.fillStyle=g; octx.beginPath(); octx.arc(cx,cy,pulse,0,Math.PI*2); octx.fill();
+  // innerer Kern-Punkt
+  octx.fillStyle=isSpk?neon:cyan; octx.shadowColor=isSpk?neon:cyan; octx.shadowBlur=14;
+  octx.beginPath(); octx.arc(cx,cy,5,0,Math.PI*2); octx.fill(); octx.shadowBlur=0;
+  requestAnimationFrame(orbDraw);
+}
+requestAnimationFrame(orbDraw);
+
+/* ============ State-Polling ============ */
+let _seenFollower=null, _seenDonationTs=null, _initDone=false, _lastLine='', _bubbleTimer=null, _alertQueue=[], _alertBusy=false, _azLast='';
+
+function fmtAmount(a){ if(a==null||a==='') return ''; const s=String(a); return /[€$£]/.test(s)?s:(s+(/^\d+([.,]\d+)?$/.test(s)?' €':'')); }
+
+function showBubble(text){
+  if(!text){ return; }
+  $('#b_text').textContent=text;
+  $('#bubble').classList.add('show');
+  clearTimeout(_bubbleTimer);
+  _bubbleTimer=setTimeout(()=>$('#bubble').classList.remove('show'), 8000);
+}
+
+/* V37-OVMP: Plattform-Badge (kick|twitch|youtube|tiktok) */
+const _PLBL={kick:'KICK',twitch:'TWITCH',youtube:'YT',tiktok:'TIKTOK'};
+function pBadge(p){
+  const k=String(p||'kick').toLowerCase();
+  const lbl=_PLBL[k]||k.toUpperCase().slice(0,6);
+  return `<span class="pbadge pf-${escapeHtml(k)}">${escapeHtml(lbl)}</span>`;
+}
+function queueAlert(kind,name,msg,platform){ _alertQueue.push({kind,name,msg,platform}); pumpAlert(); }
+function pumpAlert(){
+  if(_alertBusy||!_alertQueue.length) return;
+  _alertBusy=true;
+  const {kind,name,msg,platform}=_alertQueue.shift();
+  const el=$('#alert');
+  el.className=''; void el.offsetWidth;
+  const _pl=platform?(' · '+(_PLBL[String(platform).toLowerCase()]||platform)):'';
+  $('#a_kind').textContent = (kind==='donation'?'Donation':'Neuer Follower')+_pl;
+  $('#a_name').textContent = name||'';
+  $('#a_msg').textContent = msg||'';
+  el.classList.add('show','kind-'+kind);
+  setTimeout(()=>{ el.className=''; _alertBusy=false; pumpAlert(); }, 5600);
+}
+
+// ===== AZRAEL Stimme (Web Speech API → wird von OBS als Browser-Source-Audio erfasst) =====
+// Die Sprachausgabe erfolgt auf der OBS-Maschine; dort müssen passende Stimmen
+// installiert sein (z. B. eine de-DE-Stimme). voice.name leer = automatisch nach Sprache.
+let _voices=[], _spoke={react:'', mod:''};
+function _loadVoices(){ try{ _voices=window.speechSynthesis.getVoices()||[]; }catch(e){ _voices=[]; } }
+if('speechSynthesis' in window){ _loadVoices(); try{ window.speechSynthesis.onvoiceschanged=_loadVoices; }catch(e){} }
+function _pickVoice(v){
+  if(!_voices.length) _loadVoices();
+  if(v.name){ const m=_voices.find(x=>x.name===v.name); if(m) return m; }
+  const lang=(v.lang||'de-DE').toLowerCase();
+  return _voices.find(x=>x.lang&&x.lang.toLowerCase()===lang)
+      || _voices.find(x=>x.lang&&x.lang.toLowerCase().startsWith(lang.slice(0,2)))
+      || null;
+}
+function azSpeak(text, v){
+  if(!('speechSynthesis' in window) || !text) return;
+  try{
+    const u=new SpeechSynthesisUtterance(String(text));
+    u.lang=v.lang||'de-DE';
+    u.rate=+v.rate||1; u.pitch=+v.pitch||1; u.volume=(v.volume==null?1:+v.volume);
+    const vo=_pickVoice(v); if(vo) u.voice=vo;
+    window.speechSynthesis.cancel();   // nicht stapeln — die neueste Äußerung zählt
+    window.speechSynthesis.speak(u);
+  }catch(e){}
+}
+
+function playAudio(url, vol){
+  try{
+    const a=$('#az_audio'); if(!a||!url) return;
+    a.src=url; a.volume=(vol==null?1:Math.max(0,Math.min(1,+vol)));
+    a.currentTime=0; a.play().catch(()=>{});
+  }catch(e){}
+}
+
+async function poll(){
+  let d=null;
+  try{ const r=await fetch('/api/overlay/state',{cache:'no-store'}); d=await r.json(); }
+  catch(e){ $('#offline').style.display='block'; setTimeout(poll,3000); return; }
+  $('#offline').style.display='none';
+  if(!d||!d.ok){ setTimeout(poll,3000); return; }
+  const voice=d.voice||{};
+
+  // Title
+  if(d.title){ $('#t_name').textContent=d.title; }
+
+  // Goal / Donations
+  const goal=d.goal||{};
+  if(goal.label) $('#d_label').textContent=goal.label;
+  if($('#d_purpose')) $('#d_purpose').textContent=goal.purpose||'';
+  if(goal.target>0){
+    const pct=Math.max(0,Math.min(100, (goal.current/goal.target)*100));
+    $('#d_goalbar').style.width=pct+'%';
+    $('#d_goalv').textContent=Math.round(goal.current)+' / '+goal.target+' €';
+  } else {
+    $('#d_goalbar').style.width='0%';
+    $('#d_goalv').textContent=goal.current?Math.round(goal.current)+' €':'';
+  }
+  const dons=Array.isArray(d.donations)?d.donations:[];
+  const dl=$('#d_list');
+  dl.innerHTML = dons.length ? dons.slice(0,6).map(x=>
+    `<div class="drow">${pBadge(x.platform)}<span class="dn">${escapeHtml(x.name||'?')}</span><span class="da">${escapeHtml(fmtAmount(x.amount))}</span></div>`
+  ).join('') : '<div class="dempty">noch keine Donations</div>';
+
+  /* V37-OVMP: Bilanz je Plattform (nur Plattformen mit Aktivität zeigen) */
+  const bp=d.by_platform||{};
+  const sp=$('#d_split');
+  if(sp){
+    const rows=Object.keys(bp).filter(k=>(bp[k].donations>0||bp[k].follows>0)).map(k=>{
+      const v=bp[k], bits=[];
+      if(v.amount>0) bits.push(Math.round(v.amount)+' €');
+      else if(v.donations>0) bits.push(v.donations+'×');
+      if(v.follows>0) bits.push('+'+v.follows+' F');
+      return `<span class="sp">${pBadge(k)}${escapeHtml(bits.join(' · '))}</span>`;
+    });
+    sp.innerHTML=rows.join('');
+  }
+  /* Zähler-Nullpunkt sichtbar machen — das Overlay zählt ab Sende-Start */
+  const ds=$('#d_since');
+  if(ds) ds.textContent = d.session_start ? 'seit Sende-Start '+String(d.session_start).slice(11,16) : '';
+
+  // Latest follower (+ Plattform-Badge)
+  const lf=d.latest_follower;
+  if(lf&&lf.name){
+    $('#f_name').innerHTML=escapeHtml(lf.name)+
+      '<span class="fplat">'+pBadge(lf.platform)+'</span><span class="fglyph">▸</span>';
+  }
+  /* Ticker: letzte Follower ALLER Plattformen */
+  const ft=$('#f_ticker');
+  if(ft){
+    const fl=Array.isArray(d.followers)?d.followers.slice(1,5):[];
+    ft.innerHTML=fl.map(x=>`<span class="ft">${pBadge(x.platform)}${escapeHtml(x.name||'?')}</span>`).join('');
+  }
+
+  // Moderator
+  const m=d.mod||{};
+  const st=$('#m_state');
+  st.textContent = !m.running ? 'standby' : (m.connected ? 'aktiv · hört zu' : 'aktiv');
+  st.classList.toggle('on', !!m.running);
+  if(m.speaking){ speakUntil=performance.now()+2500; }
+  if(m.last_line && m.last_line!==_lastLine){
+    _lastLine=m.last_line;
+    speakUntil=performance.now()+4000;
+    showBubble(m.last_line);
+    if(voice.enabled && voice.mod && voice.engine!=='piper' && m.last_line!==_spoke.mod){ _spoke.mod=m.last_line; azSpeak(m.last_line, voice); }
+  }
+
+  // AZRAEL — Avatar / Live-Reaktion (vor der Kamera)
+  const az=d.azrael||{};
+  const azEl=$('#azrael');
+  if(azEl){
+    if(az.show){
+      azEl.style.display='flex';
+      azEl.classList.toggle('active', !!az.active);
+      if(az.active && az.text && az.text!==_azLast){
+        _azLast=az.text;
+        $('#az_text').textContent=az.text;
+        if(voice.enabled && voice.reactions){
+          _spoke.react=az.text;
+          if(voice.engine==='piper'){ if(az.audio) playAudio(az.audio, voice.volume); }
+          else { azSpeak(az.text, voice); }
+        }
+      }
+      if(!az.active){ _azLast=''; _spoke.react=''; }
+    } else {
+      azEl.style.display='none';
+    }
+  }
+
+  // ---- Neu-Erkennung für Alerts (nicht beim ersten Poll feuern) ----
+  const topDonTs = dons.length ? dons[0].ts : null;
+  if(_initDone){
+    if(lf&&lf.name && (!_seenFollower || (lf.name+lf.ts)!==_seenFollower)){
+      queueAlert('follow', lf.name, '', lf.platform);
+    }
+    if(topDonTs && topDonTs!==_seenDonationTs){
+      const top=dons[0];
+      queueAlert('donation', top.name, (fmtAmount(top.amount)? fmtAmount(top.amount)+(top.message? ' · '+top.message:'') : top.message||''), top.platform);
+    }
+  }
+  if(lf&&lf.name) _seenFollower=lf.name+lf.ts;
+  _seenDonationTs=topDonTs;
+  _initDone=true;
+
+  setTimeout(poll, 2500);
+}
+function escapeHtml(s){ return String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+poll();
+</script>
+</body>
+</html>

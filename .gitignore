@@ -1,0 +1,39 @@
+# ── Geheimnisse: NIEMALS ins Repo ───────────────────────────────────────
+# .env traegt 352 Variablen inkl. Cookies, OAuth-Tokens und Stream-Keys.
+# Einmal committet ist ein Geheimnis auch nach dem Loeschen noch in der
+# Historie — deshalb steht das hier ganz oben und nicht irgendwo unten.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+youtube_oauth.json
+twitch_oauth.json
+
+# ── Laufzeitdaten: gehoeren dem Server, nicht dem Repo ───────────────────
+*.sqlite
+*.sqlite3
+*.db
+recordings/
+logs/
+*.log
+build/
+
+# ── Erzeugnisse ─────────────────────────────────────────────────────────
+# .claude/INDEX.md ist ein Erzeugnis von `ncpatch map`, aber es wird
+# MITVERSIONIERT: es ist der Navigationsindex und im Auslieferungsarchiv
+# enthalten. Ein Diff darauf zeigt sofort, welche Routen/Funktionen eine
+# Aenderung angefasst hat — genau die Information, die bisher fehlte.
+__pycache__/
+*.py[cod]
+.ruff_cache/
+.pytest_cache/
+*.bak
+*.tmp
+
+# ── Auslieferungsarchive ────────────────────────────────────────────────
+# Der Build ist reproduzierbar (tools/build_release.py) — das ZIP selbst
+# gehoert nicht in die Historie, es blaeht sie nur auf.
+NIGHTCRAWLER_v37_*.zip
+*.tgz
+*.tar.gz

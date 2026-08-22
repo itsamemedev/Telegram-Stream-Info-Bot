@@ -1,0 +1,22 @@
+# V37-W-PLUS: systemd-Unit für llama.cpp (Brain-LLM-Backend Tier 4)
+# Install:  cp llama-server.service /etc/systemd/system/
+#           systemctl daemon-reload && systemctl enable --now llama-server
+# Modell:   siehe SETUP_LLAMACPP.md (Qwen2.5-1.5B-Instruct Q4_K_M empfohlen)
+[Unit]
+Description=llama.cpp Server (NIGHTCRAWLER Brain-LLM)
+After=network.target
+
+[Service]
+Type=simple
+# -t 4: 4 der 8 Kerne — ffmpeg/Whisper brauchen den Rest. Nice=10: Restreams
+# haben immer Vorrang vor der KI.
+ExecStart=/opt/llama.cpp/llama-server \
+  -m /opt/models/qwen2.5-1.5b-instruct-q4_k_m.gguf \
+  --host 127.0.0.1 --port 8080 -t 4 -c 4096 --embeddings
+Nice=10
+Restart=always
+RestartSec=5
+MemoryMax=3G
+
+[Install]
+WantedBy=multi-user.target
