@@ -1,10 +1,9 @@
 <div align="center">
 
-# 🌒 NIGHTCRAWLER
+<img src="docs/assets/banner.svg" alt="NIGHTCRAWLER — v4.0 Restream Control Room" width="100%">
 
-### Der Kontrollraum für Live-Streaming — Überwachung, Aufnahme, Multi-Ziel-Restream und KI-Moderation
-
-**v4.0 · „Restream Control Room" · Release 2026.08**
+### Der Kontrollraum für Live-Streaming
+#### Überwachung · Aufnahme · Multi-Ziel-Restream · KI-Moderation
 
 [![Lizenz: GPL v3](https://img.shields.io/badge/Lizenz-GPLv3-blue.svg?style=for-the-badge&logo=gnu)](LICENSE)
 [![Python 3.12+](https://img.shields.io/badge/Python-3.12%2B-3776AB.svg?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
@@ -26,6 +25,16 @@
 > auf einem einzigen Server, ohne Cloud-Abo.**
 
 </div>
+
+```mermaid
+flowchart LR
+    A["🎥 TikTok geht live"] --> B["🔍 erkannt<br/>Anti-Flap"]
+    B --> C["⏺️ mitgeschnitten<br/>3-stufiger Fallback"]
+    C --> D["📡 restreamt<br/>Kick · Twitch · YouTube"]
+    D --> E["🛡️ moderiert<br/>SENTINEL-SHIELD"]
+    E --> F["🤖 kommentiert<br/>AZRAEL"]
+    F --> G["📊 ausgewertet<br/>Dashboard"]
+```
 
 ---
 
@@ -139,35 +148,57 @@ fürs Handy.
 
 </details>
 
+### Der Lebenszyklus eines Streams
+
+```mermaid
+stateDiagram-v2
+    [*] --> Beobachtet
+    Beobachtet --> Geprüft: adaptives Polling
+    Geprüft --> Beobachtet: offline
+    Geprüft --> Live: live erkannt<br/>(Anti-Flap-Hysterese)
+    Live --> Preflight: Quelle auflösen
+    Preflight --> Beobachtet: alles 404<br/>kein Spawn
+    Preflight --> Aufnahme: Ziel antwortet
+    Aufnahme --> Restream: auto_start_due<br/>(Deckel beachten)
+    Restream --> Aufnahme: Ziel tot →<br/>neu aufbauen
+    Aufnahme --> Nachbereitung: Stream endet
+    Restream --> Nachbereitung: Stream endet
+    Nachbereitung --> Beobachtet: Clips, Highlights,<br/>Archiv, Statistik
+    Nachbereitung --> [*]
+```
+
 ---
 
 ## 🏗️ Architektur
 
-```
-        Telegram          Discord           TikTok            Kick / Twitch / YouTube
-           │                 │                 │                        │
-           │   Kommandos     │  45 Slash-Cmds  │   Live + Chat          │  Chat + RTMP-Ingest
-           └────────┬────────┴────────┬────────┴───────────┬────────────┘
-                    ▼                 ▼                    ▼
-    ┌───────────────────────────────────────────────────────────────────────────┐
-    │                              bot_v37.py                                   │
-    │  Monolith · 30.000+ Zeilen · Scraper · Recorder · Restream · Flask (318)   │
-    └──────┬────────────────────────┬──────────────────────────┬────────────────┘
-           │                        │                          │
-           │ configure()            │ configure()              │ Adapter
-           ▼                        ▼                          ▼
-    ┌──────────────┐        ┌──────────────┐          ┌─────────────────┐
-    │  nc/  (84+4) │        │  templates/  │          │ brain_bridge.py │
-    │  Fachmodule  │        │  Dashboard   │          └────────┬────────┘
-    │  db · oauth  │        │  Overlay/PWA │                   │
-    │  restream    │        └──────────────┘                   ▼
-    │  ledger · …  │                              ┌────────────────────────────┐
-    └──────────────┘                              │  brain/  — eigene brain.db │
-                                                  │  state · rules · router    │
-    ┌──────────────────────────┐                  │  memory · knowledge        │
-    │   SQLite  ODER  MariaDB  │                  │  semantic · scheduler      │
-    └──────────────────────────┘                  │  llm · agents · report     │
-                                                  └────────────────────────────┘
+```mermaid
+flowchart TB
+    TG["📨 Telegram<br/>28 Befehle"]:::in
+    DC["🎮 Discord<br/>45 Slash-Commands"]:::in
+    TT["🎥 TikTok<br/>Live-Erkennung + Chat"]:::in
+
+    TG --> BOT
+    DC --> BOT
+    TT --> BOT
+
+    BOT["<b>bot_v37.py</b><br/>Monolith · 34.500 Zeilen<br/>Scraper · Recorder · Restream<br/>Flask-Dashboard mit 318 Routen"]:::core
+
+    BOT -->|configure| NC["<b>nc/</b> — 84 Fachmodule<br/>Schema · OAuth · Restream<br/>Ledger · Moderation · Intel"]:::lib
+    BOT --> TPL["<b>templates/</b><br/>Dashboard · Overlay · PWA"]:::lib
+    BOT --> BR["brain_bridge.py"]:::lib
+    BR --> BRAIN["<b>brain/</b> — eigene brain.db<br/>state · rules · router · memory<br/>knowledge · semantic · scheduler<br/>llm · agents · report"]:::brain
+    BOT --> DB[("SQLite<br/>oder MariaDB")]:::db
+
+    BOT --> KICK["🟢 Kick"]:::out
+    BOT --> TW["🟣 Twitch"]:::out
+    BOT --> YT["🔴 YouTube"]:::out
+
+    classDef in fill:#1c2b3a,stroke:#2de1c2,color:#e6edf3
+    classDef core fill:#3a2415,stroke:#ff8c42,stroke-width:2px,color:#ffd9a0
+    classDef lib fill:#1a2430,stroke:#7fe7d4,color:#e6edf3
+    classDef brain fill:#241c3a,stroke:#a78bfa,color:#e6edf3
+    classDef db fill:#14202c,stroke:#8fd3f4,color:#e6edf3
+    classDef out fill:#1c2b1e,stroke:#53fc18,color:#e6edf3
 ```
 
 > [!IMPORTANT]
@@ -432,13 +463,27 @@ ADMIN_CHAT_ID=123456789              # deine Telegram-ID (Alarme, Admin-Befehle)
 
 ## 📡 Restream
 
-```
-  TikTok-Quelle ──► ffmpeg ──► tee (onfail=ignore) ──┬──► Kick    (primär)
-                      │                              ├──► Twitch  (optional)
-                      │                              └──► YouTube (optional)
-                      │
-              Transcode wird automatisch erzwungen, sobald ein Zusatzziel aktiv ist
-              (feste 2s-Keyframes: -g / -keyint_min / -sc_threshold 0)
+```mermaid
+flowchart LR
+    SRC["🎥 TikTok-Quelle"] --> FF["ffmpeg<br/>Transcode wird erzwungen,<br/>sobald ein Zusatzziel aktiv ist<br/>feste 2s-Keyframes"]
+    FF --> TEE{{"tee<br/>onfail=ignore"}}
+    TEE --> K["🟢 Kick<br/>primär"]
+    TEE --> T["🟣 Twitch<br/>optional"]
+    TEE --> Y["🔴 YouTube<br/>optional"]
+    K -.- V
+    T -.- V
+    Y -.- V
+    V["🔎 restream_guard<br/>fragt die Plattform-APIs selbst<br/>90s Anlaufkarenz · 3× Hysterese<br/>UNKNOWN ≠ OFFLINE"]
+    V ==>|"Ziel nachweislich tot →<br/>Prozess neu aufbauen"| FF
+
+    classDef src fill:#1c2b3a,stroke:#2de1c2,color:#e6edf3
+    classDef proc fill:#3a2415,stroke:#ff8c42,color:#ffd9a0
+    classDef out fill:#1c2b1e,stroke:#53fc18,color:#e6edf3
+    classDef guard fill:#241c3a,stroke:#a78bfa,color:#e6edf3
+    class SRC src
+    class FF,TEE proc
+    class K,T,Y out
+    class V guard
 ```
 
 **Scharf schalten** — in der `.env`:
@@ -573,6 +618,33 @@ ssh -L 3000:localhost:8050 ubuntu@<server-ip>
 | `/brain` | Gehirn: Wissensgraph, Lernkurve, Sentinel-Flotte, Agenten-Log |
 | `/overlay` | OBS-Overlay: AZRAEL-Sprechblase, Donation-Box, Titel |
 | `/api/selftest` | **„Was ist gerade kaputt?"** — jeder Befund mit dem Befehl, der ihn behebt |
+
+### 📸 Screenshots
+
+<!--
+  Hier gehoeren echte Screenshots hin — sie sind das Einzige, was ein fremder
+  Besucher nicht aus dem Code herauslesen kann, und der groesste Hebel fuer den
+  ersten Eindruck. Vorgehen:
+
+    1. ssh -L 3000:localhost:8050 ubuntu@<server-ip>
+    2. http://localhost:3000 im Browser, Fenster auf 1440x900
+    3. Aufnehmen: Hauptkontrollraum, /brain, /overlay, PWA auf dem Handy
+    4. VORHER schwaerzen: Stream-Keys, Tokens, Klarnamen im Chat,
+       Zuschauernamen, Betraege im Einnahmen-Panel
+    5. Ablegen unter docs/assets/ und die Tabelle unten einkommentieren
+
+  | Kontrollraum | Gehirn |
+  |---|---|
+  | ![Dashboard](docs/assets/screenshot-dashboard.png) | ![Brain](docs/assets/screenshot-brain.png) |
+  | **Overlay im Sendebild** | **PWA auf dem Handy** |
+  | ![Overlay](docs/assets/screenshot-overlay.png) | ![PWA](docs/assets/screenshot-pwa.png) |
+-->
+
+> [!NOTE]
+> Screenshots folgen. Das Dashboard zeigt Live-Betriebsdaten — die Bilder müssen
+> vor der Veröffentlichung von Stream-Keys, Tokens und Zuschauernamen befreit
+> werden. Die Anleitung dafür steht als Kommentar in der Quelle dieses
+> Abschnitts.
 
 ### 📱 Als App aufs Handy (PWA)
 
@@ -793,6 +865,7 @@ NIGHTCRAWLER/
 | **[`DEPLOY.md`](DEPLOY.md)** | Vollständige Deploy- und Prüfanleitung |
 | **[`README_V37.md`](README_V37.md)** | Ausführliche Release-Historie aller Wellen |
 | **[`CHANGELOG.md`](CHANGELOG.md)** | Versionsübersicht |
+| **[`docs/MODULARISIERUNG.md`](docs/MODULARISIERUNG.md)** | Plan, den Monolithen zu zerlegen — gemessen, in Wellen |
 | **[`SETUP_LLAMACPP.md`](SETUP_LLAMACPP.md)** | Lokales LLM einrichten |
 | **[`SETUP_TWITCH_OAUTH.md`](SETUP_TWITCH_OAUTH.md)** · **[`SETUP_YT_OAUTH.md`](SETUP_YT_OAUTH.md)** | OAuth-Flows |
 | **[`docs/CROWDSEC.md`](docs/CROWDSEC.md)** | Abwehr-Panel |
@@ -895,6 +968,36 @@ ersten Imports geladen. Konfiguration deshalb immer als Funktion lesen
 
 Vollständige Historie: **[`CHANGELOG.md`](CHANGELOG.md)** ·
 **[`README_V37.md`](README_V37.md)**
+
+---
+
+## 🧭 Roadmap
+
+Der nächste grosse Schritt ist kein Feature, sondern Aufräumen: **`bot_v37.py`
+hat 34.487 Zeilen**. Die Datei ist der Engpass des Projekts — sie lässt sich
+nicht überblicken und nur mit Werkzeug bearbeiten.
+
+Der vollständige, gemessene Plan dazu steht in
+**[`docs/MODULARISIERUNG.md`](docs/MODULARISIERUNG.md)**. Die Kurzfassung:
+
+| Welle | Inhalt | Zeilen |
+|---|---|---:|
+| **0** | Fundament — `nc/ctx.py` für die 13 echten Querschnittshelfer | ±0 |
+| **1** | Die 173 global-freien Funktionen bündeln | −2.200 |
+| **2** | Blueprint-Pilot `/api/recordings` — beweist das Verfahren | −470 |
+| **3** | Blueprints in Serie — **der grosse Hebel** | −7.600 |
+| **4** | `RestreamManager` und `KickModerator` herauslösen | −1.700 |
+| **5** | Discord-Schicht nach `discord_ext/` | −2.100 |
+| **6** | Kern aufräumen, `bot_v37.py` wird Kompositionswurzel | Rest |
+
+Zwei Messungen machen das machbar: die Kopplung ist **flach** (Median 2
+Fremdbezüge je Route, nur 13 echte Querschnittshelfer), und es gibt **kein
+einziges `url_for`** im Projekt — Flask-Blueprints sind hier
+verhaltensneutral.
+
+Die Messlatte ist keine Zeilenzahl:
+
+> **Eine neue API-Route anlegen, ohne `bot_v37.py` zu öffnen.**
 
 ---
 

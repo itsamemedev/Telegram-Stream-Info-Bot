@@ -139,6 +139,10 @@ python3 tools/ncpatch.py verify patches/x.json         # Trockenlauf
 python3 tools/ncpatch.py apply  patches/x.json         # alles-oder-nichts, legt .bak an
 ```
 
+> **Arbeitest du an der Zerlegung des Monolithen?** Dann lies zuerst
+> [`docs/MODULARISIERUNG.md`](docs/MODULARISIERUNG.md) — dort steht das Verfahren
+> je Welle, die Regel zur Vertragswanderung und was ausdrücklich nicht gemacht wird.
+
 `find` antwortet aus `.claude/INDEX.md`. **Nach jeder Änderung an Routen,
 Slash-Commands oder Top-Level-Funktionen die Karte neu bauen** und mit
 committen:
