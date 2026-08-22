@@ -399,6 +399,26 @@ def cmd_map(args) -> int:
         z.append(f"{ln:>6}  {meth:<16} {pfad:<48} {fn}")
     z.append("```\n")
 
+    # Seit Welle 2 der Zerlegung liegen Routen auch in nc/routes/*.py als
+    # Blueprints. Ohne sie hier wuerde `ncpatch find` genau die Routen nicht
+    # mehr finden, die aus dem Monolithen heraus sind — und die Kernregel des
+    # Projekts ("erst fragen wo etwas steht") liefe ins Leere.
+    bp_dir = os.path.join(root, "nc", "routes")
+    bp_routes = []
+    if os.path.isdir(bp_dir):
+        for name in sorted(os.listdir(bp_dir)):
+            if not name.endswith(".py") or name == "__init__.py":
+                continue
+            rel = f"nc/routes/{name}"
+            for ln, pfad, meth, fn in _scan(os.path.join(bp_dir, name))["routes"]:
+                bp_routes.append((rel, ln, pfad, meth, fn))
+    if bp_routes:
+        z.append(f"## Flask-Routen in Blueprints, nc/routes/ ({len(bp_routes)})\n")
+        z.append("```")
+        for rel, ln, pfad, meth, fn in sorted(bp_routes, key=lambda r: r[2]):
+            z.append(f"{ln:>6}  {meth:<16} {pfad:<48} {fn}   [{rel}]")
+        z.append("```\n")
+
     z.append(f"## Discord-Slash-Commands ({len(d['slash'])})\n")
     z.append("```")
     for ln, name, beschr in sorted(d["slash"], key=lambda r: r[1]):

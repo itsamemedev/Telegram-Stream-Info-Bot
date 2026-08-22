@@ -3436,8 +3436,13 @@ def test_v40_w34_robustness_sweep():
     # (1) Scheduler: saubere 400-Validierung statt int(None)→500.
     assert src.count("id (Zahl) fehlt oder ungültig") == 2, "Scheduler-Routen nicht gehärtet"
     assert "int(d.get(\"id\")))" not in src, "roher int(d.get('id')) noch vorhanden (500-Risiko)"
-    # (2) Waveform: Division-durch-0-Schutz.
-    assert "num_samples = max(1, int(num_samples))" in src, "Waveform-Guard fehlt"
+    # (2) Waveform: Division-durch-0-Schutz. Der Guard ist mit
+    # compute_waveform_peaks in W106 ins Aufnahmen-Blueprint gewandert — der
+    # Vertrag gilt unveraendert, nur der Anker liegt jetzt dort.
+    _rt = open("nc/routes/recordings.py", encoding="utf-8").read()
+    assert "num_samples = max(1, int(num_samples))" in _rt, "Waveform-Guard fehlt"
+    assert "num_samples = max(1, int(num_samples))" not in src, \
+        "Doppel-Logik: Waveform-Analyse noch im Monolithen"
     # (3) Query-Parameter bleiben flächendeckend robust (W32) — kein Rückfall.
     raw = [ln for ln in src.splitlines()
            if "int(request.args.get" in ln and "clamp_int(request.args.get(name)" not in ln]
@@ -4094,17 +4099,23 @@ def test_v40_w54_inspectcache():
     ok("v4.0-w54: nc.inspectcache — Parse-Fallback + Unicode-Serialisierung + Deckel bitgenau")
 
     src = open("bot_v37.py").read()
-    assert "from nc import inspectcache as _nc_inspectcache" in src
-    assert "_nc_inspectcache.serialize(data)" in src, "Serialisierung nicht delegiert"
-    # v4.0-W104: parse_row ist mit get_or_compute_inspect_sync nach nc/recdb.py
-    # gewandert (Welle 1 der Zerlegung). Der Vertrag gilt unveraendert, nur der
-    # Anker liegt jetzt eine Ebene tiefer: Bot -> recdb -> inspectcache.
+    # Der Vertrag gilt unveraendert; nur seine Anker sind zweimal gewandert.
+    # W104: parse_row ging mit get_or_compute_inspect_sync nach nc/recdb.py.
+    # W106: store_inspect ging mit den Aufnahmen-Routen ins Blueprint.
+    # Geprueft wird deshalb dort, wo der Code HEUTE liegt — und zusaetzlich,
+    # dass im Monolithen keine zweite Kopie zurueckgeblieben ist.
     _recdb = open("nc/recdb.py", encoding="utf-8").read()
+    _rt = open("nc/routes/recordings.py", encoding="utf-8").read()
+    assert "from nc import inspectcache as _nc_inspectcache" in _recdb, \
+        "nc.recdb importiert den Inspect-Cache nicht"
     assert "_nc_inspectcache.parse_row(row)" in _recdb, "Parse-Fallback nicht in nc.recdb"
+    assert "from nc import inspectcache as _nc_inspectcache" in _rt, \
+        "Blueprint importiert den Inspect-Cache nicht"
+    assert "_nc_inspectcache.serialize(data)" in _rt, "Serialisierung nicht delegiert"
     assert "return _nc_recdb.get_or_compute_inspect_sync(" in src, "Bot delegiert nicht an recdb"
     assert "json.dumps(data, ensure_ascii=False)[:200000]" not in src, "alte Serialisierung noch im Monolithen"
     assert "_nc_inspectcache.parse_row(row)" not in src, "Doppel-Logik: Parse noch im Monolithen"
-    ok("v4.0-w54: (De-)Serialisierung delegiert — Parse seit W104 ueber nc.recdb")
+    ok("v4.0-w54: (De-)Serialisierung delegiert — Parse in nc.recdb, serialize im Blueprint")
 
 
 def test_v40_w55_record_fail_backoff():
@@ -4787,9 +4798,14 @@ def test_v40_w72_bughunt_website():
     web = open("website/lafap_index.html", encoding="utf-8").read()
 
     # (A) neuer Endpoint, gehärtet über _arg_int (kein rohes int(request.args)).
-    assert '@dashboard_app.route("/api/recordings/daily")' in src, "Aggregat-Endpoint fehlt"
-    assert "def api_recordings_daily" in src, "Aggregat-Handler fehlt"
-    _seg = src[src.find("def api_recordings_daily"):src.find("def api_recordings_daily") + 1400]
+    # W106: die Aufnahmen-Routen liegen im Blueprint; der Dekorator heisst dort
+    # @bp.route statt @dashboard_app.route. Der Vertrag prueft unveraendert
+    # dasselbe — Existenz und Haertung —, nur an der neuen Stelle.
+    _rt = open("nc/routes/recordings.py", encoding="utf-8").read()
+    assert '@bp.route("/api/recordings/daily")' in _rt, "Aggregat-Endpoint fehlt"
+    assert "def api_recordings_daily" in _rt, "Aggregat-Handler fehlt"
+    assert "register_blueprint(_nc_routes_recordings.bp)" in src, "Blueprint nicht registriert"
+    _seg = _rt[_rt.find("def api_recordings_daily"):_rt.find("def api_recordings_daily") + 1400]
     assert "_arg_int(" in _seg, "Endpoint nicht über _arg_int gehärtet"
     assert "int(request.args.get" not in _seg, "roher Query-Parser im neuen Endpoint"
     assert "FROM recordings" in _seg and "deleted_at IS NULL" in _seg, "zählt nicht sauber aus recordings"
@@ -5210,8 +5226,10 @@ def test_v40_w85_truncation_and_legal_pages():
            Website-Ordner NICHT gab (404 → für eine .de-Seite ein Rechtsrisiko).
            Beide Seiten neu im gleichen Look, DSGVO-konform (lokale Fonts, keine
            externen Requests), mit ENTWURF-Banner + Platzhaltern."""
-    src = open("bot_v37.py").read()
-    _seg = src[src.find("def api_recordings_list"):src.find("def api_recordings_list") + 400]
+    # W106: api_recordings_list liegt im Aufnahmen-Blueprint. Vertrag gleich,
+    # Anker nachgezogen.
+    _rt = open("nc/routes/recordings.py", encoding="utf-8").read()
+    _seg = _rt[_rt.find("def api_recordings_list"):_rt.find("def api_recordings_list") + 400]
     assert '_arg_int("limit", 50' in _seg, "recordings/list-Limit nicht gehärtet parametrisiert"
     h = open("templates/dashboard.html").read()
     assert "/api/recordings/list?limit=" in h, "Timeline holt nicht mehr Sessions"
@@ -5379,8 +5397,10 @@ def test_v40_w91_rec_limit_and_legal_pages():
            Cinematic-Seiten angelegt: lokale Fonts (kein Google), noindex,
            ENTWURF-Banner, Platzhalter für die echten Rechtsdaten."""
     # (A) Route + Frontend
-    src = open("bot_v37.py").read()
-    _seg = src[src.find("def api_recordings_list"):src.find("def api_recordings_list") + 400]
+    # W106: api_recordings_list liegt im Aufnahmen-Blueprint. Vertrag gleich,
+    # Anker nachgezogen.
+    _rt = open("nc/routes/recordings.py", encoding="utf-8").read()
+    _seg = _rt[_rt.find("def api_recordings_list"):_rt.find("def api_recordings_list") + 400]
     assert '_arg_int("limit", 50' in _seg, "recordings/list ohne gehärteten limit-Param"
     h = open("templates/dashboard.html").read()
     assert "/api/recordings/list?limit=300" in h, "Timeline holt nicht mehr als 50"
@@ -5527,8 +5547,9 @@ def test_v40_w95_rectimeline_limit_and_legal_pages():
        Cinematic-Look, lokale Fonts (DSGVO), ENTWURF-Banner + Platzhalter."""
     import os as _os
     # (A) Route + Frontend
-    src = open("bot_v37.py").read()
-    assert '_arg_int("limit", 50, 1, 1000)' in src, "recordings/list limit nicht gehärtet"
+    # W106: Haertung liegt mit der Route im Aufnahmen-Blueprint.
+    assert '_arg_int("limit", 50, 1, 1000)' in open(
+        "nc/routes/recordings.py", encoding="utf-8").read(), "recordings/list limit nicht gehärtet"
     h = open("templates/dashboard.html").read()
     assert "/api/recordings/list?limit=300" in h, "Timeline holt nicht mehr Sessions"
     assert "'letzte '+recs.length+' Sessions'" in h, "Timeline-Label nicht ehrlich"

@@ -315,6 +315,74 @@ def _test_recdb():
     ok("bot_v37 delegiert an nc.recdb (13 Funktionen, keine Doppel-Logik)")
 
 
+def _test_routes_recordings():
+    """Welle 2 der Zerlegung (v4.0-W106): die 34 Aufnahmen-Routen liegen als
+       Flask-Blueprint in nc/routes/recordings.py. Geprueft wird, dass das
+       Blueprint fuer sich allein funktioniert (ohne Bot), dass der Kontext
+       laut scheitert statt still None zu liefern, und dass im Monolithen keine
+       zweite Kopie zurueckgeblieben ist."""
+    import importlib
+    from flask import Flask
+    from nc import ctx as ncctx
+    from nc.routes import recordings as rt
+
+    # (1) Die Pfade muessen WOERTLICH die alten sein — ein url_prefix waere die
+    # stille Verhaltensaenderung, die alle Dashboard-Aufrufe bricht.
+    app = Flask(__name__)
+    app.register_blueprint(rt.bp)
+    rules = {str(r.rule) for r in app.url_map.iter_rules() if r.endpoint != "static"}
+    assert len(rules) == 34, "34 Routen erwartet, %d registriert" % len(rules)
+    for want in ("/api/recordings/list", "/api/recordings/daily",
+                 "/api/recordings/<int:rid>/manifest", "/api/recordings/trash",
+                 "/api/rec/orphans", "/api/rec/quality/<int:rec_id>"):
+        assert want in rules, "Pfad fehlt oder umbenannt: %s" % want
+    assert not any(r.startswith("/recordings") for r in rules), \
+        "url_prefix gesetzt — die Pfade haben sich verschoben"
+    ok("routes.recordings: 34 Routen, Pfade woertlich unveraendert")
+
+    # (2) Endpunkt-Namen sind blueprint-qualifiziert. Das ist die EINZIGE
+    # erlaubte Aenderung — sie ist folgenlos, weil es im Projekt kein url_for gibt.
+    eps = {r.endpoint for r in app.url_map.iter_rules() if r.endpoint != "static"}
+    assert all(e.startswith("recordings.") for e in eps), sorted(eps)[:3]
+    for f in ("bot_v37.py", "templates/dashboard.html", "website/lafap_index.html"):
+        assert "url_for(" not in open(f, encoding="utf-8").read(), \
+            "%s benutzt url_for — Endpunkt-Umbenennung waere jetzt ein Bruch" % f
+    ok("routes.recordings: Endpunkte qualifiziert, weiterhin kein url_for im Projekt")
+
+    # (3) Ohne configure() muss der Kontext LAUT scheitern. Ein stiller
+    # None-Kontext waere der CLAUDE.md-Fehler eine Ebene hoeher: die Route
+    # liefe, taete aber nichts.
+    fresh = importlib.reload(ncctx)
+    assert fresh.is_configured() is False
+    try:
+        fresh.get()
+        raise AssertionError("nc.ctx.get() schweigt ohne configure()")
+    except RuntimeError as e:
+        assert "configure" in str(e), e
+    ok("nc.ctx: get() ohne configure() scheitert laut, nicht still")
+
+    # (4) __slots__ ist die Bremse gegen das Sammelbecken — ein vertippter oder
+    # neuer Schluessel muss sofort auffliegen, nicht erst beim ersten Aufruf.
+    try:
+        fresh.configure(gibtsnicht=1)
+        raise AssertionError("unbekannter ctx-Schluessel wurde stillschweigend geschluckt")
+    except AttributeError:
+        pass
+    ok("nc.ctx: unbekannter Schluessel fliegt sofort auf (__slots__)")
+
+    # (5) Und der Monolith haelt keine zweite Kopie.
+    src = open("bot_v37.py", encoding="utf-8").read()
+    assert "from nc.routes import recordings as _nc_routes_recordings" in src
+    assert "dashboard_app.register_blueprint(_nc_routes_recordings.bp)" in src, \
+        "Blueprint nicht registriert"
+    assert "_nc_ctx.configure(" in src, "Laufzeitkontext nicht verdrahtet"
+    for gone in ('@dashboard_app.route("/api/recordings/list")',
+                 "def api_recordings_list", "def compute_waveform_peaks",
+                 "def build_recording_manifest", "def _find_orphans"):
+        assert gone not in src, "Doppel-Logik: %s noch im Monolithen" % gone
+    ok("bot_v37 registriert nur noch — keine Aufnahmen-Route mehr im Monolithen")
+
+
 def main():
     tmp = tempfile.mkdtemp()
     configure_db(db_path=os.path.join(tmp, "t.db"), backend="sqlite")
@@ -401,6 +469,8 @@ def main():
     _test_procdiag()
 
     _test_recdb()
+
+    _test_routes_recordings()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)
 

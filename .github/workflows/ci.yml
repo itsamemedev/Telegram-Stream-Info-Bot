@@ -86,10 +86,12 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
-      # orjson ist die einzige Fremdabhängigkeit, die die statischen Verträge
-      # wirklich importieren. Alles andere in nc/ und brain/ ist stdlib-only.
+      # Bewusst minimal: orjson fuer die statischen Verträge, Flask seit W106 —
+      # die Aufnahmen-Routen sind ein Blueprint, und der Vertrag prueft die
+      # registrierten Regeln an einer echten Flask-App statt an Quelltext.
+      # Alles andere in nc/ und brain/ ist stdlib-only.
       - name: Minimale Abhängigkeiten
-        run: python -m pip install --upgrade pip orjson
+        run: python -m pip install --upgrade pip orjson flask
 
       - name: Statische Restream-Verträge
         run: python test_restream.py
