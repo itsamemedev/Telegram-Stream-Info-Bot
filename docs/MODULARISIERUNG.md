@@ -272,7 +272,7 @@ flowchart TB
     W6["Welle 6 · Kern aufräumen<br/>Rest sortieren"]
 ```
 
-### Welle 0 — Fundament (kein Code bewegt)
+### Welle 0 — Fundament ✅ *erledigt (W106, mit Welle 2)*
 
 Zwei Dinge anlegen, sonst nichts. Wer hier abkürzt, baut in Welle 3 vierzig
 `configure()`-Parameter.
@@ -379,7 +379,7 @@ Risikogewinn des ganzen Umbaus — vor Welle 2 unbedingt einrichten.
 
 ---
 
-### Welle 2 — Blueprint-Pilot: `/api/recordings`
+### Welle 2 — Blueprint-Pilot: `/api/recordings` ✅ *erledigt (W106)*
 
 **Genau ein Blueprint, 26 Routen, 468 Zeilen.** Ziel ist nicht die Zeilenzahl,
 sondern der Beweis, dass das Verfahren trägt.
@@ -419,6 +419,42 @@ zusammen, weil derselbe Pfad mit GET und POST kein Duplikat ist.
 
 **Abnahme:** identische Routentabelle, `test_smoke.py` grün auf dem Server,
 Dashboard im Browser sichtbar unverändert.
+
+#### Was der Pilot gezeigt hat (W106)
+
+**Die drei Gefahren haben gehalten, wie gemessen.** Routentabelle vor und nach
+dem Umbau verglichen: 346 Regeln, kein Pfad verloren, kein neuer; genau 34
+Endpunkt-Umbenennungen, alle mit dem erwarteten Präfix. Zusätzlich alle 34
+Routen wirklich aufgerufen — auch die mit Parametern, die `test_smoke`
+überspringt: 37 Kombinationen, 0 Fehler.
+
+**`nc/ctx.py` entstand erst hier, nicht in Welle 0.** Eine Abstraktion ohne
+Verbraucher ist genau das, wovor dieses Dokument warnt. Zwei vorsorglich
+angelegte Slots (`spawn_async`, `loop_not_ready`) sind noch in derselben Welle
+wieder geflogen, weil sie niemand benutzte. `__slots__` ist die Bremse: ein
+neues Feld fällt im Diff auf.
+
+**Fünf Vertragsanker sind gebrochen, keiner gelöscht.** Darunter der
+Inspect-Cache-Vertrag aus W54 zum *zweiten* Mal — `parse_row` war in Welle 1
+nach `nc/recdb.py` gewandert, `serialize` ging jetzt mit `store_inspect` ins
+Blueprint. Rechne mit einer Anker-Wanderung pro verschobener Funktion, die
+irgendwo zugesichert ist.
+
+> [!IMPORTANT]
+> **Die Lehre für Welle 3: die Navigationskarte muss mitwandern.**
+> `ncpatch map` kannte nur `bot_v37.py` und meldete nach dem Umzug 311 statt
+> 345 Routen — `ncpatch find` hätte genau die ausgelagerten Routen nicht mehr
+> gefunden. Das ist die Kernregel des Projekts, und der Umbau hätte sie
+> ausgehöhlt. Die Karte scannt jetzt `nc/routes/*.py` mit und weist Datei und
+> Zeile aus. **Vor jedem weiteren Blueprint prüfen: findet `ncpatch find` die
+> verschobene Route noch?**
+
+**Was im Monolithen blieb und warum.** `trigger_manual_recording` hängt am
+Recorder-Kern (`_spawn`, `build_recording_cmd`) und teilt sich das Dict
+`_MANUAL_RECORDINGS` mit `stop_manual_recording`. Beide bleiben zusammen im
+Bot: geteilten veränderlichen Zustand über zwei Module zu verteilen ist ein
+Rückschritt, kein Fortschritt. Ebenso die sechs app-weiten Hooks — als
+Blueprint-Hook würden sie nur noch für ihr Blueprint gelten.
 
 ---
 
@@ -543,13 +579,13 @@ Supervisor fahren.
 
 ## 8 · Zielbild und Messlatte
 
-| | Start | heute (W104/W105) | nach Welle 3 | Ziel |
+| | Start | heute (W104–W106) | nach Welle 3 | Ziel |
 |---|---:|---:|---:|---:|
-| `bot_v37.py` Zeilen | 34.487 | 34.447 | ~24.700 | **~8.000** |
-| `bot_v37.py` Grösse | 1,63 MB | ~1,15 MB | **~0,4 MB** |
-| Flask-Routen im Monolithen | 345 | ~30 | 0 |
-| `nc/`-Module | 83 | ~100 | ~115 |
-| Grösste Datei im Projekt | `bot_v37.py` | `bot_v37.py` | `templates/dashboard.html` |
+| `bot_v37.py` Zeilen | 34.487 | **33.674** | ~24.700 | **~8.000** |
+| Flask-Routen im Monolithen | 345 | **311** | ~30 | 0 |
+| Routen in Blueprints | 0 | **34** | ~315 | 345 |
+| `nc/`-Module | 83 | **86** | ~100 | ~115 |
+| Grösste Datei im Projekt | `bot_v37.py` | `bot_v37.py` | `bot_v37.py` | `templates/dashboard.html` |
 
 Die härtere Messlatte ist keine Zahl:
 
