@@ -9,6 +9,61 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ---
 
+## [Unveröffentlicht]
+
+### Behoben — Restream-Stabilität (W113)
+
+Fünf Befunde im Wiederanlauf-Pfad des Restreams, alle in
+`RestreamManager._monitor`. Die Entscheidungslogik liegt jetzt bot-frei und
+geprüft in [`nc/restream_stability.py`](nc/restream_stability.py).
+
+- **Reconnect-Budget kam nie zurück.** `attempts` wanderte von Reconnect zu
+  Reconnect weiter und wurde nur beim Start von Hand geleert. Ein Ziel, das
+  acht Stunden lief und dabei fünfmal kurz stolperte, galt danach als
+  „aufgegeben nach 5 Reconnects" — ab da half nur noch die Verify-Schleife mit
+  120s-Takt und bis zu 900s Backoff statt 8s. Jetzt gibt ein Lauf ab
+  `RESTREAM_STABLE_RUN_S` (180s) das Budget zurück. Für die unabhängigen
+  Relays war genau das in W87 schon repariert; der Hauptpfad blieb aussen vor.
+- **Backoff linear und ohne Streuung.** Gleichzeitig gestorbene Restreams
+  kehrten auf die Sekunde gemeinsam gegen dieselbe Ingest und dieselbe
+  TikTok-Auflösung zurück — der direkte Weg ins 429. Jetzt exponentiell,
+  gedeckelt und mit ±25 % Streuung.
+- **Der Ablauf-Pfad hatte keine Untergrenze.** Eine abgelaufene TikTok-Quell-URL
+  führte zu 2s Pause und einem Neuversuch ohne Fehlversuch — endlos. Solange
+  der Lauf Minuten hielt, ist das richtig (TikToks Signaturen rotieren ~alle
+  sechs Minuten); starb der Prozess nach Sekunden, drehte sich Resolve plus
+  ffmpeg-Spawn im 2s-Takt weiter. Jetzt bremst eine Serienzählung, und ab der
+  letzten Stufe zählt der Versuch als echter Fehlversuch.
+- **Der copy→transcode-Fallback sprang auf Netzfehler an.** Die Heuristik
+  enthielt `"failed to"` und `"unable to"` — beides steht wörtlich in
+  „Failed to resolve hostname" und „Unable to open resource". Ein kurzer
+  Netzhänger in den ersten 25 Sekunden schaltete den Restream damit für die
+  ganze Sitzung auf transcode, dessen Encode-Rückstand der Bot selbst als
+  „die typische Disconnect-Ursache" warnt. Starke Codec-Marker gelten weiter
+  unabhängig vom Netz-Rauschen, die schwachen nur ohne Netzbefund.
+
+### Hinzugefügt
+
+- **Stillstands-Wächter für den Restream.** `_monitor` hängt an `proc.wait()`
+  und sieht deshalb nur den *toten* ffmpeg — nicht den, der lebt und nichts
+  mehr sendet (RTMP-Ausgang blockiert, Input steht, tee-Slave mit
+  `onfail=ignore` weggebrochen). Bisher fror die Health-Anzeige ein und das
+  Panel zeigte weiter „live". Der Wächter belegt Fortschritt an Bild **oder**
+  Bytes, nie am blossen Eintreffen eines `-progress`-Blocks, und beendet einen
+  stehenden Prozess, damit `_monitor` neu aufbaut. Ein so beendeter Lauf füllt
+  das Reconnect-Budget nicht auf. Blind heisst nicht tot: fehlen die Messwerte,
+  wird nicht abgeschossen. Neue Felder in `/api/restream/*`:
+  `ohne_fortschritt_s`, `stillstaende`.
+- **Der progress-Leser verschluckt seinen Tod nicht mehr** (`_loop_fehler`
+  statt blankem `pass`). Stirbt er, friert die gesamte Health-Anzeige ein und
+  der Wächter wird blind — beides war vorher nirgends sichtbar.
+- Neue Stellschrauben: `RESTREAM_STABLE_RUN_S`, `RESTREAM_MAX_RECONNECTS`,
+  `RESTREAM_BACKOFF_BASE_S`, `RESTREAM_BACKOFF_MAX_S`,
+  `RESTREAM_STALL_TIMEOUT_S` (0 = Wächter aus), `RESTREAM_STALL_GRACE_S`,
+  `RESTREAM_STALL_CHECK_S`.
+
+---
+
 ## [4.0] — 2026-08 · „Restream Control Room"
 
 ### Multi-Plattform-Moderation & offener Kern

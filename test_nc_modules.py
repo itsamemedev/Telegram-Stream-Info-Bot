@@ -640,6 +640,103 @@ def _test_routes_ai():
     ok("routes.ai: SQL-Wachhund + Read-only mitgewandert, Direktimporte statt ctx")
 
 
+def _test_restream_stability():
+    """v4.0-W113: die Wiederanlauf-Regeln des Restreams.
+
+    Diese Logik lag vorher in RestreamManager._monitor und war damit nur mit
+    laufendem ffmpeg, laufender DB und laufendem Event-Loop erreichbar — also
+    faktisch ungeprueft. Zwei der fuenf Regeln waren nachweislich falsch
+    gesetzt; genau die stehen hier zuerst.
+    """
+    import nc.restream_stability as rs
+
+    pol = rs.ReconnectPolicy()
+
+    # 1) Budget-Rueckgabe — DER Befund. Vorher wanderte `attempts` von
+    #    Reconnect zu Reconnect weiter; ein Restream, der stundenlang lief und
+    #    fuenfmal stolperte, galt danach als aufgegeben.
+    assert rs.budget_after_run(4, 3600.0, pol) == 0
+    assert rs.budget_after_run(4, 10.0, pol) == 4
+    assert rs.budget_after_run(0, 10.0, pol) == 0
+    # Lang gelaufen, aber nichts gesendet (Stillstands-Kill): KEIN Nachschlag,
+    # sonst haemmert der Bot gegen einen toten Ingest ewig im Grundtakt.
+    assert rs.budget_after_run(4, 3600.0, pol, progressed=False) == 4
+    assert rs.budget_exhausted(5, pol) and not rs.budget_exhausted(4, pol)
+    ok("restream_stability: Reconnect-Budget kommt nach gesundem Lauf zurueck")
+
+    # 2) Backoff — exponentiell, gedeckelt, gestreut. Ohne Streuung kehren
+    #    alle gleichzeitig gestorbenen Restreams im Gleichschritt zurueck.
+    for n in range(0, 12):
+        d = rs.reconnect_delay(n, pol)
+        assert 1.0 <= d <= pol.max_delay_s, (n, d)
+    fest = rs.ReconnectPolicy(jitter=0.0)
+    assert rs.reconnect_delay(0, fest) == 8.0
+    assert rs.reconnect_delay(1, fest) == 16.0
+    assert rs.reconnect_delay(2, fest) == 32.0
+    assert rs.reconnect_delay(9, fest) == 60.0          # Deckel greift
+    gestreut = {rs.reconnect_delay(1, pol) for _ in range(40)}
+    assert len(gestreut) > 1, "Backoff streut nicht — Gleichschritt bleibt"
+    ok("restream_stability: Backoff exponentiell, gedeckelt und gestreut")
+
+    # 3) Ablauf der Quell-URL — schnell bleiben beim Normalfall, bremsen bei
+    #    der Schleife. Vorher: 2s, kein Fehlversuch, ohne jede Untergrenze.
+    assert rs.expired_streak(5, 400.0, pol) == 0        # Minuten gelaufen = normal
+    assert rs.expired_streak(0, 0.4, pol) == 1
+    assert rs.expired_streak(3, 0.4, pol) == 4
+    assert rs.expired_delay(0, pol) == 2.0
+    assert rs.expired_delay(99, pol) == pol.expired_delays_s[-1]
+    assert not rs.expired_is_spinning(0, pol)
+    assert rs.expired_is_spinning(len(pol.expired_delays_s), pol)
+    # Die Verzoegerung waechst monoton — nie schneller werden.
+    folge = [rs.expired_delay(i, pol) for i in range(len(pol.expired_delays_s))]
+    assert folge == sorted(folge), folge
+    ok("restream_stability: Ablauf-Pfad bremst erst, wenn er sich dreht")
+
+    # 4) Codec-Fallback — die schwachen Marker duerfen nicht mehr auf
+    #    Netzfehler anspringen (transcode kostet CPU, die dem Bild fehlt).
+    assert rs.is_codec_failure("Unable to find a suitable output format")
+    assert rs.is_codec_failure("No such codec: h265")
+    assert rs.is_codec_failure("Invalid data found when processing input")
+    assert not rs.is_codec_failure("Failed to resolve hostname pull-flv.tiktokcdn.com")
+    assert not rs.is_codec_failure("Unable to open resource: Connection refused")
+    assert not rs.is_codec_failure(
+        "Could not write header (incorrect codec parameters ?): Input/output error")
+    assert not rs.is_codec_failure("")
+    # Starke Marker gelten trotz Netz-Rauschen in derselben Kachel.
+    assert rs.is_codec_failure(
+        "Will reconnect at 123... Codec does not support this pixel format")
+    ok("restream_stability: Codec-Fallback springt nicht mehr auf Netzfehler an")
+
+    # 5) Stillstand — Karenz, Blindheit, Abschuss.
+    v = rs.stall_verdict(10.0, 0.0, pol)
+    assert v.state == rs.STALL_GRACE and not v.stalled
+    v = rs.stall_verdict(600.0, 5.0, pol)
+    assert v.state == rs.STALL_OK and not v.stalled
+    v = rs.stall_verdict(600.0, 200.0, pol)
+    assert v.state == rs.STALL_DEAD and v.stalled and v.reason
+    # Blind heisst nicht tot — Unwissen ist kein Beweis (Regel aus dem Guard).
+    v = rs.stall_verdict(600.0, 200.0, pol, reader_alive=False)
+    assert v.state == rs.STALL_BLIND and not v.stalled
+    v = rs.stall_verdict(600.0, None, pol)
+    assert v.state == rs.STALL_BLIND and not v.stalled
+    ok("restream_stability: Stillstand erkannt, Karenz und Blindheit geachtet")
+
+    # Das Modul bleibt bot-frei — sonst waere es nicht ohne Laufzeitstack
+    #  pruefbar, und genau das war der Grund fuer diese Extraktion.
+    quelle = open(os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                               "nc", "restream_stability.py"), encoding="utf-8").read()
+    import ast as _ast
+    for _n in _ast.walk(_ast.parse(quelle)):
+        if isinstance(_n, _ast.Import):
+            _mods = [a.name.split(".")[0] for a in _n.names]
+        elif isinstance(_n, _ast.ImportFrom):
+            _mods = [(_n.module or "").split(".")[0]]
+        else:
+            continue
+        assert set(_mods) <= {"random", "dataclasses", "__future__"}, _mods
+    ok("restream_stability: bot-frei und stdlib-only")
+
+
 def main():
     tmp = tempfile.mkdtemp()
     configure_db(db_path=os.path.join(tmp, "t.db"), backend="sqlite")
@@ -738,6 +835,8 @@ def main():
     _test_cfgstore_und_claude()
 
     _test_routes_ai()
+
+    _test_restream_stability()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)
 

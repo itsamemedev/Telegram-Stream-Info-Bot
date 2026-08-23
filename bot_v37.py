@@ -869,6 +869,7 @@ from nc import replygate as _nc_replygate  # v4.0-W20: Bremse fuer Chat-Antworte
 from nc import sendrate as _nc_sendrate    # v4.0-W23: YT-Sende-Bremse (Anti-Flood)
 from nc import cohost as _nc_cohost        # v4.0-W24: proaktiver Live-Co-Host
 from nc import restream_util as _nc_rutil  # v4.0-W25: reine Restream-Helfer (extrahiert)
+from nc import restream_stability as _nc_rstab  # v4.0-W113: Wiederanlauf-Regeln (rein)
 from nc import abo as _nc_abo              # v4.0-W26: Abo-Erkennung (extrahiert)
 from nc import sysrun as _nc_sysrun        # v4.0-W26: privilegierter Kommando-Runner (extrahiert)
 from nc import ffmpeg_filters as _nc_ff     # v4.0-W27: Overlay-Filtergraph-Bauer (extrahiert)
@@ -1004,6 +1005,29 @@ RESTREAM_RELAY_BITRATE_K = _env_int("RESTREAM_RELAY_BITRATE_K", 3500)
 # Latenz der Quelle bleibt (die kann kein Re-Encode wegzaubern). Zum Zurückdrehen:
 # RESTREAM_LOW_LATENCY=0 (dann wieder größerer Puffer = robuster bei Netz-Jitter).
 RESTREAM_LOW_LATENCY = os.getenv("RESTREAM_LOW_LATENCY", "1").strip().lower() in ("1", "true", "yes", "on", "y")
+# ── v4.0-W113: Wiederanlauf-Haerte ────────────────────────────────────────
+# Bisher steckten Budget, Backoff und der Ablauf-Sonderfall als nackte Zahlen
+# in RestreamManager._monitor. Zwei davon waren nachweislich falsch: das
+# Reconnect-Budget wurde NIE zurueckgegeben (ein Restream, der acht Stunden
+# lief und fuenfmal stolperte, galt danach als aufgegeben), und der
+# Ablauf-Pfad hatte keine Untergrenze (2s-Schleife ohne Ausstieg). Die Regeln
+# stehen jetzt in nc/restream_stability.py — hier nur die Stellschrauben.
+RESTREAM_STABLE_RUN_S    = _env_int("RESTREAM_STABLE_RUN_S", 180)     # so lange = gesunder Lauf
+RESTREAM_MAX_RECONNECTS  = max(1, _env_int("RESTREAM_MAX_RECONNECTS", 5))
+RESTREAM_BACKOFF_BASE_S  = max(1, _env_int("RESTREAM_BACKOFF_BASE_S", 8))
+RESTREAM_BACKOFF_MAX_S   = max(5, _env_int("RESTREAM_BACKOFF_MAX_S", 60))
+# Stillstands-Waechter: ffmpeg lebt, sendet aber nicht mehr. 0 = abschalten.
+RESTREAM_STALL_TIMEOUT_S = _env_int("RESTREAM_STALL_TIMEOUT_S", 75)
+RESTREAM_STALL_GRACE_S   = _env_int("RESTREAM_STALL_GRACE_S", 60)
+RESTREAM_STALL_CHECK_S   = max(5, _env_int("RESTREAM_STALL_CHECK_S", 15))
+_RESTREAM_POLICY = _nc_rstab.ReconnectPolicy(
+    max_reconnects=RESTREAM_MAX_RECONNECTS,
+    stable_run_s=float(RESTREAM_STABLE_RUN_S),
+    base_delay_s=float(RESTREAM_BACKOFF_BASE_S),
+    max_delay_s=float(RESTREAM_BACKOFF_MAX_S),
+    stall_grace_s=float(RESTREAM_STALL_GRACE_S),
+    stall_timeout_s=float(RESTREAM_STALL_TIMEOUT_S),
+    stall_check_s=float(RESTREAM_STALL_CHECK_S))
 # AZRAEL-Stimme (Piper) in den Restream-Ton mischen (ohne OBS). Erfordert Transcode
 # + Piper-Modell. Default AUS (fail-safe: Stream läuft auch ohne).
 RESTREAM_TTS       = os.getenv("RESTREAM_TTS", "0").strip().lower() in ("1","true","yes","on","y")
@@ -18273,10 +18297,18 @@ def _looks_like_source_expired(text):
 
 
 def _looks_like_codec_err(text):
-    t = (text or "").lower()
-    return any(s in t for s in ("codec", "could not find", "invalid data", "does not support",
-                                "incompatible", "non-monotonous", "unable to", "no such codec",
-                                "failed to", "could not write header"))
+    # v4.0-W113: Entscheidung nach nc/restream_stability.py verlagert — und
+    # dabei korrigiert. Die alte Liste enthielt "failed to" und "unable to";
+    # beides steht woertlich in "Failed to resolve hostname" und "Unable to
+    # open resource". Ein kurzer Netzhaenger in den ersten 25 Sekunden
+    # schaltete den Restream damit fuer die GANZE Sitzung auf transcode
+    # (_force_transcode wird nie geleert). Auf dem GPU-losen Server ist der
+    # Encode-Rueckstand laut der eigenen Warnung in _update_health "die
+    # typische Disconnect-Ursache" — der Fallback erzeugte also genau den
+    # Abbruch, gegen den er antritt. Starke Codec-Marker gelten weiterhin
+    # unabhaengig vom Netz-Rauschen; die schwachen nur, wenn nichts nach
+    # Netz oder Quelle aussieht.
+    return _nc_rstab.is_codec_failure(text)
 
 
 class RestreamManager:
@@ -18294,6 +18326,15 @@ class RestreamManager:
         # Reine Telemetrie (Selbsttest/Log): ein hoher Wert ist NORMAL — er
         # zeigt nur, wie kurzlebig TikToks Signaturen gerade sind.
         self._srcexpired = {}
+        # v4.0-W113: rid -> wie viele Ablaeufe DIREKT hintereinander kamen
+        # (jeweils nach einem Lauf von Sekunden). _srcexpired zaehlt alle und
+        # tut nichts damit; erst diese Serie unterscheidet TikToks normale
+        # Signatur-Rotation von einer 2s-Neustartschleife auf eine tote Edge.
+        self._srcspin = {}
+        # v4.0-W113: rid -> wie oft der Stillstands-Waechter eingegriffen hat.
+        # Ueberlebt den Reconnect (self._procs[rid] wird dabei neu angelegt),
+        # damit im Panel sichtbar bleibt, dass hier etwas grundsaetzlich klemmt.
+        self._stallkills = {}
 
     def _set_status(self, rid, status, pid=None, err=None):
         # V37-P5 (BH3-Fix): Registry-Pflege. Der Laufstatus heißt im Manager
@@ -18460,6 +18501,31 @@ class RestreamManager:
                 except (TypeError, ValueError): pass
         except Exception:
             pass
+        # v4.0-W113: Fortschrittsmarke fuer den Stillstands-Waechter.
+        # Es zaehlt NICHT, dass ein progress-Block ankam — ffmpeg schreibt
+        # seine Schnappschuesse auch dann weiter, wenn der RTMP-Ausgang
+        # blockiert und frame/total_size stehenbleiben. Beweis fuer eine
+        # lebende Sendung ist nur der ZUWACHS an Bild oder Bytes.
+        try:
+            w = info.setdefault("watch", {"frame": -1, "bytes": -1,
+                                          "advanced": _time_mod.monotonic()})
+            adv = False
+            try:
+                _fr = int(h.get("frame") or 0)
+                if _fr > w["frame"]:
+                    w["frame"], adv = _fr, True
+            except (TypeError, ValueError):
+                pass
+            try:
+                _by = int(p.get("total_size"))
+                if _by > w["bytes"]:
+                    w["bytes"], adv = _by, True
+            except (TypeError, ValueError):
+                pass
+            if adv:
+                w["advanced"] = _time_mod.monotonic()
+        except Exception:
+            pass
 
     async def _read_progress(self, rid, proc):
         buf = {}
@@ -18477,8 +18543,15 @@ class RestreamManager:
                         buf = {}
                         if RESTREAM_OVERLAY:
                             _write_restream_overlay()   # ~1×/Sek: frische AZRAEL-Reaktion einblenden
-        except Exception:
-            pass
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            # v4.0-W113: war ein blankes `pass`. Stirbt dieser Leser, friert
+            # die gesamte Health-Anzeige des Restreams ein — Bitrate, FPS,
+            # Laufzeit stehen still, obwohl gesendet wird — und der
+            # Stillstands-Waechter unten wird blind. Beides sah man vorher
+            # nirgends. Jetzt einmal auf error, danach gedrosselt.
+            _loop_fehler(f"restream-progress#{rid}", e)
 
     async def _read_stderr(self, proc, sink):
         try:
@@ -18558,6 +18631,76 @@ class RestreamManager:
                     del sink[:len(sink) - 40]
         except Exception:
             pass
+
+    async def _stall_watch(self, rid, proc):
+        """v4.0-W113: Waechter gegen den STILLEN Restream-Ausfall.
+
+        _monitor haengt an proc.wait() — der greift nur, wenn ffmpeg STIRBT.
+        Bleibt der Prozess am Leben, ohne noch zu senden (RTMP-Ausgang
+        blockiert, Input steht, tee-Slave mit onfail=ignore weggebrochen),
+        passierte bisher NICHTS: -progress verstummt oder wiederholt denselben
+        Stand, health friert auf dem letzten Wert ein, und das Panel zeigt
+        weiter "live". Das ist der Ausfall, den der Betreiber als "der Stream
+        ist einfach weg und im Log steht nichts" erlebt.
+
+        Fortschritt heisst hier Zuwachs an Bild ODER Bytes, nie das blosse
+        Eintreffen eines progress-Blocks (siehe _update_health). Findet der
+        Waechter keinen mehr, beendet er den Prozess — den Rest macht
+        _monitor, der den Abbruch wie jeden anderen behandelt und neu
+        aufbaut, mit dem Unterschied, dass ein so beendeter Lauf das
+        Reconnect-Budget NICHT auffuellt (sonst haemmerte der Bot gegen einen
+        toten Ingest ewig im Grundtakt).
+
+        Blind heisst nicht tot: liefert der progress-Leser gar nichts mehr,
+        wird nicht abgeschossen — Unwissen ist kein Beweis, dieselbe Regel
+        wie UNKNOWN in nc.restream_guard.
+        """
+        pol = _RESTREAM_POLICY
+        if pol.stall_timeout_s <= 0:
+            return                       # RESTREAM_STALL_TIMEOUT_S=0 → aus
+        try:
+            while True:
+                await asyncio.sleep(pol.stall_check_s)
+                info = self._procs.get(rid)
+                # `is not proc`: bei einem Reconnect legt start() einen neuen
+                # Eintrag an, waehrend dieser Waechter noch bis zu einem Takt
+                # weiterlaeuft. Ohne die Pruefung wuerde der alte Waechter den
+                # FRISCHEN Prozess bewerten und ihn in der Anlaufphase killen.
+                if not info or info.get("proc") is not proc:
+                    return
+                if proc.returncode is not None:
+                    return               # tot — dafuer ist _monitor da
+                now = _time_mod.monotonic()
+                w = info.get("watch") or {}
+                _pt = info.get("prog_task")
+                v = _nc_rstab.stall_verdict(
+                    ran_s=now - info["started"],
+                    since_advance_s=((now - w["advanced"])
+                                     if w.get("advanced") else None),
+                    policy=pol,
+                    reader_alive=bool(_pt is not None and not _pt.done()))
+                if v.state == _nc_rstab.STALL_BLIND and not info.get("blind_warned"):
+                    info["blind_warned"] = True
+                    log.error("Restream #%d: keine Fortschrittsdaten mehr (%s). "
+                              "Der Stillstands-Waechter schiesst deshalb NICHT, "
+                              "aber die Health-Anzeige ist ab hier tot.",
+                              rid, v.reason)
+                if not v.stalled:
+                    continue
+                info["stall_kill"] = True
+                self._stallkills[rid] = self._stallkills.get(rid, 0) + 1
+                log.error("Restream #%d: STILLSTAND — %s. ffmpeg lebt (pid %s), "
+                          "sendet aber nichts mehr. Prozess wird beendet, der "
+                          "Monitor baut neu auf. (%d. Mal fuer dieses Ziel)",
+                          rid, v.reason, proc.pid, self._stallkills[rid])
+                log_event("restream.stall", "warning",
+                          f"Restream #{rid}: Stillstand — {v.reason}", {"id": rid})
+                await _reap_proc(proc)   # rc != 0 → _monitor uebernimmt
+                return
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            _loop_fehler(f"restream-stall-watch#{rid}", e)
 
     async def start(self, rid, _attempts=0, _src_watch=False):
         ok_en, why = _restream_enabled()
@@ -18794,6 +18937,11 @@ class RestreamManager:
             except Exception as _e:
                 log.debug("community live-ping: %s", _e)
         self._procs[rid]["monitor"] = asyncio.create_task(self._monitor(rid))
+        # v4.0-W113: Stillstands-Waechter. _monitor haengt an proc.wait() und
+        # sieht deshalb nur den TOTEN ffmpeg — nicht den, der lebt und nichts
+        # mehr sendet. Genau der war bisher unsichtbar.
+        self._procs[rid]["stallwatch"] = asyncio.create_task(
+            self._stall_watch(rid, proc))
         # V37-INDEP: unabhängige Zusatz-Relays (Twitch/YouTube) als eigene
         # Prozesse — Kick bleibt davon völlig unberührt.
         if _independent:
@@ -19017,6 +19165,9 @@ class RestreamManager:
         proc = info["proc"]
         sink = []
         prog_task = asyncio.create_task(self._read_progress(rid, proc))
+        # v4.0-W113: der Stillstands-Waechter muss unterscheiden koennen,
+        # ob KEIN Fortschritt kommt oder ob nur der Leser gestorben ist.
+        info["prog_task"] = prog_task
         err_task = asyncio.create_task(self._read_stderr(proc, sink))
         rc = await proc.wait()
         for t in (prog_task, err_task):
@@ -19045,7 +19196,30 @@ class RestreamManager:
                                 or "failed" in _tl):
             log.error("Restream #%d: rtmp-Ziel-Fehler (evtl. Twitch). "
                       "stderr: %s", rid, tail[-300:])
-        attempts = info.get("attempts", 0)
+        _attempts_raw = info.get("attempts", 0)
+        # v4.0-W113: hat dieser Lauf ueberhaupt gesendet? Der Stillstands-
+        # Waechter beendet einen Prozess, der zwar LANG lief, aber kein Bild
+        # mehr lieferte. Solch ein Lauf war lang, nicht gesund — er darf das
+        # Reconnect-Budget nicht auffuellen, sonst baut der Bot gegen einen
+        # toten Ingest ewig im Grundtakt neu auf.
+        _progressed = not info.get("stall_kill")
+        attempts = _nc_rstab.budget_after_run(_attempts_raw, ran, _RESTREAM_POLICY,
+                                              progressed=_progressed)
+        if attempts != _attempts_raw:
+            # DAS war der Grund, warum ein Restream nachts nicht mehr von
+            # allein zurueckkam: `attempts` wanderte von Reconnect zu
+            # Reconnect weiter und wurde nur beim Start von Hand geleert. Ein
+            # Ziel, das acht Stunden lief und dabei fuenfmal kurz stolperte,
+            # galt danach als "aufgegeben nach 5 Reconnects" — ab da half nur
+            # noch die Verify-Schleife mit 120s-Takt und bis zu 900s Backoff
+            # statt 8s. Fuer die unabhaengigen Relays war genau das in W87
+            # schon repariert; der Hauptpfad blieb aussen vor.
+            log.info("Restream #%d: %.0f min am Stueck gesendet — "
+                     "Reconnect-Budget zurueckgesetzt (%d → 0).",
+                     rid, ran / 60.0, _attempts_raw)
+        _sw3 = info.get("stallwatch")
+        if _sw3 and not _sw3.done():
+            _sw3.cancel()
         self._procs.pop(rid, None)
         _restream_tts_stop(rid)                # Feeder/FIFO dieses Procs beenden
         try:
@@ -19078,6 +19252,7 @@ class RestreamManager:
                                                         force_fresh=True)
         if _src_err:
             self._failover.discard(rid)   # v37 W3b: bei Stream-Ende Failover zurücksetzen
+            self._srcspin.pop(rid, None)  # v4.0-W113: Serie endet mit der Quelle
             self._set_status(rid, "stopped", pid=None, err="Quelle offline — Slot frei (Failover)")
             log_event("restream.failover", "info",
                       f"Restream #{rid}: Quelle @{row['source_username']} offline → Slot frei",
@@ -19092,15 +19267,37 @@ class RestreamManager:
         # sterbender Prozess seine Ports freigibt.
         if _looks_like_source_expired(tail):
             self._srcexpired[rid] = self._srcexpired.get(rid, 0) + 1
-            log.info("Restream #%d: TikTok-Quell-URL abgelaufen (%d. Mal in "
-                     "dieser Sitzung) — mit frischer URL weiter. Kein "
-                     "Fehlversuch, das ist bei TikTok der Normalfall.",
-                     rid, self._srcexpired[rid])
+            # v4.0-W113: dieser Pfad hatte keine Untergrenze. Solange der Lauf
+            # Minuten hielt, ist er richtig — TikToks Signaturen laufen ~alle
+            # sechs Minuten ab, und dagegen hilft nur eine frische URL, kein
+            # Backoff. Stirbt der Prozess aber nach Sekunden, steht hinter dem
+            # 404 keine Rotation, sondern eine tote Edge oder ein Block: dann
+            # drehte sich Resolve + ffmpeg-Spawn alle 2s endlos weiter, ohne
+            # dass je ein Zaehler griff. `_srcexpired` zaehlte das mit und tat
+            # nichts damit. Jetzt bremst eine Serienzaehlung, und ab der
+            # letzten Stufe zaehlt der Versuch als echter Fehlversuch, damit
+            # MAX_RECONNECTS und danach der Guard uebernehmen.
+            _streak = _nc_rstab.expired_streak(self._srcspin.get(rid, 0), ran,
+                                               _RESTREAM_POLICY)
+            self._srcspin[rid] = _streak
+            _wait = _nc_rstab.expired_delay(_streak, _RESTREAM_POLICY)
+            _spin = _nc_rstab.expired_is_spinning(_streak, _RESTREAM_POLICY)
+            if _spin:
+                log.error("Restream #%d: %d Ablaeufe in Folge nach je unter %ds — "
+                          "das ist keine Signatur-Rotation mehr. Zaehlt ab jetzt "
+                          "als Fehlversuch. stderr: %s", rid, _streak,
+                          int(_RESTREAM_POLICY.expired_short_run_s), tail[-200:])
+            else:
+                log.info("Restream #%d: TikTok-Quell-URL abgelaufen (%d. Mal in "
+                         "dieser Sitzung, %.0fs Lauf) — in %.0fs mit frischer URL "
+                         "weiter. Kein Fehlversuch, das ist bei TikTok der "
+                         "Normalfall.", rid, self._srcexpired[rid], ran, _wait)
             self._set_status(rid, "starting", err="Quell-URL erneuert")
-            await asyncio.sleep(2)
-            await self.start(rid, _attempts=attempts)
+            await asyncio.sleep(_wait)
+            await self.start(rid, _attempts=(attempts + 1 if _spin else attempts))
             return
-        if attempts >= self.MAX_RECONNECTS:
+        self._srcspin.pop(rid, None)   # v4.0-W113: kein Ablauf → Serie endet
+        if _nc_rstab.budget_exhausted(attempts, _RESTREAM_POLICY):
             # v37 W3b: Multi-Kick-Failover — vor dem endgültigen Aufgeben einmal
             # aufs Backup-Ingest umschalten (nur wenn konfiguriert und noch nicht umgeschaltet)
             if KICK_INGEST_URL_BACKUP and KICK_STREAM_KEY_BACKUP and rid not in self._failover:
@@ -19116,9 +19313,17 @@ class RestreamManager:
                              err=f"Aufgegeben nach {attempts} Reconnects. {tail[:280]}")
             log_event("restream.giveup", "warning", f"Restream #{rid} aufgegeben", {"id": rid})
             return
-        delay = min(60, 8 * (attempts + 1))
-        self._set_status(rid, "error", pid=None, err=f"rc={rc} (reconnect {delay}s): {tail[:240]}")
-        log.warning(f"Restream #{rid} rc={rc}; reconnect#{attempts+1} in {delay}s")
+        # v4.0-W113: exponentiell statt linear und MIT Streuung. Linear hiess,
+        # dass ein Fehler, der drei Versuche ueberlebt, im gleichen Takt weiter
+        # angerannt wird; ohne Streuung kommen alle gleichzeitig gestorbenen
+        # Restreams auf die Sekunde gemeinsam zurueck — gegen dieselbe
+        # TikTok-Aufloesung und dieselbe Ingest. Das erzeugt das 429, das der
+        # Bot danach als "Quelle unknown" sieht.
+        delay = _nc_rstab.reconnect_delay(attempts, _RESTREAM_POLICY)
+        self._set_status(rid, "error", pid=None,
+                         err=f"rc={rc} (reconnect {delay:.0f}s): {tail[:240]}")
+        log.warning("Restream #%d rc=%s; reconnect#%d in %.0fs",
+                    rid, rc, attempts + 1, delay)
         await asyncio.sleep(delay)
         again = await self.start(rid, _attempts=attempts + 1)
         if not again.get("ok"):
@@ -19134,6 +19339,9 @@ class RestreamManager:
         self._set_status(rid, "stopped", pid=None)
         self._force_transcode.discard(rid)
         self._failover.discard(rid)   # v37 W3b: Failover zurücksetzen
+        self._srcspin.pop(rid, None)      # v4.0-W113: Serien enden mit dem Stop
+        if not _keep_desired:
+            self._stallkills.pop(rid, None)
         _COMMUNITY_PINGED.discard(rid)   # V37-COMMUNITY: naechster Start darf wieder pingen
         _restream_tts_stop(rid)
         info = self._procs.pop(rid, None)
@@ -19141,6 +19349,9 @@ class RestreamManager:
             return {"ok": True, "running": False}
         if info.get("monitor"):
             info["monitor"].cancel()
+        _sw_stall = info.get("stallwatch")     # v4.0-W113
+        if _sw_stall and not _sw_stall.done():
+            _sw_stall.cancel()
         _cg = self._chatguards.pop(rid, None)
         if _cg and not _cg.done():
             _cg.cancel()   # F92b: Chat-Guardian mit abräumen
@@ -19255,6 +19466,14 @@ class RestreamManager:
                         "verified": (None if not tg else (not dead)),
                         "restarts": g.get("restarts", 0),
                         "backoff_s": g.get("backoff_s", 0),
+                        # v4.0-W113: Sekunden seit dem letzten Zuwachs an Bild
+                        # oder Bytes. Bleibt der Wert stehen, waehrend "live"
+                        # gemeldet wird, sendet ffmpeg nicht mehr — der eine
+                        # Zustand, den das Panel bisher nicht zeigen konnte.
+                        "ohne_fortschritt_s": round(
+                            now - ((info.get("watch") or {}).get("advanced")
+                                   or info["started"])),
+                        "stillstaende": self._stallkills.get(rid, 0),
                         # B129: was ffmpeg selbst ueber die Zusatzziele sagt
                         "tee_fehler": dict(getattr(self, "_tee_fail", {}) or {})}
         return out

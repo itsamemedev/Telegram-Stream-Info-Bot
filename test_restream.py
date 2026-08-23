@@ -5851,6 +5851,83 @@ def test_v40_w109_dashboard_feldnamen():
     ok("v4.0-w109: Dashboard-Feldnamen decken sich mit dem Backend (score, load_percent)")
 
 
+def test_v40_w113_restream_stability():
+    """v4.0-W113: Restreams reissen nicht mehr dauerhaft ab.
+
+    Fuenf Befunde im Wiederanlauf, alle im selben Pfad (_monitor):
+      1. Das Reconnect-Budget wurde NIE zurueckgegeben. `attempts` wanderte
+         von Reconnect zu Reconnect weiter und wurde nur beim Start von Hand
+         geleert — ein Ziel, das acht Stunden lief und dabei fuenfmal kurz
+         stolperte, galt danach als "aufgegeben nach 5 Reconnects". Ab da
+         half nur noch die Verify-Schleife: 120s-Takt, bis zu 900s Backoff
+         statt 8s. Fuer die unabhaengigen Relays war genau das in W87 schon
+         repariert, der Hauptpfad blieb aussen vor.
+      2. Backoff linear und ohne Streuung — gleichzeitig gestorbene Restreams
+         kamen auf die Sekunde gemeinsam gegen dieselbe Ingest zurueck.
+      3. Der Ablauf-Pfad hatte keine Untergrenze: 2s Pause, kein Fehlversuch,
+         endlos. `_srcexpired` zaehlte mit und tat nichts damit.
+      4. Der copy->transcode-Fallback sprang auf Netzfehler an ("failed to",
+         "unable to" stehen woertlich in "Failed to resolve hostname") und
+         schaltete damit fuer die ganze Sitzung auf einen Encode, dessen
+         Rueckstand der Bot selbst als "typische Disconnect-Ursache" warnt.
+      5. Ein ffmpeg, der LEBT aber nichts mehr sendet, wurde nie bemerkt —
+         _monitor haengt an proc.wait(). Panel gruen, Sendung weg, Log leer.
+    """
+    src = open("bot_v37.py", encoding="utf-8").read()
+
+    # Regeln liegen bot-frei im Modul, nicht mehr als Zahlen im Monolithen.
+    assert "from nc import restream_stability as _nc_rstab" in src, "Modul nicht eingebunden"
+    assert "_RESTREAM_POLICY = _nc_rstab.ReconnectPolicy(" in src, "Policy nicht gebaut"
+
+    _mon = src[src.index("    async def _monitor(self, rid):"):
+               src.index("    async def stop(self, rid, _keep_desired=False):")]
+
+    # 1) Budget-Rueckgabe im Hauptpfad
+    assert "_nc_rstab.budget_after_run(" in _mon, "kein Budget-Reset nach gesundem Lauf"
+    assert "progressed=_progressed" in _mon, "Stillstands-Kill fuellt das Budget faelschlich auf"
+    assert "_nc_rstab.budget_exhausted(" in _mon, "Budget-Grenze nicht aus der Policy"
+
+    # 2) Backoff
+    assert "delay = min(60, 8 * (attempts + 1))" not in src, "linearer Backoff noch drin"
+    assert "_nc_rstab.reconnect_delay(" in _mon, "Backoff nicht aus der Policy"
+
+    # 3) Ablauf-Pfad mit Untergrenze
+    assert "_nc_rstab.expired_streak(" in _mon and "_nc_rstab.expired_delay(" in _mon, \
+        "Ablauf-Pfad ohne Serienzaehlung"
+    assert "_nc_rstab.expired_is_spinning(" in _mon, "Ablauf-Schleife wird nie als Fehlversuch gebucht"
+    assert "self._srcspin" in src, "Serienzaehler fehlt"
+
+    # 4) Codec-Fallback delegiert (und die alte Wortliste ist weg)
+    _ck = src[src.index("def _looks_like_codec_err(text):"):
+              src.index("class RestreamManager:")]
+    assert "_nc_rstab.is_codec_failure(text)" in _ck, "Codec-Heuristik nicht delegiert"
+    assert '"failed to", "could not write header"' not in _ck, "alte Wortliste noch im Monolithen"
+
+    # 5) Stillstands-Waechter: Marke, Task, Start, Abbau, Anzeige
+    assert 'w = info.setdefault("watch"' in src, "keine Fortschrittsmarke in _update_health"
+    assert "async def _stall_watch(self, rid, proc):" in src, "Waechter fehlt"
+    _sw = src[src.index("    async def _stall_watch(self, rid, proc):"):
+              src.index("    async def start(self, rid, _attempts=0, _src_watch=False):")]
+    assert 'info.get("proc") is not proc' in _sw, \
+        "alter Waechter kann den frischen Prozess killen"
+    assert "reader_alive=" in _sw, "blinder Waechter schiesst trotzdem"
+    assert 'info["stall_kill"] = True' in _sw and "_reap_proc(proc)" in _sw, \
+        "Waechter beendet den haengenden Prozess nicht"
+    assert 'self._procs[rid]["stallwatch"] = asyncio.create_task(' in src, "Waechter wird nicht gestartet"
+    _stop = src[src.index("    async def stop(self, rid, _keep_desired=False):"):
+                src.index("    async def stop_all(self, _keep_desired=False):")]
+    assert '_sw_stall = info.get("stallwatch")' in _stop, "Waechter wird beim Stop nicht abgeraeumt"
+    assert '"ohne_fortschritt_s"' in src, "Stillstand im Status nicht sichtbar"
+
+    # Der progress-Leser verschluckt seinen Tod nicht mehr — sonst friert die
+    # Health-Anzeige ein UND der Waechter wird blind, beides unbemerkt.
+    _rp = src[src.index("    async def _read_progress(self, rid, proc):"):
+              src.index("    async def _read_stderr(self, proc, sink):")]
+    assert "_loop_fehler(" in _rp, "progress-Leser faellt weiter still aus"
+
+    ok("v4.0-w113: Reconnect-Budget, Backoff, Ablauf-Bremse, Codec-Filter, Stillstands-Waechter")
+
+
 def main():
     print("test_restream — Restream-Kernlogik (Mock-basiert)")
     test_streak()
@@ -6026,6 +6103,7 @@ def main():
     test_v40_w102_donations_3d_qr_manual()
     test_v40_w103_selfcheck_bridge_and_endpoints()
     test_v40_w109_dashboard_feldnamen()
+    test_v40_w113_restream_stability()
     print(f"test_restream OK — {PASS} Verträge grün")
 
 
