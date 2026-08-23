@@ -458,27 +458,51 @@ Blueprint-Hook würden sie nur noch für ihr Blueprint gelten.
 
 ---
 
-### Welle 3 — Blueprints in Serie
+### Welle 3 — Blueprints in Serie 🔄 *läuft (W107: `/api/archive`)*
 
 Jetzt der grosse Hebel: **rund 7.600 Zeilen** in etwa 14 Paketen. Reihenfolge
 nach Grösse und Eigenständigkeit, ein Paket pro Welle:
 
 | Blueprint | Routen | Zeilen |
 |---|---:|---:|
-| `nc/routes/ai.py` | 24 | 896 |
-| `nc/routes/restream.py` | 16 | 434 |
-| `nc/routes/archive.py` | 11 | 344 |
-| `nc/routes/trackings.py` | 15 | 342 |
-| `nc/routes/brain.py` | 6 | 315 |
-| `nc/routes/system.py` | 7 | 306 |
-| `nc/routes/ops.py` | 10 | 298 |
+| ✅ `nc/routes/archive.py` (W107) | 11 | 582 |
+| `nc/routes/ai.py` | 24 | 1.125 |
+| `nc/routes/restream.py` | 16 | 437 |
+| `nc/routes/trackings.py` | 15 | 448 |
+| `nc/routes/ops.py` | 10 | 312 |
+| `nc/routes/brain.py` | 6 | 343 |
 | `nc/routes/azrael.py` | 18 | 261 |
-| `nc/routes/streamer.py` | 9 | 205 |
+| `nc/routes/streamer.py` | 9 | 254 |
 | `nc/routes/discord.py` | 6 | 198 |
 | `nc/routes/insights.py` | 8 | 183 |
-| `nc/routes/kick.py` + `kickmod` | 17 | 300 |
-| `nc/routes/donations.py` | 5 | 130 |
-| Rest (≈ 90 Präfixe, kleinteilig) | ~190 | ~2.500 |
+| Rest (≈ 90 Präfixe, kleinteilig) | ~180 | ~2.400 |
+
+> [!IMPORTANT]
+> **Die Reihenfolge entscheidet eine Messung, nicht dieses Dokument.**
+> `tools/bp_analyse.py` beantwortet für jede Gruppe, was ihre Herauslösung
+> kostet: welche Helfer nur sie benutzt (die ziehen mit um) und welche Helfer
+> und Globals darüber hinaus in `nc/ctx.py` müssen. Kennzahl ist **Zeilen je
+> ctx-Eintrag** — hoch ist gut.
+>
+> ```bash
+> python3 tools/bp_analyse.py              # alle Gruppen, nach Kosten sortiert
+> python3 tools/bp_analyse.py /api/ops     # eine im Detail
+> ```
+>
+> Genau deshalb kam `/api/archive` (36,4) vor `/api/ai` (32,1), obwohl `/api/ai`
+> fast doppelt so viele Zeilen bringt: es würde **24 Konfigurationswerte** in
+> den Kontext ziehen. Ganz oben stehen übrigens Gruppen, die **gar nichts**
+> kosten — `/api/collections` und `/api/scheduler` brauchen keinen einzigen
+> neuen Kontext-Eintrag. Die sind der billigste Weg, weitere Routen aus dem
+> Monolithen zu bekommen.
+>
+> Das Werkzeug markiert auch `globals()`-Zugriffe mit ⚠ — dort ist die
+> Abhängigkeit für jede Namensanalyse unsichtbar und muss von Hand geprüft
+> werden (`/api/ops` und `/api/chat` sind so ein Fall).
+
+**Konfiguration gehört in `ctx.cfg`, nicht in neue Slots.** Seit W107 nimmt der
+Kontext Startwerte als ein Dict entgegen. Ohne das hätte allein `/api/ai` den
+Kontext um 24 Felder aufgebläht. Ein Vertrag deckelt `Ctx.__slots__` bei 25.
 
 Die **133 Helfer, die nur eine Route benutzt**, wandern mit in ihr Blueprint —
 sie sind der eigentliche Zeilengewinn. Die 57 Helfer mit 2–3 Nutzern gehen
@@ -579,12 +603,12 @@ Supervisor fahren.
 
 ## 8 · Zielbild und Messlatte
 
-| | Start | heute (W104–W106) | nach Welle 3 | Ziel |
+| | Start | heute (W104–W107) | nach Welle 3 | Ziel |
 |---|---:|---:|---:|---:|
-| `bot_v37.py` Zeilen | 34.487 | **33.674** | ~24.700 | **~8.000** |
-| Flask-Routen im Monolithen | 345 | **311** | ~30 | 0 |
-| Routen in Blueprints | 0 | **34** | ~315 | 345 |
-| `nc/`-Module | 83 | **86** | ~100 | ~115 |
+| `bot_v37.py` Zeilen | 34.487 | **33.092** | ~24.700 | **~8.000** |
+| Flask-Routen im Monolithen | 345 | **300** | ~30 | 0 |
+| Routen in Blueprints | 0 | **45** | ~315 | 345 |
+| `nc/`-Module | 83 | **87** | ~100 | ~115 |
 | Grösste Datei im Projekt | `bot_v37.py` | `bot_v37.py` | `bot_v37.py` | `templates/dashboard.html` |
 
 Die härtere Messlatte ist keine Zahl:
