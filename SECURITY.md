@@ -95,6 +95,29 @@ laufenden Stand ein und halte ihn nach:
 python3 -m pip freeze > requirements.lock.txt
 ```
 
+## Auditstand
+
+Letzter vollständiger Durchgang: **v4.0-W118**. Abgedeckt: Code-Ausführung
+(`eval`/`exec`/`pickle`/`yaml.load`), `shell=True`, SQL-Injektion inklusive der
+LLM-übersetzten Abfrage, Pfad-Traversal in allen Datei-Routen, Dashboard-Auth
+(Token, PIN, Rate-Limit, Zeitkonstanz), XSS in allen drei Templates, SSRF,
+OAuth-CSRF, Open Redirect, Geheimnisse in Logs und API-Antworten,
+Dateirechte der Token-Speicher, Abhängigkeiten.
+
+Sieben Befunde behoben — Einzelheiten im [CHANGELOG](CHANGELOG.md) unter W118.
+Jeder hat einen Vertrag in `test_restream.py`
+(`test_v40_w118_sicherheitsaudit`); ein Rückfall fällt damit in der Prüfkette
+auf, nicht im Betrieb.
+
+Zwei Dinge bleiben bewusst offen und sind **keine** Nachlässigkeit, sondern
+Betreiber-Entscheidungen:
+
+- **`SWAP_CLEAR_CMD` läuft mit `shell=True`.** Die Shell wird für `&&`
+  gebraucht. Wer `.env` schreiben kann, kann ohnehin beliebigen Code
+  ausführen — die Datei ist die Vertrauenswurzel, nicht diese Zeile.
+- **Ungepinnte Abhängigkeiten** (siehe oben). Einfrieren ist Server-Arbeit;
+  geratene Versionsnummern wären schlimmer als keine.
+
 ---
 
 ## Was ausdrücklich **keine** Lücke ist

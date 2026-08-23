@@ -640,6 +640,215 @@ def _test_routes_ai():
     ok("routes.ai: SQL-Wachhund + Read-only mitgewandert, Direktimporte statt ctx")
 
 
+def _test_restream_stability():
+    """v4.0-W113: die Wiederanlauf-Regeln des Restreams.
+
+    Diese Logik lag vorher in RestreamManager._monitor und war damit nur mit
+    laufendem ffmpeg, laufender DB und laufendem Event-Loop erreichbar — also
+    faktisch ungeprueft. Zwei der fuenf Regeln waren nachweislich falsch
+    gesetzt; genau die stehen hier zuerst.
+    """
+    import nc.restream_stability as rs
+
+    pol = rs.ReconnectPolicy()
+
+    # 1) Budget-Rueckgabe — DER Befund. Vorher wanderte `attempts` von
+    #    Reconnect zu Reconnect weiter; ein Restream, der stundenlang lief und
+    #    fuenfmal stolperte, galt danach als aufgegeben.
+    assert rs.budget_after_run(4, 3600.0, pol) == 0
+    assert rs.budget_after_run(4, 10.0, pol) == 4
+    assert rs.budget_after_run(0, 10.0, pol) == 0
+    # Lang gelaufen, aber nichts gesendet (Stillstands-Kill): KEIN Nachschlag,
+    # sonst haemmert der Bot gegen einen toten Ingest ewig im Grundtakt.
+    assert rs.budget_after_run(4, 3600.0, pol, progressed=False) == 4
+    assert rs.budget_exhausted(5, pol) and not rs.budget_exhausted(4, pol)
+    ok("restream_stability: Reconnect-Budget kommt nach gesundem Lauf zurueck")
+
+    # 2) Backoff — exponentiell, gedeckelt, gestreut. Ohne Streuung kehren
+    #    alle gleichzeitig gestorbenen Restreams im Gleichschritt zurueck.
+    for n in range(0, 12):
+        d = rs.reconnect_delay(n, pol)
+        assert 1.0 <= d <= pol.max_delay_s, (n, d)
+    fest = rs.ReconnectPolicy(jitter=0.0)
+    assert rs.reconnect_delay(0, fest) == 8.0
+    assert rs.reconnect_delay(1, fest) == 16.0
+    assert rs.reconnect_delay(2, fest) == 32.0
+    assert rs.reconnect_delay(9, fest) == 60.0          # Deckel greift
+    gestreut = {rs.reconnect_delay(1, pol) for _ in range(40)}
+    assert len(gestreut) > 1, "Backoff streut nicht — Gleichschritt bleibt"
+    ok("restream_stability: Backoff exponentiell, gedeckelt und gestreut")
+
+    # 3) Ablauf der Quell-URL — schnell bleiben beim Normalfall, bremsen bei
+    #    der Schleife. Vorher: 2s, kein Fehlversuch, ohne jede Untergrenze.
+    assert rs.expired_streak(5, 400.0, pol) == 0        # Minuten gelaufen = normal
+    assert rs.expired_streak(0, 0.4, pol) == 1
+    assert rs.expired_streak(3, 0.4, pol) == 4
+    assert rs.expired_delay(0, pol) == 2.0
+    assert rs.expired_delay(99, pol) == pol.expired_delays_s[-1]
+    assert not rs.expired_is_spinning(0, pol)
+    assert rs.expired_is_spinning(len(pol.expired_delays_s), pol)
+    # Die Verzoegerung waechst monoton — nie schneller werden.
+    folge = [rs.expired_delay(i, pol) for i in range(len(pol.expired_delays_s))]
+    assert folge == sorted(folge), folge
+    ok("restream_stability: Ablauf-Pfad bremst erst, wenn er sich dreht")
+
+    # 4) Codec-Fallback — die schwachen Marker duerfen nicht mehr auf
+    #    Netzfehler anspringen (transcode kostet CPU, die dem Bild fehlt).
+    assert rs.is_codec_failure("Unable to find a suitable output format")
+    assert rs.is_codec_failure("No such codec: h265")
+    assert rs.is_codec_failure("Invalid data found when processing input")
+    assert not rs.is_codec_failure("Failed to resolve hostname pull-flv.tiktokcdn.com")
+    assert not rs.is_codec_failure("Unable to open resource: Connection refused")
+    assert not rs.is_codec_failure(
+        "Could not write header (incorrect codec parameters ?): Input/output error")
+    assert not rs.is_codec_failure("")
+    # Starke Marker gelten trotz Netz-Rauschen in derselben Kachel.
+    assert rs.is_codec_failure(
+        "Will reconnect at 123... Codec does not support this pixel format")
+    ok("restream_stability: Codec-Fallback springt nicht mehr auf Netzfehler an")
+
+    # 5) Stillstand — Karenz, Blindheit, Abschuss.
+    v = rs.stall_verdict(10.0, 0.0, pol)
+    assert v.state == rs.STALL_GRACE and not v.stalled
+    v = rs.stall_verdict(600.0, 5.0, pol)
+    assert v.state == rs.STALL_OK and not v.stalled
+    v = rs.stall_verdict(600.0, 200.0, pol)
+    assert v.state == rs.STALL_DEAD and v.stalled and v.reason
+    # Blind heisst nicht tot — Unwissen ist kein Beweis (Regel aus dem Guard).
+    v = rs.stall_verdict(600.0, 200.0, pol, reader_alive=False)
+    assert v.state == rs.STALL_BLIND and not v.stalled
+    v = rs.stall_verdict(600.0, None, pol)
+    assert v.state == rs.STALL_BLIND and not v.stalled
+    ok("restream_stability: Stillstand erkannt, Karenz und Blindheit geachtet")
+
+    # Das Modul bleibt bot-frei — sonst waere es nicht ohne Laufzeitstack
+    #  pruefbar, und genau das war der Grund fuer diese Extraktion.
+    quelle = open(os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                               "nc", "restream_stability.py"), encoding="utf-8").read()
+    import ast as _ast
+    for _n in _ast.walk(_ast.parse(quelle)):
+        if isinstance(_n, _ast.Import):
+            _mods = [a.name.split(".")[0] for a in _n.names]
+        elif isinstance(_n, _ast.ImportFrom):
+            _mods = [(_n.module or "").split(".")[0]]
+        else:
+            continue
+        assert set(_mods) <= {"random", "dataclasses", "__future__"}, _mods
+    ok("restream_stability: bot-frei und stdlib-only")
+
+
+def _test_flapguard_und_rate():
+    """v4.0-W116: die beiden Verlaufs-Urteile, jeweils ohne Bot und ohne Uhr.
+
+    Beide entscheiden ueber die ZEIT, und beide sind in der falschen
+    Richtung teuer: zu empfindlich erzeugt Alarm-Muedigkeit, zu traege
+    meldet nie. Genau deshalb stehen sie als reine Funktionen hier, wo
+    Stunden in Millisekunden durchgespielt werden koennen.
+    """
+    import nc.flapguard as fg
+    import nc.recdiag as rd
+
+    # ── Flattern ──────────────────────────────────────────────────────────
+    cfg = fg.FlapConfig(fenster_s=900, schwelle=4, ruhe_s=600,
+                        melde_abstand_s=1800)
+    w = fg.FlapWatch(cfg)
+    t = 1000.0
+    # Drei kurze Trennungen: noch kein Alarm.
+    for i in range(3):
+        u = w.trennung("kick", 30, t + i * 60)
+        assert not u.melden, i
+    # Die vierte im Fenster ist es.
+    u = w.trennung("kick", 30, t + 180)
+    assert u.melden and u.anzahl == 4 and "4 Trennungen" in u.grund, u
+    ok("flapguard: vier Trennungen im Fenster schlagen an, drei nicht")
+
+    # Regel 3: im Meldeabstand bleibt es still, danach nicht mehr.
+    u = w.trennung("kick", 30, t + 240)
+    assert not u.melden and u.anzahl == 5, u
+    u = w.trennung("kick", 30, t + 1900)     # Abstand + Fenster vorbei
+    assert not u.melden, "Fenster haette sich leeren muessen"
+    ok("flapguard: Meldeabstand gedrosselt, altes Fenster faellt raus")
+
+    # Regel 2: ein langer Halt loescht die Akte und meldet die Erholung.
+    w2 = fg.FlapWatch(cfg)
+    for i in range(4):
+        w2.trennung("tw", 10, 100 + i)
+    assert w2.snapshot()["tw"]["laut"] is True
+    u = w2.trennung("tw", 3600, 5000)        # eine Stunde gehalten
+    assert u.erholt and u.anzahl == 1 and not u.melden, u
+    assert w2.snapshot()["tw"]["laut"] is False
+    ok("flapguard: langer Halt loescht die Akte und meldet die Erholung")
+
+    # Regel 1: ueber das Fenster hinaus summiert sich nichts auf.
+    w3 = fg.FlapWatch(cfg)
+    for i in range(10):
+        u = w3.trennung("yt", 10, i * 1000.0)   # je 1000s auseinander
+        assert not u.melden, i
+    ok("flapguard: verteilte Trennungen summieren sich nicht zum Daueralarm")
+
+    # ── Raten-Einbruch ────────────────────────────────────────────────────
+    rc = rd.RateConfig(warmlauf_s=60, einbruch_anteil=0.15,
+                       einbruch_dauer_s=90, min_grundlinie_bps=40000)
+    sp = rd.RateSpur()
+    NORM = 500_000            # 500 kB/s ~ 4 Mbit/s
+    # Warmlauf: nie urteilen, nur Grundlinie bilden.
+    for _ in range(4):
+        assert sp.beobachte(NORM * 15, 15, rc) is None
+    assert sp.grundlinie_bps >= 40000
+    # Gesund weiter: still.
+    for _ in range(4):
+        assert sp.beobachte(NORM * 15, 15, rc) is None
+    # Bild weg, Ton laeuft (5 % der Rate): erst nach der Mindestdauer melden.
+    LEISE = int(NORM * 0.05)
+    assert sp.beobachte(LEISE * 15, 15, rc) is None      # 15s
+    assert sp.beobachte(LEISE * 15, 15, rc) is None      # 30s
+    assert sp.beobachte(LEISE * 15, 15, rc) is None      # 45s
+    assert sp.beobachte(LEISE * 15, 15, rc) is None      # 60s
+    assert sp.beobachte(LEISE * 15, 15, rc) is None      # 75s
+    assert sp.beobachte(LEISE * 15, 15, rc) == "einbruch"  # 90s
+    assert sp.beobachte(LEISE * 15, 15, rc) is None      # nur EINMAL je Episode
+    ok("recdiag.RateSpur: Einbruch erst nach Mindestdauer, dann genau einmal")
+
+    # Erholung wird gemeldet, danach ist wieder Ruhe.
+    assert sp.beobachte(NORM * 15, 15, rc) == "erholt"
+    assert sp.beobachte(NORM * 15, 15, rc) is None
+    ok("recdiag.RateSpur: Erholung genau einmal")
+
+    # Der Einbruch darf die Grundlinie NICHT nach unten schleifen — sonst
+    # normalisiert sich jeder Ausfall von selbst weg.
+    sp2 = rd.RateSpur()
+    for _ in range(8):
+        sp2.beobachte(NORM * 15, 15, rc)
+    basis = sp2.grundlinie_bps
+    for _ in range(20):
+        sp2.beobachte(LEISE * 15, 15, rc)
+    assert sp2.grundlinie_bps == basis, "Grundlinie ist mitgewandert"
+    ok("recdiag.RateSpur: Grundlinie wandert waehrend des Einbruchs nicht mit")
+
+    # Eine statische Szene mit MASSVOLLEM Rueckgang loest nicht aus.
+    sp3 = rd.RateSpur()
+    for _ in range(8):
+        sp3.beobachte(NORM * 15, 15, rc)
+    for _ in range(20):
+        assert sp3.beobachte(int(NORM * 0.4) * 15, 15, rc) != "einbruch"
+    ok("recdiag.RateSpur: massvoller Rueckgang (40 %) ist kein Einbruch")
+
+    # Beide Module bleiben bot-frei.
+    import ast as _ast, os as _os
+    for datei, erlaubt in (("flapguard.py", {"dataclasses", "__future__"}),):
+        quelle = open(_os.path.join(_os.path.dirname(_os.path.abspath(__file__)),
+                                    "nc", datei), encoding="utf-8").read()
+        for _n in _ast.walk(_ast.parse(quelle)):
+            if isinstance(_n, _ast.Import):
+                mods = [a.name.split(".")[0] for a in _n.names]
+            elif isinstance(_n, _ast.ImportFrom):
+                mods = [(_n.module or "").split(".")[0]]
+            else:
+                continue
+            assert set(mods) <= erlaubt, (datei, mods)
+    ok("flapguard: bot-frei und stdlib-only")
+
+
 def main():
     tmp = tempfile.mkdtemp()
     configure_db(db_path=os.path.join(tmp, "t.db"), backend="sqlite")
@@ -738,6 +947,10 @@ def main():
     _test_cfgstore_und_claude()
 
     _test_routes_ai()
+
+    _test_restream_stability()
+
+    _test_flapguard_und_rate()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)
 

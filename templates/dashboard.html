@@ -3267,6 +3267,23 @@ document.addEventListener("DOMContentLoaded",function(){
 const $ = (s,r=document)=>r.querySelector(s);
 const $$ = (s,r=document)=>Array.from(r.querySelectorAll(s));
 const esc = s => String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+/* v4.0-W118 (SEC): Maskierung fuer einen JS-String INNERHALB eines
+   HTML-Attributs — also genau fuer onclick="f('...')".
+   WARUM eine zweite Funktion noetig ist: esc() liefert fuer ' das Zeichen
+   &#39;. Der HTML-Parser dekodiert Attributwerte, BEVOR die JS-Engine sie
+   sieht — aus &#39; wird wieder ', der String ist zu und der Rest laeuft als
+   Code. Nachgestellt und im Browser bewiesen:
+       Nutzername  x');window.__xss=1;showProfile('y
+       Attribut    showProfile('x');window.__xss=1;showProfile('y')
+       Ergebnis    fremder Code lief in der Sitzung des Betreibers.
+   \xNN-Sequenzen enthalten kein einziges HTML-Sonderzeichen, ueberstehen die
+   HTML-Dekodierung unveraendert und werden erst von der JS-Engine INNERHALB
+   des Strings aufgeloest. Damit ist beides dicht. */
+const escJs = s => String(s==null?'':s).replace(
+  /[\\'"&<>\r\n\u2028\u2029]/g,
+  c => ({'\\':'\\x5c', "'":'\\x27', '"':'\\x22', '&':'\\x26',
+         '<':'\\x3c', '>':'\\x3e', '\r':'\\r', '\n':'\\n',
+         '\u2028':'\\u2028', '\u2029':'\\u2029'}[c]));
 /* V37-MP: Zuschauer-/Follower-Zahlen kompakt (1.234 statt 1234) */
 const fmtNum = n => (n==null||n==='') ? '—' : (typeof n==='number' ? n.toLocaleString('de-DE') : String(n));
 
@@ -4636,7 +4653,10 @@ async function loadBrainAlarms(){
 
 /* v4.0-W63: Azraels Creator-Dossier — je getracktem User Aktivität + Azraels Take */
 async function loadCreatorDossier(){
-  const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+  /* v4.0-W118 (SEC): lokales esc entfernt. Es maskierte ' NICHT und
+     verdeckte damit das globale, staerkere esc — in einer Funktion, die
+     fremde Creator-Daten rendert. Zwei Maskierer mit unterschiedlicher
+     Staerke sind eine Falle: gepatcht wird immer nur einer. */
   const tag=document.getElementById('cd_tag'), body=document.getElementById('cd_body');
   if(!body) return;
   try{
@@ -4666,7 +4686,10 @@ async function genCreatorDossier(){
 }
 /* v4.0-W64: Claude-Anbindung — API-Key im Dashboard verwalten (testen/speichern/entfernen) */
 async function loadClaudeStatus(){
-  const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+  /* v4.0-W118 (SEC): lokales esc entfernt. Es maskierte ' NICHT und
+     verdeckte damit das globale, staerkere esc — in einer Funktion, die
+     fremde Creator-Daten rendert. Zwei Maskierer mit unterschiedlicher
+     Staerke sind eine Falle: gepatcht wird immer nur einer. */
   const tag=document.getElementById('cl_tag'), st=document.getElementById('cl_status'), mdl=document.getElementById('cl_model');
   try{
     const d=await apiGet('/api/ai/claude/status');
@@ -4760,7 +4783,7 @@ async function runSearch(q){
   const r=d.results; let h='';
   if(r.trackings&&r.trackings.length){
     h+='<div class="sr-group"><h4>▚ Trackings ('+r.trackings.length+')</h4>';
-    r.trackings.forEach(t=>{ h+=`<div class="sr-item" onclick="showProfile('${esc(t.username)}')">
+    r.trackings.forEach(t=>{ h+=`<div class="sr-item" onclick="showProfile('${escJs(t.username)}')">
       <span>@${esc(t.username)} ${t.live?'<span class="pill live"><span class="dot"></span>LIVE</span>':''} ${t.recording?'<span class="pill rec">REC</span>':''} ${t.paused?'<span class="pill paused">PAUSE</span>':''}</span>
       <span class="meta">${esc(t.notes||'')}</span></div>`; });
     h+='</div>';
@@ -4868,13 +4891,13 @@ function renderTargetGrid(){
     const tags=_tagsMap[String(t.id)]||[];
     const tagHtml = tags.length? tags.map(x=>`<span class="tagchip">#${esc(x)}</span>`).join('') : '<span class="faint">—</span>';
     h+=`<tr data-tid="${t.id}">
-      <td class="nowrap"><b class="clickname" onclick="showProfile('${esc(t.username)}')">@${esc(t.username)}</b>${t.source==='discord'?' <span class="pill dc">DC</span>':''}</td>
+      <td class="nowrap"><b class="clickname" onclick="showProfile('${escJs(t.username)}')">@${esc(t.username)}</b>${t.source==='discord'?' <span class="pill dc">DC</span>':''}</td>
       <td>${badge}</td>
       <td class="tagcell" data-tid="${t.id}">${tagHtml}</td>
       <td class="muted" style="max-width:200px;overflow:hidden;text-overflow:ellipsis">${esc(t.notes||'')}</td>
       <td class="right nowrap">
-        <span class="btn sm cyan" onclick="inspectStream('${esc(t.username)}')">SCAN</span>
-        <span class="btn sm" onclick="openTargetCtl(${t.id},'${esc(t.username)}')">CTL</span>
+        <span class="btn sm cyan" onclick="inspectStream('${escJs(t.username)}')">SCAN</span>
+        <span class="btn sm" onclick="openTargetCtl(${t.id},'${escJs(t.username)}')">CTL</span>
       </td></tr>`;
   });
   h+='</tbody></table></div>';
@@ -4928,7 +4951,7 @@ async function showProfile(username){
   let h=`<div class="pf-head">${av}<div class="pf-id">
     <div class="pf-nick">${nick} ${vrf}${badge}</div>
     <div class="pf-handle"><a href="${esc(d.profile_url)}" target="_blank" rel="noopener">@${esc(username)}</a>${priv}
-      <span class="btn sm" style="padding:2px 6px;font-size:9px;margin-left:6px" onclick="navigator.clipboard.writeText('${esc(username)}').then(()=>toast('Username kopiert'))">⧉ copy</span>
+      <span class="btn sm" style="padding:2px 6px;font-size:9px;margin-left:6px" onclick="navigator.clipboard.writeText('${escJs(username)}').then(()=>toast('Username kopiert'))">⧉ copy</span>
     </div></div></div>`;
   if(tk && !tk.error){
     h+=`<div class="pf-stats">
@@ -4954,7 +4977,7 @@ async function showProfile(username){
     d.recent_recordings.forEach(r=>{ h+=`<div class="pf-row"><span class="faint" style="max-width:58%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(r.filename)}</span><b>${r.size_mb} MB · ${esc(r.created_at)}</b></div>`; });
   }
   h+=`<div class="btnrow" style="margin-top:14px">
-    <span class="btn sm cyan" onclick="inspectStream('${esc(username)}')">SCAN STREAM</span>
+    <span class="btn sm cyan" onclick="inspectStream('${escJs(username)}')">SCAN STREAM</span>
     <a class="btn sm" href="${esc(d.profile_url)}" target="_blank" rel="noopener" style="text-decoration:none">TikTok öffnen ↗</a></div>`;
   if((d.trackings||[]).length){
     h+='<div class="pf-sec">▚ Tracking-Steuerung</div>';
@@ -4967,10 +4990,10 @@ async function showProfile(username){
         <div class="pf-row"><span>Tracking #${t.id}${t.group_id?(' · Gruppe '+esc(t.group_id)):''}</span><b>${state}</b></div>
         <div class="btnrow" style="margin:4px 0 6px">
           ${t.paused
-            ? `<span class="btn sm cyan" onclick="pfTrkResume(${t.id},'${esc(username)}')">▶ Fortsetzen</span>`
-            : `<span class="btn sm" onclick="pfTrkPause(${t.id},'${esc(username)}')">⏸ Pausieren</span>`}
+            ? `<span class="btn sm cyan" onclick="pfTrkResume(${t.id},'${escJs(username)}')">▶ Fortsetzen</span>`
+            : `<span class="btn sm" onclick="pfTrkPause(${t.id},'${escJs(username)}')">⏸ Pausieren</span>`}
           <input class="field" id="pf_md_${t.id}" type="number" placeholder="Max-Dauer s" style="width:120px">
-          <span class="btn sm" onclick="pfTrkMaxDur(${t.id},'${esc(username)}')">Setzen</span>
+          <span class="btn sm" onclick="pfTrkMaxDur(${t.id},'${escJs(username)}')">Setzen</span>
         </div>
         <div class="pf-row faint" style="font-size:10px"><span id="pf_set_${t.id}">…</span></div>
       </div>`;
@@ -5106,14 +5129,14 @@ async function openTargetCtl(tid, username){
       </div>
     </div>
     <div class="mb"><div class="l muted mb">TAGS</div>
-      <div id="ctlTags">${tagList.map(t=>`<span class="tagchip">#${esc(t)}<span class="x" onclick="rmTag(${tid},'${esc(t)}')">✕</span></span>`).join('')||'<span class="faint">none</span>'}</div>
+      <div id="ctlTags">${tagList.map(t=>`<span class="tagchip">#${esc(t)}<span class="x" onclick="rmTag(${tid},'${escJs(t)}')">✕</span></span>`).join('')||'<span class="faint">none</span>'}</div>
       <div class="flex mt"><input class="field" id="ctlNewTag" placeholder="add tag…" style="flex:1"><span class="btn sm cyan" onclick="addTag(${tid})">+ ADD</span></div>
     </div>
     <div class="mb"><div class="l muted mb">ACTIONS</div>
       <div class="btnrow">
         <span class="btn sm" onclick="quickRestart(${tid})">⟳ QUICK-RESTART</span>
         <span class="btn sm cyan" onclick="recheckNow(${tid})">↻ RECHECK NOW</span>
-        <span class="btn sm cyan" onclick="showLiveHeat('${esc(username)}')">▦ LIVE-PATTERN</span>
+        <span class="btn sm cyan" onclick="showLiveHeat('${escJs(username)}')">▦ LIVE-PATTERN</span>
       </div>
     </div>`);
 }
@@ -5125,14 +5148,14 @@ async function setPrio(tid, level){
 async function addTag(tid){
   const v=$('#ctlNewTag').value.trim(); if(!v) return;
   const d=await apiPost('/api/trackings/'+tid+'/tags',{tag:v});
-  if(d.ok){ $('#ctlTags').innerHTML=(d.tags||[]).map(t=>`<span class="tagchip">#${esc(t)}<span class="x" onclick="rmTag(${tid},'${esc(t)}')">✕</span></span>`).join(''); $('#ctlNewTag').value=''; loadSurveil(); }
+  if(d.ok){ $('#ctlTags').innerHTML=(d.tags||[]).map(t=>`<span class="tagchip">#${esc(t)}<span class="x" onclick="rmTag(${tid},'${escJs(t)}')">✕</span></span>`).join(''); $('#ctlNewTag').value=''; loadSurveil(); }
   else toast('invalid tag (a-z0-9_- only)','err');
 }
 async function rmTag(tid, tag){
   await api('/api/trackings/'+tid+'/tags',{method:'DELETE',body:{tag}});
   const t2=await apiGet('/api/trackings/'+tid+'/tags');
   const el=$('#ctlTags');
-  if(el) el.innerHTML=((t2&&t2.tags)||[]).map(t=>`<span class="tagchip">#${esc(t)}<span class="x" onclick="rmTag(${tid},'${esc(t)}')">✕</span></span>`).join('')||'<span class="faint">none</span>';
+  if(el) el.innerHTML=((t2&&t2.tags)||[]).map(t=>`<span class="tagchip">#${esc(t)}<span class="x" onclick="rmTag(${tid},'${escJs(t)}')">✕</span></span>`).join('')||'<span class="faint">none</span>';
   loadSurveil();
 }
 async function quickRestart(tid){
@@ -6518,7 +6541,7 @@ async function bpLoadSchedule(){
   const dn=['Mo','Di','Mi','Do','Fr','Sa','So'];
   el.innerHTML=d.schedules.map(s=>`<div class="lab-row" style="display:flex;justify-content:space-between;font-size:11px;margin-bottom:4px">
     <span>@${esc(s.username)} · ${dn[s.weekday]||'?'} ${String(s.hour).padStart(2,'0')}:00 · ${s.duration_min}min</span>
-    <a href="#" onclick="bpScheduleRemove('${s.id}');return false" style="color:var(--red)">entfernen</a></div>`).join('');
+    <a href="#" onclick="bpScheduleRemove('${escJs(s.id)}');return false" style="color:var(--red)">entfernen</a></div>`).join('');
 }
 async function bpScheduleRemove(id){
   const d=await apiPost('/api/schedule/remove',{id});
@@ -6974,7 +6997,7 @@ async function loadLiveNow(){
   if(!d||d.__neterr){ el.textContent='—'; return; }
   const live=(d.tiles||[]).filter(t=>t.live);
   if(c) c.textContent=live.length+' live';
-  el.innerHTML=live.length?live.map(t=>`<span class="btn sm" style="margin:0 6px 6px 0" onclick="showProfile('${esc(t.username)}')">🔴 @${esc(t.username)}${t.recording?' ●REC':''}</span>`).join(''):'<span class="faint">Gerade niemand live.</span>';
+  el.innerHTML=live.length?live.map(t=>`<span class="btn sm" style="margin:0 6px 6px 0" onclick="showProfile('${escJs(t.username)}')">🔴 @${esc(t.username)}${t.recording?' ●REC':''}</span>`).join(''):'<span class="faint">Gerade niemand live.</span>';
 }
 /* v37: Polen-VPS-Tunnel — Aufnahme-Egress steuern */
 async function loadTunnel(){
@@ -7138,7 +7161,7 @@ async function rsLoad(){
         <td style="text-align:center">${autoBtn}</td>
         <td style="text-align:right;white-space:nowrap">
           ${startBtn}
-          <button class="btn sm" onclick="rsEdit(${t.id},'${esc(t.label||'')}','${esc(t.ingest_url||'')}',${t.transcode?1:0})" aria-label="Rs edit" title="Rs edit">✎</button>
+          <button class="btn sm" onclick="rsEdit(${t.id},'${escJs(t.label||'')}','${escJs(t.ingest_url||'')}',${t.transcode?1:0})" aria-label="Rs edit" title="Rs edit">✎</button>
           <button class="btn sm" onclick="rsDelete(${t.id})" aria-label="Schließen" title="Schließen">✕</button>
         </td></tr>${t.last_error&&(t.status==='error')?`<tr><td colspan="8" class="fp-err" style="font-size:9px;padding:2px 10px 8px">⚠ ${esc(t.last_error)}</td></tr>`:''}`;
     }).join('')+'</tbody></table>';
@@ -8622,8 +8645,8 @@ async function loadAutomation(){
     return `<tr><td style="width:52%">${esc(it.label)}</td>`
       +`<td class="mono" style="color:${cls}">${it.on?'● AN':'○ aus'}</td>`
       +`<td class="faint">${src}</td>`
-      +`<td><button class="btn sm" onclick="toggleAuto('${it.key}',${it.on?'false':'true'})">${it.on?'aus':'an'}</button>`
-      +`${it.override!==null?` <button class="btn sm" onclick="toggleAuto('${it.key}',null)" title="auf env-Default zurück" aria-label="Neu laden" title="Neu laden">↺</button>`:''}</td></tr>`;
+      +`<td><button class="btn sm" onclick="toggleAuto('${escJs(it.key)}',${it.on?'false':'true'})">${it.on?'aus':'an'}</button>`
+      +`${it.override!==null?` <button class="btn sm" onclick="toggleAuto('${escJs(it.key)}',null)" title="auf env-Default zurück" aria-label="Neu laden" title="Neu laden">↺</button>`:''}</td></tr>`;
   }).join('')+'</tbody></table></div>'
     +(d.autopilot?'':'<div class="faint" style="margin-top:8px;color:var(--amber)">⚠ Master aus — alle Automationen pausiert.</div>');
 }
@@ -8909,7 +8932,7 @@ async function loadWall(){
     const cls=['mon']; if(t.live)cls.push('live'); if(t.recording)cls.push('rec'); if(t.paused)cls.push('paused');
     const init=(t.username||'?').slice(0,2).toUpperCase();
     const lamp=t.live?'LIVE':'OFFLINE';
-    return `<div class="${cls.join(' ')}" onclick="showProfile('${esc(t.username)}')">
+    return `<div class="${cls.join(' ')}" onclick="showProfile('${escJs(t.username)}')">
       ${t.source==='discord'?'<span class="dc-dot" title="Discord"></span>':''}
       <div class="top"><div class="who"><div class="mono-badge">${esc(init)}</div>
         <div class="nm">@${esc(t.username)}</div></div>
@@ -9326,8 +9349,29 @@ async function betriebLoad(){
         html='<div class="empty">Gerade läuft kein Restream. '
             +'Geprüft wird alle '+esc(String(d.interval_s))+' s, sobald einer sendet.</div>';
       } else {
+        /* v4.0-W115: Spalte "Bild fließt". Der Stillstands-Wächter (W113)
+           erkennt seit Langem den Fall "ffmpeg lebt, sendet aber nicht mehr",
+           schoss ihn ab und baute neu auf — im Panel stand davon NICHTS, die
+           Felder ohne_fortschritt_s/stillstaende kamen in dieser Datei kein
+           einziges Mal vor. Genau dieser Wert trennt "läuft" von "läuft
+           angeblich", also gehört er neben die Laufzeit. Die Grenze kommt aus
+           der API (stall_timeout_s), nicht als zweite Kopie des Defaults. */
+        const grenze = Number(d.stall_timeout_s||0);
+        const fluss = (o)=>{
+          const a = Number((o&&o.ohne_fortschritt_s)||0);
+          const kills = Number((o&&o.stillstaende)||0);
+          if(!grenze) return '<span class="faint">Wächter aus</span>';
+          const warn = a >= grenze*0.6, schlimm = a >= grenze;
+          const farbe = schlimm ? 'var(--danger)' : (warn ? 'var(--amber)' : 'var(--ok)');
+          return '<span class="mono" style="color:'+farbe+'" title="Sekunden seit dem '
+            +'letzten Zuwachs an Bild oder Bytes — Grenze '+esc(String(grenze))+' s">'
+            +esc(String(a))+' s</span>'
+            +(kills?' <span class="tag danger" title="so oft hat der Wächter neu '
+              +'aufgebaut">'+esc(String(kills))+'×</span>':'');
+        };
         html='<div class="tbl-wrap"><table><thead><tr>'
-          +'<th>Restream</th><th>Läuft seit</th><th>Ziele bestätigt</th>'
+          +'<th>Restream</th><th>Läuft seit</th><th>Bild fließt</th>'
+          +'<th>Ziele bestätigt</th>'
           +'<th>Ziele tot</th><th>Neuaufbauten</th><th>ffmpeg meldet</th>'
           +'</tr></thead><tbody>';
         for(const rid of rids){
@@ -9339,10 +9383,30 @@ async function betriebLoad(){
             : '<span class="faint">nichts</span>';
           html += '<tr><td class="mono">#'+esc(String(rid))+'</td>'
             +'<td class="mono">'+esc(String(s.uptime_s||0))+' s</td>'
+            +'<td>'+fluss(s)+'</td>'
             +'<td>'+(live.length?live.map(x=>_bt(x)).join(' '):'<span class="faint">—</span>')+'</td>'
             +'<td>'+(dead.length?dead.map(x=>_bt(x,'danger')).join(' '):'<span class="faint">—</span>')+'</td>'
             +'<td class="mono">'+esc(String(s.restarts||0))+'</td>'
             +'<td style="font-size:11px">'+teeTxt+'</td></tr>';
+          /* v4.0-W115: unabhängige Relays (Twitch/YouTube im
+             independent-Modus) als eigene Zeile. Sie liefen bis W114 ohne
+             -progress und hatten nichts zu melden; jetzt haben sie dieselben
+             Werte wie der Hauptprozess — und ein hängender Relay ist im
+             Panel sichtbar, statt erst nach ~6 Minuten der Plattformprüfung
+             aufzufallen. */
+          const rel = s.relays||{};
+          for(const pn of Object.keys(rel)){
+            const r = rel[pn]||{};
+            html += '<tr><td class="mono faint" style="padding-left:18px">↳ '
+              +esc(pn)+'</td>'
+              +'<td class="mono">'+esc(String(r.uptime_s||0))+' s</td>'
+              +'<td>'+fluss(r)+'</td>'
+              +'<td colspan="4" class="faint" style="font-size:11px">'
+              +'eigener Relay-Prozess (pid '+esc(String(r.pid||'—'))+')'
+              +(r.health&&r.health.speed?' · speed '+esc(String(r.health.speed)):'')
+              +(r.health&&r.health.bitrate?' · '+esc(String(r.health.bitrate)):'')
+              +'</td></tr>';
+          }
         }
         html+='</tbody></table></div>';
         const ap = (d.active_platforms||[]);

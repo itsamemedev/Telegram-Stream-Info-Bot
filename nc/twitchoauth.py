@@ -141,8 +141,13 @@ def authorize_url(csrf, redirect_uri=None):
 async def exchange_code(code, state, aiohttp):
     """Schritt 2: den ?code aus dem Redirect gegen Access+Refresh tauschen.
        Gibt (ok, meldung) zurueck."""
-    if state and _state["csrf"] and state != _state["csrf"]:
-        return False, "state stimmt nicht (CSRF) — Flow neu starten"
+    # v4.0-W118 (SEC): frueher `if state and _state["csrf"] and ...` — die
+    # Pruefung fiel weg, sobald der Rueckruf GAR KEINEN state mitbrachte. Genau
+    # das kann ein Angreifer: er baut den Callback-Aufruf selbst und laesst den
+    # Parameter einfach weg. Damit war der CSRF-Schutz mit einem Handgriff
+    # abschaltbar. Jetzt gilt: wurde ein state ausgegeben, MUSS er passen.
+    if _state["csrf"] and state != _state["csrf"]:
+        return False, "state fehlt oder stimmt nicht (CSRF) — Flow neu starten"
     cid, csec = _client()
     if not (cid and csec):
         return False, "TWITCH_CLIENT_ID + TWITCH_CLIENT_SECRET fehlen"

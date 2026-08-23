@@ -19,6 +19,76 @@ def clean_username(u):
 
 PASS = 0
 
+
+# ══════════════════════════════════════════════════════════════════════════
+# v4.0-W117 · ANKER, DIE NICHT MITWACHSEN MUESSEN
+# ══════════════════════════════════════════════════════════════════════════
+# Die Vertraege hier verankern sich an woertlichem Quelltext — anders geht es
+# bei einem 1,5-MB-Monolithen nicht. Der TEURE Teil daran waren nie die
+# Textanker, sondern die FENSTER der Form `src[i:i + 2200]`: waechst die
+# Zielfunktion darueber hinaus, meldet der Test etwas als fehlend, das zwei
+# Zeilen weiter unten steht. CLAUDE.md nennt drei Faelle, in denen genau das
+# passiert ist, und jedes Mal kostet es die Frage "ist der Vertrag gebrochen
+# oder nur sein Anker".
+#
+# Gemessen am 2026-08-23: von 31 aufloesbaren Fenstern hatten 13 weniger als
+# 200 Zeichen Reserve bis zur zuletzt geprueften Nadel — bei ihnen reicht ein
+# eingefuegter Kommentarblock, um einen gruenen Vertrag rot zu faerben.
+#
+# Diese drei Helfer schneiden stattdessen per AST an der ECHTEN Grenze. Damit
+# gibt es keine Zahl mehr, die veralten kann.
+
+
+def _fn(src, name):
+    """Quelltext einer Funktion, an ihrer echten Grenze geschnitten.
+
+    Findet Top-Level-Funktionen UND verschachtelte. Kommt der Name mehrfach
+    vor, ist das ein Fehler im Test und keine stille Zufallsauswahl —
+    dann gehoert _meth() hierher."""
+    treffer = [n for n in ast.walk(ast.parse(src))
+               if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+               and n.name == name]
+    assert treffer, "Funktion %s gibt es nicht (mehr)" % name
+    assert len(treffer) == 1, (
+        "Funktion %s kommt %dx vor — _meth(src, Klasse, Name) benutzen"
+        % (name, len(treffer)))
+    return ast.get_source_segment(src, treffer[0]) or ""
+
+
+def _meth(src, klasse, name):
+    """Quelltext einer Methode — fuer Namen, die es mehrfach gibt."""
+    for c in ast.walk(ast.parse(src)):
+        if isinstance(c, ast.ClassDef) and c.name == klasse:
+            for m in c.body:
+                if isinstance(m, (ast.FunctionDef, ast.AsyncFunctionDef)) and m.name == name:
+                    return ast.get_source_segment(src, m) or ""
+    raise AssertionError("Methode %s.%s gibt es nicht (mehr)" % (klasse, name))
+
+
+def _ab(src, marke):
+    """Von einer Marke bis zum ENDE der umgebenden Funktion.
+
+    Fuer Pruefungen, die bewusst mitten in einer Funktion ansetzen ("ab hier
+    muss folgen…"). Die Marke bleibt, die willkuerliche Laenge faellt weg."""
+    pos = src.find(marke)
+    assert pos > 0, "Marke nicht gefunden: %r" % (marke[:60],)
+    zeile = src.count("\n", 0, pos) + 1
+    beste = None
+    for n in ast.walk(ast.parse(src)):
+        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) \
+                and n.lineno <= zeile <= n.end_lineno:
+            if beste is None or (n.end_lineno - n.lineno) < (beste.end_lineno - beste.lineno):
+                beste = n
+    if beste is None:
+        return src[pos:]
+    ende = 0
+    for i, z in enumerate(src.splitlines(keepends=True), start=1):
+        ende += len(z)
+        if i == beste.end_lineno:
+            break
+    return src[pos:ende]
+
+
 def ok(name):
     global PASS
     PASS += 1
@@ -521,8 +591,7 @@ def test_azrael_text_cap():
     kappt seit je auf 2x38 Zeichen)."""
     src = open("bot_v37.py").read()
     assert "AZRAEL_OVERLAY_MAXLEN" in src and "def _ov_clip_text" in src
-    i = src.find("def _azrael_overlay_state")
-    body = src[i:i + 900]
+    body = _fn(src, "_azrael_overlay_state")          # v4.0-W117
     assert '"text": _ov_clip_text(r.get("text", ""))' in body, "API kappt nicht"
     assert '"text_full"' in body, "Volltext sollte für Clients erhalten bleiben"
 
@@ -1076,12 +1145,10 @@ def test_twitch_chat_scopes_and_reply():
     ok("twitch-chat-loop: OAuth-Token bevorzugt, manueller als Fallback")
 
     # AZRAEL-Antwort ist konservativ: Flag + Ansprache + Cooldown + Shield
-    r = src.find("def _azrael_chat_should_reply")
-    rb = src[r:r + 700]
+    rb = _fn(src, "_azrael_chat_should_reply")        # v4.0-W117
     assert "AZRAEL_CHAT_REPLY" in rb and "addressed" in rb and "COOLDOWN" in rb, \
         "Antwort-Gate braucht Flag, Ansprache-Erkennung und Cooldown"
-    a = src.find("async def _azrael_chat_reply")
-    ab = src[a:a + 700]
+    ab = _fn(src, "_azrael_chat_reply")               # v4.0-W117
     assert "_sentinel_screen" in ab, "Shield muss VOR der Antwort screenen"
     ok("azrael-chat-reply: Flag + Ansprache + Cooldown + Shield-Screen")
 
@@ -1121,8 +1188,7 @@ def test_twitch_status_uses_oauth():
     alten .env-Token und meldete »Token nötig«, obwohl OAuth verbunden war. Muss
     denselben OAuth-bevorzugt-Fallback nutzen wie der EventSub-Loop."""
     src = open("bot_v37.py").read()
-    i = src.find("async def _twitch_channel_status")
-    body = src[i:i + 900]
+    body = _fn(src, "_twitch_channel_status")         # v4.0-W117
     assert "_twoauth.status().get(\"ready\")" in body, \
         "Status-Route prüft den OAuth-Flow nicht"
     assert "_twoauth.access_token" in body, "Status-Route nutzt den OAuth-Token nicht"
@@ -1260,9 +1326,7 @@ def test_foreign_ad_block():
     assert "_detect_foreign_ad" in src, "Werbe-Detektor fehlt"
     assert '_spam_check' in src and 'block_ads' in src, "nicht in die Moderation verdrahtet"
     # Der Detektor muss die eigene Invite-Allowlist per vollem Pfad prüfen
-    i = src.find("def _own_invites")
-    assert i > 0, "Invite-Allowlist fehlt — sonst gilt jeder discord.gg als eigen"
-    body = src[i:i + 600]
+    body = _fn(src, "_own_invites")                   # v4.0-W117
     assert "discord.gg" in body and "group(2)" in body, \
         "Invite muss auf vollen Pfad (mit Servername) geprüft werden"
     ok("adblock: Fremdwerbe-Detektor mit Eigen-Allowlist verdrahtet")
@@ -1351,9 +1415,7 @@ def test_restream_max_concurrent():
     assert "RESTREAM_MAX_CONCURRENT" in src, "kein Concurrent-Deckel"
     assert 'RESTREAM_MAX_CONCURRENT", 2' in src, "Default nicht 2"
     # Der Deckel greift in der Multi-Modus-Schleife per break
-    i = src.find("V37-MAXLIVE: gedeckelt")
-    assert i > 0, "Deckel nicht in auto_start_due"
-    body = src[i:i + 400]
+    body = _ab(src, "V37-MAXLIVE: gedeckelt")         # v4.0-W117
     assert "len(self._procs) >= RESTREAM_MAX_CONCURRENT" in body and "break" in body, \
         "Deckel-Prüfung fehlt oder bricht nicht ab"
     ok("maxlive: Multi-Restream auf RESTREAM_MAX_CONCURRENT gedeckelt (Default 2)")
@@ -1370,9 +1432,7 @@ def test_overlay_react_and_layout():
     src = open("bot_v37.py").read()
     # Reaktions-Filter auf den live-restreamten User
     assert "AZRAEL_REACT_ONLY_LIVE" in src, "kein Live-Reaktions-Filter"
-    i = src.find("NUR auf den User,\n                # der GERADE restreamt wird")
-    assert i > 0, "Filter nicht im react-Worker"
-    body = src[i:i + 950]
+    body = _ab(src, "NUR auf den User,\n                # der GERADE restreamt wird")   # v4.0-W117
     assert "_restream_active_sources()" in body and "continue" in body, \
         "Filter prüft nicht den aktiven Restream oder überspringt nicht"
     # Sicherung: kein aktiver Restream → nicht alles blockieren
@@ -1427,8 +1487,7 @@ def test_pwa():
     # Service-Worker-Scope-Header (sonst darf SW nicht die ganze App steuern)
     assert 'Service-Worker-Allowed' in src, "SW-Scope-Header fehlt"
     # Icon-Route hat Whitelist (Path-Traversal-Schutz)
-    i = src.find("def pwa_icon")
-    body = src[i:i + 400]
+    body = _fn(src, "pwa_icon")                       # v4.0-W117
     assert "allowed" in body and "abort(404)" in body, "Icon-Route ohne Whitelist"
     ok("pwa: Routen für Manifest, Service Worker, Icons (mit Path-Schutz)")
 
@@ -2187,8 +2246,7 @@ def test_v40_w5_channel_all():
     assert "_nc_ytapi.BROADCASTS_URL" in src and "_nc_ytapi.VIDEOS_URL" in src, "kein Data-API-Setzer"
     assert 'params={"part": "snippet"}' in src and "video_update_body" in src, "kein videos.update"
     # _channel_set_all deckt ALLE drei Plattformen ab.
-    i = src.find("async def _channel_set_all")
-    body = src[i:i + 1400]
+    body = _fn(src, "_channel_set_all")               # v4.0-W117
     assert 'out["kick"]' in body and 'out["twitch"]' in body and 'out["youtube"]' in body, "nicht alle drei Plattformen"
     assert "_youtube_set_channel(title, cat" in body, "YouTube nicht im Set-All"
     # Kategorien tragen je Plattform (kick/twitch/yt).
@@ -2314,8 +2372,7 @@ def test_v40_w10_kick_sendcheck():
     src = open("bot_v37.py").read()
     # Gedaechtnis + Klartext-Fehler im Sendepfad.
     assert "_KICK_SEND_LAST" in src, "kein Gedaechtnis fuer den letzten Sendeversuch"
-    i = src.find("async def send_message")
-    body = src[i:i + 2200]
+    body = _meth(src, "KickModerator", "send_message")   # v4.0-W117
     assert "await resp.text()" in body, "Kicks Fehlertext wird nicht gelesen"
     assert "keine Broadcaster-ID aufloesbar" in body, "fehlende Broadcaster-ID wird nicht benannt"
     assert "_KICK_SEND_LAST.update(" in body, "Sendeversuch wird nicht gemerkt"
@@ -2600,8 +2657,7 @@ def test_v40_w17_kick401_crowdsec():
 
     src = open("bot_v37.py").read()
     # Chat-Senden: User-Token bevorzugt, dann type "user".
-    i = src.find("async def send_message")
-    body = src[i:i + 2600]
+    body = _meth(src, "KickModerator", "send_message")   # v4.0-W117
     assert "_utok = await _kick_user_token(session)" in body, "Chat nutzt den User-Token nicht"
     assert 'payload = {"type": "user" if _utok else "bot"' in body, "Poster-Typ nicht gesetzt"
     assert 'App-Token darf nicht chatten' in body, "kein Klartext-Hinweis bei 401"
@@ -3480,8 +3536,7 @@ def test_v40_w35_crossplatform_restream():
     assert "async def _announce_loop(" in src and "_kick_announce_loop" not in src, \
         "Announcer nicht auf Multi-Plattform umgestellt"
     assert '_spawn(_announce_loop()' in src
-    i = src.find("async def _announce_loop(")
-    body = src[i:i + 2600]
+    body = _fn(src, "_announce_loop")                 # v4.0-W117
     assert 'for plat in ("twitch", "youtube")' in body and "_azrael_send_to(plat, txt)" in body, \
         "Announce sendet nicht an Twitch/YouTube"
     assert "mod.send_message(txt)" in body, "Announce sendet nicht an Kick"
@@ -4048,7 +4103,17 @@ def test_v40_w52_pin_login():
     assert 'redirect("/login?next="' in src, "kein Login-Redirect für Browser"
     assert "def dashboard_login_submit(" in src and '"/api/login"' in src, "Login-POST fehlt"
     assert 'p in ("/login", "/logout") or p == "/api/login"' in src, "Login-Routen nicht vom Gate ausgenommen"
-    assert 'if not nxt.startswith("/"):' in src, "kein Open-Redirect-Schutz"
+    # v4.0-W118 (SEC): der Anker ist gebrochen, der Vertrag ist STRENGER
+    # geworden. Die alte Pruefung `nxt.startswith("/")` liess //example.com
+    # durch — eine protokoll-relative URL, die der Browser als
+    # https://example.com aufloest. Jetzt entscheidet _sicheres_ziel().
+    assert "def _sicheres_ziel(roh):" in src, "kein Open-Redirect-Schutz"
+    _sz = src[src.index("def _sicheres_ziel(roh):"):
+              src.index('@dashboard_app.route("/login")')]
+    assert 'z[:2] in ("//", "/\\\\")' in _sz, \
+        "protokoll-relative Ziele (//host, /\\host) nicht abgewiesen"
+    assert src.count("_sicheres_ziel(request.") == 2, \
+        "nicht beide Login-Pfade (GET + POST) gehen ueber die Pruefung"
     # Loopback bleibt frei.
     assert 'if (request.remote_addr or "") in _LOOPBACK:' in src, "Loopback-Ausnahme verloren"
     # SW-Version gebumpt (PWA-Update).
@@ -5351,7 +5416,14 @@ def test_v40_w87_relay_source_reresolve():
         or "self._resolve_source(source_username, force_fresh=True)" in _relay, "Relay löst Quelle nicht frisch auf"
     assert "_looks_like_source_expired(_tail)" in _relay, "URL-Rotation nicht als Normalfall behandelt"
     assert "cur_url = _fresh" in _relay, "frische URL wird nicht verwendet"
-    assert "if _ran > 120:" in _relay and "attempt = 0" in _relay, "kein Budget-Reset nach gesundem Lauf"
+    # v4.0-W115: hier war der ANKER gebrochen, nicht der Vertrag. Der Reset
+    # nach einem gesunden Lauf steht weiter drin — jetzt aus dem Regelsatz
+    # (_RESTREAM_RELAY_POLICY.stable_run_s = 120.0, derselbe Wert wie zuvor)
+    # und mit der Zusatzregel aus W113: ein vom Stillstands-Waechter beendeter
+    # Lauf war LANG, aber nicht gesund und fuellt das Budget nicht auf.
+    assert "_nc_rstab.budget_after_run(" in _relay \
+        and "progressed=not _stalled" in _relay, "kein Budget-Reset nach gesundem Lauf"
+    assert "stable_run_s=120.0" in src, "W87-Schwelle von 120s verloren"
     assert "offline → Relay" in _relay, "Offline-Quelle beendet Relay nicht sauber"
     ok("v4.0-w87: Relays lösen Quelle frisch auf — YouTube/Twitch fallen nicht mehr weg")
 
@@ -5851,6 +5923,569 @@ def test_v40_w109_dashboard_feldnamen():
     ok("v4.0-w109: Dashboard-Feldnamen decken sich mit dem Backend (score, load_percent)")
 
 
+def test_v40_w113_restream_stability():
+    """v4.0-W113: Restreams reissen nicht mehr dauerhaft ab.
+
+    Fuenf Befunde im Wiederanlauf, alle im selben Pfad (_monitor):
+      1. Das Reconnect-Budget wurde NIE zurueckgegeben. `attempts` wanderte
+         von Reconnect zu Reconnect weiter und wurde nur beim Start von Hand
+         geleert — ein Ziel, das acht Stunden lief und dabei fuenfmal kurz
+         stolperte, galt danach als "aufgegeben nach 5 Reconnects". Ab da
+         half nur noch die Verify-Schleife: 120s-Takt, bis zu 900s Backoff
+         statt 8s. Fuer die unabhaengigen Relays war genau das in W87 schon
+         repariert, der Hauptpfad blieb aussen vor.
+      2. Backoff linear und ohne Streuung — gleichzeitig gestorbene Restreams
+         kamen auf die Sekunde gemeinsam gegen dieselbe Ingest zurueck.
+      3. Der Ablauf-Pfad hatte keine Untergrenze: 2s Pause, kein Fehlversuch,
+         endlos. `_srcexpired` zaehlte mit und tat nichts damit.
+      4. Der copy->transcode-Fallback sprang auf Netzfehler an ("failed to",
+         "unable to" stehen woertlich in "Failed to resolve hostname") und
+         schaltete damit fuer die ganze Sitzung auf einen Encode, dessen
+         Rueckstand der Bot selbst als "typische Disconnect-Ursache" warnt.
+      5. Ein ffmpeg, der LEBT aber nichts mehr sendet, wurde nie bemerkt —
+         _monitor haengt an proc.wait(). Panel gruen, Sendung weg, Log leer.
+    """
+    src = open("bot_v37.py", encoding="utf-8").read()
+
+    # Regeln liegen bot-frei im Modul, nicht mehr als Zahlen im Monolithen.
+    assert "from nc import restream_stability as _nc_rstab" in src, "Modul nicht eingebunden"
+    assert "_RESTREAM_POLICY = _nc_rstab.ReconnectPolicy(" in src, "Policy nicht gebaut"
+
+    _mon = src[src.index("    async def _monitor(self, rid):"):
+               src.index("    async def stop(self, rid, _keep_desired=False):")]
+
+    # 1) Budget-Rueckgabe im Hauptpfad
+    assert "_nc_rstab.budget_after_run(" in _mon, "kein Budget-Reset nach gesundem Lauf"
+    assert "progressed=_progressed" in _mon, "Stillstands-Kill fuellt das Budget faelschlich auf"
+    assert "_nc_rstab.budget_exhausted(" in _mon, "Budget-Grenze nicht aus der Policy"
+
+    # 2) Backoff
+    assert "delay = min(60, 8 * (attempts + 1))" not in src, "linearer Backoff noch drin"
+    assert "_nc_rstab.reconnect_delay(" in _mon, "Backoff nicht aus der Policy"
+
+    # 3) Ablauf-Pfad mit Untergrenze
+    assert "_nc_rstab.expired_streak(" in _mon and "_nc_rstab.expired_delay(" in _mon, \
+        "Ablauf-Pfad ohne Serienzaehlung"
+    assert "_nc_rstab.expired_is_spinning(" in _mon, "Ablauf-Schleife wird nie als Fehlversuch gebucht"
+    assert "self._srcspin" in src, "Serienzaehler fehlt"
+
+    # 4) Codec-Fallback delegiert (und die alte Wortliste ist weg)
+    _ck = src[src.index("def _looks_like_codec_err(text):"):
+              src.index("class RestreamManager:")]
+    assert "_nc_rstab.is_codec_failure(text)" in _ck, "Codec-Heuristik nicht delegiert"
+    assert '"failed to", "could not write header"' not in _ck, "alte Wortliste noch im Monolithen"
+
+    # 5) Stillstands-Waechter: Marke, Task, Start, Abbau, Anzeige
+    # v4.0-W115: Marke und Waechter bedienen jetzt BEIDE Pfade (Hauptprozess
+    # und unabhaengige Relays). Die Anker wandern mit, der Vertrag bleibt.
+    assert 'w = eintrag.setdefault("watch"' in src, "keine Fortschrittsmarke"
+    assert "self._marke_setzen(info, h, p)" in src, "_update_health setzt die Marke nicht"
+    assert "async def _stall_watch(self, rid, proc, pname=None):" in src, "Waechter fehlt"
+    _sw = src[src.index("    async def _stall_watch(self, rid, proc, pname=None):"):
+              src.index("    async def start(self, rid, _attempts=0, _src_watch=False):")]
+    assert 'info.get("proc") is not proc' in _sw, \
+        "alter Waechter kann den frischen Prozess killen"
+    assert "reader_alive=" in _sw, "blinder Waechter schiesst trotzdem"
+    assert 'info["stall_kill"] = True' in _sw and "_reap_proc(proc)" in _sw, \
+        "Waechter beendet den haengenden Prozess nicht"
+    assert 'self._procs[rid]["stallwatch"] = asyncio.create_task(' in src, "Waechter wird nicht gestartet"
+    _stop = src[src.index("    async def stop(self, rid, _keep_desired=False):"):
+                src.index("    async def stop_all(self, _keep_desired=False):")]
+    assert '_sw_stall = info.get("stallwatch")' in _stop, "Waechter wird beim Stop nicht abgeraeumt"
+    assert '"ohne_fortschritt_s"' in src, "Stillstand im Status nicht sichtbar"
+
+    # Der progress-Leser verschluckt seinen Tod nicht mehr — sonst friert die
+    # Health-Anzeige ein UND der Waechter wird blind, beides unbemerkt.
+    _rp = src[src.index("    async def _read_progress(self, rid, proc, pname=None):"):
+              src.index("    async def _read_stderr(self, proc, sink):")]
+    assert "_loop_fehler(" in _rp, "progress-Leser faellt weiter still aus"
+
+    ok("v4.0-w113: Reconnect-Budget, Backoff, Ablauf-Bremse, Codec-Filter, Stillstands-Waechter")
+
+
+def test_v40_w114_website_3d():
+    """v4.0-W114: die oeffentliche Seite steht im Raum, nicht nur drei Widgets.
+
+    Vorher waren Sentinel-Kern, Verbrauchsbalken und Spendenmuenze
+    raeumlich — auf einer flachen Seite. Jetzt: perspektivischer Korridor
+    hinter dem Inhalt, jede Sektion auf eigener Z-Ebene, Kacheln neigen
+    sich unter dem Zeiger, und der Raum gilt fuer ALLE drei Seiten
+    (Start, Impressum, Datenschutz) aus EINER Quelle. Dependency-frei wie
+    der Rest der Seite.
+
+    Die Vertraege halten die fuenf Entscheidungen fest, die im Browser
+    gemessen wurden und ohne die es bricht:
+      * perspective NICHT als CSS-Eigenschaft auf main — main ist ueber
+        zehntausend Pixel hoch, der Fluchtpunkt saesse einmalig in dessen
+        Mitte und alles weit darueber/darunter kippte grotesk weg. Also im
+        transform-Funktionsaufruf je Sektion.
+      * overflow-x:clip auf main, NICHT auf html — an der Wurzel nimmt es
+        der Kopfleiste in Chromium ihr position:sticky (gemessen:
+        header.top -2800 statt 0). Ohne Klippen: 18px Ueberlauf auf 390px.
+      * Der Schalter steht nicht in der Navigation — auf 390px fuellt die
+        Kopfleiste bereits zwei Zeilen aus, ein weiteres Element machte sie
+        37 % hoeher (78px -> 107px). Und position:fixed haette darin nicht
+        geholfen: header traegt backdrop-filter und wird damit zum
+        Bezugsrahmen fuer fixierte Nachfahren.
+      * Die Lesezone bleibt plan: eine Sektion, die die Bildschirmmitte
+        abdeckt, hat Tiefe exakt null. Gekippter Fliesstext wird unscharf
+        gerastert.
+      * Blind heisst flach: ohne JS, bei prefers-reduced-motion oder nach
+        einem Klick auf "Flach" faellt html.d3 weg und die Seite ist die
+        alte — der Knopf bleibt bis dahin hidden.
+    """
+    css = open("website/raum.css", encoding="utf-8").read()
+    js  = open("website/raum.js", encoding="utf-8").read()
+
+    # EINE Quelle, alle drei Seiten
+    for seite in ("lafap_index", "impressum", "datenschutz"):
+        w = open("website/%s.html" % seite, encoding="utf-8").read()
+        # v4.0-W117: die Verweise tragen jetzt einen Cache-Stempel (?v=hash),
+        # also nicht mehr auf die nackte Zeichenkette pruefen — der Vertrag
+        # ist "wird eingebunden", nicht "ohne Query".
+        assert re.search(r'<link rel="stylesheet" href="raum\.css(\?v=[0-9a-f]+)?">', w), \
+            seite + ": raum.css fehlt"
+        assert re.search(r'<script src="raum\.js(\?v=[0-9a-f]+)?"></script>', w), \
+            seite + ": raum.js fehlt"
+        assert '<canvas id="raum" class="raum" aria-hidden="true"></canvas>' in w, \
+            seite + ": Raum-Flaeche fehlt oder nicht als dekorativ ausgezeichnet"
+        assert 'id="d3-schalter" class="d3-schalter" hidden>' in w, \
+            seite + ": Schalter fehlt oder nicht versteckt"
+
+    # Der Schalter steht ausserhalb der Navigation (Kopfleiste bleibt zweizeilig)
+    w = open("website/lafap_index.html", encoding="utf-8").read()
+    _nav = w[w.index('<nav aria-label="Seitennavigation">'):w.index("</nav>")]
+    assert "d3-schalter" not in _nav, "Schalter steckt in der Navigation"
+
+    # Raum und Tiefe
+    assert "html.d3 main>section{perspective:" in css, "Sektionen ohne Perspektive"
+    assert "html.d3 main{overflow-x:clip}" in css, "Kipp-Ueberlauf nicht geklippt"
+    assert "html.d3{overflow-x:clip}" not in css, \
+        "clip an der Wurzel — das nimmt der Kopfleiste ihr sticky"
+    assert ".d3-schalter{position:fixed" in css and "min-height:44px" in css, \
+        "Schalter nicht als feste Ecke mit 44px-Beruehrziel"
+    assert "perspective(1600px) translate3d(0,0," in js, \
+        "Sektionstiefe nicht als transform-Funktion (Fluchtpunkt-Falle)"
+    assert "if (r.top <= mY && r.bottom >= mY) d = 0;" in js, \
+        "Tiefe haengt nicht an der Lesezone — gekippter Text wird unscharf"
+
+    # Eine Schleife, Layout nur bei Bewegung
+    assert "if (y !== letzterScroll || window.innerHeight !== letzteHoehe)" in js, \
+        "getBoundingClientRect laeuft pro Frame statt nur bei Bewegung"
+
+    # Rueckfallpfade
+    assert "prefers-reduced-motion" in js, "reduced-motion nicht beachtet"
+    assert "document.hidden" in js, "laeuft im versteckten Tab weiter"
+    assert "localStorage" in js and "lafap.raum" in js, "Wahl wird nicht gemerkt"
+    assert "hardwareConcurrency" in js, "keine Absenkung auf schwachen Geraeten"
+    assert "(hover: hover) and (pointer: fine)" in js, \
+        "Zeigerneigung auch auf Beruehrgeraeten — dort verreisst jeder Tipper den Raum"
+
+    # Kein Fremd-Code, kein externer Request
+    for quelle, name in ((css, "raum.css"), (js, "raum.js")):
+        assert "http://" not in quelle and "https://" not in quelle, \
+            name + ": externer Verweis"
+    ok("v4.0-w114: der Raum auf allen drei Seiten — Korridor, Sektionstiefe, "
+       "Kachelneigung, abschaltbar")
+
+
+def test_v40_w115_relay_sicht_und_srcwatch():
+    """v4.0-W115: die blinden Flecken, die W113 offen gelassen hat.
+
+    1. DIE UNABHAENGIGEN RELAYS WAREN BLIND. _spawn_independent startete
+       ffmpeg mit stdout=DEVNULL — der Kommandozeile lag seit jeher
+       `-progress pipe:1` bei, es hat nur nie jemand zugehoert. Fuer
+       Twitch/YouTube im Modus RESTREAM_MULTI_MODE=independent gab es
+       dadurch WEDER Health-Daten NOCH Stillstands-Erkennung: ein
+       haengender Relay fiel erst der Plattform-Pruefung auf (120s-Takt,
+       3 Fehlanzeigen ≈ 6 Minuten) — und auch nur, wenn deren API
+       ueberhaupt antwortet. Genau der Ausfall, den W113 fuer den
+       Hauptprozess geschlossen hat.
+    2. DIE W113-MESSWERTE SAH NIEMAND. ohne_fortschritt_s und
+       stillstaende standen in /api/restream/verify, kamen in
+       dashboard.html aber kein einziges Mal vor. Der Waechter griff,
+       loggte, baute neu auf — im Panel stand nichts davon.
+    3. _source_watch FING NUR CancelledError. Jede andere Ausnahme
+       beendete den Task; asyncio meldet so etwas fruehestens beim
+       Aufraeumen als "Task exception was never retrieved". Folge: der
+       Quellen-Failover fuer dieses Ziel war fuer den Rest der Laufzeit
+       tot, und der Bot wartete auf einen ffmpeg-Abbruch, der bei einer
+       sauber beendeten TikTok-Sendung nie kommt.
+
+    Bewusst EIN Waechter und EIN Health-Parser fuer beide Pfade: die
+    Entscheidung "was heisst hier tot" darf es nur einmal geben, sonst
+    laufen Haupt- und Relay-Pfad ueber die Monate auseinander.
+    """
+    src = open("bot_v37.py", encoding="utf-8").read()
+    h = open("templates/dashboard.html", encoding="utf-8").read()
+
+    # ── 1) Relays sehen und werden bewacht ────────────────────────────────
+    _sp = src[src.index("    async def _spawn_independent(self, rid, pname"):
+              src.index("    async def _monitor(self, rid):")]
+    assert "stdout=asyncio.subprocess.PIPE" in _sp, "Relay laeuft weiter blind (DEVNULL)"
+    assert "stdout=asyncio.subprocess.DEVNULL" not in _sp, "DEVNULL noch im Relay-Pfad"
+    assert "self._read_progress(rid, p, pname=pname)" in _sp, "Relay ohne progress-Leser"
+    assert "self._stall_watch(rid, p, pname=pname)" in _sp, "Relay ohne Stillstands-Waechter"
+    assert "_ptask.cancel()" in _sp and "_stask.cancel()" in _sp, \
+        "Relay raeumt seine Leser/Waechter nicht ab — Task-Leck je Reconnect"
+    assert '_stalled = bool(_eintrag.get("stall_kill"))' in _sp, \
+        "Relay merkt sich den Stillstands-Kill nicht (Budget wuerde faelschlich aufgefuellt)"
+    assert "_nc_rstab.reconnect_delay(attempt - 1, _RESTREAM_RELAY_POLICY)" in _sp, \
+        "Relay-Backoff ohne Streuung"
+    assert "_RESTREAM_RELAY_POLICY = _nc_rstab.ReconnectPolicy(" in src, "Relay-Regelsatz fehlt"
+
+    # EIN Parser, EIN Waechter — beide ueber pname auf beiden Pfaden
+    assert "def _eintrag(self, rid, pname=None):" in src, "kein gemeinsamer Zugriffspunkt"
+    assert "def _marke_setzen(eintrag, h, p):" in src, "Fortschrittsmarke nicht geteilt"
+    assert "async def _read_progress(self, rid, proc, pname=None):" in src
+    assert "async def _stall_watch(self, rid, proc, pname=None):" in src
+    assert "def _update_health(self, rid, p, pname=None):" in src
+    # Das Overlay haengt am Hauptprozess und darf nicht je Relay neu schreiben
+    _rp = src[src.index("    async def _read_progress(self, rid, proc, pname=None):"):
+              src.index("    async def _read_stderr(self, proc, sink):")]
+    assert "RESTREAM_OVERLAY and pname is None" in _rp, \
+        "Overlay wird aus jedem Relay-Takt zusaetzlich geschrieben"
+
+    # Relays im Status sichtbar
+    _st = src[src.index("    def status(self):"):]
+    assert '"relays": {' in _st, "Relays fehlen im Status"
+    assert 'self._stallkills.get(\n                                      f"{rid}:{_pn}", 0)' in _st \
+        or 'f"{rid}:{_pn}"' in _st, "Relay-Stillstaende nicht getrennt gezaehlt"
+
+    # ── 2) Im Panel sichtbar ──────────────────────────────────────────────
+    assert "stall_timeout_s=RESTREAM_STALL_TIMEOUT_S" in src, \
+        "Panel bekommt die Grenze nicht — muesste den Default doppelt kennen"
+    assert "ohne_fortschritt_s" in h, "Stillstand im Dashboard weiterhin unsichtbar"
+    assert "stillstaende" in h, "Stillstands-Zaehler im Dashboard unsichtbar"
+    assert "Bild fließt" in h, "keine Spalte fuer den Fluss"
+    assert "s.relays" in h, "Relay-Zeilen fehlen im Panel"
+    assert "d.stall_timeout_s" in h, "Panel faerbt gegen einen eigenen Default statt gegen die API"
+
+    # ── 3) Quellen-Waechter ueberlebt seine eigenen Fehler ────────────────
+    _sw = src[src.index("    async def _source_watch(self, rid, username):"):
+              src.index("    async def _switch_to_next_live(self, rid, current_user):")]
+    assert '_loop_fehler(f"restream-srcwatch#{rid}", e)' in _sw, \
+        "Quellen-Waechter meldet seinen Tod weiterhin nicht"
+    assert _sw.count("except Exception as e:") >= 2, \
+        "nur eine Fehlerklammer — eine kaputte Runde beendet den Failover noch immer"
+    ok("v4.0-w115: Relays sehen und werden bewacht, Stillstand im Panel, "
+       "Quellen-Waechter ueberlebt Fehler")
+
+
+def test_v40_w116_alterung_flattern_rate():
+    """v4.0-W116: drei Zustaende, die dem Betreiber die Sicht verstellt haben.
+
+    1. _tee_fail WURDE NIE GELEERT. Geschrieben in _read_stderr, gelesen an
+       fuenf Stellen — Deck, Verify-Loop, Sentinel-Alarm, status() und
+       Selbsttest —, geleert an keiner. Eine einmalige Ablehnung von
+       YouTube stand bis zum Bot-Neustart im Panel UND im Sentinel-Alarm,
+       auch wenn das Ziel seit Stunden wieder sendet: Dauerfehlalarm, und
+       bei der Fehlersuche jagt man einem Zustand von vorgestern hinterher.
+    2. CHAT-TRENNUNGEN ESKALIERTEN NIE. Kick-WS, Twitch-EventSub und
+       Twitch-Chat meldeten auf log.warning — in einem ERROR-Log steht
+       davon nichts. Die Verbindung konnte die ganze Nacht flattern, ohne
+       dass irgendwo etwas stand. Dasselbe Muster wie beim
+       Discord-Gateway-Tod. "Jede Trennung auf error" waere aber genauso
+       blind, also entscheidet der Verlauf (nc/flapguard.py).
+    3. DER AUFNAHME-WAECHTER MASS NUR DAS DATEIWACHSTUM. Das faengt den
+       toten Stream, nicht den halbtoten: faellt die Videospur weg und der
+       Ton laeuft weiter, waechst die Datei im Kilobyte-Takt und der
+       Waechter sieht Fortschritt. Zweite Spur ueber die RATE
+       (nc/recdiag.RateSpur) — die MELDET nur, sie killt nicht.
+    """
+    src = open("bot_v37.py", encoding="utf-8").read()
+
+    # ── 1) tee-Fehler altern und werden geleert ───────────────────────────
+    assert "def tee_fehler(self, ttl_s=None):" in src, "kein Verfall fuer tee-Fehler"
+    assert "def tee_fehler_klaeren(self, platt):" in src, "kein Loeschen bei Bestaetigung"
+    assert "RESTREAM_TEE_FAIL_TTL_S" in src, "Verfallszeit nicht einstellbar"
+    # KEIN Direktzugriff mehr an den Lesestellen — sonst umgeht einer den Verfall.
+    assert 'getattr(_RESTREAM_MGR, "_tee_fail"' not in src, \
+        "Lesestelle greift am Verfall vorbei"
+    assert 'getattr(mgr, "_tee_fail"' not in src, "Selbsttest greift am Verfall vorbei"
+    assert 'dict(getattr(self, "_tee_fail", {}) or {})' not in src, \
+        "status() greift am Verfall vorbei"
+    # Geschrieben wird weiterhin genau an EINER Stelle.
+    assert src.count("self._tee_fail = ") == 2, \
+        "unerwartete Schreibstellen auf _tee_fail"      # Anlage + Entsorgung
+    _vl = src[src.index("async def _restream_verify_loop():"):
+              src.index("async def _restream_resume_after_restart():")]
+    assert "_RESTREAM_MGR.tee_fehler_klaeren(_p)" in _vl, \
+        "bestaetigte Ziele werden nicht freigeraeumt"
+
+    # ── 2) Flattern eskaliert ─────────────────────────────────────────────
+    assert "from nc import flapguard as _nc_flap" in src, "flapguard nicht eingebunden"
+    assert "_FLAP = _nc_flap.FlapWatch(" in src, "kein Flatter-Waechter"
+    assert "def _verbindung_verloren(kanal, exc, backoff_s, seit=0.0):" in src
+    _vv = src[src.index("def _verbindung_verloren(kanal, exc, backoff_s, seit=0.0):"):
+              src.index("# F8: Chats die uns blockiert haben")]
+    assert "log.error(" in _vv and "_brain_notify(" in _vv, \
+        "Flattern wird nicht eskaliert"
+    assert "u.erholt" in _vv, "Erholung wird nicht gemeldet"
+    # Alle drei Trennungsstellen gehen durch den Helfer, keine mehr direkt.
+    for tot in ('log.warning(f"Kick-WS getrennt',
+                'log.warning("Twitch-EventSub getrennt',
+                'log.warning("Twitch-Chat getrennt'):
+        assert tot not in src, "Trennung meldet weiterhin nur auf warning: " + tot
+    for kanal in ('"Kick-WebSocket"', '"Twitch-EventSub"', '"Twitch-Chat"'):
+        assert "_verbindung_verloren(" + kanal in src, "Kanal nicht verdrahtet: " + kanal
+    # Ohne Verbindungszeitpunkt kann der Waechter nicht zwischen "hielt zehn
+    # Sekunden" und "hielt zehn Stunden" unterscheiden — daran haengt alles.
+    assert 'self.stats["since"] = _time_mod.time()' in src, "Kick ohne Verbindungsmarke"
+    assert "_es_seit = _time_mod.time()" in src, "EventSub ohne Verbindungsmarke"
+    assert 'seit=_WCHAT_STATUS["twitch"].get("since", 0.0)' in src, \
+        "Twitch-Chat ohne Verbindungsmarke"
+
+    # ── 3) Raten-Einbruch bei der Aufnahme ────────────────────────────────
+    assert "from nc import recdiag as _nc_recdiag" in src, "recdiag nicht eingebunden"
+    _wd = src[src.index("    async def _stall_watchdog():"):
+              src.index("    watchdog_task = asyncio.create_task(_stall_watchdog())")]
+    assert "_nc_recdiag.RateSpur()" in _wd, "keine Raten-Spur im Aufnahme-Waechter"
+    assert "_rate.beobachte(cur_size - _rate_last, CHECK_EVERY)" in _wd, \
+        "Raten-Spur wird nicht gefuettert"
+    assert 'log_event("recording.rate_drop"' in _wd, "Einbruch nicht als Ereignis"
+    # Der Einbruch darf NICHT killen — eine statische Szene druckt die
+    # Bitrate legitim um mehr als 85 % nach unten, und abgebrochenes
+    # Material ist unwiederbringlich weg.
+    _einbruch = _wd[_wd.index('_u == "einbruch"'):_wd.index('elif _u == "erholt"')]
+    assert "terminate()" not in _einbruch and "kill()" not in _einbruch, \
+        "Raten-Einbruch bricht die Aufnahme ab — das vernichtet echtes Material"
+    # Der Nullwachstums-Waechter darf weiterhin killen, der bleibt unberuehrt.
+    assert "stall_killed[0] = True" in _wd and "proc.terminate()" in _wd, \
+        "der bewaehrte Nullwachstums-Kill ist verloren gegangen"
+    ok("v4.0-w116: tee-Fehler altern, Flattern eskaliert, Raten-Einbruch wird gemeldet")
+
+
+def test_v40_w117_ankerhygiene():
+    """v4.0-W117: die Fenster in DIESER Datei duerfen nicht zu eng werden.
+
+    Die Vertraege hier verankern sich an woertlichem Quelltext. Die Textanker
+    sind dabei nie das Problem gewesen — die FENSTER waren es: `src[i:i + N]`
+    mit einem N, das jemand vor Monaten geschaetzt hat. Waechst die
+    Zielfunktion darueber hinaus, meldet der Test etwas als fehlend, das zwei
+    Zeilen weiter unten steht. CLAUDE.md nennt drei Faelle, in denen genau
+    das passiert ist; jedes Mal kostet es zuerst die Frage "ist der Vertrag
+    gebrochen oder nur sein Anker".
+
+    Dieser Test dreht das um: er misst fuer jedes verbliebene Fenster, wie
+    viel Luft zwischen der zuletzt geprueften Nadel und dem Fensterrand
+    liegt, und schlaegt an, BEVOR die Luft aufgebraucht ist. Statt eines
+    irrefuehrenden "Vertrag gebrochen" steht dann hier, welche Zeile zu eng
+    geworden ist und was zu tun ist.
+
+    Nicht bewertet wird, was sich nicht sicher aufloesen laesst (Fenster auf
+    Zwischenvariablen, Nadeln die nicht im Ziel vorkommen) und was negativ
+    prueft (`not in`) — dort ist ein weit entfernter Treffer gerade der
+    Beweis, dass die Pruefung stimmt.
+    """
+    import os
+    hier = os.path.dirname(os.path.abspath(__file__))
+    tests = open(os.path.join(hier, "test_restream.py"), encoding="utf-8").read()
+    tl = tests.splitlines()
+    DATEI = {"src": "bot_v37.py", "src_all": "bot_v37.py",
+             "html": "templates/dashboard.html", "h": "templates/dashboard.html",
+             "w": "website/lafap_index.html", "o": "templates/overlay.html"}
+    _q = {}
+
+    def quelle(n):
+        if n not in _q:
+            pf = DATEI.get(n)
+            _q[n] = open(os.path.join(hier, pf), encoding="utf-8").read() if pf else None
+        return _q[n]
+
+    FENSTER = re.compile(r"(\w+)\s*=\s*(\w+)\[(\w+)\s*:\s*\3\s*\+\s*(\d{3,})\]")
+    FIND = re.compile(r"(\w+)\s*=\s*(\w+)\.(?:find|index)\(\s*(\".*?\"|'.*?')\s*\)")
+    LITERAL = re.compile(r"(\"(?:[^\"\\\\]|\\\\.)*\"|'(?:[^'\\\\]|\\\\.)*')")
+    MINDESTLUFT = 150
+
+    eng, geprueft = [], 0
+    for i, zeile in enumerate(tl):
+        m = FENSTER.search(zeile)
+        if not m:
+            continue
+        var, ivar, n = m.group(1), m.group(3), int(m.group(4))
+        lit = basis = None
+        for j in range(i, max(-1, i - 25), -1):
+            f = FIND.search(tl[j])
+            if f and f.group(1) == ivar:
+                lit, basis = f.group(3), f.group(2)
+                break
+        if lit is None:
+            continue
+        try:
+            nadel = ast.literal_eval(lit)
+        except Exception:
+            continue
+        q = quelle(basis)
+        if q is None:
+            continue
+        pos = q.find(nadel)
+        if pos < 0:
+            continue
+        weit, wovon = 0, ""
+        for k in range(i + 1, min(len(tl), i + 60)):
+            z = tl[k]
+            if z.startswith("def "):
+                break
+            if var not in z or (" not in " + var) in z:
+                continue
+            for l in LITERAL.findall(z):
+                try:
+                    sub = ast.literal_eval(l)
+                except Exception:
+                    continue
+                if not isinstance(sub, str) or len(sub) < 4:
+                    continue
+                t = q.find(sub, pos)
+                if t < 0 or (t - pos) > n * 4:
+                    continue
+                if t + len(sub) - pos > weit:
+                    weit, wovon = t + len(sub) - pos, sub
+        if not weit:
+            continue
+        geprueft += 1
+        if n - weit < MINDESTLUFT:
+            eng.append("Zeile %d: Fenster %d, letzte Nadel bei %d -> nur %d Zeichen "
+                       "Luft (%r)" % (i + 1, n, weit, n - weit, wovon[:40]))
+
+    assert geprueft >= 10, ("Anker-Messung greift nicht mehr (%d Fenster erkannt) — "
+                            "Muster geaendert?" % geprueft)
+    assert not eng, (
+        "Zu enge Fenster — der naechste kleine Umbau macht daraus einen "
+        "falschen Vertragsbruch. Auf _fn(src, name), _meth(src, Klasse, name) "
+        "oder _ab(src, marke) umstellen:\n  " + "\n  ".join(eng))
+    ok("v4.0-w117: %d Fenster gemessen, alle mit mindestens %d Zeichen Luft"
+       % (geprueft, MINDESTLUFT))
+
+
+def test_v40_w117_asset_stempel():
+    """v4.0-W117: raum.css und raum.js tragen einen Cache-Stempel — aktuell.
+
+    Beide Dateien werden von allen drei oeffentlichen Seiten geladen. Ohne
+    Stempel haelt ein Browser mit warmem Cache nach einem Deploy die alte
+    Fassung; die Seite bleibt dann still flach statt kaputt (so gebaut) —
+    und WEIL nichts bricht, faellt es niemandem auf. Der Stempel ist ein
+    Inhalts-Hash, keine Nummer zum Hochzaehlen: gleicher Inhalt, gleicher
+    Stempel, Cache bleibt gueltig.
+
+    Dieser Vertrag faehrt `--check` mit. Ein vergessener Generatorlauf
+    faellt damit in der Pruefkette auf und nicht beim Betrachter — dasselbe
+    Muster wie bei .env.example (W100).
+    """
+    import os as _os
+    import subprocess as _sp
+    assert _os.path.exists("tools/stempel_assets.py"), "Stempel-Werkzeug fehlt"
+    r = _sp.run([sys.executable, "tools/stempel_assets.py", "--check"],
+                capture_output=True, text=True)
+    assert r.returncode == 0, ("Cache-Stempel veraltet — neu setzen: "
+                               + (r.stdout or r.stderr)[:160])
+    # Jede Seite bindet BEIDE Dateien mit Stempel ein.
+    for seite in ("lafap_index", "impressum", "datenschutz"):
+        w = open("website/%s.html" % seite, encoding="utf-8").read()
+        for datei in ("raum.css", "raum.js"):
+            assert re.search(re.escape(datei) + r"\?v=[0-9a-f]{6,}", w), \
+                "%s: %s ohne Cache-Stempel" % (seite, datei)
+    ok("v4.0-w117: raum.css/raum.js mit Inhalts-Stempel auf allen drei Seiten")
+
+
+def test_v40_w118_sicherheitsaudit():
+    r"""v4.0-W118: Befunde aus dem Tiefen-Audit — jeder mit eigenem Vertrag.
+
+    S1 XSS IM DASHBOARD (bewiesen, hoch). 20 Stellen bauten
+       onclick="f('${esc(x)}')". esc() liefert fuer ' das Zeichen &#39; —
+       der HTML-Parser dekodiert Attributwerte aber, BEVOR die JS-Engine
+       sie sieht. Aus &#39; wird wieder ', der String ist zu, der Rest
+       laeuft als Code. Im Browser nachgestellt:
+         Eingabe   x');window.__xss=1;showProfile('y
+         Attribut  showProfile('x');window.__xss=1;showProfile('y')
+         Ergebnis  fremder Code lief in der Sitzung des Betreibers — der
+                   Sitzung, die das Dashboard-Cookie haelt.
+       Fix: escJs() mit \xNN-Sequenzen. Die enthalten kein einziges
+       HTML-Sonderzeichen, ueberstehen die HTML-Dekodierung unveraendert
+       und werden erst von der JS-Engine INNERHALB des Strings aufgeloest.
+
+    S2 KI-SQL UNTER MARIADB. _safe_select hatte die read-only-Verbindung
+       nur fuer SQLite (mode=ro); MariaDB fiel auf eine normale
+       Schreibverbindung zurueck. Und der Wortfilter war auf SQLite
+       gemuenzt: LOAD_FILE, OUTFILE, SLEEP, BENCHMARK, mysql.user,
+       information_schema standen nicht drin — allesamt mit einem reinen
+       SELECT erreichbar.
+
+    S3 OAUTH-state UEBERSPRINGBAR. `if state and _state["csrf"] and ...`
+       liess die Pruefung weg, sobald der Rueckruf gar keinen state
+       mitbrachte — und genau das kann ein Angreifer bestimmen.
+
+    S4 OPEN REDIRECT. `nxt.startswith("/")` laesst //example.com durch.
+
+    S5 ZWEI SCHWACHE esc-SCHATTEN, die das globale, staerkere esc in
+       Funktionen verdeckten, die fremde Creator-Daten rendern.
+
+    S6 REDIS_URL MIT PASSWORT in /api/system.
+    """
+    src = open("bot_v37.py", encoding="utf-8").read()
+    h = open("templates/dashboard.html", encoding="utf-8").read()
+
+    # ── S1 ────────────────────────────────────────────────────────────────
+    assert "const escJs = s =>" in h, "JS-String-Maskierer fehlt"
+    for folge in ("\\x27", "\\x5c", "\\x3c", "\\u2028"):
+        assert folge in h, "escJs deckt " + folge + " nicht ab"
+    # Kein Handler darf mehr eine Interpolation ungeschuetzt in einen
+    # JS-'…'-String setzen. esc() reicht dort NICHT.
+    offen = []
+    for m in re.finditer(r'on\w+\s*=\s*"([^"]*)"', h):
+        for tr in re.finditer(r"'\$\{([^{}]+)\}'", m.group(1)):
+            if not tr.group(1).strip().startswith("escJs("):
+                offen.append(tr.group(1)[:40])
+    assert not offen, ("Interpolation in JS-'…' ohne escJs: " + ", ".join(offen))
+    # Genau EIN esc — zwei Maskierer unterschiedlicher Staerke sind eine Falle.
+    assert len(re.findall(r"(?:const|let|var)\s+esc\s*=", h)) == 1, \
+        "mehr als ein esc — welcher greift wo?"                        # S5
+
+    # ── S2 ────────────────────────────────────────────────────────────────
+    g = open("nc/sqlguard.py", encoding="utf-8").read()
+    for wort in ("load_file", "outfile", "dumpfile", "benchmark", "sleep",
+                 "information_schema", "mysql", "performance_schema"):
+        assert '"%s"' % wort in g, "sqlguard kennt %s nicht" % wort
+    a = open("nc/routes/ai.py", encoding="utf-8").read()
+    assert "START TRANSACTION READ ONLY" in a, "MariaDB ohne read-only Transaktion"
+    assert "conn.rollback()" in a, "read-only Transaktion wird nicht freigegeben"
+
+    # ── S3 ────────────────────────────────────────────────────────────────
+    for datei in ("nc/twitchoauth.py", "nc/ytoauth.py"):
+        o = open(datei, encoding="utf-8").read()
+        # Kommentare raus: der Fix-Kommentar zitiert das alte, kaputte Muster
+        # woertlich. Ein Vertrag, den ein Kommentar ausloesen kann, prueft den
+        # Kommentar statt den Code.
+        code = "\n".join(z for z in o.splitlines() if not z.lstrip().startswith("#"))
+        assert 'if state and _state["csrf"]' not in code, \
+            datei + ": state-Pruefung weiterhin ueberspringbar"
+        assert 'if _state["csrf"] and state != _state["csrf"]:' in code, \
+            datei + ": state wird nicht erzwungen"
+
+    # ── S4 ────────────────────────────────────────────────────────────────
+    assert "def _sicheres_ziel(roh):" in src, "Redirect-Pruefung fehlt"
+
+    # ── S7: PIN-Cookie mit Ablauf ─────────────────────────────────────────
+    # Vorher ein STATISCHER HMAC ueber das PIN: einmal ausgestellt, fuer immer
+    # gueltig, widerrufbar nur durch PIN-Wechsel. Ein Wert, der aus einem
+    # Screenshot der Entwicklerwerkzeuge abfliesst, bleibt damit unbegrenzt
+    # brauchbar.
+    assert "DASHBOARD_PIN_MAX_AGE_S" in src, "PIN-Cookie ohne Lebensdauer"
+    assert 'def _pin_auth_value(ts=None):' in src, "PIN-Cookie ohne Zeitstempel"
+    assert '"nc-dashboard-pin|" + t' in src, "Zeitstempel nicht vom HMAC gedeckt"
+    _po = src[src.index("def _pin_ok():"):src.index("def _pin_locked():")]
+    assert "alter > DASHBOARD_PIN_MAX_AGE_S" in _po, "Ablauf wird nicht geprueft"
+    assert "alter < -300" in _po, "Cookie aus der Zukunft wird akzeptiert"
+    assert "compare_digest" in _po, "Vergleich nicht zeitkonstant"
+
+    # ── S6 ────────────────────────────────────────────────────────────────
+    assert "def _url_ohne_zugang(url):" in src, "kein Maskierer fuer Zugangsdaten in URLs"
+    assert "redis_url      = _url_ohne_zugang(REDIS_URL)" in src, \
+        "REDIS_URL geht weiterhin im Klartext raus"
+    ok("v4.0-w118: XSS geschlossen, KI-SQL read-only, OAuth-state erzwungen, "
+       "Open Redirect dicht, ein Maskierer, Zugangsdaten maskiert")
+
+
 def main():
     print("test_restream — Restream-Kernlogik (Mock-basiert)")
     test_streak()
@@ -6026,6 +6661,13 @@ def main():
     test_v40_w102_donations_3d_qr_manual()
     test_v40_w103_selfcheck_bridge_and_endpoints()
     test_v40_w109_dashboard_feldnamen()
+    test_v40_w113_restream_stability()
+    test_v40_w114_website_3d()
+    test_v40_w115_relay_sicht_und_srcwatch()
+    test_v40_w116_alterung_flattern_rate()
+    test_v40_w117_ankerhygiene()
+    test_v40_w117_asset_stempel()
+    test_v40_w118_sicherheitsaudit()
     print(f"test_restream OK — {PASS} Verträge grün")
 
 

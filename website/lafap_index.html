@@ -513,10 +513,16 @@ footer nav a:hover{color:var(--phos)}
 .don-qr .qcap{font-size:.74rem;color:var(--dim)}
 @media (prefers-reduced-motion:reduce){ .don-bar i{transition:none} }
 </style>
+<!-- v4.0-W114: der Raum liegt in eigenen Dateien, weil ihn alle drei
+     Seiten teilen (Startseite, Impressum, Datenschutz). NACH dem
+     Inline-Stylesheet eingehaengt: die Reihenfolge im Dokument
+     entscheidet, und raum.css muss den .rv-Versatz ueberschreiben. -->
+<link rel="stylesheet" href="raum.css?v=e2a704c905">
 </head>
 <body>
 
 <a class="skip" href="#inhalt">Zum Inhalt springen</a>
+
 
 <header>
   <div class="bar">
@@ -532,6 +538,14 @@ footer nav a:hover{color:var(--phos)}
     </nav>
   </div>
 </header>
+
+<!-- v4.0-W114: der Raum. Rein dekorativ, faengt keine Klicks ab, bleibt
+     ohne JS unsichtbar (opacity 0, bis raum.js html.d3 setzt) — und wird
+     deshalb nie zur leeren schwarzen Flaeche. Der Schalter steht bewusst
+     NICHT in der Navigation: auf 390px fuellt die Kopfleiste bereits zwei
+     Zeilen aus, ein weiteres Element machte sie 37 % hoeher. -->
+<canvas id="raum" class="raum" aria-hidden="true"></canvas>
+<button type="button" id="d3-schalter" class="d3-schalter" hidden>Flach</button>
 
 <!-- v4.0-W72: EIN main-Landmark (vorher zwei verschachtelte <main> + ein im
      <footer> gestrandetes </main> = ungültiges HTML). id="top" bleibt das
@@ -1262,5 +1276,7 @@ footer nav a:hover{color:var(--phos)}
   kick();
 })();
 </script>
+<!-- v4.0-W114: siehe raum.css — eine Quelle fuer alle drei Seiten. -->
+<script src="raum.js?v=a187673c0e"></script>
 </body>
 </html>
