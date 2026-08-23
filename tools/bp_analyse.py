@@ -154,10 +154,27 @@ def analyse(prefix, tree, topfn, glob, imported):
                 dyn.append(h)
     zuctx = sorted(set(zuctx))
 
+    # Wer ruft die ROUTEN selbst intern auf? Das ist keine Kopplung ueber
+    # Helfer und wurde deshalb frueher nicht gemeldet — in W110 hat es
+    # zugeschlagen: /sysres und die Aggregat-Route rufen api_system_resources
+    # bzw. api_health_score direkt auf. Nach dem Umzug fehlten sie im
+    # Monolithen. Sie sind kein Hindernis (der Bot importiert sie aus dem
+    # Blueprint), aber man muss es VORHER wissen.
+    intern = {}
+    for n in tree.body:
+        if not isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) or n.name in names:
+            continue
+        called = {x.func.id for x in ast.walk(n)
+                  if isinstance(x, ast.Call) and isinstance(x.func, ast.Name)}
+        called |= {x.id for x in ast.walk(n) if isinstance(x, ast.Name)}
+        for r in names & called:
+            intern.setdefault(r, []).append(n.name)
+
     kosten = len(zuctx) + len(G)
     return {"prefix": prefix, "routes": len(sel), "lines": lines,
             "mit": mit, "mitlines": mitlines, "ctx_fns": zuctx,
             "globals": sorted(G), "imports": sorted(I), "dyn": sorted(set(dyn)),
+            "intern": intern,
             "kosten": kosten,
             "ratio": round((lines + mitlines) / kosten, 1) if kosten else 999.0}
 
@@ -186,6 +203,11 @@ def main():
         print(f"\n-> nc/ctx.py, Funktionen ({len(r['ctx_fns'])}): {r['ctx_fns']}")
         print(f"-> nc/ctx.py, Globals ({len(r['globals'])}): {r['globals']}")
         print(f"\nDirektimporte aus nc/stdlib ({len(r['imports'])}): {r['imports']}")
+        if r["intern"]:
+            print("\n⚠ Routen, die der Bot INTERN aufruft — nach dem Umzug aus dem")
+            print("  Blueprint importieren, sonst fehlen sie im Monolithen:")
+            for k, v in sorted(r["intern"].items()):
+                print(f"    {k}  <- {', '.join(sorted(set(v)))}")
         if r["dyn"]:
             print(f"\n⚠ globals()-Zugriff — Abhaengigkeit unsichtbar, HANDPRUEFUNG: {r['dyn']}")
         print(f"\nKosten {r['kosten']} ctx-Eintraege · "

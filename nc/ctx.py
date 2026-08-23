@@ -41,13 +41,16 @@ class Ctx:
         "intel_index_one",
         "intel_semantic",
         "intel_ps",                 # laufende Index-Prozesse, geteilter Zustand
-        "add_archive_entry",
-        "get_archive_entry",
-        "delete_archive_entry",
-        "kind_from_filename",
         # --- Auswertung und Webhooks (W108) ---
         "latest_popularity",
         "post_json_threaded",       # feuert Webhooks im eigenen Thread ab
+        # --- Systemzustand (W110) ---
+        # Bewusst ein GETTER, kein Wert: _BOT_START_TIME ist beim Import noch
+        # None und wird erst in main() gesetzt. Ein beim Start uebergebener Wert
+        # waere fuer immer None, und die Uptime staende ewig auf 0.
+        "get_bot_start_time",
+        "get_cookie_health",
+        "get_storage_stats",
     )
 
 

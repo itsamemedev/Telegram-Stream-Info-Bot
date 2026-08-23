@@ -507,6 +507,35 @@ def _os_basename(p):
     return _os.path.basename(p)[:-3]
 
 
+def _test_routes_health():
+    """W110: /api/health-score und /api/system-resources als ein Blueprint.
+
+       Zwei Praefixe, EIN Thema (Systemzustand) — deshalb ein Modul statt zwei
+       Ein-Routen-Dateien. Der Vertrag haelt die zwei Fallen fest, die hier
+       zugeschlagen haben."""
+    from nc import ctx as ncctx
+
+    # (1) Die Startzeit MUSS spaet gelesen werden. _BOT_START_TIME ist beim
+    # Import None und wird erst in main() gesetzt; ein beim Start uebergebener
+    # Wert waere fuer immer None und die Uptime staende ewig auf 0.
+    assert "get_bot_start_time" in ncctx.Ctx.__slots__, "Startzeit-Getter fehlt im Kontext"
+    assert "bot_start_time" not in [x for x in ncctx.Ctx.__slots__ if x != "get_bot_start_time"], \
+        "Startzeit wieder als Wert im Kontext — friert beim Import ein"
+    q = open("nc/routes/health.py", encoding="utf-8").read()
+    assert "_c().get_bot_start_time()" in q, "Blueprint liest die Startzeit nicht als Getter"
+    src = open("bot_v37.py", encoding="utf-8").read()
+    assert "get_bot_start_time=lambda: _BOT_START_TIME" in src, \
+        "Bot reicht die Startzeit nicht als Getter durch"
+
+    # (2) Beide Routen ruft der Bot auch INTERN auf (Telegram /sysres und die
+    # Aggregat-Route). Nach dem Umzug muessen sie importiert sein, sonst
+    # sterben diese Pfade mit NameError — statisch sichtbar, aber leicht zu
+    # uebersehen.
+    assert "from nc.routes.health import api_health_score, api_system_resources" in src, \
+        "interne Aufrufer verlieren die Funktionen"
+    ok("routes.health: Startzeit als Getter, interne Aufrufer versorgt")
+
+
 def main():
     tmp = tempfile.mkdtemp()
     configure_db(db_path=os.path.join(tmp, "t.db"), backend="sqlite")
@@ -599,6 +628,8 @@ def main():
     _test_routes_archive()
 
     _test_routes_alle_blueprints()
+
+    _test_routes_health()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)
 

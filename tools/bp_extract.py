@@ -80,11 +80,20 @@ def rewrite_names(src, mapping):
 
 
 def sammle(prefix):
+    """prefix darf mehrere kommagetrennte Praefixe enthalten.
+
+    Warum: manche Themen verteilen sich auf mehrere URL-Praefixe
+    (/api/health-score und /api/system-resources sind beide Systemzustand).
+    Fuer jedes ein eigenes Ein-Routen-Modul waere Zersplitterung — ein Modul
+    ist ein THEMA, nicht ein Praefix.
+    """
+    prefixe = [x.strip() for x in prefix.split(",") if x.strip()]
     src = io.open(BOT, encoding="utf-8").read()
     tree = ast.parse(src)
     routes = [n for n in tree.body
               if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
-              and any(p == prefix or p.startswith(prefix + "/") for p in _paths(n))]
+              and any(p == pre or p.startswith(pre + "/")
+                      for p in _paths(n) for pre in prefixe)]
     if not routes:
         raise SystemExit(f"keine Routen unter {prefix}")
     namen = {n.name for n in routes}
@@ -110,7 +119,8 @@ def sammle(prefix):
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("prefix", help="z.B. /api/insights")
+    ap.add_argument("prefix", help="z.B. /api/insights; mehrere mit Komma trennen, "
+                                   "wenn sie thematisch EIN Modul ergeben")
     ap.add_argument("modul", help="Dateiname ohne .py, z.B. insights")
     ap.add_argument("--ctx", default="", help="Bot-Namen, die ueber nc.ctx kommen: alt=neu,alt=neu")
     ap.add_argument("--cfg", default="", help="Namen, die aus ctx.cfg kommen: NAME,NAME")
@@ -181,9 +191,22 @@ def main():
     for n in sorted(offen):
         if n in FESTE_IMPORTE:
             imp.append(FESTE_IMPORTE[n])
-    imp += [z.strip() for z in a.imports.split(";") if z.strip()]
+    zusatz = [z.strip() for z in a.imports.split(";") if z.strip()]
+    imp += zusatz
+    # Was --imports selbst bindet, gilt als aufgeloest. Ohne das meldete das
+    # Werkzeug genau die Namen als offen, die der Aufrufer gerade nachgereicht
+    # hat, und brach mit --apply ab.
+    gebunden = set()
+    for zeile in zusatz:
+        try:
+            for n in ast.walk(ast.parse(zeile)):
+                if isinstance(n, (ast.Import, ast.ImportFrom)):
+                    for al in n.names:
+                        gebunden.add((al.asname or al.name).split(".")[0])
+        except SyntaxError:
+            print(f"⚠ --imports nicht parsebar, ignoriert: {zeile!r}")
     rest = sorted(offen - FLASK_NAMEN - STDLIB - DATETIME - set(FESTE_IMPORTE)
-                  - {"bp", "_c", "log", "_ctx"})
+                  - gebunden - {"bp", "_c", "log", "_ctx"})
 
     kopf = f'''"""nc.routes.{a.modul} — die Routen unter {a.prefix} als Flask-Blueprint.
 

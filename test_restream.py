@@ -5794,9 +5794,12 @@ def test_v40_w109_dashboard_feldnamen():
     # die lokale Variable HEISST overall, geht aber als "score" raus. Wer nur
     # den Rumpf ueberfliegt, liest "overall" und greift im Frontend daneben —
     # genau das war passiert. Der Vertrag haelt die Uebersetzung fest.
-    assert '"score": overall' in src, \
+    # W110: api_health_score und api_system_resources liegen im
+    # Systemzustand-Blueprint. Vertrag unveraendert, Anker nachgezogen.
+    _h = open("nc/routes/health.py", encoding="utf-8").read()
+    assert '"score": overall' in _h, \
         "api_health_score gibt den Wert nicht mehr als \"score\" aus — Frontend nachziehen"
-    assert '"label": label' in src, "api_health_score liefert kein label mehr"
+    assert '"label": label' in _h, "api_health_score liefert kein label mehr"
 
     # (3) cpu_percent gibt es im Backend nirgends; die Ressourcen-Zeile nutzt
     # load_percent, und das rechnet der Bot aus /proc/loadavg.
@@ -5806,8 +5809,9 @@ def test_v40_w109_dashboard_feldnamen():
     assert not any("res.cpu_percent" in ln for ln in _code), \
         "CPU-Zeile haengt wieder an cpu_percent (das Feld liefert die Route nicht)"
     assert any("res.load_percent" in ln for ln in _code), "CPU-Zeile liest nicht load_percent"
-    assert "cpu_percent" not in src, "Bot liefert cpu_percent — dann darf das Frontend es lesen"
-    assert 'out["load_percent"]' in src, "Bot berechnet load_percent nicht mehr"
+    assert "cpu_percent" not in src + _h, \
+        "Backend liefert cpu_percent — dann darf das Frontend es lesen"
+    assert 'out["load_percent"]' in _h, "load_percent wird nicht mehr berechnet"
     ok("v4.0-w109: Dashboard-Feldnamen decken sich mit dem Backend (score, load_percent)")
 
 

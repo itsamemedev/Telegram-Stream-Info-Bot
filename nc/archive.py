@@ -10,9 +10,22 @@ from hashlib import md5 as _md5, sha256 as _sha256
 from typing import Optional
 
 from nc.dbwrap import db_conn
-from nc.sqlutil import _archive_where_clause, _archive_sort_clause
+from nc.sqlutil import _archive_where_clause, _archive_sort_clause, _ARCHIVE_KIND_MAP
 
 log = logging.getLogger("TikTokBot")
+
+# v4.0-W110: vom Bot injiziert. Frueher lasen die vier unten verschobenen
+# Funktionen ARCHIVE_DIR als Bot-Global; sie lagen deshalb im Laufzeitkontext
+# statt hier, wo sie thematisch hingehoeren.
+_ARCHIVE_DIR = ""
+
+
+def configure(*, archive_dir=None):
+    """Vom Bot einmal beim Start gerufen."""
+    global _ARCHIVE_DIR
+    if archive_dir is not None:
+        _ARCHIVE_DIR = archive_dir
+
 
 
 def run_archive_file_check():
@@ -240,3 +253,66 @@ def compute_recording_fingerprint(filepath: str,
     except Exception as e:
         log.debug(f"compute_recording_fingerprint({filepath}): {e}")
         return None
+
+
+# ── v4.0-W110: Archiv-Datenzugriff, aus bot_v37 geloest ──────────────────
+# Warum hierher und nicht in den Laufzeitkontext: das sind Archiv-Funktionen,
+# und nc.archive IST das Archiv-Modul. Im Kontext haetten sie vier Slots
+# belegt, ohne dass irgendein zweites Blueprint sie braucht.
+
+def _kind_from_filename(filename: str) -> str:
+    """Liefert 'video' | 'audio' | 'image' | 'other' anhand der Extension."""
+    if not filename or '.' not in filename:
+        return 'other'
+    ext = filename.rsplit('.', 1)[-1].lower()
+    for kind, exts in _ARCHIVE_KIND_MAP.items():
+        if ext in exts:
+            return kind
+    return 'other'
+
+
+def add_archive_entry(filename, filepath, title, notes, size, mime, source_url):
+    with db_conn() as conn:
+        cur = conn.execute(
+            "INSERT INTO archive (filename, filepath, title, notes, size_bytes, "
+            "mime_type, source_url, created_at) VALUES (?,?,?,?,?,?,?,?)",
+            (filename, filepath, title, notes, size, mime, source_url,
+             datetime.now(timezone.utc).isoformat()))
+        conn.commit()
+        return cur.lastrowid
+
+
+def get_archive_entry(eid):
+    try:
+        with db_conn() as conn:
+            return conn.execute(
+                "SELECT * FROM archive WHERE id=?", (eid,)).fetchone()
+    except Exception:
+        return None
+
+
+def delete_archive_entry(eid):
+    """Löscht File + DB-Eintrag. Pfad-Safety per realpath+commonpath."""
+    row = get_archive_entry(eid)
+    if not row:
+        return False, "not found"
+    filepath = row["filepath"]
+    if filepath and os.path.exists(filepath):
+        try:
+            real_archive = os.path.realpath(_ARCHIVE_DIR) if _ARCHIVE_DIR else ""
+            real_file = os.path.realpath(filepath)
+            if real_archive and os.path.commonpath([real_archive, real_file]) == real_archive:
+                os.remove(filepath)
+            else:
+                log.warning(f"archive delete: path-traversal-Blockade für {filepath}")
+                return False, "path safety check failed"
+        except Exception as e:
+            log.warning(f"archive delete file failed: {e}")
+            # DB row trotzdem entfernen damit kein orphan
+    try:
+        with db_conn() as conn:
+            conn.execute("DELETE FROM archive WHERE id=?", (eid,))
+            conn.commit()
+    except Exception as e:
+        return False, f"db: {e}"
+    return True, ""

@@ -27,7 +27,9 @@ from nc import recdb
 from nc import envnum as _nc_envnum
 from nc.dbwrap import db_conn
 from nc.archive import (get_archive_entries_paged, run_archive_file_check,
-                        _scan_for_duplicates)
+                        _scan_for_duplicates, add_archive_entry,
+                        get_archive_entry, delete_archive_entry,
+                        _kind_from_filename)
 from nc.textmore import _safe_archive_filename
 from nc.intel import library as _intel_lib
 from nc import archivename as _nc_archivename
@@ -104,8 +106,8 @@ def get_archive_kind_breakdown():
             rows = conn.execute("SELECT filename FROM archive").fetchall()
             for r in rows:
                 breakdown['all'] += 1
-                breakdown[_c().kind_from_filename(r["filename"])] = \
-                    breakdown.get(_c().kind_from_filename(r["filename"]), 0) + 1
+                breakdown[_kind_from_filename(r["filename"])] = \
+                    breakdown.get(_kind_from_filename(r["filename"]), 0) + 1
     except Exception as e:
         log.warning(f"get_archive_kind_breakdown failed: {e}")
     return breakdown
@@ -162,7 +164,7 @@ def bulk_delete_archive_entries(ids):
             failed += 1
             errors.append({"id": str(eid), "error": "ungültige ID"})
             continue
-        ok, err = _c().delete_archive_entry(eid)
+        ok, err = delete_archive_entry(eid)
         if ok:
             deleted += 1
         else:
@@ -179,7 +181,7 @@ def rename_archive_entry(eid: int, new_name: str):
     if not new_name or not new_name.strip():
         return False, "neuer Name ist leer"
 
-    row = _c().get_archive_entry(eid)
+    row = get_archive_entry(eid)
     if not row:
         return False, "Eintrag nicht gefunden"
 
@@ -424,7 +426,7 @@ def api_archive():
             "mime_type": r["mime_type"],
             "source_url": r["source_url"],
             "created_at": (r["created_at"] or "")[:19].replace("T", " "),
-            "kind": _c().kind_from_filename(r["filename"]),
+            "kind": _kind_from_filename(r["filename"]),
             "exists": exists,
         })
 
@@ -602,7 +604,7 @@ def api_archive_upload():
                         "error": f"Datei zu groß ({size/1024**2:.0f} MB > "
                                  f"{_c().cfg["ARCHIVE_MAX_UPLOAD_MB"]} MB)"}), 413
 
-    eid = _c().add_archive_entry(
+    eid = add_archive_entry(
         filename=os.path.basename(target),
         filepath=target,
         title=title or None,
@@ -618,7 +620,7 @@ def api_archive_upload():
 
 @bp.route("/api/archive/<int:eid>", methods=["DELETE"])
 def api_archive_delete(eid):
-    ok, err = _c().delete_archive_entry(eid)
+    ok, err = delete_archive_entry(eid)
     if ok:
         return jsonify({"ok": True})
     code = 404 if "not found" in err else 500

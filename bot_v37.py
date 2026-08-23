@@ -594,6 +594,11 @@ from nc.routes import collections as _nc_routes_collections  # v4.0-W108
 from nc.routes import scheduler as _nc_routes_scheduler      # v4.0-W108
 from nc.routes import webhooks as _nc_routes_webhooks        # v4.0-W108
 from nc.routes import insights as _nc_routes_insights        # v4.0-W108
+from nc.routes import health as _nc_routes_health            # v4.0-W110
+# Diese beiden Routen ruft der Bot auch INTERN auf (Telegram /sysres und die
+# Aggregat-Route /api/dashboard-bundle) — sie sind dort gewoehnliche
+# Funktionen, keine Endpunkte. Deshalb importiert statt kopiert.
+from nc.routes.health import api_health_score, api_system_resources  # noqa: F401
 from http.cookiejar import MozillaCookieJar
 from logging.handlers import RotatingFileHandler   # B4: war mid-file bei Z. 664
 from urllib.request import urlopen as _urlopen, Request as _UrlRequest
@@ -723,7 +728,6 @@ from nc.persona import (  # noqa: F401
 from nc.util import _webhook_event_match  # noqa: F401
 from nc.proxyutil import (  # noqa: F401
     get_random_proxy, _pick_pull_proxy, configure_proxy_select)
-from nc.sqlutil import _ARCHIVE_KIND_MAP  # noqa: F401
 from nc.channels import (  # noqa: F401
     RESTREAM_CHAT as _RESTREAM_CHAT, _chat_block, configure_chat)
 from nc.textmore import _merge_banned_words, configure_banned_cap  # noqa: F401
@@ -787,6 +791,7 @@ from nc.stats import (get_per_user_stats, get_activity_pulse, get_lives_heatmap,
                       _collect_session_stats, _streamer_health, _dir_stats,
                       get_recordings_heatmap)  # noqa: F401
 from nc.archive import evaluate_archive_rule  # noqa: F401
+from nc import archive as _nc_archive     # v4.0-W110: Archiv-Datenzugriff
 from nc.notes import (delete_annotation, _conv_list,
                       set_tracking_notes)  # noqa: F401
 # V37-DBX: SQL-Export/Import (SQLite <-> MariaDB). Braucht nur db_conn.
@@ -3948,14 +3953,9 @@ def init_db():
 # damit Frontend und Backend nicht auseinanderlaufen wenn neue Extensions
 # zu ARCHIVE_ALLOWED_EXTS dazukommen.
 def _kind_from_filename(filename: str) -> str:
-    """Liefert 'video' | 'audio' | 'image' | 'other' anhand der Extension."""
-    if not filename or '.' not in filename:
-        return 'other'
-    ext = filename.rsplit('.', 1)[-1].lower()
-    for kind, exts in _ARCHIVE_KIND_MAP.items():
-        if ext in exts:
-            return kind
-    return 'other'
+    # v4.0-W110: nach nc/archive.py geloest — dort gehoert der
+    # Archiv-Datenzugriff hin, nicht in den Laufzeitkontext.
+    return _nc_archive._kind_from_filename(filename)
 
 # F38: Paginierte + gefilterte Archive-Liste.
 # 600+ Files in einem Rutsch zum Browser zu schicken ist a) langsam,
@@ -3989,48 +3989,19 @@ def _kind_from_filename(filename: str) -> str:
 # eine einfache Liste. Wir lassen die alte Signatur am Leben aber die neue paged-
 # Variante ist das was /api/archive jetzt benutzt.
 def add_archive_entry(filename, filepath, title, notes, size, mime, source_url):
-    with db_conn() as conn:
-        cur = conn.execute(
-            "INSERT INTO archive (filename, filepath, title, notes, size_bytes, "
-            "mime_type, source_url, created_at) VALUES (?,?,?,?,?,?,?,?)",
-            (filename, filepath, title, notes, size, mime, source_url,
-             datetime.now(timezone.utc).isoformat()))
-        conn.commit()
-        return cur.lastrowid
+    # v4.0-W110: nach nc/archive.py geloest — dort gehoert der
+    # Archiv-Datenzugriff hin, nicht in den Laufzeitkontext.
+    return _nc_archive.add_archive_entry(filename, filepath, title, notes, size, mime, source_url)
 
 def get_archive_entry(eid):
-    try:
-        with db_conn() as conn:
-            return conn.execute(
-                "SELECT * FROM archive WHERE id=?", (eid,)).fetchone()
-    except Exception:
-        return None
+    # v4.0-W110: nach nc/archive.py geloest — dort gehoert der
+    # Archiv-Datenzugriff hin, nicht in den Laufzeitkontext.
+    return _nc_archive.get_archive_entry(eid)
 
 def delete_archive_entry(eid):
-    """Löscht File + DB-Eintrag. Pfad-Safety per realpath+commonpath."""
-    row = get_archive_entry(eid)
-    if not row:
-        return False, "not found"
-    filepath = row["filepath"]
-    if filepath and os.path.exists(filepath):
-        try:
-            real_archive = os.path.realpath(ARCHIVE_DIR) if ARCHIVE_DIR else ""
-            real_file = os.path.realpath(filepath)
-            if real_archive and os.path.commonpath([real_archive, real_file]) == real_archive:
-                os.remove(filepath)
-            else:
-                log.warning(f"archive delete: path-traversal-Blockade für {filepath}")
-                return False, "path safety check failed"
-        except Exception as e:
-            log.warning(f"archive delete file failed: {e}")
-            # DB row trotzdem entfernen damit kein orphan
-    try:
-        with db_conn() as conn:
-            conn.execute("DELETE FROM archive WHERE id=?", (eid,))
-            conn.commit()
-    except Exception as e:
-        return False, f"db: {e}"
-    return True, ""
+    # v4.0-W110: nach nc/archive.py geloest — dort gehoert der
+    # Archiv-Datenzugriff hin, nicht in den Laufzeitkontext.
+    return _nc_archive.delete_archive_entry(eid)
 
 def start_recording_attempt(tracking_id, username, recorder):
     """F19: legt einen neuen Attempt-Eintrag an. Returns die ID für späteres Update."""
@@ -11559,84 +11530,6 @@ def api_ai_conversation_stream(conv_id):
 #   - cookie_health:    20%   (gibt's noch gültige Cookies?)
 #   - disk_usage:       20%   (Platz für neue Aufnahmen?)
 #   - bot_alive:        10%   (Bot läuft + responsive?)
-@dashboard_app.route("/api/health-score")
-def api_health_score():
-    """Computed health score (0-100) für KPI-Widget. Plus Component-Breakdown
-       damit Operator sieht WAS das Problem ist."""
-    components = {}
-
-    # Component 1: success_rate_24h
-    try:
-        with db_conn() as conn:
-            row = conn.execute(
-                "SELECT COUNT(*) AS total, "
-                "  SUM(CASE WHEN outcome IN ('ok', 'stall_killed_partial') "
-                "    THEN 1 ELSE 0 END) AS ok_count "
-                "FROM recording_attempts "
-                "WHERE started_at >= ?",
-                ((datetime.now(timezone.utc) - timedelta(hours=24)).isoformat(),)
-            ).fetchone()
-        total = row["total"] or 0
-        ok_count = row["ok_count"] or 0
-        if total == 0:
-            sr_score = 100   # keine Aufnahmen → keine Probleme
-            sr_note = "Keine Aufnahmen in 24h"
-        else:
-            sr_score = int(100.0 * ok_count / total)
-            sr_note = f"{ok_count}/{total} OK ({sr_score}%)"
-        components["success_rate"] = {"score": sr_score, "weight": 50, "note": sr_note}
-    except Exception as e:
-        components["success_rate"] = {"score": 50, "weight": 50, "note": f"error: {e}"}
-
-    # Component 2: cookie_health
-    try:
-        ck = get_cookie_health()
-        if ck.get("status") == "ok":
-            cs, cnote = 100, "OK"
-        elif ck.get("status") == "warning":
-            cs, cnote = 60, "warning"
-        elif ck.get("status") == "missing":
-            cs, cnote = 0, "fehlen"
-        else:
-            cs, cnote = 30, ck.get("status", "?")
-        components["cookies"] = {"score": cs, "weight": 20, "note": cnote}
-    except Exception as e:
-        components["cookies"] = {"score": 50, "weight": 20, "note": f"error: {e}"}
-
-    # Component 3: disk_usage (umgekehrt: 100% used → 0 score)
-    try:
-        st = get_storage_stats()
-        pct = (st.get("disk") or {}).get("used_percent")
-        if pct is None:
-            ds, dnote = 70, "?"
-        else:
-            # Linear: 0% → 100, 80% → 50, 95% → 10, 100% → 0
-            ds = max(0, int(100 - max(0, pct - 30) * 1.5))
-            dnote = f"{pct:.0f}% belegt"
-        components["disk"] = {"score": ds, "weight": 20, "note": dnote}
-    except Exception as e:
-        components["disk"] = {"score": 70, "weight": 20, "note": f"error: {e}"}
-
-    # Component 4: bot_alive (trivial 100 — Endpoint antwortet ja)
-    components["bot"] = {"score": 100, "weight": 10, "note": "responsive"}
-
-    # Weighted sum
-    score = 0
-    total_w = 0
-    for c in components.values():
-        score += c["score"] * c["weight"]
-        total_w += c["weight"]
-    overall = int(score / total_w) if total_w else 0
-    # Label für Operator
-    if   overall >= 85: label = "OK"
-    elif overall >= 60: label = "DEGRADED"
-    elif overall >= 30: label = "WARNING"
-    else:               label = "CRITICAL"
-    return jsonify({
-        "score": overall,
-        "label": label,
-        "components": components,
-    })
 
 
 # F71: Backoff-Watch — zeigt Trackings die aktuell in B45 stream-pause
@@ -15716,109 +15609,6 @@ def archive_download(eid):
         download_name=row["filename"])
 
 
-@dashboard_app.route("/api/system-resources")
-def api_system_resources():
-    """F19: Disk/Memory/Uptime aus stdlib (kein psutil als Dep)."""
-    out = {"recordings_dir": RECORDINGS_DIR}
-    # Disk-Usage des Recordings-Verzeichnisses
-    try:
-        st = shutil.disk_usage(RECORDINGS_DIR if os.path.isdir(RECORDINGS_DIR) else ".")
-        out["disk_total_gb"]  = round(st.total / 1024**3, 1)
-        out["disk_used_gb"]   = round((st.total - st.free) / 1024**3, 1)
-        out["disk_free_gb"]   = round(st.free / 1024**3, 1)
-        out["disk_percent"]   = round((st.total - st.free) / st.total * 100, 1)
-    except Exception:
-        out["disk_total_gb"] = out["disk_used_gb"] = out["disk_free_gb"] = out["disk_percent"] = None
-
-    # Memory aus /proc/meminfo (Linux)
-    out["mem_total_gb"] = out["mem_avail_gb"] = out["mem_percent"] = None
-    try:
-        meminfo = {}
-        with open("/proc/meminfo") as f:
-            for line in f:
-                k, _, v = line.partition(":")
-                meminfo[k.strip()] = v.strip()
-        total_kb = int(meminfo["MemTotal"].split()[0])
-        avail_kb = int(meminfo["MemAvailable"].split()[0])
-        out["mem_total_gb"]  = round(total_kb / 1024**2, 1)
-        out["mem_avail_gb"]  = round(avail_kb / 1024**2, 1)
-        out["mem_percent"]   = round((total_kb - avail_kb) / total_kb * 100, 1)
-    except Exception: pass
-
-    # v37 Welle 1: CPU-Last aus /proc/loadavg (kein psutil nötig)
-    out["cores"] = os.cpu_count() or 1
-    out["load1"] = out["load5"] = out["load15"] = out["load_percent"] = None
-    try:
-        with open("/proc/loadavg") as _lf:   # Tiefenbughunt: with statt open()-Leak
-            la = _lf.read().split()
-        out["load1"], out["load5"], out["load15"] = float(la[0]), float(la[1]), float(la[2])
-        out["load_percent"] = round(100 * out["load1"] / max(1, out["cores"]), 1)
-    except Exception:
-        pass
-
-    # Load average
-    try:
-        out["load_1"], out["load_5"], out["load_15"] = os.getloadavg()
-    except Exception:
-        out["load_1"] = out["load_5"] = out["load_15"] = None
-
-    # Bot-Uptime
-    if _BOT_START_TIME:
-        out["uptime_secs"] = int((datetime.now(timezone.utc) - _BOT_START_TIME).total_seconds())
-    else:
-        out["uptime_secs"] = 0
-
-    # Recordings-Disk-Footprint
-    rec_size = 0; rec_files = 0
-    try:
-        for f in glob.glob(os.path.join(RECORDINGS_DIR, "*.mp4")):
-            try:
-                rec_size += os.path.getsize(f); rec_files += 1
-            except OSError: pass
-    except Exception: pass
-    out["recordings_size_mb"] = round(rec_size / 1024**2, 1)
-    out["recordings_count"] = rec_files
-
-    # F54: Bot-Prozess-spezifische Stats — RSS, FDs, Threads.
-    # Lesbar aus /proc/self/* ohne psutil-Dependency. Direkt relevant für
-    # "warum stirbt ffmpeg mit rc=-9?" — wenn der Bot über RSS=2GB ist,
-    # ist OOM-Killer wahrscheinlich. Wenn FDs ungewöhnlich hoch (1000+),
-    # leaken wir Sockets/Files irgendwo.
-    out["bot_rss_mb"] = None
-    out["bot_threads"] = None
-    out["bot_open_fds"] = None
-    try:
-        with open("/proc/self/status") as f:
-            for line in f:
-                if line.startswith("VmRSS:"):
-                    out["bot_rss_mb"] = round(int(line.split()[1]) / 1024, 1)
-                elif line.startswith("Threads:"):
-                    out["bot_threads"] = int(line.split()[1])
-    except Exception: pass
-    try:
-        out["bot_open_fds"] = len(os.listdir("/proc/self/fd"))
-    except Exception: pass
-
-    # F54: ffmpeg/yt-dlp Prozess-Count — zeigt ob Recordings tatsächlich laufen
-    # (vs DB sagt recording=1 aber Prozess weg → der R1-Reaper greift hier).
-    out["ffmpeg_procs"] = None
-    out["ytdlp_procs"] = None
-    try:
-        ff = yt = 0
-        for pid_dir in os.listdir("/proc"):
-            if not pid_dir.isdigit(): continue
-            try:
-                with open(f"/proc/{pid_dir}/comm") as f:
-                    comm = f.read().strip()
-                if comm == "ffmpeg": ff += 1
-                elif comm in ("yt-dlp", "yt_dlp"): yt += 1
-            except (OSError, IOError):
-                continue
-        out["ffmpeg_procs"] = ff
-        out["ytdlp_procs"]  = yt
-    except Exception: pass
-
-    return jsonify(out)
 
 @dashboard_app.route("/api/system")
 def api_system():
@@ -23464,6 +23254,10 @@ async def _intel_index_one(rid, path, username="", created_at=None):
 # W106 noch stand — waeren die Intel-Helfer beim Aufruf noch nicht definiert;
 # pyflakes meldete prompt 'undefined name'. Wer hier etwas ergaenzt, muss den
 # Block gegebenenfalls WEITER nach unten schieben.
+# v4.0-W110: nc.archive braucht ARCHIVE_DIR fuer die Pfad-Sicherheitspruefung
+# in delete_archive_entry (realpath/commonpath gegen Path-Traversal).
+_nc_archive.configure(archive_dir=ARCHIVE_DIR)
+
 _nc_ctx.configure(
     log=log,
     log_event=log_event,
@@ -23482,13 +23276,14 @@ _nc_ctx.configure(
     intel_index_one=_intel_index_one,
     intel_semantic=_intel_semantic,
     intel_ps=_INTEL_PS,
-    add_archive_entry=add_archive_entry,
-    get_archive_entry=get_archive_entry,
-    delete_archive_entry=delete_archive_entry,
-    kind_from_filename=_kind_from_filename,
     # --- Auswertung und Webhooks (v4.0-W108) ---
     latest_popularity=_latest_popularity,
     post_json_threaded=_post_json_threaded,
+    # --- Systemzustand (v4.0-W110) ---
+    # Getter, nicht Wert: _BOT_START_TIME wird erst in main() gesetzt.
+    get_bot_start_time=lambda: _BOT_START_TIME,
+    get_cookie_health=get_cookie_health,
+    get_storage_stats=get_storage_stats,
     # Startwerte, nicht Helfer — deshalb gebuendelt statt als eigene Slots.
     cfg={
         "ARCHIVE_DIR": ARCHIVE_DIR,
@@ -23504,6 +23299,7 @@ dashboard_app.register_blueprint(_nc_routes_collections.bp)
 dashboard_app.register_blueprint(_nc_routes_scheduler.bp)
 dashboard_app.register_blueprint(_nc_routes_webhooks.bp)
 dashboard_app.register_blueprint(_nc_routes_insights.bp)
+dashboard_app.register_blueprint(_nc_routes_health.bp)
 
 
 async def _intel_index_loop():
