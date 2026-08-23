@@ -19,6 +19,76 @@ def clean_username(u):
 
 PASS = 0
 
+
+# ══════════════════════════════════════════════════════════════════════════
+# v4.0-W117 · ANKER, DIE NICHT MITWACHSEN MUESSEN
+# ══════════════════════════════════════════════════════════════════════════
+# Die Vertraege hier verankern sich an woertlichem Quelltext — anders geht es
+# bei einem 1,5-MB-Monolithen nicht. Der TEURE Teil daran waren nie die
+# Textanker, sondern die FENSTER der Form `src[i:i + 2200]`: waechst die
+# Zielfunktion darueber hinaus, meldet der Test etwas als fehlend, das zwei
+# Zeilen weiter unten steht. CLAUDE.md nennt drei Faelle, in denen genau das
+# passiert ist, und jedes Mal kostet es die Frage "ist der Vertrag gebrochen
+# oder nur sein Anker".
+#
+# Gemessen am 2026-08-23: von 31 aufloesbaren Fenstern hatten 13 weniger als
+# 200 Zeichen Reserve bis zur zuletzt geprueften Nadel — bei ihnen reicht ein
+# eingefuegter Kommentarblock, um einen gruenen Vertrag rot zu faerben.
+#
+# Diese drei Helfer schneiden stattdessen per AST an der ECHTEN Grenze. Damit
+# gibt es keine Zahl mehr, die veralten kann.
+
+
+def _fn(src, name):
+    """Quelltext einer Funktion, an ihrer echten Grenze geschnitten.
+
+    Findet Top-Level-Funktionen UND verschachtelte. Kommt der Name mehrfach
+    vor, ist das ein Fehler im Test und keine stille Zufallsauswahl —
+    dann gehoert _meth() hierher."""
+    treffer = [n for n in ast.walk(ast.parse(src))
+               if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+               and n.name == name]
+    assert treffer, "Funktion %s gibt es nicht (mehr)" % name
+    assert len(treffer) == 1, (
+        "Funktion %s kommt %dx vor — _meth(src, Klasse, Name) benutzen"
+        % (name, len(treffer)))
+    return ast.get_source_segment(src, treffer[0]) or ""
+
+
+def _meth(src, klasse, name):
+    """Quelltext einer Methode — fuer Namen, die es mehrfach gibt."""
+    for c in ast.walk(ast.parse(src)):
+        if isinstance(c, ast.ClassDef) and c.name == klasse:
+            for m in c.body:
+                if isinstance(m, (ast.FunctionDef, ast.AsyncFunctionDef)) and m.name == name:
+                    return ast.get_source_segment(src, m) or ""
+    raise AssertionError("Methode %s.%s gibt es nicht (mehr)" % (klasse, name))
+
+
+def _ab(src, marke):
+    """Von einer Marke bis zum ENDE der umgebenden Funktion.
+
+    Fuer Pruefungen, die bewusst mitten in einer Funktion ansetzen ("ab hier
+    muss folgen…"). Die Marke bleibt, die willkuerliche Laenge faellt weg."""
+    pos = src.find(marke)
+    assert pos > 0, "Marke nicht gefunden: %r" % (marke[:60],)
+    zeile = src.count("\n", 0, pos) + 1
+    beste = None
+    for n in ast.walk(ast.parse(src)):
+        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) \
+                and n.lineno <= zeile <= n.end_lineno:
+            if beste is None or (n.end_lineno - n.lineno) < (beste.end_lineno - beste.lineno):
+                beste = n
+    if beste is None:
+        return src[pos:]
+    ende = 0
+    for i, z in enumerate(src.splitlines(keepends=True), start=1):
+        ende += len(z)
+        if i == beste.end_lineno:
+            break
+    return src[pos:ende]
+
+
 def ok(name):
     global PASS
     PASS += 1
@@ -521,8 +591,7 @@ def test_azrael_text_cap():
     kappt seit je auf 2x38 Zeichen)."""
     src = open("bot_v37.py").read()
     assert "AZRAEL_OVERLAY_MAXLEN" in src and "def _ov_clip_text" in src
-    i = src.find("def _azrael_overlay_state")
-    body = src[i:i + 900]
+    body = _fn(src, "_azrael_overlay_state")          # v4.0-W117
     assert '"text": _ov_clip_text(r.get("text", ""))' in body, "API kappt nicht"
     assert '"text_full"' in body, "Volltext sollte für Clients erhalten bleiben"
 
@@ -1076,12 +1145,10 @@ def test_twitch_chat_scopes_and_reply():
     ok("twitch-chat-loop: OAuth-Token bevorzugt, manueller als Fallback")
 
     # AZRAEL-Antwort ist konservativ: Flag + Ansprache + Cooldown + Shield
-    r = src.find("def _azrael_chat_should_reply")
-    rb = src[r:r + 700]
+    rb = _fn(src, "_azrael_chat_should_reply")        # v4.0-W117
     assert "AZRAEL_CHAT_REPLY" in rb and "addressed" in rb and "COOLDOWN" in rb, \
         "Antwort-Gate braucht Flag, Ansprache-Erkennung und Cooldown"
-    a = src.find("async def _azrael_chat_reply")
-    ab = src[a:a + 700]
+    ab = _fn(src, "_azrael_chat_reply")               # v4.0-W117
     assert "_sentinel_screen" in ab, "Shield muss VOR der Antwort screenen"
     ok("azrael-chat-reply: Flag + Ansprache + Cooldown + Shield-Screen")
 
@@ -1121,8 +1188,7 @@ def test_twitch_status_uses_oauth():
     alten .env-Token und meldete »Token nötig«, obwohl OAuth verbunden war. Muss
     denselben OAuth-bevorzugt-Fallback nutzen wie der EventSub-Loop."""
     src = open("bot_v37.py").read()
-    i = src.find("async def _twitch_channel_status")
-    body = src[i:i + 900]
+    body = _fn(src, "_twitch_channel_status")         # v4.0-W117
     assert "_twoauth.status().get(\"ready\")" in body, \
         "Status-Route prüft den OAuth-Flow nicht"
     assert "_twoauth.access_token" in body, "Status-Route nutzt den OAuth-Token nicht"
@@ -1260,9 +1326,7 @@ def test_foreign_ad_block():
     assert "_detect_foreign_ad" in src, "Werbe-Detektor fehlt"
     assert '_spam_check' in src and 'block_ads' in src, "nicht in die Moderation verdrahtet"
     # Der Detektor muss die eigene Invite-Allowlist per vollem Pfad prüfen
-    i = src.find("def _own_invites")
-    assert i > 0, "Invite-Allowlist fehlt — sonst gilt jeder discord.gg als eigen"
-    body = src[i:i + 600]
+    body = _fn(src, "_own_invites")                   # v4.0-W117
     assert "discord.gg" in body and "group(2)" in body, \
         "Invite muss auf vollen Pfad (mit Servername) geprüft werden"
     ok("adblock: Fremdwerbe-Detektor mit Eigen-Allowlist verdrahtet")
@@ -1351,9 +1415,7 @@ def test_restream_max_concurrent():
     assert "RESTREAM_MAX_CONCURRENT" in src, "kein Concurrent-Deckel"
     assert 'RESTREAM_MAX_CONCURRENT", 2' in src, "Default nicht 2"
     # Der Deckel greift in der Multi-Modus-Schleife per break
-    i = src.find("V37-MAXLIVE: gedeckelt")
-    assert i > 0, "Deckel nicht in auto_start_due"
-    body = src[i:i + 400]
+    body = _ab(src, "V37-MAXLIVE: gedeckelt")         # v4.0-W117
     assert "len(self._procs) >= RESTREAM_MAX_CONCURRENT" in body and "break" in body, \
         "Deckel-Prüfung fehlt oder bricht nicht ab"
     ok("maxlive: Multi-Restream auf RESTREAM_MAX_CONCURRENT gedeckelt (Default 2)")
@@ -1370,9 +1432,7 @@ def test_overlay_react_and_layout():
     src = open("bot_v37.py").read()
     # Reaktions-Filter auf den live-restreamten User
     assert "AZRAEL_REACT_ONLY_LIVE" in src, "kein Live-Reaktions-Filter"
-    i = src.find("NUR auf den User,\n                # der GERADE restreamt wird")
-    assert i > 0, "Filter nicht im react-Worker"
-    body = src[i:i + 950]
+    body = _ab(src, "NUR auf den User,\n                # der GERADE restreamt wird")   # v4.0-W117
     assert "_restream_active_sources()" in body and "continue" in body, \
         "Filter prüft nicht den aktiven Restream oder überspringt nicht"
     # Sicherung: kein aktiver Restream → nicht alles blockieren
@@ -1427,8 +1487,7 @@ def test_pwa():
     # Service-Worker-Scope-Header (sonst darf SW nicht die ganze App steuern)
     assert 'Service-Worker-Allowed' in src, "SW-Scope-Header fehlt"
     # Icon-Route hat Whitelist (Path-Traversal-Schutz)
-    i = src.find("def pwa_icon")
-    body = src[i:i + 400]
+    body = _fn(src, "pwa_icon")                       # v4.0-W117
     assert "allowed" in body and "abort(404)" in body, "Icon-Route ohne Whitelist"
     ok("pwa: Routen für Manifest, Service Worker, Icons (mit Path-Schutz)")
 
@@ -2187,8 +2246,7 @@ def test_v40_w5_channel_all():
     assert "_nc_ytapi.BROADCASTS_URL" in src and "_nc_ytapi.VIDEOS_URL" in src, "kein Data-API-Setzer"
     assert 'params={"part": "snippet"}' in src and "video_update_body" in src, "kein videos.update"
     # _channel_set_all deckt ALLE drei Plattformen ab.
-    i = src.find("async def _channel_set_all")
-    body = src[i:i + 1400]
+    body = _fn(src, "_channel_set_all")               # v4.0-W117
     assert 'out["kick"]' in body and 'out["twitch"]' in body and 'out["youtube"]' in body, "nicht alle drei Plattformen"
     assert "_youtube_set_channel(title, cat" in body, "YouTube nicht im Set-All"
     # Kategorien tragen je Plattform (kick/twitch/yt).
@@ -2314,8 +2372,7 @@ def test_v40_w10_kick_sendcheck():
     src = open("bot_v37.py").read()
     # Gedaechtnis + Klartext-Fehler im Sendepfad.
     assert "_KICK_SEND_LAST" in src, "kein Gedaechtnis fuer den letzten Sendeversuch"
-    i = src.find("async def send_message")
-    body = src[i:i + 2200]
+    body = _meth(src, "KickModerator", "send_message")   # v4.0-W117
     assert "await resp.text()" in body, "Kicks Fehlertext wird nicht gelesen"
     assert "keine Broadcaster-ID aufloesbar" in body, "fehlende Broadcaster-ID wird nicht benannt"
     assert "_KICK_SEND_LAST.update(" in body, "Sendeversuch wird nicht gemerkt"
@@ -2600,8 +2657,7 @@ def test_v40_w17_kick401_crowdsec():
 
     src = open("bot_v37.py").read()
     # Chat-Senden: User-Token bevorzugt, dann type "user".
-    i = src.find("async def send_message")
-    body = src[i:i + 2600]
+    body = _meth(src, "KickModerator", "send_message")   # v4.0-W117
     assert "_utok = await _kick_user_token(session)" in body, "Chat nutzt den User-Token nicht"
     assert 'payload = {"type": "user" if _utok else "bot"' in body, "Poster-Typ nicht gesetzt"
     assert 'App-Token darf nicht chatten' in body, "kein Klartext-Hinweis bei 401"
@@ -3480,8 +3536,7 @@ def test_v40_w35_crossplatform_restream():
     assert "async def _announce_loop(" in src and "_kick_announce_loop" not in src, \
         "Announcer nicht auf Multi-Plattform umgestellt"
     assert '_spawn(_announce_loop()' in src
-    i = src.find("async def _announce_loop(")
-    body = src[i:i + 2600]
+    body = _fn(src, "_announce_loop")                 # v4.0-W117
     assert 'for plat in ("twitch", "youtube")' in body and "_azrael_send_to(plat, txt)" in body, \
         "Announce sendet nicht an Twitch/YouTube"
     assert "mod.send_message(txt)" in body, "Announce sendet nicht an Kick"
@@ -5975,8 +6030,13 @@ def test_v40_w114_website_3d():
     # EINE Quelle, alle drei Seiten
     for seite in ("lafap_index", "impressum", "datenschutz"):
         w = open("website/%s.html" % seite, encoding="utf-8").read()
-        assert '<link rel="stylesheet" href="raum.css">' in w, seite + ": raum.css fehlt"
-        assert '<script src="raum.js"></script>' in w, seite + ": raum.js fehlt"
+        # v4.0-W117: die Verweise tragen jetzt einen Cache-Stempel (?v=hash),
+        # also nicht mehr auf die nackte Zeichenkette pruefen — der Vertrag
+        # ist "wird eingebunden", nicht "ohne Query".
+        assert re.search(r'<link rel="stylesheet" href="raum\.css(\?v=[0-9a-f]+)?">', w), \
+            seite + ": raum.css fehlt"
+        assert re.search(r'<script src="raum\.js(\?v=[0-9a-f]+)?"></script>', w), \
+            seite + ": raum.js fehlt"
         assert '<canvas id="raum" class="raum" aria-hidden="true"></canvas>' in w, \
             seite + ": Raum-Flaeche fehlt oder nicht als dekorativ ausgezeichnet"
         assert 'id="d3-schalter" class="d3-schalter" hidden>' in w, \
@@ -6186,6 +6246,138 @@ def test_v40_w116_alterung_flattern_rate():
     ok("v4.0-w116: tee-Fehler altern, Flattern eskaliert, Raten-Einbruch wird gemeldet")
 
 
+def test_v40_w117_ankerhygiene():
+    """v4.0-W117: die Fenster in DIESER Datei duerfen nicht zu eng werden.
+
+    Die Vertraege hier verankern sich an woertlichem Quelltext. Die Textanker
+    sind dabei nie das Problem gewesen — die FENSTER waren es: `src[i:i + N]`
+    mit einem N, das jemand vor Monaten geschaetzt hat. Waechst die
+    Zielfunktion darueber hinaus, meldet der Test etwas als fehlend, das zwei
+    Zeilen weiter unten steht. CLAUDE.md nennt drei Faelle, in denen genau
+    das passiert ist; jedes Mal kostet es zuerst die Frage "ist der Vertrag
+    gebrochen oder nur sein Anker".
+
+    Dieser Test dreht das um: er misst fuer jedes verbliebene Fenster, wie
+    viel Luft zwischen der zuletzt geprueften Nadel und dem Fensterrand
+    liegt, und schlaegt an, BEVOR die Luft aufgebraucht ist. Statt eines
+    irrefuehrenden "Vertrag gebrochen" steht dann hier, welche Zeile zu eng
+    geworden ist und was zu tun ist.
+
+    Nicht bewertet wird, was sich nicht sicher aufloesen laesst (Fenster auf
+    Zwischenvariablen, Nadeln die nicht im Ziel vorkommen) und was negativ
+    prueft (`not in`) — dort ist ein weit entfernter Treffer gerade der
+    Beweis, dass die Pruefung stimmt.
+    """
+    import os
+    hier = os.path.dirname(os.path.abspath(__file__))
+    tests = open(os.path.join(hier, "test_restream.py"), encoding="utf-8").read()
+    tl = tests.splitlines()
+    DATEI = {"src": "bot_v37.py", "src_all": "bot_v37.py",
+             "html": "templates/dashboard.html", "h": "templates/dashboard.html",
+             "w": "website/lafap_index.html", "o": "templates/overlay.html"}
+    _q = {}
+
+    def quelle(n):
+        if n not in _q:
+            pf = DATEI.get(n)
+            _q[n] = open(os.path.join(hier, pf), encoding="utf-8").read() if pf else None
+        return _q[n]
+
+    FENSTER = re.compile(r"(\w+)\s*=\s*(\w+)\[(\w+)\s*:\s*\3\s*\+\s*(\d{3,})\]")
+    FIND = re.compile(r"(\w+)\s*=\s*(\w+)\.(?:find|index)\(\s*(\".*?\"|'.*?')\s*\)")
+    LITERAL = re.compile(r"(\"(?:[^\"\\\\]|\\\\.)*\"|'(?:[^'\\\\]|\\\\.)*')")
+    MINDESTLUFT = 150
+
+    eng, geprueft = [], 0
+    for i, zeile in enumerate(tl):
+        m = FENSTER.search(zeile)
+        if not m:
+            continue
+        var, ivar, n = m.group(1), m.group(3), int(m.group(4))
+        lit = basis = None
+        for j in range(i, max(-1, i - 25), -1):
+            f = FIND.search(tl[j])
+            if f and f.group(1) == ivar:
+                lit, basis = f.group(3), f.group(2)
+                break
+        if lit is None:
+            continue
+        try:
+            nadel = ast.literal_eval(lit)
+        except Exception:
+            continue
+        q = quelle(basis)
+        if q is None:
+            continue
+        pos = q.find(nadel)
+        if pos < 0:
+            continue
+        weit, wovon = 0, ""
+        for k in range(i + 1, min(len(tl), i + 60)):
+            z = tl[k]
+            if z.startswith("def "):
+                break
+            if var not in z or (" not in " + var) in z:
+                continue
+            for l in LITERAL.findall(z):
+                try:
+                    sub = ast.literal_eval(l)
+                except Exception:
+                    continue
+                if not isinstance(sub, str) or len(sub) < 4:
+                    continue
+                t = q.find(sub, pos)
+                if t < 0 or (t - pos) > n * 4:
+                    continue
+                if t + len(sub) - pos > weit:
+                    weit, wovon = t + len(sub) - pos, sub
+        if not weit:
+            continue
+        geprueft += 1
+        if n - weit < MINDESTLUFT:
+            eng.append("Zeile %d: Fenster %d, letzte Nadel bei %d -> nur %d Zeichen "
+                       "Luft (%r)" % (i + 1, n, weit, n - weit, wovon[:40]))
+
+    assert geprueft >= 10, ("Anker-Messung greift nicht mehr (%d Fenster erkannt) — "
+                            "Muster geaendert?" % geprueft)
+    assert not eng, (
+        "Zu enge Fenster — der naechste kleine Umbau macht daraus einen "
+        "falschen Vertragsbruch. Auf _fn(src, name), _meth(src, Klasse, name) "
+        "oder _ab(src, marke) umstellen:\n  " + "\n  ".join(eng))
+    ok("v4.0-w117: %d Fenster gemessen, alle mit mindestens %d Zeichen Luft"
+       % (geprueft, MINDESTLUFT))
+
+
+def test_v40_w117_asset_stempel():
+    """v4.0-W117: raum.css und raum.js tragen einen Cache-Stempel — aktuell.
+
+    Beide Dateien werden von allen drei oeffentlichen Seiten geladen. Ohne
+    Stempel haelt ein Browser mit warmem Cache nach einem Deploy die alte
+    Fassung; die Seite bleibt dann still flach statt kaputt (so gebaut) —
+    und WEIL nichts bricht, faellt es niemandem auf. Der Stempel ist ein
+    Inhalts-Hash, keine Nummer zum Hochzaehlen: gleicher Inhalt, gleicher
+    Stempel, Cache bleibt gueltig.
+
+    Dieser Vertrag faehrt `--check` mit. Ein vergessener Generatorlauf
+    faellt damit in der Pruefkette auf und nicht beim Betrachter — dasselbe
+    Muster wie bei .env.example (W100).
+    """
+    import os as _os
+    import subprocess as _sp
+    assert _os.path.exists("tools/stempel_assets.py"), "Stempel-Werkzeug fehlt"
+    r = _sp.run([sys.executable, "tools/stempel_assets.py", "--check"],
+                capture_output=True, text=True)
+    assert r.returncode == 0, ("Cache-Stempel veraltet — neu setzen: "
+                               + (r.stdout or r.stderr)[:160])
+    # Jede Seite bindet BEIDE Dateien mit Stempel ein.
+    for seite in ("lafap_index", "impressum", "datenschutz"):
+        w = open("website/%s.html" % seite, encoding="utf-8").read()
+        for datei in ("raum.css", "raum.js"):
+            assert re.search(re.escape(datei) + r"\?v=[0-9a-f]{6,}", w), \
+                "%s: %s ohne Cache-Stempel" % (seite, datei)
+    ok("v4.0-w117: raum.css/raum.js mit Inhalts-Stempel auf allen drei Seiten")
+
+
 def main():
     print("test_restream — Restream-Kernlogik (Mock-basiert)")
     test_streak()
@@ -6365,6 +6557,8 @@ def main():
     test_v40_w114_website_3d()
     test_v40_w115_relay_sicht_und_srcwatch()
     test_v40_w116_alterung_flattern_rate()
+    test_v40_w117_ankerhygiene()
+    test_v40_w117_asset_stempel()
     print(f"test_restream OK — {PASS} Verträge grün")
 
 

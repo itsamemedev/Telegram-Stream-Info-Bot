@@ -62,6 +62,33 @@ geprüft in [`nc/restream_stability.py`](nc/restream_stability.py).
   `RESTREAM_STALL_TIMEOUT_S` (0 = Wächter aus), `RESTREAM_STALL_GRACE_S`,
   `RESTREAM_STALL_CHECK_S`.
 
+### Geändert — Anker-Hygiene und Cache-Stempel (W117)
+
+- **Testfenster schneiden jetzt an der echten Grenze.** Die Verträge in
+  `test_restream.py` verankern sich an wörtlichem Quelltext — daran führt bei
+  einem 1,5-MB-Monolithen kein Weg vorbei. Das Problem waren nie die Textanker,
+  sondern die **Fenster** der Form `src[i:i + 2200]` mit einem N, das jemand
+  vor Monaten geschätzt hat: wächst die Zielfunktion darüber hinaus, meldet der
+  Test etwas als fehlend, das zwei Zeilen weiter unten steht. Gemessen: von 31
+  auflösbaren Fenstern hatten **13 weniger als 200 Zeichen Reserve** bis zur
+  zuletzt geprüften Nadel. Neue Helfer `_fn(src, name)`, `_meth(src, Klasse,
+  name)` und `_ab(src, marke)` schneiden per AST; 12 Fenster sind umgestellt
+  (das dreizehnte prüft bewusst einen 160-Zeichen-Ausschnitt mit `not in` und
+  bleibt).
+- **Ein Wächter hält das so.** `test_v40_w117_ankerhygiene` misst bei jedem
+  Lauf, wie viel Luft zwischen der zuletzt geprüften Nadel und dem Fensterrand
+  liegt, und schlägt unter 150 Zeichen an — mit Zeilennummer und dem Hinweis,
+  auf welchen Helfer umzustellen ist. Aus einem irreführenden „Vertrag
+  gebrochen" wird damit eine Meldung, die sagt, was wirklich los ist.
+- **`raum.css` und `raum.js` tragen einen Cache-Stempel.** Beide werden von
+  allen drei öffentlichen Seiten geladen; ohne Stempel hält ein Browser mit
+  warmem Cache nach einem Deploy die alte Fassung — die Seite bleibt dann still
+  flach statt kaputt, und *weil* nichts bricht, fällt es niemandem auf. Der
+  Stempel ist ein Inhalts-Hash (`?v=<sha256[:10]>`), keine Nummer zum
+  Hochzählen: gleicher Inhalt, gleicher Stempel, Cache bleibt gültig. Gesetzt
+  von [`tools/stempel_assets.py`](tools/stempel_assets.py), geprüft im
+  Vertrag — dasselbe Muster wie bei `.env.example`.
+
 ### Behoben — Drei Zustände, die die Sicht verstellt haben (W116)
 
 - **`_tee_fail` wurde nie geleert.** Geschrieben in `_read_stderr`, gelesen an

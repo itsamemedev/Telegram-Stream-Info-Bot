@@ -25,3 +25,15 @@ anlegen kann: `website/raum.css` und `website/raum.js`. **W116 ebenso:**
 `nc/flapguard.py` (neu) und die Erweiterung in `nc/recdiag.py`. Beide gehören ins
 Archiv und müssen vor dem Patch im `website/`-Ordner liegen — sonst laden
 die drei Seiten ins Leere und bleiben flach (kaputt geht dabei nichts).
+
+**W117 braucht keinen Patch.** Die Änderungen liegen in `test_restream.py`
+(fährt als ganze Datei mit) und in `tools/stempel_assets.py` (neu). Die
+Cache-Stempel in den drei HTML-Dateien erzeugt das Werkzeug selbst:
+
+    python tools/stempel_assets.py          # stempeln
+    python tools/stempel_assets.py --check  # nur prüfen (Exit 1 = veraltet)
+
+Nach **jeder** Änderung an `website/raum.css` oder `website/raum.js` einmal
+laufen lassen — sonst holt ein Browser mit warmem Cache die alte Fassung. Der
+Vertrag `test_v40_w117_asset_stempel` fährt `--check` mit, ein vergessener
+Lauf fällt also in der Prüfkette auf.
