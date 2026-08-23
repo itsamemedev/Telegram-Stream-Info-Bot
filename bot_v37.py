@@ -579,7 +579,6 @@ from nc import chatstats as _nc_chatstats    # v4.0-W45: Chat-Health-Aggregation
 from nc import oauthpage as _nc_oauthpage    # v4.0-W49: OAuth-Rückmeldeseiten (extrahiert)
 from nc import trackingdb as _nc_trackingdb  # v4.0-W50: Tracking-Status-Helfer (conn-injiziert)
 from nc import eventquery as _nc_eventquery  # v4.0-W51: Event-Log-Query-Bauer (rein)
-from nc import convmap as _nc_convmap        # v4.0-W55b: Conversation-Message-Mapping (rein)
 from nc import admod as _nc_admod            # v4.0-W56: Werbe-Allowlist-Bauer (rein)
 from nc import binresolve as _nc_binresolve  # v4.0-W60: Binary-Pfad-Resolver (rein)
 from nc import ffver as _nc_ffver            # v4.0-W61: ffmpeg-Versionszeilen-Parser (rein)
@@ -587,6 +586,7 @@ from nc import netstat as _nc_netstat        # v4.0-W61b: Netzdurchsatz-Parsing/
 from nc import journalperm as _nc_journalperm  # v4.0-W62b: Journal-Leserecht-Entscheidung (rein)
 from nc import cfgstore as _nc_cfgstore      # v4.0-W62c/W111: app_config lesen+schreiben
 from nc import recdb as _nc_recdb        # v4.0-W104: Aufnahmen-DB-Zugriffe (extrahiert)
+from nc import aidb as _nc_aidb          # v4.0-W112: KI-Datenzugriff (extrahiert)
 from nc import ctx as _nc_ctx            # v4.0-W106: Laufzeitkontext fuer geloeste Routen
 from nc.routes import recordings as _nc_routes_recordings  # v4.0-W106: Aufnahmen-Blueprint
 from nc.routes import archive as _nc_routes_archive        # v4.0-W107: Archiv-Blueprint
@@ -595,6 +595,7 @@ from nc.routes import scheduler as _nc_routes_scheduler      # v4.0-W108
 from nc.routes import webhooks as _nc_routes_webhooks        # v4.0-W108
 from nc.routes import insights as _nc_routes_insights        # v4.0-W108
 from nc.routes import health as _nc_routes_health            # v4.0-W110
+from nc.routes import ai as _nc_routes_ai                    # v4.0-W112: KI-Blueprint
 # Diese beiden Routen ruft der Bot auch INTERN auf (Telegram /sysres und die
 # Aggregat-Route /api/dashboard-bundle) — sie sind dort gewoehnliche
 # Funktionen, keine Endpunkte. Deshalb importiert statt kopiert.
@@ -722,7 +723,6 @@ from nc.textmore import (  # noqa: F401
     split_for_telegram, _compact_text, _parse_iso, _safe_archive_filename,
     _video_caption, _ov_wrap)
 from nc.scoring import build_report  # noqa: F401
-from nc.sqlutil import _rule_based_sql  # noqa: F401
 from nc.persona import (  # noqa: F401
     _persona_intensity_hint, _azrael_emotion, _learn_param)
 from nc.util import _webhook_event_match  # noqa: F401
@@ -792,7 +792,7 @@ from nc.stats import (get_per_user_stats, get_activity_pulse, get_lives_heatmap,
                       get_recordings_heatmap)  # noqa: F401
 from nc.archive import evaluate_archive_rule  # noqa: F401
 from nc import archive as _nc_archive     # v4.0-W110: Archiv-Datenzugriff
-from nc.notes import (delete_annotation, _conv_list,
+from nc.notes import (delete_annotation,
                       set_tracking_notes)  # noqa: F401
 # V37-DBX: SQL-Export/Import (SQLite <-> MariaDB). Braucht nur db_conn.
 from nc.dbexport import (db_export_sql as _dbx_export,
@@ -864,7 +864,6 @@ from nc import schema as _nc_schema  # B164: DB-Schema (aus init_db extrahiert)
 from nc import modheuristics as _nc_mod  # B165: plattformunabh. Mod-Heuristik
 from nc import piper_voices as _nc_piper  # B166: Piper-Stimm-/Modell-Auflösung
 from nc import audio_cue as _nc_audio  # v4.0-W11: Signalton + Ducking
-from nc import sqlguard as _nc_sqlguard  # v4.0-W14: harte Read-only-Pruefung
 from nc import crowdsec as _nc_crowdsec  # v4.0-W18: LAPI-Zugang ohne sudo
 from nc import replygate as _nc_replygate  # v4.0-W20: Bremse fuer Chat-Antworten
 from nc import sendrate as _nc_sendrate    # v4.0-W23: YT-Sende-Bremse (Anti-Flood)
@@ -1479,11 +1478,11 @@ from nc.proxyutil import (  # noqa: F401
 from nc.shield import _sentinel_screen  # noqa: F401
 # V37-MOD: reine Format-/Stream-Helfer.
 from nc.fmt import (  # noqa: F401
-    _sse, _partial_tag_hold, _fmt_offset,
+    _fmt_offset,
     fmt_duration, utc_clock, pre_table)
 # V37-MOD: kleine reine Logik-Helfer.
 from nc.util import (  # noqa: F401
-    _ai_err_msg, _looks_like_vision_model, _safe_callback_data, _topic_key)
+    _looks_like_vision_model, _safe_callback_data, _topic_key)
 # (Batch-Importe nach vorn gezogen — siehe früher Konstantenblock, V37-MOD)
 
 
@@ -3318,9 +3317,6 @@ def _anthropic_key():
     return _nc_claude.api_key()
 
 
-def _anthropic_model_raw(override=None):
-    # v4.0-W111: nach nc/claude.py geloest.
-    return _nc_claude.model_raw(override)
 
 
 
@@ -3540,17 +3536,6 @@ async def llm_chat(messages: List[dict],
 _LLM_MODELS_CACHE = {"ts": 0.0, "models": []}
 
 
-def _llm_list_models(force_refresh=False):
-    """Sync + 60s-gecacht (Ersatz der alten _ollama_list_models): Brain-Backend
-       zuerst, sonst freeai. Für Flask-Routen, die schnell antworten müssen."""
-    now = _time_mod.monotonic()
-    if not force_refresh and _LLM_MODELS_CACHE["models"] and \
-            now - _LLM_MODELS_CACHE["ts"] < 60:
-        return _LLM_MODELS_CACHE["models"]
-    models = _check_ai_models_sync(timeout=4.0) or []
-    if models:
-        _LLM_MODELS_CACHE.update(ts=now, models=models)
-    return models or _LLM_MODELS_CACHE["models"]
 
 
 async def llm_list_models() -> Optional[List[str]]:
@@ -3599,74 +3584,6 @@ def llm_chat_sync(messages, model=None, timeout=None):
     return _nc_freeai.chat_sync(messages, model=model, timeout=timeout)
 
 
-def llm_chat_stream_sync(messages, model=None):
-    """Synchrones Streaming für SSE-Routen: yielded Text-Deltas.
-       V37: streamt über freeai (SSE); wenn der Stream leer bleibt, einmalig
-       nicht-streamend nachziehen, damit der Aufrufer IMMER Text bekommt."""
-    import queue as _q
-    out = _q.Queue()
-    def _pump():
-        async def _run():
-            got = False
-            # v4.0-W65: Claude zuerst (Einmalantwort in einen Chunk), sonst freeai-SSE.
-            _akey = _anthropic_key()
-            if _akey and not any(m.get("images") for m in messages):
-                _ct, _ce = await asyncio.to_thread(
-                    _nc_claude.chat_sync, messages, _akey, _anthropic_model(model),
-                    AI_STREAM_TIMEOUT)
-                if _ct:
-                    out.put(_ct)
-                    return
-                if _ce == "auth":
-                    return
-            async for delta in _nc_freeai.chat_stream(messages, model=model,
-                                                      timeout=AI_STREAM_TIMEOUT):
-                got = True
-                out.put(delta)
-            if not got:
-                txt, _err = await _nc_freeai.chat(messages, model=model,
-                                                  timeout=AI_TIMEOUT)
-                if txt:
-                    out.put(txt)
-            out.put(None)
-        try:
-            asyncio.run(_run())
-        except Exception:
-            out.put(None)
-    threading.Thread(target=_pump, daemon=True).start()
-    # <think>-Filter (Reasoning-Modelle): Blöcke rausfiltern, über Chunk-Grenzen
-    # zerteilte Tags via _partial_tag_hold zurückhalten (Verhalten der alten
-    # Stream-Funktion 1:1 erhalten).
-    buf, thinking = "", False
-    while True:
-        item = out.get()
-        if item is None:
-            break
-        buf += item
-        emit = ""
-        while buf:
-            if thinking:
-                j = buf.find("</think>")
-                if j < 0:
-                    hold = _partial_tag_hold(buf, "</think>")
-                    buf = buf[len(buf)-hold:] if hold else ""
-                    break
-                buf = buf[j+len("</think>"):]
-                thinking = False
-            else:
-                i = buf.find("<think>")
-                if i < 0:
-                    hold = _partial_tag_hold(buf, "<think>")
-                    emit += buf[:len(buf)-hold] if hold else buf
-                    buf = buf[len(buf)-hold:] if hold else ""
-                    break
-                emit += buf[:i]
-                buf = buf[i+len("<think>"):]
-                thinking = True
-        if emit:
-            yield emit
-    if buf and not thinking:
-        yield buf
 
 
 def _check_ai_alive_sync(timeout: float = 1.5) -> bool:
@@ -4047,24 +3964,9 @@ def decide_preferred_recorder(tid: int) -> Optional[str]:
 
 def add_ai_log_entry(chat_id, user_id, prompt, response, model, duration_ms,
                      error=None, file_kind=None, file_size=None):
-    """F16: ein AI-Call wird ins persistente Log geschrieben.
-       F49: gibt die DB-id zurück (für /api/ai/ask response) oder None bei Fehler."""
-    try:
-        with db_conn() as conn:
-            cur = conn.execute(
-                "INSERT INTO ai_log (chat_id, user_id, prompt, response, model, "
-                "duration_ms, error, file_kind, file_size, created_at) "
-                "VALUES (?,?,?,?,?,?,?,?,?,?)",
-                (int(chat_id), int(user_id),
-                 (prompt or "")[:8000],     # cap to keep DB lean
-                 (response or "")[:16000] if response else None,
-                 model, duration_ms, error, file_kind, file_size,
-                 datetime.now(timezone.utc).isoformat()))
-            conn.commit()
-            return cur.lastrowid
-    except Exception as e:
-        log.warning(f"add_ai_log_entry failed: {e}")
-        return None
+    # v4.0-W112: nach nc/aidb.py geloest (KI-Datenzugriff).
+    return _nc_aidb.add_log_entry(chat_id, user_id, prompt, response, model,
+                                  duration_ms, error, file_kind, file_size)
 
 def get_recent_ai_log(limit=50):
     try:
@@ -11078,109 +10980,21 @@ AI_CHAT_CONTEXT_CHARS    = _env_int("AI_CHAT_CONTEXT_CHARS", 16000)
 AI_CHAT_TITLE_MAX        = 60
 
 
-def _conv_create(title=None):
-    """Erstellt eine neue Conversation, returnt id."""
-    now = datetime.now(timezone.utc).isoformat()
-    with db_conn() as conn:
-        cur = conn.execute(
-            "INSERT INTO ai_conversations (title, created_at, updated_at) "
-            "VALUES (?, ?, ?)",
-            (title or "Neue Konversation", now, now))
-        conn.commit()
-        return cur.lastrowid
 
 
 
 
 def _conv_messages(conv_id):
-    """Alle Messages einer Conversation, chronologisch.
-       v4.0-W55b: das Row→Dict-Mapping lebt in nc/convmap.py (bitgenau geprüft)."""
-    with db_conn() as conn:
-        rows = conn.execute(
-            "SELECT id, role, content, created_at, model, duration_ms, error "
-            "FROM ai_messages WHERE conversation_id = ? ORDER BY id ASC",
-            (conv_id,)).fetchall()
-    return _nc_convmap.messages(rows)
+    # v4.0-W112: nach nc/aidb.py geloest (KI-Datenzugriff).
+    return _nc_aidb.conv_messages(conv_id)
 
 
-def _conv_add_message(conv_id, role, content, model=None, duration_ms=None, error=None):
-    """Neue Message anhängen + Conversation updaten. Returnt message-id.
-       Wenn die Conversation noch keinen echten Titel hat und das hier die
-       erste User-Message ist, generieren wir einen Titel aus dem Inhalt."""
-    now = datetime.now(timezone.utc).isoformat()
-    with db_conn() as conn:
-        cur = conn.execute(
-            "INSERT INTO ai_messages (conversation_id, role, content, created_at, model, duration_ms, error) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (conv_id, role, content, now, model, duration_ms, error))
-        msg_id = cur.lastrowid
-        # Conversation-Meta updaten
-        # Title-Gen: wenn aktueller Titel noch der default ist UND das die
-        # erste user-message ist → neuer Titel aus den ersten 60 Zeichen.
-        if role == "user":
-            existing = conn.execute(
-                "SELECT title FROM ai_conversations WHERE id = ?",
-                (conv_id,)).fetchone()
-            if existing and (
-                not existing["title"]
-                or existing["title"] == "Neue Konversation"
-                or existing["title"].startswith("Konversation #")
-            ):
-                # Erste sinnvolle Zeile als Titel
-                first_line = content.strip().split("\n")[0]
-                if len(first_line) > AI_CHAT_TITLE_MAX:
-                    first_line = first_line[:AI_CHAT_TITLE_MAX - 1].rstrip() + "…"
-                conn.execute(
-                    "UPDATE ai_conversations SET title = ? WHERE id = ?",
-                    (first_line, conv_id))
-        conn.execute(
-            "UPDATE ai_conversations SET updated_at = ?, "
-            "  message_count = COALESCE(message_count, 0) + 1 "
-            "WHERE id = ?",
-            (now, conv_id))
-        conn.commit()
-        return msg_id
 
 
-def _conv_archive(conv_id):
-    """Soft-Delete einer Conversation (archived=1)."""
-    with db_conn() as conn:
-        conn.execute(
-            "UPDATE ai_conversations SET archived = 1 WHERE id = ?", (conv_id,))
-        conn.commit()
 
 
-def _conv_rename(conv_id, title):
-    """Titel manuell setzen."""
-    title = (title or "").strip()[:AI_CHAT_TITLE_MAX] or "(leer)"
-    with db_conn() as conn:
-        conn.execute(
-            "UPDATE ai_conversations SET title = ? WHERE id = ?",
-            (title, conv_id))
-        conn.commit()
 
 
-def _build_context_for_llm(conv_id, new_user_message):
-    """Baut die Nachrichten-Liste für Ollama. Sliding window:
-       letzte N Messages bis max M Zeichen Gesamt-Budget.
-       Ältere Messages werden weggelassen (vom Anfang her, jüngste behalten)."""
-    history = _conv_messages(conv_id)
-    # Wir hängen den neuen User-Prompt schon mal an damit er garantiert dabei ist
-    candidate = history + [{"role": "user", "content": new_user_message}]
-    # Letzte N
-    candidate = candidate[-AI_CHAT_CONTEXT_MESSAGES:]
-    # Char-Budget: vom NEUESTEN her aufaddieren bis Limit, älteres droppen
-    budget = AI_CHAT_CONTEXT_CHARS
-    keep_reversed = []
-    for m in reversed(candidate):
-        c = m.get("content", "") or ""
-        if len(c) > budget and keep_reversed:
-            break    # passt nicht mehr rein und wir haben schon was
-        keep_reversed.append(m)
-        budget -= len(c)
-    keep = list(reversed(keep_reversed))
-    # Format für Ollama: nur role + content
-    return [{"role": m["role"], "content": m["content"]} for m in keep]
 
 
 # F78: Ollama-Models-Listing mit Cache.
@@ -11188,313 +11002,20 @@ def _build_context_for_llm(conv_id, new_user_message):
 
 
 
-@dashboard_app.route("/api/ai/models")
-def api_ai_models():
-    """Verfügbare LLM-Modelle (Brain-Runtime zuerst, sonst freeai-Basen).
-       Frontend nutzt das für den Dropdown im Chat."""
-    refresh = request.args.get("refresh") == "1"
-    models = _llm_list_models(force_refresh=refresh)
-    return jsonify({
-        "ok": True,
-        "models": models,
-        "default": AI_MODEL,
-        "available": len(models),
-        "backend": ("brain" if os.getenv("AI_PROVIDER","").strip().lower()=="brain"
-                    else "freeai"),
-    })
 
 
-@dashboard_app.route("/api/ai/conversations", methods=["GET"])
-def api_ai_conversations_list():
-    """Liste aller (nicht-archivierten) Conversations."""
-    try:
-        limit = _arg_int("limit", 50, 1, 200)
-    except (TypeError, ValueError):
-        limit = 50
-    convs = _conv_list(limit=limit)
-    return jsonify({"ok": True, "conversations": convs})
 
 
-@dashboard_app.route("/api/ai/conversations", methods=["POST"])
-def api_ai_conversations_create():
-    """Neue (leere) Conversation. POST ohne Body = leere Conversation.
-       Optionaler Body: {"title": "..."}"""
-    payload = request.get_json(silent=True) or {}
-    title = (payload.get("title") or "").strip() or None
-    conv_id = _conv_create(title=title)
-    return jsonify({"ok": True, "id": conv_id})
 
 
-@dashboard_app.route("/api/ai/conversations/<int:conv_id>", methods=["GET"])
-def api_ai_conversation_get(conv_id):
-    """Conversation mit allen Messages."""
-    with db_conn() as conn:
-        meta = conn.execute(
-            "SELECT id, title, created_at, updated_at, message_count, last_model "
-            "FROM ai_conversations WHERE id = ? AND COALESCE(archived, 0) = 0",
-            (conv_id,)).fetchone()
-    if not meta:
-        return jsonify(ok=False, error="conversation not found"), 404
-    messages = _conv_messages(conv_id)
-    return jsonify({
-        "ok": True,
-        "id": meta["id"],
-        "title": meta["title"],
-        "created_at": meta["created_at"],
-        "updated_at": meta["updated_at"],
-        "message_count": meta["message_count"] or 0,
-        "last_model": meta["last_model"] or "",   # F78: pre-select in dropdown
-        "messages": messages,
-    })
 
 
-@dashboard_app.route("/api/ai/conversations/<int:conv_id>", methods=["DELETE"])
-def api_ai_conversation_delete(conv_id):
-    """Archiviert die Conversation (soft delete — Daten bleiben in der DB)."""
-    _conv_archive(conv_id)
-    return jsonify({"ok": True})
 
 
-@dashboard_app.route("/api/ai/conversations/<int:conv_id>", methods=["PATCH"])
-def api_ai_conversation_patch(conv_id):
-    """Titel ändern. Body: {"title": "..."}"""
-    payload = request.get_json(silent=True) or {}
-    title = payload.get("title")
-    if title is None:
-        return jsonify(ok=False, error="title field required"), 400
-    _conv_rename(conv_id, title)
-    return jsonify({"ok": True})
 
 
-@dashboard_app.route("/api/ai/conversations/<int:conv_id>/messages", methods=["POST"])
-def api_ai_conversation_send(conv_id):
-    """Neue User-Message hinzufügen, Ollama mit voller History befragen,
-       Assistant-Response speichern und zurückgeben.
-       Body: {"prompt": "..."}
-       Returns: {"ok": True, "user_message": {...}, "assistant_message": {...}}"""
-    # Rate limit (B5 wiederverwendet, gilt auch hier)
-    if not _ai_dashboard_rate_check():
-        return jsonify(ok=False,
-                       error=f"Rate-Limit erreicht ({_AI_DASHBOARD_MAX_PER_MIN}/min)"), 429
-
-    payload = request.get_json(silent=True) or {}
-    prompt = (payload.get("prompt") or "").strip()
-    if not prompt:
-        return jsonify(ok=False, error="prompt darf nicht leer sein"), 400
-    if len(prompt) > AI_TEXT_MAX_CHARS:
-        return jsonify(ok=False, error=f"prompt zu lang (max {AI_TEXT_MAX_CHARS} Zeichen)"), 400
-
-    # Conversation existence-Check
-    with db_conn() as conn:
-        exists = conn.execute(
-            "SELECT 1 FROM ai_conversations WHERE id = ? AND COALESCE(archived, 0) = 0",
-            (conv_id,)).fetchone()
-    if not exists:
-        return jsonify(ok=False, error="conversation not found"), 404
-
-    # F78: Per-Conversation Model-Wahl (mit Validierung gegen INSTALLIERTE
-    # Ollama-Modelle). Vorher: B9 hartcodiert auf AI_MODEL — sicher,
-    # aber unflexibel. Jetzt: Operator kann pro Konversation wählen,
-    # ABER nur aus der Liste die Ollama tatsächlich installed hat
-    # (keine arbitrary downloads via Dashboard).
-    requested = (payload.get("model") or "").strip()
-    if requested:
-        installed = _llm_list_models()
-        if requested in installed:
-            model = requested
-        else:
-            # ungültig → fallback auf Server-Default. Frontend zeigt's an.
-            log.info(f"F78: requested model '{requested}' not installed "
-                     f"→ fallback to {AI_MODEL}")
-            model = AI_MODEL
-    else:
-        # Kein Model im Request → check ob Conversation 'last_model' gespeichert hat
-        with db_conn() as conn:
-            row = conn.execute(
-                "SELECT last_model FROM ai_conversations WHERE id = ?",
-                (conv_id,)).fetchone()
-        last = (row and row["last_model"]) or ""
-        if last and last in _llm_list_models():
-            model = last
-        else:
-            model = AI_MODEL
-
-    # Conversation 'last_model' updaten falls Operator gewechselt hat
-    with db_conn() as conn:
-        conn.execute(
-            "UPDATE ai_conversations SET last_model = ? WHERE id = ?",
-            (model, conv_id))
-        conn.commit()
-
-    # User-Message speichern (für DB-Persistence + Title-Gen)
-    user_msg_id = _conv_add_message(conv_id, "user", prompt)
-
-    # Context aufbauen + an Ollama
-    messages = _build_context_for_llm(conv_id, "")
-    # _build_context appended uns die new-message — wir wollen den User-Prompt
-    # aber NICHT zweimal, da er schon in messages drin ist via DB-Lese.
-    # Korrektur: _build_context lies aus DB (inkl. unserer just-inserted message)
-    # und appended dann eine LEERE user-message. Wir lassen die weg:
-    if messages and messages[-1]["role"] == "user" and not messages[-1]["content"]:
-        messages.pop()
-
-    started = _time_mod.monotonic()
-    # V37-B104: Deckel MUSS mit — sonst erbt der Call AI_TIMEOUT (0 = im Code
-    # 3600s) und blockiert einen Flask-Worker bis zu einer Stunde.
-    response, err_kind = llm_chat_sync(messages, model=model,
-                                       timeout=AI_FLASK_TIMEOUT)
-    duration_ms = int((_time_mod.monotonic() - started) * 1000)
-
-    # B11: response cappen
-    if response and len(response) > AI_TEXT_MAX_CHARS:
-        response = (response[:AI_TEXT_MAX_CHARS]
-                    + f"\n\n…[gekürzt, originale Länge: {len(response):,} Zeichen]")
-
-    if err_kind or not response:
-        err_msg = {
-            "model_missing": f"Modell '{model}' nicht installiert",
-            "timeout":       f"Ollama Timeout nach {AI_TIMEOUT}s",
-            "unreachable":   "Ollama nicht erreichbar (Service läuft nicht?)",
-            "http":          "Ollama HTTP-Fehler",
-            "other":         "Unerwarteter Fehler",
-        }.get(err_kind, "Keine Antwort vom LLM")
-        # Assistant-Error als message speichern (so dass es im UI sichtbar ist)
-        asst_msg_id = _conv_add_message(conv_id, "assistant", "",
-                                        model=model, duration_ms=duration_ms,
-                                        error=err_msg)
-        # Auch in ai_log für globalen Stream
-        try:
-            add_ai_log_entry(0, 0, prompt, None, model, duration_ms, err_msg, None, None)
-        except Exception as e:
-            log.warning(f"ai_log dashboard-chat write failed: {e}")
-        return jsonify(ok=False, error=err_msg, error_kind=err_kind,
-                       conversation_id=conv_id, user_message_id=user_msg_id,
-                       assistant_message_id=asst_msg_id,
-                       model=model, duration_ms=duration_ms), 502
-
-    asst_msg_id = _conv_add_message(conv_id, "assistant", response,
-                                    model=model, duration_ms=duration_ms)
-    # Globaler AI-Stream bekommt auch einen Eintrag
-    try:
-        add_ai_log_entry(0, 0, prompt, response, model, duration_ms, None, None, None)
-    except Exception as e:
-        log.warning(f"ai_log dashboard-chat write failed: {e}")
-
-    # Return: beide neuen Messages (UI muss sie nicht re-fetchen)
-    return jsonify({
-        "ok": True,
-        "conversation_id": conv_id,
-        "user_message": {
-            "id": user_msg_id,
-            "role": "user",
-            "content": prompt,
-        },
-        "assistant_message": {
-            "id": asst_msg_id,
-            "role": "assistant",
-            "content": response,
-            "model": model,
-            "duration_ms": duration_ms,
-        },
-    })
 
 
-@dashboard_app.route("/api/ai/conversations/<int:conv_id>/stream", methods=["POST"])
-def api_ai_conversation_stream(conv_id):
-    """Wie .../messages, aber als Live-Stream (SSE): kein Timeout-Abbruch während
-       Laden/Denken; Frontend zeigt Reasoning + Tokens live. Speichert die
-       Assistant-Antwort am Ende wie der normale Endpoint."""
-    if not _ai_dashboard_rate_check():
-        return jsonify(ok=False, error=f"Rate-Limit erreicht ({_AI_DASHBOARD_MAX_PER_MIN}/min)"), 429
-    payload = request.get_json(silent=True) or {}
-    prompt = (payload.get("prompt") or "").strip()
-    if not prompt:
-        return jsonify(ok=False, error="prompt darf nicht leer sein"), 400
-    if len(prompt) > AI_TEXT_MAX_CHARS:
-        return jsonify(ok=False, error=f"prompt zu lang (max {AI_TEXT_MAX_CHARS} Zeichen)"), 400
-    with db_conn() as conn:
-        exists = conn.execute(
-            "SELECT 1 FROM ai_conversations WHERE id = ? AND COALESCE(archived, 0) = 0",
-            (conv_id,)).fetchone()
-    if not exists:
-        return jsonify(ok=False, error="conversation not found"), 404
-
-    # Model-Auflösung (wie im Nicht-Stream-Endpoint)
-    requested = (payload.get("model") or "").strip()
-    if requested and requested in _llm_list_models():
-        model = requested
-    else:
-        with db_conn() as conn:
-            row = conn.execute("SELECT last_model FROM ai_conversations WHERE id = ?",
-                               (conv_id,)).fetchone()
-        last = (row and row["last_model"]) or ""
-        model = last if (last and last in _llm_list_models()) else AI_MODEL
-    with db_conn() as conn:
-        conn.execute("UPDATE ai_conversations SET last_model = ? WHERE id = ?", (model, conv_id))
-        conn.commit()
-
-    user_msg_id = _conv_add_message(conv_id, "user", prompt)
-    messages = _build_context_for_llm(conv_id, "")
-    if messages and messages[-1]["role"] == "user" and not messages[-1]["content"]:
-        messages.pop()
-
-    def gen():
-        yield _sse("start", {"user_message_id": user_msg_id, "model": model})
-        started = _time_mod.monotonic()
-        answer_parts, think_parts, err = [], [], None
-        try:
-            for ev in llm_chat_stream_sync(messages, model=model):
-                if "error" in ev:
-                    err = ev["error"]
-                    yield _sse("error", {"error": _ai_err_msg(err, model), "error_kind": err})
-                    break
-                if ev.get("thinking"):
-                    think_parts.append(ev["thinking"])
-                    yield _sse("thinking", {"delta": ev["thinking"]})
-                if ev.get("content"):
-                    chunk = ev["content"]
-                    if not answer_parts:
-                        chunk = chunk.lstrip()      # Antwort nicht mit Leerzeilen beginnen
-                        if not chunk:
-                            continue
-                    answer_parts.append(chunk)
-                    yield _sse("token", {"delta": chunk})
-                if ev.get("done"):
-                    break
-        except GeneratorExit:
-            return
-        except Exception as e:
-            log.warning(f"AI-Stream gen Fehler: {e}")
-            err = err or "other"
-            yield _sse("error", {"error": _ai_err_msg(err, model), "error_kind": err})
-
-        duration_ms = int((_time_mod.monotonic() - started) * 1000)
-        answer = "".join(answer_parts).strip()
-        if answer and len(answer) > AI_TEXT_MAX_CHARS:
-            answer = answer[:AI_TEXT_MAX_CHARS] + f"\n\n…[gekürzt, {len(answer):,} Zeichen]"
-        thinking = "".join(think_parts).strip()
-
-        if err or not answer:
-            emsg = _ai_err_msg(err or "other", model)
-            aid = _conv_add_message(conv_id, "assistant", "", model=model,
-                                    duration_ms=duration_ms, error=emsg)
-            try: add_ai_log_entry(0, 0, prompt, None, model, duration_ms, emsg, None, None)
-            except Exception: pass
-            yield _sse("done", {"ok": False, "error": emsg, "assistant_message_id": aid,
-                                "model": model, "duration_ms": duration_ms})
-        else:
-            aid = _conv_add_message(conv_id, "assistant", answer, model=model,
-                                    duration_ms=duration_ms)
-            try: add_ai_log_entry(0, 0, prompt, answer, model, duration_ms, None, None, None)
-            except Exception: pass
-            yield _sse("done", {"ok": True, "assistant_message_id": aid, "content": answer,
-                                "thinking": thinking, "model": model, "duration_ms": duration_ms})
-
-    resp = Response(gen(), mimetype="text/event-stream")
-    resp.headers["Cache-Control"] = "no-cache"
-    resp.headers["X-Accel-Buffering"] = "no"      # kein Proxy-Buffering (nginx)
-    resp.headers["Connection"] = "keep-alive"
-    return resp
 
 
 # F70: Health-Score — eine einzige 0-100 Zahl die den Gesamt-Status zeigt.
@@ -11990,98 +11511,6 @@ def api_brain():
 # Sammelt Logs + Stats + recent Errors und befragt das LLM zur Diagnose.
 # WICHTIG: Nur Vorschläge als Text. KEIN automatisches Code-Patching.
 # Operator entscheidet ob/was angewendet wird.
-@dashboard_app.route("/api/ai/diagnose", methods=["POST"])
-def api_ai_diagnose():
-    """AI-gestützte Diagnose der aktuellen Bot-Probleme.
-       Sammelt: letzte Errors, recent Outcomes, Health-Components.
-       Liefert: LLM-Vorschläge zu möglichen Ursachen + Fixes (TEXT, kein Code-Apply!)."""
-    if not _ai_dashboard_rate_check():
-        return jsonify(ok=False,
-                       error=f"Rate-Limit erreicht ({_AI_DASHBOARD_MAX_PER_MIN}/min)"), 429
-
-    context_parts = []
-
-    # 1. Recent ERROR lines (filtered against scanner-noise B41)
-    try:
-        log_path = os.path.join(LOG_DIR, "error.log")
-        if os.path.isfile(log_path):
-            with open(log_path, "r", errors="ignore") as f:
-                lines = f.readlines()[-300:]
-            errs = [l.strip() for l in lines if "| ERROR |" in l]
-            # B41 noise-Filter
-            noise_re = re.compile(r"bad request version|jdwp-handshake|jrmi|rtsp/1\.0|giop|amqp|mssqlserver", re.I)
-            errs = [l for l in errs if not noise_re.search(l)][-25:]
-            if errs:
-                context_parts.append("=== RECENT ERRORS (last 25) ===\n" + "\n".join(errs))
-    except Exception as e:
-        log.warning(f"diagnose error-log read failed: {e}")
-
-    # 2. Outcomes last 24h
-    try:
-        cutoff = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
-        with db_conn() as conn:
-            rows = conn.execute(
-                "SELECT outcome, COUNT(*) AS c FROM recording_attempts "
-                "WHERE started_at >= ? GROUP BY outcome ORDER BY c DESC",
-                (cutoff,)).fetchall()
-        outs = [f"{r['outcome'] or 'unknown'}: {r['c']}" for r in rows]
-        if outs:
-            context_parts.append("=== OUTCOMES LAST 24H ===\n" + "\n".join(outs))
-    except Exception as e:
-        log.warning(f"diagnose outcomes read failed: {e}")
-
-    # 3. Backoff state
-    try:
-        if _STREAM_DEAD_BACKOFF_UNTIL:
-            count = sum(1 for u in list(_STREAM_DEAD_BACKOFF_UNTIL.values())
-                        if u > _time_mod.monotonic())   # BUG-FIX: list()-Snapshot (Race)
-            if count > 0:
-                context_parts.append(f"=== B45 BACKOFF ACTIVE ===\n{count} trackings in stream-dead backoff")
-    except Exception:
-        pass
-
-    # 4. Disk
-    try:
-        st = get_storage_stats()
-        pct = (st.get("disk") or {}).get("used_percent")
-        if pct is not None:
-            context_parts.append(f"=== DISK ===\n{pct:.0f}% used")
-    except Exception:
-        pass
-
-    if not context_parts:
-        return jsonify(ok=True,
-                       diagnosis="Keine auffälligen Daten verfügbar (kein Error-Log, keine Aufnahme-History).",
-                       model="(none)", duration_ms=0)
-
-    prompt = (
-        "Du bist ein erfahrener Senior Engineer der einen TikTok-Live-Recording-Bot "
-        "diagnostiziert. Analysiere die folgenden Daten knapp + konkret. Identifiziere:\n"
-        "1) das wichtigste aktuelle Problem (falls eines existiert)\n"
-        "2) wahrscheinliche Ursache\n"
-        "3) konkrete Handlungsempfehlung (1-3 Sätze)\n"
-        "Wenn alles in Ordnung aussieht: sage das. Antworte auf DEUTSCH, max 200 Wörter.\n\n"
-        + "\n\n".join(context_parts) +
-        "\n\nDeine Analyse:"
-    )
-
-    started = _time_mod.monotonic()
-    response, err_kind = llm_chat_sync(
-        [{"role": "user", "content": prompt}], model=AI_MODEL,
-        timeout=AI_FLASK_TIMEOUT)     # V37-B104: Flask-Worker nicht verhungern lassen
-    duration_ms = int((_time_mod.monotonic() - started) * 1000)
-
-    if err_kind or not response:
-        return jsonify(ok=False, error=err_kind or "no response from LLM"), 502
-
-    return jsonify({
-        "ok": True,
-        "diagnosis": response.strip(),
-        "model": AI_MODEL,
-        "duration_ms": duration_ms,
-        "context_chars": sum(len(p) for p in context_parts),
-        "sections": len(context_parts),
-    })
 
 
 # ============================================================================
@@ -12636,90 +12065,8 @@ _AI_DASHBOARD_RATE = []   # liste von monotonic-Timestamps der letzten Calls
 _AI_DASHBOARD_MAX_PER_MIN = _env_int("AI_DASHBOARD_MAX_PER_MIN", 15)
 _AI_DASHBOARD_LOCK = _threading_for_db.Lock()
 
-def _ai_dashboard_rate_check() -> bool:
-    """True = ok, False = limit erreicht. Thread-safe."""
-    now = _time_mod.monotonic()
-    with _AI_DASHBOARD_LOCK:
-        # Älter als 60s rauswerfen
-        cutoff = now - 60
-        _AI_DASHBOARD_RATE[:] = [t for t in _AI_DASHBOARD_RATE if t > cutoff]
-        if len(_AI_DASHBOARD_RATE) >= _AI_DASHBOARD_MAX_PER_MIN:
-            return False
-        _AI_DASHBOARD_RATE.append(now)
-        return True
 
 
-@dashboard_app.route("/api/ai/ask", methods=["POST"])
-def api_ai_ask():
-    """Dashboard-Variante von /ai. Single-shot Q&A (kein History-Tracking
-       cross-call) — wer Konversation will nimmt Telegram. Trotzdem wird der
-       Call ins ai_log geschrieben damit er im AI-Stream auftaucht.
-       POST-Body: {"prompt": "..."}  (model-Param wird IGNORIERT — siehe B9)
-       Returns:    {"ok": bool, "response": str, "model": str, "duration_ms": int,
-                    "error": str (bei Fehler)}
-
-       F49-Bug-Fix B5: Rate-Limit (default 15/min, via AI_DASHBOARD_MAX_PER_MIN).
-       F49-Bug-Fix B9: 'model' im Request wird IGNORIERT — sonst könnte ein
-       Caller beliebige Modellnamen schicken und Ollama zum Download triggern.
-       Wir nutzen immer AI_MODEL (das was der Telegram-/ai auch nimmt)."""
-    # B5: Rate-Limit zuerst
-    if not _ai_dashboard_rate_check():
-        return jsonify(ok=False,
-                       error=f"Rate-Limit erreicht ({_AI_DASHBOARD_MAX_PER_MIN}/min)"), 429
-
-    payload = request.get_json(silent=True) or {}
-    prompt = (payload.get("prompt") or "").strip()
-    if not prompt:
-        return jsonify(ok=False, error="prompt darf nicht leer sein"), 400
-    if len(prompt) > AI_TEXT_MAX_CHARS:
-        return jsonify(ok=False, error=f"prompt zu lang (max {AI_TEXT_MAX_CHARS} Zeichen)"), 400
-    # B9: model-Param ignorieren — immer Server-Default nehmen
-    model = AI_MODEL
-
-    # F49: Special chat_id=0 / user_id=0 markieren das als Dashboard-Quelle.
-    # Im AI-Stream sieht man dann "[dashboard]" statt einer Telegram-User-ID.
-    DASHBOARD_CHAT_ID = 0
-    DASHBOARD_USER_ID = 0
-
-    started = _time_mod.monotonic()
-    messages = [{"role": "user", "content": prompt}]
-    response, err_kind = llm_chat_sync(messages, model=model,
-                                       timeout=AI_FLASK_TIMEOUT)   # V37-B104
-    duration_ms = int((_time_mod.monotonic() - started) * 1000)
-
-    # F49-Bug-Fix B11: LLM-Response auf AI_TEXT_MAX_CHARS cappen.
-    # Manche Modelle geben mehrere MB zurück (z.B. wenn prompt nach "dem
-    # ganzen Dokument" fragt). add_ai_log_entry capped schon auf 16k für die
-    # DB, aber das API-Response selbst war uncapped → riesiges JSON für den
-    # Browser. Wir trunkieren mit klarer Markierung.
-    if response and len(response) > AI_TEXT_MAX_CHARS:
-        response = (response[:AI_TEXT_MAX_CHARS]
-                    + f"\n\n…[gekürzt, originale Länge: {len(response):,} Zeichen]")
-
-    if err_kind or not response:
-        # Log auch bei Fehler — damit man im Stream sieht WAS schief lief
-        err_msg = {
-            "model_missing": f"Modell '{model}' nicht installiert",
-            "timeout":       f"Ollama Timeout nach {AI_TIMEOUT}s",
-            "unreachable":   "Ollama nicht erreichbar (Service läuft nicht?)",
-            "http":          "Ollama HTTP-Fehler",
-            "other":         "Unerwarteter Fehler",
-        }.get(err_kind, "Keine Antwort vom LLM")
-        try:
-            add_ai_log_entry(DASHBOARD_CHAT_ID, DASHBOARD_USER_ID, prompt, None,
-                             model, duration_ms, err_msg, None, None)
-        except Exception as e:
-            log.warning(f"ai_log dashboard write failed: {e}")
-        return jsonify(ok=False, error=err_msg, error_kind=err_kind,
-                       model=model, duration_ms=duration_ms), 502
-
-    try:
-        add_ai_log_entry(DASHBOARD_CHAT_ID, DASHBOARD_USER_ID, prompt, response,
-                         model, duration_ms, None, None, None)
-    except Exception as e:
-        log.warning(f"ai_log dashboard write failed: {e}")
-
-    return jsonify(ok=True, response=response, model=model, duration_ms=duration_ms)
 
 
 @dashboard_app.route("/api/trackings")
@@ -12915,42 +12262,6 @@ def api_freeai_status():
         return jsonify(ok=False, error=str(e)[:200])
 
 
-@dashboard_app.route("/api/ai/config")
-def api_ai_config():
-    """v37 / v4.0-W77: die EINE KI-Konfiguration fürs Panel.
-
-    BUG-FIX W77: /api/ai/config war versehentlich an api_freeai_status geroutet
-    (liefert bases/model/provider — OHNE budget/timeout/style/url), api_ai_config
-    hing an KEINER Route. Das Panel las darum d.budget_used/_max/_timeout_s →
-    'undefined/undefined'. Jetzt korrekt verdrahtet.
-
-    Zudem Claude-bewusst: sobald ein Anthropic-Key gesetzt ist, ist Claude der
-    PRIMÄRE Provider (llm_chat: Claude zuerst). Das Panel zeigt das jetzt an,
-    statt den freeai-Fallback als 'aktiv' auszugeben."""
-    _akey = _anthropic_key()
-    if _akey:
-        _eff = _anthropic_model()
-        _raw = _anthropic_model_raw()
-        return jsonify(ok=True,
-                       model=_eff,
-                       url="api.anthropic.com/v1/messages",
-                       provider="Claude (Anthropic)",
-                       style=AZRAEL_STYLE,
-                       budget_max=AZRAEL_MAX_CALLS_MIN,
-                       budget_used=len(_AI_CALL_TS),
-                       timeout_s=AI_TIMEOUT,
-                       model_upgraded=(_eff != _raw),    # v4.0-W88: W73-Auto-Heal sichtbar
-                       configured_model=_raw)
-    _brain = os.getenv("AI_PROVIDER", "").strip().lower() == "brain"
-    return jsonify(ok=True,
-                   model=AI_MODEL,
-                   url=(os.getenv("BRAIN_LLAMACPP_URL", "http://127.0.0.1:8080")
-                        if _brain else "nc.freeai (keyless)"),
-                   provider=("brain (llama.cpp)" if _brain else "freeai (keyless)"),
-                   style=AZRAEL_STYLE,
-                   budget_max=AZRAEL_MAX_CALLS_MIN,
-                   budget_used=len(_AI_CALL_TS),
-                   timeout_s=AI_TIMEOUT)
 
 
 # ═══ v37: POLEN-VPS-TUNNEL — Aufnahme-Proxy zur Laufzeit steuern ═══
@@ -13867,61 +13178,10 @@ def api_news_status():
                    last_gen_ts=st.last_gen_ts, count=st.count)
 
 
-@dashboard_app.route("/api/ai/claude/status")
-def api_claude_status():
-    """v4.0-W64: Status der Claude-Anbindung (Key gesetzt? maskiert, Modell, Quelle)."""
-    stored = _cfg_get("ai.anthropic_key", None)
-    env_key = os.getenv("ANTHROPIC_API_KEY", "").strip()
-    key = (stored.strip() if isinstance(stored, str) and stored.strip() else env_key)
-    masked = (key[:7] + "…" + key[-4:]) if len(key) >= 14 else ("gesetzt" if key else "")
-    raw_model = _anthropic_model_raw()
-    eff_model = _nc_claude.resolve_model(raw_model)
-    return jsonify(ok=True, configured=bool(key), masked=masked,
-                   source=("dashboard" if isinstance(stored, str) and stored.strip()
-                           else ("env" if env_key else "keine")),
-                   model=eff_model, configured_model=raw_model,
-                   model_upgraded=(eff_model != raw_model),
-                   model_note=('Modell „%s“ ist abgeschaltet — automatisch auf '
-                               '„%s“ angehoben. .env/ANTHROPIC_MODEL aktualisieren.'
-                               % (raw_model, eff_model)) if eff_model != raw_model else "",
-                   default_model=_nc_claude.DEFAULT_MODEL)
 
 
-@dashboard_app.route("/api/ai/claude/save", methods=["POST"])
-def api_claude_save():
-    """Key und/oder Modell speichern (in app_config). Key wird nie zurückgegeben."""
-    payload = request.get_json(silent=True) or {}
-    saved = {}
-    if "key" in payload:
-        k = str(payload.get("key") or "").strip()
-        if k and not k.startswith("sk-"):
-            return jsonify(ok=False, error="Kein gültiger Anthropic-Key (erwartet 'sk-…')."), 400
-        _cfg_set("ai.anthropic_key", k)   # leerer String = entfernt
-        saved["key"] = bool(k)
-    if "model" in payload:
-        m = str(payload.get("model") or "").strip()
-        _cfg_set("ai.anthropic_model", m)
-        saved["model"] = m or _nc_claude.DEFAULT_MODEL
-    return jsonify(ok=True, saved=saved)
 
 
-@dashboard_app.route("/api/ai/claude/test", methods=["POST"])
-def api_claude_test():
-    """Den gespeicherten (oder mitgeschickten) Key mit einem Mini-Call prüfen.
-       v4.0-W70: gibt den ECHTEN Grund zurück (HTTP-Status + Anthropic-Fehlertext
-       oder konkreter Netzfehler), damit ein Fehlschlag diagnostizierbar ist."""
-    payload = request.get_json(silent=True) or {}
-    key = str(payload.get("key") or "").strip() or _anthropic_key()
-    if not key:
-        return jsonify(ok=False, error="Kein Key gesetzt.",
-                       message="Kein Key im Feld und keiner gespeichert."), 400
-    ok_, kind, detail = _nc_claude.probe(key, model=_anthropic_model())
-    hint = {"auth": " — Key falsch/gesperrt oder Guthaben leer.",
-            "unreachable": " — der Server erreicht api.anthropic.com nicht "
-                           "(Egress/Firewall, Port 443, DNS oder Proxy prüfen).",
-            "bad_request": " — meist ein ungültiger Modellname.",
-            "http_404": " — Modell nicht gefunden (Modellname prüfen)."}.get(kind, "")
-    return jsonify(ok=bool(ok_), detail=kind, message=detail + hint)
 
 
 @dashboard_app.route("/api/news/creators")
@@ -23214,52 +22474,6 @@ async def _intel_index_one(rid, path, username="", created_at=None):
 # W106 noch stand — waeren die Intel-Helfer beim Aufruf noch nicht definiert;
 # pyflakes meldete prompt 'undefined name'. Wer hier etwas ergaenzt, muss den
 # Block gegebenenfalls WEITER nach unten schieben.
-# v4.0-W110: nc.archive braucht ARCHIVE_DIR fuer die Pfad-Sicherheitspruefung
-# in delete_archive_entry (realpath/commonpath gegen Path-Traversal).
-_nc_archive.configure(archive_dir=ARCHIVE_DIR)
-
-_nc_ctx.configure(
-    log=log,
-    log_event=log_event,
-    arg_int=_arg_int,
-    run_async=_run_async_from_flask,
-    recordings_dir=RECORDINGS_DIR,
-    ffmpeg_threads_bg=FFMPEG_THREADS_BG,
-    ffmpeg_nice_bg=FFMPEG_NICE_BG,
-    proc_is_recorder=_proc_is_recorder,
-    scraper_session=_scraper_session,
-    trigger_manual_recording=trigger_manual_recording,
-    stop_manual_recording=stop_manual_recording,
-    get_tags_for_tracking=get_tags_for_tracking,
-    # --- Archiv-Domaene (v4.0-W107) ---
-    intel_ensure_schema=_intel_ensure_schema,
-    intel_index_one=_intel_index_one,
-    intel_semantic=_intel_semantic,
-    intel_ps=_INTEL_PS,
-    # --- Auswertung und Webhooks (v4.0-W108) ---
-    latest_popularity=_latest_popularity,
-    post_json_threaded=_post_json_threaded,
-    # --- Systemzustand (v4.0-W110) ---
-    # Getter, nicht Wert: _BOT_START_TIME wird erst in main() gesetzt.
-    get_bot_start_time=lambda: _BOT_START_TIME,
-    get_cookie_health=get_cookie_health,
-    get_storage_stats=get_storage_stats,
-    # Startwerte, nicht Helfer — deshalb gebuendelt statt als eigene Slots.
-    cfg={
-        "ARCHIVE_DIR": ARCHIVE_DIR,
-        "ARCHIVE_ALLOWED_EXTS": ARCHIVE_ALLOWED_EXTS,
-        "ARCHIVE_MAX_UPLOAD_MB": ARCHIVE_MAX_UPLOAD_MB,
-        "_MANUAL_ARCHIVE_DIR": _MANUAL_ARCHIVE_DIR,
-        "DB_INTEGRITY_ERRORS": DB_INTEGRITY_ERRORS,
-    },
-)
-dashboard_app.register_blueprint(_nc_routes_recordings.bp)
-dashboard_app.register_blueprint(_nc_routes_archive.bp)
-dashboard_app.register_blueprint(_nc_routes_collections.bp)
-dashboard_app.register_blueprint(_nc_routes_scheduler.bp)
-dashboard_app.register_blueprint(_nc_routes_webhooks.bp)
-dashboard_app.register_blueprint(_nc_routes_insights.bp)
-dashboard_app.register_blueprint(_nc_routes_health.bp)
 
 
 async def _intel_index_loop():
@@ -25051,442 +24265,110 @@ event_log(id, kind, severity, summary, created_at)
 Hinweise: Zeitspalten sind ISO-8601-Strings. Erfolg = outcome IN ('ok','stall_killed_partial')."""
 
 
-def _safe_select(sql, limit=200):
-    """Fuehrt EINE read-only SELECT-Abfrage aus (KI-Frage -> LLM -> SQL).
+# v4.0-W110: nc.archive braucht ARCHIVE_DIR fuer die Pfad-Sicherheitspruefung
+# in delete_archive_entry (realpath/commonpath gegen Path-Traversal).
+_nc_archive.configure(archive_dir=ARCHIVE_DIR)
 
-    SEC-AUDIT v4.0-W14: die alte Wortliste mit Leerzeichen-Padding war
-    umgehbar — SQLite erlaubt `WITH ... DELETE`, und mit TABS oder /**/
-    stand nie " delete " im String. Bewiesen: echte Datenloeschung. Jetzt
-    ZWEI Linien:
-      1. nc.sqlguard: normalisiert (Kommentare raus, alle Whitespaces zu
-         Leerzeichen) und prueft mit Wortgrenzen + kein Statement-Stacking.
-      2. Bei SQLite zusaetzlich eine READ-ONLY-Verbindung (mode=ro) — dann
-         kann selbst eine Filterluecke nichts mehr schreiben.
-    """
-    s, err = _nc_sqlguard.check_readonly(sql, _B71_TABLES)
-    if err:
-        return None, err
-    s = _nc_sqlguard.with_limit(s, limit)
-    try:
-        if DB_BACKEND != "mariadb" and os.path.exists(DB_PATH):
-            import sqlite3 as _sq
-            con = _sq.connect(f"file:{os.path.abspath(DB_PATH)}?mode=ro",
-                              uri=True, timeout=15)
-            try:
-                con.row_factory = _sq.Row
-                rows = [dict(r) for r in con.execute(s).fetchall()]
-            finally:
-                con.close()
-            return rows, None
-        with db_conn() as conn:
-            rows = [dict(r) for r in conn.execute(s).fetchall()]
-        return rows, None
-    except Exception as e:
-        return None, f"SQL-Fehler: {e}"
-
-
-
-
-def _nl_to_sql(question):
-    """Übersetzt eine natürlichsprachige Frage in eine SELECT-Abfrage.
-       Bevorzugt die LLM (Ollama), fällt sonst auf Regeln zurück."""
-    if EVOLUTION_USE_LLM:
-        try:
-            sys_prompt = ("Du bist ein SQLite-Experte. Wandle die Frage in GENAU EINE "
-                          "read-only SELECT-Abfrage um. Gib NUR die SQL aus, ohne Erklärung, "
-                          "ohne Markdown, ohne Semikolon.\n\n" + _B71_SCHEMA_DOC)
-            text, err = llm_chat_sync(
-                [{"role": "system", "content": sys_prompt},
-                 {"role": "user", "content": question}],
-                timeout=30)
-            if text:
-                sql = text.strip()
-                if "```" in sql:
-                    m = re.search(r"```(?:sql)?\s*(.*?)```", sql, re.DOTALL)
-                    if m:
-                        sql = m.group(1).strip()
-                sql = sql.split(";")[0].strip()
-                if sql.lower().startswith(("select", "with")):
-                    return sql, "llm"
-        except Exception:
-            pass
-    rb = _rule_based_sql(question)
-    return (rb, "rule") if rb else (None, None)
-
-
-@dashboard_app.route("/api/ai/skills")
-def api_ai_skills():
-    """Meta: welche Fähigkeiten die KI über das Selbstlernen hinaus hat."""
-    return jsonify(ok=True, skills=[
-        {"id": "ask", "name": "Daten-Fragen (NL→SQL)", "endpoint": "/api/ai/query",
-         "desc": "Stellt natürlichsprachige Fragen an die eigene Datenbank."},
-        {"id": "predict", "name": "Go-Live-Vorhersage", "endpoint": "/api/ai/predict-golive/<user>",
-         "desc": "Schätzt wann ein Streamer wahrscheinlich live geht."},
-        {"id": "anomalies", "name": "Anomalie-Erkennung", "endpoint": "/api/ai/anomalies",
-         "desc": "Erkennt Fehler-/Storage-/Volumen-Spikes."},
-        {"id": "segments", "name": "Streamer-Segmentierung", "endpoint": "/api/ai/segments",
-         "desc": "Gruppiert Streamer nach Verhalten."},
-        {"id": "recommend", "name": "Handlungsempfehlungen", "endpoint": "/api/ai/recommendations",
-         "desc": "Schlägt konkrete Aktionen vor."},
-        {"id": "report", "name": "Klartext-Report", "endpoint": "/api/ai/report",
-         "desc": "Fasst die Aktivität in Klartext zusammen."},
-        {"id": "retry", "name": "Retry-Beratung", "endpoint": "/api/ai/retry-advice/<user>",
-         "desc": "Empfiehlt Retry-Strategie aus dem Fehlermuster."},
-        {"id": "forecast", "name": "Speicher-Prognose", "endpoint": "/api/ai/forecast-storage",
-         "desc": "Schätzt wann die Platte voll ist."},
-        {"id": "health", "name": "Streamer-Scorecard", "endpoint": "/api/ai/health-score/<user>",
-         "desc": "Composite-Gesundheitswert je Streamer."},
-    ])
-
-
-@dashboard_app.route("/api/ai/query", methods=["POST"])
-def api_ai_query():
-    """KI-Fähigkeit: natürlichsprachige Frage → sichere SELECT → Antwort.
-       Body: {"q": "welcher streamer scheitert am häufigsten diese woche?"}"""
-    data = request.get_json(silent=True) or {}
-    q = (data.get("q") or data.get("question") or "").strip()
-    if not q:
-        return jsonify(ok=False, error="q (Frage) erforderlich"), 400
-    sql, source = _nl_to_sql(q)
-    if not sql:
-        return jsonify(ok=False, error="Konnte die Frage nicht in SQL übersetzen "
-                       "(LLM offline? Versuch eine einfachere Formulierung).",
-                       question=q), 200
-    rows, err = _safe_select(sql)
-    if err:
-        return jsonify(ok=False, question=q, sql=sql, source=source, error=err), 200
-    return jsonify(ok=True, question=q, sql=sql, source=source,
-                   row_count=len(rows), rows=rows[:200])
-
-
-@dashboard_app.route("/api/ai/predict-golive/<username>")
-def api_ai_predict_golive(username):
-    """Schätzt die wahrscheinlichsten Live-Zeiten eines Streamers aus der
-       Historie (Stunde × Wochentag). Datenquelle: recording_attempts."""
-    username = username.lstrip("@")
-    try:
-        with db_conn() as conn:
-            rows = conn.execute(
-                "SELECT started_at FROM recording_attempts WHERE username=? "
-                "AND outcome IN ('ok','stall_killed_partial') ORDER BY started_at DESC LIMIT 500",
-                (username,)).fetchall()
-        if not rows:
-            # Fallback: alle Versuche (auch fehlgeschlagene zeigen Live-Zeiten)
-            with db_conn() as conn:
-                rows = conn.execute(
-                    "SELECT started_at FROM recording_attempts WHERE username=? "
-                    "ORDER BY started_at DESC LIMIT 500", (username,)).fetchall()
-        by_hour = [0] * 24
-        by_dow = [0] * 7
-        n = 0
-        for r in rows:
-            dt = _parse_iso(r["started_at"])
-            if not dt:
-                continue
-            # BUG-FIX: naive datetimes als UTC behandeln (konsistent mit _streamer_health)
-            if dt.tzinfo is None:
-                dt = dt.replace(tzinfo=timezone.utc)
-            by_hour[dt.hour] += 1
-            by_dow[dt.weekday()] += 1
-            n += 1
-        if n < 3:
-            return jsonify(ok=True, username=username, samples=n,
-                           note="Zu wenig Historie für eine Vorhersage.",
-                           top_hours=[], top_days=[])
-        top_hours = sorted(range(24), key=lambda h: by_hour[h], reverse=True)[:3]
-        dow_names = ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"]
-        top_days = sorted(range(7), key=lambda d: by_dow[d], reverse=True)[:3]
-        return jsonify(ok=True, username=username, samples=n,
-                       top_hours=[{"hour": h, "score": by_hour[h],
-                                   "pct": round(100.0 * by_hour[h] / n)} for h in top_hours if by_hour[h] > 0],
-                       top_days=[{"day": dow_names[d], "score": by_dow[d],
-                                  "pct": round(100.0 * by_dow[d] / n)} for d in top_days if by_dow[d] > 0],
-                       histogram_hours=by_hour, histogram_days=by_dow)
-    except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
-
-
-@dashboard_app.route("/api/ai/anomalies")
-def api_ai_anomalies():
-    """Erkennt Auffälligkeiten: Fehler-Spike (jüngstes Fenster vs Baseline),
-       Storage-Spike, Versuchs-Volumen-Spike, plötzlich stille Streamer.
-       Wird im Dashboard angezeigt — KEINE Push-Benachrichtigung."""
-    out = []
-    try:
-        now = datetime.now(timezone.utc)
-        d1 = (now - timedelta(days=1)).isoformat()
-        d7 = (now - timedelta(days=7)).isoformat()
-        with db_conn() as conn:
-            def rate(since_a, since_b):
-                row = conn.execute(
-                    "SELECT SUM(CASE WHEN outcome IN ('ok','stall_killed_partial') THEN 1 ELSE 0 END) AS ok, "
-                    "SUM(CASE WHEN outcome NOT IN ('running','cancelled') THEN 1 ELSE 0 END) AS done "
-                    "FROM recording_attempts WHERE started_at >= ? AND started_at < ?",
-                    (since_a, since_b)).fetchone()
-                ok_n, done = int(row["ok"] or 0), int(row["done"] or 0)
-                return (100.0 * ok_n / done if done else None), done
-            r24, n24 = rate(d1, now.isoformat())
-            r_base, n_base = rate(d7, d1)
-            if r24 is not None and r_base is not None and n24 >= 5 and (r_base - r24) >= 25:
-                out.append({"type": "failure_spike", "severity": "high",
-                            "title": "Fehler-Spike letzte 24h",
-                            "detail": f"Erfolgsquote fiel auf {r24:.0f}% (Baseline {r_base:.0f}%).",
-                            "metric": {"current": round(r24, 1), "baseline": round(r_base, 1)}})
-            # Storage-Spike: Tagesvolumen vs 7d-Schnitt
-            day_mb = conn.execute(
-                "SELECT COALESCE(SUM(file_size),0)/1048576.0 AS mb FROM recordings WHERE created_at >= ?",
-                (d1,)).fetchone()["mb"]
-            wk_mb = conn.execute(
-                "SELECT COALESCE(SUM(file_size),0)/1048576.0 AS mb FROM recordings WHERE created_at >= ?",
-                (d7,)).fetchone()["mb"]
-            avg_day = wk_mb / 7.0 if wk_mb else 0
-            if avg_day > 50 and day_mb > avg_day * 2.5:
-                out.append({"type": "storage_spike", "severity": "medium",
-                            "title": "Speicher-Spike heute",
-                            "detail": f"{day_mb:.0f} MB heute vs Ø {avg_day:.0f} MB/Tag.",
-                            "metric": {"today_mb": round(day_mb), "avg_mb": round(avg_day)}})
-            # Volumen-Spike: viele Versuche, wenige Erfolge (Retry-Sturm)
-            if n24 >= 50 and r24 is not None and r24 < 15:
-                out.append({"type": "retry_storm", "severity": "high",
-                            "title": "Möglicher Retry-Sturm",
-                            "detail": f"{n24} Versuche/24h bei nur {r24:.0f}% Erfolg — ein paar "
-                                      f"nicht-aufnehmbare Streamer hämmern.",
-                            "metric": {"attempts_24h": n24, "success_pct": round(r24, 1)}})
-            # Stille Streamer: aktiv getrackt, aber lange kein Versuch
-            silent = conn.execute(
-                "SELECT t.username, MAX(a.started_at) AS last FROM trackings t "
-                "LEFT JOIN recording_attempts a ON a.username=t.username "
-                "WHERE t.paused=0 GROUP BY t.username HAVING last IS NULL OR last < ?",
-                ((now - timedelta(days=14)).isoformat(),)).fetchall()
-            if silent:
-                names = ", ".join("@" + s["username"] for s in silent[:6])
-                out.append({"type": "dormant_streamers", "severity": "low",
-                            "title": f"{len(silent)} stille Streamer (>14 Tage)",
-                            "detail": f"Lange kein Aufnahmeversuch: {names}. Evtl. inaktiv/pausieren.",
-                            "metric": {"count": len(silent)}})
-        return jsonify(ok=True, count=len(out), anomalies=out,
-                       checked_at=now.isoformat())
-    except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
-
-
-@dashboard_app.route("/api/ai/segments")
-def api_ai_segments():
-    """Segmentiert Streamer nach Verhalten: reliable / sporadic / chronic_fail /
-       dormant / high_volume. Einfaches, transparentes Regelmodell."""
-    try:
-        cut = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
-        seg = {"reliable": [], "sporadic": [], "chronic_fail": [], "dormant": [], "high_volume": []}
-        with db_conn() as conn:
-            rows = conn.execute(
-                "SELECT t.username, "
-                " COUNT(a.id) AS attempts, "
-                " SUM(CASE WHEN a.outcome IN ('ok','stall_killed_partial') THEN 1 ELSE 0 END) AS ok, "
-                " MAX(a.started_at) AS last "
-                "FROM trackings t LEFT JOIN recording_attempts a "
-                "  ON a.username=t.username AND a.started_at >= ? "
-                "GROUP BY t.username", (cut,)).fetchall()
-        for r in rows:
-            u = r["username"]
-            att = int(r["attempts"] or 0)
-            ok_n = int(r["ok"] or 0)
-            last = r["last"]
-            rate = (100.0 * ok_n / att) if att else 0
-            entry = {"user": u, "attempts": att, "ok_rate": round(rate, 1), "last": last}
-            if att == 0:
-                seg["dormant"].append(entry)
-            elif rate >= 70 and att >= 3:
-                # BUG-FIX: high_volume (att>=40) wurde vorher zuerst geprüft — ein Streamer
-                # mit 40+ Versuchen und 95% Erfolg landete als "high_volume" statt "reliable".
-                # Inhaltliche Segmente schlagen das Volumen-Label.
-                seg["reliable"].append(entry)
-            elif rate < 20 and att >= 4:
-                seg["chronic_fail"].append(entry)
-            elif att >= 40:
-                seg["high_volume"].append(entry)
-            else:
-                seg["sporadic"].append(entry)
-        summary = {k: len(v) for k, v in seg.items()}
-        return jsonify(ok=True, summary=summary, segments=seg)
-    except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
-
-
-@dashboard_app.route("/api/ai/recommendations")
-def api_ai_recommendations():
-    """Leitet konkrete Handlungsempfehlungen aus den Daten ab."""
-    recs = []
-    try:
-        cut = (datetime.now(timezone.utc) - timedelta(days=14)).isoformat()
-        with db_conn() as conn:
-            # chronische Versager → pausieren
-            chronic = conn.execute(
-                "SELECT username, COUNT(*) AS n, "
-                "SUM(CASE WHEN outcome IN ('ok','stall_killed_partial') THEN 1 ELSE 0 END) AS ok "
-                "FROM recording_attempts WHERE started_at >= ? GROUP BY username "
-                "HAVING n >= 5 AND (100.0*ok/n) < 15 ORDER BY n DESC", (cut,)).fetchall()
-            for c in chronic[:8]:
-                recs.append({"action": "pause_or_check", "priority": "high",
-                             "target": c["username"],
-                             "title": f"@{c['username']} pausieren oder prüfen",
-                             "reason": f"{c['n']} Versuche, <15% Erfolg — verbrennt Ressourcen."})
-            # dominanter 403 → Cookies
-            forb = conn.execute(
-                "SELECT COUNT(*) AS n FROM recording_attempts WHERE outcome='forbidden_403' "
-                "AND started_at >= ?", (cut,)).fetchone()["n"]
-            tot = conn.execute(
-                "SELECT COUNT(*) AS n FROM recording_attempts WHERE started_at >= ?",
-                (cut,)).fetchone()["n"]
-            if tot and forb / tot > 0.2:
-                recs.append({"action": "refresh_cookies", "priority": "high", "target": None,
-                             "title": "TikTok-Cookies erneuern",
-                             "reason": f"{round(100.0*forb/tot)}% der Versuche sind 403/Forbidden."})
-            # reliable high-value → priorisieren (VIP)
-            top = conn.execute(
-                "SELECT username, COUNT(*) AS n, "
-                "SUM(CASE WHEN outcome IN ('ok','stall_killed_partial') THEN 1 ELSE 0 END) AS ok "
-                "FROM recording_attempts WHERE started_at >= ? GROUP BY username "
-                "HAVING n >= 5 AND (100.0*ok/n) >= 80 ORDER BY ok DESC LIMIT 3", (cut,)).fetchall()
-            for t in top:
-                recs.append({"action": "prioritize", "priority": "low", "target": t["username"],
-                             "title": f"@{t['username']} als VIP priorisieren",
-                             "reason": f"Sehr zuverlässig ({t['ok']}/{t['n']} ok) — schnelleres Polling lohnt."})
-        if not recs:
-            recs.append({"action": "none", "priority": "info", "target": None,
-                         "title": "Keine dringenden Empfehlungen",
-                         "reason": "Das System läuft im erwarteten Rahmen."})
-        return jsonify(ok=True, count=len(recs), recommendations=recs)
-    except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
-
-
-@dashboard_app.route("/api/ai/report")
-def api_ai_report():
-    """Klartext-Zusammenfassung der Aktivität (period=day|week). Nutzt die LLM
-       wenn verfügbar, sonst eine Template-Zusammenfassung. Reiner Lesebericht."""
-    period = (request.args.get("period") or "day").lower()
-    days = 7 if period == "week" else 1
-    try:
-        cut = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
-        with db_conn() as conn:
-            a = conn.execute(
-                "SELECT COUNT(*) AS att, "
-                "SUM(CASE WHEN outcome IN ('ok','stall_killed_partial') THEN 1 ELSE 0 END) AS ok, "
-                "SUM(CASE WHEN outcome NOT IN ('running','cancelled') THEN 1 ELSE 0 END) AS done "
-                "FROM recording_attempts WHERE started_at >= ?", (cut,)).fetchone()
-            recs = conn.execute(
-                "SELECT COUNT(*) AS n, COALESCE(SUM(file_size),0)/1048576.0 AS mb "
-                "FROM recordings WHERE created_at >= ?", (cut,)).fetchone()
-            topfail = conn.execute(
-                "SELECT outcome, COUNT(*) AS n FROM recording_attempts "
-                "WHERE outcome NOT IN ('ok','stall_killed_partial','running','cancelled') "
-                "AND started_at >= ? GROUP BY outcome ORDER BY n DESC LIMIT 1", (cut,)).fetchone()
-        att, ok_n, done = int(a["att"] or 0), int(a["ok"] or 0), int(a["done"] or 0)
-        rate = round(100.0 * ok_n / done, 1) if done else 0.0
-        stats = {"period": period, "attempts": att, "successes": ok_n,
-                 "success_rate": rate, "recordings": int(recs["n"] or 0),
-                 "stored_mb": round(recs["mb"] or 0),
-                 "top_failure": (topfail["outcome"] if topfail else None)}
-        # Template-Text (immer vorhanden)
-        zr = "Woche" if days == 7 else "24 Stunden"
-        text = (f"In den letzten {zr}: {att} Aufnahmeversuche, davon {ok_n} erfolgreich "
-                f"({rate}% der abgeschlossenen). {stats['recordings']} Aufnahmen gespeichert "
-                f"(~{stats['stored_mb']} MB).")
-        if topfail:
-            text += f" Häufigster Fehler: {topfail['outcome']}."
-        # Optional: LLM-Verfeinerung
-        if EVOLUTION_USE_LLM:
-            try:
-                t2, err = llm_chat_sync(
-                    [{"role": "system", "content": "Formuliere einen knappen, sachlichen "
-                      "deutschen Statusbericht (2-3 Sätze) aus diesen Kennzahlen. Keine Floskeln."},
-                     {"role": "user", "content": json.dumps(stats, ensure_ascii=False)}],
-                    timeout=30)
-                if t2 and len(t2.strip()) > 20:
-                    text = t2.strip()
-            except Exception:
-                pass
-        return jsonify(ok=True, stats=stats, report=text)
-    except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
-
-
-@dashboard_app.route("/api/ai/retry-advice/<username>")
-def api_ai_retry_advice(username):
-    """Empfiehlt eine Retry-/Backoff-Strategie anhand des Fehlermusters."""
-    username = username.lstrip("@")
-    try:
-        cut = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
-        with db_conn() as conn:
-            rows = conn.execute(
-                "SELECT outcome, COUNT(*) AS n FROM recording_attempts "
-                "WHERE username=? AND started_at >= ? GROUP BY outcome ORDER BY n DESC",
-                (username, cut)).fetchall()
-        by = {r["outcome"]: int(r["n"]) for r in rows}
-        total = sum(by.values())
-        if total < 3:
-            return jsonify(ok=True, username=username, samples=total,
-                           advice="Zu wenig Historie für eine Empfehlung.")
-        dom = max((k for k in by if k not in ("ok", "stall_killed_partial", "running", "cancelled")),
-                  key=lambda k: by[k], default=None)
-        tips = {
-            "early_disconnect": "Aggressive Retries bremsen — Backoff erhöhen; Cookies/Proxy prüfen.",
-            "forbidden_403": "Retries bringen nichts ohne frische Cookies — erst Cookies erneuern.",
-            "stream_dead": "URL-Refresh-Margin erhöhen; bei 404 schnell aufhören statt zu hämmern.",
-            "hevc_unsupported": "PREFER_H264 sicherstellen; sonst dauerhaft chancenlos → pausieren.",
-            "codec_header_fail": "Meist Input-Problem — selten lösbar durch Retry; ffmpeg-Upgrade.",
-            "offline_or_protected": "Live-Detection-Timing — moderater Backoff reicht.",
-        }
-        advice = tips.get(dom, "Kein klares Muster — Standard-Backoff beibehalten.")
-        return jsonify(ok=True, username=username, samples=total,
-                       dominant_failure=dom, breakdown=by, advice=advice)
-    except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
-
-
-@dashboard_app.route("/api/ai/forecast-storage")
-def api_ai_forecast_storage():
-    """Schätzt anhand der jüngsten Wachstumsrate, wann die Platte voll ist."""
-    try:
-        import shutil as _sh
-        rec_dir = RECORDINGS_DIR if os.path.isdir(RECORDINGS_DIR) else "."
-        usage = _sh.disk_usage(rec_dir)
-        free_gb = usage.free / 1024 ** 3
-        cut = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
-        with db_conn() as conn:
-            mb7 = conn.execute(
-                "SELECT COALESCE(SUM(file_size),0)/1048576.0 AS mb FROM recordings WHERE created_at >= ?",
-                (cut,)).fetchone()["mb"]
-        per_day_gb = (mb7 / 1024.0) / 7.0
-        days_left = round(free_gb / per_day_gb) if per_day_gb > 0.01 else None
-        driver = None
-        if per_day_gb > 0.01:
-            with db_conn() as conn:
-                top = conn.execute(
-                    "SELECT username, ROUND(SUM(file_size)/1048576.0,1) AS mb FROM recordings "
-                    "WHERE created_at >= ? GROUP BY username ORDER BY mb DESC LIMIT 1",
-                    (cut,)).fetchone()
-            driver = {"username": top["username"], "mb_7d": top["mb"]} if top else None
-        return jsonify(ok=True, free_gb=round(free_gb, 1),
-                       growth_gb_per_day=round(per_day_gb, 2),
-                       days_until_full=days_left, main_driver=driver,
-                       note=("Stabil — kaum Wachstum." if days_left is None
-                             else f"Bei aktuellem Tempo in ~{days_left} Tagen voll."))
-    except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
+_nc_ctx.configure(
+    log=log,
+    log_event=log_event,
+    arg_int=_arg_int,
+    run_async=_run_async_from_flask,
+    recordings_dir=RECORDINGS_DIR,
+    ffmpeg_threads_bg=FFMPEG_THREADS_BG,
+    ffmpeg_nice_bg=FFMPEG_NICE_BG,
+    proc_is_recorder=_proc_is_recorder,
+    scraper_session=_scraper_session,
+    trigger_manual_recording=trigger_manual_recording,
+    stop_manual_recording=stop_manual_recording,
+    get_tags_for_tracking=get_tags_for_tracking,
+    # --- Archiv-Domaene (v4.0-W107) ---
+    intel_ensure_schema=_intel_ensure_schema,
+    intel_index_one=_intel_index_one,
+    intel_semantic=_intel_semantic,
+    intel_ps=_INTEL_PS,
+    # --- Auswertung und Webhooks (v4.0-W108) ---
+    latest_popularity=_latest_popularity,
+    post_json_threaded=_post_json_threaded,
+    # --- Systemzustand (v4.0-W110) ---
+    # Getter, nicht Wert: _BOT_START_TIME wird erst in main() gesetzt.
+    get_bot_start_time=lambda: _BOT_START_TIME,
+    get_cookie_health=get_cookie_health,
+    get_storage_stats=get_storage_stats,
+    # --- KI-Pfade (v4.0-W112) ---
+    llm_chat_sync=llm_chat_sync,
+    check_ai_models_sync=_check_ai_models_sync,
+    # Startwerte, nicht Helfer — deshalb gebuendelt statt als eigene Slots.
+    cfg={
+        "ARCHIVE_DIR": ARCHIVE_DIR,
+        "ARCHIVE_ALLOWED_EXTS": ARCHIVE_ALLOWED_EXTS,
+        "ARCHIVE_MAX_UPLOAD_MB": ARCHIVE_MAX_UPLOAD_MB,
+        "_MANUAL_ARCHIVE_DIR": _MANUAL_ARCHIVE_DIR,
+        "DB_INTEGRITY_ERRORS": DB_INTEGRITY_ERRORS,
+        # --- KI (v4.0-W112). Keiner dieser Namen wird im Bot je per `global`
+        # neu gebunden (nachgemessen), deshalb ist die Uebergabe beim Start
+        # sicher; die Dicts, Listen und das Lock werden per Referenz geteilt,
+        # sodass Bot und Blueprint denselben Zustand sehen.
+        "AI_CHAT_CONTEXT_CHARS": AI_CHAT_CONTEXT_CHARS,
+        "AI_CHAT_CONTEXT_MESSAGES": AI_CHAT_CONTEXT_MESSAGES,
+        "AI_CHAT_TITLE_MAX": AI_CHAT_TITLE_MAX,
+        "AI_FLASK_TIMEOUT": AI_FLASK_TIMEOUT,
+        "AI_MODEL": AI_MODEL,
+        "AI_STREAM_TIMEOUT": AI_STREAM_TIMEOUT,
+        "AI_TEXT_MAX_CHARS": AI_TEXT_MAX_CHARS,
+        "AI_TIMEOUT": AI_TIMEOUT,
+        "AZRAEL_MAX_CALLS_MIN": AZRAEL_MAX_CALLS_MIN,
+        "AZRAEL_STYLE": AZRAEL_STYLE,
+        "DB_BACKEND": DB_BACKEND,
+        "DB_PATH": DB_PATH,
+        "EVOLUTION_USE_LLM": EVOLUTION_USE_LLM,
+        "LOG_DIR": LOG_DIR,
+        "_AI_CALL_TS": _AI_CALL_TS,
+        "_AI_DASHBOARD_LOCK": _AI_DASHBOARD_LOCK,
+        "_AI_DASHBOARD_MAX_PER_MIN": _AI_DASHBOARD_MAX_PER_MIN,
+        "_AI_DASHBOARD_RATE": _AI_DASHBOARD_RATE,
+        "_B71_SCHEMA_DOC": _B71_SCHEMA_DOC,
+        "_B71_TABLES": _B71_TABLES,
+        "_LLM_MODELS_CACHE": _LLM_MODELS_CACHE,
+        "_STREAM_DEAD_BACKOFF_UNTIL": _STREAM_DEAD_BACKOFF_UNTIL,
+    },
+)
+dashboard_app.register_blueprint(_nc_routes_recordings.bp)
+dashboard_app.register_blueprint(_nc_routes_archive.bp)
+dashboard_app.register_blueprint(_nc_routes_collections.bp)
+dashboard_app.register_blueprint(_nc_routes_scheduler.bp)
+dashboard_app.register_blueprint(_nc_routes_webhooks.bp)
+dashboard_app.register_blueprint(_nc_routes_insights.bp)
+dashboard_app.register_blueprint(_nc_routes_health.bp)
+dashboard_app.register_blueprint(_nc_routes_ai.bp)
 
 
 
 
-@dashboard_app.route("/api/ai/health-score/<username>")
-def api_ai_health_score(username):
-    """Streamer-Scorecard (Composite)."""
-    username = username.lstrip("@")
-    try:
-        with db_conn() as conn:
-            return jsonify(ok=True, username=username, **_streamer_health(username, conn))
-    except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 # ---- RECORDING TOOLS --------------------------------------------------------

@@ -2486,8 +2486,13 @@ def test_v40_w14_audit2():
 
     # zweite Linie: echte Read-only-Verbindung im Bot.
     src = open("bot_v37.py").read()
-    assert "_nc_sqlguard.check_readonly(" in src, "Filter nicht verdrahtet"
-    assert '?mode=ro' in src and "uri=True" in src, "keine Read-only-Verbindung"
+    # W112: der SQL-Wachhund sitzt in den /api/ai-Routen, die jetzt im
+    # Blueprint liegen. Vertrag gleich, Anker nachgezogen — und der Bot darf
+    # keine zweite, ungeschuetzte Kopie behalten.
+    _ai = open("nc/routes/ai.py", encoding="utf-8").read()
+    assert "_nc_sqlguard.check_readonly(" in _ai, "Filter nicht verdrahtet"
+    assert '?mode=ro' in _ai and "uri=True" in _ai, "keine Read-only-Verbindung"
+    assert "?mode=ro" not in src, "Doppel-Logik: Read-only-Pfad noch im Monolithen"
     assert 'padded = " " + low.replace' not in src, "alte umgehbare Wortliste noch aktiv"
     ok("v4.0-w14: zweite Verteidigungslinie (SQLite read-only) verdrahtet")
 
@@ -4193,8 +4198,12 @@ def test_v40_w55b_convmap():
     ok("v4.0-w55b: nc.convmap — Message-Mapping bitgenau (Felder/Reihenfolge/NULL/leer)")
 
     src = open("bot_v37.py").read()
-    assert "from nc import convmap as _nc_convmap" in src
-    assert "return _nc_convmap.messages(rows)" in src, "delegiert nicht"
+    # W112: _conv_messages ist mit dem KI-Datenzugriff nach nc/aidb.py
+    # gewandert; der convmap-Aufruf damit eine Ebene tiefer. Vertrag gleich.
+    _aidb = open("nc/aidb.py", encoding="utf-8").read()
+    assert "from nc import convmap as _nc_convmap" in _aidb
+    assert "return _nc_convmap.messages(rows)" in _aidb, "delegiert nicht"
+    assert "return _nc_aidb.conv_messages(conv_id)" in src, "Bot delegiert nicht an nc.aidb"
     # Die alte Inline-Map in _conv_messages ist weg (die in api_ai_log bleibt separat).
     cm = src[src.find("def _conv_messages("):src.find("def _conv_messages(") + 500]
     assert '"duration_ms": r["duration_ms"]' not in cm, "alte Map noch in _conv_messages"
@@ -4618,11 +4627,15 @@ def test_v40_w64_claude_provider():
     ok("v4.0-w64: nc.claude — Payload/Parse/Fehler-Mapping/Key-Test + Masking bewiesen")
 
     src = open("bot_v37.py").read()
+    _ai = open("nc/routes/ai.py", encoding="utf-8").read()
     assert "import nc.claude as _nc_claude" in src
     assert "def _anthropic_key(" in src and "def _anthropic_model(" in src
     assert src.count("_nc_claude.chat_sync") >= 2, "Claude nicht in beiden llm_chat-Pfaden"
+    # W112: die drei Claude-Endpunkte liegen im KI-Blueprint. Vertrag gleich,
+    # Anker nachgezogen — und keiner darf im Monolithen zurueckgeblieben sein.
     for ep in ('/api/ai/claude/status', '/api/ai/claude/save', '/api/ai/claude/test'):
-        assert ep in src, f"Endpoint {ep} fehlt"
+        assert ep in _ai, f"Endpoint {ep} fehlt"
+        assert ep not in src, f"Doppel-Logik: {ep} noch im Monolithen"
     # Ollama restlos (funktional): kein Shim, kein sichtbares Label mehr.
     assert 'REACTION_AI_PROVIDER == "ollama"' not in src, "Ollama-Shim noch da"
     assert '("Ollama"' not in src, "sichtbares Ollama-Label noch da"
@@ -4643,9 +4656,14 @@ def test_v40_w65_claude_full_and_donation_reset():
 
     src = open("bot_v37.py").read()
     # Claude in ALLEN AI-Pfaden: llm_chat, llm_chat_sync, ai_chat (Reaction), Streaming.
-    assert src.count("_nc_claude.chat_sync") >= 4, "Claude nicht in allen AI-Pfaden"
+    # W112: llm_chat_stream_sync ist mit den /api/ai-Routen ins Blueprint
+    # gewandert. Der Vertrag prueft weiterhin ALLE Claude-Pfade, jetzt ueber
+    # beide Dateien — sonst waere die Zerlegung ein Schlupfloch.
+    _ai = open("nc/routes/ai.py", encoding="utf-8").read()
+    assert src.count("_nc_claude.chat_sync") + _ai.count("_nc_claude.chat_sync") >= 4, \
+        "Claude nicht in allen AI-Pfaden"
     assert "Reaction-AI Claude fehlgeschlagen" in src, "Reaction-Engine nicht auf Claude"
-    assert "Claude zuerst (Einmalantwort" in src, "Streaming-Pfad nicht auf Claude"
+    assert "Claude zuerst (Einmalantwort" in _ai, "Streaming-Pfad nicht auf Claude"
     # Spenden-Reset-Endpoint.
     assert '@dashboard_app.route("/api/donations/reset"' in src, "Reset-Endpoint fehlt"
     assert "DELETE FROM overlay_events WHERE kind='donation'" in src, "Reset löscht nicht"
@@ -4783,9 +4801,10 @@ def test_v40_w70_claude_probe_diag():
     assert ok_ is False and kind == "unreachable" and "Connection refused" in detail
     # Rückwärtskompatibel: test_key liefert weiter (ok, str).
     assert CL.test_key("sk-x", opener=ok_op) == (True, "ok")
-    src = open("bot_v37.py").read()
-    assert "_nc_claude.probe(key" in src, "Endpoint nutzt die Diagnose nicht"
-    assert "api.anthropic.com nicht" in src, "Egress-Hinweis fehlt"
+    # W112: der Diagnose-Endpoint liegt im KI-Blueprint.
+    _ai = open("nc/routes/ai.py", encoding="utf-8").read()
+    assert "_nc_claude.probe(key" in _ai, "Endpoint nutzt die Diagnose nicht"
+    assert "api.anthropic.com nicht" in _ai, "Egress-Hinweis fehlt"
     ok("v4.0-w70: Claude-Diagnose — echte Ursache (HTTP/Netz) + Egress-Hinweis")
 
 
@@ -4893,10 +4912,15 @@ def test_v40_w73_retired_model_autoheal():
     assert cl.resolve_model("") == cl.DEFAULT_MODEL and cl.resolve_model(None) == cl.DEFAULT_MODEL
     # Bot verdrahtet: _anthropic_model liefert das EFFEKTIVE (aufgelöste) Modell,
     # Status-Route legt configured_model + model_upgraded offen.
-    src = open("bot_v37.py").read()
-    assert "_nc_claude.resolve_model(" in src, "resolve_model nicht im Bot verdrahtet"
-    assert "def _anthropic_model_raw" in src, "Roh-Modell-Helfer fehlt"
-    assert "configured_model=" in src and "model_upgraded=" in src, "Status legt Anhebung nicht offen"
+    # W111/W112: die Aufloesung lebt in nc.claude, der Roh-Helfer wird dort
+    # direkt importiert, und die Status-Route liegt im KI-Blueprint.
+    _cl = open("nc/claude.py", encoding="utf-8").read()
+    _ai = open("nc/routes/ai.py", encoding="utf-8").read()
+    assert "resolve_model(raw)" in _cl, "resolve_model nicht in nc.claude verdrahtet"
+    assert "def model_raw(" in _cl, "Roh-Modell-Helfer fehlt"
+    assert "model_raw as _anthropic_model_raw" in _ai, "Blueprint nutzt den Roh-Helfer nicht"
+    assert "configured_model=" in _ai and "model_upgraded=" in _ai, \
+        "Status legt Anhebung nicht offen"
     ok("v4.0-w73: totes Modell (404) heilt sich — retired → aktuelles Äquivalent")
 
 
@@ -4975,17 +4999,18 @@ def test_v40_w77_aiconfig_and_overview_agents():
            liefert alle Felder und ist Claude-bewusst (Key gesetzt → Claude primär).
        (B) In der Übersicht fehlte die Kachel für aktive Wächter/Agenten — neu,
            gespeist aus /api/brain/agents, ehrlich bei nicht erreichbarem Brain."""
-    src = open("bot_v37.py").read()
     # (A) Route zeigt auf die richtige Funktion; die alte Fehlverdrahtung ist weg.
-    assert 'def api_ai_config():' in src, "api_ai_config fehlt"
+    # W112: api_ai_config liegt im KI-Blueprint.
+    _ai = open("nc/routes/ai.py", encoding="utf-8").read()
+    assert 'def api_ai_config():' in _ai, "api_ai_config fehlt"
     # der Decorator steht unmittelbar VOR api_ai_config
-    _before = src[:src.find('def api_ai_config')]
-    assert _before.rstrip().endswith('@dashboard_app.route("/api/ai/config")'), \
+    _before = _ai[:_ai.find('def api_ai_config')]
+    assert _before.rstrip().endswith('@bp.route("/api/ai/config")'), \
         "/api/ai/config nicht auf api_ai_config geroutet"
-    assert '@dashboard_app.route("/api/ai/config")\ndef api_freeai_status' not in src, \
+    assert '@bp.route("/api/ai/config")\ndef api_freeai_status' not in _ai, \
         "alte Fehlverdrahtung (ai/config → freeai_status) noch da"
     # Panel-Felder vorhanden + Claude-bewusst
-    _seg = src[src.find('def api_ai_config'):src.find('def api_ai_config') + 1400]
+    _seg = _ai[_ai.find('def api_ai_config'):_ai.find('def api_ai_config') + 1400]
     for f in ("budget_used", "budget_max", "timeout_s", "style", "provider", "url"):
         assert f in _seg, "api_ai_config liefert Feld nicht: " + f
     assert "Claude (Anthropic)" in _seg and "_anthropic_key()" in _seg, "nicht Claude-bewusst"
@@ -5352,7 +5377,10 @@ def test_v40_w88_ops_observability():
         # 6 /healthz angereichert
         "healthz-enriched": ("procs=len(active_processes)" in src and "zombies=_zomb" in src),
         # 7 KI-Panel model_upgraded (W73-Auto-Heal sichtbar)
-        "ai-upgraded": ("model_upgraded=(_eff != _raw)" in src and "auto-aktualisiert" in h),
+        # W112: die Status-Route liegt im KI-Blueprint, das Panel weiter im Dashboard.
+        "ai-upgraded": ("model_upgraded=(_eff != _raw)"
+                        in open("nc/routes/ai.py", encoding="utf-8").read()
+                        and "auto-aktualisiert" in h),
         # 8 Boot-Warnung leere .env
         "empty-env-warn": ("def _warn_empty_env" in src and "_warn_empty_env()" in src),
         # 9 Zombie-Kinder-Zähler

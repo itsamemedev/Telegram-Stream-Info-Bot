@@ -488,6 +488,27 @@ def _test_routes_alle_blueprints():
     ok("nc/routes: %d Blueprints, %d Routen — Pfade, Endpunkte, Grenze, Hooks, Parser"
        % (len(module), gesamt))
 
+    # (7) Jeder cfg-Schluessel, den ein Blueprint liest, muss auch geliefert
+    # werden. Ein fehlender faellt NICHT beim Start auf, sondern erst beim
+    # Aufruf der Route — als KeyError im 500er. Genau so ist in W112
+    # /api/ai/forecast-storage gestorben.
+    import re as _re
+    _i = src.index("    cfg={")
+    _j = src.index("    },", _i)
+    _geliefert = set(_re.findall(r'"([A-Za-z_][A-Za-z0-9_]*)":', src[_i:_j]))
+    for name in module:
+        quelle = open("nc/routes/%s.py" % name, encoding="utf-8").read()
+        # Doc-/Kommentarzeilen raus: dort steht cfg["NAME"] als Platzhalter.
+        code = "\n".join(ln for ln in quelle.splitlines()
+                         if not ln.lstrip().startswith("#"))
+        code = code.split('"""')
+        code = "".join(code[0::2]) if len(code) > 1 else quelle
+        gebraucht = set(_re.findall(r'cfg\["([^"]+)"\]', code))
+        fehlt = gebraucht - _geliefert
+        assert not fehlt, "%s liest cfg-Schluessel, die der Bot nicht liefert: %s" % (
+            name, sorted(fehlt))
+    ok("cfg: jeder gelesene Schluessel wird auch geliefert (%d Schluessel)" % len(_geliefert))
+
     # url_for bleibt projektweit verboten: es ist der einzige Grund, warum die
     # Endpunkt-Umbenennung durch Blueprints folgenlos ist.
     for f in ("bot_v37.py", "templates/dashboard.html", "website/lafap_index.html"):
@@ -572,11 +593,51 @@ def _test_cfgstore_und_claude():
     for fn, ziel in (("_cfg_get", "_nc_cfgstore.get(key, default)"),
                      ("_cfg_set", "_nc_cfgstore.set_(key, value)"),
                      ("_anthropic_key", "_nc_claude.api_key()"),
-                     ("_anthropic_model_raw", "_nc_claude.model_raw(override)"),
                      ("_anthropic_model", "_nc_claude.model(override)")):
         assert ("return " + ziel) in src, "%s delegiert nicht" % fn
     assert "_ANTHROPIC_MODEL_WARNED" not in src, "alter Warn-Cache noch im Monolithen"
+    # model_raw braucht der Bot selbst nicht mehr — es wanderte mit den
+    # /api/ai-Routen ins Blueprint und wird dort direkt aus nc.claude
+    # importiert, statt ueber eine zweite Huelle zu laufen.
+    assert "model_raw as _anthropic_model_raw" in open(
+        "nc/routes/ai.py", encoding="utf-8").read(), "Blueprint importiert model_raw nicht direkt"
     ok("bot_v37 delegiert cfg-Zugriff und Anthropic-Modellwahl")
+
+
+def _test_routes_ai():
+    """W112: die 24 /api/ai-Routen als Blueprint — der groesste Einzelumzug
+       (1.125 Zeilen). Die generischen Zusicherungen deckt
+       _test_routes_alle_blueprints ab; hier stehen die Besonderheiten."""
+    from flask import Flask
+    from nc.routes import ai as rt
+
+    app = Flask(__name__)
+    app.register_blueprint(rt.bp)
+    regeln = [r for r in app.url_map.iter_rules() if r.endpoint != "static"]
+    assert len(regeln) == 24, "24 Regeln erwartet, %d" % len(regeln)
+    ok("routes.ai: 24 Regeln registriert")
+
+    q = open("nc/routes/ai.py", encoding="utf-8").read()
+
+    # (1) Der SQL-Wachhund und die Read-only-Verbindung MUESSEN mitgewandert
+    # sein — /api/ai/query fuehrt vom Nutzer erzeugtes SQL aus. Ohne beides
+    # waere die Zerlegung ein Sicherheitsrueckschritt.
+    assert "_nc_sqlguard.check_readonly(" in q, "SQL-Wachhund fehlt im Blueprint"
+    assert "?mode=ro" in q and "uri=True" in q, "keine Read-only-Verbindung"
+
+    # (2) Vier Namen kommen direkt aus nc/, nicht ueber den Laufzeitkontext.
+    # Sie waeren sonst vier Slots gewesen, obwohl sie reiner Modulzugriff sind.
+    for imp in ("from nc.claude import", "from nc.cfgstore import get as _cfg_get",
+                "from nc.aidb import conv_messages", "from nc.notes import _conv_list"):
+        assert imp in q, "Direktimport fehlt: " + imp
+    assert "_c().cfg[" in q, "Konfiguration laeuft nicht ueber ctx.cfg"
+
+    # (3) Und der Monolith haelt keine zweite Kopie der KI-Routen.
+    src = open("bot_v37.py", encoding="utf-8").read()
+    for gone in ('@dashboard_app.route("/api/ai/ask")', "def api_ai_ask",
+                 "def llm_chat_stream_sync", "def _nl_to_sql", "def _safe_select"):
+        assert gone not in src, "Doppel-Logik: %s noch im Monolithen" % gone
+    ok("routes.ai: SQL-Wachhund + Read-only mitgewandert, Direktimporte statt ctx")
 
 
 def main():
@@ -675,6 +736,8 @@ def main():
     _test_routes_health()
 
     _test_cfgstore_und_claude()
+
+    _test_routes_ai()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)
 

@@ -51,6 +51,11 @@ class Ctx:
         "get_bot_start_time",
         "get_cookie_health",
         "get_storage_stats",
+        # --- KI-Pfade (W112). Bleiben im Bot: llm_chat_sync geht ueber
+        # brain/freeai und haengt am Provider-Zustand, _check_ai_models_sync
+        # an dessen Modell-Cache.
+        "llm_chat_sync",
+        "check_ai_models_sync",
     )
 
 
