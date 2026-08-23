@@ -20,7 +20,20 @@ import re
 FORBIDDEN = ("insert", "update", "delete", "drop", "alter", "create", "attach",
              "detach", "pragma", "replace", "vacuum", "into", "reindex",
              "analyze", "begin", "commit", "rollback", "savepoint", "trigger",
-             "grant", "revoke", "load_extension", "writefile", "readfile")
+             "grant", "revoke", "load_extension", "writefile", "readfile",
+             # v4.0-W118 (SEC): die Liste war auf SQLite gemuenzt. Unter
+             # DB_BACKEND=mariadb sind ganz andere Dinge gefaehrlich, und ein
+             # reines SELECT reicht dort fuer Dateizugriff und Lahmlegen:
+             #   SELECT LOAD_FILE('/etc/passwd')      -> Datei lesen
+             #   SELECT ... INTO OUTFILE '/var/www/x' -> Datei schreiben
+             #   SELECT SLEEP(600) / BENCHMARK(...)   -> Verbindung blockieren
+             #   SELECT ... FROM mysql.user           -> Passwort-Hashes
+             # "into" stand schon drin, der Rest nicht. Wortgrenzen sorgen
+             # dafuer, dass z.B. OFFSET nicht an "set" haengenbleibt.
+             "load_file", "outfile", "dumpfile", "benchmark", "sleep",
+             "information_schema", "mysql", "performance_schema", "sys_exec",
+             "handler", "lock", "unlock", "prepare", "execute", "call", "set",
+             "show", "describe", "use", "kill", "shutdown")
 
 _LINE_COMMENT = re.compile(r"--[^\n]*")
 _BLOCK_COMMENT = re.compile(r"/\*.*?\*/", re.S)

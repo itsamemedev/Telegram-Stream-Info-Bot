@@ -62,6 +62,54 @@ geprüft in [`nc/restream_stability.py`](nc/restream_stability.py).
   `RESTREAM_STALL_TIMEOUT_S` (0 = Wächter aus), `RESTREAM_STALL_GRACE_S`,
   `RESTREAM_STALL_CHECK_S`.
 
+### Sicherheit — Tiefen-Audit (W118)
+
+Vollständiger Durchgang über Code-Ausführung, Deserialisierung, SQL, Pfade,
+Web-Auth, XSS, SSRF, OAuth, Secrets und Abhängigkeiten. Sieben Befunde behoben,
+jeder mit eigenem Vertrag in `test_restream.py`.
+
+- **XSS im Dashboard (hoch, im Browser bewiesen).** 20 Stellen bauten
+  `onclick="f('${esc(x)}')"`. `esc()` liefert für `'` das Zeichen `&#39;` — der
+  HTML-Parser dekodiert Attributwerte aber, **bevor** die JS-Engine sie sieht.
+  Aus `&#39;` wird wieder `'`, der String ist zu, der Rest läuft als Code.
+  Nachgestellt: Eingabe `x');window.__xss=1;showProfile('y` ergab das Attribut
+  `showProfile('x');window.__xss=1;showProfile('y')` — fremder Code lief in der
+  Sitzung des Betreibers, also der Sitzung mit dem Dashboard-Cookie. Neu:
+  `escJs()` mit `\xNN`-Sequenzen, die kein HTML-Sonderzeichen enthalten, die
+  HTML-Dekodierung unverändert überstehen und erst von der JS-Engine
+  **innerhalb** des Strings aufgelöst werden. Sechs Angriffsmuster
+  gegengeprüft, Werte kommen unverändert am Handler an.
+- **KI-SQL unter MariaDB (mittel).** `_safe_select` hatte die read-only
+  Verbindung nur für SQLite (`mode=ro`); MariaDB fiel auf eine normale
+  Schreibverbindung zurück. Der Wortfilter war ebenfalls auf SQLite gemünzt —
+  `LOAD_FILE`, `OUTFILE`, `SLEEP`, `BENCHMARK`, `mysql.user`,
+  `information_schema` fehlten, allesamt mit einem reinen `SELECT` erreichbar.
+  Jetzt: Filter erweitert **und** `START TRANSACTION READ ONLY` mit `ROLLBACK`,
+  damit eine Filterlücke allein nicht mehr reicht.
+- **OAuth-`state` übersprungen (mittel).** `if state and _state["csrf"] and …`
+  ließ die CSRF-Prüfung weg, sobald der Rückruf gar keinen `state` mitbrachte —
+  und genau das bestimmt der Aufrufer. Twitch und YouTube: `state` wird jetzt
+  erzwungen, sobald einer ausgegeben wurde.
+- **Open Redirect (niedrig-mittel).** `nxt.startswith("/")` ließ `//example.com`
+  durch — protokoll-relativ, vom Browser als `https://example.com` aufgelöst.
+  Neu: `_sicheres_ziel()` weist `//host` und `/\host` ab.
+- **Zwei schwache `esc`-Schatten (niedrig).** Lokale Maskierer ohne `'` in
+  Funktionen, die fremde Creator-Daten rendern, verdeckten das globale,
+  stärkere `esc`. Entfernt — es gibt jetzt genau einen.
+- **`REDIS_URL` mit Passwort in `/api/system` (niedrig).** Neu:
+  `_url_ohne_zugang()` maskiert Zugangsdaten, Host und Port bleiben lesbar.
+- **PIN-Cookie ohne Ablauf (niedrig).** Der Wert war ein statischer HMAC über
+  das PIN: einmal ausgestellt, für immer gültig, widerrufbar nur durch
+  PIN-Wechsel. Jetzt trägt er seinen Ausstellungszeitpunkt (vom HMAC gedeckt,
+  also nicht verschiebbar) und läuft nach `DASHBOARD_PIN_MAX_AGE_S` ab.
+  **Der Betreiber muss sich einmalig neu anmelden.**
+
+Geprüft und für unbedenklich befunden: keine `eval`/`exec`/`pickle`/`yaml.load`,
+Pfad-Traversal überall über `realpath` + `commonpath` abgesichert, keine
+eingehenden Webhooks ohne Signatur (der Bot pollt), API-Antworten ohne
+Klartext-Geheimnisse, Token-Speicher mit `0600`, Rate-Limiting und
+Brute-Force-Sperre vorhanden, Auth-Vergleiche zeitkonstant.
+
 ### Geändert — Anker-Hygiene und Cache-Stempel (W117)
 
 - **Testfenster schneiden jetzt an der echten Grenze.** Die Verträge in

@@ -680,6 +680,26 @@ _RE_STREAM_URL = re.compile(
     r"(rtmps?://[^\s'\"]*?/(?:app|live2|live)/)([^\s'\"]+)", re.I)
 
 
+def _url_ohne_zugang(url):
+    """v4.0-W118 (SEC): Zugangsdaten aus einer URL entfernen, Rest lesbar lassen.
+
+    REDIS_URL & Co. duerfen ein Passwort tragen (redis://:geheim@host:6379/0).
+    /api/system gab die URL bisher unveraendert aus — die Antwort landet im
+    Browser-Cache, in Screenshots und in jedem Support-Log. Host und Port
+    bleiben stehen, denn genau die braucht die Fehlersuche.
+    """
+    try:
+        u = (url or "").strip()
+        if "@" not in u or "//" not in u:
+            return u
+        schema, rest = u.split("//", 1)
+        zugang, ziel = rest.rsplit("@", 1)
+        benutzer = zugang.split(":", 1)[0]
+        return f"{schema}//{benutzer + ':' if benutzer else ''}<geheim>@{ziel}"
+    except Exception:
+        return "<URL unterdrueckt>"
+
+
 def _redact_stream_urls(text):
     # v4.0-W32: verbatim nach nc/logsafe.py extrahiert (bitgenau geprüft).
     return _nc_logsafe.redact_stream_urls(text, _RE_STREAM_URL)
@@ -10347,21 +10367,52 @@ _PIN_FAIL_MAX = 5                  # so viele Fehlversuche
 _PIN_FAIL_LOCK_S = 60             # dann 60s Sperre (gegen PIN-Bruteforce)
 
 
-def _pin_auth_value():
-    """Der Cookie-Wert bei erfolgreichem Login — aus dem PIN abgeleitet (HMAC),
-       nie das PIN selbst. Ohne Serverstatus verifizierbar."""
+# v4.0-W118 (SEC): Lebensdauer des PIN-Cookies. Vorher war der Cookie-Wert ein
+# STATISCHER HMAC ueber das PIN — einmal ausgestellt, galt er fuer immer und
+# liess sich nur widerrufen, indem man das PIN aenderte. Ein Wert, der aus
+# einem Screenshot der Entwicklerwerkzeuge oder einer Browser-Sicherung
+# abfliesst, bleibt damit unbegrenzt gueltig. Jetzt traegt er seinen
+# Ausstellungszeitpunkt und laeuft serverseitig ab.
+DASHBOARD_PIN_MAX_AGE_S = _env_int("DASHBOARD_PIN_MAX_AGE_S", 30 * 86400)
+
+
+def _pin_auth_value(ts=None):
+    """Cookie-Wert bei erfolgreichem Login: "<zeit>.<hmac>".
+
+    Nie das PIN selbst, und ohne Serverstatus pruefbar — der Zeitstempel
+    steht im Klartext, ist aber vom HMAC mitgedeckt, laesst sich also nicht
+    nach vorn schieben. Damit ist der Cookie zeitlich begrenzt, ohne dass der
+    Server sich ausgestellte Sitzungen merken muesste.
+    """
     import hmac as _hmac
     import hashlib as _hl
-    return _hmac.new(DASHBOARD_PIN.encode(), b"nc-dashboard-pin", _hl.sha256).hexdigest()
+    t = str(int(ts if ts is not None else _time_mod.time()))
+    sig = _hmac.new(DASHBOARD_PIN.encode(),
+                    ("nc-dashboard-pin|" + t).encode(), _hl.sha256).hexdigest()
+    return t + "." + sig
 
 
 def _pin_ok():
-    """True, wenn ein gültiges PIN-Auth-Cookie vorliegt (zeitkonstant)."""
+    """True, wenn ein gültiges, NICHT abgelaufenes PIN-Cookie vorliegt.
+
+    v4.0-W118 (SEC): prueft zusaetzlich das Alter. Der Vergleich bleibt
+    zeitkonstant; ein Cookie im alten Format (ohne Zeitstempel) gilt nicht
+    mehr — der Betreiber meldet sich einmal neu an, und alles, was vorher
+    abgeflossen ist, ist damit wertlos.
+    """
     import hmac as _hmac
     if not DASHBOARD_PIN:
         return False
-    given = request.cookies.get("nc_auth") or ""
-    return bool(given) and _hmac.compare_digest(str(given), _pin_auth_value())
+    given = str(request.cookies.get("nc_auth") or "")
+    if "." not in given:
+        return False
+    t_roh = given.split(".", 1)[0]
+    if not t_roh.isdigit():
+        return False
+    alter = _time_mod.time() - int(t_roh)
+    if alter < -300 or (DASHBOARD_PIN_MAX_AGE_S > 0 and alter > DASHBOARD_PIN_MAX_AGE_S):
+        return False                      # abgelaufen oder aus der Zukunft
+    return _hmac.compare_digest(given, _pin_auth_value(int(t_roh)))
 
 
 def _pin_locked():
@@ -10491,12 +10542,25 @@ def _pwa_dir():
     return os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates")
 
 
+def _sicheres_ziel(roh):
+    """v4.0-W118 (SEC): Weiterleitungsziel nach dem Login — nur seiteneigen.
+
+    Die alte Pruefung war `nxt.startswith("/")`. Das laesst //example.com
+    durch: eine PROTOKOLL-RELATIVE URL, die der Browser als
+    https://example.com aufloest — ein offener Redirect mitten im
+    Login-Flow, ideal fuers Phishing ("das Dashboard hat dich ausgeloggt").
+    Der Backslash-Fall deckt die Browser-Eigenheit /\\host mit ab.
+    """
+    z = (roh or "/").strip()
+    if (not z.startswith("/")) or z[:2] in ("//", "/\\"):
+        return "/"
+    return z
+
+
 @dashboard_app.route("/login")
 def dashboard_login_page():
     # Schon eingeloggt (oder kein PIN nötig) → weiter zum Ziel.
-    nxt = request.args.get("next") or "/"
-    if not nxt.startswith("/"):
-        nxt = "/"                                   # nur interne Redirects (Open-Redirect-Schutz)
+    nxt = _sicheres_ziel(request.args.get("next"))
     if not DASHBOARD_PIN or _pin_ok() or _token_ok():
         return redirect(nxt)
     return Response(_login_page("", nxt), mimetype="text/html")
@@ -10506,9 +10570,7 @@ def dashboard_login_page():
 def dashboard_login_submit():
     if not DASHBOARD_PIN:
         return redirect("/")
-    nxt = request.form.get("next") or "/"
-    if not nxt.startswith("/"):
-        nxt = "/"
+    nxt = _sicheres_ziel(request.form.get("next"))
     if _pin_locked():
         return Response(_login_page("Zu viele Fehlversuche — kurz warten.", nxt),
                         mimetype="text/html", status=429)
@@ -14998,7 +15060,7 @@ def api_system():
             AI_MODEL in models or
             any(m.startswith(AI_MODEL + ":") for m in models)
         ),
-        redis_url      = REDIS_URL,
+        redis_url      = _url_ohne_zugang(REDIS_URL),   # v4.0-W118 (SEC)
         redis_alive    = redis_ver is not None,
         redis_version  = redis_ver,
         cookies_total  = len(cookies),

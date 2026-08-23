@@ -4103,7 +4103,17 @@ def test_v40_w52_pin_login():
     assert 'redirect("/login?next="' in src, "kein Login-Redirect für Browser"
     assert "def dashboard_login_submit(" in src and '"/api/login"' in src, "Login-POST fehlt"
     assert 'p in ("/login", "/logout") or p == "/api/login"' in src, "Login-Routen nicht vom Gate ausgenommen"
-    assert 'if not nxt.startswith("/"):' in src, "kein Open-Redirect-Schutz"
+    # v4.0-W118 (SEC): der Anker ist gebrochen, der Vertrag ist STRENGER
+    # geworden. Die alte Pruefung `nxt.startswith("/")` liess //example.com
+    # durch — eine protokoll-relative URL, die der Browser als
+    # https://example.com aufloest. Jetzt entscheidet _sicheres_ziel().
+    assert "def _sicheres_ziel(roh):" in src, "kein Open-Redirect-Schutz"
+    _sz = src[src.index("def _sicheres_ziel(roh):"):
+              src.index('@dashboard_app.route("/login")')]
+    assert 'z[:2] in ("//", "/\\\\")' in _sz, \
+        "protokoll-relative Ziele (//host, /\\host) nicht abgewiesen"
+    assert src.count("_sicheres_ziel(request.") == 2, \
+        "nicht beide Login-Pfade (GET + POST) gehen ueber die Pruefung"
     # Loopback bleibt frei.
     assert 'if (request.remote_addr or "") in _LOOPBACK:' in src, "Loopback-Ausnahme verloren"
     # SW-Version gebumpt (PWA-Update).
@@ -6378,6 +6388,104 @@ def test_v40_w117_asset_stempel():
     ok("v4.0-w117: raum.css/raum.js mit Inhalts-Stempel auf allen drei Seiten")
 
 
+def test_v40_w118_sicherheitsaudit():
+    r"""v4.0-W118: Befunde aus dem Tiefen-Audit — jeder mit eigenem Vertrag.
+
+    S1 XSS IM DASHBOARD (bewiesen, hoch). 20 Stellen bauten
+       onclick="f('${esc(x)}')". esc() liefert fuer ' das Zeichen &#39; —
+       der HTML-Parser dekodiert Attributwerte aber, BEVOR die JS-Engine
+       sie sieht. Aus &#39; wird wieder ', der String ist zu, der Rest
+       laeuft als Code. Im Browser nachgestellt:
+         Eingabe   x');window.__xss=1;showProfile('y
+         Attribut  showProfile('x');window.__xss=1;showProfile('y')
+         Ergebnis  fremder Code lief in der Sitzung des Betreibers — der
+                   Sitzung, die das Dashboard-Cookie haelt.
+       Fix: escJs() mit \xNN-Sequenzen. Die enthalten kein einziges
+       HTML-Sonderzeichen, ueberstehen die HTML-Dekodierung unveraendert
+       und werden erst von der JS-Engine INNERHALB des Strings aufgeloest.
+
+    S2 KI-SQL UNTER MARIADB. _safe_select hatte die read-only-Verbindung
+       nur fuer SQLite (mode=ro); MariaDB fiel auf eine normale
+       Schreibverbindung zurueck. Und der Wortfilter war auf SQLite
+       gemuenzt: LOAD_FILE, OUTFILE, SLEEP, BENCHMARK, mysql.user,
+       information_schema standen nicht drin — allesamt mit einem reinen
+       SELECT erreichbar.
+
+    S3 OAUTH-state UEBERSPRINGBAR. `if state and _state["csrf"] and ...`
+       liess die Pruefung weg, sobald der Rueckruf gar keinen state
+       mitbrachte — und genau das kann ein Angreifer bestimmen.
+
+    S4 OPEN REDIRECT. `nxt.startswith("/")` laesst //example.com durch.
+
+    S5 ZWEI SCHWACHE esc-SCHATTEN, die das globale, staerkere esc in
+       Funktionen verdeckten, die fremde Creator-Daten rendern.
+
+    S6 REDIS_URL MIT PASSWORT in /api/system.
+    """
+    src = open("bot_v37.py", encoding="utf-8").read()
+    h = open("templates/dashboard.html", encoding="utf-8").read()
+
+    # ── S1 ────────────────────────────────────────────────────────────────
+    assert "const escJs = s =>" in h, "JS-String-Maskierer fehlt"
+    for folge in ("\\x27", "\\x5c", "\\x3c", "\\u2028"):
+        assert folge in h, "escJs deckt " + folge + " nicht ab"
+    # Kein Handler darf mehr eine Interpolation ungeschuetzt in einen
+    # JS-'…'-String setzen. esc() reicht dort NICHT.
+    offen = []
+    for m in re.finditer(r'on\w+\s*=\s*"([^"]*)"', h):
+        for tr in re.finditer(r"'\$\{([^{}]+)\}'", m.group(1)):
+            if not tr.group(1).strip().startswith("escJs("):
+                offen.append(tr.group(1)[:40])
+    assert not offen, ("Interpolation in JS-'…' ohne escJs: " + ", ".join(offen))
+    # Genau EIN esc — zwei Maskierer unterschiedlicher Staerke sind eine Falle.
+    assert len(re.findall(r"(?:const|let|var)\s+esc\s*=", h)) == 1, \
+        "mehr als ein esc — welcher greift wo?"                        # S5
+
+    # ── S2 ────────────────────────────────────────────────────────────────
+    g = open("nc/sqlguard.py", encoding="utf-8").read()
+    for wort in ("load_file", "outfile", "dumpfile", "benchmark", "sleep",
+                 "information_schema", "mysql", "performance_schema"):
+        assert '"%s"' % wort in g, "sqlguard kennt %s nicht" % wort
+    a = open("nc/routes/ai.py", encoding="utf-8").read()
+    assert "START TRANSACTION READ ONLY" in a, "MariaDB ohne read-only Transaktion"
+    assert "conn.rollback()" in a, "read-only Transaktion wird nicht freigegeben"
+
+    # ── S3 ────────────────────────────────────────────────────────────────
+    for datei in ("nc/twitchoauth.py", "nc/ytoauth.py"):
+        o = open(datei, encoding="utf-8").read()
+        # Kommentare raus: der Fix-Kommentar zitiert das alte, kaputte Muster
+        # woertlich. Ein Vertrag, den ein Kommentar ausloesen kann, prueft den
+        # Kommentar statt den Code.
+        code = "\n".join(z for z in o.splitlines() if not z.lstrip().startswith("#"))
+        assert 'if state and _state["csrf"]' not in code, \
+            datei + ": state-Pruefung weiterhin ueberspringbar"
+        assert 'if _state["csrf"] and state != _state["csrf"]:' in code, \
+            datei + ": state wird nicht erzwungen"
+
+    # ── S4 ────────────────────────────────────────────────────────────────
+    assert "def _sicheres_ziel(roh):" in src, "Redirect-Pruefung fehlt"
+
+    # ── S7: PIN-Cookie mit Ablauf ─────────────────────────────────────────
+    # Vorher ein STATISCHER HMAC ueber das PIN: einmal ausgestellt, fuer immer
+    # gueltig, widerrufbar nur durch PIN-Wechsel. Ein Wert, der aus einem
+    # Screenshot der Entwicklerwerkzeuge abfliesst, bleibt damit unbegrenzt
+    # brauchbar.
+    assert "DASHBOARD_PIN_MAX_AGE_S" in src, "PIN-Cookie ohne Lebensdauer"
+    assert 'def _pin_auth_value(ts=None):' in src, "PIN-Cookie ohne Zeitstempel"
+    assert '"nc-dashboard-pin|" + t' in src, "Zeitstempel nicht vom HMAC gedeckt"
+    _po = src[src.index("def _pin_ok():"):src.index("def _pin_locked():")]
+    assert "alter > DASHBOARD_PIN_MAX_AGE_S" in _po, "Ablauf wird nicht geprueft"
+    assert "alter < -300" in _po, "Cookie aus der Zukunft wird akzeptiert"
+    assert "compare_digest" in _po, "Vergleich nicht zeitkonstant"
+
+    # ── S6 ────────────────────────────────────────────────────────────────
+    assert "def _url_ohne_zugang(url):" in src, "kein Maskierer fuer Zugangsdaten in URLs"
+    assert "redis_url      = _url_ohne_zugang(REDIS_URL)" in src, \
+        "REDIS_URL geht weiterhin im Klartext raus"
+    ok("v4.0-w118: XSS geschlossen, KI-SQL read-only, OAuth-state erzwungen, "
+       "Open Redirect dicht, ein Maskierer, Zugangsdaten maskiert")
+
+
 def main():
     print("test_restream — Restream-Kernlogik (Mock-basiert)")
     test_streak()
@@ -6559,6 +6667,7 @@ def main():
     test_v40_w116_alterung_flattern_rate()
     test_v40_w117_ankerhygiene()
     test_v40_w117_asset_stempel()
+    test_v40_w118_sicherheitsaudit()
     print(f"test_restream OK — {PASS} Verträge grün")
 
 

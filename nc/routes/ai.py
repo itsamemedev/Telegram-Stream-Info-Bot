@@ -265,8 +265,28 @@ def _safe_select(sql, limit=200):
             finally:
                 con.close()
             return rows, None
+        # v4.0-W118 (SEC): MariaDB fiel bisher auf eine ganz normale
+        # SCHREIB-Verbindung zurueck — die zweite Linie gab es nur unter
+        # SQLite (mode=ro). Damit haette EINE Luecke im Wortfilter gereicht.
+        # START TRANSACTION READ ONLY laesst der Server jeden Schreibversuch
+        # ablehnen, unabhaengig davon, was der Filter durchgelassen hat; das
+        # abschliessende ROLLBACK gibt die Transaktion in jedem Fall frei.
         with db_conn() as conn:
-            rows = [dict(r) for r in conn.execute(s).fetchall()]
+            try:
+                conn.execute("START TRANSACTION READ ONLY")
+            except Exception as _e:
+                # Aeltere Server kennen das nicht — dann bleibt der Filter die
+                # einzige Linie, und das gehoert sichtbar ins Log statt still
+                # angenommen zu werden.
+                log.warning("KI-Abfrage: READ-ONLY-Transaktion nicht moeglich "
+                            "(%s) — es greift nur der Wortfilter.", _e)
+            try:
+                rows = [dict(r) for r in conn.execute(s).fetchall()]
+            finally:
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
         return rows, None
     except Exception as e:
         return None, f"SQL-Fehler: {e}"
