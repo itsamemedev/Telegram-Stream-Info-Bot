@@ -1,0 +1,100 @@
+name: "🐞 Fehlerbericht"
+description: Etwas funktioniert nicht wie beschrieben
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Danke für den Bericht. **Bitte redigiere Logausschnitte vor dem
+        Einfügen** — sie enthalten regelmäßig Cookies, OAuth-Tokens und
+        Stream-Keys.
+
+        Sicherheitslücken gehören **nicht** hierher, sondern in ein
+        [Security Advisory](https://github.com/itsamemedev/Telegram-Stream-Info-Bot/security/advisories/new).
+
+  - type: checkboxes
+    id: vorab
+    attributes:
+      label: Vorab
+      options:
+        - label: Ich habe die bestehenden Issues durchsucht.
+          required: true
+        - label: Ich habe alle Geheimnisse aus meinen Logausschnitten entfernt.
+          required: true
+
+  - type: dropdown
+    id: bereich
+    attributes:
+      label: Bereich
+      options:
+        - Live-Erkennung / Scraper
+        - Aufnahme / Recorder
+        - Restream (Kick / Twitch / YouTube)
+        - Chat & Moderation / SENTINEL-SHIELD
+        - KI / AZRAEL / brain
+        - Dashboard / Overlay / PWA
+        - Telegram
+        - Discord
+        - Datenbank / Schema
+        - Einnahmen / Ledger
+        - Deploy / systemd / Betrieb
+        - Sonstiges
+    validations:
+      required: true
+
+  - type: textarea
+    id: was
+    attributes:
+      label: Was passiert
+      description: Was beobachtest du, und was hättest du stattdessen erwartet?
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduktion
+    attributes:
+      label: Wie lässt es sich auslösen
+      placeholder: |
+        1. …
+        2. …
+        3. Fehler erscheint
+    validations:
+      required: true
+
+  - type: textarea
+    id: log
+    attributes:
+      label: Logausschnitt
+      description: "`journalctl -u nightcrawler -n 200 --no-pager` — redigiert!"
+      render: text
+
+  - type: textarea
+    id: selftest
+    attributes:
+      label: Selbsttest
+      description: "`curl -s localhost:8050/api/selftest | python3 -m json.tool`"
+      render: json
+
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Dashboard-Footer oder `python3 -c "import nc.version as v; print(v.summary_line())"`
+      placeholder: "NIGHTCRAWLER v4.0 · Restream Control Room"
+    validations:
+      required: true
+
+  - type: input
+    id: umgebung
+    attributes:
+      label: Umgebung
+      placeholder: "Ubuntu 24.04 · Python 3.13 · SQLite · 8 Kerne · ffmpeg 6.1"
+    validations:
+      required: true
+
+  - type: textarea
+    id: pruefkette
+    attributes:
+      label: Prüfkette
+      description: Falls schon gelaufen — was sagen py_compile, pyflakes, ruff und die Tests?
+      render: text

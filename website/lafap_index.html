@@ -1,0 +1,1266 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LAFAP — Logik Absolut Fehl am Platz · KI-gestützte Live-Reaction-Streams</title>
+<meta name="description" content="Logik Absolut Fehl am Platz: die Schattenseiten von TikTok Deutschland — ungeschönt, kritisch, mit schwarzem Humor. Analysiert von Azrael Sentinel, unserer selbst gehosteten KI.">
+<meta property="og:title" content="LAFAP — Logik Absolut Fehl am Platz">
+<meta property="og:description" content="KI-gestützte Live-Reaction-Streams über die Schattenseiten von TikTok Deutschland. Mit Azrael Sentinel — unserer eigenen, selbst gehosteten KI.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://lafap.de/">
+<meta property="og:locale" content="de_DE">
+<!-- Ohne og:image zeigen Discord, WhatsApp und Telegram beim Teilen nur
+     eine graue Karte. 1200x630 ist das Format, das alle drei erwarten. -->
+<meta property="og:image" content="https://lafap.de/og-card.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="LAFAP — Logik Absolut Fehl am Platz">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="https://lafap.de/og-card.png">
+<meta name="theme-color" content="#05080a">
+<link rel="icon" href='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" fill="%2305080a"/><circle cx="16" cy="16" r="10" fill="none" stroke="%2300e5ff" stroke-width="1.5"/><circle cx="16" cy="16" r="4" fill="%2300ff9c"/></svg>'>
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "Organization",
+  "name": "LAFAP — Logik Absolut Fehl am Platz",
+  "url": "https://lafap.de/",
+  "description": "Deutsche Community für KI-gestützte Live-Reaction-Streams und kritische Diskussion über TikTok-Inhalte.",
+  "knowsAbout": ["TikTok Deutschland", "Medienkritik", "Künstliche Intelligenz", "Livestreaming"]
+}
+</script>
+<!-- Schriften LOKAL. Vorher kamen sie von fonts.googleapis.com — dabei
+     uebertraegt der Browser jedes Besuchers dessen IP an Google, ohne
+     Einwilligung. Fuer eine deutsche Seite mit Impressum und Datenschutz-
+     hinweis ist das ein vermeidbares Risiko (LG Muenchen I, 20.01.2022,
+     Az. 3 O 17493/20). Nebeneffekt: ein DNS-Lookup und ein TLS-Handshake
+     weniger pro Seitenaufruf.
+     Dateien einmalig ablegen unter website/fonts/ — siehe FONTS.md. -->
+<link rel="preload" href="fonts/orbitron-700.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="fonts/jetbrainsmono-400.woff2" as="font" type="font/woff2" crossorigin>
+<style>
+@font-face{font-family:'Orbitron';src:url('fonts/orbitron-500.woff2')format('woff2');font-weight:500;font-display:swap;font-style:normal}
+@font-face{font-family:'Orbitron';src:url('fonts/orbitron-700.woff2')format('woff2');font-weight:700;font-display:swap;font-style:normal}
+@font-face{font-family:'Orbitron';src:url('fonts/orbitron-900.woff2')format('woff2');font-weight:900;font-display:swap;font-style:normal}
+@font-face{font-family:'JetBrains Mono';src:url('fonts/jetbrainsmono-400.woff2')format('woff2');font-weight:400;font-display:swap;font-style:normal}
+@font-face{font-family:'JetBrains Mono';src:url('fonts/jetbrainsmono-500.woff2')format('woff2');font-weight:500;font-display:swap;font-style:normal}
+@font-face{font-family:'JetBrains Mono';src:url('fonts/jetbrainsmono-700.woff2')format('woff2');font-weight:700;font-display:swap;font-style:normal}
+
+/* ═══ B130 Gestaltungssystem ═══ */
+/* ══════════════════════════════════════════════════════════════════════
+   Azrael Sentinel · Gestaltungssystem
+   ══════════════════════════════════════════════════════════════════════
+   These sind: das Dashboard ist ein WACHINSTRUMENT, kein Schaufenster.
+   Es laeuft 24/7 und meldet Zustand. Alles Gestalterische leitet sich
+   daraus ab.
+
+   HINWEIS (v4.0-W72): Diese Passage beschrieb frueher das MESSING/BLAUPAUSE-
+   System des DASHBOARDS. Die oeffentliche Website nutzt ein anderes, EIGENES
+   System — Phosphor-Gruen-Cyberpunk auf Void-Schwarz. Deshalb hier korrekt:
+
+   VOID + PHOSPHOR — warum nicht Reinschwarz + Knallgruen ueberall:
+   Der Grund ist kein #000, sondern ein leicht ins Kuehle verschobenes
+   Void (#05080a) mit feinem Scanline-Raster — ein Terminal, das seit
+   Stunden laeuft, kein leeres Nichts. Phosphor (#00ff9c) traegt die Marke
+   (LAFAP), Cyan (#00e5ff) die KI (Azrael), Magenta (#ff2e88) den Monitor,
+   Amber (#ffb000) Recht/Hinweis. Leuchten ist hier SIGNAL, nicht Deko:
+   nur Live-Elemente glimmen, statische Flaechen bleiben ruhig.
+
+   SIGNATUR (neu): Glas-Panels mit Phosphor-Oberkante + drehbarer Sentinel-
+   Kern im Hero (Vanilla-Canvas-3D, ohne Fremd-Lib, reduced-motion-fest) —
+   damit die Website denselben cinematischen 3D-Ton traegt wie das Dashboard,
+   ohne dessen Messing-Identitaet zu kopieren.
+   ══════════════════════════════════════════════════════════════════════ */
+
+:root,
+
+/* ── Website-eigene Regeln, gleiches Token-System ──────────────────── */
+body{
+  background:
+    radial-gradient(900px 520px at 82% -14%,
+      color-mix(in srgb, var(--neon) 8%, transparent), transparent 60%),
+    linear-gradient(180deg, var(--bg2), var(--bg) 46%);
+  color:var(--text);
+}
+.acronym .glyph{ color:var(--neon); }
+.acronym .word{ color:var(--text-dim); }
+.stat b{ color:var(--neon); }
+.principle b{ color:var(--neon); }
+h2{ color:var(--text); letter-spacing:.02em; }
+a{ color:var(--cyan); }
+.btn.kick:hover,.btn.yt:hover,.btn.tw:hover,.btn.dc:hover{ border-color:var(--neon); }
+:focus-visible{ outline:2px solid var(--neon); outline-offset:3px; }
+@media (prefers-reduced-motion: reduce){
+  *,*::before,*::after{ animation-duration:.01ms !important;
+                        transition-duration:.01ms !important; }
+}
+
+</style>
+<style>
+/* =====================================================================
+   LAFAP.de v2 — Design-Tokens (Azrael-Sentinel-Identität)
+   void #05080a · phosphor #00ff9c (LAFAP) · cyan #00e5ff (Azrael)
+   magenta #ff2e88 (Monitor) · amber #ffb000 (Recht/Hinweis)
+   ===================================================================== */
+:root{
+  --void:#05080a; --panel:#0a0f12; --panel2:#0d1418; --line:#12211c;
+  --phos:#00ff9c; --cyan:#00e5ff; --mag:#ff2e88; --amber:#ffb000;
+  --ash:#9fb4ac; --dim:#5c6f68; --white:#e8fff4;
+  --disp:'Orbitron',sans-serif; --mono:'JetBrains Mono',monospace;
+  /* v4.0: EIN Theme. Alt-Variablennamen als Aliase auf die Phosphor-
+     Palette — beseitigt das frühere Messing/Blaupause-Mischtheme. */
+  --neon:var(--phos); --bg:var(--void); --bg2:var(--panel2);
+  --text:var(--white); --text-dim:var(--ash);
+}
+*{margin:0;padding:0;box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{background:var(--void); color:var(--ash); font-family:var(--mono);
+  font-size:15px; line-height:1.75; overflow-x:hidden}
+body::before{content:""; position:fixed; inset:0; pointer-events:none;
+  z-index:2; background:repeating-linear-gradient(0deg,
+  transparent 0 2px, rgba(0,255,156,.014) 2px 4px)}
+::selection{background:var(--phos); color:var(--void)}
+a{color:var(--phos)}
+:focus-visible{outline:2px solid var(--cyan); outline-offset:3px}
+.wrap{max-width:1020px; margin:0 auto; padding:0 20px}
+section{padding:76px 0}
+h2{font-family:var(--disp); font-weight:700; color:var(--white);
+  letter-spacing:.16em; text-transform:uppercase;
+  font-size:clamp(1.1rem,4vw,1.5rem); margin-bottom:8px}
+h3{font-family:var(--disp); font-weight:500; color:var(--white);
+  letter-spacing:.12em; font-size:.95rem; margin:34px 0 14px;
+  text-transform:uppercase}
+.eyebrow{font-size:.68rem; letter-spacing:.22em; text-transform:uppercase;
+  margin-bottom:14px}
+.eyebrow.g{color:var(--phos)} .eyebrow.c{color:var(--cyan)}
+.eyebrow.m{color:var(--mag)}
+.rule{height:1px; background:linear-gradient(90deg,var(--phos),transparent);
+  margin:22px 0 30px}
+#azrael .rule{background:linear-gradient(90deg,var(--cyan),transparent)}
+#monitor .rule{background:linear-gradient(90deg,var(--mag),transparent)}
+.prose{max-width:680px}
+.prose p{margin-bottom:18px}
+.prose .lead{color:var(--white)}
+
+/* Scroll-Reveal (JS setzt .in; ohne JS/reduced-motion alles sichtbar) */
+.rv{opacity:1; transform:none}
+.js .rv{opacity:0; transform:translateY(14px);
+  transition:opacity .5s ease, transform .5s ease}
+.js .rv.in{opacity:1; transform:none}
+
+/* ---------- Kopfleiste ---------- */
+header{position:sticky; top:0; z-index:10;
+  background:rgba(5,8,10,.93); backdrop-filter:blur(6px);
+  border-bottom:1px solid var(--line)}
+.bar{display:flex; align-items:center; justify-content:space-between;
+  padding:12px 20px; max-width:1020px; margin:0 auto}
+.logo{font-family:var(--disp); font-weight:900; letter-spacing:.22em;
+  color:var(--phos); font-size:1.05rem; text-decoration:none}
+.logo span{color:var(--mag)}
+nav a{font-size:.7rem; letter-spacing:.14em; text-transform:uppercase;
+  text-decoration:none; color:var(--ash); margin-left:16px}
+nav a:hover,nav a:focus-visible{color:var(--phos)}
+
+/* ---------- Hero ---------- */
+.hero{padding:92px 0 60px}
+.boot{font-size:.72rem; color:var(--phos); opacity:.75;
+  letter-spacing:.12em; margin-bottom:26px}
+.boot::before{content:"▸ "; color:var(--mag)}
+.cursor{display:inline-block; width:.6em; height:1.1em;
+  background:var(--phos); vertical-align:-.15em;
+  animation:blink 1s steps(1) infinite}
+@keyframes blink{50%{opacity:0}}
+.acronym{display:flex; flex-direction:column; gap:2px;
+  font-family:var(--disp); font-weight:900; margin-bottom:30px}
+.acronym .row{display:flex; align-items:baseline; gap:16px}
+.acronym .glyph{color:var(--phos); font-size:clamp(2.3rem,9vw,4.4rem);
+  width:1.1em; text-shadow:0 0 22px rgba(0,255,156,.35)}
+.acronym .word{color:var(--white); font-size:clamp(.85rem,3vw,1.3rem);
+  letter-spacing:.3em; font-weight:500; text-transform:uppercase;
+  border-left:2px solid var(--line); padding-left:16px}
+.acronym .row:nth-child(3) .glyph,
+.acronym .row:nth-child(3) .word{color:var(--mag);
+  text-shadow:0 0 22px rgba(255,46,136,.3)}
+.tagline{max-width:640px; color:var(--white); font-size:1.02rem}
+.tagline b{color:var(--phos); font-weight:700}
+
+/* ---------- Stats-Leiste ---------- */
+.stats{display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr));
+  gap:1px; background:var(--line); border:1px solid var(--line);
+  border-radius:4px; overflow:hidden; margin-top:44px}
+.stat{background:var(--panel); padding:18px 16px}
+.stat b{display:block; font-family:var(--disp); font-weight:700;
+  color:var(--phos); font-size:1.25rem; letter-spacing:.06em}
+.stat span{font-size:.66rem; letter-spacing:.14em; text-transform:uppercase;
+  color:var(--dim)}
+
+/* ---------- Stream-Buttons ---------- */
+.streams{display:grid; gap:16px; margin-top:26px;
+  grid-template-columns:repeat(auto-fit,minmax(240px,1fr))}
+.btn{display:flex; align-items:center; justify-content:center; gap:14px;
+  font-family:var(--disp); font-weight:700; letter-spacing:.18em;
+  text-transform:uppercase; text-decoration:none; font-size:1.15rem;
+  padding:26px 20px; border:2px solid; border-radius:4px;
+  background:var(--panel);
+  transition:transform .15s ease, box-shadow .15s ease}
+.btn small{display:block; font-family:var(--mono); font-weight:400;
+  font-size:.62rem; letter-spacing:.1em; opacity:.75}
+.btn:hover,.btn:focus-visible{transform:translateY(-3px)}
+.btn.kick{color:#53fc18; border-color:#53fc18}
+.btn.kick:hover{box-shadow:0 0 32px rgba(83,252,24,.35)}
+.btn.yt{color:#ff4040; border-color:#ff4040}
+.btn.yt:hover{box-shadow:0 0 32px rgba(255,64,64,.35)}
+.btn.tw{color:#a970ff; border-color:#a970ff}
+.btn.tw:hover{box-shadow:0 0 32px rgba(169,112,255,.35)}
+.btn.dc{color:#7289ff; border-color:#7289ff}
+.btn.dc:hover{box-shadow:0 0 32px rgba(114,137,255,.35)}
+.btn .dot{width:10px; height:10px; border-radius:50%;
+  background:currentColor; animation:blink 1.4s steps(1) infinite}
+
+/* ---------- Themen-Monitor ---------- */
+.log{background:var(--panel); border:1px solid var(--line);
+  border-radius:4px; padding:26px 22px; font-size:.85rem; max-width:780px}
+.log .head{color:var(--mag); font-size:.68rem; letter-spacing:.18em;
+  margin-bottom:16px; text-transform:uppercase}
+.log ul{list-style:none}
+.log li{padding:9px 0; border-bottom:1px dashed var(--line);
+  display:flex; gap:14px; align-items:baseline}
+.log li:last-child{border-bottom:none}
+.log .tag{color:var(--mag); font-size:.66rem; letter-spacing:.1em;
+  white-space:nowrap; min-width:74px}
+.log .txt{color:var(--white)}
+.log .note{margin-top:18px; font-size:.78rem; color:var(--ash)}
+
+/* ---------- Azrael: Auge ---------- */
+#azrael{background:linear-gradient(180deg,transparent,
+  rgba(0,229,255,.035) 30%, transparent)}
+.az-grid{display:grid; grid-template-columns:150px 1fr; gap:34px;
+  align-items:start}
+.eye{position:relative; width:150px; height:150px}
+.eye .ring{position:absolute; inset:0; border-radius:50%;
+  border:1px solid rgba(0,229,255,.4)}
+.eye .ring:nth-child(2){inset:18px; border-color:rgba(0,229,255,.25)}
+.eye .ring:nth-child(3){inset:36px; border-color:rgba(0,229,255,.15)}
+.eye .core{position:absolute; inset:60px; border-radius:50%;
+  background:var(--cyan); box-shadow:0 0 34px var(--cyan)}
+.eye .sweep{position:absolute; inset:0; border-radius:50%;
+  background:conic-gradient(from 0deg, rgba(0,229,255,.28),
+  transparent 70deg); animation:sweep 4s linear infinite}
+@keyframes sweep{to{transform:rotate(360deg)}}
+
+/* ---------- Azrael: Pipeline ---------- */
+.pipe{display:grid; gap:10px; margin:8px 0 6px;
+  grid-template-columns:repeat(4, 1fr)}
+.pipe .node{background:var(--panel2); border:1px solid rgba(0,229,255,.25);
+  border-radius:4px; padding:14px 12px; position:relative; font-size:.74rem}
+.pipe .node b{display:block; font-family:var(--disp); font-weight:700;
+  color:var(--cyan); font-size:.72rem; letter-spacing:.14em;
+  margin-bottom:6px; text-transform:uppercase}
+.pipe .node em{font-style:normal; color:var(--dim); font-size:.68rem}
+.pipe .node::after{content:"▸"; position:absolute; right:-13px; top:50%;
+  transform:translateY(-50%); color:var(--cyan); font-size:.9rem; z-index:1}
+.pipe .node:last-child::after{content:none}
+.pipe-ms{font-size:.66rem; color:var(--dim); letter-spacing:.1em;
+  margin-bottom:8px}
+
+/* ---------- Azrael: Spec-Tabelle ---------- */
+.spec{width:100%; max-width:780px; border:1px solid var(--line);
+  border-radius:4px; border-collapse:separate; border-spacing:0;
+  overflow:hidden; font-size:.82rem}
+.spec th,.spec td{padding:11px 16px; text-align:left;
+  border-bottom:1px solid var(--line); vertical-align:top}
+.spec tr:last-child th,.spec tr:last-child td{border-bottom:none}
+.spec th{background:var(--panel2); color:var(--cyan); font-weight:500;
+  white-space:nowrap; width:220px; font-size:.72rem;
+  letter-spacing:.08em; text-transform:uppercase}
+.spec td{background:var(--panel); color:var(--white)}
+.spec td .why{display:block; color:var(--dim); font-size:.74rem;
+  margin-top:3px}
+
+/* ---------- Azrael: Tier-Kaskade ---------- */
+.tiers{list-style:none; max-width:780px; counter-reset:tier}
+.tiers li{position:relative; padding:16px 18px 16px 66px;
+  background:var(--panel); border:1px solid var(--line);
+  border-radius:4px; margin-bottom:10px; font-size:.85rem}
+.tiers li::before{counter-increment:tier; content:"0" counter(tier);
+  position:absolute; left:16px; top:14px; font-family:var(--disp);
+  font-weight:900; font-size:1.3rem; color:var(--line)}
+.tiers li b{color:var(--cyan); font-weight:700}
+.tiers li .share{float:right; font-size:.66rem; color:var(--dim);
+  letter-spacing:.1em; margin-left:12px}
+.tiers li:last-child{border-color:rgba(0,229,255,.35)}
+.tiers li:last-child::before{color:var(--cyan)}
+
+/* ---------- Azrael: Agenten-Grid ---------- */
+.agents{display:grid; gap:12px;
+  grid-template-columns:repeat(auto-fit,minmax(210px,1fr))}
+.agent{background:var(--panel); border:1px solid var(--line);
+  border-radius:4px; padding:16px; font-size:.78rem}
+.agent b{display:flex; align-items:center; gap:8px;
+  font-family:var(--disp); font-weight:700; letter-spacing:.12em;
+  color:var(--white); font-size:.74rem; margin-bottom:8px;
+  text-transform:uppercase}
+.agents-status{font-size:.7rem;letter-spacing:.14em;text-transform:uppercase;color:var(--dim);font-family:var(--mono);margin-bottom:14px}
+.agents-status b{color:var(--phos)}
+.agent.inactive{opacity:.5}
+.agent.inactive b::before{background:var(--dim)!important;box-shadow:none!important}
+.agent b::before{content:""; width:7px; height:7px; border-radius:50%;
+  background:var(--phos); box-shadow:0 0 8px var(--phos)}
+.az-facts{list-style:none; max-width:680px}
+.az-facts li{padding:10px 0 10px 22px; position:relative;
+  border-bottom:1px dashed var(--line); font-size:.88rem}
+.az-facts li::before{content:"◈"; color:var(--cyan);
+  position:absolute; left:0}
+.az-facts b{color:var(--cyan); font-weight:500}
+.footnote{font-size:.72rem; color:var(--dim); max-width:780px;
+  margin-top:14px}
+
+/* ---------- Grundsätze / Disclaimer ---------- */
+.principles{display:grid; gap:12px; max-width:780px;
+  grid-template-columns:repeat(auto-fit,minmax(230px,1fr))}
+.principle{border:1px solid var(--line); border-radius:4px;
+  background:var(--panel); padding:18px; font-size:.8rem}
+.principle b{display:block; color:var(--phos); font-family:var(--disp);
+  font-weight:700; font-size:.72rem; letter-spacing:.14em;
+  margin-bottom:8px; text-transform:uppercase}
+.disclaimer{border:1px solid rgba(255,176,0,.35); border-radius:4px;
+  background:rgba(255,176,0,.05); padding:22px 24px; max-width:780px;
+  color:var(--amber); font-size:.86rem; margin-top:26px}
+
+/* ---------- Footer ---------- */
+footer{border-top:1px solid var(--line); padding:34px 0 44px;
+  font-size:.72rem; color:var(--dim)}
+footer .f{display:flex; flex-wrap:wrap; gap:10px 26px;
+  justify-content:space-between; align-items:baseline}
+footer b{color:var(--phos); font-family:var(--disp);
+  letter-spacing:.2em; font-weight:700}
+footer nav a{margin:0 0 0 18px; color:var(--dim); font-size:.7rem}
+footer nav a:hover{color:var(--phos)}
+
+@media (max-width:720px){
+  .pipe{grid-template-columns:1fr}
+  .pipe .node::after{content:"▾"; right:auto; left:50%; top:auto;
+    bottom:-15px; transform:translateX(-50%)}
+  .pipe .node:last-child::after{content:none}
+  .pipe{gap:16px}
+  .az-grid{grid-template-columns:1fr}
+  .eye{margin:0 auto}
+  .spec th{width:auto; display:block; border-bottom:none; padding-bottom:2px}
+  .spec td{display:block; padding-top:4px}
+  nav a{margin-left:11px; font-size:.62rem}
+  section{padding:56px 0}
+}
+@media (prefers-reduced-motion:reduce){
+  .cursor,.btn .dot{animation:none}
+  .eye .sweep{animation:none; opacity:.4}
+  .btn{transition:none}
+  .js .rv{opacity:1; transform:none; transition:none}
+}
+/* ============ NEWS ============ */
+#news .rule{background:linear-gradient(90deg,var(--cyan),transparent)}
+.news-list{display:grid; gap:14px}
+.news-item{background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:16px 18px}
+.news-item .n-top{display:flex; align-items:center; gap:10px; margin-bottom:7px; flex-wrap:wrap}
+.news-item .n-cat{font-size:.6rem; letter-spacing:.14em; text-transform:uppercase; color:var(--cyan); border:1px solid var(--line); border-radius:99px; padding:2px 10px}
+.news-item .n-date{font-size:.72rem; color:var(--ash); font-family:'JetBrains Mono',monospace}
+.news-item h3{font-size:1.02rem; margin:0 0 6px; color:var(--white)}
+.news-item p{color:var(--ash); line-height:1.55; margin:0}
+.news-empty{color:var(--ash); font-size:.9rem}
+.news-cat-project .n-cat{color:var(--phos)}
+.news-cat-creators .n-cat{color:var(--mag)}
+.news-cat-ai .n-cat{color:var(--cyan)}
+/* v4.0 · Lagebild — Live-Metriken + 7-Tage-Chart (void/phosphor) */
+.metrics{display:grid;grid-template-columns:repeat(auto-fit,minmax(148px,1fr));gap:14px;margin:26px 0 18px}
+.metric{background:var(--panel);border:1px solid var(--line);padding:20px 16px;position:relative;overflow:hidden}
+.metric::before{content:"";position:absolute;top:0;left:0;width:100%;height:2px;background:linear-gradient(90deg,var(--phos),transparent)}
+.metric b{display:block;font-family:var(--disp);font-weight:700;font-size:2rem;color:var(--phos);line-height:1;letter-spacing:.02em}
+.metric span{display:block;margin-top:10px;font-size:.64rem;letter-spacing:.14em;text-transform:uppercase;color:var(--dim)}
+.chart-card{background:var(--panel);border:1px solid var(--line);padding:22px 20px}
+.chart-head{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:18px}
+.chart-legend{font-size:.64rem;color:var(--dim);font-family:var(--mono);letter-spacing:.1em}
+.chart{display:flex;align-items:flex-end;gap:10px;height:150px}
+.chart .bar{flex:1;display:flex;flex-direction:column;align-items:center;gap:6px;height:100%;justify-content:flex-end}
+.chart .bar .col{width:100%;background:linear-gradient(180deg,var(--phos),rgba(0,255,156,.12));min-height:3px;box-shadow:0 0 12px rgba(0,255,156,.25)}
+#mod-chart .bar .col{background:linear-gradient(180deg,var(--mag),rgba(255,46,136,.12));box-shadow:0 0 12px rgba(255,46,136,.22)}
+.chart .bar .v{font-size:.6rem;color:var(--ash);font-family:var(--mono)}
+.chart .bar .d{font-size:.56rem;color:var(--dim);font-family:var(--mono);letter-spacing:.06em;text-transform:uppercase}
+
+/* ══════════════════════════════════════════════════════════════════════
+   v4.0-W72 · CINEMATISCHE POLITUR — holt den 3D-/Glas-Ton des Dashboards
+   (W57–W71) auf die Website. Rein additiv, token-basiert, reduced-motion-fest.
+   ══════════════════════════════════════════════════════════════════════ */
+
+/* Skip-Link (A11y) — nur bei Tastaturfokus sichtbar */
+.skip{position:absolute;left:-999px;top:0;z-index:50;background:var(--phos);
+  color:var(--void);font-family:var(--mono);font-weight:700;font-size:.8rem;
+  padding:10px 16px;border-radius:0 0 6px 0;letter-spacing:.06em;text-decoration:none}
+.skip:focus{left:0}
+
+/* Footer-Version */
+.ver{margin-left:10px;color:var(--dim);font-size:.66rem;letter-spacing:.08em}
+.ver::before{content:"·\00a0"}
+
+/* Glas-Panels: Panels bekommen einen feinen Glas-Schimmer + Phosphor-Oberkante
+   (Dashboard-Signatur W67) und heben beim Hover leicht an. */
+.metric,.chart-card,.agent,.principle,.news-item{
+  background:linear-gradient(180deg,
+    color-mix(in srgb,var(--panel) 92%,var(--phos) 3%),var(--panel));
+  backdrop-filter:blur(2px);
+  transition:transform .16s ease, box-shadow .16s ease, border-color .16s ease}
+.metric{border-radius:8px}
+.chart-card{border-radius:10px;position:relative;overflow:hidden}
+.chart-card::before{content:"";position:absolute;top:0;left:0;right:0;height:1px;
+  background:linear-gradient(90deg,transparent,var(--cyan),transparent);opacity:.5}
+.metric:hover,.agent:hover,.principle:hover,.news-item:hover{
+  transform:translateY(-2px);border-color:color-mix(in srgb,var(--phos) 40%,var(--line))}
+.metric:hover{box-shadow:0 8px 26px -14px color-mix(in srgb,var(--phos) 60%,transparent)}
+.chart .bar .col{transition:filter .16s ease}
+.chart .bar:hover .col{filter:brightness(1.25)}
+.stat{transition:background .16s ease}
+.stat:hover{background:color-mix(in srgb,var(--panel) 82%,var(--phos) 6%)}
+
+/* Plattform-Chips */
+.chips{display:flex;flex-wrap:wrap;gap:8px;margin:16px 0 4px}
+.chip{font-family:var(--mono);font-size:.62rem;letter-spacing:.12em;
+  text-transform:uppercase;color:var(--cyan);border:1px solid var(--line);
+  border-radius:99px;padding:5px 13px;display:inline-flex;align-items:center;gap:7px;
+  background:color-mix(in srgb,var(--panel) 90%,var(--cyan) 4%)}
+.chip::before{content:"";width:6px;height:6px;border-radius:50%;
+  background:var(--phos);box-shadow:0 0 7px var(--phos)}
+
+/* ── Hero: zweispaltig, Text links, Sentinel-Kern rechts ── */
+.hero-copy{min-width:0}
+.hero.wrap{display:grid;grid-template-columns:1fr;gap:8px 40px;align-items:center}
+@media (min-width:860px){
+  .hero.wrap{grid-template-columns:minmax(0,1.15fr) minmax(280px,.85fr)}
+  .hero-copy{grid-column:1;grid-row:1}
+  .hero-core{grid-column:2;grid-row:1;justify-self:center}
+  .hero .stats,.hero .streams{grid-column:1 / -1}
+}
+.hero-core{position:relative;width:100%;max-width:340px;aspect-ratio:1/1;
+  display:flex;align-items:center;justify-content:center}
+#sentinel-core{display:block;width:100%;height:100%}
+.core-cap{position:absolute;bottom:6px;left:50%;transform:translateX(-50%);
+  font-family:var(--mono);font-size:.58rem;letter-spacing:.28em;color:var(--dim);
+  display:flex;align-items:center;gap:7px;white-space:nowrap}
+.core-cap .core-live{color:var(--phos);animation:corepulse 2.4s ease-in-out infinite}
+@keyframes corepulse{0%,100%{opacity:.35}50%{opacity:1}}
+@media (max-width:859px){
+  .hero-core{max-width:230px;margin:14px auto 0}
+  .hero.wrap{gap:4px}
+}
+/* v4.0-W92: KI-Verbrauch (3D) + Spendenpanel — additiv, token-basiert. */
+.res-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:18px;margin-top:8px}
+.res-card{background:var(--panel);border:1px solid var(--line);border-radius:10px;
+  padding:20px 20px;position:relative;overflow:hidden}
+.res-card::before{content:"";position:absolute;top:0;left:0;right:0;height:1px;
+  background:linear-gradient(90deg,transparent,var(--cyan),transparent);opacity:.5}
+.usage3d-wrap{height:220px;margin:6px 0 12px;position:relative}
+.don3d-wrap{height:132px;margin:2px 0 10px;position:relative}
+#don-3d{display:block;width:100%;height:100%}#usage-3d{display:block;width:100%;height:100%}
+.usage-nums{display:grid;grid-template-columns:repeat(2,1fr);gap:10px}
+.usage-nums .metric{padding:14px 14px;border-radius:8px}
+.usage-nums .metric b{font-size:1.25rem}
+.don-amount{font-family:var(--disp);font-weight:900;color:var(--white);font-size:2.1rem;
+  letter-spacing:.02em;margin:8px 0 4px;line-height:1}
+.don-amount b[data-k="don_cur"]{color:var(--phos)}
+.don-goal{color:var(--dim);font-size:1.1rem;font-weight:700}
+.don-bar{height:14px;border:1px solid var(--line);border-radius:20px;background:var(--panel2);
+  overflow:hidden;margin:12px 0 8px}
+.don-bar i{display:block;height:100%;width:0;border-radius:20px;
+  background:linear-gradient(90deg,var(--phos),var(--cyan));
+  box-shadow:0 0 12px color-mix(in srgb,var(--phos) 60%,transparent);
+  transition:width 1.1s cubic-bezier(.2,.7,.2,1)}
+.don-meta{font-size:.82rem;color:var(--ash);margin-bottom:14px}
+.don-meta [data-k]{color:var(--phos);font-weight:700}
+.don-btn{display:inline-block;font-family:var(--disp);font-weight:700;letter-spacing:.1em;
+  text-transform:uppercase;font-size:.8rem;color:var(--void);background:var(--phos);
+  padding:12px 22px;border-radius:8px;text-decoration:none;
+  box-shadow:0 0 18px color-mix(in srgb,var(--phos) 45%,transparent);transition:transform .15s,box-shadow .15s}
+.don-btn:hover{transform:translateY(-1px);box-shadow:0 0 26px color-mix(in srgb,var(--phos) 65%,transparent);text-decoration:none}
+.don-btn:focus-visible{outline:2px solid var(--cyan);outline-offset:3px}
+.mono{font-family:var(--mono)}
+/* v4.0-W94: Krypto-Spenden · v4.0-W99: PayPal + Krypto zu einer Box vereint */
+.pay-methods{margin-top:16px;border-top:1px solid var(--line);padding-top:16px;
+  display:grid;gap:18px}
+@media(min-width:720px){.pay-methods.has-crypto{grid-template-columns:1fr 1fr;gap:22px}}
+.pay-method{min-width:0}
+.pay-method .eyebrow{margin-bottom:10px}
+.pay-method .don-btn{margin-top:0}
+.pay-mail{margin-top:8px}
+.crypto-wrap{min-width:0}
+.crypto-wrap .eyebrow{margin-bottom:10px}
+.crypto-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;
+  background:var(--panel2);border:1px solid var(--line);border-radius:8px;
+  padding:9px 12px;margin:8px 0}
+.crypto-coin{font-family:var(--disp);font-weight:700;letter-spacing:.06em;color:var(--cyan);
+  font-size:.78rem;min-width:120px}
+.crypto-addr{font-family:var(--mono);font-size:.74rem;color:var(--ash);
+  word-break:break-all;flex:1;min-width:160px}
+.crypto-copy{font-family:var(--mono);font-size:.68rem;font-weight:700;letter-spacing:.08em;
+  text-transform:uppercase;color:var(--void);background:var(--cyan);border:0;cursor:pointer;
+  padding:6px 12px;border-radius:6px}
+.crypto-copy:hover{filter:brightness(1.08)} .crypto-copy.done{background:var(--phos)}
+.crypto-recv{font-size:.76rem;color:var(--phos);margin-top:4px}
+.crypto-qr{flex:0 0 auto;width:72px;height:72px;background:#fff;border:1px solid var(--phos);box-shadow:0 0 10px rgba(0,255,156,.25);
+  border-radius:6px;padding:4px;display:flex;align-items:center;justify-content:center}
+.crypto-qr svg{width:100%;height:100%;display:block}
+.don-qr{margin-top:12px;display:flex;align-items:center;gap:12px}
+.don-qr .qbox{width:92px;height:92px;background:#fff;border:1px solid var(--phos);box-shadow:0 0 12px rgba(0,255,156,.28);
+  border-radius:8px;padding:6px;flex:0 0 auto}
+.don-qr .qbox svg{width:100%;height:100%;display:block}
+.don-qr .qcap{font-size:.74rem;color:var(--dim)}
+@media (prefers-reduced-motion:reduce){ .don-bar i{transition:none} }
+</style>
+</head>
+<body>
+
+<a class="skip" href="#inhalt">Zum Inhalt springen</a>
+
+<header>
+  <div class="bar">
+    <a class="logo" href="#top">LAF<span>A</span>P</a>
+    <nav aria-label="Seitennavigation">
+      <a href="#ueber">Über uns</a>
+      <a href="#monitor">Themen</a>
+      <a href="#azrael">Azrael</a>
+      <a href="#grundsaetze">Grundsätze</a>
+      <a href="#streams">Live</a>
+      <a href="#news">News</a>
+      <a href="https://discord.gg/XyxTDD8Ga" rel="noopener">Discord</a>
+    </nav>
+  </div>
+</header>
+
+<!-- v4.0-W72: EIN main-Landmark (vorher zwei verschachtelte <main> + ein im
+     <footer> gestrandetes </main> = ungültiges HTML). id="top" bleibt das
+     Back-to-Top-Ziel; id="inhalt" ist das Skip-Link-Ziel, tabindex=-1, damit
+     der Sprung den Fokus wirklich setzt. -->
+<main id="top" tabindex="-1">
+  <span id="inhalt" tabindex="-1"></span>
+
+  <!-- ============ HERO ============ -->
+  <section class="hero wrap">
+    <div class="hero-copy">
+    <p class="boot">SENTINEL ONLINE — TikTok Deutschland im Monitoring<span class="cursor" aria-hidden="true"></span></p>
+    <!-- Die Seite hatte KEIN h1 (4x h2, 0x h1). Suchmaschinen und
+         Screenreader suchen zuerst die eine Hauptueberschrift. Der
+         Akronym-Block ist sie inhaltlich — also wird er auch als h1
+         ausgezeichnet. role="img" bleibt, damit die Buchstaben-Grafik
+         als Einheit vorgelesen wird statt Buchstabe fuer Buchstabe. -->
+    <h1 class="acronym" role="img" aria-label="LAFAP — Logik Absolut Fehl Am Platz">
+      <div class="row"><span class="glyph">L</span><span class="word">Logik</span></div>
+      <div class="row"><span class="glyph">A</span><span class="word">Absolut</span></div>
+      <div class="row"><span class="glyph">F</span><span class="word">Fehl</span></div>
+      <div class="row"><span class="glyph">A</span><span class="word">Am</span></div>
+      <div class="row"><span class="glyph">P</span><span class="word">Platz</span></div>
+    </h1>
+    <p class="tagline">Die Schattenseiten von TikTok Deutschland — <b>ungeschönt, kritisch</b> und mit einer Prise schwarzem Humor. Analysiert in Echtzeit von <b>Azrael Sentinel</b>, unserer eigenen, selbst gehosteten KI.</p>
+    </div><!-- /.hero-copy -->
+
+    <!-- v4.0-W72: Sentinel-Kern — drehbares Vanilla-Canvas-3D (kein Fremd-Code,
+         kein externer Request, reduced-motion-fest). Holt den cinematischen
+         3D-Ton des Dashboards auf die Startseite. Rein dekorativ → aria-hidden. -->
+    <div class="hero-core" aria-hidden="true">
+      <canvas id="sentinel-core"></canvas>
+      <div class="core-cap"><span class="core-live" id="core-live">◍</span> SENTINEL&nbsp;CORE</div>
+    </div>
+
+    <div class="stats rv" aria-label="Eckdaten">
+      <div class="stat"><b>24/7</b><span>Monitoring</span></div>
+      <div class="stat"><b>3</b><span>Plattformen live</span></div>
+      <div class="stat"><b>100%</b><span>Self-Hosted-KI</span></div>
+      <div class="stat"><b>&lt; 3 s</b><span>Reaktionslatenz*</span></div>
+    </div>
+
+    <!-- ============ STREAM-BUTTONS ============ -->
+    <div class="streams" id="streams">
+      <a class="btn kick" href="https://kick.com/logikabsolutfehlamplatz" rel="noopener">
+        <span class="dot" aria-hidden="true"></span>
+        <span>Kick<small>Haupt-Livestream</small></span>
+      </a>
+      <a class="btn yt" href="https://youtube.com/@Logikabsolutfehlamplatz-c5k" rel="noopener">
+        <span class="dot" aria-hidden="true"></span>
+        <span>YouTube<small>Streams &amp; Archiv</small></span>
+      </a>
+      <a class="btn tw" href="https://twitch.tv/logikabsolutfehlamplatz" rel="noopener">
+        <span class="dot" aria-hidden="true"></span>
+        <span>Twitch<small>Restream</small></span>
+      </a>
+      <a class="btn dc" href="https://discord.gg/XyxTDD8Ga" rel="noopener">
+        <span class="dot" aria-hidden="true"></span>
+        <span>Discord<small>Community &amp; Diskussion</small></span>
+      </a>
+    </div>
+  </section>
+
+  <!-- ============ ÜBER UNS (Vorlage) ============ -->
+  <section id="ueber" class="wrap rv">
+    <p class="eyebrow g">// Wer wir sind</p>
+    <h2>🧠 Logik Absolut Fehl am Platz</h2>
+    <div class="rule"></div>
+    <div class="prose">
+      <p class="lead">Willkommen bei Logik Absolut Fehl am Platz.</p>
+      <p>Hier zeigen wir die Schattenseiten von TikTok Deutschland – ungeschönt, kritisch und mit einer Prise schwarzem Humor.</p>
+      <p>🎥 Unsere KI-gestützten Live-Reaction-Streams analysieren virale Clips, absurde Trends und fragwürdige Inhalte.</p>
+      <p>Unser Ziel ist nicht, Menschen grundlos an den Pranger zu stellen, sondern Missstände sichtbar zu machen, kritisch zu hinterfragen und zum Nachdenken anzuregen.</p>
+      <p>💬 Freie Meinungsäußerung. Kritische Diskussionen. Schwarzer Humor.</p>
+    </div>
+  </section>
+
+  <!-- ============ LAGEBILD ============ -->
+  <section id="lagebild" class="wrap rv">
+    <p class="eyebrow g">// Lagebild in Echtzeit</p>
+    <h2>Live-Metriken</h2>
+    <div class="rule"></div>
+    <div class="metrics" id="metric-cards">
+      <div class="metric"><b data-k="tracked">—</b><span>Begleitete Creator</span></div>
+      <div class="metric"><b data-k="live_today">—</b><span>Heute live</span></div>
+      <div class="metric"><b data-k="platforms">—</b><span>Plattformen</span></div>
+      <div class="metric"><b data-k="agents_active">—</b><span>KI-Wächter</span></div>
+      <div class="metric"><b data-k="kg_facts">—</b><span>Gelernte Fakten</span></div>
+      <div class="metric"><b data-k="total_live_7d">—</b><span>Live-Einsätze · 7 T</span></div>
+      <div class="metric"><b data-k="moderation_7d">—</b><span>Mod-Aktionen · 7 T</span></div>
+      <div class="metric"><b data-k="peak_live">—</b><span>Spitze · 7 T</span></div>
+    </div>
+    <div class="chips" id="platform-chips" aria-label="Aktive Plattformen"></div>
+    <div class="chart-card">
+      <div class="chart-head"><span class="eyebrow c">// Live-Aktivität · 7 Tage</span><span class="chart-legend" id="chart-max"></span></div>
+      <div class="chart" id="live-chart" role="img" aria-label="Live-Aktivität der letzten 7 Tage"><span class="chart-legend">lädt …</span></div>
+    </div>
+    <div class="chart-card" style="margin-top:16px">
+      <div class="chart-head"><span class="eyebrow m">// Moderation · 7 Tage</span><span class="chart-legend" id="mod-max"></span></div>
+      <div class="chart" id="mod-chart" role="img" aria-label="Moderations-Aktivität der letzten 7 Tage"><span class="chart-legend">lädt …</span></div>
+    </div>
+    <p class="note" id="metric-ts">Aktualisiert sich automatisch — keine Aufzeichnung, nur Live-Begleitung.</p>
+  </section>
+
+  <!-- ============ RECHENLEISTUNG & SPENDEN (W92) ============ -->
+  <section id="ressourcen" class="wrap rv">
+    <p class="eyebrow g">// Rechenleistung &amp; Unterstützung</p>
+    <h2>KI-Verbrauch &amp; Spenden</h2>
+    <div class="rule"></div>
+    <div class="res-grid">
+
+      <!-- 3D Token/Kosten -->
+      <div class="res-card">
+        <div class="chart-head"><span class="eyebrow c">// KI-Verbrauch · 3D</span>
+          <span class="chart-legend" id="usage-upd"></span></div>
+        <div class="usage3d-wrap"><canvas id="usage-3d" role="img"
+             aria-label="3D-Darstellung des KI-Token-Verbrauchs (Input/Output)"></canvas></div>
+        <div class="usage-nums">
+          <div class="metric"><b data-k="tok_total">—</b><span>Tokens gesamt</span></div>
+          <div class="metric"><b data-k="cost_total">—</b><span>Kosten* gesamt</span></div>
+          <div class="metric"><b data-k="tok_month">—</b><span>Tokens · Monat</span></div>
+          <div class="metric"><b data-k="cost_month">—</b><span>Kosten* · Monat</span></div>
+        </div>
+        <p class="note">*Geschätzter API-Gegenwert <b>aller</b> Tokens zu Claude-Preisen
+          — Transparenz, keine echte Abrechnung.</p>
+      </div>
+
+      <!-- Spendenpanel -->
+      <div class="res-card">
+        <div class="chart-head"><span class="eyebrow m">// Spendenziel · 3D</span>
+          <span class="chart-legend" id="don-period">monatlich</span></div>
+        <!-- v4.0-W102: rotierende 3D-Münze (Vanilla-Canvas, dependency-frei,
+             reduced-motion-fest); Leuchtkraft folgt dem Spendenfortschritt. -->
+        <div class="don3d-wrap"><canvas id="don-3d" role="img"
+             aria-label="3D-Münze zur Visualisierung des Spendenfortschritts"></canvas></div>
+        <div class="don-amount"><b data-k="don_cur">—</b>
+          <span class="don-goal">/ <b data-k="don_goal">—</b></span></div>
+        <div class="don-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100"
+             aria-valuenow="0" id="don-progress"><i id="don-fill"></i></div>
+        <div class="don-meta"><span data-k="don_pct">—</span> erreicht ·
+          Ziel <span data-k="don_goal2">—</span> pro Monat</div>
+        <p class="note">Der self-hosted Betrieb (Server + KI) kostet real Geld — jede
+          Spende hält Azrael Sentinel am Laufen.</p>
+        <!-- v4.0-W99: PayPal + Krypto als gleichwertige Zahlwege in EINER Box -->
+        <div class="pay-methods" id="pay-methods">
+          <div class="pay-method">
+            <p class="eyebrow c">// PayPal</p>
+            <a class="don-btn" id="don-btn" href="#" rel="noopener" target="_blank">Mit PayPal spenden</a>
+            <div class="don-qr" id="don-qr" hidden>
+              <div class="qbox" id="don-qr-box"></div>
+              <span class="qcap">Scannen zum Spenden — führt direkt zu PayPal.</span>
+            </div>
+            <p class="note pay-mail">PayPal: <span id="don-mail" class="mono">—</span></p>
+          </div>
+          <div class="pay-method crypto-wrap" id="crypto-wrap" hidden>
+            <p class="eyebrow c">// Krypto</p>
+            <div id="crypto-list"></div>
+            <p class="note" id="crypto-recv"></p>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ============ NEWS ============ -->
+  <section id="news" class="wrap rv">
+    <p class="eyebrow c">// Was es Neues gibt</p>
+    <h2>News</h2>
+    <div class="rule"></div>
+    <div id="news-list" class="news-list" aria-live="polite">
+      <p class="news-empty">Neuigkeiten werden geladen …</p>
+    </div>
+  </section>
+
+  <!-- ============ THEMEN-MONITOR ============ -->
+  <section id="monitor" class="wrap rv">
+    <p class="eyebrow m">// Was auf den Schirm kommt</p>
+    <h2>Themen-Monitor</h2>
+    <div class="rule"></div>
+    <div class="log" role="list" aria-label="Themen unserer Streams">
+      <p class="head">▚ SENTINEL-ERFASSUNG — laufende Beobachtung</p>
+      <ul>
+        <li role="listitem"><span class="tag">[ERFASST]</span><span class="txt">Suchtverhalten und Selbstzerstörung</span></li>
+        <li role="listitem"><span class="tag">[ERFASST]</span><span class="txt">Fragwürdige Influencer und gefährliche Trends</span></li>
+        <li role="listitem"><span class="tag">[ERFASST]</span><span class="txt">Moralische Entgleisungen und gesellschaftliche Abgründe</span></li>
+        <li role="listitem"><span class="tag">[ERFASST]</span><span class="txt">Manipulation, Fake-Content und Desinformation</span></li>
+        <li role="listitem"><span class="tag">[ERFASST]</span><span class="txt">Auffälliges oder problematisches Verhalten im Netz</span></li>
+        <li role="listitem"><span class="tag">[ERFASST]</span><span class="txt">Fälle mutmaßlicher Grooming- oder Pädophilie-Vorwürfe, soweit sie öffentlich bekannt oder Gegenstand der Berichterstattung sind</span></li>
+      </ul>
+      <p class="note">Grundlage sind ausschließlich öffentlich zugängliche Inhalte und Berichterstattung. Es gilt die Unschuldsvermutung.</p>
+    </div>
+  </section>
+
+  <!-- ============ AZRAEL SENTINEL ============ -->
+  <section id="azrael" class="wrap">
+    <p class="eyebrow c">// Unsere eigene KI — im Detail</p>
+    <h2>Azrael Sentinel</h2>
+    <div class="rule"></div>
+
+    <div class="az-grid rv">
+      <div class="eye" aria-hidden="true">
+        <div class="sweep"></div>
+        <div class="ring"></div><div class="ring"></div><div class="ring"></div>
+        <div class="core"></div>
+      </div>
+      <div class="prose">
+        <p class="lead">Azrael Sentinel ist keine Cloud-KI von der Stange. Es ist ein selbst gehostetes KI-System, das auf eigener Server-Hardware läuft und für genau eine Aufgabe gebaut wurde: <span style="color:var(--white)">Livestreams in Echtzeit verstehen und einordnen.</span></p>
+        <p>Kein OpenAI, kein Google, keine Datenweitergabe: Jede Sekunde Audio, jede Chat-Nachricht und jede Analyse bleibt auf unserer eigenen Maschine. Das ist technisch anspruchsvoller als eine Cloud-API — aber es ist die einzige Architektur, die zu unserem Anspruch an Unabhängigkeit passt.</p>
+      </div>
+    </div>
+
+    <h3>Die Pipeline — vom Stream zur Reaktion</h3>
+    <p class="pipe-ms">Typische Ende-zu-Ende-Latenz: unter 3 Sekunden*</p>
+    <div class="pipe rv" role="list" aria-label="Verarbeitungs-Pipeline">
+      <div class="node" role="listitem"><b>01 · Ingest</b>Stream-Audio wird abgegriffen und in Segmente zerlegt.<em><br>ffmpeg · Voice Activity Detection</em></div>
+      <div class="node" role="listitem"><b>02 · Transkription</b>Gesprochenes wird lokal in Text umgewandelt — auch bei Musik und Nebengeräuschen.<em><br>Whisper (lokal, VAD-getunt)</em></div>
+      <div class="node" role="listitem"><b>03 · Azrael Core</b>Vier-Stufen-Entscheidung: erst Regeln, dann Daten, dann Wissensgraph — das Sprachmodell nur, wenn nötig.<em><br>Hybrid-Architektur, s. unten</em></div>
+      <div class="node" role="listitem"><b>04 · Ausgabe</b>Reaktion in den Stream, Moderations­entscheidung oder stiller Log-Eintrag.<em><br>Kick · Discord · TikTok</em></div>
+    </div>
+
+    <h3>Technische Eckdaten</h3>
+    <table class="spec rv">
+      <tbody>
+        <tr><th scope="row">Modellbasis</th>
+          <td>Feinabgestimmtes Open-Source-Sprachmodell, ~1,5 Milliarden Parameter
+            <span class="why">Bewusst kompakt: für Live-Reaktionen zählt Latenz, nicht Modellgröße. Ein 70B-Modell wäre auf CPU-Hardware nicht echtzeitfähig.</span></td></tr>
+        <tr><th scope="row">Quantisierung</th>
+          <td>4-Bit (INT4, Q4_K_M)
+            <span class="why">Reduziert den Speicherbedarf des Modells auf ~1 GB bei minimalem Qualitätsverlust — Voraussetzung für CPU-Betrieb.</span></td></tr>
+        <tr><th scope="row">Kontextfenster</th>
+          <td>4.096 Tokens
+            <span class="why">Genug für Transkript-Ausschnitt + Chatverlauf + Anweisung; klein gehalten, weil der KV-Cache sonst RAM frisst.</span></td></tr>
+        <tr><th scope="row">Inferenz</th>
+          <td>CPU-only, 4 dedizierte Kerne, llama.cpp-Runtime
+            <span class="why">Keine GPU nötig. Die anderen Kerne gehören der Stream-Verarbeitung — die hat immer Vorrang vor der KI.</span></td></tr>
+        <tr><th scope="row">Spracherkennung</th>
+          <td>Whisper, lokal, mit Voice-Activity-Detection
+            <span class="why">VAD-Tuning verhindert, dass Musik oder Stille als Sprache fehlinterpretiert wird.</span></td></tr>
+        <tr><th scope="row">Entscheidungs-Budget</th>
+          <td>Hartes Limit an LLM-Aufrufen pro Stunde
+            <span class="why">Das Sprachmodell ist die Ausnahme, nicht die Regel — über 90% aller Entscheidungen fallen ohne LLM (s. Kaskade).</span></td></tr>
+        <tr><th scope="row">Gedächtnis</th>
+          <td>Langzeit-Ereignisspeicher + Wissensgraph (SQLite)
+            <span class="why">Azrael merkt sich Streams, Muster und eigene Entscheidungen — nicht nur den Chatverlauf.</span></td></tr>
+        <tr><th scope="row">Hosting</th>
+          <td>Eigener dedizierter Server (Ubuntu), 24/7
+            <span class="why">Volle Datenhoheit. Nichts verlässt die Maschine.</span></td></tr>
+      </tbody>
+    </table>
+    <p class="footnote">* Latenz abhängig von Segmentlänge und Auslastung; Werte aus dem laufenden Betrieb. Konfiguration wird laufend weiterentwickelt — Angaben entsprechen dem aktuellen Stand.</p>
+
+    <h3>Die Vier-Stufen-Kaskade — warum Azrael so schnell ist</h3>
+    <p class="prose" style="margin-bottom:18px">Die meisten "KI-Systeme" schicken alles durch ein Sprachmodell. Azrael macht das Gegenteil: Jede Aufgabe durchläuft vier Stufen, und die teuerste Stufe kommt zuletzt. Jede Entscheidung wird mit Begründung protokolliert — wir können jederzeit nachlesen, <em>warum</em> Azrael etwas getan hat.</p>
+    <ol class="tiers rv">
+      <li><span class="share">µs · deterministisch</span><b>Regeln.</b> Reconnects, Ressourcen-Wächter, Moderations-Grundregeln: eindeutige Wenn-Dann-Logik. Hier wird niemals ein Sprachmodell gebraucht.</li>
+      <li><span class="share">ms · Fakten</span><b>Datenbank.</b> "Wie oft war Streamer X diese Woche live?" — Faktenfragen beantwortet der Ereignisspeicher direkt.</li>
+      <li><span class="share">ms · gelernt</span><b>Wissensgraph.</b> Zusammenhänge aus Beobachtung: wer streamt wann, welche Muster wiederholen sich. Automatisch abgeleitet, jeder Fakt mit Quelle und Begründung.</li>
+      <li><span class="share">s · nur wenn nötig</span><b>Sprachmodell.</b> Erst wenn die Stufen 1–3 nicht reichen — freie Formulierungen, Einordnung, Zusammenfassungen. Budgetiert und protokolliert.</li>
+    </ol>
+
+    <h3>Die Agenten-Flotte</h3>
+    <p class="prose" style="margin-bottom:18px">Azrael ist kein einzelner Prozess, sondern ein Verbund spezialisierter Agenten. Jeder läuft in eigenem Takt und kann einzeln aktiviert oder deaktiviert werden:</p>
+    <p class="agents-status" id="agents-status">Wächter-Flotte …</p>
+    <div class="agents rv" id="agents-grid">
+      <div class="agent" data-agent="health"><b>Health</b>Selbstüberwachung: Taktlücken, Datenbank­zustand, Fehlerhäufungen.</div>
+      <div class="agent" data-agent="recovery"><b>Recovery</b>Erkennt festgefahrene Prozesse und räumt auf, wo die normale Automatik nicht griff.</div>
+      <div class="agent" data-agent="scout"><b>Scout</b>Vorausschau: wer geht wahrscheinlich wann live? Aus Wochen an Beobachtung.</div>
+      <div class="agent" data-agent="analytics"><b>Analytics</b>Verdichtet jeden Tag zu einem Lagebild: Live-Sessions, Aktivität, Entscheidungen.</div>
+      <div class="agent" data-agent="learning"><b>Learning</b>Misst die eigene Prognosegüte gegen die Realität — nachweisbar, nicht gefühlt.</div>
+      <div class="agent" data-agent="sentinel"><b>Sentinel</b>Wächter am Rand: erkennt Angriffe und feindselige IPs, bevor sie stören.</div>
+      <div class="agent" data-agent="toxicity"><b>Toxicity</b>Beobachtet den Ton im Chat und schlägt an, wenn er kippt.</div>
+      <div class="agent" data-agent="uptime"><b>Uptime</b>Prüft je Plattform (Kick/Twitch/YouTube), ob die Chat-Verbindung wirklich steht.</div>
+      <div class="agent" data-agent="restream_sentinel"><b>Restream</b>Erkennt Restream-Ziele, die still scheitern — und meldet den echten Grund.</div>
+      <div class="agent" data-agent="disk"><b>Disk</b>Speicher-Reichweite: warnt früh, lange bevor der Platz knapp wird.</div>
+      <div class="agent" data-agent="recording"><b>Session</b>Erkennt hängende Live-Erfassungen und stößt sauber neu an.</div>
+      <div class="agent" data-agent="proxy"><b>Proxy</b>Wacht über den einzigen Weg zu TikTok — erkennt Blocks und Limits sofort.</div>
+      <div class="agent" data-agent="swap"><b>Swap</b>Hält den Arbeitsspeicher flott: leert regelmäßig den Swap zurück ins RAM — mit striktem Schutz vor Überlastung.</div>
+    </div>
+
+    <ul class="az-facts" style="margin-top:34px">
+      <li><b>Erklärbar by design:</b> jede Entscheidung trägt eine Begründung im Log — "warum wurde das getan?" ist immer beantwortbar.</li>
+      <li><b>Autonomie wird verdient:</b> neue Fähigkeiten laufen erst im Beobachtungsmodus und dürfen erst handeln, wenn das Protokoll zeigt, dass sie richtig liegen.</li>
+      <li><b>Messbares Lernen:</b> Prognosen werden gegen die Realität geprüft (Brier-Score) — Verbesserung ist eine Zahl, kein Marketing-Versprechen.</li>
+    </ul>
+  </section>
+
+  <!-- ============ GRUNDSÄTZE ============ -->
+  <section id="grundsaetze" class="wrap rv">
+    <p class="eyebrow g">// Woran wir uns halten</p>
+    <h2>Grundsätze</h2>
+    <div class="rule"></div>
+    <div class="principles">
+      <div class="principle"><b>Öffentliche Quellen</b>Wir arbeiten ausschließlich mit öffentlich zugänglichen Inhalten und Berichterstattung.</div>
+      <div class="principle"><b>Unschuldsvermutung</b>Vorwürfe bleiben Vorwürfe, bis sie belegt sind — und werden so benannt.</div>
+      <div class="principle"><b>Kritik an Verhalten</b>Wir kritisieren Inhalte und Verhalten, nicht Menschen als solche.</div>
+      <div class="principle"><b>Moderierte Community</b>Diskutiert wird auf unserem <a href="https://discord.gg/XyxTDD8Ga" rel="noopener">Discord-Server</a> — Azrael und menschliche Moderation greifen bei Hass, Doxxing und Grenzüberschreitungen konsequent ein.</div>
+    </div>
+    <div class="disclaimer">❗ Wir fördern weder Hass noch Mobbing. Wer in unseren Communities zu Belästigung oder Übergriffen aufruft, fliegt — ohne Diskussion.</div>
+  </section>
+
+</main>
+
+<footer>
+  <div class="wrap f">
+    <span><b>LAFAP</b> · Logik Absolut Fehl am Platz<span class="ver" id="site-ver" aria-hidden="true"></span></span>
+    <nav aria-label="Rechtliches">
+      <a href="/impressum.html">Impressum</a>
+      <a href="/datenschutz.html">Datenschutz</a>
+    </nav>
+    <span>Analysiert von Azrael Sentinel · <a href="https://discord.gg/XyxTDD8Ga" rel="noopener" style="color:inherit">Discord</a> · lafap.de</span>
+  </div>
+</footer>
+
+<script>
+/* Scroll-Reveal — einziges JS der Seite. Ohne JS bleibt alles sichtbar
+   (Klasse .js wird erst hier gesetzt); reduced-motion deaktiviert es. */
+(function(){
+  if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  document.body.classList.add('js');
+  var io = new IntersectionObserver(function(es){
+    es.forEach(function(e){
+      if (e.isIntersecting){ e.target.classList.add('in'); io.unobserve(e.target); }
+    });
+  }, {threshold: .12});
+  document.querySelectorAll('.rv').forEach(function(el){ io.observe(el); });
+})();
+</script>
+
+<script>
+/* News aus news.json (vom News-Agent geschrieben). Rein statisch: die Seite
+   holt die Datei per fetch; fehlt sie, bleibt der Bereich ruhig leer. */
+(function(){
+  var box=document.getElementById('news-list'); if(!box) return;
+  var LAB={project:'Projekt',creators:'Creator',ai:'KI'};
+  function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];});}
+  function fmt(ts){ if(!ts) return ''; try{ return new Date(ts*1000).toLocaleDateString('de-DE',{day:'2-digit',month:'short',year:'numeric'}); }catch(e){ return ''; } }
+  fetch('news.json?_='+Date.now()).then(function(r){ if(!r.ok) throw 0; return r.json(); }).then(function(d){
+    var items=(d&&d.items)||[];
+    if(!items.length){ box.innerHTML='<p class="news-empty">Noch keine Neuigkeiten.</p>'; return; }
+    box.innerHTML=items.map(function(it){
+      var cat=it.category||''; var lab=it.category_label||LAB[cat]||cat;
+      return '<article class="news-item news-cat-'+esc(cat)+'">'
+        +'<div class="n-top"><span class="n-cat">'+esc(lab)+'</span><span class="n-date">'+esc(fmt(it.ts))+'</span></div>'
+        +'<h3>'+esc(it.title||'')+'</h3><p>'+esc(it.body||'')+'</p></article>';
+    }).join('');
+  }).catch(function(){ box.innerHTML='<p class="news-empty">Neuigkeiten derzeit nicht verf\u00fcgbar.</p>'; });
+})();
+</script>
+<script>
+/* v4.0: Lagebild — sichere oeffentliche Metriken aus stats.json (nur Live-Begleitung). */
+(function(){
+  function setk(k,v){var el=document.querySelector('[data-k="'+k+'"]'); if(el) el.textContent=v;}
+  fetch('stats.json?_='+Date.now()).then(function(r){ if(!r.ok) throw 0; return r.json(); }).then(function(d){
+    setk('tracked', d.tracked!=null?d.tracked:'\u2014');
+    setk('live_today', d.live_today!=null?d.live_today:'\u2014');
+    setk('platforms', (d.platforms&&d.platforms.length)||0);
+    setk('agents_active', (d.agents_known!==false && d.agents_active!=null)?d.agents_active:'\u2014');  // W74: „—" statt irreführendem 0, wenn Flotte unbekannt
+    setk('kg_facts', d.kg_facts!=null?d.kg_facts:'\u2014');
+    setk('total_live_7d', d.total_live_7d!=null?d.total_live_7d:'\u2014');
+    setk('moderation_7d', d.moderation_7d!=null?d.moderation_7d:'\u2014');
+    setk('peak_live', d.peak_live!=null?d.peak_live:'\u2014');
+    // v4.0-W92: KI-Verbrauch (Tokens/Kosten) + 3D-Statistik füttern.
+    try{
+      var u=d.usage||{}; var m=u.month||{};
+      var fmtN=function(n){ n=+n||0;
+        if(n>=1e9)return (n/1e9).toFixed(2)+' Mrd';
+        if(n>=1e6)return (n/1e6).toFixed(2)+' Mio';
+        if(n>=1e3)return (n/1e3).toFixed(1)+'k'; return String(Math.round(n)); };
+      var fmtE=function(v){ return (+v||0).toLocaleString('de-DE',{minimumFractionDigits:2,maximumFractionDigits:2})+' €'; };
+      // v4.0-W98/W101: Token->Euro rechnet die WEBSITE selbst (nicht vom fertigen
+      // Server-Wert abhaengig). Die RATE liest sie aus stats.json (u.rate) — eine
+      // Quelle der Wahrheit; nur falls ein aelteres Backend sie nicht liefert,
+      // greifen die Fallback-Konstanten (Claude-haiku 1.00/5.00 USD, USD->EUR 0.92).
+      var _rt=(u&&u.rate)||{};
+      var _EUR=(+_rt.usd_eur)||0.92;
+      var _RIN=((+_rt.in_per_mtok_usd)||1.00)*_EUR/1e6, _ROUT=((+_rt.out_per_mtok_usd)||5.00)*_EUR/1e6;
+      var _cost=function(tin,tout){ return (+tin||0)*_RIN + (+tout||0)*_ROUT; };
+      var costTotal=_cost(u.tokens_in,u.tokens_out);
+      // Monat: stats.json liefert nur tokens_total (kein In/Out-Split) -> mit dem
+      // €/Token des Gesamtwerts skalieren; Fallback = Mittel aus In/Out-Rate.
+      var _tot=(+u.tokens_total||0), _perTok=_tot>0?(costTotal/_tot):((_RIN+_ROUT)/2);
+      var costMonth=(+m.tokens_total||0)*_perTok;
+      setk('tok_total', u.tokens_total!=null?fmtN(u.tokens_total):'\u2014');
+      setk('cost_total', u.tokens_total!=null?fmtE(costTotal):'\u2014');
+      setk('tok_month', m.tokens_total!=null?fmtN(m.tokens_total):'\u2014');
+      setk('cost_month', m.tokens_total!=null?fmtE(costMonth):'\u2014');
+      var upd=document.getElementById('usage-upd');
+      if(upd&&u.updated_at){ upd.textContent='aktualisiert '+new Date(u.updated_at*1000).toLocaleTimeString('de-DE',{hour:'2-digit',minute:'2-digit'}); }
+      if(window.__usage3d){ window.__usage3d(+u.tokens_in||0, +u.tokens_out||0, costTotal); }
+    }catch(e){}
+    // v4.0-W92: Live-Spendenpanel (PayPal-Ziel).
+    try{
+      var dn=d.donation||{};
+      var fmtE2=function(v){ return (+v||0).toLocaleString('de-DE',{minimumFractionDigits:2,maximumFractionDigits:2})+' €'; };
+      if(dn.current_eur!=null) setk('don_cur', fmtE2(dn.current_eur));
+      if(dn.goal_eur!=null){ setk('don_goal', fmtE2(dn.goal_eur)); setk('don_goal2', fmtE2(dn.goal_eur)); }
+      var pct=Math.max(0,Math.min(100,+dn.pct||0));
+      setk('don_pct', pct.toLocaleString('de-DE',{maximumFractionDigits:1})+' %');
+      var fill=document.getElementById('don-fill'); if(fill) fill.style.width=pct+'%';
+      var pb=document.getElementById('don-progress'); if(pb) pb.setAttribute('aria-valuenow',String(Math.round(pct)));
+      if(window.__don3d) window.__don3d(pct);   /* v4.0-W102: 3D-Münze folgt dem Fortschritt */
+      if(dn.period){ var dp=document.getElementById('don-period'); if(dp) dp.textContent=dn.period; }
+      var mail=(dn.paypal||'').trim();
+      if(mail){
+        var mel=document.getElementById('don-mail'); if(mel) mel.textContent=mail;
+        var btn=document.getElementById('don-btn');
+        if(btn){ btn.href='https://www.paypal.com/donate/?business='+encodeURIComponent(mail)
+          +'&currency_code=EUR&item_name='+encodeURIComponent('Azrael Sentinel — Betrieb'); }
+      }
+      // v4.0-W95: PayPal-QR (Inline-SVG vom eigenen Server)
+      var dq=document.getElementById('don-qr'), dqb=document.getElementById('don-qr-box');
+      if(dq&&dqb){ if(dn.paypal_qr){ dqb.innerHTML=dn.paypal_qr; dq.hidden=false; } else { dq.hidden=true; } }
+    }catch(e){}
+    // v4.0-W94: Krypto-Spendenadressen (nur gesetzte) + BTC-Empfang.
+    try{
+      var cw=document.getElementById('crypto-wrap'), cl=document.getElementById('crypto-list');
+      var cr=(d.crypto&&Array.isArray(d.crypto.addresses))?d.crypto.addresses:[];
+      if(cw&&cl&&cr.length){
+        // v4.0-W101: Adresse/Label escapen (Quelle ist zwar die eigene env, aber
+        // sicher ist sauber). QR bleibt Markup — server-generiertes SVG.
+        var esc=function(s){ return String(s==null?'':s).replace(/[&<>"']/g,function(c){
+          return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); };
+        cl.innerHTML=cr.map(function(a){
+          var addr=String(a.address||''); var eaddr=esc(addr);
+          var qr=a.qr?('<div class="crypto-qr">'+a.qr+'</div>'):'';
+          return '<div class="crypto-row">'+qr+'<span class="crypto-coin">'+esc(a.label||a.coin)+'</span>'
+            +'<span class="crypto-addr">'+eaddr+'</span>'
+            +'<button class="crypto-copy" type="button" data-addr="'+eaddr+'">Kopieren</button></div>';
+        }).join('');
+        cl.querySelectorAll('.crypto-copy').forEach(function(btn){
+          btn.addEventListener('click',function(){
+            var a=btn.getAttribute('data-addr');
+            var done=function(){ btn.textContent='Kopiert ✓'; btn.classList.add('done');
+              setTimeout(function(){ btn.textContent='Kopieren'; btn.classList.remove('done'); },1600); };
+            if(navigator.clipboard&&navigator.clipboard.writeText){ navigator.clipboard.writeText(a).then(done,done); }
+            else{ try{ var t=document.createElement('textarea');t.value=a;document.body.appendChild(t);
+              t.select();document.execCommand('copy');document.body.removeChild(t);done(); }catch(e){} }
+          });
+        });
+        var recv=document.getElementById('crypto-recv');
+        if(recv){ recv.textContent=(d.crypto.btc_received_btc!=null)
+          ? ('Bislang empfangen: '+d.crypto.btc_received_btc+' BTC') : ''; }
+        cw.hidden=false;
+        // v4.0-W99: zweispaltig nur, wenn Krypto sichtbar ist
+        var pm=document.getElementById('pay-methods'); if(pm) pm.classList.add('has-crypto');
+      } else if(cw){ cw.hidden=true;
+        var pm2=document.getElementById('pay-methods'); if(pm2) pm2.classList.remove('has-crypto'); }
+    }catch(e){}
+    // v4.0-W72: Plattform-Chips aus der echten platforms-Liste.
+    try{
+      var chips=document.getElementById('platform-chips');
+      var plats=Array.isArray(d.platforms)?d.platforms:[];
+      var PL={kick:'Kick',twitch:'Twitch',youtube:'YouTube',tiktok:'TikTok'};
+      if(chips){ chips.innerHTML=plats.map(function(p){
+        var key=String(p||'').toLowerCase();
+        return '<span class="chip">'+(PL[key]||String(p))+'</span>';
+      }).join(''); }
+    }catch(e){}
+    // v4.0-W72: Version dezent im Footer (echtes stats-Feld).
+    try{ var ver=document.getElementById('site-ver');
+      if(ver&&d.version){ ver.textContent='Azrael Sentinel v'+d.version; } }catch(e){}
+    // v4.0-W4/W74: Wächter-Flotte live. Autoritativ aus d.agents; ist die Liste
+    // leer (Brain im schreibenden Prozess nicht erreichbar → agents_known=false),
+    // wird KEIN falsches „0 von 12" behauptet, sondern der echte Zustand gezeigt.
+    try{
+      var ags=Array.isArray(d.agents)?d.agents:[];
+      var known=(d.agents_known!==false) && ags.length>0;
+      var amap={}; ags.forEach(function(a){ amap[a.name]=!!a.active; });
+      var grid=document.getElementById('agents-grid');
+      if(grid){ grid.querySelectorAll('.agent[data-agent]').forEach(function(el){
+        var on=amap[el.getAttribute('data-agent')];
+        // nur dimmen, wenn die Flotte bekannt IST und dieser Agent als aus gemeldet wird
+        if(known && on===false){ el.classList.add('inactive'); }
+        else { el.classList.remove('inactive'); }
+      }); }
+      var st=document.getElementById('agents-status');
+      if(st){
+        if(known){
+          var tot=d.agents_total||ags.length;
+          var act=(d.agents_active!=null?d.agents_active:ags.filter(function(a){return a.active;}).length);
+          st.innerHTML='Wächter-Flotte · <b>'+act+' von '+tot+'</b> aktiv';
+        } else {
+          st.innerHTML='Wächter-Flotte · <b>Status nicht verfügbar</b> — Brain gerade nicht erreichbar';
+        }
+      }
+    }catch(e){}
+    var days=d.live_7d||[]; var chart=document.getElementById('live-chart');
+    var vals=days.map(function(x){return (x&&x.live)||0;});
+    var max=Math.max.apply(null,[1].concat(vals));
+    var mx=document.getElementById('chart-max'); if(mx) mx.textContent='max '+max+' / Tag';
+    if(chart){
+      if(!days.length){ chart.innerHTML='<span class="chart-legend">Noch keine Live-Aktivit\u00e4t erfasst.</span>'; }
+      else chart.innerHTML=days.map(function(x){
+        var v=(x&&x.live)||0, h=Math.round((v/max)*100);
+        var dd=new Date((x&&x.day||'')+'T00:00:00');
+        var lbl=isNaN(dd.getTime())?'':dd.toLocaleDateString('de-DE',{weekday:'short'});
+        return '<div class="bar"><span class="v">'+v+'</span><div class="col" style="height:'+h+'%"></div><span class="d">'+lbl+'</span></div>';
+      }).join('');
+    }
+    // v4.0-W4: zweiter Chart — Moderations-Aktivität je Tag.
+    var md=d.mod_7d||[]; var mchart=document.getElementById('mod-chart');
+    var mvals=md.map(function(x){return (x&&x.n)||0;});
+    var mmax=Math.max.apply(null,[1].concat(mvals));
+    var mm=document.getElementById('mod-max'); if(mm) mm.textContent='max '+mmax+' / Tag';
+    if(mchart){
+      if(!md.length){ mchart.innerHTML='<span class="chart-legend">Noch keine Moderations-Aktivität.</span>'; }
+      else mchart.innerHTML=md.map(function(x){
+        var v=(x&&x.n)||0, h=Math.round((v/mmax)*100);
+        var dd=new Date((x&&x.day||'')+'T00:00:00');
+        var lbl=isNaN(dd.getTime())?'':dd.toLocaleDateString('de-DE',{weekday:'short'});
+        return '<div class="bar"><span class="v">'+v+'</span><div class="col" style="height:'+h+'%"></div><span class="d">'+lbl+'</span></div>';
+      }).join('');
+    }
+    var ts=document.getElementById('metric-ts');
+    if(ts&&d.generated_at){ var t=new Date(d.generated_at*1000);
+      ts.textContent='Stand: '+t.toLocaleString('de-DE')+' \u2014 keine Aufzeichnung, nur Live-Begleitung.'; }
+  }).catch(function(){ var c=document.getElementById('live-chart');
+    if(c) c.innerHTML='<span class="chart-legend">Metriken derzeit nicht verf\u00fcgbar.</span>'; });
+})();
+</script>
+<script>
+/* v4.0-W72 · SENTINEL-KERN — drehbares 3D-Drahtgitter (Vanilla-Canvas, kein
+   Fremd-Code, kein externer Request). Breitengrad/Längengrad-Kugel + umlaufende
+   Wächter-Knoten in Phosphor/Cyan; ziehen dreht, sonst Auto-Spin. Bei
+   prefers-reduced-motion nur EIN statisches Bild, kein Loop. Pausiert bei
+   verstecktem Tab. */
+(function(){
+  var cv=document.getElementById('sentinel-core'); if(!cv||!cv.getContext) return;
+  var ctx=cv.getContext('2d'), W=0,H=0,dpr=1,raf=null,yaw=0.6,tilt=-0.42,
+      spin=0.0032, drag=null, t=0,
+      reduce=!!(window.matchMedia&&window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+  function cssv(n,f){try{var v=getComputedStyle(document.documentElement).getPropertyValue(n).trim();return v||f;}catch(e){return f;}}
+  var PHOS=cssv('--phos','#00ff9c'), CYAN=cssv('--cyan','#00e5ff'), DIM=cssv('--dim','#5c6f68');
+  function fit(){var r=cv.parentElement.getBoundingClientRect();
+    W=Math.max(160,r.width||240);H=Math.max(160,r.height||W);
+    dpr=Math.min(2,window.devicePixelRatio||1);
+    cv.width=W*dpr;cv.height=H*dpr;}
+  // Kugelgitter: Punkte auf Breiten-/Längenkreisen
+  var grid=[];
+  (function(){
+    var la,lo;
+    for(la=-60;la<=60;la+=30){for(lo=0;lo<360;lo+=12){grid.push(sph(la,lo,'line'));}}
+    for(lo=0;lo<360;lo+=30){for(la=-78;la<=78;la+=12){grid.push(sph(la,lo,'line'));}}
+  })();
+  // Wächter-Flotte: 12 Knoten fest verteilt
+  var fleet=[]; (function(){var i,seed=[[18,20],[52,80],[-30,140],[8,210],[64,300],
+    [-50,40],[36,175],[-12,260],[70,110],[-64,330],[24,55],[-40,230]];
+    for(i=0;i<seed.length;i++){var p=sph(seed[i][0],seed[i][1],'node');p.hue=i%3;p.ph=i*0.7;fleet.push(p);}})();
+  function sph(la,lo,kind){var a=la*Math.PI/180,b=lo*Math.PI/180;
+    return {x:Math.cos(a)*Math.cos(b),y:Math.sin(a),z:Math.cos(a)*Math.sin(b),kind:kind};}
+  function proj(p){
+    var cy=Math.cos(yaw),sy=Math.sin(yaw),cp=Math.cos(tilt),sp=Math.sin(tilt);
+    var x1=p.x*cy - p.z*sy, z1=p.x*sy + p.z*cy;
+    var y2=p.y*cp - z1*sp, z2=p.y*sp + z1*cp;
+    var R=Math.min(W,H)*0.34, persp=1.9/(1.9+z2);
+    return {x:W/2 + x1*R*persp, y:H/2 - y2*R*persp, z:z2, s:persp};
+  }
+  function frame(){
+    ctx.setTransform(dpr,0,0,dpr,0,0);ctx.clearRect(0,0,W,H);
+    var cx=W/2,cy=H/2,R=Math.min(W,H)*0.34;
+    // Grundschein
+    var glow=ctx.createRadialGradient(cx,cy,R*0.1,cx,cy,R*1.25);
+    glow.addColorStop(0,'rgba(0,255,156,0.10)');glow.addColorStop(1,'rgba(0,255,156,0)');
+    ctx.fillStyle=glow;ctx.beginPath();ctx.arc(cx,cy,R*1.25,0,6.2832);ctx.fill();
+    // Äquator-Ring
+    ctx.strokeStyle='rgba(0,229,255,0.18)';ctx.lineWidth=1;ctx.beginPath();
+    for(var e=0;e<=64;e++){var pe=proj(sph(0,e/64*360,'line'));e?ctx.lineTo(pe.x,pe.y):ctx.moveTo(pe.x,pe.y);}ctx.stroke();
+    // Gitterpunkte (Rückseite dunkler)
+    grid.forEach(function(p){var q=proj(p),front=q.z>=0;
+      ctx.globalAlpha=front?0.55:0.16;ctx.fillStyle=front?PHOS:DIM;
+      ctx.beginPath();ctx.arc(q.x,q.y,Math.max(0.6,1.1*q.s),0,6.2832);ctx.fill();});
+    ctx.globalAlpha=1;
+    // Flotten-Knoten (pulsierend)
+    fleet.map(function(p){return {p:p,q:proj(p)};})
+      .sort(function(a,b){return a.q.z-b.q.z;})
+      .forEach(function(o){var q=o.q,front=q.z>=0,
+        col=o.p.hue===1?CYAN:(o.p.hue===2?'#ffb000':PHOS),
+        pulse=0.6+0.4*Math.sin(t*0.05+o.p.ph),
+        rad=(front?3.2:1.8)*q.s*(0.8+0.4*pulse);
+      ctx.globalAlpha=front?1:0.25;
+      if(front){ctx.shadowColor=col;ctx.shadowBlur=10*pulse;}
+      ctx.fillStyle=col;ctx.beginPath();ctx.arc(q.x,q.y,rad,0,6.2832);ctx.fill();
+      ctx.shadowBlur=0;ctx.globalAlpha=1;});
+    // Kern
+    ctx.shadowColor=CYAN;ctx.shadowBlur=18;ctx.fillStyle=CYAN;
+    ctx.beginPath();ctx.arc(cx,cy,Math.max(2.5,R*0.05),0,6.2832);ctx.fill();ctx.shadowBlur=0;
+  }
+  function loop(){ if(document.hidden){raf=null;return;}
+    if(!drag)yaw+=spin; t++; frame(); raf=requestAnimationFrame(loop); }
+  function kick(){ if(reduce){frame();return;} if(!raf)raf=requestAnimationFrame(loop); }
+  // Ziehen zum Drehen
+  cv.style.touchAction='none';cv.style.cursor='grab';
+  cv.addEventListener('pointerdown',function(e){drag={x:e.clientX,y:e.clientY};cv.setPointerCapture&&cv.setPointerCapture(e.pointerId);cv.style.cursor='grabbing';});
+  cv.addEventListener('pointermove',function(e){if(!drag)return;yaw+=(e.clientX-drag.x)*0.008;
+    tilt=Math.max(-1.2,Math.min(1.2,tilt+(e.clientY-drag.y)*0.006));drag.x=e.clientX;drag.y=e.clientY;
+    if(reduce)frame();else kick();});
+  function endDrag(){drag=null;cv.style.cursor='grab';}
+  cv.addEventListener('pointerup',endDrag);cv.addEventListener('pointercancel',endDrag);
+  window.addEventListener('resize',function(){fit();if(reduce)frame();else kick();});
+  document.addEventListener('visibilitychange',function(){if(!document.hidden)kick();});
+  fit();kick();
+})();
+
+/* v4.0-W92: KI-Verbrauch als isometrische 3D-Balken (Input/Output-Tokens),
+   dependency-frei, reduced-motion-fest, bei verstecktem Tab pausiert. Wird über
+   window.__usage3d(inTok, outTok, cost) aus dem stats.json-Loader gefüttert. */
+(function(){
+  var cv=document.getElementById('usage-3d'); if(!cv||!cv.getContext) return;
+  var ctx=cv.getContext('2d'), W=0,H=0,dpr=1,raf=null,t=0,
+      reduce=!!(window.matchMedia&&window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+  function cssv(n,f){try{var v=getComputedStyle(document.documentElement).getPropertyValue(n).trim();return v||f;}catch(e){return f;}}
+  var PHOS=cssv('--phos','#00ff9c'),CYAN=cssv('--cyan','#00e5ff'),DIM=cssv('--dim','#5c6f68');
+  var bars=[{lab:'INPUT',col:CYAN,tv:0.5,v:0.5},{lab:'OUTPUT',col:PHOS,tv:0.8,v:0.8}];
+  var COS=Math.cos(Math.PI/6),SIN=Math.sin(Math.PI/6);
+  function fit(){var r=cv.parentElement.getBoundingClientRect();
+    W=Math.max(220,r.width||300);H=Math.max(160,r.height||220);
+    dpr=Math.min(2,window.devicePixelRatio||1);cv.width=W*dpr;cv.height=H*dpr;}
+  function iso(x,y,z,cx,cy,s){ return [cx+(x-z)*COS*s, cy+(x+z)*SIN*s - y*s]; }
+  function hexA(hex,a){ var h=(hex||'#00ff9c').replace('#','');
+    if(h.length===3)h=h[0]+h[0]+h[1]+h[1]+h[2]+h[2];
+    var r=parseInt(h.substr(0,2),16),g=parseInt(h.substr(2,2),16),b=parseInt(h.substr(4,2),16);
+    if(isNaN(r))return 'rgba(0,255,156,'+a+')'; return 'rgba('+r+','+g+','+b+','+a+')'; }
+  function quad(p1,p2,p3,p4,fill,stroke){ ctx.beginPath();ctx.moveTo(p1[0],p1[1]);
+    ctx.lineTo(p2[0],p2[1]);ctx.lineTo(p3[0],p3[1]);ctx.lineTo(p4[0],p4[1]);ctx.closePath();
+    if(fill){ctx.fillStyle=fill;ctx.fill();} if(stroke){ctx.strokeStyle=stroke;ctx.lineWidth=1;ctx.stroke();} }
+  function box(cx,cy,s,ox,oz,w,h,col){
+    var top=[iso(ox,h,oz,cx,cy,s),iso(ox+w,h,oz,cx,cy,s),iso(ox+w,h,oz+w,cx,cy,s),iso(ox,h,oz+w,cx,cy,s)];
+    var left=[iso(ox,0,oz+w,cx,cy,s),iso(ox+w,0,oz+w,cx,cy,s),iso(ox+w,h,oz+w,cx,cy,s),iso(ox,h,oz+w,cx,cy,s)];
+    var right=[iso(ox+w,0,oz,cx,cy,s),iso(ox+w,0,oz+w,cx,cy,s),iso(ox+w,h,oz+w,cx,cy,s),iso(ox+w,h,oz,cx,cy,s)];
+    quad(left[0],left[1],left[2],left[3],hexA(col,.14),hexA(col,.45));
+    quad(right[0],right[1],right[2],right[3],hexA(col,.26),hexA(col,.55));
+    ctx.save();ctx.shadowColor=col;ctx.shadowBlur=14;
+    quad(top[0],top[1],top[2],top[3],hexA(col,.5),col);ctx.restore();
+  }
+  function frame(){
+    ctx.setTransform(dpr,0,0,dpr,0,0);ctx.clearRect(0,0,W,H);
+    var s=Math.min(W,H)/6.2, cx=W/2, cy=H*0.68, g,i;
+    ctx.strokeStyle=hexA(DIM,.22);ctx.lineWidth=1;
+    for(g=0;g<=4;g++){ var a=iso(g,0,0,cx,cy,s),b=iso(g,0,4,cx,cy,s);
+      ctx.beginPath();ctx.moveTo(a[0],a[1]);ctx.lineTo(b[0],b[1]);ctx.stroke();
+      var c=iso(0,0,g,cx,cy,s),d=iso(4,0,g,cx,cy,s);
+      ctx.beginPath();ctx.moveTo(c[0],c[1]);ctx.lineTo(d[0],d[1]);ctx.stroke(); }
+    var pulse=reduce?1:(0.97+0.03*Math.sin(t*0.05)), pos=[[0.65,1.15],[2.25,1.15]], maxH=3.3;
+    for(i=0;i<bars.length;i++){ bars[i].v+=(bars[i].tv-bars[i].v)*0.08;
+      var h=Math.max(0.05,bars[i].v*maxH)*pulse;
+      box(cx,cy,s,pos[i][0],pos[i][1],1.1,h,bars[i].col);
+      var lp=iso(pos[i][0]+0.55,0,pos[i][1]+1.3,cx,cy,s);
+      ctx.fillStyle=hexA(bars[i].col,.9);ctx.font='700 10px "JetBrains Mono",monospace';
+      ctx.textAlign='center';ctx.fillText(bars[i].lab,lp[0],lp[1]+14); }
+    t++;
+  }
+  function loop(){ if(document.hidden){raf=null;return;} frame(); raf=requestAnimationFrame(loop); }
+  function kick(){ if(reduce){frame();return;} if(!raf)raf=requestAnimationFrame(loop); }
+  window.__usage3d=function(inTok,outTok){
+    var mx=Math.max(inTok||0,outTok||0,1);
+    bars[0].tv=(inTok||0)/mx; bars[1].tv=(outTok||0)/mx;
+    if(reduce)frame(); else kick();
+  };
+  fit(); window.addEventListener('resize',function(){fit();if(reduce)frame();else kick();});
+  document.addEventListener('visibilitychange',function(){if(!document.hidden)kick();});
+  kick();
+})();
+
+/* v4.0-W102: rotierende 3D-Euro-Münze für die Spenden-Box (Vanilla-Canvas,
+   dependency-frei, reduced-motion-fest, bei verstecktem Tab pausiert).
+   window.__don3d(pct) setzt den Fortschritt → hellere Münze bei mehr Prozent. */
+(function(){
+  var cv=document.getElementById('don-3d'); if(!cv||!cv.getContext) return;
+  var ctx=cv.getContext('2d'), W=0,H=0,dpr=1,raf=null,th=0.9,pct=0,tpct=0,
+      reduce=!!(window.matchMedia&&window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+  function cssv(n,f){try{var v=getComputedStyle(document.documentElement).getPropertyValue(n).trim();return v||f;}catch(e){return f;}}
+  var PHOS=cssv('--phos','#00ff9c'),AMBER=cssv('--amber','#ffb000'),CYAN=cssv('--cyan','#00e5ff');
+  function hexA(hex,a){var h=(hex||'#00ff9c').replace('#','');
+    if(h.length===3)h=h[0]+h[0]+h[1]+h[1]+h[2]+h[2];
+    var r=parseInt(h.substr(0,2),16),g=parseInt(h.substr(2,2),16),b=parseInt(h.substr(4,2),16);
+    if(isNaN(r))return 'rgba(0,255,156,'+a+')';return 'rgba('+r+','+g+','+b+','+a+')';}
+  function fit(){var r=cv.parentElement.getBoundingClientRect();
+    W=Math.max(200,r.width||300);H=Math.max(110,r.height||132);
+    dpr=Math.min(2,window.devicePixelRatio||1);cv.width=W*dpr;cv.height=H*dpr;}
+  function frame(){
+    ctx.setTransform(dpr,0,0,dpr,0,0);ctx.clearRect(0,0,W,H);
+    pct+=(tpct-pct)*0.06;
+    var glow=0.35+0.55*Math.min(1,pct/100);            // Fortschritt → Leuchtkraft
+    var cx=W/2, cy=H/2, R=Math.min(W,H)*0.40, TH=R*0.34;
+    var c=Math.cos(th), s=Math.sin(th);
+    var rx=R*Math.max(0.05,Math.abs(c)), ry=R;
+    var dir=(s>=0)?1:-1, dx=(TH/2)*Math.abs(s);
+    var faceCx=cx+dx*dir, farCx=faceCx-2*dx*dir;
+    // Kante (Zylinderrand) zwischen naher und ferner Fläche
+    if(dx>0.6){
+      ctx.beginPath();
+      ctx.moveTo(faceCx,cy-ry); ctx.lineTo(farCx,cy-ry);
+      ctx.lineTo(farCx,cy+ry);  ctx.lineTo(faceCx,cy+ry); ctx.closePath();
+      var eg=ctx.createLinearGradient(farCx,0,faceCx,0);
+      eg.addColorStop(0,hexA(AMBER,.30)); eg.addColorStop(1,hexA(AMBER,.62));
+      ctx.fillStyle=eg; ctx.fill();
+      ctx.strokeStyle=hexA(PHOS,.45); ctx.lineWidth=1; ctx.stroke();
+    }
+    // Münzfläche
+    ctx.save();
+    ctx.shadowColor=PHOS; ctx.shadowBlur=18*glow;
+    ctx.beginPath(); ctx.ellipse(faceCx,cy,rx,ry,0,0,Math.PI*2);
+    var fg=ctx.createRadialGradient(faceCx-rx*0.3,cy-ry*0.3,R*0.1,faceCx,cy,R);
+    fg.addColorStop(0,hexA(AMBER,.30+.4*glow));
+    fg.addColorStop(0.6,hexA(AMBER,.16+.2*glow));
+    fg.addColorStop(1,hexA('#0a0f12',.9));
+    ctx.fillStyle=fg; ctx.fill();
+    ctx.lineWidth=2; ctx.strokeStyle=hexA(PHOS,.55+.4*glow); ctx.stroke();
+    ctx.restore();
+    // innerer Ring + €-Symbol (horizontal mit der Drehung gestaucht)
+    if(rx>3){
+      ctx.beginPath(); ctx.ellipse(faceCx,cy,rx*0.74,ry*0.74,0,0,Math.PI*2);
+      ctx.strokeStyle=hexA(CYAN,.35); ctx.lineWidth=1; ctx.stroke();
+      ctx.save(); ctx.translate(faceCx,cy); ctx.scale(Math.max(0.05,Math.abs(c)),1);
+      ctx.fillStyle=hexA(PHOS,.85+.15*glow);
+      ctx.font='700 '+Math.round(R*0.9)+'px "Orbitron",sans-serif';
+      ctx.textAlign='center'; ctx.textBaseline='middle'; ctx.fillText('\u20AC',0,R*0.02);
+      ctx.restore();
+    }
+    if(!reduce) th+=0.028;
+  }
+  function loop(){ if(document.hidden){raf=null;return;} frame(); raf=requestAnimationFrame(loop); }
+  function kick(){ if(reduce){frame();return;} if(!raf)raf=requestAnimationFrame(loop); }
+  window.__don3d=function(p){ tpct=Math.max(0,Math.min(100,+p||0)); if(reduce)frame(); else kick(); };
+  fit(); window.addEventListener('resize',function(){fit();if(reduce)frame();else kick();});
+  document.addEventListener('visibilitychange',function(){if(!document.hidden)kick();});
+  kick();
+})();
+</script>
+</body>
+</html>

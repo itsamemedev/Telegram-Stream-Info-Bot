@@ -1,0 +1,81 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" width="1200" height="630" role="img" aria-label="LAFAP — Logik Absolut Fehl Am Platz">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#04100b"/><stop offset="55%" stop-color="#08180f"/><stop offset="100%" stop-color="#040d09"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#00ff9c" stop-opacity="0.16"/><stop offset="100%" stop-color="#00ff9c" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect width="1200" height="630" fill="url(#bg)"/>
+  <ellipse cx="880" cy="300" rx="420" ry="330" fill="url(#glow)"/>
+  <g fill="#00ff9c" fill-opacity="0.035">
+    <rect x="0" y="0" width="1200" height="2"/><rect x="0" y="9" width="1200" height="2"/><rect x="0" y="18" width="1200" height="2"/>
+    <rect x="0" y="27" width="1200" height="2"/><rect x="0" y="36" width="1200" height="2"/><rect x="0" y="45" width="1200" height="2"/>
+    <rect x="0" y="54" width="1200" height="2"/><rect x="0" y="63" width="1200" height="2"/><rect x="0" y="72" width="1200" height="2"/>
+    <rect x="0" y="81" width="1200" height="2"/><rect x="0" y="90" width="1200" height="2"/><rect x="0" y="99" width="1200" height="2"/>
+    <rect x="0" y="108" width="1200" height="2"/><rect x="0" y="117" width="1200" height="2"/><rect x="0" y="126" width="1200" height="2"/>
+    <rect x="0" y="135" width="1200" height="2"/><rect x="0" y="144" width="1200" height="2"/><rect x="0" y="153" width="1200" height="2"/>
+    <rect x="0" y="162" width="1200" height="2"/><rect x="0" y="171" width="1200" height="2"/><rect x="0" y="180" width="1200" height="2"/>
+    <rect x="0" y="189" width="1200" height="2"/><rect x="0" y="198" width="1200" height="2"/><rect x="0" y="207" width="1200" height="2"/>
+    <rect x="0" y="216" width="1200" height="2"/><rect x="0" y="225" width="1200" height="2"/><rect x="0" y="234" width="1200" height="2"/>
+    <rect x="0" y="243" width="1200" height="2"/><rect x="0" y="252" width="1200" height="2"/><rect x="0" y="261" width="1200" height="2"/>
+    <rect x="0" y="270" width="1200" height="2"/><rect x="0" y="279" width="1200" height="2"/><rect x="0" y="288" width="1200" height="2"/>
+    <rect x="0" y="297" width="1200" height="2"/><rect x="0" y="306" width="1200" height="2"/><rect x="0" y="315" width="1200" height="2"/>
+    <rect x="0" y="324" width="1200" height="2"/><rect x="0" y="333" width="1200" height="2"/><rect x="0" y="342" width="1200" height="2"/>
+    <rect x="0" y="351" width="1200" height="2"/><rect x="0" y="360" width="1200" height="2"/><rect x="0" y="369" width="1200" height="2"/>
+    <rect x="0" y="378" width="1200" height="2"/><rect x="0" y="387" width="1200" height="2"/><rect x="0" y="396" width="1200" height="2"/>
+    <rect x="0" y="405" width="1200" height="2"/><rect x="0" y="414" width="1200" height="2"/><rect x="0" y="423" width="1200" height="2"/>
+    <rect x="0" y="432" width="1200" height="2"/><rect x="0" y="441" width="1200" height="2"/><rect x="0" y="450" width="1200" height="2"/>
+    <rect x="0" y="459" width="1200" height="2"/><rect x="0" y="468" width="1200" height="2"/><rect x="0" y="477" width="1200" height="2"/>
+    <rect x="0" y="486" width="1200" height="2"/><rect x="0" y="495" width="1200" height="2"/><rect x="0" y="504" width="1200" height="2"/>
+    <rect x="0" y="513" width="1200" height="2"/><rect x="0" y="522" width="1200" height="2"/><rect x="0" y="531" width="1200" height="2"/>
+    <rect x="0" y="540" width="1200" height="2"/><rect x="0" y="549" width="1200" height="2"/><rect x="0" y="558" width="1200" height="2"/>
+    <rect x="0" y="567" width="1200" height="2"/><rect x="0" y="576" width="1200" height="2"/><rect x="0" y="585" width="1200" height="2"/>
+    <rect x="0" y="594" width="1200" height="2"/><rect x="0" y="603" width="1200" height="2"/><rect x="0" y="612" width="1200" height="2"/>
+    <rect x="0" y="621" width="1200" height="2"/>
+  </g>
+  <g stroke="#00e5ff" stroke-opacity="0.35" stroke-width="3" fill="none">
+    <path d="M48 48 h50 M48 48 v50"/><path d="M1152 48 h-50 M1152 48 v50"/>
+    <path d="M48 582 h50 M48 582 v-50"/><path d="M1152 582 h-50 M1152 582 v-50"/>
+  </g>
+
+  <!-- Akronym, wie auf der Seite: Initiale in Phosphor, Wort dahinter -->
+  <g font-family="'DejaVu Sans Mono',ui-monospace,monospace">
+    <text x="96" y="168" font-size="62" font-weight="bold" fill="#00ff9c" letter-spacing="2">L</text>
+    <text x="152" y="168" font-size="46" fill="#e8fff4" letter-spacing="3">ogik</text>
+    <text x="96" y="238" font-size="62" font-weight="bold" fill="#00ff9c" letter-spacing="2">A</text>
+    <text x="152" y="238" font-size="46" fill="#e8fff4" letter-spacing="3">bsolut</text>
+    <text x="96" y="308" font-size="62" font-weight="bold" fill="#00ff9c" letter-spacing="2">F</text>
+    <text x="152" y="308" font-size="46" fill="#e8fff4" letter-spacing="3">ehl</text>
+    <text x="96" y="378" font-size="62" font-weight="bold" fill="#00ff9c" letter-spacing="2">A</text>
+    <text x="152" y="378" font-size="46" fill="#e8fff4" letter-spacing="3">m</text>
+    <text x="96" y="448" font-size="62" font-weight="bold" fill="#00ff9c" letter-spacing="2">P</text>
+    <text x="152" y="448" font-size="46" fill="#e8fff4" letter-spacing="3">latz</text>
+  </g>
+
+  <line x1="96" y1="486" x2="1104" y2="486" stroke="#00e5ff" stroke-opacity="0.28" stroke-width="1.5"/>
+
+  <text x="96" y="530" font-family="'DejaVu Sans',system-ui,sans-serif" font-size="25" fill="#e8fff4" fill-opacity="0.92">Die Schattenseiten von TikTok Deutschland — ungeschönt und kritisch.</text>
+  <text x="96" y="566" font-family="'DejaVu Sans',system-ui,sans-serif" font-size="25" fill="#e8fff4" fill-opacity="0.7">Analysiert in Echtzeit von <tspan fill="#00ff9c" font-weight="bold">Azrael Sentinel</tspan>, unserer selbst gehosteten KI.</text>
+
+  <!-- Sentinel-Kern, das Motiv der Seite -->
+  <g transform="translate(930,270)">
+    <circle r="132" fill="none" stroke="#00ff9c" stroke-opacity="0.10" stroke-width="1.5"/>
+    <circle r="104" fill="none" stroke="#00e5ff" stroke-opacity="0.16" stroke-width="1.5"/>
+    <ellipse rx="132" ry="46" fill="none" stroke="#00e5ff" stroke-opacity="0.30" stroke-width="1.5"/>
+    <ellipse rx="132" ry="92" fill="none" stroke="#00ff9c" stroke-opacity="0.16" stroke-width="1.5"/>
+    <ellipse rx="46" ry="132" fill="none" stroke="#00ff9c" stroke-opacity="0.16" stroke-width="1.5"/>
+    <ellipse rx="92" ry="132" fill="none" stroke="#00ff9c" stroke-opacity="0.10" stroke-width="1.5"/>
+    <circle r="13" fill="#00e5ff"/>
+    <circle cx="0"    cy="-132" r="6" fill="#00ff9c"/>
+    <circle cx="118"  cy="-58"  r="6" fill="#ffb000"/>
+    <circle cx="126"  cy="40"   r="6" fill="#00ff9c"/>
+    <circle cx="58"   cy="118"  r="6" fill="#00e5ff"/>
+    <circle cx="-64"  cy="115"  r="6" fill="#00ff9c"/>
+    <circle cx="-126" cy="34"   r="6" fill="#00ff9c"/>
+    <circle cx="-114" cy="-66"  r="6" fill="#ffb000"/>
+    <circle cx="-42"  cy="-125" r="6" fill="#00e5ff"/>
+  </g>
+  <text x="930" y="452" text-anchor="middle" font-family="'DejaVu Sans Mono',ui-monospace,monospace" font-size="15" letter-spacing="3.4" fill="#00e5ff" fill-opacity="0.8">AZRAEL SENTINEL</text>
+</svg>

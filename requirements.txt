@@ -1,8 +1,59 @@
-python-telegram-bot[ext]==21.1.1
-httpx[http2]==0.27.0
-uvloop==0.19.0
-cachetools==5.3.3
-numpy==1.26.4
-openai==1.12.0
-python-dotenv==1.0.0
-apscheduler==3.10.4
+# NIGHTCRAWLER v37 — Laufzeitabhaengigkeiten
+#
+# Warum es das gibt: die 17 Fremdpakete standen bisher NUR implizit im Code.
+# Folge war unter anderem, dass test_smoke.py auf keiner anderen Maschine als
+# dem Server lief — es fuehrt bot_v37.py wirklich aus. Die Pflicht-Pruefkette
+# war damit dauerhaft zerrissen.
+#
+# ACHTUNG, VERSIONEN SIND HIER BEWUSST OFFEN. Die Wahrheit ueber die real
+# funktionierenden Versionen steht auf dem Server, nicht in dieser Datei.
+# Einmalig dort einfrieren und die erzeugte Datei ins Repo uebernehmen:
+#
+#     cd ~/tiktok-bot
+#     python3 -m pip freeze > requirements.lock.txt
+#
+# Ab dann auf jeder Maschine:  pip install -r requirements.lock.txt
+#
+# Besonders wichtig fuer TikTokLive: die Bibliothek haengt sich an eine
+# undokumentierte TikTok-API. Ein Update kann die Live-Erkennung von einem
+# Tag auf den anderen brechen — genau dafuer braucht es einen Pin, und zwar
+# den der nachweislich laufenden Version.
+
+# ── Kern: Bot-Plattformen ────────────────────────────────────────────────
+python-telegram-bot            # import telegram — Telegram-Bot
+discord.py                     # import discord  — Discord-Gateway + Slash-Commands
+TikTokLive                     # Live-Erkennung (undokumentierte API, s.o.)
+
+# ── Web / Dashboard ──────────────────────────────────────────────────────
+Flask                          # Dashboard, 283 Routen
+Werkzeug                       # von Flask mitgebracht, hier explizit (WSGI-Server)
+
+# ── HTTP / Netz ──────────────────────────────────────────────────────────
+aiohttp                        # async HTTP (Scraper, Restream-Steuerung, APIs)
+requests                       # sync HTTP
+httpx                          # HTTP/2-faehiger Client
+PySocks                        # import socks — SOCKS-Proxy fuer den Scraper
+websockets_proxy               # WebSocket ueber Proxy (Kick-Chat)
+
+# ── Konfiguration / Daten ────────────────────────────────────────────────
+python-dotenv                  # import dotenv — .env laden
+orjson                         # schnelles JSON
+PyMySQL                        # import pymysql — nur bei DB_BACKEND=mariadb
+redis                          # optionaler Cache
+
+# ── KI / Medien ──────────────────────────────────────────────────────────
+faster-whisper                 # import faster_whisper — Transkription
+
+# ── Ablage ───────────────────────────────────────────────────────────────
+boto3                          # S3-Backup (optional, nur bei S3_BACKUP=1)
+
+# ── Optional, spuerbarer Gewinn ──────────────────────────────────────────
+uvloop                         # schnellere asyncio-Schleife (nur Linux/macOS)
+
+# ── NICHT per pip: Systempakete ──────────────────────────────────────────
+# Diese werden ueber den Paketmanager installiert, nicht hierueber:
+#   ffmpeg      Aufnahme, Restream, Overlay-Einblendung
+#   streamlink  Quellenaufloesung
+#   yt-dlp      Rueckfall-Aufloesung (403-Lebenszyklus)
+#   crowdsec    Abwehr-Panel (cscli)
+#     sudo apt install ffmpeg streamlink yt-dlp

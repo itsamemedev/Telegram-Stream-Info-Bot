@@ -1,0 +1,14 @@
+{
+  "generated_at": 0,
+  "count": 1,
+  "items": [
+    {
+      "id": "seed00000000",
+      "ts": 0,
+      "category": "project",
+      "category_label": "Projekt",
+      "title": "Was Azrael Sentinel kann",
+      "body": "Unsere Plattform begleitet Live-Streams in Echtzeit – mit Multi-Plattform-Restream und KI-gestützter Moderation. Sobald der News-Agent läuft, erscheinen hier laufend aktuelle Neuigkeiten."
+    }
+  ]
+}

@@ -1,0 +1,721 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NIGHTCRAWLER — AI BRAIN</title>
+<style>
+/* =====================================================================
+   NIGHTCRAWLER AI-BRAIN-Dashboard (M8)
+   Eigenständige Seite unter /brain — additiv, dashboard_v36 unberührt.
+   Tokens: void #05080a · phosphor #00ff9c · cyan #00e5ff ·
+           magenta #ff2e88 · amber #ffb000
+   ===================================================================== */
+:root{
+  --void:#05080a; --panel:#0a0f12; --panel2:#0d1418; --line:#12211c;
+  --phos:#00ff9c; --cyan:#00e5ff; --mag:#ff2e88; --amber:#ffb000;
+  --ash:#9fb4ac; --dim:#5c6f68; --white:#e8fff4;
+  --mono:'JetBrains Mono','Cascadia Code',monospace;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:var(--void); color:var(--ash); font-family:var(--mono);
+  font-size:13px; line-height:1.6}
+body::before{content:""; position:fixed; inset:0; pointer-events:none;
+  z-index:5; background:repeating-linear-gradient(0deg,
+  transparent 0 2px, rgba(0,255,156,.012) 2px 4px)}
+a{color:var(--phos)}
+button{font-family:var(--mono); font-size:11px; cursor:pointer;
+  background:var(--panel2); color:var(--ash);
+  border:1px solid var(--line); border-radius:3px; padding:3px 10px}
+button:hover{color:var(--phos); border-color:var(--phos)}
+button.on{color:var(--phos); border-color:var(--phos)}
+button.off{color:var(--mag); border-color:var(--mag)}
+input,select,textarea{background:var(--panel2); color:var(--white);
+  border:1px solid var(--line); border-radius:3px; padding:6px 10px;
+  font-family:var(--mono); font-size:12px}
+:focus-visible{outline:2px solid var(--cyan); outline-offset:2px}
+
+/* ---- Kopf ---- */
+header{position:sticky; top:0; z-index:10; display:flex; flex-wrap:wrap;
+  gap:8px 22px; align-items:center; padding:12px 18px;
+  background:rgba(5,8,10,.94); border-bottom:1px solid var(--line);
+  backdrop-filter:blur(6px)}
+header h1{font-size:14px; letter-spacing:.28em; color:var(--phos);
+  font-weight:700}
+header h1 span{color:var(--cyan)}
+.pill{display:inline-flex; align-items:center; gap:6px; font-size:10px;
+  letter-spacing:.1em; padding:3px 10px; border:1px solid var(--line);
+  border-radius:20px; color:var(--dim); text-transform:uppercase}
+.pill i{width:7px; height:7px; border-radius:50%; background:var(--dim)}
+.pill.ok{color:var(--phos); border-color:rgba(0,255,156,.4)}
+.pill.ok i{background:var(--phos); box-shadow:0 0 7px var(--phos)}
+.pill.warn{color:var(--amber); border-color:rgba(255,176,0,.4)}
+.pill.warn i{background:var(--amber)}
+.pill.bad{color:var(--mag); border-color:rgba(255,46,136,.4)}
+.pill.bad i{background:var(--mag)}
+header .right{margin-left:auto; font-size:10px; color:var(--dim)}
+
+/* ---- Raster ---- */
+main{display:grid; gap:14px; padding:16px;
+  grid-template-columns:repeat(12, 1fr); max-width:1600px; margin:0 auto}
+.card{grid-column:span 6; background:var(--panel);
+  border:1px solid var(--line); border-radius:5px; padding:14px 16px;
+  min-width:0}
+.card.w4{grid-column:span 4}
+.card.w8{grid-column:span 8}
+.card.w12{grid-column:span 12}
+.card h2{font-size:10px; letter-spacing:.24em; text-transform:uppercase;
+  color:var(--phos); margin-bottom:12px; display:flex; gap:10px;
+  align-items:baseline}
+.card h2 small{color:var(--dim); letter-spacing:.06em; font-weight:400;
+  text-transform:none; margin-left:auto}
+.card.cy h2{color:var(--cyan)}
+.card.mg h2{color:var(--mag)}
+.card.gr h2{color:var(--neon,#39d98a)}
+@media (max-width:1100px){.card,.card.w4,.card.w8{grid-column:span 12}}
+
+/* ---- Tabellen/Listen ---- */
+table{width:100%; border-collapse:collapse; font-size:11.5px}
+th{color:var(--dim); text-align:left; font-weight:400; font-size:10px;
+  letter-spacing:.12em; text-transform:uppercase; padding:4px 8px 6px 0;
+  border-bottom:1px solid var(--line)}
+td{padding:6px 8px 6px 0; border-bottom:1px dashed var(--line);
+  vertical-align:top; color:var(--white)}
+tr:last-child td{border-bottom:none}
+td .sub{display:block; color:var(--dim); font-size:10.5px}
+.num{color:var(--cyan)}
+.err{color:var(--mag)}
+.okc{color:var(--phos)}
+.scroll{max-height:340px; overflow:auto}
+.scroll::-webkit-scrollbar{width:8px}
+.scroll::-webkit-scrollbar-thumb{background:var(--line); border-radius:4px}
+
+/* ---- Why-Feed ---- */
+.feed{list-style:none; font-size:11.5px}
+.feed li{padding:8px 0; border-bottom:1px dashed var(--line)}
+.feed li:last-child{border-bottom:none}
+.feed .t{color:var(--dim); font-size:10px; margin-right:8px}
+.feed .r{color:var(--phos)}
+.feed .why{display:block; color:var(--ash); margin-top:2px}
+.feed .res{color:var(--cyan)}
+
+/* ---- Zähler ---- */
+.counts{display:grid; gap:8px;
+  grid-template-columns:repeat(auto-fill,minmax(115px,1fr))}
+.count{background:var(--panel2); border:1px solid var(--line);
+  border-radius:4px; padding:10px 12px}
+.count b{display:block; font-size:19px; color:var(--phos);
+  font-weight:700}
+.count.dead b{color:var(--mag)}
+.count span{font-size:9.5px; letter-spacing:.1em; color:var(--dim);
+  text-transform:uppercase}
+
+/* ---- Agenten ---- */
+.agents{display:grid; gap:10px;
+  grid-template-columns:repeat(auto-fill,minmax(200px,1fr))}
+.agent{background:var(--panel2); border:1px solid var(--line);
+  border-radius:4px; padding:11px 12px; font-size:11px}
+.agent .nm{display:flex; align-items:center; gap:8px; color:var(--white);
+  letter-spacing:.14em; text-transform:uppercase; font-size:10.5px;
+  margin-bottom:6px}
+.agent .nm i{width:7px; height:7px; border-radius:50%}
+.agent.idle .nm i{background:var(--phos); box-shadow:0 0 6px var(--phos)}
+.agent.disabled .nm i{background:var(--dim)}
+.agent.error .nm i{background:var(--mag); box-shadow:0 0 6px var(--mag)}
+.agent .meta{color:var(--dim); font-size:10px; margin-bottom:8px}
+.agent .row{display:flex; gap:6px}
+
+/* ---- Balken (CPU-Prognose) ---- */
+.bars{display:flex; gap:6px; align-items:flex-end; height:110px;
+  padding-top:6px}
+.bar{flex:1; display:flex; flex-direction:column; justify-content:flex-end;
+  align-items:center; gap:4px; min-width:0}
+.bar i{width:100%; background:linear-gradient(180deg,var(--cyan),
+  rgba(0,229,255,.15)); border-radius:2px 2px 0 0; min-height:2px}
+.bar.warn i{background:linear-gradient(180deg,var(--mag),
+  rgba(255,46,136,.15))}
+.bar span{font-size:9px; color:var(--dim)}
+.bar b{font-size:9px; color:var(--cyan); font-weight:400}
+.bar.warn b{color:var(--mag)}
+
+/* ---- Canvas ---- */
+canvas{width:100%; display:block}
+.legend{display:flex; gap:14px; font-size:10px; color:var(--dim);
+  margin-top:6px; flex-wrap:wrap}
+.legend i{display:inline-block; width:9px; height:9px; border-radius:2px;
+  margin-right:5px; vertical-align:-1px}
+
+/* ---- Ask ---- */
+.ask{display:flex; gap:8px}
+.ask input{flex:1}
+.answer{margin-top:12px; background:var(--panel2);
+  border:1px solid rgba(0,229,255,.3); border-radius:4px; padding:12px;
+  font-size:12px; color:var(--white); white-space:pre-wrap; display:none}
+.answer .meta{display:block; color:var(--dim); font-size:10px;
+  margin-top:8px}
+.trace{font-size:10px; color:var(--dim); margin-top:8px}
+.trace b{color:var(--cyan); font-weight:400}
+</style>
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="apple-touch-icon" href="/pwa-icon-192.png">
+</head>
+<body>
+
+<header>
+  <h1>NIGHTCRAWLER <span>// AI BRAIN</span></h1>
+  <span class="pill" id="p-tick"><i></i>TICK</span>
+  <span class="pill" id="p-llm"><i></i>LLM</span>
+  <span class="pill" id="p-budget"><i></i>BUDGET</span>
+  <a href="/api/brain/report/weekly" target="_blank" class="pill"
+     style="text-decoration:none" title="Wochenreport als Markdown">REPORT 7T</a>
+  <span class="right" id="upd">—</span>
+</header>
+
+<main>
+
+  <!-- SYSTEMZUSTAND -->
+  <section class="card w8">
+    <h2>Systemzustand <small id="st-ts"></small></h2>
+    <div class="counts" id="counts"></div>
+  </section>
+
+  <!-- LLM -->
+  <section class="card w4 cy">
+    <h2>Tier 4 · Sprachmodell</h2>
+    <table id="llm-tbl"><tbody></tbody></table>
+  </section>
+
+  <!-- ENTSCHEIDUNGEN -->
+  <section class="card">
+    <h2>Entscheidungen · Warum? <small>persistiert, überlebt Neustart</small></h2>
+    <div class="scroll"><ul class="feed" id="why"></ul></div>
+  </section>
+
+  <!-- REGELN -->
+  <section class="card">
+    <h2>Regeln <small>Toggle wirkt sofort</small></h2>
+    <div class="scroll">
+      <table>
+        <thead><tr><th>Regel</th><th>Hits</th><th>Fehler</th><th></th></tr></thead>
+        <tbody id="rules"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- AGENTEN -->
+  <section class="card w12">
+    <h2>AZRAEL-Agentenflotte <small>einzeln schaltbar · Läufe fehlerisoliert</small></h2>
+    <div class="agents" id="agents"></div>
+  </section>
+
+  <!-- SENDE-VORSCHAU -->
+  <section class="card">
+    <h2>Sende-Vorschau <small>Go-Live-Prognose, nächste 6h</small></h2>
+    <div class="scroll">
+      <table>
+        <thead><tr><th>Streamer</th><th>Wann</th><th>P</th><th>Basis</th></tr></thead>
+        <tbody id="upcoming"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- CPU-PROGNOSE -->
+  <section class="card cy">
+    <h2>CPU-Prognose <small>saisonal, load15/Kerne</small></h2>
+    <div class="bars" id="cpu"></div>
+  </section>
+
+  <!-- ROUTER -->
+  <section class="card">
+    <h2>Task-Router <small>Kaskade rules→db→knowledge→llm</small></h2>
+    <table>
+      <thead><tr><th>Tier</th><th>Gelöst</th><th>Weitergereicht</th><th>Fehler</th></tr></thead>
+      <tbody id="router"></tbody>
+    </table>
+    <div class="scroll" style="max-height:170px; margin-top:10px">
+      <ul class="feed" id="routes"></ul>
+    </div>
+  </section>
+
+  <!-- KNOWLEDGE GRAPH -->
+  <section class="card mg">
+    <h2>Wissensgraph <small id="kg-stats"></small></h2>
+    <canvas id="kg" height="260"></canvas>
+    <div class="legend">
+      <span><i style="background:var(--phos)"></i>Streamer</span>
+      <span><i style="background:var(--cyan)"></i>Wert</span>
+      <span><i style="background:var(--mag)"></i>Kante = Fakt (Stärke = Gewicht)</span>
+    </div>
+  </section>
+
+  <!-- MEMORY-METRIKEN -->
+  <section class="card w8 cy">
+    <h2>Memory · Metriken
+      <small><select id="metric-sel"></select> · 24h</small></h2>
+    <canvas id="metric" height="150"></canvas>
+    <div class="legend" id="metric-leg"></div>
+  </section>
+
+  <!-- WACHSTUM / LERNKURVE -->
+  <section class="card w4 gr">
+    <h2>Lern- &amp; Wachstumskurve <small id="gr-stats">— das Gehirn über Zeit</small></h2>
+    <canvas id="growth" height="220"></canvas>
+    <div class="legend" id="growth-leg"></div>
+  </section>
+
+  <!-- AZRAEL FRAGEN -->
+  <section class="card w4 cy">
+    <h2>Azrael fragen <small>läuft durch die Kaskade</small></h2>
+    <div class="ask">
+      <input id="q" placeholder="z.B. Was ist zuletzt passiert?"
+             autocomplete="off">
+      <button id="q-btn">SENDEN</button>
+    </div>
+    <div style="margin-top:8px">
+      <button id="explain-btn">LETZTE ENTSCHEIDUNGEN ERKLÄREN</button>
+    </div>
+    <div class="ask" style="margin-top:10px">
+      <input id="semq" placeholder="Semantik-Suche im Gedächtnis…"
+             autocomplete="off">
+      <button id="sem-btn">SUCHEN</button>
+    </div>
+    <div class="answer" id="semres"></div>
+    <div class="answer" id="answer"></div>
+  </section>
+
+</main>
+
+<script>
+"use strict";
+/* NIGHTCRAWLER AI-Brain-Dashboard — Vanilla JS, keine Dependencies.
+   Pollt /api/brain/* alle 10s; Schreibaktionen (Toggles, Fragen) sofort. */
+
+const $ = (s) => document.querySelector(s);
+const esc = (x) => String(x ?? "").replace(/[&<>"']/g,
+  (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const fmtT = (ts) => ts ? new Date(ts * 1000).toLocaleTimeString("de-DE")
+                        : "—";
+const J = (r) => r.ok ? r.json() : Promise.reject(new Error(r.status));
+
+async function api(path, opts) {
+  return fetch("/api/brain" + path, opts).then(J);
+}
+
+/* ---------------- Kopf-Pills ---------------- */
+function pill(el, cls, txt) {
+  el.className = "pill " + cls;
+  el.innerHTML = "<i></i>" + esc(txt);
+}
+
+/* ---------------- Overview: State, Regeln, Why, Router ---------------- */
+async function loadOverview() {
+  const o = await api("/overview");
+  pill($("#p-tick"), o.tick_alive ? "ok" : "bad",
+       o.tick_alive ? "TICK LIVE" : "TICK TOT");
+  $("#st-ts").textContent = "Stand " + fmtT(o.state.ts);
+
+  // Zähler je kind/state
+  const c = $("#counts"); c.innerHTML = "";
+  const counts = o.state.counts || {};
+  const order = ["stream", "recorder", "restream", "agent"];
+  const kinds = [...new Set([...order, ...Object.keys(counts)])]
+    .filter((k) => counts[k]);
+  if (!kinds.length) {
+    c.innerHTML = '<div class="count"><b>0</b><span>Entitäten — ' +
+      'wartet auf DB-Sync</span></div>';
+  }
+  for (const k of kinds) {
+    for (const [st, n] of Object.entries(counts[k])) {
+      const dead = /dead|error|stalled/.test(st);
+      c.insertAdjacentHTML("beforeend",
+        `<div class="count${dead ? " dead" : ""}"><b>${n}</b>` +
+        `<span>${esc(k)} · ${esc(st)}</span></div>`);
+    }
+  }
+
+  // Regeln
+  const rt = $("#rules"); rt.innerHTML = "";
+  for (const r of o.rules) {
+    rt.insertAdjacentHTML("beforeend", `<tr>
+      <td>${esc(r.name)}<span class="sub">${esc((r.tags || []).join(", "))}` +
+      `${r.last_fired ? " · zuletzt " + fmtT(r.last_fired) : ""}</span></td>
+      <td class="num">${r.hits}</td>
+      <td class="${r.errors ? "err" : ""}">${r.errors}</td>
+      <td><button class="${r.enabled ? "on" : "off"}"
+        data-rule="${esc(r.name)}" data-on="${r.enabled ? 0 : 1}">
+        ${r.enabled ? "AN" : "AUS"}</button></td></tr>`);
+  }
+  rt.querySelectorAll("button").forEach((b) => b.onclick = async () => {
+    await api(`/rules/${encodeURIComponent(b.dataset.rule)}/toggle` +
+              `?on=${b.dataset.on}`, {method: "POST"});
+    loadOverview();
+  });
+
+  // Router-Statistik + letzte Routen
+  const rr = $("#router"); rr.innerHTML = "";
+  for (const [tier, s] of Object.entries(o.router.stats)) {
+    rr.insertAdjacentHTML("beforeend", `<tr><td>${esc(tier)}</td>
+      <td class="okc">${s.handled}</td><td>${s.passed}</td>
+      <td class="${s.errors ? "err" : ""}">${s.errors}</td></tr>`);
+  }
+  const rl = $("#routes"); rl.innerHTML = "";
+  for (const e of (o.router.log || []).slice(-12).reverse()) {
+    const skips = (e.trace || [])
+      .filter((t) => t.skip || t.error)
+      .map((t) => `${t.tier}: ${t.skip || t.error}`).join(" · ");
+    rl.insertAdjacentHTML("beforeend", `<li>
+      <span class="t">${fmtT(e.ts)}</span>
+      <span class="${e.ok ? "okc" : "err"}">${esc(e.topic)}</span>
+      → <span class="res">${e.ok ? esc(e.tier) : "unbeantwortet"}</span>
+      <span class="t">${e.ms} ms</span>
+      ${skips ? `<span class="why">${esc(skips)}</span>` : ""}</li>`);
+  }
+}
+
+async function loadWhy() {
+  const w = await api("/why?limit=30");
+  const el = $("#why"); el.innerHTML = "";
+  if (!w.length) {
+    el.innerHTML = '<li><span class="why">Noch keine Entscheidungen — ' +
+      "das System hat nichts zu beanstanden.</span></li>";
+  }
+  for (const d of w) {
+    el.insertAdjacentHTML("beforeend", `<li>
+      <span class="t">${fmtT(d.ts)}</span>
+      <span class="r">[${esc(d.rule)}]</span>
+      <span class="why">Grund: ${esc(typeof d.reason === "object"
+        ? JSON.stringify(d.reason) : d.reason)}</span>
+      <span class="res">→ ${esc(typeof d.result === "object"
+        ? JSON.stringify(d.result) : d.result)}</span></li>`);
+  }
+}
+
+/* ---------------- Agenten ---------------- */
+async function loadAgents() {
+  const ag = await api("/agents");
+  const el = $("#agents"); el.innerHTML = "";
+  for (const a of ag) {
+    const cls = !a.enabled ? "disabled" : (a.last_error ? "error" : "idle");
+    el.insertAdjacentHTML("beforeend", `<div class="agent ${cls}">
+      <div class="nm"><i></i>${esc(a.name)}</div>
+      <div class="meta">${a.runs} Läufe · ${a.findings} Befunde ·
+        ${a.errors} Fehler · Takt ${a.interval_s}s
+        ${a.last_error ? `<br><span class="err">${esc(a.last_error)}</span>`
+                       : ""}</div>
+      <div class="row">
+        <button data-a="${esc(a.name)}" data-on="${a.enabled ? 0 : 1}"
+          class="${a.enabled ? "on" : "off"}">
+          ${a.enabled ? "AKTIV" : "AUS"}</button>
+        <button data-run="${esc(a.name)}">RUN</button>
+      </div></div>`);
+  }
+  el.querySelectorAll("button[data-a]").forEach((b) => b.onclick =
+    async () => {
+      await api(`/agents/${encodeURIComponent(b.dataset.a)}/toggle` +
+                `?on=${b.dataset.on}`, {method: "POST"});
+      loadAgents();
+    });
+  el.querySelectorAll("button[data-run]").forEach((b) => b.onclick =
+    async () => {
+      b.textContent = "…";
+      await api(`/agents/${encodeURIComponent(b.dataset.run)}/run`,
+                {method: "POST"});
+      loadAgents(); loadWhy();
+    });
+}
+
+/* ---------------- Scheduler: Vorschau + CPU ---------------- */
+async function loadSchedule() {
+  const up = await api("/schedule/upcoming?hours=6&threshold=0.1");
+  const el = $("#upcoming"); el.innerHTML = "";
+  if (!up.length) {
+    el.innerHTML = '<tr><td colspan="4"><span class="sub">Keine Prognosen ' +
+      "— braucht ein paar Tage Session-Historie.</span></td></tr>";
+  }
+  for (const u of up) {
+    el.insertAdjacentHTML("beforeend", `<tr>
+      <td>${esc(u.user)}</td>
+      <td>${u.in_hours === 0 ? "jetzt" : "+" + u.in_hours + "h"}
+        <span class="sub">${u.hour_utc}:00 UTC</span></td>
+      <td class="num">${(u.prob * 100).toFixed(0)}%</td>
+      <td><span class="sub">${esc(u.basis)}</span></td></tr>`);
+  }
+
+  const fc = await api("/schedule/cpu?hours=8");
+  const cp = $("#cpu"); cp.innerHTML = "";
+  for (const h of fc) {
+    const v = h.load_ratio_avg;
+    const pct = v == null ? 0 : Math.min(v, 1.5) / 1.5 * 100;
+    cp.insertAdjacentHTML("beforeend", `<div class="bar${h.warn ? " warn" : ""}">
+      <b>${v == null ? "–" : v.toFixed(2)}</b>
+      <i style="height:${pct}%"></i>
+      <span>${h.hour_utc}h</span></div>`);
+  }
+}
+
+/* ---------------- Knowledge Graph (Canvas, radial) ---------------- */
+async function loadGraph() {
+  const [g, st] = await Promise.all([api("/knowledge/graph?limit=120"),
+                                     api("/knowledge/facts?limit=1")
+                                       .catch(() => [])]);
+  $("#kg-stats").textContent = `${g.nodes.length} Knoten · ` +
+                               `${g.edges.length} Kanten`;
+  const cv = $("#kg");
+  const W = cv.width = cv.clientWidth * devicePixelRatio;
+  const H = cv.height = 260 * devicePixelRatio;
+  const ctx = cv.getContext("2d");
+  ctx.clearRect(0, 0, W, H);
+  if (!g.nodes.length) {
+    ctx.fillStyle = "#5c6f68";
+    ctx.font = `${11 * devicePixelRatio}px monospace`;
+    ctx.fillText("Graph leer — Ableitung braucht ≥3 Sessions pro Streamer.",
+                 14 * devicePixelRatio, 40 * devicePixelRatio);
+    return;
+  }
+  // Subjekte auf äußerem Ring, Werte auf innerem — simple, lesbar, billig.
+  const subj = g.nodes.filter((n) => n.kind === "subject");
+  const vals = g.nodes.filter((n) => n.kind !== "subject");
+  const cx = W / 2, cy = H / 2;
+  const pos = {};
+  const place = (arr, r) => arr.forEach((n, i) => {
+    const a = (i / Math.max(arr.length, 1)) * 2 * Math.PI - Math.PI / 2;
+    pos[n.id] = [cx + r * Math.cos(a), cy + r * Math.sin(a)];
+  });
+  place(subj, Math.min(cx, cy) * 0.82);
+  place(vals, Math.min(cx, cy) * 0.42);
+  for (const e of g.edges) {
+    const a = pos[e.from], b = pos[e.to];
+    if (!a || !b) continue;
+    ctx.strokeStyle = `rgba(255,46,136,${0.12 + 0.5 * Math.min(e.weight, 1)})`;
+    ctx.lineWidth = devicePixelRatio;
+    ctx.beginPath(); ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], b[1]);
+    ctx.stroke();
+  }
+  const dot = (n) => {
+    const p = pos[n.id];
+    ctx.fillStyle = n.kind === "subject" ? "#00ff9c" : "#00e5ff";
+    ctx.beginPath();
+    ctx.arc(p[0], p[1], (n.kind === "subject" ? 4 : 3) * devicePixelRatio,
+            0, 7); ctx.fill();
+    if (n.kind === "subject") {
+      ctx.fillStyle = "#e8fff4";
+      ctx.font = `${9.5 * devicePixelRatio}px monospace`;
+      ctx.fillText(n.id.slice(0, 14), p[0] + 6 * devicePixelRatio,
+                   p[1] + 3 * devicePixelRatio);
+    }
+  };
+  g.nodes.forEach(dot);
+}
+
+/* ---------------- Memory-Metriken (Canvas-Sparkline) ---------------- */
+let metricName = null;
+async function loadMetricNames() {
+  const j = await api("/memory/metrics");
+  const sel = $("#metric-sel");
+  const names = j.names || [];
+  sel.innerHTML = names.map((n) =>
+    `<option${n === metricName ? " selected" : ""}>${esc(n)}</option>`)
+    .join("");
+  if (!metricName && names.length) metricName = names[0];
+  sel.onchange = () => { metricName = sel.value; loadMetric(); };
+}
+async function loadMetric() {
+  if (!metricName) return;
+  const pts = await api(`/memory/metrics?name=` +
+                        `${encodeURIComponent(metricName)}&hours=24`);
+  const cv = $("#metric");
+  const W = cv.width = cv.clientWidth * devicePixelRatio;
+  const H = cv.height = 150 * devicePixelRatio;
+  const ctx = cv.getContext("2d");
+  ctx.clearRect(0, 0, W, H);
+  $("#metric-leg").innerHTML =
+    `<span><i style="background:#00e5ff"></i>Ø</span>` +
+    `<span><i style="background:rgba(0,229,255,.25)"></i>min–max</span>` +
+    `<span>${pts.length} Buckets</span>`;
+  if (pts.length < 2) {
+    ctx.fillStyle = "#5c6f68";
+    ctx.font = `${11 * devicePixelRatio}px monospace`;
+    ctx.fillText("Zu wenig Daten — Metriken laufen im 60s-Raster auf.",
+                 14 * devicePixelRatio, 40 * devicePixelRatio);
+    return;
+  }
+  const lo = Math.min(...pts.map((p) => p.min));
+  const hi = Math.max(...pts.map((p) => p.max)) || 1;
+  const X = (i) => i / (pts.length - 1) * (W - 16) + 8;
+  const Y = (v) => H - 14 - (v - lo) / (hi - lo || 1) * (H - 28);
+  // min–max-Band
+  ctx.beginPath();
+  pts.forEach((p, i) => i ? ctx.lineTo(X(i), Y(p.max))
+                          : ctx.moveTo(X(i), Y(p.max)));
+  for (let i = pts.length - 1; i >= 0; i--) ctx.lineTo(X(i), Y(pts[i].min));
+  ctx.closePath();
+  ctx.fillStyle = "rgba(0,229,255,.14)"; ctx.fill();
+  // Ø-Linie
+  ctx.beginPath();
+  pts.forEach((p, i) => i ? ctx.lineTo(X(i), Y(p.avg))
+                          : ctx.moveTo(X(i), Y(p.avg)));
+  ctx.strokeStyle = "#00e5ff"; ctx.lineWidth = 1.5 * devicePixelRatio;
+  ctx.stroke();
+  // Achsenwerte
+  ctx.fillStyle = "#5c6f68";
+  ctx.font = `${9 * devicePixelRatio}px monospace`;
+  ctx.fillText(hi.toFixed(2), 8, 10 * devicePixelRatio);
+  ctx.fillText(lo.toFixed(2), 8, H - 4 * devicePixelRatio);
+}
+
+/* ---------------- WACHSTUM / LERNKURVE ---------------- */
+async function loadGrowth() {
+  let d;
+  try { d = await api("/brain/growth?days=30"); }
+  catch (e) { return; }
+  const pts = (d && d.points) || [];
+  const cv = $("#growth");
+  const W = cv.width = cv.clientWidth * devicePixelRatio;
+  const H = cv.height = 220 * devicePixelRatio;
+  const ctx = cv.getContext("2d");
+  ctx.clearRect(0, 0, W, H);
+  const cur = (d && d.current) || {};
+  $("#gr-stats").textContent =
+    `${cur.triples || 0} Fakten · ${cur.vectors || 0} Vektoren · ${cur.users || 0} Nutzer`;
+  const series = [
+    { key: "triples", col: "#39d98a", label: "Wissen (Fakten)" },
+    { key: "vectors", col: "#00e5ff", label: "Vektoren" },
+    { key: "users",   col: "#ffb454", label: "Nutzer" },
+  ];
+  $("#growth-leg").innerHTML = series.map((s) =>
+    `<span><i style="background:${s.col}"></i>${s.label}</span>`).join("") +
+    `<span>${pts.length} Messpunkte</span>`;
+  if (pts.length < 2) {
+    ctx.fillStyle = "#5c6f68";
+    ctx.font = `${11 * devicePixelRatio}px monospace`;
+    ctx.fillText("Wächst mit der Zeit — stündlicher Snapshot. Kurve baut sich auf.",
+                 14 * devicePixelRatio, 40 * devicePixelRatio);
+    return;
+  }
+  const hi = Math.max(1, ...pts.map((p) =>
+    Math.max(p.triples, p.vectors, p.users)));
+  const X = (i) => i / (pts.length - 1) * (W - 20) + 10;
+  const Y = (v) => H - 18 - (v / hi) * (H - 32);
+  series.forEach((s) => {
+    ctx.beginPath();
+    pts.forEach((p, i) => i ? ctx.lineTo(X(i), Y(p[s.key]))
+                            : ctx.moveTo(X(i), Y(p[s.key])));
+    ctx.strokeStyle = s.col; ctx.lineWidth = 1.8 * devicePixelRatio;
+    ctx.stroke();
+  });
+  ctx.fillStyle = "#5c6f68";
+  ctx.font = `${9 * devicePixelRatio}px monospace`;
+  ctx.fillText(String(hi), 8, 12 * devicePixelRatio);
+  ctx.fillText("0", 8, H - 6 * devicePixelRatio);
+}
+
+/* ---------------- LLM ---------------- */
+async function loadLLM() {
+  const h = await api("/llm/health");
+  const b = h.budget;
+  // BH-7: BACKEND=off ist eine bewusste Konfiguration, kein Ausfall.
+  if (h.backend_conf === "off") {
+    pill($("#p-llm"), "warn", "LLM AUS (KONFIG)");
+  } else {
+    const _ms = (h.budget && h.budget.avg_ms) || h.avg_ms || null;
+    pill($("#p-llm"),
+         h.llamacpp.up ? "ok" : (h.ollama.up ? "warn" : "bad"),
+         (h.llamacpp.up ? "LLAMA.CPP" : (h.ollama.up ? "OLLAMA (FALLBACK)"
+                                                     : "LLM OFFLINE"))
+         + (_ms ? " · " + Math.round(_ms) + "ms" : ""));
+  }
+  pill($("#p-budget"), b.remaining > 5 ? "ok"
+       : (b.remaining ? "warn" : "bad"),
+       `BUDGET ${b.used_h}/${b.max_h}`);
+  const s = await api("/llm/stats");
+  $("#llm-tbl tbody").innerHTML = `
+    <tr><td>Backend-Kette</td><td class="num">${esc(h.backend_conf)}</td></tr>
+    <tr><td>llama.cpp</td><td class="${h.llamacpp.up ? "okc" : "err"}">
+      ${h.llamacpp.up ? "UP · " + h.llamacpp.ms + " ms"
+                      : "DOWN (" + esc(h.llamacpp.error || "?") + ")"}</td></tr>
+    <tr><td>Ollama</td><td class="${h.ollama.up ? "okc" : "err"}">
+      ${h.ollama.up ? "UP · " + h.ollama.ms + " ms" : "DOWN"}</td></tr>
+    <tr><td>Antworten OK</td><td class="num">${s.ok}</td></tr>
+    <tr><td>Budget-Ablehnungen</td><td>${s.budget_denied}</td></tr>
+    <tr><td>Slot belegt</td><td>${s.busy_denied}</td></tr>`;
+}
+
+/* ---------------- Fragen ---------------- */
+function showAnswer(res) {
+  const el = $("#answer"); el.style.display = "block";
+  if (res.ok) {
+    const r = res.result;
+    el.innerHTML = esc(r.text || JSON.stringify(r)) +
+      `<span class="meta">Tier: ${esc(res.tier)} · ${res.ms} ms` +
+      `${r.backend ? " · " + esc(r.backend) : ""}</span>`;
+  } else {
+    const skips = (res.trace || [])
+      .map((t) => `<b>${esc(t.tier)}</b>: ${esc(t.skip || t.error || "—")}`)
+      .join("<br>");
+    el.innerHTML = `<span class="err">Kein Tier konnte antworten.</span>` +
+      `<div class="trace">${skips}</div>`;
+  }
+}
+$("#q-btn").onclick = async () => {
+  const q = $("#q").value.trim();
+  if (!q) return;
+  $("#q-btn").textContent = "…";
+  try {
+    showAnswer(await api("/llm/ask", {
+      method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({prompt: q})}));
+  } finally { $("#q-btn").textContent = "SENDEN"; }
+};
+$("#q").addEventListener("keydown",
+  (e) => { if (e.key === "Enter") $("#q-btn").click(); });
+$("#explain-btn").onclick = async () => {
+  $("#explain-btn").textContent = "…";
+  try { showAnswer(await api("/llm/explain", {method: "POST"})); }
+  finally { $("#explain-btn").textContent =
+            "LETZTE ENTSCHEIDUNGEN ERKLÄREN"; }
+};
+
+/* ---------------- Zyklus ---------------- */
+let _busy = false;
+async function refresh() {
+  if (_busy) return;            // IMP-7: keine überlappenden Poll-Runden
+  _busy = true;
+  try {
+  const jobs = [loadOverview(), loadWhy(), loadAgents(), loadSchedule(),
+                loadGraph(), loadMetricNames().then(loadMetric),
+                loadGrowth(), loadLLM()];
+  const rs = await Promise.allSettled(jobs);
+  const fails = rs.filter((r) => r.status === "rejected").length;
+  $("#upd").textContent = (fails ? `${fails} Panels ohne Daten · ` : "") +
+    "Aktualisiert " + new Date().toLocaleTimeString("de-DE");
+  } finally { _busy = false; }
+}
+document.getElementById("sem-btn").addEventListener("click", async () => {
+  const q = document.getElementById("semq").value.trim();
+  const box = document.getElementById("semres");
+  if (!q) return;
+  box.textContent = "Suche…";
+  try {
+    const j = await api("/semantic/search?q=" + encodeURIComponent(q));
+    if (!j.ok) { box.textContent = j.error || "Fehler"; return; }
+    box.innerHTML = (j.hits || []).map(h =>
+      "<div><b>@" + esc(h.username) + "</b> · " +
+      new Date(h.ts * 1000).toLocaleDateString("de-DE") +
+      " · " + h.score.toFixed(2) + "<br>" + esc((h.text || "").slice(0, 220)) +
+      "</div>").join("<hr>") || "Keine Treffer.";
+  } catch (e) { box.textContent = "Suche fehlgeschlagen."; }
+});
+document.getElementById("semq").addEventListener("keydown",
+  e => { if (e.key === "Enter") document.getElementById("sem-btn").click(); });
+refresh();
+setInterval(refresh, 10000);
+</script>
+<script>
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", function () {
+    navigator.serviceWorker.register("/sw.js", { scope: "/" }).catch(function () {});
+  });
+}
+</script>
+</body>
+</html>
