@@ -5366,7 +5366,13 @@ def test_v40_w89_sysdiag_strip():
         assert 'id="' + _id + '"' in h, "Diagnose-Element fehlt: " + _id
     assert ".sysdiag" in h, "Diagnose-CSS fehlt"
     # Loader liest /healthz und färbt Stalls/Zombies
-    _ov = h[h.find("async function loadOverview"):h.find("async function loadOverview") + 2400]
+    # v4.0-W109: frueher ein festes 2400-Zeichen-Fenster. Der Health-Fix machte
+    # loadOverview zehn Zeilen laenger, und der Vertrag meldete Felder als
+    # fehlend, die zwei Zeilen weiter unten stehen — genau die Anker-Falle aus
+    # CLAUDE.md. Jetzt bis zum Funktionsende (VIEW_LOADERS['overview']), damit
+    # der Anker nicht bei jeder Laengenaenderung neu justiert werden muss.
+    _ov = h[h.find("async function loadOverview"):h.find("VIEW_LOADERS['overview']")]
+    assert len(_ov) > 500, "loadOverview nicht gefunden — Anker gebrochen"
     assert "apiGet('/healthz')" in _ov, "Streifen zieht nicht aus /healthz"
     assert "loop_stalls" in _ov and "zombies" in _ov and "uptime_s" in _ov, "W88-Felder nicht gebunden"
     assert "'bad'" in _ov and "'warn'" in _ov, "keine Farbcodierung für Stalls/Zombies"
@@ -5760,6 +5766,51 @@ def test_v40_w103_selfcheck_bridge_and_endpoints():
     ok("v4.0-w103: --selfcheck prüft Brain-Bridge + Dashboard-Endpoints (harte Fehler)")
 
 
+def test_v40_w109_dashboard_feldnamen():
+    """v4.0-W109: das Dashboard las zwei Felder, die es im Backend nie gab.
+
+       Symptom war "System-Health zeigt nichts an": die Uebersichts-Kachel
+       pruefte `hs.overall != null`, /api/health-score liefert aber
+       {score,label,components} — die Bedingung war immer falsch, die Kachel
+       blieb auf "-". Dasselbe Muster in der System-Ansicht: die CPU-Zeile hing
+       an res.cpu_percent, einem psutil-Ueberbleibsel, das die Route nie
+       geliefert hat; die Zeile fehlte deshalb immer komplett.
+
+       Beide Faelle sind STILL: kein JS-Fehler, kein 5xx, nur eine leere
+       Anzeige. Genau deshalb dieser Vertrag — er vergleicht die Feldnamen, die
+       das Frontend liest, mit denen, die der Bot wirklich setzt."""
+    src = open("bot_v37.py").read()
+    h = open("templates/dashboard.html").read()
+
+    # (1) Die Uebersichts-Kachel liest score, nicht overall.
+    _i = h.find("var hs=await apiGet('/api/health-score')")
+    assert _i > 0, "Health-Score-Aufruf in der Uebersicht verschwunden"
+    _ov = [ln for ln in h[_i:_i + 1200].splitlines() if not ln.lstrip().startswith("//")]
+    assert any("hs.score" in ln for ln in _ov), "Uebersichts-Kachel liest nicht hs.score"
+    assert not any("hs.overall" in ln for ln in _ov), \
+        "Uebersichts-Kachel liest wieder hs.overall — das Feld gibt es nicht"
+
+    # (2) Und der Bot gibt sie unter diesem Namen aus. Der Kern des Fehlers:
+    # die lokale Variable HEISST overall, geht aber als "score" raus. Wer nur
+    # den Rumpf ueberfliegt, liest "overall" und greift im Frontend daneben —
+    # genau das war passiert. Der Vertrag haelt die Uebersetzung fest.
+    assert '"score": overall' in src, \
+        "api_health_score gibt den Wert nicht mehr als \"score\" aus — Frontend nachziehen"
+    assert '"label": label' in src, "api_health_score liefert kein label mehr"
+
+    # (3) cpu_percent gibt es im Backend nirgends; die Ressourcen-Zeile nutzt
+    # load_percent, und das rechnet der Bot aus /proc/loadavg.
+    # Nur CODE-Zeilen pruefen: der Fix erklaert sich im Kommentar und nennt das
+    # alte Feld dabei beim Namen. Ein reiner Textvergleich schlaege daran an.
+    _code = [ln for ln in h.splitlines() if not ln.lstrip().startswith("//")]
+    assert not any("res.cpu_percent" in ln for ln in _code), \
+        "CPU-Zeile haengt wieder an cpu_percent (das Feld liefert die Route nicht)"
+    assert any("res.load_percent" in ln for ln in _code), "CPU-Zeile liest nicht load_percent"
+    assert "cpu_percent" not in src, "Bot liefert cpu_percent — dann darf das Frontend es lesen"
+    assert 'out["load_percent"]' in src, "Bot berechnet load_percent nicht mehr"
+    ok("v4.0-w109: Dashboard-Feldnamen decken sich mit dem Backend (score, load_percent)")
+
+
 def main():
     print("test_restream — Restream-Kernlogik (Mock-basiert)")
     test_streak()
@@ -5934,6 +5985,7 @@ def main():
     test_v40_w101_rate_single_source_and_escape()
     test_v40_w102_donations_3d_qr_manual()
     test_v40_w103_selfcheck_bridge_and_endpoints()
+    test_v40_w109_dashboard_feldnamen()
     print(f"test_restream OK — {PASS} Verträge grün")
 
 

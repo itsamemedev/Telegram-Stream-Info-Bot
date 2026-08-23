@@ -6068,7 +6068,11 @@ async function loadSystem(){
   }
   if(res && !res.__neterr){
     const rows=[];
-    if(res.cpu_percent!=null) rows.push(['CPU', res.cpu_percent+'%', res.cpu_percent]);
+    // v4.0-W109: hing an res.cpu_percent — ein psutil-Ueberbleibsel, das die
+    // Route nie geliefert hat; die CPU-Zeile fehlte deshalb immer. Der Bot
+    // rechnet die Last selbst aus /proc/loadavg als load_percent
+    // (100 * load1 / cores) — genau das ist hier gemeint.
+    if(res.load_percent!=null) rows.push(['CPU-LAST', res.load_percent+'%', res.load_percent]);
     if(res.mem_percent!=null) rows.push(['MEM', res.mem_percent+'%', res.mem_percent]);
     if(res.disk_percent!=null) rows.push(['DISK', res.disk_percent+'%', res.disk_percent]);
     $('#sy_res').innerHTML=rows.length?rows.map(([l,t,v])=>`<div class="mb"><div class="flexc"><span class="muted">${l}</span><span class="mono cyan">${t}</span></div><div class="bar ${v>=85?'danger':(v>=60?'amber':'')}"><i style="width:${Math.min(100,v)}%"></i></div></div>`).join('')
@@ -10997,9 +11001,22 @@ async function loadOverview(){
            var tag=document.getElementById('ov_cc_tag'); if(tag) tag.textContent=(s.live_now||0)+' live · '+(s.active_trackings||0)+' getrackt'; }
   }catch(e){}
   try{
+    // v4.0-W109: las frueher hs.overall — das Feld liefert /api/health-score
+    // NICHT. Die Antwort heisst {score,label,components}, also war hs.overall
+    // immer undefined, die Bedingung nie wahr und die Kachel blieb leer.
+    // Die System-Ansicht nutzte schon immer hs.score; jetzt beide gleich.
     var hs=await apiGet('/api/health-score');
-    if(hs&&hs.overall!=null){ var e=document.getElementById('ov_health');
-      if(e){ e.textContent=hs.overall+'%'; e.style.color=(hs.overall>=85?'var(--neon)':hs.overall>=60?'var(--amber)':'var(--red)'); } }
+    var e=document.getElementById('ov_health');
+    if(e){
+      if(hs&&hs.score!=null){
+        e.textContent=hs.score+'%';
+        e.style.color=(hs.score>=85?'var(--neon)':hs.score>=60?'var(--amber)':'var(--red)');
+        e.title=hs.label?('Zustand: '+hs.label):'';
+      } else {
+        // Ehrlich bleiben: „—" heisst „nicht ermittelbar", nicht „0 %".
+        e.textContent='—'; e.style.color='var(--fg-dim)'; e.title='Health-Score nicht erreichbar';
+      }
+    }
   }catch(e){}
   // v4.0-W77: aktive Wächter/Agenten in der Übersicht (vorher gar nicht gezeigt).
   // Ehrlich: ist das Brain nicht erreichbar (leere Liste), „—" statt falsche 0.
