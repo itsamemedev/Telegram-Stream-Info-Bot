@@ -83,4 +83,4 @@ systemctl disable --now ollama  # Go-Daemon + Registry weg, ~0.5-1 GB RAM frei
 
 Der bestehende Ollama-Pfad in bot_v36 (`ai_chat`) bleibt funktional —
 die Umstellung von ai_chat auf die Brain-Runtime kommt im finalen
-bot_v37 als env-Schalter `AI_PROVIDER=brain` (Default: unverändert).
+bot.py als env-Schalter `AI_PROVIDER=brain` (Default: unverändert).

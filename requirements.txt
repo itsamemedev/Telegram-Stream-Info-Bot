@@ -2,7 +2,7 @@
 #
 # Warum es das gibt: die 17 Fremdpakete standen bisher NUR implizit im Code.
 # Folge war unter anderem, dass test_smoke.py auf keiner anderen Maschine als
-# dem Server lief — es fuehrt bot_v37.py wirklich aus. Die Pflicht-Pruefkette
+# dem Server lief — es fuehrt bot.py wirklich aus. Die Pflicht-Pruefkette
 # war damit dauerhaft zerrissen.
 #
 # ACHTUNG, VERSIONEN SIND HIER BEWUSST OFFEN. Die Wahrheit ueber die real

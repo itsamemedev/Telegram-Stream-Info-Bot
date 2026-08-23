@@ -1,7 +1,7 @@
 """nc.intel — Flaggschiff-Intelligenz für NIGHTCRAWLER v4.0.
 
 Bewusst als eigenes Subpaket ausgelagert (Monolith-Abtrag): die drei großen
-v4.0-Funktionen leben hier als self-contained, testbare Module — bot_v37.py
+v4.0-Funktionen leben hier als self-contained, testbare Module — bot.py
 bekommt nur dünne Adapter (Whisper-/Embed-/LLM-Funktion reinreichen, Routen).
 
 - transcripts : gemeinsames Substrat — Transkript-Segmente je Aufnahme (Store).

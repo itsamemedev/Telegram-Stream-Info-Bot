@@ -1,6 +1,6 @@
 """nc.textutil — reine Text-/Format-Helfer (keine Bot-Abhängigkeiten).
 
-Extrahiert aus bot_v37.py. Nur re+html. clean_username härtet gegen jede
+Extrahiert aus bot.py. Nur re+html. clean_username härtet gegen jede
 TikTok-URL-Variante (B76-Serie); fmt_number/safe/short sind Anzeige-Helfer.
 """
 

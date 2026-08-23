@@ -481,6 +481,26 @@ footer nav a:hover{color:var(--phos)}
 .don-btn:hover{transform:translateY(-1px);box-shadow:0 0 26px color-mix(in srgb,var(--phos) 65%,transparent);text-decoration:none}
 .don-btn:focus-visible{outline:2px solid var(--cyan);outline-offset:3px}
 .mono{font-family:var(--mono)}
+/* v4.0-W115: Quellcode-Download. Bewusst mit den vorhandenen Bausteinen
+   (.res-grid/.res-card/.don-btn) gebaut — neu ist nur der Zweitknopf, die
+   Merkmalsliste und der Kommandokasten. */
+.dl-btn2{display:inline-block;font-family:var(--disp);font-weight:700;letter-spacing:.1em;
+  text-transform:uppercase;font-size:.8rem;color:var(--cyan);background:transparent;
+  border:1px solid var(--line);padding:11px 21px;border-radius:8px;text-decoration:none;
+  transition:border-color .15s,color .15s}
+.dl-btn2:hover{border-color:var(--cyan);text-decoration:none}
+.dl-btn2:focus-visible{outline:2px solid var(--cyan);outline-offset:3px}
+.dl-row{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin:16px 0 4px}
+.dl-facts{list-style:none;padding:0;margin:14px 0 0}
+.dl-facts li{position:relative;padding:7px 0 7px 18px;font-size:.86rem;color:var(--ash);
+  border-bottom:1px solid var(--line)}
+.dl-facts li:last-child{border-bottom:0}
+.dl-facts li::before{content:"▸";position:absolute;left:0;color:var(--cyan)}
+.dl-facts b{color:var(--white);font-weight:700}
+.dl-cmd{font-family:var(--mono);font-size:.76rem;color:var(--ash);background:var(--panel2);
+  border:1px solid var(--line);border-radius:8px;padding:11px 13px;margin-top:14px;
+  overflow-x:auto;white-space:pre}
+@media(pointer:coarse){.dl-btn2{min-height:44px;display:inline-flex;align-items:center}}
 /* v4.0-W94: Krypto-Spenden · v4.0-W99: PayPal + Krypto zu einer Box vereint */
 .pay-methods{margin-top:16px;border-top:1px solid var(--line);padding-top:16px;
   display:grid;gap:18px}
@@ -531,6 +551,7 @@ footer nav a:hover{color:var(--phos)}
       <a href="#ueber">Über uns</a>
       <a href="#monitor">Themen</a>
       <a href="#azrael">Azrael</a>
+      <a href="#quellcode">Quellcode</a>
       <a href="#grundsaetze">Grundsätze</a>
       <a href="#streams">Live</a>
       <a href="#news">News</a>
@@ -831,6 +852,58 @@ footer nav a:hover{color:var(--phos)}
       <li><b>Autonomie wird verdient:</b> neue Fähigkeiten laufen erst im Beobachtungsmodus und dürfen erst handeln, wenn das Protokoll zeigt, dass sie richtig liegen.</li>
       <li><b>Messbares Lernen:</b> Prognosen werden gegen die Realität geprüft (Brier-Score) — Verbesserung ist eine Zahl, kein Marketing-Versprechen.</li>
     </ul>
+  </section>
+
+  <!-- ============ QUELLCODE / DOWNLOAD ============ -->
+  <!-- v4.0-W115: Der Abschnitt steht bewusst direkt hinter Azrael. Dort wird
+       behauptet, das System laufe self-hosted und ohne Cloud — hier ist der
+       Beleg zum Nachlesen. Die ZIP-Adresse zeigt auf codeload.github.com und
+       liefert immer den aktuellen Stand des main-Zweigs, ohne dass hier eine
+       Datei gepflegt werden muss, die sonst still veraltet. -->
+  <section id="quellcode" class="wrap rv">
+    <p class="eyebrow c">// Offener Kern</p>
+    <h2>Quellcode &amp; Download</h2>
+    <div class="rule"></div>
+    <div class="res-grid">
+
+      <div class="res-card">
+        <p class="eyebrow c">// Das ganze Projekt</p>
+        <p>Der komplette Bot — Multi-Ziel-Restream, Chat-Moderation, Dashboard
+          und der KI-Kern von Azrael Sentinel — liegt offen auf GitHub. Kein Kern,
+          den man uns glauben muss: nachlesen, selbst betreiben, weiterentwickeln.</p>
+        <div class="dl-row">
+          <a class="don-btn" href="https://codeload.github.com/itsamemedev/Telegram-Stream-Info-Bot/zip/refs/heads/main"
+             rel="noopener">Als ZIP herunterladen</a>
+          <a class="dl-btn2" href="https://github.com/itsamemedev/Telegram-Stream-Info-Bot"
+             target="_blank" rel="noopener">Auf GitHub ansehen</a>
+        </div>
+        <div class="dl-cmd">git clone https://github.com/itsamemedev/Telegram-Stream-Info-Bot.git</div>
+        <p class="note">Das Archiv enthält den aktuellen Stand des Hauptzweigs.
+          Zugangsdaten sind nicht dabei — die Konfiguration entsteht aus
+          <span class="mono">.env.example</span>, und wer den Bot betreibt,
+          bringt eigene Schlüssel mit.</p>
+      </div>
+
+      <div class="res-card">
+        <p class="eyebrow c">// Was drin steckt</p>
+        <ul class="dl-facts">
+          <li><b>Multi-Ziel-Restream</b> — ein Signal parallel nach Kick, Twitch
+            und YouTube senden, mit Überwachung jeder Strecke.</li>
+          <li><b>Azrael Sentinel</b> — der KI-Kern mit Wissensgraph, Regelwerk
+            und Wächter-Agenten, self-hosted statt Cloud.</li>
+          <li><b>Dashboard</b> — Kontrollraum für Sendeleiste, Moderation
+            und Systemzustand, im Browser.</li>
+          <li><b>Lizenz GPLv3</b> — nutzen, ändern, weitergeben; Änderungen
+            bleiben unter derselben Lizenz offen.</li>
+          <li><b>Python 3.13</b> — Einrichtung Schritt für Schritt in
+            <span class="mono">README.md</span> und <span class="mono">docs/DEPLOY.md</span>.</li>
+        </ul>
+        <p class="note">Selbst betrieben braucht das Projekt einen eigenen Server
+          und eigene Zugänge zu den Plattformen. Es ist kein Fertigprodukt zum
+          Anklicken, sondern der Bauplan hinter dem, was hier läuft.</p>
+      </div>
+
+    </div>
   </section>
 
   <!-- ============ GRUNDSÄTZE ============ -->

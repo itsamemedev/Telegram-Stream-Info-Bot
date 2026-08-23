@@ -38,7 +38,7 @@ Ausgabe hier einfügen
 
 ## Regeln eingehalten
 
-- [ ] `nc/*` und `brain/*` importieren **nicht** aus `bot_v37`
+- [ ] `nc/*` und `brain/*` importieren **nicht** aus `bot.py`
 - [ ] Kein `except: pass` in Dauerläufern — `_loop_fehler(name, exc)` benutzt
 - [ ] Konfiguration wird als **Funktion** gelesen, nicht als Modul-Konstante
 - [ ] Neue Funktionalität ist per Env-Schalter abschaltbar, Default ist sinnvoll
@@ -50,7 +50,7 @@ Ausgabe hier einfügen
       Slash-Commands oder Top-Level-Funktionen betroffen sind
 - [ ] `.env.example` neu erzeugt (`python3 tools/gen_env_example.py`) — falls neue
       Konfigurationsvariablen dazugekommen sind
-- [ ] `CHANGELOG.md` ergänzt
+- [ ] `docs/CHANGELOG.md` ergänzt
 
 ## Rückrollbarkeit
 

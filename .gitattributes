@@ -21,6 +21,6 @@
 *.zip   binary
 *.tgz   binary
 
-# bot_v37.py ist 1,5 MB — Diffs darauf sind teuer, aber unverzichtbar.
+# bot.py ist 1,5 MB — Diffs darauf sind teuer, aber unverzichtbar.
 # Kein 'binary'-Marker: gerade hier ist der Diff die einzige Chance zu sehen,
 # was ein Build wirklich geaendert hat.

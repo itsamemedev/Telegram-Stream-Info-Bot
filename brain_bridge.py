@@ -497,7 +497,7 @@ def _register_db_handlers() -> None:
         return res
 
     def llm_ask(task):
-        # B120: Schluessel-Toleranz. bot_v37.brain_cmd schickte
+        # B120: Schluessel-Toleranz. bot.brain_cmd schickte
         # {"question": ...}, dieser Handler las nur "prompt" -> er warf
         # IMMER Unhandled, der Router meldete "kein Tier konnte den Task
         # loesen" und /brain antwortete strukturell "keine Antwort".

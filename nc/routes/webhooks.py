@@ -3,7 +3,7 @@
 Welle 3 der Zerlegung (siehe docs/MODULARISIERUNG.md), erzeugt mit
 tools/bp_extract.py. Pfade stehen woertlich in den Dekoratoren (kein
 url_prefix); app-weite Hooks bleiben auf der App; was der Monolith weiterhin
-stellen muss, kommt ueber nc.ctx statt ueber einen Import aus bot_v37.
+stellen muss, kommt ueber nc.ctx statt ueber einen Import aus bot.py.
 """
 
 from datetime import datetime, timezone

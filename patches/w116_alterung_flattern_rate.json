@@ -1,6 +1,6 @@
 [
  {
-  "file": "bot_v37.py",
+  "file": "bot.py",
   "id": "w116-import",
   "op": "replace",
   "anchor": "from nc import restream_stability as _nc_rstab  # v4.0-W113: Wiederanlauf-Regeln (rein)\n",
@@ -8,7 +8,7 @@
   "count": 1
  },
  {
-  "file": "bot_v37.py",
+  "file": "bot.py",
   "id": "w116-config",
   "op": "replace",
   "anchor": "_RESTREAM_RELAY_POLICY = _nc_rstab.ReconnectPolicy(\n    max_reconnects=RESTREAM_MAX_RECONNECTS,\n    stable_run_s=120.0,\n    base_delay_s=3.0,\n    max_delay_s=30.0,\n    stall_grace_s=float(RESTREAM_STALL_GRACE_S),\n    stall_timeout_s=float(RESTREAM_STALL_TIMEOUT_S),\n    stall_check_s=float(RESTREAM_STALL_CHECK_S))\n",
@@ -16,7 +16,7 @@
   "count": 1
  },
  {
-  "file": "bot_v37.py",
+  "file": "bot.py",
   "id": "w116-helfer",
   "op": "replace",
   "anchor": "                  exc_info=True)\n    else:\n        st[1] += 1\n",
@@ -24,7 +24,7 @@
   "count": 1
  },
  {
-  "file": "bot_v37.py",
+  "file": "bot.py",
   "id": "w116-kickws",
   "op": "replace",
   "anchor": "                    if self.running:\n                        log.warning(f\"Kick-WS getrennt ({e}) — reconnect in 10s\")\n                        await asyncio.sleep(10)\n",
@@ -32,7 +32,7 @@
   "count": 1
  },
  {
-  "file": "bot_v37.py",
+  "file": "bot.py",
   "id": "w116-eventsub",
   "op": "replace",
   "anchor": "        except Exception as e:\n            log.warning(\"Twitch-EventSub getrennt (%s) — Reconnect in %ss\", e, backoff)\n        await asyncio.sleep(backoff)\n",
@@ -40,7 +40,7 @@
   "count": 1
  },
  {
-  "file": "bot_v37.py",
+  "file": "bot.py",
   "id": "w116-twchat",
   "op": "replace",
   "anchor": "        except Exception as e:\n            log.warning(\"Twitch-Chat getrennt (%s) — Reconnect in %ss\", e, backoff)\n            _WCHAT_STATUS[\"twitch\"][\"reconnects\"] += 1\n",
@@ -48,7 +48,7 @@
   "count": 1
  },
  {
-  "file": "bot_v37.py",
+  "file": "bot.py",
   "id": "w116-kick-since",
   "op": "replace",
   "anchor": "                        self.stats[\"connected\"] = True\n                        log.info(\"Kick-Moderator: Chat-Websocket verbunden\")\n",
@@ -56,7 +56,7 @@
   "count": 1
  },
  {
-  "file": "bot_v37.py",
+  "file": "bot.py",
   "id": "w116-es-since",
   "op": "replace",
   "anchor": "    backoff = 30\n    ws_url = \"wss://eventsub.wss.twitch.tv/ws\"\n    _oauth_ready = _twoauth.status().get(\"ready\")\n    while True:\n        try:\n",
@@ -64,7 +64,7 @@
   "count": 1
  },
  {
-  "file": "bot_v37.py",
+  "file": "bot.py",
   "id": "w116-teefail-methoden",
   "op": "replace",
   "anchor": "    def status(self):\n",
@@ -72,7 +72,7 @@
   "count": 1
  },
  {
-  "file": "bot_v37.py",
+  "file": "bot.py",
   "id": "w116-lese-deck",
   "op": "replace",
   "anchor": "    _tf = getattr(_RESTREAM_MGR, \"_tee_fail\", {}) or {}\n",
@@ -80,7 +80,7 @@
   "count": 1
  },
  {
-  "file": "bot_v37.py",
+  "file": "bot.py",
   "id": "w116-lese-status",
   "op": "replace",
   "anchor": "                        \"tee_fehler\": dict(getattr(self, \"_tee_fail\", {}) or {})}\n",
@@ -88,7 +88,7 @@
   "count": 1
  },
  {
-  "file": "bot_v37.py",
+  "file": "bot.py",
   "id": "w116-lese-verify",
   "op": "replace",
   "anchor": "    _tf = (getattr(_RESTREAM_MGR, \"_tee_fail\", {}) or {}).get(\"kick\")\n",
@@ -96,7 +96,7 @@
   "count": 1
  },
  {
-  "file": "bot_v37.py",
+  "file": "bot.py",
   "id": "w116-lese-sentinel",
   "op": "replace",
   "anchor": "        for zielname, tf in (getattr(_RESTREAM_MGR, \"_tee_fail\", {}) or {}).items():\n",
@@ -104,7 +104,7 @@
   "count": 1
  },
  {
-  "file": "bot_v37.py",
+  "file": "bot.py",
   "id": "w116-lese-selbsttest",
   "op": "replace",
   "anchor": "            tf = dict(getattr(mgr, \"_tee_fail\", {}) or {})\n",
@@ -112,7 +112,7 @@
   "count": 1
  },
  {
-  "file": "bot_v37.py",
+  "file": "bot.py",
   "id": "w116-teefail-klaeren",
   "op": "replace",
   "anchor": "                plat = {k: v for k, v in plat.items() if k in active}\n",
@@ -120,7 +120,7 @@
   "count": 1
  },
  {
-  "file": "bot_v37.py",
+  "file": "bot.py",
   "id": "w116-rate-init",
   "op": "replace",
   "anchor": "    async def _stall_watchdog():\n        last_size = -1\n        unchanged_seconds = 0\n        CHECK_EVERY = 15\n",
@@ -128,7 +128,7 @@
   "count": 1
  },
  {
-  "file": "bot_v37.py",
+  "file": "bot.py",
   "id": "w116-rate-beobachten",
   "op": "replace",
   "anchor": "                try:\n                    cur_size = os.path.getsize(output_file) if os.path.exists(output_file) else 0\n                except OSError:\n                    cur_size = -1\n",

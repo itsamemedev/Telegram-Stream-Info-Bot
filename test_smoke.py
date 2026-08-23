@@ -1,6 +1,6 @@
-"""test_smoke — laedt bot_v37.py WIRKLICH und ruft jede GET-Route auf.
+"""test_smoke — laedt bot.py WIRKLICH und ruft jede GET-Route auf.
 
-Warum das noetig war: die uebrigen Suiten lesen bot_v37.py nur als TEXT
+Warum das noetig war: die uebrigen Suiten lesen bot.py nur als TEXT
 (Regex/AST). Ob die Datei ueberhaupt importierbar ist, ob die Modul-Ebene ohne
 NameError durchlaeuft, ob alle 268 Routen registriert werden und ob sie beim
 Aufruf nicht in einen 500er laufen — das hat vorher NICHTS geprueft. Genau
@@ -109,10 +109,10 @@ def main():
     _install_stubs()
 
     import importlib.util as u
-    spec = u.spec_from_file_location("bot_v37", os.path.join(ROOT, "bot_v37.py"))
+    spec = u.spec_from_file_location("bot", os.path.join(ROOT, "bot.py"))
     m = u.module_from_spec(spec)
     spec.loader.exec_module(m)          # NameError/Reihenfolge-Fallen knallen hier
-    ok("bot_v37.py importiert — Modul-Ebene laeuft ohne Fehler durch")
+    ok("bot.py importiert — Modul-Ebene laeuft ohne Fehler durch")
 
     rules = list(m.dashboard_app.url_map.iter_rules())
     assert len(rules) > 200, "nur %d Routen registriert?" % len(rules)

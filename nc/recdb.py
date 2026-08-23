@@ -1,4 +1,4 @@
-"""nc.recdb — die Aufnahmen-Datenbankzugriffe, aus bot_v37 herausgelöst.
+"""nc.recdb — die Aufnahmen-Datenbankzugriffe, aus bot.py herausgelöst.
 
 Warum gebündelt und warum GENAU diese dreizehn: sie sind der Datenzugriff der
 Aufnahmen-Domäne (recordings, recording_attempts, recording_notes, bookmarks,

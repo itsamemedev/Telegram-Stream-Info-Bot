@@ -1,4 +1,4 @@
-"""nc.piper_voices — B166: reine Piper-Stimm-/Modell-Auflösung (aus bot_v37 extrahiert).
+"""nc.piper_voices — B166: reine Piper-Stimm-/Modell-Auflösung (aus bot.py extrahiert).
 
 Die zwei zustandslosen Kerne der Piper-TTS-Stimmwahl:
   voice_roots()        — baut die Liste der Suchwurzeln (dedupliziert, Reihenfolge)
@@ -17,7 +17,7 @@ def voice_roots(base_dirs, *, recordings_dir: str = "", module_dir: str = ""):
     """Alle Wurzeln, in denen nach Piper-Stimmen gesucht wird — in Reihenfolge,
        dedupliziert. base_dirs zuerst (PIPER_VOICE_DIRS), dann die üblichen Orte,
        dann <recordings_dir>/voices und <module_dir>/voices.
-       Identisch zur bisherigen bot_v37._piper_voice_roots-Reihenfolge."""
+       Identisch zur bisherigen bot._piper_voice_roots-Reihenfolge."""
     roots = list(base_dirs)
     extras = [
         os.path.expanduser("~/.local/share/piper"),

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""bp_extract — eine Routengruppe aus bot_v37 in ein Blueprint heben.
+"""bp_extract — eine Routengruppe aus bot.py in ein Blueprint heben.
 
 Macht den mechanischen Teil von Welle 3 (docs/MODULARISIERUNG.md): Routen und
 die Helfer, die nur sie benutzen, verbatim herausschneiden, die Aufrufe auf ihre
@@ -30,7 +30,7 @@ import token as T
 import tokenize
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-BOT = os.path.join(ROOT, "bot_v37.py")
+BOT = os.path.join(ROOT, "bot.py")
 
 # Namen, die in jedem Blueprint gleich aufgelöst werden. Alles andere muss der
 # Aufrufer über --ctx / --cfg angeben, damit nichts still im Kontext landet.
@@ -213,7 +213,7 @@ def main():
 Welle 3 der Zerlegung (siehe docs/MODULARISIERUNG.md), erzeugt mit
 tools/bp_extract.py. Pfade stehen woertlich in den Dekoratoren (kein
 url_prefix); app-weite Hooks bleiben auf der App; was der Monolith weiterhin
-stellen muss, kommt ueber nc.ctx statt ueber einen Import aus bot_v37.
+stellen muss, kommt ueber nc.ctx statt ueber einen Import aus bot.py.
 """
 
 {chr(10).join(dict.fromkeys(imp))}
@@ -253,15 +253,15 @@ log = _LazyLog()
         del lines[s - 1:e]
     io.open(BOT, "w", encoding="utf-8").write("".join(lines))
     print(f"\ngeschrieben: nc/routes/{a.modul}.py")
-    print(f"bot_v37.py gekuerzt um {gesamt} Zeilen")
+    print(f"bot.py gekuerzt um {gesamt} Zeilen")
     print(f"""
 NOCH ZU TUN (Mechanik ist durch, Entscheidungen nicht):
-  1. Import + Registrierung in bot_v37.py:
+  1. Import + Registrierung in bot.py:
          from nc.routes import {a.modul} as _nc_routes_{a.modul}
          dashboard_app.register_blueprint(_nc_routes_{a.modul}.bp)
      HINTER die letzte injizierte Definition, sonst 'undefined name'.
   2. nc.ctx.configure(...) um die neuen Eintraege erweitern.
-  3. pyflakes bot_v37.py — tote Importe entfernen, die nur die Routen brauchten.
+  3. pyflakes bot.py — tote Importe entfernen, die nur die Routen brauchten.
   4. Routentabelle gegen die Basislinie vergleichen (346 Regeln, keine verloren).
   5. Gebrochene Vertragsanker migrieren, KEINEN loeschen.
   6. ncpatch map + volle Pruefkette inklusive test_smoke.""")

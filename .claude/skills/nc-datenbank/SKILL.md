@@ -60,7 +60,7 @@ keine neuen Aufrufstellen schaffen.
 
 ## Schema
 
-`init_db()` in `bot_v37.py` (ab ~Z. 3750) baut alle Tabellen backend-aware über
+`init_db()` in `bot.py` (ab ~Z. 3750) baut alle Tabellen backend-aware über
 Platzhalter, die oben im Block gesetzt werden:
 
     pk        _schema_pk()      AUTO_INCREMENT-PK in nativer Form
@@ -117,11 +117,11 @@ Index (`row[1]`) funktioniert nur auf SQLite und steckt zu Recht nur in
 Es gibt keine MariaDB auf der Entwicklungsmaschine — SQLite-Läufe beweisen also
 nichts über MariaDB. Ersatzweise nach jeder SQL-Änderung gezielt gegenlesen:
 
-    python tools/ncpatch.py grep "COLLATE\|datetime('now'\|AUTOINCREMENT\|PRAGMA " bot_v37.py
+    python tools/ncpatch.py grep "COLLATE\|datetime('now'\|AUTOINCREMENT\|PRAGMA " bot.py
 
 Jeder Treffer außerhalb von `_schema_pk`/`_migrate_columns` ist erklärungspflichtig.
 
-    python -m py_compile bot_v37.py && python test_nc_modules.py
+    python -m py_compile bot.py && python test_nc_modules.py
 
 `nc/dbexport.py` kann ein Backend in den Dialekt des anderen exportieren
 (`/api/db/export?dialect=mariadb|sqlite`) — das ist der Migrationsweg, kein

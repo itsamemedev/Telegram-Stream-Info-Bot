@@ -1,4 +1,4 @@
-"""nc.cfgnorm — v4.0-W33: reine Config-Normalisierer, aus bot_v37 gebündelt.
+"""nc.cfgnorm — v4.0-W33: reine Config-Normalisierer, aus bot.py gebündelt.
 
 Sechs Funktionen mit demselben Muster lagen verstreut im Monolithen: ein
 gespeichertes app_config-dict (`saved`) wird mit .env-Fallbacks und Defaults zu

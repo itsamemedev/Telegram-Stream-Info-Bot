@@ -1,4 +1,4 @@
-"""nc.ffbuild — v4.0-W44: der ffmpeg-Kommandobauer, aus bot_v37 herausgelöst.
+"""nc.ffbuild — v4.0-W44: der ffmpeg-Kommandobauer, aus bot.py herausgelöst.
 
 Ein kleiner, aber überall genutzter Baustein (Restream, Recording, Clips): setzt
 den Thread-Deckel und die optionale nice-Stufe. Verbatim übernommen — Verhalten

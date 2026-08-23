@@ -1,6 +1,6 @@
 # Fremdcode und Lizenzen
 
-NIGHTCRAWLER steht unter der **GNU GPL v3.0 oder später** ([`LICENSE`](LICENSE)).
+NIGHTCRAWLER steht unter der **GNU GPL v3.0 oder später** ([`LICENSE`](../LICENSE)).
 Diese Datei listet Fremdcode, der mitgeliefert oder zur Laufzeit benötigt wird,
 samt seiner Lizenz.
 
@@ -27,7 +27,7 @@ keine zusätzliche Laufzeitabhängigkeit erzeugen.
 ## Laufzeitabhängigkeiten (pip)
 
 Diese Pakete werden **nicht** mitgeliefert, sondern über
-[`requirements.txt`](requirements.txt) installiert.
+[`requirements.txt`](../requirements.txt) installiert.
 
 | Paket | Zweck | Lizenz |
 |---|---|---|

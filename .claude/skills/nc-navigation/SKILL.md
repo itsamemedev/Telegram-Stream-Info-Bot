@@ -1,13 +1,13 @@
 ---
 name: nc-navigation
-description: Etwas in NIGHTCRAWLER finden, ohne Token zu verbrennen — die Reihenfolge Karte, Symbol, Ausschnitt statt Suche über den 1,5-MB-Monolithen. Nutze dies IMMER als ersten Schritt, bevor du bot_v37.py, templates/dashboard.html oder ein nc//brain/-Modul liest, und bei jeder Frage der Form "wo ist X", "welche Route", "welcher Command", "wie heißt die Funktion für". Trigger: wo ist, finden, suchen, welche Route, welcher Endpoint, Slash-Command, Funktion für, Zeile, INDEX, Karte, navigieren.
+description: Etwas in NIGHTCRAWLER finden, ohne Token zu verbrennen — die Reihenfolge Karte, Symbol, Ausschnitt statt Suche über den 1,5-MB-Monolithen. Nutze dies IMMER als ersten Schritt, bevor du bot.py, templates/dashboard.html oder ein nc//brain/-Modul liest, und bei jeder Frage der Form "wo ist X", "welche Route", "welcher Command", "wie heißt die Funktion für". Trigger: wo ist, finden, suchen, welche Route, welcher Endpoint, Slash-Command, Funktion für, Zeile, INDEX, Karte, navigieren.
 ---
 
 # Navigation — erst wissen wo, dann lesen
 
 ## Das Kostenbild, das die Regel begründet
 
-    bot_v37.py                  ~400.000 Token   niemals lesen
+    bot.py                  ~400.000 Token   niemals lesen
     .claude/INDEX.md             ~12.000 Token   nur wenn wirklich alles gebraucht wird
     ncpatch find <begriff>          ~100 Token   der Normalfall
     ncpatch show <von> <bis>     50-500 Token   der eigentliche Ausschnitt
@@ -30,17 +30,17 @@ alle 283 Flask-Routen (mit `methods=`), 45 Discord-Slash-Commands, Discord-Event
 
 **2. Den Bereich eingrenzen.** Bei einem bekannten Funktionsnamen direkt:
 
-    python tools/ncpatch.py sym bot_v37.py api_donations_summary
+    python tools/ncpatch.py sym bot.py api_donations_summary
     # -> FunctionDef api_donations_summary: Z.16907-16960 (54 Zeilen)
 
 **3. Nur diesen Ausschnitt lesen.**
 
-    python tools/ncpatch.py show bot_v37.py 16907 16960
+    python tools/ncpatch.py show bot.py 16907 16960
 
 **4. Erst wenn die Karte nichts hergibt**, gezielt greppen — mit Muster, nie
 mit einem Begriff, der hundertfach vorkommt:
 
-    python tools/ncpatch.py grep "router.route(" bot_v37.py -C 3
+    python tools/ncpatch.py grep "router.route(" bot.py -C 3
 
 ## Wann die Karte neu gebaut werden muss
 

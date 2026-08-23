@@ -1,7 +1,7 @@
 # V37-W-PLUS: systemd-Unit für llama.cpp (Brain-LLM-Backend Tier 4)
 # Install:  cp llama-server.service /etc/systemd/system/
 #           systemctl daemon-reload && systemctl enable --now llama-server
-# Modell:   siehe SETUP_LLAMACPP.md (Qwen2.5-1.5B-Instruct Q4_K_M empfohlen)
+# Modell:   siehe docs/SETUP_LLAMACPP.md (Qwen2.5-1.5B-Instruct Q4_K_M empfohlen)
 [Unit]
 Description=llama.cpp Server (NIGHTCRAWLER Brain-LLM)
 After=network.target

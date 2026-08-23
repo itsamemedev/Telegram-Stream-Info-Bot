@@ -207,7 +207,7 @@ def test_key(api_key, model=None, opener=None):
     return (ok_, "ok" if ok_ else detail)
 
 
-# ── v4.0-W111: Schluessel- und Modellwahl, aus bot_v37 geloest ───────────
+# ── v4.0-W111: Schluessel- und Modellwahl, aus bot.py geloest ───────────
 #
 # Warum hierher: das sind Anthropic-Belange, und nc.claude IST der
 # Anthropic-Provider. Im Laufzeitkontext haetten sie drei Slots belegt, ohne

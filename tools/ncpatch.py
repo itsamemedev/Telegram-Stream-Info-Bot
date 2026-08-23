@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """ncpatch — anker-basiertes Patchen des NIGHTCRAWLER-Monolithen.
 
-WARUM: bot_v37.py hat ~29.000 Zeilen / 1,4 MB. Die Datei in ein LLM-Kontext-
+WARUM: bot.py hat ~29.000 Zeilen / 1,4 MB. Die Datei in ein LLM-Kontext-
 fenster zu laden kostet ~400k Token PRO Durchgang. Dieses Tool erlaubt
 chirurgische Änderungen über eindeutige Textanker, ohne die Datei je
 vollständig zu lesen oder zu schreiben.
@@ -9,7 +9,7 @@ vollständig zu lesen oder zu schreiben.
 Patch-Format: eine JSON-Datei mit einer Liste von Operationen.
 
   [
-    {"file": "bot_v37.py",
+    {"file": "bot.py",
      "id":   "B120-discord-supervisor",
      "op":   "replace",              # replace | insert_after | insert_before | delete
      "anchor": "    try:\n        await client.start(DISCORD_BOT_TOKEN)\n",
@@ -26,9 +26,9 @@ Aufruf:
   python3 ncpatch.py apply  patches/w2_ai.json      [--root .]
   python3 ncpatch.py verify patches/w2_ai.json      [--root .]   # dry-run
   python3 ncpatch.py check                          [--root .]   # Validierung
-  python3 ncpatch.py grep  "such-text" bot_v37.py   [-C 3]       # Anker finden
-  python3 ncpatch.py show  bot_v37.py 24721 24760                # Zeilen zeigen
-  python3 ncpatch.py sym   bot_v37.py _discord_start             # Symbol-Zeilen
+  python3 ncpatch.py grep  "such-text" bot.py   [-C 3]       # Anker finden
+  python3 ncpatch.py show  bot.py 24721 24760                # Zeilen zeigen
+  python3 ncpatch.py sym   bot.py _discord_start             # Symbol-Zeilen
   python3 ncpatch.py map                                         # .claude/INDEX.md bauen
   python3 ncpatch.py find  "donations"                           # wo ist X? (aus der Karte)
 """
@@ -304,7 +304,7 @@ def cmd_sym(args) -> int:
 #
 # WARUM: der teuerste Fehler an diesem Projekt ist, den Monolithen zu
 # durchsuchen, um herauszufinden WO etwas steht. Jeder blinde Scan über
-# bot_v37.py kostet ein Vielfaches dessen, was der gesuchte Ausschnitt
+# bot.py kostet ein Vielfaches dessen, was der gesuchte Ausschnitt
 # selbst kostet. `map` destilliert die Datei einmal in ein paar KB;
 # `find` beantwortet daraus die Frage "wo ist X?" ohne die Datei
 # überhaupt zu öffnen.
@@ -386,7 +386,7 @@ def cmd_map(args) -> int:
     ziel = _index_path(root)
     os.makedirs(os.path.dirname(ziel), exist_ok=True)
 
-    haupt = "bot_v37.py"
+    haupt = "bot.py"
     d = _scan(os.path.join(root, haupt))
     z = ["# NIGHTCRAWLER — Navigationskarte\n",
          "Erzeugt von `python tools/ncpatch.py map`. Nach jeder Änderung an",

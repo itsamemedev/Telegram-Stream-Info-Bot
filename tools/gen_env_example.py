@@ -4,7 +4,7 @@
 Warum generiert statt handgepflegt: der Bot liest ~470 Umgebungsvariablen. Eine
 handgeschriebene Vorlage veraltet sofort und übersieht Variablen — genau die
 Lücke, an der leere .env-Zeilen den Brain gekillt haben (W81/W82). Dieses Skript
-scannt bot_v37.py, brain/, brain_bridge.py und nc/ nach env-Zugriffen, zieht Name
+scannt bot.py, brain/, brain_bridge.py und nc/ nach env-Zugriffen, zieht Name
 + Default und schreibt sie gruppiert heraus. Erneut ausführbar:
 
     python tools/gen_env_example.py        # schreibt .env.example
@@ -30,7 +30,7 @@ _REQUIRED = {"BOT_TOKEN", "TELEGRAM_TOKEN", "TELEGRAM_CHAT_ID"}
 
 
 def collect():
-    files = ["bot_v37.py", "brain_bridge.py"] + \
+    files = ["bot.py", "brain_bridge.py"] + \
         sorted(glob.glob(os.path.join(ROOT, "brain", "*.py"))) + \
         sorted(glob.glob(os.path.join(ROOT, "nc", "*.py")))
     seen = {}

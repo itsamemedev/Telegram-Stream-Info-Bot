@@ -1,6 +1,6 @@
 """nc.notes — Notizen, Lesezeichen, Annotationen.
 
-Extrahiert aus bot_v37.py. Reine DB-Schreibpfade ohne Bot-Globals."""
+Extrahiert aus bot.py. Reine DB-Schreibpfade ohne Bot-Globals."""
 
 import logging
 from datetime import datetime, timezone

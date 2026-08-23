@@ -1,6 +1,6 @@
 """nc.streamsel — v4.0-W29: TikTok-Stream-URL-Auswahl (Resolver-Chokepoint).
 
-Der codec-bewusste Kern des Restream-Resolvers, aus bot_v37 herausgelöst — die
+Der codec-bewusste Kern des Restream-Resolvers, aus bot.py herausgelöst — die
 Logik, die aus TikToks liveCoreSDKData die beste Quelle (H.264 vor HEVC, sonst
 kaputte Aufnahme) wählt. VERBATIM übernommen: Verhalten ist bitgenau identisch
 zum Monolithen, inklusive der bestehenden latenten Kanten (z. B. ein Crash, wenn
@@ -83,7 +83,7 @@ def find_stream_urls(obj, prefer_h264: bool = True, _depth: int = 0) -> Optional
     """Rekursiv durch eine geparste JSON-Struktur laufen und das streamUrl-Node finden.
        Defensiv: TikTok variiert die Pfade zwischen Releases — wir suchen breit.
 
-       v4.0-W31: verbatim aus bot_v37 übernommen; prefer_h264 wird durchgereicht
+       v4.0-W31: verbatim aus bot.py übernommen; prefer_h264 wird durchgereicht
        (früher las die Blattfunktion das globale PREFER_H264 direkt)."""
     if _depth > 8:
         return None

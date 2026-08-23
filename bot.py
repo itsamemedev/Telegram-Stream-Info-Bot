@@ -596,6 +596,7 @@ from nc.routes import webhooks as _nc_routes_webhooks        # v4.0-W108
 from nc.routes import insights as _nc_routes_insights        # v4.0-W108
 from nc.routes import health as _nc_routes_health            # v4.0-W110
 from nc.routes import ai as _nc_routes_ai                    # v4.0-W112: KI-Blueprint
+from nc import updater as _nc_updater                        # v4.0-W115: Selbst-Update aus dem GitHub-Repo
 # Diese beiden Routen ruft der Bot auch INTERN auf (Telegram /sysres und die
 # Aggregat-Route /api/dashboard-bundle) — sie sind dort gewoehnliche
 # Funktionen, keine Endpunkte. Deshalb importiert statt kopiert.
@@ -1441,6 +1442,24 @@ if not _file_log_ok:
 
 log = logging.getLogger("TikTokBot")
 _nc_preflight.configure(logger=log)   # V37-MOD: Preflight-Logger nachreichen
+
+# ═══════════════════════════════════════════════════════════════════════
+# v4.0-W115 · Selbst-Update (nc.updater)
+# Die Wurzel ist der Ordner DIESER Datei — nicht das Arbeitsverzeichnis.
+# systemd startet den Dienst mit einem anderen cwd, und ein Update wuerde
+# dann in ein leeres Verzeichnis schreiben statt in den Bestand.
+# ═══════════════════════════════════════════════════════════════════════
+UPDATE_REPO    = os.getenv("UPDATE_REPO", _nc_updater.REPO_DEFAULT).strip()
+UPDATE_BRANCH  = os.getenv("UPDATE_BRANCH", _nc_updater.BRANCH_DEFAULT).strip()
+UPDATE_ENABLED = os.getenv("UPDATE_ENABLED", "1").strip().lower() in ("1", "true", "yes", "on", "y")
+UPDATE_RESTART_CMD = os.getenv("UPDATE_RESTART_CMD", "").strip()
+_nc_updater.configure(
+    root=os.path.dirname(os.path.abspath(__file__)),
+    repo=UPDATE_REPO, branch=UPDATE_BRANCH,
+    token=os.getenv("GITHUB_TOKEN", "").strip(),
+    enabled=UPDATE_ENABLED, restart_cmd=UPDATE_RESTART_CMD,
+    keep_backups=_nc_envnum.env_int("UPDATE_KEEP_BACKUPS", 10),
+    logger=log)
 
 
 # B41: Werkzeug-Spam-Filter
@@ -16606,7 +16625,7 @@ def api_twitch_oauth_start():
     # V37-TWOAUTH-FIX2: Twitch verlangt bei Redirect-URIs HTTPS — mit EINER
     # Ausnahme: http://localhost:PORT ist erlaubt. Eine IP mit https geht NICHT
     # (kein Zertifikat fuer nackte IPs). Deshalb ist der Default localhost:3000,
-    # das der Nutzer per SSH-Tunnel auf den Bot legt (SETUP_TWITCH_OAUTH.md).
+    # das der Nutzer per SSH-Tunnel auf den Bot legt (docs/SETUP_TWITCH_OAUTH.md).
     # Wer eine echte Domain + HTTPS hat, setzt TWITCH_REDIRECT_URI darauf.
     forced = (os.getenv("TWITCH_REDIRECT_URI", "") or "").strip()
     redirect_uri = forced or "http://localhost:3000/api/twitch/oauth/callback"
@@ -16756,6 +16775,104 @@ def api_ops_version():
                    ffmpeg=_ffmpeg_version_str(),
                    db_backend=DB_BACKEND,
                    prefer_h264=PREFER_H264)
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# v4.0-W115 · Selbst-Update aus dem GitHub-Repo (nc.updater)
+# Die Uebersicht zeigt ganz vorn eine Update-Karte. Ablauf dort: pruefen →
+# Trockenlauf → einspielen → neu starten. Jeder Schritt ist einzeln
+# ausloesbar und einzeln rueckrollbar, weil der Deploy hier direkt gegen
+# Produktion laeuft.
+#
+# Warum Hintergrund-Thread statt Arbeit im Request: der Download dauert je
+# nach Leitung zehn Sekunden bis eine Minute. Im Request liefe der Browser
+# in einen Timeout und der Operator wuesste nicht, ob das Update noch laeuft
+# oder schon halb geschrieben hat.
+# ═══════════════════════════════════════════════════════════════════════
+@dashboard_app.route("/api/update/check")
+def api_update_check():
+    """Billige Pruefung — ein GitHub-API-Aufruf, kein Download."""
+    try:
+        res = _nc_updater.check()
+    except Exception as e:
+        log.error("Update-Pruefung fehlgeschlagen: %s", e, exc_info=True)
+        return jsonify(ok=False, error=f"Update-Pruefung: {e}"), 500
+    res["job"] = _nc_updater.job_state()
+    res["backups"] = _nc_updater.list_backups()[:5]
+    res["local_version"] = globals().get("BOT_VERSION", "")
+    res["build"] = globals().get("BUILD_STAMP", "")
+    return jsonify(**res)
+
+
+@dashboard_app.route("/api/update/status")
+def api_update_status():
+    """Fortschritt des laufenden bzw. Ergebnis des letzten Laufs."""
+    return jsonify(ok=True, job=_nc_updater.job_state(),
+                   settings=_nc_updater.settings())
+
+
+@dashboard_app.route("/api/update/start", methods=["POST"])
+def api_update_start():
+    """Update anstossen. dry_run=true rechnet nur durch und schreibt nichts."""
+    body = request.get_json(silent=True) or {}
+    dry = bool(body.get("dry_run"))
+    if not dry and not UPDATE_ENABLED:
+        return jsonify(ok=False,
+                       error="Update-Schreiben ist abgeschaltet (UPDATE_ENABLED=0)."), 403
+    res = _nc_updater.start_update(dry_run=dry)
+    return (jsonify(**res), 200 if res.get("ok") else 409)
+
+
+@dashboard_app.route("/api/update/backups")
+def api_update_backups():
+    return jsonify(ok=True, backups=_nc_updater.list_backups())
+
+
+@dashboard_app.route("/api/update/rollback", methods=["POST"])
+def api_update_rollback():
+    """Ein Backup zurueckspielen. Ohne Namen das neueste."""
+    body = request.get_json(silent=True) or {}
+    name = (body.get("backup") or "").strip()
+    if not name:
+        bl = _nc_updater.list_backups()
+        if not bl:
+            return jsonify(ok=False, error="Kein Backup vorhanden."), 404
+        name = bl[0]["name"]
+    try:
+        res = _nc_updater.rollback(name)
+    except Exception as e:
+        log.error("Rollback fehlgeschlagen: %s", e, exc_info=True)
+        return jsonify(ok=False, error=f"Rollback: {e}"), 500
+    if res.get("ok"):
+        log_event("update_rollback", "warning", f"Backup {name} zurueckgespielt")
+    return (jsonify(**res), 200 if res.get("ok") else 500)
+
+
+@dashboard_app.route("/api/update/restart", methods=["POST"])
+def api_update_restart():
+    """Dienst neu starten — nur wenn UPDATE_RESTART_CMD gesetzt ist.
+
+    Bewusst opt-in: ein Neustart-Kommando, das der Bot selbst kennt, ist ein
+    Fernsteuer-Knopf auf das System. Ohne gesetzte Variable nennt die Antwort
+    nur das Kommando, das der Operator selbst absetzt."""
+    if not UPDATE_RESTART_CMD:
+        return jsonify(ok=False, needs_manual=True,
+                       hint="sudo systemctl restart tiktok-bot",
+                       error="Kein Neustart-Kommando hinterlegt "
+                             "(UPDATE_RESTART_CMD). Bitte von Hand neu starten."), 409
+    try:
+        # Verzoegert und abgekoppelt: der Neustart killt genau den Prozess, der
+        # diese Antwort noch senden muss. Ohne das Fenster sieht der Operator
+        # einen Netzwerkfehler statt einer Bestaetigung.
+        subprocess.Popen(["sh", "-c", f"sleep 2; {UPDATE_RESTART_CMD}"],
+                         start_new_session=True,
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except Exception as e:
+        log.error("Neustart nicht ausgeloest: %s", e, exc_info=True)
+        return jsonify(ok=False, error=f"Neustart nicht ausgeloest: {e}"), 500
+    log_event("update_restart", "warning", f"Neustart ausgeloest: {UPDATE_RESTART_CMD}")
+    return jsonify(ok=True, cmd=UPDATE_RESTART_CMD,
+                   summary="Neustart in 2 Sekunden — das Dashboard ist kurz weg.")
 
 
 @dashboard_app.route("/api/ops/log-tail")
@@ -22939,7 +23056,7 @@ def api_chat_send():
         if not fn:
             return jsonify(ok=False, error="YouTube nicht sendefähig "
                            "(kein aktiver Live-Chat oder OAuth nicht "
-                           "konfiguriert — SETUP_YT_OAUTH.md)"), 503
+                           "konfiguriert — docs/SETUP_YT_OAUTH.md)"), 503
         try:
             _run_async_from_flask(fn(text), timeout=15)
             return jsonify(ok=True)
@@ -24041,7 +24158,7 @@ async def _youtube_channel_status():
                 "Zahlen erscheinen, sobald du live bist." if oauth
                 else "YouTube läuft (Restream/Key), aber Titel/Kategorie/Chat/"
                      "Live-Zahlen brauchen OAuth — im Dashboard verbinden "
-                     "(SETUP_YT_OAUTH.md).")
+                     "(docs/SETUP_YT_OAUTH.md).")
         return {"configured": True, "source": "config", "url": None,
                 "is_live": False, "error": hint}
     # 3) Handle vorhanden → Scrape der /live-Seite (keyloser Fallback).
@@ -29264,7 +29381,7 @@ def _clip_should_velocity(times):
 _WCHAT_THANK_LAST = {}
 # V37-YT-SEND: OAuth-Sendekanal für YouTube (Data-API v3). Anders als das
 # lesende InnerTube-Polling braucht Senden echte Credentials: einmalig ein
-# Refresh-Token erzeugen (SETUP_YT_OAUTH.md), Access-Token wird zur Laufzeit
+# Refresh-Token erzeugen (docs/SETUP_YT_OAUTH.md), Access-Token wird zur Laufzeit
 # selbst erneuert. liveChatId kommt aus dem aktiven Broadcast.
 # (Aliase _WCHAT_STATUS/_TWITCH_SEND/_YT_SEND stehen im frühen Konstanten-
 #  block, damit die Deck-API sie nutzen kann — V37-MOD.)
@@ -30554,6 +30671,115 @@ async def brain_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ Brain nicht verfügbar: {e}")
 
 
+async def update_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """v4.0-W115: /update                — Stand gegen das GitHub-Repo pruefen
+                  /update pruefen        — Trockenlauf: was WUERDE sich aendern
+                  /update jetzt          — einspielen (mit Backup)
+                  /update zurueck        — letztes Backup zurueckspielen
+
+    Eingespielt wird nur nach ausdruecklichem "jetzt". Ein Update ersetzt
+    Code unter einem laufenden Dienst — das passiert nicht als Nebenwirkung
+    einer Statusabfrage."""
+    if not _is_authorized(update):
+        return
+    args = [a.lower() for a in (context.args or [])]
+    mode = args[0] if args else ""
+
+    if mode in ("jetzt", "apply", "now", "pruefen", "prüfen", "dry", "trocken"):
+        dry = mode not in ("jetzt", "apply", "now")
+        if not dry and not UPDATE_ENABLED:
+            await update.message.reply_text(
+                "🔒 Update-Schreiben ist abgeschaltet (<code>UPDATE_ENABLED=0</code>).",
+                parse_mode=ParseMode.HTML)
+            return
+        res = _nc_updater.start_update(dry_run=dry)
+        if not res.get("ok"):
+            await update.message.reply_text(f"⏳ {res.get('error')}")
+            return
+        msg = await update.message.reply_text(
+            "🔄 <b>Trockenlauf laeuft …</b>" if dry else "⬇️ <b>Update laeuft …</b>",
+            parse_mode=ParseMode.HTML)
+        # Fortschritt pollen statt blockieren: der Download darf eine Minute
+        # dauern, und ein haengender Handler blockiert den Update-Dispatcher.
+        last = ""
+        for _ in range(180):
+            await asyncio.sleep(1)
+            st = _nc_updater.job_state()
+            if not st.get("running"):
+                break
+            line = f"{st.get('phase')} · {st.get('percent')}% {st.get('text') or ''}".strip()
+            if line != last:
+                last = line
+                try:
+                    await msg.edit_text(
+                        ("🔄 <b>Trockenlauf</b>\n" if dry else "⬇️ <b>Update</b>\n")
+                        + f"<code>{html.escape(line)}</code>",
+                        parse_mode=ParseMode.HTML)
+                except Exception:
+                    pass       # "message is not modified" / Flood-Limit — belanglos
+        st = _nc_updater.job_state()
+        r = st.get("result") or {}
+        if not r:
+            await update.message.reply_text("⏱ Update laeuft noch — <code>/update</code> zeigt den Stand.",
+                                            parse_mode=ParseMode.HTML)
+            return
+        if not r.get("ok"):
+            await update.message.reply_text(f"❌ {r.get('error') or r.get('summary')}")
+            return
+        plan = r.get("plan") or {}
+        txt = [("🔄 <b>Trockenlauf</b>" if dry else "✅ <b>Update eingespielt</b>"), ""]
+        txt.append(f"• neu: {len(plan.get('new') or [])}")
+        txt.append(f"• geaendert: {len(plan.get('changed') or [])}")
+        txt.append(f"• unveraendert: {plan.get('same', 0)}")
+        if plan.get("protected"):
+            txt.append(f"• geschuetzt uebersprungen: {len(plan['protected'])}")
+        if r.get("backup"):
+            txt.append(f"• Backup: <code>{html.escape(r['backup'])}</code>")
+        if r.get("restart_needed"):
+            txt += ["", "⚠️ <b>Neustart noetig</b> — "
+                    f"<code>{html.escape(UPDATE_RESTART_CMD or 'sudo systemctl restart tiktok-bot')}</code>"]
+        await update.message.reply_text("\n".join(txt), parse_mode=ParseMode.HTML)
+        return
+
+    if mode in ("zurueck", "zurück", "rollback"):
+        bl = _nc_updater.list_backups()
+        if not bl:
+            await update.message.reply_text("Kein Backup vorhanden — nichts zurueckzuspielen.")
+            return
+        res = _nc_updater.rollback(bl[0]["name"])
+        if not res.get("ok"):
+            await update.message.reply_text(f"❌ {res.get('error')}")
+            return
+        log_event("update_rollback", "warning", f"Backup {bl[0]['name']} zurueckgespielt")
+        await update.message.reply_text(
+            f"↩️ <b>{res['restored']} Datei(en) zurueckgespielt</b> aus "
+            f"<code>{html.escape(bl[0]['name'])}</code>\n⚠️ Neustart noetig.",
+            parse_mode=ParseMode.HTML)
+        return
+
+    # Ohne Argument: nur nachsehen.
+    c = await asyncio.to_thread(_nc_updater.check)
+    lines = [f"🧩 <b>NIGHTCRAWLER v{BOT_VERSION}</b> · Update", ""]
+    loc = c.get("local") or {}
+    lines.append(f"• Stand hier: <code>{loc.get('short') or 'unbekannt'}</code>"
+                 + (f" ({loc.get('source')})" if loc.get("source") else ""))
+    if c.get("ok"):
+        rem = c.get("remote") or {}
+        lines.append(f"• Repo: <code>{rem.get('short')}</code> vom {(rem.get('date') or '')[:10]}")
+        if rem.get("message"):
+            lines.append(f"  <i>{html.escape(rem['message'][:120])}</i>")
+        lines += ["", ("🔔 <b>Neuer Stand verfuegbar.</b>" if c.get("update_available")
+                       else ("✅ Alles aktuell." if c.get("local_known")
+                             else "❔ Vergleich unsicher — <code>/update pruefen</code> rechnet es durch."))]
+    else:
+        lines.append(f"• Repo: <i>{html.escape(str(c.get('error') or 'nicht erreichbar'))}</i>")
+    lines += ["", "<code>/update pruefen</code> — Trockenlauf",
+              "<code>/update jetzt</code> — einspielen",
+              "<code>/update zurueck</code> — letztes Backup"]
+    await update.message.reply_text("\n".join(lines), parse_mode=ParseMode.HTML,
+                                    disable_web_page_preview=True)
+
+
 async def einnahmen_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """B120: /einnahmen [jahr]           — Jahresaufstellung
              /einnahmen buchen <datum> <plattform> <brutto> [gebuehr] [beleg]
@@ -30735,7 +30961,8 @@ async def run_bot():
                      ("brain", brain_cmd),                              # V37
                      ("einnahmen", einnahmen_cmd),                      # B120
                      ("track_exact", track_exact),                      # B125
-                     ("report", report_cmd)):                           # V37
+                     ("report", report_cmd),                            # V37
+                     ("update", update_cmd)):                           # v4.0-W115
         app.add_handler(CommandHandler(name, fn))
     app.add_handler(CallbackQueryHandler(on_callback))                  # C20
     # F16: Media (Document/Photo) mit /ai-Caption

@@ -1,6 +1,6 @@
 """nc.stats — Auswertungen & Kennzahlen (reine DB-Aggregation).
 
-Extrahiert aus bot_v37.py, nachdem db_conn() nach nc.dbwrap gewandert
+Extrahiert aus bot.py, nachdem db_conn() nach nc.dbwrap gewandert
 ist — dadurch hängen diese Funktionen an KEINEM Bot-Global mehr."""
 
 import logging

@@ -29,7 +29,7 @@ Hinweis auf eine vergessene Abrechnung).
 
 TikTok kommt hier ueberhaupt nicht vor: TikTok-Gifts gehen an den
 getrackten Streamer, nicht an unsere Kanaele. Fremdes Geld ist keine
-Einnahme (siehe REVENUE_PLATFORMS in bot_v37).
+Einnahme (siehe REVENUE_PLATFORMS in bot.py).
 
 ════════════════════════════════════════════════════════════════════════
 GoBD-NAEHE (kein Zertifikat, aber die Grundsaetze)
@@ -63,7 +63,7 @@ import re
 from datetime import datetime, timezone
 
 # Plattformen, die Geld an EIGENE Kanaele auszahlen. Deckungsgleich mit
-# REVENUE_PLATFORMS in bot_v37 — bewusst hier gespiegelt, damit das Modul
+# REVENUE_PLATFORMS in bot.py — bewusst hier gespiegelt, damit das Modul
 # bot-frei bleibt und isoliert testbar ist.
 PLATFORMS = ("twitch", "youtube", "kick", "sonstige")
 

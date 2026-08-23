@@ -1,4 +1,4 @@
-"""nc.restream_util — v4.0-W25: reine Restream-Helfer, aus bot_v37 extrahiert.
+"""nc.restream_util — v4.0-W25: reine Restream-Helfer, aus bot.py extrahiert.
 
 Zwei kleine, aber auf kritischen Pfaden sitzende Funktionen — beide ohne jede
 Bot-Kopplung (nur stdlib), deshalb verlustfrei herauslösbar und bitgenau gegen

@@ -68,7 +68,7 @@ Wer das Dashboard öffentlich erreichbar macht, stellt einen vollständigen
 Fernsteuerungs-Kontrollraum ins Netz — inklusive Aufnahme-Archiv,
 Einnahmen-Journal und Restream-Steuerung. Wenn es sein muss: Reverse Proxy mit
 TLS **und** Authentifizierung davor, `DASHBOARD_TOKEN` setzen, und die
-CrowdSec-Anbindung aktivieren (siehe [`docs/CROWDSEC.md`](docs/CROWDSEC.md)).
+CrowdSec-Anbindung aktivieren (siehe [`docs/CROWDSEC.md`](CROWDSEC.md)).
 
 ### Log-Redaction nicht umgehen
 

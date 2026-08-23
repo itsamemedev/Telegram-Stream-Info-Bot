@@ -1,4 +1,4 @@
-"""nc.trackingdb — v4.0-W50: die zwei Tracking-Status-Helfer, aus bot_v37 gelöst.
+"""nc.trackingdb — v4.0-W50: die zwei Tracking-Status-Helfer, aus bot.py gelöst.
 
 Beide operieren auf der trackings-Tabelle und stehen im selben Live-Transitions-
 Fluss. Verbatim übernommen; die DB-Verbindung wird injiziert (der Aufrufer öffnet

@@ -1,6 +1,6 @@
 # Den Monolithen zerlegen — Plan
 
-`bot_v37.py` hat **34.487 Zeilen / 1,63 MB**. Diese Datei ist der Engpass des
+`bot.py` hat **34.487 Zeilen / 1,63 MB**. Diese Datei ist der Engpass des
 Projekts: sie lässt sich nicht lesen, nicht überblicken und nur mit Werkzeug
 (`ncpatch`) bearbeiten. Dieses Dokument sagt, wie sie kleiner wird, **ohne dass
 der Bot dabei stehenbleibt**.
@@ -147,7 +147,7 @@ def ff_cmd(cmd, threads=None, nice=None):
 ```
 
 ```python
-# bot_v37.py — was übrig bleibt
+# bot.py — was übrig bleibt
 from nc import ffbuild as _nc_ffbuild
 
 def _ff_cmd(cmd, threads=None, nice=None):
@@ -157,7 +157,7 @@ def _ff_cmd(cmd, threads=None, nice=None):
 ### 3.1 Die Vertragswanderung — der Punkt, an dem es sonst scheitert
 
 `test_restream.py` hat **306 Verträge in 172 Testfunktionen**, und **149 davon
-verankern sich an wörtlichem Quelltext von `bot_v37.py`**:
+verankern sich an wörtlichem Quelltext von `bot.py`**:
 
 ```python
 assert 'out[1:1] = ["-threads", str(int(threads))]' in src
@@ -236,7 +236,7 @@ Zusätzlich, weil beim Verschieben genau das schiefgeht:
 
 ```bash
 # keine doppelten Top-Level-Defs (Kopie liegen geblieben)
-python3 -c "import ast,collections;b=ast.parse(open('bot_v37.py',encoding='utf-8').read()).body;\
+python3 -c "import ast,collections;b=ast.parse(open('bot.py',encoding='utf-8').read()).body;\
 n=[x.name for x in b if hasattr(x,'name')];d=[k for k,v in collections.Counter(n).items() if v>1];\
 print('DUPLIKATE:',d) if d else print('keine doppelten Defs')"
 
@@ -251,7 +251,7 @@ Welle: er muss genau die verschobenen Symbole zeigen und **keine Route
 verlieren**. Dann `bash tools/deploy.sh <zip>`, das im Nebenverzeichnis prüft
 und bei Fehlschlag selbst zurückrollt.
 
-> **`test_smoke.py` ist die einzige Abnahme, die zählt.** Es führt `bot_v37.py`
+> **`test_smoke.py` ist die einzige Abnahme, die zählt.** Es führt `bot.py`
 > wirklich aus und findet damit als Einziges die Fehlerklasse, die dieser Umbau
 > erzeugt: NameError durch einen Namen, der nach dem Verschieben nicht mehr da
 > ist, und Reihenfolge-Fallen beim Import. Es läuft nur auf dem Server.
@@ -279,7 +279,7 @@ Zwei Dinge anlegen, sonst nichts. Wer hier abkürzt, baut in Welle 3 vierzig
 
 **`nc/ctx.py`** — ein Namensraum für die **13** echten Querschnittshelfer und
 die fünf Laufzeit-Singletons. Der Bot füllt ihn genau einmal beim Start; `nc/`
-liest nur. Kein Import aus `bot_v37` — die Architektur-Grenze bleibt.
+liest nur. Kein Import aus `bot.py` — die Architektur-Grenze bleibt.
 
 ```python
 """nc.ctx — der Laufzeitkontext, den herausgelöste Module brauchen.
@@ -400,7 +400,7 @@ def api_recordings():
 ```
 
 ```python
-# bot_v37.py, im Startpfad — eine Zeile pro Blueprint
+# bot.py, im Startpfad — eine Zeile pro Blueprint
 from nc.routes import recordings as _rt_recordings
 dashboard_app.register_blueprint(_rt_recordings.bp)
 ```
@@ -442,7 +442,7 @@ irgendwo zugesichert ist.
 
 > [!IMPORTANT]
 > **Die Lehre für Welle 3: die Navigationskarte muss mitwandern.**
-> `ncpatch map` kannte nur `bot_v37.py` und meldete nach dem Umzug 311 statt
+> `ncpatch map` kannte nur `bot.py` und meldete nach dem Umzug 311 statt
 > 345 Routen — `ncpatch find` hätte genau die ausgelagerten Routen nicht mehr
 > gefunden. Das ist die Kernregel des Projekts, und der Umbau hätte sie
 > ausgehöhlt. Die Karte scannt jetzt `nc/routes/*.py` mit und weist Datei und
@@ -525,7 +525,7 @@ python3 tools/bp_extract.py /api/insights insights --apply
 **Verträge gelten generisch, nicht je Blueprint.** `_test_routes_alle_blueprints`
 in `test_nc_modules.py` prüft jedes Modul in `nc/routes/` automatisch: Pfade
 unter `/api/`, Endpunkte qualifiziert, im Bot registriert, kein Rückimport aus
-`bot_v37`, keine app-weiten Hooks mitgewandert, kein roher Query-Parser. Ein
+`bot.py`, keine app-weiten Hooks mitgewandert, kein roher Query-Parser. Ein
 neues Blueprint braucht dafür **keinen neuen Testcode** — nur die Wanderung
 seiner eigenen, spezifischen Anker.
 
@@ -595,7 +595,7 @@ umzieht.
 ### Welle 6 — Kern aufräumen
 
 Was übrig ist, sortieren: Scraper, Recorder, die Dauerschleifen. Kein Zwang,
-alles zu bewegen. `bot_v37.py` soll am Ende **Kompositionswurzel** sein:
+alles zu bewegen. `bot.py` soll am Ende **Kompositionswurzel** sein:
 `.env` lesen, Kontext füllen, Blueprints registrieren, Loops starten,
 Supervisor fahren.
 
@@ -607,7 +607,7 @@ Supervisor fahren.
 |---|---|
 | **Grosser Wurf in einem Zug** | Deploy geht gegen Produktion. Eine Welle, die nicht einzeln rückrollbar ist, ist nicht ausrollbar. |
 | **Beim Verschieben verbessern** | Verhalten und Ort gleichzeitig ändern macht jeden Fehler unauflösbar. Verbesserung ist eine eigene Welle danach. |
-| **`nc/` aus `bot_v37` importieren lassen** | Bricht die Architektur-Grenze und erzeugt Zirkularimporte im grössten File des Projekts. |
+| **`nc/` aus `bot.py` importieren lassen** | Bricht die Architektur-Grenze und erzeugt Zirkularimporte im grössten File des Projekts. |
 | **Verträge löschen, weil sie kippen** | Ein gekippter Anker ist eine Wanderung, kein Freibrief. Sonst ist der Umbau nach zehn Wellen ungetestet. |
 | **`async` → `sync` oder Framework-Wechsel** | Kein Zerlegungsproblem. Getrennt entscheiden, wenn überhaupt. |
 | **`brain/` anfassen** | Ist bereits sauber getrennt, stdlib-only, mit eigener DB. Es ist das Vorbild, nicht die Baustelle. |
@@ -634,15 +634,15 @@ Supervisor fahren.
 
 | | Start | heute (W104–W108) | nach Welle 3 | Ziel |
 |---|---:|---:|---:|---:|
-| `bot_v37.py` Zeilen | 34.487 | **32.713** | ~24.700 | **~8.000** |
+| `bot.py` Zeilen | 34.487 | **32.713** | ~24.700 | **~8.000** |
 | Flask-Routen im Monolithen | 345 | **281** | ~30 | 0 |
 | Routen in Blueprints | 0 | **64** | ~315 | 345 |
 | `nc/`-Module | 83 | **91** | ~100 | ~115 |
-| Grösste Datei im Projekt | `bot_v37.py` | `bot_v37.py` | `bot_v37.py` | `templates/dashboard.html` |
+| Grösste Datei im Projekt | `bot.py` | `bot.py` | `bot.py` | `templates/dashboard.html` |
 
 Die härtere Messlatte ist keine Zahl:
 
-> **Eine neue API-Route anzulegen, ohne `bot_v37.py` zu öffnen.**
+> **Eine neue API-Route anzulegen, ohne `bot.py` zu öffnen.**
 
 Solange das nicht geht, ist der Umbau nicht fertig — egal, wie viele Zeilen
 gewandert sind.
@@ -671,7 +671,7 @@ Alle Zahlen dieses Dokuments stammen aus diesen zwei Läufen.
 python3 - <<'PY'
 import ast, io
 from collections import defaultdict
-src = io.open('bot_v37.py', encoding='utf-8').read()
+src = io.open('bot.py', encoding='utf-8').read()
 tree = ast.parse(src)
 gl = {t.id for n in tree.body if isinstance(n, (ast.Assign, ast.AnnAssign))
       for t in (n.targets if isinstance(n, ast.Assign) else [n.target])
@@ -702,7 +702,7 @@ PY
 python3 - <<'PY'
 import ast, io, statistics
 from collections import Counter
-src = io.open('bot_v37.py', encoding='utf-8').read()
+src = io.open('bot.py', encoding='utf-8').read()
 tree = ast.parse(src)
 top = {n.name for n in tree.body if hasattr(n, 'name')}
 gl = {t.id for n in tree.body if isinstance(n, (ast.Assign, ast.AnnAssign))

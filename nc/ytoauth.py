@@ -257,7 +257,7 @@ async def access_token(aiohttp):
 def invalidate_access():
     """Access-Token verwerfen, Refresh-Token behalten.
 
-    Warum: bot_v37 setzte bei 401/403 nur _YT_SEND["token_exp"]=0 — das ist
+    Warum: bot.py setzte bei 401/403 nur _YT_SEND["token_exp"]=0 — das ist
     aber nur der Cache des Bots. access_token() hier gab danach denselben
     zwischengespeicherten Token bis zu 50 Minuten weiter zurueck, weil
     _state["access_exp"] unberuehrt blieb. Die Invalidierung war damit

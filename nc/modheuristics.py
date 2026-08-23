@@ -4,7 +4,7 @@
 WARUM DIESES MODUL
 ════════════════════════════════════════════════════════════════════════
 Die schnelle Spam-Heuristik (CAPS/Link/Mention/Flood/Repeat) und die
-Eskalations-Leiter steckten bislang INNEN in bot_v37.KickModerator — also fest
+Eskalations-Leiter steckten bislang INNEN in bot.KickModerator — also fest
 an Kick gebunden. Genau deshalb moderiert der volle KI-Moderator nur auf Kick:
 die Logik war nicht wiederverwendbar. Hier liegt sie jetzt als REINE Funktionen
 ohne Bot-Zustand, ohne Netz, ohne Plattformbezug. Der Kick-Moderator ruft sie
@@ -168,7 +168,7 @@ def is_exempt(roles, exempt=DEFAULT_EXEMPT):
 
 
 def resolve_exempt(cfg, env_value=None):
-    """v4.0-W62d: Die Ausnahme-Rollen bestimmen (Config-Auflösung, aus bot_v37
+    """v4.0-W62d: Die Ausnahme-Rollen bestimmen (Config-Auflösung, aus bot.py
        gelöst). Reihenfolge: cfg['exempt_roles'] (nur wenn cfg ein dict ist), sonst
        env_value, sonst DEFAULT_EXEMPT. Ein String wird an Komma/Whitespace
        gesplittet. os.getenv bleibt beim Aufrufer (env_value wird injiziert)."""

@@ -1,4 +1,4 @@
-"""nc.loginpage — PIN-Login-Seite im Terminal-Look, aus bot_v37 gelöst.
+"""nc.loginpage — PIN-Login-Seite im Terminal-Look, aus bot.py gelöst.
 
 Reiner HTML-Builder (einzige Abhängigkeit: html.escape). Phase-1-Zerlegung,
 verbatim übernommen. Der Bot importiert login_page unter seinem alten Namen,

@@ -1,4 +1,4 @@
-"""nc.ffmpeg_filters — v4.0-W27: reine Overlay-Filtergraph-Bauer (aus bot_v37).
+"""nc.ffmpeg_filters — v4.0-W27: reine Overlay-Filtergraph-Bauer (aus bot.py).
 
 Die zwei Overlay-Ketten des Restreams als reine String-Bauer herausgelöst — in
 W22 scheiterte der naive Schnitt (verschachtelte defs), jetzt AST-exakt und

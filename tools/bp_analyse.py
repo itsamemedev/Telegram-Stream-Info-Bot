@@ -28,7 +28,7 @@ import re
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-BOT = os.path.join(ROOT, "bot_v37.py")
+BOT = os.path.join(ROOT, "bot.py")
 BUILTINS = set(dir(builtins))
 
 # Was schon aus dem Monolithen heraus ist, taucht nicht mehr auf — die Datei

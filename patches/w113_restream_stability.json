@@ -1,6 +1,6 @@
 [
  {
-  "file": "bot_v37.py",
+  "file": "bot.py",
   "id": "w113-import",
   "op": "insert_after",
   "anchor": "from nc import restream_util as _nc_rutil  # v4.0-W25: reine Restream-Helfer (extrahiert)\n",
@@ -8,7 +8,7 @@
   "count": 1
  },
  {
-  "file": "bot_v37.py",
+  "file": "bot.py",
   "id": "w113-config",
   "op": "replace",
   "anchor": "RESTREAM_LOW_LATENCY = os.getenv(\"RESTREAM_LOW_LATENCY\", \"1\").strip().lower() in (\"1\", \"true\", \"yes\", \"on\", \"y\")\n",
@@ -16,7 +16,7 @@
   "count": 1
  },
  {
-  "file": "bot_v37.py",
+  "file": "bot.py",
   "id": "w113-init",
   "op": "replace",
   "anchor": "        # B138: rid -> wie oft die TikTok-Quell-URL in dieser Sitzung ablief.\n        # Reine Telemetrie (Selbsttest/Log): ein hoher Wert ist NORMAL — er\n        # zeigt nur, wie kurzlebig TikToks Signaturen gerade sind.\n        self._srcexpired = {}\n",
@@ -24,7 +24,7 @@
   "count": 1
  },
  {
-  "file": "bot_v37.py",
+  "file": "bot.py",
   "id": "w113-health",
   "op": "replace",
   "anchor": "            if \"out_time\" in p: h[\"out_time\"] = p[\"out_time\"].split(\".\")[0]\n            if \"total_size\" in p:\n                try: h[\"size_mb\"] = round(int(p[\"total_size\"]) / 1048576, 1)\n                except (TypeError, ValueError): pass\n        except Exception:\n            pass\n",
@@ -32,7 +32,7 @@
   "count": 1
  },
  {
-  "file": "bot_v37.py",
+  "file": "bot.py",
   "id": "w113-progress",
   "op": "replace",
   "anchor": "    async def _read_progress(self, rid, proc):\n        buf = {}\n        try:\n            while True:\n                line = await proc.stdout.readline()\n                if not line:\n                    break\n                s = line.decode(\"utf-8\", \"ignore\").strip()\n                if \"=\" in s:\n                    k, v = s.split(\"=\", 1)\n                    buf[k] = v\n                    if k == \"progress\":          # Snapshot-Ende\n                        self._update_health(rid, buf)\n                        buf = {}\n                        if RESTREAM_OVERLAY:\n                            _write_restream_overlay()   # ~1×/Sek: frische AZRAEL-Reaktion einblenden\n        except Exception:\n            pass\n",
@@ -40,7 +40,7 @@
   "count": 1
  },
  {
-  "file": "bot_v37.py",
+  "file": "bot.py",
   "id": "w113-codec",
   "op": "replace",
   "anchor": "def _looks_like_codec_err(text):\n    t = (text or \"\").lower()\n    return any(s in t for s in (\"codec\", \"could not find\", \"invalid data\", \"does not support\",\n                                \"incompatible\", \"non-monotonous\", \"unable to\", \"no such codec\",\n                                \"failed to\", \"could not write header\"))\n",
@@ -48,7 +48,7 @@
   "count": 1
  },
  {
-  "file": "bot_v37.py",
+  "file": "bot.py",
   "id": "w113-stallwatch",
   "op": "replace",
   "anchor": "    async def start(self, rid, _attempts=0, _src_watch=False):\n",
@@ -56,7 +56,7 @@
   "count": 1
  },
  {
-  "file": "bot_v37.py",
+  "file": "bot.py",
   "id": "w113-progtask",
   "op": "replace",
   "anchor": "        prog_task = asyncio.create_task(self._read_progress(rid, proc))\n        err_task = asyncio.create_task(self._read_stderr(proc, sink))\n",
@@ -64,7 +64,7 @@
   "count": 1
  },
  {
-  "file": "bot_v37.py",
+  "file": "bot.py",
   "id": "w113-monitor",
   "op": "replace",
   "anchor": "        attempts = info.get(\"attempts\", 0)\n        self._procs.pop(rid, None)\n        _restream_tts_stop(rid)                # Feeder/FIFO dieses Procs beenden\n        try:\n            with db_conn() as conn:\n                row = conn.execute(\"SELECT enabled, status, source_username FROM restreams WHERE id=?\", (rid,)).fetchone()\n        except Exception:\n            row = None\n        if (not row) or row[\"status\"] == \"stopped\" or not row[\"enabled\"]:\n            self._set_status(rid, \"stopped\", pid=None)\n            return\n        if rc == 0:\n            self._set_status(rid, \"stopped\", pid=None, err=\"Quelle beendet (EOF)\")\n            return\n        # copy→transcode-Fallback: copy-Modus früh gestorben mit Codec-Fehler\n        if (not transcode_used) and ran < 25 and _looks_like_codec_err(tail):\n            self._force_transcode.add(rid)\n            log.warning(f\"Restream #{rid}: copy fehlgeschlagen ({tail[:120]}…) → Auto-Transcode\")\n            self._set_status(rid, \"starting\", err=\"copy → transcode (Codec-Fallback)\")\n            await asyncio.sleep(3)\n            await self.start(rid, _attempts=attempts)\n            return\n        # Failover: ist die Quelle überhaupt noch live? Wenn offline → Slot SOFORT\n        # freigeben (kein sinnloser Reconnect am toten Stream). Single-Modus schaltet\n        # dann via auto_start_due zügig zum nächsten Live-User.\n        # force_fresh: der Prozess ist gerade an dieser Quelle gestorben. Der\n        # 15s-Cache haette hier \"live\" mit exakt der URL geliefert, die soeben\n        # versagt hat — und damit sowohl die Offline-Entscheidung als auch den\n        # folgenden Reconnect auf veralteten Daten gefaellt.\n        _src_now, _src_err = await self._resolve_source(row[\"source_username\"],\n                                                        force_fresh=True)\n        if _src_err:\n            self._failover.discard(rid)   # v37 W3b: bei Stream-Ende Failover zurücksetzen\n            self._set_status(rid, \"stopped\", pid=None, err=\"Quelle offline — Slot frei (Failover)\")\n            log_event(\"restream.failover\", \"info\",\n                      f\"Restream #{rid}: Quelle @{row['source_username']} offline → Slot frei\",\n                      {\"id\": rid})\n            return\n        # B138: Abgelaufene Quell-URL — die Quelle ist nachweislich NOCH LIVE\n        # (das steht zwei Zeilen weiter oben fest, _src_err war leer). Also\n        # sofort mit der frisch aufgeloesten URL weiter, ohne Backoff und ohne\n        # den Versuchszaehler zu erhoehen. Sonst frisst der Sechs-Minuten-Takt\n        # von TikToks Signaturen das Reconnect-Budget auf und der Restream gibt\n        # auf, waehrend der Streamer weitersendet. 2s Pause reichen, damit ein\n        # sterbender Prozess seine Ports freigibt.\n        if _looks_like_source_expired(tail):\n            self._srcexpired[rid] = self._srcexpired.get(rid, 0) + 1\n            log.info(\"Restream #%d: TikTok-Quell-URL abgelaufen (%d. Mal in \"\n                     \"dieser Sitzung) — mit frischer URL weiter. Kein \"\n                     \"Fehlversuch, das ist bei TikTok der Normalfall.\",\n                     rid, self._srcexpired[rid])\n            self._set_status(rid, \"starting\", err=\"Quell-URL erneuert\")\n            await asyncio.sleep(2)\n            await self.start(rid, _attempts=attempts)\n            return\n        if attempts >= self.MAX_RECONNECTS:\n            # v37 W3b: Multi-Kick-Failover — vor dem endgültigen Aufgeben einmal\n            # aufs Backup-Ingest umschalten (nur wenn konfiguriert und noch nicht umgeschaltet)\n            if KICK_INGEST_URL_BACKUP and KICK_STREAM_KEY_BACKUP and rid not in self._failover:\n                self._failover.add(rid)\n                log.warning(\"Restream #%d: Primär-Ingest erschöpft → Failover auf Backup-Ingest.\", rid)\n                log_event(\"restream.failover_ingest\", \"warning\",\n                          f\"Restream #{rid} → Backup-Ingest\", {\"id\": rid})\n                self._set_status(rid, \"starting\", err=\"Failover → Backup-Ingest\")\n                await asyncio.sleep(3)\n                await self.start(rid, _attempts=0)\n                return\n            self._set_status(rid, \"error\", pid=None,\n                             err=f\"Aufgegeben nach {attempts} Reconnects. {tail[:280]}\")\n            log_event(\"restream.giveup\", \"warning\", f\"Restream #{rid} aufgegeben\", {\"id\": rid})\n            return\n        delay = min(60, 8 * (attempts + 1))\n        self._set_status(rid, \"error\", pid=None, err=f\"rc={rc} (reconnect {delay}s): {tail[:240]}\")\n        log.warning(f\"Restream #{rid} rc={rc}; reconnect#{attempts+1} in {delay}s\")\n        await asyncio.sleep(delay)\n        again = await self.start(rid, _attempts=attempts + 1)\n        if not again.get(\"ok\"):\n            log.warning(f\"Restream #{rid} reconnect fehlgeschlagen: {again.get('error')}\")\n",
@@ -72,7 +72,7 @@
   "count": 1
  },
  {
-  "file": "bot_v37.py",
+  "file": "bot.py",
   "id": "w113-start-watch",
   "op": "replace",
   "anchor": "        self._procs[rid][\"monitor\"] = asyncio.create_task(self._monitor(rid))\n",
@@ -80,7 +80,7 @@
   "count": 1
  },
  {
-  "file": "bot_v37.py",
+  "file": "bot.py",
   "id": "w113-stop-watch",
   "op": "replace",
   "anchor": "        if info.get(\"monitor\"):\n            info[\"monitor\"].cancel()\n",
@@ -88,7 +88,7 @@
   "count": 1
  },
  {
-  "file": "bot_v37.py",
+  "file": "bot.py",
   "id": "w113-status",
   "op": "replace",
   "anchor": "                        \"restarts\": g.get(\"restarts\", 0),\n                        \"backoff_s\": g.get(\"backoff_s\", 0),\n",
@@ -96,7 +96,7 @@
   "count": 1
  },
  {
-  "file": "bot_v37.py",
+  "file": "bot.py",
   "id": "w113-stop-reset",
   "op": "replace",
   "anchor": "        self._force_transcode.discard(rid)\n        self._failover.discard(rid)   # v37 W3b: Failover zurücksetzen\n",

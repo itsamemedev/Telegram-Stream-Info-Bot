@@ -1,4 +1,4 @@
-"""nc.ffver — v4.0-W61: Parsen der ffmpeg-Versionszeile, aus bot_v37 gelöst.
+"""nc.ffver — v4.0-W61: Parsen der ffmpeg-Versionszeile, aus bot.py gelöst.
 
 Rein: die stdout von 'ffmpeg -version' rein, die Versionsnummer raus. Der
 Subprozess-Aufruf und der Cache bleiben beim Aufrufer. 'ffmpeg version X …' → X;

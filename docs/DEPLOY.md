@@ -25,7 +25,7 @@ Archiv und bleiben unangetastet. `.env.example` ist nur die Vorlage.
     skills/nightcrawler/      Arbeitsanweisung fuer kuenftige Sessions
     DEPLOY.md                 diese Datei
 
-Geaendert: bot_v37.py, brain_bridge.py, nc/freeai.py, nc/logfilters.py,
+Geaendert: bot.py, brain_bridge.py, nc/freeai.py, nc/logfilters.py,
 brain/llm.py. Alles andere unveraendert aus dem Original.
 
 ## 4. Beim Start mitlesen

@@ -1,10 +1,10 @@
 """nc.preflight — Stream-URL-Preflight (CDN-404-Schutz, V37-B91).
 
-Extrahiert aus bot_v37.py. Prüft eine Stream-URL vor dem ffmpeg-Spawn auf 404
+Extrahiert aus bot.py. Prüft eine Stream-URL vor dem ffmpeg-Spawn auf 404
 und testet _hd/_uhd/_sd-Suffix-Fallbacks (TikTok-CDN-Quirk). Nutzt die Zähler
 _PREFLIGHT_STATS/_PREFLIGHT_DEAD_STREAK, die die Bridge als Metriken spiegelt.
 
-`log` und `RECORD_PROXY` werden von bot_v37.py via configure() injiziert, damit
+`log` und `RECORD_PROXY` werden von bot.py via configure() injiziert, damit
 das Modul keine Rückabhängigkeit auf den Monolithen hat.
 """
 
@@ -15,7 +15,7 @@ RECORD_PROXY = ""
 
 
 def configure(logger=None, record_proxy=None):
-    """bot_v37.py reicht seinen Logger + Proxy rein (identisches Verhalten)."""
+    """bot.py reicht seinen Logger + Proxy rein (identisches Verhalten)."""
     global log, RECORD_PROXY
     if logger is not None:
         log = logger
