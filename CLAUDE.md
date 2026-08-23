@@ -7,14 +7,14 @@ per ZIP über den Bestand, siehe `skills/nc-betrieb`.
 
 ## Die eine Regel
 
-`bot_v37.py` hat **30.582 Zeilen / 1,5 MB ≈ 400.000 Token**. Diese Datei wird
+`bot.py` hat **30.582 Zeilen / 1,5 MB ≈ 400.000 Token**. Diese Datei wird
 **nie** ganz gelesen und **nie** blind durchsucht. Erst fragen wo etwas steht,
 dann den Ausschnitt holen:
 
     python tools/ncpatch.py find "donations"               # wo ist X? (~100 Token)
-    python tools/ncpatch.py sym  bot_v37.py api_brain      # Zeilenbereich eines Symbols
-    python tools/ncpatch.py show bot_v37.py 24750 24810    # nur diesen Ausschnitt
-    python tools/ncpatch.py grep "tree.command" bot_v37.py -C 3
+    python tools/ncpatch.py sym  bot.py api_brain      # Zeilenbereich eines Symbols
+    python tools/ncpatch.py show bot.py 24750 24810    # nur diesen Ausschnitt
+    python tools/ncpatch.py grep "tree.command" bot.py -C 3
     python tools/ncpatch.py map                            # Karte neu bauen
     python tools/ncpatch.py verify patches/x.json          # Trockenlauf
     python tools/ncpatch.py apply  patches/x.json          # alles-oder-nichts, legt .bak an
@@ -32,9 +32,11 @@ Auf diesem Windows-Rechner heißt der Interpreter **`python`** (3.13.12);
 
 ## Aufbau
 
-    bot_v37.py           Monolith: Telegram + Discord (45 Slash-Commands),
+    bot.py               Monolith: Telegram + Discord (45 Slash-Commands),
                          Flask-Dashboard (283 Routen), Scraper, Recorder,
-                         Restream, Schema (init_db)
+                         Restream, Schema (init_db).
+                         Hiess bis v4.0-W119 bot_v37.py — beim Suchen in
+                         alten Notizen und Patch-Dateien daran denken.
     brain_bridge.py      Adapter Bot ↔ brain/ (M2)
     brain/               KI-Kern: state, rules, router, agents, memory,
                          semantic, knowledge, scheduler, llm, report
@@ -42,13 +44,19 @@ Auf diesem Windows-Rechner heißt der Interpreter **`python`** (3.13.12);
     templates/           dashboard.html, brain.html, overlay.html, PWA
     website/             lafap_index.html (öffentliche Seite)
     tools/ncpatch.py     Patch- und Prüfwerkzeug
+    docs/                Sämtliche Anleitungen und Historie — DEPLOY,
+                         START_HIER, CONTRIBUTING, SECURITY, CHANGELOG,
+                         README_V37, die SETUP_*-Anleitungen. In der Wurzel
+                         liegt an Text nur noch README.md (Einstieg),
+                         CLAUDE.md (diese Datei, muss dort liegen, sonst
+                         findet Claude Code sie nicht) und LICENSE.
     .claude/skills/      Arbeitsanweisungen — hier und nur hier findet Claude
                          Code sie. Gehören mit ins Auslieferungs-Archiv
                          (früher lagen sie unter skills/, dort wurden sie nie
                          geladen).
 
 **Architektur-Grenze, die gilt:** `nc/*` und `brain/*` importieren **nie** aus
-`bot_v37`. Konfiguration kommt per `configure(...)`-Injection. Das hält beides
+`bot.py`. Konfiguration kommt per `configure(...)`-Injection. Das hält beides
 isoliert testbar und verhindert Zirkularimporte. `brain/` ist thread-basiert und
 stdlib-only (`urllib`, kein `aiohttp`).
 
@@ -61,18 +69,18 @@ stdlib-only (`urllib`, kein `aiohttp`).
     python test_smoke.py ; python test_nc_modules.py ; python test_restream.py
 
 **Auf diesem Windows-Rechner gilt vorher `$env:PYTHONUTF8="1"`.** Die Tests
-öffnen `bot_v37.py` ohne `encoding=`; ohne UTF-8-Modus greift cp1252 und sie
+öffnen `bot.py` ohne `encoding=`; ohne UTF-8-Modus greift cp1252 und sie
 sterben mit `UnicodeDecodeError` statt zu prüfen. Auf dem Server ist UTF-8
 Default, dort ist nichts zu setzen.
 
-`test_smoke.py` läuft hier **nicht** — es führt `bot_v37.py` wirklich aus und
+`test_smoke.py` läuft hier **nicht** — es führt `bot.py` wirklich aus und
 braucht dafür den ganzen Laufzeitstack (flask, telegram, discord, dotenv,
 streamlink, yt-dlp, psutil), der auf der Autorenmaschine bewusst fehlt. Der
 Test gehört auf den Server. Was er abdeckt (NameError, Reihenfolge-Fallen),
 fangen hier `py_compile` und `pyflakes` weitgehend mit ab.
 
 Die statischen Verträge in `test_restream.py` verankern sich an **wörtlichem
-Quelltext** von `bot_v37.py`. Ändert sich eine Signatur, kippt der Vertrag,
+Quelltext** von `bot.py`. Ändert sich eine Signatur, kippt der Vertrag,
 obwohl der Code stimmt — dreimal passiert (`stop(self, rid)` wurde
 `stop(self, rid, _keep_desired=False)`). Ebenso die Fenster der Form
 `src[i:i + 3000]`: wächst die Funktion darüber hinaus, meldet der Test etwas
@@ -156,7 +164,7 @@ müssen deshalb einzeln verifizierbar und rückrollbar sein.
 | Skill | Wofür |
 |---|---|
 | `nc-navigation` | **Zuerst.** Etwas finden, ohne den Monolithen zu durchsuchen |
-| `nightcrawler` | Änderungen an `bot_v37.py`, `nc/`, `brain/` — Anker-Patching, Validierung |
+| `nightcrawler` | Änderungen an `bot.py`, `nc/`, `brain/` — Anker-Patching, Validierung |
 | `html-templates` | `templates/*.html`, `website/*.html` — Themen Messing/Blaupause, Prüfkette |
 | `nc-betrieb` | Deploy, systemd, Log-Lesen, Rollback, CrowdSec, Kick-Störungen |
 | `nc-datenbank` | SQL und Schema unter SQLite **und** MariaDB |

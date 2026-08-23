@@ -10,7 +10,7 @@ anlaeuft — also nie geprueft wurde. Falsch gebaut erzeugt genau diese
 Logik entweder eine Neustart-Schleife (schlimmer als der Ausfall) oder
 einen Restream, der nach fuenf Huepfern fuer den Rest der Nacht wegbleibt.
 Deshalb steht sie hier als reine Funktionen: stdlib-only, kein Import aus
-bot_v37, vollstaendig testbar.
+bot.py, vollstaendig testbar.
 
 ════════════════════════════════════════════════════════════════════════
 DIE FUENF BEFUNDE, DIE HIER BEHOBEN WERDEN

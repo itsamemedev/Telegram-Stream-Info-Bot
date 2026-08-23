@@ -1,4 +1,4 @@
-"""nc.oauthpage — v4.0-W49: die OAuth-Rückmeldeseiten, aus bot_v37 gelöst.
+"""nc.oauthpage — v4.0-W49: die OAuth-Rückmeldeseiten, aus bot.py gelöst.
 
 Reine HTML-Bauer: Ergebnis (ok/Fehler) und Meldung rein, fertige Browser-Seite
 raus. Kein Zustand, kein I/O ausser html.escape. Bitgenau gegen den Monolithen

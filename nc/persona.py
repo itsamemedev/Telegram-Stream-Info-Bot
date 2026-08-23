@@ -1,6 +1,6 @@
 """nc.persona — AZRAEL-Persona-Heuristiken (rein).
 
-Extrahiert aus bot_v37.py: Intensitäts-Hinweis fürs LLM-Prompt, Emotions-
+Extrahiert aus bot.py: Intensitäts-Hinweis fürs LLM-Prompt, Emotions-
 Klassifikation für Reaktionen, Lernparameter-Anpassung."""
 
 import json

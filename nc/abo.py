@@ -1,6 +1,6 @@
 """nc.abo — v4.0-W26: Abo-/Subscriber-only-Erkennung im TikTok-liveRoom-JSON.
 
-Verbatim aus bot_v37 herausgelöst (B148). Rein und ohne Bot-Kopplung: bekommt
+Verbatim aus bot.py herausgelöst (B148). Rein und ohne Bot-Kopplung: bekommt
 das Room-Dict herein, scannt defensiv nach dem 'sub_only'-Gating und gibt True
 nur bei einem echten Sub-only-Signal zurück. Bitgenau gegen den Monolithen
 geprüft.

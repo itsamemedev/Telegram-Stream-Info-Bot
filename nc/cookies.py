@@ -1,6 +1,6 @@
 """nc.cookies — Cookie-Format-Verarbeitung (keine Bot-Abhängigkeiten).
 
-Extrahiert aus bot_v37.py: beliebige Cookie-Eingaben (Header-String, JSON-
+Extrahiert aus bot.py: beliebige Cookie-Eingaben (Header-String, JSON-
 Export, Netscape) → Netscape-Format, Dedupe, Alarm-Stufen-Bewertung."""
 
 import json

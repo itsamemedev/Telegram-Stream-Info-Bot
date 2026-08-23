@@ -12,7 +12,7 @@ Blueprint, nicht hierher. `__slots__` ist die Bremse: ein neues Feld ist eine
 bewusste Entscheidung und fällt im Diff auf. Wer hier etwas einträgt, muss
 zeigen können, dass es mehr als ein Blueprint benutzt.
 
-Die Architektur-Grenze bleibt: kein Import aus bot_v37. Der Bot füllt den
+Die Architektur-Grenze bleibt: kein Import aus bot.py. Der Bot füllt den
 Kontext einmal beim Start, danach wird nur gelesen.
 """
 
@@ -97,7 +97,7 @@ def get():
     if _CTX is None:
         raise RuntimeError(
             "nc.ctx ist nicht konfiguriert — nc.ctx.configure(...) fehlt im Startpfad "
-            "von bot_v37.py")
+            "von bot.py")
     return _CTX
 
 

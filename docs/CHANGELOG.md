@@ -3,7 +3,7 @@
 Alle nennenswerten Änderungen an NIGHTCRAWLER. Format angelehnt an
 [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
-Die maßgebliche Quelle ist [`nc/version.py`](nc/version.py) — Dashboard-Footer,
+Die maßgebliche Quelle ist [`nc/version.py`](../nc/version.py) — Dashboard-Footer,
 `/api/version` und das „Was ist neu"-Panel lesen von dort. Die ausführliche
 Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
@@ -11,11 +11,49 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Geändert — `bot_v37.py` heißt jetzt `bot.py` (W119)
+
+Die Versionsnummer im Dateinamen war seit v4.0 falsch und stiftete bei jedem
+Blick in die Ablage Zweifel, ob die Datei noch die aktuelle ist. Der Name sagt
+jetzt nur noch, was die Datei ist.
+
+- Alle 448 Verweise nachgezogen: Tests, `tools/`, CI, Patch-Dateien,
+  `.gitattributes`, Skills und Dokumentation.
+- Der Architektur-Wächter in `test_nc_modules.py` prüft den Rückimport aus dem
+  Monolithen jetzt auf `bot` **exakt oder als Paket-Präfix** `bot.`. Ein
+  `startswith("bot")` hätte künftig jedes Modul getroffen, dessen Name so
+  beginnt.
+- Der Vertrag für `nc.updater` prüft denselben Rückimport über den AST statt
+  über eine Textsuche — „bot" steckt seit der Umbenennung in jedem zweiten
+  Wort des Moduls („bot-frei") und wäre ein Dauer-Fehlalarm.
+
+### Geändert — Wurzelverzeichnis aufgeräumt (W119)
+
+Elf Textdateien lagen in der Wurzel und verdeckten, was dort tatsächlich zum
+Betrieb gehört. Sie liegen jetzt unter [`docs/`](.), mit
+[`docs/README.md`](README.md) als Wegweiser.
+
+- Verschoben: `CHANGELOG.md`, `CODE_OF_CONDUCT.md`, `CONTRIBUTING.md`,
+  `DEPLOY.md`, `README_V37.md`, `SECURITY.md`, die drei `SETUP_*`-Anleitungen,
+  `START_HIER.txt`, `THIRD_PARTY_LICENSES.md`. GitHub erkennt
+  Verhaltenskodex, Beitragsleitfaden und Sicherheitshinweis auch unter `docs/`.
+- In der Wurzel geblieben, weil dort gebraucht: `README.md` (Einstieg),
+  `LICENSE` (Lizenzerkennung von GitHub), `requirements.txt`
+  (`pip install -r`), `.env.example` (schreibt `tools/gen_env_example.py`
+  dorthin), `llama-server.service` (systemd-Einheit) und `CLAUDE.md` —
+  **letztere zwingend**, sonst findet Claude Code die Arbeitsgrundlage nicht.
+- Alle Querverweise nachgezogen: relative Links aus `docs/` nach oben
+  (`../nc/version.py`), die Hinweise in den Fehlermeldungen des Bots
+  (`docs/SETUP_YT_OAUTH.md`), GitHub-Vorlagen, CI und der Website-Text.
+- `tools/build_release.py` zählt die Anleitungen nicht mehr einzeln auf — sie
+  kommen über den `docs`-Ordner mit. Sonst wären sie doppelt im Archiv
+  gelandet und jede Umbenennung hätte ein `FEHLT:` ins Protokoll geschrieben.
+
 ### Hinzugefügt — Selbst-Update aus dem Repo (W115)
 
 Der Bestand lässt sich jetzt aus dem GitHub-Repo aktualisieren, ohne den Umweg
 über ein ZIP von Hand. Die Entscheidungslogik liegt bot-frei und geprüft in
-[`nc/updater.py`](nc/updater.py).
+[`nc/updater.py`](../nc/updater.py).
 
 - **Übersicht, ganz vorn:** die Karte „Software-Stand" zeigt Version, lokalen
   Stand, Repo-Stand und Datum. Ablauf in vier Schritten, jeder einzeln
@@ -58,7 +96,7 @@ Loader selbst an, wenn die Übersicht vorn liegt.
 
 Fünf Befunde im Wiederanlauf-Pfad des Restreams, alle in
 `RestreamManager._monitor`. Die Entscheidungslogik liegt jetzt bot-frei und
-geprüft in [`nc/restream_stability.py`](nc/restream_stability.py).
+geprüft in [`nc/restream_stability.py`](../nc/restream_stability.py).
 
 - **Reconnect-Budget kam nie zurück.** `attempts` wanderte von Reconnect zu
   Reconnect weiter und wurde nur beim Start von Hand geleert. Ein Ziel, das
@@ -177,7 +215,7 @@ Brute-Force-Sperre vorhanden, Auth-Vergleiche zeitkonstant.
   flach statt kaputt, und *weil* nichts bricht, fällt es niemandem auf. Der
   Stempel ist ein Inhalts-Hash (`?v=<sha256[:10]>`), keine Nummer zum
   Hochzählen: gleicher Inhalt, gleicher Stempel, Cache bleibt gültig. Gesetzt
-  von [`tools/stempel_assets.py`](tools/stempel_assets.py), geprüft im
+  von [`tools/stempel_assets.py`](../tools/stempel_assets.py), geprüft im
   Vertrag — dasselbe Muster wie bei `.env.example`.
 
 ### Behoben — Drei Zustände, die die Sicht verstellt haben (W116)
@@ -198,7 +236,7 @@ Brute-Force-Sperre vorhanden, Auth-Vergleiche zeitkonstant.
   Die Verbindung konnte die ganze Nacht flattern, ohne dass irgendwo etwas
   stand — dasselbe Muster wie beim Discord-Gateway-Tod. „Jede Trennung auf
   error" wäre aber genauso blind, also entscheidet der Verlauf:
-  [`nc/flapguard.py`](nc/flapguard.py) meldet erst, wenn vier Trennungen in eine
+  [`nc/flapguard.py`](../nc/flapguard.py) meldet erst, wenn vier Trennungen in eine
   Viertelstunde fallen, drosselt Wiederholungen und meldet die Erholung einmal.
   Alle drei Kanäle halten dafür jetzt fest, seit wann ihre Verbindung steht.
 - **Der Aufnahme-Wächter maß nur das Dateiwachstum.** Das fängt den toten
@@ -244,8 +282,8 @@ Drei Stellen, die W113 offen gelassen hat.
 Die öffentliche Seite hatte drei räumliche Widgets (Sentinel-Kern,
 Verbrauchsbalken, Spendenmünze) auf einer flachen Fläche. Jetzt trägt die
 Seite selbst die Tiefe — auf **allen drei Seiten** (Start, Impressum,
-Datenschutz) aus einer Quelle: [`website/raum.css`](website/raum.css) und
-[`website/raum.js`](website/raum.js). Dependency-frei wie der Rest der
+Datenschutz) aus einer Quelle: [`website/raum.css`](../website/raum.css) und
+[`website/raum.js`](../website/raum.js). Dependency-frei wie der Rest der
 Seite: Vanilla-Canvas, kein Fremd-Code, kein externer Request.
 
 - **Perspektivischer Korridor** hinter dem Inhalt — Boden, Decke, Ringe und

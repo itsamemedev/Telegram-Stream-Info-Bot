@@ -1,6 +1,6 @@
 """nc.fmt — reine Format-/Stream-Helfer (keine Bot-Abhängigkeiten).
 
-Extrahiert aus bot_v37.py:
+Extrahiert aus bot.py:
 - _sse: Server-Sent-Events-Frame (json).
 - _partial_tag_hold: hält am Chunk-Ende zurück, was Anfang eines <think>-Tags
   sein könnte (Stream-Parsing).

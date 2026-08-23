@@ -1,6 +1,6 @@
 """nc.ffdiag — ffmpeg-Diagnose-Helfer (keine Bot-Abhängigkeiten).
 
-Extrahiert aus bot_v37.py: stderr-Tail/Diagnostik (Banner-Skip, Fehler-
+Extrahiert aus bot.py: stderr-Tail/Diagnostik (Banner-Skip, Fehler-
 Extraktion), Kommando-Redaktion fürs Log (Cookies raus), Codec-Erkennung,
 Aufnahme-Qualitätsstufe."""
 
@@ -167,7 +167,7 @@ def _rec_quality(rec):
 
 def ffprobe_duration(path) -> float:
     """Dauer einer Mediendatei in Sekunden (sync, ffprobe). 0.0 bei Fehler/Timeout.
-       Phase-1-Zerlegung: verbatim aus bot_v37 (_ffprobe_duration)."""
+       Phase-1-Zerlegung: verbatim aus bot.py (_ffprobe_duration)."""
     try:
         p = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration",
                             "-of", "default=noprint_wrappers=1:nokey=1", path],
@@ -179,7 +179,7 @@ def ffprobe_duration(path) -> float:
 
 def clip_caption_escape(s) -> str:
     """Text für ffmpeg drawtext entschärfen (Sonderzeichen) + auf 70 Zeichen kürzen.
-       Phase-1-Zerlegung: verbatim aus bot_v37 (_clip_caption_escape)."""
+       Phase-1-Zerlegung: verbatim aus bot.py (_clip_caption_escape)."""
     s = (s or "").replace("\\", " ").replace(":", " ").replace("'", " ").replace("%", " ")
     s = re.sub(r"\s+", " ", s).strip()
     return s[:70]

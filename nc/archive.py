@@ -1,6 +1,6 @@
 """nc.archive — Archiv-Regeln, Retention, Duplikat-Scan.
 
-Extrahiert aus bot_v37.py. Reine Datei-/DB-Logik ohne Bot-Globals."""
+Extrahiert aus bot.py. Reine Datei-/DB-Logik ohne Bot-Globals."""
 
 import logging
 from datetime import datetime, timezone, timedelta  # noqa: F401
@@ -255,7 +255,7 @@ def compute_recording_fingerprint(filepath: str,
         return None
 
 
-# ── v4.0-W110: Archiv-Datenzugriff, aus bot_v37 geloest ──────────────────
+# ── v4.0-W110: Archiv-Datenzugriff, aus bot.py geloest ──────────────────
 # Warum hierher und nicht in den Laufzeitkontext: das sind Archiv-Funktionen,
 # und nc.archive IST das Archiv-Modul. Im Kontext haetten sie vier Slots
 # belegt, ohne dass irgendein zweites Blueprint sie braucht.

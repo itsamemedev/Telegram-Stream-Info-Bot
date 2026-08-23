@@ -1,4 +1,4 @@
-"""nc.envnum — v4.0-W32: reine Zahl-/Env-Parser, aus bot_v37 gebündelt.
+"""nc.envnum — v4.0-W32: reine Zahl-/Env-Parser, aus bot.py gebündelt.
 
 Drei Helfer, die vorher im Monolithen lagen und dieselbe Aufgabe an mehreren
 Stellen lösten — jetzt zentral, rein und bitgenau geprüft:

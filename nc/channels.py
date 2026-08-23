@@ -3,7 +3,7 @@
 Erster Modularisierungsschritt für die W-CHAT-Schicht: der Status-Container und
 die Send-Hooks liegen hier zentral, damit Deck-API, Chat-Send, Broadcast und die
 Listener-Loops dieselbe Quelle nutzen. Die Loops selbst bleiben (vorerst) in
-bot_v37.py; sie schreiben in diese Register. Kein Verhalten ändert sich.
+bot.py; sie schreiben in diese Register. Kein Verhalten ändert sich.
 """
 
 # Live-Status pro Plattform (von den Listener-Loops gepflegt, von Deck/Dashboard

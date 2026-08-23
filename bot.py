@@ -16625,7 +16625,7 @@ def api_twitch_oauth_start():
     # V37-TWOAUTH-FIX2: Twitch verlangt bei Redirect-URIs HTTPS — mit EINER
     # Ausnahme: http://localhost:PORT ist erlaubt. Eine IP mit https geht NICHT
     # (kein Zertifikat fuer nackte IPs). Deshalb ist der Default localhost:3000,
-    # das der Nutzer per SSH-Tunnel auf den Bot legt (SETUP_TWITCH_OAUTH.md).
+    # das der Nutzer per SSH-Tunnel auf den Bot legt (docs/SETUP_TWITCH_OAUTH.md).
     # Wer eine echte Domain + HTTPS hat, setzt TWITCH_REDIRECT_URI darauf.
     forced = (os.getenv("TWITCH_REDIRECT_URI", "") or "").strip()
     redirect_uri = forced or "http://localhost:3000/api/twitch/oauth/callback"
@@ -23056,7 +23056,7 @@ def api_chat_send():
         if not fn:
             return jsonify(ok=False, error="YouTube nicht sendefähig "
                            "(kein aktiver Live-Chat oder OAuth nicht "
-                           "konfiguriert — SETUP_YT_OAUTH.md)"), 503
+                           "konfiguriert — docs/SETUP_YT_OAUTH.md)"), 503
         try:
             _run_async_from_flask(fn(text), timeout=15)
             return jsonify(ok=True)
@@ -24158,7 +24158,7 @@ async def _youtube_channel_status():
                 "Zahlen erscheinen, sobald du live bist." if oauth
                 else "YouTube läuft (Restream/Key), aber Titel/Kategorie/Chat/"
                      "Live-Zahlen brauchen OAuth — im Dashboard verbinden "
-                     "(SETUP_YT_OAUTH.md).")
+                     "(docs/SETUP_YT_OAUTH.md).")
         return {"configured": True, "source": "config", "url": None,
                 "is_live": False, "error": hint}
     # 3) Handle vorhanden → Scrape der /live-Seite (keyloser Fallback).
@@ -29381,7 +29381,7 @@ def _clip_should_velocity(times):
 _WCHAT_THANK_LAST = {}
 # V37-YT-SEND: OAuth-Sendekanal für YouTube (Data-API v3). Anders als das
 # lesende InnerTube-Polling braucht Senden echte Credentials: einmalig ein
-# Refresh-Token erzeugen (SETUP_YT_OAUTH.md), Access-Token wird zur Laufzeit
+# Refresh-Token erzeugen (docs/SETUP_YT_OAUTH.md), Access-Token wird zur Laufzeit
 # selbst erneuert. liveChatId kommt aus dem aktiven Broadcast.
 # (Aliase _WCHAT_STATUS/_TWITCH_SEND/_YT_SEND stehen im frühen Konstanten-
 #  block, damit die Deck-API sie nutzen kann — V37-MOD.)

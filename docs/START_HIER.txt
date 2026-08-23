@@ -107,7 +107,7 @@ Dashboard aufgeraeumt: die tote Funktion sparkline() entfernt (einmal
    Duplikate; bewusst unangetastet gelassen.
 
 Geändert gegenüber B145:  brain/agents.py, brain/__init__.py,
-brain_bridge.py, bot_v37.py, templates/dashboard.html.
+brain_bridge.py, bot.py, templates/dashboard.html.
 
 
 ────────────────────────────────────────────────────────────────────
@@ -128,7 +128,7 @@ Panel „AZRAEL Sentinel-Flotte" (jetzt 10 Agenten):
 Abschaltbar: BRAIN_AGENT_TOXICITY/UPTIME=0.
 
 Geändert gegenüber B144:  brain/agents.py, brain/__init__.py,
-brain_bridge.py, bot_v37.py. (Dashboard-Panel unveraendert — es ist
+brain_bridge.py, bot.py. (Dashboard-Panel unveraendert — es ist
 datengetrieben und zeigt neue Agenten von selbst.)
 
 
@@ -157,7 +157,7 @@ der Befund-Verlauf der Flotte. crit-Befunde gehen zusaetzlich an notify.
 Optional per .env abschaltbar: BRAIN_AGENT_SENTINEL/DISK/RESTREAM_SENTINEL=0.
 
 Geändert gegenüber B143:  brain/agents.py, brain/__init__.py,
-brain_bridge.py, bot_v37.py, templates/dashboard.html.
+brain_bridge.py, bot.py, templates/dashboard.html.
 
 
 ────────────────────────────────────────────────────────────────────
@@ -177,7 +177,7 @@ Kein Verhalten am Senden selbst geaendert — nur die Rueckmeldung
 wird ehrlich. POST /api/chat/send liefert dazu zusaetzlich
 results{plattform:{ok,error}} (sent/failed bleiben erhalten).
 
-Geändert gegenüber B142:  bot_v37.py, templates/dashboard.html.
+Geändert gegenüber B142:  bot.py, templates/dashboard.html.
 
 
 ────────────────────────────────────────────────────────────────────
@@ -207,7 +207,7 @@ YouTube: Titel/Kategorie folgen erst, wenn du YouTube-OAuth verbindest
 Neue Endpoints: GET /api/channel/categories, POST /api/channel/set.
 Der alte POST /api/kick/channel bleibt bestehen (nichts bricht).
 
-Geändert gegenüber B141:  bot_v37.py, nc/twitchoauth.py,
+Geändert gegenüber B141:  bot.py, nc/twitchoauth.py,
 templates/dashboard.html.
 
 
@@ -224,7 +224,7 @@ Damit laeuft genau ein Restream, der Bot schaltet bei Offline zur
 naechsten Live-Quelle. Mehrere gleichzeitig gehen physikalisch nur
 mit eigenen Keys je Kick-/Twitch-Channel.
 
-Zwei Code-Verbesserungen dazu (nur bot_v37.py):
+Zwei Code-Verbesserungen dazu (nur bot.py):
   • tee-Fehler werden jetzt korrekt benannt (kick/twitch/youtube)
     statt „unbekannt". Vorher wurde die Ziel-Liste im Fehlerpfad
     frisch neu geraten (falscher #Index nach YouTube-Flap) und die
@@ -237,7 +237,7 @@ Zwei Code-Verbesserungen dazu (nur bot_v37.py):
     sich den Kick-Key mit #Y … RESTREAM_SINGLE=1 setzen …") statt dass
     es sich stumm in einen Neuaufbau-Sturm frisst.
 
-Geändert gegenüber B140:  nur bot_v37.py. Alles andere identisch.
+Geändert gegenüber B140:  nur bot.py. Alles andere identisch.
 
 
 ────────────────────────────────────────────────────────────────────
@@ -292,7 +292,7 @@ DB-SCHEMA F102 — auf MariaDB werden zwei Tabellen jetzt korrekt angelegt
    unangetastet (CREATE TABLE IF NOT EXISTS), Snowflakes passten dort
    ohnehin. Der Fix greift nur, falls du je auf DB_BACKEND=mariadb gehst.
 
-Geändert gegenüber B138:  bot_v37.py  (nur init_db, ein Block). Sonst
+Geändert gegenüber B138:  bot.py  (nur init_db, ein Block). Sonst
 identisch zu B138 — alle B138-Behebungen unten sind weiterhin enthalten.
 
 
@@ -361,7 +361,7 @@ mit 26 Verträgen, test_restream mit 95 Verträgen) ist vorab grün.
    (mit Zahl der unterdrückten Fälle), damit das Log lesbar bleibt.
    Neue Logzeile, nach der du suchen kannst:  Schleife <name> gestoert
 
-Geändert gegenüber B137:  bot_v37.py, templates/dashboard.html,
+Geändert gegenüber B137:  bot.py, templates/dashboard.html,
 nc/ytoauth.py, nc/restream_guard.py, test_restream.py, CLAUDE.md
 
 
@@ -384,7 +384,7 @@ WAS IN B137 NEU WAR
 - Heller „blaupause"-Look besser lesbar (keine milchigen Scanlines mehr)
 - Theme-Umschalter im Footer entfernt
 - Kick-„öffnen"-Buttons entfernt (Sendeleiste + Restream-Control)
-- CrowdSec/Abwehr-Panel gefixt (in bot_v37.py)
+- CrowdSec/Abwehr-Panel gefixt (in bot.py)
 - LOW-LATENCY-RESTREAM (B137): der Restream puffert deutlich weniger. Im
   Transcode-Pfad (Multi-Ziel/Overlay/TTS) jetzt -tune zerolatency (x264 ohne
   B-Frames/Lookahead), halber VBV-Puffer (1s statt 2s), muxdelay=0. Fuehlt
@@ -409,7 +409,7 @@ WAS IN B137 NEU WAR
     angehämmert, sondern sofort frisch aufgelöst.
   * Altes hartes Kick-Verhalten bei Bedarf zurück: RESTREAM_KICK_HARD=1 in .env
 
-Geändert gegenüber B132:  templates/dashboard.html  und  bot_v37.py
+Geändert gegenüber B132:  templates/dashboard.html  und  bot.py
 Alles andere unverändert aus deinem Original.
 
 

@@ -2,10 +2,10 @@ blank_issues_enabled: false
 contact_links:
   - name: 🔐 Sicherheitslücke melden
     url: https://github.com/itsamemedev/Telegram-Stream-Info-Bot/security/advisories/new
-    about: Bitte kein öffentliches Issue — siehe SECURITY.md.
+    about: Bitte kein öffentliches Issue — siehe docs/SECURITY.md.
   - name: 🚑 Erste Hilfe im Betrieb
-    url: https://github.com/itsamemedev/Telegram-Stream-Info-Bot/blob/main/START_HIER.txt
+    url: https://github.com/itsamemedev/Telegram-Stream-Info-Bot/blob/main/docs/START_HIER.txt
     about: Einspielen, Log lesen, "was ist gerade kaputt" — vor dem Issue hier schauen.
   - name: 📖 Deploy- und Prüfanleitung
-    url: https://github.com/itsamemedev/Telegram-Stream-Info-Bot/blob/main/DEPLOY.md
+    url: https://github.com/itsamemedev/Telegram-Stream-Info-Bot/blob/main/docs/DEPLOY.md
     about: Vollständige Anleitung samt Rollback.

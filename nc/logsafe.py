@@ -1,4 +1,4 @@
-"""nc.logsafe — v4.0-W32: sicherheitsrelevante Log-Redaction, aus bot_v37 gelöst.
+"""nc.logsafe — v4.0-W32: sicherheitsrelevante Log-Redaction, aus bot.py gelöst.
 
 Ein Stream-Key ist das Passwort des Kanals — wer ihn hat, sendet auf fremdem
 Namen. ffmpeg schreibt bei tee-Fehlern die volle Ziel-URL inkl. Key nach stderr;

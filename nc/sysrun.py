@@ -1,6 +1,6 @@
 """nc.sysrun — v4.0-W26: privilegierter Kommando-Runner (direkt → sudo -n).
 
-Verbatim aus bot_v37 herausgelöst. Rein logisch (die einzige Aussenwirkung ist
+Verbatim aus bot.py herausgelöst. Rein logisch (die einzige Aussenwirkung ist
 subprocess.run), kein Bot-Zustand. Führt ein Kommando aus — erst direkt, bei
 rc!=0 passwortlos via 'sudo -n' — und gibt (rc, stdout, stderr, used_sudo)
 zurück, ohne je zu hängen (timeout). Bitgenau gegen den Monolithen geprüft,

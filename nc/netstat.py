@@ -1,4 +1,4 @@
-"""nc.netstat — v4.0-W61b: Netzdurchsatz-Berechnung, aus bot_v37 gelöst.
+"""nc.netstat — v4.0-W61b: Netzdurchsatz-Berechnung, aus bot.py gelöst.
 
 Zwei reine Teile: sum_bytes parst den Inhalt von /proc/net/dev zur Summe aller
 rx+tx-Bytes (ohne loopback), throughput_kbps macht aus zwei Messungen den

@@ -1,19 +1,19 @@
 ---
 name: nightcrawler
-description: Arbeiten am NIGHTCRAWLER-Bot (bot_v37.py, nc/, brain/, brain_bridge.py, templates/dashboard.html) — TikTok-Live-Recording-, Restream- und KI-Moderations-Plattform. Nutze dies bei JEDER Änderung an diesen Dateien: Anker-Patching statt Volltext-Lesen, Pflicht-Validierung vor Auslieferung, bekannte Fallstricke. Trigger: bot_v37, NIGHTCRAWLER, AZRAEL, Restream-Control-Room, nc/-Modul, brain/-Modul, Sendeleiste.
+description: Arbeiten am NIGHTCRAWLER-Bot (bot.py, nc/, brain/, brain_bridge.py, templates/dashboard.html) — TikTok-Live-Recording-, Restream- und KI-Moderations-Plattform. Nutze dies bei JEDER Änderung an diesen Dateien: Anker-Patching statt Volltext-Lesen, Pflicht-Validierung vor Auslieferung, bekannte Fallstricke. Trigger: bot.py, NIGHTCRAWLER, AZRAEL, Restream-Control-Room, nc/-Modul, brain/-Modul, Sendeleiste.
 ---
 
 # NIGHTCRAWLER — Arbeitsanweisung
 
 ## Die eine Regel, die alles andere spart
 
-`bot_v37.py` hat ~29.000 Zeilen / 1,4 MB ≈ **400.000 Token pro Volltext-Lesung**.
+`bot.py` hat ~29.000 Zeilen / 1,4 MB ≈ **400.000 Token pro Volltext-Lesung**.
 Lies die Datei **nie** ganz. Nutze `ncpatch.py`:
 
 ```bash
-python3 ncpatch.py sym  bot_v37.py _discord_run_once   # Zeilenbereich eines Symbols
-python3 ncpatch.py grep "tree.command" bot_v37.py -C 3 # Anker finden
-python3 ncpatch.py show bot_v37.py 24750 24810         # nur diesen Ausschnitt
+python3 ncpatch.py sym  bot.py _discord_run_once   # Zeilenbereich eines Symbols
+python3 ncpatch.py grep "tree.command" bot.py -C 3 # Anker finden
+python3 ncpatch.py show bot.py 24750 24810         # nur diesen Ausschnitt
 python3 ncpatch.py verify patches/x.json               # Trockenlauf
 python3 ncpatch.py apply  patches/x.json               # Alles-oder-nichts + Validierung
 ```
@@ -70,7 +70,7 @@ Modellnamen. Ein gemeinsamer Name macht jede Rotation zur Attrappe.
 
 ## Architektur-Grenzen, die einzuhalten sind
 
-- `nc/*` und `brain/*` sind **bot-frei**: kein Import aus `bot_v37`. Konfiguration
+- `nc/*` und `brain/*` sind **bot-frei**: kein Import aus `bot.py`. Konfiguration
   kommt per `configure(...)`-Injection. Das hält beides isoliert testbar und
   verhindert Zirkularimporte im Monolithen.
 - `brain/` ist thread-basiert und stdlib-only (urllib, kein aiohttp).

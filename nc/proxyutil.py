@@ -1,6 +1,6 @@
 """nc.proxyutil — reine Proxy-URL-Helfer (keine Bot-Abhängigkeiten).
 
-Extrahiert aus bot_v37.py. _normalize_proxy_url ergänzt ein fehlendes Schema,
+Extrahiert aus bot.py. _normalize_proxy_url ergänzt ein fehlendes Schema,
 _proxy_key liefert den kanonischen Router-Key (matcht 'http://ip:port' und
 'ip:port' auf denselben Pool-Eintrag). Beide rein string-basiert.
 """
@@ -10,7 +10,7 @@ import time as _time_mod
 
 
 
-# ProxyHealth-Schwellen (per configure() aus bot_v37.py injiziert).
+# ProxyHealth-Schwellen (per configure() aus bot.py injiziert).
 _PROXY_EVICT_AFTER_FAILS = 4
 _PROXY_FAST_MS = 500
 _PROXY_MEDIUM_MS = 1500
@@ -155,7 +155,7 @@ class ProxyHealth:
         }
 
 
-# ---- Proxy-Auswahl (V37 Welle 3): aus bot_v37.py extrahiert ----------------
+# ---- Proxy-Auswahl (V37 Welle 3): aus bot.py extrahiert ----------------
 # Injection: _TUNNEL (dict-Referenz, mutable), PROXY_LIST (Listen-Referenz),
 # RECORD_PROXY (fester String), Router per GETTER (PROXY_ROUTER wird im Bot
 # erst spät instanziiert — ein Lambda löst die Reihenfolge-Falle).

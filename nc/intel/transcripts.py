@@ -8,7 +8,7 @@ Segmente aus, der Copilot füttert Live-Segmente ein.
 
 DB-agnostisch: Funktionen bekommen eine DBAPI-Connection. Platzhalterstil wird
 über `paramstyle` gewählt ("qmark" → ?, "format" → %s), Default sqlite.
-Kein Import aus bot_v37 — dadurch ohne den Bot testbar.
+Kein Import aus bot.py — dadurch ohne den Bot testbar.
 """
 from __future__ import annotations
 

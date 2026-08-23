@@ -10,7 +10,7 @@ echtes Sterben je Ziel separat und startet gezielt neu.
 Vorher war Kick das fest verdrahtete Basis-Ziel (immer ffmpeg-Ausgang) und
 Twitch/YouTube opt-in-Extras (per Default AUS). Diese Asymmetrie ist entfernt.
 
-Rein/ohne Bot-Abhängigkeit — konfiguriert via configure(), das bot_v37.py mit
+Rein/ohne Bot-Abhängigkeit — konfiguriert via configure(), das bot.py mit
 den Env-Werten füttert. Reihenfolge (kick, twitch, youtube) ist nur stabil, NICHT
 privilegierend.
 """
@@ -25,7 +25,7 @@ _CFG = {
 
 
 def configure(**kw):
-    """bot_v37.py reicht die Env-Konfiguration rein. Unbekannte Keys ignoriert.
+    """bot.py reicht die Env-Konfiguration rein. Unbekannte Keys ignoriert.
        Legacy-Keys (kick_hard) werden stillschweigend geschluckt — es gibt kein
        hartes Primär-Ziel mehr, alle Ziele sind weich (onfail=ignore)."""
     for k, v in kw.items():

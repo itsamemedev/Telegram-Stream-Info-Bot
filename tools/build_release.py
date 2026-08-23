@@ -30,9 +30,11 @@ BUILD = (sys.argv[1] if len(sys.argv) > 1 else "B138").upper()
 ZIEL = os.path.join(WURZEL, f"NIGHTCRAWLER_v37_{BUILD}.zip")
 
 DATEIEN = [
-    "bot_v37.py", "brain_bridge.py",
-    "CLAUDE.md", "DEPLOY.md", "README_V37.md", "START_HIER.txt",
-    "SETUP_LLAMACPP.md", "SETUP_TWITCH_OAUTH.md", "SETUP_YT_OAUTH.md",
+    "bot.py", "brain_bridge.py",
+    # Die Anleitungen liegen seit dem Aufraeumen unter docs/ und kommen ueber
+    # ORDNER mit — hier einzeln aufzuzaehlen wuerde sie doppelt einpacken und
+    # bei jeder Umbenennung ein "FEHLT:" ins Protokoll schreiben.
+    "CLAUDE.md", "README.md", "LICENSE",
     "llama-server.service", "requirements.txt",
     ".gitignore", ".gitattributes",
     "test_smoke.py", "test_nc_modules.py", "test_restream.py",

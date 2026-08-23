@@ -1,4 +1,4 @@
-"""nc.archivename — v4.0-W62: kollisionsfreies, atomares Anlegen, aus bot_v37 gelöst.
+"""nc.archivename — v4.0-W62: kollisionsfreies, atomares Anlegen, aus bot.py gelöst.
 
 open_unique kapselt die Namensfolge (filename, dann base_2, base_3, … vor der
 Extension) und die Retry-Schleife. Das eigentliche Öffnen wird injiziert

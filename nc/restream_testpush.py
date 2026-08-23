@@ -202,7 +202,7 @@ def classify_result(rc, stderr: str) -> dict:
 
 
 def fingerprint(key: str) -> dict:
-    """Key NIE im Klartext (wie start() in bot_v37): Länge + Quersumme reichen,
+    """Key NIE im Klartext (wie start() in bot.py): Länge + Quersumme reichen,
        um den benutzten Key gegen den im Kick-Dashboard zu vergleichen."""
     k = (key or "").encode("utf-8")
     return {"len": len(k), "fp": sum(k) % 65536}

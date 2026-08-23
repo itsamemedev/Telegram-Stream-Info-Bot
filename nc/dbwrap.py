@@ -1,6 +1,6 @@
 """nc.dbwrap — DB-Zugang: Verbindungs-Wrapper + db_conn() + MariaDB-Pool.
 
-Extrahiert aus bot_v37.py. Der MariaDB-Pfad übersetzt SQLite-Dialekt via
+Extrahiert aus bot.py. Der MariaDB-Pfad übersetzt SQLite-Dialekt via
 nc.sqlutil._translate_sql und liefert Row-Objekte mit dict-Zugriff, damit der
 gesamte Bot-Code backend-agnostisch bleibt.
 
@@ -241,7 +241,7 @@ class _MariaDBConnWrap:
 
 
 # ------------------------------------------------------------------
-# db_conn + MariaDB-Pool (V37: aus bot_v37.py hierher)
+# db_conn + MariaDB-Pool (V37: aus bot.py hierher)
 # ------------------------------------------------------------------
 
 def _mariadb_connect():

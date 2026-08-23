@@ -9,7 +9,7 @@ das nicht. mysqldump schreibt Backticks und ENGINE=InnoDB — SQLite frisst das
 nicht. Ein DDL-Uebersetzer waere eine eigene Baustelle mit vielen Sonderfaellen.
 
 DER WEG HIER: **nur Daten exportieren, das Schema baut das Ziel selbst.**
-bot_v37._init_db() legt alle 42 Tabellen bereits in beiden Dialekten korrekt an
+bot._init_db() legt alle 42 Tabellen bereits in beiden Dialekten korrekt an
 (_schema_pk(), txt_idx/txt_big/tbl_opts). Also: Bot einmal gegen das neue
 Backend starten -> Schema steht -> dieses SQL einspielen. Das ist robust, weil
 die Schema-Wahrheit an genau EINER Stelle bleibt.

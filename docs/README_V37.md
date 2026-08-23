@@ -110,12 +110,12 @@ Chat-Antworten) unberührt.
 
 bot_v36 + Brain-Layer (Module M1–M8). **Alle v36-Features bleiben vollständig
 erhalten** — jeder Brain-Baustein ist additiv, fail-open und einzeln
-abschaltbar. Ohne `brain/`-Verzeichnis startet bot_v37 exakt wie v36.
+abschaltbar. Ohne `brain/`-Verzeichnis startet bot.py exakt wie v36.
 
 ## Architektur
 
 ```
-                    ┌──────────── bot_v37.py (dein v36 + 3 Patches) ───────────┐
+                    ┌──────────── bot.py (dein v36 + 3 Patches) ───────────┐
 Telegram ⇄ Bot ⇄ Recorder/Restream/Loops ⇄ SQLite (bot-DB)   Flask-Dashboard   │
                     └───────────────┬──────────────────────────────┬───────────┘
                               (nur lesen)                    (Routen additiv)
@@ -862,7 +862,7 @@ timeout/wait_for zurückkommt.
 
 ## Testsuite: die Lücke, die alle anderen offenließen
 
-Alle bisherigen Suiten lesen `bot_v37.py` nur als **Text** (Regex/AST). Ob die
+Alle bisherigen Suiten lesen `bot.py` nur als **Text** (Regex/AST). Ob die
 Datei überhaupt **importierbar** ist, ob die Modul-Ebene ohne NameError
 durchläuft, ob die Routen registriert werden und beim Aufruf keinen 500er
 werfen — das prüfte **nichts**. Genau solche Fehler sind statisch unsichtbar:
@@ -871,7 +871,7 @@ erst beim echten Aufruf auf.
 
 `test_smoke.py` schließt das: es stubbt TikTokLive + python-telegram-bot (mit
 `_AnyMeta`-Metaklasse, weil `ContextTypes.DEFAULT_TYPE` ein Klassen-Attribut
-ist), lädt bot_v37.py, ruft `init_db()` und dann **jede parameterlose
+ist), lädt bot.py, ruft `init_db()` und dann **jede parameterlose
 GET-Route** auf. Ergebnis: **268 Routen registriert, 140 aufgerufen, 138
 sauber, 2 erwartete 503er** (`/api/channels/status`, `/api/kick/channel` —
 brauchen einen Event-Loop und liefern planmäßig `transient: true`; der Test
@@ -933,7 +933,7 @@ brauchen 22 bzw. 26 Bot-Funktionen). Ein AST-Scan der **441 freien Funktionen**
 Und in der 1–3-Gruppe hingen **106 Funktionen an genau EINEM Symbol: `db_conn`**.
 
 **Schritt 1 — db_conn nach nc/dbwrap.py.** Die Wrapper lagen dort schon, die
-Fabrik selbst noch in bot_v37.py. Sie braucht nur env-abgeleitete Konstanten →
+Fabrik selbst noch in bot.py. Sie braucht nur env-abgeleitete Konstanten →
 per `configure_db(db_path=…, backend=…, mariadb={…})` injiziert; das Modul liest
 selbst KEINE Env und bleibt testbar. `_mariadb_connect`, `_WAL_INIT` und der
 Pool-Lock sind mitgewandert. Reihenfolge AST-geprueft: alle 309 `db_conn()`-
@@ -952,11 +952,11 @@ Aufrufe liegen in Funktionen, `configure_db()` laeuft auf Modul-Ebene davor.
   toggle_bookmark, add_annotation, delete_annotation, _conv_list,
   set_tracking_notes)
 
-**Stand: 25 nc-Module, bot_v37.py 28.589 → 27.984 Z.** (seit Projektstart
+**Stand: 25 nc-Module, bot.py 28.589 → 27.984 Z.** (seit Projektstart
 29.449 → 27.984, −1.465 Z.).
 
 **Neue Testsuite `test_nc_modules.py` (14 Vertraege).** Sie zieht das Schema
-zur Laufzeit AUS bot_v37.py (Klammer-Zaehlung statt Regex) und loest die
+zur Laufzeit AUS bot.py (Klammer-Zaehlung statt Regex) und loest die
 f-String-Platzhalter mit den SQLite-Werten auf — der Test kann also nicht gegen
 ein ausgedachtes Schema gruen werden. Genau dieser Fehler ist beim Bauen
 mehrfach passiert: erst wurde eine `recordings.filename`-Spalte angenommen (es
@@ -1083,12 +1083,12 @@ senken → `LIVE_REACT_SPEECH=0` (Whisper ganz aus, Chat-Reaktion bleibt) →
 mehr). Eine GPU löst es endgültig, aber das ist keine Softwarefrage.
 
 ## Modularisierung: bewusster Stopp
-RestreamManager (645 Z.) und KickModerator (613 Z.) bleiben in bot_v37.py. Der
+RestreamManager (645 Z.) und KickModerator (613 Z.) bleiben in bot.py. Der
 AST-Scan zeigt **22 bzw. 26 harte Bot-Funktions-Abhängigkeiten** — eine
 Extraktion bräuchte 48 injizierte Callbacks. Das wäre kein Modul, sondern
 verschobener Code mit riesiger Injektionsfläche: schlechter als der
 Ist-Zustand. Diese Kopplung ist semantisch — die beiden Klassen SIND die
-Orchestrierung. Endstand: **22 nc-Module**, bot_v37.py 29.449 → ~28.600 Z.
+Orchestrierung. Endstand: **22 nc-Module**, bot.py 29.449 → ~28.600 Z.
 
 ## Fehlerbehebung aus dem Produktions-Log (V37-B94…B97)
 Vier Befunde aus error.log, alle mit Regressionsvertrag in test_restream:
@@ -1322,7 +1322,7 @@ AST-Scan über alle Top-Level-Klassen mit echter Abhängigkeitsanalyse:
   nc.proxyutil).
 - **`nc/proxyutil.py`** — _ProxyRouter dazu (Pool/Lock als Referenzen,
   configure_router VOR der Instanziierung — AST-verifiziert).
-Ergebnis: **22 nc-Module**, bot_v37.py von 29.449 auf **28.186 Zeilen**.
+Ergebnis: **22 nc-Module**, bot.py von 29.449 auf **28.186 Zeilen**.
 Bewusst NICHT extrahiert: RestreamManager (645 Z.) und KickModerator (613 Z.)
 — beide mit 6+ harten Bot-Abhängigkeiten; das wäre eine eigene Welle mit
 Callback-Injection und braucht mehr Testabdeckung als die Verträge in
@@ -1476,7 +1476,7 @@ Whisper/Piper). Neu: **Entwickler-Angabe** mit TikTok-Profil
 
 ## Modularisierung (nc/-Paket) — Start
 Erste Runde der schrittweisen Entflechtung des ~29k-Zeilen-Monolithen. In sich
-geschlossene, abhängigkeitsarme Einheiten wandern nach `nc/`; bot_v37.py
+geschlossene, abhängigkeitsarme Einheiten wandern nach `nc/`; bot.py
 re-importiert sie, sodass sich am Laufzeitverhalten **nichts** ändert:
 - **`nc/shield.py`** — SENTINEL-SHIELD (reine Regex-Logik, nur re+os).
 - **`nc/preflight.py`** — Stream-URL-Preflight; `log`/`RECORD_PROXY` werden per
@@ -1615,7 +1615,7 @@ Klick öffnet den Kanal). Neue Bausteine:
 cd /pfad/zum/projekt
 # 0. Backup des aktuellen Dashboards
 cp templates/dashboard.html templates/dashboard_v36.bak.html
-# 1. Entpacken — legt bot_v37.py, brain/, brain_bridge.py und
+# 1. Entpacken — legt bot.py, brain/, brain_bridge.py und
 #    templates/dashboard.html (mit Tab 06 AI BRAIN) + templates/brain.html ab
 unzip -o NIGHTCRAWLER_v37_complete.zip
 # 2. Selbsttests auf dem Server (keine Abhängigkeit außer Flask für M2-Test)
@@ -1623,8 +1623,8 @@ python3 -m brain.test_m1 && python3 -m brain.test_m3 && \
 python3 -m brain.test_m4 && python3 -m brain.test_m5 && \
 python3 -m brain.test_m6 && python3 -m brain.test_m7 && \
 python3 test_m2_bridge.py
-# 3. systemd auf bot_v37.py umstellen
-sed -i 's/bot_v36.py/bot_v37.py/' /etc/systemd/system/nightcrawler.service
+# 3. systemd auf bot.py umstellen
+sed -i 's/bot_v36.py/bot.py/' /etc/systemd/system/nightcrawler.service
 systemctl daemon-reload && systemctl restart nightcrawler
 # 4. Prüfen
 curl -s localhost:8050/api/brain/overview | head -c 400
@@ -1635,7 +1635,7 @@ Rollback = systemd zurück auf bot_v36.py. brain.db ist isoliert — die
 bot-DB wird vom Brain nie geschrieben (einzige Ausnahme: RecoveryAgent
 mit explizitem `BRAIN_ACT_RECOVERY=1`).
 
-## Die 3 Patches in bot_v37.py (Suchmarke `V37-P`)
+## Die 3 Patches in bot.py (Suchmarke `V37-P`)
 
 | Patch | Ort | Verhalten |
 |---|---|---|

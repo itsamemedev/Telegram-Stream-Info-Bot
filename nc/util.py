@@ -1,6 +1,6 @@
 """nc.util — kleine reine Logik-Helfer (keine Bot-Abhängigkeiten).
 
-Extrahiert aus bot_v37.py: LLM-Fehlermeldungen, Vision-Modell-Heuristik,
+Extrahiert aus bot.py: LLM-Fehlermeldungen, Vision-Modell-Heuristik,
 Telegram-callback_data-Kappung, Topic-Key-Bau. Alle stdlib-only.
 """
 

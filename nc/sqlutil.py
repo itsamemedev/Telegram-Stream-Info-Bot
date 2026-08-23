@@ -1,6 +1,6 @@
 """nc.sqlutil — SQL-Text-Helfer für Brain-NL→SQL + Archiv (rein).
 
-Extrahiert aus bot_v37.py: Übersetzungs-Mapping natürlicher Begriffe,
+Extrahiert aus bot.py: Übersetzungs-Mapping natürlicher Begriffe,
 regelbasierter SQL-Bau, sichere ORDER-BY-Klauseln."""
 
 

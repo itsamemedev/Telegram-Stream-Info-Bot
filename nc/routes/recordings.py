@@ -1,7 +1,7 @@
 """nc.routes.recordings — die Aufnahmen-Routen als Flask-Blueprint.
 
 Welle 2 der Zerlegung (v4.0-W106, siehe docs/MODULARISIERUNG.md): 34 Routen und
-fuenf Helfer, die ausschliesslich diese Routen benutzen, verbatim aus bot_v37
+fuenf Helfer, die ausschliesslich diese Routen benutzen, verbatim aus bot.py
 geloest. Der Monolith registriert das Blueprint nur noch.
 
 Warum Blueprints hier verhaltensneutral sind: die Pfade stehen woertlich in den
@@ -21,7 +21,7 @@ Was bewusst NICHT mitgewandert ist:
     ueber zwei Module zu verteilen waere ein Rueckschritt, kein Fortschritt.
 
 Alles, was der Monolith weiterhin bereitstellen muss, kommt ueber nc.ctx —
-nicht ueber einen Import aus bot_v37. Die Architektur-Grenze haelt.
+nicht ueber einen Import aus bot.py. Die Architektur-Grenze haelt.
 """
 
 import asyncio

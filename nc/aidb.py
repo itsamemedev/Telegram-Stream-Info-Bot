@@ -1,4 +1,4 @@
-"""nc.aidb — der Datenzugriff der KI-Domaene, aus bot_v37 geloest.
+"""nc.aidb — der Datenzugriff der KI-Domaene, aus bot.py geloest.
 
 v4.0-W112, Vorarbeit fuer das /api/ai-Blueprint: beides ist reiner
 DB-Zugriff (Tabellen ai_log und ai_messages) und waere im Laufzeitkontext zu

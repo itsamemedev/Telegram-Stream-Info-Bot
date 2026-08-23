@@ -1,8 +1,8 @@
 """nc.shield — SENTINEL-SHIELD: deterministische Anti-Doxxing/Anti-Hate-Schicht.
 
-Extrahiert aus bot_v37.py (V37-W-SHIELD). Reine Regex-Logik, greift VOR jeder
+Extrahiert aus bot.py (V37-W-SHIELD). Reine Regex-Logik, greift VOR jeder
 KI-Klassifikation auf Kick UND Discord, kostet 0 KI-Budget. Erkennt Leetspeak/
-Punkt-Tarnung. bot_v37.py importiert _sentinel_screen/_shield_normalize zurück.
+Punkt-Tarnung. bot.py importiert _sentinel_screen/_shield_normalize zurück.
 """
 
 import os

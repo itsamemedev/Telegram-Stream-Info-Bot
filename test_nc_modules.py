@@ -1,7 +1,7 @@
-"""test_nc_modules — die aus bot_v37.py extrahierten nc-Module laufen
+"""test_nc_modules — die aus bot.py extrahierten nc-Module laufen
 eigenstaendig gegen das ECHTE Bot-Schema.
 
-Das Schema wird zur Laufzeit AUS bot_v37.py gezogen (Klammer-Zaehlung, keine
+Das Schema wird zur Laufzeit AUS bot.py gezogen (Klammer-Zaehlung, keine
 Regex-Naeherung) und die f-String-Platzhalter werden mit den SQLite-Werten
 aufgeloest. So kann der Test nicht gegen ein ausgedachtes Schema gruen werden —
 genau der Fehler, der beim Bauen dieser Module mehrfach passiert ist.
@@ -26,7 +26,7 @@ TABLES = ["recording_notes", "bookmarks", "recording_annotations", "recordings",
           "trackings", "recording_attempts", "archive", "stream_chapters",
           "ai_conversations"]
 
-# Werte aus dem SQLite-Zweig von _init_db() (bot_v37.py)
+# Werte aus dem SQLite-Zweig von _init_db() (bot.py)
 PLACEHOLDERS = {"txt_idx": "TEXT", "txt_long": "TEXT", "txt_big": "TEXT",
                 "ts": "TEXT",   # v4.0-W79: indizierter Timestamp (SQLite=TEXT, MariaDB=VARCHAR(64))
                 "iv": "INTEGER", "tbl_opts": "",
@@ -41,8 +41,16 @@ def ok(msg):
     print("  \u2713 " + msg)
 
 
+def _ist_monolith(modul: str) -> bool:
+    """Zeigt der Modulname auf bot.py? Exakt oder als Paket-Praefix.
+
+    Nach der Umbenennung von bot.py zu bot ist ein reiner startswith("bot")
+    zu grob — er wuerde jedes Modul treffen, dessen Name so beginnt."""
+    return modul == "bot" or modul.startswith("bot.")
+
+
 def _extract_schema():
-    """CREATE TABLE aus bot_v37.py ziehen — Klammern zaehlen, nicht raten."""
+    """CREATE TABLE aus bot.py ziehen — Klammern zaehlen, nicht raten."""
     here = os.path.dirname(os.path.abspath(__file__))
     src = open(os.path.join(here, "nc", "schema.py")).read()  # B164: Schema extrahiert
     out = []
@@ -156,7 +164,7 @@ def _test_dbexport():
 
 def _test_procdiag():
     """Phase-1-Zerlegung: die Prozess-/Thread-Diagnose (W83/W88) liegt jetzt in
-       nc.procdiag; bot_v37 hält nur dünne Wrapper. Verhalten muss identisch sein."""
+       nc.procdiag; bot.py hält nur dünne Wrapper. Verhalten muss identisch sein."""
     import tempfile, os as _os, glob as _glob
     from nc import procdiag
     assert isinstance(procdiag.zombie_child_count(), int)
@@ -174,20 +182,20 @@ def _test_procdiag():
     ok("procdiag.dump_all_threads schreibt Dump")
 
     # Monolith delegiert (Wrapper vorhanden, Logik ausgelagert)
-    src = open("bot_v37.py").read()
+    src = open("bot.py").read()
     assert "from nc import procdiag as _nc_procdiag" in src, "procdiag nicht importiert"
     assert "_nc_procdiag.zombie_child_count()" in src, "Wrapper delegiert nicht"
-    ok("bot_v37 delegiert an nc.procdiag")
+    ok("bot.py delegiert an nc.procdiag")
 
     # Phase-1-Zerlegung: ffmpeg-Clip-Helfer nach nc.ffdiag konsolidiert
     from nc import ffdiag
     assert ffdiag.ffprobe_duration("/nonexistent_xyz.mp4") == 0.0
     assert ffdiag.clip_caption_escape("a: 'b' 100% \\ c") == "a b 100 c"
     assert len(ffdiag.clip_caption_escape("x" * 200)) == 70
-    ok("ffdiag.ffprobe_duration + clip_caption_escape (aus bot_v37 gelöst)")
+    ok("ffdiag.ffprobe_duration + clip_caption_escape (aus bot.py gelöst)")
     assert "clip_caption_escape as _clip_caption_escape" in src, "Clip-Escape nicht konsolidiert importiert"
     assert "def _clip_caption_escape(s):" not in src, "alter Rumpf noch im Monolith"
-    ok("bot_v37 nutzt konsolidierte ffdiag-Clip-Helfer")
+    ok("bot.py nutzt konsolidierte ffdiag-Clip-Helfer")
 
     # Phase-1-Zerlegung: Login-Seite nach nc.loginpage
     from nc import loginpage
@@ -195,7 +203,7 @@ def _test_procdiag():
     assert "<form" in _pg and "Falsches PIN." in _pg and "value='/betrieb'" in _pg
     assert "&lt;script&gt;" in loginpage.login_page("<script>", "/"), "Login-Seite escaped nicht"
     assert "login_page as _login_page" in src and "def _login_page(" not in src, "Login-Seite nicht ausgelagert"
-    ok("nc.loginpage.login_page (aus bot_v37 gelöst, XSS-sicher)")
+    ok("nc.loginpage.login_page (aus bot.py gelöst, XSS-sicher)")
 
 
 def _test_shield_harden():
@@ -237,7 +245,7 @@ def _test_shield_harden():
 
 def _test_recdb():
     """Welle 1 der Zerlegung (v4.0-W104): die Aufnahmen-DB-Zugriffe liegen jetzt
-       in nc.recdb, bot_v37 haelt nur noch Delegationen. Geprueft wird beides —
+       in nc.recdb, bot.py haelt nur noch Delegationen. Geprueft wird beides —
        dass das Modul arbeitet UND dass der Monolith wirklich delegiert, statt
        eine zweite Kopie der Logik zu behalten."""
     import sqlite3, tempfile, os as _os
@@ -298,7 +306,7 @@ def _test_recdb():
     ok("recdb: fehlende Tabelle -> leere Liste statt Ausnahme")
 
     # --- und der Monolith delegiert wirklich ---
-    src = open("bot_v37.py", encoding="utf-8").read()
+    src = open("bot.py", encoding="utf-8").read()
     assert "from nc import recdb as _nc_recdb" in src, "recdb nicht importiert"
     assert "_nc_recdb.configure(log_event=log_event)" in src, "log_event nicht injiziert"
     for fn in ("get_all_recordings", "get_recording_by_id", "soft_delete_recording",
@@ -312,7 +320,7 @@ def _test_recdb():
     # beiden Kopien mit der Zeit auseinander.
     assert "SELECT * FROM recordings WHERE deleted_at IS NULL" not in src, \
         "alte SQL noch im Monolithen — Doppel-Logik"
-    ok("bot_v37 delegiert an nc.recdb (13 Funktionen, keine Doppel-Logik)")
+    ok("bot.py delegiert an nc.recdb (13 Funktionen, keine Doppel-Logik)")
 
 
 def _test_routes_recordings():
@@ -344,7 +352,7 @@ def _test_routes_recordings():
     # erlaubte Aenderung — sie ist folgenlos, weil es im Projekt kein url_for gibt.
     eps = {r.endpoint for r in app.url_map.iter_rules() if r.endpoint != "static"}
     assert all(e.startswith("recordings.") for e in eps), sorted(eps)[:3]
-    for f in ("bot_v37.py", "templates/dashboard.html", "website/lafap_index.html"):
+    for f in ("bot.py", "templates/dashboard.html", "website/lafap_index.html"):
         assert "url_for(" not in open(f, encoding="utf-8").read(), \
             "%s benutzt url_for — Endpunkt-Umbenennung waere jetzt ein Bruch" % f
     ok("routes.recordings: Endpunkte qualifiziert, weiterhin kein url_for im Projekt")
@@ -371,7 +379,7 @@ def _test_routes_recordings():
     ok("nc.ctx: unbekannter Schluessel fliegt sofort auf (__slots__)")
 
     # (5) Und der Monolith haelt keine zweite Kopie.
-    src = open("bot_v37.py", encoding="utf-8").read()
+    src = open("bot.py", encoding="utf-8").read()
     assert "from nc.routes import recordings as _nc_routes_recordings" in src
     assert "dashboard_app.register_blueprint(_nc_routes_recordings.bp)" in src, \
         "Blueprint nicht registriert"
@@ -380,7 +388,7 @@ def _test_routes_recordings():
                  "def api_recordings_list", "def compute_waveform_peaks",
                  "def build_recording_manifest", "def _find_orphans"):
         assert gone not in src, "Doppel-Logik: %s noch im Monolithen" % gone
-    ok("bot_v37 registriert nur noch — keine Aufnahmen-Route mehr im Monolithen")
+    ok("bot.py registriert nur noch — keine Aufnahmen-Route mehr im Monolithen")
 
 
 def _test_routes_archive():
@@ -418,13 +426,13 @@ def _test_routes_archive():
     ok("routes.archive: Konfiguration ueber ctx.cfg, nur die bekannte Altlast bleibt")
 
     # Und der Monolith haelt keine zweite Kopie.
-    src = open("bot_v37.py", encoding="utf-8").read()
+    src = open("bot.py", encoding="utf-8").read()
     assert "from nc.routes import archive as _nc_routes_archive" in src
     assert "dashboard_app.register_blueprint(_nc_routes_archive.bp)" in src
     for gone in ('@dashboard_app.route("/api/archive")', "def api_archive_upload",
                  "def rename_archive_entry", "def get_archive_aggregate_stats"):
         assert gone not in src, "Doppel-Logik: %s noch im Monolithen" % gone
-    ok("bot_v37 registriert nur noch — keine Archiv-Route mehr im Monolithen")
+    ok("bot.py registriert nur noch — keine Archiv-Route mehr im Monolithen")
 
     # Die Obergrenze fuer nc.ctx prueft _test_routes_alle_blueprints zentral.
 
@@ -443,7 +451,7 @@ def _test_routes_alle_blueprints():
     module = sorted(_os_basename(p) for p in _glob.glob("nc/routes/*.py")
                     if not p.endswith("__init__.py"))
     assert module, "keine Blueprints gefunden"
-    src = open("bot_v37.py", encoding="utf-8").read()
+    src = open("bot.py", encoding="utf-8").read()
 
     gesamt = 0
     for name in module:
@@ -465,19 +473,22 @@ def _test_routes_alle_blueprints():
             "%s: Endpunkt nicht qualifiziert" % name
         # (3) Der Bot registriert es wirklich — sonst waere die Route weg.
         assert "register_blueprint(_nc_routes_%s.bp)" % name in src, \
-            "%s nicht in bot_v37 registriert" % name
+            "%s nicht in bot.py registriert" % name
         # (4) Architektur-Grenze: kein Rueckimport aus dem Monolithen. Geprueft
-        # wird ueber den AST, nicht ueber den Text — "aus bot_v37 geloest" steht
+        # wird ueber den AST, nicht ueber den Text — "aus bot.py geloest" steht
         # voellig zu Recht in jedem Docstring und ist kein Verstoss.
+        # Seit der Umbenennung heisst das Modul schlicht "bot": auf Praefix zu
+        # pruefen wuerde jedes kuenftige Modul mit diesem Wortanfang faelschlich
+        # treffen, deshalb exakt oder als Paket-Praefix "bot.".
         import ast as _ast
         quelle = open("nc/routes/%s.py" % name, encoding="utf-8").read()
         for _n in _ast.walk(_ast.parse(quelle)):
             if isinstance(_n, _ast.Import):
-                assert all(not al.name.startswith("bot_v37") for al in _n.names), \
-                    "%s importiert aus bot_v37" % name
+                assert all(not _ist_monolith(al.name) for al in _n.names), \
+                    "%s importiert aus bot.py" % name
             elif isinstance(_n, _ast.ImportFrom):
-                assert not (_n.module or "").startswith("bot_v37"), \
-                    "%s importiert aus bot_v37" % name
+                assert not _ist_monolith(_n.module or ""), \
+                    "%s importiert aus bot.py" % name
         # (5) Keine app-weiten Hooks mitgewandert — als Blueprint-Hook wuerden
         # sie nur noch fuer ihr Blueprint gelten, eine stille Verhaltensaenderung.
         for hook in ("@bp.before_request", "@bp.after_request", "@bp.errorhandler"):
@@ -511,7 +522,7 @@ def _test_routes_alle_blueprints():
 
     # url_for bleibt projektweit verboten: es ist der einzige Grund, warum die
     # Endpunkt-Umbenennung durch Blueprints folgenlos ist.
-    for f in ("bot_v37.py", "templates/dashboard.html", "website/lafap_index.html"):
+    for f in ("bot.py", "templates/dashboard.html", "website/lafap_index.html"):
         assert "url_for(" not in open(f, encoding="utf-8").read(), \
             "%s benutzt url_for — Blueprint-Umbenennung waere jetzt ein Bruch" % f
     ok("weiterhin kein url_for im Projekt")
@@ -544,7 +555,7 @@ def _test_routes_health():
         "Startzeit wieder als Wert im Kontext — friert beim Import ein"
     q = open("nc/routes/health.py", encoding="utf-8").read()
     assert "_c().get_bot_start_time()" in q, "Blueprint liest die Startzeit nicht als Getter"
-    src = open("bot_v37.py", encoding="utf-8").read()
+    src = open("bot.py", encoding="utf-8").read()
     assert "get_bot_start_time=lambda: _BOT_START_TIME" in src, \
         "Bot reicht die Startzeit nicht als Getter durch"
 
@@ -589,7 +600,7 @@ def _test_cfgstore_und_claude():
     ok("claude: Modellwahl (app_config > env > Default) + Retired-Anhebung")
 
     # Und der Monolith delegiert, statt eine zweite Kopie zu halten.
-    src = open("bot_v37.py", encoding="utf-8").read()
+    src = open("bot.py", encoding="utf-8").read()
     for fn, ziel in (("_cfg_get", "_nc_cfgstore.get(key, default)"),
                      ("_cfg_set", "_nc_cfgstore.set_(key, value)"),
                      ("_anthropic_key", "_nc_claude.api_key()"),
@@ -601,7 +612,7 @@ def _test_cfgstore_und_claude():
     # importiert, statt ueber eine zweite Huelle zu laufen.
     assert "model_raw as _anthropic_model_raw" in open(
         "nc/routes/ai.py", encoding="utf-8").read(), "Blueprint importiert model_raw nicht direkt"
-    ok("bot_v37 delegiert cfg-Zugriff und Anthropic-Modellwahl")
+    ok("bot.py delegiert cfg-Zugriff und Anthropic-Modellwahl")
 
 
 def _test_routes_ai():
@@ -633,7 +644,7 @@ def _test_routes_ai():
     assert "_c().cfg[" in q, "Konfiguration laeuft nicht ueber ctx.cfg"
 
     # (3) Und der Monolith haelt keine zweite Kopie der KI-Routen.
-    src = open("bot_v37.py", encoding="utf-8").read()
+    src = open("bot.py", encoding="utf-8").read()
     for gone in ('@dashboard_app.route("/api/ai/ask")', "def api_ai_ask",
                  "def llm_chat_stream_sync", "def _nl_to_sql", "def _safe_select"):
         assert gone not in src, "Doppel-Logik: %s noch im Monolithen" % gone
@@ -755,7 +766,7 @@ def _test_updater():
                  ".git/HEAD", "build/README.md", "nc/__pycache__/x.pyc",
                  "website/news.json", ".nc_update.json"):
         assert up.is_protected(pfad), pfad
-    for pfad in ("bot_v37.py", "nc/updater.py", "brain/router.py",
+    for pfad in ("bot.py", "nc/updater.py", "brain/router.py",
                  "templates/dashboard.html", "website/lafap_index.html",
                  ".claude/skills/nightcrawler/SKILL.md", "requirements.txt",
                  ".env.example"):
@@ -787,12 +798,12 @@ def _test_updater():
     ok("updater: Archiv-Wurzel wird abgestreift")
 
     # ── Zusage 3: nur hinzufuegen und ersetzen, nie loeschen ─────────────
-    eintraege = [("bot_v37.py", 10, "neu"), ("nc/neu.py", 5, "x"),
+    eintraege = [("bot.py", 10, "neu"), ("nc/neu.py", 5, "x"),
                  ("gleich.py", 3, "same"), (".env", 1, "y"),
                  ("../boom", 1, "z"), ("riesig.bin", up.MAX_FILE_BYTES + 1, "w")]
-    lokal = {"bot_v37.py": "alt", "gleich.py": "same", "nur_lokal.sh": "meins"}
+    lokal = {"bot.py": "alt", "gleich.py": "same", "nur_lokal.sh": "meins"}
     plan = up.build_plan(eintraege, lambda r: lokal.get(r))
-    assert plan.changed == ["bot_v37.py"], plan.changed
+    assert plan.changed == ["bot.py"], plan.changed
     assert plan.new == ["nc/neu.py"], plan.new
     assert plan.same == 1
     assert plan.protected == [".env"], plan.protected
@@ -817,7 +828,15 @@ def _test_updater():
     # ── bot-frei und stdlib-only ────────────────────────────────────────
     hier = os.path.dirname(os.path.abspath(__file__))
     src = open(os.path.join(hier, "nc", "updater.py"), encoding="utf-8").read()
-    assert "bot_v37" not in src, "nc.updater importiert aus dem Monolithen"
+    # Ueber den AST, nicht ueber den Text: "bot" steckt seit der Umbenennung
+    # in jedem zweiten Wort des Moduls ("bot-frei"), eine Textsuche waere ein
+    # Dauer-Fehlalarm.
+    import ast as _ast
+    for _n in _ast.walk(_ast.parse(src)):
+        if isinstance(_n, _ast.Import):
+            assert all(not _ist_monolith(a.name) for a in _n.names), "importiert bot.py"
+        elif isinstance(_n, _ast.ImportFrom):
+            assert not _ist_monolith(_n.module or ""), "importiert bot.py"
     assert "import requests" not in src and "aiohttp" not in src, "Fremd-Bibliothek"
     assert "urllib.request" in src
     # Der Token darf nie in einer API-Antwort landen.

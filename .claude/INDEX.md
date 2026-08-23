@@ -4,7 +4,7 @@ Erzeugt von `python tools/ncpatch.py map`. Nach jeder Änderung an
 Routen, Slash-Commands oder Top-Level-Funktionen neu erzeugen.
 Zahlen sind Zeilennummern für `ncpatch show` / `ncpatch sym`.
 
-## Flask-Routen in bot_v37.py (261)
+## Flask-Routen in bot.py (261)
 
 ```
  10655  GET              /                                                dashboard
@@ -424,7 +424,7 @@ Zahlen sind Zeilennummern für `ncpatch show` / `ncpatch sym`.
  28179  on_ready
 ```
 
-## Top-Level-Symbole in bot_v37.py (555 Funktionen, 2 Klassen)
+## Top-Level-Symbole in bot.py (555 Funktionen, 2 Klassen)
 
 ```
   2465-2466   _abo_key

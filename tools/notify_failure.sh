@@ -4,7 +4,7 @@
 #
 # WARUM ES DAS GIBT
 # Der eingebaute Watchdog erkennt Stillstand — aber nur, solange der Prozess
-# lebt. Stirbt bot_v37 ganz (OOM-Killer, Absturz beim Start, kaputter Build),
+# lebt. Stirbt bot.py ganz (OOM-Killer, Absturz beim Start, kaputter Build),
 # meldet sich NIEMAND. Bei einem unbeaufsichtigten Dienst ist genau das die
 # Ausfallart, die einen kalt erwischt: der Bot ist weg, und man merkt es
 # Stunden spaeter am fehlenden Stream.

@@ -36,7 +36,7 @@ def upsert(conn, key, payload, now):
     conn.commit()
 
 
-# ── v4.0-W111: die Leseseite, aus bot_v37 geloest ────────────────────────
+# ── v4.0-W111: die Leseseite, aus bot.py geloest ────────────────────────
 
 import json as _json                                          # noqa: E402
 from datetime import datetime as _dt, timezone as _tz         # noqa: E402

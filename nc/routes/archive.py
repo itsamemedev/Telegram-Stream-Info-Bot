@@ -1,7 +1,7 @@
 """nc.routes.archive — die Archiv-Routen als Flask-Blueprint.
 
 Welle 3 der Zerlegung (v4.0-W107, siehe docs/MODULARISIERUNG.md): elf Routen und
-sieben Helfer, die ausschliesslich diese Routen benutzen, verbatim aus bot_v37
+sieben Helfer, die ausschliesslich diese Routen benutzen, verbatim aus bot.py
 geloest. Ausgewaehlt wurde die Gruppe nicht nach Gefuehl, sondern nach der
 Kennzahl aus tools/bp_analyse.py: 582 Zeilen fuer 16 neue Kontext-Eintraege ist
 das beste Verhaeltnis unter den grossen Gruppen. /api/ai bringt zwar mehr
@@ -10,7 +10,7 @@ Zeilen, wuerde aber 24 Konfigurationswerte in den Kontext ziehen.
 Wie bei nc.routes.recordings: die Pfade stehen woertlich in den Dekoratoren
 (kein url_prefix), die app-weiten Hooks bleiben auf der App, und alles, was der
 Monolith weiterhin stellen muss, kommt ueber nc.ctx statt ueber einen Import
-aus bot_v37.
+aus bot.py.
 
 Konfiguration kommt als _c().cfg["NAME"] und nicht per eigenem Env-Lesepfad:
 der Bot friert diese Werte beim Import ein, ein zweiter Lesepfad waere eine

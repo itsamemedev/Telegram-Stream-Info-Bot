@@ -181,7 +181,7 @@ flowchart TB
     DC --> BOT
     TT --> BOT
 
-    BOT["<b>bot_v37.py</b><br/>Monolith · 34.500 Zeilen<br/>Scraper · Recorder · Restream<br/>Flask-Dashboard mit 345 Routen"]:::core
+    BOT["<b>bot.py</b><br/>Monolith · 34.500 Zeilen<br/>Scraper · Recorder · Restream<br/>Flask-Dashboard mit 345 Routen"]:::core
 
     BOT -->|configure| NC["<b>nc/</b> — 84 Fachmodule<br/>Schema · OAuth · Restream<br/>Ledger · Moderation · Intel"]:::lib
     BOT --> TPL["<b>templates/</b><br/>Dashboard · Overlay · PWA"]:::lib
@@ -203,7 +203,7 @@ flowchart TB
 
 > [!IMPORTANT]
 > **Die Architektur-Grenze, die gilt:** `nc/*` und `brain/*` importieren **niemals**
-> aus `bot_v37`. Konfiguration kommt ausschließlich per `configure(...)`-Injection.
+> aus `bot.py`. Konfiguration kommt ausschließlich per `configure(...)`-Injection.
 > Das hält beide Bibliotheken isoliert testbar und verhindert Zirkularimporte.
 > `brain/` ist thread-basiert und stdlib-only.
 
@@ -220,7 +220,7 @@ pip install -r requirements.txt
 sudo apt install -y ffmpeg streamlink yt-dlp
 
 cp .env.example .env && nano .env      # mindestens BOT_TOKEN eintragen
-python3 bot_v37.py
+python3 bot.py
 ```
 
 Dashboard danach unter <http://127.0.0.1:8050> — von außen nur per SSH-Tunnel,
@@ -242,7 +242,7 @@ siehe [Sicherheit](#️-sicherheit).
 | **Netz** | 10 Mbit Upload | 50 Mbit+ (Multi-Restream) |
 
 > [!IMPORTANT]
-> **Python 3.12 ist harte Mindestversion.** `bot_v37.py` nutzt f-strings mit
+> **Python 3.12 ist harte Mindestversion.** `bot.py` nutzt f-strings mit
 > Backslash (PEP 701) — unter 3.11 scheitert schon das Parsen der Datei.
 
 <details>
@@ -337,7 +337,7 @@ DB_PASS=…
 <br>
 
 ```bash
-python3 bot_v37.py
+python3 bot.py
 ```
 
 Erwartete Zeilen im Log:
@@ -358,7 +358,7 @@ Läuft alles, richte den [systemd-Dienst](#-deployment) ein.
 
 <br>
 
-Für KI-Antworten ohne Cloud und ohne Kosten: siehe **[`SETUP_LLAMACPP.md`](SETUP_LLAMACPP.md)**
+Für KI-Antworten ohne Cloud und ohne Kosten: siehe **[`docs/SETUP_LLAMACPP.md`](docs/SETUP_LLAMACPP.md)**
 und die mitgelieferte Unit **[`llama-server.service`](llama-server.service)**.
 Ist kein llama.cpp erreichbar, fällt der Bot automatisch auf Ollama und danach
 auf die keylosen freien Backends zurück — er startet **nie** deswegen nicht.
@@ -394,8 +394,8 @@ ADMIN_CHAT_ID=123456789              # deine Telegram-ID (Alarme, Admin-Befehle)
 
 | Plattform | Anleitung |
 |---|---|
-| Twitch | **[`SETUP_TWITCH_OAUTH.md`](SETUP_TWITCH_OAUTH.md)** |
-| YouTube | **[`SETUP_YT_OAUTH.md`](SETUP_YT_OAUTH.md)** |
+| Twitch | **[`docs/SETUP_TWITCH_OAUTH.md`](docs/SETUP_TWITCH_OAUTH.md)** |
+| YouTube | **[`docs/SETUP_YT_OAUTH.md`](docs/SETUP_YT_OAUTH.md)** |
 | Kick | User-OAuth direkt im Dashboard-Panel (Titel & Kategorie setzen) |
 
 > [!WARNING]
@@ -674,7 +674,7 @@ After=network-online.target
 Type=simple
 User=ubuntu
 WorkingDirectory=/home/ubuntu/nightcrawler
-ExecStart=/home/ubuntu/nightcrawler/.venv/bin/python3 bot_v37.py
+ExecStart=/home/ubuntu/nightcrawler/.venv/bin/python3 bot.py
 Restart=always
 RestartSec=10
 
@@ -720,7 +720,7 @@ sudo systemctl edit nightcrawler     # → [Unit] OnFailure=nightcrawler-notify@
 Danach kommt bei jedem Ausfall eine Telegram-/Discord-Nachricht mit den letzten
 Logzeilen.
 
-Ausführlich: **[`DEPLOY.md`](DEPLOY.md)** und **[`START_HIER.txt`](START_HIER.txt)**.
+Ausführlich: **[`docs/DEPLOY.md`](docs/DEPLOY.md)** und **[`docs/START_HIER.txt`](docs/START_HIER.txt)**.
 
 ---
 
@@ -741,7 +741,7 @@ python3 test_restream.py
 
 | Test | Deckt ab |
 |---|---|
-| `test_smoke.py` | Führt `bot_v37.py` **wirklich** aus — NameError, Reihenfolge-Fallen. Braucht den ganzen Laufzeitstack, gehört auf den Server. |
+| `test_smoke.py` | Führt `bot.py` **wirklich** aus — NameError, Reihenfolge-Fallen. Braucht den ganzen Laufzeitstack, gehört auf den Server. |
 | `test_nc_modules.py` | Die Fachmodule in `nc/` isoliert, ohne Netz und ohne DB |
 | `test_restream.py` | Statische Verträge gegen den Restream-Pfad |
 | `test_m2_bridge.py` | Adapter Bot ↔ `brain/` |
@@ -766,7 +766,7 @@ Verträge und ein Geheimnis-Scan auf Python 3.12 und 3.13.
 <br>
 
 Die statischen Verträge verankern sich an **wörtlichem Quelltext** von
-`bot_v37.py`. Ändert sich eine Signatur, kippt der Vertrag, obwohl der Code
+`bot.py`. Ändert sich eine Signatur, kippt der Vertrag, obwohl der Code
 stimmt. Ebenso bei Fenstern der Form `src[i:i + 3000]`: wächst eine Funktion
 darüber hinaus, meldet der Test etwas als fehlend, das zwei Zeilen weiter unten
 steht.
@@ -778,14 +778,14 @@ gebrochen ist.**
 
 ### 🧭 Navigation im Monolithen
 
-`bot_v37.py` hat über 30.000 Zeilen. Es wird **nie** ganz gelesen und **nie**
+`bot.py` hat über 30.000 Zeilen. Es wird **nie** ganz gelesen und **nie**
 blind durchsucht — erst fragen wo etwas steht, dann den Ausschnitt holen:
 
 ```bash
 python3 tools/ncpatch.py find "donations"              # wo ist X?
-python3 tools/ncpatch.py sym  bot_v37.py api_brain     # Zeilenbereich eines Symbols
-python3 tools/ncpatch.py show bot_v37.py 24750 24810   # nur diesen Ausschnitt
-python3 tools/ncpatch.py grep "tree.command" bot_v37.py -C 3
+python3 tools/ncpatch.py sym  bot.py api_brain     # Zeilenbereich eines Symbols
+python3 tools/ncpatch.py show bot.py 24750 24810   # nur diesen Ausschnitt
+python3 tools/ncpatch.py grep "tree.command" bot.py -C 3
 python3 tools/ncpatch.py map                           # Navigationskarte neu bauen
 python3 tools/ncpatch.py verify patches/x.json         # Trockenlauf
 python3 tools/ncpatch.py apply  patches/x.json         # alles-oder-nichts, legt .bak an
@@ -815,7 +815,7 @@ python3 tools/ncpatch.py apply  patches/x.json         # alles-oder-nichts, legt
 > eigene Kanäle: sie werden als `kind="gift"` gespeichert, nie als `donation`,
 > und laufen in **keine** Geldsumme.
 
-Sicherheitslücke gefunden? → **[`SECURITY.md`](SECURITY.md)**. Bitte **kein**
+Sicherheitslücke gefunden? → **[`docs/SECURITY.md`](docs/SECURITY.md)**. Bitte **kein**
 öffentliches Issue.
 
 ---
@@ -824,7 +824,7 @@ Sicherheitslücke gefunden? → **[`SECURITY.md`](SECURITY.md)**. Bitte **kein**
 
 ```
 NIGHTCRAWLER/
-├── bot_v37.py                Monolith: Telegram + Discord + Flask + Scraper +
+├── bot.py                Monolith: Telegram + Discord + Flask + Scraper +
 │                             Recorder + Restream + Schema
 ├── brain_bridge.py           Adapter  Bot ↔ brain/
 │
@@ -861,13 +861,13 @@ NIGHTCRAWLER/
 
 | Datei | Inhalt |
 |---|---|
-| **[`START_HIER.txt`](START_HIER.txt)** | Einspielen in einem Befehl, Log lesen, Erste Hilfe |
-| **[`DEPLOY.md`](DEPLOY.md)** | Vollständige Deploy- und Prüfanleitung |
-| **[`README_V37.md`](README_V37.md)** | Ausführliche Release-Historie aller Wellen |
-| **[`CHANGELOG.md`](CHANGELOG.md)** | Versionsübersicht |
+| **[`docs/START_HIER.txt`](docs/START_HIER.txt)** | Einspielen in einem Befehl, Log lesen, Erste Hilfe |
+| **[`docs/DEPLOY.md`](docs/DEPLOY.md)** | Vollständige Deploy- und Prüfanleitung |
+| **[`docs/README_V37.md`](docs/README_V37.md)** | Ausführliche Release-Historie aller Wellen |
+| **[`docs/CHANGELOG.md`](docs/CHANGELOG.md)** | Versionsübersicht |
 | **[`docs/MODULARISIERUNG.md`](docs/MODULARISIERUNG.md)** | Plan, den Monolithen zu zerlegen — gemessen, in Wellen |
-| **[`SETUP_LLAMACPP.md`](SETUP_LLAMACPP.md)** | Lokales LLM einrichten |
-| **[`SETUP_TWITCH_OAUTH.md`](SETUP_TWITCH_OAUTH.md)** · **[`SETUP_YT_OAUTH.md`](SETUP_YT_OAUTH.md)** | OAuth-Flows |
+| **[`docs/SETUP_LLAMACPP.md`](docs/SETUP_LLAMACPP.md)** | Lokales LLM einrichten |
+| **[`docs/SETUP_TWITCH_OAUTH.md`](docs/SETUP_TWITCH_OAUTH.md)** · **[`docs/SETUP_YT_OAUTH.md`](docs/SETUP_YT_OAUTH.md)** | OAuth-Flows |
 | **[`docs/CROWDSEC.md`](docs/CROWDSEC.md)** | Abwehr-Panel |
 | **[`CLAUDE.md`](CLAUDE.md)** | Arbeitsgrundlage für KI-gestützte Entwicklung |
 
@@ -966,14 +966,14 @@ ersten Imports geladen. Konfiguration deshalb immer als Funktion lesen
 | Sentinel-Agenten | 12 |
 | Konfigurationsvariablen | ~470 |
 
-Vollständige Historie: **[`CHANGELOG.md`](CHANGELOG.md)** ·
-**[`README_V37.md`](README_V37.md)**
+Vollständige Historie: **[`docs/CHANGELOG.md`](docs/CHANGELOG.md)** ·
+**[`docs/README_V37.md`](docs/README_V37.md)**
 
 ---
 
 ## 🧭 Roadmap
 
-Der nächste grosse Schritt ist kein Feature, sondern Aufräumen: **`bot_v37.py`
+Der nächste grosse Schritt ist kein Feature, sondern Aufräumen: **`bot.py`
 hat 34.487 Zeilen**. Die Datei ist der Engpass des Projekts — sie lässt sich
 nicht überblicken und nur mit Werkzeug bearbeiten.
 
@@ -988,7 +988,7 @@ Der vollständige, gemessene Plan dazu steht in
 | **3** | Blueprints in Serie — **der grosse Hebel** | −7.600 |
 | **4** | `RestreamManager` und `KickModerator` herauslösen | −1.700 |
 | **5** | Discord-Schicht nach `discord_ext/` | −2.100 |
-| **6** | Kern aufräumen, `bot_v37.py` wird Kompositionswurzel | Rest |
+| **6** | Kern aufräumen, `bot.py` wird Kompositionswurzel | Rest |
 
 Zwei Messungen machen das machbar: die Kopplung ist **flach** (Median 2
 Fremdbezüge je Route, nur 13 echte Querschnittshelfer), und es gibt **kein
@@ -997,17 +997,17 @@ verhaltensneutral.
 
 Die Messlatte ist keine Zeilenzahl:
 
-> **Eine neue API-Route anlegen, ohne `bot_v37.py` zu öffnen.**
+> **Eine neue API-Route anlegen, ohne `bot.py` zu öffnen.**
 
 ---
 
 ## 🤝 Mitwirken
 
-Beiträge sind willkommen. **Bitte vorher [`CONTRIBUTING.md`](CONTRIBUTING.md)
+Beiträge sind willkommen. **Bitte vorher [`docs/CONTRIBUTING.md`](docs/CONTRIBUTING.md)
 lesen** — es gibt einige harte Regeln, die aus echten Ausfällen entstanden sind:
 
 1. Die **Pflicht-Prüfkette** läuft vor jedem Pull Request.
-2. `nc/*` und `brain/*` importieren **nie** aus `bot_v37`.
+2. `nc/*` und `brain/*` importieren **nie** aus `bot.py`.
 3. Kommentare und Ausgaben auf **Deutsch**, und sie erklären **warum**, nicht was.
 4. Kein `except: pass` in Dauerläufern — dafür gibt es `_loop_fehler`.
 
@@ -1021,7 +1021,7 @@ git push -u origin feature/mein-feature
 Auch hilfreich ohne Code: Bug-Reports mit Logausschnitt, Dokumentations-
 Korrekturen, Übersetzungen.
 
-Bitte beachte den **[Verhaltenskodex](CODE_OF_CONDUCT.md)**.
+Bitte beachte den **[Verhaltenskodex](docs/CODE_OF_CONDUCT.md)**.
 
 ---
 
@@ -1060,7 +1060,7 @@ Volltext: **[`LICENSE`](LICENSE)** · Was das praktisch heißt:
 | Weitergabe | Änderungen kennzeichnen | |
 | Private Nutzung | Lizenz- und Copyright-Hinweis beilegen | |
 
-Fremdcode und dessen Lizenzen: **[`THIRD_PARTY_LICENSES.md`](THIRD_PARTY_LICENSES.md)**
+Fremdcode und dessen Lizenzen: **[`docs/THIRD_PARTY_LICENSES.md`](docs/THIRD_PARTY_LICENSES.md)**
 
 ---
 

@@ -1,6 +1,6 @@
 """nc.textmore — weitere reine Text-/Parse-Helfer.
 
-Extrahiert aus bot_v37.py: Telegram-Nachrichten-Splitting, Text-Kompaktierung,
+Extrahiert aus bot.py: Telegram-Nachrichten-Splitting, Text-Kompaktierung,
 ISO-Datums-Parsing, sichere Archiv-Dateinamen, Video-Captions, Overlay-Umbruch."""
 
 import os

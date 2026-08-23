@@ -231,7 +231,7 @@ def test_reentrance_contract():
     """Statischer Vertrag: im Switch wird der Watcher VOR stop() aus der
     Registry gelöst (sonst cancelt er sich selbst mitten im Umschalten),
     und stop() räumt indep-Tasks + srcwatch + chatguard ab."""
-    src = open("bot_v37.py").read()
+    src = open("bot.py").read()
     i = src.find("async def _switch_to_next_live")
     body = src[i:src.find("\n    async def ", i + 10)]
     # B123 hängte stop() den Parameter _keep_desired=True an. Die frühere
@@ -257,7 +257,7 @@ def test_reentrance_contract():
 def test_relay_profile_contract():
     """Kick (Hauptprozess) darf NIE das leichte Relay-Profil erben; nur die
     Zusatz-Relays laufen mit relay_profile=True."""
-    src = open("bot_v37.py").read()
+    src = open("bot.py").read()
     assert src.count("relay_profile=True") == 1
     kick_zone = src[src.find("only_target=_kick_target") - 500:
                     src.find("only_target=_kick_target") + 150]
@@ -358,7 +358,7 @@ def test_overlay_session_and_platforms():
 def test_overlay_push_contract():
     """Alle Event-Quellen müssen ihre Plattform mitgeben, und die Route muss
     nach Session filtern (sonst kehrt der Reset-Bug zurück)."""
-    src = open("bot_v37.py").read()
+    src = open("bot.py").read()
     # Jede _overlay_push-Nutzung (außer der Definition) trägt platform=
     calls = [ln for ln in src.splitlines()
              if "_overlay_push(" in ln and "def _overlay_push" not in ln]
@@ -391,7 +391,7 @@ def test_flask_async_unpack_contract():
     selbst ein 2-Tupel liefert. api_channels_status gibt ein 3-Key-Dict
     zurück — dort MUSS einfach zugewiesen werden (sonst HTTP 500
     'too many values to unpack')."""
-    src = open("bot_v37.py").read()
+    src = open("bot.py").read()
     i = src.find("def api_channels_status")
     body = src[i:src.find("@dashboard_app.route", i + 10)]
     assert "data = _run_async_from_flask(" in body
@@ -403,7 +403,7 @@ def test_overlay_size_contract():
     """B94: Das Overlay muss in der ECHTEN Quellauflösung gerendert werden.
     Ein fest gerendertes 9:16-Overlay wurde per scale2ref auf eine 16:9-Quelle
     breitgezerrt — auf dem PC unbrauchbar."""
-    src = open("bot_v37.py").read()
+    src = open("bot.py").read()
     assert 'RESTREAM_OVERLAY_HTML_SIZE", "auto"' in src, "auto muss Default sein"
     assert "def _probe_video_size" in src and "def _overlay_render_size" in src
     # Probe-Ergebnis fließt in den Screenshot
@@ -423,7 +423,7 @@ def test_overlay_size_contract():
 def test_heartbeat_contract():
     """B96: Der Watchdog misst LEBEN. Ein Worker in einer langen Whisper-
     Transkription ist gesund — vorher schlug der Beat erst danach zu."""
-    src = open("bot_v37.py").read()
+    src = open("bot.py").read()
     assert "async def _hb_while(" in src
     assert '_hb_while("live-react", _whisper_transcribe(w))' in src
     # Rückstau wird verworfen statt minutenlang abgearbeitet
@@ -439,7 +439,7 @@ def test_heartbeat_contract():
 def test_dead_chat_contract():
     """B97: 'chat not found' setzt eine Sperre — der Video-Upload hat sie nie
     gelesen und produzierte 176 identische Fehler in einer Nacht."""
-    src = open("bot_v37.py").read()
+    src = open("bot.py").read()
     i = src.find("async def _send_one(fh_or_path, caption):")
     body = src[i:i + 900]
     assert "if _is_dead(chat_id):" in body, "_send_one prüft die Sperre nicht"
@@ -456,7 +456,7 @@ def test_whisper_throttle_contract():
     """B98: Ohne GPU teilen sich Encoder, Whisper und llama.cpp 8 Kerne.
     Während gesendet wird, MUSS das Sendebild Vorrang haben — Whisper läuft
     dann serialisiert statt WHISPER_MAX_CONCURRENT-fach."""
-    src = open("bot_v37.py").read()
+    src = open("bot.py").read()
     assert "WHISPER_THROTTLE_LIVE" in src
     i = src.find("async def _whisper_transcribe")
     # Funktionsgrenze statt fester 2000 Zeichen: die Drossel-Zeile steht rund
@@ -518,7 +518,7 @@ def test_azrael_overlay_source():
     Live-Reaction-Engine ruft _KICK_MOD.react() auf und schickt nichts in den
     Chat → AZRAELs Antworten tauchten im Restream nie auf. Primärquelle muss
     _AZRAEL_REACTION sein (das setzt react() selbst)."""
-    src = open("bot_v37.py").read()
+    src = open("bot.py").read()
     i = src.find("def _write_restream_overlay")
     body = src[i:i + 3000]
     j = body.find("AZRAEL-Reaktion unten")
@@ -589,7 +589,7 @@ def test_azrael_text_cap():
     """B101: Der HTML-Pfad reichte den VOLLEN Reaktionstext durch — lange
     Antworten wurden im Sendebild zur unlesbaren Textwand (der drawtext-Pfad
     kappt seit je auf 2x38 Zeichen)."""
-    src = open("bot_v37.py").read()
+    src = open("bot.py").read()
     assert "AZRAEL_OVERLAY_MAXLEN" in src and "def _ov_clip_text" in src
     body = _fn(src, "_azrael_overlay_state")          # v4.0-W117
     assert '"text": _ov_clip_text(r.get("text", ""))' in body, "API kappt nicht"
@@ -612,7 +612,7 @@ def test_overlay_size_selfcorrect():
     """B102: Der auto-Default greift NICHT, wenn in der Server-.env noch ein
     fester Wert steht (os.getenv liest die .env zuerst). Ein 9:16-Overlay auf
     einer 16:9-Quelle ist immer falsch → die Quelle muss gewinnen."""
-    src = open("bot_v37.py").read()
+    src = open("bot.py").read()
     assert "def _parse_size" in src
     i = src.find("def _overlay_render_size")
     body = src[i:src.find("def _find_chromium", i)]
@@ -653,7 +653,7 @@ def test_overlay_size_selfcorrect():
 def test_overlay_mode_default():
     """Der HTML-Modus ist Default — er kann den Stream nicht kaputt machen,
     weil vier Fallbacks auf drawtext greifen."""
-    src = open("bot_v37.py").read()
+    src = open("bot.py").read()
     assert 'RESTREAM_OVERLAY_MODE", "html"' in src, "html muss Default sein"
     assert 'RESTREAM_OVERLAY_MODE not in ("text", "html")' in src
     # Fallback-Pfade müssen erhalten bleiben
@@ -694,7 +694,7 @@ def test_ffmpeg_thread_budget():
     Bei vier moeglichen parallelen x264 (Transcode, Relay, Shrink, Clip) war das
     die Ursache. Dieser Test haelt fest, dass der Deckel nicht wieder verschwindet.
     """
-    src = open("bot_v37.py").read()
+    src = open("bot.py").read()
     tree = ast.parse(src)
 
     # _ff_cmd existiert (delegiert seit W44) und die -threads-Logik lebt in nc.ffbuild
@@ -753,7 +753,7 @@ def test_ai_timeout_capped():
        _run_async_from_flask angewandt. Drei Flask-Routen riefen llm_chat_sync
        direkt und erbten AI_TIMEOUT (.env: 0 → im Code 3600s) — ein Worker
        konnte eine Stunde blockieren."""
-    src = open("bot_v37.py").read()
+    src = open("bot.py").read()
     tree = ast.parse(src)
     TARGETS = {"llm_chat", "ai_chat", "llm_chat_sync"}
     naked = []
@@ -794,7 +794,7 @@ def test_fast_json_safety():
     einen TypeError. Ein schnellerer Serializer, der Fehler verschluckt, ist
     schlechter als ein langsamer, der sie zeigt.
     """
-    src = open("bot_v37.py").read()
+    src = open("bot.py").read()
     assert "def _install_fast_json(" in src, "_install_fast_json fehlt"
     i = src.find("def _install_fast_json(")
     body = src[i:src.find("\n_ORJSON_ON", i)]
@@ -819,7 +819,7 @@ def test_fast_json_safety():
 def test_uvloop_optional():
     """V37-PERF: uvloop wird VOR asyncio.run() gesetzt (sonst wirkungslos) und
        ist optional — fehlt das Paket, läuft alles unverändert weiter."""
-    src = open("bot_v37.py").read()
+    src = open("bot.py").read()
     assert "def _install_fast_eventloop(" in src, "_install_fast_eventloop fehlt"
     # Den AUFRUF suchen, nicht die Definition — beide heissen gleich.
     call = src.find("    _install_fast_eventloop()")
@@ -844,7 +844,7 @@ def test_url_refresh_no_wait():
     regulaere Live-Intervall (ADAPTIVE_INTERVALS["live"] = 20s) ab: 20 Sekunden
     fehlende Aufnahme bei JEDEM Refresh, also alle ~28 Minuten.
     """
-    src = open("bot_v37.py").read()
+    src = open("bot.py").read()
     tree = ast.parse(src)
     i = src.find("if url_refreshed[0]:\n                try:\n                    _NEXT_CHECK_AT[tid] = 0")
     assert i > 0, "url_refresh stellt den naechsten Check nicht sofort faellig"
@@ -886,7 +886,7 @@ def test_chat_guardian_reconnect():
     """V37-CHAT: Der Guardian muss auf den Task WARTEN statt in 30s-Schritten zu
        pollen — sonst bleibt der Chat nach jedem Abbruch bis zu 30s tot. Und er
        braucht Backoff, sonst verbrennt er bei Dauerfehlern Sign-Quota."""
-    src = open("bot_v37.py").read()
+    src = open("bot.py").read()
     tree = ast.parse(src)
     fn = ""
     for n in ast.walk(tree):
@@ -922,14 +922,14 @@ def test_config_drift():
 
     # Die Defaults werden aus der QUELLE gezogen, nicht aus einer zweiten Liste —
     # sonst laeuft die Pruefung irgendwann der Realitaet hinterher.
-    d = cd.extract_defaults("bot_v37.py")
+    d = cd.extract_defaults("bot.py")
     assert len(d) > 200, f"nur {len(d)} Env-Keys aus der Quelle — AST kaputt?"
     assert d.get("RESTREAM_MULTI_MODE") == "tee", d.get("RESTREAM_MULTI_MODE")
     assert d.get("RESTREAM_OVERLAY_MODE") == "html"
     ok(f"confdrift liest {len(d)} Env-Defaults per AST aus der Quelle")
 
     # Der Fall, der uns CPU gekostet hat
-    rep = cd.config_drift("bot_v37.py",
+    rep = cd.config_drift("bot.py",
                           env={"RESTREAM_MULTI_MODE": "independent"},
                           only_watchlist=True)
     assert rep["watched_drift"] == 1, rep
@@ -939,14 +939,14 @@ def test_config_drift():
     ok("confdrift erkennt RESTREAM_MULTI_MODE=independent (der echte Fall)")
 
     # Gleicher Wert = keine Drift; Secrets werden ignoriert
-    assert cd.config_drift("bot_v37.py", env={"RESTREAM_MULTI_MODE": "tee"},
+    assert cd.config_drift("bot.py", env={"RESTREAM_MULTI_MODE": "tee"},
                            only_watchlist=True)["drift_count"] == 0
-    assert cd.config_drift("bot_v37.py", env={"TELEGRAM_TOKEN": "abc"},
+    assert cd.config_drift("bot.py", env={"TELEGRAM_TOKEN": "abc"},
                            only_watchlist=True)["drift_count"] == 0
     ok("confdrift: kein Fehlalarm bei Gleichstand, Secrets ignoriert")
 
     # "1" vs 1 darf keine Drift sein
-    assert cd.config_drift("bot_v37.py", env={"WHISPER_CPU_THREADS": "2"},
+    assert cd.config_drift("bot.py", env={"WHISPER_CPU_THREADS": "2"},
                            only_watchlist=True)["drift_count"] == 0
     ok("confdrift: normalisiert Typen ('2' == 2)")
 
@@ -985,7 +985,7 @@ def test_overlay_react_wrap():
     ok("_ov_wrap: bestehende Aufrufer unverändert (ellipsis default False)")
 
     # Der Fix nutzt Env-Konstanten + erklärendes Präfix, nicht mehr hartes "AZRAEL ▸"
-    src = open("bot_v37.py").read()
+    src = open("bot.py").read()
     assert "AZRAEL_OVERLAY_PREFIX" in src, "Präfix muss konfigurierbar sein"
     assert 'f"{AZRAEL_OVERLAY_PREFIX} {txt}"' in src, "Reaktion muss das Präfix nutzen"
     assert 'y=f"{H}-th-58"' in open("nc/ffmpeg_filters.py").read(), \
@@ -1055,7 +1055,7 @@ def test_twitch_oauth():
     ok("twitchoauth: status() meldet ready nach Flow")
 
     # Der EventSub-Loop bevorzugt OAuth, hält aber den manuellen Token als Fallback
-    src = open("bot_v37.py").read()
+    src = open("bot.py").read()
     i = src.find("async def _twitch_eventsub_loop():")
     body = src[i:i + 1600]
     assert "_twoauth.access_token" in body, "Loop nutzt den OAuth-Token nicht"
@@ -1073,7 +1073,7 @@ def test_donations_summary():
     """V37-DON: Donations aller vier Plattformen landen über _overlay_push in
     overlay_events und werden nach Plattform aggregiert. YouTube+Twitch sind
     KEINE Sonderfälle — sie nutzen denselben Pfad wie Kick/TikTok."""
-    src = open("bot_v37.py").read()
+    src = open("bot.py").read()
     assert '@dashboard_app.route("/api/donations/summary")' in src, \
         "Donations-Route fehlt"
     # Panel zeigt Kick/Twitch/YouTube — TikTok wurde auf Wunsch entfernt
@@ -1109,7 +1109,7 @@ def test_azrael_overlay_toggle():
     """V37-AZHIDE: AZRAELs Reaktion im gebrannten Sendebild muss abschaltbar sein
     (AZRAEL_OVERLAY_REACT=0), ohne seine Chat-Antworten zu berühren — das ist ein
     getrennter Pfad."""
-    src = open("bot_v37.py").read()
+    src = open("bot.py").read()
     assert "AZRAEL_OVERLAY_REACT" in src, "Schalter fehlt"
     # Der react-Block hängt am Schalter
     i = src.find("if AZRAEL_OVERLAY_REACT and _OVERLAY.get")
@@ -1136,7 +1136,7 @@ def test_twitch_chat_scopes_and_reply():
     assert hasattr(tw, "login_name"), "login_name fehlt (IRC-NICK braucht ihn)"
     ok("twitchoauth: login_name für den IRC-NICK vorhanden")
 
-    src = open("bot_v37.py").read()
+    src = open("bot.py").read()
     # Chat-Loop nutzt den OAuth-Token, mit manuellem Fallback
     i = src.find("async def _twitch_chat_loop")
     body = src[i:i + 1800]
@@ -1167,7 +1167,7 @@ def test_twitch_sentinel_timeout():
     assert hasattr(tw, "timeout_user"), "timeout_user-Helfer fehlt"
     ok("twitchoauth: Moderations-Scope + timeout_user() vorhanden")
 
-    src = open("bot_v37.py").read()
+    src = open("bot.py").read()
     i = src.find("V37-TWMOD")
     body = src[i:i + 2200]      # W19: Fenster groesser (Team-Ausnahme + Verwarnung kamen dazu)
     assert "_twoauth.timeout_user" in body, "Twitch-Timeout wird nicht ausgelöst"
@@ -1187,7 +1187,7 @@ def test_twitch_status_uses_oauth():
     """V37-TWFIX: Die Kanal-Status-Route (Follower/Live im Dashboard) hing nur am
     alten .env-Token und meldete »Token nötig«, obwohl OAuth verbunden war. Muss
     denselben OAuth-bevorzugt-Fallback nutzen wie der EventSub-Loop."""
-    src = open("bot_v37.py").read()
+    src = open("bot.py").read()
     body = _fn(src, "_twitch_channel_status")         # v4.0-W117
     assert "_twoauth.status().get(\"ready\")" in body, \
         "Status-Route prüft den OAuth-Flow nicht"
@@ -1207,7 +1207,7 @@ def test_twitch_ingest_default():
     """V37-TWINGEST: Der Twitch-Ingest-Default muss der globale Server sein.
     Das alte rtmp://live.twitch.tv/app wird nicht mehr angenommen und brach
     Restreams mit rc=8 ab (in der Praxis bestätigt: Wechsel behob es)."""
-    src = open("bot_v37.py").read()
+    src = open("bot.py").read()
     assert "ingest.global-contribute.live-video.net" in src, \
         "globaler Twitch-Ingest fehlt als Default"
     assert 'os.getenv("TWITCH_INGEST_URL", "rtmp://live.twitch.tv/app")' not in src, \
@@ -1243,7 +1243,7 @@ def test_community_discovery_loop():
     ok("community: Highlight-Post ruft zum Teilen auf")
 
     # Verdrahtung im Bot: alle drei Trigger-Punkte
-    src = open("bot_v37.py").read()
+    src = open("bot.py").read()
     assert "_community.note_chatter" in src, "Wiedererkennung nicht im Chat-Push"
     assert "_community.live_ping" in src, "Live-Ping nicht am Restream-Start"
     assert "_community.highlight_post" in src, "Highlight-Share nicht am Clip-Highlight"
@@ -1292,7 +1292,7 @@ def test_loyalty_rewards():
     ok("loyalty: Cooldown verhindert Punkte-Farming")
 
     # Persistenz-Verdrahtung: der Bot nutzt die DB-Tabelle, nicht RAM
-    src = open("bot_v37.py").read()
+    src = open("bot.py").read()
     schema_src = open("nc/schema.py").read()   # B164: Schema in eigenes Modul extrahiert
     assert "CREATE TABLE IF NOT EXISTS loyalty_points" in schema_src, "keine persistente Tabelle"
     assert "_loyalty.award_chat" in src, "Punkte werden nicht vergeben"
@@ -1303,7 +1303,7 @@ def test_loyalty_rewards():
 def test_sentinel_chat_reach():
     """V37-SENTINEL-REACH: AZRAEL antwortet auf @Azrael in ALLEN Chats außer
     TikTok. Kick fehlte vorher (nur Twitch/YouTube) — jetzt ergänzt."""
-    src = open("bot_v37.py").read()
+    src = open("bot.py").read()
     # AZRAEL-Antwort auf allen drei erlaubten Plattformen
     for p in ("kick", "twitch", "youtube"):
         assert f'_azrael_chat_reply("{p}"' in src, f"AZRAEL antwortet nicht auf {p}"
@@ -1322,7 +1322,7 @@ def test_sentinel_chat_reach():
 def test_foreign_ad_block():
     """V37-ADBLOCK: Fremdwerbung (fremder Link/Invite/Eigenwerbung) wird geblockt,
     eigene Kanäle/Discord per Allowlist ausgenommen. 0 False Positives Pflicht."""
-    src = open("bot_v37.py").read()
+    src = open("bot.py").read()
     assert "_detect_foreign_ad" in src, "Werbe-Detektor fehlt"
     assert '_spam_check' in src and 'block_ads' in src, "nicht in die Moderation verdrahtet"
     # Der Detektor muss die eigene Invite-Allowlist per vollem Pfad prüfen
@@ -1339,7 +1339,7 @@ def test_foreign_ad_block():
 def test_brain_growth_viz():
     """V37-BRAINVIZ: Gehirn-Dashboard zeigt echten Lern-/Wachstumsverlauf —
     Zeitreihe aus Snapshots, nicht nur Momentan-Status."""
-    src = open("bot_v37.py").read()
+    src = open("bot.py").read()
     schema_src = open("nc/schema.py").read()   # B164: Schema extrahiert
     assert "CREATE TABLE IF NOT EXISTS brain_growth" in schema_src, "keine Wachstums-Tabelle"
     assert "def _brain_growth_snapshot" in src, "kein Snapshot-Mechanismus"
@@ -1377,7 +1377,7 @@ def test_llm_budget():
     ok("llmbudget: Brain-LLM Timeout 300s + max_tokens 1024, env-übersteuerbar")
 
     # Setup dokumentiert das größere Kontextfenster + die Abwägung
-    setup = open("SETUP_LLAMACPP.md").read()
+    setup = open("docs/SETUP_LLAMACPP.md").read()
     assert "-c 8192" in setup, "Kontextfenster nicht erhöht"
     assert "ABWÄGUNG" in setup or "Abwägung" in setup, "Ressourcen-Abwägung nicht dokumentiert"
     ok("llmbudget: Kontextfenster 8192 + Abwägung (RAM/Recordings) dokumentiert")
@@ -1387,11 +1387,11 @@ def test_nexus_removed():
     """V37-NEXUSOUT: Nexus (NeuralCore) vollständig entfernt — AZRAEL Sentinel
     ist das eigenständige System, Nexus war ein getrennter Selbstbeobachtungs-
     Kern und wurde auf Wunsch komplett rausgenommen."""
-    src = open("bot_v37.py").read()
+    src = open("bot.py").read()
     for token in ("NeuralCore", "_NEXUS", "_nexus_loop", "NEXUS_ENABLED",
                   "api_nexus_", "/api/nexus/"):
-        assert token not in src, f"Nexus-Rest in bot_v37.py: {token}"
-    ok("nexusout: bot_v37.py frei von Nexus")
+        assert token not in src, f"Nexus-Rest in bot.py: {token}"
+    ok("nexusout: bot.py frei von Nexus")
 
     # Dashboard ebenfalls sauber
     try:
@@ -1411,7 +1411,7 @@ def test_nexus_removed():
 def test_restream_max_concurrent():
     """V37-MAXLIVE: Im Multi-Modus höchstens RESTREAM_MAX_CONCURRENT (Default 2)
     gleichzeitige Restreams — schützt den GPU-losen Server vor Encode-Flut."""
-    src = open("bot_v37.py").read()
+    src = open("bot.py").read()
     assert "RESTREAM_MAX_CONCURRENT" in src, "kein Concurrent-Deckel"
     assert 'RESTREAM_MAX_CONCURRENT", 2' in src, "Default nicht 2"
     # Der Deckel greift in der Multi-Modus-Schleife per break
@@ -1429,7 +1429,7 @@ def test_restream_max_concurrent():
 def test_overlay_react_and_layout():
     """V37-REACTLIVE: AZRAEL reagiert im Sendebild nur auf den restreamten User;
     Sprechblase breiter/höher; Donation-Box oben links; Text nicht zu früh gekappt."""
-    src = open("bot_v37.py").read()
+    src = open("bot.py").read()
     # Reaktions-Filter auf den live-restreamten User
     assert "AZRAEL_REACT_ONLY_LIVE" in src, "kein Live-Reaktions-Filter"
     body = _ab(src, "NUR auf den User,\n                # der GERADE restreamt wird")   # v4.0-W117
@@ -1456,7 +1456,7 @@ def test_overlay_react_and_layout():
 def test_deepbughunt_fixes():
     """Tiefenbughunt: 3 echte Bugs gefunden + behoben (Log-Spam-Drossel,
     Race Condition bei Dict-Iteration, File-Handle-Leaks)."""
-    src = open("bot_v37.py").read()
+    src = open("bot.py").read()
     # Bug 1: Cookie-Warnung gedrosselt (nicht mehr pro Aufruf)
     assert "_COOKIE_WARN_TS" in src, "Cookie-Log-Spam-Drossel fehlt"
     assert "gedrosselt" in src, "Drossel-Logik nicht verdrahtet"
@@ -1479,7 +1479,7 @@ def test_deepbughunt_fixes():
 def test_pwa():
     """PWA: Dashboard als installierbare App. Manifest + Service Worker + Icons,
     aber Service Worker cacht NIEMALS API-Daten (Live-Kontrollpanel)."""
-    src = open("bot_v37.py").read()
+    src = open("bot.py").read()
     # Routen vorhanden
     assert '"/manifest.webmanifest"' in src, "keine Manifest-Route"
     assert '"/sw.js"' in src, "keine Service-Worker-Route"
@@ -1806,7 +1806,7 @@ def test_b165_modheuristics():
 # ------------------------------------------------- B166) Piper-Stimm-Auflösung + Outcomes-Fix
 
 def test_b166_piper_voices():
-    """B166: reine Piper-Auflösung (aus bot_v37 extrahiert) + der OUTCOMES-Renderfix."""
+    """B166: reine Piper-Auflösung (aus bot.py extrahiert) + der OUTCOMES-Renderfix."""
     from nc import piper_voices as pv
 
     voices = [{"name": "de_DE-thorsten-medium", "path": "/opt/piper/de_DE-thorsten-medium.onnx"},
@@ -1843,7 +1843,7 @@ def test_b166_piper_voices():
 # ------------------------------------------------- B167) Evolution-Analyse-Extraktion
 
 def test_b167_evolution():
-    """B167: der aus bot_v37 gelöste Selbstanalyse-Kern läuft eigenständig +
+    """B167: der aus bot.py gelöste Selbstanalyse-Kern läuft eigenständig +
        liefert die erwartete Struktur/Quote (verbatim → Logik unverändert)."""
     import sqlite3, contextlib
     from nc import schema, evolution
@@ -1867,7 +1867,7 @@ def test_b167_evolution():
     assert "70.0%" in " ".join(res["insights"]), "Erfolgsquote falsch → Logik verändert"
     ok("b167: evolution.analyze läuft eigenständig, Quote korrekt (7/10)")
     # Bot bindet den Kern nicht mehr selbst
-    src=open("bot_v37.py").read()
+    src=open("bot.py").read()
     assert "def _evolution_analyze()" not in src, "Analyse-Kern noch im Monolithen"
     assert "_nc_evolution.analyze(" in src, "Bot delegiert nicht an nc.evolution"
     ok("b167: Monolith delegiert Analyse an nc.evolution")
@@ -1932,7 +1932,7 @@ def test_b168_moderator_everywhere():
     ok("b168: geteilte Pipeline Sentinel>Bann>Spam>Flood, spam_filter-Gating korrekt")
 
     # Verdrahtung: Bot hat _screen_full und Twitch/YouTube nutzen es.
-    src = open("bot_v37.py").read()
+    src = open("bot.py").read()
     assert "def _screen_full(" in src, "geteilte Pipeline fehlt"
     assert "_screen_full(text, user, _TW_MSG_HIST" in src, "Twitch nutzt Pipeline nicht"
     assert "_screen_full(txt, who, _YT_MSG_HIST" in src, "YouTube nutzt Pipeline nicht"
@@ -1986,7 +1986,7 @@ def test_b169_kick_oauth():
     ok("b169: Token-Parse, Ablauf (inkl. unbekannt) und Scope-Prüfung korrekt")
 
     # Verdrahtung im Bot.
-    src = open("bot_v37.py").read()
+    src = open("bot.py").read()
     assert "await _kick_user_token(session) or await self._get_token(session)" in src, \
         "update_channel bevorzugt den User-Token nicht"
     for r in ("/api/kick/oauth/start", "/api/kick/oauth/callback",
@@ -2002,7 +2002,7 @@ def test_b170_azrael_and_youtube():
     """B170: AZRAEL antwortet nur echten Usern und sendet an alle drei Chats zum
        einen User; YouTube-Listener erkennt Continuation robuster + meldet Grund."""
     import re
-    src = open("bot_v37.py").read()
+    src = open("bot.py").read()
 
     # AZRAEL: Selbst-Guard + Broadcast an alle drei Plattformen.
     assert "def _azrael_self_names(" in src and "def _azrael_broadcast_reply(" in src
@@ -2018,7 +2018,7 @@ def test_b170_azrael_and_youtube():
     # W21: Antwort geht in den Ursprungs-Chat; alle drei nur mit Schalter.
     assert "_azrael_send_to" in body, "kein Sendeweg im Broadcast"
     assert "if _azrael_reply_all_chats():" in body, "Schalter fehlt"
-    src_all = open("bot_v37.py").read()
+    src_all = open("bot.py").read()
     i2 = src_all.find("async def _azrael_send_to")
     sender = src_all[i2:i2 + 1400]      # W41: Fenster größer (Status-Rückgabe + Doc)
     assert all(p in sender for p in ("kick", "twitch", "youtube")), "nicht alle drei Chats moeglich"
@@ -2055,7 +2055,7 @@ def test_v40_version():
     assert v.changelog()[-1]["version"] == "3.7"   # Historie erhalten
     ok("v4.0: nc.version — 4.0 + Changelog mit Historie")
 
-    src = open("bot_v37.py").read()
+    src = open("bot.py").read()
     assert 'BOT_VERSION = _nc_version.VERSION' in src, "BOT_VERSION nicht zentralisiert"
     assert '"2026.08 · v4.0"' in src, "BUILD_STAMP nicht auf v4.0"
     assert '"/api/version"' in src and "def api_version(" in src, "keine /api/version-Route"
@@ -2078,7 +2078,7 @@ def test_v40_youtube_api():
     assert bp["snippet"]["type"]=="temporary" and bp["snippet"]["banDurationSeconds"]==300
     assert y.ban_payload("LC","C",0)["snippet"]["type"]=="permanent"
     assert y.is_self({"channel_id":"C"},"C")
-    src=open("bot_v37.py").read()
+    src=open("bot.py").read()
     assert "async def _youtube_api_chat_loop(" in src and "async def _yt_timeout(" in src
     assert "await _youtube_api_chat_loop()" in src, "YT-Loop delegiert nicht an API"
     assert "_nc_ytapi.BANS_URL" in src, "kein YouTube-Durchgreifen verdrahtet"
@@ -2095,7 +2095,7 @@ def test_v40_news_no_recordings():
     cr=[i for i in news.build_items(facts,categories=("creators",),now_ts=1)][0]
     assert "2 von 10" in cr["body"] and "a" in cr["body"]
     # auch das Bot-Modul (news_facts/phrase) erwaehnt keine Aufnahmen mehr
-    bsrc=open("bot_v37.py").read()
+    bsrc=open("bot.py").read()
     # _news_facts/_public_stats duerfen KEINE Aufnahme-Zahlen exponieren. (Die
     # interne Prometheus-Metrik nightcrawler_recordings_total ist NICHT oeffentlich
     # und zaehlt nicht — geprueft wird der News-/Stats-Fakten-Pfad.)
@@ -2116,7 +2116,7 @@ def test_v40_website():
     assert h.count("<section") == h.count("</section>")
     # oeffentliche stats sicher: kein "aufnahme"/"recording" auf der Seite
     assert "aufnahme" not in h.lower().replace("keine aufzeichnung","").replace("keine aufnahme","")
-    src=open("bot_v37.py").read()
+    src=open("bot.py").read()
     assert "def _public_stats(" in src and "def _stats_write(" in src and '"/api/public/stats"' in src
     ok("v4.0: Website vereinheitlicht (void), Lagebild+Chart aus stats.json")
 
@@ -2126,7 +2126,7 @@ def test_v40_website():
 def test_v40_wave2():
     """v4.0 Welle 2: Stats-Loop (Website-Metriken werden IMMER geschrieben),
        angereicherte aufnahmefreie Kennzahlen, YT-API-Durchgreifen, Box entfernt."""
-    src = open("bot_v37.py").read()
+    src = open("bot.py").read()
 
     # Stats-Loop: existiert, ist STATS_PUBLIC-gated, wird gespawnt, unabhängig vom News-Agenten.
     assert "async def _stats_loop(" in src, "kein eigener Stats-Loop"
@@ -2170,7 +2170,7 @@ def test_v40_wave2():
 
 def test_v40_modfeed():
     """v4.0: plattformübergreifender Moderations-Feed — Endpoint + Panel + Plattform-Erkennung."""
-    src = open("bot_v37.py").read()
+    src = open("bot.py").read()
     assert '"/api/moderation/feed"' in src and "def api_moderation_feed(" in src
     # Plattform-Erkennung aus actor.
     assert 'if "twitch" in a' in src and '"youtube" in a' in src, "keine Plattform-Erkennung"
@@ -2196,7 +2196,7 @@ def test_v40_modfeed():
 
 def test_v40_w4_website():
     """v4.0-W4: vollständige 12-Agenten-Flotte (live) + zweiter Chart + reichere Stats."""
-    src = open("bot_v37.py").read()
+    src = open("bot.py").read()
     # _public_stats: live-Agentenliste + mod_7d-Serie.
     assert 'stats["agents"]' in src and 'stats["agents_total"]' in src, "keine Live-Agentenliste in stats"
     assert 'stats["mod_7d"]' in src, "keine Moderations-7-Tage-Serie"
@@ -2240,7 +2240,7 @@ def test_v40_w5_channel_all():
     assert len(y.merge_video_snippet(cur, title="Z" * 200)["title"]) == 100
     ok("v4.0-w5: YouTube-Snippet-Merge — Pflichtfelder erhalten, Titel gedeckelt")
 
-    src = open("bot_v37.py").read()
+    src = open("bot.py").read()
     # _youtube_set_channel ist KEIN Platzhalter mehr, nutzt Broadcast+Video-Update.
     assert "YouTube-Setzung folgt als eigener Schritt" not in src, "YouTube-Setzer noch Platzhalter"
     assert "_nc_ytapi.BROADCASTS_URL" in src and "_nc_ytapi.VIDEOS_URL" in src, "kein Data-API-Setzer"
@@ -2267,7 +2267,7 @@ def test_v40_w6_public_brand():
     assert "NIGHTCRAWLER" not in seed, "News-Seed nennt NIGHTCRAWLER"
     assert "Aufzeichnung" not in seed and "Aufnahme" not in seed, "News-Seed nennt Aufnahmen"
 
-    src = open("bot_v37.py").read()
+    src = open("bot.py").read()
     # KEINE der AZRAEL-Chat-Personas darf den internen Codenamen nennen.
     _pos = 0
     _seen = 0
@@ -2295,7 +2295,7 @@ def test_v40_w7_public_brand_sweep():
     """v4.0-W7: KEINE oeffentlich sichtbare Flaeche nennt den internen Codenamen —
        Overlay (auf dem Stream), Living-Title, Discord-Community-Embeds/Commands.
        (Admin-only Telegram/Alarme/CLI/Fehler-Channel duerfen ihn intern behalten.)"""
-    src = open("bot_v37.py").read()
+    src = open("bot.py").read()
     # Overlay-Titel (wird ins Video gerendert) -> Azrael Sentinel, kein NIGHTCRAWLER-Default.
     assert 'os.getenv("OVERLAY_TITLE", "Azrael Sentinel")' in src, "Overlay-Default nicht rebrandet"
     assert '"NIGHTCRAWLER").strip(),' not in src, "Overlay-Default noch NIGHTCRAWLER"
@@ -2339,7 +2339,7 @@ def test_v40_w9_kick_and_listener():
     """v4.0-W9: Kick-Broadcaster-ID wird auto-aufgeloest (fixt AZRAELs Kick-Posts
        UND Kick-Timeouts, die ohne broadcaster_user_id still scheiterten); der
        Chat-Listener zeigt bei 'getrennt' den Grund."""
-    src = open("bot_v37.py").read()
+    src = open("bot.py").read()
     # Resolver existiert + liest user_id/user.id + cacht.
     assert "async def _kick_broadcaster_id(" in src, "kein Broadcaster-ID-Resolver"
     assert 'j.get("user_id")' in src and '(j.get("user") or {}).get("id")' in src, "user_id nicht aufgeloest"
@@ -2369,7 +2369,7 @@ def test_v40_w9_kick_and_listener():
 def test_v40_w10_kick_sendcheck():
     """v4.0-W10: ein stummer Kick-Chat darf nicht mehr still scheitern — Kicks
        Fehlertext wird mitgelesen, gemerkt, im Panel gezeigt; Sendetest-Route."""
-    src = open("bot_v37.py").read()
+    src = open("bot.py").read()
     # Gedaechtnis + Klartext-Fehler im Sendepfad.
     assert "_KICK_SEND_LAST" in src, "kein Gedaechtnis fuer den letzten Sendeversuch"
     body = _meth(src, "KickModerator", "send_message")   # v4.0-W117
@@ -2431,7 +2431,7 @@ def test_v40_w11_cue_and_duck():
     ok("v4.0-w11: Duck-Kette korrekt, ohne Ducking unveraendert")
 
     # Bot-Verdrahtung.
-    src = open("bot_v37.py").read()
+    src = open("bot.py").read()
     assert "_nc_audio.cue_pcm(" in src, "Signalton wird nicht in die Stimm-Queue gelegt"
     assert "AZRAEL_CUE_TONE" in src and "RESTREAM_DUCK" in src, "Schalter fehlen"
     assert src.count("_nc_audio.mix_chain(") == 3, "nicht alle 3 Mix-Stellen nutzen die Kette"
@@ -2444,7 +2444,7 @@ def test_v40_w11_cue_and_duck():
 def test_v40_w12_audio_panel():
     """v4.0-W12: Signalton + Ducking zur Laufzeit einstellbar (app_config schlaegt
        .env) statt nur per .env + Neustart; Panel + Ton-Test."""
-    src = open("bot_v37.py").read()
+    src = open("bot.py").read()
     assert "def _audio_cfg(" in src, "keine Laufzeit-Audio-Konfig"
     assert '_cfg_get("audio.cue"' in src and '_cfg_set("audio.cue"' in src, "nicht persistent"
     # Ton UND Duck lesen zur Laufzeit (keine eingefrorenen Env-Konstanten mehr).
@@ -2480,7 +2480,7 @@ def test_v40_w13_security():
        als 'Auth aktiv' gemeldet) — jetzt wird er wirklich erzwungen, ohne den
        Operator (Loopback/SSH-Tunnel) oder die OAuth-Rueckrufe auszusperren."""
     import hmac
-    src = open("bot_v37.py").read()
+    src = open("bot.py").read()
 
     # (1) Spoofing-Schutz: XFF nur von vertrauten Proxies.
     assert "TRUSTED_PROXIES" in src and "def _client_ip(" in src, "kein Spoofing-Schutz"
@@ -2542,7 +2542,7 @@ def test_v40_w14_audit2():
     ok("v4.0-w14: SQL-Filter — alle bewiesenen Umgehungen dicht, Lesen bleibt moeglich")
 
     # zweite Linie: echte Read-only-Verbindung im Bot.
-    src = open("bot_v37.py").read()
+    src = open("bot.py").read()
     # W112: der SQL-Wachhund sitzt in den /api/ai-Routen, die jetzt im
     # Blueprint liegen. Vertrag gleich, Anker nachgezogen — und der Bot darf
     # keine zweite, ungeschuetzte Kopie behalten.
@@ -2570,7 +2570,7 @@ def test_v40_w15_audit3():
     """v4.0-W15 (dritte Runde, Token ist jetzt SCHARF): (6) das OBS-Overlay haette
        mit aktivem Token 401 bekommen -> leeres Overlay im Stream; (7) kick_mod_log
        und audit_log wuchsen unbegrenzt (nur INSERTs, nie ein DELETE)."""
-    src = open("bot_v37.py").read()
+    src = open("bot.py").read()
 
     # (6) OBS-Browserquelle bleibt lesend erreichbar, Schreibrouten NICHT.
     assert "_AUTH_EXEMPT_READ" in src, "keine Leseausnahme fuer die OBS-Quelle"
@@ -2621,7 +2621,7 @@ def test_v40_w16_mod_exempt():
     assert m.is_exempt({"vip"}, exempt=("vip",))          # konfigurierbar
     ok("v4.0-w16: Rollen aus Twitch-Tags + Kick-Badges, Team ausgenommen, Subs nicht")
 
-    src = open("bot_v37.py").read()
+    src = open("bot.py").read()
     assert "def _mod_is_exempt(" in src, "kein gemeinsamer Ausnahme-Helfer"
     assert "MOD_EXEMPT_ROLES" in src, "Ausnahmen nicht konfigurierbar"
     # Kick: Rollen werden aus dem Payload gereicht und im Handler geprueft.
@@ -2655,7 +2655,7 @@ def test_v40_w17_kick401_crowdsec():
                "channel:write"):
         assert sc in k.DEFAULT_SCOPES, "Scope fehlt: " + sc
 
-    src = open("bot_v37.py").read()
+    src = open("bot.py").read()
     # Chat-Senden: User-Token bevorzugt, dann type "user".
     body = _meth(src, "KickModerator", "send_message")   # v4.0-W117
     assert "_utok = await _kick_user_token(session)" in body, "Chat nutzt den User-Token nicht"
@@ -2714,7 +2714,7 @@ def test_v40_w18_crowdsec_lapi():
     assert c.explain_status(404)[0] == "lapi_pfad"
     ok("v4.0-w18: LAPI-Zugang — URL/Header/Auswertung/Fehlerdeutung korrekt")
 
-    src = open("bot_v37.py").read()
+    src = open("bot.py").read()
     assert "def _crowdsec_via_lapi(" in src, "kein LAPI-Weg im Bot"
     assert "CROWDSEC_BOUNCER_KEY" in src and "CROWDSEC_LAPI_URL" in src, "Zugang nicht konfigurierbar"
     # LAPI zuerst, cscli bleibt Rueckfallebene (kein Bruch fuer bestehende Setups).
@@ -2756,7 +2756,7 @@ def test_v40_w19_warn_first():
     assert prune_infractions(None, 1) == 0 and prune_infractions({}, 1) == 0
     ok("v4.0-w19: Verstoss-Zaehler wachsen nicht mehr unbegrenzt")
 
-    src = open("bot_v37.py").read()
+    src = open("bot.py").read()
     assert "def _escalation_decide(" in src and "def _mod_warn_first(" in src
     assert "def _mod_warn_text(" in src, "keine Verwarnungs-Formulierung"
     assert 'if action == "warn":' in src, "Kick verwarnt nicht"
@@ -2815,7 +2815,7 @@ def test_v40_w20_replygate():
     assert st5["last_ts"] == before, "abgelehnte Antwort verschiebt den Zeitstempel"
     ok("v4.0-w20: Dopplung, Mindestabstand, Nutzer-Cooldown, Obergrenze greifen")
 
-    src = open("bot_v37.py").read()
+    src = open("bot.py").read()
     assert "_nc_replygate.allow(" in src, "Bremse nicht verdrahtet"
     assert "def _azrael_gate_cfg(" in src, "Gate-Config-Reader fehlt"
     assert "AZRAEL_REPLY_MIN_GAP_S" in open("nc/cfgnorm.py").read(), \
@@ -2836,7 +2836,7 @@ def test_v40_w21_reply_origin_only():
        gefragt wurde"): B170 schickte jede Antwort an ALLE drei Chats — das
        verdreifachte sie und wirkte in den anderen Chats zusammenhanglos.
        Jetzt Default = nur Ursprung; AZRAEL_REPLY_ALL_CHATS=1 stellt Alt-Verhalten her."""
-    src = open("bot_v37.py").read()
+    src = open("bot.py").read()
     assert "def _azrael_reply_all_chats(" in src, "kein Schalter"
     assert "AZRAEL_REPLY_ALL_CHATS" in src, "nicht per Env umstellbar"
     assert 'os.getenv("AZRAEL_REPLY_ALL_CHATS", "0")' in src, "Default ist nicht 'nur Ursprung'"
@@ -2866,7 +2866,7 @@ def test_v40_w21_origin_only():
     """v4.0-W21: (a) FIX — die Team-Ausnahme aus W16 stieg aus dem GANZEN Handler
        aus, dadurch bekamen Broadcaster/Moderatoren keine AZRAEL-Antworten mehr
        („Azrael reagiert nicht mehr"). (b) Antwort nur noch im Ursprungs-Chat."""
-    src = open("bot_v37.py").read()
+    src = open("bot.py").read()
     assert "_exempt = _mod_is_exempt(roles, self.cfg)" in src
     assert "if _mod_is_exempt(roles, self.cfg):\n            return" not in src, \
         "Ausnahme blockiert weiter den ganzen Handler"
@@ -2911,7 +2911,7 @@ def test_v40_w22_highlights():
     assert H.score(40.0, 10.0, 1.0) > H.score(40.0, 10.0, 0.0), "Begeisterung zaehlt nicht"
     ok("v4.0-w22: Radar erkennt Chat-Ausschlaege, kein Fehlalarm bei Ruhe")
 
-    src = open("bot_v37.py").read()
+    src = open("bot.py").read()
     assert "_highlight_observe(src, text)" in src, "Radar nicht im Chat-Pfad"
     assert '"/api/highlights"' in src and '"/api/highlights/config"' in src
     assert "HIGHLIGHTS_ENABLED" in open("nc/cfgnorm.py").read() and \
@@ -2952,7 +2952,7 @@ def test_v40_w23_sendrate():
     assert st3["last_ts"] == last_ok, "Drop hat den Zustand veraendert"
     ok("v4.0-w23: Sende-Bremse deckelt Minute + Mindestabstand, Drops harmlos")
 
-    src = open("bot_v37.py").read()
+    src = open("bot.py").read()
     assert "from nc import sendrate as _nc_sendrate" in src, "Modul nicht importiert"
     assert "_nc_sendrate.allow(_YT_SENDRATE" in src, "Bremse nicht im Sendepfad"
     seg = src[src.find("async def _youtube_send("):]
@@ -2966,7 +2966,7 @@ def test_v40_w23_sendrate():
 def test_v40_w23_kick_redirect():
     """v4.0-W23: Kick-Redirect-URI live setzbar (app_config schlaegt .env, kein
        Neustart) + Panel warnt beim nicht erreichbaren localhost-Fallback."""
-    src = open("bot_v37.py").read()
+    src = open("bot.py").read()
     seg = src[src.find("def _kick_redirect_uri():"):src.find("async def _kick_user_token(")]
     assert 'kick.redirect_uri' in seg, "app_config-Ueberschreibung fehlt"
     assert seg.find("kick.redirect_uri") < seg.find("KICK_REDIRECT_URI"), \
@@ -2986,7 +2986,7 @@ def test_v40_w23_crowdsec_panel():
     """v4.0-W23: CrowdSec-Verbindungsstatus im Dashboard (der letzte Integrations-
        schritt hatte keine eigene Anzeige) + praezisere Doku (Port ermitteln,
        Schluessel-Falle beim curl-Test)."""
-    src = open("bot_v37.py").read()
+    src = open("bot.py").read()
     assert '"/api/defense/crowdsec"' in src and "def api_defense_crowdsec(" in src, "keine Diagnose-Route"
     route = src[src.find("def api_defense_crowdsec("):]
     route = route[:route.find("@dashboard_app.route(\"/api/defense/fail2ban\")")]
@@ -3040,7 +3040,7 @@ def test_v40_w24_cohost():
         assert seed and "@" not in seed, f"prompt_seed({k}) enthaelt '@' oder ist leer"
     ok("v4.0-w24: eine gemeinsame Bremse (Abstand+Sperre+Deckel), Ausloeser schaltbar")
 
-    src = open("bot_v37.py").read()
+    src = open("bot.py").read()
     assert "from nc import cohost as _nc_cohost" in src, "Modul nicht importiert"
     assert "_cohost_fire_highlight(hit)" in src, "Highlight-Reaktion nicht im Radar-Pfad"
     # Flagship sitzt GENAU im Highlight-Trefferpfad (nach dem _modlog des Radars).
@@ -3076,7 +3076,7 @@ def test_v40_w24b_youtube_channel_card():
        gab ohne YOUTUBE_CHANNEL sofort configured=false zurueck, das Frontend
        versteckte die Karte. Jetzt zeigt sie sich wie Twitch, sobald YouTube
        ueberhaupt in Betrieb ist (Handle/Key/OAuth/Chat) — mit klarem Status."""
-    src = open("bot_v37.py").read()
+    src = open("bot.py").read()
     fn = src[src.find("async def _youtube_channel_status("):]
     fn = fn[:fn.find("@dashboard_app.route(\"/api/channels/status\")")]
     # Der alte harte Riegel ist weg …
@@ -3099,7 +3099,7 @@ def test_v40_w24c_youtube_deck_clickable():
        klickbar — die Deck-URL war None, das Frontend haengt den onclick aber an
        p.url. Jetzt gibt es auch ohne Handle eine URL (Broadcast→Watch, sonst
        Studio); Chip damit klickbar."""
-    src = open("bot_v37.py").read()
+    src = open("bot.py").read()
     deck = src[src.find("def api_restream_deck("):]
     deck = deck[:deck.find("return jsonify(ok=True,")]
     assert "def _yt_deck_url(" in deck, "keine YT-Deck-URL-Logik"
@@ -3155,7 +3155,7 @@ def test_v40_w25_restream_util():
     assert R.looks_like_source_expired("") is False and R.looks_like_source_expired(None) is False
     ok("v4.0-w25: nc.restream_util — IVS-Ingest + Ablauf-Erkennung korrekt")
 
-    src = open("bot_v37.py").read()
+    src = open("bot.py").read()
     assert "from nc import restream_util as _nc_rutil" in src, "Modul nicht importiert"
     assert "return _nc_rutil.normalize_ingest(ingest_url)" in src, "normalize_ingest delegiert nicht"
     assert "return _nc_rutil.looks_like_source_expired(text)" in src, "expired delegiert nicht"
@@ -3214,7 +3214,7 @@ def test_v40_w26_abo_and_sysrun():
     assert r[0] == 127, "FileNotFound-Code falsch"
     ok("v4.0-w26: nc.abo + nc.sysrun verhalten sich wie der Monolith")
 
-    src = open("bot_v37.py").read()
+    src = open("bot.py").read()
     assert "from nc import abo as _nc_abo" in src and "from nc import sysrun as _nc_sysrun" in src
     assert "return _nc_abo.room_is_abo(room)" in src, "abo delegiert nicht"
     assert "return _nc_sysrun.run_priv(" in src, "run_priv delegiert nicht"
@@ -3246,7 +3246,7 @@ def test_v40_w27_ffmpeg_filters():
     assert len(parts2) == len(parts) + 2, "Avatar fügt genau 2 Teile hinzu"
     ok("v4.0-w27: drawtext_chain + studio_chain bitgenau, Escaping + Avatar korrekt")
 
-    src = open("bot_v37.py").read()
+    src = open("bot.py").read()
     assert "from nc import ffmpeg_filters as _nc_ff" in src, "Modul nicht importiert"
     assert "_nc_ff.drawtext_chain(_restream_overlay_files(rid), RESTREAM_FONT)" in src
     assert "_nc_ff.studio_chain(_restream_overlay_files(rid), RESTREAM_FONT," in src
@@ -3282,7 +3282,7 @@ def test_v40_w28_filepayload():
     assert FP.classify_downloaded(b"\xff\xfe\xfa\x80", name="a.bin")["kind"] == "text"
     ok("v4.0-w28: filepayload — Größe/pdf/image/text/binary + Encoding + Cap korrekt")
 
-    src = open("bot_v37.py").read()
+    src = open("bot.py").read()
     assert "from nc import filepayload as _nc_fp" in src, "Modul nicht importiert"
     assert "_nc_fp.classify_downloaded(raw, name=name, mime=mime," in src, "Klassifikation delegiert nicht"
     assert "_nc_fp.size_reject(fsize, AI_FILE_MAX_BYTES)" in src, "Größen-Check delegiert nicht"
@@ -3323,7 +3323,7 @@ def test_v40_w29_streamsel():
     assert SS.extract_urls_from_streamurl_node("kein dict") is None
     ok("v4.0-w29: streamsel — H.264-vor-HEVC, SDK-Parsing, kein HEVC-Merge")
 
-    src = open("bot_v37.py").read()
+    src = open("bot.py").read()
     assert "from nc import streamsel as _nc_ss" in src, "Modul nicht importiert"
     assert "_nc_ss.is_hevc(vcodec)" in src and "_nc_ss.select_stream_from_data_section(" in src
     assert "_nc_ss.extract_urls_from_streamurl_node(node, prefer_h264=PREFER_H264)" in src
@@ -3358,7 +3358,7 @@ def test_v40_w30_fixes_and_sysload():
     assert all(x["cpu"] > 1.0 for x in ps["top"]) and len(ps["top"]) == 2, "Top nur >1 % CPU"
     ok("v4.0-w30: Resolver-Crash behoben (übersprungen), sysload-Parser korrekt")
 
-    src = open("bot_v37.py").read()
+    src = open("bot.py").read()
     # FIX-Nachweis: die _as_dict-Härtung sitzt am TikTok-Resolver-Eingang.
     assert "def _as_dict(" in src, "kein _as_dict-Helfer"
     assert "_as_dict(_as_dict(data.get(\"data\")).get(\"liveRoom\"))" in src, "liveRoom nicht gehärtet"
@@ -3394,7 +3394,7 @@ def test_v40_w31_find_stream_urls():
     assert SS.find_stream_urls("x") is None and SS.find_stream_urls(None) is None
     ok("v4.0-w31: find_stream_urls — Rekursion, Tiefen-Cap, direkter Treffer")
 
-    src = open("bot_v37.py").read()
+    src = open("bot.py").read()
     assert "from nc import streamsel as _nc_ss" in src
     assert "_nc_ss.find_stream_urls(obj, prefer_h264=PREFER_H264, _depth=_depth)" in src, "Walker delegiert nicht"
     assert "Containing-Node: streamUrl/stream_url" not in src, "alte Walker-Logik noch im Monolithen"
@@ -3431,7 +3431,7 @@ def test_v40_w32_bundle_and_harden():
     assert "sk_test_ABCDWXYZ" not in red and "<KEY:" in red and "live-video.net" in red
     ok("v4.0-w32: envnum + logsafe — Parsing/Redaction bitgenau, robust")
 
-    src = open("bot_v37.py").read()
+    src = open("bot.py").read()
     # (A) Delegationen.
     assert "from nc import envnum as _nc_envnum" in src and "from nc import logsafe as _nc_logsafe" in src
     assert "_nc_envnum.env_int(name, default)" in src
@@ -3442,7 +3442,7 @@ def test_v40_w32_bundle_and_harden():
     # dort genauso, sonst waere die Zerlegung ein Schlupfloch. Geprueft wird
     # deshalb ueber ALLE Routen-tragenden Dateien statt nur ueber den Monolithen.
     import glob as _glob
-    _quellen = {"bot_v37.py": src}
+    _quellen = {"bot.py": src}
     for _p in sorted(_glob.glob("nc/routes/*.py")):
         _quellen[_p] = open(_p, encoding="utf-8").read()
     raw_hits = [f"{_p}: {ln.strip()}" for _p, _t in _quellen.items()
@@ -3487,7 +3487,7 @@ def test_v40_w33_cfgnorm_bundle():
     assert c["kinds"]["highlight"]["cooldown_s"] == 120.0, "kinds nicht tief gemerged"
     ok("v4.0-w33: cfgnorm — 6 Normalisierer bitgenau (saved > .env > Default)")
 
-    src = open("bot_v37.py").read()
+    src = open("bot.py").read()
     assert "from nc import cfgnorm as _nc_cfgnorm" in src
     for call in ("normalize_quiet_hours(_cfg_get", "normalize_highlights(_cfg_get",
                  "normalize_sendrate(_cfg_get", "normalize_gate(_cfg_get",
@@ -3504,7 +3504,7 @@ def test_v40_w34_robustness_sweep():
        ohne Timeout; keine verpuffenden Coroutinen). Behoben wurden die konkreten
        Funde: Scheduler-Routen gaben bei fehlender id einen 500 statt 400; die
        Waveform-Analyse konnte bei num_samples=0 durch Null teilen."""
-    src = open("bot_v37.py").read()
+    src = open("bot.py").read()
     # (1) Scheduler: saubere 400-Validierung statt int(None)→500.
     # W108: die Scheduler-Routen liegen im Blueprint. Vertrag unveraendert,
     # Anker nachgezogen — und der rohe Parser bleibt ueberall verboten.
@@ -3531,7 +3531,7 @@ def test_v40_w35_crossplatform_restream():
        ORACLE-Befehle (!recap/!ask/…) laufen jetzt aus allen drei Chats UND vor
        dem auto_reply/auto_moderate-Gate. (3) Discord-Invite wird einmalig,
        nie ablaufend erzeugt und aus app_config/.env aufgelöst."""
-    src = open("bot_v37.py").read()
+    src = open("bot.py").read()
     # (1) Announcer plattformübergreifend.
     assert "async def _announce_loop(" in src and "_kick_announce_loop" not in src, \
         "Announcer nicht auf Multi-Plattform umgestellt"
@@ -3586,7 +3586,7 @@ def test_v40_w36_restream_247_efficiency():
                        platform_results={"kick": G.LIVE}, now=now)
     assert d["action"] == G.ACT_NONE, "gesunder Restream darf nicht neu gestartet werden"
 
-    src = open("bot_v37.py").read()
+    src = open("bot.py").read()
     assert "_need_resolve = (not is_running) or any(" in src, "bedingter Resolve fehlt"
     assert 'RESTREAM_MULTI_MODE = os.getenv("RESTREAM_MULTI_MODE", "tee")' in src, \
         "tee-Default (ein Quell-Pull, Fan-out) verloren"
@@ -3600,7 +3600,7 @@ def test_v40_w37_memory_audit():
        sind pro Streamer). Das EINE echte unbegrenzte Leck — _ORACLE_USER_LAST,
        pro einzigartigem Chatter, seit W35 über alle Plattformen gefüttert — ist
        jetzt gedeckelt (abgelaufene Cooldowns werden bei Überlauf entfernt)."""
-    src = open("bot_v37.py").read()
+    src = open("bot.py").read()
     # Der Prune sitzt direkt an der Schreibstelle.
     assert "if len(_ORACLE_USER_LAST) > 500:" in src, "Oracle-Cooldown-Deckelung fehlt"
     assert "_ORACLE_USER_LAST.pop(_k, None)" in src, "Prune entfernt nichts"
@@ -3633,7 +3633,7 @@ def test_v40_w38_resource_early_warning():
        schließen im finally, db_conn immer 'with'). Die fd-/RSS-Zahlen wurden
        aber nur passiv im Dashboard gezeigt — jetzt alarmiert der Watchdog
        PROAKTIV und kantengetriggert, wenn sie über Tage klettern."""
-    src = open("bot_v37.py").read()
+    src = open("bot.py").read()
     assert "WATCHDOG_FD_WARN" in src and "WATCHDOG_RSS_WARN_MB" in src, "Schwellen fehlen"
     assert 'log_event(f"watchdog.{_what}_high"' in src, "keine proaktive Ressourcen-Warnung im Watchdog"
     assert '"res": {"fd": False, "rss": False}' in src, "Kanten-Zustand nicht initialisiert"
@@ -3663,7 +3663,7 @@ def test_v40_w39_adaptive_source_watch():
        → weniger TikTok-Resolves im Dauerbetrieb. Bei JEDEM Nicht-live-Signal
        (offline ODER unknown) schnappt es sofort aufs schnelle Basis-Intervall
        zurück → der Failover bleibt reaktionsschnell."""
-    src = open("bot_v37.py").read()
+    src = open("bot.py").read()
     assert "RESTREAM_SRC_POLL_MAX_S" in src, "Cap-Konstante fehlt"
     assert "_poll = min(_cap, _poll + _base // 2)" in src, "adaptives Hochfahren fehlt"
     # Nicht-live setzt zurück (beide Zweige offline/unknown auf _base).
@@ -3718,7 +3718,7 @@ def test_v40_w40_resource_trend():
     mixed = [None, 100, None, 130, 160, 190, 220, 250, 280, 310, 340, 370, 400, 430, 460]
     assert RT.rising_trend(mixed, min_abs_growth=40.0)["trend"] is True
 
-    src = open("bot_v37.py").read()
+    src = open("bot.py").read()
     assert "from nc import restrend as _nc_restrend" in src
     assert "_RES_HISTORY = _collections.deque(maxlen=300)" in src, "Ring-Puffer fehlt/unbegrenzt"
     assert 'log_event(f"watchdog.{_w}_slowleak"' in src, "keine Slow-Leak-Warnung"
@@ -3739,7 +3739,7 @@ def test_v40_w41_send_observability():
        gibt es ein Ergebnis zurück (sent/offline/error), der Announcer nennt den
        Grund je übersprungener Plattform, und ein Endpoint zeigt on-demand, wohin
        gerade gesendet werden kann — genau die Frage hinter 'nur auf Kick'."""
-    src = open("bot_v37.py").read()
+    src = open("bot.py").read()
     # _azrael_send_to gibt Status zurück.
     i = src.find("async def _azrael_send_to(")
     body = src[i:i + 1400]
@@ -3775,7 +3775,7 @@ def test_v40_w42_chat_listener_decoupled():
        eigener try, und bei fehlendem Kanal eine klare Log-Ansage statt Funkstille.
        Der Sende-Status-Endpoint unterscheidet 'Kanal nicht gesetzt' von
        'verbunden-aber-Token-Problem'."""
-    src = open("bot_v37.py").read()
+    src = open("bot.py").read()
     bb = src.find("Brain-Bridge deaktiviert")
     tw = src.find("_spawn(_twitch_chat_loop()")
     assert tw > bb, "Chat-Spawns hängen noch im Brain-Bridge-try (gekoppelt)"
@@ -3838,7 +3838,7 @@ def test_v40_w44_ffbuild():
         FB.shutil.which = _real
     ok("v4.0-w44: nc.ffbuild — Thread-Deckel, nice-Präfix, Assertion korrekt")
 
-    src = open("bot_v37.py").read()
+    src = open("bot.py").read()
     assert "from nc import ffbuild as _nc_ffbuild" in src, "Modul nicht importiert"
     assert "return _nc_ffbuild.ff_cmd(cmd, threads=threads, nice=nice)" in src, "delegiert nicht"
     assert "out[1:1] = [\"-threads\"" not in src, "alte ff_cmd-Logik noch im Monolithen"
@@ -3875,7 +3875,7 @@ def test_v40_w45_chatstats():
     assert CS.summarize(stats4, 150.0, 1000.0)["w"]["uptime_pct"] == 100.0, "uptime nicht gedeckelt"
     ok("v4.0-w45: nc.chatstats — Uptime/Median/Sessions/Gründe bitgenau")
 
-    src = open("bot_v37.py").read()
+    src = open("bot.py").read()
     assert "from nc import chatstats as _nc_chatstats" in src
     assert "_nc_chatstats.summarize(_CHAT_STATS, _time_mod.monotonic(), _time_mod.time())" in src, "delegiert nicht"
     assert "Uptime-Quote: der ehrlichste" not in src, "alte Aggregation noch im Monolithen"
@@ -3899,7 +3899,7 @@ def test_v40_w46_json_and_telegram_launch():
         pass
     assert orjson.dumps({64: {"x": 1}}, option=orjson.OPT_NON_STR_KEYS).decode() == '{"64":{"x":1}}'
 
-    src = open("bot_v37.py").read()
+    src = open("bot.py").read()
     assert "opt = orjson.OPT_NON_STR_KEYS" in src, "JSON-Provider coerct int-Keys nicht"
     # Telegram-Start gekapselt + laut.
     assert "Telegram-Polling FEHLGESCHLAGEN" in src, "Telegram-Start nicht gekapselt/geloggt"
@@ -3916,7 +3916,7 @@ def test_v40_w47_executor_isolation():
        hängen. Fix: Default-Pool großzügig dimensioniert UND Whisper (Dauerlast) in
        einen eigenen Pool isoliert. Thread-Zahl wird jetzt aufgezeichnet (sichtbar
        im Ressourcen-Trend), falls doch etwas den Pool füllt."""
-    src = open("bot_v37.py").read()
+    src = open("bot.py").read()
     # Default-Pool großzügig + früh in main().
     assert "set_default_executor(" in src, "Default-Executor nicht gesetzt"
     assert 'thread_name_prefix="ncworker"' in src
@@ -3950,7 +3950,7 @@ def test_v40_w48_loop_lag_monitor():
        misst diese Überschreitung und meldet Blockaden mit DAUER (gedrosselt), inkl.
        Thread-Zahl — die Diagnose für „hängt nach einiger Zeit", falls W47 nicht
        reicht."""
-    src = open("bot_v37.py").read()
+    src = open("bot.py").read()
     assert "async def _loop_lag_monitor(" in src and "_spawn(_loop_lag_monitor()" in src, "Detektor fehlt/nicht gespawnt"
     assert 'log_event("watchdog.loop_lag"' in src, "keine Loop-Lag-Meldung"
     assert "LOOP_LAG_WARN_S" in src and "LOOP_LAG_INTERVAL_S" in src, "Schwellen fehlen"
@@ -3988,7 +3988,7 @@ def test_v40_w49_oauthpage():
     assert "#8FB98F" in OP.kick(True, "x") and "#E0A0A0" in OP.kick(False, "x"), "Kick-Farbe falsch"
     ok("v4.0-w49: nc.oauthpage — beide Seiten bitgenau, Escaping je Plattform erhalten")
 
-    src = open("bot_v37.py").read()
+    src = open("bot.py").read()
     assert "from nc import oauthpage as _nc_oauthpage" in src
     assert "return _nc_oauthpage.twitch(ok, msg)" in src and "return _nc_oauthpage.kick(ok, msg)" in src, "delegiert nicht"
     assert "Dieses Fenster kann geschlossen" not in src, "alte Seiten-Logik noch im Monolithen"
@@ -4020,7 +4020,7 @@ def test_v40_w50_trackingdb():
     assert TD.get_state(db, 999) == (None, None, None)
     ok("v4.0-w50: nc.trackingdb — atomarer Claim + get_state gegen echtes SQLite bewiesen")
 
-    src = open("bot_v37.py").read()
+    src = open("bot.py").read()
     assert "from nc import trackingdb as _nc_trackingdb" in src
     assert "_nc_trackingdb.claim_transition(conn, tracking_id, going_live)" in src
     assert "_nc_trackingdb.get_state(conn, tracking_id)" in src
@@ -4054,7 +4054,7 @@ def test_v40_w51_eventquery():
     assert "ORDER BY id DESC" in s
     ok("v4.0-w51: nc.eventquery — Filter/AND/LIMIT/Injektionssicherheit bitgenau")
 
-    src = open("bot_v37.py").read()
+    src = open("bot.py").read()
     assert "from nc import eventquery as _nc_eventquery" in src
     assert "_nc_eventquery.build_query(limit, kind, severity)" in src, "delegiert nicht"
     assert 'wsql = ("WHERE " + " AND ".join(where)) if where else ""' not in src, "alte Query-Logik noch im Monolithen"
@@ -4095,7 +4095,7 @@ def test_v40_w52_pin_login():
     note("x", 1000)
     assert locked("x", 1000) and not locked("x", 1061), "5→Sperre 60s, dann frei"
 
-    src = open("bot_v37.py").read()
+    src = open("bot.py").read()
     assert 'DASHBOARD_PIN      = os.getenv("DASHBOARD_PIN"' in src, "PIN-Config fehlt"
     assert "def _pin_ok(" in src and "def _pin_auth_value(" in src, "PIN-Helfer fehlen"
     assert "if not DASHBOARD_TOKEN and not DASHBOARD_PIN:" in src, "Gate nicht rückwärtskompatibel"
@@ -4153,7 +4153,7 @@ def test_v40_w53_pwa_audit():
     assert '"/brain"' not in sw, "/brain (404) noch in der SW-Shell"
     assert "pwa-icon-maskable-512.png" in sw, "maskable-Icon nicht in der Shell"
 
-    src = open("bot_v37.py").read()
+    src = open("bot.py").read()
     # Der Server bestätigt: /brain ist KEINE HTML-Route (nur / und /overlay liefern Seiten).
     assert '@dashboard_app.route("/brain")' not in src, "unerwartete /brain-Route — Audit-Annahme prüfen"
     assert '@dashboard_app.route("/")' in src and "def pwa_icon(variant)" in src
@@ -4182,7 +4182,7 @@ def test_v40_w54_inspectcache():
     assert big == _json.dumps({"blob": "x" * 500000}, ensure_ascii=False)[:200000], "nicht bitgenau zum Original"
     ok("v4.0-w54: nc.inspectcache — Parse-Fallback + Unicode-Serialisierung + Deckel bitgenau")
 
-    src = open("bot_v37.py").read()
+    src = open("bot.py").read()
     # Der Vertrag gilt unveraendert; nur seine Anker sind zweimal gewandert.
     # W104: parse_row ging mit get_or_compute_inspect_sync nach nc/recdb.py.
     # W106: store_inspect ging mit den Aufnahmen-Routen ins Blueprint.
@@ -4223,7 +4223,7 @@ def test_v40_w55_record_fail_backoff():
     # Effekt: über 30min statt ~90 Versuchen (alle 20s) nur noch ~6.
     assert (30 * 60 // 20) == 90
 
-    src = open("bot_v37.py").read()
+    src = open("bot.py").read()
     assert "RECORD_FAIL_BACKOFF = os.getenv" in src, "Backoff-Config fehlt"
     assert "_REC_BACKOFF_UNTIL[username] = _time_mod.time() + _bo" in src, "Backoff wird nicht gesetzt"
     assert "RECORD_FAIL_BACKOFF_BASE_S * (2 ** (_n403 - RECORD_403_HITS))" in src, "nicht exponentiell aus dem 403-Streak"
@@ -4262,7 +4262,7 @@ def test_v40_w55b_convmap():
     assert CM.messages([]) == [], "leer → leere Liste"
     ok("v4.0-w55b: nc.convmap — Message-Mapping bitgenau (Felder/Reihenfolge/NULL/leer)")
 
-    src = open("bot_v37.py").read()
+    src = open("bot.py").read()
     # W112: _conv_messages ist mit dem KI-Datenzugriff nach nc/aidb.py
     # gewandert; der convmap-Aufruf damit eine Ebene tiefer. Vertrag gleich.
     _aidb = open("nc/aidb.py", encoding="utf-8").read()
@@ -4294,7 +4294,7 @@ def test_v40_w56_admod():
     assert AM.build_allowlist("kein link", [], ad_url) == set(AM._OWN_PLATFORMS)
     ok("v4.0-w56: nc.admod — Allowlist-Aufbau bitgenau (URL-Domain/#@-Strip/Plattformen)")
 
-    src = open("bot_v37.py").read()
+    src = open("bot.py").read()
     assert "from nc import admod as _nc_admod" in src
     assert "_nc_admod.build_allowlist(" in src, "delegiert nicht"
     assert 'allow.update({"kick.com"' not in src, "alte Allowlist-Logik noch im Monolithen"
@@ -4324,7 +4324,7 @@ def test_v40_w57_brain3d_and_attack_time():
     ok("v4.0-w57: 3D-Wissensgraph (drehen/zoomen/schwenken) + Angriffs-Zeitstempel")
 
     # Das Backend liefert den Zeitstempel bereits (last = Auth-Log-Zeitstempel).
-    src = open("bot_v37.py").read()
+    src = open("bot.py").read()
     assert '"last": line[:15]' in src, "Backend liefert keinen Angriffs-Zeitstempel"
 
 
@@ -4379,7 +4379,7 @@ def test_v40_w59_donations_unknown():
     assert D.unknown_count(Bad(), 30) == 0
     ok("v4.0-w59: nc.donations.unknown_count — Zählung/Row-Zugriff/Fehler→0 gegen SQLite bewiesen")
 
-    src = open("bot_v37.py").read()
+    src = open("bot.py").read()
     assert "_nc_donations.unknown_count(conn, days)" in src, "delegiert nicht"
     assert "kind='donation' AND (platform IS NULL" not in src, "alte SQL noch im Monolithen"
 
@@ -4403,7 +4403,7 @@ def test_v40_w60_binresolve():
     assert BR.resolve("cscli", cand, lambda n: "", lambda c: c == "/usr/bin/cscli") == "/usr/bin/cscli"
     ok("v4.0-w60: nc.binresolve — which-zuerst/Kandidaten-Reihenfolge/None bewiesen")
 
-    src = open("bot_v37.py").read()
+    src = open("bot.py").read()
     assert "from nc import binresolve as _nc_binresolve" in src
     assert "_nc_binresolve.resolve(" in src, "delegiert nicht"
     assert '/usr/local/sbin/cscli"):' not in src, "alte Fallback-Schleife noch im Monolithen"
@@ -4425,7 +4425,7 @@ def test_v40_w61_ffver():
     assert FV.parse_version("ffmpeg version 5.0\nzweite zeile") == "5.0"
     ok("v4.0-w61: nc.ffver — Versions-Parsing bitgenau (Version/Fallback/leer/40-cap)")
 
-    src = open("bot_v37.py").read()
+    src = open("bot.py").read()
     assert "from nc import ffver as _nc_ffver" in src
     assert "_nc_ffver.parse_version(out.stdout)" in src, "delegiert nicht"
     assert 're.search(r"ffmpeg version' not in src, "alte Parse-Logik noch im Monolithen"
@@ -4452,7 +4452,7 @@ def test_v40_w61b_netstat():
     assert NS.throughput_kbps(10.0, 3800, 10.0, 7800) == 0.0, "keine Zeitdifferenz → 0"
     ok("v4.0-w61b: nc.netstat — Parsing + kbps-Delta (Erststart/Reset/Zeit-Guard) bewiesen")
 
-    src = open("bot_v37.py").read()
+    src = open("bot.py").read()
     assert "from nc import netstat as _nc_netstat" in src
     assert "_nc_netstat.sum_bytes(f.read())" in src and "_nc_netstat.throughput_kbps(prev_ts" in src
     assert "rx_bytes + tx_bytes" not in src, "alte Parse-Logik noch im Monolithen"
@@ -4494,7 +4494,7 @@ def test_v40_w62_archivename():
     # W107: _archive_open_unique ist mit den Archiv-Routen ins Blueprint
     # gewandert. Der Vertrag gilt unveraendert, der Anker liegt jetzt dort —
     # und der Monolith darf keine zweite Kopie behalten.
-    src = open("bot_v37.py").read()
+    src = open("bot.py").read()
     _rt = open("nc/routes/archive.py", encoding="utf-8").read()
     assert "from nc import archivename as _nc_archivename" in _rt
     assert "_nc_archivename.open_unique(" in _rt, "delegiert nicht"
@@ -4520,7 +4520,7 @@ def test_v40_w62b_journalperm():
     assert JP.may_read({1000}, lambda n: None, 0) is True
     ok("v4.0-w62b: nc.journalperm — Gruppen/root-Entscheidung + None-Skip bewiesen")
 
-    src = open("bot_v37.py").read()
+    src = open("bot.py").read()
     assert "from nc import journalperm as _nc_journalperm" in src
     assert "_nc_journalperm.may_read(" in src, "delegiert nicht"
     assert 'for name in ("adm", "systemd-journal")' not in src, "alte Entscheidung noch im Monolithen"
@@ -4584,7 +4584,7 @@ def test_v40_w62c_cfgstore():
     # W111: _cfg_set ist selbst nach nc/cfgstore.py gewandert, der Upsert-Aufruf
     # damit eine Ebene tiefer. Der Vertrag gilt unveraendert — geprueft wird
     # jetzt dort, plus dass der Bot wirklich delegiert und keine Kopie behaelt.
-    src = open("bot_v37.py").read()
+    src = open("bot.py").read()
     _cs = open("nc/cfgstore.py", encoding="utf-8").read()
     assert "from nc import cfgstore as _nc_cfgstore" in src
     assert "upsert(conn, key, payload, now)" in _cs, "set_ ruft den Upsert nicht"
@@ -4613,7 +4613,7 @@ def test_v40_w62d_mod_resolve_exempt():
     assert M.is_exempt(["Moderator"], ex) is True and M.is_exempt(["subscriber"], ex) is False
     ok("v4.0-w62d: nc.modheuristics.resolve_exempt — Auflösung dict/env/Default bewiesen")
 
-    src = open("bot_v37.py").read()
+    src = open("bot.py").read()
     assert "_nc_mod.resolve_exempt(cfg, os.getenv(\"MOD_EXEMPT_ROLES\"" in src, "delegiert nicht"
     assert "cfgv.replace" not in src, "alte Parse-Logik noch im Monolithen"
 
@@ -4639,7 +4639,7 @@ def test_v40_w63_creator_dossier():
     assert by["carol"]["sessions"] == 0, "inaktiver getrackter User muss enthalten sein"
     assert [u["username"] for u in out] == ["alice", "bob", "carol"], "nach Aktivität sortiert"
 
-    src = open("bot_v37.py").read()
+    src = open("bot.py").read()
     # Backend: Aktivität + Azrael-Take + Generierung + Cache + Endpoints.
     assert "def _creator_activity(" in src and "_nc_creatoragg.summarize(" in src, "Aktivität wird nicht aggregiert"
     assert "async def _azrael_creator_take(" in src and "Azrael Sentinel" in src, "Azraels Take fehlt"
@@ -4691,7 +4691,7 @@ def test_v40_w64_claude_provider():
     assert masked == "sk-ant-…9xyz" and "abc123" not in masked
     ok("v4.0-w64: nc.claude — Payload/Parse/Fehler-Mapping/Key-Test + Masking bewiesen")
 
-    src = open("bot_v37.py").read()
+    src = open("bot.py").read()
     _ai = open("nc/routes/ai.py", encoding="utf-8").read()
     assert "import nc.claude as _nc_claude" in src
     assert "def _anthropic_key(" in src and "def _anthropic_model(" in src
@@ -4719,7 +4719,7 @@ def test_v40_w65_claude_full_and_donation_reset():
     from nc import claude as CL
     assert CL.DEFAULT_MODEL == "claude-haiku-4-5-20251001", "Default-Modell veraltet"
 
-    src = open("bot_v37.py").read()
+    src = open("bot.py").read()
     # Claude in ALLEN AI-Pfaden: llm_chat, llm_chat_sync, ai_chat (Reaction), Streaming.
     # W112: llm_chat_stream_sync ist mit den /api/ai-Routen ins Blueprint
     # gewandert. Der Vertrag prueft weiterhin ALLE Claude-Pfade, jetzt ueber
@@ -4822,7 +4822,7 @@ def test_v40_w68_overview_landing():
     # Übersicht ist Default-Landing.
     assert "dataset.view==='overview'" in h, "Übersicht nicht als Default-Landing"
     # health-score liefert overall (Backend).
-    assert '"overall"' in open("bot_v37.py").read() or "overall=" in open("bot_v37.py").read() or "overall" in open("bot_v37.py").read()
+    assert '"overall"' in open("bot.py").read() or "overall=" in open("bot.py").read() or "overall" in open("bot.py").read()
     ok("v4.0-w68: Übersichts-Landing — KPIs + 3D-Zentrale (multi-mount) + Schnellzugriff")
 
 
@@ -4904,7 +4904,7 @@ def test_v40_w72_bughunt_website():
            </main> = ungültiges HTML. Genau ein <main>, sauberer Footer, Skip-Link.
        (C) WEBSITE-REDESIGN: cinematischer 3D-Sentinel-Kern (Vanilla-Canvas),
            Glas-Politur, echte Zusatzfelder (peak_live, Plattform-Chips, version)."""
-    src = open("bot_v37.py").read()
+    src = open("bot.py").read()
     h = open("templates/dashboard.html").read()
     web = open("website/lafap_index.html", encoding="utf-8").read()
 
@@ -4996,7 +4996,7 @@ def test_v40_w74_fleet_status_honest():
        agents_known (True nur bei echter Fleet-Liste); die Website behauptet ohne
        bekannte Flotte kein „0", sondern „Status nicht verfügbar", und markiert Karten
        nur bei bekanntem Zustand als inaktiv."""
-    src = open("bot_v37.py").read()
+    src = open("bot.py").read()
     assert 'stats["agents_known"]' in src, "agents_known nicht in _public_stats"
     # Flag hängt an einer echten Fleet-Liste, nicht hart True.
     _seg = src[src.find('stats["agents_known"] = False'):src.find('stats["agents_total"] = len(stats["agents"])') + 60]
@@ -5017,7 +5017,7 @@ def test_v40_w75_zombie_reap():
        Restream-Relay, jeder Screenshot-Timeout) summierte sich das bis zu Prozess-/
        FD-Limits — der Bot wirkte „hängend". Zentraler Helfer _reap_proc
        (terminate→wait→ggf. kill→wait) erntet immer; die Leck-Stellen nutzen ihn."""
-    src = open("bot_v37.py").read()
+    src = open("bot.py").read()
     assert "async def _reap_proc(" in src, "Reap-Helfer fehlt"
     # Helfer endet garantiert mit einem wait() (erntet auch bereits toten Proc).
     _seg = src[src.find("async def _reap_proc("):src.find("async def _reap_proc(") + 1600]
@@ -5041,7 +5041,7 @@ def test_v40_w76_fork_deadlock_guard():
        Fix: Fork und nativer Whisper-Abschnitt über EIN Lock serialisiert; alle
        asyncio.create_subprocess_*-Aufrufe laufen zentral fork-sicher. Kein
        os.register_at_fork (GIL↔Lock-Falle)."""
-    src = open("bot_v37.py").read()
+    src = open("bot.py").read()
     assert "_FORK_NATIVE_LOCK = threading.Lock()" in src, "Fork-Koordinations-Lock fehlt"
     assert "def _whisper_native_section" in src, "native Sektion (Whisper) nicht markiert"
     # zentrale Einhängung beider Spawn-Funktionen
@@ -5158,7 +5158,7 @@ def test_v40_w79_mariadb_index_keylen():
     # Composite-Schlüssel unter der 3072-Byte-Grenze (utf8mb4 = 4 B/Zeichen)
     assert 255 * 4 + 64 * 4 < 3072, "recordings(username,created_at)-Key zu lang"
     # init_db reicht den ts-Typ als VARCHAR(64) durch
-    src = open("bot_v37.py").read()
+    src = open("bot.py").read()
     assert 'ts        = "VARCHAR(64)" if is_my else "TEXT"' in src, "ts-Typ nicht in init_db"
     assert "is_my=is_my, ts=ts," in src, "ts nicht an create_schema durchgereicht"
     # create_schema akzeptiert ts (Signatur)
@@ -5190,7 +5190,7 @@ def test_v40_w80_discord_upload_level():
     assert "Server-Level" in dl.describe(50 * MB) and "Free" in dl.describe(10 * MB)
 
     # Monolith-Verschlankung: Logik ausgelagert, Bot ruft nur noch das Modul.
-    src = open("bot_v37.py").read()
+    src = open("bot.py").read()
     assert "from nc import discordlimits" in src, "Modul nicht importiert"
     assert "_nc_dclimits.effective_upload_mb(" in src, "Bot nutzt das Modul nicht"
     # der alte, boost-fressende min()-Deckel ist raus
@@ -5232,7 +5232,7 @@ def test_v40_w81_env_int_and_bridge_health():
     assert "RETAIN_DAYS = env_int(" in open("brain/__init__.py").read(), "RETAIN_DAYS nicht gehärtet"
 
     # Bridge-Health sichtbar
-    src = open("bot_v37.py").read()
+    src = open("bot.py").read()
     assert '@dashboard_app.route("/api/brain/health")' in src and "_BRIDGE_STATUS" in src, "Health-Route fehlt"
     assert "exc_info=True" in src, "kein voller Traceback bei Bridge-Fehler"
     h = open("templates/dashboard.html").read()
@@ -5244,7 +5244,7 @@ def test_v40_w82_env_hardening_and_bridge_alert():
     """v4.0-W82: die .env-Absturzklasse ist codebase-weit zu + Bridge-Ausfall
        alarmiert aktiv.
        (A) Vier ungeschützte rohe float(os.getenv(...)) auf MODUL-Ebene in
-           bot_v37.py (RESTREAM_TTS_GAIN, DEFENSE_SERVER_LAT/LON, HYPE_CLIP_ENERGY)
+           bot.py (RESTREAM_TTS_GAIN, DEFENSE_SERVER_LAT/LON, HYPE_CLIP_ENERGY)
            hätten den GANZEN Bot bei leerer .env am Import gekillt (W81 traf nur
            die Bridge). Auf nc.envnum umgestellt. Meta-Sperre: nirgends im Kern
            mehr ein rohes int/float(os.getenv(...)) OHNE ' or default' oder envnum.
@@ -5254,7 +5254,7 @@ def test_v40_w82_env_hardening_and_bridge_alert():
     import glob as _glob
 
     # (A) konkrete vier: jetzt über envnum
-    src = open("bot_v37.py").read()
+    src = open("bot.py").read()
     for name in ("RESTREAM_TTS_GAIN", "DEFENSE_SERVER_LAT",
                  "DEFENSE_SERVER_LON", "HYPE_CLIP_ENERGY"):
         assert _re.search(r'env_float\("' + name + r'"', src), name + " nicht gehärtet"
@@ -5264,7 +5264,7 @@ def test_v40_w82_env_hardening_and_bridge_alert():
     # envnum. Modul-Ebene = Zuweisung ohne Einrückung. Prosa (literales
     # 'os.getenv(...)') und eingerückte/try-gekapselte Laufzeit-Aufrufe zählen
     # nicht — die gefährliche Klasse ist der Import-Crash.
-    files = ["bot_v37.py", "brain_bridge.py"] + _glob.glob("nc/*.py") + _glob.glob("brain/*.py")
+    files = ["bot.py", "brain_bridge.py"] + _glob.glob("nc/*.py") + _glob.glob("brain/*.py")
     offenders = []
     _mod_assign = _re.compile(r"^[A-Za-z_][A-Za-z0-9_]*\s*=\s*.*?(?:float|int)\(os\.getenv\(")
     for f in files:
@@ -5293,7 +5293,7 @@ def test_v40_w83_loop_stall_watchdog():
        finden; jetzt macht der Bot den Dump selbst: Heartbeat-Task auf dem Loop +
        UNABHÄNGIGER Daemon-Thread, der bei stehendem Heartbeat einen Voll-Stack-
        Dump aller Threads (faulthandler) ins Log schreibt + Telegram alarmiert."""
-    src = open("bot_v37.py").read()
+    src = open("bot.py").read()
     assert "async def _loop_heartbeat" in src, "Heartbeat-Task fehlt"
     assert "def _loop_watchdog_thread" in src, "Watchdog-Thread fehlt"
     assert "def _start_loop_watchdog" in src, "Watchdog-Start fehlt"
@@ -5405,7 +5405,7 @@ def test_v40_w87_relay_source_reresolve():
        der Primär-Monitor die URL erneuert). Fix: Relay löst die Quelle bei jedem
        Reconnect frisch auf, zählt reine URL-Rotation NICHT als Fehlversuch, gibt nach
        gesundem Lauf das Budget zurück und endet sauber, wenn die Quelle offline ist."""
-    src = open("bot_v37.py").read()
+    src = open("bot.py").read()
     # source_username wird durchgereicht
     assert "async def _spawn_independent(self, rid, pname, purl, source_url, transcode,\n" in src \
         and "source_username=None):" in src, "source_username nicht durchgereicht"
@@ -5432,7 +5432,7 @@ def test_v40_w88_ops_observability():
     """v4.0-W88: 10 additive Ops-/Observability-Verbesserungen (kein Eingriff in
        Recording/Restream-Kernpfade). Alle aus den Vorfällen dieser Session
        gelernt: Hänger-Diagnose, leere .env, stille Bridge, Zombies."""
-    src = open("bot_v37.py").read()
+    src = open("bot.py").read()
     h = open("templates/dashboard.html").read()
     checks = {
         # 1 faulthandler + SIGUSR1 on-demand Thread-Dump
@@ -5490,7 +5490,7 @@ def test_v40_w89_sysdiag_strip():
 def test_v40_w90_stream_archive():
     """v4.0-W90: FLAGGSCHIFF A — Semantisches Stream-Archiv („Frag dein Archiv").
        Bewusst als eigenes Subpaket nc/intel/ (Monolith-Abtrag): das Substrat
-       (transcripts) + das Archiv (library) leben dort, testbar ohne Bot; bot_v37
+       (transcripts) + das Archiv (library) leben dort, testbar ohne Bot; bot.py
        hat nur Adapter (Whisper-Segmente), Hintergrund-Indexer und Routen."""
     import os as _os
     # Module existieren und tragen die Kern-API
@@ -5501,8 +5501,8 @@ def test_v40_w90_stream_archive():
     lib = open("nc/intel/library.py").read()
     assert "def save_segments" in tx and "def pending_ids" in tx and "def ensure_schema" in tx
     assert "def search" in lib and "def index_recording" in lib and "def parse_ref" in lib
-    # bot_v37: dünne Anbindung, kein Nachbau der Logik im Monolithen
-    src = open("bot_v37.py").read()
+    # bot.py: dünne Anbindung, kein Nachbau der Logik im Monolithen
+    src = open("bot.py").read()
     assert "from nc.intel import transcripts as _intel_tx" in src
     assert "from nc.intel import library as _intel_lib" in src
     assert "async def _whisper_segments" in src, "Whisper-Segment-Adapter fehlt"
@@ -5584,7 +5584,7 @@ def test_v40_w92_usage_and_donation():
     assert cl.parse_usage({"usage": {"input_tokens": 5, "output_tokens": 7}}) == (5, 7)
 
     # Backend liefert usage + donation in den öffentlichen Stats
-    src = open("bot_v37.py").read()
+    src = open("bot.py").read()
     assert 'stats["usage"] = _nc_usage.snapshot()' in src, "usage nicht in _public_stats"
     assert '"goal_eur"' in src and '"paypal"' in src and "DONATION_GOAL_EUR" in src, "Spendenblock fehlt"
     assert 'paypal@voice4you.org' in src, "PayPal-Standardadresse fehlt"
@@ -5631,7 +5631,7 @@ def test_v40_w93_meter_all_providers():
         "freeai/brain tragen nicht zu den Gesamtkosten bei (W96)"
 
     # der Bot metert freeai + brain zusätzlich zu Claude
-    src = open("bot_v37.py").read()
+    src = open("bot.py").read()
     assert "_nc_freeai.chat_sync = _freeai_chat_sync_metered" in src, "freeai nicht gemetert"
     assert '_nc_usage.record("freeai"' in src, "freeai-Record fehlt"
     assert '_nc_usage.record("brain"' in src, "brain-Record fehlt"
@@ -5664,7 +5664,7 @@ def test_v40_w94_crypto_donations():
         _os.environ.pop(_env, None)
 
     # der Explorer wird SERVER-seitig aufgerufen — nicht im Browser
-    src = open("bot_v37.py").read()
+    src = open("bot.py").read()
     assert 'stats["crypto"] = _nc_crypto.snapshot(fetch_live=True)' in src, "crypto nicht in _public_stats"
     h = open("website/lafap_index.html", encoding="utf-8").read()
     assert "blockstream" not in h, "Explorer darf nicht im Browser aufgerufen werden"
@@ -5831,7 +5831,7 @@ def test_v40_w102_donations_3d_qr_manual():
     assert 'light="#ffffff"' in qr and 'dark="#0a0f12"' in qr, "QR nicht dunkel-auf-hell"
     assert "light=None" not in qr, "QR noch transparent (unscannbar auf dunklem Grund)"
 
-    src = open("bot_v37.py").read()
+    src = open("bot.py").read()
     # (C) manuelle Spenden-Endpoints + current_eur-Integration
     assert '@dashboard_app.route("/api/donations/add"' in src, "kein Add-Endpoint"
     assert '@dashboard_app.route("/api/donations/manual")' in src, "keine Manual-Liste"
@@ -5859,7 +5859,7 @@ def test_v40_w103_selfcheck_bridge_and_endpoints():
        „undefined", 500er). Jetzt zwei echte Checks: Bridge real initialisieren
        (ohne Tick) + kritische Routen per Test-Client aufrufen; ein Bridge-Init-
        Fehler ist ein HARTER Fehler (Exit 1)."""
-    src = open("bot_v37.py").read()
+    src = open("bot.py").read()
     seg = src[src.find("async def _selfcheck"):src.find("def _run_selfcheck_and_exit")]
     assert seg, "_selfcheck nicht gefunden"
     # (14) Brain-Bridge im Selfcheck real initialisiert, Fehler = fail
@@ -5887,7 +5887,7 @@ def test_v40_w109_dashboard_feldnamen():
        Beide Faelle sind STILL: kein JS-Fehler, kein 5xx, nur eine leere
        Anzeige. Genau deshalb dieser Vertrag — er vergleicht die Feldnamen, die
        das Frontend liest, mit denen, die der Bot wirklich setzt."""
-    src = open("bot_v37.py").read()
+    src = open("bot.py").read()
     h = open("templates/dashboard.html").read()
 
     # (1) Die Uebersichts-Kachel liest score, nicht overall.
@@ -5945,7 +5945,7 @@ def test_v40_w113_restream_stability():
       5. Ein ffmpeg, der LEBT aber nichts mehr sendet, wurde nie bemerkt —
          _monitor haengt an proc.wait(). Panel gruen, Sendung weg, Log leer.
     """
-    src = open("bot_v37.py", encoding="utf-8").read()
+    src = open("bot.py", encoding="utf-8").read()
 
     # Regeln liegen bot-frei im Modul, nicht mehr als Zahlen im Monolithen.
     assert "from nc import restream_stability as _nc_rstab" in src, "Modul nicht eingebunden"
@@ -6116,7 +6116,7 @@ def test_v40_w115_relay_sicht_und_srcwatch():
     Entscheidung "was heisst hier tot" darf es nur einmal geben, sonst
     laufen Haupt- und Relay-Pfad ueber die Monate auseinander.
     """
-    src = open("bot_v37.py", encoding="utf-8").read()
+    src = open("bot.py", encoding="utf-8").read()
     h = open("templates/dashboard.html", encoding="utf-8").read()
 
     # ── 1) Relays sehen und werden bewacht ────────────────────────────────
@@ -6193,7 +6193,7 @@ def test_v40_w116_alterung_flattern_rate():
        Waechter sieht Fortschritt. Zweite Spur ueber die RATE
        (nc/recdiag.RateSpur) — die MELDET nur, sie killt nicht.
     """
-    src = open("bot_v37.py", encoding="utf-8").read()
+    src = open("bot.py", encoding="utf-8").read()
 
     # ── 1) tee-Fehler altern und werden geleert ───────────────────────────
     assert "def tee_fehler(self, ttl_s=None):" in src, "kein Verfall fuer tee-Fehler"
@@ -6282,7 +6282,7 @@ def test_v40_w117_ankerhygiene():
     hier = os.path.dirname(os.path.abspath(__file__))
     tests = open(os.path.join(hier, "test_restream.py"), encoding="utf-8").read()
     tl = tests.splitlines()
-    DATEI = {"src": "bot_v37.py", "src_all": "bot_v37.py",
+    DATEI = {"src": "bot.py", "src_all": "bot.py",
              "html": "templates/dashboard.html", "h": "templates/dashboard.html",
              "w": "website/lafap_index.html", "o": "templates/overlay.html"}
     _q = {}
@@ -6422,7 +6422,7 @@ def test_v40_w118_sicherheitsaudit():
 
     S6 REDIS_URL MIT PASSWORT in /api/system.
     """
-    src = open("bot_v37.py", encoding="utf-8").read()
+    src = open("bot.py", encoding="utf-8").read()
     h = open("templates/dashboard.html", encoding="utf-8").read()
 
     # ── S1 ────────────────────────────────────────────────────────────────

@@ -1,4 +1,4 @@
-"""nc.procdiag — Prozess-/Thread-Diagnose, aus bot_v37 herausgelöst (Phase-1-Zerlegung).
+"""nc.procdiag — Prozess-/Thread-Diagnose, aus bot.py herausgelöst (Phase-1-Zerlegung).
 
 Drei pure, seiteneffektarme Helfer, die zur W83/W88-Observability gehören und
 KEINEN geteilten Zustand mit dem Monolithen brauchen — daher als erster,

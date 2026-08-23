@@ -1,6 +1,6 @@
 """nc.story — StoryMemory: leichtgewichtiges Erzähl-Gedächtnis pro Live-Session.
 
-Extrahiert aus bot_v37.py. Sammelt Beats/Running-Gags/Stammzuschauer heuristisch
+Extrahiert aus bot.py. Sammelt Beats/Running-Gags/Stammzuschauer heuristisch
 (kein LLM in der Hot-Loop) und liefert dem Director eine Kontext-Essenz. Die
 Deque-Länge (STORY_MAX_BEATS) wird per configure() injiziert.
 """
@@ -12,7 +12,7 @@ STORY_MAX_BEATS = 40
 
 
 def configure(max_beats=None):
-    """bot_v37.py reicht STORY_MAX_BEATS rein (identisches Verhalten)."""
+    """bot.py reicht STORY_MAX_BEATS rein (identisches Verhalten)."""
     global STORY_MAX_BEATS
     if max_beats is not None:
         STORY_MAX_BEATS = int(max_beats)

@@ -1,6 +1,6 @@
 """nc.scoring — Profil-Qualitäts-Score + Analyse-Report (rein).
 
-Extrahiert aus bot_v37.py: compute_quality_score bewertet ein TikTok-Profil
+Extrahiert aus bot.py: compute_quality_score bewertet ein TikTok-Profil
 (Follower/Engagement/Verhältnisse), build_report rendert den Telegram-Report."""
 
 from datetime import datetime

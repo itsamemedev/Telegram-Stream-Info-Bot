@@ -1,4 +1,4 @@
-"""nc.eventquery — v4.0-W51: der Event-Log-Query-Bauer, aus bot_v37 gelöst.
+"""nc.eventquery — v4.0-W51: der Event-Log-Query-Bauer, aus bot.py gelöst.
 
 Baut die SELECT-Abfrage fürs Event-Log mit optionalen, PARAMETRISIERTEN Filtern
 (kind/severity) — der WHERE-Teil entsteht dynamisch, aber jeder Wert geht als

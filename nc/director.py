@@ -1,6 +1,6 @@
 """nc.director — LiveDirector: Regie-Instanz pro Live-User.
 
-Extrahiert aus bot_v37.py. Hält Kurzzeit-Gedächtnis, misst Stream-Momentum und
+Extrahiert aus bot.py. Hält Kurzzeit-Gedächtnis, misst Stream-Momentum und
 entscheidet WANN/mit welcher Energie AZRAEL reagiert — reine schnelle Heuristik,
 kein LLM in der Hot-Loop. Die DIRECTOR_*-Schwellen + AZRAEL_THANK_TRACKED_GIFTS
 werden per configure() injiziert (identisches Verhalten wie im Monolithen).

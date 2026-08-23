@@ -36,7 +36,7 @@ cp .env.example .env                 # anpassen
 Systempakete (nicht über pip): `ffmpeg`, `streamlink`, `yt-dlp`.
 
 **Auf Windows:** Der Interpreter heißt dort `python`, nicht `python3`. Setze
-vorher `$env:PYTHONUTF8="1"` — die Tests öffnen `bot_v37.py` ohne `encoding=`,
+vorher `$env:PYTHONUTF8="1"` — die Tests öffnen `bot.py` ohne `encoding=`,
 ohne UTF-8-Modus greift cp1252 und sie sterben mit `UnicodeDecodeError`, statt
 zu prüfen.
 
@@ -66,7 +66,7 @@ Zusätzlich immer:
 
 ### `test_smoke.py` läuft nicht überall
 
-Es führt `bot_v37.py` **wirklich** aus und braucht dafür den ganzen
+Es führt `bot.py` **wirklich** aus und braucht dafür den ganzen
 Laufzeitstack (flask, telegram, discord, dotenv, streamlink, yt-dlp, psutil).
 Auf einer Entwicklermaschine ohne diesen Stack fällt es aus — dort fangen
 `py_compile` und `pyflakes` das Meiste ab (NameError, Reihenfolge-Fallen). Der
@@ -75,7 +75,7 @@ Test gehört auf den Server.
 ### Wenn ein Vertrag in `test_restream.py` kippt
 
 Die statischen Verträge verankern sich an **wörtlichem Quelltext** von
-`bot_v37.py`. Ändert sich eine Signatur, kippt der Vertrag, obwohl der Code
+`bot.py`. Ändert sich eine Signatur, kippt der Vertrag, obwohl der Code
 stimmt — das ist schon dreimal passiert (`stop(self, rid)` wurde
 `stop(self, rid, _keep_desired=False)`). Ebenso die Fenster der Form
 `src[i:i + 3000]`: wächst die Funktion darüber hinaus, meldet der Test etwas als
@@ -90,12 +90,12 @@ fehlend, das zwei Zeilen weiter unten steht.
 
 ### 1. Keine Rückimporte
 
-`nc/*` und `brain/*` importieren **niemals** aus `bot_v37`. Konfiguration kommt
+`nc/*` und `brain/*` importieren **niemals** aus `bot.py`. Konfiguration kommt
 ausschließlich per `configure(...)`-Injection.
 
 ```python
 # ❌ falsch — koppelt das Modul an den Monolithen, erzeugt Zirkularimporte
-from bot_v37 import DB_PATH, log
+from bot.py import DB_PATH, log
 
 # ✅ richtig — der Aufrufer injiziert, was das Modul braucht
 def configure(*, db_conn, log, cfg):
@@ -127,20 +127,20 @@ eine Korrektur ist eine Gegenbuchung, kein Überschreiben.
 
 ## Navigation im Monolithen
 
-`bot_v37.py` hat über 30.000 Zeilen. Diese Datei wird **nie** ganz gelesen und
+`bot.py` hat über 30.000 Zeilen. Diese Datei wird **nie** ganz gelesen und
 **nie** blind durchsucht. Erst fragen wo etwas steht, dann den Ausschnitt holen:
 
 ```bash
 python3 tools/ncpatch.py find "donations"              # wo ist X?
-python3 tools/ncpatch.py sym  bot_v37.py api_brain     # Zeilenbereich eines Symbols
-python3 tools/ncpatch.py show bot_v37.py 24750 24810   # nur diesen Ausschnitt
-python3 tools/ncpatch.py grep "tree.command" bot_v37.py -C 3
+python3 tools/ncpatch.py sym  bot.py api_brain     # Zeilenbereich eines Symbols
+python3 tools/ncpatch.py show bot.py 24750 24810   # nur diesen Ausschnitt
+python3 tools/ncpatch.py grep "tree.command" bot.py -C 3
 python3 tools/ncpatch.py verify patches/x.json         # Trockenlauf
 python3 tools/ncpatch.py apply  patches/x.json         # alles-oder-nichts, legt .bak an
 ```
 
 > **Arbeitest du an der Zerlegung des Monolithen?** Dann lies zuerst
-> [`docs/MODULARISIERUNG.md`](docs/MODULARISIERUNG.md) — dort steht das Verfahren
+> [`docs/MODULARISIERUNG.md`](MODULARISIERUNG.md) — dort steht das Verfahren
 > je Welle, die Regel zur Vertragswanderung und was ausdrücklich nicht gemacht wird.
 
 `find` antwortet aus `.claude/INDEX.md`. **Nach jeder Änderung an Routen,
@@ -283,7 +283,7 @@ python3 -c "import nc.freeai as f; print(f.diagnose())"   # bei KI-Problemen
 
 Mit einem Pull Request stellst du deinen Beitrag unter die
 **GNU General Public License v3.0 oder später** — dieselbe Lizenz wie das
-Projekt. Siehe [`LICENSE`](LICENSE).
+Projekt. Siehe [`LICENSE`](../LICENSE).
 
 Bringst du Fremdcode mit, trage ihn in
 [`THIRD_PARTY_LICENSES.md`](THIRD_PARTY_LICENSES.md) ein und prüfe, dass seine

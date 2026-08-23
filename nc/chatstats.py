@@ -1,4 +1,4 @@
-"""nc.chatstats — v4.0-W45: reine Chat-Health-Aggregation, aus bot_v37 gelöst.
+"""nc.chatstats — v4.0-W45: reine Chat-Health-Aggregation, aus bot.py gelöst.
 
 Verdichtet die rohen Verbindungs-Zähler je Chat-Listener zu den Kennzahlen, an
 denen man Disconnect-Muster erkennt (Uptime-Quote, Median-/kürzeste/längste

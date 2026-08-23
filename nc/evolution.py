@@ -1,4 +1,4 @@
-"""nc.evolution — B167: Selbstanalyse-Kern (aus bot_v37._evolution_analyze extrahiert).
+"""nc.evolution — B167: Selbstanalyse-Kern (aus bot._evolution_analyze extrahiert).
 
 Der KERN des Lern-/Evolutions-Subsystems: liest Betriebsdaten (recording_attempts,
 learned_params …) und leitet Erkenntnisse + Vorschläge + gelernte Parameter ab.

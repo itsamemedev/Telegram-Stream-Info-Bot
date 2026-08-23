@@ -15,10 +15,10 @@ Sicherung und anschließender Prüfung.
 
 | Datei | Welle | Inhalt |
 |---|---|---|
-| `w113_restream_stability.json` | v4.0-W113 | Wiederanlauf-Härte des Restreams (`bot_v37.py`) |
+| `w113_restream_stability.json` | v4.0-W113 | Wiederanlauf-Härte des Restreams (`bot.py`) |
 | `w114_website_3d.json` | v4.0-W114 | Die öffentliche Seite im Raum (`website/lafap_index.html`, `impressum.html`, `datenschutz.html`) |
-| `w115_relay_sicht.json` | v4.0-W115 | Relays sichtbar + bewacht, Stillstand im Panel, Quellen-Wächter (`bot_v37.py`, `templates/dashboard.html`) |
-| `w116_alterung_flattern_rate.json` | v4.0-W116 | tee-Fehler altern, Flattern eskaliert, Raten-Einbruch bei der Aufnahme (`bot_v37.py`) |
+| `w115_relay_sicht.json` | v4.0-W115 | Relays sichtbar + bewacht, Stillstand im Panel, Quellen-Wächter (`bot.py`, `templates/dashboard.html`) |
+| `w116_alterung_flattern_rate.json` | v4.0-W116 | tee-Fehler altern, Flattern eskaliert, Raten-Einbruch bei der Aufnahme (`bot.py`) |
 
 **W114 braucht zusätzlich zwei NEUE Dateien**, die ein Anker-Patch nicht
 anlegen kann: `website/raum.css` und `website/raum.js`. **W116 ebenso:**

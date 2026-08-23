@@ -1,6 +1,6 @@
 [
  {
-  "file": "bot_v37.py",
+  "file": "bot.py",
   "id": "w115-policy",
   "op": "replace",
   "anchor": "_RESTREAM_POLICY = _nc_rstab.ReconnectPolicy(\n    max_reconnects=RESTREAM_MAX_RECONNECTS,\n    stable_run_s=float(RESTREAM_STABLE_RUN_S),\n    base_delay_s=float(RESTREAM_BACKOFF_BASE_S),\n    max_delay_s=float(RESTREAM_BACKOFF_MAX_S),\n    stall_grace_s=float(RESTREAM_STALL_GRACE_S),\n    stall_timeout_s=float(RESTREAM_STALL_TIMEOUT_S),\n    stall_check_s=float(RESTREAM_STALL_CHECK_S))\n",
@@ -8,7 +8,7 @@
   "count": 1
  },
  {
-  "file": "bot_v37.py",
+  "file": "bot.py",
   "id": "w115-helfer",
   "op": "replace",
   "anchor": "    def _update_health(self, rid, p):\n",
@@ -16,7 +16,7 @@
   "count": 1
  },
  {
-  "file": "bot_v37.py",
+  "file": "bot.py",
   "id": "w115-health-kopf",
   "op": "replace",
   "anchor": "    def _update_health(self, rid, p):\n        info = self._procs.get(rid)\n        if not info:\n            return\n        h = info[\"health\"]\n",
@@ -24,7 +24,7 @@
   "count": 1
  },
  {
-  "file": "bot_v37.py",
+  "file": "bot.py",
   "id": "w115-health-slow",
   "op": "replace",
   "anchor": "                            log.warning(\"Restream #%d: ENCODE-RÜCKSTAND — \"\n                                        \"speed %.2fx < Echtzeit. ffmpeg kommt \"\n                                        \"nicht hinterher (CPU-Limit). Das ist \"\n                                        \"die typische Disconnect-Ursache. \"\n                                        \"Abhilfe: RESTREAM_MULTI_MODE=tee, \"\n                                        \"Bitrate/FPS senken, oder weniger \"\n                                        \"Ziele.\", rid, _sp)\n",
@@ -32,7 +32,7 @@
   "count": 1
  },
  {
-  "file": "bot_v37.py",
+  "file": "bot.py",
   "id": "w115-health-marke",
   "op": "replace",
   "anchor": "        # v4.0-W113: Fortschrittsmarke fuer den Stillstands-Waechter.\n        # Es zaehlt NICHT, dass ein progress-Block ankam — ffmpeg schreibt\n        # seine Schnappschuesse auch dann weiter, wenn der RTMP-Ausgang\n        # blockiert und frame/total_size stehenbleiben. Beweis fuer eine\n        # lebende Sendung ist nur der ZUWACHS an Bild oder Bytes.\n        try:\n            w = info.setdefault(\"watch\", {\"frame\": -1, \"bytes\": -1,\n                                          \"advanced\": _time_mod.monotonic()})\n            adv = False\n            try:\n                _fr = int(h.get(\"frame\") or 0)\n                if _fr > w[\"frame\"]:\n                    w[\"frame\"], adv = _fr, True\n            except (TypeError, ValueError):\n                pass\n            try:\n                _by = int(p.get(\"total_size\"))\n                if _by > w[\"bytes\"]:\n                    w[\"bytes\"], adv = _by, True\n            except (TypeError, ValueError):\n                pass\n            if adv:\n                w[\"advanced\"] = _time_mod.monotonic()\n        except Exception:\n            pass\n",
@@ -40,7 +40,7 @@
   "count": 1
  },
  {
-  "file": "bot_v37.py",
+  "file": "bot.py",
   "id": "w115-progress",
   "op": "replace",
   "anchor": "    async def _read_progress(self, rid, proc):\n        buf = {}\n        try:\n            while True:\n                line = await proc.stdout.readline()\n                if not line:\n                    break\n                s = line.decode(\"utf-8\", \"ignore\").strip()\n                if \"=\" in s:\n                    k, v = s.split(\"=\", 1)\n                    buf[k] = v\n                    if k == \"progress\":          # Snapshot-Ende\n                        self._update_health(rid, buf)\n                        buf = {}\n                        if RESTREAM_OVERLAY:\n                            _write_restream_overlay()   # ~1×/Sek: frische AZRAEL-Reaktion einblenden\n        except asyncio.CancelledError:\n            raise\n        except Exception as e:\n            # v4.0-W113: war ein blankes `pass`. Stirbt dieser Leser, friert\n            # die gesamte Health-Anzeige des Restreams ein — Bitrate, FPS,\n            # Laufzeit stehen still, obwohl gesendet wird — und der\n            # Stillstands-Waechter unten wird blind. Beides sah man vorher\n            # nirgends. Jetzt einmal auf error, danach gedrosselt.\n            _loop_fehler(f\"restream-progress#{rid}\", e)\n",
@@ -48,7 +48,7 @@
   "count": 1
  },
  {
-  "file": "bot_v37.py",
+  "file": "bot.py",
   "id": "w115-stallwatch",
   "op": "replace",
   "anchor": "    async def _stall_watch(self, rid, proc):\n        \"\"\"v4.0-W113: Waechter gegen den STILLEN Restream-Ausfall.\n\n        _monitor haengt an proc.wait() — der greift nur, wenn ffmpeg STIRBT.\n        Bleibt der Prozess am Leben, ohne noch zu senden (RTMP-Ausgang\n        blockiert, Input steht, tee-Slave mit onfail=ignore weggebrochen),\n        passierte bisher NICHTS: -progress verstummt oder wiederholt denselben\n        Stand, health friert auf dem letzten Wert ein, und das Panel zeigt\n        weiter \"live\". Das ist der Ausfall, den der Betreiber als \"der Stream\n        ist einfach weg und im Log steht nichts\" erlebt.\n\n        Fortschritt heisst hier Zuwachs an Bild ODER Bytes, nie das blosse\n        Eintreffen eines progress-Blocks (siehe _update_health). Findet der\n        Waechter keinen mehr, beendet er den Prozess — den Rest macht\n        _monitor, der den Abbruch wie jeden anderen behandelt und neu\n        aufbaut, mit dem Unterschied, dass ein so beendeter Lauf das\n        Reconnect-Budget NICHT auffuellt (sonst haemmerte der Bot gegen einen\n        toten Ingest ewig im Grundtakt).\n\n        Blind heisst nicht tot: liefert der progress-Leser gar nichts mehr,\n        wird nicht abgeschossen — Unwissen ist kein Beweis, dieselbe Regel\n        wie UNKNOWN in nc.restream_guard.\n        \"\"\"\n        pol = _RESTREAM_POLICY\n        if pol.stall_timeout_s <= 0:\n            return                       # RESTREAM_STALL_TIMEOUT_S=0 → aus\n        try:\n            while True:\n                await asyncio.sleep(pol.stall_check_s)\n                info = self._procs.get(rid)\n                # `is not proc`: bei einem Reconnect legt start() einen neuen\n                # Eintrag an, waehrend dieser Waechter noch bis zu einem Takt\n                # weiterlaeuft. Ohne die Pruefung wuerde der alte Waechter den\n                # FRISCHEN Prozess bewerten und ihn in der Anlaufphase killen.\n                if not info or info.get(\"proc\") is not proc:\n                    return\n                if proc.returncode is not None:\n                    return               # tot — dafuer ist _monitor da\n                now = _time_mod.monotonic()\n                w = info.get(\"watch\") or {}\n                _pt = info.get(\"prog_task\")\n                v = _nc_rstab.stall_verdict(\n                    ran_s=now - info[\"started\"],\n                    since_advance_s=((now - w[\"advanced\"])\n                                     if w.get(\"advanced\") else None),\n                    policy=pol,\n                    reader_alive=bool(_pt is not None and not _pt.done()))\n                if v.state == _nc_rstab.STALL_BLIND and not info.get(\"blind_warned\"):\n                    info[\"blind_warned\"] = True\n                    log.error(\"Restream #%d: keine Fortschrittsdaten mehr (%s). \"\n                              \"Der Stillstands-Waechter schiesst deshalb NICHT, \"\n                              \"aber die Health-Anzeige ist ab hier tot.\",\n                              rid, v.reason)\n                if not v.stalled:\n                    continue\n                info[\"stall_kill\"] = True\n                self._stallkills[rid] = self._stallkills.get(rid, 0) + 1\n                log.error(\"Restream #%d: STILLSTAND — %s. ffmpeg lebt (pid %s), \"\n                          \"sendet aber nichts mehr. Prozess wird beendet, der \"\n                          \"Monitor baut neu auf. (%d. Mal fuer dieses Ziel)\",\n                          rid, v.reason, proc.pid, self._stallkills[rid])\n                log_event(\"restream.stall\", \"warning\",\n                          f\"Restream #{rid}: Stillstand — {v.reason}\", {\"id\": rid})\n                await _reap_proc(proc)   # rc != 0 → _monitor uebernimmt\n                return\n        except asyncio.CancelledError:\n            raise\n        except Exception as e:\n            _loop_fehler(f\"restream-stall-watch#{rid}\", e)\n",
@@ -56,7 +56,7 @@
   "count": 1
  },
  {
-  "file": "bot_v37.py",
+  "file": "bot.py",
   "id": "w115-relay-spawn",
   "op": "replace",
   "anchor": "                    p = await asyncio.create_subprocess_exec(\n                        *cmd, stdout=asyncio.subprocess.DEVNULL,\n                        stderr=asyncio.subprocess.PIPE)\n                    slot = self._procs.get(rid, {}).get(\"indep\", {})\n                    slot[pname] = {\"proc\": p, \"started\": _time_mod.monotonic()}\n                    log.info(\"Restream #%d [%s]: unabhängiger Relay live (pid %s)\",\n                             rid, pname, p.pid)\n",
@@ -64,7 +64,7 @@
   "count": 1
  },
  {
-  "file": "bot_v37.py",
+  "file": "bot.py",
   "id": "w115-relay-budget",
   "op": "replace",
   "anchor": "                    rc = await p.wait()\n                    _etask.cancel()\n                    _tail = \"\".join(_sink)[-300:]\n                    _ran = _time_mod.monotonic() - _started\n                    if rc and _tail:\n                        log.error(\"Restream #%d [%s]: Relay rc=%s — stderr: %s\",\n                                  rid, pname, rc, _tail)\n                    if rid not in self._procs:\n                        break            # sauber gestoppt\n                    # v4.0-W87: lief der Relay eine Weile, war er gesund — der Tod\n                    # ist ein FRISCHES Ereignis, also volles Reconnect-Budget zurück.\n                    if _ran > 120:\n                        attempt = 0\n",
@@ -72,7 +72,7 @@
   "count": 1
  },
  {
-  "file": "bot_v37.py",
+  "file": "bot.py",
   "id": "w115-relay-backoff",
   "op": "replace",
   "anchor": "                    attempt += 1\n                    if attempt > self.MAX_RECONNECTS:\n                        log.warning(\"Restream #%d [%s]: max Reconnects — Relay \"\n                                    \"aufgegeben (Kick + andere laufen weiter).\",\n                                    rid, pname)\n                        break\n                    _delay = min(30, 3 * attempt)\n                    log.info(\"Restream #%d [%s]: Relay beendet (rc=%s), \"\n                             \"Reconnect in %ss (%d/%d)\", rid, pname, rc,\n                             _delay, attempt, self.MAX_RECONNECTS)\n                    await asyncio.sleep(_delay)\n",
@@ -80,7 +80,7 @@
   "count": 1
  },
  {
-  "file": "bot_v37.py",
+  "file": "bot.py",
   "id": "w115-srcwatch",
   "op": "replace",
   "anchor": "    async def _source_watch(self, rid, username):\n        \"\"\"V37-SRCFAIL: pollt NUR den Online-Status der gerade gerestreamten\n           Quelle. Geht sie offline (mehrfach in Folge, gegen Flackern),\n           schaltet er aktiv zur nächsten live Quelle — ohne auf den ffmpeg-Tod\n           zu warten. 'unknown' (Proxy/Rate-Limit) zählt NICHT als offline.\"\"\"\n        offline_hits = 0\n        # Aufwärmphase: dem frisch gestarteten Relay + der Quelle Zeit geben,\n        # bevor der erste Online-Check zählt (verhindert Sofort-Umschalten bei\n        # noch nicht propagiertem Live-Status).\n        try:\n            await asyncio.sleep(max(15, RESTREAM_SRC_POLL_S))\n        except asyncio.CancelledError:\n            return\n        try:\n            # v4.0-W39: adaptives Poll-Intervall. Eine stabil bestätigte Live-\n            # Quelle muss nicht alle 30s neu aufgelöst werden — das Intervall\n            # fährt bei jedem Live-Beweis sanft hoch (bis RESTREAM_SRC_POLL_MAX_S),\n            # das spart im Dauerbetrieb TikTok-Resolves. Bei JEDEM Nicht-live-\n            # Signal (offline ODER unknown) schnappt es SOFORT aufs schnelle Basis-\n            # Intervall zurück → der Failover bleibt reaktionsschnell.\n            _base = max(10, RESTREAM_SRC_POLL_S)\n            _cap = max(_base, RESTREAM_SRC_POLL_MAX_S)\n            _poll = _base\n            while rid in self._procs:\n                _src, _err = await self._resolve_source(username)\n                if _err == \"offline\":\n                    offline_hits += 1\n                    _poll = _base                      # mögliche Trennung → schnell prüfen\n                    log.info(\"Restream #%d: Quelle @%s offline (%d/%d)\",\n                             rid, username, offline_hits, RESTREAM_SRC_OFFLINE_HITS)\n                    if offline_hits >= RESTREAM_SRC_OFFLINE_HITS:\n                        log.info(\"Restream #%d: @%s dauerhaft offline → wechsle \"\n                                 \"zur nächsten Live-Quelle.\", rid, username)\n                        await self._switch_to_next_live(rid, username)\n                        return    # dieser Watcher endet; der neue Start bekommt einen eigenen\n                elif _err:\n                    # unknown/Fehler: NICHT als offline werten, Zähler halten,\n                    # aber schnell weiterprüfen (kein Hochfahren bei Unsicherheit).\n                    _poll = _base\n                else:\n                    offline_hits = 0                   # wieder live gesehen → Zähler zurück\n                    _poll = min(_cap, _poll + _base // 2)   # stabil live → sanft langsamer\n                await asyncio.sleep(_poll)\n        except asyncio.CancelledError:\n            pass\n",
@@ -88,7 +88,7 @@
   "count": 1
  },
  {
-  "file": "bot_v37.py",
+  "file": "bot.py",
   "id": "w115-status",
   "op": "replace",
   "anchor": "                        # B129: was ffmpeg selbst ueber die Zusatzziele sagt\n                        \"tee_fehler\": dict(getattr(self, \"_tee_fail\", {}) or {})}\n",
@@ -96,7 +96,7 @@
   "count": 1
  },
  {
-  "file": "bot_v37.py",
+  "file": "bot.py",
   "id": "w115-verify-api",
   "op": "replace",
   "anchor": "                       active_platforms=sorted(_restream_active_platforms()),\n                       guard=_RESTREAM_GUARD.snapshot(),\n                       status=_RESTREAM_MGR.status())\n",

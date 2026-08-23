@@ -1,6 +1,6 @@
 """nc.scraper — TikTok-Profil/Live-HTML-Scraper.
 
-Extrahiert aus bot_v37.py. Proxy-Auswahl kommt aus nc.proxyutil (dort per
+Extrahiert aus bot.py. Proxy-Auswahl kommt aus nc.proxyutil (dort per
 configure injiziert), aiohttp wird lazy im Call importiert."""
 
 import asyncio

@@ -88,20 +88,20 @@ find . -name '*.py' -print0 | xargs -0 "$PY" -m py_compile
 
 if "$PY" -c 'import pyflakes' 2>/dev/null; then
   info "pyflakes"
-  "$PY" -m pyflakes bot_v37.py brain_bridge.py nc/*.py brain/*.py
+  "$PY" -m pyflakes bot.py brain_bridge.py nc/*.py brain/*.py
 else
   info "pyflakes nicht installiert — uebersprungen (pip install pyflakes)"
 fi
 
 if "$PY" -c 'import ruff' 2>/dev/null || command -v ruff >/dev/null; then
   info "ruff"
-  "$PY" -m ruff check --select F,E9,B --ignore B905 bot_v37.py || \
-    ruff check --select F,E9,B --ignore B905 bot_v37.py
+  "$PY" -m ruff check --select F,E9,B --ignore B905 bot.py || \
+    ruff check --select F,E9,B --ignore B905 bot.py
 else
   info "ruff nicht installiert — uebersprungen"
 fi
 
-info "test_smoke.py — fuehrt bot_v37.py wirklich aus"
+info "test_smoke.py — fuehrt bot.py wirklich aus"
 "$PY" test_smoke.py
 
 info "test_nc_modules.py"

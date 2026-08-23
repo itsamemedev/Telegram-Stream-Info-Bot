@@ -1,10 +1,10 @@
-"""nc.schema — B164: DB-Schema-Erzeugung (aus bot_v37.init_db extrahiert).
+"""nc.schema — B164: DB-Schema-Erzeugung (aus bot.init_db extrahiert).
 
 Rein mechanisch aus dem Monolithen herausgelöst: der komplette CREATE-TABLE-/
 Index-/Migrations-Block. Die backend-abhängigen Platzhalter (pk, txt_idx …) und
 die zwei Helfer (_create_index_safe, _migrate_columns) werden vom Bot als
 Parameter hereingereicht — so ändert sich KEINE Schema-Zeile beim Umzug, und
-das Modul bleibt frei von Bot-Globals. Aufruf: bot_v37.init_db() öffnet die
+das Modul bleibt frei von Bot-Globals. Aufruf: bot.init_db() öffnet die
 Verbindung und ruft create_schema(conn, …).
 
 43 Tabellen + Indizes + Spalten-Migrationen. Idempotent (CREATE … IF NOT EXISTS).
