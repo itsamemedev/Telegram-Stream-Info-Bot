@@ -62,6 +62,38 @@ geprüft in [`nc/restream_stability.py`](nc/restream_stability.py).
   `RESTREAM_STALL_TIMEOUT_S` (0 = Wächter aus), `RESTREAM_STALL_GRACE_S`,
   `RESTREAM_STALL_CHECK_S`.
 
+### Hinzugefügt — Die Website steht im Raum (W114)
+
+Die öffentliche Seite hatte drei räumliche Widgets (Sentinel-Kern,
+Verbrauchsbalken, Spendenmünze) auf einer flachen Fläche. Jetzt trägt die
+Seite selbst die Tiefe — auf **allen drei Seiten** (Start, Impressum,
+Datenschutz) aus einer Quelle: [`website/raum.css`](website/raum.css) und
+[`website/raum.js`](website/raum.js). Dependency-frei wie der Rest der
+Seite: Vanilla-Canvas, kein Fremd-Code, kein externer Request.
+
+- **Perspektivischer Korridor** hinter dem Inhalt — Boden, Decke, Ringe und
+  ein driftendes Knotenfeld, gekoppelt an Scrollstand und Zeiger.
+- **Jede Sektion auf eigener Z-Ebene.** Sie kippt und liegt hinten, während
+  sie in den Blick kommt, und steht **exakt plan, sobald sie die Lesezone
+  abdeckt** — dauerhaft gekippter Fließtext wird unscharf gerastert.
+- **Kacheln als Körper**: Stream-Knöpfe, Karten, Kennzahlen und Agenten
+  neigen sich unter dem Zeiger, das Akronym ist als Extrusion ausgestellt.
+- **Schalter „Flach" / „3D"** unten rechts, in `localStorage` gemerkt.
+  Vorgabe an; bei `prefers-reduced-motion` aus, aber umschaltbar — die
+  ausdrückliche Wahl schlägt die Systemvorgabe. Ohne JS bleibt der Knopf
+  versteckt und die Seite exakt die alte.
+- Weniger Punkte auf schmalen Schirmen und schwachen Geräten, Pause im
+  versteckten Tab, Zeigerparallaxe nur bei echtem Zeiger.
+
+Drei Fallen, die im Browser gemessen und deshalb im Code festgehalten sind:
+`perspective` steht **im transform-Funktionsaufruf je Sektion**, nicht als
+CSS-Eigenschaft auf `main` (das Element ist über zehntausend Pixel hoch — der
+Fluchtpunkt säße einmalig in dessen Mitte); `overflow-x:clip` sitzt auf
+`main`, **nicht auf `html`** (an der Wurzel nimmt es der Kopfleiste in
+Chromium ihr `position:sticky`); und der Schalter steht **außerhalb der
+Navigation** (auf 390px füllt die Kopfleiste bereits zwei Zeilen — ein
+weiteres Element machte sie 37 % höher).
+
 ---
 
 ## [4.0] — 2026-08 · „Restream Control Room"

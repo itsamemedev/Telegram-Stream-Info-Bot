@@ -1,0 +1,58 @@
+[
+ {
+  "file": "website/lafap_index.html",
+  "id": "w114-lafap_index-01",
+  "op": "replace",
+  "anchor": ".don-qr .qcap{font-size:.74rem;color:var(--dim)}\n@media (prefers-reduced-motion:reduce){ .don-bar i{transition:none} }\n</style>\n</head>\n<body>\n\n<a class=\"skip\" href=\"#inhalt\">Zum Inhalt springen</a>\n\n<header>\n  <div class=\"bar\">\n",
+  "new": ".don-qr .qcap{font-size:.74rem;color:var(--dim)}\n@media (prefers-reduced-motion:reduce){ .don-bar i{transition:none} }\n</style>\n<!-- v4.0-W114: der Raum liegt in eigenen Dateien, weil ihn alle drei\n     Seiten teilen (Startseite, Impressum, Datenschutz). NACH dem\n     Inline-Stylesheet eingehaengt: die Reihenfolge im Dokument\n     entscheidet, und raum.css muss den .rv-Versatz ueberschreiben. -->\n<link rel=\"stylesheet\" href=\"raum.css\">\n</head>\n<body>\n\n<a class=\"skip\" href=\"#inhalt\">Zum Inhalt springen</a>\n\n\n<header>\n  <div class=\"bar\">\n",
+  "count": 1
+ },
+ {
+  "file": "website/lafap_index.html",
+  "id": "w114-lafap_index-02",
+  "op": "replace",
+  "anchor": "    </nav>\n  </div>\n</header>\n\n<!-- v4.0-W72: EIN main-Landmark (vorher zwei verschachtelte <main> + ein im\n     <footer> gestrandetes </main> = ungültiges HTML). id=\"top\" bleibt das\n",
+  "new": "    </nav>\n  </div>\n</header>\n\n<!-- v4.0-W114: der Raum. Rein dekorativ, faengt keine Klicks ab, bleibt\n     ohne JS unsichtbar (opacity 0, bis raum.js html.d3 setzt) — und wird\n     deshalb nie zur leeren schwarzen Flaeche. Der Schalter steht bewusst\n     NICHT in der Navigation: auf 390px fuellt die Kopfleiste bereits zwei\n     Zeilen aus, ein weiteres Element machte sie 37 % hoeher. -->\n<canvas id=\"raum\" class=\"raum\" aria-hidden=\"true\"></canvas>\n<button type=\"button\" id=\"d3-schalter\" class=\"d3-schalter\" hidden>Flach</button>\n\n<!-- v4.0-W72: EIN main-Landmark (vorher zwei verschachtelte <main> + ein im\n     <footer> gestrandetes </main> = ungültiges HTML). id=\"top\" bleibt das\n",
+  "count": 1
+ },
+ {
+  "file": "website/lafap_index.html",
+  "id": "w114-lafap_index-03",
+  "op": "replace",
+  "anchor": "  kick();\n})();\n</script>\n</body>\n</html>\n",
+  "new": "  kick();\n})();\n</script>\n<!-- v4.0-W114: siehe raum.css — eine Quelle fuer alle drei Seiten. -->\n<script src=\"raum.js\"></script>\n</body>\n</html>\n",
+  "count": 1
+ },
+ {
+  "file": "website/impressum.html",
+  "id": "w114-impressum-01",
+  "op": "replace",
+  "anchor": "  font-size:.72rem; color:var(--dim)}\n.f nav a{color:var(--ash)} .f b{color:var(--white)}\n</style>\n</head>\n<body>\n<a class=\"skip\" href=\"#inhalt\">Zum Inhalt springen</a>\n<header>\n  <div class=\"bar\">\n",
+  "new": "  font-size:.72rem; color:var(--dim)}\n.f nav a{color:var(--ash)} .f b{color:var(--white)}\n</style>\n<!-- v4.0-W114: derselbe Raum wie auf der Startseite. Die Rechtstexte\n     selbst bleiben plan — raum.js kippt nur main > section, und davon\n     gibt es hier keine. Der Raum liegt dahinter, der Schalter ist da,\n     die Lesbarkeit bleibt unangetastet. -->\n<link rel=\"stylesheet\" href=\"raum.css\">\n</head>\n<body>\n\n<!-- v4.0-W114: der Raum. Rein dekorativ, faengt keine Klicks ab, bleibt\n     ohne JS unsichtbar (opacity 0, bis raum.js html.d3 setzt) — und wird\n     deshalb nie zur leeren schwarzen Flaeche. Der Schalter steht bewusst\n     NICHT in der Navigation: auf 390px fuellt die Kopfleiste bereits zwei\n     Zeilen aus, ein weiteres Element machte sie 37 % hoeher. -->\n<canvas id=\"raum\" class=\"raum\" aria-hidden=\"true\"></canvas>\n<button type=\"button\" id=\"d3-schalter\" class=\"d3-schalter\" hidden>Flach</button>\n<a class=\"skip\" href=\"#inhalt\">Zum Inhalt springen</a>\n<header>\n  <div class=\"bar\">\n",
+  "count": 1
+ },
+ {
+  "file": "website/impressum.html",
+  "id": "w114-impressum-02",
+  "op": "replace",
+  "anchor": "    <span>Analysiert von Azrael Sentinel · lafap.de</span>\n  </div>\n</footer>\n</body>\n</html>\n",
+  "new": "    <span>Analysiert von Azrael Sentinel · lafap.de</span>\n  </div>\n</footer>\n<script src=\"raum.js\"></script>\n</body>\n</html>\n",
+  "count": 1
+ },
+ {
+  "file": "website/datenschutz.html",
+  "id": "w114-datenschutz-01",
+  "op": "replace",
+  "anchor": "  font-size:.72rem; color:var(--dim)}\n.f nav a{color:var(--ash)} .f b{color:var(--white)}\n</style>\n</head>\n<body>\n<a class=\"skip\" href=\"#inhalt\">Zum Inhalt springen</a>\n<header>\n  <div class=\"bar\">\n",
+  "new": "  font-size:.72rem; color:var(--dim)}\n.f nav a{color:var(--ash)} .f b{color:var(--white)}\n</style>\n<!-- v4.0-W114: derselbe Raum wie auf der Startseite. Die Rechtstexte\n     selbst bleiben plan — raum.js kippt nur main > section, und davon\n     gibt es hier keine. Der Raum liegt dahinter, der Schalter ist da,\n     die Lesbarkeit bleibt unangetastet. -->\n<link rel=\"stylesheet\" href=\"raum.css\">\n</head>\n<body>\n\n<!-- v4.0-W114: der Raum. Rein dekorativ, faengt keine Klicks ab, bleibt\n     ohne JS unsichtbar (opacity 0, bis raum.js html.d3 setzt) — und wird\n     deshalb nie zur leeren schwarzen Flaeche. Der Schalter steht bewusst\n     NICHT in der Navigation: auf 390px fuellt die Kopfleiste bereits zwei\n     Zeilen aus, ein weiteres Element machte sie 37 % hoeher. -->\n<canvas id=\"raum\" class=\"raum\" aria-hidden=\"true\"></canvas>\n<button type=\"button\" id=\"d3-schalter\" class=\"d3-schalter\" hidden>Flach</button>\n<a class=\"skip\" href=\"#inhalt\">Zum Inhalt springen</a>\n<header>\n  <div class=\"bar\">\n",
+  "count": 1
+ },
+ {
+  "file": "website/datenschutz.html",
+  "id": "w114-datenschutz-02",
+  "op": "replace",
+  "anchor": "    <span>Analysiert von Azrael Sentinel · lafap.de</span>\n  </div>\n</footer>\n</body>\n</html>\n",
+  "new": "    <span>Analysiert von Azrael Sentinel · lafap.de</span>\n  </div>\n</footer>\n<script src=\"raum.js\"></script>\n</body>\n</html>\n",
+  "count": 1
+ }
+]

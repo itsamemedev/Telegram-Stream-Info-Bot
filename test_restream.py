@@ -5928,6 +5928,87 @@ def test_v40_w113_restream_stability():
     ok("v4.0-w113: Reconnect-Budget, Backoff, Ablauf-Bremse, Codec-Filter, Stillstands-Waechter")
 
 
+def test_v40_w114_website_3d():
+    """v4.0-W114: die oeffentliche Seite steht im Raum, nicht nur drei Widgets.
+
+    Vorher waren Sentinel-Kern, Verbrauchsbalken und Spendenmuenze
+    raeumlich — auf einer flachen Seite. Jetzt: perspektivischer Korridor
+    hinter dem Inhalt, jede Sektion auf eigener Z-Ebene, Kacheln neigen
+    sich unter dem Zeiger, und der Raum gilt fuer ALLE drei Seiten
+    (Start, Impressum, Datenschutz) aus EINER Quelle. Dependency-frei wie
+    der Rest der Seite.
+
+    Die Vertraege halten die fuenf Entscheidungen fest, die im Browser
+    gemessen wurden und ohne die es bricht:
+      * perspective NICHT als CSS-Eigenschaft auf main — main ist ueber
+        zehntausend Pixel hoch, der Fluchtpunkt saesse einmalig in dessen
+        Mitte und alles weit darueber/darunter kippte grotesk weg. Also im
+        transform-Funktionsaufruf je Sektion.
+      * overflow-x:clip auf main, NICHT auf html — an der Wurzel nimmt es
+        der Kopfleiste in Chromium ihr position:sticky (gemessen:
+        header.top -2800 statt 0). Ohne Klippen: 18px Ueberlauf auf 390px.
+      * Der Schalter steht nicht in der Navigation — auf 390px fuellt die
+        Kopfleiste bereits zwei Zeilen aus, ein weiteres Element machte sie
+        37 % hoeher (78px -> 107px). Und position:fixed haette darin nicht
+        geholfen: header traegt backdrop-filter und wird damit zum
+        Bezugsrahmen fuer fixierte Nachfahren.
+      * Die Lesezone bleibt plan: eine Sektion, die die Bildschirmmitte
+        abdeckt, hat Tiefe exakt null. Gekippter Fliesstext wird unscharf
+        gerastert.
+      * Blind heisst flach: ohne JS, bei prefers-reduced-motion oder nach
+        einem Klick auf "Flach" faellt html.d3 weg und die Seite ist die
+        alte — der Knopf bleibt bis dahin hidden.
+    """
+    css = open("website/raum.css", encoding="utf-8").read()
+    js  = open("website/raum.js", encoding="utf-8").read()
+
+    # EINE Quelle, alle drei Seiten
+    for seite in ("lafap_index", "impressum", "datenschutz"):
+        w = open("website/%s.html" % seite, encoding="utf-8").read()
+        assert '<link rel="stylesheet" href="raum.css">' in w, seite + ": raum.css fehlt"
+        assert '<script src="raum.js"></script>' in w, seite + ": raum.js fehlt"
+        assert '<canvas id="raum" class="raum" aria-hidden="true"></canvas>' in w, \
+            seite + ": Raum-Flaeche fehlt oder nicht als dekorativ ausgezeichnet"
+        assert 'id="d3-schalter" class="d3-schalter" hidden>' in w, \
+            seite + ": Schalter fehlt oder nicht versteckt"
+
+    # Der Schalter steht ausserhalb der Navigation (Kopfleiste bleibt zweizeilig)
+    w = open("website/lafap_index.html", encoding="utf-8").read()
+    _nav = w[w.index('<nav aria-label="Seitennavigation">'):w.index("</nav>")]
+    assert "d3-schalter" not in _nav, "Schalter steckt in der Navigation"
+
+    # Raum und Tiefe
+    assert "html.d3 main>section{perspective:" in css, "Sektionen ohne Perspektive"
+    assert "html.d3 main{overflow-x:clip}" in css, "Kipp-Ueberlauf nicht geklippt"
+    assert "html.d3{overflow-x:clip}" not in css, \
+        "clip an der Wurzel — das nimmt der Kopfleiste ihr sticky"
+    assert ".d3-schalter{position:fixed" in css and "min-height:44px" in css, \
+        "Schalter nicht als feste Ecke mit 44px-Beruehrziel"
+    assert "perspective(1600px) translate3d(0,0," in js, \
+        "Sektionstiefe nicht als transform-Funktion (Fluchtpunkt-Falle)"
+    assert "if (r.top <= mY && r.bottom >= mY) d = 0;" in js, \
+        "Tiefe haengt nicht an der Lesezone — gekippter Text wird unscharf"
+
+    # Eine Schleife, Layout nur bei Bewegung
+    assert "if (y !== letzterScroll || window.innerHeight !== letzteHoehe)" in js, \
+        "getBoundingClientRect laeuft pro Frame statt nur bei Bewegung"
+
+    # Rueckfallpfade
+    assert "prefers-reduced-motion" in js, "reduced-motion nicht beachtet"
+    assert "document.hidden" in js, "laeuft im versteckten Tab weiter"
+    assert "localStorage" in js and "lafap.raum" in js, "Wahl wird nicht gemerkt"
+    assert "hardwareConcurrency" in js, "keine Absenkung auf schwachen Geraeten"
+    assert "(hover: hover) and (pointer: fine)" in js, \
+        "Zeigerneigung auch auf Beruehrgeraeten — dort verreisst jeder Tipper den Raum"
+
+    # Kein Fremd-Code, kein externer Request
+    for quelle, name in ((css, "raum.css"), (js, "raum.js")):
+        assert "http://" not in quelle and "https://" not in quelle, \
+            name + ": externer Verweis"
+    ok("v4.0-w114: der Raum auf allen drei Seiten — Korridor, Sektionstiefe, "
+       "Kachelneigung, abschaltbar")
+
+
 def main():
     print("test_restream — Restream-Kernlogik (Mock-basiert)")
     test_streak()
@@ -6104,6 +6185,7 @@ def main():
     test_v40_w103_selfcheck_bridge_and_endpoints()
     test_v40_w109_dashboard_feldnamen()
     test_v40_w113_restream_stability()
+    test_v40_w114_website_3d()
     print(f"test_restream OK — {PASS} Verträge grün")
 
 

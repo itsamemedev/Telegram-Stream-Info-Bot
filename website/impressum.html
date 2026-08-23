@@ -63,8 +63,21 @@ footer{border-top:1px solid var(--line); margin-top:40px; padding:22px 0}
   font-size:.72rem; color:var(--dim)}
 .f nav a{color:var(--ash)} .f b{color:var(--white)}
 </style>
+<!-- v4.0-W114: derselbe Raum wie auf der Startseite. Die Rechtstexte
+     selbst bleiben plan — raum.js kippt nur main > section, und davon
+     gibt es hier keine. Der Raum liegt dahinter, der Schalter ist da,
+     die Lesbarkeit bleibt unangetastet. -->
+<link rel="stylesheet" href="raum.css">
 </head>
 <body>
+
+<!-- v4.0-W114: der Raum. Rein dekorativ, faengt keine Klicks ab, bleibt
+     ohne JS unsichtbar (opacity 0, bis raum.js html.d3 setzt) — und wird
+     deshalb nie zur leeren schwarzen Flaeche. Der Schalter steht bewusst
+     NICHT in der Navigation: auf 390px fuellt die Kopfleiste bereits zwei
+     Zeilen aus, ein weiteres Element machte sie 37 % hoeher. -->
+<canvas id="raum" class="raum" aria-hidden="true"></canvas>
+<button type="button" id="d3-schalter" class="d3-schalter" hidden>Flach</button>
 <a class="skip" href="#inhalt">Zum Inhalt springen</a>
 <header>
   <div class="bar">
@@ -157,5 +170,6 @@ footer{border-top:1px solid var(--line); margin-top:40px; padding:22px 0}
     <span>Analysiert von Azrael Sentinel · lafap.de</span>
   </div>
 </footer>
+<script src="raum.js"></script>
 </body>
 </html>

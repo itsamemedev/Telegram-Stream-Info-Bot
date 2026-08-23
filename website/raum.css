@@ -1,0 +1,134 @@
+/* raum.css — v4.0-W114. Gemeinsam von lafap_index.html, impressum.html
+   und datenschutz.html geladen: der Raum gehoert zur SEITE, nicht zu
+   einem einzelnen Dokument. Regeln, die auf den Rechtsseiten keine
+   Entsprechung haben (.acronym, .hero-core, .res-card), greifen dort
+   schlicht nicht — das ist billiger als drei Ableger zu pflegen. */
+/* ═══════════════════════════════════════════════════════════════════════
+   v4.0-W114 · DER RAUM — die ganze Seite steht in 3D
+   ═══════════════════════════════════════════════════════════════════════
+   Bisher war 3D auf drei Widgets beschraenkt (Sentinel-Kern, Verbrauchs-
+   balken, Spendenmuenze): jedes fuer sich raeumlich, die Seite drumherum
+   flach. Jetzt traegt die SEITE die Tiefe — ein perspektivischer Korridor
+   hinter dem Inhalt, jede Sektion auf einer eigenen Z-Ebene, jede Kachel
+   als Koerper, der sich unter dem Zeiger neigt.
+
+   DREI REGELN, DIE DAS LESBAR HALTEN
+   1. Tiefe beim ANNAEHERN, flach beim LESEN. Eine Sektion kippt und liegt
+      hinten, waehrend sie in den Blick kommt, und steht exakt plan, sobald
+      sie mittig ist. Dauerhaft gekippter Fliesstext wird vom Browser
+      unscharf gerastert — auf einem Textblock ist das schlicht unlesbar.
+   2. ALLES haengt an html.d3. Ohne JS, bei prefers-reduced-motion oder
+      wenn der Betrachter auf "Flach" schaltet, faellt die Klasse weg und
+      die Seite ist exakt die alte — kein Rest, keine halbe Tiefe.
+   3. perspective sitzt auf dem main-Element, NICHT auf dem body-Element. Die Kopfleiste ist
+      position:sticky; in einem perspektivischen Elternteil verliert sticky
+      seinen Halt und die Leiste wandert beim Scrollen mit.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+/* Hintergrundraum. Liegt hinter allem, faengt keine Klicks ab und blendet
+   beim Umschalten weich auf statt zu springen. */
+.raum{position:fixed;inset:0;width:100%;height:100%;display:block;
+  z-index:0;pointer-events:none;opacity:0;transition:opacity .7s ease}
+html.d3 .raum{opacity:1}
+html.d3 main,html.d3 footer{position:relative;z-index:1}
+/* Eine um X gekippte Sektion wird durch die Perspektive an ihrer nahen
+   Kante BREITER — bei einer hohen Sektion reicht das fuer 18px seitlichen
+   Ueberlauf (gemessen auf 390px: scrollWidth 408 statt 390).
+   Geklippt wird auf main, NICHT auf der Wurzel: overflow-x:clip an html
+   nimmt der Kopfleiste in Chromium ihr position:sticky — gemessen, die
+   Leiste scrollte mit statt oben zu bleiben. clip statt hidden, weil clip
+   keinen Scrollbehaelter erzeugt; die Perspektive liegt ohnehin je Sektion
+   und wird davon nicht eingeebnet. */
+html.d3 main{overflow-x:clip}
+
+/* perspective sitzt AUF DER SEKTION (fuer ihre Kinder) und noch einmal
+   als transform-Funktion im Skript (fuer die Sektion selbst). Nicht auf
+   dem main-Element: das ist ist ueber zehntausend Pixel hoch, und eine
+   perspective darauf legt den Fluchtpunkt EINMALIG in dessen Mitte —
+   alles weit darueber oder darunter kippt dann grotesk weg. Je Sektion
+   sitzt der Fluchtpunkt dagegen dort, wo gerade gelesen wird. */
+html.d3 main>section{perspective:1300px;perspective-origin:50% 45%;
+  backface-visibility:hidden;will-change:transform}
+/* Der Versatz aus dem Scroll-Reveal wird abgeschaltet: eine Sektion darf
+   nur EIN transform tragen, sonst ueberschreibt der Reveal-Versatz die
+   Tiefe (oder umgekehrt). Das Einblenden bleibt, es laeuft ueber opacity.
+   Die Tiefe selbst setzt das Skript inline — das schlaegt jeden Selektor
+   und macht die Kaskade an dieser Stelle unnoetig. */
+html.d3 body.js .rv{transform:none;transition:opacity .5s ease}
+html.d3 body.js .rv.in{transform:none}
+
+/* Zwischenebenen brauchen preserve-3d, sonst flacht der Browser die
+   Kacheln ein und translateZ bleibt wirkungslos. .stats fehlt hier
+   bewusst: sie traegt overflow:hidden fuer ihre runden Ecken, und
+   overflow != visible flacht 3D-Kinder IMMER ein — dort wird deshalb der
+   ganze Block geneigt statt jeder Kachel einzeln. */
+html.d3 .streams,html.d3 .principles,html.d3 .res-grid,html.d3 .metrics,
+html.d3 .agents,html.d3 .news-list,html.d3 .prose,html.d3 .hero-copy{
+  transform-style:preserve-3d}
+
+/* Kacheln als Koerper: leicht nach vorn, mit Kante und Schlagschatten
+   gegen den Raum dahinter. Glas statt Blech — der Korridor soll durch die
+   Zwischenraeume durchscheinen, ohne dass Text an Kontrast verliert. */
+html.d3 .stats,html.d3 .streams .btn,html.d3 .res-card,html.d3 .principle,
+html.d3 .news-item,html.d3 .metric,html.d3 .agent,html.d3 .log,
+html.d3 .chart-card{
+  transition:transform .3s cubic-bezier(.2,.7,.2,1), box-shadow .25s ease;
+  box-shadow:0 18px 42px rgba(0,0,0,.55), 0 0 0 1px rgba(0,255,156,.05)}
+/* Waehrend der Zeiger auf der Kachel steht, KEIN transform-Uebergang: das
+   Skript setzt die Neigung bei jeder Zeigerbewegung, ein Uebergang liesse
+   die Kachel dem Zeiger sichtbar hinterherlaufen. Beim Verlassen faellt
+   die Klasse weg, der Uebergang oben greift und die Kachel legt sich
+   weich zurueck. */
+html.d3 .d3-hover{transition:box-shadow .25s ease}
+html.d3 .res-card,html.d3 .principle,html.d3 .news-item,html.d3 .metric,
+html.d3 .agent,html.d3 .log,html.d3 .chart-card{
+  background:color-mix(in srgb,var(--panel) 84%,transparent)}
+html.d3 .streams .btn{
+  background:color-mix(in srgb,var(--panel) 80%,transparent)}
+/* backdrop-filter erst ab Zeigergeraeten mit Platz: in einem
+   3D-transformierten Elternteil ist der Filter teuer, und auf dem Handy
+   kostet er genau die Bildrate, die die Tiefe braucht. */
+@media (min-width:860px) and (hover:hover){
+  html.d3 .res-card,html.d3 .principle,html.d3 .news-item,html.d3 .metric,
+  html.d3 .agent,html.d3 .log,html.d3 .chart-card,html.d3 .streams .btn{
+    backdrop-filter:blur(5px);-webkit-backdrop-filter:blur(5px)}
+}
+/* Der Hover-Versatz der Stream-Knoepfe wird vom Neigungs-Transform des
+   Skripts gesetzt — ohne diese Zeile ueberschreibt die alte Regel ihn. */
+html.d3 .streams .btn:hover,html.d3 .streams .btn:focus-visible{transform:none}
+html.d3 .d3-hover{box-shadow:0 26px 60px rgba(0,0,0,.62),
+  0 0 22px color-mix(in srgb,var(--phos) 18%,transparent)}
+
+/* Der Sentinel-Kern schwebt am weitesten vorn — er ist das Objekt, um das
+   der Raum gebaut ist. */
+html.d3 .hero-core{transform:translateZ(70px)}
+
+/* Das Akronym als ausgestellter Koerper: gestapelte Schatten in
+   Blickrichtung ergeben eine Extrusion, ohne ein einziges zusaetzliches
+   Element und ohne dass der Buchstabe seine Kante verliert. */
+html.d3 .acronym{transform-style:preserve-3d}
+html.d3 .acronym .glyph{
+  text-shadow:1px 1px 0 #017a4b, 2px 2px 0 #016a41, 3px 3px 0 #015936,
+    4px 4px 0 #01482c, 5px 5px 0 #013721, 6px 7px 14px rgba(0,0,0,.6),
+    0 0 26px rgba(0,255,156,.35)}
+html.d3 .acronym .row:nth-child(3) .glyph{
+  text-shadow:1px 1px 0 #8a1449, 2px 2px 0 #78123f, 3px 3px 0 #660f36,
+    4px 4px 0 #540c2c, 5px 5px 0 #420922, 6px 7px 14px rgba(0,0,0,.6),
+    0 0 26px rgba(255,46,136,.3)}
+
+/* Der Schalter in der Kopfleiste. Er heisst nach seinem ERGEBNIS: steht
+   "Flach" darauf, fuehrt ein Klick dorthin. */
+.d3-schalter{position:fixed;right:16px;bottom:16px;z-index:11;
+  display:inline-flex;align-items:center;justify-content:center;
+  font-family:var(--mono);font-size:.66rem;letter-spacing:.14em;
+  text-transform:uppercase;color:var(--ash);cursor:pointer;
+  border:1px solid var(--line);border-radius:99px;
+  min-height:44px;min-width:62px;padding:0 16px;
+  background:color-mix(in srgb,var(--panel) 88%,transparent);
+  backdrop-filter:blur(5px);-webkit-backdrop-filter:blur(5px);
+  box-shadow:0 6px 18px rgba(0,0,0,.5)}
+.d3-schalter:hover,.d3-schalter:focus-visible{color:var(--phos);
+  border-color:var(--phos)}
+/* Auf schmalen Schirmen ist die Tiefe flacher: dort steht der Text naeher
+   am Rand, und ein starkes Kippen schiebt ihn sichtbar aus der Spur. */
+@media (max-width:640px){ html.d3 main>section{perspective:2200px} }
