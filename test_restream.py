@@ -6102,6 +6102,90 @@ def test_v40_w115_relay_sicht_und_srcwatch():
        "Quellen-Waechter ueberlebt Fehler")
 
 
+def test_v40_w116_alterung_flattern_rate():
+    """v4.0-W116: drei Zustaende, die dem Betreiber die Sicht verstellt haben.
+
+    1. _tee_fail WURDE NIE GELEERT. Geschrieben in _read_stderr, gelesen an
+       fuenf Stellen — Deck, Verify-Loop, Sentinel-Alarm, status() und
+       Selbsttest —, geleert an keiner. Eine einmalige Ablehnung von
+       YouTube stand bis zum Bot-Neustart im Panel UND im Sentinel-Alarm,
+       auch wenn das Ziel seit Stunden wieder sendet: Dauerfehlalarm, und
+       bei der Fehlersuche jagt man einem Zustand von vorgestern hinterher.
+    2. CHAT-TRENNUNGEN ESKALIERTEN NIE. Kick-WS, Twitch-EventSub und
+       Twitch-Chat meldeten auf log.warning — in einem ERROR-Log steht
+       davon nichts. Die Verbindung konnte die ganze Nacht flattern, ohne
+       dass irgendwo etwas stand. Dasselbe Muster wie beim
+       Discord-Gateway-Tod. "Jede Trennung auf error" waere aber genauso
+       blind, also entscheidet der Verlauf (nc/flapguard.py).
+    3. DER AUFNAHME-WAECHTER MASS NUR DAS DATEIWACHSTUM. Das faengt den
+       toten Stream, nicht den halbtoten: faellt die Videospur weg und der
+       Ton laeuft weiter, waechst die Datei im Kilobyte-Takt und der
+       Waechter sieht Fortschritt. Zweite Spur ueber die RATE
+       (nc/recdiag.RateSpur) — die MELDET nur, sie killt nicht.
+    """
+    src = open("bot_v37.py", encoding="utf-8").read()
+
+    # ── 1) tee-Fehler altern und werden geleert ───────────────────────────
+    assert "def tee_fehler(self, ttl_s=None):" in src, "kein Verfall fuer tee-Fehler"
+    assert "def tee_fehler_klaeren(self, platt):" in src, "kein Loeschen bei Bestaetigung"
+    assert "RESTREAM_TEE_FAIL_TTL_S" in src, "Verfallszeit nicht einstellbar"
+    # KEIN Direktzugriff mehr an den Lesestellen — sonst umgeht einer den Verfall.
+    assert 'getattr(_RESTREAM_MGR, "_tee_fail"' not in src, \
+        "Lesestelle greift am Verfall vorbei"
+    assert 'getattr(mgr, "_tee_fail"' not in src, "Selbsttest greift am Verfall vorbei"
+    assert 'dict(getattr(self, "_tee_fail", {}) or {})' not in src, \
+        "status() greift am Verfall vorbei"
+    # Geschrieben wird weiterhin genau an EINER Stelle.
+    assert src.count("self._tee_fail = ") == 2, \
+        "unerwartete Schreibstellen auf _tee_fail"      # Anlage + Entsorgung
+    _vl = src[src.index("async def _restream_verify_loop():"):
+              src.index("async def _restream_resume_after_restart():")]
+    assert "_RESTREAM_MGR.tee_fehler_klaeren(_p)" in _vl, \
+        "bestaetigte Ziele werden nicht freigeraeumt"
+
+    # ── 2) Flattern eskaliert ─────────────────────────────────────────────
+    assert "from nc import flapguard as _nc_flap" in src, "flapguard nicht eingebunden"
+    assert "_FLAP = _nc_flap.FlapWatch(" in src, "kein Flatter-Waechter"
+    assert "def _verbindung_verloren(kanal, exc, backoff_s, seit=0.0):" in src
+    _vv = src[src.index("def _verbindung_verloren(kanal, exc, backoff_s, seit=0.0):"):
+              src.index("# F8: Chats die uns blockiert haben")]
+    assert "log.error(" in _vv and "_brain_notify(" in _vv, \
+        "Flattern wird nicht eskaliert"
+    assert "u.erholt" in _vv, "Erholung wird nicht gemeldet"
+    # Alle drei Trennungsstellen gehen durch den Helfer, keine mehr direkt.
+    for tot in ('log.warning(f"Kick-WS getrennt',
+                'log.warning("Twitch-EventSub getrennt',
+                'log.warning("Twitch-Chat getrennt'):
+        assert tot not in src, "Trennung meldet weiterhin nur auf warning: " + tot
+    for kanal in ('"Kick-WebSocket"', '"Twitch-EventSub"', '"Twitch-Chat"'):
+        assert "_verbindung_verloren(" + kanal in src, "Kanal nicht verdrahtet: " + kanal
+    # Ohne Verbindungszeitpunkt kann der Waechter nicht zwischen "hielt zehn
+    # Sekunden" und "hielt zehn Stunden" unterscheiden — daran haengt alles.
+    assert 'self.stats["since"] = _time_mod.time()' in src, "Kick ohne Verbindungsmarke"
+    assert "_es_seit = _time_mod.time()" in src, "EventSub ohne Verbindungsmarke"
+    assert 'seit=_WCHAT_STATUS["twitch"].get("since", 0.0)' in src, \
+        "Twitch-Chat ohne Verbindungsmarke"
+
+    # ── 3) Raten-Einbruch bei der Aufnahme ────────────────────────────────
+    assert "from nc import recdiag as _nc_recdiag" in src, "recdiag nicht eingebunden"
+    _wd = src[src.index("    async def _stall_watchdog():"):
+              src.index("    watchdog_task = asyncio.create_task(_stall_watchdog())")]
+    assert "_nc_recdiag.RateSpur()" in _wd, "keine Raten-Spur im Aufnahme-Waechter"
+    assert "_rate.beobachte(cur_size - _rate_last, CHECK_EVERY)" in _wd, \
+        "Raten-Spur wird nicht gefuettert"
+    assert 'log_event("recording.rate_drop"' in _wd, "Einbruch nicht als Ereignis"
+    # Der Einbruch darf NICHT killen — eine statische Szene druckt die
+    # Bitrate legitim um mehr als 85 % nach unten, und abgebrochenes
+    # Material ist unwiederbringlich weg.
+    _einbruch = _wd[_wd.index('_u == "einbruch"'):_wd.index('elif _u == "erholt"')]
+    assert "terminate()" not in _einbruch and "kill()" not in _einbruch, \
+        "Raten-Einbruch bricht die Aufnahme ab — das vernichtet echtes Material"
+    # Der Nullwachstums-Waechter darf weiterhin killen, der bleibt unberuehrt.
+    assert "stall_killed[0] = True" in _wd and "proc.terminate()" in _wd, \
+        "der bewaehrte Nullwachstums-Kill ist verloren gegangen"
+    ok("v4.0-w116: tee-Fehler altern, Flattern eskaliert, Raten-Einbruch wird gemeldet")
+
+
 def main():
     print("test_restream — Restream-Kernlogik (Mock-basiert)")
     test_streak()
@@ -6280,6 +6364,7 @@ def main():
     test_v40_w113_restream_stability()
     test_v40_w114_website_3d()
     test_v40_w115_relay_sicht_und_srcwatch()
+    test_v40_w116_alterung_flattern_rate()
     print(f"test_restream OK — {PASS} Verträge grün")
 
 

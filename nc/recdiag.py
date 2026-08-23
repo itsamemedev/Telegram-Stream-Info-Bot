@@ -15,6 +15,7 @@ Braucht nur db_conn — keine Bot-Globals.
 import logging
 import re
 from collections import Counter
+from dataclasses import dataclass
 
 from nc.dbwrap import db_conn
 
@@ -171,3 +172,90 @@ def url_refresh_stats(days=7):
             "likely_url_refresh_cuts": len(refresh),
             "median_segment_s": _median([r["duration_secs"] for r in refresh]),
             "note": "Segmente um ~25-35min sind typisch fuer den URL-Refresh-Schnitt"}
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# v4.0-W116 · RATEN-EINBRUCH WAEHREND DER AUFNAHME
+# ══════════════════════════════════════════════════════════════════════════
+# Der Stillstands-Waechter in handle_recording_finished misst genau eine
+# Sache: waechst die Datei? Das faengt den toten Stream — aber nicht den
+# HALBTOTEN. Faellt bei einer TikTok-Uebertragung die Videospur weg und der
+# Ton laeuft weiter, waechst die Datei munter im Kilobyte-Takt: der Waechter
+# sieht Fortschritt, die Aufnahme laeuft stundenlang weiter, und am Ende
+# liegt eine Datei mit Standbild auf der Platte. Dasselbe Bild bei einem
+# Netz-Einbruch, bei dem die Quelle auf eine Notbitrate faellt.
+#
+# Erkennbar ist das an der RATE, nicht am Wachstum: die Datenrate bricht auf
+# einen Bruchteil dessen ein, was dieselbe Aufnahme vorher hatte.
+#
+# WARUM DAS NUR MELDET UND NICHT ABBRICHT:
+# Ein H.264-Stream mit -c copy gibt die Quelle 1:1 weiter, und eine wirklich
+# statische Szene (Standbild-Intro, jemand haelt die Kamera auf eine Wand)
+# druckt die Bitrate voellig legitim um mehr als 85 % nach unten. Eine
+# Aufnahme deswegen abzubrechen wuerde echtes Material vernichten — und
+# Material zurueckholen kann man nicht. Der Nullwachstums-Waechter darf
+# killen, weil "0 Bytes in 45 Sekunden" keine harmlose Lesart hat; dieser
+# hier darf es nicht. Er meldet, und der Betreiber entscheidet.
+
+
+@dataclass(frozen=True)
+class RateConfig:
+    warmlauf_s: float = 60.0            # so lange nur Grundlinie sammeln
+    einbruch_anteil: float = 0.15       # unter 15 % der Grundlinie = Einbruch
+    einbruch_dauer_s: float = 90.0      # so lange muss er anhalten
+    min_grundlinie_bps: float = 40000.0 # darunter ist keine Aussage moeglich
+
+
+@dataclass
+class RateSpur:
+    """Verlauf EINER Aufnahme. Reine Rechnung: keine Uhr, keine Datei —
+    der Aufrufer reicht Zuwachs und Zeitspanne herein."""
+    grundlinie_bps: float = 0.0
+    laufzeit_s: float = 0.0
+    seit_einbruch_s: float = 0.0
+    gemeldet: bool = False
+    letzte_rate_bps: float = 0.0
+
+    def beobachte(self, zuwachs_bytes: float, dt_s: float,
+                  cfg: RateConfig | None = None):
+        """Gibt "einbruch", "erholt" oder None zurueck — hoechstens einmal
+        je Episode, damit der Aufrufer nicht drosseln muss."""
+        cfg = cfg or RateConfig()
+        if dt_s <= 0:
+            return None
+        rate = max(0.0, float(zuwachs_bytes)) / dt_s
+        self.letzte_rate_bps = rate
+        self.laufzeit_s += dt_s
+
+        # Warmlauf: nur Grundlinie bilden, nie urteilen. Die ersten Sekunden
+        # einer Aufnahme sind kein Massstab — Header, Probe, erster Keyframe.
+        if self.laufzeit_s < cfg.warmlauf_s:
+            self.grundlinie_bps = max(self.grundlinie_bps, rate)
+            return None
+        if self.grundlinie_bps < cfg.min_grundlinie_bps:
+            self.grundlinie_bps = max(self.grundlinie_bps, rate)
+            return None
+
+        schwelle = self.grundlinie_bps * cfg.einbruch_anteil
+        if rate >= schwelle:
+            # Gesunde Messung: Grundlinie langsam nachfuehren. Nur hier —
+            # waehrend eines Einbruchs mitzuziehen wuerde die Grundlinie
+            # nach unten schleifen, und der Einbruch verschwaende von selbst.
+            self.grundlinie_bps = 0.9 * self.grundlinie_bps + 0.1 * rate
+            war = self.gemeldet
+            self.seit_einbruch_s = 0.0
+            self.gemeldet = False
+            return "erholt" if war else None
+
+        self.seit_einbruch_s += dt_s
+        if self.seit_einbruch_s >= cfg.einbruch_dauer_s and not self.gemeldet:
+            self.gemeldet = True
+            return "einbruch"
+        return None
+
+    def bericht(self) -> str:
+        """Eine Zeile fuer das Log — kbit/s statt Bytes, weil der Betreiber
+        die Bitrate seiner Quelle in kbit/s kennt."""
+        return ("%.0f kbit/s gegen %.0f kbit/s Grundlinie, seit %.0f s"
+                % (self.letzte_rate_bps * 8 / 1000,
+                   self.grundlinie_bps * 8 / 1000, self.seit_einbruch_s))

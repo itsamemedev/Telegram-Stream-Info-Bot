@@ -62,6 +62,36 @@ geprüft in [`nc/restream_stability.py`](nc/restream_stability.py).
   `RESTREAM_STALL_TIMEOUT_S` (0 = Wächter aus), `RESTREAM_STALL_GRACE_S`,
   `RESTREAM_STALL_CHECK_S`.
 
+### Behoben — Drei Zustände, die die Sicht verstellt haben (W116)
+
+- **`_tee_fail` wurde nie geleert.** Geschrieben in `_read_stderr`, gelesen an
+  fünf Stellen (Deck, Verify-Loop, Sentinel-Alarm, `status()`, Selbsttest) —
+  geleert an keiner. Eine einmalige Ablehnung von YouTube stand bis zum
+  Bot-Neustart im Panel **und im Sentinel-Alarm**, auch wenn das Ziel seit
+  Stunden wieder sendet: Dauerfehlalarm, und bei der Fehlersuche jagt man einem
+  Zustand von vorgestern hinterher. Jetzt zwei Wege raus, beide nötig:
+  `tee_fehler()` filtert nach `RESTREAM_TEE_FAIL_TTL_S` (Vorgabe 15 min) und
+  entsorgt Verfallenes gleich, und die Verify-Schleife löscht einen Eintrag,
+  sobald die Plattform selbst bestätigt, dass sie wieder sendet. Alle fünf
+  Lesestellen gehen über die Methode — Direktzugriff ist vertraglich verboten,
+  sonst umgeht einer den Verfall.
+- **Chat-Trennungen eskalierten nie.** Kick-WebSocket, Twitch-EventSub und
+  Twitch-Chat meldeten auf `log.warning`; in einem ERROR-Log steht davon nichts.
+  Die Verbindung konnte die ganze Nacht flattern, ohne dass irgendwo etwas
+  stand — dasselbe Muster wie beim Discord-Gateway-Tod. „Jede Trennung auf
+  error" wäre aber genauso blind, also entscheidet der Verlauf:
+  [`nc/flapguard.py`](nc/flapguard.py) meldet erst, wenn vier Trennungen in eine
+  Viertelstunde fallen, drosselt Wiederholungen und meldet die Erholung einmal.
+  Alle drei Kanäle halten dafür jetzt fest, seit wann ihre Verbindung steht.
+- **Der Aufnahme-Wächter maß nur das Dateiwachstum.** Das fängt den toten
+  Stream, nicht den halbtoten: fällt die Videospur weg und der Ton läuft weiter,
+  wächst die Datei im Kilobyte-Takt und der Wächter sieht Fortschritt — am Ende
+  liegt eine Stunde Standbild auf der Platte. Neue zweite Spur über die
+  **Rate** (`nc.recdiag.RateSpur`). Sie **meldet nur und bricht nicht ab**: eine
+  wirklich statische Szene drückt die Bitrate völlig legitim um mehr als 85 %
+  nach unten, und abgebrochenes Material ist unwiederbringlich weg. Der
+  bewährte Nullwachstums-Kill bleibt unangetastet.
+
 ### Behoben — Blinde Flecken im Restream-Pfad (W115)
 
 Drei Stellen, die W113 offen gelassen hat.

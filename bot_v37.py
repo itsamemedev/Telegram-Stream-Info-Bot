@@ -870,6 +870,8 @@ from nc import sendrate as _nc_sendrate    # v4.0-W23: YT-Sende-Bremse (Anti-Flo
 from nc import cohost as _nc_cohost        # v4.0-W24: proaktiver Live-Co-Host
 from nc import restream_util as _nc_rutil  # v4.0-W25: reine Restream-Helfer (extrahiert)
 from nc import restream_stability as _nc_rstab  # v4.0-W113: Wiederanlauf-Regeln (rein)
+from nc import flapguard as _nc_flap  # v4.0-W116: flatternde Verbindungen (rein)
+from nc import recdiag as _nc_recdiag  # v4.0-W116: Raten-Einbruch (rein)
 from nc import abo as _nc_abo              # v4.0-W26: Abo-Erkennung (extrahiert)
 from nc import sysrun as _nc_sysrun        # v4.0-W26: privilegierter Kommando-Runner (extrahiert)
 from nc import ffmpeg_filters as _nc_ff     # v4.0-W27: Overlay-Filtergraph-Bauer (extrahiert)
@@ -1042,6 +1044,20 @@ _RESTREAM_RELAY_POLICY = _nc_rstab.ReconnectPolicy(
     stall_grace_s=float(RESTREAM_STALL_GRACE_S),
     stall_timeout_s=float(RESTREAM_STALL_TIMEOUT_S),
     stall_check_s=float(RESTREAM_STALL_CHECK_S))
+# v4.0-W116: Verfallszeit fuer tee-Ziel-Fehler. _tee_fail wurde geschrieben
+# und an fuenf Stellen gelesen — aber NIE geleert. Eine einmalige Ablehnung
+# von YouTube stand damit bis zum Bot-Neustart im Panel, im Sentinel-Alarm
+# und im Selbsttest, auch wenn das Ziel seit Stunden wieder sendet. Bei der
+# Fehlersuche jagt man dann einem Zustand von vorgestern hinterher.
+RESTREAM_TEE_FAIL_TTL_S = _env_int("RESTREAM_TEE_FAIL_TTL_S", 900)
+# v4.0-W116: ab wann ist eine Dauerverbindung "flatternd"? Siehe
+# nc/flapguard.py — eine einzelne Trennung ist Alltag, vier in einer
+# Viertelstunde sind es nicht.
+_FLAP = _nc_flap.FlapWatch(_nc_flap.FlapConfig(
+    fenster_s=float(_env_int("CHAT_FLAP_FENSTER_S", 900)),
+    schwelle=max(2, _env_int("CHAT_FLAP_SCHWELLE", 4)),
+    ruhe_s=float(_env_int("CHAT_FLAP_RUHE_S", 600)),
+    melde_abstand_s=float(_env_int("CHAT_FLAP_MELDEABSTAND_S", 1800))))
 # AZRAEL-Stimme (Piper) in den Restream-Ton mischen (ohne OBS). Erfordert Transcode
 # + Piper-Modell. Default AUS (fail-safe: Stream läuft auch ohne).
 RESTREAM_TTS       = os.getenv("RESTREAM_TTS", "0").strip().lower() in ("1","true","yes","on","y")
@@ -8084,6 +8100,53 @@ def _loop_fehler(name, exc):
     else:
         st[1] += 1
 
+
+def _verbindung_verloren(kanal, exc, backoff_s, seit=0.0):
+    """v4.0-W116: eine Dauerverbindung ist weggebrochen — richtig melden.
+
+    Kick-WebSocket, Twitch-EventSub und Twitch-Chat meldeten das bisher auf
+    log.warning. In einem ERROR-Log erscheint davon NICHTS; die Verbindung
+    konnte die ganze Nacht im Minutentakt flattern, ohne dass irgendwo
+    etwas stand. Genau das Muster, das den Discord-Gateway-Tod monatelang
+    verdeckt hat.
+
+    "Jede Trennung auf error" waere aber ebenso falsch: Plattformen
+    rotieren ihre Gateways, ein Reconnect nach fuenf Sekunden ist kein
+    Vorfall, und Alarm-Muedigkeit ist genauso blind wie Stille. Also
+    entscheidet der VERLAUF — die Regeln dazu stehen bot-frei und getestet
+    in nc/flapguard.py, hier steht nur Ein- und Ausgabe.
+
+    `seit`: Zeitstempel (time.time()) des Verbindungsaufbaus, damit
+    messbar ist, wie lange sie gehalten hat. 0 = unbekannt, wird als kurz
+    gewertet (die vorsichtigere Annahme).
+    """
+    now = _time_mod.time()
+    gehalten = max(0.0, now - seit) if seit else 0.0
+    try:
+        u = _FLAP.trennung(kanal, gehalten, now)
+    except Exception:
+        u = None
+    _hielt = (f", hielt {gehalten:.0f}s" if gehalten else "")
+    if u is None:
+        log.warning("%s getrennt (%s) — Reconnect in %ss%s", kanal, exc, backoff_s, _hielt)
+        return
+    if u.erholt:
+        log.info("%s: Verbindung hat wieder %.0f Minuten durchgehalten — "
+                 "Flattern beendet.", kanal, gehalten / 60.0)
+    if u.melden:
+        log.error("%s FLATTERT: %s (zuletzt %s)%s. Reihenfolge: 1) Token/Key "
+                  "noch gueltig? 2) Netz zur Plattform (Proxy, CrowdSec, "
+                  "Rate-Limit)? 3) Plattform-Stoerung. Naechster Reconnect "
+                  "in %ss.", kanal, u.grund, exc, _hielt, backoff_s)
+        try:
+            _brain_notify(f"🟠 {kanal} flattert: {u.grund}. Letzter Grund: {exc}")
+        except Exception:
+            pass
+    else:
+        log.warning("%s getrennt (%s) — Reconnect in %ss%s (%d/%d im "
+                    "%d-Minuten-Fenster)", kanal, exc, backoff_s, _hielt,
+                    u.anzahl, _FLAP.cfg.schwelle, u.fenster_min)
+
 # F8: Chats die uns blockiert haben merken wir uns für 1h, statt immer
 # wieder reinzulaufen. Verhindert Logspam und unnötige API-Calls.
 _dead_chats: dict = {}   # chat_id -> timestamp_until
@@ -9512,6 +9575,17 @@ async def handle_recording_finished(proc, tid, chat_id, username, output_file,
         last_size = -1
         unchanged_seconds = 0
         CHECK_EVERY = 15
+        # v4.0-W116: zweite Spur neben dem Nullwachstums-Test. Der misst nur
+        # "waechst die Datei" und faengt damit den toten Stream — aber nicht
+        # den HALBTOTEN: faellt die Videospur weg und der Ton laeuft weiter,
+        # waechst die Datei munter im Kilobyte-Takt, der Waechter sieht
+        # Fortschritt, und am Ende liegt eine Stunde Standbild auf der Platte.
+        # Erkennbar ist das an der RATE, nicht am Wachstum. Diese Spur MELDET
+        # nur — abbrechen darf sie nicht: eine wirklich statische Szene
+        # druckt die Bitrate voellig legitim um mehr als 85 % nach unten, und
+        # eine deswegen abgebrochene Aufnahme ist unwiederbringlich weg.
+        _rate = _nc_recdiag.RateSpur()
+        _rate_last = 0
         # VERBESSERUNG: Adaptiver STALL_THRESHOLD. Basiswert 45s bleibt.
         # Bei großen Dateien (> 100 MB) hat ffmpeg kurze I/O-Pausen beim
         # Flushen des MP4-Containers. Diese dauern bis zu 20s bei sehr großen
@@ -9531,6 +9605,27 @@ async def handle_recording_finished(proc, tid, chat_id, username, output_file,
                     cur_size = os.path.getsize(output_file) if os.path.exists(output_file) else 0
                 except OSError:
                     cur_size = -1
+                # v4.0-W116: Raten-Einbruch (Bild weg, Ton laeuft weiter).
+                if cur_size >= 0:
+                    try:
+                        _u = _rate.beobachte(cur_size - _rate_last, CHECK_EVERY)
+                        _rate_last = cur_size
+                        if _u == "einbruch":
+                            log.error("recording @%s: DATENRATE EINGEBROCHEN — %s. "
+                                      "Typisch: Videospur weg (Ton laeuft weiter) "
+                                      "oder Quelle auf Notbitrate. Die Aufnahme "
+                                      "laeuft ABSICHTLICH weiter — ein Abbruch "
+                                      "wuerde bei einer echten Standbild-Szene "
+                                      "Material vernichten. Datei pruefen.",
+                                      username, _rate.bericht())
+                            log_event("recording.rate_drop", "warning",
+                                      f"@{username}: Datenrate eingebrochen ({_rate.bericht()})",
+                                      {"user": username})
+                        elif _u == "erholt":
+                            log.info("recording @%s: Datenrate wieder normal (%s).",
+                                     username, _rate.bericht())
+                    except Exception as _re:
+                        log.debug("rate-spur @%s: %s", username, _re)
                 # Threshold adaptiv an Dateigröße anpassen
                 if cur_size > 0:
                     STALL_THRESHOLD = min(MAX_STALL,
@@ -13568,7 +13663,7 @@ def api_restream_deck():
     # ausgespielt) — nicht zu verwechseln mit dem Chat-Listener-Status oben.
     _extra = [n for n, _ in _multistream_targets()]
     _any_live = bool(_RESTREAM_ACTIVE_ALL)
-    _tf = getattr(_RESTREAM_MGR, "_tee_fail", {}) or {}
+    _tf = _RESTREAM_MGR.tee_fehler()          # v4.0-W116: nur noch geltende
     def _terr(_n):
         _e = _tf.get(_n)
         return {"msg": str(_e.get("msg", ""))[:200],
@@ -19550,6 +19645,44 @@ class RestreamManager:
                      f"({len(self._procs) + 1}/{RESTREAM_MAX_CONCURRENT})")
             await self.start(r["id"], _src_watch=True)   # V37-SRCFAIL
 
+    def tee_fehler(self, ttl_s=None):
+        """v4.0-W116: die tee-Ziel-Fehler, die JETZT noch gelten.
+
+        _tee_fail wurde in _read_stderr geschrieben und an fuenf Stellen
+        gelesen — Deck, Verify-Loop, Sentinel-Alarm, status() und
+        Selbsttest —, aber an keiner einzigen geleert. Eine einmalige
+        Ablehnung von YouTube stand damit bis zum Bot-Neustart im Panel,
+        im Alarm und im Selbsttest, auch wenn das Ziel seit Stunden wieder
+        sendet. Bei der Fehlersuche jagt man dann einem Zustand von
+        vorgestern hinterher, und der Sentinel meldet Dauerfehlalarm.
+
+        Zwei Wege raus, beide noetig:
+          * hier die Verfallszeit — auch wenn RESTREAM_VERIFY=0 ist und
+            niemand ein Ziel je wieder bestaetigt;
+          * tee_fehler_klaeren() aus der Verify-Schleife, sobald die
+            Plattform selbst sagt, dass sie wieder sendet — das ist der
+            schnelle Weg und braucht keinen Ablauf abzuwarten.
+        """
+        ttl = RESTREAM_TEE_FAIL_TTL_S if ttl_s is None else ttl_s
+        roh = getattr(self, "_tee_fail", None) or {}
+        if ttl <= 0:
+            return dict(roh)
+        jetzt = _time_mod.time()
+        frisch = {k: v for k, v in roh.items()
+                  if (jetzt - (v.get("ts") or 0)) < ttl}
+        if len(frisch) != len(roh):
+            # Verfallene Eintraege gleich entsorgen, nicht nur ausblenden —
+            # sonst waechst das Dict ueber Wochen mit toten Zielen voll.
+            self._tee_fail = frisch
+        return dict(frisch)
+
+    def tee_fehler_klaeren(self, platt):
+        """Ein Ziel sendet nachweislich wieder — seinen Altfehler loeschen."""
+        st = getattr(self, "_tee_fail", None)
+        if st and platt in st:
+            st.pop(platt, None)
+            log.info("Restream: tee-Ziel %s sendet wieder — Altfehler geloescht.", platt)
+
     def status(self):
         """B123: 'live' hiess bisher nur 'Prozess existiert'.
 
@@ -19607,7 +19740,7 @@ class RestreamManager:
                                       f"{rid}:{_pn}", 0)}
                             for _pn, _e in (info.get("indep") or {}).items()},
                         # B129: was ffmpeg selbst ueber die Zusatzziele sagt
-                        "tee_fehler": dict(getattr(self, "_tee_fail", {}) or {})}
+                        "tee_fehler": self.tee_fehler()}   # v4.0-W116
         return out
 
 
@@ -20575,6 +20708,11 @@ class KickModerator:
                         await ws.send_json({"event": "pusher:subscribe",
                                             "data": {"channel": f"chatrooms.{KICK_CHATROOM_ID}.v2"}})
                         self.stats["connected"] = True
+                        # v4.0-W116: wann diese Verbindung stand. Ohne die
+                        # Marke kann der Flatter-Waechter nicht unterscheiden,
+                        # ob sie zehn Sekunden oder zehn Stunden gehalten hat —
+                        # und genau daran haengt, ob eine Trennung Alltag ist.
+                        self.stats["since"] = _time_mod.time()
                         log.info("Kick-Moderator: Chat-Websocket verbunden")
                         async for msg in ws:
                             if not self.running:
@@ -20626,7 +20764,11 @@ class KickModerator:
                 except Exception as e:
                     self.stats["connected"] = False
                     if self.running:
-                        log.warning(f"Kick-WS getrennt ({e}) — reconnect in 10s")
+                        # v4.0-W116: war log.warning — im ERROR-Log stand nie
+                        # etwas, auch wenn die Verbindung die ganze Nacht
+                        # flatterte. Jetzt entscheidet der Verlauf.
+                        _verbindung_verloren("Kick-WebSocket", e, 10,
+                                             seit=self.stats.get("since", 0.0))
                         await asyncio.sleep(10)
         finally:
             self.stats["connected"] = False
@@ -22369,7 +22511,7 @@ async def _restream_platform_state():
     # Ausfall: Kick klemmte einmal und wurde danach NIE wieder versucht.
     # "Slave muxer #0 failed" von ffmpeg ist dagegen ein ausdruecklicher
     # Beweis, dass Kick nicht annimmt — das zaehlt als OFFLINE.
-    _tf = (getattr(_RESTREAM_MGR, "_tee_fail", {}) or {}).get("kick")
+    _tf = _RESTREAM_MGR.tee_fehler().get("kick")   # v4.0-W116
     if _tf and (_time_mod.time() - _tf.get("ts", 0)) < max(60, RESTREAM_VERIFY_S * 2):
         out["kick"] = _nc_guard.OFFLINE
     for name, r in (("twitch", res[1]), ("youtube", res[2])):
@@ -22417,6 +22559,13 @@ async def _restream_verify_loop():
                 plat = await _restream_platform_state()
                 active = _restream_active_platforms()
                 plat = {k: v for k, v in plat.items() if k in active}
+                # v4.0-W116: bestaetigt die Plattform selbst, dass sie sendet,
+                # ist ihr alter tee-Fehler erledigt. Ohne diese Zeile blieb er
+                # bis zum Bot-Neustart im Panel und im Sentinel-Alarm stehen —
+                # die Verfallszeit in tee_fehler() ist nur das Netz darunter.
+                for _p, _r in plat.items():
+                    if _r == _nc_guard.LIVE:
+                        _RESTREAM_MGR.tee_fehler_klaeren(_p)
             else:
                 plat = {}
             now = _time_mod.monotonic()
@@ -25731,7 +25880,7 @@ def api_selftest():
                            "Ziele erzwingen ihn (RESTREAM_MULTI_ALLOW_COPY=0).")
 
         # ── Kick: welcher Ausgang ist tot? ──────────────────────────────
-        for zielname, tf in (getattr(_RESTREAM_MGR, "_tee_fail", {}) or {}).items():
+        for zielname, tf in _RESTREAM_MGR.tee_fehler().items():   # v4.0-W116
             alter = _time_mod.time() - (tf.get("ts") or 0)
             if alter < 3600:
                 _st_befund(b, "rot", "Restream",
@@ -29652,8 +29801,10 @@ async def _twitch_eventsub_loop():
     backoff = 30
     ws_url = "wss://eventsub.wss.twitch.tv/ws"
     _oauth_ready = _twoauth.status().get("ready")
+    _es_seit = 0.0            # v4.0-W116: seit wann steht diese Verbindung
     while True:
         try:
+            _es_seit = _time_mod.time()
             # V37-TWOAUTH: bei OAuth den Token pro Verbindungsaufbau frisch holen —
             # der Access-Token lebt nur ~1h, ein langer EventSub-Lauf ueberdauert
             # das. access_token() erneuert bei Bedarf per Refresh-Token. Beim
@@ -29721,7 +29872,7 @@ async def _twitch_eventsub_loop():
         except asyncio.CancelledError:
             raise
         except Exception as e:
-            log.warning("Twitch-EventSub getrennt (%s) — Reconnect in %ss", e, backoff)
+            _verbindung_verloren("Twitch-EventSub", e, backoff, seit=_es_seit)   # v4.0-W116
         await asyncio.sleep(backoff)
         backoff = min(300, int(backoff * 1.6))
         ws_url = "wss://eventsub.wss.twitch.tv/ws"
@@ -29939,7 +30090,8 @@ async def _twitch_chat_loop():
         except asyncio.CancelledError:
             raise
         except Exception as e:
-            log.warning("Twitch-Chat getrennt (%s) — Reconnect in %ss", e, backoff)
+            _verbindung_verloren("Twitch-Chat", e, backoff,                     # v4.0-W116
+                                 seit=_WCHAT_STATUS["twitch"].get("since", 0.0))
             _WCHAT_STATUS["twitch"]["reconnects"] += 1
             _WCHAT_STATUS["twitch"].update(connected=False, error=str(e)[:120])
             _TWITCH_SEND["fn"] = None
@@ -31200,7 +31352,7 @@ async def main():
         def _brain_restream_health():
             # M8: tee-Fehler + Kick-Key-Kollisionen fuer den RestreamSentinel.
             mgr = _RESTREAM_MGR
-            tf = dict(getattr(mgr, "_tee_fail", {}) or {})
+            tf = mgr.tee_fehler()          # v4.0-W116
             procs = getattr(mgr, "_procs", {}) or {}
             by_key = {}
             for _rid, _info in procs.items():

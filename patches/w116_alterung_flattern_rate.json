@@ -1,0 +1,138 @@
+[
+ {
+  "file": "bot_v37.py",
+  "id": "w116-import",
+  "op": "replace",
+  "anchor": "from nc import restream_stability as _nc_rstab  # v4.0-W113: Wiederanlauf-Regeln (rein)\n",
+  "new": "from nc import restream_stability as _nc_rstab  # v4.0-W113: Wiederanlauf-Regeln (rein)\nfrom nc import flapguard as _nc_flap  # v4.0-W116: flatternde Verbindungen (rein)\nfrom nc import recdiag as _nc_recdiag  # v4.0-W116: Raten-Einbruch (rein)\n",
+  "count": 1
+ },
+ {
+  "file": "bot_v37.py",
+  "id": "w116-config",
+  "op": "replace",
+  "anchor": "_RESTREAM_RELAY_POLICY = _nc_rstab.ReconnectPolicy(\n    max_reconnects=RESTREAM_MAX_RECONNECTS,\n    stable_run_s=120.0,\n    base_delay_s=3.0,\n    max_delay_s=30.0,\n    stall_grace_s=float(RESTREAM_STALL_GRACE_S),\n    stall_timeout_s=float(RESTREAM_STALL_TIMEOUT_S),\n    stall_check_s=float(RESTREAM_STALL_CHECK_S))\n",
+  "new": "_RESTREAM_RELAY_POLICY = _nc_rstab.ReconnectPolicy(\n    max_reconnects=RESTREAM_MAX_RECONNECTS,\n    stable_run_s=120.0,\n    base_delay_s=3.0,\n    max_delay_s=30.0,\n    stall_grace_s=float(RESTREAM_STALL_GRACE_S),\n    stall_timeout_s=float(RESTREAM_STALL_TIMEOUT_S),\n    stall_check_s=float(RESTREAM_STALL_CHECK_S))\n# v4.0-W116: Verfallszeit fuer tee-Ziel-Fehler. _tee_fail wurde geschrieben\n# und an fuenf Stellen gelesen — aber NIE geleert. Eine einmalige Ablehnung\n# von YouTube stand damit bis zum Bot-Neustart im Panel, im Sentinel-Alarm\n# und im Selbsttest, auch wenn das Ziel seit Stunden wieder sendet. Bei der\n# Fehlersuche jagt man dann einem Zustand von vorgestern hinterher.\nRESTREAM_TEE_FAIL_TTL_S = _env_int(\"RESTREAM_TEE_FAIL_TTL_S\", 900)\n# v4.0-W116: ab wann ist eine Dauerverbindung \"flatternd\"? Siehe\n# nc/flapguard.py — eine einzelne Trennung ist Alltag, vier in einer\n# Viertelstunde sind es nicht.\n_FLAP = _nc_flap.FlapWatch(_nc_flap.FlapConfig(\n    fenster_s=float(_env_int(\"CHAT_FLAP_FENSTER_S\", 900)),\n    schwelle=max(2, _env_int(\"CHAT_FLAP_SCHWELLE\", 4)),\n    ruhe_s=float(_env_int(\"CHAT_FLAP_RUHE_S\", 600)),\n    melde_abstand_s=float(_env_int(\"CHAT_FLAP_MELDEABSTAND_S\", 1800))))\n",
+  "count": 1
+ },
+ {
+  "file": "bot_v37.py",
+  "id": "w116-helfer",
+  "op": "replace",
+  "anchor": "                  exc_info=True)\n    else:\n        st[1] += 1\n",
+  "new": "                  exc_info=True)\n    else:\n        st[1] += 1\n\n\ndef _verbindung_verloren(kanal, exc, backoff_s, seit=0.0):\n    \"\"\"v4.0-W116: eine Dauerverbindung ist weggebrochen — richtig melden.\n\n    Kick-WebSocket, Twitch-EventSub und Twitch-Chat meldeten das bisher auf\n    log.warning. In einem ERROR-Log erscheint davon NICHTS; die Verbindung\n    konnte die ganze Nacht im Minutentakt flattern, ohne dass irgendwo\n    etwas stand. Genau das Muster, das den Discord-Gateway-Tod monatelang\n    verdeckt hat.\n\n    \"Jede Trennung auf error\" waere aber ebenso falsch: Plattformen\n    rotieren ihre Gateways, ein Reconnect nach fuenf Sekunden ist kein\n    Vorfall, und Alarm-Muedigkeit ist genauso blind wie Stille. Also\n    entscheidet der VERLAUF — die Regeln dazu stehen bot-frei und getestet\n    in nc/flapguard.py, hier steht nur Ein- und Ausgabe.\n\n    `seit`: Zeitstempel (time.time()) des Verbindungsaufbaus, damit\n    messbar ist, wie lange sie gehalten hat. 0 = unbekannt, wird als kurz\n    gewertet (die vorsichtigere Annahme).\n    \"\"\"\n    now = _time_mod.time()\n    gehalten = max(0.0, now - seit) if seit else 0.0\n    try:\n        u = _FLAP.trennung(kanal, gehalten, now)\n    except Exception:\n        u = None\n    _hielt = (f\", hielt {gehalten:.0f}s\" if gehalten else \"\")\n    if u is None:\n        log.warning(\"%s getrennt (%s) — Reconnect in %ss%s\", kanal, exc, backoff_s, _hielt)\n        return\n    if u.erholt:\n        log.info(\"%s: Verbindung hat wieder %.0f Minuten durchgehalten — \"\n                 \"Flattern beendet.\", kanal, gehalten / 60.0)\n    if u.melden:\n        log.error(\"%s FLATTERT: %s (zuletzt %s)%s. Reihenfolge: 1) Token/Key \"\n                  \"noch gueltig? 2) Netz zur Plattform (Proxy, CrowdSec, \"\n                  \"Rate-Limit)? 3) Plattform-Stoerung. Naechster Reconnect \"\n                  \"in %ss.\", kanal, u.grund, exc, _hielt, backoff_s)\n        try:\n            _brain_notify(f\"🟠 {kanal} flattert: {u.grund}. Letzter Grund: {exc}\")\n        except Exception:\n            pass\n    else:\n        log.warning(\"%s getrennt (%s) — Reconnect in %ss%s (%d/%d im \"\n                    \"%d-Minuten-Fenster)\", kanal, exc, backoff_s, _hielt,\n                    u.anzahl, _FLAP.cfg.schwelle, u.fenster_min)\n",
+  "count": 1
+ },
+ {
+  "file": "bot_v37.py",
+  "id": "w116-kickws",
+  "op": "replace",
+  "anchor": "                    if self.running:\n                        log.warning(f\"Kick-WS getrennt ({e}) — reconnect in 10s\")\n                        await asyncio.sleep(10)\n",
+  "new": "                    if self.running:\n                        # v4.0-W116: war log.warning — im ERROR-Log stand nie\n                        # etwas, auch wenn die Verbindung die ganze Nacht\n                        # flatterte. Jetzt entscheidet der Verlauf.\n                        _verbindung_verloren(\"Kick-WebSocket\", e, 10,\n                                             seit=self.stats.get(\"since\", 0.0))\n                        await asyncio.sleep(10)\n",
+  "count": 1
+ },
+ {
+  "file": "bot_v37.py",
+  "id": "w116-eventsub",
+  "op": "replace",
+  "anchor": "        except Exception as e:\n            log.warning(\"Twitch-EventSub getrennt (%s) — Reconnect in %ss\", e, backoff)\n        await asyncio.sleep(backoff)\n",
+  "new": "        except Exception as e:\n            _verbindung_verloren(\"Twitch-EventSub\", e, backoff, seit=_es_seit)   # v4.0-W116\n        await asyncio.sleep(backoff)\n",
+  "count": 1
+ },
+ {
+  "file": "bot_v37.py",
+  "id": "w116-twchat",
+  "op": "replace",
+  "anchor": "        except Exception as e:\n            log.warning(\"Twitch-Chat getrennt (%s) — Reconnect in %ss\", e, backoff)\n            _WCHAT_STATUS[\"twitch\"][\"reconnects\"] += 1\n",
+  "new": "        except Exception as e:\n            _verbindung_verloren(\"Twitch-Chat\", e, backoff,                     # v4.0-W116\n                                 seit=_WCHAT_STATUS[\"twitch\"].get(\"since\", 0.0))\n            _WCHAT_STATUS[\"twitch\"][\"reconnects\"] += 1\n",
+  "count": 1
+ },
+ {
+  "file": "bot_v37.py",
+  "id": "w116-kick-since",
+  "op": "replace",
+  "anchor": "                        self.stats[\"connected\"] = True\n                        log.info(\"Kick-Moderator: Chat-Websocket verbunden\")\n",
+  "new": "                        self.stats[\"connected\"] = True\n                        # v4.0-W116: wann diese Verbindung stand. Ohne die\n                        # Marke kann der Flatter-Waechter nicht unterscheiden,\n                        # ob sie zehn Sekunden oder zehn Stunden gehalten hat —\n                        # und genau daran haengt, ob eine Trennung Alltag ist.\n                        self.stats[\"since\"] = _time_mod.time()\n                        log.info(\"Kick-Moderator: Chat-Websocket verbunden\")\n",
+  "count": 1
+ },
+ {
+  "file": "bot_v37.py",
+  "id": "w116-es-since",
+  "op": "replace",
+  "anchor": "    backoff = 30\n    ws_url = \"wss://eventsub.wss.twitch.tv/ws\"\n    _oauth_ready = _twoauth.status().get(\"ready\")\n    while True:\n        try:\n",
+  "new": "    backoff = 30\n    ws_url = \"wss://eventsub.wss.twitch.tv/ws\"\n    _oauth_ready = _twoauth.status().get(\"ready\")\n    _es_seit = 0.0            # v4.0-W116: seit wann steht diese Verbindung\n    while True:\n        try:\n            _es_seit = _time_mod.time()\n",
+  "count": 1
+ },
+ {
+  "file": "bot_v37.py",
+  "id": "w116-teefail-methoden",
+  "op": "replace",
+  "anchor": "    def status(self):\n",
+  "new": "    def tee_fehler(self, ttl_s=None):\n        \"\"\"v4.0-W116: die tee-Ziel-Fehler, die JETZT noch gelten.\n\n        _tee_fail wurde in _read_stderr geschrieben und an fuenf Stellen\n        gelesen — Deck, Verify-Loop, Sentinel-Alarm, status() und\n        Selbsttest —, aber an keiner einzigen geleert. Eine einmalige\n        Ablehnung von YouTube stand damit bis zum Bot-Neustart im Panel,\n        im Alarm und im Selbsttest, auch wenn das Ziel seit Stunden wieder\n        sendet. Bei der Fehlersuche jagt man dann einem Zustand von\n        vorgestern hinterher, und der Sentinel meldet Dauerfehlalarm.\n\n        Zwei Wege raus, beide noetig:\n          * hier die Verfallszeit — auch wenn RESTREAM_VERIFY=0 ist und\n            niemand ein Ziel je wieder bestaetigt;\n          * tee_fehler_klaeren() aus der Verify-Schleife, sobald die\n            Plattform selbst sagt, dass sie wieder sendet — das ist der\n            schnelle Weg und braucht keinen Ablauf abzuwarten.\n        \"\"\"\n        ttl = RESTREAM_TEE_FAIL_TTL_S if ttl_s is None else ttl_s\n        roh = getattr(self, \"_tee_fail\", None) or {}\n        if ttl <= 0:\n            return dict(roh)\n        jetzt = _time_mod.time()\n        frisch = {k: v for k, v in roh.items()\n                  if (jetzt - (v.get(\"ts\") or 0)) < ttl}\n        if len(frisch) != len(roh):\n            # Verfallene Eintraege gleich entsorgen, nicht nur ausblenden —\n            # sonst waechst das Dict ueber Wochen mit toten Zielen voll.\n            self._tee_fail = frisch\n        return dict(frisch)\n\n    def tee_fehler_klaeren(self, platt):\n        \"\"\"Ein Ziel sendet nachweislich wieder — seinen Altfehler loeschen.\"\"\"\n        st = getattr(self, \"_tee_fail\", None)\n        if st and platt in st:\n            st.pop(platt, None)\n            log.info(\"Restream: tee-Ziel %s sendet wieder — Altfehler geloescht.\", platt)\n\n    def status(self):\n",
+  "count": 1
+ },
+ {
+  "file": "bot_v37.py",
+  "id": "w116-lese-deck",
+  "op": "replace",
+  "anchor": "    _tf = getattr(_RESTREAM_MGR, \"_tee_fail\", {}) or {}\n",
+  "new": "    _tf = _RESTREAM_MGR.tee_fehler()          # v4.0-W116: nur noch geltende\n",
+  "count": 1
+ },
+ {
+  "file": "bot_v37.py",
+  "id": "w116-lese-status",
+  "op": "replace",
+  "anchor": "                        \"tee_fehler\": dict(getattr(self, \"_tee_fail\", {}) or {})}\n",
+  "new": "                        \"tee_fehler\": self.tee_fehler()}   # v4.0-W116\n",
+  "count": 1
+ },
+ {
+  "file": "bot_v37.py",
+  "id": "w116-lese-verify",
+  "op": "replace",
+  "anchor": "    _tf = (getattr(_RESTREAM_MGR, \"_tee_fail\", {}) or {}).get(\"kick\")\n",
+  "new": "    _tf = _RESTREAM_MGR.tee_fehler().get(\"kick\")   # v4.0-W116\n",
+  "count": 1
+ },
+ {
+  "file": "bot_v37.py",
+  "id": "w116-lese-sentinel",
+  "op": "replace",
+  "anchor": "        for zielname, tf in (getattr(_RESTREAM_MGR, \"_tee_fail\", {}) or {}).items():\n",
+  "new": "        for zielname, tf in _RESTREAM_MGR.tee_fehler().items():   # v4.0-W116\n",
+  "count": 1
+ },
+ {
+  "file": "bot_v37.py",
+  "id": "w116-lese-selbsttest",
+  "op": "replace",
+  "anchor": "            tf = dict(getattr(mgr, \"_tee_fail\", {}) or {})\n",
+  "new": "            tf = mgr.tee_fehler()          # v4.0-W116\n",
+  "count": 1
+ },
+ {
+  "file": "bot_v37.py",
+  "id": "w116-teefail-klaeren",
+  "op": "replace",
+  "anchor": "                plat = {k: v for k, v in plat.items() if k in active}\n",
+  "new": "                plat = {k: v for k, v in plat.items() if k in active}\n                # v4.0-W116: bestaetigt die Plattform selbst, dass sie sendet,\n                # ist ihr alter tee-Fehler erledigt. Ohne diese Zeile blieb er\n                # bis zum Bot-Neustart im Panel und im Sentinel-Alarm stehen —\n                # die Verfallszeit in tee_fehler() ist nur das Netz darunter.\n                for _p, _r in plat.items():\n                    if _r == _nc_guard.LIVE:\n                        _RESTREAM_MGR.tee_fehler_klaeren(_p)\n",
+  "count": 1
+ },
+ {
+  "file": "bot_v37.py",
+  "id": "w116-rate-init",
+  "op": "replace",
+  "anchor": "    async def _stall_watchdog():\n        last_size = -1\n        unchanged_seconds = 0\n        CHECK_EVERY = 15\n",
+  "new": "    async def _stall_watchdog():\n        last_size = -1\n        unchanged_seconds = 0\n        CHECK_EVERY = 15\n        # v4.0-W116: zweite Spur neben dem Nullwachstums-Test. Der misst nur\n        # \"waechst die Datei\" und faengt damit den toten Stream — aber nicht\n        # den HALBTOTEN: faellt die Videospur weg und der Ton laeuft weiter,\n        # waechst die Datei munter im Kilobyte-Takt, der Waechter sieht\n        # Fortschritt, und am Ende liegt eine Stunde Standbild auf der Platte.\n        # Erkennbar ist das an der RATE, nicht am Wachstum. Diese Spur MELDET\n        # nur — abbrechen darf sie nicht: eine wirklich statische Szene\n        # druckt die Bitrate voellig legitim um mehr als 85 % nach unten, und\n        # eine deswegen abgebrochene Aufnahme ist unwiederbringlich weg.\n        _rate = _nc_recdiag.RateSpur()\n        _rate_last = 0\n",
+  "count": 1
+ },
+ {
+  "file": "bot_v37.py",
+  "id": "w116-rate-beobachten",
+  "op": "replace",
+  "anchor": "                try:\n                    cur_size = os.path.getsize(output_file) if os.path.exists(output_file) else 0\n                except OSError:\n                    cur_size = -1\n",
+  "new": "                try:\n                    cur_size = os.path.getsize(output_file) if os.path.exists(output_file) else 0\n                except OSError:\n                    cur_size = -1\n                # v4.0-W116: Raten-Einbruch (Bild weg, Ton laeuft weiter).\n                if cur_size >= 0:\n                    try:\n                        _u = _rate.beobachte(cur_size - _rate_last, CHECK_EVERY)\n                        _rate_last = cur_size\n                        if _u == \"einbruch\":\n                            log.error(\"recording @%s: DATENRATE EINGEBROCHEN — %s. \"\n                                      \"Typisch: Videospur weg (Ton laeuft weiter) \"\n                                      \"oder Quelle auf Notbitrate. Die Aufnahme \"\n                                      \"laeuft ABSICHTLICH weiter — ein Abbruch \"\n                                      \"wuerde bei einer echten Standbild-Szene \"\n                                      \"Material vernichten. Datei pruefen.\",\n                                      username, _rate.bericht())\n                            log_event(\"recording.rate_drop\", \"warning\",\n                                      f\"@{username}: Datenrate eingebrochen ({_rate.bericht()})\",\n                                      {\"user\": username})\n                        elif _u == \"erholt\":\n                            log.info(\"recording @%s: Datenrate wieder normal (%s).\",\n                                     username, _rate.bericht())\n                    except Exception as _re:\n                        log.debug(\"rate-spur @%s: %s\", username, _re)\n",
+  "count": 1
+ }
+]
