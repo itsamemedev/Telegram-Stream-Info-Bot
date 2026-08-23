@@ -9326,8 +9326,29 @@ async function betriebLoad(){
         html='<div class="empty">Gerade läuft kein Restream. '
             +'Geprüft wird alle '+esc(String(d.interval_s))+' s, sobald einer sendet.</div>';
       } else {
+        /* v4.0-W115: Spalte "Bild fließt". Der Stillstands-Wächter (W113)
+           erkennt seit Langem den Fall "ffmpeg lebt, sendet aber nicht mehr",
+           schoss ihn ab und baute neu auf — im Panel stand davon NICHTS, die
+           Felder ohne_fortschritt_s/stillstaende kamen in dieser Datei kein
+           einziges Mal vor. Genau dieser Wert trennt "läuft" von "läuft
+           angeblich", also gehört er neben die Laufzeit. Die Grenze kommt aus
+           der API (stall_timeout_s), nicht als zweite Kopie des Defaults. */
+        const grenze = Number(d.stall_timeout_s||0);
+        const fluss = (o)=>{
+          const a = Number((o&&o.ohne_fortschritt_s)||0);
+          const kills = Number((o&&o.stillstaende)||0);
+          if(!grenze) return '<span class="faint">Wächter aus</span>';
+          const warn = a >= grenze*0.6, schlimm = a >= grenze;
+          const farbe = schlimm ? 'var(--danger)' : (warn ? 'var(--amber)' : 'var(--ok)');
+          return '<span class="mono" style="color:'+farbe+'" title="Sekunden seit dem '
+            +'letzten Zuwachs an Bild oder Bytes — Grenze '+esc(String(grenze))+' s">'
+            +esc(String(a))+' s</span>'
+            +(kills?' <span class="tag danger" title="so oft hat der Wächter neu '
+              +'aufgebaut">'+esc(String(kills))+'×</span>':'');
+        };
         html='<div class="tbl-wrap"><table><thead><tr>'
-          +'<th>Restream</th><th>Läuft seit</th><th>Ziele bestätigt</th>'
+          +'<th>Restream</th><th>Läuft seit</th><th>Bild fließt</th>'
+          +'<th>Ziele bestätigt</th>'
           +'<th>Ziele tot</th><th>Neuaufbauten</th><th>ffmpeg meldet</th>'
           +'</tr></thead><tbody>';
         for(const rid of rids){
@@ -9339,10 +9360,30 @@ async function betriebLoad(){
             : '<span class="faint">nichts</span>';
           html += '<tr><td class="mono">#'+esc(String(rid))+'</td>'
             +'<td class="mono">'+esc(String(s.uptime_s||0))+' s</td>'
+            +'<td>'+fluss(s)+'</td>'
             +'<td>'+(live.length?live.map(x=>_bt(x)).join(' '):'<span class="faint">—</span>')+'</td>'
             +'<td>'+(dead.length?dead.map(x=>_bt(x,'danger')).join(' '):'<span class="faint">—</span>')+'</td>'
             +'<td class="mono">'+esc(String(s.restarts||0))+'</td>'
             +'<td style="font-size:11px">'+teeTxt+'</td></tr>';
+          /* v4.0-W115: unabhängige Relays (Twitch/YouTube im
+             independent-Modus) als eigene Zeile. Sie liefen bis W114 ohne
+             -progress und hatten nichts zu melden; jetzt haben sie dieselben
+             Werte wie der Hauptprozess — und ein hängender Relay ist im
+             Panel sichtbar, statt erst nach ~6 Minuten der Plattformprüfung
+             aufzufallen. */
+          const rel = s.relays||{};
+          for(const pn of Object.keys(rel)){
+            const r = rel[pn]||{};
+            html += '<tr><td class="mono faint" style="padding-left:18px">↳ '
+              +esc(pn)+'</td>'
+              +'<td class="mono">'+esc(String(r.uptime_s||0))+' s</td>'
+              +'<td>'+fluss(r)+'</td>'
+              +'<td colspan="4" class="faint" style="font-size:11px">'
+              +'eigener Relay-Prozess (pid '+esc(String(r.pid||'—'))+')'
+              +(r.health&&r.health.speed?' · speed '+esc(String(r.health.speed)):'')
+              +(r.health&&r.health.bitrate?' · '+esc(String(r.health.bitrate)):'')
+              +'</td></tr>';
+          }
         }
         html+='</tbody></table></div>';
         const ap = (d.active_platforms||[]);

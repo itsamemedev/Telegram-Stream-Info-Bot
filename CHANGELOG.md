@@ -62,6 +62,35 @@ geprüft in [`nc/restream_stability.py`](nc/restream_stability.py).
   `RESTREAM_STALL_TIMEOUT_S` (0 = Wächter aus), `RESTREAM_STALL_GRACE_S`,
   `RESTREAM_STALL_CHECK_S`.
 
+### Behoben — Blinde Flecken im Restream-Pfad (W115)
+
+Drei Stellen, die W113 offen gelassen hat.
+
+- **Die unabhängigen Relays waren blind.** `_spawn_independent` startete ffmpeg
+  mit `stdout=DEVNULL` — die Kommandozeile trägt seit jeher `-progress pipe:1`,
+  es hat nur nie jemand zugehört. Für Twitch/YouTube im Modus
+  `RESTREAM_MULTI_MODE=independent` gab es dadurch **weder Health-Daten noch
+  Stillstands-Erkennung**: ein hängender Relay fiel erst der Plattform-Prüfung
+  auf (120s-Takt, 3 Fehlanzeigen ≈ 6 Minuten) — und auch nur, wenn deren API
+  antwortet. Jetzt bedienen **derselbe** Health-Parser und **derselbe**
+  Stillstands-Wächter beide Pfade (`pname`-Parameter). Der Relay bringt nur
+  einen eigenen, härter getakteten Regelsatz mit (`_RESTREAM_RELAY_POLICY`:
+  Grundtakt 3s statt 8s, Deckel 30s statt 60s, gesunder Lauf ab 120s — der
+  W87-Wert, unverändert). Sein Backoff streut jetzt ebenfalls.
+- **Die W113-Messwerte sah niemand.** `ohne_fortschritt_s` und `stillstaende`
+  standen in `/api/restream/verify`, kamen in `dashboard.html` aber kein
+  einziges Mal vor. Neu: Spalte **„Bild fließt"** in der Zielprüfung,
+  farbcodiert gegen `stall_timeout_s` (das die API jetzt mitliefert, statt dass
+  das Panel den Default doppelt kennt), plus eine eigene Zeile je Relay mit
+  Laufzeit, Fluss, pid und speed.
+- **`_source_watch` fing nur `CancelledError`.** Jede andere Ausnahme beendete
+  den Task; asyncio meldet so etwas frühestens beim Aufräumen als „Task
+  exception was never retrieved". Folge: der Quellen-Failover für dieses Ziel
+  war für den Rest der Laufzeit tot, und der Bot wartete auf einen
+  ffmpeg-Abbruch, der bei einer sauber beendeten TikTok-Sendung nie kommt.
+  Jetzt überlebt eine einzelne gescheiterte Runde — sichtbar über
+  `_loop_fehler`, der Wächter läuft weiter.
+
 ### Hinzugefügt — Die Website steht im Raum (W114)
 
 Die öffentliche Seite hatte drei räumliche Widgets (Sentinel-Kern,

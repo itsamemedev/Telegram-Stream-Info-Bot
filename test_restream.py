@@ -5351,7 +5351,14 @@ def test_v40_w87_relay_source_reresolve():
         or "self._resolve_source(source_username, force_fresh=True)" in _relay, "Relay löst Quelle nicht frisch auf"
     assert "_looks_like_source_expired(_tail)" in _relay, "URL-Rotation nicht als Normalfall behandelt"
     assert "cur_url = _fresh" in _relay, "frische URL wird nicht verwendet"
-    assert "if _ran > 120:" in _relay and "attempt = 0" in _relay, "kein Budget-Reset nach gesundem Lauf"
+    # v4.0-W115: hier war der ANKER gebrochen, nicht der Vertrag. Der Reset
+    # nach einem gesunden Lauf steht weiter drin — jetzt aus dem Regelsatz
+    # (_RESTREAM_RELAY_POLICY.stable_run_s = 120.0, derselbe Wert wie zuvor)
+    # und mit der Zusatzregel aus W113: ein vom Stillstands-Waechter beendeter
+    # Lauf war LANG, aber nicht gesund und fuellt das Budget nicht auf.
+    assert "_nc_rstab.budget_after_run(" in _relay \
+        and "progressed=not _stalled" in _relay, "kein Budget-Reset nach gesundem Lauf"
+    assert "stable_run_s=120.0" in src, "W87-Schwelle von 120s verloren"
     assert "offline → Relay" in _relay, "Offline-Quelle beendet Relay nicht sauber"
     ok("v4.0-w87: Relays lösen Quelle frisch auf — YouTube/Twitch fallen nicht mehr weg")
 
@@ -5904,9 +5911,12 @@ def test_v40_w113_restream_stability():
     assert '"failed to", "could not write header"' not in _ck, "alte Wortliste noch im Monolithen"
 
     # 5) Stillstands-Waechter: Marke, Task, Start, Abbau, Anzeige
-    assert 'w = info.setdefault("watch"' in src, "keine Fortschrittsmarke in _update_health"
-    assert "async def _stall_watch(self, rid, proc):" in src, "Waechter fehlt"
-    _sw = src[src.index("    async def _stall_watch(self, rid, proc):"):
+    # v4.0-W115: Marke und Waechter bedienen jetzt BEIDE Pfade (Hauptprozess
+    # und unabhaengige Relays). Die Anker wandern mit, der Vertrag bleibt.
+    assert 'w = eintrag.setdefault("watch"' in src, "keine Fortschrittsmarke"
+    assert "self._marke_setzen(info, h, p)" in src, "_update_health setzt die Marke nicht"
+    assert "async def _stall_watch(self, rid, proc, pname=None):" in src, "Waechter fehlt"
+    _sw = src[src.index("    async def _stall_watch(self, rid, proc, pname=None):"):
               src.index("    async def start(self, rid, _attempts=0, _src_watch=False):")]
     assert 'info.get("proc") is not proc' in _sw, \
         "alter Waechter kann den frischen Prozess killen"
@@ -5921,7 +5931,7 @@ def test_v40_w113_restream_stability():
 
     # Der progress-Leser verschluckt seinen Tod nicht mehr — sonst friert die
     # Health-Anzeige ein UND der Waechter wird blind, beides unbemerkt.
-    _rp = src[src.index("    async def _read_progress(self, rid, proc):"):
+    _rp = src[src.index("    async def _read_progress(self, rid, proc, pname=None):"):
               src.index("    async def _read_stderr(self, proc, sink):")]
     assert "_loop_fehler(" in _rp, "progress-Leser faellt weiter still aus"
 
@@ -6007,6 +6017,89 @@ def test_v40_w114_website_3d():
             name + ": externer Verweis"
     ok("v4.0-w114: der Raum auf allen drei Seiten — Korridor, Sektionstiefe, "
        "Kachelneigung, abschaltbar")
+
+
+def test_v40_w115_relay_sicht_und_srcwatch():
+    """v4.0-W115: die blinden Flecken, die W113 offen gelassen hat.
+
+    1. DIE UNABHAENGIGEN RELAYS WAREN BLIND. _spawn_independent startete
+       ffmpeg mit stdout=DEVNULL — der Kommandozeile lag seit jeher
+       `-progress pipe:1` bei, es hat nur nie jemand zugehoert. Fuer
+       Twitch/YouTube im Modus RESTREAM_MULTI_MODE=independent gab es
+       dadurch WEDER Health-Daten NOCH Stillstands-Erkennung: ein
+       haengender Relay fiel erst der Plattform-Pruefung auf (120s-Takt,
+       3 Fehlanzeigen ≈ 6 Minuten) — und auch nur, wenn deren API
+       ueberhaupt antwortet. Genau der Ausfall, den W113 fuer den
+       Hauptprozess geschlossen hat.
+    2. DIE W113-MESSWERTE SAH NIEMAND. ohne_fortschritt_s und
+       stillstaende standen in /api/restream/verify, kamen in
+       dashboard.html aber kein einziges Mal vor. Der Waechter griff,
+       loggte, baute neu auf — im Panel stand nichts davon.
+    3. _source_watch FING NUR CancelledError. Jede andere Ausnahme
+       beendete den Task; asyncio meldet so etwas fruehestens beim
+       Aufraeumen als "Task exception was never retrieved". Folge: der
+       Quellen-Failover fuer dieses Ziel war fuer den Rest der Laufzeit
+       tot, und der Bot wartete auf einen ffmpeg-Abbruch, der bei einer
+       sauber beendeten TikTok-Sendung nie kommt.
+
+    Bewusst EIN Waechter und EIN Health-Parser fuer beide Pfade: die
+    Entscheidung "was heisst hier tot" darf es nur einmal geben, sonst
+    laufen Haupt- und Relay-Pfad ueber die Monate auseinander.
+    """
+    src = open("bot_v37.py", encoding="utf-8").read()
+    h = open("templates/dashboard.html", encoding="utf-8").read()
+
+    # ── 1) Relays sehen und werden bewacht ────────────────────────────────
+    _sp = src[src.index("    async def _spawn_independent(self, rid, pname"):
+              src.index("    async def _monitor(self, rid):")]
+    assert "stdout=asyncio.subprocess.PIPE" in _sp, "Relay laeuft weiter blind (DEVNULL)"
+    assert "stdout=asyncio.subprocess.DEVNULL" not in _sp, "DEVNULL noch im Relay-Pfad"
+    assert "self._read_progress(rid, p, pname=pname)" in _sp, "Relay ohne progress-Leser"
+    assert "self._stall_watch(rid, p, pname=pname)" in _sp, "Relay ohne Stillstands-Waechter"
+    assert "_ptask.cancel()" in _sp and "_stask.cancel()" in _sp, \
+        "Relay raeumt seine Leser/Waechter nicht ab — Task-Leck je Reconnect"
+    assert '_stalled = bool(_eintrag.get("stall_kill"))' in _sp, \
+        "Relay merkt sich den Stillstands-Kill nicht (Budget wuerde faelschlich aufgefuellt)"
+    assert "_nc_rstab.reconnect_delay(attempt - 1, _RESTREAM_RELAY_POLICY)" in _sp, \
+        "Relay-Backoff ohne Streuung"
+    assert "_RESTREAM_RELAY_POLICY = _nc_rstab.ReconnectPolicy(" in src, "Relay-Regelsatz fehlt"
+
+    # EIN Parser, EIN Waechter — beide ueber pname auf beiden Pfaden
+    assert "def _eintrag(self, rid, pname=None):" in src, "kein gemeinsamer Zugriffspunkt"
+    assert "def _marke_setzen(eintrag, h, p):" in src, "Fortschrittsmarke nicht geteilt"
+    assert "async def _read_progress(self, rid, proc, pname=None):" in src
+    assert "async def _stall_watch(self, rid, proc, pname=None):" in src
+    assert "def _update_health(self, rid, p, pname=None):" in src
+    # Das Overlay haengt am Hauptprozess und darf nicht je Relay neu schreiben
+    _rp = src[src.index("    async def _read_progress(self, rid, proc, pname=None):"):
+              src.index("    async def _read_stderr(self, proc, sink):")]
+    assert "RESTREAM_OVERLAY and pname is None" in _rp, \
+        "Overlay wird aus jedem Relay-Takt zusaetzlich geschrieben"
+
+    # Relays im Status sichtbar
+    _st = src[src.index("    def status(self):"):]
+    assert '"relays": {' in _st, "Relays fehlen im Status"
+    assert 'self._stallkills.get(\n                                      f"{rid}:{_pn}", 0)' in _st \
+        or 'f"{rid}:{_pn}"' in _st, "Relay-Stillstaende nicht getrennt gezaehlt"
+
+    # ── 2) Im Panel sichtbar ──────────────────────────────────────────────
+    assert "stall_timeout_s=RESTREAM_STALL_TIMEOUT_S" in src, \
+        "Panel bekommt die Grenze nicht — muesste den Default doppelt kennen"
+    assert "ohne_fortschritt_s" in h, "Stillstand im Dashboard weiterhin unsichtbar"
+    assert "stillstaende" in h, "Stillstands-Zaehler im Dashboard unsichtbar"
+    assert "Bild fließt" in h, "keine Spalte fuer den Fluss"
+    assert "s.relays" in h, "Relay-Zeilen fehlen im Panel"
+    assert "d.stall_timeout_s" in h, "Panel faerbt gegen einen eigenen Default statt gegen die API"
+
+    # ── 3) Quellen-Waechter ueberlebt seine eigenen Fehler ────────────────
+    _sw = src[src.index("    async def _source_watch(self, rid, username):"):
+              src.index("    async def _switch_to_next_live(self, rid, current_user):")]
+    assert '_loop_fehler(f"restream-srcwatch#{rid}", e)' in _sw, \
+        "Quellen-Waechter meldet seinen Tod weiterhin nicht"
+    assert _sw.count("except Exception as e:") >= 2, \
+        "nur eine Fehlerklammer — eine kaputte Runde beendet den Failover noch immer"
+    ok("v4.0-w115: Relays sehen und werden bewacht, Stillstand im Panel, "
+       "Quellen-Waechter ueberlebt Fehler")
 
 
 def main():
@@ -6186,6 +6279,7 @@ def main():
     test_v40_w109_dashboard_feldnamen()
     test_v40_w113_restream_stability()
     test_v40_w114_website_3d()
+    test_v40_w115_relay_sicht_und_srcwatch()
     print(f"test_restream OK — {PASS} Verträge grün")
 
 

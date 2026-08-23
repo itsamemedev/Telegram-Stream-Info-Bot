@@ -17,6 +17,7 @@ Sicherung und anschließender Prüfung.
 |---|---|---|
 | `w113_restream_stability.json` | v4.0-W113 | Wiederanlauf-Härte des Restreams (`bot_v37.py`) |
 | `w114_website_3d.json` | v4.0-W114 | Die öffentliche Seite im Raum (`website/lafap_index.html`, `impressum.html`, `datenschutz.html`) |
+| `w115_relay_sicht.json` | v4.0-W115 | Relays sichtbar + bewacht, Stillstand im Panel, Quellen-Wächter (`bot_v37.py`, `templates/dashboard.html`) |
 
 **W114 braucht zusätzlich zwei NEUE Dateien**, die ein Anker-Patch nicht
 anlegen kann: `website/raum.css` und `website/raum.js`. Beide gehören ins
