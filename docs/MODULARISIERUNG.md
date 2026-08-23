@@ -458,14 +458,19 @@ Blueprint-Hook würden sie nur noch für ihr Blueprint gelten.
 
 ---
 
-### Welle 3 — Blueprints in Serie 🔄 *läuft (W107: `/api/archive`)*
+### Welle 3 — Blueprints in Serie 🔄 *läuft (W107–W108: 6 Blueprints, 64 Routen)*
 
 Jetzt der grosse Hebel: **rund 7.600 Zeilen** in etwa 14 Paketen. Reihenfolge
 nach Grösse und Eigenständigkeit, ein Paket pro Welle:
 
 | Blueprint | Routen | Zeilen |
 |---|---:|---:|
+| ✅ `nc/routes/recordings.py` (W106) | 34 | 800 |
 | ✅ `nc/routes/archive.py` (W107) | 11 | 582 |
+| ✅ `nc/routes/insights.py` (W108) | 8 | 183 |
+| ✅ `nc/routes/collections.py` (W108) | 3 | 84 |
+| ✅ `nc/routes/webhooks.py` (W108) | 4 | 83 |
+| ✅ `nc/routes/scheduler.py` (W108) | 4 | 58 |
 | `nc/routes/ai.py` | 24 | 1.125 |
 | `nc/routes/restream.py` | 16 | 437 |
 | `nc/routes/trackings.py` | 15 | 448 |
@@ -499,6 +504,30 @@ nach Grösse und Eigenständigkeit, ein Paket pro Welle:
 > Das Werkzeug markiert auch `globals()`-Zugriffe mit ⚠ — dort ist die
 > Abhängigkeit für jede Namensanalyse unsichtbar und muss von Hand geprüft
 > werden (`/api/ops` und `/api/chat` sind so ein Fall).
+
+**Die Mechanik ist jetzt ein Werkzeug.** `tools/bp_extract.py` schneidet Routen
+und ihre alleinigen Helfer heraus, schreibt die Aufrufe um, erzeugt das Modul
+und kürzt den Monolithen — danach bleibt die Checkliste, die es selbst ausgibt:
+Verdrahtung, Vertragswanderung, Prüfkette.
+
+```bash
+python3 tools/bp_extract.py /api/insights insights            # Trockenlauf
+python3 tools/bp_extract.py /api/insights insights --apply
+```
+
+> [!WARNING]
+> **Namen werden über `tokenize` ersetzt, nie über Regex.** In W107 traf eine
+> Regex-Ersetzung mitten in eine Zeichenkette: aus `"ARCHIVE_DIR nicht
+> konfiguriert"` wurde `'_c().cfg["ARCHIVE_DIR"] nicht konfiguriert'`, und die
+> Datei war syntaktisch kaputt. Ein Tokenizer unterscheidet Namen von Strings
+> und Kommentaren; ein Regex kann das nicht.
+
+**Verträge gelten generisch, nicht je Blueprint.** `_test_routes_alle_blueprints`
+in `test_nc_modules.py` prüft jedes Modul in `nc/routes/` automatisch: Pfade
+unter `/api/`, Endpunkte qualifiziert, im Bot registriert, kein Rückimport aus
+`bot_v37`, keine app-weiten Hooks mitgewandert, kein roher Query-Parser. Ein
+neues Blueprint braucht dafür **keinen neuen Testcode** — nur die Wanderung
+seiner eigenen, spezifischen Anker.
 
 **Konfiguration gehört in `ctx.cfg`, nicht in neue Slots.** Seit W107 nimmt der
 Kontext Startwerte als ein Dict entgegen. Ohne das hätte allein `/api/ai` den
@@ -603,12 +632,12 @@ Supervisor fahren.
 
 ## 8 · Zielbild und Messlatte
 
-| | Start | heute (W104–W107) | nach Welle 3 | Ziel |
+| | Start | heute (W104–W108) | nach Welle 3 | Ziel |
 |---|---:|---:|---:|---:|
-| `bot_v37.py` Zeilen | 34.487 | **33.092** | ~24.700 | **~8.000** |
-| Flask-Routen im Monolithen | 345 | **300** | ~30 | 0 |
-| Routen in Blueprints | 0 | **45** | ~315 | 345 |
-| `nc/`-Module | 83 | **87** | ~100 | ~115 |
+| `bot_v37.py` Zeilen | 34.487 | **32.713** | ~24.700 | **~8.000** |
+| Flask-Routen im Monolithen | 345 | **281** | ~30 | 0 |
+| Routen in Blueprints | 0 | **64** | ~315 | 345 |
+| `nc/`-Module | 83 | **91** | ~100 | ~115 |
 | Grösste Datei im Projekt | `bot_v37.py` | `bot_v37.py` | `bot_v37.py` | `templates/dashboard.html` |
 
 Die härtere Messlatte ist keine Zahl:
