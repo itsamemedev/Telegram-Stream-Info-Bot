@@ -737,6 +737,96 @@ def _test_restream_stability():
     ok("restream_stability: bot-frei und stdlib-only")
 
 
+def _test_updater():
+    """v4.0-W115: Selbst-Update — die drei Zusagen, ohne Netz und ohne Bot.
+
+    Ein Update schreibt Code unter einen laufenden Dienst. Genau drei Dinge
+    duerfen dabei nie passieren, und alle drei sind hier reine Funktionen:
+    Betriebsdaten anfassen, aus der Wurzel ausbrechen, lokale Dateien
+    loeschen. Der Rest (Download, Backup, Schreiben) haengt daran.
+    """
+    import nc.updater as up
+
+    # ── Zusage 1: Betriebsdaten sind unantastbar ─────────────────────────
+    # Die Liste ist der einzige Schutz der .env mit ihren 352 Variablen —
+    # ein Update, das sie mit .env.example ueberschreibt, kostet den Betrieb.
+    for pfad in (".env", "logs/debug.log", "nc/logs/x.log", "recordings/a.mp4",
+                 "bot.db", "bot.db-wal", "archive/x.mp4", "backups/x.zip",
+                 ".git/HEAD", "build/README.md", "nc/__pycache__/x.pyc",
+                 "website/news.json", ".nc_update.json"):
+        assert up.is_protected(pfad), pfad
+    for pfad in ("bot_v37.py", "nc/updater.py", "brain/router.py",
+                 "templates/dashboard.html", "website/lafap_index.html",
+                 ".claude/skills/nightcrawler/SKILL.md", "requirements.txt",
+                 ".env.example"):
+        assert not up.is_protected(pfad), pfad
+    ok("updater: Betriebsdaten geschuetzt, Quelltext aktualisierbar")
+
+    # website/news.json schreibt der News-Agent im Betrieb. Kaeme sie aus dem
+    # Archiv zurueck, stuende die Website schlagartig auf dem Stand des
+    # letzten Commits — mit verschwundenen News.
+    assert up.is_protected("website/news.json")
+    assert not up.is_protected("website/lafap_index.html")
+    ok("updater: news.json geschuetzt, die Seite selbst nicht")
+
+    # ── Zusage 2: kein Ausbruch aus der Wurzel (Zip-Slip) ────────────────
+    for bose in ("../etc/passwd", "/etc/passwd", "a/../../b", "C:/x",
+                 "./../x", "", "..", "nc/../../boom"):
+        assert up.normalize(bose) == "", bose
+    assert up.normalize("nc/updater.py") == "nc/updater.py"
+    assert up.normalize("nc\\updater.py") == "nc/updater.py"
+    # Ein unbrauchbarer Pfad gilt zugleich als geschuetzt — doppelter Riegel,
+    # damit kein Zweig ihn versehentlich doch schreibt.
+    assert up.is_protected("../etc/passwd")
+    ok("updater: Zip-Slip abgeriegelt, unbrauchbare Pfade gelten als geschuetzt")
+
+    # GitHub packt alles unter <repo>-<branch>/ — diese Ebene faellt weg.
+    assert up.strip_archive_root("Telegram-Stream-Info-Bot-main/nc/x.py") == "nc/x.py"
+    assert up.strip_archive_root("Telegram-Stream-Info-Bot-main/") == ""
+    assert up.strip_archive_root("nurwurzel") == ""
+    ok("updater: Archiv-Wurzel wird abgestreift")
+
+    # ── Zusage 3: nur hinzufuegen und ersetzen, nie loeschen ─────────────
+    eintraege = [("bot_v37.py", 10, "neu"), ("nc/neu.py", 5, "x"),
+                 ("gleich.py", 3, "same"), (".env", 1, "y"),
+                 ("../boom", 1, "z"), ("riesig.bin", up.MAX_FILE_BYTES + 1, "w")]
+    lokal = {"bot_v37.py": "alt", "gleich.py": "same", "nur_lokal.sh": "meins"}
+    plan = up.build_plan(eintraege, lambda r: lokal.get(r))
+    assert plan.changed == ["bot_v37.py"], plan.changed
+    assert plan.new == ["nc/neu.py"], plan.new
+    assert plan.same == 1
+    assert plan.protected == [".env"], plan.protected
+    assert sorted(plan.rejected) == ["../boom", "riesig.bin"], plan.rejected
+    # Die lokale Datei, die im Archiv fehlt, taucht in keiner Liste auf —
+    # sie bleibt liegen. Sonst raeumt ein Update eigene Skripte weg.
+    for liste in (plan.new, plan.changed, plan.protected, plan.rejected):
+        assert "nur_lokal.sh" not in liste
+    assert plan.as_dict()["count"] == 2
+    ok("updater: Plan trennt neu/geaendert/geschuetzt, loescht nie")
+
+    # ── Ehrlichkeit der Auskunft ────────────────────────────────────────
+    # Ohne bekannten lokalen Stand ist "es gibt ein Update" eine Behauptung.
+    assert "unbekannt" in up.describe({"ok": True, "update_available": False,
+                                       "local_known": False}).lower()
+    assert "aktuell" in up.describe({"ok": True, "update_available": False,
+                                     "local_known": True}).lower()
+    assert "fehlgeschlagen" in up.describe({"ok": False, "error": "kaputt"}).lower()
+    assert up.short_sha("a1b2c3d4e5f6") == "a1b2c3d"
+    ok("updater: Auskunft nennt einen unbekannten Stand auch so")
+
+    # ── bot-frei und stdlib-only ────────────────────────────────────────
+    hier = os.path.dirname(os.path.abspath(__file__))
+    src = open(os.path.join(hier, "nc", "updater.py"), encoding="utf-8").read()
+    assert "bot_v37" not in src, "nc.updater importiert aus dem Monolithen"
+    assert "import requests" not in src and "aiohttp" not in src, "Fremd-Bibliothek"
+    assert "urllib.request" in src
+    # Der Token darf nie in einer API-Antwort landen.
+    up.configure(root=hier, token="geheim")
+    st = up.settings()
+    assert "geheim" not in repr(st) and st["has_token"] is True, st
+    ok("updater: bot-frei, stdlib-only, Token nie in der Auskunft")
+
+
 def _test_flapguard_und_rate():
     """v4.0-W116: die beiden Verlaufs-Urteile, jeweils ohne Bot und ohne Uhr.
 
@@ -951,6 +1041,8 @@ def main():
     _test_restream_stability()
 
     _test_flapguard_und_rate()
+
+    _test_updater()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)
 

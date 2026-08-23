@@ -2489,6 +2489,42 @@ document.addEventListener("DOMContentLoaded",function(){
       <span class="sd"><span class="sd-l">DB</span><span class="sd-v" id="sd_db">–</span></span>
     </div>
 
+    <!-- v4.0-W115: Software-Stand — bewusst die ERSTE Karte der Uebersicht.
+         Ein veralteter Stand ist kein Randthema: er entscheidet, ob ein
+         gemeldeter Fehler ueberhaupt noch existiert. Der Ablauf hier ist
+         vierstufig und jederzeit abbrechbar — pruefen, trocken rechnen,
+         einspielen, neu starten. Geschrieben wird erst nach Rueckfrage. -->
+    <div class="panel mb" id="pnl_ov_update">
+      <div class="head"><h3>◆ SOFTWARE-STAND</h3>
+        <span class="tag" id="up_tag">wird geprüft …</span>
+        <div class="spacer"></div>
+        <button class="btn sm" onclick="updCheck(true)" aria-label="Auf Aktualisierungen prüfen"
+                title="Auf Aktualisierungen prüfen">↻</button></div>
+      <div class="body">
+        <div class="sysdiag" id="up_diag" aria-label="Versionsstand">
+          <span class="sd"><span class="sd-l">Version</span><span class="sd-v" id="up_ver">–</span></span>
+          <span class="sd"><span class="sd-l">Hier</span><span class="sd-v mono" id="up_local">–</span></span>
+          <span class="sd"><span class="sd-l">Im Repo</span><span class="sd-v mono" id="up_remote">–</span></span>
+          <span class="sd"><span class="sd-l">Stand vom</span><span class="sd-v" id="up_date">–</span></span>
+        </div>
+        <div id="up_msg" class="faint" style="font-size:var(--fs-sm);margin-bottom:10px">
+          Verbindung zum Repo wird geprüft …</div>
+        <div class="bar cyan" id="up_bar" hidden role="progressbar" aria-valuemin="0"
+             aria-valuemax="100" aria-valuenow="0" aria-label="Fortschritt der Aktualisierung"><i style="width:0"></i></div>
+        <div id="up_detail"></div>
+        <div class="btnrow mt">
+          <button class="btn cyan" id="up_dry" onclick="updStart(true)">Trockenlauf</button>
+          <button class="btn" id="up_go" onclick="updApply()">Aktualisierung einspielen</button>
+          <button class="btn danger" id="up_rb" onclick="updRollback()" hidden>Zurückrollen</button>
+          <button class="btn" id="up_rs" onclick="updRestart()" hidden>Dienst neu starten</button>
+          <div class="spacer"></div>
+          <a class="btn sm" id="up_repo" href="https://github.com/itsamemedev/Telegram-Stream-Info-Bot"
+             target="_blank" rel="noopener">Repo ansehen</a>
+          <a class="btn sm" id="up_zip" href="#" download>Als ZIP laden</a>
+        </div>
+      </div>
+    </div>
+
     <div class="panel mb" id="pnl_ov_cc">
       <div class="head"><h3>◆ NIGHTCRAWLER · KOMMANDOZENTRALE</h3>
         <span class="tag" id="ov_cc_tag">…</span>
@@ -10917,6 +10953,189 @@ var ncCommandCenter=(function(){
 /* v4.0-W71: loadCommandCenter (Insights-Mount) entfernt — die Kommandozentrale
    lebt jetzt nur noch auf der Übersicht (ncCommandCenter.start('ov_cc','overview')). */
 
+/* ═══ v4.0-W115: Software-Stand · Selbst-Update aus dem GitHub-Repo ═══
+   Vier Endpunkte, ein Zustand:
+     GET  /api/update/check     billig, ein GitHub-Aufruf, kein Download
+     POST /api/update/start     {dry_run} — laeuft im Hintergrund-Thread
+     GET  /api/update/status    Fortschritt/Ergebnis dieses Laufs
+     POST /api/update/rollback  letztes Backup zurueckspielen
+
+   Warum gepollt und nicht auf die Antwort gewartet: der Download dauert je
+   nach Leitung bis zu einer Minute. Ein fetch darauf laeuft in den Timeout
+   des Browsers, und der Operator saehe einen Netzwerkfehler waehrend das
+   Update in Wahrheit sauber durchlaeuft. */
+var UPD_POLL=null, UPD_LAST=null, UPD_SHOWN=0;   /* UPD_SHOWN: Zeitstempel des
+   zuletzt angezeigten Ergebnisses. Ohne ihn zeigt jeder /api/update/check
+   dasselbe Ergebnis erneut an — und weil das Poll-Ende direkt danach
+   prueft, stand die Meldung zweimal auf dem Schirm. */
+
+function updEl(id){ return document.getElementById(id); }
+function updSet(id,txt,cls){ var e=updEl(id); if(!e) return;
+  e.textContent=(txt==null||txt==='')?'–':txt;
+  e.className=(e.id==='up_ver'||e.id==='up_date')?('sd-v'+(cls?' '+cls:'')):('sd-v mono'+(cls?' '+cls:'')); }
+
+function updBusy(on){
+  ['up_dry','up_go','up_rb','up_rs'].forEach(function(id){
+    var b=updEl(id); if(b) b.disabled=!!on; });
+}
+function updBar(pct,show){
+  var bar=updEl('up_bar'); if(!bar) return;
+  bar.hidden=!show;
+  bar.setAttribute('aria-valuenow', Math.round(pct||0));
+  var i=bar.querySelector('i'); if(i) i.style.width=Math.max(0,Math.min(100,pct||0))+'%';
+}
+
+async function updCheck(manual){
+  var d=await apiGet('/api/update/check');
+  UPD_LAST=d;
+  var tag=updEl('up_tag'), msg=updEl('up_msg');
+  updSet('up_ver', d.local_version?('v'+d.local_version):'–');
+  updSet('up_local', (d.local&&d.local.short)||'unbekannt');
+  var repo=updEl('up_repo'), zip=updEl('up_zip');
+  if(repo&&d.repo_url) repo.href=d.repo_url;
+  if(zip&&d.zip_url) zip.href=d.zip_url;
+
+  if(!d.ok){
+    updSet('up_remote','–'); updSet('up_date','–');
+    if(tag){ tag.textContent='nicht erreichbar'; tag.style.color='var(--amber)'; }
+    /* Ehrlich benennen, was los ist — der Bot laeuft weiter, nur die
+       Pruefung nicht. Ein blosses "Fehler" liesse offen, ob der Dienst haengt. */
+    if(msg) msg.textContent='Repo nicht erreichbar: '+(d.error||'unbekannt')
+      +' — der Bot läuft davon unberührt weiter.';
+  } else {
+    var r=d.remote||{};
+    updSet('up_remote', r.short||'–');
+    updSet('up_date', (r.date||'').slice(0,10)||'–');
+    if(d.update_available){
+      if(tag){ tag.textContent='Aktualisierung verfügbar'; tag.style.color='var(--amber)'; }
+      updSet('up_remote', r.short||'–', 'warn');
+      if(msg) msg.innerHTML='<b>Neuer Stand im Repo.</b> '+esc(r.message||'')
+        +' <span class="faint">— erst Trockenlauf, dann einspielen.</span>';
+    } else if(d.local_known){
+      if(tag){ tag.textContent='aktuell'; tag.style.color='var(--neon)'; }
+      updSet('up_remote', r.short||'–', 'ok');
+      if(msg) msg.textContent='Dieser Bestand entspricht dem Repo.';
+    } else {
+      if(tag){ tag.textContent='Stand unbekannt'; tag.style.color='var(--text-dim)'; }
+      if(msg) msg.textContent='Über diesen Weg wurde noch nie aktualisiert — '
+        +'der Trockenlauf rechnet durch, was sich ändern würde, und schreibt nichts.';
+    }
+  }
+  var rb=updEl('up_rb');
+  if(rb) rb.hidden=!(d.backups&&d.backups.length);
+  var go=updEl('up_go');
+  if(go) go.disabled=(d.enabled===false);
+  if(go&&d.enabled===false) go.title='Update-Schreiben ist abgeschaltet (UPDATE_ENABLED=0)';
+  /* Ein Lauf kann noch aus einer frueheren Sitzung laufen. */
+  if(d.job&&d.job.running){ updBusy(true); updPollStart(); }
+  else if(d.job&&d.job.result&&(d.job.finished||0)>UPD_SHOWN) updRender(d.job.result, d.job.finished);
+  if(manual&&typeof toast==='function') toast('Stand geprüft','ok');
+  return d;
+}
+
+async function updStart(dry){
+  var d=await apiPost('/api/update/start',{dry_run:!!dry});
+  if(!d||!d.ok){ if(typeof toast==='function') toast((d&&d.error)||'Start fehlgeschlagen','err'); return; }
+  updBusy(true); updBar(0,true);
+  var msg=updEl('up_msg');
+  if(msg) msg.textContent=dry?'Trockenlauf läuft — es wird nichts geschrieben.'
+                            :'Aktualisierung läuft — bitte den Dienst jetzt nicht neu starten.';
+  var det=updEl('up_detail'); if(det) det.innerHTML='';
+  updPollStart();
+}
+
+function updPollStart(){
+  if(UPD_POLL) clearInterval(UPD_POLL);
+  UPD_POLL=setInterval(async function(){
+    var d=await apiGet('/api/update/status');
+    var j=(d&&d.job)||{};
+    updBar(j.percent||0, true);
+    var msg=updEl('up_msg');
+    if(msg&&j.running) msg.textContent=(j.phase||'')+' · '+(j.percent||0)+'% '+(j.text||'');
+    if(j.running) return;
+    clearInterval(UPD_POLL); UPD_POLL=null;
+    updBusy(false); updBar(100,false);
+    /* Erst neu pruefen, DANN das Ergebnis zeigen. Andersherum ueberschrieb
+       die Pruefung die Ergebniszeile ("201 neu, 1 geaendert") sofort wieder
+       mit ihrem Statustext, und der Operator sah nie, was der Lauf getan hat.
+       updRender ist ueber UPD_SHOWN idempotent — der zweite Aufruf ist ein
+       No-op und toastet nicht erneut. */
+    await updCheck(false);
+    updRender(j.result||null, j.finished);
+  },1200);
+}
+
+function updRender(r, finished){
+  var det=updEl('up_detail'), msg=updEl('up_msg');
+  if(!det) return;
+  if(!r){ det.innerHTML=''; return; }
+  if(finished && finished<=UPD_SHOWN) return;   // schon gezeigt
+  UPD_SHOWN=Math.max(UPD_SHOWN, finished||0);
+  if(!r.ok){
+    det.innerHTML='<div class="empty">'+esc(r.error||r.summary||'Fehlgeschlagen')+'</div>';
+    if(typeof toast==='function') toast(r.error||'Aktualisierung fehlgeschlagen','err');
+    return;
+  }
+  var p=r.plan||{}, rows=[];
+  function grp(title,arr,cls){
+    if(!arr||!arr.length) return '';
+    var head='<div style="margin-top:8px"><span class="tag" style="color:var(--'+cls+')">'
+      +esc(title)+' · '+arr.length+'</span></div>';
+    /* Nur die ersten 12 auflisten. Bei einem Erst-Update sind es ueber 200 —
+       eine Liste dieser Laenge schiebt die Uebersicht um mehrere Bildschirme
+       nach unten und macht die Karte unbedienbar. Die Zahl im Etikett sagt
+       ohnehin das Wesentliche; die Namen sind nur eine Stichprobe. */
+    var show=arr.slice(0,12).map(function(f){return '<div class="mono faint" style="font-size:var(--fs-2xs)">'+esc(f)+'</div>';}).join('');
+    var more=arr.length>12?'<div class="faint" style="font-size:var(--fs-2xs)">… und '+(arr.length-12)+' weitere</div>':'';
+    return head+show+more;
+  }
+  rows.push(grp('Neu',p['new'],'neon'));
+  rows.push(grp('Geändert',p.changed,'amber'));
+  rows.push(grp('Geschützt übersprungen',p.protected,'cyan'));
+  if(r.failed&&r.failed.length)
+    rows.push('<div style="margin-top:8px"><span class="tag" style="color:var(--red)">Fehlgeschlagen · '
+      +r.failed.length+'</span></div>'+r.failed.map(function(f){
+        return '<div class="mono" style="font-size:var(--fs-2xs);color:var(--red)">'
+          +esc(f.file)+' — '+esc(f.error)+'</div>';}).join(''));
+  if(r.backup) rows.push('<div class="faint mt" style="font-size:var(--fs-2xs)">Backup: <span class="mono">'
+    +esc(r.backup)+'</span></div>');
+  det.innerHTML=rows.join('');
+  if(msg) msg.textContent=r.summary||'';
+  var rs=updEl('up_rs');
+  if(rs) rs.hidden=!r.restart_needed;
+  if(typeof toast==='function') toast(r.summary||'Fertig', r.restart_needed?'warn':'ok');
+}
+
+async function updApply(){
+  var d=UPD_LAST||{};
+  var rem=(d.remote&&d.remote.short)||'dem Repo-Stand';
+  if(!confirm('Bestand auf '+rem+' aktualisieren?\n\n'
+    +'• Betriebsdaten (.env, Datenbank, Logs, Aufnahmen) bleiben unangetastet.\n'
+    +'• Jede ersetzte Datei wandert vorher in ein Backup.\n'
+    +'• Danach ist ein Neustart des Dienstes nötig.')) return;
+  updStart(false);
+}
+
+async function updRollback(){
+  if(!confirm('Letztes Backup zurückspielen?\n\n'
+    +'Damit gilt wieder der Stand von vor der letzten Aktualisierung. '
+    +'Ein Neustart ist danach nötig.')) return;
+  updBusy(true);
+  var d=await apiPost('/api/update/rollback',{});
+  updBusy(false);
+  if(typeof toast==='function') toast(d&&d.ok?(d.summary||'Zurückgespielt'):((d&&d.error)||'Rollback fehlgeschlagen'), d&&d.ok?'warn':'err');
+  var rs=updEl('up_rs'); if(rs&&d&&d.restart_needed) rs.hidden=false;
+  updCheck(false);
+}
+
+async function updRestart(){
+  if(!confirm('Dienst jetzt neu starten?\n\nLaufende Aufnahmen und Restreams brechen ab.')) return;
+  var d=await apiPost('/api/update/restart',{});
+  if(typeof toast==='function')
+    toast(d&&d.ok?(d.summary||'Neustart läuft'):((d&&d.hint)?('Bitte selbst neu starten: '+d.hint):((d&&d.error)||'Neustart fehlgeschlagen')),
+          d&&d.ok?'warn':'err');
+}
+
 /* v4.0-W68: Übersichts-Landing — Top-KPIs + 3D-Kommandozentrale + Schnellzugriff */
 function gotoView(v){ var t=document.querySelector('.tabs .tab[data-view="'+v+'"]'); if(t) t.click(); }
 /* v4.0-W69: ncRecBars3D — rotierbares 3D-Balkendiagramm „Aufnahmen pro Tag" (14T).
@@ -11053,6 +11272,7 @@ var ncCatchGauge=(function(){
 })();
 
 async function loadOverview(){
+  try{ updCheck(false); }catch(e){}
   try{ ncCommandCenter.start('ov_cc','overview'); }catch(e){}
   try{ ncRecBars3D.start('rb_canvas','overview'); }catch(e){}
   try{ ncCatchGauge.start('cg_canvas','overview'); }catch(e){}
@@ -11112,6 +11332,18 @@ async function loadOverview(){
   try{ archStatus(); }catch(e){}
 }
 VIEW_LOADERS['overview']=loadOverview;
+/* v4.0-W115: Anstoss beim Seitenaufruf — mit demselben Kunstgriff wie
+   `VIEW_LOADERS.restream && VIEW_LOADERS.restream()` im INIT-Block.
+   WARUM noetig: die Tab-Wiederherstellung beim Start klickt den Uebersichts-
+   Tab, laeuft aber in einem FRUEHEREN Script-Block als diese Zeile. Zum
+   Zeitpunkt des Klicks ist VIEW_LOADERS['overview'] noch undefined, der
+   Loader wird also uebersprungen — und der 8s-Intervall-Refresh deckt nur
+   'system' ab. Ergebnis war: beim ersten Aufruf blieben Kennzahlen,
+   Kommandozentrale und Software-Stand leer, bis der Betreiber von Hand auf
+   einen anderen Tab und zurueck ging. Nur anstossen, wenn die Uebersicht
+   auch wirklich vorn liegt — sonst laedt ein Deep-Link auf /#brain die
+   Uebersicht unnoetig mit. */
+try{ if(CURRENT_VIEW==='overview') loadOverview(); }catch(e){}
 
 // v4.0-W90: Stream-Archiv-Suche
 async function archStatus(){

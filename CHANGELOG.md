@@ -11,6 +11,49 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Hinzugefügt — Selbst-Update aus dem Repo (W115)
+
+Der Bestand lässt sich jetzt aus dem GitHub-Repo aktualisieren, ohne den Umweg
+über ein ZIP von Hand. Die Entscheidungslogik liegt bot-frei und geprüft in
+[`nc/updater.py`](nc/updater.py).
+
+- **Übersicht, ganz vorn:** die Karte „Software-Stand" zeigt Version, lokalen
+  Stand, Repo-Stand und Datum. Ablauf in vier Schritten, jeder einzeln
+  auslösbar: prüfen → Trockenlauf → einspielen → neu starten.
+- **Trockenlauf zuerst.** Er rechnet Datei für Datei durch, was sich ändern
+  würde, und schreibt nichts. Erst danach steht die Rückfrage vor dem
+  Einspielen.
+- **Betriebsdaten sind unantastbar.** `.env`, Datenbanken, Logs, Aufnahmen,
+  Archiv, Backups und die vom News-Agenten geschriebene `website/news.json`
+  werden nie angefasst. Ohne diese Liste hätte ein Update die `.env` mit der
+  `.env.example` überschrieben — 352 Variablen weg.
+- **Nur hinzufügen und ersetzen, nie löschen.** Eine lokale Datei, die im
+  Archiv fehlt, bleibt liegen; sonst räumt ein Update eigene Skripte weg, und
+  das fällt erst Wochen später auf.
+- **Nichts wird geschrieben, bevor das Backup steht.** Jede ersetzte Datei
+  wandert vorher nach `backups/nc_update_<zeit>.zip`; scheitert das Backup,
+  bricht das Update ab. `Zurückrollen` stellt genau diesen Stand wieder her.
+- **Zip-Slip abgeriegelt.** Archivnamen mit `../` oder absolutem Pfad werden
+  verworfen, zusätzlich prüft der Schreibpfad die Wurzel ein zweites Mal.
+- **Im Hintergrund, mit Fortschritt.** Der Download dauert je nach Leitung bis
+  zu einer Minute — im Flask-Request wäre der Browser in den Timeout gelaufen,
+  während das Update in Wahrheit sauber durchläuft.
+- **Telegram:** `/update`, `/update pruefen`, `/update jetzt`,
+  `/update zurueck` — eingespielt wird nur nach ausdrücklichem „jetzt".
+- **Website:** Abschnitt „Quellcode & Download" mit ZIP-Link, GitHub-Link und
+  `git clone`. Neue Variablen: `UPDATE_ENABLED`, `UPDATE_REPO`,
+  `UPDATE_BRANCH`, `UPDATE_RESTART_CMD`, `UPDATE_KEEP_BACKUPS`.
+
+### Behoben — Übersicht blieb beim ersten Aufruf leer (W115)
+
+Die Tab-Wiederherstellung beim Start klickt den Übersichts-Tab, läuft aber in
+einem früheren Script-Block als `VIEW_LOADERS['overview']=loadOverview`. Zum
+Zeitpunkt des Klicks war der Eintrag noch `undefined`, der Loader wurde
+übersprungen — und der 8s-Intervall-Refresh deckt nur `system` ab. Kennzahlen,
+Kommandozentrale und Trefferquote blieben deshalb leer, bis der Betreiber von
+Hand auf einen anderen Tab und zurück ging. Jetzt stößt die Registrierung den
+Loader selbst an, wenn die Übersicht vorn liegt.
+
 ### Behoben — Restream-Stabilität (W113)
 
 Fünf Befunde im Wiederanlauf-Pfad des Restreams, alle in
