@@ -205,3 +205,61 @@ def test_key(api_key, model=None, opener=None):
     """Key mit einem minimalen Call prüfen → (ok: bool, detail: str)."""
     ok_, _kind, detail = probe(api_key, model=model, opener=opener)
     return (ok_, "ok" if ok_ else detail)
+
+
+# ── v4.0-W111: Schluessel- und Modellwahl, aus bot_v37 geloest ───────────
+#
+# Warum hierher: das sind Anthropic-Belange, und nc.claude IST der
+# Anthropic-Provider. Im Laufzeitkontext haetten sie drei Slots belegt, ohne
+# dass ein zweites Blueprint sie braucht. Sie lasen nur deshalb wie Bot-Code,
+# weil sie ueber _cfg_get an die app_config gingen — die liegt seit W111
+# ebenfalls in nc (nc.cfgstore).
+
+import logging as _logging                                    # noqa: E402
+import os as _os                                              # noqa: E402
+
+from nc import cfgstore as _cfgstore                          # noqa: E402
+
+_log = _logging.getLogger("TikTokBot")
+_MODEL_WARNED = set()
+
+
+def api_key():
+    """Anthropic-API-Key — Dashboard-Eingabe (app_config) hat Vorrang, sonst
+       ENV ANTHROPIC_API_KEY. Leer bedeutet Claude aus, der Fallback greift."""
+    try:
+        k = _cfgstore.get("ai.anthropic_key", None)
+        if isinstance(k, str) and k.strip():
+            return k.strip()
+    except Exception:
+        pass
+    return _os.getenv("ANTHROPIC_API_KEY", "").strip()
+
+
+def model_raw(override=None):
+    """Der KONFIGURIERTE Modellwert (override → app_config → env → Default),
+       noch OHNE Retired-Aufloesung — fuer die Status-Anzeige."""
+    if override and str(override).startswith("claude"):
+        return override
+    try:
+        m = _cfgstore.get("ai.anthropic_model", None)
+        if isinstance(m, str) and m.strip():
+            return m.strip()
+    except Exception:
+        pass
+    return _os.getenv("ANTHROPIC_MODEL", "").strip() or DEFAULT_MODEL
+
+
+def model(override=None):
+    """Das EFFEKTIVE Modell — ein bekannt abgeschalteter Pin wird automatisch
+       auf das aktuelle Aequivalent gleicher Klasse angehoben, damit der
+       LLM-Pfad nicht still bricht. Die Anhebung wird EINMAL je Wert
+       protokolliert."""
+    raw = model_raw(override)
+    eff = resolve_model(raw)
+    if eff != raw and raw not in _MODEL_WARNED:
+        _MODEL_WARNED.add(raw)
+        _log.warning("Anthropic-Modell '%s' ist abgeschaltet — automatisch auf "
+                     "'%s' angehoben. Bitte ANTHROPIC_MODEL/.env aktualisieren.",
+                     raw, eff)
+    return eff

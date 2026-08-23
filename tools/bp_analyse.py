@@ -154,6 +154,49 @@ def analyse(prefix, tree, topfn, glob, imported):
                 dyn.append(h)
     zuctx = sorted(set(zuctx))
 
+    # Reine Delegationen sind KEINE echte Kopplung: wenn die Bot-Funktion nur
+    # "return _nc_x.y(...)" macht, kann das Blueprint direkt aus nc.x
+    # importieren und braucht dafuer keinen Kontext-Eintrag. Ohne diese
+    # Unterscheidung meldet das Werkzeug Kosten, die es gar nicht gibt — genau
+    # so sah /api/ai nach der W111-Vorarbeit unveraendert teuer aus.
+    body_all = {n.name: n for n in tree.body
+                if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
+    direkt = {}
+    for f in list(zuctx):
+        n = body_all.get(f)
+        if not n:
+            continue
+        koerper = [x for x in n.body if not (isinstance(x, ast.Expr)
+                                             and isinstance(x.value, ast.Constant))]
+        if len(koerper) != 1 or not isinstance(koerper[0], ast.Return):
+            continue
+        val = koerper[0].value
+        if not (isinstance(val, ast.Call) and isinstance(val.func, ast.Attribute)
+                and isinstance(val.func.value, ast.Name)):
+            continue
+        # REINE Weitergabe heisst: jedes Argument ist unveraendert ein Parameter
+        # der Huelle. Sonst tut die Huelle mehr, als sie zugibt, und ein
+        # Direktimport bekaeme die falsche Signatur — _arg_int liest zusaetzlich
+        # request.args.get(name) und war genau so ein Fehlalarm.
+        params = {a.arg for a in n.args.args + n.args.kwonlyargs}
+        rein = all(isinstance(x, ast.Name) and x.id in params for x in val.args) and \
+            all(isinstance(k.value, ast.Name) and k.value.id in params
+                for k in val.keywords)
+        if rein:
+            imp = imported.get(val.func.value.id, "")
+            # aus "from nc import cfgstore" / "import nc.claude" den Modulpfad
+            # ziehen, damit die Ausgabe ein benutzbarer Import ist
+            if imp.startswith("from "):
+                teile = imp.split()
+                ziel = f"{teile[1]}.{teile[3]}"
+            elif imp.startswith("import "):
+                ziel = imp.split()[1]
+            else:
+                ziel = val.func.value.id
+            direkt[f] = f"{ziel}.{val.func.attr}"
+            zuctx.remove(f)
+
+
     # Wer ruft die ROUTEN selbst intern auf? Das ist keine Kopplung ueber
     # Helfer und wurde deshalb frueher nicht gemeldet — in W110 hat es
     # zugeschlagen: /sysres und die Aggregat-Route rufen api_system_resources
@@ -174,7 +217,7 @@ def analyse(prefix, tree, topfn, glob, imported):
     return {"prefix": prefix, "routes": len(sel), "lines": lines,
             "mit": mit, "mitlines": mitlines, "ctx_fns": zuctx,
             "globals": sorted(G), "imports": sorted(I), "dyn": sorted(set(dyn)),
-            "intern": intern,
+            "intern": intern, "direkt": direkt,
             "kosten": kosten,
             "ratio": round((lines + mitlines) / kosten, 1) if kosten else 999.0}
 
@@ -201,6 +244,10 @@ def main():
               f" (+ {r['mitlines']} Zeilen mitgezogene Helfer)")
         print(f"\nziehen mit ({len(r['mit'])}): {r['mit']}")
         print(f"\n-> nc/ctx.py, Funktionen ({len(r['ctx_fns'])}): {r['ctx_fns']}")
+        if r["direkt"]:
+            print(f"-> direkt importierbar, KEIN ctx noetig ({len(r['direkt'])}):")
+            for k, v in sorted(r["direkt"].items()):
+                print(f"     {k}  ->  {v}")
         print(f"-> nc/ctx.py, Globals ({len(r['globals'])}): {r['globals']}")
         print(f"\nDirektimporte aus nc/stdlib ({len(r['imports'])}): {r['imports']}")
         if r["intern"]:

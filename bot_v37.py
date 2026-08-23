@@ -585,7 +585,7 @@ from nc import binresolve as _nc_binresolve  # v4.0-W60: Binary-Pfad-Resolver (r
 from nc import ffver as _nc_ffver            # v4.0-W61: ffmpeg-Versionszeilen-Parser (rein)
 from nc import netstat as _nc_netstat        # v4.0-W61b: Netzdurchsatz-Parsing/Delta (rein)
 from nc import journalperm as _nc_journalperm  # v4.0-W62b: Journal-Leserecht-Entscheidung (rein)
-from nc import cfgstore as _nc_cfgstore      # v4.0-W62c: app_config-Upsert (conn-injiziert)
+from nc import cfgstore as _nc_cfgstore      # v4.0-W62c/W111: app_config lesen+schreiben
 from nc import recdb as _nc_recdb        # v4.0-W104: Aufnahmen-DB-Zugriffe (extrahiert)
 from nc import ctx as _nc_ctx            # v4.0-W106: Laufzeitkontext fuer geloeste Routen
 from nc.routes import recordings as _nc_routes_recordings  # v4.0-W106: Aufnahmen-Blueprint
@@ -3313,47 +3313,21 @@ AI_FLASK_TIMEOUT      = _env_int("AI_FLASK_TIMEOUT", 300)   # Cap für Dashboard
 
 
 def _anthropic_key():
-    """v4.0-W64: Anthropic-API-Key — Dashboard-Eingabe (app_config) hat Vorrang,
-       sonst ENV ANTHROPIC_API_KEY. Leer → Claude aus, Fallback greift."""
-    try:
-        k = _cfg_get("ai.anthropic_key", None)
-        if isinstance(k, str) and k.strip():
-            return k.strip()
-    except Exception:
-        pass
-    return os.getenv("ANTHROPIC_API_KEY", "").strip()
+    # v4.0-W111: nach nc/claude.py geloest — Anthropic-Belange
+    # gehoeren in den Anthropic-Provider.
+    return _nc_claude.api_key()
 
 
 def _anthropic_model_raw(override=None):
-    """v4.0-W73: der KONFIGURIERTE Modellwert (override → app_config → env →
-       Default), noch OHNE Retired-Auflösung — für die Status-Anzeige."""
-    if override and str(override).startswith("claude"):
-        return override
-    try:
-        m = _cfg_get("ai.anthropic_model", None)
-        if isinstance(m, str) and m.strip():
-            return m.strip()
-    except Exception:
-        pass
-    return os.getenv("ANTHROPIC_MODEL", "").strip() or _nc_claude.DEFAULT_MODEL
+    # v4.0-W111: nach nc/claude.py geloest.
+    return _nc_claude.model_raw(override)
 
 
-_ANTHROPIC_MODEL_WARNED = set()
 
 
 def _anthropic_model(override=None):
-    """v4.0-W73: das EFFEKTIVE Modell — ein bekannt abgeschalteter Pin (z. B.
-       claude-3-5-haiku-latest, retired → 404) wird automatisch auf das aktuelle
-       Äquivalent gleicher Klasse angehoben, damit der LLM-Pfad nicht still
-       bricht. Die Anhebung wird EINMAL je Wert protokolliert."""
-    raw = _anthropic_model_raw(override)
-    eff = _nc_claude.resolve_model(raw)
-    if eff != raw and raw not in _ANTHROPIC_MODEL_WARNED:
-        _ANTHROPIC_MODEL_WARNED.add(raw)
-        log.warning("Anthropic-Modell '%s' ist abgeschaltet — automatisch auf "
-                    "'%s' angehoben. Bitte ANTHROPIC_MODEL/.env aktualisieren.",
-                    raw, eff)
-    return eff
+    # v4.0-W111: nach nc/claude.py geloest.
+    return _nc_claude.model(override)
 
 
 # ---- Reaction-Engine-Backend (umschaltbar) ----
@@ -16287,28 +16261,14 @@ def api_watchlist_export():
 
 
 def _cfg_get(key, default=None):
-    """Liest einen JSON-Wert aus app_config. default bei Fehlen/Fehler."""
-    try:
-        with db_conn() as conn:
-            row = conn.execute("SELECT v FROM app_config WHERE k=?", (key,)).fetchone()
-        if not row or row["v"] is None:
-            return default
-        try:
-            return json.loads(row["v"])
-        except Exception:
-            return row["v"]
-    except Exception:
-        return default
+    # v4.0-W111: nach nc/cfgstore.py geloest — dort liegt der
+    # app_config-Zugriff, Lese- wie Schreibseite.
+    return _nc_cfgstore.get(key, default)
 
 
 def _cfg_set(key, value):
-    """Upsert eines JSON-Werts in app_config (backend-agnostisch ohne UPSERT-SQL).
-       v4.0-W62c: die TOCTOU-sichere Upsert-Sequenz lebt in nc/cfgstore.py."""
-    payload = json.dumps(value, ensure_ascii=False)
-    now = datetime.now(timezone.utc).isoformat()
-    with db_conn() as conn:
-        _nc_cfgstore.upsert(conn, key, payload, now)
-    return value
+    # v4.0-W111: nach nc/cfgstore.py geloest.
+    return _nc_cfgstore.set_(key, value)
 
 
 

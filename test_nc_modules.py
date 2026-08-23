@@ -536,6 +536,49 @@ def _test_routes_health():
     ok("routes.health: Startzeit als Getter, interne Aufrufer versorgt")
 
 
+def _test_cfgstore_und_claude():
+    """W111: Vorarbeit fuer das /api/ai-Blueprint. Fuenf Funktionen, die reiner
+       app_config-Zugriff bzw. Anthropic-Belang sind, lagen im Monolithen und
+       waeren dort zu fuenf Kontext-Eintraegen geworden. Sie liegen jetzt in
+       den Modulen, die genau dafuer da sind."""
+    import sqlite3, tempfile, os as _os
+    from nc import cfgstore, claude, dbwrap
+
+    db = _os.path.join(tempfile.mkdtemp(), "cfg.sqlite")
+    con = sqlite3.connect(db)
+    con.execute("CREATE TABLE app_config (k TEXT UNIQUE, v TEXT, updated_at TEXT)")
+    con.commit(); con.close()
+    dbwrap.configure_db(db_path=db, backend="sqlite")
+
+    assert cfgstore.get("fehlt", "vorgabe") == "vorgabe"
+    cfgstore.set_("ai.x", {"a": 1})
+    assert cfgstore.get("ai.x") == {"a": 1}
+    cfgstore.set_("ai.x", {"a": 2})                     # Upsert-Pfad
+    assert cfgstore.get("ai.x") == {"a": 2}, "Upsert hat nicht aktualisiert"
+    ok("cfgstore: get/set_ inkl. Upsert gegen echtes SQLite")
+
+    # Anthropic: app_config hat Vorrang vor der Umgebung.
+    _os.environ["ANTHROPIC_MODEL"] = "claude-aus-der-env"
+    assert claude.model_raw() == "claude-aus-der-env"
+    cfgstore.set_("ai.anthropic_model", "claude-aus-der-db")
+    assert claude.model_raw() == "claude-aus-der-db", "app_config hat keinen Vorrang"
+    # Ein abgeschalteter Pin wird angehoben, statt still auf 404 zu laufen.
+    assert claude.model("claude-3-5-haiku-latest") == claude.DEFAULT_MODEL
+    _os.environ.pop("ANTHROPIC_MODEL", None)
+    ok("claude: Modellwahl (app_config > env > Default) + Retired-Anhebung")
+
+    # Und der Monolith delegiert, statt eine zweite Kopie zu halten.
+    src = open("bot_v37.py", encoding="utf-8").read()
+    for fn, ziel in (("_cfg_get", "_nc_cfgstore.get(key, default)"),
+                     ("_cfg_set", "_nc_cfgstore.set_(key, value)"),
+                     ("_anthropic_key", "_nc_claude.api_key()"),
+                     ("_anthropic_model_raw", "_nc_claude.model_raw(override)"),
+                     ("_anthropic_model", "_nc_claude.model(override)")):
+        assert ("return " + ziel) in src, "%s delegiert nicht" % fn
+    assert "_ANTHROPIC_MODEL_WARNED" not in src, "alter Warn-Cache noch im Monolithen"
+    ok("bot_v37 delegiert cfg-Zugriff und Anthropic-Modellwahl")
+
+
 def main():
     tmp = tempfile.mkdtemp()
     configure_db(db_path=os.path.join(tmp, "t.db"), backend="sqlite")
@@ -630,6 +673,8 @@ def main():
     _test_routes_alle_blueprints()
 
     _test_routes_health()
+
+    _test_cfgstore_und_claude()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)
 

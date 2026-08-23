@@ -4507,10 +4507,18 @@ def test_v40_w62c_cfgstore():
     assert db.execute("SELECT v FROM app_config WHERE k='x'").fetchone()["v"] == '"new"'
     ok("v4.0-w62c: nc.cfgstore — Upsert (INSERT/UPDATE/TOCTOU-Fallback) gegen SQLite bewiesen")
 
+    # W111: _cfg_set ist selbst nach nc/cfgstore.py gewandert, der Upsert-Aufruf
+    # damit eine Ebene tiefer. Der Vertrag gilt unveraendert — geprueft wird
+    # jetzt dort, plus dass der Bot wirklich delegiert und keine Kopie behaelt.
     src = open("bot_v37.py").read()
+    _cs = open("nc/cfgstore.py", encoding="utf-8").read()
     assert "from nc import cfgstore as _nc_cfgstore" in src
-    assert "_nc_cfgstore.upsert(conn, key, payload, now)" in src, "delegiert nicht"
+    assert "upsert(conn, key, payload, now)" in _cs, "set_ ruft den Upsert nicht"
+    assert "return _nc_cfgstore.set_(key, value)" in src, "Bot delegiert _cfg_set nicht"
+    assert "return _nc_cfgstore.get(key, default)" in src, "Bot delegiert _cfg_get nicht"
     assert "INSERT INTO app_config (k, v, updated_at)" not in src, "alter Upsert noch im Monolithen"
+    assert "SELECT v FROM app_config WHERE k=?" not in src, \
+        "Doppel-Logik: app_config-Lesezugriff noch im Monolithen"
 
 
 def test_v40_w62d_mod_resolve_exempt():
