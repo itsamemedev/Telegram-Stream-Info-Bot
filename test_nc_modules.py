@@ -426,12 +426,85 @@ def _test_routes_archive():
         assert gone not in src, "Doppel-Logik: %s noch im Monolithen" % gone
     ok("bot_v37 registriert nur noch — keine Archiv-Route mehr im Monolithen")
 
-    # Der Kontext bleibt klein. Waechst er unbemerkt, ist die Grenze weg, die
-    # nc/ctx.py sich selbst setzt — deshalb eine harte Obergrenze.
+    # Die Obergrenze fuer nc.ctx prueft _test_routes_alle_blueprints zentral.
+
+
+def _test_routes_alle_blueprints():
+    """W108: ab hier gilt der Vertrag GENERISCH fuer jedes Modul in nc/routes/.
+
+       Frueher bekam jedes Blueprint seinen eigenen Testblock — bei dreizehn
+       geplanten waere das dreizehnmal dieselbe Zusicherung in leicht anderer
+       Schreibweise. Was fuer alle gilt, wird hier einmal geprueft; nur
+       Besonderheiten einzelner Module stehen weiter in eigenen Tests."""
+    import glob as _glob
+    import importlib
+    from flask import Flask
+
+    module = sorted(_os_basename(p) for p in _glob.glob("nc/routes/*.py")
+                    if not p.endswith("__init__.py"))
+    assert module, "keine Blueprints gefunden"
+    src = open("bot_v37.py", encoding="utf-8").read()
+
+    gesamt = 0
+    for name in module:
+        mod = importlib.import_module("nc.routes." + name)
+        assert hasattr(mod, "bp"), "%s hat kein bp" % name
+
+        app = Flask(__name__)
+        app.register_blueprint(mod.bp)
+        regeln = [r for r in app.url_map.iter_rules() if r.endpoint != "static"]
+        assert regeln, "%s registriert keine Route" % name
+        gesamt += len(regeln)
+
+        # (1) Pfade woertlich: ein url_prefix wuerde jeden Dashboard-Aufruf brechen.
+        for r in regeln:
+            assert str(r.rule).startswith("/api/"), \
+                "%s: Pfad nicht mehr unter /api/ — url_prefix gesetzt? %s" % (name, r.rule)
+        # (2) Endpunkte blueprint-qualifiziert.
+        assert all(r.endpoint.startswith(name + ".") for r in regeln), \
+            "%s: Endpunkt nicht qualifiziert" % name
+        # (3) Der Bot registriert es wirklich — sonst waere die Route weg.
+        assert "register_blueprint(_nc_routes_%s.bp)" % name in src, \
+            "%s nicht in bot_v37 registriert" % name
+        # (4) Architektur-Grenze: kein Rueckimport aus dem Monolithen. Geprueft
+        # wird ueber den AST, nicht ueber den Text — "aus bot_v37 geloest" steht
+        # voellig zu Recht in jedem Docstring und ist kein Verstoss.
+        import ast as _ast
+        quelle = open("nc/routes/%s.py" % name, encoding="utf-8").read()
+        for _n in _ast.walk(_ast.parse(quelle)):
+            if isinstance(_n, _ast.Import):
+                assert all(not al.name.startswith("bot_v37") for al in _n.names), \
+                    "%s importiert aus bot_v37" % name
+            elif isinstance(_n, _ast.ImportFrom):
+                assert not (_n.module or "").startswith("bot_v37"), \
+                    "%s importiert aus bot_v37" % name
+        # (5) Keine app-weiten Hooks mitgewandert — als Blueprint-Hook wuerden
+        # sie nur noch fuer ihr Blueprint gelten, eine stille Verhaltensaenderung.
+        for hook in ("@bp.before_request", "@bp.after_request", "@bp.errorhandler"):
+            assert hook not in quelle, "%s: %s gehoert auf die App" % (name, hook)
+        # (6) Query-Parameter gehaertet, kein rohes int(request.args...).
+        assert "int(request.args.get" not in quelle, \
+            "%s: roher Query-Parser (Flask-500-Risiko)" % name
+    ok("nc/routes: %d Blueprints, %d Routen — Pfade, Endpunkte, Grenze, Hooks, Parser"
+       % (len(module), gesamt))
+
+    # url_for bleibt projektweit verboten: es ist der einzige Grund, warum die
+    # Endpunkt-Umbenennung durch Blueprints folgenlos ist.
+    for f in ("bot_v37.py", "templates/dashboard.html", "website/lafap_index.html"):
+        assert "url_for(" not in open(f, encoding="utf-8").read(), \
+            "%s benutzt url_for — Blueprint-Umbenennung waere jetzt ein Bruch" % f
+    ok("weiterhin kein url_for im Projekt")
+
+    # Der Kontext bleibt klein, sonst ist die Grenze weg, die er sich setzt.
     from nc import ctx as ncctx
     assert len(ncctx.Ctx.__slots__) <= 25, (
         "nc.ctx waechst zum Sammelbecken: %d Slots" % len(ncctx.Ctx.__slots__))
     ok("nc.ctx: %d Slots, Obergrenze eingehalten" % len(ncctx.Ctx.__slots__))
+
+
+def _os_basename(p):
+    import os as _os
+    return _os.path.basename(p)[:-3]
 
 
 def main():
@@ -524,6 +597,8 @@ def main():
     _test_routes_recordings()
 
     _test_routes_archive()
+
+    _test_routes_alle_blueprints()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)
 

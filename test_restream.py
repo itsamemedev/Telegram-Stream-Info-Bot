@@ -3445,8 +3445,11 @@ def test_v40_w34_robustness_sweep():
        Waveform-Analyse konnte bei num_samples=0 durch Null teilen."""
     src = open("bot_v37.py").read()
     # (1) Scheduler: saubere 400-Validierung statt int(None)→500.
-    assert src.count("id (Zahl) fehlt oder ungültig") == 2, "Scheduler-Routen nicht gehärtet"
-    assert "int(d.get(\"id\")))" not in src, "roher int(d.get('id')) noch vorhanden (500-Risiko)"
+    # W108: die Scheduler-Routen liegen im Blueprint. Vertrag unveraendert,
+    # Anker nachgezogen — und der rohe Parser bleibt ueberall verboten.
+    _sched = open("nc/routes/scheduler.py", encoding="utf-8").read()
+    assert _sched.count("id (Zahl) fehlt oder ungültig") == 2, "Scheduler-Routen nicht gehärtet"
+    assert "int(d.get(\"id\")))" not in src + _sched, "roher int(d.get('id')) noch vorhanden (500-Risiko)"
     # (2) Waveform: Division-durch-0-Schutz. Der Guard ist mit
     # compute_waveform_peaks in W106 ins Aufnahmen-Blueprint gewandert — der
     # Vertrag gilt unveraendert, nur der Anker liegt jetzt dort.

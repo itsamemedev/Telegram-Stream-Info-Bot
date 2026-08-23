@@ -590,6 +590,10 @@ from nc import recdb as _nc_recdb        # v4.0-W104: Aufnahmen-DB-Zugriffe (ext
 from nc import ctx as _nc_ctx            # v4.0-W106: Laufzeitkontext fuer geloeste Routen
 from nc.routes import recordings as _nc_routes_recordings  # v4.0-W106: Aufnahmen-Blueprint
 from nc.routes import archive as _nc_routes_archive        # v4.0-W107: Archiv-Blueprint
+from nc.routes import collections as _nc_routes_collections  # v4.0-W108
+from nc.routes import scheduler as _nc_routes_scheduler      # v4.0-W108
+from nc.routes import webhooks as _nc_routes_webhooks        # v4.0-W108
+from nc.routes import insights as _nc_routes_insights        # v4.0-W108
 from http.cookiejar import MozillaCookieJar
 from logging.handlers import RotatingFileHandler   # B4: war mid-file bei Z. 664
 from urllib.request import urlopen as _urlopen, Request as _UrlRequest
@@ -15090,54 +15094,10 @@ def api_notify_test():
         return jsonify(ok=False, error=str(e)), 500
 
 
-@dashboard_app.route("/api/scheduler/list")
-def api_scheduler_list():
-    try:
-        with db_conn() as conn:
-            rows = conn.execute("SELECT id, kind, at_hhmm, payload, enabled, last_run_date "
-                                "FROM scheduled_tasks ORDER BY at_hhmm").fetchall()
-        items = [{"id": r["id"], "kind": r["kind"], "at": r["at_hhmm"], "payload": r["payload"] or "",
-                  "enabled": bool(r["enabled"]), "last": r["last_run_date"] or "—"} for r in rows]
-        return jsonify(ok=True, items=items)
-    except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
 
 
-@dashboard_app.route("/api/scheduler/add", methods=["POST"])
-def api_scheduler_add():
-    d = request.get_json(silent=True) or {}
-    kind = (d.get("kind") or "").strip()
-    at = (d.get("at") or "").strip()
-    payload = (d.get("payload") or "").strip()[:1000]
-    if kind not in ("announce", "push"):
-        return jsonify(ok=False, error="kind muss 'announce' oder 'push' sein"), 400
-    if not re.match(r'^([01]\d|2[0-3]):[0-5]\d$', at):
-        return jsonify(ok=False, error="Zeit im Format HH:MM (24h)"), 400
-    if not payload:
-        return jsonify(ok=False, error="leerer Text"), 400
-    try:
-        with db_conn() as conn:
-            conn.execute("INSERT INTO scheduled_tasks (kind, at_hhmm, payload, enabled, created_at) "
-                         "VALUES (?,?,?,1,?)", (kind, at, payload, datetime.now(timezone.utc).isoformat()))
-        return jsonify(ok=True)
-    except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
 
 
-@dashboard_app.route("/api/scheduler/delete", methods=["POST"])
-def api_scheduler_delete():
-    d = request.get_json(silent=True) or {}
-    # v4.0-W34-FIX: id sauber validieren — vorher crashte int(None) bei fehlender
-    # id in einen 500 mit Python-Interna; jetzt klarer 400 (wie die übrigen Routen).
-    tid = _nc_envnum.clamp_int(d.get("id"), None)
-    if tid is None:
-        return jsonify(ok=False, error="id (Zahl) fehlt oder ungültig"), 400
-    try:
-        with db_conn() as conn:
-            conn.execute("DELETE FROM scheduled_tasks WHERE id=?", (tid,))
-        return jsonify(ok=True)
-    except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
 
 
 @dashboard_app.route("/api/chat/send_status")
@@ -15178,20 +15138,6 @@ def api_discord_invite():
                            else ("env" if url else "none")))
 
 
-@dashboard_app.route("/api/scheduler/toggle", methods=["POST"])
-def api_scheduler_toggle():
-    d = request.get_json(silent=True) or {}
-    # v4.0-W34-FIX: id sauber validieren (vorher 500 bei fehlender id).
-    tid = _nc_envnum.clamp_int(d.get("id"), None)
-    if tid is None:
-        return jsonify(ok=False, error="id (Zahl) fehlt oder ungültig"), 400
-    try:
-        with db_conn() as conn:
-            conn.execute("UPDATE scheduled_tasks SET enabled=? WHERE id=?",
-                         (1 if d.get("enabled") else 0, tid))
-        return jsonify(ok=True)
-    except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
 
 
 # ═══ v37 Welle 3: Streamer-Drawer (#18) + Recorder-Tier (#11) ═══
@@ -16705,203 +16651,20 @@ def _ffmpeg_version_str():
 
 # =====================  GROUP A — Insights / Analytics  =====================
 
-@dashboard_app.route("/api/insights/best-times/<username>")
-def api_insights_best_times(username):
-    """Beste Stunden/Wochentage um diesen Streamer live zu erwischen — aus den
-       Startzeiten erfolgreicher Aufnahmeversuche (Live-Evidenz)."""
-    try:
-        with db_conn() as conn:
-            rows = conn.execute(
-                "SELECT started_at FROM recording_attempts "
-                "WHERE username=? AND started_at IS NOT NULL", (username,)).fetchall()
-        by_hour = [0] * 24
-        by_dow = [0] * 7        # 0=Montag … 6=Sonntag
-        total = 0
-        for r in rows:
-            dt = _parse_iso(r["started_at"])
-            if not dt:
-                continue
-            by_hour[dt.hour] += 1
-            by_dow[dt.weekday()] += 1
-            total += 1
-        top_hours = sorted(range(24), key=lambda h: by_hour[h], reverse=True)
-        top_hours = [{"hour": h, "count": by_hour[h]} for h in top_hours if by_hour[h] > 0][:5]
-        dow_names = ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"]
-        top_dows = sorted(range(7), key=lambda d: by_dow[d], reverse=True)
-        top_dows = [{"day": dow_names[d], "count": by_dow[d]} for d in top_dows if by_dow[d] > 0][:3]
-        rec = None
-        if top_hours and top_dows:
-            rec = f"{top_dows[0]['day']} gegen {top_hours[0]['hour']:02d}:00 Uhr"
-        return jsonify(ok=True, username=username, samples=total,
-                       top_hours=top_hours, top_days=top_dows, recommendation=rec)
-    except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
 
 
-@dashboard_app.route("/api/insights/reliability")
-def api_insights_reliability():
-    """Aufnahme-Zuverlässigkeit pro Streamer (ok-Quote), schlechteste zuerst."""
-    try:
-        with db_conn() as conn:
-            rows = conn.execute(
-                "SELECT username, COUNT(*) AS total, "
-                "SUM(CASE WHEN outcome='ok' THEN 1 ELSE 0 END) AS ok "
-                "FROM recording_attempts GROUP BY username "
-                "HAVING COUNT(*) >= 1").fetchall()
-        out = []
-        for r in rows:
-            total = int(r["total"] or 0)
-            ok = int(r["ok"] or 0)
-            rate = round(100.0 * ok / total, 1) if total else 0.0
-            out.append({"username": r["username"], "attempts": total,
-                        "successful": ok, "success_rate": rate})
-        out.sort(key=lambda x: (x["success_rate"], -x["attempts"]))
-        return jsonify(ok=True, streamers=out, count=len(out))
-    except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
 
 
-@dashboard_app.route("/api/insights/session-stats")
-def api_insights_session_stats():
-    """Live-Session-Dauer-Statistik pro Streamer aus aufgenommenen Dateien."""
-    try:
-        with db_conn() as conn:
-            rows = conn.execute(
-                "SELECT username, COUNT(*) AS n, "
-                "AVG(duration_secs) AS avg_s, MAX(duration_secs) AS max_s, "
-                "SUM(duration_secs) AS sum_s "
-                "FROM recordings WHERE deleted_at IS NULL AND duration_secs IS NOT NULL "
-                "GROUP BY username").fetchall()
-        out = []
-        for r in rows:
-            out.append({
-                "username": r["username"],
-                "recordings": int(r["n"] or 0),
-                "avg_minutes": round((r["avg_s"] or 0) / 60.0, 1),
-                "max_minutes": round((r["max_s"] or 0) / 60.0, 1),
-                "total_hours": round((r["sum_s"] or 0) / 3600.0, 1),
-            })
-        out.sort(key=lambda x: x["total_hours"], reverse=True)
-        return jsonify(ok=True, streamers=out, count=len(out))
-    except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
 
 
-@dashboard_app.route("/api/insights/growth/<username>")
-def api_insights_growth(username):
-    """Follower-/Heart-Wachstum aus profile_snapshots (Delta + Tagesrate)."""
-    try:
-        with db_conn() as conn:
-            rows = conn.execute(
-                "SELECT follower_count, heart_count, captured_at FROM profile_snapshots "
-                "WHERE username=? ORDER BY captured_at ASC", (username,)).fetchall()
-        if len(rows) < 2:
-            return jsonify(ok=True, username=username, snapshots=len(rows),
-                           note="Zu wenige Snapshots für Wachstums-Analyse.")
-        first, last = rows[0], rows[-1]
-        d_follow = (last["follower_count"] or 0) - (first["follower_count"] or 0)
-        d_heart = (last["heart_count"] or 0) - (first["heart_count"] or 0)
-        t0, t1 = _parse_iso(first["captured_at"]), _parse_iso(last["captured_at"])
-        days = max((t1 - t0).total_seconds() / 86400.0, 0.01) if (t0 and t1) else 1.0
-        return jsonify(ok=True, username=username, snapshots=len(rows),
-                       follower_delta=d_follow, heart_delta=d_heart,
-                       days_span=round(days, 1),
-                       followers_per_day=round(d_follow / days, 1),
-                       current_followers=last["follower_count"])
-    except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
 
 
-@dashboard_app.route("/api/insights/catch-rate")
-def api_insights_catch_rate():
-    """Anteil erkannter Lives die erfolgreich aufgenommen wurden (gesamt)."""
-    try:
-        with db_conn() as conn:
-            row = conn.execute(
-                "SELECT COUNT(*) AS total, "
-                "SUM(CASE WHEN outcome='ok' THEN 1 ELSE 0 END) AS ok "
-                "FROM recording_attempts").fetchone()
-        total = int(row["total"] or 0)
-        ok = int(row["ok"] or 0)
-        rate = round(100.0 * ok / total, 1) if total else 0.0
-        return jsonify(ok=True, total_attempts=total, successful=ok,
-                       catch_rate=rate)
-    except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
 
 
-@dashboard_app.route("/api/insights/activity-clock")
-def api_insights_activity_clock():
-    """Globale Live-Aktivität nach Tagesstunde (über alle Streamer) — für
-       Kapazitätsplanung: wann laufen die meisten Aufnahmen gleichzeitig."""
-    try:
-        with db_conn() as conn:
-            rows = conn.execute(
-                "SELECT started_at FROM recording_attempts "
-                "WHERE started_at IS NOT NULL").fetchall()
-        by_hour = [0] * 24
-        for r in rows:
-            dt = _parse_iso(r["started_at"])
-            if dt:
-                by_hour[dt.hour] += 1
-        peak = max(range(24), key=lambda h: by_hour[h]) if any(by_hour) else None
-        return jsonify(ok=True, by_hour=by_hour, peak_hour=peak,
-                       total=sum(by_hour))
-    except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
 
 
-@dashboard_app.route("/api/insights/leaderboard")
-def api_insights_leaderboard():
-    """Komposit-Ranking der Streamer: Aktivität (Versuche) × Zuverlässigkeit
-       (ok-Quote) × Popularität (Follower). Score 0-100, höchste zuerst."""
-    try:
-        with db_conn() as conn:
-            rows = conn.execute(
-                "SELECT username, COUNT(*) AS total, "
-                "SUM(CASE WHEN outcome='ok' THEN 1 ELSE 0 END) AS ok "
-                "FROM recording_attempts GROUP BY username").fetchall()
-            data = []
-            max_act = 1
-            max_pop = 1
-            for r in rows:
-                total = int(r["total"] or 0)
-                ok = int(r["ok"] or 0)
-                pop = _latest_popularity(conn, r["username"])
-                max_act = max(max_act, total)
-                max_pop = max(max_pop, pop)
-                data.append({"username": r["username"], "attempts": total,
-                             "ok": ok, "followers": pop})
-        out = []
-        for d in data:
-            rel = (d["ok"] / d["attempts"]) if d["attempts"] else 0.0
-            act = d["attempts"] / max_act
-            pop = d["followers"] / max_pop
-            score = round(100.0 * (0.4 * act + 0.35 * rel + 0.25 * pop), 1)
-            out.append({**d, "reliability": round(rel * 100, 1), "score": score})
-        out.sort(key=lambda x: x["score"], reverse=True)
-        return jsonify(ok=True, leaderboard=out[:50], count=len(out))
-    except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
 
 
-@dashboard_app.route("/api/insights/storage-by-streamer")
-def api_insights_storage_by_streamer():
-    """Belegter Speicher pro Streamer (GB), größte zuerst."""
-    try:
-        with db_conn() as conn:
-            rows = conn.execute(
-                "SELECT username, COUNT(*) AS n, SUM(file_size) AS bytes "
-                "FROM recordings WHERE deleted_at IS NULL "
-                "GROUP BY username").fetchall()
-        out = [{"username": r["username"], "recordings": int(r["n"] or 0),
-                "gb": round((r["bytes"] or 0) / 1024 / 1024 / 1024, 2)}
-               for r in rows]
-        out.sort(key=lambda x: x["gb"], reverse=True)
-        total_gb = round(sum(x["gb"] for x in out), 2)
-        return jsonify(ok=True, streamers=out, total_gb=total_gb, count=len(out))
-    except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
 
 
 # =====================  GROUP B — Recording-Kuratierung  =====================
@@ -16920,74 +16683,8 @@ def api_insights_storage_by_streamer():
 
 # =====================  GROUP C — Streamer-Collections  =====================
 
-@dashboard_app.route("/api/collections", methods=["GET", "POST"])
-def api_collections():
-    """GET: alle Collections + Mitglieder-Anzahl. POST: neue Collection anlegen."""
-    if request.method == "POST":
-        payload = request.get_json(silent=True) or {}
-        name = (payload.get("name") or "").strip()[:64]
-        color = (payload.get("color") or "").strip()[:16] or None
-        if not name:
-            return jsonify(ok=False, error="name erforderlich."), 400
-        try:
-            with db_conn() as conn:
-                cur = conn.execute(
-                    "INSERT INTO tracking_collections (name, color, created_at) "
-                    "VALUES (?,?,?)",
-                    (name, color, datetime.now(timezone.utc).isoformat()))
-                conn.commit()
-                new_id = cur.lastrowid
-            return jsonify(ok=True, id=new_id, name=name, color=color)
-        except Exception as e:
-            return jsonify(ok=False, error=str(e)), 500
-    # GET
-    try:
-        with db_conn() as conn:
-            rows = conn.execute(
-                "SELECT c.id, c.name, c.color, c.created_at, "
-                "(SELECT COUNT(*) FROM trackings t WHERE t.collection_id=c.id) AS members "
-                "FROM tracking_collections c ORDER BY c.name").fetchall()
-        return jsonify(ok=True, collections=[
-            {"id": r["id"], "name": r["name"], "color": r["color"],
-             "members": int(r["members"] or 0),
-             "created_at": (r["created_at"] or "")[:19]} for r in rows])
-    except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
 
 
-@dashboard_app.route("/api/collections/<int:cid>", methods=["POST", "DELETE"])
-def api_collection_modify(cid):
-    """POST: umbenennen/Farbe ändern. DELETE: Collection löschen (Mitglieder
-       werden nur entkoppelt, nicht gelöscht)."""
-    try:
-        with db_conn() as conn:
-            row = conn.execute("SELECT 1 FROM tracking_collections WHERE id=?",
-                              (cid,)).fetchone()
-            if not row:
-                return jsonify(ok=False, error="Collection nicht gefunden."), 404
-            if request.method == "DELETE":
-                conn.execute("UPDATE trackings SET collection_id=NULL WHERE collection_id=?",
-                             (cid,))
-                conn.execute("DELETE FROM tracking_collections WHERE id=?", (cid,))
-                conn.commit()
-                return jsonify(ok=True, deleted=cid)
-            payload = request.get_json(silent=True) or {}
-            name = (payload.get("name") or "").strip()[:64]
-            color = (payload.get("color") or "").strip()[:16]
-            sets, params = [], []
-            if name:
-                sets.append("name=?"); params.append(name)
-            if color:
-                sets.append("color=?"); params.append(color)
-            if not sets:
-                return jsonify(ok=False, error="Nichts zu ändern."), 400
-            params.append(cid)
-            conn.execute(f"UPDATE tracking_collections SET {', '.join(sets)} WHERE id=?",
-                         tuple(params))
-            conn.commit()
-        return jsonify(ok=True, id=cid)
-    except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
 
 
 @dashboard_app.route("/api/trackings/<int:tid>/collection", methods=["POST"])
@@ -17019,24 +16716,6 @@ def api_tracking_collection(tid):
         return jsonify(ok=False, error=str(e)), 500
 
 
-@dashboard_app.route("/api/collections/<int:cid>/trackings")
-def api_collection_trackings(cid):
-    """Alle Trackings einer Collection."""
-    try:
-        with db_conn() as conn:
-            c = conn.execute("SELECT name FROM tracking_collections WHERE id=?",
-                            (cid,)).fetchone()
-            if not c:
-                return jsonify(ok=False, error="Collection nicht gefunden."), 404
-            rows = conn.execute(
-                "SELECT id, username, last_live, recording, paused FROM trackings "
-                "WHERE collection_id=? ORDER BY username", (cid,)).fetchall()
-        return jsonify(ok=True, collection=c["name"], trackings=[
-            {"id": r["id"], "username": r["username"],
-             "live": bool(r["last_live"]), "recording": bool(r["recording"]),
-             "paused": bool(r["paused"])} for r in rows])
-    except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
 
 
 # =================  GROUP D — Per-Streamer-Einstellungen  ==================
@@ -17109,95 +16788,12 @@ def api_tracking_settings(tid):
 
 # =====================  GROUP E — Outbound-Webhooks  =====================
 
-@dashboard_app.route("/api/webhooks", methods=["GET", "POST"])
-def api_webhooks():
-    """GET: alle Webhooks. POST: neuen Webhook anlegen
-       {url, events?: 'kindA,kindB' | '*', enabled?}."""
-    if request.method == "POST":
-        payload = request.get_json(silent=True) or {}
-        url = (payload.get("url") or "").strip()
-        events = (payload.get("events") or "*").strip()[:255]
-        enabled = 0 if payload.get("enabled") is False else 1
-        if not (url.startswith("http://") or url.startswith("https://")):
-            return jsonify(ok=False, error="url muss mit http:// oder https:// beginnen."), 400
-        if len(url) > 2000:
-            return jsonify(ok=False, error="url zu lang."), 400
-        try:
-            with db_conn() as conn:
-                cur = conn.execute(
-                    "INSERT INTO webhooks (url, events, enabled, created_at) "
-                    "VALUES (?,?,?,?)",
-                    (url, events, enabled, datetime.now(timezone.utc).isoformat()))
-                conn.commit()
-                new_id = cur.lastrowid
-            return jsonify(ok=True, id=new_id, url=url, events=events,
-                           enabled=bool(enabled))
-        except Exception as e:
-            return jsonify(ok=False, error=str(e)), 500
-    # GET
-    try:
-        with db_conn() as conn:
-            rows = conn.execute(
-                "SELECT id, url, events, enabled, created_at, last_status, "
-                "last_fired_at, fail_count FROM webhooks ORDER BY id DESC").fetchall()
-        return jsonify(ok=True, webhooks=[
-            {"id": r["id"], "url": r["url"], "events": r["events"],
-             "enabled": bool(r["enabled"]), "last_status": r["last_status"],
-             "last_fired_at": (r["last_fired_at"] or "")[:19] if r["last_fired_at"] else None,
-             "fail_count": int(r["fail_count"] or 0)} for r in rows])
-    except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
 
 
-@dashboard_app.route("/api/webhooks/<int:wid>", methods=["DELETE"])
-def api_webhook_delete(wid):
-    """Webhook löschen."""
-    try:
-        with db_conn() as conn:
-            row = conn.execute("SELECT 1 FROM webhooks WHERE id=?", (wid,)).fetchone()
-            if not row:
-                return jsonify(ok=False, error="Webhook nicht gefunden."), 404
-            conn.execute("DELETE FROM webhooks WHERE id=?", (wid,))
-            conn.commit()
-        return jsonify(ok=True, deleted=wid)
-    except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
 
 
-@dashboard_app.route("/api/webhooks/<int:wid>/toggle", methods=["POST"])
-def api_webhook_toggle(wid):
-    """Webhook aktivieren/deaktivieren (toggle)."""
-    try:
-        with db_conn() as conn:
-            row = conn.execute("SELECT enabled FROM webhooks WHERE id=?", (wid,)).fetchone()
-            if not row:
-                return jsonify(ok=False, error="Webhook nicht gefunden."), 404
-            new_val = 0 if (row["enabled"] or 0) else 1
-            conn.execute("UPDATE webhooks SET enabled=? WHERE id=?", (new_val, wid))
-            conn.commit()
-        return jsonify(ok=True, id=wid, enabled=bool(new_val))
-    except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
 
 
-@dashboard_app.route("/api/webhooks/<int:wid>/test", methods=["POST"])
-def api_webhook_test(wid):
-    """Feuert einen Test-Payload an diesen Webhook (asynchron im Thread).
-       Das tatsächliche Ergebnis erscheint danach in last_status (GET /api/webhooks)."""
-    try:
-        with db_conn() as conn:
-            row = conn.execute("SELECT id, url FROM webhooks WHERE id=?", (wid,)).fetchone()
-        if not row:
-            return jsonify(ok=False, error="Webhook nicht gefunden."), 404
-        body = {"event": "webhook.test", "severity": "info",
-                "summary": "Test-Webhook vom TikTok-Bot Dashboard",
-                "payload": {"test": True}, "ts": datetime.now(timezone.utc).isoformat(),
-                "source": "tiktok-bot"}
-        _post_json_threaded(row["url"], body, wid)
-        return jsonify(ok=True, id=wid, dispatched=True,
-                       note="Test gesendet — Ergebnis in 'last_status' nach kurzer Zeit.")
-    except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
 
 
 # =================  GROUP F — Notification-Quiet-Hours  ==================
@@ -23890,6 +23486,9 @@ _nc_ctx.configure(
     get_archive_entry=get_archive_entry,
     delete_archive_entry=delete_archive_entry,
     kind_from_filename=_kind_from_filename,
+    # --- Auswertung und Webhooks (v4.0-W108) ---
+    latest_popularity=_latest_popularity,
+    post_json_threaded=_post_json_threaded,
     # Startwerte, nicht Helfer — deshalb gebuendelt statt als eigene Slots.
     cfg={
         "ARCHIVE_DIR": ARCHIVE_DIR,
@@ -23901,6 +23500,10 @@ _nc_ctx.configure(
 )
 dashboard_app.register_blueprint(_nc_routes_recordings.bp)
 dashboard_app.register_blueprint(_nc_routes_archive.bp)
+dashboard_app.register_blueprint(_nc_routes_collections.bp)
+dashboard_app.register_blueprint(_nc_routes_scheduler.bp)
+dashboard_app.register_blueprint(_nc_routes_webhooks.bp)
+dashboard_app.register_blueprint(_nc_routes_insights.bp)
 
 
 async def _intel_index_loop():

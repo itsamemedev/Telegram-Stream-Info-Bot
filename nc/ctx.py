@@ -45,6 +45,9 @@ class Ctx:
         "get_archive_entry",
         "delete_archive_entry",
         "kind_from_filename",
+        # --- Auswertung und Webhooks (W108) ---
+        "latest_popularity",
+        "post_json_threaded",       # feuert Webhooks im eigenen Thread ab
     )
 
 
