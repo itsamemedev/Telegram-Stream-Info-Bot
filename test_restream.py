@@ -3377,10 +3377,21 @@ def test_v40_w32_bundle_and_harden():
     assert "_nc_envnum.clamp_int(request.args.get(name), default, lo, hi)" in src
     assert "_nc_logsafe.redact_stream_urls(text, _RE_STREAM_URL)" in src
     # (B) HÄRTUNG: kein rohes int(request.args.get( mehr außer im clamp_int-Kern.
-    raw_hits = [ln for ln in src.splitlines()
+    # Seit W106/W107 liegen Routen auch in nc/routes/*.py — die Haertung gilt
+    # dort genauso, sonst waere die Zerlegung ein Schlupfloch. Geprueft wird
+    # deshalb ueber ALLE Routen-tragenden Dateien statt nur ueber den Monolithen.
+    import glob as _glob
+    _quellen = {"bot_v37.py": src}
+    for _p in sorted(_glob.glob("nc/routes/*.py")):
+        _quellen[_p] = open(_p, encoding="utf-8").read()
+    raw_hits = [f"{_p}: {ln.strip()}" for _p, _t in _quellen.items()
+                for ln in _t.splitlines()
                 if "int(request.args.get" in ln and "clamp_int(request.args.get(name)" not in ln]
     assert not raw_hits, f"noch rohe Query-Parser (Flask-500-Risiko): {raw_hits[:2]}"
-    assert src.count("_arg_int(") >= 25, "Query-Parser nicht flächendeckend vereinheitlicht"
+    _n_arg_int = sum(t.count("_arg_int(") for t in _quellen.values())
+    assert _n_arg_int >= 25, (
+        "Query-Parser nicht flächendeckend vereinheitlicht (%d Vorkommen über %d Dateien)"
+        % (_n_arg_int, len(_quellen)))
     ok("v4.0-w32: alle Query-Parameter über _arg_int gehärtet (kein 500 mehr)")
 
 
@@ -4403,10 +4414,15 @@ def test_v40_w62_archivename():
         pass
     ok("v4.0-w62: nc.archivename — Namensfolge (_2/_3 vor ext) + Retry + Erschöpfung bewiesen")
 
+    # W107: _archive_open_unique ist mit den Archiv-Routen ins Blueprint
+    # gewandert. Der Vertrag gilt unveraendert, der Anker liegt jetzt dort —
+    # und der Monolith darf keine zweite Kopie behalten.
     src = open("bot_v37.py").read()
-    assert "from nc import archivename as _nc_archivename" in src
-    assert "_nc_archivename.open_unique(" in src, "delegiert nicht"
+    _rt = open("nc/routes/archive.py", encoding="utf-8").read()
+    assert "from nc import archivename as _nc_archivename" in _rt
+    assert "_nc_archivename.open_unique(" in _rt, "delegiert nicht"
     assert "zu viele Kollisionen im Archive-Ordner" not in src, "alte Retry-Schleife noch im Monolithen"
+    assert "_nc_archivename.open_unique(" not in src, "Doppel-Logik: noch im Monolithen"
 
 
 def test_v40_w62b_journalperm():
@@ -5373,9 +5389,14 @@ def test_v40_w90_stream_archive():
     assert "from nc.intel import transcripts as _intel_tx" in src
     assert "from nc.intel import library as _intel_lib" in src
     assert "async def _whisper_segments" in src, "Whisper-Segment-Adapter fehlt"
-    for route in ('@dashboard_app.route("/api/archive/search")',
-                  '@dashboard_app.route("/api/archive/status")'):
-        assert route in src, "Archiv-Route fehlt: " + route
+    # W107: die Archiv-Routen liegen im Blueprint, der Dekorator heisst dort
+    # @bp.route. Geprueft wird dieselbe Existenz an der neuen Stelle — plus
+    # dass der Bot das Blueprint wirklich registriert.
+    _rt = open("nc/routes/archive.py", encoding="utf-8").read()
+    for route in ('@bp.route("/api/archive/search")',
+                  '@bp.route("/api/archive/status")'):
+        assert route in _rt, "Archiv-Route fehlt: " + route
+    assert "register_blueprint(_nc_routes_archive.bp)" in src, "Archiv-Blueprint nicht registriert"
     assert "async def _intel_index_loop" in src and "_intel_index_loop()" in src, "Indexer nicht verdrahtet"
     # opt-in gehärtet (leere .env crasht nicht)
     assert 'env_int("ARCHIVE_INDEX_ENABLED"' in src, "Indexer-Gate nicht env-gehärtet"

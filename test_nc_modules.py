@@ -383,6 +383,57 @@ def _test_routes_recordings():
     ok("bot_v37 registriert nur noch — keine Aufnahmen-Route mehr im Monolithen")
 
 
+def _test_routes_archive():
+    """Welle 3 der Zerlegung (v4.0-W107): elf Archiv-Routen als Blueprint.
+       Dieselben Zusicherungen wie fuer recordings — plus die neue cfg-Bruecke,
+       die verhindert, dass nc/ctx.py zum Konfigurations-Abladeplatz wird."""
+    from flask import Flask
+    from nc.routes import archive as rt
+
+    app = Flask(__name__)
+    app.register_blueprint(rt.bp)
+    rules = {str(r.rule) for r in app.url_map.iter_rules() if r.endpoint != "static"}
+    assert len(rules) == 11, "11 Routen erwartet, %d registriert" % len(rules)
+    for want in ("/api/archive", "/api/archive/upload", "/api/archive/search",
+                 "/api/archive/<int:eid>", "/api/archive/duplicates"):
+        assert want in rules, "Pfad fehlt oder umbenannt: %s" % want
+    assert all(r.endpoint.startswith("archive.")
+               for r in app.url_map.iter_rules() if r.endpoint != "static")
+    ok("routes.archive: 11 Routen, Pfade woertlich unveraendert")
+
+    # Konfiguration laeuft ueber cfg, NICHT ueber eigene Env-Lesepfade: der Bot
+    # friert diese Werte beim Import ein, ein zweiter Lesepfad im Blueprint waere
+    # eine stille Verhaltensaenderung gegenueber dem Monolithen.
+    src_rt = open("nc/routes/archive.py", encoding="utf-8").read()
+    assert 'cfg["ARCHIVE_DIR"]' in src_rt, "ARCHIVE_DIR nicht ueber cfg"
+    # GENAU EIN roher Env-Zugriff ist erlaubt, und zwar der, der schon im
+    # Monolithen stand (api_archive_duplicates liest ARCHIVE_DIR als Fallback
+    # nochmal selbst, obwohl der Bot den Wert oben bereits einfriert). Das ist
+    # eine Altlast, kein neuer Lesepfad — sie wurde beim Verschieben bewusst
+    # NICHT "nebenbei repariert", weil Verhalten und Ort nie in derselben Welle
+    # geaendert werden. Der Zaehler haelt fest, dass nicht mehr dazukommen.
+    assert src_rt.count('os.getenv("ARCHIVE') == 1, (
+        "neuer roher Env-Lesepfad im Blueprint (%d statt 1)"
+        % src_rt.count('os.getenv("ARCHIVE'))
+    ok("routes.archive: Konfiguration ueber ctx.cfg, nur die bekannte Altlast bleibt")
+
+    # Und der Monolith haelt keine zweite Kopie.
+    src = open("bot_v37.py", encoding="utf-8").read()
+    assert "from nc.routes import archive as _nc_routes_archive" in src
+    assert "dashboard_app.register_blueprint(_nc_routes_archive.bp)" in src
+    for gone in ('@dashboard_app.route("/api/archive")', "def api_archive_upload",
+                 "def rename_archive_entry", "def get_archive_aggregate_stats"):
+        assert gone not in src, "Doppel-Logik: %s noch im Monolithen" % gone
+    ok("bot_v37 registriert nur noch — keine Archiv-Route mehr im Monolithen")
+
+    # Der Kontext bleibt klein. Waechst er unbemerkt, ist die Grenze weg, die
+    # nc/ctx.py sich selbst setzt — deshalb eine harte Obergrenze.
+    from nc import ctx as ncctx
+    assert len(ncctx.Ctx.__slots__) <= 25, (
+        "nc.ctx waechst zum Sammelbecken: %d Slots" % len(ncctx.Ctx.__slots__))
+    ok("nc.ctx: %d Slots, Obergrenze eingehalten" % len(ncctx.Ctx.__slots__))
+
+
 def main():
     tmp = tempfile.mkdtemp()
     configure_db(db_path=os.path.join(tmp, "t.db"), backend="sqlite")
@@ -471,6 +522,8 @@ def main():
     _test_recdb()
 
     _test_routes_recordings()
+
+    _test_routes_archive()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)
 

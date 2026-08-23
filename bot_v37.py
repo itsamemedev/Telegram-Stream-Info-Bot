@@ -584,12 +584,12 @@ from nc import admod as _nc_admod            # v4.0-W56: Werbe-Allowlist-Bauer (
 from nc import binresolve as _nc_binresolve  # v4.0-W60: Binary-Pfad-Resolver (rein)
 from nc import ffver as _nc_ffver            # v4.0-W61: ffmpeg-Versionszeilen-Parser (rein)
 from nc import netstat as _nc_netstat        # v4.0-W61b: Netzdurchsatz-Parsing/Delta (rein)
-from nc import archivename as _nc_archivename  # v4.0-W62: kollisionsfreier atomarer Open (rein)
 from nc import journalperm as _nc_journalperm  # v4.0-W62b: Journal-Leserecht-Entscheidung (rein)
 from nc import cfgstore as _nc_cfgstore      # v4.0-W62c: app_config-Upsert (conn-injiziert)
 from nc import recdb as _nc_recdb        # v4.0-W104: Aufnahmen-DB-Zugriffe (extrahiert)
 from nc import ctx as _nc_ctx            # v4.0-W106: Laufzeitkontext fuer geloeste Routen
 from nc.routes import recordings as _nc_routes_recordings  # v4.0-W106: Aufnahmen-Blueprint
+from nc.routes import archive as _nc_routes_archive        # v4.0-W107: Archiv-Blueprint
 from http.cookiejar import MozillaCookieJar
 from logging.handlers import RotatingFileHandler   # B4: war mid-file bei Z. 664
 from urllib.request import urlopen as _urlopen, Request as _UrlRequest
@@ -719,7 +719,7 @@ from nc.persona import (  # noqa: F401
 from nc.util import _webhook_event_match  # noqa: F401
 from nc.proxyutil import (  # noqa: F401
     get_random_proxy, _pick_pull_proxy, configure_proxy_select)
-from nc.sqlutil import _ARCHIVE_KIND_MAP, _archive_where_clause  # noqa: F401
+from nc.sqlutil import _ARCHIVE_KIND_MAP  # noqa: F401
 from nc.channels import (  # noqa: F401
     RESTREAM_CHAT as _RESTREAM_CHAT, _chat_block, configure_chat)
 from nc.textmore import _merge_banned_words, configure_banned_cap  # noqa: F401
@@ -782,9 +782,7 @@ from nc.dbwrap import db_conn, configure_db  # noqa: F401
 from nc.stats import (get_per_user_stats, get_activity_pulse, get_lives_heatmap,
                       _collect_session_stats, _streamer_health, _dir_stats,
                       get_recordings_heatmap)  # noqa: F401
-from nc.archive import (run_archive_file_check, evaluate_archive_rule,
-                        get_archive_entries_paged,
-                        _scan_for_duplicates)  # noqa: F401
+from nc.archive import evaluate_archive_rule  # noqa: F401
 from nc.notes import (delete_annotation, _conv_list,
                       set_tracking_notes)  # noqa: F401
 # V37-DBX: SQL-Export/Import (SQLite <-> MariaDB). Braucht nur db_conn.
@@ -3938,28 +3936,8 @@ def init_db():
             iv=iv, tbl_opts=tbl_opts, is_my=is_my, ts=ts,
             _create_index_safe=_create_index_safe, _migrate_columns=_migrate_columns, log=log)
 # F21: Archive-Helpers
-def archive_writeable() -> bool:
-    """True wenn ARCHIVE_DIR konfiguriert UND existiert/anlegbar UND beschreibbar."""
-    if not ARCHIVE_DIR:
-        return False
-    try:
-        os.makedirs(ARCHIVE_DIR, exist_ok=True)
-        return os.access(ARCHIVE_DIR, os.W_OK)
-    except Exception:
-        return False
 
 
-def _archive_open_unique(filename: str) -> tuple:
-    """F32: Atomares Anlegen einer neuen Datei unter ARCHIVE_DIR. Liefert
-       (file_descriptor, full_path). Bei Kollision wird _2, _3, ... vor
-       die Extension gehängt — anders als _archive_unique_path() ist das
-       atomisch (O_CREAT | O_EXCL): zwei parallele Uploads können nicht
-       denselben Pfad wählen und einander überschreiben."""
-    flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY
-    # v4.0-W62: Namensfolge + Retry nach nc/archivename.py (opener injiziert,
-    # bewiesen). Der atomare os.open (O_CREAT|O_EXCL) bleibt hier.
-    return _nc_archivename.open_unique(
-        ARCHIVE_DIR, filename, lambda full: os.open(full, flags, 0o644))
 
 # F38: Kind-Klassifikation für Type-Filter (video/audio/image).
 # Wird vom Dashboard-Filter und vom Bulk-Listing benutzt. Single source of truth,
@@ -3984,92 +3962,10 @@ def _kind_from_filename(filename: str) -> str:
 
 
 
-def get_archive_aggregate_stats(*, kind='all', query=None, date_from=None, date_to=None):
-    """F38: Aggregierte Stats ÜBER ALLE gefilterten Rows (nicht nur Seite)."""
-    where_sql, params = _archive_where_clause(kind=kind, query=query, date_from=date_from, date_to=date_to)
-    try:
-        with db_conn() as conn:
-            row = conn.execute(
-                f"SELECT COUNT(*), COALESCE(SUM(COALESCE(size_bytes,0)), 0) "
-                f"FROM archive {where_sql}", params).fetchone()
-            return {"count": row[0] if row else 0,
-                    "total_size_bytes": row[1] if row else 0}
-    except Exception as e:
-        log.warning(f"get_archive_aggregate_stats failed: {e}")
-        return {"count": 0, "total_size_bytes": 0}
-
-def get_archive_kind_breakdown():
-    """F38: Anzahl pro Kind (video/audio/image/other). Für die Type-Filter-Tabs."""
-    breakdown = {'all': 0, 'video': 0, 'audio': 0, 'image': 0, 'other': 0}
-    try:
-        with db_conn() as conn:
-            rows = conn.execute("SELECT filename FROM archive").fetchall()
-            for r in rows:
-                breakdown['all'] += 1
-                breakdown[_kind_from_filename(r["filename"])] = \
-                    breakdown.get(_kind_from_filename(r["filename"]), 0) + 1
-    except Exception as e:
-        log.warning(f"get_archive_kind_breakdown failed: {e}")
-    return breakdown
 
 
-def get_archive_missing_ids():
-    """F38: Schnell-Check — nur die IDs der fehlenden Einträge (für Indikator-
-       Badges in der Liste). Geht die ganze Tabelle durch; bei 100k Files
-       Sekundenbereich, aber wir cachen das im Frontend pro Refresh-Cycle."""
-    missing = set()
-    try:
-        with db_conn() as conn:
-            rows = conn.execute("SELECT id, filepath FROM archive").fetchall()
-        for r in rows:
-            fp = r["filepath"]
-            if not fp or not os.path.exists(fp):
-                missing.add(r["id"])
-    except Exception as e:
-        log.warning(f"get_archive_missing_ids failed: {e}")
-    return missing
 
-def bulk_delete_archive_entries(ids):
-    """F38: Bulk-Delete für Multi-Select-UI. Geht über delete_archive_entry()
-       — damit Path-Safety, File-Cleanup und DB-Row-Cleanup pro Eintrag laufen,
-       und ein einzelnes Fehlschlagen den Batch nicht abbricht.
-       F39-Bug-Hunt-Fix H2: IDs werden dedupliziert. Vorher hat der Client mit
-       ids=[1,1,1] drei Mal versucht ID 1 zu löschen — erster Versuch ok, die
-       zwei folgenden 'not found' → deleted=1/failed=2 obwohl logisch nichts
-       fehlschlug.
-    """
-    if not ids:
-        return {"ok": True, "deleted": 0, "failed": 0, "errors": []}
-    seen = set()
-    deduped = []
-    for eid in ids:
-        # Konvertierungsversuch früh, damit Dedup über int-Werte arbeitet
-        # (sonst zählen "1" und 1 als zwei verschiedene Einträge)
-        try:
-            eid_int = int(eid)
-        except (TypeError, ValueError):
-            # Bad-ID dennoch ans Log weitergeben — wir liefern den Fehler später
-            deduped.append(eid)
-            continue
-        if eid_int not in seen:
-            seen.add(eid_int)
-            deduped.append(eid_int)
 
-    deleted = 0
-    failed = 0
-    errors = []
-    for eid in deduped:
-        if not isinstance(eid, int):
-            failed += 1
-            errors.append({"id": str(eid), "error": "ungültige ID"})
-            continue
-        ok, err = delete_archive_entry(eid)
-        if ok:
-            deleted += 1
-        else:
-            failed += 1
-            errors.append({"id": eid, "error": err or "unbekannt"})
-    return {"ok": failed == 0, "deleted": deleted, "failed": failed, "errors": errors}
 
 # F39: Rename-Funktion für das manuelle Archiv.
 # Constraints:
@@ -4084,142 +3980,6 @@ def bulk_delete_archive_entries(ids):
 #     Traversal via konstruierten alten Pfaden in der DB.
 #   - DB-Zeile wird IMMER aktualisiert wenn der Rename auf Disk geklappt hat,
 #     auch wenn die Datei vorher fehlte (dann ist's nur DB-Rename).
-def rename_archive_entry(eid: int, new_name: str):
-    """Liefert (ok: bool, payload_or_error). Bei ok=True ist payload ein dict
-       mit den neuen Feldern. Bei ok=False ist payload ein Fehler-String."""
-    if not ARCHIVE_DIR:
-        return False, "ARCHIVE_DIR nicht konfiguriert"
-    if not new_name or not new_name.strip():
-        return False, "neuer Name ist leer"
-
-    row = get_archive_entry(eid)
-    if not row:
-        return False, "Eintrag nicht gefunden"
-
-    old_filename = row["filename"]
-    old_filepath = row["filepath"]
-    old_ext = os.path.splitext(old_filename)[1].lower() if old_filename else ""
-
-    # Sanitization gleich wie beim Upload — gleiche Zeichensatz-Regeln.
-    candidate = _safe_archive_filename(new_name.strip())
-
-    # Extension-Lock: wenn der User keine Extension angegeben hat (oder eine
-    # andere), erzwingen wir die alte. Verhindert dass der Browser den Download
-    # als .mov anbietet, obwohl das File intern .mp4 ist.
-    cand_base, cand_ext = os.path.splitext(candidate)
-    if not cand_ext:
-        # User hat nur den Namen-Stem angegeben → alte Extension dranhängen
-        candidate = cand_base + old_ext
-    elif cand_ext.lower() != old_ext:
-        return False, (f"Extension darf nicht geändert werden "
-                       f"(alt: {old_ext or 'keine'}, neu: {cand_ext}). "
-                       f"Lass die Extension weg, dann wird '{old_ext}' beibehalten.")
-
-    # Erneute Sanity-Prüfung nach evtl. zusammengefügter Extension
-    if not candidate or candidate in (".", "..", old_ext):
-        return False, "neuer Name nach Sanitization leer"
-
-    if candidate == old_filename:
-        return False, "neuer Name ist identisch mit altem Namen"
-
-    # Pfad-Safety: alter Pfad muss innerhalb ARCHIVE_DIR liegen
-    real_archive = os.path.realpath(ARCHIVE_DIR)
-    if old_filepath:
-        try:
-            real_old = os.path.realpath(old_filepath)
-            if os.path.commonpath([real_archive, real_old]) != real_archive:
-                log.warning(f"rename blocked: old path outside archive: {old_filepath}")
-                return False, "Pfad-Safety-Check fehlgeschlagen (alter Pfad)"
-        except (ValueError, OSError) as e:
-            return False, f"alter Pfad ungültig: {e}"
-
-    # Ziel-Pfad bestimmen — bei Kollision _2/_3/... anhängen.
-    # F39-Bug-Hunt-Fix: Vorher haben wir NUR os.path.exists() geprüft. Wenn
-    # ein DB-Eintrag aber einen Pfad referenzierte dessen Datei gelöscht
-    # war (file-check zeigt 'fehlt'), bestand der Pfad auf Disk nicht — wir
-    # hätten dorthin umbenannt — der DB-UPDATE wäre dann am UNIQUE-Constraint
-    # auf filepath gescheitert (Rollback hat zwar funktioniert, aber das
-    # ist unnötiger File-Bounce). Jetzt prüfen wir beides.
-    base, ext = os.path.splitext(candidate)
-    target_filename = candidate
-    target_path = os.path.join(ARCHIVE_DIR, target_filename)
-
-    def _target_in_use(path):
-        if os.path.exists(path):
-            return True
-        # DB-Check: filepath ist UNIQUE. Wenn ein anderer Eintrag diesen Pfad
-        # belegt (auch wenn das File auf Disk fehlt), kollidieren wir beim
-        # UPDATE.
-        try:
-            with db_conn() as conn:
-                row = conn.execute(
-                    "SELECT id FROM archive WHERE filepath = ? AND id != ?",
-                    (path, eid)).fetchone()
-                return row is not None
-        except Exception as e:
-            log.warning(f"rename db-collision check failed: {e}")
-            # Im Zweifel kollidieren-lassen — sicherer als überschreiben.
-            return True
-
-    for n in range(2, 10000):
-        # Pfad-Safety: Ziel muss in ARCHIVE_DIR sein. Defensive Wahl auch
-        # wenn _safe_archive_filename '..' eigentlich rausstripped.
-        try:
-            real_target = os.path.realpath(target_path)
-            if os.path.commonpath([real_archive, real_target]) != real_archive:
-                return False, "Pfad-Safety-Check fehlgeschlagen (neuer Pfad)"
-        except (ValueError, OSError) as e:
-            return False, f"neuer Pfad ungültig: {e}"
-        if not _target_in_use(target_path):
-            break
-        target_filename = f"{base}_{n}{ext}"
-        target_path = os.path.join(ARCHIVE_DIR, target_filename)
-    else:
-        return False, "zu viele Namenskollisionen"
-
-    # Eigentlicher Rename auf Disk — nur wenn alte Datei existiert.
-    old_existed = bool(old_filepath) and os.path.exists(old_filepath)
-    if old_existed:
-        try:
-            os.rename(old_filepath, target_path)
-        except OSError as e:
-            log.error(f"rename failed for #{eid}: {e}")
-            return False, f"rename auf Disk fehlgeschlagen: {e}"
-    else:
-        log.info(f"rename #{eid}: alte Datei fehlte, nur DB-Eintrag wird aktualisiert")
-
-    # DB-Eintrag aktualisieren
-    try:
-        with db_conn() as conn:
-            conn.execute(
-                "UPDATE archive SET filename=?, filepath=? WHERE id=?",
-                (target_filename, target_path, eid))
-            conn.commit()
-    except DB_INTEGRITY_ERRORS as e:
-        # UNIQUE constraint auf filepath — Race mit parallelem Rename auf
-        # denselben Zielnamen. File auf Disk wieder zurückbenennen, damit
-        # wir keine Datei-/DB-Inkonsistenz produzieren.
-        if old_existed:
-            try: os.rename(target_path, old_filepath)
-            except Exception: pass
-        return False, f"DB-Konflikt: {e}"
-    except Exception as e:
-        # Selber Rollback-Versuch — DB-Update fehlgeschlagen, File aber schon
-        # umbenannt. Zurückrollen.
-        if old_existed:
-            try: os.rename(target_path, old_filepath)
-            except Exception: pass
-        log.error(f"rename db update failed for #{eid}: {e}")
-        return False, f"DB-Update fehlgeschlagen: {e}"
-
-    log.info(f"archive: '#{eid}' renamed '{old_filename}' → '{target_filename}'")
-    return True, {
-        "id":          eid,
-        "filename":    target_filename,
-        "filepath":    target_path,
-        "old_filename": old_filename,
-        "renamed_on_disk": old_existed,
-    }
 
 # Backwards-compat: einige interne Aufrufer (z.B. /diag, Tests) erwarten weiterhin
 # eine einfache Liste. Wir lassen die alte Signatur am Leben aber die neue paged-
@@ -12466,47 +12226,8 @@ _MANUAL_ARCHIVE_DIR = os.getenv("MANUAL_ARCHIVE_DIR", "").strip()
 
 
 
-@dashboard_app.route("/api/archive/duplicates")
-def api_archive_duplicates():
-    """Scannt nach Duplikaten. Query-Param 'root' kann anderen Pfad geben
-       (default: MANUAL_ARCHIVE_DIR env-var, fallback ARCHIVE_DIR, fallback ./archive)."""
-    scan_root = (request.args.get("root") or _MANUAL_ARCHIVE_DIR or
-                 os.getenv("ARCHIVE_DIR", "").strip() or "archive")
-    scan_root = os.path.abspath(scan_root)
-    dup_groups, stats = _scan_for_duplicates(scan_root)
-    return jsonify({
-        "ok": True,
-        "scan_root": scan_root,
-        "duplicate_groups": dup_groups,
-        "stats": stats,
-    })
 
 
-@dashboard_app.route("/api/archive/duplicates/delete", methods=["POST"])
-def api_archive_duplicates_delete():
-    """Löscht eine spezifische Duplikat-Datei. Sicherheits-Check: muss unter
-       dem Scan-Root liegen (kein beliebiges Filesystem-Delete via Dashboard).
-       Body: {"path": "...", "scan_root": "..."}"""
-    payload = request.get_json(silent=True) or {}
-    target = payload.get("path", "")
-    scan_root = payload.get("scan_root", "")
-    if not target or not scan_root:
-        return jsonify(ok=False, error="path + scan_root required"), 400
-    abs_target = os.path.abspath(target)
-    abs_root = os.path.abspath(scan_root)
-    # SECURITY: target MUSS unter scan_root liegen
-    if not abs_target.startswith(abs_root + os.sep):
-        return jsonify(ok=False,
-                       error="path not within scan_root (security check failed)"), 403
-    if not os.path.isfile(abs_target):
-        return jsonify(ok=False, error="file not found"), 404
-    try:
-        size = os.path.getsize(abs_target)
-        os.remove(abs_target)
-        log.info(f"manual-archive duplicate deleted: {abs_target} ({size}B)")
-        return jsonify(ok=True, deleted=abs_target, freed_bytes=size)
-    except OSError as e:
-        return jsonify(ok=False, error=str(e)), 500
 
 
 # ============================================================================
@@ -16006,154 +15727,14 @@ def api_recording_attempts():
 # =============================================================================
 # F21: Manuelles Archiv (separat von Telegram-Recording-Pipeline)
 # =============================================================================
-@dashboard_app.route("/api/archive")
-def api_archive():
-    """F38: Paginierte + gefilterte Archive-Liste.
-       Query-Params (alle optional):
-         page       (int, 1-based, default 1)
-         per_page   (int, 1..200, default 25)
-         sort       (date|name|filename|size, default 'date')
-         dir        (asc|desc, default 'desc')
-         kind       (all|video|audio|image, default 'all')
-         q          (Such-String, Liste/title/notes/source_url)
-         check      (1 = pro Eintrag os.path.exists() prüfen — teurer aber genau)
-    """
-    if not ARCHIVE_DIR:
-        return jsonify({
-            "enabled": False, "configured": False,
-            "archive_dir": "", "writable": False,
-            "max_upload_mb": ARCHIVE_MAX_UPLOAD_MB,
-            "stats": None, "entries": [],
-            "page": 1, "per_page": 25,
-            "total": 0, "total_filtered": 0,
-            "kind_breakdown": {"all": 0, "video": 0, "audio": 0, "image": 0, "other": 0},
-            "missing_count": 0,
-        })
-
-    # Query-Params parsen mit defensiven Defaults — bei Garbage-Input nicht
-    # crashen, sondern auf "alles anzeigen, Seite 1" fallen.
-    try:
-        page = _arg_int("page", 1, 1)
-    except (TypeError, ValueError): page = 1
-    try:
-        per_page = _arg_int("per_page", 25, 1, 200)
-    except (TypeError, ValueError): per_page = 25
-    sort = (request.args.get("sort") or "date").lower()
-    if sort not in ("date", "name", "filename", "size"): sort = "date"
-    direction = (request.args.get("dir") or "desc").lower()
-    if direction not in ("asc", "desc"): direction = "desc"
-    kind = (request.args.get("kind") or "all").lower()
-    # F39-Bug-Hunt-Fix H1: 'other' war in der Validierung erlaubt, aber
-    # _ARCHIVE_KIND_MAP enthält kein 'other' → kein Filter angewandt →
-    # ?kind=other zeigte stillschweigend ALLE Einträge an. Wir akzeptieren
-    # 'other' nicht mehr (Frontend hat eh keinen Tab dafür); URL-Hacker
-    # bekommen ein sauberes Fallback auf 'all'.
-    if kind not in ("all", "video", "audio", "image"): kind = "all"
-    query = (request.args.get("q") or "").strip() or None
-    date_from = (request.args.get("from") or "").strip() or None   # v37: Datums-Range
-    date_to = (request.args.get("to") or "").strip() or None
-    check_files = request.args.get("check") in ("1", "true", "yes")
-
-    writable = archive_writeable()
-    rows, total_filtered, total_all = get_archive_entries_paged(
-        page=page, per_page=per_page, sort=sort, direction=direction,
-        kind=kind, query=query, date_from=date_from, date_to=date_to)
-    agg = get_archive_aggregate_stats(kind=kind, query=query, date_from=date_from, date_to=date_to)
-    breakdown = get_archive_kind_breakdown()
-
-    # Datei-Existenz pro Seite — billig (max 200 stat()-Calls). Wird IMMER
-    # gemacht damit das ✗-Badge in der Liste pro Eintrag korrekt ist.
-    page_missing_count = 0
-    entries_out = []
-    for r in rows:
-        fp = r["filepath"]
-        exists = bool(fp) and os.path.exists(fp)
-        if not exists: page_missing_count += 1
-        entries_out.append({
-            "id": r["id"],
-            "filename": r["filename"],
-            "title": r["title"] or "",
-            "notes": r["notes"] or "",
-            "size_bytes": r["size_bytes"] or 0,
-            "mime_type": r["mime_type"],
-            "source_url": r["source_url"],
-            "created_at": (r["created_at"] or "")[:19].replace("T", " "),
-            "kind": _kind_from_filename(r["filename"]),
-            "exists": exists,
-        })
-
-    # Gesamtzahl fehlender Files — nur wenn explizit angefordert (kostet
-    # einen Full-Table-Scan mit os.path.exists() pro Row, bei 50k Files
-    # nicht-trivial). Default: nur die Seite checken (s.o.).
-    total_missing = None
-    if check_files:
-        total_missing = len(get_archive_missing_ids())
-
-    disk = None
-    try:
-        s = shutil.disk_usage(ARCHIVE_DIR if os.path.isdir(ARCHIVE_DIR) else "/")
-        disk = {
-            "total_gb": round(s.total / 1024**3, 2),
-            "free_gb":  round(s.free  / 1024**3, 2),
-            "used_gb":  round((s.total - s.free) / 1024**3, 2),
-            "percent":  round((s.total - s.free) / s.total * 100, 1),
-        }
-    except Exception: pass
-
-    total_pages = max(1, (total_filtered + per_page - 1) // per_page) if total_filtered else 1
-
-    return jsonify({
-        "enabled": True,
-        "configured": True,
-        "archive_dir": ARCHIVE_DIR,
-        "writable": writable,
-        "max_upload_mb": ARCHIVE_MAX_UPLOAD_MB,
-        "allowed_extensions": sorted(ARCHIVE_ALLOWED_EXTS),
-        "stats": {
-            "count": agg["count"],                      # nach Filter
-            "total_size_bytes": agg["total_size_bytes"],# nach Filter
-            "total_all": total_all,                     # ungefiltert
-            "disk": disk,
-        },
-        "entries": entries_out,
-        "page": page,
-        "per_page": per_page,
-        "total_filtered": total_filtered,
-        "total_pages": total_pages,
-        "sort": sort, "dir": direction, "kind": kind, "q": query or "",
-        "kind_breakdown": breakdown,
-        "page_missing_count": page_missing_count,
-        "total_missing": total_missing,    # None wenn ?check=0
-    })
 
 # F38: On-Demand File-Check über die ganze Tabelle. Liefert die Liste der
 # DB-Einträge deren Datei fehlt. Read-only — der User entscheidet was
 # damit passiert (löschen, ignorieren, manuell wiederherstellen).
-@dashboard_app.route("/api/archive/check")
-def api_archive_check():
-    if not ARCHIVE_DIR:
-        return jsonify({"ok": False, "error": "ARCHIVE_DIR nicht konfiguriert"}), 400
-    result = run_archive_file_check()
-    return jsonify({"ok": True, **result})
 
 # F38: Bulk-Delete für Multi-Select-UI. Nimmt JSON {"ids": [1,2,3]}.
 # Geht pro Eintrag durch delete_archive_entry() — Path-Safety + File-Cleanup
 # + DB-Row-Cleanup einzeln, ein Fehler bricht den Batch nicht ab.
-@dashboard_app.route("/api/archive/bulk-delete", methods=["POST"])
-def api_archive_bulk_delete():
-    if not ARCHIVE_DIR:
-        return jsonify({"ok": False, "error": "ARCHIVE_DIR nicht konfiguriert"}), 400
-    payload = request.get_json(silent=True) or {}
-    ids = payload.get("ids") or []
-    if not isinstance(ids, list):
-        return jsonify({"ok": False, "error": "ids muss Liste sein"}), 400
-    if len(ids) > 500:
-        return jsonify({"ok": False, "error": "max 500 IDs pro Request"}), 400
-    result = bulk_delete_archive_entries(ids)
-    log.info(f"archive bulk-delete: requested={len(ids)} "
-             f"deleted={result['deleted']} failed={result['failed']}")
-    code = 200 if result["ok"] else 207   # 207 Multi-Status bei Teilerfolg
-    return jsonify(result), code
 
 # F39: Rename für einzelne Archive-Einträge.
 # POST /api/archive/<id>/rename  Body: {"new_name": "..."}
@@ -16161,121 +15742,7 @@ def api_archive_bulk_delete():
 #   - Extension wird verriegelt (siehe rename_archive_entry-Docs)
 #   - Bei Namenskollision wird _2/_3/... vor die Extension gehängt
 #   - Liefert {ok, id, filename, old_filename, renamed_on_disk}
-@dashboard_app.route("/api/archive/<int:eid>/rename", methods=["POST"])
-def api_archive_rename(eid):
-    if not ARCHIVE_DIR:
-        return jsonify({"ok": False, "error": "ARCHIVE_DIR nicht konfiguriert"}), 400
-    # Auch hier accept-or-fail: nur wenn ARCHIVE_DIR beschreibbar ist macht
-    # Rename Sinn (sonst kann os.rename fehlschlagen — wir wollen das
-    # frühzeitig melden).
-    if not archive_writeable():
-        return jsonify({"ok": False,
-                        "error": f"ARCHIVE_DIR '{ARCHIVE_DIR}' nicht schreibbar"}), 500
 
-    payload = request.get_json(silent=True) or {}
-    new_name = payload.get("new_name") or payload.get("filename") or ""
-    if not isinstance(new_name, str):
-        return jsonify({"ok": False, "error": "new_name muss String sein"}), 400
-    if len(new_name) > 255:
-        return jsonify({"ok": False, "error": "neuer Name zu lang (max 255 Zeichen)"}), 400
-
-    ok, result = rename_archive_entry(eid, new_name)
-    if ok:
-        return jsonify({"ok": True, **result})
-    # Eigene Status-Codes je nach Fehlerart — hilft beim Debuggen im Frontend
-    err = str(result)
-    if "nicht gefunden" in err:
-        code = 404
-    elif "Pfad-Safety" in err or "Extension" in err or "leer" in err or "identisch" in err:
-        code = 400
-    elif "Kollision" in err:
-        code = 409
-    else:
-        code = 500
-    return jsonify({"ok": False, "error": err}), code
-
-@dashboard_app.route("/api/archive/upload", methods=["POST"])
-def api_archive_upload():
-    if not ARCHIVE_DIR:
-        return jsonify({"ok": False, "error": "ARCHIVE_DIR nicht konfiguriert"}), 400
-    if not archive_writeable():
-        return jsonify({"ok": False,
-                        "error": f"ARCHIVE_DIR '{ARCHIVE_DIR}' nicht schreibbar"}), 500
-
-    f = request.files.get("file")
-    if not f or not f.filename:
-        return jsonify({"ok": False, "error": "keine Datei im Upload"}), 400
-
-    title  = (request.form.get("title")      or "").strip()[:200]
-    notes  = (request.form.get("notes")      or "").strip()[:2000]
-    source = (request.form.get("source_url") or "").strip()[:500]
-
-    fname = _safe_archive_filename(f.filename)
-    ext = fname.rsplit(".", 1)[-1].lower() if "." in fname else ""
-    if ext not in ARCHIVE_ALLOWED_EXTS:
-        return jsonify({"ok": False,
-                        "error": f"Datei-Typ '.{ext}' nicht erlaubt. "
-                                 f"Erlaubt: {', '.join(sorted(ARCHIVE_ALLOWED_EXTS))}"}), 400
-
-    # BUG-FIX (Disk-Check): Vorher wurde `free < ARCHIVE_MAX_UPLOAD_MB/4` geprüft
-    # (= 25 GB bei 100-GB-Default). Folge: selbst eine 5-MB-Datei ließ sich nicht
-    # hochladen wenn < 25 GB frei waren — komplett kaputt auf normalen Disks.
-    # Jetzt: echte Upload-Größe (Content-Length) + 100 MB Puffer prüfen. Fällt
-    # auf einen kleinen Mindest-Puffer zurück wenn Content-Length fehlt.
-    try:
-        free = shutil.disk_usage(ARCHIVE_DIR).free
-        incoming = request.content_length or 0           # Gesamt-Body inkl. Multipart-Overhead
-        buffer_bytes = 100 * 1024 * 1024                  # 100 MB Sicherheitspuffer
-        needed = (incoming if incoming > 0 else 1024 * 1024) + buffer_bytes
-        if free < needed:
-            return jsonify({"ok": False,
-                            "error": f"nur {free/1024**3:.2f} GB frei, Upload braucht "
-                                     f"~{needed/1024**3:.2f} GB — bitte aufräumen"}), 507
-    except Exception: pass
-
-    # F32: Atomare Filename-Allokation. Zwei parallele Uploads mit gleichem
-    # ursprünglichem Namen können sich nicht mehr gegenseitig überschreiben.
-    try:
-        fd, target = _archive_open_unique(fname)
-    except Exception as e:
-        log.error(f"archive open failed: {e}")
-        return jsonify({"ok": False, "error": f"file allocation failed: {e}"}), 500
-    try:
-        # Stream Werkzeug-FileStorage in den exclusively geöffneten fd
-        with os.fdopen(fd, "wb") as out:
-            f.stream.seek(0)
-            while True:
-                chunk = f.stream.read(1024 * 1024)   # 1 MB chunks
-                if not chunk: break
-                out.write(chunk)
-        size = os.path.getsize(target)
-    except Exception as e:
-        try:
-            if os.path.exists(target): os.remove(target)
-        except Exception: pass
-        log.error(f"archive upload save failed: {e}")
-        return jsonify({"ok": False, "error": f"save failed: {e}"}), 500
-
-    # Nach-Hoc-Limit-Check (falls multipart-Stream durchkam)
-    if size > ARCHIVE_MAX_UPLOAD_MB * 1024 * 1024:
-        try: os.remove(target)
-        except Exception: pass
-        return jsonify({"ok": False,
-                        "error": f"Datei zu groß ({size/1024**2:.0f} MB > "
-                                 f"{ARCHIVE_MAX_UPLOAD_MB} MB)"}), 413
-
-    eid = add_archive_entry(
-        filename=os.path.basename(target),
-        filepath=target,
-        title=title or None,
-        notes=notes or None,
-        size=size,
-        mime=f.mimetype or None,
-        source_url=source or None,
-    )
-    log.info(f"archive: '{os.path.basename(target)}' ({size/1024**2:.1f} MB) abgelegt → id={eid}")
-    return jsonify({"ok": True, "id": eid,
-                    "filename": os.path.basename(target), "size": size})
 
 @dashboard_app.route("/archive/<int:eid>/download")
 def archive_download(eid):
@@ -16302,13 +15769,6 @@ def archive_download(eid):
         as_attachment=True,
         download_name=row["filename"])
 
-@dashboard_app.route("/api/archive/<int:eid>", methods=["DELETE"])
-def api_archive_delete(eid):
-    ok, err = delete_archive_entry(eid)
-    if ok:
-        return jsonify({"ok": True})
-    code = 404 if "not found" in err else 500
-    return jsonify({"ok": False, "error": err}), code
 
 @dashboard_app.route("/api/system-resources")
 def api_system_resources():
@@ -16699,32 +16159,6 @@ def _scraper_session():
         return None
 
 
-# ═══ v4.0-W106: Welle 2 der Zerlegung — Aufnahmen-Routen als Blueprint ═══
-#
-# Die 34 /api/recordings- und /api/rec/-Routen liegen jetzt in
-# nc/routes/recordings.py (siehe docs/MODULARISIERUNG.md). Hier bleibt nur die
-# Registrierung — und die Verdrahtung dessen, was der Monolith weiterhin
-# bereitstellen muss.
-#
-# Diese Stelle ist bewusst gewaehlt: sie liegt hinter der letzten der
-# injizierten Definitionen (_scraper_session). Frueher waere der Kontext mit
-# None-Werten gefuellt, und die Routen fielen erst beim ersten Aufruf um —
-# genau die Sorte Fehler, die niemand beim Start bemerkt.
-_nc_ctx.configure(
-    log=log,
-    log_event=log_event,
-    arg_int=_arg_int,
-    run_async=_run_async_from_flask,
-    recordings_dir=RECORDINGS_DIR,
-    ffmpeg_threads_bg=FFMPEG_THREADS_BG,
-    ffmpeg_nice_bg=FFMPEG_NICE_BG,
-    proc_is_recorder=_proc_is_recorder,
-    scraper_session=_scraper_session,
-    trigger_manual_recording=trigger_manual_recording,
-    stop_manual_recording=stop_manual_recording,
-    get_tags_for_tracking=get_tags_for_tracking,
-)
-dashboard_app.register_blueprint(_nc_routes_recordings.bp)
 
 
 # ---------- X20: Universal Search ----------
@@ -24422,6 +23856,52 @@ async def _intel_index_one(rid, path, username="", created_at=None):
                                        created_at=created_at, paramstyle=_INTEL_PS)
     return len(segs)
 
+# ═══ v4.0-W106/W107: Zerlegung — Routen als Blueprints registrieren ═══
+#
+# Die 34 /api/recordings- und /api/rec/-Routen liegen jetzt in
+# nc/routes/recordings.py (siehe docs/MODULARISIERUNG.md). Hier bleibt nur die
+# Registrierung — und die Verdrahtung dessen, was der Monolith weiterhin
+# bereitstellen muss.
+#
+# Diese Stelle ist bewusst gewaehlt: sie liegt hinter der LETZTEN der
+# injizierten Definitionen (_intel_index_one). Weiter oben — wo der Block in
+# W106 noch stand — waeren die Intel-Helfer beim Aufruf noch nicht definiert;
+# pyflakes meldete prompt 'undefined name'. Wer hier etwas ergaenzt, muss den
+# Block gegebenenfalls WEITER nach unten schieben.
+_nc_ctx.configure(
+    log=log,
+    log_event=log_event,
+    arg_int=_arg_int,
+    run_async=_run_async_from_flask,
+    recordings_dir=RECORDINGS_DIR,
+    ffmpeg_threads_bg=FFMPEG_THREADS_BG,
+    ffmpeg_nice_bg=FFMPEG_NICE_BG,
+    proc_is_recorder=_proc_is_recorder,
+    scraper_session=_scraper_session,
+    trigger_manual_recording=trigger_manual_recording,
+    stop_manual_recording=stop_manual_recording,
+    get_tags_for_tracking=get_tags_for_tracking,
+    # --- Archiv-Domaene (v4.0-W107) ---
+    intel_ensure_schema=_intel_ensure_schema,
+    intel_index_one=_intel_index_one,
+    intel_semantic=_intel_semantic,
+    intel_ps=_INTEL_PS,
+    add_archive_entry=add_archive_entry,
+    get_archive_entry=get_archive_entry,
+    delete_archive_entry=delete_archive_entry,
+    kind_from_filename=_kind_from_filename,
+    # Startwerte, nicht Helfer — deshalb gebuendelt statt als eigene Slots.
+    cfg={
+        "ARCHIVE_DIR": ARCHIVE_DIR,
+        "ARCHIVE_ALLOWED_EXTS": ARCHIVE_ALLOWED_EXTS,
+        "ARCHIVE_MAX_UPLOAD_MB": ARCHIVE_MAX_UPLOAD_MB,
+        "_MANUAL_ARCHIVE_DIR": _MANUAL_ARCHIVE_DIR,
+        "DB_INTEGRITY_ERRORS": DB_INTEGRITY_ERRORS,
+    },
+)
+dashboard_app.register_blueprint(_nc_routes_recordings.bp)
+dashboard_app.register_blueprint(_nc_routes_archive.bp)
+
 
 async def _intel_index_loop():
     """v4.0-W90: opt-in Hintergrund-Transkribierer. Nimmt pro Runde EINE noch
@@ -24457,54 +23937,10 @@ async def _intel_index_loop():
         await asyncio.sleep(interval)
 
 
-@dashboard_app.route("/api/archive/search")
-def api_archive_search():
-    """Bedeutungs-Suche über alle transkribierten Aufnahmen."""
-    q = (request.args.get("q") or "").strip()
-    if not q:
-        return jsonify(ok=False, error="Parameter q fehlt", hits=[])
-    be = _intel_semantic()
-    if be is None:
-        return jsonify(ok=False, error="Semantik-Backend (Brain) nicht verfügbar", hits=[])
-    _intel_ensure_schema()
-    k = _arg_int("k", 8, 1, 30)
-    user = (request.args.get("user") or "").strip() or None
-    try:
-        with db_conn() as c:
-            res = _intel_lib.search(c, be, q, k=k, username=user, paramstyle=_INTEL_PS)
-        return jsonify(res)
-    except Exception as e:
-        return jsonify(ok=False, error=str(e)[:200], hits=[])
 
 
-@dashboard_app.route("/api/archive/status")
-def api_archive_status():
-    _intel_ensure_schema()
-    be = _intel_semantic()
-    try:
-        with db_conn() as c:
-            cov = _intel_lib.coverage(c, be, _INTEL_PS)
-        cov["ok"] = True
-        cov["backend_ready"] = be is not None
-        cov["indexer_enabled"] = _nc_envnum.env_int("ARCHIVE_INDEX_ENABLED", 0) == 1
-        return jsonify(cov)
-    except Exception as e:
-        return jsonify(ok=False, error=str(e)[:200])
 
 
-@dashboard_app.route("/api/archive/index/<int:rid>", methods=["POST"])
-def api_archive_index_one(rid):
-    """Eine bestimmte Aufnahme manuell (neu) transkribieren + indizieren."""
-    rec = next((r for r in get_all_recordings(limit=1000) if r["id"] == rid), None)
-    if not rec or not rec.get("filepath"):
-        return jsonify(ok=False, error="Aufnahme/Datei nicht gefunden"), 404
-    try:
-        n = _run_async_from_flask(
-            _intel_index_one(rid, rec["filepath"], username=rec.get("username", "")),
-            timeout=900)
-        return jsonify(ok=True, recording_id=rid, segments=n)
-    except Exception as e:
-        return jsonify(ok=False, error=str(e)[:200]), 500
 
 
 @dashboard_app.route("/healthz")

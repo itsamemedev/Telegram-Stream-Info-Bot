@@ -26,6 +26,7 @@ class Ctx:
         "log_event",                # Ereignisprotokoll (event_log + Webhooks)
         "arg_int",                  # geprüfter Query-Parameter
         "run_async",                # Coroutine auf dem Bot-Loop, blockierend
+        "cfg",                      # Konfigurationswerte, siehe unten
         # --- Aufnahme-Domäne ---
         "recordings_dir",
         "ffmpeg_threads_bg",
@@ -35,9 +36,28 @@ class Ctx:
         "trigger_manual_recording",  # haengt am Recorder-Kern, bleibt im Bot
         "stop_manual_recording",    # teilt _MANUAL_RECORDINGS mit trigger_
         "get_tags_for_tracking",
+        # --- Archiv-Domäne (W107) ---
+        "intel_ensure_schema",
+        "intel_index_one",
+        "intel_semantic",
+        "intel_ps",                 # laufende Index-Prozesse, geteilter Zustand
+        "add_archive_entry",
+        "get_archive_entry",
+        "delete_archive_entry",
+        "kind_from_filename",
     )
 
 
+# Warum cfg ein Dict ist und keine zwoelf weiteren Slots: die Blueprints
+# brauchen .env-abgeleitete Werte (ARCHIVE_DIR, AI_TIMEOUT, …). Als Einzelfelder
+# waere nc/ctx.py nach drei Wellen ein Konfigurations-Abladeplatz — genau das
+# Sammelbecken, das dieses Modul verhindern soll. Ein Dict haelt die Grenze
+# zwischen "Helfer, die der Monolith stellt" (Slots, einzeln begruendet) und
+# "Werte, die aus der .env kommen" (cfg) sichtbar.
+#
+# Die Werte werden beim Start uebergeben, nicht gelesen: der Bot friert sie
+# ohnehin schon beim Import ein, und ein zweiter Lesepfad waere eine stille
+# Verhaltensaenderung gegenueber dem Monolithen.
 _CTX = None
 
 
