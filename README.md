@@ -230,6 +230,38 @@ siehe [Sicherheit](#️-sicherheit).
 
 ## 📦 Installation
 
+### Schnellweg — geführtes Installationsskript
+
+Wer nicht jeden Schritt selbst gehen will: die Skripte richten alles ein,
+**erklären dabei jeden Schritt** und fragen vor jedem Eingriff. Optionale
+Bausteine (Discord, Restream-Ziele, Transkription, MariaDB, CrowdSec, lokales
+LLM) werden einzeln angeboten; wo ein Passwort frei wählbar ist, bieten sie an,
+eines zu erzeugen.
+
+```bash
+# Ubuntu · Debian · Raspberry Pi OS · macOS
+git clone https://github.com/itsamemedev/Telegram-Stream-Info-Bot.git ~/nightcrawler
+bash ~/nightcrawler/tools/installer.sh          # --express = weniger Fragen, --unattended = keine
+```
+
+```bat
+rem Windows
+tools\install.bat
+```
+
+Beide legen venv und `.env` an, installieren die Systempakete, prüfen mit
+`bot.py --selfcheck` nach und richten auf Wunsch Autostart ein — unter Linux
+systemd samt Totmann-Meldung und der Status-MOTD (`tools/motd.sh`), unter macOS
+launchd, unter Windows die Aufgabenplanung. Ein zweiter Lauf aktualisiert eine
+bestehende Installation, statt sie zu überbügeln.
+
+> [!NOTE]
+> **Python 3.12 ist harte Mindestversion** (siehe unten). Debian 12 und
+> Raspberry Pi OS bookworm liefern 3.11 — das Skript erkennt das und bietet
+> einen Weg zu einem neueren Interpreter an.
+
+Wer lieber selbst Hand anlegt, findet den ausführlichen Weg hier:
+
 ### Voraussetzungen
 
 | | Mindestens | Empfohlen |

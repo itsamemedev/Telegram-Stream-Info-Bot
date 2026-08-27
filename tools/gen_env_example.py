@@ -73,13 +73,16 @@ def render(seen):
             val = seen[name]
             secret = bool(_SECRET.search(name))
             req = name in _REQUIRED
-            tag = ""
-            if req:
-                tag = "   # [PFLICHT] setzen"
-            elif secret:
-                tag = "   # (Geheimnis — hier eintragen)"
             if secret or req:
-                out.append("%s=%s" % (name, tag))
+                # Der Hinweis gehoert in eine EIGENE Zeile. "NAME=   # Hinweis"
+                # sieht wie ein Kommentar aus, ist aber keiner: python-dotenv
+                # liest bei einem unquotierten Wert den Rest der Zeile als WERT.
+                # Aus `cp .env.example .env` wurden so rund 40 Variablen mit dem
+                # Inhalt "# (Geheimnis — hier eintragen)" — der Bot hielt damit
+                # Discord, Twitch, YouTube und Anthropic fuer konfiguriert und
+                # meldete "Token abgelehnt" statt "kein Token".
+                out.append("# [PFLICHT] setzen" if req else "# (Geheimnis — hier eintragen)")
+                out.append("%s=" % name)
             else:
                 # Default informativ, auskommentiert (Bot nutzt ohnehin den Default)
                 shown = str(val).replace("\n", " ")
