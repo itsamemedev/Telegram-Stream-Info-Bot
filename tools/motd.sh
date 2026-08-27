@@ -1,0 +1,678 @@
+#!/usr/bin/env bash
+#
+# NIGHTCRAWLER — Message of the Day (Login-Statusbild)
+#
+#   ./motd.sh                  Vorschau (aendert nichts)
+#   sudo ./motd.sh --install   als /etc/update-motd.d/99-nightcrawler einhaengen
+#   sudo ./motd.sh --uninstall wieder entfernen
+#   ./motd.sh --doctor         zeigt, WAS erkannt wurde und woher
+#
+# WARUM DIESE FASSUNG
+# Die erste Version hatte alle Pfade fest verdrahtet (/home/ubuntu/tiktok-bot,
+# bot_v37.py, Dienst "tiktok-bot"). Auf jeder anderen Maschine — und seit W119
+# auch auf dieser, weil bot_v37.py zu bot.py wurde — zeigte sie stumm einen
+# leeren Rahmen: kein Fehler, nur keine Daten. Diese Fassung erkennt die
+# Installation selbst, schreibt das Ergebnis beim --install in eine Konfig
+# (/etc/nightcrawler/motd.conf) und ist damit auf jeder Box richtig.
+#
+# Weitere Unterschiede, jeder aus einem konkreten Fehlbild:
+#   * Plattform-Chips lasen JEDEN .env-Schluessel, der "KICK" enthielt. Ein
+#     gesetztes KICK_INGEST_URL machte Kick gruen, obwohl KICK_ENABLED=0 war.
+#     Jetzt entscheidet <PLAT>_ENABLED, danach erst ein echter Stream-Key.
+#   * "BARW=10 bar ..." — Zuweisung vor einem FUNKTIONSaufruf bleibt in bash
+#     nach der Rueckkehr stehen. Die Breite war ab da global kaputt. Jetzt
+#     nimmt bar() die Breite als zweites Argument.
+#   * du/find ueber eine 400-GB-Aufnahmebibliothek lief bei JEDEM Login. Das
+#     Ergebnis wird jetzt 15 Minuten zwischengespeichert.
+#   * Dashboard galt als "auf", sobald der Port lauschte. Ein haengender Flask
+#     lauscht auch. Jetzt wird /healthz wirklich gefragt.
+#   * Laeuft auf bash 3.2 (macOS) mit: keine assoziativen Arrays, /proc-Zugriffe
+#     sind eingezaeunt, fuer Darwin gibt es eigene Zweige.
+#
+# Grundregel: eine MOTD darf NIE einen Login blockieren. Deshalb kein set -e,
+# kein Kommando ohne Zeitdeckel und jedes externe Werkzeug nur nach have().
+
+LC_ALL=C
+export LC_ALL
+
+NC_MOTD_VERSION="2.0"
+
+# ── Vorgaben (jede per /etc/nightcrawler/motd.conf oder Umgebung ueberschreibbar)
+SERVICE="${SERVICE:-}"          # leer = automatisch suchen
+BOT_DIR="${BOT_DIR:-}"          # leer = automatisch suchen
+DASH_PORT="${DASH_PORT:-}"      # leer = aus .env (DASHBOARD_PORT), sonst 8050
+DB="${DB:-}"                    # leer = tiktok_bot.db im BOT_DIR, sonst groesste *.db
+DISK_TARGET="${DISK_TARGET:-/}"
+WIDTH="${WIDTH:-54}"
+BARW="${BARW:-22}"
+SHOW_REC="${SHOW_REC:-1}"       # Aufnahmen-Block (0 = aus)
+REC_CACHE_TTL="${REC_CACHE_TTL:-900}"   # Sekunden; der Scan ist der teuerste Teil
+CPU_SAMPLE="${CPU_SAMPLE:-0.20}"        # Messfenster; 0 = ueberspringen
+COLOR_MODE="${COLOR_MODE:-auto}"        # auto | truecolor | 256 | off
+DEST="${DEST:-/etc/update-motd.d/99-nightcrawler}"
+
+OS="$(uname -s 2>/dev/null || echo unknown)"
+# macOS hat kein /etc/update-motd.d und der Login laeuft ohne root — die
+# Konfiguration liegt dort im Home, sonst systemweit unter /etc.
+if [ -z "${CONF:-}" ]; then
+  if [ "$OS" = "Darwin" ] && [ ! -r /etc/nightcrawler/motd.conf ]; then
+    CONF="$HOME/.nightcrawler-motd.conf"
+  else
+    CONF="/etc/nightcrawler/motd.conf"
+  fi
+fi
+
+# shellcheck source=/dev/null
+[ -r "$CONF" ] && . "$CONF"
+
+# ── Farben ───────────────────────────────────────────────────
+# Bewusst OHNE TTY-Test: die MOTD laeuft unter run-parts ohne TTY, ein Gate
+# haette sie dauerhaft farblos gemacht. Wer es roh braucht: COLOR_MODE=off.
+e=$'\033'
+_tc=0
+case "$COLOR_MODE" in
+  off)       e=""; ;;
+  256)       _tc=0 ;;
+  truecolor) _tc=1 ;;
+  *)         case "${COLORTERM:-}" in *[Tt]ruecolor*|*24bit*) _tc=1 ;; esac ;;
+esac
+if [ -z "$e" ]; then
+  BR=""; DIM=""; TXT=""; FNT=""; OK=""; WRN=""; ERR=""; B=""; R=""
+elif [ "$_tc" = 1 ]; then
+  BR="${e}[38;2;232;200;106m"; DIM="${e}[38;2;201;162;39m"; TXT="${e}[38;2;239;231;214m"
+  FNT="${e}[38;2;138;129;114m"; OK="${e}[38;2;127;168;107m"; WRN="${e}[38;2;224;154;60m"
+  ERR="${e}[38;2;212;85;63m"
+  B="${e}[1m"; R="${e}[0m"
+else
+  BR="${e}[38;5;179m"; DIM="${e}[38;5;136m"; TXT="${e}[38;5;187m"
+  FNT="${e}[38;5;101m"; OK="${e}[38;5;107m"; WRN="${e}[38;5;173m"
+  ERR="${e}[38;5;167m"
+  B="${e}[1m"; R="${e}[0m"
+fi
+
+have(){ command -v "$1" >/dev/null 2>&1; }
+
+# Zeitdeckel um alles, was haengen kann. Ohne timeout(1) (macOS ohne coreutils)
+# wird das Kommando roh ausgefuehrt — dort sind die Kandidaten lokal und schnell.
+tmo(){ local s="$1"; shift; if have timeout; then timeout "$s" "$@"; else "$@"; fi; }
+
+# ── Installation erkennen ────────────────────────────────────
+detect_service(){
+  [ -n "$SERVICE" ] && { printf '%s' "$SERVICE"; return; }
+  have systemctl || return
+  local u
+  for u in tiktok-bot nightcrawler nightcrawler-bot tiktok_bot; do
+    if systemctl list-unit-files --no-legend "${u}.service" 2>/dev/null | grep -q .; then
+      printf '%s' "$u"; return
+    fi
+  done
+  # Letzter Versuch: irgendeine Unit, die nach dem Bot aussieht.
+  systemctl list-unit-files --no-legend --type=service 2>/dev/null \
+    | awk '{print $1}' | grep -iE '^(tiktok|nightcrawler)' | head -1 | sed 's/\.service$//'
+}
+
+is_botdir(){ [ -f "$1/bot.py" ] || [ -f "$1/bot_v37.py" ]; }
+
+detect_botdir(){
+  [ -n "$BOT_DIR" ] && is_botdir "$BOT_DIR" && { printf '%s' "$BOT_DIR"; return; }
+  local d
+  # 1. Der Dienst weiss es am besten.
+  if [ -n "$SERVICE" ] && have systemctl; then
+    d=$(systemctl show -p WorkingDirectory --value "$SERVICE" 2>/dev/null)
+    [ -n "$d" ] && is_botdir "$d" && { printf '%s' "$d"; return; }
+  fi
+  # 2. Uebliche Orte, inklusive aller Home-Verzeichnisse (MOTD laeuft als root).
+  for d in "$HOME/nightcrawler" "$HOME/tiktok-bot" /opt/nightcrawler /opt/tiktok-bot \
+           /srv/nightcrawler /home/*/nightcrawler /home/*/tiktok-bot \
+           /Users/*/nightcrawler /Users/*/tiktok-bot; do
+    is_botdir "$d" && { printf '%s' "$d"; return; }
+  done
+}
+
+envget(){ # $1=Schluessel — erster unkommentierter Treffer aus der .env
+  [ -f "$ENVF" ] || return
+  awk -F= -v k="$1" '
+    /^[[:space:]]*#/ {next}
+    {key=$1; gsub(/[[:space:]]/,"",key)}
+    key==k {v=$2; for(i=3;i<=NF;i++) v=v"="$i
+            sub(/[[:space:]]*#.*$/,"",v); gsub(/^[[:space:]"'"'"']+|[[:space:]"'"'"']+$/,"",v)
+            print v; exit}' "$ENVF" 2>/dev/null
+}
+
+SERVICE="$(detect_service)"
+BOT_DIR="$(detect_botdir)"
+ENVF="${ENVF:-$BOT_DIR/.env}"
+LOGF="${LOGF:-$BOT_DIR/logs/error.log}"
+RECDIR="${RECDIR:-$BOT_DIR/recordings}"
+if [ -z "$DASH_PORT" ]; then DASH_PORT="$(envget DASHBOARD_PORT)"; fi
+[ -z "$DASH_PORT" ] && DASH_PORT=8050
+DB_BACKEND="$(envget DB_BACKEND)"
+if [ -z "$DB" ]; then
+  if [ -f "$BOT_DIR/tiktok_bot.db" ]; then DB="$BOT_DIR/tiktok_bot.db"
+  else
+    # brain.db ist die KI-Ablage, nicht die Bot-Datenbank — sie waere auf
+    # manchen Boxen die groessere und wuerde die Zahlen unten leer lassen.
+    _big=0
+    for _f in "$BOT_DIR"/*.db; do
+      [ -f "$_f" ] || continue
+      case "$_f" in */brain.db) continue;; esac
+      _sz=$(wc -c < "$_f" 2>/dev/null || echo 0)
+      [ "$_sz" -gt "$_big" ] 2>/dev/null && { _big=$_sz; DB=$_f; }
+    done
+  fi
+fi
+
+# ── Install / Uninstall ──────────────────────────────────────
+NC_STATE="/etc/update-motd.d/.nc-silenced"
+DEFAULTS="00-header 10-help-text 50-landscape-sysinfo 50-motd-news 80-esm-announce 88-esm-announce 90-updates-available 91-contract-ua-esm-status 91-release-upgrade 92-unattended-upgrades 95-hwe-eol"
+RC_MARK_A="# >>> NIGHTCRAWLER MOTD >>>"
+RC_MARK_E="# <<< NIGHTCRAWLER MOTD <<<"
+
+silence_defaults(){
+  local s="" f p
+  for f in $DEFAULTS; do
+    p="/etc/update-motd.d/$f"
+    [ -x "$p" ] && chmod -x "$p" 2>/dev/null && s="$s $f"
+  done
+  if [ -n "$s" ]; then
+    printf '%s\n' $s > "$NC_STATE"
+    printf "  ${FNT}Standard-MOTD gedaempft:${R}%s\n" "$s"
+  else
+    printf "  ${FNT}Standard-MOTD war bereits still${R}\n"
+  fi
+}
+restore_defaults(){
+  [ -f "$NC_STATE" ] || return
+  local f
+  while read -r f; do [ -e "/etc/update-motd.d/$f" ] && chmod +x "/etc/update-motd.d/$f"; done < "$NC_STATE"
+  rm -f "$NC_STATE"
+  printf "  ${FNT}Standard-MOTD wiederhergestellt${R}\n"
+}
+
+write_conf(){
+  # Die erkannten Pfade festschreiben. Ohne das raet die installierte Kopie bei
+  # jedem Login neu — und raet als root anders als du beim Testen.
+  mkdir -p "$(dirname "$CONF")" 2>/dev/null || return 1
+  {
+    printf '# NIGHTCRAWLER MOTD — erzeugt von motd.sh --install am %s\n' "$(date '+%F %T')"
+    printf '# Von Hand aenderbar; --install ueberschreibt die Datei.\n'
+    printf 'SERVICE=%s\n'     "$(qq "$SERVICE")"
+    printf 'BOT_DIR=%s\n'     "$(qq "$BOT_DIR")"
+    printf 'DASH_PORT=%s\n'   "$(qq "$DASH_PORT")"
+    printf 'DB=%s\n'          "$(qq "$DB")"
+    printf 'DISK_TARGET=%s\n' "$(qq "$DISK_TARGET")"
+    printf 'SHOW_REC=%s\n'    "$(qq "$SHOW_REC")"
+    printf 'CPU_SAMPLE=%s\n'  "$(qq "$CPU_SAMPLE")"
+    printf 'COLOR_MODE=%s\n'  "$(qq "$COLOR_MODE")"
+  } > "$CONF"
+  chmod 644 "$CONF" 2>/dev/null
+  printf "${OK}✔ Konfiguration${R} → %s\n" "$CONF"
+}
+qq(){ printf "'%s'" "$(printf '%s' "${1:-}" | sed "s/'/'\\\\''/g")"; }
+
+need_root(){ [ "$(id -u)" -eq 0 ] || { printf "${WRN}Bitte mit sudo:${R} sudo %s %s\n" "$0" "$1"; exit 1; }; }
+
+install_linux(){
+  local src; src="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
+  [ -d /etc/update-motd.d ] || mkdir -p /etc/update-motd.d
+  cp "$src" "$DEST" && chmod +x "$DEST" || { printf "${ERR}✘ Installation fehlgeschlagen${R}\n"; exit 1; }
+  printf "${OK}✔ installiert${R} → %s\n" "$DEST"
+  write_conf
+  silence_defaults
+  printf "  ${FNT}Vorschau:  sudo run-parts /etc/update-motd.d/${R}\n"
+  printf "  ${FNT}'Last login' kommt von SSH — optional 'PrintLastLog no' in sshd_config${R}\n"
+  if ! grep -rqs 'pam_motd' /etc/pam.d/sshd 2>/dev/null; then
+    printf "  ${WRN}Hinweis:${R} ${FNT}/etc/pam.d/sshd laedt pam_motd nicht — dann bleibt der Login still.${R}\n"
+  fi
+}
+
+install_darwin(){
+  # macOS kennt weder /etc/update-motd.d noch pam_motd. Sauberster Weg ist ein
+  # markierter Block in der Shell-rc des Nutzers — idempotent und rueckbaubar.
+  local src rc; src="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
+  rc="${SHELLRC:-$HOME/.zshrc}"; [ -n "${BASH_VERSION:-}" ] && [ ! -f "$rc" ] && rc="$HOME/.bash_profile"
+  if grep -qs "$RC_MARK_A" "$rc"; then
+    printf "${FNT}bereits eingetragen in %s${R}\n" "$rc"
+  else
+    { printf '\n%s\n' "$RC_MARK_A"
+      printf '[ -t 1 ] && [ -z "$NC_MOTD_SHOWN" ] && export NC_MOTD_SHOWN=1 && "%s"\n' "$src"
+      printf '%s\n' "$RC_MARK_E"; } >> "$rc"
+    printf "${OK}✔ eingetragen${R} → %s\n" "$rc"
+  fi
+  write_conf
+  printf "  ${FNT}Wirksam nach:  exec \$SHELL -l${R}\n"
+}
+
+uninstall_darwin(){
+  local rc; rc="${SHELLRC:-$HOME/.zshrc}"
+  for rc in "$HOME/.zshrc" "$HOME/.bash_profile" "$HOME/.bashrc"; do
+    [ -f "$rc" ] && grep -qs "$RC_MARK_A" "$rc" || continue
+    sed -i.nc-bak "/$(printf '%s' "$RC_MARK_A" | sed 's/[][\.*^$\/]/\\&/g')/,/$(printf '%s' "$RC_MARK_E" | sed 's/[][\.*^$\/]/\\&/g')/d" "$rc"
+    printf "${OK}✔ entfernt aus${R} %s ${FNT}(Sicherung: %s.nc-bak)${R}\n" "$rc" "$rc"
+  done
+}
+
+doctor(){
+  printf "\n${BR}${B}NIGHTCRAWLER MOTD — Erkennung${R}  ${FNT}v%s${R}\n\n" "$NC_MOTD_VERSION"
+  printf "  %-12s %s\n" "System"    "$OS $(uname -r 2>/dev/null)"
+  printf "  %-12s %s\n" "Konfig"    "$([ -r "$CONF" ] && echo "$CONF" || echo "— (keine, alles erkannt)")"
+  printf "  %-12s %s\n" "Dienst"    "${SERVICE:-— nicht gefunden}"
+  printf "  %-12s %s\n" "BOT_DIR"   "${BOT_DIR:-— nicht gefunden}"
+  printf "  %-12s %s\n" ".env"      "$([ -f "$ENVF" ] && echo "$ENVF" || echo "— fehlt")"
+  printf "  %-12s %s\n" "Datenbank" "${DB:-— keine gefunden}${DB_BACKEND:+  (DB_BACKEND=$DB_BACKEND)}"
+  printf "  %-12s %s\n" "Log"       "$([ -f "$LOGF" ] && echo "$LOGF" || echo "— fehlt")"
+  printf "  %-12s %s\n" "Aufnahmen" "$([ -d "$RECDIR" ] && echo "$RECDIR" || echo "— fehlt")"
+  printf "  %-12s %s\n" "Dashboard" ":$DASH_PORT"
+  printf "  %-12s %s\n" "Werkzeuge" "$(for t in systemctl ss curl sqlite3 python3 free df find du; do have $t && printf '%s ' "$t"; done)"
+  printf "\n  ${FNT}Falsch erkannt? Werte in %s eintragen (oder als Umgebung setzen).${R}\n\n" "$CONF"
+  exit 0
+}
+
+case "${1:-}" in
+  --install)
+    need_root --install
+    if [ "$OS" = "Darwin" ]; then install_darwin; else install_linux; fi
+    exit 0;;
+  --uninstall)
+    if [ "$OS" = "Darwin" ]; then uninstall_darwin; exit 0; fi
+    need_root --uninstall
+    if [ -f "$DEST" ]; then rm -f "$DEST" && printf "${OK}✔ entfernt${R} → %s\n" "$DEST"
+    else printf "${FNT}nicht installiert${R}\n"; fi
+    restore_defaults
+    printf "  ${FNT}%s bleibt liegen (harmlos, enthaelt nur Pfade)${R}\n" "$CONF"
+    exit 0;;
+  --doctor)  doctor;;
+  --version) printf 'NIGHTCRAWLER MOTD %s\n' "$NC_MOTD_VERSION"; exit 0;;
+  --help|-h)
+    printf "NIGHTCRAWLER MOTD %s\n\n" "$NC_MOTD_VERSION"
+    printf "  (ohne Argument)  Vorschau — aendert nichts\n"
+    printf "  --install        einhaengen + Standard-MOTD daempfen (sudo; macOS: Shell-rc)\n"
+    printf "  --uninstall      entfernen + Standard-MOTD wiederherstellen\n"
+    printf "  --doctor         zeigt, was erkannt wurde und woher\n"
+    printf "  --version        Fassung\n\n"
+    printf "Anpassen ueber %s oder Umgebung:\n" "$CONF"
+    printf "  SERVICE BOT_DIR DASH_PORT DB DISK_TARGET SHOW_REC CPU_SAMPLE COLOR_MODE\n"
+    printf "Beispiel:  BOT_DIR=~/mein-bot COLOR_MODE=off ./motd.sh\n"
+    exit 0;;
+  "") ;;
+  *) printf "${WRN}Unbekannte Option: %s${R}  (--help)\n" "$1"; exit 1;;
+esac
+
+# ── Zeichen-Helfer ───────────────────────────────────────────
+col4(){ local p=${1:-0}; if [ "$p" -ge 90 ]; then printf '%s' "$ERR"
+        elif [ "$p" -ge 70 ]; then printf '%s' "$WRN"; else printf '%s' "$OK"; fi; }
+rule(){ printf "${DIM}"; awk -v n="$WIDTH" 'BEGIN{while(n-->0)printf "━"}'; printf "${R}\n"; }
+sect(){ printf "  ${DIM}${B}%s${R}\n" "$1"; }
+bar(){  # bar <prozent> [breite]  — Breite als ARGUMENT: eine Zuweisung vor dem
+        # Funktionsaufruf (BARW=10 bar 50) bleibt in bash danach stehen und
+        # verstellte in der Vorfassung alle folgenden Balken.
+  local p=${1:-0} w=${2:-$BARW} i fill col out=""
+  [ "$p" -lt 0 ] 2>/dev/null && p=0; [ "$p" -gt 100 ] 2>/dev/null && p=100
+  fill=$(( (p*w+50)/100 )); col=$(col4 "$p"); out="${col}"
+  i=0; while [ "$i" -lt "$w" ]; do
+    if [ "$i" -lt "$fill" ]; then out="${out}█"; else out="${out}${FNT}▒${col}"; fi
+    i=$((i+1))
+  done
+  printf "%b" "${out}${R}"
+}
+gauge(){ printf "  ${DIM}%-6s${R} %b ${FNT}%s${R}\n" "$1" "$(bar "$2")" "$3"; }
+dot(){ case "$1" in ok) printf "${OK}●${R}";; warn) printf "${WRN}●${R}";;
+                    err) printf "${ERR}●${R}";; *) printf "${FNT}●${R}";; esac; }
+row(){ printf "  ${DIM}%-11s${R}%b %b\n" "$1" "$2" "$3"; }
+human(){ awk -v b="${1:-0}" 'BEGIN{s="B K M G T P";n=split(s,u," ");x=b+0;i=1;
+         while(x>=1024&&i<n){x/=1024;i++} printf (x<10?"%.1f%s":"%.0f%s"),x,u[i]}'; }
+ago(){ local d=$(( $(date +%s) - ${1%.*} ))
+  [ "$d" -lt 0 ] && d=0
+  if   [ "$d" -lt 60 ];    then echo "${d}s"
+  elif [ "$d" -lt 3600 ];  then echo "$((d/60))m"
+  elif [ "$d" -lt 86400 ]; then echo "$((d/3600))h"
+  else echo "$((d/86400))d"; fi; }
+onoff(){ [ "${1:-0}" -gt 0 ] 2>/dev/null && echo ok || echo faint; }
+pct(){ [ "${2:-0}" -gt 0 ] 2>/dev/null && echo $(( $1*100/$2 )) || echo 0; }
+
+WARN_LINES=""
+warn_add(){ WARN_LINES="${WARN_LINES}${1}"$'\n'; }
+
+# ── Messwerte einsammeln ─────────────────────────────────────
+CPU_LINES=""
+if [ "$OS" = "Linux" ] && [ -r /proc/stat ] && [ "$CPU_SAMPLE" != "0" ]; then
+  _snap(){ awk '/^cpu[0-9]*[ \t]/{idle=$5+$6; tot=0; for(i=2;i<=NF;i++) tot+=$i; print $1, idle, tot}' /proc/stat; }
+  _s1=$(_snap); sleep "$CPU_SAMPLE"; _s2=$(_snap)
+  CPU_LINES=$(printf '%s\n%s\n' "$_s1" "$_s2" | awk '
+    { if (seen[$1]++) { di=$2-i[$1]; dt=$3-t[$1]; p=(dt>0)?int(100*(dt-di)/dt+0.5):0; print $1, p }
+      else { i[$1]=$2; t[$1]=$3 } }')
+fi
+CPU_ALL=$(printf '%s\n' "$CPU_LINES" | awk '$1=="cpu"{print $2; exit}')
+if [ -z "$CPU_ALL" ] && [ "$OS" = "Darwin" ]; then
+  # macOS hat kein /proc: Summe der Prozesslast durch Kernzahl. Grob, aber
+  # sofort da — top -l 1 kostet eine ganze Sekunde pro Login.
+  CPU_ALL=$(ps -A -o %cpu= 2>/dev/null | awk -v n="$(sysctl -n hw.ncpu 2>/dev/null || echo 1)" \
+            '{s+=$1} END{p=int(s/n+0.5); print (p>100?100:p)}')
+fi
+[ -z "$CPU_ALL" ] && CPU_ALL=0
+
+if [ "$OS" = "Darwin" ]; then
+  NPC=$(sysctl -n hw.ncpu 2>/dev/null || echo 1)
+else
+  NPC=$(nproc 2>/dev/null || grep -c '^processor' /proc/cpuinfo 2>/dev/null || echo 1)
+fi
+
+# Speicher — auf Linux direkt aus /proc/meminfo (kein free(1) noetig, kein
+# Rateraten an dessen Spaltenlayout, das sich zwischen Versionen verschoben hat)
+MEM_U=0; MEM_T=0; SWP_U=0; SWP_T=0
+if [ -r /proc/meminfo ]; then
+  eval "$(awk '/^MemTotal:/{t=$2} /^MemAvailable:/{a=$2} /^SwapTotal:/{st=$2} /^SwapFree:/{sf=$2}
+               END{printf "MEM_T=%d MEM_U=%d SWP_T=%d SWP_U=%d", t/1024, (t-a)/1024, st/1024, (st-sf)/1024}' /proc/meminfo)"
+elif [ "$OS" = "Darwin" ] && have vm_stat; then
+  MEM_T=$(( $(sysctl -n hw.memsize 2>/dev/null || echo 0) / 1048576 ))
+  MEM_U=$(vm_stat 2>/dev/null | awk -v tot="$MEM_T" '
+    /page size of/{ps=$8} /Pages free/{f=$3} /Pages speculative/{s=$3}
+    END{gsub(/\./,"",f); gsub(/\./,"",s); if(ps=="")ps=4096; printf "%d", tot-((f+s)*ps)/1048576}')
+fi
+
+# Platte — POSIX-df (-Pk laeuft auch auf macOS; --output ist GNU-only)
+DISK_U=0; DISK_T=0; DISK_A=0
+eval "$(tmo 3 df -Pk "$DISK_TARGET" 2>/dev/null | awk 'NR==2{printf "DISK_U=%d DISK_T=%d DISK_A=%d", $3, $2, $4}')"
+
+# Temperatur — Raspberry Pi und alles mit thermal_zone
+TEMP=""
+if have vcgencmd; then
+  TEMP=$(tmo 2 vcgencmd measure_temp 2>/dev/null | tr -dc '0-9.' | cut -d. -f1)
+elif [ -r /sys/class/thermal/thermal_zone0/temp ]; then
+  TEMP=$(( $(cat /sys/class/thermal/thermal_zone0/temp 2>/dev/null || echo 0) / 1000 ))
+  [ "$TEMP" = "0" ] && TEMP=""
+fi
+# Unterspannung/Drosselung: der haeufigste Grund fuer "der Pi nimmt nicht auf"
+THROTTLE=""
+if have vcgencmd; then
+  _tv=$(tmo 2 vcgencmd get_throttled 2>/dev/null | cut -d= -f2)
+  case "$_tv" in 0x0|"") ;; *) THROTTLE="$_tv" ;; esac
+fi
+
+# ── Kopf ─────────────────────────────────────────────────────
+# BUILD_STAMP steht seit v4.0 als Klartext in bot.py ("2026.08 · v4.0"); die
+# alte Fassung suchte ein "B<nummer>" in bot_v37.py und fand nach W119 nichts
+# mehr — der Kopf war seitdem versionslos.
+VER="$(envget BUILD_STAMP)"
+if [ -z "$VER" ]; then
+  for f in "$BOT_DIR/bot.py" "$BOT_DIR/bot_v37.py"; do
+    [ -f "$f" ] || continue
+    VER=$(sed -n 's/^BUILD_STAMP *= *os\.getenv("BUILD_STAMP", *"\([^"]*\)").*/\1/p' "$f" | head -1)
+    [ -n "$VER" ] && break
+  done
+fi
+GITREF=""
+if [ -n "$BOT_DIR" ] && [ -d "$BOT_DIR/.git" ] && have git; then
+  GITREF=$(tmo 2 git -C "$BOT_DIR" rev-parse --short HEAD 2>/dev/null)
+fi
+if have uptime; then UP=$(uptime -p 2>/dev/null | sed 's/^up //'); fi
+[ -z "${UP:-}" ] && [ -r /proc/uptime ] && UP="$(awk '{d=int($1/86400); h=int(($1%86400)/3600); m=int(($1%3600)/60);
+  printf (d? "%dd %dh" : (h? "%dh %dm" : "%dm")), (d?d:(h?h:m)), (d?h:m)}' /proc/uptime)"
+[ -z "${UP:-}" ] && UP="—"
+
+printf "\n"; rule
+printf "  ${BR}${B}◤ NIGHTCRAWLER${R}${VER:+ ${DIM}${VER}${R}}${GITREF:+ ${FNT}·${R} ${FNT}${GITREF}${R}}   ${TXT}%s${R}\n" "$(hostname 2>/dev/null)"
+printf "  ${FNT}Restream Control Room${R}   ${FNT}up %s${R}\n" "$UP"
+rule
+
+# ── System ───────────────────────────────────────────────────
+sect "SYSTEM"
+gauge "CPU" "$CPU_ALL" "${CPU_ALL}% · ${NPC} Kerne"
+if [ -n "$CPU_LINES" ]; then
+  # Ein Zeichen je Kern: sieht sofort, ob EIN ffmpeg einen Kern festhaelt oder
+  # ob wirklich alle unter Last stehen.
+  EQ="  ${FNT}Kerne  ${R}"
+  while read -r _n _p; do
+    case "$_n" in cpu[0-9]*) ;; *) continue;; esac
+    _l=$(( (_p*8+50)/100 )); [ "$_l" -gt 8 ] && _l=8
+    case "$_l" in 0|1) _c="▁";; 2) _c="▂";; 3) _c="▃";; 4) _c="▄";;
+                  5) _c="▅";; 6) _c="▆";; 7) _c="▇";; *) _c="█";; esac
+    EQ="${EQ}$(col4 "$_p")${_c}${R}"
+  done <<EOF
+$CPU_LINES
+EOF
+  printf "%b\n" "$EQ"
+fi
+if [ -r /proc/loadavg ]; then read -r l1 l5 l15 _ < /proc/loadavg
+elif have uptime; then eval "$(uptime | sed 's/.*averages*: *//; s/,//g' | awk '{print "l1="$1" l5="$2" l15="$3}')"; fi
+LOADLINE="  ${DIM}Load  ${R} ${TXT}${l1:-?}${R} ${FNT}·${R} ${TXT}${l5:-?}${R} ${FNT}·${R} ${TXT}${l15:-?}${R}"
+[ -n "$TEMP" ] && LOADLINE="${LOADLINE}   ${DIM}Temp${R} $( [ "$TEMP" -ge 75 ] && printf '%s' "$WRN" || printf '%s' "$TXT" )${TEMP}°C${R}"
+printf "%b\n" "$LOADLINE"
+[ "$MEM_T" -gt 0 ] && gauge "RAM"  "$(pct "$MEM_U" "$MEM_T")" \
+  "$(awk -v u="$MEM_U" -v t="$MEM_T" 'BEGIN{printf "%.1f/%.1fG",u/1024,t/1024}')  $(pct "$MEM_U" "$MEM_T")%"
+[ "$SWP_T" -gt 0 ] && gauge "Swap" "$(pct "$SWP_U" "$SWP_T")" \
+  "$(awk -v u="$SWP_U" -v t="$SWP_T" 'BEGIN{printf "%.1f/%.1fG",u/1024,t/1024}')  $(pct "$SWP_U" "$SWP_T")%"
+if [ "$DISK_T" -gt 0 ]; then
+  DPCT=$(pct "$DISK_U" "$DISK_T")
+  gauge "Disk" "$DPCT" "$(human $((DISK_U*1024)))/$(human $((DISK_T*1024)))  ${DPCT}% · $(human $((DISK_A*1024))) frei"
+  [ "$DPCT" -ge 90 ] && warn_add "Platte zu ${DPCT}% voll — Aufnahmen brechen ab: ${TXT}/cleanup${R}${FNT} oder alte Dateien loeschen${R}"
+fi
+[ -n "$THROTTLE" ] && warn_add "Pi meldet Drosselung (get_throttled=${THROTTLE}) — Netzteil pruefen, sonst bricht ffmpeg weg"
+rule
+
+# ── NIGHTCRAWLER: Dienst, Dashboard, Abwehr, Fehler ──────────
+sect "NIGHTCRAWLER"
+if [ -z "$BOT_DIR" ]; then
+  row "Installation" "$(dot warn)" "${WRN}nicht gefunden${R} ${FNT}— BOT_DIR in ${CONF} setzen (./motd.sh --doctor)${R}"
+fi
+
+if [ -n "$SERVICE" ] && have systemctl; then
+  if systemctl is-active --quiet "$SERVICE" 2>/dev/null; then
+    _since=$(systemctl show -p ActiveEnterTimestamp --value "$SERVICE" 2>/dev/null | cut -d' ' -f2-3)
+    _nrs=$(systemctl show -p NRestarts --value "$SERVICE" 2>/dev/null)
+    _extra=""
+    [ -n "$_since" ] && _extra="seit $_since"
+    # NRestarts > 0 heisst: der Dienst ist zwar oben, faellt aber. Genau das
+    # sieht man an "is-active" NIE — und es ist der wichtigere Befund.
+    if [ -n "$_nrs" ] && [ "$_nrs" -gt 0 ] 2>/dev/null; then
+      _extra="${_extra} · ${_nrs}x neugestartet"
+      warn_add "Dienst wurde ${_nrs}x neu gestartet — Grund: ${TXT}journalctl -u ${SERVICE} -p err -n 50${R}"
+    fi
+    row "Bot" "$(dot ok)" "${TXT}laeuft${R} ${FNT}${_extra}${R}"
+  else
+    _res=$(systemctl show -p Result --value "$SERVICE" 2>/dev/null)
+    row "Bot" "$(dot err)" "${ERR}gestoppt${R} ${FNT}${_res:+(${_res})}${R}"
+    warn_add "Bot laeuft nicht: ${TXT}sudo systemctl start ${SERVICE}${R}${FNT} — Grund: journalctl -u ${SERVICE} -n 80${R}"
+  fi
+elif [ -n "$BOT_DIR" ]; then
+  # Ohne systemd (macOS, Container, Handstart): am Prozess erkennen.
+  # Muster bewusst eng: ein blosses "bot.py" trifft auch einen Editor, ein
+  # grep oder ein Deploy-Skript in der Prozessliste — und meldet dann froehlich
+  # "laeuft", waehrend der Bot tot ist.
+  if tmo 2 pgrep -f "python[0-9.]*[^|]*bot(_v37)?\.py" >/dev/null 2>&1; then
+    row "Bot" "$(dot ok)" "${TXT}laeuft${R} ${FNT}(Prozess, kein systemd-Dienst)${R}"
+  else
+    row "Bot" "$(dot err)" "${ERR}kein Prozess${R} ${FNT}(kein systemd-Dienst gefunden)${R}"
+  fi
+fi
+
+# Dashboard: nicht "lauscht der Port", sondern "antwortet die App". Ein
+# haengender Flask-Thread haelt den Port offen — die alte Anzeige blieb gruen.
+DASH_JSON=""
+if have curl; then
+  DASH_JSON=$(tmo 2 curl -s --max-time 1.5 "http://127.0.0.1:${DASH_PORT}/healthz" 2>/dev/null)
+fi
+if [ -n "$DASH_JSON" ]; then
+  _ok=$(printf '%s' "$DASH_JSON" | sed -n 's/.*"ok"[: ]*\([a-z]*\).*/\1/p')
+  _procs=$(printf '%s' "$DASH_JSON" | sed -n 's/.*"procs"[: ]*\([0-9]*\).*/\1/p')
+  _zomb=$(printf '%s' "$DASH_JSON" | sed -n 's/.*"zombies"[: ]*\([0-9]*\).*/\1/p')
+  if [ "$_ok" = "true" ]; then
+    row "Dashboard" "$(dot ok)" "${TXT}gesund${R} ${FNT}:${DASH_PORT}${_procs:+ · ${_procs} Kindprozesse}${R}"
+  else
+    row "Dashboard" "$(dot warn)" "${WRN}degradiert${R} ${FNT}:${DASH_PORT} — /healthz meldet ok=false${R}"
+    warn_add "Dashboard degradiert (DB oder Dauerschleifen): ${TXT}curl -s localhost:${DASH_PORT}/api/selftest${R}"
+  fi
+  [ -n "$_zomb" ] && [ "$_zomb" -gt 0 ] 2>/dev/null && \
+    warn_add "${_zomb} Zombie-Kindprozesse — ffmpeg/streamlink werden nicht abgeraeumt"
+elif have ss && tmo 2 ss -ltn 2>/dev/null | grep -q ":${DASH_PORT} "; then
+  row "Dashboard" "$(dot warn)" "${WRN}Port offen, keine Antwort${R} ${FNT}:${DASH_PORT}${R}"
+elif have lsof && tmo 2 lsof -nP -iTCP:"${DASH_PORT}" -sTCP:LISTEN >/dev/null 2>&1; then
+  row "Dashboard" "$(dot warn)" "${WRN}Port offen, keine Antwort${R} ${FNT}:${DASH_PORT}${R}"
+else
+  row "Dashboard" "$(dot err)" "${ERR}kein Listener${R} ${FNT}:${DASH_PORT}${R}"
+fi
+
+if have systemctl && systemctl list-unit-files --no-legend 'crowdsec.service' 2>/dev/null | grep -q .; then
+  if systemctl is-active --quiet crowdsec 2>/dev/null; then
+    CS=$(command -v cscli 2>/dev/null || echo /usr/bin/cscli)
+    BANS=""
+    [ -x "$CS" ] && BANS=$(tmo 3 "$CS" decisions list -o raw 2>/dev/null | tail -n +2 | wc -l | tr -d ' ')
+    row "CrowdSec" "$(dot ok)" "${TXT}aktiv${R} ${FNT}${BANS:+· ${BANS} Bans}${R}"
+  else
+    row "CrowdSec" "$(dot err)" "${ERR}inaktiv${R} ${FNT}— Abwehr blind${R}"
+  fi
+fi
+
+if [ -f "$LOGF" ]; then
+  # error.log enthaelt NUR ERROR+ (eigener Handler). Interessant ist deshalb
+  # nicht "gibt es Fehler", sondern "wie viele HEUTE und wie alt der letzte".
+  ETODAY=$(tmo 3 grep -c "^$(date +%F)" "$LOGF" 2>/dev/null | tr -d ' ')
+  ETODAY=${ETODAY:-0}
+  ELAST=""
+  if [ "$ETODAY" -gt 0 ] 2>/dev/null; then
+    _lt=$(tail -n 1 "$LOGF" 2>/dev/null | cut -c1-19)
+    [ -n "$_lt" ] && ELAST=$(date -d "$_lt" +%s 2>/dev/null)
+    [ -n "$ELAST" ] && ELAST=" · letzter vor $(ago "$ELAST")"
+  fi
+  if   [ "$ETODAY" -eq 0 ] 2>/dev/null; then row "Fehler" "$(dot ok)"   "${TXT}0${R} ${FNT}heute${R}"
+  elif [ "$ETODAY" -lt 5 ] 2>/dev/null; then row "Fehler" "$(dot warn)" "${WRN}${ETODAY}${R} ${FNT}heute${ELAST}${R}"
+  else row "Fehler" "$(dot err)" "${ERR}${ETODAY}${R} ${FNT}heute${ELAST}${R}"
+       warn_add "${ETODAY} Fehler heute: ${TXT}tail -n 40 ${LOGF}${R}"
+  fi
+fi
+rule
+
+# ── Tracking (Datenbank, streng lesend) ──────────────────────
+dbq(){ # $1 = SQL, liefert eine Zeile mit |-getrennten Spalten
+  if have sqlite3; then tmo 3 sqlite3 -readonly -separator '|' "$DB" "$1" 2>/dev/null
+  elif have python3; then tmo 5 python3 -c '
+import sqlite3, sys
+try:
+    c = sqlite3.connect("file:" + sys.argv[1] + "?mode=ro", uri=True)
+    print("|".join(str(x) for x in c.execute(sys.argv[2]).fetchone()))
+except Exception:
+    pass' "$DB" "$1" 2>/dev/null
+  fi; }
+
+case "$DB_BACKEND" in
+  mariadb|mysql)
+    sect "TRACKING"
+    row "Datenbank" "$(dot faint)" "${FNT}MariaDB — Zahlen nur im Dashboard (:${DASH_PORT})${R}"
+    rule;;
+  *)
+  if [ -n "$DB" ] && [ -f "$DB" ] && { have sqlite3 || have python3; }; then
+    # EIN Aufruf statt fuenf: jeder oeffnet die Datei, sperrt kurz und kostet
+    # Zeit — bei jedem Login. restreams gibt es erst ab v37, deshalb der
+    # Rueckfall auf die schmale Abfrage.
+    STATS=$(dbq "SELECT (SELECT COUNT(*) FROM trackings),
+                        (SELECT COUNT(*) FROM trackings WHERE last_live=1),
+                        (SELECT COUNT(*) FROM trackings WHERE recording=1),
+                        (SELECT COUNT(*) FROM trackings WHERE paused=1),
+                        (SELECT COUNT(*) FROM restreams WHERE status='live')")
+    [ -z "$STATS" ] && STATS=$(dbq "SELECT (SELECT COUNT(*) FROM trackings),
+                        (SELECT COUNT(*) FROM trackings WHERE last_live=1),
+                        (SELECT COUNT(*) FROM trackings WHERE recording=1),
+                        (SELECT COUNT(*) FROM trackings WHERE paused=1), -1")
+    if [ -n "$STATS" ]; then
+      IFS='|' read -r TT LVN REC PAU RSL <<EOF
+$STATS
+EOF
+      TT=${TT:-0}; LVN=${LVN:-0}; REC=${REC:-0}; PAU=${PAU:-0}; RSL=${RSL:--1}
+      FFN=$(tmo 2 pgrep -c ffmpeg 2>/dev/null | tr -d ' '); FFN=${FFN:-0}
+      sect "TRACKING"
+      row "Getrackt" "$(dot faint)" "${TXT}${TT}${R} ${FNT}Streamer${R}${FNT}$([ "$PAU" -gt 0 ] 2>/dev/null && printf ' · %s pausiert' "$PAU")${R}"
+      printf "  ${DIM}%-11s${R}%b ${TXT}%s${R} ${FNT}von %s${R}  %b\n" \
+        "Live jetzt" "$(dot "$(onoff "$LVN")")" "$LVN" "$TT" "$(bar "$(pct "$LVN" "$TT")" 10)"
+      row "Aufnahme" "$(dot "$(onoff "$REC")")" "${TXT}${REC}${R} ${FNT}aktiv · ${FFN} ffmpeg${R}"
+      # Genau diese Luecke jagt der recording-Sentinel: DB sagt "nimmt auf",
+      # es laeuft aber kein einziges ffmpeg.
+      if [ "$REC" -gt 0 ] 2>/dev/null && [ "$FFN" -eq 0 ] 2>/dev/null; then
+        warn_add "DB meldet ${REC} Aufnahmen, es laeuft aber KEIN ffmpeg — Karteileichen: ${TXT}/recstatus${R}"
+      fi
+      [ "$RSL" -ge 0 ] 2>/dev/null && row "Restream" "$(dot "$(onoff "$RSL")")" "${TXT}${RSL}${R} ${FNT}Ziel(e) live${R}"
+      rule
+    fi
+  fi;;
+esac
+
+# ── Plattformen und Kanaele (Chips aus der .env) ─────────────
+if [ -f "$ENVF" ]; then
+  truthy(){ case "$(printf '%s' "${1:-}" | tr 'A-Z' 'a-z')" in
+              1|true|yes|on|y) return 0;; *) return 1;; esac; }
+  chip(){ case "$2" in
+            on)   printf "${OK}▣ %s${R}  " "$1";;
+            halb) printf "${WRN}▨ %s${R}  " "$1";;   # eingeschaltet, aber unvollstaendig
+            *)    printf "${FNT}▢ %s${R}  " "$1";;
+          esac; }
+  # Die Vorfassung nahm JEDEN Schluessel, der das Stichwort enthielt. Ein
+  # gesetztes KICK_INGEST_URL machte Kick gruen, obwohl KICK_ENABLED=0 war.
+  # Reihenfolge jetzt: ausdrueckliches ENABLED schlaegt alles, danach zaehlt
+  # nur ein echter Stream-Key.
+  plat(){ # $1=Praefix  $2=Schluesselvariable  ($3 = Vorgabe wenn ENABLED fehlt)
+    local en key
+    en="$(envget "${1}_ENABLED")"; key="$(envget "$2")"
+    if [ -n "$en" ] && ! truthy "$en"; then echo off; return; fi
+    if [ -n "$key" ]; then echo on; else echo halb; fi
+  }
+  sect "RESTREAM"
+  printf "  %b%b%b${FNT}  ▣ bereit · ▨ ohne Key · ▢ aus${R}\n" \
+    "$(chip Kick    "$(plat KICK    KICK_STREAM_KEY)")" \
+    "$(chip Twitch  "$(plat TWITCH  TWITCH_STREAM_KEY)")" \
+    "$(chip YouTube "$(plat YOUTUBE YOUTUBE_STREAM_KEY)")"
+  sect "KANAELE"
+  _tg=off; [ -n "$(envget BOT_TOKEN)" ] && _tg=on
+  _dc=off; [ -n "$(envget DISCORD_BOT_TOKEN)" ] && _dc=on
+  _ai=halb   # keylos laeuft AZRAEL immer (nc/freeai), mit Key nur besser
+  for k in ANTHROPIC_API_KEY OPENAI_API_KEY POLLINATIONS_API_KEY LLM7_TOKEN; do
+    [ -n "$(envget "$k")" ] && { _ai=on; break; }
+  done
+  printf "  %b%b%b\n" "$(chip Telegram "$_tg")" "$(chip Discord "$_dc")" "$(chip AZRAEL "$_ai")"
+  [ "$_tg" = off ] && warn_add "BOT_TOKEN fehlt in der .env — ohne ihn startet der Telegram-Teil nicht"
+  rule
+elif [ -n "$BOT_DIR" ]; then
+  row ".env" "$(dot err)" "${ERR}fehlt${R} ${FNT}— cp .env.example .env && chmod 600 .env${R}"
+  rule
+fi
+
+# ── Aufnahmen (Dateisystem, zwischengespeichert) ─────────────
+# du/find ueber eine 400-GB-Bibliothek dauerte bei JEDEM Login mehrere
+# Sekunden. Das Ergebnis aendert sich langsam — REC_CACHE_TTL reicht voellig.
+if [ "$SHOW_REC" = 1 ] && [ -d "$RECDIR" ]; then
+  CACHE="${TMPDIR:-/var/tmp}/nc-motd-rec-$(id -u 2>/dev/null || echo 0).cache"
+  cache_age(){ local m
+    m=$(stat -c %Y "$1" 2>/dev/null || stat -f %m "$1" 2>/dev/null) || return 1
+    [ -n "$m" ] || return 1; echo $(( $(date +%s) - m )); }
+  _age=$(cache_age "$CACHE" 2>/dev/null)
+  if [ -n "${_age:-}" ] && [ "$_age" -lt "$REC_CACHE_TTL" ] 2>/dev/null; then
+    IFS='|' read -r RC RKB RNEW < "$CACHE"
+  else
+    RC=$(tmo 8 find "$RECDIR" -type f \( -name '*.ts' -o -name '*.mp4' -o -name '*.mkv' -o -name '*.flv' \) 2>/dev/null | wc -l | tr -d ' ')
+    RKB=$(tmo 8 du -sk "$RECDIR" 2>/dev/null | cut -f1)
+    if [ "$OS" = "Darwin" ]; then
+      RNEW=$(tmo 8 find "$RECDIR" -type f -exec stat -f '%m' {} + 2>/dev/null | sort -n | tail -1)
+    else
+      RNEW=$(tmo 8 find "$RECDIR" -type f -printf '%T@\n' 2>/dev/null | sort -n | tail -1)
+    fi
+    printf '%s|%s|%s\n' "${RC:-0}" "${RKB:-0}" "${RNEW:-}" > "$CACHE" 2>/dev/null
+  fi
+  sect "AUFNAHMEN"
+  printf "  ${TXT}%s${R} ${FNT}Dateien${R}   ${TXT}%s${R} ${FNT}gesamt${R}%b   ${FNT}%s${R}\n" \
+    "${RC:-0}" \
+    "$([ -n "${RKB:-}" ] && human $(( ${RKB:-0} * 1024 )) || echo '—')" \
+    "$([ -n "${RNEW:-}" ] && printf "   ${FNT}neuste vor${R} ${TXT}%s${R}" "$(ago "$RNEW")")" \
+    "$([ -n "${_age:-}" ] && [ "${_age:-0}" -lt "$REC_CACHE_TTL" ] 2>/dev/null && printf '(Stand: vor %ss)' "$_age")"
+  rule
+fi
+
+# ── Hinweise ─────────────────────────────────────────────────
+# Nur was WIRKLICH ansteht. Eine MOTD, die immer denselben Absatz zeigt, wird
+# nach drei Tagen nicht mehr gelesen — dann faellt auch der echte Befund durch.
+if [ -n "$WARN_LINES" ]; then
+  sect "HINWEISE"
+  printf '%s' "$WARN_LINES" | while IFS= read -r l; do
+    [ -n "$l" ] && printf "  ${WRN}▲${R} %b\n" "$l"
+  done
+  rule
+fi
+printf "\n"
+exit 0

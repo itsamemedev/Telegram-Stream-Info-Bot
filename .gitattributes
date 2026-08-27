@@ -13,6 +13,9 @@
 *.js    text eol=lf
 *.json  text eol=lf
 *.service text eol=lf
+# Ausnahme: cmd.exe stolpert ueber Batch-Dateien mit reinem LF - Sprungmarken
+# (goto/call :label) werden dann je nach Windows-Fassung nicht gefunden.
+*.bat   text eol=crlf
 *.webmanifest text eol=lf
 
 # Binaerdateien nie anfassen

@@ -199,10 +199,16 @@ URTEIL="$(curl -fsS -m 10 "http://127.0.0.1:${PORT}/api/selftest" 2>/dev/null ||
 if [ -n "$URTEIL" ]; then
   # Heredoc mit 'PYEOF' in Anfuehrungszeichen: die Shell fasst den Block nicht
   # an, deshalb duerfen hier beliebige Anfuehrungszeichen und $ vorkommen.
-  printf '%s' "$URTEIL" | "$PY" - <<'PYEOF' || printf '%s\n' "$URTEIL" | head -c 800
-import json, sys
+  # Das Urteil kommt ueber die UMGEBUNG, nicht ueber eine Pipe. Grund: "python -"
+  # liest das PROGRAMM von stdin, und das Heredoc belegt stdin damit bereits —
+  # die Pipe lief ins Leere und json.load(sys.stdin) bekam nichts. Aufgefallen
+  # ist es nie, weil bei jedem Fehlschlag klaglos der Rueckfall griff und statt
+  # des formatierten Urteils rohes JSON zeigte. Genau so sah jede Auslieferung
+  # bisher aus.
+  URTEIL="$URTEIL" "$PY" - <<'PYEOF' || printf '%s\n' "$URTEIL" | head -c 800
+import json, os
 
-d = json.load(sys.stdin)
+d = json.loads(os.environ["URTEIL"])
 ZEICHEN = {"rot": "\033[31m✗\033[0m", "gelb": "\033[33m!\033[0m"}
 print("  Urteil: %s (%d rot, %d gelb)" % (
     d.get("urteil", "?"), d.get("anzahl_rot", 0), d.get("anzahl_gelb", 0)))

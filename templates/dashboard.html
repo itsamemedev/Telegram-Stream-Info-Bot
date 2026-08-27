@@ -297,6 +297,27 @@ body{
 }
 .panel .head .tag{font-size:var(--fs-2xs);color:var(--text-faint);letter-spacing:0.1em}
 .panel .body{padding:14px}
+
+/* v4.0-W120: Panels auf- und zuklappen.
+   Warum an der Kopfzeile und nicht an einem eigenen Balken: der Kopf IST
+   bereits die Kante des Panels. Ein zweites Bedienelement daneben waere ein
+   zweites Ding, das man erst lesen muss. Der Winkel rechts sagt, was ein
+   Klick bewirkt; die ganze Kopfzeile nimmt ihn entgegen. */
+.panel > .head{cursor:pointer;user-select:none}
+.panel > .head > h3{cursor:inherit}
+.pnl-klapp{
+  appearance:none;-webkit-appearance:none;background:none;border:0;
+  color:var(--text-faint);font-family:var(--mono);font-size:var(--fs-sm);
+  line-height:1;padding:2px 4px;margin-left:2px;cursor:pointer;
+}
+.panel > .head:hover .pnl-klapp,.pnl-klapp:hover{color:var(--neon)}
+.pnl-klapp:focus-visible{outline:1px solid var(--neon);outline-offset:2px}
+/* Zugeklappt verschwindet mit dem Koerper auch die Trennlinie darueber —
+   sonst schwebt ein Strich unter einer leeren Kante. */
+.panel.zu > .body{display:none}
+.panel.zu > .head{border-bottom:0}
+@media(pointer:coarse){ .pnl-klapp{min-width:44px;min-height:44px;padding:0} }
+
 .panel.span2{grid-column:span 2}
 @media(max-width:680px){.panel.span2{grid-column:span 1}}
 
@@ -2114,7 +2135,7 @@ tbody tr:hover td{ background: color-mix(in srgb, var(--neon) 4%, transparent); 
 }
 
 /* ── Themenumschalter ──────────────────────────────────────────────── */
-#themeToggle{
+#themeToggle,#klappAlle{
   display:inline-flex; align-items:center; gap:7px;
   padding:7px 12px; border-radius:999px;
   border:1px solid var(--border-bright);
@@ -2123,7 +2144,7 @@ tbody tr:hover td{ background: color-mix(in srgb, var(--neon) 4%, transparent); 
   font-family:var(--mono), ui-monospace, monospace;
   font-size:11px; letter-spacing:.05em;
 }
-#themeToggle:hover{ border-color:var(--neon); }
+#themeToggle:hover,#klappAlle:hover{ border-color:var(--neon); }
 
 /* ── Qualitaetsboden ───────────────────────────────────────────────── */
 :focus-visible{ outline:2px solid var(--neon); outline-offset:2px;
@@ -2421,6 +2442,13 @@ document.addEventListener("DOMContentLoaded",function(){
       <div class="led">TRACK <b id="ledTrack">0</b></div>
       <div class="led">HP <b id="ledHp">--</b></div>
       <div class="led clock" id="ledClock">--:--:--</div>
+      <!-- v4.0-W122: klappt alle Bloecke der AKTUELLEN Ansicht. Wie beim
+           Themenschalter benennt die Beschriftung das Ergebnis, nicht den
+           Zustand. Sie versteckt sich, solange die Ansicht nichts Klappbares
+           enthaelt — ein Schalter ohne Wirkung ist schlimmer als keiner. -->
+      <button id="klappAlle" type="button" onclick="klappAlleUm()"
+              aria-label="Alle Bloecke dieser Ansicht zuklappen"
+              title="Alle Bloecke dieser Ansicht zuklappen">▾ Alles zu</button>
       <!-- B130: Themenumschalter. Beschriftung sagt, wohin der Klick fuehrt
            ("Blaupause"), nicht wo man steht — ein Schalter benennt sein
            Ergebnis. -->
@@ -3270,7 +3298,6 @@ document.addEventListener("DOMContentLoaded",function(){
       <div class="head"><h3>▚ Brain-Analytik</h3>
         <span class="tag">Regeln · Gedächtnis · Metriken</span>
         <div class="spacer"></div>
-        <button class="btn sm" id="brainFrameToggle" onclick="toggleBrainFrame()">▼ einklappen</button>
       </div>
       <div class="body" id="brainFrameWrap" style="padding:0">
         <iframe id="brainFrame" data-src="/brain" title="AI Brain"
@@ -3492,6 +3519,29 @@ document.addEventListener('keydown', e=>{
   if(e.key==='/' && document.activeElement!==$('#cmd')){ e.preventDefault(); $('#cmd').focus(); }
 });
 
+/* ============ PULS-TAKT (v4.0-W121) ============
+   Die Ansichts-Poller bremsen sich seit je selbst (CURRENT_VIEW===… &&
+   !document.hidden). Die GLOBALEN Dauerlaeufer taten es nicht: der
+   5-Sekunden-Puls lief weiter, wenn das Fenster im Hintergrund lag oder das
+   Handy in der Tasche steckte — 17.280 Aufrufe pro Tag und offenem Tab, genau
+   die Zahl aus DEPLOY.md §7. Serverseitig ist /api/pulse inzwischen billig
+   (0,2 ms); auf dem Handy ist es Akku, und die PWA laeuft dort den ganzen Tag.
+
+   pulsIntervall() ersetzt setInterval() fuer genau diese Dauerlaeufer. Zwei
+   Haelften, und die zweite ist die wichtigere: sie schweigen im unsichtbaren
+   Tab UND laufen beim Zurueckkommen sofort einmal. Ohne dieses Nachholen
+   zeigte der erste Blick bis zu eine Minute alte Zahlen — auf einem
+   Wachinstrument waere das schlimmer als die gesparten Aufrufe. */
+var _PULS_TAKTE = [];
+function pulsIntervall(fn, ms){
+  _PULS_TAKTE.push(fn);
+  return setInterval(function(){ if(document.hidden) return; fn(); }, ms);
+}
+document.addEventListener('visibilitychange', function(){
+  if(document.hidden) return;
+  _PULS_TAKTE.forEach(function(fn){ try{ fn(); }catch(e){} });
+});
+
 /* ============ MATRIX RAIN ============ */
 (function matrix(){
   const c=$('#matrix'), x=c.getContext('2d');
@@ -3511,11 +3561,11 @@ document.addEventListener('keydown', e=>{
       drops[i]++;
     }
   }
-  setInterval(draw, 60);
+  pulsIntervall(draw, 60);
 })();
 
 /* ============ CLOCK ============ */
-setInterval(()=>{ const el=$('#ledClock'); if(el) el.textContent=new Date().toLocaleTimeString('en-GB',{hour12:false})+' UTC'; }, 1000);
+pulsIntervall(()=>{ const el=$('#ledClock'); if(el) el.textContent=new Date().toLocaleTimeString('en-GB',{hour12:false})+' UTC'; }, 1000);
 
 /* THEME-SWITCHER (Footer) entfernt — Farbthema steuert der Topbar-Schalter
    (◑ Blaupause / ◐ Messing). Der frühere Footer-Cycler bot u.a. das nirgends
@@ -3589,7 +3639,7 @@ async function pollNextLive(){
     } else wrap.style.display='none';
   }catch(e){}
 }
-setInterval(pollNextLive,60000); setTimeout(pollNextLive,4000);
+pulsIntervall(pollNextLive,60000); setTimeout(pollNextLive,4000);
 
 /* V37-W-CTRL: SHIELD-Abwehrzähler in der Sendeleiste */
 async function pollShield(){
@@ -3604,7 +3654,7 @@ async function pollShield(){
     if(wrap) wrap.style.color=(j.total_24h>0)?'var(--red)':'';
   }catch(e){}
 }
-setInterval(pollShield,60000); setTimeout(pollShield,6000);
+pulsIntervall(pollShield,60000); setTimeout(pollShield,6000);
 
 async function loadBrainStatus(){
   let _brainUp=false;
@@ -4782,14 +4832,6 @@ VIEW_LOADERS['brain']=async ()=>{
   const f=document.getElementById('brainFrame');
   if(f && !f.getAttribute('src')) f.setAttribute('src', f.dataset.src);
 };
-function toggleBrainFrame(){
-  const w=document.getElementById('brainFrameWrap'),
-        b=document.getElementById('brainFrameToggle');
-  if(!w) return;
-  const hidden = w.style.display==='none';
-  w.style.display = hidden ? '' : 'none';
-  if(b) b.textContent = hidden ? '▼ einklappen' : '▲ ausklappen';
-}
 
 /* ============ UNIVERSAL SEARCH (X20) ============ */
 let searchTimer=null;
@@ -8227,7 +8269,7 @@ async function labLoadDisk(){
    ============================================================ */
 VIEW_LOADERS.restream && VIEW_LOADERS.restream();
 pollHeader();
-setInterval(pollHeader, 5000);
+pulsIntervall(pollHeader, 5000);
 // refresh active view every 8s for live-ish data
 setInterval(()=>{
   if(document.hidden) return;
@@ -9277,7 +9319,7 @@ async function pollPreflightDot(){
     el.title='Preflight: '+(d.overall==='ok'?'alle Systeme grün':(d.fails?d.fails+' Fehler':d.warns+' Warnungen'));
   }catch(e){}
 }
-pollPreflightDot(); setInterval(pollPreflightDot, 45000);
+pollPreflightDot(); pulsIntervall(pollPreflightDot, 45000);
 
 /* ══ V37-UI: Count-Up ═══════════════════════════════════════════════════
    Zahlen sollen zaehlen statt zu springen. Der naive Weg waere, alle ~229
@@ -11378,6 +11420,179 @@ async function archSearch(){
 
 VIEW_LOADERS['insights'] = async ()=>{ await insightsLoad(); loadInsightsPlus(); loadDefenseAttacks(); loadAboStatus(); loadRecTimeline(); };
 
+</script>
+
+<script>
+/* ============ PANELS AUF- UND ZUKLAPPEN (v4.0-W120) ============
+   Das Dashboard hat 117 Panels in acht Ansichten. Wer taeglich nur vier davon
+   braucht, scrollt an den anderen 113 vorbei — jedes Mal neu. Jede Kopfzeile
+   klappt ihr Panel deshalb zu, und der Zustand haelt ueber den Reload hinweg.
+
+   Drei Beobachtungen haben die Umsetzung bestimmt:
+
+   1. 72 der 117 Panels stehen NICHT im Markup, sondern entstehen erst, wenn
+      ihre Ansicht zum ersten Mal geoeffnet wird (die VIEW_LOADERS bauen sie
+      per innerHTML). Ein einmaliges Verdrahten beim Laden erwischt sie nie.
+      Darum: ein einziger delegierter Klick-Horcher plus ein MutationObserver,
+      statt Handler an jedem Panel.
+
+   2. Die Kopfzeilen tragen eigene Knoepfe — Aktualisieren, Trockenlauf,
+      Verbinden. Ein Klick darauf darf NICHT klappen, sonst verschwindet der
+      Inhalt genau in dem Moment, in dem man ihn angefordert hat. Alles mit
+      eigener Bedeutung (button, a, Eingaben, alles mit onclick) ist deshalb
+      vom Klappen ausgenommen.
+
+   3. Nur 57 Panels haben eine id. Der Rest bekommt einen Schluessel aus
+      Ansicht + Ueberschrift; kommt derselbe Titel in einer Ansicht zweimal vor
+      (insights: TREFFERQUOTE), entscheidet die Reihenfolge im Dokument. So
+      verschiebt ein neu eingefuegtes Panel nicht die Zustaende aller anderen,
+      wie es ein reiner Zaehler taete. */
+(function(){
+  'use strict';
+  var SPEICHER = 'nc_panels';
+  var zu = new Set();
+  try {
+    var roh = JSON.parse(localStorage.getItem(SPEICHER) || '[]');
+    if (Array.isArray(roh)) zu = new Set(roh);
+  } catch (e) { /* privater Modus oder kaputter Eintrag: dann eben alles offen */ }
+
+  function sichern(){
+    // Gespeichert werden nur die ZUgeklappten. Offen ist der Normalfall und
+    // braucht keinen Eintrag — so waechst der Schluesselbestand nicht mit
+    // jedem Panel, das es je gab.
+    try { localStorage.setItem(SPEICHER, JSON.stringify(Array.from(zu))); } catch (e) {}
+  }
+
+  function titel(p){
+    var h = p.querySelector(':scope > .head > h3');
+    return h ? h.textContent.replace(/\s+/g, ' ').trim() : 'Panel';
+  }
+  function basis(p){
+    var v = p.closest('.view');
+    var name = titel(p).toUpperCase().replace(/[^A-Z0-9ÄÖÜ]+/g, '-').replace(/^-|-$/g, '');
+    return (v ? v.id : 'frei') + ':' + name.slice(0, 40);
+  }
+  function schluessel(p){
+    if (p.id) return p.id;
+    var b = basis(p), v = p.closest('.view');
+    if (!v) return b;
+    var n = 0, alle = v.querySelectorAll('.panel');
+    for (var i = 0; i < alle.length; i++){
+      if (alle[i] === p) break;
+      if (!alle[i].id && basis(alle[i]) === b) n++;
+    }
+    return n ? b + '#' + n : b;
+  }
+
+  function zeichnen(p, geschlossen){
+    p.classList.toggle('zu', geschlossen);
+    var b = p.querySelector(':scope > .head > .pnl-klapp');
+    if (!b) return;
+    b.textContent = geschlossen ? '▸' : '▾';
+    b.setAttribute('aria-expanded', geschlossen ? 'false' : 'true');
+    // Der Knopf traegt nur ein Zeichen — ohne aria-label liest ein Screenreader
+    // "Schaltflaeche" und sonst nichts.
+    b.setAttribute('aria-label', (geschlossen ? 'Aufklappen: ' : 'Zuklappen: ') + titel(p));
+    b.title = geschlossen ? 'Aufklappen' : 'Zuklappen';
+  }
+
+  var lfd = 0;
+  function ruesten(p){
+    var kopf = p.querySelector(':scope > .head');
+    var koerper = p.querySelector(':scope > .body');
+    // Ohne Kopf oder ohne Koerper gibt es nichts zu klappen — dann auch keinen
+    // Knopf, der ins Leere zeigt.
+    if (!kopf || !koerper || kopf.dataset.klappbar) return;
+    kopf.dataset.klappbar = '1';
+    if (!koerper.id) { do { koerper.id = 'nc_pb_' + (++lfd); } while (document.getElementById(koerper.id) !== koerper); }
+    var b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'pnl-klapp';
+    b.setAttribute('aria-controls', koerper.id);
+    kopf.appendChild(b);
+    zeichnen(p, zu.has(schluessel(p)));
+  }
+
+  function alleRuesten(wurzel){
+    if (wurzel.nodeType !== 1) return;
+    if (wurzel.classList && wurzel.classList.contains('panel')) ruesten(wurzel);
+    if (wurzel.querySelectorAll) Array.prototype.forEach.call(wurzel.querySelectorAll('.panel'), ruesten);
+  }
+
+  /* Der Sammelschalter in der Topbar wirkt bewusst nur auf die SICHTBARE
+     Ansicht. Alles auf einmal zuzuklappen — auch die sieben Ansichten, die
+     man gerade nicht ansieht — waere eine Aenderung, die niemand sehen und
+     deshalb auch niemand rueckgaengig machen kann. */
+  function panelsDerAnsicht(){
+    var v = document.querySelector('.view.active');
+    if (!v) return [];
+    return Array.prototype.filter.call(v.querySelectorAll('.panel'), function(p){
+      return p.querySelector(':scope > .head') && p.querySelector(':scope > .body');
+    });
+  }
+  window.klappAlleUm = function(){
+    var p = panelsDerAnsicht();
+    if (!p.length) return;
+    // Ist noch irgendetwas offen, klappt der Klick zu — erst wenn alles zu ist,
+    // klappt er wieder auf. So hat der Schalter immer eine sichtbare Wirkung.
+    var zuklappen = p.some(function(x){ return !x.classList.contains('zu'); });
+    p.forEach(function(x){
+      var k = schluessel(x);
+      if (zuklappen) zu.add(k); else zu.delete(k);
+      zeichnen(x, zuklappen);
+    });
+    sichern();
+    knopfAktualisieren();
+  };
+  function knopfAktualisieren(){
+    var b = document.getElementById('klappAlle');
+    if (!b) return;
+    var p = panelsDerAnsicht();
+    b.style.display = p.length ? '' : 'none';
+    if (!p.length) return;
+    var etwasOffen = p.some(function(x){ return !x.classList.contains('zu'); });
+    b.textContent = etwasOffen ? '▾ Alles zu' : '▸ Alles auf';
+    var t = 'Alle Bloecke dieser Ansicht ' + (etwasOffen ? 'zuklappen' : 'aufklappen');
+    b.setAttribute('aria-label', t);
+    b.title = t;
+  }
+  var _knopfTimer = null;
+  function knopfSpaeter(){ clearTimeout(_knopfTimer); _knopfTimer = setTimeout(knopfAktualisieren, 60); }
+
+  document.addEventListener('click', function(ev){
+    var kopf = ev.target.closest && ev.target.closest('.panel > .head');
+    if (!kopf || !kopf.dataset.klappbar) return;
+    // Siehe Punkt 2 oben: eigene Bedienelemente im Kopf behalten ihre Wirkung.
+    if (ev.target.closest('button:not(.pnl-klapp), a, input, select, textarea, label, [onclick]')) return;
+    var p = kopf.parentElement, k = schluessel(p), geschlossen = !p.classList.contains('zu');
+    if (geschlossen) zu.add(k); else zu.delete(k);
+    zeichnen(p, geschlossen);
+    sichern();
+    knopfAktualisieren();
+  });
+
+  function start(){
+    alleRuesten(document.body);
+    var haupt = document.getElementById('hauptinhalt') || document.body;
+    new MutationObserver(function(muts){
+      for (var i = 0; i < muts.length; i++){
+        var n = muts[i].addedNodes;
+        for (var j = 0; j < n.length; j++) alleRuesten(n[j]);
+      }
+      knopfSpaeter();   // eine Ansicht baut sich in vielen Schritten auf
+    }).observe(haupt, { childList: true, subtree: true });
+    // Ansichtswechsel: die acht .view-Container tauschen nur ihre Klasse. Nur
+    // diese acht werden beobachtet — ein subtree-Beobachter auf Attribute
+    // wuerde bei jedem blinkenden Laempchen im Dashboard mitfeuern.
+    var ansichtBeob = new MutationObserver(knopfSpaeter);
+    Array.prototype.forEach.call(document.querySelectorAll('.view'), function(v){
+      ansichtBeob.observe(v, { attributes: true, attributeFilter: ['class'] });
+    });
+    knopfAktualisieren();
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start);
+  else start();
+})();
 </script>
 </body>
 </html>
