@@ -199,7 +199,7 @@ call :info "Nicht installiert wird:%OPT_AUS%"
 
 set "NC_REQ=%TEMP%\nc-req.txt"
 set "NC_AUS=%OPT_AUS%"
-%PY% -c "import os,re;L=[x.split('#')[0].strip() for x in open('requirements.txt',encoding='utf-8')];A=set(os.environ.get('NC_AUS','').lower().replace('_','-').split());open(os.environ['NC_REQ'],'w',encoding='utf-8').write('\n'.join(x for x in L if x and re.split(r'[<>=!~\[]',x)[0].strip().lower().replace('_','-') not in A))"
+%PY% -c "import os,re;L=[x.split('#')[0].strip() for x in open('requirements.txt',encoding='utf-8')];A=set(os.environ.get('NC_AUS','').lower().replace('_','-').split());open(os.environ['NC_REQ'],'w',encoding='utf-8').write('\n'.join(x for x in L if x and re.split(r'[;<>=!~\[]',x)[0].strip().lower().replace('_','-') not in A))"
 set "RC=%ERRORLEVEL%"
 if not "%RC%"=="0" call :fehler "requirements.txt liess sich nicht auswerten."
 if not "%RC%"=="0" goto :ende_fehler

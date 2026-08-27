@@ -56,6 +56,21 @@ jobs:
       - name: ruff
         run: python -m ruff check --select F,E9,B --ignore B905 --exclude nc/_vendor .
 
+      # .env.example wird aus dem Quellcode erzeugt und veraltet sonst still:
+      # ein neues os.getenv() steht dann nirgends in der Vorlage. Ausserdem war
+      # genau hier ein Fehler versteckt — "NAME=   # (Geheimnis)" sieht wie ein
+      # Kommentar aus, ist aber der WERT. Der Check faengt beides ab.
+      - name: .env.example ist aktuell (aus dem Quellcode erzeugt)
+        run: python tools/gen_env_example.py --check
+
+      # Die Skripte unter tools/ sind Teil der Auslieferung — installer.sh und
+      # motd.sh laufen auf fremden Maschinen, deploy.sh auf der Produktion.
+      # Kein Grund, sie schlechter zu pruefen als den Python-Anteil.
+      - name: shellcheck über die Skripte
+        run: |
+          command -v shellcheck >/dev/null || sudo apt-get install -y -qq shellcheck
+          shellcheck -S warning tools/*.sh
+
   templates:
     name: Templates (doppelte IDs · CSS-Bilanz)
     runs-on: ubuntu-latest

@@ -508,7 +508,7 @@ REQ_TMP="$(mktemp)"
 NC_AUS="$OPT_AUS" awk '
   { line=$0; sub(/#.*/,"",line); gsub(/^[[:space:]]+|[[:space:]]+$/,"",line)
     if (line=="") next
-    name=line; sub(/[<>=!~[].*/,"",name); gsub(/[[:space:]]/,"",name)
+    name=line; sub(/[;<>=!~[].*/,"",name); gsub(/[[:space:]]/,"",name)   # ; trennt den Umgebungsmarker ab
     key=tolower(name); gsub(/_/,"-",key)
     if (!(key in aus)) print line }
   BEGIN{ n=split(tolower(ENVIRON["NC_AUS"]), a, /[[:space:]]+/)

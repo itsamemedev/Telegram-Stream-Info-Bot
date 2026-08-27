@@ -3512,6 +3512,29 @@ document.addEventListener('keydown', e=>{
   if(e.key==='/' && document.activeElement!==$('#cmd')){ e.preventDefault(); $('#cmd').focus(); }
 });
 
+/* ============ PULS-TAKT (v4.0-W121) ============
+   Die Ansichts-Poller bremsen sich seit je selbst (CURRENT_VIEW===… &&
+   !document.hidden). Die GLOBALEN Dauerlaeufer taten es nicht: der
+   5-Sekunden-Puls lief weiter, wenn das Fenster im Hintergrund lag oder das
+   Handy in der Tasche steckte — 17.280 Aufrufe pro Tag und offenem Tab, genau
+   die Zahl aus DEPLOY.md §7. Serverseitig ist /api/pulse inzwischen billig
+   (0,2 ms); auf dem Handy ist es Akku, und die PWA laeuft dort den ganzen Tag.
+
+   pulsIntervall() ersetzt setInterval() fuer genau diese Dauerlaeufer. Zwei
+   Haelften, und die zweite ist die wichtigere: sie schweigen im unsichtbaren
+   Tab UND laufen beim Zurueckkommen sofort einmal. Ohne dieses Nachholen
+   zeigte der erste Blick bis zu eine Minute alte Zahlen — auf einem
+   Wachinstrument waere das schlimmer als die gesparten Aufrufe. */
+var _PULS_TAKTE = [];
+function pulsIntervall(fn, ms){
+  _PULS_TAKTE.push(fn);
+  return setInterval(function(){ if(document.hidden) return; fn(); }, ms);
+}
+document.addEventListener('visibilitychange', function(){
+  if(document.hidden) return;
+  _PULS_TAKTE.forEach(function(fn){ try{ fn(); }catch(e){} });
+});
+
 /* ============ MATRIX RAIN ============ */
 (function matrix(){
   const c=$('#matrix'), x=c.getContext('2d');
@@ -3531,11 +3554,11 @@ document.addEventListener('keydown', e=>{
       drops[i]++;
     }
   }
-  setInterval(draw, 60);
+  pulsIntervall(draw, 60);
 })();
 
 /* ============ CLOCK ============ */
-setInterval(()=>{ const el=$('#ledClock'); if(el) el.textContent=new Date().toLocaleTimeString('en-GB',{hour12:false})+' UTC'; }, 1000);
+pulsIntervall(()=>{ const el=$('#ledClock'); if(el) el.textContent=new Date().toLocaleTimeString('en-GB',{hour12:false})+' UTC'; }, 1000);
 
 /* THEME-SWITCHER (Footer) entfernt — Farbthema steuert der Topbar-Schalter
    (◑ Blaupause / ◐ Messing). Der frühere Footer-Cycler bot u.a. das nirgends
@@ -3609,7 +3632,7 @@ async function pollNextLive(){
     } else wrap.style.display='none';
   }catch(e){}
 }
-setInterval(pollNextLive,60000); setTimeout(pollNextLive,4000);
+pulsIntervall(pollNextLive,60000); setTimeout(pollNextLive,4000);
 
 /* V37-W-CTRL: SHIELD-Abwehrzähler in der Sendeleiste */
 async function pollShield(){
@@ -3624,7 +3647,7 @@ async function pollShield(){
     if(wrap) wrap.style.color=(j.total_24h>0)?'var(--red)':'';
   }catch(e){}
 }
-setInterval(pollShield,60000); setTimeout(pollShield,6000);
+pulsIntervall(pollShield,60000); setTimeout(pollShield,6000);
 
 async function loadBrainStatus(){
   let _brainUp=false;
@@ -8239,7 +8262,7 @@ async function labLoadDisk(){
    ============================================================ */
 VIEW_LOADERS.restream && VIEW_LOADERS.restream();
 pollHeader();
-setInterval(pollHeader, 5000);
+pulsIntervall(pollHeader, 5000);
 // refresh active view every 8s for live-ish data
 setInterval(()=>{
   if(document.hidden) return;
@@ -9289,7 +9312,7 @@ async function pollPreflightDot(){
     el.title='Preflight: '+(d.overall==='ok'?'alle Systeme grün':(d.fails?d.fails+' Fehler':d.warns+' Warnungen'));
   }catch(e){}
 }
-pollPreflightDot(); setInterval(pollPreflightDot, 45000);
+pollPreflightDot(); pulsIntervall(pollPreflightDot, 45000);
 
 /* ══ V37-UI: Count-Up ═══════════════════════════════════════════════════
    Zahlen sollen zaehlen statt zu springen. Der naive Weg waere, alle ~229
