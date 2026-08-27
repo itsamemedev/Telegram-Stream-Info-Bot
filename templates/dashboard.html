@@ -2135,7 +2135,7 @@ tbody tr:hover td{ background: color-mix(in srgb, var(--neon) 4%, transparent); 
 }
 
 /* ── Themenumschalter ──────────────────────────────────────────────── */
-#themeToggle{
+#themeToggle,#klappAlle{
   display:inline-flex; align-items:center; gap:7px;
   padding:7px 12px; border-radius:999px;
   border:1px solid var(--border-bright);
@@ -2144,7 +2144,7 @@ tbody tr:hover td{ background: color-mix(in srgb, var(--neon) 4%, transparent); 
   font-family:var(--mono), ui-monospace, monospace;
   font-size:11px; letter-spacing:.05em;
 }
-#themeToggle:hover{ border-color:var(--neon); }
+#themeToggle:hover,#klappAlle:hover{ border-color:var(--neon); }
 
 /* ── Qualitaetsboden ───────────────────────────────────────────────── */
 :focus-visible{ outline:2px solid var(--neon); outline-offset:2px;
@@ -2442,6 +2442,13 @@ document.addEventListener("DOMContentLoaded",function(){
       <div class="led">TRACK <b id="ledTrack">0</b></div>
       <div class="led">HP <b id="ledHp">--</b></div>
       <div class="led clock" id="ledClock">--:--:--</div>
+      <!-- v4.0-W122: klappt alle Bloecke der AKTUELLEN Ansicht. Wie beim
+           Themenschalter benennt die Beschriftung das Ergebnis, nicht den
+           Zustand. Sie versteckt sich, solange die Ansicht nichts Klappbares
+           enthaelt — ein Schalter ohne Wirkung ist schlimmer als keiner. -->
+      <button id="klappAlle" type="button" onclick="klappAlleUm()"
+              aria-label="Alle Bloecke dieser Ansicht zuklappen"
+              title="Alle Bloecke dieser Ansicht zuklappen">▾ Alles zu</button>
       <!-- B130: Themenumschalter. Beschriftung sagt, wohin der Klick fuehrt
            ("Blaupause"), nicht wo man steht — ein Schalter benennt sein
            Ergebnis. -->
@@ -11512,6 +11519,46 @@ VIEW_LOADERS['insights'] = async ()=>{ await insightsLoad(); loadInsightsPlus();
     if (wurzel.querySelectorAll) Array.prototype.forEach.call(wurzel.querySelectorAll('.panel'), ruesten);
   }
 
+  /* Der Sammelschalter in der Topbar wirkt bewusst nur auf die SICHTBARE
+     Ansicht. Alles auf einmal zuzuklappen — auch die sieben Ansichten, die
+     man gerade nicht ansieht — waere eine Aenderung, die niemand sehen und
+     deshalb auch niemand rueckgaengig machen kann. */
+  function panelsDerAnsicht(){
+    var v = document.querySelector('.view.active');
+    if (!v) return [];
+    return Array.prototype.filter.call(v.querySelectorAll('.panel'), function(p){
+      return p.querySelector(':scope > .head') && p.querySelector(':scope > .body');
+    });
+  }
+  window.klappAlleUm = function(){
+    var p = panelsDerAnsicht();
+    if (!p.length) return;
+    // Ist noch irgendetwas offen, klappt der Klick zu — erst wenn alles zu ist,
+    // klappt er wieder auf. So hat der Schalter immer eine sichtbare Wirkung.
+    var zuklappen = p.some(function(x){ return !x.classList.contains('zu'); });
+    p.forEach(function(x){
+      var k = schluessel(x);
+      if (zuklappen) zu.add(k); else zu.delete(k);
+      zeichnen(x, zuklappen);
+    });
+    sichern();
+    knopfAktualisieren();
+  };
+  function knopfAktualisieren(){
+    var b = document.getElementById('klappAlle');
+    if (!b) return;
+    var p = panelsDerAnsicht();
+    b.style.display = p.length ? '' : 'none';
+    if (!p.length) return;
+    var etwasOffen = p.some(function(x){ return !x.classList.contains('zu'); });
+    b.textContent = etwasOffen ? '▾ Alles zu' : '▸ Alles auf';
+    var t = 'Alle Bloecke dieser Ansicht ' + (etwasOffen ? 'zuklappen' : 'aufklappen');
+    b.setAttribute('aria-label', t);
+    b.title = t;
+  }
+  var _knopfTimer = null;
+  function knopfSpaeter(){ clearTimeout(_knopfTimer); _knopfTimer = setTimeout(knopfAktualisieren, 60); }
+
   document.addEventListener('click', function(ev){
     var kopf = ev.target.closest && ev.target.closest('.panel > .head');
     if (!kopf || !kopf.dataset.klappbar) return;
@@ -11521,6 +11568,7 @@ VIEW_LOADERS['insights'] = async ()=>{ await insightsLoad(); loadInsightsPlus();
     if (geschlossen) zu.add(k); else zu.delete(k);
     zeichnen(p, geschlossen);
     sichern();
+    knopfAktualisieren();
   });
 
   function start(){
@@ -11531,7 +11579,16 @@ VIEW_LOADERS['insights'] = async ()=>{ await insightsLoad(); loadInsightsPlus();
         var n = muts[i].addedNodes;
         for (var j = 0; j < n.length; j++) alleRuesten(n[j]);
       }
+      knopfSpaeter();   // eine Ansicht baut sich in vielen Schritten auf
     }).observe(haupt, { childList: true, subtree: true });
+    // Ansichtswechsel: die acht .view-Container tauschen nur ihre Klasse. Nur
+    // diese acht werden beobachtet — ein subtree-Beobachter auf Attribute
+    // wuerde bei jedem blinkenden Laempchen im Dashboard mitfeuern.
+    var ansichtBeob = new MutationObserver(knopfSpaeter);
+    Array.prototype.forEach.call(document.querySelectorAll('.view'), function(v){
+      ansichtBeob.observe(v, { attributes: true, attributeFilter: ['class'] });
+    });
+    knopfAktualisieren();
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start);
   else start();

@@ -1,0 +1,57 @@
+-fsS -m 15 -o /dev/null --data-urlencode chat_id=777888 --data-urlencode text=🔴 NIGHTCRAWLER AUSGEFALLEN
+Dienst:  tiktok-bot.service
+Rechner: vm
+Zeit:    2026-08-27 11:15:56 UTC
+Grund:   ?
+
+Letzte Logzeilen:
+-- No entries --
+
+Neustart:  sudo systemctl start tiktok-bot.service
+Ansehen:   journalctl -u tiktok-bot.service -n 100 --no-pager https://api.telegram.org/bot123456:AAFgeheim/sendMessage
+-fsS -m 15 -o /dev/null --data-urlencode chat_id=777888 --data-urlencode text=🔴 NIGHTCRAWLER AUSGEFALLEN
+Dienst:  tiktok-bot.service
+Rechner: vm
+Zeit:    2026-08-27 11:18:19 UTC
+Grund:   ?
+
+Letzte Logzeilen:
+-- No entries --
+
+Neustart:  sudo systemctl start tiktok-bot.service
+Ansehen:   journalctl -u tiktok-bot.service -n 100 --no-pager https://api.telegram.org/bot123456:AAFgeheim/sendMessage
+-fsS -m 15 -o /dev/null --data-urlencode chat_id=777888 --data-urlencode text=🔴 NIGHTCRAWLER AUSGEFALLEN
+Dienst:  tiktok-bot.service
+Rechner: vm
+Zeit:    2026-08-27 11:19:10 UTC
+Grund:   ?
+
+Letzte Logzeilen:
+-- No entries --
+
+Neustart:  sudo systemctl start tiktok-bot.service
+Ansehen:   journalctl -u tiktok-bot.service -n 100 --no-pager https://api.telegram.org/bot123456:AAFgeheim/sendMessage
+-fsS -m 15 -o /dev/null --data-urlencode chat_id=777888 --data-urlencode text=🔴 NIGHTCRAWLER AUSGEFALLEN
+Dienst:  tiktok-bot.service
+Rechner: vm
+Zeit:    2026-08-27 11:19:28 UTC
+Grund:   ?
+
+Letzte Logzeilen:
+-- No entries --
+
+Neustart:  sudo systemctl start tiktok-bot.service
+Ansehen:   journalctl -u tiktok-bot.service -n 100 --no-pager https://api.telegram.org/bot123:AAF/sendMessage
+-fsS -m 15 -o /dev/null -H Content-Type: application/json -d @- https://discord.test/hook/abc
+-fsS -m 15 -o /dev/null -H Content-Type: application/json -d @- https://discord.test/hook/abc
+-fsS -m 15 -o /dev/null --data-urlencode chat_id=222 --data-urlencode text=🔴 NIGHTCRAWLER AUSGEFALLEN
+Dienst:  tiktok-bot.service
+Rechner: vm
+Zeit:    2026-08-27 11:19:46 UTC
+Grund:   ?
+
+Letzte Logzeilen:
+-- No entries --
+
+Neustart:  sudo systemctl start tiktok-bot.service
+Ansehen:   journalctl -u tiktok-bot.service -n 100 --no-pager https://api.telegram.org/botalt/sendMessage

@@ -31,7 +31,8 @@
 #   4) Testen — MUSS eine Nachricht ausloesen:
 #        systemctl start nightcrawler-notify@tiktok-bot.service
 #
-# Nutzt TELEGRAM_TOKEN/TELEGRAM_CHAT_ID bzw. DISCORD_WEBHOOK aus der .env.
+# Nutzt BOT_TOKEN + ALLOWED_USER_IDS bzw. DISCORD_WEBHOOK_URL aus der .env —
+# also die Namen, die dort ohnehin stehen. Nichts zusaetzlich einzutragen.
 # Faellt ein Kanal aus, wird der andere trotzdem versucht.
 
 set -uo pipefail   # bewusst KEIN -e: eine gescheiterte Meldung darf die
@@ -40,6 +41,24 @@ set -uo pipefail   # bewusst KEIN -e: eine gescheiterte Meldung darf die
 EINHEIT="${1:-tiktok-bot.service}"
 WANN="$(date '+%F %H:%M:%S %Z')"
 RECHNER="$(hostname)"
+
+# WARUM DIESE ABLEITUNG
+# Dieses Skript las bisher TELEGRAM_TOKEN, TELEGRAM_CHAT_ID und
+# DISCORD_WEBHOOK. Diese drei Namen kommen in der .env des Bots NICHT vor —
+# dort heissen sie BOT_TOKEN, ALLOWED_USER_IDS und DISCORD_WEBHOOK_URL. Wer
+# die Einrichtung aus docs/START_HIER.txt befolgte, bekam deshalb NIE eine
+# Meldung: das Skript fand keinen Kanal und beendete sich mit Code 1. Und ein
+# fehlgeschlagener OnFailure-Dienst faellt niemandem auf — die Totmann-Meldung
+# war selbst tot, ausgerechnet.
+# Die alten Namen behalten Vorrang, damit bestehende Einrichtungen, die sie
+# eigens gesetzt haben, unveraendert weiterlaufen.
+TG_TOKEN="${TELEGRAM_TOKEN:-${BOT_TOKEN:-}}"
+TG_CHAT="${TELEGRAM_CHAT_ID:-}"
+if [ -z "$TG_CHAT" ]; then
+  # ALLOWED_USER_IDS ist eine Liste; der erste Eintrag ist der Betreiber.
+  TG_CHAT="$(printf '%s' "${ALLOWED_USER_IDS:-}" | cut -d, -f1 | tr -d '[:space:]\"')"
+fi
+DC_HOOK="${DISCORD_WEBHOOK:-${DISCORD_WEBHOOK_URL:-}}"
 
 # Die letzten Zeilen sind das Wertvollste an der Meldung — ohne sie weiss man
 # nur DASS etwas kaputt ist, nicht WAS.
@@ -61,11 +80,11 @@ Ansehen:   journalctl -u ${EINHEIT} -n 100 --no-pager"
 gesendet=0
 
 # ── Telegram ─────────────────────────────────────────────────────────────
-if [ -n "${TELEGRAM_TOKEN:-}" ] && [ -n "${TELEGRAM_CHAT_ID:-}" ]; then
+if [ -n "$TG_TOKEN" ] && [ -n "$TG_CHAT" ]; then
   if curl -fsS -m 15 -o /dev/null \
-      --data-urlencode "chat_id=${TELEGRAM_CHAT_ID}" \
+      --data-urlencode "chat_id=${TG_CHAT}" \
       --data-urlencode "text=${TEXT}" \
-      "https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage"; then
+      "https://api.telegram.org/bot${TG_TOKEN}/sendMessage"; then
     echo "Telegram-Meldung gesendet."
     gesendet=1
   else
@@ -74,14 +93,14 @@ if [ -n "${TELEGRAM_TOKEN:-}" ] && [ -n "${TELEGRAM_CHAT_ID:-}" ]; then
 fi
 
 # ── Discord ──────────────────────────────────────────────────────────────
-if [ -n "${DISCORD_WEBHOOK:-}" ]; then
+if [ -n "$DC_HOOK" ]; then
   # Discord deckelt bei 2000 Zeichen; wir kuerzen defensiv auf 1900.
   KURZ="$(printf '%s' "$TEXT" | head -c 1900)"
   if printf '%s' "$KURZ" | python3 -c '
 import json,sys
 print(json.dumps({"content": "```\n" + sys.stdin.read() + "\n```"}))' \
       | curl -fsS -m 15 -o /dev/null -H "Content-Type: application/json" \
-             -d @- "$DISCORD_WEBHOOK"; then
+             -d @- "$DC_HOOK"; then
     echo "Discord-Meldung gesendet."
     gesendet=1
   else
@@ -90,7 +109,7 @@ print(json.dumps({"content": "```\n" + sys.stdin.read() + "\n```"}))' \
 fi
 
 if [ "$gesendet" = "0" ]; then
-  echo "KEIN Meldeweg konfiguriert oder alle fehlgeschlagen — " \
-       "TELEGRAM_TOKEN/TELEGRAM_CHAT_ID oder DISCORD_WEBHOOK in der .env pruefen." >&2
+  echo "KEIN Meldeweg konfiguriert oder alle fehlgeschlagen — in der .env " \
+       "BOT_TOKEN + ALLOWED_USER_IDS (Telegram) oder DISCORD_WEBHOOK_URL pruefen." >&2
   exit 1
 fi
