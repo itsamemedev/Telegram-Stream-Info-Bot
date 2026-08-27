@@ -297,6 +297,27 @@ body{
 }
 .panel .head .tag{font-size:var(--fs-2xs);color:var(--text-faint);letter-spacing:0.1em}
 .panel .body{padding:14px}
+
+/* v4.0-W120: Panels auf- und zuklappen.
+   Warum an der Kopfzeile und nicht an einem eigenen Balken: der Kopf IST
+   bereits die Kante des Panels. Ein zweites Bedienelement daneben waere ein
+   zweites Ding, das man erst lesen muss. Der Winkel rechts sagt, was ein
+   Klick bewirkt; die ganze Kopfzeile nimmt ihn entgegen. */
+.panel > .head{cursor:pointer;user-select:none}
+.panel > .head > h3{cursor:inherit}
+.pnl-klapp{
+  appearance:none;-webkit-appearance:none;background:none;border:0;
+  color:var(--text-faint);font-family:var(--mono);font-size:var(--fs-sm);
+  line-height:1;padding:2px 4px;margin-left:2px;cursor:pointer;
+}
+.panel > .head:hover .pnl-klapp,.pnl-klapp:hover{color:var(--neon)}
+.pnl-klapp:focus-visible{outline:1px solid var(--neon);outline-offset:2px}
+/* Zugeklappt verschwindet mit dem Koerper auch die Trennlinie darueber —
+   sonst schwebt ein Strich unter einer leeren Kante. */
+.panel.zu > .body{display:none}
+.panel.zu > .head{border-bottom:0}
+@media(pointer:coarse){ .pnl-klapp{min-width:44px;min-height:44px;padding:0} }
+
 .panel.span2{grid-column:span 2}
 @media(max-width:680px){.panel.span2{grid-column:span 1}}
 
@@ -3270,7 +3291,6 @@ document.addEventListener("DOMContentLoaded",function(){
       <div class="head"><h3>▚ Brain-Analytik</h3>
         <span class="tag">Regeln · Gedächtnis · Metriken</span>
         <div class="spacer"></div>
-        <button class="btn sm" id="brainFrameToggle" onclick="toggleBrainFrame()">▼ einklappen</button>
       </div>
       <div class="body" id="brainFrameWrap" style="padding:0">
         <iframe id="brainFrame" data-src="/brain" title="AI Brain"
@@ -4782,14 +4802,6 @@ VIEW_LOADERS['brain']=async ()=>{
   const f=document.getElementById('brainFrame');
   if(f && !f.getAttribute('src')) f.setAttribute('src', f.dataset.src);
 };
-function toggleBrainFrame(){
-  const w=document.getElementById('brainFrameWrap'),
-        b=document.getElementById('brainFrameToggle');
-  if(!w) return;
-  const hidden = w.style.display==='none';
-  w.style.display = hidden ? '' : 'none';
-  if(b) b.textContent = hidden ? '▼ einklappen' : '▲ ausklappen';
-}
 
 /* ============ UNIVERSAL SEARCH (X20) ============ */
 let searchTimer=null;
@@ -11378,6 +11390,129 @@ async function archSearch(){
 
 VIEW_LOADERS['insights'] = async ()=>{ await insightsLoad(); loadInsightsPlus(); loadDefenseAttacks(); loadAboStatus(); loadRecTimeline(); };
 
+</script>
+
+<script>
+/* ============ PANELS AUF- UND ZUKLAPPEN (v4.0-W120) ============
+   Das Dashboard hat 117 Panels in acht Ansichten. Wer taeglich nur vier davon
+   braucht, scrollt an den anderen 113 vorbei — jedes Mal neu. Jede Kopfzeile
+   klappt ihr Panel deshalb zu, und der Zustand haelt ueber den Reload hinweg.
+
+   Drei Beobachtungen haben die Umsetzung bestimmt:
+
+   1. 72 der 117 Panels stehen NICHT im Markup, sondern entstehen erst, wenn
+      ihre Ansicht zum ersten Mal geoeffnet wird (die VIEW_LOADERS bauen sie
+      per innerHTML). Ein einmaliges Verdrahten beim Laden erwischt sie nie.
+      Darum: ein einziger delegierter Klick-Horcher plus ein MutationObserver,
+      statt Handler an jedem Panel.
+
+   2. Die Kopfzeilen tragen eigene Knoepfe — Aktualisieren, Trockenlauf,
+      Verbinden. Ein Klick darauf darf NICHT klappen, sonst verschwindet der
+      Inhalt genau in dem Moment, in dem man ihn angefordert hat. Alles mit
+      eigener Bedeutung (button, a, Eingaben, alles mit onclick) ist deshalb
+      vom Klappen ausgenommen.
+
+   3. Nur 57 Panels haben eine id. Der Rest bekommt einen Schluessel aus
+      Ansicht + Ueberschrift; kommt derselbe Titel in einer Ansicht zweimal vor
+      (insights: TREFFERQUOTE), entscheidet die Reihenfolge im Dokument. So
+      verschiebt ein neu eingefuegtes Panel nicht die Zustaende aller anderen,
+      wie es ein reiner Zaehler taete. */
+(function(){
+  'use strict';
+  var SPEICHER = 'nc_panels';
+  var zu = new Set();
+  try {
+    var roh = JSON.parse(localStorage.getItem(SPEICHER) || '[]');
+    if (Array.isArray(roh)) zu = new Set(roh);
+  } catch (e) { /* privater Modus oder kaputter Eintrag: dann eben alles offen */ }
+
+  function sichern(){
+    // Gespeichert werden nur die ZUgeklappten. Offen ist der Normalfall und
+    // braucht keinen Eintrag — so waechst der Schluesselbestand nicht mit
+    // jedem Panel, das es je gab.
+    try { localStorage.setItem(SPEICHER, JSON.stringify(Array.from(zu))); } catch (e) {}
+  }
+
+  function titel(p){
+    var h = p.querySelector(':scope > .head > h3');
+    return h ? h.textContent.replace(/\s+/g, ' ').trim() : 'Panel';
+  }
+  function basis(p){
+    var v = p.closest('.view');
+    var name = titel(p).toUpperCase().replace(/[^A-Z0-9ÄÖÜ]+/g, '-').replace(/^-|-$/g, '');
+    return (v ? v.id : 'frei') + ':' + name.slice(0, 40);
+  }
+  function schluessel(p){
+    if (p.id) return p.id;
+    var b = basis(p), v = p.closest('.view');
+    if (!v) return b;
+    var n = 0, alle = v.querySelectorAll('.panel');
+    for (var i = 0; i < alle.length; i++){
+      if (alle[i] === p) break;
+      if (!alle[i].id && basis(alle[i]) === b) n++;
+    }
+    return n ? b + '#' + n : b;
+  }
+
+  function zeichnen(p, geschlossen){
+    p.classList.toggle('zu', geschlossen);
+    var b = p.querySelector(':scope > .head > .pnl-klapp');
+    if (!b) return;
+    b.textContent = geschlossen ? '▸' : '▾';
+    b.setAttribute('aria-expanded', geschlossen ? 'false' : 'true');
+    // Der Knopf traegt nur ein Zeichen — ohne aria-label liest ein Screenreader
+    // "Schaltflaeche" und sonst nichts.
+    b.setAttribute('aria-label', (geschlossen ? 'Aufklappen: ' : 'Zuklappen: ') + titel(p));
+    b.title = geschlossen ? 'Aufklappen' : 'Zuklappen';
+  }
+
+  var lfd = 0;
+  function ruesten(p){
+    var kopf = p.querySelector(':scope > .head');
+    var koerper = p.querySelector(':scope > .body');
+    // Ohne Kopf oder ohne Koerper gibt es nichts zu klappen — dann auch keinen
+    // Knopf, der ins Leere zeigt.
+    if (!kopf || !koerper || kopf.dataset.klappbar) return;
+    kopf.dataset.klappbar = '1';
+    if (!koerper.id) { do { koerper.id = 'nc_pb_' + (++lfd); } while (document.getElementById(koerper.id) !== koerper); }
+    var b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'pnl-klapp';
+    b.setAttribute('aria-controls', koerper.id);
+    kopf.appendChild(b);
+    zeichnen(p, zu.has(schluessel(p)));
+  }
+
+  function alleRuesten(wurzel){
+    if (wurzel.nodeType !== 1) return;
+    if (wurzel.classList && wurzel.classList.contains('panel')) ruesten(wurzel);
+    if (wurzel.querySelectorAll) Array.prototype.forEach.call(wurzel.querySelectorAll('.panel'), ruesten);
+  }
+
+  document.addEventListener('click', function(ev){
+    var kopf = ev.target.closest && ev.target.closest('.panel > .head');
+    if (!kopf || !kopf.dataset.klappbar) return;
+    // Siehe Punkt 2 oben: eigene Bedienelemente im Kopf behalten ihre Wirkung.
+    if (ev.target.closest('button:not(.pnl-klapp), a, input, select, textarea, label, [onclick]')) return;
+    var p = kopf.parentElement, k = schluessel(p), geschlossen = !p.classList.contains('zu');
+    if (geschlossen) zu.add(k); else zu.delete(k);
+    zeichnen(p, geschlossen);
+    sichern();
+  });
+
+  function start(){
+    alleRuesten(document.body);
+    var haupt = document.getElementById('hauptinhalt') || document.body;
+    new MutationObserver(function(muts){
+      for (var i = 0; i < muts.length; i++){
+        var n = muts[i].addedNodes;
+        for (var j = 0; j < n.length; j++) alleRuesten(n[j]);
+      }
+    }).observe(haupt, { childList: true, subtree: true });
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start);
+  else start();
+})();
 </script>
 </body>
 </html>
