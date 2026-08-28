@@ -125,13 +125,44 @@ def main():
     ap.add_argument("--ctx", default="", help="Bot-Namen, die ueber nc.ctx kommen: alt=neu,alt=neu")
     ap.add_argument("--cfg", default="", help="Namen, die aus ctx.cfg kommen: NAME,NAME")
     ap.add_argument("--imports", default="", help="zusaetzliche Importzeilen, mit ; getrennt")
+    ap.add_argument("--mit", default="",
+                    help="Modul-Zuweisungen, die MITWANDERN: NAME,NAME. Fuer Caches mit "
+                         "genau einem Eigentuemer (_FFMPEG_VER_CACHE) — sie gehoeren ins "
+                         "Modul, nicht in nc.ctx. Wer noch einen zweiten Leser hat, "
+                         "gehoert NICHT hierher, sondern ueber --ctx.")
     ap.add_argument("--apply", action="store_true", help="wirklich schreiben")
     a = ap.parse_args()
 
     src, tree, routes, movers = sammle(a.prefix)
     lines = src.splitlines(keepends=True)
+
+    # Modul-Zuweisungen, die mitwandern. Gegenprobe gegen den Rest des
+    # Monolithen: liest die jemand ausserhalb der wandernden Symbole, waere der
+    # Umzug ein Zustandsriss — zwei Kopien desselben Caches, die auseinander
+    # laufen. Dann bricht es hier ab statt still zu zerreissen.
+    mitnehmen = [x.strip() for x in a.mit.split(",") if x.strip()]
+    wandert = {n.name for n in routes} | {n.name for n in movers}
+    globs = []
+    for name in mitnehmen:
+        treffer = [n for n in tree.body if isinstance(n, ast.Assign)
+                   and len(n.targets) == 1 and isinstance(n.targets[0], ast.Name)
+                   and n.targets[0].id == name]
+        if len(treffer) != 1:
+            raise SystemExit(f"--mit {name}: {len(treffer)} Zuweisungen auf Modulebene, "
+                             f"erwartet genau eine")
+        fremd = sorted({n.name for n in tree.body
+                        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+                        and n.name not in wandert
+                        and any(isinstance(x, ast.Name) and x.id == name
+                                for x in ast.walk(n))})
+        if fremd:
+            raise SystemExit(f"--mit {name}: wird ausserhalb auch von {fremd} gelesen — "
+                             f"gehoert ueber --ctx, nicht ins Modul")
+        globs.append(treffer[0])
+
     stuecke = sorted([(*_span(n), n.name, "route") for n in routes]
-                     + [(*_span(n), n.name, "helfer") for n in movers])
+                     + [(*_span(n), n.name, "helfer") for n in movers]
+                     + [(n.lineno, n.end_lineno, n.targets[0].id, "global") for n in globs])
     gesamt = sum(e - s + 1 for s, e, _, _ in stuecke)
 
     print(f"\n=== {a.prefix} -> nc/routes/{a.modul}.py ===")
@@ -146,11 +177,14 @@ def main():
     for k in filter(None, a.cfg.split(",")):
         ctxmap[k] = f'_c().cfg["{k}"]'
 
+    zust = "\n".join("".join(lines[s - 1:e]).rstrip()
+                     for s, e, _, art in stuecke if art == "global")
     koerper = "\n\n\n".join("".join(lines[s - 1:e]).rstrip()
                             for s, e, _, art in stuecke if art == "helfer")
     rt = "\n\n\n".join("".join(lines[s - 1:e]).rstrip()
                        for s, e, _, art in stuecke if art == "route")
-    body = ((koerper + "\n\n\n" if koerper else "") + rt)
+    body = ((zust + "\n\n\n" if zust else "")
+            + (koerper + "\n\n\n" if koerper else "") + rt)
     body = rewrite_names(body, ctxmap).replace("@dashboard_app.route(", "@bp.route(")
 
     # Welche freien Namen bleiben uebrig? Die muessen importiert werden.
@@ -181,6 +215,25 @@ def main():
         if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load):
             if n.id not in lokal and n.id not in dir(builtins):
                 offen.add(n.id)
+
+    # Namenskollision mit dem Kontext-Zugriff. In W116 machte eine Route
+    # `import collections as _c` — im Monolithen harmlos, im Blueprint
+    # beschattet das _c() und jeder Kontextzugriff der Route stirbt mit
+    # "'module' object is not callable". test_smoke fand es, keine statische
+    # Pruefung. Hier faellt es vorher auf.
+    for n in ast.walk(probe):
+        if not isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        for x in ast.walk(n):
+            treffer = None
+            if isinstance(x, (ast.Import, ast.ImportFrom)):
+                treffer = [al for al in x.names if (al.asname or al.name) in ("_c", "log", "bp")]
+            elif isinstance(x, ast.Name) and isinstance(x.ctx, ast.Store) and x.id in ("_c", "log", "bp"):
+                treffer = [x]
+            if treffer:
+                print(f"\n⚠ {n.name} bindet '_c'/'log'/'bp' lokal — das beschattet den "
+                      f"Kontextzugriff des Blueprints. Vor --apply umbenennen.")
+                break
 
     imp = ["from flask import Blueprint" + (", " + ", ".join(sorted(offen & FLASK_NAMEN))
                                             if offen & FLASK_NAMEN else "")]

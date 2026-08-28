@@ -32,7 +32,12 @@ _REQUIRED = {"BOT_TOKEN", "TELEGRAM_TOKEN", "TELEGRAM_CHAT_ID"}
 def collect():
     files = ["bot.py", "brain_bridge.py"] + \
         sorted(glob.glob(os.path.join(ROOT, "brain", "*.py"))) + \
-        sorted(glob.glob(os.path.join(ROOT, "nc", "*.py")))
+        sorted(glob.glob(os.path.join(ROOT, "nc", "*.py"))) + \
+        sorted(glob.glob(os.path.join(ROOT, "nc", "routes", "*.py")))
+    # v4.0-W117: nc/routes/ gehoert dazu. Ohne das verschwindet jede Variable
+    # aus der Beispieldatei, sobald ihre einzige Lesestelle in ein Blueprint
+    # wandert (zuerst passiert bei DASHBOARD_TRACK_GROUP_ID) — der Betreiber
+    # haette einen Schalter verloren, den es weiterhin gibt.
     seen = {}
     for f in files:
         p = f if os.path.isabs(f) else os.path.join(ROOT, f)

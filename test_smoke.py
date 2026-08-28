@@ -190,6 +190,48 @@ def main():
         "(erwartet >= %d). Regression von v4.0-W105." % (_after, _before + 2))
     ok("Audit-Log protokolliert Schreibzugriffe (W105: kein create_task im Flask-Thread)")
 
+    # v4.0-W117: die Tracking-Zugriffe liegen in nc/trackingdb.py, das
+    # Aufraeumen des Recorder-Zustands beim Entpausen macht ein Rueckruf im Bot
+    # (B54). Faellt der Rueckruf weg, laeuft alles weiter — und das Tracking
+    # pausiert sich beim naechsten stall_killed-Streak sofort wieder. Statisch
+    # unsichtbar, deshalb hier als Rundlauf.
+    from nc import trackingdb as _TD
+    _r = m.bulk_add_trackings(1, ["alice", "bob", "alice"], added_by=7)
+    assert _r["added"] == ["alice", "bob"] and _r["duplicates"] == ["alice"], _r
+    _tid = [x["id"] for x in m.get_all_active_trackings(include_paused=True)
+            if x["username"] == "alice"][0]
+    for _d in (m._STREAM_DEAD_STREAK, m._STREAM_DEAD_BACKOFF_UNTIL,
+               m._PENDING_OFFLINE_COUNT, m._PENDING_OFFLINE_SINCE,
+               m._EARLY_DISCONNECT_RETRY):
+        _d[_tid] = 1
+    assert m.set_tracking_paused(_tid, True) is True
+    assert len(m.get_all_active_trackings()) == 1, "pausiertes Tracking noch aktiv"
+    assert m.set_tracking_paused(_tid, False) is True
+    assert len(m.get_all_active_trackings()) == 2, "entpaustes Tracking fehlt"
+    for _n in ("_STREAM_DEAD_STREAK", "_STREAM_DEAD_BACKOFF_UNTIL",
+               "_PENDING_OFFLINE_COUNT", "_PENDING_OFFLINE_SINCE",
+               "_EARLY_DISCONNECT_RETRY"):
+        assert _tid not in getattr(m, _n), \
+            "%s beim Resume nicht geraeumt — on_resume-Rueckruf nicht verdrahtet (B54)" % _n
+    assert m.set_tracking_paused(999999, True) is False, "unbekannte id muss False geben"
+    assert _TD.add_tracking_tag(_tid, "vip") is True
+    assert _TD.add_tracking_tag(_tid, "vip") is False, "Dublette muss False geben"
+    assert _TD.get_tags_for_tracking(_tid) == ["vip"]
+    assert _TD.set_tracking_priority(_tid, 2) is True
+    assert m.get_priority_poll_interval(_tid, 60) == 10, "VIP-Intervall greift nicht"
+    ok("W117: Tracking-Zugriffe delegiert, Resume raeumt den Worker-Zustand auf")
+
+    # v4.0-W117: der TikTok-Status-Zaehler wird als REFERENZ nach nc/stats.py
+    # gereicht. Bei einer Kopie zaehlte der Scraper ins Leere und die Verteilung
+    # staende ewig auf 0 — auch das sieht man nur im Lauf.
+    m.record_tiktok_status(200)
+    m.record_tiktok_status(200)
+    m.record_tiktok_status(404)
+    _dist = m.get_tiktok_status_distribution()
+    assert _dist["total"] == 3 and _dist["by_code"][0] == {"code": 200, "count": 2,
+                                                          "pct": 66.7}, _dist
+    ok("W117: Status-Zaehler als Referenz geteilt (Scraper zaehlt, Auswertung sieht es)")
+
     # Konfig-Wahrheit: greifen die Defaults, die wir gesetzt haben?
     assert m.RESTREAM_OVERLAY_MODE == "html", m.RESTREAM_OVERLAY_MODE
     assert m.RESTREAM_OVERLAY_HTML_SIZE == "auto", m.RESTREAM_OVERLAY_HTML_SIZE

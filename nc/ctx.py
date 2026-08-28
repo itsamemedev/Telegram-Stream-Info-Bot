@@ -35,7 +35,9 @@ class Ctx:
         "scraper_session",          # geteilte HTTP-Session des Scrapers
         "trigger_manual_recording",  # haengt am Recorder-Kern, bleibt im Bot
         "stop_manual_recording",    # teilt _MANUAL_RECORDINGS mit trigger_
-        "get_tags_for_tracking",
+        # get_tags_for_tracking ist mit den uebrigen Tracking-Zugriffen nach
+        # nc/trackingdb.py gewandert (W117) — beide Seiten importieren, der
+        # Kontext braucht den Slot nicht mehr.
         # --- Archiv-Domäne (W107) ---
         "intel_ensure_schema",
         "intel_index_one",
@@ -51,6 +53,13 @@ class Ctx:
         "get_bot_start_time",
         "get_cookie_health",
         "get_storage_stats",
+        # Ebenfalls ein GETTER (W116): _MAIN_LOOP wird erst in run_bot() gesetzt.
+        # Im Monolithen stand dafuer globals().get("_MAIN_LOOP") — in einem
+        # Blueprint waere das still None, weil globals() dort der Modul-
+        # Namensraum des Blueprints ist. Genau die Sorte stiller Fehlanzeige,
+        # vor der CLAUDE.md warnt: der Healthcheck haette "event_loop: false"
+        # gemeldet, obwohl der Loop laeuft.
+        "get_main_loop",
         # --- KI-Pfade (W112). Bleiben im Bot: llm_chat_sync geht ueber
         # brain/freeai und haengt am Provider-Zustand, _check_ai_models_sync
         # an dessen Modell-Cache.

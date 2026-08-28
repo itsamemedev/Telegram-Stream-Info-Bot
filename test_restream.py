@@ -1074,11 +1074,16 @@ def test_donations_summary():
     overlay_events und werden nach Plattform aggregiert. YouTube+Twitch sind
     KEINE Sonderfälle — sie nutzen denselben Pfad wie Kick/TikTok."""
     src = open("bot.py").read()
-    assert '@dashboard_app.route("/api/donations/summary")' in src, \
+    # v4.0-W116: die Route liegt jetzt im Blueprint nc/routes/money.py. Der
+    # Vertrag gilt unveraendert, er verankert nur eine Ebene tiefer.
+    money = open("nc/routes/money.py", encoding="utf-8").read()
+    assert '@bp.route("/api/donations/summary")' in money, \
         "Donations-Route fehlt"
+    assert "def api_donations_summary" not in src, \
+        "Doppel-Logik: die Route liegt noch im Monolithen UND im Blueprint"
     # Panel zeigt Kick/Twitch/YouTube — TikTok wurde auf Wunsch entfernt
-    i = src.find("def api_donations_summary")
-    body = src[i:i + 3000]
+    i = money.find("def api_donations_summary")
+    body = money[i:i + 3000]
     for p in ("kick", "twitch", "youtube"):
         assert f'"{p}"' in body, f"Plattform {p} fehlt in der Aggregation"
     assert 'for p in ("kick", "twitch", "youtube")' in body, \
@@ -2171,11 +2176,16 @@ def test_v40_wave2():
 def test_v40_modfeed():
     """v4.0: plattformübergreifender Moderations-Feed — Endpoint + Panel + Plattform-Erkennung."""
     src = open("bot.py").read()
-    assert '"/api/moderation/feed"' in src and "def api_moderation_feed(" in src
+    # v4.0-W117: die Route liegt im Blueprint nc/routes/stats.py. Vertrag
+    # unveraendert, nur eine Ebene tiefer verankert — plus die Zusicherung,
+    # dass der Monolith keine zweite Fassung behalten hat.
+    _st = open("nc/routes/stats.py", encoding="utf-8").read()
+    assert '"/api/moderation/feed"' in _st and "def api_moderation_feed(" in _st
+    assert "def api_moderation_feed(" not in src, "Doppel-Logik im Monolithen"
     # Plattform-Erkennung aus actor.
-    assert 'if "twitch" in a' in src and '"youtube" in a' in src, "keine Plattform-Erkennung"
+    assert 'if "twitch" in a' in _st and '"youtube" in a' in _st, "keine Plattform-Erkennung"
     # nur Durchgreif-Aktionen im Feed.
-    assert "kind IN ('timeout','ban','flag','delete','warn')" in src, "Feed filtert Aktionen nicht"
+    assert "kind IN ('timeout','ban','flag','delete','warn')" in _st, "Feed filtert Aktionen nicht"
     dash = open("templates/dashboard.html").read()
     assert 'id="pnl_modfeed"' in dash and "async function loadModFeed(" in dash
     assert "mf-kick" in dash and "mf-twitch" in dash and "mf-youtube" in dash, "keine Plattform-Badges"
@@ -3461,7 +3471,12 @@ def test_v40_w32_bundle_and_harden():
                 for ln in _t.splitlines()
                 if "int(request.args.get" in ln and "clamp_int(request.args.get(name)" not in ln]
     assert not raw_hits, f"noch rohe Query-Parser (Flask-500-Risiko): {raw_hits[:2]}"
-    _n_arg_int = sum(t.count("_arg_int(") for t in _quellen.values())
+    # v4.0-W117: in den Blueprints heisst derselbe Parser _c().arg_int — der
+    # Vertrag zaehlt beide Schreibweisen. Nur die Bot-Schreibweise zu zaehlen
+    # haette die Haertung mit jeder Welle scheinbar schrumpfen lassen, obwohl
+    # keine einzige Route ungehaertet wurde.
+    _n_arg_int = sum(t.count("_arg_int(") + t.count("_c().arg_int(")
+                     for t in _quellen.values())
     assert _n_arg_int >= 25, (
         "Query-Parser nicht flächendeckend vereinheitlicht (%d Vorkommen über %d Dateien)"
         % (_n_arg_int, len(_quellen)))
@@ -3731,10 +3746,19 @@ def test_v40_w40_resource_trend():
     assert RT.rising_trend(mixed, min_abs_growth=40.0)["trend"] is True
 
     src = open("bot.py").read()
-    assert "from nc import restrend as _nc_restrend" in src
     assert "_RES_HISTORY = _collections.deque(maxlen=300)" in src, "Ring-Puffer fehlt/unbegrenzt"
     assert 'log_event(f"watchdog.{_w}_slowleak"' in src, "keine Slow-Leak-Warnung"
-    assert '"/api/ops/resource_history"' in src, "Verlauf-Endpoint fehlt"
+    # v4.0-W116: der Verlauf-Endpoint liegt jetzt im Blueprint nc/routes/ops.py.
+    # Der Ring bleibt im Bot — der Watchdog schreibt ihn — und wird als Referenz
+    # ueber ctx.cfg geteilt. Genau das sichert die dritte Zusicherung: eine Kopie
+    # waere ein Panel, das ewig dieselben Punkte zeigt.
+    ops = open("nc/routes/ops.py", encoding="utf-8").read()
+    assert "from nc import restrend as _nc_restrend" in ops
+    assert '@bp.route("/api/ops/resource_history")' in ops, "Verlauf-Endpoint fehlt"
+    assert '_c().cfg["_RES_HISTORY"]' in ops, "Blueprint liest den Ring nicht ueber den Kontext"
+    assert '"_RES_HISTORY": _RES_HISTORY,' in src, "Ring wird nicht in den Kontext gereicht"
+    assert "def api_ops_resource_history" not in src, \
+        "Doppel-Logik: Route liegt noch im Monolithen UND im Blueprint"
     # Dashboard-Frontend: Panel, Chart, Loader verdrahtet.
     dash = open("templates/dashboard.html").read()
     assert 'id="pnl_restrend"' in dash and 'id="rtr_body"' in dash, "Verlauf-Panel fehlt"
@@ -4392,8 +4416,15 @@ def test_v40_w59_donations_unknown():
     ok("v4.0-w59: nc.donations.unknown_count — Zählung/Row-Zugriff/Fehler→0 gegen SQLite bewiesen")
 
     src = open("bot.py").read()
-    assert "_nc_donations.unknown_count(conn, days)" in src, "delegiert nicht"
-    assert "kind='donation' AND (platform IS NULL" not in src, "alte SQL noch im Monolithen"
+    # v4.0-W116: der Aufrufer _donations_unknown_count hatte ausser den
+    # /api/donations-Routen keinen Leser mehr und ist mit ihnen ins Blueprint
+    # gewandert. Die Delegation gilt unveraendert, sie steht nur dort.
+    _money = open("nc/routes/money.py", encoding="utf-8").read()
+    assert "_nc_donations.unknown_count(conn, days)" in _money, "delegiert nicht"
+    assert "def _donations_unknown_count" not in src, \
+        "Doppel-Logik: Helfer liegt noch im Monolithen UND im Blueprint"
+    assert "kind='donation' AND (platform IS NULL" not in src + _money, \
+        "alte SQL wieder da"
 
 
 def test_v40_w60_binresolve():
@@ -4438,9 +4469,17 @@ def test_v40_w61_ffver():
     ok("v4.0-w61: nc.ffver — Versions-Parsing bitgenau (Version/Fallback/leer/40-cap)")
 
     src = open("bot.py").read()
-    assert "from nc import ffver as _nc_ffver" in src
-    assert "_nc_ffver.parse_version(out.stdout)" in src, "delegiert nicht"
-    assert 're.search(r"ffmpeg version' not in src, "alte Parse-Logik noch im Monolithen"
+    # v4.0-W116: _ffmpeg_version_str war nur noch von den /api/ops-Routen genutzt
+    # und ist mit ihnen ins Blueprint gewandert — samt seinem Cache, der genau
+    # einen Eigentuemer hat. Der Vertrag verankert jetzt dort.
+    ops = open("nc/routes/ops.py", encoding="utf-8").read()
+    assert "from nc import ffver as _nc_ffver" in ops
+    assert "_nc_ffver.parse_version(out.stdout)" in ops, "delegiert nicht"
+    assert '_FFMPEG_VER_CACHE = {"v": None}' in ops, "Cache nicht mitgewandert"
+    assert "def _ffmpeg_version_str" not in src, \
+        "Doppel-Logik: Versionshelfer liegt noch im Monolithen UND im Blueprint"
+    assert 're.search(r"ffmpeg version' not in src and 're.search(r"ffmpeg version' not in ops, \
+        "alte Parse-Logik wieder da"
 
 
 def test_v40_w61b_netstat():
@@ -4742,8 +4781,10 @@ def test_v40_w65_claude_full_and_donation_reset():
     assert "Reaction-AI Claude fehlgeschlagen" in src, "Reaction-Engine nicht auf Claude"
     assert "Claude zuerst (Einmalantwort" in _ai, "Streaming-Pfad nicht auf Claude"
     # Spenden-Reset-Endpoint.
-    assert '@dashboard_app.route("/api/donations/reset"' in src, "Reset-Endpoint fehlt"
-    assert "DELETE FROM overlay_events WHERE kind='donation'" in src, "Reset löscht nicht"
+    # v4.0-W116: Reset-Endpoint liegt im Blueprint nc/routes/money.py.
+    _money = open("nc/routes/money.py", encoding="utf-8").read()
+    assert '@bp.route("/api/donations/reset"' in _money, "Reset-Endpoint fehlt"
+    assert "DELETE FROM overlay_events WHERE kind='donation'" in _money, "Reset löscht nicht"
 
     # Reset-Logik gegen echtes SQLite: Spenden weg, Rest bleibt.
     import sqlite3
@@ -5845,13 +5886,23 @@ def test_v40_w102_donations_3d_qr_manual():
 
     src = open("bot.py").read()
     # (C) manuelle Spenden-Endpoints + current_eur-Integration
-    assert '@dashboard_app.route("/api/donations/add"' in src, "kein Add-Endpoint"
-    assert '@dashboard_app.route("/api/donations/manual")' in src, "keine Manual-Liste"
-    assert "donations/manual/<int:rid>/delete" in src, "kein Delete-Endpoint"
+    # v4.0-W116: Endpoints im Blueprint nc/routes/money.py, der DB-Zugriff in
+    # nc/donationsdb.py. Der Vertrag prueft beides plus die Delegation — sonst
+    # koennten Modul und Monolith auseinanderlaufen.
+    _money = open("nc/routes/money.py", encoding="utf-8").read()
+    _ddb = open("nc/donationsdb.py", encoding="utf-8").read()
+    assert '@bp.route("/api/donations/add"' in _money, "kein Add-Endpoint"
+    assert '@bp.route("/api/donations/manual")' in _money, "keine Manual-Liste"
+    assert "donations/manual/<int:rid>/delete" in _money, "kein Delete-Endpoint"
+    assert "def manual_total" in _ddb and "def manual_rows" in _ddb, \
+        "manuelle Summe/Liste nicht in nc.donationsdb"
     assert "def _manual_donations_total" in src and "cur += _manual_donations_total()" in src, \
         "manuelle Summe fließt nicht in current_eur"
-    assert "platform='manual'" in src, "manuelle Spenden nicht als platform='manual'"
-    assert "WHERE id=? AND kind='donation'" in src, "Delete nicht portabel (rowid statt id)"
+    assert "return _nc_donationsdb.manual_total()" in src, \
+        "Bot delegiert nicht — Doppel-Logik zur manuellen Summe"
+    assert "platform='manual'" in _money or "platform='manual'" in _ddb, \
+        "manuelle Spenden nicht als platform='manual'"
+    assert "WHERE id=? AND kind='donation'" in _money, "Delete nicht portabel (rowid statt id)"
 
     # (B) + (C) Frontend
     h = open("templates/dashboard.html").read()

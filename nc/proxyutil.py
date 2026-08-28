@@ -192,6 +192,41 @@ def configure_proxy_select(tunnel=None, record_proxy=None, proxy_list=None,
     if router_getter is not None: _ROUTER_GET = router_getter
 
 
+# ---- Lesezugriff fuer die Tunnel-Routen (v4.0-W116) -------------------------
+# Warum hier und nicht ueber nc.ctx: dieses Modul haelt den Tunnel-Zustand
+# ohnehin schon — configure_proxy_select() bekommt beim Start denselben Dict,
+# den der Bot benutzt. Ihn ein zweites Mal durch den Kontext zu reichen waere
+# eine zweite Wahrheit ueber dieselbe Sache.
+def tunnel_effective():
+    """Der Proxy, der fuer eine Aufnahme wirklich benutzt wuerde (oder None).
+
+    Bitgenau der Koerper von _tunnel_effective() aus dem Monolithen.
+    """
+    if _TUNNEL.get("forced_off"):
+        return None
+    return _TUNNEL.get("override") or (_RECORD_PROXY or None)
+
+
+def tunnel_state():
+    """Der geteilte Zustands-Dict, als Referenz — nicht als Kopie.
+
+    Das Dashboard schreibt hier hinein (override, forced_off, last_test) und die
+    Aufnahme liest es im selben Moment. Eine Kopie waere ein stiller Schalter,
+    der nichts schaltet.
+    """
+    return _TUNNEL
+
+
+def record_proxy():
+    """RECORD_PROXY aus der .env, wie beim Start injiziert."""
+    return _RECORD_PROXY
+
+
+def proxy_pool():
+    """PROXY_LIST aus der .env, wie beim Start injiziert."""
+    return _PROXY_LIST
+
+
 def get_random_proxy() -> Optional[str]:
     # v37: Laufzeit-Tunnel-Steuerung (Polen-VPS). Override hat Vorrang vor allem;
     # forced_off erzwingt Direktverbindung. Default (None/False) = unverändert.
