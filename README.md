@@ -783,6 +783,7 @@ python3 -m py_compile <geänderte .py>
 python3 -m pyflakes   <geänderte .py>                      # 0 Befunde
 python3 -m ruff check --select F,E9,B --ignore B905 <geänderte .py>
 python3 tools/ncpatch.py check                             # Templates prüfen
+python3 tools/ncpatch.py docs                              # Zahlen in der Doku
 python3 test_smoke.py
 python3 test_nc_modules.py
 python3 test_restream.py
@@ -807,7 +808,13 @@ PYTHONPATH=. python3 nc/intel/test_intel.py
 
 Was ohne den vollen Laufzeitstack prüfbar ist, läuft bei jedem Push automatisch:
 **[`.github/workflows/ci.yml`](.github/workflows/ci.yml)** — Lint, Templates,
-Verträge und ein Geheimnis-Scan auf Python 3.12 und 3.13.
+Doku-Zahlen, Verträge und ein Geheimnis-Scan auf Python 3.12 und 3.13.
+
+> [!NOTE]
+> `ncpatch docs` vergleicht die Kennzahlen in README und `CLAUDE.md` — Routen,
+> Zeilen, Module, Agenten, `.env`-Variablen — mit dem Quelltext und prüft jeden
+> internen Anker. Diese Zahlen waren zweimal still veraltet; von Hand gepflegt
+> hält das niemand durch.
 
 <details>
 <summary><b>Wenn ein Vertrag in <code>test_restream.py</code> kippt</b></summary>
@@ -838,6 +845,7 @@ python3 tools/ncpatch.py grep "tree.command" bot.py -C 3
 python3 tools/ncpatch.py map                           # Navigationskarte neu bauen
 python3 tools/ncpatch.py verify patches/x.json         # Trockenlauf
 python3 tools/ncpatch.py apply  patches/x.json         # alles-oder-nichts, legt .bak an
+python3 tools/ncpatch.py docs                          # Doku-Zahlen gegen den Code
 ```
 
 `find` antwortet aus **[`.claude/INDEX.md`](.claude/INDEX.md)** — 355 Routen

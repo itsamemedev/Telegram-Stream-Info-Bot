@@ -26,6 +26,7 @@ Aufruf:
   python3 ncpatch.py apply  patches/w2_ai.json      [--root .]
   python3 ncpatch.py verify patches/w2_ai.json      [--root .]   # dry-run
   python3 ncpatch.py check                          [--root .]   # Validierung
+  python3 ncpatch.py docs                           [--root .]   # Doku-Zahlen
   python3 ncpatch.py grep  "such-text" bot.py   [-C 3]       # Anker finden
   python3 ncpatch.py show  bot.py 24721 24760                # Zeilen zeigen
   python3 ncpatch.py sym   bot.py _discord_start             # Symbol-Zeilen
@@ -490,6 +491,165 @@ def cmd_find(args) -> int:
     return 0 if treffer else 1
 
 
+# ─────────────────────────────────────────── Doku: Zahlen und Anker
+
+# WARUM: README.md und CLAUDE.md nennen Dutzende Kennzahlen — Routen, Zeilen,
+# Module, Agenten, .env-Variablen. Die sind zweimal still auseinandergelaufen:
+# das README sprach von 345 Routen (echte 355), 34.487 Zeilen (echte 32.569)
+# und 12 Sentinel-Agenten, waehrend 13 registriert waren — swap und proxy
+# fehlten in der Tabelle ganz. Alle diese Zahlen stehen im Quelltext. Dieser
+# Befehl vergleicht sie, statt sie zu glauben.
+#
+# Bewusst NICHT Teil von `check`: `check` laeuft in deploy.sh vor dem
+# Umschwenken auf Produktion. Eine veraltete Zahl im README darf einen Deploy
+# nicht aufhalten — sie gehoert in die CI, wo sie vor dem Merge auffaellt.
+
+# Einheit -> erlaubte Werte. Mehrere Werte, weil eine Zahl legitim in
+# Teilmengen auftritt ("355 Routen (265 in bot.py, 90 in nc/routes/)").
+def _kennzahlen(root: str) -> tuple[dict, dict]:
+    d = _scan(os.path.join(root, "bot.py"))
+    zeilen = len(_read(os.path.join(root, "bot.py")).splitlines())
+
+    bp_dir = os.path.join(root, "nc", "routes")
+    bp_dateien = [f for f in sorted(os.listdir(bp_dir))
+                  if f.endswith(".py") and f != "__init__.py"] \
+        if os.path.isdir(bp_dir) else []
+    bp_routen = sum(len(_scan(os.path.join(bp_dir, f))["routes"])
+                    for f in bp_dateien)
+
+    def _module(pfad: str) -> int:
+        p = os.path.join(root, pfad)
+        if not os.path.isdir(p):
+            return 0
+        return len([f for f in os.listdir(p) if f.endswith(".py")
+                    and f != "__init__.py" and not f.startswith("test_")])
+
+    # Die Sentinel-Flotte: jede Agentenklasse traegt ihren Namen als
+    # Klassenattribut. Die Basisklasse heisst selbst "agent" und zaehlt nicht.
+    agenten = {m.group(1) for m in re.finditer(
+        r'^\s*name\s*=\s*"([a-z_]+)"',
+        _read(os.path.join(root, "brain", "agents.py")), re.M)} - {"agent"}
+
+    # Telegram-Befehle stehen als Tupel-Liste in der Registrierung, nicht als
+    # Dekorator — deshalb ueber den AST statt ueber _scan.
+    tg = 0
+    for node in ast.walk(ast.parse(_read(os.path.join(root, "bot.py")))):
+        if not isinstance(node, ast.For) or not isinstance(node.iter, ast.Tuple):
+            continue
+        if "CommandHandler" not in ast.dump(node):
+            continue
+        tg = max(tg, len(node.iter.elts))
+
+    env = os.path.join(root, ".env.example")
+    variablen = len({m.group(1) for m in re.finditer(
+        r"^#?\s*([A-Z][A-Z0-9_]{2,})=", _read(env), re.M)}) if os.path.exists(env) else 0
+
+    routen = len(d["routes"]) + bp_routen
+    einheiten = {
+        "Routen":            {routen, len(d["routes"]), bp_routen},
+        "API-Routen":        {routen, len(d["routes"]), bp_routen},
+        "Flask-Routen":      {routen, len(d["routes"]), bp_routen},
+        "Blueprints":        {len(bp_dateien)},
+        "Flask-Blueprints":  {len(bp_dateien)},
+        "Slash-Commands":    {len(d["slash"])},
+        "Funktionen":        {len(d["defs"])},
+        "Fachmodule":        {_module("nc")},
+        # Auf Tausender abgerundet ist zulaessig ("bot.py hat ueber 32.000
+        # Zeilen") — alles andere muss die exakte Zahl sein.
+        "Zeilen":            {zeilen, zeilen // 1000 * 1000},
+        "Befehle":           {tg},
+        "Variablen":         {variablen},
+        "Wächter":           {len(agenten)},
+        "Wächter-Agenten":   {len(agenten)},
+    }
+    # Tabellenzeilen nennen die Zahl NACH dem Begriff: "| Sentinel-Agenten | 13 |"
+    labels = {
+        "Flask-Routen":            einheiten["Routen"],
+        "Discord-Slash-Commands":  einheiten["Slash-Commands"],
+        "Fachmodule":              einheiten["Fachmodule"],
+        "Sentinel-Agenten":        einheiten["Wächter"],
+        "Konfigurationsvariablen": einheiten["Variablen"],
+    }
+    return einheiten, labels
+
+
+def _slug(titel: str) -> str:
+    """GitHubs Anker-Regel: kleinschreiben, Satzzeichen und Emoji raus,
+    Leerzeichen zu '-'. NICHT trimmen — genau deshalb faengt der Anker einer
+    Emoji-Ueberschrift mit '-' an, und genau daran starb der Discord-Badge."""
+    t = re.sub(r"[`*\[\]().,:„“\"/]", "", titel).lower()
+    behalten = "".join(c for c in t
+                       if re.match(r"[\w \-]", c) or c == "️")
+    return "#" + behalten.replace(" ", "-")
+
+
+def _doku_zeilen(text: str):
+    """Zeilen ohne Codebloecke — Mermaid ausgenommen, dort stehen Kennzahlen
+    in den Diagramm-Beschriftungen und sollen mitgeprueft werden."""
+    fence = None
+    for nr, zeile in enumerate(text.split("\n"), 1):
+        if zeile.startswith("```"):
+            fence = None if fence is not None else zeile[3:].strip().lower()
+            continue
+        if fence is not None and fence != "mermaid":
+            continue
+        yield nr, zeile
+
+
+def cmd_docs(args) -> int:
+    root = args.root
+    einheiten, labels = _kennzahlen(root)
+    rc = 0
+
+    def zahl(s: str) -> int:
+        return int(s.replace(".", "").replace(" ", ""))
+
+    muster = re.compile(r"(\d[\d.]*)\s*\**\s*(" +
+                        "|".join(sorted(einheiten, key=len, reverse=True)) + r")\b")
+    for datei in ("README.md", "CLAUDE.md"):
+        pfad = os.path.join(root, datei)
+        if not os.path.exists(pfad):
+            continue
+        text = _read(pfad)
+        for nr, zeile in _doku_zeilen(text):
+            for m in muster.finditer(zeile):
+                wert, einheit = zahl(m.group(1)), m.group(2)
+                if wert not in einheiten[einheit]:
+                    erlaubt = " oder ".join(f"{v:,}".replace(",", ".")
+                                            for v in sorted(einheiten[einheit]))
+                    print(f"  {datei}:{nr}: {m.group(1)} {einheit} — "
+                          f"echt sind {erlaubt}")
+                    rc = 1
+            if zeile.startswith("|"):
+                zellen = [z.strip() for z in zeile.strip("|").split("|")]
+                if len(zellen) >= 2 and zellen[0].strip("*` ") in labels:
+                    erlaubt = labels[zellen[0].strip("*` ")]
+                    treffer = re.search(r"(\d[\d.]*)", zellen[1])
+                    if treffer and zahl(treffer.group(1)) not in erlaubt:
+                        print(f"  {datei}:{nr}: {zellen[0]} = "
+                              f"{treffer.group(1)} — echt sind "
+                              f"{' oder '.join(str(v) for v in sorted(erlaubt))}")
+                        rc = 1
+
+    # Interne Anker. Zwei Badges zeigten ins Leere, einer davon nur wegen des
+    # unsichtbaren Variation Selectors im Emoji der Ueberschrift.
+    readme = os.path.join(root, "README.md")
+    if os.path.exists(readme):
+        text = _read(readme)
+        anker = {_slug(m.group(1).strip())
+                 for nr, z in _doku_zeilen(text)
+                 for m in [re.match(r"^#{1,6}\s+(.*)$", z)] if m}
+        for nr, zeile in _doku_zeilen(text):
+            for ziel in re.findall(r"\]\((#[^)]+)\)", zeile):
+                if ziel not in anker:
+                    print(f"  README.md:{nr}: toter Anker {ziel!r}")
+                    rc = 1
+
+    print("  doku: BEFUNDE — Zahlen von Hand nachgezogen?" if rc else
+          "  doku: OK (Zahlen und interne Anker gegen den Quelltext geprueft)")
+    return rc
+
+
 # ────────────────────────────────────────────────────────────── CLI
 
 
@@ -504,6 +664,8 @@ def main() -> int:
         s.set_defaults(func=fn)
 
     s = sub.add_parser("check"); s.set_defaults(func=cmd_check)
+
+    s = sub.add_parser("docs"); s.set_defaults(func=cmd_docs)
 
     s = sub.add_parser("grep")
     s.add_argument("pattern"); s.add_argument("file")

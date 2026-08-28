@@ -20,6 +20,7 @@ dann den Ausschnitt holen:
     python tools/ncpatch.py verify patches/x.json          # Trockenlauf
     python tools/ncpatch.py apply  patches/x.json          # alles-oder-nichts, legt .bak an
     python tools/ncpatch.py check                          # Templates: doppelte IDs, CSS-Bilanz
+    python tools/ncpatch.py docs                           # Doku-Zahlen gegen den Quelltext
 
 `find` antwortet aus `.claude/INDEX.md` — 355 Routen (265 in `bot.py`, 90 in
 `nc/routes/`), 45 Slash-Commands, 565 Funktionen mit Zeilennummern. Nach Änderungen an Routen, Commands oder
@@ -68,6 +69,7 @@ stdlib-only (`urllib`, kein `aiohttp`).
     python -m pyflakes   <geänderte .py>        # 0 Befunde
     python -m ruff check --select F,E9,B --ignore B905 <geänderte .py>
     python tools/ncpatch.py check
+    python tools/ncpatch.py docs
     python test_smoke.py ; python test_nc_modules.py ; python test_restream.py
 
 **Auf diesem Windows-Rechner gilt vorher `$env:PYTHONUTF8="1"`.** Die Tests
