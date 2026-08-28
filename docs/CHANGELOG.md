@@ -11,6 +11,80 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Behoben — neun Panels aus dem Reorg wieder verdrahtet (W126)
+
+Der Reorg löste die Ansichten **VAULT**, **INTEL**, **BRAIN+** und **LAB** auf
+und ließ ihre Loader mit einem Wächter (`if(!$('#x')) return;`) stehen. Die
+Funktionen laufen seither, greifen ins Leere und melden nichts. Alle
+betroffenen Endpunkte antworteten die ganze Zeit weiter — es fehlte nur die
+Oberfläche. Jetzt hängen sie da, wo sie hingehören:
+
+**Betrieb → Automatisierung** (neues Panel): Auto-Archiv-Regeln
+(`/api/auto-archive-rules`), Webhooks (`/api/webhooks`), Sammlungen
+(`/api/collections`), Ruhezeiten (`/api/notifications/quiet-hours`). Für alle
+vier gab es nur Lese-, Test- und Löschwege — das **Anlegen** fehlte, und eine
+Liste, die nur leer sein kann, ist keine Bedienung. Das Regel-Formular bietet
+genau die vier Bedingungen, die `evaluate_archive_rule` wirklich kennt, und
+benennt die eine Aktion, die die Regel-Maschine beherrscht.
+
+**Betrieb → Aufnahmefenster planen**: das Anlegen lief seit je, die geplanten
+Fenster **anzusehen** oder zu entfernen nicht (`/api/schedule/list|remove`).
+
+**AZRAEL Brain → Evolutions-Kern** (neues Panel): Stand, Wissensbalken,
+gelernte Werte und offene Vorschläge (`/api/evolution/status|learned|
+proposals`). Verlauf und Changelog hatten anderswo überlebt — deshalb fiel
+nicht auf, dass der Rest unsichtbar war.
+
+**AZRAEL Brain → KI-Chat** (neues Panel): hier fehlte mehr als Markup. Da
+waren nur Lesewege ohne Eingang — Konversationen laden, öffnen, löschen.
+Modell-Liste, neue Konversation und **Senden** gab es nicht, `_aiModels` wurde
+nie gefüllt. Neu geschrieben; die vollständige Stilvorlage (`.ai-wrap` bis
+`.ai-send`) stand die ganze Zeit im Stylesheet.
+
+**Streams → Aufnahmen** (neues Panel): die Aufnahmen aus der Datenbank samt
+Aufnahme-Fenster (Manifest, Qualität, Wellenform, Notizen, Marken). Ohne
+Liste war das Fenster über keinen Weg mehr erreichbar.
+
+**Control → Highlight-Clips** (neues Panel): `loadClips()` lief seit je im
+700-ms-Takt über `avatarPoll` und schrieb in ein Raster, das es nicht gab.
+Die Clips entstanden also durchgehend, sehen konnte sie niemand.
+
+Zwei Altlasten ersatzlos entfernt statt Markup zu erfinden: `km_conn`
+(denselben Zustand zeigen `kms_conn` und die Kanal-Chips) und `cc_tag` (der
+zweite Einbau der Kommandozentrale, den W71 entfernt hat — `ov_cc_tag` lebt).
+
+**Drei Fehler, die erst der Browser gezeigt hat:**
+
+* `loadAutomation()` gab es **zweimal** — der Autopilot-Lader und, im ersten
+  Anlauf dieser Welle, das Automatisierungs-Panel. Die spätere Deklaration
+  gewinnt; das Panel blieb stumm, ohne dass irgendwo ein Fehler stand. Meines
+  heißt jetzt `loadAutomatisierung()`.
+* `loadClips is not defined`: Funktions-Deklarationen gelten nur im eigenen
+  `<script>`-Block. Ein Ansichts-Loader in einem früheren Block sieht spätere
+  Deklarationen nicht — und die Restream-Ansicht wird schon während des
+  Parsens aufgebaut. Dafür gibt es jetzt `nachAufbau(name)`.
+* `d.items.map` im Autopilot-Lader war ungeprüft: antwortet die Route ok, aber
+  ohne `items`, warf es und das Panel blieb stumm zurück. Gehärtet.
+
+Beim Wiederbeleben zwei Escaping-Altlasten mitgenommen: der Clip-Name ging über
+`esc()` plus String-Konkatenation in einen `onclick` — das Muster, das W118 mit
+`escJs()` geschlossen hat. Und die englischen Beschriftungen der wiederbelebten
+Renderer (`no rules defined`, `KEINE COLLECTIONS`, `RUN`, `test/off/on`,
+`URL/Events/Fails`, `4 msg`) sind jetzt deutsch.
+
+Ergebnis messbar: **0 tote IDs** (vorher 28), **0 unerreichbare Funktionen**
+(vorher 27) im Dashboard. Der Vertrag
+`test_v40_w126_reorg_reste_verdrahtet` prüft nicht Einzel-IDs, sondern die
+Eigenschaft, die verloren ging — *jede ID, die das JavaScript nachschlägt,
+muss es im Markup geben* — plus doppelte Funktionsnamen. Diese eine Zeile
+hätte W122, W125 und W126 verhindert. Jede Zusicherung wurde durch Sabotage
+gegengeprüft.
+
+Geprüft im echten Browser (Chromium gegen eine gestubbte API): 36 Schritte
+über alle vier Ansichten, plus die 15 aus W125 — Kennzahlen, Listen, Anlegen,
+Ablehnen falscher Eingaben, Senden im Chat, Apostroph im Datei- und
+Clip-Namen, keine Konsolenfehler.
+
 ### Behoben — Papierkorb, Dubletten und Umbenennen waren unerreichbar (W125)
 
 Der Reorg löste die Ansichten **VAULT** und die Aufnahme-Liste auf und ließ

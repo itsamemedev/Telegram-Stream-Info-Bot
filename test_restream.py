@@ -6708,6 +6708,85 @@ def test_v40_w125_papierkorb_und_archiv_werkzeuge():
     ok("v4.0-w125: Papierkorb, Dubletten und Umbenennen wieder erreichbar")
 
 
+def test_v40_w126_reorg_reste_verdrahtet():
+    """v4.0-W126: kein Loader ohne Markup, kein Markup ohne Loader.
+
+    Der Reorg loeste die Ansichten VAULT, INTEL, BRAIN+ und LAB auf. Zurueck
+    blieben Loader mit einem Waechter (`if(!$('#x')) return;`) — sie laufen,
+    greifen ins Leere und melden nichts. Sieben Endpunkt-Familien verloren so
+    ihre einzige Oberflaeche, obwohl sie durchgehend antworteten: Regeln,
+    Webhooks, Sammlungen, Ruhezeiten, geplante Aufnahmen, Evolutions-Kern,
+    KI-Chat, Aufnahmen-Liste und Highlight-Clips.
+
+    Statt einzelne IDs aufzuzaehlen prueft dieser Vertrag die EIGENSCHAFT, die
+    dabei verloren ging: jede ID, die das JavaScript nachschlaegt, muss es im
+    Markup geben. Diese eine Zeile haette W122, W125 und W126 verhindert.
+    """
+    import re as _re
+    dash = open("templates/dashboard.html", encoding="utf-8").read()
+
+    # ── Kein Zugriff auf eine ID, die es nicht gibt ──────────────────────
+    vorhanden = set(_re.findall(r'\bid\s*=\s*"([A-Za-z0-9_-]+)"', dash))
+    vorhanden |= set(_re.findall(r'\bid\s*=\s*\\?["\']?([A-Za-z0-9_-]+)', dash))
+    gesucht = set(_re.findall(r'getElementById\(\s*["\']([A-Za-z0-9_-]+)["\']', dash))
+    gesucht |= set(_re.findall(r'\$\(\s*["\']#([A-Za-z0-9_-]+)["\']\s*\)', dash))
+    tot = sorted(gesucht - vorhanden)
+    assert not tot, "JavaScript greift auf Markup zu, das es nicht gibt: %s" % tot
+
+    # ── Kein doppelter globaler Funktionsname ───────────────────────────
+    # loadAutomation() gab es zweimal: der Autopilot-Lader und (im ersten
+    # Anlauf dieser Welle) das Automatisierungs-Panel. Die spaetere
+    # Deklaration gewinnt, das Panel blieb stumm — ohne jede Fehlermeldung.
+    namen = _re.findall(r'^(?:async\s+)?function\s+([A-Za-z_$][\w$]*)\s*\(', dash, _re.M)
+    doppelt = sorted({n for n in namen if namen.count(n) > 1})
+    assert not doppelt, "globale Funktionsnamen doppelt vergeben: %s" % doppelt
+
+    # ── Die neun wiederbelebten Panels haengen an einem Loader ──────────
+    _betrieb = dash[dash.index("VIEW_LOADERS['betrieb'] = async ()=>{"):]
+    _betrieb = _betrieb[:_betrieb.index("};")]
+    for _f in ("loadAutomatisierung()", "bpLoadSchedule()"):
+        assert _f in _betrieb, "%s haengt nicht im Betrieb-Loader" % _f
+    _brain = dash[dash.index("VIEW_LOADERS['brain']=async ()=>{"):]
+    _brain = _brain[:_brain.index("\n};")]
+    for _f in ("nachAufbau('loadEvolution')", "nachAufbau('aiInit')"):
+        assert _f in _brain, "%s haengt nicht im Brain-Loader" % _f
+    assert "loadCaptures();" in dash[dash.index("VIEW_LOADERS.wall = async function(){"):
+                                     dash.index("let _arcPage=1;")], \
+        "Aufnahmen-Liste haengt nicht im Streams-Loader"
+
+    # nachAufbau() loest die Falle, die der Browser gemeldet hat: ein Loader
+    # in einem frueheren <script>-Block sieht spaetere Deklarationen nicht.
+    assert "function nachAufbau(name){" in dash, "Helfer gegen die Block-Reihenfolge fehlt"
+    assert "nachAufbau('loadClips')" in dash, "Clips laden ungeschuetzt ueber Blockgrenze"
+
+    # ── Anlegen, nicht nur ansehen ───────────────────────────────────────
+    # Ohne Anlege-Weg ist eine Liste, die nur leer sein kann, keine Bedienung.
+    for _fn, _ep in (("async function arAdd(", "/api/auto-archive-rules"),
+                     ("async function collAdd(", "/api/collections"),
+                     ("async function whAdd(", "/api/webhooks"),
+                     ("async function aiNewConv(", "/api/ai/conversations"),
+                     ("async function aiSend(", "/messages")):
+        assert _fn in dash, "%s fehlt" % _fn
+        _k = dash[dash.index(_fn):]
+        _k = _k[:_k.index("\n}")]
+        assert _ep in _k, "%s spricht %s nicht an" % (_fn, _ep)
+
+    # Der KI-Chat braucht seine Modell-Liste, sonst ist _aiModels immer leer.
+    assert "async function aiLoadModels(" in dash and "'/api/ai/models'" in dash, \
+        "Modell-Liste wird nicht geladen"
+
+    # ── W118-Regel: Werte in Inline-Handlern nur ueber escJs ─────────────
+    _clips = dash[dash.index("async function loadClips("):]
+    _clips = _clips[:_clips.index("\n}")]
+    assert "escJs(c.name)" in _clips, "Clip-Name geht ungeschuetzt in einen onclick"
+
+    # ── Was ersatzlos entfiel, bleibt entfallen ─────────────────────────
+    for _tot in ("function loadVault", "function loadManual", "function showTrash"):
+        assert _tot not in dash, "%s wieder da" % _tot
+    ok("v4.0-w126: jede nachgeschlagene ID existiert, neun Panels verdrahtet, "
+       "Anlege-Wege vorhanden")
+
+
 def main():
     print("test_restream — Restream-Kernlogik (Mock-basiert)")
     test_streak()
@@ -6894,6 +6973,7 @@ def main():
     test_v40_w122_trackings_ansicht()
     test_v40_w124_offline_meldung_ins_thema()
     test_v40_w125_papierkorb_und_archiv_werkzeuge()
+    test_v40_w126_reorg_reste_verdrahtet()
     print(f"test_restream OK — {PASS} Verträge grün")
 
 

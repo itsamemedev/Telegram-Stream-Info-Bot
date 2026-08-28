@@ -3027,10 +3027,73 @@ document.addEventListener("DOMContentLoaded",function(){
           <button class="btn sm cyan" onclick="ops6Schedule()">Fenster hinzufügen</button>
         </div>
         <div id="ops6_sch_out"></div>
+        <!-- v4.0-W126: Anlegen ging seit je (ops6Schedule -> /api/schedule/add),
+             die geplanten Fenster ANZUSEHEN oder zu entfernen nicht — die
+             Liste stand in der aufgeloesten Brain+-Ansicht. -->
+        <div id="bp_sc_list" class="skel" aria-busy="true" style="margin-top:8px"><i></i></div>
 
         <div class="kc-sub" style="margin-top:16px">TAGES-ZUSAMMENFASSUNG <span class="faint" style="font-size:10px;letter-spacing:0">Vorschau ohne Senden</span></div>
         <button class="btn sm" onclick="ops6Summary()">Vorschau laden</button>
         <div id="ops6_summary" style="margin-top:8px"></div>
+      </div>
+    </div>
+
+    <!-- v4.0-W126: AUTOMATISIERUNG. Vier Endpunkte, die seit dem Reorg keine
+         Oberflaeche mehr hatten und trotzdem die ganze Zeit antworteten:
+         /api/auto-archive-rules, /api/webhooks, /api/collections und
+         /api/notifications/quiet-hours. Sie gehoeren zusammen — alles vier
+         beantwortet "was soll der Bot von selbst tun". -->
+    <div class="panel mt">
+      <div class="head"><h3>▚ Automatisierung</h3>
+        <span class="tag">Regeln · Webhooks · Sammlungen · Ruhezeiten</span>
+        <div class="spacer"></div>
+        <button class="btn sm" onclick="loadAutomatisierung()" aria-label="Aktualisieren" title="Aktualisieren">↻</button></div>
+      <div class="body">
+        <div class="faint" style="font-size:11px;line-height:1.55;margin-bottom:14px">
+          Was ohne dich passiert: Regeln räumen das Archiv auf, Webhooks melden
+          Ereignisse nach draußen, Sammlungen bündeln Streamer, Ruhezeiten
+          halten den Bot nachts still. Löschende Aktionen fragen nach.
+        </div>
+
+        <div class="kc-sub">AUTO-ARCHIV-REGELN</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:8px">
+          <input id="ar_name" type="text" placeholder="Name der Regel" style="max-width:190px">
+          <select id="ar_feld" style="max-width:190px">
+            <option value="min_size_mb">mindestens (MB)</option>
+            <option value="max_size_mb">höchstens (MB)</option>
+            <option value="min_duration_secs">länger als (Sekunden)</option>
+            <option value="username_contains">Streamer enthält</option>
+          </select>
+          <input id="ar_wert" type="text" placeholder="Wert" style="max-width:120px">
+          <button class="btn sm cyan" onclick="arAdd()">Regel anlegen</button>
+          <span class="faint" style="font-size:10.5px">Aktion: ins Archiv kopieren — die
+            Regel-Maschine kennt bisher nur diese eine.</span>
+        </div>
+        <div id="op_rules" class="skel" aria-busy="true" style="margin-bottom:18px"><i></i></div>
+
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:18px">
+          <div>
+            <div class="kc-sub">SAMMLUNGEN <span class="faint" style="font-size:10px;letter-spacing:0">Streamer bündeln</span></div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:8px">
+              <input id="coll_name" type="text" placeholder="Name" style="max-width:150px">
+              <input id="coll_farbe" type="color" value="#e8c86a" style="width:48px;padding:2px" aria-label="Farbe" title="Farbe">
+              <button class="btn sm cyan" onclick="collAdd()">Anlegen</button>
+            </div>
+            <div id="lab_colls" class="skel" aria-busy="true"><i></i></div>
+          </div>
+          <div>
+            <div class="kc-sub">RUHEZEITEN <span class="faint" style="font-size:10px;letter-spacing:0">keine Meldungen im Fenster</span></div>
+            <div id="lab_quiet" class="skel" aria-busy="true"><i></i></div>
+          </div>
+        </div>
+
+        <div class="kc-sub" style="margin-top:18px">WEBHOOKS <span class="faint" style="font-size:10px;letter-spacing:0">Ereignisse nach draußen melden</span></div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:8px">
+          <input id="wh_url" type="url" placeholder="https://…" style="flex:1;min-width:220px">
+          <input id="wh_events" type="text" placeholder="Ereignisse (leer = alle)" style="max-width:200px">
+          <button class="btn sm cyan" onclick="whAdd()">Webhook anlegen</button>
+        </div>
+        <div id="lab_webhooks" class="skel" aria-busy="true"><i></i></div>
       </div>
     </div>
 
@@ -3293,6 +3356,78 @@ document.addEventListener("DOMContentLoaded",function(){
       </div>
     </div>
 
+    <!-- v4.0-W126: KI-CHAT. Die Stilvorlage dieser Ansicht steht seit je
+         vollstaendig im Stylesheet (.ai-wrap bis .ai-send) — nur ihr Markup
+         verschwand im Reorg, zusammen mit dem Senden. Uebrig blieben Lesewege
+         ohne Eingang: Konversationen laden, oeffnen, loeschen. Backend war
+         nie weg (/api/ai/models, /api/ai/conversations[/<id>/messages]). -->
+    <div class="panel mt">
+      <div class="head"><h3>▚ KI-Chat</h3>
+        <span class="tag" id="ai_backend">…</span>
+        <div class="spacer"></div>
+        <button class="btn sm" onclick="aiInit()" aria-label="Aktualisieren" title="Aktualisieren">↻</button></div>
+      <div class="body">
+        <div class="ai-wrap">
+          <div class="ai-side">
+            <div class="shead">
+              <button class="ai-newbtn" onclick="aiNewConv()">＋ Neue Konversation</button>
+            </div>
+            <div class="ai-convs" id="ai_convs"></div>
+          </div>
+          <div class="ai-main">
+            <div class="ai-bar">
+              <span class="title" id="ai_title">KI-Chat</span>
+              <select class="ai-modelsel" id="ai_model" onchange="aiPickModel(this.value)"
+                      aria-label="Modell wählen" title="Modell"></select>
+              <span class="ai-status" id="ai_status"><span class="dot"></span><span>prüfe…</span></span>
+            </div>
+            <div class="ai-thread" id="ai_thread"></div>
+            <div class="ai-input">
+              <textarea class="ai-ta" id="ai_ta" rows="1" onkeydown="aiKey(event)"
+                aria-label="Nachricht"
+                placeholder="Frage stellen — Enter sendet, Umschalt+Enter macht eine neue Zeile"></textarea>
+              <button class="ai-send" id="ai_send" onclick="aiSend()"
+                      aria-label="Senden" title="Senden">▸</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- v4.0-W126: EVOLUTIONS-KERN. /api/evolution/{status,learned,proposals}
+         antworteten weiter, nur ihre Ansicht war im Reorg verschwunden. Der
+         Verlauf (history/run/changelog) hatte an anderer Stelle ueberlebt —
+         daher fiel monatelang niemandem auf, dass Stand, Gelerntes und
+         Vorschlaege gar nicht mehr zu sehen waren. -->
+    <div class="panel mt">
+      <div class="head"><h3>▚ Evolutions-Kern</h3>
+        <span class="tag" id="evo_ver">…</span>
+        <div class="spacer"></div>
+        <span class="faint" id="evo_meta" style="font-size:10.5px">…</span>
+        <button class="btn sm" onclick="loadEvolution()" aria-label="Aktualisieren" title="Aktualisieren">↻</button></div>
+      <div class="body">
+        <div class="grid g4">
+          <div class="metric"><span class="v" id="evo_know">–</span><span class="l">Wissensstand</span></div>
+          <div class="metric"><span class="v" id="evo_cycles">–</span><span class="l">Lern-Zyklen</span></div>
+          <div class="metric"><span class="v" id="evo_props">–</span><span class="l">offene Vorschläge</span></div>
+          <div class="metric"><span class="v"><button class="btn sm cyan" onclick="runKiEvolution()">Zyklus starten</button></span><span class="l">von Hand</span></div>
+        </div>
+        <div class="bar" style="margin:10px 0 4px"><i id="evo_knowbar" style="width:0%"></i></div>
+        <div class="faint" id="evo_last" style="font-size:10.5px;margin-bottom:16px">…</div>
+
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:18px">
+          <div>
+            <div class="kc-sub">GELERNTE WERTE <span class="faint" style="font-size:10px;letter-spacing:0">mit Vertrauen</span></div>
+            <div id="evo_learned" class="skel" aria-busy="true"><i></i><i></i></div>
+          </div>
+          <div>
+            <div class="kc-sub">VORSCHLÄGE <span class="faint" style="font-size:10px;letter-spacing:0">warten auf deine Entscheidung</span></div>
+            <div id="evo_proposals" class="skel" aria-busy="true"><i></i><i></i></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <div class="panel mt">
       <div class="head"><h3>▚ Brain-Analytik</h3>
         <span class="tag">Regeln · Gedächtnis · Metriken</span>
@@ -3346,6 +3481,20 @@ const escJs = s => String(s==null?'':s).replace(
   c => ({'\\':'\\x5c', "'":'\\x27', '"':'\\x22', '&':'\\x26',
          '<':'\\x3c', '>':'\\x3e', '\r':'\\r', '\n':'\\n',
          '\u2028':'\\u2028', '\u2029':'\\u2029'}[c]));
+/* v4.0-W126: Funktions-Deklarationen gelten nur in ihrem eigenen
+   <script>-Block. Ein Ansichts-Loader in einem FRUEHEREN Block kann eine
+   Funktion aus einem spaeteren also noch nicht sehen — im Browser gemessen
+   als "loadClips is not defined", weil die Restream-Ansicht schon waehrend
+   des Parsens aufgebaut wird. nachAufbau() ruft sofort auf, wenn es geht,
+   und sonst genau einmal, sobald das Dokument fertig ist. */
+function nachAufbau(name){
+  const hol = () => (typeof window[name]==='function') ? window[name] : null;
+  const f = hol();
+  if(f){ f(); return; }
+  const spaet = () => { const g=hol(); if(g) g(); };
+  if(document.readyState==='complete') setTimeout(spaet, 0);
+  else window.addEventListener('load', spaet, {once:true});
+}
 /* V37-MP: Zuschauer-/Follower-Zahlen kompakt (1.234 statt 1234) */
 const fmtNum = n => (n==null||n==='') ? '—' : (typeof n==='number' ? n.toLocaleString('de-DE') : String(n));
 
@@ -3839,7 +3988,7 @@ async function runKiEvolution(){
   const d=await apiPost('/api/evolution/run',{});
   if(btn){ btn.disabled=false; btn.textContent='Zyklus starten'; }
   if(typeof toast==='function') toast((d&&d.ok!==false)?'Lern-Zyklus gestartet':'Zyklus fehlgeschlagen',(d&&d.ok!==false)?'ok':'err');
-  loadKiEvolution(); loadKiGrowth();
+  loadKiEvolution(); loadKiGrowth(); loadEvolution();
 }
 async function showKiChangelog(){
   const box=$('#kc_changelog');
@@ -4825,6 +4974,8 @@ VIEW_LOADERS['brain']=async ()=>{
   loadFetchHeatmap();
   loadBrainAlarms();
   loadKiMeta();
+  nachAufbau('loadEvolution');   /* v4.0-W126: Stand, Gelerntes, Vorschlaege */
+  nachAufbau('aiInit');          /* v4.0-W126: KI-Chat */
   const f=document.getElementById('brainFrame');
   if(f && !f.getAttribute('src')) f.setAttribute('src', f.dataset.src);
 };
@@ -5267,19 +5418,19 @@ function renderCaptures(recs){
      jeder Aufruf 'Cannot set properties of null' und brach die
      restliche Funktion ab. */
   if(!$('#cp_list')) return;
-  $('#cp_meta').textContent=recs.length+' files';
-  if(!recs.length){ $('#cp_list').innerHTML='<div class="empty">NO CAPTURES YET</div>'; return; }
-  let h='<div class="tbl-wrap"><table><thead><tr><th>#</th><th>Target</th><th>File</th><th>Size</th><th>Dur</th><th>When</th><th class="right">Actions</th></tr></thead><tbody>';
+  $('#cp_meta').textContent=recs.length+(recs.length===1?' Aufnahme':' Aufnahmen');
+  if(!recs.length){ $('#cp_list').innerHTML='<div class="empty">Noch keine Aufnahme — sie entstehen automatisch, sobald ein getrackter Streamer live geht.</div>'; return; }
+  let h='<div class="tbl-wrap"><table><thead><tr><th>#</th><th>Streamer</th><th>Datei</th><th class="right">Größe</th><th>Dauer</th><th>Wann</th><th class="right">Aktion</th></tr></thead><tbody>';
   recs.forEach(r=>{
     const fn=r.filename||(r.filepath?r.filepath.split('/').pop():'—');
     h+=`<tr>
       <td class="mono faint">${r.id}</td>
       <td class="nowrap"><b>@${esc(r.username)}</b></td>
       <td class="nowrap" style="max-width:240px;overflow:hidden;text-overflow:ellipsis">${esc(fn)}</td>
-      <td class="mono">${humanBytes(r.file_size||r.size_bytes)}</td>
+      <td class="mono right">${humanBytes(r.file_size||r.size_bytes)}</td>
       <td class="mono faint">${r.duration_secs?humanDur(r.duration_secs):'—'}</td>
       <td class="muted nowrap">${ago(r.created_at)}</td>
-      <td class="right nowrap"><span class="btn sm cyan" onclick="openRecording(${r.id})">OPEN</span></td>
+      <td class="right nowrap"><span class="btn sm cyan" onclick="openRecording(${r.id})">Öffnen</span></td>
     </tr>`;
   });
   h+='</tbody></table></div>';
@@ -5395,17 +5546,59 @@ async function trashRec(id){
    VIEW: OPS
    ============================================================ */
 
+/* v4.0-W126: AUTOMATISIERUNG — ein Loader fuer die vier Endpunkte, die seit
+   dem Reorg keine Oberflaeche mehr hatten. Der Name traegt bewusst das lange
+   deutsche Wort: loadAutomation() ist seit je der Autopilot-Lader. Der erste
+   Anlauf hiess genauso — die spaetere Deklaration gewann, und das Panel blieb
+   stumm, ohne dass irgendwo ein Fehler stand. Die Listen-, Test- und
+   Loeschwege gab es schon; was fehlte, war das ANLEGEN — ohne das ist eine
+   Liste, die nur leer sein kann, keine Bedienung. */
+async function loadAutomatisierung(){
+  loadRules(); labLoadCollections(); labLoadQuiet(); labLoadWebhooks();
+}
+async function arAdd(){
+  const name=($('#ar_name')||{}).value||'';
+  const feld=($('#ar_feld')||{}).value||'min_size_mb';
+  const roh=(($('#ar_wert')||{}).value||'').trim();
+  if(!name.trim()){ toast('Die Regel braucht einen Namen.','warn'); return; }
+  if(!roh){ toast('Die Bedingung braucht einen Wert.','warn'); return; }
+  /* Zahlenfelder als Zahl schicken: evaluate_archive_rule vergleicht
+     numerisch, ein String haette stumm nie gepasst. */
+  const wert = feld==='username_contains' ? roh : Number(roh);
+  if(feld!=='username_contains' && !isFinite(wert)){ toast('Der Wert muss eine Zahl sein.','warn'); return; }
+  const d=await apiPost('/api/auto-archive-rules',
+    {name:name.trim(), condition:{[feld]:wert}, action:{action:'copy_to_archive'}});
+  if(d&&d.ok){ toast('Regel angelegt'); const n=$('#ar_name'); if(n) n.value='';
+    const w=$('#ar_wert'); if(w) w.value=''; loadRules(); }
+  else toast('Regel anlegen fehlgeschlagen: '+((d&&d.error)||'unbekannter Fehler'),'err');
+}
+async function collAdd(){
+  const name=(($('#coll_name')||{}).value||'').trim();
+  if(!name){ toast('Die Sammlung braucht einen Namen.','warn'); return; }
+  const d=await apiPost('/api/collections',{name, color:($('#coll_farbe')||{}).value||''});
+  if(d&&d.ok){ toast('Sammlung angelegt'); const n=$('#coll_name'); if(n) n.value=''; labLoadCollections(); }
+  else toast('Anlegen fehlgeschlagen: '+((d&&d.error)||'unbekannter Fehler'),'err');
+}
+async function whAdd(){
+  const url=(($('#wh_url')||{}).value||'').trim();
+  const events=(($('#wh_events')||{}).value||'').trim() || '*';
+  if(!/^https?:\/\//.test(url)){ toast('Die Adresse muss mit http:// oder https:// beginnen.','warn'); return; }
+  const d=await apiPost('/api/webhooks',{url, events});
+  if(d&&d.ok){ toast('Webhook angelegt'); const u=$('#wh_url'); if(u) u.value='';
+    const e=$('#wh_events'); if(e) e.value=''; labLoadWebhooks(); }
+  else toast('Anlegen fehlgeschlagen: '+((d&&d.error)||'unbekannter Fehler'),'err');
+}
 async function loadRules(){
   const d=await apiGet('/api/auto-archive-rules');
   const el=$('#op_rules');
   const rules=(d&&d.rules)||[];
-  if(!rules.length){ el.innerHTML='<div class="faint" style="font-size:11px">no rules defined</div>'; return; }
+  if(!rules.length){ el.innerHTML='<div class="empty">Noch keine Regel — oben eine anlegen.</div>'; return; }
   el.innerHTML=rules.map(r=>{
     const cond=Object.entries(r.condition).map(([k,v])=>`${k}=${v}`).join(', ');
     return `<div class="flexc mb" style="padding:6px;border:1px solid var(--border)">
-      <div><b class="cyan">${esc(r.name)}</b><div class="faint mono" style="font-size:9.5px">IF ${esc(cond)} → ${esc(r.action.action||'?')}</div>
-        ${r.last_run?`<div class="faint" style="font-size:9px">last: ${ago(r.last_run)} ago · matched ${r.last_match_count}</div>`:''}</div>
-      <div class="btnrow"><span class="btn sm cyan" onclick="runRule(${r.id})">RUN</span><span class="btn sm danger" onclick="delRule(${r.id})">✕</span></div>
+      <div><b class="cyan">${esc(r.name)}</b><div class="faint mono" style="font-size:9.5px">WENN ${esc(cond)} → ${esc(r.action.action||'?')}</div>
+        ${r.last_run?`<div class="faint" style="font-size:9px">zuletzt ${ago(r.last_run)} · ${r.last_match_count} Treffer</div>`:''}</div>
+      <div class="btnrow"><span class="btn sm cyan" onclick="runRule(${r.id})">Anwenden</span><span class="btn sm danger" onclick="delRule(${r.id})" title="Regel löschen">✕</span></div>
     </div>`;
   }).join('');
 }
@@ -6423,16 +6616,105 @@ function aiCopyCode(el){
 }
 
 
+/* v4.0-W126: Der Eingang zum Chat. Vorhanden waren nur Lesewege
+   (aiLoadConvs/aiOpenConv/aiDelConv) — Modell-Liste, neue Konversation und
+   Senden fehlten samt Markup, _aiModels wurde nie gefuellt. Ohne die drei
+   ist der Rest eine Ansicht, in der man nichts tun kann. */
+async function aiInit(){
+  if(!$('#ai_thread')) return;
+  await aiLoadModels();
+  aiLoadConvs();
+}
+async function aiLoadModels(){
+  const sel=$('#ai_model'), st=$('#ai_status'), bk=$('#ai_backend');
+  const d=await apiGet('/api/ai/models');
+  _aiModels=(d&&d.models)||[]; _aiDefault=(d&&d.default)||'';
+  if(bk) bk.textContent=(d&&d.backend)||'—';
+  if(st){
+    st.classList.toggle('ok', _aiModels.length>0);
+    st.classList.toggle('off', _aiModels.length===0);
+    st.lastElementChild.textContent=_aiModels.length
+      ? _aiModels.length+' Modelle' : 'kein Modell';
+  }
+  if(!sel) return;
+  if(!_aiModels.length){
+    sel.innerHTML='<option value="">kein Modell verfügbar</option>';
+    _aiModel=''; return;
+  }
+  _aiModel=_aiModels.includes(_aiDefault)?_aiDefault:_aiModels[0];
+  sel.innerHTML=_aiModels.map(m=>
+    `<option value="${esc(m)}"${m===_aiModel?' selected':''}>${esc(m)}</option>`).join('');
+}
+function aiPickModel(v){ _aiModel=v||''; }
+async function aiNewConv(){
+  const d=await apiPost('/api/ai/conversations',{});
+  if(!d||!d.ok){ toast('Neue Konversation fehlgeschlagen: '+((d&&d.error)||'unbekannter Fehler'),'err'); return; }
+  _aiConvId=d.id;
+  await aiLoadConvs();
+  aiOpenConv(d.id);
+  const ta=$('#ai_ta'); if(ta) ta.focus();
+}
+function aiKey(e){
+  /* Enter sendet, Umschalt+Enter macht eine neue Zeile — so wie es im
+     Platzhalter steht. */
+  if(e.key==='Enter' && !e.shiftKey){ e.preventDefault(); aiSend(); }
+}
+function aiBusy(an){
+  _aiBusy=an;
+  const b=$('#ai_send'); if(b) b.disabled=an;
+  const ta=$('#ai_ta'); if(ta) ta.disabled=an;
+}
+async function aiSend(){
+  if(_aiBusy) return;
+  const ta=$('#ai_ta'); if(!ta) return;
+  const prompt=ta.value.trim();
+  if(!prompt) return;
+  if(!_aiModels.length){ toast('Kein Modell verfügbar — AI_PROVIDER und die Runtime prüfen.','err'); return; }
+  /* Ohne Konversation gibt es keine Adresse fuer die Nachricht: erst eine
+     anlegen, dann senden. */
+  if(_aiConvId==null){
+    const n=await apiPost('/api/ai/conversations',{});
+    if(!n||!n.ok){ toast('Konversation anlegen fehlgeschlagen','err'); return; }
+    _aiConvId=n.id;
+  }
+  const conv=_aiConvId;
+  ta.value=''; ta.style.height='';
+  aiBusy(true);
+  const th=$('#ai_thread');
+  if(th){
+    /* Die eigene Nachricht sofort zeigen und darunter die Punkte — sonst
+       steht der Betreiber sekundenlang vor einem unveraenderten Fenster. */
+    th.insertAdjacentHTML('beforeend', aiMsgHtml({role:'user', content:prompt}));
+    th.insertAdjacentHTML('beforeend',
+      '<div class="ai-msg assistant" id="ai_wait"><div class="ai-av">AI</div>'+
+      '<div><div class="ai-bub"><div class="ai-typing"><i></i><i></i><i></i></div></div></div></div>');
+    aiScroll();
+  }
+  const d=await apiPost('/api/ai/conversations/'+conv+'/messages',
+                        {prompt, model:_aiModel||undefined});
+  const wait=$('#ai_wait'); if(wait) wait.remove();
+  aiBusy(false);
+  if(d && d.ok && d.assistant_message){
+    if(th){ th.insertAdjacentHTML('beforeend', aiMsgHtml(d.assistant_message)); aiScroll(); }
+    aiLoadConvs();                      /* Titel/Zaehler in der Liste nachziehen */
+  } else {
+    const fehler=(d&&d.error)||'Keine Antwort vom LLM';
+    if(th){ th.insertAdjacentHTML('beforeend', aiMsgHtml({role:'assistant', error:fehler})); aiScroll(); }
+    toast(fehler,'err');
+  }
+  const t2=$('#ai_ta'); if(t2) t2.focus();
+}
+
 async function aiLoadConvs(){
   const d=await apiGet('/api/ai/conversations?limit=80');
-  const box=$('#ai_convs');
+  const box=$('#ai_convs'); if(!box) return;
   _aiConvCache=(d&&d.conversations)||[];
   if(!_aiConvCache.length){ box.innerHTML='<div class="empty" style="padding:14px 8px">Keine Konversationen.<br>Starte eine neue.</div>'; }
   else {
     box.innerHTML=_aiConvCache.map(c=>`
       <div class="ai-conv${c.id===_aiConvId?' active':''}" onclick="aiOpenConv(${c.id})">
         <div class="t">${esc(c.title)}</div>
-        <div class="m">${c.message_count} msg · ${ago(c.updated_at)}</div>
+        <div class="m">${c.message_count} Nachrichten · ${ago(c.updated_at)}</div>
         <span class="x" onclick="event.stopPropagation();aiDelConv(${c.id})" title="löschen">✕</span>
       </div>`).join('');
   }
@@ -6572,8 +6854,10 @@ async function evoDismiss(id,applied){
 async function bpLoadSchedule(){
   const el=$('#bp_sc_list'); if(!el) return;
   const d=await apiGet('/api/schedule/list');
-  if(!d.ok){ el.innerHTML='<div class="empty">offline</div>'; return; }
-  if(!d.count){ el.innerHTML='<div class="empty">keine geplanten Aufnahmen</div>'; return; }
+  /* d kann null sein (Netzfehler) — 'd.ok' haette dann geworfen und die
+     ganze Ansicht abgebrochen, seit die Liste wieder sichtbar ist. */
+  if(!d || !d.ok){ el.innerHTML='<div class="empty">Planung nicht erreichbar.</div>'; return; }
+  if(!d.count){ el.innerHTML='<div class="empty">Keine geplanten Aufnahmen — oben ein Fenster hinzufügen.</div>'; return; }
   const dn=['Mo','Di','Mi','Do','Fr','Sa','So'];
   el.innerHTML=d.schedules.map(s=>`<div class="lab-row" style="display:flex;justify-content:space-between;font-size:11px;margin-bottom:4px">
     <span>@${esc(s.username)} · ${dn[s.weekday]||'?'} ${String(s.hour).padStart(2,'0')}:00 · ${s.duration_min}min</span>
@@ -6972,6 +7256,19 @@ VIEW_LOADERS.restream = async function(){
             </div>
           </div>
         </div>
+
+        <!-- v4.0-W126: HIGHLIGHT-CLIPS. loadClips() lief seit je im 700ms-Takt
+             ueber avatarPoll und griff dabei ins Leere: das Raster, in das es
+             schreibt, stand in einer aufgeloesten Ansicht. Die Clips
+             entstanden also die ganze Zeit, nur sehen konnte sie niemand.
+             Leeren geht in der Betrieb-Ansicht (Highlight-Clips leeren). -->
+        <div class="panel mt">
+          <div class="head"><h3>▚ Highlight-Clips</h3>
+            <span class="tag" id="clip_state">…</span>
+            <div class="spacer"></div>
+            <button class="btn sm" onclick="loadClips()" aria-label="Aktualisieren" title="Aktualisieren">↻</button></div>
+          <div class="body"><div id="clip_grid" class="skel" aria-busy="true"><i></i><i></i></div></div>
+        </div>
       </div>`;
     root.dataset.built='1';
     if(!window._rsAutoRefresh){
@@ -6981,6 +7278,7 @@ VIEW_LOADERS.restream = async function(){
     }
   }
   rsLoad(); kmLoad(); slLoad(); loadResilience(); kcLoad(); kcCatsLoad(); voiceLoad(); ctxLoad(); rsDeck(); loadTunnel(); loadLiveNow(); loadTimeline(); loadTranscript();
+  nachAufbau('loadClips');   /* steht in einem spaeteren Script-Block */
 };
 /* v37: Live-Transkript-Viewer */
 async function loadTranscript(){
@@ -7247,7 +7545,8 @@ async function kmLoad(){
   chip('kick',ch.kick); chip('discord',ch.discord); chip('tiktok',ch.tiktok);
   chip('twitch',ch.twitch); chip('youtube',ch.youtube);
   shieldLoad();
-  const cn=$('#km_conn'); if(cn) cn.style.color=d.stats?.connected?'var(--neon)':'var(--text-dim)';
+  /* v4.0-W126: der eingefaerbte Punkt #km_conn ist im Reorg entfallen —
+     denselben Zustand zeigen kms_conn und die Kanal-Chips oben. */
   const st=$('#km_state'); if(st) st.textContent = !d.api_configured?'API nicht konfiguriert (.env)':(d.running?'läuft':'gestoppt');
   const tg=$('#km_toggle'); if(tg) tg.textContent=d.running?'stoppen':'starten';
   // cfg in UI spiegeln (nur wenn nicht gerade fokussiert)
@@ -8196,7 +8495,7 @@ async function labLoadCollections(){
   const el=$('#lab_colls'); if(!el) return;
   const d=await apiGet('/api/collections');
   const rows=(d&&d.collections)||[];
-  if(!rows.length){ el.innerHTML='<div class="empty">KEINE COLLECTIONS</div>'; return; }
+  if(!rows.length){ el.innerHTML='<div class="empty">Noch keine Sammlung — oben eine anlegen.</div>'; return; }
   el.innerHTML=rows.map(c=>`<div class="lab-row">
     <span><span class="dotc" style="background:${esc(c.color||'var(--neon)')}"></span>${esc(c.name)} <span class="faint">·${c.members}</span></span>
     <span class="btn xs" onclick="labDelCollection(${c.id})">✕</span></div>`).join('');
@@ -8231,14 +8530,14 @@ async function labLoadWebhooks(){
   const el=$('#lab_webhooks'); if(!el) return;
   const d=await apiGet('/api/webhooks');
   const rows=(d&&d.webhooks)||[];
-  if(!rows.length){ el.innerHTML='<div class="empty">KEINE WEBHOOKS</div>'; return; }
-  el.innerHTML='<div class="tbl-wrap"><table class="lab-tbl"><thead><tr><th>URL</th><th>Events</th><th>Status</th><th>Fails</th><th></th></tr></thead><tbody>'+
+  if(!rows.length){ el.innerHTML='<div class="empty">Noch kein Webhook — oben eine Adresse eintragen.</div>'; return; }
+  el.innerHTML='<div class="tbl-wrap"><table class="lab-tbl"><thead><tr><th>Adresse</th><th>Ereignisse</th><th>Status</th><th>Fehler</th><th></th></tr></thead><tbody>'+
     rows.map(w=>`<tr>
       <td style="max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(w.url)}">${w.enabled?'':'<span class="faint">⏸ </span>'}${esc(w.url)}</td>
       <td class="faint">${esc(w.events||'*')}</td>
       <td>${w.last_status?`<span class="faint" style="color:${String(w.last_status)[0]==='2'?'var(--neon)':'var(--red)'}">${esc(w.last_status)}</span>`:'<span class="faint">—</span>'}</td>
       <td class="faint">${w.fail_count||0}</td>
-      <td style="white-space:nowrap"><span class="btn xs" onclick="labTestWebhook(${w.id})">test</span> <span class="btn xs" onclick="labToggleWebhook(${w.id})">${w.enabled?'off':'on'}</span> <span class="btn xs" onclick="labDelWebhook(${w.id})">✕</span></td>
+      <td style="white-space:nowrap"><span class="btn xs" onclick="labTestWebhook(${w.id})">testen</span> <span class="btn xs" onclick="labToggleWebhook(${w.id})">${w.enabled?'aus':'an'}</span> <span class="btn xs" onclick="labDelWebhook(${w.id})" title="Webhook löschen">✕</span></td>
     </tr>`).join('')+'</tbody></table></div>';
 }
 async function labTestWebhook(id){
@@ -8415,7 +8714,7 @@ async function loadClips(){
   try{
     const r=await apiGet('/api/clips');
     if(!r || !r.ok){ g.innerHTML='<div class="empty">Clips offline</div>'; return; }
-    if(st) st.textContent=(r.enabled?(r.clips.length+' Clips'):'aus · CLIP_ENABLED=0');
+    if(st) st.textContent=(r.enabled?(r.clips.length+(r.clips.length===1?' Clip':' Clips')):'aus · CLIP_ENABLED=0');
     if(!r.clips.length){ g.style.display='block'; g.innerHTML='<div class="empty">Noch keine Clips'+(r.enabled?' — Highlights erscheinen automatisch':' · CLIP_ENABLED=0 setzen')+'</div>'; return; }
     g.style.display='grid'; g.style.gridTemplateColumns='repeat(auto-fill,minmax(190px,1fr))'; g.style.gap='12px';
     g.innerHTML=r.clips.map(c=>{
@@ -8423,7 +8722,7 @@ async function loadClips(){
       return '<div style="border:1px solid var(--border);background:#05080e;border-radius:4px;overflow:hidden">'
         +'<video src="'+url+'" controls preload="metadata" style="width:100%;display:block;background:#000;aspect-ratio:9/16;object-fit:contain"></video>'
         +'<div style="padding:7px 9px"><div class="mono" style="font-size:10px;color:var(--neon);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(c.name)+'</div>'
-        +'<div class="faint" style="font-size:9px;margin-top:3px">'+d.toLocaleString()+' · '+mb+' MB · <a href="'+url+'" download style="color:var(--neon)">⬇</a> · <span onclick="deleteClip(\''+esc(c.name)+'\')" style="color:#ff2e88;cursor:pointer">🗑 löschen</span></div></div></div>';
+        +'<div class="faint" style="font-size:9px;margin-top:3px">'+d.toLocaleString()+' · '+mb+' MB · <a href="'+url+'" download style="color:var(--neon)">⬇</a> · <span onclick="deleteClip(\''+escJs(c.name)+'\')" style="color:#ff2e88;cursor:pointer">🗑 löschen</span></div></div></div>';
     }).join('');
   }catch(e){ g.innerHTML='<div class="empty">Fehler beim Laden</div>'; }
 }
@@ -8729,6 +9028,10 @@ async function loadMemories(){
 async function loadAutomation(){
   const d=await apiGet('/api/automation/status'); const el=$('#ap_list'); if(!el) return;
   if(!d||d.__neterr){ el.textContent='—'; return; }
+  /* v4.0-W126: d.items war ungeprueft — antwortet die Route ok, aber ohne
+     items, warf .map() und das Autopilot-Panel blieb stumm zurueck. Im
+     Browser gemessen: "Cannot read properties of undefined (reading 'map')". */
+  if(!Array.isArray(d.items)){ el.innerHTML='<div class="empty">Keine Automationen gemeldet.</div>'; return; }
   const m=$('#ap_master');
   if(m){ m.textContent='AUTOPILOT: '+(d.autopilot?'AN':'AUS');
     m.style.borderColor=d.autopilot?'var(--neon)':'var(--amber)'; m.style.color=d.autopilot?'var(--neon)':'var(--amber)'; }
@@ -8965,6 +9268,26 @@ VIEW_LOADERS.wall = async function(){
         </div>
       </div>
 
+      <!-- v4.0-W126: AUFNAHMEN. Nicht dasselbe wie das Archiv darunter: das
+           Archiv listet Dateien in ARCHIVE_DIR, das hier die Aufnahmen aus der
+           Datenbank samt Aufnahme-Fenster (Manifest, Qualitaet, Wellenform,
+           Notizen, Marken). Dieses Fenster war ueber die aufgeloeste Ansicht
+           die einzige Tuer — ohne Liste kam man an keine Aufnahme mehr heran. -->
+      <div class="panel" style="margin-top:16px">
+        <div class="head"><h3>▚ Aufnahmen</h3><span class="tag" id="cp_meta">…</span>
+          <div class="spacer"></div>
+          <button class="btn sm" onclick="loadCaptures()" aria-label="Aktualisieren" title="Aktualisieren">↻</button></div>
+        <div class="body">
+          <div class="grid g4" style="margin-bottom:12px">
+            <div class="metric"><span class="v" id="cp_total">–</span><span class="l">Aufnahmen</span></div>
+            <div class="metric"><span class="v" id="cp_size">–</span><span class="l">belegt</span></div>
+            <div class="metric"><span class="v" id="cp_book">–</span><span class="l">Lesezeichen</span></div>
+            <div class="metric"><span class="v" id="cp_q">–</span><span class="l">Ø Qualität</span></div>
+          </div>
+          <div id="cp_list" class="skel" aria-busy="true"><i></i><i></i><i></i></div>
+        </div>
+      </div>
+
       <div class="panel" style="margin-top:16px">
         <div class="head"><h3>▚ Archiv</h3><span class="tag" id="arc_count">—</span>
           <div class="spacer"></div>
@@ -8985,7 +9308,7 @@ VIEW_LOADERS.wall = async function(){
     root.dataset.built='1';
     if(!window._wallTimer) window._wallTimer=setInterval(()=>{ if(CURRENT_VIEW==='wall' && !document.hidden){ loadWall(); loadSurveil(); } }, 8000);
   }
-  loadWall(); loadSurveil(); loadArchive(); loadRecTools();
+  loadWall(); loadSurveil(); loadArchive(); loadRecTools(); loadCaptures();
   try{ trkGroupsFill(); }catch(e){}
 };
 let _arcPage=1;
@@ -9995,6 +10318,7 @@ async function ops6Schedule(){
   const d=await apiPost('/api/schedule/add',body);
   if(out) out.innerHTML='<div class="kc-row '+(d&&d.ok?'sev-info':'sev-high')+'"><div class="kc-t">'+
     (d&&d.ok?('Fenster für @'+esc(username)+' hinzugefügt'):esc((d&&d.error)||'Fehler'))+'</div></div>';
+  if(d&&d.ok) bpLoadSchedule();
 }
 async function ops6Summary(){
   const box=$('#ops6_summary');
@@ -10441,7 +10765,7 @@ async function auTest(){
     : '<span style="color:var(--amber)">'+esc((r&&r.error)||'nicht möglich')+'</span>';
 }
 
-VIEW_LOADERS['betrieb'] = async ()=>{ await betriebLoad(); loadOps6(); loadStats6(); loadMaint6(); loadRestreamHealth(); loadResourceHistory(); loadSendStatus(); loadTestPush(); loadMarketing(); loadNews(); loadKickOAuth(); loadModFeed(); loadAudioCfg(); loadHighlights(); loadCohost(); };
+VIEW_LOADERS['betrieb'] = async ()=>{ await betriebLoad(); loadAutomatisierung(); bpLoadSchedule(); loadOps6(); loadStats6(); loadMaint6(); loadRestreamHealth(); loadResourceHistory(); loadSendStatus(); loadTestPush(); loadMarketing(); loadNews(); loadKickOAuth(); loadModFeed(); loadAudioCfg(); loadHighlights(); loadCohost(); };
 
 
 /* ═══════════════════════════════════════════════════════════════════════
@@ -11149,8 +11473,10 @@ var ncCommandCenter=(function(){
   }
   function load(){
     return apiGet('/api/stats').then(function(s){
-      if(s){setData(s);var tag=document.getElementById('cc_tag');
-        if(tag)tag.textContent=(s.live_now||0)+' live · '+(s.active_trackings||0)+' getrackt';}
+      /* v4.0-W126: frueher stand hier zusaetzlich cc_tag — der zweite
+         Einbau der Kommandozentrale, den W71 entfernt hat. Die Zeile
+         schreibt ov_cc_tag (siehe unten), das es wirklich gibt. */
+      if(s) setData(s);
       kick();
     }).catch(function(){});
   }
