@@ -11,6 +11,37 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Geändert — Monolith zerlegt: fünf Blueprints, 62 Routen, 1.762 Zeilen (W116, W117)
+
+`bot.py` schrumpft von 32.596 auf **30.834 Zeilen**; von den 355 Flask-Routen
+liegen jetzt **152 ausserhalb** des Monolithen (vorher 90). Verhalten
+unverändert — die Routentabelle ist vor und nach beiden Wellen bitgleich,
+Pfad **und** `methods`.
+
+Neu in `nc/routes/`: `settings` (Konfiguration, Zeitplan, DB-Im/Export,
+Cookies), `ops` (Betrieb, Tunnel, Selbst-Update), `money` (Spenden,
+Finanzamt), `trackings`, `stats` (Auswertung, KI-Log, Moderations-Feed). Neu
+in `nc/`: `donationsdb`; erweitert: `trackingdb` (+11 Zugriffe), `stats`
+(+`get_stats`, +Status-Verteilung), `proxyutil` (Tunnel-Zustand lesen).
+
+Vier Dinge, die für den Betrieb zählen:
+
+- **`nc.ctx.configure(...)` steht jetzt am Dateiende.** Vorher mitten in der
+  Datei — und sah damit nur Namen, die bis dorthin definiert waren.
+- **`globals().get("BOT_VERSION")` wäre beim Umzug still gebrochen.** In einem
+  Blueprint ist `globals()` das Modul; vier Routen hätten dauerhaft ihren
+  Default geliefert („Version 3.7", „event_loop: false").
+- **Geteilter Laufzeitzustand wandert als Referenz, nie als Kopie** — Cookie-
+  Cache, Ressourcen-Ring, Tunnel-Dict und die neun Zähler des Live-Workers.
+  Eine Kopie wäre ein Panel, das einfriert, oder ein Schalter ohne Wirkung.
+- **`tools/gen_env_example.py` scannte `nc/routes/` nicht.** Mit der letzten
+  Lesestelle von `DASHBOARD_TRACK_GROUP_ID` im Blueprint wäre die Variable
+  lautlos aus `.env.example` gefallen.
+
+Neue Werkzeuge: `tools/route_inventory.py` (Routentabelle vor/nach
+vergleichen), `bp_extract --mit` (Cache zieht mit seinem Eigentümer um) plus
+Warnung vor Namenskollisionen mit dem Kontextzugriff.
+
 ### Behoben — neun Panels aus dem Reorg wieder verdrahtet (W126)
 
 Der Reorg löste die Ansichten **VAULT**, **INTEL**, **BRAIN+** und **LAB** auf
