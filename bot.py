@@ -581,7 +581,6 @@ from nc import trackingdb as _nc_trackingdb  # v4.0-W50: Tracking-Status-Helfer 
 from nc import eventquery as _nc_eventquery  # v4.0-W51: Event-Log-Query-Bauer (rein)
 from nc import admod as _nc_admod            # v4.0-W56: Werbe-Allowlist-Bauer (rein)
 from nc import binresolve as _nc_binresolve  # v4.0-W60: Binary-Pfad-Resolver (rein)
-from nc import ffver as _nc_ffver            # v4.0-W61: ffmpeg-Versionszeilen-Parser (rein)
 from nc import netstat as _nc_netstat        # v4.0-W61b: Netzdurchsatz-Parsing/Delta (rein)
 from nc import journalperm as _nc_journalperm  # v4.0-W62b: Journal-Leserecht-Entscheidung (rein)
 from nc import cfgstore as _nc_cfgstore      # v4.0-W62c/W111: app_config lesen+schreiben
@@ -596,7 +595,11 @@ from nc.routes import webhooks as _nc_routes_webhooks        # v4.0-W108
 from nc.routes import insights as _nc_routes_insights        # v4.0-W108
 from nc.routes import health as _nc_routes_health            # v4.0-W110
 from nc.routes import ai as _nc_routes_ai                    # v4.0-W112: KI-Blueprint
+from nc.routes import settings as _nc_routes_settings        # v4.0-W116: Einstellungen
+from nc.routes import ops as _nc_routes_ops                  # v4.0-W116: Betrieb
+from nc.routes import money as _nc_routes_money              # v4.0-W116: Geld
 from nc import updater as _nc_updater                        # v4.0-W115: Selbst-Update aus dem GitHub-Repo
+from nc import donationsdb as _nc_donationsdb                # v4.0-W116: manuell erfasste Spenden lesen
 # Diese beiden Routen ruft der Bot auch INTERN auf (Telegram /sysres und die
 # Aggregat-Route /api/dashboard-bundle) — sie sind dort gewoehnliche
 # Funktionen, keine Endpunkte. Deshalb importiert statt kopiert.
@@ -739,7 +742,7 @@ from nc.ffdiag import (  # noqa: F401
     clip_caption_escape as _clip_caption_escape)  # Phase-1-Zerlegung: konsolidiert
 from nc import streamsel as _nc_ss          # v4.0-W29: TikTok-Stream-Auswahl (Resolver, extrahiert)
 from nc.cookies import (  # noqa: F401
-    _cookies_input_to_netscape, _dedupe_cookie_text, _cookie_alarm_level)
+    _cookies_input_to_netscape, _cookie_alarm_level)
 from nc.textmore import (  # noqa: F401
     split_for_telegram, _compact_text, _parse_iso, _safe_archive_filename,
     _video_caption, _ov_wrap)
@@ -816,9 +819,6 @@ from nc import archive as _nc_archive     # v4.0-W110: Archiv-Datenzugriff
 from nc.notes import (delete_annotation,
                       set_tracking_notes)  # noqa: F401
 # V37-DBX: SQL-Export/Import (SQLite <-> MariaDB). Braucht nur db_conn.
-from nc.dbexport import (db_export_sql as _dbx_export,
-                         db_import_sql as _dbx_import,
-                         export_summary as _dbx_summary)  # noqa: F401
 # V37-DISC: Disconnect-Analyse aus recording_attempts. Die Tabelle protokolliert
 # seit jeher jeden Abbruch mitsamt ffmpeg-stderr — ausgewertet hat es nie jemand.
 # V37-DRIFT: .env gegen Code-Defaults. Dreimal in einer Session hat eine
@@ -1570,7 +1570,8 @@ from nc.textutil import (clean_username, fmt_number, safe,  # noqa: F401
 # V37-MOD: Proxy-URL-Helfer früh importieren (get_random_proxy ~Z.1180 nutzt
 # _normalize_proxy_url — der Import muss VOR der ersten Nutzung stehen).
 from nc.proxyutil import (  # noqa: F401
-    _normalize_proxy_url, _proxy_scheme, _tunnel_mask)
+    _normalize_proxy_url, _proxy_scheme)
+from nc import proxyutil as _nc_proxyutil_sel   # v4.0-W116: Tunnel-Zustand lesen
 # V37-MOD: SENTINEL-SHIELD früh (KickModerator ~Z.20.7k nutzt _sentinel_screen).
 from nc.shield import _sentinel_screen  # noqa: F401
 # V37-MOD: reine Format-/Stream-Helfer.
@@ -5343,13 +5344,6 @@ def universal_search(query: str, limit: int = 30) -> dict:
 # ---------- X21: Recording-Manifest-Export ----------
 
 # ---------- X22: Cookie-Refresh-Days ----------
-def cookies_days_old() -> Optional[float]:
-    """Wie viele Tage ist die cookies.txt alt? None wenn nicht da."""
-    if not os.path.exists(COOKIE_FILE): return None
-    try:
-        return (_time_mod.time() - os.path.getmtime(COOKIE_FILE)) / 86400
-    except Exception:
-        return None
 
 # ---------- X23: Tracking Quick-Restart ----------
 def quick_restart_tracking(tracking_id: int) -> dict:
@@ -10897,126 +10891,8 @@ def api_storage_cleanup():
 
 
 # F52: Cookie-Health-Endpoint für Dashboard-Widget
-@dashboard_app.route("/api/cookies/health")
-def api_cookies_health():
-    """Liefert detaillierten Cookie-Status: welche kritischen fehlen, was
-       läuft bald ab, wie alt ist die cookies.txt."""
-    return jsonify(get_cookie_health())
 
 
-@dashboard_app.route("/api/cookies/update", methods=["POST"])
-def api_cookies_update():
-    """B63: Cookies aktualisieren ohne SSH/Datei-Editing.
-
-       Body: {"cookies": "<text>"} — der Inhalt ist entweder das Netscape-
-       Format (Extension 'Get cookies.txt LOCALLY') ODER ein JSON-Array
-       (Extension 'Cookie-Editor' / 'EditThisCookie'). Format wird automatisch
-       erkannt.
-
-       Ablauf (defensiv — alte Cookies gehen NIE kaputt):
-         1. Input nach Netscape konvertieren.
-         2. In <COOKIE_FILE>.new schreiben und mit MozillaCookieJar validieren.
-         3. Prüfen dass ein Auth-Cookie (sessionid_ss/sessionid) drin ist —
-            sonst Abbruch (User war im Browser nicht eingeloggt). Alte Datei
-            bleibt unangetastet.
-         4. Alte Datei nach <COOKIE_FILE>.bak sichern.
-         5. Atomar ersetzen (os.replace) + Cache leeren → sofort live.
-
-       Keine Zusatz-Software auf dem Server nötig.
-    """
-    payload = request.get_json(silent=True) or {}
-    raw = (payload.get("cookies") or "").strip()
-    if not raw:
-        return jsonify(ok=False, error="Keine Cookie-Daten übergeben."), 400
-    if len(raw) > 2_000_000:
-        return jsonify(ok=False, error="Eingabe zu groß (>2 MB)."), 400
-
-    # 1) Konvertieren
-    try:
-        netscape, n_parsed = _cookies_input_to_netscape(raw)
-    except json.JSONDecodeError as e:
-        return jsonify(ok=False, error=f"JSON nicht lesbar: {e}"), 400
-    except Exception as e:
-        return jsonify(ok=False, error=f"Cookies nicht verarbeitbar: {e}"), 400
-    if n_parsed == 0:
-        return jsonify(ok=False,
-                       error="Keine gültigen Cookies erkannt. Erwartet wird das "
-                             "Netscape-Format (cookies.txt) oder ein JSON-Array."), 400
-    # 1b) Doppelte Namen (z.B. msToken unter mehreren Domains) automatisch
-    #     bereinigen → verhindert die 'mehrfach unter verschiedenen Domains'-Warnung.
-    try:
-        netscape, n_dupes = _dedupe_cookie_text(netscape)
-    except Exception:
-        n_dupes = 0
-
-    # 2) Temp schreiben + validieren
-    tmp = COOKIE_FILE + ".new"
-    try:
-        with open(tmp, "w", encoding="utf-8") as f:
-            f.write(netscape)
-        cj = MozillaCookieJar(tmp)
-        cj.load(ignore_discard=True, ignore_expires=True)
-        names = {c.name for c in cj}
-    except Exception as e:
-        try:
-            os.remove(tmp)
-        except OSError:
-            pass
-        return jsonify(ok=False, error=f"Validierung fehlgeschlagen: {e}"), 400
-
-    # 3) Auth-Cookie verlangen — sonst nicht überschreiben
-    if "sessionid_ss" not in names and "sessionid" not in names:
-        try:
-            os.remove(tmp)
-        except OSError:
-            pass
-        return jsonify(
-            ok=False,
-            error="Kein Auth-Cookie (sessionid_ss/sessionid) gefunden. Bist du im "
-                  "Browser bei TikTok eingeloggt? Update abgebrochen — die alten "
-                  "Cookies bleiben erhalten.",
-            parsed=n_parsed,
-            found=sorted(names)[:20],
-        ), 400
-
-    # 4) Backup
-    backed_up = False
-    if os.path.exists(COOKIE_FILE):
-        try:
-            shutil.copy2(COOKIE_FILE, COOKIE_FILE + ".bak")
-            backed_up = True
-        except Exception as e:
-            log.warning(f"Cookie-Backup fehlgeschlagen (fahre fort): {e}")
-
-    # 5) Atomar ersetzen
-    try:
-        os.replace(tmp, COOKIE_FILE)
-    except Exception as e:
-        try:
-            os.remove(tmp)
-        except OSError:
-            pass
-        return jsonify(ok=False, error=f"Schreiben fehlgeschlagen: {e}"), 500
-
-    # Cache invalidieren → _load_cookies_dict() lädt beim nächsten Zugriff neu
-    try:
-        _COOKIES_CACHE.pop("v", None)
-    except Exception:
-        pass
-
-    health = get_cookie_health()
-    try:
-        log.info(
-            f"Cookies via Dashboard aktualisiert: {n_parsed} Cookies geschrieben, "
-            f"status={health.get('status')}, critical_present={health.get('critical_present')}, "
-            f"backup={'ja' if backed_up else 'nein'}"
-        )
-    except Exception:
-        pass
-    return jsonify(ok=True, parsed=n_parsed, backed_up=backed_up,
-                   deduped=n_dupes,
-                   auth_cookie=("sessionid_ss" if "sessionid_ss" in names else "sessionid"),
-                   health=health)
 
 
 # F55: Daily-Summary Preview + Send-Now
@@ -12488,24 +12364,6 @@ def api_trackings():
 
 
 # ═══ v37: Log-Tail + AZRAEL-Live-Test fürs Dashboard ═══
-@dashboard_app.route("/api/ops/logtail")
-def api_ops_logtail():
-    """v37: letzte N Zeilen des Logs — Betriebseinblick ohne SSH."""
-    level = (request.args.get("level") or "debug").lower()
-    fname = "error.log" if level == "error" else "debug.log"
-    try:
-        n = _arg_int("n", 90, 10, 300)
-    except Exception:
-        n = 90
-    path = os.path.join(LOG_DIR, fname)
-    lines = []
-    try:
-        if os.path.exists(path):
-            with open(path, "r", encoding="utf-8", errors="replace") as f:
-                lines = f.readlines()[-n:]
-    except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
-    return jsonify(ok=True, file=fname, lines=[ln.rstrip("\n") for ln in lines])
 
 
 @dashboard_app.route("/api/azrael/ask", methods=["POST"])
@@ -12671,70 +12529,18 @@ def api_freeai_status():
 # ═══ v37: POLEN-VPS-TUNNEL — Aufnahme-Proxy zur Laufzeit steuern ═══
 
 def _tunnel_effective():
-    if _TUNNEL.get("forced_off"):
-        return None
-    return _TUNNEL.get("override") or (RECORD_PROXY or None)
+    # v4.0-W116: Koerper nach nc/proxyutil.py — dort liegt _TUNNEL ohnehin schon
+    # (per configure_proxy_select derselbe Dict), und die Tunnel-Routen im
+    # Blueprint kommen so ohne einen weiteren nc.ctx-Eintrag aus.
+    return _nc_proxyutil_sel.tunnel_effective()
 
 
-@dashboard_app.route("/api/tunnel/status")
-def api_tunnel_status():
-    eff = _tunnel_effective()
-    return jsonify(ok=True,
-                   configured=_tunnel_mask(RECORD_PROXY or None),
-                   override=_tunnel_mask(_TUNNEL.get("override")),
-                   forced_off=bool(_TUNNEL.get("forced_off")),
-                   active=bool(eff),
-                   effective=_tunnel_mask(eff),
-                   pool_size=len(PROXY_LIST),
-                   last_test=_TUNNEL.get("last_test"))
 
 
-@dashboard_app.route("/api/tunnel/toggle", methods=["POST"])
-def api_tunnel_toggle():
-    d = request.get_json(silent=True) or {}
-    _TUNNEL["forced_off"] = bool(d.get("off"))
-    log.info("v37 Tunnel: forced_off=%s (Dashboard)", _TUNNEL["forced_off"])
-    return jsonify(ok=True, forced_off=_TUNNEL["forced_off"], effective=_tunnel_mask(_tunnel_effective()))
 
 
-@dashboard_app.route("/api/tunnel/set", methods=["POST"])
-def api_tunnel_set():
-    d = request.get_json(silent=True) or {}
-    p = (d.get("proxy") or "").strip()
-    if p and not re.match(r"^(socks5h?|https?)://", p):
-        return jsonify(ok=False, error="Format: socks5://host:port oder http://host:port"), 400
-    _TUNNEL["override"] = p or None
-    log.info("v37 Tunnel: override=%s (Dashboard)", _tunnel_mask(_TUNNEL["override"]))
-    return jsonify(ok=True, override=_tunnel_mask(_TUNNEL["override"]), effective=_tunnel_mask(_tunnel_effective()))
 
 
-@dashboard_app.route("/api/tunnel/test", methods=["POST"])
-def api_tunnel_test():
-    """Testet Erreichbarkeit von TikTok über den aktuell effektiven Proxy
-       (oder direkt, wenn keiner). Nutzt curl (auf dem Server vorhanden)."""
-    eff = _tunnel_effective()
-    import subprocess
-    cmd = ["curl", "--max-time", "10", "-sS", "-o", "/dev/null",
-           "-w", "%{http_code} %{time_total}", "-A", "Mozilla/5.0",
-           "https://www.tiktok.com/"]
-    if eff:
-        cmd = cmd[:1] + ["-x", eff] + cmd[1:]
-    t0 = _time_mod.time()
-    try:
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=14)
-        out = (r.stdout or "").strip()
-        code = out.split(" ")[0] if out else "0"
-        ok = code.startswith(("2", "3"))
-        res = {"ok": ok, "http_code": code, "via": _tunnel_mask(eff) or "direkt",
-               "ms": int((_time_mod.time() - t0) * 1000),
-               "err": (r.stderr or "").strip()[:200] if not ok else None,
-               "at": datetime.now(timezone.utc).strftime("%H:%M:%S")}
-    except Exception as e:
-        res = {"ok": False, "http_code": "0", "via": _tunnel_mask(eff) or "direkt",
-               "ms": int((_time_mod.time() - t0) * 1000), "err": str(e)[:200],
-               "at": datetime.now(timezone.utc).strftime("%H:%M:%S")}
-    _TUNNEL["last_test"] = res
-    return jsonify(res)
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -14379,56 +14185,8 @@ def api_prometheus_metrics():
     return (body, 200, {"Content-Type": "text/plain; version=0.0.4; charset=utf-8"})
 
 
-@dashboard_app.route("/api/ops/resource_history")
-def api_ops_resource_history():
-    """v4.0-W40: Langzeit-Verlauf von RSS/fds für den Trend-Chart im Dashboard.
-       Zeigt schleichendes Wachstum, das die Momentwerte nicht verraten."""
-    hist = list(_RES_HISTORY)
-    fd_series = [p["fds"] for p in hist]
-    rss_series = [p["rss_mb"] for p in hist]
-    return jsonify(
-        ok=True,
-        sample_min=WATCHDOG_RES_SAMPLE_MIN,
-        points=hist,
-        fd_trend=_nc_restrend.rising_trend(fd_series, min_points=12,
-                                           min_rel_growth=0.30, min_abs_growth=40.0),
-        rss_trend=_nc_restrend.rising_trend(rss_series, min_points=12,
-                                            min_rel_growth=0.30, min_abs_growth=150.0))
 
 
-@dashboard_app.route("/api/ops/metrics")
-def api_ops_metrics():
-    """Zeitreihen der letzten 14 Tage: Aufnahmen, KI-Calls, Clips pro Tag."""
-    days = 14
-    today = datetime.now(timezone.utc).date()
-    date_list = [(today - timedelta(days=i)).isoformat() for i in range(days - 1, -1, -1)]
-    start = date_list[0]
-
-    def series(table):
-        # table stammt aus fixer Whitelist unten → kein Injection-Vektor
-        agg = {}
-        try:
-            with db_conn() as conn:
-                for r in conn.execute("SELECT substr(created_at,1,10) AS d, COUNT(*) AS n FROM " + table +
-                                      " WHERE created_at >= ? GROUP BY d", (start,)).fetchall():
-                    agg[r["d"]] = r["n"]
-        except Exception:
-            pass
-        return [agg.get(dt, 0) for dt in date_list]
-
-    ai_err = {}
-    try:
-        with db_conn() as conn:
-            for r in conn.execute("SELECT substr(created_at,1,10) AS d, COUNT(*) AS n FROM ai_interactions "
-                                  "WHERE created_at >= ? AND ok=0 GROUP BY d", (start,)).fetchall():
-                ai_err[r["d"]] = r["n"]
-    except Exception:
-        pass
-    return jsonify(ok=True, dates=[d[5:] for d in date_list],
-                   recordings=series("recordings"),
-                   ai_calls=series("ai_interactions"),
-                   ai_errors=[ai_err.get(dt, 0) for dt in date_list],
-                   clips=series("discord_clips"))
 
 
 @dashboard_app.route("/api/azrael/agents")
@@ -14455,58 +14213,6 @@ def api_azrael_memories():
 
 
 # ═══ v37: RELIABILITY — Fehler-Analyse (Kategorisierung + Trend, read-only) ═══
-@dashboard_app.route("/api/ops/errors")
-def api_ops_errors():
-    """Zuverlässigkeit: normalisiert die letzten error.log-Zeilen zu Signaturen
-       (User/URLs/Zahlen raus → gleiche Fehler gruppiert), zählt Häufigkeit und
-       Trend (letzte Stunde / 24h). Rein lesend."""
-    import collections as _c
-    path = os.path.join(LOG_DIR, "error.log")
-    lines = []
-    try:
-        if os.path.exists(path):
-            with open(path, "r", encoding="utf-8", errors="replace") as f:
-                lines = f.readlines()[-1000:]
-    except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
-    now = datetime.now(timezone.utc)
-    sig_count = _c.Counter()
-    sig_last, sig_sample = {}, {}
-    last_hour = last_24h = 0
-    for raw in lines:
-        ln = raw.rstrip("\n")
-        if not ln.strip():
-            continue
-        ts = None
-        m = re.match(r'(\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2})', ln)
-        if m:
-            try:
-                ts = datetime.fromisoformat(m.group(1).replace(" ", "T")).replace(tzinfo=timezone.utc)
-            except Exception:
-                ts = None
-        mm = re.search(r'\b(ERROR|WARNING|CRITICAL)\b\s*(.*)$', ln)
-        msg = (mm.group(2) if mm else ln).strip()
-        sig = re.sub(r'@\w+', '@X', msg)
-        sig = re.sub(r'https?://\S+', 'URL', sig)
-        sig = re.sub(r'0x[0-9a-fA-F]+', '0xN', sig)
-        sig = re.sub(r'\b\d+\b', '#', sig)
-        sig = re.sub(r'\s+', ' ', sig).strip()[:90]
-        if not sig:
-            continue
-        sig_count[sig] += 1
-        if ts:
-            sig_last[sig] = ts.isoformat()[11:19]
-        sig_sample.setdefault(sig, msg[:140])
-        if ts:
-            age = (now - ts).total_seconds()
-            if age <= 3600:
-                last_hour += 1
-            if age <= 86400:
-                last_24h += 1
-    top = [{"sig": s, "count": c, "last": sig_last.get(s, ""), "sample": sig_sample.get(s, "")}
-           for s, c in sig_count.most_common(12)]
-    return jsonify(ok=True, scanned=len(lines), last_hour=last_hour, last_24h=last_24h,
-                   distinct=len(sig_count), categories=top)
 
 
 # ═══ v37: PREFLIGHT — Betriebsbereitschafts-Check aller Subsysteme (read-only) ═══
@@ -14649,17 +14355,6 @@ def api_system_preflight_history():
         return jsonify(ok=False, error=str(e)), 500
 
 
-@dashboard_app.route("/api/ops/audit")
-def api_ops_audit():
-    try:
-        with db_conn() as conn:
-            rows = conn.execute("SELECT method, path, ip, status, created_at FROM audit_log "
-                                "ORDER BY id DESC LIMIT 40").fetchall()
-        items = [{"method": r["method"], "path": r["path"], "ip": r["ip"], "status": r["status"],
-                  "at": (r["created_at"] or "")[5:19].replace("T", " ")} for r in rows]
-        return jsonify(ok=True, items=items)
-    except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
 
 
 # ═══ v37 Welle 2: Benachrichtigungen + Scheduler ═══
@@ -15943,12 +15638,6 @@ def api_tracking_quick_restart(tid):
     return jsonify(result), code
 
 # ---------- X22: Cookie-Age + X26: Multi-status overview ----------
-@dashboard_app.route("/api/cookies/age")
-def api_cookies_age():
-    days = cookies_days_old()
-    return jsonify(ok=True, days_old=round(days, 1) if days is not None else None,
-                   exists=days is not None,
-                   warn=(days is not None and days > 7))
 
 # ---------- X27: Bulk Profile-Lookup ----------
 @dashboard_app.route("/api/profile/lookup-bulk", methods=["POST"])
@@ -16159,22 +15848,7 @@ def _latest_popularity(conn, username):
     return int(row["follower_count"]) if row and row["follower_count"] else 0
 
 
-_FFMPEG_VER_CACHE = {"v": None}
 
-def _ffmpeg_version_str():
-    """ffmpeg-Version (gecached). Leerer String wenn nicht ermittelbar."""
-    if _FFMPEG_VER_CACHE["v"] is not None:
-        return _FFMPEG_VER_CACHE["v"]
-    ver = ""
-    try:
-        import subprocess as _sp
-        out = _sp.run(["ffmpeg", "-version"], capture_output=True, text=True, timeout=4)
-        # v4.0-W61: Parsen der Versionszeile nach nc/ffver.py (bitgenau geprüft).
-        ver = _nc_ffver.parse_version(out.stdout)
-    except Exception:
-        ver = ""
-    _FFMPEG_VER_CACHE["v"] = ver
-    return ver
 
 
 # =====================  GROUP A — Insights / Analytics  =====================
@@ -16346,122 +16020,10 @@ def api_quiet_hours():
 
 # =====================  GROUP G — Ops / System  =====================
 
-@dashboard_app.route("/api/ops/healthcheck")
-def api_ops_healthcheck():
-    """Detaillierter Health-Check für externes Monitoring (Uptime-Kuma etc).
-       Liefert pro Komponente ok/nok + Gesamtstatus ok|degraded|down."""
-    checks = {}
-    # DB
-    try:
-        with db_conn() as conn:
-            conn.execute("SELECT 1").fetchone()
-        checks["database"] = True
-    except Exception:
-        checks["database"] = False
-    # Disk
-    disk_ok = True
-    disk_pct = None
-    try:
-        usage = shutil.disk_usage(RECORDINGS_DIR if os.path.isdir(RECORDINGS_DIR) else ".")
-        disk_pct = round(100.0 * usage.used / usage.total, 1)
-        disk_ok = disk_pct < 95.0
-    except Exception:
-        disk_ok = False
-    checks["disk"] = disk_ok
-    # Cookies
-    try:
-        ch = get_cookie_health()
-        checks["cookies"] = bool(ch.get("critical_present"))
-    except Exception:
-        checks["cookies"] = False
-    # ffmpeg vorhanden
-    try:
-        checks["ffmpeg"] = shutil.which("ffmpeg") is not None
-    except Exception:
-        checks["ffmpeg"] = False
-    # Event-Loop des Bots
-    try:
-        loop = globals().get("_MAIN_LOOP")
-        checks["event_loop"] = bool(loop and loop.is_running())
-    except Exception:
-        checks["event_loop"] = False
-    critical = ["database", "disk"]
-    if all(checks.get(c) for c in critical) and all(checks.values()):
-        status = "ok"
-    elif all(checks.get(c) for c in critical):
-        status = "degraded"
-    else:
-        status = "down"
-    code = 200 if status != "down" else 503
-    return jsonify(ok=(status != "down"), status=status, checks=checks,
-                   disk_used_pct=disk_pct), code
 
 
-@dashboard_app.route("/api/ops/db-stats")
-def api_ops_db_stats():
-    """Zeilen-Anzahl pro Tabelle + DB-Größe (SQLite). Für Kapazitäts-Monitoring."""
-    tables = ["trackings", "recordings", "tiktok_checks", "recording_attempts",
-              "event_log", "bookmarks", "tracking_tags", "recording_notes",
-              "recording_annotations", "archive", "profile_snapshots",
-              "ai_conversations", "ai_messages", "manual_recordings",
-              "webhooks", "tracking_collections", "app_config"]
-    counts = {}
-    try:
-        with db_conn() as conn:
-            for t in tables:
-                try:
-                    counts[t] = conn.execute(f"SELECT COUNT(*) AS n FROM {t}").fetchone()["n"]
-                except Exception:
-                    counts[t] = None
-    except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
-    db_size = None
-    try:
-        if DB_BACKEND != "mariadb" and os.path.exists(DB_PATH):
-            db_size = os.path.getsize(DB_PATH)
-    except Exception:
-        pass
-    return jsonify(ok=True, backend=DB_BACKEND, table_rows=counts,
-                   db_size_mb=round(db_size / 1024 / 1024, 2) if db_size else None)
 
 
-@dashboard_app.route("/api/ops/disk-breakdown")
-def api_ops_disk_breakdown():
-    """Speicherbelegung pro Verzeichnis (recordings/archive/logs) + DB + frei."""
-    def _dir_bytes(path):
-        total = 0
-        if not path or not os.path.isdir(path):
-            return 0
-        try:
-            for root, _dirs, files in os.walk(path):
-                for f in files:
-                    try:
-                        total += os.path.getsize(os.path.join(root, f))
-                    except OSError:
-                        pass
-        except Exception:
-            pass
-        return total
-    out = {}
-    try:
-        out["recordings_mb"] = round(_dir_bytes(RECORDINGS_DIR) / 1024 / 1024, 1)
-        arch = globals().get("ARCHIVE_DIR")
-        out["archive_mb"] = round(_dir_bytes(arch) / 1024 / 1024, 1) if arch else 0
-        logs_dir = os.path.join(os.path.dirname(os.path.abspath(DB_PATH)), "logs")
-        if not os.path.isdir(logs_dir):
-            logs_dir = "logs"
-        out["logs_mb"] = round(_dir_bytes(logs_dir) / 1024 / 1024, 1)
-        db_mb = 0
-        if DB_BACKEND != "mariadb" and os.path.exists(DB_PATH):
-            db_mb = os.path.getsize(DB_PATH) / 1024 / 1024
-        out["db_mb"] = round(db_mb, 2)
-        usage = shutil.disk_usage(RECORDINGS_DIR if os.path.isdir(RECORDINGS_DIR) else ".")
-        out["free_gb"] = round(usage.free / 1024 / 1024 / 1024, 1)
-        out["total_gb"] = round(usage.total / 1024 / 1024 / 1024, 1)
-        out["used_pct"] = round(100.0 * usage.used / usage.total, 1)
-    except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
-    return jsonify(ok=True, **out)
 
 
 # ---- V37-DBX: DB als SQL exportieren / importieren --------------------------
@@ -16497,189 +16059,24 @@ def api_community_stats():
         return jsonify(ok=False, error=str(e)), 500
 
 
-@dashboard_app.route("/api/donations/reset", methods=["POST"])
-def api_donations_reset():
-    """v4.0-W65: Spenden-DB leeren. Löscht alle overlay_events mit kind='donation'
-       (die bisherigen Einträge sind durch Bugs entstanden, es gab real keine
-       Spenden). Der Ziel-Fortschritt wird live aus genau diesen Zeilen summiert
-       und geht dadurch automatisch auf 0 zurück. Follows/Reaktionen bleiben."""
-    try:
-        with db_conn() as conn:
-            cur = conn.cursor()
-            cur.execute("DELETE FROM overlay_events WHERE kind='donation'")
-            removed = cur.rowcount if (cur.rowcount is not None and cur.rowcount >= 0) else 0
-            conn.commit()
-        log.info("Spenden-DB geleert: %s Zeilen entfernt (Dashboard)", removed)
-        return jsonify(ok=True, removed=int(removed))
-    except Exception as e:
-        log.error("Spenden-Reset fehlgeschlagen: %s", e)
-        return jsonify(ok=False, error=str(e)), 500
 
 
-def _parse_eur(raw):
-    """'12,50' / '12.50' / '€12' → float, sonst None. Robust gegen Komma & Symbol."""
-    if raw is None:
-        return None
-    s = str(raw).strip().replace("€", "").replace(" ", "")
-    if not s:
-        return None
-    s = s.replace(",", ".")
-    # nur letzte Punkt-Gruppe als Dezimaltrenner (Tausenderpunkte ignorieren)
-    if s.count(".") > 1:
-        head, _, tail = s.rpartition(".")
-        s = head.replace(".", "") + "." + tail
-    try:
-        v = float(s)
-    except (TypeError, ValueError):
-        return None
-    return v if v == v and v not in (float("inf"), float("-inf")) else None
-
-
-def _manual_donations_rows(limit=200):
-    """Manuell im Dashboard erfasste Spenden (overlay_events platform='manual').
-       Bewusst getrennt von Plattform-Trinkgeldern; werden aus den Plattform-
-       Summen gefiltert (kein Doppelzählen)."""
-    rows = []
-    try:
-        with db_conn() as conn:
-            cur = conn.cursor()
-            cur.execute("SELECT id, ts, name, amount, message FROM overlay_events "
-                        "WHERE kind='donation' AND platform='manual' "
-                        "ORDER BY ts DESC LIMIT ?", (int(limit),))
-            for r in cur.fetchall():
-                amt = _parse_eur(r["amount"])
-                rows.append({"id": r["id"], "ts": r["ts"], "note": r["name"] or "",
-                             "amount_eur": round(amt, 2) if amt is not None else 0.0,
-                             "message": r["message"] or ""})
-    except Exception as e:
-        log.debug("manual donations read: %s", e)
-    return rows
-
-
+# v4.0-W116: _parse_eur/_manual_donations_rows/_manual_donations_total liegen
+# jetzt in nc/donationsdb.py. Die Delegation bleibt nur fuer _manual_donations_total
+# — die Statistik-Route braucht den Namen weiterhin; die beiden anderen hatten im
+# Bot ausser den /api/donations-Routen keinen Leser mehr und wuerden hier tot
+# liegenbleiben (genau der Zerfall, den docs/MODULARISIERUNG.md 3.1 verhindert).
 def _manual_donations_total():
     """Summe aller manuell erfassten Spenden in EUR (backend-agnostisch)."""
-    return round(sum(r["amount_eur"] for r in _manual_donations_rows(limit=100000)), 2)
+    return _nc_donationsdb.manual_total()
 
 
-@dashboard_app.route("/api/donations/add", methods=["POST"])
-def api_donations_add():
-    """v4.0-W102: manuelle Spende erfassen (Dashboard). Betreiber-gepflegt, weil
-       PayPal/Krypto keine öffentliche Live-Summe liefern. Fließt in den
-       Website-Fortschritt (current_eur = env-Basis + Summe manuell)."""
-    src = request.get_json(silent=True) or request.form or request.values
-    amount = _parse_eur(src.get("amount"))
-    if amount is None or amount <= 0:
-        return jsonify(ok=False, error="Betrag fehlt oder ungültig (z. B. 12,50)."), 400
-    if amount > 1_000_000:
-        return jsonify(ok=False, error="Betrag unplausibel groß."), 400
-    note = (str(src.get("note") or src.get("source") or "").strip())[:120] or "manuell"
-    msg = (str(src.get("message") or "").strip())[:500]
-    ts_in = str(src.get("date") or src.get("ts") or "").strip()
-    try:
-        ts = (datetime.fromisoformat(ts_in).astimezone(timezone.utc).isoformat()
-              if ts_in else datetime.now(timezone.utc).isoformat())
-    except Exception:
-        ts = datetime.now(timezone.utc).isoformat()
-    try:
-        with db_conn() as conn:
-            conn.execute("INSERT INTO overlay_events (ts, kind, name, amount, message, platform) "
-                         "VALUES (?,?,?,?,?, 'manual')",
-                         (ts, "donation", note, ("%.2f" % amount), msg))
-            conn.commit()
-        log.info("Manuelle Spende erfasst: %.2f EUR (%s)", amount, note)
-        return jsonify(ok=True, amount_eur=round(amount, 2),
-                       total_eur=_manual_donations_total())
-    except Exception as e:
-        log.error("Manuelle Spende fehlgeschlagen: %s", e)
-        return jsonify(ok=False, error=str(e)), 500
 
 
-@dashboard_app.route("/api/donations/manual")
-def api_donations_manual():
-    """v4.0-W102: Liste + Summe der manuell erfassten Spenden fürs Dashboard."""
-    rows = _manual_donations_rows(limit=_arg_int("limit", 100, 1, 1000))
-    return jsonify(ok=True, total_eur=round(sum(r["amount_eur"] for r in rows), 2),
-                   count=len(rows), items=rows)
 
 
-@dashboard_app.route("/api/donations/manual/<int:rid>/delete", methods=["POST"])
-def api_donations_manual_delete(rid):
-    """v4.0-W102: eine manuelle Spende wieder entfernen (Korrektur)."""
-    try:
-        with db_conn() as conn:
-            cur = conn.cursor()
-            cur.execute("DELETE FROM overlay_events WHERE id=? AND kind='donation' "
-                        "AND platform='manual'", (int(rid),))
-            removed = cur.rowcount if (cur.rowcount and cur.rowcount > 0) else 0
-            conn.commit()
-        return jsonify(ok=bool(removed), removed=int(removed),
-                       total_eur=_manual_donations_total())
-    except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
 
 
-@dashboard_app.route("/api/donations/summary")
-def api_donations_summary():
-    """V37-DON: Donations aus overlay_events, nach Plattform aufgeschluesselt.
-
-    Alle vier Plattformen schreiben ueber _overlay_push('donation', ...) mit
-    platform-Tag in dieselbe Tabelle — Kick/TikTok/Twitch (Bits/Subs)/YouTube
-    (Superchat). Dieses Panel macht sie erstmals sichtbar. ?days=30 begrenzt.
-    """
-    try:
-        days = _arg_int("days", 30, 1, 365)
-    except ValueError:
-        days = 30
-    out = {"ok": True, "window_days": days, "by_platform": [], "recent": [],
-           "total_count": 0}
-    try:
-        with db_conn() as conn:
-            cur = conn.cursor()
-            try:
-                cur.execute(
-                    "SELECT platform, COUNT(*) n FROM overlay_events "
-                    "WHERE kind='donation' AND platform IN"
-                    + _REVENUE_SQL_IN +
-                    " AND ts >= datetime('now', ?) "
-                    "GROUP BY platform", ("-%d days" % days,))
-            except Exception:
-                cur.execute(
-                    "SELECT platform, COUNT(*) n FROM overlay_events "
-                    "WHERE kind='donation' AND platform IN"
-                    + _REVENUE_SQL_IN +
-                    (" AND ts >= (NOW() - INTERVAL %d DAY) "
-                     "GROUP BY platform" % days))
-            rows = cur.fetchall()
-            # Alle vier Plattformen zeigen, auch mit 0 — macht sichtbar, was
-            # verbunden ist und was (noch) nicht.
-            counts = {r["platform"] or "?": r["n"] for r in rows}
-            # V37-DON: TikTok bewusst NICHT im Panel — auf Wunsch entfernt.
-            # (Die Erfassung läuft weiter, nur die Anzeige zeigt TikTok nicht.)
-            for p in ("kick", "twitch", "youtube"):
-                out["by_platform"].append({"platform": p, "count": counts.get(p, 0)})
-                out["total_count"] += counts.get(p, 0)
-            # Letzte 15 Donations (ohne TikTok — auf Wunsch aus dem Panel)
-            try:
-                cur.execute(
-                    "SELECT ts, name, amount, message, platform FROM overlay_events "
-                    "WHERE kind='donation' AND platform IN"
-                    + _REVENUE_SQL_IN +
-                    " ORDER BY id DESC LIMIT 15")
-            except Exception:
-                pass
-            for r in cur.fetchall():
-                out["recent"].append({
-                    "ts": r["ts"], "name": r["name"] or "?",
-                    "amount": r["amount"] or "", "message": r["message"] or "",
-                    "platform": r["platform"] or "?"})
-            # B138: Zeilen ohne Herkunft mitzaehlen — sie sind nicht weg, sie
-            # gelten nur nicht mehr als eigene Einnahme. Ohne diese Zahl wirkt
-            # die (korrekt) gesunkene Summe wie Datenverlust.
-            out["unknown_count"] = _donations_unknown_count(conn, days)
-        return jsonify(out)
-    except Exception as e:
-        log.warning("api_donations_summary: %s", e)
-        return jsonify(ok=False, error=str(e)), 500
 
 
 @dashboard_app.route("/api/system/check_timing")
@@ -16901,69 +16298,10 @@ def api_youtube_oauth_logout():
 # aus Anzeigewerten, das hier sind gebuchte Auszahlungen. Vermischen waere
 # der Fehler, der falsche Steuerzahlen erzeugt (siehe nc/ledger.py).
 
-@dashboard_app.route("/api/finanzamt/entries")
-def api_finanzamt_entries():
-    try:
-        year = _arg_int("year", datetime.now(timezone.utc).year)
-    except ValueError:
-        return jsonify(ok=False, error="year muss eine Jahreszahl sein"), 400
-    try:
-        with db_conn() as conn:
-            return jsonify(ok=True, year=year,
-                           entries=_nc_ledger.entries(conn, year),
-                           summary=_nc_ledger.summary(conn, year),
-                           crosscheck=_nc_ledger.crosscheck(conn, year, _REVENUE_SQL_IN),
-                           platforms=list(_nc_ledger.PLATFORMS),
-                           kinds=list(_nc_ledger.KINDS),
-                           disclaimer=_nc_ledger.DISCLAIMER)
-    except Exception as e:
-        log.warning("api_finanzamt_entries: %s", e)
-        return jsonify(ok=False, error=str(e)), 500
 
 
-@dashboard_app.route("/api/finanzamt/entry", methods=["POST"])
-def api_finanzamt_add():
-    """Auszahlung buchen. Append-only — es gibt bewusst kein PUT/DELETE.
-    Korrektur = neue Buchung mit kind='correction' + storno_of."""
-    d = request.get_json(silent=True) or {}
-    try:
-        with db_conn() as conn:
-            res = _nc_ledger.add_entry(
-                conn,
-                d.get("booked_on"), d.get("platform"), d.get("gross_eur"),
-                kind=(d.get("kind") or "payout"),
-                fee_eur=d.get("fee_eur") or 0,
-                currency=(d.get("currency") or "EUR"),
-                fx_rate=d.get("fx_rate"),
-                original_amount=d.get("original_amount"),
-                doc_ref=(d.get("doc_ref") or ""),
-                note=(d.get("note") or ""),
-                storno_of=d.get("storno_of"))
-            conn.commit()
-        return jsonify(ok=True, **res)
-    except _nc_ledger.LedgerError as e:
-        return jsonify(ok=False, error=str(e)), 400
-    except Exception as e:
-        log.warning("api_finanzamt_add: %s", e)
-        return jsonify(ok=False, error=str(e)), 500
 
 
-@dashboard_app.route("/api/finanzamt/export.csv")
-def api_finanzamt_csv():
-    """CSV fuer die Steuerberaterin (Semikolon + BOM, DE-Dezimalkomma)."""
-    try:
-        year = _arg_int("year", datetime.now(timezone.utc).year)
-    except ValueError:
-        return Response("year muss eine Jahreszahl sein", status=400)
-    try:
-        with db_conn() as conn:
-            body = _nc_ledger.export_csv(conn, year)
-        return Response(body, mimetype="text/csv; charset=utf-8",
-                        headers={"Content-Disposition":
-                                 f'attachment; filename="einnahmen_{year}.csv"'})
-    except Exception as e:
-        log.warning("api_finanzamt_csv: %s", e)
-        return Response(f"Export fehlgeschlagen: {e}", status=500)
 
 
 @dashboard_app.route("/api/twitch/oauth/status")
@@ -17083,99 +16421,12 @@ def api_config_drift():
 
 
 
-@dashboard_app.route("/api/db/summary")
-def api_db_summary():
-    """Tabellen + Zeilenzahlen fuer das Wartungs-Panel."""
-    try:
-        s = _dbx_summary()
-        return jsonify(ok=True, backend=DB_BACKEND, tables=s,
-                       total=sum(v for v in s.values() if v > 0),
-                       other=("mariadb" if DB_BACKEND == "sqlite" else "sqlite"))
-    except Exception as e:
-        log.warning("api_db_summary: %s", e)
-        return jsonify(ok=False, error=str(e)), 500
 
 
-@dashboard_app.route("/api/db/export")
-def api_db_export():
-    """Streamt den SQL-Export als Download.
-
-    ?dialect=mariadb|sqlite — fuer welches ZIEL escaped wird. Default ist das
-    jeweils ANDERE Backend, weil genau das der Umzugs-Fall ist.
-    """
-    dialect = (request.args.get("dialect") or
-               ("mariadb" if DB_BACKEND == "sqlite" else "sqlite")).strip().lower()
-    if dialect not in ("sqlite", "mariadb"):
-        return jsonify(ok=False, error="dialect muss sqlite oder mariadb sein"), 400
-    ts = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
-    fname = f"nightcrawler-{DB_BACKEND}-to-{dialect}-{ts}.sql"
-
-    def _gen():
-        try:
-            yield from _dbx_export(dialect=dialect)
-        except Exception as e:                     # im Stream ist kein 500 mehr moeglich
-            log.error("DB-Export abgebrochen: %s", e)
-            yield f"\n-- ABBRUCH: {e}\n-- Diese Datei ist UNVOLLSTAENDIG, nicht einspielen!\n"
-
-    log.info("DB-Export gestartet: %s -> %s", DB_BACKEND, dialect)
-    return Response(_gen(), mimetype="application/sql",
-                    headers={"Content-Disposition": f'attachment; filename="{fname}"',
-                             "X-Accel-Buffering": "no"})
 
 
-@dashboard_app.route("/api/db/import", methods=["POST"])
-def api_db_import():
-    """Spielt einen Export ein. Erwartet die .sql-Datei als multipart 'file'
-       oder den Text im Body. ?dry_run=1 prueft nur."""
-    dry = request.args.get("dry_run") == "1"
-    f = request.files.get("file")
-    if f is not None:
-        raw = f.read()
-    else:
-        raw = request.get_data() or b""
-    if not raw:
-        return jsonify(ok=False, error="keine Datei/kein Inhalt"), 400
-    if len(raw) > DB_IMPORT_MAX_MB * 1024 * 1024:
-        return jsonify(ok=False, error=f"Datei > {DB_IMPORT_MAX_MB} MB — "
-                                       "DB_IMPORT_MAX_MB anheben oder per CLI einspielen"), 413
-    try:
-        text = raw.decode("utf-8")
-    except UnicodeDecodeError:
-        return jsonify(ok=False, error="Datei ist kein UTF-8 — kein gueltiger Export"), 400
-    try:
-        rep = _dbx_import(text, expect_dialect=DB_BACKEND, dry_run=dry)
-        # rep enthaelt "ok" bereits — jsonify(ok=…, **rep) waere ein doppeltes
-        # Keyword-Argument und wirft TypeError.
-        return jsonify(**rep), (200 if rep.get("ok") else 400)
-    except Exception as e:
-        log.error("DB-Import fehlgeschlagen: %s", e)
-        return jsonify(ok=False, error=str(e)), 500
 
 
-@dashboard_app.route("/api/ops/version")
-def api_ops_version():
-    """Bot-Version, Uptime, Feature-Anzahl, Python/ffmpeg-Versionen, Schalter."""
-    import sys as _sys
-    start = globals().get("_BOT_START_TIME")
-    uptime_s = None
-    if start:
-        try:
-            uptime_s = int((datetime.now(timezone.utc) - start).total_seconds())
-        except Exception:
-            uptime_s = None
-    try:
-        route_count = len(list(dashboard_app.url_map.iter_rules()))
-    except Exception:
-        route_count = None
-    return jsonify(ok=True,
-                   version=globals().get("BOT_VERSION", "3.7"),
-                   build=globals().get("BUILD_STAMP", ""),
-                   uptime_seconds=uptime_s,
-                   api_routes=route_count,
-                   python=_sys.version.split()[0],
-                   ffmpeg=_ffmpeg_version_str(),
-                   db_backend=DB_BACKEND,
-                   prefer_h264=PREFER_H264)
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -17190,125 +16441,18 @@ def api_ops_version():
 # in einen Timeout und der Operator wuesste nicht, ob das Update noch laeuft
 # oder schon halb geschrieben hat.
 # ═══════════════════════════════════════════════════════════════════════
-@dashboard_app.route("/api/update/check")
-def api_update_check():
-    """Billige Pruefung — ein GitHub-API-Aufruf, kein Download."""
-    try:
-        res = _nc_updater.check()
-    except Exception as e:
-        log.error("Update-Pruefung fehlgeschlagen: %s", e, exc_info=True)
-        return jsonify(ok=False, error=f"Update-Pruefung: {e}"), 500
-    res["job"] = _nc_updater.job_state()
-    res["backups"] = _nc_updater.list_backups()[:5]
-    res["local_version"] = globals().get("BOT_VERSION", "")
-    res["build"] = globals().get("BUILD_STAMP", "")
-    return jsonify(**res)
 
 
-@dashboard_app.route("/api/update/status")
-def api_update_status():
-    """Fortschritt des laufenden bzw. Ergebnis des letzten Laufs."""
-    return jsonify(ok=True, job=_nc_updater.job_state(),
-                   settings=_nc_updater.settings())
 
 
-@dashboard_app.route("/api/update/start", methods=["POST"])
-def api_update_start():
-    """Update anstossen. dry_run=true rechnet nur durch und schreibt nichts."""
-    body = request.get_json(silent=True) or {}
-    dry = bool(body.get("dry_run"))
-    if not dry and not UPDATE_ENABLED:
-        return jsonify(ok=False,
-                       error="Update-Schreiben ist abgeschaltet (UPDATE_ENABLED=0)."), 403
-    res = _nc_updater.start_update(dry_run=dry)
-    return (jsonify(**res), 200 if res.get("ok") else 409)
 
 
-@dashboard_app.route("/api/update/backups")
-def api_update_backups():
-    return jsonify(ok=True, backups=_nc_updater.list_backups())
 
 
-@dashboard_app.route("/api/update/rollback", methods=["POST"])
-def api_update_rollback():
-    """Ein Backup zurueckspielen. Ohne Namen das neueste."""
-    body = request.get_json(silent=True) or {}
-    name = (body.get("backup") or "").strip()
-    if not name:
-        bl = _nc_updater.list_backups()
-        if not bl:
-            return jsonify(ok=False, error="Kein Backup vorhanden."), 404
-        name = bl[0]["name"]
-    try:
-        res = _nc_updater.rollback(name)
-    except Exception as e:
-        log.error("Rollback fehlgeschlagen: %s", e, exc_info=True)
-        return jsonify(ok=False, error=f"Rollback: {e}"), 500
-    if res.get("ok"):
-        log_event("update_rollback", "warning", f"Backup {name} zurueckgespielt")
-    return (jsonify(**res), 200 if res.get("ok") else 500)
 
 
-@dashboard_app.route("/api/update/restart", methods=["POST"])
-def api_update_restart():
-    """Dienst neu starten — nur wenn UPDATE_RESTART_CMD gesetzt ist.
-
-    Bewusst opt-in: ein Neustart-Kommando, das der Bot selbst kennt, ist ein
-    Fernsteuer-Knopf auf das System. Ohne gesetzte Variable nennt die Antwort
-    nur das Kommando, das der Operator selbst absetzt."""
-    if not UPDATE_RESTART_CMD:
-        return jsonify(ok=False, needs_manual=True,
-                       hint="sudo systemctl restart tiktok-bot",
-                       error="Kein Neustart-Kommando hinterlegt "
-                             "(UPDATE_RESTART_CMD). Bitte von Hand neu starten."), 409
-    try:
-        # Verzoegert und abgekoppelt: der Neustart killt genau den Prozess, der
-        # diese Antwort noch senden muss. Ohne das Fenster sieht der Operator
-        # einen Netzwerkfehler statt einer Bestaetigung.
-        subprocess.Popen(["sh", "-c", f"sleep 2; {UPDATE_RESTART_CMD}"],
-                         start_new_session=True,
-                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    except Exception as e:
-        log.error("Neustart nicht ausgeloest: %s", e, exc_info=True)
-        return jsonify(ok=False, error=f"Neustart nicht ausgeloest: {e}"), 500
-    log_event("update_restart", "warning", f"Neustart ausgeloest: {UPDATE_RESTART_CMD}")
-    return jsonify(ok=True, cmd=UPDATE_RESTART_CMD,
-                   summary="Neustart in 2 Sekunden — das Dashboard ist kurz weg.")
 
 
-@dashboard_app.route("/api/ops/log-tail")
-def api_ops_log_tail():
-    """Letzte N Zeilen des debug- oder error-Logs (which=debug|error, lines=N)."""
-    which = (request.args.get("which") or "debug").lower()
-    if which not in ("debug", "error"):
-        which = "debug"
-    try:
-        lines = _arg_int("lines", 100, 1, 1000)
-    except (TypeError, ValueError):
-        lines = 100
-    logs_dir = os.path.join(os.path.dirname(os.path.abspath(DB_PATH)), "logs")
-    if not os.path.isdir(logs_dir):
-        logs_dir = "logs"
-    path = os.path.join(logs_dir, f"{which}.log")
-    if not os.path.exists(path):
-        return jsonify(ok=True, file=path, lines=[], count=0,
-                       note="Log-Datei nicht gefunden.")
-    try:
-        # Effizientes Tail: Datei in Blöcken vom Ende lesen
-        with open(path, "rb") as f:
-            f.seek(0, os.SEEK_END)
-            size = f.tell()
-            block = 8192
-            data = b""
-            while size > 0 and data.count(b"\n") <= lines:
-                step = min(block, size)
-                size -= step
-                f.seek(size)
-                data = f.read(step) + data
-        text_lines = data.decode("utf-8", errors="replace").splitlines()[-lines:]
-        return jsonify(ok=True, file=path, count=len(text_lines), lines=text_lines)
-    except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
 
 # =============================================================================
 
@@ -25057,10 +24201,6 @@ _REVENUE_SQL_IN = "('" + "','".join(REVENUE_PLATFORMS) + "')"
 # sich ueber /api/donations/unbekannt einsehen.
 
 
-def _donations_unknown_count(conn, days=30):
-    """Wie viele Spenden-Zeilen haben keine verwertbare Herkunft?
-       v4.0-W59: nach nc/donations.py extrahiert (conn-injiziert, gegen SQLite bewiesen)."""
-    return _nc_donations.unknown_count(conn, days)
 
 
 def is_revenue_platform(platform) -> bool:
@@ -25349,82 +24489,6 @@ event_log(id, kind, severity, summary, created_at)
 Hinweise: Zeitspalten sind ISO-8601-Strings. Erfolg = outcome IN ('ok','stall_killed_partial')."""
 
 
-# v4.0-W110: nc.archive braucht ARCHIVE_DIR fuer die Pfad-Sicherheitspruefung
-# in delete_archive_entry (realpath/commonpath gegen Path-Traversal).
-_nc_archive.configure(archive_dir=ARCHIVE_DIR)
-
-_nc_ctx.configure(
-    log=log,
-    log_event=log_event,
-    arg_int=_arg_int,
-    run_async=_run_async_from_flask,
-    recordings_dir=RECORDINGS_DIR,
-    ffmpeg_threads_bg=FFMPEG_THREADS_BG,
-    ffmpeg_nice_bg=FFMPEG_NICE_BG,
-    proc_is_recorder=_proc_is_recorder,
-    scraper_session=_scraper_session,
-    trigger_manual_recording=trigger_manual_recording,
-    stop_manual_recording=stop_manual_recording,
-    get_tags_for_tracking=get_tags_for_tracking,
-    # --- Archiv-Domaene (v4.0-W107) ---
-    intel_ensure_schema=_intel_ensure_schema,
-    intel_index_one=_intel_index_one,
-    intel_semantic=_intel_semantic,
-    intel_ps=_INTEL_PS,
-    # --- Auswertung und Webhooks (v4.0-W108) ---
-    latest_popularity=_latest_popularity,
-    post_json_threaded=_post_json_threaded,
-    # --- Systemzustand (v4.0-W110) ---
-    # Getter, nicht Wert: _BOT_START_TIME wird erst in main() gesetzt.
-    get_bot_start_time=lambda: _BOT_START_TIME,
-    get_cookie_health=get_cookie_health,
-    get_storage_stats=get_storage_stats,
-    # --- KI-Pfade (v4.0-W112) ---
-    llm_chat_sync=llm_chat_sync,
-    check_ai_models_sync=_check_ai_models_sync,
-    # Startwerte, nicht Helfer — deshalb gebuendelt statt als eigene Slots.
-    cfg={
-        "ARCHIVE_DIR": ARCHIVE_DIR,
-        "ARCHIVE_ALLOWED_EXTS": ARCHIVE_ALLOWED_EXTS,
-        "ARCHIVE_MAX_UPLOAD_MB": ARCHIVE_MAX_UPLOAD_MB,
-        "_MANUAL_ARCHIVE_DIR": _MANUAL_ARCHIVE_DIR,
-        "DB_INTEGRITY_ERRORS": DB_INTEGRITY_ERRORS,
-        # --- KI (v4.0-W112). Keiner dieser Namen wird im Bot je per `global`
-        # neu gebunden (nachgemessen), deshalb ist die Uebergabe beim Start
-        # sicher; die Dicts, Listen und das Lock werden per Referenz geteilt,
-        # sodass Bot und Blueprint denselben Zustand sehen.
-        "AI_CHAT_CONTEXT_CHARS": AI_CHAT_CONTEXT_CHARS,
-        "AI_CHAT_CONTEXT_MESSAGES": AI_CHAT_CONTEXT_MESSAGES,
-        "AI_CHAT_TITLE_MAX": AI_CHAT_TITLE_MAX,
-        "AI_FLASK_TIMEOUT": AI_FLASK_TIMEOUT,
-        "AI_MODEL": AI_MODEL,
-        "AI_STREAM_TIMEOUT": AI_STREAM_TIMEOUT,
-        "AI_TEXT_MAX_CHARS": AI_TEXT_MAX_CHARS,
-        "AI_TIMEOUT": AI_TIMEOUT,
-        "AZRAEL_MAX_CALLS_MIN": AZRAEL_MAX_CALLS_MIN,
-        "AZRAEL_STYLE": AZRAEL_STYLE,
-        "DB_BACKEND": DB_BACKEND,
-        "DB_PATH": DB_PATH,
-        "EVOLUTION_USE_LLM": EVOLUTION_USE_LLM,
-        "LOG_DIR": LOG_DIR,
-        "_AI_CALL_TS": _AI_CALL_TS,
-        "_AI_DASHBOARD_LOCK": _AI_DASHBOARD_LOCK,
-        "_AI_DASHBOARD_MAX_PER_MIN": _AI_DASHBOARD_MAX_PER_MIN,
-        "_AI_DASHBOARD_RATE": _AI_DASHBOARD_RATE,
-        "_B71_SCHEMA_DOC": _B71_SCHEMA_DOC,
-        "_B71_TABLES": _B71_TABLES,
-        "_LLM_MODELS_CACHE": _LLM_MODELS_CACHE,
-        "_STREAM_DEAD_BACKOFF_UNTIL": _STREAM_DEAD_BACKOFF_UNTIL,
-    },
-)
-dashboard_app.register_blueprint(_nc_routes_recordings.bp)
-dashboard_app.register_blueprint(_nc_routes_archive.bp)
-dashboard_app.register_blueprint(_nc_routes_collections.bp)
-dashboard_app.register_blueprint(_nc_routes_scheduler.bp)
-dashboard_app.register_blueprint(_nc_routes_webhooks.bp)
-dashboard_app.register_blueprint(_nc_routes_insights.bp)
-dashboard_app.register_blueprint(_nc_routes_health.bp)
-dashboard_app.register_blueprint(_nc_routes_ai.bp)
 
 
 
@@ -25767,50 +24831,8 @@ def api_data_export():
         return jsonify(ok=False, error=str(e)), 500
 
 
-@dashboard_app.route("/api/config/snapshot")
-def api_config_snapshot():
-    """Exportiert app_config + learned_params als JSON-Snapshot (Backup)."""
-    try:
-        with db_conn() as conn:
-            cfg = {r["k"]: r["v"] for r in conn.execute("SELECT k, v FROM app_config").fetchall()}
-            learned = [dict(r) for r in conn.execute(
-                "SELECT k, v, confidence, samples, category FROM learned_params").fetchall()]
-        return jsonify(ok=True, generated_at=datetime.now(timezone.utc).isoformat(),
-                       app_config=cfg, learned_params=learned,
-                       counts={"config": len(cfg), "learned": len(learned)})
-    except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
 
 
-@dashboard_app.route("/api/config/restore", methods=["POST"])
-def api_config_restore():
-    """Stellt app_config aus einem Snapshot wieder her. confirm=true nötig.
-       Setzt NUR app_config-Schlüssel (keine learned_params, kein Schema)."""
-    data = request.get_json(silent=True) or {}
-    if not data.get("confirm"):
-        return jsonify(ok=False, error="confirm=true erforderlich"), 400
-    cfg = data.get("app_config") or {}
-    if not isinstance(cfg, dict):
-        return jsonify(ok=False, error="app_config muss ein Objekt sein"), 400
-    try:
-        restored = 0
-        failed = 0
-        for k, v in cfg.items():
-            try:
-                _cfg_set(k, json.loads(v) if isinstance(v, str) else v)
-                restored += 1
-            except Exception:
-                # BUG-FIX: vorher wurde auch nach Fehler restored+=1 gezählt
-                # weil der äußere except auf _cfg_set(k,v) fiel und ebenfalls
-                # restored+=1 ausführte. Jetzt: getrennter Fehler-Zähler.
-                try:
-                    _cfg_set(k, v)
-                    restored += 1
-                except Exception:
-                    failed += 1
-        return jsonify(ok=True, restored=restored, failed=failed)
-    except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
 
 
 @dashboard_app.route("/api/stats/timeline")
@@ -25838,53 +24860,10 @@ def api_stats_timeline():
         return jsonify(ok=False, error=str(e)), 500
 
 
-@dashboard_app.route("/api/schedule/list")
-def api_schedule_list():
-    """Listet geplante Aufnahmefenster (in app_config gespeichert)."""
-    try:
-        sched = _cfg_get("scheduled_recordings", []) or []
-        return jsonify(ok=True, count=len(sched), schedules=sched)
-    except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
 
 
-@dashboard_app.route("/api/schedule/add", methods=["POST"])
-def api_schedule_add():
-    """Fügt ein geplantes Aufnahmefenster hinzu.
-       Body: {username, weekday(0-6), hour(0-23), duration_min}"""
-    data = request.get_json(silent=True) or {}
-    u = (data.get("username") or "").lstrip("@")
-    if not u:
-        return jsonify(ok=False, error="username erforderlich"), 400
-    try:
-        # BUG-FIX: int(datetime.now().timestamp()) hat Sekunden-Granularität.
-        # Zwei Einträge in derselben Sekunde bekommen die gleiche ID →
-        # api_schedule_remove löscht beide. Fix: Mikrosekunden-Timestamp.
-        uid = int(datetime.now(timezone.utc).timestamp() * 1_000_000)
-        entry = {"id": uid,
-                 "username": u, "weekday": int(data.get("weekday", 0)) % 7,
-                 "hour": int(data.get("hour", 20)) % 24,
-                 "duration_min": int(data.get("duration_min", 60))}
-        sched = _cfg_get("scheduled_recordings", []) or []
-        sched.append(entry)
-        _cfg_set("scheduled_recordings", sched)
-        return jsonify(ok=True, added=entry, count=len(sched))
-    except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
 
 
-@dashboard_app.route("/api/schedule/remove", methods=["POST"])
-def api_schedule_remove():
-    """Entfernt ein geplantes Fenster per id."""
-    data = request.get_json(silent=True) or {}
-    sid = data.get("id")
-    try:
-        sched = _cfg_get("scheduled_recordings", []) or []
-        new = [s for s in sched if str(s.get("id")) != str(sid)]
-        _cfg_set("scheduled_recordings", new)
-        return jsonify(ok=True, removed=len(sched) - len(new), count=len(new))
-    except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
 
 
 # F15: Sync-Helper für Flask-Routen (Dashboard-Backend)
@@ -32587,6 +31566,120 @@ def _install_fast_eventloop():
     except Exception as e:
         log.warning("uvloop konnte nicht aktiviert werden: %s — Standard-Loop", e)
         return False
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Kompositionswurzel — v4.0-W116 ans Dateiende verschoben
+#
+# Vorher stand dieser Block mitten in der Datei (~Z. 24.500). Damit konnte
+# der Kontext nur Namen sehen, die BIS DORT definiert waren — _RES_HISTORY
+# und WATCHDOG_RES_SAMPLE_MIN (Z. ~30.600) waeren ein NameError beim Import
+# gewesen. Am Dateiende steht das ganze Modul, und jede weitere Welle kann
+# uebergeben, was sie braucht, ohne Definitionen zu verschieben.
+#
+# Reihenfolge ist unkritisch: die Blueprints registrieren nur Regeln, gelesen
+# wird der Kontext erst im Request. Die app-weiten Hooks bleiben auf der App.
+# ═══════════════════════════════════════════════════════════════════════
+# v4.0-W110: nc.archive braucht ARCHIVE_DIR fuer die Pfad-Sicherheitspruefung
+# in delete_archive_entry (realpath/commonpath gegen Path-Traversal).
+_nc_archive.configure(archive_dir=ARCHIVE_DIR)
+
+_nc_ctx.configure(
+    log=log,
+    log_event=log_event,
+    arg_int=_arg_int,
+    run_async=_run_async_from_flask,
+    recordings_dir=RECORDINGS_DIR,
+    ffmpeg_threads_bg=FFMPEG_THREADS_BG,
+    ffmpeg_nice_bg=FFMPEG_NICE_BG,
+    proc_is_recorder=_proc_is_recorder,
+    scraper_session=_scraper_session,
+    trigger_manual_recording=trigger_manual_recording,
+    stop_manual_recording=stop_manual_recording,
+    get_tags_for_tracking=get_tags_for_tracking,
+    # --- Archiv-Domaene (v4.0-W107) ---
+    intel_ensure_schema=_intel_ensure_schema,
+    intel_index_one=_intel_index_one,
+    intel_semantic=_intel_semantic,
+    intel_ps=_INTEL_PS,
+    # --- Auswertung und Webhooks (v4.0-W108) ---
+    latest_popularity=_latest_popularity,
+    post_json_threaded=_post_json_threaded,
+    # --- Systemzustand (v4.0-W110) ---
+    # Getter, nicht Wert: _BOT_START_TIME wird erst in main() gesetzt.
+    get_bot_start_time=lambda: _BOT_START_TIME,
+    get_cookie_health=get_cookie_health,
+    get_storage_stats=get_storage_stats,
+    # v4.0-W116: ebenfalls Getter — _MAIN_LOOP wird erst in run_bot() gebunden.
+    get_main_loop=lambda: _MAIN_LOOP,
+    # --- KI-Pfade (v4.0-W112) ---
+    llm_chat_sync=llm_chat_sync,
+    check_ai_models_sync=_check_ai_models_sync,
+    # Startwerte, nicht Helfer — deshalb gebuendelt statt als eigene Slots.
+    cfg={
+        "ARCHIVE_DIR": ARCHIVE_DIR,
+        "ARCHIVE_ALLOWED_EXTS": ARCHIVE_ALLOWED_EXTS,
+        "ARCHIVE_MAX_UPLOAD_MB": ARCHIVE_MAX_UPLOAD_MB,
+        "_MANUAL_ARCHIVE_DIR": _MANUAL_ARCHIVE_DIR,
+        "DB_INTEGRITY_ERRORS": DB_INTEGRITY_ERRORS,
+        # --- KI (v4.0-W112). Keiner dieser Namen wird im Bot je per `global`
+        # neu gebunden (nachgemessen), deshalb ist die Uebergabe beim Start
+        # sicher; die Dicts, Listen und das Lock werden per Referenz geteilt,
+        # sodass Bot und Blueprint denselben Zustand sehen.
+        "AI_CHAT_CONTEXT_CHARS": AI_CHAT_CONTEXT_CHARS,
+        "AI_CHAT_CONTEXT_MESSAGES": AI_CHAT_CONTEXT_MESSAGES,
+        "AI_CHAT_TITLE_MAX": AI_CHAT_TITLE_MAX,
+        "AI_FLASK_TIMEOUT": AI_FLASK_TIMEOUT,
+        "AI_MODEL": AI_MODEL,
+        "AI_STREAM_TIMEOUT": AI_STREAM_TIMEOUT,
+        "AI_TEXT_MAX_CHARS": AI_TEXT_MAX_CHARS,
+        "AI_TIMEOUT": AI_TIMEOUT,
+        "AZRAEL_MAX_CALLS_MIN": AZRAEL_MAX_CALLS_MIN,
+        "AZRAEL_STYLE": AZRAEL_STYLE,
+        "DB_BACKEND": DB_BACKEND,
+        "DB_PATH": DB_PATH,
+        "EVOLUTION_USE_LLM": EVOLUTION_USE_LLM,
+        "LOG_DIR": LOG_DIR,
+        "_AI_CALL_TS": _AI_CALL_TS,
+        "_AI_DASHBOARD_LOCK": _AI_DASHBOARD_LOCK,
+        "_AI_DASHBOARD_MAX_PER_MIN": _AI_DASHBOARD_MAX_PER_MIN,
+        "_AI_DASHBOARD_RATE": _AI_DASHBOARD_RATE,
+        "_B71_SCHEMA_DOC": _B71_SCHEMA_DOC,
+        "_B71_TABLES": _B71_TABLES,
+        "_LLM_MODELS_CACHE": _LLM_MODELS_CACHE,
+        "_STREAM_DEAD_BACKOFF_UNTIL": _STREAM_DEAD_BACKOFF_UNTIL,
+        # --- Einstellungen, Betrieb und Geld (v4.0-W116) ---
+        # BOT_VERSION/BUILD_STAMP standen in den Routen als
+        # globals().get("BOT_VERSION", "3.7") — im Blueprint waere das still der
+        # Default gewesen, das Dashboard haette ewig "3.7" angezeigt.
+        "BOT_VERSION": BOT_VERSION,
+        "BUILD_STAMP": BUILD_STAMP,
+        "COOKIE_FILE": COOKIE_FILE,
+        "DB_IMPORT_MAX_MB": DB_IMPORT_MAX_MB,
+        "PREFER_H264": PREFER_H264,
+        "UPDATE_ENABLED": UPDATE_ENABLED,
+        "UPDATE_RESTART_CMD": UPDATE_RESTART_CMD,
+        "WATCHDOG_RES_SAMPLE_MIN": WATCHDOG_RES_SAMPLE_MIN,
+        "_REVENUE_SQL_IN": _REVENUE_SQL_IN,
+        # Beide sind veraenderlicher Zustand und wandern als REFERENZ: der Bot
+        # invalidiert den Cookie-Cache (_COOKIES_CACHE.pop) und der Watchdog
+        # schreibt den Ressourcen-Ring (_RES_HISTORY.append), beides muss die
+        # Route im selben Moment sehen. Eine Kopie waere ein totes Panel.
+        "_COOKIES_CACHE": _COOKIES_CACHE,
+        "_RES_HISTORY": _RES_HISTORY,
+    },
+)
+dashboard_app.register_blueprint(_nc_routes_recordings.bp)
+dashboard_app.register_blueprint(_nc_routes_archive.bp)
+dashboard_app.register_blueprint(_nc_routes_collections.bp)
+dashboard_app.register_blueprint(_nc_routes_scheduler.bp)
+dashboard_app.register_blueprint(_nc_routes_webhooks.bp)
+dashboard_app.register_blueprint(_nc_routes_insights.bp)
+dashboard_app.register_blueprint(_nc_routes_health.bp)
+dashboard_app.register_blueprint(_nc_routes_ai.bp)
+dashboard_app.register_blueprint(_nc_routes_settings.bp)   # v4.0-W116
+dashboard_app.register_blueprint(_nc_routes_ops.bp)        # v4.0-W116
+dashboard_app.register_blueprint(_nc_routes_money.bp)      # v4.0-W116
 
 
 if __name__ == "__main__":

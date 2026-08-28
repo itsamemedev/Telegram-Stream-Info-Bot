@@ -471,7 +471,10 @@ nach Grösse und Eigenständigkeit, ein Paket pro Welle:
 | ✅ `nc/routes/collections.py` (W108) | 3 | 84 |
 | ✅ `nc/routes/webhooks.py` (W108) | 4 | 83 |
 | ✅ `nc/routes/scheduler.py` (W108) | 4 | 58 |
-| `nc/routes/ai.py` | 24 | 1.125 |
+| ✅ `nc/routes/ai.py` (W112) | 24 | 1.125 |
+| ✅ `nc/routes/settings.py` (W116) | 11 | 279 |
+| ✅ `nc/routes/ops.py` (W116) | 20 | 442 |
+| ✅ `nc/routes/money.py` (W116) | 8 | 193 |
 | `nc/routes/restream.py` | 16 | 437 |
 | `nc/routes/trackings.py` | 15 | 448 |
 | `nc/routes/ops.py` | 10 | 312 |
@@ -632,12 +635,12 @@ Supervisor fahren.
 
 ## 8 · Zielbild und Messlatte
 
-| | Start | heute (W104–W108) | nach Welle 3 | Ziel |
+| | Start | heute (W104–W116) | nach Welle 3 | Ziel |
 |---|---:|---:|---:|---:|
-| `bot.py` Zeilen | 34.487 | **32.713** | ~24.700 | **~8.000** |
-| Flask-Routen im Monolithen | 345 | **281** | ~30 | 0 |
-| Routen in Blueprints | 0 | **64** | ~315 | 345 |
-| `nc/`-Module | 83 | **91** | ~100 | ~115 |
+| `bot.py` Zeilen | 34.487 | **31.689** | ~24.700 | **~8.000** |
+| Flask-Routen im Monolithen | 345 | **226** | ~30 | 0 |
+| Routen in Blueprints | 0 | **129** | ~315 | 355 |
+| `nc/`-Module | 83 | **101** | ~100 | ~115 |
 | Grösste Datei im Projekt | `bot.py` | `bot.py` | `bot.py` | `templates/dashboard.html` |
 
 Die härtere Messlatte ist keine Zahl:
@@ -741,6 +744,51 @@ Routen 345 - Median Fremdbezuege 2 - <=2: 243 - >10: 8
 Helfer 203 - nur 1 Route: 133 - 2-3 Routen: 57 - >3 Routen: 13
 url_for im Projekt: 0
 ```
+
+---
+
+### Welle 3, Stand W116 — drei Blueprints auf einmal
+
+Erste Welle mit **drei** Paketen statt einem: `settings` (Konfiguration,
+Zeitplan, DB-Im/Export, Cookies), `ops` (Betrieb, Tunnel, Selbst-Update) und
+`money` (Spenden, Finanzamt). Zusammen **39 Routen und 914 Zeilen** aus dem
+Monolithen. Die Routentabelle war vorher und nachher bei **355 Regeln**, Pfad
+und `methods` gleich — geprüft mit dem neuen `tools/route_inventory.py`, das
+diesen Pflichtbeleg jetzt maschinell führt statt von Hand.
+
+Vier Befunde, die für die nächsten Wellen zählen:
+
+**Die Kompositionswurzel steht jetzt am Dateiende.** `nc.ctx.configure(...)`
+lag mitten in `bot.py` (~Z. 24.500) und konnte deshalb nur Namen sehen, die bis
+dorthin definiert waren. `_RES_HISTORY` und `WATCHDOG_RES_SAMPLE_MIN` stehen bei
+Z. 30.600 — ein NameError beim Import. Der Block ist ans Ende gewandert; damit
+kann jede weitere Welle übergeben, was sie braucht, ohne Definitionen zu
+verschieben.
+
+**`globals().get("X")` ist beim Umzug eine stille Falle.** Vier Routen lasen so
+`BOT_VERSION`, `BUILD_STAMP`, `_BOT_START_TIME` und `_MAIN_LOOP`. Im Monolithen
+ist `globals()` der Bot; im Blueprint ist es das Modul — die Route hätte
+weitergelaufen und ewig den Default geliefert („Version 3.7", „event_loop:
+false"). Ein Namens-Werkzeug sieht das nicht, weil der Name in einer
+Zeichenkette steht. **Vor jeder Welle `grep -n 'globals()' ` über die
+Kandidaten.**
+
+**Nicht jeder geteilte Zustand gehört in den Kontext.** Der Tunnel-Zustand liegt
+längst in `nc/proxyutil.py` (derselbe Dict, per `configure_proxy_select`
+injiziert). Vier Lesezugriffe dort statt fünf neuer Kontext-Einträge. Und ein
+Cache mit genau einem Eigentümer (`_FFMPEG_VER_CACHE`) wandert mit seinem
+Eigentümer ins Modul — dafür hat `bp_extract` jetzt `--mit`, samt Gegenprobe:
+liest den Cache noch jemand anders, bricht es ab statt still zu zerreissen.
+Der Kontext steht damit bei 25 Slots, genau an seiner Obergrenze — **die
+nächste Welle muss ohne neuen Slot auskommen.**
+
+**`test_smoke.py` hat wieder das gefunden, was keine statische Prüfung sieht.**
+Eine Route macht `import collections as _c` — im Monolithen harmlos, im
+Blueprint beschattet das den Kontextzugriff `_c()`, und jeder Zugriff stirbt mit
+„'module' object is not callable". Prüfkette grün, Route trotzdem 500.
+`bp_extract` warnt jetzt vor dieser Kollision. Und der Laufzeitstack gehört in
+jede Arbeitsumgebung: 200 aufgerufene Routen, 0 unerwartete 5xx ist eine andere
+Abnahme als „compiliert".
 
 ---
 
