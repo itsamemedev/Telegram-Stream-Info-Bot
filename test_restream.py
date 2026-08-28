@@ -2176,11 +2176,16 @@ def test_v40_wave2():
 def test_v40_modfeed():
     """v4.0: plattformübergreifender Moderations-Feed — Endpoint + Panel + Plattform-Erkennung."""
     src = open("bot.py").read()
-    assert '"/api/moderation/feed"' in src and "def api_moderation_feed(" in src
+    # v4.0-W117: die Route liegt im Blueprint nc/routes/stats.py. Vertrag
+    # unveraendert, nur eine Ebene tiefer verankert — plus die Zusicherung,
+    # dass der Monolith keine zweite Fassung behalten hat.
+    _st = open("nc/routes/stats.py", encoding="utf-8").read()
+    assert '"/api/moderation/feed"' in _st and "def api_moderation_feed(" in _st
+    assert "def api_moderation_feed(" not in src, "Doppel-Logik im Monolithen"
     # Plattform-Erkennung aus actor.
-    assert 'if "twitch" in a' in src and '"youtube" in a' in src, "keine Plattform-Erkennung"
+    assert 'if "twitch" in a' in _st and '"youtube" in a' in _st, "keine Plattform-Erkennung"
     # nur Durchgreif-Aktionen im Feed.
-    assert "kind IN ('timeout','ban','flag','delete','warn')" in src, "Feed filtert Aktionen nicht"
+    assert "kind IN ('timeout','ban','flag','delete','warn')" in _st, "Feed filtert Aktionen nicht"
     dash = open("templates/dashboard.html").read()
     assert 'id="pnl_modfeed"' in dash and "async function loadModFeed(" in dash
     assert "mf-kick" in dash and "mf-twitch" in dash and "mf-youtube" in dash, "keine Plattform-Badges"
@@ -3466,7 +3471,12 @@ def test_v40_w32_bundle_and_harden():
                 for ln in _t.splitlines()
                 if "int(request.args.get" in ln and "clamp_int(request.args.get(name)" not in ln]
     assert not raw_hits, f"noch rohe Query-Parser (Flask-500-Risiko): {raw_hits[:2]}"
-    _n_arg_int = sum(t.count("_arg_int(") for t in _quellen.values())
+    # v4.0-W117: in den Blueprints heisst derselbe Parser _c().arg_int — der
+    # Vertrag zaehlt beide Schreibweisen. Nur die Bot-Schreibweise zu zaehlen
+    # haette die Haertung mit jeder Welle scheinbar schrumpfen lassen, obwohl
+    # keine einzige Route ungehaertet wurde.
+    _n_arg_int = sum(t.count("_arg_int(") + t.count("_c().arg_int(")
+                     for t in _quellen.values())
     assert _n_arg_int >= 25, (
         "Query-Parser nicht flächendeckend vereinheitlicht (%d Vorkommen über %d Dateien)"
         % (_n_arg_int, len(_quellen)))

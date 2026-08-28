@@ -559,7 +559,6 @@ _BOOT_TS = _time_mod.time()               # F82: Prozess-Start für /api/health-
 import collections as _collections        # B4: war mid-file bei Z. 1175
 import socket as _socket                  # B4: war mid-file bei Z. 9725
 import signal as _signal_mod              # B4: war function-local — zentral importiert
-import csv as _csv                        # B4: war function-local in api_trackings_export
 from datetime import datetime, timezone, timedelta
 from typing import Optional, List, Tuple
 # v4.0-W32: reine Helfer-Module früh importieren — _env_int/_env_int_range werden
@@ -598,12 +597,17 @@ from nc.routes import ai as _nc_routes_ai                    # v4.0-W112: KI-Blu
 from nc.routes import settings as _nc_routes_settings        # v4.0-W116: Einstellungen
 from nc.routes import ops as _nc_routes_ops                  # v4.0-W116: Betrieb
 from nc.routes import money as _nc_routes_money              # v4.0-W116: Geld
+from nc.routes import trackings as _nc_routes_trackings      # v4.0-W117: Trackings
+from nc.routes import stats as _nc_routes_stats              # v4.0-W117: Auswertung
 from nc import updater as _nc_updater                        # v4.0-W115: Selbst-Update aus dem GitHub-Repo
 from nc import donationsdb as _nc_donationsdb                # v4.0-W116: manuell erfasste Spenden lesen
 # Diese beiden Routen ruft der Bot auch INTERN auf (Telegram /sysres und die
 # Aggregat-Route /api/dashboard-bundle) — sie sind dort gewoehnliche
 # Funktionen, keine Endpunkte. Deshalb importiert statt kopiert.
 from nc.routes.health import api_health_score, api_system_resources  # noqa: F401
+# v4.0-W117: /api/bulk ruft die View-Funktion direkt auf, damit die
+# Datenstruktur 1:1 identisch bleibt — deshalb der Name auch hier.
+from nc.routes.stats import api_stats  # noqa: F401
 from http.cookiejar import MozillaCookieJar
 from logging.handlers import RotatingFileHandler   # B4: war mid-file bei Z. 664
 from urllib.request import urlopen as _urlopen, Request as _UrlRequest
@@ -811,13 +815,13 @@ from nc.dbwrap import db_conn, configure_db  # noqa: F401
 
 # V37: Drei Domänen-Module, möglich geworden durch die db_conn-Verschiebung —
 # diese Funktionen hängen an keinem Bot-Global mehr.
+from nc import stats as _nc_stats          # v4.0-W117: get_stats + Status-Verteilung
 from nc.stats import (get_per_user_stats, get_activity_pulse, get_lives_heatmap,
                       _collect_session_stats, _streamer_health, _dir_stats,
                       get_recordings_heatmap)  # noqa: F401
 from nc.archive import evaluate_archive_rule  # noqa: F401
 from nc import archive as _nc_archive     # v4.0-W110: Archiv-Datenzugriff
-from nc.notes import (delete_annotation,
-                      set_tracking_notes)  # noqa: F401
+from nc.notes import delete_annotation  # noqa: F401
 # V37-DBX: SQL-Export/Import (SQLite <-> MariaDB). Braucht nur db_conn.
 # V37-DISC: Disconnect-Analyse aus recording_attempts. Die Tabelle protokolliert
 # seit jeher jeden Abbruch mitsamt ffmpeg-stderr — ausgewertet hat es nie jemand.
@@ -4066,17 +4070,6 @@ def add_ai_log_entry(chat_id, user_id, prompt, response, model, duration_ms,
     return _nc_aidb.add_log_entry(chat_id, user_id, prompt, response, model,
                                   duration_ms, error, file_kind, file_size)
 
-def get_recent_ai_log(limit=50):
-    try:
-        with db_conn() as conn:
-            return conn.execute(
-                "SELECT id, chat_id, user_id, prompt, response, model, duration_ms, "
-                "error, file_kind, file_size, created_at "
-                "FROM ai_log ORDER BY id DESC LIMIT ?", (limit,)
-            ).fetchall()
-    except Exception as e:
-        log.warning(f"get_recent_ai_log failed: {e}")
-        return []
 
 def save_tiktok_check(user_id: int, username: str, data: dict):
     with db_conn() as conn:
@@ -4113,27 +4106,13 @@ def get_all_checks(limit=100, offset=0):
 #
 # Deshalb zwei Massnahmen: hier ein TTL-Cache, und in api_stats() ein
 # lean-Modus, der die Aggregate fuer den Puls komplett auslaesst.
-_STATS_CACHE = {"ts": 0.0, "val": None}
 STATS_CACHE_TTL = _env_int("STATS_CACHE_TTL", 120)   # Sekunden, 0 = aus
 
 
 def get_stats(force: bool = False):
-    now = _time_mod.monotonic()
-    c = _STATS_CACHE
-    if (not force and c["val"] is not None and STATS_CACHE_TTL > 0
-            and now - c["ts"] < STATS_CACHE_TTL):
-        return c["val"]
-    with db_conn() as conn:
-        total = conn.execute("SELECT COUNT(*) FROM tiktok_checks").fetchone()[0]
-        unique_users = conn.execute("SELECT COUNT(DISTINCT telegram_user_id) FROM tiktok_checks").fetchone()[0]
-        top = conn.execute("SELECT username, COUNT(*) cnt FROM tiktok_checks GROUP BY username "
-                           "ORDER BY cnt DESC LIMIT 10").fetchall()
-    # Rows in einfache Tupel kopieren: sqlite3.Row haengt an der Connection,
-    # die beim Verlassen des with-Blocks geschlossen wird.
-    val = (total, unique_users,
-           [{"username": r["username"], "cnt": r["cnt"]} for r in top])
-    _STATS_CACHE.update(ts=now, val=val)
-    return val
+    # v4.0-W117: Koerper und Cache nach nc/stats.py — der /api/stats-Blueprint
+    # braucht sie ebenso wie der Bot, und ueber nc.ctx waere das ein Slot mehr.
+    return _nc_stats.get_stats(force)
 
 # F64: Per-Chat Tracking-Quota
 # Verhindert dass ein einzelner Chat hunderte Trackings anlegt → DB-Bloat,
@@ -4171,83 +4150,9 @@ def add_tracking(group_id: int, username: str, added_by: int) -> bool:
 
 
 def bulk_add_trackings(group_id: int, usernames: list, added_by: int) -> dict:
-    """F56: Bulk-Import — viele Usernames auf einmal anlegen. Returns Stats:
-         { added: [...], duplicates: [...], invalid: [...], quota_exceeded: [...] }
-       'duplicates' = bereits in diesem Chat getrackt.
-       'invalid' = leere oder regex-failing Usernames.
-       'quota_exceeded' = nach MAX_TRACKINGS_PER_CHAT abgewiesen.
-       Durchläuft die Liste defensiv: ein einzelner Fehler stoppt nicht den Rest.
-
-       F56-Bug-Fix B22: Per-Row COMMIT + ROLLBACK bei Fehler.
-       Vorher hatten wir EINEN großen TXN für alle Inserts. Auf MariaDB-Seite
-       war das gefährlich: wenn ein einzelner INSERT mit z.B. Lock-Timeout
-       fehlschlug, war die TXN poisoned — alle FOLGENDEN INSERTs scheiterten
-       auch (selbst die guten), und der finale conn.commit() warf alles weg.
-       Jetzt: jeder Insert ist sein eigener TXN. Bei Fehler explizit rollback,
-       weitermachen. Etwas mehr Roundtrips, aber bulletproof gegen
-       Partial-Failure-Szenarien.
-
-       F64: MAX_TRACKINGS_PER_CHAT enforcement. Zählt vorab existing + plant
-       wie viele dazukommen, schneidet danach ab mit quota_exceeded-Markierung."""
-    added, duplicates, invalid, quota_exceeded = [], [], [], []
-    now_iso = datetime.now(timezone.utc).isoformat()
-    seen_in_batch = set()
-    with db_conn() as conn:
-        # Bereits existierende auf einmal abrufen — spart N+1 Queries
-        existing_rows = conn.execute(
-            "SELECT username FROM trackings WHERE group_id=?", (group_id,)
-        ).fetchall()
-        existing = {r["username"] for r in existing_rows}
-        # F64: Wie viel Headroom haben wir noch in diesem Chat?
-        if MAX_TRACKINGS_PER_CHAT > 0:
-            remaining_quota = MAX_TRACKINGS_PER_CHAT - len(existing)
-        else:
-            remaining_quota = None   # unbegrenzt
-
-        for raw in usernames:
-            u = clean_username(raw) if raw else None
-            if not u:
-                invalid.append(raw); continue
-            if u in seen_in_batch:
-                # Doppelt im Input — als Duplicate werten
-                duplicates.append(u); continue
-            seen_in_batch.add(u)
-            if u in existing:
-                duplicates.append(u); continue
-            # F64: Quota-Check vor INSERT
-            if remaining_quota is not None and remaining_quota <= 0:
-                quota_exceeded.append(u)
-                continue
-            try:
-                conn.execute(
-                    "INSERT INTO trackings (group_id, username, added_by, created_at) "
-                    "VALUES (?,?,?,?)",
-                    (group_id, u, added_by, now_iso))
-                # B22: per-Row commit damit ein späterer Fehler nicht alle
-                # früheren INSERTs invalidiert
-                conn.commit()
-                added.append(u)
-                if remaining_quota is not None:
-                    remaining_quota -= 1
-            except DB_INTEGRITY_ERRORS:
-                # Race: jemand anders fügt parallel hinzu. Als Duplicate werten.
-                # B22: rollback wegen MariaDB-TXN-State (no-op auf SQLite, aber nötig
-                # damit die nächste INSERT-Iteration auf MariaDB nicht in poisoned-TXN landet).
-                try: conn.rollback()
-                except Exception: pass
-                duplicates.append(u)
-            except Exception as e:
-                # B22: NON-IntegrityError (Lock-Timeout, Connection-Lost, etc.) —
-                # rollback + weiter. Sonst poisoned die TXN auf MariaDB und alle
-                # folgenden INSERTs scheitern auch.
-                try: conn.rollback()
-                except Exception: pass
-                log.warning(f"bulk_add_trackings: {u}: {e}")
-                invalid.append(u)
-        # Final commit ist no-op (jede Row hat schon commited oder rolled back)
-        # aber schadet nicht — bleibt aus Konsistenz drin.
-    return {"added": added, "duplicates": duplicates, "invalid": invalid,
-            "quota_exceeded": quota_exceeded}
+    """F56: Bulk-Import — viele Usernames auf einmal anlegen.
+       v4.0-W117: Koerper nach nc/trackingdb.py; Signatur und Verhalten unveraendert."""
+    return _nc_trackingdb.bulk_add_trackings(group_id, usernames, added_by)
 
 def remove_tracking(group_id: int, username: str):
     """F51-Bug-Fix B6: Beim Löschen eines Trackings auch alle in-memory
@@ -4276,61 +4181,33 @@ def remove_tracking(group_id: int, username: str):
         _PENDING_OFFLINE_SINCE.pop(tid, None)
 
 def get_trackings_for_group(group_id: int):
-    with db_conn() as conn:
-        return conn.execute("SELECT * FROM trackings WHERE group_id=?", (group_id,)).fetchall()
+    return _nc_trackingdb.get_trackings_for_group(group_id)
 
 def get_all_active_trackings(include_paused: bool = False):
-    """F53: Default skip paused trackings — Worker holt nur was wirklich
-       gepollt werden soll. Dashboard nutzt include_paused=True um die
-       Tabelle vollständig anzuzeigen (mit Pause-Badge)."""
-    with db_conn() as conn:
-        if include_paused:
-            return conn.execute("SELECT * FROM trackings").fetchall()
-        # paused IS NULL fängt auch alte Rows ab die noch keine paused-Spalte hatten
-        # (Migration ist defensiv aber sicher ist sicher).
-        return conn.execute(
-            "SELECT * FROM trackings WHERE COALESCE(paused, 0) = 0").fetchall()
+    """F53: Default skip paused trackings. v4.0-W117: Koerper in nc/trackingdb.py."""
+    return _nc_trackingdb.get_all_active_trackings(include_paused)
 
 
 def set_tracking_paused(tracking_id: int, paused: bool) -> bool:
-    """F53: Pause/Resume Toggle. Returns True wenn Row existiert (egal ob
-       der Wert geändert wurde), False wenn tracking_id nicht existiert.
+    """F53: Pause/Resume Toggle. v4.0-W117: Koerper in nc/trackingdb.py; das
+       Aufraeumen des In-Memory-Zustands beim Resume (B54) macht weiterhin der
+       Bot — ueber den on_resume-Rueckruf, der beim Start injiziert wird."""
+    return _nc_trackingdb.set_tracking_paused(tracking_id, paused)
 
-       F53-Bug-Fix B33: Vorher returnten wir `rowcount > 0`. Auf MariaDB ist
-       rowcount aber die Anzahl der TATSÄCHLICH GEÄNDERTEN Rows (nicht der
-       MATCHED). Folge: bei einem schon-paused Tracking → rowcount=0 →
-       return False → Dashboard kriegt 404 'not found' obwohl das Tracking
-       existiert. SQLite zeigt das Problem nicht. Fix: Existenz separat
-       checken, dann UPDATE.
 
-       B54: Beim RESUME (paused=False) werden auch die auto_disabled-Flags
-       gecleart. Sonst würde das Tracking sofort wieder gepaust werden beim
-       nächsten stall_killed-Streak (was die in-memory states schon haben).
-       Beim PAUSE wird auto_disabled NICHT gesetzt (manueller Pause ≠ Auto)."""
-    with db_conn() as conn:
-        exists = conn.execute(
-            "SELECT 1 FROM trackings WHERE id=? LIMIT 1",
-            (tracking_id,)).fetchone()
-        if not exists:
-            return False
-        if paused:
-            conn.execute("UPDATE trackings SET paused=1 WHERE id=?",
-                         (tracking_id,))
-        else:
-            # B54: explizit auto_disable-Flags löschen beim Resume
-            conn.execute(
-                "UPDATE trackings SET paused=0, "
-                "  auto_disabled_at=NULL, auto_disabled_reason=NULL "
-                "WHERE id=?",
-                (tracking_id,))
-            # In-memory states wegputzen damit der Streak nicht sofort wieder zuschlägt
-            _STREAM_DEAD_STREAK.pop(tracking_id, None)
-            _STREAM_DEAD_BACKOFF_UNTIL.pop(tracking_id, None)
-            _PENDING_OFFLINE_COUNT.pop(tracking_id, None)
-            _PENDING_OFFLINE_SINCE.pop(tracking_id, None)
-            _EARLY_DISCONNECT_RETRY.pop(tracking_id, None)
-        conn.commit()
-        return True
+def _tracking_resume_cleanup(tracking_id: int) -> None:
+    """B54: beim Entpausen die In-Memory-Zaehler des Live-Workers loeschen.
+
+    Diese fuenf Dicts gehoeren dem Recorder, nicht der Datenbank — deshalb
+    bleiben sie hier und nc/trackingdb.py ruft nur zurueck (v4.0-W117). Ohne
+    das Aufraeumen wuerde der naechste stall_killed-Streak das Tracking sofort
+    wieder pausieren, und der Betreiber saehe einen Schalter, der nichts tut.
+    """
+    _STREAM_DEAD_STREAK.pop(tracking_id, None)
+    _STREAM_DEAD_BACKOFF_UNTIL.pop(tracking_id, None)
+    _PENDING_OFFLINE_COUNT.pop(tracking_id, None)
+    _PENDING_OFFLINE_SINCE.pop(tracking_id, None)
+    _EARLY_DISCONNECT_RETRY.pop(tracking_id, None)
 
 
 
@@ -4584,114 +4461,20 @@ def get_event_log(limit: int = 100, kind: Optional[str] = None,
         return conn.execute(sql, params).fetchall()
 
 # ---------- X2: Tracking-Tags ----------
-def add_tracking_tag(tracking_id: int, tag: str) -> bool:
-    """Tag normalisiert (lowercase, gestrippt, max 30 chars)."""
-    tag = (tag or "").strip().lower()[:30]
-    if not tag or not re.match(r'^[a-z0-9_\-]+$', tag):
-        return False
-    try:
-        with db_conn() as conn:
-            conn.execute(
-                "INSERT INTO tracking_tags (tracking_id, tag, created_at) "
-                "VALUES (?,?,?)",
-                (tracking_id, tag, datetime.now(timezone.utc).isoformat()))
-            conn.commit()
-            return True
-    except DB_INTEGRITY_ERRORS:
-        return False    # bereits vorhanden
-    except Exception as e:
-        log.warning(f"add_tracking_tag: {e}")
-        return False
 
-def remove_tracking_tag(tracking_id: int, tag: str) -> bool:
-    tag = (tag or "").strip().lower()
-    if not tag: return False
-    try:
-        with db_conn() as conn:
-            cur = conn.execute(
-                "DELETE FROM tracking_tags WHERE tracking_id=? AND tag=?",
-                (tracking_id, tag))
-            conn.commit()
-            return cur.rowcount > 0
-    except Exception:
-        return False
 
-def get_tags_for_tracking(tracking_id: int) -> List[str]:
-    try:
-        with db_conn() as conn:
-            rows = conn.execute(
-                "SELECT tag FROM tracking_tags WHERE tracking_id=? ORDER BY tag",
-                (tracking_id,)).fetchall()
-        return [r["tag"] for r in rows]
-    except Exception:
-        return []
 
 def get_all_tags_with_counts() -> List[dict]:
     """Alle Tags + Anzahl Trackings die diesen Tag haben."""
-    try:
-        with db_conn() as conn:
-            rows = conn.execute(
-                "SELECT tag, COUNT(*) AS cnt FROM tracking_tags "
-                "GROUP BY tag ORDER BY cnt DESC, tag ASC"
-            ).fetchall()
-        return [{"tag": r["tag"], "count": r["cnt"]} for r in rows]
-    except Exception:
-        return []
+    return _nc_trackingdb.get_all_tags_with_counts()
 
 # ---------- X3: Tracking-Priority (VIP) ----------
-def set_tracking_priority(tracking_id: int, level: int,
-                          custom_interval: Optional[int] = None) -> bool:
-    """level 0=normal, 1=high (15s), 2=vip (10s). Custom interval overrides level."""
-    level = max(0, min(2, int(level)))
-    if custom_interval is not None:
-        custom_interval = max(5, min(3600, int(custom_interval)))
-    try:
-        with db_conn() as conn:
-            # Existiert tracking?
-            exists = conn.execute(
-                "SELECT 1 FROM trackings WHERE id=?", (tracking_id,)).fetchone()
-            if not exists: return False
-            # Upsert via DELETE+INSERT (portabel SQLite+MariaDB)
-            conn.execute("DELETE FROM tracking_priority WHERE tracking_id=?",
-                         (tracking_id,))
-            conn.execute(
-                "INSERT INTO tracking_priority "
-                "(tracking_id, priority_level, custom_interval_secs, updated_at) "
-                "VALUES (?,?,?,?)",
-                (tracking_id, level, custom_interval,
-                 datetime.now(timezone.utc).isoformat()))
-            conn.commit()
-        log_event("tracking.priority", "info",
-                  f"Tracking #{tracking_id} priority={level} interval={custom_interval}",
-                  {"tracking_id": tracking_id, "level": level,
-                   "custom_interval": custom_interval})
-        return True
-    except Exception as e:
-        log.warning(f"set_tracking_priority: {e}")
-        return False
 
-def get_tracking_priority(tracking_id: int) -> dict:
-    try:
-        with db_conn() as conn:
-            row = conn.execute(
-                "SELECT priority_level, custom_interval_secs FROM tracking_priority "
-                "WHERE tracking_id=?", (tracking_id,)).fetchone()
-        if not row:
-            return {"level": 0, "custom_interval": None}
-        return {"level": row["priority_level"] or 0,
-                "custom_interval": row["custom_interval_secs"]}
-    except Exception:
-        return {"level": 0, "custom_interval": None}
 
 def get_priority_poll_interval(tracking_id: int, default_interval: int) -> int:
     """Polling-Intervall basierend auf Priority. Wird von _schedule_next_check
-       benutzt. Höhere Priority = kürzeres Intervall."""
-    p = get_tracking_priority(tracking_id)
-    if p["custom_interval"] is not None:
-        return p["custom_interval"]
-    if p["level"] >= 2:    return min(default_interval, 10)    # VIP
-    if p["level"] >= 1:    return min(default_interval, 15)    # high
-    return default_interval
+       benutzt. Hoehere Priority = kuerzeres Intervall."""
+    return _nc_trackingdb.get_priority_poll_interval(tracking_id, default_interval)
 
 # ---------- X4: Recording-Notes ----------
 
@@ -5027,78 +4810,10 @@ def record_tiktok_status(status_code: int):
 
 def get_tiktok_status_distribution() -> dict:
     """Returns: {since_seconds, total, by_code: [{code, count, pct}]}"""
-    total = sum(_TIKTOK_STATUS_COUNTER.values())
-    by_code = []
-    for code, count in _TIKTOK_STATUS_COUNTER.most_common():
-        by_code.append({
-            "code": code,
-            "count": count,
-            "pct": round(100.0 * count / total, 1) if total else 0,
-        })
-    return {
-        "since_seconds": int(_time_mod.monotonic() - _TIKTOK_STATUS_FIRST_SEEN),
-        "total": total,
-        "by_code": by_code,
-    }
+    return _nc_stats.get_tiktok_status_distribution()
 
 # ---------- X16: Failure-Pattern-Clusterer ----------
-_FAILURE_PATTERNS = [
-    ("403/Forbidden",       re.compile(r"\b403\b|forbidden", re.I)),
-    ("Connection-Timeout",  re.compile(r"connection.*timed out|timed out", re.I)),
-    ("HTTP-404 (stream)",   re.compile(r"http.{0,3}error.{0,3}404|not found", re.I)),
-    ("DNS/Network",         re.compile(r"name resolution|dns|unable to find", re.I)),
-    ("Broken-Pipe",         re.compile(r"broken pipe|epipe", re.I)),
-    ("Codec-Error",         re.compile(r"invalid data found|codec.*not.*found", re.I)),
-    ("Moov-Missing",        re.compile(r"moov atom not found", re.I)),
-    ("Bitstream-Error",     re.compile(r"non-monotonous dts|aac.*adts", re.I)),
-    ("TLS-Handshake",       re.compile(r"ssl|tls|certificate", re.I)),
-    ("Rate-Limit (429)",    re.compile(r"\b429\b|too many requests", re.I)),
-]
 
-def cluster_failures(hours: int = 24) -> dict:
-    """Liest stderr_tail der letzten N Stunden, gruppiert nach Pattern."""
-    hours = max(1, min(int(hours or 24), 168))
-    since = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
-    counts = {label: 0 for label, _ in _FAILURE_PATTERNS}
-    counts["Unknown"] = 0
-    total_failures = 0
-    examples = {}    # pattern -> example stderr-snippet
-    try:
-        with db_conn() as conn:
-            rows = conn.execute(
-                "SELECT username, stderr_tail FROM recording_attempts "
-                "WHERE started_at >= ? "
-                "  AND outcome NOT IN ('ok', 'stall_killed_partial', 'running') "
-                "ORDER BY id DESC LIMIT 500",
-                (since,)).fetchall()
-    except Exception as e:
-        return {"hours": hours, "total": 0, "error": str(e), "patterns": []}
-    for r in rows:
-        tail = r["stderr_tail"] or ""
-        total_failures += 1
-        matched = False
-        for label, regex in _FAILURE_PATTERNS:
-            if regex.search(tail):
-                counts[label] += 1
-                if label not in examples:
-                    examples[label] = (r["username"], tail[-150:].strip())
-                matched = True
-                break
-        if not matched and tail.strip():
-            counts["Unknown"] += 1
-    patterns = []
-    for label, _ in _FAILURE_PATTERNS + [("Unknown", None)]:
-        if counts.get(label, 0) > 0:
-            example = examples.get(label)
-            patterns.append({
-                "label": label,
-                "count": counts[label],
-                "pct": round(100.0 * counts[label] / total_failures, 1) if total_failures else 0,
-                "example_user": example[0] if example else None,
-                "example_snippet": example[1] if example else None,
-            })
-    patterns.sort(key=lambda x: -x["count"])
-    return {"hours": hours, "total": total_failures, "patterns": patterns}
 
 # ---------- X17: Activity-Pulse (1min-Resolution) ----------
 
@@ -5346,43 +5061,6 @@ def universal_search(query: str, limit: int = 30) -> dict:
 # ---------- X22: Cookie-Refresh-Days ----------
 
 # ---------- X23: Tracking Quick-Restart ----------
-def quick_restart_tracking(tracking_id: int) -> dict:
-    """Setzt den State eines Trackings zurück: cleared backoff,
-       early-disconnect, stream-dead, queued sofort für Recheck."""
-    info = {"tracking_id": tracking_id, "actions": []}
-    try:
-        with db_conn() as conn:
-            row = conn.execute(
-                "SELECT username FROM trackings WHERE id=?",
-                (tracking_id,)).fetchone()
-        if not row:
-            return {"ok": False, "error": "tracking not found"}
-        username = row["username"]
-        info["username"] = username
-    except Exception as e:
-        return {"ok": False, "error": str(e)}
-    if _STREAM_DEAD_STREAK.pop(tracking_id, None):
-        info["actions"].append("cleared stream_dead_streak")
-    if _STREAM_DEAD_BACKOFF_UNTIL.pop(tracking_id, None):
-        info["actions"].append("cleared stream_dead_backoff")
-    if _EARLY_DISCONNECT_RETRY.pop(tracking_id, None):
-        info["actions"].append("cleared early_disconnect_retries")
-    if _PENDING_OFFLINE_COUNT.pop(tracking_id, None):
-        _PENDING_OFFLINE_SINCE.pop(tracking_id, None)
-        info["actions"].append("cleared pending_offline")
-    if _RATE_LIMIT_BACKOFF.pop(username, None):
-        info["actions"].append("cleared rate_limit_backoff")
-    if _RATE_LIMIT_PENALTY.pop(username, None):
-        info["actions"].append("cleared rate_limit_penalty")
-    _LIVE_STATUS_CACHE.pop(username, None)
-    info["actions"].append("flushed live_status_cache")
-    _NEXT_CHECK_AT[tracking_id] = 0
-    info["actions"].append("queued immediate recheck")
-    log_event("tracking.restart", "info",
-              f"Quick-Restart Tracking #{tracking_id} @{username}",
-              {"tracking_id": tracking_id, "username": username,
-               "actions": info["actions"]})
-    return {"ok": True, **info}
 
 # ---------- X24: Stream-URL-Inspector (live test) ----------
 async def inspect_stream_url(username: str, session=None) -> dict:
@@ -6649,7 +6327,7 @@ async def cleanup(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     cleaned_checks += over
             if cleaned_checks:
                 conn.commit()
-                _STATS_CACHE["val"] = None       # Cache sofort invalidieren
+                _nc_stats.invalidate_stats_cache()   # Cache sofort invalidieren
     except Exception as e:
         log.warning("Retention tiktok_checks fehlgeschlagen: %s", e)
 
@@ -10788,41 +10466,6 @@ def api_pulse():
                    deck=_j(api_restream_deck))
 
 
-@dashboard_app.route("/api/stats")
-def api_stats(lean: bool = False):
-    """lean=True (aus /api/pulse): nur die drei billigen, indizierten Zaehler.
-       Die teuren Gesamt-Aggregate ueber tiktok_checks bleiben weg — der
-       Header zeigt sie ohnehin nicht (siehe Kommentar an get_stats)."""
-    if lean:
-        with db_conn() as conn:
-            active_t = conn.execute("SELECT COUNT(*) FROM trackings").fetchone()[0]
-            live_now = conn.execute("SELECT COUNT(*) FROM trackings WHERE last_live=1").fetchone()[0]
-            creators = conn.execute(
-                "SELECT COUNT(DISTINCT username) FROM trackings").fetchone()[0]
-            rec_count = conn.execute(
-                "SELECT COUNT(*) FROM recordings WHERE deleted_at IS NULL").fetchone()[0]
-        return jsonify(active_trackings=active_t, live_now=live_now,
-                       creators=creators, recordings_count=rec_count, lean=True)
-    total, unique_users, top = get_stats()
-    with db_conn() as conn:
-        active_t = conn.execute("SELECT COUNT(*) FROM trackings").fetchone()[0]
-        live_now = conn.execute("SELECT COUNT(*) FROM trackings WHERE last_live=1").fetchone()[0]
-        # Die Kachel "Creator" zeigte bisher unique_users — das sind DISTINCT
-        # telegram_user_id aus tiktok_checks, also die Menschen, die mal /check
-        # getippt haben. Ein neu getrackter Streamer änderte daran nichts, die
-        # Zahl stand tage- bis wochenlang still. "Creator" sind die getrackten
-        # Handles; unique_users bleibt für die Checks-Kachel erhalten.
-        creators = conn.execute(
-            "SELECT COUNT(DISTINCT username) FROM trackings").fetchone()[0]
-        # BUG-FIX (Konsistenz): soft-deleted (X19 Trash) ausschließen. Vorher
-        # zählte stats ALLE recordings, während get_all_recordings / overview /
-        # captures-Liste gelöschte ausschließen → Header-Count wich nach dem
-        # In-den-Papierkorb-Verschieben von der sichtbaren Liste ab.
-        rec_count = conn.execute(
-            "SELECT COUNT(*) FROM recordings WHERE deleted_at IS NULL").fetchone()[0]
-    return jsonify(total_checks=total, unique_users=unique_users, creators=creators,
-                   top=[{"username": r["username"], "count": r["cnt"]} for r in top],
-                   active_trackings=active_t, live_now=live_now, recordings_count=rec_count)
 
 @dashboard_app.route("/api/checks")
 def api_checks():
@@ -10920,139 +10563,11 @@ def api_summary_preview():
 # kein Discord-Post, keine gruppenbezogene Ansicht. Beides sah für den
 # Betreiber gleich aus — "der hinzugefügte Streamer taucht nirgends auf".
 # Deshalb löst der Server die Gruppe jetzt selbst auf, wenn keine kommt.
-def _dashboard_track_group() -> int:
-    """Standardgruppe für Trackings ohne explizite group_id.
-       Reihenfolge: DASHBOARD_TRACK_GROUP_ID → DAILY_SUMMARY_CHAT_ID →
-       die meistgenutzte group_id aus trackings (dort läuft der Betrieb
-       nachweislich) → DISCORD_TRACK_GROUP_ID → DISCORD_GUILD_ID →
-       ALLOWED_CHAT_IDS, falls es genau einen gibt. 0 = nicht auflösbar,
-       der Aufrufer meldet das mit Klartext statt still zu schlucken.
-       Als Funktion gelesen, nicht als Modul-Konstante: .env ist zum
-       Import-Zeitpunkt teils noch nicht geladen."""
-    gid = _env_int("DASHBOARD_TRACK_GROUP_ID", 0)
-    if gid:
-        return gid
-    if DAILY_SUMMARY_CHAT_ID:
-        return DAILY_SUMMARY_CHAT_ID
-    try:
-        with db_conn() as conn:
-            row = conn.execute(
-                "SELECT group_id, COUNT(*) AS n FROM trackings "
-                "GROUP BY group_id ORDER BY n DESC LIMIT 1").fetchone()
-        if row and row["group_id"]:
-            return int(row["group_id"])
-    except Exception as e:
-        log.warning("Standardgruppe fürs Dashboard: DB-Abfrage fehlgeschlagen: %s", e)
-    for cand in (DISCORD_TRACK_GROUP_ID, DISCORD_GUILD_ID):
-        if cand:
-            return int(cand)
-    if len(ALLOWED_CHAT_IDS) == 1:
-        return int(next(iter(ALLOWED_CHAT_IDS)))
-    return 0
 
 
-@dashboard_app.route("/api/trackings/groups")
-def api_trackings_groups():
-    """Bekannte Zielgruppen samt Belegung + die aufgelöste Standardgruppe.
-       Damit kann das Dashboard eine Auswahl anbieten, statt den Betreiber
-       eine Chat-ID tippen zu lassen, die er nirgends ablesen kann."""
-    default_gid = _dashboard_track_group()
-
-    def _src(gid: int) -> str:
-        return "discord" if (DISCORD_GUILD_ID and gid == DISCORD_GUILD_ID) else "telegram"
-
-    groups = []
-    try:
-        with db_conn() as conn:
-            rows = conn.execute(
-                "SELECT group_id, COUNT(*) AS n FROM trackings "
-                "GROUP BY group_id ORDER BY n DESC").fetchall()
-        for r in rows:
-            gid = int(r["group_id"] or 0)
-            groups.append({"group_id": gid, "count": r["n"], "source": _src(gid),
-                           "default": gid == default_gid})
-    except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
-    # Die Standardgruppe steht auch dann zur Wahl, wenn dort noch nichts läuft
-    # (frische Installation — sonst böte das Dashboard genau nichts an).
-    if default_gid and not any(g["group_id"] == default_gid for g in groups):
-        groups.insert(0, {"group_id": default_gid, "count": 0,
-                          "source": _src(default_gid), "default": True})
-    return jsonify(ok=True, groups=groups, default_group_id=default_gid)
 
 
 # F56: Bulk-Tracking-Import
-@dashboard_app.route("/api/trackings/bulk", methods=["POST"])
-def api_trackings_bulk():
-    """Bulk-add Trackings für einen Chat. Akzeptiert:
-       POST { "group_id": <int>, "usernames": ["@user1", "user2", ...] }
-       ODER  { "group_id": <int>, "text": "@u1 @u2\nu3 u4" }   (text auto-split)
-       Returns: { ok: true, group_id: <int>, added: [...], duplicates: [...],
-                  invalid: [...] }
-
-       group_id ist OPTIONAL: fehlt sie (oder ist 0), übernimmt
-       _dashboard_track_group() die Auflösung. Vorher war sie Pflicht — das
-       Dashboard-Feld blieb leer und der Streamer wurde nie angelegt.
-
-       Limit: max 200 Usernames pro Call (sonst Telegram-Rate-Limit-Probleme
-       beim späteren Polling und langes Block des Flask-Workers)."""
-    payload = request.get_json(silent=True) or {}
-    raw_gid = payload.get("group_id")
-    if raw_gid in (None, "", 0, "0"):
-        group_id = _dashboard_track_group()
-    else:
-        try:
-            group_id = int(raw_gid)
-        except (TypeError, ValueError):
-            return jsonify(ok=False, error="group_id muss eine Zahl sein"), 400
-    if not group_id:
-        return jsonify(ok=False, error="keine Zielgruppe auflösbar — "
-                       "DASHBOARD_TRACK_GROUP_ID (oder DAILY_SUMMARY_CHAT_ID) "
-                       "in .env setzen oder group_id mitgeben"), 400
-
-    # Usernames-Liste aus 'usernames' ODER 'text' bauen
-    names = payload.get("usernames")
-    if not names:
-        text = payload.get("text", "")
-        if not isinstance(text, str):
-            return jsonify(ok=False, error="text muss ein String sein"), 400
-        # F56-Bug-Fix B39: text-Input cappen. Flask MAX_CONTENT_LENGTH ist auf
-        # ARCHIVE_MAX_UPLOAD_MB+16 hochgesetzt (für Archive-Uploads — ~2GB
-        # default). Ohne hier zu cappen könnte ein User 2GB Text reinpasten →
-        # der regex-split würde den Flask-Worker für ein paar Sekunden blocken.
-        # 50KB ist mehr als genug für 200 Usernames inkl. Whitespace/Trenner.
-        if len(text) > 50_000:
-            return jsonify(ok=False,
-                           error="text zu groß (max 50KB für Bulk-Add)"), 413
-        # F56: Split nach Whitespace, Komma, Newline, Semikolon
-        names = [n for n in re.split(r'[\s,;\n]+', text) if n]
-    if not isinstance(names, list) or not names:
-        return jsonify(ok=False, error="keine usernames angegeben"), 400
-    if len(names) > 200:
-        return jsonify(ok=False, error="max 200 usernames pro bulk-call"), 400
-
-    # added_by=0 als Dashboard-Marker (analog zu F49)
-    result = bulk_add_trackings(group_id, names, added_by=0)
-
-    # F56: Sofort recheck für alle neuen (kein Warten auf nächsten Polling-Tick)
-    if result["added"]:
-        try:
-            with db_conn() as conn:
-                rows = conn.execute(
-                    "SELECT id FROM trackings WHERE group_id=? AND username IN ("
-                    + ",".join("?" * len(result["added"])) + ")",
-                    [group_id] + result["added"]
-                ).fetchall()
-                for r in rows:
-                    _NEXT_CHECK_AT[r["id"]] = 0
-        except Exception as e:
-            log.warning(f"bulk_add: sofort-recheck setup failed: {e}")
-
-    return jsonify(ok=True, group_id=group_id, **result,
-                   summary={"added": len(result["added"]),
-                            "duplicates": len(result["duplicates"]),
-                            "invalid": len(result["invalid"]),
-                            "quota_exceeded": len(result.get("quota_exceeded", []))})
 
 
 # F57: Outcome-Breakdown für Diagnose-Widget
@@ -11203,34 +10718,6 @@ def api_profile(username):
 # nicht öffnen. Man sieht aber den Start der Konversation" — der listing-
 # endpoint (/api/ai-log) truncated bei 200 Zeichen, es gab keinen Weg den
 # vollen Text zu sehen. Dieser Endpoint liefert den unbeschnittenen Eintrag.
-@dashboard_app.route("/api/ai-log/<int:entry_id>")
-def api_ai_log_detail(entry_id):
-    """Volle prompt + response für einen AI-Log-Eintrag. Wird vom Modal
-       gefetched wenn der Operator auf eine Zeile klickt."""
-    with db_conn() as conn:
-        row = conn.execute(
-            "SELECT id, created_at, chat_id, user_id, prompt, response, "
-            "  model, duration_ms, error, file_kind, file_size "
-            "FROM ai_log WHERE id=?",
-            (entry_id,)).fetchone()
-    if not row:
-        return jsonify(ok=False, error="entry not found"), 404
-    # B50: Cap bei 50KB pro Feld damit eine kaputte AI-Antwort den Browser
-    # nicht crasht. 50KB ist mehr als genug für normale Chats.
-    return jsonify({
-        "ok": True,
-        "id": row["id"],
-        "created_at": row["created_at"],
-        "chat_id": row["chat_id"],
-        "user_id": row["user_id"],
-        "prompt": (row["prompt"] or "")[:50000],
-        "response": (row["response"] or "")[:50000],
-        "model": row["model"],
-        "duration_ms": row["duration_ms"],
-        "error": row["error"],
-        "file_kind": row["file_kind"],
-        "file_size": row["file_size"],
-    })
 
 
 # ============================================================================
@@ -12338,29 +11825,6 @@ _AI_DASHBOARD_LOCK = _threading_for_db.Lock()
 
 
 
-@dashboard_app.route("/api/trackings")
-def api_trackings():
-    """F53: include_paused=True damit Dashboard alle Trackings sieht
-       (mit Pause-Badge). Worker nutzt include_paused=False.
-       B54: liefert auch auto_disabled_at + auto_disabled_reason damit das
-       Dashboard zwischen 'manuell pausiert' und 'circuit-breaker hit' unterscheidet."""
-    rows = get_all_active_trackings(include_paused=True)
-    # B63: Quelle mitliefern — Trackings können aus Telegram-Gruppen ODER vom
-    # Discord-Server stammen. Ohne Badge sieht der Operator nicht, woher ein
-    # Eintrag kommt (und warum er ggf. doppelt existiert). Bei geteilter Liste
-    # (DISCORD_TRACK_GROUP_ID=Telegram-ID) ist die Heimat Telegram → kein DC-Badge.
-    return jsonify([{
-        "id": t["id"], "username": t["username"], "group_id": t["group_id"],
-        "source": ("discord" if (DISCORD_GUILD_ID and t["group_id"] == DISCORD_GUILD_ID) else "telegram"),
-        "last_live": bool(t["last_live"]), "recording": bool(t["recording"]),
-        "paused": bool(t["paused"]) if "paused" in t.keys() else False,    # F53
-        "notes": (t["notes"] if "notes" in t.keys() else None) or "",      # F60
-        "auto_disabled_at": (t["auto_disabled_at"]
-            if "auto_disabled_at" in t.keys() else None) or "",            # B54
-        "auto_disabled_reason": (t["auto_disabled_reason"]
-            if "auto_disabled_reason" in t.keys() else None) or "",        # B54
-        "created_at": t["created_at"][:19] if t["created_at"] else ""
-    } for t in rows])
 
 
 # ═══ v37: Log-Tail + AZRAEL-Live-Test fürs Dashboard ═══
@@ -14831,75 +14295,14 @@ def api_discord_announce():
 
 
 # F60: Per-Tracking Notes/Labels — Operator schreibt kurze Notiz pro Tracking
-@dashboard_app.route("/api/trackings/<int:tracking_id>/notes", methods=["POST"])
-def api_tracking_notes(tracking_id):
-    """POST {"notes": "..."} — speichert/löscht Notiz. Max 200 Zeichen."""
-    payload = request.get_json(silent=True) or {}
-    notes = payload.get("notes", "")
-    if not isinstance(notes, str):
-        return jsonify(ok=False, error="notes muss ein String sein"), 400
-    ok = set_tracking_notes(tracking_id, notes)
-    if not ok:
-        return jsonify(ok=False, error="tracking not found"), 404
-    return jsonify(ok=True, tracking_id=tracking_id,
-                   notes=notes.strip()[:200])
 
 
 # F62: Trackings als CSV exportieren — für Backup/Migration/Sharing.
-@dashboard_app.route("/api/trackings/export")
-def api_trackings_export():
-    """GET → text/csv. Alle Trackings inkl. Status, Notes, Chat-IDs.
-       Format ist gut für Import in andere Bots oder als Backup."""
-    rows = get_all_active_trackings(include_paused=True)
-    buf = io.StringIO()
-    writer = _csv.writer(buf, quoting=_csv.QUOTE_MINIMAL)
-    # Header — Reihenfolge ist die für Re-Import-freundlichste
-    writer.writerow(["id", "username", "group_id", "added_by", "created_at",
-                     "last_live", "recording", "paused", "notes"])
-    for t in rows:
-        writer.writerow([
-            t["id"],
-            t["username"],
-            t["group_id"],
-            t["added_by"] if "added_by" in t.keys() else "",
-            t["created_at"] or "",
-            1 if t["last_live"] else 0,
-            1 if t["recording"] else 0,
-            1 if ("paused" in t.keys() and t["paused"]) else 0,
-            (t["notes"] if "notes" in t.keys() else None) or "",
-        ])
-    csv_text = buf.getvalue()
-    # F62: Filename mit Datum damit man bei mehreren Backups durchblickt
-    fname = f"trackings_{datetime.now(timezone.utc).strftime('%Y-%m-%d')}.csv"
-    return (csv_text, 200, {
-        "Content-Type": "text/csv; charset=utf-8",
-        "Content-Disposition": f'attachment; filename="{fname}"',
-    })
 
 
 # F53: Pause/Resume eines Trackings vom Dashboard
-@dashboard_app.route("/api/trackings/<int:tracking_id>/pause", methods=["POST"])
-def api_tracking_pause(tracking_id):
-    """Pausiert ein Tracking — Worker überspringt es bis Resume."""
-    ok = set_tracking_paused(tracking_id, True)
-    if not ok:
-        return jsonify(ok=False, error="tracking not found"), 404
-    # F53: Falls gerade aufgenommen wird — laufende Aufnahme NICHT stoppen,
-    # nur weitere verhindern. Wer aktiv stoppen will nutzt /cleanup.
-    return jsonify(ok=True, paused=True, tracking_id=tracking_id)
 
 
-@dashboard_app.route("/api/trackings/<int:tracking_id>/resume", methods=["POST"])
-def api_tracking_resume(tracking_id):
-    """Setzt das Tracking wieder aktiv — Worker pollt wieder."""
-    ok = set_tracking_paused(tracking_id, False)
-    if not ok:
-        return jsonify(ok=False, error="tracking not found"), 404
-    # F53: Sofort recheck damit man nicht bis zum nächsten regulären Tick wartet
-    try:
-        _NEXT_CHECK_AT[tracking_id] = 0
-    except Exception: pass
-    return jsonify(ok=True, paused=False, tracking_id=tracking_id)
 
 
 # F51: Manueller Force-Recheck eines Trackings.
@@ -14907,41 +14310,6 @@ def api_tracking_resume(tracking_id):
 # sofort statt auf die adaptive Polling-Schedule zu warten. Praktisch wenn
 # man weiß dass ein User gerade live gegangen ist und der Bot es noch nicht
 # erkannt hat (Cache, Backoff).
-@dashboard_app.route("/api/trackings/<int:tracking_id>/recheck", methods=["POST"])
-def api_tracking_recheck(tracking_id):
-    """POST. Sofort-Check eines Trackings + Cache-Invalidation."""
-    # 1. Tracking existiert?
-    with db_conn() as conn:
-        row = conn.execute(
-            "SELECT username FROM trackings WHERE id=?",
-            (tracking_id,)).fetchone()
-    if not row:
-        return jsonify(ok=False, error="tracking not found"), 404
-    username = row["username"]
-
-    # 2. Live-Status-Cache flushen damit der Recheck wirklich frisch ist
-    try:
-        _LIVE_STATUS_CACHE.pop(username, None)
-    except Exception:
-        pass
-
-    # 3. Rate-Limit-Backoff für diesen User zurücksetzen (er soll JETZT geprüft
-    # werden, nicht warten). Vorsicht: falls TikTok wirklich rate-limited, gibt
-    # es trotzdem 429 — aber dann setzt sich der Backoff bei der nächsten
-    # Antwort eh wieder.
-    try:
-        _RATE_LIMIT_BACKOFF.pop(username, None)
-    except Exception:
-        pass
-
-    # 4. Schedule sofort für nächsten Loop-Tick (LOOP_TICK = 5s)
-    try:
-        _NEXT_CHECK_AT[tracking_id] = 0
-    except Exception:
-        pass
-
-    return jsonify(ok=True, message=f"recheck queued für @{username}",
-                   username=username, tracking_id=tracking_id)
 
 
 # F59: Aktive Aufnahme grazil stoppen.
@@ -14968,23 +14336,6 @@ def health():
         recordings_dir = os.path.isdir(RECORDINGS_DIR),
     )
 
-@dashboard_app.route("/api/ai-log")
-def api_ai_log():
-    """F16: letzte AI-Calls für Dashboard-Stream."""
-    rows = get_recent_ai_log(limit=50)
-    return jsonify([{
-        "id": r["id"],
-        "created_at": r["created_at"][:19] if r["created_at"] else "",
-        "chat_id": r["chat_id"],
-        "user_id": r["user_id"],
-        "prompt": (r["prompt"] or "")[:200],
-        "response_preview": (r["response"] or "")[:200] if r["response"] else None,
-        "model": r["model"],
-        "duration_ms": r["duration_ms"],
-        "error": r["error"],
-        "file_kind": r["file_kind"],
-        "file_size": r["file_size"],
-    } for r in rows])
 
 
 # F49: AI-Chat-Endpoint ist weiter oben definiert (mit Rate-Limit B5 + Model-Pin B9).
@@ -15384,49 +14735,9 @@ def api_annotation_delete(aid):
 def api_tags_list():
     return jsonify(ok=True, tags=get_all_tags_with_counts())
 
-@dashboard_app.route("/api/trackings/tags-map")
-def api_trackings_tags_map():
-    """BUG-FIX (Perf): Liefert ALLE Tag-Zuordnungen in EINER Query als
-       {tracking_id: [tags]}. Vorher hat das Dashboard pro Grid-Zeile einen
-       eigenen /tags-Call gemacht → bei 50 Trackings 50 Requests, und das
-       alle 8s beim Auto-Refresh + bei jedem Filter-Tastendruck."""
-    out = {}
-    try:
-        with db_conn() as conn:
-            rows = conn.execute(
-                "SELECT tracking_id, tag FROM tracking_tags ORDER BY tracking_id, tag"
-            ).fetchall()
-        for r in rows:
-            out.setdefault(str(r["tracking_id"]), []).append(r["tag"])
-    except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
-    return jsonify(ok=True, map=out)
 
-@dashboard_app.route("/api/trackings/<int:tid>/tags", methods=["GET", "POST", "DELETE"])
-def api_tracking_tags(tid):
-    if request.method == "GET":
-        return jsonify(ok=True, tags=get_tags_for_tracking(tid))
-    data = request.get_json(silent=True) or {}
-    tag = data.get("tag", "")
-    if request.method == "POST":
-        ok = add_tracking_tag(tid, tag)
-        return jsonify(ok=ok, tags=get_tags_for_tracking(tid))
-    # DELETE
-    ok = remove_tracking_tag(tid, tag)
-    return jsonify(ok=ok, tags=get_tags_for_tracking(tid))
 
 # ---------- X3: Priority ----------
-@dashboard_app.route("/api/trackings/<int:tid>/priority", methods=["GET", "POST"])
-def api_tracking_priority(tid):
-    if request.method == "GET":
-        return jsonify(ok=True, **get_tracking_priority(tid))
-    data = request.get_json(silent=True) or {}
-    level = data.get("level", 0)
-    custom = data.get("custom_interval")
-    ok = set_tracking_priority(tid, level, custom)
-    if not ok:
-        return jsonify(ok=False, error="tracking not found"), 404
-    return jsonify(ok=True, **get_tracking_priority(tid))
 
 # ---------- X1: Event-Log ----------
 @dashboard_app.route("/api/events")
@@ -15536,9 +14847,6 @@ def api_stream_inspect(username):
 # ---------- X9: Fingerprint + Dedup ----------
 
 # ---------- X15: TikTok-Status-Distribution ----------
-@dashboard_app.route("/api/stats/tiktok-status")
-def api_tiktok_status():
-    return jsonify(ok=True, **get_tiktok_status_distribution())
 
 @dashboard_app.route("/api/abo/status")
 def api_abo_status():
@@ -15609,10 +14917,6 @@ def api_proxy_heatmap():
     return jsonify(ok=True, cells=cells)
 
 # ---------- X16: Failure-Patterns ----------
-@dashboard_app.route("/api/stats/failures-by-pattern")
-def api_failures_by_pattern():
-    hours = _arg_int("hours", 24, 1, 168)
-    return jsonify(ok=True, **cluster_failures(hours))
 
 # ---------- X17: Activity-Pulse ----------
 @dashboard_app.route("/api/activity-pulse")
@@ -15629,13 +14933,6 @@ def api_activity_pulse():
 
 
 # ---------- X23: Quick-Restart ----------
-@dashboard_app.route("/api/trackings/<int:tid>/quick-restart", methods=["POST"])
-def api_tracking_quick_restart(tid):
-    # quick_restart_tracking ist sync (manipuliert nur in-memory dicts + DB),
-    # daher kein async-Bridge nötig.
-    result = quick_restart_tracking(tid)
-    code = 200 if result.get("ok") else 404
-    return jsonify(result), code
 
 # ---------- X22: Cookie-Age + X26: Multi-status overview ----------
 
@@ -15678,33 +14975,6 @@ def api_profile_lookup_bulk():
     return jsonify(ok=True, results=results)
 
 # ---------- X28: Watchlist-Export ----------
-@dashboard_app.route("/api/trackings/watchlist-export")
-def api_watchlist_export():
-    try:
-        with db_conn() as conn:
-            rows = conn.execute(
-                "SELECT id, username, group_id, COALESCE(notes,'') AS notes, "
-                "  last_live, recording, COALESCE(paused,0) AS paused, created_at "
-                "FROM trackings ORDER BY username ASC").fetchall()
-        out = []
-        for r in rows:
-            out.append({
-                "username": r["username"],
-                "notes": r["notes"],
-                "paused": bool(r["paused"]),
-                "tags": get_tags_for_tracking(r["id"]),
-                "priority": get_tracking_priority(r["id"]),
-                "created_at": r["created_at"],
-            })
-        from flask import Response
-        payload = json.dumps({"exported_at": datetime.now(timezone.utc).isoformat(),
-                              "count": len(out), "watchlist": out},
-                             ensure_ascii=False, indent=2)
-        return Response(payload, mimetype="application/json",
-                        headers={"Content-Disposition":
-                                 "attachment; filename=watchlist.json"})
-    except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
 
 # ---------- X29: Recording-Stats-Summary (dashboard overview) ----------
 
@@ -15889,103 +15159,14 @@ def _latest_popularity(conn, username):
 
 
 
-@dashboard_app.route("/api/trackings/<int:tid>/collection", methods=["POST"])
-def api_tracking_collection(tid):
-    """Ordnet ein Tracking einer Collection zu (collection_id=null → entkoppeln)."""
-    payload = request.get_json(silent=True) or {}
-    cid = payload.get("collection_id", None)
-    try:
-        with db_conn() as conn:
-            tr = conn.execute("SELECT 1 FROM trackings WHERE id=?", (tid,)).fetchone()
-            if not tr:
-                return jsonify(ok=False, error="Tracking nicht gefunden."), 404
-            if cid in (None, 0, "", "null"):
-                conn.execute("UPDATE trackings SET collection_id=NULL WHERE id=?", (tid,))
-                conn.commit()
-                return jsonify(ok=True, tracking_id=tid, collection_id=None)
-            try:
-                cid = int(cid)
-            except (TypeError, ValueError):
-                return jsonify(ok=False, error="collection_id ungültig."), 400
-            exists = conn.execute("SELECT 1 FROM tracking_collections WHERE id=?",
-                                 (cid,)).fetchone()
-            if not exists:
-                return jsonify(ok=False, error="Collection existiert nicht."), 400
-            conn.execute("UPDATE trackings SET collection_id=? WHERE id=?", (cid, tid))
-            conn.commit()
-        return jsonify(ok=True, tracking_id=tid, collection_id=cid)
-    except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
 
 
 
 
 # =================  GROUP D — Per-Streamer-Einstellungen  ==================
 
-@dashboard_app.route("/api/trackings/<int:tid>/max-duration", methods=["POST"])
-def api_tracking_max_duration(tid):
-    """Setzt das Aufnahmedauer-Override (Sekunden) für einen Streamer.
-       0/null → Override entfernen (globaler Default greift wieder)."""
-    payload = request.get_json(silent=True) or {}
-    raw = payload.get("seconds", payload.get("max_duration", None))
-    try:
-        with db_conn() as conn:
-            tr = conn.execute("SELECT 1 FROM trackings WHERE id=?", (tid,)).fetchone()
-            if not tr:
-                return jsonify(ok=False, error="Tracking nicht gefunden."), 404
-            if raw in (None, 0, "0", "", "null"):
-                conn.execute("UPDATE trackings SET max_duration_override=NULL WHERE id=?",
-                             (tid,))
-                conn.commit()
-                return jsonify(ok=True, tracking_id=tid, seconds=None)
-            try:
-                secs = int(raw)
-            except (TypeError, ValueError):
-                return jsonify(ok=False, error="seconds muss eine Zahl sein."), 400
-            secs = max(30, min(secs, 86400))     # 30s … 24h Sicherheits-Clamp
-            conn.execute("UPDATE trackings SET max_duration_override=? WHERE id=?",
-                         (secs, tid))
-            conn.commit()
-        return jsonify(ok=True, tracking_id=tid, seconds=secs)
-    except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
 
 
-@dashboard_app.route("/api/trackings/<int:tid>/settings")
-def api_tracking_settings(tid):
-    """Kombinierte Per-Streamer-Einstellungen (Override, Collection, Tags-Anzahl,
-       Notizen-Anzahl, Status) in einem Aufruf."""
-    try:
-        with db_conn() as conn:
-            tr = conn.execute(
-                "SELECT id, username, last_live, recording, paused, collection_id, "
-                "max_duration_override FROM trackings WHERE id=?", (tid,)).fetchone()
-            if not tr:
-                return jsonify(ok=False, error="Tracking nicht gefunden."), 404
-            coll_name = None
-            if tr["collection_id"]:
-                c = conn.execute("SELECT name FROM tracking_collections WHERE id=?",
-                                (tr["collection_id"],)).fetchone()
-                coll_name = c["name"] if c else None
-            try:
-                ntags = conn.execute("SELECT COUNT(*) AS n FROM tracking_tags "
-                                     "WHERE tracking_id=?", (tid,)).fetchone()["n"]
-            except Exception:
-                ntags = 0
-            try:
-                nnotes = conn.execute("SELECT COUNT(*) AS n FROM recording_notes "
-                                      "WHERE tracking_id=?", (tid,)).fetchone()["n"]
-            except Exception:
-                nnotes = 0
-        return jsonify(ok=True, tracking_id=tid, username=tr["username"],
-                       live=bool(tr["last_live"]), recording=bool(tr["recording"]),
-                       paused=bool(tr["paused"]),
-                       collection_id=tr["collection_id"], collection=coll_name,
-                       max_duration_override=tr["max_duration_override"],
-                       effective_duration=(tr["max_duration_override"] or MAX_RECORD_SECS),
-                       tag_count=int(ntags or 0), note_count=int(nnotes or 0))
-    except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
 
 
 # =====================  GROUP E — Outbound-Webhooks  =====================
@@ -22925,53 +22106,6 @@ def api_highlights_config():
     return jsonify(ok=True, **new)
 
 
-@dashboard_app.route("/api/moderation/feed")
-def api_moderation_feed():
-    """v4.0: plattformUEBERGREIFENDER Moderations-Feed (Kick/Twitch/YouTube) aus
-       kick_mod_log. Macht „Moderator ueberall" sichtbar — welche Aktion, welche
-       Plattform, welcher User, welcher Grund. Admin-Dashboard (kein oeffentl. Leak)."""
-    try:
-        hours = _arg_int("hours", 24, 1, 168)
-    except (TypeError, ValueError):
-        hours = 24
-    try:
-        limit = _arg_int("limit", 40, 1, 200)
-    except (TypeError, ValueError):
-        limit = 40
-    cut = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
-
-    def _platform(actor):
-        a = (actor or "").lower()
-        if "twitch" in a:
-            return "twitch"
-        if "youtube" in a or "yt" in a:
-            return "youtube"
-        return "kick"
-
-    items, counts = [], {"kick": 0, "twitch": 0, "youtube": 0}
-    try:
-        with db_conn() as c:
-            rows = c.execute(
-                "SELECT ts, kind, actor, content, meta FROM kick_mod_log "
-                "WHERE ts >= ? AND kind IN ('timeout','ban','flag','delete','warn') "
-                "ORDER BY ts DESC LIMIT ?", (cut, limit)).fetchall()
-        for r in rows:
-            try:
-                meta = json.loads(r["meta"] or "{}")
-            except Exception:
-                meta = {}
-            plat = _platform(r["actor"])
-            counts[plat] = counts.get(plat, 0) + 1
-            items.append({
-                "ts": r["ts"], "platform": plat, "kind": r["kind"],
-                "user": meta.get("user", ""), "cat": meta.get("cat", ""),
-                "detail": meta.get("detail", ""),
-                "note": meta.get("note", ""),
-                "content": (r["content"] or "")[:160],
-            })
-    except Exception as e:
-        return jsonify(ok=False, error=str(e)[:160]), 200
-    return jsonify(ok=True, hours=hours, count=len(items), counts=counts, items=items)
 
 
 @dashboard_app.route("/api/audio/config", methods=["GET", "POST"])
@@ -24835,29 +23969,6 @@ def api_data_export():
 
 
 
-@dashboard_app.route("/api/stats/timeline")
-def api_stats_timeline():
-    """Aktivitäts-Zeitreihe der letzten N Tage (?days=14): Versuche, Erfolge,
-       Aufnahmen, MB — für ein Dashboard-Chart."""
-    days = _arg_int("days", 14, 1, 90)
-    try:
-        out = []
-        with db_conn() as conn:
-            for i in range(days - 1, -1, -1):
-                day = (datetime.now(timezone.utc) - timedelta(days=i)).date().isoformat()
-                a = conn.execute(
-                    "SELECT COUNT(*) AS att, "
-                    "SUM(CASE WHEN outcome IN ('ok','stall_killed_partial') THEN 1 ELSE 0 END) AS ok "
-                    "FROM recording_attempts WHERE date(started_at)=?", (day,)).fetchone()
-                rec = conn.execute(
-                    "SELECT COUNT(*) AS n, COALESCE(SUM(file_size),0)/1048576.0 AS mb "
-                    "FROM recordings WHERE date(created_at)=?", (day,)).fetchone()
-                out.append({"date": day, "attempts": int(a["att"] or 0),
-                            "successes": int(a["ok"] or 0),
-                            "recordings": int(rec["n"] or 0), "mb": round(rec["mb"] or 0)})
-        return jsonify(ok=True, days=days, timeline=out)
-    except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
 
 
 
@@ -31584,6 +30695,21 @@ def _install_fast_eventloop():
 # in delete_archive_entry (realpath/commonpath gegen Path-Traversal).
 _nc_archive.configure(archive_dir=ARCHIVE_DIR)
 
+# v4.0-W117: die Tracking-Zugriffe in nc/trackingdb.py brauchen die
+# backend-abhaengigen Integritaetsfehler, den Quota-Deckel, das Ereignis-
+# protokoll und den Rueckruf zum Aufraeumen des Recorder-Zustands.
+# v4.0-W117: get_stats/-verteilung liegen in nc/stats.py; der TikTok-Status-
+# Zaehler wird als Referenz gereicht, damit der Scraper weiter hochzaehlt und
+# die Auswertung dasselbe Objekt liest.
+_nc_stats.configure_stats(stats_cache_ttl=STATS_CACHE_TTL,
+                          status_counter=_TIKTOK_STATUS_COUNTER,
+                          status_first_seen=_TIKTOK_STATUS_FIRST_SEEN)
+
+_nc_trackingdb.configure(integrity_errors=DB_INTEGRITY_ERRORS,
+                         max_trackings_per_chat=MAX_TRACKINGS_PER_CHAT,
+                         log_event_fn=log_event,
+                         on_resume=_tracking_resume_cleanup)
+
 _nc_ctx.configure(
     log=log,
     log_event=log_event,
@@ -31596,7 +30722,6 @@ _nc_ctx.configure(
     scraper_session=_scraper_session,
     trigger_manual_recording=trigger_manual_recording,
     stop_manual_recording=stop_manual_recording,
-    get_tags_for_tracking=get_tags_for_tracking,
     # --- Archiv-Domaene (v4.0-W107) ---
     intel_ensure_schema=_intel_ensure_schema,
     intel_index_one=_intel_index_one,
@@ -31667,6 +30792,24 @@ _nc_ctx.configure(
         # Route im selben Moment sehen. Eine Kopie waere ein totes Panel.
         "_COOKIES_CACHE": _COOKIES_CACHE,
         "_RES_HISTORY": _RES_HISTORY,
+        # --- Trackings (v4.0-W117) ---
+        "ALLOWED_CHAT_IDS": ALLOWED_CHAT_IDS,
+        "DAILY_SUMMARY_CHAT_ID": DAILY_SUMMARY_CHAT_ID,
+        "DISCORD_GUILD_ID": DISCORD_GUILD_ID,
+        "DISCORD_TRACK_GROUP_ID": DISCORD_TRACK_GROUP_ID,
+        "MAX_RECORD_SECS": MAX_RECORD_SECS,
+        # Neun Dicts des Live-Workers, als Referenz geteilt. Der Recorder
+        # schreibt sie, das Dashboard liest und raeumt sie (Quick-Restart).
+        # Kopien waeren ein Knopf, der nichts bewirkt.
+        "_EARLY_DISCONNECT_RETRY": _EARLY_DISCONNECT_RETRY,
+        "_LIVE_STATUS_CACHE": _LIVE_STATUS_CACHE,
+        "_NEXT_CHECK_AT": _NEXT_CHECK_AT,
+        "_PENDING_OFFLINE_COUNT": _PENDING_OFFLINE_COUNT,
+        "_PENDING_OFFLINE_SINCE": _PENDING_OFFLINE_SINCE,
+        "_RATE_LIMIT_BACKOFF": _RATE_LIMIT_BACKOFF,
+        "_RATE_LIMIT_PENALTY": _RATE_LIMIT_PENALTY,
+        # _STREAM_DEAD_BACKOFF_UNTIL steht schon im KI-Block oben (W112).
+        "_STREAM_DEAD_STREAK": _STREAM_DEAD_STREAK,
     },
 )
 dashboard_app.register_blueprint(_nc_routes_recordings.bp)
@@ -31680,6 +30823,8 @@ dashboard_app.register_blueprint(_nc_routes_ai.bp)
 dashboard_app.register_blueprint(_nc_routes_settings.bp)   # v4.0-W116
 dashboard_app.register_blueprint(_nc_routes_ops.bp)        # v4.0-W116
 dashboard_app.register_blueprint(_nc_routes_money.bp)      # v4.0-W116
+dashboard_app.register_blueprint(_nc_routes_trackings.bp)  # v4.0-W117
+dashboard_app.register_blueprint(_nc_routes_stats.bp)      # v4.0-W117
 
 
 if __name__ == "__main__":

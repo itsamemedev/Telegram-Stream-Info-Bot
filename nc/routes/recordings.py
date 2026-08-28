@@ -39,6 +39,7 @@ from nc import recdb
 from nc import inspectcache as _nc_inspectcache
 from nc import ffbuild as _nc_ffbuild
 from nc.dbwrap import db_conn
+from nc import trackingdb as _nc_trackingdb   # v4.0-W117: Tags direkt statt ueber nc.ctx
 from nc.archive import compute_recording_fingerprint, _retention_match
 from nc.ffdiag import _rec_quality
 from nc.notes import add_annotation, set_recording_note, toggle_bookmark
@@ -172,7 +173,7 @@ def build_recording_manifest(recording_id: int) -> Optional[dict]:
     except Exception: pass
     # Tags vom ursprünglichen Tracking (wenn vorhanden)
     if out["tracking_id"]:
-        out["tags"] = _c().get_tags_for_tracking(out["tracking_id"])
+        out["tags"] = _nc_trackingdb.get_tags_for_tracking(out["tracking_id"])
     return out
 
 

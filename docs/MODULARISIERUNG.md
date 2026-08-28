@@ -475,6 +475,8 @@ nach Grösse und Eigenständigkeit, ein Paket pro Welle:
 | ✅ `nc/routes/settings.py` (W116) | 11 | 279 |
 | ✅ `nc/routes/ops.py` (W116) | 20 | 442 |
 | ✅ `nc/routes/money.py` (W116) | 8 | 193 |
+| ✅ `nc/routes/trackings.py` (W117) | 16 | 459 |
+| ✅ `nc/routes/stats.py` (W117) | 7 | 224 |
 | `nc/routes/restream.py` | 16 | 437 |
 | `nc/routes/trackings.py` | 15 | 448 |
 | `nc/routes/ops.py` | 10 | 312 |
@@ -635,12 +637,12 @@ Supervisor fahren.
 
 ## 8 · Zielbild und Messlatte
 
-| | Start | heute (W104–W116) | nach Welle 3 | Ziel |
+| | Start | heute (W104–W117) | nach Welle 3 | Ziel |
 |---|---:|---:|---:|---:|
-| `bot.py` Zeilen | 34.487 | **31.689** | ~24.700 | **~8.000** |
-| Flask-Routen im Monolithen | 345 | **226** | ~30 | 0 |
-| Routen in Blueprints | 0 | **129** | ~315 | 355 |
-| `nc/`-Module | 83 | **101** | ~100 | ~115 |
+| `bot.py` Zeilen | 34.487 | **30.834** | ~24.700 | **~8.000** |
+| Flask-Routen im Monolithen | 345 | **203** | ~30 | 0 |
+| Routen in Blueprints | 0 | **152** | ~315 | 355 |
+| `nc/`-Module | 83 | **103** | ~100 | ~115 |
 | Grösste Datei im Projekt | `bot.py` | `bot.py` | `bot.py` | `templates/dashboard.html` |
 
 Die härtere Messlatte ist keine Zahl:
@@ -789,6 +791,45 @@ Blueprint beschattet das den Kontextzugriff `_c()`, und jeder Zugriff stirbt mit
 `bp_extract` warnt jetzt vor dieser Kollision. Und der Laufzeitstack gehört in
 jede Arbeitsumgebung: 200 aufgerufene Routen, 0 unerwartete 5xx ist eine andere
 Abnahme als „compiliert".
+
+### Welle 3, Stand W117 — der Kontext war voll, also wuchs er nicht
+
+Nach W116 stand `nc/ctx.py` bei 25 Slots, genau an der vertraglichen
+Obergrenze. Die grösste verbleibende Gruppe — `/api/trackings`, 16 Routen —
+hätte nach der Kostenrechnung **vier weitere** gebraucht. Statt die Grenze zu
+verschieben, ist der umgekehrte Weg gegangen worden, und der ist der eigentlich
+richtige:
+
+**Erst den Datenzugriff lösen, dann die Routen.** Elf Tracking-Zugriffe sind
+nach `nc/trackingdb.py` gewandert (das Modul gab es seit W50 mit zwei
+Funktionen), zwei Auswertungen nach `nc/stats.py`. Damit kosten sie **null**
+Kontext-Einträge: Bot und Blueprint importieren beide. `get_tags_for_tracking`
+wurde dabei sogar aus dem Kontext frei — **24 Slots statt 25, mit 23 Routen
+mehr ausserhalb des Monolithen.** Das ist die Reihenfolge, die
+[Welle 1 → Welle 2](#welle-1--blattfunktionen-und-domänen-datenzugriff--erledigt-w104)
+vorgezeichnet hat; sie skaliert, das Aufblähen des Kontexts tut es nicht.
+
+**Laufzeitzustand bleibt bei seinem Eigentümer.** `set_tracking_paused` räumt
+beim Entpausen fünf In-Memory-Zähler des Live-Workers auf (B54). Diese Dicts
+gehören dem Recorder, nicht der Datenbank — das Modul bekommt deshalb einen
+`on_resume`-Rückruf statt fremden Zustands. Fehlte der Rückruf, liefe alles
+weiter und das Tracking pausierte sich beim nächsten Streak sofort wieder:
+ein Schalter, der nichts tut. Genau dafür steht jetzt ein **Rundlauf** in
+`test_smoke.py` — pausieren, entpausen, prüfen dass geräumt wurde.
+
+**Der Extraktor zog Weiterleitungen auf Weiterleitungen mit.** Fünf frisch
+angelegte Bot-Delegationen wurden von `bp_extract` ins Blueprint übernommen,
+weil dort ihre einzigen Aufrufer sassen. Kein Fehler, aber eine Kette, die nur
+auseinanderlaufen kann — sie wurden durch einen direkten Import ersetzt. Wer
+Helfer in derselben Welle löst und Routen zieht, muss danach hinsehen.
+
+**Eine .env-Variable wäre lautlos aus der Doku verschwunden.**
+`tools/gen_env_example.py` scannte `bot.py`, `brain/` und `nc/` — aber nicht
+`nc/routes/`. Mit der letzten Lesestelle von `DASHBOARD_TRACK_GROUP_ID` im
+Blueprint fiel sie aus `.env.example`, und der Betreiber hätte einen Schalter
+verloren, den es weiterhin gibt. Gefunden hat das der `.env.example`-Vertrag,
+nicht ein Mensch. **Jedes Werkzeug, das über „alle Quelldateien" mittelt, muss
+bei jeder Welle gegengeprüft werden.**
 
 ---
 

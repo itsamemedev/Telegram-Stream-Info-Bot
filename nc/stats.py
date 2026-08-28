@@ -296,3 +296,78 @@ def get_recordings_heatmap() -> dict:
             total += 1
         except Exception: pass
     return {"grid": grid, "total": total, "lookback_days": 30}
+
+
+# ═════════════════════════════════════════════════════════════════════════
+# v4.0-W117: get_stats und die TikTok-Status-Verteilung, verbatim aus bot.py
+#
+# Beide werden vom Bot (Telegram-/stats, Brain-Panel) UND vom /api/stats-
+# Blueprint gebraucht. Ueber nc/ctx.py waeren das zwei weitere Slots gewesen;
+# als Modul kosten sie null, weil beide Seiten importieren koennen.
+#
+# Der Zaehler wird als REFERENZ injiziert: der Scraper zaehlt weiter im Bot
+# hoch, die Auswertung liest hier. Eine Kopie waere eine Verteilung, die beim
+# Start einfriert.
+# ═════════════════════════════════════════════════════════════════════════
+
+_STATS_CACHE = {"ts": 0.0, "val": None}
+STATS_CACHE_TTL = 120
+_STATUS_COUNTER = {}
+_STATUS_FIRST_SEEN = 0.0
+
+
+def configure_stats(*, stats_cache_ttl=None, status_counter=None,
+                    status_first_seen=None):
+    """Vom Bot einmal beim Start gerufen."""
+    global STATS_CACHE_TTL, _STATUS_COUNTER, _STATUS_FIRST_SEEN
+    if stats_cache_ttl is not None:
+        STATS_CACHE_TTL = stats_cache_ttl
+    if status_counter is not None:
+        _STATUS_COUNTER = status_counter
+    if status_first_seen is not None:
+        _STATUS_FIRST_SEEN = status_first_seen
+
+
+def get_stats(force: bool = False):
+    now = _time_mod.monotonic()
+    c = _STATS_CACHE
+    if (not force and c["val"] is not None and STATS_CACHE_TTL > 0
+            and now - c["ts"] < STATS_CACHE_TTL):
+        return c["val"]
+    with db_conn() as conn:
+        total = conn.execute("SELECT COUNT(*) FROM tiktok_checks").fetchone()[0]
+        unique_users = conn.execute("SELECT COUNT(DISTINCT telegram_user_id) FROM tiktok_checks").fetchone()[0]
+        top = conn.execute("SELECT username, COUNT(*) cnt FROM tiktok_checks GROUP BY username "
+                           "ORDER BY cnt DESC LIMIT 10").fetchall()
+    # Rows in einfache Tupel kopieren: sqlite3.Row haengt an der Connection,
+    # die beim Verlassen des with-Blocks geschlossen wird.
+    val = (total, unique_users,
+           [{"username": r["username"], "cnt": r["cnt"]} for r in top])
+    _STATS_CACHE.update(ts=now, val=val)
+    return val
+
+
+def get_tiktok_status_distribution() -> dict:
+    """Returns: {since_seconds, total, by_code: [{code, count, pct}]}"""
+    total = sum(_STATUS_COUNTER.values())
+    by_code = []
+    for code, count in _STATUS_COUNTER.most_common():
+        by_code.append({
+            "code": code,
+            "count": count,
+            "pct": round(100.0 * count / total, 1) if total else 0,
+        })
+    return {
+        "since_seconds": int(_time_mod.monotonic() - _STATUS_FIRST_SEEN),
+        "total": total,
+        "by_code": by_code,
+    }
+
+
+def invalidate_stats_cache():
+    """Nach dem Aufraeumen von tiktok_checks: der naechste get_stats() liest frisch.
+
+    Warum eine Funktion und nicht der blanke Dict: der Bot soll den Cache
+    leeren duerfen, ohne dessen Aufbau zu kennen (v4.0-W117).
+    """
+    _STATS_CACHE["val"] = None

@@ -35,7 +35,9 @@ class Ctx:
         "scraper_session",          # geteilte HTTP-Session des Scrapers
         "trigger_manual_recording",  # haengt am Recorder-Kern, bleibt im Bot
         "stop_manual_recording",    # teilt _MANUAL_RECORDINGS mit trigger_
-        "get_tags_for_tracking",
+        # get_tags_for_tracking ist mit den uebrigen Tracking-Zugriffen nach
+        # nc/trackingdb.py gewandert (W117) — beide Seiten importieren, der
+        # Kontext braucht den Slot nicht mehr.
         # --- Archiv-Domäne (W107) ---
         "intel_ensure_schema",
         "intel_index_one",
