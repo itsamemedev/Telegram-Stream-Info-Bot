@@ -11,6 +11,54 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Behoben — README rendert nicht mehr, Kennzahlen waren veraltet (W123)
+
+GitHub meldete am Lebenszyklus-Diagramm „Unable to render rich display /
+Cannot read properties of undefined (reading 'render')". Es war der einzige
+Block, der kein `flowchart` war: `stateDiagram-v2` wird von GitHubs Renderer
+als eigener Chunk nachgeladen. Jetzt ein `flowchart TD` mit identischem
+Inhalt; zusätzlich raus, was in älteren Renderern stolpert — `<b>`-Tags in
+Labels und die Klasse `in`. Alle vier Blöcke gegen mermaid 9.4.3, 10.9.3 und
+11 in echtem Chromium gerendert.
+
+Dazu die Zahlen, die still auseinandergelaufen waren: **355 Routen** (265 in
+`bot.py`, 90 in `nc/routes/`) statt 345, **32.569 Zeilen** statt 34.487,
+**89** `nc`-Module statt 84, **10** `brain`-Module statt 11, **13**
+Sentinel-Agenten statt 12 — `swap` und `proxy` fehlten in der Tabelle ganz —,
+**~495** `.env`-Variablen statt ~470, **29** Telegram-Befehle statt 28
+(`/update` war nirgends dokumentiert). `CLAUDE.md` trug dieselbe Drift, teils
+noch älter, und behauptete „Kein Git-Repo".
+
+Zwei Badges zeigten ins Leere: der Discord-Badge auf eine Überschrift in
+`<summary><h3>`, für die GitHub keine ID vergibt, der Telegram-Badge auf einen
+Anker ohne den Variation Selector, der im Emoji der Überschrift steckt.
+
+### Hinzugefügt — `ncpatch docs`, der Zahlenwächter (W123)
+
+    python3 tools/ncpatch.py docs
+
+Vergleicht die Kennzahlen in `README.md`, `CLAUDE.md` und den ausgelagerten
+Doku-Dateien mit dem Quelltext: Routen, Slash-Commands, Top-Level-Funktionen,
+Zeilen in `bot.py`, Module, Blueprints, Sentinel-Agenten, Telegram-Befehle,
+`.env`-Variablen. Prüft zusätzlich jeden internen Anker gegen GitHubs
+Slug-Regel und die Befehlslisten **namentlich** — wer einen 46. Slash-Command
+hinzufügt und brav „46" schreibt, ohne den Namen einzutragen, käme durch eine
+reine Zählprüfung.
+
+Bewusst **nicht** Teil von `ncpatch check`: `check` läuft in `deploy.sh` vor
+dem Umschwenken auf Produktion, und eine veraltete Zahl im README darf keinen
+Deploy aufhalten. Stattdessen neuer CI-Job `doku`.
+
+### Geändert — README von 1.116 auf 946 Zeilen (W123)
+
+Referenzmaterial raus aus dem Einstiegsdokument, Verweise rein:
+[`INSTALL.md`](INSTALL.md) (Installation von Hand, fünf Schritte),
+[`TROUBLESHOOTING.md`](TROUBLESHOOTING.md) (Störungsbilder und ihre echten
+Ursachen) und [`ROADMAP.md`](ROADMAP.md) (die sechs Wellen der Zerlegung).
+Im README bleibt, was die Entscheidung trägt: Schnellstart, Voraussetzungen,
+der `selftest`-Aufruf und die Messlatte der Zerlegung. Das
+Inhaltsverzeichnis war unvollständig und listet jetzt alle Abschnitte.
+
 ### Behoben — Im Dashboard hinzugefügte Streamer zählten nirgends (W120)
 
 Ein im Dashboard angelegter Streamer tauchte weder als live noch als Creator

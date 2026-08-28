@@ -87,6 +87,25 @@ jobs:
       - name: ncpatch check
         run: python tools/ncpatch.py check
 
+  doku:
+    name: Doku (Zahlen · interne Anker)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      # README.md und CLAUDE.md nennen Kennzahlen, die im Quelltext stehen:
+      # Routen, Zeilen, Module, Agenten, .env-Variablen. Zweimal sind sie
+      # still auseinandergelaufen — 345 statt 355 Routen, 12 statt 13
+      # Sentinel-Agenten. Hier faellt das vor dem Merge auf statt Monate
+      # spaeter. Prueft ausserdem die internen Anker: ein Badge zeigte ins
+      # Leere, weil im Emoji der Ueberschrift ein Variation Selector steckt.
+      - name: ncpatch docs
+        run: python tools/ncpatch.py docs
+
   tests:
     name: Verträge & Module (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest

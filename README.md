@@ -13,8 +13,8 @@
 [![Status: produktiv](https://img.shields.io/badge/Status-produktiv-success.svg?style=for-the-badge)](#-projektstatus)
 [![CI](https://img.shields.io/github/actions/workflow/status/itsamemedev/Telegram-Stream-Info-Bot/ci.yml?branch=main&style=for-the-badge&label=CI&logo=githubactions&logoColor=white)](../../actions/workflows/ci.yml)
 
-[![Telegram](https://img.shields.io/badge/Telegram-Bot-26A5E4?style=flat-square&logo=telegram&logoColor=white)](#-bedienung)
-[![Discord](https://img.shields.io/badge/Discord-45%20Slash--Commands-5865F2?style=flat-square&logo=discord&logoColor=white)](#discord--45-slash-commands)
+[![Telegram](https://img.shields.io/badge/Telegram-Bot-26A5E4?style=flat-square&logo=telegram&logoColor=white)](#️-bedienung)
+[![Discord](https://img.shields.io/badge/Discord-45%20Slash--Commands-5865F2?style=flat-square&logo=discord&logoColor=white)](#️-bedienung)
 [![TikTok](https://img.shields.io/badge/TikTok-Live--Erkennung-000000?style=flat-square&logo=tiktok&logoColor=white)](#-was-nightcrawler-macht)
 [![Kick](https://img.shields.io/badge/Kick-Restream%20%2B%20Chat-53FC18?style=flat-square&logo=kick&logoColor=black)](#-restream)
 [![Twitch](https://img.shields.io/badge/Twitch-Restream%20%2B%20Chat-9146FF?style=flat-square&logo=twitch&logoColor=white)](#-restream)
@@ -54,20 +54,23 @@ flowchart LR
 - [⚡ Schnellstart](#-schnellstart)
 - [📦 Installation](#-installation)
 - [⚙️ Konfiguration](#️-konfiguration)
+- [🕹️ Bedienung](#️-bedienung)
 
 </td><td>
 
-- [🕹️ Bedienung](#️-bedienung)
 - [📡 Restream](#-restream)
 - [🧠 Das Gehirn (AZRAEL)](#-das-gehirn-azrael)
 - [🖥️ Dashboard](#️-dashboard)
 - [🚀 Deployment](#-deployment)
+- [🧪 Tests & Prüfkette](#-tests--prüfkette)
+- [🛡️ Sicherheit](#️-sicherheit)
 
 </td><td>
 
-- [🧪 Tests & Prüfkette](#-tests--prüfkette)
-- [🛡️ Sicherheit](#️-sicherheit)
 - [🗺️ Projektstruktur](#️-projektstruktur)
+- [🩺 Fehlersuche](#-fehlersuche)
+- [📈 Projektstatus](#-projektstatus)
+- [🧭 Roadmap](#-roadmap)
 - [🤝 Mitwirken](#-mitwirken)
 - [📄 Lizenz](#-lizenz)
 
@@ -124,7 +127,7 @@ reagiert live auf den gesendeten Stream und blendet sich ins Sendebild ein.
 <td valign="top">
 
 ### 📊 Auswerten
-Flask-Dashboard mit **345 API-Routen**, Wissensgraph-Visualisierung,
+Flask-Dashboard mit **355 API-Routen**, Wissensgraph-Visualisierung,
 Einnahmen-Journal (Finanzamt-tauglich, append-only mit Hash-Kette) und PWA
 fürs Handy.
 
@@ -145,10 +148,10 @@ fürs Handy.
 | **Chat & Moderation** | SENTINEL-SHIELD (Doxxing / Hate / Drohung) · geteilte Moderations-Heuristik über Kick, Twitch, YouTube · Fremdwerbungs-Erkennung mit Eigen-Allowlist · Banned-Words · Timeout-Eskalation |
 | **KI (AZRAEL)** | Chat-Antworten auf Ansprache · Live-Reaktionen aufs Sendebild · Sprachausgabe (Piper) · Persona-System · Multi-Backend: llama.cpp → Ollama → freie APIs → OpenAI/Anthropic · Budget- und Tier-Steuerung |
 | **Gehirn (`brain/`)** | Zustandsmaschine · regelbasierte Tier-1-Entscheidungen mit Warum-Log · Langzeitgedächtnis · Wissensgraph (Triple-Store) · semantische Suche · Prognosen · Wochenreport |
-| **Sentinel-Flotte** | 12 Wächter-Agenten (health, recovery, scout, analytics, learning, sentinel, disk, restream, toxicity, uptime, recording, …) mit Telegram-Alarm, einzeln abschaltbar |
+| **Sentinel-Flotte** | 13 Wächter-Agenten (health, recovery, scout, analytics, learning, sentinel, disk, swap, restream, toxicity, uptime, recording, proxy) mit Telegram-Alarm, einzeln abschaltbar |
 | **Community** | Wiedererkennung von Stammzuschauern · Loyalty-Punkte & Ränge · Discord-XP, Level, Daily-Streak · Live-Ping · Highlight-Share · Community-Events |
 | **Geld** | Spenden-Telemetrie (Schätzwerte) · getrenntes Einnahmen-Journal (`nc/ledger.py`) mit Hash-Kette und CSV-Export fürs Finanzamt |
-| **Dashboard** | 345 Flask-Routen · Live-Panels · Gehirn-Visualisierung mit Lernkurve · Overlay für OBS · installierbare PWA (Android) · QR-Login |
+| **Dashboard** | 355 Flask-Routen · Live-Panels · Gehirn-Visualisierung mit Lernkurve · Overlay für OBS · installierbare PWA (Android) · QR-Login |
 | **Betrieb** | systemd-Dienst · Deploy-Skript mit Vorabprüfung und Auto-Rollback · Selbsttest-Route · Totmann-Meldung bei Prozesstod · CrowdSec-Anbindung · Log-Redaction für Cookies und Stream-Keys |
 | **Datenbank** | SQLite **oder** MariaDB · zentrales Schema-Modul · Export-Werkzeug · SQL-Guard |
 
@@ -157,20 +160,24 @@ fürs Handy.
 ### Der Lebenszyklus eines Streams
 
 ```mermaid
-stateDiagram-v2
-    [*] --> Beobachtet
-    Beobachtet --> Geprüft: adaptives Polling
-    Geprüft --> Beobachtet: offline
-    Geprüft --> Live: live erkannt<br/>(Anti-Flap-Hysterese)
-    Live --> Preflight: Quelle auflösen
-    Preflight --> Beobachtet: alles 404<br/>kein Spawn
-    Preflight --> Aufnahme: Ziel antwortet
-    Aufnahme --> Restream: auto_start_due<br/>(Deckel beachten)
-    Restream --> Aufnahme: Ziel tot →<br/>neu aufbauen
-    Aufnahme --> Nachbereitung: Stream endet
-    Restream --> Nachbereitung: Stream endet
-    Nachbereitung --> Beobachtet: Clips, Highlights,<br/>Archiv, Statistik
-    Nachbereitung --> [*]
+flowchart TD
+    START(("Start")):::edge --> BEO["Beobachtet"]:::phase
+    BEO -->|"adaptives Polling"| PRUEF["Geprüft"]:::phase
+    PRUEF -->|"offline"| BEO
+    PRUEF -->|"live erkannt · Anti-Flap-Hysterese"| LIVE["Live"]:::phase
+    LIVE -->|"Quelle auflösen"| PRE["Preflight"]:::phase
+    PRE -->|"alles 404 · kein Spawn"| BEO
+    PRE -->|"Ziel antwortet"| AUF["Aufnahme"]:::aktiv
+    AUF -->|"auto_start_due · Deckel beachten"| RES["Restream"]:::aktiv
+    RES -->|"Ziel tot · neu aufbauen"| AUF
+    AUF -->|"Stream endet"| NACH["Nachbereitung"]:::phase
+    RES -->|"Stream endet"| NACH
+    NACH -->|"Clips, Highlights, Archiv, Statistik"| BEO
+    NACH --> ENDE(("Ende")):::edge
+
+    classDef phase fill:#1a2430,stroke:#7fe7d4,color:#e6edf3
+    classDef aktiv fill:#3a2415,stroke:#ff8c42,color:#ffd9a0
+    classDef edge fill:#14202c,stroke:#8fd3f4,color:#e6edf3
 ```
 
 ---
@@ -179,27 +186,28 @@ stateDiagram-v2
 
 ```mermaid
 flowchart TB
-    TG["📨 Telegram<br/>28 Befehle"]:::in
-    DC["🎮 Discord<br/>45 Slash-Commands"]:::in
-    TT["🎥 TikTok<br/>Live-Erkennung + Chat"]:::in
+    TG["📨 Telegram<br/>29 Befehle"]:::ein
+    DC["🎮 Discord<br/>45 Slash-Commands"]:::ein
+    TT["🎥 TikTok<br/>Live-Erkennung + Chat"]:::ein
 
     TG --> BOT
     DC --> BOT
     TT --> BOT
 
-    BOT["<b>bot.py</b><br/>Monolith · 34.500 Zeilen<br/>Scraper · Recorder · Restream<br/>Flask-Dashboard mit 345 Routen"]:::core
+    BOT["bot.py<br/>Monolith · 32.569 Zeilen<br/>Scraper · Recorder · Restream<br/>Flask-Dashboard · 265 eigene Routen"]:::core
 
-    BOT -->|configure| NC["<b>nc/</b> — 84 Fachmodule<br/>Schema · OAuth · Restream<br/>Ledger · Moderation · Intel"]:::lib
-    BOT --> TPL["<b>templates/</b><br/>Dashboard · Overlay · PWA"]:::lib
+    BOT -->|configure| NC["nc/ — 89 Fachmodule<br/>Schema · OAuth · Restream<br/>Ledger · Moderation · Intel"]:::lib
+    NC --> RT["nc/routes/ — 8 Blueprints<br/>90 weitere API-Routen"]:::lib
+    BOT --> TPL["templates/<br/>Dashboard · Overlay · PWA"]:::lib
     BOT --> BR["brain_bridge.py"]:::lib
-    BR --> BRAIN["<b>brain/</b> — eigene brain.db<br/>state · rules · router · memory<br/>knowledge · semantic · scheduler<br/>llm · agents · report"]:::brain
+    BR --> BRAIN["brain/ — eigene brain.db<br/>state · rules · router · memory<br/>knowledge · semantic · scheduler<br/>llm · agents · report"]:::brain
     BOT --> DB[("SQLite<br/>oder MariaDB")]:::db
 
     BOT --> KICK["🟢 Kick"]:::out
     BOT --> TW["🟣 Twitch"]:::out
     BOT --> YT["🔴 YouTube"]:::out
 
-    classDef in fill:#1c2b3a,stroke:#2de1c2,color:#e6edf3
+    classDef ein fill:#1c2b3a,stroke:#2de1c2,color:#e6edf3
     classDef core fill:#3a2415,stroke:#ff8c42,stroke-width:2px,color:#ffd9a0
     classDef lib fill:#1a2430,stroke:#7fe7d4,color:#e6edf3
     classDef brain fill:#241c3a,stroke:#a78bfa,color:#e6edf3
@@ -261,13 +269,6 @@ systemd samt Totmann-Meldung und der Status-MOTD (`tools/motd.sh`), unter macOS
 launchd, unter Windows die Aufgabenplanung. Ein zweiter Lauf aktualisiert eine
 bestehende Installation, statt sie zu überbügeln.
 
-> [!NOTE]
-> **Python 3.12 ist harte Mindestversion** (siehe unten). Debian 12 und
-> Raspberry Pi OS bookworm liefern 3.11 — das Skript erkennt das und bietet
-> einen Weg zu einem neueren Interpreter an.
-
-Wer lieber selbst Hand anlegt, findet den ausführlichen Weg hier:
-
 ### Voraussetzungen
 
 | | Mindestens | Empfohlen |
@@ -282,132 +283,20 @@ Wer lieber selbst Hand anlegt, findet den ausführlichen Weg hier:
 > [!IMPORTANT]
 > **Python 3.12 ist harte Mindestversion.** `bot.py` nutzt f-strings mit
 > Backslash (PEP 701) — unter 3.11 scheitert schon das Parsen der Datei.
+> Debian 12 und Raspberry Pi OS bookworm liefern 3.11; das Installationsskript
+> erkennt das und bietet einen Weg zu einem neueren Interpreter an.
 
-<details>
-<summary><b>Schritt 1 — Systempakete</b></summary>
+### Von Hand
 
-<br>
-
-Diese vier kommen **nicht** über `pip`, sondern über den Paketmanager:
-
-```bash
-sudo apt update
-sudo apt install -y python3 python3-venv python3-pip ffmpeg streamlink yt-dlp
-```
-
-| Paket | Wofür |
-|---|---|
-| `ffmpeg` | Aufnahme, Restream, Overlay-Einblendung |
-| `streamlink` | Quellenauflösung |
-| `yt-dlp` | Rückfall-Auflösung (403-Lebenszyklus) |
-| `crowdsec` | *optional* — Abwehr-Panel im Dashboard (`cscli`) |
-
-</details>
-
-<details>
-<summary><b>Schritt 2 — Projekt und virtuelle Umgebung</b></summary>
-
-<br>
-
-```bash
-git clone https://github.com/itsamemedev/Telegram-Stream-Info-Bot.git ~/nightcrawler
-cd ~/nightcrawler
-
-python3 -m venv .venv
-source .venv/bin/activate
-pip install --upgrade pip
-pip install -r requirements.txt
-```
-
-> [!NOTE]
-> `requirements.txt` lässt die Versionen bewusst offen. Sobald der Bot bei dir
-> läuft, friere den **nachweislich funktionierenden** Stand ein:
-> ```bash
-> python3 -m pip freeze > requirements.lock.txt
-> ```
-> Das ist besonders für `TikTokLive` wichtig — die Bibliothek hängt an einer
-> undokumentierten API und kann von einem Tag auf den anderen brechen.
-
-</details>
-
-<details>
-<summary><b>Schritt 3 — Konfiguration anlegen</b></summary>
-
-<br>
-
-```bash
-cp .env.example .env
-chmod 600 .env
-nano .env
-```
-
-Die Vorlage ist **auto-generiert** aus dem Quellcode und listet alle
-Konfigurationsvariablen mit ihren Defaults. Auskommentierte Zeilen = Default
-aktiv. Neu erzeugen nach Code-Änderungen:
-
-```bash
-python3 tools/gen_env_example.py
-```
-
-</details>
-
-<details>
-<summary><b>Schritt 4 — Datenbank</b></summary>
-
-<br>
-
-Die Datenbank legt sich beim ersten Start **selbst** an — nichts zu tun.
-Standard ist SQLite; für MariaDB in der `.env`:
-
-```ini
-DB_BACKEND=mariadb
-DB_HOST=127.0.0.1
-DB_NAME=nightcrawler
-DB_USER=nightcrawler
-DB_PASS=…
-```
-
-</details>
-
-<details>
-<summary><b>Schritt 5 — Erster Start</b></summary>
-
-<br>
-
-```bash
-python3 bot.py
-```
-
-Erwartete Zeilen im Log:
-
-```
-Recorder-Inventur:  ffmpeg : /usr/bin/ffmpeg   yt-dlp : /usr/bin/yt-dlp
-Discord verbunden als <bot> — 45 Slash-Commands aktiv.
-Brain-LLM: llama.cpp OK   (oder: KEIN Backend erreichbar → Fallback)
-Dashboard läuft auf 127.0.0.1:8050
-```
-
-Läuft alles, richte den [systemd-Dienst](#-deployment) ein.
-
-</details>
-
-<details>
-<summary><b>Optional — lokales LLM (llama.cpp)</b></summary>
-
-<br>
-
-Für KI-Antworten ohne Cloud und ohne Kosten: siehe **[`docs/SETUP_LLAMACPP.md`](docs/SETUP_LLAMACPP.md)**
-und die mitgelieferte Unit **[`llama-server.service`](llama-server.service)**.
-Ist kein llama.cpp erreichbar, fällt der Bot automatisch auf Ollama und danach
-auf die keylosen freien Backends zurück — er startet **nie** deswegen nicht.
-
-</details>
+Systempakete, venv, `.env`, Datenbank, erster Start, lokales LLM und die
+OAuth-Flows — Schritt für Schritt in
+**[`docs/INSTALL.md`](docs/INSTALL.md)**.
 
 ---
 
 ## ⚙️ Konfiguration
 
-Alle Einstellungen leben in `.env`. Die Vorlage `.env.example` kennt **rund 470 Variablen** — das Minimum ist klein:
+Alle Einstellungen leben in `.env`. Die Vorlage `.env.example` kennt **rund 495 Variablen** — das Minimum ist klein:
 
 ### 🔑 Pflicht
 
@@ -460,6 +349,7 @@ ADMIN_CHAT_ID=123456789              # deine Telegram-ID (Alarme, Admin-Befehle)
 | `/brain` · `/brain teste` · `/report` | Gehirn-Status, Selbsttest, Wochenreport |
 | `/diag` · `/sysres` · `/quota` · `/logs` | Diagnose, Ressourcen, Kontingente, Logs |
 | `/pause` · `/resume` | Tracking anhalten / fortsetzen |
+| `/update` | Selbstaktualisierung aus dem Repo |
 | `/cookies` · `/teststream` | Cookie-Zustand, Teststream |
 | `/einnahmen` | Einnahmen-Journal (Buchen, Jahresübersicht) |
 
@@ -602,7 +492,7 @@ additiv, fail-open und einzeln abschaltbar.
 | `semantic.py` | Semantische Suche |
 | `scheduler.py` | Prognosen und Poll-Hints |
 | `llm.py` | LLM-Runtime: llama.cpp → Ollama → Fallback |
-| `agents.py` | Sentinel-Flotte (12 Wächter, einzeln schaltbar) |
+| `agents.py` | Sentinel-Flotte (13 Wächter, einzeln schaltbar) |
 | `report.py` | Wochenreport in Markdown |
 
 ### 🛰️ Die Sentinel-Flotte
@@ -616,10 +506,12 @@ additiv, fail-open und einzeln abschaltbar.
 | `learning` | Lernfortschritt des Wissensgraphen |
 | `sentinel` | CrowdSec — Angriffsspitzen, blinde Abwehr |
 | `disk` | Freier Platz + Schätzung „Stunden bis voll" |
+| `swap` | Swap-Belegung — räumt bei RAM-Puffer selbst auf (`SWAP_CLEAR_CMD`) |
 | `restream_sentinel` | **Still** scheiternde Restream-Ziele, geteilte Keys |
 | `toxicity` | Chat-Toxizitäts-**Welle** (möglicher Raid) |
 | `uptime` | Chat-Verbindungen je Plattform, Reconnect-Flattern |
 | `recording` | Aufnahmen mit lebender PID, aber nicht wachsender Datei |
+| `proxy` | Erfolgs- und 403-Quote der TikTok-Fetches (Server-IP-/Proxy-Block) |
 
 Jeder Agent ist isoliert — ein toter Agent kann den Tick nie killen. Abschalten
 per `BRAIN_AGENT_<NAME>=0`.
@@ -642,7 +534,7 @@ Deterministische Erkennung **vor** Banned-Words und **vor** jeder KI:
 
 ## 🖥️ Dashboard
 
-Flask-Dashboard mit **345 Routen** unter `127.0.0.1:8050`.
+Flask-Dashboard mit **355 Routen** unter `127.0.0.1:8050`.
 
 ```bash
 # Von deinem Laptop — niemals den Port öffnen:
@@ -772,6 +664,7 @@ python3 -m py_compile <geänderte .py>
 python3 -m pyflakes   <geänderte .py>                      # 0 Befunde
 python3 -m ruff check --select F,E9,B --ignore B905 <geänderte .py>
 python3 tools/ncpatch.py check                             # Templates prüfen
+python3 tools/ncpatch.py docs                              # Zahlen in der Doku
 python3 test_smoke.py
 python3 test_nc_modules.py
 python3 test_restream.py
@@ -796,7 +689,13 @@ PYTHONPATH=. python3 nc/intel/test_intel.py
 
 Was ohne den vollen Laufzeitstack prüfbar ist, läuft bei jedem Push automatisch:
 **[`.github/workflows/ci.yml`](.github/workflows/ci.yml)** — Lint, Templates,
-Verträge und ein Geheimnis-Scan auf Python 3.12 und 3.13.
+Doku-Zahlen, Verträge und ein Geheimnis-Scan auf Python 3.12 und 3.13.
+
+> [!NOTE]
+> `ncpatch docs` vergleicht die Kennzahlen in README und `CLAUDE.md` — Routen,
+> Zeilen, Module, Agenten, `.env`-Variablen — mit dem Quelltext und prüft jeden
+> internen Anker. Diese Zahlen waren zweimal still veraltet; von Hand gepflegt
+> hält das niemand durch.
 
 <details>
 <summary><b>Wenn ein Vertrag in <code>test_restream.py</code> kippt</b></summary>
@@ -816,7 +715,7 @@ gebrochen ist.**
 
 ### 🧭 Navigation im Monolithen
 
-`bot.py` hat über 30.000 Zeilen. Es wird **nie** ganz gelesen und **nie**
+`bot.py` hat über 32.000 Zeilen. Es wird **nie** ganz gelesen und **nie**
 blind durchsucht — erst fragen wo etwas steht, dann den Ausschnitt holen:
 
 ```bash
@@ -827,10 +726,12 @@ python3 tools/ncpatch.py grep "tree.command" bot.py -C 3
 python3 tools/ncpatch.py map                           # Navigationskarte neu bauen
 python3 tools/ncpatch.py verify patches/x.json         # Trockenlauf
 python3 tools/ncpatch.py apply  patches/x.json         # alles-oder-nichts, legt .bak an
+python3 tools/ncpatch.py docs                          # Doku-Zahlen gegen den Code
 ```
 
-`find` antwortet aus **[`.claude/INDEX.md`](.claude/INDEX.md)** — 345 Routen,
-45 Slash-Commands, 573 Funktionen, jeweils mit Zeilennummer.
+`find` antwortet aus **[`.claude/INDEX.md`](.claude/INDEX.md)** — 355 Routen
+(265 in `bot.py`, 90 in `nc/routes/`), 45 Slash-Commands, 565 Funktionen,
+jeweils mit Zeilennummer.
 
 ---
 
@@ -838,7 +739,7 @@ python3 tools/ncpatch.py apply  patches/x.json         # alles-oder-nichts, legt
 
 | Regel | Warum |
 |---|---|
-| **`.env` liegt nie im Repo und nie im Archiv** | ~470 Variablen inkl. Cookies, OAuth-Tokens und Stream-Keys |
+| **`.env` liegt nie im Repo und nie im Archiv** | ~495 Variablen inkl. Cookies, OAuth-Tokens und Stream-Keys |
 | **Dashboard bindet auf `127.0.0.1`** | Zugriff läuft über SSH-Tunnel, nicht über einen offenen Port |
 | **Cookie- und Key-Redaction beim Logging** | `streamlink`/`ffmpeg`-Kommandozeilen werden vor dem Loggen bereinigt |
 | **Ledger ist append-only mit Hash-Kette** | Eine Korrektur ist eine Gegenbuchung, kein Überschreiben |
@@ -871,13 +772,14 @@ NIGHTCRAWLER/
 │   ├── semantic.py  scheduler.py  llm.py  agents.py  report.py
 │   └── test_m*.py            Modultests
 │
-├── nc/                       84 Fachmodule (bot-frei, configure()-Injection)
+├── nc/                       89 Fachmodule (bot-frei, configure()-Injection)
 │   ├── schema.py             zentrales DB-Schema
 │   ├── restream_*.py         Ziele, Guard, Test-Push, Utils
 │   ├── ledger.py             Einnahmen-Journal (Hash-Kette)
 │   ├── twitchoauth.py  ytoauth.py  kick_oauth.py
 │   ├── modheuristics.py  shield.py  replygate.py
 │   ├── freeai.py  claude.py  piper_voices.py
+│   ├── routes/               8 Flask-Blueprints (90 API-Routen)
 │   ├── intel/                Archiv-Index, Transkripte, Reels
 │   └── _vendor/segno/        vendored QR-Encoder (BSD)
 │
@@ -886,7 +788,7 @@ NIGHTCRAWLER/
 ├── website/                  öffentliche Seite, Impressum, Datenschutz
 ├── tools/                    ncpatch.py · deploy.sh · build_release.py
 │                             gen_env_example.py · notify_failure.sh
-├── docs/                     CROWDSEC.md
+├── docs/                     DEPLOY · CONTRIBUTING · CHANGELOG · SETUP_* · …
 ├── .claude/                  INDEX.md (Navigationskarte) + Skills
 │
 ├── .env.example              auto-generierte Konfigurationsvorlage
@@ -900,7 +802,10 @@ NIGHTCRAWLER/
 | Datei | Inhalt |
 |---|---|
 | **[`docs/START_HIER.txt`](docs/START_HIER.txt)** | Einspielen in einem Befehl, Log lesen, Erste Hilfe |
+| **[`docs/INSTALL.md`](docs/INSTALL.md)** | Installation von Hand, Schritt für Schritt |
 | **[`docs/DEPLOY.md`](docs/DEPLOY.md)** | Vollständige Deploy- und Prüfanleitung |
+| **[`docs/TROUBLESHOOTING.md`](docs/TROUBLESHOOTING.md)** | Störungsbilder und ihre echten Ursachen |
+| **[`docs/ROADMAP.md`](docs/ROADMAP.md)** | Die sechs Wellen der Zerlegung, in Kurzfassung |
 | **[`docs/README_V37.md`](docs/README_V37.md)** | Ausführliche Release-Historie aller Wellen |
 | **[`docs/CHANGELOG.md`](docs/CHANGELOG.md)** | Versionsübersicht |
 | **[`docs/MODULARISIERUNG.md`](docs/MODULARISIERUNG.md)** | Plan, den Monolithen zu zerlegen — gemessen, in Wellen |
@@ -913,10 +818,7 @@ NIGHTCRAWLER/
 
 ## 🩺 Fehlersuche
 
-<details>
-<summary><b>„Es geht nicht mehr" — wo zuerst schauen</b></summary>
-
-<br>
+Erste Frage immer an den Bot selbst:
 
 ```bash
 curl -s localhost:8050/api/selftest | python3 -m json.tool
@@ -926,68 +828,10 @@ Fasst zusammen, was sonst fünf verschiedene Log-Greps wären: tote Sendeziele,
 YouTube-Grund, Abwehr-Rechte, gestörte Dauerschleifen, schweigende Kern-Loops,
 Plattenfüllstand — **jeder Befund mit dem Befehl, der ihn behebt**.
 
-</details>
-
-<details>
-<summary><b>Stille <code>except</code>-Blöcke sind der Hauptfeind</b></summary>
-
-<br>
-
-Der Bot fängt großflächig ab und loggt auf `warning`/`debug`. Ein `log.warning`
-erscheint in einem ERROR-Log **nie** — so blieb ein Discord-Gateway-Tod
-monatelang unsichtbar. Wenn etwas „nicht mehr geht", suche zuerst das `except`,
-das den Grund frisst.
-
-Für periodische Schleifen gibt es `_loop_fehler(name, exc)`: erste Meldung
-sofort auf `error` mit Traceback, danach höchstens alle 15 Minuten eine — mit
-der Zahl der unterdrückten Fälle.
-
-</details>
-
-<details>
-<summary><b>Aufnahmen schlagen fehl</b></summary>
-
-<br>
-
-```
-KEIN Recorder installiert — Aufnahmen werden FEHLSCHLAGEN.
-```
-
-```bash
-sudo apt install ffmpeg        # empfohlen, für den nativen Pfad
-pip install -U yt-dlp          # Fallback-Recorder
-```
-
-</details>
-
-<details>
-<summary><b>KI antwortet nicht / Antworten sind abgeschnitten</b></summary>
-
-<br>
-
-```bash
-python3 -c "import nc.freeai as f; print(f.diagnose())"
-```
-
-Zeigt pro Backend: frei/gesperrt, Latenz, keyless/KEY, letzter Fehler. Bei
-abgeschnittenen Antworten `BRAIN_LLM_MAX_TOKENS` erhöhen, bei Timeouts
-`BRAIN_LLM_TIMEOUT_S` — beides hängt bei CPU-Inferenz zusammen.
-
-`REACTION_AI_TIMEOUT` bleibt bewusst **kurz**: die Live-Reaktion muss snappy
-sein, sonst schlägt der Watchdog Alarm.
-
-</details>
-
-<details>
-<summary><b>Konfiguration wird nicht übernommen</b></summary>
-
-<br>
-
-**Modul-Konstanten frieren `.env` ein.** Die `.env` wird teilweise erst nach den
-ersten Imports geladen. Konfiguration deshalb immer als Funktion lesen
-(`_backend_conf()`), nie als Modul-Konstante.
-
-</details>
+Die häufigen Störungsbilder und wo ihre Ursache wirklich liegt, stehen in
+**[`docs/TROUBLESHOOTING.md`](docs/TROUBLESHOOTING.md)**: stille `except`-Blöcke
+(der Hauptfeind), fehlschlagende Aufnahmen, schweigende KI, `.env`-Werte die
+nicht greifen, gekippte Verträge in `test_restream.py`.
 
 ---
 
@@ -998,11 +842,11 @@ ersten Imports geladen. Konfiguration deshalb immer als Funktion lesen
 | | |
 |---|---|
 | Aktuelle Version | **4.0** — „Restream Control Room" (2026.08) |
-| Flask-Routen | 345 |
+| Flask-Routen | 355 (265 in `bot.py` · 90 in `nc/routes/`) |
 | Discord-Slash-Commands | 45 |
-| Fachmodule | 84 in `nc/` (+4 in `nc/intel/`), 11 in `brain/` |
-| Sentinel-Agenten | 12 |
-| Konfigurationsvariablen | ~470 |
+| Fachmodule | 89 in `nc/` (+8 in `nc/routes/`, +3 in `nc/intel/`), 10 in `brain/` |
+| Sentinel-Agenten | 13 |
+| Konfigurationsvariablen | ~495 |
 
 Vollständige Historie: **[`docs/CHANGELOG.md`](docs/CHANGELOG.md)** ·
 **[`docs/README_V37.md`](docs/README_V37.md)**
@@ -1011,31 +855,16 @@ Vollständige Historie: **[`docs/CHANGELOG.md`](docs/CHANGELOG.md)** ·
 
 ## 🧭 Roadmap
 
-Der nächste grosse Schritt ist kein Feature, sondern Aufräumen: **`bot.py`
-hat 34.487 Zeilen**. Die Datei ist der Engpass des Projekts — sie lässt sich
-nicht überblicken und nur mit Werkzeug bearbeiten.
-
-Der vollständige, gemessene Plan dazu steht in
-**[`docs/MODULARISIERUNG.md`](docs/MODULARISIERUNG.md)**. Die Kurzfassung:
-
-| Welle | Inhalt | Zeilen |
-|---|---|---:|
-| **0** | Fundament — `nc/ctx.py` für die 13 echten Querschnittshelfer | ±0 |
-| **1** | Die 173 global-freien Funktionen bündeln | −2.200 |
-| **2** | Blueprint-Pilot `/api/recordings` — beweist das Verfahren | −470 |
-| **3** | Blueprints in Serie — **der grosse Hebel** | −7.600 |
-| **4** | `RestreamManager` und `KickModerator` herauslösen | −1.700 |
-| **5** | Discord-Schicht nach `discord_ext/` | −2.100 |
-| **6** | Kern aufräumen, `bot.py` wird Kompositionswurzel | Rest |
-
-Zwei Messungen machen das machbar: die Kopplung ist **flach** (Median 2
-Fremdbezüge je Route, nur 13 echte Querschnittshelfer), und es gibt **kein
-einziges `url_for`** im Projekt — Flask-Blueprints sind hier
-verhaltensneutral.
-
-Die Messlatte ist keine Zeilenzahl:
+Der nächste grosse Schritt ist kein Feature, sondern Aufräumen: **`bot.py` hat
+32.569 Zeilen**. Die Datei ist der Engpass des Projekts. Die Messlatte dafür ist
+aber keine Zeilenzahl:
 
 > **Eine neue API-Route anlegen, ohne `bot.py` zu öffnen.**
+
+Der Weg dahin in sechs Wellen — gemessen, nicht geschätzt:
+**[`docs/ROADMAP.md`](docs/ROADMAP.md)**. Welle 2 ist erledigt, Welle 3 läuft:
+`nc/routes/` trägt heute 8 Blueprints mit 90 API-Routen, die nicht mehr im
+Monolithen stehen.
 
 ---
 
