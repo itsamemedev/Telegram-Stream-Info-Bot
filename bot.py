@@ -1144,8 +1144,8 @@ LIVING_TITLE_TEMPLATE  = os.getenv("LIVING_TITLE_TEMPLATE", "🔴 {user} LIVE ·
 AZRAEL_STYLE           = os.getenv("AZRAEL_STYLE", "locker, knapp, deutsch, trockener Cyberpunk-Humor, nie devot").strip()
 AZRAEL_MAX_CALLS_MIN   = _env_int("AZRAEL_MAX_CALLS_MIN", 20)    # globales KI-Budget (Calls/Minute, Schutz vor Fluten/Loops)
 # v37: zentrale Version/Build-Kennung — löst die veralteten v2.0/B65/2026.06-Streuungen ab
-BOT_VERSION = _nc_version.VERSION  # v4.0 (zentral in nc.version)
-BUILD_STAMP = os.getenv("BUILD_STAMP", "2026.08 · v4.0")
+BOT_VERSION = _nc_version.VERSION  # v4.1 (zentral in nc.version)
+BUILD_STAMP = os.getenv("BUILD_STAMP", "2026.08 · v4.1")
 # F91: AZRAEL PROACTIVE — Co-Host, der Funkstille im Kick-Chat füllt
 PROACTIVE_ENABLED      = os.getenv("PROACTIVE_ENABLED", "1").strip().lower() in ("1","true","yes","on","y")
 PROACTIVE_SILENCE_S    = _env_int("PROACTIVE_SILENCE_S", 180)    # so lange Chat-Stille bis AZRAEL eingreift
@@ -12485,8 +12485,64 @@ def _news_facts() -> dict:
             _live = [r["username"] for r in _rows if (r["username"] or "").strip()]
             facts["live_today"] = _live
             facts["live_today_count"] = len(_live)
-    except Exception:
-        pass
+
+            # v4.1: Wochenbild. Der Tageswert allein hat keinen Massstab — "2 live"
+            # sagt nichts, "2 heute, 11 in sieben Tagen" schon. Aggregiert in
+            # Python statt per GROUP BY/DISTINCT-Datumsfunktion: datetime()/DATE()
+            # gibt es so nur in SQLite, die Query waere auf MariaDB gestorben.
+            _cut7 = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
+            _r7 = c.execute(
+                "SELECT username, started_at FROM recording_attempts "
+                "WHERE started_at >= ? AND username IS NOT NULL", (_cut7,)).fetchall()
+            _u7, _d7, _s7 = set(), set(), 0
+            for _r in _r7:
+                _u = (_r["username"] or "").strip()
+                if not _u:
+                    continue
+                _s7 += 1
+                _u7.add(_u)
+                _d7.add(str(_r["started_at"] or "")[:10])
+            facts["live_7d_count"] = len(_u7)
+            facts["active_days_7d"] = len({d for d in _d7 if d})
+            facts["sessions_7d"] = _s7
+
+            # Eingerichtete Sende-Ziele — oeffentlich unbedenklich (nur die ANZAHL,
+            # nie Label, URL oder Key).
+            try:
+                facts["restream_targets"] = c.execute(
+                    "SELECT COUNT(*) AS n FROM restreams WHERE enabled = 1").fetchone()["n"]
+            except Exception as _e:
+                log.debug("_news_facts restream_targets: %s", _e)
+
+            # Was die Moderation in der Woche tatsaechlich getan hat.
+            try:
+                facts["mod_actions_7d"] = c.execute(
+                    "SELECT COUNT(*) AS n FROM kick_mod_log WHERE ts >= ?",
+                    (_cut7,)).fetchone()["n"]
+            except Exception as _e:
+                log.debug("_news_facts mod_actions_7d: %s", _e)
+            try:
+                facts["ai_answers_7d"] = c.execute(
+                    "SELECT COUNT(*) AS n FROM ai_interactions "
+                    "WHERE created_at >= ? AND ok = 1", (_cut7,)).fetchone()["n"]
+            except Exception as _e:
+                log.debug("_news_facts ai_answers_7d: %s", _e)
+
+            # Wissenszuwachs der Woche = juengster minus aeltester Messpunkt im
+            # Fenster. Negative Werte (Speicher wurde geleert) fallen weg statt
+            # als "-40 gelernt" auf der Website zu landen.
+            try:
+                _g = c.execute(
+                    "SELECT ts, triples FROM brain_growth WHERE ts >= ? ORDER BY ts",
+                    (_cut7,)).fetchall()
+                if len(_g) >= 2:
+                    _delta = int(_g[-1]["triples"] or 0) - int(_g[0]["triples"] or 0)
+                    if _delta > 0:
+                        facts["kg_growth_7d"] = _delta
+            except Exception as _e:
+                log.debug("_news_facts kg_growth_7d: %s", _e)
+    except Exception as _e:
+        log.debug("_news_facts DB: %s", _e)
     try:
         from brain import get_brain
         b = get_brain()
@@ -12590,6 +12646,26 @@ async def _creator_dossier_generate(days: int = 7, max_users: int = 30) -> dict:
         return payload
 
 
+def _news_absaetze(text) -> str:
+    """v4.1: KI-Antwort auf saubere Absaetze normalisieren. Der Website-Renderer
+       trennt an "\n\n" — ohne diese Normalisierung liefert ein Modell mal drei
+       Leerzeilen, mal einzelne Umbrueche mitten im Satz, und die Seite zeigt
+       entweder Luecken oder einen einzigen Klotz."""
+    zeilen = [z.strip() for z in (text or "").replace("\r", "").split("\n")]
+    absaetze, puffer = [], []
+    for z in zeilen:
+        if z:
+            # Aufzaehlungszeichen fliegen raus: die Details stehen auf der Website
+            # in einer eigenen Liste, im Fliesstext waeren sie doppelt.
+            puffer.append(z.lstrip("-*\u2022 ").strip())
+        elif puffer:
+            absaetze.append(" ".join(puffer))
+            puffer = []
+    if puffer:
+        absaetze.append(" ".join(puffer))
+    return "\n\n".join(a for a in absaetze if a)
+
+
 async def _news_phrase_impl(cat, facts) -> "str | None":
     """Optionale KI-Formulierung aus den ECHTEN Fakten (kein Erfinden). self-gated."""
     if os.getenv("NEWS_AI_FLAVOR", "1").strip().lower() not in ("1", "true", "yes", "on"):
@@ -12600,16 +12676,23 @@ async def _news_phrase_impl(cat, facts) -> "str | None":
                  "creators": "einen Tages-Report der heute live gewesenen Creator "
                              "(die Namen aus den Fakten duerfen genannt werden)",
                  "ai": "die KI"}.get(cat, cat)
-        msgs = [{"role": "system", "content": "Du schreibst kurze, oeffentliche Website-News auf Deutsch. "
-                 "1-2 Saetze, sachlich-einladend, KEINE Hashtags, KEINE Emojis, KEINE erfundenen Zahlen. "
-                 "Nutze AUSSCHLIESSLICH die genannten Fakten. WICHTIG: Erwaehne NIEMALS Aufnahmen, "
+        # v4.1: ausfuehrlich statt Statuszeile. Die alte Vorgabe "1-2 Saetze" hat
+        # aus jeder Meldung eine Zeile gemacht — fuer einen Erstbesucher wertlos
+        # und fuer Suchmaschinen zu duenn. Jetzt drei Absaetze; die Absatzgrenzen
+        # muessen deshalb erhalten bleiben (frueher: .replace("\n", " ")).
+        msgs = [{"role": "system", "content": "Du schreibst oeffentliche Website-News auf Deutsch. "
+                 "Schreibe GENAU DREI Absaetze, getrennt durch eine Leerzeile, zusammen 110-180 Woerter: "
+                 "(1) was gerade passiert ist, (2) was das konkret bedeutet, (3) eine sachliche Einordnung. "
+                 "Sachlich-einladend, ganze Saetze, KEINE Hashtags, KEINE Emojis, KEINE Ueberschriften, "
+                 "KEINE Aufzaehlungszeichen, KEINE erfundenen Zahlen. Nutze AUSSCHLIESSLICH die genannten "
+                 "Fakten und uebernimm jede Zahl unveraendert. WICHTIG: Erwaehne NIEMALS Aufnahmen, "
                  "Aufzeichnungen, Mitschnitte oder Recording — die Plattform nimmt oeffentlich nichts auf; "
                  "sprich ausschliesslich von Live-Begleitung, Restream und Moderation."},
-                {"role": "user", "content": f"Formuliere eine oeffentliche News ueber {label} "
+                {"role": "user", "content": f"Formuliere eine ausfuehrliche oeffentliche News ueber {label} "
                  f"aus diesen Fakten, ohne neue Zahlen zu erfinden: {base}"}]
-        out = await asyncio.wait_for(_nc_freeai.chat(msgs, timeout=10), timeout=12)
-        out = (out or "").strip().replace("\n", " ")
-        return out[:400] or None
+        out = await asyncio.wait_for(_nc_freeai.chat(msgs, timeout=20), timeout=24)
+        out = _news_absaetze(out)
+        return out[:1600] or None
     except Exception:
         return None
 

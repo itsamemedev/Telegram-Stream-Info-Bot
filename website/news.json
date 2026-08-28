@@ -8,7 +8,33 @@
       "category": "project",
       "category_label": "Projekt",
       "title": "Was Azrael Sentinel kann",
-      "body": "Unsere Plattform begleitet Live-Streams in Echtzeit – mit Multi-Plattform-Restream und KI-gestützter Moderation. Sobald der News-Agent läuft, erscheinen hier laufend aktuelle Neuigkeiten."
+      "lead": "Ein Stream, mehrere Kanäle, eine wachsame KI — das ist der ganze Gedanke hinter Azrael Sentinel.",
+      "body": "Azrael Sentinel begleitet Live-Streams in Echtzeit. Ein einziges Signal geht herein und läuft parallel auf Kick, Twitch und YouTube wieder hinaus — die Zuschauer bleiben dort, wo sie ohnehin sind, statt zwischen Kanälen zu wechseln.\n\nWährend gesendet wird, liest unsere KI in allen angeschlossenen Chats gleichzeitig mit: sie antwortet auf Fragen, greift bei Spam und Beleidigungen ein und meldet, wenn ein Kanal wegbricht. Sie läuft auf eigener Hardware, nicht bei einem Cloud-Anbieter — was im Chat steht, verlässt diesen Rechner nicht.\n\nSobald der News-Agent läuft, steht an dieser Stelle laufend Aktuelles: ein täglicher Report darüber, wer von den begleiteten Creatorn live war, und der Fortschritt der KI in Zahlen. Alles daran stammt aus dem echten Betrieb — geschätzt oder ausgedacht wird hier nichts.",
+      "metrics": [
+        {
+          "label": "Ziel-Plattformen",
+          "value": "3"
+        },
+        {
+          "label": "Version",
+          "value": "4.1"
+        }
+      ],
+      "bullets": [
+        "Restream: ein Signal, gleichzeitig auf Kick, Twitch und YouTube — ohne zweiten Rechner",
+        "Moderation in allen angeschlossenen Chats aus einer gemeinsamen Heuristik",
+        "AZRAEL antwortet im Chat und spricht dabei genau eine Person an, statt in den Raum zu rufen",
+        "Fällt ein Ziel aus, läuft die Sendung auf den übrigen weiter und das ausgefallene wird gemeldet",
+        "Selbst gehostet auf eigener Hardware — kein Chatverlauf bei einem Cloud-Anbieter"
+      ],
+      "tags": [
+        "Restream",
+        "Moderation",
+        "Selbst gehostet",
+        "Kick",
+        "Twitch",
+        "YouTube"
+      ]
     }
   ]
 }

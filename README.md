@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="docs/assets/banner.svg" alt="NIGHTCRAWLER — v4.0 Restream Control Room" width="100%">
+<img src="docs/assets/banner.svg" alt="NIGHTCRAWLER — v4.1 Öffentliche Stimme" width="100%">
 
 ### Der Kontrollraum für Live-Streaming
 #### Überwachung · Aufnahme · Multi-Ziel-Restream · KI-Moderation
@@ -194,7 +194,7 @@ flowchart TB
     DC --> BOT
     TT --> BOT
 
-    BOT["bot.py<br/>Monolith · 30.834 Zeilen<br/>Scraper · Recorder · Restream<br/>Flask-Dashboard · 203 eigene Routen"]:::core
+    BOT["bot.py<br/>Monolith · 30.917 Zeilen<br/>Scraper · Recorder · Restream<br/>Flask-Dashboard · 203 eigene Routen"]:::core
 
     BOT -->|configure| NC["nc/ — 90 Fachmodule<br/>Schema · OAuth · Restream<br/>Ledger · Moderation · Intel"]:::lib
     NC --> RT["nc/routes/ — 13 Blueprints<br/>152 weitere API-Routen"]:::lib
@@ -730,7 +730,7 @@ python3 tools/ncpatch.py docs                          # Doku-Zahlen gegen den C
 ```
 
 `find` antwortet aus **[`.claude/INDEX.md`](.claude/INDEX.md)** — 355 Routen
-(203 in `bot.py`, 152 in `nc/routes/`), 45 Slash-Commands, 552 Funktionen,
+(203 in `bot.py`, 152 in `nc/routes/`), 45 Slash-Commands, 553 Funktionen,
 jeweils mit Zeilennummer.
 
 ---
@@ -856,7 +856,7 @@ Vollständige Historie: **[`docs/CHANGELOG.md`](docs/CHANGELOG.md)** ·
 ## 🧭 Roadmap
 
 Der nächste grosse Schritt ist kein Feature, sondern Aufräumen: **`bot.py` hat
-30.834 Zeilen**. Die Datei ist der Engpass des Projekts. Die Messlatte dafür ist
+30.917 Zeilen**. Die Datei ist der Engpass des Projekts. Die Messlatte dafür ist
 aber keine Zeilenzahl:
 
 > **Eine neue API-Route anlegen, ohne `bot.py` zu öffnen.**
@@ -936,7 +936,7 @@ Fremdcode und dessen Lizenzen: **[`docs/THIRD_PARTY_LICENSES.md`](docs/THIRD_PAR
 
 <div align="center">
 
-**NIGHTCRAWLER v4.0 · „Restream Control Room"**
+**NIGHTCRAWLER v4.1 · „Öffentliche Stimme"**
 
 **[🌐 lafap.de](https://lafap.de)** · **[💬 Discord](https://discord.gg/psvnxm7tSV)** · **[📓 Changelog](docs/CHANGELOG.md)**
 

@@ -640,6 +640,53 @@ weiteres Element machte sie 37 % höher).
 
 ---
 
+## [4.1] — 2026-08 · „Öffentliche Stimme"
+
+### Geändert — Website-News sind Meldungen, keine Statuszeilen (Welle 1)
+
+Bis v4.0 war eine News auf lafap.de **ein Satz**. Für einen Erstbesucher stand
+dort nichts, was ihn bleiben ließ, und für eine Suchmaschine waren es rund 30
+Wörter pro Eintrag. Ein Item trägt jetzt fünf Felder statt einem:
+
+| Feld | Inhalt |
+|---|---|
+| `lead` | Anreißer-Satz, der auch allein steht |
+| `body` | Fließtext in **mehreren Absätzen** (durch Leerzeile getrennt) |
+| `metrics` | `[{label, value}]` — die harten Zahlen als Kennzahlen-Leiste |
+| `bullets` | Detailpunkte, die im Fließtext nur bremsen würden |
+| `tags` | Themen-Chips |
+
+Alle neuen Felder sind **optional**: eine bestehende `news.json` mit alten
+Einträgen rendert unverändert weiter, statt leere Kästen zu hinterlassen.
+
+Damit es überhaupt etwas zu erzählen gibt, sammelt `_news_facts()` ein
+Wochenbild ein — Sendungen, verschiedene Creator und aktive Tage der letzten
+sieben Tage, eingerichtete Sende-Ziele, Moderations-Eingriffe, Chat-Antworten
+und der Zuwachs des Wissensspeichers. Die Zeitfenster werden in Python
+berechnet und als Parameter gebunden; `datetime('now', …)` gibt es auf MariaDB
+nicht.
+
+Drei Dinge, die für den Betrieb zählen:
+
+- **Die KI formuliert nur den Fließtext.** `lead`, `metrics`, `bullets` und
+  `tags` entstehen ausschließlich aus echten Fakten — eine halluzinierte Zahl
+  kann so gar nicht erst in eine Kennzahl geraten. Der Prompt fordert jetzt
+  drei Absätze statt „1-2 Sätze"; `_news_absaetze()` normalisiert die Antwort,
+  weil der Renderer an Leerzeilen trennt.
+- **Fehlende Fakten verschwinden, sie werden nie zur 0.** Beim Praxislauf
+  zerbrachen zwei Sätze, sobald eine Zahl fehlte („Jeder von **ihnen**" ohne
+  Bezug, ein Absatz der klein anfing). Die Texte werden jetzt satzweise
+  zusammengesetzt, und ein Vertrag spielt Teilmengen der Fakten durch.
+- **Öffentliche Texte in korrektem Deutsch.** Die News gingen bisher mit
+  `ae/oe/ue`-Umschrift auf eine deutsche Seite („Waechter", „Kanaele").
+
+Dazu: die Kennzahlen-Leiste liegt auf Flex statt Grid — bei fünf Zahlen auf
+drei Spalten blieb auf dem Handy eine leere Geisterkachel stehen. Und die
+Dashboard-Vorschau zeigt vor dem Veröffentlichen, welche Zahlen nach außen
+gehen; vorher stand dort nur der Body.
+
+---
+
 ## [4.0] — 2026-08 · „Restream Control Room"
 
 ### Multi-Plattform-Moderation & offener Kern

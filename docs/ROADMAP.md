@@ -1,7 +1,7 @@
 # Roadmap
 
 Der nächste grosse Schritt ist kein Feature, sondern Aufräumen: **`bot.py` hat
-30.834 Zeilen**. Die Datei ist der Engpass des Projekts — sie lässt sich nicht
+30.917 Zeilen**. Die Datei ist der Engpass des Projekts — sie lässt sich nicht
 überblicken und nur mit Werkzeug bearbeiten.
 
 Der vollständige, gemessene Plan steht in
