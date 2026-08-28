@@ -364,12 +364,47 @@ footer nav a:hover{color:var(--phos)}
 .news-item .n-top{display:flex; align-items:center; gap:10px; margin-bottom:7px; flex-wrap:wrap}
 .news-item .n-cat{font-size:.6rem; letter-spacing:.14em; text-transform:uppercase; color:var(--cyan); border:1px solid var(--line); border-radius:99px; padding:2px 10px}
 .news-item .n-date{font-size:.72rem; color:var(--ash); font-family:'JetBrains Mono',monospace}
-.news-item h3{font-size:1.02rem; margin:0 0 6px; color:var(--white)}
-.news-item p{color:var(--ash); line-height:1.55; margin:0}
+.news-item h3{font-size:1.14rem; margin:0 0 8px; color:var(--white)}
+.news-item p{color:var(--ash); line-height:1.62; margin:0}
 .news-empty{color:var(--ash); font-size:.9rem}
 .news-cat-project .n-cat{color:var(--phos)}
 .news-cat-creators .n-cat{color:var(--mag)}
 .news-cat-ai .n-cat{color:var(--cyan)}
+/* v4.1 · Ausfuehrliche News. Eine Meldung ist jetzt Anreisser + Kennzahlen +
+   Fliesstext + Detailliste + Themen — die Abstaende tragen die Gliederung,
+   damit dafuer keine zusaetzlichen Linien noetig sind. */
+.news-item{padding:20px 22px}
+.news-item .n-lead{color:var(--white); font-size:1rem; line-height:1.6; margin:0 0 14px}
+/* Flex, NICHT Grid: bei auto-fit-Spalten bleibt in der letzten Reihe eine
+   leere Kachel stehen (5 Kennzahlen auf 3 Spalten) — die sah auf dem Handy
+   wie ein Darstellungsfehler aus. Flex laesst die letzte Reihe aufgehen. */
+.news-item .n-figs{display:flex; flex-wrap:wrap; gap:8px; margin:0 0 16px}
+.news-item .n-fig{flex:1 1 124px; background:var(--panel2); border:1px solid var(--line);
+                  border-radius:6px; padding:10px 12px}
+.news-item .n-fig b{display:block; font-family:var(--disp); font-weight:700; font-size:1.28rem;
+                    line-height:1.1; color:var(--phos); font-variant-numeric:tabular-nums}
+.news-item .n-fig span{display:block; margin-top:5px; font-size:.58rem; letter-spacing:.12em;
+                       text-transform:uppercase; color:var(--dim)}
+.news-cat-creators .n-fig b{color:var(--mag)}
+.news-cat-ai .n-fig b{color:var(--cyan)}
+.news-item .n-body p + p{margin-top:11px}
+.news-item .n-points{list-style:none; margin:16px 0 0; padding:0; display:grid; gap:7px}
+.news-item .n-points li{position:relative; padding-left:20px; color:var(--ash);
+                        font-size:.9rem; line-height:1.55}
+/* Kein Listenpunkt-Glyph, sondern ein Strich in Akzentfarbe: die Kategorie
+   bleibt so auch in der Detailliste ablesbar, ohne zweite Beschriftung. */
+.news-item .n-points li::before{content:"\2014"; position:absolute; left:0; top:0;
+                                color:var(--cyan); opacity:.75}
+.news-cat-project .n-points li::before{color:var(--phos)}
+.news-cat-creators .n-points li::before{color:var(--mag)}
+.news-item .n-tags{display:flex; flex-wrap:wrap; gap:7px; margin:16px 0 0}
+.news-item .n-tag{font-size:.58rem; letter-spacing:.12em; text-transform:uppercase;
+                  color:var(--dim); border:1px solid var(--line); border-radius:99px;
+                  padding:3px 9px}
+@media (max-width:560px){
+  .news-item{padding:16px 15px}
+  .news-item .n-fig{flex-basis:104px}
+}
 /* v4.0 · Lagebild — Live-Metriken + 7-Tage-Chart (void/phosphor) */
 .metrics{display:grid;grid-template-columns:repeat(auto-fit,minmax(148px,1fr));gap:14px;margin:26px 0 18px}
 .metric{background:var(--panel);border:1px solid var(--line);padding:20px 16px;position:relative;overflow:hidden}
@@ -950,20 +985,59 @@ footer nav a:hover{color:var(--phos)}
 
 <script>
 /* News aus news.json (vom News-Agent geschrieben). Rein statisch: die Seite
-   holt die Datei per fetch; fehlt sie, bleibt der Bereich ruhig leer. */
+   holt die Datei per fetch; fehlt sie, bleibt der Bereich ruhig leer.
+
+   v4.1: eine Meldung besteht jetzt aus mehreren Feldern — lead (Anreisser),
+   body (MEHRERE Absaetze, getrennt durch Leerzeile), metrics (Kennzahlen),
+   bullets (Details) und tags. Alle sind OPTIONAL: aeltere Eintraege in einer
+   bestehenden news.json kennen nur title/body und sollen trotzdem sauber
+   erscheinen, statt leere Kaesten zu hinterlassen. Deshalb prueft jeder Block
+   selbst, ob sein Feld ueberhaupt Inhalt hat. */
 (function(){
   var box=document.getElementById('news-list'); if(!box) return;
   var LAB={project:'Projekt',creators:'Creator',ai:'KI'};
   function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];});}
   function fmt(ts){ if(!ts) return ''; try{ return new Date(ts*1000).toLocaleDateString('de-DE',{day:'2-digit',month:'short',year:'numeric'}); }catch(e){ return ''; } }
+  function arr(v){ return Object.prototype.toString.call(v)==='[object Array]' ? v : []; }
+  /* Absaetze: an Leerzeilen trennen. Ein einzelner Umbruch mitten im Satz ist
+     KEIN neuer Absatz — sonst zerfaellt ein umgebrochener Fliesstext in Fetzen. */
+  function absaetze(t){
+    return String(t==null?'':t).split(/\n\s*\n/).map(function(s){ return s.replace(/\s+/g,' ').trim(); })
+      .filter(function(s){ return s.length; });
+  }
+  function figs(m){
+    var rows=arr(m).filter(function(f){ return f && f.label && (f.value!==''&&f.value!=null); });
+    if(!rows.length) return '';
+    return '<div class="n-figs">'+rows.map(function(f){
+      return '<div class="n-fig"><b>'+esc(f.value)+'</b><span>'+esc(f.label)+'</span></div>';
+    }).join('')+'</div>';
+  }
+  function punkte(b){
+    var li=arr(b).filter(function(s){ return s && String(s).trim(); });
+    if(!li.length) return '';
+    return '<ul class="n-points">'+li.map(function(s){ return '<li>'+esc(s)+'</li>'; }).join('')+'</ul>';
+  }
+  function themen(t){
+    var tg=arr(t).filter(function(s){ return s && String(s).trim(); });
+    if(!tg.length) return '';
+    return '<p class="n-tags">'+tg.map(function(s){ return '<span class="n-tag">'+esc(s)+'</span>'; }).join('')+'</p>';
+  }
   fetch('news.json?_='+Date.now()).then(function(r){ if(!r.ok) throw 0; return r.json(); }).then(function(d){
     var items=(d&&d.items)||[];
     if(!items.length){ box.innerHTML='<p class="news-empty">Noch keine Neuigkeiten.</p>'; return; }
     box.innerHTML=items.map(function(it){
       var cat=it.category||''; var lab=it.category_label||LAB[cat]||cat;
+      var lead=String(it.lead||'').trim();
+      var ps=absaetze(it.body);
       return '<article class="news-item news-cat-'+esc(cat)+'">'
         +'<div class="n-top"><span class="n-cat">'+esc(lab)+'</span><span class="n-date">'+esc(fmt(it.ts))+'</span></div>'
-        +'<h3>'+esc(it.title||'')+'</h3><p>'+esc(it.body||'')+'</p></article>';
+        +'<h3>'+esc(it.title||'')+'</h3>'
+        +(lead?'<p class="n-lead">'+esc(lead)+'</p>':'')
+        +figs(it.metrics)
+        +(ps.length?'<div class="n-body">'+ps.map(function(s){ return '<p>'+esc(s)+'</p>'; }).join('')+'</div>':'')
+        +punkte(it.bullets)
+        +themen(it.tags)
+        +'</article>';
     }).join('');
   }).catch(function(){ box.innerHTML='<p class="news-empty">Neuigkeiten derzeit nicht verf\u00fcgbar.</p>'; });
 })();

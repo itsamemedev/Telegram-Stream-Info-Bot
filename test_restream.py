@@ -1763,6 +1763,126 @@ def test_b163_news():
     ok("b163: render_json-Struktur korrekt")
 
 
+# ------------------------------------------------- v4.1) Ausführliche Website-News
+
+def test_v41_news_ausfuehrlich():
+    """v4.1: eine News ist keine Statuszeile mehr. Verriegelt die neuen Felder,
+       die Absatz-Struktur und — der eigentliche Punkt — dass die KI NUR den
+       Fließtext formuliert: Kennzahlen und Detailpunkte kommen ausschließlich
+       aus echten Fakten und dürfen von einer Halluzination nie berührt werden."""
+    from nc import news as nw
+
+    facts = {"version": "4.1", "platforms": ["Kick", "Twitch", "YouTube"], "tracked": 42,
+             "live_today": ["alpha", "beta"], "live_today_count": 2,
+             "kg_facts": 210, "agents_active": 12, "sessions_7d": 37,
+             "live_7d_count": 11, "active_days_7d": 6, "restream_targets": 3,
+             "mod_actions_7d": 48, "ai_answers_7d": 264, "kg_growth_7d": 31}
+    items = nw.build_items(facts, categories=nw.CATEGORIES, now_ts=1000)
+    assert len(items) == 3
+    for it in items:
+        assert it["lead"].strip(), f"{it['category']}: kein Anreißer"
+        assert len(it["body"].split("\n\n")) >= 2, f"{it['category']}: nur ein Absatz"
+        assert len(it["metrics"]) >= 2, f"{it['category']}: zu wenige Kennzahlen"
+        assert len(it["bullets"]) >= 3, f"{it['category']}: zu wenige Detailpunkte"
+        assert it["tags"], f"{it['category']}: keine Themen"
+        for m in it["metrics"]:
+            assert m.get("label") and str(m.get("value", "")).strip()
+    ok("v4.1: lead/metrics/bullets/tags je Kategorie gefüllt, Body mehrabsätzig")
+
+    # Das Wochenbild landet auch wirklich im Text, nicht nur in den Kennzahlen.
+    by = {it["category"]: it for it in items}
+    assert "37" in by["creators"]["body"] and "11" in by["creators"]["body"]
+    assert "31" in by["ai"]["body"] and "264" in by["ai"]["body"]
+    ok("v4.1: Wochenzahlen stehen im Fließtext")
+
+    # Fehlt eine Zahl, verschwindet sie — sie wird NIE zur 0 auf der Website.
+    duenn = nw.build_items({"tracked": 5, "live_today_count": 0, "platforms": []},
+                           categories=nw.CATEGORIES, now_ts=1)
+    for it in duenn:
+        for m in it["metrics"]:
+            if m["label"] != "Heute live":
+                assert m["value"] not in ("0", "+0"), (it["category"], m)
+    ok("v4.1: fehlende Fakten erzeugen keine 0-Kennzahlen")
+
+    # KI-Formulierung ersetzt NUR den Body — Kennzahlen bleiben faktenrein.
+    frei = nw.build_items(facts, phrasings={"ai": "Frei erfunden: 999 Dinge."},
+                          categories=("ai",), now_ts=1)[0]
+    assert frei["body"] == "Frei erfunden: 999 Dinge."
+    assert all("999" not in str(m["value"]) for m in frei["metrics"])
+    assert frei["bullets"] and all("999" not in b for b in frei["bullets"])
+    ok("v4.1: Phrasing berührt Kennzahlen und Detailpunkte nicht")
+
+    # Ein geänderter Detailwert ist eine NEUE Meldung, kein Duplikat.
+    a = nw.build_items(facts, categories=("ai",), now_ts=100)
+    b = nw.build_items({**facts, "kg_growth_7d": 32}, categories=("ai",), now_ts=200)
+    assert len(nw.merge(a, b, 20)) == 2, "geänderte Kennzahl fällt als Duplikat weg"
+    ok("v4.1: item_id erfasst auch die neuen Felder")
+
+    # Öffentliche Texte in echtem Deutsch — keine ae/oe/ue-Umschrift.
+    import re
+    erlaubt = {"Zuschauer", "Zuschauerzahlen", "Azrael", "Azraels", "aktuelle", "neue",
+               "Blaue", "graue"}
+    for it in items:
+        t = (it["lead"] + " " + it["body"] + " " + " ".join(it["bullets"]) + " " +
+             " ".join(m["label"] for m in it["metrics"]))
+        rest = {w for w in re.findall(r"\w*(?:ae|oe|ue)\w*", t) if w not in erlaubt}
+        assert not rest, f"{it['category']}: Umschrift im öffentlichen Text: {rest}"
+    ok("v4.1: öffentliche News in korrektem Deutsch")
+
+    # Der eigentliche Betriebsfall: Fakten fehlen EINZELN. Genau dabei sind im
+    # Praxislauf zwei Saetze zerbrochen ("Jeder von ihnen" ohne Bezug, ein Absatz
+    # der klein anfing). Deshalb jede Teilmenge durchspielen, nicht nur "alles da".
+    import itertools
+    optional = ["tracked", "agents_active", "kg_facts", "kg_growth_7d",
+                "ai_answers_7d", "mod_actions_7d", "sessions_7d", "live_7d_count",
+                "active_days_7d", "version", "platforms", "live_today",
+                "live_today_count"]
+    for r in range(len(optional) + 1):
+        if r not in (0, 1, len(optional) - 1, len(optional)):
+            continue          # Raender genuegen; alle 8192 Kombinationen waeren Ballast
+        for weg in itertools.combinations(optional, r):
+            teil = {k: v for k, v in facts.items() if k not in weg}
+            for it in nw.build_items(teil, categories=nw.CATEGORIES, now_ts=1):
+                for abs_ in it["body"].split("\n\n"):
+                    assert abs_ == abs_.strip(), f"{it['category']}: Absatz mit Rand-Leerzeichen"
+                    assert abs_[0].isupper() or abs_[0].isdigit(), \
+                        f"{it['category']}: Absatz beginnt klein — {abs_[:60]!r} (ohne {weg})"
+                    assert ".." not in abs_ and " ." not in abs_ and ", ." not in abs_, \
+                        f"{it['category']}: Satzrest — {abs_[:80]!r} (ohne {weg})"
+                if not teil.get("agents_active"):
+                    assert "Jeder von ihnen" not in it["body"], \
+                        f"{it['category']}: 'Jeder von ihnen' ohne Bezugszahl"
+    ok("v4.1: Saetze bleiben ganz, auch wenn einzelne Fakten fehlen")
+
+    # Der Bot sammelt die Fakten dafür auch wirklich ein.
+    src = open("bot.py", encoding="utf-8").read()
+    for key in ("sessions_7d", "active_days_7d", "live_7d_count", "restream_targets",
+                "mod_actions_7d", "ai_answers_7d", "kg_growth_7d"):
+        assert f'facts["{key}"]' in src, f"_news_facts sammelt {key} nicht"
+    assert "def _news_absaetze(" in src and "out = _news_absaetze(out)" in src, \
+        "KI-Antwort wird nicht auf Absätze normalisiert"
+    assert 'GENAU DREI Absaetze' in src, "KI-Prompt fordert keine Absätze"
+    # Zeitfenster in Python berechnet — datetime()/DATE() gibt es auf MariaDB nicht.
+    _blk = src[src.find("def _news_facts"):src.find("async def _news_phrase(")]
+    # Kommentarzeilen raus: der Block ERKLAERT, warum diese Funktionen fehlen —
+    # ohne den Filter meldet der Vertrag genau diese Erklaerung als Verstoss.
+    _code = "\n".join(z for z in _blk.split("\n") if not z.strip().startswith("#"))
+    assert "datetime('now'" not in _code and "DATE(" not in _code, \
+        "SQLite-only-Datumsfunktion im News-Fakten-Pfad"
+    ok("v4.1: _news_facts liefert das Wochenbild, backend-neutral")
+
+    # Die Website rendert die neuen Felder — und überlebt alte Einträge ohne sie.
+    h = open("website/lafap_index.html", encoding="utf-8").read()
+    for marke in ("n-lead", "n-figs", "n-fig", "n-body", "n-points", "n-tag",
+                  "figs(it.metrics)", "punkte(it.bullets)", "themen(it.tags)"):
+        assert marke in h, f"Website rendert {marke} nicht"
+    assert "absaetze(it.body)" in h, "Website trennt den Body nicht in Absätze"
+    seed = open("website/news.json", encoding="utf-8").read()
+    for feld in ('"lead"', '"metrics"', '"bullets"', '"tags"'):
+        assert feld in seed, f"Seed ohne {feld}"
+    ok("v4.1: Website-Renderer und Seed tragen die neuen Felder")
+
+
 # ------------------------------------------------- B165) Mod-Heuristik (plattformunabhängig)
 
 def test_b165_modheuristics():
@@ -2051,23 +2171,27 @@ def test_b170_azrael_and_youtube():
 # ------------------------------------------------- v4.0) Versions-/Changelog-System
 
 def test_v40_version():
-    """v4.0: zentrale Versions-Quelle + Verdrahtung (Footer/Route/Panel)."""
+    """v4.1: zentrale Versions-Quelle + Verdrahtung (Footer/Route/Panel).
+       Der Test wandert mit der Version mit — er verriegelt, dass Footer,
+       BUILD_STAMP und nc.version NICHT auseinanderlaufen (schon dreimal
+       passiert: Modul auf neu, Footer blieb auf alt)."""
     from nc import version as v
-    assert v.VERSION == "4.0" and v.current()["version"] == "4.0"
-    assert v.summary_line().startswith("NIGHTCRAWLER v4.0")
+    assert v.VERSION == "4.1" and v.current()["version"] == "4.1"
+    assert v.summary_line().startswith("NIGHTCRAWLER v4.1")
     top = v.latest()
-    assert top["version"] == "4.0" and len(top["highlights"]) >= 5
+    assert top["version"] == "4.1" and len(top["highlights"]) >= 5
+    assert [c["version"] for c in v.changelog()][:2] == ["4.1", "4.0"]
     assert v.changelog()[-1]["version"] == "3.7"   # Historie erhalten
-    ok("v4.0: nc.version — 4.0 + Changelog mit Historie")
+    ok("v4.1: nc.version — 4.1 + Changelog mit Historie")
 
     src = open("bot.py").read()
     assert 'BOT_VERSION = _nc_version.VERSION' in src, "BOT_VERSION nicht zentralisiert"
-    assert '"2026.08 · v4.0"' in src, "BUILD_STAMP nicht auf v4.0"
+    assert '"2026.08 · v4.1"' in src, "BUILD_STAMP nicht auf v4.1"
     assert '"/api/version"' in src and "def api_version(" in src, "keine /api/version-Route"
     dash = open("templates/dashboard.html").read()
-    assert "<b>v4.0</b>" in dash, "Footer nicht auf v4.0"
+    assert "<b>v4.1</b>" in dash, "Footer nicht auf v4.1"
     assert "/api/version" in src  # Panel entfernt (v4.0-w2), Route bleibt
-    ok("v4.0: Footer v4.0 + /api/version + Was-ist-neu-Panel verdrahtet")
+    ok("v4.1: Footer v4.1 + /api/version + Was-ist-neu-Panel verdrahtet")
 
 
 # ------------------------------------------------- v4.0-2) YouTube-API, News-ohne-Aufnahmen, Website
@@ -6890,6 +7014,7 @@ def main():
     test_b161_testpush_guard()
     test_b162_marketing()
     test_b163_news()
+    test_v41_news_ausfuehrlich()
     test_b165_modheuristics()
     test_b166_piper_voices()
     test_b167_evolution()

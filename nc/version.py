@@ -4,13 +4,26 @@ Eine einzige Wahrheit für die Versionsanzeige (Dashboard-Footer, /api/version,
 „Was ist neu"-Panel). Reine Daten + kleine Helfer, voll testbar.
 """
 
-VERSION = "4.0"
-CODENAME = "Restream Control Room"
+VERSION = "4.1"
+CODENAME = "Öffentliche Stimme"
 RELEASE = "2026.08"
 
 # Meilenstein-Changelog, neueste Version zuerst. highlights = kurze, ehrliche
 # Stichpunkte dessen, was die Version bringt.
 CHANGELOG = [
+    {
+        "version": "4.1",
+        "date": "2026-08",
+        "title": "Öffentliche Stimme",
+        "highlights": [
+            "News auf der Website sind ausführliche Meldungen statt einer Statuszeile: Anreißer, Kennzahlen, Fließtext in Absätzen, Detailliste und Themen",
+            "Der News-Agent liefert dafür ein Wochenbild — Sendungen und aktive Tage der letzten sieben Tage, eingerichtete Sende-Ziele, Moderations-Eingriffe, Chat-Antworten und Wissenszuwachs",
+            "Kennzahlen und Detailpunkte stammen immer aus echten Fakten; die KI formuliert nur den Fließtext",
+            "Website rendert die neuen Felder und bleibt für alte Einträge ohne sie fehlerfrei",
+            "Dashboard-Vorschau zeigt vor dem Veröffentlichen, welche Zahlen nach außen gehen",
+            "Öffentliche Texte in korrektem Deutsch statt in ae/oe/ue-Umschrift",
+        ],
+    },
     {
         "version": "4.0",
         "date": "2026-08",

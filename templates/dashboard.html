@@ -3442,7 +3442,7 @@ document.addEventListener("DOMContentLoaded",function(){
   </div>
 
   <div class="footer">
-    <span>NIGHTCRAWLER <b>v4.0</b></span>
+    <span>NIGHTCRAWLER <b>v4.1</b></span>
     <span>BUILD <b>2026.08</b></span>
     <span id="modCount">… MODULES ONLINE</span>
   </div>
@@ -10563,7 +10563,21 @@ async function loadNews(){
 async function nwToggle(on){ const d=await apiPost('/api/news/toggle',{enabled:!!on}); if(d&&d.ok)toast(on?'News-Agent an':'News-Agent aus'); loadNews(); }
 async function nwCfg(patch){ const d=await apiPost('/api/news/config',patch); if(!d||!d.ok)toast('Konfig-Fehler','warn'); loadNews(); }
 async function nwCat(c,on){ const st=await apiGet('/api/news/status'); let cs=((st&&st.categories)||[]).filter(x=>x!==c); if(on)cs.push(c); await apiPost('/api/news/config',{categories:cs}); loadNews(); }
-function _nwRender(items){ if(!items||!items.length) return '<span class="faint">Keine News.</span>'; return items.map(function(it){ return '<div class="nw-item"><div class="nw-cat">'+esc(it.category_label||it.category||'')+'</div><div class="nw-t">'+esc(it.title||'')+'</div><div class="nw-b">'+esc(it.body||'')+'</div></div>'; }).join(''); }
+/* v4.1: die Vorschau zeigt, was WIRKLICH auf die Website geht — Anreisser,
+   Kennzahlen, alle Absaetze und die Detailpunkte. Vorher stand hier nur der
+   Body; ein Betreiber konnte also nicht sehen, welche Zahlen er veroeffentlicht. */
+function _nwRender(items){ if(!items||!items.length) return '<span class="faint">Keine News.</span>'; return items.map(function(it){
+  var arr=function(v){ return Object.prototype.toString.call(v)==='[object Array]'?v:[]; };
+  var ps=String(it.body||'').split(/\n\s*\n/).map(function(x){return x.replace(/\s+/g,' ').trim();}).filter(Boolean);
+  var m=arr(it.metrics).filter(function(f){return f&&f.label;});
+  var bl=arr(it.bullets).filter(Boolean);
+  return '<div class="nw-item"><div class="nw-cat">'+esc(it.category_label||it.category||'')+'</div>'
+    +'<div class="nw-t">'+esc(it.title||'')+'</div>'
+    +(it.lead?'<div class="nw-b" style="color:var(--text)">'+esc(it.lead)+'</div>':'')
+    +(m.length?'<div class="nw-b faint mono" style="margin:3px 0">'+m.map(function(f){return esc(f.label)+': '+esc(f.value);}).join(' · ')+'</div>':'')
+    +ps.map(function(x){return '<div class="nw-b" style="margin-top:4px">'+esc(x)+'</div>';}).join('')
+    +(bl.length?'<ul class="nw-b" style="margin:5px 0 0 16px">'+bl.map(function(x){return '<li>'+esc(x)+'</li>';}).join('')+'</ul>':'')
+    +'</div>'; }).join(''); }
 async function nwPreview(){ const o=$('#nw_out'); if(o)o.innerHTML='<span class="faint">lade…</span>'; const d=await apiGet('/api/news/preview'); if(!o)return; if(!d||!d.ok){o.innerHTML='<span style="color:var(--red)">Vorschau fehlgeschlagen.</span>';return;} o.innerHTML='<div class="faint" style="margin-bottom:4px">Vorschau (statische Fakten — beim echten Generieren formuliert die KI):</div>'+_nwRender(d.items); }
 async function nwGenerate(){ if(!confirm('Jetzt News generieren und auf der Website veröffentlichen?'))return; const o=$('#nw_out'); if(o)o.innerHTML='<span class="faint">generiere…</span>'; const d=await apiPost('/api/news/generate-now',{}); if(!o)return; if(!d){o.innerHTML='<span style="color:var(--red)">keine Antwort</span>';return;} if(!d.ok){o.innerHTML='<span style="color:var(--amber)">Fehler: '+esc(d.error||'—')+'</span>';return;} o.innerHTML='<span style="color:var(--ok)">✓ veröffentlicht</span> <span class="faint">'+(d.items||0)+' News auf der Website ('+(d.new||0)+' neu)</span>'; toast('News veröffentlicht'); loadNews(); }
 
