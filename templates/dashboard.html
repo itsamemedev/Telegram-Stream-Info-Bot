@@ -5380,39 +5380,6 @@ async function trashRec(id){
   else toast('failed','err');
 }
 
-/* ---- manual recording ---- */
-async function loadManual(){
-  const d=await apiGet('/api/recordings/manual/list');
-  const recs=(d&&d.recordings)||[];
-  const el=$('#mc_list');
-  if(!recs.length){ el.innerHTML='<div class="faint" style="font-size:11px">no manual captures</div>'; return; }
-  let h='<div class="tbl-wrap"><table><thead><tr><th>#</th><th>Target</th><th>Status</th><th>Size</th><th>Started</th><th class="right"></th></tr></thead><tbody>';
-  recs.forEach(r=>{
-    const st=r.status==='running'?'<span class="pill rec">● REC</span>':
-      (r.status==='completed'?'<span class="pill ok">done</span>':'<span class="pill off">'+esc(r.status)+'</span>');
-    h+=`<tr><td class="mono faint">${r.id}</td><td><b>@${esc(r.username)}</b></td><td>${st}</td>
-      <td class="mono">${r.size_mb!=null?r.size_mb+' MB':'—'}</td><td class="muted">${ago(r.started_at)}</td>
-      <td class="right">${r.status==='running'?`<span class="btn sm danger" onclick="stopManual(${r.id})">STOP</span>`:''}</td></tr>`;
-  });
-  h+='</tbody></table></div>'; el.innerHTML=h;
-}
-async function stopManual(id){
-  const d=await apiPost('/api/recordings/manual/'+id+'/stop');
-  toast(d.ok?'STOP SENT':'stop failed', d.ok?'':'err'); setTimeout(loadManual,800);
-}
-
-/* ---- bookmarks / trash / dedup ---- */
-async function showTrash(){
-  const d=await apiGet('/api/recordings/trash');
-  const t=(d&&d.trash)||[];
-  openModal('🗑 TRASH ('+t.length+')', t.length? '<div class="tbl-wrap"><table><thead><tr><th>#</th><th>Target</th><th>File</th><th>Deleted</th><th></th></tr></thead><tbody>'+
-    t.map(r=>`<tr><td class="mono faint">${r.id}</td><td><b>@${esc(r.username)}</b></td><td class="nowrap">${esc(r.filename)}</td><td class="muted">${ago(r.deleted_at)}</td><td><span class="btn sm cyan" onclick="restoreRec(${r.id})">RESTORE</span></td></tr>`).join('')+'</tbody></table></div>'
-    : '<div class="empty">TRASH EMPTY</div>');
-}
-async function restoreRec(id){
-  const d=await apiPost('/api/recordings/'+id+'/restore');
-  if(d.ok){ toast('RESTORED // #'+id); showTrash(); loadCaptures(); }
-}
 </script>
 <script>
 /* intel + ops + system views next */
@@ -6285,100 +6252,63 @@ async function updateCookies(){
 /* ============================================================
    VIEW: VAULT — Manuelles Archiv (upload/list/rename/delete/dedup)
    ============================================================ */
-/* vault builder dissolved → Recordings (reorg) */
-async function loadVault(){
-  /* BUGFIX Tiefensuche: diese Funktion gehoert zu einer Ansicht, deren
-     HTML nicht (mehr) im Template steht. Ohne diesen Waechter warf
-     jeder Aufruf 'Cannot set properties of null' und brach die
-     restliche Funktion ab. */
-  if(!$('#va_list')) return;
-  const q=$('#va_search')?.value||'', kind=$('#va_kind')?.value||'all';
-  const d=await apiGet('/api/archive?q='+encodeURIComponent(q)+'&kind='+kind+'&per_page=100');
-  if(!d || d.__neterr){ $('#va_list').innerHTML='<div class="empty">archive offline</div>'; return; }
-  const st=d.stats||{};
-  $('#va_count').textContent=st.total_all??(d.entries?d.entries.length:'--');
-  $('#va_size').textContent=st.total_size_bytes!=null?humanBytes(st.total_size_bytes):'--';
-  if(st.disk){ $('#va_free').textContent=(st.disk.free_gb!=null?st.disk.free_gb+' GB':'--'); }
-  $('#va_missing').textContent=d.total_missing!=null?d.total_missing:'0';
-  if(d.max_upload_mb) $('#va_maxmb').textContent='max '+d.max_upload_mb+' MB';
-  if(d.allowed_extensions) $('#va_exts').textContent=d.allowed_extensions.slice(0,12).join(' · ');
-  const entries=d.entries||[];
-  $('#va_meta').textContent=(d.total_filtered!=null?d.total_filtered:entries.length)+' files';
-  if(!entries.length){ $('#va_list').innerHTML='<div class="empty">VAULT EMPTY — drop a file above</div>'; return; }
-  let h='<div class="tbl-wrap"><table><thead><tr><th>#</th><th>Title / File</th><th>Kind</th><th>Size</th><th>When</th><th class="right">Actions</th></tr></thead><tbody>';
-  entries.forEach(e=>{
-    // BUG-FIX: Backend liefert 'exists' (true=Datei da), nicht 'missing'.
-    // Vorher prüfte der Code e.missing → immer undefined → fehlende Dateien
-    // wurden fälschlich mit Download-Button als vorhanden angezeigt.
-    const missing = (e.exists===false);
-    h+=`<tr>
-      <td class="mono faint">${e.id}</td>
-      <td style="max-width:280px"><b>${esc(e.title||e.filename)}</b>${e.title?`<div class="faint" style="font-size:10px">${esc(e.filename)}</div>`:''}${e.notes?`<div class="muted" style="font-size:10px">${esc(e.notes)}</div>`:''}</td>
-      <td><span class="pill ${missing?'off':'ok'}">${esc(e.kind||'?')}</span></td>
-      <td class="mono">${humanBytes(e.size_bytes)}${missing?' <span class="pill off">missing</span>':''}</td>
-      <td class="muted nowrap">${ago(e.created_at)}</td>
-      <td class="right nowrap">
-        ${missing?'':`<a class="btn sm cyan" href="/archive/${e.id}/download" target="_blank">↓</a>`}
-        <span class="btn sm" onclick="vaultRename(${e.id},'${esc((e.filename||'')).replace(/'/g,"\\'")}')">✎</span>
-        <span class="btn sm danger" onclick="vaultDelete(${e.id})">✕</span>
-      </td></tr>`;
-  });
-  h+='</tbody></table></div>'; $('#va_list').innerHTML=h;
-}
-async function vaultRename(id, currentFilename){
-  const v=prompt('Datei #'+id+' umbenennen (mit Endung, z.B. clip.mp4):', currentFilename);
+/* v4.0-W125: Die VAULT-Ansicht wurde im Reorg nach "Recordings" aufgeloest.
+   Ihre Liste, Upload, Integritaets-Check und Sammel-Loeschen leben seither im
+   Archiv-Panel (arc_*) der Streams-Ansicht. Zwei Faehigkeiten hatten dort
+   aber kein Gegenstueck und waren damit unerreichbar, obwohl die Endpunkte
+   die ganze Zeit liefen: UMBENENNEN und die DUBLETTEN-Suche. Beide haengen
+   jetzt am Archiv-Panel. Die Vault-Liste und ihr Einzel-Loeschen sind
+   ersatzlos entfallen — loadArchive() und arcBulkDelete() koennen dasselbe. */
+async function arcRename(id, currentFilename){
+  const v=prompt('Datei #'+id+' umbenennen (mit Endung, z.B. clip.mp4):', currentFilename||'');
   if(v===null) return;
   if(!v.trim()){ toast('Name darf nicht leer sein','warn'); return; }
-  // BUG-FIX: Backend erwartet 'new_name' (benennt die echte Datei um), nicht 'title'.
+  /* Das Backend erwartet 'new_name' — es benennt die echte Datei um, nicht
+     nur den Anzeigetitel. */
   const d=await apiPost('/api/archive/'+id+'/rename',{new_name:v.trim()});
-  if(d && d.ok){ toast('RENAMED → '+esc(d.filename||v)); loadVault(); }
-  else toast('✕ '+(d&&d.error||'rename failed'),'err');
-}
-async function vaultDelete(id){
-  if(!confirm('Datei #'+id+' wirklich löschen? (entfernt auch die Datei von der Disk)')) return;
-  const d=await apiDel('/api/archive/'+id);
-  if(d && (d.ok||d.deleted)){ toast('DELETED // #'+id); loadVault(); } else toast('delete failed','err');
+  if(d && d.ok){ toast('Umbenannt → '+(d.filename||v.trim())); loadArchive(true); }
+  else toast('Umbenennen fehlgeschlagen: '+((d&&d.error)||'unbekannter Fehler'),'err');
 }
 let _dedupScanRoot='';   // scan_root vom letzten Dedup-Scan (für Delete-Security)
-async function vaultDedup(){
+async function arcDedup(){
   const d=await apiGet('/api/archive/duplicates');
   const groups=(d&&d.duplicate_groups)||[];
   const stats=(d&&d.stats)||{};
   _dedupScanRoot=(d&&d.scan_root)||'';
-  const wastedMb=stats.total_wasted_bytes?(stats.total_wasted_bytes/1024/1024).toFixed(1):'0';
-  renderDedup(groups, stats, wastedMb);
+  /* humanBytes statt fester MB: bei mehreren GB stand hier "3072.0 MB". */
+  arcRenderDedup(groups, stats, humanBytes(stats.total_wasted_bytes||0));
 }
-function renderDedup(groups, stats, wastedMb){
-  openModal('⊟ VAULT DUPLICATES', (groups.length?
-    `<div class="flexc mb"><span class="muted" style="font-size:11px">${groups.length} Gruppen · ${stats.scanned_files||0} gescannt · ${wastedMb} MB verschwendet</span>
-      <span class="btn sm danger" onclick="vaultPurgeAll()">⌫ ALLE DUPLIKATE LÖSCHEN (je 1 behalten)</span></div>
+function arcRenderDedup(groups, stats, wasted){
+  openModal('⊟ Dubletten im Archiv', (groups.length?
+    `<div class="flexc mb"><span class="muted" style="font-size:11px">${groups.length} ${groups.length===1?'Gruppe':'Gruppen'} · ${stats.scanned_files||0} Dateien gescannt · ${wasted} doppelt belegt</span>
+      <span class="btn sm danger" onclick="arcPurgeAll()">⌫ Alle Dubletten löschen (je 1 behalten)</span></div>
     <div id="dedupGroups">`+
     groups.map((g,gi)=>{
       const files=g.files||[];
       return `<div class="panel mb" data-grp="${gi}"><div class="body">
         <div class="flexc mb"><b class="cyan">${g.count}× · ${g.size_mb} MB${g.partial_hash?' <span class="faint">(header-hash)</span>':''}</b>
           <span><span class="faint mono" style="font-size:10px">${esc((g.hash||'').slice(0,16))}</span>
-          <span class="btn sm danger" style="margin-left:8px" onclick="vaultPurgeGroup(${gi})">⌫ Duplikate (${(files.length-1)})</span></span></div>`+
+          <span class="btn sm danger" style="margin-left:8px" onclick="arcPurgeGroup(${gi})">⌫ Dubletten (${(files.length-1)})</span></span></div>`+
         files.map((m,fi)=>`<div class="flexc" style="padding:3px 0;border-bottom:1px solid rgba(0,255,156,0.05)" data-path="${esc(m.path)}">
           <span>${fi===0?'<span class="pill ok" style="padding:0 5px">KEEP</span> ':''}${esc(m.name)}</span>
           <span class="flex"><span class="faint mono" style="font-size:10px">${esc(m.dir||'')}</span>
-          ${fi===0?'':`<span class="btn sm danger" style="padding:2px 6px" onclick="vaultDeleteDupe('${esc(m.path).replace(/'/g,"\\'")}',this)">✕</span>`}</span></div>`).join('')+
+          ${fi===0?'':`<span class="btn sm danger" style="padding:2px 6px" onclick="arcDeleteDupe('${escJs(m.path)}',this)">✕</span>`}</span></div>`).join('')+
         '</div></div>';
     }).join('')+'</div>'
-    : '<div class="empty">NO DUPLICATES IN VAULT</div>'));
+    : '<div class="empty">Keine Dubletten gefunden — das Archiv ist sauber.</div>'));
 }
-async function vaultDeleteDupe(path, btn){
-  if(!_dedupScanRoot){ toast('scan first','warn'); return; }
+async function arcDeleteDupe(path, btn){
+  if(!_dedupScanRoot){ toast('Erst scannen — Knopf „⊟ Dubletten“','warn'); return; }
   if(btn){ btn.textContent='…'; btn.style.pointerEvents='none'; }
   const d=await apiPost('/api/archive/duplicates/delete',{path:path, scan_root:_dedupScanRoot});
   if(d&&d.ok){
-    toast('DELETED // '+(d.freed_bytes?humanBytes(d.freed_bytes)+' frei':'ok'));
+    toast('Gelöscht'+(d.freed_bytes?' — '+humanBytes(d.freed_bytes)+' frei':''));
     // Zeile aus dem Modal entfernen
     if(btn){ const row=btn.closest('[data-path]'); if(row) row.remove(); }
-    loadVault();
-  } else { toast('✕ '+(d&&d.error||'delete failed'),'err'); if(btn){ btn.textContent='✕'; btn.style.pointerEvents=''; } }
+    loadArchive(true);
+  } else { toast('Löschen fehlgeschlagen: '+((d&&d.error)||'unbekannter Fehler'),'err'); if(btn){ btn.textContent='✕'; btn.style.pointerEvents=''; } }
 }
-async function vaultPurgeGroup(gi){
+async function arcPurgeGroup(gi){
   const grp=$(`[data-grp="${gi}"]`); if(!grp) return;
   const rows=Array.from(grp.querySelectorAll('[data-path]'));
   const toDelete=rows.slice(1);   // erste behalten
@@ -6390,13 +6320,13 @@ async function vaultPurgeGroup(gi){
     const d=await apiPost('/api/archive/duplicates/delete',{path, scan_root:_dedupScanRoot});
     if(d&&d.ok){ freed+=d.freed_bytes||0; n++; row.remove(); }
   }
-  toast(`PURGED // ${n} gelöscht · ${humanBytes(freed)} frei`);
-  loadVault();
+  toast(`${n} Dubletten gelöscht · ${humanBytes(freed)} frei`);
+  loadArchive(true);
 }
-async function vaultPurgeAll(){
+async function arcPurgeAll(){
   const groups=Array.from($$('#dedupGroups [data-grp]'));
   const total=$$('#dedupGroups [data-path]').length - groups.length;  // alle minus 1 pro Gruppe
-  if(total<=0){ toast('nichts zu löschen','warn'); return; }
+  if(total<=0){ toast('Nichts zu löschen — jede Gruppe hat nur eine Datei.','warn'); return; }
   if(!confirm(`${total} Duplikate über alle ${groups.length} Gruppen löschen (je 1 behalten)? Das kann nicht rückgängig gemacht werden.`)) return;
   let freed=0, n=0;
   for(const grp of groups){
@@ -6407,9 +6337,9 @@ async function vaultPurgeAll(){
       if(d&&d.ok){ freed+=d.freed_bytes||0; n++; row.remove(); }
     }
   }
-  toast(`PURGE COMPLETE // ${n} gelöscht · ${humanBytes(freed)} frei`);
-  loadVault();
-  setTimeout(vaultDedup, 600);   // neu scannen
+  toast(`Fertig — ${n} Dubletten gelöscht · ${humanBytes(freed)} frei`);
+  loadArchive(true);
+  setTimeout(arcDedup, 600);   // neu scannen
 }
 
 /* ============================================================
@@ -8972,6 +8902,12 @@ VIEW_LOADERS.wall = async function(){
                 <button class="btn sm" onclick="rtDedup()">Scan</button></div>
               <div id="rt_dedup" class="faint" style="font-size:11px;margin-top:6px">—</div>
             </div>
+            <div class="kc-seg" style="text-align:left">
+              <div style="display:flex;justify-content:space-between;align-items:center;gap:6px">
+                <span class="k">Papierkorb</span>
+                <button class="btn sm" onclick="rtTrash()">Öffnen</button></div>
+              <div id="rt_trash" class="faint" style="font-size:11px;margin-top:6px">—</div>
+            </div>
           </div>
 
           <div class="kc-sub" style="margin-top:16px">RETENTION <span class="faint" style="font-size:10px;letter-spacing:0">Vorschau vor dem Löschen</span></div>
@@ -9044,7 +8980,7 @@ VIEW_LOADERS.wall = async function(){
           <button class="btn sm" onclick="arcReset()">Reset</button>
           <button class="btn sm" onclick="loadArchive(true)" aria-label="Aktualisieren" title="Aktualisieren">↻</button>
         </div>
-        <div class="body"><div class="faint" id="arc_disk" style="font-size:10.5px;margin-bottom:8px">—</div><div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px"><label class="btn sm" style="cursor:pointer;margin:0">⬆ Upload<input type="file" id="arc_up_file" style="display:none" onchange="arcUpload()"></label><input class="field" id="arc_up_title" placeholder="Titel (optional)" style="width:150px"><button class="btn sm" onclick="arcCheck()">Integritäts-Check</button><button class="btn sm" onclick="arcBulkDelete()">🗑 Auswahl löschen</button><span class="faint" id="arc_mgmt_out" style="font-size:10.5px"></span></div><div id="arc_list" class="skel" aria-busy="true"><i></i><i></i><i></i></div><div id="arc_more" style="text-align:center;margin-top:10px"></div></div>
+        <div class="body"><div class="faint" id="arc_disk" style="font-size:10.5px;margin-bottom:8px">—</div><div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px"><label class="btn sm" style="cursor:pointer;margin:0">⬆ Upload<input type="file" id="arc_up_file" style="display:none" onchange="arcUpload()"></label><input class="field" id="arc_up_title" placeholder="Titel (optional)" style="width:150px"><button class="btn sm" onclick="arcCheck()">Integritäts-Check</button><button class="btn sm" onclick="arcDedup()">⊟ Dubletten</button><button class="btn sm" onclick="arcBulkDelete()">🗑 Auswahl löschen</button><span class="faint" id="arc_mgmt_out" style="font-size:10.5px"></span></div><div id="arc_list" class="skel" aria-busy="true"><i></i><i></i><i></i></div><div id="arc_more" style="text-align:center;margin-top:10px"></div></div>
       </div>`;
     root.dataset.built='1';
     if(!window._wallTimer) window._wallTimer=setInterval(()=>{ if(CURRENT_VIEW==='wall' && !document.hidden){ loadWall(); loadSurveil(); } }, 8000);
@@ -9087,7 +9023,8 @@ async function loadArchive(reset){
     return `<tr${miss?' style="opacity:.45"':''}><td style="width:24px;text-align:center"><input type="checkbox" class="arc-cb" value="${r.id}"></td><td class="mono" style="max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(r.title||r.filename||'—')}${miss?' <span style="color:var(--magenta)">✗</span>':''}</td>`
       +`<td class="faint">${esc(r.kind||'—')}</td><td class="mono right">${mb(r.size_bytes)}</td>`
       +`<td class="mono">${esc((r.created_at||'').slice(0,16))}</td>`
-      +`<td>${miss?'—':`<a class="btn sm" href="/archive/${r.id}/download" target="_blank" rel="noopener">⬇</a>`}</td></tr>`; };
+      +`<td class="nowrap">${miss?'—':`<a class="btn sm" href="/archive/${r.id}/download" target="_blank" rel="noopener" aria-label="Herunterladen" title="Herunterladen">⬇</a>`}`
+      +` <button class="btn sm" onclick="arcRename(${r.id},'${escJs(r.filename||'')}')" aria-label="Umbenennen" title="Umbenennen">✎</button></td></tr>`; };
   if(_arcPage===1){
     if(!rowsF.length){ el.innerHTML='<div class="empty">Nichts gefunden — Filter anpassen</div>'; if(more)more.innerHTML=''; return; }
     el.innerHTML='<div class="tbl-wrap"><table><thead><tr><th style="width:24px;text-align:center"><input type="checkbox" onclick="arcToggleAll(this)" title="alle auswählen"></th><th>Datei</th><th>Typ</th><th class="right">Größe</th><th>Datum</th><th></th></tr></thead><tbody id="arc_tb">'+rowsF.map(rowHtml).join('')+'</tbody></table></div>';
@@ -9248,6 +9185,7 @@ async function loadRecTools(){
   loadRtActive();
   loadRtAttempts();
   loadRtLabels();
+  loadRtTrash();
 }
 function rtMb(mb){ return (mb==null)?'—':(mb>=1024?(mb/1024).toFixed(1)+' GB':mb+' MB'); }
 async function rtManualStart(){
@@ -9312,6 +9250,46 @@ async function rtByLabel(label){
       '<span class="faint" style="font-size:10px">'+rtMb(r.size_mb)+'</span></div>').join('')
      :'<div class="faint" style="font-size:11px">Nichts gefunden.</div>');
 }
+/* v4.0-W125: Die Liste der manuellen Aufnahmen samt Stop-Knopf ist
+   ersatzlos entfallen — die Aufnahme-Werkzeuge zeigen laufende Aufnahmen
+   mit Stop (loadRtActive/rtStopActive) und starten neue ueber
+   rtManualStart().
+
+   Der PAPIERKORB dagegen war ein echtes Loch: eine Aufnahme wegzuwerfen
+   ging weiter (trashRec im Aufnahme-Fenster), sie ANZUSEHEN oder
+   zurueckzuholen nicht — das Markup dieser Ansicht verschwand im Reorg,
+   waehrend /api/recordings/trash und /restore die ganze Zeit liefen.
+   Wegwerfen ohne Zurueckholen ist die gefaehrlichere Haelfte. Haengt jetzt
+   in den Speicher-Werkzeugen neben Verwaisten und Duplikaten. */
+async function loadRtTrash(){
+  const box=$('#rt_trash'); if(!box) return;
+  const d=await apiGet('/api/recordings/trash');
+  const rows=(d&&d.trash)||[];
+  const mb=rows.reduce((s,r)=>s+(r.size_mb||0),0);
+  box.textContent=rows.length
+    ? rows.length+' Aufnahmen · '+rtMb(Math.round(mb))+' wiederherstellbar'
+    : 'leer';
+}
+async function rtTrash(){
+  const d=await apiGet('/api/recordings/trash');
+  const rows=(d&&d.trash)||[];
+  openModal('🗑 Papierkorb ('+rows.length+')', rows.length
+    ? '<div class="tbl-wrap"><table><thead><tr><th>#</th><th>Streamer</th><th>Datei</th><th class="right">Größe</th><th>Gelöscht</th><th></th></tr></thead><tbody>'+
+      rows.map(r=>`<tr><td class="mono faint">${r.id}</td><td><b>@${esc(r.username)}</b></td>
+        <td class="nowrap">${esc(r.filename)}</td><td class="mono right">${r.size_mb!=null?r.size_mb+' MB':'—'}</td>
+        <td class="muted">${ago(r.deleted_at)}</td>
+        <td><span class="btn sm cyan" onclick="rtRestore(${r.id})">Wiederherstellen</span></td></tr>`).join('')+
+      '</tbody></table></div>'
+    : '<div class="empty">Papierkorb leer — hier landen Aufnahmen, die du im Aufnahme-Fenster wegwirfst.</div>');
+}
+async function rtRestore(id){
+  const d=await apiPost('/api/recordings/'+id+'/restore');
+  if(d && d.ok){
+    toast('Aufnahme #'+id+' wiederhergestellt');
+    rtTrash(); loadRtTrash(); loadRtActive();
+  } else toast('Wiederherstellen fehlgeschlagen','err');
+}
+
 async function rtOrphans(){
   const box=$('#rt_orphans');
   if(!box) return;

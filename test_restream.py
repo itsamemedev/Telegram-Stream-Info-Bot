@@ -6646,6 +6646,68 @@ def test_v40_w124_offline_meldung_ins_thema():
        "beide achten die Quiet Hours")
 
 
+def test_v40_w125_papierkorb_und_archiv_werkzeuge():
+    """v4.0-W125: drei Faehigkeiten mit lebendem Backend sind wieder bedienbar.
+
+    Der Reorg loeste die Ansichten VAULT und die Aufnahme-Liste auf und liess
+    ihre Loader mit einem Waechter stehen. Drei Endpunkte verloren dabei ihre
+    einzige Oberflaeche, ohne dass jemand es merkte — sie antworten bis heute:
+
+      * /api/recordings/trash + /restore  — wegwerfen ging weiter, ansehen
+        und zurueckholen nicht. Das ist die gefaehrliche Haelfte.
+      * /api/archive/duplicates(/delete)  — die Loesch-Oberflaeche fuer
+        Dubletten; rtDedup() zaehlt sie nur.
+      * /api/archive/<id>/rename          — ohne jeden Aufrufer.
+
+    Dieser Vertrag haelt Markup UND Verdrahtung fest, damit sie nicht ein
+    zweites Mal lautlos verschwinden.
+    """
+    dash = open("templates/dashboard.html", encoding="utf-8").read()
+
+    # ── Papierkorb: Kachel, Zaehler im Loader, Fenster, Wiederherstellen ──
+    assert dash.count('id="rt_trash"') == 1, "Papierkorb-Kachel fehlt (oder doppelt)"
+    assert 'onclick="rtTrash()"' in dash, "Papierkorb nicht bedienbar"
+    _lt = dash[dash.index("async function loadRecTools("):
+               dash.index("async function rtManualStart(")]
+    assert "loadRtTrash();" in _lt, "Papierkorb-Zaehler laedt nicht mit"
+    for _fn in ("async function loadRtTrash(", "async function rtTrash(",
+                "async function rtRestore("):
+        assert _fn in dash, "%s fehlt" % _fn
+    _rr = dash[dash.index("async function rtRestore("):]
+    _rr = _rr[:_rr.index("\n}")]
+    assert "/api/recordings/" in _rr and "/restore" in _rr, "Wiederherstellen ruft nichts auf"
+    assert "loadCaptures()" not in _rr, \
+        "rtRestore frischt eine Ansicht auf, deren Markup es nicht gibt"
+
+    # ── Dubletten: Knopf am Archiv-Panel, Fenster, Loesch-Wege ───────────
+    assert 'onclick="arcDedup()"' in dash, "Kein Knopf fuer die Dubletten-Suche"
+    for _fn in ("async function arcDedup(", "function arcRenderDedup(",
+                "async function arcDeleteDupe(", "async function arcPurgeGroup(",
+                "async function arcPurgeAll("):
+        assert _fn in dash, "%s fehlt" % _fn
+    _dd = dash[dash.index("let _dedupScanRoot="):dash.index("   VIEW: NEURAL")]
+    assert "loadVault()" not in _dd, "Dedup frischt die aufgeloeste Vault-Ansicht auf"
+    assert "loadArchive(true);" in _dd, "Dedup frischt die Archiv-Liste nicht auf"
+    # W118-Regel: Werte in Inline-Handler nur ueber escJs, nie esc()+replace.
+    assert "escJs(m.path)" in _dd, "Dateipfad geht ungeschuetzt in einen onclick"
+    assert ".replace(/'/g" not in _dd, "naives Quote-Ersetzen im Handler wieder da"
+
+    # ── Umbenennen: Knopf je Zeile, Backend-Feldname, Auffrischen ────────
+    assert "async function arcRename(" in dash, "Umbenennen fehlt"
+    assert 'onclick="arcRename(' in dash, "Umbenennen hat keinen Knopf"
+    _ar = dash[dash.index("async function arcRename("):]
+    _ar = _ar[:_ar.index("\n}")]
+    assert "new_name" in _ar, "Backend erwartet new_name, nicht title"
+    assert "loadArchive(true)" in _ar, "Liste frischt nach dem Umbenennen nicht auf"
+
+    # ── Was ersatzlos wegfaellt, ist auch wirklich weg ───────────────────
+    for _tot in ("function loadVault", "function vaultDelete", "function vaultRename",
+                 "function loadManual", "function stopManual",
+                 "function showTrash", "function restoreRec"):
+        assert _tot not in dash, "%s wieder da (ersetzt durch das Archiv-Panel)" % _tot
+    ok("v4.0-w125: Papierkorb, Dubletten und Umbenennen wieder erreichbar")
+
+
 def main():
     print("test_restream — Restream-Kernlogik (Mock-basiert)")
     test_streak()
@@ -6831,6 +6893,7 @@ def main():
     test_v40_w121_oauth_proxy_meldethema_kollision()
     test_v40_w122_trackings_ansicht()
     test_v40_w124_offline_meldung_ins_thema()
+    test_v40_w125_papierkorb_und_archiv_werkzeuge()
     print(f"test_restream OK — {PASS} Verträge grün")
 
 

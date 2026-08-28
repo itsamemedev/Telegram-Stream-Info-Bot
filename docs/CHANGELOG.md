@@ -11,6 +11,44 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Behoben — Papierkorb, Dubletten und Umbenennen waren unerreichbar (W125)
+
+Der Reorg löste die Ansichten **VAULT** und die Aufnahme-Liste auf und ließ
+ihre Loader mit einem Wächter (`if(!$('#…')) return;`) stehen. Was dabei
+unterging: drei Endpunkte verloren ihre einzige Oberfläche, während sie im
+Backend die ganze Zeit weiterliefen.
+
+* **Papierkorb** — das gefährlichste der drei. Eine Aufnahme wegzuwerfen ging
+  weiter (`trashRec` im Aufnahme-Fenster), sie anzusehen oder zurückzuholen
+  nicht: `/api/recordings/trash` und `/api/recordings/<id>/restore` hatten
+  keinen einzigen Aufrufer mehr. Wegwerfen ohne Zurückholen ist die
+  gefährlichere Hälfte. Liegt jetzt als vierte Kachel in den
+  Speicher-Werkzeugen, mit Bestand und Größe direkt auf der Kachel.
+* **Dubletten im Archiv** — `rtDedup()` zählt sie nur; die Oberfläche zum
+  Ansehen und Löschen (`/api/archive/duplicates`, `…/delete`) war weg. Hängt
+  jetzt am Archiv-Panel, Knopf „⊟ Dubletten".
+* **Umbenennen** — `/api/archive/<id>/rename` benennt die echte Datei um und
+  hatte gar keinen Aufrufer. Jetzt ein ✎ je Archiv-Zeile.
+
+Beim Wiederbeleben gleich zwei Altlasten mitgenommen: der Dateipfad ging über
+`esc()` plus naives Quote-Ersetzen in einen `onclick` — genau das Muster, das
+W118 mit `escJs()` geschlossen hat; ein Apostroph im Dateinamen hätte den
+String beendet. Und „3072.0 MB verschwendet" heißt jetzt „3.0 GB doppelt
+belegt".
+
+Ersatzlos entfallen, weil das Archiv-Panel und die Aufnahme-Werkzeuge dasselbe
+können: `loadVault`, `vaultDelete`, `loadManual`, `stopManual`.
+
+Geprüft im echten Browser (Chromium, Template gegen eine gestubbte API):
+15 Schritte grün — Kachel, Fenster, Wiederherstellen, Umbenennen mit
+Apostroph im Namen, Dubletten löschen, keine Konsolenfehler. Der Vertrag
+`test_v40_w125_papierkorb_und_archiv_werkzeuge` hält Markup **und**
+Verdrahtung fest.
+
+Was der Reorg sonst noch abgehängt hat, ist damit nicht erledigt — ohne
+Oberfläche laufen weiter: Auto-Archiv-Regeln, Webhooks, Sammlungen,
+KI-Konversationen, Evolutions-Status/-Vorschläge und geplante Aufnahmen.
+
 ### Behoben — Offline-Meldungen landeten weiter im Hauptchat (W124)
 
 Das Melde-Thema aus W121 wirkte nur halb: LIVE ging hinein, OFFLINE weiter
