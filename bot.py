@@ -10713,21 +10713,30 @@ def api_stats(lean: bool = False):
         with db_conn() as conn:
             active_t = conn.execute("SELECT COUNT(*) FROM trackings").fetchone()[0]
             live_now = conn.execute("SELECT COUNT(*) FROM trackings WHERE last_live=1").fetchone()[0]
+            creators = conn.execute(
+                "SELECT COUNT(DISTINCT username) FROM trackings").fetchone()[0]
             rec_count = conn.execute(
                 "SELECT COUNT(*) FROM recordings WHERE deleted_at IS NULL").fetchone()[0]
         return jsonify(active_trackings=active_t, live_now=live_now,
-                       recordings_count=rec_count, lean=True)
+                       creators=creators, recordings_count=rec_count, lean=True)
     total, unique_users, top = get_stats()
     with db_conn() as conn:
         active_t = conn.execute("SELECT COUNT(*) FROM trackings").fetchone()[0]
         live_now = conn.execute("SELECT COUNT(*) FROM trackings WHERE last_live=1").fetchone()[0]
+        # Die Kachel "Creator" zeigte bisher unique_users — das sind DISTINCT
+        # telegram_user_id aus tiktok_checks, also die Menschen, die mal /check
+        # getippt haben. Ein neu getrackter Streamer änderte daran nichts, die
+        # Zahl stand tage- bis wochenlang still. "Creator" sind die getrackten
+        # Handles; unique_users bleibt für die Checks-Kachel erhalten.
+        creators = conn.execute(
+            "SELECT COUNT(DISTINCT username) FROM trackings").fetchone()[0]
         # BUG-FIX (Konsistenz): soft-deleted (X19 Trash) ausschließen. Vorher
         # zählte stats ALLE recordings, während get_all_recordings / overview /
         # captures-Liste gelöschte ausschließen → Header-Count wich nach dem
         # In-den-Papierkorb-Verschieben von der sichtbaren Liste ab.
         rec_count = conn.execute(
             "SELECT COUNT(*) FROM recordings WHERE deleted_at IS NULL").fetchone()[0]
-    return jsonify(total_checks=total, unique_users=unique_users,
+    return jsonify(total_checks=total, unique_users=unique_users, creators=creators,
                    top=[{"username": r["username"], "count": r["cnt"]} for r in top],
                    active_trackings=active_t, live_now=live_now, recordings_count=rec_count)
 
@@ -10937,23 +10946,103 @@ def api_summary_preview():
         return jsonify(ok=False, error=str(e)), 500
 
 
+# ── Zielgruppe für Trackings, die im Dashboard entstehen ────────────────
+# WARUM: Das Dashboard kannte nur den Bulk-Add mit einem Pflichtfeld
+# "group_id". Diese Zahl kennt niemand auswendig — leer gelassen kam
+# "group_id fehlt" (der Streamer wurde also gar nicht angelegt), geraten
+# landete das Tracking in einem Chat, den es nicht gibt: kein Live-Ping,
+# kein Discord-Post, keine gruppenbezogene Ansicht. Beides sah für den
+# Betreiber gleich aus — "der hinzugefügte Streamer taucht nirgends auf".
+# Deshalb löst der Server die Gruppe jetzt selbst auf, wenn keine kommt.
+def _dashboard_track_group() -> int:
+    """Standardgruppe für Trackings ohne explizite group_id.
+       Reihenfolge: DASHBOARD_TRACK_GROUP_ID → DAILY_SUMMARY_CHAT_ID →
+       die meistgenutzte group_id aus trackings (dort läuft der Betrieb
+       nachweislich) → DISCORD_TRACK_GROUP_ID → DISCORD_GUILD_ID →
+       ALLOWED_CHAT_IDS, falls es genau einen gibt. 0 = nicht auflösbar,
+       der Aufrufer meldet das mit Klartext statt still zu schlucken.
+       Als Funktion gelesen, nicht als Modul-Konstante: .env ist zum
+       Import-Zeitpunkt teils noch nicht geladen."""
+    gid = _env_int("DASHBOARD_TRACK_GROUP_ID", 0)
+    if gid:
+        return gid
+    if DAILY_SUMMARY_CHAT_ID:
+        return DAILY_SUMMARY_CHAT_ID
+    try:
+        with db_conn() as conn:
+            row = conn.execute(
+                "SELECT group_id, COUNT(*) AS n FROM trackings "
+                "GROUP BY group_id ORDER BY n DESC LIMIT 1").fetchone()
+        if row and row["group_id"]:
+            return int(row["group_id"])
+    except Exception as e:
+        log.warning("Standardgruppe fürs Dashboard: DB-Abfrage fehlgeschlagen: %s", e)
+    for cand in (DISCORD_TRACK_GROUP_ID, DISCORD_GUILD_ID):
+        if cand:
+            return int(cand)
+    if len(ALLOWED_CHAT_IDS) == 1:
+        return int(next(iter(ALLOWED_CHAT_IDS)))
+    return 0
+
+
+@dashboard_app.route("/api/trackings/groups")
+def api_trackings_groups():
+    """Bekannte Zielgruppen samt Belegung + die aufgelöste Standardgruppe.
+       Damit kann das Dashboard eine Auswahl anbieten, statt den Betreiber
+       eine Chat-ID tippen zu lassen, die er nirgends ablesen kann."""
+    default_gid = _dashboard_track_group()
+
+    def _src(gid: int) -> str:
+        return "discord" if (DISCORD_GUILD_ID and gid == DISCORD_GUILD_ID) else "telegram"
+
+    groups = []
+    try:
+        with db_conn() as conn:
+            rows = conn.execute(
+                "SELECT group_id, COUNT(*) AS n FROM trackings "
+                "GROUP BY group_id ORDER BY n DESC").fetchall()
+        for r in rows:
+            gid = int(r["group_id"] or 0)
+            groups.append({"group_id": gid, "count": r["n"], "source": _src(gid),
+                           "default": gid == default_gid})
+    except Exception as e:
+        return jsonify(ok=False, error=str(e)), 500
+    # Die Standardgruppe steht auch dann zur Wahl, wenn dort noch nichts läuft
+    # (frische Installation — sonst böte das Dashboard genau nichts an).
+    if default_gid and not any(g["group_id"] == default_gid for g in groups):
+        groups.insert(0, {"group_id": default_gid, "count": 0,
+                          "source": _src(default_gid), "default": True})
+    return jsonify(ok=True, groups=groups, default_group_id=default_gid)
+
+
 # F56: Bulk-Tracking-Import
 @dashboard_app.route("/api/trackings/bulk", methods=["POST"])
 def api_trackings_bulk():
     """Bulk-add Trackings für einen Chat. Akzeptiert:
        POST { "group_id": <int>, "usernames": ["@user1", "user2", ...] }
        ODER  { "group_id": <int>, "text": "@u1 @u2\nu3 u4" }   (text auto-split)
-       Returns: { ok: true, added: [...], duplicates: [...], invalid: [...] }
+       Returns: { ok: true, group_id: <int>, added: [...], duplicates: [...],
+                  invalid: [...] }
+
+       group_id ist OPTIONAL: fehlt sie (oder ist 0), übernimmt
+       _dashboard_track_group() die Auflösung. Vorher war sie Pflicht — das
+       Dashboard-Feld blieb leer und der Streamer wurde nie angelegt.
 
        Limit: max 200 Usernames pro Call (sonst Telegram-Rate-Limit-Probleme
        beim späteren Polling und langes Block des Flask-Workers)."""
     payload = request.get_json(silent=True) or {}
-    try:
-        group_id = int(payload.get("group_id", 0))
-    except (TypeError, ValueError):
-        return jsonify(ok=False, error="group_id muss eine Zahl sein"), 400
+    raw_gid = payload.get("group_id")
+    if raw_gid in (None, "", 0, "0"):
+        group_id = _dashboard_track_group()
+    else:
+        try:
+            group_id = int(raw_gid)
+        except (TypeError, ValueError):
+            return jsonify(ok=False, error="group_id muss eine Zahl sein"), 400
     if not group_id:
-        return jsonify(ok=False, error="group_id fehlt"), 400
+        return jsonify(ok=False, error="keine Zielgruppe auflösbar — "
+                       "DASHBOARD_TRACK_GROUP_ID (oder DAILY_SUMMARY_CHAT_ID) "
+                       "in .env setzen oder group_id mitgeben"), 400
 
     # Usernames-Liste aus 'usernames' ODER 'text' bauen
     names = payload.get("usernames")
@@ -10993,7 +11082,7 @@ def api_trackings_bulk():
         except Exception as e:
             log.warning(f"bulk_add: sofort-recheck setup failed: {e}")
 
-    return jsonify(ok=True, **result,
+    return jsonify(ok=True, group_id=group_id, **result,
                    summary={"added": len(result["added"]),
                             "duplicates": len(result["duplicates"]),
                             "invalid": len(result["invalid"]),
@@ -14482,23 +14571,70 @@ def api_discord_invite():
 
 
 # ═══ v37 Welle 3: Streamer-Drawer (#18) + Recorder-Tier (#11) ═══
-@dashboard_app.route("/api/streamer/detail")
-def api_streamer_detail():
-    user = (request.args.get("user") or "").lstrip("@").lower()
-    if not user:
-        return jsonify(ok=False, error="user fehlt"), 400
-    out = {"ok": True, "user": user, "tier": _ACTIVE_TIER.get(user),
-           "live": user in _LIVE_SESSION_START, "recordings": [], "chapters": [], "rec_total": 0}
+def _ci_key(mapping, name: str):
+    """Passenden Schlüssel aus einem username-keyed Dict holen, Groß-/
+       Kleinschreibung egal. Die Laufzeit-Dicts (_LIVE_SESSION_START,
+       _ACTIVE_TIER) sind mit der GESPEICHERTEN Schreibweise des Trackings
+       gefüllt; wer lowercase nachschlägt, findet nichts."""
+    if not name:
+        return None
+    if name in mapping:
+        return name
+    low = name.lower()
+    for k in list(mapping):
+        if isinstance(k, str) and k.lower() == low:
+            return k
+    return None
+
+
+def _resolve_tracked_user(name: str) -> str:
+    """Gespeicherte Schreibweise eines getrackten Handles (case-insensitiv).
+       Fällt auf die Eingabe zurück, wenn nichts getrackt ist — dann sieht
+       die Karte wenigstens den Namen, den der Betreiber angeklickt hat."""
+    if not name:
+        return ""
     try:
         with db_conn() as conn:
-            recs = conn.execute("SELECT filepath, created_at FROM recordings WHERE username=? "
+            row = conn.execute(
+                "SELECT username FROM trackings WHERE LOWER(username)=LOWER(?) LIMIT 1",
+                (name,)).fetchone()
+        if row and row["username"]:
+            return row["username"]
+    except Exception as e:
+        log.warning("Streamer-Auflösung für @%s fehlgeschlagen: %s", name, e)
+    return name
+
+
+@dashboard_app.route("/api/streamer/detail")
+def api_streamer_detail():
+    raw = (request.args.get("user") or "").lstrip("@").strip()
+    if not raw:
+        return jsonify(ok=False, error="user fehlt"), 400
+    # WARUM case-insensitiv: clean_username macht KEIN lower(), die trackings
+    # speichern den Handle also so, wie er getippt wurde ("@RabiLive"). Diese
+    # Route hat stur .lower() angewendet — bei jedem Handle mit Großbuchstaben
+    # traf keine einzige Abfrage: die Streamer-Karte zeigte OFFLINE, 0
+    # Aufnahmen, keine Kapitel, obwohl der Streamer gerade sendete. Genau das
+    # sah im Dashboard aus wie "der hinzugefügte Streamer zählt nirgends".
+    user = _resolve_tracked_user(raw)
+    live_key = _ci_key(_LIVE_SESSION_START, user)
+    tier_key = _ci_key(_ACTIVE_TIER, user)
+    out = {"ok": True, "user": user,
+           "tier": _ACTIVE_TIER.get(tier_key) if tier_key else None,
+           "live": bool(live_key), "recordings": [], "chapters": [], "rec_total": 0}
+    try:
+        with db_conn() as conn:
+            recs = conn.execute("SELECT filepath, created_at FROM recordings "
+                                "WHERE LOWER(username)=LOWER(?) "
                                 "ORDER BY id DESC LIMIT 10", (user,)).fetchall()
             out["recordings"] = [{"file": os.path.basename(r["filepath"] or ""),
                                   "at": (r["created_at"] or "")[:16].replace("T", " ")} for r in recs]
-            out["rec_total"] = conn.execute("SELECT COUNT(*) AS c FROM recordings WHERE username=?",
+            out["rec_total"] = conn.execute("SELECT COUNT(*) AS c FROM recordings "
+                                            "WHERE LOWER(username)=LOWER(?)",
                                             (user,)).fetchone()["c"]
             chaps = conn.execute("SELECT offset_secs, title, reason, created_at FROM stream_chapters "
-                                 "WHERE username=? ORDER BY id DESC LIMIT 8", (user,)).fetchall()
+                                 "WHERE LOWER(username)=LOWER(?) "
+                                 "ORDER BY id DESC LIMIT 8", (user,)).fetchall()
             out["chapters"] = [{"offset": c["offset_secs"] or 0,
                                 "title": c["title"] or c["reason"] or "Moment",
                                 "at": (c["created_at"] or "")[:16].replace("T", " ")} for c in chaps]

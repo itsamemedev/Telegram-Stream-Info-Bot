@@ -8783,6 +8783,17 @@ VIEW_LOADERS.wall = async function(){
         <button class="btn sm" id="wall_liveonly" onclick="wallToggleLive()">nur live</button>
         <span class="btn sm" onclick="loadWall()">↻ REFRESH</span>
       </div>
+      <!-- Streamer direkt an der Wand aufnehmen. Vorher ging das nur ueber den
+           Bulk-Add tief in der Trackings-Verwaltung, mit einem Pflichtfeld
+           "group_id", das niemand ablesen kann — ohne Gruppe wurde gar nichts
+           angelegt, und der Betreiber sah nur, dass sein Streamer nirgends
+           auftaucht. Ohne Angabe waehlt der Server jetzt die Standardgruppe. -->
+      <div class="wall-add" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:12px">
+        <input class="field" id="wall_add" placeholder="@streamer aufnehmen…" style="width:210px"
+               aria-label="Streamer aufnehmen" onkeydown="if(event.key==='Enter')wallAdd()">
+        <button class="btn sm cyan" id="wall_add_btn" onclick="wallAdd()">+ TRACKEN</button>
+        <span class="faint" id="wall_add_grp" style="font-size:10px"></span>
+      </div>
       <div class="wall-grid" id="wall_grid"><div class="skel" aria-busy="true"><i></i><i></i><i></i></div></div>
 
       <div class="panel" style="margin-top:16px" id="pnl_rectools">
@@ -8881,9 +8892,10 @@ VIEW_LOADERS.wall = async function(){
             <a class="btn sm" href="/api/trackings/export" download="trackings.csv" style="text-decoration:none">⬇ Trackings (CSV)</a>
             <a class="btn sm" href="/api/trackings/watchlist-export" download="watchlist.json" style="text-decoration:none">⬇ Watchlist (JSON)</a>
           </div>
-          <div class="kc-sub">BULK-ADD <span class="faint" style="font-size:10px;letter-spacing:0">mehrere Streamer auf einmal in eine Gruppe</span></div>
+          <div class="kc-sub">BULK-ADD <span class="faint" style="font-size:10px;letter-spacing:0">mehrere Streamer auf einmal · Gruppe leer lassen = Standardgruppe</span></div>
           <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-start">
-            <input id="trk_bulk_group" type="number" placeholder="group_id" style="max-width:150px">
+            <input id="trk_bulk_group" type="number" list="trk_bulk_groups" placeholder="group_id" style="max-width:150px">
+            <datalist id="trk_bulk_groups"></datalist>
             <textarea id="trk_bulk_text" placeholder="@user1 @user2 user3 …  (Leerzeichen/Komma/Zeilen)" rows="3" style="flex:1;min-width:220px"></textarea>
             <button class="btn cyan" onclick="trkBulkAdd()">Hinzufügen</button>
           </div>
@@ -8912,6 +8924,7 @@ VIEW_LOADERS.wall = async function(){
     if(!window._wallTimer) window._wallTimer=setInterval(()=>{ if(CURRENT_VIEW==='wall' && !document.hidden) loadWall(); }, 8000);
   }
   loadWall(); loadArchive(); loadRecTools();
+  try{ trkGroupsFill(); }catch(e){}
 };
 let _arcPage=1;
 function arcReset(){
@@ -9005,7 +9018,7 @@ async function loadWall(){
   $('#wall_live').textContent=(d.live??0)+' live';
   $('#wall_total').textContent=(d.total??0)+' gesamt';
   const g=$('#wall_grid');
-  if(!d.tiles||!d.tiles.length){g.innerHTML='<div class="empty">Keine Streamer getrackt — per /track oder Telegram hinzufügen</div>';return;}
+  if(!d.tiles||!d.tiles.length){g.innerHTML='<div class="empty">Noch kein Streamer aufgenommen — Namen oben eintragen und „+ TRACKEN“ drücken.</div>';return;}
   g.innerHTML=d.tiles.map(t=>{
     const cls=['mon']; if(t.live)cls.push('live'); if(t.recording)cls.push('rec'); if(t.paused)cls.push('paused');
     const init=(t.username||'?').slice(0,2).toUpperCase();
@@ -9030,6 +9043,37 @@ function wallFilter(){
     m.style.display=show?'':'none';
   });
 }
+/* Streamer an der Monitor-Wand aufnehmen. Ohne group_id — die loest der
+   Server auf (_dashboard_track_group). Nach dem Anlegen wird sofort die Wand
+   UND die Uebersicht neu geladen: der neue Streamer muss auf der Stelle in
+   den Kennzahlen stehen, sonst wirkt das Hinzufuegen folgenlos. */
+async function wallAdd(){
+  const el=$('#wall_add'), btn=$('#wall_add_btn'), note=$('#wall_add_grp');
+  if(!el) return;
+  const text=(el.value||'').trim();
+  if(!text){ el.focus(); return; }
+  if(btn){ btn.disabled=true; btn.textContent='…'; }
+  const d=await apiPost('/api/trackings/bulk',{text});
+  if(btn){ btn.disabled=false; btn.textContent='+ TRACKEN'; }
+  if(!d||!d.ok){
+    const msg=(d&&d.error)||'Konnte nicht angelegt werden.';
+    if(note){ note.style.color='var(--red)'; note.textContent=msg; }
+    if(typeof toast==='function') toast(msg,'err');
+    return;
+  }
+  const added=(d.added||[]).length, dup=(d.duplicates||[]).length, inv=(d.invalid||[]).length;
+  let msg;
+  if(added) msg=added+' aufgenommen · Gruppe '+(d.group_id||'—')+' · erster Check läuft';
+  else if(dup) msg='wird bereits getrackt';
+  /* Beide Ausgabewege (textContent, toast) setzen reinen Text — hier NICHT
+     esc() aufrufen, sonst stünde "&amp;" auf dem Schirm. */
+  else msg='Name unbrauchbar'+(inv?': '+(d.invalid||[]).slice(0,3).join(', '):'');
+  if(note){ note.style.color=added?'var(--neon)':'var(--amber)'; note.textContent=msg; }
+  if(typeof toast==='function') toast(msg, added?'ok':'err');
+  if(added) el.value='';
+  loadWall();
+  try{ if(typeof loadOverview==='function') loadOverview(); }catch(e){}
+}
 function wallToggleLive(){
   window._wallLiveOnly=!window._wallLiveOnly;
   const b=$('#wall_liveonly');
@@ -9040,18 +9084,33 @@ function wallToggleLive(){
 /* ═══ WAVE 4: Trackings-Bulk-Add ═══ */
 async function trkBulkAdd(){
   const g=$('#trk_bulk_group'), t=$('#trk_bulk_text'), out=$('#trk_bulk_out');
-  if(!g||!t||!out) return;
-  const group_id=parseInt(g.value||'0',10);
+  if(!t||!out) return;
+  /* group_id ist kein Pflichtfeld mehr. Leer heisst: der Server nimmt die
+     Standardgruppe. Vorher brach die Funktion hier mit "group_id fehlt" ab —
+     der Streamer wurde nie angelegt, und im Dashboard war davon nichts zu
+     sehen ausser dieser einen roten Zeile. */
+  const group_id=parseInt((g&&g.value)||'0',10)||0;
   const text=(t.value||'').trim();
-  if(!group_id){ out.innerHTML='<div class="kc-row sev-high"><div class="kc-t">group_id fehlt</div></div>'; g.focus(); return; }
-  if(!text){ out.innerHTML='<div class="kc-row sev-high"><div class="kc-t">Keine Usernames</div></div>'; t.focus(); return; }
+  if(!text){ out.innerHTML='<div class="kc-row sev-high"><div class="kc-t">Keine Usernames — Namen ins Feld daneben schreiben.</div></div>'; t.focus(); return; }
   out.innerHTML='<div class="faint" style="font-size:11px">… füge hinzu</div>';
-  const d=await apiPost('/api/trackings/bulk',{group_id, text});
+  const d=await apiPost('/api/trackings/bulk', group_id?{group_id, text}:{text});
   if(!d||!d.ok){ out.innerHTML='<div class="kc-row sev-high"><div class="kc-t">'+esc((d&&d.error)||'Fehler')+'</div></div>'; return; }
   const a=(d.added||[]).length, dup=(d.duplicates||[]).length, inv=(d.invalid||[]).length;
-  out.innerHTML='<div class="kc-row sev-info"><div><div class="kc-t">'+a+' hinzugefügt · '+dup+' Duplikate · '+inv+' ungültig</div>'+
+  out.innerHTML='<div class="kc-row sev-info"><div><div class="kc-t">'+a+' hinzugefügt · '+dup+' Duplikate · '+inv+' ungültig · Gruppe '+esc(String(d.group_id||'—'))+'</div>'+
     (inv?'<div class="kc-d">ungültig: '+esc((d.invalid||[]).slice(0,10).join(', '))+'</div>':'')+'</div></div>';
-  if(a){ t.value=''; if(typeof loadWall==='function') loadWall(); }
+  if(a){ t.value=''; if(typeof loadWall==='function') loadWall();
+         try{ if(typeof loadOverview==='function') loadOverview(); }catch(e){} }
+}
+/* Auswahl der bekannten Zielgruppen fuellen, damit niemand eine Chat-ID
+   raten muss. Faellt die Route aus, bleibt das Feld ein freies Zahlenfeld. */
+async function trkGroupsFill(){
+  const g=$('#trk_bulk_group'), dl=$('#trk_bulk_groups');
+  if(!g||!dl) return;
+  const d=await apiGet('/api/trackings/groups');
+  if(!d||!d.ok) return;
+  dl.innerHTML=(d.groups||[]).map(x=>'<option value="'+esc(String(x.group_id))+'">'
+    +esc(String(x.group_id))+' · '+x.count+' getrackt · '+esc(x.source)+(x.default?' · Standard':'')+'</option>').join('');
+  g.placeholder=d.default_group_id?('leer = Standard ('+d.default_group_id+')'):'group_id';
 }
 
 /* ═══════════ WAVE 3: RECORDING-TOOLS — Loader ═══════════
@@ -10868,7 +10927,8 @@ var ncCommandCenter=(function(){
       {k:'track',  label:'GETRACKT',   val:(s.active_trackings||0), col:C('--cyan','#22d3ee')},
       {k:'rec',    label:'AUFNAHMEN',  val:(s.recordings_count||0), col:C('--neon','#00ff9c')},
       {k:'chk',    label:'CHECKS',     val:(s.total_checks||0),     col:C('--amber','#e8c86a')},
-      {k:'usr',    label:'CREATOR',    val:(s.unique_users||0),     col:C('--magenta','#c678ff')}
+      /* CREATOR = getrackte Handles, nicht die Telegram-Konten aus tiktok_checks. */
+      {k:'usr',    label:'CREATOR',    val:(s.creators!=null?s.creators:(s.unique_users||0)), col:C('--magenta','#c678ff')}
     ];
     // Knoten gleichmäßig auf einem gekippten Ring verteilen
     var n=kpis.length;
@@ -11323,7 +11383,12 @@ async function loadOverview(){
     var s=await apiGet('/api/stats');
     if(s){ set('ov_live',s.live_now||0); set('ov_track',s.active_trackings||0);
            set('ov_rec',s.recordings_count||0); set('ov_chk',s.total_checks||0);
-           set('ov_usr',s.unique_users||0);
+           /* Die Kachel heisst "Creator" — sie zeigte aber unique_users, also
+              die Telegram-Konten, die je /check getippt haben. Ein neu
+              aufgenommener Streamer aenderte daran nichts. Jetzt die Zahl der
+              getrackten Handles (s.creators); unique_users nur als Rueckfall
+              fuer eine aeltere Serverfassung. */
+           set('ov_usr',(s.creators!=null?s.creators:(s.unique_users||0)));
            var tag=document.getElementById('ov_cc_tag'); if(tag) tag.textContent=(s.live_now||0)+' live · '+(s.active_trackings||0)+' getrackt'; }
   }catch(e){}
   try{
