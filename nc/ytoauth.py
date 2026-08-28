@@ -267,6 +267,51 @@ def invalidate_access():
     _state["access_exp"] = 0.0
 
 
+async def revoke(aiohttp):
+    """Google-Abmeldung: den Zugriff BEI GOOGLE zurueckziehen, nicht nur lokal
+    vergessen. -> (ok, meldung)
+
+    WARUM das noetig ist: forget() loescht nur unseren Refresh-Token. Die
+    Freigabe im Google-Konto bleibt bestehen — der naechste Verbindungsversuch
+    laeuft dann still durch dieselbe Zustimmung, und wer das Konto WECHSELN
+    will, kommt nicht heran, ohne von Hand auf myaccount.google.com den
+    Zugriff zu entziehen. Genau dieser Schritt fehlte im Dashboard.
+
+    Nach dem Widerruf ist der Refresh-Token tot; die Zustimmung wird beim
+    naechsten Verbinden neu abgefragt, samt Kontoauswahl.
+
+    Der lokale Zustand wird IMMER geleert — auch wenn Google nicht erreichbar
+    war. Sonst haette der Betreiber einen Knopf, der bei Netzfehlern gar
+    nichts tut, und der Zustand im Dashboard bliebe auf 'verbunden'.
+    """
+    tok = (_state.get("refresh") or "").strip() or (_state.get("access") or "").strip()
+    if not tok:
+        forget()
+        return True, "Es war keine Verbindung gespeichert — Zustand ist jetzt leer."
+    ok, meldung = True, ("Google-Zugriff widerrufen. Beim naechsten Verbinden "
+                         "fragt Google wieder nach Konto und Zustimmung.")
+    try:
+        async with aiohttp.ClientSession() as s:
+            async with s.post(REVOKE, data={"token": tok},
+                              timeout=aiohttp.ClientTimeout(total=15)) as r:
+                if r.status not in (200, 204):
+                    body = (await r.text())[:200]
+                    # 400 heisst bei Google meist "Token war ohnehin schon
+                    # ungueltig" — kein Grund zur Panik, aber sagen muss man es.
+                    ok = (r.status == 400)
+                    meldung = (f"Google antwortete mit {r.status}: {body}. "
+                               f"Lokal ist die Verbindung trotzdem geloest; "
+                               f"zur Sicherheit unter myaccount.google.com/permissions "
+                               f"nachsehen.")
+    except Exception as e:
+        ok = False
+        meldung = (f"Google nicht erreichbar ({e}). Lokal ist die Verbindung "
+                   f"geloest — die Freigabe im Google-Konto besteht evtl. weiter.")
+    finally:
+        forget()
+    return ok, meldung
+
+
 def forget():
     """Verbindung loesen: Refresh-Token verwerfen und Store loeschen."""
     _state.update(refresh="", access="", access_exp=0.0, channel="")

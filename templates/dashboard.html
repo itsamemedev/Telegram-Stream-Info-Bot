@@ -5743,6 +5743,30 @@ VIEW_LOADERS.system = async function(){
             verbinden. Danach erneuert der Bot den Zugang selbst.
           </div>
           <div id="ytoauth_body" class="skel" aria-busy="true"><i></i><i></i></div>
+
+          <!-- Rueckruf-Adresse: immer sichtbar, nicht erst nach dem Verbinden.
+               Genau hier lag der Fehler — ohne Vorgabe stand fest
+               "http://localhost:3000", Google brach mit redirect_uri_mismatch
+               ab, und weil der Flow nie durchlief, gab es weder Kontoauswahl
+               noch einen Trennen-Knopf. Ohne Eintrag nimmt der Server jetzt
+               die Adresse, unter der dieses Dashboard laeuft (nginx-Proxy). -->
+          <div style="margin-top:14px;padding:12px 14px;background:var(--sunken);border-radius:var(--r-md);border:1px solid var(--border)">
+            <div style="font-size:11px;font-weight:600;color:var(--cyan);margin-bottom:8px">↩ Rückruf-Adresse (Redirect-URI)</div>
+            <div class="faint" style="font-size:10.5px;line-height:1.6;margin-bottom:8px">
+              Muss <b>exakt so</b> in der Google-Cloud-Console unter „Autorisierte
+              Weiterleitungs-URIs“ stehen. Feld leer lassen = die Adresse, unter der
+              dieses Dashboard gerade läuft.
+            </div>
+            <code id="ytoauth_redir_eff" style="display:block;user-select:all;word-break:break-all;color:var(--cyan);font-size:10.5px;margin-bottom:8px">…</code>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+              <input id="yo_redir" class="mono" style="flex:1;min-width:230px;padding:6px 8px"
+                     aria-label="YouTube Rückruf-Adresse"
+                     placeholder="https://deine-domain:8050/api/youtube/oauth/callback">
+              <button class="btn sm cyan" onclick="ytoauthSaveRedirect()">Übernehmen</button>
+            </div>
+            <div class="faint" id="ytoauth_redir_note" style="font-size:10px;margin-top:6px"></div>
+          </div>
+
           <div id="ytoauth_tunnel" style="display:none;margin-top:14px;padding:12px 14px;background:var(--sunken);border-radius:var(--r-md);border:1px solid var(--border)">
             <div style="font-size:11px;font-weight:600;color:var(--cyan);margin-bottom:8px">
               ⚑ Einmaliger SSH-Tunnel nötig
@@ -7573,6 +7597,16 @@ async function ytoauthLoad(){
   const box=$('#ytoauth_body'), tag=$('#ytoauth_tag');
   if(!d||!d.ok){ if(box) box.innerHTML='<div class="faint">nicht erreichbar</div>'; return; }
   if(d.redirect_uri && $('#ytoauth_redir')) $('#ytoauth_redir').textContent=d.redirect_uri;
+  if(d.redirect_uri && $('#ytoauth_redir_eff')) $('#ytoauth_redir_eff').textContent=d.redirect_uri;
+  const rin=$('#yo_redir');
+  if(rin && document.activeElement!==rin) rin.value=(d.redirect_source&&d.redirect_source!=='fallback')?(d.redirect_uri||''):'';
+  const rnote=$('#ytoauth_redir_note');
+  if(rnote){
+    const q={config:'im Dashboard gesetzt',env:'aus der .env (YOUTUBE_REDIRECT_URI)',fallback:'automatisch aus der Adresse dieses Dashboards'}[d.redirect_source]||'—';
+    if(d.redirect_public===false){ rnote.style.color='var(--amber)';
+      rnote.textContent='Quelle: '+q+' — zeigt auf localhost. Google erreicht das nur über einen Tunnel; besser die öffentliche Adresse eintragen.'; }
+    else { rnote.style.color=''; rnote.textContent='Quelle: '+q+'.'; }
+  }
   const tunnelBox=$('#ytoauth_tunnel');
   if(tunnelBox) tunnelBox.style.display = d.needs_tunnel ? 'block' : 'none';
   if(d.ready){
@@ -7586,9 +7620,11 @@ async function ytoauthLoad(){
       +'<span style="color:var(--neon);font-size:18px">✓</span>'
       +'<span>YouTube verbunden — Zuschauer, Abonnenten und der KI-Moderator im Live-Chat sind aktiv.</span></div>'
       +(viaEnv?'<div class="faint" style="font-size:10.5px;margin-top:8px;color:var(--amber)">Token stammt aus der <code>.env</code>. Steht die Google-App auf „Testing“, läuft er nach 7 Tagen ab — einmal hier verbinden macht ihn dauerhaft.</div>':'')
-      +'<div style="margin-top:12px;display:flex;gap:8px">'
+      +'<div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap">'
       +'<button class="btn sm" onclick="ytoauthStart()">Neu verbinden</button>'
-      +'<button class="btn sm" onclick="ytoauthForget()">Verbindung lösen</button></div>';
+      +'<button class="btn sm" onclick="ytoauthSwitch()">Konto wechseln</button>'
+      +'<button class="btn sm" onclick="ytoauthLogout()">Von Google abmelden</button>'
+      +'<button class="btn sm" onclick="ytoauthForget()">Nur lokal lösen</button></div>';
     if(tunnelBox && !viaEnv) tunnelBox.style.display='none';
     return;
   }
@@ -7602,8 +7638,13 @@ async function ytoauthLoad(){
       +'<div class="faint" style="font-size:11px;margin-top:8px">Erst eintragen und den Bot neu starten.</div>';
     return;
   }
+  /* Der Abmelde-Knopf steht auch hier — nicht erst nach erfolgreichem
+     Verbinden. Wer beim ersten Versuch das falsche Google-Konto erwischt hat,
+     kommt sonst nicht mehr an die Kontoauswahl: Google merkt sich die
+     Freigabe und winkt still durch. */
   box.innerHTML='<button class="btn" onclick="ytoauthStart()">▸ Mit YouTube verbinden</button>'
-    +'<div class="faint" style="font-size:10.5px;margin-top:8px">Erst den Tunnel unten starten, dann hier klicken.</div>';
+    +'<button class="btn sm" style="margin-left:8px" onclick="ytoauthLogout()">Von Google abmelden</button>'
+    +'<div class="faint" style="font-size:10.5px;margin-top:8px">Google zeigt beim Verbinden die <b>Kontoauswahl</b> — bei mehreren Konten das Kanal-Konto wählen. Zeigt die Rückruf-Adresse oben auf <code>localhost</code>, vorher den Tunnel starten.</div>';
 }
 function ytoauthStart(){
   window.open('/api/youtube/oauth/start', 'youtube_oauth', 'width=560,height=720');
@@ -7615,6 +7656,30 @@ function ytoauthStart(){
 async function ytoauthForget(){
   if(!confirm('YouTube-Verbindung lösen? Zuschauerzahlen und der KI-Moderator im Live-Chat fallen dann aus, bis du neu verbindest.')) return;
   await apiPost('/api/youtube/oauth/forget', {});
+  ytoauthLoad();
+}
+/* Echte Abmeldung: zieht die Freigabe BEI GOOGLE zurück. Nur lokal löschen
+   reicht nicht — Google merkt sich die Zustimmung, der nächste Versuch läuft
+   still durch dasselbe Konto, und Kontowechsel wäre nur von Hand über
+   myaccount.google.com möglich. */
+async function ytoauthLogout(){
+  if(!confirm('Vom Google-Konto abmelden? Der Zugriff wird bei Google widerrufen. Beim nächsten Verbinden fragt Google wieder nach Konto und Zustimmung.')) return;
+  const d=await apiPost('/api/youtube/oauth/logout', {});
+  if(typeof toast==='function') toast((d&&d.message)||(d&&d.ok?'Abgemeldet':'Abmeldung fehlgeschlagen'), (d&&d.ok)?'ok':'err');
+  ytoauthLoad();
+}
+/* Konto wechseln = abmelden, dann sofort neu verbinden. Erst danach zeigt
+   Google die Kontoauswahl wirklich mit allen Konten. */
+async function ytoauthSwitch(){
+  if(!confirm('Auf ein anderes Google-Konto wechseln? Der aktuelle Zugriff wird widerrufen und der Verbinden-Dialog geöffnet.')) return;
+  const d=await apiPost('/api/youtube/oauth/logout', {});
+  if(d&&!d.ok&&typeof toast==='function') toast((d&&d.message)||'Widerruf fehlgeschlagen — verbinde trotzdem neu','err');
+  ytoauthStart();
+}
+async function ytoauthSaveRedirect(){
+  const el=$('#yo_redir'); if(!el) return;
+  const d=await apiPost('/api/youtube/oauth/redirect',{uri:(el.value||'').trim()});
+  if(typeof toast==='function') toast((d&&d.ok)?('Rückruf-Adresse: '+(d.redirect_uri||'')):((d&&d.error)||'Fehler'), (d&&d.ok)?'ok':'err');
   ytoauthLoad();
 }
 

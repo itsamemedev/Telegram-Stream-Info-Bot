@@ -2967,10 +2967,22 @@ def test_v40_w23_kick_redirect():
     """v4.0-W23: Kick-Redirect-URI live setzbar (app_config schlaegt .env, kein
        Neustart) + Panel warnt beim nicht erreichbaren localhost-Fallback."""
     src = open("bot.py").read()
-    seg = src[src.find("def _kick_redirect_uri():"):src.find("async def _kick_user_token(")]
-    assert 'kick.redirect_uri' in seg, "app_config-Ueberschreibung fehlt"
-    assert seg.find("kick.redirect_uri") < seg.find("KICK_REDIRECT_URI"), \
+    # ANKER GEWANDERT (nicht der Vertrag): die Reihenfolge config → env →
+    # Fallback steht seit dem OAuth-Umbau EINMAL in _oauth_redirect_uri und
+    # gilt fuer Kick, Twitch und YouTube gemeinsam. _kick_redirect_uri reicht
+    # nur noch die Plattform durch. Geprueft wird dieselbe Zusage, nur dort,
+    # wo sie jetzt lebt.
+    gen = src[src.find("def _oauth_redirect_uri("):src.find("def _oauth_redirect_source(")]
+    assert "{platform}.redirect_uri" in gen, "app_config-Ueberschreibung fehlt"
+    assert gen.find("{platform}.redirect_uri") < gen.find("_oauth_redirect_env(platform)"), \
         "Reihenfolge falsch — config muss VOR env stehen"
+    # Die Env-Namen muessen als Literal im Quelltext stehen, sonst fallen sie
+    # aus .env.example heraus (gen_env_example.py findet nur Literale).
+    _env = src[src.find("def _oauth_redirect_env("):src.find("def _oauth_redirect_uri(")]
+    for _v in ("KICK_REDIRECT_URI", "TWITCH_REDIRECT_URI", "YOUTUBE_REDIRECT_URI"):
+        assert '"%s"' % _v in _env, "%s nicht als Literal auffindbar" % _v
+    seg = src[src.find("def _kick_redirect_uri():"):src.find("async def _kick_user_token(")]
+    assert '_oauth_redirect_uri("kick")' in seg, "Kick nutzt die gemeinsame Aufloesung nicht"
     assert "def _kick_redirect_source(" in src and "def _kick_redirect_public(" in src
     assert '"/api/kick/oauth/redirect"' in src and "def api_kick_oauth_redirect(" in src, \
         "kein Live-Setzer fuer die Redirect-URI"
@@ -6486,6 +6498,77 @@ def test_v40_w118_sicherheitsaudit():
        "Open Redirect dicht, ein Maskierer, Zugangsdaten maskiert")
 
 
+def test_v40_w119_oauth_proxy_meldethema_kollision():
+    """v4.0-W119: drei Betriebsbefunde, je ein Vertrag.
+
+    1. OAuth hinter dem nginx-Proxy. Twitch und YouTube hatten fest
+       'http://localhost:3000' als Rueckruf — eine Adresse, die von aussen
+       niemand sieht. Google bricht damit mit redirect_uri_mismatch ab, BEVOR
+       die Kontoauswahl erscheint; weil der Flow nie durchlief, erschien auch
+       nie der Trennen-Knopf. Eine falsche Adresse, drei Symptome.
+    2. Google-Abmeldung. forget() loeschte nur lokal; die Freigabe im
+       Google-Konto blieb, ein Kontowechsel war ohne myaccount.google.com
+       unmoeglich.
+    3. Live-/Offline-Meldungen gehoeren ins eigene Forum-Thema, nie in den
+       Hauptchannel.
+    """
+    src = open("bot.py").read()
+
+    # ── 1: gemeinsame, proxy-taugliche Aufloesung ────────────────────────
+    assert "def _public_base_url(" in src, "keine oeffentliche Basis-URL"
+    _pb = src[src.index("def _public_base_url("):src.index("def _oauth_redirect_uri(")]
+    assert "PUBLIC_BASE_URL" in _pb, "kein Env-Vorrang fuer die oeffentliche Adresse"
+    assert "X-Forwarded-Host" in _pb and "TRUSTED_PROXIES" in _pb, \
+        "Proxy-Header ohne Vertrauensgrenze — waere faelschbar"
+    for plat in ("youtube", "twitch"):
+        assert '_oauth_redirect_uri("%s")' % plat in src, \
+            "%s nutzt die gemeinsame Aufloesung nicht" % plat
+    assert "http://localhost:3000/api/youtube/oauth/callback" not in src, \
+        "YouTube haengt noch am festen localhost:3000"
+    assert '"/api/youtube/oauth/redirect"' in src and "def api_youtube_oauth_redirect(" in src, \
+        "kein Live-Setzer fuer die YouTube-Rueckruf-Adresse"
+    _ys = src[src.index("def api_youtube_oauth_start("):src.index("def api_youtube_oauth_callback(")]
+    assert 'prompt="select_account consent"' in _ys, "keine Google-Kontoauswahl erzwungen"
+
+    # ── 2: Abmeldung widerruft bei Google ────────────────────────────────
+    yt = open("nc/ytoauth.py", encoding="utf-8").read()
+    assert "async def revoke(" in yt, "kein Widerruf in nc/ytoauth.py"
+    _rv = yt[yt.index("async def revoke("):yt.index("def forget(")]
+    assert "REVOKE" in _rv, "Widerruf ruft den Google-Endpunkt nicht auf"
+    assert "forget()" in _rv, "lokaler Zustand bleibt nach dem Widerruf stehen"
+    assert '"/api/youtube/oauth/logout"' in src and "def api_youtube_oauth_logout(" in src, \
+        "keine Abmelde-Route"
+    dash = open("templates/dashboard.html", encoding="utf-8").read()
+    assert "ytoauthLogout(" in dash and "ytoauthSwitch(" in dash, \
+        "Panel ohne Abmelden/Konto-wechseln"
+    assert "ytoauthSaveRedirect(" in dash and 'id="yo_redir"' in dash, \
+        "Panel ohne Feld fuer die Rueckruf-Adresse"
+
+    # ── 3: Melde-Thema statt Hauptchannel ────────────────────────────────
+    assert "async def _send_live_notice(" in src, "kein eigener Melde-Weg"
+    _p = src.index("async def _send_live_notice(")
+    _ln = src[_p:src.index("async def split_and_send_video(", _p)]
+    assert "message_thread_id=tid" in _ln, "Meldung geht nicht ins Thema"
+    assert "_topic_forget(" in _ln, "geloeschtes Thema wird nicht geheilt"
+    _hs = src[src.index("async def _handle_single_tracking("):src.index("async def _ensure_topic(")]
+    assert "_send_live_notice(bot_app.bot, _tg_chat" in _hs, "LIVE-Meldung nicht umgestellt"
+    assert "_send_live_notice(bot_app.bot, chat_id" in _hs, "OFFLINE-Meldung nicht umgestellt"
+
+    # ── Kollisions-Befund benennt Plattform, Nummern und Quelle ──────────
+    ag = open("brain/agents.py", encoding="utf-8").read()
+    _co = ag[ag.index("def _collisions("):ag.index("class ToxicityAgent")]
+    assert 'f"Kick-Key-Kollision' not in ag, "Befund behauptet weiter pauschal 'Kick'"
+    assert "{plat}-Key" in _co, "Befund nennt die Plattform nicht"
+    assert "platform" in _co and "same_source" in _co, \
+        "Befund unterscheidet die beiden Faelle nicht"
+    _rh = src[src.index("def _brain_restream_health("):src.index("def _brain_moderation_snap(")]
+    assert "tee_targets" in _rh, "Kollision wird nicht ueber die echten Ziele geprueft"
+    assert "returncode is not None" in _rh, "tote Prozesse zaehlen weiter mit"
+    assert "RESTREAM_SINGLE" in _rh, "RESTREAM_SINGLE wird nicht beruecksichtigt"
+    ok("v4.0-w119: OAuth ueber den Proxy, echte Google-Abmeldung, Melde-Thema, "
+       "ehrlicher Kollisions-Befund")
+
+
 def main():
     print("test_restream — Restream-Kernlogik (Mock-basiert)")
     test_streak()
@@ -6668,6 +6751,7 @@ def main():
     test_v40_w117_ankerhygiene()
     test_v40_w117_asset_stempel()
     test_v40_w118_sicherheitsaudit()
+    test_v40_w119_oauth_proxy_meldethema_kollision()
     print(f"test_restream OK — {PASS} Verträge grün")
 
 
