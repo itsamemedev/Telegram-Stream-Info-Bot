@@ -11,6 +11,99 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Behoben — Im Dashboard hinzugefügte Streamer zählten nirgends (W120)
+
+Ein im Dashboard angelegter Streamer tauchte weder als live noch als Creator
+noch sonstwo auf. Drei getrennte Ursachen, die zusammen dasselbe Bild ergaben.
+
+- **Die Zielgruppe.** Der einzige Weg war der Bulk-Add tief in der
+  Trackings-Verwaltung, mit Pflichtfeld `group_id`. Leer gelassen brach die
+  Route mit „group_id fehlt" ab — das Tracking entstand nie. Geraten landete
+  es in einem Chat, den es nicht gibt: kein Live-Ping, kein Discord-Post.
+  Beides sah für den Betreiber gleich aus. `group_id` ist jetzt optional;
+  `_dashboard_track_group()` löst sie auf (`DASHBOARD_TRACK_GROUP_ID`,
+  `DAILY_SUMMARY_CHAT_ID`, meistgenutzte Gruppe aus `trackings`,
+  `DISCORD_TRACK_GROUP_ID`, `DISCORD_GUILD_ID`, einzelner
+  `ALLOWED_CHAT_IDS`-Eintrag). Ist keine auflösbar, nennt die Antwort die zu
+  setzende Variable im Klartext.
+- **Neu:** `GET /api/trackings/groups` (bekannte Gruppen samt Belegung) und
+  ein Feld **„+ TRACKEN"** direkt an der Monitor-Wand — Name rein, fertig.
+- **Die Kachel „Creator"** zeigte `unique_users`, also `DISTINCT
+  telegram_user_id` aus `tiktok_checks`: die Konten, die je `/check` getippt
+  haben. Ein neu getrackter Streamer konnte diese Zahl nie bewegen.
+  `/api/stats` liefert jetzt `creators` (`DISTINCT username` aus `trackings`).
+- **Groß-/Kleinschreibung.** `clean_username` schreibt nicht klein, die
+  `trackings` speichern den Handle also wie getippt. `/api/streamer/detail`,
+  `/api/stream/timeline` und `/api/restream/report` schrieben ihn stur klein —
+  bei jedem Handle mit Großbuchstaben traf keine Abfrage: OFFLINE, 0
+  Aufnahmen, leere Timeline, während gesendet wurde. Jetzt löst
+  `_resolve_tracked_user()` die gespeicherte Schreibweise auf, die Abfragen
+  laufen über `LOWER(...)` (SQLite wie MariaDB), Laufzeit-Dicts über
+  `_ci_key()`.
+
+### Behoben — OAuth hinter dem Proxy, Google-Abmeldung, Melde-Thema (W121)
+
+- **YouTube-OAuth lief nicht über den Reverse-Proxy.** Kick konnte seine
+  Rückruf-Adresse im Dashboard setzen; Twitch und YouTube hatten nur `.env`
+  und sonst fest `http://localhost:3000` — eine Adresse, die von außen niemand
+  sieht. Google bricht damit mit `redirect_uri_mismatch` ab, **bevor** die
+  Kontoauswahl erscheint; weil der Flow nie durchlief, erschien auch nie der
+  Trennen-Knopf. Eine falsche Adresse, drei Symptome.
+  Neu `_public_base_url()` (Vorrang `PUBLIC_BASE_URL`, sonst Proxy-Header —
+  aber nur von einem vertrauten Absender, sonst wäre die Rückruf-Adresse per
+  Header fälschbar; fehlt der Port im Host, ergänzt `X-Forwarded-Port` ihn)
+  und `_oauth_redirect_uri()` für alle drei Plattformen: app_config, dann
+  `.env`, dann diese Adresse. Dazu `POST /api/youtube/oauth/redirect` und
+  `POST /api/twitch/oauth/redirect` zum Live-Setzen samt Feld im Panel.
+- **Google-Abmeldung.** `forget()` löschte nur lokal — die Freigabe im
+  Google-Konto blieb, ein Kontowechsel war nur über `myaccount.google.com`
+  möglich. `nc/ytoauth.py` bekommt `revoke()` (Widerruf beim Google-Endpunkt,
+  lokaler Zustand **immer** geleert, auch bei Netzfehler) und
+  `POST /api/youtube/oauth/logout`. Im Panel „Von Google abmelden" und „Konto
+  wechseln", auch sichtbar, wenn noch nie verbunden wurde. Der Start-Aufruf
+  gibt `prompt=select_account consent` jetzt ausdrücklich mit.
+- **Der Befund „Kick-Key-Kollision" war nicht mehr wahr.** Seit der
+  symmetrischen Zielauflösung (W77) ist die Zielliste global; das verglichene
+  Feld `kick_url` ist nur noch „die erste konfigurierte Plattform" und bei
+  jedem Restream gleich. Wer eine Quelle auf drei Plattformen ausspielt, bekam
+  den Befund im Zwei-Minuten-Takt — ohne Plattform, ohne Quelle, mit einem
+  Rat, der zur `.env`-Konfiguration nicht mehr passt. Jetzt werden alle Ziele
+  je Prozess verglichen, nur lebende Prozesse gezählt, `RESTREAM_SINGLE`
+  berücksichtigt, und der Befund nennt Plattform, Restream-Nummern und
+  Quellen — zwei Zeilen derselben Quelle sind ein anderer Fall als zwei
+  Quellen auf einem Key.
+- **Live-/Offline-Meldungen gingen in den Hauptchannel.** Ist die Gruppe ein
+  Forum, legt der Bot jetzt ein eigenes Thema an
+  (`TELEGRAM_NOTIFY_TOPIC_NAME`, Standard „📡 Live & Offline") und meldet nur
+  dorthin. Wird das Thema gelöscht, antwortet Telegram mit „message thread not
+  found" — dann Zuordnung verwerfen, Thema neu anlegen, einmal wiederholen.
+  Der Hauptchannel ist bewusst kein Rückfall; scheitert auch das, sagt eine
+  Fehlerzeile warum. Ohne Forum gibt es keine Themen — dort bleibt es beim
+  Chat.
+
+### Behoben — Trackings-Ansicht hatte kein Markup mehr (W122)
+
+Die Logik lief die ganze Zeit weiter (`loadSurveil`, `renderTargetGrid`,
+`renderBandwidth`, `loadHeatmap`), nur ihr HTML war verschwunden: alle elf IDs
+kamen im Template **null** mal vor, die Funktionen brachen an ihrem eigenen
+Wächter ab. Damit waren **Tags, Notizen, Priorität, Schnell-Neustart und
+Jetzt-Prüfen** aus dem Dashboard nicht mehr erreichbar — ein getrackter
+Streamer war nur noch eine Kachel.
+
+- Panel wieder im Streams-Tab unter der Monitor-Wand: vier Kennzahlen, Filter
+  über Name und Notiz, Sortierung nach Status/Name/VIP, Tabelle mit
+  Status/Tags/Notiz, laufende Aufnahmen mit Rate, 30-Tage-Karte. Keine Zeile
+  Logik geändert, nur das fehlende Markup und die Verdrahtung im Loader.
+- Die Heatmap bekommt eine Drossel (5 Minuten) — sie deckt 30 Tage ab und wäre
+  sonst im 8-Sekunden-Takt der Tabelle mitgelaufen.
+- Texte der Ansicht auf Deutsch (war `TARGET`/`SCAN`/`CTL`/`NO TARGETS`).
+
+#### Entfernt
+- **Radar-Anzeige.** Sie hing an einem Canvas, das es im Template nicht mehr
+  gibt: `_radarRAF`/`_radarAngle` wurden nie wieder gelesen,
+  `radarUpdateStats()` schrieb in fünf IDs, die nirgends existierten.
+- Die feste Server-IP aus den Tunnel-Kästen des Dashboards.
+
 ### Geändert — `bot_v37.py` heißt jetzt `bot.py` (W119)
 
 Die Versionsnummer im Dateinamen war seit v4.0 falsch und stiftete bei jedem

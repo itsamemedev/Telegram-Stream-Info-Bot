@@ -5,6 +5,8 @@
 ### Der Kontrollraum für Live-Streaming
 #### Überwachung · Aufnahme · Multi-Ziel-Restream · KI-Moderation
 
+[![AZRAEL SENTINEL — weltweit erste Streaming-KI](https://img.shields.io/badge/%F0%9F%A4%96%20AZRAEL%20SENTINEL-Weltweit%20erste%20Streaming--KI-E8C86A?style=for-the-badge&labelColor=0C0B09)](https://lafap.de/)
+
 [![Lizenz: GPL v3](https://img.shields.io/badge/Lizenz-GPLv3-blue.svg?style=for-the-badge&logo=gnu)](LICENSE)
 [![Python 3.12+](https://img.shields.io/badge/Python-3.12%2B-3776AB.svg?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
 [![Plattform: Linux](https://img.shields.io/badge/Plattform-Ubuntu%20%2F%20systemd-E95420.svg?style=for-the-badge&logo=ubuntu&logoColor=white)](#-installation)
@@ -17,6 +19,7 @@
 [![Kick](https://img.shields.io/badge/Kick-Restream%20%2B%20Chat-53FC18?style=flat-square&logo=kick&logoColor=black)](#-restream)
 [![Twitch](https://img.shields.io/badge/Twitch-Restream%20%2B%20Chat-9146FF?style=flat-square&logo=twitch&logoColor=white)](#-restream)
 [![YouTube](https://img.shields.io/badge/YouTube-Restream%20%2B%20Chat-FF0000?style=flat-square&logo=youtube&logoColor=white)](#-restream)
+[![Changelog](https://img.shields.io/badge/Changelog-alle%20%C3%84nderungen-C9A227?style=flat-square&logo=markdown&logoColor=white)](docs/CHANGELOG.md)
 
 <br>
 

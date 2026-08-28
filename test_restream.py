@@ -6498,8 +6498,8 @@ def test_v40_w118_sicherheitsaudit():
        "Open Redirect dicht, ein Maskierer, Zugangsdaten maskiert")
 
 
-def test_v40_w119_oauth_proxy_meldethema_kollision():
-    """v4.0-W119: drei Betriebsbefunde, je ein Vertrag.
+def test_v40_w121_oauth_proxy_meldethema_kollision():
+    """v4.0-W121: drei Betriebsbefunde, je ein Vertrag.
 
     1. OAuth hinter dem nginx-Proxy. Twitch und YouTube hatten fest
        'http://localhost:3000' als Rueckruf — eine Adresse, die von aussen
@@ -6565,12 +6565,12 @@ def test_v40_w119_oauth_proxy_meldethema_kollision():
     assert "tee_targets" in _rh, "Kollision wird nicht ueber die echten Ziele geprueft"
     assert "returncode is not None" in _rh, "tote Prozesse zaehlen weiter mit"
     assert "RESTREAM_SINGLE" in _rh, "RESTREAM_SINGLE wird nicht beruecksichtigt"
-    ok("v4.0-w119: OAuth ueber den Proxy, echte Google-Abmeldung, Melde-Thema, "
+    ok("v4.0-w121: OAuth ueber den Proxy, echte Google-Abmeldung, Melde-Thema, "
        "ehrlicher Kollisions-Befund")
 
 
-def test_v40_w120_trackings_ansicht():
-    """v4.0-W120: die Trackings-Ansicht hat wieder Markup.
+def test_v40_w122_trackings_ansicht():
+    """v4.0-W122: die Trackings-Ansicht hat wieder Markup.
 
     Die Logik lief seit je (loadSurveil/renderTargetGrid/renderBandwidth/
     loadHeatmap), nur ihr HTML war irgendwann verschwunden — alle IDs kamen
@@ -6608,7 +6608,7 @@ def test_v40_w120_trackings_ansicht():
         "Twitch-Panel ohne Feld fuer die Rueckruf-Adresse"
     # Keine fremde Server-IP als Beispiel im ausgelieferten Dashboard.
     assert "217.182.138.35" not in dash, "feste Server-IP im Template"
-    ok("v4.0-w120: Trackings-Ansicht wieder bedienbar, Radar-Leiche raus, "
+    ok("v4.0-w122: Trackings-Ansicht wieder bedienbar, Radar-Leiche raus, "
        "Twitch-Rueckruf pflegbar")
 
 
@@ -6794,8 +6794,8 @@ def main():
     test_v40_w117_ankerhygiene()
     test_v40_w117_asset_stempel()
     test_v40_w118_sicherheitsaudit()
-    test_v40_w119_oauth_proxy_meldethema_kollision()
-    test_v40_w120_trackings_ansicht()
+    test_v40_w121_oauth_proxy_meldethema_kollision()
+    test_v40_w122_trackings_ansicht()
     print(f"test_restream OK — {PASS} Verträge grün")
 
 
