@@ -13,8 +13,8 @@
 [![Status: produktiv](https://img.shields.io/badge/Status-produktiv-success.svg?style=for-the-badge)](#-projektstatus)
 [![CI](https://img.shields.io/github/actions/workflow/status/itsamemedev/Telegram-Stream-Info-Bot/ci.yml?branch=main&style=for-the-badge&label=CI&logo=githubactions&logoColor=white)](../../actions/workflows/ci.yml)
 
-[![Telegram](https://img.shields.io/badge/Telegram-Bot-26A5E4?style=flat-square&logo=telegram&logoColor=white)](#-bedienung)
-[![Discord](https://img.shields.io/badge/Discord-45%20Slash--Commands-5865F2?style=flat-square&logo=discord&logoColor=white)](#discord--45-slash-commands)
+[![Telegram](https://img.shields.io/badge/Telegram-Bot-26A5E4?style=flat-square&logo=telegram&logoColor=white)](#️-bedienung)
+[![Discord](https://img.shields.io/badge/Discord-45%20Slash--Commands-5865F2?style=flat-square&logo=discord&logoColor=white)](#️-bedienung)
 [![TikTok](https://img.shields.io/badge/TikTok-Live--Erkennung-000000?style=flat-square&logo=tiktok&logoColor=white)](#-was-nightcrawler-macht)
 [![Kick](https://img.shields.io/badge/Kick-Restream%20%2B%20Chat-53FC18?style=flat-square&logo=kick&logoColor=black)](#-restream)
 [![Twitch](https://img.shields.io/badge/Twitch-Restream%20%2B%20Chat-9146FF?style=flat-square&logo=twitch&logoColor=white)](#-restream)
@@ -54,20 +54,23 @@ flowchart LR
 - [⚡ Schnellstart](#-schnellstart)
 - [📦 Installation](#-installation)
 - [⚙️ Konfiguration](#️-konfiguration)
+- [🕹️ Bedienung](#️-bedienung)
 
 </td><td>
 
-- [🕹️ Bedienung](#️-bedienung)
 - [📡 Restream](#-restream)
 - [🧠 Das Gehirn (AZRAEL)](#-das-gehirn-azrael)
 - [🖥️ Dashboard](#️-dashboard)
 - [🚀 Deployment](#-deployment)
+- [🧪 Tests & Prüfkette](#-tests--prüfkette)
+- [🛡️ Sicherheit](#️-sicherheit)
 
 </td><td>
 
-- [🧪 Tests & Prüfkette](#-tests--prüfkette)
-- [🛡️ Sicherheit](#️-sicherheit)
 - [🗺️ Projektstruktur](#️-projektstruktur)
+- [🩺 Fehlersuche](#-fehlersuche)
+- [📈 Projektstatus](#-projektstatus)
+- [🧭 Roadmap](#-roadmap)
 - [🤝 Mitwirken](#-mitwirken)
 - [📄 Lizenz](#-lizenz)
 
