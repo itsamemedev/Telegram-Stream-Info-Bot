@@ -6612,6 +6612,181 @@ def test_v40_w122_trackings_ansicht():
        "Twitch-Rueckruf pflegbar")
 
 
+def test_v40_w124_offline_meldung_ins_thema():
+    """v4.0-W124: auch die Offline-Meldung landet im Melde-Thema.
+
+    W121 stellte Live UND Offline auf _send_live_notice um — geprueft wurde
+    aber nur _handle_single_tracking. Die Offline-Meldung hat einen ZWEITEN
+    Sender: den Fan-Out am Ende der Aufnahme. Beide sind ueber
+    claim_live_transition(going_live=False) serialisiert, und der
+    Aufnahme-Pfad gewinnt den Anspruch praktisch immer — die Aufnahme endet
+    in derselben Sekunde, in der der Stream stirbt, der Live-Check pollt erst
+    30s spaeter. Ergebnis im Betrieb: LIVE im Thema, OFFLINE trotzdem im
+    Hauptchat. Dieser Vertrag haelt beide Sender fest.
+    """
+    src = open("bot.py", encoding="utf-8").read()
+    # Sender 1: Live-Check-Worker (W121 — hier nur zur Vollstaendigkeit).
+    _hs = src[src.index("async def _handle_single_tracking("):
+              src.index("async def _ensure_topic(")]
+    assert "_send_live_notice(bot_app.bot, chat_id" in _hs, \
+        "Offline-Meldung des Live-Check-Workers nicht im Melde-Thema"
+    # Sender 2: Fan-Out am Ende der Aufnahme — der, der real feuert.
+    _fan = src[src.index("# F30: OFFLINE-Notification BEVOR Upload startet"):]
+    _fan = _fan[:_fan.index("# Upload an alle Fan-Out Chats")]
+    assert "claim_live_transition(ftid, going_live=False)" in _fan, \
+        "Fan-Out-Block nicht mehr am erwarteten Anker"
+    assert "_send_live_notice(" in _fan, \
+        "Offline-Meldung am Aufnahme-Ende geht wieder in den Hauptchat"
+    assert "_safe_send(" not in _fan, \
+        "_safe_send im Fan-Out — ohne message_thread_id landet das im Hauptchat"
+    # F63 gilt fuer BEIDE Sender: sonst kam nachts OFFLINE ohne vorheriges LIVE.
+    assert "_is_quiet_hours()" in _fan, \
+        "Fan-Out ignoriert Quiet Hours — OFFLINE-Spam ohne vorheriges LIVE"
+    ok("v4.0-w124: beide Offline-Sender schreiben ins Melde-Thema, "
+       "beide achten die Quiet Hours")
+
+
+def test_v40_w125_papierkorb_und_archiv_werkzeuge():
+    """v4.0-W125: drei Faehigkeiten mit lebendem Backend sind wieder bedienbar.
+
+    Der Reorg loeste die Ansichten VAULT und die Aufnahme-Liste auf und liess
+    ihre Loader mit einem Waechter stehen. Drei Endpunkte verloren dabei ihre
+    einzige Oberflaeche, ohne dass jemand es merkte — sie antworten bis heute:
+
+      * /api/recordings/trash + /restore  — wegwerfen ging weiter, ansehen
+        und zurueckholen nicht. Das ist die gefaehrliche Haelfte.
+      * /api/archive/duplicates(/delete)  — die Loesch-Oberflaeche fuer
+        Dubletten; rtDedup() zaehlt sie nur.
+      * /api/archive/<id>/rename          — ohne jeden Aufrufer.
+
+    Dieser Vertrag haelt Markup UND Verdrahtung fest, damit sie nicht ein
+    zweites Mal lautlos verschwinden.
+    """
+    dash = open("templates/dashboard.html", encoding="utf-8").read()
+
+    # ── Papierkorb: Kachel, Zaehler im Loader, Fenster, Wiederherstellen ──
+    assert dash.count('id="rt_trash"') == 1, "Papierkorb-Kachel fehlt (oder doppelt)"
+    assert 'onclick="rtTrash()"' in dash, "Papierkorb nicht bedienbar"
+    _lt = dash[dash.index("async function loadRecTools("):
+               dash.index("async function rtManualStart(")]
+    assert "loadRtTrash();" in _lt, "Papierkorb-Zaehler laedt nicht mit"
+    for _fn in ("async function loadRtTrash(", "async function rtTrash(",
+                "async function rtRestore("):
+        assert _fn in dash, "%s fehlt" % _fn
+    _rr = dash[dash.index("async function rtRestore("):]
+    _rr = _rr[:_rr.index("\n}")]
+    assert "/api/recordings/" in _rr and "/restore" in _rr, "Wiederherstellen ruft nichts auf"
+    assert "loadCaptures()" not in _rr, \
+        "rtRestore frischt eine Ansicht auf, deren Markup es nicht gibt"
+
+    # ── Dubletten: Knopf am Archiv-Panel, Fenster, Loesch-Wege ───────────
+    assert 'onclick="arcDedup()"' in dash, "Kein Knopf fuer die Dubletten-Suche"
+    for _fn in ("async function arcDedup(", "function arcRenderDedup(",
+                "async function arcDeleteDupe(", "async function arcPurgeGroup(",
+                "async function arcPurgeAll("):
+        assert _fn in dash, "%s fehlt" % _fn
+    _dd = dash[dash.index("let _dedupScanRoot="):dash.index("   VIEW: NEURAL")]
+    assert "loadVault()" not in _dd, "Dedup frischt die aufgeloeste Vault-Ansicht auf"
+    assert "loadArchive(true);" in _dd, "Dedup frischt die Archiv-Liste nicht auf"
+    # W118-Regel: Werte in Inline-Handler nur ueber escJs, nie esc()+replace.
+    assert "escJs(m.path)" in _dd, "Dateipfad geht ungeschuetzt in einen onclick"
+    assert ".replace(/'/g" not in _dd, "naives Quote-Ersetzen im Handler wieder da"
+
+    # ── Umbenennen: Knopf je Zeile, Backend-Feldname, Auffrischen ────────
+    assert "async function arcRename(" in dash, "Umbenennen fehlt"
+    assert 'onclick="arcRename(' in dash, "Umbenennen hat keinen Knopf"
+    _ar = dash[dash.index("async function arcRename("):]
+    _ar = _ar[:_ar.index("\n}")]
+    assert "new_name" in _ar, "Backend erwartet new_name, nicht title"
+    assert "loadArchive(true)" in _ar, "Liste frischt nach dem Umbenennen nicht auf"
+
+    # ── Was ersatzlos wegfaellt, ist auch wirklich weg ───────────────────
+    for _tot in ("function loadVault", "function vaultDelete", "function vaultRename",
+                 "function loadManual", "function stopManual",
+                 "function showTrash", "function restoreRec"):
+        assert _tot not in dash, "%s wieder da (ersetzt durch das Archiv-Panel)" % _tot
+    ok("v4.0-w125: Papierkorb, Dubletten und Umbenennen wieder erreichbar")
+
+
+def test_v40_w126_reorg_reste_verdrahtet():
+    """v4.0-W126: kein Loader ohne Markup, kein Markup ohne Loader.
+
+    Der Reorg loeste die Ansichten VAULT, INTEL, BRAIN+ und LAB auf. Zurueck
+    blieben Loader mit einem Waechter (`if(!$('#x')) return;`) — sie laufen,
+    greifen ins Leere und melden nichts. Sieben Endpunkt-Familien verloren so
+    ihre einzige Oberflaeche, obwohl sie durchgehend antworteten: Regeln,
+    Webhooks, Sammlungen, Ruhezeiten, geplante Aufnahmen, Evolutions-Kern,
+    KI-Chat, Aufnahmen-Liste und Highlight-Clips.
+
+    Statt einzelne IDs aufzuzaehlen prueft dieser Vertrag die EIGENSCHAFT, die
+    dabei verloren ging: jede ID, die das JavaScript nachschlaegt, muss es im
+    Markup geben. Diese eine Zeile haette W122, W125 und W126 verhindert.
+    """
+    import re as _re
+    dash = open("templates/dashboard.html", encoding="utf-8").read()
+
+    # ── Kein Zugriff auf eine ID, die es nicht gibt ──────────────────────
+    vorhanden = set(_re.findall(r'\bid\s*=\s*"([A-Za-z0-9_-]+)"', dash))
+    vorhanden |= set(_re.findall(r'\bid\s*=\s*\\?["\']?([A-Za-z0-9_-]+)', dash))
+    gesucht = set(_re.findall(r'getElementById\(\s*["\']([A-Za-z0-9_-]+)["\']', dash))
+    gesucht |= set(_re.findall(r'\$\(\s*["\']#([A-Za-z0-9_-]+)["\']\s*\)', dash))
+    tot = sorted(gesucht - vorhanden)
+    assert not tot, "JavaScript greift auf Markup zu, das es nicht gibt: %s" % tot
+
+    # ── Kein doppelter globaler Funktionsname ───────────────────────────
+    # loadAutomation() gab es zweimal: der Autopilot-Lader und (im ersten
+    # Anlauf dieser Welle) das Automatisierungs-Panel. Die spaetere
+    # Deklaration gewinnt, das Panel blieb stumm — ohne jede Fehlermeldung.
+    namen = _re.findall(r'^(?:async\s+)?function\s+([A-Za-z_$][\w$]*)\s*\(', dash, _re.M)
+    doppelt = sorted({n for n in namen if namen.count(n) > 1})
+    assert not doppelt, "globale Funktionsnamen doppelt vergeben: %s" % doppelt
+
+    # ── Die neun wiederbelebten Panels haengen an einem Loader ──────────
+    _betrieb = dash[dash.index("VIEW_LOADERS['betrieb'] = async ()=>{"):]
+    _betrieb = _betrieb[:_betrieb.index("};")]
+    for _f in ("loadAutomatisierung()", "bpLoadSchedule()"):
+        assert _f in _betrieb, "%s haengt nicht im Betrieb-Loader" % _f
+    _brain = dash[dash.index("VIEW_LOADERS['brain']=async ()=>{"):]
+    _brain = _brain[:_brain.index("\n};")]
+    for _f in ("nachAufbau('loadEvolution')", "nachAufbau('aiInit')"):
+        assert _f in _brain, "%s haengt nicht im Brain-Loader" % _f
+    assert "loadCaptures();" in dash[dash.index("VIEW_LOADERS.wall = async function(){"):
+                                     dash.index("let _arcPage=1;")], \
+        "Aufnahmen-Liste haengt nicht im Streams-Loader"
+
+    # nachAufbau() loest die Falle, die der Browser gemeldet hat: ein Loader
+    # in einem frueheren <script>-Block sieht spaetere Deklarationen nicht.
+    assert "function nachAufbau(name){" in dash, "Helfer gegen die Block-Reihenfolge fehlt"
+    assert "nachAufbau('loadClips')" in dash, "Clips laden ungeschuetzt ueber Blockgrenze"
+
+    # ── Anlegen, nicht nur ansehen ───────────────────────────────────────
+    # Ohne Anlege-Weg ist eine Liste, die nur leer sein kann, keine Bedienung.
+    for _fn, _ep in (("async function arAdd(", "/api/auto-archive-rules"),
+                     ("async function collAdd(", "/api/collections"),
+                     ("async function whAdd(", "/api/webhooks"),
+                     ("async function aiNewConv(", "/api/ai/conversations"),
+                     ("async function aiSend(", "/messages")):
+        assert _fn in dash, "%s fehlt" % _fn
+        _k = dash[dash.index(_fn):]
+        _k = _k[:_k.index("\n}")]
+        assert _ep in _k, "%s spricht %s nicht an" % (_fn, _ep)
+
+    # Der KI-Chat braucht seine Modell-Liste, sonst ist _aiModels immer leer.
+    assert "async function aiLoadModels(" in dash and "'/api/ai/models'" in dash, \
+        "Modell-Liste wird nicht geladen"
+
+    # ── W118-Regel: Werte in Inline-Handlern nur ueber escJs ─────────────
+    _clips = dash[dash.index("async function loadClips("):]
+    _clips = _clips[:_clips.index("\n}")]
+    assert "escJs(c.name)" in _clips, "Clip-Name geht ungeschuetzt in einen onclick"
+
+    # ── Was ersatzlos entfiel, bleibt entfallen ─────────────────────────
+    for _tot in ("function loadVault", "function loadManual", "function showTrash"):
+        assert _tot not in dash, "%s wieder da" % _tot
+    ok("v4.0-w126: jede nachgeschlagene ID existiert, neun Panels verdrahtet, "
+       "Anlege-Wege vorhanden")
+
+
 def main():
     print("test_restream — Restream-Kernlogik (Mock-basiert)")
     test_streak()
@@ -6796,6 +6971,9 @@ def main():
     test_v40_w118_sicherheitsaudit()
     test_v40_w121_oauth_proxy_meldethema_kollision()
     test_v40_w122_trackings_ansicht()
+    test_v40_w124_offline_meldung_ins_thema()
+    test_v40_w125_papierkorb_und_archiv_werkzeuge()
+    test_v40_w126_reorg_reste_verdrahtet()
     print(f"test_restream OK — {PASS} Verträge grün")
 
 

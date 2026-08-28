@@ -9915,10 +9915,31 @@ async def handle_recording_finished(proc, tid, chat_id, username, output_file,
                                   f"Fenster {UPLOAD_WINDOW_START:02d}–{UPLOAD_WINDOW_END:02d} Uhr")
             else:
                 _upload_status = f"Upload läuft ({_mb:.1f} MB)…"
+            # v4.0-W124: HIER lag der Grund, warum LIVE im Melde-Thema landete
+            # und OFFLINE trotzdem im Hauptchannel. Es gibt ZWEI Sender für die
+            # Offline-Meldung, beide über claim_live_transition(going_live=False)
+            # serialisiert: der Live-Check-Worker (nutzt _send_live_notice) und
+            # dieser Pfad am Ende der Aufnahme. Der hier gewinnt den Claim fast
+            # immer — das Recording endet in derselben Sekunde, in der der Stream
+            # stirbt, der Worker pollt erst 30s später. Damit ging praktisch JEDE
+            # Offline-Meldung über den einfachen Sende-Weg ohne
+            # message_thread_id, also in den Hauptchannel. Deshalb auch hier
+            # _send_live_notice().
+            # F63 galt hier nie: Quiet Hours unterdrücken die LIVE-Meldung und die
+            # OFFLINE-Meldung des Live-Check-Workers — dieser Sender prüfte sie
+            # nicht. Weil er den Anspruch fast immer gewinnt, kam nachts genau der
+            # Fall, den F63 verhindern soll: OFFLINE ohne vorheriges LIVE. Der
+            # Anspruch wird trotzdem geltend gemacht (er setzt last_live), nur die
+            # Meldung entfällt.
+            _quiet = _is_quiet_hours()
             for ftid, fchat in zip(target_tids, target_chats):
                 if claim_live_transition(ftid, going_live=False):
+                    if _quiet:
+                        log.info("@%s OFFLINE — Notification unterdrückt "
+                                 "(Quiet Hours, chat %s).", username, fchat)
+                        continue
                     try:
-                        await _safe_send(
+                        await _send_live_notice(
                             bot_app.bot, fchat,
                             f"⚫ <b>OFFLINE · @{safe(username)}</b>\n"
                             f"<i>Stream beendet{dur_str} · {_upload_status}</i>",
@@ -23565,7 +23586,11 @@ async def _intel_index_loop():
                         _intel_tx.set_status(c, rid, _intel_tx.FAILED,
                                              error="Datei fehlt", paramstyle=_INTEL_PS)
         except Exception as e:
-            log.debug("Archiv-Indexer: %s", e)
+            # Vorher log.debug: faellt der Indexer aus (Whisper fehlt, DB-Lock,
+            # Platte voll), transkribiert er nie wieder — und in einem ERROR-Log
+            # steht dazu keine Zeile. Genau das Muster, das _loop_fehler abloest:
+            # erste Meldung sofort mit Traceback, danach gedrosselt.
+            _loop_fehler("_intel_index_loop", e)
         await asyncio.sleep(interval)
 
 
@@ -28755,8 +28780,10 @@ async def _scheduler_loop():
                     try:
                         with db_conn() as conn:
                             conn.execute("UPDATE scheduled_tasks SET last_run_date=? WHERE id=?", (d, rid))
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        # Nicht still: schlaegt dieses UPDATE fehl, gilt die Aufgabe
+                        # als nie gelaufen und feuert alle 30s den ganzen Tag erneut.
+                        _loop_fehler("_scheduler_loop/last_run_date", e)
                 await asyncio.to_thread(_mark)
         except Exception as e:
             _loop_fehler("_scheduler_loop", e)

@@ -11,6 +11,163 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Behoben — neun Panels aus dem Reorg wieder verdrahtet (W126)
+
+Der Reorg löste die Ansichten **VAULT**, **INTEL**, **BRAIN+** und **LAB** auf
+und ließ ihre Loader mit einem Wächter (`if(!$('#x')) return;`) stehen. Die
+Funktionen laufen seither, greifen ins Leere und melden nichts. Alle
+betroffenen Endpunkte antworteten die ganze Zeit weiter — es fehlte nur die
+Oberfläche. Jetzt hängen sie da, wo sie hingehören:
+
+**Betrieb → Automatisierung** (neues Panel): Auto-Archiv-Regeln
+(`/api/auto-archive-rules`), Webhooks (`/api/webhooks`), Sammlungen
+(`/api/collections`), Ruhezeiten (`/api/notifications/quiet-hours`). Für alle
+vier gab es nur Lese-, Test- und Löschwege — das **Anlegen** fehlte, und eine
+Liste, die nur leer sein kann, ist keine Bedienung. Das Regel-Formular bietet
+genau die vier Bedingungen, die `evaluate_archive_rule` wirklich kennt, und
+benennt die eine Aktion, die die Regel-Maschine beherrscht.
+
+**Betrieb → Aufnahmefenster planen**: das Anlegen lief seit je, die geplanten
+Fenster **anzusehen** oder zu entfernen nicht (`/api/schedule/list|remove`).
+
+**AZRAEL Brain → Evolutions-Kern** (neues Panel): Stand, Wissensbalken,
+gelernte Werte und offene Vorschläge (`/api/evolution/status|learned|
+proposals`). Verlauf und Changelog hatten anderswo überlebt — deshalb fiel
+nicht auf, dass der Rest unsichtbar war.
+
+**AZRAEL Brain → KI-Chat** (neues Panel): hier fehlte mehr als Markup. Da
+waren nur Lesewege ohne Eingang — Konversationen laden, öffnen, löschen.
+Modell-Liste, neue Konversation und **Senden** gab es nicht, `_aiModels` wurde
+nie gefüllt. Neu geschrieben; die vollständige Stilvorlage (`.ai-wrap` bis
+`.ai-send`) stand die ganze Zeit im Stylesheet.
+
+**Streams → Aufnahmen** (neues Panel): die Aufnahmen aus der Datenbank samt
+Aufnahme-Fenster (Manifest, Qualität, Wellenform, Notizen, Marken). Ohne
+Liste war das Fenster über keinen Weg mehr erreichbar.
+
+**Control → Highlight-Clips** (neues Panel): `loadClips()` lief seit je im
+700-ms-Takt über `avatarPoll` und schrieb in ein Raster, das es nicht gab.
+Die Clips entstanden also durchgehend, sehen konnte sie niemand.
+
+Zwei Altlasten ersatzlos entfernt statt Markup zu erfinden: `km_conn`
+(denselben Zustand zeigen `kms_conn` und die Kanal-Chips) und `cc_tag` (der
+zweite Einbau der Kommandozentrale, den W71 entfernt hat — `ov_cc_tag` lebt).
+
+**Drei Fehler, die erst der Browser gezeigt hat:**
+
+* `loadAutomation()` gab es **zweimal** — der Autopilot-Lader und, im ersten
+  Anlauf dieser Welle, das Automatisierungs-Panel. Die spätere Deklaration
+  gewinnt; das Panel blieb stumm, ohne dass irgendwo ein Fehler stand. Meines
+  heißt jetzt `loadAutomatisierung()`.
+* `loadClips is not defined`: Funktions-Deklarationen gelten nur im eigenen
+  `<script>`-Block. Ein Ansichts-Loader in einem früheren Block sieht spätere
+  Deklarationen nicht — und die Restream-Ansicht wird schon während des
+  Parsens aufgebaut. Dafür gibt es jetzt `nachAufbau(name)`.
+* `d.items.map` im Autopilot-Lader war ungeprüft: antwortet die Route ok, aber
+  ohne `items`, warf es und das Panel blieb stumm zurück. Gehärtet.
+
+Beim Wiederbeleben zwei Escaping-Altlasten mitgenommen: der Clip-Name ging über
+`esc()` plus String-Konkatenation in einen `onclick` — das Muster, das W118 mit
+`escJs()` geschlossen hat. Und die englischen Beschriftungen der wiederbelebten
+Renderer (`no rules defined`, `KEINE COLLECTIONS`, `RUN`, `test/off/on`,
+`URL/Events/Fails`, `4 msg`) sind jetzt deutsch.
+
+Ergebnis messbar: **0 tote IDs** (vorher 28), **0 unerreichbare Funktionen**
+(vorher 27) im Dashboard. Der Vertrag
+`test_v40_w126_reorg_reste_verdrahtet` prüft nicht Einzel-IDs, sondern die
+Eigenschaft, die verloren ging — *jede ID, die das JavaScript nachschlägt,
+muss es im Markup geben* — plus doppelte Funktionsnamen. Diese eine Zeile
+hätte W122, W125 und W126 verhindert. Jede Zusicherung wurde durch Sabotage
+gegengeprüft.
+
+Geprüft im echten Browser (Chromium gegen eine gestubbte API): 36 Schritte
+über alle vier Ansichten, plus die 15 aus W125 — Kennzahlen, Listen, Anlegen,
+Ablehnen falscher Eingaben, Senden im Chat, Apostroph im Datei- und
+Clip-Namen, keine Konsolenfehler.
+
+### Behoben — Papierkorb, Dubletten und Umbenennen waren unerreichbar (W125)
+
+Der Reorg löste die Ansichten **VAULT** und die Aufnahme-Liste auf und ließ
+ihre Loader mit einem Wächter (`if(!$('#…')) return;`) stehen. Was dabei
+unterging: drei Endpunkte verloren ihre einzige Oberfläche, während sie im
+Backend die ganze Zeit weiterliefen.
+
+* **Papierkorb** — das gefährlichste der drei. Eine Aufnahme wegzuwerfen ging
+  weiter (`trashRec` im Aufnahme-Fenster), sie anzusehen oder zurückzuholen
+  nicht: `/api/recordings/trash` und `/api/recordings/<id>/restore` hatten
+  keinen einzigen Aufrufer mehr. Wegwerfen ohne Zurückholen ist die
+  gefährlichere Hälfte. Liegt jetzt als vierte Kachel in den
+  Speicher-Werkzeugen, mit Bestand und Größe direkt auf der Kachel.
+* **Dubletten im Archiv** — `rtDedup()` zählt sie nur; die Oberfläche zum
+  Ansehen und Löschen (`/api/archive/duplicates`, `…/delete`) war weg. Hängt
+  jetzt am Archiv-Panel, Knopf „⊟ Dubletten".
+* **Umbenennen** — `/api/archive/<id>/rename` benennt die echte Datei um und
+  hatte gar keinen Aufrufer. Jetzt ein ✎ je Archiv-Zeile.
+
+Beim Wiederbeleben gleich zwei Altlasten mitgenommen: der Dateipfad ging über
+`esc()` plus naives Quote-Ersetzen in einen `onclick` — genau das Muster, das
+W118 mit `escJs()` geschlossen hat; ein Apostroph im Dateinamen hätte den
+String beendet. Und „3072.0 MB verschwendet" heißt jetzt „3.0 GB doppelt
+belegt".
+
+Ersatzlos entfallen, weil das Archiv-Panel und die Aufnahme-Werkzeuge dasselbe
+können: `loadVault`, `vaultDelete`, `loadManual`, `stopManual`.
+
+Geprüft im echten Browser (Chromium, Template gegen eine gestubbte API):
+15 Schritte grün — Kachel, Fenster, Wiederherstellen, Umbenennen mit
+Apostroph im Namen, Dubletten löschen, keine Konsolenfehler. Der Vertrag
+`test_v40_w125_papierkorb_und_archiv_werkzeuge` hält Markup **und**
+Verdrahtung fest.
+
+Was der Reorg sonst noch abgehängt hat, ist damit nicht erledigt — ohne
+Oberfläche laufen weiter: Auto-Archiv-Regeln, Webhooks, Sammlungen,
+KI-Konversationen, Evolutions-Status/-Vorschläge und geplante Aufnahmen.
+
+### Behoben — Offline-Meldungen landeten weiter im Hauptchat (W124)
+
+Das Melde-Thema aus W121 wirkte nur halb: LIVE ging hinein, OFFLINE weiter
+in den Hauptchannel. Grund war nicht der Sendeweg, sondern dass es **zwei**
+Sender für die Offline-Meldung gibt, beide über
+`claim_live_transition(going_live=False)` serialisiert:
+
+* der Live-Check-Worker in `_handle_single_tracking` — der war in W121
+  umgestellt und wurde auch als einziger geprüft,
+* der Fan-Out am **Ende der Aufnahme** in `handle_recording_finished` — der
+  war es nicht.
+
+Der zweite gewinnt den Anspruch praktisch immer: die Aufnahme endet in
+derselben Sekunde, in der der Stream stirbt, während der Live-Check erst
+~30 s später pollt. Damit ging real jede Offline-Meldung über den einfachen
+Sendeweg ohne `message_thread_id` — also in den Hauptchat. Jetzt nutzen
+beide Sender `_send_live_notice`.
+
+Am selben Ort lag ein zweiter Fehler derselben Ursache: **F63 (Quiet Hours)**
+prüfte nur der Live-Check-Worker. Weil der andere Sender feuerte, kam nachts
+genau der Fall, den F63 verhindern soll — OFFLINE ohne vorheriges LIVE. Der
+Anspruch wird weiterhin geltend gemacht (er setzt `last_live`), nur die
+Meldung entfällt.
+
+Neuer Vertrag `test_v40_w124_offline_meldung_ins_thema` hält **beide** Sender
+fest, statt wie W121 nur einen.
+
+### Behoben — zwei Dauerläufer verschluckten ihre Fehler (W124)
+
+Verstoß gegen die eigene Regel „jeder Dauerläufer gehört auf `_loop_fehler`,
+nie auf `log.debug` und nie auf `pass`":
+
+* `_intel_index_loop` (Archiv-Indexer/Transkription) meldete auf `log.debug`.
+  Fällt Whisper aus, ist die DB gesperrt oder die Platte voll, transkribiert
+  er nie wieder — und in einem ERROR-Log steht dazu keine Zeile.
+* `_scheduler_loop` schrieb `last_run_date` in einem stillen `except: pass`.
+  Schlägt das UPDATE fehl, gilt die Aufgabe als nie gelaufen und feuert alle
+  30 s den ganzen Tag erneut, lautlos.
+
+### Entfernt — Rest der 2D-Angriffskarte (W124)
+
+`ncGratG()` (das Gradnetz) und die Regel `.wm-grat` blieben stehen, als W71
+`ncDefenseMap` entfernte. Die Funktion hatte danach keinen einzigen Aufrufer
+mehr — sie war die einzige nie aufgerufene der 488 Dashboard-Funktionen.
+
 ### Behoben — README rendert nicht mehr, Kennzahlen waren veraltet (W123)
 
 GitHub meldete am Lebenszyklus-Diagramm „Unable to render rich display /
