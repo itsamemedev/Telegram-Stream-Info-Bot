@@ -573,6 +573,25 @@ def _kennzahlen(root: str) -> tuple[dict, dict]:
     return einheiten, labels
 
 
+def _befehle(root: str) -> dict[str, set[str]]:
+    """Die registrierten Befehlsnamen. WARUM zusaetzlich zur Zahl: wer einen
+    46. Slash-Command hinzufuegt und im README brav "46" schreibt, ohne den
+    Namen in die Liste zu setzen, kaeme durch eine reine Zaehlpruefung."""
+    pfad = os.path.join(root, "bot.py")
+    discord = {name for _, name, _ in _scan(pfad)["slash"]}
+
+    # Telegram registriert ueber eine Tupel-Liste, nicht ueber Dekoratoren.
+    telegram: set[str] = set()
+    for node in ast.walk(ast.parse(_read(pfad))):
+        if (isinstance(node, ast.For) and isinstance(node.iter, ast.Tuple)
+                and "CommandHandler" in ast.dump(node)):
+            namen = {e.elts[0].value for e in node.iter.elts
+                     if isinstance(e, ast.Tuple) and isinstance(e.elts[0], ast.Constant)}
+            if len(namen) > len(telegram):
+                telegram = namen
+    return {"Discord": discord, "Telegram": telegram}
+
+
 def _slug(titel: str) -> str:
     """GitHubs Anker-Regel: kleinschreiben, Satzzeichen und Emoji raus,
     Leerzeichen zu '-'. NICHT trimmen — genau deshalb faengt der Anker einer
@@ -635,11 +654,36 @@ def cmd_docs(args) -> int:
                               f"{' oder '.join(str(v) for v in sorted(erlaubt))}")
                         rc = 1
 
-    # Interne Anker. Zwei Badges zeigten ins Leere, einer davon nur wegen des
-    # unsichtbaren Variation Selectors im Emoji der Ueberschrift.
     readme = os.path.join(root, "README.md")
     if os.path.exists(readme):
         text = _read(readme)
+
+        # Die Befehlslisten namentlich, nicht nur ihre Laenge.
+        for kanal, (von, bis) in (("Telegram", ("### Telegram", "<details>")),
+                                  ("Discord", ("<summary><h3>Discord", "</details>"))):
+            try:
+                a = text.index(von)
+                ausschnitt = text[a:text.index(bis, a)]
+            except ValueError:
+                print(f"  README.md: Befehlsliste {kanal} nicht gefunden — "
+                      f"Anker {von!r} fehlt, Pruefung faellt aus")
+                rc = 1
+                continue
+            # Der Lookahead haelt "`/sys_*`" aus der Liste heraus: das ist
+            # ein Sammelbegriff im Fliesstext, kein registrierter Befehl.
+            gelistet = set(re.findall(r"`/([a-z_]+)(?=[`\s])", ausschnitt))
+            echt = _befehle(root)[kanal]
+            for fehlt in sorted(echt - gelistet):
+                print(f"  README.md: /{fehlt} ist registriert, steht aber in "
+                      f"keiner {kanal}-Liste")
+                rc = 1
+            for zuviel in sorted(gelistet - echt):
+                print(f"  README.md: /{zuviel} steht in der {kanal}-Liste, "
+                      f"ist aber nicht registriert")
+                rc = 1
+
+        # Interne Anker. Zwei Badges zeigten ins Leere, einer davon nur wegen
+        # des unsichtbaren Variation Selectors im Emoji der Ueberschrift.
         anker = {_slug(m.group(1).strip())
                  for nr, z in _doku_zeilen(text)
                  for m in [re.match(r"^#{1,6}\s+(.*)$", z)] if m}
