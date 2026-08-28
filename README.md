@@ -124,7 +124,7 @@ reagiert live auf den gesendeten Stream und blendet sich ins Sendebild ein.
 <td valign="top">
 
 ### 📊 Auswerten
-Flask-Dashboard mit **345 API-Routen**, Wissensgraph-Visualisierung,
+Flask-Dashboard mit **355 API-Routen**, Wissensgraph-Visualisierung,
 Einnahmen-Journal (Finanzamt-tauglich, append-only mit Hash-Kette) und PWA
 fürs Handy.
 
@@ -145,10 +145,10 @@ fürs Handy.
 | **Chat & Moderation** | SENTINEL-SHIELD (Doxxing / Hate / Drohung) · geteilte Moderations-Heuristik über Kick, Twitch, YouTube · Fremdwerbungs-Erkennung mit Eigen-Allowlist · Banned-Words · Timeout-Eskalation |
 | **KI (AZRAEL)** | Chat-Antworten auf Ansprache · Live-Reaktionen aufs Sendebild · Sprachausgabe (Piper) · Persona-System · Multi-Backend: llama.cpp → Ollama → freie APIs → OpenAI/Anthropic · Budget- und Tier-Steuerung |
 | **Gehirn (`brain/`)** | Zustandsmaschine · regelbasierte Tier-1-Entscheidungen mit Warum-Log · Langzeitgedächtnis · Wissensgraph (Triple-Store) · semantische Suche · Prognosen · Wochenreport |
-| **Sentinel-Flotte** | 12 Wächter-Agenten (health, recovery, scout, analytics, learning, sentinel, disk, restream, toxicity, uptime, recording, …) mit Telegram-Alarm, einzeln abschaltbar |
+| **Sentinel-Flotte** | 13 Wächter-Agenten (health, recovery, scout, analytics, learning, sentinel, disk, swap, restream, toxicity, uptime, recording, proxy) mit Telegram-Alarm, einzeln abschaltbar |
 | **Community** | Wiedererkennung von Stammzuschauern · Loyalty-Punkte & Ränge · Discord-XP, Level, Daily-Streak · Live-Ping · Highlight-Share · Community-Events |
 | **Geld** | Spenden-Telemetrie (Schätzwerte) · getrenntes Einnahmen-Journal (`nc/ledger.py`) mit Hash-Kette und CSV-Export fürs Finanzamt |
-| **Dashboard** | 345 Flask-Routen · Live-Panels · Gehirn-Visualisierung mit Lernkurve · Overlay für OBS · installierbare PWA (Android) · QR-Login |
+| **Dashboard** | 355 Flask-Routen · Live-Panels · Gehirn-Visualisierung mit Lernkurve · Overlay für OBS · installierbare PWA (Android) · QR-Login |
 | **Betrieb** | systemd-Dienst · Deploy-Skript mit Vorabprüfung und Auto-Rollback · Selbsttest-Route · Totmann-Meldung bei Prozesstod · CrowdSec-Anbindung · Log-Redaction für Cookies und Stream-Keys |
 | **Datenbank** | SQLite **oder** MariaDB · zentrales Schema-Modul · Export-Werkzeug · SQL-Guard |
 
@@ -157,20 +157,24 @@ fürs Handy.
 ### Der Lebenszyklus eines Streams
 
 ```mermaid
-stateDiagram-v2
-    [*] --> Beobachtet
-    Beobachtet --> Geprüft: adaptives Polling
-    Geprüft --> Beobachtet: offline
-    Geprüft --> Live: live erkannt<br/>(Anti-Flap-Hysterese)
-    Live --> Preflight: Quelle auflösen
-    Preflight --> Beobachtet: alles 404<br/>kein Spawn
-    Preflight --> Aufnahme: Ziel antwortet
-    Aufnahme --> Restream: auto_start_due<br/>(Deckel beachten)
-    Restream --> Aufnahme: Ziel tot →<br/>neu aufbauen
-    Aufnahme --> Nachbereitung: Stream endet
-    Restream --> Nachbereitung: Stream endet
-    Nachbereitung --> Beobachtet: Clips, Highlights,<br/>Archiv, Statistik
-    Nachbereitung --> [*]
+flowchart TD
+    START(("Start")):::edge --> BEO["Beobachtet"]:::phase
+    BEO -->|"adaptives Polling"| PRUEF["Geprüft"]:::phase
+    PRUEF -->|"offline"| BEO
+    PRUEF -->|"live erkannt · Anti-Flap-Hysterese"| LIVE["Live"]:::phase
+    LIVE -->|"Quelle auflösen"| PRE["Preflight"]:::phase
+    PRE -->|"alles 404 · kein Spawn"| BEO
+    PRE -->|"Ziel antwortet"| AUF["Aufnahme"]:::aktiv
+    AUF -->|"auto_start_due · Deckel beachten"| RES["Restream"]:::aktiv
+    RES -->|"Ziel tot · neu aufbauen"| AUF
+    AUF -->|"Stream endet"| NACH["Nachbereitung"]:::phase
+    RES -->|"Stream endet"| NACH
+    NACH -->|"Clips, Highlights, Archiv, Statistik"| BEO
+    NACH --> ENDE(("Ende")):::edge
+
+    classDef phase fill:#1a2430,stroke:#7fe7d4,color:#e6edf3
+    classDef aktiv fill:#3a2415,stroke:#ff8c42,color:#ffd9a0
+    classDef edge fill:#14202c,stroke:#8fd3f4,color:#e6edf3
 ```
 
 ---
@@ -179,27 +183,28 @@ stateDiagram-v2
 
 ```mermaid
 flowchart TB
-    TG["📨 Telegram<br/>28 Befehle"]:::in
-    DC["🎮 Discord<br/>45 Slash-Commands"]:::in
-    TT["🎥 TikTok<br/>Live-Erkennung + Chat"]:::in
+    TG["📨 Telegram<br/>29 Befehle"]:::ein
+    DC["🎮 Discord<br/>45 Slash-Commands"]:::ein
+    TT["🎥 TikTok<br/>Live-Erkennung + Chat"]:::ein
 
     TG --> BOT
     DC --> BOT
     TT --> BOT
 
-    BOT["<b>bot.py</b><br/>Monolith · 34.500 Zeilen<br/>Scraper · Recorder · Restream<br/>Flask-Dashboard mit 345 Routen"]:::core
+    BOT["bot.py<br/>Monolith · 32.569 Zeilen<br/>Scraper · Recorder · Restream<br/>Flask-Dashboard · 265 eigene Routen"]:::core
 
-    BOT -->|configure| NC["<b>nc/</b> — 84 Fachmodule<br/>Schema · OAuth · Restream<br/>Ledger · Moderation · Intel"]:::lib
-    BOT --> TPL["<b>templates/</b><br/>Dashboard · Overlay · PWA"]:::lib
+    BOT -->|configure| NC["nc/ — 89 Fachmodule<br/>Schema · OAuth · Restream<br/>Ledger · Moderation · Intel"]:::lib
+    NC --> RT["nc/routes/ — 8 Blueprints<br/>90 weitere API-Routen"]:::lib
+    BOT --> TPL["templates/<br/>Dashboard · Overlay · PWA"]:::lib
     BOT --> BR["brain_bridge.py"]:::lib
-    BR --> BRAIN["<b>brain/</b> — eigene brain.db<br/>state · rules · router · memory<br/>knowledge · semantic · scheduler<br/>llm · agents · report"]:::brain
+    BR --> BRAIN["brain/ — eigene brain.db<br/>state · rules · router · memory<br/>knowledge · semantic · scheduler<br/>llm · agents · report"]:::brain
     BOT --> DB[("SQLite<br/>oder MariaDB")]:::db
 
     BOT --> KICK["🟢 Kick"]:::out
     BOT --> TW["🟣 Twitch"]:::out
     BOT --> YT["🔴 YouTube"]:::out
 
-    classDef in fill:#1c2b3a,stroke:#2de1c2,color:#e6edf3
+    classDef ein fill:#1c2b3a,stroke:#2de1c2,color:#e6edf3
     classDef core fill:#3a2415,stroke:#ff8c42,stroke-width:2px,color:#ffd9a0
     classDef lib fill:#1a2430,stroke:#7fe7d4,color:#e6edf3
     classDef brain fill:#241c3a,stroke:#a78bfa,color:#e6edf3
@@ -407,7 +412,7 @@ auf die keylosen freien Backends zurück — er startet **nie** deswegen nicht.
 
 ## ⚙️ Konfiguration
 
-Alle Einstellungen leben in `.env`. Die Vorlage `.env.example` kennt **rund 470 Variablen** — das Minimum ist klein:
+Alle Einstellungen leben in `.env`. Die Vorlage `.env.example` kennt **rund 495 Variablen** — das Minimum ist klein:
 
 ### 🔑 Pflicht
 
@@ -460,6 +465,7 @@ ADMIN_CHAT_ID=123456789              # deine Telegram-ID (Alarme, Admin-Befehle)
 | `/brain` · `/brain teste` · `/report` | Gehirn-Status, Selbsttest, Wochenreport |
 | `/diag` · `/sysres` · `/quota` · `/logs` | Diagnose, Ressourcen, Kontingente, Logs |
 | `/pause` · `/resume` | Tracking anhalten / fortsetzen |
+| `/update` | Selbstaktualisierung aus dem Repo |
 | `/cookies` · `/teststream` | Cookie-Zustand, Teststream |
 | `/einnahmen` | Einnahmen-Journal (Buchen, Jahresübersicht) |
 
@@ -602,7 +608,7 @@ additiv, fail-open und einzeln abschaltbar.
 | `semantic.py` | Semantische Suche |
 | `scheduler.py` | Prognosen und Poll-Hints |
 | `llm.py` | LLM-Runtime: llama.cpp → Ollama → Fallback |
-| `agents.py` | Sentinel-Flotte (12 Wächter, einzeln schaltbar) |
+| `agents.py` | Sentinel-Flotte (13 Wächter, einzeln schaltbar) |
 | `report.py` | Wochenreport in Markdown |
 
 ### 🛰️ Die Sentinel-Flotte
@@ -616,10 +622,12 @@ additiv, fail-open und einzeln abschaltbar.
 | `learning` | Lernfortschritt des Wissensgraphen |
 | `sentinel` | CrowdSec — Angriffsspitzen, blinde Abwehr |
 | `disk` | Freier Platz + Schätzung „Stunden bis voll" |
+| `swap` | Swap-Belegung — räumt bei RAM-Puffer selbst auf (`SWAP_CLEAR_CMD`) |
 | `restream_sentinel` | **Still** scheiternde Restream-Ziele, geteilte Keys |
 | `toxicity` | Chat-Toxizitäts-**Welle** (möglicher Raid) |
 | `uptime` | Chat-Verbindungen je Plattform, Reconnect-Flattern |
 | `recording` | Aufnahmen mit lebender PID, aber nicht wachsender Datei |
+| `proxy` | Erfolgs- und 403-Quote der TikTok-Fetches (Server-IP-/Proxy-Block) |
 
 Jeder Agent ist isoliert — ein toter Agent kann den Tick nie killen. Abschalten
 per `BRAIN_AGENT_<NAME>=0`.
@@ -642,7 +650,7 @@ Deterministische Erkennung **vor** Banned-Words und **vor** jeder KI:
 
 ## 🖥️ Dashboard
 
-Flask-Dashboard mit **345 Routen** unter `127.0.0.1:8050`.
+Flask-Dashboard mit **355 Routen** unter `127.0.0.1:8050`.
 
 ```bash
 # Von deinem Laptop — niemals den Port öffnen:
@@ -816,7 +824,7 @@ gebrochen ist.**
 
 ### 🧭 Navigation im Monolithen
 
-`bot.py` hat über 30.000 Zeilen. Es wird **nie** ganz gelesen und **nie**
+`bot.py` hat über 32.000 Zeilen. Es wird **nie** ganz gelesen und **nie**
 blind durchsucht — erst fragen wo etwas steht, dann den Ausschnitt holen:
 
 ```bash
@@ -829,8 +837,9 @@ python3 tools/ncpatch.py verify patches/x.json         # Trockenlauf
 python3 tools/ncpatch.py apply  patches/x.json         # alles-oder-nichts, legt .bak an
 ```
 
-`find` antwortet aus **[`.claude/INDEX.md`](.claude/INDEX.md)** — 345 Routen,
-45 Slash-Commands, 573 Funktionen, jeweils mit Zeilennummer.
+`find` antwortet aus **[`.claude/INDEX.md`](.claude/INDEX.md)** — 355 Routen
+(265 in `bot.py`, 90 in `nc/routes/`), 45 Slash-Commands, 565 Funktionen,
+jeweils mit Zeilennummer.
 
 ---
 
@@ -838,7 +847,7 @@ python3 tools/ncpatch.py apply  patches/x.json         # alles-oder-nichts, legt
 
 | Regel | Warum |
 |---|---|
-| **`.env` liegt nie im Repo und nie im Archiv** | ~470 Variablen inkl. Cookies, OAuth-Tokens und Stream-Keys |
+| **`.env` liegt nie im Repo und nie im Archiv** | ~495 Variablen inkl. Cookies, OAuth-Tokens und Stream-Keys |
 | **Dashboard bindet auf `127.0.0.1`** | Zugriff läuft über SSH-Tunnel, nicht über einen offenen Port |
 | **Cookie- und Key-Redaction beim Logging** | `streamlink`/`ffmpeg`-Kommandozeilen werden vor dem Loggen bereinigt |
 | **Ledger ist append-only mit Hash-Kette** | Eine Korrektur ist eine Gegenbuchung, kein Überschreiben |
@@ -871,13 +880,14 @@ NIGHTCRAWLER/
 │   ├── semantic.py  scheduler.py  llm.py  agents.py  report.py
 │   └── test_m*.py            Modultests
 │
-├── nc/                       84 Fachmodule (bot-frei, configure()-Injection)
+├── nc/                       89 Fachmodule (bot-frei, configure()-Injection)
 │   ├── schema.py             zentrales DB-Schema
 │   ├── restream_*.py         Ziele, Guard, Test-Push, Utils
 │   ├── ledger.py             Einnahmen-Journal (Hash-Kette)
 │   ├── twitchoauth.py  ytoauth.py  kick_oauth.py
 │   ├── modheuristics.py  shield.py  replygate.py
 │   ├── freeai.py  claude.py  piper_voices.py
+│   ├── routes/               8 Flask-Blueprints (90 API-Routen)
 │   ├── intel/                Archiv-Index, Transkripte, Reels
 │   └── _vendor/segno/        vendored QR-Encoder (BSD)
 │
@@ -886,7 +896,7 @@ NIGHTCRAWLER/
 ├── website/                  öffentliche Seite, Impressum, Datenschutz
 ├── tools/                    ncpatch.py · deploy.sh · build_release.py
 │                             gen_env_example.py · notify_failure.sh
-├── docs/                     CROWDSEC.md
+├── docs/                     DEPLOY · CONTRIBUTING · CHANGELOG · SETUP_* · …
 ├── .claude/                  INDEX.md (Navigationskarte) + Skills
 │
 ├── .env.example              auto-generierte Konfigurationsvorlage
@@ -998,11 +1008,11 @@ ersten Imports geladen. Konfiguration deshalb immer als Funktion lesen
 | | |
 |---|---|
 | Aktuelle Version | **4.0** — „Restream Control Room" (2026.08) |
-| Flask-Routen | 345 |
+| Flask-Routen | 355 (265 in `bot.py` · 90 in `nc/routes/`) |
 | Discord-Slash-Commands | 45 |
-| Fachmodule | 84 in `nc/` (+4 in `nc/intel/`), 11 in `brain/` |
-| Sentinel-Agenten | 12 |
-| Konfigurationsvariablen | ~470 |
+| Fachmodule | 89 in `nc/` (+8 in `nc/routes/`, +3 in `nc/intel/`), 10 in `brain/` |
+| Sentinel-Agenten | 13 |
+| Konfigurationsvariablen | ~495 |
 
 Vollständige Historie: **[`docs/CHANGELOG.md`](docs/CHANGELOG.md)** ·
 **[`docs/README_V37.md`](docs/README_V37.md)**
@@ -1012,7 +1022,7 @@ Vollständige Historie: **[`docs/CHANGELOG.md`](docs/CHANGELOG.md)** ·
 ## 🧭 Roadmap
 
 Der nächste grosse Schritt ist kein Feature, sondern Aufräumen: **`bot.py`
-hat 34.487 Zeilen**. Die Datei ist der Engpass des Projekts — sie lässt sich
+hat 32.569 Zeilen**. Die Datei ist der Engpass des Projekts — sie lässt sich
 nicht überblicken und nur mit Werkzeug bearbeiten.
 
 Der vollständige, gemessene Plan dazu steht in
