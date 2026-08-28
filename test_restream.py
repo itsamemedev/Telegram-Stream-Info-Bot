@@ -6569,6 +6569,49 @@ def test_v40_w119_oauth_proxy_meldethema_kollision():
        "ehrlicher Kollisions-Befund")
 
 
+def test_v40_w120_trackings_ansicht():
+    """v4.0-W120: die Trackings-Ansicht hat wieder Markup.
+
+    Die Logik lief seit je (loadSurveil/renderTargetGrid/renderBandwidth/
+    loadHeatmap), nur ihr HTML war irgendwann verschwunden — alle IDs kamen
+    im Template NULL mal vor, die Funktionen brachen an ihrem eigenen
+    Waechter ab. Damit waren Tags, Notizen, Prioritaet, Schnell-Neustart und
+    Jetzt-Pruefen aus dem Dashboard nicht mehr erreichbar; ein getrackter
+    Streamer war nur noch eine Kachel. Dieser Vertrag haelt das Markup fest,
+    damit es nicht ein zweites Mal lautlos verschwindet.
+    """
+    dash = open("templates/dashboard.html", encoding="utf-8").read()
+    for _id in ("sv_grid", "sv_gridmeta", "sv_filter", "sv_sort", "sv_track",
+                "sv_live", "sv_rec", "sv_bw", "sv_bwlist", "sv_heat",
+                "sv_last_refresh"):
+        assert dash.count('id="%s"' % _id) == 1, \
+            "%s fehlt im Markup (oder ist doppelt)" % _id
+    # Die Ansicht wird beim Oeffnen UND im Auffrisch-Takt gefuellt.
+    assert "loadWall(); loadSurveil();" in dash, "Loader nicht im Streams-Tab verdrahtet"
+    assert "loadWall(); loadSurveil(); }" in dash, "Ansicht frischt sich nicht auf"
+    # Steuerung erreichbar: die Tabellenzeile fuehrt ins CTL-Fenster.
+    _rt = dash[dash.index("function renderTargetGrid("):dash.index("/* RADAR ENTFERNT")]
+    assert "openTargetCtl(" in _rt and "showProfile(" in _rt, \
+        "Zeile ohne Steuerung/Profil — Tags und Prioritaet waeren wieder unerreichbar"
+    # Das Radar hing an einem Canvas, das es nicht mehr gibt: raus statt tot.
+    assert "function radarUpdateStats(" not in dash and "radarUpdateStats();" not in dash, \
+        "toter Radar-Code wieder da (Definition oder Aufruf)"
+    assert "_radarHash" not in dash, "Radar-Hilfsfunktion wieder da"
+    # Heatmap darf nicht im 8s-Takt mitlaufen (30-Tage-Aggregat).
+    _hm = dash[dash.index("async function loadHeatmap("):dash.index("function renderHeat(")]
+    assert "300000" in _hm, "Heatmap ohne Drossel"
+    # Twitch bekommt dieselbe Rueckruf-Pflege wie Kick und YouTube.
+    src = open("bot.py").read()
+    assert '"/api/twitch/oauth/redirect"' in src and "def api_twitch_oauth_redirect(" in src, \
+        "kein Live-Setzer fuer die Twitch-Rueckruf-Adresse"
+    assert "twoauthSaveRedirect(" in dash and 'id="tw_redir"' in dash, \
+        "Twitch-Panel ohne Feld fuer die Rueckruf-Adresse"
+    # Keine fremde Server-IP als Beispiel im ausgelieferten Dashboard.
+    assert "217.182.138.35" not in dash, "feste Server-IP im Template"
+    ok("v4.0-w120: Trackings-Ansicht wieder bedienbar, Radar-Leiche raus, "
+       "Twitch-Rueckruf pflegbar")
+
+
 def main():
     print("test_restream — Restream-Kernlogik (Mock-basiert)")
     test_streak()
@@ -6752,6 +6795,7 @@ def main():
     test_v40_w117_asset_stempel()
     test_v40_w118_sicherheitsaudit()
     test_v40_w119_oauth_proxy_meldethema_kollision()
+    test_v40_w120_trackings_ansicht()
     print(f"test_restream OK — {PASS} Verträge grün")
 
 

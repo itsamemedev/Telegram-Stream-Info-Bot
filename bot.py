@@ -16967,6 +16967,30 @@ def api_twitch_oauth_status():
         return jsonify(ok=False, error=str(e)), 500
 
 
+@dashboard_app.route("/api/twitch/oauth/redirect", methods=["POST"])
+def api_twitch_oauth_redirect():
+    """Redirect-URI live setzen (app_config), ohne .env/Neustart — wie bei Kick
+       und YouTube. Muss danach 1:1 in der Twitch-App unter 'OAuth Redirect
+       URLs' stehen. Leerer Wert loescht die Ueberschreibung."""
+    data = request.get_json(silent=True) or {}
+    uri = str(data.get("uri", "") or "").strip()
+    if uri:
+        low = uri.lower()
+        if not (low.startswith("http://") or low.startswith("https://")):
+            return jsonify(ok=False, error="URI muss mit http:// oder https:// beginnen"), 400
+        if not low.endswith("/api/twitch/oauth/callback"):
+            return jsonify(ok=False, error="URI muss auf /api/twitch/oauth/callback enden "
+                           "(exakt dieser Pfad ist die Rueckruf-Route)"), 400
+        if low.startswith("http://") and "localhost" not in low and "127.0.0.1" not in low:
+            return jsonify(ok=False, error="Twitch akzeptiert http:// nur fuer localhost — "
+                           "sonst https:// verwenden"), 400
+    _cfg_set("twitch.redirect_uri", uri)
+    eff = _oauth_redirect_uri("twitch")
+    return jsonify(ok=True, redirect_uri=eff,
+                   redirect_source=_oauth_redirect_source("twitch"),
+                   redirect_public=_kick_redirect_public(eff))
+
+
 @dashboard_app.route("/api/twitch/oauth/start")
 def api_twitch_oauth_start():
     """Schritt 1: leitet zum Twitch-Zustimmungsdialog um. CSRF-state in der

@@ -4904,10 +4904,10 @@ function openRecording(id){ if(window._openRecording) window._openRecording(id);
 let _trackingsCache=[];
 let _tagsMap={};   // BUG-FIX (Perf): tracking_id(str) -> [tags], in EINEM Call geladen
 async function loadSurveil(){
-  /* BUGFIX Tiefensuche: diese Funktion gehoert zu einer Ansicht, deren
-     HTML nicht (mehr) im Template steht. Ohne diesen Waechter warf
-     jeder Aufruf 'Cannot set properties of null' und brach die
-     restliche Funktion ab. */
+  /* Waechter bleibt: das Markup dieser Ansicht wird erst beim ersten
+     Oeffnen des Streams-Tabs gebaut (VIEW_LOADERS.wall). Wer vorher
+     aufruft — etwa setPrio/addTag aus einem Modal — traefe sonst auf
+     null und broeche mit 'Cannot set properties of null' ab. */
   if(!$('#sv_grid')) return;
   const [stats, trackings, bw, tagsMap] = await Promise.all([
     apiGet('/api/stats'), apiGet('/api/trackings'), apiGet('/api/bandwidth/live'),
@@ -4926,7 +4926,6 @@ async function loadSurveil(){
   _tagsMap=(tagsMap&&tagsMap.ok&&tagsMap.map)?tagsMap.map:{};
   _trackingsCache=Array.isArray(trackings)?trackings:[];
   renderTargetGrid();
-  radarUpdateStats();
   loadHeatmap();
   // VERBESSERUNG: "zuletzt aktualisiert" Timestamp
   const ts = $('#sv_last_refresh');
@@ -4934,7 +4933,8 @@ async function loadSurveil(){
 }
 function renderBandwidth(streams){
   const el=$('#sv_bwlist');
-  if(!streams.length){ el.innerHTML='<div class="empty">NO ACTIVE CAPTURES</div>'; return; }
+  if(!el) return;
+  if(!streams.length){ el.innerHTML='<div class="empty">Gerade läuft keine Aufnahme.</div>'; return; }
   const max=Math.max(1,...streams.map(s=>s.rate_kbps));
   el.innerHTML=streams.map(s=>`
     <div class="mb">
@@ -4944,10 +4944,10 @@ function renderBandwidth(streams){
     </div>`).join('');
 }
 function renderTargetGrid(){
-  /* BUGFIX Tiefensuche: diese Funktion gehoert zu einer Ansicht, deren
-     HTML nicht (mehr) im Template steht. Ohne diesen Waechter warf
-     jeder Aufruf 'Cannot set properties of null' und brach die
-     restliche Funktion ab. */
+  /* Waechter bleibt: das Markup dieser Ansicht wird erst beim ersten
+     Oeffnen des Streams-Tabs gebaut (VIEW_LOADERS.wall). Wer vorher
+     aufruft — etwa setPrio/addTag aus einem Modal — traefe sonst auf
+     null und broeche mit 'Cannot set properties of null' ab. */
   if(!$('#sv_grid')) return;
   const f=($('#sv_filter')?.value||'').toLowerCase();
   const sort=$('#sv_sort')?.value||'status';
@@ -4957,8 +4957,8 @@ function renderTargetGrid(){
   else if(sort==='name') rows.sort((a,b)=>(a.username||'').localeCompare(b.username||''));
   else if(sort==='vip') rows.sort((a,b)=>(_tagsMap[String(b.id)]||[]).includes('vip')-(_tagsMap[String(a.id)]||[]).includes('vip'));
   $('#sv_gridmeta').textContent=rows.length+' / '+_trackingsCache.length;
-  if(!rows.length){ $('#sv_grid').innerHTML='<div class="empty">NO TARGETS</div>'; return; }
-  let h='<div class="tbl-wrap"><table><thead><tr><th>Target</th><th>Status</th><th>Tags</th><th>Notes</th><th class="right">Actions</th></tr></thead><tbody>';
+  if(!rows.length){ $('#sv_grid').innerHTML='<div class="empty">Kein Tracking passt zum Filter.</div>'; return; }
+  let h='<div class="tbl-wrap"><table><thead><tr><th>Streamer</th><th>Status</th><th>Tags</th><th>Notiz</th><th class="right">Aktionen</th></tr></thead><tbody>';
   rows.forEach(t=>{
     let badge='';
     if(t.recording) badge='<span class="pill rec">● REC</span>';
@@ -4974,40 +4974,20 @@ function renderTargetGrid(){
       <td class="tagcell" data-tid="${t.id}">${tagHtml}</td>
       <td class="muted" style="max-width:200px;overflow:hidden;text-overflow:ellipsis">${esc(t.notes||'')}</td>
       <td class="right nowrap">
-        <span class="btn sm cyan" onclick="inspectStream('${escJs(t.username)}')">SCAN</span>
-        <span class="btn sm" onclick="openTargetCtl(${t.id},'${escJs(t.username)}')">CTL</span>
+        <span class="btn sm cyan" onclick="inspectStream('${escJs(t.username)}')">Prüfen</span>
+        <span class="btn sm" onclick="openTargetCtl(${t.id},'${escJs(t.username)}')">Steuern</span>
       </td></tr>`;
   });
   h+='</tbody></table></div>';
   $('#sv_grid').innerHTML=h;
 }
 
-/* ===================== LIVE RADAR ENGINE =====================
-   Self-contained PPI-style sweep. Every tracked target is a contact;
-   live/capturing contacts sit closer to center and flare as the beam
-   passes. Reads the existing _trackingsCache — no extra API calls. */
-let _radarRAF=null, _radarAngle=0;
-function _radarHash(s){ let h=2166136261; s=String(s); for(let i=0;i<s.length;i++){ h^=s.charCodeAt(i); h=Math.imul(h,16777619);} return (h>>>0); }
-
-
-
-function radarUpdateStats(){
-  const list=Array.isArray(_trackingsCache)?_trackingsCache:[];
-  const rec=list.filter(t=>t.recording).length;
-  const live=list.filter(t=>t.last_live && !t.recording).length;
-  const set=(id,v)=>{ const e=document.getElementById(id); if(e) e.textContent=v; };
-  set('rv_live',live); set('rv_rec',rec); set('rv_track',list.length);
-  const meta=document.getElementById('radar_meta'); if(meta) meta.textContent=list.length+' contacts · '+(live+rec)+' active';
-  const feed=document.getElementById('radar_feed');
-  if(feed){
-    const active=list.filter(t=>t.recording||t.last_live).sort((a,b)=>((b.recording?2:1)-(a.recording?2:1))).slice(0,8);
-    feed.innerHTML = active.length ? active.map(t=>{
-      const brg=(_radarHash(t.username||'')%360).toString().padStart(3,'0');
-      const st=t.recording?'<i class="lg rec"></i>':'<i class="lg live"></i>';
-      return '<div class="rf-row" onclick="showProfile(\''+esc(t.username)+'\')">'+st+'<span class="rf-n">@'+esc(t.username)+'</span><span class="rf-b">'+brg+'\u00b0</span></div>';
-    }).join('') : '<div class="rf-empty">no active contacts — sweeping…</div>';
-  }
-}
+/* RADAR ENTFERNT: Die PPI-Sweep-Anzeige hing an einem Canvas, das es im
+   Template nicht mehr gibt. _radarRAF/_radarAngle wurden nie wieder
+   gelesen, und radarUpdateStats() schrieb in fuenf IDs, die nirgends
+   existierten. Was sie zeigte — wer ist live, wer nimmt auf — steht in der
+   Monitor-Wand und in der Trackings-Tabelle. Zweimal dasselbe in Bewegung
+   ist keine Information, sondern Unruhe auf einem Schirm, der 24/7 laeuft. */
 
 /* ===== PROFILE POPUP (B60) — click a username → local stats + live TikTok profile ===== */
 function fmtK(n){ if(n==null) return '—'; n=+n; if(isNaN(n)) return '—';
@@ -5122,13 +5102,22 @@ async function pfTrkMaxDur(tid, username){
   if(typeof toast==='function') toast(d&&d.ok?(seconds?('Max-Dauer: '+seconds+'s'):'Override entfernt'):((d&&d.error)||'Fehler'), d&&d.ok?'ok':'err');
   pfLoadTrkSettings(tid);
 }
-async function loadHeatmap(){
+let _heatLast=0;
+async function loadHeatmap(force){
+  /* Die Karte deckt 30 Tage ab — sie aendert sich nicht im 8-Sekunden-Takt,
+     in dem die Trackings-Tabelle laeuft. Hoechstens alle 5 Minuten holen,
+     sonst zahlt der Server die Aggregation umsonst. */
+  const el=$('#sv_heat'); if(!el) return;
+  const now=Date.now();
+  if(!force && _heatLast && (now-_heatLast)<300000) return;
+  _heatLast=now;
   const d=await apiGet('/api/heatmap/recordings');
-  renderHeat($('#sv_heat'), (d&&d.grid)||null, (d&&d.total)||0);
+  renderHeat(el, (d&&d.grid)||null, (d&&d.total)||0);
 }
 const DAYS=['Mo','Di','Mi','Do','Fr','Sa','So'];
 function renderHeat(el, grid, total){
-  if(!grid){ el.innerHTML='<div class="empty">NO DATA</div>'; return; }
+  if(!el) return;           // Aufrufer aus anderen Ansichten geben ggf. null
+  if(!grid){ el.innerHTML='<div class="empty">Noch keine Aufnahmen in den letzten 30 Tagen.</div>'; return; }
   let max=0; grid.forEach(r=>r.forEach(v=>{if(v>max)max=v;}));
   max=Math.max(1,max);
   let h='<div class="heat"><div class="hh"></div>';
@@ -5198,36 +5187,36 @@ async function openTargetCtl(tid, username){
   ]);
   const level=pr.level||0;
   const tagList=(tags&&tags.tags)||[];
-  openModal('TARGET CTL // @'+username, `
-    <div class="mb"><div class="l muted mb">PRIORITY</div>
+  openModal('Steuerung · @'+username, `
+    <div class="mb"><div class="l muted mb">PRIORITÄT</div>
       <div class="btnrow">
-        <span class="btn sm ${level===0?'on':''}" onclick="setPrio(${tid},0)">NORMAL</span>
-        <span class="btn sm ${level===1?'on':''}" onclick="setPrio(${tid},1)">HIGH · 15s</span>
-        <span class="btn sm mag ${level===2?'on':''}" onclick="setPrio(${tid},2)">VIP · 10s</span>
+        <span class="btn sm ${level===0?'on':''}" onclick="setPrio(${tid},0)">Normal</span>
+        <span class="btn sm ${level===1?'on':''}" onclick="setPrio(${tid},1)">Hoch · alle 15s</span>
+        <span class="btn sm mag ${level===2?'on':''}" onclick="setPrio(${tid},2)">VIP · alle 10s</span>
       </div>
     </div>
     <div class="mb"><div class="l muted mb">TAGS</div>
       <div id="ctlTags">${tagList.map(t=>`<span class="tagchip">#${esc(t)}<span class="x" onclick="rmTag(${tid},'${escJs(t)}')">✕</span></span>`).join('')||'<span class="faint">none</span>'}</div>
-      <div class="flex mt"><input class="field" id="ctlNewTag" placeholder="add tag…" style="flex:1"><span class="btn sm cyan" onclick="addTag(${tid})">+ ADD</span></div>
+      <div class="flex mt"><input class="field" id="ctlNewTag" placeholder="Tag hinzufügen…" aria-label="Tag hinzufügen" style="flex:1"><span class="btn sm cyan" onclick="addTag(${tid})">+ Hinzufügen</span></div>
     </div>
-    <div class="mb"><div class="l muted mb">ACTIONS</div>
+    <div class="mb"><div class="l muted mb">AKTIONEN</div>
       <div class="btnrow">
-        <span class="btn sm" onclick="quickRestart(${tid})">⟳ QUICK-RESTART</span>
-        <span class="btn sm cyan" onclick="recheckNow(${tid})">↻ RECHECK NOW</span>
-        <span class="btn sm cyan" onclick="showLiveHeat('${escJs(username)}')">▦ LIVE-PATTERN</span>
+        <span class="btn sm" onclick="quickRestart(${tid})">⟳ Schnell-Neustart</span>
+        <span class="btn sm cyan" onclick="recheckNow(${tid})">↻ Jetzt prüfen</span>
+        <span class="btn sm cyan" onclick="showLiveHeat('${escJs(username)}')">▦ Live-Muster</span>
       </div>
     </div>`);
 }
 async function setPrio(tid, level){
   const d=await apiPost('/api/trackings/'+tid+'/priority',{level});
-  if(d.ok){ toast('PRIORITY SET // level '+level); openTargetCtl(tid, _ctlUsername); loadSurveil(); }
-  else toast('FAILED', 'err');
+  if(d.ok){ toast('Priorität gesetzt: Stufe '+level); openTargetCtl(tid, _ctlUsername); loadSurveil(); }
+  else toast('Priorität nicht gesetzt', 'err');
 }
 async function addTag(tid){
   const v=$('#ctlNewTag').value.trim(); if(!v) return;
   const d=await apiPost('/api/trackings/'+tid+'/tags',{tag:v});
   if(d.ok){ $('#ctlTags').innerHTML=(d.tags||[]).map(t=>`<span class="tagchip">#${esc(t)}<span class="x" onclick="rmTag(${tid},'${escJs(t)}')">✕</span></span>`).join(''); $('#ctlNewTag').value=''; loadSurveil(); }
-  else toast('invalid tag (a-z0-9_- only)','err');
+  else toast('Tag ungültig — erlaubt sind a-z, 0-9, _ und -','err');
 }
 async function rmTag(tid, tag){
   await api('/api/trackings/'+tid+'/tags',{method:'DELETE',body:{tag}});
@@ -5238,12 +5227,12 @@ async function rmTag(tid, tag){
 }
 async function quickRestart(tid){
   const d=await apiPost('/api/trackings/'+tid+'/quick-restart');
-  if(d.ok){ toast('RESTART // '+(d.actions||[]).length+' states cleared'); }
-  else toast('failed','err');
+  if(d.ok){ toast('Neustart: '+(d.actions||[]).length+' Zustände zurückgesetzt'); }
+  else toast('Schnell-Neustart fehlgeschlagen','err');
 }
 async function recheckNow(tid){
   const d=await apiPost('/api/trackings/'+tid+'/recheck');
-  toast(d&&d.ok?'RECHECK QUEUED':'recheck failed', d&&d.ok?'':'err');
+  toast(d&&d.ok?'Prüfung eingereiht — läuft in wenigen Sekunden':'Prüfung fehlgeschlagen', d&&d.ok?'':'err');
 }
 async function showLiveHeat(username){
   const d=await apiGet('/api/heatmap/lives/'+encodeURIComponent(username));
@@ -5710,9 +5699,28 @@ VIEW_LOADERS.system = async function(){
             Zugang danach selbst — kein 60-Tage-Ablauf, keine Scope-Fummelei.
           </div>
           <div id="twoauth_body" class="skel" aria-busy="true"><i></i><i></i></div>
+
+          <!-- Gleiches Feld wie bei Kick und YouTube: ohne Eintrag nimmt der
+               Server die Adresse, unter der dieses Dashboard laeuft. -->
+          <div style="margin-top:14px;padding:12px 14px;background:var(--sunken);border-radius:var(--r-md);border:1px solid var(--border)">
+            <div style="font-size:11px;font-weight:600;color:var(--cyan);margin-bottom:8px">↩ Rückruf-Adresse (Redirect-URL)</div>
+            <div class="faint" style="font-size:10.5px;line-height:1.6;margin-bottom:8px">
+              Muss <b>exakt so</b> in der Twitch-App unter „OAuth Redirect URLs“ stehen.
+              Feld leer lassen = die Adresse, unter der dieses Dashboard gerade läuft.
+            </div>
+            <code id="twoauth_redir_eff" style="display:block;user-select:all;word-break:break-all;color:var(--cyan);font-size:10.5px;margin-bottom:8px">…</code>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+              <input id="tw_redir" class="mono" style="flex:1;min-width:230px;padding:6px 8px"
+                     aria-label="Twitch Rückruf-Adresse"
+                     placeholder="https://deine-domain:8050/api/twitch/oauth/callback">
+              <button class="btn sm cyan" onclick="twoauthSaveRedirect()">Übernehmen</button>
+            </div>
+            <div class="faint" id="twoauth_redir_note" style="font-size:10px;margin-top:6px"></div>
+          </div>
+
           <div id="twoauth_tunnel" style="display:none;margin-top:14px;padding:12px 14px;background:var(--sunken);border-radius:var(--r-md);border:1px solid var(--border)">
             <div style="font-size:11px;font-weight:600;color:var(--cyan);margin-bottom:8px">
-              ⚑ Einmaliger SSH-Tunnel nötig
+              ⚑ Notweg: einmaliger SSH-Tunnel
             </div>
             <div class="faint" style="font-size:10.5px;line-height:1.6;margin-bottom:10px">
               Twitch erlaubt bei Redirect-URLs nur HTTPS oder <code>localhost</code> —
@@ -5721,7 +5729,7 @@ VIEW_LOADERS.system = async function(){
               Verbinden-Klick, danach nicht mehr nötig.
             </div>
             <div style="font-size:10px;color:var(--text-faint);margin-bottom:4px">1. Auf deinem PC/Handy (Termius) diesen Tunnel öffnen:</div>
-            <code style="display:block;user-select:all;word-break:break-all;color:var(--neon);font-size:10.5px;margin-bottom:10px">ssh -L 3000:localhost:8050 dein-user@217.182.138.35</code>
+            <code style="display:block;user-select:all;word-break:break-all;color:var(--neon);font-size:10.5px;margin-bottom:10px">ssh -L 3000:localhost:8050 dein-user@dein-server</code>
             <div style="font-size:10px;color:var(--text-faint);margin-bottom:4px">2. In der Twitch-App (OAuth Redirect URLs) exakt eintragen:</div>
             <code id="twoauth_redir" style="display:block;user-select:all;word-break:break-all;color:var(--cyan);font-size:10.5px;margin-bottom:10px">…</code>
             <div style="font-size:10px;color:var(--text-faint)">3. Dann diese Seite über <code>http://localhost:3000</code> öffnen (nicht die IP!) und oben „Mit Twitch verbinden" klicken.</div>
@@ -5769,7 +5777,7 @@ VIEW_LOADERS.system = async function(){
 
           <div id="ytoauth_tunnel" style="display:none;margin-top:14px;padding:12px 14px;background:var(--sunken);border-radius:var(--r-md);border:1px solid var(--border)">
             <div style="font-size:11px;font-weight:600;color:var(--cyan);margin-bottom:8px">
-              ⚑ Einmaliger SSH-Tunnel nötig
+              ⚑ Notweg: einmaliger SSH-Tunnel
             </div>
             <div class="faint" style="font-size:10.5px;line-height:1.6;margin-bottom:10px">
               Google erlaubt als Redirect-URI nur HTTPS oder <code>localhost</code> —
@@ -5777,7 +5785,7 @@ VIEW_LOADERS.system = async function(){
               tunneln, verbinden, fertig.
             </div>
             <div style="font-size:10px;color:var(--text-faint);margin-bottom:4px">1. Auf deinem PC/Handy (Termius) diesen Tunnel öffnen:</div>
-            <code style="display:block;user-select:all;word-break:break-all;color:var(--neon);font-size:10.5px;margin-bottom:10px">ssh -L 3000:localhost:8050 dein-user@217.182.138.35</code>
+            <code style="display:block;user-select:all;word-break:break-all;color:var(--neon);font-size:10.5px;margin-bottom:10px">ssh -L 3000:localhost:8050 dein-user@dein-server</code>
             <div style="font-size:10px;color:var(--text-faint);margin-bottom:4px">2. In der Google-Cloud-App unter „Autorisierte Redirect-URIs“ exakt eintragen:</div>
             <code id="ytoauth_redir" style="display:block;user-select:all;word-break:break-all;color:var(--cyan);font-size:10.5px;margin-bottom:10px">…</code>
             <div style="font-size:10px;color:var(--text-faint)">3. Diese Seite über <code>http://localhost:3000</code> öffnen (nicht die IP!) und oben „Mit YouTube verbinden“ klicken. Google zeigt jetzt die <b>Kontoauswahl</b> — bei mehreren Konten das richtige Kanal-Konto wählen.</div>
@@ -7559,6 +7567,16 @@ async function twoauthLoad(){
   const box=$('#twoauth_body'), tag=$('#twoauth_tag');
   if(!d||!d.ok){ if(box) box.innerHTML='<div class="faint">nicht erreichbar</div>'; return; }
   if(d.redirect_uri) $('#twoauth_redir').textContent=d.redirect_uri;
+  if(d.redirect_uri && $('#twoauth_redir_eff')) $('#twoauth_redir_eff').textContent=d.redirect_uri;
+  const trin=$('#tw_redir');
+  if(trin && document.activeElement!==trin) trin.value=(d.redirect_source&&d.redirect_source!=='fallback')?(d.redirect_uri||''):'';
+  const trnote=$('#twoauth_redir_note');
+  if(trnote){
+    const q={config:'im Dashboard gesetzt',env:'aus der .env (TWITCH_REDIRECT_URI)',fallback:'automatisch aus der Adresse dieses Dashboards'}[d.redirect_source]||'—';
+    if(d.redirect_public===false){ trnote.style.color='var(--amber)';
+      trnote.textContent='Quelle: '+q+' — zeigt auf localhost. Twitch erreicht das nur über einen Tunnel; besser die öffentliche Adresse eintragen.'; }
+    else { trnote.style.color=''; trnote.textContent='Quelle: '+q+'.'; }
+  }
   const tunnelBox=$('#twoauth_tunnel');
   if(tunnelBox) tunnelBox.style.display = d.needs_tunnel ? 'block' : 'none';
   if(d.ready){
@@ -7582,6 +7600,12 @@ async function twoauthLoad(){
   }
   box.innerHTML='<button class="btn" onclick="twoauthStart()">▸ Mit Twitch verbinden</button>'
     +'<div class="faint" style="font-size:10.5px;margin-top:8px">Erst den Tunnel unten starten, dann hier klicken. Als Kanal-Konto eingeloggt sein.</div>';
+}
+async function twoauthSaveRedirect(){
+  const el=$('#tw_redir'); if(!el) return;
+  const d=await apiPost('/api/twitch/oauth/redirect',{uri:(el.value||'').trim()});
+  if(typeof toast==='function') toast((d&&d.ok)?('Rückruf-Adresse: '+(d.redirect_uri||'')):((d&&d.error)||'Fehler'), (d&&d.ok)?'ok':'err');
+  twoauthLoad();
 }
 function twoauthStart(){
   window.open('/api/twitch/oauth/start', 'twitch_oauth', 'width=560,height=720');
@@ -8861,6 +8885,47 @@ VIEW_LOADERS.wall = async function(){
       </div>
       <div class="wall-grid" id="wall_grid"><div class="skel" aria-busy="true"><i></i><i></i><i></i></div></div>
 
+      <!-- Trackings-Tabelle. Diese Ansicht existierte als JavaScript weiter
+           (loadSurveil/renderTargetGrid/renderBandwidth/loadHeatmap), ihr
+           Markup war aber irgendwann verschwunden: alle IDs kamen im Template
+           null mal vor, die Funktionen brachen an ihrem eigenen Waechter ab.
+           Damit waren Tags, Notizen, Prioritaet, Quick-Restart und Recheck
+           aus dem Dashboard nicht mehr erreichbar — ein getrackter Streamer
+           war nur noch eine Kachel. Hier steht das fehlende Markup; die
+           Logik ist unveraendert. -->
+      <div class="panel" style="margin-top:16px" id="pnl_targets">
+        <div class="head"><h3>▚ Trackings</h3>
+          <span class="tag" id="sv_gridmeta">—</span>
+          <div class="spacer"></div>
+          <span class="faint mono" id="sv_last_refresh" style="font-size:10px"></span>
+          <button class="btn sm" onclick="loadSurveil()" aria-label="Aktualisieren" title="Aktualisieren">↻</button>
+        </div>
+        <div class="body">
+          <div class="grid mb" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:12px">
+            <div class="metric"><span class="v" id="sv_track" style="color:var(--cyan)">–</span><span class="l">Getrackt</span></div>
+            <div class="metric"><span class="v" id="sv_live" style="color:var(--red)">–</span><span class="l">Live jetzt</span></div>
+            <div class="metric"><span class="v" id="sv_rec" style="color:var(--magenta)">–</span><span class="l">Aufnahmen</span></div>
+            <div class="metric"><span class="v" id="sv_bw" style="color:var(--neon)">–</span><span class="l">Bandbreite</span></div>
+          </div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">
+            <input class="field" id="sv_filter" placeholder="Name oder Notiz filtern…" aria-label="Trackings filtern"
+                   style="flex:1;min-width:170px" oninput="renderTargetGrid()">
+            <select class="field" id="sv_sort" aria-label="Sortierung" onchange="renderTargetGrid()">
+              <option value="status">nach Status</option>
+              <option value="name">nach Name</option>
+              <option value="vip">VIP zuerst</option>
+            </select>
+          </div>
+          <div id="sv_grid" class="skel" aria-busy="true"><i></i><i></i><i></i></div>
+
+          <div class="kc-sub" style="margin-top:16px">LAUFENDE AUFNAHMEN</div>
+          <div id="sv_bwlist"></div>
+
+          <div class="kc-sub" style="margin-top:16px">AUFNAHMEN NACH WOCHENTAG UND STUNDE</div>
+          <div id="sv_heat"></div>
+        </div>
+      </div>
+
       <div class="panel" style="margin-top:16px" id="pnl_rectools">
         <div class="head"><h3>▚ Recording-Tools</h3>
           <span class="tag" id="rt_tag">Aufnahmen · Speicher · Qualität</span>
@@ -8986,9 +9051,9 @@ VIEW_LOADERS.wall = async function(){
         <div class="body"><div class="faint" id="arc_disk" style="font-size:10.5px;margin-bottom:8px">—</div><div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px"><label class="btn sm" style="cursor:pointer;margin:0">⬆ Upload<input type="file" id="arc_up_file" style="display:none" onchange="arcUpload()"></label><input class="field" id="arc_up_title" placeholder="Titel (optional)" style="width:150px"><button class="btn sm" onclick="arcCheck()">Integritäts-Check</button><button class="btn sm" onclick="arcBulkDelete()">🗑 Auswahl löschen</button><span class="faint" id="arc_mgmt_out" style="font-size:10.5px"></span></div><div id="arc_list" class="skel" aria-busy="true"><i></i><i></i><i></i></div><div id="arc_more" style="text-align:center;margin-top:10px"></div></div>
       </div>`;
     root.dataset.built='1';
-    if(!window._wallTimer) window._wallTimer=setInterval(()=>{ if(CURRENT_VIEW==='wall' && !document.hidden) loadWall(); }, 8000);
+    if(!window._wallTimer) window._wallTimer=setInterval(()=>{ if(CURRENT_VIEW==='wall' && !document.hidden){ loadWall(); loadSurveil(); } }, 8000);
   }
-  loadWall(); loadArchive(); loadRecTools();
+  loadWall(); loadSurveil(); loadArchive(); loadRecTools();
   try{ trkGroupsFill(); }catch(e){}
 };
 let _arcPage=1;
