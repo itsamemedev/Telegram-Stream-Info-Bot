@@ -609,7 +609,7 @@ def cmd_docs(args) -> int:
     # Nur die Dateien, deren Zahlen aus dem Quelltext stammen. docs/CHANGELOG
     # und README_V37 halten bewusst historische Staende fest — dort waere eine
     # "veraltete" Zahl richtig.
-    for datei in ("README.md", "CLAUDE.md",
+    for datei in ("README.md", "CLAUDE.md", "docs/INSTALL.md",
                   "docs/ROADMAP.md", "docs/TROUBLESHOOTING.md"):
         pfad = os.path.join(root, datei)
         if not os.path.exists(pfad):
