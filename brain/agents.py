@@ -667,8 +667,9 @@ class RestreamSentinelAgent(Agent):
     """Restream-Waechter. Erkennt Ziele, die STILL scheitern — der ffmpeg-
     Prozess lebt, aber ein tee-Slave (Kick/Twitch/YouTube) wird von der
     Plattform abgelehnt. RecoveryAgent sieht nur tote Prozesse, nicht tote
-    Slaves; genau diese Luecke deckt dieser Agent. Meldet zusaetzlich geteilte
-    Kick-Keys (ein Key = ein Slot). Injizierter Accessor liefert den Zustand."""
+    Slaves; genau diese Luecke deckt dieser Agent. Meldet zusaetzlich doppelt
+    belegte Ziele — ein Ingest-Key nimmt nur EINEN Publisher an, egal auf
+    welcher Plattform. Injizierter Accessor liefert den Zustand."""
     name = "restream_sentinel"
     interval_s = 120.0
     stale_s = 180.0            # tee-Fehler juenger als das = frisch/relevant
@@ -695,12 +696,47 @@ class RestreamSentinelAgent(Agent):
                         "text": f"Restream-Ziel(e) still abgelehnt: {', '.join(fresh)} "
                                 f"— Prozess laeuft, Plattform verweigert "
                                 f"(Key/Doppel-Live/IP?)"})
-        for pair in (h.get("key_collisions") or []):
-            out.append({"level": "warn", "collision": pair,
-                        "text": f"Kick-Key-Kollision: Restreams "
-                                f"{', '.join('#' + str(x) for x in pair)} teilen einen "
-                                f"Key — nur einer sendet. RESTREAM_SINGLE=1 oder "
-                                f"eigene Keys je Channel."})
+        out.extend(self._collisions(h))
+        return out
+
+    @staticmethod
+    def _collisions(h: dict) -> list[dict]:
+        """Ziel-Doppelbelegungen als Befund.
+
+        Frueher hiess das pauschal "Kick-Key-Kollision" und verglich ein Feld,
+        das seit der symmetrischen Zielaufloesung bei JEDEM Restream gleich
+        ist (die erste konfigurierte Plattform). Wer eine Quelle auf drei
+        Plattformen ausspielt, bekam die Meldung im Zwei-Minuten-Takt, ohne
+        zu erfahren, WELCHE zwei Zeilen gemeint sind — und der Rat "eigene
+        Keys je Channel" passte nicht mehr zur Konfiguration ueber die .env.
+        Jetzt benennt der Befund Plattform, Restream-Nummern und Quellen und
+        unterscheidet die zwei Faelle, die verschiedene Abhilfen haben."""
+        out: list[dict] = []
+        for col in (h.get("key_collisions") or []):
+            # Rueckwaertskompatibel: aeltere Bruecken liefern nur [rid, rid].
+            if not isinstance(col, dict):
+                col = {"platform": "?", "rids": list(col), "sources": [],
+                       "same_source": False}
+            rids = col.get("rids") or []
+            if len(rids) < 2:
+                continue
+            plat = col.get("platform") or "?"
+            nummern = ", ".join("#" + str(x) for x in rids)
+            quellen = [q for q in (col.get("sources") or []) if q]
+            wer = (" (" + ", ".join("@" + q for q in dict.fromkeys(quellen)) + ")"
+                   if quellen else "")
+            if col.get("same_source"):
+                text = (f"Restreams {nummern}{wer} senden dieselbe Quelle doppelt "
+                        f"auf denselben {plat}-Key — ein Key nimmt nur EINEN "
+                        f"Publisher an, der zweite scheitert. Es ist eine Zeile "
+                        f"zu viel: eine davon abschalten.")
+            else:
+                text = (f"Restreams {nummern}{wer} senden auf denselben "
+                        f"{plat}-Key — nur einer kommt an. Entweder RESTREAM_SINGLE=1 "
+                        f"(ein Kanal, ein Stream) oder je Restream eigene "
+                        f"Ingest/Key-Werte hinterlegen.")
+            out.append({"level": "warn", "collision": rids, "platform": plat,
+                        "sources": quellen, "text": text})
         return out
 
 

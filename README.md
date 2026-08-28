@@ -5,6 +5,8 @@
 ### Der Kontrollraum für Live-Streaming
 #### Überwachung · Aufnahme · Multi-Ziel-Restream · KI-Moderation
 
+[![AZRAEL SENTINEL — weltweit erste Streaming-KI](https://img.shields.io/badge/%F0%9F%A4%96%20AZRAEL%20SENTINEL-Weltweit%20erste%20Streaming--KI-E8C86A?style=for-the-badge&labelColor=0C0B09)](https://lafap.de)
+
 [![Lizenz: GPL v3](https://img.shields.io/badge/Lizenz-GPLv3-blue.svg?style=for-the-badge&logo=gnu)](LICENSE)
 [![Python 3.12+](https://img.shields.io/badge/Python-3.12%2B-3776AB.svg?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
 [![Plattform: Linux](https://img.shields.io/badge/Plattform-Ubuntu%20%2F%20systemd-E95420.svg?style=for-the-badge&logo=ubuntu&logoColor=white)](#-installation)
@@ -17,6 +19,10 @@
 [![Kick](https://img.shields.io/badge/Kick-Restream%20%2B%20Chat-53FC18?style=flat-square&logo=kick&logoColor=black)](#-restream)
 [![Twitch](https://img.shields.io/badge/Twitch-Restream%20%2B%20Chat-9146FF?style=flat-square&logo=twitch&logoColor=white)](#-restream)
 [![YouTube](https://img.shields.io/badge/YouTube-Restream%20%2B%20Chat-FF0000?style=flat-square&logo=youtube&logoColor=white)](#-restream)
+[![Changelog](https://img.shields.io/badge/Changelog-alle%20%C3%84nderungen-C9A227?style=flat-square&logo=markdown&logoColor=white)](docs/CHANGELOG.md)
+
+[![Website: lafap.de](https://img.shields.io/badge/Website-lafap.de-E8C86A?style=for-the-badge&logo=firefoxbrowser&logoColor=0C0B09&labelColor=0C0B09)](https://lafap.de)
+[![Discord beitreten](https://img.shields.io/badge/Discord-Community%20beitreten-5865F2?style=for-the-badge&logo=discord&logoColor=white&labelColor=0C0B09)](https://discord.gg/psvnxm7tSV)
 
 <br>
 
@@ -1053,6 +1059,9 @@ git push -u origin feature/mein-feature
 Auch hilfreich ohne Code: Bug-Reports mit Logausschnitt, Dokumentations-
 Korrekturen, Übersetzungen.
 
+Fragen, die kein Issue sind, gehören auf den **[Discord-Server](https://discord.gg/psvnxm7tSV)**.
+Das Projekt im Betrieb sehen: **[lafap.de](https://lafap.de)**.
+
 Bitte beachte den **[Verhaltenskodex](docs/CODE_OF_CONDUCT.md)**.
 
 ---
@@ -1099,6 +1108,8 @@ Fremdcode und dessen Lizenzen: **[`docs/THIRD_PARTY_LICENSES.md`](docs/THIRD_PAR
 <div align="center">
 
 **NIGHTCRAWLER v4.0 · „Restream Control Room"**
+
+**[🌐 lafap.de](https://lafap.de)** · **[💬 Discord](https://discord.gg/psvnxm7tSV)** · **[📓 Changelog](docs/CHANGELOG.md)**
 
 Wenn dir das Projekt hilft, lass einen ⭐ da.
 

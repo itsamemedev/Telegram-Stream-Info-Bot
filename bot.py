@@ -1332,10 +1332,14 @@ _twoauth.configure(
 # B121: gleiches Muster fuer YouTube. Der Store liegt neben dem Twitch-Store;
 # eine bestehende .env-Konfiguration (YOUTUBE_REFRESH_TOKEN) bleibt gueltig,
 # bis der Flow einmal durchlaufen wurde.
+# Die wirksame Rueckruf-Adresse baut _oauth_redirect_uri("youtube") zur
+# Laufzeit (app_config → .env → oeffentliche Adresse dieses Dashboards). Hier
+# steht deshalb KEIN localhost-Default mehr: der war jahrelang das, was Google
+# zu sehen bekam, wenn YOUTUBE_REDIRECT_URI leer blieb — und genau daran ist
+# der Flow hinter dem Proxy gescheitert.
 _ytoauth.configure(
     os.path.join(RECORDINGS_DIR, "youtube_oauth.json"),
-    os.getenv("YOUTUBE_REDIRECT_URI",
-              "http://localhost:3000/api/youtube/oauth/callback"))
+    os.getenv("YOUTUBE_REDIRECT_URI", ""))
 
 LOG_DIR = "logs"
 LOG_MAX_BYTES   = _env_int("LOG_MAX_BYTES", 10*1024*1024)   # 10 MB
@@ -8434,9 +8438,10 @@ async def _handle_single_tracking(t, bot_app):
                         ttl_note = f" ⏳<i>läuft in ~{max(0, ttl // 60)}min ab</i>"
                     text += (f"\n\n📺 <b>Direkt-Stream ({kind})</b> — in VLC öffnen"
                              f"{ttl_note}:\n<code>{html.escape(stream_url)}</code>")
-                await _safe_send(bot_app.bot, _tg_chat, text,
-                                 reply_markup=kb, parse_mode=ParseMode.HTML,
-                                 disable_notification=False)
+                # Ins Melde-Thema, nicht in den Hauptchannel (_send_live_notice).
+                await _send_live_notice(bot_app.bot, _tg_chat, text,
+                                        reply_markup=kb, parse_mode=ParseMode.HTML,
+                                        disable_notification=False)
         else:
             log.debug(f"@{username} LIVE-Transition schon von anderem Worker behandelt – kein Notif.")
     elif not is_live and old_last_live:
@@ -8467,9 +8472,9 @@ async def _handle_single_tracking(t, bot_app):
             else:
                 text = (f"⚫ <b>OFFLINE · @{safe(username)}</b>\n"
                         f"<i>Stream beendet · Aufnahme wird verarbeitet…</i>")
-                await _safe_send(bot_app.bot, chat_id, text,
-                                 parse_mode=ParseMode.HTML,
-                                 disable_notification=True)
+                await _send_live_notice(bot_app.bot, chat_id, text,
+                                        parse_mode=ParseMode.HTML,
+                                        disable_notification=True)
         else:
             log.debug(f"@{username} OFFLINE-Transition schon behandelt – kein Notif.")
 
@@ -8912,9 +8917,11 @@ async def _chat_is_forum(chat_id, bot) -> bool:
     _TG_FORUM_CACHE[chat_id] = (is_forum, now)
     return is_forum
 
-async def _ensure_topic(chat_id, username, bot):
+async def _ensure_topic(chat_id, username, bot, name=None):
     """Stellt ein Forum-Topic für @username im Chat sicher. Returns thread_id
-       oder None (kein Forum / keine Rechte / Fehler → Aufrufer sendet normal)."""
+       oder None (kein Forum / keine Rechte / Fehler → Aufrufer sendet normal).
+       'name' übersteuert den Topic-Titel — dafür gibt es das Melde-Thema
+       (siehe _ensure_notify_topic), das keinem Nutzer gehört."""
     if not TELEGRAM_USE_TOPICS or not username:
         return None
     key = _topic_key(chat_id, username)
@@ -8924,18 +8931,80 @@ async def _ensure_topic(chat_id, username, bot):
     if not await _chat_is_forum(chat_id, bot):
         return None                  # normale Gruppe/Channel/DM → keine Topics
     try:
-        topic = await bot.create_forum_topic(chat_id=chat_id, name=f"@{username}"[:128])
+        _titel = (name or f"@{username}")[:128]
+        topic = await bot.create_forum_topic(chat_id=chat_id, name=_titel)
         tid = getattr(topic, "message_thread_id", None)
         if tid:
             with _TG_TOPICS_LOCK:
                 _TG_TOPICS[key] = tid
                 _tg_topics_save()
-            log.info(f"Telegram-Topic erstellt: @{username} in chat {chat_id} (thread {tid})")
+            log.info(f"Telegram-Topic erstellt: {_titel} in chat {chat_id} (thread {tid})")
         return tid
     except Exception as e:
         # Keine 'Themen verwalten'-Rechte / API-Fehler → überspringen, normal senden
-        log.debug(f"Topic-Erstellung übersprungen (@{username}, chat {chat_id}): {e}")
+        log.debug(f"Topic-Erstellung übersprungen ({name or '@' + str(username)}, "
+                  f"chat {chat_id}): {e}")
         return None
+
+
+# ── Melde-Thema: Live/Offline gehört NIE in den Hauptchannel ────────────
+# Ist die Gruppe ein Forum, bekommen Live- und Offline-Meldungen ein eigenes
+# Thema. Im Hauptchannel gingen sie zwischen Uploads, Befehlen und Antworten
+# unter — und genau dort sucht sie niemand. Ist die Gruppe KEIN Forum, gibt es
+# keine Themen; dann bleibt nur der Chat selbst.
+# Der Schlüssel trägt ein '#': clean_username entfernt dieses Zeichen, ein
+# echter Handle kann also nie mit dem Melde-Thema kollidieren.
+_TG_NOTIFY_TOPIC_KEY = "#live-notices"
+
+
+def _notify_topic_name() -> str:
+    """Titel des Melde-Themas. Als Funktion gelesen (nicht als Konstante):
+       .env ist zum Import-Zeitpunkt teils noch nicht geladen."""
+    return (os.getenv("TELEGRAM_NOTIFY_TOPIC_NAME", "") or "").strip() or "📡 Live & Offline"
+
+
+async def _ensure_notify_topic(chat_id, bot):
+    """thread_id des Melde-Themas — oder None, wenn Themen nicht möglich sind."""
+    return await _ensure_topic(chat_id, _TG_NOTIFY_TOPIC_KEY, bot,
+                               name=_notify_topic_name())
+
+
+async def _send_live_notice(bot, chat_id: int, text: str, **kwargs) -> bool:
+    """Live-/Offline-Meldung senden — im Forum IMMER ins Melde-Thema.
+
+       Wird das Thema von Hand gelöscht, antwortet Telegram mit
+       'message thread not found'. Ohne Behandlung wäre die Meldung ab da
+       dauerhaft weg, und der Grund stünde nur auf warning. Deshalb: Zuordnung
+       verwerfen, Thema neu anlegen, EINMAL wiederholen. Der Hauptchannel ist
+       bewusst kein Rückfall — er ist genau das, was hier vermieden werden
+       soll; scheitert auch der zweite Versuch, sagt das Log warum."""
+    tid = await _ensure_notify_topic(chat_id, bot)
+    if not tid:
+        # Kein Forum (oder TELEGRAM_USE_TOPICS=0) → Themen gibt es hier nicht.
+        return await _safe_send(bot, chat_id, text, **kwargs)
+    for versuch in (1, 2):
+        try:
+            await bot.send_message(chat_id, text, message_thread_id=tid, **kwargs)
+            return True
+        except BadRequest as e:
+            if versuch == 2 or "thread" not in str(e).lower():
+                break                # kein Themen-Problem → regulärer Fehlerweg
+            log.info("Telegram: Melde-Thema in Chat %s existiert nicht mehr — "
+                     "lege es neu an.", chat_id)
+            _topic_forget(chat_id, _TG_NOTIFY_TOPIC_KEY)
+            neu = await _ensure_notify_topic(chat_id, bot)
+            if not neu or neu == tid:
+                break
+            tid = neu
+        except Exception:
+            break                    # Rate-Limit/Netz → _safe_send kann das
+    ok = await _safe_send(bot, chat_id, text, message_thread_id=tid, **kwargs)
+    if not ok:
+        log.error("Live-/Offline-Meldung nicht zugestellt (Chat %s, Thema %s). "
+                  "Der Hauptchannel ist als Ziel ausgeschlossen. Braucht der Bot "
+                  "noch das Recht 'Themen verwalten'?", chat_id, tid)
+    return ok
+
 
 _tg_topics_load_into_mem()           # gespeicherte Topic-Zuordnungen laden
 
@@ -10713,21 +10782,30 @@ def api_stats(lean: bool = False):
         with db_conn() as conn:
             active_t = conn.execute("SELECT COUNT(*) FROM trackings").fetchone()[0]
             live_now = conn.execute("SELECT COUNT(*) FROM trackings WHERE last_live=1").fetchone()[0]
+            creators = conn.execute(
+                "SELECT COUNT(DISTINCT username) FROM trackings").fetchone()[0]
             rec_count = conn.execute(
                 "SELECT COUNT(*) FROM recordings WHERE deleted_at IS NULL").fetchone()[0]
         return jsonify(active_trackings=active_t, live_now=live_now,
-                       recordings_count=rec_count, lean=True)
+                       creators=creators, recordings_count=rec_count, lean=True)
     total, unique_users, top = get_stats()
     with db_conn() as conn:
         active_t = conn.execute("SELECT COUNT(*) FROM trackings").fetchone()[0]
         live_now = conn.execute("SELECT COUNT(*) FROM trackings WHERE last_live=1").fetchone()[0]
+        # Die Kachel "Creator" zeigte bisher unique_users — das sind DISTINCT
+        # telegram_user_id aus tiktok_checks, also die Menschen, die mal /check
+        # getippt haben. Ein neu getrackter Streamer änderte daran nichts, die
+        # Zahl stand tage- bis wochenlang still. "Creator" sind die getrackten
+        # Handles; unique_users bleibt für die Checks-Kachel erhalten.
+        creators = conn.execute(
+            "SELECT COUNT(DISTINCT username) FROM trackings").fetchone()[0]
         # BUG-FIX (Konsistenz): soft-deleted (X19 Trash) ausschließen. Vorher
         # zählte stats ALLE recordings, während get_all_recordings / overview /
         # captures-Liste gelöschte ausschließen → Header-Count wich nach dem
         # In-den-Papierkorb-Verschieben von der sichtbaren Liste ab.
         rec_count = conn.execute(
             "SELECT COUNT(*) FROM recordings WHERE deleted_at IS NULL").fetchone()[0]
-    return jsonify(total_checks=total, unique_users=unique_users,
+    return jsonify(total_checks=total, unique_users=unique_users, creators=creators,
                    top=[{"username": r["username"], "count": r["cnt"]} for r in top],
                    active_trackings=active_t, live_now=live_now, recordings_count=rec_count)
 
@@ -10937,23 +11015,103 @@ def api_summary_preview():
         return jsonify(ok=False, error=str(e)), 500
 
 
+# ── Zielgruppe für Trackings, die im Dashboard entstehen ────────────────
+# WARUM: Das Dashboard kannte nur den Bulk-Add mit einem Pflichtfeld
+# "group_id". Diese Zahl kennt niemand auswendig — leer gelassen kam
+# "group_id fehlt" (der Streamer wurde also gar nicht angelegt), geraten
+# landete das Tracking in einem Chat, den es nicht gibt: kein Live-Ping,
+# kein Discord-Post, keine gruppenbezogene Ansicht. Beides sah für den
+# Betreiber gleich aus — "der hinzugefügte Streamer taucht nirgends auf".
+# Deshalb löst der Server die Gruppe jetzt selbst auf, wenn keine kommt.
+def _dashboard_track_group() -> int:
+    """Standardgruppe für Trackings ohne explizite group_id.
+       Reihenfolge: DASHBOARD_TRACK_GROUP_ID → DAILY_SUMMARY_CHAT_ID →
+       die meistgenutzte group_id aus trackings (dort läuft der Betrieb
+       nachweislich) → DISCORD_TRACK_GROUP_ID → DISCORD_GUILD_ID →
+       ALLOWED_CHAT_IDS, falls es genau einen gibt. 0 = nicht auflösbar,
+       der Aufrufer meldet das mit Klartext statt still zu schlucken.
+       Als Funktion gelesen, nicht als Modul-Konstante: .env ist zum
+       Import-Zeitpunkt teils noch nicht geladen."""
+    gid = _env_int("DASHBOARD_TRACK_GROUP_ID", 0)
+    if gid:
+        return gid
+    if DAILY_SUMMARY_CHAT_ID:
+        return DAILY_SUMMARY_CHAT_ID
+    try:
+        with db_conn() as conn:
+            row = conn.execute(
+                "SELECT group_id, COUNT(*) AS n FROM trackings "
+                "GROUP BY group_id ORDER BY n DESC LIMIT 1").fetchone()
+        if row and row["group_id"]:
+            return int(row["group_id"])
+    except Exception as e:
+        log.warning("Standardgruppe fürs Dashboard: DB-Abfrage fehlgeschlagen: %s", e)
+    for cand in (DISCORD_TRACK_GROUP_ID, DISCORD_GUILD_ID):
+        if cand:
+            return int(cand)
+    if len(ALLOWED_CHAT_IDS) == 1:
+        return int(next(iter(ALLOWED_CHAT_IDS)))
+    return 0
+
+
+@dashboard_app.route("/api/trackings/groups")
+def api_trackings_groups():
+    """Bekannte Zielgruppen samt Belegung + die aufgelöste Standardgruppe.
+       Damit kann das Dashboard eine Auswahl anbieten, statt den Betreiber
+       eine Chat-ID tippen zu lassen, die er nirgends ablesen kann."""
+    default_gid = _dashboard_track_group()
+
+    def _src(gid: int) -> str:
+        return "discord" if (DISCORD_GUILD_ID and gid == DISCORD_GUILD_ID) else "telegram"
+
+    groups = []
+    try:
+        with db_conn() as conn:
+            rows = conn.execute(
+                "SELECT group_id, COUNT(*) AS n FROM trackings "
+                "GROUP BY group_id ORDER BY n DESC").fetchall()
+        for r in rows:
+            gid = int(r["group_id"] or 0)
+            groups.append({"group_id": gid, "count": r["n"], "source": _src(gid),
+                           "default": gid == default_gid})
+    except Exception as e:
+        return jsonify(ok=False, error=str(e)), 500
+    # Die Standardgruppe steht auch dann zur Wahl, wenn dort noch nichts läuft
+    # (frische Installation — sonst böte das Dashboard genau nichts an).
+    if default_gid and not any(g["group_id"] == default_gid for g in groups):
+        groups.insert(0, {"group_id": default_gid, "count": 0,
+                          "source": _src(default_gid), "default": True})
+    return jsonify(ok=True, groups=groups, default_group_id=default_gid)
+
+
 # F56: Bulk-Tracking-Import
 @dashboard_app.route("/api/trackings/bulk", methods=["POST"])
 def api_trackings_bulk():
     """Bulk-add Trackings für einen Chat. Akzeptiert:
        POST { "group_id": <int>, "usernames": ["@user1", "user2", ...] }
        ODER  { "group_id": <int>, "text": "@u1 @u2\nu3 u4" }   (text auto-split)
-       Returns: { ok: true, added: [...], duplicates: [...], invalid: [...] }
+       Returns: { ok: true, group_id: <int>, added: [...], duplicates: [...],
+                  invalid: [...] }
+
+       group_id ist OPTIONAL: fehlt sie (oder ist 0), übernimmt
+       _dashboard_track_group() die Auflösung. Vorher war sie Pflicht — das
+       Dashboard-Feld blieb leer und der Streamer wurde nie angelegt.
 
        Limit: max 200 Usernames pro Call (sonst Telegram-Rate-Limit-Probleme
        beim späteren Polling und langes Block des Flask-Workers)."""
     payload = request.get_json(silent=True) or {}
-    try:
-        group_id = int(payload.get("group_id", 0))
-    except (TypeError, ValueError):
-        return jsonify(ok=False, error="group_id muss eine Zahl sein"), 400
+    raw_gid = payload.get("group_id")
+    if raw_gid in (None, "", 0, "0"):
+        group_id = _dashboard_track_group()
+    else:
+        try:
+            group_id = int(raw_gid)
+        except (TypeError, ValueError):
+            return jsonify(ok=False, error="group_id muss eine Zahl sein"), 400
     if not group_id:
-        return jsonify(ok=False, error="group_id fehlt"), 400
+        return jsonify(ok=False, error="keine Zielgruppe auflösbar — "
+                       "DASHBOARD_TRACK_GROUP_ID (oder DAILY_SUMMARY_CHAT_ID) "
+                       "in .env setzen oder group_id mitgeben"), 400
 
     # Usernames-Liste aus 'usernames' ODER 'text' bauen
     names = payload.get("usernames")
@@ -10993,7 +11151,7 @@ def api_trackings_bulk():
         except Exception as e:
             log.warning(f"bulk_add: sofort-recheck setup failed: {e}")
 
-    return jsonify(ok=True, **result,
+    return jsonify(ok=True, group_id=group_id, **result,
                    summary={"added": len(result["added"]),
                             "duplicates": len(result["duplicates"]),
                             "invalid": len(result["invalid"]),
@@ -12353,20 +12511,27 @@ def api_azrael_ask():
 @dashboard_app.route("/api/stream/timeline")
 def api_stream_timeline():
     """Kapitel-Marker (Auto-Director) der laufenden/letzten Session für die Timeline."""
-    user = (request.args.get("user") or (_RESTREAM_ACTIVE or {}).get("user") or "").lstrip("@").lower()
+    # Groß-/Kleinschreibung: trackings speichern den Handle wie getippt
+    # (clean_username macht kein lower()). Ein hart kleingeschriebener Name
+    # traf hier weder die Kapitel noch die laufende Session — die Timeline
+    # blieb leer und meldete "nicht live", während gesendet wurde.
+    user = _resolve_tracked_user(
+        (request.args.get("user") or (_RESTREAM_ACTIVE or {}).get("user") or "").lstrip("@").strip())
     if not user:
         return jsonify(ok=True, user=None, chapters=[], duration_secs=0, live=False)
     since = (datetime.now(timezone.utc) - timedelta(hours=12)).isoformat()
     try:
         with db_conn() as conn:
             rows = conn.execute("SELECT offset_secs, reason, title, created_at FROM stream_chapters "
-                                "WHERE username=? AND created_at >= ? ORDER BY offset_secs ASC LIMIT 40",
+                                "WHERE LOWER(username)=LOWER(?) AND created_at >= ? "
+                                "ORDER BY offset_secs ASC LIMIT 40",
                                 (user, since)).fetchall()
     except Exception as e:
         return jsonify(ok=False, error=str(e)), 500
     chapters = [{"offset": int(r["offset_secs"] or 0), "reason": r["reason"] or "",
                  "title": r["title"] or "", "at": (r["created_at"] or "")[11:19]} for r in rows]
-    start = _LIVE_SESSION_START.get(user)
+    _sk = _ci_key(_LIVE_SESSION_START, user)
+    start = _LIVE_SESSION_START.get(_sk) if _sk else None
     dur = int(_time_mod.time() - start) if start else (max([c["offset"] for c in chapters], default=0) + 60)
     return jsonify(ok=True, user=user, live=bool(start), chapters=chapters,
                    duration_secs=max(dur, 1),
@@ -12377,10 +12542,14 @@ def api_stream_timeline():
 def api_restream_report():
     """1-Klick-Sende-Report: Session-Bilanz → Discord (+ Rückgabe für die Anzeige)."""
     d = request.get_json(silent=True) or {}
-    user = (d.get("user") or (_RESTREAM_ACTIVE or {}).get("user") or "").lstrip("@").lower()
+    # Wie in /api/stream/timeline: Schreibweise aus den trackings auflösen,
+    # sonst zählt der Report für "@RabiLive" nichts (Aufnahmen, Dauer, Momente).
+    user = _resolve_tracked_user(
+        (d.get("user") or (_RESTREAM_ACTIVE or {}).get("user") or "").lstrip("@").strip())
     if not user:
         return jsonify(ok=False, error="kein aktiver Stream — Streamer angeben"), 400
-    start = _LIVE_SESSION_START.get(user)
+    _sk = _ci_key(_LIVE_SESSION_START, user)
+    start = _LIVE_SESSION_START.get(_sk) if _sk else None
     stats = _collect_session_stats(user, start)
     dur = stats.get("dur_min")
     lines = [f"📊 **Sende-Report @{user}**",
@@ -13501,27 +13670,94 @@ def api_version():
 # Refresh automatisch. Redirect-URI MUSS in der Kick-Developer-App eingetragen
 # sein und mit KICK_REDIRECT_URI übereinstimmen.
 # ═══════════════════════════════════════════════════════════════════════
+def _public_base_url() -> str:
+    """Die Basis-URL, unter der dieses Dashboard von aussen erreichbar ist —
+       also das, was im Browser steht (z.B. https://example.dev:8050).
+
+       WARUM: Alle OAuth-Rueckrufe laufen ueber den nginx-Proxy. Kick konnte
+       seine Redirect-URI im Dashboard setzen, Twitch und YouTube hatten nur
+       .env und sonst 'http://localhost:3000' — eine Adresse, die weder Google
+       noch der Betreiber je zu Gesicht bekommt. Folge: Google bricht mit
+       redirect_uri_mismatch ab, BEVOR die Kontoauswahl erscheint, und weil der
+       Flow nie durchlief, gab es auch nie den Trennen-Knopf. Aus einer falschen
+       Adresse wurden drei Symptome.
+
+       Reihenfolge: PUBLIC_BASE_URL (.env) → Proxy-Header, aber NUR von einem
+       vertrauten Absender (TRUSTED_PROXIES oder Loopback — sonst koennte
+       jeder per gefaelschtem X-Forwarded-Host die Rueckruf-Adresse umbiegen)
+       → Host-Header → localhost:DASHBOARD_PORT."""
+    forced = (os.getenv("PUBLIC_BASE_URL", "") or "").strip().rstrip("/")
+    if forced:
+        return forced
+    try:
+        remote = (request.remote_addr or "").strip()
+        proto = host = port = ""
+        if remote in TRUSTED_PROXIES or remote in _LOOPBACK:
+            def _h(name):
+                return (request.headers.get(name, "") or "").split(",")[0].strip()
+            proto, host, port = _h("X-Forwarded-Proto"), _h("X-Forwarded-Host"), _h("X-Forwarded-Port")
+        host = host or (request.headers.get("Host", "") or "").strip()
+        # nginx setzt in der Regel nur $host — ohne Port. Läuft das Dashboard
+        # unter einem anderen Port als 80/443 (hier: 8050), fehlt der in der
+        # Rückruf-Adresse, und Google lehnt sie als fremd ab. X-Forwarded-Port
+        # schließt die Lücke, wenn der Proxy ihn mitschickt.
+        if port and ":" not in host and port not in ("80", "443"):
+            host = f"{host}:{port}"
+        if host:
+            return f"{proto or request.scheme or 'https'}://{host}".rstrip("/")
+    except Exception:
+        # Kein Request-Kontext (Start, Hintergrund-Task) — dann der Fallback.
+        pass
+    return f"http://localhost:{DASHBOARD_PORT}"
+
+
+def _oauth_redirect_env(platform: str) -> str:
+    """Die .env-Vorgabe je Plattform.
+
+       Bewusst ausgeschrieben statt os.getenv(f"{platform.upper()}_REDIRECT_URI"):
+       tools/gen_env_example.py findet Variablen nur als Literal. Ein dynamisch
+       gebauter Name fehlt danach in der .env-Vorlage — und was dort fehlt,
+       existiert fuer den Betreiber nicht."""
+    return {
+        "kick": os.getenv("KICK_REDIRECT_URI", ""),
+        "twitch": os.getenv("TWITCH_REDIRECT_URI", ""),
+        "youtube": os.getenv("YOUTUBE_REDIRECT_URI", ""),
+    }.get(platform, "").strip()
+
+
+def _oauth_redirect_uri(platform: str) -> str:
+    """Redirect-URI eines OAuth-Flows. app_config schlaegt .env schlaegt die
+       oeffentliche Basis-URL. Damit gilt fuer Kick, Twitch und YouTube
+       dieselbe Regel — und hinter dem Proxy stimmt sie ohne Konfiguration."""
+    saved = (_cfg_get(f"{platform}.redirect_uri", "") or "").strip()
+    if saved:
+        return saved
+    env = _oauth_redirect_env(platform)
+    if env:
+        return env
+    return f"{_public_base_url()}/api/{platform}/oauth/callback"
+
+
+def _oauth_redirect_source(platform: str) -> str:
+    """Woher stammt die aktive Redirect-URI? Fuer die Dashboard-Warnung."""
+    if (_cfg_get(f"{platform}.redirect_uri", "") or "").strip():
+        return "config"
+    if _oauth_redirect_env(platform):
+        return "env"
+    return "fallback"
+
+
 def _kick_redirect_uri():
     # v4.0-W23: app_config schlaegt .env schlaegt Fallback. Damit laesst sich die
     # Redirect-URI LIVE im Dashboard setzen — ohne .env/systemd-Neustart, der die
     # haeufigste Ursache fuer "steht immer noch auf localhost:8050" ist (Variable
     # nicht in der EnvironmentFile oder Bot nicht neu gestartet).
-    saved = (_cfg_get("kick.redirect_uri", "") or "").strip()
-    if saved:
-        return saved
-    env = os.getenv("KICK_REDIRECT_URI", "").strip()
-    if env:
-        return env
-    return f"http://localhost:{DASHBOARD_PORT}/api/kick/oauth/callback"
+    return _oauth_redirect_uri("kick")
 
 
 def _kick_redirect_source():
     """Woher stammt die aktive Redirect-URI? Fuer die Dashboard-Warnung."""
-    if (_cfg_get("kick.redirect_uri", "") or "").strip():
-        return "config"
-    if os.getenv("KICK_REDIRECT_URI", "").strip():
-        return "env"
-    return "fallback"
+    return _oauth_redirect_source("kick")
 
 
 def _kick_redirect_public(uri):
@@ -14482,23 +14718,70 @@ def api_discord_invite():
 
 
 # ═══ v37 Welle 3: Streamer-Drawer (#18) + Recorder-Tier (#11) ═══
-@dashboard_app.route("/api/streamer/detail")
-def api_streamer_detail():
-    user = (request.args.get("user") or "").lstrip("@").lower()
-    if not user:
-        return jsonify(ok=False, error="user fehlt"), 400
-    out = {"ok": True, "user": user, "tier": _ACTIVE_TIER.get(user),
-           "live": user in _LIVE_SESSION_START, "recordings": [], "chapters": [], "rec_total": 0}
+def _ci_key(mapping, name: str):
+    """Passenden Schlüssel aus einem username-keyed Dict holen, Groß-/
+       Kleinschreibung egal. Die Laufzeit-Dicts (_LIVE_SESSION_START,
+       _ACTIVE_TIER) sind mit der GESPEICHERTEN Schreibweise des Trackings
+       gefüllt; wer lowercase nachschlägt, findet nichts."""
+    if not name:
+        return None
+    if name in mapping:
+        return name
+    low = name.lower()
+    for k in list(mapping):
+        if isinstance(k, str) and k.lower() == low:
+            return k
+    return None
+
+
+def _resolve_tracked_user(name: str) -> str:
+    """Gespeicherte Schreibweise eines getrackten Handles (case-insensitiv).
+       Fällt auf die Eingabe zurück, wenn nichts getrackt ist — dann sieht
+       die Karte wenigstens den Namen, den der Betreiber angeklickt hat."""
+    if not name:
+        return ""
     try:
         with db_conn() as conn:
-            recs = conn.execute("SELECT filepath, created_at FROM recordings WHERE username=? "
+            row = conn.execute(
+                "SELECT username FROM trackings WHERE LOWER(username)=LOWER(?) LIMIT 1",
+                (name,)).fetchone()
+        if row and row["username"]:
+            return row["username"]
+    except Exception as e:
+        log.warning("Streamer-Auflösung für @%s fehlgeschlagen: %s", name, e)
+    return name
+
+
+@dashboard_app.route("/api/streamer/detail")
+def api_streamer_detail():
+    raw = (request.args.get("user") or "").lstrip("@").strip()
+    if not raw:
+        return jsonify(ok=False, error="user fehlt"), 400
+    # WARUM case-insensitiv: clean_username macht KEIN lower(), die trackings
+    # speichern den Handle also so, wie er getippt wurde ("@RabiLive"). Diese
+    # Route hat stur .lower() angewendet — bei jedem Handle mit Großbuchstaben
+    # traf keine einzige Abfrage: die Streamer-Karte zeigte OFFLINE, 0
+    # Aufnahmen, keine Kapitel, obwohl der Streamer gerade sendete. Genau das
+    # sah im Dashboard aus wie "der hinzugefügte Streamer zählt nirgends".
+    user = _resolve_tracked_user(raw)
+    live_key = _ci_key(_LIVE_SESSION_START, user)
+    tier_key = _ci_key(_ACTIVE_TIER, user)
+    out = {"ok": True, "user": user,
+           "tier": _ACTIVE_TIER.get(tier_key) if tier_key else None,
+           "live": bool(live_key), "recordings": [], "chapters": [], "rec_total": 0}
+    try:
+        with db_conn() as conn:
+            recs = conn.execute("SELECT filepath, created_at FROM recordings "
+                                "WHERE LOWER(username)=LOWER(?) "
                                 "ORDER BY id DESC LIMIT 10", (user,)).fetchall()
             out["recordings"] = [{"file": os.path.basename(r["filepath"] or ""),
                                   "at": (r["created_at"] or "")[:16].replace("T", " ")} for r in recs]
-            out["rec_total"] = conn.execute("SELECT COUNT(*) AS c FROM recordings WHERE username=?",
+            out["rec_total"] = conn.execute("SELECT COUNT(*) AS c FROM recordings "
+                                            "WHERE LOWER(username)=LOWER(?)",
                                             (user,)).fetchone()["c"]
             chaps = conn.execute("SELECT offset_secs, title, reason, created_at FROM stream_chapters "
-                                 "WHERE username=? ORDER BY id DESC LIMIT 8", (user,)).fetchall()
+                                 "WHERE LOWER(username)=LOWER(?) "
+                                 "ORDER BY id DESC LIMIT 8", (user,)).fetchall()
             out["chapters"] = [{"offset": c["offset_secs"] or 0,
                                 "title": c["title"] or c["reason"] or "Moment",
                                 "at": (c["created_at"] or "")[:16].replace("T", " ")} for c in chaps]
@@ -16465,15 +16748,45 @@ def api_youtube_oauth_status():
     try:
         st = _ytoauth.status()
         # Google erlaubt als Redirect nur HTTPS oder http://localhost:PORT —
-        # eine nackte IP wird abgelehnt (kein Zertifikat moeglich). Deshalb
-        # derselbe Default wie bei Twitch: localhost:3000 per SSH-Tunnel.
-        forced = (os.getenv("YOUTUBE_REDIRECT_URI", "") or "").strip()
-        st["redirect_uri"] = forced or "http://localhost:3000/api/youtube/oauth/callback"
-        st["redirect_forced"] = bool(forced)
-        st["needs_tunnel"] = not forced
+        # eine nackte IP wird abgelehnt (kein Zertifikat moeglich). Hinter dem
+        # nginx-Proxy ist genau die Adresse richtig, unter der das Dashboard
+        # gerade geoeffnet ist; frueher stand hier stur localhost:3000, und
+        # Google brach mit redirect_uri_mismatch ab (siehe _public_base_url).
+        eff = _oauth_redirect_uri("youtube")
+        src = _oauth_redirect_source("youtube")
+        st["redirect_uri"] = eff
+        st["redirect_source"] = src
+        st["redirect_forced"] = src != "fallback"
+        st["redirect_public"] = _kick_redirect_public(eff)
+        # Ein Tunnel ist nur noetig, solange die Adresse auf localhost zeigt.
+        st["needs_tunnel"] = not st["redirect_public"]
         return jsonify(ok=True, **st)
     except Exception as e:
         return jsonify(ok=False, error=str(e)), 500
+
+
+@dashboard_app.route("/api/youtube/oauth/redirect", methods=["POST"])
+def api_youtube_oauth_redirect():
+    """Redirect-URI live setzen (app_config), ohne .env/Neustart — wie bei Kick.
+       Muss danach 1:1 in der Google-Cloud-Console unter 'Autorisierte
+       Weiterleitungs-URIs' stehen. Leerer Wert loescht die Ueberschreibung."""
+    data = request.get_json(silent=True) or {}
+    uri = str(data.get("uri", "") or "").strip()
+    if uri:
+        low = uri.lower()
+        if not (low.startswith("http://") or low.startswith("https://")):
+            return jsonify(ok=False, error="URI muss mit http:// oder https:// beginnen"), 400
+        if not low.endswith("/api/youtube/oauth/callback"):
+            return jsonify(ok=False, error="URI muss auf /api/youtube/oauth/callback enden "
+                           "(exakt dieser Pfad ist die Rueckruf-Route)"), 400
+        if low.startswith("http://") and "localhost" not in low and "127.0.0.1" not in low:
+            return jsonify(ok=False, error="Google akzeptiert http:// nur fuer localhost — "
+                           "sonst https:// verwenden"), 400
+    _cfg_set("youtube.redirect_uri", uri)
+    eff = _oauth_redirect_uri("youtube")
+    return jsonify(ok=True, redirect_uri=eff,
+                   redirect_source=_oauth_redirect_source("youtube"),
+                   redirect_public=_kick_redirect_public(eff))
 
 
 @dashboard_app.route("/api/youtube/oauth/start")
@@ -16483,9 +16796,12 @@ def api_youtube_oauth_start():
         return jsonify(ok=False, error="YOUTUBE_CLIENT_ID fehlt in der .env"), 400
     if not (os.getenv("YOUTUBE_CLIENT_SECRET", "") or "").strip():
         return jsonify(ok=False, error="YOUTUBE_CLIENT_SECRET fehlt in der .env"), 400
-    forced = (os.getenv("YOUTUBE_REDIRECT_URI", "") or "").strip()
-    redirect_uri = forced or "http://localhost:3000/api/youtube/oauth/callback"
-    url = _ytoauth.authorize_url(secrets.token_urlsafe(16), redirect_uri=redirect_uri)
+    redirect_uri = _oauth_redirect_uri("youtube")
+    # 'select_account consent' ausdruecklich mitgeben statt auf den Modul-
+    # Default zu bauen: das ist die Kontoauswahl, ohne die man mit mehreren
+    # Google-Konten immer beim zuletzt benutzten landet.
+    url = _ytoauth.authorize_url(secrets.token_urlsafe(16), redirect_uri=redirect_uri,
+                                 prompt="select_account consent")
     if not url:
         return jsonify(ok=False, error="Authorize-URL nicht baubar"), 400
     return redirect(url)
@@ -16522,6 +16838,41 @@ def api_youtube_oauth_forget():
         return jsonify(ok=True)
     except Exception as e:
         return jsonify(ok=False, error=str(e)), 500
+
+
+@dashboard_app.route("/api/youtube/oauth/logout", methods=["POST"])
+def api_youtube_oauth_logout():
+    """Vom Google-Konto abmelden: Zugriff BEI GOOGLE widerrufen und lokal
+       loeschen. Unterschied zu /forget: danach ist auch die Freigabe im
+       Google-Konto weg, der naechste Verbindungsversuch fragt wieder nach
+       Konto und Zustimmung. Das ist der Weg, um auf ein anderes Google-Konto
+       zu wechseln, ohne myaccount.google.com von Hand aufzurufen."""
+    import aiohttp
+    # Stammt der Token aus der .env, ueberlebt er das Abmelden: beim naechsten
+    # Start liest ytoauth ihn dort wieder ein — dann steht "verbunden (.env)"
+    # im Panel, waehrend der Zugriff bei Google laengst widerrufen ist. Das
+    # sagen wir, statt es den Betreiber suchen zu lassen.
+    _aus_env = (os.getenv("YOUTUBE_REFRESH_TOKEN", "") or "").strip()
+    try:
+        ok, msg = _run_async_from_flask(_ytoauth.revoke(aiohttp), timeout=25)
+    except RuntimeError as e:
+        if _loop_not_ready(e):
+            # Ohne Loop kein Netz-Aufruf — wenigstens lokal sauber trennen,
+            # damit der Knopf nicht wirkungslos aussieht.
+            _ytoauth.forget()
+            ok, msg = False, ("Bot-Loop startet noch — lokal getrennt, der "
+                              "Widerruf bei Google muss wiederholt werden.")
+        else:
+            return jsonify(ok=False, error=str(e)), 500
+    except Exception as e:
+        return jsonify(ok=False, error=str(e)), 500
+    _YT_SEND["token"], _YT_SEND["token_exp"] = "", 0
+    _YT_API_CACHE.update(ts=0.0, data=None)
+    if _aus_env:
+        msg += (" Achtung: YOUTUBE_REFRESH_TOKEN steht noch in der .env — der "
+                "Wert ist jetzt tot, wird beim naechsten Start aber wieder "
+                "gelesen. Zeile dort entfernen.")
+    return jsonify(ok=ok, message=msg)
 
 
 # ═══ B120: FINANZAMT — Einnahmen-Journal (nc.ledger) ═══════════════════
@@ -16603,13 +16954,41 @@ def api_twitch_oauth_status():
         # MUSS. Twitch erlaubt nur HTTPS oder http://localhost — eine IP mit
         # https wird abgelehnt. Default localhost:3000 (per SSH-Tunnel), oder
         # der erzwungene TWITCH_REDIRECT_URI (echte Domain mit HTTPS).
-        forced = (os.getenv("TWITCH_REDIRECT_URI", "") or "").strip()
-        st["redirect_uri"] = forced or "http://localhost:3000/api/twitch/oauth/callback"
-        st["redirect_forced"] = bool(forced)
-        st["needs_tunnel"] = not forced
+        # Wie bei Kick/YouTube: ohne Vorgabe die Adresse, unter der das
+        # Dashboard gerade laeuft (hinter dem Proxy also die echte Domain).
+        eff = _oauth_redirect_uri("twitch")
+        st["redirect_uri"] = eff
+        st["redirect_source"] = _oauth_redirect_source("twitch")
+        st["redirect_forced"] = st["redirect_source"] != "fallback"
+        st["redirect_public"] = _kick_redirect_public(eff)
+        st["needs_tunnel"] = not st["redirect_public"]
         return jsonify(ok=True, **st)
     except Exception as e:
         return jsonify(ok=False, error=str(e)), 500
+
+
+@dashboard_app.route("/api/twitch/oauth/redirect", methods=["POST"])
+def api_twitch_oauth_redirect():
+    """Redirect-URI live setzen (app_config), ohne .env/Neustart — wie bei Kick
+       und YouTube. Muss danach 1:1 in der Twitch-App unter 'OAuth Redirect
+       URLs' stehen. Leerer Wert loescht die Ueberschreibung."""
+    data = request.get_json(silent=True) or {}
+    uri = str(data.get("uri", "") or "").strip()
+    if uri:
+        low = uri.lower()
+        if not (low.startswith("http://") or low.startswith("https://")):
+            return jsonify(ok=False, error="URI muss mit http:// oder https:// beginnen"), 400
+        if not low.endswith("/api/twitch/oauth/callback"):
+            return jsonify(ok=False, error="URI muss auf /api/twitch/oauth/callback enden "
+                           "(exakt dieser Pfad ist die Rueckruf-Route)"), 400
+        if low.startswith("http://") and "localhost" not in low and "127.0.0.1" not in low:
+            return jsonify(ok=False, error="Twitch akzeptiert http:// nur fuer localhost — "
+                           "sonst https:// verwenden"), 400
+    _cfg_set("twitch.redirect_uri", uri)
+    eff = _oauth_redirect_uri("twitch")
+    return jsonify(ok=True, redirect_uri=eff,
+                   redirect_source=_oauth_redirect_source("twitch"),
+                   redirect_public=_kick_redirect_public(eff))
 
 
 @dashboard_app.route("/api/twitch/oauth/start")
@@ -16626,9 +17005,10 @@ def api_twitch_oauth_start():
     # Ausnahme: http://localhost:PORT ist erlaubt. Eine IP mit https geht NICHT
     # (kein Zertifikat fuer nackte IPs). Deshalb ist der Default localhost:3000,
     # das der Nutzer per SSH-Tunnel auf den Bot legt (docs/SETUP_TWITCH_OAUTH.md).
-    # Wer eine echte Domain + HTTPS hat, setzt TWITCH_REDIRECT_URI darauf.
-    forced = (os.getenv("TWITCH_REDIRECT_URI", "") or "").strip()
-    redirect_uri = forced or "http://localhost:3000/api/twitch/oauth/callback"
+    # Wer eine echte Domain + HTTPS hat, setzt TWITCH_REDIRECT_URI darauf —
+    # oder laesst es: hinter dem Proxy liefert _oauth_redirect_uri genau diese
+    # Domain, ohne dass irgendwo eine Adresse doppelt gepflegt werden muss.
+    redirect_uri = _oauth_redirect_uri("twitch")
     url = _twoauth.authorize_url(secrets.token_urlsafe(16), redirect_uri=redirect_uri)
     if not url:
         return jsonify(ok=False, error="Authorize-URL nicht baubar"), 400
@@ -31639,16 +32019,62 @@ async def main():
                     "hint": cs.get("hint") or ""}
 
         def _brain_restream_health():
-            # M8: tee-Fehler + Kick-Key-Kollisionen fuer den RestreamSentinel.
+            # M8: tee-Fehler + Ziel-Doppelbelegungen fuer den RestreamSentinel.
+            #
+            # WARUM das hier umgebaut wurde: seit v4.0-W77 ist die Zielliste
+            # GLOBAL (nc.restream_targets liest Kick/Twitch/YouTube aus der
+            # .env). 'kick_url' ist seitdem nur noch "die erste konfigurierte
+            # Plattform" — bei EINEM Restream, der auf drei Plattformen
+            # ausspielt, ist das voellig normal. Der alte Vergleich lief ueber
+            # genau dieses Feld und meldete deshalb "Kick-Key-Kollision",
+            # sobald ueberhaupt zwei Restreams liefen: ohne Plattformnamen,
+            # ohne Quelle, mit einem Rat ("eigene Keys je Channel"), der zur
+            # heutigen Konfiguration nicht mehr passt.
+            #
+            # Jetzt: je Prozess ALLE Ziele vergleichen, nur LEBENDE Prozesse
+            # zaehlen, RESTREAM_SINGLE respektieren (dann kann es die Lage
+            # gar nicht geben) und Quelle + Plattform mitgeben, damit der
+            # Befund benennt, welche zwei Zeilen sich in die Quere kommen.
             mgr = _RESTREAM_MGR
             tf = mgr.tee_fehler()          # v4.0-W116
             procs = getattr(mgr, "_procs", {}) or {}
-            by_key = {}
+            live = {}
             for _rid, _info in procs.items():
-                _k = (_info or {}).get("kick_url")
-                if _k:
-                    by_key.setdefault(_k, []).append(_rid)
-            collisions = [sorted(v) for v in by_key.values() if len(v) > 1]
+                _proc = (_info or {}).get("proc")
+                if _proc is not None and _proc.returncode is not None:
+                    continue           # beendet, wird gleich aus _procs geraeumt
+                live[_rid] = _info or {}
+            quellen = {}
+            try:
+                if live:
+                    with db_conn() as conn:
+                        rows = conn.execute(
+                            "SELECT id, source_username FROM restreams WHERE id IN ("
+                            + ",".join("?" * len(live)) + ")",
+                            list(live)).fetchall()
+                    quellen = {r["id"]: (r["source_username"] or "") for r in rows}
+            except Exception as e:
+                log.debug("restream-health: Quellen nicht lesbar: %s", e)
+            by_url = {}
+            for _rid, _info in live.items():
+                _ziele = _info.get("tee_targets") or []
+                if not _ziele and _info.get("kick_url"):
+                    _ziele = [("?", _info["kick_url"])]
+                for _name, _url in _ziele:
+                    if _url:
+                        by_url.setdefault(_url, {"platform": _name, "rids": []})
+                        by_url[_url]["rids"].append(_rid)
+            collisions = []
+            if not RESTREAM_SINGLE:
+                for _eintrag in by_url.values():
+                    _rids = sorted(_eintrag["rids"])
+                    if len(_rids) > 1:
+                        collisions.append({
+                            "platform": _eintrag["platform"],
+                            "rids": _rids,
+                            "sources": [quellen.get(r, "") for r in _rids],
+                            "same_source": len({quellen.get(r, "") for r in _rids}) == 1,
+                        })
             return {"tee_fail": tf, "key_collisions": collisions}
 
         def _brain_moderation_snap():
