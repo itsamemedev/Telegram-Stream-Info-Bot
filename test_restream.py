@@ -6612,6 +6612,40 @@ def test_v40_w122_trackings_ansicht():
        "Twitch-Rueckruf pflegbar")
 
 
+def test_v40_w124_offline_meldung_ins_thema():
+    """v4.0-W124: auch die Offline-Meldung landet im Melde-Thema.
+
+    W121 stellte Live UND Offline auf _send_live_notice um — geprueft wurde
+    aber nur _handle_single_tracking. Die Offline-Meldung hat einen ZWEITEN
+    Sender: den Fan-Out am Ende der Aufnahme. Beide sind ueber
+    claim_live_transition(going_live=False) serialisiert, und der
+    Aufnahme-Pfad gewinnt den Anspruch praktisch immer — die Aufnahme endet
+    in derselben Sekunde, in der der Stream stirbt, der Live-Check pollt erst
+    30s spaeter. Ergebnis im Betrieb: LIVE im Thema, OFFLINE trotzdem im
+    Hauptchat. Dieser Vertrag haelt beide Sender fest.
+    """
+    src = open("bot.py", encoding="utf-8").read()
+    # Sender 1: Live-Check-Worker (W121 — hier nur zur Vollstaendigkeit).
+    _hs = src[src.index("async def _handle_single_tracking("):
+              src.index("async def _ensure_topic(")]
+    assert "_send_live_notice(bot_app.bot, chat_id" in _hs, \
+        "Offline-Meldung des Live-Check-Workers nicht im Melde-Thema"
+    # Sender 2: Fan-Out am Ende der Aufnahme — der, der real feuert.
+    _fan = src[src.index("# F30: OFFLINE-Notification BEVOR Upload startet"):]
+    _fan = _fan[:_fan.index("# Upload an alle Fan-Out Chats")]
+    assert "claim_live_transition(ftid, going_live=False)" in _fan, \
+        "Fan-Out-Block nicht mehr am erwarteten Anker"
+    assert "_send_live_notice(" in _fan, \
+        "Offline-Meldung am Aufnahme-Ende geht wieder in den Hauptchat"
+    assert "_safe_send(" not in _fan, \
+        "_safe_send im Fan-Out — ohne message_thread_id landet das im Hauptchat"
+    # F63 gilt fuer BEIDE Sender: sonst kam nachts OFFLINE ohne vorheriges LIVE.
+    assert "_is_quiet_hours()" in _fan, \
+        "Fan-Out ignoriert Quiet Hours — OFFLINE-Spam ohne vorheriges LIVE"
+    ok("v4.0-w124: beide Offline-Sender schreiben ins Melde-Thema, "
+       "beide achten die Quiet Hours")
+
+
 def main():
     print("test_restream — Restream-Kernlogik (Mock-basiert)")
     test_streak()
@@ -6796,6 +6830,7 @@ def main():
     test_v40_w118_sicherheitsaudit()
     test_v40_w121_oauth_proxy_meldethema_kollision()
     test_v40_w122_trackings_ansicht()
+    test_v40_w124_offline_meldung_ins_thema()
     print(f"test_restream OK — {PASS} Verträge grün")
 
 

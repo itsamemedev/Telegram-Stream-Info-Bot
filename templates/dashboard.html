@@ -1047,7 +1047,6 @@ td .dot, .dot{display:inline-block;width:8px;height:8px;border-radius:50%;backgr
   background:var(--bg2);overflow:hidden;border-radius:var(--r-sm);margin-bottom:16px}
 .worldmap-wrap svg{display:block;width:100%;height:auto}
 .wm-land{fill:var(--bg);stroke:var(--neon-dim);stroke-width:.3;stroke-linejoin:round;opacity:.9}
-.wm-grat line{stroke:var(--border);stroke-width:.25;opacity:.5}
 .wm-arc{fill:none;stroke:var(--neon-dim);stroke-width:.35;stroke-linecap:round;opacity:.5}
 .wm-atk{fill:var(--amber);opacity:.85}
 .wm-atk.hot{fill:var(--red)}
@@ -4258,14 +4257,11 @@ var ncBrainNet3D=(function(){
   window.addEventListener('resize',function(){if(cv&&CURRENT_VIEW==='brain'){fit();kick();}});
   return {start:start,snapshotInto:snapshotInto};
 })();
-function ncGratG(){
-  var g='<g class="wm-grat">',lon,lat,x,y;
-  for(lon=-150;lon<=150;lon+=30){x=lon+180;g+='<line x1="'+x+'" y1="6" x2="'+x+'" y2="146"/>';}
-  for(lat=-60;lat<=60;lat+=30){y=90-lat;g+='<line x1="0" y1="'+y+'" x2="360" y2="'+y+'"/>';}
-  return g+'</g>';
-}
 /* v4.0-W71: ncDefenseMap (2D-SVG-Karte) entfernt — seit W58 ersetzt durch
-   die 3D-Weltkugel ncDefenseGlobe; war toter Code (keine Aufrufe mehr). */
+   die 3D-Weltkugel ncDefenseGlobe; war toter Code (keine Aufrufe mehr).
+   Nachgezogen: ncGratG() (das Gradnetz dieser Karte) und die zugehoerige
+   Regel .wm-grat blieben damals stehen — die Funktion hatte danach keinen
+   einzigen Aufrufer mehr. */
 
 /* v4.0-W58: ncDefenseGlobe — die Angriffskarte als drehbare 3D-Weltkugel.
    Eigenständig, gleiche Daten wie ncDefenseMap (attacks[lat,lon,count,…], server).

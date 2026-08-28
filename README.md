@@ -194,7 +194,7 @@ flowchart TB
     DC --> BOT
     TT --> BOT
 
-    BOT["bot.py<br/>Monolith · 32.569 Zeilen<br/>Scraper · Recorder · Restream<br/>Flask-Dashboard · 265 eigene Routen"]:::core
+    BOT["bot.py<br/>Monolith · 32.596 Zeilen<br/>Scraper · Recorder · Restream<br/>Flask-Dashboard · 265 eigene Routen"]:::core
 
     BOT -->|configure| NC["nc/ — 89 Fachmodule<br/>Schema · OAuth · Restream<br/>Ledger · Moderation · Intel"]:::lib
     NC --> RT["nc/routes/ — 8 Blueprints<br/>90 weitere API-Routen"]:::lib
@@ -856,7 +856,7 @@ Vollständige Historie: **[`docs/CHANGELOG.md`](docs/CHANGELOG.md)** ·
 ## 🧭 Roadmap
 
 Der nächste grosse Schritt ist kein Feature, sondern Aufräumen: **`bot.py` hat
-32.569 Zeilen**. Die Datei ist der Engpass des Projekts. Die Messlatte dafür ist
+32.596 Zeilen**. Die Datei ist der Engpass des Projekts. Die Messlatte dafür ist
 aber keine Zeilenzahl:
 
 > **Eine neue API-Route anlegen, ohne `bot.py` zu öffnen.**

@@ -11,6 +11,51 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Behoben — Offline-Meldungen landeten weiter im Hauptchat (W124)
+
+Das Melde-Thema aus W121 wirkte nur halb: LIVE ging hinein, OFFLINE weiter
+in den Hauptchannel. Grund war nicht der Sendeweg, sondern dass es **zwei**
+Sender für die Offline-Meldung gibt, beide über
+`claim_live_transition(going_live=False)` serialisiert:
+
+* der Live-Check-Worker in `_handle_single_tracking` — der war in W121
+  umgestellt und wurde auch als einziger geprüft,
+* der Fan-Out am **Ende der Aufnahme** in `handle_recording_finished` — der
+  war es nicht.
+
+Der zweite gewinnt den Anspruch praktisch immer: die Aufnahme endet in
+derselben Sekunde, in der der Stream stirbt, während der Live-Check erst
+~30 s später pollt. Damit ging real jede Offline-Meldung über den einfachen
+Sendeweg ohne `message_thread_id` — also in den Hauptchat. Jetzt nutzen
+beide Sender `_send_live_notice`.
+
+Am selben Ort lag ein zweiter Fehler derselben Ursache: **F63 (Quiet Hours)**
+prüfte nur der Live-Check-Worker. Weil der andere Sender feuerte, kam nachts
+genau der Fall, den F63 verhindern soll — OFFLINE ohne vorheriges LIVE. Der
+Anspruch wird weiterhin geltend gemacht (er setzt `last_live`), nur die
+Meldung entfällt.
+
+Neuer Vertrag `test_v40_w124_offline_meldung_ins_thema` hält **beide** Sender
+fest, statt wie W121 nur einen.
+
+### Behoben — zwei Dauerläufer verschluckten ihre Fehler (W124)
+
+Verstoß gegen die eigene Regel „jeder Dauerläufer gehört auf `_loop_fehler`,
+nie auf `log.debug` und nie auf `pass`":
+
+* `_intel_index_loop` (Archiv-Indexer/Transkription) meldete auf `log.debug`.
+  Fällt Whisper aus, ist die DB gesperrt oder die Platte voll, transkribiert
+  er nie wieder — und in einem ERROR-Log steht dazu keine Zeile.
+* `_scheduler_loop` schrieb `last_run_date` in einem stillen `except: pass`.
+  Schlägt das UPDATE fehl, gilt die Aufgabe als nie gelaufen und feuert alle
+  30 s den ganzen Tag erneut, lautlos.
+
+### Entfernt — Rest der 2D-Angriffskarte (W124)
+
+`ncGratG()` (das Gradnetz) und die Regel `.wm-grat` blieben stehen, als W71
+`ncDefenseMap` entfernte. Die Funktion hatte danach keinen einzigen Aufrufer
+mehr — sie war die einzige nie aufgerufene der 488 Dashboard-Funktionen.
+
 ### Behoben — README rendert nicht mehr, Kennzahlen waren veraltet (W123)
 
 GitHub meldete am Lebenszyklus-Diagramm „Unable to render rich display /
