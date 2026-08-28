@@ -922,6 +922,8 @@ NIGHTCRAWLER/
 |---|---|
 | **[`docs/START_HIER.txt`](docs/START_HIER.txt)** | Einspielen in einem Befehl, Log lesen, Erste Hilfe |
 | **[`docs/DEPLOY.md`](docs/DEPLOY.md)** | Vollständige Deploy- und Prüfanleitung |
+| **[`docs/TROUBLESHOOTING.md`](docs/TROUBLESHOOTING.md)** | Störungsbilder und ihre echten Ursachen |
+| **[`docs/ROADMAP.md`](docs/ROADMAP.md)** | Die sechs Wellen der Zerlegung, in Kurzfassung |
 | **[`docs/README_V37.md`](docs/README_V37.md)** | Ausführliche Release-Historie aller Wellen |
 | **[`docs/CHANGELOG.md`](docs/CHANGELOG.md)** | Versionsübersicht |
 | **[`docs/MODULARISIERUNG.md`](docs/MODULARISIERUNG.md)** | Plan, den Monolithen zu zerlegen — gemessen, in Wellen |
@@ -934,10 +936,7 @@ NIGHTCRAWLER/
 
 ## 🩺 Fehlersuche
 
-<details>
-<summary><b>„Es geht nicht mehr" — wo zuerst schauen</b></summary>
-
-<br>
+Erste Frage immer an den Bot selbst:
 
 ```bash
 curl -s localhost:8050/api/selftest | python3 -m json.tool
@@ -947,68 +946,10 @@ Fasst zusammen, was sonst fünf verschiedene Log-Greps wären: tote Sendeziele,
 YouTube-Grund, Abwehr-Rechte, gestörte Dauerschleifen, schweigende Kern-Loops,
 Plattenfüllstand — **jeder Befund mit dem Befehl, der ihn behebt**.
 
-</details>
-
-<details>
-<summary><b>Stille <code>except</code>-Blöcke sind der Hauptfeind</b></summary>
-
-<br>
-
-Der Bot fängt großflächig ab und loggt auf `warning`/`debug`. Ein `log.warning`
-erscheint in einem ERROR-Log **nie** — so blieb ein Discord-Gateway-Tod
-monatelang unsichtbar. Wenn etwas „nicht mehr geht", suche zuerst das `except`,
-das den Grund frisst.
-
-Für periodische Schleifen gibt es `_loop_fehler(name, exc)`: erste Meldung
-sofort auf `error` mit Traceback, danach höchstens alle 15 Minuten eine — mit
-der Zahl der unterdrückten Fälle.
-
-</details>
-
-<details>
-<summary><b>Aufnahmen schlagen fehl</b></summary>
-
-<br>
-
-```
-KEIN Recorder installiert — Aufnahmen werden FEHLSCHLAGEN.
-```
-
-```bash
-sudo apt install ffmpeg        # empfohlen, für den nativen Pfad
-pip install -U yt-dlp          # Fallback-Recorder
-```
-
-</details>
-
-<details>
-<summary><b>KI antwortet nicht / Antworten sind abgeschnitten</b></summary>
-
-<br>
-
-```bash
-python3 -c "import nc.freeai as f; print(f.diagnose())"
-```
-
-Zeigt pro Backend: frei/gesperrt, Latenz, keyless/KEY, letzter Fehler. Bei
-abgeschnittenen Antworten `BRAIN_LLM_MAX_TOKENS` erhöhen, bei Timeouts
-`BRAIN_LLM_TIMEOUT_S` — beides hängt bei CPU-Inferenz zusammen.
-
-`REACTION_AI_TIMEOUT` bleibt bewusst **kurz**: die Live-Reaktion muss snappy
-sein, sonst schlägt der Watchdog Alarm.
-
-</details>
-
-<details>
-<summary><b>Konfiguration wird nicht übernommen</b></summary>
-
-<br>
-
-**Modul-Konstanten frieren `.env` ein.** Die `.env` wird teilweise erst nach den
-ersten Imports geladen. Konfiguration deshalb immer als Funktion lesen
-(`_backend_conf()`), nie als Modul-Konstante.
-
-</details>
+Die häufigen Störungsbilder und wo ihre Ursache wirklich liegt, stehen in
+**[`docs/TROUBLESHOOTING.md`](docs/TROUBLESHOOTING.md)**: stille `except`-Blöcke
+(der Hauptfeind), fehlschlagende Aufnahmen, schweigende KI, `.env`-Werte die
+nicht greifen, gekippte Verträge in `test_restream.py`.
 
 ---
 
@@ -1032,31 +973,16 @@ Vollständige Historie: **[`docs/CHANGELOG.md`](docs/CHANGELOG.md)** ·
 
 ## 🧭 Roadmap
 
-Der nächste grosse Schritt ist kein Feature, sondern Aufräumen: **`bot.py`
-hat 32.569 Zeilen**. Die Datei ist der Engpass des Projekts — sie lässt sich
-nicht überblicken und nur mit Werkzeug bearbeiten.
-
-Der vollständige, gemessene Plan dazu steht in
-**[`docs/MODULARISIERUNG.md`](docs/MODULARISIERUNG.md)**. Die Kurzfassung:
-
-| Welle | Inhalt | Zeilen |
-|---|---|---:|
-| **0** | Fundament — `nc/ctx.py` für die 13 echten Querschnittshelfer | ±0 |
-| **1** | Die 173 global-freien Funktionen bündeln | −2.200 |
-| **2** | Blueprint-Pilot `/api/recordings` — beweist das Verfahren | −470 |
-| **3** | Blueprints in Serie — **der grosse Hebel** | −7.600 |
-| **4** | `RestreamManager` und `KickModerator` herauslösen | −1.700 |
-| **5** | Discord-Schicht nach `discord_ext/` | −2.100 |
-| **6** | Kern aufräumen, `bot.py` wird Kompositionswurzel | Rest |
-
-Zwei Messungen machen das machbar: die Kopplung ist **flach** (Median 2
-Fremdbezüge je Route, nur 13 echte Querschnittshelfer), und es gibt **kein
-einziges `url_for`** im Projekt — Flask-Blueprints sind hier
-verhaltensneutral.
-
-Die Messlatte ist keine Zeilenzahl:
+Der nächste grosse Schritt ist kein Feature, sondern Aufräumen: **`bot.py` hat
+32.569 Zeilen**. Die Datei ist der Engpass des Projekts. Die Messlatte dafür ist
+aber keine Zeilenzahl:
 
 > **Eine neue API-Route anlegen, ohne `bot.py` zu öffnen.**
+
+Der Weg dahin in sechs Wellen — gemessen, nicht geschätzt:
+**[`docs/ROADMAP.md`](docs/ROADMAP.md)**. Welle 2 ist erledigt, Welle 3 läuft:
+`nc/routes/` trägt heute 8 Blueprints mit 90 API-Routen, die nicht mehr im
+Monolithen stehen.
 
 ---
 
