@@ -2059,6 +2059,43 @@ def test_v41_w3_evolution_core_raus():
     ok("v4.1-W3: Blueprint ohne einen einzigen ctx-Eintrag")
 
 
+
+# ------------------------------------------------- v4.1-W4) bot_app war nie gesetzt
+
+def test_v41_w4_bot_app_gebunden():
+    """v4.1-W4: zwei Benachrichtigungspfade lasen ein Global, das es nie gab.
+
+    `bot_app` kam in bot.py ausschliesslich als PARAMETERNAME vor. Die beiden
+    Stellen, die ihn per globals().get("bot_app") lesen, bekamen deshalb immer
+    None: _brain_notify meldete "Loop/Bot nicht bereit" auf log.warning (in
+    einem ERROR-Log unsichtbar) und _marketing_post_telegram antwortete
+    dauerhaft {"ok": False, "error": "Bot nicht bereit"}. Beide Pfade waren
+    tot, ohne dass irgendwo etwas danach aussah.
+    """
+    import ast as _ast
+    src = open("bot.py", encoding="utf-8").read()
+
+    # (1) Die Leser gibt es weiterhin — der Vertrag ist nicht, sie zu entfernen.
+    leser = src.count('globals().get("bot_app")')
+    assert leser >= 2, "die bot_app-Leser sind verschwunden statt versorgt zu werden"
+
+    # (2) Und es gibt genau eine Stelle, die den Namen wirklich bindet.
+    assert 'globals()["bot_app"] = app' in src, \
+        "bot_app wird nirgends gesetzt — beide Melder laufen wieder ins Leere"
+
+    # (3) Sie steht in run_bot, direkt bei der Application. Frueher waere jede
+    # andere Stelle zu frueh gewesen: die Application entsteht erst dort.
+    _baum = _ast.parse(src)
+    _fn = [n for n in _baum.body
+           if isinstance(n, (_ast.FunctionDef, _ast.AsyncFunctionDef)) and n.name == "run_bot"]
+    assert _fn, "run_bot nicht gefunden"
+    _koerper = "\n".join(src.splitlines()[_fn[0].lineno - 1:_fn[0].end_lineno])
+    assert 'globals()["bot_app"] = app' in _koerper, "bot_app wird ausserhalb von run_bot gesetzt"
+    assert _koerper.index("Application.builder()") < _koerper.index('globals()["bot_app"] = app'), \
+        "bot_app wird gebunden, bevor es die Application gibt"
+    ok("v4.1-W4: bot_app ist gebunden, beide Melder erreichen Telegram wieder")
+
+
 # ------------------------------------------------- B168) Moderator überall (Twitch/YouTube)
 
 def test_b168_moderator_everywhere():
@@ -7147,6 +7184,7 @@ def main():
     test_b166_piper_voices()
     test_b167_evolution()
     test_v41_w3_evolution_core_raus()
+    test_v41_w4_bot_app_gebunden()
     test_b168_moderator_everywhere()
     test_b169_kick_oauth()
     test_b170_azrael_and_youtube()

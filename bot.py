@@ -29034,6 +29034,17 @@ async def run_bot():
     scraper = TikTokScraper()
     app = Application.builder().token(BOT_TOKEN).build()
     app.bot_data["scraper"] = scraper
+    # v4.1-W4: bot_app war NIE ein Modul-Global — nur ein Parametername in zwei
+    # Dutzend Funktionen. Die beiden Stellen, die ihn per globals().get("bot_app")
+    # lesen, bekamen deshalb IMMER None und liefen ins Leere:
+    #   _brain_notify        -> "BRAIN-ALARM (Loop/Bot nicht bereit)" auf log.warning,
+    #                           also im ERROR-Log unsichtbar; kein Alarm kam je an.
+    #   _marketing_post_telegram -> {"ok": False, "error": "Bot nicht bereit"},
+    #                           der Telegram-Zweig des Marketings war tot.
+    # Genau das Fehlerbild aus CLAUDE.md: es "geht nicht" und niemand sieht warum.
+    # Hier steht die Application zum ersten Mal fest — dieselbe Stelle, an der
+    # zwei Zeilen weiter schon _GLOBAL_SCRAPER gesetzt wird.
+    globals()["bot_app"] = app
     # X-Series: Scraper auch global ablegen damit Flask-Routes die Session
     # für resolve/inspect benutzen können.
     global _GLOBAL_SCRAPER
