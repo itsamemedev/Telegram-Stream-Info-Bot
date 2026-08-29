@@ -577,6 +577,7 @@ from nc import ffbuild as _nc_ffbuild        # v4.0-W44: ffmpeg-Kommandobauer (e
 from nc import chatstats as _nc_chatstats    # v4.0-W45: Chat-Health-Aggregation (extrahiert)
 from nc import oauthpage as _nc_oauthpage    # v4.0-W49: OAuth-Rückmeldeseiten (extrahiert)
 from nc import trackingdb as _nc_trackingdb  # v4.0-W50: Tracking-Status-Helfer (conn-injiziert)
+from nc import tiktokcheck as _nc_tiktokcheck  # v4.1-W5: existiert der Account noch?
 from nc import eventquery as _nc_eventquery  # v4.0-W51: Event-Log-Query-Bauer (rein)
 from nc import admod as _nc_admod            # v4.0-W56: Werbe-Allowlist-Bauer (rein)
 from nc import binresolve as _nc_binresolve  # v4.0-W60: Binary-Pfad-Resolver (rein)
@@ -602,6 +603,7 @@ from nc.routes import stats as _nc_routes_stats              # v4.0-W117: Auswer
 from nc.routes import evolution as _nc_routes_evolution      # v4.1-W3: Evolution
 from nc.routes import news as _nc_routes_news                # v4.1-W4: Website-News
 from nc.routes import marketing as _nc_routes_marketing      # v4.1-W4: Cross-Promo
+from nc.routes import streamer as _nc_routes_streamer        # v4.1-W5: Streamer-Ansicht
 from nc import updater as _nc_updater                        # v4.0-W115: Selbst-Update aus dem GitHub-Repo
 from nc import donationsdb as _nc_donationsdb                # v4.0-W116: manuell erfasste Spenden lesen
 # Diese beiden Routen ruft der Bot auch INTERN auf (Telegram /sysres und die
@@ -820,7 +822,7 @@ from nc.dbwrap import db_conn, configure_db  # noqa: F401
 # diese Funktionen hängen an keinem Bot-Global mehr.
 from nc import stats as _nc_stats          # v4.0-W117: get_stats + Status-Verteilung
 from nc.stats import (get_per_user_stats, get_activity_pulse, get_lives_heatmap,
-                      _collect_session_stats, _streamer_health, _dir_stats,
+                      _collect_session_stats, _dir_stats,
                       get_recordings_heatmap)  # noqa: F401
 from nc.archive import evaluate_archive_rule  # noqa: F401
 from nc import archive as _nc_archive     # v4.0-W110: Archiv-Datenzugriff
@@ -4159,31 +4161,21 @@ def bulk_add_trackings(group_id: int, usernames: list, added_by: int) -> dict:
        v4.0-W117: Koerper nach nc/trackingdb.py; Signatur und Verhalten unveraendert."""
     return _nc_trackingdb.bulk_add_trackings(group_id, usernames, added_by)
 
-def remove_tracking(group_id: int, username: str):
-    """F51-Bug-Fix B6: Beim Löschen eines Trackings auch alle in-memory
-       per-tracking-Dicts cleanen. Sonst sammelt sich Orphan-State an
-       (_NEXT_CHECK_AT, _EARLY_DISCONNECT_RETRY, _RECORDING_SPAWN_AT).
-       Funktional kein Bug — die Keys werden einfach nie wieder gelesen —
-       aber bei einem Bot der jahrelang läuft und viel an/aus-getrackt
-       wird, ein langsamer Memory-Leak."""
-    # Erst die tids holen die wir löschen, damit wir hinterher die in-memory
-    # Dicts purgen können.
-    with db_conn() as conn:
-        rows = conn.execute(
-            "SELECT id FROM trackings WHERE group_id=? AND username=?",
-            (group_id, username)).fetchall()
-        conn.execute("DELETE FROM trackings WHERE group_id=? AND username=?",
-                     (group_id, username))
-        conn.commit()
-    for r in rows:
-        tid = r["id"]
-        _NEXT_CHECK_AT.pop(tid, None)
-        _EARLY_DISCONNECT_RETRY.pop(tid, None)
-        _RECORDING_SPAWN_AT.pop(tid, None)
-        _STREAM_DEAD_STREAK.pop(tid, None)            # B45
-        _STREAM_DEAD_BACKOFF_UNTIL.pop(tid, None)     # B45
-        _PENDING_OFFLINE_COUNT.pop(tid, None)         # B48
-        _PENDING_OFFLINE_SINCE.pop(tid, None)
+def _tracking_remove_cleanup(tid):
+    """Rueckruf fuer nc.trackingdb.remove_tracking (v4.1-W5).
+
+    Die sieben Dicts gehoeren dem Live-Worker hier im Bot, nicht der Datenbank.
+    Ohne dieses Aufraeumen sammelt sich Orphan-State an — funktional kein Bug,
+    die Keys werden nie wieder gelesen, aber bei jahrelanger Laufzeit ein
+    langsames Leck (F51/B6).
+    """
+    _NEXT_CHECK_AT.pop(tid, None)
+    _EARLY_DISCONNECT_RETRY.pop(tid, None)
+    _RECORDING_SPAWN_AT.pop(tid, None)
+    _STREAM_DEAD_STREAK.pop(tid, None)            # B45
+    _STREAM_DEAD_BACKOFF_UNTIL.pop(tid, None)     # B45
+    _PENDING_OFFLINE_COUNT.pop(tid, None)         # B48
+    _PENDING_OFFLINE_SINCE.pop(tid, None)
 
 def get_trackings_for_group(group_id: int):
     return _nc_trackingdb.get_trackings_for_group(group_id)
@@ -5588,7 +5580,7 @@ async def untrack(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Benutzung: <code>/untrack @username</code>",
                                         parse_mode=ParseMode.HTML); return
     username = clean_username(context.args[0])
-    remove_tracking(update.effective_chat.id, username)
+    _nc_trackingdb.remove_tracking(update.effective_chat.id, username)
     await update.message.reply_text(
         f"🗑 <b>TRACKING BEENDET · @{safe(username)}</b>\n"
         f"<i>Keine Benachrichtigungen mehr für diesen Nutzer.</i>",
@@ -7532,7 +7524,7 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         allowed, reason = _can_stop_tracking(update, chat_id, username)
         if not allowed:
             await q.answer(reason, show_alert=True); return
-        remove_tracking(chat_id, username)
+        _nc_trackingdb.remove_tracking(chat_id, username)
         await q.answer(f"@{username} – Tracking beendet.")
         try:
             await q.edit_message_reply_markup(reply_markup=None)
@@ -11887,7 +11879,7 @@ def api_stream_timeline():
     # (clean_username macht kein lower()). Ein hart kleingeschriebener Name
     # traf hier weder die Kapitel noch die laufende Session — die Timeline
     # blieb leer und meldete "nicht live", während gesendet wurde.
-    user = _resolve_tracked_user(
+    user = _nc_trackingdb.resolve_tracked_user(
         (request.args.get("user") or (_RESTREAM_ACTIVE or {}).get("user") or "").lstrip("@").strip())
     if not user:
         return jsonify(ok=True, user=None, chapters=[], duration_secs=0, live=False)
@@ -11902,7 +11894,7 @@ def api_stream_timeline():
         return jsonify(ok=False, error=str(e)), 500
     chapters = [{"offset": int(r["offset_secs"] or 0), "reason": r["reason"] or "",
                  "title": r["title"] or "", "at": (r["created_at"] or "")[11:19]} for r in rows]
-    _sk = _ci_key(_LIVE_SESSION_START, user)
+    _sk = _nc_trackingdb.ci_key(_LIVE_SESSION_START, user)
     start = _LIVE_SESSION_START.get(_sk) if _sk else None
     dur = int(_time_mod.time() - start) if start else (max([c["offset"] for c in chapters], default=0) + 60)
     return jsonify(ok=True, user=user, live=bool(start), chapters=chapters,
@@ -11916,11 +11908,11 @@ def api_restream_report():
     d = request.get_json(silent=True) or {}
     # Wie in /api/stream/timeline: Schreibweise aus den trackings auflösen,
     # sonst zählt der Report für "@RabiLive" nichts (Aufnahmen, Dauer, Momente).
-    user = _resolve_tracked_user(
+    user = _nc_trackingdb.resolve_tracked_user(
         (d.get("user") or (_RESTREAM_ACTIVE or {}).get("user") or "").lstrip("@").strip())
     if not user:
         return jsonify(ok=False, error="kein aktiver Stream — Streamer angeben"), 400
-    _sk = _ci_key(_LIVE_SESSION_START, user)
+    _sk = _nc_trackingdb.ci_key(_LIVE_SESSION_START, user)
     start = _LIVE_SESSION_START.get(_sk) if _sk else None
     stats = _collect_session_stats(user, start)
     dur = stats.get("dur_min")
@@ -12931,36 +12923,6 @@ def api_azrael_core():
 
 
 # ═══ F92: STREAMER MONITOR WALL — Broadcast-Wall statt Registry-Tabelle ═══
-@dashboard_app.route("/api/streamers/wall")
-def api_streamers_wall():
-    """F92: Angereicherte Streamer-Kacheln für die Monitor-Wall: Live-/Rec-
-       Status + Aufnahmen-Gesamt + letzte Aufnahme + Avatar (best-effort aus
-       Redis-Cache, kein TikTok-Call). Live-Kacheln zuerst."""
-    try:
-        rows = get_all_active_trackings(include_paused=True)
-    except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
-    counts, lasts = {}, {}
-    try:
-        with db_conn() as conn:
-            for r in conn.execute("SELECT username, COUNT(*) AS n, MAX(created_at) AS last "
-                                  "FROM recordings GROUP BY username").fetchall():
-                counts[r["username"]] = r["n"]
-                lasts[r["username"]] = (r["last"] or "")[:16].replace("T", " ")
-    except Exception:
-        pass
-    tiles = []
-    for t in rows:
-        u = t["username"]
-        tiles.append({
-            "username": u,
-            "live": bool(t["last_live"]), "recording": bool(t["recording"]),
-            "paused": bool(t["paused"]) if "paused" in t.keys() else False,
-            "source": ("discord" if (DISCORD_GUILD_ID and t["group_id"] == DISCORD_GUILD_ID) else "telegram"),
-            "recs": counts.get(u, 0), "last_rec": lasts.get(u, ""),
-        })
-    tiles.sort(key=lambda x: (not x["live"], not x["recording"], -x["recs"], x["username"].lower()))
-    return jsonify(ok=True, tiles=tiles, live=sum(1 for t in tiles if t["live"]), total=len(tiles))
 
 
 # ═══ F82: Betriebs-Endpoints + Header-Härtung ═══
@@ -13461,76 +13423,10 @@ def api_discord_invite():
 
 
 # ═══ v37 Welle 3: Streamer-Drawer (#18) + Recorder-Tier (#11) ═══
-def _ci_key(mapping, name: str):
-    """Passenden Schlüssel aus einem username-keyed Dict holen, Groß-/
-       Kleinschreibung egal. Die Laufzeit-Dicts (_LIVE_SESSION_START,
-       _ACTIVE_TIER) sind mit der GESPEICHERTEN Schreibweise des Trackings
-       gefüllt; wer lowercase nachschlägt, findet nichts."""
-    if not name:
-        return None
-    if name in mapping:
-        return name
-    low = name.lower()
-    for k in list(mapping):
-        if isinstance(k, str) and k.lower() == low:
-            return k
-    return None
 
 
-def _resolve_tracked_user(name: str) -> str:
-    """Gespeicherte Schreibweise eines getrackten Handles (case-insensitiv).
-       Fällt auf die Eingabe zurück, wenn nichts getrackt ist — dann sieht
-       die Karte wenigstens den Namen, den der Betreiber angeklickt hat."""
-    if not name:
-        return ""
-    try:
-        with db_conn() as conn:
-            row = conn.execute(
-                "SELECT username FROM trackings WHERE LOWER(username)=LOWER(?) LIMIT 1",
-                (name,)).fetchone()
-        if row and row["username"]:
-            return row["username"]
-    except Exception as e:
-        log.warning("Streamer-Auflösung für @%s fehlgeschlagen: %s", name, e)
-    return name
 
 
-@dashboard_app.route("/api/streamer/detail")
-def api_streamer_detail():
-    raw = (request.args.get("user") or "").lstrip("@").strip()
-    if not raw:
-        return jsonify(ok=False, error="user fehlt"), 400
-    # WARUM case-insensitiv: clean_username macht KEIN lower(), die trackings
-    # speichern den Handle also so, wie er getippt wurde ("@RabiLive"). Diese
-    # Route hat stur .lower() angewendet — bei jedem Handle mit Großbuchstaben
-    # traf keine einzige Abfrage: die Streamer-Karte zeigte OFFLINE, 0
-    # Aufnahmen, keine Kapitel, obwohl der Streamer gerade sendete. Genau das
-    # sah im Dashboard aus wie "der hinzugefügte Streamer zählt nirgends".
-    user = _resolve_tracked_user(raw)
-    live_key = _ci_key(_LIVE_SESSION_START, user)
-    tier_key = _ci_key(_ACTIVE_TIER, user)
-    out = {"ok": True, "user": user,
-           "tier": _ACTIVE_TIER.get(tier_key) if tier_key else None,
-           "live": bool(live_key), "recordings": [], "chapters": [], "rec_total": 0}
-    try:
-        with db_conn() as conn:
-            recs = conn.execute("SELECT filepath, created_at FROM recordings "
-                                "WHERE LOWER(username)=LOWER(?) "
-                                "ORDER BY id DESC LIMIT 10", (user,)).fetchall()
-            out["recordings"] = [{"file": os.path.basename(r["filepath"] or ""),
-                                  "at": (r["created_at"] or "")[:16].replace("T", " ")} for r in recs]
-            out["rec_total"] = conn.execute("SELECT COUNT(*) AS c FROM recordings "
-                                            "WHERE LOWER(username)=LOWER(?)",
-                                            (user,)).fetchone()["c"]
-            chaps = conn.execute("SELECT offset_secs, title, reason, created_at FROM stream_chapters "
-                                 "WHERE LOWER(username)=LOWER(?) "
-                                 "ORDER BY id DESC LIMIT 8", (user,)).fetchall()
-            out["chapters"] = [{"offset": c["offset_secs"] or 0,
-                                "title": c["title"] or c["reason"] or "Moment",
-                                "at": (c["created_at"] or "")[:16].replace("T", " ")} for c in chaps]
-    except Exception as e:
-        out["db_error"] = str(e)
-    return jsonify(out)
 
 
 # ═══ v37 Welle 3: Retention-Policy (#12) ═══
@@ -22734,254 +22630,23 @@ Hinweise: Zeitspalten sind ISO-8601-Strings. Erfolg = outcome IN ('ok','stall_ki
 
 # ---- STREAMER TOOLS ---------------------------------------------------------
 
-@dashboard_app.route("/api/streamer/compare")
-def api_streamer_compare():
-    """Vergleicht zwei Streamer Seite an Seite. ?a=user1&b=user2"""
-    a = (request.args.get("a") or "").lstrip("@")
-    b = (request.args.get("b") or "").lstrip("@")
-    if not a or not b:
-        return jsonify(ok=False, error="a und b erforderlich"), 400
-    try:
-        with db_conn() as conn:
-            def stats(u):
-                h = _streamer_health(u, conn)
-                rec = conn.execute(
-                    "SELECT COUNT(*) AS n, COALESCE(SUM(file_size),0)/1048576.0 AS mb, "
-                    "COALESCE(SUM(duration_secs),0) AS dur FROM recordings WHERE username=?",
-                    (u,)).fetchone()
-                h.update({"recordings": int(rec["n"] or 0), "total_mb": round(rec["mb"] or 0),
-                          "total_minutes": round((rec["dur"] or 0) / 60.0)})
-                return h
-            return jsonify(ok=True, a={"username": a, **stats(a)},
-                           b={"username": b, **stats(b)})
-    except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
 
 
-@dashboard_app.route("/api/streamer/priority/<username>", methods=["GET", "POST"])
-def api_streamer_priority(username):
-    """Liest/setzt die Prioritätsstufe (0=normal,1=high,2=vip) eines Streamers.
-       Beeinflusst Polling/Retry. POST body: {"level":2}"""
-    username = username.lstrip("@")
-    try:
-        with db_conn() as conn:
-            tr = conn.execute("SELECT id FROM trackings WHERE username=? LIMIT 1",
-                              (username,)).fetchone()
-            if not tr:
-                return jsonify(ok=False, error="streamer not tracked"), 404
-            tid = tr["id"]
-            if request.method == "POST":
-                data = request.get_json(silent=True) or {}
-                level = int(data.get("level", 0))
-                if level not in (0, 1, 2):
-                    return jsonify(ok=False, error="level muss 0,1,2 sein"), 400
-                now = datetime.now(timezone.utc).isoformat()
-                cur = conn.execute("UPDATE tracking_priority SET priority_level=?, updated_at=? "
-                                   "WHERE tracking_id=?", (level, now, tid))
-                if getattr(cur, "rowcount", 0) in (0, -1):
-                    if not conn.execute("SELECT 1 FROM tracking_priority WHERE tracking_id=?",
-                                        (tid,)).fetchone():
-                        conn.execute("INSERT INTO tracking_priority (tracking_id, priority_level, updated_at) "
-                                     "VALUES (?,?,?)", (tid, level, now))
-                conn.commit()
-                return jsonify(ok=True, username=username, level=level)
-            row = conn.execute("SELECT priority_level FROM tracking_priority WHERE tracking_id=?",
-                               (tid,)).fetchone()
-            return jsonify(ok=True, username=username,
-                           level=int(row["priority_level"]) if row else 0)
-    except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
 
 
-@dashboard_app.route("/api/streamer/journal/<username>")
-def api_streamer_journal(username):
-    """Aktivitäts-Journal eines Streamers: jüngste Versuche + Aufnahmen,
-       chronologisch gemischt."""
-    username = username.lstrip("@")
-    try:
-        items = []
-        with db_conn() as conn:
-            for r in conn.execute(
-                    "SELECT started_at AS at, outcome, duration_secs FROM recording_attempts "
-                    "WHERE username=? ORDER BY started_at DESC LIMIT 40", (username,)).fetchall():
-                items.append({"at": r["at"], "type": "attempt", "outcome": r["outcome"],
-                              "duration_secs": r["duration_secs"]})
-            for r in conn.execute(
-                    "SELECT created_at AS at, file_size, duration_secs FROM recordings "
-                    "WHERE username=? ORDER BY created_at DESC LIMIT 40", (username,)).fetchall():
-                items.append({"at": r["at"], "type": "recording",
-                              "mb": round((r["file_size"] or 0) / 1048576.0, 1),
-                              "duration_secs": r["duration_secs"]})
-        items.sort(key=lambda x: x["at"] or "", reverse=True)
-        return jsonify(ok=True, username=username, count=len(items), journal=items[:60])
-    except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
 
 
-@dashboard_app.route("/api/streamer/watchlist")
-def api_streamer_watchlist():
-    """Alle getrackten Streamer mit Prioritätsstufe + Health-Score."""
-    try:
-        out = []
-        with db_conn() as conn:
-            rows = conn.execute(
-                "SELECT t.username, t.paused, COALESCE(p.priority_level,0) AS lvl "
-                "FROM trackings t LEFT JOIN tracking_priority p ON p.tracking_id=t.id "
-                "ORDER BY lvl DESC, t.username ASC").fetchall()
-            for r in rows:
-                h = _streamer_health(r["username"], conn)
-                out.append({"username": r["username"], "paused": bool(r["paused"]),
-                            "priority": int(r["lvl"]), "health": h["score"],
-                            "grade": h["grade"], "ok_rate": h["ok_rate"]})
-        return jsonify(ok=True, count=len(out), watchlist=out)
-    except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
 
 
-@dashboard_app.route("/api/streamer/dormant")
-def api_streamer_dormant():
-    """Streamer ohne Aktivität seit N Tagen (?days=14) — Drop-Kandidaten."""
-    # BUG-FIX: int() auf ungültigem Query-Parameter (z.B. "days=abc") wirft
-    # ValueError → unkontrollierter 500. Außerdem: extrem große Werte (days=999999)
-    # erzeugen einen datetime vor Unix-Epoch → SQLite gibt falsche Ergebnisse.
-    try:
-        days = _arg_int("days", 14, 1, 3650)
-    except (ValueError, TypeError):
-        return jsonify(ok=False, error="days muss eine ganze Zahl sein (1–3650)"), 400
-    try:
-        cut = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
-        with db_conn() as conn:
-            rows = conn.execute(
-                "SELECT t.username, MAX(a.started_at) AS last FROM trackings t "
-                "LEFT JOIN recording_attempts a ON a.username=t.username "
-                "WHERE t.paused=0 GROUP BY t.username HAVING last IS NULL OR last < ? "
-                "ORDER BY last ASC", (cut,)).fetchall()
-        out = [{"username": r["username"], "last_activity": r["last"]} for r in rows]
-        return jsonify(ok=True, count=len(out), days=days, dormant=out)
-    except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
 
 
 # ── Streamer-Existenz-Check + Löschen (für „Ruhende") ───────────────────────
-async def _tiktok_account_exists(username):
-    """Prüft, ob @username auf TikTok noch existiert.
-    Return ("exists"|"gone"|"unknown", http_status, detail).
-
-    BEWUSST KONSERVATIV: „gone" nur bei eindeutigem Signal (HTTP 404 oder TikToks
-    „Account nicht auffindbar"). Bei Block/Captcha/Rate-Limit/Netzfehler → „unknown",
-    damit die Oberfläche KEIN Löschen anbietet — die OVH-IP ist bei TikTok geblockt,
-    ein blindes „nicht gefunden" würde sonst echte Accounts löschbar machen. Läuft
-    deshalb über denselben Pull-Proxy wie die Live-Auflösung."""
-    import aiohttp
-    username = (username or "").lstrip("@").strip()
-    if not username:
-        return ("unknown", 0, "leerer Name")
-    proxy = None
-    try:
-        proxy = await _pick_checked_pull_proxy(username=username)
-    except Exception:
-        proxy = None
-    if not proxy:
-        try:
-            proxy = get_random_proxy()
-        except Exception:
-            proxy = None
-    url = f"https://www.tiktok.com/@{username}"
-    try:
-        sess = await _get_ai_session()
-        _to = aiohttp.ClientTimeout(total=15)
-        async with sess.get(url, headers=_LIVE_RESOLVER_HEADERS, proxy=proxy,
-                            allow_redirects=True, timeout=_to) as r:
-            st = r.status
-            if st == 404:
-                return ("gone", 404, "TikTok liefert 404 für das Profil")
-            if st in (403, 429):
-                return ("unknown", st, f"TikTok blockt/limitet ({st}) — später erneut")
-            body = await r.text(errors="ignore")
-    except Exception as e:
-        return ("unknown", 0, f"Abfrage fehlgeschlagen: {str(e)[:80]}")
-    low = body.lower()
-    if ('"statuscode":10221' in low or '"statuscode":10202' in low
-            or "couldn't find this account" in low
-            or "couldn\u2019t find this account" in low):
-        return ("gone", st, "TikTok: Account nicht auffindbar")
-    if ('"uniqueid":"' + username.lower() + '"' in low
-            or "__universal_data_for_rehydration__" in low
-            or '"userinfo"' in low):
-        return ("exists", st, "Profil vorhanden")
-    if "captcha" in low or "verify to continue" in low:
-        return ("unknown", st, "TikTok-Captcha/Block — später erneut prüfen")
-    return ("unknown", st, "kein eindeutiges Signal (evtl. Block) — später erneut")
 
 
-@dashboard_app.route("/api/streamer/exists/<username>")
-def api_streamer_exists(username):
-    """Konservativer Existenz-Check eines TikTok-Accounts. deletable=True nur,
-    wenn TikTok den Account eindeutig als nicht (mehr) vorhanden meldet."""
-    uname = (username or "").lstrip("@").strip()
-    if not uname:
-        return jsonify(ok=False, error="kein Name"), 400
-    try:
-        status, http_status, detail = _run_async_from_flask(
-            _tiktok_account_exists(uname), timeout=25)
-    except Exception as e:
-        if _loop_not_ready(e):
-            return jsonify(ok=False, error="Bot startet noch — gleich erneut"), 503
-        return jsonify(ok=False, error=str(e)), 500
-    return jsonify(ok=True, username=uname, status=status,
-                   http_status=http_status, detail=detail,
-                   deletable=(status == "gone"))
 
 
-@dashboard_app.route("/api/streamer/delete/<username>", methods=["POST"])
-def api_streamer_delete(username):
-    """Entfernt ALLE Trackings eines Streamers (über alle Gruppen) inkl. der
-    in-memory-States (remove_tracking cleant die). Gedacht für Accounts, die es
-    auf TikTok nicht mehr gibt — die UI ruft das erst nach Bestätigung auf."""
-    uname = (username or "").lstrip("@").strip()
-    if not uname:
-        return jsonify(ok=False, error="kein Name"), 400
-    try:
-        with db_conn() as conn:
-            rows = conn.execute(
-                "SELECT DISTINCT group_id FROM trackings WHERE username=?",
-                (uname,)).fetchall()
-        groups = [r["group_id"] for r in rows]
-        if not groups:
-            return jsonify(ok=False, error="kein Tracking für diesen Namen"), 404
-        for gid in groups:
-            remove_tracking(gid, uname)
-        log.info("Streamer @%s via Dashboard gelöscht (%d Tracking(s)).",
-                 uname, len(groups))
-        return jsonify(ok=True, username=uname, deleted=len(groups))
-    except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
 
 
-@dashboard_app.route("/api/streamer/digest/<username>")
-def api_streamer_digest(username):
-    """Konsolidiertes Streamer-Profil in EINEM Call: Health, Volumen,
-       Top-Zeiten, dominanter Fehler — für die Per-Streamer-Ansicht."""
-    username = username.lstrip("@")
-    try:
-        with db_conn() as conn:
-            health = _streamer_health(username, conn)
-            rec = conn.execute(
-                "SELECT COUNT(*) AS n, COALESCE(SUM(file_size),0)/1048576.0 AS mb, "
-                "COALESCE(SUM(duration_secs),0) AS dur, MAX(created_at) AS last "
-                "FROM recordings WHERE username=?", (username,)).fetchone()
-            domfail = conn.execute(
-                "SELECT outcome, COUNT(*) AS n FROM recording_attempts WHERE username=? "
-                "AND outcome NOT IN ('ok','stall_killed_partial','running','cancelled') "
-                "GROUP BY outcome ORDER BY n DESC LIMIT 1", (username,)).fetchone()
-        return jsonify(ok=True, username=username, health=health,
-                       recordings={"count": int(rec["n"] or 0),
-                                   "total_mb": round(rec["mb"] or 0),
-                                   "total_minutes": round((rec["dur"] or 0) / 60.0),
-                                   "last": rec["last"]},
-                       dominant_failure=(domfail["outcome"] if domfail else None))
-    except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
 
 
 # ---- DATA / OPS TOOLS -------------------------------------------------------
@@ -24250,7 +23915,7 @@ async def _discord_run_once():
         gid = DISCORD_TRACK_GROUP_ID or (inter.guild_id or 0)   # B63: Schalter wurde ignoriert
         u = username.strip().lstrip("@")
         try:
-            await asyncio.to_thread(remove_tracking, gid, u)
+            await asyncio.to_thread(_nc_trackingdb.remove_tracking, gid, u)
             await inter.response.send_message(f"🗑 @{u} wird nicht mehr getrackt")
         except Exception as e:
             await inter.response.send_message(f"Fehler: {e}", ephemeral=True)
@@ -29791,7 +29456,8 @@ _nc_stats.configure_stats(stats_cache_ttl=STATS_CACHE_TTL,
 _nc_trackingdb.configure(integrity_errors=DB_INTEGRITY_ERRORS,
                          max_trackings_per_chat=MAX_TRACKINGS_PER_CHAT,
                          log_event_fn=log_event,
-                         on_resume=_tracking_resume_cleanup)
+                         on_resume=_tracking_resume_cleanup,
+                         on_remove=_tracking_remove_cleanup)
 
 # v4.1-W3: der Evolution-Core liegt vollstaendig in nc/evolution.py. bot_file
 # ist der Grund, warum das hier steht und nicht im Modul: der Snapshot-Schreiber
@@ -29804,6 +29470,13 @@ _nc_trackingdb.configure(integrity_errors=DB_INTEGRITY_ERRORS,
 # __file__ des Fachmoduls waere es nc/website/ geworden) und get_bot_app (ein
 # GETTER — die Telegram-Application entsteht erst in run_bot, und globals() ist
 # im Modul der Modul-Namensraum, nicht der Bot).
+# v4.1-W5: die Existenzpruefung laeuft ueber denselben Weg wie die
+# Live-Aufloesung — gepoolte Session, geprueter Pull-Proxy, gleiche Kopfzeilen.
+# Alle drei haengen am Laufzeitkern und bleiben im Bot.
+_nc_tiktokcheck.configure(get_ai_session=_get_ai_session,
+                          pick_proxy=_pick_checked_pull_proxy,
+                          live_resolver_headers=_LIVE_RESOLVER_HEADERS)
+
 _nc_news.configure(log=log,
                    bot_file=__file__,
                    llm_chat=llm_chat,
@@ -29923,6 +29596,11 @@ _nc_ctx.configure(
         "ALLOWED_CHAT_IDS": ALLOWED_CHAT_IDS,
         # --- News und Marketing (v4.1-W4) ---
         "ALLOWED_USER_IDS": ALLOWED_USER_IDS,
+        # --- Streamer-Ansicht (v4.1-W5). Beide Dicts wandern als REFERENZ:
+        # der Live-Worker schreibt sie, die Karte liest sie im selben
+        # Moment. Eine Kopie waere ab dem Start eingefroren.
+        "_ACTIVE_TIER": _ACTIVE_TIER,
+        "_LIVE_SESSION_START": _LIVE_SESSION_START,
         "DISCORD_WEBHOOK_URL": DISCORD_WEBHOOK_URL,
         "DAILY_SUMMARY_CHAT_ID": DAILY_SUMMARY_CHAT_ID,
         "DISCORD_GUILD_ID": DISCORD_GUILD_ID,
@@ -29958,6 +29636,7 @@ dashboard_app.register_blueprint(_nc_routes_stats.bp)      # v4.0-W117
 dashboard_app.register_blueprint(_nc_routes_evolution.bp)  # v4.1-W3
 dashboard_app.register_blueprint(_nc_routes_news.bp)       # v4.1-W4
 dashboard_app.register_blueprint(_nc_routes_marketing.bp)  # v4.1-W4
+dashboard_app.register_blueprint(_nc_routes_streamer.bp)   # v4.1-W5
 
 
 if __name__ == "__main__":

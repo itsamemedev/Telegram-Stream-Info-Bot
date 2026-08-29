@@ -11,6 +11,77 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Behoben — neun weitere Dauerläufer-Stellen melden ihre Ausfälle (v4.1 W5)
+
+W2 hat sieben Stellen versorgt und im Changelog gestanden, damit sei die Regel
+durchgesetzt. Ein Scan über **alle** Dauerschleifen fand zwölf, die weiter an
+`_loop_fehler` vorbei meldeten — sieben davon still auf `log.warning`, was in
+einem ERROR-Log nicht erscheint:
+
+* **`reaper_loop`** — die EINZIGE Instanz, die tote Recorder-Prozesse abräumt.
+  Fällt sie aus, bleiben Zombies in den Slots und keine Aufnahme startet mehr.
+* **`_storage_cleanup_loop`** — ohne ihn läuft die Platte voll.
+* **`_proxy_pool_refresh_loop`** — ohne Refresh altert der Pool, und die
+  Aufnahmen laufen nach und nach auf tote Proxies.
+* **`_evolution_loop`** — in W2 übersehen, obwohl dort genau diese Regel
+  aufgestellt wurde.
+* **`_live_react_loop`** — fällt sie aus, reagiert AZRAEL im Live-Chat auf
+  nichts mehr; das sieht aus wie „die KI antwortet nicht", nicht wie ein Ausfall.
+* **`_db_maintenance_loop`** — Datenbank wächst unbegrenzt, der Planer arbeitet
+  mit alter Statistik.
+* **`_system_backup_loop`** — war sichtbar, aber ohne Traceback und ungedrosselt.
+
+Dazu zwei Stellen eine Ebene tiefer: `_disk_alarm_loop` und `_cookie_alarm_loop`
+melden ihren eigenen Absturz längst auf `log.error` mit Traceback, aber ihre
+**Prüfung** scheiterte still. Scheitert die dauerhaft, feuert der Alarm nie und
+die Schleife läuft weiter — von aussen nicht von „alles in Ordnung" zu
+unterscheiden.
+
+Nicht angefasst: `_daily_summary_loop`, `_disk_alarm_loop`, `_cookie_alarm_loop`,
+`_restream_verify_loop` und `_auto_restream_loop` melden ihren Schleifenfehler
+bereits auf `log.error` mit Traceback (die beiden Restream-Wächter seit B138).
+Sie sind sichtbar; ihnen fehlt nur die Drosselung, und sie ticken minütlich bis
+stündlich.
+
+Der Vertrag prüft ab jetzt **generisch**: kein Dauerläufer ohne sichtbare
+Fehlermeldung. Vorher war das eine Liste, die jede neue Schleife wieder
+unterlaufen konnte.
+
+### Geändert — Monolith zerlegt: die Streamer-Ansicht (v4.1 W5)
+
+`bot.py` schrumpft von 29.942 auf **29.646 Zeilen**. Von den 355 Flask-Routen
+liegen jetzt **183 ausserhalb** (vorher 173), in **17 Blueprints**. Die
+Routentabelle ist vor und nach der Welle bitgleich.
+
+`/api/streamer` kostete nach `bp_analyse` **elf** Kontext-Einträge; nach dem
+Lösen der Helfer fünf, und alle fünf gab es bereits. **Vierte Welle in Folge
+ohne einen neuen `nc.ctx`-Slot.** Gelöst wurden `_ci_key` und
+`_resolve_tracked_user` nach `nc/trackingdb.py` (beide drehen sich um die
+gespeicherte Schreibweise eines Handles), `_tiktok_account_exists` in das neue
+`nc/tiktokcheck.py`, und `remove_tracking` ebenfalls nach `nc/trackingdb.py` —
+letzteres mit einem `on_remove`-Rückruf, weil die sieben per-tracking-Dicts dem
+Live-Worker gehören und nicht der Datenbank (derselbe Weg wie `on_resume` in
+W117; ohne den Rückruf wächst der Orphan-State still weiter, F51/B6).
+
+**Der Befund dieser Welle ist ein Werkzeugfehler, kein Codefehler.**
+`api_streamer_compare` enthält eine verschachtelte Hilfsfunktion `def stats(u)`.
+`bp_extract` sammelte die Aufrufe einer Route und verglich die Namen mit den
+Top-Level-Definitionen, **ohne zu prüfen, was die Route selbst bindet** — der
+gleichnamige **Telegram-Befehl `stats`** galt damit als Helfer dieser Route,
+wäre ins Flask-Blueprint gewandert und aus `bot.py` verschwunden. Bemerkenswert
+ist, was das nicht gefangen hätte: die Routentabelle bleibt identisch, weil sie
+nur Flask-Regeln zählt; ein Slash-Befehl weniger ist dort unsichtbar. Der
+Extraktor schliesst lokal gebundene Namen jetzt aus, und ein Vertrag hält beide
+Hälften fest.
+
+**Liegen bleibt `/api/profile`** (3 Routen, 184 Zeilen). Es hängt an
+`_get_live_info` — einer Funktion mit acht weiteren Aufrufern im Recorder-Kern.
+Sie ist echter Bot-Laufzeitcode und liesse sich nur über einen neuen
+Kontext-Slot erreichen, den genau *ein* Blueprint benutzt; genau den Fall
+schliesst `nc/ctx.py` im Kopf aus. Die Gruppe wartet auf das Lösen der
+Live-Auflösungs-Schicht, nicht auf einen Slot.
+
+
 ### Behoben — `bot_app` war nie gebunden, zwei Melder liefen ins Leere (v4.1 W4)
 
 `bot_app` kam in `bot.py` ausschliesslich als **Parametername** vor, nie als
