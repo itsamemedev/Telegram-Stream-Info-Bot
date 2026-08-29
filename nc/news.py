@@ -43,8 +43,18 @@ DB/Brain) und optionale KI-Formulierungen; erfunden wird hier nichts. So bleibt
 die Struktur testbar und ein Fehler kann die Website nicht mit Muell fluten.
 """
 
+import asyncio
+import os
+import time as _time_mod
 from dataclasses import dataclass
 import hashlib
+from datetime import datetime, timedelta, timezone
+
+from nc import creatoragg as _nc_creatoragg
+from nc import freeai as _nc_freeai
+from nc.cfgstore import get as _cfg_get, set_ as _cfg_set
+from nc.dbwrap import db_conn
+from nc.envnum import env_int as _env_int
 
 PROJECT = "project"
 CREATORS = "creators"
@@ -436,3 +446,392 @@ def merge(existing: list, new: list, max_items: int) -> list:
 def render_json(items: list, now_ts: float) -> dict:
     """Die news.json-Struktur, die die Website liest."""
     return {"generated_at": now_ts, "count": len(items), "items": items}
+
+
+# ---------------------------------------------------------------------------
+# v4.1-W4: die Bot-Seite der News, aus dem Monolithen geloest.
+#
+# Bis hierher lag hier nur der bot-freie Textbau (build_items, merge,
+# render_json); Faktenerhebung, Config, Zustand, das Schreiben von news.json
+# und der KI-Pfad blieben in bot.py — und damit auch die acht /api/news-Routen.
+# Erst der Kern, dann die Routen: nc/routes/news.py kostet null nc.ctx-Slots.
+#
+# Woertlich uebernommen; ersetzt wurden nur die frueheren Modul-Globals.
+# ---------------------------------------------------------------------------
+
+
+class _Conf(dict):
+    """Wirft laut statt einen nackten KeyError zu liefern.
+
+    Ein fehlender Startwert ist ein Verdrahtungsfehler im Bot, kein Datenfehler
+    der Route — und er soll den Namen nennen, der fehlt, statt im naechsten
+    except-Block zu verschwinden.
+    """
+
+    def __missing__(self, key):
+        raise RuntimeError(
+            "%s ist nicht konfiguriert (%r fehlt) — configure(...) fehlt im "
+            "Startpfad von bot.py" % (__name__, key))
+
+
+_conf = _Conf()
+
+
+class _LazyLog:
+    """Der Logger des Bots, erst beim Zugriff geholt — beim Import ist er None."""
+
+    def __getattr__(self, name):
+        return getattr(_conf["log"], name)
+
+
+log = _LazyLog()
+
+
+def configure(*, log, bot_file, llm_chat, stats_write, ai_timeout, bot_version,
+              kick_channel_url, kick_stream_key, twitch_stream_key,
+              youtube_stream_key, yt_ingest_cache):
+    """Vom Bot genau einmal beim Start gerufen.
+
+    bot_file ist der Pfad der BOT-Quelle, kein __file__ dieses Moduls:
+    output_path() legt news.json in den website/-Ordner NEBEN dem Bot. Mit dem
+    __file__ des Fachmoduls waere das nc/website/ geworden — die oeffentliche
+    Seite haette ab dem Umzug still eine Datei gelesen, die niemand mehr
+    schreibt. Dieselbe Falle wie in W3.
+
+    yt_ingest_cache wandert als REFERENZ: der YouTube-Pfad des Bots schreibt
+    den Cache, collect_facts() liest ihn. Eine Kopie waere ab dem Start
+    eingefroren.
+    """
+    _conf.update(log=log, bot_file=bot_file, llm_chat=llm_chat,
+                 stats_write=stats_write, ai_timeout=ai_timeout,
+                 bot_version=bot_version, kick_channel_url=kick_channel_url,
+                 kick_stream_key=kick_stream_key, twitch_stream_key=twitch_stream_key,
+                 youtube_stream_key=youtube_stream_key,
+                 yt_ingest_cache=yt_ingest_cache)
+
+
+def enabled() -> bool:
+    return bool(_cfg_get("news.enabled",
+                         os.getenv("NEWS_ENABLED", "0").strip().lower() in ("1", "true", "yes", "on")))
+
+
+def output_path() -> str:
+    """Zielpfad fuer news.json. Default: der website/-Ordner neben dem Bot.
+       Ueber NEWS_OUTPUT_DIR auf den echten nginx-Root umstellbar."""
+    d = os.getenv("NEWS_OUTPUT_DIR", "").strip() or \
+        os.path.join(os.path.dirname(os.path.abspath(_conf["bot_file"])), "website")
+    return os.path.join(d, "news.json")
+
+
+def config() -> "NewsConfig":
+    stored = _cfg_get("news.config", {}) or {}
+    cats = stored.get("categories")
+    if not cats:
+        cats = [c.strip() for c in os.getenv("NEWS_CATEGORIES", "project,creators,ai").split(",") if c.strip()]
+    cats = tuple(c for c in cats if c in CATEGORIES) or CATEGORIES
+
+    def _b(v, envname):
+        return bool(v) if isinstance(v, bool) else (os.getenv(envname, "0").strip().lower() in ("1", "true", "yes", "on"))
+    return NewsConfig(
+        enabled=enabled(),
+        auto=_b(stored.get("auto"), "NEWS_AUTO"),
+        categories=cats,
+        cadence_hours=float(stored.get("cadence_hours") or _env_int("NEWS_CADENCE_HOURS", 24)),
+        quiet_start=int(stored.get("quiet_start", _env_int("NEWS_QUIET_START", 0))),
+        quiet_end=int(stored.get("quiet_end", _env_int("NEWS_QUIET_END", 0))),
+        max_items=max(1, int(stored.get("max_items", _env_int("NEWS_MAX_ITEMS", 20)))))
+
+
+def state() -> "NewsState":
+    s = _cfg_get("news.state", {}) or {}
+    return NewsState(last_gen_ts=float(s.get("last_gen_ts", 0) or 0),
+                              count=int(s.get("count", 0) or 0))
+
+
+def state_save(ts, count):
+    _cfg_set("news.state", {"last_gen_ts": ts, "count": int(count)})
+
+
+def read_items() -> list:
+    import json
+    try:
+        with open(output_path(), "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data.get("items", []) if isinstance(data, dict) else []
+    except Exception:
+        return []
+
+
+def write_items(items) -> tuple:
+    import json
+    path = output_path()
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        payload = render_json(items, _time_mod.time())
+        tmp = path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(payload, f, ensure_ascii=False, indent=2)
+        os.replace(tmp, path)                 # atomar — kein halb geschriebenes news.json
+        return True, path
+    except Exception as e:
+        return False, str(e)[:200]
+
+
+def collect_facts() -> dict:
+    """Sammelt ECHTE, AGGREGIERTE Fakten (keine Einzelpersonen) fuer die News."""
+    facts = {"version": _conf["bot_version"]}
+    plats = []
+    if _conf["kick_channel_url"] or _conf["kick_stream_key"]:
+        plats.append("Kick")
+    if _conf["twitch_stream_key"]:
+        plats.append("Twitch")
+    if _conf["youtube_stream_key"] or _conf["yt_ingest_cache"].get("key"):
+        plats.append("YouTube")
+    facts["platforms"] = plats
+    try:
+        with db_conn() as c:
+            facts["tracked"] = c.execute("SELECT COUNT(*) AS n FROM trackings").fetchone()["n"]
+            # v4.0: Tages-Live-Report. Wer war in den letzten 24 h live? Signal ist
+            # der Live-Erkennungs-Log (recording_attempts.started_at) — intern
+            # genutzt, in der OEFFENTLICHEN News NIE als "Aufnahme" formuliert,
+            # sondern ausschliesslich als "war live".
+            _cut = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
+            _rows = c.execute(
+                "SELECT DISTINCT username FROM recording_attempts "
+                "WHERE started_at >= ? AND username IS NOT NULL "
+                "ORDER BY username", (_cut,)).fetchall()
+            _live = [r["username"] for r in _rows if (r["username"] or "").strip()]
+            facts["live_today"] = _live
+            facts["live_today_count"] = len(_live)
+
+            # v4.1: Wochenbild. Der Tageswert allein hat keinen Massstab — "2 live"
+            # sagt nichts, "2 heute, 11 in sieben Tagen" schon. Aggregiert in
+            # Python statt per GROUP BY/DISTINCT-Datumsfunktion: datetime()/DATE()
+            # gibt es so nur in SQLite, die Query waere auf MariaDB gestorben.
+            _cut7 = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
+            _r7 = c.execute(
+                "SELECT username, started_at FROM recording_attempts "
+                "WHERE started_at >= ? AND username IS NOT NULL", (_cut7,)).fetchall()
+            _u7, _d7, _s7 = set(), set(), 0
+            for _r in _r7:
+                _u = (_r["username"] or "").strip()
+                if not _u:
+                    continue
+                _s7 += 1
+                _u7.add(_u)
+                _d7.add(str(_r["started_at"] or "")[:10])
+            facts["live_7d_count"] = len(_u7)
+            facts["active_days_7d"] = len({d for d in _d7 if d})
+            facts["sessions_7d"] = _s7
+
+            # Eingerichtete Sende-Ziele — oeffentlich unbedenklich (nur die ANZAHL,
+            # nie Label, URL oder Key).
+            try:
+                facts["restream_targets"] = c.execute(
+                    "SELECT COUNT(*) AS n FROM restreams WHERE enabled = 1").fetchone()["n"]
+            except Exception as _e:
+                log.debug("_news_facts restream_targets: %s", _e)
+
+            # Was die Moderation in der Woche tatsaechlich getan hat.
+            try:
+                facts["mod_actions_7d"] = c.execute(
+                    "SELECT COUNT(*) AS n FROM kick_mod_log WHERE ts >= ?",
+                    (_cut7,)).fetchone()["n"]
+            except Exception as _e:
+                log.debug("_news_facts mod_actions_7d: %s", _e)
+            try:
+                facts["ai_answers_7d"] = c.execute(
+                    "SELECT COUNT(*) AS n FROM ai_interactions "
+                    "WHERE created_at >= ? AND ok = 1", (_cut7,)).fetchone()["n"]
+            except Exception as _e:
+                log.debug("_news_facts ai_answers_7d: %s", _e)
+
+            # Wissenszuwachs der Woche = juengster minus aeltester Messpunkt im
+            # Fenster. Negative Werte (Speicher wurde geleert) fallen weg statt
+            # als "-40 gelernt" auf der Website zu landen.
+            try:
+                _g = c.execute(
+                    "SELECT ts, triples FROM brain_growth WHERE ts >= ? ORDER BY ts",
+                    (_cut7,)).fetchall()
+                if len(_g) >= 2:
+                    _delta = int(_g[-1]["triples"] or 0) - int(_g[0]["triples"] or 0)
+                    if _delta > 0:
+                        facts["kg_growth_7d"] = _delta
+            except Exception as _e:
+                log.debug("_news_facts kg_growth_7d: %s", _e)
+    except Exception as _e:
+        log.debug("_news_facts DB: %s", _e)
+    try:
+        from brain import get_brain
+        b = get_brain()
+        if b:
+            st = b.knowledge.stats() or {}
+            facts["kg_facts"] = int(st.get("triples", 0) or 0)
+            try:
+                ag = b.agents.status()
+                facts["agents_active"] = len(ag.get("agents", ag)) if isinstance(ag, dict) else len(ag)
+            except Exception:
+                facts["agents_active"] = 0
+    except Exception:
+        pass
+    return facts
+
+
+async def phrase(cat, facts) -> "str | None":
+    """v4.0-W63-Marker: _news_phrase folgt unten (unverändert)."""
+    return await phrase_impl(cat, facts)
+
+
+def creator_activity(days: int = 7) -> list:
+    """Aktivität je getracktem User im Fenster (aus recording_attempts), inkl.
+       inaktiver User. Aggregation in nc/creatoragg.py."""
+    try:
+        cut = (datetime.now(timezone.utc) - timedelta(days=max(1, days))).isoformat()
+        with db_conn() as c:
+            rows = c.execute(
+                "SELECT username, started_at, outcome FROM recording_attempts "
+                "WHERE started_at >= ? AND username IS NOT NULL", (cut,)).fetchall()
+            tracked = [r["username"] for r in
+                       c.execute("SELECT username FROM trackings").fetchall()
+                       if (r["username"] or "").strip()]
+        return _nc_creatoragg.summarize(rows, tracked)
+    except Exception as e:
+        log.debug("_creator_activity: %s", e)
+        return []
+
+
+def creator_facts_line(u: dict) -> str:
+    """Kompakte Faktenzeile für Azraels Prompt/Anzeige."""
+    if not u["sessions"]:
+        return "war im Zeitraum nicht live"
+    oc = u.get("outcomes") or {}
+    fails = sum(v for k, v in oc.items()
+                if k not in ("success", "ok", "running", "?"))
+    last = (u.get("last_seen") or "")[:16].replace("T", " ")
+    part = f"{u['sessions']}× live an {u['active_days']} Tag(en), zuletzt {last}"
+    if fails:
+        part += f", {fails} Aufnahme(n) fehlgeschlagen (Zugriff/Region)"
+    return part
+
+
+async def azrael_creator_take(username: str, factline: str) -> str:
+    """Azraels (kurze) Einschätzung zu einem Creator. Leerer String, wenn KI aus
+       oder nicht erreichbar — dann zeigt das Dashboard nur die Fakten."""
+    if os.getenv("NEWS_CREATOR_AI", "1").strip().lower() not in ("1", "true", "yes", "on"):
+        return ""
+    try:
+        msgs = [
+            {"role": "system", "content":
+             "Du bist Azrael Sentinel, der wachsame KI-Waechter dieses Stream-Setups. "
+             "Bewerte einen getrackten Creator in EINEM knappen deutschen Satz (max 30 "
+             "Woerter): sachlich, leicht sardonisch, kein Fliesstext-Vorwort, keine "
+             "Anrede, keine Emojis."},
+            {"role": "user", "content":
+             f"Creator @{username}. Aktivitaet: {factline}. Dein Urteil in einem Satz:"},
+        ]
+        text, _err = await _conf["llm_chat"](msgs, timeout=_conf["ai_timeout"])
+        return (text or "").strip().split("\n")[0][:240]
+    except Exception:
+        return ""
+
+
+async def creator_dossier_generate(days: int = 7, max_users: int = 30) -> dict:
+    """Baut je getracktem User Fakten + Azraels Take und cacht das Ergebnis in
+       app_config (news.creators). Auf Abruf oder ueber die News-Kadenz."""
+    global _CREATOR_DOSSIER_LOCK
+    if _CREATOR_DOSSIER_LOCK is None:
+        _CREATOR_DOSSIER_LOCK = asyncio.Lock()
+    async with _CREATOR_DOSSIER_LOCK:
+        acts = creator_activity(days)[:max(1, max_users)]
+        items = []
+        for u in acts:
+            factline = creator_facts_line(u)
+            take = await azrael_creator_take(u["username"], factline)
+            items.append({
+                "username": u["username"], "sessions": u["sessions"],
+                "active_days": u["active_days"], "last_seen": u["last_seen"],
+                "outcomes": u["outcomes"], "summary": factline, "azrael": take,
+            })
+        payload = {"items": items, "generated_ts": datetime.now(timezone.utc).isoformat(),
+                   "days": days}
+        try:
+            _cfg_set("news.creators", payload)
+        except Exception as e:
+            log.debug("news.creators speichern: %s", e)
+        return payload
+
+
+def absaetze(text) -> str:
+    """v4.1: KI-Antwort auf saubere Absaetze normalisieren. Der Website-Renderer
+       trennt an "\n\n" — ohne diese Normalisierung liefert ein Modell mal drei
+       Leerzeilen, mal einzelne Umbrueche mitten im Satz, und die Seite zeigt
+       entweder Luecken oder einen einzigen Klotz."""
+    zeilen = [z.strip() for z in (text or "").replace("\r", "").split("\n")]
+    absaetze, puffer = [], []
+    for z in zeilen:
+        if z:
+            # Aufzaehlungszeichen fliegen raus: die Details stehen auf der Website
+            # in einer eigenen Liste, im Fliesstext waeren sie doppelt.
+            puffer.append(z.lstrip("-*\u2022 ").strip())
+        elif puffer:
+            absaetze.append(" ".join(puffer))
+            puffer = []
+    if puffer:
+        absaetze.append(" ".join(puffer))
+    return "\n\n".join(a for a in absaetze if a)
+
+
+async def phrase_impl(cat, facts) -> "str | None":
+    """Optionale KI-Formulierung aus den ECHTEN Fakten (kein Erfinden). self-gated."""
+    if os.getenv("NEWS_AI_FLAVOR", "1").strip().lower() not in ("1", "true", "yes", "on"):
+        return None
+    try:
+        base = _static_body(cat, facts)
+        label = {"project": "das Projekt",
+                 "creators": "einen Tages-Report der heute live gewesenen Creator "
+                             "(die Namen aus den Fakten duerfen genannt werden)",
+                 "ai": "die KI"}.get(cat, cat)
+        # v4.1: ausfuehrlich statt Statuszeile. Die alte Vorgabe "1-2 Saetze" hat
+        # aus jeder Meldung eine Zeile gemacht — fuer einen Erstbesucher wertlos
+        # und fuer Suchmaschinen zu duenn. Jetzt drei Absaetze; die Absatzgrenzen
+        # muessen deshalb erhalten bleiben (frueher: .replace("\n", " ")).
+        msgs = [{"role": "system", "content": "Du schreibst oeffentliche Website-News auf Deutsch. "
+                 "Schreibe GENAU DREI Absaetze, getrennt durch eine Leerzeile, zusammen 110-180 Woerter: "
+                 "(1) was gerade passiert ist, (2) was das konkret bedeutet, (3) eine sachliche Einordnung. "
+                 "Sachlich-einladend, ganze Saetze, KEINE Hashtags, KEINE Emojis, KEINE Ueberschriften, "
+                 "KEINE Aufzaehlungszeichen, KEINE erfundenen Zahlen. Nutze AUSSCHLIESSLICH die genannten "
+                 "Fakten und uebernimm jede Zahl unveraendert. WICHTIG: Erwaehne NIEMALS Aufnahmen, "
+                 "Aufzeichnungen, Mitschnitte oder Recording — die Plattform nimmt oeffentlich nichts auf; "
+                 "sprich ausschliesslich von Live-Begleitung, Restream und Moderation."},
+                {"role": "user", "content": f"Formuliere eine ausfuehrliche oeffentliche News ueber {label} "
+                 f"aus diesen Fakten, ohne neue Zahlen zu erfinden: {base}"}]
+        out = await asyncio.wait_for(_nc_freeai.chat(msgs, timeout=20), timeout=24)
+        out = absaetze(out)
+        return out[:1600] or None
+    except Exception:
+        return None
+
+
+async def generate(manual: bool = False) -> dict:
+    cfg = config()
+    if not cfg.categories:
+        return {"ok": False, "error": "Keine Kategorien aktiv"}
+    facts = await asyncio.to_thread(collect_facts)
+    phrasings = {}
+    for cat in cfg.categories:
+        p = await phrase(cat, facts)
+        if p:
+            phrasings[cat] = p
+    now = _time_mod.time()
+    fresh = build_items(facts, phrasings=phrasings, categories=cfg.categories, now_ts=now)
+    existing = await asyncio.to_thread(read_items)
+    merged = merge(existing, fresh, cfg.max_items)
+    ok, info = await asyncio.to_thread(write_items, merged)
+    await asyncio.to_thread(_conf["stats_write"])
+    if ok:
+        st = state()
+        state_save(now, st.count + 1)
+        log.info("News generiert (%d Items gesamt, %d neu, manual=%s) → %s",
+                 len(merged), len(fresh), manual, info)
+    return {"ok": ok, "items": len(merged), "new": len(fresh),
+            "path": info if ok else None, "error": None if ok else info}

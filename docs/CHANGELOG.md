@@ -11,6 +11,70 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Behoben — `bot_app` war nie gebunden, zwei Melder liefen ins Leere (v4.1 W4)
+
+`bot_app` kam in `bot.py` ausschliesslich als **Parametername** vor, nie als
+Modul-Global. Die beiden Stellen, die ihn per `globals().get("bot_app")` lesen,
+bekamen deshalb immer `None`:
+
+* **`_brain_notify`** meldete „BRAIN-ALARM (Loop/Bot nicht bereit)" auf
+  `log.warning` und kehrte um. In einem ERROR-Log erscheint davon nichts — kein
+  einziger Brain-Alarm hat je Telegram erreicht.
+* **`_marketing_post_telegram`** antwortete dauerhaft
+  `{"ok": false, "error": "Bot nicht bereit"}`. Der Telegram-Zweig des
+  Marketings war tot; im Dashboard sah es nach einem Konfigurationsfehler aus.
+
+Genau das Fehlerbild aus `CLAUDE.md`: etwas „geht nicht" und der Grund steht in
+einem `warning`, das niemand sieht. Gefunden beim Vermessen der Abhängigkeiten
+für den News-/Marketing-Umzug — `globals()`-Zugriffe sind dort seit W116
+Handprüfung. Der Name wird jetzt dort gebunden, wo die Application zum ersten
+Mal feststeht: in `run_bot`, zwei Zeilen über `_GLOBAL_SCRAPER`, das an
+derselben Stelle nach demselben Muster gesetzt wird. Vertrag:
+`test_v41_w4_bot_app_gebunden`.
+
+### Geändert — Monolith zerlegt: News- und Marketing-Kern plus 13 Routen (v4.1 W4)
+
+`bot.py` schrumpft von 30.451 auf **29.942 Zeilen** — zum ersten Mal unter
+30.000. Von den 355 Flask-Routen liegen jetzt **173 ausserhalb** (vorher 160),
+in **16 Blueprints**. Die Routentabelle ist vor und nach der Welle bitgleich.
+
+Dieselbe Reihenfolge wie in W117 und W3, diesmal für zwei Module gleichzeitig:
+**erst der Kern, dann die Routen.** 404 Zeilen — Faktenerhebung, Config, Zustand,
+`news.json`-Schreiber, KI-Pfad, Creator-Dossier, das Marketing-Senden — sind
+wörtlich nach `nc/news.py` und `nc/marketing.py` gewandert, wo bisher nur die
+bot-freie Text- und Anti-Spam-Logik lag. `/api/news` kostete davor **zwölf**
+Kontext-Einträge, `/api/marketing` **sieben**; danach zwei und drei, und alle
+fünf gab es schon (`run_async`, `get_main_loop`, zwei `cfg`-Schlüssel).
+**`nc.ctx` ist um null Einträge gewachsen** und steht weiter bei 24 Slots.
+
+Drei Fallen, jede davon still:
+
+* **`__file__` wiederholt sich pro Welle.** `_news_output_path` legt `news.json`
+  neben den Bot. Im Fachmodul wäre daraus `nc/website/news.json` geworden — die
+  öffentliche Seite hätte eine Datei gelesen, die niemand mehr schreibt, und der
+  News-Agent hätte in ein totes Verzeichnis geschrieben. Kommt jetzt als
+  `bot_file` aus dem Bot; im Testharnisch gegengeprüft.
+* **Die `.env.example`-Falle aus W117, anders herum.** Nicht der Suchpfad des
+  Scanners, sondern die Schreibweise der Aufrufstelle: aus
+  `_env_int("NEWS_MAX_ITEMS", 20)` wurde durch die Injektion
+  `_conf["env_int"](...)`, worauf das Muster des Generators nicht mehr passt.
+  **Acht Variablen** wären lautlos aus der Vorlage gefallen. Gefunden hat es der
+  Vertrag. `_env_int` ist ohnehin nur eine Weiterleitung auf `nc.envnum` — jetzt
+  direkt importiert statt injiziert, damit die Aufrufstelle wörtlich bleibt.
+* **Verschattung beim Umbenennen.** Wie `llm_note` in W3: `publish()` hat ein
+  lokales `flavor`, `generate()` ein lokales `facts`, `phrase_impl()` einen
+  Parameter dieses Namens. Die Funktionen heissen deshalb `ai_flavor` und
+  `collect_facts`; `pyflakes` (F823) hat beides vor dem ersten Lauf gefunden.
+
+Ausserdem ist `_loop_not_ready` nach `nc/util.py` gewandert — ein reines
+Prädikat mit siebzehn Lesern im Monolithen und ab jetzt in jedem Blueprint. Als
+Kontext-Slot wäre es Verschwendung gewesen.
+
+Fünf Vertragsanker sind mitgewandert (Fakten-Sammlung, Aufnahme-Verbot im
+Prompt, Creator-Dossier, Invite-Auflösung, Absatz-Normalisierung) — **kein
+einziger gelöscht**. Neu: `test_v41_w4_news_marketing_kern_raus`.
+
+
 ### Geändert — Monolith zerlegt: der Evolution-Core und seine acht Routen (v4.1 W3)
 
 `bot.py` schrumpft von 30.944 auf **30.451 Zeilen**; von den 355 Flask-Routen

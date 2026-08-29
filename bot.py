@@ -600,6 +600,8 @@ from nc.routes import money as _nc_routes_money              # v4.0-W116: Geld
 from nc.routes import trackings as _nc_routes_trackings      # v4.0-W117: Trackings
 from nc.routes import stats as _nc_routes_stats              # v4.0-W117: Auswertung
 from nc.routes import evolution as _nc_routes_evolution      # v4.1-W3: Evolution
+from nc.routes import news as _nc_routes_news                # v4.1-W4: Website-News
+from nc.routes import marketing as _nc_routes_marketing      # v4.1-W4: Cross-Promo
 from nc import updater as _nc_updater                        # v4.0-W115: Selbst-Update aus dem GitHub-Repo
 from nc import donationsdb as _nc_donationsdb                # v4.0-W116: manuell erfasste Spenden lesen
 # Diese beiden Routen ruft der Bot auch INTERN auf (Telegram /sysres und die
@@ -754,7 +756,7 @@ from nc.textmore import (  # noqa: F401
 from nc.scoring import build_report  # noqa: F401
 from nc.persona import (  # noqa: F401
     _persona_intensity_hint, _azrael_emotion)
-from nc.util import _webhook_event_match  # noqa: F401
+from nc.util import _webhook_event_match, _loop_not_ready  # noqa: F401
 from nc.proxyutil import (  # noqa: F401
     get_random_proxy, _pick_pull_proxy, configure_proxy_select)
 from nc.channels import (  # noqa: F401
@@ -885,7 +887,6 @@ from nc import restream_guard as _nc_guard    # B123: Soll-Zustand + Zielpruefun
 from nc import restream_testpush as _nc_testpush  # B161: sichere Test-Pushes (isoliert)
 from nc import marketing as _nc_marketing  # B162: Cross-Promo-Agent (bot-frei)
 from nc import news as _nc_news  # B163: oeffentliche Website-News (bot-frei)
-from nc import creatoragg as _nc_creatoragg  # v4.0-W63: Creator-Aktivitäts-Aggregation (rein)
 from nc import schema as _nc_schema  # B164: DB-Schema (aus init_db extrahiert)
 from nc import modheuristics as _nc_mod  # B165: plattformunabh. Mod-Heuristik
 from nc import piper_voices as _nc_piper  # B166: Piper-Stimm-/Modell-Auflösung
@@ -12181,131 +12182,22 @@ def api_testpush_run():
 # Dashboard schaltbar, Auto-Cadence opt-in, Anti-Spam bot-frei in nc.marketing.
 # Persistenz ueber app_config (_cfg_get/_cfg_set) → Toggle wirkt sofort & ueberlebt Neustart.
 # ═══════════════════════════════════════════════════════════════════════
-def _marketing_enabled() -> bool:
-    return bool(_cfg_get("marketing.enabled",
-                         os.getenv("MARKETING_ENABLED", "0").strip().lower() in ("1", "true", "yes", "on")))
 
 
-def _marketing_default_targets():
-    t = []
-    if DISCORD_WEBHOOK_URL:
-        t.append("discord")
-    if os.getenv("MARKETING_TG_CHAT_ID", "").strip() or ALLOWED_USER_IDS:
-        t.append("telegram")
-    return t
 
 
-def _marketing_cfg() -> "_nc_marketing.MarketingConfig":
-    """Config FRISCH bauen: app_config-Overrides ueber .env-Defaults, Kanal-URLs
-       aus den bestehenden Env-Variablen (Modul-Konstanten wuerden .env einfrieren)."""
-    stored = _cfg_get("marketing.config", {}) or {}
-    channels = {}
-    if KICK_CHANNEL_URL:
-        channels["Kick"] = KICK_CHANNEL_URL
-    _tw = (os.getenv("TWITCH_CHANNEL", "") or "").strip().lstrip("#")
-    if _tw:
-        channels["Twitch"] = _tw if _tw.startswith("http") else f"https://twitch.tv/{_tw}"
-    _yt = (os.getenv("YOUTUBE_CHANNEL", "") or "").strip()
-    if _yt:
-        channels["YouTube"] = _yt if _yt.startswith("http") else f"https://youtube.com/@{_yt.lstrip('@')}"
-
-    def _b(v, dflt):
-        return bool(v) if isinstance(v, bool) else dflt
-    return _nc_marketing.MarketingConfig(
-        enabled=_marketing_enabled(),
-        auto=_b(stored.get("auto"), os.getenv("MARKETING_AUTO", "0").strip().lower() in ("1", "true", "yes", "on")),
-        targets=tuple(stored.get("targets") or _marketing_default_targets()),
-        cadence_hours=float(stored.get("cadence_hours") or _env_int("MARKETING_CADENCE_HOURS", 6)),
-        min_gap_hours=float(stored.get("min_gap_hours") or _env_int("MARKETING_MIN_GAP_HOURS", 3)),
-        quiet_start=int(stored.get("quiet_start", _env_int("MARKETING_QUIET_START", 23))),
-        quiet_end=int(stored.get("quiet_end", _env_int("MARKETING_QUIET_END", 8))),
-        only_when_live=_b(stored.get("only_when_live"),
-                          os.getenv("MARKETING_ONLY_WHEN_LIVE", "0").strip().lower() in ("1", "true", "yes", "on")),
-        channels=channels,
-        website=(os.getenv("MARKETING_WEBSITE_URL", "https://lafap.de").strip()),
-        invite=_discord_invite(),
-    )
 
 
-def _marketing_state_obj() -> "_nc_marketing.MarketingState":
-    s = _cfg_get("marketing.state", {}) or {}
-    return _nc_marketing.MarketingState(
-        last_post_ts=float(s.get("last_post_ts", 0) or 0),
-        count=int(s.get("count", 0) or 0))
 
 
-def _marketing_state_save(ts, count):
-    _cfg_set("marketing.state", {"last_post_ts": ts, "count": int(count)})
 
 
-async def _marketing_flavor(cfg) -> "str | None":
-    """Optionale KI-Zeile (ein Satz) via freeai. Best-effort — None bei Fehler,
-       dann greift die statische Vorlage. self-gated auf MARKETING_AI_FLAVOR."""
-    if os.getenv("MARKETING_AI_FLAVOR", "1").strip().lower() not in ("1", "true", "yes", "on"):
-        return None
-    try:
-        names = ", ".join(cfg.channels.keys()) or "unseren Kanaelen"
-        msgs = [{"role": "system", "content": "Du bist ein knapper Social-Media-Texter. "
-                 "Antworte mit GENAU EINEM kurzen deutschen Satz, ohne Hashtags, ohne Emojis."},
-                {"role": "user", "content": f"Schreibe einen einladenden Ein-Satz-Aufruf, "
-                 f"unseren Livestream auf {names} und unsere Website zu besuchen."}]
-        out = await asyncio.wait_for(_nc_freeai.chat(msgs, timeout=8), timeout=10)
-        out = (out or "").strip().replace("\n", " ")
-        return out[:200] or None
-    except Exception:
-        return None
 
 
-async def _marketing_post_discord(text: str) -> dict:
-    if not DISCORD_WEBHOOK_URL:
-        return {"ok": False, "error": "kein DISCORD_WEBHOOK_URL"}
-    try:
-        import aiohttp
-        session = await _get_ai_session()
-        async with session.post(DISCORD_WEBHOOK_URL, json={"content": text[:1900]},
-                                timeout=aiohttp.ClientTimeout(total=10)) as r:
-            return {"ok": r.status in (200, 204), "status": r.status}
-    except Exception as e:
-        return {"ok": False, "error": str(e)[:160]}
 
 
-async def _marketing_post_telegram(text: str) -> dict:
-    try:
-        chat_id = os.getenv("MARKETING_TG_CHAT_ID", "").strip()
-        chat_id = int(chat_id) if chat_id.lstrip("-").isdigit() else (sorted(ALLOWED_USER_IDS)[0] if ALLOWED_USER_IDS else 0)
-    except Exception:
-        chat_id = sorted(ALLOWED_USER_IDS)[0] if ALLOWED_USER_IDS else 0
-    if not chat_id:
-        return {"ok": False, "error": "kein Telegram-Ziel (MARKETING_TG_CHAT_ID)"}
-    _app = globals().get("bot_app")
-    if _app is None:
-        return {"ok": False, "error": "Bot nicht bereit"}
-    await _safe_send(_app.bot, chat_id, text[:4000])   # _safe_send wirft nie
-    return {"ok": True, "chat_id": chat_id}
 
 
-async def _marketing_publish(manual: bool = False) -> dict:
-    """Komponiert (optional mit KI-Zeile) und postet an alle aktiven Ziele.
-       Aktualisiert immer den Zeitstempel — auch der manuelle Post haelt danach Abstand."""
-    cfg = _marketing_cfg()
-    if not _nc_marketing.has_content(cfg):
-        return {"ok": False, "error": "Nichts zu bewerben (keine Kanal-URL/Website gesetzt)"}
-    if not cfg.targets:
-        return {"ok": False, "error": "Keine Ziele aktiv (Discord-Webhook/Telegram-Chat konfigurieren)"}
-    st = _marketing_state_obj()
-    flavor = await _marketing_flavor(cfg)
-    msg = _nc_marketing.compose(cfg, variant=st.count, flavor=flavor)
-    sent = {}
-    if "discord" in cfg.targets:
-        sent["discord"] = await _marketing_post_discord(msg["discord"])
-    if "telegram" in cfg.targets:
-        sent["telegram"] = await _marketing_post_telegram(msg["telegram"])
-    ok = any(v.get("ok") for v in sent.values()) if sent else False
-    if ok:
-        _marketing_state_save(_time_mod.time(), st.count + 1)
-        log.info("Marketing-Post gesendet (manual=%s, count=%d, Ziele=%s)",
-                 manual, st.count + 1, ",".join(k for k, v in sent.items() if v.get("ok")))
-    return {"ok": ok, "manual": manual, "sent": sent, "count": st.count + (1 if ok else 0)}
 
 
 async def _marketing_loop():
@@ -12314,90 +12206,27 @@ async def _marketing_loop():
     await asyncio.sleep(90)
     while True:
         try:
-            cfg = _marketing_cfg()
-            st = _marketing_state_obj()
+            cfg = _nc_marketing.config()
+            st = _nc_marketing.state()
             now = _time_mod.time()
             hour = int(_time_mod.strftime("%H", _time_mod.localtime(now)))
             due, _reason = _nc_marketing.should_post(cfg, st, now, hour,
                                                      any_live=bool(_RESTREAM_ACTIVE_ALL))
             if due:
-                await _marketing_publish(manual=False)
+                await _nc_marketing.publish(manual=False)
         except Exception as e:
             _loop_fehler("_marketing_loop", e)
         await asyncio.sleep(_env_int("MARKETING_CHECK_INTERVAL_S", 300))
 
 
-@dashboard_app.route("/api/marketing/status")
-def api_marketing_status():
-    cfg = _marketing_cfg()
-    st = _marketing_state_obj()
-    return jsonify(ok=True,
-                   enabled=cfg.enabled, auto=cfg.auto, targets=list(cfg.targets),
-                   cadence_hours=cfg.cadence_hours, min_gap_hours=cfg.min_gap_hours,
-                   quiet_start=cfg.quiet_start, quiet_end=cfg.quiet_end,
-                   only_when_live=cfg.only_when_live,
-                   channels=[{"name": n, "url": u} for n, u in cfg.channels.items()],
-                   website=cfg.website, invite_set=bool(cfg.invite),
-                   discord_ready=bool(DISCORD_WEBHOOK_URL),
-                   telegram_ready=bool(os.getenv("MARKETING_TG_CHAT_ID", "").strip() or ALLOWED_USER_IDS),
-                   has_content=_nc_marketing.has_content(cfg),
-                   last_post_ts=st.last_post_ts, count=st.count,
-                   next_due_ts=_nc_marketing.next_due_ts(cfg, st))
 
 
-@dashboard_app.route("/api/marketing/toggle", methods=["POST"])
-def api_marketing_toggle():
-    payload = request.get_json(silent=True) or {}
-    enabled = bool(payload.get("enabled"))
-    _cfg_set("marketing.enabled", enabled)
-    return jsonify(ok=True, enabled=enabled)
 
 
-@dashboard_app.route("/api/marketing/config", methods=["POST"])
-def api_marketing_config():
-    payload = request.get_json(silent=True) or {}
-    stored = _cfg_get("marketing.config", {}) or {}
-    for k in ("auto", "only_when_live"):
-        if k in payload:
-            stored[k] = bool(payload[k])
-    if "targets" in payload and isinstance(payload["targets"], list):
-        stored["targets"] = [t for t in payload["targets"] if t in _nc_marketing.TARGETS]
-    for k in ("cadence_hours", "min_gap_hours"):
-        if k in payload:
-            try:
-                stored[k] = max(0.5, float(payload[k]))
-            except (TypeError, ValueError):
-                return jsonify(ok=False, error=f"{k} muss eine Zahl sein"), 400
-    for k in ("quiet_start", "quiet_end"):
-        if k in payload:
-            try:
-                stored[k] = int(payload[k]) % 24
-            except (TypeError, ValueError):
-                return jsonify(ok=False, error=f"{k} muss 0-23 sein"), 400
-    _cfg_set("marketing.config", stored)
-    return jsonify(ok=True, config=stored)
 
 
-@dashboard_app.route("/api/marketing/preview")
-def api_marketing_preview():
-    """Schnelle Vorschau OHNE KI-Zeile (die wird erst beim echten Senden ergaenzt)
-       und OHNE zu posten."""
-    cfg = _marketing_cfg()
-    st = _marketing_state_obj()
-    msg = _nc_marketing.compose(cfg, variant=st.count, flavor=None)
-    return jsonify(ok=True, preview=msg, has_content=_nc_marketing.has_content(cfg))
 
 
-@dashboard_app.route("/api/marketing/send-now", methods=["POST"])
-def api_marketing_send_now():
-    """Manueller Sofort-Post (umgeht Cadence/Ruhezeit bewusst — der Mensch entscheidet)."""
-    try:
-        res = _run_async_from_flask(_marketing_publish(manual=True), timeout=40)
-    except Exception as e:
-        if _loop_not_ready(e):
-            return jsonify(ok=False, error="Event-Loop startet noch — kurz erneut versuchen."), 503
-        return jsonify(ok=False, error=f"Marketing-Post: {e}"), 500
-    return jsonify(**res)
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -12406,334 +12235,39 @@ def api_marketing_send_now():
 # Auto-Cadence opt-in. Fakten kommen aus DB/Brain (nie erfunden), Formulierung
 # optional via freeai. Persistenz ueber app_config → Toggle sofort & neustart-fest.
 # ═══════════════════════════════════════════════════════════════════════
-def _news_enabled() -> bool:
-    return bool(_cfg_get("news.enabled",
-                         os.getenv("NEWS_ENABLED", "0").strip().lower() in ("1", "true", "yes", "on")))
 
 
-def _news_output_path() -> str:
-    """Zielpfad fuer news.json. Default: der website/-Ordner neben dem Bot.
-       Ueber NEWS_OUTPUT_DIR auf den echten nginx-Root umstellbar."""
-    d = os.getenv("NEWS_OUTPUT_DIR", "").strip() or \
-        os.path.join(os.path.dirname(os.path.abspath(__file__)), "website")
-    return os.path.join(d, "news.json")
 
 
-def _news_cfg() -> "_nc_news.NewsConfig":
-    stored = _cfg_get("news.config", {}) or {}
-    cats = stored.get("categories")
-    if not cats:
-        cats = [c.strip() for c in os.getenv("NEWS_CATEGORIES", "project,creators,ai").split(",") if c.strip()]
-    cats = tuple(c for c in cats if c in _nc_news.CATEGORIES) or _nc_news.CATEGORIES
-
-    def _b(v, envname):
-        return bool(v) if isinstance(v, bool) else (os.getenv(envname, "0").strip().lower() in ("1", "true", "yes", "on"))
-    return _nc_news.NewsConfig(
-        enabled=_news_enabled(),
-        auto=_b(stored.get("auto"), "NEWS_AUTO"),
-        categories=cats,
-        cadence_hours=float(stored.get("cadence_hours") or _env_int("NEWS_CADENCE_HOURS", 24)),
-        quiet_start=int(stored.get("quiet_start", _env_int("NEWS_QUIET_START", 0))),
-        quiet_end=int(stored.get("quiet_end", _env_int("NEWS_QUIET_END", 0))),
-        max_items=max(1, int(stored.get("max_items", _env_int("NEWS_MAX_ITEMS", 20)))))
 
 
-def _news_state_obj() -> "_nc_news.NewsState":
-    s = _cfg_get("news.state", {}) or {}
-    return _nc_news.NewsState(last_gen_ts=float(s.get("last_gen_ts", 0) or 0),
-                              count=int(s.get("count", 0) or 0))
 
 
-def _news_state_save(ts, count):
-    _cfg_set("news.state", {"last_gen_ts": ts, "count": int(count)})
 
 
-def _news_read() -> list:
-    import json
-    try:
-        with open(_news_output_path(), "r", encoding="utf-8") as f:
-            data = json.load(f)
-        return data.get("items", []) if isinstance(data, dict) else []
-    except Exception:
-        return []
 
 
-def _news_write(items) -> tuple:
-    import json
-    path = _news_output_path()
-    try:
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        payload = _nc_news.render_json(items, _time_mod.time())
-        tmp = path + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(payload, f, ensure_ascii=False, indent=2)
-        os.replace(tmp, path)                 # atomar — kein halb geschriebenes news.json
-        return True, path
-    except Exception as e:
-        return False, str(e)[:200]
 
 
-def _news_facts() -> dict:
-    """Sammelt ECHTE, AGGREGIERTE Fakten (keine Einzelpersonen) fuer die News."""
-    facts = {"version": BOT_VERSION}
-    plats = []
-    if KICK_CHANNEL_URL or KICK_STREAM_KEY:
-        plats.append("Kick")
-    if TWITCH_STREAM_KEY:
-        plats.append("Twitch")
-    if YOUTUBE_STREAM_KEY or _YT_INGEST_CACHE.get("key"):
-        plats.append("YouTube")
-    facts["platforms"] = plats
-    try:
-        with db_conn() as c:
-            facts["tracked"] = c.execute("SELECT COUNT(*) AS n FROM trackings").fetchone()["n"]
-            # v4.0: Tages-Live-Report. Wer war in den letzten 24 h live? Signal ist
-            # der Live-Erkennungs-Log (recording_attempts.started_at) — intern
-            # genutzt, in der OEFFENTLICHEN News NIE als "Aufnahme" formuliert,
-            # sondern ausschliesslich als "war live".
-            _cut = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
-            _rows = c.execute(
-                "SELECT DISTINCT username FROM recording_attempts "
-                "WHERE started_at >= ? AND username IS NOT NULL "
-                "ORDER BY username", (_cut,)).fetchall()
-            _live = [r["username"] for r in _rows if (r["username"] or "").strip()]
-            facts["live_today"] = _live
-            facts["live_today_count"] = len(_live)
-
-            # v4.1: Wochenbild. Der Tageswert allein hat keinen Massstab — "2 live"
-            # sagt nichts, "2 heute, 11 in sieben Tagen" schon. Aggregiert in
-            # Python statt per GROUP BY/DISTINCT-Datumsfunktion: datetime()/DATE()
-            # gibt es so nur in SQLite, die Query waere auf MariaDB gestorben.
-            _cut7 = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
-            _r7 = c.execute(
-                "SELECT username, started_at FROM recording_attempts "
-                "WHERE started_at >= ? AND username IS NOT NULL", (_cut7,)).fetchall()
-            _u7, _d7, _s7 = set(), set(), 0
-            for _r in _r7:
-                _u = (_r["username"] or "").strip()
-                if not _u:
-                    continue
-                _s7 += 1
-                _u7.add(_u)
-                _d7.add(str(_r["started_at"] or "")[:10])
-            facts["live_7d_count"] = len(_u7)
-            facts["active_days_7d"] = len({d for d in _d7 if d})
-            facts["sessions_7d"] = _s7
-
-            # Eingerichtete Sende-Ziele — oeffentlich unbedenklich (nur die ANZAHL,
-            # nie Label, URL oder Key).
-            try:
-                facts["restream_targets"] = c.execute(
-                    "SELECT COUNT(*) AS n FROM restreams WHERE enabled = 1").fetchone()["n"]
-            except Exception as _e:
-                log.debug("_news_facts restream_targets: %s", _e)
-
-            # Was die Moderation in der Woche tatsaechlich getan hat.
-            try:
-                facts["mod_actions_7d"] = c.execute(
-                    "SELECT COUNT(*) AS n FROM kick_mod_log WHERE ts >= ?",
-                    (_cut7,)).fetchone()["n"]
-            except Exception as _e:
-                log.debug("_news_facts mod_actions_7d: %s", _e)
-            try:
-                facts["ai_answers_7d"] = c.execute(
-                    "SELECT COUNT(*) AS n FROM ai_interactions "
-                    "WHERE created_at >= ? AND ok = 1", (_cut7,)).fetchone()["n"]
-            except Exception as _e:
-                log.debug("_news_facts ai_answers_7d: %s", _e)
-
-            # Wissenszuwachs der Woche = juengster minus aeltester Messpunkt im
-            # Fenster. Negative Werte (Speicher wurde geleert) fallen weg statt
-            # als "-40 gelernt" auf der Website zu landen.
-            try:
-                _g = c.execute(
-                    "SELECT ts, triples FROM brain_growth WHERE ts >= ? ORDER BY ts",
-                    (_cut7,)).fetchall()
-                if len(_g) >= 2:
-                    _delta = int(_g[-1]["triples"] or 0) - int(_g[0]["triples"] or 0)
-                    if _delta > 0:
-                        facts["kg_growth_7d"] = _delta
-            except Exception as _e:
-                log.debug("_news_facts kg_growth_7d: %s", _e)
-    except Exception as _e:
-        log.debug("_news_facts DB: %s", _e)
-    try:
-        from brain import get_brain
-        b = get_brain()
-        if b:
-            st = b.knowledge.stats() or {}
-            facts["kg_facts"] = int(st.get("triples", 0) or 0)
-            try:
-                ag = b.agents.status()
-                facts["agents_active"] = len(ag.get("agents", ag)) if isinstance(ag, dict) else len(ag)
-            except Exception:
-                facts["agents_active"] = 0
-    except Exception:
-        pass
-    return facts
 
 
-async def _news_phrase(cat, facts) -> "str | None":
-    """v4.0-W63-Marker: _news_phrase folgt unten (unverändert)."""
-    return await _news_phrase_impl(cat, facts)
 
 
-def _creator_activity(days: int = 7) -> list:
-    """Aktivität je getracktem User im Fenster (aus recording_attempts), inkl.
-       inaktiver User. Aggregation in nc/creatoragg.py."""
-    try:
-        cut = (datetime.now(timezone.utc) - timedelta(days=max(1, days))).isoformat()
-        with db_conn() as c:
-            rows = c.execute(
-                "SELECT username, started_at, outcome FROM recording_attempts "
-                "WHERE started_at >= ? AND username IS NOT NULL", (cut,)).fetchall()
-            tracked = [r["username"] for r in
-                       c.execute("SELECT username FROM trackings").fetchall()
-                       if (r["username"] or "").strip()]
-        return _nc_creatoragg.summarize(rows, tracked)
-    except Exception as e:
-        log.debug("_creator_activity: %s", e)
-        return []
 
 
-def _creator_facts_line(u: dict) -> str:
-    """Kompakte Faktenzeile für Azraels Prompt/Anzeige."""
-    if not u["sessions"]:
-        return "war im Zeitraum nicht live"
-    oc = u.get("outcomes") or {}
-    fails = sum(v for k, v in oc.items()
-                if k not in ("success", "ok", "running", "?"))
-    last = (u.get("last_seen") or "")[:16].replace("T", " ")
-    part = f"{u['sessions']}× live an {u['active_days']} Tag(en), zuletzt {last}"
-    if fails:
-        part += f", {fails} Aufnahme(n) fehlgeschlagen (Zugriff/Region)"
-    return part
 
 
-async def _azrael_creator_take(username: str, factline: str) -> str:
-    """Azraels (kurze) Einschätzung zu einem Creator. Leerer String, wenn KI aus
-       oder nicht erreichbar — dann zeigt das Dashboard nur die Fakten."""
-    if os.getenv("NEWS_CREATOR_AI", "1").strip().lower() not in ("1", "true", "yes", "on"):
-        return ""
-    try:
-        msgs = [
-            {"role": "system", "content":
-             "Du bist Azrael Sentinel, der wachsame KI-Waechter dieses Stream-Setups. "
-             "Bewerte einen getrackten Creator in EINEM knappen deutschen Satz (max 30 "
-             "Woerter): sachlich, leicht sardonisch, kein Fliesstext-Vorwort, keine "
-             "Anrede, keine Emojis."},
-            {"role": "user", "content":
-             f"Creator @{username}. Aktivitaet: {factline}. Dein Urteil in einem Satz:"},
-        ]
-        text, _err = await llm_chat(msgs, timeout=AI_TIMEOUT)
-        return (text or "").strip().split("\n")[0][:240]
-    except Exception:
-        return ""
 
 
 _CREATOR_DOSSIER_LOCK = None
 
 
-async def _creator_dossier_generate(days: int = 7, max_users: int = 30) -> dict:
-    """Baut je getracktem User Fakten + Azraels Take und cacht das Ergebnis in
-       app_config (news.creators). Auf Abruf oder ueber die News-Kadenz."""
-    global _CREATOR_DOSSIER_LOCK
-    if _CREATOR_DOSSIER_LOCK is None:
-        _CREATOR_DOSSIER_LOCK = asyncio.Lock()
-    async with _CREATOR_DOSSIER_LOCK:
-        acts = _creator_activity(days)[:max(1, max_users)]
-        items = []
-        for u in acts:
-            factline = _creator_facts_line(u)
-            take = await _azrael_creator_take(u["username"], factline)
-            items.append({
-                "username": u["username"], "sessions": u["sessions"],
-                "active_days": u["active_days"], "last_seen": u["last_seen"],
-                "outcomes": u["outcomes"], "summary": factline, "azrael": take,
-            })
-        payload = {"items": items, "generated_ts": datetime.now(timezone.utc).isoformat(),
-                   "days": days}
-        try:
-            _cfg_set("news.creators", payload)
-        except Exception as e:
-            log.debug("news.creators speichern: %s", e)
-        return payload
 
 
-def _news_absaetze(text) -> str:
-    """v4.1: KI-Antwort auf saubere Absaetze normalisieren. Der Website-Renderer
-       trennt an "\n\n" — ohne diese Normalisierung liefert ein Modell mal drei
-       Leerzeilen, mal einzelne Umbrueche mitten im Satz, und die Seite zeigt
-       entweder Luecken oder einen einzigen Klotz."""
-    zeilen = [z.strip() for z in (text or "").replace("\r", "").split("\n")]
-    absaetze, puffer = [], []
-    for z in zeilen:
-        if z:
-            # Aufzaehlungszeichen fliegen raus: die Details stehen auf der Website
-            # in einer eigenen Liste, im Fliesstext waeren sie doppelt.
-            puffer.append(z.lstrip("-*\u2022 ").strip())
-        elif puffer:
-            absaetze.append(" ".join(puffer))
-            puffer = []
-    if puffer:
-        absaetze.append(" ".join(puffer))
-    return "\n\n".join(a for a in absaetze if a)
 
 
-async def _news_phrase_impl(cat, facts) -> "str | None":
-    """Optionale KI-Formulierung aus den ECHTEN Fakten (kein Erfinden). self-gated."""
-    if os.getenv("NEWS_AI_FLAVOR", "1").strip().lower() not in ("1", "true", "yes", "on"):
-        return None
-    try:
-        base = _nc_news._static_body(cat, facts)
-        label = {"project": "das Projekt",
-                 "creators": "einen Tages-Report der heute live gewesenen Creator "
-                             "(die Namen aus den Fakten duerfen genannt werden)",
-                 "ai": "die KI"}.get(cat, cat)
-        # v4.1: ausfuehrlich statt Statuszeile. Die alte Vorgabe "1-2 Saetze" hat
-        # aus jeder Meldung eine Zeile gemacht — fuer einen Erstbesucher wertlos
-        # und fuer Suchmaschinen zu duenn. Jetzt drei Absaetze; die Absatzgrenzen
-        # muessen deshalb erhalten bleiben (frueher: .replace("\n", " ")).
-        msgs = [{"role": "system", "content": "Du schreibst oeffentliche Website-News auf Deutsch. "
-                 "Schreibe GENAU DREI Absaetze, getrennt durch eine Leerzeile, zusammen 110-180 Woerter: "
-                 "(1) was gerade passiert ist, (2) was das konkret bedeutet, (3) eine sachliche Einordnung. "
-                 "Sachlich-einladend, ganze Saetze, KEINE Hashtags, KEINE Emojis, KEINE Ueberschriften, "
-                 "KEINE Aufzaehlungszeichen, KEINE erfundenen Zahlen. Nutze AUSSCHLIESSLICH die genannten "
-                 "Fakten und uebernimm jede Zahl unveraendert. WICHTIG: Erwaehne NIEMALS Aufnahmen, "
-                 "Aufzeichnungen, Mitschnitte oder Recording — die Plattform nimmt oeffentlich nichts auf; "
-                 "sprich ausschliesslich von Live-Begleitung, Restream und Moderation."},
-                {"role": "user", "content": f"Formuliere eine ausfuehrliche oeffentliche News ueber {label} "
-                 f"aus diesen Fakten, ohne neue Zahlen zu erfinden: {base}"}]
-        out = await asyncio.wait_for(_nc_freeai.chat(msgs, timeout=20), timeout=24)
-        out = _news_absaetze(out)
-        return out[:1600] or None
-    except Exception:
-        return None
 
 
-async def _news_generate(manual: bool = False) -> dict:
-    cfg = _news_cfg()
-    if not cfg.categories:
-        return {"ok": False, "error": "Keine Kategorien aktiv"}
-    facts = await asyncio.to_thread(_news_facts)
-    phrasings = {}
-    for cat in cfg.categories:
-        p = await _news_phrase(cat, facts)
-        if p:
-            phrasings[cat] = p
-    now = _time_mod.time()
-    fresh = _nc_news.build_items(facts, phrasings=phrasings, categories=cfg.categories, now_ts=now)
-    existing = await asyncio.to_thread(_news_read)
-    merged = _nc_news.merge(existing, fresh, cfg.max_items)
-    ok, info = await asyncio.to_thread(_news_write, merged)
-    await asyncio.to_thread(_stats_write)
-    if ok:
-        st = _news_state_obj()
-        _news_state_save(now, st.count + 1)
-        log.info("News generiert (%d Items gesamt, %d neu, manual=%s) → %s",
-                 len(merged), len(fresh), manual, info)
-    return {"ok": ok, "items": len(merged), "new": len(fresh),
-            "path": info if ok else None, "error": None if ok else info}
 
 
 def _public_stats() -> dict:
@@ -12741,7 +12275,7 @@ def _public_stats() -> dict:
        NIE Aufnahmen — nur Live-Begleitung/Moderation. live_7d = wie viele
        getrackte Creator je Tag live waren (intern aus dem Live-Erkennungs-Log,
        oeffentlich als 'live' formuliert)."""
-    facts = _news_facts()
+    facts = _nc_news.collect_facts()
     stats = {
         "version": BOT_VERSION,
         "generated_at": _time_mod.time(),
@@ -12923,13 +12457,13 @@ async def _news_loop():
     await asyncio.sleep(120)
     while True:
         try:
-            cfg = _news_cfg()
-            st = _news_state_obj()
+            cfg = _nc_news.config()
+            st = _nc_news.state()
             now = _time_mod.time()
             hour = int(_time_mod.strftime("%H", _time_mod.localtime(now)))
             due, _reason = _nc_news.should_generate(cfg, st, now, hour)
             if due:
-                await _news_generate(manual=False)
+                await _nc_news.generate(manual=False)
             # v4.0: oeffentliche Metriken jede Runde aktualisieren (fuer die
             # Website-Grafiken) — auch wenn gerade keine News faellig sind.
             await asyncio.to_thread(_stats_write)
@@ -12938,17 +12472,6 @@ async def _news_loop():
         await asyncio.sleep(_env_int("NEWS_CHECK_INTERVAL_S", 900))
 
 
-@dashboard_app.route("/api/news/status")
-def api_news_status():
-    cfg = _news_cfg()
-    st = _news_state_obj()
-    current = _news_read()
-    return jsonify(ok=True,
-                   enabled=cfg.enabled, auto=cfg.auto, categories=list(cfg.categories),
-                   cadence_hours=cfg.cadence_hours, quiet_start=cfg.quiet_start,
-                   quiet_end=cfg.quiet_end, max_items=cfg.max_items,
-                   output_path=_news_output_path(), current_items=len(current),
-                   last_gen_ts=st.last_gen_ts, count=st.count)
 
 
 
@@ -12957,91 +12480,18 @@ def api_news_status():
 
 
 
-@dashboard_app.route("/api/news/creators")
-def api_news_creators():
-    """v4.0-W63: Azraels Creator-Dossier — je getracktem User Aktivitäts-
-       Zusammenfassung + Azraels Take (aus dem Cache, sofort)."""
-    data = _cfg_get("news.creators", {}) or {}
-    items = data.get("items", []) if isinstance(data, dict) else []
-    return jsonify(ok=True, items=items,
-                   generated_ts=data.get("generated_ts") if isinstance(data, dict) else None,
-                   days=data.get("days", 7) if isinstance(data, dict) else 7)
 
 
-@dashboard_app.route("/api/news/creators/generate", methods=["POST"])
-def api_news_creators_generate():
-    """Neu-Bewertung anstoßen (läuft im Hintergrund; kann KI-Zeit kosten)."""
-    payload = request.get_json(silent=True) or {}
-    try:
-        days = max(1, min(60, int(payload.get("days", 7))))
-    except (TypeError, ValueError):
-        days = 7
-    loop = _MAIN_LOOP
-    if loop and loop.is_running():
-        asyncio.run_coroutine_threadsafe(_creator_dossier_generate(days), loop)
-        return jsonify(ok=True, started=True, days=days)
-    return jsonify(ok=False, error="Event-Loop nicht bereit"), 503
 
 
-@dashboard_app.route("/api/news/toggle", methods=["POST"])
-def api_news_toggle():
-    payload = request.get_json(silent=True) or {}
-    enabled = bool(payload.get("enabled"))
-    _cfg_set("news.enabled", enabled)
-    return jsonify(ok=True, enabled=enabled)
 
 
-@dashboard_app.route("/api/news/config", methods=["POST"])
-def api_news_config():
-    payload = request.get_json(silent=True) or {}
-    stored = _cfg_get("news.config", {}) or {}
-    if "auto" in payload:
-        stored["auto"] = bool(payload["auto"])
-    if "categories" in payload and isinstance(payload["categories"], list):
-        stored["categories"] = [c for c in payload["categories"] if c in _nc_news.CATEGORIES]
-    if "cadence_hours" in payload:
-        try:
-            stored["cadence_hours"] = max(0.5, float(payload["cadence_hours"]))
-        except (TypeError, ValueError):
-            return jsonify(ok=False, error="cadence_hours muss eine Zahl sein"), 400
-    if "max_items" in payload:
-        try:
-            stored["max_items"] = max(1, min(100, int(payload["max_items"])))
-        except (TypeError, ValueError):
-            return jsonify(ok=False, error="max_items muss eine Zahl sein"), 400
-    for k in ("quiet_start", "quiet_end"):
-        if k in payload:
-            try:
-                stored[k] = int(payload[k]) % 24
-            except (TypeError, ValueError):
-                return jsonify(ok=False, error=f"{k} muss 0-23 sein"), 400
-    _cfg_set("news.config", stored)
-    return jsonify(ok=True, config=stored)
 
 
-@dashboard_app.route("/api/news/preview")
-def api_news_preview():
-    """Schnelle Vorschau OHNE KI-Formulierung (statische Fakten-Texte), ohne zu schreiben."""
-    cfg = _news_cfg()
-    facts = _news_facts()
-    items = _nc_news.build_items(facts, phrasings={}, categories=cfg.categories, now_ts=_time_mod.time())
-    return jsonify(ok=True, items=items, facts=facts)
 
 
-@dashboard_app.route("/api/news/items")
-def api_news_items():
-    return jsonify(ok=True, items=_news_read())
 
 
-@dashboard_app.route("/api/news/generate-now", methods=["POST"])
-def api_news_generate_now():
-    try:
-        res = _run_async_from_flask(_news_generate(manual=True), timeout=60)
-    except Exception as e:
-        if _loop_not_ready(e):
-            return jsonify(ok=False, error="Event-Loop startet noch — kurz erneut versuchen."), 503
-        return jsonify(ok=False, error=f"News-Generierung: {e}"), 500
-    return jsonify(**res)
 
 
 @dashboard_app.route("/api/version")
@@ -14779,10 +14229,6 @@ def _run_async_from_flask(coro, timeout: float = 70.0):
     return fut.result(timeout=timeout)
 
 
-def _loop_not_ready(e) -> bool:
-    """B86: True wenn der Fehler das transiente 'Loop fährt noch hoch'-Signal ist.
-       Routes geben dann 503 statt 500 zurück (kein Serverfehler-Push)."""
-    return isinstance(e, RuntimeError) and "event loop not ready" in str(e)
 
 def _scraper_session():
     """Best-effort aiohttp-Session vom globalen Scraper. None wenn nicht da."""
@@ -29034,6 +28480,17 @@ async def run_bot():
     scraper = TikTokScraper()
     app = Application.builder().token(BOT_TOKEN).build()
     app.bot_data["scraper"] = scraper
+    # v4.1-W4: bot_app war NIE ein Modul-Global — nur ein Parametername in zwei
+    # Dutzend Funktionen. Die beiden Stellen, die ihn per globals().get("bot_app")
+    # lesen, bekamen deshalb IMMER None und liefen ins Leere:
+    #   _brain_notify        -> "BRAIN-ALARM (Loop/Bot nicht bereit)" auf log.warning,
+    #                           also im ERROR-Log unsichtbar; kein Alarm kam je an.
+    #   _marketing_post_telegram -> {"ok": False, "error": "Bot nicht bereit"},
+    #                           der Telegram-Zweig des Marketings war tot.
+    # Genau das Fehlerbild aus CLAUDE.md: es "geht nicht" und niemand sieht warum.
+    # Hier steht die Application zum ersten Mal fest — dieselbe Stelle, an der
+    # zwei Zeilen weiter schon _GLOBAL_SCRAPER gesetzt wird.
+    globals()["bot_app"] = app
     # X-Series: Scraper auch global ablegen damit Flask-Routes die Session
     # für resolve/inspect benutzen können.
     global _GLOBAL_SCRAPER
@@ -30316,6 +29773,35 @@ _nc_trackingdb.configure(integrity_errors=DB_INTEGRITY_ERRORS,
 # sichert die Quelle DES BOTS — mit __file__ im Modul haette build/bot_v{N}.py
 # ab dem Umzug still nc/evolution.py enthalten, und der ganze Pfad haengt in
 # einem `except: pass`.
+# v4.1-W4: die Bot-Seite von News und Marketing liegt in nc/news.py und
+# nc/marketing.py. Zwei Werte sind der Grund, warum das hier steht und nicht im
+# Modul: bot_file (news.json gehoert in das website/ NEBEN dem Bot, mit dem
+# __file__ des Fachmoduls waere es nc/website/ geworden) und get_bot_app (ein
+# GETTER — die Telegram-Application entsteht erst in run_bot, und globals() ist
+# im Modul der Modul-Namensraum, nicht der Bot).
+_nc_news.configure(log=log,
+                   bot_file=__file__,
+                   llm_chat=llm_chat,
+                   stats_write=_stats_write,
+                   ai_timeout=AI_TIMEOUT,
+                   bot_version=BOT_VERSION,
+                   kick_channel_url=KICK_CHANNEL_URL,
+                   kick_stream_key=KICK_STREAM_KEY,
+                   twitch_stream_key=TWITCH_STREAM_KEY,
+                   youtube_stream_key=YOUTUBE_STREAM_KEY,
+                   # Referenz, keine Kopie: der YouTube-Pfad schreibt den Cache,
+                   # collect_facts liest ihn. Eine Kopie waere ab Start eingefroren.
+                   yt_ingest_cache=_YT_INGEST_CACHE)
+
+_nc_marketing.configure(log=log,
+                        get_bot_app=lambda: globals().get("bot_app"),
+                        safe_send=_safe_send,
+                        get_ai_session=_get_ai_session,
+                        discord_invite=_discord_invite,
+                        discord_webhook_url=DISCORD_WEBHOOK_URL,
+                        allowed_user_ids=ALLOWED_USER_IDS,
+                        kick_channel_url=KICK_CHANNEL_URL)
+
 _nc_evolution.configure(log=log,
                         log_event=log_event,
                         llm_chat_sync=llm_chat_sync,
@@ -30410,6 +29896,9 @@ _nc_ctx.configure(
         "_RES_HISTORY": _RES_HISTORY,
         # --- Trackings (v4.0-W117) ---
         "ALLOWED_CHAT_IDS": ALLOWED_CHAT_IDS,
+        # --- News und Marketing (v4.1-W4) ---
+        "ALLOWED_USER_IDS": ALLOWED_USER_IDS,
+        "DISCORD_WEBHOOK_URL": DISCORD_WEBHOOK_URL,
         "DAILY_SUMMARY_CHAT_ID": DAILY_SUMMARY_CHAT_ID,
         "DISCORD_GUILD_ID": DISCORD_GUILD_ID,
         "DISCORD_TRACK_GROUP_ID": DISCORD_TRACK_GROUP_ID,
@@ -30442,6 +29931,8 @@ dashboard_app.register_blueprint(_nc_routes_money.bp)      # v4.0-W116
 dashboard_app.register_blueprint(_nc_routes_trackings.bp)  # v4.0-W117
 dashboard_app.register_blueprint(_nc_routes_stats.bp)      # v4.0-W117
 dashboard_app.register_blueprint(_nc_routes_evolution.bp)  # v4.1-W3
+dashboard_app.register_blueprint(_nc_routes_news.bp)       # v4.1-W4
+dashboard_app.register_blueprint(_nc_routes_marketing.bp)  # v4.1-W4
 
 
 if __name__ == "__main__":
