@@ -1272,7 +1272,10 @@ async def _upload_window_loop(bot_app):
                                     f"fehlgeschlagen: {e}")
                         # NICHT entfernen → nächster Durchlauf versucht erneut
         except Exception as e:
-            log.warning(f"Upload-Fenster-Loop Fehler: {e}")
+            # log.warning erscheint in einem ERROR-Log NIE. Dieser Dauerlaeufer
+            # haelt die aufgeschobenen Uploads — faellt er aus, bleiben die
+            # Aufnahmen fuer immer in der Warteschlange liegen.
+            _loop_fehler("_upload_window_loop", e)
         await asyncio.sleep(60)
 
 DB_PATH        = "tiktok_bot.db"
@@ -6738,7 +6741,10 @@ async def _viewer_sample_loop():
                 _VIEWER_SAMPLES.append((_time_mod.time(), int(cnt)))
         except asyncio.CancelledError:
             return
-        except Exception:
+        except Exception as e:
+            # Vorher stilles continue: faellt die Stichprobe dauerhaft aus,
+            # bleibt die Zuschauerkurve leer und niemand erfaehrt warum.
+            _loop_fehler("_viewer_sample_loop", e)
             continue
 
 
@@ -6803,14 +6809,17 @@ async def _db_vacuum_loop():
             await asyncio.sleep(7 * 24 * 3600)
             def _run():
                 with db_conn() as conn:
+                    # Nicht still: schlaegt das woechentlich fehl, waechst die
+                    # Datenbank unbegrenzt weiter und der Planer arbeitet mit
+                    # veralteter Statistik — beides sieht man erst viel spaeter.
                     try:
                         conn.execute("ANALYZE")
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        _loop_fehler("_db_vacuum_loop/ANALYZE", e)
                     try:
                         conn.execute("VACUUM")
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        _loop_fehler("_db_vacuum_loop/VACUUM", e)
             await asyncio.to_thread(_run)
             log.info("DB-Wartung: ANALYZE+VACUUM durchgelaufen.")
         except asyncio.CancelledError:
@@ -10115,9 +10124,13 @@ _LOOPBACK = ("127.0.0.1", "localhost", "::1")
 # aktivem DASHBOARD_TOKEN waere das Overlay im Stream sonst leer. Beides ist
 # lesend und landet ohnehin sichtbar im oeffentlichen Video; die schreibenden
 # Overlay-Routen (/api/overlay/event|config, POST) bleiben geschuetzt.
-_AUTH_EXEMPT_PREFIXES = ("/api/public/", "/healthz")
+# /api/public/ ist ein echtes Praefix (mehrere Routen darunter), /healthz ist
+# genau EINE Route — als Praefix haette auch /healthzirgendwas den Login
+# uebersprungen. Deshalb steht es bei den exakten Pfaden.
+_AUTH_EXEMPT_PREFIXES = ("/api/public/",)
 _AUTH_EXEMPT_READ = ("/overlay", "/api/overlay/state")
-_AUTH_EXEMPT_EXACT = ("/api/kick/oauth/callback", "/api/twitch/oauth/callback",
+_AUTH_EXEMPT_EXACT = ("/healthz",
+                      "/api/kick/oauth/callback", "/api/twitch/oauth/callback",
                       "/api/youtube/oauth/callback", "/api/yt/oauth/callback")
 
 
@@ -12886,8 +12899,10 @@ async def _stats_loop():
         try:
             try:
                 _nc_usage.flush()               # in-memory Zähler auf Disk sichern
-            except Exception:
-                pass
+            except Exception as _e:
+                # Nicht still: schlaegt das Sichern dauerhaft fehl (Platte voll,
+                # Rechte), zaehlt der Bot ins Nichts und niemand erfaehrt es.
+                _loop_fehler("_stats_loop/usage.flush", _e)
             ok, info = await asyncio.to_thread(_stats_write)
             if not ok:
                 log.debug("stats.json nicht geschrieben: %s", info)
@@ -26937,7 +26952,10 @@ async def _scheduler_loop():
                             "SELECT id, kind, payload FROM scheduled_tasks "
                             "WHERE enabled=1 AND at_hhmm=? AND (last_run_date IS NULL OR last_run_date<>?)",
                             (hh, td)).fetchall()
-                except Exception:
+                except Exception as e:
+                    # Stiller Fehlschlag hiess: KEINE faellige Aufgabe gefunden,
+                    # also laeuft der Zeitplan nie — und das Log sagt nichts.
+                    _loop_fehler("_scheduler_loop/faellige", e)
                     return []
             for r in await asyncio.to_thread(_due):
                 kind, payload = r["kind"], r["payload"] or ""
@@ -28958,9 +28976,15 @@ async def _youtube_api_chat_loop():
             _YT_SEND["fn"] = None
             return
         except Exception as e:
+            # v4.1-W2: W116 hat Kick-WebSocket, Twitch-EventSub und Twitch-Chat
+            # auf _verbindung_verloren umgestellt — die beiden YouTube-Schleifen
+            # blieben dabei liegen. Eine dauerhaft abreissende YouTube-Verbindung
+            # stand damit nur auf log.debug: im ERROR-Log keine Zeile, genau das
+            # Muster, das den Discord-Gateway-Tod monatelang verdeckt hat.
+            _verbindung_verloren("YouTube-Chat (Data-API)", e, backoff,
+                                 seit=_WCHAT_STATUS["youtube"].get("since", 0.0))
             _WCHAT_STATUS["youtube"]["reconnects"] += 1
             _WCHAT_STATUS["youtube"].update(connected=False, error=str(e)[:120])
-            log.debug("youtube-api-chat: %s", e)
             await asyncio.sleep(backoff); backoff = min(backoff * 2, 120)
 
 
@@ -29116,7 +29140,10 @@ async def _youtube_chat_loop():
         except asyncio.CancelledError:
             raise
         except Exception as e:
-            log.info("YouTube-Chat neu verbinden (%s) — in %ss", e, backoff)
+            # v4.1-W2: wie oben — der Verlauf entscheidet, ob das eine Meldung
+            # wert ist, nicht jede einzelne Trennung (nc/flapguard.py).
+            _verbindung_verloren("YouTube-Chat", e, backoff,
+                                 seit=_WCHAT_STATUS["youtube"].get("since", 0.0))
             _WCHAT_STATUS["youtube"]["reconnects"] += 1
             _WCHAT_STATUS["youtube"].update(connected=False, error=str(e)[:120])
             _YT_SEND["fn"] = None; _YT_SEND["live_chat_id"] = ""

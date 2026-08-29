@@ -11,6 +11,64 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Behoben — Dauerläufer, die ihre Ausfälle verschluckt haben (v4.1 W2)
+
+Die Regel steht in `CLAUDE.md`: jeder Dauerläufer gehört auf `_loop_fehler`
+(erste Meldung sofort mit Traceback, danach höchstens alle 15 Minuten eine) —
+nie auf `log.debug` und nie auf `pass`. Ein `log.warning` erscheint in einem
+ERROR-Log ebenfalls **nie**; genau so blieb der Discord-Gateway-Tod
+monatelang unsichtbar. Sieben Stellen hielten sich nicht daran, und bei jeder
+nimmt ein stiller Ausfall ein ganzes Stück Funktion mit:
+
+* **Beide YouTube-Chat-Schleifen.** W116 hatte für Dauerverbindungen
+  `_verbindung_verloren()` eingeführt und Kick-WebSocket, Twitch-EventSub und
+  Twitch-Chat umgestellt — die zwei YouTube-Schleifen blieben liegen. Eine
+  dauerhaft abreißende YouTube-Verbindung stand damit nur auf `log.debug`.
+  Jetzt derselbe Weg wie bei Twitch, inklusive Flatter-Bewertung über
+  `nc/flapguard.py` (Gateway-Rotation ist kein Vorfall, dauerndes Flattern
+  schon).
+* **`_stats_loop` → `_nc_usage.flush()`** im stillen `except: pass`. Schlägt
+  das Sichern dauerhaft fehl, zählt der Bot ins Nichts.
+* **`_scheduler_loop`** gab bei einem Query-Fehler stumm `[]` zurück — das
+  heißt: keine fällige Aufgabe gefunden, der Zeitplan läuft nie, und das Log
+  sagt nichts.
+* **`_db_vacuum_loop`** ließ `ANALYZE` und `VACUUM` still scheitern. Die
+  Datenbank wächst dann unbegrenzt weiter, der Planer arbeitet mit veralteter
+  Statistik — beides sieht man erst viel später.
+* **`_viewer_sample_loop`** hatte ein stilles `continue`: fällt die Stichprobe
+  aus, bleibt die Zuschauerkurve leer, ohne Grund im Log.
+* **`_upload_window_loop`** meldete auf `log.warning`. Dieser Läufer hält die
+  aufgeschobenen Uploads — fällt er aus, bleiben Aufnahmen für immer in der
+  Warteschlange.
+
+Nicht angefasst und bewusst still bleiben die 19 Stellen, die `CLAUDE.md`
+ausdrücklich ausnimmt: der Fehlerkanal selbst (dort erzeugt Loggen Rekursion),
+Aufräumpfade, deren Fehlschlag bedeutungslos ist (`proc.terminate()` auf einen
+toten Prozess), Zeilen-/Zeilenweise-Parser und ein `raise`, das ohnehin
+weiterwirft.
+
+### Behoben — `/healthz` war ein Präfix, kein Pfad (v4.1 W2)
+
+`_AUTH_EXEMPT_PREFIXES` enthielt `/healthz`, geprüft mit `startswith`. Damit
+hätte auch `/healthzirgendwas` den Login übersprungen. Es ist genau **eine**
+Route — steht jetzt bei den exakten Pfaden. `/api/public/` bleibt Präfix, dort
+liegen mehrere Routen.
+
+### Behoben — `gen_env_example.py` hätte Variablen still verlieren können (v4.1 W2)
+
+Der Scanner schnitt Kommentare mit `zeile.split("#", 1)[0]` ab. Ein Default,
+der selbst ein `#` enthält — eine Farbe wie `os.getenv("UI_ACCENT", "#e8c86a")` —
+hätte die Zeile mittendrin zerschnitten, das Muster nicht mehr gepasst, und
+die Variable wäre lautlos aus `.env.example` gefallen. Genau die Lücke, gegen
+die das Skript geschrieben wurde; `--check` hätte es nicht gefangen, weil
+beide Seiten vom selben Scanner kommen. Heute trifft es keine einzige
+Lesestelle (nachgezählt: null) — es war eine Falle für die nächste. Der
+Schnitt ist jetzt quote-bewusst.
+
+Der Vertrag `test_v41_w2_dauerlaeufer_melden_sich` hält alle sieben Stellen
+fest; jede Zusicherung wurde per Sabotage gegengeprüft.
+
+
 ### Geändert — Monolith zerlegt: fünf Blueprints, 62 Routen, 1.762 Zeilen (W116, W117)
 
 `bot.py` schrumpft von 32.596 auf **30.834 Zeilen**; von den 355 Flask-Routen

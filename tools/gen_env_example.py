@@ -29,6 +29,30 @@ _SECRET = re.compile(r'(TOKEN|KEY|SECRET|PASSWORD|_PIN|WEBHOOK|CLIENT_SECRET|ACC
 _REQUIRED = {"BOT_TOKEN", "TELEGRAM_TOKEN", "TELEGRAM_CHAT_ID"}
 
 
+def _ohne_kommentar(zeile: str) -> str:
+    """Kommentar abschneiden, aber nur ein '#' AUSSERHALB von Anfuehrungszeichen.
+
+    Vorher: zeile.split("#", 1)[0]. Damit haette ein Default, der selbst ein
+    '#' enthaelt — eine Farbe wie os.getenv("UI_ACCENT", "#e8c86a") — die Zeile
+    mittendrin zerschnitten, das Muster nicht mehr gepasst und die Variable
+    waere lautlos aus .env.example gefallen. Genau die Luecke, gegen die dieses
+    Skript ueberhaupt geschrieben wurde. Heute trifft es keine Lesestelle
+    (nachgezaehlt: null) — es ist eine Falle fuer die naechste.
+    """
+    quote = ""
+    for i, c in enumerate(zeile):
+        if quote:
+            if c == "\\":
+                continue
+            if c == quote:
+                quote = ""
+        elif c in "\"'":
+            quote = c
+        elif c == "#":
+            return zeile[:i]
+    return zeile
+
+
 def collect():
     files = ["bot.py", "brain_bridge.py"] + \
         sorted(glob.glob(os.path.join(ROOT, "brain", "*.py"))) + \
@@ -47,7 +71,7 @@ def collect():
         except OSError:
             continue
         for line in txt.splitlines():
-            s = line.split("#", 1)[0]
+            s = _ohne_kommentar(line)
             for m in _NUM.finditer(s):
                 seen.setdefault(m.group(1), m.group(2))
             for m in _STR.finditer(s):
