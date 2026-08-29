@@ -2162,6 +2162,68 @@ def test_v41_w4_news_marketing_kern_raus():
     ok("v4.1-W4: nc.ctx bei %d Slots, kein Eintrag dazugekommen" % len(ncctx.Ctx.__slots__))
 
 
+
+# ------------------------------------------------- v4.1-W5) die restlichen Dauerlaeufer
+
+def test_v41_w5_restliche_dauerlaeufer():
+    """v4.1-W5: W2 hat sieben Stellen versorgt — zwoelf blieben liegen.
+
+    Die Regel aus CLAUDE.md gilt fuer JEDEN Dauerlaeufer: erste Meldung sofort
+    mit Traceback, danach gedrosselt, nie auf log.warning. Ein `warning`
+    erscheint in einem ERROR-Log nicht; genau so blieb der Discord-Gateway-Tod
+    monatelang unsichtbar. Dieser Vertrag haelt die neun Stellen fest, an denen
+    ein stiller Ausfall ein ganzes Stueck Funktion mitnimmt — und prueft
+    generisch, dass keine WEITERE Schleife wieder auf warning zurueckfaellt.
+    """
+    import ast as _ast
+    src = open("bot.py", encoding="utf-8").read()
+    zeilen = src.splitlines()
+
+    # (1) Die sieben Schleifen, die still waren, melden jetzt namentlich.
+    for name in ("reaper_loop", "_storage_cleanup_loop", "_proxy_pool_refresh_loop",
+                 "_evolution_loop", "_live_react_loop", "_db_maintenance_loop",
+                 "_system_backup_loop"):
+        assert '_loop_fehler("%s"' % name in src, \
+            "%s meldet wieder an _loop_fehler vorbei" % name
+
+    # (2) Und die zwei Alarm-PRUEFUNGEN, die still scheiterten. Der Ausfall der
+    # Schleife war sichtbar, das Scheitern ihrer eigentlichen Arbeit nicht —
+    # von aussen ununterscheidbar von "alles in Ordnung".
+    for name in ("_disk_alarm_loop/check", "_cookie_alarm_loop/check"):
+        assert '_loop_fehler("%s"' % name in src, \
+            "%s scheitert wieder lautlos — der Alarm feuert dann nie" % name
+
+    # (3) Die alten Meldezeilen sind weg, nicht bloss ergaenzt.
+    for tot in ('log.warning(f"Reaper Fehler', 'log.warning(f"Storage-Cleanup Fehler',
+                'log.warning("Proxy-Pool-Auto: Refresh fehlgeschlagen',
+                'log.warning(f"Evolution-Loop Fehler', 'log.warning("live-react loop Fehler',
+                'log.warning("DB-Maintenance fehlgeschlagen',
+                'log.warning(f"Disk-Alarm check failed',
+                'log.warning("Cookie-Alarm check failed'):
+        assert tot not in src, "alter warning-Pfad wieder da: " + tot
+
+    # (4) Generisch: KEIN Dauerlaeufer meldet seinen Schleifenfehler mehr auf
+    # warning oder debug. Frueher war das eine Liste, die jede neue Schleife
+    # wieder unterlaufen konnte; jetzt faellt die naechste sofort auf.
+    baum = _ast.parse(src)
+    schlampig = []
+    for n in baum.body:
+        if not isinstance(n, (_ast.FunctionDef, _ast.AsyncFunctionDef)):
+            continue
+        if not n.name.endswith("_loop"):
+            continue
+        if not any(isinstance(x, (_ast.While, _ast.For)) for x in _ast.walk(n)):
+            continue
+        koerper = "\n".join(zeilen[n.lineno - 1:n.end_lineno])
+        versorgt = ("_loop_fehler(" in koerper or "_verbindung_verloren(" in koerper
+                    or "exc_info=True" in koerper)
+        if not versorgt:
+            schlampig.append(n.name)
+    assert not schlampig, \
+        "Dauerlaeufer ohne sichtbare Fehlermeldung: %s" % sorted(schlampig)
+    ok("v4.1-W5: neun weitere Stellen melden sichtbar, kein Dauerlaeufer mehr stumm")
+
+
 # ------------------------------------------------- B168) Moderator überall (Twitch/YouTube)
 
 def test_b168_moderator_everywhere():
@@ -7267,6 +7329,7 @@ def main():
     test_v41_w3_evolution_core_raus()
     test_v41_w4_bot_app_gebunden()
     test_v41_w4_news_marketing_kern_raus()
+    test_v41_w5_restliche_dauerlaeufer()
     test_b168_moderator_everywhere()
     test_b169_kick_oauth()
     test_b170_azrael_and_youtube()

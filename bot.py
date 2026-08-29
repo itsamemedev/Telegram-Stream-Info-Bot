@@ -6926,7 +6926,10 @@ async def _disk_alarm_loop(bot_app):
                     if delivered:
                         _DISK_ALARM_LAST_STATE["over"] = is_over
             except Exception as e:
-                log.warning(f"Disk-Alarm check failed: {e}")
+                # v4.1-W5: war log.warning. Scheitert die PRUEFUNG dauerhaft,
+                # feuert der Platten-Alarm nie — und die Schleife laeuft weiter,
+                # von aussen ununterscheidbar von "Platte in Ordnung".
+                _loop_fehler("_disk_alarm_loop/check", e)
             await asyncio.sleep(DISK_ALARM_INTERVAL)
         except asyncio.CancelledError:
             raise
@@ -6971,7 +6974,10 @@ async def _cookie_alarm_loop(bot_app):
                     except Exception as e:
                         log.warning("Cookie-Alarm relief send failed: %s", e)
             except Exception as e:
-                log.warning("Cookie-Alarm check failed: %s", e)
+                # v4.1-W5: war log.warning — dasselbe Muster wie beim
+                # Platten-Alarm: scheitert die Pruefung, meldet niemand mehr
+                # abgelaufene Cookies, und Aufnahmen scheitern spaeter mit 403.
+                _loop_fehler("_cookie_alarm_loop/check", e)
             await asyncio.sleep(DISK_ALARM_INTERVAL)
         except asyncio.CancelledError:
             raise
@@ -8378,7 +8384,11 @@ async def reaper_loop():
                                     f"({now_mono - spawn_at:.0f}s ohne Subprocess) — Lock freigegeben")
                 conn.commit()
         except Exception as e:
-            log.warning(f"Reaper Fehler: {e}")
+            # v4.1-W5: war log.warning. Der Reaper ist die EINZIGE Instanz, die
+            # tote Recorder-Prozesse abraeumt — faellt er aus, bleiben Zombies in
+            # den Slots und keine Aufnahme startet mehr, ohne dass im error.log
+            # ein Wort davon steht.
+            _loop_fehler("reaper_loop", e)
         await asyncio.sleep(60)
 
 
@@ -8395,7 +8405,9 @@ async def _storage_cleanup_loop():
                          f"({r['freed_bytes']/1024/1024:.0f} MB freigegeben), "
                          f"{r['skipped']} behalten")
         except Exception as e:
-            log.warning(f"Storage-Cleanup Fehler: {e}")
+            # v4.1-W5: war log.warning. Faellt die Aufraeumung aus, laeuft die
+            # Platte voll — sichtbar wird das erst, wenn nichts mehr geht.
+            _loop_fehler("_storage_cleanup_loop", e)
         await asyncio.sleep(86400)   # täglich
 
 
@@ -11695,7 +11707,9 @@ async def _proxy_pool_refresh_loop():
         except asyncio.CancelledError:
             raise
         except Exception as e:
-            log.warning("Proxy-Pool-Auto: Refresh fehlgeschlagen: %s", e)
+            # v4.1-W5: war log.warning. Ohne Refresh altert der Pool, und die
+            # Aufnahmen laufen nach und nach auf tote Proxies.
+            _loop_fehler("_proxy_pool_refresh_loop", e)
         await asyncio.sleep(interval)
 
 
@@ -15225,7 +15239,10 @@ async def _evolution_loop():
         try:
             await asyncio.to_thread(_nc_evolution.cycle, "auto")
         except Exception as e:
-            log.warning(f"Evolution-Loop Fehler: {e}")
+            # v4.1-W5: war log.warning — in W2 uebersehen, obwohl dort genau diese
+            # Regel aufgestellt wurde. Faellt der Zyklus aus, lernt der Bot nie
+            # wieder etwas und build/ bleibt auf dem alten Stand.
+            _loop_fehler("_evolution_loop", e)
         await asyncio.sleep(EVOLUTION_INTERVAL_HOURS * 3600)
 
 
@@ -20420,7 +20437,10 @@ async def _live_react_loop():
                 t = _spawn(_live_react_worker(u, ev), name=f"live-react-{u}")
                 _live_react_workers[u] = {"stop": ev, "task": t}
         except Exception as e:
-            log.warning("live-react loop Fehler: %s", e)
+            # v4.1-W5: war log.warning. Faellt die Schleife aus, reagiert AZRAEL im
+            # Live-Chat auf nichts mehr — und das sieht aus wie "die KI antwortet
+            # nicht", nicht wie ein Ausfall.
+            _loop_fehler("_live_react_loop", e)
         await asyncio.sleep(8)
 
 
@@ -25815,7 +25835,10 @@ async def _db_maintenance_loop():
             await asyncio.to_thread(_maint)
             log.debug("DB-Maintenance: wal_checkpoint(TRUNCATE) + optimize ok")
         except Exception as e:
-            log.warning("DB-Maintenance fehlgeschlagen: %s", e)
+            # v4.1-W5: war log.warning. Ohne Wartung waechst die Datenbank unbegrenzt
+            # und der Query-Planer arbeitet mit alter Statistik — beides merkt man
+            # erst viel spaeter.
+            _loop_fehler("_db_maintenance_loop", e)
         await asyncio.sleep(6 * 3600)            # alle 6h
 
 
@@ -26244,7 +26267,9 @@ async def _system_backup_loop():
             else:
                 log.error("System-Backup fehlgeschlagen: %s", res.get("error"))
         except Exception as e:
-            log.error("System-Backup crashte: %s", e)
+            # v4.1-W5: war log.error OHNE Traceback und ungedrosselt. Sichtbar war der
+            # Ausfall, die Ursache nicht — und ein Dauerfehler haette das Log geflutet.
+            _loop_fehler("_system_backup_loop", e)
 
 
 
