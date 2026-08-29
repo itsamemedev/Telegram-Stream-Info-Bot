@@ -55,14 +55,25 @@ _BRUCHSTUECK_ANFANG = re.compile(r'^[)\],;:%.\u2014\u2013+*/|=&#-]')
 _BRUCHSTUECK_ENDE = re.compile(r'[(\[{=]$|\b(?:und|oder|der|die|das|von|mit|im|in|am|auf|zu|bei)$')
 
 
-def _ist_uebersetzbar(text):
+def _ist_uebersetzbar(text, deutsch_noetig=True):
+    """deutsch_noetig=False fuer Stellen, die per Definition Benutzertext sind.
+
+    Der Deutsch-Marker ist eine Heuristik gegen Bezeichner und CSS-Werte. Bei
+    einer Slash-Befehl-Beschreibung braucht es sie nicht: dort steht IMMER Text
+    fuer Menschen, auch wenn er zufaellig ohne Umlaut auskommt ("Status",
+    "Tracklist"). Ohne diese Ausnahme fielen 22 der 46 Beschreibungen aus dem
+    Katalog — und die Befehlsliste im Discord waere halb deutsch geblieben.
+    """
     t = (text or "").strip()
     if len(t) < 3 or not _WORT.search(t):
         return False
     if t.startswith("{{") or t.startswith("${") or t.startswith("&"):
         return False
-    # Reine Bezeichner (CSS-Klassen, IDs, Dateinamen, URLs) sind kein Text.
-    if re.fullmatch(r"[\w./#:-]+", t):
+    # Reine Bezeichner (CSS-Klassen, IDs, Dateinamen, URLs) sind kein Text —
+    # ausser an Stellen, die per Definition Benutzertext sind. "Restream-Status"
+    # sieht fuer diese Pruefung aus wie ein Bezeichner und ist doch die
+    # Beschreibung eines Slash-Befehls.
+    if deutsch_noetig and re.fullmatch(r"[\w./#:-]+", t):
         return False
     if t.startswith("http://") or t.startswith("https://"):
         return False
@@ -77,7 +88,7 @@ def _ist_uebersetzbar(text):
         return False
     if "\n" in t:
         return False
-    return bool(_DEUTSCH.search(t))
+    return bool(_DEUTSCH.search(t)) if deutsch_noetig else True
 
 
 def _js_textstuecke(literal):
@@ -132,40 +143,67 @@ def _html_strings(pfad):
     return raus
 
 
-def _py_strings(pfad):
-    """Deutschsprachige Literale im Python-Quelltext — ohne Docstrings.
+# Wohin ein Text fliesst, entscheidet, ob er uebersetzt gehoert. Diese Aufrufe
+# gehen an einen MENSCHEN — Telegram-Antworten, Discord-Nachrichten, die
+# Beschreibungen der Slash-Befehle. Alles andere in bot.py ist Log und Diagnose
+# fuer den Betreiber und hat im Katalog nichts verloren: 660 log.*-Aufrufe
+# wuerden ihn um Hunderte Eintraege aufblaehen, die nie jemand liest und die
+# faelschlich als "noch zu uebersetzen" zaehlen.
+_SENKEN = {"reply_text", "send_message", "_safe_send", "send", "answer", "reply",
+           "send_video", "send_photo", "send_document", "edit_text",
+           "edit_message_text", "respond"}
+# Schluesselwoerter, unter denen Text an dieselben Senken geht.
+_SENKE_KW = {"text", "content", "caption", "description"}
 
-    Docstrings und Kommentare erklaeren den Code fuer Entwickler und gehoeren
-    NICHT in den Katalog: sie erreichen nie einen Benutzer, wuerden ihn aber um
-    Hunderte Eintraege aufblaehen. Der AST unterscheidet das zuverlaessig,
-    ein Regex nicht.
+
+def _py_strings(pfad):
+    """Die Zeichenketten aus bot.py, die einen BENUTZER erreichen.
+
+    Nicht jedes deutsche Literal gehoert in den Katalog. bot.py hat rund 870
+    deutschsprachige Literale, davon sind die allermeisten Logzeilen: sie
+    erreichen nie jemanden ausser dem Betreiber im Journal, und CLAUDE.md sagt
+    ausdruecklich, dass die auf Deutsch bleiben. Ein Katalog, der sie
+    einsammelt, zaehlt Hunderte Eintraege als "noch zu uebersetzen", die
+    niemand je sehen wird — und verdeckt damit, was wirklich fehlt.
+
+    Eingesammelt wird deshalb, was in eine Senke fliesst (siehe _SENKEN) oder
+    als description= an einem Slash-Befehl haengt. Docstrings sind ohnehin
+    ausgeschlossen; der AST unterscheidet sie zuverlaessig, ein Regex nicht.
     """
     quelle = io.open(os.path.join(ROOT, pfad), encoding="utf-8").read()
     baum = ast.parse(quelle)
-    docstrings = set()
-    for n in ast.walk(baum):
-        if isinstance(n, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
-            d = ast.get_docstring(n, clean=False)
-            if d:
-                docstrings.add(d)
     raus = set()
-    for n in ast.walk(baum):
+
+    def _aus_knoten(n, deutsch_noetig=True):
         if isinstance(n, ast.Constant) and isinstance(n.value, str):
-            if n.value in docstrings:
-                continue
-            if _ist_uebersetzbar(n.value):
+            if _ist_uebersetzbar(n.value, deutsch_noetig):
                 raus.add(n.value.strip())
         elif isinstance(n, ast.JoinedStr):
-            # f-Strings: nur die festen Teile. Der Platzhalter selbst ist Daten.
-            # f-Strings: nur zusammenhaengende feste Stuecke, und nur wenn
-            # sie fuer sich einen Satz ergeben. Der Rest braucht ein t() an der
-            # Quelle — ein Bruchstueck als Schluessel traefe nie.
             for x in n.values:
-                if not (isinstance(x, ast.Constant) and isinstance(x.value, str)):
-                    continue
-                st = x.value.strip()
-                if _ist_uebersetzbar(st) and len(st.split()) >= 3:
-                    raus.add(st)
+                if isinstance(x, ast.Constant) and isinstance(x.value, str):
+                    st = x.value.strip()
+                    if _ist_uebersetzbar(st, deutsch_noetig) and len(st.split()) >= 3:
+                        raus.add(st)
+        elif isinstance(n, ast.BinOp):
+            # "Text " + var + " Rest": beide Seiten pruefen.
+            _aus_knoten(n.left, deutsch_noetig)
+            _aus_knoten(n.right, deutsch_noetig)
+        elif isinstance(n, ast.Call):
+            # Bereits umschlossenes _nc_i18n.t("..."): das Argument ist der Text.
+            for a in n.args[:1]:
+                _aus_knoten(a, deutsch_noetig)
+
+    for n in ast.walk(baum):
+        if not isinstance(n, ast.Call):
+            continue
+        f = n.func
+        name = f.attr if isinstance(f, ast.Attribute) else (f.id if isinstance(f, ast.Name) else None)
+        treffer = name in _SENKEN
+        for arg in (n.args if treffer else []):
+            _aus_knoten(arg)
+        for kw in n.keywords:
+            if kw.arg in _SENKE_KW and (treffer or kw.arg == "description"):
+                _aus_knoten(kw.value, deutsch_noetig=(kw.arg != "description"))
     return raus
 
 
@@ -213,7 +251,7 @@ def main():
     sprache = a.write or a.check or a.liste
     if not sprache:
         je_datei = {}
-        for s, dateien in gefunden.items():
+        for _text, dateien in gefunden.items():
             for d in dateien:
                 je_datei[d] = je_datei.get(d, 0) + 1
         for d, n in sorted(je_datei.items(), key=lambda x: -x[1]):

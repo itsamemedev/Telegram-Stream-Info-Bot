@@ -7894,15 +7894,20 @@ def _is_dead(chat_id: int) -> bool:
 def _mark_dead(chat_id: int):
     _dead_chats[chat_id] = datetime.now(timezone.utc).timestamp() + _DEAD_CHAT_TTL
 
-async def _safe_send(bot, chat_id: int, text: str, **kwargs) -> bool:
+async def _safe_send(bot, chat_id: int, text: str, lang: str = None, **kwargs) -> bool:
     """Sendet eine Nachricht und behandelt typische Telegram-Fehler kontrolliert.
        Gibt True bei Erfolg, False sonst. Wirft NIE eine Exception nach außen.
        - RetryAfter: einmalig nach Cooldown nochmal probieren.
        - Forbidden / BadRequest 'chat not found': Chat als tot markieren.
        - NetworkError: einmal kurz warten, dann zweiter Versuch.
-       Alle Fehler werden geloggt, NICHT an den User zurückgesendet."""
+       Alle Fehler werden geloggt, NICHT an den User zurückgesendet.
+
+       v4.1-W6: hier laeuft ALLES zusammen, was der Bot nach Telegram schickt —
+       deshalb steht die Uebersetzung genau hier und nicht an 90 Aufrufstellen.
+       Was nicht im Katalog steht, bleibt deutsch (nc.i18n.t reicht durch)."""
     if _is_dead(chat_id):
         return False
+    text = _nc_i18n.t(text, lang)
     try:
         await bot.send_message(chat_id, text, **kwargs)
         return True
@@ -23854,7 +23859,7 @@ async def _discord_run_once():
         return False
 
     # ───────── INFO / Telegram-Parität ─────────
-    @tree.command(name="status", description="Azrael Sentinel Status: Trackings, Live, Restream")
+    @tree.command(name="status", description=_nc_i18n.t("Azrael Sentinel Status: Trackings, Live, Restream"))
     async def _c_status(inter):
         try:
             with db_conn() as conn:
@@ -23868,7 +23873,7 @@ async def _discord_run_once():
         except Exception as e:
             await inter.response.send_message(f"Fehler: {e}", ephemeral=True)
 
-    @tree.command(name="tracklist", description="Getrackte TikTok-User dieses Servers")
+    @tree.command(name="tracklist", description=_nc_i18n.t("Getrackte TikTok-User dieses Servers"))
     async def _c_tracklist(inter):
         gid = DISCORD_TRACK_GROUP_ID or (inter.guild_id or 0)   # B63: Schalter wurde ignoriert
         try:
@@ -23883,7 +23888,7 @@ async def _discord_run_once():
         except Exception as e:
             await inter.response.send_message(f"Fehler: {e}", ephemeral=True)
 
-    @tree.command(name="track", description="TikTok-User tracken")
+    @tree.command(name="track", description=_nc_i18n.t("TikTok-User tracken"))
     @app_commands.describe(username="TikTok-Username (ohne @)")
     async def _c_track(inter, username: str):
         gid = DISCORD_TRACK_GROUP_ID or (inter.guild_id or 0)   # B63: Schalter wurde ignoriert
@@ -23916,7 +23921,7 @@ async def _discord_run_once():
         except Exception as e:
             await inter.response.send_message(f"Fehler: {e}", ephemeral=True)
 
-    @tree.command(name="untrack", description="TikTok-User nicht mehr tracken")
+    @tree.command(name="untrack", description=_nc_i18n.t("TikTok-User nicht mehr tracken"))
     @app_commands.describe(username="TikTok-Username (ohne @)")
     async def _c_untrack(inter, username: str):
         gid = DISCORD_TRACK_GROUP_ID or (inter.guild_id or 0)   # B63: Schalter wurde ignoriert
@@ -23927,7 +23932,7 @@ async def _discord_run_once():
         except Exception as e:
             await inter.response.send_message(f"Fehler: {e}", ephemeral=True)
 
-    @tree.command(name="ai", description="AZRAEL / KI fragen (Text oder Sprachnachricht)")
+    @tree.command(name="ai", description=_nc_i18n.t("AZRAEL / KI fragen (Text oder Sprachnachricht)"))
     @app_commands.describe(prompt="Deine Frage")
     async def _c_ai(inter, prompt: str):
         await inter.response.defer()
@@ -23942,13 +23947,13 @@ async def _discord_run_once():
         except Exception as e:
             await inter.followup.send(f"Fehler: {e}")
 
-    @tree.command(name="restream_status", description="Restream-Status")
+    @tree.command(name="restream_status", description=_nc_i18n.t("Restream-Status"))
     async def _c_restream_status(inter):
         act = _RESTREAM_ACTIVE or {}
         await inter.response.send_message("Restream: " + (("@" + str(act["user"])) if act.get("user") else "— inaktiv"))
 
     # ───────── SERVER-VERWALTUNG (Admin) ─────────
-    @tree.command(name="create_channel", description="Text-Channel anlegen (optional in Kategorie)")
+    @tree.command(name="create_channel", description=_nc_i18n.t("Text-Channel anlegen (optional in Kategorie)"))
     @app_commands.describe(name="Channel-Name", category="optional: Kategorie-Name (wird angelegt falls neu)")
     async def _c_create_channel(inter, name: str, category: str = None):
         if not await _guard(inter):
@@ -23964,7 +23969,7 @@ async def _discord_run_once():
         except Exception as e:
             await inter.response.send_message(f"Fehler: {e}", ephemeral=True)
 
-    @tree.command(name="create_voice", description="Voice-Channel anlegen")
+    @tree.command(name="create_voice", description=_nc_i18n.t("Voice-Channel anlegen"))
     @app_commands.describe(name="Name", category="optional: Kategorie")
     async def _c_create_voice(inter, name: str, category: str = None):
         if not await _guard(inter):
@@ -23979,7 +23984,7 @@ async def _discord_run_once():
         except Exception as e:
             await inter.response.send_message(f"Fehler: {e}", ephemeral=True)
 
-    @tree.command(name="create_category", description="Kategorie anlegen")
+    @tree.command(name="create_category", description=_nc_i18n.t("Kategorie anlegen"))
     @app_commands.describe(name="Kategorie-Name")
     async def _c_create_category(inter, name: str):
         if not await _guard(inter):
@@ -23990,7 +23995,7 @@ async def _discord_run_once():
         except Exception as e:
             await inter.response.send_message(f"Fehler: {e}", ephemeral=True)
 
-    @tree.command(name="create_role", description="Rolle / Nutzergruppe anlegen")
+    @tree.command(name="create_role", description=_nc_i18n.t("Rolle / Nutzergruppe anlegen"))
     @app_commands.describe(name="Rollenname", color="optional: Hex (z.B. 00ff9c)", mentionable="erwähnbar?")
     async def _c_create_role(inter, name: str, color: str = None, mentionable: bool = True):
         if not await _guard(inter):
@@ -24007,7 +24012,7 @@ async def _discord_run_once():
         except Exception as e:
             await inter.response.send_message(f"Fehler: {e}", ephemeral=True)
 
-    @tree.command(name="create_group", description="Nutzergruppe (= Rolle) anlegen")
+    @tree.command(name="create_group", description=_nc_i18n.t("Nutzergruppe (= Rolle) anlegen"))
     @app_commands.describe(name="Gruppenname")
     async def _c_create_group(inter, name: str):
         if not await _guard(inter):
@@ -24018,7 +24023,7 @@ async def _discord_run_once():
         except Exception as e:
             await inter.response.send_message(f"Fehler: {e}", ephemeral=True)
 
-    @tree.command(name="assign_role", description="Rolle/Gruppe einem Mitglied geben")
+    @tree.command(name="assign_role", description=_nc_i18n.t("Rolle/Gruppe einem Mitglied geben"))
     @app_commands.describe(member="Mitglied", role="Rolle/Gruppe")
     async def _c_assign_role(inter, member: discord.Member, role: discord.Role):
         if not await _guard(inter):
@@ -24029,7 +24034,7 @@ async def _discord_run_once():
         except Exception as e:
             await inter.response.send_message(f"Fehler: {e}", ephemeral=True)
 
-    @tree.command(name="remove_role", description="Rolle/Gruppe entfernen")
+    @tree.command(name="remove_role", description=_nc_i18n.t("Rolle/Gruppe entfernen"))
     @app_commands.describe(member="Mitglied", role="Rolle/Gruppe")
     async def _c_remove_role(inter, member: discord.Member, role: discord.Role):
         if not await _guard(inter):
@@ -24040,7 +24045,7 @@ async def _discord_run_once():
         except Exception as e:
             await inter.response.send_message(f"Fehler: {e}", ephemeral=True)
 
-    @tree.command(name="set_channel_perms", description="Rechte einer Rolle für einen Channel setzen")
+    @tree.command(name="set_channel_perms", description=_nc_i18n.t("Rechte einer Rolle für einen Channel setzen"))
     @app_commands.describe(channel="Channel", role="Rolle", view="ansehen", send="schreiben")
     async def _c_set_perms(inter, channel: discord.TextChannel, role: discord.Role,
                            view: bool = True, send: bool = True):
@@ -24053,7 +24058,7 @@ async def _discord_run_once():
         except Exception as e:
             await inter.response.send_message(f"Fehler: {e}", ephemeral=True)
 
-    @tree.command(name="kick", description="Mitglied kicken")
+    @tree.command(name="kick", description=_nc_i18n.t("Mitglied kicken"))
     @app_commands.describe(member="Mitglied", reason="Grund (optional)")
     async def _c_kick(inter, member: discord.Member, reason: str = None):
         if not await _guard(inter):
@@ -24064,7 +24069,7 @@ async def _discord_run_once():
         except Exception as e:
             await inter.response.send_message(f"Fehler: {e}", ephemeral=True)
 
-    @tree.command(name="ban", description="Mitglied bannen")
+    @tree.command(name="ban", description=_nc_i18n.t("Mitglied bannen"))
     @app_commands.describe(member="Mitglied", reason="Grund (optional)")
     async def _c_ban(inter, member: discord.Member, reason: str = None):
         if not await _guard(inter):
@@ -24075,7 +24080,7 @@ async def _discord_run_once():
         except Exception as e:
             await inter.response.send_message(f"Fehler: {e}", ephemeral=True)
 
-    @tree.command(name="timeout", description="Mitglied stummschalten (Minuten)")
+    @tree.command(name="timeout", description=_nc_i18n.t("Mitglied stummschalten (Minuten)"))
     @app_commands.describe(member="Mitglied", minutes="Minuten", reason="Grund (optional)")
     async def _c_timeout(inter, member: discord.Member, minutes: int, reason: str = None):
         if not await _guard(inter):
@@ -24088,7 +24093,7 @@ async def _discord_run_once():
         except Exception as e:
             await inter.response.send_message(f"Fehler: {e}", ephemeral=True)
 
-    @tree.command(name="purge", description="Letzte N Nachrichten im Channel löschen (max 100)")
+    @tree.command(name="purge", description=_nc_i18n.t("Letzte N Nachrichten im Channel löschen (max 100)"))
     @app_commands.describe(count="Anzahl")
     async def _c_purge(inter, count: int):
         if not await _guard(inter):
@@ -24234,7 +24239,7 @@ async def _discord_run_once():
             log.warning("Discord: Tracked-User-Query fehlgeschlagen: %s", e)
         return out
 
-    @tree.command(name="setup_community", description="Community-Server einrichten: Ränge, Channels, Rechte")
+    @tree.command(name="setup_community", description=_nc_i18n.t("Community-Server einrichten: Ränge, Channels, Rechte"))
     async def _c_setup_community(inter):
         if not await _guard(inter):
             return
@@ -24252,7 +24257,7 @@ async def _discord_run_once():
         except Exception as e:
             await inter.followup.send(f"Fehler: {e}", ephemeral=True)
 
-    @tree.command(name="setup_targets", description="Pro getracktem User: Clips-, Chat- und Voice-Channel anlegen")
+    @tree.command(name="setup_targets", description=_nc_i18n.t("Pro getracktem User: Clips-, Chat- und Voice-Channel anlegen"))
     async def _c_setup_targets(inter):
         if not await _guard(inter):
             return
@@ -24269,7 +24274,7 @@ async def _discord_run_once():
         except Exception as e:
             await inter.followup.send(f"Fehler: {e}", ephemeral=True)
 
-    @tree.command(name="rank", description="Dein Level und Rang anzeigen")
+    @tree.command(name="rank", description=_nc_i18n.t("Dein Level und Rang anzeigen"))
     async def _c_rank(inter):
         try:
             with db_conn() as conn:
@@ -24283,7 +24288,7 @@ async def _discord_run_once():
         except Exception as e:
             await inter.response.send_message(f"Fehler: {e}", ephemeral=True)
 
-    @tree.command(name="leaderboard", description="Top-10 der Community nach XP")
+    @tree.command(name="leaderboard", description=_nc_i18n.t("Top-10 der Community nach XP"))
     async def _c_leaderboard(inter):
         try:
             with db_conn() as conn:
@@ -24301,7 +24306,7 @@ async def _discord_run_once():
             await inter.response.send_message(f"Fehler: {e}", ephemeral=True)
 
     # ───────── F102: COMMUNITY — Daily-Streak, Profil, AZRAEL-Q&A, Events ─────────
-    @tree.command(name="daily", description="Tägliche XP-Belohnung abholen (Streak-Bonus!)")
+    @tree.command(name="daily", description=_nc_i18n.t("Tägliche XP-Belohnung abholen (Streak-Bonus!)"))
     async def _c_daily(inter):
         try:
             today = datetime.now(timezone.utc).date()
@@ -24357,7 +24362,7 @@ async def _discord_run_once():
         except Exception as e:
             await inter.response.send_message(f"Fehler: {e}", ephemeral=True)
 
-    @tree.command(name="profile", description="Dein Community-Profil: Level, Rang, Streak, Rang-Platz")
+    @tree.command(name="profile", description=_nc_i18n.t("Dein Community-Profil: Level, Rang, Streak, Rang-Platz"))
     async def _c_profile(inter, member: discord.Member = None):
         try:
             target = member or inter.user
@@ -24387,7 +24392,7 @@ async def _discord_run_once():
         except Exception as e:
             await inter.response.send_message(f"Fehler: {e}", ephemeral=True)
 
-    @tree.command(name="ask", description="AZRAEL etwas fragen — der KI-Community-Assistent")
+    @tree.command(name="ask", description=_nc_i18n.t("AZRAEL etwas fragen — der KI-Community-Assistent"))
     async def _c_ask(inter, frage: str):
         await inter.response.defer()
         try:
@@ -24417,7 +24422,7 @@ async def _discord_run_once():
         except Exception as e:
             await inter.followup.send(f"Fehler: {e}")
 
-    @tree.command(name="event", description="Community-Event ankündigen (Admin) — mit Countdown")
+    @tree.command(name="event", description=_nc_i18n.t("Community-Event ankündigen (Admin) — mit Countdown"))
     async def _c_event(inter, titel: str, wann: str, beschreibung: str = ""):
         if not await _guard(inter):
             return
@@ -24460,7 +24465,7 @@ async def _discord_run_once():
         except Exception as e:
             await inter.response.send_message(f"Fehler: {e}", ephemeral=True)
 
-    @tree.command(name="events", description="Kommende Community-Events anzeigen")
+    @tree.command(name="events", description=_nc_i18n.t("Kommende Community-Events anzeigen"))
     async def _c_events(inter):
         try:
             with db_conn() as conn:
@@ -24483,7 +24488,7 @@ async def _discord_run_once():
             await inter.response.send_message(f"Fehler: {e}", ephemeral=True)
 
     # ───────── BOT-STEUERUNG: recstatus (track/untrack/tracklist/ai existieren bereits oben) ─────────
-    @tree.command(name="recstatus", description="Aktuell laufende Aufnahmen")
+    @tree.command(name="recstatus", description=_nc_i18n.t("Aktuell laufende Aufnahmen"))
     async def _c_recstatus(inter):
         try:
             with db_conn() as conn:
@@ -24496,7 +24501,7 @@ async def _discord_run_once():
         except Exception as e:
             await inter.response.send_message(f"Fehler: {e}", ephemeral=True)
 
-    @tree.command(name="livenow", description="Welche getrackten User sind gerade live")
+    @tree.command(name="livenow", description=_nc_i18n.t("Welche getrackten User sind gerade live"))
     async def _c_livenow(inter):
         try:
             with db_conn() as conn:
@@ -24509,7 +24514,7 @@ async def _discord_run_once():
         except Exception as e:
             await inter.response.send_message(f"Fehler: {e}", ephemeral=True)
 
-    @tree.command(name="clips", description="Letzte Highlight-Clips eines Users")
+    @tree.command(name="clips", description=_nc_i18n.t("Letzte Highlight-Clips eines Users"))
     @app_commands.describe(username="TikTok-Username")
     async def _c_clips(inter, username: str):
         try:
@@ -24525,7 +24530,7 @@ async def _discord_run_once():
         except Exception as e:
             await inter.response.send_message(f"Fehler: {e}", ephemeral=True)
 
-    @tree.command(name="post_test", description="Test: Nachricht in den Channel eines getrackten Users posten")
+    @tree.command(name="post_test", description=_nc_i18n.t("Test: Nachricht in den Channel eines getrackten Users posten"))
     @app_commands.describe(username="TikTok-Username")
     async def _c_post_test(inter, username: str):
         if not await _guard(inter):
@@ -24540,7 +24545,7 @@ async def _discord_run_once():
         except Exception as e:
             await inter.followup.send(f"Fehler: {e}", ephemeral=True)
 
-    @tree.command(name="help", description="Alle Bot-Befehle anzeigen")
+    @tree.command(name="help", description=_nc_i18n.t("Alle Bot-Befehle anzeigen"))
     async def _c_help(inter):
         await inter.response.send_message(
             "**🦇 Azrael Sentinel — Befehle**\n"
@@ -24555,7 +24560,7 @@ async def _discord_run_once():
             "**Server (Admin):** `/create_channel` `/create_voice` `/create_category` `/create_role`",
             ephemeral=True)
 
-    @tree.command(name="follow", description="Bei Live-Gang eines Streamers gepingt werden")
+    @tree.command(name="follow", description=_nc_i18n.t("Bei Live-Gang eines Streamers gepingt werden"))
     @app_commands.describe(username="TikTok-Username")
     async def _c_follow(inter, username: str):
         u = username.lstrip("@")
@@ -24570,7 +24575,7 @@ async def _discord_run_once():
         except Exception as e:
             await inter.response.send_message(f"Fehler: {e}", ephemeral=True)
 
-    @tree.command(name="unfollow", description="Live-Pings für einen Streamer abbestellen")
+    @tree.command(name="unfollow", description=_nc_i18n.t("Live-Pings für einen Streamer abbestellen"))
     @app_commands.describe(username="TikTok-Username")
     async def _c_unfollow(inter, username: str):
         try:
@@ -24581,7 +24586,7 @@ async def _discord_run_once():
         except Exception as e:
             await inter.response.send_message(f"Fehler: {e}", ephemeral=True)
 
-    @tree.command(name="stats", description="Statistik zu einem getrackten Streamer")
+    @tree.command(name="stats", description=_nc_i18n.t("Statistik zu einem getrackten Streamer"))
     @app_commands.describe(username="TikTok-Username")
     async def _c_stats(inter, username: str):
         try:
@@ -24603,7 +24608,7 @@ async def _discord_run_once():
         except Exception as e:
             await inter.response.send_message(f"Fehler: {e}", ephemeral=True)
 
-    @tree.command(name="warn", description="Mitglied verwarnen (eskaliert ab 3 Verwarnungen zu Timeout)")
+    @tree.command(name="warn", description=_nc_i18n.t("Mitglied verwarnen (eskaliert ab 3 Verwarnungen zu Timeout)"))
     @app_commands.describe(member="Mitglied", reason="Grund")
     async def _c_warn(inter, member: discord.Member, reason: str = "kein Grund"):
         if not await _guard(inter):
@@ -24627,7 +24632,7 @@ async def _discord_run_once():
         except Exception as e:
             await inter.response.send_message(f"Fehler: {e}", ephemeral=True)
 
-    @tree.command(name="warnings", description="Verwarnungen eines Mitglieds anzeigen")
+    @tree.command(name="warnings", description=_nc_i18n.t("Verwarnungen eines Mitglieds anzeigen"))
     @app_commands.describe(member="Mitglied")
     async def _c_warnings(inter, member: discord.Member):
         try:
@@ -24642,7 +24647,7 @@ async def _discord_run_once():
         except Exception as e:
             await inter.response.send_message(f"Fehler: {e}", ephemeral=True)
 
-    @tree.command(name="clearwarns", description="Alle Verwarnungen eines Mitglieds löschen")
+    @tree.command(name="clearwarns", description=_nc_i18n.t("Alle Verwarnungen eines Mitglieds löschen"))
     @app_commands.describe(member="Mitglied")
     async def _c_clearwarns(inter, member: discord.Member):
         if not await _guard(inter):
@@ -24654,7 +24659,7 @@ async def _discord_run_once():
         except Exception as e:
             await inter.response.send_message(f"Fehler: {e}", ephemeral=True)
 
-    @tree.command(name="topstreamers", description="Rangliste der Streamer nach Aufnahmen")
+    @tree.command(name="topstreamers", description=_nc_i18n.t("Rangliste der Streamer nach Aufnahmen"))
     async def _c_topstreamers(inter):
         try:
             with db_conn() as conn:
@@ -24668,7 +24673,7 @@ async def _discord_run_once():
         except Exception as e:
             await inter.response.send_message(f"Fehler: {e}", ephemeral=True)
 
-    @tree.command(name="clipoftheweek", description="Aktuell führender Clip-of-the-Week (⭐-Voting)")
+    @tree.command(name="clipoftheweek", description=_nc_i18n.t("Aktuell führender Clip-of-the-Week (⭐-Voting)"))
     async def _c_cotw(inter):
         await inter.response.defer()
         try:
@@ -24682,7 +24687,7 @@ async def _discord_run_once():
 
     _disc_clip_last = {}    # F84: user_id -> monotonic (Cooldown für /clip)
 
-    @tree.command(name="clip", description="Highlight-Clip der letzten Sekunden vom laufenden Stream")
+    @tree.command(name="clip", description=_nc_i18n.t("Highlight-Clip der letzten Sekunden vom laufenden Stream"))
     @app_commands.describe(username="Streamer (leer = der einzige der gerade aufgenommen wird)")
     async def _c_clip(inter, username: str = ""):
         now = _time_mod.monotonic()
@@ -24719,7 +24724,7 @@ async def _discord_run_once():
             except Exception:
                 await inter.response.send_message(f"Fehler: {e}", ephemeral=True)
 
-    @tree.command(name="botstats", description="Bot-Health: Uptime, Trackings, Aufnahmen, DB (Admin)")
+    @tree.command(name="botstats", description=_nc_i18n.t("Bot-Health: Uptime, Trackings, Aufnahmen, DB (Admin)"))
     async def _c_botstats(inter):
         if not await _guard(inter):
             return
@@ -24750,7 +24755,7 @@ async def _discord_run_once():
         except Exception as e:
             await inter.response.send_message(f"Fehler: {e}", ephemeral=True)
 
-    @tree.command(name="sys_unpause", description="Auto-pausierte Quelle wieder aktivieren (Admin)")
+    @tree.command(name="sys_unpause", description=_nc_i18n.t("Auto-pausierte Quelle wieder aktivieren (Admin)"))
     @app_commands.describe(username="TikTok-Username der pausierten Quelle")
     async def _c_sys_unpause(inter, username: str):
         if not _is_admin(inter):
@@ -24775,7 +24780,7 @@ async def _discord_run_once():
         except Exception as e:
             await inter.followup.send(f"❌ Fehler: {e}")
 
-    @tree.command(name="sys_report", description="Azrael Sentinel Wochenreport (Brain, Markdown)")
+    @tree.command(name="sys_report", description=_nc_i18n.t("Azrael Sentinel Wochenreport (Brain, Markdown)"))
     async def _c_sys_report(inter):
         if not _is_admin(inter):
             await inter.response.send_message("Nur Admins.", ephemeral=True); return
@@ -24877,7 +24882,7 @@ async def _discord_run_once():
         tree.command(name=_pname, description=_pdesc[:100])(_mk())
     # =================== ENDE V37-W-PAR ======================================
 
-    @tree.command(name="streaminfo", description="Kompakt-Karte eines Streamers: Aktivität, Aufnahmen, Follower-Trend")
+    @tree.command(name="streaminfo", description=_nc_i18n.t("Kompakt-Karte eines Streamers: Aktivität, Aufnahmen, Follower-Trend"))
     @app_commands.describe(username="TikTok-Username")
     async def _c_streaminfo(inter, username: str):
         u = username.strip().lstrip("@")
@@ -26376,7 +26381,7 @@ async def _discord_post_user(username, text, feed="live-feed", ping_notify=False
             else:
                 emb = discord.Embed(
                     title=f"⏹ @{(username or '').lstrip('@')} ist offline",
-                    description="Stream beendet — Aufnahme gesichert. 📼",
+                    description=_nc_i18n.t("Stream beendet — Aufnahme gesichert. 📼"),
                     colour=discord.Colour(0x555C66))
                 # F84: Session-Bilanz als Embed-Felder (nur was wir sicher wissen)
                 if stats:

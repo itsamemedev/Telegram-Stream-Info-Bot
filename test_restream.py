@@ -2377,17 +2377,59 @@ def test_v41_w6_i18n_fundament():
     import json as _j
     _en = _j.load(open("locales/en.json", encoding="utf-8"))["strings"]
     _gefuellt = {k: v for k, v in _en.items() if v}
-    assert len(_gefuellt) >= 500, "Katalog en zu duenn: %d Eintraege" % len(_gefuellt)
+    assert len(_gefuellt) == len(_en), \
+        "%d von %d Eintraegen ohne Uebersetzung" % (len(_en) - len(_gefuellt), len(_en))
+    assert len(_en) >= 600, "Katalog en zu duenn: %d Eintraege" % len(_en)
     assert _gefuellt.get("Aufnahme gestoppt") == "Recording stopped"
     # Keine Uebersetzung darf mit ihrer Quelle identisch sein — das waere ein
     # vergessener Eintrag, der als erledigt zaehlt.
-    # "Sprache / Language" ist absichtlich zweisprachig: es beschriftet den
-    # Umschalter selbst und muss in BEIDEN Sprachen lesbar bleiben.
-    _absicht = {"Sprache / Language"}
-    _faul = [k for k, v in _gefuellt.items()
-             if k == v and len(k) > 12 and k not in _absicht]
+    _faul = [k for k, v in _gefuellt.items() if k == v and len(k) > 12]
     assert not _faul, "Eintraege unveraendert uebernommen: %s" % _faul[:5]
-    ok("v4.1-W6: %d von %d Eintraegen uebersetzt" % (len(_gefuellt), len(_en)))
+    ok("v4.1-W6: alle %d Katalogeintraege uebersetzt" % len(_en))
+
+    # (7) Der Bot uebersetzt am SENDEWEG, nicht an 90 Aufrufstellen. _safe_send
+    # ist der einzige Weg nach Telegram — steht die Uebersetzung dort nicht,
+    # bleibt der Bot einsprachig, egal wie voll der Katalog ist.
+    b = open("bot.py", encoding="utf-8").read()
+    assert "text = _nc_i18n.t(text, lang)" in b, \
+        "_safe_send uebersetzt nicht — der Bot bleibt deutsch"
+    assert "_nc_i18n.configure(standard=UI_LANG)" in b, "nc.i18n wird nicht konfiguriert"
+    ok("v4.1-W6: Telegram-Sendeweg und UI_LANG verdrahtet")
+
+    # (8) Slash-Befehle gegen die Discord-Regeln rekonstruieren — in BEIDEN
+    # Sprachen. Die 100-Zeichen-Grenze gilt fuer die AUSGELIEFERTE Beschreibung,
+    # und ausgeliefert wird ab jetzt die uebersetzte. Eine zu lange englische
+    # Beschreibung liesse die Registrierung scheitern, und der Befehl waere im
+    # Discord schlicht weg — ohne dass hier irgendetwas rot wuerde.
+    import ast as _ast
+    import re as _re2
+    _befunde, _n = [], 0
+    for _k in _ast.walk(_ast.parse(b)):
+        if not isinstance(_k, _ast.Call):
+            continue
+        if not _ast.unparse(_k.func).endswith(("tree.command", "app_commands.command")):
+            continue
+        _n += 1
+        _kw = {x.arg: x.value for x in _k.keywords}
+        _name = getattr(_kw.get("name"), "value", None)
+        _d = _kw.get("description")
+        _de = None
+        if isinstance(_d, _ast.Call) and _d.args and isinstance(_d.args[0], _ast.Constant):
+            _de = _d.args[0].value
+        elif isinstance(_d, _ast.Constant):
+            _de = _d.value
+        if _name and not _re2.fullmatch(r"[-_a-z0-9]{1,32}", _name):
+            _befunde.append(("Name", _name))
+        if _de is None:
+            continue
+        if not isinstance(_d, _ast.Call):
+            _befunde.append(("Beschreibung nicht uebersetzt", _name))
+        for _sp, _txt in (("de", _de), ("en", _en.get(_de, _de))):
+            if len(_txt) > 100:
+                _befunde.append(("Beschreibung %s %d Zeichen" % (_sp, len(_txt)), _name))
+    assert _n >= 45, "nur %d Slash-Befehle gefunden — Registrierung kaputt?" % _n
+    assert not _befunde, "Discord-Befehle verletzen die Regeln: %s" % _befunde[:5]
+    ok("v4.1-W6: %d Slash-Befehle gueltig, Beschreibungen <=100 in de UND en" % _n)
 
 
 # ------------------------------------------------- B168) Moderator überall (Twitch/YouTube)
