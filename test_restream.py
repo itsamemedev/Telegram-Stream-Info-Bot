@@ -2294,6 +2294,76 @@ def test_v41_w5_streamer_blueprint():
     ok("v4.1-W5: nc.ctx bei %d Slots, kein Eintrag dazugekommen" % len(ncctx.Ctx.__slots__))
 
 
+
+# ------------------------------------------------- v4.1-W6) Mehrsprachigkeit
+
+def test_v41_w6_i18n_fundament():
+    """v4.1-W6: der Katalog, die Spracherkennung und der Rueckfall auf Deutsch.
+
+    Der Ansatz ist ungewoehnlich und deshalb vertraglich festgehalten: die
+    DEUTSCHE Zeichenkette ist der Schluessel. Das haelt den Bestand lesbar und
+    macht jeden fehlenden Eintrag zu einem deutschen Satz statt zu einem nackten
+    Schluesselnamen — aber es heisst auch, dass ein geaenderter deutscher Text
+    seine Uebersetzung still verliert. Genau dagegen steht --check.
+    """
+    import json as _json
+    from nc import i18n
+
+    # (1) Rueckfall: was nicht im Katalog steht, bleibt Deutsch. NIE leer, nie
+    # ein Schluesselname — eine Oberflaeche mit Luecken waere schlimmer als
+    # eine einsprachige.
+    assert i18n.t("Vollkommen unbekannter Satz", "en") == "Vollkommen unbekannter Satz"
+    assert i18n.t("", "en") == ""
+    assert i18n.t("Irgendwas", "kl") == "Irgendwas", "unbekannte Sprache muss durchreichen"
+    ok("v4.1-W6: fehlende Uebersetzung faellt auf Deutsch zurueck")
+
+    # (2) Spracherkennung. Der Header ist ein Wunsch: passt nichts, sagt die
+    # Funktion None und der Aufrufer entscheidet.
+    assert i18n.aus_accept_language("en-US,en;q=0.9,de;q=0.8") == "en"
+    assert i18n.aus_accept_language("de-DE,de;q=0.9,en;q=0.8") == "de"
+    assert i18n.aus_accept_language("fr-FR,fr;q=0.9,en;q=0.3") == "en", "q-Wert missachtet"
+    assert i18n.aus_accept_language("fr") is None
+    assert i18n.aus_accept_language("") is None and i18n.aus_accept_language(None) is None
+    for roh, erwartet in (("de-DE", "de"), ("EN", "en"), ("en_US", "en"),
+                          ("fr", None), ("", None), (None, None)):
+        assert i18n.normalisieren(roh) == erwartet, "normalisieren(%r)" % roh
+    ok("v4.1-W6: Accept-Language und normalisieren exakt")
+
+    # (3) Platzhalter werden NACH der Uebersetzung eingesetzt — im Englischen
+    # steht das Objekt oft woanders. Und ein Katalogeintrag mit falschem
+    # Platzhalter darf keine Route sprengen.
+    i18n.configure()
+    i18n._kataloge["en"] = {"{n} Aufnahmen von {u}": "{u} has {n} recordings",
+                            "Kaputt {fehlt}": "Broken {gibtsnicht}"}
+    try:
+        assert i18n.t("{n} Aufnahmen von {u}", "en", n=3, u="a") == "a has 3 recordings"
+        assert i18n.t("Kaputt {fehlt}", "en", fehlt="x") == "Kaputt x", \
+            "kaputter Katalogeintrag muss auf den deutschen Satz zurueckfallen"
+    finally:
+        i18n._kataloge.pop("en", None)
+    ok("v4.1-W6: Platzhalter nach der Uebersetzung, kaputter Eintrag faellt zurueck")
+
+    # (4) Der Katalog auf der Platte ist gueltiges JSON im erwarteten Format,
+    # und Deutsch bleibt leer — die Quellsprache braucht keine Uebersetzung.
+    for sp in i18n.SPRACHEN:
+        roh = _json.load(open("locales/%s.json" % sp, encoding="utf-8"))
+        assert isinstance(roh.get("strings"), dict), "locales/%s.json ohne strings" % sp
+    assert not _json.load(open("locales/de.json", encoding="utf-8"))["strings"], \
+        "de ist die Quellsprache und darf keinen Katalog haben"
+    ok("v4.1-W6: %d Kataloge auf der Platte, de bleibt leer" % len(i18n.SPRACHEN))
+
+    # (5) Die Oberflaeche uebersetzt im Browser. Ohne Beobachter waere nur das
+    # beim Laden vorhandene Geruest uebersetzt und jede nachgeladene Tabelle
+    # wieder deutsch — sichtbar halb uebersetzt.
+    h = open("templates/dashboard.html", encoding="utf-8").read()
+    assert "/api/i18n/katalog" in h, "Dashboard laedt keinen Katalog"
+    assert "MutationObserver" in h, "kein Beobachter — nachgeladene Inhalte blieben deutsch"
+    assert "data-i18n-switch" in h, "kein Anker fuer den Sprachumschalter"
+    assert "TABU" in h and "CODE:1" in h and "PRE:1" in h, \
+        "Uebersetzer verschont <code>/<pre> nicht — dort stehen Befehle und Logzeilen"
+    ok("v4.1-W6: Browser-Uebersetzer mit Beobachter, Tabu-Zonen und Umschalter")
+
+
 # ------------------------------------------------- B168) Moderator überall (Twitch/YouTube)
 
 def test_b168_moderator_everywhere():
@@ -7401,6 +7471,7 @@ def main():
     test_v41_w4_news_marketing_kern_raus()
     test_v41_w5_restliche_dauerlaeufer()
     test_v41_w5_streamer_blueprint()
+    test_v41_w6_i18n_fundament()
     test_b168_moderator_everywhere()
     test_b169_kick_oauth()
     test_b170_azrael_and_youtube()

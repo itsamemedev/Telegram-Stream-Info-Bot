@@ -578,6 +578,7 @@ from nc import chatstats as _nc_chatstats    # v4.0-W45: Chat-Health-Aggregation
 from nc import oauthpage as _nc_oauthpage    # v4.0-W49: OAuth-Rückmeldeseiten (extrahiert)
 from nc import trackingdb as _nc_trackingdb  # v4.0-W50: Tracking-Status-Helfer (conn-injiziert)
 from nc import tiktokcheck as _nc_tiktokcheck  # v4.1-W5: existiert der Account noch?
+from nc import i18n as _nc_i18n  # v4.1-W6: Mehrsprachigkeit (Katalog + Spracherkennung)
 from nc import eventquery as _nc_eventquery  # v4.0-W51: Event-Log-Query-Bauer (rein)
 from nc import admod as _nc_admod            # v4.0-W56: Werbe-Allowlist-Bauer (rein)
 from nc import binresolve as _nc_binresolve  # v4.0-W60: Binary-Pfad-Resolver (rein)
@@ -604,6 +605,7 @@ from nc.routes import evolution as _nc_routes_evolution      # v4.1-W3: Evolutio
 from nc.routes import news as _nc_routes_news                # v4.1-W4: Website-News
 from nc.routes import marketing as _nc_routes_marketing      # v4.1-W4: Cross-Promo
 from nc.routes import streamer as _nc_routes_streamer        # v4.1-W5: Streamer-Ansicht
+from nc.routes import i18n as _nc_routes_i18n                # v4.1-W6: Sprachwahl
 from nc import updater as _nc_updater                        # v4.0-W115: Selbst-Update aus dem GitHub-Repo
 from nc import donationsdb as _nc_donationsdb                # v4.0-W116: manuell erfasste Spenden lesen
 # Diese beiden Routen ruft der Bot auch INTERN auf (Telegram /sysres und die
@@ -657,6 +659,11 @@ def _env_int_range(name: str, default: int, lo: int, hi: int) -> int:
     return _nc_envnum.env_int_range(name, default, lo, hi)
 
 DASHBOARD_PORT     = _env_int("DASHBOARD_PORT", 8050)
+# v4.1-W6: Standardsprache der Oberflaeche. Der Bestand ist auf Deutsch
+# geschrieben, deshalb ist "de" die Quellsprache und der Default. Wer die Box
+# auf Englisch fahren will, setzt UI_LANG=en — die Sprachwahl im Dashboard
+# (Cookie) und der Accept-Language-Header des Browsers schlagen das je Besucher.
+UI_LANG            = (os.getenv("UI_LANG", "de") or "de").strip().lower()
 DASHBOARD_TOKEN    = os.getenv("DASHBOARD_TOKEN", "").strip()    # C9
 # v4.0-W52: PIN-Login fürs Dashboard/PWA. Gesetzt → externer Zugriff braucht das
 # PIN (schöne Login-Seite); nicht gesetzt → Verhalten unverändert (kein Login).
@@ -29470,6 +29477,11 @@ _nc_trackingdb.configure(integrity_errors=DB_INTEGRITY_ERRORS,
 # __file__ des Fachmoduls waere es nc/website/ geworden) und get_bot_app (ein
 # GETTER — die Telegram-Application entsteht erst in run_bot, und globals() ist
 # im Modul der Modul-Namensraum, nicht der Bot).
+# v4.1-W6: Mehrsprachigkeit. UI_LANG ist die Sprache fuer alles ohne eigene
+# Angabe — Hintergrund-Jobs, Ansagen ohne Empfaenger. Der Katalog liegt in
+# locales/; fehlt ein Eintrag, bleibt der Text deutsch statt zu verschwinden.
+_nc_i18n.configure(standard=UI_LANG)
+
 # v4.1-W5: die Existenzpruefung laeuft ueber denselben Weg wie die
 # Live-Aufloesung — gepoolte Session, geprueter Pull-Proxy, gleiche Kopfzeilen.
 # Alle drei haengen am Laufzeitkern und bleiben im Bot.
@@ -29637,6 +29649,7 @@ dashboard_app.register_blueprint(_nc_routes_evolution.bp)  # v4.1-W3
 dashboard_app.register_blueprint(_nc_routes_news.bp)       # v4.1-W4
 dashboard_app.register_blueprint(_nc_routes_marketing.bp)  # v4.1-W4
 dashboard_app.register_blueprint(_nc_routes_streamer.bp)   # v4.1-W5
+dashboard_app.register_blueprint(_nc_routes_i18n.bp)       # v4.1-W6
 
 
 if __name__ == "__main__":
