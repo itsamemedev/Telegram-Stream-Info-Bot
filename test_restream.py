@@ -2355,13 +2355,39 @@ def test_v41_w6_i18n_fundament():
     # (5) Die Oberflaeche uebersetzt im Browser. Ohne Beobachter waere nur das
     # beim Laden vorhandene Geruest uebersetzt und jede nachgeladene Tabelle
     # wieder deutsch — sichtbar halb uebersetzt.
-    h = open("templates/dashboard.html", encoding="utf-8").read()
-    assert "/api/i18n/katalog" in h, "Dashboard laedt keinen Katalog"
-    assert "MutationObserver" in h, "kein Beobachter — nachgeladene Inhalte blieben deutsch"
-    assert "data-i18n-switch" in h, "kein Anker fuer den Sprachumschalter"
-    assert "TABU" in h and "CODE:1" in h and "PRE:1" in h, \
+    js = open("nc/routes/i18n.py", encoding="utf-8").read()
+    assert "/api/i18n/katalog" in js, "Uebersetzer laedt keinen Katalog"
+    assert "MutationObserver" in js, "kein Beobachter — nachgeladene Inhalte blieben deutsch"
+    assert "TABU" in js and "CODE:1" in js and "PRE:1" in js, \
         "Uebersetzer verschont <code>/<pre> nicht — dort stehen Befehle und Logzeilen"
-    ok("v4.1-W6: Browser-Uebersetzer mit Beobachter, Tabu-Zonen und Umschalter")
+    # Alle drei Oberflaechen binden DENSELBEN Uebersetzer ein. Drei Inline-Kopien
+    # waeren drei Stellen, die auseinanderlaufen — und zwei davon faenden es
+    # niemand, weil brain und overlay seltener angesehen werden.
+    for vorlage in ("templates/dashboard.html", "templates/brain.html",
+                    "templates/overlay.html"):
+        h = open(vorlage, encoding="utf-8").read()
+        assert '<script src="/api/i18n/uebersetzer.js"' in h, \
+            "%s bindet den Uebersetzer nicht ein" % vorlage
+    assert "data-i18n-switch" in open("templates/dashboard.html", encoding="utf-8").read(), \
+        "kein Anker fuer den Sprachumschalter"
+    ok("v4.1-W6: ein Uebersetzer fuer drei Oberflaechen, mit Beobachter und Tabu-Zonen")
+
+    # (6) Der Katalog ist nicht bloss vorhanden, er traegt auch etwas. Ein leerer
+    # Katalog wuerde jede Zusicherung oben erfuellen und trotzdem nichts tun.
+    import json as _j
+    _en = _j.load(open("locales/en.json", encoding="utf-8"))["strings"]
+    _gefuellt = {k: v for k, v in _en.items() if v}
+    assert len(_gefuellt) >= 500, "Katalog en zu duenn: %d Eintraege" % len(_gefuellt)
+    assert _gefuellt.get("Aufnahme gestoppt") == "Recording stopped"
+    # Keine Uebersetzung darf mit ihrer Quelle identisch sein — das waere ein
+    # vergessener Eintrag, der als erledigt zaehlt.
+    # "Sprache / Language" ist absichtlich zweisprachig: es beschriftet den
+    # Umschalter selbst und muss in BEIDEN Sprachen lesbar bleiben.
+    _absicht = {"Sprache / Language"}
+    _faul = [k for k, v in _gefuellt.items()
+             if k == v and len(k) > 12 and k not in _absicht]
+    assert not _faul, "Eintraege unveraendert uebernommen: %s" % _faul[:5]
+    ok("v4.1-W6: %d von %d Eintraegen uebersetzt" % (len(_gefuellt), len(_en)))
 
 
 # ------------------------------------------------- B168) Moderator überall (Twitch/YouTube)

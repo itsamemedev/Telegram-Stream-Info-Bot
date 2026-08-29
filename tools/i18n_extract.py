@@ -47,6 +47,14 @@ _DEUTSCH = re.compile(
 _SKIP_ATTR_WERTE = re.compile(r"^[\d\s.,:%#/+-]*$")
 
 
+# Ein Schluessel muss im DOM als GANZER Textknoten auftauchen koennen, sonst
+# trifft er nie. Diese Muster erkennen die Bruchstuecke, die entstehen, wenn das
+# Dashboard sein HTML per String-Verkettung baut.
+_MARKUP = re.compile(r'[<>]|\w+\s*=\s*["\']|\$\{|`')
+_BRUCHSTUECK_ANFANG = re.compile(r'^[)\],;:%.\u2014\u2013+*/|=&#-]')
+_BRUCHSTUECK_ENDE = re.compile(r'[(\[{=]$|\b(?:und|oder|der|die|das|von|mit|im|in|am|auf|zu|bei)$')
+
+
 def _ist_uebersetzbar(text):
     t = (text or "").strip()
     if len(t) < 3 or not _WORT.search(t):
@@ -58,7 +66,51 @@ def _ist_uebersetzbar(text):
         return False
     if t.startswith("http://") or t.startswith("https://"):
         return False
+    # v4.1-W6: Bruchstuecke aussortieren. Der Uebersetzer im Browser vergleicht
+    # GANZE Textknoten; ein Stueck wie ") — bitte durchsehen" oder
+    # '<span class="btn" onclick="x(' steht dort nie fuer sich. Ein Eintrag
+    # dafuer waere tot und wuerde den Katalog nur aufblaehen — schlimmer noch,
+    # er wuerde als "uebersetzt" zaehlen, obwohl die Stelle deutsch bleibt.
+    if _MARKUP.search(t):
+        return False
+    if _BRUCHSTUECK_ANFANG.match(t) or _BRUCHSTUECK_ENDE.search(t):
+        return False
+    if "\n" in t:
+        return False
     return bool(_DEUTSCH.search(t))
+
+
+def _js_textstuecke(literal):
+    """Aus einem JS-Literal die Stuecke holen, die spaeter als TEXT im DOM stehen.
+
+    Der Uebersetzer im Browser sieht Textknoten, keine Quelltext-Literale. Ein
+    Literal wie `<div class="empty">Noch keine Aufnahmen.</div>` erscheint dort
+    als der blosse Satz — das rohe Literal als Schluessel zu nehmen waere ein
+    Eintrag, der NIE trifft. Deshalb: Markup abziehen, an ${...} trennen (was
+    dort steht, sind Daten und wechselt zur Laufzeit), und nur die festen
+    Stuecke behalten.
+
+    Bruchstuecke wie "Fuer @" fliegen raus: sie stehen im DOM nie allein,
+    sondern verschmelzen mit dem eingesetzten Wert zu einem Textknoten. Ein
+    Eintrag dafuer waere ebenfalls tot — solche Saetze brauchen ein T() an der
+    Quelle und kommen in einer eigenen Welle.
+    """
+    if not literal:
+        return []
+    # ${...} und Markup entfernen; beides ist im DOM kein uebersetzbarer Text.
+    ohne_var = re.sub(r"\$\{[^}]*\}", "\x00", literal)
+    ohne_tags = re.sub(r"<[^>]{0,200}>", "\x00", ohne_var)
+    raus = []
+    for stueck in ohne_tags.split("\x00"):
+        stueck = stueck.replace("&nbsp;", " ").replace("&amp;", "&").strip()
+        if not _ist_uebersetzbar(stueck):
+            continue
+        # Mindestens zwei Woerter ODER ein abgeschlossener Satz — sonst ist es
+        # ein Bruchstueck um einen Platzhalter herum.
+        if len(stueck.split()) < 2 and not stueck.endswith((".", "!", "?", ":")):
+            continue
+        raus.append(stueck)
+    return raus
 
 
 def _html_strings(pfad):
@@ -75,9 +127,8 @@ def _html_strings(pfad):
             raus.add(a.strip())
     js = "\n".join(re.findall(r"<script\b[^>]*>(.*?)</script>", roh, flags=re.S))
     for a, b, c in re.findall(r"'([^'\\\n]{4,})'|\"([^\"\\\n]{4,})\"|`([^`\\\n]{4,})`", js):
-        s = a or b or c
-        if _ist_uebersetzbar(s):
-            raus.add(s.strip())
+        for stueck in _js_textstuecke(a or b or c):
+            raus.add(stueck)
     return raus
 
 
@@ -106,10 +157,15 @@ def _py_strings(pfad):
                 raus.add(n.value.strip())
         elif isinstance(n, ast.JoinedStr):
             # f-Strings: nur die festen Teile. Der Platzhalter selbst ist Daten.
-            fest = "".join(x.value for x in n.values
-                           if isinstance(x, ast.Constant) and isinstance(x.value, str))
-            if _ist_uebersetzbar(fest) and len(fest.strip()) > 6:
-                raus.add(fest.strip())
+            # f-Strings: nur zusammenhaengende feste Stuecke, und nur wenn
+            # sie fuer sich einen Satz ergeben. Der Rest braucht ein t() an der
+            # Quelle — ein Bruchstueck als Schluessel traefe nie.
+            for x in n.values:
+                if not (isinstance(x, ast.Constant) and isinstance(x.value, str)):
+                    continue
+                st = x.value.strip()
+                if _ist_uebersetzbar(st) and len(st.split()) >= 3:
+                    raus.add(st)
     return raus
 
 

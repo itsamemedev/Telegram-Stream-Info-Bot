@@ -10,7 +10,7 @@ das feste Geruest getroffen und den Rest auf Deutsch stehen lassen — sichtbar
 zweisprachig, also schlimmer als gar nicht.
 """
 
-from flask import Blueprint, jsonify, make_response, request
+from flask import Blueprint, Response, jsonify, make_response, request
 
 from nc import i18n as _nc_i18n
 
@@ -82,4 +82,132 @@ def api_i18n_waehlen():
     antwort = make_response(jsonify(ok=True, sprache=gewuenscht))
     antwort.set_cookie(_COOKIE, gewuenscht, max_age=_COOKIE_MAX_AGE,
                        samesite="Lax", httponly=False)
+    return antwort
+
+
+# Der Uebersetzer fuer den Browser. Als ausgelieferte Datei und nicht dreimal
+# inline in dashboard/brain/overlay: drei Kopien waeren drei Stellen, die
+# auseinanderlaufen. Er steht hier als Zeichenkette statt in static/, weil das
+# Projekt kein static/ hat und ein neuer Ordner im Auslieferungs-ZIP eine
+# eigene Fehlerquelle waere.
+_UEBERSETZER_JS = r"""(function(){
+  'use strict';
+  var KAT = null;            // deutsch -> zielsprache
+  var SPRACHE = 'de';
+  var ATTRS = ['placeholder','title','aria-label','alt'];
+
+  // Elemente, deren Inhalt Daten ist und nie uebersetzt werden darf. <code>
+  // und <pre> zeigen Befehle und Logzeilen — ein Treffer waere dort ein Fehler.
+  var TABU = {SCRIPT:1, STYLE:1, CODE:1, PRE:1, TEXTAREA:1, KBD:1, SAMP:1};
+
+  function uebersetze(text){
+    if (!KAT || !text) return null;
+    var roh = text.trim();
+    if (!roh) return null;
+    var treffer = KAT[roh];
+    if (!treffer) return null;
+    // Rand-Leerzeichen erhalten: viele Knoten sind " Text " mit Einrueckung,
+    // und ein Trim wuerde das Layout veraendern.
+    return text.replace(roh, treffer);
+  }
+
+  function knoten(n){
+    if (n.nodeType === 3){                       // Textknoten
+      if (n.parentNode && TABU[n.parentNode.nodeName]) return;
+      if (n.parentNode && n.parentNode.closest && n.parentNode.closest('[data-i18n-skip]')) return;
+      var neu = uebersetze(n.nodeValue);
+      if (neu !== null && neu !== n.nodeValue){
+        // Das Original merken, sonst laesst sich nicht zurueckschalten und ein
+        // zweiter Durchlauf wuerde bereits Uebersetztes nicht mehr finden.
+        if (n.__de === undefined) n.__de = n.nodeValue;
+        n.nodeValue = neu;
+      }
+      return;
+    }
+    if (n.nodeType !== 1) return;
+    if (TABU[n.nodeName] || n.hasAttribute('data-i18n-skip')) return;
+    for (var i=0;i<ATTRS.length;i++){
+      var a = ATTRS[i];
+      if (!n.hasAttribute(a)) continue;
+      var wert = n.getAttribute(a), neuA = uebersetze(wert);
+      if (neuA !== null && neuA !== wert){
+        if (!n.hasAttribute('data-de-'+a)) n.setAttribute('data-de-'+a, wert);
+        n.setAttribute(a, neuA);
+      }
+    }
+    for (var c = n.firstChild; c; c = c.nextSibling) knoten(c);
+  }
+
+  function alles(wurzel){
+    if (!KAT || !Object.keys(KAT).length) return;
+    knoten(wurzel || document.body);
+  }
+
+  // Nachgeladene Inhalte: das Dashboard baut Tabellen und Panels per JS. Ohne
+  // Beobachter waere alles uebersetzt, was beim Laden schon dastand — und
+  // alles danach wieder deutsch. Genau der halb uebersetzte Zustand, den der
+  // Browser-Ansatz vermeiden soll.
+  var beobachter = null;
+  function beobachten(){
+    if (beobachter || !window.MutationObserver) return;
+    beobachter = new MutationObserver(function(liste){
+      if (!KAT || !Object.keys(KAT).length) return;
+      for (var i=0;i<liste.length;i++){
+        var m = liste[i];
+        for (var j=0;j<m.addedNodes.length;j++) knoten(m.addedNodes[j]);
+        if (m.type === 'characterData' && m.target) knoten(m.target);
+      }
+    });
+    beobachter.observe(document.body, {childList:true, subtree:true, characterData:true});
+  }
+
+  function umschalterBauen(sprachen, aktiv){
+    var wo = document.querySelector('[data-i18n-switch]');
+    if (!wo || sprachen.length < 2) return;
+    var sel = document.createElement('select');
+    sel.className = 'i18n-switch';
+    sel.setAttribute('aria-label', 'Sprache / Language');
+    sel.setAttribute('data-i18n-skip','');       // sich selbst nie uebersetzen
+    sprachen.forEach(function(s){
+      var o = document.createElement('option');
+      o.value = s.code; o.textContent = s.name;
+      if (s.code === aktiv) o.selected = true;
+      sel.appendChild(o);
+    });
+    sel.addEventListener('change', function(){
+      fetch('/api/i18n/waehlen', {method:'POST', headers:{'Content-Type':'application/json'},
+                                 body: JSON.stringify({sprache: sel.value})})
+        .then(function(){ location.reload(); })   // Neuladen ist ehrlicher als
+        .catch(function(){ location.reload(); }); // ein halb zurueckgedrehtes DOM
+    });
+    wo.appendChild(sel);
+  }
+
+  fetch('/api/i18n/katalog').then(function(r){ return r.json(); }).then(function(d){
+    if (!d || !d.ok) return;
+    SPRACHE = d.sprache || 'de';
+    KAT = d.strings || {};
+    document.documentElement.setAttribute('lang', SPRACHE);
+    alles(document.body);
+    beobachten();
+    return fetch('/api/i18n/sprachen').then(function(r){ return r.json(); });
+  }).then(function(d){
+    if (d && d.ok) umschalterBauen(d.sprachen || [], d.aktiv || SPRACHE);
+  }).catch(function(){ /* ohne Katalog bleibt alles deutsch — das ist der Fallback */ });
+
+  // Fuer Code, der selbst uebersetzen will (Meldungen vor dem Einfuegen).
+  window.T = function(text){ var u = uebersetze(text); return u === null ? text : u; };
+})();"""
+
+
+@bp.route("/api/i18n/uebersetzer.js")
+def api_i18n_js():
+    """Der Uebersetzer, den die drei Oberflaechen einbinden.
+
+    Eine Stunde Cache: der Code aendert sich selten, der KATALOG dagegen kommt
+    aus /api/i18n/katalog und wird nicht mitgecacht — eine neue Uebersetzung
+    ist damit sofort sichtbar, ohne dass jemand hart neu laden muss.
+    """
+    antwort = Response(_UEBERSETZER_JS, mimetype="application/javascript")
+    antwort.headers["Cache-Control"] = "public, max-age=3600"
     return antwort
