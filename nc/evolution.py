@@ -11,8 +11,11 @@ Outcome-Mengen und der learned_params-Leser wandern mit hierher.
 """
 
 import json
+import os
 from datetime import datetime, timedelta, timezone
 
+from nc.dbwrap import db_conn
+from nc.persona import _learn_param
 from nc.textmore import _parse_iso  # bereits bot-freies nc/-Modul
 
 # Outcomes die WEDER Erfolg NOCH Aufnahme-Fehler sind (nicht in den Nenner).
@@ -330,3 +333,445 @@ def analyze(*, db_conn, _evolution_llm_note, EVOLUTION_WINDOW_DAYS):
             pass
 
     return {"insights": insights, "proposals": proposals, "learned": learned}
+
+
+# ---------------------------------------------------------------------------
+# v4.1-W3: der GANZE Evolution-Core, nicht mehr nur die Analyse.
+#
+# Bis hierher stand nur analyze() ausserhalb des Monolithen; Versionszaehler,
+# build/-Schreiber, LLM-Notiz und der Zyklus selbst blieben in bot.py — und
+# damit auch die acht /api/evolution-Routen, die sie brauchen. Erst der Kern,
+# dann die Routen (die Reihenfolge aus W117): so kostet das Blueprint
+# nc/routes/evolution.py KEINEN einzigen neuen nc.ctx-Slot.
+#
+# Die Koerper sind woertlich aus bot.py uebernommen. Ersetzt wurden nur die
+# Namen, die im Monolithen Modul-Globals waren; sie kommen jetzt aus _conf.
+# ---------------------------------------------------------------------------
+
+_EVOLUTION_VERSION_TAG = "v37"
+
+
+class _Conf(dict):
+    """Wirft laut statt einen KeyError zu liefern.
+
+    Ein fehlender Startwert ist ein Verdrahtungsfehler im Bot, kein Datenfehler
+    der Route — und er soll den Namen nennen, der fehlt, statt als nackter
+    KeyError im naechsten except-Block zu verschwinden.
+    """
+
+    def __missing__(self, key):
+        raise RuntimeError(
+            "nc.evolution ist nicht konfiguriert (%r fehlt) — "
+            "nc.evolution.configure(...) fehlt im Startpfad von bot.py" % key)
+
+
+_conf = _Conf()
+
+
+class _LazyLog:
+    """Der Logger des Bots, erst beim Zugriff geholt.
+
+    Als Modul-Konstante waere er beim Import None: nc.evolution wird bei den
+    ersten Imports geladen, configure() laeuft erst am Dateiende von bot.py.
+    """
+
+    def __getattr__(self, name):
+        return getattr(_conf["log"], name)
+
+
+log = _LazyLog()
+
+
+def configure(*, log, log_event, llm_chat_sync, bot_file, db_path,
+              enabled, interval_hours, use_llm, window_days):
+    """Vom Bot genau einmal beim Start gerufen.
+
+    bot_file ist bewusst ein Parameter und kein __file__: der Snapshot-Schreiber
+    in write_build() sichert die QUELLE DES BOTS. Innerhalb dieses Moduls waere
+    __file__ nc/evolution.py — build/bot_v{N}.py haette ab dem Umzug still das
+    falsche, 330 Zeilen kurze File enthalten, und niemand haette es gemerkt,
+    weil der ganze Snapshot-Pfad in einem `except: pass` haengt.
+    """
+    _conf.update(log=log, log_event=log_event, llm_chat_sync=llm_chat_sync,
+                 bot_file=bot_file, db_path=db_path, enabled=bool(enabled),
+                 interval_hours=interval_hours, use_llm=use_llm,
+                 window_days=window_days)
+
+
+def conf():
+    """Die .env-Startwerte des Cores — fuer die Anzeige-Routen.
+
+    Als Funktion, nicht als Modul-Konstante: gefuellt wird erst beim Start.
+    """
+    return {"enabled": _conf["enabled"], "interval_hours": _conf["interval_hours"],
+            "use_llm": _conf["use_llm"], "window_days": _conf["window_days"]}
+
+
+def build_dir():
+    """Pfad zum build/-Ordner (neben der DB / im Bot-Verzeichnis)."""
+    override = os.getenv("BUILD_DIR")
+    if override:
+        return override
+    base = os.path.dirname(os.path.abspath(_conf["db_path"])) or "."
+    return os.path.join(base, "build")
+
+
+def next_version():
+    """Aktuelle Evolutions-Version (Anzahl bisheriger Zyklen + 1)."""
+    try:
+        with db_conn() as conn:
+            row = conn.execute("SELECT MAX(version) AS m FROM evolution_log").fetchone()
+        return int((row["m"] or 0)) + 1
+    except Exception:
+        return 1
+
+
+def engineering_note(insights, proposals):
+    """Optional: lokales LLM (Ollama) für eine Klartext-Engineering-Notiz.
+       Gibt Text oder None (graceful wenn Ollama offline / deaktiviert)."""
+    if not _conf["use_llm"]:
+        return None
+    try:
+        sys_p = ("Du bist ein Senior-Engineer der einen TikTok-Live-Recording-Bot betreut. "
+                 "Fasse die folgenden automatisch erkannten Erkenntnisse in 2-4 knappen "
+                 "Sätzen zusammen und nenne die EINE wichtigste nächste Maßnahme. Deutsch, "
+                 "technisch-präzise, keine Floskeln.")
+        body = "ERKENNTNISSE:\n" + "\n".join(f"- {i}" for i in insights[:12])
+        if proposals:
+            body += "\n\nVORSCHLÄGE:\n" + "\n".join(f"- {p['title']}" for p in proposals[:8])
+        text, err = _conf["llm_chat_sync"](
+            [{"role": "system", "content": sys_p},
+             {"role": "user", "content": body}],
+            timeout=30)
+        return text if text and not err else None
+    except Exception as e:
+        log.debug(f"evolution LLM note failed: {e}")
+        return None
+
+
+def write_build(version, summary, insights, proposals, learned, llm_note):
+    """Schreibt die Weiterentwicklung in den build/-Ordner: README.md (überschrieben),
+       CHANGELOG.md (neueste Version oben), proposals/vN.md, learned_state.json.
+       Gibt die Anzahl geschriebener Dateien zurück."""
+    bdir = build_dir()
+    pdir = os.path.join(bdir, "proposals")
+    os.makedirs(pdir, exist_ok=True)
+    ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    files = 0
+
+    def _fmt_props(props):
+        if not props:
+            return "_Keine offenen Vorschläge in diesem Zyklus._\n"
+        out = ""
+        for p in props:
+            out += (f"- **{p['title']}**  \n"
+                    f"  _Kategorie:_ {p['category']} · _Impact:_ {p.get('impact','—')} · "
+                    f"_Konfidenz:_ {int(p.get('confidence',0)*100)}%  \n"
+                    f"  {p['rationale']}\n")
+        return out
+
+    # README.md
+    learned_lines = ""
+    for k, tup in sorted(learned.items()):
+        val = tup[0] if isinstance(tup, (list, tuple)) else tup
+        conf = int((tup[1] if isinstance(tup, (list, tuple)) and len(tup) > 1 else 0) * 100)
+        learned_lines += f"- `{k}` = {val}  _(Konfidenz {conf}%)_\n"
+    readme = f"""# 🧬 Self-Learning Evolution Core — build/
+
+Dieser Ordner wird **automatisch** vom Evolution Core des TikTok-Bots erzeugt
+und gepflegt. Die KI lernt kontinuierlich aus den Betriebsdaten des Bots und
+legt hier ihre Erkenntnisse und Weiterentwicklungs-Vorschläge ab.
+
+- **Aktuelle Version:** v{version}
+- **Letzter Lern-Zyklus:** {ts}
+- **Modell-Tag:** {_EVOLUTION_VERSION_TAG}
+
+## Wie es funktioniert
+1. Alle {_conf["interval_hours"]}h (oder manuell) analysiert die KI Aufnahme-
+   Outcomes, Codec-Fehler, Zuverlässigkeit pro Streamer, Trends und Speicher.
+2. Sie baut **versioniertes Wissen** auf (`learned_state.json`, mit Konfidenz).
+3. Sie generiert **datengestützte Vorschläge** (`proposals/`), priorisiert nach
+   Impact und Konfidenz.
+4. Jeder Zyklus wird in `CHANGELOG.md` dokumentiert.
+
+> ⚠️ **Sicherheit:** Die KI deployt **keinen** Code eigenmächtig in den laufenden
+> Bot. Sie justiert nur risikofreies Wissen automatisch und legt Code-/Config-
+> Änderungen als **prüfbare Vorschläge** hier ab. Anwenden entscheidet ein Mensch.
+
+## Letzte Zusammenfassung
+{summary}
+
+{("### 🧠 Engineering-Notiz (LLM)\n" + llm_note + "\n") if llm_note else ""}
+## Aktueller Wissensstand
+{learned_lines or "_noch kein Wissen gelernt_"}
+
+## Offene Vorschläge (v{version})
+{_fmt_props(proposals)}
+---
+_Automatisch generiert — nicht manuell editieren, wird beim nächsten Zyklus überschrieben._
+"""
+    with open(os.path.join(bdir, "README.md"), "w", encoding="utf-8") as f:
+        f.write(readme)
+    files += 1
+
+    # proposals/vN.md
+    pmd = f"""# Vorschläge — Evolution v{version}
+_{ts}_
+
+## Zusammenfassung
+{summary}
+
+## Erkenntnisse
+{chr(10).join('- ' + i for i in insights) or '- keine'}
+
+## Vorschläge
+{_fmt_props(proposals)}
+"""
+    with open(os.path.join(pdir, f"v{version}.md"), "w", encoding="utf-8") as f:
+        f.write(pmd)
+    files += 1
+
+    # CHANGELOG.md (neueste Version oben)
+    header = ("# Changelog — Evolution Core\n\n"
+              "Automatisch generiert. Jeder Eintrag = ein Lern-Zyklus.\n\n")
+    entry = (f"## v{version} — {ts}\n\n"
+             f"{summary}\n\n"
+             f"**Erkenntnisse:** {len(insights)} · **Vorschläge:** {len(proposals)}\n\n"
+             + "".join(f"- {i}\n" for i in insights)
+             + ("\n**Neue Vorschläge:**\n" + "".join(f"- {p['title']}\n" for p in proposals)
+                if proposals else "")
+             + "\n")
+    chpath = os.path.join(bdir, "CHANGELOG.md")
+    old_body = ""
+    if os.path.exists(chpath):
+        try:
+            with open(chpath, "r", encoding="utf-8") as f:
+                content = f.read()
+            idx = content.find("## v")
+            old_body = content[idx:] if idx != -1 else ""
+        except Exception:
+            old_body = ""
+    with open(chpath, "w", encoding="utf-8") as f:
+        f.write(header + entry + old_body)
+    files += 1
+
+    # learned_state.json
+    try:
+        dump = {k: {"value": (t[0] if isinstance(t, (list, tuple)) else t),
+                    "confidence": (t[1] if isinstance(t, (list, tuple)) and len(t) > 1 else None),
+                    "samples": (t[2] if isinstance(t, (list, tuple)) and len(t) > 2 else None),
+                    "category": (t[3] if isinstance(t, (list, tuple)) and len(t) > 3 else None)}
+                for k, t in learned.items()}
+        with open(os.path.join(bdir, "learned_state.json"), "w", encoding="utf-8") as f:
+            json.dump({"version": version, "generated": ts, "params": dump}, f,
+                      ensure_ascii=False, indent=2)
+        files += 1
+    except Exception:
+        pass
+
+    # Self-Reproduction: versionierten Snapshot der eigenen Quelldatei schreiben.
+    # BUG-FIX (Trim): Vorher wurde find(_HEADER_MARK_E) genutzt — trifft den Marker
+    # im Header (erste Fundstelle), aber _HEADER_MARK_E erscheint auch als String-Literal
+    # im Funktionskörper selbst. rfind() findet den letzten Treffer und landet damit
+    # immer korrekt am Ende des Headers, nie mittendrin im Code.
+    _HEADER_MARK_S = "# [EVOLUTION SNAPSHOT"
+    _HEADER_MARK_E = "# [END EVOLUTION SNAPSHOT]"
+    try:
+        bdir = build_dir()
+        with open(_conf["bot_file"], "r", encoding="utf-8") as _src:
+            src_lines = _src.read()
+
+        # BUG-FIX: Vorher griff der Trim, sobald die Marker IRGENDWO im File
+        # vorkamen — aber _HEADER_MARK_S/_E stehen als String-Literale in genau
+        # dieser Funktion (snap_header-Template). __file__ (die laufende Quelle)
+        # hat NIE einen echten Header oben; trotzdem fand rfind/find den Literal
+        # bei ~Z.16279 und schnitt ~80% der Datei weg → bot_v{N}.py war
+        # abgeschnitten + nicht lauffähig (SyntaxError, mitten im String-Literal).
+        # Korrekt: nur trimmen wenn die Datei WIRKLICH mit einem Header BEGINNT
+        # (der wird immer oben angefügt). Dann ist der ERSTE End-Marker (find)
+        # das Header-Ende. Pristine Quelle → startswith False → kein Trim → volle
+        # Datei wird sauber gesnapshottet.
+        if src_lines.lstrip().startswith(_HEADER_MARK_S):
+            e = src_lines.find(_HEADER_MARK_E)
+            if e != -1:
+                src_lines = src_lines[e + len(_HEADER_MARK_E):].lstrip("\n")
+
+        # Erkenntnisse als Kommentar-Zeilen
+        if insights:
+            ins_text = "".join(
+                "#   %02d. %s\n" % (i + 1, line)
+                for i, line in enumerate(insights)
+            )
+        else:
+            ins_text = "#   (keine Erkenntnisse in diesem Zyklus)\n"
+
+        # Vorschlaege als Kommentar-Zeilen
+        if proposals:
+            prop_lines = []
+            for i, p in enumerate(proposals):
+                title    = p.get("title", "?")
+                cat      = p.get("category", "")
+                impact   = p.get("impact", "")
+                conf_pct = int(p.get("confidence", 0) * 100)
+                rat      = p.get("rationale", "")
+                prop_lines.append(
+                    "#   %02d. [%s] %s\n"
+                    "#       Impact: %s  Konfidenz: %d%%\n"
+                    "#       %s\n" % (i + 1, cat, title, impact, conf_pct, rat)
+                )
+            prop_text = "".join(prop_lines)
+        else:
+            prop_text = "#   (keine Vorschlaege in diesem Zyklus)\n"
+
+        # Gelerntes Wissen als Kommentar-Zeilen
+        if learned:
+            learn_lines = []
+            for k, tup in sorted(learned.items()):
+                val  = tup[0] if isinstance(tup, (list, tuple)) else tup
+                conf = int(
+                    (tup[1] if isinstance(tup, (list, tuple)) and len(tup) > 1 else 0) * 100
+                )
+                learn_lines.append("#   %s = %s  (Konfidenz %d%%)\n" % (k, val, conf))
+            learn_text = "".join(learn_lines)
+        else:
+            learn_text = "#   (kein Wissen in diesem Zyklus)\n"
+
+        snap_header = (
+            "# [EVOLUTION SNAPSHOT v%d]\n"
+            "# Erzeugt:     %s\n"
+            "# Zusammenfassung: %s\n"
+            "#\n"
+            "# ERKENNTNISSE (%d)\n"
+            "%s"
+            "#\n"
+            "# VORSCHLAEGE (%d)\n"
+            "%s"
+            "#\n"
+            "# GELERNTES WISSEN\n"
+            "%s"
+            "# [END EVOLUTION SNAPSHOT]\n"
+            "\n"
+        ) % (version, ts, summary,
+             len(insights), ins_text,
+             len(proposals), prop_text,
+             learn_text)
+
+        snapshot_src  = snap_header + src_lines
+        snapshot_name = "bot_v%d.py" % version
+        latest_name   = "bot_latest.py"
+
+        with open(os.path.join(bdir, snapshot_name), "w", encoding="utf-8") as _out:
+            _out.write(snapshot_src)
+        with open(os.path.join(bdir, latest_name), "w", encoding="utf-8") as _out:
+            _out.write(snapshot_src)
+        files += 2
+
+        # Manifest (snapshots.json)
+        manifest_path = os.path.join(bdir, "snapshots.json")
+        try:
+            with open(manifest_path, "r", encoding="utf-8") as mf:
+                manifest = json.load(mf)
+        except Exception:
+            manifest = []
+        manifest.insert(0, {
+            "version":   version,
+            "ts":        ts,
+            "file":      snapshot_name,
+            "size_kb":   round(len(snapshot_src.encode("utf-8")) / 1024, 1),
+            "insights":  len(insights),
+            "proposals": len(proposals),
+            "learned":   len(learned),
+            "summary":   summary,
+        })
+        manifest = manifest[:20]
+        with open(manifest_path, "w", encoding="utf-8") as mf:
+            json.dump(manifest, mf, ensure_ascii=False, indent=2)
+
+    except Exception:
+        pass   # Self-Repro optional — kein Crash wenn Permissions fehlen
+
+    return files
+
+
+def cycle(trigger="auto"):
+    """Ein kompletter Lern-Zyklus (SYNC — wird von der Loop via to_thread und vom
+       Flask-Thread aufgerufen). Analysiert, lernt, schreibt build/, loggt.
+       Gibt ein Summary-dict zurück."""
+    version = next_version()
+    result = analyze(db_conn=db_conn, _evolution_llm_note=engineering_note,
+                     EVOLUTION_WINDOW_DAYS=_conf["window_days"])
+    insights = result["insights"]
+    proposals = result["proposals"]
+    learned = result["learned"]
+
+    # Wissen persistieren
+    try:
+        with db_conn() as conn:
+            for k, tup in learned.items():
+                if isinstance(tup, (list, tuple)):
+                    val, conf, samples, cat = (tup + (0, 0, "general"))[:4]
+                else:
+                    val, conf, samples, cat = tup, 0.5, 0, "general"
+                _learn_param(conn, k, val, conf, samples, cat)
+            conn.commit()
+    except Exception as e:
+        log.warning(f"evolution: learned_params persist failed: {e}")
+
+    # Vorschläge persistieren (dedupliziert auf (category,title) bei status='proposed')
+    saved_props = 0
+    try:
+        with db_conn() as conn:
+            now = datetime.now(timezone.utc).isoformat()
+            for p in proposals:
+                dup = conn.execute(
+                    "SELECT 1 FROM evolution_proposals WHERE category=? AND title=? "
+                    "AND status='proposed'", (p["category"], p["title"])).fetchone()
+                if dup:
+                    continue
+                conn.execute(
+                    "INSERT INTO evolution_proposals (version, ts, category, title, rationale, "
+                    "detail, confidence, impact, status) VALUES (?,?,?,?,?,?,?,?,'proposed')",
+                    (version, now, p["category"], p["title"], p.get("rationale", ""),
+                     json.dumps(p, ensure_ascii=False), float(p.get("confidence", 0.5)),
+                     p.get("impact", "")))
+                saved_props += 1
+            conn.commit()
+    except Exception as e:
+        log.warning(f"evolution: proposals persist failed: {e}")
+
+    summary = (f"Zyklus v{version}: {len(insights)} Erkenntnisse, {saved_props} neue "
+               f"Vorschläge (von {len(proposals)} erkannt). Erfolgsquote-Wissen aktualisiert.")
+    if not insights:
+        summary = f"Zyklus v{version}: noch zu wenig Daten für belastbare Erkenntnisse."
+
+    llm_note = engineering_note(insights, proposals)
+
+    files = 0
+    try:
+        files = write_build(version, summary, insights, proposals, learned, llm_note)
+    except Exception as e:
+        log.warning(f"evolution: build write failed: {e}")
+
+    # Zyklus loggen
+    try:
+        with db_conn() as conn:
+            conn.execute(
+                "INSERT INTO evolution_log (version, ts, summary, insights, proposals, files, "
+                "trigger) VALUES (?,?,?,?,?,?,?)",
+                (version, datetime.now(timezone.utc).isoformat(), summary,
+                 len(insights), saved_props, files, trigger))
+            conn.commit()
+    except Exception as e:
+        log.warning(f"evolution: log write failed: {e}")
+
+    try:
+        _conf["log_event"]("evolution.cycle", "info", summary,
+                  {"version": version, "insights": len(insights),
+                   "proposals": saved_props, "trigger": trigger})
+    except Exception:
+        pass
+    log.info(f"🧬 Evolution {summary} (build: {files} Dateien, trigger={trigger})")
+
+    return {"ok": True, "version": version, "summary": summary,
+            "insights": insights, "proposals": saved_props, "files": files,
+            "llm_note": llm_note, "build_dir": build_dir()}
