@@ -478,6 +478,8 @@ nach Grösse und Eigenständigkeit, ein Paket pro Welle:
 | ✅ `nc/routes/trackings.py` (W117) | 16 | 459 |
 | ✅ `nc/routes/stats.py` (W117) | 7 | 224 |
 | ✅ `nc/routes/evolution.py` (v4.1-W3) | 8 | 143 |
+| ✅ `nc/routes/news.py` (v4.1-W4) | 8 | 84 |
+| ✅ `nc/routes/marketing.py` (v4.1-W4) | 5 | 63 |
 | `nc/routes/restream.py` | 16 | 437 |
 | `nc/routes/trackings.py` | 15 | 448 |
 | `nc/routes/ops.py` | 10 | 312 |
@@ -638,11 +640,11 @@ Supervisor fahren.
 
 ## 8 · Zielbild und Messlatte
 
-| | Start | heute (W104–v4.1-W3) | nach Welle 3 | Ziel |
+| | Start | heute (W104–v4.1-W4) | nach Welle 3 | Ziel |
 |---|---:|---:|---:|---:|
-| `bot.py` Zeilen | 34.487 | **30.451** | ~24.700 | **~8.000** |
-| Flask-Routen im Monolithen | 345 | **195** | ~30 | 0 |
-| Routen in Blueprints | 0 | **160** | ~315 | 355 |
+| `bot.py` Zeilen | 34.487 | **29.942** | ~24.700 | **~8.000** |
+| Flask-Routen im Monolithen | 345 | **182** | ~30 | 0 |
+| Routen in Blueprints | 0 | **173** | ~315 | 355 |
 | `nc/`-Module | 83 | **103** | ~100 | ~115 |
 | Grösste Datei im Projekt | `bot.py` | `bot.py` | `bot.py` | `templates/dashboard.html` |
 
@@ -874,6 +876,52 @@ Unterschied zwischen links und rechts und machte aus dem linken
 `_conf["window_days"]=`, also einen Syntaxfehler. Die Signatur von `analyze()`
 ist der Vertrag aus B167 und bleibt; der Aufruf wurde deshalb vor dem Umschreiben
 geschützt und danach von Hand eingesetzt.
+
+
+### Welle 3, Stand v4.1-W4 — dieselbe Reihenfolge, zwei Module auf einmal
+
+`/api/news` kostete nach `bp_analyse` **zwölf** Kontext-Einträge, `/api/marketing`
+**sieben** — beide unbezahlbar bei 24 von 25 belegten Slots. Nach dem Umzug des
+Kerns (404 Zeilen aus `bot.py` nach `nc/news.py` und `nc/marketing.py`) waren es
+**zwei und drei** — und alle fünf gab es bereits: `run_async`, `get_main_loop`
+und zwei `cfg`-Schlüssel. **Der Kontext ist um null Einträge gewachsen.** Das
+Muster trägt jetzt drei Wellen in Folge.
+
+**`__file__` ist die Falle, die sich pro Welle wiederholt.** In W3 war es der
+Snapshot-Schreiber, hier `_news_output_path`: `os.path.dirname(os.path.abspath(
+__file__))` + `"website"` legt `news.json` neben den Bot. Im Fachmodul wäre das
+`nc/website/news.json` geworden — die öffentliche Seite hätte ab dem Umzug eine
+Datei gelesen, die niemand mehr schreibt, und der News-Agent hätte munter
+weiter in ein totes Verzeichnis geschrieben. Beim Umzug einer Funktion in ein
+anderes Verzeichnis ist **jedes `__file__` ein Umzugsschaden**, bis das
+Gegenteil gezeigt ist.
+
+**`globals()` ebenso — und diesmal war das Ziel gar nicht da.** Beim Vermessen
+der Abhängigkeiten fiel auf, dass `_marketing_post_telegram` und `_brain_notify`
+`globals().get("bot_app")` lesen, `bot_app` in `bot.py` aber **nie** gebunden
+wird: der Name existiert ausschliesslich als Parametername. Beide Melder liefen
+seit jeher ins Leere — der eine mit `{"ok": false, "error": "Bot nicht bereit"}`,
+der andere mit einem `log.warning`, das in einem ERROR-Log nicht vorkommt. Das
+ist als **eigener Commit vor dem Umzug** repariert worden, damit die Welle keine
+Mine mitträgt und beide Hälften einzeln rückrollbar bleiben.
+
+**Die `.env.example`-Falle aus W117 hat sich wiederholt, nur anders herum.**
+Diesmal lag es nicht am Suchpfad des Scanners, sondern an der Schreibweise der
+Aufrufstelle: aus `_env_int("NEWS_MAX_ITEMS", 20)` wurde durch die Injektion
+`_conf["env_int"]("NEWS_MAX_ITEMS", 20)`, und das Muster
+`env_int\(\s*["\']NAME` passt darauf nicht mehr. **Acht Variablen** wären
+lautlos aus der Vorlage gefallen. Gefunden hat es der Vertrag, kein Mensch. Der
+Fix ist die bessere Lösung: `_env_int` ist ohnehin nur eine Weiterleitung auf
+`nc.envnum` — direkt importieren statt injizieren, dann bleibt die Aufrufstelle
+wörtlich. **Wer beim Umzug eine Aufrufstelle umschreibt, ändert damit auch, was
+die Werkzeuge dort noch finden.**
+
+**Verschattung ist beim Umbenennen die Regel, nicht die Ausnahme.** Wie
+`llm_note` in W3: `publish()` hat ein lokales `flavor`, `generate()` ein lokales
+`facts`, `phrase_impl()` sogar einen Parameter dieses Namens. Die Funktionen
+heissen deshalb `ai_flavor` und `collect_facts`. Beide Male hat `pyflakes` (F823)
+es vor dem ersten Lauf gefunden — die Prüfkette fängt genau diesen Fehler, wenn
+man sie vor dem Commit fährt statt danach.
 
 
 ---

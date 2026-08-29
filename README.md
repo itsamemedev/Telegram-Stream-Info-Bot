@@ -194,10 +194,10 @@ flowchart TB
     DC --> BOT
     TT --> BOT
 
-    BOT["bot.py<br/>Monolith · 30.451 Zeilen<br/>Scraper · Recorder · Restream<br/>Flask-Dashboard · 195 eigene Routen"]:::core
+    BOT["bot.py<br/>Monolith · 29.942 Zeilen<br/>Scraper · Recorder · Restream<br/>Flask-Dashboard · 182 eigene Routen"]:::core
 
     BOT -->|configure| NC["nc/ — 90 Fachmodule<br/>Schema · OAuth · Restream<br/>Ledger · Moderation · Intel"]:::lib
-    NC --> RT["nc/routes/ — 14 Blueprints<br/>160 weitere API-Routen"]:::lib
+    NC --> RT["nc/routes/ — 16 Blueprints<br/>173 weitere API-Routen"]:::lib
     BOT --> TPL["templates/<br/>Dashboard · Overlay · PWA"]:::lib
     BOT --> BR["brain_bridge.py"]:::lib
     BR --> BRAIN["brain/ — eigene brain.db<br/>state · rules · router · memory<br/>knowledge · semantic · scheduler<br/>llm · agents · report"]:::brain
@@ -715,7 +715,7 @@ gebrochen ist.**
 
 ### 🧭 Navigation im Monolithen
 
-`bot.py` hat über 30.000 Zeilen. Es wird **nie** ganz gelesen und **nie**
+`bot.py` hat 29.942 Zeilen. Es wird **nie** ganz gelesen und **nie**
 blind durchsucht — erst fragen wo etwas steht, dann den Ausschnitt holen:
 
 ```bash
@@ -730,7 +730,7 @@ python3 tools/ncpatch.py docs                          # Doku-Zahlen gegen den C
 ```
 
 `find` antwortet aus **[`.claude/INDEX.md`](.claude/INDEX.md)** — 355 Routen
-(195 in `bot.py`, 160 in `nc/routes/`), 45 Slash-Commands, 548 Funktionen,
+(182 in `bot.py`, 173 in `nc/routes/`), 45 Slash-Commands, 522 Funktionen,
 jeweils mit Zeilennummer.
 
 ---
@@ -856,14 +856,14 @@ Vollständige Historie: **[`docs/CHANGELOG.md`](docs/CHANGELOG.md)** ·
 ## 🧭 Roadmap
 
 Der nächste grosse Schritt ist kein Feature, sondern Aufräumen: **`bot.py` hat
-30.451 Zeilen**. Die Datei ist der Engpass des Projekts. Die Messlatte dafür ist
+29.942 Zeilen**. Die Datei ist der Engpass des Projekts. Die Messlatte dafür ist
 aber keine Zeilenzahl:
 
 > **Eine neue API-Route anlegen, ohne `bot.py` zu öffnen.**
 
 Der Weg dahin in sechs Wellen — gemessen, nicht geschätzt:
 **[`docs/ROADMAP.md`](docs/ROADMAP.md)**. Welle 2 ist erledigt, Welle 3 läuft:
-`nc/routes/` trägt heute 14 Blueprints mit 160 API-Routen, die nicht mehr im
+`nc/routes/` trägt heute 16 Blueprints mit 173 API-Routen, die nicht mehr im
 Monolithen stehen.
 
 ---

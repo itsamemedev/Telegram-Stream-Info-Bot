@@ -41,3 +41,14 @@ def _webhook_event_match(events_csv, kind):
         return True
     wanted = {x.strip().lower() for x in ev.split(",") if x.strip()}
     return (kind or "").lower() in wanted
+
+
+def _loop_not_ready(e) -> bool:
+    """B86: True wenn der Fehler das transiente 'Loop faehrt noch hoch'-Signal ist.
+       Routes geben dann 503 statt 500 zurueck (kein Serverfehler-Push).
+
+       v4.1-W4 aus bot.py geloest: siebzehn Routen im Monolithen und ab jetzt
+       jedes Blueprint fragen dasselbe. Ein reines Praedikat ohne Bot-Bezug
+       gehoert nicht in nc.ctx — dort ist der Platz knapp und begruendungs-
+       pflichtig, hier kostet es nichts."""
+    return isinstance(e, RuntimeError) and "event loop not ready" in str(e)

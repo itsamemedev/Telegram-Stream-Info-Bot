@@ -8,7 +8,7 @@ GitHub-Repo trägt Historie, CI und Issues — es ist nicht der Deploy-Weg.
 
 ## Die eine Regel
 
-`bot.py` hat **30.451 Zeilen / 1,5 MB ≈ 395.000 Token**. Diese Datei wird
+`bot.py` hat **29.942 Zeilen / 1,5 MB ≈ 390.000 Token**. Diese Datei wird
 **nie** ganz gelesen und **nie** blind durchsucht. Erst fragen wo etwas steht,
 dann den Ausschnitt holen:
 
@@ -22,8 +22,8 @@ dann den Ausschnitt holen:
     python tools/ncpatch.py check                          # Templates: doppelte IDs, CSS-Bilanz
     python tools/ncpatch.py docs                           # Doku-Zahlen gegen den Quelltext
 
-`find` antwortet aus `.claude/INDEX.md` — 355 Routen (195 in `bot.py`, 160 in
-`nc/routes/`), 45 Slash-Commands, 548 Funktionen mit Zeilennummern. Nach Änderungen an Routen, Commands oder
+`find` antwortet aus `.claude/INDEX.md` — 355 Routen (182 in `bot.py`, 173 in
+`nc/routes/`), 45 Slash-Commands, 522 Funktionen mit Zeilennummern. Nach Änderungen an Routen, Commands oder
 Top-Level-Funktionen `map` neu laufen lassen. Details: Skill `nc-navigation`.
 
 Für „wer ruft das auf?" und „was ist der Typ?" ist der Sprachserver billiger als
@@ -35,7 +35,7 @@ Auf diesem Windows-Rechner heißt der Interpreter **`python`** (3.13.12);
 ## Aufbau
 
     bot.py               Monolith: Telegram + Discord (45 Slash-Commands),
-                         Flask-Dashboard (195 eigene Routen), Scraper, Recorder,
+                         Flask-Dashboard (182 eigene Routen), Scraper, Recorder,
                          Restream, Schema (init_db).
                          Hiess bis v4.0-W119 bot_v37.py — beim Suchen in
                          alten Notizen und Patch-Dateien daran denken.
@@ -43,7 +43,7 @@ Auf diesem Windows-Rechner heißt der Interpreter **`python`** (3.13.12);
     brain/               KI-Kern: state, rules, router, agents, memory,
                          semantic, knowledge, scheduler, llm, report
     nc/                  90 Fachmodule: db, scraping, restream, oauth, ledger, …
-    nc/routes/           14 Flask-Blueprints mit 160 weiteren API-Routen
+    nc/routes/           16 Flask-Blueprints mit 173 weiteren API-Routen
     templates/           dashboard.html, brain.html, overlay.html, PWA
     website/             lafap_index.html (öffentliche Seite)
     tools/ncpatch.py     Patch- und Prüfwerkzeug

@@ -1854,16 +1854,18 @@ def test_v41_news_ausfuehrlich():
                         f"{it['category']}: 'Jeder von ihnen' ohne Bezugszahl"
     ok("v4.1: Saetze bleiben ganz, auch wenn einzelne Fakten fehlen")
 
-    # Der Bot sammelt die Fakten dafür auch wirklich ein.
-    src = open("bot.py", encoding="utf-8").read()
+    # Die Fakten werden auch wirklich eingesammelt. v4.1-W4: der Fakten- und
+    # KI-Pfad liegt in nc/news.py, nicht mehr im Monolithen — der VERTRAG ist
+    # unveraendert, nur sein Anker ist mitgewandert.
+    src = open("nc/news.py", encoding="utf-8").read()
     for key in ("sessions_7d", "active_days_7d", "live_7d_count", "restream_targets",
                 "mod_actions_7d", "ai_answers_7d", "kg_growth_7d"):
-        assert f'facts["{key}"]' in src, f"_news_facts sammelt {key} nicht"
-    assert "def _news_absaetze(" in src and "out = _news_absaetze(out)" in src, \
+        assert f'facts["{key}"]' in src, f"collect_facts sammelt {key} nicht"
+    assert "def absaetze(" in src and "out = absaetze(out)" in src, \
         "KI-Antwort wird nicht auf Absätze normalisiert"
     assert 'GENAU DREI Absaetze' in src, "KI-Prompt fordert keine Absätze"
     # Zeitfenster in Python berechnet — datetime()/DATE() gibt es auf MariaDB nicht.
-    _blk = src[src.find("def _news_facts"):src.find("async def _news_phrase(")]
+    _blk = src[src.find("def collect_facts"):src.find("async def phrase(")]
     # Kommentarzeilen raus: der Block ERKLAERT, warum diese Funktionen fehlen —
     # ohne den Filter meldet der Vertrag genau diese Erklaerung als Verstoss.
     _code = "\n".join(z for z in _blk.split("\n") if not z.strip().startswith("#"))
@@ -2096,6 +2098,70 @@ def test_v41_w4_bot_app_gebunden():
     ok("v4.1-W4: bot_app ist gebunden, beide Melder erreichen Telegram wieder")
 
 
+
+# ------------------------------------------------- v4.1-W4) News/Marketing-Kern raus
+
+def test_v41_w4_news_marketing_kern_raus():
+    """v4.1-W4: die Bot-Seite von News und Marketing liegt in nc/, die Routen im
+       Blueprint — und nc.ctx ist dabei um keinen Eintrag gewachsen."""
+    import ast as _ast
+    from nc import news as N, marketing as M
+    src = open("bot.py", encoding="utf-8").read()
+
+    # (1) Keine der 25 Funktionen steht noch im Monolithen.
+    for name in ("_news_cfg", "_news_facts", "_news_generate", "_news_write", "_news_read",
+                 "_news_output_path", "_news_phrase_impl", "_news_absaetze",
+                 "_creator_activity", "_creator_facts_line", "_azrael_creator_take",
+                 "_creator_dossier_generate",
+                 "_marketing_cfg", "_marketing_publish", "_marketing_post_telegram",
+                 "_marketing_post_discord", "_marketing_flavor"):
+        assert ("def %s(" % name) not in src, "%s noch in bot.py" % name
+    for name in ("config", "state", "collect_facts", "generate", "read_items",
+                 "write_items", "output_path", "phrase", "phrase_impl", "absaetze",
+                 "creator_activity", "azrael_creator_take", "creator_dossier_generate",
+                 "configure"):
+        assert callable(getattr(N, name, None)), "nc.news.%s fehlt" % name
+    for name in ("config", "state", "publish", "post_discord", "post_telegram",
+                 "ai_flavor", "configure"):
+        assert callable(getattr(M, name, None)), "nc.marketing.%s fehlt" % name
+    ok("v4.1-W4: News- und Marketing-Kern vollstaendig in nc/")
+
+    # (2) Die beiden Umzugsfallen. bot_file: news.json gehoert in das website/
+    # NEBEN dem Bot — mit dem __file__ des Fachmoduls waere es nc/website/
+    # geworden und die oeffentliche Seite haette still eine tote Datei gelesen.
+    _n = _ast.parse(open("nc/news.py", encoding="utf-8").read())
+    assert not [x for x in _ast.walk(_n) if isinstance(x, _ast.Name) and x.id == "__file__"], \
+        "nc/news.py liest __file__ statt bot_file"
+    assert "bot_file=__file__" in src, "Bot reicht seine eigene Quelle nicht durch"
+    # get_bot_app: globals() ist im Modul der MODUL-Namensraum (W116).
+    _m = _ast.parse(open("nc/marketing.py", encoding="utf-8").read())
+    assert not [x for x in _ast.walk(_m)
+                if isinstance(x, _ast.Call) and isinstance(x.func, _ast.Name)
+                and x.func.id == "globals"], \
+        "nc/marketing.py ruft globals() — im Modul immer der falsche Namensraum"
+    assert 'get_bot_app=lambda: globals().get("bot_app")' in src, \
+        "der Telegram-Zweig bekommt keinen Getter auf die Application"
+    ok("v4.1-W4: bot_file und get_bot_app statt __file__ und globals()")
+
+    # (3) .env.example-Falle: _conf["env_int"]("NEWS_MAX_ITEMS", 20) haette
+    # tools/gen_env_example.py nicht mehr gematcht (es sucht env_int("NAME") —
+    # acht Variablen waeren lautlos aus der Vorlage gefallen. Deshalb wird
+    # _env_int direkt importiert statt injiziert.
+    for _f in ("nc/news.py", "nc/marketing.py"):
+        _q = open(_f, encoding="utf-8").read()
+        assert '_conf["env_int"]' not in _q, \
+            "%s injiziert env_int wieder — .env.example verliert dann Variablen" % _f
+        assert "from nc.envnum import env_int as _env_int" in _q, \
+            "%s importiert env_int nicht direkt" % _f
+    ok("v4.1-W4: env_int direkt importiert, .env.example bleibt vollstaendig")
+
+    # (4) Der Kontext ist NICHT gewachsen — der Punkt der Reihenfolge.
+    from nc import ctx as ncctx
+    assert len(ncctx.Ctx.__slots__) <= 24, \
+        "nc.ctx ist doch gewachsen: %d Slots" % len(ncctx.Ctx.__slots__)
+    ok("v4.1-W4: nc.ctx bei %d Slots, kein Eintrag dazugekommen" % len(ncctx.Ctx.__slots__))
+
+
 # ------------------------------------------------- B168) Moderator überall (Twitch/YouTube)
 
 def test_b168_moderator_everywhere():
@@ -2321,17 +2387,21 @@ def test_v40_news_no_recordings():
     # Tages-Live-Report nennt Namen + Zahl
     cr=[i for i in news.build_items(facts,categories=("creators",),now_ts=1)][0]
     assert "2 von 10" in cr["body"] and "a" in cr["body"]
-    # auch das Bot-Modul (news_facts/phrase) erwaehnt keine Aufnahmen mehr
+    # auch der Fakten-/KI-Pfad erwaehnt keine Aufnahmen mehr. v4.1-W4: er liegt
+    # in nc/news.py, _public_stats blieb im Bot — der Vertrag prueft jetzt beide
+    # Dateien statt einer. Geloescht wird keine Zusicherung.
+    nsrc=open("nc/news.py", encoding="utf-8").read()
     bsrc=open("bot.py").read()
-    # _news_facts/_public_stats duerfen KEINE Aufnahme-Zahlen exponieren. (Die
+    # collect_facts/_public_stats duerfen KEINE Aufnahme-Zahlen exponieren. (Die
     # interne Prometheus-Metrik nightcrawler_recordings_total ist NICHT oeffentlich
     # und zaehlt nicht — geprueft wird der News-/Stats-Fakten-Pfad.)
-    _nf = bsrc[bsrc.find("def _news_facts"):bsrc.find("def _news_output_path")]
+    _nf = nsrc[nsrc.find("def collect_facts"):nsrc.find("async def phrase(")]
     _ps = bsrc[bsrc.find("def _public_stats"):bsrc.find("def _stats_output_path")]
+    assert _nf and _ps, "Fakten-Segmente nicht gefunden — Anker gebrochen"
     for _seg in (_nf, _ps):
         assert "recordings_7d" not in _seg and "recordings_total" not in _seg, "Aufnahme-Zahl im oeffentlichen Fakten-Pfad"
-    assert "Erwaehne NIEMALS Aufnahmen" in bsrc, "KI-Prompt ohne Aufnahme-Verbot"
-    assert "live_today_count" in bsrc
+    assert "Erwaehne NIEMALS Aufnahmen" in nsrc, "KI-Prompt ohne Aufnahme-Verbot"
+    assert "live_today_count" in nsrc
     ok("v4.0: News erwaehnt nie Aufnahmen, Tages-Live-Report der getrackten User")
 
 def test_v40_website():
@@ -2366,9 +2436,11 @@ def test_v40_wave2():
     ok("v4.0-w2: Stats-Loop (immer an) + angereicherte aufnahmefreie Metriken")
 
     # News erwähnt NIE Aufnahmen (Prompt-Verbot) + Tages-Live-Report.
-    assert "Erwaehne NIEMALS Aufnahmen" in src, "News-Prompt verbietet Aufnahmen nicht"
-    assert '"live_today"' in src and "recording_attempts" in src, "kein Tages-Live-Report"
-    assert "nimmt oeffentlich nichts auf" in src
+    # v4.1-W4: der News-Pfad liegt in nc/news.py — Anker gewandert, Vertrag gleich.
+    nsrc = open("nc/news.py", encoding="utf-8").read()
+    assert "Erwaehne NIEMALS Aufnahmen" in nsrc, "News-Prompt verbietet Aufnahmen nicht"
+    assert '"live_today"' in nsrc and "recording_attempts" in nsrc, "kein Tages-Live-Report"
+    assert "nimmt oeffentlich nichts auf" in nsrc
     ok("v4.0-w2: News aufnahmefrei + Tages-Report der Live-Creator")
 
     # YouTube: offizieller API-Weg + Durchgreifen (Timeout via bans).
@@ -3804,7 +3876,13 @@ def test_v40_w35_crossplatform_restream():
     assert "_spawn(_ensure_discord_invite" in src, "Invite-Erzeugung nicht in on_ready verdrahtet"
     assert 'api_discord_invite' in src and '"/api/discord/invite"' in src, "Website-Endpoint fehlt"
     # Marketing nutzt den aufgelösten Invite (nicht mehr die rohe Konstante).
-    assert "invite=_discord_invite()" in src, "Marketing nutzt den aufgelösten Invite nicht"
+    # v4.1-W4: der Config-Bau liegt in nc/marketing.py und bekommt den Resolver
+    # injiziert. Beide Haelften geprueft — Anker gewandert, Vertrag unveraendert.
+    msrc = open("nc/marketing.py", encoding="utf-8").read()
+    assert 'invite=_conf["discord_invite"]()' in msrc, \
+        "Marketing nutzt den aufgelösten Invite nicht"
+    assert "discord_invite=_discord_invite," in src, \
+        "der Bot reicht den Invite-Resolver nicht durch — Marketing baut ohne Invite"
     ok("v4.0-w35: Announce Kick+Twitch+YouTube, Befehle überall+ungated, Invite einmalig")
 
 
@@ -4912,15 +4990,18 @@ def test_v40_w63_creator_dossier():
     assert by["carol"]["sessions"] == 0, "inaktiver getrackter User muss enthalten sein"
     assert [u["username"] for u in out] == ["alice", "bob", "carol"], "nach Aktivität sortiert"
 
-    src = open("bot.py").read()
+    # v4.1-W4: Backend in nc/news.py, Endpoints im Blueprint nc/routes/news.py.
+    # Derselbe Vertrag, zwei gewanderte Anker.
+    src = open("nc/news.py", encoding="utf-8").read()
+    rt = open("nc/routes/news.py", encoding="utf-8").read()
     # Backend: Aktivität + Azrael-Take + Generierung + Cache + Endpoints.
-    assert "def _creator_activity(" in src and "_nc_creatoragg.summarize(" in src, "Aktivität wird nicht aggregiert"
-    assert "async def _azrael_creator_take(" in src and "Azrael Sentinel" in src, "Azraels Take fehlt"
-    assert "async def _creator_dossier_generate(" in src and '_cfg_set("news.creators"' in src, "Generierung/Cache fehlt"
-    assert '@dashboard_app.route("/api/news/creators")' in src, "GET-Endpoint fehlt"
-    assert '@dashboard_app.route("/api/news/creators/generate"' in src, "Generate-Endpoint fehlt"
-    # _news_phrase blieb funktionsfähig (Wrapper → impl).
-    assert "async def _news_phrase_impl(" in src and "return await _news_phrase_impl(" in src, "_news_phrase-Umbau kaputt"
+    assert "def creator_activity(" in src and "_nc_creatoragg.summarize(" in src, "Aktivität wird nicht aggregiert"
+    assert "async def azrael_creator_take(" in src and "Azrael Sentinel" in src, "Azraels Take fehlt"
+    assert "async def creator_dossier_generate(" in src and '_cfg_set("news.creators"' in src, "Generierung/Cache fehlt"
+    assert '@bp.route("/api/news/creators")' in rt, "GET-Endpoint fehlt"
+    assert '@bp.route("/api/news/creators/generate"' in rt, "Generate-Endpoint fehlt"
+    # phrase blieb funktionsfähig (Wrapper → impl).
+    assert "async def phrase_impl(" in src and "return await phrase_impl(" in src, "phrase-Umbau kaputt"
     # Dashboard: Panel + Loader + Verdrahtung.
     h = open("templates/dashboard.html").read()
     assert 'id="pnl_creators"' in h and "async function loadCreatorDossier(" in h, "Dashboard-Panel/Loader fehlt"
@@ -7185,6 +7266,7 @@ def main():
     test_b167_evolution()
     test_v41_w3_evolution_core_raus()
     test_v41_w4_bot_app_gebunden()
+    test_v41_w4_news_marketing_kern_raus()
     test_b168_moderator_everywhere()
     test_b169_kick_oauth()
     test_b170_azrael_and_youtube()
