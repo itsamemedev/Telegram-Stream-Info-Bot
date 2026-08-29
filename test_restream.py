@@ -6962,6 +6962,73 @@ def test_v40_w126_reorg_reste_verdrahtet():
        "Anlege-Wege vorhanden")
 
 
+def test_v41_w2_dauerlaeufer_melden_sich():
+    """v4.1-W2: kein Dauerlaeufer verschluckt mehr einen Ausfall.
+
+    Die Regel steht in CLAUDE.md: jeder Dauerlaeufer gehoert auf
+    `_loop_fehler` (erste Meldung sofort mit Traceback, danach gedrosselt) —
+    nie auf `log.debug` und nie auf `pass`. Ein `log.warning` erscheint in
+    einem ERROR-Log ebenfalls NIE; genau so blieb der Discord-Gateway-Tod
+    monatelang unsichtbar.
+
+    W116 hatte dafuer `_verbindung_verloren()` eingefuehrt und Kick-WebSocket,
+    Twitch-EventSub und Twitch-Chat umgestellt — die beiden YouTube-Schleifen
+    blieben dabei liegen. Dieser Vertrag haelt die Stellen fest, an denen ein
+    stiller Ausfall ein ganzes Stueck Funktion mitnimmt.
+    """
+    src = open("bot.py", encoding="utf-8").read()
+
+    def _block(kopf, ende):
+        a = src.index(kopf)
+        return src[a:src.index(ende, a)]
+
+    # ── Beide YouTube-Schleifen melden wie Twitch ────────────────────────
+    for _fn, _name in (("async def _youtube_api_chat_loop(", "YouTube-Chat (Data-API)"),
+                       ("async def _youtube_chat_loop(", "YouTube-Chat")):
+        _b = src[src.index(_fn):]
+        _b = _b[:_b.index("\nasync def ", 10) if "\nasync def " in _b[10:] else len(_b)]
+        assert '_verbindung_verloren("%s"' % _name in _b, \
+            "%s meldet den Verbindungsverlust nicht ueber _verbindung_verloren" % _name
+    # Alle fuenf Dauerverbindungen benutzen denselben Weg.
+    assert src.count("_verbindung_verloren(") >= 6, \
+        "eine Dauerverbindung meldet wieder an _verbindung_verloren vorbei"
+
+    # ── Stille Stellen, die je ein ganzes Stueck Funktion verdeckt haben ─
+    _stats = _block("async def _stats_loop(", "\n@dashboard_app.route")
+    assert "_loop_fehler(\"_stats_loop/usage.flush\"" in _stats, \
+        "Nutzungszaehler gehen wieder still verloren"
+    _vac = _block("async def _db_vacuum_loop(", "\n_KICK_BID_CACHE") \
+        if "\n_KICK_BID_CACHE" in src[src.index("async def _db_vacuum_loop("):] \
+        else src[src.index("async def _db_vacuum_loop("):][:2000]
+    for _w in ("ANALYZE", "VACUUM"):
+        assert '_loop_fehler("_db_vacuum_loop/%s"' % _w in _vac, \
+            "%s scheitert wieder lautlos — die Datenbank waechst dann ewig" % _w
+    _up = _block("async def _upload_window_loop(", "\nDB_PATH")
+    assert '_loop_fehler("_upload_window_loop"' in _up, \
+        "Upload-Fenster-Loop meldet wieder auf log.warning (im ERROR-Log unsichtbar)"
+    assert "log.warning(f\"Upload-Fenster-Loop Fehler" not in src, \
+        "alter warning-Pfad wieder da"
+    assert '_loop_fehler("_scheduler_loop/faellige"' in src, \
+        "faellige Aufgaben scheitern wieder lautlos — der Zeitplan laeuft dann nie"
+    assert '_loop_fehler("_viewer_sample_loop"' in src, \
+        "Zuschauer-Stichprobe faellt wieder stumm aus"
+
+    # ── /healthz ist EINE Route, kein Praefix ───────────────────────────
+    assert '_AUTH_EXEMPT_PREFIXES = ("/api/public/",)' in src, \
+        "/healthz wieder als Praefix — /healthzirgendwas umginge den Login"
+    assert '_AUTH_EXEMPT_EXACT = ("/healthz",' in src, \
+        "/healthz nicht mehr ausgenommen (Health-Check braucht ihn ohne Login)"
+
+    # ── Der Vorlagen-Erzeuger schneidet Kommentare quote-bewusst ────────
+    gen = open("tools/gen_env_example.py", encoding="utf-8").read()
+    assert "def _ohne_kommentar(" in gen, "quote-bewusster Kommentar-Schnitt fehlt"
+    assert 'line.split("#", 1)[0]' not in gen, \
+        "naiver Kommentar-Schnitt zurueck — ein Default mit '#' faellt still aus .env.example"
+    ok("v4.1-w2: Dauerlaeufer melden ihre Ausfaelle, /healthz exakt, "
+       "Vorlagen-Erzeuger quote-bewusst")
+
+
+
 def main():
     print("test_restream — Restream-Kernlogik (Mock-basiert)")
     test_streak()
@@ -7150,6 +7217,7 @@ def main():
     test_v40_w124_offline_meldung_ins_thema()
     test_v40_w125_papierkorb_und_archiv_werkzeuge()
     test_v40_w126_reorg_reste_verdrahtet()
+    test_v41_w2_dauerlaeufer_melden_sich()
     print(f"test_restream OK — {PASS} Verträge grün")
 
 
