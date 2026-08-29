@@ -599,6 +599,7 @@ from nc.routes import ops as _nc_routes_ops                  # v4.0-W116: Betrie
 from nc.routes import money as _nc_routes_money              # v4.0-W116: Geld
 from nc.routes import trackings as _nc_routes_trackings      # v4.0-W117: Trackings
 from nc.routes import stats as _nc_routes_stats              # v4.0-W117: Auswertung
+from nc.routes import evolution as _nc_routes_evolution      # v4.1-W3: Evolution
 from nc import updater as _nc_updater                        # v4.0-W115: Selbst-Update aus dem GitHub-Repo
 from nc import donationsdb as _nc_donationsdb                # v4.0-W116: manuell erfasste Spenden lesen
 # Diese beiden Routen ruft der Bot auch INTERN auf (Telegram /sysres und die
@@ -752,7 +753,7 @@ from nc.textmore import (  # noqa: F401
     _video_caption, _ov_wrap)
 from nc.scoring import build_report  # noqa: F401
 from nc.persona import (  # noqa: F401
-    _persona_intensity_hint, _azrael_emotion, _learn_param)
+    _persona_intensity_hint, _azrael_emotion)
 from nc.util import _webhook_event_match  # noqa: F401
 from nc.proxyutil import (  # noqa: F401
     get_random_proxy, _pick_pull_proxy, configure_proxy_select)
@@ -8445,7 +8446,7 @@ async def check_all_trackings(bot_app):
     if EVOLUTION_ENABLED:
         _spawn(_evolution_loop(), name="evolution")
         log.info(f"🧬 Evolution Core aktiv: Lern-Zyklus alle "
-                 f"{EVOLUTION_INTERVAL_HOURS}h, build/ unter {_evo_build_dir()}"
+                 f"{EVOLUTION_INTERVAL_HOURS}h, build/ unter {_nc_evolution.build_dir()}"
                  + ("" if EVOLUTION_USE_LLM else " (LLM aus)"))
     # Restream: Auto-Start-Checker (startet Auto-Ziele wenn Quelle live geht)
     _rs_en, _rs_why = _restream_enabled()
@@ -15756,385 +15757,17 @@ def api_config_drift():
 EVOLUTION_ENABLED        = os.getenv("EVOLUTION_ENABLED", "1").lower() in ("1","true","yes","y")
 EVOLUTION_INTERVAL_HOURS = max(1, int(os.getenv("EVOLUTION_INTERVAL_HOURS", "6") or 6))
 EVOLUTION_USE_LLM        = os.getenv("EVOLUTION_USE_LLM", "1").lower() in ("1","true","yes","y")
-_EVOLUTION_VERSION_TAG   = "v37"
 # B67: Fenster für die Haupt-Erfolgsquote (Tage). Verhindert dass uralte
 # Altlasten (z.B. HEVC-Ära vor dem Codec-Fix) die aktuelle Quote verfälschen.
 EVOLUTION_WINDOW_DAYS    = max(1, int(os.getenv("EVOLUTION_WINDOW_DAYS", "30") or 30))
 
-def _evo_build_dir():
-    """Pfad zum build/-Ordner (neben der DB / im Bot-Verzeichnis)."""
-    override = os.getenv("BUILD_DIR")
-    if override:
-        return override
-    base = os.path.dirname(os.path.abspath(DB_PATH)) or "."
-    return os.path.join(base, "build")
+# v4.1-W3: Versionszaehler, LLM-Notiz, build/-Schreiber und der Zyklus selbst
+# liegen jetzt in nc/evolution.py — woertlich, nur die Bot-Globals kommen dort
+# aus _conf (siehe nc.evolution.configure am Dateiende). Hier bleibt der
+# Supervisor: ein Dauerlaeufer gehoert in die Kompositionswurzel, nicht ins
+# Fachmodul.
 
 
-def _evo_version():
-    """Aktuelle Evolutions-Version (Anzahl bisheriger Zyklen + 1)."""
-    try:
-        with db_conn() as conn:
-            row = conn.execute("SELECT MAX(version) AS m FROM evolution_log").fetchone()
-        return int((row["m"] or 0)) + 1
-    except Exception:
-        return 1
-
-
-
-
-
-
-
-
-def _evolution_llm_note(insights, proposals):
-    """Optional: lokales LLM (Ollama) für eine Klartext-Engineering-Notiz.
-       Gibt Text oder None (graceful wenn Ollama offline / deaktiviert)."""
-    if not EVOLUTION_USE_LLM:
-        return None
-    try:
-        sys_p = ("Du bist ein Senior-Engineer der einen TikTok-Live-Recording-Bot betreut. "
-                 "Fasse die folgenden automatisch erkannten Erkenntnisse in 2-4 knappen "
-                 "Sätzen zusammen und nenne die EINE wichtigste nächste Maßnahme. Deutsch, "
-                 "technisch-präzise, keine Floskeln.")
-        body = "ERKENNTNISSE:\n" + "\n".join(f"- {i}" for i in insights[:12])
-        if proposals:
-            body += "\n\nVORSCHLÄGE:\n" + "\n".join(f"- {p['title']}" for p in proposals[:8])
-        text, err = llm_chat_sync(
-            [{"role": "system", "content": sys_p},
-             {"role": "user", "content": body}],
-            timeout=30)
-        return text if text and not err else None
-    except Exception as e:
-        log.debug(f"evolution LLM note failed: {e}")
-        return None
-
-
-def _evolution_write_build(version, summary, insights, proposals, learned, llm_note):
-    """Schreibt die Weiterentwicklung in den build/-Ordner: README.md (überschrieben),
-       CHANGELOG.md (neueste Version oben), proposals/vN.md, learned_state.json.
-       Gibt die Anzahl geschriebener Dateien zurück."""
-    bdir = _evo_build_dir()
-    pdir = os.path.join(bdir, "proposals")
-    os.makedirs(pdir, exist_ok=True)
-    ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-    files = 0
-
-    def _fmt_props(props):
-        if not props:
-            return "_Keine offenen Vorschläge in diesem Zyklus._\n"
-        out = ""
-        for p in props:
-            out += (f"- **{p['title']}**  \n"
-                    f"  _Kategorie:_ {p['category']} · _Impact:_ {p.get('impact','—')} · "
-                    f"_Konfidenz:_ {int(p.get('confidence',0)*100)}%  \n"
-                    f"  {p['rationale']}\n")
-        return out
-
-    # README.md
-    learned_lines = ""
-    for k, tup in sorted(learned.items()):
-        val = tup[0] if isinstance(tup, (list, tuple)) else tup
-        conf = int((tup[1] if isinstance(tup, (list, tuple)) and len(tup) > 1 else 0) * 100)
-        learned_lines += f"- `{k}` = {val}  _(Konfidenz {conf}%)_\n"
-    readme = f"""# 🧬 Self-Learning Evolution Core — build/
-
-Dieser Ordner wird **automatisch** vom Evolution Core des TikTok-Bots erzeugt
-und gepflegt. Die KI lernt kontinuierlich aus den Betriebsdaten des Bots und
-legt hier ihre Erkenntnisse und Weiterentwicklungs-Vorschläge ab.
-
-- **Aktuelle Version:** v{version}
-- **Letzter Lern-Zyklus:** {ts}
-- **Modell-Tag:** {_EVOLUTION_VERSION_TAG}
-
-## Wie es funktioniert
-1. Alle {EVOLUTION_INTERVAL_HOURS}h (oder manuell) analysiert die KI Aufnahme-
-   Outcomes, Codec-Fehler, Zuverlässigkeit pro Streamer, Trends und Speicher.
-2. Sie baut **versioniertes Wissen** auf (`learned_state.json`, mit Konfidenz).
-3. Sie generiert **datengestützte Vorschläge** (`proposals/`), priorisiert nach
-   Impact und Konfidenz.
-4. Jeder Zyklus wird in `CHANGELOG.md` dokumentiert.
-
-> ⚠️ **Sicherheit:** Die KI deployt **keinen** Code eigenmächtig in den laufenden
-> Bot. Sie justiert nur risikofreies Wissen automatisch und legt Code-/Config-
-> Änderungen als **prüfbare Vorschläge** hier ab. Anwenden entscheidet ein Mensch.
-
-## Letzte Zusammenfassung
-{summary}
-
-{("### 🧠 Engineering-Notiz (LLM)\n" + llm_note + "\n") if llm_note else ""}
-## Aktueller Wissensstand
-{learned_lines or "_noch kein Wissen gelernt_"}
-
-## Offene Vorschläge (v{version})
-{_fmt_props(proposals)}
----
-_Automatisch generiert — nicht manuell editieren, wird beim nächsten Zyklus überschrieben._
-"""
-    with open(os.path.join(bdir, "README.md"), "w", encoding="utf-8") as f:
-        f.write(readme)
-    files += 1
-
-    # proposals/vN.md
-    pmd = f"""# Vorschläge — Evolution v{version}
-_{ts}_
-
-## Zusammenfassung
-{summary}
-
-## Erkenntnisse
-{chr(10).join('- ' + i for i in insights) or '- keine'}
-
-## Vorschläge
-{_fmt_props(proposals)}
-"""
-    with open(os.path.join(pdir, f"v{version}.md"), "w", encoding="utf-8") as f:
-        f.write(pmd)
-    files += 1
-
-    # CHANGELOG.md (neueste Version oben)
-    header = ("# Changelog — Evolution Core\n\n"
-              "Automatisch generiert. Jeder Eintrag = ein Lern-Zyklus.\n\n")
-    entry = (f"## v{version} — {ts}\n\n"
-             f"{summary}\n\n"
-             f"**Erkenntnisse:** {len(insights)} · **Vorschläge:** {len(proposals)}\n\n"
-             + "".join(f"- {i}\n" for i in insights)
-             + ("\n**Neue Vorschläge:**\n" + "".join(f"- {p['title']}\n" for p in proposals)
-                if proposals else "")
-             + "\n")
-    chpath = os.path.join(bdir, "CHANGELOG.md")
-    old_body = ""
-    if os.path.exists(chpath):
-        try:
-            with open(chpath, "r", encoding="utf-8") as f:
-                content = f.read()
-            idx = content.find("## v")
-            old_body = content[idx:] if idx != -1 else ""
-        except Exception:
-            old_body = ""
-    with open(chpath, "w", encoding="utf-8") as f:
-        f.write(header + entry + old_body)
-    files += 1
-
-    # learned_state.json
-    try:
-        dump = {k: {"value": (t[0] if isinstance(t, (list, tuple)) else t),
-                    "confidence": (t[1] if isinstance(t, (list, tuple)) and len(t) > 1 else None),
-                    "samples": (t[2] if isinstance(t, (list, tuple)) and len(t) > 2 else None),
-                    "category": (t[3] if isinstance(t, (list, tuple)) and len(t) > 3 else None)}
-                for k, t in learned.items()}
-        with open(os.path.join(bdir, "learned_state.json"), "w", encoding="utf-8") as f:
-            json.dump({"version": version, "generated": ts, "params": dump}, f,
-                      ensure_ascii=False, indent=2)
-        files += 1
-    except Exception:
-        pass
-
-    # Self-Reproduction: versionierten Snapshot der eigenen Quelldatei schreiben.
-    # BUG-FIX (Trim): Vorher wurde find(_HEADER_MARK_E) genutzt — trifft den Marker
-    # im Header (erste Fundstelle), aber _HEADER_MARK_E erscheint auch als String-Literal
-    # im Funktionskörper selbst. rfind() findet den letzten Treffer und landet damit
-    # immer korrekt am Ende des Headers, nie mittendrin im Code.
-    _HEADER_MARK_S = "# [EVOLUTION SNAPSHOT"
-    _HEADER_MARK_E = "# [END EVOLUTION SNAPSHOT]"
-    try:
-        bdir = _evo_build_dir()
-        with open(__file__, "r", encoding="utf-8") as _src:
-            src_lines = _src.read()
-
-        # BUG-FIX: Vorher griff der Trim, sobald die Marker IRGENDWO im File
-        # vorkamen — aber _HEADER_MARK_S/_E stehen als String-Literale in genau
-        # dieser Funktion (snap_header-Template). __file__ (die laufende Quelle)
-        # hat NIE einen echten Header oben; trotzdem fand rfind/find den Literal
-        # bei ~Z.16279 und schnitt ~80% der Datei weg → bot_v{N}.py war
-        # abgeschnitten + nicht lauffähig (SyntaxError, mitten im String-Literal).
-        # Korrekt: nur trimmen wenn die Datei WIRKLICH mit einem Header BEGINNT
-        # (der wird immer oben angefügt). Dann ist der ERSTE End-Marker (find)
-        # das Header-Ende. Pristine Quelle → startswith False → kein Trim → volle
-        # Datei wird sauber gesnapshottet.
-        if src_lines.lstrip().startswith(_HEADER_MARK_S):
-            e = src_lines.find(_HEADER_MARK_E)
-            if e != -1:
-                src_lines = src_lines[e + len(_HEADER_MARK_E):].lstrip("\n")
-
-        # Erkenntnisse als Kommentar-Zeilen
-        if insights:
-            ins_text = "".join(
-                "#   %02d. %s\n" % (i + 1, line)
-                for i, line in enumerate(insights)
-            )
-        else:
-            ins_text = "#   (keine Erkenntnisse in diesem Zyklus)\n"
-
-        # Vorschlaege als Kommentar-Zeilen
-        if proposals:
-            prop_lines = []
-            for i, p in enumerate(proposals):
-                title    = p.get("title", "?")
-                cat      = p.get("category", "")
-                impact   = p.get("impact", "")
-                conf_pct = int(p.get("confidence", 0) * 100)
-                rat      = p.get("rationale", "")
-                prop_lines.append(
-                    "#   %02d. [%s] %s\n"
-                    "#       Impact: %s  Konfidenz: %d%%\n"
-                    "#       %s\n" % (i + 1, cat, title, impact, conf_pct, rat)
-                )
-            prop_text = "".join(prop_lines)
-        else:
-            prop_text = "#   (keine Vorschlaege in diesem Zyklus)\n"
-
-        # Gelerntes Wissen als Kommentar-Zeilen
-        if learned:
-            learn_lines = []
-            for k, tup in sorted(learned.items()):
-                val  = tup[0] if isinstance(tup, (list, tuple)) else tup
-                conf = int(
-                    (tup[1] if isinstance(tup, (list, tuple)) and len(tup) > 1 else 0) * 100
-                )
-                learn_lines.append("#   %s = %s  (Konfidenz %d%%)\n" % (k, val, conf))
-            learn_text = "".join(learn_lines)
-        else:
-            learn_text = "#   (kein Wissen in diesem Zyklus)\n"
-
-        snap_header = (
-            "# [EVOLUTION SNAPSHOT v%d]\n"
-            "# Erzeugt:     %s\n"
-            "# Zusammenfassung: %s\n"
-            "#\n"
-            "# ERKENNTNISSE (%d)\n"
-            "%s"
-            "#\n"
-            "# VORSCHLAEGE (%d)\n"
-            "%s"
-            "#\n"
-            "# GELERNTES WISSEN\n"
-            "%s"
-            "# [END EVOLUTION SNAPSHOT]\n"
-            "\n"
-        ) % (version, ts, summary,
-             len(insights), ins_text,
-             len(proposals), prop_text,
-             learn_text)
-
-        snapshot_src  = snap_header + src_lines
-        snapshot_name = "bot_v%d.py" % version
-        latest_name   = "bot_latest.py"
-
-        with open(os.path.join(bdir, snapshot_name), "w", encoding="utf-8") as _out:
-            _out.write(snapshot_src)
-        with open(os.path.join(bdir, latest_name), "w", encoding="utf-8") as _out:
-            _out.write(snapshot_src)
-        files += 2
-
-        # Manifest (snapshots.json)
-        manifest_path = os.path.join(bdir, "snapshots.json")
-        try:
-            with open(manifest_path, "r", encoding="utf-8") as mf:
-                manifest = json.load(mf)
-        except Exception:
-            manifest = []
-        manifest.insert(0, {
-            "version":   version,
-            "ts":        ts,
-            "file":      snapshot_name,
-            "size_kb":   round(len(snapshot_src.encode("utf-8")) / 1024, 1),
-            "insights":  len(insights),
-            "proposals": len(proposals),
-            "learned":   len(learned),
-            "summary":   summary,
-        })
-        manifest = manifest[:20]
-        with open(manifest_path, "w", encoding="utf-8") as mf:
-            json.dump(manifest, mf, ensure_ascii=False, indent=2)
-
-    except Exception:
-        pass   # Self-Repro optional — kein Crash wenn Permissions fehlen
-
-    return files
-
-
-def _evolution_cycle(trigger="auto"):
-    """Ein kompletter Lern-Zyklus (SYNC — wird von der Loop via to_thread und vom
-       Flask-Thread aufgerufen). Analysiert, lernt, schreibt build/, loggt.
-       Gibt ein Summary-dict zurück."""
-    version = _evo_version()
-    result = _nc_evolution.analyze(db_conn=db_conn, _evolution_llm_note=_evolution_llm_note,
-                                    EVOLUTION_WINDOW_DAYS=EVOLUTION_WINDOW_DAYS)
-    insights = result["insights"]
-    proposals = result["proposals"]
-    learned = result["learned"]
-
-    # Wissen persistieren
-    try:
-        with db_conn() as conn:
-            for k, tup in learned.items():
-                if isinstance(tup, (list, tuple)):
-                    val, conf, samples, cat = (tup + (0, 0, "general"))[:4]
-                else:
-                    val, conf, samples, cat = tup, 0.5, 0, "general"
-                _learn_param(conn, k, val, conf, samples, cat)
-            conn.commit()
-    except Exception as e:
-        log.warning(f"evolution: learned_params persist failed: {e}")
-
-    # Vorschläge persistieren (dedupliziert auf (category,title) bei status='proposed')
-    saved_props = 0
-    try:
-        with db_conn() as conn:
-            now = datetime.now(timezone.utc).isoformat()
-            for p in proposals:
-                dup = conn.execute(
-                    "SELECT 1 FROM evolution_proposals WHERE category=? AND title=? "
-                    "AND status='proposed'", (p["category"], p["title"])).fetchone()
-                if dup:
-                    continue
-                conn.execute(
-                    "INSERT INTO evolution_proposals (version, ts, category, title, rationale, "
-                    "detail, confidence, impact, status) VALUES (?,?,?,?,?,?,?,?,'proposed')",
-                    (version, now, p["category"], p["title"], p.get("rationale", ""),
-                     json.dumps(p, ensure_ascii=False), float(p.get("confidence", 0.5)),
-                     p.get("impact", "")))
-                saved_props += 1
-            conn.commit()
-    except Exception as e:
-        log.warning(f"evolution: proposals persist failed: {e}")
-
-    summary = (f"Zyklus v{version}: {len(insights)} Erkenntnisse, {saved_props} neue "
-               f"Vorschläge (von {len(proposals)} erkannt). Erfolgsquote-Wissen aktualisiert.")
-    if not insights:
-        summary = f"Zyklus v{version}: noch zu wenig Daten für belastbare Erkenntnisse."
-
-    llm_note = _evolution_llm_note(insights, proposals)
-
-    files = 0
-    try:
-        files = _evolution_write_build(version, summary, insights, proposals, learned, llm_note)
-    except Exception as e:
-        log.warning(f"evolution: build write failed: {e}")
-
-    # Zyklus loggen
-    try:
-        with db_conn() as conn:
-            conn.execute(
-                "INSERT INTO evolution_log (version, ts, summary, insights, proposals, files, "
-                "trigger) VALUES (?,?,?,?,?,?,?)",
-                (version, datetime.now(timezone.utc).isoformat(), summary,
-                 len(insights), saved_props, files, trigger))
-            conn.commit()
-    except Exception as e:
-        log.warning(f"evolution: log write failed: {e}")
-
-    try:
-        log_event("evolution.cycle", "info", summary,
-                  {"version": version, "insights": len(insights),
-                   "proposals": saved_props, "trigger": trigger})
-    except Exception:
-        pass
-    log.info(f"🧬 Evolution {summary} (build: {files} Dateien, trigger={trigger})")
-
-    return {"ok": True, "version": version, "summary": summary,
-            "insights": insights, "proposals": saved_props, "files": files,
-            "llm_note": llm_note, "build_dir": _evo_build_dir()}
 
 
 async def _evolution_loop():
@@ -16144,7 +15777,7 @@ async def _evolution_loop():
     await asyncio.sleep(90)
     while True:
         try:
-            await asyncio.to_thread(_evolution_cycle, "auto")
+            await asyncio.to_thread(_nc_evolution.cycle, "auto")
         except Exception as e:
             log.warning(f"Evolution-Loop Fehler: {e}")
         await asyncio.sleep(EVOLUTION_INTERVAL_HOURS * 3600)
@@ -16152,162 +15785,20 @@ async def _evolution_loop():
 
 # ----------------------------- B66 Endpoints -----------------------------
 
-@dashboard_app.route("/api/evolution/status")
-def api_evolution_status():
-    """Zustand des Evolution Core: Version, letzter Zyklus, Wissens-/Vorschlags-
-       Zähler, 'Wissens-Level' (für die Gehirn-Anzeige)."""
-    try:
-        with db_conn() as conn:
-            last = conn.execute("SELECT version, ts, summary, insights, proposals, files, trigger "
-                               "FROM evolution_log ORDER BY id DESC LIMIT 1").fetchone()
-            cycles = conn.execute("SELECT COUNT(*) AS n FROM evolution_log").fetchone()["n"]
-            nlearned = conn.execute("SELECT COUNT(*) AS n, AVG(confidence) AS c, "
-                                   "SUM(samples) AS s FROM learned_params").fetchone()
-            open_props = conn.execute("SELECT COUNT(*) AS n FROM evolution_proposals "
-                                     "WHERE status='proposed'").fetchone()["n"]
-        knew = int(nlearned["n"] or 0)
-        avg_conf = round((nlearned["c"] or 0) * 100, 0)
-        samples = int(nlearned["s"] or 0)
-        # Wissens-Level 0-100: skaliert mit Anzahl Parameter, Konfidenz und Samples
-        knowledge = min(100, round(0.35 * min(100, knew * 6)
-                                   + 0.35 * (avg_conf or 0)
-                                   + 0.30 * min(100, samples / 2.0)))
-        return jsonify(
-            ok=True, enabled=EVOLUTION_ENABLED, version=_evo_version() - 1,
-            next_version=_evo_version(), cycles=int(cycles or 0),
-            interval_hours=EVOLUTION_INTERVAL_HOURS, use_llm=EVOLUTION_USE_LLM,
-            learned_params=knew, avg_confidence=avg_conf, total_samples=samples,
-            knowledge_level=knowledge, open_proposals=int(open_props or 0),
-            build_dir=_evo_build_dir(),
-            last_cycle=(dict(version=last["version"], ts=(last["ts"] or "")[:19],
-                             summary=last["summary"], insights=last["insights"],
-                             proposals=last["proposals"], files=last["files"],
-                             trigger=last["trigger"]) if last else None))
-    except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
 
 
-@dashboard_app.route("/api/evolution/run", methods=["POST"])
-def api_evolution_run():
-    """Startet sofort einen Lern-Zyklus (manuell). Läuft im Flask-Thread."""
-    try:
-        res = _evolution_cycle("manual")
-        return jsonify(res)
-    except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
 
 
-@dashboard_app.route("/api/evolution/learned")
-def api_evolution_learned():
-    """Alle gelernten Parameter mit Konfidenz + Samples."""
-    try:
-        with db_conn() as conn:
-            rows = conn.execute("SELECT k, v, confidence, samples, category, updated_at "
-                               "FROM learned_params ORDER BY category, k").fetchall()
-        out = []
-        for r in rows:
-            try:
-                val = json.loads(r["v"])
-            except Exception:
-                val = r["v"]
-            out.append({"key": r["k"], "value": val,
-                        "confidence": round((r["confidence"] or 0) * 100, 0),
-                        "samples": r["samples"], "category": r["category"],
-                        "updated_at": (r["updated_at"] or "")[:19]})
-        return jsonify(ok=True, params=out, count=len(out))
-    except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
 
 
-@dashboard_app.route("/api/evolution/proposals")
-def api_evolution_proposals():
-    """Vorschläge (default nur offene). ?all=1 für alle."""
-    show_all = request.args.get("all") in ("1", "true", "yes")
-    try:
-        with db_conn() as conn:
-            q = ("SELECT id, version, ts, category, title, rationale, confidence, impact, status "
-                 "FROM evolution_proposals ")
-            if not show_all:
-                q += "WHERE status='proposed' "
-            q += "ORDER BY confidence DESC, id DESC LIMIT 100"
-            rows = conn.execute(q).fetchall()
-        return jsonify(ok=True, proposals=[
-            {"id": r["id"], "version": r["version"], "ts": (r["ts"] or "")[:19],
-             "category": r["category"], "title": r["title"], "rationale": r["rationale"],
-             "confidence": round((r["confidence"] or 0) * 100, 0),
-             "impact": r["impact"], "status": r["status"]} for r in rows])
-    except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
 
 
-@dashboard_app.route("/api/evolution/proposals/<int:pid>/dismiss", methods=["POST"])
-def api_evolution_dismiss(pid):
-    """Markiert einen Vorschlag als erledigt/verworfen."""
-    payload = request.get_json(silent=True) or {}
-    new_status = "applied" if payload.get("applied") else "dismissed"
-    try:
-        with db_conn() as conn:
-            row = conn.execute("SELECT 1 FROM evolution_proposals WHERE id=?", (pid,)).fetchone()
-            if not row:
-                return jsonify(ok=False, error="Vorschlag nicht gefunden."), 404
-            conn.execute("UPDATE evolution_proposals SET status=? WHERE id=?", (new_status, pid))
-            conn.commit()
-        return jsonify(ok=True, id=pid, status=new_status)
-    except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
 
 
-@dashboard_app.route("/api/evolution/history")
-def api_evolution_history():
-    """Liste der Lern-Zyklen (neueste zuerst)."""
-    try:
-        with db_conn() as conn:
-            rows = conn.execute("SELECT version, ts, summary, insights, proposals, files, trigger "
-                               "FROM evolution_log ORDER BY id DESC LIMIT 40").fetchall()
-        return jsonify(ok=True, history=[
-            {"version": r["version"], "ts": (r["ts"] or "")[:19], "summary": r["summary"],
-             "insights": r["insights"], "proposals": r["proposals"], "files": r["files"],
-             "trigger": r["trigger"]} for r in rows])
-    except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
 
 
-@dashboard_app.route("/api/evolution/changelog")
-def api_evolution_changelog():
-    """Inhalt der generierten CHANGELOG.md (für die Dashboard-Anzeige)."""
-    path = os.path.join(_evo_build_dir(), "CHANGELOG.md")
-    if not os.path.exists(path):
-        return jsonify(ok=True, exists=False, content="",
-                       note="Noch kein Zyklus gelaufen — Changelog wird beim ersten erzeugt.")
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            content = f.read()[:40000]
-        return jsonify(ok=True, exists=True, path=path, content=content)
-    except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
 
 
-@dashboard_app.route("/api/evolution/snapshots")
-def api_evolution_snapshots():
-    """Listet verfügbare bot.py-Snapshots im build/-Ordner (Self-Reproduction Manifest)."""
-    bdir = _evo_build_dir()
-    manifest_path = os.path.join(bdir, "snapshots.json")
-    snapshots = []
-    if os.path.exists(manifest_path):
-        try:
-            with open(manifest_path, "r", encoding="utf-8") as f:
-                snapshots = json.load(f)
-        except Exception:
-            pass
-    # Fallback: build/-Ordner nach bot_v*.py scannen
-    if not snapshots:
-        for p in sorted(glob.glob(os.path.join(bdir, "bot_v*.py")), reverse=True)[:10]:
-            snapshots.append({
-                "file": os.path.basename(p),
-                "size_kb": round(os.path.getsize(p) / 1024, 1),
-                "ts": "",
-            })
-    return jsonify(ok=True, snapshots=snapshots, build_dir=bdir)
 
 
 # ===================== KICK RESTREAM + KI-MODERATOR =====================
@@ -30820,6 +30311,21 @@ _nc_trackingdb.configure(integrity_errors=DB_INTEGRITY_ERRORS,
                          log_event_fn=log_event,
                          on_resume=_tracking_resume_cleanup)
 
+# v4.1-W3: der Evolution-Core liegt vollstaendig in nc/evolution.py. bot_file
+# ist der Grund, warum das hier steht und nicht im Modul: der Snapshot-Schreiber
+# sichert die Quelle DES BOTS — mit __file__ im Modul haette build/bot_v{N}.py
+# ab dem Umzug still nc/evolution.py enthalten, und der ganze Pfad haengt in
+# einem `except: pass`.
+_nc_evolution.configure(log=log,
+                        log_event=log_event,
+                        llm_chat_sync=llm_chat_sync,
+                        bot_file=__file__,
+                        db_path=DB_PATH,
+                        enabled=EVOLUTION_ENABLED,
+                        interval_hours=EVOLUTION_INTERVAL_HOURS,
+                        use_llm=EVOLUTION_USE_LLM,
+                        window_days=EVOLUTION_WINDOW_DAYS)
+
 _nc_ctx.configure(
     log=log,
     log_event=log_event,
@@ -30935,6 +30441,7 @@ dashboard_app.register_blueprint(_nc_routes_ops.bp)        # v4.0-W116
 dashboard_app.register_blueprint(_nc_routes_money.bp)      # v4.0-W116
 dashboard_app.register_blueprint(_nc_routes_trackings.bp)  # v4.0-W117
 dashboard_app.register_blueprint(_nc_routes_stats.bp)      # v4.0-W117
+dashboard_app.register_blueprint(_nc_routes_evolution.bp)  # v4.1-W3
 
 
 if __name__ == "__main__":

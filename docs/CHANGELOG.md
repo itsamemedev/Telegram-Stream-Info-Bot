@@ -11,6 +11,57 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Geändert — Monolith zerlegt: der Evolution-Core und seine acht Routen (v4.1 W3)
+
+`bot.py` schrumpft von 30.944 auf **30.451 Zeilen**; von den 355 Flask-Routen
+liegen jetzt **160 ausserhalb** des Monolithen (vorher 152). Die Routentabelle
+ist vor und nach der Welle bitgleich — Pfad **und** `methods`, geprüft mit
+`tools/route_inventory.py`.
+
+`nc.ctx` stand bei 24 von 25 erlaubten Slots, und `/api/evolution` hätte nach
+der Kostenrechnung fünf Funktionen und fünf Globals gebraucht. Statt die Grenze
+zu verschieben, ist wie in W117 erst der Kern gelöst worden — diesmal
+vollständig: Versionszähler, LLM-Notiz, der `build/`-Schreiber und der Zyklus
+selbst (zusammen 352 Zeilen) sind wörtlich nach `nc/evolution.py` gewandert, wo
+seit B167 nur `analyze()` lag. Danach kostet das Blueprint **null**
+Kontext-Einträge: `nc/routes/evolution.py` importiert `nc.evolution` direkt und
+kennt `nc.ctx` überhaupt nicht. Der Kontext steht weiterhin bei 24 Slots.
+
+Im Bot bleibt genau das, was dorthin gehört: die `EVOLUTION_*`-Startwerte, der
+Supervisor `_evolution_loop` und ein `nc.evolution.configure(...)` in der
+Kompositionswurzel.
+
+Drei Befunde, die die Welle fast still kaputtgemacht hätten:
+
+* **`__file__` ist beim Umzug dieselbe Falle wie `globals()` in W116.** Der
+  Self-Reproduction-Pfad schreibt einen versionierten Schnappschuss der eigenen
+  Quelle mit `open(__file__)`. Im Monolithen ist das `bot.py`; im Fachmodul wäre
+  es ab dem Umzug das 25 KB grosse `nc/evolution.py` gewesen — `build/bot_v{N}.py`
+  hätte still das falsche File enthalten, und **gemerkt hätte es niemand**, weil
+  der ganze Pfad in einem `except: pass` hängt. Die Quelle kommt jetzt als
+  `bot_file` aus dem Bot; ein Vertrag hält fest, dass `nc/evolution.py` `__file__`
+  nicht mehr liest. Gegenprobe im Testharnisch: der geschriebene Schnappschuss
+  ist 1,5 MB gross, nicht 25 KB.
+* **Ein Funktionsname, der eine lokale Variable beschattet.** Der Zyklus enthält
+  `llm_note = _evolution_llm_note(...)`. Hiesse die Funktion nach dem Umzug
+  `llm_note`, bände Python den Namen für die ganze Funktion lokal und der Aufruf
+  stürbe mit `UnboundLocalError` — erst zur Laufzeit, mitten im Zyklus.
+  `pyflakes` hat es als F823 gefunden, bevor es je lief; sie heisst jetzt
+  `engineering_note`.
+* **Der Extraktor benennt auch Schlüsselwort-Argumente um.** `analyze(...)` wird
+  mit genau den Namen gerufen, die umzubenennen waren; `rewrite_names` sieht bei
+  `f(x=x)` keinen Unterschied zwischen links und rechts. Die Signatur von
+  `analyze()` ist der Vertrag aus B167 und bleibt unangetastet.
+
+Der Vertragsanker aus B167 (`_nc_evolution.analyze(` in `bot.py`) ist gebrochen,
+weil der Bot `analyze()` gar nicht mehr selbst ruft — der **Vertrag** gilt
+weiter, nur sein **Anker** ist gewandert. Er wurde migriert, nicht gelöscht.
+Neu dazu: `test_v41_w3_evolution_core_raus` hält die fünf gewanderten Funktionen,
+die `bot_file`-Durchreichung, das laute Werfen ohne `configure()` und die
+Kontextfreiheit des Blueprints fest. `test_smoke.py` ruft den Zyklus einmal
+vollständig durch — 6 geschriebene Dateien, Schnappschuss in voller Grösse.
+
+
 ### Behoben — Dauerläufer, die ihre Ausfälle verschluckt haben (v4.1 W2)
 
 Die Regel steht in `CLAUDE.md`: jeder Dauerläufer gehört auf `_loop_fehler`

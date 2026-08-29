@@ -477,6 +477,7 @@ nach Grösse und Eigenständigkeit, ein Paket pro Welle:
 | ✅ `nc/routes/money.py` (W116) | 8 | 193 |
 | ✅ `nc/routes/trackings.py` (W117) | 16 | 459 |
 | ✅ `nc/routes/stats.py` (W117) | 7 | 224 |
+| ✅ `nc/routes/evolution.py` (v4.1-W3) | 8 | 143 |
 | `nc/routes/restream.py` | 16 | 437 |
 | `nc/routes/trackings.py` | 15 | 448 |
 | `nc/routes/ops.py` | 10 | 312 |
@@ -637,11 +638,11 @@ Supervisor fahren.
 
 ## 8 · Zielbild und Messlatte
 
-| | Start | heute (W104–W117) | nach Welle 3 | Ziel |
+| | Start | heute (W104–v4.1-W3) | nach Welle 3 | Ziel |
 |---|---:|---:|---:|---:|
-| `bot.py` Zeilen | 34.487 | **30.834** | ~24.700 | **~8.000** |
-| Flask-Routen im Monolithen | 345 | **203** | ~30 | 0 |
-| Routen in Blueprints | 0 | **152** | ~315 | 355 |
+| `bot.py` Zeilen | 34.487 | **30.451** | ~24.700 | **~8.000** |
+| Flask-Routen im Monolithen | 345 | **195** | ~30 | 0 |
+| Routen in Blueprints | 0 | **160** | ~315 | 355 |
 | `nc/`-Module | 83 | **103** | ~100 | ~115 |
 | Grösste Datei im Projekt | `bot.py` | `bot.py` | `bot.py` | `templates/dashboard.html` |
 
@@ -830,6 +831,50 @@ Blueprint fiel sie aus `.env.example`, und der Betreiber hätte einen Schalter
 verloren, den es weiterhin gibt. Gefunden hat das der `.env.example`-Vertrag,
 nicht ein Mensch. **Jedes Werkzeug, das über „alle Quelldateien" mittelt, muss
 bei jeder Welle gegengeprüft werden.**
+
+### Welle 3, Stand v4.1-W3 — das erste Blueprint ganz ohne Kontext
+
+`nc.ctx` stand bei 24 von 25 erlaubten Slots. `/api/evolution` hätte nach der
+Kostenrechnung von `bp_analyse` **fünf Funktionen und fünf Globals** gebraucht —
+mehr, als überhaupt noch hineinpassen. Wieder ist der umgekehrte Weg gegangen
+worden, und diesmal noch weiter als in W117:
+
+**Erst der ganze Kern, dann die Routen.** Seit B167 lag nur `analyze()` in
+`nc/evolution.py`; Versionszähler, LLM-Notiz, der `build/`-Schreiber und der
+Zyklus selbst blieben im Monolithen — zusammen **352 Zeilen**, an denen die acht
+Routen hingen. Sie sind wörtlich hinterhergewandert; ersetzt wurden nur die
+Namen, die dort Modul-Globals waren. Danach kostete das Blueprint **null**
+Kontext-Einträge: `nc/routes/evolution.py` importiert `nc.evolution` direkt und
+kennt `nc.ctx` überhaupt nicht. Der Kontext steht weiterhin bei 24 Slots, mit
+acht Routen und 493 Zeilen weniger im Monolithen.
+
+**`__file__` ist beim Umzug eine stille Falle — wie `globals()` in W116.** Der
+Self-Reproduction-Pfad schreibt einen versionierten Schnappschuss der eigenen
+Quelle: `open(__file__)`. Im Monolithen ist das `bot.py`; in `nc/evolution.py`
+wäre es ab dem Umzug das 25 KB grosse Fachmodul gewesen — `build/bot_v{N}.py`
+hätte still das falsche File enthalten, und **gemerkt hätte es niemand**, weil
+der gesamte Snapshot-Pfad in einem `except: pass` hängt. Die Quelle kommt
+deshalb als `bot_file` aus dem Bot; ein Vertrag hält fest, dass `nc/evolution.py`
+`__file__` nicht mehr liest (geprüft über den AST, nicht über den Text — der
+Name steht dort zu Recht in einem Kommentar). Gegenprobe im Testharnisch: der
+geschriebene Schnappschuss ist 1,5 MB gross, nicht 25 KB.
+
+**Ein Funktionsname, der eine lokale Variable beschattet.** `_evolution_cycle`
+enthält `llm_note = _evolution_llm_note(...)`. Heisst die Funktion nach dem
+Umzug `llm_note`, verschatten sich beide — Python bindet den Namen für die ganze
+Funktion lokal, und der Aufruf stirbt mit `UnboundLocalError`, aber erst zur
+Laufzeit im Zyklus. `pyflakes` hat es als F823 gefunden, bevor es je lief; die
+Funktion heisst jetzt `engineering_note`. Beim Herauslösen ist der *neue* Name
+Teil des Umzugs, nicht Kosmetik.
+
+**Der Extraktor benennt auch Schlüsselwort-Argumente um.** `analyze(...)` wird
+mit `_evolution_llm_note=` und `EVOLUTION_WINDOW_DAYS=` gerufen — genau die
+Namen, die umzubenennen waren. `rewrite_names` sieht bei `f(x=x)` keinen
+Unterschied zwischen links und rechts und machte aus dem linken
+`_conf["window_days"]=`, also einen Syntaxfehler. Die Signatur von `analyze()`
+ist der Vertrag aus B167 und bleibt; der Aufruf wurde deshalb vor dem Umschreiben
+geschützt und danach von Hand eingesetzt.
+
 
 ---
 

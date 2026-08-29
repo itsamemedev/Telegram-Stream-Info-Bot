@@ -1994,8 +1994,69 @@ def test_b167_evolution():
     # Bot bindet den Kern nicht mehr selbst
     src=open("bot.py").read()
     assert "def _evolution_analyze()" not in src, "Analyse-Kern noch im Monolithen"
-    assert "_nc_evolution.analyze(" in src, "Bot delegiert nicht an nc.evolution"
-    ok("b167: Monolith delegiert Analyse an nc.evolution")
+    # v4.1-W3: der Anker war "_nc_evolution.analyze(" — seit der Zyklus selbst im
+    # Modul liegt, ruft der Bot analyze() gar nicht mehr direkt. Der VERTRAG ist
+    # unveraendert (der Kern gehoert nicht in den Monolithen), nur sein Anker ist
+    # gewandert. Deshalb migriert statt geloescht.
+    assert "_nc_evolution.cycle" in src, "Bot delegiert nicht an nc.evolution"
+    ok("b167: Monolith delegiert den Zyklus an nc.evolution")
+
+
+
+# ------------------------------------------------- v4.1-W3) Evolution-Core komplett raus
+
+def test_v41_w3_evolution_core_raus():
+    """v4.1-W3: nicht nur die Analyse, der GANZE Core liegt in nc/evolution.py —
+       und die acht Routen im Blueprint, ohne einen einzigen neuen ctx-Slot."""
+    from nc import evolution
+    src = open("bot.py", encoding="utf-8").read()
+
+    # (1) Keine der fuenf Funktionen steht noch im Monolithen.
+    for name in ("_evo_build_dir", "_evo_version", "_evolution_llm_note",
+                 "_evolution_write_build", "_evolution_cycle"):
+        assert ("def %s(" % name) not in src, "%s noch in bot.py" % name
+    for name in ("build_dir", "next_version", "engineering_note", "write_build",
+                 "cycle", "configure", "conf"):
+        assert callable(getattr(evolution, name, None)), "nc.evolution.%s fehlt" % name
+    ok("v4.1-W3: Evolution-Core vollstaendig in nc/evolution.py")
+
+    # (2) Der Snapshot-Schreiber sichert die Quelle DES BOTS. Im Modul waere
+    # __file__ nc/evolution.py — build/bot_v{N}.py haette still das falsche File
+    # enthalten, und der ganze Pfad haengt in einem `except: pass`. Deshalb ist
+    # bot_file ein Parameter, und der Bot muss ihn setzen.
+    import ast as _ast
+    _mod = _ast.parse(open("nc/evolution.py", encoding="utf-8").read())
+    assert not [n for n in _ast.walk(_mod)
+                if isinstance(n, _ast.Name) and n.id == "__file__"], \
+        "nc/evolution.py liest __file__ statt bot_file"
+    assert "bot_file=__file__" in src, "Bot reicht seine eigene Quelle nicht durch"
+    ok("v4.1-W3: Snapshot-Quelle kommt als bot_file aus dem Bot")
+
+    # (3) Unkonfiguriert wirft es laut, statt still None zu liefern.
+    import nc.evolution as _ev
+    alt = dict(_ev._conf)
+    _ev._conf.clear()
+    try:
+        _ev.build_dir()
+    except RuntimeError as e:
+        assert "configure" in str(e), "Fehlermeldung nennt den Startpfad nicht"
+    else:
+        raise AssertionError("unkonfiguriertes nc.evolution laeuft still weiter")
+    finally:
+        _ev._conf.update(alt)
+    ok("v4.1-W3: unkonfiguriert wirft laut, kein stiller None-Pfad")
+
+    # (4) Das Blueprint kommt ohne nc.ctx aus — das ist der Punkt der Welle.
+    _bp = _ast.parse(open("nc/routes/evolution.py", encoding="utf-8").read())
+    _imp = set()
+    for n in _ast.walk(_bp):
+        if isinstance(n, _ast.Import):
+            _imp |= {al.name for al in n.names}
+        elif isinstance(n, _ast.ImportFrom):
+            _imp |= {"%s.%s" % (n.module or "", al.name) for al in n.names}
+    assert not [m for m in _imp if m.endswith("ctx") or m == "nc.ctx"], \
+        "routes/evolution zieht doch wieder am Kontext: %s" % sorted(_imp)
+    ok("v4.1-W3: Blueprint ohne einen einzigen ctx-Eintrag")
 
 
 # ------------------------------------------------- B168) Moderator überall (Twitch/YouTube)
@@ -7085,6 +7146,7 @@ def main():
     test_b165_modheuristics()
     test_b166_piper_voices()
     test_b167_evolution()
+    test_v41_w3_evolution_core_raus()
     test_b168_moderator_everywhere()
     test_b169_kick_oauth()
     test_b170_azrael_and_youtube()
