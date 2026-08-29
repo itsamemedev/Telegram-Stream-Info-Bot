@@ -74,17 +74,24 @@ DB_INTEGRITY_ERRORS = ()
 MAX_TRACKINGS_PER_CHAT = 0
 log_event = lambda *a, **k: None          # noqa: E731
 _on_resume = lambda tracking_id: None     # noqa: E731
+_on_remove = lambda tracking_id: None     # noqa: E731
 
 
 def configure(*, integrity_errors=None, max_trackings_per_chat=None,
-              log_event_fn=None, on_resume=None):
+              log_event_fn=None, on_resume=None, on_remove=None):
     """Vom Bot einmal beim Start gerufen.
 
     `on_resume` bekommt die tracking_id, wenn ein Tracking entpaust wird, und
     raeumt die In-Memory-Zaehler des Recorders auf. Ohne das wuerde der naechste
     stall_killed-Streak das Tracking sofort wieder pausieren (B54).
+
+    `on_remove` ist v4.1-W5 und aus demselben Grund ein Rueckruf: beim Loeschen
+    muessen sieben per-tracking-Dicts des Live-Workers geraeumt werden. Die
+    gehoeren dem Recorder, nicht der Datenbank — ohne den Rueckruf sammelt sich
+    Orphan-State an, und bei einem Bot, der jahrelang laeuft, ist das ein
+    langsames Leck (F51/B6).
     """
-    global DB_INTEGRITY_ERRORS, MAX_TRACKINGS_PER_CHAT, log_event, _on_resume
+    global DB_INTEGRITY_ERRORS, MAX_TRACKINGS_PER_CHAT, log_event, _on_resume, _on_remove
     if integrity_errors is not None:
         DB_INTEGRITY_ERRORS = integrity_errors
     if max_trackings_per_chat is not None:
@@ -93,6 +100,8 @@ def configure(*, integrity_errors=None, max_trackings_per_chat=None,
         log_event = log_event_fn
     if on_resume is not None:
         _on_resume = on_resume
+    if on_remove is not None:
+        _on_remove = on_remove
 
 
 def bulk_add_trackings(group_id: int, usernames: list, added_by: int) -> dict:
@@ -345,3 +354,74 @@ def get_priority_poll_interval(tracking_id: int, default_interval: int) -> int:
     if p["level"] >= 2:    return min(default_interval, 10)    # VIP
     if p["level"] >= 1:    return min(default_interval, 15)    # high
     return default_interval
+
+
+# ---------------------------------------------------------------------------
+# v4.1-W5: zwei Schreibweisen-Helfer, aus bot.py geloest.
+#
+# Beide drehen sich um dieselbe Sache: die Laufzeit-Dicts des Live-Workers sind
+# mit der GESPEICHERTEN Schreibweise des Trackings gefuellt, die Oberflaeche
+# schickt aber, was der Betreiber angeklickt hat. Sie gehoeren damit zur
+# trackings-Tabelle und nicht in den Kontext — Bot und Blueprint importieren
+# beide direkt (die Reihenfolge aus W117).
+# ---------------------------------------------------------------------------
+
+
+def ci_key(mapping, name: str):
+    """Passenden Schlüssel aus einem username-keyed Dict holen, Groß-/
+       Kleinschreibung egal. Die Laufzeit-Dicts (_LIVE_SESSION_START,
+       _ACTIVE_TIER) sind mit der GESPEICHERTEN Schreibweise des Trackings
+       gefüllt; wer lowercase nachschlägt, findet nichts."""
+    if not name:
+        return None
+    if name in mapping:
+        return name
+    low = name.lower()
+    for k in list(mapping):
+        if isinstance(k, str) and k.lower() == low:
+            return k
+    return None
+
+
+def resolve_tracked_user(name: str) -> str:
+    """Gespeicherte Schreibweise eines getrackten Handles (case-insensitiv).
+       Fällt auf die Eingabe zurück, wenn nichts getrackt ist — dann sieht
+       die Karte wenigstens den Namen, den der Betreiber angeklickt hat."""
+    if not name:
+        return ""
+    try:
+        with db_conn() as conn:
+            row = conn.execute(
+                "SELECT username FROM trackings WHERE LOWER(username)=LOWER(?) LIMIT 1",
+                (name,)).fetchone()
+        if row and row["username"]:
+            return row["username"]
+    except Exception as e:
+        log.warning("Streamer-Auflösung für @%s fehlgeschlagen: %s", name, e)
+    return name
+
+
+def remove_tracking(group_id: int, username: str):
+    """Tracking loeschen — und den Laufzeitzustand des Workers mitloeschen.
+
+    F51-Bug-Fix B6: ohne das Aufraeumen sammelt sich Orphan-State in den
+    per-tracking-Dicts an (_NEXT_CHECK_AT, _EARLY_DISCONNECT_RETRY, …).
+    Funktional kein Bug — die Keys werden nie wieder gelesen — aber bei einem
+    Bot, der jahrelang laeuft und viel an- und abgetrackt wird, ein langsames
+    Leck.
+
+    v4.1-W5 aus bot.py geloest. Die sieben Dicts gehoeren dem Live-Worker, nicht
+    der Datenbank: das Modul ruft deshalb zurueck (on_remove), statt fremden
+    Laufzeitzustand zu halten — derselbe Weg wie bei on_resume in W117.
+    """
+    # Erst die tids holen die wir loeschen, damit der Aufrufer hinterher die
+    # in-memory Dicts purgen kann.
+    with db_conn() as conn:
+        rows = conn.execute(
+            "SELECT id FROM trackings WHERE group_id=? AND username=?",
+            (group_id, username)).fetchall()
+        conn.execute("DELETE FROM trackings WHERE group_id=? AND username=?",
+                     (group_id, username))
+        conn.commit()
+    for r in rows:
+        _on_remove(r["id"])

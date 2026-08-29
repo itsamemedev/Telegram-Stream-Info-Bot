@@ -2162,6 +2162,138 @@ def test_v41_w4_news_marketing_kern_raus():
     ok("v4.1-W4: nc.ctx bei %d Slots, kein Eintrag dazugekommen" % len(ncctx.Ctx.__slots__))
 
 
+
+# ------------------------------------------------- v4.1-W5) die restlichen Dauerlaeufer
+
+def test_v41_w5_restliche_dauerlaeufer():
+    """v4.1-W5: W2 hat sieben Stellen versorgt — zwoelf blieben liegen.
+
+    Die Regel aus CLAUDE.md gilt fuer JEDEN Dauerlaeufer: erste Meldung sofort
+    mit Traceback, danach gedrosselt, nie auf log.warning. Ein `warning`
+    erscheint in einem ERROR-Log nicht; genau so blieb der Discord-Gateway-Tod
+    monatelang unsichtbar. Dieser Vertrag haelt die neun Stellen fest, an denen
+    ein stiller Ausfall ein ganzes Stueck Funktion mitnimmt — und prueft
+    generisch, dass keine WEITERE Schleife wieder auf warning zurueckfaellt.
+    """
+    import ast as _ast
+    src = open("bot.py", encoding="utf-8").read()
+    zeilen = src.splitlines()
+
+    # (1) Die sieben Schleifen, die still waren, melden jetzt namentlich.
+    for name in ("reaper_loop", "_storage_cleanup_loop", "_proxy_pool_refresh_loop",
+                 "_evolution_loop", "_live_react_loop", "_db_maintenance_loop",
+                 "_system_backup_loop"):
+        assert '_loop_fehler("%s"' % name in src, \
+            "%s meldet wieder an _loop_fehler vorbei" % name
+
+    # (2) Und die zwei Alarm-PRUEFUNGEN, die still scheiterten. Der Ausfall der
+    # Schleife war sichtbar, das Scheitern ihrer eigentlichen Arbeit nicht —
+    # von aussen ununterscheidbar von "alles in Ordnung".
+    for name in ("_disk_alarm_loop/check", "_cookie_alarm_loop/check"):
+        assert '_loop_fehler("%s"' % name in src, \
+            "%s scheitert wieder lautlos — der Alarm feuert dann nie" % name
+
+    # (3) Die alten Meldezeilen sind weg, nicht bloss ergaenzt.
+    for tot in ('log.warning(f"Reaper Fehler', 'log.warning(f"Storage-Cleanup Fehler',
+                'log.warning("Proxy-Pool-Auto: Refresh fehlgeschlagen',
+                'log.warning(f"Evolution-Loop Fehler', 'log.warning("live-react loop Fehler',
+                'log.warning("DB-Maintenance fehlgeschlagen',
+                'log.warning(f"Disk-Alarm check failed',
+                'log.warning("Cookie-Alarm check failed'):
+        assert tot not in src, "alter warning-Pfad wieder da: " + tot
+
+    # (4) Generisch: KEIN Dauerlaeufer meldet seinen Schleifenfehler mehr auf
+    # warning oder debug. Frueher war das eine Liste, die jede neue Schleife
+    # wieder unterlaufen konnte; jetzt faellt die naechste sofort auf.
+    baum = _ast.parse(src)
+    schlampig = []
+    for n in baum.body:
+        if not isinstance(n, (_ast.FunctionDef, _ast.AsyncFunctionDef)):
+            continue
+        if not n.name.endswith("_loop"):
+            continue
+        if not any(isinstance(x, (_ast.While, _ast.For)) for x in _ast.walk(n)):
+            continue
+        koerper = "\n".join(zeilen[n.lineno - 1:n.end_lineno])
+        versorgt = ("_loop_fehler(" in koerper or "_verbindung_verloren(" in koerper
+                    or "exc_info=True" in koerper)
+        if not versorgt:
+            schlampig.append(n.name)
+    assert not schlampig, \
+        "Dauerlaeufer ohne sichtbare Fehlermeldung: %s" % sorted(schlampig)
+    ok("v4.1-W5: neun weitere Stellen melden sichtbar, kein Dauerlaeufer mehr stumm")
+
+
+
+# ------------------------------------------------- v4.1-W5) Streamer-Ansicht raus
+
+def test_v41_w5_streamer_blueprint():
+    """v4.1-W5: die Streamer-Ansicht liegt im Blueprint, ihre Helfer in nc/ —
+       ohne einen neuen nc.ctx-Slot, und ohne dass ein Slash-Befehl mitwandert."""
+    import ast as _ast
+    import sqlite3
+    from nc import trackingdb as td, tiktokcheck
+    src = open("bot.py", encoding="utf-8").read()
+    baum = _ast.parse(src)
+
+    # (1) Die drei Helfer stehen nicht mehr im Monolithen.
+    for name in ("_ci_key", "_resolve_tracked_user", "_tiktok_account_exists"):
+        assert ("def %s(" % name) not in src, "%s noch in bot.py" % name
+    for fn in ("ci_key", "resolve_tracked_user", "remove_tracking"):
+        assert callable(getattr(td, fn, None)), "nc.trackingdb.%s fehlt" % fn
+    assert callable(getattr(tiktokcheck, "account_exists", None)), "nc.tiktokcheck fehlt"
+    ok("v4.1-W5: Schreibweisen-Helfer und Existenzpruefung in nc/")
+
+    # (2) remove_tracking raeumt weiter den Laufzeitzustand — ueber einen
+    # RUECKRUF, weil die sieben Dicts dem Live-Worker gehoeren, nicht der DB.
+    # Fehlt der Rueckruf, laeuft alles weiter und der Orphan-State waechst
+    # still (F51/B6) — derselbe Weg wie on_resume in W117.
+    assert "on_remove=_tracking_remove_cleanup" in src, \
+        "remove_tracking raeumt den Worker-Zustand nicht mehr auf"
+    assert "def _tracking_remove_cleanup(" in src, "der Rueckruf fehlt im Bot"
+    conn = sqlite3.connect(":memory:"); conn.row_factory = sqlite3.Row
+    conn.execute("CREATE TABLE trackings (id INTEGER PRIMARY KEY AUTOINCREMENT, "
+                 "group_id INTEGER, username TEXT)")
+    conn.execute("INSERT INTO trackings (group_id, username) VALUES (5, 'a')")
+    conn.commit()
+    import contextlib
+    geraeumt = []
+    @contextlib.contextmanager
+    def dbc():
+        yield conn
+    _alt_db, _alt_cb = td.db_conn, td._on_remove
+    td.db_conn = dbc
+    td.configure(on_remove=geraeumt.append)
+    try:
+        td.remove_tracking(5, "a")
+    finally:
+        td.db_conn = _alt_db
+        td.configure(on_remove=_alt_cb)
+    assert geraeumt == [1], "on_remove wurde nicht je geloeschter tracking_id gerufen: %r" % geraeumt
+    assert conn.execute("SELECT COUNT(*) c FROM trackings").fetchone()["c"] == 0, "Zeile nicht geloescht"
+    ok("v4.1-W5: remove_tracking loescht UND raeumt, ueber den Rueckruf")
+
+    # (3) Der Extraktor haette den Telegram-Befehl `stats` mitgenommen:
+    # api_streamer_compare enthaelt ein verschachteltes `def stats(u)`, und
+    # bp_extract entschied nach dem blossen Namen. Der Befehl waere aus bot.py
+    # verschwunden, und die Routentabelle haette nichts gemerkt — sie zaehlt
+    # nur Flask-Regeln. Beide Haelften werden hier festgehalten.
+    assert [n for n in baum.body
+            if isinstance(n, (_ast.FunctionDef, _ast.AsyncFunctionDef)) and n.name == "stats"], \
+        "der Telegram-Befehl stats ist aus bot.py verschwunden"
+    assert '("stats", stats)' in src, "stats ist nicht mehr als Slash-Befehl registriert"
+    bp = open("nc/routes/streamer.py", encoding="utf-8").read()
+    assert "ContextTypes" not in bp and "ParseMode" not in bp, \
+        "ein Telegram-Handler ist ins Flask-Blueprint gewandert"
+    ok("v4.1-W5: der Telegram-Befehl stats ist NICHT mitgewandert")
+
+    # (4) Der Kontext ist wieder nicht gewachsen.
+    from nc import ctx as ncctx
+    assert len(ncctx.Ctx.__slots__) <= 24, \
+        "nc.ctx ist doch gewachsen: %d Slots" % len(ncctx.Ctx.__slots__)
+    ok("v4.1-W5: nc.ctx bei %d Slots, kein Eintrag dazugekommen" % len(ncctx.Ctx.__slots__))
+
+
 # ------------------------------------------------- B168) Moderator überall (Twitch/YouTube)
 
 def test_b168_moderator_everywhere():
@@ -7267,6 +7399,8 @@ def main():
     test_v41_w3_evolution_core_raus()
     test_v41_w4_bot_app_gebunden()
     test_v41_w4_news_marketing_kern_raus()
+    test_v41_w5_restliche_dauerlaeufer()
+    test_v41_w5_streamer_blueprint()
     test_b168_moderator_everywhere()
     test_b169_kick_oauth()
     test_b170_azrael_and_youtube()

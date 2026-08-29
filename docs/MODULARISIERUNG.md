@@ -480,6 +480,7 @@ nach Grösse und Eigenständigkeit, ein Paket pro Welle:
 | ✅ `nc/routes/evolution.py` (v4.1-W3) | 8 | 143 |
 | ✅ `nc/routes/news.py` (v4.1-W4) | 8 | 84 |
 | ✅ `nc/routes/marketing.py` (v4.1-W4) | 5 | 63 |
+| ✅ `nc/routes/streamer.py` (v4.1-W5) | 10 | 248 |
 | `nc/routes/restream.py` | 16 | 437 |
 | `nc/routes/trackings.py` | 15 | 448 |
 | `nc/routes/ops.py` | 10 | 312 |
@@ -640,12 +641,12 @@ Supervisor fahren.
 
 ## 8 · Zielbild und Messlatte
 
-| | Start | heute (W104–v4.1-W4) | nach Welle 3 | Ziel |
+| | Start | heute (W104–v4.1-W5) | nach Welle 3 | Ziel |
 |---|---:|---:|---:|---:|
-| `bot.py` Zeilen | 34.487 | **29.942** | ~24.700 | **~8.000** |
-| Flask-Routen im Monolithen | 345 | **182** | ~30 | 0 |
-| Routen in Blueprints | 0 | **173** | ~315 | 355 |
-| `nc/`-Module | 83 | **103** | ~100 | ~115 |
+| `bot.py` Zeilen | 34.487 | **29.646** | ~24.700 | **~8.000** |
+| Flask-Routen im Monolithen | 345 | **172** | ~30 | 0 |
+| Routen in Blueprints | 0 | **183** | ~315 | 355 |
+| `nc/`-Module | 83 | **111** | ~100 | ~115 |
 | Grösste Datei im Projekt | `bot.py` | `bot.py` | `bot.py` | `templates/dashboard.html` |
 
 Die härtere Messlatte ist keine Zahl:
@@ -922,6 +923,47 @@ die Werkzeuge dort noch finden.**
 heissen deshalb `ai_flavor` und `collect_facts`. Beide Male hat `pyflakes` (F823)
 es vor dem ersten Lauf gefunden — die Prüfkette fängt genau diesen Fehler, wenn
 man sie vor dem Commit fährt statt danach.
+
+
+### Welle 3, Stand v4.1-W5 — der Extraktor hätte einen Slash-Befehl mitgenommen
+
+`/api/streamer` kostete nach `bp_analyse` **elf** Kontext-Einträge. Nach dem
+Lösen der Helfer waren es fünf, und alle fünf gab es bereits (`arg_int`,
+`run_async`, `log`, zwei `cfg`-Schlüssel). Vierte Welle in Folge ohne einen
+neuen Slot.
+
+Gelöst wurden: `_ci_key` und `_resolve_tracked_user` nach `nc/trackingdb.py`
+(beide drehen sich um die *gespeicherte* Schreibweise eines Handles, gehören
+also zur `trackings`-Tabelle), `_tiktok_account_exists` in das neue
+`nc/tiktokcheck.py`, und `remove_tracking` ebenfalls nach `nc/trackingdb.py` —
+letzteres mit einem `on_remove`-Rückruf, weil die sieben per-tracking-Dicts dem
+Live-Worker gehören und nicht der Datenbank. Das ist derselbe Weg wie
+`on_resume` in W117: **Laufzeitzustand bleibt bei seinem Eigentümer.**
+
+**Der Befund dieser Welle ist ein Werkzeugfehler, kein Codefehler.**
+`api_streamer_compare` enthält eine verschachtelte Hilfsfunktion `def stats(u)`.
+`bp_extract` sammelt die Aufrufe einer Route über `ast.Call` und vergleicht die
+Namen mit den Top-Level-Definitionen — **ohne zu prüfen, was die Route selbst
+bindet.** Der gleichnamige Telegram-Befehl `stats` auf Modulebene galt damit als
+„Helfer, den nur diese Route benutzt", wäre ins Flask-Blueprint gewandert und
+aus `bot.py` verschwunden.
+
+Bemerkenswert ist, was das *nicht* gefangen hätte: die Routentabelle bleibt
+identisch, weil sie nur Flask-Regeln zählt. Ein Slash-Befehl weniger ist dort
+unsichtbar. `pyflakes` hätte den `NameError` in der Befehlsregistrierung
+gemeldet — aber nur, weil der Name dort noch steht; bei einem Handler, der
+ausschliesslich über einen Dekorator registriert wird, wäre auch das still
+geblieben. `bp_extract` schliesst lokal gebundene Namen jetzt aus, und ein
+Vertrag hält beide Hälften fest: der Befehl ist noch da, und im Blueprint steht
+kein Telegram-Import.
+
+**Was liegen bleibt und warum.** `/api/profile` (3 Routen, 184 Zeilen) wäre die
+naheliegende Ergänzung gewesen, hängt aber an `_get_live_info` — einer Funktion
+mit acht weiteren Aufrufern im Recorder-Kern. Sie ist echter Bot-Laufzeitcode
+und liesse sich nur über einen neuen Kontext-Slot erreichen, den genau *ein*
+Blueprint benutzt; das ist der Fall, den `nc/ctx.py` im Kopf ausdrücklich
+ausschliesst. Die Gruppe wartet auf das Lösen der Live-Auflösungs-Schicht
+(Welle 6), nicht auf einen Slot.
 
 
 ---

@@ -99,10 +99,28 @@ def sammle(prefix):
     namen = {n.name for n in routes}
 
     # Helfer, die AUSSER diesen Routen niemand aufruft, ziehen mit um.
+    #
+    # v4.1-W5: was die Route SELBST bindet, zaehlt nicht als Aufruf. Sonst
+    # entscheidet der blosse Name: api_streamer_compare enthaelt ein
+    # verschachteltes `def stats(u)`, und der Extraktor hielt den
+    # gleichnamigen Telegram-Befehl `stats` auf Modulebene fuer einen Helfer,
+    # den nur diese Route benutzt — er waere mitgewandert und aus bot.py
+    # verschwunden. Ein Slash-Befehl weg, und die Routentabelle haette
+    # nichts gemerkt, weil sie nur Flask-Regeln zaehlt.
     aufrufe = set()
     for n in routes:
+        lokal = set()
+        for x in ast.walk(n):
+            if isinstance(x, (ast.FunctionDef, ast.AsyncFunctionDef)) and x is not n:
+                lokal.add(x.name)
+            if isinstance(x, ast.Name) and isinstance(x.ctx, ast.Store):
+                lokal.add(x.id)
+            if isinstance(x, (ast.Import, ast.ImportFrom)):
+                lokal |= {(al.asname or al.name).split(".")[0] for al in x.names}
+        lokal |= {a.arg for a in n.args.args + n.args.kwonlyargs}
         aufrufe |= {x.func.id for x in ast.walk(n)
-                    if isinstance(x, ast.Call) and isinstance(x.func, ast.Name)}
+                    if isinstance(x, ast.Call) and isinstance(x.func, ast.Name)
+                    and x.func.id not in lokal}
     top = {n.name: n for n in tree.body
            if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
     extern = set()
