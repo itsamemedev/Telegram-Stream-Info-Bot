@@ -52,3 +52,36 @@ def _loop_not_ready(e) -> bool:
        gehoert nicht in nc.ctx — dort ist der Platz knapp und begruendungs-
        pflichtig, hier kostet es nichts."""
     return isinstance(e, RuntimeError) and "event loop not ready" in str(e)
+
+
+def datei_in(basis, name, endung=None):
+    """Absoluter Pfad zu `name` UNTERHALB von `basis` — oder None.
+
+    v4.1-W10 (CodeQL py/path-injection). Die Ausliefer-Routen prüften bisher
+    mit `"/" in fn or "\\\\" in fn`. Das ist inhaltlich dicht, aber es ist eine
+    Prüfung auf VERBOTENES statt eine Zusage über das Ergebnis: wer sie später
+    lockert (ein Unterordner, ein Windows-Laufwerksbuchstabe, ein URL-dekodiertes
+    Zeichen), verschiebt die Sicherheit, ohne sie anzufassen. Hier wird
+    stattdessen der fertige Pfad aufgelöst und nachgewiesen, dass er in `basis`
+    liegt — was auch Symlinks und `..` in jeder Schreibweise abdeckt.
+
+    `endung` (z.B. ".mp4") wird zusätzlich erzwungen, damit eine Route für
+    Videos keine Datenbank ausliefert.
+    """
+    import os
+    if not name or not isinstance(name, str):
+        return None
+    if endung and not name.lower().endswith(endung.lower()):
+        return None
+    wurzel = os.path.realpath(os.path.abspath(basis))
+    ziel = os.path.realpath(os.path.join(wurzel, name))
+    # commonpath statt startswith: "/daten/clips2" faengt auch mit
+    # "/daten/clips" an, liegt aber NICHT darin.
+    try:
+        if os.path.commonpath([wurzel, ziel]) != wurzel:
+            return None
+    except ValueError:
+        return None                      # verschiedene Laufwerke (Windows)
+    if ziel == wurzel:
+        return None
+    return ziel

@@ -62,3 +62,78 @@ def looks_like_source_expired(text):
     # echten Streamende. Erst zusammen mit einem Reconnect-Versuch ist es der
     # Ablauf-Fall.
     return "stream ends prematurely" in t and "will reconnect" in t
+
+
+def url_host(url: str) -> str:
+    """v4.1-W10: Hostname aus einer rtmp(s)-URL — ohne Schema, Port, Pfad und
+    Key, lowercase. Hiess in bot.py _url_host (B141) und wird jetzt von zwei
+    Stellen gebraucht: dem tee-Fehler-Labeling und der Abbruch-Diagnose."""
+    if not url or "://" not in url:
+        return ""
+    rest = url.split("://", 1)[1]
+    return rest.split("/", 1)[0].split(":", 1)[0].strip().lower()
+
+
+def betroffene_ziele(tail, targets):
+    """Welche Restream-Ziele nennt dieser ffmpeg-stderr-Auszug beim Namen?
+
+    Rückgabe: die Namen aus `targets` ([(name, url), …]), deren INGEST-HOST im
+    Text vorkommt — in der Reihenfolge von `targets`, ohne Dubletten.
+
+    WARUM das gebraucht wird: die Abbruch-Diagnose in bot.py schrieb bei jedem
+    'Input/output error' und jedem 'End of file' kategorisch "Kick-Ingest nimmt
+    die Verbindung nicht an" — auch dann, wenn im Auszug ausschliesslich der
+    TWITCH-Slave stand. Der Betreiber suchte danach am falschen Ende: Kick-Key
+    prüfen, Kick-App prüfen, IP-Block bei Kick prüfen, während Twitch das
+    Problem war. Ein Diagnosetext, der auf die falsche Plattform zeigt, ist
+    schlimmer als gar keiner.
+
+    Kick und Twitch liegen BEIDE auf live-video.net (beide fahren AWS IVS) —
+    deshalb wird auf den vollen Host verglichen, nie auf den Plattformnamen:
+    'twitch' kommt in Twitchs eigener Ingest-URL gar nicht vor.
+    """
+    text = (tail or "").lower()
+    out = []
+    for name, url in (targets or []):
+        host = url_host(url)
+        if host and host in text and name not in out:
+            out.append(name)
+    return out
+
+
+def fenstergroesse(text, fallback="1080,1920"):
+    """`W,H` aus reinen Ziffern — oder der Fallback.
+
+    v4.1-W10 (CodeQL py/command-line-injection): dieser Wert landet in
+    `--window-size=…` auf der Chromium-Kommandozeile. Er stammt aus der .env
+    (RESTREAM_OVERLAY_HTML_SIZE) bzw. aus einer ffprobe-Messung. Die
+    Kommandozeile wird als LISTE uebergeben, es gibt also keine Shell — aber
+    ein Wert wie "800,600 --dump-dom" waere trotzdem ein zweites Argument fuer
+    Chromium. Hier kommt nur durch, was aus zwei Zahlen besteht.
+
+    Ein Trennzeichen `,` oder `x` wird akzeptiert (beides steht in echten
+    .env-Dateien), ausgegeben wird immer die Chromium-Schreibweise mit Komma.
+    """
+    import re
+    m = re.fullmatch(r"\s*(\d{1,5})\s*[,x]\s*(\d{1,5})\s*", str(text or ""))
+    if not m:
+        return fallback
+    b, h = int(m.group(1)), int(m.group(2))
+    if not (0 < b <= 16384 and 0 < h <= 16384):
+        return fallback
+    return f"{b},{h}"
+
+
+def http_url(text, fallback=""):
+    """Nur http/https lassen wir auf eine Kommandozeile.
+
+    v4.1-W10: die Overlay-URL kommt aus der .env und wird an Chromium
+    uebergeben. `file:///etc/shadow` waere dort eine gueltige Seite, und ein
+    Wert, der mit `--` beginnt, waere ueberhaupt keine URL, sondern ein
+    weiteres Argument.
+    """
+    t = str(text or "").strip()
+    low = t.lower()
+    if low.startswith("http://") or low.startswith("https://"):
+        return t
+    return fallback

@@ -7891,6 +7891,99 @@ def test_v41_w9_kick_blueprint():
     ok("v4.1-W9: 8 Routen als Blueprint, Zugangsdaten aus cfg, null neue ctx-Slots")
 
 
+
+# --------------------------------------- v4.1-W10) Befunde aus dem error.log
+
+def test_v41_w10_diagnose_und_blindheit():
+    """v4.1-W10: zwei Befunde aus dem laufenden Betrieb, beide von derselben
+       Sorte — der Bot sagte etwas Falsches statt gar nichts.
+
+    1. Die Abbruch-Diagnose nannte bei jedem 'Input/output error' und jedem
+       'End of file' kategorisch Kick. Im error.log vom 30.08. stand sie
+       sechsmal, waehrend im Auszug auch der Twitch-Slave scheiterte. Wer
+       danach handelt, prueft Kick-Key, Kick-App und IP-Block bei Kick — am
+       falschen Ende.
+    2. Endete der -progress-Leser, blieben Bitrate und FPS im Dashboard auf
+       dem letzten Wert stehen. Eine stehende Bitrate liest sich wie ein
+       gesunder Stream. Das ist die gefaehrlichere Haelfte: nicht dass die
+       Messung aufhoert, sondern dass ihr letzter Wert weiter als Messung gilt.
+    """
+    src = open("bot.py", encoding="utf-8").read()
+
+    # (1) Kein fester Plattformname mehr in der Abbruch-Diagnose.
+    assert "Kick-Ingest nimmt die Verbindung nicht an" not in src, \
+        "die Diagnose behauptet wieder kategorisch Kick"
+    assert "_nc_rutil.betroffene_ziele(tail, _zl)" in src, \
+        "die Diagnose leitet das Ziel nicht aus dem stderr ab"
+    # Beide Zweige — der rtmps- und der rtmp-Zweig — muessen es tun.
+    assert src.count("_nc_rutil.betroffene_ziele(tail, _zl)") == 2, \
+        "nur einer der beiden Fehlerzweige nennt das echte Ziel"
+
+    # (2) Blindheit wird markiert, und zwar NICHT beim normalen Abbruch.
+    assert "def _mark_blind(" in src, "keine Blind-Markierung"
+    _rp = src[src.index("async def _read_progress("):src.index("def _mark_blind(")]
+    assert "EOF" in _rp and "_blind_grund" in _rp, "EOF endet weiter still"
+    assert "finally:" in _rp and "self._mark_blind(" in _rp, "Markierung nicht verdrahtet"
+    # Der Cancel-Pfad ist der SAUBERE Stopp: _monitor cancelt beide Leser,
+    # nachdem ffmpeg gewartet wurde. Wuerde er markieren, traege jeder normale
+    # Stopp eine Warnung ins Dashboard — und die Warnung waere wertlos.
+    _cancel = _rp[_rp.index("except asyncio.CancelledError:"):_rp.index("except Exception as e:")]
+    assert "_blind_grund" not in _cancel, \
+        "der saubere Stopp markiert blind — dann warnt jeder Stopp"
+
+    # (3) Der Waechter nennt den konkreten Grund, nicht nur 'Leser tot'.
+    _sw = src[src.index("if v.state == _nc_rstab.STALL_BLIND"):]
+    assert 'blind_reason' in _sw[:900], "Waechter meldet weiter ohne Grund"
+
+    # (4) Das Dashboard zeigt es. Ohne diese Haelfte bleibt der Wert stehen und
+    # sieht gesund aus — genau der Befund.
+    dash = open("templates/dashboard.html", encoding="utf-8").read()
+    assert "h.blind" in dash and "blind_reason" in dash, \
+        "Dashboard zeigt eingefrorene Werte weiter als Messung"
+    ok("v4.1-W10: Diagnose nennt das echte Ziel, blinde Health-Werte sind markiert")
+
+
+def test_v41_w10_codeql_befunde():
+    """v4.1-W10: die vier CodeQL-Klassen, die im Repo wirklich vorkamen."""
+    src = open("bot.py", encoding="utf-8").read()
+
+    # (1) Kommandozeile: Groesse und URL werden am EINEN Uebergabepunkt
+    # geprueft, nicht dort, wo sie herkommen.
+    _cmd = src[src.index("def _htmlov_screenshot_cmd("):
+               src.index("def _restream_html_overlay_start(")]
+    assert "_nc_rutil.fenstergroesse(" in _cmd and "_nc_rutil.http_url(" in _cmd, \
+        "Chromium-Argumente ungeprueft"
+    assert "f\"--window-size={size or" not in _cmd, "ungeprueftes --window-size wieder da"
+
+    # (2) Ausliefer-Routen: Zusage statt Verbotsliste.
+    for _fn in ("api_clip_file", "api_tts_file"):
+        _r = src[src.index("def %s(" % _fn):]
+        _r = _r[:_r.index("@dashboard_app.route", 10) if "@dashboard_app.route" in _r[10:] else 1500]
+        assert "_nc_util.datei_in(" in _r, "%s prueft weiter nur Zeichen" % _fn
+
+    # (3) Log-Datei aus einer Tabelle, nicht aus dem Parameter.
+    ops = open("nc/routes/ops.py", encoding="utf-8").read()
+    assert "_DATEIEN = {" in ops and "_DATEIEN[which]" in ops, \
+        "der Log-Pfad wird weiter aus dem Parameter gebaut"
+    assert 'f"{which}.log"' not in ops, "alter Pfadbau noch da"
+
+    # (4) Der Dedup-Hash ist als nicht-sicherheitsrelevant deklariert — und
+    # sein WERT bleibt gleich. Ein Wechsel auf sha256 wuerde jede bereits
+    # veroeffentlichte Meldung einmalig zur Neu-Meldung machen.
+    import hashlib
+    from nc.news import item_id
+    _erw = hashlib.sha1(b"a|b|c|").hexdigest()[:12]
+    assert item_id("a", "b", "c") == _erw, "Item-Id hat sich geaendert (Re-Post-Welle)"
+    news = open("nc/news.py", encoding="utf-8").read()
+    assert "usedforsecurity=False" in news, "Hash nicht als Nicht-Sicherheitshash deklariert"
+
+    # (5) Der HTML-Filter im Extraktor endet auch bei '</script >'.
+    ex = open("tools/i18n_extract.py", encoding="utf-8").read()
+    assert "</script\\s*>" in ex and "re.I" in ex, \
+        "Skript-Ende nur in einer Schreibweise erkannt"
+    ok("v4.1-W10: Kommandozeile, Ausliefer-Pfade, Log-Pfad, Hash und HTML-Filter")
+
+
 def main():
     print("test_restream — Restream-Kernlogik (Mock-basiert)")
     test_streak()
@@ -7957,6 +8050,8 @@ def main():
     test_v41_w7_sprache_je_benutzer()
     test_v41_w8_oauth_schicht()
     test_v41_w9_kick_blueprint()
+    test_v41_w10_diagnose_und_blindheit()
+    test_v41_w10_codeql_befunde()
     test_b168_moderator_everywhere()
     test_b169_kick_oauth()
     test_b170_azrael_and_youtube()

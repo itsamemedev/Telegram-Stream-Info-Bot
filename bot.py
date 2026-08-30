@@ -772,6 +772,7 @@ from nc.scoring import build_report  # noqa: F401
 from nc.persona import (  # noqa: F401
     _persona_intensity_hint, _azrael_emotion)
 from nc.util import _webhook_event_match, _loop_not_ready  # noqa: F401
+from nc import util as _nc_util  # v4.1-W10: datei_in() fuer die Ausliefer-Routen
 from nc.proxyutil import (  # noqa: F401
     get_random_proxy, _pick_pull_proxy, configure_proxy_select)
 from nc.channels import (  # noqa: F401
@@ -14824,11 +14825,11 @@ def _url_host(url: str) -> str:
     lowercase. Fuers tee-Fehler-Labeling: kick/twitch/youtube an ihren Hosts
     erkennen. kick=fa….live-video.net, twitch=ingest.…live-video.net,
     youtube=a.rtmp.youtube.com sind unterscheidbar — der Name-Substring
-    'twitch' kommt in dessen IVS-URL dagegen gar nicht vor."""
-    if not url or "://" not in url:
-        return ""
-    rest = url.split("://", 1)[1]
-    return rest.split("/", 1)[0].split(":", 1)[0].strip().lower()
+    'twitch' kommt in dessen IVS-URL dagegen gar nicht vor.
+
+    v4.1-W10: nach nc/restream_util.py geloest, weil die Abbruch-Diagnose
+    denselben Hostvergleich braucht."""
+    return _nc_rutil.url_host(url)
 
 
 def _normalize_ingest(ingest_url: str) -> str:
@@ -15476,11 +15477,24 @@ def _find_chromium():
 
 
 def _htmlov_screenshot_cmd(binpath, png_tmp, size=None):
+    # v4.1-W10 (CodeQL py/command-line-injection): Groesse und URL werden hier
+    # geprueft, nicht dort, wo sie herkommen. Das ist der EINE Punkt, an dem
+    # beide auf eine Kommandozeile gehen — beide stammen aus der .env bzw. aus
+    # einer ffprobe-Messung. Die Uebergabe ist eine Liste, es gibt also keine
+    # Shell; ein Wert wie "800,600 --dump-dom" waere aber trotzdem ein
+    # zusaetzliches Chromium-Argument, und `file:///…` waere eine gueltige
+    # Seite. Faellt etwas durch, greift der Fallback statt eines Fehlers: der
+    # Overlay-Pfad darf an einer .env-Zeile nicht sterben.
+    _sz = _nc_rutil.fenstergroesse(
+        size or RESTREAM_OVERLAY_HTML_FALLBACK_SIZE,
+        _nc_rutil.fenstergroesse(RESTREAM_OVERLAY_HTML_FALLBACK_SIZE))
+    _url = _nc_rutil.http_url(RESTREAM_OVERLAY_HTML_URL,
+                              f"http://127.0.0.1:{DASHBOARD_PORT}/overlay")
     return [binpath, "--headless=new", "--disable-gpu", "--no-sandbox",
             "--hide-scrollbars", "--default-background-color=00000000",
-            f"--window-size={size or RESTREAM_OVERLAY_HTML_FALLBACK_SIZE}",
+            f"--window-size={_sz}",
             f"--screenshot={png_tmp}", "--virtual-time-budget=2500",
-            RESTREAM_OVERLAY_HTML_URL]
+            _url]
 
 
 def _restream_html_overlay_start(rid, source_url=None):
@@ -16156,10 +16170,22 @@ class RestreamManager:
         Hauptprozess sichtbar gemacht hat, blieb dort unsichtbar. Derselbe
         Leser bedient jetzt beide."""
         buf = {}
+        _blind_grund = ""
         try:
             while True:
                 line = await proc.stdout.readline()
                 if not line:
+                    # v4.1-W10: KEIN stiller Ausstieg mehr. EOF heisst: ffmpeg
+                    # hat den -progress-Strom geschlossen, waehrend der Prozess
+                    # weiterlaeuft. Der Leser endet dann regulaer (keine
+                    # Exception, also auch keine _loop_fehler-Meldung) — und
+                    # ab hier friert die Health-Anzeige auf dem LETZTEN guten
+                    # Wert ein. Bitrate und FPS stehen im Dashboard weiter da
+                    # und sehen gesund aus, obwohl niemand mehr misst. Genau so
+                    # stand Restream #43 im error.log: "keine Fortschrittsdaten
+                    # mehr", danach nichts.
+                    _blind_grund = ("ffmpeg hat den -progress-Strom "
+                                    "geschlossen (EOF)")
                     break
                 s = line.decode("utf-8", "ignore").strip()
                 if "=" in s:
@@ -16174,6 +16200,10 @@ class RestreamManager:
                         if RESTREAM_OVERLAY and pname is None:
                             _write_restream_overlay()   # ~1×/Sek: frische AZRAEL-Reaktion einblenden
         except asyncio.CancelledError:
+            # Der Normalfall beim Prozessende: _monitor cancelt beide Leser,
+            # nachdem ffmpeg gewartet wurde. Das ist KEINE Blindheit — hier
+            # darf nichts markiert werden, sonst traegt jeder saubere Stopp
+            # eine Warnung ins Dashboard.
             raise
         except Exception as e:
             # v4.0-W113: war ein blankes `pass`. Stirbt dieser Leser, friert
@@ -16181,7 +16211,37 @@ class RestreamManager:
             # Laufzeit stehen still, obwohl gesendet wird — und der
             # Stillstands-Waechter unten wird blind. Beides sah man vorher
             # nirgends. Jetzt einmal auf error, danach gedrosselt.
+            _blind_grund = f"{type(e).__name__}: {e}"
             _loop_fehler(f"restream-progress#{rid}" + (f"[{pname}]" if pname else ""), e)
+        finally:
+            if _blind_grund:
+                self._mark_blind(rid, _blind_grund, pname=pname)
+
+    def _mark_blind(self, rid, grund, pname=None):
+        """v4.1-W10: die Health-Werte dieses Laufs sind ab jetzt Vergangenheit.
+
+        Ohne diese Markierung bleibt im Dashboard die letzte Bitrate stehen —
+        und eine stehende Bitrate liest sich wie ein gesunder Stream. Das ist
+        die gefaehrlichere Haelfte des Befunds: nicht dass die Messung
+        aufhoert, sondern dass ihr letzter Wert weiter als Messung gilt.
+        """
+        try:
+            info = self._eintrag(rid, pname)
+            if not info:
+                return
+            h = info.setdefault("health", {})
+            if h.get("blind"):
+                return                      # schon gemeldet, nicht doppelt
+            h["blind"] = True
+            h["blind_reason"] = grund
+            h["blind_ts"] = _time_mod.time()
+            _wer = f"#{rid}" + (f" [{pname}]" if pname else "")
+            log.error("Restream %s: -progress-Leser beendet (%s). Die "
+                      "Health-Werte frieren auf dem letzten Stand ein und "
+                      "sind ab hier als 'blind' markiert — sie sehen sonst "
+                      "gesund aus, obwohl niemand mehr misst.", _wer, grund)
+        except Exception as e:
+            log.debug("Blind-Markierung fehlgeschlagen: %s", e)
 
     async def _read_stderr(self, proc, sink):
         try:
@@ -16319,10 +16379,15 @@ class RestreamManager:
                     reader_alive=bool(_pt is not None and not _pt.done()))
                 if v.state == _nc_rstab.STALL_BLIND and not info.get("blind_warned"):
                     info["blind_warned"] = True
-                    log.error("Restream %s: keine Fortschrittsdaten mehr (%s). "
+                    # v4.1-W10: den KONKRETEN Grund mitnennen. "progress-Leser
+                    # tot" sagt, DASS niemand mehr misst, nicht warum — und
+                    # ohne das Warum war der Befund im error.log nicht
+                    # verfolgbar. _read_progress hinterlegt ihn beim Ende.
+                    _bg = (info.get("health") or {}).get("blind_reason") or "Grund unbekannt"
+                    log.error("Restream %s: keine Fortschrittsdaten mehr (%s; %s). "
                               "Der Stillstands-Waechter schiesst deshalb NICHT, "
                               "aber die Health-Anzeige ist ab hier tot.",
-                              _wer, v.reason)
+                              _wer, v.reason, _bg)
                 if not v.stalled:
                     continue
                 info["stall_kill"] = True
@@ -16878,15 +16943,34 @@ class RestreamManager:
         if ("tls" in _tl or "ssl" in _tl or "handshake" in _tl
                 or "end of file" in _tl or "input/output error" in _tl
                 or "i/o error" in _tl):
-            log.error("Restream #%d: Kick-Ingest nimmt die Verbindung nicht an "
-                      "(rtmps). Reihenfolge: 1) welcher Key laeuft wirklich — "
-                      "Startzeile 'Kick-Ziel:' im Log, DB schlaegt .env; "
-                      "2) laeuft derselbe Key schon woanders; 3) IP-Block. "
-                      "stderr: %s", rid, tail[-300:])
+            # v4.1-W10: WELCHES Ziel steht wirklich im Auszug? Bis hierher
+            # nannte diese Zeile kategorisch Kick — auch wenn im stderr
+            # ausschliesslich der Twitch-Slave stand. Der Betreiber prueft
+            # danach Kick-Key, Kick-App und IP-Block bei Kick, waehrend Twitch
+            # das Problem ist. Eine Diagnose, die auf die falsche Plattform
+            # zeigt, ist schlimmer als gar keine. Verglichen wird auf den
+            # INGEST-HOST, nie auf den Plattformnamen: Kick und Twitch liegen
+            # beide auf live-video.net, und 'twitch' kommt in Twitchs eigener
+            # URL nicht vor.
+            _zl = ((info or {}).get("tee_targets") or _nc_rst.active_targets())
+            _betroffen = _nc_rutil.betroffene_ziele(tail, _zl)
+            _wen = ", ".join(_betroffen) if _betroffen else "unbekannt (kein Ziel-Host im Auszug)"
+            log.error("Restream #%d: Ingest nimmt die Verbindung nicht an — "
+                      "betroffen: %s. Reihenfolge: 1) welcher Key laeuft "
+                      "wirklich — Startzeile '%s-Ziel:' im Log, DB schlaegt "
+                      ".env; 2) laeuft derselbe Key schon woanders; "
+                      "3) IP-Block. stderr: %s",
+                      rid, _wen,
+                      (_betroffen[0].capitalize() if _betroffen else "Kick"),
+                      tail[-300:])
         elif "rtmp" in _tl and ("refused" in _tl or "unable" in _tl
                                 or "failed" in _tl):
-            log.error("Restream #%d: rtmp-Ziel-Fehler (evtl. Twitch). "
-                      "stderr: %s", rid, tail[-300:])
+            _zl = ((info or {}).get("tee_targets") or _nc_rst.active_targets())
+            _betroffen = _nc_rutil.betroffene_ziele(tail, _zl)
+            log.error("Restream #%d: rtmp-Ziel-Fehler — betroffen: %s. "
+                      "stderr: %s", rid,
+                      (", ".join(_betroffen) if _betroffen else "unbekannt"),
+                      tail[-300:])
         _attempts_raw = info.get("attempts", 0)
         # v4.0-W113: hat dieser Lauf ueberhaupt gesendet? Der Stillstands-
         # Waechter beendet einen Prozess, der zwar LANG lief, aber kein Bild
@@ -20929,17 +21013,22 @@ def api_clips():
 @dashboard_app.route("/api/clip/<fn>", methods=["GET", "DELETE"])
 def api_clip_file(fn):
     """GET: Clip ausliefern (Abspielen/Download). DELETE: Clip manuell löschen. Flach in CLIP_DIR."""
-    if "/" in fn or "\\" in fn or not fn.endswith(".mp4"):
+    # v4.1-W10 (CodeQL py/path-injection): statt auf Verbotenes zu pruefen,
+    # wird der fertige Pfad aufgeloest und nachgewiesen, dass er in CLIP_DIR
+    # liegt. Das deckt auch Symlinks und '..' in jeder Schreibweise ab — und
+    # es bleibt richtig, wenn spaeter jemand die Route auf Unterordner oeffnet.
+    p = _nc_util.datei_in(CLIP_DIR, fn, ".mp4")
+    if not p:
         abort(404)
     if request.method == "DELETE":
         try:
-            p = os.path.join(os.path.abspath(CLIP_DIR), fn)
             if os.path.exists(p):
                 os.remove(p)
             return jsonify(ok=True, deleted=fn)
         except OSError as e:
             return jsonify(ok=False, error=str(e)), 500
-    return send_from_directory(os.path.abspath(CLIP_DIR), fn, mimetype="video/mp4")
+    return send_from_directory(os.path.abspath(CLIP_DIR), os.path.basename(p),
+                               mimetype="video/mp4")
 
 
 @dashboard_app.route("/api/clips/clear", methods=["POST", "DELETE"])
@@ -20980,9 +21069,13 @@ def api_tts_file(fn):
     # HARDENING: <fn> statt <path:fn> — Dateien liegen flach in _TTS_DIR, es
     # werden keine Slashes/Subpaths gebraucht. Zusätzlich .wav erzwingen.
     # (send_from_directory schützt ohnehin via safe_join, aber enger ist besser.)
-    if "/" in fn or "\\" in fn or not fn.endswith(".wav"):
+    # v4.1-W10 (CodeQL py/path-injection): siehe api_clip_file — der aufgeloeste
+    # Pfad muss nachweislich in _TTS_DIR liegen, nicht nur keine Slashes haben.
+    p = _nc_util.datei_in(_TTS_DIR, fn, ".wav")
+    if not p:
         abort(404)
-    return send_from_directory(os.path.abspath(_TTS_DIR), fn, mimetype="audio/wav")
+    return send_from_directory(os.path.abspath(_TTS_DIR), os.path.basename(p),
+                               mimetype="audio/wav")
 
 
 @dashboard_app.route("/api/azrael/tts_test", methods=["POST"])

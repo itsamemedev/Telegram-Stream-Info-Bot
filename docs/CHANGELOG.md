@@ -11,6 +11,59 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Behoben — Fehlerbilder aus dem Betrieb und fünf CodeQL-Klassen (v4.1 W10)
+
+**Die Abbruch-Diagnose zeigte auf die falsche Plattform.** Bei jedem
+`Input/output error` und jedem `End of file` schrieb der Bot kategorisch
+„Kick-Ingest nimmt die Verbindung nicht an (rtmps)" — im `error.log` vom
+30.08. sechsmal, während im selben Auszug auch der **Twitch**-Slave scheiterte.
+Wer danach handelt, prüft Kick-Key, Kick-App und IP-Block bei Kick, während
+Twitch das Problem ist. Eine Diagnose, die auf die falsche Plattform zeigt,
+ist schlimmer als gar keine. Sie nennt jetzt die Ziele, deren **Ingest-Host**
+wirklich im Auszug steht (`nc/restream_util.betroffene_ziele`) — verglichen
+wird auf den vollen Host, nie auf den Plattformnamen: Kick und Twitch liegen
+beide auf `live-video.net`, und „twitch" kommt in Twitchs eigener URL nicht vor.
+
+**Eingefrorene Health-Werte sahen aus wie ein gesunder Stream.** Endet der
+`-progress`-Leser regulär (ffmpeg schliesst den Strom, EOF — keine Exception,
+also auch keine Meldung), blieben Bitrate und FPS im Dashboard auf dem letzten
+Wert stehen. Der Stillstands-Wächter meldete einmal „keine Fortschrittsdaten
+mehr" und lief danach blind weiter. Das ist die gefährlichere Hälfte: nicht
+dass die Messung aufhört, sondern dass ihr letzter Wert weiter als Messung
+gilt. Der Leser markiert seinen Eintrag jetzt als `blind` samt Grund, der
+Wächter nennt diesen Grund, und das Dashboard zeigt „⚠ blind" statt einer
+Zahl, die nichts mehr misst. Der saubere Stopp (`CancelledError`) markiert
+ausdrücklich **nicht** — sonst trüge jeder normale Stopp eine Warnung.
+
+**CodeQL, fünf Klassen:**
+
+* *Uncontrolled command line* (Critical). `--window-size` und die Overlay-URL
+  gehen aus der `.env` auf Chromiums Kommandozeile. Die Übergabe ist eine
+  Liste, es gibt also keine Shell — ein Wert wie `800,600 --dump-dom` wäre
+  trotzdem ein zweites Argument, und `file:///…` eine gültige Seite. Beide
+  werden jetzt am **einen** Übergabepunkt geprüft; fällt etwas durch, greift
+  der Fallback statt eines Fehlers.
+* *Uncontrolled data in path expression*. Die Ausliefer-Routen (`/api/clip/<fn>`,
+  `/api/tts/<fn>`) prüften auf verbotene Zeichen. Das war dicht, aber es ist
+  eine Aussage über Zeichen statt über das Ziel. `nc.util.datei_in()` löst den
+  Pfad auf und weist nach, dass er in der Basis liegt — inklusive Symlinks und
+  des Präfix-Nachbarn (`/daten/clips2` fängt mit `/daten/clips` an, liegt aber
+  nicht darin). `nc/routes/ops.py` baut den Log-Pfad aus einer Tabelle.
+* *Path injection über einen Sprachnamen*. `nc.i18n.katalog()` ist über
+  `/api/i18n/katalog?lang=…` erreichbar und legte den Namen in einen Dateipfad.
+  Jetzt nur noch Sprachen aus `SPRACHEN`; Unbekanntes fällt auf den leeren
+  Katalog, also auf Deutsch.
+* *Weak hashing*. Die Item-Id in `nc/news.py` ist ein Inhalts-Hash für den
+  Dedup, kein Schutz — `usedforsecurity=False` sagt das. **Der Wert bleibt
+  gleich**: ein Wechsel auf sha256 hätte jede bereits veröffentlichte Meldung
+  einmalig zur Neu-Meldung gemacht.
+* *Bad HTML filtering regex*. `tools/i18n_extract.py` erkannte nur `</script>`.
+  Bei `</script >` hätte es den Rest der Datei als Skript verschluckt — alle
+  folgenden Textknoten wären lautlos aus dem Katalog gefallen.
+
+Sechs Verträge sind neu (vier in `test_nc_modules.py`, zwei in
+`test_restream.py`).
+
 ### Geändert — Kick als Blueprint, Kick-Schicht nach `nc/` (v4.1 W9)
 
 `bot.py`: 29.437 → **29.254 Zeilen**. `nc/routes/` trägt jetzt 21 Blueprints

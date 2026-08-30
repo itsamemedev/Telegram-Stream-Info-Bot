@@ -110,7 +110,13 @@ def item_id(category: str, title: str, body: str, extra: str = "") -> str:
     """Inhalts-Id fuer den Dedup in merge(). `extra` nimmt ab v4.1 die neuen
        Felder auf: aendert sich NUR eine Kennzahl oder ein Detailpunkt, ist das
        eine neue Meldung — ohne `extra` waere sie als Duplikat verschwunden."""
-    h = hashlib.sha1(f"{category}|{title}|{body}|{extra}".encode("utf-8")).hexdigest()
+    # v4.1-W10 (CodeQL py/weak-sensitive-data-hashing): usedforsecurity=False
+    # sagt Bibliothek und Prüfwerkzeug, was hier wirklich passiert — eine
+    # Inhalts-Id für den Dedup, kein Schutz. Der WERT bleibt derselbe; ein
+    # Wechsel auf sha256 wuerde jede bereits veroeffentlichte Meldung einmalig
+    # zur Neu-Meldung machen, weil ihre Id sich aendert.
+    h = hashlib.new("sha1", f"{category}|{title}|{body}|{extra}".encode("utf-8"),
+                    usedforsecurity=False).hexdigest()
     return h[:12]
 
 
