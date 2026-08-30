@@ -11,6 +11,47 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Behoben — zwei Restreams auf einem Kick-Key (v4.1 W12)
+
+Der Befund aus dem `debug.log` vom 30.08., und die Ursache der Abbruch-Serie
+aus dem `error.log` desselben Tages. Sekunde für Sekunde:
+
+```
+09:23:42  #60 stirbt (rc=255). _monitor plant reconnect in 20s und nimmt #60
+          dabei aus _procs — der Einzel-Slot sieht frei aus.
+09:23:46  auto_start_due findet _procs leer, Single-Modus sagt „frei", → #6.
+09:24:02  Der geplante Reconnect von #60 feuert — ohne noch einmal zu fragen.
+```
+
+Ab hier senden zwei Restreams auf **denselben Kick-Key**. Ein RTMP-Key nimmt
+einen Publisher; jeder neue Verbindungsaufbau wirft den anderen raus. Beide
+sterben abwechselnd, der Wiederanlauf baut beide neu auf. Das lief über
+Stunden — im `error.log` als `Broken pipe`, `Input/output error` und sechs
+Stillstands-Abschüsse für ein Ziel.
+
+**Die Prüfung sass nur im Scheduler, nicht im Start.** `auto_start_due`
+respektierte den Einzel-Modus vorbildlich; der Reconnect-Pfad in `_monitor`
+kannte ihn gar nicht. Zwischen „reconnect in 20s" und dem Start liegt aber
+genug Zeit, dass sich die Lage ändert — genau diese Lücke wurde benutzt. Die
+Prüfung sitzt jetzt in `start()`, dem einen Punkt, durch den Scheduler,
+Verify-Loop, Reconnect und Handstart gleichermassen gehen.
+
+**Die dafür gebaute Warnung schwieg.** B141 meldet seit Langem „Restream #X
+teilt sich den Kick-Key mit #Y" — unter der Bedingung `_dup and not
+RESTREAM_SINGLE`. Sie war also ausgerechnet in dem Modus stumm, in dem der
+Fehler überhaupt entstehen kann. In dreieinhalb Stunden Log steht sie kein
+einziges Mal. Ein geteilter Key ist immer falsch; die Warnung gilt jetzt immer.
+
+**Nebenbefund im selben Log:** `Abwehr: CrowdSec-LAPI HTTP 403` stand 109 Mal
+da — der Dashboard-Takt ruft den Weg alle zwei Minuten auf, und ein 403 ist ein
+Dauerzustand (Bouncer-Schlüssel nicht registriert), kein Ereignis. Was dabei
+fehlte, war das Wichtigste: `hint` und `fix` gingen nur an die API zurück, nie
+ins Log. Wer den Log las, sah 109 Mal eine Zahl und nie, was zu tun ist. Jetzt
+beim ersten Mal und danach höchstens alle 15 Minuten — dafür mit Grund und
+Abhilfe.
+
+Zwei Verträge sind neu.
+
 ### Behoben — Fehlerbilder aus dem Betrieb und fünf CodeQL-Klassen (v4.1 W10)
 
 **Die Abbruch-Diagnose zeigte auf die falsche Plattform.** Bei jedem

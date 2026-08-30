@@ -2,7 +2,7 @@
 
 > 🌐 **English** · [Deutsch](../ROADMAP.md)
 
-The next big step is not a feature, it is cleaning up: **`bot.py` has 29,356
+The next big step is not a feature, it is cleaning up: **`bot.py` has 29,404
 lines**. That file is the project's bottleneck — it cannot be taken in at a
 glance and can only be edited with tooling.
 
