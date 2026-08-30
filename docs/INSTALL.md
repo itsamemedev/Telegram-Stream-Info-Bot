@@ -1,5 +1,7 @@
 # Installation von Hand
 
+> 🌐 **Deutsch** · [English](en/INSTALL.md)
+
 Der schnelle Weg steht im README: **[📦 Installation](../README.md#-installation)**
 — `tools/installer.sh` richtet alles ein und fragt vor jedem Eingriff. Diese
 Anleitung ist für alle, die jeden Schritt selbst gehen wollen.

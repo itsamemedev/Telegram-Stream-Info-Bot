@@ -5,6 +5,8 @@
 ### Der Kontrollraum für Live-Streaming
 #### Überwachung · Aufnahme · Multi-Ziel-Restream · KI-Moderation
 
+🌐 **Deutsch** · [English](README.en.md)
+
 [![AZRAEL SENTINEL — weltweit erste Streaming-KI](https://img.shields.io/badge/%F0%9F%A4%96%20AZRAEL%20SENTINEL-Weltweit%20erste%20Streaming--KI-E8C86A?style=for-the-badge&labelColor=0C0B09)](https://lafap.de)
 
 [![Lizenz: GPL v3](https://img.shields.io/badge/Lizenz-GPLv3-blue.svg?style=for-the-badge&logo=gnu)](LICENSE)
@@ -127,7 +129,7 @@ reagiert live auf den gesendeten Stream und blendet sich ins Sendebild ein.
 <td valign="top">
 
 ### 📊 Auswerten
-Flask-Dashboard mit **355 API-Routen**, Wissensgraph-Visualisierung,
+Flask-Dashboard mit **359 API-Routen**, Wissensgraph-Visualisierung,
 Einnahmen-Journal (Finanzamt-tauglich, append-only mit Hash-Kette) und PWA
 fürs Handy.
 
@@ -151,7 +153,7 @@ fürs Handy.
 | **Sentinel-Flotte** | 13 Wächter-Agenten (health, recovery, scout, analytics, learning, sentinel, disk, swap, restream, toxicity, uptime, recording, proxy) mit Telegram-Alarm, einzeln abschaltbar |
 | **Community** | Wiedererkennung von Stammzuschauern · Loyalty-Punkte & Ränge · Discord-XP, Level, Daily-Streak · Live-Ping · Highlight-Share · Community-Events |
 | **Geld** | Spenden-Telemetrie (Schätzwerte) · getrenntes Einnahmen-Journal (`nc/ledger.py`) mit Hash-Kette und CSV-Export fürs Finanzamt |
-| **Dashboard** | 355 Flask-Routen · Live-Panels · Gehirn-Visualisierung mit Lernkurve · Overlay für OBS · installierbare PWA (Android) · QR-Login |
+| **Dashboard** | 359 Flask-Routen · Live-Panels · Gehirn-Visualisierung mit Lernkurve · Overlay für OBS · installierbare PWA (Android) · QR-Login |
 | **Betrieb** | systemd-Dienst · Deploy-Skript mit Vorabprüfung und Auto-Rollback · Selbsttest-Route · Totmann-Meldung bei Prozesstod · CrowdSec-Anbindung · Log-Redaction für Cookies und Stream-Keys |
 | **Datenbank** | SQLite **oder** MariaDB · zentrales Schema-Modul · Export-Werkzeug · SQL-Guard |
 
@@ -194,10 +196,10 @@ flowchart TB
     DC --> BOT
     TT --> BOT
 
-    BOT["bot.py<br/>Monolith · 29.646 Zeilen<br/>Scraper · Recorder · Restream<br/>Flask-Dashboard · 172 eigene Routen"]:::core
+    BOT["bot.py<br/>Monolith · 29.664 Zeilen<br/>Scraper · Recorder · Restream<br/>Flask-Dashboard · 172 eigene Routen"]:::core
 
-    BOT -->|configure| NC["nc/ — 91 Fachmodule<br/>Schema · OAuth · Restream<br/>Ledger · Moderation · Intel"]:::lib
-    NC --> RT["nc/routes/ — 17 Blueprints<br/>183 weitere API-Routen"]:::lib
+    BOT -->|configure| NC["nc/ — 92 Fachmodule<br/>Schema · OAuth · Restream<br/>Ledger · Moderation · Intel"]:::lib
+    NC --> RT["nc/routes/ — 18 Blueprints<br/>187 weitere API-Routen"]:::lib
     BOT --> TPL["templates/<br/>Dashboard · Overlay · PWA"]:::lib
     BOT --> BR["brain_bridge.py"]:::lib
     BR --> BRAIN["brain/ — eigene brain.db<br/>state · rules · router · memory<br/>knowledge · semantic · scheduler<br/>llm · agents · report"]:::brain
@@ -296,7 +298,7 @@ OAuth-Flows — Schritt für Schritt in
 
 ## ⚙️ Konfiguration
 
-Alle Einstellungen leben in `.env`. Die Vorlage `.env.example` kennt **rund 495 Variablen** — das Minimum ist klein:
+Alle Einstellungen leben in `.env`. Die Vorlage `.env.example` kennt **rund 496 Variablen** — das Minimum ist klein:
 
 ### 🔑 Pflicht
 
@@ -534,7 +536,7 @@ Deterministische Erkennung **vor** Banned-Words und **vor** jeder KI:
 
 ## 🖥️ Dashboard
 
-Flask-Dashboard mit **355 Routen** unter `127.0.0.1:8050`.
+Flask-Dashboard mit **359 Routen** unter `127.0.0.1:8050`.
 
 ```bash
 # Von deinem Laptop — niemals den Port öffnen:
@@ -715,7 +717,7 @@ gebrochen ist.**
 
 ### 🧭 Navigation im Monolithen
 
-`bot.py` hat 29.646 Zeilen. Es wird **nie** ganz gelesen und **nie**
+`bot.py` hat 29.664 Zeilen. Es wird **nie** ganz gelesen und **nie**
 blind durchsucht — erst fragen wo etwas steht, dann den Ausschnitt holen:
 
 ```bash
@@ -729,8 +731,8 @@ python3 tools/ncpatch.py apply  patches/x.json         # alles-oder-nichts, legt
 python3 tools/ncpatch.py docs                          # Doku-Zahlen gegen den Code
 ```
 
-`find` antwortet aus **[`.claude/INDEX.md`](.claude/INDEX.md)** — 355 Routen
-(172 in `bot.py`, 183 in `nc/routes/`), 45 Slash-Commands, 519 Funktionen,
+`find` antwortet aus **[`.claude/INDEX.md`](.claude/INDEX.md)** — 359 Routen
+(172 in `bot.py`, 187 in `nc/routes/`), 45 Slash-Commands, 519 Funktionen,
 jeweils mit Zeilennummer.
 
 ---
@@ -739,7 +741,7 @@ jeweils mit Zeilennummer.
 
 | Regel | Warum |
 |---|---|
-| **`.env` liegt nie im Repo und nie im Archiv** | ~495 Variablen inkl. Cookies, OAuth-Tokens und Stream-Keys |
+| **`.env` liegt nie im Repo und nie im Archiv** | ~496 Variablen inkl. Cookies, OAuth-Tokens und Stream-Keys |
 | **Dashboard bindet auf `127.0.0.1`** | Zugriff läuft über SSH-Tunnel, nicht über einen offenen Port |
 | **Cookie- und Key-Redaction beim Logging** | `streamlink`/`ffmpeg`-Kommandozeilen werden vor dem Loggen bereinigt |
 | **Ledger ist append-only mit Hash-Kette** | Eine Korrektur ist eine Gegenbuchung, kein Überschreiben |
@@ -842,11 +844,12 @@ nicht greifen, gekippte Verträge in `test_restream.py`.
 | | |
 |---|---|
 | Aktuelle Version | **4.0** — „Restream Control Room" (2026.08) |
-| Flask-Routen | 355 (172 in `bot.py` · 183 in `nc/routes/`) |
+| Flask-Routen | 359 (172 in `bot.py` · 187 in `nc/routes/`) |
 | Discord-Slash-Commands | 45 |
-| Fachmodule | 91 in `nc/` (+17 in `nc/routes/`, +3 in `nc/intel/`), 10 in `brain/` |
+| Fachmodule | 92 in `nc/` (+18 in `nc/routes/`, +3 in `nc/intel/`), 10 in `brain/` |
 | Sentinel-Agenten | 13 |
-| Konfigurationsvariablen | ~495 |
+| Konfigurationsvariablen | ~496 |
+| Sprachen | Deutsch (Quelle), Englisch |
 
 Vollständige Historie: **[`docs/CHANGELOG.md`](docs/CHANGELOG.md)** ·
 **[`docs/README_V37.md`](docs/README_V37.md)**
@@ -856,14 +859,14 @@ Vollständige Historie: **[`docs/CHANGELOG.md`](docs/CHANGELOG.md)** ·
 ## 🧭 Roadmap
 
 Der nächste grosse Schritt ist kein Feature, sondern Aufräumen: **`bot.py` hat
-29.646 Zeilen**. Die Datei ist der Engpass des Projekts. Die Messlatte dafür ist
+29.664 Zeilen**. Die Datei ist der Engpass des Projekts. Die Messlatte dafür ist
 aber keine Zeilenzahl:
 
 > **Eine neue API-Route anlegen, ohne `bot.py` zu öffnen.**
 
 Der Weg dahin in sechs Wellen — gemessen, nicht geschätzt:
 **[`docs/ROADMAP.md`](docs/ROADMAP.md)**. Welle 2 ist erledigt, Welle 3 läuft:
-`nc/routes/` trägt heute 17 Blueprints mit 183 API-Routen, die nicht mehr im
+`nc/routes/` trägt heute 18 Blueprints mit 187 API-Routen, die nicht mehr im
 Monolithen stehen.
 
 ---

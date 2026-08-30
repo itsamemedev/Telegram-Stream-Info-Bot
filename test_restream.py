@@ -2294,6 +2294,199 @@ def test_v41_w5_streamer_blueprint():
     ok("v4.1-W5: nc.ctx bei %d Slots, kein Eintrag dazugekommen" % len(ncctx.Ctx.__slots__))
 
 
+
+# ------------------------------------------------- v4.1-W6) Mehrsprachigkeit
+
+def test_v41_w6_i18n_fundament():
+    """v4.1-W6: der Katalog, die Spracherkennung und der Rueckfall auf Deutsch.
+
+    Der Ansatz ist ungewoehnlich und deshalb vertraglich festgehalten: die
+    DEUTSCHE Zeichenkette ist der Schluessel. Das haelt den Bestand lesbar und
+    macht jeden fehlenden Eintrag zu einem deutschen Satz statt zu einem nackten
+    Schluesselnamen — aber es heisst auch, dass ein geaenderter deutscher Text
+    seine Uebersetzung still verliert. Genau dagegen steht --check.
+    """
+    import json as _json
+    from nc import i18n
+
+    # (1) Rueckfall: was nicht im Katalog steht, bleibt Deutsch. NIE leer, nie
+    # ein Schluesselname — eine Oberflaeche mit Luecken waere schlimmer als
+    # eine einsprachige.
+    assert i18n.t("Vollkommen unbekannter Satz", "en") == "Vollkommen unbekannter Satz"
+    assert i18n.t("", "en") == ""
+    assert i18n.t("Irgendwas", "kl") == "Irgendwas", "unbekannte Sprache muss durchreichen"
+    ok("v4.1-W6: fehlende Uebersetzung faellt auf Deutsch zurueck")
+
+    # (2) Spracherkennung. Der Header ist ein Wunsch: passt nichts, sagt die
+    # Funktion None und der Aufrufer entscheidet.
+    assert i18n.aus_accept_language("en-US,en;q=0.9,de;q=0.8") == "en"
+    assert i18n.aus_accept_language("de-DE,de;q=0.9,en;q=0.8") == "de"
+    assert i18n.aus_accept_language("fr-FR,fr;q=0.9,en;q=0.3") == "en", "q-Wert missachtet"
+    assert i18n.aus_accept_language("fr") is None
+    assert i18n.aus_accept_language("") is None and i18n.aus_accept_language(None) is None
+    for roh, erwartet in (("de-DE", "de"), ("EN", "en"), ("en_US", "en"),
+                          ("fr", None), ("", None), (None, None)):
+        assert i18n.normalisieren(roh) == erwartet, "normalisieren(%r)" % roh
+    ok("v4.1-W6: Accept-Language und normalisieren exakt")
+
+    # (3) Platzhalter werden NACH der Uebersetzung eingesetzt — im Englischen
+    # steht das Objekt oft woanders. Und ein Katalogeintrag mit falschem
+    # Platzhalter darf keine Route sprengen.
+    i18n.configure()
+    i18n._kataloge["en"] = {"{n} Aufnahmen von {u}": "{u} has {n} recordings",
+                            "Kaputt {fehlt}": "Broken {gibtsnicht}"}
+    try:
+        assert i18n.t("{n} Aufnahmen von {u}", "en", n=3, u="a") == "a has 3 recordings"
+        assert i18n.t("Kaputt {fehlt}", "en", fehlt="x") == "Kaputt x", \
+            "kaputter Katalogeintrag muss auf den deutschen Satz zurueckfallen"
+    finally:
+        i18n._kataloge.pop("en", None)
+    ok("v4.1-W6: Platzhalter nach der Uebersetzung, kaputter Eintrag faellt zurueck")
+
+    # (4) Der Katalog auf der Platte ist gueltiges JSON im erwarteten Format,
+    # und Deutsch bleibt leer — die Quellsprache braucht keine Uebersetzung.
+    for sp in i18n.SPRACHEN:
+        roh = _json.load(open("locales/%s.json" % sp, encoding="utf-8"))
+        assert isinstance(roh.get("strings"), dict), "locales/%s.json ohne strings" % sp
+    assert not _json.load(open("locales/de.json", encoding="utf-8"))["strings"], \
+        "de ist die Quellsprache und darf keinen Katalog haben"
+    ok("v4.1-W6: %d Kataloge auf der Platte, de bleibt leer" % len(i18n.SPRACHEN))
+
+    # (5) Die Oberflaeche uebersetzt im Browser. Ohne Beobachter waere nur das
+    # beim Laden vorhandene Geruest uebersetzt und jede nachgeladene Tabelle
+    # wieder deutsch — sichtbar halb uebersetzt.
+    js = open("nc/routes/i18n.py", encoding="utf-8").read()
+    assert "/api/i18n/katalog" in js, "Uebersetzer laedt keinen Katalog"
+    assert "MutationObserver" in js, "kein Beobachter — nachgeladene Inhalte blieben deutsch"
+    assert "TABU" in js and "CODE:1" in js and "PRE:1" in js, \
+        "Uebersetzer verschont <code>/<pre> nicht — dort stehen Befehle und Logzeilen"
+    # Alle drei Oberflaechen binden DENSELBEN Uebersetzer ein. Drei Inline-Kopien
+    # waeren drei Stellen, die auseinanderlaufen — und zwei davon faenden es
+    # niemand, weil brain und overlay seltener angesehen werden.
+    for vorlage in ("templates/dashboard.html", "templates/brain.html",
+                    "templates/overlay.html"):
+        h = open(vorlage, encoding="utf-8").read()
+        assert '<script src="/api/i18n/uebersetzer.js"' in h, \
+            "%s bindet den Uebersetzer nicht ein" % vorlage
+    assert "data-i18n-switch" in open("templates/dashboard.html", encoding="utf-8").read(), \
+        "kein Anker fuer den Sprachumschalter"
+    ok("v4.1-W6: ein Uebersetzer fuer drei Oberflaechen, mit Beobachter und Tabu-Zonen")
+
+    # (6) Der Katalog ist nicht bloss vorhanden, er traegt auch etwas. Ein leerer
+    # Katalog wuerde jede Zusicherung oben erfuellen und trotzdem nichts tun.
+    import json as _j
+    _en = _j.load(open("locales/en.json", encoding="utf-8"))["strings"]
+    _gefuellt = {k: v for k, v in _en.items() if v}
+    assert len(_gefuellt) == len(_en), \
+        "%d von %d Eintraegen ohne Uebersetzung" % (len(_en) - len(_gefuellt), len(_en))
+    assert len(_en) >= 600, "Katalog en zu duenn: %d Eintraege" % len(_en)
+    assert _gefuellt.get("Aufnahme gestoppt") == "Recording stopped"
+    # Keine Uebersetzung darf mit ihrer Quelle identisch sein — das waere ein
+    # vergessener Eintrag, der als erledigt zaehlt.
+    _faul = [k for k, v in _gefuellt.items() if k == v and len(k) > 12]
+    assert not _faul, "Eintraege unveraendert uebernommen: %s" % _faul[:5]
+    ok("v4.1-W6: alle %d Katalogeintraege uebersetzt" % len(_en))
+
+    # (7) Der Bot uebersetzt am SENDEWEG, nicht an 90 Aufrufstellen. _safe_send
+    # ist der einzige Weg nach Telegram — steht die Uebersetzung dort nicht,
+    # bleibt der Bot einsprachig, egal wie voll der Katalog ist.
+    b = open("bot.py", encoding="utf-8").read()
+    assert "text = _nc_i18n.t(text, lang)" in b, \
+        "_safe_send uebersetzt nicht — der Bot bleibt deutsch"
+    assert "_nc_i18n.configure(standard=UI_LANG)" in b, "nc.i18n wird nicht konfiguriert"
+    ok("v4.1-W6: Telegram-Sendeweg und UI_LANG verdrahtet")
+
+    # (8) Slash-Befehle gegen die Discord-Regeln rekonstruieren — in BEIDEN
+    # Sprachen. Die 100-Zeichen-Grenze gilt fuer die AUSGELIEFERTE Beschreibung,
+    # und ausgeliefert wird ab jetzt die uebersetzte. Eine zu lange englische
+    # Beschreibung liesse die Registrierung scheitern, und der Befehl waere im
+    # Discord schlicht weg — ohne dass hier irgendetwas rot wuerde.
+    import ast as _ast
+    import re as _re2
+    _befunde, _n = [], 0
+    for _k in _ast.walk(_ast.parse(b)):
+        if not isinstance(_k, _ast.Call):
+            continue
+        if not _ast.unparse(_k.func).endswith(("tree.command", "app_commands.command")):
+            continue
+        _n += 1
+        _kw = {x.arg: x.value for x in _k.keywords}
+        _name = getattr(_kw.get("name"), "value", None)
+        _d = _kw.get("description")
+        _de = None
+        if isinstance(_d, _ast.Call) and _d.args and isinstance(_d.args[0], _ast.Constant):
+            _de = _d.args[0].value
+        elif isinstance(_d, _ast.Constant):
+            _de = _d.value
+        if _name and not _re2.fullmatch(r"[-_a-z0-9]{1,32}", _name):
+            _befunde.append(("Name", _name))
+        if _de is None:
+            continue
+        if not isinstance(_d, _ast.Call):
+            _befunde.append(("Beschreibung nicht uebersetzt", _name))
+        for _sp, _txt in (("de", _de), ("en", _en.get(_de, _de))):
+            if len(_txt) > 100:
+                _befunde.append(("Beschreibung %s %d Zeichen" % (_sp, len(_txt)), _name))
+    assert _n >= 45, "nur %d Slash-Befehle gefunden — Registrierung kaputt?" % _n
+    assert not _befunde, "Discord-Befehle verletzen die Regeln: %s" % _befunde[:5]
+    ok("v4.1-W6: %d Slash-Befehle gueltig, Beschreibungen <=100 in de UND en" % _n)
+
+
+
+# ------------------------------------------------- v4.1-W6) zweisprachige Doku
+
+def test_v41_w6_doku_zweisprachig():
+    """v4.1-W6: englische Doku NEBEN der deutschen, mit lebenden Querverweisen.
+
+    Zwei Fassungen einer Datei laufen auseinander, sobald niemand hinsieht.
+    Dieser Vertrag sieht hin: er haelt fest, dass es jede englische Datei gibt,
+    dass beide Seiten aufeinander zeigen, und dass kein relativer Link ins
+    Leere fuehrt.
+    """
+    import os as _os
+    import re as _re3
+
+    paare = [("README.md", "README.en.md"),
+             ("CLAUDE.md", "CLAUDE.en.md"),
+             ("docs/README.md", "docs/en/README.md"),
+             ("docs/ROADMAP.md", "docs/en/ROADMAP.md"),
+             ("docs/INSTALL.md", "docs/en/INSTALL.md"),
+             ("docs/DEPLOY.md", "docs/en/DEPLOY.md"),
+             ("docs/SECURITY.md", "docs/en/SECURITY.md"),
+             ("docs/TROUBLESHOOTING.md", "docs/en/TROUBLESHOOTING.md"),
+             ("docs/CONTRIBUTING.md", "docs/en/CONTRIBUTING.md"),
+             ("docs/CODE_OF_CONDUCT.md", "docs/en/CODE_OF_CONDUCT.md")]
+    for de, en in paare:
+        assert _os.path.exists(de), "deutsche Fassung fehlt: %s" % de
+        assert _os.path.exists(en), "englische Fassung fehlt: %s" % en
+        # Beide Seiten muessen aufeinander zeigen — ein einseitiger Verweis
+        # laesst den Leser der anderen Sprache im Regen stehen.
+        kopf_de = "\n".join(open(de, encoding="utf-8").read().splitlines()[:12])
+        kopf_en = "\n".join(open(en, encoding="utf-8").read().splitlines()[:12])
+        assert "🌐" in kopf_de, "%s ohne Sprachumschalter" % de
+        assert "🌐" in kopf_en, "%s ohne Sprachumschalter" % en
+
+    # Kein relativer Link zeigt ins Leere. Auskommentiertes und Code-Spans
+    # bleiben aussen vor: dort stehen Platzhalter (die noch fehlenden
+    # Screenshots) und Regex-Schnipsel, die zufaellig wie Links aussehen.
+    kaputt = []
+    for pfad in [x for _p in paare for x in _p]:
+        roh = open(pfad, encoding="utf-8").read()
+        roh = _re3.sub(r"<!--.*?-->", "", roh, flags=_re3.S)
+        roh = _re3.sub(r"```.*?```", "", roh, flags=_re3.S)
+        roh = _re3.sub(r"`[^`]*`", "", roh)
+        basis = _os.path.dirname(pfad) or "."
+        for m in _re3.finditer(r"\]\(([^)#][^)]*)\)", roh):
+            ziel = m.group(1).split("#")[0]
+            if not ziel or ziel.startswith(("http", "mailto", "../../actions")):
+                continue
+            if not _os.path.exists(_os.path.normpath(_os.path.join(basis, ziel))):
+                kaputt.append((pfad, ziel))
+    assert not kaputt, "tote relative Links: %s" % kaputt[:5]
+    ok("v4.1-W6: %d Dokumente zweisprachig, Querverweise beidseitig, keine toten Links"
+       % (len(paare) * 2))
+
+
 # ------------------------------------------------- B168) Moderator überall (Twitch/YouTube)
 
 def test_b168_moderator_everywhere():
@@ -7401,6 +7594,8 @@ def main():
     test_v41_w4_news_marketing_kern_raus()
     test_v41_w5_restliche_dauerlaeufer()
     test_v41_w5_streamer_blueprint()
+    test_v41_w6_i18n_fundament()
+    test_v41_w6_doku_zweisprachig()
     test_b168_moderator_everywhere()
     test_b169_kick_oauth()
     test_b170_azrael_and_youtube()

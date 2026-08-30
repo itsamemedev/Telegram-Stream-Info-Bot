@@ -2331,6 +2331,12 @@ tbody tr:hover td{ background: color-mix(in srgb, var(--neon) 4%, transparent); 
   @keyframes ncViewIn{ from{opacity:0; transform:translateY(6px);} to{opacity:1; transform:none;} }
 }
 
+
+/* v4.1-W6: Sprachumschalter in der Topbar */
+.i18n-switch{background:var(--panel,#0b1016);color:var(--fg,#e8e6e3);
+  border:1px solid var(--line,#233);border-radius:6px;padding:.25rem .4rem;
+  font:inherit;font-size:.8rem;cursor:pointer}
+.i18n-switch:focus-visible{outline:2px solid var(--accent,#e8c86a);outline-offset:1px}
 </style>
 </head>
 <body>
@@ -2453,6 +2459,10 @@ document.addEventListener("DOMContentLoaded",function(){
            Ergebnis. -->
       <button id="themeToggle" type="button" onclick="ncToggleTheme()"
               aria-label="Farbthema wechseln" title="Farbthema wechseln">◑ Blaupause</button>
+      <!-- v4.1-W6: Anker fuer den Sprachumschalter. Er wird erst per JS
+           gefuellt, wenn der Server mehr als eine Sprache meldet — ein
+           Umschalter mit genau einem Eintrag waere nur Ballast. -->
+      <span data-i18n-switch data-i18n-skip></span>
     </div>
   </div>
 
@@ -12103,5 +12113,9 @@ VIEW_LOADERS['insights'] = async ()=>{ await insightsLoad(); loadInsightsPlus();
   else start();
 })();
 </script>
+<!-- v4.1-W6: Mehrsprachigkeit. Der Uebersetzer kommt vom Server (/i18n.js) und
+     nicht dreimal inline: dashboard, brain und overlay brauchen denselben, und
+     drei Kopien waeren drei Stellen, die auseinanderlaufen. -->
+<script src="/api/i18n/uebersetzer.js" defer></script>
 </body>
 </html>

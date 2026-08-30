@@ -629,5 +629,7 @@ async function poll(){
 function escapeHtml(s){ return String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 poll();
 </script>
+<!-- v4.1-W6: derselbe Uebersetzer wie im Dashboard, vom Server geliefert. -->
+<script src="/api/i18n/uebersetzer.js" defer></script>
 </body>
 </html>

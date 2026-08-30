@@ -1,5 +1,7 @@
 # Mitwirken an NIGHTCRAWLER
 
+> 🌐 **Deutsch** · [English](en/CONTRIBUTING.md)
+
 Danke, dass du beitragen willst. Dieses Projekt läuft produktiv im Dauerbetrieb —
 ein Deploy geht direkt gegen Produktion. Die Regeln hier sind deshalb keine
 Stilfragen, sondern aus echten Ausfällen entstanden.
