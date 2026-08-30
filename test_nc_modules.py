@@ -1033,6 +1033,26 @@ def _test_w10_diagnose_und_pfadschutz():
     ok("v4.1-W10: Katalog laedt nur Sprachen aus der Positivliste")
 
 
+
+def _test_w12_einzel_slot():
+    """v4.1-W12: zwei Restreams duerfen sich keinen Kick-Key teilen."""
+    from nc.restream_util import slot_belegt
+
+    # Der Fall vom 30.08.: #60 stirbt, wird aus _procs genommen, der Scheduler
+    # vergibt den Slot an #6 — und 20 Sekunden spaeter feuert der geplante
+    # Reconnect von #60. Genau hier muss die Antwort "belegt" lauten.
+    assert slot_belegt(True, [6], 60) == 6, "Reconnect laeuft in den fremden Slot"
+    assert slot_belegt(True, [], 60) is None, "freier Slot wird verweigert"
+    # Der eigene Wiederanlauf ist kein Fremdbeleger — sonst koennte sich ein
+    # Restream nach einem Abbruch nie mehr selbst neu aufbauen.
+    assert slot_belegt(True, [60], 60) is None, "Restream blockiert sich selbst"
+    # Multi-Modus heisst: eigene Keys je Ziel, also kein Slot.
+    assert slot_belegt(False, [6, 43], 60) is None, "Multi-Modus kennt keinen Slot"
+    # Mehrere Fremde: es genuegt, EINEN zu nennen — die Meldung soll knapp sein.
+    assert slot_belegt(True, [6, 43], 60) in (6, 43)
+    ok("v4.1-W12: Einzel-Slot wird beim START geprueft, nicht bei der Planung")
+
+
 def main():
     tmp = tempfile.mkdtemp()
     configure_db(db_path=os.path.join(tmp, "t.db"), backend="sqlite")
@@ -1139,6 +1159,8 @@ def main():
     _test_updater()
 
     _test_w10_diagnose_und_pfadschutz()
+
+    _test_w12_einzel_slot()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)
 

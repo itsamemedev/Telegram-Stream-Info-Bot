@@ -137,3 +137,35 @@ def http_url(text, fallback=""):
     if low.startswith("http://") or low.startswith("https://"):
         return t
     return fallback
+
+
+def slot_belegt(single, laufende, rid):
+    """v4.1-W12: Wer haelt den Einzel-Slot, wenn `rid` jetzt starten will?
+
+    Rueckgabe: die ID des anderen laufenden Restreams, oder None (frei).
+
+    WARUM ES DAS BRAUCHT — der Ablauf vom 30.08., Sekunde fuer Sekunde:
+
+        09:23:42  Restream #60 stirbt (rc=255), _monitor plant reconnect in 20s
+                  und nimmt #60 dabei aus _procs. Der Slot sieht frei aus.
+        09:23:46  auto_start_due findet _procs leer, Single-Modus sagt "frei",
+                  startet #6.
+        09:24:02  Der geplante Reconnect von #60 feuert — ohne noch einmal zu
+                  fragen, ob der Slot inzwischen vergeben ist.
+
+    Ab hier senden zwei Restreams auf denselben Kick-Key. Ein RTMP-Key nimmt
+    EINEN Publisher; jeder neue Verbindungsaufbau wirft den anderen raus. Beide
+    sterben abwechselnd, der Wiederanlauf baut beide neu auf, und das laeuft
+    stundenlang so weiter — im error.log als "Broken pipe", "Input/output
+    error" und sechs Stillstands-Abschuesse fuer dasselbe Ziel.
+
+    Die Pruefung gehoert deshalb an den START, nicht an den Planungszeitpunkt:
+    zwischen "reconnect in 20s" und dem Start liegt genug Zeit, dass sich die
+    Lage aendert.
+    """
+    if not single:
+        return None                     # Multi-Modus: eigene Keys, kein Slot
+    for r in laufende:
+        if r != rid:
+            return r
+    return None

@@ -197,7 +197,7 @@ flowchart TB
     DC --> BOT
     TT --> BOT
 
-    BOT["bot.py<br/>monolith · 29,356 lines<br/>scraper · recorder · restream<br/>Flask dashboard · 153 own routes"]:::core
+    BOT["bot.py<br/>monolith · 29,404 lines<br/>scraper · recorder · restream<br/>Flask dashboard · 153 own routes"]:::core
 
     BOT -->|configure| NC["nc/ — 92 domain modules<br/>schema · OAuth · restream<br/>ledger · moderation · intel"]:::lib
     NC --> RT["nc/routes/ — 21 blueprints<br/>206 further API routes"]:::lib
@@ -709,7 +709,7 @@ broken.**
 
 ### 🧭 Navigating the monolith
 
-`bot.py` has 29,356 lines. It is **never** read in full and **never** searched
+`bot.py` has 29,404 lines. It is **never** read in full and **never** searched
 blindly — first ask where something is, then fetch the excerpt:
 
 ```bash
@@ -855,7 +855,7 @@ Full history: **[`docs/CHANGELOG.md`](docs/CHANGELOG.md)** ·
 
 ## 🧭 Roadmap
 
-The next big step is not a feature, it is cleaning up: **`bot.py` has 29,356
+The next big step is not a feature, it is cleaning up: **`bot.py` has 29,404
 lines**. That file is the project's bottleneck. The bar for it is not a line
 count though:
 

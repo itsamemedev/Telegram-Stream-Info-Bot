@@ -7991,6 +7991,48 @@ def test_v41_w10_codeql_befunde():
     ok("v4.1-W10: Kommandozeile, Ausliefer-Pfade, Log-Pfad, Hash und HTML-Filter")
 
 
+
+# ------------------------------- v4.1-W12) Zwei Restreams auf einem Kick-Key
+
+def test_v41_w12_kick_key_kollision():
+    """v4.1-W12: der Befund aus dem debug.log vom 30.08. — zwei Restreams auf
+       demselben Kick-Key, stundenlang, und die dafuer gebaute Warnung schwieg.
+
+    Ablauf: 09:23:42 stirbt #60 und wird fuer den Backoff aus _procs genommen.
+    09:23:46 findet auto_start_due den Slot frei und startet #6. 09:24:02
+    feuert der geplante Reconnect von #60 — ohne noch einmal zu fragen. Ab da
+    senden beide auf denselben Key, werfen sich abwechselnd raus, und der
+    Wiederanlauf baut beide neu auf. Im error.log: Broken pipe, Input/output
+    error, sechs Stillstands-Abschuesse fuer ein Ziel.
+    """
+    src = open("bot.py", encoding="utf-8").read()
+
+    # (1) Die Pruefung sitzt im START, nicht nur im Scheduler. Nur dort deckt
+    # sie auch den Reconnect-Pfad ab.
+    _st = src[src.index("    async def start(self, rid, _attempts=0"):]
+    _st = _st[:_st.index("SELECT * FROM restreams WHERE id=?")]
+    assert "_nc_rutil.slot_belegt(RESTREAM_SINGLE" in _st, \
+        "start() prueft den Einzel-Slot nicht — der Reconnect laeuft wieder hinein"
+    assert "self._procs" in _st, "die Pruefung sieht die laufenden Restreams nicht"
+
+    # (2) Die Kollisions-Warnung war ausgerechnet im Einzel-Modus stumm —
+    # also in dem Modus, in dem der Fehler entsteht. Sie gilt jetzt immer.
+    assert "if _dup and not RESTREAM_SINGLE:" not in src, \
+        "die Warnung ist im Einzel-Modus wieder stumm"
+    assert "teilt sich den Kick-Key mit" in src, "keine Kollisions-Warnung mehr"
+
+    # (3) CrowdSec: ein Dauerzustand darf den Log nicht 109 Mal fuellen — und
+    # die Abhilfe gehoert INS Log, nicht nur in die API-Antwort.
+    _cs = src[src.index("def _crowdsec_via_lapi("):]
+    _cs = _cs[:_cs.index("jails, total = _nc_crowdsec.parse_decisions")]
+    assert "_CROWDSEC_LOG_STATE" in _cs, "keine Drosselung"
+    assert "Abhilfe: %s" in _cs, "die Abhilfe steht weiter nur in der API-Antwort"
+    assert 'log.warning("Abwehr: CrowdSec-LAPI HTTP %s", e.code)' not in src, \
+        "die ungedrosselte Zeile ist wieder da"
+    ok("v4.1-W12: Einzel-Slot beim Start geprueft, Kollision immer gemeldet, "
+       "CrowdSec gedrosselt mit Abhilfe")
+
+
 def main():
     print("test_restream — Restream-Kernlogik (Mock-basiert)")
     test_streak()
@@ -8059,6 +8101,7 @@ def main():
     test_v41_w9_kick_blueprint()
     test_v41_w10_diagnose_und_blindheit()
     test_v41_w10_codeql_befunde()
+    test_v41_w12_kick_key_kollision()
     test_b168_moderator_everywhere()
     test_b169_kick_oauth()
     test_b170_azrael_and_youtube()

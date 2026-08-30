@@ -16413,6 +16413,28 @@ class RestreamManager:
             return {"ok": False, "error": f"Restream deaktiviert ({why})"}
         if rid in self._procs:
             return {"ok": True, "already": True}
+        # v4.1-W12: Haelt jemand anders den Einzel-Slot? Diese Frage wurde
+        # bisher NUR im Scheduler gestellt (auto_start_due), nicht hier — und
+        # damit nicht auf dem Reconnect-Pfad. _monitor nimmt den Restream beim
+        # Tod aus _procs und startet ihn erst nach dem Backoff neu; in dieser
+        # Luecke vergibt der Scheduler den Slot an einen anderen. Der Reconnect
+        # lief danach ohne jede Ruecksicht los, und zwei Restreams sendeten auf
+        # denselben Kick-Key. Ein RTMP-Key nimmt EINEN Publisher: jeder neue
+        # Verbindungsaufbau wirft den anderen raus, beide sterben abwechselnd,
+        # der Wiederanlauf baut beide neu auf. Am 30.08. lief genau das ueber
+        # Stunden (#6 gegen #60, sechs Stillstands-Abschuesse fuer ein Ziel).
+        #
+        # Die Pruefung gehoert an den START, nicht an die Planung: zwischen
+        # "reconnect in 20s" und dem Start aendert sich die Lage.
+        _belegt = _nc_rutil.slot_belegt(RESTREAM_SINGLE, list(self._procs.keys()), rid)
+        if _belegt is not None:
+            _msg = (f"Einzel-Modus: Restream #{_belegt} laeuft bereits. "
+                    f"Zwei Restreams auf einem Kick-Key werfen sich gegenseitig "
+                    f"raus — deshalb kein Start. RESTREAM_SINGLE=0 nur mit "
+                    f"eigenem Key je Ziel.")
+            self._set_status(rid, "idle", err=_msg)
+            log.warning("Restream #%d nicht gestartet — %s", rid, _msg)
+            return {"ok": False, "error": _msg}
         with db_conn() as conn:
             row = conn.execute("SELECT * FROM restreams WHERE id=?", (rid,)).fetchone()
         if not row:
@@ -16615,7 +16637,13 @@ class RestreamManager:
         # ins Log, mit der konkreten Abhilfe.
         _dup = [r for r, i in self._procs.items()
                 if r != rid and i.get("kick_url") == _kick_url]
-        if _dup and not RESTREAM_SINGLE:
+        if _dup:
+            # v4.1-W12: Die Bedingung lautete `_dup and not RESTREAM_SINGLE` —
+            # die Warnung war also ausgerechnet in dem Modus stumm, in dem der
+            # Fehler ueberhaupt entstehen kann. Am 30.08. teilten sich #6 und
+            # #60 stundenlang einen Key, und diese Zeile stand kein einziges
+            # Mal im Log. Ein geteilter Key ist IMMER falsch, egal in welchem
+            # Modus; die Warnung gilt jetzt immer.
             log.warning("Restream #%d teilt sich den Kick-Key mit #%s — ein RTMP-Key "
                         "erlaubt nur EINEN Publisher; die anderen scheitern mit "
                         "'Input/output error'. Fix: RESTREAM_SINGLE=1 (bei einem "
@@ -22615,7 +22643,27 @@ def _crowdsec_via_lapi():
         data = _json.loads(raw) if raw.strip() else []
     except urllib.error.HTTPError as e:
         status, hint, fix = _nc_crowdsec.explain_status(e.code)
-        log.warning("Abwehr: CrowdSec-LAPI HTTP %s", e.code)
+        # v4.1-W12: gedrosselt UND mit Abhilfe. Vorher stand hier 109 Mal in
+        # dreieinhalb Stunden dieselbe Zeile "CrowdSec-LAPI HTTP 403" — der
+        # Dashboard-Takt ruft diesen Weg alle zwei Minuten auf, und ein 403
+        # ist ein DAUERZUSTAND (Schluessel nicht registriert), kein Ereignis.
+        # Was dabei fehlte, war ausgerechnet das Wichtige: hint und fix gingen
+        # nur an die API zurueck, nie ins Log. Wer den Log las, sah 109 Mal
+        # eine Zahl und nie, was zu tun ist. Jetzt: beim ersten Mal und danach
+        # hoechstens alle 15 Minuten, dafuer mit Grund und Abhilfe.
+        _st = globals().setdefault("_CROWDSEC_LOG_STATE", {})
+        _now = _time_mod.time()
+        _prev = _st.get(e.code) or {"ts": 0.0, "n": 0}
+        _prev["n"] += 1
+        if _now - _prev["ts"] >= 900:
+            _sup = _prev["n"] - 1
+            log.warning("Abwehr: CrowdSec-LAPI HTTP %s — %s Abhilfe: %s%s",
+                        e.code, hint, fix,
+                        (f" (×{_sup} unterdrueckt seit der letzten Meldung)"
+                         if _sup > 0 else ""))
+            _prev["ts"] = _now
+            _prev["n"] = 0
+        _st[e.code] = _prev
         return {"ok": False, "status": status, "error": f"HTTP {e.code}",
                 "hint": hint, "fix": fix, "jails": [], "total_banned": 0,
                 "engine": "crowdsec", "via": "lapi"}
