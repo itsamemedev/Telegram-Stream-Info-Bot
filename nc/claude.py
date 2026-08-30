@@ -88,7 +88,14 @@ def _split_messages(messages):
             if str(content).strip():
                 system.append(str(content).strip())
         elif role in ("user", "assistant"):
-            conv.append({"role": role, "content": str(content)})
+            # v4.1-W13: LEERE Inhalte fliegen raus, wie bei system. Die
+            # Messages-API weist einen leeren Textblock mit HTTP 400 ab — und
+            # zwar den GANZEN Request, nicht nur den Block. Vorher wurde
+            # ausgerechnet die Sorte Nachricht durchgereicht, die den Aufruf
+            # sicher scheitern laesst, und die Klasse "bad_request" verriet
+            # nicht, welche es war.
+            if str(content).strip():
+                conv.append({"role": role, "content": str(content)})
     return ("\n\n".join(system) or None), conv
 
 
@@ -122,6 +129,27 @@ def parse_usage(data):
         return (0, 0)
 
 
+def fehlertext(e):
+    """Anthropics eigene Fehlermeldung aus einem HTTPError — oder der Rohtext.
+
+    v4.1-W13: Bis hierher las nur probe() (der Dashboard-Test) diesen Body.
+    chat_sync verwarf ihn und gab bloss die Klasse zurueck. Im Log stand
+    deshalb 26 Mal "Reaction-AI Claude fehlgeschlagen (bad_request)" und kein
+    einziges Mal, WAS am Request schlecht war — waehrend die API es jedes Mal
+    mitgeschickt hat. Genau der Fall aus CLAUDE.md: erst das except suchen,
+    das den Grund frisst.
+    """
+    roh = ""
+    try:
+        roh = e.read().decode("utf-8", "replace")[:400]
+    except Exception:
+        pass
+    try:
+        return (json.loads(roh).get("error", {}) or {}).get("message", "") or roh
+    except Exception:
+        return roh
+
+
 def _error_kind(code):
     if code == 401 or code == 403:
         return "auth"
@@ -133,14 +161,31 @@ def _error_kind(code):
 
 
 def chat_sync(messages, api_key, model=None, timeout=None, max_tokens=None, opener=None,
-              on_usage=None):
+              on_usage=None, on_error=None):
     """Blockierender Claude-Chat → (text, err_kind|None). opener(req, timeout) ist
        für Tests injizierbar; Default ist urllib. Ohne Key → (None, 'no_key').
        v4.0-W92: on_usage(model, input_tokens, output_tokens) wird bei Erfolg
-       best-effort aufgerufen (Token-Zählung) — Default None = altes Verhalten."""
+       best-effort aufgerufen (Token-Zählung) — Default None = altes Verhalten.
+
+       v4.1-W13: on_error(kind, detail, model) meldet den ECHTEN Grund. Der
+       Rückgabewert bleibt absichtlich (text, kind): ein Dutzend Aufrufstellen
+       vergleicht `err == "auth"`, und ein dritter Rückgabewert hätte sie alle
+       angefasst. Der Rückruf ist der schmalere Eingriff."""
     if not api_key:
         return (None, "no_key")
     body = build_payload(messages, model, max_tokens)
+    # v4.1-W13: Ohne eine einzige user/assistant-Nachricht kann der Aufruf nicht
+    # gelingen — die API antwortet mit HTTP 400. Den Weg gar nicht erst zu gehen
+    # spart den Fehlversuch und benennt die Ursache, statt sie als
+    # "bad_request" zu tarnen.
+    if not body.get("messages"):
+        if on_error:
+            try:
+                on_error("kein_verlauf", "Kein user/assistant-Inhalt im Request "
+                         "(nur System-Text oder alles leer).", body.get("model"))
+            except Exception:
+                pass
+        return (None, "kein_verlauf")
     req = urllib.request.Request(
         API_URL, data=json.dumps(body).encode("utf-8"),
         headers={"content-type": "application/json",
@@ -160,8 +205,21 @@ def chat_sync(messages, api_key, model=None, timeout=None, max_tokens=None, open
                 pass
         return (text, None) if text else (None, "empty")
     except urllib.error.HTTPError as e:
-        return (None, _error_kind(e.code))
-    except Exception:
+        kind = _error_kind(e.code)
+        if on_error:
+            try:
+                on_error(kind, "HTTP %s: %s" % (e.code, fehlertext(e) or "abgelehnt"),
+                         body.get("model"))
+            except Exception:
+                pass
+        return (None, kind)
+    except Exception as e:
+        if on_error:
+            try:
+                on_error("unreachable", "%s: %s" % (type(e).__name__, e),
+                         body.get("model"))
+            except Exception:
+                pass
         return (None, "unreachable")
 
 
@@ -184,17 +242,9 @@ def probe(api_key, model=None, opener=None):
         return (True, "ok", "Verbindung ok — Claude antwortet.") if parse_response(data) \
             else (False, "empty", "Verbunden, aber leere Antwort.")
     except urllib.error.HTTPError as e:
-        raw = ""
-        try:
-            raw = e.read().decode("utf-8", "replace")[:400]
-        except Exception:
-            pass
-        amsg = ""
-        try:
-            amsg = (json.loads(raw).get("error", {}) or {}).get("message", "")
-        except Exception:
-            amsg = raw
-        return (False, _error_kind(e.code), "HTTP %s: %s" % (e.code, amsg or getattr(e, "reason", "") or "abgelehnt"))
+        amsg = fehlertext(e)
+        return (False, _error_kind(e.code),
+                "HTTP %s: %s" % (e.code, amsg or getattr(e, "reason", "") or "abgelehnt"))
     except urllib.error.URLError as e:
         return (False, "unreachable", "Netzwerk nicht erreichbar: %s" % getattr(e, "reason", e))
     except Exception as e:

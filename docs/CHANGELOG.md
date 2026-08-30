@@ -11,6 +11,41 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Behoben — AZRAELs Claude-Pfad sagte nicht, warum er scheitert (v4.1 W13)
+
+Im `debug.log` vom 30.08. steht **26 Mal** „Reaction-AI Claude fehlgeschlagen
+(bad_request) → Kette" — und kein einziges Mal, *was* am Request schlecht war.
+Die API schickt diese Begründung bei jedem 400 mit; `chat_sync` las den Body
+gar nicht erst:
+
+```python
+except urllib.error.HTTPError as e:
+    return (None, _error_kind(e.code))     # der Grund ist hier weg
+```
+
+Bemerkenswert: `probe()` — der Dashboard-Test — liest denselben Body seit W70
+vollständig aus. Der Weg, den der Betreiber im Alltag nutzt, war der stumme.
+Genau der Fall aus CLAUDE.md: erst das `except` suchen, das den Grund frisst.
+
+`fehlertext(e)` liegt jetzt einmal da und wird von **beiden** Wegen benutzt.
+`chat_sync` meldet über einen `on_error(kind, detail, model)`-Rückruf; der
+**Rückgabewert bleibt `(text, kind)`**, weil ein Dutzend Aufrufstellen
+`err == "auth"` vergleicht und ein dritter Rückgabewert sie alle angefasst
+hätte. Die Warnung nennt jetzt Modell und API-Text.
+
+**Zwei deterministische 400er gleich mit erledigt.** `_split_messages` warf
+leere **system**-Inhalte weg, liess leere **user/assistant**-Inhalte aber
+durch — und die Messages-API weist einen leeren Textblock mit 400 ab, und zwar
+den ganzen Request. Und bestand die Anfrage nur aus System-Text, ging sie mit
+`messages: []` hinaus, was ebenfalls nur 400 werden kann; dieser Fall wird
+jetzt gar nicht mehr gesendet, sondern heisst `kein_verlauf` statt sich als
+`bad_request` zu tarnen.
+
+Der Rückruf läuft im Thread von `chat_sync` — er schreibt nur, er loggt nicht;
+ein Vertrag hält das fest.
+
+Vier Verträge sind neu.
+
 ### Behoben — zwei Restreams auf einem Kick-Key (v4.1 W12)
 
 Der Befund aus dem `debug.log` vom 30.08., und die Ursache der Abbruch-Serie

@@ -1053,6 +1053,57 @@ def _test_w12_einzel_slot():
     ok("v4.1-W12: Einzel-Slot wird beim START geprueft, nicht bei der Planung")
 
 
+
+def _test_w13_claude_fehlergrund():
+    """v4.1-W13: der Grund darf nicht im except haengenbleiben."""
+    import json as _json
+    import urllib.error
+    import io as _io
+    import nc.claude as C
+
+    # (1) Der ECHTE Fehlertext der API kommt beim Aufrufer an. Im debug.log vom
+    # 30.08. stand 26 Mal "fehlgeschlagen (bad_request)" und nie, WAS schlecht
+    # war — obwohl die API es jedes Mal mitschickt.
+    koerper = _json.dumps({"error": {"type": "invalid_request_error",
+                                     "message": "max_tokens: must be >= 1"}}).encode()
+
+    def _opener_400(req, timeout):
+        raise urllib.error.HTTPError(C.API_URL, 400, "Bad Request", {},
+                                     _io.BytesIO(koerper))
+
+    gesehen = []
+    txt, kind = C.chat_sync([{"role": "user", "content": "hi"}], "k",
+                            opener=_opener_400,
+                            on_error=lambda k, d, m: gesehen.append((k, d, m)))
+    assert (txt, kind) == (None, "bad_request"), "Vertrag (text, kind) veraendert"
+    assert gesehen, "der Grund wird weiter verschluckt"
+    assert "max_tokens: must be >= 1" in gesehen[0][1], "API-Text fehlt"
+    assert "HTTP 400" in gesehen[0][1] and gesehen[0][2], "Status oder Modell fehlt"
+
+    # (2) Ohne Rueckruf bleibt alles wie vorher — die zwoelf Aufrufstellen, die
+    # `err == "auth"` vergleichen, duerfen sich nicht aendern.
+    assert C.chat_sync([{"role": "user", "content": "hi"}], "k",
+                       opener=_opener_400) == (None, "bad_request")
+
+    # (3) Leere Inhalte fliegen raus: die API weist einen leeren Textblock mit
+    # 400 ab, und zwar den GANZEN Request.
+    b = C.build_payload([{"role": "system", "content": "S"},
+                         {"role": "user", "content": "   "},
+                         {"role": "user", "content": "echt"}])
+    assert b["messages"] == [{"role": "user", "content": "echt"}], "leerer Block bleibt drin"
+    assert b["system"] == "S"
+
+    # (4) Gar kein Verlauf: der Aufruf kann nicht gelingen, also wird er nicht
+    # gemacht — und der Grund heisst nicht "bad_request".
+    gesehen2 = []
+    assert C.chat_sync([{"role": "system", "content": "nur system"}], "k",
+                       opener=lambda r, t: (_ for _ in ()).throw(
+                           AssertionError("API wurde trotzdem gerufen")),
+                       on_error=lambda k, d, m: gesehen2.append(k)) == (None, "kein_verlauf")
+    assert gesehen2 == ["kein_verlauf"]
+    ok("v4.1-W13: Claude-Fehler nennen Grund und Modell, leere Requests gar nicht erst")
+
+
 def main():
     tmp = tempfile.mkdtemp()
     configure_db(db_path=os.path.join(tmp, "t.db"), backend="sqlite")
@@ -1161,6 +1212,8 @@ def main():
     _test_w10_diagnose_und_pfadschutz()
 
     _test_w12_einzel_slot()
+
+    _test_w13_claude_fehlergrund()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)
 
