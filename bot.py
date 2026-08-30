@@ -582,6 +582,7 @@ from nc import tiktokcheck as _nc_tiktokcheck  # v4.1-W5: existiert der Account 
 from nc import i18n as _nc_i18n  # v4.1-W6: Mehrsprachigkeit (Katalog + Spracherkennung)
 from nc import oauthredirect as _nc_oauthredirect  # v4.1-W8: OAuth-Rueckruf-Adressen (Kick/Twitch/YouTube)
 from nc import kickapi as _nc_kickapi  # v4.1-W9: Kick-Slug, Broadcaster-ID, Sendeprotokoll
+from nc import discordstate as _nc_discordstate  # v4.1-W16: Discord-Zustand (DB + laufend)
 from nc import eventquery as _nc_eventquery  # v4.0-W51: Event-Log-Query-Bauer (rein)
 from nc import admod as _nc_admod            # v4.0-W56: Werbe-Allowlist-Bauer (rein)
 from nc import binresolve as _nc_binresolve  # v4.0-W60: Binary-Pfad-Resolver (rein)
@@ -614,6 +615,7 @@ from nc.routes import youtube as _nc_routes_youtube          # v4.1-W8: YouTube-
 from nc.routes import kick as _nc_routes_kick                # v4.1-W9: Kick-OAuth, Kanal, Sendecheck
 from nc.routes import chat as _nc_routes_chat                # v4.1-W15: Eigener-Kanal-Chat
 from nc.routes import cohost as _nc_routes_cohost            # v4.1-W15: Co-Host-Bremse
+from nc.routes import discord as _nc_routes_discord          # v4.1-W16: Discord-Panel
 from nc import updater as _nc_updater                        # v4.0-W115: Selbst-Update aus dem GitHub-Repo
 from nc import donationsdb as _nc_donationsdb                # v4.0-W116: manuell erfasste Spenden lesen
 # Diese beiden Routen ruft der Bot auch INTERN auf (Telegram /sysres und die
@@ -12835,77 +12837,6 @@ def _sec_headers(resp):
 
 
 # ═══ F81: DISCORD-VERWALTUNG — Community-Übersicht fürs Dashboard ═══
-@dashboard_app.route("/api/discord/overview")
-def api_discord_overview():
-    """F81: Discord-Status + Community-Daten fürs Dashboard. Liest NUR
-       sync-sichere Client-Attribute (is_ready/user/guilds/member_count sind
-       gecachte Properties, kein await) + DB-Tabellen. Bewusst KEIN
-       run_coroutine_threadsafe → kann den Bot-Loop nicht blockieren."""
-    out = {"ok": True, "connected": False, "bot": None, "guild": None,
-           "members": None, "trackings_discord": 0, "xp_top": [],
-           "warns": [], "clips_7d": 0, "digest_week": None, "cotw_week": None}
-    # B120: Session-Telemetrie mitliefern, damit das Dashboard einen
-    # stillen Gateway-Abriss anzeigen kann statt nur "connected: false".
-    out["session"] = dict(_DISCORD_SESSION)
-    c = _DISCORD_CLIENT
-    guild = None
-    try:
-        if c is not None and c.is_ready():
-            out["connected"] = True
-            out["bot"] = str(c.user)
-            if c.guilds:
-                guild = c.guilds[0]
-                out["guild"] = guild.name
-                out["members"] = guild.member_count
-    except Exception:
-        pass
-
-    def _dname(uid):
-        # User-ID → Anzeigename aus dem Guild-Cache (sync); Fallback: nackte ID
-        try:
-            if guild is not None:
-                m = guild.get_member(int(uid))
-                if m:
-                    return m.display_name
-        except Exception:
-            pass
-        return str(uid)
-
-    try:
-        with db_conn() as conn:
-            if DISCORD_GUILD_ID:
-                r = conn.execute("SELECT COUNT(*) AS c FROM trackings WHERE group_id=?",
-                                 (DISCORD_GUILD_ID,)).fetchone()
-                out["trackings_discord"] = r["c"] if r else 0
-            # B65: Auf die konfigurierte Guild filtern — sonst mischen sich bei
-            # Guild-Wechsel (alte Test-Server) fremde XP/Warns in die Anzeige.
-            # (?=0 OR …) = Filter aus, wenn keine Guild konfiguriert.
-            out["xp_top"] = [{"name": _dname(r["user_id"]), "xp": r["xp"], "level": r["level"]}
-                             for r in conn.execute(
-                                 "SELECT user_id, xp, level FROM discord_xp "
-                                 "WHERE (?=0 OR guild_id=?) "
-                                 "ORDER BY xp DESC LIMIT 10",
-                                 (DISCORD_GUILD_ID, DISCORD_GUILD_ID)).fetchall()]
-            out["warns"] = [{"name": _dname(r["user_id"]), "reason": r["reason"] or "",
-                             "moderator": r["moderator"] or "",
-                             "at": (r["created_at"] or "")[:16].replace("T", " ")}
-                            for r in conn.execute(
-                                "SELECT user_id, moderator, reason, created_at FROM discord_warns "
-                                "WHERE (?=0 OR guild_id=?) "
-                                "ORDER BY id DESC LIMIT 10",
-                                (DISCORD_GUILD_ID, DISCORD_GUILD_ID)).fetchall()]
-            since = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
-            r = conn.execute("SELECT COUNT(*) AS c FROM discord_clips WHERE created_at >= ?",
-                             (since,)).fetchone()
-            out["clips_7d"] = r["c"] if r else 0
-    except Exception as e:
-        out["db_error"] = str(e)
-    try:
-        out["digest_week"] = _disc_state_get("digest_week")
-        out["cotw_week"] = _disc_state_get("cotw_week")
-    except Exception:
-        pass
-    return jsonify(out)
 
 
 # ═══ v37: Betriebs-Metriken (14-Tage-Trends, DB-only) + AZRAEL-Gedächtnis ═══
@@ -12921,28 +12852,6 @@ def api_stream_transcript():
     return jsonify(ok=True, user=user, lines=lines)
 
 
-@dashboard_app.route("/api/discord/webhook_test", methods=["POST"])
-def api_discord_webhook_test():
-    """Testet den Discord-Webhook mit einer Testnachricht."""
-    if not DISCORD_WEBHOOK_URL:
-        return jsonify(ok=False, error="Kein DISCORD_WEBHOOK_URL konfiguriert"), 400
-
-    async def _send():
-        import aiohttp
-        to = aiohttp.ClientTimeout(total=10)
-        async with aiohttp.ClientSession(timeout=to) as sx:
-            async with sx.post(DISCORD_WEBHOOK_URL,
-                               json={"content": "✅ Webhook-Test von NIGHTCRAWLER — Verbindung ok."}) as r:
-                return r.status
-    try:
-        status = _run_async_from_flask(_send(), timeout=15)
-        return jsonify(ok=(status in (200, 204)), status=status)
-    except RuntimeError as e:
-        if _loop_not_ready(e):
-            return jsonify(ok=False, error="Bot-Loop startet noch", transient=True), 503
-        return jsonify(ok=False, error=str(e)), 500
-    except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
 
 
 @dashboard_app.route("/api/system/config_snapshot")
@@ -13125,12 +13034,12 @@ def api_system_preflight():
         else "kein LLM erreichbar (Brain + freeai-Basen down)")
 
     # ── Community ──
-    dc_ok = bool(_DISCORD_CLIENT and getattr(_DISCORD_CLIENT, "user", None))
+    dc_ok = bool(_nc_discordstate.CLIENT["obj"] and getattr(_nc_discordstate.CLIENT["obj"], "user", None))
     # B120: Ohne Reconnect-Zaehler und letzten Grund war "nicht verbunden"
     # nicht von "nie konfiguriert" zu unterscheiden — der stille Gateway-
     # Tod blieb monatelang unsichtbar.
     if dc_ok:
-        _dc_detail = f"online als {_DISCORD_CLIENT.user}"
+        _dc_detail = f"online als {_nc_discordstate.CLIENT["obj"].user}"
         if _DISCORD_SESSION.get("reconnects"):
             _dc_detail += f" · {_DISCORD_SESSION['reconnects']} Reconnects"
     elif not DISCORD_BOT_TOKEN:
@@ -13235,14 +13144,6 @@ def api_notify_test():
 
 
 
-@dashboard_app.route("/api/discord/invite")
-def api_discord_invite():
-    """v4.0-W35: liefert den dauerhaften Community-Invite für die Website. Quelle
-       ist der einmalig erzeugte (oder in .env gesetzte) Link — nie ein neuer."""
-    url = _discord_invite()
-    return jsonify(ok=bool(url), invite=url,
-                   source=("app_config" if (_cfg_get("discord.invite_url", "") or "").strip()
-                           else ("env" if url else "none")))
 
 
 
@@ -13277,22 +13178,6 @@ def api_retention_run():
 
 
 # ═══ v37 Welle 3: Clip-of-the-Week-Stand (#13) ═══
-@dashboard_app.route("/api/discord/clips_week")
-def api_discord_clips_week():
-    wk = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
-    try:
-        with db_conn() as conn:
-            rows = conn.execute("SELECT username, stars_pushed, created_at FROM discord_clips "
-                                "WHERE guild_id=? AND created_at>=? "
-                                "ORDER BY stars_pushed DESC, id DESC LIMIT 12",
-                                (DISCORD_GUILD_ID, wk)).fetchall()
-        clips = [{"username": r["username"] or "?", "highlighted": bool(r["stars_pushed"]),
-                  "at": (r["created_at"] or "")[:16].replace("T", " ")} for r in rows]
-        return jsonify(ok=True, clips=clips,
-                       highlighted=sum(1 for c in clips if c["highlighted"]),
-                       total=len(clips), threshold=CLIP_HIGHLIGHT_STARS)
-    except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
 
 
 # ═══ F98: Browser-Push — Server-Sent Events statt 8s-Polling ═══
@@ -13493,89 +13378,8 @@ def api_backup_run():
 
 
 # ═══ v37: Community-Tab-Ausbau — reiche Discord-Stats + Broadcast ═══
-@dashboard_app.route("/api/discord/community")
-def api_discord_community():
-    """Reichhaltige Community-Statistik: Level-Verteilung, XP, Clips, Warns —
-       gefiltert auf die eigene Guild."""
-    gid = DISCORD_GUILD_ID
-    out = {"ok": True, "levels": [], "xp_total": 0, "members_ranked": 0,
-           "clips_week": 0, "clips_total": 0, "warns_week": 0, "warns_total": 0,
-           "top_clippers": [], "top_members": []}
-    try:
-        wk = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
-        with db_conn() as conn:
-            rows = conn.execute("SELECT level, COUNT(*) AS n FROM discord_xp WHERE guild_id=? "
-                                "GROUP BY level ORDER BY level", (gid,)).fetchall()
-            out["levels"] = [{"level": r["level"], "n": r["n"]} for r in rows]
-            out["members_ranked"] = sum(r["n"] for r in rows)
-            out["xp_total"] = conn.execute("SELECT COALESCE(SUM(xp),0) AS t FROM discord_xp "
-                                           "WHERE guild_id=?", (gid,)).fetchone()["t"] or 0
-            out["top_members"] = [{"user_id": str(r["user_id"]), "xp": r["xp"], "level": r["level"]}
-                                  for r in conn.execute("SELECT user_id, xp, level FROM discord_xp "
-                                  "WHERE guild_id=? ORDER BY xp DESC LIMIT 10", (gid,)).fetchall()]
-            out["clips_week"] = conn.execute("SELECT COUNT(*) AS c FROM discord_clips "
-                                "WHERE guild_id=? AND created_at>=?", (gid, wk)).fetchone()["c"]
-            out["clips_total"] = conn.execute("SELECT COUNT(*) AS c FROM discord_clips "
-                                "WHERE guild_id=?", (gid,)).fetchone()["c"]
-            out["top_clippers"] = [{"username": r["username"], "n": r["n"]}
-                                   for r in conn.execute("SELECT username, COUNT(*) AS n FROM discord_clips "
-                                   "WHERE guild_id=? AND username IS NOT NULL GROUP BY username "
-                                   "ORDER BY n DESC LIMIT 6", (gid,)).fetchall()]
-            out["top_clippers_week"] = [{"username": r["username"], "n": r["n"]}
-                                        for r in conn.execute("SELECT username, COUNT(*) AS n FROM discord_clips "
-                                        "WHERE guild_id=? AND username IS NOT NULL AND created_at>=? GROUP BY username "
-                                        "ORDER BY n DESC LIMIT 6", (gid, wk)).fetchall()]
-            out["warns_week"] = conn.execute("SELECT COUNT(*) AS c FROM discord_warns "
-                                "WHERE guild_id=? AND created_at>=?", (gid, wk)).fetchone()["c"]
-            out["warns_total"] = conn.execute("SELECT COUNT(*) AS c FROM discord_warns "
-                                "WHERE guild_id=?", (gid,)).fetchone()["c"]
-            # F102: Daily-Streaks + kommende Events
-            try:
-                out["daily_active"] = conn.execute(
-                    "SELECT COUNT(*) AS c FROM discord_daily WHERE guild_id=? AND streak>0",
-                    (gid,)).fetchone()["c"]
-                out["top_streaks"] = [{"user_id": str(r["user_id"]), "streak": r["streak"],
-                                       "best": r["best_streak"]}
-                    for r in conn.execute("SELECT user_id, streak, best_streak FROM discord_daily "
-                    "WHERE guild_id=? ORDER BY streak DESC LIMIT 6", (gid,)).fetchall()]
-                out["events"] = [{"title": r["title"], "starts_at": r["starts_at"],
-                                  "desc": r["description"]}
-                    for r in conn.execute("SELECT title, starts_at, description FROM community_events "
-                    "WHERE guild_id=? AND done=0 ORDER BY starts_at LIMIT 8", (gid,)).fetchall()]
-            except Exception:
-                pass
-    except Exception as e:
-        out["db_error"] = str(e)
-    return jsonify(out)
 
 
-@dashboard_app.route("/api/discord/announce", methods=["POST"])
-def api_discord_announce():
-    """v37 Feature: Community-Broadcast — Ankündigung aus dem Dashboard an den
-       Discord-Webhook posten."""
-    if not DISCORD_WEBHOOK_URL:
-        return jsonify(ok=False, error="Kein DISCORD_WEBHOOK_URL in der .env konfiguriert"), 400
-    d = request.get_json(silent=True) or {}
-    text = (d.get("text") or "").strip()[:3000]   # v37: Längen-Cap
-    if not text:
-        return jsonify(ok=False, error="leere Nachricht"), 400
-
-    async def _send():
-        import aiohttp
-        content = ("📢 **Ankündigung**\n" + text)[:1900]
-        to = aiohttp.ClientTimeout(total=10)
-        async with aiohttp.ClientSession(timeout=to) as sx:
-            async with sx.post(DISCORD_WEBHOOK_URL, json={"content": content}) as r:
-                return r.status
-    try:
-        status = _run_async_from_flask(_send(), timeout=15)
-        return jsonify(ok=(status in (200, 204)), status=status)
-    except RuntimeError as e:
-        if _loop_not_ready(e):
-            return jsonify(ok=False, error="Bot-Loop startet noch", transient=True), 503
-        return jsonify(ok=False, error=str(e)), 500
-    except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
 
 
 # F60: Per-Tracking Notes/Labels — Operator schreibt kurze Notiz pro Tracking
@@ -20743,7 +20547,7 @@ def api_kickmod_status():
                    channels={
                        "kick": {"enabled": bool(KICK_CHATROOM_ID), "connected": bool(_KICK_MOD.stats.get("connected"))},
                        "discord": {"enabled": bool(DISCORD_BOT_TOKEN and DISCORD_AI_MOD),
-                                   "connected": bool(_DISCORD_CLIENT and getattr(_DISCORD_CLIENT, "user", None))},
+                                   "connected": bool(_nc_discordstate.CLIENT["obj"] and getattr(_nc_discordstate.CLIENT["obj"], "user", None))},
                        "tiktok": {"enabled": LIVE_REACT_CHAT,
                                   "connected": bool((_RESTREAM_ACTIVE or {}).get("user"))},
                        "twitch": {"enabled": bool((os.getenv("TWITCH_CHANNEL","") or "").strip()),
@@ -23104,7 +22908,7 @@ def _discord_guild_filesize_bytes():
     """v4.0-W80: filesize_limit des verbundenen Guilds (Bytes) — kennt das
        Boost-Level. 0, wenn (noch) kein Client/Guild verbunden ist."""
     try:
-        cli = globals().get("_DISCORD_CLIENT")
+        cli = _nc_discordstate.CLIENT["obj"]
         if cli and getattr(cli, "guilds", None):
             gid = DISCORD_GUILD_ID or 0
             gs = list(cli.guilds)
@@ -23153,7 +22957,11 @@ CLIP_CMD_COOLDOWN_S    = _env_int("CLIP_CMD_COOLDOWN_S", 120)         # /clip-Co
 CLIP_HIGHLIGHT_STARS   = _env_int("CLIP_HIGHLIGHT_STARS", 3)          # ab so vielen ⭐ wird ein Clip zum Highlight
 CLIP_HIGHLIGHT_TO_TG   = os.getenv("CLIP_HIGHLIGHT_TO_TG", "1").strip().lower() in ("1","true","yes","on","y")  # Highlights automatisch nach Telegram
 DISCORD_OPS_ALERTS     = os.getenv("DISCORD_OPS_ALERTS", "1").strip().lower() in ("1","true","yes","on","y")    # kritische Recording-Fehler nach #mod-log
-_DISCORD_CLIENT = None
+# v4.1-W16: der laufende discord.py-Client steht im Register
+# nc.discordstate.CLIENT. Ein direkter Alias ginge NICHT: der Bot bindet den
+# Namen neu (Reconnect, Aufraeumen), ein Alias zeigte danach auf den alten
+# Client. Dieselbe Falle wie bei KICK_MOD in W9 — und in einem Blueprint waere
+# das Modul-Global ohnehin fuer immer None.
 # B79-Fix: discord.py wertet Parameter-Annotationen (z.B. `member: discord.Member`)
 # zur Command-Registrierung via callback.__globals__ aus. Steht `import discord`
 # nur LOKAL in _discord_start, ist es dort nicht → NameError: name 'discord' is
@@ -23205,7 +23013,7 @@ async def _discord_ops_alert(key, text):
        Produktionssicht am Handy ohne SSH. Rate-Limit: pro key (z.B.
        'stall:@user') max. 1 Alert / 30min, sonst flutet ein 403-Streak
        den Channel. No-op ohne Client/Schalter."""
-    if not (DISCORD_OPS_ALERTS and _DISCORD_CLIENT):
+    if not (DISCORD_OPS_ALERTS and _nc_discordstate.CLIENT["obj"]):
         return
     now = _time_mod.monotonic()
     if now - _OPS_ALERT_LAST.get(key, 0) < 1800:
@@ -23216,7 +23024,7 @@ async def _discord_ops_alert(key, text):
     except Exception:
         return
     try:
-        for g in _DISCORD_CLIENT.guilds:
+        for g in _nc_discordstate.CLIENT["obj"].guilds:
             ch = discord.utils.get(g.text_channels, name=(DISCORD_MODLOG_CHANNEL or "mod-log"))
             if ch:
                 emb = discord.Embed(title="🚨 Recording-Alarm", description=text[:3800],
@@ -23234,8 +23042,10 @@ async def _discord_ops_alert(key, text):
 # _liveboard_loop/_weekly_digest_loop/... erneut. Bei n Reconnects liefen
 # n parallele Endlosschleifen gegen dieselben Channels.
 _DISCORD_BGTASKS_STARTED = False
-_DISCORD_SESSION = {"attempt": 0, "connected_since": None, "last_error": None,
-                    "last_disconnect": None, "reconnects": 0}
+# v4.1-W16: dasselbe Dict wie in nc/discordstate.py — der Supervisor hier
+# schreibt es fort, die Route liest es. Eine zweite Kopie, und das Panel
+# meldete "nie verbunden", waehrend der Bot seit Stunden im Server sitzt.
+_DISCORD_SESSION = _nc_discordstate.SESSION
 
 
 async def _discord_start():
@@ -23280,7 +23090,7 @@ async def _discord_start():
                                 last_disconnect=_time_mod.time(),
                                 connected_since=None)
         _DISCORD_SESSION["reconnects"] += 1
-        globals()["_DISCORD_CLIENT"] = None
+        _nc_discordstate.CLIENT["obj"] = None
         # Kam die Session nie bis on_ready, ist der Fehler deterministisch
         # (kaputte Command-Registrierung, Netzsperre, falsche Guild-ID).
         # Endlos dagegen zu laufen verschleiert das Problem nur, deshalb
@@ -23300,15 +23110,10 @@ async def _discord_start():
 
 
 def _discord_invite() -> str:
-    """v4.0-W35: die EINE Wahrheit für den Community-Invite. Reihenfolge:
-       gespeicherter (einmalig erzeugter) app_config-Wert → .env-Fallback. So
-       nutzen Announcer, Marketing UND die Website denselben Link, sobald er
-       einmal existiert."""
-    try:
-        stored = (_cfg_get("discord.invite_url", "") or "").strip()
-    except Exception:
-        stored = ""
-    return stored or DISCORD_INVITE_URL
+    # v4.0-W35 / v4.1-W16: die EINE Wahrheit fuer den Community-Invite liegt in
+    # nc/discordstate.py — Announcer, Marketing, Website und die Route lesen
+    # dieselbe Funktion.
+    return _nc_discordstate.invite()
 
 
 async def _ensure_discord_invite(client):
@@ -23366,7 +23171,6 @@ async def _ensure_discord_invite(client):
 
 async def _discord_run_once():
     """EINE Discord-Session. Rueckgabe True = nicht neu versuchen."""
-    global _DISCORD_CLIENT
     if not DISCORD_BOT_TOKEN:
         log.info("Discord deaktiviert (kein DISCORD_BOT_TOKEN gesetzt).")
         return True
@@ -23418,7 +23222,7 @@ async def _discord_run_once():
 
     tree.interaction_check = _disc_sprache_setzen
 
-    _DISCORD_CLIENT = client
+    _nc_discordstate.CLIENT["obj"] = client
     # F96: ERROR-Logs aller Logger (bot, TikTokBot, Flask) in die Discord-Queue.
     # Am ROOT-Logger, damit auch Flask-Exceptions (log_exception) mitkommen.
     if DISCORD_ERROR_PUSH and not getattr(logging.getLogger(), "_nc_errhandler", False):
@@ -25060,7 +24864,7 @@ async def _discord_run_once():
     except asyncio.CancelledError:
         raise
     finally:
-        _DISCORD_CLIENT = None
+        _nc_discordstate.CLIENT["obj"] = None
         try:
             if not client.is_closed():
                 await client.close()
@@ -25606,8 +25410,8 @@ async def _announce_loop():
 async def _discord_stop():
     """Schließt den Discord-Client beim Shutdown (sonst verwaiste Verbindung)."""
     try:
-        if _DISCORD_CLIENT is not None:
-            await _DISCORD_CLIENT.close()
+        if _nc_discordstate.CLIENT["obj"] is not None:
+            await _nc_discordstate.CLIENT["obj"].close()
     except Exception:
         pass
 
@@ -25716,7 +25520,7 @@ async def _shrink_for_discord(path, limit_mb):
 async def _clip_to_discord(username, path, caption=""):
     """Postet einen Highlight-Clip in den {slug}-clips Channel des Users (Discord).
        No-op wenn CLIP_DISCORD_UPLOAD aus, Client nicht da oder Channel fehlt."""
-    if not CLIP_DISCORD_UPLOAD or not _DISCORD_CLIENT:
+    if not CLIP_DISCORD_UPLOAD or not _nc_discordstate.CLIENT["obj"]:
         return
     try:
         import discord
@@ -25733,7 +25537,7 @@ async def _clip_to_discord(username, path, caption=""):
         # las sich wie ein Fehler und war nur ein Ueberbleibsel.
         slug = re.sub(r"[^a-z0-9]+", "-", (username or "").lstrip("@").lower()).strip("-") or "user"
         ch = None
-        for g in _DISCORD_CLIENT.guilds:
+        for g in _nc_discordstate.CLIENT["obj"].guilds:
             ch = discord.utils.get(g.text_channels, name=f"{slug}-clips")
             if ch:
                 break
@@ -25851,7 +25655,7 @@ async def _community_events_loop():
     import discord
     while True:
         try:
-            if _DISCORD_CLIENT and getattr(_DISCORD_CLIENT, "user", None):
+            if _nc_discordstate.CLIENT["obj"] and getattr(_nc_discordstate.CLIENT["obj"], "user", None):
                 now = datetime.now(timezone.utc)
                 with db_conn() as conn:
                     rows = conn.execute("SELECT id, guild_id, title, description, starts_at, announced "
@@ -25862,7 +25666,7 @@ async def _community_events_loop():
                         except Exception:
                             continue
                         mins = (when - now).total_seconds() / 60.0
-                        guild = _DISCORD_CLIENT.get_guild(r["guild_id"])
+                        guild = _nc_discordstate.CLIENT["obj"].get_guild(r["guild_id"])
                         ch = discord.utils.get(guild.text_channels, name=DISCORD_EVENTS_CHANNEL) if guild else None
                         # 10-Min-Vorwarnung (einmalig via announced=1)
                         if ch and not r["announced"] and 0 < mins <= 10:
@@ -25887,7 +25691,7 @@ async def _error_channel_loop():
     await asyncio.sleep(20)
     while True:
         try:
-            if _DC_ERR_QUEUE and _DISCORD_CLIENT and getattr(_DISCORD_CLIENT, "user", None):
+            if _DC_ERR_QUEUE and _nc_discordstate.CLIENT["obj"] and getattr(_nc_discordstate.CLIENT["obj"], "user", None):
                 batch = []
                 while _DC_ERR_QUEUE and len(batch) < 8:
                     batch.append(_DC_ERR_QUEUE.popleft())
@@ -25902,7 +25706,7 @@ async def _error_channel_loop():
                     last_sent = {k: v for k, v in last_sent.items() if now - v < 600}
                 if out:
                     txt = "\n".join(f"```{b['msg']}```" for b in out)[:1990]
-                    for g in _DISCORD_CLIENT.guilds:
+                    for g in _nc_discordstate.CLIENT["obj"].guilds:
                         ch = await _ensure_error_channel(g)
                         if ch:
                             try:
@@ -25923,7 +25727,7 @@ async def _discord_post_user(username, text, feed="live-feed", ping_notify=False
        Ping bleibt im content (Pings in Embeds lösen keine Notification aus).
        kind=None = alter Plaintext-Pfad (/post_test etc.) — unverändert.
        Schlägt der Embed-Bau fehl → Plaintext-Fallback statt gar keiner Meldung."""
-    if not _DISCORD_CLIENT:
+    if not _nc_discordstate.CLIENT["obj"]:
         return
     try:
         import discord
@@ -25997,7 +25801,7 @@ async def _discord_post_user(username, text, feed="live-feed", ping_notify=False
             pass
     try:
         posted_feed = False
-        for g in _DISCORD_CLIENT.guilds:
+        for g in _nc_discordstate.CLIENT["obj"].guilds:
             uc = discord.utils.get(g.text_channels, name=f"{slug}-clips")
             if uc:
                 await _send(uc)
@@ -26019,7 +25823,7 @@ async def _discord_post_user(username, text, feed="live-feed", ping_notify=False
 async def _discord_live_thread(username, opening=True):
     """Öffnet bei Live-Gang einen Diskussions-Thread in #live-feed, archiviert ihn bei Offline.
        Thread-ID wird in discord_state gemerkt. No-op wenn Discord/Feature aus."""
-    if not (_auto_on("auto_thread", DISCORD_AUTO_THREAD) and _DISCORD_CLIENT):
+    if not (_auto_on("auto_thread", DISCORD_AUTO_THREAD) and _nc_discordstate.CLIENT["obj"]):
         return
     try:
         import discord
@@ -26028,7 +25832,7 @@ async def _discord_live_thread(username, opening=True):
     slug = re.sub(r"[^a-z0-9]+", "-", (username or "").lstrip("@").lower()).strip("-") or "user"
     key = f"thread_{slug}"
     try:
-        for g in _DISCORD_CLIENT.guilds:
+        for g in _nc_discordstate.CLIENT["obj"].guilds:
             ch = discord.utils.get(g.text_channels, name="live-feed")
             if not ch:
                 continue
@@ -26044,7 +25848,7 @@ async def _discord_live_thread(username, opening=True):
                 tid = _disc_state_get(key)
                 if tid:
                     try:
-                        th = ch.get_thread(int(tid)) or await _DISCORD_CLIENT.fetch_channel(int(tid))
+                        th = ch.get_thread(int(tid)) or await _nc_discordstate.CLIENT["obj"].fetch_channel(int(tid))
                         if th:
                             await th.send(_nc_i18n.t("⏹ Stream beendet — Thread wird archiviert."))
                             await th.edit(archived=True)
@@ -26056,12 +25860,9 @@ async def _discord_live_thread(username, opening=True):
 
 
 def _disc_state_get(k):
-    try:
-        with db_conn() as conn:
-            r = conn.execute("SELECT v FROM discord_state WHERE k=?", (k,)).fetchone()
-        return r["v"] if r else None
-    except Exception:
-        return None
+    # v4.1-W16: nach nc/discordstate.py geloest, damit nc/routes/discord.py den
+    # Wochenstand direkt lesen kann statt ueber nc.ctx.
+    return _nc_discordstate.state_get(k)
 
 
 def _disc_state_set(k, v):
@@ -29201,6 +29002,10 @@ _nc_ctx.configure(
         "KICK_BROADCASTER_ID": KICK_BROADCASTER_ID,
         "KICK_CLIENT_ID": KICK_CLIENT_ID,
         "KICK_CLIENT_SECRET": KICK_CLIENT_SECRET,
+        # --- Discord (v4.1-W16). DISCORD_GUILD_ID und DISCORD_WEBHOOK_URL
+        # standen bereits weiter unten in diesem Dict — ruff hat die Dublette
+        # gefangen. Neu ist nur die Sternchen-Schwelle der Clip-Woche.
+        "CLIP_HIGHLIGHT_STARS": CLIP_HIGHLIGHT_STARS,
         # --- KI (v4.0-W112). Keiner dieser Namen wird im Bot je per `global`
         # neu gebunden (nachgemessen), deshalb ist die Uebergabe beim Start
         # sicher; die Dicts, Listen und das Lock werden per Referenz geteilt,
@@ -29297,6 +29102,7 @@ dashboard_app.register_blueprint(_nc_routes_youtube.bp)    # v4.1-W8
 dashboard_app.register_blueprint(_nc_routes_kick.bp)       # v4.1-W9
 dashboard_app.register_blueprint(_nc_routes_chat.bp)       # v4.1-W15
 dashboard_app.register_blueprint(_nc_routes_cohost.bp)     # v4.1-W15
+dashboard_app.register_blueprint(_nc_routes_discord.bp)    # v4.1-W16
 
 
 if __name__ == "__main__":

@@ -487,6 +487,7 @@ nach Grösse und Eigenständigkeit, ein Paket pro Welle:
 | ✅ `nc/routes/kick.py` (v4.1-W9) | 8 | 245 |
 | ✅ `nc/routes/chat.py` (v4.1-W15) | 2 | 119 |
 | ✅ `nc/routes/cohost.py` (v4.1-W15) | 2 | 62 |
+| ✅ `nc/routes/discord.py` (v4.1-W16) | 6 | 222 |
 | `nc/routes/restream.py` | 16 | 437 |
 | `nc/routes/trackings.py` | 15 | 448 |
 | `nc/routes/ops.py` | 10 | 312 |
@@ -647,12 +648,12 @@ Supervisor fahren.
 
 ## 8 · Zielbild und Messlatte
 
-| | Start | heute (W104–v4.1-W15) | nach Welle 3 | Ziel |
+| | Start | heute (W104–v4.1-W16) | nach Welle 3 | Ziel |
 |---|---:|---:|---:|---:|
-| `bot.py` Zeilen | 34.487 | **29.306** | ~24.700 | **~8.000** |
-| Flask-Routen im Monolithen | 345 | **149** | ~30 | 0 |
-| Routen in Blueprints | 0 | **210** | ~315 | 355 |
-| `nc/`-Module | 83 | **118** | ~100 | ~115 |
+| `bot.py` Zeilen | 34.487 | **29.112** | ~24.700 | **~8.000** |
+| Flask-Routen im Monolithen | 345 | **143** | ~30 | 0 |
+| Routen in Blueprints | 0 | **216** | ~315 | 355 |
+| `nc/`-Module | 83 | **120** | ~100 | ~115 |
 | Grösste Datei im Projekt | `bot.py` | `bot.py` | `bot.py` | `templates/dashboard.html` |
 
 Die härtere Messlatte ist keine Zahl:
