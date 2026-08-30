@@ -124,3 +124,27 @@ def snapshot(state, now):
     return {"in_window": len(win),
             "by_kind": dict(state.get("by_kind") or {}),
             "last_any": state.get("last_any")}
+
+
+# ---- v4.1-W15: Zustand und Konfigurations-Leser -----------------------------
+# Beide standen als Modul-Globals im Monolithen und waeren beim Herausloesen
+# von /api/cohost zu zwei nc.ctx-Eintraegen geworden. Sie gehoeren hierher: der
+# Zustand ist der DIESES Moduls (new_state/decide/snapshot arbeiten darauf),
+# und der Leser setzt nur die gespeicherte Konfiguration gegen die Defaults von
+# hier. Beides braucht keine Injektion — nc.cfgnorm und nc.cfgstore sind
+# ebenfalls bot-frei.
+#
+# STATE ist GETEILT, nicht kopiert: der Co-Host-Pfad im Bot schreibt die Bremse
+# fort (decide), die Route liest sie (snapshot). Zwei Kopien, und das Dashboard
+# zeigte eine Bremse, die nie zieht.
+
+from nc import cfgnorm as _cfgnorm            # noqa: E402 — Blockgrenze, siehe oben
+from nc.cfgstore import get as _cfg_get       # noqa: E402
+
+STATE = new_state()
+
+
+def config():
+    # v4.0-W33: Normalisierung nach nc/cfgnorm.py (bitgenau geprüft); die frische
+    # Default-Config kommt weiterhin von hier.
+    return _cfgnorm.normalize_cohost(_cfg_get("azrael.cohost", None), default_config())

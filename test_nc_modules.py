@@ -514,7 +514,13 @@ def _test_routes_alle_blueprints():
                          if not ln.lstrip().startswith("#"))
         code = code.split('"""')
         code = "".join(code[0::2]) if len(code) > 1 else quelle
-        gebraucht = set(_re.findall(r'cfg\["([^"]+)"\]', code))
+        # v4.1-W15: NUR der Kontext-cfg. Der alte Ausdruck traf jedes
+        # `cfg["x"]` — auch ein LOKALES Dict, das die Route selbst gebaut hat
+        # (nc/routes/cohost.py: `cfg = _cohost_cfg()` und dann `cfg["enabled"]`).
+        # Der Vertrag haette dort vier Schluessel vom Bot verlangt, die es dort
+        # nie gab. Blueprints lesen den Kontext ausnahmslos als `_c().cfg[...]`
+        # — bp_extract erzeugt genau diese Form.
+        gebraucht = set(_re.findall(r'_c\(\)\.cfg\["([^"]+)"\]', code))
         fehlt = gebraucht - _geliefert
         assert not fehlt, "%s liest cfg-Schluessel, die der Bot nicht liefert: %s" % (
             name, sorted(fehlt))
