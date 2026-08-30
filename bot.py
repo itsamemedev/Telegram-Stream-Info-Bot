@@ -579,6 +579,7 @@ from nc import oauthpage as _nc_oauthpage    # v4.0-W49: OAuth-Rückmeldeseiten 
 from nc import trackingdb as _nc_trackingdb  # v4.0-W50: Tracking-Status-Helfer (conn-injiziert)
 from nc import tiktokcheck as _nc_tiktokcheck  # v4.1-W5: existiert der Account noch?
 from nc import i18n as _nc_i18n  # v4.1-W6: Mehrsprachigkeit (Katalog + Spracherkennung)
+from nc import oauthredirect as _nc_oauthredirect  # v4.1-W8: OAuth-Rueckruf-Adressen (Kick/Twitch/YouTube)
 from nc import eventquery as _nc_eventquery  # v4.0-W51: Event-Log-Query-Bauer (rein)
 from nc import admod as _nc_admod            # v4.0-W56: Werbe-Allowlist-Bauer (rein)
 from nc import binresolve as _nc_binresolve  # v4.0-W60: Binary-Pfad-Resolver (rein)
@@ -606,6 +607,8 @@ from nc.routes import news as _nc_routes_news                # v4.1-W4: Website-
 from nc.routes import marketing as _nc_routes_marketing      # v4.1-W4: Cross-Promo
 from nc.routes import streamer as _nc_routes_streamer        # v4.1-W5: Streamer-Ansicht
 from nc.routes import i18n as _nc_routes_i18n                # v4.1-W6: Sprachwahl
+from nc.routes import twitch as _nc_routes_twitch            # v4.1-W8: Twitch-OAuth
+from nc.routes import youtube as _nc_routes_youtube          # v4.1-W8: YouTube-OAuth
 from nc import updater as _nc_updater                        # v4.0-W115: Selbst-Update aus dem GitHub-Repo
 from nc import donationsdb as _nc_donationsdb                # v4.0-W116: manuell erfasste Spenden lesen
 # Diese beiden Routen ruft der Bot auch INTERN auf (Telegram /sysres und die
@@ -1350,7 +1353,7 @@ _twoauth.configure(
 # B121: gleiches Muster fuer YouTube. Der Store liegt neben dem Twitch-Store;
 # eine bestehende .env-Konfiguration (YOUTUBE_REFRESH_TOKEN) bleibt gueltig,
 # bis der Flow einmal durchlaufen wurde.
-# Die wirksame Rueckruf-Adresse baut _oauth_redirect_uri("youtube") zur
+# Die wirksame Rueckruf-Adresse baut nc.oauthredirect zur
 # Laufzeit (app_config → .env → oeffentliche Adresse dieses Dashboards). Hier
 # steht deshalb KEIN localhost-Default mehr: der war jahrelang das, was Google
 # zu sehen bekam, wenn YOUTUBE_REDIRECT_URI leer blieb — und genau daran ist
@@ -12552,101 +12555,26 @@ def api_version():
 # Refresh automatisch. Redirect-URI MUSS in der Kick-Developer-App eingetragen
 # sein und mit KICK_REDIRECT_URI übereinstimmen.
 # ═══════════════════════════════════════════════════════════════════════
-def _public_base_url() -> str:
-    """Die Basis-URL, unter der dieses Dashboard von aussen erreichbar ist —
-       also das, was im Browser steht (z.B. https://example.dev:8050).
-
-       WARUM: Alle OAuth-Rueckrufe laufen ueber den nginx-Proxy. Kick konnte
-       seine Redirect-URI im Dashboard setzen, Twitch und YouTube hatten nur
-       .env und sonst 'http://localhost:3000' — eine Adresse, die weder Google
-       noch der Betreiber je zu Gesicht bekommt. Folge: Google bricht mit
-       redirect_uri_mismatch ab, BEVOR die Kontoauswahl erscheint, und weil der
-       Flow nie durchlief, gab es auch nie den Trennen-Knopf. Aus einer falschen
-       Adresse wurden drei Symptome.
-
-       Reihenfolge: PUBLIC_BASE_URL (.env) → Proxy-Header, aber NUR von einem
-       vertrauten Absender (TRUSTED_PROXIES oder Loopback — sonst koennte
-       jeder per gefaelschtem X-Forwarded-Host die Rueckruf-Adresse umbiegen)
-       → Host-Header → localhost:DASHBOARD_PORT."""
-    forced = (os.getenv("PUBLIC_BASE_URL", "") or "").strip().rstrip("/")
-    if forced:
-        return forced
-    try:
-        remote = (request.remote_addr or "").strip()
-        proto = host = port = ""
-        if remote in TRUSTED_PROXIES or remote in _LOOPBACK:
-            def _h(name):
-                return (request.headers.get(name, "") or "").split(",")[0].strip()
-            proto, host, port = _h("X-Forwarded-Proto"), _h("X-Forwarded-Host"), _h("X-Forwarded-Port")
-        host = host or (request.headers.get("Host", "") or "").strip()
-        # nginx setzt in der Regel nur $host — ohne Port. Läuft das Dashboard
-        # unter einem anderen Port als 80/443 (hier: 8050), fehlt der in der
-        # Rückruf-Adresse, und Google lehnt sie als fremd ab. X-Forwarded-Port
-        # schließt die Lücke, wenn der Proxy ihn mitschickt.
-        if port and ":" not in host and port not in ("80", "443"):
-            host = f"{host}:{port}"
-        if host:
-            return f"{proto or request.scheme or 'https'}://{host}".rstrip("/")
-    except Exception:
-        # Kein Request-Kontext (Start, Hintergrund-Task) — dann der Fallback.
-        pass
-    return f"http://localhost:{DASHBOARD_PORT}"
-
-
-def _oauth_redirect_env(platform: str) -> str:
-    """Die .env-Vorgabe je Plattform.
-
-       Bewusst ausgeschrieben statt os.getenv(f"{platform.upper()}_REDIRECT_URI"):
-       tools/gen_env_example.py findet Variablen nur als Literal. Ein dynamisch
-       gebauter Name fehlt danach in der .env-Vorlage — und was dort fehlt,
-       existiert fuer den Betreiber nicht."""
-    return {
-        "kick": os.getenv("KICK_REDIRECT_URI", ""),
-        "twitch": os.getenv("TWITCH_REDIRECT_URI", ""),
-        "youtube": os.getenv("YOUTUBE_REDIRECT_URI", ""),
-    }.get(platform, "").strip()
-
-
-def _oauth_redirect_uri(platform: str) -> str:
-    """Redirect-URI eines OAuth-Flows. app_config schlaegt .env schlaegt die
-       oeffentliche Basis-URL. Damit gilt fuer Kick, Twitch und YouTube
-       dieselbe Regel — und hinter dem Proxy stimmt sie ohne Konfiguration."""
-    saved = (_cfg_get(f"{platform}.redirect_uri", "") or "").strip()
-    if saved:
-        return saved
-    env = _oauth_redirect_env(platform)
-    if env:
-        return env
-    return f"{_public_base_url()}/api/{platform}/oauth/callback"
-
-
-def _oauth_redirect_source(platform: str) -> str:
-    """Woher stammt die aktive Redirect-URI? Fuer die Dashboard-Warnung."""
-    if (_cfg_get(f"{platform}.redirect_uri", "") or "").strip():
-        return "config"
-    if _oauth_redirect_env(platform):
-        return "env"
-    return "fallback"
-
-
+# v4.1-W8: Die komplette Rueckruf-Schicht liegt in nc/oauthredirect.py. Grund:
+# nc.ctx steht bei 24 von vertraglich 25 Slots, und /api/twitch brauchte drei
+# davon allein fuer die Aufloesung. Erst die Schicht loesen, dann die Routen
+# (W117) — danach kosteten /api/twitch und /api/youtube null neue Eintraege.
+# Uebrig sind hier nur die drei Kick-Namen: sie haben Aufrufstellen im
+# Bot-Kern (Restream, Token-Refresh), der nicht mitgewandert ist.
 def _kick_redirect_uri():
     # v4.0-W23: app_config schlaegt .env schlaegt Fallback. Damit laesst sich die
     # Redirect-URI LIVE im Dashboard setzen — ohne .env/systemd-Neustart, der die
     # haeufigste Ursache fuer "steht immer noch auf localhost:8050" ist (Variable
     # nicht in der EnvironmentFile oder Bot nicht neu gestartet).
-    return _oauth_redirect_uri("kick")
+    return _nc_oauthredirect.redirect_uri("kick")
 
 
 def _kick_redirect_source():
-    """Woher stammt die aktive Redirect-URI? Fuer die Dashboard-Warnung."""
-    return _oauth_redirect_source("kick")
+    return _nc_oauthredirect.redirect_source("kick")
 
 
 def _kick_redirect_public(uri):
-    """False, wenn die URI auf localhost/127.0.0.1 zeigt — dann kann Kick sie
-       extern NICHT erreichen und der OAuth-Rueckruf schlaegt fehl."""
-    u = (uri or "").lower()
-    return not ("localhost" in u or "127.0.0.1" in u or "://0.0.0.0" in u)
+    return _nc_oauthredirect.redirect_public(uri)
 
 
 async def _kick_user_token(session=None):
@@ -14833,136 +14761,16 @@ def api_restream_verify():
 # Rueckmeldeseite, gleiche Tunnel-Logik. Wer den einen Flow kennt, kennt
 # den anderen.
 
-@dashboard_app.route("/api/youtube/oauth/status")
-def api_youtube_oauth_status():
-    try:
-        st = _ytoauth.status()
-        # Google erlaubt als Redirect nur HTTPS oder http://localhost:PORT —
-        # eine nackte IP wird abgelehnt (kein Zertifikat moeglich). Hinter dem
-        # nginx-Proxy ist genau die Adresse richtig, unter der das Dashboard
-        # gerade geoeffnet ist; frueher stand hier stur localhost:3000, und
-        # Google brach mit redirect_uri_mismatch ab (siehe _public_base_url).
-        eff = _oauth_redirect_uri("youtube")
-        src = _oauth_redirect_source("youtube")
-        st["redirect_uri"] = eff
-        st["redirect_source"] = src
-        st["redirect_forced"] = src != "fallback"
-        st["redirect_public"] = _kick_redirect_public(eff)
-        # Ein Tunnel ist nur noetig, solange die Adresse auf localhost zeigt.
-        st["needs_tunnel"] = not st["redirect_public"]
-        return jsonify(ok=True, **st)
-    except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
 
 
-@dashboard_app.route("/api/youtube/oauth/redirect", methods=["POST"])
-def api_youtube_oauth_redirect():
-    """Redirect-URI live setzen (app_config), ohne .env/Neustart — wie bei Kick.
-       Muss danach 1:1 in der Google-Cloud-Console unter 'Autorisierte
-       Weiterleitungs-URIs' stehen. Leerer Wert loescht die Ueberschreibung."""
-    data = request.get_json(silent=True) or {}
-    uri = str(data.get("uri", "") or "").strip()
-    if uri:
-        low = uri.lower()
-        if not (low.startswith("http://") or low.startswith("https://")):
-            return jsonify(ok=False, error="URI muss mit http:// oder https:// beginnen"), 400
-        if not low.endswith("/api/youtube/oauth/callback"):
-            return jsonify(ok=False, error="URI muss auf /api/youtube/oauth/callback enden "
-                           "(exakt dieser Pfad ist die Rueckruf-Route)"), 400
-        if low.startswith("http://") and "localhost" not in low and "127.0.0.1" not in low:
-            return jsonify(ok=False, error="Google akzeptiert http:// nur fuer localhost — "
-                           "sonst https:// verwenden"), 400
-    _cfg_set("youtube.redirect_uri", uri)
-    eff = _oauth_redirect_uri("youtube")
-    return jsonify(ok=True, redirect_uri=eff,
-                   redirect_source=_oauth_redirect_source("youtube"),
-                   redirect_public=_kick_redirect_public(eff))
 
 
-@dashboard_app.route("/api/youtube/oauth/start")
-def api_youtube_oauth_start():
-    import secrets
-    if not (os.getenv("YOUTUBE_CLIENT_ID", "") or "").strip():
-        return jsonify(ok=False, error="YOUTUBE_CLIENT_ID fehlt in der .env"), 400
-    if not (os.getenv("YOUTUBE_CLIENT_SECRET", "") or "").strip():
-        return jsonify(ok=False, error="YOUTUBE_CLIENT_SECRET fehlt in der .env"), 400
-    redirect_uri = _oauth_redirect_uri("youtube")
-    # 'select_account consent' ausdruecklich mitgeben statt auf den Modul-
-    # Default zu bauen: das ist die Kontoauswahl, ohne die man mit mehreren
-    # Google-Konten immer beim zuletzt benutzten landet.
-    url = _ytoauth.authorize_url(secrets.token_urlsafe(16), redirect_uri=redirect_uri,
-                                 prompt="select_account consent")
-    if not url:
-        return jsonify(ok=False, error="Authorize-URL nicht baubar"), 400
-    return redirect(url)
 
 
-@dashboard_app.route("/api/youtube/oauth/callback")
-def api_youtube_oauth_callback():
-    import aiohttp
-    err = request.args.get("error")
-    if err:
-        return _twitch_oauth_page(False, f"Google lehnte ab: {err} "
-                                  f"({request.args.get('error_description', '')})")
-    code = (request.args.get("code") or "").strip()
-    state = (request.args.get("state") or "").strip()
-    if not code:
-        return _twitch_oauth_page(False, "Kein ?code in der URL"), 400
-    ok, msg = _run_async_from_flask(
-        _ytoauth.exchange_code(code, state, aiohttp), timeout=25)
-    if ok:
-        # Token-Cache invalidieren, damit der naechste Aufruf sofort den
-        # frischen Zugang nutzt statt auf den alten Ablauf zu warten.
-        _YT_SEND["token"], _YT_SEND["token_exp"] = "", 0
-        _YT_API_CACHE.update(ts=0.0, data=None)
-    return _twitch_oauth_page(ok, msg)
 
 
-@dashboard_app.route("/api/youtube/oauth/forget", methods=["POST"])
-def api_youtube_oauth_forget():
-    """Verbindung loesen (z.B. vor dem Wechsel auf einen anderen Kanal)."""
-    try:
-        _ytoauth.forget()
-        _YT_SEND["token"], _YT_SEND["token_exp"] = "", 0
-        _YT_API_CACHE.update(ts=0.0, data=None)
-        return jsonify(ok=True)
-    except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
 
 
-@dashboard_app.route("/api/youtube/oauth/logout", methods=["POST"])
-def api_youtube_oauth_logout():
-    """Vom Google-Konto abmelden: Zugriff BEI GOOGLE widerrufen und lokal
-       loeschen. Unterschied zu /forget: danach ist auch die Freigabe im
-       Google-Konto weg, der naechste Verbindungsversuch fragt wieder nach
-       Konto und Zustimmung. Das ist der Weg, um auf ein anderes Google-Konto
-       zu wechseln, ohne myaccount.google.com von Hand aufzurufen."""
-    import aiohttp
-    # Stammt der Token aus der .env, ueberlebt er das Abmelden: beim naechsten
-    # Start liest ytoauth ihn dort wieder ein — dann steht "verbunden (.env)"
-    # im Panel, waehrend der Zugriff bei Google laengst widerrufen ist. Das
-    # sagen wir, statt es den Betreiber suchen zu lassen.
-    _aus_env = (os.getenv("YOUTUBE_REFRESH_TOKEN", "") or "").strip()
-    try:
-        ok, msg = _run_async_from_flask(_ytoauth.revoke(aiohttp), timeout=25)
-    except RuntimeError as e:
-        if _loop_not_ready(e):
-            # Ohne Loop kein Netz-Aufruf — wenigstens lokal sauber trennen,
-            # damit der Knopf nicht wirkungslos aussieht.
-            _ytoauth.forget()
-            ok, msg = False, ("Bot-Loop startet noch — lokal getrennt, der "
-                              "Widerruf bei Google muss wiederholt werden.")
-        else:
-            return jsonify(ok=False, error=str(e)), 500
-    except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
-    _YT_SEND["token"], _YT_SEND["token_exp"] = "", 0
-    _YT_API_CACHE.update(ts=0.0, data=None)
-    if _aus_env:
-        msg += (" Achtung: YOUTUBE_REFRESH_TOKEN steht noch in der .env — der "
-                "Wert ist jetzt tot, wird beim naechsten Start aber wieder "
-                "gelesen. Zeile dort entfernen.")
-    return jsonify(ok=ok, message=msg)
 
 
 # ═══ B120: FINANZAMT — Einnahmen-Journal (nc.ledger) ═══════════════════
@@ -14976,102 +14784,14 @@ def api_youtube_oauth_logout():
 
 
 
-@dashboard_app.route("/api/twitch/oauth/status")
-def api_twitch_oauth_status():
-    """V37-TWOAUTH: Was ist konfiguriert, ist der Flow abgeschlossen?"""
-    try:
-        st = _twoauth.status()
-        # Die Redirect-URI melden, die der Nutzer in der Twitch-App eintragen
-        # MUSS. Twitch erlaubt nur HTTPS oder http://localhost — eine IP mit
-        # https wird abgelehnt. Default localhost:3000 (per SSH-Tunnel), oder
-        # der erzwungene TWITCH_REDIRECT_URI (echte Domain mit HTTPS).
-        # Wie bei Kick/YouTube: ohne Vorgabe die Adresse, unter der das
-        # Dashboard gerade laeuft (hinter dem Proxy also die echte Domain).
-        eff = _oauth_redirect_uri("twitch")
-        st["redirect_uri"] = eff
-        st["redirect_source"] = _oauth_redirect_source("twitch")
-        st["redirect_forced"] = st["redirect_source"] != "fallback"
-        st["redirect_public"] = _kick_redirect_public(eff)
-        st["needs_tunnel"] = not st["redirect_public"]
-        return jsonify(ok=True, **st)
-    except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
 
 
-@dashboard_app.route("/api/twitch/oauth/redirect", methods=["POST"])
-def api_twitch_oauth_redirect():
-    """Redirect-URI live setzen (app_config), ohne .env/Neustart — wie bei Kick
-       und YouTube. Muss danach 1:1 in der Twitch-App unter 'OAuth Redirect
-       URLs' stehen. Leerer Wert loescht die Ueberschreibung."""
-    data = request.get_json(silent=True) or {}
-    uri = str(data.get("uri", "") or "").strip()
-    if uri:
-        low = uri.lower()
-        if not (low.startswith("http://") or low.startswith("https://")):
-            return jsonify(ok=False, error="URI muss mit http:// oder https:// beginnen"), 400
-        if not low.endswith("/api/twitch/oauth/callback"):
-            return jsonify(ok=False, error="URI muss auf /api/twitch/oauth/callback enden "
-                           "(exakt dieser Pfad ist die Rueckruf-Route)"), 400
-        if low.startswith("http://") and "localhost" not in low and "127.0.0.1" not in low:
-            return jsonify(ok=False, error="Twitch akzeptiert http:// nur fuer localhost — "
-                           "sonst https:// verwenden"), 400
-    _cfg_set("twitch.redirect_uri", uri)
-    eff = _oauth_redirect_uri("twitch")
-    return jsonify(ok=True, redirect_uri=eff,
-                   redirect_source=_oauth_redirect_source("twitch"),
-                   redirect_public=_kick_redirect_public(eff))
 
 
-@dashboard_app.route("/api/twitch/oauth/start")
-def api_twitch_oauth_start():
-    """Schritt 1: leitet zum Twitch-Zustimmungsdialog um. CSRF-state in der
-       Session-freien Umgebung: wir merken ihn im Modul (Single-User-Dashboard)."""
-    import secrets
-    cid = (os.getenv("TWITCH_CLIENT_ID", "") or "").strip()
-    if not cid:
-        return jsonify(ok=False, error="TWITCH_CLIENT_ID fehlt in der .env"), 400
-    if not (os.getenv("TWITCH_CLIENT_SECRET", "") or "").strip():
-        return jsonify(ok=False, error="TWITCH_CLIENT_SECRET fehlt in der .env"), 400
-    # V37-TWOAUTH-FIX2: Twitch verlangt bei Redirect-URIs HTTPS — mit EINER
-    # Ausnahme: http://localhost:PORT ist erlaubt. Eine IP mit https geht NICHT
-    # (kein Zertifikat fuer nackte IPs). Deshalb ist der Default localhost:3000,
-    # das der Nutzer per SSH-Tunnel auf den Bot legt (docs/SETUP_TWITCH_OAUTH.md).
-    # Wer eine echte Domain + HTTPS hat, setzt TWITCH_REDIRECT_URI darauf —
-    # oder laesst es: hinter dem Proxy liefert _oauth_redirect_uri genau diese
-    # Domain, ohne dass irgendwo eine Adresse doppelt gepflegt werden muss.
-    redirect_uri = _oauth_redirect_uri("twitch")
-    url = _twoauth.authorize_url(secrets.token_urlsafe(16), redirect_uri=redirect_uri)
-    if not url:
-        return jsonify(ok=False, error="Authorize-URL nicht baubar"), 400
-    return redirect(url)
 
 
-@dashboard_app.route("/api/twitch/oauth/callback")
-def api_twitch_oauth_callback():
-    """Schritt 2: Twitch schickt ?code hierher. Gegen Refresh-Token tauschen.
-
-    Der Redirect zeigt zwar auf localhost:3000 (so in der App eingetragen), aber
-    der Nutzer kann den ?code-Teil der URL auch von Hand hierher kopieren, falls
-    das Dashboard nicht unter localhost:3000 laeuft. Beide Wege landen hier.
-    """
-    import aiohttp
-    err = request.args.get("error")
-    if err:
-        return _twitch_oauth_page(False, f"Twitch lehnte ab: {err} "
-                                  f"({request.args.get('error_description', '')})")
-    code = (request.args.get("code") or "").strip()
-    state = (request.args.get("state") or "").strip()
-    if not code:
-        return _twitch_oauth_page(False, "Kein ?code in der URL"), 400
-    ok, msg = _run_async_from_flask(
-        _twoauth.exchange_code(code, state, aiohttp), timeout=25)
-    return _twitch_oauth_page(ok, msg)
 
 
-def _twitch_oauth_page(ok, msg):
-    """Kleine Rueckmeldeseite nach dem Flow — kein rohes JSON im Browser.
-       v4.0-W49: nach nc/oauthpage.py extrahiert (bitgenau geprüft, msg escaped)."""
-    return _nc_oauthpage.twitch(ok, msg)
 
 
 @dashboard_app.route("/api/system/config_drift")
@@ -26669,11 +26389,10 @@ _WCHAT_THANK_LAST = {}
 #  block, damit die Deck-API sie nutzen kann — V37-MOD.)
 
 
-# B120: eigener Cache fuer den API-Kanalstatus. Die YouTube Data API hat
-# ein TAGES-Kontingent (10.000 Einheiten); der Control-Tab pollt alle 20s.
-# Ohne diesen Cache waere das Kontingent vor Mittag verbrannt und die API
-# antwortet bis Mitternacht nur noch mit 403 quotaExceeded.
-_YT_API_CACHE = {"ts": 0.0, "data": None}
+# B120/v4.1-W8: der Kontingent-Cache liegt jetzt neben YT_SEND in
+# nc/channels.py — geteilter Zustand gehoert dorthin, nicht in den Monolithen,
+# sonst waere er beim Herausloesen von /api/youtube ein nc.ctx-Eintrag geworden.
+_YT_API_CACHE = _nc_channels.YT_API_CACHE
 
 # ── YouTube-Restream: RTMP-Ingest automatisch auflösen ──────────────────────
 # Bisher hing der YouTube-Restream KOMPLETT an einem manuell gesetzten
@@ -26924,12 +26643,13 @@ async def _yt_live_chat_id(tok):
     return lcid or None
 
 
-_YT_SENDRATE = _nc_sendrate.new_state()    # v4.0-W23: Zustand der YT-Sende-Bremse
+# v4.1-W8: Zustand und Normalisierung liegen in nc/channels.py, damit
+# /api/youtube sie direkt importieren kann statt ueber nc.ctx.
+_YT_SENDRATE = _nc_channels.YT_SENDRATE     # v4.0-W23: Zustand der YT-Sende-Bremse
 
 
 def _yt_sendrate_cfg():
-    # v4.0-W33: Normalisierung nach nc/cfgnorm.py (bitgenau geprüft).
-    return _nc_cfgnorm.normalize_sendrate(_cfg_get("youtube.sendrate", None))
+    return _nc_channels.yt_sendrate_cfg()
 
 
 async def _youtube_send(text):
@@ -26963,15 +26683,6 @@ async def _youtube_send(text):
     return True
 
 
-@dashboard_app.route("/api/youtube/sendrate")
-def api_youtube_sendrate():
-    """v4.0-W23: Zustand der YT-Sende-Bremse (verworfen/gesendet, letzte Minute)."""
-    try:
-        cfg = _yt_sendrate_cfg()
-        snap = _nc_sendrate.snapshot(_YT_SENDRATE, _time_mod.monotonic())
-        return jsonify(ok=True, cfg=cfg, **snap)
-    except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
 
 
 def _wchat_thank_ok(user):
@@ -29537,6 +29248,16 @@ _nc_trackingdb.configure(integrity_errors=DB_INTEGRITY_ERRORS,
 # locales/; fehlt ein Eintrag, bleibt der Text deutsch statt zu verschwinden.
 _nc_i18n.configure(standard=UI_LANG)
 
+# v4.1-W8: Die OAuth-Rueckruf-Adressen. TRUSTED_PROXIES und DASHBOARD_PORT
+# kommen von hier statt aus einer zweiten os.getenv-Stelle im Modul — sonst
+# haetten Bot und Schicht bei einer .env-Aenderung unterschiedliche Werte, und
+# genau daraus entsteht ein redirect_uri_mismatch, das niemand nachvollziehen
+# kann. PUBLIC_BASE_URL und die *_REDIRECT_URI liest die Schicht weiterhin bei
+# jedem Aufruf selbst: sie sind zur Laufzeit aenderbar.
+_nc_oauthredirect.configure(trusted_proxies=TRUSTED_PROXIES,
+                            loopback=_LOOPBACK,
+                            dashboard_port=DASHBOARD_PORT)
+
 # v4.1-W5: die Existenzpruefung laeuft ueber denselben Weg wie die
 # Live-Aufloesung — gepoolte Session, geprueter Pull-Proxy, gleiche Kopfzeilen.
 # Alle drei haengen am Laufzeitkern und bleiben im Bot.
@@ -29705,6 +29426,8 @@ dashboard_app.register_blueprint(_nc_routes_news.bp)       # v4.1-W4
 dashboard_app.register_blueprint(_nc_routes_marketing.bp)  # v4.1-W4
 dashboard_app.register_blueprint(_nc_routes_streamer.bp)   # v4.1-W5
 dashboard_app.register_blueprint(_nc_routes_i18n.bp)       # v4.1-W6
+dashboard_app.register_blueprint(_nc_routes_twitch.bp)     # v4.1-W8
+dashboard_app.register_blueprint(_nc_routes_youtube.bp)    # v4.1-W8
 
 
 if __name__ == "__main__":

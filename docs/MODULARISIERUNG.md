@@ -481,6 +481,9 @@ nach Grösse und Eigenständigkeit, ein Paket pro Welle:
 | ✅ `nc/routes/news.py` (v4.1-W4) | 8 | 84 |
 | ✅ `nc/routes/marketing.py` (v4.1-W4) | 5 | 63 |
 | ✅ `nc/routes/streamer.py` (v4.1-W5) | 10 | 248 |
+| ✅ `nc/routes/i18n.py` (v4.1-W6) | 4 | 213 |
+| ✅ `nc/routes/twitch.py` (v4.1-W8) | 4 | 124 |
+| ✅ `nc/routes/youtube.py` (v4.1-W8) | 7 | 189 |
 | `nc/routes/restream.py` | 16 | 437 |
 | `nc/routes/trackings.py` | 15 | 448 |
 | `nc/routes/ops.py` | 10 | 312 |
@@ -641,12 +644,12 @@ Supervisor fahren.
 
 ## 8 · Zielbild und Messlatte
 
-| | Start | heute (W104–v4.1-W5) | nach Welle 3 | Ziel |
+| | Start | heute (W104–v4.1-W8) | nach Welle 3 | Ziel |
 |---|---:|---:|---:|---:|
-| `bot.py` Zeilen | 34.487 | **29.646** | ~24.700 | **~8.000** |
-| Flask-Routen im Monolithen | 345 | **172** | ~30 | 0 |
-| Routen in Blueprints | 0 | **183** | ~315 | 355 |
-| `nc/`-Module | 83 | **111** | ~100 | ~115 |
+| `bot.py` Zeilen | 34.487 | **29.437** | ~24.700 | **~8.000** |
+| Flask-Routen im Monolithen | 345 | **161** | ~30 | 0 |
+| Routen in Blueprints | 0 | **198** | ~315 | 355 |
+| `nc/`-Module | 83 | **113** | ~100 | ~115 |
 | Grösste Datei im Projekt | `bot.py` | `bot.py` | `bot.py` | `templates/dashboard.html` |
 
 Die härtere Messlatte ist keine Zahl:
@@ -965,6 +968,39 @@ Blueprint benutzt; das ist der Fall, den `nc/ctx.py` im Kopf ausdrücklich
 ausschliesst. Die Gruppe wartet auf das Lösen der Live-Auflösungs-Schicht
 (Welle 6), nicht auf einen Slot.
 
+
+### Welle 3, Stand v4.1-W8 — zwei Gruppen, elf Routen, null neue Slots
+
+`/api/twitch` kostete nach `bp_analyse` **vier** Kontext-Einträge, `/api/youtube`
+**acht**. Drei davon waren bei beiden dieselben drei Funktionen: die Auflösung
+der OAuth-Rückruf-Adresse. Nach ihrem Umzug in `nc/oauthredirect.py` kostet
+`/api/twitch` **einen** Eintrag (`run_async`, den es längst gibt) und
+`/api/youtube` ebenfalls einen. Fünfte Welle in Folge ohne neuen Slot.
+
+Bei YouTube kamen drei Modul-Globals dazu — `_YT_API_CACHE`, `_YT_SENDRATE`
+und der Reader `_yt_sendrate_cfg`. Sie sind nach `nc/channels.py` gewandert,
+dorthin, wo `YT_SEND` schon lag. Der Punkt ist nicht das Aufräumen, sondern
+dass es **dasselbe Objekt** bleiben muss: der Trennen-Knopf im Blueprint leert
+den Token-Cache, den der Sendepfad im Bot füllt. Zwei Kopien, und der Bot
+sendet nach dem Abmelden mit dem alten Token weiter — sichtbar erst, wenn
+Google die Freigabe längst widerrufen hat.
+
+**Der Befund dieser Welle ist wieder ein Werkzeugfehler.** `bp_analyse` hielt
+`_YT_SEND = _nc_channels.YT_SEND` für einen Monolith-Global und meldete drei
+Kontext-Einträge, die es gar nicht gibt. Das ist exakt die Fehlanzeige, die das
+Werkzeug bei reinen Delegations-*Funktionen* schon kannte (W111) — nur auf
+Zuweisungen übertragen. Es zählt sie jetzt als direkt importierbar, aber nur
+bei **eindeutiger** Bindung: ein Name, der auf Modulebene ein zweites Mal
+zugewiesen wird, ist kein Alias, sondern Zustand mit Geschichte. Der
+Unterschied ist nicht kosmetisch: die falsche Meldung hätte die Gruppe als
+„zu teuer" liegen lassen.
+
+**Was liegen bleibt und warum.** `/api/kick` (8 Routen) hängt nicht an der
+Rückruf-Schicht, sondern am Moderations- und Restream-Kern (`_KICK_MOD`,
+`_KICK_SEND_LAST`, `_kick_slug`, `_get_ai_session`) und benutzt zusätzlich
+`globals()` — eine Abhängigkeit, die keine Namensanalyse sieht. Das ist eine
+eigene Welle, keine Zugabe zu dieser. `/api/profile` wartet unverändert auf die
+Live-Auflösungs-Schicht (Welle 6).
 
 ---
 

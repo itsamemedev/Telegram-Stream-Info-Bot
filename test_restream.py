@@ -3668,7 +3668,13 @@ def test_v40_w23_sendrate():
     seg = seg[:seg.find("    return True")]
     assert seg.find("_nc_sendrate.allow") < seg.find("await _yt_access_token()"), \
         "Bremse nicht am Chokepoint (muss VOR dem Token/HTTP sitzen)"
-    assert '"/api/youtube/sendrate"' in src, "keine Status-Route"
+    # ANKER GEWANDERT (v4.1-W8, nicht der Vertrag): die Status-Route steht in
+    # nc/routes/youtube.py, der Zustand der Bremse in nc/channels.py. Der
+    # Sendepfad selbst bleibt im Monolithen — nur er darf ihn druecken.
+    _yt = open("nc/routes/youtube.py", encoding="utf-8").read()
+    assert '"/api/youtube/sendrate"' in _yt, "keine Status-Route"
+    assert "from nc.channels import YT_SENDRATE" in _yt, \
+        "Route liest einen ANDEREN Zustand als der Sendepfad — Bremse waere blind"
     ok("v4.0-w23: Bremse am EINEN Chokepoint _youtube_send, vor jeder API-Zeile")
 
 
@@ -3681,17 +3687,24 @@ def test_v40_w23_kick_redirect():
     # gilt fuer Kick, Twitch und YouTube gemeinsam. _kick_redirect_uri reicht
     # nur noch die Plattform durch. Geprueft wird dieselbe Zusage, nur dort,
     # wo sie jetzt lebt.
-    gen = src[src.find("def _oauth_redirect_uri("):src.find("def _oauth_redirect_source(")]
+    # ANKER ERNEUT GEWANDERT (v4.1-W8, nicht der Vertrag): die Schicht liegt
+    # jetzt in nc/oauthredirect.py, damit nc/routes/twitch.py sie direkt
+    # importieren kann statt drei nc.ctx-Slots dafuer zu verbrauchen. Der Bot
+    # haelt nur noch Weiterleitungen. Geprueft wird dieselbe Zusage dort, wo
+    # sie lebt.
+    ore = open("nc/oauthredirect.py", encoding="utf-8").read()
+    gen = ore[ore.find("def redirect_uri("):ore.find("def redirect_source(")]
     assert "{platform}.redirect_uri" in gen, "app_config-Ueberschreibung fehlt"
-    assert gen.find("{platform}.redirect_uri") < gen.find("_oauth_redirect_env(platform)"), \
+    assert gen.find("{platform}.redirect_uri") < gen.find("redirect_env(platform)"), \
         "Reihenfolge falsch — config muss VOR env stehen"
     # Die Env-Namen muessen als Literal im Quelltext stehen, sonst fallen sie
     # aus .env.example heraus (gen_env_example.py findet nur Literale).
-    _env = src[src.find("def _oauth_redirect_env("):src.find("def _oauth_redirect_uri(")]
+    _env = ore[ore.find("def redirect_env("):ore.find("def redirect_uri(")]
     for _v in ("KICK_REDIRECT_URI", "TWITCH_REDIRECT_URI", "YOUTUBE_REDIRECT_URI"):
         assert '"%s"' % _v in _env, "%s nicht als Literal auffindbar" % _v
     seg = src[src.find("def _kick_redirect_uri():"):src.find("async def _kick_user_token(")]
-    assert '_oauth_redirect_uri("kick")' in seg, "Kick nutzt die gemeinsame Aufloesung nicht"
+    assert '_nc_oauthredirect.redirect_uri("kick")' in seg, \
+        "Kick nutzt die gemeinsame Aufloesung nicht"
     assert "def _kick_redirect_source(" in src and "def _kick_redirect_public(" in src
     assert '"/api/kick/oauth/redirect"' in src and "def api_kick_oauth_redirect(" in src, \
         "kein Live-Setzer fuer die Redirect-URI"
@@ -4220,9 +4233,15 @@ def test_v40_w33_cfgnorm_bundle():
     src = open("bot.py").read()
     assert "from nc import cfgnorm as _nc_cfgnorm" in src
     for call in ("normalize_quiet_hours(_cfg_get", "normalize_highlights(_cfg_get",
-                 "normalize_sendrate(_cfg_get", "normalize_gate(_cfg_get",
+                 "normalize_gate(_cfg_get",
                  "normalize_audio(_cfg_get", "normalize_cohost(_cfg_get"):
         assert f"_nc_cfgnorm.{call}" in src, f"{call} delegiert nicht"
+    # ANKER GEWANDERT (v4.1-W8, nicht der Vertrag): der sendrate-Reader liegt
+    # bei seinem Zustand in nc/channels.py, damit /api/youtube ihn direkt
+    # importieren kann. Dieselbe Zusage, andere Datei.
+    _ch = open("nc/channels.py", encoding="utf-8").read()
+    assert "_cfgnorm.normalize_sendrate(_cfg_get" in _ch, \
+        "normalize_sendrate(_cfg_get delegiert nicht"
     assert "int(float(os.getenv(env, default)))" not in src, "alte Normalisierungs-Logik noch im Monolithen"
     ok("v4.0-w33: alle 6 Reader delegieren, _cfg_get-I/O bleibt im Bot")
 
@@ -4735,7 +4754,14 @@ def test_v40_w49_oauthpage():
 
     src = open("bot.py").read()
     assert "from nc import oauthpage as _nc_oauthpage" in src
-    assert "return _nc_oauthpage.twitch(ok, msg)" in src and "return _nc_oauthpage.kick(ok, msg)" in src, "delegiert nicht"
+    assert "return _nc_oauthpage.kick(ok, msg)" in src, "Kick-Seite delegiert nicht"
+    # ANKER GEWANDERT (v4.1-W8, nicht der Vertrag): die Twitch-Seite wird von
+    # den beiden OAuth-Blueprints benutzt, nicht mehr vom Monolithen. Beide
+    # importieren dieselbe Funktion — keine zweite Seiten-Logik.
+    for _mod in ("nc/routes/twitch.py", "nc/routes/youtube.py"):
+        _s = open(_mod, encoding="utf-8").read()
+        assert "from nc.oauthpage import twitch as " in _s, "%s baut die Seite selbst" % _mod
+        assert "Dieses Fenster kann geschlossen" not in _s, "%s mit eigener Seiten-Logik" % _mod
     assert "Dieses Fenster kann geschlossen" not in src, "alte Seiten-Logik noch im Monolithen"
     ok("v4.0-w49: Bot delegiert beide OAuth-Seiten, keine Doppel-Logik")
 
@@ -7278,19 +7304,33 @@ def test_v40_w121_oauth_proxy_meldethema_kollision():
     src = open("bot.py").read()
 
     # ── 1: gemeinsame, proxy-taugliche Aufloesung ────────────────────────
-    assert "def _public_base_url(" in src, "keine oeffentliche Basis-URL"
-    _pb = src[src.index("def _public_base_url("):src.index("def _oauth_redirect_uri(")]
+    # ANKER GEWANDERT (v4.1-W8, nicht der Vertrag): die Aufloesung liegt in
+    # nc/oauthredirect.py, der Bot reicht nur noch durch.
+    _ore = open("nc/oauthredirect.py", encoding="utf-8").read()
+    assert "def public_base_url(" in _ore, "keine oeffentliche Basis-URL"
+    _pb = _ore[_ore.index("def public_base_url("):_ore.index("def redirect_env(")]
     assert "PUBLIC_BASE_URL" in _pb, "kein Env-Vorrang fuer die oeffentliche Adresse"
-    assert "X-Forwarded-Host" in _pb and "TRUSTED_PROXIES" in _pb, \
+    assert "X-Forwarded-Host" in _pb and "trusted_proxies" in _pb, \
         "Proxy-Header ohne Vertrauensgrenze — waere faelschbar"
-    for plat in ("youtube", "twitch"):
-        assert '_oauth_redirect_uri("%s")' % plat in src, \
-            "%s nutzt die gemeinsame Aufloesung nicht" % plat
+    assert "TRUSTED_PROXIES" in src[src.index("_nc_oauthredirect.configure("):
+                                    src.index("_nc_oauthredirect.configure(") + 300], \
+        "die Vertrauensgrenze wird dem Modul nicht uebergeben"
+    # ANKER GEWANDERT (v4.1-W8): beide Flows liegen als Blueprint in nc/routes/
+    # und importieren die Aufloesung direkt. Geprueft bleibt dieselbe Zusage:
+    # sie bauen ihre Rueckruf-Adresse ueber die EINE Schicht, nicht jeder fuer
+    # sich — sonst driften Kick, Twitch und YouTube wieder auseinander.
+    for _plat in ("twitch", "youtube"):
+        _s = open("nc/routes/%s.py" % _plat, encoding="utf-8").read()
+        assert "from nc.oauthredirect import redirect_uri as _redirect_uri" in _s and \
+            '_redirect_uri("%s")' % _plat in _s, \
+            "%s nutzt die gemeinsame Aufloesung nicht" % _plat
     assert "http://localhost:3000/api/youtube/oauth/callback" not in src, \
         "YouTube haengt noch am festen localhost:3000"
-    assert '"/api/youtube/oauth/redirect"' in src and "def api_youtube_oauth_redirect(" in src, \
+    # ANKER GEWANDERT (v4.1-W8): die YouTube-Routen liegen in nc/routes/youtube.py.
+    _yt = open("nc/routes/youtube.py", encoding="utf-8").read()
+    assert '"/api/youtube/oauth/redirect"' in _yt and "def api_youtube_oauth_redirect(" in _yt, \
         "kein Live-Setzer fuer die YouTube-Rueckruf-Adresse"
-    _ys = src[src.index("def api_youtube_oauth_start("):src.index("def api_youtube_oauth_callback(")]
+    _ys = _yt[_yt.index("def api_youtube_oauth_start("):_yt.index("def api_youtube_oauth_callback(")]
     assert 'prompt="select_account consent"' in _ys, "keine Google-Kontoauswahl erzwungen"
 
     # ── 2: Abmeldung widerruft bei Google ────────────────────────────────
@@ -7299,7 +7339,7 @@ def test_v40_w121_oauth_proxy_meldethema_kollision():
     _rv = yt[yt.index("async def revoke("):yt.index("def forget(")]
     assert "REVOKE" in _rv, "Widerruf ruft den Google-Endpunkt nicht auf"
     assert "forget()" in _rv, "lokaler Zustand bleibt nach dem Widerruf stehen"
-    assert '"/api/youtube/oauth/logout"' in src and "def api_youtube_oauth_logout(" in src, \
+    assert '"/api/youtube/oauth/logout"' in _yt and "def api_youtube_oauth_logout(" in _yt, \
         "keine Abmelde-Route"
     dash = open("templates/dashboard.html", encoding="utf-8").read()
     assert "ytoauthLogout(" in dash and "ytoauthSwitch(" in dash, \
@@ -7364,8 +7404,9 @@ def test_v40_w122_trackings_ansicht():
     _hm = dash[dash.index("async function loadHeatmap("):dash.index("function renderHeat(")]
     assert "300000" in _hm, "Heatmap ohne Drossel"
     # Twitch bekommt dieselbe Rueckruf-Pflege wie Kick und YouTube.
-    src = open("bot.py").read()
-    assert '"/api/twitch/oauth/redirect"' in src and "def api_twitch_oauth_redirect(" in src, \
+    # ANKER GEWANDERT (v4.1-W8): die Route steht in nc/routes/twitch.py.
+    _tw = open("nc/routes/twitch.py", encoding="utf-8").read()
+    assert '"/api/twitch/oauth/redirect"' in _tw and "def api_twitch_oauth_redirect(" in _tw, \
         "kein Live-Setzer fuer die Twitch-Rueckruf-Adresse"
     assert "twoauthSaveRedirect(" in dash and 'id="tw_redir"' in dash, \
         "Twitch-Panel ohne Feld fuer die Rueckruf-Adresse"
@@ -7617,6 +7658,111 @@ def test_v41_w2_dauerlaeufer_melden_sich():
 
 
 
+
+# ------------------------------------------- v4.1-W8) OAuth-Rueckruf-Schicht
+
+def test_v41_w8_oauth_schicht():
+    """v4.1-W8: die Rueckruf-Aufloesung und der YouTube-Sendezustand liegen in
+       nc/, /api/twitch und /api/youtube sind Blueprints — ohne einen einzigen
+       neuen nc.ctx-Slot.
+
+    Warum das ein Vertrag ist und nicht nur eine Aufraeumaktion: die Schicht
+    entscheidet, welche Adresse Kick, Twitch und Google zu sehen bekommen. Faellt
+    sie auseinander (jeder Flow baut sie wieder selbst), kommt genau das zurueck,
+    was W121 behoben hat — redirect_uri_mismatch, und zwar VOR der Kontoauswahl,
+    also ohne jede Fehlermeldung im Bot.
+    """
+    import os
+    import nc.oauthredirect as ORE
+
+    # (1) Reihenfolge und Vertrauensgrenze. public_base_url() haengt an
+    # flask.request; ohne Request-Kontext MUSS es den Fallback liefern statt
+    # zu werfen — es laeuft auch aus Hintergrund-Tasks.
+    ORE.configure(trusted_proxies={"10.0.0.1"}, loopback=("127.0.0.1",),
+                  dashboard_port=8050)
+    _alt = os.environ.pop("PUBLIC_BASE_URL", None)
+    try:
+        assert ORE.public_base_url() == "http://localhost:8050", \
+            "ohne Request-Kontext kein Fallback"
+        os.environ["PUBLIC_BASE_URL"] = "https://example.dev/"
+        assert ORE.public_base_url() == "https://example.dev", \
+            "PUBLIC_BASE_URL hat keinen Vorrang (oder der Schraegstrich bleibt)"
+    finally:
+        os.environ.pop("PUBLIC_BASE_URL", None)
+        if _alt is not None:
+            os.environ["PUBLIC_BASE_URL"] = _alt
+
+    # (2) Der Erreichbarkeits-Test. False heisst: die Plattform kann die
+    # Adresse von aussen NICHT aufrufen, der Rueckruf laeuft ins Leere.
+    for _u in ("http://localhost:8050/x", "http://127.0.0.1:8050/x",
+               "http://0.0.0.0:8050/x"):
+        assert ORE.redirect_public(_u) is False, "%s faelschlich als oeffentlich" % _u
+    assert ORE.redirect_public("https://example.dev/api/kick/oauth/callback") is True
+    assert ORE.redirect_public(None) is True, "leere URI darf nicht als kaputt gelten"
+    ok("v4.1-W8: Basis-URL mit Vorrang und Fallback, Erreichbarkeit ehrlich")
+
+    # (3) Ein fehlendes configure() muss LAUT scheitern. Still auf None zu
+    # laufen waere hier besonders teuer: die Adresse waere falsch, aber
+    # plausibel — und der Fehler taeuchte erst bei Google auf.
+    _gesichert = dict(ORE._conf)
+    ORE._conf.clear()
+    try:
+        ORE.public_base_url()
+    except RuntimeError as e:
+        assert "configure" in str(e), "Fehlermeldung nennt die Ursache nicht"
+    else:
+        raise AssertionError("fehlendes configure() bleibt still")
+    finally:
+        ORE._conf.update(_gesichert)
+    ok("v4.1-W8: fehlendes configure() faellt sofort auf")
+
+    # (4) EINE Schicht fuer alle drei Flows. Kick bleibt im Monolithen (der
+    # Restream-Kern liest die Adresse mit), Twitch und YouTube sind Blueprints
+    # — aber alle drei fragen dieselbe Funktion.
+    src = open("bot.py", encoding="utf-8").read()
+    assert "from nc import oauthredirect as _nc_oauthredirect" in src
+    assert '_nc_oauthredirect.redirect_uri("kick")' in src, "Kick geht nicht ueber die Schicht"
+    assert "def _oauth_redirect_uri(" not in src and "def _public_base_url(" not in src, \
+        "die Aufloesung steht wieder doppelt im Monolithen"
+    for _n in ("TRUSTED_PROXIES", "DASHBOARD_PORT"):
+        assert _n in src[src.index("_nc_oauthredirect.configure("):
+                         src.index("_nc_oauthredirect.configure(") + 300], \
+            "%s wird der Schicht nicht uebergeben" % _n
+
+    # (5) Die Blueprints. Beide vollstaendig, beide ohne eigene Aufloesung.
+    for _plat, _n in (("twitch", 4), ("youtube", 7)):
+        _s = open("nc/routes/%s.py" % _plat, encoding="utf-8").read()
+        assert _s.count("@bp.route(") == _n, \
+            "%s: %d Routen erwartet" % (_plat, _n)
+        assert "PUBLIC_BASE_URL" not in _s and "X-Forwarded-Host" not in _s, \
+            "%s baut die Basis-URL wieder selbst" % _plat
+        assert "import bot" not in _s, "%s importiert aus dem Monolithen" % _plat
+        assert "from nc.routes import %s as _nc_routes_%s" % (_plat, _plat) in src and \
+            "register_blueprint(_nc_routes_%s.bp)" % _plat in src, \
+            "%s ist nicht registriert — die Routen waeren 404" % _plat
+
+    # (6) Null neue Kontext-Eintraege. Das ist der ganze Grund, warum die
+    # Schicht VOR den Routen dran war (W117): nc.ctx steht vertraglich bei 25.
+    import nc.ctx as CTX
+    assert len(CTX.Ctx.__slots__) == 24, \
+        "nc.ctx gewachsen — die Routen sollten null neue Eintraege kosten"
+    ok("v4.1-W8: 11 Routen als Blueprint, eine Schicht, null neue ctx-Slots")
+
+    # (7) Geteilter Zustand, nicht kopierter. Der Trennen-Knopf im Blueprint
+    # muss denselben Token-Cache leeren, den der Sendepfad im Bot fuellt —
+    # sonst sendet der Bot nach dem Abmelden weiter mit dem alten Token.
+    import nc.channels as CH
+    assert CH.YT_SEND is not None and "token" in CH.YT_SEND
+    _yt = open("nc/routes/youtube.py", encoding="utf-8").read()
+    assert "from nc.channels import YT_SEND as _YT_SEND" in _yt and \
+        "from nc.channels import YT_API_CACHE as _YT_API_CACHE" in _yt, \
+        "Blueprint haelt eigene Kopien — Abmelden bliebe fuer den Bot unsichtbar"
+    assert "_YT_API_CACHE = _nc_channels.YT_API_CACHE" in src and \
+        "_YT_SENDRATE = _nc_channels.YT_SENDRATE" in src, \
+        "der Bot haelt eigene Kopien statt der geteilten"
+    ok("v4.1-W8: YouTube-Zustand geteilt statt kopiert, Abmelden wirkt im Bot")
+
+
 def main():
     print("test_restream — Restream-Kernlogik (Mock-basiert)")
     test_streak()
@@ -7681,6 +7827,7 @@ def main():
     test_v41_w6_i18n_fundament()
     test_v41_w6_doku_zweisprachig()
     test_v41_w7_sprache_je_benutzer()
+    test_v41_w8_oauth_schicht()
     test_b168_moderator_everywhere()
     test_b169_kick_oauth()
     test_b170_azrael_and_youtube()
