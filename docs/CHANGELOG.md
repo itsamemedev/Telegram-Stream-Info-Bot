@@ -11,6 +11,42 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Geändert — Discord als Blueprint (v4.1 W16)
+
+`bot.py`: 29.306 → **29.112 Zeilen**. `nc/routes/` trägt jetzt 24 Blueprints
+mit 216 Routen, der Monolith noch 143. `nc.ctx` bleibt bei **24 von 25**.
+
+`/api/discord` kostete acht Kontext-Einträge. Neu `nc/discordstate.py` löst
+Wochenstand (`state_get`), Invite (`invite`) und den Verbindungszustand heraus;
+die drei `.env`-Werte gehen über `ctx.cfg`, das ein Dict ist und keinen Slot
+kostet. Übrig bleibt `run_async` — das gab es schon. **Null neue Einträge.**
+
+**Warum ein Modul für zwei so verschiedene Dinge** — das eine aus der
+Datenbank, das andere aus dem Arbeitsspeicher: sie beantworten dieselbe Frage,
+„wie steht es gerade um Discord?". Das Panel liest in einem Aufruf den
+gespeicherten Wochenstand *und* den laufenden Verbindungszustand. Zwei Module
+für eine Ansicht wären die schlechtere Grenze.
+
+**Register für den Client, Alias für die Session — und das ist kein Zufall.**
+`_DISCORD_CLIENT` wird vom Bot **neu gebunden** (bei jedem Reconnect und beim
+Aufräumen); ein Alias zeigte danach auf den alten, geschlossenen Client, und
+das Panel meldete „online", während nichts mehr durchging. Deshalb ein
+Register, wie bei `KICK_MOD` in W9. `_DISCORD_SESSION` dagegen wird nur *in
+place* verändert, nie neu gebunden — dort ist der Alias richtig und genügt.
+Damit ist auch der letzte `globals()`-Zugriff aus dem Discord-Pfad
+verschwunden.
+
+`DISCORD_INVITE_URL` liest die Schicht jetzt bei jedem Aufruf statt als
+Modul-Konstante — die Regel aus `CLAUDE.md`. Am Ergebnis ändert das nichts,
+sobald der Flow einmal lief (der gespeicherte Wert schlägt die Variable
+ohnehin); es hilft nur dem Fall „Betreiber trägt die Variable nach".
+
+**`ruff` hat eine Dublette gefangen:** zwei der drei `.env`-Werte
+(`DISCORD_GUILD_ID`, `DISCORD_WEBHOOK_URL`) standen bereits in `ctx.cfg`. Neu
+ist nur `CLIP_HIGHLIGHT_STARS`.
+
+Ein Vertrag ist neu, ein Anker gewandert (W35) — keiner gelöscht.
+
 ### Geändert — Chat und Co-Host als Blueprint (v4.1 W15)
 
 `bot.py`: 29.442 → **29.306 Zeilen**. `nc/routes/` trägt jetzt 23 Blueprints

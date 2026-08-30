@@ -4342,7 +4342,16 @@ def test_v40_w35_crossplatform_restream():
     assert "max_age=0, max_uses=0, unique=False" in src, "Invite nicht nie-ablaufend/einmalig"
     assert '_cfg_set("discord.invite_url"' in src, "Invite wird nicht persistiert (einmalig)"
     assert "_spawn(_ensure_discord_invite" in src, "Invite-Erzeugung nicht in on_ready verdrahtet"
-    assert 'api_discord_invite' in src and '"/api/discord/invite"' in src, "Website-Endpoint fehlt"
+    # ANKER GEWANDERT (v4.1-W16, nicht der Vertrag): die Route liegt in
+    # nc/routes/discord.py und liest DIESELBE Funktion wie Announcer, Marketing
+    # und Website — das ist der eigentliche Kern von W35 ("die EINE Wahrheit"),
+    # und er ist jetzt sogar leichter zu sehen: alle vier importieren
+    # nc.discordstate.invite.
+    _db = open("nc/routes/discord.py", encoding="utf-8").read()
+    assert 'api_discord_invite' in _db and '"/api/discord/invite"' in _db, \
+        "Website-Endpoint fehlt"
+    assert "from nc.discordstate import invite as _discord_invite" in _db, \
+        "die Route baut den Invite selbst statt die eine Wahrheit zu lesen"
     # Marketing nutzt den aufgelösten Invite (nicht mehr die rohe Konstante).
     # v4.1-W4: der Config-Bau liegt in nc/marketing.py und bekommt den Resolver
     # injiziert. Beide Haelften geprueft — Anker gewandert, Vertrag unveraendert.
@@ -8152,6 +8161,61 @@ def test_v41_w15_chat_und_cohost():
     ok("v4.1-W15: 4 Routen raus, geteilter Zustand geteilt geblieben, 0 neue Slots")
 
 
+
+# ------------------------------------------- v4.1-W16) Discord als Blueprint
+
+def test_v41_w16_discord_blueprint():
+    """v4.1-W16: /api/discord raus, acht Kontext-Eintraege auf null.
+
+    Der heikle Teil ist der CLIENT. Er darf kein Alias sein: der Bot bindet
+    den Namen bei jedem Reconnect und beim Aufraeumen NEU. Ein Alias zeigte
+    danach auf den alten, geschlossenen Client — das Panel meldete "online",
+    waehrend nichts mehr durchging. Deshalb ein Register, wie bei KICK_MOD.
+    """
+    src = open("bot.py", encoding="utf-8").read()
+    _db = open("nc/routes/discord.py", encoding="utf-8").read()
+
+    # (1) Kein Modul-Global mehr — weder im Bot noch im Blueprint.
+    assert "_DISCORD_CLIENT" not in src, "der Client ist wieder ein Modul-Global"
+    assert "_DISCORD_CLIENT" not in _db, "Modul-Global des Monolithen im Blueprint"
+    assert '_nc_discordstate.CLIENT["obj"] = client' in src, \
+        "der Bot traegt den Client nicht ins Register ein"
+
+    # (2) SESSION dagegen IST ein Alias — und das ist richtig: das Dict wird
+    # nur in place veraendert, nie neu gebunden. Beide Seiten muessen dasselbe
+    # Objekt sehen, sonst meldet das Panel "nie verbunden".
+    assert "_DISCORD_SESSION = _nc_discordstate.SESSION" in src, \
+        "der Bot fuehrt eine eigene Verbindungs-Buchfuehrung"
+    assert "from nc.discordstate import SESSION as _DISCORD_SESSION" in _db
+    import nc.discordstate as DS
+    assert DS.CLIENT == {"obj": None} or "obj" in DS.CLIENT
+    assert set(DS.SESSION) == {"attempt", "connected_since", "last_error",
+                               "last_disconnect", "reconnects"}
+
+    # (3) Kein globals() im Discord-Pfad — im Blueprint waere das fuer immer None.
+    import ast as _ast
+    assert not [x for x in _ast.walk(_ast.parse(_db))
+                if isinstance(x, _ast.Call) and isinstance(x.func, _ast.Name)
+                and x.func.id == "globals"], "globals() im Blueprint"
+    assert 'globals().get("_DISCORD_CLIENT")' not in src and \
+        'globals()["_DISCORD_CLIENT"]' not in src, "globals()-Zugriff wieder da"
+
+    # (4) Vollstaendig, registriert, und die .env-Werte ueber cfg statt ueber
+    # eine zweite os.getenv-Stelle.
+    assert _db.count("@bp.route(") == 6, "sechs Routen erwartet"
+    assert "import bot" not in _db, "Blueprint importiert aus dem Monolithen"
+    assert "from nc.routes import discord as _nc_routes_discord" in src and \
+        "register_blueprint(_nc_routes_discord.bp)" in src, "nicht registriert"
+    for _k in ("CLIP_HIGHLIGHT_STARS", "DISCORD_GUILD_ID", "DISCORD_WEBHOOK_URL"):
+        assert '_c().cfg["%s"]' % _k in _db, "%s nicht aus cfg" % _k
+        assert 'os.getenv("%s"' % _k not in _db, "%s aus zweiter Quelle" % _k
+
+    # (5) Null neue Kontext-Eintraege.
+    import nc.ctx as CTX
+    assert len(CTX.Ctx.__slots__) == 24, "nc.ctx gewachsen"
+    ok("v4.1-W16: 6 Routen raus, Client im Register, Session geteilt, 0 neue Slots")
+
+
 def main():
     print("test_restream — Restream-Kernlogik (Mock-basiert)")
     test_streak()
@@ -8224,6 +8288,7 @@ def main():
     test_v41_w13_claude_grund_im_log()
     test_v41_w14_watchdog_ursache()
     test_v41_w15_chat_und_cohost()
+    test_v41_w16_discord_blueprint()
     test_b168_moderator_everywhere()
     test_b169_kick_oauth()
     test_b170_azrael_and_youtube()
