@@ -3766,13 +3766,25 @@ async def ai_chat(messages, model=None, timeout=None):
     # Rückkehr auf keyless; transiente Fehler fallen auf die Kette zurück.
     _akey = _anthropic_key()
     if _akey and not any(m.get("images") for m in messages):
+        # v4.1-W13: den ECHTEN Grund einsammeln. Vorher stand im Log 26 Mal
+        # "fehlgeschlagen (bad_request)" und kein einziges Mal, WAS am Request
+        # schlecht war — obwohl die API es jedes Mal mitschickt. Der Rueckruf
+        # laeuft im Thread von chat_sync; er darf deshalb nur schreiben, nicht
+        # blockieren.
+        _cdetail = {}
+        def _claude_grund(kind, detail, modell):
+            _cdetail["kind"], _cdetail["detail"], _cdetail["model"] = kind, detail, modell
         _ctxt, _cerr = await asyncio.to_thread(
-            _nc_claude.chat_sync, messages, _akey, _anthropic_model(model), timeout)
+            _nc_claude.chat_sync, messages, _akey, _anthropic_model(model), timeout,
+            on_error=_claude_grund)
         if _ctxt:
             return (_ctxt, None)
         if _cerr == "auth":
             return (None, "auth")
-        _react_warn("claudefb", "Reaction-AI Claude fehlgeschlagen (%s) → Kette." % _cerr)
+        _react_warn("claudefb", "Reaction-AI Claude fehlgeschlagen (%s) → Kette. "
+                    "Modell=%s, Antwort der API: %s"
+                    % (_cerr, _cdetail.get("model") or "?",
+                       _cdetail.get("detail") or "kein Text mitgeliefert"))
     # V37-B92: provider=brain → llama.cpp-Runtime (Ollama ist auf den 8 Kernen
     # messbar langsamer). Fail-open-Kette: brain → ollama.
     if REACTION_AI_PROVIDER in ("brain", "llamacpp"):

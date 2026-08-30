@@ -8033,6 +8033,27 @@ def test_v41_w12_kick_key_kollision():
        "CrowdSec gedrosselt mit Abhilfe")
 
 
+
+# ------------------------- v4.1-W13) Der Grund bleibt nicht im except haengen
+
+def test_v41_w13_claude_grund_im_log():
+    """v4.1-W13: die Reaction-Kette meldet, WAS die API abgelehnt hat."""
+    src = open("bot.py", encoding="utf-8").read()
+    _ac = src[src.index("async def ai_chat("):]
+    # Bis zum brain-Zweig — und zwar zum ZWEIG, nicht zur gleichnamigen
+    # Log-Zeile ein paar Zeilen darueber. Ein zu kurzer Schnitt haette hier
+    # einen gruenen Vertrag ueber Code ergeben, der gar nicht geprueft wird.
+    _ac = _ac[:_ac.index("if REACTION_AI_PROVIDER in (\"brain\", \"llamacpp\"):")]
+    assert "on_error=_claude_grund" in _ac, "der Grund wird nicht eingesammelt"
+    assert "Antwort der API: %s" in _ac, "der Grund landet nicht in der Warnung"
+    assert "Modell=%s" in _ac, "das Modell fehlt — bei einem Modellfehler die halbe Antwort"
+    # Der Rueckruf laeuft im Thread von chat_sync und darf dort nur schreiben.
+    _cb = _ac[_ac.index("def _claude_grund("):_ac.index("_ctxt, _cerr = await")]
+    assert "log." not in _cb and "await" not in _cb, \
+        "der Rueckruf tut mehr als schreiben — er laeuft in einem fremden Thread"
+    ok("v4.1-W13: Claude-Ablehnung nennt Modell und API-Text statt nur der Klasse")
+
+
 def main():
     print("test_restream — Restream-Kernlogik (Mock-basiert)")
     test_streak()
@@ -8102,6 +8123,7 @@ def main():
     test_v41_w10_diagnose_und_blindheit()
     test_v41_w10_codeql_befunde()
     test_v41_w12_kick_key_kollision()
+    test_v41_w13_claude_grund_im_log()
     test_b168_moderator_everywhere()
     test_b169_kick_oauth()
     test_b170_azrael_and_youtube()
