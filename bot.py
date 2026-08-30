@@ -21019,14 +21019,15 @@ def api_clip_file(fn):
     #   safe_join   ist der von Flask/Werkzeug mitgelieferte, dafuer gebaute
     #               Pfadschutz. Er kennt die Sonderfaelle (Trennzeichen je
     #               Plattform, Laufwerksbuchstaben, absolute Namen) und gibt
-    #               None zurueck, statt sie zu reparieren.
-    #   datei_in    loest zusaetzlich SYMLINKS auf und erzwingt die Endung.
-    #               safe_join tut beides nicht: ein Symlink im Clip-Ordner
-    #               zeigte damit weiterhin nach draussen.
-    if safe_join(os.path.abspath(CLIP_DIR), fn) is None:
-        abort(404)
-    p = _nc_util.datei_in(CLIP_DIR, fn, ".mp4")
-    if not p:
+    #               None zurueck, statt sie zu reparieren. Der ausgelieferte
+    #               Pfad kommt VON IHM — er ist die Quelle, nicht bloss ein
+    #               vorgeschaltetes Ja/Nein.
+    #   datei_in    entscheidet nur noch, OB geliefert wird: es loest
+    #               zusaetzlich SYMLINKS auf und erzwingt die Endung. Beides
+    #               tut safe_join nicht, ein Symlink im Clip-Ordner zeigte
+    #               damit weiterhin nach draussen.
+    p = safe_join(os.path.abspath(CLIP_DIR), fn)
+    if p is None or _nc_util.datei_in(CLIP_DIR, fn, ".mp4") is None:
         abort(404)
     if request.method == "DELETE":
         try:
@@ -21077,12 +21078,10 @@ def api_tts_file(fn):
     # HARDENING: <fn> statt <path:fn> — Dateien liegen flach in _TTS_DIR, es
     # werden keine Slashes/Subpaths gebraucht. Zusätzlich .wav erzwingen.
     # (send_from_directory schützt ohnehin via safe_join, aber enger ist besser.)
-    # v4.1-W10/W11 (CodeQL py/path-injection): siehe api_clip_file — erst der
-    # mitgelieferte Pfadschutz, dann die Aufloesung samt Symlinks und Endung.
-    if safe_join(os.path.abspath(_TTS_DIR), fn) is None:
-        abort(404)
-    p = _nc_util.datei_in(_TTS_DIR, fn, ".wav")
-    if not p:
+    # v4.1-W10/W11 (CodeQL py/path-injection): siehe api_clip_file — der Pfad
+    # kommt aus safe_join, datei_in entscheidet nur ob (Symlinks, Endung).
+    p = safe_join(os.path.abspath(_TTS_DIR), fn)
+    if p is None or _nc_util.datei_in(_TTS_DIR, fn, ".wav") is None:
         abort(404)
     return send_from_directory(os.path.abspath(_TTS_DIR), os.path.basename(p),
                                mimetype="audio/wav")
