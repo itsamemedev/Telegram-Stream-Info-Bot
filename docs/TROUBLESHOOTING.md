@@ -1,5 +1,7 @@
 # Fehlersuche
 
+> 🌐 **Deutsch** · [English](en/TROUBLESHOOTING.md)
+
 Die häufigen Störungsbilder und wo ihre Ursache wirklich liegt. Einstieg im
 README: **[🩺 Fehlersuche](../README.md#-fehlersuche)**.
 

@@ -1,5 +1,7 @@
 # Sicherheitsrichtlinie
 
+> 🌐 **Deutsch** · [English](en/SECURITY.md)
+
 ## Unterstützte Versionen
 
 | Version | Unterstützt |

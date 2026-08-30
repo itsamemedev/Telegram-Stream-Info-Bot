@@ -1,5 +1,7 @@
 # NIGHTCRAWLER v37 — Arbeitsgrundlage
 
+> 🌐 **Deutsch** (maßgeblich) · [English](CLAUDE.en.md)
+
 TikTok-Live-Überwachung, Aufnahme, Multi-Ziel-Restream und KI-Moderation
 (AZRAEL). Ein Python-Monolith plus zwei bot-freie Bibliotheken, betrieben als
 systemd-Dienst auf einer 8-Kern-Ubuntu-Box. Auslieferung läuft per ZIP über den
@@ -8,7 +10,7 @@ GitHub-Repo trägt Historie, CI und Issues — es ist nicht der Deploy-Weg.
 
 ## Die eine Regel
 
-`bot.py` hat **29.646 Zeilen / 1,5 MB ≈ 385.000 Token**. Diese Datei wird
+`bot.py` hat **29.664 Zeilen / 1,5 MB ≈ 385.000 Token**. Diese Datei wird
 **nie** ganz gelesen und **nie** blind durchsucht. Erst fragen wo etwas steht,
 dann den Ausschnitt holen:
 
@@ -22,7 +24,7 @@ dann den Ausschnitt holen:
     python tools/ncpatch.py check                          # Templates: doppelte IDs, CSS-Bilanz
     python tools/ncpatch.py docs                           # Doku-Zahlen gegen den Quelltext
 
-`find` antwortet aus `.claude/INDEX.md` — 355 Routen (172 in `bot.py`, 183 in
+`find` antwortet aus `.claude/INDEX.md` — 359 Routen (172 in `bot.py`, 187 in
 `nc/routes/`), 45 Slash-Commands, 519 Funktionen mit Zeilennummern. Nach Änderungen an Routen, Commands oder
 Top-Level-Funktionen `map` neu laufen lassen. Details: Skill `nc-navigation`.
 
@@ -42,8 +44,10 @@ Auf diesem Windows-Rechner heißt der Interpreter **`python`** (3.13.12);
     brain_bridge.py      Adapter Bot ↔ brain/ (M2)
     brain/               KI-Kern: state, rules, router, agents, memory,
                          semantic, knowledge, scheduler, llm, report
-    nc/                  91 Fachmodule: db, scraping, restream, oauth, ledger, …
-    nc/routes/           17 Flask-Blueprints mit 183 weiteren API-Routen
+    nc/                  92 Fachmodule: db, scraping, restream, oauth, ledger,
+                         i18n, …
+    nc/routes/           18 Flask-Blueprints mit 187 weiteren API-Routen
+    locales/             de.json, en.json — der Übersetzungskatalog
     templates/           dashboard.html, brain.html, overlay.html, PWA
     website/             lafap_index.html (öffentliche Seite)
     tools/ncpatch.py     Patch- und Prüfwerkzeug
@@ -70,6 +74,7 @@ stdlib-only (`urllib`, kein `aiohttp`).
     python -m ruff check --select F,E9,B --ignore B905 <geänderte .py>
     python tools/ncpatch.py check
     python tools/ncpatch.py docs
+    python tools/i18n_extract.py --check en
     python test_smoke.py ; python test_nc_modules.py ; python test_restream.py
 
 **Auf diesem Windows-Rechner gilt vorher `$env:PYTHONUTF8="1"`.** Die Tests
@@ -143,7 +148,7 @@ Ledger-Einträge sind append-only mit Hash-Kette; Korrektur = Gegenbuchung.
 
 ## Sicherheit
 
-`.env` hat rund 495 Variablen und enthält Cookies, OAuth-Tokens und Stream-Keys — sie
+`.env` hat rund 496 Variablen und enthält Cookies, OAuth-Tokens und Stream-Keys — sie
 liegt nie im Archiv und wird nie ausgegeben. Beim Logging von
 `streamlink`/`ffmpeg`-Kommandos werden Cookie-Header redacted (F4); dieser
 Redact-Pfad darf bei Änderungen an der Kommandozeile nicht umgangen werden. Das
@@ -155,6 +160,13 @@ SSH-Tunnel, nicht über Öffnen des Ports.
 Code-Kommentare und alle Ausgaben auf Deutsch. Kommentare erklären **warum**,
 nicht was — bevorzugt mit dem konkreten Fehlerbild, das die Zeile verhindert.
 Antworten an den Betreiber: knapp, entscheidungsfreudig, ohne Weichspüler.
+
+**Benutzertexte sind seit v4.1-W6 mehrsprachig.** Der deutsche String ist der
+Schlüssel, `locales/en.json` trägt das Englische. Ein fehlender Eintrag fällt
+auf Deutsch zurück statt auf einen nackten Schlüsselnamen. Nach Änderungen an
+Benutzertext `tools/i18n_extract.py --check en` laufen lassen — es meldet
+fehlende **und** verwaiste Einträge. Logzeilen bleiben absichtlich deutsch: sie
+sind für den Betreiber und laufen nie durch die Übersetzungsschicht.
 
 ## Arbeitsweise
 

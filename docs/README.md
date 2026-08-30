@@ -1,5 +1,7 @@
 # Dokumentation
 
+> 🌐 **Deutsch** · [English](en/README.md)
+
 Alle Anleitungen und die Historie liegen hier. In der Wurzel steht an Text nur
 noch [`README.md`](../README.md) als Einstieg, [`CLAUDE.md`](../CLAUDE.md) —
 die muss dort liegen, sonst findet Claude Code die Arbeitsgrundlage nicht — und
@@ -32,3 +34,13 @@ die muss dort liegen, sonst findet Claude Code die Arbeitsgrundlage nicht — un
 | [`CHANGELOG.md`](CHANGELOG.md) | Versionsübersicht |
 | [`README_V37.md`](README_V37.md) | Ausführliche Historie aller Entwicklungswellen |
 | [`THIRD_PARTY_LICENSES.md`](THIRD_PARTY_LICENSES.md) | Fremdcode und dessen Lizenzen |
+
+---
+
+## English
+
+English versions of the core documents live in **[`en/`](en/)** — index,
+roadmap, installation, deployment, troubleshooting, contributing, security and
+the code of conduct. `CHANGELOG.md`, `README_V37.md` and `MODULARISIERUNG.md`
+remain German-only: they are history and internal analysis that grows with
+every wave.

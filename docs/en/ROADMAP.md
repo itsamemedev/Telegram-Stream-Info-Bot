@@ -2,7 +2,7 @@
 
 > 🌐 **English** · [Deutsch](../ROADMAP.md)
 
-The next big step is not a feature, it is cleaning up: **`bot.py` has 29,646
+The next big step is not a feature, it is cleaning up: **`bot.py` has 29,664
 lines**. That file is the project's bottleneck — it cannot be taken in at a
 glance and can only be edited with tooling.
 
@@ -24,7 +24,7 @@ version.
 | **5** | Move the Discord layer into `discord_ext/` | −2,100 |
 | **6** | Clean up the core, `bot.py` becomes the composition root | the rest |
 
-Wave 2 is done, wave 3 is running: `nc/routes/` carries 17 blueprints with 183
+Wave 2 is done, wave 3 is running: `nc/routes/` carries 18 blueprints with 187
 API routes today that no longer sit in the monolith.
 
 ---

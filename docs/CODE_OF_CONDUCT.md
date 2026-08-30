@@ -1,5 +1,7 @@
 # Verhaltenskodex für Mitwirkende
 
+> 🌐 **Deutsch** · [English](en/CODE_OF_CONDUCT.md)
+
 *(Contributor Covenant v2.1 — deutsche Fassung)*
 
 ## Unser Versprechen
