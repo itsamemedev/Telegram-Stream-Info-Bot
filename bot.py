@@ -644,6 +644,7 @@ from telegram.ext import (
 )
 
 from flask import Flask, render_template, jsonify, send_from_directory, abort, request, Response, redirect
+from werkzeug.utils import safe_join  # v4.1-W11: der gebaute Pfadschutz von Flask selbst
 
 import sqlite3
 import decimal as _decimal   # V37-PERF: orjson-Provider braucht Decimal
@@ -21013,10 +21014,17 @@ def api_clips():
 @dashboard_app.route("/api/clip/<fn>", methods=["GET", "DELETE"])
 def api_clip_file(fn):
     """GET: Clip ausliefern (Abspielen/Download). DELETE: Clip manuell löschen. Flach in CLIP_DIR."""
-    # v4.1-W10 (CodeQL py/path-injection): statt auf Verbotenes zu pruefen,
-    # wird der fertige Pfad aufgeloest und nachgewiesen, dass er in CLIP_DIR
-    # liegt. Das deckt auch Symlinks und '..' in jeder Schreibweise ab — und
-    # es bleibt richtig, wenn spaeter jemand die Route auf Unterordner oeffnet.
+    # v4.1-W10/W11 (CodeQL py/path-injection). ZWEI Schranken, jede mit
+    # eigener Aufgabe — das ist keine Doppelung:
+    #   safe_join   ist der von Flask/Werkzeug mitgelieferte, dafuer gebaute
+    #               Pfadschutz. Er kennt die Sonderfaelle (Trennzeichen je
+    #               Plattform, Laufwerksbuchstaben, absolute Namen) und gibt
+    #               None zurueck, statt sie zu reparieren.
+    #   datei_in    loest zusaetzlich SYMLINKS auf und erzwingt die Endung.
+    #               safe_join tut beides nicht: ein Symlink im Clip-Ordner
+    #               zeigte damit weiterhin nach draussen.
+    if safe_join(os.path.abspath(CLIP_DIR), fn) is None:
+        abort(404)
     p = _nc_util.datei_in(CLIP_DIR, fn, ".mp4")
     if not p:
         abort(404)
@@ -21069,8 +21077,10 @@ def api_tts_file(fn):
     # HARDENING: <fn> statt <path:fn> — Dateien liegen flach in _TTS_DIR, es
     # werden keine Slashes/Subpaths gebraucht. Zusätzlich .wav erzwingen.
     # (send_from_directory schützt ohnehin via safe_join, aber enger ist besser.)
-    # v4.1-W10 (CodeQL py/path-injection): siehe api_clip_file — der aufgeloeste
-    # Pfad muss nachweislich in _TTS_DIR liegen, nicht nur keine Slashes haben.
+    # v4.1-W10/W11 (CodeQL py/path-injection): siehe api_clip_file — erst der
+    # mitgelieferte Pfadschutz, dann die Aufloesung samt Symlinks und Endung.
+    if safe_join(os.path.abspath(_TTS_DIR), fn) is None:
+        abort(404)
     p = _nc_util.datei_in(_TTS_DIR, fn, ".wav")
     if not p:
         abort(404)

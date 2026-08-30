@@ -7955,11 +7955,18 @@ def test_v41_w10_codeql_befunde():
         "Chromium-Argumente ungeprueft"
     assert "f\"--window-size={size or" not in _cmd, "ungeprueftes --window-size wieder da"
 
-    # (2) Ausliefer-Routen: Zusage statt Verbotsliste.
+    # (2) Ausliefer-Routen: Zusage statt Verbotsliste, und zwar zweifach.
+    # safe_join ist der von Werkzeug mitgelieferte, dafuer gebaute Schutz —
+    # er kennt die Sonderfaelle je Plattform. datei_in loest zusaetzlich
+    # SYMLINKS auf und erzwingt die Endung; safe_join tut beides nicht, ein
+    # Symlink im Clip-Ordner zeigte damit weiterhin nach draussen. Beide
+    # Schranken haben also eine eigene Aufgabe.
+    assert "from werkzeug.utils import safe_join" in src, "kein mitgelieferter Pfadschutz"
     for _fn in ("api_clip_file", "api_tts_file"):
         _r = src[src.index("def %s(" % _fn):]
         _r = _r[:_r.index("@dashboard_app.route", 10) if "@dashboard_app.route" in _r[10:] else 1500]
         assert "_nc_util.datei_in(" in _r, "%s prueft weiter nur Zeichen" % _fn
+        assert "safe_join(" in _r, "%s ohne den mitgelieferten Pfadschutz" % _fn
 
     # (3) Log-Datei aus einer Tabelle, nicht aus dem Parameter.
     ops = open("nc/routes/ops.py", encoding="utf-8").read()

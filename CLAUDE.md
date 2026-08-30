@@ -10,7 +10,7 @@ GitHub-Repo trägt Historie, CI und Issues — es ist nicht der Deploy-Weg.
 
 ## Die eine Regel
 
-`bot.py` hat **29.347 Zeilen / 1,5 MB ≈ 385.000 Token**. Diese Datei wird
+`bot.py` hat **29.357 Zeilen / 1,5 MB ≈ 385.000 Token**. Diese Datei wird
 **nie** ganz gelesen und **nie** blind durchsucht. Erst fragen wo etwas steht,
 dann den Ausschnitt holen:
 

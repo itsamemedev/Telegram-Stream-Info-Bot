@@ -45,10 +45,14 @@ ausdrücklich **nicht** — sonst trüge jeder normale Stopp eine Warnung.
   der Fallback statt eines Fehlers.
 * *Uncontrolled data in path expression*. Die Ausliefer-Routen (`/api/clip/<fn>`,
   `/api/tts/<fn>`) prüften auf verbotene Zeichen. Das war dicht, aber es ist
-  eine Aussage über Zeichen statt über das Ziel. `nc.util.datei_in()` löst den
-  Pfad auf und weist nach, dass er in der Basis liegt — inklusive Symlinks und
-  des Präfix-Nachbarn (`/daten/clips2` fängt mit `/daten/clips` an, liegt aber
-  nicht darin). `nc/routes/ops.py` baut den Log-Pfad aus einer Tabelle.
+  eine Aussage über Zeichen statt über das Ziel. Jetzt zwei Schranken mit je
+  eigener Aufgabe: `werkzeug.utils.safe_join` ist der von Flask mitgelieferte,
+  dafür gebaute Schutz und kennt die Sonderfälle je Plattform;
+  `nc.util.datei_in()` löst zusätzlich **Symlinks** auf, erzwingt die Endung
+  und schliesst den Präfix-Nachbarn aus (`/daten/clips2` fängt mit
+  `/daten/clips` an, liegt aber nicht darin) — beides tut `safe_join` nicht,
+  ein Symlink im Clip-Ordner zeigte damit weiterhin nach draussen.
+  `nc/routes/ops.py` baut den Log-Pfad aus einer Tabelle.
 * *Path injection über einen Sprachnamen*. `nc.i18n.katalog()` ist über
   `/api/i18n/katalog?lang=…` erreichbar und legte den Namen in einen Dateipfad.
   Jetzt nur noch Sprachen aus `SPRACHEN`; Unbekanntes fällt auf den leeren
