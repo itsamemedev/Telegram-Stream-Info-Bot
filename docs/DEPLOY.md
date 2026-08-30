@@ -1,5 +1,7 @@
 # NIGHTCRAWLER v37 — Build B120
 
+> 🌐 **Deutsch** · [English](en/DEPLOY.md)
+
 Dieses Archiv ist der **komplette Projektstand**, identisch aufgebaut wie das
 Original. Entpacken, ueber das Bestandsverzeichnis legen, neu starten.
 

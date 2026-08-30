@@ -2432,6 +2432,61 @@ def test_v41_w6_i18n_fundament():
     ok("v4.1-W6: %d Slash-Befehle gueltig, Beschreibungen <=100 in de UND en" % _n)
 
 
+
+# ------------------------------------------------- v4.1-W6) zweisprachige Doku
+
+def test_v41_w6_doku_zweisprachig():
+    """v4.1-W6: englische Doku NEBEN der deutschen, mit lebenden Querverweisen.
+
+    Zwei Fassungen einer Datei laufen auseinander, sobald niemand hinsieht.
+    Dieser Vertrag sieht hin: er haelt fest, dass es jede englische Datei gibt,
+    dass beide Seiten aufeinander zeigen, und dass kein relativer Link ins
+    Leere fuehrt.
+    """
+    import os as _os
+    import re as _re3
+
+    paare = [("README.md", "README.en.md"),
+             ("CLAUDE.md", "CLAUDE.en.md"),
+             ("docs/README.md", "docs/en/README.md"),
+             ("docs/ROADMAP.md", "docs/en/ROADMAP.md"),
+             ("docs/INSTALL.md", "docs/en/INSTALL.md"),
+             ("docs/DEPLOY.md", "docs/en/DEPLOY.md"),
+             ("docs/SECURITY.md", "docs/en/SECURITY.md"),
+             ("docs/TROUBLESHOOTING.md", "docs/en/TROUBLESHOOTING.md"),
+             ("docs/CONTRIBUTING.md", "docs/en/CONTRIBUTING.md"),
+             ("docs/CODE_OF_CONDUCT.md", "docs/en/CODE_OF_CONDUCT.md")]
+    for de, en in paare:
+        assert _os.path.exists(de), "deutsche Fassung fehlt: %s" % de
+        assert _os.path.exists(en), "englische Fassung fehlt: %s" % en
+        # Beide Seiten muessen aufeinander zeigen — ein einseitiger Verweis
+        # laesst den Leser der anderen Sprache im Regen stehen.
+        kopf_de = "\n".join(open(de, encoding="utf-8").read().splitlines()[:12])
+        kopf_en = "\n".join(open(en, encoding="utf-8").read().splitlines()[:12])
+        assert "🌐" in kopf_de, "%s ohne Sprachumschalter" % de
+        assert "🌐" in kopf_en, "%s ohne Sprachumschalter" % en
+
+    # Kein relativer Link zeigt ins Leere. Auskommentiertes und Code-Spans
+    # bleiben aussen vor: dort stehen Platzhalter (die noch fehlenden
+    # Screenshots) und Regex-Schnipsel, die zufaellig wie Links aussehen.
+    kaputt = []
+    for pfad in [x for _p in paare for x in _p]:
+        roh = open(pfad, encoding="utf-8").read()
+        roh = _re3.sub(r"<!--.*?-->", "", roh, flags=_re3.S)
+        roh = _re3.sub(r"```.*?```", "", roh, flags=_re3.S)
+        roh = _re3.sub(r"`[^`]*`", "", roh)
+        basis = _os.path.dirname(pfad) or "."
+        for m in _re3.finditer(r"\]\(([^)#][^)]*)\)", roh):
+            ziel = m.group(1).split("#")[0]
+            if not ziel or ziel.startswith(("http", "mailto", "../../actions")):
+                continue
+            if not _os.path.exists(_os.path.normpath(_os.path.join(basis, ziel))):
+                kaputt.append((pfad, ziel))
+    assert not kaputt, "tote relative Links: %s" % kaputt[:5]
+    ok("v4.1-W6: %d Dokumente zweisprachig, Querverweise beidseitig, keine toten Links"
+       % (len(paare) * 2))
+
+
 # ------------------------------------------------- B168) Moderator überall (Twitch/YouTube)
 
 def test_b168_moderator_everywhere():
@@ -7540,6 +7595,7 @@ def main():
     test_v41_w5_restliche_dauerlaeufer()
     test_v41_w5_streamer_blueprint()
     test_v41_w6_i18n_fundament()
+    test_v41_w6_doku_zweisprachig()
     test_b168_moderator_everywhere()
     test_b169_kick_oauth()
     test_b170_azrael_and_youtube()

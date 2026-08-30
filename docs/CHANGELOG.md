@@ -11,6 +11,92 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Hinzugefügt — Mehrsprachigkeit, Englisch als zweite Sprache (v4.1 W6)
+
+Oberfläche, Bot und Doku sprechen jetzt Deutsch **und** Englisch. Neu:
+`nc/i18n.py` (Katalog, Spracherkennung, Rückfall), `nc/routes/i18n.py`
+(Katalog-, Sprachlisten- und Wahl-Endpunkt plus der ausgelieferte Übersetzer),
+`locales/de.json` und `locales/en.json`, `tools/i18n_extract.py` und die
+Variable `UI_LANG` (Default `de`).
+
+**Der Ansatz ist ungewöhnlich und deshalb begründet: die deutsche Zeichenkette
+IST der Schlüssel.** Der Bestand hatte 1.803 übersetzbare Zeichenketten in
+sieben Dateien. Jede davon gegen einen künstlichen Schlüssel zu tauschen wäre
+ein Umbau an 1.803 Stellen gewesen: nicht rückrollbar, nicht einzeln prüfbar
+und mit sicherem Verlust einzelner Strings. So bleibt der Bestand unverändert
+lesbar, und ein fehlender Eintrag fällt auf Deutsch zurück statt auf einen
+nackten Schlüsselnamen. Der Preis — ein geänderter deutscher Text verliert
+still seine Übersetzung — ist bekannt; genau dagegen steht
+`tools/i18n_extract.py --check`, das fehlende **und** verwaiste Einträge meldet.
+
+**Übersetzt wird im Browser, nicht auf dem Server.** Das Dashboard erzeugt den
+größten Teil seiner Texte selbst; serverseitiges Rendern hätte nur das feste
+Gerüst getroffen und den Rest deutsch gelassen — sichtbar halb übersetzt, also
+schlechter als gar nicht. Ein `MutationObserver` fängt nachgeladene Inhalte;
+`<code>`, `<pre>`, `<textarea>` und alles unter `[data-i18n-skip]` bleiben tabu,
+dort stehen Befehle und Logzeilen. Dashboard, brain und overlay binden denselben
+Übersetzer unter `/api/i18n/uebersetzer.js` ein.
+
+Sprachwahl in dieser Reihenfolge: `?lang=` schlägt Cookie schlägt
+`Accept-Language` schlägt `UI_LANG`. Eine gesetzte Wahl darf der Browser nie
+überstimmen, sonst springt die Oberfläche auf dem nächsten Gerät zurück.
+
+Der Bot übersetzt am **Sendeweg**: `_safe_send` ist der einzige Weg nach
+Telegram, deshalb steht die Übersetzung dort und nicht an 90 Aufrufstellen. Die
+46 Discord-Slash-Beschreibungen sind einzeln umschlossen, weil sie zur
+Definitionszeit ausgewertet werden.
+
+Der Katalog umfasst **647 Einträge, alle übersetzt**. Logzeilen sind bewusst
+nicht dabei: sie erreichen nie einen Benutzer, `CLAUDE.md` sagt ausdrücklich,
+dass sie deutsch bleiben, und im Katalog hätten sie als „noch zu übersetzen"
+gezählt und verdeckt, was wirklich fehlt.
+
+Vier Fallen unterwegs, jede davon still:
+
+* **Der Extraktor sammelte rohe JS-Literale.** Der Übersetzer vergleicht aber
+  Textknoten — `'<div class="empty">Noch keine Aufnahmen.</div>'` hätte als
+  Schlüssel NIE getroffen. Jetzt zieht er Markup und `${…}` ab und verwirft
+  Bruchstücke, die im DOM nie allein stehen. Ein Eintrag, der nie trifft, wäre
+  schlimmer als keiner: er zählte als erledigt, während die Stelle deutsch
+  bleibt.
+* **Pythons AST liefert Byte-Offsets, keine Zeichen.** Beim Umschließen der
+  `description=`-Literale landete der Schnitt hinter jedem Em-Dash zu weit
+  rechts und fraß die schließende Klammer. `py_compile` fing es sofort.
+* **22 Befehlsbeschreibungen fielen durch den Deutsch-Filter** („Status",
+  „Tracklist", „Ban") und eine durch den Bezeichner-Filter („Restream-Status").
+  Beide Heuristiken sind an `description=` falsch — dort steht per Definition
+  Text für Menschen. Ohne die Ausnahme wäre die Befehlsliste im Discord halb
+  deutsch geblieben.
+* **Der Blueprint-Vertrag verlangt `/api/` für jede Route.** Der erste Entwurf
+  lieferte den Übersetzer unter `/i18n.js` aus — ein Sonderweg neben der API.
+  Der Pfad heißt jetzt `/api/i18n/uebersetzer.js`.
+
+Neuer Vertrag: die 100-Zeichen-Grenze der Slash-Beschreibungen wird gegen
+**beide** Sprachen geprüft. Ausgeliefert wird ab jetzt die übersetzte — eine zu
+lange englische Beschreibung ließe die Registrierung scheitern, und der Befehl
+wäre im Discord schlicht weg, ohne dass irgendetwas rot würde.
+
+### Hinzugefügt — englische Dokumentation neben der deutschen (v4.1 W6)
+
+`README.en.md`, `CLAUDE.en.md` und `docs/en/` mit Index, Roadmap, Installation,
+Deploy, Fehlersuche, Mitwirken, Sicherheit und Verhaltenskodex. Jede deutsche
+Datei mit englischer Entsprechung trägt oben einen Sprachumschalter, und beide
+Seiten zeigen aufeinander.
+
+**Die deutsche Fassung bleibt die Quelle.** Bei `CLAUDE.md` steht das
+ausdrücklich in der englischen Datei: Claude Code lädt die deutsche, und wenn
+beide auseinandergehen, gilt die deutsche.
+
+Nicht übersetzt und in `docs/en/README.md` begründet: `CHANGELOG.md`,
+`README_V37.md` und `MODULARISIERUNG.md` — rund 3.700 Zeilen Historie und
+interne Analyse, die mit jeder Welle wachsen. Zwei Fassungen davon zu pflegen
+hieße, sie bei jeder Welle doppelt fortzuschreiben.
+
+Ein Vertrag hält beides fest: jede englische Datei existiert, beide Seiten
+verweisen aufeinander, und kein relativer Link in den zwanzig Dokumenten zeigt
+ins Leere.
+
+
 ### Behoben — neun weitere Dauerläufer-Stellen melden ihre Ausfälle (v4.1 W5)
 
 W2 hat sieben Stellen versorgt und im Changelog gestanden, damit sei die Regel
