@@ -167,13 +167,22 @@ def analyse(prefix, tree, topfn, glob, imported, aliase=None):
             dyn.append(n.name)
 
     # Ein Helfer zieht nur dann mit um, wenn ihn sonst NIEMAND benutzt.
+    #
+    # v4.1-W9: KLASSENKOERPER zaehlen mit, und jede lesende Erwaehnung zaehlt,
+    # nicht nur ast.Call. _kick_broadcaster_id wird nur von KickModerator und
+    # den /api/kick-Routen benutzt; ohne die Klassen im Blick galt er als
+    # "gehoert nur den Routen" und waere mitgewandert — der Kick-Sendepfad
+    # haette danach einen NameError geworfen.
     extern = {}
     for n in tree.body:
-        if not isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) or n.name in names:
+        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            if n.name in names:
+                continue
+        elif not isinstance(n, ast.ClassDef):
             continue
-        called = {x.func.id for x in ast.walk(n)
-                  if isinstance(x, ast.Call) and isinstance(x.func, ast.Name)}
-        for f in F & called:
+        benutzt = {x.id for x in ast.walk(n)
+                   if isinstance(x, ast.Name) and isinstance(x.ctx, ast.Load)}
+        for f in F & benutzt:
             extern.setdefault(f, []).append(n.name)
     mit = sorted(f for f in F if f not in extern)
     zuctx = sorted(f for f in F if f in extern)

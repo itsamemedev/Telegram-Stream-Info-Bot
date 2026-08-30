@@ -484,6 +484,7 @@ nach Grösse und Eigenständigkeit, ein Paket pro Welle:
 | ✅ `nc/routes/i18n.py` (v4.1-W6) | 4 | 213 |
 | ✅ `nc/routes/twitch.py` (v4.1-W8) | 4 | 124 |
 | ✅ `nc/routes/youtube.py` (v4.1-W8) | 7 | 189 |
+| ✅ `nc/routes/kick.py` (v4.1-W9) | 8 | 245 |
 | `nc/routes/restream.py` | 16 | 437 |
 | `nc/routes/trackings.py` | 15 | 448 |
 | `nc/routes/ops.py` | 10 | 312 |
@@ -644,12 +645,12 @@ Supervisor fahren.
 
 ## 8 · Zielbild und Messlatte
 
-| | Start | heute (W104–v4.1-W8) | nach Welle 3 | Ziel |
+| | Start | heute (W104–v4.1-W9) | nach Welle 3 | Ziel |
 |---|---:|---:|---:|---:|
-| `bot.py` Zeilen | 34.487 | **29.437** | ~24.700 | **~8.000** |
-| Flask-Routen im Monolithen | 345 | **161** | ~30 | 0 |
-| Routen in Blueprints | 0 | **198** | ~315 | 355 |
-| `nc/`-Module | 83 | **113** | ~100 | ~115 |
+| `bot.py` Zeilen | 34.487 | **29.254** | ~24.700 | **~8.000** |
+| Flask-Routen im Monolithen | 345 | **153** | ~30 | 0 |
+| Routen in Blueprints | 0 | **206** | ~315 | 355 |
+| `nc/`-Module | 83 | **116** | ~100 | ~115 |
 | Grösste Datei im Projekt | `bot.py` | `bot.py` | `bot.py` | `templates/dashboard.html` |
 
 Die härtere Messlatte ist keine Zahl:
@@ -1001,6 +1002,42 @@ Rückruf-Schicht, sondern am Moderations- und Restream-Kern (`_KICK_MOD`,
 `globals()` — eine Abhängigkeit, die keine Namensanalyse sieht. Das ist eine
 eigene Welle, keine Zugabe zu dieser. `/api/profile` wartet unverändert auf die
 Live-Auflösungs-Schicht (Welle 6).
+
+### Welle 3, Stand v4.1-W9 — der Extraktor hätte den Kick-Chat getötet
+
+`/api/kick` kostete **elf** Kontext-Einträge und war damit die teuerste offene
+Gruppe. Nach dem Lösen von `nc/kickapi.py` (Slug, Broadcaster-ID,
+Sende-Gedächtnis, Token-Tausch) und dem Moderator-Register in
+`nc/channels.py` bleiben `run_async` und `log` — beide gab es schon. Sechste
+Welle in Folge ohne neuen Slot.
+
+**Der Befund ist wieder ein Werkzeugfehler, und diesmal ein gefährlicher.**
+`bp_analyse` und `bp_extract` beantworten „zieht dieser Helfer mit um?" über
+die Frage, wer ihn sonst noch benutzt — und durchsuchten dafür nur
+Top-Level-Funktionen. **Klassenkörper fehlten.** `_kick_broadcaster_id` wird
+von genau zwei Seiten benutzt: den `/api/kick`-Routen und der Methode
+`KickModerator.send_message`. Ohne die Klasse im Blick galt er als „gehört nur
+den Routen", wäre ins Blueprint gewandert und aus `bot.py` verschwunden.
+
+Was das gekostet hätte: der Kick-Chat wäre beim nächsten Sendeversuch mit
+`NameError` gestorben — in einem `except`-Block, also als stumme Zeile im Log,
+genau das Fehlerbild aus dem Kopf von CLAUDE.md. `pyflakes` hätte es hier
+zufällig gefangen (der Name steht im Monolithen noch da und wäre undefiniert),
+aber das ist Glück, kein Verfahren: ein Helfer, der nur über einen Dekorator
+oder ein Dict erreicht wird, wäre still geblieben. Beide Werkzeuge sehen jetzt
+Klassenkörper, und **jede lesende Erwähnung** zählt, nicht nur `ast.Call` —
+wer einen Helfer als Wert weiterreicht, benutzt ihn genauso.
+
+**`globals()` ist aus dem Kick-Pfad verschwunden.** An neun Stellen stand
+`globals().get("_KICK_MOD")`. Im Monolithen liefert das die Instanz; in einem
+Blueprint ist `globals()` dessen eigener Namensraum, der Wert wäre für immer
+`None` und `/api/kick/sendcheck` meldete „Moderator läuft nicht", während er
+läuft. Dieselbe Falle wie `_MAIN_LOOP` in W116. Der Moderator steht jetzt im
+Register `nc.channels.KICK_MOD` — und das ist zugleich die Vorarbeit für
+`/api/kickmod` (9 Routen) und `/api/chat` (2), die beide nur daran hingen.
+
+**Was liegen bleibt.** `KickModerator` selbst ist Welle 4, nicht diese.
+`/api/profile` wartet unverändert auf die Live-Auflösungs-Schicht (Welle 6).
 
 ---
 

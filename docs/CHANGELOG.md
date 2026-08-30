@@ -11,6 +11,51 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Geändert — Kick als Blueprint, Kick-Schicht nach `nc/` (v4.1 W9)
+
+`bot.py`: 29.437 → **29.254 Zeilen**. `nc/routes/` trägt jetzt 21 Blueprints
+mit 206 Routen, der Monolith noch 153. Damit sind **alle drei** OAuth-Flows
+(Kick, Twitch, YouTube) aus dem Monolithen heraus.
+
+`/api/kick` war mit **elf** `nc.ctx`-Einträgen die teuerste offene Gruppe
+überhaupt. Neu `nc/kickapi.py` löst Slug, Broadcaster-ID, Sende-Gedächtnis und
+Token-Tausch heraus; die Rückruf-Adressen lagen seit W8 in
+`nc/oauthredirect.py`. Übrig bleiben `run_async` und `log` — beide gab es
+schon. **Null neue Einträge.**
+
+**Geteilter Zustand, nicht kopierter.** `SEND_LAST` schreibt der Kick-Sendepfad
+im Bot, gelesen wird es von `/api/kick/sendcheck`. Zwei Kopien, und die
+Diagnose meldete ewig „noch kein Sendeversuch", während Kick in Wahrheit jede
+Zeile mit 401 abweist — genau die stille Fehlanzeige, gegen die diese Route in
+W10 gebaut wurde. Dasselbe für `BID_CACHE`: zwei Caches wären zwei
+Fremdabrufe pro Stunde statt einem.
+
+**`globals()` ist raus.** Der laufende Moderator kam an neun Stellen über
+`globals().get("_KICK_MOD")`. Im Monolithen liefert das die Instanz; in einem
+Blueprint ist `globals()` **dessen** Namensraum — der Wert wäre für immer
+`None`, und `/api/kick/sendcheck` meldete „Kick-Moderator läuft nicht",
+während er läuft. Er steht jetzt im Register `nc.channels.KICK_MOD`, neben
+`TWITCH_SEND`/`YT_SEND`. Das ist zugleich die Vorarbeit für `/api/kickmod`
+und `/api/chat`.
+
+Die Zugangsdaten (`KICK_CLIENT_ID`, `KICK_CLIENT_SECRET`,
+`KICK_BROADCASTER_ID`) kommen über `ctx.cfg` statt über eine zweite
+`os.getenv`-Stelle — der Bot friert sie beim Import ein, ein zweiter Lesepfad
+könnte abweichen.
+
+**Werkzeugfehler behoben, und dieser hätte Produktion getroffen:**
+`bp_analyse` und `bp_extract` durchsuchten für „wer benutzt diesen Helfer
+sonst noch?" nur Top-Level-Funktionen — **keine Klassenkörper**.
+`_kick_broadcaster_id` wird ausschliesslich von `KickModerator` und den
+`/api/kick`-Routen benutzt; der Extraktor hielt ihn deshalb für „gehört nur
+den Routen", hätte ihn ins Blueprint verschoben und aus `bot.py` entfernt —
+der Kick-Chat wäre beim nächsten Sendeversuch mit `NameError` gestorben,
+mitten in einem `except`-Block. Beide Werkzeuge sehen jetzt Klassenkörper,
+und jede **lesende** Erwähnung zählt, nicht nur `ast.Call`.
+
+Drei Verträge sind neu, sieben Anker gewandert (B169, W9, W10, W17, W23, W49,
+W8) — keiner gelöscht.
+
 ### Geändert — OAuth-Rückruf-Schicht nach `nc/`, Twitch und YouTube als Blueprint (v4.1 W8)
 
 `bot.py`: 29.714 → **29.437 Zeilen**. `nc/routes/` trägt jetzt 20 Blueprints

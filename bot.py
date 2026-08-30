@@ -575,11 +575,13 @@ from nc import cfgnorm as _nc_cfgnorm        # v4.0-W33: reine Config-Normalisie
 from nc import restrend as _nc_restrend      # v4.0-W40: Langzeit-Ressourcen-Trend (Slow-Leak)
 from nc import ffbuild as _nc_ffbuild        # v4.0-W44: ffmpeg-Kommandobauer (extrahiert)
 from nc import chatstats as _nc_chatstats    # v4.0-W45: Chat-Health-Aggregation (extrahiert)
-from nc import oauthpage as _nc_oauthpage    # v4.0-W49: OAuth-Rückmeldeseiten (extrahiert)
+# v4.1-W9: nc.oauthpage ist raus — beide Rueckmeldeseiten (Kick, Twitch)
+# werden nur noch von den OAuth-Blueprints gebaut, nicht mehr vom Monolithen.
 from nc import trackingdb as _nc_trackingdb  # v4.0-W50: Tracking-Status-Helfer (conn-injiziert)
 from nc import tiktokcheck as _nc_tiktokcheck  # v4.1-W5: existiert der Account noch?
 from nc import i18n as _nc_i18n  # v4.1-W6: Mehrsprachigkeit (Katalog + Spracherkennung)
 from nc import oauthredirect as _nc_oauthredirect  # v4.1-W8: OAuth-Rueckruf-Adressen (Kick/Twitch/YouTube)
+from nc import kickapi as _nc_kickapi  # v4.1-W9: Kick-Slug, Broadcaster-ID, Sendeprotokoll
 from nc import eventquery as _nc_eventquery  # v4.0-W51: Event-Log-Query-Bauer (rein)
 from nc import admod as _nc_admod            # v4.0-W56: Werbe-Allowlist-Bauer (rein)
 from nc import binresolve as _nc_binresolve  # v4.0-W60: Binary-Pfad-Resolver (rein)
@@ -609,6 +611,7 @@ from nc.routes import streamer as _nc_routes_streamer        # v4.1-W5: Streamer
 from nc.routes import i18n as _nc_routes_i18n                # v4.1-W6: Sprachwahl
 from nc.routes import twitch as _nc_routes_twitch            # v4.1-W8: Twitch-OAuth
 from nc.routes import youtube as _nc_routes_youtube          # v4.1-W8: YouTube-OAuth
+from nc.routes import kick as _nc_routes_kick                # v4.1-W9: Kick-OAuth, Kanal, Sendecheck
 from nc import updater as _nc_updater                        # v4.0-W115: Selbst-Update aus dem GitHub-Repo
 from nc import donationsdb as _nc_donationsdb                # v4.0-W116: manuell erfasste Spenden lesen
 # Diese beiden Routen ruft der Bot auch INTERN auf (Telegram /sysres und die
@@ -6659,8 +6662,9 @@ _VIEWER_SAMPLES = _collections.deque(maxlen=720)   # (ts, count) — ~12h bei 60
 
 
 def _kick_slug():
-    u = (os.getenv("KICK_CHANNEL_URL", "") or "").strip().rstrip("/")
-    return u.rsplit("/", 1)[-1] if "/" in u else u
+    # v4.1-W9: nach nc/kickapi.py geloest, damit nc/routes/kick.py den Slug
+    # direkt importieren kann statt ueber nc.ctx.
+    return _nc_kickapi.slug()
 
 
 # B138: Kick-Follower. Die offizielle API v1 /public/v1/channels liefert
@@ -6753,43 +6757,17 @@ async def _viewer_sample_loop():
 
 
 
-_KICK_BID_CACHE = {"id": 0, "ts": 0.0}
-# v4.0-W10: letzter Kick-Sendeversuch — damit ein stummer Kick-Chat nicht mehr
-# still scheitert, sondern im Dashboard mit KLARTEXT-Grund sichtbar wird.
-_KICK_SEND_LAST = {"ts": 0.0, "ok": None, "error": "", "status": 0, "bid": 0}
+# v4.1-W9: Cache und Sendeprotokoll liegen in nc/kickapi.py. Die Aliase halten
+# die 12 Lesestellen im Bot-Kern unveraendert — und es ist DASSELBE Objekt:
+# der Sendepfad hier schreibt, /api/kick/sendcheck im Blueprint liest. Eine
+# zweite Kopie und die Diagnose meldete ewig "noch kein Sendeversuch".
+_KICK_BID_CACHE = _nc_kickapi.BID_CACHE
+_KICK_SEND_LAST = _nc_kickapi.SEND_LAST
 
 
 async def _kick_broadcaster_id():
-    """v4.0-W9: Broadcaster-User-ID fuer den Kick-Chat-/Moderations-POST. Nutzt
-       KICK_BROADCASTER_ID wenn gesetzt, sonst wird sie EINMALIG aus dem Kanal-Slug
-       aufgeloest (kick.com/api/v2/channels/<slug> -> user_id) und 1h gecacht.
-       OHNE sie lehnt Kick den Bot-POST ab (HTTP 400) -> AZRAEL bliebe auf Kick
-       stumm und Kick-Timeouts wuerden still scheitern."""
-    if KICK_BROADCASTER_ID:
-        return KICK_BROADCASTER_ID
-    c = _KICK_BID_CACHE
-    if c["id"] and (_time_mod.time() - c["ts"] < 3600):
-        return c["id"]
-    slug = _kick_slug()
-    if not slug:
-        return 0
-    try:
-        import aiohttp
-        session = await _get_ai_session()
-        async with session.get(f"https://kick.com/api/v2/channels/{slug}",
-                               timeout=aiohttp.ClientTimeout(total=8),
-                               headers={"User-Agent": "Mozilla/5.0"}) as r:
-            if r.status != 200:
-                return 0
-            j = await r.json(content_type=None)
-        bid = int(j.get("user_id") or (j.get("user") or {}).get("id") or 0)
-        if bid:
-            c.update(id=bid, ts=_time_mod.time())
-            log.info("Kick-Broadcaster-ID aus Kanal aufgeloest: %s", bid)
-        return bid
-    except Exception as e:
-        log.debug("kick broadcaster-id: %s", e)
-        return 0
+    return await _nc_kickapi.broadcaster_id()
+
 
 def _viewer_stats(since_ts=None):
     pts = [(t, c) for (t, c) in _VIEWER_SAMPLES if not since_ts or t >= since_ts]
@@ -12561,20 +12539,10 @@ def api_version():
 # (W117) — danach kosteten /api/twitch und /api/youtube null neue Eintraege.
 # Uebrig sind hier nur die drei Kick-Namen: sie haben Aufrufstellen im
 # Bot-Kern (Restream, Token-Refresh), der nicht mitgewandert ist.
-def _kick_redirect_uri():
-    # v4.0-W23: app_config schlaegt .env schlaegt Fallback. Damit laesst sich die
-    # Redirect-URI LIVE im Dashboard setzen — ohne .env/systemd-Neustart, der die
-    # haeufigste Ursache fuer "steht immer noch auf localhost:8050" ist (Variable
-    # nicht in der EnvironmentFile oder Bot nicht neu gestartet).
-    return _nc_oauthredirect.redirect_uri("kick")
 
 
-def _kick_redirect_source():
-    return _nc_oauthredirect.redirect_source("kick")
 
 
-def _kick_redirect_public(uri):
-    return _nc_oauthredirect.redirect_public(uri)
 
 
 async def _kick_user_token(session=None):
@@ -12611,115 +12579,18 @@ async def _kick_user_token(session=None):
             await session.close()
 
 
-async def _kick_oauth_exchange(code, pending):
-    payload = _nc_kickoauth.token_exchange_payload(
-        KICK_CLIENT_ID, KICK_CLIENT_SECRET,
-        pending.get("redirect") or _kick_redirect_uri(), code, pending.get("verifier"))
-    session = await _get_ai_session()
-    async with session.post(_nc_kickoauth.TOKEN_URL, data=payload,
-                            timeout=aiohttp.ClientTimeout(total=20)) as r:
-        data = await r.json(content_type=None)
-    tok, err = _nc_kickoauth.parse_token_response(data, _time_mod.time())
-    if not tok:
-        return {"ok": False, "error": str(err)}
-    _cfg_set("kick.user_token", tok)
-    log.info("Kick-User-OAuth verbunden (Scope: %s)", tok.get("scope", ""))
-    return {"ok": True, "scope": tok.get("scope", "")}
 
 
-def _kick_oauth_page(ok, msg):
-    # v4.0-W49: nach nc/oauthpage.py extrahiert (bitgenau, manuelles Escaping erhalten).
-    return _nc_oauthpage.kick(ok, msg)
 
 
-@dashboard_app.route("/api/kick/oauth/start")
-def api_kick_oauth_start():
-    if not (KICK_CLIENT_ID and KICK_CLIENT_SECRET):
-        return jsonify(ok=False, error="KICK_CLIENT_ID/SECRET fehlen — Kick-Developer-App "
-                       "unter kick.com/settings/developer anlegen"), 400
-    redirect = _kick_redirect_uri()
-    verifier, challenge = _nc_kickoauth.gen_pkce()
-    state = _nc_kickoauth.gen_state()
-    _cfg_set("kick.oauth_pending", {"verifier": verifier, "state": state,
-                                    "ts": _time_mod.time(), "redirect": redirect})
-    url = _nc_kickoauth.build_authorize_url(
-        KICK_CLIENT_ID, redirect, _nc_kickoauth.DEFAULT_SCOPES, state, challenge)
-    return jsonify(ok=True, auth_url=url, redirect_uri=redirect)
 
 
-@dashboard_app.route("/api/kick/oauth/callback")
-def api_kick_oauth_callback():
-    if request.args.get("error"):
-        return _kick_oauth_page(False, f"Kick lehnte ab: {request.args.get('error')}")
-    code = request.args.get("code", "")
-    state = request.args.get("state", "")
-    pending = _cfg_get("kick.oauth_pending", None) or {}
-    if not code or not pending:
-        return _kick_oauth_page(False, "Kein Code oder kein laufender Flow.")
-    if state != pending.get("state"):
-        return _kick_oauth_page(False, "State stimmt nicht — Abbruch aus Sicherheitsgründen.")
-    try:
-        res = _run_async_from_flask(_kick_oauth_exchange(code, pending), timeout=30)
-    except Exception as e:
-        if _loop_not_ready(e):
-            return _kick_oauth_page(False, "Event-Loop startet noch — kurz erneut versuchen.")
-        return _kick_oauth_page(False, f"Token-Tausch fehlgeschlagen: {e}")
-    _cfg_set("kick.oauth_pending", {})
-    if not res.get("ok"):
-        return _kick_oauth_page(False, res.get("error") or "Token-Tausch fehlgeschlagen.")
-    scope = res.get("scope", "")
-    extra = "" if "channel:write" in scope else " (Achtung: channel:write NICHT gewährt — Titel/Kategorie bleiben gesperrt)"
-    return _kick_oauth_page(True, f"Kick verbunden. Scopes: {scope}{extra}")
 
 
-@dashboard_app.route("/api/kick/oauth/status")
-def api_kick_oauth_status():
-    tok = _cfg_get("kick.user_token", None) or {}
-    connected = bool(tok.get("access_token"))
-    now = _time_mod.time()
-    return jsonify(ok=True, connected=connected, scope=tok.get("scope", ""),
-                   has_channel_write=_nc_kickoauth.has_scope(tok, "channel:write"),
-                   # W17: ohne diese beiden antwortet Kick auf Chat/Timeouts mit 401
-                   has_chat_write=_nc_kickoauth.has_scope(tok, "chat:write"),
-                   has_moderation=_nc_kickoauth.has_scope(tok, "moderation:ban"),
-                   expired=(_nc_kickoauth.is_expired(tok, now) if connected else None),
-                   expires_in=(int(tok.get("expires_at", 0) - now) if tok.get("expires_at") else None),
-                   client_configured=bool(KICK_CLIENT_ID and KICK_CLIENT_SECRET),
-                   redirect_uri=_kick_redirect_uri(),
-                   # v4.0-W23: woher kommt die Redirect-URI + ist sie extern
-                   # erreichbar? Das Panel warnt, wenn noch der localhost-Fallback
-                   # aktiv ist (Kick erreicht den nie → OAuth scheitert).
-                   redirect_source=_kick_redirect_source(),
-                   redirect_public=_kick_redirect_public(_kick_redirect_uri()))
 
 
-@dashboard_app.route("/api/kick/oauth/redirect", methods=["POST"])
-def api_kick_oauth_redirect():
-    """v4.0-W23: Redirect-URI LIVE setzen (app_config), ohne .env/Neustart.
-       Muss danach 1:1 in der Kick-Developer-App eingetragen sein. Leerer Wert
-       loescht die Ueberschreibung → es gilt wieder .env bzw. der Fallback."""
-    data = request.get_json(silent=True) or {}
-    uri = str(data.get("uri", "") or "").strip()
-    if uri:
-        low = uri.lower()
-        if not (low.startswith("http://") or low.startswith("https://")):
-            return jsonify(ok=False, error="URI muss mit http:// oder https:// beginnen"), 400
-        if not low.endswith("/api/kick/oauth/callback"):
-            return jsonify(ok=False, error="URI muss auf /api/kick/oauth/callback enden "
-                           "(exakt dieser Pfad ist die Rueckruf-Route)"), 400
-    _cfg_set("kick.redirect_uri", uri)
-    eff = _kick_redirect_uri()
-    return jsonify(ok=True, redirect_uri=eff, redirect_source=_kick_redirect_source(),
-                   redirect_public=_kick_redirect_public(eff),
-                   note=("" if _kick_redirect_public(eff)
-                         else "Achtung: localhost ist von Kick aus nicht erreichbar."))
 
 
-@dashboard_app.route("/api/kick/oauth/disconnect", methods=["POST"])
-def api_kick_oauth_disconnect():
-    _cfg_set("kick.user_token", {})
-    _cfg_set("kick.oauth_pending", {})
-    return jsonify(ok=True)
 
 
 # ═══ F85: ON-AIR-Deck — kompakter Restream-Status fürs Dashboard-Hero ═══
@@ -13350,7 +13221,7 @@ def api_notify_test():
 def api_chat_send_status():
     """v4.0-W41: beantwortet direkt „auf welchen Plattformen kann der Bot GERADE
        in den Chat schreiben?". Genau die Frage hinter „Nachricht nur auf Kick"."""
-    kick_ready = globals().get("_KICK_MOD") is not None
+    kick_ready = _nc_channels.KICK_MOD["obj"] is not None
     tw_ready = bool(_TWITCH_SEND.get("fn"))
     yt_ready = bool(_YT_SEND.get("fn"))
     tw_chan = (os.getenv("TWITCH_CHANNEL", "") or "").strip()
@@ -18426,6 +18297,11 @@ class KickModerator:
 
 _RESTREAM_MGR = RestreamManager()
 _KICK_MOD = KickModerator()
+# v4.1-W9: die Instanz ins geteilte Register, damit /api/kick, /api/kickmod und
+# /api/chat sie erreichen, ohne dass KickModerator selbst wandern muss (das ist
+# Welle 4). Im Monolithen stand dafuer globals()-Zugriff — in einem
+# Blueprint waere das fuer immer None, siehe nc/channels.py.
+_nc_channels.KICK_MOD["obj"] = _KICK_MOD
 
 
 # ===================== LIVE-REACTION-ENGINE (Whisper / Sprache) =====================
@@ -20863,44 +20739,6 @@ def api_audio_testtone():
     return jsonify(ok=True, queues=len(queues), bytes=len(pcm))
 
 
-@dashboard_app.route("/api/kick/sendcheck", methods=["GET", "POST"])
-def api_kick_sendcheck():
-    """v4.0-W10: Warum schweigt AZRAEL auf Kick? GET = Diagnose ohne zu senden
-       (Zugangsdaten da? Broadcaster-ID aufloesbar? letzter Sendeversuch/Fehler).
-       POST = schickt EINE kurze Testzeile und meldet den echten Grund im Klartext."""
-    creds = bool(KICK_CLIENT_ID and KICK_CLIENT_SECRET)
-    out = {
-        "ok": True,
-        "creds_configured": creds,
-        "broadcaster_id_env": KICK_BROADCASTER_ID or 0,
-        "channel": _kick_slug() or "",
-        "moderator_running": bool(globals().get("_KICK_MOD")),
-        "last": dict(_KICK_SEND_LAST),
-    }
-    if not creds:
-        out["hinweis"] = ("KICK_CLIENT_ID/KICK_CLIENT_SECRET fehlen — ohne sie kann "
-                          "der Bot auf Kick nicht schreiben (Lesen geht ohne).")
-        return jsonify(out)
-    if request.method == "GET":
-        try:
-            out["broadcaster_id_resolved"] = _run_async_from_flask(
-                _kick_broadcaster_id(), timeout=15)
-        except Exception as e:
-            out["broadcaster_id_resolved"] = 0
-            out["hinweis"] = f"Broadcaster-ID nicht aufloesbar: {str(e)[:120]}"
-        return jsonify(out)
-    mod = globals().get("_KICK_MOD")
-    if mod is None:
-        out.update(ok=False, error="Kick-Moderator laeuft nicht (KICK_CHATROOM_ID?)")
-        return jsonify(out)
-    txt = (request.get_json(silent=True) or {}).get("text") or "Azrael Sentinel · Sendetest"
-    try:
-        sent, err = _run_async_from_flask(mod.send_message(_nc_i18n.t(str(txt)[:120])), timeout=30)
-    except Exception as e:
-        out.update(ok=False, error=str(e)[:160])
-        return jsonify(out)
-    out.update(sent=bool(sent), error=(err or ""), last=dict(_KICK_SEND_LAST))
-    return jsonify(out)
 
 
 @dashboard_app.route("/api/kickmod/status")
@@ -21624,45 +21462,8 @@ def api_channels_status():
         return jsonify(ok=False, error=str(e)), 500
 
 
-@dashboard_app.route("/api/kick/channel")
-def api_kick_channel():
-    """Kanal-Status: live, Zuschauer, Titel, Follower."""
-    try:
-        info, err = _run_async_from_flask(_KICK_MOD.channel_info(), timeout=20)
-        if err:
-            return jsonify(ok=False, error=err), 502
-        return jsonify(ok=True, channel=info)
-    except RuntimeError as e:
-        # B86-Fix: 'event loop not ready' ist KEIN Serverfehler — es ist das
-        # normale Startup-Fenster (Dashboard lädt, asyncio-Loop fährt noch hoch)
-        # ODER Kick ist nicht konfiguriert. Vorher fiel das in den generischen
-        # 500-Zweig → Dashboard zeigte "Server-Fehler 500" als Push, aber nichts
-        # stand im Log (still gefangen). Jetzt 503 (transient) — das Frontend
-        # toastet 503 NICHT als Serverfehler.
-        return jsonify(ok=False, error=str(e), transient=True), 503
-    except Exception as e:
-        log.warning("api_kick_channel: %s", e)   # B85: jetzt auch geloggt
-        return jsonify(ok=False, error=str(e)), 500
 
 
-@dashboard_app.route("/api/kick/channel", methods=["POST"])
-def api_kick_channel_set():
-    """Stream-Titel / Kategorie setzen (PATCH /channels)."""
-    d = request.get_json(silent=True) or {}
-    title = d.get("title")
-    cat = d.get("category_id")
-    if title is None and not cat:
-        return jsonify(ok=False, error="title oder category_id nötig"), 400
-    try:
-        ok, err = _run_async_from_flask(
-            _KICK_MOD.update_channel(title=title, category_id=cat), timeout=20)
-        return jsonify(ok=ok, error=err), (200 if ok else 502)
-    except RuntimeError as e:
-        if _loop_not_ready(e):
-            return jsonify(ok=False, error="Bot-Loop startet noch", transient=True), 503
-        return jsonify(ok=False, error=str(e)), 500
-    except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
 
 
 # ===================== TITEL/KATEGORIE (Kick + Twitch + YouTube) =============
@@ -25746,7 +25547,7 @@ async def _announce_loop():
                 # An ALLE Plattformen — mit Ergebnis je Plattform, damit man sieht
                 # WARUM eine leer ausgeht (nicht verbunden vs Sendefehler).
                 results = {}
-                mod = globals().get("_KICK_MOD")
+                mod = _nc_channels.KICK_MOD["obj"]
                 if mod is None:
                     results["kick"] = "offline"
                 else:
@@ -26748,7 +26549,7 @@ async def _azrael_chat_reply(platform, user, text):
         hard = _sentinel_screen(text or "")
         if hard and hard[0]:
             return None
-        mod = globals().get("_KICK_MOD")
+        mod = _nc_channels.KICK_MOD["obj"]
         if mod is None:
             return None
         ctx = f"Chat-Nachricht von {user} auf {platform}. Antworte kurz (1 Satz)."
@@ -26813,7 +26614,7 @@ async def _azrael_send_to(platform, msg, session=None):
     verbunden (kein Sende-Kanal registriert), 'error' = Senden warf."""
     try:
         if platform == "kick":
-            mod = globals().get("_KICK_MOD")
+            mod = _nc_channels.KICK_MOD["obj"]
             if mod is None:
                 return "offline"
             await mod.send_message(_nc_i18n.t(msg), session)
@@ -27100,7 +26901,7 @@ def _screen_full(content, user_id, hist, cfg):
     hard = _sentinel_screen(c)                          # 1) harte Verstöße
     if hard and hard[0]:
         return hard[0], hard[1]
-    mod = globals().get("_KICK_MOD")
+    mod = _nc_channels.KICK_MOD["obj"]
     if mod is not None:                                 # 2) Bannwörter (geteilt)
         try:
             hit = mod._banned_hit(c)
@@ -27212,7 +27013,7 @@ async def _twitch_chat_loop():
                     # OAuth-Token den Scope moderator:manage:banned_users hat UND
                     # die Auto-Moderation im Dashboard aktiv ist (gleicher Schalter
                     # wie Kick — Sentinel an/aus gilt für beide Plattformen).
-                    _mod = globals().get("_KICK_MOD")
+                    _mod = _nc_channels.KICK_MOD["obj"]
                     # v4.0-W16: IRC-Tags werden endlich genutzt — Broadcaster/
                     # Moderatoren/Staff bleiben vom Auto-Mod verschont.
                     _tw_roles = _nc_mod.twitch_roles(tags)
@@ -27340,7 +27141,7 @@ async def _youtube_api_chat_loop():
                     log.info("YouTube-API-Chat: %s — neu verbinden", reason)
                     break
                 msgs, page, poll = _nc_ytapi.parse_messages(data)
-                mod = globals().get("_KICK_MOD")
+                mod = _nc_channels.KICK_MOD["obj"]
                 for m in msgs:
                     who, txt = m.get("author", ""), m.get("text", "")
                     if not txt or m.get("is_owner"):     # eigene/Owner-Posts überspringen
@@ -27473,7 +27274,7 @@ async def _youtube_chat_loop():
                                 # YT-Chat wird anonym gelesen → KEIN Timeout/Delete
                                 # (das braucht YouTube-OAuth + Mod-Scope). Wir
                                 # ERKENNEN + loggen, damit Verstöße sichtbar werden.
-                                _mody = globals().get("_KICK_MOD")
+                                _mody = _nc_channels.KICK_MOD["obj"]
                                 if _mody is not None and _mody.cfg.get("auto_moderate"):
                                     _vy = _screen_full(txt, who, _YT_MSG_HIST, _mody.cfg)
                                     if _vy:
@@ -29258,6 +29059,15 @@ _nc_oauthredirect.configure(trusted_proxies=TRUSTED_PROXIES,
                             loopback=_LOOPBACK,
                             dashboard_port=DASHBOARD_PORT)
 
+# v4.1-W9: Kick-Slug, Broadcaster-ID und das Sendeprotokoll. get_session ist die
+# gepoolte aiohttp-Session des Bots — sie haengt am Laufzeitkern und bleibt dort.
+_nc_kickapi.configure(log=log,
+                      get_session=_get_ai_session,
+                      time_mod=_time_mod,
+                      broadcaster_id_env=KICK_BROADCASTER_ID,
+                      client_id=KICK_CLIENT_ID,
+                      client_secret=KICK_CLIENT_SECRET)
+
 # v4.1-W5: die Existenzpruefung laeuft ueber denselben Weg wie die
 # Live-Aufloesung — gepoolte Session, geprueter Pull-Proxy, gleiche Kopfzeilen.
 # Alle drei haengen am Laufzeitkern und bleiben im Bot.
@@ -29335,6 +29145,12 @@ _nc_ctx.configure(
         "ARCHIVE_MAX_UPLOAD_MB": ARCHIVE_MAX_UPLOAD_MB,
         "_MANUAL_ARCHIVE_DIR": _MANUAL_ARCHIVE_DIR,
         "DB_INTEGRITY_ERRORS": DB_INTEGRITY_ERRORS,
+        # --- Kick (v4.1-W9). Startwerte aus der .env, keine Helfer — deshalb
+        # hier und nicht als eigene Slots. Der Bot friert sie beim Import ein;
+        # ein zweiter Lesepfad im Blueprint waere eine stille Abweichung.
+        "KICK_BROADCASTER_ID": KICK_BROADCASTER_ID,
+        "KICK_CLIENT_ID": KICK_CLIENT_ID,
+        "KICK_CLIENT_SECRET": KICK_CLIENT_SECRET,
         # --- KI (v4.0-W112). Keiner dieser Namen wird im Bot je per `global`
         # neu gebunden (nachgemessen), deshalb ist die Uebergabe beim Start
         # sicher; die Dicts, Listen und das Lock werden per Referenz geteilt,
@@ -29428,6 +29244,7 @@ dashboard_app.register_blueprint(_nc_routes_streamer.bp)   # v4.1-W5
 dashboard_app.register_blueprint(_nc_routes_i18n.bp)       # v4.1-W6
 dashboard_app.register_blueprint(_nc_routes_twitch.bp)     # v4.1-W8
 dashboard_app.register_blueprint(_nc_routes_youtube.bp)    # v4.1-W8
+dashboard_app.register_blueprint(_nc_routes_kick.bp)       # v4.1-W9
 
 
 if __name__ == "__main__":
