@@ -11,6 +11,47 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Geändert — OAuth-Rückruf-Schicht nach `nc/`, Twitch und YouTube als Blueprint (v4.1 W8)
+
+`bot.py`: 29.714 → **29.437 Zeilen**. `nc/routes/` trägt jetzt 20 Blueprints
+mit 198 Routen, der Monolith noch 161.
+
+**Reihenfolge wie in W117: erst die Schicht, dann die Routen.** `/api/twitch`
+hätte vorher drei `nc.ctx`-Slots gekostet, `/api/youtube` acht — bei 24 von
+vertraglich 25 belegten Slots war das der Grund, warum beide Gruppen liegen
+blieben. Nach dem Umzug der Schicht kosten sie **null**.
+
+Neu `nc/oauthredirect.py`: `public_base_url()`, `redirect_env()`,
+`redirect_uri()`, `redirect_source()`, `redirect_public()`. Die Reihenfolge
+app_config → `.env` → öffentliche Basis-URL steht damit an **einer** Stelle für
+Kick, Twitch und YouTube. Fällt sie auseinander, kommt genau der Fehler zurück,
+den W121 behoben hat: `redirect_uri_mismatch`, ausgelöst **vor** der
+Kontoauswahl — also ohne jede Meldung im Bot.
+
+`TRUSTED_PROXIES` und `DASHBOARD_PORT` kommen per `configure()` aus dem Bot,
+nicht aus einer zweiten `os.getenv`-Stelle im Modul: zwei Lesestellen mit
+unterschiedlichen Werten wären genau der unauffindbare Fall.
+`PUBLIC_BASE_URL` und die `*_REDIRECT_URI` liest die Schicht weiterhin bei
+jedem Aufruf — sie sind zur Laufzeit änderbar.
+
+`nc/channels.py` bekam `YT_API_CACHE`, `YT_SENDRATE` und `yt_sendrate_cfg()`
+dazu — sie standen als Modul-Globals im Monolithen, neben `YT_SEND`, das
+längst dort liegt. Der direkte Import trifft **dasselbe** Objekt: eine zweite
+Kopie wäre ein Zustandsriss, bei dem der Trennen-Knopf den Token-Cache des
+Sendepfads nicht mehr leert und der Bot nach dem Abmelden weitersendet. Ein
+Vertrag prüft das.
+
+**Werkzeug korrigiert:** `tools/bp_analyse.py` hielt `_YT_SEND =
+_nc_channels.YT_SEND` für einen Monolith-Global und meldete drei
+`nc.ctx`-Einträge, die es gar nicht gibt — dieselbe Fehlanzeige, die es bei
+reinen Delegations-Funktionen schon kannte. Aliase auf `nc`-Modul-Attribute
+zählen jetzt als direkt importierbar, aber nur bei **eindeutiger** Bindung: wer
+auf Modulebene ein zweites Mal zugewiesen wird, ist kein Alias, sondern Zustand
+mit Geschichte.
+
+Vier Verträge sind neu, sieben Anker gewandert (Aufteilung, Bremse,
+`cfgnorm`, OAuth-Seite, W121, W122, W23) — keiner gelöscht.
+
 ### Geändert — Sprache je Benutzer statt je Server (v4.1 W7)
 
 Bis W6 entschied `UI_LANG` für alle. Ein deutschsprachiger und ein

@@ -78,3 +78,28 @@ def _chat_block(maxlines=None, width=None, source_user=None):
             if len(out) > maxlines * 3:      # Notbremse gegen Endlos-Wraps
                 break
     return "\n".join(out[-maxlines:])
+
+
+# ---- YouTube: Kontingent-Cache und Sende-Bremse (v4.1-W8) -------------------
+# Beide lagen als Modul-Globals in bot.py und waeren beim Herausloesen von
+# /api/youtube zu drei nc.ctx-Eintraegen geworden — obwohl sie reiner geteilter
+# Zustand sind, genau wie YT_SEND daneben. Der Kontext steht bei 24 von
+# vertraglich 25 Slots; die Reihenfolge aus W117 lautet deshalb: erst den
+# Zustand loesen, dann die Routen.
+
+# B120: eigener Cache fuer den API-Kanalstatus. Die YouTube Data API hat
+# ein TAGES-Kontingent (10.000 Einheiten); der Control-Tab pollt alle 20s.
+# Ohne diesen Cache waere das Kontingent vor Mittag verbrannt und die API
+# antwortet bis Mitternacht nur noch mit 403 quotaExceeded.
+YT_API_CACHE = {"ts": 0.0, "data": None}
+
+from nc import sendrate as _sendrate           # noqa: E402 — Blockgrenze, siehe oben
+from nc import cfgnorm as _cfgnorm             # noqa: E402
+from nc.cfgstore import get as _cfg_get        # noqa: E402
+
+YT_SENDRATE = _sendrate.new_state()    # v4.0-W23: Zustand der YT-Sende-Bremse
+
+
+def yt_sendrate_cfg():
+    # v4.0-W33: Normalisierung nach nc/cfgnorm.py (bitgenau geprüft).
+    return _cfgnorm.normalize_sendrate(_cfg_get("youtube.sendrate", None))

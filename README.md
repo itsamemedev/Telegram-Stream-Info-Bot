@@ -196,10 +196,10 @@ flowchart TB
     DC --> BOT
     TT --> BOT
 
-    BOT["bot.py<br/>Monolith · 29.714 Zeilen<br/>Scraper · Recorder · Restream<br/>Flask-Dashboard · 172 eigene Routen"]:::core
+    BOT["bot.py<br/>Monolith · 29.437 Zeilen<br/>Scraper · Recorder · Restream<br/>Flask-Dashboard · 161 eigene Routen"]:::core
 
-    BOT -->|configure| NC["nc/ — 92 Fachmodule<br/>Schema · OAuth · Restream<br/>Ledger · Moderation · Intel"]:::lib
-    NC --> RT["nc/routes/ — 18 Blueprints<br/>187 weitere API-Routen"]:::lib
+    BOT -->|configure| NC["nc/ — 93 Fachmodule<br/>Schema · OAuth · Restream<br/>Ledger · Moderation · Intel"]:::lib
+    NC --> RT["nc/routes/ — 20 Blueprints<br/>198 weitere API-Routen"]:::lib
     BOT --> TPL["templates/<br/>Dashboard · Overlay · PWA"]:::lib
     BOT --> BR["brain_bridge.py"]:::lib
     BR --> BRAIN["brain/ — eigene brain.db<br/>state · rules · router · memory<br/>knowledge · semantic · scheduler<br/>llm · agents · report"]:::brain
@@ -717,7 +717,7 @@ gebrochen ist.**
 
 ### 🧭 Navigation im Monolithen
 
-`bot.py` hat 29.714 Zeilen. Es wird **nie** ganz gelesen und **nie**
+`bot.py` hat 29.437 Zeilen. Es wird **nie** ganz gelesen und **nie**
 blind durchsucht — erst fragen wo etwas steht, dann den Ausschnitt holen:
 
 ```bash
@@ -732,7 +732,7 @@ python3 tools/ncpatch.py docs                          # Doku-Zahlen gegen den C
 ```
 
 `find` antwortet aus **[`.claude/INDEX.md`](.claude/INDEX.md)** — 359 Routen
-(172 in `bot.py`, 187 in `nc/routes/`), 45 Slash-Commands, 520 Funktionen,
+(161 in `bot.py`, 198 in `nc/routes/`), 45 Slash-Commands, 515 Funktionen,
 jeweils mit Zeilennummer.
 
 ---
@@ -844,9 +844,9 @@ nicht greifen, gekippte Verträge in `test_restream.py`.
 | | |
 |---|---|
 | Aktuelle Version | **4.0** — „Restream Control Room" (2026.08) |
-| Flask-Routen | 359 (172 in `bot.py` · 187 in `nc/routes/`) |
+| Flask-Routen | 359 (161 in `bot.py` · 198 in `nc/routes/`) |
 | Discord-Slash-Commands | 45 |
-| Fachmodule | 92 in `nc/` (+18 in `nc/routes/`, +3 in `nc/intel/`), 10 in `brain/` |
+| Fachmodule | 93 in `nc/` (+20 in `nc/routes/`, +3 in `nc/intel/`), 10 in `brain/` |
 | Sentinel-Agenten | 13 |
 | Konfigurationsvariablen | ~496 |
 | Sprachen | Deutsch (Quelle), Englisch |
@@ -859,14 +859,14 @@ Vollständige Historie: **[`docs/CHANGELOG.md`](docs/CHANGELOG.md)** ·
 ## 🧭 Roadmap
 
 Der nächste grosse Schritt ist kein Feature, sondern Aufräumen: **`bot.py` hat
-29.714 Zeilen**. Die Datei ist der Engpass des Projekts. Die Messlatte dafür ist
+29.437 Zeilen**. Die Datei ist der Engpass des Projekts. Die Messlatte dafür ist
 aber keine Zeilenzahl:
 
 > **Eine neue API-Route anlegen, ohne `bot.py` zu öffnen.**
 
 Der Weg dahin in sechs Wellen — gemessen, nicht geschätzt:
 **[`docs/ROADMAP.md`](docs/ROADMAP.md)**. Welle 2 ist erledigt, Welle 3 läuft:
-`nc/routes/` trägt heute 18 Blueprints mit 187 API-Routen, die nicht mehr im
+`nc/routes/` trägt heute 20 Blueprints mit 198 API-Routen, die nicht mehr im
 Monolithen stehen.
 
 ---

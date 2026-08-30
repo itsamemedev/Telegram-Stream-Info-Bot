@@ -55,7 +55,48 @@ def _load():
         elif isinstance(n, ast.Import):
             for a in n.names:
                 imported[(a.asname or a.name).split(".")[0]] = f"import {a.name}"
-    return src, tree, topfn, glob, imported
+    return src, tree, topfn, glob, imported, _aliase(tree, imported)
+
+
+def _aliase(tree, imported):
+    """Top-Level-Globals, die nur ein anderer Name fuer ein nc-Modul-Attribut
+       sind: `_YT_SEND = _nc_channels.YT_SEND`.
+
+       Warum das zaehlt: solche Namen sind KEINE Kopplung an den Monolithen.
+       Ein Blueprint importiert dasselbe Objekt direkt aus nc/ und teilt sich
+       damit denselben Zustand — ohne nc.ctx-Eintrag. Ohne diese Unterscheidung
+       meldet das Werkzeug Kosten, die es gar nicht gibt; dieselbe Fehlanzeige
+       gab es vor W111 schon bei den reinen Delegations-Funktionen.
+
+       Nur EINDEUTIGE Aliase: wird der Name irgendwo sonst auf Modulebene neu
+       gebunden, ist er kein Alias mehr, sondern Zustand mit Geschichte.
+    """
+    zuweisungen = {}
+    for n in tree.body:
+        if not isinstance(n, ast.Assign):
+            continue
+        for t in n.targets:
+            if isinstance(t, ast.Name):
+                zuweisungen.setdefault(t.id, []).append(n.value)
+    out = {}
+    for name, werte in zuweisungen.items():
+        if len(werte) != 1:
+            continue                       # mehrfach gebunden → kein Alias
+        v = werte[0]
+        if not (isinstance(v, ast.Attribute) and isinstance(v.value, ast.Name)):
+            continue
+        imp = imported.get(v.value.id, "")
+        if imp.startswith("from "):
+            teile = imp.split()
+            ziel = f"{teile[1]}.{teile[3]}"
+        elif imp.startswith("import "):
+            ziel = imp.split()[1]
+        else:
+            continue
+        if not ziel.startswith("nc."):
+            continue
+        out[name] = f"{ziel}.{v.attr}"
+    return out
 
 
 def _paths(node):
@@ -107,7 +148,7 @@ def _deps(node, topfn, glob, imported):
     return fns, gls, imps, dyn
 
 
-def analyse(prefix, tree, topfn, glob, imported):
+def analyse(prefix, tree, topfn, glob, imported, aliase=None):
     sel = [n for n in tree.body
            if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
            and any(p == prefix or p.startswith(prefix + "/") for p in _paths(n))]
@@ -213,6 +254,13 @@ def analyse(prefix, tree, topfn, glob, imported):
         for r in names & called:
             intern.setdefault(r, []).append(n.name)
 
+    # Aliase auf nc-Modul-Attribute sind kein Kontext-Eintrag: das Blueprint
+    # importiert dasselbe Objekt direkt und teilt sich denselben Zustand.
+    for g in sorted(G):
+        if (aliase or {}).get(g):
+            direkt[g] = aliase[g]
+            G.discard(g)
+
     kosten = len(zuctx) + len(G)
     return {"prefix": prefix, "routes": len(sel), "lines": lines,
             "mit": mit, "mitlines": mitlines, "ctx_fns": zuctx,
@@ -223,7 +271,7 @@ def analyse(prefix, tree, topfn, glob, imported):
 
 
 def main():
-    src, tree, topfn, glob, imported = _load()
+    src, tree, topfn, glob, imported, aliase = _load()
     prefixe = {}
     for n in tree.body:
         if not isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)):
@@ -235,7 +283,7 @@ def main():
             break
 
     if len(sys.argv) > 1:
-        r = analyse(sys.argv[1], tree, topfn, glob, imported)
+        r = analyse(sys.argv[1], tree, topfn, glob, imported, aliase)
         if not r:
             print("keine Routen unter", sys.argv[1])
             return 1
@@ -261,7 +309,7 @@ def main():
               f"{r['ratio']} Zeilen je Eintrag")
         return 0
 
-    rows = [analyse(p, tree, topfn, glob, imported) for p in sorted(prefixe)]
+    rows = [analyse(p, tree, topfn, glob, imported, aliase) for p in sorted(prefixe)]
     rows = [r for r in rows if r and r["lines"] >= 40]
     rows.sort(key=lambda r: -r["ratio"])
     print(f"\n{'Praefix':<20}{'Rt':>4}{'Zeilen':>8}{'+Helfer':>9}"
