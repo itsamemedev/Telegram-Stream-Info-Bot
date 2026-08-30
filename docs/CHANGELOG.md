@@ -11,6 +11,45 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Geändert — Chat und Co-Host als Blueprint (v4.1 W15)
+
+`bot.py`: 29.442 → **29.306 Zeilen**. `nc/routes/` trägt jetzt 23 Blueprints
+mit 210 Routen, der Monolith noch 149. `nc.ctx` bleibt bei **24 von 25**.
+
+Beide Gruppen hängen an **geteiltem Zustand**, und genau daran entschied sich,
+ob der Umzug richtig ist. Das ist hier besonders heikel, weil beide Routen
+**Diagnose** sind: eine Kopie hätte sie „nicht verbunden" bzw. eine Bremse
+melden lassen, die nie zieht — während beides läuft.
+
+* `/api/chat` (2 Routen) liest die drei Sendewege aus `nc/channels.py`:
+  `KICK_MOD` (seit W9 im Register), `TWITCH_SEND` und `YT_SEND`. Die vier
+  `_KICK_MOD`-Zugriffe der Chat-Routen gehen jetzt über das Register — dieselbe
+  Umstellung wie bei den Kick-Routen in W9.
+* `/api/cohost` (2 Routen): Bremse (`STATE`) und Konfigurations-Leser
+  (`config()`) sind nach `nc/cohost.py` gewandert, dorthin, wo `decide`,
+  `snapshot` und `default_config` schon lagen. Ohne Injektion — `nc.cfgnorm`
+  und `nc.cfgstore` sind ebenfalls bot-frei. Das Ergebnis ist das **zweite
+  Blueprint überhaupt ohne jeden `nc.ctx`-Zugriff** (nach `evolution` in W3).
+
+**Ein Vertrag hat sich selbst als zu grob erwiesen.** Die Prüfung „jeder
+`cfg`-Schlüssel, den ein Blueprint liest, wird auch geliefert" suchte nach
+jedem `cfg["x"]` — und traf damit auch ein **lokales** Dict, das die Route
+selbst gebaut hat (`cfg = _cohost_cfg()`, dann `cfg["enabled"]`). Sie hätte
+vier Schlüssel vom Bot verlangt, die es dort nie gab. Blueprints lesen den
+Kontext ausnahmslos als `_c().cfg[...]`; der Ausdruck verlangt jetzt genau
+diese Form.
+
+Ein Vertrag ist neu, vier Anker sind gewandert (W24, W33, W41, W15) — keiner
+gelöscht.
+
+**Was liegen bleibt und warum.** `/api/audio` (2 Routen) sieht mit zwei
+Einträgen gleich billig aus, ist es aber nicht: `_restream_tts` ist die
+Laufzeit-Buchführung des TTS-Feeders (Threads, FIFOs, Queues, 26 Lesestellen),
+und `_audio_cfg` hat keine natürliche Heimat in `nc/` — `nc/audio_cue.py` ist
+bewusst reines DSP (nur `math`/`struct`). Dort etwas hineinzulegen wäre
+Verschieben ohne Gewinn. Die Gruppe wartet auf die TTS-Schicht, nicht auf einen
+Slot — derselbe Fall wie `/api/profile`.
+
 ### Behoben — totes Modell kostete jeden Umlauf, Watchdog zeigte falsch (v4.1 W14)
 
 **Ein totes Modell wurde 26 Mal neu entdeckt.** Im `debug.log` steht 26 Mal

@@ -3821,7 +3821,14 @@ def test_v40_w24_cohost():
     # sein Anker ist gewandert.
     assert 'await _KICK_MOD.send_message(_nc_i18n.t("🦇 " + line))' in f91, \
         "Kick-only-Fallback (ohne Co-Host) verloren"
-    assert '"/api/cohost"' in src and '"/api/cohost/config"' in src, "Routen fehlen"
+    # ANKER GEWANDERT (v4.1-W15, nicht der Vertrag): die beiden Routen liegen in
+    # nc/routes/cohost.py — dem ersten Blueprint ueberhaupt, das nc.ctx gar
+    # nicht mehr braucht. Entscheidung, Zustand und Leser stehen vollstaendig
+    # in nc/cohost.py.
+    _cb = open("nc/routes/cohost.py", encoding="utf-8").read()
+    assert '"/api/cohost"' in _cb and '"/api/cohost/config"' in _cb, "Routen fehlen"
+    assert "from nc.cohost import STATE as _COHOST" in _cb, \
+        "die Route liest eine eigene Kopie der Bremse statt der geteilten"
     dash = open("templates/dashboard.html").read()
     assert 'id="pnl_cohost"' in dash and "async function loadCohost(" in dash
     assert "loadCohost();" in dash, "Panel nicht im Betrieb-Loader"
@@ -4261,9 +4268,14 @@ def test_v40_w33_cfgnorm_bundle():
     src = open("bot.py").read()
     assert "from nc import cfgnorm as _nc_cfgnorm" in src
     for call in ("normalize_quiet_hours(_cfg_get", "normalize_highlights(_cfg_get",
-                 "normalize_gate(_cfg_get",
-                 "normalize_audio(_cfg_get", "normalize_cohost(_cfg_get"):
+                 "normalize_gate(_cfg_get", "normalize_audio(_cfg_get"):
         assert f"_nc_cfgnorm.{call}" in src, f"{call} delegiert nicht"
+    # ANKER GEWANDERT (v4.1-W15, nicht der Vertrag): der cohost-Leser liegt bei
+    # seinen Defaults in nc/cohost.py, damit /api/cohost ihn direkt importieren
+    # kann. Dieselbe Zusage, andere Datei — wie schon bei sendrate in W8.
+    _ch = open("nc/cohost.py", encoding="utf-8").read()
+    assert "_cfgnorm.normalize_cohost(_cfg_get" in _ch, \
+        "normalize_cohost(_cfg_get delegiert nicht"
     # ANKER GEWANDERT (v4.1-W8, nicht der Vertrag): der sendrate-Reader liegt
     # bei seinem Zustand in nc/channels.py, damit /api/youtube ihn direkt
     # importieren kann. Dieselbe Zusage, andere Datei.
@@ -4540,8 +4552,17 @@ def test_v40_w41_send_observability():
     # Announcer nennt Skip-Gründe.
     assert "nicht verbunden" in src and "Sendefehler" in src, "Announce nennt keine Skip-Gründe"
     assert "KEINE Plattform erreicht" in src, "kein klarer Log bei Totalausfall"
-    # Diagnose-Endpoint.
-    assert '"/api/chat/send_status"' in src and "api_chat_send_status" in src, "Sende-Status-Endpoint fehlt"
+    # Diagnose-Endpoint. ANKER GEWANDERT (v4.1-W15): er liegt in
+    # nc/routes/chat.py und liest die Sendebereitschaft aus den GETEILTEN
+    # Registern in nc/channels.py. Eine eigene Kopie dort und die Diagnose
+    # meldete "nicht verbunden", waehrend der Bot sendet — also genau das
+    # Gegenteil dessen, wofuer sie gebaut wurde.
+    _cb = open("nc/routes/chat.py", encoding="utf-8").read()
+    assert '"/api/chat/send_status"' in _cb and "api_chat_send_status" in _cb, \
+        "Sende-Status-Endpoint fehlt"
+    for _imp in ("from nc.channels import TWITCH_SEND", "from nc.channels import YT_SEND"):
+        assert _imp in _cb, "die Diagnose liest nicht dieselben Sende-Hooks wie der Bot"
+    assert '_nc_channels.KICK_MOD["obj"]' in _cb, "Kick-Bereitschaft nicht aus dem Register"
 
     # Verhalten (nachgebaut): nur Kick verbunden → korrekte sent/skipped-Aufteilung.
     def status(kick, tw, yt):
@@ -8085,6 +8106,52 @@ def test_v41_w14_watchdog_ursache():
     ok("v4.1-W14: Watchdog meldet einmal je Stillstand und nennt die echte Ursache")
 
 
+
+# ------------------------------------- v4.1-W15) Chat und Co-Host als Blueprint
+
+def test_v41_w15_chat_und_cohost():
+    """v4.1-W15: zwei kleine Steuer-Gruppen raus, null neue nc.ctx-Slots.
+
+    Beide haengen an GETEILTEM Zustand, und genau daran entscheidet sich, ob
+    der Umzug richtig ist: die Sende-Register (KICK_MOD, TWITCH_SEND, YT_SEND)
+    und die Co-Host-Bremse muessen dieselben Objekte bleiben, die der Bot
+    fortschreibt. Eine Kopie waere hier besonders heimtueckisch — die Routen
+    sind DIAGNOSE: sie meldeten "nicht verbunden" bzw. eine Bremse, die nie
+    zieht, waehrend beides laeuft.
+    """
+    src = open("bot.py", encoding="utf-8").read()
+
+    # (1) Der Bot haelt keine eigenen Kopien mehr.
+    assert "_COHOST = _nc_cohost.STATE" in src, "der Bot haelt eine eigene Bremse"
+    assert "_COHOST = _nc_cohost.new_state()" not in src, "zweiter Zustand wieder da"
+    assert 'return _nc_cohost.config()' in src, "der Leser steht wieder doppelt"
+
+    # (2) Die Chat-Routen lesen den Moderator aus dem Register, nicht als
+    # Modul-Global — sonst waere er im Blueprint None (W9).
+    _cb = open("nc/routes/chat.py", encoding="utf-8").read()
+    assert "_KICK_MOD" not in _cb, "Modul-Global des Monolithen im Blueprint"
+    assert _cb.count("@bp.route(") == 2
+
+    # (3) nc/routes/cohost.py ist das ZWEITE Blueprint ganz ohne Kontext (nach
+    # evolution in v4.1-W3). Das ist die Messlatte aus MODULARISIERUNG.md:
+    # eine Route anlegen, ohne bot.py zu oeffnen.
+    _ch = open("nc/routes/cohost.py", encoding="utf-8").read()
+    assert "from nc import ctx" not in _ch and "_c()" not in _ch, \
+        "cohost braucht den Kontext wieder"
+    assert _ch.count("@bp.route(") == 2
+
+    # (4) Registriert — sonst waeren die Routen 404.
+    for _n in ("chat", "cohost"):
+        assert "from nc.routes import %s as _nc_routes_%s" % (_n, _n) in src and \
+            "register_blueprint(_nc_routes_%s.bp)" % _n in src, \
+            "%s ist nicht registriert" % _n
+
+    # (5) Null neue Kontext-Eintraege.
+    import nc.ctx as CTX
+    assert len(CTX.Ctx.__slots__) == 24, "nc.ctx gewachsen"
+    ok("v4.1-W15: 4 Routen raus, geteilter Zustand geteilt geblieben, 0 neue Slots")
+
+
 def main():
     print("test_restream — Restream-Kernlogik (Mock-basiert)")
     test_streak()
@@ -8156,6 +8223,7 @@ def main():
     test_v41_w12_kick_key_kollision()
     test_v41_w13_claude_grund_im_log()
     test_v41_w14_watchdog_ursache()
+    test_v41_w15_chat_und_cohost()
     test_b168_moderator_everywhere()
     test_b169_kick_oauth()
     test_b170_azrael_and_youtube()

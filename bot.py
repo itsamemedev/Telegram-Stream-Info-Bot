@@ -612,6 +612,8 @@ from nc.routes import i18n as _nc_routes_i18n                # v4.1-W6: Sprachwa
 from nc.routes import twitch as _nc_routes_twitch            # v4.1-W8: Twitch-OAuth
 from nc.routes import youtube as _nc_routes_youtube          # v4.1-W8: YouTube-OAuth
 from nc.routes import kick as _nc_routes_kick                # v4.1-W9: Kick-OAuth, Kanal, Sendecheck
+from nc.routes import chat as _nc_routes_chat                # v4.1-W15: Eigener-Kanal-Chat
+from nc.routes import cohost as _nc_routes_cohost            # v4.1-W15: Co-Host-Bremse
 from nc import updater as _nc_updater                        # v4.0-W115: Selbst-Update aus dem GitHub-Repo
 from nc import donationsdb as _nc_donationsdb                # v4.0-W116: manuell erfasste Spenden lesen
 # Diese beiden Routen ruft der Bot auch INTERN auf (Telegram /sysres und die
@@ -13231,32 +13233,6 @@ def api_notify_test():
 
 
 
-@dashboard_app.route("/api/chat/send_status")
-def api_chat_send_status():
-    """v4.0-W41: beantwortet direkt „auf welchen Plattformen kann der Bot GERADE
-       in den Chat schreiben?". Genau die Frage hinter „Nachricht nur auf Kick"."""
-    kick_ready = _nc_channels.KICK_MOD["obj"] is not None
-    tw_ready = bool(_TWITCH_SEND.get("fn"))
-    yt_ready = bool(_YT_SEND.get("fn"))
-    tw_chan = (os.getenv("TWITCH_CHANNEL", "") or "").strip()
-    yt_chan = (os.getenv("YOUTUBE_CHANNEL", "") or "").strip()
-
-    def _hint(ready, chan, plat):
-        if ready:
-            return ""
-        if not chan:
-            return f"{plat}_CHANNEL ist in der .env leer — dort setzen (dann startet der Listener)"
-        return "Kanal gesetzt, aber Chat nicht verbunden — OAuth/Token prüfen"
-    plats = {
-        "kick": {"can_send": kick_ready,
-                 "hint": "" if kick_ready else "Kick-Mod/App-Token nicht bereit"},
-        "twitch": {"can_send": tw_ready, "channel_set": bool(tw_chan),
-                   "hint": _hint(tw_ready, tw_chan, "TWITCH")},
-        "youtube": {"can_send": yt_ready, "channel_set": bool(yt_chan),
-                    "hint": _hint(yt_ready, yt_chan, "YOUTUBE")},
-    }
-    ready = [p for p, v in plats.items() if v["can_send"]]
-    return jsonify(ok=True, ready=ready, count=len(ready), platforms=plats)
 
 
 @dashboard_app.route("/api/discord/invite")
@@ -20460,77 +20436,6 @@ def api_shield_stats():
     return jsonify(ok=True, total_24h=total, by_cat=by_cat, recent=recent)
 
 
-@dashboard_app.route("/api/chat/send", methods=["POST"])
-def api_chat_send():
-    """V37-W-CTRL: Nachricht in den EIGENEN Kanal-Chat (kick|twitch) —
-    der Mobile-Operator muss dafür nicht mehr die Plattform-App öffnen.
-    YouTube ist lesend (Senden bräuchte OAuth) → 501."""
-    d = request.get_json(silent=True) or {}
-    platform = (d.get("platform") or "kick").strip().lower()
-    text = (d.get("text") or "").strip()[:450]
-    if not text:
-        return jsonify(ok=False, error="text fehlt"), 400
-    if platform == "kick":
-        if not _KICK_MOD:
-            return jsonify(ok=False, error="Kick-Mod nicht verbunden"), 503
-        ok, err = _run_async_from_flask(_KICK_MOD.send_message(_nc_i18n.t(text)), timeout=15)
-        return jsonify(ok=bool(ok), error=err)
-    if platform == "twitch":
-        fn = _TWITCH_SEND.get("fn")
-        if not fn:
-            return jsonify(ok=False, error="Twitch nicht verbunden oder "
-                           "kein TWITCH_CHAT_TOKEN (nur-lesend)"), 503
-        try:
-            _run_async_from_flask(fn(text), timeout=10)
-            return jsonify(ok=True)
-        except Exception as e:
-            return jsonify(ok=False, error=str(e)), 500
-    if platform == "youtube":
-        fn = _YT_SEND.get("fn")
-        if not fn:
-            return jsonify(ok=False, error="YouTube nicht sendefähig "
-                           "(kein aktiver Live-Chat oder OAuth nicht "
-                           "konfiguriert — docs/SETUP_YT_OAUTH.md)"), 503
-        try:
-            _run_async_from_flask(fn(text), timeout=15)
-            return jsonify(ok=True)
-        except Exception as e:
-            return jsonify(ok=False, error=str(e)), 500
-    if platform in ("all", "broadcast"):
-        # V37-W-CTRL: eine Ansage in ALLE sendefähigen eigenen Chats
-        # (Kick + Twitch-mit-Token). Eine Aktion für "gleich gehts los".
-        # B143: zusaetzlich strukturierte results{plattform:{ok,error}}, damit
-        # das Dashboard pro Plattform Erfolg/Grund toasten kann (sent/failed
-        # bleiben fuer den Discord-Announce-Aufrufer erhalten).
-        done, fails, results = [], [], {}
-        if _KICK_MOD:
-            ok, err = _run_async_from_flask(_KICK_MOD.send_message(_nc_i18n.t(text)), timeout=15)
-            results["kick"] = {"ok": bool(ok), "error": err}
-            (done if ok else fails).append("kick" + (f" ({err})" if err else ""))
-        else:
-            results["kick"] = {"ok": False, "error": "Kick nicht verbunden"}
-        fn = _TWITCH_SEND.get("fn")
-        if fn:
-            try:
-                _run_async_from_flask(fn(text), timeout=10); done.append("twitch")
-                results["twitch"] = {"ok": True, "error": None}
-            except Exception as e:
-                fails.append(f"twitch ({e})")
-                results["twitch"] = {"ok": False, "error": str(e)}
-        else:
-            results["twitch"] = {"ok": False, "error": "Twitch nicht verbunden (IRC/chat:edit)"}
-        ytf = _YT_SEND.get("fn")
-        if ytf:
-            try:
-                _run_async_from_flask(ytf(text), timeout=15); done.append("youtube")
-                results["youtube"] = {"ok": True, "error": None}
-            except Exception as e:
-                fails.append(f"youtube ({e})")
-                results["youtube"] = {"ok": False, "error": str(e)}
-        else:
-            results["youtube"] = {"ok": False, "error": "YouTube nicht verbunden (OAuth)"}
-        return jsonify(ok=bool(done), sent=done, failed=fails, results=results)
-    return jsonify(ok=False, error="platform muss kick|twitch|youtube|all sein"), 400
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -20738,53 +20643,8 @@ def api_restream_stop_all():
 
 
 # ---- KI-Moderator-Endpoints ----
-@dashboard_app.route("/api/cohost")
-def api_cohost():
-    """v4.0-W24: Status des proaktiven Co-Hosts — an/aus, Bremse, letzte Impulse."""
-    try:
-        cfg = _cohost_cfg()
-        snap = _nc_cohost.snapshot(_COHOST, _time_mod.monotonic())
-        return jsonify(ok=True, enabled=cfg["enabled"], min_gap_s=cfg["min_gap_s"],
-                       per_15min=cfg["per_15min"], kinds=cfg["kinds"], **snap)
-    except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
 
 
-@dashboard_app.route("/api/cohost/config", methods=["POST"])
-def api_cohost_config():
-    """v4.0-W24: Co-Host live schalten/justieren (app_config, kein Neustart)."""
-    saved = dict(_cfg_get("azrael.cohost", None) or {})
-    d = request.get_json(silent=True) or {}
-    if "enabled" in d:
-        saved["enabled"] = bool(d["enabled"])
-    if "min_gap_s" in d:
-        try:
-            saved["min_gap_s"] = max(10.0, float(d["min_gap_s"]))
-        except (TypeError, ValueError):
-            pass
-    if "per_15min" in d:
-        try:
-            saved["per_15min"] = max(1, int(d["per_15min"]))
-        except (TypeError, ValueError):
-            pass
-    if isinstance(d.get("kinds"), dict):
-        kd = dict(saved.get("kinds") or {})
-        for name, kc in d["kinds"].items():
-            if name in ("highlight", "quiet") and isinstance(kc, dict):
-                cur = dict(kd.get(name) or {})
-                if "on" in kc:
-                    cur["on"] = bool(kc["on"])
-                if "cooldown_s" in kc:
-                    try:
-                        cur["cooldown_s"] = max(30.0, float(kc["cooldown_s"]))
-                    except (TypeError, ValueError):
-                        pass
-                kd[name] = cur
-        saved["kinds"] = kd
-    _cfg_set("azrael.cohost", saved)
-    cfg = _cohost_cfg()
-    return jsonify(ok=True, enabled=cfg["enabled"], min_gap_s=cfg["min_gap_s"],
-                   per_15min=cfg["per_15min"], kinds=cfg["kinds"])
 
 
 @dashboard_app.route("/api/highlights")
@@ -26822,14 +26682,16 @@ async def _azrael_broadcast_reply(origin, user, reply, session=None):
 # (neu) plus die bestehende Funkstille-Fuellung (F91), beide unter EINER
 # gemeinsamen Anti-Flood-Bremse (nc.cohost) und cross-platform.
 # ═══════════════════════════════════════════════════════════════════════
-_COHOST = _nc_cohost.new_state()
+# v4.1-W15: Zustand und Leser liegen in nc/cohost.py, damit nc/routes/cohost.py
+# sie direkt importieren kann statt ueber nc.ctx. Der Alias haelt die drei
+# Lesestellen im Bot unveraendert — und es ist DASSELBE Objekt: der Co-Host-Pfad
+# hier schreibt die Bremse fort, die Route liest sie. Eine zweite Kopie, und das
+# Dashboard zeigte eine Bremse, die nie zieht.
+_COHOST = _nc_cohost.STATE
 
 
 def _cohost_cfg():
-    # v4.0-W33: Normalisierung nach nc/cfgnorm.py (bitgenau geprüft); die frische
-    # Default-Config kommt weiterhin aus nc.cohost.
-    return _nc_cfgnorm.normalize_cohost(_cfg_get("azrael.cohost", None),
-                                        _nc_cohost.default_config())
+    return _nc_cohost.config()
 
 
 def _cohost_gate(kind):
@@ -29433,6 +29295,8 @@ dashboard_app.register_blueprint(_nc_routes_i18n.bp)       # v4.1-W6
 dashboard_app.register_blueprint(_nc_routes_twitch.bp)     # v4.1-W8
 dashboard_app.register_blueprint(_nc_routes_youtube.bp)    # v4.1-W8
 dashboard_app.register_blueprint(_nc_routes_kick.bp)       # v4.1-W9
+dashboard_app.register_blueprint(_nc_routes_chat.bp)       # v4.1-W15
+dashboard_app.register_blueprint(_nc_routes_cohost.bp)     # v4.1-W15
 
 
 if __name__ == "__main__":
