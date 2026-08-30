@@ -79,10 +79,20 @@ _WARN = lambda topic, msg: None          # noqa: E731
 _TELEMETRY = lambda **kw: None           # noqa: E731
 
 _COOLDOWN_S = 90.0           # 429-Sperre pro Base
+# v4.1-W14: Ein "Model is currently unavailable" ist kein Ausrutscher, sondern
+# meist eine Abschaltung beim Anbieter. 90s waeren zu kurz — die Base wuerde
+# den toten Namen im Minutentakt weiter anfragen. 15 Minuten sind lang genug,
+# dass es nicht mehr weh tut, und kurz genug, dass ein zurueckgekehrtes Modell
+# von selbst wieder drankommt.
+_MODEL_COOLDOWN_S = 900.0
 _state_lock = threading.Lock()
 _base_block = {}             # url -> monotonic-ts, bis wann gesperrt
 _base_lat = {}               # url -> EMA-Latenz in ms
 _base_err = {}               # url -> {"kind","detail","ts"}  (Diagnose)
+# v4.1-W14: (url, modell) -> monotonic-ts, bis wann DIESES Modell dieser Base
+# uebersprungen wird. Der 429-Cooldown sperrt die ganze Base; hier geht es um
+# den anderen Fall: die Base lebt, ein einzelnes Modell ist tot.
+_model_block = {}
 _LAT_ALPHA = 0.3             # EMA-Gewicht neuer Messungen
 
 
@@ -204,6 +214,30 @@ def _block_base(url: str):
         _base_block[url] = _time_mod.monotonic() + _COOLDOWN_S
 
 
+def _block_model(url: str, modell):
+    """v4.1-W14: dieses EINE Modell dieser Base fuer eine Weile ueberspringen.
+
+    Im debug.log vom 30.08. steht 26 Mal derselbe Satz:
+    "Model 'gpt-4.1-nano-2025-04-14' is currently unavailable." B140 hatte
+    schon dafuer gesorgt, dass so ein 400 die Base nicht verbrennt — die
+    uebrigen Modelle werden danach probiert. Was fehlte: sich das zu MERKEN.
+    Jeder folgende Aufruf begann wieder mit dem toten Namen, verbrannte einen
+    Umlauf und schrieb eine Warnung. Auf dem Live-React-Pfad, dessen ganzes
+    Zeitbudget Sekunden betraegt, ist das kein Schoenheitsfehler.
+    """
+    if not modell:
+        return
+    with _state_lock:
+        _model_block[(url, modell)] = _time_mod.monotonic() + _MODEL_COOLDOWN_S
+
+
+def _model_gesperrt(url: str, modell) -> bool:
+    if not modell:
+        return False
+    with _state_lock:
+        return _model_block.get((url, modell), 0) > _time_mod.monotonic()
+
+
 def _convert_messages(messages) -> list:
     """Ollama-Style Vision ('images': [base64,…] am Message-Dict) → OpenAI-
     Vision-Format (content-Array mit image_url/data-URL). Text-only Messages
@@ -250,8 +284,17 @@ def _candidate_models(base: dict, wanted: Optional[str]) -> List[Optional[str]]:
         return [wanted]        # custom Base ohne Katalog: _model_for entscheidet
     w = (wanted or _MODEL or "").strip()
     if w and w in models:
-        return [w] + [m for m in models if m != w]
-    return models
+        reihe = [w] + [m for m in models if m != w]
+    else:
+        reihe = models
+    # v4.1-W14: bekannt tote Modelle nach hinten — nicht raus. Sind ALLE
+    # gesperrt, wird trotzdem probiert; dieselbe Haltung wie bei
+    # _eligible_bases: lieber ein Versuch als sicheres Scheitern. Der Gewinn
+    # ist die REIHENFOLGE — der tote Name kostet nicht mehr jeden Umlauf den
+    # ersten Versuch.
+    url = base.get("url") or ""
+    frei = [m for m in reihe if not _model_gesperrt(url, m)]
+    return frei + [m for m in reihe if m not in frei] if frei else reihe
 
 
 def _payload(base: dict, messages, model, stream=False) -> dict:
@@ -359,6 +402,9 @@ async def chat(messages: List[dict], model=None, timeout=None
                         _WARN("freeaihttp",
                               f"freeai: HTTP {resp.status} bei {url} "
                               f"(model={_m}) {_body}")
+                        # v4.1-W14: merken, dass DIESES Modell hier tot ist —
+                        # sonst beginnt jeder naechste Aufruf wieder damit.
+                        _block_model(base["url"], _m)
                         last_err = kind
                         continue                    # naechstes Modell derselben Base
                     data = await resp.json(content_type=None)

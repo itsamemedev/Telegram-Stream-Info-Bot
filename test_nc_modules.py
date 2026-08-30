@@ -1104,6 +1104,42 @@ def _test_w13_claude_fehlergrund():
     ok("v4.1-W13: Claude-Fehler nennen Grund und Modell, leere Requests gar nicht erst")
 
 
+
+def _test_w14_totes_modell():
+    """v4.1-W14: ein totes Modell darf nicht jeden Umlauf den ersten Versuch kosten."""
+    import nc.freeai as F
+
+    base = {"url": "https://api.llm7.io/v1",
+            "models": ["gpt-4.1-nano-2025-04-14", "zweit", "dritt"]}
+    F._model_block.clear()
+    assert F._candidate_models(base, None)[0] == "gpt-4.1-nano-2025-04-14"
+
+    # Der Fall aus dem debug.log: 26 Mal "Model ... is currently unavailable",
+    # jedes Mal als ERSTER Versuch. Nach dem Merken steht er hinten.
+    F._block_model(base["url"], "gpt-4.1-nano-2025-04-14")
+    reihe = F._candidate_models(base, None)
+    assert reihe[0] == "zweit", "das tote Modell kommt weiter zuerst dran"
+    assert set(reihe) == set(base["models"]), "ein Modell ist ganz verschwunden"
+    assert reihe[-1] == "gpt-4.1-nano-2025-04-14", "das tote Modell steht nicht hinten"
+
+    # Sind ALLE gesperrt, wird trotzdem probiert — dieselbe Haltung wie bei
+    # _eligible_bases: lieber ein Versuch als sicheres Scheitern.
+    for m in base["models"]:
+        F._block_model(base["url"], m)
+    assert F._candidate_models(base, None) == base["models"], \
+        "bei komplett gesperrter Base bleibt nichts zum Probieren"
+
+    # Die Sperre gilt pro BASE, nicht global: dasselbe Modell kann anderswo leben.
+    andere = {"url": "https://text.pollinations.ai", "models": ["gpt-4.1-nano-2025-04-14", "x"]}
+    assert F._candidate_models(andere, None)[0] == "gpt-4.1-nano-2025-04-14", \
+        "die Sperre wirkt ueber Basen hinweg — ein gesundes Modell waere mitgesperrt"
+
+    # Eine Base ohne Katalog bleibt unberuehrt (custom FREEAI_BASES).
+    assert F._candidate_models({"url": "x"}, "wunsch") == ["wunsch"]
+    F._model_block.clear()
+    ok("v4.1-W14: totes Modell wandert ans Ende, pro Base, nie ganz raus")
+
+
 def main():
     tmp = tempfile.mkdtemp()
     configure_db(db_path=os.path.join(tmp, "t.db"), backend="sqlite")
@@ -1214,6 +1250,8 @@ def main():
     _test_w12_einzel_slot()
 
     _test_w13_claude_fehlergrund()
+
+    _test_w14_totes_modell()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)
 

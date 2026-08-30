@@ -28169,11 +28169,37 @@ async def _watchdog_loop():
                     log.info("WATCHDOG: Loop '%s' wieder aktiv.", name)
             # Self-Heal: hängende Live-React-Worker anstoßen (Director als Proxy)
             if LIVE_DIRECTOR:
+                _rstate = _WATCHDOG_STATE.setdefault("react_stalls", {})
                 for u, d in list(_LIVE_DIRECTORS.items()):
                     idle = _time_mod.time() - max(d.last_react, d.started)
-                    if idle > 600 and d.react_count == 0:
-                        log.warning("WATCHDOG: Live-React @%s seit %ds ohne einzige Reaktion "
-                                    "— prüfe Audio-Tap/Chat.", u, int(idle))
+                    _still = bool(idle > 600 and d.react_count == 0)
+                    if _still and not _rstate.get(u):
+                        _rstate[u] = True
+                        # v4.1-W14: NICHT mehr blind auf Audio-Tap/Chat zeigen.
+                        # Am 30.08. stand diese Zeile 19 Mal im Log und schickte
+                        # den Betreiber zum Audio-Tap — waehrend in Wahrheit
+                        # JEDER Reaktionsversuch am KI-Backend scheiterte
+                        # (Claude bad_request, dann pollinations auth, dann
+                        # llm7 400). Der Bot weiss das: _react_warn hinterlegt
+                        # den Zeitpunkt der letzten Backend-Klage. Liegt die
+                        # frisch vor, ist das die Ursache, nicht der Ton.
+                        _ki_alt = min((_time_mod.monotonic() - _react_fail_ts[k]
+                                       for k in ("reactai", "claudefb", "brainfb")
+                                       if k in _react_fail_ts), default=None)
+                        if _ki_alt is not None and _ki_alt < 1800:
+                            log.warning("WATCHDOG: Live-React @%s seit %ds ohne einzige "
+                                        "Reaktion — Ursache ist das KI-Backend: die "
+                                        "Reaction-Kette hat vor %ds zuletzt geklagt. "
+                                        "Audio-Tap und Chat sind hier NICHT das Problem.",
+                                        u, int(idle), int(_ki_alt))
+                        else:
+                            log.warning("WATCHDOG: Live-React @%s seit %ds ohne einzige "
+                                        "Reaktion — das KI-Backend meldet nichts, also "
+                                        "kommt vermutlich kein Input an: Audio-Tap/Chat "
+                                        "pruefen.", u, int(idle))
+                    elif not _still and _rstate.get(u):
+                        _rstate[u] = False
+                        log.info("WATCHDOG: Live-React @%s reagiert wieder.", u)
             # v4.0-W38: proaktive Ressourcen-Frühwarnung. Die fd-/RSS-Zahlen lagen
             # bisher nur passiv im Dashboard — über Tage kletternde fds (Socket-Leak)
             # oder RSS (Speicher-Wachstum → OOM-Killer) hat niemand aktiv bemerkt.

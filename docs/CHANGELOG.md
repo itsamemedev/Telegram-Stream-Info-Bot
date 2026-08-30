@@ -11,6 +11,38 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Behoben — totes Modell kostete jeden Umlauf, Watchdog zeigte falsch (v4.1 W14)
+
+**Ein totes Modell wurde 26 Mal neu entdeckt.** Im `debug.log` steht 26 Mal
+derselbe Satz: `Model 'gpt-4.1-nano-2025-04-14' is currently unavailable.`
+B140 hatte schon dafür gesorgt, dass ein solcher 400 die Base nicht verbrennt —
+die übrigen Modelle werden danach probiert. Was fehlte: sich das zu **merken**.
+Jeder folgende Aufruf begann wieder mit dem toten Namen, verbrannte einen
+Umlauf und schrieb eine Warnung. Auf dem Live-React-Pfad, dessen ganzes
+Zeitbudget Sekunden beträgt, ist das kein Schönheitsfehler.
+
+`nc/freeai.py` merkt sich jetzt pro **(Base, Modell)**, dass der Anbieter es
+abgelehnt hat, und sortiert es für 15 Minuten ans Ende — nicht heraus. Sind
+alle Modelle einer Base gesperrt, wird trotzdem probiert; dieselbe Haltung wie
+bei `_eligible_bases`: lieber ein Versuch als sicheres Scheitern. Die Sperre
+gilt pro Base, damit ein anderswo gesundes Modell nicht mitgesperrt wird.
+
+**Der Watchdog schickte zum Audio-Tap, während die KI ausfiel.** 19 Mal stand
+`Live-React @… seit Ns ohne einzige Reaktion — prüfe Audio-Tap/Chat` im Log,
+alle 45 Sekunden neu. In Wahrheit scheiterte **jeder** Reaktionsversuch am
+Backend (Claude `bad_request` → pollinations `auth` → llm7 400). Dieselbe Sorte
+Fehler wie die Kick-Diagnose aus W10: eine Meldung, die auf eine Stelle zeigt,
+die das Log gar nicht belastet.
+
+Der Bot weiss es besser — `_react_warn` hinterlegt den Zeitpunkt der letzten
+Backend-Klage. Liegt der frisch vor, nennt die Meldung das KI-Backend als
+Ursache und sagt ausdrücklich, dass Audio-Tap und Chat es **nicht** sind;
+schweigt das Backend, bleibt der alte Hinweis richtig und stehen. Ausserdem ist
+der Zweig jetzt flankengesteuert wie der Loop-Wächter darüber: eine Meldung je
+Stillstand, und eine Entwarnung, wenn wieder reagiert wird.
+
+Drei Verträge sind neu.
+
 ### Behoben — AZRAELs Claude-Pfad sagte nicht, warum er scheitert (v4.1 W13)
 
 Im `debug.log` vom 30.08. steht **26 Mal** „Reaction-AI Claude fehlgeschlagen
