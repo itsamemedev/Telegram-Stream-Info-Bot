@@ -11,6 +11,108 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Behoben — Fehlerbilder aus dem Betrieb und fünf CodeQL-Klassen (v4.1 W10)
+
+**Die Abbruch-Diagnose zeigte auf die falsche Plattform.** Bei jedem
+`Input/output error` und jedem `End of file` schrieb der Bot kategorisch
+„Kick-Ingest nimmt die Verbindung nicht an (rtmps)" — im `error.log` vom
+30.08. sechsmal, während im selben Auszug auch der **Twitch**-Slave scheiterte.
+Wer danach handelt, prüft Kick-Key, Kick-App und IP-Block bei Kick, während
+Twitch das Problem ist. Eine Diagnose, die auf die falsche Plattform zeigt,
+ist schlimmer als gar keine. Sie nennt jetzt die Ziele, deren **Ingest-Host**
+wirklich im Auszug steht (`nc/restream_util.betroffene_ziele`) — verglichen
+wird auf den vollen Host, nie auf den Plattformnamen: Kick und Twitch liegen
+beide auf `live-video.net`, und „twitch" kommt in Twitchs eigener URL nicht vor.
+
+**Eingefrorene Health-Werte sahen aus wie ein gesunder Stream.** Endet der
+`-progress`-Leser regulär (ffmpeg schliesst den Strom, EOF — keine Exception,
+also auch keine Meldung), blieben Bitrate und FPS im Dashboard auf dem letzten
+Wert stehen. Der Stillstands-Wächter meldete einmal „keine Fortschrittsdaten
+mehr" und lief danach blind weiter. Das ist die gefährlichere Hälfte: nicht
+dass die Messung aufhört, sondern dass ihr letzter Wert weiter als Messung
+gilt. Der Leser markiert seinen Eintrag jetzt als `blind` samt Grund, der
+Wächter nennt diesen Grund, und das Dashboard zeigt „⚠ blind" statt einer
+Zahl, die nichts mehr misst. Der saubere Stopp (`CancelledError`) markiert
+ausdrücklich **nicht** — sonst trüge jeder normale Stopp eine Warnung.
+
+**CodeQL, fünf Klassen:**
+
+* *Uncontrolled command line* (Critical). `--window-size` und die Overlay-URL
+  gehen aus der `.env` auf Chromiums Kommandozeile. Die Übergabe ist eine
+  Liste, es gibt also keine Shell — ein Wert wie `800,600 --dump-dom` wäre
+  trotzdem ein zweites Argument, und `file:///…` eine gültige Seite. Beide
+  werden jetzt am **einen** Übergabepunkt geprüft; fällt etwas durch, greift
+  der Fallback statt eines Fehlers.
+* *Uncontrolled data in path expression*. Die Ausliefer-Routen (`/api/clip/<fn>`,
+  `/api/tts/<fn>`) prüften auf verbotene Zeichen. Das war dicht, aber es ist
+  eine Aussage über Zeichen statt über das Ziel. Jetzt zwei Schranken mit je
+  eigener Aufgabe: `werkzeug.utils.safe_join` ist der von Flask mitgelieferte,
+  dafür gebaute Schutz und kennt die Sonderfälle je Plattform;
+  `nc.util.datei_in()` löst zusätzlich **Symlinks** auf, erzwingt die Endung
+  und schliesst den Präfix-Nachbarn aus (`/daten/clips2` fängt mit
+  `/daten/clips` an, liegt aber nicht darin) — beides tut `safe_join` nicht,
+  ein Symlink im Clip-Ordner zeigte damit weiterhin nach draussen.
+  `nc/routes/ops.py` baut den Log-Pfad aus einer Tabelle.
+* *Path injection über einen Sprachnamen*. `nc.i18n.katalog()` ist über
+  `/api/i18n/katalog?lang=…` erreichbar und legte den Namen in einen Dateipfad.
+  Jetzt nur noch Sprachen aus `SPRACHEN`; Unbekanntes fällt auf den leeren
+  Katalog, also auf Deutsch.
+* *Weak hashing*. Die Item-Id in `nc/news.py` ist ein Inhalts-Hash für den
+  Dedup, kein Schutz — `usedforsecurity=False` sagt das. **Der Wert bleibt
+  gleich**: ein Wechsel auf sha256 hätte jede bereits veröffentlichte Meldung
+  einmalig zur Neu-Meldung gemacht.
+* *Bad HTML filtering regex*. `tools/i18n_extract.py` erkannte nur `</script>`.
+  Bei `</script >` hätte es den Rest der Datei als Skript verschluckt — alle
+  folgenden Textknoten wären lautlos aus dem Katalog gefallen.
+
+Sechs Verträge sind neu (vier in `test_nc_modules.py`, zwei in
+`test_restream.py`).
+
+### Geändert — Kick als Blueprint, Kick-Schicht nach `nc/` (v4.1 W9)
+
+`bot.py`: 29.437 → **29.254 Zeilen**. `nc/routes/` trägt jetzt 21 Blueprints
+mit 206 Routen, der Monolith noch 153. Damit sind **alle drei** OAuth-Flows
+(Kick, Twitch, YouTube) aus dem Monolithen heraus.
+
+`/api/kick` war mit **elf** `nc.ctx`-Einträgen die teuerste offene Gruppe
+überhaupt. Neu `nc/kickapi.py` löst Slug, Broadcaster-ID, Sende-Gedächtnis und
+Token-Tausch heraus; die Rückruf-Adressen lagen seit W8 in
+`nc/oauthredirect.py`. Übrig bleiben `run_async` und `log` — beide gab es
+schon. **Null neue Einträge.**
+
+**Geteilter Zustand, nicht kopierter.** `SEND_LAST` schreibt der Kick-Sendepfad
+im Bot, gelesen wird es von `/api/kick/sendcheck`. Zwei Kopien, und die
+Diagnose meldete ewig „noch kein Sendeversuch", während Kick in Wahrheit jede
+Zeile mit 401 abweist — genau die stille Fehlanzeige, gegen die diese Route in
+W10 gebaut wurde. Dasselbe für `BID_CACHE`: zwei Caches wären zwei
+Fremdabrufe pro Stunde statt einem.
+
+**`globals()` ist raus.** Der laufende Moderator kam an neun Stellen über
+`globals().get("_KICK_MOD")`. Im Monolithen liefert das die Instanz; in einem
+Blueprint ist `globals()` **dessen** Namensraum — der Wert wäre für immer
+`None`, und `/api/kick/sendcheck` meldete „Kick-Moderator läuft nicht",
+während er läuft. Er steht jetzt im Register `nc.channels.KICK_MOD`, neben
+`TWITCH_SEND`/`YT_SEND`. Das ist zugleich die Vorarbeit für `/api/kickmod`
+und `/api/chat`.
+
+Die Zugangsdaten (`KICK_CLIENT_ID`, `KICK_CLIENT_SECRET`,
+`KICK_BROADCASTER_ID`) kommen über `ctx.cfg` statt über eine zweite
+`os.getenv`-Stelle — der Bot friert sie beim Import ein, ein zweiter Lesepfad
+könnte abweichen.
+
+**Werkzeugfehler behoben, und dieser hätte Produktion getroffen:**
+`bp_analyse` und `bp_extract` durchsuchten für „wer benutzt diesen Helfer
+sonst noch?" nur Top-Level-Funktionen — **keine Klassenkörper**.
+`_kick_broadcaster_id` wird ausschliesslich von `KickModerator` und den
+`/api/kick`-Routen benutzt; der Extraktor hielt ihn deshalb für „gehört nur
+den Routen", hätte ihn ins Blueprint verschoben und aus `bot.py` entfernt —
+der Kick-Chat wäre beim nächsten Sendeversuch mit `NameError` gestorben,
+mitten in einem `except`-Block. Beide Werkzeuge sehen jetzt Klassenkörper,
+und jede **lesende** Erwähnung zählt, nicht nur `ast.Call`.
+
+Drei Verträge sind neu, sieben Anker gewandert (B169, W9, W10, W17, W23, W49,
+W8) — keiner gelöscht.
+
 ### Geändert — OAuth-Rückruf-Schicht nach `nc/`, Twitch und YouTube als Blueprint (v4.1 W8)
 
 `bot.py`: 29.714 → **29.437 Zeilen**. `nc/routes/` trägt jetzt 20 Blueprints

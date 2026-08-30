@@ -101,6 +101,14 @@ def katalog(sprache):
        jede Uebersetzung auf den deutschen Quelltext zurueck, statt dass die
        Oberflaeche mit Schluesselnamen zerfaellt."""
     sprache = sprache or _standard
+    # v4.1-W10 (CodeQL py/path-injection): NUR bekannte Sprachen. Der Name
+    # wandert unten in einen Dateipfad, und katalog() ist aus der Route
+    # /api/i18n/katalog?lang=… erreichbar. Ohne diese Schranke liest
+    # lang=../../irgendwas eine beliebige JSON-Datei vom Server. Unbekanntes
+    # faellt auf den leeren Katalog — also auf Deutsch, die immer gueltige
+    # Antwort — statt zu werfen.
+    if sprache not in SPRACHEN:
+        return {}
     if sprache == QUELLSPRACHE:
         return {}
     with _lock:

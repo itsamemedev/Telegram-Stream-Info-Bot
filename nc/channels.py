@@ -18,6 +18,21 @@ WCHAT_STATUS = {
 # Send-Hooks: von den Loops gesetzt (sendefähige Verbindung), von Chat-Send/
 # Broadcast aufgerufen. None = nicht sendefähig.
 TWITCH_SEND = {"fn": None}
+
+# v4.1-W9: Register für den laufenden Kick-Moderator. Die KickModerator-Klasse
+# bleibt im Monolithen (Welle 4), aber drei Blueprints müssen die INSTANZ
+# erreichen: /api/kick, /api/kickmod und /api/chat.
+#
+# Warum ein Register und kein nc.ctx-Slot: der Kontext ist keine Sammelstelle,
+# und ein Dict neben TWITCH_SEND/YT_SEND ist dasselbe Muster wie dort — der Bot
+# trägt ein, die Leser lesen.
+#
+# Warum überhaupt: im Monolithen stand dafür `globals().get("_KICK_MOD")`. In
+# einem Blueprint ist globals() der Namensraum DES BLUEPRINTS — der Ausdruck
+# wäre dort für immer None, und /api/kick/sendcheck meldete "Kick-Moderator
+# läuft nicht", während er läuft. Genau die stille Fehlanzeige aus W116
+# (_MAIN_LOOP) und aus CLAUDE.md.
+KICK_MOD = {"obj": None}
 YT_SEND = {"fn": None, "token": "", "token_exp": 0.0,
            "live_chat_id": "", "lcid_exp": 0.0}
 

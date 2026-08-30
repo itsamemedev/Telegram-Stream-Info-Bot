@@ -124,12 +124,27 @@ def sammle(prefix):
     top = {n.name: n for n in tree.body
            if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
     extern = set()
+    # v4.1-W9: KLASSENKOERPER zaehlen mit. Sie fehlten hier, und das war
+    # dieselbe Falle wie der Slash-Befehl in W5, nur andersherum:
+    # _kick_broadcaster_id wird ausschliesslich von KickModerator und den
+    # /api/kick-Routen benutzt. Weil nur Top-Level-Funktionen durchsucht
+    # wurden, galt der Helfer als "benutzt nur diese Routen" — er waere ins
+    # Blueprint gewandert und aus bot.py verschwunden, und der Kick-Chat
+    # haette beim naechsten Sendeversuch mit NameError abgebrochen, mitten in
+    # einem except-Block.
+    #
+    # Ausserdem zaehlt jede LESENDE Erwaehnung, nicht nur ast.Call: wer einen
+    # Helfer als Wert weiterreicht (Callback, Dict-Eintrag), benutzt ihn
+    # genauso.
     for n in tree.body:
-        if not isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) or n.name in namen:
+        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            if n.name in namen:
+                continue
+        elif not isinstance(n, ast.ClassDef):
             continue
-        called = {x.func.id for x in ast.walk(n)
-                  if isinstance(x, ast.Call) and isinstance(x.func, ast.Name)}
-        extern |= (aufrufe & called)
+        benutzt = {x.id for x in ast.walk(n)
+                   if isinstance(x, ast.Name) and isinstance(x.ctx, ast.Load)}
+        extern |= (aufrufe & benutzt)
     movers = [top[h] for h in sorted(aufrufe & set(top)) if h not in extern and h not in namen]
     return src, tree, routes, movers
 

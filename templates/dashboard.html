@@ -7486,8 +7486,13 @@ async function rsLoad(){
       const live=t.status==='live';
       const up=t.uptime_s!=null?Math.floor(t.uptime_s/60)+'m '+(t.uptime_s%60)+'s':'—';
       const h=t.health||{};
+      /* v4.1-W10: 'blind' heisst, der -progress-Leser ist beendet. Die Werte
+         daneben sind der letzte Stand vor dem Abriss, keine Messung. Ohne
+         diesen Hinweis liest sich eine stehende Bitrate wie ein gesunder
+         Stream — genau der Fall aus dem error.log (Restream #43). */
       const health = live ? (
-        `<span class="mono" style="font-size:9px">${h.bitrate||'—'} · ${h.fps?h.fps.toFixed(0)+'fps':'—'}`
+        (h.blind?`<span style="color:var(--amber)" title="${esc(h.blind_reason||'')}">⚠ blind</span> `:'')
+        + `<span class="mono" style="font-size:9px${h.blind?';opacity:.55':''}">${h.bitrate||'—'} · ${h.fps?h.fps.toFixed(0)+'fps':'—'}`
         + (h.drop?` · <span style="color:var(--red)">drop ${h.drop}</span>`:'')
         + (t.active_transcode?' · <span style="color:var(--amber)">x264</span>':'')+'</span>'
       ) : (t.attempts?`<span class="faint" style="font-size:9px">reconnect ${t.attempts}/5</span>`:'<span class="faint">—</span>');

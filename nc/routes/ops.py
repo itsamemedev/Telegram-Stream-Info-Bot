@@ -497,8 +497,15 @@ def api_update_restart():
 @bp.route("/api/ops/log-tail")
 def api_ops_log_tail():
     """Letzte N Zeilen des debug- oder error-Logs (which=debug|error, lines=N)."""
+    # v4.1-W10 (CodeQL py/path-injection): der Dateiname kommt aus einer
+    # TABELLE, nicht aus dem Parameter. Die Positivliste von vorher war
+    # inhaltlich schon dicht, aber sie schrieb den geprueften Text weiter in
+    # den Pfad — fuer Leser wie fuer Pruefwerkzeug bleibt so offen, ob wirklich
+    # jeder Weg durch die Pruefung fuehrt. Jetzt kann dort nur noch stehen, was
+    # hier steht.
+    _DATEIEN = {"debug": "debug.log", "error": "error.log"}
     which = (request.args.get("which") or "debug").lower()
-    if which not in ("debug", "error"):
+    if which not in _DATEIEN:
         which = "debug"
     try:
         lines = _c().arg_int("lines", 100, 1, 1000)
@@ -507,7 +514,7 @@ def api_ops_log_tail():
     logs_dir = os.path.join(os.path.dirname(os.path.abspath(_c().cfg["DB_PATH"])), "logs")
     if not os.path.isdir(logs_dir):
         logs_dir = "logs"
-    path = os.path.join(logs_dir, f"{which}.log")
+    path = os.path.join(logs_dir, _DATEIEN[which])
     if not os.path.exists(path):
         return jsonify(ok=True, file=path, lines=[], count=0,
                        note="Log-Datei nicht gefunden.")

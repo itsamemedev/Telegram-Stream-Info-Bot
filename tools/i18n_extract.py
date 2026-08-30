@@ -127,8 +127,13 @@ def _js_textstuecke(literal):
 def _html_strings(pfad):
     """Textknoten, uebersetzbare Attribute und deutschsprachige JS-Literale."""
     roh = io.open(os.path.join(ROOT, pfad), encoding="utf-8").read()
-    ohne_js = re.sub(r"<script\b.*?</script>|<style\b.*?</style>|<!--.*?-->", "",
-                     roh, flags=re.S)
+    # v4.1-W10 (CodeQL py/bad-tag-filter): `</script>` ist nicht die einzige
+    # Schreibweise, die ein Browser als Ende akzeptiert — `</script >` und
+    # `</SCRIPT\n>` sind es auch. Der alte Ausdruck haette dort weitergesucht
+    # und den Rest der Datei als Skript verschluckt; im Extraktor heisst das:
+    # alle folgenden Textknoten fehlen im Katalog, ohne dass es auffaellt.
+    ohne_js = re.sub(r"<script\b.*?</script\s*>|<style\b.*?</style\s*>|<!--.*?-->", "",
+                     roh, flags=re.S | re.I)
     raus = set()
     for t in re.findall(r">([^<>]+)<", ohne_js):
         if _ist_uebersetzbar(t):
@@ -136,7 +141,8 @@ def _html_strings(pfad):
     for a in re.findall(r'(?:placeholder|title|aria-label|alt)="([^"]{3,})"', ohne_js):
         if _ist_uebersetzbar(a) and not _SKIP_ATTR_WERTE.match(a):
             raus.add(a.strip())
-    js = "\n".join(re.findall(r"<script\b[^>]*>(.*?)</script>", roh, flags=re.S))
+    js = "\n".join(re.findall(r"<script\b[^>]*>(.*?)</script\s*>", roh,
+                              flags=re.S | re.I))
     for a, b, c in re.findall(r"'([^'\\\n]{4,})'|\"([^\"\\\n]{4,})\"|`([^`\\\n]{4,})`", js):
         for stueck in _js_textstuecke(a or b or c):
             raus.add(stueck)

@@ -2683,10 +2683,17 @@ def test_b169_kick_oauth():
     src = open("bot.py").read()
     assert "await _kick_user_token(session) or await self._get_token(session)" in src, \
         "update_channel bevorzugt den User-Token nicht"
+    # ANKER GEWANDERT (v4.1-W9, nicht der Vertrag): die vier OAuth-Routen
+    # liegen in nc/routes/kick.py, der Token-Tausch in nc/kickapi.py. Geprueft
+    # wird dieselbe Zusage — der Flow ist vollstaendig verdrahtet — nur dort,
+    # wo er jetzt lebt. Der User-Token-Vorrang oben bleibt im Bot, weil
+    # update_channel zum KickModerator gehoert (Welle 4).
+    _kb = open("nc/routes/kick.py", encoding="utf-8").read()
     for r in ("/api/kick/oauth/start", "/api/kick/oauth/callback",
               "/api/kick/oauth/status", "/api/kick/oauth/disconnect"):
-        assert '"' + r + '"' in src, r
-    assert "kick.user_token" in src and "kick.oauth_pending" in src
+        assert '"' + r + '"' in _kb, r
+    _ka = open("nc/kickapi.py", encoding="utf-8").read()
+    assert "kick.user_token" in (src + _ka) and "kick.oauth_pending" in _kb
     ok("b169: update_channel bevorzugt User-Token + 4 OAuth-Routen verdrahtet")
 
 
@@ -3050,9 +3057,16 @@ def test_v40_w9_kick_and_listener():
        Chat-Listener zeigt bei 'getrennt' den Grund."""
     src = open("bot.py").read()
     # Resolver existiert + liest user_id/user.id + cacht.
-    assert "async def _kick_broadcaster_id(" in src, "kein Broadcaster-ID-Resolver"
-    assert 'j.get("user_id")' in src and '(j.get("user") or {}).get("id")' in src, "user_id nicht aufgeloest"
-    assert "_KICK_BID_CACHE" in src, "keine Cache-Struktur"
+    # ANKER GEWANDERT (v4.1-W9, nicht der Vertrag): Resolver und Cache liegen
+    # in nc/kickapi.py, damit nc/routes/kick.py sie direkt importieren kann.
+    # Der Bot haelt eine Weiterleitung, weil KickModerator sie dreimal aufruft.
+    assert "async def _kick_broadcaster_id(" in src, "kein Broadcaster-ID-Resolver im Bot"
+    _ka = open("nc/kickapi.py", encoding="utf-8").read()
+    assert "async def broadcaster_id(" in _ka, "kein Broadcaster-ID-Resolver"
+    assert 'j.get("user_id")' in _ka and '(j.get("user") or {}).get("id")' in _ka, "user_id nicht aufgeloest"
+    assert "BID_CACHE" in _ka, "keine Cache-Struktur"
+    assert "_KICK_BID_CACHE = _nc_kickapi.BID_CACHE" in src, \
+        "Bot haelt einen EIGENEN Cache — zweimal aufgeloest, zweimal Fremdabruf"
     # send_message + bans + channel_info loesen die ID auto auf (kein nacktes KICK_BROADCASTER_ID mehr im payload).
     assert "KICK_BROADCASTER_ID or await _kick_broadcaster_id()" in src, "Auto-Aufloesung nicht verdrahtet"
     assert 'payload["broadcaster_user_id"] = KICK_BROADCASTER_ID' not in src, "alter payload-Pfad ohne Aufloesung"
@@ -3085,10 +3099,18 @@ def test_v40_w10_kick_sendcheck():
     assert "await resp.text()" in body, "Kicks Fehlertext wird nicht gelesen"
     assert "keine Broadcaster-ID aufloesbar" in body, "fehlende Broadcaster-ID wird nicht benannt"
     assert "_KICK_SEND_LAST.update(" in body, "Sendeversuch wird nicht gemerkt"
-    # Diagnose-/Testroute.
-    assert '"/api/kick/sendcheck"' in src and "def api_kick_sendcheck(" in src
-    assert 'methods=["GET", "POST"]' in src, "sendcheck ohne GET+POST"
-    assert "creds_configured" in src and "broadcaster_id_resolved" in src, "Diagnose unvollstaendig"
+    # Diagnose-/Testroute. ANKER GEWANDERT (v4.1-W9): sie liegt in
+    # nc/routes/kick.py. Der Vertrag ist derselbe — und er haengt daran, dass
+    # Route und Sendepfad DASSELBE Gedaechtnis lesen: eine eigene Kopie im
+    # Blueprint und die Diagnose meldete ewig "noch kein Sendeversuch",
+    # waehrend Kick in Wahrheit jede Zeile abweist.
+    _kb = open("nc/routes/kick.py", encoding="utf-8").read()
+    assert '"/api/kick/sendcheck"' in _kb and "def api_kick_sendcheck(" in _kb
+    assert 'methods=["GET", "POST"]' in _kb, "sendcheck ohne GET+POST"
+    assert "creds_configured" in _kb and "broadcaster_id_resolved" in _kb, "Diagnose unvollstaendig"
+    assert "from nc.kickapi import SEND_LAST as _KICK_SEND_LAST" in _kb and \
+        "_KICK_SEND_LAST = _nc_kickapi.SEND_LAST" in src, \
+        "Route und Sendepfad lesen nicht dasselbe Gedaechtnis"
     # Deck exponiert Kick-Sendezustand.
     assert '"send_ok": _KICK_SEND_LAST.get("ok")' in src, "deck ohne Kick-Sendezustand"
     ok("v4.0-w10: Kick-Sendefehler im Klartext + gemerkt + Diagnose-/Testroute")
@@ -3377,7 +3399,9 @@ def test_v40_w17_kick401_crowdsec():
         "Kick-Timeout nutzt weiter nur den App-Token"
     assert "moderation/bans" in tbody, "falscher Moderations-Endpunkt"
     # Panel/Status zeigen die entscheidenden Scopes.
-    assert "has_chat_write=" in src and "has_moderation=" in src
+    # ANKER GEWANDERT (v4.1-W9): die Status-Route liegt in nc/routes/kick.py.
+    _kb = open("nc/routes/kick.py", encoding="utf-8").read()
+    assert "has_chat_write=" in _kb and "has_moderation=" in _kb
     dash = open("templates/dashboard.html").read()
     assert "d.has_chat_write" in dash and "d.has_moderation" in dash, "Panel zeigt Scopes nicht"
     ok("v4.0-w17: Kick chattet/moderiert mit User-Token, Scopes sichtbar")
@@ -3681,7 +3705,6 @@ def test_v40_w23_sendrate():
 def test_v40_w23_kick_redirect():
     """v4.0-W23: Kick-Redirect-URI live setzbar (app_config schlaegt .env, kein
        Neustart) + Panel warnt beim nicht erreichbaren localhost-Fallback."""
-    src = open("bot.py").read()
     # ANKER GEWANDERT (nicht der Vertrag): die Reihenfolge config → env →
     # Fallback steht seit dem OAuth-Umbau EINMAL in _oauth_redirect_uri und
     # gilt fuer Kick, Twitch und YouTube gemeinsam. _kick_redirect_uri reicht
@@ -3702,14 +3725,19 @@ def test_v40_w23_kick_redirect():
     _env = ore[ore.find("def redirect_env("):ore.find("def redirect_uri(")]
     for _v in ("KICK_REDIRECT_URI", "TWITCH_REDIRECT_URI", "YOUTUBE_REDIRECT_URI"):
         assert '"%s"' % _v in _env, "%s nicht als Literal auffindbar" % _v
-    seg = src[src.find("def _kick_redirect_uri():"):src.find("async def _kick_user_token(")]
-    assert '_nc_oauthredirect.redirect_uri("kick")' in seg, \
-        "Kick nutzt die gemeinsame Aufloesung nicht"
-    assert "def _kick_redirect_source(" in src and "def _kick_redirect_public(" in src
-    assert '"/api/kick/oauth/redirect"' in src and "def api_kick_oauth_redirect(" in src, \
+    # ANKER GEWANDERT (v4.1-W9, nicht der Vertrag): der ganze Kick-OAuth-Teil
+    # liegt in nc/routes/kick.py. Geprueft bleibt dasselbe: Kick loest ueber
+    # die gemeinsame Schicht auf, die Adresse ist live setzbar, und der Status
+    # nennt Quelle und Erreichbarkeit.
+    _kb = open("nc/routes/kick.py", encoding="utf-8").read()
+    seg = _kb[_kb.find("def _kick_redirect_uri():"):_kb.find("@bp.route(")]
+    assert '_redirect_uri("kick")' in seg, "Kick nutzt die gemeinsame Aufloesung nicht"
+    assert "redirect_source as _redirect_source" in _kb and \
+        "redirect_public as _redirect_public" in _kb, "Quelle/Erreichbarkeit nicht importiert"
+    assert '"/api/kick/oauth/redirect"' in _kb and "def api_kick_oauth_redirect(" in _kb, \
         "kein Live-Setzer fuer die Redirect-URI"
-    assert "redirect_source=" in src and "redirect_public=" in src, "Status ohne Quelle/Erreichbarkeit"
-    assert "/api/kick/oauth/callback" in src, "Setzer prueft den Pfad nicht"
+    assert "redirect_source=" in _kb and "redirect_public=" in _kb, "Status ohne Quelle/Erreichbarkeit"
+    assert "/api/kick/oauth/callback" in _kb, "Setzer prueft den Pfad nicht"
     dash = open("templates/dashboard.html").read()
     assert "koSetRedirect(" in dash and "ko_redir" in dash, "Panel ohne Setz-Feld"
     assert "redirect_source" in dash and "redirect_public" in dash, "Panel wertet Quelle nicht aus"
@@ -4753,17 +4781,19 @@ def test_v40_w49_oauthpage():
     ok("v4.0-w49: nc.oauthpage — beide Seiten bitgenau, Escaping je Plattform erhalten")
 
     src = open("bot.py").read()
-    assert "from nc import oauthpage as _nc_oauthpage" in src
-    assert "return _nc_oauthpage.kick(ok, msg)" in src, "Kick-Seite delegiert nicht"
-    # ANKER GEWANDERT (v4.1-W8, nicht der Vertrag): die Twitch-Seite wird von
-    # den beiden OAuth-Blueprints benutzt, nicht mehr vom Monolithen. Beide
-    # importieren dieselbe Funktion — keine zweite Seiten-Logik.
-    for _mod in ("nc/routes/twitch.py", "nc/routes/youtube.py"):
+    # ANKER GEWANDERT (v4.1-W8/W9, nicht der Vertrag): beide Rueckmeldeseiten
+    # werden nur noch von den drei OAuth-Blueprints gebaut. Der Monolith kennt
+    # nc.oauthpage gar nicht mehr — das ist die staerkere Zusage, nicht die
+    # schwaechere: es kann dort keine zweite Seiten-Logik mehr geben.
+    assert "_nc_oauthpage" not in src, "der Monolith baut wieder OAuth-Seiten"
+    for _mod, _fn in (("nc/routes/twitch.py", "twitch"),
+                      ("nc/routes/youtube.py", "twitch"),
+                      ("nc/routes/kick.py", "kick")):
         _s = open(_mod, encoding="utf-8").read()
-        assert "from nc.oauthpage import twitch as " in _s, "%s baut die Seite selbst" % _mod
+        assert "from nc.oauthpage import %s as " % _fn in _s, "%s baut die Seite selbst" % _mod
         assert "Dieses Fenster kann geschlossen" not in _s, "%s mit eigener Seiten-Logik" % _mod
     assert "Dieses Fenster kann geschlossen" not in src, "alte Seiten-Logik noch im Monolithen"
-    ok("v4.0-w49: Bot delegiert beide OAuth-Seiten, keine Doppel-Logik")
+    ok("v4.0-w49: drei Blueprints teilen zwei Seiten, keine Doppel-Logik")
 
 
 def test_v40_w50_trackingdb():
@@ -7721,7 +7751,10 @@ def test_v41_w8_oauth_schicht():
     # — aber alle drei fragen dieselbe Funktion.
     src = open("bot.py", encoding="utf-8").read()
     assert "from nc import oauthredirect as _nc_oauthredirect" in src
-    assert '_nc_oauthredirect.redirect_uri("kick")' in src, "Kick geht nicht ueber die Schicht"
+    # ANKER GEWANDERT (v4.1-W9, nicht der Vertrag): auch Kick ist ein Blueprint
+    # und importiert die Aufloesung direkt. Der Monolith haelt keine eigene mehr.
+    _kb = open("nc/routes/kick.py", encoding="utf-8").read()
+    assert '_redirect_uri("kick")' in _kb, "Kick geht nicht ueber die Schicht"
     assert "def _oauth_redirect_uri(" not in src and "def _public_base_url(" not in src, \
         "die Aufloesung steht wieder doppelt im Monolithen"
     for _n in ("TRUSTED_PROXIES", "DASHBOARD_PORT"):
@@ -7761,6 +7794,201 @@ def test_v41_w8_oauth_schicht():
         "_YT_SENDRATE = _nc_channels.YT_SENDRATE" in src, \
         "der Bot haelt eigene Kopien statt der geteilten"
     ok("v4.1-W8: YouTube-Zustand geteilt statt kopiert, Abmelden wirkt im Bot")
+
+
+
+# ------------------------------------------------- v4.1-W9) Kick als Blueprint
+
+def test_v41_w9_kick_blueprint():
+    """v4.1-W9: /api/kick liegt als Blueprint in nc/routes/, die Kick-Schicht in
+       nc/kickapi.py — ohne einen einzigen neuen nc.ctx-Slot.
+
+    Der Vertrag haengt an EINER Sache: geteilter Zustand darf nicht kopiert
+    werden. Der Sendepfad im Bot schreibt SEND_LAST, die Diagnose-Route liest
+    es; der Bot haelt den Moderator, drei Blueprints brauchen ihn. Zwei Kopien,
+    und /api/kick/sendcheck meldet "noch kein Sendeversuch" bzw. "Moderator
+    laeuft nicht", waehrend beides laeuft — genau die stille Fehlanzeige,
+    gegen die diese Route in W10 ueberhaupt gebaut wurde.
+    """
+    import asyncio
+    import os
+
+    import nc.channels as CH
+    import nc.kickapi as KA
+
+    # (1) Der Slug kommt aus KICK_CHANNEL_URL und ist der letzte Pfadteil.
+    _alt = os.environ.get("KICK_CHANNEL_URL")
+    try:
+        os.environ["KICK_CHANNEL_URL"] = "https://kick.com/lafap/"
+        assert KA.slug() == "lafap", "Slug nicht aus der Kanal-URL"
+        os.environ["KICK_CHANNEL_URL"] = ""
+        assert KA.slug() == "", "leere URL muss leeren Slug geben"
+    finally:
+        os.environ.pop("KICK_CHANNEL_URL", None)
+        if _alt is not None:
+            os.environ["KICK_CHANNEL_URL"] = _alt
+
+    # (2) Fehlendes configure() faellt laut auf. Still auf None zu laufen hiesse
+    # hier: Kick-Posts ohne Broadcaster-ID, die Kick mit HTTP 400 abweist —
+    # AZRAEL waere stumm, ohne dass irgendwo ein Fehler steht.
+    _gesichert = dict(KA._conf)
+    KA._conf.clear()
+    try:
+        asyncio.run(KA.broadcaster_id())
+    except RuntimeError as e:
+        assert "configure" in str(e), "Fehlermeldung nennt die Ursache nicht"
+    else:
+        raise AssertionError("fehlendes configure() bleibt still")
+    finally:
+        KA._conf.update(_gesichert)
+    ok("v4.1-W9: Kick-Slug korrekt, fehlendes configure() faellt sofort auf")
+
+    # (3) Geteilter Zustand, nicht kopierter — auf beiden Seiten.
+    src = open("bot.py", encoding="utf-8").read()
+    _kb = open("nc/routes/kick.py", encoding="utf-8").read()
+    assert "_KICK_SEND_LAST = _nc_kickapi.SEND_LAST" in src and \
+        "_KICK_BID_CACHE = _nc_kickapi.BID_CACHE" in src, \
+        "der Bot haelt eigene Kopien statt der geteilten"
+    assert "from nc.kickapi import SEND_LAST as _KICK_SEND_LAST" in _kb, \
+        "die Diagnose-Route liest ein anderes Gedaechtnis als der Sendepfad"
+    assert CH.KICK_MOD == {"obj": None} or "obj" in CH.KICK_MOD, "kein Moderator-Register"
+    assert '_nc_channels.KICK_MOD["obj"] = _KICK_MOD' in src, \
+        "der Bot traegt den Moderator nicht ins Register ein"
+
+    # (4) KEIN globals() mehr im Kick-Pfad. In einem Blueprint waere globals()
+    # dessen eigener Namensraum — der Moderator waere fuer immer None.
+    # Ueber den SYNTAXBAUM geprueft, nicht ueber Textsuche: Docstring und
+    # Kommentare des Blueprints erklaeren die Falle ausdruecklich und nennen
+    # sie dabei beim Namen. Ein Textvergleich wuerde genau die Erklaerung
+    # bestrafen, die den Fehler verhindert.
+    import ast as _ast
+    _aufrufe = [x for x in _ast.walk(_ast.parse(_kb))
+                if isinstance(x, _ast.Call) and isinstance(x.func, _ast.Name)
+                and x.func.id == "globals"]
+    assert not _aufrufe, \
+        "globals()-Zugriff im Blueprint — dort ist das fuer immer None"
+    assert 'globals().get("_KICK_MOD")' not in src, \
+        "globals()-Zugriff auf den Moderator wieder da (blockiert die naechste Welle)"
+    assert '_nc_channels.KICK_MOD["obj"]' in _kb, "Blueprint liest nicht aus dem Register"
+    ok("v4.1-W9: Sendeprotokoll und Moderator geteilt, kein globals() mehr")
+
+    # (5) Das Blueprint: vollstaendig, registriert, ohne Monolith-Import.
+    assert _kb.count("@bp.route(") == 8, "acht Routen erwartet"
+    assert "import bot" not in _kb, "Blueprint importiert aus dem Monolithen"
+    assert "from nc.routes import kick as _nc_routes_kick" in src and \
+        "register_blueprint(_nc_routes_kick.bp)" in src, \
+        "kick ist nicht registriert — die Routen waeren 404"
+    # Zugangsdaten ueber ctx.cfg, nicht ueber eine zweite os.getenv-Stelle:
+    # der Bot friert sie beim Import ein, ein zweiter Lesepfad koennte
+    # abweichen und der Flow schluege mit "client_id unbekannt" fehl.
+    assert 'os.getenv("KICK_CLIENT_ID"' not in _kb and \
+        '_c().cfg["KICK_CLIENT_ID"]' in _kb, "Zugangsdaten aus zweiter Quelle"
+
+    # (6) Null neue Kontext-Eintraege — der Grund, warum die Schicht vorher dran war.
+    import nc.ctx as CTX
+    assert len(CTX.Ctx.__slots__) == 24, \
+        "nc.ctx gewachsen — /api/kick sollte null neue Eintraege kosten"
+    ok("v4.1-W9: 8 Routen als Blueprint, Zugangsdaten aus cfg, null neue ctx-Slots")
+
+
+
+# --------------------------------------- v4.1-W10) Befunde aus dem error.log
+
+def test_v41_w10_diagnose_und_blindheit():
+    """v4.1-W10: zwei Befunde aus dem laufenden Betrieb, beide von derselben
+       Sorte — der Bot sagte etwas Falsches statt gar nichts.
+
+    1. Die Abbruch-Diagnose nannte bei jedem 'Input/output error' und jedem
+       'End of file' kategorisch Kick. Im error.log vom 30.08. stand sie
+       sechsmal, waehrend im Auszug auch der Twitch-Slave scheiterte. Wer
+       danach handelt, prueft Kick-Key, Kick-App und IP-Block bei Kick — am
+       falschen Ende.
+    2. Endete der -progress-Leser, blieben Bitrate und FPS im Dashboard auf
+       dem letzten Wert stehen. Eine stehende Bitrate liest sich wie ein
+       gesunder Stream. Das ist die gefaehrlichere Haelfte: nicht dass die
+       Messung aufhoert, sondern dass ihr letzter Wert weiter als Messung gilt.
+    """
+    src = open("bot.py", encoding="utf-8").read()
+
+    # (1) Kein fester Plattformname mehr in der Abbruch-Diagnose.
+    assert "Kick-Ingest nimmt die Verbindung nicht an" not in src, \
+        "die Diagnose behauptet wieder kategorisch Kick"
+    assert "_nc_rutil.betroffene_ziele(tail, _zl)" in src, \
+        "die Diagnose leitet das Ziel nicht aus dem stderr ab"
+    # Beide Zweige — der rtmps- und der rtmp-Zweig — muessen es tun.
+    assert src.count("_nc_rutil.betroffene_ziele(tail, _zl)") == 2, \
+        "nur einer der beiden Fehlerzweige nennt das echte Ziel"
+
+    # (2) Blindheit wird markiert, und zwar NICHT beim normalen Abbruch.
+    assert "def _mark_blind(" in src, "keine Blind-Markierung"
+    _rp = src[src.index("async def _read_progress("):src.index("def _mark_blind(")]
+    assert "EOF" in _rp and "_blind_grund" in _rp, "EOF endet weiter still"
+    assert "finally:" in _rp and "self._mark_blind(" in _rp, "Markierung nicht verdrahtet"
+    # Der Cancel-Pfad ist der SAUBERE Stopp: _monitor cancelt beide Leser,
+    # nachdem ffmpeg gewartet wurde. Wuerde er markieren, traege jeder normale
+    # Stopp eine Warnung ins Dashboard — und die Warnung waere wertlos.
+    _cancel = _rp[_rp.index("except asyncio.CancelledError:"):_rp.index("except Exception as e:")]
+    assert "_blind_grund" not in _cancel, \
+        "der saubere Stopp markiert blind — dann warnt jeder Stopp"
+
+    # (3) Der Waechter nennt den konkreten Grund, nicht nur 'Leser tot'.
+    _sw = src[src.index("if v.state == _nc_rstab.STALL_BLIND"):]
+    assert 'blind_reason' in _sw[:900], "Waechter meldet weiter ohne Grund"
+
+    # (4) Das Dashboard zeigt es. Ohne diese Haelfte bleibt der Wert stehen und
+    # sieht gesund aus — genau der Befund.
+    dash = open("templates/dashboard.html", encoding="utf-8").read()
+    assert "h.blind" in dash and "blind_reason" in dash, \
+        "Dashboard zeigt eingefrorene Werte weiter als Messung"
+    ok("v4.1-W10: Diagnose nennt das echte Ziel, blinde Health-Werte sind markiert")
+
+
+def test_v41_w10_codeql_befunde():
+    """v4.1-W10: die vier CodeQL-Klassen, die im Repo wirklich vorkamen."""
+    src = open("bot.py", encoding="utf-8").read()
+
+    # (1) Kommandozeile: Groesse und URL werden am EINEN Uebergabepunkt
+    # geprueft, nicht dort, wo sie herkommen.
+    _cmd = src[src.index("def _htmlov_screenshot_cmd("):
+               src.index("def _restream_html_overlay_start(")]
+    assert "_nc_rutil.fenstergroesse(" in _cmd and "_nc_rutil.http_url(" in _cmd, \
+        "Chromium-Argumente ungeprueft"
+    assert "f\"--window-size={size or" not in _cmd, "ungeprueftes --window-size wieder da"
+
+    # (2) Ausliefer-Routen: Zusage statt Verbotsliste, und zwar zweifach.
+    # safe_join ist der von Werkzeug mitgelieferte, dafuer gebaute Schutz —
+    # er kennt die Sonderfaelle je Plattform. datei_in loest zusaetzlich
+    # SYMLINKS auf und erzwingt die Endung; safe_join tut beides nicht, ein
+    # Symlink im Clip-Ordner zeigte damit weiterhin nach draussen. Beide
+    # Schranken haben also eine eigene Aufgabe.
+    assert "from werkzeug.utils import safe_join" in src, "kein mitgelieferter Pfadschutz"
+    for _fn in ("api_clip_file", "api_tts_file"):
+        _r = src[src.index("def %s(" % _fn):]
+        _r = _r[:_r.index("@dashboard_app.route", 10) if "@dashboard_app.route" in _r[10:] else 1500]
+        assert "_nc_util.datei_in(" in _r, "%s prueft weiter nur Zeichen" % _fn
+        assert "safe_join(" in _r, "%s ohne den mitgelieferten Pfadschutz" % _fn
+
+    # (3) Log-Datei aus einer Tabelle, nicht aus dem Parameter.
+    ops = open("nc/routes/ops.py", encoding="utf-8").read()
+    assert "_DATEIEN = {" in ops and "_DATEIEN[which]" in ops, \
+        "der Log-Pfad wird weiter aus dem Parameter gebaut"
+    assert 'f"{which}.log"' not in ops, "alter Pfadbau noch da"
+
+    # (4) Der Dedup-Hash ist als nicht-sicherheitsrelevant deklariert — und
+    # sein WERT bleibt gleich. Ein Wechsel auf sha256 wuerde jede bereits
+    # veroeffentlichte Meldung einmalig zur Neu-Meldung machen.
+    import hashlib
+    from nc.news import item_id
+    _erw = hashlib.sha1(b"a|b|c|").hexdigest()[:12]
+    assert item_id("a", "b", "c") == _erw, "Item-Id hat sich geaendert (Re-Post-Welle)"
+    news = open("nc/news.py", encoding="utf-8").read()
+    assert "usedforsecurity=False" in news, "Hash nicht als Nicht-Sicherheitshash deklariert"
+
+    # (5) Der HTML-Filter im Extraktor endet auch bei '</script >'.
+    ex = open("tools/i18n_extract.py", encoding="utf-8").read()
+    assert "</script\\s*>" in ex and "re.I" in ex, \
+        "Skript-Ende nur in einer Schreibweise erkannt"
+    ok("v4.1-W10: Kommandozeile, Ausliefer-Pfade, Log-Pfad, Hash und HTML-Filter")
 
 
 def main():
@@ -7828,6 +8056,9 @@ def main():
     test_v41_w6_doku_zweisprachig()
     test_v41_w7_sprache_je_benutzer()
     test_v41_w8_oauth_schicht()
+    test_v41_w9_kick_blueprint()
+    test_v41_w10_diagnose_und_blindheit()
+    test_v41_w10_codeql_befunde()
     test_b168_moderator_everywhere()
     test_b169_kick_oauth()
     test_b170_azrael_and_youtube()

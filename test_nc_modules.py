@@ -958,6 +958,81 @@ def _test_flapguard_und_rate():
     ok("flapguard: bot-frei und stdlib-only")
 
 
+
+def _test_w10_diagnose_und_pfadschutz():
+    """v4.1-W10: die Befunde aus dem error.log und von CodeQL — als reine Logik
+       geprueft, dort wo sie liegt."""
+    import os
+    from nc.restream_util import (betroffene_ziele, fenstergroesse, http_url,
+                                  url_host)
+    from nc.util import datei_in
+
+    # (1) Wer steht wirklich im stderr-Auszug? Kick und Twitch liegen BEIDE auf
+    # live-video.net — deshalb wird auf den vollen Host verglichen. Genau daran
+    # scheiterte die alte Diagnose: sie nannte kategorisch Kick.
+    ziele = [("kick", "rtmps://fa723fc1b171.global-contribute.live-video.net:443/app/K1"),
+             ("twitch", "rtmp://ingest.global-contribute.live-video.net/app/K2"),
+             ("youtube", "rtmp://a.rtmp.youtube.com/live2/K3")]
+    nur_twitch = ("[tee] Slave '[f=flv]rtmp://ingest.global-contribute."
+                  "live-video.net/app/<KEY>': error opening: I/O error")
+    assert betroffene_ziele(nur_twitch, ziele) == ["twitch"], \
+        "Twitch-Ausfall wuerde weiter als Kick gemeldet"
+    beide = nur_twitch + "\nSlave 'rtmps://fa723fc1b171.global-contribute.live-video.net:443/app/<KEY>' failed"
+    assert betroffene_ziele(beide, ziele) == ["kick", "twitch"], "Reihenfolge/Menge falsch"
+    assert betroffene_ziele("All tee outputs failed.", ziele) == [], \
+        "ohne Host im Text darf kein Ziel behauptet werden"
+    assert betroffene_ziele("", ziele) == [] and betroffene_ziele("x", []) == []
+    assert url_host("rtmps://h.example:443/app/k") == "h.example"
+    assert url_host("kaputt") == ""
+    ok("v4.1-W10: Abbruch-Diagnose nennt das Ziel, das wirklich im stderr steht")
+
+    # (2) Was auf eine Kommandozeile darf. Die Uebergabe ist eine Liste, es gibt
+    # keine Shell — ein zweites Argument waere trotzdem ein zweites Argument.
+    assert fenstergroesse("1080,1920") == "1080,1920"
+    assert fenstergroesse(" 1920 x 1080 ") == "1920,1080", "x als Trenner nicht erkannt"
+    assert fenstergroesse("800,600 --dump-dom", "9,9") == "9,9", "Flag-Anhang kommt durch"
+    assert fenstergroesse("auto", "9,9") == "9,9" and fenstergroesse(None, "9,9") == "9,9"
+    assert fenstergroesse("0,600", "9,9") == "9,9", "Nullbreite akzeptiert"
+    assert fenstergroesse("999999,10", "9,9") == "9,9", "unbegrenzte Groesse akzeptiert"
+    assert http_url("https://a.example/x") == "https://a.example/x"
+    for boese in ("file:///etc/shadow", "--dump-dom", "javascript:1", ""):
+        assert http_url(boese, "FB") == "FB", "%s kommt auf die Kommandozeile" % boese
+    ok("v4.1-W10: Fenstergroesse und Overlay-URL koennen kein Argument schmuggeln")
+
+    # (3) Pfad-Zusage statt Verbotsliste. Geprueft wird das ERGEBNIS: liegt die
+    # aufgeloeste Datei wirklich unter der Basis?
+    assert datei_in("/daten/clips", "a.mp4", ".mp4") == os.path.realpath("/daten/clips/a.mp4")
+    for boese in ("../etc/passwd.mp4", "../../x.mp4", "/etc/shadow.mp4",
+                  "", None):
+        assert datei_in("/daten/clips", boese, ".mp4") is None, "%r kommt durch" % boese
+    # Der Rueckwaertsschraegstrich ist unter POSIX ein ganz normales Zeichen in
+    # einem Dateinamen — er traegt dort NICHT aus dem Verzeichnis heraus. Die
+    # alte Pruefung verbot ihn trotzdem; das war nicht falsch, aber es war eine
+    # Aussage ueber Zeichen statt ueber das Ziel. Entscheidend ist, dass der
+    # aufgeloeste Pfad in der Basis liegt — und das tut er hier.
+    if os.sep == "/":
+        assert datei_in("/daten/clips", "..\\x.mp4", ".mp4") == \
+            os.path.realpath("/daten/clips/..\\x.mp4")
+    assert datei_in("/daten/clips", "a.wav", ".mp4") is None, "Endung nicht erzwungen"
+    assert datei_in("/daten/clips", "unterordner/a.mp4", ".mp4") == \
+        os.path.realpath("/daten/clips/unterordner/a.mp4"), \
+        "ein Unterordner INNERHALB der Basis ist erlaubt — die Zusage ist die Basis"
+    # Der Praefix-Nachbar: /daten/clips2 faengt mit /daten/clips an, liegt aber
+    # nicht darin. Genau das macht ein startswith-Vergleich falsch.
+    assert datei_in("/daten/clips", "../clips2/a.mp4", ".mp4") is None, \
+        "Praefix-Nachbar gilt faelschlich als innerhalb"
+    ok("v4.1-W10: Ausliefer-Pfade weisen Zugehoerigkeit nach, statt Zeichen zu verbieten")
+
+    # (4) Der Sprachkatalog liest nur bekannte Sprachen — der Name wird sonst
+    # zum Dateipfad, und katalog() haengt an /api/i18n/katalog?lang=…
+    import nc.i18n as I18N
+    assert I18N.katalog("../../etc/passwd") == {}, "Sprachname wandert in den Pfad"
+    assert I18N.katalog("fr") == {}, "unbekannte Sprache wird geladen"
+    assert I18N.katalog("de") == {}, "Quellsprache braucht keinen Katalog"
+    assert isinstance(I18N.katalog("en"), dict)
+    ok("v4.1-W10: Katalog laedt nur Sprachen aus der Positivliste")
+
+
 def main():
     tmp = tempfile.mkdtemp()
     configure_db(db_path=os.path.join(tmp, "t.db"), backend="sqlite")
@@ -1062,6 +1137,8 @@ def main():
     _test_flapguard_und_rate()
 
     _test_updater()
+
+    _test_w10_diagnose_und_pfadschutz()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)
 
