@@ -328,8 +328,8 @@ ADMIN_CHAT_ID=123456789              # your Telegram ID (alarms, admin commands)
 
 | Platform | Guide |
 |---|---|
-| Twitch | **[`docs/SETUP_TWITCH_OAUTH.md`](docs/SETUP_TWITCH_OAUTH.md)** (German) |
-| YouTube | **[`docs/SETUP_YT_OAUTH.md`](docs/SETUP_YT_OAUTH.md)** (German) |
+| Twitch | **[`docs/en/SETUP_TWITCH_OAUTH.md`](docs/en/SETUP_TWITCH_OAUTH.md)** |
+| YouTube | **[`docs/en/SETUP_YT_OAUTH.md`](docs/en/SETUP_YT_OAUTH.md)** |
 | Kick | user OAuth directly in the dashboard panel (set title & category) |
 
 > [!WARNING]
@@ -807,8 +807,8 @@ NIGHTCRAWLER/
 | **[`docs/CHANGELOG.md`](docs/CHANGELOG.md)** | Version overview (German) |
 | **[`docs/README_V37.md`](docs/README_V37.md)** | Detailed release history of every wave (German) |
 | **[`docs/MODULARISIERUNG.md`](docs/MODULARISIERUNG.md)** | Plan for taking the monolith apart — measured, in waves (German) |
-| **[`docs/SETUP_LLAMACPP.md`](docs/SETUP_LLAMACPP.md)** | Set up the local LLM (German) |
-| **[`docs/CROWDSEC.md`](docs/CROWDSEC.md)** | Defence panel (German) |
+| **[`docs/en/SETUP_LLAMACPP.md`](docs/en/SETUP_LLAMACPP.md)** | Set up the local LLM |
+| **[`docs/en/CROWDSEC.md`](docs/en/CROWDSEC.md)** | Defence panel |
 | **[`CLAUDE.md`](CLAUDE.md)** | Working brief for AI-assisted development (German) |
 
 ---
@@ -934,7 +934,7 @@ Full text: **[`LICENSE`](LICENSE)** · what that means in practice:
 | Private use | Include the licence and copyright notice | |
 
 Third-party code and its licences:
-**[`docs/THIRD_PARTY_LICENSES.md`](docs/THIRD_PARTY_LICENSES.md)**
+**[`docs/en/THIRD_PARTY_LICENSES.md`](docs/en/THIRD_PARTY_LICENSES.md)**
 
 ---
 

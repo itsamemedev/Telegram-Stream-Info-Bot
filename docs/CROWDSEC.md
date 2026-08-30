@@ -1,5 +1,7 @@
 # CrowdSec für Azrael Sentinel einrichten
 
+> 🌐 **Deutsch** · [English](en/CROWDSEC.md)
+
 Stand: v4.0-W23
 
 > **Wichtigste Regel zuerst:** Nimm den LAPI-Port **nicht an** — **ermittle** ihn

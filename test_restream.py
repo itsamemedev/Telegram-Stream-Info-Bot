@@ -2455,7 +2455,12 @@ def test_v41_w6_doku_zweisprachig():
              ("docs/SECURITY.md", "docs/en/SECURITY.md"),
              ("docs/TROUBLESHOOTING.md", "docs/en/TROUBLESHOOTING.md"),
              ("docs/CONTRIBUTING.md", "docs/en/CONTRIBUTING.md"),
-             ("docs/CODE_OF_CONDUCT.md", "docs/en/CODE_OF_CONDUCT.md")]
+             ("docs/CODE_OF_CONDUCT.md", "docs/en/CODE_OF_CONDUCT.md"),
+             ("docs/CROWDSEC.md", "docs/en/CROWDSEC.md"),
+             ("docs/SETUP_LLAMACPP.md", "docs/en/SETUP_LLAMACPP.md"),
+             ("docs/SETUP_TWITCH_OAUTH.md", "docs/en/SETUP_TWITCH_OAUTH.md"),
+             ("docs/SETUP_YT_OAUTH.md", "docs/en/SETUP_YT_OAUTH.md"),
+             ("docs/THIRD_PARTY_LICENSES.md", "docs/en/THIRD_PARTY_LICENSES.md")]
     for de, en in paare:
         assert _os.path.exists(de), "deutsche Fassung fehlt: %s" % de
         assert _os.path.exists(en), "englische Fassung fehlt: %s" % en

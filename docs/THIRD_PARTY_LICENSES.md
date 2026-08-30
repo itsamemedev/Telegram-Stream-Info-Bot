@@ -1,5 +1,7 @@
 # Fremdcode und Lizenzen
 
+> 🌐 **Deutsch** · [English](en/THIRD_PARTY_LICENSES.md)
+
 NIGHTCRAWLER steht unter der **GNU GPL v3.0 oder später** ([`LICENSE`](../LICENSE)).
 Diese Datei listet Fremdcode, der mitgeliefert oder zur Laufzeit benötigt wird,
 samt seiner Lizenz.

@@ -1,5 +1,7 @@
 # SETUP_LLAMACPP.md — M6: llama-server auf ns3068954 (Ollama-Ablösung)
 
+> 🌐 **Deutsch** · [English](en/SETUP_LLAMACPP.md)
+
 ## 1. Binary holen (statisch, kein Build nötig)
 
 ```bash

@@ -11,6 +11,56 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Geändert — Sprache je Benutzer statt je Server (v4.1 W7)
+
+Bis W6 entschied `UI_LANG` für alle. Ein deutschsprachiger und ein
+englischsprachiger Zuschauer im selben Discord bekamen dieselbe Sprache — und
+zwar die des Betreibers. Jetzt entscheidet Telegrams `language_code` bzw.
+discord.pys `interaction.locale` **je Anfrage**.
+
+**Die Sprache hängt an der Anfrage, nicht am Modul.** `nc.i18n` führt sie in
+einer `ContextVar`. Ein Modul-Global wäre geteilter Zustand zwischen
+gleichzeitigen Tasks — der Deutsche bekäme Englisch, weil eine Millisekunde
+vorher ein Engländer gefragt hat. Ein Vertrag beweist das mit zwei parallel
+laufenden Tasks.
+
+Gesetzt wird **vor** dem Handler, an genau einer Stelle je Plattform: Telegram
+über `TypeHandler(Update, …)` in Gruppe −1, Discord über
+`tree.interaction_check`. Damit sind alle 46 Slash-Befehle und alle
+Telegram-Handler erfasst, ohne einen einzigen davon anzufassen.
+
+Beide Haken sind **fail-open**. `interaction_check` ist eigentlich eine
+Berechtigungsprüfung: gäbe die Spracherkennung dort `False` oder würfe sie, wäre
+jeder Slash-Befehl im Discord tot — die Übersetzung hätte den Bot abgeschaltet.
+Sie fängt deshalb alles und liefert immer `True`.
+
+212 Sendestellen sind mechanisch mit `_nc_i18n.t(…)` umschlossen, über
+Byte-Offsets (die Em-Dash-Falle aus W6c). `t()` reicht Nicht-Text unverändert
+durch — manche Sendestellen bekommen kein Wort, sondern `None` oder ein Embed,
+und ein `TypeError` dort wäre eine Antwort, die gar nicht erst rausgeht.
+
+**Ein Fehler dabei gefunden und behoben:** der Wrapper entschied nach dem
+*Methodennamen*, wo der Text steht. Bei `telegram.Bot.send_message(chat_id,
+text)` stimmt Position 2 — bei `KickModerator.send_message(text, session)` steht
+dort die **Session**. Drei Stellen übersetzten die HTTP-Session und ließen den
+Text deutsch. Der Empfänger entscheidet, nicht der Name; ein Vertrag hält fest,
+dass `t()` auf keiner Session mehr sitzt.
+
+Zwei Vertragsanker sind mitgewandert (Kick-only-Fallback, Announce) — beide
+Verträge gelten unverändert, nur ihr wörtlicher Anker hat sich um das `t(…)`
+erweitert.
+
+### Hinzugefügt — die restliche Dokumentation auf Englisch (v4.1 W7)
+
+`docs/en/` trägt jetzt auch CrowdSec, die drei SETUP-Anleitungen und die
+Fremdcode-Lizenzen: **30 Dokumente zweisprachig**, jedes mit beidseitigem
+Sprachumschalter. Der Link-Vertrag deckt sie alle ab.
+
+Deutsch bleiben weiterhin `CHANGELOG.md`, `README_V37.md` und
+`MODULARISIERUNG.md` (Historie und interne Analyse, ~3.700 Zeilen) sowie
+`START_HIER.txt` — eine `.txt`, keine Markdown-Datei.
+
+
 ### Hinzugefügt — Mehrsprachigkeit, Englisch als zweite Sprache (v4.1 W6)
 
 Oberfläche, Bot und Doku sprechen jetzt Deutsch **und** Englisch. Neu:
