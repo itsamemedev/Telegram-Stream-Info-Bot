@@ -1,5 +1,7 @@
 # Twitch verbinden (Follower-Zähler)
 
+> 🌐 **Deutsch** · [English](en/SETUP_TWITCH_OAUTH.md)
+
 Der Follower-Zähler nutzt Twitch EventSub. Du gibst Client-ID + Secret an und
 klickst einmal verbinden — danach erneuert der Bot den Zugang selbst.
 

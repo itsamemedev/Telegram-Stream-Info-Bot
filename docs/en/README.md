@@ -13,10 +13,10 @@ All guides and the project history live here. The repository root carries only
 |---|---|
 | [`START_HIER.txt`](../START_HIER.txt) | Deploy in one command, read the log, first aid (German) |
 | [`DEPLOY.md`](DEPLOY.md) | Complete deployment and verification guide |
-| [`SETUP_LLAMACPP.md`](../SETUP_LLAMACPP.md) | Local LLM, no cloud and no cost (German) |
-| [`SETUP_TWITCH_OAUTH.md`](../SETUP_TWITCH_OAUTH.md) | Set up Twitch OAuth (German) |
-| [`SETUP_YT_OAUTH.md`](../SETUP_YT_OAUTH.md) | Set up YouTube OAuth (German) |
-| [`CROWDSEC.md`](../CROWDSEC.md) | Defence: CrowdSec integration (German) |
+| [`SETUP_LLAMACPP.md`](SETUP_LLAMACPP.md) | Local LLM, no cloud and no cost |
+| [`SETUP_TWITCH_OAUTH.md`](SETUP_TWITCH_OAUTH.md) | Set up Twitch OAuth |
+| [`SETUP_YT_OAUTH.md`](SETUP_YT_OAUTH.md) | Set up YouTube OAuth |
+| [`CROWDSEC.md`](CROWDSEC.md) | Defence: CrowdSec integration |
 
 ## Contribute
 
@@ -33,7 +33,7 @@ All guides and the project history live here. The repository root carries only
 |---|---|
 | [`CHANGELOG.md`](../CHANGELOG.md) | Version overview (German) |
 | [`README_V37.md`](../README_V37.md) | Detailed history of every development wave (German) |
-| [`THIRD_PARTY_LICENSES.md`](../THIRD_PARTY_LICENSES.md) | Third-party code and its licences |
+| [`THIRD_PARTY_LICENSES.md`](THIRD_PARTY_LICENSES.md) | Third-party code and its licences |
 
 ---
 

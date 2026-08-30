@@ -197,7 +197,7 @@ flowchart TB
     DC --> BOT
     TT --> BOT
 
-    BOT["bot.py<br/>monolith · 29,664 lines<br/>scraper · recorder · restream<br/>Flask dashboard · 172 own routes"]:::core
+    BOT["bot.py<br/>monolith · 29,714 lines<br/>scraper · recorder · restream<br/>Flask dashboard · 172 own routes"]:::core
 
     BOT -->|configure| NC["nc/ — 92 domain modules<br/>schema · OAuth · restream<br/>ledger · moderation · intel"]:::lib
     NC --> RT["nc/routes/ — 18 blueprints<br/>187 further API routes"]:::lib
@@ -328,8 +328,8 @@ ADMIN_CHAT_ID=123456789              # your Telegram ID (alarms, admin commands)
 
 | Platform | Guide |
 |---|---|
-| Twitch | **[`docs/SETUP_TWITCH_OAUTH.md`](docs/SETUP_TWITCH_OAUTH.md)** (German) |
-| YouTube | **[`docs/SETUP_YT_OAUTH.md`](docs/SETUP_YT_OAUTH.md)** (German) |
+| Twitch | **[`docs/en/SETUP_TWITCH_OAUTH.md`](docs/en/SETUP_TWITCH_OAUTH.md)** |
+| YouTube | **[`docs/en/SETUP_YT_OAUTH.md`](docs/en/SETUP_YT_OAUTH.md)** |
 | Kick | user OAuth directly in the dashboard panel (set title & category) |
 
 > [!WARNING]
@@ -709,7 +709,7 @@ broken.**
 
 ### 🧭 Navigating the monolith
 
-`bot.py` has 29,664 lines. It is **never** read in full and **never** searched
+`bot.py` has 29,714 lines. It is **never** read in full and **never** searched
 blindly — first ask where something is, then fetch the excerpt:
 
 ```bash
@@ -724,7 +724,7 @@ python3 tools/ncpatch.py docs                      # documentation numbers vs. t
 ```
 
 `find` answers from **[`.claude/INDEX.md`](.claude/INDEX.md)** — 359 routes
-(172 in `bot.py`, 187 in `nc/routes/`), 45 slash commands, 519 functions, each
+(172 in `bot.py`, 187 in `nc/routes/`), 45 slash commands, 520 functions, each
 with a line number.
 
 ---
@@ -807,8 +807,8 @@ NIGHTCRAWLER/
 | **[`docs/CHANGELOG.md`](docs/CHANGELOG.md)** | Version overview (German) |
 | **[`docs/README_V37.md`](docs/README_V37.md)** | Detailed release history of every wave (German) |
 | **[`docs/MODULARISIERUNG.md`](docs/MODULARISIERUNG.md)** | Plan for taking the monolith apart — measured, in waves (German) |
-| **[`docs/SETUP_LLAMACPP.md`](docs/SETUP_LLAMACPP.md)** | Set up the local LLM (German) |
-| **[`docs/CROWDSEC.md`](docs/CROWDSEC.md)** | Defence panel (German) |
+| **[`docs/en/SETUP_LLAMACPP.md`](docs/en/SETUP_LLAMACPP.md)** | Set up the local LLM |
+| **[`docs/en/CROWDSEC.md`](docs/en/CROWDSEC.md)** | Defence panel |
 | **[`CLAUDE.md`](CLAUDE.md)** | Working brief for AI-assisted development (German) |
 
 ---
@@ -855,7 +855,7 @@ Full history: **[`docs/CHANGELOG.md`](docs/CHANGELOG.md)** ·
 
 ## 🧭 Roadmap
 
-The next big step is not a feature, it is cleaning up: **`bot.py` has 29,664
+The next big step is not a feature, it is cleaning up: **`bot.py` has 29,714
 lines**. That file is the project's bottleneck. The bar for it is not a line
 count though:
 
@@ -934,7 +934,7 @@ Full text: **[`LICENSE`](LICENSE)** · what that means in practice:
 | Private use | Include the licence and copyright notice | |
 
 Third-party code and its licences:
-**[`docs/THIRD_PARTY_LICENSES.md`](docs/THIRD_PARTY_LICENSES.md)**
+**[`docs/en/THIRD_PARTY_LICENSES.md`](docs/en/THIRD_PARTY_LICENSES.md)**
 
 ---
 

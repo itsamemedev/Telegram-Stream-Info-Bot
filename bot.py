@@ -634,7 +634,7 @@ from telegram.error import (
 )
 from telegram.ext import (
     Application, CommandHandler, ContextTypes, CallbackQueryHandler,
-    MessageHandler, filters,
+    MessageHandler, TypeHandler, filters,
 )
 
 from flask import Flask, render_template, jsonify, send_from_directory, abort, request, Response, redirect
@@ -5402,17 +5402,17 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "<i>Bei Live-Stream → automatische Benachrichtigung, Aufnahme &amp; "
         "Restream. Chat wird KI-moderiert (SENTINEL-SHIELD).</i>"
     )
-    await update.message.reply_text(text, parse_mode=ParseMode.HTML)
+    await update.message.reply_text(_nc_i18n.t(text), parse_mode=ParseMode.HTML)
 
 async def tiktok(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not _is_authorized(update): return
     if not context.args:
-        await update.message.reply_text("Bitte: <code>/tiktok username</code>",
+        await update.message.reply_text(_nc_i18n.t("Bitte: <code>/tiktok username</code>"),
                                         parse_mode=ParseMode.HTML); return
     username = clean_username(context.args[0])
     if not username:
-        await update.message.reply_text("⚠️ Ungültiger Username."); return
-    msg = await update.message.reply_text("⏳ <i>Analysiere TikTok-Profil…</i>",
+        await update.message.reply_text(_nc_i18n.t("⚠️ Ungültiger Username.")); return
+    msg = await update.message.reply_text(_nc_i18n.t("⏳ <i>Analysiere TikTok-Profil…</i>"),
                                           parse_mode=ParseMode.HTML)
     scraper: TikTokScraper = context.application.bot_data["scraper"]
     try:
@@ -5437,25 +5437,25 @@ async def tiktok(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 parse_mode=ParseMode.HTML); return
         save_tiktok_check(update.effective_user.id, username, data)
         await msg.edit_text(
-            build_report(data, info),
+            _nc_i18n.t(build_report(data, info)),
             parse_mode=ParseMode.HTML,
             disable_web_page_preview=True,
             reply_markup=profile_keyboard(username, info.get("is_live", False)))
     except Exception as e:
         log.exception(f"/tiktok @{username} failed")
         await msg.edit_text(
-            f"⚠️ <b>FEHLER · @{safe(username)}</b>\n<i>{safe(str(e))}</i>",
+            _nc_i18n.t(f"⚠️ <b>FEHLER · @{safe(username)}</b>\n<i>{safe(str(e))}</i>"),
             parse_mode=ParseMode.HTML)
 
 async def live(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not _is_authorized(update): return
     if not context.args:
-        await update.message.reply_text("Bitte: <code>/live username</code>",
+        await update.message.reply_text(_nc_i18n.t("Bitte: <code>/live username</code>"),
                                         parse_mode=ParseMode.HTML); return
     username = clean_username(context.args[0])
     if not username:
-        await update.message.reply_text("⚠️ Ungültiger Username."); return
-    msg = await update.message.reply_text("⏳ <i>Prüfe Live-Status…</i>",
+        await update.message.reply_text(_nc_i18n.t("⚠️ Ungültiger Username.")); return
+    msg = await update.message.reply_text(_nc_i18n.t("⏳ <i>Prüfe Live-Status…</i>"),
                                           parse_mode=ParseMode.HTML)
     try:
         scraper = context.application.bot_data.get("scraper")
@@ -5480,11 +5480,11 @@ async def live(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     f"<code>{utc_clock()} UTC</code>")
             kb = InlineKeyboardMarkup([[InlineKeyboardButton(
                 "🌐 Profil", url=f"https://www.tiktok.com/@{username}")]])
-        await msg.edit_text(text, parse_mode=ParseMode.HTML, reply_markup=kb)
+        await msg.edit_text(_nc_i18n.t(text), parse_mode=ParseMode.HTML, reply_markup=kb)
     except Exception as e:
         log.exception(f"/live @{username} failed")
         await msg.edit_text(
-            f"⚠️ <b>FEHLER · @{safe(username)}</b>\n<i>{safe(str(e))}</i>",
+            _nc_i18n.t(f"⚠️ <b>FEHLER · @{safe(username)}</b>\n<i>{safe(str(e))}</i>"),
             parse_mode=ParseMode.HTML)
 
 async def track_exact(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -5514,23 +5514,23 @@ async def track_exact(update: Update, context: ContextTypes.DEFAULT_TYPE):
     gid = update.effective_chat.id
     if add_tracking(gid, name, update.effective_user.id):
         await update.message.reply_text(
-            f"✅ <b>@{safe(name)}</b> wird getrackt <i>(wörtlich übernommen)</i>.",
+            _nc_i18n.t(f"✅ <b>@{safe(name)}</b> wird getrackt <i>(wörtlich übernommen)</i>."),
             parse_mode=ParseMode.HTML)
     else:
         await update.message.reply_text(
-            f"ℹ️ <b>@{safe(name)}</b> wird bereits getrackt.",
+            _nc_i18n.t(f"ℹ️ <b>@{safe(name)}</b> wird bereits getrackt."),
             parse_mode=ParseMode.HTML)
 
 
 async def track(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not _is_authorized(update): return
     if not context.args:
-        await update.message.reply_text("Benutzung: <code>/track @username</code>",
+        await update.message.reply_text(_nc_i18n.t("Benutzung: <code>/track @username</code>"),
                                         parse_mode=ParseMode.HTML); return
     _raw_in = context.args[0]
     username = clean_username(_raw_in)
     if not username:
-        await update.message.reply_text("⚠️ Ungültiger Username."); return
+        await update.message.reply_text(_nc_i18n.t("⚠️ Ungültiger Username.")); return
     # B125: Hat clean_username den Namen VERAENDERT, das sichtbar machen.
     # Anlass war "@www.tiktok.comrabi1978" — ein echter Handle, der wie eine
     # URL aussieht. Wer so einen Namen tippt, soll sofort sehen, ob der Bot
@@ -5579,12 +5579,12 @@ async def track(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         text = (f"ℹ️ <b>BEREITS AKTIV · @{safe(username)}</b>\n"
                 f"<i>Tracking läuft schon in dieser Gruppe.</i>")
-    await update.message.reply_text(text, parse_mode=ParseMode.HTML)
+    await update.message.reply_text(_nc_i18n.t(text), parse_mode=ParseMode.HTML)
 
 async def untrack(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not _is_authorized(update): return
     if not context.args:
-        await update.message.reply_text("Benutzung: <code>/untrack @username</code>",
+        await update.message.reply_text(_nc_i18n.t("Benutzung: <code>/untrack @username</code>"),
                                         parse_mode=ParseMode.HTML); return
     username = clean_username(context.args[0])
     _nc_trackingdb.remove_tracking(update.effective_chat.id, username)
@@ -5641,13 +5641,13 @@ async def tracklist(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"\n"
         f"<code>Aktualisiert: {utc_clock()} UTC</code>"
     )
-    await update.message.reply_text(text, parse_mode=ParseMode.HTML)
+    await update.message.reply_text(_nc_i18n.t(text), parse_mode=ParseMode.HTML)
 
 async def diag(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """F11: Selbst-Diagnose direkt aus Telegram. Zeigt was im Stack
        installiert/erreichbar ist und welcher Recorder aktiv wäre."""
     if not _is_authorized(update): return
-    msg = await update.message.reply_text("⏳ <i>Diagnose läuft…</i>",
+    msg = await update.message.reply_text(_nc_i18n.t("⏳ <i>Diagnose läuft…</i>"),
                                           parse_mode=ParseMode.HTML)
 
     # 1) Recorder-Binaries
@@ -5787,10 +5787,10 @@ async def diag(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"{extra}"
     )
     try:
-        await msg.edit_text(text, parse_mode=ParseMode.HTML)
+        await msg.edit_text(_nc_i18n.t(text), parse_mode=ParseMode.HTML)
     except Exception as e:
         log.warning(f"diag edit failed: {e}")
-        await msg.edit_text("Diagnose abgeschlossen — siehe debug.log.")
+        await msg.edit_text(_nc_i18n.t("Diagnose abgeschlossen — siehe debug.log."))
 
 async def teststream(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """F11: 30-Sekunden-Probe-Recording mit kompletter Diagnose-Ausgabe.
@@ -5806,10 +5806,10 @@ async def teststream(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     username = clean_username(context.args[0])
     if not username:
-        await update.message.reply_text("⚠️ Ungültiger Username."); return
+        await update.message.reply_text(_nc_i18n.t("⚠️ Ungültiger Username.")); return
 
     msg = await update.message.reply_text(
-        f"⏳ <i>Probe-Aufnahme @{safe(username)} (max 30s)…</i>",
+        _nc_i18n.t(f"⏳ <i>Probe-Aufnahme @{safe(username)} (max 30s)…</i>"),
         parse_mode=ParseMode.HTML)
 
     # Step 1: live status
@@ -5931,11 +5931,11 @@ async def teststream(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if len(text) > 3900:
         text = text[:3900] + "\n…</pre>"
     try:
-        await msg.edit_text(text, parse_mode=ParseMode.HTML)
+        await msg.edit_text(_nc_i18n.t(text), parse_mode=ParseMode.HTML)
     except Exception as e:
         log.warning(f"teststream edit failed: {e}")
         await msg.edit_text(
-            f"❌ Test fehlgeschlagen ({safe(cat)}). Siehe debug.log.",
+            _nc_i18n.t(f"❌ Test fehlgeschlagen ({safe(cat)}). Siehe debug.log."),
             parse_mode=ParseMode.HTML)
 
 # =============================================================================
@@ -6004,7 +6004,7 @@ async def _run_ai_call(update, context, prompt_text: str,
     except Exception: pass
 
     msg = await update.message.reply_text(
-        f"🤔 <i>Denke nach…{' (mit Datei)' if file_obj else ''}</i>",
+        _nc_i18n.t(f"🤔 <i>Denke nach…{' (mit Datei)' if file_obj else ''}</i>"),
         parse_mode=ParseMode.HTML)
 
     # Datei verarbeiten falls vorhanden
@@ -6023,7 +6023,7 @@ async def _run_ai_call(update, context, prompt_text: str,
             err_text = (
                 f"⚠️ <b>Datei nicht verarbeitet</b>\n"
                 f"<i>{safe(payload['error'])}</i>")
-            await msg.edit_text(err_text, parse_mode=ParseMode.HTML)
+            await msg.edit_text(_nc_i18n.t(err_text), parse_mode=ParseMode.HTML)
             add_ai_log_entry(chat_id, user_id, prompt_text, None, AI_MODEL, 0,
                              error=f"file_{payload['kind']}: {payload['error']}",
                              file_kind=payload["kind"], file_size=file_size)
@@ -6072,7 +6072,7 @@ async def _run_ai_call(update, context, prompt_text: str,
             "empty":      "LLM lieferte leere Antwort. Siehe debug.log.",
         }.get(err_kind, "Unbekannter Fehler.")
         await msg.edit_text(
-            f"⚠️ <b>AI nicht verfügbar</b>\n<i>{err_text_map}</i>",
+            _nc_i18n.t(f"⚠️ <b>AI nicht verfügbar</b>\n<i>{err_text_map}</i>"),
             parse_mode=ParseMode.HTML)
         add_ai_log_entry(chat_id, user_id, prompt_text, None, use_model, duration_ms,
                          error=err_kind, file_kind=file_kind, file_size=file_size)
@@ -6096,13 +6096,13 @@ async def _run_ai_call(update, context, prompt_text: str,
     footer = f"\n\n— {elapsed:.1f}s · {use_model}{file_marker}"
     chunks = split_for_telegram(response + footer, 4000)
     if len(chunks) == 1:
-        try: await msg.edit_text(chunks[0])
+        try: await msg.edit_text(_nc_i18n.t(chunks[0]))
         except Exception as e: log.warning(f"AI edit_text failed: {e}")
     else:
-        try: await msg.edit_text(chunks[0])
+        try: await msg.edit_text(_nc_i18n.t(chunks[0]))
         except Exception: pass
         for c in chunks[1:]:
-            try: await update.message.reply_text(c)
+            try: await update.message.reply_text(_nc_i18n.t(c))
             except Exception as e: log.warning(f"AI follow-up reply failed: {e}")
 
 
@@ -6175,7 +6175,7 @@ async def aireset(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     await ai_history_clear(chat_id, user_id)
     await update.message.reply_text(
-        "🧹 <b>AI-Verlauf gelöscht</b>\n<i>Nächste Frage startet frisch.</i>",
+        _nc_i18n.t("🧹 <b>AI-Verlauf gelöscht</b>\n<i>Nächste Frage startet frisch.</i>"),
         parse_mode=ParseMode.HTML)
 
 # =============================================================================
@@ -6211,13 +6211,13 @@ async def recstatus(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if r["outcome"] not in ("ok", "running") and r["stderr_tail"]:
             tail = r["stderr_tail"][-200:].strip()
             lines.append(f"   <pre>{safe(tail)}</pre>")
-    await update.message.reply_text("\n".join(lines), parse_mode=ParseMode.HTML)
+    await update.message.reply_text(_nc_i18n.t("\n".join(lines)), parse_mode=ParseMode.HTML)
 
 
 async def cleanup(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """F19: räumt verwaiste recording=1 Locks weg + alte Probe-Dateien."""
     if not _is_authorized(update): return
-    msg = await update.message.reply_text("🧹 <i>Räume auf…</i>",
+    msg = await update.message.reply_text(_nc_i18n.t("🧹 <i>Räume auf…</i>"),
                                           parse_mode=ParseMode.HTML)
     cleaned_locks = 0
     # F42-Bug-Hunt-Fix B7: Race-Condition mit Spawn-Fenster. Vorher hat /cleanup
@@ -6412,7 +6412,7 @@ async def cleanup(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ("Attempts (>30d)", cleaned_attempts),
     ]
     body = pre_table([(k, str(v)) for k, v in rows], align='left')
-    await msg.edit_text(f"🧹 <b>CLEANUP</b>\n{body}", parse_mode=ParseMode.HTML)
+    await msg.edit_text(_nc_i18n.t(f"🧹 <b>CLEANUP</b>\n{body}"), parse_mode=ParseMode.HTML)
 
 
 async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -6452,7 +6452,7 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
              ("/tiktok-Calls", str(n_checks)),
              ("/ai-Calls",  str(n_ai))]
     body = pre_table(lines, align='left')
-    await update.message.reply_text(f"<b>📊 STATS</b>\n{body}",
+    await update.message.reply_text(_nc_i18n.t(f"<b>📊 STATS</b>\n{body}"),
                                     parse_mode=ParseMode.HTML)
 
 
@@ -6647,8 +6647,8 @@ async def summary_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text = _build_daily_summary()
     except Exception as e:
         log.error(f"summary_cmd build failed: {e}", exc_info=True)
-        await update.message.reply_text(f"❌ Summary fehlgeschlagen: {e}"); return
-    await update.message.reply_text(text, parse_mode=ParseMode.HTML)
+        await update.message.reply_text(_nc_i18n.t(f"❌ Summary fehlgeschlagen: {e}")); return
+    await update.message.reply_text(_nc_i18n.t(text), parse_mode=ParseMode.HTML)
 
 
 # ---- V37: Kick-Zuschauer-Sampler (Sende-Timeline bekommt Kontext) ------------
@@ -7005,7 +7005,7 @@ async def bulkadd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode=ParseMode.HTML); return
     candidates = [c for c in re.split(r'[\s,;\n]+', raw) if c]
     if not candidates:
-        await update.message.reply_text("⚠️ Keine Usernames erkannt."); return
+        await update.message.reply_text(_nc_i18n.t("⚠️ Keine Usernames erkannt.")); return
     if len(candidates) > 200:
         await update.message.reply_text(
             "⚠️ Max 200 Usernames pro Bulk-Call. "
@@ -7044,7 +7044,7 @@ async def bulkadd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         more = f" + {len(result['added']) - 10} weitere" if len(result['added']) > 10 else ""
         lines.append("")
         lines.append(f"<i>Neu: {sample}{more}</i>")
-    await update.message.reply_text("\n".join(lines), parse_mode=ParseMode.HTML)
+    await update.message.reply_text(_nc_i18n.t("\n".join(lines)), parse_mode=ParseMode.HTML)
 
 
 async def topusers(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -7104,7 +7104,7 @@ async def topusers(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = (f"📊 <b>TOP {len(rows)} USERS</b> <i>({sort_label})</i>\n"
             f"{body}\n"
             f"<i>Sortier-Optionen: rec · bytes · success · recent</i>")
-    await update.message.reply_text(text, parse_mode=ParseMode.HTML)
+    await update.message.reply_text(_nc_i18n.t(text), parse_mode=ParseMode.HTML)
 
 
 async def cookies_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -7150,7 +7150,7 @@ async def cookies_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif h["status"] == "warning":
         extra = ("\n<i>→ Cookies bald erneuern um Probleme zu vermeiden.</i>")
 
-    await update.message.reply_text(f"<b>🍪 COOKIES</b>\n{body}{extra}",
+    await update.message.reply_text(_nc_i18n.t(f"<b>🍪 COOKIES</b>\n{body}{extra}"),
                                     parse_mode=ParseMode.HTML)
 
 
@@ -7167,7 +7167,7 @@ async def _pause_resume_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE,
             parse_mode=ParseMode.HTML); return
     username = clean_username(context.args[0])
     if not username:
-        await update.message.reply_text("⚠️ Ungültiger Username."); return
+        await update.message.reply_text(_nc_i18n.t("⚠️ Ungültiger Username.")); return
     # Tracking-ID für diesen User in diesem Chat suchen
     with db_conn() as conn:
         row = conn.execute(
@@ -7175,7 +7175,7 @@ async def _pause_resume_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE,
             (chat_id, username)).fetchone()
     if not row:
         await update.message.reply_text(
-            f"<i>@{safe(username)} wird in diesem Chat nicht getrackt.</i>",
+            _nc_i18n.t(f"<i>@{safe(username)} wird in diesem Chat nicht getrackt.</i>"),
             parse_mode=ParseMode.HTML); return
     tid = row["id"]
     set_tracking_paused(tid, paused)
@@ -7186,7 +7186,7 @@ async def _pause_resume_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE,
     icon = "⏸" if paused else "▶️"
     state = "pausiert" if paused else "wieder aktiv"
     await update.message.reply_text(
-        f"{icon} <b>@{safe(username)}</b> ist {state}.",
+        _nc_i18n.t(f"{icon} <b>@{safe(username)}</b> ist {state}."),
         parse_mode=ParseMode.HTML)
 
 
@@ -7216,7 +7216,7 @@ async def stoprec(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode=ParseMode.HTML); return
     username = clean_username(context.args[0])
     if not username:
-        await update.message.reply_text("⚠️ Ungültiger Username."); return
+        await update.message.reply_text(_nc_i18n.t("⚠️ Ungültiger Username.")); return
     with db_conn() as conn:
         row = conn.execute(
             "SELECT id, pid FROM trackings "
@@ -7224,7 +7224,7 @@ async def stoprec(update: Update, context: ContextTypes.DEFAULT_TYPE):
             (chat_id, username)).fetchone()
     if not row:
         await update.message.reply_text(
-            f"<i>Keine aktive Aufnahme für @{safe(username)} in diesem Chat.</i>",
+            _nc_i18n.t(f"<i>Keine aktive Aufnahme für @{safe(username)} in diesem Chat.</i>"),
             parse_mode=ParseMode.HTML); return
     pid = row["pid"]
     if not pid:
@@ -7246,10 +7246,10 @@ async def stoprec(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode=ParseMode.HTML)
     except ProcessLookupError:
         await update.message.reply_text(
-            "<i>Process schon weg — natürlicher Exit kommt jeden Moment.</i>",
+            _nc_i18n.t("<i>Process schon weg — natürlicher Exit kommt jeden Moment.</i>"),
             parse_mode=ParseMode.HTML)
     except Exception as e:
-        await update.message.reply_text(f"❌ Stop fehlgeschlagen: {e}")
+        await update.message.reply_text(_nc_i18n.t(f"❌ Stop fehlgeschlagen: {e}"))
 
 
 async def quota(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -7297,7 +7297,7 @@ async def quota(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif total >= MAX_TRACKINGS_PER_CHAT * 0.9:
             extra = ("\n<i>⚠️ Quota fast voll.</i>")
     await update.message.reply_text(
-        f"<b>📊 QUOTA</b>\n{body}{extra}",
+        _nc_i18n.t(f"<b>📊 QUOTA</b>\n{body}{extra}"),
         parse_mode=ParseMode.HTML)
 
 
@@ -7314,7 +7314,7 @@ async def logs_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     log_path = os.path.join(LOG_DIR, "error.log")
     if not os.path.exists(log_path):
         await update.message.reply_text(
-            "<i>error.log existiert (noch) nicht — gut, vermutlich keine Fehler.</i>",
+            _nc_i18n.t("<i>error.log existiert (noch) nicht — gut, vermutlich keine Fehler.</i>"),
             parse_mode=ParseMode.HTML); return
     # Efficient tail: read last ~64KB, split lines, take last N
     try:
@@ -7325,12 +7325,12 @@ async def logs_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 _ = f.readline()  # skip likely-incomplete first line
             tail = f.read().decode("utf-8", errors="replace")
     except Exception as e:
-        await update.message.reply_text(f"❌ Konnte error.log nicht lesen: {e}"); return
+        await update.message.reply_text(_nc_i18n.t(f"❌ Konnte error.log nicht lesen: {e}")); return
 
     lines = [l for l in tail.splitlines() if l.strip()]
     if not lines:
         await update.message.reply_text(
-            "<i>error.log ist leer — keine Fehler.</i>",
+            _nc_i18n.t("<i>error.log ist leer — keine Fehler.</i>"),
             parse_mode=ParseMode.HTML); return
     selected = lines[-n:]
     # Telegram-Limit beachten: 4096 chars. Wir kürzen jede Zeile + truncate.
@@ -7364,7 +7364,7 @@ async def sysres(update: Update, context: ContextTypes.DEFAULT_TYPE):
         with dashboard_app.test_request_context('/api/system-resources'):
             d = api_system_resources().get_json()
     except Exception as e:
-        await update.message.reply_text(f"❌ System-Stats fehlgeschlagen: {e}")
+        await update.message.reply_text(_nc_i18n.t(f"❌ System-Stats fehlgeschlagen: {e}"))
         return
 
     def _fmt_bar(pct):
@@ -7423,7 +7423,7 @@ async def sysres(update: Update, context: ContextTypes.DEFAULT_TYPE):
     extra_txt = ("\n\n" + "\n".join(extras)) if extras else ""
 
     await update.message.reply_text(
-        f"<b>🖥 SYSTEM RESOURCES</b>\n{body}{extra_txt}",
+        _nc_i18n.t(f"<b>🖥 SYSTEM RESOURCES</b>\n{body}{extra_txt}"),
         parse_mode=ParseMode.HTML)
 
 
@@ -7511,7 +7511,7 @@ async def about(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "\n"
         "ℹ️ <code>/start</code> für alle Befehle."
     )
-    await update.message.reply_text(text, parse_mode=ParseMode.HTML,
+    await update.message.reply_text(_nc_i18n.t(text), parse_mode=ParseMode.HTML,
                                     disable_web_page_preview=True)
 
 # -----------------------------
@@ -7520,19 +7520,19 @@ async def about(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     if not _is_authorized(update):
-        await q.answer("Nicht autorisiert.", show_alert=True); return
+        await q.answer(_nc_i18n.t("Nicht autorisiert."), show_alert=True); return
     data = q.data or ""
     if data.startswith("s:"):                  # stop tracking
         username = clean_username(data[2:])
         if not username:
-            await q.answer("Ungültig."); return
+            await q.answer(_nc_i18n.t("Ungültig.")); return
         chat_id = q.message.chat.id
         # F24: strikter Auth-Check für destruktive Aktion
         allowed, reason = _can_stop_tracking(update, chat_id, username)
         if not allowed:
-            await q.answer(reason, show_alert=True); return
+            await q.answer(_nc_i18n.t(reason), show_alert=True); return
         _nc_trackingdb.remove_tracking(chat_id, username)
-        await q.answer(f"@{username} – Tracking beendet.")
+        await q.answer(_nc_i18n.t(f"@{username} – Tracking beendet."))
         try:
             await q.edit_message_reply_markup(reply_markup=None)
         except Exception: pass
@@ -7894,6 +7894,30 @@ def _is_dead(chat_id: int) -> bool:
 def _mark_dead(chat_id: int):
     _dead_chats[chat_id] = datetime.now(timezone.utc).timestamp() + _DEAD_CHAT_TTL
 
+async def _tg_sprache_setzen(update, context):
+    """v4.1-W7: die Sprache dieses Telegram-Benutzers fuer diese Anfrage merken.
+
+    Telegram liefert `language_code` am Absender ("de", "en-US", …). Der Wert
+    landet in einer ContextVar und gilt damit fuer alles, was in dieser Task
+    noch passiert — auch fuer Antworten, die tief in einem Helfer entstehen.
+
+    Warum nicht als Parameter durch die Aufrufkette: der Bot hat 212
+    Sendestellen. Eine vergessene Stelle antwortete stumm in der falschen
+    Sprache, ohne dass irgendetwas auffiele.
+
+    Kennt Telegram die Sprache nicht oder unterstuetzen wir sie nicht, setzt
+    sprache_setzen() NICHTS — dann gilt UI_LANG. Ein unbekanntes Kuerzel darf
+    die Antwort nicht verschlucken.
+    """
+    try:
+        nutzer = getattr(update, "effective_user", None)
+        _nc_i18n.sprache_setzen(getattr(nutzer, "language_code", None))
+    except Exception as e:
+        # Der Spracherkenner darf niemals ein Update fallen lassen — lieber
+        # deutsch antworten als gar nicht.
+        log.debug("Spracherkennung (Telegram): %s", e)
+
+
 async def _safe_send(bot, chat_id: int, text: str, lang: str = None, **kwargs) -> bool:
     """Sendet eine Nachricht und behandelt typische Telegram-Fehler kontrolliert.
        Gibt True bei Erfolg, False sonst. Wirft NIE eine Exception nach außen.
@@ -7909,14 +7933,14 @@ async def _safe_send(bot, chat_id: int, text: str, lang: str = None, **kwargs) -
         return False
     text = _nc_i18n.t(text, lang)
     try:
-        await bot.send_message(chat_id, text, **kwargs)
+        await bot.send_message(chat_id, _nc_i18n.t(text), **kwargs)
         return True
     except RetryAfter as e:
         wait = float(getattr(e, "retry_after", 5)) + 1
         log.warning(f"Telegram rate-limit, warte {wait:.0f}s | chat={chat_id}")
         await asyncio.sleep(wait)
         try:
-            await bot.send_message(chat_id, text, **kwargs)
+            await bot.send_message(chat_id, _nc_i18n.t(text), **kwargs)
             return True
         except Exception as e2:
             log.warning(f"Send retry failed | chat={chat_id} | err={e2}")
@@ -7935,7 +7959,7 @@ async def _safe_send(bot, chat_id: int, text: str, lang: str = None, **kwargs) -
         log.warning(f"NetworkError, retry once | chat={chat_id} | err={e}")
         await asyncio.sleep(2)
         try:
-            await bot.send_message(chat_id, text, **kwargs)
+            await bot.send_message(chat_id, _nc_i18n.t(text), **kwargs)
             return True
         except Exception as e2:
             log.warning(f"Send retry failed | chat={chat_id} | err={e2}")
@@ -8683,7 +8707,7 @@ async def _send_live_notice(bot, chat_id: int, text: str, **kwargs) -> bool:
         return await _safe_send(bot, chat_id, text, **kwargs)
     for versuch in (1, 2):
         try:
-            await bot.send_message(chat_id, text, message_thread_id=tid, **kwargs)
+            await bot.send_message(chat_id, _nc_i18n.t(text), message_thread_id=tid, **kwargs)
             return True
         except BadRequest as e:
             if versuch == 2 or "thread" not in str(e).lower():
@@ -18015,7 +18039,7 @@ class KickModerator:
                 pool = [f"🖤 Danke für den Support, {user}!",
                         f"⚡ {user}, danke dir — genau solche Leute halten das hier am Laufen!",
                         f"🖤 Support von {user} — gesehen und gefeiert, danke!"]
-            await self.send_message(_rnd.choice(pool), session=session)
+            await self.send_message(_nc_i18n.t(_rnd.choice(pool)), session=session)
         except Exception as e:
             log.debug("Kick-Dank fehlgeschlagen: %s", e)
 
@@ -18303,7 +18327,7 @@ class KickModerator:
                       int((_time_mod.monotonic() - _t0) * 1000), bool(text), err)
         if err or not text:
             return
-        ok, _ = await self.send_message(f"@{sender} {text.strip()}", session)
+        ok, _ = await self.send_message(_nc_i18n.t(f"@{sender} {text.strip()}"), session)
         if ok:
             self.stats["replied"] += 1
             _modlog("reply", "bot", text.strip(), {"to": sender})
@@ -18485,7 +18509,7 @@ class KickModerator:
                 # beendet die meisten Faelle, ohne jemanden stummzuschalten.
                 action, mins = self._escalation_decide(user_id)
                 if action == "warn":
-                    await self.send_message(_mod_warn_text(sender, sp), session)
+                    await self.send_message(_nc_i18n.t(_mod_warn_text(sender, sp)), session)
                     self.stats["moderated"] += 1
                     _modlog("warn", "auto-mod-kick", content,
                             {"user": sender, "reason": sp, "cat": "spam"})
@@ -18503,7 +18527,7 @@ class KickModerator:
                     "!momente", "!mem", "!erinnerung", "!damals")):
                 ans = await oracle_handle(sender, content)
                 if ans:
-                    await self.send_message(ans, session=session)
+                    await self.send_message(_nc_i18n.t(ans), session=session)
                 return
         except Exception as e:
             log.debug("oracle hook: %s", e)
@@ -18652,7 +18676,7 @@ class KickModerator:
             _ai_telemetry("Kick-Engage", 24, len(text or ""),
                           int((_time_mod.monotonic() - _te0) * 1000), bool(text), err)
             if text and not err:
-                await self.send_message(text.strip())
+                await self.send_message(_nc_i18n.t(text.strip()))
 
     async def start(self):
         if self.running:
@@ -18666,7 +18690,7 @@ class KickModerator:
         # Begrüßung in den Chat (optional)
         greet = (self.cfg.get("greeting") or "").strip()
         if greet:
-            _spawn(self.send_message(greet), name="mod-greet")
+            _spawn(self.send_message(_nc_i18n.t(greet)), name="mod-greet")
         return {"ok": True}
 
     async def stop(self):
@@ -18868,7 +18892,7 @@ async def _azrael_reaction_to_chats(text, source=""):
 
     if _KICK_MOD:
         try:
-            ok, err = await _KICK_MOD.send_message(msg)
+            ok, err = await _KICK_MOD.send_message(_nc_i18n.t(msg))
             (gesendet if ok else fehler).append(f"kick{'' if ok else f' ({err})'}")
         except Exception as e:
             fehler.append(f"kick ({e})")
@@ -19429,7 +19453,7 @@ async def _azrael_proactive_loop():
                                     last_proactive = now
                                     log.info("🦇 AZRAEL proaktiv (Co-Host): %s", line[:80])
                             else:
-                                await _KICK_MOD.send_message("🦇 " + line)
+                                await _KICK_MOD.send_message(_nc_i18n.t("🦇 " + line))
                                 if ORACLE_VOICE:
                                     _spawn(_piper_say(line[:220]), name="proactive-voice")
                                 last_proactive = now
@@ -20728,7 +20752,7 @@ def api_chat_send():
     if platform == "kick":
         if not _KICK_MOD:
             return jsonify(ok=False, error="Kick-Mod nicht verbunden"), 503
-        ok, err = _run_async_from_flask(_KICK_MOD.send_message(text), timeout=15)
+        ok, err = _run_async_from_flask(_KICK_MOD.send_message(_nc_i18n.t(text)), timeout=15)
         return jsonify(ok=bool(ok), error=err)
     if platform == "twitch":
         fn = _TWITCH_SEND.get("fn")
@@ -20759,7 +20783,7 @@ def api_chat_send():
         # bleiben fuer den Discord-Announce-Aufrufer erhalten).
         done, fails, results = [], [], {}
         if _KICK_MOD:
-            ok, err = _run_async_from_flask(_KICK_MOD.send_message(text), timeout=15)
+            ok, err = _run_async_from_flask(_KICK_MOD.send_message(_nc_i18n.t(text)), timeout=15)
             results["kick"] = {"ok": bool(ok), "error": err}
             (done if ok else fails).append("kick" + (f" ({err})" if err else ""))
         else:
@@ -21151,7 +21175,7 @@ def api_kick_sendcheck():
         return jsonify(out)
     txt = (request.get_json(silent=True) or {}).get("text") or "Azrael Sentinel · Sendetest"
     try:
-        sent, err = _run_async_from_flask(mod.send_message(str(txt)[:120]), timeout=30)
+        sent, err = _run_async_from_flask(mod.send_message(_nc_i18n.t(str(txt)[:120])), timeout=30)
     except Exception as e:
         out.update(ok=False, error=str(e)[:160])
         return jsonify(out)
@@ -21302,7 +21326,7 @@ def api_azrael_react():
     if err or not text:
         return jsonify(ok=False, error=err or "keine Antwort (Ollama erreichbar?)"), 502
     if d.get("push_chat"):
-        try: _run_async_from_flask(_KICK_MOD.send_message(f"AZRAEL: {text}"), timeout=15)
+        try: _run_async_from_flask(_KICK_MOD.send_message(_nc_i18n.t(f"AZRAEL: {text}")), timeout=15)
         except Exception: pass
     return jsonify(ok=True, reaction=text)
 
@@ -21593,7 +21617,7 @@ def api_kickmod_say():
     if not msg:
         return jsonify(ok=False, error="leere Nachricht"), 400
     try:
-        ok, err = _run_async_from_flask(_KICK_MOD.send_message(msg), timeout=20)
+        ok, err = _run_async_from_flask(_KICK_MOD.send_message(_nc_i18n.t(msg)), timeout=20)
         return jsonify(ok=ok, error=err), (200 if ok else 502)
     except RuntimeError as e:
         if _loop_not_ready(e):
@@ -23830,6 +23854,27 @@ async def _discord_run_once():
 
     client = discord.Client(intents=intents)
     tree = app_commands.CommandTree(client)
+
+    # v4.1-W7: die Sprache dieses Discord-Benutzers fuer diese Anfrage merken.
+    #
+    # interaction_check laeuft vor JEDEM Slash-Befehl — das ist der einzige
+    # Punkt, an dem man alle 46 erwischt, ohne 46 Dekoratoren anzufassen.
+    # discord.py liefert die Sprache als Locale-Objekt ("de", "en-US", …);
+    # str() darauf ergibt das Kuerzel, das nc.i18n normalisiert.
+    #
+    # Der Rueckgabewert MUSS True sein: interaction_check ist eigentlich eine
+    # Berechtigungspruefung. Gaebe diese Funktion False oder wuerfe sie, waere
+    # jeder Slash-Befehl im Discord tot — die Spracherkennung haette den Bot
+    # abgeschaltet. Deshalb faengt sie alles und antwortet immer True.
+    async def _disc_sprache_setzen(inter):
+        try:
+            _nc_i18n.sprache_setzen(str(getattr(inter, "locale", "") or ""))
+        except Exception as e:
+            log.debug("Spracherkennung (Discord): %s", e)
+        return True
+
+    tree.interaction_check = _disc_sprache_setzen
+
     _DISCORD_CLIENT = client
     # F96: ERROR-Logs aller Logger (bot, TikTokBot, Flask) in die Discord-Queue.
     # Am ROOT-Logger, damit auch Flask-Exceptions (log_exception) mitkommen.
@@ -23855,7 +23900,7 @@ async def _discord_run_once():
     async def _guard(inter) -> bool:
         if _is_admin(inter):
             return True
-        await inter.response.send_message("⛔ Nur Admins (oder konfigurierte Admin-Rolle).", ephemeral=True)
+        await inter.response.send_message(_nc_i18n.t("⛔ Nur Admins (oder konfigurierte Admin-Rolle)."), ephemeral=True)
         return False
 
     # ───────── INFO / Telegram-Parität ─────────
@@ -23869,9 +23914,9 @@ async def _discord_run_once():
             act = _RESTREAM_ACTIVE or {}
             rs = ("@" + str(act["user"])) if act.get("user") else "— inaktiv"
             await inter.response.send_message(
-                f"**Azrael Sentinel**\n• Trackings: `{at}`   • Live: `{ln}`   • Recordings: `{rc}`\n• Restream: `{rs}`")
+                _nc_i18n.t(f"**Azrael Sentinel**\n• Trackings: `{at}`   • Live: `{ln}`   • Recordings: `{rc}`\n• Restream: `{rs}`"))
         except Exception as e:
-            await inter.response.send_message(f"Fehler: {e}", ephemeral=True)
+            await inter.response.send_message(_nc_i18n.t(f"Fehler: {e}"), ephemeral=True)
 
     @tree.command(name="tracklist", description=_nc_i18n.t("Getrackte TikTok-User dieses Servers"))
     async def _c_tracklist(inter):
@@ -23881,12 +23926,12 @@ async def _discord_run_once():
                 rows = conn.execute("SELECT username, last_live FROM trackings WHERE group_id=? "
                                     "ORDER BY username", (gid,)).fetchall()
             if not rows:
-                await inter.response.send_message("Keine Trackings auf diesem Server. `/track <user>`", ephemeral=True)
+                await inter.response.send_message(_nc_i18n.t("Keine Trackings auf diesem Server. `/track <user>`"), ephemeral=True)
                 return
             lines = [("🔴 " if r["last_live"] else "⚪ ") + "@" + r["username"] for r in rows]
-            await inter.response.send_message("**Trackings**\n" + "\n".join(lines[:50]))
+            await inter.response.send_message(_nc_i18n.t("**Trackings**\n" + "\n".join(lines[:50])))
         except Exception as e:
-            await inter.response.send_message(f"Fehler: {e}", ephemeral=True)
+            await inter.response.send_message(_nc_i18n.t(f"Fehler: {e}"), ephemeral=True)
 
     @tree.command(name="track", description=_nc_i18n.t("TikTok-User tracken"))
     @app_commands.describe(username="TikTok-Username (ohne @)")
@@ -23894,7 +23939,7 @@ async def _discord_run_once():
         gid = DISCORD_TRACK_GROUP_ID or (inter.guild_id or 0)   # B63: Schalter wurde ignoriert
         u = username.strip().lstrip("@")
         if not u:
-            await inter.response.send_message("Username fehlt.", ephemeral=True)
+            await inter.response.send_message(_nc_i18n.t("Username fehlt."), ephemeral=True)
             return
         try:
             ok = await asyncio.to_thread(add_tracking, gid, u, inter.user.id)
@@ -23904,7 +23949,7 @@ async def _discord_run_once():
                                        (gid, u)).fetchone()
                 if row:
                     _NEXT_CHECK_AT[row["id"]] = 0   # sofort prüfen statt aufs Intervall warten
-                await inter.response.send_message(f"✅ Tracke @{u} — erster Check läuft.")
+                await inter.response.send_message(_nc_i18n.t(f"✅ Tracke @{u} — erster Check läuft."))
             else:
                 # B63: Ehrliches Feedback — 'schon getrackt' stimmte nur bei Duplikat
                 # in DIESER Gruppe. Quota-Ablehnung sah identisch aus → User glaubte
@@ -23913,13 +23958,13 @@ async def _discord_run_once():
                     here = conn.execute("SELECT 1 FROM trackings WHERE group_id=? AND username=?",
                                         (gid, u)).fetchone()
                 if here:
-                    await inter.response.send_message(f"ℹ @{u} ist hier schon getrackt.")
+                    await inter.response.send_message(_nc_i18n.t(f"ℹ @{u} ist hier schon getrackt."))
                 else:
                     await inter.response.send_message(
                         f"⛔ @{u} NICHT angelegt — Tracking-Limit erreicht "
                         f"(MAX_TRACKINGS_PER_CHAT={MAX_TRACKINGS_PER_CHAT}).", ephemeral=True)
         except Exception as e:
-            await inter.response.send_message(f"Fehler: {e}", ephemeral=True)
+            await inter.response.send_message(_nc_i18n.t(f"Fehler: {e}"), ephemeral=True)
 
     @tree.command(name="untrack", description=_nc_i18n.t("TikTok-User nicht mehr tracken"))
     @app_commands.describe(username="TikTok-Username (ohne @)")
@@ -23928,9 +23973,9 @@ async def _discord_run_once():
         u = username.strip().lstrip("@")
         try:
             await asyncio.to_thread(_nc_trackingdb.remove_tracking, gid, u)
-            await inter.response.send_message(f"🗑 @{u} wird nicht mehr getrackt")
+            await inter.response.send_message(_nc_i18n.t(f"🗑 @{u} wird nicht mehr getrackt"))
         except Exception as e:
-            await inter.response.send_message(f"Fehler: {e}", ephemeral=True)
+            await inter.response.send_message(_nc_i18n.t(f"Fehler: {e}"), ephemeral=True)
 
     @tree.command(name="ai", description=_nc_i18n.t("AZRAEL / KI fragen (Text oder Sprachnachricht)"))
     @app_commands.describe(prompt="Deine Frage")
@@ -23939,18 +23984,18 @@ async def _discord_run_once():
         try:
             content, err = await azrael_chat("Discord /ai", prompt, timeout=30)   # F90: eine KI-Identität
             if err == "budget":
-                await inter.followup.send("⏳ AZRAEL ist gerade ausgelastet — gleich nochmal.")
+                await inter.followup.send(_nc_i18n.t("⏳ AZRAEL ist gerade ausgelastet — gleich nochmal."))
             elif err or not content:
-                await inter.followup.send(f"KI nicht verfügbar ({err or 'leer'}).")
+                await inter.followup.send(_nc_i18n.t(f"KI nicht verfügbar ({err or 'leer'})."))
             else:
-                await inter.followup.send(content[:1900])
+                await inter.followup.send(_nc_i18n.t(content[:1900]))
         except Exception as e:
-            await inter.followup.send(f"Fehler: {e}")
+            await inter.followup.send(_nc_i18n.t(f"Fehler: {e}"))
 
     @tree.command(name="restream_status", description=_nc_i18n.t("Restream-Status"))
     async def _c_restream_status(inter):
         act = _RESTREAM_ACTIVE or {}
-        await inter.response.send_message("Restream: " + (("@" + str(act["user"])) if act.get("user") else "— inaktiv"))
+        await inter.response.send_message(_nc_i18n.t("Restream: " + (("@" + str(act["user"])) if act.get("user") else "— inaktiv")))
 
     # ───────── SERVER-VERWALTUNG (Admin) ─────────
     @tree.command(name="create_channel", description=_nc_i18n.t("Text-Channel anlegen (optional in Kategorie)"))
@@ -23967,7 +24012,7 @@ async def _discord_run_once():
             await inter.response.send_message(f"✅ Channel {ch.mention} angelegt"
                                               + (f" in **{cat.name}**" if cat else ""))
         except Exception as e:
-            await inter.response.send_message(f"Fehler: {e}", ephemeral=True)
+            await inter.response.send_message(_nc_i18n.t(f"Fehler: {e}"), ephemeral=True)
 
     @tree.command(name="create_voice", description=_nc_i18n.t("Voice-Channel anlegen"))
     @app_commands.describe(name="Name", category="optional: Kategorie")
@@ -23980,9 +24025,9 @@ async def _discord_run_once():
                 cat = discord.utils.get(inter.guild.categories, name=category) or \
                     await inter.guild.create_category(category)
             ch = await inter.guild.create_voice_channel(name, category=cat)
-            await inter.response.send_message(f"✅ Voice-Channel **{ch.name}** angelegt")
+            await inter.response.send_message(_nc_i18n.t(f"✅ Voice-Channel **{ch.name}** angelegt"))
         except Exception as e:
-            await inter.response.send_message(f"Fehler: {e}", ephemeral=True)
+            await inter.response.send_message(_nc_i18n.t(f"Fehler: {e}"), ephemeral=True)
 
     @tree.command(name="create_category", description=_nc_i18n.t("Kategorie anlegen"))
     @app_commands.describe(name="Kategorie-Name")
@@ -23991,9 +24036,9 @@ async def _discord_run_once():
             return
         try:
             cat = await inter.guild.create_category(name)
-            await inter.response.send_message(f"✅ Kategorie **{cat.name}** angelegt")
+            await inter.response.send_message(_nc_i18n.t(f"✅ Kategorie **{cat.name}** angelegt"))
         except Exception as e:
-            await inter.response.send_message(f"Fehler: {e}", ephemeral=True)
+            await inter.response.send_message(_nc_i18n.t(f"Fehler: {e}"), ephemeral=True)
 
     @tree.command(name="create_role", description=_nc_i18n.t("Rolle / Nutzergruppe anlegen"))
     @app_commands.describe(name="Rollenname", color="optional: Hex (z.B. 00ff9c)", mentionable="erwähnbar?")
@@ -24008,9 +24053,9 @@ async def _discord_run_once():
                 except Exception:
                     pass
             role = await inter.guild.create_role(**kwargs)
-            await inter.response.send_message(f"✅ Rolle {role.mention} angelegt")
+            await inter.response.send_message(_nc_i18n.t(f"✅ Rolle {role.mention} angelegt"))
         except Exception as e:
-            await inter.response.send_message(f"Fehler: {e}", ephemeral=True)
+            await inter.response.send_message(_nc_i18n.t(f"Fehler: {e}"), ephemeral=True)
 
     @tree.command(name="create_group", description=_nc_i18n.t("Nutzergruppe (= Rolle) anlegen"))
     @app_commands.describe(name="Gruppenname")
@@ -24019,9 +24064,9 @@ async def _discord_run_once():
             return
         try:
             role = await inter.guild.create_role(name=name, mentionable=True)
-            await inter.response.send_message(f"✅ Gruppe {role.mention} angelegt")
+            await inter.response.send_message(_nc_i18n.t(f"✅ Gruppe {role.mention} angelegt"))
         except Exception as e:
-            await inter.response.send_message(f"Fehler: {e}", ephemeral=True)
+            await inter.response.send_message(_nc_i18n.t(f"Fehler: {e}"), ephemeral=True)
 
     @tree.command(name="assign_role", description=_nc_i18n.t("Rolle/Gruppe einem Mitglied geben"))
     @app_commands.describe(member="Mitglied", role="Rolle/Gruppe")
@@ -24030,9 +24075,9 @@ async def _discord_run_once():
             return
         try:
             await member.add_roles(role)
-            await inter.response.send_message(f"✅ {member.mention} → {role.mention}")
+            await inter.response.send_message(_nc_i18n.t(f"✅ {member.mention} → {role.mention}"))
         except Exception as e:
-            await inter.response.send_message(f"Fehler: {e}", ephemeral=True)
+            await inter.response.send_message(_nc_i18n.t(f"Fehler: {e}"), ephemeral=True)
 
     @tree.command(name="remove_role", description=_nc_i18n.t("Rolle/Gruppe entfernen"))
     @app_commands.describe(member="Mitglied", role="Rolle/Gruppe")
@@ -24041,9 +24086,9 @@ async def _discord_run_once():
             return
         try:
             await member.remove_roles(role)
-            await inter.response.send_message(f"✅ {role.mention} von {member.mention} entfernt")
+            await inter.response.send_message(_nc_i18n.t(f"✅ {role.mention} von {member.mention} entfernt"))
         except Exception as e:
-            await inter.response.send_message(f"Fehler: {e}", ephemeral=True)
+            await inter.response.send_message(_nc_i18n.t(f"Fehler: {e}"), ephemeral=True)
 
     @tree.command(name="set_channel_perms", description=_nc_i18n.t("Rechte einer Rolle für einen Channel setzen"))
     @app_commands.describe(channel="Channel", role="Rolle", view="ansehen", send="schreiben")
@@ -24054,9 +24099,9 @@ async def _discord_run_once():
         try:
             await channel.set_permissions(role, view_channel=view, send_messages=send)
             await inter.response.send_message(
-                f"✅ {role.mention} in {channel.mention}: ansehen={view}, schreiben={send}")
+                _nc_i18n.t(f"✅ {role.mention} in {channel.mention}: ansehen={view}, schreiben={send}"))
         except Exception as e:
-            await inter.response.send_message(f"Fehler: {e}", ephemeral=True)
+            await inter.response.send_message(_nc_i18n.t(f"Fehler: {e}"), ephemeral=True)
 
     @tree.command(name="kick", description=_nc_i18n.t("Mitglied kicken"))
     @app_commands.describe(member="Mitglied", reason="Grund (optional)")
@@ -24065,9 +24110,9 @@ async def _discord_run_once():
             return
         try:
             await member.kick(reason=reason)
-            await inter.response.send_message(f"👢 {member} gekickt" + (f" — {reason}" if reason else ""))
+            await inter.response.send_message(_nc_i18n.t(f"👢 {member} gekickt" + (f" — {reason}" if reason else "")))
         except Exception as e:
-            await inter.response.send_message(f"Fehler: {e}", ephemeral=True)
+            await inter.response.send_message(_nc_i18n.t(f"Fehler: {e}"), ephemeral=True)
 
     @tree.command(name="ban", description=_nc_i18n.t("Mitglied bannen"))
     @app_commands.describe(member="Mitglied", reason="Grund (optional)")
@@ -24076,9 +24121,9 @@ async def _discord_run_once():
             return
         try:
             await member.ban(reason=reason, delete_message_days=0)
-            await inter.response.send_message(f"🔨 {member} gebannt" + (f" — {reason}" if reason else ""))
+            await inter.response.send_message(_nc_i18n.t(f"🔨 {member} gebannt" + (f" — {reason}" if reason else "")))
         except Exception as e:
-            await inter.response.send_message(f"Fehler: {e}", ephemeral=True)
+            await inter.response.send_message(_nc_i18n.t(f"Fehler: {e}"), ephemeral=True)
 
     @tree.command(name="timeout", description=_nc_i18n.t("Mitglied stummschalten (Minuten)"))
     @app_commands.describe(member="Mitglied", minutes="Minuten", reason="Grund (optional)")
@@ -24089,9 +24134,9 @@ async def _discord_run_once():
             import datetime as _dt
             until = _dt.datetime.now(_dt.timezone.utc) + _dt.timedelta(minutes=max(1, minutes))
             await member.timeout(until, reason=reason)
-            await inter.response.send_message(f"🔇 {member} für {minutes} min stummgeschaltet")
+            await inter.response.send_message(_nc_i18n.t(f"🔇 {member} für {minutes} min stummgeschaltet"))
         except Exception as e:
-            await inter.response.send_message(f"Fehler: {e}", ephemeral=True)
+            await inter.response.send_message(_nc_i18n.t(f"Fehler: {e}"), ephemeral=True)
 
     @tree.command(name="purge", description=_nc_i18n.t("Letzte N Nachrichten im Channel löschen (max 100)"))
     @app_commands.describe(count="Anzahl")
@@ -24101,10 +24146,10 @@ async def _discord_run_once():
         try:
             await inter.response.defer(ephemeral=True)
             deleted = await inter.channel.purge(limit=max(1, min(100, count)))
-            await inter.followup.send(f"🧹 {len(deleted)} Nachrichten gelöscht", ephemeral=True)
+            await inter.followup.send(_nc_i18n.t(f"🧹 {len(deleted)} Nachrichten gelöscht"), ephemeral=True)
         except Exception as e:
             try:
-                await inter.followup.send(f"Fehler: {e}", ephemeral=True)
+                await inter.followup.send(_nc_i18n.t(f"Fehler: {e}"), ephemeral=True)
             except Exception:
                 pass
 
@@ -24255,7 +24300,7 @@ async def _discord_run_once():
                 f"Nächster Schritt: `/setup_targets` legt pro getracktem User eigene Channels an.",
                 ephemeral=True)
         except Exception as e:
-            await inter.followup.send(f"Fehler: {e}", ephemeral=True)
+            await inter.followup.send(_nc_i18n.t(f"Fehler: {e}"), ephemeral=True)
 
     @tree.command(name="setup_targets", description=_nc_i18n.t("Pro getracktem User: Clips-, Chat- und Voice-Channel anlegen"))
     async def _c_setup_targets(inter):
@@ -24265,14 +24310,14 @@ async def _discord_run_once():
         try:
             users = _tracked_usernames(DISCORD_TARGET_CAP)
             if not users:
-                await inter.followup.send("Keine getrackten User gefunden.", ephemeral=True); return
+                await inter.followup.send(_nc_i18n.t("Keine getrackten User gefunden."), ephemeral=True); return
             made = await _provision_user_channels(inter.guild, users)
             await inter.followup.send(
                 f"✅ {len(made)} neue User-Bereiche angelegt (von {len(users)} getrackten · Cap {DISCORD_TARGET_CAP}).\n"
                 + (", ".join(made) if made else "alle bereits vorhanden."),
                 ephemeral=True)
         except Exception as e:
-            await inter.followup.send(f"Fehler: {e}", ephemeral=True)
+            await inter.followup.send(_nc_i18n.t(f"Fehler: {e}"), ephemeral=True)
 
     @tree.command(name="rank", description=_nc_i18n.t("Dein Level und Rang anzeigen"))
     async def _c_rank(inter):
@@ -24286,7 +24331,7 @@ async def _discord_run_once():
                 f"🏅 **{inter.user.display_name}** · Level **{lvl}** · Rang **{_rank_for_level(lvl) or '—'}**\n"
                 f"XP: {xp} / {need} (nächstes Level)", ephemeral=True)
         except Exception as e:
-            await inter.response.send_message(f"Fehler: {e}", ephemeral=True)
+            await inter.response.send_message(_nc_i18n.t(f"Fehler: {e}"), ephemeral=True)
 
     @tree.command(name="leaderboard", description=_nc_i18n.t("Top-10 der Community nach XP"))
     async def _c_leaderboard(inter):
@@ -24295,15 +24340,15 @@ async def _discord_run_once():
                 rows = conn.execute("SELECT user_id, xp FROM discord_xp WHERE guild_id=? "
                                     "ORDER BY xp DESC LIMIT 10", (inter.guild_id,)).fetchall()
             if not rows:
-                await inter.response.send_message("Noch keine XP-Daten.", ephemeral=True); return
+                await inter.response.send_message(_nc_i18n.t("Noch keine XP-Daten."), ephemeral=True); return
             lines = []
             for i, r in enumerate(rows, 1):
                 m = inter.guild.get_member(r["user_id"])
                 nm = m.display_name if m else f"User {r['user_id']}"
                 lines.append(f"`{i:2}.` **{nm}** — Lvl {_xp_to_level(r['xp'])} ({r['xp']} XP)")
-            await inter.response.send_message("🏆 **Leaderboard**\n" + "\n".join(lines))
+            await inter.response.send_message(_nc_i18n.t("🏆 **Leaderboard**\n" + "\n".join(lines)))
         except Exception as e:
-            await inter.response.send_message(f"Fehler: {e}", ephemeral=True)
+            await inter.response.send_message(_nc_i18n.t(f"Fehler: {e}"), ephemeral=True)
 
     # ───────── F102: COMMUNITY — Daily-Streak, Profil, AZRAEL-Q&A, Events ─────────
     @tree.command(name="daily", description=_nc_i18n.t("Tägliche XP-Belohnung abholen (Streak-Bonus!)"))
@@ -24322,7 +24367,7 @@ async def _discord_run_once():
                         last = None
                 if last == today:
                     await inter.response.send_message(
-                        "⏳ Heute schon abgeholt — komm morgen wieder für deinen Streak-Bonus!",
+                        _nc_i18n.t("⏳ Heute schon abgeholt — komm morgen wieder für deinen Streak-Bonus!"),
                         ephemeral=True)
                     return
                 # Streak: gestern geclaimt → +1, sonst Reset auf 1
@@ -24360,7 +24405,7 @@ async def _discord_run_once():
                 except Exception:
                     pass
         except Exception as e:
-            await inter.response.send_message(f"Fehler: {e}", ephemeral=True)
+            await inter.response.send_message(_nc_i18n.t(f"Fehler: {e}"), ephemeral=True)
 
     @tree.command(name="profile", description=_nc_i18n.t("Dein Community-Profil: Level, Rang, Streak, Rang-Platz"))
     async def _c_profile(inter, member: discord.Member = None):
@@ -24390,7 +24435,7 @@ async def _discord_run_once():
                 emb.set_thumbnail(url=target.display_avatar.url)
             await inter.response.send_message(embed=emb)
         except Exception as e:
-            await inter.response.send_message(f"Fehler: {e}", ephemeral=True)
+            await inter.response.send_message(_nc_i18n.t(f"Fehler: {e}"), ephemeral=True)
 
     @tree.command(name="ask", description=_nc_i18n.t("AZRAEL etwas fragen — der KI-Community-Assistent"))
     async def _c_ask(inter, frage: str):
@@ -24413,14 +24458,14 @@ async def _discord_run_once():
                               "TikTok-Restream-Servers. Antworte hilfreich, freundlich, kurz "
                               "(max 4 Sätze), auf Deutsch. Kennst du etwas nicht, sag es ehrlich."))
             if err or not txt:
-                await inter.followup.send(f"⚠ AZRAEL konnte nicht antworten ({err or 'leer'}).")
+                await inter.followup.send(_nc_i18n.t(f"⚠ AZRAEL konnte nicht antworten ({err or 'leer'})."))
                 return
             emb = discord.Embed(description=txt[:3900], color=0x00e5ff)
             emb.set_author(name="🦇 AZRAEL")
             emb.set_footer(text=f"gefragt von {inter.user.display_name}")
             await inter.followup.send(embed=emb)
         except Exception as e:
-            await inter.followup.send(f"Fehler: {e}")
+            await inter.followup.send(_nc_i18n.t(f"Fehler: {e}"))
 
     @tree.command(name="event", description=_nc_i18n.t("Community-Event ankündigen (Admin) — mit Countdown"))
     async def _c_event(inter, titel: str, wann: str, beschreibung: str = ""):
@@ -24444,7 +24489,7 @@ async def _discord_run_once():
                         continue
             if when is None:
                 await inter.response.send_message(
-                    "⚠ Zeit nicht verstanden. Formate: `2026-07-10 20:00`, `+2h`, `+30m`, `+1d`.",
+                    _nc_i18n.t("⚠ Zeit nicht verstanden. Formate: `2026-07-10 20:00`, `+2h`, `+30m`, `+1d`."),
                     ephemeral=True)
                 return
             with db_conn() as conn:
@@ -24459,11 +24504,11 @@ async def _discord_run_once():
             ev_ch = discord.utils.get(inter.guild.text_channels, name=DISCORD_EVENTS_CHANNEL)
             if ev_ch:
                 await ev_ch.send(content="@here 📢 Neues Event!", embed=emb)
-                await inter.response.send_message(f"✅ Event in #{DISCORD_EVENTS_CHANNEL} angekündigt.", ephemeral=True)
+                await inter.response.send_message(_nc_i18n.t(f"✅ Event in #{DISCORD_EVENTS_CHANNEL} angekündigt."), ephemeral=True)
             else:
                 await inter.response.send_message(embed=emb)
         except Exception as e:
-            await inter.response.send_message(f"Fehler: {e}", ephemeral=True)
+            await inter.response.send_message(_nc_i18n.t(f"Fehler: {e}"), ephemeral=True)
 
     @tree.command(name="events", description=_nc_i18n.t("Kommende Community-Events anzeigen"))
     async def _c_events(inter):
@@ -24473,7 +24518,7 @@ async def _discord_run_once():
                                     "WHERE guild_id=? AND done=0 ORDER BY starts_at LIMIT 10",
                                     (inter.guild_id,)).fetchall()
             if not rows:
-                await inter.response.send_message("📭 Keine kommenden Events. Admins: `/event`.", ephemeral=True)
+                await inter.response.send_message(_nc_i18n.t("📭 Keine kommenden Events. Admins: `/event`."), ephemeral=True)
                 return
             emb = discord.Embed(title="📅 Kommende Events", color=0xffb000)
             for r in rows:
@@ -24485,7 +24530,7 @@ async def _discord_run_once():
                 emb.add_field(name=r["title"], value=(r["description"] or "") + f"\n{when}", inline=False)
             await inter.response.send_message(embed=emb)
         except Exception as e:
-            await inter.response.send_message(f"Fehler: {e}", ephemeral=True)
+            await inter.response.send_message(_nc_i18n.t(f"Fehler: {e}"), ephemeral=True)
 
     # ───────── BOT-STEUERUNG: recstatus (track/untrack/tracklist/ai existieren bereits oben) ─────────
     @tree.command(name="recstatus", description=_nc_i18n.t("Aktuell laufende Aufnahmen"))
@@ -24495,11 +24540,11 @@ async def _discord_run_once():
                 rows = conn.execute("SELECT username, output_file FROM trackings WHERE recording=1 "
                                     "ORDER BY username").fetchall()
             if not rows:
-                await inter.response.send_message("⚫ Keine aktiven Aufnahmen.", ephemeral=True); return
+                await inter.response.send_message(_nc_i18n.t("⚫ Keine aktiven Aufnahmen."), ephemeral=True); return
             lines = [f"🔴 @{r['username']}" + (f" — `{os.path.basename(r['output_file'])}`" if r["output_file"] else "") for r in rows]
-            await inter.response.send_message(f"**Aktive Aufnahmen ({len(rows)})**\n" + "\n".join(lines[:40]))
+            await inter.response.send_message(_nc_i18n.t(f"**Aktive Aufnahmen ({len(rows)})**\n" + "\n".join(lines[:40])))
         except Exception as e:
-            await inter.response.send_message(f"Fehler: {e}", ephemeral=True)
+            await inter.response.send_message(_nc_i18n.t(f"Fehler: {e}"), ephemeral=True)
 
     @tree.command(name="livenow", description=_nc_i18n.t("Welche getrackten User sind gerade live"))
     async def _c_livenow(inter):
@@ -24508,11 +24553,11 @@ async def _discord_run_once():
                 rows = conn.execute("SELECT username, recording FROM trackings WHERE last_live=1 "
                                     "ORDER BY username").fetchall()
             if not rows:
-                await inter.response.send_message("⚫ Gerade niemand live.", ephemeral=True); return
+                await inter.response.send_message(_nc_i18n.t("⚫ Gerade niemand live."), ephemeral=True); return
             lines = [("🔴 REC " if r["recording"] else "🟢 LIVE ") + f"@{r['username']}" for r in rows]
-            await inter.response.send_message(f"**Live jetzt ({len(rows)})**\n" + "\n".join(lines[:40]))
+            await inter.response.send_message(_nc_i18n.t(f"**Live jetzt ({len(rows)})**\n" + "\n".join(lines[:40])))
         except Exception as e:
-            await inter.response.send_message(f"Fehler: {e}", ephemeral=True)
+            await inter.response.send_message(_nc_i18n.t(f"Fehler: {e}"), ephemeral=True)
 
     @tree.command(name="clips", description=_nc_i18n.t("Letzte Highlight-Clips eines Users"))
     @app_commands.describe(username="TikTok-Username")
@@ -24520,15 +24565,15 @@ async def _discord_run_once():
         try:
             slug = _disc_slug(username)
             if not os.path.isdir(CLIP_DIR):
-                await inter.response.send_message("Keine Clips vorhanden.", ephemeral=True); return
+                await inter.response.send_message(_nc_i18n.t("Keine Clips vorhanden."), ephemeral=True); return
             files = [f for f in os.listdir(CLIP_DIR) if f.endswith(".mp4") and slug in f.lower()]
             files.sort(key=lambda f: os.path.getmtime(os.path.join(CLIP_DIR, f)), reverse=True)
             if not files:
-                await inter.response.send_message(f"Keine Clips für @{username.lstrip('@')}.", ephemeral=True); return
+                await inter.response.send_message(_nc_i18n.t(f"Keine Clips für @{username.lstrip('@')}."), ephemeral=True); return
             lines = [f"• `{f}` ({os.path.getsize(os.path.join(CLIP_DIR, f)) // 1048576} MB)" for f in files[:10]]
-            await inter.response.send_message(f"**Clips @{username.lstrip('@')} ({len(files)})**\n" + "\n".join(lines))
+            await inter.response.send_message(_nc_i18n.t(f"**Clips @{username.lstrip('@')} ({len(files)})**\n" + "\n".join(lines)))
         except Exception as e:
-            await inter.response.send_message(f"Fehler: {e}", ephemeral=True)
+            await inter.response.send_message(_nc_i18n.t(f"Fehler: {e}"), ephemeral=True)
 
     @tree.command(name="post_test", description=_nc_i18n.t("Test: Nachricht in den Channel eines getrackten Users posten"))
     @app_commands.describe(username="TikTok-Username")
@@ -24540,10 +24585,10 @@ async def _discord_run_once():
             u = username.lstrip("@")
             await _discord_post_user(u, f"✅ Test-Post für **@{u}** — der Upload-Channel funktioniert.", feed=None)
             await inter.followup.send(
-                f"Test-Nachricht an `#{_disc_slug(u)}-clips` gesendet (falls Channel existiert — sonst erst `/setup_targets`).",
+                _nc_i18n.t(f"Test-Nachricht an `#{_disc_slug(u)}-clips` gesendet (falls Channel existiert — sonst erst `/setup_targets`)."),
                 ephemeral=True)
         except Exception as e:
-            await inter.followup.send(f"Fehler: {e}", ephemeral=True)
+            await inter.followup.send(_nc_i18n.t(f"Fehler: {e}"), ephemeral=True)
 
     @tree.command(name="help", description=_nc_i18n.t("Alle Bot-Befehle anzeigen"))
     async def _c_help(inter):
@@ -24571,9 +24616,9 @@ async def _discord_run_once():
                 role = await inter.guild.create_role(name=rname, mentionable=True,
                                                      colour=discord.Colour(0x00e5ff), reason="Streamer-Notify")
             await inter.user.add_roles(role, reason="follow")
-            await inter.response.send_message(f"🔔 Du wirst gepingt wenn **@{u}** live geht.", ephemeral=True)
+            await inter.response.send_message(_nc_i18n.t(f"🔔 Du wirst gepingt wenn **@{u}** live geht."), ephemeral=True)
         except Exception as e:
-            await inter.response.send_message(f"Fehler: {e}", ephemeral=True)
+            await inter.response.send_message(_nc_i18n.t(f"Fehler: {e}"), ephemeral=True)
 
     @tree.command(name="unfollow", description=_nc_i18n.t("Live-Pings für einen Streamer abbestellen"))
     @app_commands.describe(username="TikTok-Username")
@@ -24582,9 +24627,9 @@ async def _discord_run_once():
             role = discord.utils.get(inter.guild.roles, name=f"🔔 {_disc_slug(username.lstrip('@'))}")
             if role and role in inter.user.roles:
                 await inter.user.remove_roles(role, reason="unfollow")
-            await inter.response.send_message(f"🔕 Keine Live-Pings mehr für **@{username.lstrip('@')}**.", ephemeral=True)
+            await inter.response.send_message(_nc_i18n.t(f"🔕 Keine Live-Pings mehr für **@{username.lstrip('@')}**."), ephemeral=True)
         except Exception as e:
-            await inter.response.send_message(f"Fehler: {e}", ephemeral=True)
+            await inter.response.send_message(_nc_i18n.t(f"Fehler: {e}"), ephemeral=True)
 
     @tree.command(name="stats", description=_nc_i18n.t("Statistik zu einem getrackten Streamer"))
     @app_commands.describe(username="TikTok-Username")
@@ -24604,9 +24649,9 @@ async def _discord_run_once():
                 if snap["follower_count"] is not None: lines.append(f"👥 Follower: **{snap['follower_count']:,}**")
                 if snap["heart_count"] is not None: lines.append(f"❤️ Herzen: **{snap['heart_count']:,}**")
                 if snap["video_count"] is not None: lines.append(f"🎥 Videos: **{snap['video_count']:,}**")
-            await inter.response.send_message("\n".join(lines))
+            await inter.response.send_message(_nc_i18n.t("\n".join(lines)))
         except Exception as e:
-            await inter.response.send_message(f"Fehler: {e}", ephemeral=True)
+            await inter.response.send_message(_nc_i18n.t(f"Fehler: {e}"), ephemeral=True)
 
     @tree.command(name="warn", description=_nc_i18n.t("Mitglied verwarnen (eskaliert ab 3 Verwarnungen zu Timeout)"))
     @app_commands.describe(member="Mitglied", reason="Grund")
@@ -24628,9 +24673,9 @@ async def _discord_run_once():
                     msg += f"\n⏳ Timeout {DISCORD_WARN_TIMEOUT_MIN}min (ab 3. Verwarnung)."
                 except Exception:
                     pass
-            await inter.response.send_message(msg)
+            await inter.response.send_message(_nc_i18n.t(msg))
         except Exception as e:
-            await inter.response.send_message(f"Fehler: {e}", ephemeral=True)
+            await inter.response.send_message(_nc_i18n.t(f"Fehler: {e}"), ephemeral=True)
 
     @tree.command(name="warnings", description=_nc_i18n.t("Verwarnungen eines Mitglieds anzeigen"))
     @app_commands.describe(member="Mitglied")
@@ -24641,11 +24686,11 @@ async def _discord_run_once():
                                     "WHERE guild_id=? AND user_id=? ORDER BY id DESC LIMIT 15",
                                     (inter.guild_id, member.id)).fetchall()
             if not rows:
-                await inter.response.send_message(f"{member.display_name} hat keine Verwarnungen.", ephemeral=True); return
+                await inter.response.send_message(_nc_i18n.t(f"{member.display_name} hat keine Verwarnungen."), ephemeral=True); return
             lines = [f"• {(r['created_at'] or '')[:10]} — {r['reason']} _(von {r['moderator']})_" for r in rows]
-            await inter.response.send_message(f"⚠️ **{member.display_name}** ({len(rows)})\n" + "\n".join(lines), ephemeral=True)
+            await inter.response.send_message(_nc_i18n.t(f"⚠️ **{member.display_name}** ({len(rows)})\n" + "\n".join(lines)), ephemeral=True)
         except Exception as e:
-            await inter.response.send_message(f"Fehler: {e}", ephemeral=True)
+            await inter.response.send_message(_nc_i18n.t(f"Fehler: {e}"), ephemeral=True)
 
     @tree.command(name="clearwarns", description=_nc_i18n.t("Alle Verwarnungen eines Mitglieds löschen"))
     @app_commands.describe(member="Mitglied")
@@ -24655,9 +24700,9 @@ async def _discord_run_once():
         try:
             with db_conn() as conn:
                 conn.execute("DELETE FROM discord_warns WHERE guild_id=? AND user_id=?", (inter.guild_id, member.id))
-            await inter.response.send_message(f"🧹 Verwarnungen von {member.mention} gelöscht.")
+            await inter.response.send_message(_nc_i18n.t(f"🧹 Verwarnungen von {member.mention} gelöscht."))
         except Exception as e:
-            await inter.response.send_message(f"Fehler: {e}", ephemeral=True)
+            await inter.response.send_message(_nc_i18n.t(f"Fehler: {e}"), ephemeral=True)
 
     @tree.command(name="topstreamers", description=_nc_i18n.t("Rangliste der Streamer nach Aufnahmen"))
     async def _c_topstreamers(inter):
@@ -24666,12 +24711,12 @@ async def _discord_run_once():
                 rows = conn.execute("SELECT username, COUNT(*) AS n FROM recordings "
                                     "GROUP BY username ORDER BY n DESC LIMIT 10").fetchall()
             if not rows:
-                await inter.response.send_message("Noch keine Aufnahmen.", ephemeral=True); return
+                await inter.response.send_message(_nc_i18n.t("Noch keine Aufnahmen."), ephemeral=True); return
             medals = ["🥇", "🥈", "🥉"] + ["🔹"] * 7
             lines = [f"{medals[i]} **@{r['username']}** — {r['n']} Aufnahmen" for i, r in enumerate(rows)]
-            await inter.response.send_message("🏆 **Top-Streamer**\n" + "\n".join(lines))
+            await inter.response.send_message(_nc_i18n.t("🏆 **Top-Streamer**\n" + "\n".join(lines)))
         except Exception as e:
-            await inter.response.send_message(f"Fehler: {e}", ephemeral=True)
+            await inter.response.send_message(_nc_i18n.t(f"Fehler: {e}"), ephemeral=True)
 
     @tree.command(name="clipoftheweek", description=_nc_i18n.t("Aktuell führender Clip-of-the-Week (⭐-Voting)"))
     async def _c_cotw(inter):
@@ -24679,11 +24724,11 @@ async def _discord_run_once():
         try:
             leader = await _clip_week_leader()
             if not leader or leader[1] <= 0:
-                await inter.followup.send("Noch keine Votes diese Woche. ⭐ die Clips zum Abstimmen!"); return
+                await inter.followup.send(_nc_i18n.t("Noch keine Votes diese Woche. ⭐ die Clips zum Abstimmen!")); return
             msg, votes, username = leader
-            await inter.followup.send(f"🏆 **Führend:** @{username} mit **{votes}** ⭐\n{msg.jump_url}")
+            await inter.followup.send(_nc_i18n.t(f"🏆 **Führend:** @{username} mit **{votes}** ⭐\n{msg.jump_url}"))
         except Exception as e:
-            await inter.followup.send(f"Fehler: {e}")
+            await inter.followup.send(_nc_i18n.t(f"Fehler: {e}"))
 
     _disc_clip_last = {}    # F84: user_id -> monotonic (Cooldown für /clip)
 
@@ -24693,7 +24738,7 @@ async def _discord_run_once():
         now = _time_mod.monotonic()
         wait = CLIP_CMD_COOLDOWN_S - (now - _disc_clip_last.get(inter.user.id, 0))
         if wait > 0:
-            await inter.response.send_message(f"⏳ Cooldown — versuch's in {int(wait)}s nochmal.", ephemeral=True)
+            await inter.response.send_message(_nc_i18n.t(f"⏳ Cooldown — versuch's in {int(wait)}s nochmal."), ephemeral=True)
             return
         u = username.strip().lstrip("@")
         try:
@@ -24703,7 +24748,7 @@ async def _discord_run_once():
                                         "GROUP BY username").fetchall()
                 names = [r["username"] for r in rows]
                 if not names:
-                    await inter.response.send_message("Gerade läuft keine Aufnahme.", ephemeral=True); return
+                    await inter.response.send_message(_nc_i18n.t("Gerade läuft keine Aufnahme."), ephemeral=True); return
                 if len(names) > 1:
                     await inter.response.send_message(
                         "Mehrere Aufnahmen laufen — gib den Streamer an: " +
@@ -24714,15 +24759,15 @@ async def _discord_run_once():
             out = await clip_moment(u, reason=f"/clip von {inter.user.display_name}",
                                     caption=f"Clip by {inter.user.display_name}")
             if out:
-                await inter.followup.send(f"✂ Clip von **@{u}** erstellt — landet gleich in **#{u}-clips**. ⭐ nicht vergessen!")
+                await inter.followup.send(_nc_i18n.t(f"✂ Clip von **@{u}** erstellt — landet gleich in **#{u}-clips**. ⭐ nicht vergessen!"))
             else:
                 await inter.followup.send(f"Kein Clip möglich für @{u} — keine laufende Aufnahme, "
                                           f"Aufnahme zu frisch oder Clip-Cooldown des Streamers aktiv.")
         except Exception as e:
             try:
-                await inter.followup.send(f"Fehler: {e}")
+                await inter.followup.send(_nc_i18n.t(f"Fehler: {e}"))
             except Exception:
-                await inter.response.send_message(f"Fehler: {e}", ephemeral=True)
+                await inter.response.send_message(_nc_i18n.t(f"Fehler: {e}"), ephemeral=True)
 
     @tree.command(name="botstats", description=_nc_i18n.t("Bot-Health: Uptime, Trackings, Aufnahmen, DB (Admin)"))
     async def _c_botstats(inter):
@@ -24753,13 +24798,13 @@ async def _discord_run_once():
             emb.timestamp = datetime.now(timezone.utc)
             await inter.response.send_message(embed=emb, ephemeral=True)
         except Exception as e:
-            await inter.response.send_message(f"Fehler: {e}", ephemeral=True)
+            await inter.response.send_message(_nc_i18n.t(f"Fehler: {e}"), ephemeral=True)
 
     @tree.command(name="sys_unpause", description=_nc_i18n.t("Auto-pausierte Quelle wieder aktivieren (Admin)"))
     @app_commands.describe(username="TikTok-Username der pausierten Quelle")
     async def _c_sys_unpause(inter, username: str):
         if not _is_admin(inter):
-            await inter.response.send_message("Nur Admins.", ephemeral=True); return
+            await inter.response.send_message(_nc_i18n.t("Nur Admins."), ephemeral=True); return
         await inter.response.defer(thinking=True)
         u = username.strip().lstrip("@")
         try:
@@ -24778,21 +24823,21 @@ async def _discord_run_once():
             await inter.followup.send(f"✅ @{u} reaktiviert." if n else
                                       f"@{u} war nicht pausiert.")
         except Exception as e:
-            await inter.followup.send(f"❌ Fehler: {e}")
+            await inter.followup.send(_nc_i18n.t(f"❌ Fehler: {e}"))
 
     @tree.command(name="sys_report", description=_nc_i18n.t("Azrael Sentinel Wochenreport (Brain, Markdown)"))
     async def _c_sys_report(inter):
         if not _is_admin(inter):
-            await inter.response.send_message("Nur Admins.", ephemeral=True); return
+            await inter.response.send_message(_nc_i18n.t("Nur Admins."), ephemeral=True); return
         await inter.response.defer(thinking=True)
         try:
             from brain import get_brain
             from brain import report as _brain_report
             md = await asyncio.to_thread(_brain_report.weekly, get_brain())
         except Exception as e:
-            await inter.followup.send(f"❌ Report fehlgeschlagen: {e}"); return
+            await inter.followup.send(_nc_i18n.t(f"❌ Report fehlgeschlagen: {e}")); return
         for i in range(0, len(md), 1900):
-            await inter.followup.send(md[i:i + 1900])
+            await inter.followup.send(_nc_i18n.t(md[i:i + 1900]))
 
     # ===================== V37-W-PAR: Telegram-Parität ======================
     # Die restlichen TG-Kommandos laufen über einen Shim, der die ORIGINAL-
@@ -24829,7 +24874,7 @@ async def _discord_run_once():
 
     async def _run_tg_handler(inter, fn, args_str=""):
         if not _is_admin(inter):
-            await inter.response.send_message("Nur Admins.", ephemeral=True); return
+            await inter.response.send_message(_nc_i18n.t("Nur Admins."), ephemeral=True); return
         await inter.response.defer(thinking=True)
         chunks = []
         async def _sink(t):
@@ -24851,7 +24896,7 @@ async def _discord_run_once():
         out = "\n\n".join(c for c in chunks if c) or "✅ Ausgeführt (keine Ausgabe)."
         out = re.sub(r"</?(?:b|i|code|pre|u|s)>", "**", out)     # grobes HTML→MD
         for i in range(0, len(out), 1900):
-            await inter.followup.send(out[i:i + 1900])
+            await inter.followup.send(_nc_i18n.t(out[i:i + 1900]))
 
     _PAR_CMDS = (
         ("sys_pause",    "Tracking pausieren (TG: /pause @user)",        pause_tracking,  True),
@@ -24915,7 +24960,7 @@ async def _discord_run_once():
             emb.timestamp = datetime.now(timezone.utc)
             await inter.response.send_message(embed=emb)
         except Exception as e:
-            await inter.response.send_message(f"Fehler: {e}", ephemeral=True)
+            await inter.response.send_message(_nc_i18n.t(f"Fehler: {e}"), ephemeral=True)
 
     # ───────── XP/Leveling via on_message ─────────
     _xp_cool = {}   # user_id -> monotonic (Anti-Spam: max 1× XP / 60s)
@@ -24936,7 +24981,7 @@ async def _discord_run_once():
                         pass
             txt = f"🎉 {message.author.mention} ist jetzt **Level {newlvl}**" + (f" — Rang **{rkname}**!" if rkname else "!")
             ch = discord.utils.get(message.guild.text_channels, name=DISCORD_LEVELUP_CHANNEL) if DISCORD_LEVELUP_CHANNEL else None
-            await (ch or message.channel).send(txt)
+            await (ch or message.channel).send(_nc_i18n.t(txt))
         except Exception as e:
             log.debug("Discord Level-Up: %s", e)
 
@@ -24957,10 +25002,10 @@ async def _discord_run_once():
             async with message.channel.typing():
                 text = await _whisper_transcribe(tmp_wav)
                 if not text:
-                    await message.reply("🎤 Konnte die Sprachnachricht nicht transkribieren.", mention_author=False)
+                    await message.reply(_nc_i18n.t("🎤 Konnte die Sprachnachricht nicht transkribieren."), mention_author=False)
                     return
                 txt, err = await azrael_chat("Telegram Voice", text, timeout=30)   # F90: eine KI-Identität
-            await message.reply(f"🎤 **Du:** {text[:300]}\n\n🤖 {(txt or err or '—')[:1700]}", mention_author=False)
+            await message.reply(_nc_i18n.t(f"🎤 **Du:** {text[:300]}\n\n🤖 {(txt or err or '—')[:1700]}"), mention_author=False)
         except Exception as e:
             log.debug("Discord Voice-AI: %s", e)
         finally:
@@ -25106,7 +25151,7 @@ async def _discord_run_once():
         if DISCORD_AUTOMOD_ACTION == "delete":
             try:
                 await message.delete()
-                w = await message.channel.send(f"{message.author.mention} Nachricht entfernt — {reason}.")
+                w = await message.channel.send(_nc_i18n.t(f"{message.author.mention} Nachricht entfernt — {reason}."))
                 await w.delete(delay=6)
                 return True
             except Exception:
@@ -25188,7 +25233,7 @@ async def _discord_run_once():
                     f"{message.author.display_name} schreibt im Discord: {q}",
                     extra_system="Antworte kurz (max 3 Sätze), locker, deutsch.")
             if txt and not err:
-                await message.reply(txt[:1900], mention_author=False)
+                await message.reply(_nc_i18n.t(txt[:1900]), mention_author=False)
                 _KICK_MOD.last_spoken = {"text": txt[:200], "ts": _time_mod.monotonic()}
         except Exception as e:
             log.debug("discord azrael reply: %s", e)
@@ -25396,7 +25441,7 @@ async def _discord_run_once():
                     await ch.send(content=member.mention, embed=emb)
                 except Exception:
                     try:
-                        await ch.send(f"👋 Willkommen {member.mention} in der Community!")
+                        await ch.send(_nc_i18n.t(f"👋 Willkommen {member.mention} in der Community!"))
                     except Exception:
                         pass
         except Exception as e:
@@ -25986,7 +26031,7 @@ async def _announce_loop():
                     results["kick"] = "offline"
                 else:
                     try:
-                        okk, err = await mod.send_message(txt)
+                        okk, err = await mod.send_message(_nc_i18n.t(txt))
                         results["kick"] = "sent" if okk else "error"
                         if not okk:
                             log.debug("Announce Kick: %s", err)
@@ -26284,7 +26329,7 @@ async def _community_events_loop():
                             conn.execute("UPDATE community_events SET announced=1 WHERE id=?", (r["id"],))
                         # Start erreicht → Go + erledigt
                         elif ch and mins <= 0:
-                            await ch.send(f"@here 🔴 **{r['title']}** geht JETZT los!")
+                            await ch.send(_nc_i18n.t(f"@here 🔴 **{r['title']}** geht JETZT los!"))
                             conn.execute("UPDATE community_events SET done=1 WHERE id=?", (r["id"],))
                         elif mins < -120:      # alte Leichen aufräumen
                             conn.execute("UPDATE community_events SET done=1 WHERE id=?", (r["id"],))
@@ -26318,7 +26363,7 @@ async def _error_channel_loop():
                         ch = await _ensure_error_channel(g)
                         if ch:
                             try:
-                                await ch.send(txt)
+                                await ch.send(_nc_i18n.t(txt))
                             except Exception:
                                 pass
         except Exception as e:
@@ -26404,7 +26449,7 @@ async def _discord_post_user(username, text, feed="live-feed", ping_notify=False
                 await ch.send(content=mention, embed=emb, view=view)
             else:
                 body = f"{mention} {text}" if mention else text
-                await ch.send(body[:1950])
+                await ch.send(_nc_i18n.t(body[:1950]))
         except Exception:
             pass
     try:
@@ -26449,7 +26494,7 @@ async def _discord_live_thread(username, opening=True):
                     th = await ch.create_thread(name=f"🔴 {username} · {datetime.now().strftime('%d.%m %H:%M')}",
                                                 type=discord.ChannelType.public_thread)
                     _disc_state_set(key, th.id)
-                    await th.send(f"💬 Diskussion zum Stream von **@{username}** — leg los!")
+                    await th.send(_nc_i18n.t(f"💬 Diskussion zum Stream von **@{username}** — leg los!"))
                 except Exception as e:
                     log.debug("live-thread open: %s", e)
             else:
@@ -26458,7 +26503,7 @@ async def _discord_live_thread(username, opening=True):
                     try:
                         th = ch.get_thread(int(tid)) or await _DISCORD_CLIENT.fetch_channel(int(tid))
                         if th:
-                            await th.send("⏹ Stream beendet — Thread wird archiviert.")
+                            await th.send(_nc_i18n.t("⏹ Stream beendet — Thread wird archiviert."))
                             await th.edit(archived=True)
                     except Exception as e:
                         log.debug("live-thread archive: %s", e)
@@ -27060,7 +27105,7 @@ async def _azrael_send_to(platform, msg, session=None):
             mod = globals().get("_KICK_MOD")
             if mod is None:
                 return "offline"
-            await mod.send_message(msg, session)
+            await mod.send_message(_nc_i18n.t(msg), session)
             return "sent"
         if platform == "twitch":
             fn = _TWITCH_SEND.get("fn")
@@ -27807,7 +27852,7 @@ async def brain_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 rows = _c.execute("SELECT who, ts FROM paused_sources "
                                   "ORDER BY ts DESC LIMIT 20").fetchall()
             if not rows:
-                await update.message.reply_text("✅ Keine auto-pausierten Quellen.")
+                await update.message.reply_text(_nc_i18n.t("✅ Keine auto-pausierten Quellen."))
                 return
             import datetime as _dt
             lines = []
@@ -27820,12 +27865,12 @@ async def brain_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "Auto-pausierte Quellen (zweite Chance nach " + retry + "h):\n"
                 + "\n".join(lines) + "\n\nReaktivieren: /brain unpause <user>")
         except Exception as e:
-            await update.message.reply_text(f"❌ Fehler: {e}")
+            await update.message.reply_text(_nc_i18n.t(f"❌ Fehler: {e}"))
         return
     if args and args[0].lower() in ("unpause", "reaktivieren", "resume"):
         u = (args[1].lstrip("@") if len(args) > 1 else "").strip()
         if not u:
-            await update.message.reply_text("Nutzung: /brain unpause <user>")
+            await update.message.reply_text(_nc_i18n.t("Nutzung: /brain unpause <user>"))
             return
         try:
             with db_conn() as conn:
@@ -27845,7 +27890,7 @@ async def brain_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"✅ @{u} reaktiviert." if n else
                 f"@{u} war nicht pausiert (nichts geändert).")
         except Exception as e:
-            await update.message.reply_text(f"❌ Fehler: {e}")
+            await update.message.reply_text(_nc_i18n.t(f"❌ Fehler: {e}"))
         return
     try:
         from brain import get_brain
@@ -27912,9 +27957,9 @@ async def brain_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         _r = res.get("result")
         txt = (_r.get("text") if isinstance(_r, dict) else None) or _r or "keine Antwort"
-        await update.message.reply_text(f"🧠 [{res.get('tier', '?')}] {str(txt)[:3500]}")
+        await update.message.reply_text(_nc_i18n.t(f"🧠 [{res.get('tier', '?')}] {str(txt)[:3500]}"))
     except Exception as e:
-        await update.message.reply_text(f"❌ Brain nicht verfügbar: {e}")
+        await update.message.reply_text(_nc_i18n.t(f"❌ Brain nicht verfügbar: {e}"))
 
 
 async def update_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -27935,15 +27980,15 @@ async def update_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         dry = mode not in ("jetzt", "apply", "now")
         if not dry and not UPDATE_ENABLED:
             await update.message.reply_text(
-                "🔒 Update-Schreiben ist abgeschaltet (<code>UPDATE_ENABLED=0</code>).",
+                _nc_i18n.t("🔒 Update-Schreiben ist abgeschaltet (<code>UPDATE_ENABLED=0</code>)."),
                 parse_mode=ParseMode.HTML)
             return
         res = _nc_updater.start_update(dry_run=dry)
         if not res.get("ok"):
-            await update.message.reply_text(f"⏳ {res.get('error')}")
+            await update.message.reply_text(_nc_i18n.t(f"⏳ {res.get('error')}"))
             return
         msg = await update.message.reply_text(
-            "🔄 <b>Trockenlauf laeuft …</b>" if dry else "⬇️ <b>Update laeuft …</b>",
+            _nc_i18n.t("🔄 <b>Trockenlauf laeuft …</b>" if dry else "⬇️ <b>Update laeuft …</b>"),
             parse_mode=ParseMode.HTML)
         # Fortschritt pollen statt blockieren: der Download darf eine Minute
         # dauern, und ein haengender Handler blockiert den Update-Dispatcher.
@@ -27966,11 +28011,11 @@ async def update_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         st = _nc_updater.job_state()
         r = st.get("result") or {}
         if not r:
-            await update.message.reply_text("⏱ Update laeuft noch — <code>/update</code> zeigt den Stand.",
+            await update.message.reply_text(_nc_i18n.t("⏱ Update laeuft noch — <code>/update</code> zeigt den Stand."),
                                             parse_mode=ParseMode.HTML)
             return
         if not r.get("ok"):
-            await update.message.reply_text(f"❌ {r.get('error') or r.get('summary')}")
+            await update.message.reply_text(_nc_i18n.t(f"❌ {r.get('error') or r.get('summary')}"))
             return
         plan = r.get("plan") or {}
         txt = [("🔄 <b>Trockenlauf</b>" if dry else "✅ <b>Update eingespielt</b>"), ""]
@@ -27984,17 +28029,17 @@ async def update_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if r.get("restart_needed"):
             txt += ["", "⚠️ <b>Neustart noetig</b> — "
                     f"<code>{html.escape(UPDATE_RESTART_CMD or 'sudo systemctl restart tiktok-bot')}</code>"]
-        await update.message.reply_text("\n".join(txt), parse_mode=ParseMode.HTML)
+        await update.message.reply_text(_nc_i18n.t("\n".join(txt)), parse_mode=ParseMode.HTML)
         return
 
     if mode in ("zurueck", "zurück", "rollback"):
         bl = _nc_updater.list_backups()
         if not bl:
-            await update.message.reply_text("Kein Backup vorhanden — nichts zurueckzuspielen.")
+            await update.message.reply_text(_nc_i18n.t("Kein Backup vorhanden — nichts zurueckzuspielen."))
             return
         res = _nc_updater.rollback(bl[0]["name"])
         if not res.get("ok"):
-            await update.message.reply_text(f"❌ {res.get('error')}")
+            await update.message.reply_text(_nc_i18n.t(f"❌ {res.get('error')}"))
             return
         log_event("update_rollback", "warning", f"Backup {bl[0]['name']} zurueckgespielt")
         await update.message.reply_text(
@@ -28022,7 +28067,7 @@ async def update_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     lines += ["", "<code>/update pruefen</code> — Trockenlauf",
               "<code>/update jetzt</code> — einspielen",
               "<code>/update zurueck</code> — letztes Backup"]
-    await update.message.reply_text("\n".join(lines), parse_mode=ParseMode.HTML,
+    await update.message.reply_text(_nc_i18n.t("\n".join(lines)), parse_mode=ParseMode.HTML,
                                     disable_web_page_preview=True)
 
 
@@ -28081,12 +28126,12 @@ async def einnahmen_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             lines += ["", f"ℹ Overlay-Schaetzung {_nc_donations.fmt_eur(cc['overlay_estimate_eur'])} "
                           f"vs. gebucht {_nc_donations.fmt_eur(cc['booked_gross_eur'])} — {cc['hint']}"]
         lines += ["", f"<i>{_nc_ledger.DISCLAIMER}</i>"]
-        await update.message.reply_text("\n".join(lines)[:4000],
+        await update.message.reply_text(_nc_i18n.t("\n".join(lines)[:4000]),
                                         parse_mode=ParseMode.HTML)
     except _nc_ledger.LedgerError as e:
-        await update.message.reply_text(f"⚠️ {safe(str(e))}", parse_mode=ParseMode.HTML)
+        await update.message.reply_text(_nc_i18n.t(f"⚠️ {safe(str(e))}"), parse_mode=ParseMode.HTML)
     except Exception as e:
-        await update.message.reply_text(f"❌ Fehler: {safe(str(e))}",
+        await update.message.reply_text(_nc_i18n.t(f"❌ Fehler: {safe(str(e))}"),
                                         parse_mode=ParseMode.HTML)
 
 
@@ -28098,9 +28143,9 @@ async def report_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         from brain import report as _brain_report
         md = await asyncio.to_thread(_brain_report.weekly, get_brain())
         for i in range(0, len(md), 3800):
-            await update.message.reply_text(md[i:i + 3800])
+            await update.message.reply_text(_nc_i18n.t(md[i:i + 3800]))
     except Exception as e:
-        await update.message.reply_text(f"❌ Report fehlgeschlagen: {e}")
+        await update.message.reply_text(_nc_i18n.t(f"❌ Report fehlgeschlagen: {e}"))
 
 
 async def run_bot():
@@ -28221,6 +28266,11 @@ async def run_bot():
                      ("report", report_cmd),                            # V37
                      ("update", update_cmd)):                           # v4.0-W115
         app.add_handler(CommandHandler(name, fn))
+    # v4.1-W7: Sprache des Absenders setzen, BEVOR irgendein Handler laeuft.
+    # Gruppe -1 laeuft vor Gruppe 0 (allen anderen); block=False laesst das
+    # Update danach normal weiterlaufen. Ohne beides bekaeme entweder der
+    # Handler die Sprache zu spaet oder gar keiner mehr das Update.
+    app.add_handler(TypeHandler(Update, _tg_sprache_setzen), group=-1)
     app.add_handler(CallbackQueryHandler(on_callback))                  # C20
     # F16: Media (Document/Photo) mit /ai-Caption
     app.add_handler(MessageHandler(

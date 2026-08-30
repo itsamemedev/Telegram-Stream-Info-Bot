@@ -1,5 +1,7 @@
 # YouTube verbinden (B121)
 
+> 🌐 **Deutsch** · [English](en/SETUP_YT_OAUTH.md)
+
 Seit Build B121 gibt es dafuer einen Knopf im Dashboard — genau wie bei Twitch.
 Der frueher noetige Weg ueber den Google OAuth Playground entfaellt.
 
