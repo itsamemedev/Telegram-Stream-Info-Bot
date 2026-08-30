@@ -87,7 +87,9 @@ def _install_stubs():
                 type(c, (), {"__init__": lambda self, *a, **k: None}))
     for c in ["Application", "ApplicationBuilder", "CommandHandler",
               "MessageHandler", "filters", "ContextTypes", "CallbackQueryHandler",
-              "ConversationHandler", "JobQueue", "AIORateLimiter"]:
+              "ConversationHandler", "JobQueue", "AIORateLimiter",
+              # v4.1-W7: setzt die Sprache des Absenders, bevor ein Handler laeuft
+              "TypeHandler"]:
         setattr(sys.modules["telegram.ext"], c, _Any)
     sys.modules["telegram.constants"].ParseMode = type(
         "ParseMode", (), {"HTML": "HTML", "MARKDOWN": "Markdown",

@@ -2487,6 +2487,81 @@ def test_v41_w6_doku_zweisprachig():
        % (len(paare) * 2))
 
 
+
+# ------------------------------------------------- v4.1-W7) Sprache je Benutzer
+
+def test_v41_w7_sprache_je_benutzer():
+    """v4.1-W7: jeder Benutzer bekommt SEINE Sprache, nicht die des Servers.
+
+    Bis W6 entschied UI_LANG fuer alle. Ein deutschsprachiger und ein
+    englischsprachiger Zuschauer im selben Discord bekamen dieselbe Sprache —
+    und zwar die des Betreibers.
+    """
+    import asyncio as _aio
+    from nc import i18n
+
+    # (1) Die Sprache haengt an der ANFRAGE, nicht am Modul. Ein Modul-Global
+    # waere geteilter Zustand zwischen gleichzeitigen Tasks: der Deutsche
+    # bekaeme Englisch, weil eine Millisekunde vorher ein Englaender gefragt hat.
+    ergebnis = {}
+
+    async def _einer(sprache, name):
+        i18n.sprache_setzen(sprache)
+        await _aio.sleep(0)                     # Taskwechsel erzwingen
+        ergebnis[name] = i18n.t("Alle gestoppt")
+
+    async def _beide():
+        await _aio.gather(_einer("en", "englisch"), _einer("de", "deutsch"))
+
+    _aio.run(_beide())
+    assert ergebnis["englisch"] == "All stopped", ergebnis
+    assert ergebnis["deutsch"] == "Alle gestoppt", ergebnis
+    ok("v4.1-W7: gleichzeitige Anfragen halten ihre Sprache auseinander")
+
+    # (2) Unbekanntes setzt NICHTS — dann gilt UI_LANG. Ein Kuerzel, das wir
+    # nicht koennen, darf die Antwort nicht verschlucken.
+    assert i18n.sprache_setzen("kl-KL") is None
+    assert i18n.sprache_setzen(None) is None
+    assert i18n.sprache_setzen("de-DE") == "de"
+    assert i18n.sprache_setzen("en-US") == "en"
+    ok("v4.1-W7: unbekannte Kuerzel setzen nichts, bekannte werden normalisiert")
+
+    # (3) t() darf an 212 Sendestellen nie gefaehrlicher sein als das, was es
+    # uebersetzt. Manche bekommen kein Wort, sondern None oder ein Embed.
+    for wert in (None, 5, {"a": 1}, [], object()):
+        assert i18n.t(wert) is wert or i18n.t(wert) == wert, "t() veraendert Nicht-Text"
+    ok("v4.1-W7: t() reicht Nicht-Text unveraendert durch")
+
+    # (4) Beide Plattformen setzen die Sprache VOR dem Handler — sonst greift
+    # sie erst bei der uebernaechsten Antwort.
+    src = open("bot.py", encoding="utf-8").read()
+    assert "TypeHandler(Update, _tg_sprache_setzen), group=-1" in src, \
+        "Telegram setzt die Sprache nicht vor allen Handlern"
+    assert "tree.interaction_check = _disc_sprache_setzen" in src, \
+        "Discord setzt die Sprache nicht vor jedem Slash-Befehl"
+    # interaction_check ist eigentlich eine Berechtigungspruefung: gaebe sie
+    # False oder wuerfe sie, waere JEDER Slash-Befehl tot. Sie muss alles
+    # fangen und immer True liefern.
+    _blk = src[src.find("async def _disc_sprache_setzen("):]
+    _blk = _blk[:_blk.find("tree.interaction_check")]
+    assert "except Exception" in _blk and "return True" in _blk, \
+        "Spracherkennung kann Discord-Befehle abschalten"
+    ok("v4.1-W7: beide Plattformen setzen die Sprache vor dem Handler, fail-open")
+
+    # (5) Der Empfaenger entscheidet, WO der Text steht: bei telegram
+    # Bot.send_message(chat_id, text) an Position 2, bei
+    # KickModerator.send_message(text, session) an Position 1. Nach dem
+    # Methodennamen zu gehen hat beim ersten Anlauf die Session uebersetzt.
+    import ast as _a7
+    fehl = []
+    for n in _a7.walk(_a7.parse(src)):
+        if isinstance(n, _a7.Call) and _a7.unparse(n.func).endswith("_nc_i18n.t") and n.args:
+            if _a7.unparse(n.args[0]) in ("session", "conn", "bot", "client", "inter", "update"):
+                fehl.append((n.lineno, _a7.unparse(n.args[0])))
+    assert not fehl, "t() auf etwas, das kein Text ist: %s" % fehl[:5]
+    ok("v4.1-W7: kein Uebersetzungsaufruf auf Sessions oder Verbindungen")
+
+
 # ------------------------------------------------- B168) Moderator überall (Twitch/YouTube)
 
 def test_b168_moderator_everywhere():
@@ -3695,7 +3770,11 @@ def test_v40_w24_cohost():
     f91 = src[src.find("async def _azrael_proactive_loop("):]
     f91 = f91[:f91.find("async def _discord_notify(")]
     assert '_cohost_gate("quiet")' in f91 and "_cohost_broadcast(" in f91, "F91 nicht an gemeinsame Bremse"
-    assert 'await _KICK_MOD.send_message("🦇 " + line)' in f91, "Kick-only-Fallback (ohne Co-Host) verloren"
+    # v4.1-W7: der Text ist jetzt von _nc_i18n.t(...) umschlossen. Der VERTRAG
+    # ist unveraendert (ohne Co-Host geht die Zeile weiterhin nach Kick), nur
+    # sein Anker ist gewandert.
+    assert 'await _KICK_MOD.send_message(_nc_i18n.t("🦇 " + line))' in f91, \
+        "Kick-only-Fallback (ohne Co-Host) verloren"
     assert '"/api/cohost"' in src and '"/api/cohost/config"' in src, "Routen fehlen"
     dash = open("templates/dashboard.html").read()
     assert 'id="pnl_cohost"' in dash and "async function loadCohost(" in dash
@@ -4185,7 +4264,7 @@ def test_v40_w35_crossplatform_restream():
     body = _fn(src, "_announce_loop")                 # v4.0-W117
     assert 'for plat in ("twitch", "youtube")' in body and "_azrael_send_to(plat, txt)" in body, \
         "Announce sendet nicht an Twitch/YouTube"
-    assert "mod.send_message(txt)" in body, "Announce sendet nicht an Kick"
+    assert "mod.send_message(_nc_i18n.t(txt))" in body, "Announce sendet nicht an Kick"
     # (2) Befehle plattformübergreifend + vor dem Gate.
     assert "async def _maybe_handle_command(" in src
     assert '_maybe_handle_command("twitch"' in src and '_maybe_handle_command("youtube"' in src, \
@@ -7596,6 +7675,7 @@ def main():
     test_v41_w5_streamer_blueprint()
     test_v41_w6_i18n_fundament()
     test_v41_w6_doku_zweisprachig()
+    test_v41_w7_sprache_je_benutzer()
     test_b168_moderator_everywhere()
     test_b169_kick_oauth()
     test_b170_azrael_and_youtube()

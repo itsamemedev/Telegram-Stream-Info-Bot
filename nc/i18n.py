@@ -22,6 +22,7 @@ Eintrag (fehlende Uebersetzungen).
 Architektur-Grenze wie ueberall in nc/: kein Import aus bot.py, stdlib-only.
 """
 
+import contextvars
 import json
 import os
 import re
@@ -42,6 +43,34 @@ _kataloge = {}
 _lock = threading.Lock()
 _verzeichnis = None
 _standard = QUELLSPRACHE
+
+# v4.1-W7: die Sprache DES GERADE BEDIENTEN BENUTZERS.
+#
+# Warum eine ContextVar und kein Modul-Global: Telegram und Discord bearbeiten
+# mehrere Anfragen gleichzeitig, jede in ihrer eigenen asyncio-Task. Ein
+# Modul-Global waere ein geteilter Zustand zwischen ihnen — der Deutsche bekaeme
+# die Antwort auf Englisch, weil eine Millisekunde vorher ein Englaender etwas
+# gefragt hat. Eine ContextVar wird je Task getrennt gefuehrt und vererbt sich
+# an alles, was innerhalb der Task awaited wird.
+#
+# Warum ueberhaupt implizit statt als Parameter: der Bot hat 208 Sendestellen.
+# Eine Sprache durch alle durchzureichen waere ein Umbau an 208 Stellen, bei dem
+# garantiert welche vergessen werden — und eine vergessene Stelle antwortet
+# stumm in der falschen Sprache, ohne dass irgendetwas auffaellt.
+_aktuelle = contextvars.ContextVar("nc_i18n_sprache", default=None)
+
+
+def sprache_setzen(sprache):
+    """Die Sprache fuer diese Anfrage setzen. Unbekanntes setzt nichts."""
+    norm = normalisieren(sprache)
+    if norm:
+        _aktuelle.set(norm)
+    return norm
+
+
+def aktuelle_sprache():
+    """Die Sprache dieser Anfrage, sonst der Standard."""
+    return _aktuelle.get() or _standard
 
 
 def configure(*, verzeichnis=None, standard=None):
@@ -103,8 +132,16 @@ def t(text, sprache=None, **kw):
     Katalogeintrag die Reihenfolge aendern darf — im Englischen steht das Objekt
     oft woanders als im Deutschen.
     """
-    if not text:
+    if not text or not isinstance(text, str):
+        # v4.1-W7: t() sitzt an 208 Sendestellen, und manche bekommen keinen
+        # Text, sondern None oder ein Embed. Ein TypeError dort waere eine
+        # Antwort, die gar nicht erst rausgeht — der Uebersetzer darf nie
+        # gefaehrlicher sein als das, was er uebersetzt.
         return text
+    # Ohne ausdrueckliche Angabe gilt die Sprache dieser Anfrage — so muss sie
+    # nicht durch 208 Sendestellen gereicht werden.
+    if sprache is None:
+        sprache = aktuelle_sprache()
     aus = katalog(sprache).get(text, text)
     if kw:
         try:
