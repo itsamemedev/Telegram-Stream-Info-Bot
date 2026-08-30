@@ -548,9 +548,9 @@ Zahlen sind Zeilennummern für `ncpatch show` / `ncpatch sym`.
  23264-23266  _discord_upload_limit_label
  23259-23261  _discord_upload_limit_mb
   6855-6932   _disk_alarm_loop
- 28253-28302  _disk_autoclean
- 28305-28318  _disk_guard_loop
- 28245-28250  _disk_pct
+ 28279-28328  _disk_autoclean
+ 28331-28344  _disk_guard_loop
+ 28271-28276  _disk_pct
  15321-15323  _drawtext_chain
  13847-13849  _dump_all_threads
  11494-11558  _enrich_proxies_with_geo
@@ -591,7 +591,7 @@ Zahlen sind Zeilennummern für `ncpatch show` / `ncpatch sym`.
  15492-15510  _htmlov_screenshot_cmd
  19427-19437  _httpx_proxy
  14388-14400  _in_quiet_hours
- 29132-29163  _install_fast_eventloop
+ 29158-29189  _install_fast_eventloop
  10040-10094  _install_fast_json
  13852-13868  _install_faulthandler
  20545-20554  _intel_ensure_schema
@@ -638,7 +638,7 @@ Zahlen sind Zeilennummern für `ncpatch show` / `ncpatch sym`.
   7889-7890   _mark_dead
  12240-12256  _marketing_loop
  26749-26767  _maybe_handle_command
- 28404-28428  _maybe_hype_clip
+ 28430-28454  _maybe_hype_clip
   3900-3923   _migrate_columns
  27026-27037  _mod_is_exempt
  27040-27045  _mod_warn_first
@@ -725,7 +725,7 @@ Zahlen sind Zeilennummern für `ncpatch show` / `ncpatch sym`.
   6009-6126   _run_ai_call
  13975-13988  _run_async_from_flask
  22589-22592  _run_priv
- 29120-29128  _run_selfcheck_and_exit
+ 29146-29154  _run_selfcheck_and_exit
  25405-25416  _s3_client
   7916-7967   _safe_send
   4604-4620   _sample_net_throughput
@@ -737,13 +737,13 @@ Zahlen sind Zeilennummern für `ncpatch show` / `ncpatch sym`.
  27054-27093  _screen_full
  12795-12832  _sec_headers
   2168-2170   _select_stream_from_data_section
- 28933-29117  _selfcheck
+ 28959-29143  _selfcheck
   8690-8724   _send_live_notice
   1206-1210   _should_defer_upload
  25818-25853  _shrink_for_discord
  10376-10388  _sicheres_ziel
- 28325-28342  _sign_health_check
- 28345-28364  _sign_health_loop
+ 28351-28368  _sign_health_check
+ 28371-28390  _sign_health_loop
   7745-7756   _spawn
   7759-7789   _spawn_from_flask
  22932-22935  _st_befund
@@ -753,7 +753,7 @@ Zahlen sind Zeilennummern für `ncpatch show` / `ncpatch sym`.
  12434-12437  _stats_output_path
  12440-12452  _stats_write
   8418-8434   _storage_cleanup_loop
- 28384-28391  _story_for
+ 28410-28417  _story_for
   3206-3212   _stream_url_expiry
   3221-3227   _stream_url_is_fresh
   3214-3219   _stream_url_ttl
@@ -799,7 +799,7 @@ Zahlen sind Zeilennummern für `ncpatch show` / `ncpatch sym`.
   6786-6793   _viewer_stats
  10273-10276  _wants_html
   7619-7633   _warn_empty_env
- 28140-28235  _watchdog_loop
+ 28140-28261  _watchdog_loop
  26651-26659  _wchat_thank_ok
  19273-19303  _whisper_get_model
   7706-7713   _whisper_native_section
@@ -899,7 +899,7 @@ Zahlen sind Zeilennummern für `ncpatch show` / `ncpatch sym`.
   4445-4471   log_event
   1508-1541   log_recording_failure
   7299-7348   logs_cmd
- 28432-28923  main
+ 28458-28949  main
   6165-6188   on_ai_media
   7425-7451   on_ai_reply
   7454-7483   on_azrael_mention

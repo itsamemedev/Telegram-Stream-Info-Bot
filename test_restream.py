@@ -8054,6 +8054,37 @@ def test_v41_w13_claude_grund_im_log():
     ok("v4.1-W13: Claude-Ablehnung nennt Modell und API-Text statt nur der Klasse")
 
 
+
+# ------------------- v4.1-W14) Watchdog zeigt nicht auf die falsche Stelle
+
+def test_v41_w14_watchdog_ursache():
+    """v4.1-W14: 19 Mal "prüfe Audio-Tap/Chat", während das KI-Backend ausfiel.
+
+    Am 30.08. scheiterte JEDER Reaktionsversuch am Backend (Claude
+    bad_request → pollinations auth → llm7 400). Der Watchdog schickte den
+    Betreiber trotzdem zum Audio-Tap — und zwar alle 45 Sekunden neu, weil der
+    Zweig anders als der Loop-Wächter darüber keine Flankenerkennung hatte.
+    """
+    src = open("bot.py", encoding="utf-8").read()
+    _wd = src[src.index("if LIVE_DIRECTOR:\n                _rstate"):]
+    _wd = _wd[:_wd.index("v4.0-W38")]
+
+    # (1) Flanke statt Dauerfeuer — wie beim Loop-Waechter darueber.
+    assert "react_stalls" in _wd and "_rstate.get(u)" in _wd, \
+        "der Zweig meldet weiter bei jedem Takt"
+    assert "reagiert wieder" in _wd, "keine Entwarnung — der Zustand bleibt haengen"
+
+    # (2) Die Meldung nennt die Ursache, die der Bot KENNT. _react_warn
+    # hinterlegt den Zeitpunkt der letzten Backend-Klage; liegt der frisch vor,
+    # ist der Audio-Tap nachweislich nicht das Problem.
+    assert "_react_fail_ts" in _wd, "der Watchdog fragt das KI-Backend nicht"
+    assert "NICHT das Problem" in _wd, "zeigt weiter blind auf Audio-Tap/Chat"
+    # Und andersherum: schweigt das Backend, bleibt der alte Hinweis richtig.
+    assert "Audio-Tap/Chat\n" in _wd or "Audio-Tap/Chat " in _wd, \
+        "der Hinweis auf Audio-Tap ist ganz verschwunden — er stimmt ja manchmal"
+    ok("v4.1-W14: Watchdog meldet einmal je Stillstand und nennt die echte Ursache")
+
+
 def main():
     print("test_restream — Restream-Kernlogik (Mock-basiert)")
     test_streak()
@@ -8124,6 +8155,7 @@ def main():
     test_v41_w10_codeql_befunde()
     test_v41_w12_kick_key_kollision()
     test_v41_w13_claude_grund_im_log()
+    test_v41_w14_watchdog_ursache()
     test_b168_moderator_everywhere()
     test_b169_kick_oauth()
     test_b170_azrael_and_youtube()
