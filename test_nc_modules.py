@@ -1146,6 +1146,176 @@ def _test_w14_totes_modell():
     ok("v4.1-W14: totes Modell wandert ans Ende, pro Base, nie ganz raus")
 
 
+def _test_w18_toxizitaet_ohne_tiktok():
+    """v4.1-W18: TikTok loest keine Toxizitaets-Warnung beim Betreiber aus."""
+    import nc.modstats as M
+
+    # Der Fall aus dem Betrieb: ein aktiver Live-React-Worker schreibt AZRAELs
+    # Reaktionen auf einen TikTok-Stream ins kick_mod_log. Frueher zaehlte
+    # jede dieser Zeilen als "Moderations-Aktion" — sechs davon reichten fuer
+    # eine Warnung ueber einen Chat, den der Bot gar nicht moderiert.
+    tiktok = [("reaction", "azrael", {"src": "helge_72"})] * 12
+    tiktok += [("highlight", "radar", {"score": 3})] * 4
+    v = M.verdichte(tiktok)
+    assert v["actions_1h"] == 0, "TikTok-Reaktionen zaehlen weiter als Moderation"
+    assert v["platforms"] == {}
+
+    # Was der Bot selbst sagt und was er lernt, ist ebenfalls keine Moderation.
+    assert M.verdichte([("send", "bot", {}), ("reply", "bot", {}),
+                        ("learn", "ai", {})])["actions_1h"] == 0
+
+    # Die drei Stream-Chats zaehlen — mit Plattform-Aufschluesselung, damit die
+    # Meldung sagt WO es kracht, nicht nur DASS.
+    echt = [("timeout", "auto-mod-kick", {"platform": "kick"}),
+            ("warn", "auto-mod-twitch", {"platform": "twitch", "cat": "spam"}),
+            ("timeout", "auto-mod-youtube", {"platform": "youtube"}),
+            ("flag", "auto-mod-youtube", {"platform": "youtube"})]
+    v = M.verdichte(echt + tiktok)
+    assert v["actions_1h"] == 4, v
+    assert v["platforms"] == {"kick": 1, "twitch": 1, "youtube": 2}, v["platforms"]
+
+    # Discord ist eine eigene Welt und standardmaessig NICHT dabei; wer es will,
+    # traegt es ein. TikTok laesst sich auch so nicht zuschalten — es steht
+    # nicht in PLATTFORMEN, und genau das ist der Sinn der harten Liste.
+    dc = [("timeout", "ai-discord", {"platform": "discord", "toxic": 0.9})]
+    assert M.verdichte(dc)["actions_1h"] == 0, "Discord meldet ungefragt mit"
+    assert M.verdichte(dc, erlaubt=M.quellen("kick,discord"))["actions_1h"] == 1
+    assert "tiktok" not in M.PLATTFORMEN, "TikTok waere konfigurierbar geworden"
+    assert M.quellen("tiktok") == M.STANDARD_QUELLEN, "TikTok liess sich einschalten"
+    assert M.quellen("tiktok,kick") == ("kick",)
+
+    # Der Trend vergleicht zwei Stunden. Liefe die Vorstunde ungefiltert, waere
+    # jede TikTok-Sitzung in der Vorstunde eine gemeldete "Beruhigung" und
+    # jedes Ende einer Sitzung eine gemeldete "Welle". Beide Seiten, eine Regel.
+    v = M.verdichte(echt, vorzeilen=tiktok)
+    assert v["actions_prev_1h"] == 0, "die Vorstunde laeuft durch eine andere Regel"
+
+    # sentinel-shield schreibt aus dem Kick-Moderator UND aus dem Discord-
+    # Automod. Ohne Markierung ist die Zeile nicht zuzuordnen und zaehlt nicht
+    # mit — eine falsch zugeordnete Warnung waere schlimmer als eine fehlende.
+    assert M.plattform("sentinel-shield", {}) is None
+    assert M.plattform("sentinel-shield", {"platform": "discord"}) == "discord"
+    assert M.plattform("sentinel-shield", {"platform": "kick"}) == "kick"
+    # Altbestand ohne Markierung bleibt ueber den Aktor lesbar.
+    assert M.plattform("auto-mod-twitch", None) == "twitch"
+    assert M.plattform("azrael", {"src": "helge_72"}) is None
+
+    # Ein gefaelschter Plattformname faellt auf den Aktor zurueck statt zu zaehlen.
+    assert M.plattform("auto-mod-kick", {"platform": "tiktok"}) == "kick"
+    assert M.plattform("azrael", {"platform": "tiktok"}) is None
+
+    # avg bleibt None, wenn niemand einen toxic-Wert gemessen hat: 0.0 waere
+    # die Aussage "nicht toxisch", und die hat hier niemand getroffen.
+    assert M.verdichte(echt)["avg_toxic_1h"] is None
+    mit = [("timeout", "ai", {"platform": "kick", "toxic": 0.9}),
+           ("timeout", "ai", {"platform": "kick", "toxic": 0.7})]
+    assert M.verdichte(mit)["avg_toxic_1h"] == 0.8
+
+    # Der Agent nennt die Plattformen in seiner Meldung.
+    import brain.agents as A
+
+    class _B:
+        class memory:
+            @staticmethod
+            def record_metric(*a, **k): pass
+    schnapp = {"actions_1h": 9, "actions_prev_1h": 1, "avg_toxic_1h": 0.8,
+               "platforms": {"kick": 7, "twitch": 2}}
+    m = A.ToxicityAgent(_B(), moderation=lambda: schnapp).run({})
+    assert len(m) == 1 and "kick 7" in m[0]["text"] and "twitch 2" in m[0]["text"], m
+    # Ohne Aufschluesselung (Altbestand) bleibt der Text wie bisher lesbar.
+    m = A.ToxicityAgent(_B(), moderation=lambda: {
+        "actions_1h": 9, "actions_prev_1h": 1}).run({})
+    assert len(m) == 1 and "[" not in m[0]["text"], m
+
+    ok("v4.1-W18: TikTok zaehlt nicht als Moderation, Plattform steht in der Meldung")
+
+
+def _test_w18_kickmod_blueprint():
+    """v4.1-W18: neun Routen raus, null neue Kontext-Eintraege."""
+    import tempfile as _tf
+
+    import nc.badwords as B
+    import nc.channels as C
+
+    # (1) Die Datenschicht traegt sich selbst — Dateien, kein Bot, kein Netz.
+    d = _tf.mkdtemp()
+    B.configure(recordings_dir=d)
+    assert B.load_banned() == [] and B.load_learned() == [], "leerer Start nicht leer"
+    assert B.save_banned(["arsch", "x" * 99])
+    assert B.load_banned() == ["arsch", "x" * 40], "keine Kappung auf 40 Zeichen"
+    assert B.save_learned([{"word": "test"}])
+    assert B.load_learned() == [{"word": "test"}]
+    # Kaputtes JSON darf den Moderator nicht mitreissen: lieber leer als Absturz.
+    open(os.path.join(d, "banned_words.json"), "w", encoding="utf-8").write("{kaputt")
+    assert B.load_banned() == []
+    # Und der Deckel gilt auch beim Lesen einer zu langen Liste.
+    B.save_banned(["w%d" % i for i in range(B.CAP + 50)])
+    assert len(B.load_banned()) == B.CAP
+
+    # (2) Die Basisliste faellt bei Netzfehler NICHT auf leer zurueck — eine
+    # geleerte Liste waere ein still entwaffneter Moderator.
+    def _kaputt(url):
+        raise OSError("kein Netz")
+    w, q = B.fetch_ldnoobw_de(opener=_kaputt)
+    assert q == "fallback" and w == B.FALLBACK_DE and w, "Netzfehler leert die Liste"
+    # Eine leere Antwort zaehlt ebenfalls als Fehlschlag.
+    w, q = B.fetch_ldnoobw_de(opener=lambda u: "\n#nur ein Kommentar\n")
+    assert q == "fallback" and w == B.FALLBACK_DE
+    w, q = B.fetch_ldnoobw_de(opener=lambda u: "eins\n# weg\nzwei\n")
+    assert (w, q) == (["eins", "zwei"], "online")
+
+    # (3) Der primaere Restream ist ein REGISTER, kein Alias. bot.py bindet den
+    # Namen bei jeder Primaer-Nachfolge neu; ein Alias zeigte danach auf das
+    # alte Dict, und das SENTINEL-Panel meldete den vorherigen User als aktiv.
+    C.RESTREAM_ACTIVE["obj"] = {}
+    assert C.restream_active() == {}, "restream_active gibt None statt {}"
+    C.RESTREAM_ACTIVE["obj"] = {"user": "helge_72", "rid": 7}
+    assert C.restream_active().get("user") == "helge_72"
+
+    # (4) Der Blueprint sieht denselben Zustand wie der Bot — das ist der
+    # ganze Punkt der Register. Und er kommt ohne neuen ctx-Slot aus.
+    import ast as _ast
+
+    import nc.routes.kickmod as K
+    from flask import Flask
+    app = Flask(__name__)
+    app.register_blueprint(K.bp)
+    regeln = {str(r.rule) for r in app.url_map.iter_rules() if r.endpoint != "static"}
+    assert len(regeln) == 9, regeln
+    with app.test_client() as cl:
+        j = cl.get("/api/kickmod/status").get_json()
+    assert j["ok"] and j["running"] is False, j
+    assert j["channels"]["tiktok"]["connected"] is True, "Register nicht gelesen"
+    C.RESTREAM_ACTIVE["obj"] = {}
+
+    # Ohne laufenden Moderator antworten die schreibenden Routen 503 statt 500:
+    # "startet noch" ist voruebergehend, das Dashboard darf es wiederholen.
+    with app.test_client() as cl:
+        for weg in ("/api/kickmod/config", "/api/kickmod/start",
+                    "/api/kickmod/say", "/api/kickmod/import_badwords"):
+            assert cl.post(weg, json={}).status_code == 503, weg
+
+    # (5) Kein neuer ctx-Slot. Der Kontext steht vertraglich bei hoechstens 25.
+    quelle = open("nc/routes/kickmod.py", encoding="utf-8").read()
+    genutzt = {n.attr for n in _ast.walk(_ast.parse(quelle))
+               if isinstance(n, _ast.Attribute) and isinstance(n.value, _ast.Call)
+               and getattr(n.value.func, "id", "") == "_c"}
+    assert genutzt == {"run_async"}, "der Blueprint braucht mehr als run_async: %r" % genutzt
+
+    # (6) Die sieben .env-Werte werden bei JEDEM Aufruf gelesen, nicht als
+    # Modul-Konstante eingefroren (CLAUDE.md: .env laedt teils erst spaeter).
+    for kopf in ("KICK_CLIENT_ID", "KICKMOD_AUTOSTART", "DISCORD_BOT_TOKEN",
+                 "LIVE_REACT_CHAT", "KICK_CHATROOM_ID"):
+        assert 'os.getenv("%s"' % kopf in quelle or '_txt("%s")' % kopf in quelle \
+            or '_flag("%s")' % kopf in quelle, "%s eingefroren" % kopf
+    for zeile in quelle.split("\n"):
+        z = zeile.strip()
+        assert not (z[:1].isupper() and " = os.getenv(" in z), \
+            "Modul-Konstante friert .env ein: %s" % z
+
+    ok("v4.1-W18: kickmod als Blueprint, Bannwoerter und Primaer-Restream geloest")
+
+
 def main():
     tmp = tempfile.mkdtemp()
     configure_db(db_path=os.path.join(tmp, "t.db"), backend="sqlite")
@@ -1258,6 +1428,10 @@ def main():
     _test_w13_claude_fehlergrund()
 
     _test_w14_totes_modell()
+
+    _test_w18_toxizitaet_ohne_tiktok()
+
+    _test_w18_kickmod_blueprint()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)
 

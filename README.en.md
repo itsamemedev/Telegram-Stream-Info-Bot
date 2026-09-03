@@ -197,10 +197,10 @@ flowchart TB
     DC --> BOT
     TT --> BOT
 
-    BOT["bot.py<br/>monolith · 29,112 lines<br/>scraper · recorder · restream<br/>Flask dashboard · 143 own routes"]:::core
+    BOT["bot.py<br/>monolith · 28,935 lines<br/>scraper · recorder · restream<br/>Flask dashboard · 134 own routes"]:::core
 
     BOT -->|configure| NC["nc/ — 92 domain modules<br/>schema · OAuth · restream<br/>ledger · moderation · intel"]:::lib
-    NC --> RT["nc/routes/ — 24 blueprints<br/>216 further API routes"]:::lib
+    NC --> RT["nc/routes/ — 25 blueprints<br/>225 further API routes"]:::lib
     BOT --> TPL["templates/<br/>dashboard · overlay · PWA"]:::lib
     BOT --> BR["brain_bridge.py"]:::lib
     BR --> BRAIN["brain/ — its own brain.db<br/>state · rules · router · memory<br/>knowledge · semantic · scheduler<br/>llm · agents · report"]:::brain
@@ -302,7 +302,7 @@ flows — step by step in **[`docs/en/INSTALL.md`](docs/en/INSTALL.md)**.
 ## ⚙️ Configuration
 
 Every setting lives in the `.env`. The template `.env.example` knows **around
-496 variables** — the minimum is small:
+497 variables** — the minimum is small:
 
 ### 🔑 Mandatory
 
@@ -709,7 +709,7 @@ broken.**
 
 ### 🧭 Navigating the monolith
 
-`bot.py` has 29,112 lines. It is **never** read in full and **never** searched
+`bot.py` has 28,935 lines. It is **never** read in full and **never** searched
 blindly — first ask where something is, then fetch the excerpt:
 
 ```bash
@@ -724,7 +724,7 @@ python3 tools/ncpatch.py docs                      # documentation numbers vs. t
 ```
 
 `find` answers from **[`.claude/INDEX.md`](.claude/INDEX.md)** — 359 routes
-(143 in `bot.py`, 216 in `nc/routes/`), 45 slash commands, 510 functions, each
+(134 in `bot.py`, 225 in `nc/routes/`), 45 slash commands, 503 functions, each
 with a line number.
 
 ---
@@ -733,7 +733,7 @@ with a line number.
 
 | Rule | Why |
 |---|---|
-| **The `.env` is never in the repository and never in the archive** | ~496 variables including cookies, OAuth tokens and stream keys |
+| **The `.env` is never in the repository and never in the archive** | ~497 variables including cookies, OAuth tokens and stream keys |
 | **The dashboard binds to `127.0.0.1`** | Access runs through an SSH tunnel, not through an open port |
 | **Cookie and key redaction when logging** | `streamlink`/`ffmpeg` command lines are cleaned before they are logged |
 | **The ledger is append-only with a hash chain** | A correction is a counter-entry, not an overwrite |
@@ -774,7 +774,7 @@ NIGHTCRAWLER/
 │   ├── twitchoauth.py  ytoauth.py  kick_oauth.py
 │   ├── modheuristics.py  shield.py  replygate.py
 │   ├── freeai.py  claude.py  piper_voices.py
-│   ├── routes/               24 Flask blueprints (216 API routes)
+│   ├── routes/               25 Flask blueprints (225 API routes)
 │   ├── intel/                archive index, transcripts, reels
 │   └── _vendor/segno/        vendored QR encoder (BSD)
 │
@@ -841,11 +841,11 @@ service.
 | | |
 |---|---|
 | Current version | **4.1** — “Public Voice” (2026.08) |
-| Flask routes | 359 (143 in `bot.py` · 216 in `nc/routes/`) |
+| Flask routes | 359 (134 in `bot.py` · 225 in `nc/routes/`) |
 | Discord slash commands | 45 |
 | Domain modules | 92 in `nc/` (+18 in `nc/routes/`, +3 in `nc/intel/`), 10 in `brain/` |
 | Sentinel agents | 13 |
-| Configuration variables | ~496 |
+| Configuration variables | ~497 |
 | Languages | German (source), English |
 
 Full history: **[`docs/CHANGELOG.md`](docs/CHANGELOG.md)** ·
@@ -855,7 +855,7 @@ Full history: **[`docs/CHANGELOG.md`](docs/CHANGELOG.md)** ·
 
 ## 🧭 Roadmap
 
-The next big step is not a feature, it is cleaning up: **`bot.py` has 29,112
+The next big step is not a feature, it is cleaning up: **`bot.py` has 28,935
 lines**. That file is the project's bottleneck. The bar for it is not a line
 count though:
 
@@ -863,7 +863,7 @@ count though:
 
 The route there in six waves — measured, not estimated:
 **[`docs/en/ROADMAP.md`](docs/en/ROADMAP.md)**. Wave 2 is done, wave 3 is
-running: `nc/routes/` carries 24 blueprints with 216 API routes today that no
+running: `nc/routes/` carries 25 blueprints with 225 API routes today that no
 longer sit in the monolith.
 
 ---

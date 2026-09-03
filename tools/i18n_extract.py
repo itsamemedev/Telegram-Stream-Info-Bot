@@ -55,7 +55,7 @@ _BRUCHSTUECK_ANFANG = re.compile(r'^[)\],;:%.\u2014\u2013+*/|=&#-]')
 _BRUCHSTUECK_ENDE = re.compile(r'[(\[{=]$|\b(?:und|oder|der|die|das|von|mit|im|in|am|auf|zu|bei)$')
 
 
-def _ist_uebersetzbar(text, deutsch_noetig=True):
+def _ist_uebersetzbar(text, deutsch_noetig=True, bezeichner_moeglich=True):
     """deutsch_noetig=False fuer Stellen, die per Definition Benutzertext sind.
 
     Der Deutsch-Marker ist eine Heuristik gegen Bezeichner und CSS-Werte. Bei
@@ -63,6 +63,11 @@ def _ist_uebersetzbar(text, deutsch_noetig=True):
     fuer Menschen, auch wenn er zufaellig ohne Umlaut auskommt ("Status",
     "Tracklist"). Ohne diese Ausnahme fielen 22 der 46 Beschreibungen aus dem
     Katalog — und die Befehlsliste im Discord waere halb deutsch geblieben.
+
+    bezeichner_moeglich=False fuer Stellen, an denen ein einzelnes Wort KEIN
+    Bezeichner sein kann, weil es zwischen zwei Tags steht (v4.1-W18). Ein
+    `<th>Datei</th>` ist im DOM ein vollstaendiger Textknoten und niemals eine
+    CSS-Klasse; die Bezeichner-Heuristik hat dort nichts zu entscheiden.
     """
     t = (text or "").strip()
     if len(t) < 3 or not _WORT.search(t):
@@ -73,7 +78,7 @@ def _ist_uebersetzbar(text, deutsch_noetig=True):
     # ausser an Stellen, die per Definition Benutzertext sind. "Restream-Status"
     # sieht fuer diese Pruefung aus wie ein Bezeichner und ist doch die
     # Beschreibung eines Slash-Befehls.
-    if deutsch_noetig and re.fullmatch(r"[\w./#:-]+", t):
+    if deutsch_noetig and bezeichner_moeglich and re.fullmatch(r"[\w./#:-]+", t):
         return False
     if t.startswith("http://") or t.startswith("https://"):
         return False
@@ -110,15 +115,42 @@ def _js_textstuecke(literal):
         return []
     # ${...} und Markup entfernen; beides ist im DOM kein uebersetzbarer Text.
     ohne_var = re.sub(r"\$\{[^}]*\}", "\x00", literal)
-    ohne_tags = re.sub(r"<[^>]{0,200}>", "\x00", ohne_var)
+    ohne_tags = re.sub(r"<[^>]{0,200}>", "\x01", ohne_var)
+    # v4.1-W18: Ein Stueck zwischen zwei TAGS ist im DOM ein vollstaendiger
+    # Textknoten und darf deshalb auch ein einzelnes Wort sein. Genau daran
+    # fielen bisher die Tabellenkoepfe aus dem Katalog — 'Datei', 'Datum',
+    # 'Grund', 'Groesse', 'Geloescht' stehen als <th>…</th> voellig fuer sich,
+    # zaehlten aber als "weniger als zwei Woerter" und flogen mit den echten
+    # Bruchstuecken zusammen raus. Ergebnis: der Kopf einer Tabelle blieb
+    # deutsch, waehrend ihr Inhalt uebersetzt war.
     raus = []
-    for stueck in ohne_tags.split("\x00"):
+    # \x00 = ${...}, \x01 = Tag. Der Unterschied entscheidet, ob ein Stueck im
+    # DOM allein steht: an einem Tag endet ein Textknoten, an einem Platzhalter
+    # verschmilzt er mit dem eingesetzten Wert.
+    teile = re.split(r"([\x00\x01])", ohne_tags)
+    stuecke = teile[::2]
+    grenzen = teile[1::2]
+    for i, stueck in enumerate(stuecke):
+        links = grenzen[i - 1] if i > 0 else None
+        rechts = grenzen[i] if i < len(grenzen) else None
         stueck = stueck.replace("&nbsp;", " ").replace("&amp;", "&").strip()
-        if not _ist_uebersetzbar(stueck):
+        # Ein Knoten steht fuer sich, wenn ihn auf beiden Seiten ein Tag oder
+        # das Literalende begrenzt UND mindestens eine Seite wirklich ein Tag
+        # ist. Die zweite Bedingung ist der Punkt: ein blankes Literal wie
+        # 'läuft' kann genauso gut ein Vergleichswert sein (`x === 'läuft'`)
+        # oder ein Objektschluessel. Dafuer einen Eintrag anzulegen waere ein
+        # TOTER Eintrag — er zaehlte als uebersetzt, waehrend die Stelle
+        # deutsch bleibt, und verdeckte damit genau das, was die Pruefung
+        # sichtbar machen soll. Ein Tag daneben ist dagegen ein Beleg: so
+        # schreibt niemand einen Vergleich.
+        allein = (links in (None, "\x01") and rechts in (None, "\x01")
+                  and "\x01" in (links, rechts))
+        if not _ist_uebersetzbar(stueck, bezeichner_moeglich=not allein):
             continue
-        # Mindestens zwei Woerter ODER ein abgeschlossener Satz — sonst ist es
-        # ein Bruchstueck um einen Platzhalter herum.
-        if len(stueck.split()) < 2 and not stueck.endswith((".", "!", "?", ":")):
+        # Sonst: mindestens zwei Woerter ODER ein abgeschlossener Satz — alles
+        # andere ist ein Bruchstueck um einen Platzhalter herum und stuende im
+        # DOM nie fuer sich.
+        if not allein and len(stueck.split()) < 2 and not stueck.endswith((".", "!", "?", ":")):
             continue
         raus.append(stueck)
     return raus
