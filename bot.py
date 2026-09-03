@@ -588,6 +588,8 @@ from nc import badwords as _nc_badwords  # v4.1-W18: Bannwortliste + Lern-Wartes
 from nc import revenue as _nc_revenue  # v4.1-W20: Einnahmen-Gate (B120)
 from nc import audiocue as _nc_audiocue  # v4.1-W20: Signalton/Ducking
 from nc import brainstate as _nc_brainstate  # v4.1-W21: Brain-Panel-Zustand
+from nc import restreamcfg as _nc_rscfg  # v4.1-W22: Sendeziele + Pruef-Parameter
+from nc import restreamstate as _nc_rsstate  # v4.1-W22: Restream-Laufzeitzustand
 from nc import azraelstate as _nc_azrael  # v4.1-W19: AZRAELs Laufzeitzustand (geteilt)
 from nc import whispercfg as _nc_whisper  # v4.1-W19: Whisper-Modell als Register
 from nc import eventquery as _nc_eventquery  # v4.0-W51: Event-Log-Query-Bauer (rein)
@@ -628,6 +630,7 @@ from nc.routes import azrael as _nc_routes_azrael            # v4.1-W19: AZRAEL-
 from nc.routes import overlay as _nc_routes_overlay          # v4.1-W20: Sendebild
 from nc.routes import audio as _nc_routes_audio              # v4.1-W20: Signalton
 from nc.routes import brain as _nc_routes_brain              # v4.1-W21: Brain-Panel
+from nc.routes import restream as _nc_routes_restream        # v4.1-W22: Sendeleiste
 from nc import updater as _nc_updater                        # v4.0-W115: Selbst-Update aus dem GitHub-Repo
 from nc import donationsdb as _nc_donationsdb                # v4.0-W116: manuell erfasste Spenden lesen
 # Diese beiden Routen ruft der Bot auch INTERN auf (Telegram /sysres und die
@@ -895,8 +898,14 @@ DETECT_VIA_YTDLP   = os.getenv("DETECT_VIA_YTDLP", "auto").strip().lower()
 # Stream Key). Die URL ändert sich gelegentlich, daher NICHT hartcodiert —
 # hier eintragen oder pro Ziel im Dashboard überschreiben.
 # Beispiel-URL (prüfe deine im Dashboard): rtmp://ingest.kick.com/live
-KICK_INGEST_URL    = os.getenv("KICK_INGEST_URL", "").strip()
-KICK_STREAM_KEY    = os.getenv("KICK_STREAM_KEY", "").strip()
+# v4.1-W22: EINE Parse-Regel. Die Werte kommen aus nc/restreamcfg.py, damit
+# Bot und Blueprint dieselben Vorgaben, dieselbe Leerzeichen- und dieselbe
+# Wahrheitsbehandlung benutzen. Hier steht der Stand beim START; der
+# Blueprint liest live. Weichen beide ab, hat jemand .env geaendert und den
+# Dienst noch nicht neu gestartet — genau das soll das Dashboard zeigen.
+# Stream-Keys sind Geheimnisse: nie loggen, nie in eine API-Antwort.
+KICK_INGEST_URL    = _nc_rscfg.ingest("kick")
+KICK_STREAM_KEY    = _nc_rscfg.ziel("kick")["key"]
 # v37 W3b: Multi-Kick-Failover — Backup-Ingest, wenn der Primär erschöpft ist (opt-in)
 KICK_INGEST_URL_BACKUP = os.getenv("KICK_INGEST_URL_BACKUP", "").strip()
 KICK_STREAM_KEY_BACKUP = os.getenv("KICK_STREAM_KEY_BACKUP", "").strip()
@@ -904,12 +913,12 @@ KICK_STREAM_KEY_BACKUP = os.getenv("KICK_STREAM_KEY_BACKUP", "").strip()
 # GLEICHSTELLUNG (W77): Twitch und YouTube sind jetzt genau wie Kick — sie senden,
 # sobald ihre INGEST_URL + STREAM_KEY gesetzt sind. Default „an" (aktiv-wenn-
 # konfiguriert); ein explizites *_ENABLED=0 pausiert eine Plattform gezielt.
-YOUTUBE_ENABLED    = os.getenv("YOUTUBE_ENABLED", "1").strip().lower() in ("1", "true", "yes", "on", "y")
-YOUTUBE_INGEST_URL = os.getenv("YOUTUBE_INGEST_URL", "rtmp://a.rtmp.youtube.com/live2").strip()
-YOUTUBE_STREAM_KEY = os.getenv("YOUTUBE_STREAM_KEY", "").strip()
-TWITCH_ENABLED     = os.getenv("TWITCH_ENABLED", "1").strip().lower() in ("1", "true", "yes", "on", "y")
-TWITCH_INGEST_URL  = os.getenv("TWITCH_INGEST_URL", "rtmp://ingest.global-contribute.live-video.net/app").strip()
-TWITCH_STREAM_KEY  = os.getenv("TWITCH_STREAM_KEY", "").strip()
+YOUTUBE_ENABLED    = _nc_rscfg.aktiv("youtube")
+YOUTUBE_INGEST_URL = _nc_rscfg.ingest("youtube")
+YOUTUBE_STREAM_KEY = _nc_rscfg.ziel("youtube")["key"]
+TWITCH_ENABLED     = _nc_rscfg.aktiv("twitch")
+TWITCH_INGEST_URL  = _nc_rscfg.ingest("twitch")
+TWITCH_STREAM_KEY  = _nc_rscfg.ziel("twitch")["key"]
 # Kick hat KEINEN eigenen Enable-Schalter mehr nötig — es ist active-when-keyed
 # wie die anderen. KICK_ENABLED=0 pausiert es dennoch, falls gewünscht.
 KICK_ENABLED       = os.getenv("KICK_ENABLED", "1").strip().lower() in ("1", "true", "yes", "on", "y")
@@ -917,7 +926,6 @@ KICK_ENABLED       = os.getenv("KICK_ENABLED", "1").strip().lower() in ("1", "tr
 # V37-MOD: Multistream-Ziele + tee-Bau nach nc/restream_targets.py.
 import nc.restream_targets as _nc_rst
 from nc import restream_guard as _nc_guard    # B123: Soll-Zustand + Zielpruefung
-from nc import restream_testpush as _nc_testpush  # B161: sichere Test-Pushes (isoliert)
 from nc import marketing as _nc_marketing  # B162: Cross-Promo-Agent (bot-frei)
 from nc import news as _nc_news  # B163: oeffentliche Website-News (bot-frei)
 from nc import schema as _nc_schema  # B164: DB-Schema (aus init_db extrahiert)
@@ -958,7 +966,7 @@ def _multistream_targets():
 RESTREAM_ENABLED   = os.getenv("RESTREAM_ENABLED", "auto").strip().lower()
 RESTREAM_TRANSCODE = os.getenv("RESTREAM_TRANSCODE", "0").lower() in ("1","true","yes","y")
 RESTREAM_BITRATE_K = _env_int("RESTREAM_BITRATE_K", 6000)   # nur im Transcode-Modus
-RESTREAM_OVERLAY   = os.getenv("RESTREAM_OVERLAY", "0").strip().lower() in ("1","true","yes","on","y")
+RESTREAM_OVERLAY   = _nc_rscfg.overlay()
 # V37-HTMLOV: Overlay-Modus. "text" = bewährte drawtext-Kette (Textdateien).
 # "html" = die /overlay-Browser-Source wird SERVER-SEITIG per headless Chromium
 # zu PNG gerendert und via image2pipe-FIFO ins Video gemischt — pixelgenau
@@ -1011,14 +1019,16 @@ RESTREAM_FAIL_LOG_COOLDOWN_S = _env_int("RESTREAM_FAIL_LOG_COOLDOWN_S", 600)
 # einfach weiter. Der Prozess lebt, also meldete status() "live" fuer ALLE
 # Ziele, obwohl auf zwei Plattformen nichts ankam. Deshalb fragen wir nicht
 # mehr ffmpeg, sondern die Plattform selbst.
-RESTREAM_VERIFY        = os.getenv("RESTREAM_VERIFY", "1").strip().lower() in ("1","true","yes","on","y")
-RESTREAM_VERIFY_S      = _env_int("RESTREAM_VERIFY_S", 120)       # Prueftakt
-RESTREAM_VERIFY_GRACE  = _env_int("RESTREAM_VERIFY_GRACE_S", 90)  # Anlaufkarenz
-RESTREAM_VERIFY_MISSES = _env_int("RESTREAM_VERIFY_MISSES", 3)    # Hysterese
+RESTREAM_VERIFY        = _nc_rscfg.verify()
+RESTREAM_VERIFY_S      = _nc_rscfg.verify_takt()     # Prueftakt
+RESTREAM_VERIFY_GRACE  = _nc_rscfg.verify_karenz()   # Anlaufkarenz
+RESTREAM_VERIFY_MISSES = _nc_rscfg.verify_misses()   # Hysterese
+# v4.1-W22: der Waechter-Zustand wird mit nc/routes/restream.py geteilt.
 _RESTREAM_GUARD = _nc_guard.RestreamGuard(_nc_guard.GuardConfig(
     startup_grace_s=RESTREAM_VERIFY_GRACE,
     misses_before_action=RESTREAM_VERIFY_MISSES,
     verify_interval_s=RESTREAM_VERIFY_S))
+_nc_rsstate.GUARD["obj"] = _RESTREAM_GUARD   # v4.1-W22: Register
 # V37-MAXLIVE: Im Multi-Modus (RESTREAM_SINGLE=0) höchstens so viele Live-User
 # gleichzeitig restreamen. Default 2 — schützt den GPU-losen Server vor zu vielen
 # parallelen ffmpeg-Encodes. Braucht eigene Ingest-Ziele/Keys pro Restream.
@@ -1079,7 +1089,7 @@ RESTREAM_MAX_RECONNECTS  = max(1, _env_int("RESTREAM_MAX_RECONNECTS", 5))
 RESTREAM_BACKOFF_BASE_S  = max(1, _env_int("RESTREAM_BACKOFF_BASE_S", 8))
 RESTREAM_BACKOFF_MAX_S   = max(5, _env_int("RESTREAM_BACKOFF_MAX_S", 60))
 # Stillstands-Waechter: ffmpeg lebt, sendet aber nicht mehr. 0 = abschalten.
-RESTREAM_STALL_TIMEOUT_S = _env_int("RESTREAM_STALL_TIMEOUT_S", 75)
+RESTREAM_STALL_TIMEOUT_S = _nc_rscfg.stall_timeout()
 RESTREAM_STALL_GRACE_S   = _env_int("RESTREAM_STALL_GRACE_S", 60)
 RESTREAM_STALL_CHECK_S   = max(5, _env_int("RESTREAM_STALL_CHECK_S", 15))
 _RESTREAM_POLICY = _nc_rstab.ReconnectPolicy(
@@ -1133,7 +1143,9 @@ RESTREAM_REACT_HOLD = _env_int("RESTREAM_REACT_HOLD", 20)
 # Branding-Footer. "burnin" = altes Verhalten (Bänder direkt aufs Quellbild).
 # Zur Laufzeit über das Dashboard umschaltbar (greift beim nächsten Relay-Start).
 RESTREAM_LAYOUT      = os.getenv("RESTREAM_LAYOUT", "studio").strip().lower()      # studio|burnin
-_RESTREAM_LAYOUT_RT  = {"mode": RESTREAM_LAYOUT if RESTREAM_LAYOUT in ("studio", "burnin") else "studio"}
+# v4.1-W22: geteilt mit nc/routes/restream.py (Alias, nie neu gebunden).
+_RESTREAM_LAYOUT_RT  = _nc_rsstate.LAYOUT
+_RESTREAM_LAYOUT_RT["mode"] = RESTREAM_LAYOUT if RESTREAM_LAYOUT in ("studio", "burnin") else "studio"
 RESTREAM_CANVAS_W    = _env_int("RESTREAM_CANVAS_W", 1920)
 RESTREAM_CANVAS_H    = _env_int("RESTREAM_CANVAS_H", 1080)
 RESTREAM_CHAT_SOURCE = os.getenv("RESTREAM_CHAT_SOURCE", "both").strip().lower()   # tiktok|kick|both|off
@@ -1144,9 +1156,7 @@ configure_chat(lines=RESTREAM_CHAT_LINES, width=RESTREAM_CHAT_WIDTH)  # V37 W3: 
 # manuell übers Dashboard). Läuft nur an, wenn die Kick-Credentials da sind.
 KICKMOD_AUTOSTART    = os.getenv("KICKMOD_AUTOSTART", "1").strip().lower() in ("1", "true", "yes", "on", "y")
 
-def _restream_layout_mode():
-    m = (_RESTREAM_LAYOUT_RT.get("mode") or "studio").lower()
-    return m if m in ("studio", "burnin") else "studio"
+_restream_layout_mode = _nc_rsstate.layout_mode
 # KI-Moderator: offizielle Kick-API (OAuth 2.1). App unter
 # https://kick.com/settings/developer anlegen → client id/secret.
 KICK_CLIENT_ID     = os.getenv("KICK_CLIENT_ID", "").strip()
@@ -1154,8 +1164,8 @@ KICK_CLIENT_SECRET = os.getenv("KICK_CLIENT_SECRET", "").strip()
 KICK_BROADCASTER_ID= _env_int("KICK_BROADCASTER_ID", 0)     # numerische broadcaster_user_id
 KICK_CHATROOM_ID   = _env_int("KICK_CHATROOM_ID", 0)        # für Chat-Lesen (Websocket)
 # F83: Kick↔Discord Cross-Promotion
-KICK_CHANNEL_URL   = os.getenv("KICK_CHANNEL_URL", "").strip().rstrip("/")   # öffentlicher Kick-Kanal-Link für Live-Notifs
-DISCORD_INVITE_URL = os.getenv("DISCORD_INVITE_URL", "").strip()             # Discord-Einladung für den Kick-Announcer
+KICK_CHANNEL_URL   = _nc_rscfg.kick_channel_url()   # oeffentlicher Kick-Kanal-Link
+DISCORD_INVITE_URL = _nc_rscfg.discord_invite()      # Discord-Einladung fuer den Announcer
 KICK_ANNOUNCE      = os.getenv("KICK_ANNOUNCE", "1").strip().lower() in ("1","true","yes","on","y")
 KICK_ANNOUNCE_INTERVAL_MIN = _env_int("KICK_ANNOUNCE_INTERVAL_MIN", 30)      # Abstand zwischen Invite-Posts im Kick-Chat
 KICK_ANNOUNCE_TEXT = os.getenv("KICK_ANNOUNCE_TEXT", "").strip()             # optional eigener Text, {invite} wird ersetzt
@@ -3623,6 +3633,7 @@ async def _get_ai_session() -> "aiohttp.ClientSession":
                 connector=aiohttp.TCPConnector(limit=10, limit_per_host=4,
                                                keepalive_timeout=60))
         return _AI_SESSION
+_nc_rsstate.AI_SESSION["fn"] = _get_ai_session   # v4.1-W22: Haken fuer /api/restream
 
 async def _close_ai_session():
     """Beim Bot-Shutdown aufrufen, damit die gepoolte Session nicht als
@@ -7772,37 +7783,6 @@ def _spawn(coro, *, name: str = None):
     return task
 
 
-def _spawn_from_flask(coro, *, name: str = None):
-    """Feuert eine Coroutine aus dem FLASK-Thread auf dem Bot-Loop ab.
-
-    Warum es das braucht (v4.0-W105, Tiefenbughunt): _spawn() nutzt
-    asyncio.create_task() und verlangt damit einen laufenden Loop IM
-    AUFRUFENDEN THREAD. Das Dashboard laeuft aber in einem eigenen Thread
-    (threading.Thread(target=run_flask)) — dort gibt es keinen. create_task()
-    warf deshalb bei JEDEM Aufruf RuntimeError("no running event loop"), das
-    umgebende except verschluckte ihn, und die Coroutine blieb unerwartet
-    liegen ("coroutine was never awaited"): die Arbeit passierte nie.
-
-    Anders als _run_async_from_flask wird NICHT auf das Ergebnis gewartet —
-    der Aufrufer sitzt in after_request bzw. am Ende einer Route und darf die
-    Antwort nicht verzoegern. Fehler landen im Log statt im Nichts.
-    """
-    if _MAIN_LOOP is None or not _MAIN_LOOP.is_running():
-        try:
-            coro.close()        # kein "never awaited"-Warning und kein Leak
-        except Exception:
-            pass
-        raise RuntimeError("event loop not ready")
-    fut = asyncio.run_coroutine_threadsafe(coro, _MAIN_LOOP)
-
-    def _done_cb(f):
-        try:
-            f.result()
-        except Exception as e:
-            log.error("Hintergrundaufgabe %r aus dem Flask-Thread gescheitert: %s",
-                      name, e, exc_info=e)
-    fut.add_done_callback(_done_cb)
-    return fut
 
 
 # B138: gedrosselte Fehlermeldung fuer periodische Schleifen.
@@ -10518,7 +10498,7 @@ def api_pulse():
                    stats=_j(lambda: api_stats(lean=True)),
                    bandwidth=_j(api_bandwidth_live),
                    health=_j(api_health_score),
-                   deck=_j(api_restream_deck))
+                   deck=_j(_nc_routes_restream.api_restream_deck))
 
 
 
@@ -11592,61 +11572,8 @@ def api_stream_timeline():
                    viewers=_viewer_stats(start))     # V37: Kick-Zuschauer-Kontext
 
 
-@dashboard_app.route("/api/restream/report", methods=["POST"])
-def api_restream_report():
-    """1-Klick-Sende-Report: Session-Bilanz → Discord (+ Rückgabe für die Anzeige)."""
-    d = request.get_json(silent=True) or {}
-    # Wie in /api/stream/timeline: Schreibweise aus den trackings auflösen,
-    # sonst zählt der Report für "@RabiLive" nichts (Aufnahmen, Dauer, Momente).
-    user = _nc_trackingdb.resolve_tracked_user(
-        (d.get("user") or _restream_active().get("user") or "").lstrip("@").strip())
-    if not user:
-        return jsonify(ok=False, error="kein aktiver Stream — Streamer angeben"), 400
-    _sk = _nc_trackingdb.ci_key(_LIVE_SESSION_START, user)
-    start = _LIVE_SESSION_START.get(_sk) if _sk else None
-    stats = _collect_session_stats(user, start)
-    dur = stats.get("dur_min")
-    lines = [f"📊 **Sende-Report @{user}**",
-             (f"⏱ Dauer: {dur // 60}h {dur % 60}min" if isinstance(dur, int) else "⏱ Dauer: —"),
-             f"📼 Aufnahmen: {stats.get('recs', 0)} · {stats.get('size_mb', 0)} MB",
-             f"🔥 Hype-Momente: {stats.get('moments', 0)}"]
-    text = "\n".join(lines)
-    sent_dc = False
-    try:
-        # v4.0-W105 (Tiefenbughunt): _spawn() scheitert hier immer — diese Route
-        # laeuft im Flask-Thread ohne eigenen Loop. Die Meldung ging deshalb nie
-        # raus, und der Grund stand nur auf log.debug, also im Fehlerlog nie.
-        _spawn_from_flask(_discord_notify(text, "report"), name="report-dc")
-        sent_dc = True
-    except Exception as e:
-        log.error("Sende-Report an Discord fehlgeschlagen: %s", e, exc_info=e)
-    return jsonify(ok=True, text=text, sent_discord=sent_dc)
 
 
-@dashboard_app.route("/api/restream/health")
-def api_restream_health():
-    """B160: Live-Encode-Health je aktivem Restream (bitrate/fps/speed/drop aus ffmpeg-progress)."""
-    out = []
-    try:
-        procs = getattr(_RESTREAM_MGR, "_procs", {}) or {}
-        active = _RESTREAM_ACTIVE_ALL or {}
-        for rid, info in list(procs.items()):
-            h = (info or {}).get("health") or {}
-            meta = active.get(rid) or {}
-            started = (info or {}).get("started")
-            up = int(_time_mod.monotonic() - started) if started else None
-            tt = (info or {}).get("tee_targets")
-            out.append({
-                "rid": rid, "user": meta.get("user", ""), "label": meta.get("label", ""),
-                "bitrate": h.get("bitrate"), "fps": h.get("fps"), "speed": h.get("speed"),
-                "drop": h.get("drop", 0), "dup": h.get("dup", 0), "size_mb": h.get("size_mb"),
-                "out_time": h.get("out_time"),
-                "slow": bool(h.get("slow_ticks", 0) >= 5 or h.get("slow_warned")),
-                "uptime_s": up, "ntargets": (len(tt) if hasattr(tt, "__len__") else 0),
-            })
-    except Exception as e:
-        return jsonify(ok=False, error=str(e)[:120], streams=[])
-    return jsonify(ok=True, streams=out, count=len(out))
 
 
 @dashboard_app.route("/api/automation/status")
@@ -11725,26 +11652,6 @@ def _tunnel_effective():
 # RESTREAM_TEST_ALLOW_LIVE=1 + Bestätigung erreichbar und NIE, während der Kanal
 # live ist. Die Freigabe fällt bot-frei in nc.restream_testpush.guard().
 # ═══════════════════════════════════════════════════════════════════════
-async def _kick_channel_live():
-    """B161: Ist der produktive Kick-Kanal gerade live? True/False/None(=unklar).
-       public keyless API kick.com/api/v2/channels/<slug> — None bei jedem Zweifel,
-       damit UNKNOWN nie als OFFLINE fehlgedeutet wird (Regel aus restream_guard)."""
-    slug = _kick_slug()
-    if not slug:
-        return None
-    try:
-        import aiohttp
-        session = await _get_ai_session()
-        async with session.get(f"https://kick.com/api/v2/channels/{slug}",
-                               timeout=aiohttp.ClientTimeout(total=8),
-                               headers={"User-Agent": "Mozilla/5.0"}) as r:
-            if r.status != 200:
-                return None
-            j = await r.json(content_type=None)
-        ls = j.get("livestream")
-        return bool(ls and ls.get("is_live", True))
-    except Exception:
-        return None
 
 
 def _testpush_resolve_live():
@@ -11764,112 +11671,15 @@ def _testpush_resolve_live():
     except Exception:
         pass
     return KICK_INGEST_URL, KICK_STREAM_KEY, ("env" if KICK_STREAM_KEY else "")
+_nc_rsstate.TESTPUSH_LIVE["fn"] = _testpush_resolve_live   # v4.1-W22: Haken fuer /api/restream
 
 
-def _testpush_cfg():
-    """.env FRISCH lesen (Modul-Konstanten würden sie einfrieren — s. Skill)."""
-    li, lk, ls = _testpush_resolve_live()
-    return _nc_testpush.TestPushConfig(
-        test_ingest=os.getenv("RESTREAM_TEST_INGEST", "").strip(),
-        test_key=os.getenv("RESTREAM_TEST_KEY", "").strip(),
-        live_ingest=li, live_key=lk, live_key_source=ls,
-        allow_live=os.getenv("RESTREAM_TEST_ALLOW_LIVE", "0").strip().lower() in ("1", "true", "yes", "on"),
-        duration_s=_env_int("RESTREAM_TEST_DURATION_S", 8),
-        fps=_env_int("RESTREAM_TEST_FPS", 30))
 
 
-async def _testpush_exec(cmd, duration_s):
-    """Führt den ffmpeg-Testbild-Push aus, sammelt rc+stderr. Hartes Timeout,
-       Prozess wird bei Überschreitung sicher getötet (kein Zombie/Leak)."""
-    proc = await asyncio.create_subprocess_exec(
-        *cmd, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE)
-    try:
-        _, stderr = await asyncio.wait_for(proc.communicate(), timeout=duration_s + 15)
-    except asyncio.TimeoutError:
-        try:
-            proc.kill()
-        except Exception:
-            pass
-        try:
-            await proc.wait()
-        except Exception:
-            pass
-        return {"rc": -1, "stderr": "timed out"}
-    return {"rc": proc.returncode, "stderr": (stderr or b"").decode("utf-8", "replace")}
 
 
-@dashboard_app.route("/api/restream/testpush", methods=["GET"])
-def api_testpush_status():
-    """B161: Status fürs Panel — Test-Ziel konfiguriert? Guards frei? Kanal live?"""
-    cfg = _testpush_cfg()
-    tgt = _nc_testpush.resolve_target(cfg, _nc_testpush.TARGET_TEST)
-    ch = _nc_testpush.CH_UNKNOWN
-    try:
-        live = _run_async_from_flask(_kick_channel_live(), timeout=10)
-        ch = (_nc_testpush.CH_LIVE if live
-              else _nc_testpush.CH_OFFLINE if live is False
-              else _nc_testpush.CH_UNKNOWN)
-    except Exception:
-        ch = _nc_testpush.CH_UNKNOWN
-    return jsonify(ok=True,
-                   test_configured=bool(cfg.test_ingest and cfg.test_key),
-                   test_ingest_host=(_url_host(cfg.test_ingest) or ""),
-                   test_key_fp=(_nc_testpush.fingerprint(cfg.test_key) if cfg.test_key else None),
-                   live_key_source=cfg.live_key_source,
-                   live_ingest_host=(_url_host(cfg.live_ingest) or ""),
-                   allow_live=cfg.allow_live,
-                   restream_active=len(_RESTREAM_ACTIVE_ALL),
-                   channel=ch, duration_s=cfg.duration_s, fps=cfg.fps,
-                   default_ready=bool(tgt.ok))
 
 
-@dashboard_app.route("/api/restream/testpush", methods=["POST"])
-def api_testpush_run():
-    """B161: sendet ein kurzes ffmpeg-Testbild an einen Ingest, um den Key zu
-       prüfen. Body: {target?: 'test'|'live', confirm?: bool}. Standard = Test-Slot.
-       Der Live-Key ist mehrfach gesichert (allow_live + Kanal-Offline + confirm)."""
-    payload = request.get_json(silent=True) or {}
-    prefer = (_nc_testpush.TARGET_LIVE
-              if str(payload.get("target", "")).lower() == "live"
-              else _nc_testpush.TARGET_TEST)
-    confirm = bool(payload.get("confirm", False))
-    cfg = _testpush_cfg()
-    tgt = _nc_testpush.resolve_target(cfg, prefer)
-    # Kanal-Live nur abfragen, wenn der Live-Key betroffen sein KÖNNTE — spart
-    # bei jedem harmlosen Test-Slot-Push einen HTTP-Aufruf.
-    channel = _nc_testpush.CH_OFFLINE
-    if tgt.ok and tgt.is_live_key:
-        try:
-            live = _run_async_from_flask(_kick_channel_live(), timeout=10)
-            channel = (_nc_testpush.CH_LIVE if live
-                       else _nc_testpush.CH_OFFLINE if live is False
-                       else _nc_testpush.CH_UNKNOWN)
-        except Exception:
-            channel = _nc_testpush.CH_UNKNOWN
-    dec = _nc_testpush.guard(cfg, tgt, active_all_nonempty=bool(_RESTREAM_ACTIVE_ALL),
-                             channel=channel, confirm=confirm)
-    if not dec.allowed:
-        return jsonify(ok=False, allowed=False, reason=dec.reason, error=dec.message,
-                       target=tgt.source, is_live_key=tgt.is_live_key,
-                       channel=channel), dec.http
-    cmd = _nc_testpush.build_cmd(tgt.ingest, tgt.key, _normalize_ingest,
-                                 duration_s=cfg.duration_s, fps=cfg.fps)
-    fp = _nc_testpush.fingerprint(tgt.key)
-    log.info("Test-Push: Ziel=%s host=%s key(len=%d,fp=%05d) dur=%ds live_key=%s",
-             tgt.source, _url_host(tgt.ingest) or "?", fp["len"], fp["fp"],
-             cfg.duration_s, tgt.is_live_key)
-    try:
-        res = _run_async_from_flask(_testpush_exec(cmd, cfg.duration_s),
-                                    timeout=cfg.duration_s + 25)
-    except Exception as e:
-        if _loop_not_ready(e):
-            return jsonify(ok=False, error="Event-Loop startet noch — kurz erneut versuchen."), 503
-        return jsonify(ok=False, error=f"Test-Push-Ausführung: {e}"), 500
-    result = _nc_testpush.classify_result(res.get("rc"), res.get("stderr", ""))
-    return jsonify(ok=(result["state"] == "ok"), allowed=True,
-                   target=tgt.source, is_live_key=tgt.is_live_key,
-                   ingest_host=_url_host(tgt.ingest) or "", key_fp=fp,
-                   channel=channel, duration_s=cfg.duration_s, result=result)
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -12267,127 +12077,6 @@ async def _kick_user_token(session=None):
 
 
 # ═══ F85: ON-AIR-Deck — kompakter Restream-Status fürs Dashboard-Hero ═══
-@dashboard_app.route("/api/restream/deck")
-def api_restream_deck():
-    """F85: Signalfluss-Status für das ON-AIR-Deck: aktiver Restream
-       (Quelle/Label) + öffentlicher Kick-Link. Bewusst minimal & sync-sicher."""
-    ra = dict(_restream_active())
-    # V37-W-CTRL: Status aller drei Eigene-Kanal-Plattformen fürs Deck.
-    _tw_chan = (os.getenv("TWITCH_CHANNEL", "") or "").strip().lstrip("#")
-    _yt = (os.getenv("YOUTUBE_CHANNEL", "") or "").strip()
-    _now = _time_mod.time()
-    def _age(p):
-        lm = _WCHAT_STATUS[p]["last_msg"]
-        return round(_now - lm) if lm else None
-    def _up(p):
-        sc = _WCHAT_STATUS[p].get("since") or 0
-        return round(_now - sc) if (sc and _WCHAT_STATUS[p]["connected"]) else None
-    # v4.0-W24c: YouTube-Chip war ohne YOUTUBE_CHANNEL nicht klickbar — die
-    # Deck-URL war dann None, das Frontend haengt den onclick aber an p.url.
-    # Jetzt eine brauchbare URL auch ohne Handle: laeuft gerade ein Broadcast,
-    # direkt auf die Live-Watch-Seite; sonst, wenn YouTube ueberhaupt in Betrieb
-    # ist (Key/OAuth/enabled), ins Studio-Live-Dashboard des Creators.
-    def _yt_deck_url():
-        if _yt:
-            return (_yt if _yt.startswith("http")
-                    else f"https://youtube.com/{_yt if _yt.startswith('@') else '@' + _yt}/live")
-        bc = (_YT_INGEST_CACHE.get("broadcast") or "").strip()
-        if bc:
-            return f"https://www.youtube.com/watch?v={bc}"
-        if (YOUTUBE_STREAM_KEY or YOUTUBE_ENABLED or _YT_INGEST_CACHE.get("key")
-                or _yt_oauth_configured()):
-            return "https://studio.youtube.com/"
-        return None
-    _yt_url = _yt_deck_url()
-    platforms = {
-        "kick": {
-            "configured": bool(KICK_CHANNEL_URL or KICK_CHATROOM_ID),
-            "connected": bool(_KICK_MOD and _KICK_MOD.stats.get("connected")),
-            "mode": "send", "url": KICK_CHANNEL_URL or None,
-            # v4.0-W10: letzter Sendeversuch (Klartext) statt stummem Scheitern
-            "error": ("" if _KICK_SEND_LAST.get("ok") is not False
-                      else _KICK_SEND_LAST.get("error", "")),
-            "send_ok": _KICK_SEND_LAST.get("ok"),
-            "send_age_s": (round(_now - _KICK_SEND_LAST["ts"])
-                           if _KICK_SEND_LAST.get("ts") else None)},
-        "twitch": {
-            "configured": bool(_tw_chan),
-            "connected": _WCHAT_STATUS["twitch"]["connected"],
-            "mode": _WCHAT_STATUS["twitch"]["mode"],
-            "last_msg_s": _age("twitch"),
-            "reconnects": _WCHAT_STATUS["twitch"]["reconnects"],
-            "uptime_s": _up("twitch"),
-            "error": _WCHAT_STATUS["twitch"].get("error") or "",
-            "url": f"https://twitch.tv/{_tw_chan}" if _tw_chan else None},
-        "youtube": {
-            "configured": bool(_yt or YOUTUBE_STREAM_KEY or YOUTUBE_ENABLED
-                               or _YT_INGEST_CACHE.get("key") or _yt_oauth_configured()),
-            "connected": _WCHAT_STATUS["youtube"]["connected"],
-            "mode": _WCHAT_STATUS["youtube"]["mode"],
-            "last_msg_s": _age("youtube"),
-            "reconnects": _WCHAT_STATUS["youtube"]["reconnects"],
-            "uptime_s": _up("youtube"),
-            "error": _WCHAT_STATUS["youtube"].get("error") or "",
-            "url": _yt_url},
-    }
-    # V37: Restream-Ziel-Status pro Plattform (wohin wird tatsächlich
-    # ausgespielt) — nicht zu verwechseln mit dem Chat-Listener-Status oben.
-    _extra = [n for n, _ in _multistream_targets()]
-    _any_live = bool(_RESTREAM_ACTIVE_ALL)
-    _tf = _RESTREAM_MGR.tee_fehler()          # v4.0-W116: nur noch geltende
-    def _terr(_n):
-        _e = _tf.get(_n)
-        return {"msg": str(_e.get("msg", ""))[:200],
-                "age_s": int(_time_mod.time() - _e.get("ts", _time_mod.time()))} if _e else None
-    def _ihost(_u):
-        try:
-            return _url_host(_u) or ""
-        except Exception:
-            return ""
-    _kick_db = False
-    try:
-        with db_conn() as _kc:
-            _kr = _kc.execute("SELECT 1 FROM restreams WHERE COALESCE(stream_key,'')<>'' "
-                              "OR COALESCE(ingest_url,'')<>'' LIMIT 1").fetchone()
-            _kick_db = bool(_kr)
-    except Exception:
-        _kick_db = False
-    restream = {
-        "kick": {"is_target": True, "configured": bool(KICK_STREAM_KEY or KICK_INGEST_URL),
-                 "live": _any_live, "primary": True,
-                 "key_source": ("db" if _kick_db else ("env" if KICK_STREAM_KEY else "")),
-                 "ingest_host": _ihost(KICK_INGEST_URL), "last_error": _terr("kick")},
-        "twitch": {"is_target": ("twitch" in _extra), "configured": bool(TWITCH_STREAM_KEY),
-                   "enabled": TWITCH_ENABLED, "live": (_any_live and "twitch" in _extra),
-                   "primary": False,
-                   "key_source": ("env" if TWITCH_STREAM_KEY else ""),
-                   "ingest_host": _ihost(TWITCH_INGEST_URL), "last_error": _terr("twitch")},
-        "youtube": {"is_target": ("youtube" in _extra),
-                    "configured": bool(YOUTUBE_STREAM_KEY or _YT_INGEST_CACHE.get("key")),
-                    "enabled": YOUTUBE_ENABLED, "live": (_any_live and "youtube" in _extra),
-                    "key_source": ("env" if YOUTUBE_STREAM_KEY
-                                   else (_YT_INGEST_CACHE.get("source") or "")),
-                    # B138: Welcher Broadcast wurde getroffen? Ohne das laesst
-                    # sich "sendet auf den falschen Key" nur am schwarzen
-                    # Player in Studio erkennen — nie im Dashboard.
-                    "broadcast": _YT_INGEST_CACHE.get("broadcast", ""),
-                    "reason": ("" if ("youtube" in _extra)
-                               else (_YT_INGEST_CACHE.get("reason")
-                                     or ("YOUTUBE_ENABLED=0 (in .env aktivieren)"
-                                         if not YOUTUBE_ENABLED else "Stream-Key wird aufgelöst…"))),
-                    "primary": False,
-                    "ingest_host": _ihost(YOUTUBE_INGEST_URL), "last_error": _terr("youtube")},
-    }
-    # Chat-Status + Restream-Status zusammenführen (Frontend nutzt beides)
-    for k in ("kick", "twitch", "youtube"):
-        platforms[k]["restream"] = restream[k]
-    return jsonify(ok=True,
-                   active=(ra if ra.get("user") else None),
-                   all=[{k: v for k, v in (i or {}).items() if k != "ovdir"}
-                        for i in _RESTREAM_ACTIVE_ALL.values()],   # V37-P5c (BH3: ohne interne Pfade)
-                   platforms=platforms,
-                   restream=restream,
-                   kick_url=KICK_CHANNEL_URL or None)
 
 
 # ═══ F90: AZRAEL CORE — Telemetrie der einen KI fürs Dashboard ═══
@@ -13997,29 +13686,6 @@ def api_check_timing():
                    "overlay_tage_ohne_spenden": OVERLAY_RETENTION_DAYS})
 
 
-@dashboard_app.route("/api/restream/verify")
-def api_restream_verify():
-    """B123: Was sagen die PLATTFORMEN — nicht was sagt ffmpeg.
-
-    Zeigt pro Restream je Ziel: letzte Antwort der Plattform, Zahl der
-    Fehlanzeigen in Folge, ob das Ziel seit dem Start je bestaetigt war.
-    Damit ist im Panel unterscheidbar: 'laeuft' vs. 'kommt an'."""
-    try:
-        return jsonify(ok=True,
-                       enabled=RESTREAM_VERIFY,
-                       interval_s=RESTREAM_VERIFY_S,
-                       grace_s=RESTREAM_VERIFY_GRACE,
-                       misses_before_action=RESTREAM_VERIFY_MISSES,
-                       active_platforms=sorted(_restream_active_platforms()),
-                       # v4.0-W115: das Panel braucht die Grenze, gegen die es
-                       # ohne_fortschritt_s einfaerbt — sonst muesste es den
-                       # Default doppelt kennen und liefe bei geaenderter .env
-                       # auseinander.
-                       stall_timeout_s=RESTREAM_STALL_TIMEOUT_S,
-                       guard=_RESTREAM_GUARD.snapshot(),
-                       status=_RESTREAM_MGR.status())
-    except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
 
 
 # ═══ B121: YOUTUBE VERBINDEN — Pendant zum Twitch-OAuth-Flow ═══════════
@@ -14199,19 +13865,8 @@ def _modlog(kind, actor, content, meta=None):
         pass
 
 
-def _restream_enabled():
-    """Master-Schalter für die Restream-Funktion (per .env steuerbar).
-       Rückgabe: (enabled: bool, reason: str)."""
-    if RESTREAM_ENABLED in ("0", "false", "no", "off", "disabled"):
-        return False, "per RESTREAM_ENABLED=0 deaktiviert"
-    if RESTREAM_ENABLED in ("1", "true", "yes", "on", "enabled"):
-        return True, ""
-    # "auto": aktiv, sobald IRGENDEIN Ziel konfiguriert ist (v4.0-W77: keine
-    # Kick-Pflicht mehr — Kick/Twitch/YouTube sind gleichberechtigt).
-    if _nc_rst.active_targets():
-        return True, ""
-    return False, ("kein Restream-Ziel konfiguriert — mindestens EIN "
-                   "*_INGEST_URL + *_STREAM_KEY (kick/twitch/youtube) setzen")
+# v4.1-W22: nach nc/restreamcfg.py geloest (siehe dort).
+_restream_enabled = _nc_rscfg.enabled
 
 
 def _url_host(url: str) -> str:
@@ -14270,7 +13925,7 @@ _restream_active = _nc_channels.restream_active
 # _RESTREAM_ACTIVE bleibt als "primär" (zuletzt gestartet) für die 20+
 # Bestandsstellen erhalten — die Registry ergänzt Multi-Stream-Sicht für
 # Chat-Routing (P5b) und Dashboard (/api/restream/deck: Feld "all").
-_RESTREAM_ACTIVE_ALL = {}
+_RESTREAM_ACTIVE_ALL = _nc_rsstate.ACTIVE_ALL   # v4.1-W22: geteilt (Alias)
 # V37-COMMUNITY: welche rids in dieser Session schon einen Live-Ping bekamen
 # (verhindert Ping-Spam bei Reconnects). Wird beim Stop des Restreams geleert.
 _COMMUNITY_PINGED = set()
@@ -14307,8 +13962,7 @@ _RESTREAM_LAST_EVENT = {"ts": 0.0, "kind": "", "name": "", "amount": "", "messag
 _CHAT_FEED_USERS = set()   # F92b: User mit AKTIVEM TikTok-Chat-Listener (Live-React ODER Restream-Guardian)
 # F92d: Diagnose-Zustand des Chat-Listeners — macht "Panel leer" im Dashboard
 # erklärbar (verbunden? wie viele Events? letzter Fehler? welcher Egress?).
-_CHAT_DIAG = {"user": None, "phase": "idle", "since": 0.0, "events": 0,
-              "last_error": "", "egress": "", "register": "", "cooldown_until": 0.0}
+_CHAT_DIAG = _nc_rsstate.CHAT_DIAG   # v4.1-W22: geteilt (Alias)
 
 # ---- V37-CHAT: Verbindungs-Telemetrie pro User ------------------------------
 # _CHAT_DIAG oben ist EIN globales Dict fuer alle User — mehrere Listener
@@ -14391,16 +14045,7 @@ def _chat_sanitize(s, maxlen=200):
     s = _CHAT_STRIP_RE.sub("", str(s or ""))
     return " ".join(s.split())[:maxlen]
 
-def _chat_src_ok(src):
-    """Darf diese Quelle in den Sendebild-Chat? (RESTREAM_CHAT_SOURCE)"""
-    v = RESTREAM_CHAT_SOURCE
-    if v in ("off", "none", "0"):
-        return False
-    # V37-W-CHAT: twitch/youtube sind eigene Kanäle wie kick — sie zählen
-    # zur Kick-Klasse (sichtbar bei "both" und bei "kick").
-    if src in ("twitch", "youtube"):
-        return v in ("both", "kick", src)
-    return v == "both" or v == src
+_chat_src_ok = _nc_rscfg.chat_src_ok   # v4.1-W22
 
 _HIGHLIGHTS = _nc_highlights.new_state()      # W22: Radar-Zustand (Chat-Tempo)
 
@@ -17739,6 +17384,9 @@ class KickModerator:
 
 
 _RESTREAM_MGR = RestreamManager()
+# v4.1-W22: Register, kein Alias — der Manager entsteht erst hier, lange
+# nach dem Import von nc/restreamstate.py. Ein Alias waere fuer immer None.
+_nc_rsstate.MGR["obj"] = _RESTREAM_MGR
 _KICK_MOD = KickModerator()
 # v4.1-W9: die Instanz ins geteilte Register, damit /api/kick, /api/kickmod und
 # /api/chat sie erreichen, ohne dass KickModerator selbst wandern muss (das ist
@@ -18527,6 +18175,7 @@ async def _discord_notify(text, source=None):
                 await r.read()
     except Exception as e:
         log.debug("discord notify: %s", e)
+_nc_rsstate.NOTIFY["fn"] = _discord_notify   # v4.1-W22: Haken fuer /api/restream
 
 
 async def _push_notify(title, message, priority=0):
@@ -19171,7 +18820,7 @@ _nc_director.configure(min_gap_s=DIRECTOR_MIN_GAP_S, max_gap_s=DIRECTOR_MAX_GAP_
                        mem_turns=DIRECTOR_MEM_TURNS, chatters=DIRECTOR_CHATTERS)
 from nc.director import LiveDirector  # noqa: F401,E402
 
-_LIVE_DIRECTORS = {}
+_LIVE_DIRECTORS = _nc_rsstate.DIRECTORS   # v4.1-W22: geteilt (Alias)
 
 
 def _director_for(username):
@@ -19461,14 +19110,7 @@ async def _restream_platform_state():
     return out
 
 
-def _restream_active_platforms():
-    """Welche Plattformen bekommen ueberhaupt Bild? Kick ist der Primaer,
-    Twitch/YouTube nur wenn als Multistream-Ziel konfiguriert. Nicht
-    konfigurierte Ziele duerfen nie einen Neustart ausloesen."""
-    names = {"kick"}
-    for n, _url in _multistream_targets():
-        names.add(n)
-    return names
+_restream_active_platforms = _nc_rscfg.active_platforms   # v4.1-W22
 
 
 async def _restream_verify_loop():
@@ -19650,113 +19292,14 @@ async def _auto_restream_loop():
 
 
 # ---- Restream-Endpoints ----
-@dashboard_app.route("/api/restream/list")
-def api_restream_list():
-    try:
-        with db_conn() as conn:
-            rows = conn.execute("SELECT * FROM restreams ORDER BY id DESC").fetchall()
-        live = _RESTREAM_MGR.status()
-        en, why = _restream_enabled()
-        def _auto(r):
-            try: return bool(r["auto_restream"])
-            except (IndexError, KeyError): return False
-        return jsonify(ok=True, enabled=en, reason=why,
-                       configured=bool(KICK_INGEST_URL or any(r["ingest_url"] for r in rows)),
-                       targets=[{
-                           "id": r["id"], "label": r["label"], "source_username": r["source_username"],
-                           "ingest_url": r["ingest_url"] or KICK_INGEST_URL,
-                           "has_key": bool(r["stream_key"] or KICK_STREAM_KEY),
-                           "transcode": bool(r["transcode"]), "enabled": bool(r["enabled"]),
-                           "auto_restream": _auto(r),
-                           "status": r["status"], "last_error": r["last_error"],
-                           "uptime_s": live.get(r["id"], {}).get("uptime_s"),
-                           "attempts": live.get(r["id"], {}).get("attempts"),
-                           "active_transcode": live.get(r["id"], {}).get("transcode"),
-                           "health": live.get(r["id"], {}).get("health")} for r in rows])
-    except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
 
 
-@dashboard_app.route("/api/restream/create", methods=["POST"])
-def api_restream_create():
-    d = request.get_json(silent=True) or {}
-    # B76-Fix: User fügen gern die komplette TikTok-URL ein — lstrip("@") ließ
-    # "https://www.tiktok.com/@rabi1978" durch, der Chat-Listener scheiterte dann
-    # an einem Phantom-User ("www.tiktok.comrabi1978"). clean_username extrahiert
-    # das echte Handle aus URL/@-Formen.
-    src = clean_username(d.get("source_username") or "")
-    if not src:
-        return jsonify(ok=False, error="source_username fehlt"), 400
-    try:
-        with db_conn() as conn:
-            conn.execute(
-                "INSERT INTO restreams (created_at, label, source_username, ingest_url, stream_key, "
-                "transcode, enabled, auto_restream, status) VALUES (?,?,?,?,?,?,1,?,'idle')",
-                (datetime.now(timezone.utc).isoformat(), (d.get("label") or src)[:120], src,
-                 (d.get("ingest_url") or "").strip(), (d.get("stream_key") or "").strip(),
-                 1 if d.get("transcode") else 0, 1 if d.get("auto_restream") else 0))
-            conn.commit()
-        return jsonify(ok=True)
-    except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
 
 
-@dashboard_app.route("/api/restream/<int:rid>/edit", methods=["POST"])
-def api_restream_edit(rid):
-    """Ziel-Parameter ändern (Label, Ingest, Key, Transcode, Auto). Nicht im Live-Betrieb."""
-    d = request.get_json(silent=True) or {}
-    fields, vals = [], []
-    if "label" in d:        fields.append("label=?");        vals.append((d["label"] or "")[:120])
-    if "ingest_url" in d:   fields.append("ingest_url=?");   vals.append((d["ingest_url"] or "").strip())
-    if "stream_key" in d:   fields.append("stream_key=?");   vals.append((d["stream_key"] or "").strip())
-    if "transcode" in d:    fields.append("transcode=?");    vals.append(1 if d["transcode"] else 0)
-    if "auto_restream" in d:fields.append("auto_restream=?");vals.append(1 if d["auto_restream"] else 0)
-    if not fields:
-        return jsonify(ok=False, error="nichts zu ändern"), 400
-    try:
-        with db_conn() as conn:
-            vals.append(rid)
-            conn.execute(f"UPDATE restreams SET {', '.join(fields)} WHERE id=?", vals)
-            conn.commit()
-        return jsonify(ok=True)
-    except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
 
 
-@dashboard_app.route("/api/restream/<int:rid>/delete", methods=["POST"])
-def api_restream_delete(rid):
-    try:
-        _run_async_from_flask(_RESTREAM_MGR.stop(rid), timeout=15)
-    except Exception:
-        pass
-    try:
-        with db_conn() as conn:
-            conn.execute("DELETE FROM restreams WHERE id=?", (rid,))
-            conn.commit()
-        return jsonify(ok=True)
-    except RuntimeError as e:
-        if _loop_not_ready(e):
-            return jsonify(ok=False, error="Bot-Loop startet noch", transient=True), 503
-        return jsonify(ok=False, error=str(e)), 500
-    except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
 
 
-@dashboard_app.route("/api/restream/<int:rid>/start", methods=["POST"])
-def api_restream_start(rid):
-    en, why = _restream_enabled()
-    if not en:
-        return jsonify(ok=False, error=f"Restream deaktiviert: {why}"), 409
-    try:
-        with db_conn() as conn:
-            conn.execute("UPDATE restreams SET enabled=1 WHERE id=?", (rid,))
-            conn.commit()
-        res = _run_async_from_flask(_RESTREAM_MGR.start(rid), timeout=40)
-        return jsonify(res), (200 if res.get("ok") else 502)
-    except RuntimeError:
-        return jsonify(ok=False, error="Event-Loop nicht bereit"), 503
-    except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
 
 
 @dashboard_app.route("/api/shield/stats")
@@ -19942,56 +19485,10 @@ def api_debug_threads():
                    uptime_s=_uptime_s())
 
 
-@dashboard_app.route("/api/restream/<int:rid>/stop", methods=["POST"])
-def api_restream_stop(rid):
-    try:
-        res = _run_async_from_flask(_RESTREAM_MGR.stop(rid), timeout=15)
-        return jsonify(res)
-    except RuntimeError as e:
-        if _loop_not_ready(e):
-            return jsonify(ok=False, error="Bot-Loop startet noch", transient=True), 503
-        return jsonify(ok=False, error=str(e)), 500
-    except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
 
 
-@dashboard_app.route("/api/restream/start_all", methods=["POST"])
-def api_restream_start_all():
-    """Startet alle aktivierten Ziele, deren Quelle gerade live ist."""
-    en, why = _restream_enabled()
-    if not en:
-        return jsonify(ok=False, error=f"Restream deaktiviert: {why}"), 409
-    started, skipped = 0, 0
-    try:
-        with db_conn() as conn:
-            rows = conn.execute("SELECT id FROM restreams WHERE enabled=1").fetchall()
-        for r in rows:
-            try:
-                res = _run_async_from_flask(_RESTREAM_MGR.start(r["id"]), timeout=40)
-                if res.get("ok"): started += 1
-                else: skipped += 1
-            except Exception:
-                skipped += 1
-        return jsonify(ok=True, started=started, skipped=skipped)
-    except RuntimeError as e:
-        if _loop_not_ready(e):
-            return jsonify(ok=False, error="Bot-Loop startet noch", transient=True), 503
-        return jsonify(ok=False, error=str(e)), 500
-    except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
 
 
-@dashboard_app.route("/api/restream/stop_all", methods=["POST"])
-def api_restream_stop_all():
-    try:
-        _run_async_from_flask(_RESTREAM_MGR.stop_all(), timeout=30)
-        return jsonify(ok=True)
-    except RuntimeError as e:
-        if _loop_not_ready(e):
-            return jsonify(ok=False, error="Bot-Loop startet noch", transient=True), 503
-        return jsonify(ok=False, error=str(e)), 500
-    except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
 
 
 # ---- KI-Moderator-Endpoints ----
@@ -20834,42 +20331,8 @@ def overlay_page():
 
 
 # ═══ F92: Studio-Layout — Chat-Feed + Layout-Umschalter fürs Dashboard ═══
-@dashboard_app.route("/api/restream/chatfeed")
-def api_restream_chatfeed():
-    """Live-Chat-Feed (TikTok + Kick), wie er ins Sendebild gebrannt wird —
-       fürs Studio-Monitor-Panel im Dashboard."""
-    items = [{"ts": round(m["ts"], 1), "src": m["src"], "who": m["who"], "text": m["text"]}
-             for m in list(_RESTREAM_CHAT)[-40:]]
-    brand = "  \u00b7  ".join(
-        u.replace("https://", "").replace("http://", "").rstrip("/")
-        for u in (KICK_CHANNEL_URL, DISCORD_INVITE_URL) if (u or "").strip())
-    # F100: Regie-Zustand des aktiven Streams (Stimmung/Energie/Stammchatter)
-    _active_u = clean_username(_restream_active().get("user") or "")
-    _dir = _LIVE_DIRECTORS.get(_restream_active().get("user") or "") or \
-        (next((d for u, d in _LIVE_DIRECTORS.items() if clean_username(u) == _active_u), None) if _active_u else None)
-    director = _dir.snapshot() if _dir is not None else None
-    return jsonify(ok=True, items=items, layout=_restream_layout_mode(), brand=brand,
-                   director=director,
-                   diag=dict(_CHAT_DIAG),
-                   sources={"tiktok": _chat_src_ok("tiktok"), "kick": _chat_src_ok("kick")},
-                   overlay_enabled=RESTREAM_OVERLAY,
-                   active=_restream_active().get("user"))
 
 
-@dashboard_app.route("/api/restream/layout", methods=["POST"])
-def api_restream_layout():
-    """Layout zur Laufzeit umschalten (studio|burnin). Greift beim NÄCHSTEN
-       Relay-Start — ein laufender ffmpeg behält seinen Filtergraph."""
-    d = request.get_json(silent=True) or {}
-    mode = (d.get("mode") or "").strip().lower()
-    if mode not in ("studio", "burnin"):
-        return jsonify(ok=False, error="mode muss studio|burnin sein"), 400
-    _RESTREAM_LAYOUT_RT["mode"] = mode
-    log_event("restream.layout", "info", f"Sendebild-Layout → {mode}", {"mode": mode})
-    running = bool(getattr(_RESTREAM_MGR, "_procs", {}))
-    return jsonify(ok=True, mode=mode,
-                   note=("greift beim nächsten Relay-Start — laufenden Restream neu starten"
-                         if running else "aktiv beim nächsten Relay-Start"))
 
 
 
@@ -21970,7 +21433,7 @@ try:
     import discord as discord   # noqa: F401 — modulweite Sichtbarkeit für Annotationen
 except Exception:
     discord = None
-_LIVE_SESSION_START = {}    # F84: username -> epoch des Live-Gangs (für Session-Stats im Offline-Embed)
+_LIVE_SESSION_START = _nc_rsstate.SESSION_START   # F84 (v4.1-W22: geteilt)
 _ACTIVE_TIER = {}           # v37 W3: username -> aktiver Recorder-Tier (native/yt-dlp) — nur Sichtbarkeit
 _OPS_ALERT_LAST = {}        # F84: alert-key -> monotonic (Rate-Limit gegen Alert-Spam bei Streaks)
 # v37 Welle 2: Benachrichtigungs-Kanäle + Alarm-Schwellen
@@ -25027,12 +24490,7 @@ _YT_API_CACHE = _nc_channels.YT_API_CACHE
 # YouTube fiel still hinten runter. Jetzt: den persistenten Stream-Key über die
 # Data API (liveStreams.list, mine=true) holen — derselbe OAuth-Token, den
 # Status/Chat ohnehin nutzen. Der Key ist persistent, deshalb 10-min-Cache.
-_YT_INGEST_CACHE = {"addr": "", "key": "", "ts": 0.0, "reason": "", "source": "",
-                    # B138: welcher Broadcast wurde getroffen (Diagnose im
-                    # Dashboard) und welcher Stream ist an ihn gebunden.
-                    # last_logged verhindert, dass derselbe Fehlgrund bei jedem
-                    # Restream-Start erneut ins Log wandert.
-                    "broadcast": "", "bound": "", "last_logged": ""}
+_YT_INGEST_CACHE = _nc_rsstate.YT_INGEST_CACHE   # B138 (v4.1-W22: geteilt)
 
 
 async def _resolve_youtube_ingest(force=False):
@@ -25923,11 +25381,7 @@ async def _yt_timeout(tok, lcid, channel_id, seconds):
         return False
 
 
-def _yt_oauth_configured():
-    if _ytoauth.status().get("ready"):
-        return True
-    return all((os.getenv(k, "") or "").strip()
-               for k in ("YOUTUBE_CLIENT_ID", "YOUTUBE_CLIENT_SECRET", "YOUTUBE_REFRESH_TOKEN"))
+_yt_oauth_configured = _nc_rscfg.yt_oauth_configured   # v4.1-W22
 
 
 async def _youtube_api_chat_loop():
@@ -28095,6 +27549,42 @@ _nc_ctx.configure(
         "_STREAM_DEAD_STREAK": _STREAM_DEAD_STREAK,
     },
 )
+def _spawn_from_flask(coro, *, name: str = None):
+    """Feuert eine Coroutine aus dem FLASK-Thread auf dem Bot-Loop ab.
+
+    Warum es das braucht (v4.0-W105, Tiefenbughunt): _spawn() nutzt
+    asyncio.create_task() und verlangt damit einen laufenden Loop IM
+    AUFRUFENDEN THREAD. Das Dashboard laeuft aber in einem eigenen Thread
+    (threading.Thread(target=run_flask)) — dort gibt es keinen. create_task()
+    warf deshalb bei JEDEM Aufruf RuntimeError("no running event loop"), das
+    umgebende except verschluckte ihn, und die Coroutine blieb unerwartet
+    liegen ("coroutine was never awaited"): die Arbeit passierte nie.
+
+    Anders als _run_async_from_flask wird NICHT auf das Ergebnis gewartet —
+    der Aufrufer sitzt in after_request bzw. am Ende einer Route und darf die
+    Antwort nicht verzoegern. Fehler landen im Log statt im Nichts.
+    """
+    if _MAIN_LOOP is None or not _MAIN_LOOP.is_running():
+        try:
+            coro.close()        # kein "never awaited"-Warning und kein Leak
+        except Exception:
+            pass
+        raise RuntimeError("event loop not ready")
+    fut = asyncio.run_coroutine_threadsafe(coro, _MAIN_LOOP)
+
+    def _done_cb(f):
+        try:
+            f.result()
+        except Exception as e:
+            log.error("Hintergrundaufgabe %r aus dem Flask-Thread gescheitert: %s",
+                      name, e, exc_info=e)
+    fut.add_done_callback(_done_cb)
+    return fut
+
+
+_nc_rsstate.SPAWN["fn"] = _spawn_from_flask   # v4.1-W22: Haken fuer /api/restream
+
+
 dashboard_app.register_blueprint(_nc_routes_recordings.bp)
 dashboard_app.register_blueprint(_nc_routes_archive.bp)
 dashboard_app.register_blueprint(_nc_routes_collections.bp)
@@ -28124,6 +27614,7 @@ dashboard_app.register_blueprint(_nc_routes_azrael.bp)     # v4.1-W19
 dashboard_app.register_blueprint(_nc_routes_overlay.bp)    # v4.1-W20
 dashboard_app.register_blueprint(_nc_routes_audio.bp)      # v4.1-W20
 dashboard_app.register_blueprint(_nc_routes_brain.bp)      # v4.1-W21
+dashboard_app.register_blueprint(_nc_routes_restream.bp)   # v4.1-W22
 
 
 if __name__ == "__main__":

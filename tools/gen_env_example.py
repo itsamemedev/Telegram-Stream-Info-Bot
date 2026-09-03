@@ -70,12 +70,23 @@ def collect():
                 txt = _fh.read()
         except OSError:
             continue
-        for line in txt.splitlines():
-            s = _ohne_kommentar(line)
-            for m in _NUM.finditer(s):
-                seen.setdefault(m.group(1), m.group(2))
-            for m in _STR.finditer(s):
-                seen.setdefault(m.group(1), (m.group(2) or ""))
+        # v4.1-W22: die kommentarfreien Zeilen wieder ZUSAMMENSETZEN und erst
+        # dann suchen. Vorher lief die Suche je Zeile — ein umbrochener Aufruf
+        #
+        #     os.getenv(
+        #         "TWITCH_INGEST_URL",
+        #         "rtmp://ingest.global-contribute...").strip()
+        #
+        # passte auf keine einzelne Zeile und fiel still aus der Vorlage. Genau
+        # die Luecke, gegen die dieses Skript geschrieben wurde; sie kostete
+        # beim ersten Anlauf von W22 prompt eine Variable. Kommentare werden
+        # weiterhin ZEILENWEISE entfernt — sonst verschluckte ein '#' in einem
+        # Default den Rest der Datei.
+        ohne = "\n".join(_ohne_kommentar(z) for z in txt.splitlines())
+        for m in _NUM.finditer(ohne):
+            seen.setdefault(m.group(1), m.group(2))
+        for m in _STR.finditer(ohne):
+            seen.setdefault(m.group(1), (m.group(2) or ""))
     return seen
 
 
