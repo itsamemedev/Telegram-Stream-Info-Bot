@@ -6133,7 +6133,7 @@ async function retPreview(){
 }
 async function retRun(){
   const days=parseInt(($('#ret_days').value||'30'),10)||30;
-  if(!confirm('WIRKLICH alle Aufnahmen älter als '+days+' Tage unwiderruflich löschen?')) return;
+  if(!confirm(T('WIRKLICH alle Aufnahmen unwiderruflich löschen?')+'\n\n'+T('älter als')+' '+days+' '+T('Tage'))) return;
   const el=$('#ret_body'); if(el) el.textContent='lösche…';
   const r=await api('/api/retention/run',{method:'POST',body:{days}});
   if(!r||r.ok===false){ if(el) el.innerHTML='<span style="color:var(--magenta)">'+esc((r&&r.error)||'Fehler')+'</span>'; return; }
@@ -6463,7 +6463,7 @@ async function updateCookies(){
    jetzt am Archiv-Panel. Die Vault-Liste und ihr Einzel-Loeschen sind
    ersatzlos entfallen — loadArchive() und arcBulkDelete() koennen dasselbe. */
 async function arcRename(id, currentFilename){
-  const v=prompt('Datei #'+id+' umbenennen (mit Endung, z.B. clip.mp4):', currentFilename||'');
+  const v=prompt(T('Datei umbenennen (mit Endung, z.B. clip.mp4):')+'\n\n#'+id, currentFilename||'');
   if(v===null) return;
   if(!v.trim()){ toast('Name darf nicht leer sein','warn'); return; }
   /* Das Backend erwartet 'new_name' — es benennt die echte Datei um, nicht
@@ -6516,7 +6516,7 @@ async function arcPurgeGroup(gi){
   const rows=Array.from(grp.querySelectorAll('[data-path]'));
   const toDelete=rows.slice(1);   // erste behalten
   if(!toDelete.length) return;
-  if(!confirm(`${toDelete.length} Duplikate löschen (1 wird behalten)?`)) return;
+  if(!confirm(toDelete.length+' '+T('Duplikate löschen (1 wird behalten)?'))) return;
   let freed=0, n=0;
   for(const row of toDelete){
     const path=row.getAttribute('data-path');
@@ -6530,7 +6530,7 @@ async function arcPurgeAll(){
   const groups=Array.from($$('#dedupGroups [data-grp]'));
   const total=$$('#dedupGroups [data-path]').length - groups.length;  // alle minus 1 pro Gruppe
   if(total<=0){ toast('Nichts zu löschen — jede Gruppe hat nur eine Datei.','warn'); return; }
-  if(!confirm(`${total} Duplikate über alle ${groups.length} Gruppen löschen (je 1 behalten)? Das kann nicht rückgängig gemacht werden.`)) return;
+  if(!confirm(total+' '+T('Duplikate löschen (je 1 behalten)?')+'\n\n'+groups.length+' '+T('Gruppen')+'\n'+T('Das kann nicht rückgängig gemacht werden.'))) return;
   let freed=0, n=0;
   for(const grp of groups){
     const rows=Array.from(grp.querySelectorAll('[data-path]')).slice(1);
@@ -7305,7 +7305,7 @@ async function restreamStartDue(){
   if(typeof toast==='function') toast('Sende-Automatik angestoßen');
 }
 async function restreamStopAll(){
-  if(!confirm('WIRKLICH alle laufenden Restreams stoppen?')) return;
+  if(!confirm(T('WIRKLICH alle laufenden Restreams stoppen?'))) return;
   const res=$('#rsctl_res'); if(res) res.textContent='stoppe…';
   const r=await api('/api/restream/stop_all',{method:'POST',body:{}});
   if(res) res.innerHTML=(r&&(r.ok!==false))?'<span style="color:var(--amber)">⏹ Alle Restreams gestoppt</span>':'<span style="color:var(--magenta)">✗ '+esc((r&&r.error)||'Fehler')+'</span>';
@@ -7517,20 +7517,20 @@ async function rsLoad(){
 }
 async function rsAuto(id,val){ const d=await apiPost('/api/restream/'+id+'/edit',{auto_restream:!!val}); if(d&&d.ok){toast(val?'Auto-Start an':'Auto-Start aus');rsLoad();} else toast('Fehler','err'); }
 async function rsEdit(id,label,ingest,transcode){
-  const nl=prompt('Label:', label); if(nl===null)return;
-  const ni=prompt('Ingest-URL (leer = .env):', ingest); if(ni===null)return;
-  const nt=confirm('Transcode aktivieren? (OK = ja, Abbrechen = nein/copy)');
-  const nk=prompt('Neuer Stream-Key (leer lassen = unverändert):','');
+  const nl=prompt(T('Label:'), label); if(nl===null)return;
+  const ni=prompt(T('Ingest-URL (leer = .env):'), ingest); if(ni===null)return;
+  const nt=confirm(T('Transcode aktivieren? (OK = ja, Abbrechen = nein/copy)'));
+  const nk=prompt(T('Neuer Stream-Key (leer lassen = unverändert):'),'');
   const body={label:nl, ingest_url:ni, transcode:nt};
   if(nk) body.stream_key=nk;
   const d=await apiPost('/api/restream/'+id+'/edit',body);
   if(d&&d.ok){toast('Gespeichert');rsLoad();} else toast((d&&d.error)||'Fehler','err');
 }
 async function rsStartAll(){ toast('starte alle live Quellen…'); const d=await apiPost('/api/restream/start_all',{}); if(d&&d.ok)toast('gestartet: '+d.started+' · übersprungen: '+d.skipped); else toast('Fehler','err'); rsLoad(); }
-async function rsStopAll(){ if(!confirm('Alle Restreams stoppen?'))return; const d=await apiPost('/api/restream/stop_all',{}); if(d&&d.ok)toast('Alle gestoppt'); rsLoad(); }
+async function rsStopAll(){ if(!confirm(T('Alle Restreams stoppen?')))return; const d=await apiPost('/api/restream/stop_all',{}); if(d&&d.ok)toast('Alle gestoppt'); rsLoad(); }
 async function rsStart(id){ toast('starte…'); const d=await apiPost('/api/restream/'+id+'/start',{}); if(d&&d.ok)toast('Restream läuft'); else toast((d&&d.error)||'Start fehlgeschlagen','err'); rsLoad(); }
 async function rsStop(id){ const d=await apiPost('/api/restream/'+id+'/stop',{}); if(d&&d.ok)toast('Gestoppt'); rsLoad(); }
-async function rsDelete(id){ if(!confirm('Ziel löschen?'))return; const d=await apiPost('/api/restream/'+id+'/delete',{}); if(d&&d.ok){toast('Gelöscht');rsLoad();} }
+async function rsDelete(id){ if(!confirm(T('Ziel löschen?')))return; const d=await apiPost('/api/restream/'+id+'/delete',{}); if(d&&d.ok){toast('Gelöscht');rsLoad();} }
 
 let _kmRunning=false;
 async function kmLoad(){
@@ -7742,13 +7742,13 @@ async function donAddManual(){
   if(btn){btn.disabled=false;btn.textContent='+ Hinzufügen';}
 }
 async function donManualDelete(id){
-  if(!confirm('Diesen manuellen Spenden-Eintrag löschen?')) return;
+  if(!confirm(T('Diesen manuellen Spenden-Eintrag löschen?'))) return;
   try{ await apiPost('/api/donations/manual/'+id+'/delete',{}); }catch(e){}
   donManualLoad();
 }
 /* v4.0-W65: Spenden-DB leeren (Bug-Altbestand; es gab real nie Spenden) */
 async function donReset(){
-  if(!confirm('Wirklich ALLE Spenden-Einträge löschen? Der Ziel-Fortschritt geht auf 0 zurück. (Follows/Reaktionen bleiben.)')) return;
+  if(!confirm(T('Wirklich ALLE Spenden-Einträge löschen? Der Ziel-Fortschritt geht auf 0 zurück. (Follows/Reaktionen bleiben.)'))) return;
   const btn=document.getElementById('don_reset');
   if(btn){btn.disabled=true;btn.textContent='🗑 …';}
   try{
@@ -7918,7 +7918,7 @@ function ytoauthStart(){
   }, 3000);
 }
 async function ytoauthForget(){
-  if(!confirm('YouTube-Verbindung lösen? Zuschauerzahlen und der KI-Moderator im Live-Chat fallen dann aus, bis du neu verbindest.')) return;
+  if(!confirm(T('YouTube-Verbindung lösen? Zuschauerzahlen und der KI-Moderator im Live-Chat fallen dann aus, bis du neu verbindest.'))) return;
   await apiPost('/api/youtube/oauth/forget', {});
   ytoauthLoad();
 }
@@ -7927,7 +7927,7 @@ async function ytoauthForget(){
    still durch dasselbe Konto, und Kontowechsel wäre nur von Hand über
    myaccount.google.com möglich. */
 async function ytoauthLogout(){
-  if(!confirm('Vom Google-Konto abmelden? Der Zugriff wird bei Google widerrufen. Beim nächsten Verbinden fragt Google wieder nach Konto und Zustimmung.')) return;
+  if(!confirm(T('Vom Google-Konto abmelden? Der Zugriff wird bei Google widerrufen. Beim nächsten Verbinden fragt Google wieder nach Konto und Zustimmung.'))) return;
   const d=await apiPost('/api/youtube/oauth/logout', {});
   if(typeof toast==='function') toast((d&&d.message)||(d&&d.ok?'Abgemeldet':'Abmeldung fehlgeschlagen'), (d&&d.ok)?'ok':'err');
   ytoauthLoad();
@@ -7935,7 +7935,7 @@ async function ytoauthLogout(){
 /* Konto wechseln = abmelden, dann sofort neu verbinden. Erst danach zeigt
    Google die Kontoauswahl wirklich mit allen Konten. */
 async function ytoauthSwitch(){
-  if(!confirm('Auf ein anderes Google-Konto wechseln? Der aktuelle Zugriff wird widerrufen und der Verbinden-Dialog geöffnet.')) return;
+  if(!confirm(T('Auf ein anderes Google-Konto wechseln? Der aktuelle Zugriff wird widerrufen und der Verbinden-Dialog geöffnet.'))) return;
   const d=await apiPost('/api/youtube/oauth/logout', {});
   if(d&&!d.ok&&typeof toast==='function') toast((d&&d.message)||'Widerruf fehlgeschlagen — verbinde trotzdem neu','err');
   ytoauthStart();
@@ -8066,8 +8066,8 @@ function dbxPick(){
 }
 async function dbxImport(dry){
   if(!_DBX_FILE){ toast('Erst eine .sql-Datei wählen'); return; }
-  if(!dry && !confirm('Import überschreibt die aktuellen Tabellen-Inhalte '
-      +'(DELETE + INSERT je Tabelle).\n\nVorher mit "Prüfen" testen?\n\nWirklich importieren?')) return;
+  if(!dry && !confirm(T('Import überschreibt die aktuellen Tabellen-Inhalte (DELETE + INSERT je Tabelle).')
+      +'\n\n'+T('Vorher mit „Prüfen" testen?')+'\n\n'+T('Wirklich importieren?'))) return;
   const out=$('#dbx_out');
   out.textContent=dry?'Prüfe…':'Importiere…';
   const fd=new FormData(); fd.append('file', _DBX_FILE);
@@ -8381,7 +8381,7 @@ async function learnedPromote(){
   } else toast('Übernahme fehlgeschlagen','err');
 }
 async function learnedClear(){
-  if(!confirm('Alle gelernten Kandidaten verwerfen?')) return;
+  if(!confirm(T('Alle gelernten Kandidaten verwerfen?'))) return;
   const d=await apiPost('/api/kickmod/learned/clear',{});
   if(d&&d.ok){ toast('Queue geleert'); learnedLoad(); }
 }
@@ -8717,7 +8717,7 @@ function drawAvatarOn(c,t){
 }
 let _clipsLoaded=0;
 function deleteClip(name){
-  if(!confirm('Clip löschen?\n'+name)) return;
+  if(!confirm(T('Clip löschen?')+'\n'+name)) return;
   apiDel('/api/clip/'+encodeURIComponent(name)).then(d=>{
     if(d && d.ok){ toast('Clip gelöscht'); loadClips(); }
     else toast('Löschen fehlgeschlagen','err');
@@ -9406,7 +9406,7 @@ async function arcBulkDelete(){
   const ids=Array.from(document.querySelectorAll('#arc_tb .arc-cb:checked'))
     .map(c=>parseInt(c.value,10)).filter(Boolean);
   if(!ids.length){ if(typeof toast==='function') toast('Nichts ausgewählt','err'); return; }
-  if(typeof confirm==='function' && !confirm(ids.length+' Archiv-Einträge löschen? (Datei + DB-Eintrag)')) return;
+  if(typeof confirm==='function' && !confirm(ids.length+' '+T('Archiv-Einträge löschen? (Datei + DB-Eintrag)'))) return;
   const d=await apiPost('/api/archive/bulk-delete',{ids});
   if(typeof toast==='function'){
     if(d&&d.failed) toast('Teilweise: '+(d.deleted||0)+' gelöscht, '+d.failed+' Fehler','err');
@@ -9639,7 +9639,7 @@ async function rtOrphans(){
     ' <button class="btn sm" onclick="rtOrphansClean()" style="margin-left:4px">löschen</button>';
 }
 async function rtOrphansClean(){
-  if(typeof confirm==='function' && !confirm('Verwaiste Dateien wirklich löschen?')) return;
+  if(typeof confirm==='function' && !confirm(T('Verwaiste Dateien wirklich löschen?'))) return;
   const d=await apiPost('/api/rec/orphans/clean',{confirm:true});
   if(typeof toast==='function') toast(d&&d.ok?('Gelöscht: '+(d.deleted||0)+' Dateien'):((d&&d.error)||'Fehler'), d&&d.ok?'ok':'err');
   rtOrphans();
@@ -9683,7 +9683,7 @@ async function rtRetentionPreview(){
 }
 async function rtRetentionApply(){
   if(!_rtRetRules) return;
-  if(typeof confirm==='function' && !confirm('Aufnahmen laut Vorschau endgültig löschen?')) return;
+  if(typeof confirm==='function' && !confirm(T('Aufnahmen laut Vorschau endgültig löschen?'))) return;
   const d=await apiPost('/api/rec/retention/apply',{confirm:true, rules:_rtRetRules});
   if(typeof toast==='function') toast(d&&d.ok?('Gelöscht: '+(d.deleted||0)):((d&&d.error)||'Fehler'), d&&d.ok?'ok':'err');
   const applyBtn=$('#rt_ret_apply'); if(applyBtn) applyBtn.style.display='none';
@@ -9758,7 +9758,7 @@ async function pollSendbar(dPre){
         src.title=all.length+' aktive Restreams';
         src.querySelectorAll('.sb-pill').forEach(p=>{
           p.onclick=async()=>{
-            if(!confirm('Restream #'+p.dataset.rid+' (@'+p.dataset.user+') stoppen?')) return;
+            if(!confirm(T('Restream stoppen?')+'\n\n#'+p.dataset.rid+' (@'+p.dataset.user+')')) return;
             try{ await fetch('/api/restream/'+p.dataset.rid+'/stop',{method:'POST'}); }catch(e){}
           };
         });
@@ -10296,7 +10296,7 @@ async function ops6Restore(){
   let snap;
   try{ snap=JSON.parse(el.value); }catch(e){ out.innerHTML='<div class="kc-row sev-high"><div class="kc-t">Kein gültiges JSON.</div></div>'; return; }
   const cfg=snap.app_config||snap;
-  if(typeof confirm==='function' && !confirm('app_config aus diesem Snapshot wiederherstellen?')) return;
+  if(typeof confirm==='function' && !confirm(T('app_config aus diesem Snapshot wiederherstellen?'))) return;
   const d=await apiPost('/api/config/restore',{confirm:true, app_config:cfg});
   out.innerHTML='<div class="kc-row '+(d&&d.ok?'sev-info':'sev-high')+'"><div class="kc-t">'+
     (d&&d.ok?('Wiederhergestellt: '+(d.restored||0)+' Schlüssel'):esc((d&&d.error)||'Fehler'))+'</div></div>';
@@ -10306,7 +10306,7 @@ async function ops6Cleanup(dry){
   const out=$('#ops6_cleanup_out'), applyBtn=$('#ops6_cleanup_apply');
   if(!out) return;
   const days=parseInt(($('#ops6_cleanup_days')||{}).value||'30',10)||30;
-  if(!dry && typeof confirm==='function' && !confirm('Aufnahmen älter als '+days+' Tage endgültig löschen?')) return;
+  if(!dry && typeof confirm==='function' && !confirm(T('Aufnahmen endgültig löschen?')+'\n\n'+T('älter als')+' '+days+' '+T('Tage'))) return;
   out.innerHTML='<div class="faint" style="font-size:11px">…</div>';
   const d=await apiPost('/api/storage/cleanup',{days, dry_run:!!dry});
   if(!d||!d.ok){ out.innerHTML='<div class="kc-row sev-high"><div class="kc-t">'+esc((d&&d.error)||'Fehler')+'</div></div>'; return; }
@@ -10318,7 +10318,7 @@ async function ops6Cleanup(dry){
   if(applyBtn) applyBtn.style.display=(dry&&n)?'':'none';
 }
 async function ops6ClipsClear(){
-  if(typeof confirm==='function' && !confirm('Alle Highlight-Clips löschen?')) return;
+  if(typeof confirm==='function' && !confirm(T('Alle Highlight-Clips löschen?'))) return;
   const d=await apiPost('/api/clips/clear',{});
   if(typeof toast==='function') toast(d&&d.ok?('Clips gelöscht: '+(d.removed||0)):'Fehler', d&&d.ok?'ok':'err');
 }
@@ -10478,9 +10478,11 @@ async function loadTestPush(){
 async function tpRun(target){
   const isLive=target==='live';
   if(isLive){
-    if(!confirm('ACHTUNG: Test-Push auf den ECHTEN Kick-Kanal-Key.\n\nDas Testbild kann für Zuschauer auf kick.com sichtbar werden. Nur ausführen, wenn du gerade NICHT sendest und der Kanal offline ist.\n\nWirklich auf den LIVE-Key pushen?')) return;
+    if(!confirm(T('ACHTUNG: Test-Push auf den ECHTEN Kick-Kanal-Key.')+'\n\n'
+      +T('Das Testbild kann für Zuschauer auf kick.com sichtbar werden. Nur ausführen, wenn du gerade NICHT sendest und der Kanal offline ist.')+'\n\n'
+      +T('Wirklich auf den LIVE-Key pushen?'))) return;
   } else {
-    if(!confirm('Test-Push mit dem Test-Slot senden?')) return;
+    if(!confirm(T('Test-Push mit dem Test-Slot senden?'))) return;
   }
   const rb=$('#tp_result'); if(rb) rb.innerHTML='<span class="faint">Sende Testbild…</span>';
   const d=await apiPost('/api/restream/testpush',{target:target,confirm:true});
@@ -10539,7 +10541,7 @@ async function mkToggle(on){ const d=await apiPost('/api/marketing/toggle',{enab
 async function mkCfg(patch){ const d=await apiPost('/api/marketing/config',patch); if(!d||!d.ok)toast('Konfig-Fehler','warn'); loadMarketing(); }
 async function mkTarget(t,on){ const st=await apiGet('/api/marketing/status'); let ts=((st&&st.targets)||[]).filter(x=>x!==t); if(on)ts.push(t); await apiPost('/api/marketing/config',{targets:ts}); loadMarketing(); }
 async function mkPreview(){ const o=$('#mk_out'); if(o)o.innerHTML='<span class="faint">lade…</span>'; const d=await apiGet('/api/marketing/preview'); if(!o)return; if(!d||!d.ok){o.innerHTML='<span style="color:var(--red)">Vorschau fehlgeschlagen.</span>';return;} o.innerHTML='<div class="mk-prev-h">Discord</div><pre class="mk-prev">'+esc(d.preview.discord)+'</pre><div class="mk-prev-h">Telegram</div><pre class="mk-prev">'+esc(d.preview.telegram)+'</pre><div class="faint">Beim echten Senden wird zusätzlich eine KI-Zeile ergänzt.</div>'; }
-async function mkSendNow(){ if(!confirm('Jetzt einen Promo-Post an die aktiven Ziele senden?'))return; const o=$('#mk_out'); if(o)o.innerHTML='<span class="faint">sende…</span>'; const d=await apiPost('/api/marketing/send-now',{}); if(!o)return; if(!d){o.innerHTML='<span style="color:var(--red)">keine Antwort</span>';return;} if(!d.ok){o.innerHTML='<span style="color:var(--amber)">Abgelehnt: '+esc(d.error||'—')+'</span>';return;} const parts=Object.entries(d.sent||{}).map(function(e){return e[0]+': '+(e[1].ok?'✓':('✕'+(e[1].error?' '+esc(e[1].error):'')));}).join(' · '); o.innerHTML='<span style="color:var(--ok)">✓ gesendet</span> <span class="faint">'+parts+'</span>'; toast('Promo-Post gesendet'); loadMarketing(); }
+async function mkSendNow(){ if(!confirm(T('Jetzt einen Promo-Post an die aktiven Ziele senden?')))return; const o=$('#mk_out'); if(o)o.innerHTML='<span class="faint">sende…</span>'; const d=await apiPost('/api/marketing/send-now',{}); if(!o)return; if(!d){o.innerHTML='<span style="color:var(--red)">keine Antwort</span>';return;} if(!d.ok){o.innerHTML='<span style="color:var(--amber)">Abgelehnt: '+esc(d.error||'—')+'</span>';return;} const parts=Object.entries(d.sent||{}).map(function(e){return e[0]+': '+(e[1].ok?'✓':('✕'+(e[1].error?' '+esc(e[1].error):'')));}).join(' · '); o.innerHTML='<span style="color:var(--ok)">✓ gesendet</span> <span class="faint">'+parts+'</span>'; toast('Promo-Post gesendet'); loadMarketing(); }
 
 function _nwAgo(ts){ if(!ts) return 'nie'; const s=Date.now()/1000-ts; if(s<60)return 'gerade'; if(s<3600)return Math.floor(s/60)+'m'; if(s<86400)return (s/3600).toFixed(1)+'h'; return Math.floor(s/86400)+'d'; }
 
@@ -10594,7 +10596,7 @@ function _nwRender(items){ if(!items||!items.length) return '<span class="faint"
     +(bl.length?'<ul class="nw-b" style="margin:5px 0 0 16px">'+bl.map(function(x){return '<li>'+esc(x)+'</li>';}).join('')+'</ul>':'')
     +'</div>'; }).join(''); }
 async function nwPreview(){ const o=$('#nw_out'); if(o)o.innerHTML='<span class="faint">lade…</span>'; const d=await apiGet('/api/news/preview'); if(!o)return; if(!d||!d.ok){o.innerHTML='<span style="color:var(--red)">Vorschau fehlgeschlagen.</span>';return;} o.innerHTML='<div class="faint" style="margin-bottom:4px">Vorschau (statische Fakten — beim echten Generieren formuliert die KI):</div>'+_nwRender(d.items); }
-async function nwGenerate(){ if(!confirm('Jetzt News generieren und auf der Website veröffentlichen?'))return; const o=$('#nw_out'); if(o)o.innerHTML='<span class="faint">generiere…</span>'; const d=await apiPost('/api/news/generate-now',{}); if(!o)return; if(!d){o.innerHTML='<span style="color:var(--red)">keine Antwort</span>';return;} if(!d.ok){o.innerHTML='<span style="color:var(--amber)">Fehler: '+esc(d.error||'—')+'</span>';return;} o.innerHTML='<span style="color:var(--ok)">✓ veröffentlicht</span> <span class="faint">'+(d.items||0)+' News auf der Website ('+(d.new||0)+' neu)</span>'; toast('News veröffentlicht'); loadNews(); }
+async function nwGenerate(){ if(!confirm(T('Jetzt News generieren und auf der Website veröffentlichen?')))return; const o=$('#nw_out'); if(o)o.innerHTML='<span class="faint">generiere…</span>'; const d=await apiPost('/api/news/generate-now',{}); if(!o)return; if(!d){o.innerHTML='<span style="color:var(--red)">keine Antwort</span>';return;} if(!d.ok){o.innerHTML='<span style="color:var(--amber)">Fehler: '+esc(d.error||'—')+'</span>';return;} o.innerHTML='<span style="color:var(--ok)">✓ veröffentlicht</span> <span class="faint">'+(d.items||0)+' News auf der Website ('+(d.new||0)+' neu)</span>'; toast('News veröffentlicht'); loadNews(); }
 
 async function loadKickOAuth(){
   const box=$('#ko_body'), tag=$('#ko_tag'); if(!box) return;
@@ -10659,7 +10661,7 @@ async function koSendTest(){
   }
   if(typeof loadListeners==='function') loadListeners();
 }
-async function koDisconnect(){ if(!confirm('Kick-Verbindung trennen?'))return; await apiPost('/api/kick/oauth/disconnect',{}); toast('Kick getrennt'); loadKickOAuth(); }
+async function koDisconnect(){ if(!confirm(T('Kick-Verbindung trennen?')))return; await apiPost('/api/kick/oauth/disconnect',{}); toast('Kick getrennt'); loadKickOAuth(); }
 async function koSetRedirect(){
   const el=$('#ko_redir'); if(!el) return;
   const uri=(el.value||'').trim();
@@ -11074,7 +11076,7 @@ async function in5CheckExists(i){
 async function in5DeleteStreamer(i){
   const u=(window._in5Dormant||[])[i];
   if(u==null) return;
-  if(typeof confirm==='function' && !confirm('@'+u+' und alle zugehörigen Trackings endgültig löschen?')) return;
+  if(typeof confirm==='function' && !confirm(T('Streamer und alle zugehörigen Trackings endgültig löschen?')+'\n\n@'+u)) return;
   const d=await apiPost('/api/streamer/delete/'+encodeURIComponent(u),{});
   if(typeof toast==='function') toast(d&&d.ok?('@'+u+' gelöscht ('+(d.deleted||0)+' Tracking(s))'):((d&&d.error)||'Fehler'), d&&d.ok?'ok':'err');
   if(d&&d.ok){ loadIn5Dormant(); loadIn5Watch(); }
@@ -11670,17 +11672,17 @@ function updRender(r, finished){
 async function updApply(){
   var d=UPD_LAST||{};
   var rem=(d.remote&&d.remote.short)||'dem Repo-Stand';
-  if(!confirm('Bestand auf '+rem+' aktualisieren?\n\n'
-    +'• Betriebsdaten (.env, Datenbank, Logs, Aufnahmen) bleiben unangetastet.\n'
-    +'• Jede ersetzte Datei wandert vorher in ein Backup.\n'
-    +'• Danach ist ein Neustart des Dienstes nötig.')) return;
+  if(!confirm(T('Bestand aktualisieren?')+'\n\n'+rem+'\n\n'
+    +'• '+T('Betriebsdaten (.env, Datenbank, Logs, Aufnahmen) bleiben unangetastet.')+'\n'
+    +'• '+T('Jede ersetzte Datei wandert vorher in ein Backup.')+'\n'
+    +'• '+T('Danach ist ein Neustart des Dienstes nötig.'))) return;
   updStart(false);
 }
 
 async function updRollback(){
-  if(!confirm('Letztes Backup zurückspielen?\n\n'
-    +'Damit gilt wieder der Stand von vor der letzten Aktualisierung. '
-    +'Ein Neustart ist danach nötig.')) return;
+  if(!confirm(T('Letztes Backup zurückspielen?')+'\n\n'
+    +T('Damit gilt wieder der Stand von vor der letzten Aktualisierung.')+' '
+    +T('Ein Neustart ist danach nötig.'))) return;
   updBusy(true);
   var d=await apiPost('/api/update/rollback',{});
   updBusy(false);
@@ -11690,7 +11692,7 @@ async function updRollback(){
 }
 
 async function updRestart(){
-  if(!confirm('Dienst jetzt neu starten?\n\nLaufende Aufnahmen und Restreams brechen ab.')) return;
+  if(!confirm(T('Dienst jetzt neu starten?')+'\n\n'+T('Laufende Aufnahmen und Restreams brechen ab.'))) return;
   var d=await apiPost('/api/update/restart',{});
   if(typeof toast==='function')
     toast(d&&d.ok?(d.summary||'Neustart läuft'):((d&&d.hint)?('Bitte selbst neu starten: '+d.hint):((d&&d.error)||'Neustart fehlgeschlagen')),

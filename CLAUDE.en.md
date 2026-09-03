@@ -16,7 +16,7 @@ route.
 
 ## The one rule
 
-`bot.py` has **28,467 lines / 1.4 MB ≈ 360,000 tokens**. That file is **never**
+`bot.py` has **28,133 lines / 1.4 MB ≈ 356,000 tokens**. That file is **never**
 read in full and **never** searched blindly. First ask where something is, then
 fetch the excerpt:
 
@@ -30,8 +30,8 @@ fetch the excerpt:
     python tools/ncpatch.py check                      # templates: duplicate IDs, CSS balance
     python tools/ncpatch.py docs                       # documentation numbers vs. the source
 
-`find` answers from `.claude/INDEX.md` — 359 routes (111 in `bot.py`, 248 in
-`nc/routes/`), 45 slash commands, 494 functions with line numbers. After changes
+`find` answers from `.claude/INDEX.md` — 359 routes (105 in `bot.py`, 254 in
+`nc/routes/`), 45 slash commands, 491 functions with line numbers. After changes
 to routes, commands or top-level functions, run `map` again. Details: skill
 `nc-navigation`.
 
@@ -44,7 +44,7 @@ On the author's Windows machine the interpreter is called **`python`**
 ## Layout
 
     bot.py               monolith: Telegram + Discord (45 slash commands),
-                         Flask dashboard (111 own routes), scraper, recorder,
+                         Flask dashboard (105 own routes), scraper, recorder,
                          restream, schema (init_db).
                          Was called bot_v37.py until v4.0-W119 — keep that in
                          mind when searching old notes and patch files.
@@ -52,7 +52,7 @@ On the author's Windows machine the interpreter is called **`python`**
     brain/               AI core: state, rules, router, agents, memory,
                          semantic, knowledge, scheduler, llm, report
     nc/                  92 domain modules: db, scraping, restream, oauth, ledger, i18n, …
-    nc/routes/           28 Flask blueprints with 248 further API routes
+    nc/routes/           29 Flask blueprints with 254 further API routes
     locales/             de.json, en.json — the translation catalogue
     templates/           dashboard.html, brain.html, overlay.html, PWA
     website/             lafap_index.html (the public site)

@@ -188,6 +188,17 @@ def _html_strings(pfad):
             raus.add(a.strip())
     js = "\n".join(re.findall(r"<script\b[^>]*>(.*?)</script\s*>", roh,
                               flags=re.S | re.I))
+    # v4.1-W21: was ausdruecklich mit T("...") umschlossen ist, kommt IMMER in
+    # den Katalog — ohne Heuristik. Notwendig fuer die nativen Dialoge
+    # (confirm/prompt): die oeffnet der Browser selbst, der DOM-Beobachter
+    # sieht sie nie, und uebersetzt werden koennen sie nur VOR dem Aufruf.
+    # Genau deshalb greift dort auch die Bruchstueck-Regel nicht: "Tage" ist
+    # ein einzelnes Wort und trotzdem ein vollstaendiger uebersetzter Baustein,
+    # weil der Aufrufer ihn selbst zusammensetzt.
+    for a, b in re.findall(r"\bT\(\s*'([^'\\\n]+)'|\bT\(\s*\"([^\"\\\n]+)\"", js):
+        stueck = (a or b).strip()
+        if len(stueck) >= 3 and _WORT.search(stueck):
+            raus.add(stueck)
     for a, b, c in re.findall(r"'([^'\\\n]{4,})'|\"([^\"\\\n]{4,})\"|`([^`\\\n]{4,})`", js):
         for stueck in _js_textstuecke(a or b or c):
             raus.add(stueck)

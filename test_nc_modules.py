@@ -1497,6 +1497,92 @@ def _test_w20_overlay_audio_und_geld():
     ok("v4.1-W20: overlay+audio als Blueprint, Einnahmen-Gate mit einer Quelle")
 
 
+def _test_w21_brain_blueprint():
+    """v4.1-W21: sechs Routen raus; Zahl und Router als Register, Rest Alias."""
+    import ast as _ast
+
+    import nc.brainstate as B
+
+    # (1) STALLS MUSS ein Register sein. Eine ganze Zahl laesst sich nicht per
+    # Alias teilen — ein Alias waere eine Kopie auf 0, und /api/brain/health
+    # meldete "keine Stalls", waehrend der Loop klemmt. Genau die stille
+    # Fehlanzeige, gegen die es die Zahl ueberhaupt gibt.
+    B.STALLS["n"] = 0
+    assert B.stall() == 1 and B.stall() == 2
+    assert B.STALLS["n"] == 2, "der Zaehler ist nicht geteilt"
+
+    # (2) Die Ringpuffer sind BEIM SCHREIBEN begrenzt, nicht beim Lesen. Sonst
+    # waechst die Liste weiter und nur die Anzeige sieht harmlos aus — ein
+    # Speicherleck, das erst nach Tagen auffaellt.
+    B.HISTORY.clear(); B.STREAM.clear(); B.LAST_STATUS.clear()
+    for i in range(B.HISTORY_MAX + 25):
+        B.record({"core": {"activity": i, "status": "active", "label": "BOT CORE"}})
+    assert len(B.HISTORY["core"]) == B.HISTORY_MAX, len(B.HISTORY["core"])
+    assert B.HISTORY["core"][-1] == B.HISTORY_MAX + 24, "die juengsten Werte fehlen"
+    assert B.history_for("core") == B.HISTORY["core"]
+    assert B.history_for("gibtsnicht") == []
+
+    # (3) Ein Status-UEBERGANG erzeugt genau ein Stream-Ereignis, kein Dauerfeuer.
+    B.STREAM.clear(); B.LAST_STATUS.clear()
+    # Der erste Blick auf einen Knoten ist kein Uebergang: sonst meldete jeder
+    # Bot-Start eine Welle von Ereignissen fuer Zustaende, die sich gar nicht
+    # geaendert haben.
+    B.record({"x": {"activity": 1, "status": "active", "label": "X"}})
+    assert B.STREAM == [], "der erste Blick gilt schon als Uebergang"
+    B.record({"x": {"activity": 1, "status": "error", "label": "X"}})
+    assert len(B.STREAM) == 1 and B.STREAM[0]["kind"] == "error", B.STREAM
+    B.record({"x": {"activity": 1, "status": "error", "label": "X"}})
+    assert len(B.STREAM) == 1, "gleicher Status erzeugt weiter Ereignisse"
+    B.record({"x": {"activity": 1, "status": "active", "label": "X"}})
+    assert len(B.STREAM) == 2 and B.STREAM[-1]["kind"] == "up"
+    # Juengstes zuerst — das Panel zeigt oben, was gerade passiert ist.
+    assert B.stream_recent(1)[0]["kind"] == "up"
+    for i in range(B.STREAM_MAX + 10):
+        B.record({"x": {"activity": 1, "status": "error" if i % 2 else "active", "label": "X"}})
+    assert len(B.STREAM) == B.STREAM_MAX
+
+    # (4) Der Blueprint sieht denselben Zustand wie der Bot.
+    import nc.routes.brain as R
+    from flask import Flask
+    app = Flask(__name__)
+    app.register_blueprint(R.bp)
+    regeln = {str(r.rule) for r in app.url_map.iter_rules() if r.endpoint != "static"}
+    assert len(regeln) == 6, sorted(regeln)
+    B.BRIDGE.update(ok=False, phase="import_failed", error="brain fehlt")
+    B.STALLS["n"] = 7
+    with app.test_client() as cl:
+        j = cl.get("/api/brain/health").get_json()
+        assert j["ok"] is False and j["phase"] == "import_failed", j
+        assert j["error"] == "brain fehlt", "der echte Grund kommt nicht durch"
+        assert j["loop_stalls"] == 7, "der Stall-Zaehler ist eine Kopie"
+        assert cl.get("/api/brain/creator").get_json()["ok"] is False
+    B.BRIDGE.update(ok=False, phase="not_started", error=None)
+    B.STALLS["n"] = 0
+
+    # (5) Kein neuer ctx-Slot, keine eingefrorene .env-Konstante.
+    quelle = open("nc/routes/brain.py", encoding="utf-8").read()
+    genutzt = {n.attr for n in _ast.walk(_ast.parse(quelle))
+               if isinstance(n, _ast.Attribute) and isinstance(n.value, _ast.Call)
+               and getattr(n.value.func, "id", "") == "_c"}
+    assert genutzt <= {"arg_int", "get_bot_start_time", "log"}, \
+        "der Blueprint braucht neue Kontext-Eintraege: %r" % genutzt
+    for zeile in quelle.split("\n"):
+        z = zeile.strip()
+        assert not (z[:1].isupper() and " = os.getenv(" in z), \
+            "Modul-Konstante friert .env ein: %s" % z
+    # Und kein globals()-Umweg: genau daran waere der Proxy-Router gescheitert.
+    # Per AST, nicht per Text — die Erklaerung dazu steht voellig zu Recht im
+    # Docstring des Blueprints und ist kein Verstoss (derselbe Fehlalarm wie
+    # in W16).
+    _baum = _ast.parse(quelle)
+    assert not [n for n in _ast.walk(_baum)
+                if isinstance(n, _ast.Call) and isinstance(n.func, _ast.Name)
+                and n.func.id == "globals"], \
+        "globals() im Blueprint — das ist DIESER Namensraum"
+
+    ok("v4.1-W21: brain als Blueprint, Zaehler und Router als Register")
+
+
 def main():
     tmp = tempfile.mkdtemp()
     configure_db(db_path=os.path.join(tmp, "t.db"), backend="sqlite")
@@ -1617,6 +1703,8 @@ def main():
     _test_w19_azrael_blueprint()
 
     _test_w20_overlay_audio_und_geld()
+
+    _test_w21_brain_blueprint()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)
 
