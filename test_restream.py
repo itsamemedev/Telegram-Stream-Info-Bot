@@ -8387,6 +8387,92 @@ def test_v41_w18_katalog_reicht_bis_zum_tabellenkopf():
     ok("v4.1-W18: Tabellenkoepfe im Katalog, blanke Literale bleiben draussen")
 
 
+def test_v41_w19_aliase_bleiben_aliase():
+    """v4.1-W19: geteilter Zustand bleibt geteilt — nichts wird neu gebunden."""
+    import ast as _ast
+    src = open("bot.py", encoding="utf-8").read()
+    baum = _ast.parse(src)
+
+    # Die acht Container aus nc/azraelstate.py sind ALIASE. Bindet bot.py auch
+    # nur einen davon neu, zeigt der Alias danach auf eine tote Kopie: das
+    # Dashboard meldete dann einen eingefrorenen Stand — ohne Fehler, ohne
+    # Logzeile. Genau die stille Fehlanzeige, gegen die W18 das Register
+    # eingefuehrt hat. Hier wird das Gegenteil geprueft: dass es KEIN Register
+    # braucht, weil wirklich nur in place veraendert wird.
+    aliase = {"_OVERLAY", "_AZRAEL_CONTEXT", "_AZRAEL_REACTION", "_AI_CALL_TS",
+              "_LIVE_REACT_PAUSED", "_LIVE_TRANSCRIPT", "_live_react_workers",
+              "_AZRAEL_AGENTS"}
+    zuweisungen = {}
+    for n in _ast.walk(baum):
+        ziele = []
+        if isinstance(n, _ast.Assign):
+            ziele = n.targets
+        elif isinstance(n, (_ast.AugAssign, _ast.AnnAssign)):
+            ziele = [n.target]
+        for z in ziele:
+            if isinstance(z, _ast.Name) and z.id in aliase:
+                zuweisungen.setdefault(z.id, []).append(n.lineno)
+    for name in aliase:
+        zs = zuweisungen.get(name, [])
+        assert len(zs) == 1, "%s wird %d-mal gebunden (Zeilen %r) — der Alias " \
+                             "zeigt danach auf eine tote Kopie" % (name, len(zs), zs)
+    # Und kein globals()-Umweg an denselben Namen vorbei.
+    for name in aliase:
+        assert 'globals()["%s"]' % name not in src, "%s wird per globals() neu gebunden" % name
+
+    # Die drei Haken sind registriert — ohne sie antworten die Routen 503 statt
+    # zu arbeiten, und /api/azrael/ask waere dauerhaft tot.
+    for zeile in ('_nc_azrael.LIVE_STATE["fn"] = _azrael_live_state',
+                  '_nc_azrael.CHAT["fn"] = azrael_chat',
+                  '_nc_piper.SAY["fn"] = _piper_say'):
+        assert zeile in src, "Haken fehlt: %s" % zeile
+
+    # Whisper laeuft komplett ueber das Register — kein `global` mehr, das im
+    # Blueprint der falsche Namensraum waere.
+    assert "global _whisper_model" not in src, "der Laufzeit-Umschalter bindet wieder global"
+    assert "WHISPER_MODEL_NAME" not in src, "der eingefrorene Modellname ist zurueck"
+    ok("v4.1-W19: acht Aliase einmalig gebunden, drei Haken gesetzt, Whisper im Register")
+
+
+def test_v41_w19_katalog_kennt_die_blueprints():
+    """v4.1-W19: was aus bot.py in einen Blueprint zieht, faellt nicht aus dem
+       Katalog."""
+    import importlib.util as _iu
+    _sp = _iu.spec_from_file_location("_ix2", "tools/i18n_extract.py")
+    ix = _iu.module_from_spec(_sp)
+    _sp.loader.exec_module(ix)
+
+    # Der Extraktor kannte nur bot.py. Bei 225 Routen in nc/routes/ hiess das:
+    # die Fehlertexte der halben API waren ausser Reichweite — und die
+    # Abdeckungszahl zeigte es nicht, weil sie nur zaehlt, was sie sieht.
+    assert ix.BP_GLOB == "nc/routes/*.py"
+    gef = ix._bp_strings("nc/routes/azrael.py")
+    assert "statement fehlt" in gef and "Bot-Loop startet noch" in gef, sorted(gef)[:5]
+    assert ix._bp_strings("nc/routes/kickmod.py"), "kickmod uebersetzt nichts"
+
+    # Eingesammelt wird NUR, was ausdruecklich in t(...) steht — deshalb kann
+    # es hier keinen toten Eintrag geben. Ein f-String faellt raus: sein Wert
+    # steht erst zur Laufzeit fest und waere als Schluessel wertlos.
+    import ast as _ast, tempfile as _tf, os as _os
+    pf = _os.path.join(_tf.mkdtemp(), "x.py")
+    open(pf, "w", encoding="utf-8").write(
+        't("echter Text")\n'
+        '_nc_i18n.t("auch echt")\n'
+        't(f"nicht {x} nehmbar")\n'
+        'log.warning("Logzeile bleibt deutsch")\n'
+        'jsonify(error="nicht umschlossen")\n')
+    assert ix._bp_strings(pf) == {"echter Text", "auch echt"}, ix._bp_strings(pf)
+    _ast.parse(open(pf, encoding="utf-8").read())
+
+    # Und der Katalog ist vollstaendig: kein fehlender, kein verwaister Eintrag.
+    import json as _json
+    kat = _json.load(open("locales/en.json", encoding="utf-8"))["strings"]
+    gefunden = set(ix.sammeln())
+    assert not (gefunden - set(kat)), "fehlend: %r" % sorted(gefunden - set(kat))[:5]
+    assert not (set(kat) - gefunden), "verwaist: %r" % sorted(set(kat) - gefunden)[:5]
+    ok("v4.1-W19: der Katalog reicht in die Blueprints, nur ueber t() und ohne tote Eintraege")
+
+
 def test_v41_w17_website():
     """v4.1-W17: die Website hat Material bekommen — ohne Klassen zu brechen."""
     neu = open("website/lafap_index.html", encoding="utf-8").read()
@@ -8507,6 +8593,8 @@ def main():
     test_v41_w17_website()
     test_v41_w18_toxizitaet_nur_eigene_kanaele()
     test_v41_w18_katalog_reicht_bis_zum_tabellenkopf()
+    test_v41_w19_aliase_bleiben_aliase()
+    test_v41_w19_katalog_kennt_die_blueprints()
     test_b168_moderator_everywhere()
     test_b169_kick_oauth()
     test_b170_azrael_and_youtube()

@@ -49,6 +49,13 @@ def _c():
     return _ctx.get()
 
 
+def _t(s):
+    """v4.1-W19: an der Quelle uebersetzen. Diese Texte erreichen das DOM
+       meist verkettet ("Fehler: " + error) — ein Katalogeintrag fuer den
+       blossen Text traefe dort nie."""
+    return _nc_i18n.t(s)
+
+
 def _mod():
     """Der laufende Kick-Moderator aus dem Register (v4.1-W9)."""
     return _nc_channels.KICK_MOD["obj"]
@@ -103,7 +110,7 @@ def api_kickmod_status():
 def api_kickmod_config():
     mod = _mod()
     if mod is None:
-        return jsonify(ok=False, error="Kick-Moderator läuft nicht"), 503
+        return jsonify(ok=False, error=_t("Kick-Moderator läuft nicht")), 503
     d = request.get_json(silent=True) or {}
     if "auto_reply" in d:    mod.cfg["auto_reply"] = bool(d["auto_reply"])
     if "auto_moderate" in d: mod.cfg["auto_moderate"] = bool(d["auto_moderate"])
@@ -154,7 +161,7 @@ def api_kickmod_import_badwords():
        Die Liste ist im Dashboard-Feld danach reviewbar/kürzbar."""
     mod = _mod()
     if mod is None:
-        return jsonify(ok=False, error="Kick-Moderator läuft nicht"), 503
+        return jsonify(ok=False, error=_t("Kick-Moderator läuft nicht")), 503
     words, source = _nc_badwords.fetch_ldnoobw_de()
     before = list(mod.cfg.get("banned_words") or [])
     merged = _merge_banned_words(before, words)
@@ -177,7 +184,7 @@ def api_kickmod_learned_promote():
        'words', sonst alle) und entfernt sie aus der Queue."""
     mod = _mod()
     if mod is None:
-        return jsonify(ok=False, error="Kick-Moderator läuft nicht"), 503
+        return jsonify(ok=False, error=_t("Kick-Moderator läuft nicht")), 503
     d = request.get_json(silent=True) or {}
     words = d.get("words")
     items = _nc_badwords.load_learned()
@@ -205,12 +212,12 @@ def api_kickmod_learned_clear():
 def api_kickmod_start():
     mod = _mod()
     if mod is None:
-        return jsonify(ok=False, error="Kick-Moderator läuft nicht"), 503
+        return jsonify(ok=False, error=_t("Kick-Moderator läuft nicht")), 503
     try:
         res = _c().run_async(mod.start(), timeout=15)
         return jsonify(res), (200 if res.get("ok") else 502)
     except RuntimeError:
-        return jsonify(ok=False, error="Event-Loop nicht bereit"), 503
+        return jsonify(ok=False, error=_t("Event-Loop nicht bereit")), 503
     except Exception as e:
         return jsonify(ok=False, error=str(e)), 500
 
@@ -219,13 +226,13 @@ def api_kickmod_start():
 def api_kickmod_stop():
     mod = _mod()
     if mod is None:
-        return jsonify(ok=False, error="Kick-Moderator läuft nicht"), 503
+        return jsonify(ok=False, error=_t("Kick-Moderator läuft nicht")), 503
     try:
         res = _c().run_async(mod.stop(), timeout=15)
         return jsonify(res)
     except RuntimeError as e:
         if _loop_not_ready(e):
-            return jsonify(ok=False, error="Bot-Loop startet noch", transient=True), 503
+            return jsonify(ok=False, error=_t("Bot-Loop startet noch"), transient=True), 503
         return jsonify(ok=False, error=str(e)), 500
     except Exception as e:
         return jsonify(ok=False, error=str(e)), 500
@@ -236,17 +243,17 @@ def api_kickmod_say():
     """Manuelle Nachricht über den Bot senden (Operator-Test)."""
     mod = _mod()
     if mod is None:
-        return jsonify(ok=False, error="Kick-Moderator läuft nicht"), 503
+        return jsonify(ok=False, error=_t("Kick-Moderator läuft nicht")), 503
     d = request.get_json(silent=True) or {}
     msg = (d.get("message") or "").strip()
     if not msg:
-        return jsonify(ok=False, error="leere Nachricht"), 400
+        return jsonify(ok=False, error=_t("leere Nachricht")), 400
     try:
         ok, err = _c().run_async(mod.send_message(_nc_i18n.t(msg)), timeout=20)
         return jsonify(ok=ok, error=err), (200 if ok else 502)
     except RuntimeError as e:
         if _loop_not_ready(e):
-            return jsonify(ok=False, error="Bot-Loop startet noch", transient=True), 503
+            return jsonify(ok=False, error=_t("Bot-Loop startet noch"), transient=True), 503
         return jsonify(ok=False, error=str(e)), 500
     except Exception as e:
         return jsonify(ok=False, error=str(e)), 500
