@@ -23,7 +23,6 @@ import time
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-import aiohttp
 
 from flask import Blueprint, jsonify, request
 
@@ -95,6 +94,12 @@ def get_profile_snapshots(username: str, limit: int = 50) -> list:
 async def inspect_stream_url(username: str, session=None) -> dict:
     """Probiert resolve_tiktok_live_stream und prüft die HLS-URL via HTTP HEAD.
        Liefert: ttfb, headers, resolved-format etc."""
+    # Erst hier importiert, nicht auf Modulebene: nc/* muss ohne den vollen
+    # Laufzeitstack importierbar bleiben — der CI-Job "Verträge & Module"
+    # installiert nur orjson und flask und ist an genau diesem Import
+    # gescheitert (W23). Lokal fiel es nicht auf, weil aiohttp hier liegt.
+    import aiohttp
+
     username = clean_username(username)
     if not username:
         return {"ok": False, "error": _t("ungültiger username")}
@@ -451,6 +456,8 @@ def api_profile_lookup_bulk():
     usernames = [clean_username(u) for u in usernames[:20]]
     usernames = [u for u in usernames if u]
     async def _lookup_all():
+        import aiohttp          # siehe inspect_stream_url: nicht auf Modulebene
+
         results = {}
         session = _c().scraper_session()
         own = False

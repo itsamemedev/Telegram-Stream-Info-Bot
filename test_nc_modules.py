@@ -447,6 +447,7 @@ def _test_routes_alle_blueprints():
     import glob as _glob
     import importlib
     from flask import Flask
+    import sys as _sys
 
     module = sorted(_os_basename(p) for p in _glob.glob("nc/routes/*.py")
                     if not p.endswith("__init__.py"))
@@ -501,6 +502,24 @@ def _test_routes_alle_blueprints():
         # (6) Query-Parameter gehaertet, kein rohes int(request.args...).
         assert "int(request.args.get" not in quelle, \
             "%s: roher Query-Parser (Flask-500-Risiko)" % name
+        # (7) Auf Modulebene nur stdlib, flask und nc. v4.1-W23: ein
+        # `import aiohttp` ganz oben in nc/routes/beobachtung.py hat genau
+        # diesen Job in CI gekippt — dort werden absichtlich nur orjson und
+        # flask installiert, damit nc/* isoliert testbar bleibt (CLAUDE.md).
+        # Lokal fiel es nicht auf, weil der volle Laufzeitstack da liegt.
+        # Wer aiohttp, telegram, discord, streamlink, yt_dlp oder psutil
+        # braucht, importiert IN der Funktion.
+        ERLAUBT = {"flask", "orjson", "nc"}
+        for _n in _ast.parse(quelle).body:      # nur body: verschachtelte
+            wurzeln = []                        # Importe sind ausdruecklich ok
+            if isinstance(_n, _ast.Import):
+                wurzeln = [al.name.split(".")[0] for al in _n.names]
+            elif isinstance(_n, _ast.ImportFrom) and not _n.level:
+                wurzeln = [(_n.module or "").split(".")[0]]
+            for w in wurzeln:
+                assert w in ERLAUBT or w in _sys.stdlib_module_names, \
+                    ("%s: %r auf Modulebene — bricht den CI-Vertragsjob, "
+                     "in die Funktion verschieben" % (name, w))
     ok("nc/routes: %d Blueprints, %d Routen — Pfade, Endpunkte, Grenze, Hooks, Parser"
        % (len(module), gesamt))
 
