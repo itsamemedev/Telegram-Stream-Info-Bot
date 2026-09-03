@@ -464,9 +464,14 @@ def _test_routes_alle_blueprints():
         assert regeln, "%s registriert keine Route" % name
         gesamt += len(regeln)
 
-        # (1) Pfade woertlich: ein url_prefix wuerde jeden Dashboard-Aufruf brechen.
+        # (1) Pfade woertlich: ein url_prefix wuerde jeden Dashboard-Aufruf
+        # brechen. Ausnahmen sind Pfade, die per Konvention NICHT unter /api/
+        # liegen — /metrics ist der Prometheus-Endpunkt, und ein Scraper sucht
+        # ihn genau dort (v4.1-W23). Die Liste steht hier ausdruecklich, damit
+        # ein versehentlich gesetzter url_prefix trotzdem auffliegt.
+        AUSSERHALB = {"/metrics"}
         for r in regeln:
-            assert str(r.rule).startswith("/api/"), \
+            assert str(r.rule).startswith("/api/") or str(r.rule) in AUSSERHALB, \
                 "%s: Pfad nicht mehr unter /api/ — url_prefix gesetzt? %s" % (name, r.rule)
         # (2) Endpunkte blueprint-qualifiziert.
         assert all(r.endpoint.startswith(name + ".") for r in regeln), \
@@ -1691,6 +1696,98 @@ def _test_w22_restream_blueprint():
     ok("v4.1-W22: restream als Blueprint, Ziele live gelesen, kein Key nach aussen")
 
 
+def _test_w23_beobachtung_und_toasts():
+    """v4.1-W23: acht Beobachtungs-Routen raus, verkettete Toasts uebersetzbar."""
+    import ast as _ast
+    import re as _re
+
+    import nc.brainstate as B
+    import nc.channels as C
+    import nc.tiktokheaders as H
+
+    # (1) Die Zuschauer-Stichproben sind BEGRENZT. Ohne maxlen waere das ein
+    # Leck, das erst nach Tagen auffaellt — bei 60-s-Takt sind 720 Punkte
+    # rund 12 Stunden, und mehr zeigt der Graph ohnehin nicht.
+    assert C.VIEWER_SAMPLES.maxlen == 720
+    C.VIEWER_SAMPLES.clear()
+    for i in range(900):
+        C.VIEWER_SAMPLES.append((i, i))
+    assert len(C.VIEWER_SAMPLES) == 720 and C.VIEWER_SAMPLES[-1] == (899, 899)
+    C.VIEWER_SAMPLES.clear()
+
+    # (2) Die drei Waechter-Zaehler liegen beieinander — sie beantworten
+    # dieselbe Frage ("warum startet der nicht neu?") und wurden vorher an
+    # drei Stellen im Monolithen gepflegt.
+    for name in ("DEAD_STREAK", "EARLY_DISCONNECT", "DEAD_BACKOFF_UNTIL"):
+        assert isinstance(getattr(B, name), dict), name
+
+    # (3) Die TikTok-Kopfzeilen sind vollstaendig — ohne plausiblen
+    # Fingerabdruck liefert TikTok eine andere Seite aus, und der Aufloeser
+    # findet keine Stream-URL. Accept-Encoding kommt vom Bot, weil es davon
+    # abhaengt, ob Brotli installiert ist.
+    for k in ("User-Agent", "Accept", "Accept-Language", "Referer", "sec-ch-ua"):
+        assert H.HEADERS.get(k), "Kopfzeile %s fehlt" % k
+    H.configure(accept_encoding="gzip, deflate, br")
+    assert H.HEADERS["Accept-Encoding"] == "gzip, deflate, br"
+    H.configure(accept_encoding="gzip, deflate")
+
+    # (4) Der Blueprint: acht Routen, kein neuer ctx-Slot, keine eingefrorene
+    # .env-Konstante. /metrics liegt bewusst NICHT unter /api/ — ein
+    # Prometheus-Scraper sucht es genau dort.
+    from flask import Flask
+    import nc.routes.beobachtung as R
+    app = Flask(__name__)
+    app.register_blueprint(R.bp)
+    regeln = [r for r in app.url_map.iter_rules() if r.endpoint != "static"]
+    assert len(regeln) == 8, sorted(str(r.rule) for r in regeln)
+    assert any(str(r.rule) == "/metrics" for r in regeln)
+    quelle = open("nc/routes/beobachtung.py", encoding="utf-8").read()
+    baum = _ast.parse(quelle)
+    genutzt = {n.attr for n in _ast.walk(baum)
+               if isinstance(n, _ast.Attribute) and isinstance(n.value, _ast.Call)
+               and getattr(n.value.func, "id", "") == "_c"}
+    assert genutzt <= {"run_async", "log", "log_event", "arg_int",
+                       "scraper_session", "get_bot_start_time"}, \
+        "der Blueprint braucht neue Kontext-Eintraege: %r" % genutzt
+    for zeile in quelle.split("\n"):
+        z = zeile.strip()
+        assert not (z[:1].isupper() and " = os.getenv(" in z), \
+            "Modul-Konstante friert .env ein: %s" % z
+
+    # (5) Diese Routen BEOBACHTEN nur. Kein Aufruf hier startet, stoppt oder
+    # loescht etwas — das ist die Klammer, die die vier Gruppen zusammenhaelt,
+    # und der Grund, warum sie in EINER Datei stehen duerfen.
+    for n in _ast.walk(baum):
+        if not (isinstance(n, (_ast.FunctionDef, _ast.AsyncFunctionDef))):
+            continue
+        for d in n.decorator_list:
+            if not (isinstance(d, _ast.Call) and _ast.unparse(d.func).endswith(".route")):
+                continue
+            meth = []
+            for kw in d.keywords:
+                if kw.arg == "methods":
+                    meth = _ast.literal_eval(kw.value)
+            assert set(meth) <= {"GET", "POST"}, "%s: schreibende Methode" % n.name
+    assert "DELETE" not in quelle and "conn.execute(\"DELETE" not in quelle
+
+    # (6) Die verketteten Toasts sind umschlossen. toast() erzeugt zwar einen
+    # DOM-Knoten, aber bei 'Aufnahme @'+u+' gestartet' heisst der Knoten
+    # "Aufnahme @helge_72 gestartet" — ein Eintrag fuer "Aufnahme @" trifft
+    # dort nie. 28 solcher Eintraege standen bereits im Katalog und zaehlten
+    # als uebersetzt, ohne je zu greifen.
+    dash = open("templates/dashboard.html", encoding="utf-8").read()
+    offen = []
+    for m in _re.finditer(r"\btoast\s*\(\s*'([^'\\\n]{3,})'\s*\+", dash):
+        offen.append(m.group(1))
+    assert not offen, "verketteter Toast ohne T(): %r" % offen[:5]
+    # Und das ZWEITE Argument bleibt unberuehrt: 'err'/'ok' ist eine
+    # CSS-Klasse, kein Text. Ein T() darauf zerstoert die Fehlerfarbe.
+    assert "T('err')" not in dash and 'T("err")' not in dash, \
+        "die Toast-Klasse wird uebersetzt"
+
+    ok("v4.1-W23: Beobachtungs-Routen als Blueprint, verkettete Toasts uebersetzbar")
+
+
 def main():
     tmp = tempfile.mkdtemp()
     configure_db(db_path=os.path.join(tmp, "t.db"), backend="sqlite")
@@ -1815,6 +1912,8 @@ def main():
     _test_w21_brain_blueprint()
 
     _test_w22_restream_blueprint()
+
+    _test_w23_beobachtung_und_toasts()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)
 

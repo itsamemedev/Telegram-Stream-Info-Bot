@@ -11,6 +11,66 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Behoben — verkettete Toast-Meldungen blieben deutsch (v4.1 W23)
+
+`toast()` erzeugt einen DOM-Knoten, den der Übersetzer sieht — **aber nur, wenn
+der ganze Text ein Katalogschlüssel ist.** Bei
+
+```js
+toast('Aufnahme @'+u+' gestartet')
+```
+
+heißt der Knoten „Aufnahme @helge_72 gestartet"; ein Eintrag für `Aufnahme @`
+trifft dort nie. **28 solcher Einträge standen bereits im Katalog** und zählten
+als übersetzt, ohne je zu greifen — dieselbe stille Buchhaltung wie bei den
+nativen Dialogen in W21, nur an anderer Stelle.
+
+89 Literale in verketteten Aufrufen laufen jetzt durch `T()`. Ternäre Zweige
+(`d.ok?'Gespeichert':'Fehler'`) sind unberührt geblieben: sie sind bereits
+vollständige Knoten.
+
+**Ein Fehler im ersten Anlauf, festgehalten weil er teuer gewesen wäre:** das
+Skript umschloss auch das *zweite* Argument — `toast(msg, 'err')`. Das ist die
+CSS-Klasse, kein Text; ein Katalogeintrag dafür hätte die Fehlerfarbe zerstört.
+Jetzt wird nur das erste Argument angefasst, und ein Vertrag prüft, dass
+`T('err')` nirgends steht.
+
+Fünf englische Bruchstücke in deutschen Meldungen (`done`, `matched`,
+`MOVED TO TRASH //`, `QUALITY //`, `dupes)`) sind deutsch formuliert statt mit
+Identitäts-Übersetzungen in den Katalog geschoben. Katalog: 829 → **891**.
+
+### Geändert — die Beobachtungs-Routen als Blueprint (v4.1 W23)
+
+Vier kleine Gruppen in **einem** Blueprint: `/metrics`, `/api/backoff-watch`,
+`/api/stream` und `/api/profile` — acht Routen, **null neue
+`nc.ctx`-Einträge**. Einzeln rechtfertigt keine davon eine eigene Datei;
+zusammen haben sie eine klare Klammer: **sie beobachten, sie steuern nichts.**
+Ein Vertrag prüft das per AST — keine schreibende Methode, kein `DELETE`.
+
+Gelöst wurde dafür:
+
+* Die drei Wächter-Zähler liegen jetzt beieinander in `nc/brainstate.py`. Sie
+  beantworten dieselbe Frage („warum startet der nicht neu?") und wurden
+  vorher an drei Stellen im Monolithen gepflegt.
+* Die Zuschauer-Stichproben in `nc/channels.py`, mit `maxlen` — ohne die wäre
+  das ein Leck, das erst nach Tagen auffällt.
+* **`nc/tiktokheaders.py`** trägt den Browser-Fingerabdruck für TikTok-Abrufe.
+  Kein Geheimnis, aber auch keine Kosmetik: ohne plausible Kopfzeilen liefert
+  TikTok eine andere Seite aus, und der Auflöser findet keine Stream-URL. Das
+  `Accept-Encoding` kommt weiterhin vom Bot, weil es davon abhängt, ob Brotli
+  installiert ist.
+
+`/metrics` liegt bewusst **nicht** unter `/api/` — ein Prometheus-Scraper sucht
+es genau dort. Der generische Blueprint-Vertrag hat das prompt gemeldet; er
+führt die Ausnahme jetzt ausdrücklich, damit ein versehentlich gesetzter
+`url_prefix` trotzdem auffliegt.
+
+`.env.example` 499 → **500** (`RECORDINGS_DIR` wurde durch den Umzug erstmals
+sichtbar).
+
+`bot.py` 27.624 → **27.218** Zeilen, Blueprints 30 → 31, eigene Routen im
+Monolithen 89 → **81**.
+
 ### Geändert — `/api/restream` als Blueprint, Sendeziele mit einer Parse-Regel (v4.1 W22)
 
 Die letzte große Gruppe im Monolithen: **16 Routen**, und **null neue

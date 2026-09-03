@@ -83,11 +83,21 @@ AI_SESSION = {"fn": None}    # () -> aiohttp.ClientSession | None
 TESTPUSH_LIVE = {"fn": None}  # () -> (darf: bool, grund: str)
 SPAWN = {"fn": None}         # (coro, name=...) -> None, feuert auf dem Bot-Loop
 
+# v4.1-W23: was /api/profile und /api/stream brauchen und ein Modul nicht kann.
+# Alle vier haengen am Scraper, am Redis-Cache oder am TikTok-Aufloeser — also
+# an Zustand, den nur der laufende Bot hat.
+REDIS_GET = {"fn": None}     # async (key) -> dict|None
+REDIS_SET = {"fn": None}     # async (key, wert, ttl) -> None
+LIVE_INFO = {"fn": None}     # async (username, session) -> dict
+RESOLVE_LIVE = {"fn": None}  # async (username, session, mode=...) -> dict
+
 
 def haken(name):
     """Einen registrierten Haken holen, oder None."""
     return {"notify": NOTIFY, "ai_session": AI_SESSION,
-            "testpush_live": TESTPUSH_LIVE, "spawn": SPAWN}[name]["fn"]
+            "testpush_live": TESTPUSH_LIVE, "spawn": SPAWN,
+            "redis_get": REDIS_GET, "redis_set": REDIS_SET,
+            "live_info": LIVE_INFO, "resolve_live": RESOLVE_LIVE}[name]["fn"]
 
 
 def guard():
