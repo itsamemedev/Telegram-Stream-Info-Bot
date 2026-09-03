@@ -69,7 +69,13 @@ jobs:
       - name: shellcheck über die Skripte
         run: |
           command -v shellcheck >/dev/null || sudo apt-get install -y -qq shellcheck
+          # v4.1-W17: tools/lib/ MIT pruefen. Der alte Glob endete bei
+          # tools/*.sh — das erste Skript unter tools/lib/ (i18n.sh) waere
+          # nie geprueft worden, obwohl es von installer.sh und motd.sh
+          # gesourct wird und damit in beiden mitlaeuft. Ein Fehler dort
+          # traefe die Installation, ohne dass CI etwas sagt.
           shellcheck -S warning tools/*.sh
+          shellcheck -S warning -s sh tools/lib/*.sh
 
   templates:
     name: Templates (doppelte IDs · CSS-Bilanz)

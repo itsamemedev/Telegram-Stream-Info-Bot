@@ -16,7 +16,7 @@
 # lesbar und mit jedem Editor erweiterbar ist. Kein JSON: die Shell haette dafuer
 # python3 gebraucht, und der Installer laeuft, BEVOR python3 sichergestellt ist.
 
-NC_TOOLS_I18N_VERSION="1"
+NC_TOOLS_I18N_VERSION="1"      # wird von nc_i18n_status ausgegeben (--doctor)
 
 # ── Sprache bestimmen ────────────────────────────────────────
 # Reihenfolge: NC_LANG (ausdruecklich) → UI_LANG aus der .env (dieselbe
@@ -72,6 +72,7 @@ t(){
 
 # Wie viel ist abgedeckt? Fuer tools/i18n_tools.py --check und den --doctor.
 nc_i18n_status(){
+  printf 'i18n:    Fassung %s\n' "$NC_TOOLS_I18N_VERSION"
   printf 'Sprache: %s\n' "$NC_LANG_EFF"
   if [ -n "${NC_I18N_KATALOG:-}" ] && [ -r "$NC_I18N_KATALOG" ]; then
     printf 'Katalog: %s (%s Eintraege)\n' "$NC_I18N_KATALOG" \

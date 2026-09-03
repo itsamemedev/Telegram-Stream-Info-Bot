@@ -79,7 +79,10 @@ fi
 if [ -r "$(dirname "$0")/lib/i18n.sh" ]; then
   . "$(dirname "$0")/lib/i18n.sh"
 elif [ -n "${BOT_DIR:-}" ] && [ -r "${BOT_DIR}/tools/lib/i18n.sh" ]; then
-  NC_I18N_KATALOG=""; . "${BOT_DIR}/tools/lib/i18n.sh"
+  # Die INSTALLIERTE Kopie unter /etc/update-motd.d/ hat kein locales/ neben
+  # sich. i18n.sh findet den Katalog trotzdem: es sucht ueber BASH_SOURCE
+  # relativ zu SICH SELBST, also unter ${BOT_DIR}/locales/.
+  . "${BOT_DIR}/tools/lib/i18n.sh"
 else
   t(){ printf '%s' "$*"; }
 fi
