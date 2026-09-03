@@ -10,6 +10,8 @@ from datetime import datetime, timezone
 import json
 import re
 from flask import Blueprint, jsonify, request
+
+from nc import i18n as _nc_i18n
 from nc.dbwrap import db_conn
 import io
 import csv as _csv
@@ -26,6 +28,13 @@ from nc.notes import set_tracking_notes
 from nc import ctx as _ctx
 
 bp = Blueprint("trackings", __name__)
+
+def _t(s):
+    """v4.1-W20: an der Quelle uebersetzen. Diese Texte erreichen das DOM
+       meist verkettet ("Fehler: " + error) — ein Katalogeintrag fuer den
+       blossen Text traefe dort nie."""
+    return _nc_i18n.t(s)
+
 
 
 def _c():
@@ -52,7 +61,7 @@ def quick_restart_tracking(tracking_id: int) -> dict:
                 "SELECT username FROM trackings WHERE id=?",
                 (tracking_id,)).fetchone()
         if not row:
-            return {"ok": False, "error": "tracking not found"}
+            return {"ok": False, "error": _t("Tracking nicht gefunden")}
         username = row["username"]
         info["username"] = username
     except Exception as e:
@@ -164,18 +173,18 @@ def api_trackings_bulk():
         try:
             group_id = int(raw_gid)
         except (TypeError, ValueError):
-            return jsonify(ok=False, error="group_id muss eine Zahl sein"), 400
+            return jsonify(ok=False, error=_t("group_id muss eine Zahl sein")), 400
     if not group_id:
-        return jsonify(ok=False, error="keine Zielgruppe auflösbar — "
-                       "DASHBOARD_TRACK_GROUP_ID (oder DAILY_SUMMARY_CHAT_ID) "
-                       "in .env setzen oder group_id mitgeben"), 400
+        return jsonify(ok=False, error=_t("keine Zielgruppe auflösbar — "
+                                          "DASHBOARD_TRACK_GROUP_ID (oder DAILY_SUMMARY_CHAT_ID) "
+                                          "in .env setzen oder group_id mitgeben")), 400
 
     # Usernames-Liste aus 'usernames' ODER 'text' bauen
     names = payload.get("usernames")
     if not names:
         text = payload.get("text", "")
         if not isinstance(text, str):
-            return jsonify(ok=False, error="text muss ein String sein"), 400
+            return jsonify(ok=False, error=_t("text muss ein String sein")), 400
         # F56-Bug-Fix B39: text-Input cappen. Flask MAX_CONTENT_LENGTH ist auf
         # ARCHIVE_MAX_UPLOAD_MB+16 hochgesetzt (für Archive-Uploads — ~2GB
         # default). Ohne hier zu cappen könnte ein User 2GB Text reinpasten →
@@ -183,13 +192,13 @@ def api_trackings_bulk():
         # 50KB ist mehr als genug für 200 Usernames inkl. Whitespace/Trenner.
         if len(text) > 50_000:
             return jsonify(ok=False,
-                           error="text zu groß (max 50KB für Bulk-Add)"), 413
+                           error=_t("text zu groß (max 50KB für Bulk-Add)")), 413
         # F56: Split nach Whitespace, Komma, Newline, Semikolon
         names = [n for n in re.split(r'[\s,;\n]+', text) if n]
     if not isinstance(names, list) or not names:
-        return jsonify(ok=False, error="keine usernames angegeben"), 400
+        return jsonify(ok=False, error=_t("keine usernames angegeben")), 400
     if len(names) > 200:
-        return jsonify(ok=False, error="max 200 usernames pro bulk-call"), 400
+        return jsonify(ok=False, error=_t("max 200 usernames pro bulk-call")), 400
 
     # added_by=0 als Dashboard-Marker (analog zu F49)
     result = bulk_add_trackings(group_id, names, added_by=0)
@@ -246,10 +255,10 @@ def api_tracking_notes(tracking_id):
     payload = request.get_json(silent=True) or {}
     notes = payload.get("notes", "")
     if not isinstance(notes, str):
-        return jsonify(ok=False, error="notes muss ein String sein"), 400
+        return jsonify(ok=False, error=_t("notes muss ein String sein")), 400
     ok = set_tracking_notes(tracking_id, notes)
     if not ok:
-        return jsonify(ok=False, error="tracking not found"), 404
+        return jsonify(ok=False, error=_t("Tracking nicht gefunden")), 404
     return jsonify(ok=True, tracking_id=tracking_id,
                    notes=notes.strip()[:200])
 
@@ -290,7 +299,7 @@ def api_tracking_pause(tracking_id):
     """Pausiert ein Tracking — Worker überspringt es bis Resume."""
     ok = set_tracking_paused(tracking_id, True)
     if not ok:
-        return jsonify(ok=False, error="tracking not found"), 404
+        return jsonify(ok=False, error=_t("Tracking nicht gefunden")), 404
     # F53: Falls gerade aufgenommen wird — laufende Aufnahme NICHT stoppen,
     # nur weitere verhindern. Wer aktiv stoppen will nutzt /cleanup.
     return jsonify(ok=True, paused=True, tracking_id=tracking_id)
@@ -301,7 +310,7 @@ def api_tracking_resume(tracking_id):
     """Setzt das Tracking wieder aktiv — Worker pollt wieder."""
     ok = set_tracking_paused(tracking_id, False)
     if not ok:
-        return jsonify(ok=False, error="tracking not found"), 404
+        return jsonify(ok=False, error=_t("Tracking nicht gefunden")), 404
     # F53: Sofort recheck damit man nicht bis zum nächsten regulären Tick wartet
     try:
         _c().cfg["_NEXT_CHECK_AT"][tracking_id] = 0
@@ -318,7 +327,7 @@ def api_tracking_recheck(tracking_id):
             "SELECT username FROM trackings WHERE id=?",
             (tracking_id,)).fetchone()
     if not row:
-        return jsonify(ok=False, error="tracking not found"), 404
+        return jsonify(ok=False, error=_t("Tracking nicht gefunden")), 404
     username = row["username"]
 
     # 2. Live-Status-Cache flushen damit der Recheck wirklich frisch ist
@@ -388,7 +397,7 @@ def api_tracking_priority(tid):
     custom = data.get("custom_interval")
     ok = set_tracking_priority(tid, level, custom)
     if not ok:
-        return jsonify(ok=False, error="tracking not found"), 404
+        return jsonify(ok=False, error=_t("Tracking nicht gefunden")), 404
     return jsonify(ok=True, **get_tracking_priority(tid))
 
 
@@ -439,7 +448,7 @@ def api_tracking_collection(tid):
         with db_conn() as conn:
             tr = conn.execute("SELECT 1 FROM trackings WHERE id=?", (tid,)).fetchone()
             if not tr:
-                return jsonify(ok=False, error="Tracking nicht gefunden."), 404
+                return jsonify(ok=False, error=_t("Tracking nicht gefunden.")), 404
             if cid in (None, 0, "", "null"):
                 conn.execute("UPDATE trackings SET collection_id=NULL WHERE id=?", (tid,))
                 conn.commit()
@@ -447,11 +456,11 @@ def api_tracking_collection(tid):
             try:
                 cid = int(cid)
             except (TypeError, ValueError):
-                return jsonify(ok=False, error="collection_id ungültig."), 400
+                return jsonify(ok=False, error=_t("collection_id ungültig.")), 400
             exists = conn.execute("SELECT 1 FROM tracking_collections WHERE id=?",
                                  (cid,)).fetchone()
             if not exists:
-                return jsonify(ok=False, error="Collection existiert nicht."), 400
+                return jsonify(ok=False, error=_t("Collection existiert nicht.")), 400
             conn.execute("UPDATE trackings SET collection_id=? WHERE id=?", (cid, tid))
             conn.commit()
         return jsonify(ok=True, tracking_id=tid, collection_id=cid)
@@ -469,7 +478,7 @@ def api_tracking_max_duration(tid):
         with db_conn() as conn:
             tr = conn.execute("SELECT 1 FROM trackings WHERE id=?", (tid,)).fetchone()
             if not tr:
-                return jsonify(ok=False, error="Tracking nicht gefunden."), 404
+                return jsonify(ok=False, error=_t("Tracking nicht gefunden.")), 404
             if raw in (None, 0, "0", "", "null"):
                 conn.execute("UPDATE trackings SET max_duration_override=NULL WHERE id=?",
                              (tid,))
@@ -478,7 +487,7 @@ def api_tracking_max_duration(tid):
             try:
                 secs = int(raw)
             except (TypeError, ValueError):
-                return jsonify(ok=False, error="seconds muss eine Zahl sein."), 400
+                return jsonify(ok=False, error=_t("seconds muss eine Zahl sein.")), 400
             secs = max(30, min(secs, 86400))     # 30s … 24h Sicherheits-Clamp
             conn.execute("UPDATE trackings SET max_duration_override=? WHERE id=?",
                          (secs, tid))
@@ -498,7 +507,7 @@ def api_tracking_settings(tid):
                 "SELECT id, username, last_live, recording, paused, collection_id, "
                 "max_duration_override FROM trackings WHERE id=?", (tid,)).fetchone()
             if not tr:
-                return jsonify(ok=False, error="Tracking nicht gefunden."), 404
+                return jsonify(ok=False, error=_t("Tracking nicht gefunden.")), 404
             coll_name = None
             if tr["collection_id"]:
                 c = conn.execute("SELECT name FROM tracking_collections WHERE id=?",

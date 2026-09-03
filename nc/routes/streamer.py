@@ -10,6 +10,7 @@ from datetime import datetime, timedelta, timezone
 import os
 from flask import Blueprint, jsonify, request
 from nc.dbwrap import db_conn
+from nc import i18n as _nc_i18n
 from nc import tiktokcheck as _nc_tiktokcheck
 from nc import trackingdb as _nc_trackingdb
 from nc.trackingdb import get_all_active_trackings
@@ -19,6 +20,13 @@ from nc.stats import _streamer_health
 from nc import ctx as _ctx
 
 bp = Blueprint("streamer", __name__)
+
+def _t(s):
+    """v4.1-W20: an der Quelle uebersetzen. Diese Texte erreichen das DOM
+       meist verkettet ("Fehler: " + error) — ein Katalogeintrag fuer den
+       blossen Text traefe dort nie."""
+    return _nc_i18n.t(s)
+
 
 
 def _c():
@@ -71,7 +79,7 @@ def api_streamers_wall():
 def api_streamer_detail():
     raw = (request.args.get("user") or "").lstrip("@").strip()
     if not raw:
-        return jsonify(ok=False, error="user fehlt"), 400
+        return jsonify(ok=False, error=_t("user fehlt")), 400
     # WARUM case-insensitiv: clean_username macht KEIN lower(), die trackings
     # speichern den Handle also so, wie er getippt wurde ("@RabiLive"). Diese
     # Route hat stur .lower() angewendet — bei jedem Handle mit Großbuchstaben
@@ -111,7 +119,7 @@ def api_streamer_compare():
     a = (request.args.get("a") or "").lstrip("@")
     b = (request.args.get("b") or "").lstrip("@")
     if not a or not b:
-        return jsonify(ok=False, error="a und b erforderlich"), 400
+        return jsonify(ok=False, error=_t("a und b erforderlich")), 400
     try:
         with db_conn() as conn:
             def stats(u):
@@ -139,13 +147,13 @@ def api_streamer_priority(username):
             tr = conn.execute("SELECT id FROM trackings WHERE username=? LIMIT 1",
                               (username,)).fetchone()
             if not tr:
-                return jsonify(ok=False, error="streamer not tracked"), 404
+                return jsonify(ok=False, error=_t("Streamer wird nicht getrackt")), 404
             tid = tr["id"]
             if request.method == "POST":
                 data = request.get_json(silent=True) or {}
                 level = int(data.get("level", 0))
                 if level not in (0, 1, 2):
-                    return jsonify(ok=False, error="level muss 0,1,2 sein"), 400
+                    return jsonify(ok=False, error=_t("level muss 0,1,2 sein")), 400
                 now = datetime.now(timezone.utc).isoformat()
                 cur = conn.execute("UPDATE tracking_priority SET priority_level=?, updated_at=? "
                                    "WHERE tracking_id=?", (level, now, tid))
@@ -218,7 +226,7 @@ def api_streamer_dormant():
     try:
         days = _c().arg_int("days", 14, 1, 3650)
     except (ValueError, TypeError):
-        return jsonify(ok=False, error="days muss eine ganze Zahl sein (1–3650)"), 400
+        return jsonify(ok=False, error=_t("days muss eine ganze Zahl sein (1–3650)")), 400
     try:
         cut = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
         with db_conn() as conn:
@@ -239,13 +247,13 @@ def api_streamer_exists(username):
     wenn TikTok den Account eindeutig als nicht (mehr) vorhanden meldet."""
     uname = (username or "").lstrip("@").strip()
     if not uname:
-        return jsonify(ok=False, error="kein Name"), 400
+        return jsonify(ok=False, error=_t("kein Name")), 400
     try:
         status, http_status, detail = _c().run_async(
             _nc_tiktokcheck.account_exists(uname), timeout=25)
     except Exception as e:
         if _loop_not_ready(e):
-            return jsonify(ok=False, error="Bot startet noch — gleich erneut"), 503
+            return jsonify(ok=False, error=_t("Bot startet noch — gleich erneut")), 503
         return jsonify(ok=False, error=str(e)), 500
     return jsonify(ok=True, username=uname, status=status,
                    http_status=http_status, detail=detail,
@@ -259,7 +267,7 @@ def api_streamer_delete(username):
     auf TikTok nicht mehr gibt — die UI ruft das erst nach Bestätigung auf."""
     uname = (username or "").lstrip("@").strip()
     if not uname:
-        return jsonify(ok=False, error="kein Name"), 400
+        return jsonify(ok=False, error=_t("kein Name")), 400
     try:
         with db_conn() as conn:
             rows = conn.execute(
@@ -267,7 +275,7 @@ def api_streamer_delete(username):
                 (uname,)).fetchall()
         groups = [r["group_id"] for r in rows]
         if not groups:
-            return jsonify(ok=False, error="kein Tracking für diesen Namen"), 404
+            return jsonify(ok=False, error=_t("kein Tracking für diesen Namen")), 404
         for gid in groups:
             _nc_trackingdb.remove_tracking(gid, uname)
         log.info("Streamer @%s via Dashboard gelöscht (%d Tracking(s)).",

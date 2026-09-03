@@ -17,10 +17,18 @@ import os
 
 from flask import Blueprint, jsonify, request
 
+from nc import i18n as _nc_i18n
 from nc import evolution as _nc_evolution
 from nc.dbwrap import db_conn
 
 bp = Blueprint("evolution", __name__)
+
+def _t(s):
+    """v4.1-W20: an der Quelle uebersetzen. Diese Texte erreichen das DOM
+       meist verkettet ("Fehler: " + error) — ein Katalogeintrag fuer den
+       blossen Text traefe dort nie."""
+    return _nc_i18n.t(s)
+
 
 
 @bp.route("/api/evolution/status")
@@ -121,7 +129,7 @@ def api_evolution_dismiss(pid):
         with db_conn() as conn:
             row = conn.execute("SELECT 1 FROM evolution_proposals WHERE id=?", (pid,)).fetchone()
             if not row:
-                return jsonify(ok=False, error="Vorschlag nicht gefunden."), 404
+                return jsonify(ok=False, error=_t("Vorschlag nicht gefunden.")), 404
             conn.execute("UPDATE evolution_proposals SET status=? WHERE id=?", (new_status, pid))
             conn.commit()
         return jsonify(ok=True, id=pid, status=new_status)

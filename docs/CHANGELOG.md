@@ -11,6 +11,76 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Geändert — jede Route übersetzt an der Quelle (v4.1 W20)
+
+W19 hat den Extraktor bis in `nc/routes/` gebracht, aber nur zwei Blueprints
+umgestellt. Die übrigen **21 antworteten weiter deutsch** — 136 Stellen. Von
+Hand wären das über hundert Einzeländerungen gewesen, und die *eine*
+vergessene fällt niemandem auf: eine deutsch gebliebene Zeile sieht aus wie
+eine, die es noch nicht gibt.
+
+Deshalb **`tools/i18n_wrap.py`**: es findet die Benutzertexte per AST und
+schreibt `t(...)` textuell an die Stelle — nicht per `ast.unparse`, das die
+ganze Datei umformatiert hätte. `--check` ist der Vertrag, `--write` die
+Arbeit. f-Strings bleiben draußen (ihr Wert steht erst zur Laufzeit fest und
+wäre als Schlüssel wertlos), mehrzeilige Literale werden gemeldet statt
+geraten — die 14 sind von Hand umschlossen.
+
+Eine Falle, die das Werkzeug beim ersten Lauf sofort aufdeckte: **`col_offset`
+im AST ist ein UTF-8-Byte-Offset, kein Zeichen-Offset.** In einer Zeile mit
+Umlaut vor dem Literal verrutscht ein Zeichen-Slice um genau die Zahl der
+Mehrbytes und schreibt kaputten Code. Dass es auffiel, lag nur am `ast.parse()`
+vor dem Schreiben; ohne das wären still defekte Blueprints entstanden. Ein
+Vertrag hält jetzt beides fest.
+
+**Vierzehn Fehlertexte waren bereits englisch** (`file not found`,
+`recording not found`, …) — in einer deutschen API. Die sind jetzt deutsch
+formuliert, statt den Katalog mit Identitäts-Übersetzungen aufzuweichen: sein
+Vertrag lautet, dass der Schlüssel deutsch ist (`nc/i18n.py`), und
+`"file not found" → "file not found"` sähe in der Abdeckungszahl aus wie
+geleistete Arbeit, wo keine war. Vorher geprüft, dass die Oberfläche keine
+dieser Zeichenketten vergleicht.
+
+Katalog: 692 → **805 Einträge über 36 Dateien**, 0 fehlend, 0 verwaist. Die
+drei i18n-Prüfungen laufen jetzt auch in CI — bis hierher waren sie nur über
+die Verträge gedeckt, was „ein Vertrag ist rot" meldet statt „dieser Text
+fehlt".
+
+### Geändert — `/api/overlay` und `/api/audio` als Blueprint, ein Einnahmen-Gate (v4.1 W20)
+
+Fünf Routen aus dem Monolithen, **null neue `nc.ctx`-Einträge**. Gelöst wurde:
+
+* **`nc/revenue.py`** trägt das Einnahmen-Gate (B120) und die
+  Overlay-Plattformen. Es stand als Konstantenpaar im Monolithen, und
+  `nc/routes/money.py` spiegelte es zusätzlich über einen `ctx.cfg`-Eintrag —
+  **zwei Orte für eine Wahrheit, aus der ein Drift wird.** Jetzt eine Quelle,
+  und der `cfg`-Eintrag ist weg. TikTok gehört nicht zu den Einnahmequellen
+  (Gifts gehen an den getrackten Streamer), wohl aber zu den
+  Overlay-Plattformen: Follows von dort sind Reichweite, kein Geld.
+* **`nc/audiocue.py`** trägt Signalton- und Ducking-Konfiguration; die
+  `.env`-Vorgaben reicht der Bot hinein, statt sie im Modul einzufrieren.
+* **`nc/channels.RESTREAM_TTS`** und **`nc/azraelstate.OVERLAY_SESSION`** sind
+  Aliase. Beim Testton ist das der ganze Punkt: er muss in den **Live-Mix**.
+  Eine Kopie hieße „0 Warteschlangen" bei laufendem Restream — eine
+  Fehlanzeige, die wie ein kaputter Ton aussieht.
+
+`_overlay_push` bleibt im Bot (zwölf weitere Aufrufer dort) und kommt als
+Haken, wie in W19.
+
+**Vier Vertrags-Anker sind mitgewandert, keiner gelöscht** — die Zusicherungen
+gelten unverändert, nur stehen sie jetzt in `nc/`: der Session-Filter des
+Overlays, die Einnahmen-Positivliste, die Audio-Laufzeitkonfig und der
+`normalize_audio`-Delegationsanker.
+
+`bot.py` 28.640 → **28.467** Zeilen, Blueprints 26 → 28, eigene Routen im
+Monolithen 116 → **111**.
+
+**Offen, nicht angefasst:** `nc/ledger.PLATFORMS` behauptet im Kommentar,
+deckungsgleich mit den Einnahmequellen zu sein — ist es nicht (`sonstige`
+gegen `manuell`). Das sind Buchungskategorien für die Steuer gegen
+Einnahmequellen; sie *sollen* sich unterscheiden, nur der Kommentar ist
+falsch. Geldcode wird nicht nebenbei angefasst (CLAUDE.md).
+
 ### Geändert — `/api/azrael` als Blueprint, drei Schichten gelöst (v4.1 W19)
 
 Die größte Routengruppe, die noch im Monolithen stand: **18 Routen**, und

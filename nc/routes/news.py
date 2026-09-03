@@ -9,6 +9,7 @@ stellen muss, kommt ueber nc.ctx statt ueber einen Import aus bot.py.
 import asyncio
 from flask import Blueprint, jsonify, request
 import time as _time_mod
+from nc import i18n as _nc_i18n
 from nc import news as _nc_news
 from nc.util import _loop_not_ready
 from nc.cfgstore import get as _cfg_get, set_ as _cfg_set
@@ -16,6 +17,13 @@ from nc.cfgstore import get as _cfg_get, set_ as _cfg_set
 from nc import ctx as _ctx
 
 bp = Blueprint("news", __name__)
+
+def _t(s):
+    """v4.1-W20: an der Quelle uebersetzen. Diese Texte erreichen das DOM
+       meist verkettet ("Fehler: " + error) — ein Katalogeintrag fuer den
+       blossen Text traefe dort nie."""
+    return _nc_i18n.t(s)
+
 
 
 def _c():
@@ -68,7 +76,7 @@ def api_news_creators_generate():
     if loop and loop.is_running():
         asyncio.run_coroutine_threadsafe(_nc_news.creator_dossier_generate(days), loop)
         return jsonify(ok=True, started=True, days=days)
-    return jsonify(ok=False, error="Event-Loop nicht bereit"), 503
+    return jsonify(ok=False, error=_t("Event-Loop nicht bereit")), 503
 
 
 @bp.route("/api/news/toggle", methods=["POST"])
@@ -91,12 +99,12 @@ def api_news_config():
         try:
             stored["cadence_hours"] = max(0.5, float(payload["cadence_hours"]))
         except (TypeError, ValueError):
-            return jsonify(ok=False, error="cadence_hours muss eine Zahl sein"), 400
+            return jsonify(ok=False, error=_t("cadence_hours muss eine Zahl sein")), 400
     if "max_items" in payload:
         try:
             stored["max_items"] = max(1, min(100, int(payload["max_items"])))
         except (TypeError, ValueError):
-            return jsonify(ok=False, error="max_items muss eine Zahl sein"), 400
+            return jsonify(ok=False, error=_t("max_items muss eine Zahl sein")), 400
     for k in ("quiet_start", "quiet_end"):
         if k in payload:
             try:
@@ -127,6 +135,6 @@ def api_news_generate_now():
         res = _c().run_async(_nc_news.generate(manual=True), timeout=60)
     except Exception as e:
         if _loop_not_ready(e):
-            return jsonify(ok=False, error="Event-Loop startet noch — kurz erneut versuchen."), 503
+            return jsonify(ok=False, error=_t("Event-Loop startet noch — kurz erneut versuchen.")), 503
         return jsonify(ok=False, error=f"News-Generierung: {e}"), 500
     return jsonify(**res)

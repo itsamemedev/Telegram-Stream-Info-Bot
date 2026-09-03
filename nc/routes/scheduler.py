@@ -9,12 +9,20 @@ stellen muss, kommt ueber nc.ctx statt ueber einen Import aus bot.py.
 from datetime import datetime, timezone
 import re
 from flask import Blueprint, jsonify, request
+from nc import i18n as _nc_i18n
 from nc import envnum as _nc_envnum
 from nc.dbwrap import db_conn
 
 from nc import ctx as _ctx
 
 bp = Blueprint("scheduler", __name__)
+
+def _t(s):
+    """v4.1-W20: an der Quelle uebersetzen. Diese Texte erreichen das DOM
+       meist verkettet ("Fehler: " + error) — ein Katalogeintrag fuer den
+       blossen Text traefe dort nie."""
+    return _nc_i18n.t(s)
+
 
 
 def _c():
@@ -51,11 +59,11 @@ def api_scheduler_add():
     at = (d.get("at") or "").strip()
     payload = (d.get("payload") or "").strip()[:1000]
     if kind not in ("announce", "push"):
-        return jsonify(ok=False, error="kind muss 'announce' oder 'push' sein"), 400
+        return jsonify(ok=False, error=_t("kind muss 'announce' oder 'push' sein")), 400
     if not re.match(r'^([01]\d|2[0-3]):[0-5]\d$', at):
-        return jsonify(ok=False, error="Zeit im Format HH:MM (24h)"), 400
+        return jsonify(ok=False, error=_t("Zeit im Format HH:MM (24h)")), 400
     if not payload:
-        return jsonify(ok=False, error="leerer Text"), 400
+        return jsonify(ok=False, error=_t("leerer Text")), 400
     try:
         with db_conn() as conn:
             conn.execute("INSERT INTO scheduled_tasks (kind, at_hhmm, payload, enabled, created_at) "
@@ -72,7 +80,7 @@ def api_scheduler_delete():
     # id in einen 500 mit Python-Interna; jetzt klarer 400 (wie die übrigen Routen).
     tid = _nc_envnum.clamp_int(d.get("id"), None)
     if tid is None:
-        return jsonify(ok=False, error="id (Zahl) fehlt oder ungültig"), 400
+        return jsonify(ok=False, error=_t("id (Zahl) fehlt oder ungültig")), 400
     try:
         with db_conn() as conn:
             conn.execute("DELETE FROM scheduled_tasks WHERE id=?", (tid,))
@@ -87,7 +95,7 @@ def api_scheduler_toggle():
     # v4.0-W34-FIX: id sauber validieren (vorher 500 bei fehlender id).
     tid = _nc_envnum.clamp_int(d.get("id"), None)
     if tid is None:
-        return jsonify(ok=False, error="id (Zahl) fehlt oder ungültig"), 400
+        return jsonify(ok=False, error=_t("id (Zahl) fehlt oder ungültig")), 400
     try:
         with db_conn() as conn:
             conn.execute("UPDATE scheduled_tasks SET enabled=? WHERE id=?",

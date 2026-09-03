@@ -8,11 +8,20 @@ stellen muss, kommt ueber nc.ctx statt ueber einen Import aus bot.py.
 
 from datetime import datetime, timezone
 from flask import Blueprint, jsonify, request
+
+from nc import i18n as _nc_i18n
 from nc.dbwrap import db_conn
 
 from nc import ctx as _ctx
 
 bp = Blueprint("webhooks", __name__)
+
+def _t(s):
+    """v4.1-W20: an der Quelle uebersetzen. Diese Texte erreichen das DOM
+       meist verkettet ("Fehler: " + error) — ein Katalogeintrag fuer den
+       blossen Text traefe dort nie."""
+    return _nc_i18n.t(s)
+
 
 
 def _c():
@@ -39,9 +48,9 @@ def api_webhooks():
         events = (payload.get("events") or "*").strip()[:255]
         enabled = 0 if payload.get("enabled") is False else 1
         if not (url.startswith("http://") or url.startswith("https://")):
-            return jsonify(ok=False, error="url muss mit http:// oder https:// beginnen."), 400
+            return jsonify(ok=False, error=_t("url muss mit http:// oder https:// beginnen.")), 400
         if len(url) > 2000:
-            return jsonify(ok=False, error="url zu lang."), 400
+            return jsonify(ok=False, error=_t("url zu lang.")), 400
         try:
             with db_conn() as conn:
                 cur = conn.execute(
@@ -76,7 +85,7 @@ def api_webhook_delete(wid):
         with db_conn() as conn:
             row = conn.execute("SELECT 1 FROM webhooks WHERE id=?", (wid,)).fetchone()
             if not row:
-                return jsonify(ok=False, error="Webhook nicht gefunden."), 404
+                return jsonify(ok=False, error=_t("Webhook nicht gefunden.")), 404
             conn.execute("DELETE FROM webhooks WHERE id=?", (wid,))
             conn.commit()
         return jsonify(ok=True, deleted=wid)
@@ -91,7 +100,7 @@ def api_webhook_toggle(wid):
         with db_conn() as conn:
             row = conn.execute("SELECT enabled FROM webhooks WHERE id=?", (wid,)).fetchone()
             if not row:
-                return jsonify(ok=False, error="Webhook nicht gefunden."), 404
+                return jsonify(ok=False, error=_t("Webhook nicht gefunden.")), 404
             new_val = 0 if (row["enabled"] or 0) else 1
             conn.execute("UPDATE webhooks SET enabled=? WHERE id=?", (new_val, wid))
             conn.commit()
@@ -108,7 +117,7 @@ def api_webhook_test(wid):
         with db_conn() as conn:
             row = conn.execute("SELECT id, url FROM webhooks WHERE id=?", (wid,)).fetchone()
         if not row:
-            return jsonify(ok=False, error="Webhook nicht gefunden."), 404
+            return jsonify(ok=False, error=_t("Webhook nicht gefunden.")), 404
         body = {"event": "webhook.test", "severity": "info",
                 "summary": "Test-Webhook vom TikTok-Bot Dashboard",
                 "payload": {"test": True}, "ts": datetime.now(timezone.utc).isoformat(),

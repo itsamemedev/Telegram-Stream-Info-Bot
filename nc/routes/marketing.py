@@ -8,6 +8,7 @@ stellen muss, kommt ueber nc.ctx statt ueber einen Import aus bot.py.
 
 import os
 from flask import Blueprint, jsonify, request
+from nc import i18n as _nc_i18n
 from nc import marketing as _nc_marketing
 from nc.util import _loop_not_ready
 from nc.cfgstore import get as _cfg_get, set_ as _cfg_set
@@ -15,6 +16,13 @@ from nc.cfgstore import get as _cfg_get, set_ as _cfg_set
 from nc import ctx as _ctx
 
 bp = Blueprint("marketing", __name__)
+
+def _t(s):
+    """v4.1-W20: an der Quelle uebersetzen. Diese Texte erreichen das DOM
+       meist verkettet ("Fehler: " + error) — ein Katalogeintrag fuer den
+       blossen Text traefe dort nie."""
+    return _nc_i18n.t(s)
+
 
 
 def _c():
@@ -99,6 +107,6 @@ def api_marketing_send_now():
         res = _c().run_async(_nc_marketing.publish(manual=True), timeout=40)
     except Exception as e:
         if _loop_not_ready(e):
-            return jsonify(ok=False, error="Event-Loop startet noch — kurz erneut versuchen."), 503
+            return jsonify(ok=False, error=_t("Event-Loop startet noch — kurz erneut versuchen.")), 503
         return jsonify(ok=False, error=f"Marketing-Post: {e}"), 500
     return jsonify(**res)

@@ -77,6 +77,21 @@ jobs:
           shellcheck -S warning tools/*.sh
           shellcheck -S warning -s sh tools/lib/*.sh
 
+      # v4.1-W20: Die Uebersetzung wurde bis hierher NUR von den Vertraegen
+      # gedeckt. Das reicht funktional, meldet aber "ein Vertrag ist rot"
+      # statt "dieser Text fehlt im Katalog" — und genau die Zahl ist die
+      # Arbeitsanweisung. Drei Zeilen, die den Befund direkt zeigen.
+      #
+      # Reihenfolge mit Absicht: erst pruefen, ob ueberhaupt an der Quelle
+      # umschlossen wurde (i18n_wrap), dann ob der Katalog vollstaendig ist.
+      # Andersherum meldete der Katalog "vollstaendig", waehrend die Haelfte
+      # der Fehlertexte gar nicht erst eingesammelt wurde.
+      - name: Uebersetzung — Quelle umschlossen, Katalog vollstaendig
+        run: |
+          python tools/i18n_wrap.py --check
+          python tools/i18n_extract.py --check en
+          python tools/i18n_tools.py --check en
+
   templates:
     name: Templates (doppelte IDs · CSS-Bilanz)
     runs-on: ubuntu-latest

@@ -46,6 +46,12 @@ KICK_MOD = {"obj": None}
 # die Falle aus CLAUDE.md ("Guards als Objekt-Attribut").
 RESTREAM_ACTIVE = {"obj": {}}
 
+# v4.1-W20: laufende AZRAEL-Stimmkanäle je Restream — rid -> {thread, stop,
+# fifo, queue}. Alias und nicht Register: bot.py trägt ein und nimmt heraus,
+# bindet den Namen aber nie neu. /api/audio/testtone legt den Signalton in
+# genau diese Warteschlangen, damit er im LIVE-Mix hörbar ist statt nur lokal.
+RESTREAM_TTS = {}
+
 
 def restream_active():
     """Der primäre Restream als Dict — nie None, damit .get() immer trägt."""

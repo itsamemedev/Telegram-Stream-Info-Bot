@@ -23,6 +23,7 @@ import time as _time_mod
 from flask import Blueprint, jsonify, redirect, request
 
 import nc.ytoauth as _ytoauth
+from nc import i18n as _nc_i18n
 from nc import sendrate as _nc_sendrate
 from nc.channels import YT_API_CACHE as _YT_API_CACHE
 from nc.channels import YT_SEND as _YT_SEND
@@ -38,6 +39,13 @@ from nc.util import _loop_not_ready
 from nc import ctx as _ctx
 
 bp = Blueprint("youtube", __name__)
+
+def _t(s):
+    """v4.1-W20: an der Quelle uebersetzen. Diese Texte erreichen das DOM
+       meist verkettet ("Fehler: " + error) — ein Katalogeintrag fuer den
+       blossen Text traefe dort nie."""
+    return _nc_i18n.t(s)
+
 
 
 def _c():
@@ -78,13 +86,13 @@ def api_youtube_oauth_redirect():
     if uri:
         low = uri.lower()
         if not (low.startswith("http://") or low.startswith("https://")):
-            return jsonify(ok=False, error="URI muss mit http:// oder https:// beginnen"), 400
+            return jsonify(ok=False, error=_t("URI muss mit http:// oder https:// beginnen")), 400
         if not low.endswith("/api/youtube/oauth/callback"):
-            return jsonify(ok=False, error="URI muss auf /api/youtube/oauth/callback enden "
-                           "(exakt dieser Pfad ist die Rueckruf-Route)"), 400
+            return jsonify(ok=False, error=_t("URI muss auf /api/youtube/oauth/callback enden "
+                                              "(exakt dieser Pfad ist die Rueckruf-Route)")), 400
         if low.startswith("http://") and "localhost" not in low and "127.0.0.1" not in low:
-            return jsonify(ok=False, error="Google akzeptiert http:// nur fuer localhost — "
-                           "sonst https:// verwenden"), 400
+            return jsonify(ok=False, error=_t("Google akzeptiert http:// nur fuer localhost — "
+                                              "sonst https:// verwenden")), 400
     _cfg_set("youtube.redirect_uri", uri)
     eff = _redirect_uri("youtube")
     return jsonify(ok=True, redirect_uri=eff,
@@ -96,9 +104,9 @@ def api_youtube_oauth_redirect():
 def api_youtube_oauth_start():
     import secrets
     if not (os.getenv("YOUTUBE_CLIENT_ID", "") or "").strip():
-        return jsonify(ok=False, error="YOUTUBE_CLIENT_ID fehlt in der .env"), 400
+        return jsonify(ok=False, error=_t("YOUTUBE_CLIENT_ID fehlt in der .env")), 400
     if not (os.getenv("YOUTUBE_CLIENT_SECRET", "") or "").strip():
-        return jsonify(ok=False, error="YOUTUBE_CLIENT_SECRET fehlt in der .env"), 400
+        return jsonify(ok=False, error=_t("YOUTUBE_CLIENT_SECRET fehlt in der .env")), 400
     redirect_uri = _redirect_uri("youtube")
     # 'select_account consent' ausdruecklich mitgeben statt auf den Modul-
     # Default zu bauen: das ist die Kontoauswahl, ohne die man mit mehreren
@@ -106,7 +114,7 @@ def api_youtube_oauth_start():
     url = _ytoauth.authorize_url(secrets.token_urlsafe(16), redirect_uri=redirect_uri,
                                  prompt="select_account consent")
     if not url:
-        return jsonify(ok=False, error="Authorize-URL nicht baubar"), 400
+        return jsonify(ok=False, error=_t("Authorize-URL nicht baubar")), 400
     return redirect(url)
 
 

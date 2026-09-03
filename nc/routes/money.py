@@ -9,6 +9,8 @@ stellen muss, kommt ueber nc.ctx statt ueber einen Import aus bot.py.
 from datetime import datetime, timezone
 from flask import Blueprint, Response, jsonify, request
 from nc.dbwrap import db_conn
+from nc import i18n as _nc_i18n
+from nc import revenue as _nc_revenue
 from nc import ledger as _nc_ledger
 from nc import donations as _nc_donations
 from nc.donationsdb import parse_eur as _parse_eur, manual_rows as _manual_donations_rows, manual_total as _manual_donations_total
@@ -16,6 +18,13 @@ from nc.donationsdb import parse_eur as _parse_eur, manual_rows as _manual_donat
 from nc import ctx as _ctx
 
 bp = Blueprint("money", __name__)
+
+def _t(s):
+    """v4.1-W20: an der Quelle uebersetzen. Diese Texte erreichen das DOM
+       meist verkettet ("Fehler: " + error) — ein Katalogeintrag fuer den
+       blossen Text traefe dort nie."""
+    return _nc_i18n.t(s)
+
 
 
 def _c():
@@ -65,9 +74,9 @@ def api_donations_add():
     src = request.get_json(silent=True) or request.form or request.values
     amount = _parse_eur(src.get("amount"))
     if amount is None or amount <= 0:
-        return jsonify(ok=False, error="Betrag fehlt oder ungültig (z. B. 12,50)."), 400
+        return jsonify(ok=False, error=_t("Betrag fehlt oder ungültig (z. B. 12,50).")), 400
     if amount > 1_000_000:
-        return jsonify(ok=False, error="Betrag unplausibel groß."), 400
+        return jsonify(ok=False, error=_t("Betrag unplausibel groß.")), 400
     note = (str(src.get("note") or src.get("source") or "").strip())[:120] or "manuell"
     msg = (str(src.get("message") or "").strip())[:500]
     ts_in = str(src.get("date") or src.get("ts") or "").strip()
@@ -135,14 +144,14 @@ def api_donations_summary():
                 cur.execute(
                     "SELECT platform, COUNT(*) n FROM overlay_events "
                     "WHERE kind='donation' AND platform IN"
-                    + _c().cfg["_REVENUE_SQL_IN"] +
+                    + _nc_revenue.sql_in() +
                     " AND ts >= datetime('now', ?) "
                     "GROUP BY platform", ("-%d days" % days,))
             except Exception:
                 cur.execute(
                     "SELECT platform, COUNT(*) n FROM overlay_events "
                     "WHERE kind='donation' AND platform IN"
-                    + _c().cfg["_REVENUE_SQL_IN"] +
+                    + _nc_revenue.sql_in() +
                     (" AND ts >= (NOW() - INTERVAL %d DAY) "
                      "GROUP BY platform" % days))
             rows = cur.fetchall()
@@ -159,7 +168,7 @@ def api_donations_summary():
                 cur.execute(
                     "SELECT ts, name, amount, message, platform FROM overlay_events "
                     "WHERE kind='donation' AND platform IN"
-                    + _c().cfg["_REVENUE_SQL_IN"] +
+                    + _nc_revenue.sql_in() +
                     " ORDER BY id DESC LIMIT 15")
             except Exception:
                 pass
@@ -183,13 +192,13 @@ def api_finanzamt_entries():
     try:
         year = _c().arg_int("year", datetime.now(timezone.utc).year)
     except ValueError:
-        return jsonify(ok=False, error="year muss eine Jahreszahl sein"), 400
+        return jsonify(ok=False, error=_t("year muss eine Jahreszahl sein")), 400
     try:
         with db_conn() as conn:
             return jsonify(ok=True, year=year,
                            entries=_nc_ledger.entries(conn, year),
                            summary=_nc_ledger.summary(conn, year),
-                           crosscheck=_nc_ledger.crosscheck(conn, year, _c().cfg["_REVENUE_SQL_IN"]),
+                           crosscheck=_nc_ledger.crosscheck(conn, year, _nc_revenue.sql_in()),
                            platforms=list(_nc_ledger.PLATFORMS),
                            kinds=list(_nc_ledger.KINDS),
                            disclaimer=_nc_ledger.DISCLAIMER)

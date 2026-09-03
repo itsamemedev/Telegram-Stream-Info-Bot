@@ -10,12 +10,21 @@ from datetime import datetime, timedelta, timezone
 import json
 import re
 from flask import Blueprint, jsonify
+
+from nc import i18n as _nc_i18n
 from nc.dbwrap import db_conn
 from nc.stats import get_stats, get_tiktok_status_distribution
 
 from nc import ctx as _ctx
 
 bp = Blueprint("stats", __name__)
+
+def _t(s):
+    """v4.1-W20: an der Quelle uebersetzen. Diese Texte erreichen das DOM
+       meist verkettet ("Fehler: " + error) — ein Katalogeintrag fuer den
+       blossen Text traefe dort nie."""
+    return _nc_i18n.t(s)
+
 
 
 def _c():
@@ -153,7 +162,7 @@ def api_ai_log_detail(entry_id):
             "FROM ai_log WHERE id=?",
             (entry_id,)).fetchone()
     if not row:
-        return jsonify(ok=False, error="entry not found"), 404
+        return jsonify(ok=False, error=_t("Eintrag nicht gefunden")), 404
     # B50: Cap bei 50KB pro Feld damit eine kaputte AI-Antwort den Browser
     # nicht crasht. 50KB ist mehr als genug für normale Chats.
     return jsonify({

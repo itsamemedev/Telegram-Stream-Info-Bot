@@ -16,6 +16,13 @@ from nc import i18n as _nc_i18n
 
 bp = Blueprint("i18n", __name__)
 
+def _t(s):
+    """v4.1-W20: an der Quelle uebersetzen. Diese Texte erreichen das DOM
+       meist verkettet ("Fehler: " + error) — ein Katalogeintrag fuer den
+       blossen Text traefe dort nie."""
+    return _nc_i18n.t(s)
+
+
 # Ein Jahr. Die Sprachwahl ist eine Vorliebe, keine Sitzung — sie soll einen
 # Neustart des Browsers ueberleben.
 _COOKIE = "nc_lang"
@@ -77,7 +84,7 @@ def api_i18n_waehlen():
     daten = request.get_json(silent=True) or {}
     gewuenscht = _nc_i18n.normalisieren(daten.get("sprache") or request.args.get("lang"))
     if not gewuenscht:
-        return jsonify(ok=False, error="unbekannte Sprache",
+        return jsonify(ok=False, error=_t("unbekannte Sprache"),
                        sprachen=list(_nc_i18n.SPRACHEN)), 400
     antwort = make_response(jsonify(ok=True, sprache=gewuenscht))
     antwort.set_cookie(_COOKIE, gewuenscht, max_age=_COOKIE_MAX_AGE,

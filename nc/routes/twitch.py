@@ -14,6 +14,8 @@ ohnehin schon gab. Neue Kontext-Eintraege: null.
 import os
 from flask import Blueprint, jsonify, redirect, request
 
+from nc import i18n as _nc_i18n
+
 import nc.twitchoauth as _twoauth
 from nc.cfgstore import set_ as _cfg_set
 from nc.oauthpage import twitch as _twitch_oauth_page
@@ -24,6 +26,13 @@ from nc.oauthredirect import redirect_uri as _redirect_uri
 from nc import ctx as _ctx
 
 bp = Blueprint("twitch", __name__)
+
+def _t(s):
+    """v4.1-W20: an der Quelle uebersetzen. Diese Texte erreichen das DOM
+       meist verkettet ("Fehler: " + error) — ein Katalogeintrag fuer den
+       blossen Text traefe dort nie."""
+    return _nc_i18n.t(s)
+
 
 
 def _c():
@@ -64,13 +73,13 @@ def api_twitch_oauth_redirect():
     if uri:
         low = uri.lower()
         if not (low.startswith("http://") or low.startswith("https://")):
-            return jsonify(ok=False, error="URI muss mit http:// oder https:// beginnen"), 400
+            return jsonify(ok=False, error=_t("URI muss mit http:// oder https:// beginnen")), 400
         if not low.endswith("/api/twitch/oauth/callback"):
-            return jsonify(ok=False, error="URI muss auf /api/twitch/oauth/callback enden "
-                           "(exakt dieser Pfad ist die Rueckruf-Route)"), 400
+            return jsonify(ok=False, error=_t("URI muss auf /api/twitch/oauth/callback enden "
+                                              "(exakt dieser Pfad ist die Rueckruf-Route)")), 400
         if low.startswith("http://") and "localhost" not in low and "127.0.0.1" not in low:
-            return jsonify(ok=False, error="Twitch akzeptiert http:// nur fuer localhost — "
-                           "sonst https:// verwenden"), 400
+            return jsonify(ok=False, error=_t("Twitch akzeptiert http:// nur fuer localhost — "
+                                              "sonst https:// verwenden")), 400
     _cfg_set("twitch.redirect_uri", uri)
     eff = _redirect_uri("twitch")
     return jsonify(ok=True, redirect_uri=eff,
@@ -85,9 +94,9 @@ def api_twitch_oauth_start():
     import secrets
     cid = (os.getenv("TWITCH_CLIENT_ID", "") or "").strip()
     if not cid:
-        return jsonify(ok=False, error="TWITCH_CLIENT_ID fehlt in der .env"), 400
+        return jsonify(ok=False, error=_t("TWITCH_CLIENT_ID fehlt in der .env")), 400
     if not (os.getenv("TWITCH_CLIENT_SECRET", "") or "").strip():
-        return jsonify(ok=False, error="TWITCH_CLIENT_SECRET fehlt in der .env"), 400
+        return jsonify(ok=False, error=_t("TWITCH_CLIENT_SECRET fehlt in der .env")), 400
     # V37-TWOAUTH-FIX2: Twitch verlangt bei Redirect-URIs HTTPS — mit EINER
     # Ausnahme: http://localhost:PORT ist erlaubt. Eine IP mit https geht NICHT
     # (kein Zertifikat fuer nackte IPs). Deshalb ist der Default localhost:3000,
@@ -98,7 +107,7 @@ def api_twitch_oauth_start():
     redirect_uri = _redirect_uri("twitch")
     url = _twoauth.authorize_url(secrets.token_urlsafe(16), redirect_uri=redirect_uri)
     if not url:
-        return jsonify(ok=False, error="Authorize-URL nicht baubar"), 400
+        return jsonify(ok=False, error=_t("Authorize-URL nicht baubar")), 400
     return redirect(url)
 
 

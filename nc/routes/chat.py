@@ -26,6 +26,13 @@ from nc import ctx as _ctx
 
 bp = Blueprint("chat", __name__)
 
+def _t(s):
+    """v4.1-W20: an der Quelle uebersetzen. Diese Texte erreichen das DOM
+       meist verkettet ("Fehler: " + error) — ein Katalogeintrag fuer den
+       blossen Text traefe dort nie."""
+    return _nc_i18n.t(s)
+
+
 
 def _c():
     """Laufzeitkontext. Aufruf statt Modul-Konstante — der Kontext wird erst
@@ -70,17 +77,17 @@ def api_chat_send():
     platform = (d.get("platform") or "kick").strip().lower()
     text = (d.get("text") or "").strip()[:450]
     if not text:
-        return jsonify(ok=False, error="text fehlt"), 400
+        return jsonify(ok=False, error=_t("text fehlt")), 400
     if platform == "kick":
         if not _nc_channels.KICK_MOD["obj"]:
-            return jsonify(ok=False, error="Kick-Mod nicht verbunden"), 503
+            return jsonify(ok=False, error=_t("Kick-Mod nicht verbunden")), 503
         ok, err = _c().run_async(_nc_channels.KICK_MOD["obj"].send_message(_nc_i18n.t(text)), timeout=15)
         return jsonify(ok=bool(ok), error=err)
     if platform == "twitch":
         fn = _TWITCH_SEND.get("fn")
         if not fn:
-            return jsonify(ok=False, error="Twitch nicht verbunden oder "
-                           "kein TWITCH_CHAT_TOKEN (nur-lesend)"), 503
+            return jsonify(ok=False, error=_t("Twitch nicht verbunden oder "
+                                              "kein TWITCH_CHAT_TOKEN (nur-lesend)")), 503
         try:
             _c().run_async(fn(text), timeout=10)
             return jsonify(ok=True)
@@ -89,9 +96,9 @@ def api_chat_send():
     if platform == "youtube":
         fn = _YT_SEND.get("fn")
         if not fn:
-            return jsonify(ok=False, error="YouTube nicht sendefähig "
-                           "(kein aktiver Live-Chat oder OAuth nicht "
-                           "konfiguriert — docs/SETUP_YT_OAUTH.md)"), 503
+            return jsonify(ok=False, error=_t("YouTube nicht sendefähig "
+                                              "(kein aktiver Live-Chat oder OAuth nicht "
+                                              "konfiguriert — docs/SETUP_YT_OAUTH.md)")), 503
         try:
             _c().run_async(fn(text), timeout=15)
             return jsonify(ok=True)
@@ -109,7 +116,7 @@ def api_chat_send():
             results["kick"] = {"ok": bool(ok), "error": err}
             (done if ok else fails).append("kick" + (f" ({err})" if err else ""))
         else:
-            results["kick"] = {"ok": False, "error": "Kick nicht verbunden"}
+            results["kick"] = {"ok": False, "error": _t("Kick nicht verbunden")}
         fn = _TWITCH_SEND.get("fn")
         if fn:
             try:
@@ -119,7 +126,7 @@ def api_chat_send():
                 fails.append(f"twitch ({e})")
                 results["twitch"] = {"ok": False, "error": str(e)}
         else:
-            results["twitch"] = {"ok": False, "error": "Twitch nicht verbunden (IRC/chat:edit)"}
+            results["twitch"] = {"ok": False, "error": _t("Twitch nicht verbunden (IRC/chat:edit)")}
         ytf = _YT_SEND.get("fn")
         if ytf:
             try:
@@ -129,6 +136,6 @@ def api_chat_send():
                 fails.append(f"youtube ({e})")
                 results["youtube"] = {"ok": False, "error": str(e)}
         else:
-            results["youtube"] = {"ok": False, "error": "YouTube nicht verbunden (OAuth)"}
+            results["youtube"] = {"ok": False, "error": _t("YouTube nicht verbunden (OAuth)")}
         return jsonify(ok=bool(done), sent=done, failed=fails, results=results)
-    return jsonify(ok=False, error="platform muss kick|twitch|youtube|all sein"), 400
+    return jsonify(ok=False, error=_t("platform muss kick|twitch|youtube|all sein")), 400

@@ -36,6 +36,7 @@ from flask import Blueprint, jsonify, request
 
 from nc import ctx as _ctx
 from nc import recdb
+from nc import i18n as _nc_i18n
 from nc import inspectcache as _nc_inspectcache
 from nc import ffbuild as _nc_ffbuild
 from nc.dbwrap import db_conn
@@ -47,6 +48,13 @@ from nc.recdiag import disconnect_analysis as _rd_analysis, url_refresh_stats as
 from nc.scoring import compute_quality_score
 
 bp = Blueprint("recordings", __name__)
+
+def _t(s):
+    """v4.1-W20: an der Quelle uebersetzen. Diese Texte erreichen das DOM
+       meist verkettet ("Fehler: " + error) — ein Katalogeintrag fuer den
+       blossen Text traefe dort nie."""
+    return _nc_i18n.t(s)
+
 
 
 def _c():
@@ -289,13 +297,13 @@ def api_recording_stop(tracking_id):
             "WHERE id=? AND recording=1", (tracking_id,)).fetchone()
     if not row:
         return jsonify(ok=False,
-                       error="kein aktives Recording für dieses Tracking"), 404
+                       error=_t("kein aktives Recording für dieses Tracking")), 404
     pid = row["pid"]
     if not pid:
         # Edge: recording=1 aber kein pid (Race oder Inkonsistenz).
         # Der Reaper räumt das beim nächsten Lauf weg.
-        return jsonify(ok=False, error="recording flag gesetzt aber kein PID — "
-                       "Reaper räumt beim nächsten Tick auf"), 409
+        return jsonify(ok=False, error=_t("recording flag gesetzt aber kein PID — "
+                                          "Reaper räumt beim nächsten Tick auf")), 409
     # F59-Bug-Fix B36: PID-Reuse-Schutz. Wenn der ffmpeg-Prozess vor Stunden
     # gecrasht ist und der Kernel die PID inzwischen recycled hat, würden
     # wir hier eine fremde Anwendung töten. _proc_is_recorder liest
@@ -319,7 +327,7 @@ def api_recording_stop(tracking_id):
     except Exception as e:
         return jsonify(ok=False, error=f"kill fehlgeschlagen: {e}"), 500
     return jsonify(ok=True, username=row["username"], pid=pid,
-                   message="SIGTERM gesendet — file wird grazil finalisiert")
+                   message=_t("SIGTERM gesendet — file wird grazil finalisiert"))
 
 
 @bp.route("/api/recordings/list")
@@ -403,7 +411,7 @@ def api_recordings_daily():
 def api_recording_inspect(rid):
     rec = recdb.get_recording_by_id(rid)
     if not rec:
-        return jsonify(ok=False, error="recording not found"), 404
+        return jsonify(ok=False, error=_t("Aufnahme nicht gefunden")), 404
     # Cache first
     cached = recdb.get_or_compute_inspect_sync(rid)
     force = request.args.get("force") == "1"
@@ -411,7 +419,7 @@ def api_recording_inspect(rid):
         return jsonify(ok=True, cached=True, inspect=cached)
     fp = rec["filepath"]
     if not fp or not os.path.exists(fp):
-        return jsonify(ok=False, error="file not on disk",
+        return jsonify(ok=False, error=_t("Datei liegt nicht auf der Platte"),
                        inspect=cached), 404
     try:
         data = _c().run_async(ffprobe_inspect(fp), timeout=30)
@@ -419,7 +427,7 @@ def api_recording_inspect(rid):
         return jsonify(ok=False, error=f"ffprobe failed: {e}",
                        inspect=cached), 503
     if not data:
-        return jsonify(ok=False, error="ffprobe returned nothing",
+        return jsonify(ok=False, error=_t("ffprobe lieferte nichts"),
                        inspect=cached), 502
     fhash = compute_recording_fingerprint(fp)
     store_inspect(rid, data, fhash)
@@ -430,7 +438,7 @@ def api_recording_inspect(rid):
 def api_recording_quality(rid):
     rec = recdb.get_recording_by_id(rid)
     if not rec:
-        return jsonify(ok=False, error="recording not found"), 404
+        return jsonify(ok=False, error=_t("Aufnahme nicht gefunden")), 404
     inspect = recdb.get_or_compute_inspect_sync(rid)
     fp = rec["filepath"]
     if not inspect and fp and os.path.exists(fp):
@@ -464,7 +472,7 @@ def api_recording_notes(rid):
     note = data.get("note", "")
     ok = set_recording_note(rid, note)
     if not ok:
-        return jsonify(ok=False, error="recording not found"), 404
+        return jsonify(ok=False, error=_t("Aufnahme nicht gefunden")), 404
     return jsonify(ok=True, note=note.strip()[:5000])
 
 
@@ -486,7 +494,7 @@ def api_recording_annotations(rid):
     label = data.get("label", "")
     aid = add_annotation(rid, ts, label)
     if aid is None:
-        return jsonify(ok=False, error="invalid annotation or recording not found"), 400
+        return jsonify(ok=False, error=_t("Anmerkung ungültig oder Aufnahme nicht gefunden")), 400
     return jsonify(ok=True, id=aid)
 
 
@@ -494,7 +502,7 @@ def api_recording_annotations(rid):
 def api_recording_manifest(rid):
     m = build_recording_manifest(rid)
     if not m:
-        return jsonify(ok=False, error="recording not found"), 404
+        return jsonify(ok=False, error=_t("Aufnahme nicht gefunden")), 404
     return jsonify(ok=True, manifest=m)
 
 
@@ -502,17 +510,17 @@ def api_recording_manifest(rid):
 def api_recording_waveform(rid):
     rec = recdb.get_recording_by_id(rid)
     if not rec:
-        return jsonify(ok=False, error="recording not found"), 404
+        return jsonify(ok=False, error=_t("Aufnahme nicht gefunden")), 404
     fp = rec["filepath"]
     if not fp or not os.path.exists(fp):
-        return jsonify(ok=False, error="file not on disk"), 404
+        return jsonify(ok=False, error=_t("Datei liegt nicht auf der Platte")), 404
     samples = _arg_int("samples", 160, 20, 400)
     try:
         peaks = _c().run_async(compute_waveform_peaks(fp, samples), timeout=70)
     except Exception as e:
         return jsonify(ok=False, error=f"waveform failed: {e}"), 503
     if peaks is None:
-        return jsonify(ok=False, error="could not compute waveform"), 502
+        return jsonify(ok=False, error=_t("Wellenform nicht berechenbar")), 502
     return jsonify(ok=True, peaks=peaks, count=len(peaks))
 
 
@@ -520,7 +528,7 @@ def api_recording_waveform(rid):
 def api_recording_fingerprint(rid):
     h = recdb.update_recording_fingerprint(rid)
     if not h:
-        return jsonify(ok=False, error="could not compute (file missing?)"), 404
+        return jsonify(ok=False, error=_t("nicht berechenbar (Datei fehlt?)")), 404
     dupes = recdb.find_recordings_by_fingerprint(h)
     return jsonify(ok=True, fingerprint=h, duplicates=[{
         "id": d["id"], "username": d["username"],
@@ -535,7 +543,7 @@ def api_manual_start():
     username = (data.get("username") or "").strip()
     duration = data.get("duration_secs", 300)
     if not username:
-        return jsonify(ok=False, error="username required"), 400
+        return jsonify(ok=False, error=_t("username erforderlich")), 400
     try:
         result = _c().run_async(
             _c().trigger_manual_recording(username, duration, session=_c().scraper_session()),
@@ -667,7 +675,7 @@ def api_recording_star(rid):
         with db_conn() as conn:
             row = conn.execute("SELECT starred FROM recordings WHERE id=?", (rid,)).fetchone()
             if not row:
-                return jsonify(ok=False, error="Aufnahme nicht gefunden."), 404
+                return jsonify(ok=False, error=_t("Aufnahme nicht gefunden.")), 404
             if "starred" in payload:
                 new_val = 1 if payload.get("starred") else 0
             else:
@@ -711,14 +719,14 @@ def api_recording_rating(rid):
         try:
             rating = int(raw)
         except (TypeError, ValueError):
-            return jsonify(ok=False, error="rating muss 1-5 sein."), 400
+            return jsonify(ok=False, error=_t("rating muss 1-5 sein.")), 400
         if not (1 <= rating <= 5):
-            return jsonify(ok=False, error="rating muss 1-5 sein."), 400
+            return jsonify(ok=False, error=_t("rating muss 1-5 sein.")), 400
     try:
         with db_conn() as conn:
             r = conn.execute("SELECT 1 FROM recordings WHERE id=?", (rid,)).fetchone()
             if not r:
-                return jsonify(ok=False, error="Aufnahme nicht gefunden."), 404
+                return jsonify(ok=False, error=_t("Aufnahme nicht gefunden.")), 404
             conn.execute("UPDATE recordings SET rating=? WHERE id=?", (rating, rid))
             conn.commit()
         return jsonify(ok=True, id=rid, rating=rating)
@@ -735,7 +743,7 @@ def api_recording_label(rid):
         with db_conn() as conn:
             r = conn.execute("SELECT 1 FROM recordings WHERE id=?", (rid,)).fetchone()
             if not r:
-                return jsonify(ok=False, error="Aufnahme nicht gefunden."), 404
+                return jsonify(ok=False, error=_t("Aufnahme nicht gefunden.")), 404
             conn.execute("UPDATE recordings SET label=? WHERE id=?", (label, rid))
             conn.commit()
         return jsonify(ok=True, id=rid, label=label)
@@ -805,7 +813,7 @@ def api_rec_quality(rec_id):
         with db_conn() as conn:
             row = conn.execute("SELECT * FROM recordings WHERE id=?", (rec_id,)).fetchone()
         if not row:
-            return jsonify(ok=False, error="recording not found"), 404
+            return jsonify(ok=False, error=_t("Aufnahme nicht gefunden")), 404
         return jsonify(ok=True, id=rec_id, username=row["username"], **_rec_quality(dict(row)))
     except Exception as e:
         return jsonify(ok=False, error=str(e)), 500
@@ -818,7 +826,7 @@ def api_rec_classify(rec_id):
         with db_conn() as conn:
             row = conn.execute("SELECT * FROM recordings WHERE id=?", (rec_id,)).fetchone()
         if not row:
-            return jsonify(ok=False, error="recording not found"), 404
+            return jsonify(ok=False, error=_t("Aufnahme nicht gefunden")), 404
         d = dict(row)
         dur = d.get("duration_secs") or 0
         cat = ("quick" if dur < 300 else "standard" if dur < 3600 else "marathon")
@@ -866,7 +874,7 @@ def api_rec_retention_apply():
        von der Platte + DB-Einträge. Mit Trockenlauf-Schutz."""
     data = request.get_json(silent=True) or {}
     if not data.get("confirm"):
-        return jsonify(ok=False, error="confirm=true erforderlich (Sicherheitsabfrage)"), 400
+        return jsonify(ok=False, error=_t("confirm=true erforderlich (Sicherheitsabfrage)")), 400
     rules = data.get("rules") or {}
     try:
         matched = _retention_match(rules)
@@ -937,7 +945,7 @@ def api_rec_orphans_clean():
     """Löscht verwaiste Dateien. confirm=true erforderlich."""
     data = request.get_json(silent=True) or {}
     if not data.get("confirm"):
-        return jsonify(ok=False, error="confirm=true erforderlich"), 400
+        return jsonify(ok=False, error=_t("confirm=true erforderlich")), 400
     try:
         o = _find_orphans()
         freed, deleted = 0, 0
