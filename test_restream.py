@@ -8285,6 +8285,108 @@ def test_v41_w17_werkzeuge():
        "Farbe immer, Versionsdrift geprueft")
 
 
+def test_v41_w18_toxizitaet_nur_eigene_kanaele():
+    """v4.1-W18: der Betreiber bekommt keine Toxizitaets-Warnung fuer TikTok."""
+    src = open("bot.py", encoding="utf-8").read()
+
+    # Der Schnappschuss zaehlt nicht mehr blind jede Zeile der Tabelle.
+    _i = src.index("def _brain_moderation_snap():")
+    blk = src[_i:_i + 2600]
+    assert "SELECT kind, actor, meta FROM kick_mod_log" in blk,         "der Schnappschuss liest die Art der Zeile nicht mehr mit"
+    assert "_nc_modstats.verdichte(" in blk, "die Regel liegt nicht in nc/modstats.py"
+    assert "COUNT(*)" not in blk, "die Vorstunde wird wieder ungefiltert gezaehlt"
+    assert "MOD_TREND_PLATTFORMEN" in blk, "die Auswahl ist nicht konfigurierbar"
+
+    # JEDER _modlog-Aufruf mit einer Moderations-Art muss seine Plattform
+    # nennen. Ohne Markierung zaehlt die Zeile nicht mit — die Aktion waere
+    # also still verschwunden statt gemeldet. Ein Regex reicht hier nicht:
+    # die Aufrufe sind mehrzeilig, der AST sieht sie als ein Stueck.
+    import ast as _ast
+    baum = _ast.parse(src)
+    ohne = []
+    for n in _ast.walk(baum):
+        if not (isinstance(n, _ast.Call) and isinstance(n.func, _ast.Name)
+                and n.func.id == "_modlog" and n.args):
+            continue
+        a0 = n.args[0]
+        if not (isinstance(a0, _ast.Constant) and a0.value in
+                ("timeout", "warn", "ban", "delete", "flag")):
+            continue
+        meta = n.args[3] if len(n.args) > 3 else None
+        keys = [k.value for k in meta.keys
+                if isinstance(k, _ast.Constant)] if isinstance(meta, _ast.Dict) else []
+        if "platform" not in keys:
+            ohne.append((a0.value, getattr(n.args[1], "value", "?"), n.lineno))
+    assert not ohne, "Moderations-Aufrufe ohne Plattform-Markierung: %r" % (ohne,)
+
+    # Und die Gegenprobe: die TikTok-naehen Arten tragen KEINE Markierung —
+    # sonst waere die Trennlinie durch ein spaeteres Copy-Paste wieder weg.
+    for _kind, _actor in (("reaction", "azrael"), ("highlight", "radar")):
+        for n in _ast.walk(baum):
+            if (isinstance(n, _ast.Call) and isinstance(n.func, _ast.Name)
+                    and n.func.id == "_modlog" and n.args
+                    and isinstance(n.args[0], _ast.Constant)
+                    and n.args[0].value == _kind):
+                meta = n.args[3] if len(n.args) > 3 else None
+                keys = [k.value for k in meta.keys
+                        if isinstance(k, _ast.Constant)] if isinstance(meta, _ast.Dict) else []
+                assert "platform" not in keys,                     "%s/%s wird als Moderation gezaehlt" % (_kind, _actor)
+
+    # TikTok steht nicht in der harten Liste — es laesst sich also auch per
+    # .env nicht zuschalten. Dieselbe Trennlinie wie bei REVENUE_PLATFORMS.
+    ms = open("nc/modstats.py", encoding="utf-8").read()
+    assert '"tiktok"' not in ms, "TikTok ist in nc/modstats.py aufgetaucht"
+    assert 'PLATTFORMEN = ("kick", "twitch", "youtube", "discord")' in ms
+    ok("v4.1-W18: TikTok ist aus dem Moderations-Trend heraus, jede Aktion markiert")
+
+
+def test_v41_w18_katalog_reicht_bis_zum_tabellenkopf():
+    """v4.1-W18: ein Wort zwischen zwei Tags gehoert in den Katalog — ein
+       blankes Literal nicht."""
+    import importlib.util as _iu
+    _sp = _iu.spec_from_file_location("_ix", "tools/i18n_extract.py")
+    ix = _iu.module_from_spec(_sp)
+    _sp.loader.exec_module(ix)
+
+    # Der Befund: <th>Datei</th> ist im DOM ein vollstaendiger Textknoten. Er
+    # fiel raus, weil er "weniger als zwei Woerter" hat — der Kopf einer
+    # Tabelle blieb deutsch, waehrend ihr Inhalt uebersetzt war.
+    assert "Datei" in ix._js_textstuecke("<th>Datei</th>")
+    assert "Größe" in ix._js_textstuecke('<th class="right">Größe</th>')
+
+    # Die Gegenprobe, und sie ist der eigentliche Punkt: ein blankes Literal
+    # ist KEIN Beleg. `x === 'läuft'` sieht identisch aus, und ein Eintrag
+    # dafuer waere tot — er zaehlte als uebersetzt, waehrend die Stelle
+    # deutsch bleibt. Genau das soll die Abdeckungszahl nicht verdecken.
+    assert ix._js_textstuecke("läuft") == []
+    assert ix._js_textstuecke("gespeichert") == []
+
+    # Ein einzelnes Wort neben einem Platzhalter bleibt draussen: es
+    # verschmilzt im DOM mit dem eingesetzten Wert zu EINEM Knoten, ein
+    # Eintrag dafuer traefe nie.
+    assert ix._js_textstuecke("Datei ${x}") == []
+    assert ix._js_textstuecke("${x} Größe") == []
+    assert "GESTÖRT" not in ix._js_textstuecke("GESTÖRT · ${phase}")
+    # Ein Tag daneben aendert genau das — dann endet der Knoten dort.
+    assert ix._js_textstuecke("<b>Datei</b> ${x}") == ["Datei"]
+
+    # Ganze Saetze funktionieren unveraendert, mit und ohne Platzhalter.
+    assert "Noch keine Aufnahmen." in ix._js_textstuecke(
+        '<div class="empty">Noch keine Aufnahmen.</div>')
+
+    # Und der Katalog selbst: kein fehlender, kein verwaister Eintrag. Ein
+    # verwaister waere ein toter Schluessel, ein fehlender eine deutsch
+    # gebliebene Stelle — beides bleibt ohne diese Pruefung unsichtbar.
+    import json as _json
+    kat = _json.load(open("locales/en.json", encoding="utf-8"))["strings"]
+    gefunden = set(ix.sammeln())
+    assert not (gefunden - set(kat)), "fehlend: %r" % sorted(gefunden - set(kat))[:5]
+    assert not (set(kat) - gefunden), "verwaist: %r" % sorted(set(kat) - gefunden)[:5]
+    for _wort in ("Datei", "Datum", "Grund", "Größe", "Quelle", "Zeit"):
+        assert kat.get(_wort), "%s fehlt im Katalog" % _wort
+    ok("v4.1-W18: Tabellenkoepfe im Katalog, blanke Literale bleiben draussen")
+
+
 def test_v41_w17_website():
     """v4.1-W17: die Website hat Material bekommen — ohne Klassen zu brechen."""
     neu = open("website/lafap_index.html", encoding="utf-8").read()
@@ -8403,6 +8505,8 @@ def main():
     test_v41_w16_discord_blueprint()
     test_v41_w17_werkzeuge()
     test_v41_w17_website()
+    test_v41_w18_toxizitaet_nur_eigene_kanaele()
+    test_v41_w18_katalog_reicht_bis_zum_tabellenkopf()
     test_b168_moderator_everywhere()
     test_b169_kick_oauth()
     test_b170_azrael_and_youtube()

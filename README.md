@@ -196,10 +196,10 @@ flowchart TB
     DC --> BOT
     TT --> BOT
 
-    BOT["bot.py<br/>Monolith · 29.112 Zeilen<br/>Scraper · Recorder · Restream<br/>Flask-Dashboard · 143 eigene Routen"]:::core
+    BOT["bot.py<br/>Monolith · 28.935 Zeilen<br/>Scraper · Recorder · Restream<br/>Flask-Dashboard · 134 eigene Routen"]:::core
 
-    BOT -->|configure| NC["nc/ — 95 Fachmodule<br/>Schema · OAuth · Restream<br/>Ledger · Moderation · Intel"]:::lib
-    NC --> RT["nc/routes/ — 24 Blueprints<br/>216 weitere API-Routen"]:::lib
+    BOT -->|configure| NC["nc/ — 97 Fachmodule<br/>Schema · OAuth · Restream<br/>Ledger · Moderation · Intel"]:::lib
+    NC --> RT["nc/routes/ — 25 Blueprints<br/>225 weitere API-Routen"]:::lib
     BOT --> TPL["templates/<br/>Dashboard · Overlay · PWA"]:::lib
     BOT --> BR["brain_bridge.py"]:::lib
     BR --> BRAIN["brain/ — eigene brain.db<br/>state · rules · router · memory<br/>knowledge · semantic · scheduler<br/>llm · agents · report"]:::brain
@@ -298,7 +298,7 @@ OAuth-Flows — Schritt für Schritt in
 
 ## ⚙️ Konfiguration
 
-Alle Einstellungen leben in `.env`. Die Vorlage `.env.example` kennt **rund 496 Variablen** — das Minimum ist klein:
+Alle Einstellungen leben in `.env`. Die Vorlage `.env.example` kennt **rund 497 Variablen** — das Minimum ist klein:
 
 ### 🔑 Pflicht
 
@@ -717,7 +717,7 @@ gebrochen ist.**
 
 ### 🧭 Navigation im Monolithen
 
-`bot.py` hat 29.112 Zeilen. Es wird **nie** ganz gelesen und **nie**
+`bot.py` hat 28.935 Zeilen. Es wird **nie** ganz gelesen und **nie**
 blind durchsucht — erst fragen wo etwas steht, dann den Ausschnitt holen:
 
 ```bash
@@ -732,7 +732,7 @@ python3 tools/ncpatch.py docs                          # Doku-Zahlen gegen den C
 ```
 
 `find` antwortet aus **[`.claude/INDEX.md`](.claude/INDEX.md)** — 359 Routen
-(143 in `bot.py`, 216 in `nc/routes/`), 45 Slash-Commands, 510 Funktionen,
+(134 in `bot.py`, 225 in `nc/routes/`), 45 Slash-Commands, 503 Funktionen,
 jeweils mit Zeilennummer.
 
 ---
@@ -741,7 +741,7 @@ jeweils mit Zeilennummer.
 
 | Regel | Warum |
 |---|---|
-| **`.env` liegt nie im Repo und nie im Archiv** | ~496 Variablen inkl. Cookies, OAuth-Tokens und Stream-Keys |
+| **`.env` liegt nie im Repo und nie im Archiv** | ~497 Variablen inkl. Cookies, OAuth-Tokens und Stream-Keys |
 | **Dashboard bindet auf `127.0.0.1`** | Zugriff läuft über SSH-Tunnel, nicht über einen offenen Port |
 | **Cookie- und Key-Redaction beim Logging** | `streamlink`/`ffmpeg`-Kommandozeilen werden vor dem Loggen bereinigt |
 | **Ledger ist append-only mit Hash-Kette** | Eine Korrektur ist eine Gegenbuchung, kein Überschreiben |
@@ -774,7 +774,7 @@ NIGHTCRAWLER/
 │   ├── semantic.py  scheduler.py  llm.py  agents.py  report.py
 │   └── test_m*.py            Modultests
 │
-├── nc/                       95 Fachmodule (bot-frei, configure()-Injection)
+├── nc/                       97 Fachmodule (bot-frei, configure()-Injection)
 │   ├── schema.py             zentrales DB-Schema
 │   ├── restream_*.py         Ziele, Guard, Test-Push, Utils
 │   ├── ledger.py             Einnahmen-Journal (Hash-Kette)
@@ -844,11 +844,11 @@ nicht greifen, gekippte Verträge in `test_restream.py`.
 | | |
 |---|---|
 | Aktuelle Version | **4.1** — „Öffentliche Stimme" (2026.08) |
-| Flask-Routen | 359 (143 in `bot.py` · 216 in `nc/routes/`) |
+| Flask-Routen | 359 (134 in `bot.py` · 225 in `nc/routes/`) |
 | Discord-Slash-Commands | 45 |
-| Fachmodule | 95 in `nc/` (+24 in `nc/routes/`, +3 in `nc/intel/`), 10 in `brain/` |
+| Fachmodule | 97 in `nc/` (+25 in `nc/routes/`, +3 in `nc/intel/`), 10 in `brain/` |
 | Sentinel-Agenten | 13 |
-| Konfigurationsvariablen | ~496 |
+| Konfigurationsvariablen | ~497 |
 | Sprachen | Deutsch (Quelle), Englisch |
 
 Vollständige Historie: **[`docs/CHANGELOG.md`](docs/CHANGELOG.md)** ·
@@ -859,14 +859,14 @@ Vollständige Historie: **[`docs/CHANGELOG.md`](docs/CHANGELOG.md)** ·
 ## 🧭 Roadmap
 
 Der nächste grosse Schritt ist kein Feature, sondern Aufräumen: **`bot.py` hat
-29.112 Zeilen**. Die Datei ist der Engpass des Projekts. Die Messlatte dafür ist
+28.935 Zeilen**. Die Datei ist der Engpass des Projekts. Die Messlatte dafür ist
 aber keine Zeilenzahl:
 
 > **Eine neue API-Route anlegen, ohne `bot.py` zu öffnen.**
 
 Der Weg dahin in sechs Wellen — gemessen, nicht geschätzt:
 **[`docs/ROADMAP.md`](docs/ROADMAP.md)**. Welle 2 ist erledigt, Welle 3 läuft:
-`nc/routes/` trägt heute 24 Blueprints mit 216 API-Routen, die nicht mehr im
+`nc/routes/` trägt heute 25 Blueprints mit 225 API-Routen, die nicht mehr im
 Monolithen stehen.
 
 ---

@@ -744,7 +744,13 @@ class ToxicityAgent(Agent):
     """Chat-Toxizitaets-Trend. Liest per injiziertem Accessor eine Verdichtung
     des Moderations-Logs (Aktionen letzte Stunde vs. Vorstunde + mittlerer
     toxic-Score) und meldet, wenn die Toxizitaet auffaellig STEIGT — nicht die
-    Einzelaktion (die macht die Moderation schon), sondern die Welle."""
+    Einzelaktion (die macht die Moderation schon), sondern die Welle.
+
+    Welche Plattformen einfliessen, entscheidet der Lieferant des
+    Schnappschusses (nc/modstats.py), nicht dieser Agent: TikTok gehoert nicht
+    dazu, dort hat der Bot keine Moderationsbefugnis. Steht in der
+    Verdichtung ein `platforms`-Zaehler, nennt die Meldung ihn mit — sonst
+    weiss der Betreiber zwar, DASS es kracht, aber nicht WO."""
     name = "toxicity"
     interval_s = 600.0
     spike_factor = 2.0         # Aktionen ≥ 2× Vorstunde = Welle
@@ -767,19 +773,25 @@ class ToxicityAgent(Agent):
         avg = s.get("avg_toxic_1h")
         self._brain.memory.record_metric("moderation_actions_1h", now_n)
         out: list[dict] = []
+        je = s.get("platforms") or {}
+        wo = ""
+        if je:
+            wo = " [" + ", ".join(f"{k} {v}" for k, v in
+                                  sorted(je.items(), key=lambda x: -x[1])) + "]"
         rising = now_n >= self.spike_min and now_n >= self.spike_factor * max(prev_n, 1)
         if rising:
             lvl = "crit" if now_n >= self.spike_min * 3 else "warn"
             tail = f", Ø-Toxizität {avg}" if avg is not None else ""
             out.append({"level": lvl, "actions_1h": now_n, "actions_prev_1h": prev_n,
-                        "avg_toxic": avg,
+                        "avg_toxic": avg, "platforms": je,
                         "text": f"Chat-Toxizität steigt: {now_n} Moderations-Aktionen "
-                                f"letzte Stunde (Vorstunde {prev_n}){tail} "
+                                f"letzte Stunde (Vorstunde {prev_n}){tail}{wo} "
                                 f"— moegliche Welle/Raid"})
         elif avg is not None and avg >= self.hot_toxic and now_n >= self.spike_min:
             out.append({"level": "warn", "avg_toxic": avg, "actions_1h": now_n,
+                        "platforms": je,
                         "text": f"Chat laeuft heiss: Ø-Toxizität {avg} ueber "
-                                f"{now_n} Aktionen/Stunde"})
+                                f"{now_n} Aktionen/Stunde{wo}"})
         return out
 
 

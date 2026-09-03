@@ -16,7 +16,7 @@ route.
 
 ## The one rule
 
-`bot.py` has **29,112 lines / 1.5 MB ≈ 385,000 tokens**. That file is **never**
+`bot.py` has **28,935 lines / 1.4 MB ≈ 366,000 tokens**. That file is **never**
 read in full and **never** searched blindly. First ask where something is, then
 fetch the excerpt:
 
@@ -30,8 +30,8 @@ fetch the excerpt:
     python tools/ncpatch.py check                      # templates: duplicate IDs, CSS balance
     python tools/ncpatch.py docs                       # documentation numbers vs. the source
 
-`find` answers from `.claude/INDEX.md` — 359 routes (143 in `bot.py`, 216 in
-`nc/routes/`), 45 slash commands, 510 functions with line numbers. After changes
+`find` answers from `.claude/INDEX.md` — 359 routes (134 in `bot.py`, 225 in
+`nc/routes/`), 45 slash commands, 503 functions with line numbers. After changes
 to routes, commands or top-level functions, run `map` again. Details: skill
 `nc-navigation`.
 
@@ -44,7 +44,7 @@ On the author's Windows machine the interpreter is called **`python`**
 ## Layout
 
     bot.py               monolith: Telegram + Discord (45 slash commands),
-                         Flask dashboard (143 own routes), scraper, recorder,
+                         Flask dashboard (134 own routes), scraper, recorder,
                          restream, schema (init_db).
                          Was called bot_v37.py until v4.0-W119 — keep that in
                          mind when searching old notes and patch files.
@@ -52,7 +52,7 @@ On the author's Windows machine the interpreter is called **`python`**
     brain/               AI core: state, rules, router, agents, memory,
                          semantic, knowledge, scheduler, llm, report
     nc/                  92 domain modules: db, scraping, restream, oauth, ledger, i18n, …
-    nc/routes/           24 Flask blueprints with 216 further API routes
+    nc/routes/           25 Flask blueprints with 225 further API routes
     locales/             de.json, en.json — the translation catalogue
     templates/           dashboard.html, brain.html, overlay.html, PWA
     website/             lafap_index.html (the public site)
@@ -154,7 +154,7 @@ append-only with a hash chain; a correction is a counter-entry.
 
 ## Security
 
-The `.env` has around 496 variables and contains cookies, OAuth tokens and
+The `.env` has around 497 variables and contains cookies, OAuth tokens and
 stream keys — it is never in the archive and is never printed. When logging
 `streamlink`/`ffmpeg` commands, cookie headers are redacted (F4); that redaction
 path must not be bypassed when the command line changes. The dashboard binds to

@@ -583,6 +583,8 @@ from nc import i18n as _nc_i18n  # v4.1-W6: Mehrsprachigkeit (Katalog + Spracher
 from nc import oauthredirect as _nc_oauthredirect  # v4.1-W8: OAuth-Rueckruf-Adressen (Kick/Twitch/YouTube)
 from nc import kickapi as _nc_kickapi  # v4.1-W9: Kick-Slug, Broadcaster-ID, Sendeprotokoll
 from nc import discordstate as _nc_discordstate  # v4.1-W16: Discord-Zustand (DB + laufend)
+from nc import modstats as _nc_modstats  # v4.1-W18: was als Moderations-Aktion gemeldet wird
+from nc import badwords as _nc_badwords  # v4.1-W18: Bannwortliste + Lern-Warteschlange
 from nc import eventquery as _nc_eventquery  # v4.0-W51: Event-Log-Query-Bauer (rein)
 from nc import admod as _nc_admod            # v4.0-W56: Werbe-Allowlist-Bauer (rein)
 from nc import binresolve as _nc_binresolve  # v4.0-W60: Binary-Pfad-Resolver (rein)
@@ -616,6 +618,7 @@ from nc.routes import kick as _nc_routes_kick                # v4.1-W9: Kick-OAu
 from nc.routes import chat as _nc_routes_chat                # v4.1-W15: Eigener-Kanal-Chat
 from nc.routes import cohost as _nc_routes_cohost            # v4.1-W15: Co-Host-Bremse
 from nc.routes import discord as _nc_routes_discord          # v4.1-W16: Discord-Panel
+from nc.routes import kickmod as _nc_routes_kickmod          # v4.1-W18: SENTINEL-Panel
 from nc import updater as _nc_updater                        # v4.0-W115: Selbst-Update aus dem GitHub-Repo
 from nc import donationsdb as _nc_donationsdb                # v4.0-W116: manuell erfasste Spenden lesen
 # Diese beiden Routen ruft der Bot auch INTERN auf (Telegram /sysres und die
@@ -11915,7 +11918,7 @@ def api_stream_timeline():
     # traf hier weder die Kapitel noch die laufende Session — die Timeline
     # blieb leer und meldete "nicht live", während gesendet wurde.
     user = _nc_trackingdb.resolve_tracked_user(
-        (request.args.get("user") or (_RESTREAM_ACTIVE or {}).get("user") or "").lstrip("@").strip())
+        (request.args.get("user") or _restream_active().get("user") or "").lstrip("@").strip())
     if not user:
         return jsonify(ok=True, user=None, chapters=[], duration_secs=0, live=False)
     since = (datetime.now(timezone.utc) - timedelta(hours=12)).isoformat()
@@ -11944,7 +11947,7 @@ def api_restream_report():
     # Wie in /api/stream/timeline: Schreibweise aus den trackings auflösen,
     # sonst zählt der Report für "@RabiLive" nichts (Aufnahmen, Dauer, Momente).
     user = _nc_trackingdb.resolve_tracked_user(
-        (d.get("user") or (_RESTREAM_ACTIVE or {}).get("user") or "").lstrip("@").strip())
+        (d.get("user") or _restream_active().get("user") or "").lstrip("@").strip())
     if not user:
         return jsonify(ok=False, error="kein aktiver Stream — Streamer angeben"), 400
     _sk = _nc_trackingdb.ci_key(_LIVE_SESSION_START, user)
@@ -12616,7 +12619,7 @@ async def _kick_user_token(session=None):
 def api_restream_deck():
     """F85: Signalfluss-Status für das ON-AIR-Deck: aktiver Restream
        (Quelle/Label) + öffentlicher Kick-Link. Bewusst minimal & sync-sicher."""
-    ra = dict(_RESTREAM_ACTIVE or {})
+    ra = dict(_restream_active())
     # V37-W-CTRL: Status aller drei Eigene-Kanal-Plattformen fürs Deck.
     _tw_chan = (os.getenv("TWITCH_CHANNEL", "") or "").strip().lstrip("#")
     _yt = (os.getenv("YOUTUBE_CHANNEL", "") or "").strip()
@@ -12843,7 +12846,7 @@ def _sec_headers(resp):
 @dashboard_app.route("/api/stream/transcript")
 def api_stream_transcript():
     """Live-Transkript: was AZRAEL gerade vom Stream hört (letzte Zeilen)."""
-    user = (request.args.get("user") or (_RESTREAM_ACTIVE or {}).get("user") or "").lstrip("@").lower()
+    user = (request.args.get("user") or _restream_active().get("user") or "").lstrip("@").lower()
     if not user:
         return jsonify(ok=True, user=None, lines=[])
     buf = list(_LIVE_TRANSCRIPT.get(user) or [])[-30:]
@@ -12904,7 +12907,7 @@ def api_prometheus_metrics():
     except Exception:
         db_ok = 0
     live = len(_LIVE_SESSION_START or {})
-    restream = 1 if (_RESTREAM_ACTIVE or {}).get("user") else 0
+    restream = 1 if _restream_active().get("user") else 0
     try:
         tracked = len(get_all_active_trackings(include_paused=True))
     except Exception:
@@ -12941,7 +12944,7 @@ def api_prometheus_metrics():
 @dashboard_app.route("/api/azrael/agents")
 def api_azrael_agents():
     """v37: die AZRAEL-Agenten (je Rolle ein Agent)."""
-    active = ((_RESTREAM_ACTIVE or {}).get("user") or "")
+    active = (_restream_active().get("user") or "")
     items = [{"key": k, "name": a["name"], "role": a["role"], "persona": a["persona"],
               "channels": list(a["match"])} for k, a in _AZRAEL_AGENTS.items()]
     return jsonify(ok=True, agents=items, model=AI_MODEL, restream_user=active or None)
@@ -14661,7 +14664,10 @@ def _restream_overlay_files(rid=None):
             "caption": os.path.join(d, "caption.txt"),  # F92: Panel-Überschrift + Legende
             "brand":  os.path.join(d, "brand.txt")}     # F92: Branding-Footer (Kick/Discord)
 
-_RESTREAM_ACTIVE = {}            # PRIMÄRER Restream {"user","label","rid"} — Quell-Streamer fürs Overlay
+# v4.1-W18: der primäre Restream liegt als Register in nc/channels.py — die
+# Blueprints müssen ihn erreichen, und `globals()["_RESTREAM_ACTIVE"] = …`
+# wäre dort der Namensraum des Blueprints gewesen (stille Fehlanzeige).
+_restream_active = _nc_channels.restream_active
 # V37-P5: Registry ALLER aktiven Restreams {rid: {"user","label","rid"}}.
 # _RESTREAM_ACTIVE bleibt als "primär" (zuletzt gestartet) für die 20+
 # Bestandsstellen erhalten — die Registry ergänzt Multi-Stream-Sicht für
@@ -14679,7 +14685,7 @@ def _restream_active_sources():
         if u:
             out.add(u)
     if not out:
-        u = clean_username((_RESTREAM_ACTIVE or {}).get("user") or "")
+        u = clean_username(_restream_active().get("user") or "")
         if u:
             out.add(u)
     return out
@@ -14944,7 +14950,7 @@ def _write_restream_overlay(reaction_fresh_secs=None):
     # Quell-Streamer (nur wenn der aktive Restream wirklich läuft)
     src_line = ""
     try:
-        act = _RESTREAM_ACTIVE or {}
+        act = _restream_active()
         if act.get("user") and act.get("rid") in getattr(_RESTREAM_MGR, "_procs", {}):
             src_line = "\u2514 @" + str(act["user"])
             if act.get("label"):
@@ -15015,7 +15021,7 @@ def _write_restream_overlay(reaction_fresh_secs=None):
                 # Follower-Zahl nur wenn Overlay-Quelle TikTok zulässt — bei Kick ist der
                 # TikTok-Wert irreführend (Publikum sitzt auf Kick, nicht beim Quell-Streamer).
                 try:
-                    _act = _RESTREAM_ACTIVE or {}
+                    _act = _restream_active()
                     if _act.get("user") and _overlay_src_ok("tiktok"):
                         _fc = _latest_popularity(conn, _act["user"])
                 except Exception:
@@ -15051,7 +15057,7 @@ def _write_restream_overlay(reaction_fresh_secs=None):
     try:
         if _restream_layout_mode() == "studio":
             _ov_atomic_write(f["chat"], _chat_block(
-                source_user=(_RESTREAM_ACTIVE or {}).get("user")))
+                source_user=_restream_active().get("user")))
             legend = []
             if _chat_src_ok("tiktok"):
                 legend.append("\u25b8 TIKTOK")
@@ -15480,7 +15486,7 @@ async def _restream_tts_enqueue_wav(wav_path, source_user=None):
                         _q = _restream_tts[_rid].get("queue")
                         break
                 if _q is None:
-                    _arid = (_RESTREAM_ACTIVE or {}).get("rid")
+                    _arid = _restream_active().get("rid")
                     if _arid in _restream_tts:
                         _q = _restream_tts[_arid].get("queue")
                 if _q is None and len(_restream_tts) == 1:
@@ -15759,9 +15765,9 @@ class RestreamManager:
                 # der Primäre, rückt ein laufender Parallel-Restream nach
                 # (Sendeleiste, Overlay-Quelle, TTS-Fallback folgen ihm);
                 # stoppt der letzte, wird sauber geleert.
-                if (_RESTREAM_ACTIVE or {}).get("rid") == rid:
+                if _restream_active().get("rid") == rid:
                     _nxt = next(iter(_RESTREAM_ACTIVE_ALL.values()), None)
-                    globals()["_RESTREAM_ACTIVE"] = (
+                    _nc_channels.RESTREAM_ACTIVE["obj"] = (
                         {"user": _nxt.get("user"), "label": _nxt.get("label"),
                          "rid": _nxt.get("rid")} if _nxt else {})
         except Exception:
@@ -16300,7 +16306,8 @@ class RestreamManager:
         src = _src2
         try: _lbl = row["label"] or ""
         except (IndexError, KeyError): _lbl = ""
-        globals()["_RESTREAM_ACTIVE"] = {"user": row["source_username"], "label": _lbl, "rid": rid}
+        _nc_channels.RESTREAM_ACTIVE["obj"] = {"user": row["source_username"],
+                                               "label": _lbl, "rid": rid}
         # V37-P6 (BH3-Fix): Overlay-Verzeichnis wird HIER eingefroren statt
         # dynamisch über _RESTREAM_ACTIVE bestimmt. Vorher kippte die Pfad-
         # Zuordnung beim Start eines ZWEITEN Streams: der bereits laufende
@@ -17265,84 +17272,19 @@ _AZRAEL_REACTION = {"ts": 0.0, "statement": "", "text": "", "active": False, "au
 # ist für Deutsch gewollt (fängt Komposita: „arsch" -> „Arschloch"). WICHTIG: Liste
 # über-filtert teils (Kontext!) — daher im Dashboard reviewbar; Kontext/Verschleierung
 # deckt zusätzlich die Ollama-Moderation ab.
-_LDNOOBW_DE_URL = "https://raw.githubusercontent.com/LDNOOBW/List-of-Dirty-Naughty-Obscene-and-Otherwise-Bad-Words/master/de"
-_BANNED_WORDS_CAP = 300
-configure_banned_cap(_BANNED_WORDS_CAP)   # V37 W3: nc.textmore
-_BADWORDS_DE_FALLBACK = [
-    "analritter", "arsch", "arschficker", "arschlecker", "arschloch", "bimbo", "bratze",
-    "bumsen", "bonze", "dödel", "fick", "ficken", "flittchen", "fotze", "fratze",
-    "hackfresse", "hure", "hurensohn", "ische", "kackbratze", "kacke", "kacken",
-    "kackwurst", "kampflesbe", "kanake", "kimme", "lümmel", "milf", "möpse",
-    "morgenlatte", "möse", "mufti", "muschi", "nackt", "neger", "nigger", "nippel",
-    "nutte", "onanieren", "orgasmus", "penis", "pimmel", "pimpern", "pinkeln", "pissen",
-    "pisser", "popel", "poppen", "porno", "reudig", "rosette", "schabracke", "schlampe",
-    "scheiße", "scheisser", "schiesser", "schnackeln", "schwanzlutscher", "schwuchtel",
-    "tittchen", "titten", "vögeln", "vollpfosten", "wichse", "wichsen", "wichser",
-]
-
-def _badwords_path() -> str:
-    return os.path.join(RECORDINGS_DIR, "banned_words.json")
-
-def _load_banned_words_file():
-    try:
-        with open(_badwords_path(), "r", encoding="utf-8") as f:
-            d = json.load(f)
-        if isinstance(d, list):
-            return [str(w)[:40] for w in d if str(w).strip()][:_BANNED_WORDS_CAP]
-    except (FileNotFoundError, json.JSONDecodeError, OSError, ValueError):
-        pass
-    return []
-
-def _save_banned_words_file(words):
-    try:
-        os.makedirs(RECORDINGS_DIR, exist_ok=True)
-        tmp = _badwords_path() + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(list(words), f, ensure_ascii=False)
-        os.replace(tmp, _badwords_path())
-    except OSError:
-        pass
-
-
-def _fetch_ldnoobw_de():
-    """Holt die deutsche Liste live; bei Fehler eingebauter Fallback. -> (words, source)."""
-    try:
-        import urllib.request
-        req = urllib.request.Request(_LDNOOBW_DE_URL, headers={"User-Agent": "nightcrawler-bot/1.0"})
-        with urllib.request.urlopen(req, timeout=12) as r:
-            raw = r.read().decode("utf-8", "replace")
-        words = [ln.strip() for ln in raw.splitlines() if ln.strip() and not ln.lstrip().startswith("#")]
-        if words:
-            return words, "online"
-    except Exception:
-        pass
-    return list(_BADWORDS_DE_FALLBACK), "fallback"
-
-
-# ---- Gelernte Schimpfwörter (Review-Queue) ----------------------------------
-# Was die KI-Moderation als toxisch flaggt, wird hier als KANDIDAT gesammelt
-# (mehrsprachig) — NICHT automatisch gebannt (LLM-Fehleinschätzungen würden sonst
-# Unschuldige sperren). Promotion in die aktive banned_words-Liste per Dashboard.
-def _learned_path() -> str:
-    return os.path.join(RECORDINGS_DIR, "learned_badwords.json")
-
-def _learned_load():
-    try:
-        with open(_learned_path(), "r", encoding="utf-8") as f:
-            d = json.load(f)
-        return d if isinstance(d, list) else []
-    except (FileNotFoundError, json.JSONDecodeError, OSError, ValueError):
-        return []
-
-def _learned_save(items):
-    try:
-        os.makedirs(RECORDINGS_DIR, exist_ok=True)
-        tmp = _learned_path() + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(list(items), f, ensure_ascii=False)
-        os.replace(tmp, _learned_path())
-    except OSError:
-        pass
+# v4.1-W18: Bannwortliste, Lern-Warteschlange und die LDNOOBW-Basisliste liegen
+# in nc/badwords.py. Grund: die Haelfte der /api/kickmod-Routen ist reine
+# Dateiarbeit und haette als Blueprint fuenf ctx-Eintraege gekostet — bei 24 von
+# 25 belegten Plaetzen der ganze Rest. Erst die Datenschicht loesen, dann sind
+# die Routen umsonst (dieselbe Reihenfolge wie W117). Warum gelernte Woerter NIE
+# automatisch gebannt werden und warum ueber eine Zwischendatei geschrieben wird,
+# steht dort.
+_nc_badwords.configure(recordings_dir=RECORDINGS_DIR)
+configure_banned_cap(_nc_badwords.CAP)   # V37 W3: nc.textmore
+_load_banned_words_file = _nc_badwords.load_banned
+_save_banned_words_file = _nc_badwords.save_banned
+_learned_load = _nc_badwords.load_learned
+_learned_save = _nc_badwords.save_learned
 
 # UPGRADE: pro-Streamer-Persona — username -> eigener AZRAEL-Persona-Text (JSON).
 def _streamer_personas_path() -> str:
@@ -17988,7 +17930,8 @@ class KickModerator:
                         f"SENTINEL {_hard[0]}: {_hard[1]}", session):
                     self.stats["moderated"] += 1
                     _modlog("timeout", "sentinel-shield", content,
-                            {"user": sender, "cat": _hard[0], "what": _hard[1]})
+                            {"user": sender, "cat": _hard[0], "what": _hard[1],
+                             "platform": "kick"})
                 return
         # BUGHUNT: Banned-Words zuerst (kein Ollama nötig) → sofortiger Timeout.
         if self.cfg.get("auto_moderate") and user_id and not _exempt:
@@ -17996,7 +17939,8 @@ class KickModerator:
             if hit:
                 if await self.timeout_user(user_id, int(self.cfg.get("auto_timeout_max_min") or MOD_AUTO_TIMEOUT_MAX_MIN), f"Banned word: {hit}", session):
                     self.stats["moderated"] += 1
-                    _modlog("timeout", "filter", content, {"user": sender, "word": hit})
+                    _modlog("timeout", "filter", content,
+                            {"user": sender, "word": hit, "platform": "kick"})
                 return
             # AUSBAU: schnelle Spam-Heuristik (ohne Ollama) → eskalierender Cool-off-Timeout.
             sp = self._spam_check(content, user_id)
@@ -18008,11 +17952,14 @@ class KickModerator:
                     await self.send_message(_nc_i18n.t(_mod_warn_text(sender, sp)), session)
                     self.stats["moderated"] += 1
                     _modlog("warn", "auto-mod-kick", content,
-                            {"user": sender, "reason": sp, "cat": "spam"})
+                            {"user": sender, "reason": sp, "cat": "spam",
+                             "platform": "kick"})
                     return
                 if await self.timeout_user(user_id, mins, f"Auto-Mod: {sp}", session):
                     self.stats["moderated"] += 1
-                    _modlog("timeout", "spam", content, {"user": sender, "reason": sp, "min": mins})
+                    _modlog("timeout", "spam", content,
+                            {"user": sender, "reason": sp, "min": mins,
+                             "platform": "kick"})
                 return
         # F86 / v4.0-W35: ORACLE-Commands IMMER zuerst — VOR dem auto_reply/
         # auto_moderate-Gate. Sonst funktionieren !recap/!ask nicht, wenn beide
@@ -18039,7 +17986,7 @@ class KickModerator:
                 _KICK_MSG_TIMES.append(_time_mod.monotonic())
                 if len(_KICK_MSG_TIMES) > 200:
                     del _KICK_MSG_TIMES[:100]
-                _src = (_RESTREAM_ACTIVE or {}).get("user")
+                _src = _restream_active().get("user")
                 if (_src and _clip_should_velocity(_KICK_MSG_TIMES)
                         and _time_mod.monotonic() - _KICK_VELO_LAST > 60):
                     _KICK_VELO_LAST = _time_mod.monotonic()
@@ -18057,7 +18004,9 @@ class KickModerator:
                 ok = await self.timeout_user(user_id, int(self.cfg.get("auto_timeout_max_min") or MOD_AUTO_TIMEOUT_MAX_MIN), "Auto-Mod: Spam/Toxizität", session)
                 if ok:
                     self.stats["moderated"] += 1
-                    _modlog("timeout", "ai", content, {"user": sender, "toxic": cls["toxic"]})
+                    _modlog("timeout", "ai", content,
+                            {"user": sender, "toxic": cls["toxic"],
+                             "platform": "kick"})
                 try:
                     await self._learn_from(content)   # neue Schimpfwörter lernen (→ Review-Queue)
                 except Exception:
@@ -18553,7 +18502,7 @@ def _azrael_live_state():
     """V1: Echtzeit-Systemzustand für den Prompt — die KI weiß immer, was
        NIGHTCRAWLER gerade tut (nur In-Memory, kein DB-Hit)."""
     parts = []
-    ra = _RESTREAM_ACTIVE or {}
+    ra = _restream_active()
     if ra.get("user"):
         parts.append(f"Kick-Restream läuft, Quelle @{ra['user']}" + (f" (Ziel {ra.get('label')})" if ra.get("label") else ""))
     live_now = sorted(_LIVE_SESSION_START.keys())
@@ -18570,7 +18519,7 @@ def _azrael_system(purpose, extra=""):
     """V2/V3/V4/V5: EIN System-Prompt für alle Kanäle — Identität + Stil +
        Live-Zustand + Streamer-Gedächtnis + Persona + Prompt-Injection-Schild.
        v37: hängt zusätzlich die passende Agenten-Rolle an (siehe _AZRAEL_AGENTS)."""
-    user = ((_RESTREAM_ACTIVE or {}).get("user") or "").lstrip("@").lower()
+    user = (_restream_active().get("user") or "").lstrip("@").lower()
     mems = _oracle_memories(user, 2) if user else []
     memtxt = "\n".join(f"- {m.get('summary')}" for m in mems if m.get("summary"))
     persona = _oracle_persona(user) if user else ""
@@ -18671,7 +18620,7 @@ async def oracle_handle(sender, content):
         except Exception as e:
             log.debug("oracle !mem: %s", e)
             return "🧠 Gedächtnis gerade nicht erreichbar."
-    user = (_RESTREAM_ACTIVE or {}).get("user") or ""
+    user = _restream_active().get("user") or ""
     if cmd == "chapters":
         try:
             since = (datetime.now(timezone.utc) - timedelta(hours=12)).isoformat()
@@ -18876,7 +18825,7 @@ async def _living_title_loop():
         try:
             if not _auto_on("living_title", LIVING_TITLE):
                 await asyncio.sleep(60); continue
-            ra = _RESTREAM_ACTIVE or {}
+            ra = _restream_active()
             user = (ra.get("user") or "").lstrip("@").lower()
             now = _time_mod.monotonic()
             if not user:
@@ -18923,7 +18872,7 @@ async def _azrael_proactive_loop():
         try:
             if not _auto_on("proactive", PROACTIVE_ENABLED):
                 await asyncio.sleep(45); continue
-            ra = _RESTREAM_ACTIVE or {}
+            ra = _restream_active()
             user = (ra.get("user") or "").lstrip("@").lower()
             now = _time_mod.monotonic()
             if user and now - last_proactive >= max(120, PROACTIVE_COOLDOWN_S):
@@ -20530,125 +20479,16 @@ def api_audio_testtone():
 
 
 
-@dashboard_app.route("/api/kickmod/status")
-def api_kickmod_status():
-    rows = []
-    try:
-        with db_conn() as conn:
-            rows = conn.execute("SELECT ts, kind, actor, content, meta FROM kick_mod_log "
-                                "ORDER BY id DESC LIMIT 50").fetchall()
-    except Exception:
-        pass
-    return jsonify(ok=True, running=_KICK_MOD.running,
-                   api_configured=bool(KICK_CLIENT_ID and KICK_CLIENT_SECRET),
-                   chat_configured=bool(KICK_CHATROOM_ID),
-                   autostart=KICKMOD_AUTOSTART,
-                   # F93: Multi-Channel-Sicht für das SENTINEL-Panel
-                   channels={
-                       "kick": {"enabled": bool(KICK_CHATROOM_ID), "connected": bool(_KICK_MOD.stats.get("connected"))},
-                       "discord": {"enabled": bool(DISCORD_BOT_TOKEN and DISCORD_AI_MOD),
-                                   "connected": bool(_nc_discordstate.CLIENT["obj"] and getattr(_nc_discordstate.CLIENT["obj"], "user", None))},
-                       "tiktok": {"enabled": LIVE_REACT_CHAT,
-                                  "connected": bool((_RESTREAM_ACTIVE or {}).get("user"))},
-                       "twitch": {"enabled": bool((os.getenv("TWITCH_CHANNEL","") or "").strip()),
-                                  "connected": _WCHAT_STATUS["twitch"]["connected"]},
-                       "youtube": {"enabled": bool((os.getenv("YOUTUBE_CHANNEL","") or "").strip()),
-                                   "connected": _WCHAT_STATUS["youtube"]["connected"]}},
-                   cfg=_KICK_MOD.cfg, stats=_KICK_MOD.stats,
-                   log=[{"ts": (r["ts"] or "")[:19], "kind": r["kind"], "actor": r["actor"],
-                         "content": r["content"]} for r in rows])
 
 
-@dashboard_app.route("/api/kickmod/config", methods=["POST"])
-def api_kickmod_config():
-    d = request.get_json(silent=True) or {}
-    if "auto_reply" in d:    _KICK_MOD.cfg["auto_reply"] = bool(d["auto_reply"])
-    if "auto_moderate" in d: _KICK_MOD.cfg["auto_moderate"] = bool(d["auto_moderate"])
-    if "sensitivity" in d:
-        try: _KICK_MOD.cfg["sensitivity"] = max(0.0, min(1.0, float(d["sensitivity"])))
-        except (TypeError, ValueError): pass
-    if "engage_min" in d:
-        try: _KICK_MOD.cfg["engage_min"] = max(0, min(120, int(d["engage_min"])))
-        except (TypeError, ValueError): pass
-    if "persona" in d:  _KICK_MOD.cfg["persona"] = (d["persona"] or "")[:200]
-    if "persona_full" in d:  _KICK_MOD.cfg["persona_full"] = (d["persona_full"] or "")[:4000]
-    if "reaction_prompt" in d: _KICK_MOD.cfg["reaction_prompt"] = (d["reaction_prompt"] or "")[:4000]
-    if "learn_badwords" in d: _KICK_MOD.cfg["learn_badwords"] = bool(d["learn_badwords"])
-    if "learn_autoadd" in d: _KICK_MOD.cfg["learn_autoadd"] = bool(d["learn_autoadd"])
-    # AUSBAU: Spam-Heuristik + Eskalation + Persona-Ton
-    if "spam_filter" in d: _KICK_MOD.cfg["spam_filter"] = bool(d["spam_filter"])
-    if "escalate" in d: _KICK_MOD.cfg["escalate"] = bool(d["escalate"])
-    if "intensity" in d:
-        try: _KICK_MOD.cfg["intensity"] = max(0, min(2, int(d["intensity"])))
-        except (TypeError, ValueError): pass
-    if "flood_max" in d:
-        try: _KICK_MOD.cfg["flood_max"] = max(2, min(50, int(d["flood_max"])))
-        except (TypeError, ValueError): pass
-    if "max_links" in d:
-        try: _KICK_MOD.cfg["max_links"] = max(0, min(20, int(d["max_links"])))
-        except (TypeError, ValueError): pass
-    if "max_caps_ratio" in d:
-        try: _KICK_MOD.cfg["max_caps_ratio"] = max(0.3, min(1.0, float(d["max_caps_ratio"])))
-        except (TypeError, ValueError): pass
-    if "auto_timeout_max_min" in d:
-        try: _KICK_MOD.cfg["auto_timeout_max_min"] = max(1, min(1440, int(d["auto_timeout_max_min"])))
-        except (TypeError, ValueError): pass
-    if "greeting" in d: _KICK_MOD.cfg["greeting"] = (d["greeting"] or "")[:300]
-    if "banned_words" in d:
-        bw = d["banned_words"]
-        if isinstance(bw, str):
-            bw = [w.strip() for w in bw.split(",") if w.strip()]
-        if isinstance(bw, list):
-            _KICK_MOD.cfg["banned_words"] = [str(w)[:40] for w in bw][:_BANNED_WORDS_CAP]
-            _save_banned_words_file(_KICK_MOD.cfg["banned_words"])
-    return jsonify(ok=True, cfg=_KICK_MOD.cfg)
 
 
-@dashboard_app.route("/api/kickmod/import_badwords", methods=["POST"])
-def api_kickmod_import_badwords():
-    """Lädt eine freie deutsche Schimpfwort-Basisliste (LDNOOBW) EINMAL und merged sie
-       in banned_words (dedupliziert, gekappt, lokal gecached). Bei Netzfehler Fallback.
-       Die Liste ist im Dashboard-Feld danach reviewbar/kürzbar."""
-    words, source = _fetch_ldnoobw_de()
-    before = list(_KICK_MOD.cfg.get("banned_words") or [])
-    merged = _merge_banned_words(before, words)
-    added = len(merged) - len(before)
-    _KICK_MOD.cfg["banned_words"] = merged
-    _save_banned_words_file(merged)
-    return jsonify(ok=True, source=source, added=added, total=len(merged), banned_words=merged)
 
 
-@dashboard_app.route("/api/kickmod/learned")
-def api_kickmod_learned():
-    """Gelernte Schimpfwort-Kandidaten (Review-Queue)."""
-    items = _learned_load()
-    return jsonify(ok=True, count=len(items), learned=items)
 
 
-@dashboard_app.route("/api/kickmod/learned/promote", methods=["POST"])
-def api_kickmod_learned_promote():
-    """Übernimmt gelernte Kandidaten in die aktive banned_words-Liste (Auswahl via
-       'words', sonst alle) und entfernt sie aus der Queue."""
-    d = request.get_json(silent=True) or {}
-    words = d.get("words")
-    items = _learned_load()
-    pick = {str(w).lower() for w in words} if isinstance(words, list) and words else None
-    promote = [it for it in items if (pick is None or str(it.get("word", "")).lower() in pick)]
-    if promote:
-        bw = list(_KICK_MOD.cfg.get("banned_words") or [])
-        bw += [it["word"] for it in promote if it.get("word")]
-        _KICK_MOD.cfg["banned_words"] = _merge_banned_words(bw, [])
-        _save_banned_words_file(_KICK_MOD.cfg["banned_words"])
-        rest = [it for it in items if str(it.get("word", "")).lower() not in pick] if pick else []
-        _learned_save(rest)
-    return jsonify(ok=True, promoted=len(promote), banned_words=_KICK_MOD.cfg.get("banned_words") or [],
-                   total=len(_KICK_MOD.cfg.get("banned_words") or []), remaining=len(_learned_load()))
 
 
-@dashboard_app.route("/api/kickmod/learned/clear", methods=["POST"])
-def api_kickmod_learned_clear():
-    _learned_save([])
-    return jsonify(ok=True)
 
 
 @dashboard_app.route("/api/azrael/react", methods=["POST"])
@@ -20949,46 +20789,10 @@ def api_azrael_whisper_model():
                    available=_faster_whisper_available())
 
 
-@dashboard_app.route("/api/kickmod/start", methods=["POST"])
-def api_kickmod_start():
-    try:
-        res = _run_async_from_flask(_KICK_MOD.start(), timeout=15)
-        return jsonify(res), (200 if res.get("ok") else 502)
-    except RuntimeError:
-        return jsonify(ok=False, error="Event-Loop nicht bereit"), 503
-    except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
 
 
-@dashboard_app.route("/api/kickmod/stop", methods=["POST"])
-def api_kickmod_stop():
-    try:
-        res = _run_async_from_flask(_KICK_MOD.stop(), timeout=15)
-        return jsonify(res)
-    except RuntimeError as e:
-        if _loop_not_ready(e):
-            return jsonify(ok=False, error="Bot-Loop startet noch", transient=True), 503
-        return jsonify(ok=False, error=str(e)), 500
-    except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
 
 
-@dashboard_app.route("/api/kickmod/say", methods=["POST"])
-def api_kickmod_say():
-    """Manuelle Nachricht über den Bot senden (Operator-Test)."""
-    d = request.get_json(silent=True) or {}
-    msg = (d.get("message") or "").strip()
-    if not msg:
-        return jsonify(ok=False, error="leere Nachricht"), 400
-    try:
-        ok, err = _run_async_from_flask(_KICK_MOD.send_message(_nc_i18n.t(msg)), timeout=20)
-        return jsonify(ok=ok, error=err), (200 if ok else 502)
-    except RuntimeError as e:
-        if _loop_not_ready(e):
-            return jsonify(ok=False, error="Bot-Loop startet noch", transient=True), 503
-        return jsonify(ok=False, error=str(e)), 500
-    except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
 
 
 # ---- V37-MP: Kanal-Status ALLER eigenen Plattformen -------------------------
@@ -21715,8 +21519,8 @@ def api_restream_chatfeed():
         u.replace("https://", "").replace("http://", "").rstrip("/")
         for u in (KICK_CHANNEL_URL, DISCORD_INVITE_URL) if (u or "").strip())
     # F100: Regie-Zustand des aktiven Streams (Stimmung/Energie/Stammchatter)
-    _active_u = clean_username((_RESTREAM_ACTIVE or {}).get("user") or "")
-    _dir = _LIVE_DIRECTORS.get((_RESTREAM_ACTIVE or {}).get("user") or "") or \
+    _active_u = clean_username(_restream_active().get("user") or "")
+    _dir = _LIVE_DIRECTORS.get(_restream_active().get("user") or "") or \
         (next((d for u, d in _LIVE_DIRECTORS.items() if clean_username(u) == _active_u), None) if _active_u else None)
     director = _dir.snapshot() if _dir is not None else None
     return jsonify(ok=True, items=items, layout=_restream_layout_mode(), brand=brand,
@@ -21724,7 +21528,7 @@ def api_restream_chatfeed():
                    diag=dict(_CHAT_DIAG),
                    sources={"tiktok": _chat_src_ok("tiktok"), "kick": _chat_src_ok("kick")},
                    overlay_enabled=RESTREAM_OVERLAY,
-                   active=(_RESTREAM_ACTIVE or {}).get("user"))
+                   active=_restream_active().get("user"))
 
 
 @dashboard_app.route("/api/restream/layout", methods=["POST"])
@@ -23258,7 +23062,7 @@ async def _discord_run_once():
                 at = conn.execute("SELECT COUNT(*) FROM trackings").fetchone()[0]
                 ln = conn.execute("SELECT COUNT(*) FROM trackings WHERE last_live=1").fetchone()[0]
                 rc = conn.execute("SELECT COUNT(*) FROM recordings WHERE deleted_at IS NULL").fetchone()[0]
-            act = _RESTREAM_ACTIVE or {}
+            act = _restream_active()
             rs = ("@" + str(act["user"])) if act.get("user") else "— inaktiv"
             await inter.response.send_message(
                 _nc_i18n.t(f"**Azrael Sentinel**\n• Trackings: `{at}`   • Live: `{ln}`   • Recordings: `{rc}`\n• Restream: `{rs}`"))
@@ -23341,7 +23145,7 @@ async def _discord_run_once():
 
     @tree.command(name="restream_status", description=_nc_i18n.t("Restream-Status"))
     async def _c_restream_status(inter):
-        act = _RESTREAM_ACTIVE or {}
+        act = _restream_active()
         await inter.response.send_message(_nc_i18n.t("Restream: " + (("@" + str(act["user"])) if act.get("user") else "— inaktiv")))
 
     # ───────── SERVER-VERWALTUNG (Admin) ─────────
@@ -24140,7 +23944,7 @@ async def _discord_run_once():
             if dbsz is not None:
                 emb.add_field(name="DB-Größe", value=f"{dbsz} MB", inline=True)
             emb.add_field(name="Discord-Latenz", value=f"{int(client.latency * 1000)} ms", inline=True)
-            _ra = _RESTREAM_ACTIVE or {}
+            _ra = _restream_active()
             emb.add_field(name="Restream", value=(f"📡 @{_ra['user']}" if _ra.get("user") else "—"), inline=True)
             emb.timestamp = datetime.now(timezone.utc)
             await inter.response.send_message(embed=emb, ephemeral=True)
@@ -24493,7 +24297,8 @@ async def _discord_run_once():
             except Exception:
                 pass
             _modlog("timeout", "sentinel-shield", (message.content or "")[:200],
-                    {"user": str(message.author), "reason": reason})
+                    {"user": str(message.author), "reason": reason,
+                     "platform": "discord"})
             return True
         if DISCORD_AUTOMOD_ACTION == "delete":
             try:
@@ -24546,7 +24351,8 @@ async def _discord_run_once():
             pass
         _KICK_MOD.stats["dc_moderated"] = _KICK_MOD.stats.get("dc_moderated", 0) + 1
         _modlog("timeout", "ai-discord", c[:200],
-                {"user": str(message.author), "toxic": round(cls["toxic"], 2), "min": mins})
+                {"user": str(message.author), "toxic": round(cls["toxic"], 2), "min": mins,
+                 "platform": "discord"})
         try:
             mlog = discord.utils.get(message.guild.text_channels, name=DISCORD_MODLOG_CHANNEL)
             if mlog:
@@ -24596,7 +24402,7 @@ async def _discord_run_once():
             rows = conn.execute("SELECT username, recording FROM trackings WHERE last_live=1 ORDER BY username").fetchall()
         desc = "\n".join((("🔴 " if r["recording"] else "🟢 ") + f"@{r['username']}") for r in rows) if rows else "Gerade niemand live."
         # F84: Restream-Status direkt im Board — Community sieht sofort ob Kick läuft
-        _ra = _RESTREAM_ACTIVE or {}
+        _ra = _restream_active()
         if _ra.get("user"):
             desc += f"\n\n📡 **Kick-Restream läuft** — Quelle: @{_ra['user']}"
             if KICK_CHANNEL_URL:
@@ -25358,7 +25164,7 @@ async def _announce_loop():
         try:
             if not _auto_on("announce", KICK_ANNOUNCE):
                 await asyncio.sleep(60); continue
-            active = bool((_RESTREAM_ACTIVE or {}).get("user"))
+            active = bool(_restream_active().get("user"))
             now = _time_mod.monotonic()
             if active and not was_active:
                 last_post = now - interval + 180        # → erster Post ~3min nach Start
@@ -26854,14 +26660,16 @@ async def _twitch_chat_loop():
                             if _fn_tw:
                                 await _fn_tw(_mod_warn_text(user, _verdict[1]))
                             _modlog("warn", "auto-mod-twitch", text,
-                                    {"user": user, "cat": _verdict[0], "detail": _verdict[1]})
+                                    {"user": user, "cat": _verdict[0], "detail": _verdict[1],
+                                     "platform": "twitch"})
                         elif _verdict:
                             _ok, _m = await _twoauth.timeout_user(
                                 _aioh, user, MOD_AUTO_TIMEOUT_MAX_MIN,
                                 f"AUTO-MOD {_verdict[0]}: {_verdict[1]}")
                             if _ok:
                                 _modlog("timeout", "auto-mod-twitch", text,
-                                        {"user": user, "cat": _verdict[0], "detail": _verdict[1]})
+                                        {"user": user, "cat": _verdict[0], "detail": _verdict[1],
+                                         "platform": "twitch"})
                             else:
                                 log.debug("twitch-timeout %s: %s", user, _m)
                     # V37-TWCHAT: AZRAEL antwortet, wenn angesprochen (send-fähiger
@@ -26985,7 +26793,8 @@ async def _youtube_api_chat_loop():
                             await _yt_timeout(tok, lcid, m["channel_id"],
                                               MOD_AUTO_TIMEOUT_MAX_MIN * 60)
                             _modlog("timeout", "auto-mod-youtube", txt,
-                                    {"user": who, "cat": verdict[0], "detail": verdict[1]})
+                                    {"user": who, "cat": verdict[0], "detail": verdict[1],
+                                     "platform": "youtube"})
                             continue
                     # AZRAEL — an alle drei Chats, adressiert an diesen User.
                     if _YT_SEND.get("fn") and _azrael_chat_should_reply(txt):
@@ -27105,6 +26914,7 @@ async def _youtube_chat_loop():
                                     if _vy:
                                         _modlog("flag", "auto-mod-youtube", txt,
                                                 {"user": who, "cat": _vy[0], "detail": _vy[1],
+                                                 "platform": "youtube",
                                                  "note": "erkannt, kein Durchgreifen (YouTube-OAuth fehlt)"})
                                 # V37-TWCHAT: AZRAEL antwortet auf YouTube, wenn
                                 # angesprochen und der Sendekanal bereit ist.
@@ -28369,28 +28179,40 @@ async def main():
 
         def _brain_moderation_snap():
             # M8: Moderations-Trend fuer den ToxicityAgent — aus kick_mod_log.
+            # v4.1-W18: NICHT mehr jede Zeile. In der Tabelle liegt auch, was
+            # AZRAEL auf einem TikTok-Live sagt (kind="reaction", im
+            # Sekundentakt) und was der Highlight-Radar meldet. Beides zaehlte
+            # als "Moderations-Aktion" und loeste beim Betreiber eine
+            # Toxizitaets-Warnung fuer einen Chat aus, den er gar nicht
+            # moderiert. Die Regel steht jetzt in nc/modstats.py — dort auch,
+            # warum TikTok sich nicht per Konfiguration zuschalten laesst.
             now = datetime.now(timezone.utc)
             h1 = (now - timedelta(hours=1)).isoformat()
             h2 = (now - timedelta(hours=2)).isoformat()
             try:
                 with db_conn() as conn:
                     rows1 = conn.execute(
-                        "SELECT meta FROM kick_mod_log WHERE ts>=?", (h1,)).fetchall()
-                    prev = conn.execute(
-                        "SELECT COUNT(*) FROM kick_mod_log WHERE ts>=? AND ts<?",
-                        (h2, h1)).fetchone()[0]
+                        "SELECT kind, actor, meta FROM kick_mod_log WHERE ts>=?",
+                        (h1,)).fetchall()
+                    rows0 = conn.execute(
+                        "SELECT kind, actor, meta FROM kick_mod_log "
+                        "WHERE ts>=? AND ts<?", (h2, h1)).fetchall()
             except Exception:
                 return {}
-            tox = []
-            for r in rows1:
-                try:
-                    m = json.loads((r["meta"] if not isinstance(r, tuple) else r[0]) or "{}")
-                    if "toxic" in m:
-                        tox.append(float(m["toxic"]))
-                except Exception:
-                    pass
-            return {"actions_1h": len(rows1), "actions_prev_1h": int(prev or 0),
-                    "avg_toxic_1h": round(sum(tox) / len(tox), 3) if tox else None}
+
+            def _tripel(rows):
+                for r in rows:
+                    k, a, m = (r[0], r[1], r[2]) if isinstance(r, tuple) else (
+                        r["kind"], r["actor"], r["meta"])
+                    try:
+                        meta = json.loads(m or "{}")
+                    except Exception:
+                        meta = {}
+                    yield k, a, meta if isinstance(meta, dict) else {}
+
+            return _nc_modstats.verdichte(
+                list(_tripel(rows1)), list(_tripel(rows0)),
+                erlaubt=_nc_modstats.quellen(os.getenv("MOD_TREND_PLATTFORMEN") or None))
 
         def _brain_recording_snap():
             # M8: aktuelle Groesse+alive je laufender Aufnahme fuer den RecordingAgent.
@@ -29103,6 +28925,7 @@ dashboard_app.register_blueprint(_nc_routes_kick.bp)       # v4.1-W9
 dashboard_app.register_blueprint(_nc_routes_chat.bp)       # v4.1-W15
 dashboard_app.register_blueprint(_nc_routes_cohost.bp)     # v4.1-W15
 dashboard_app.register_blueprint(_nc_routes_discord.bp)    # v4.1-W16
+dashboard_app.register_blueprint(_nc_routes_kickmod.bp)    # v4.1-W18
 
 
 if __name__ == "__main__":

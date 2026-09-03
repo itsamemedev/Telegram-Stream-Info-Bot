@@ -11,6 +11,81 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Behoben — TikTok löst keine Toxizitäts-Warnung mehr aus (v4.1 W18)
+
+Der Betreiber bekam Meldungen der Form „Chat-Toxizität steigt: N
+Moderations-Aktionen letzte Stunde" für einen Chat, den der Bot **gar nicht
+moderiert**. Ursache: der Schnappschuss für den `ToxicityAgent` zählte jede
+Zeile aus `kick_mod_log` — dort liegt aber deutlich mehr als Moderation.
+AZRAELs Live-Reaktion auf einen TikTok-Stream (`kind="reaction"`, im
+Sekundentakt), der Highlight-Radar, die eigenen Chat-Nachrichten des Bots und
+gelernte Schimpfwort-Kandidaten zählten alle mit. Ein einziger aktiver
+Live-React-Worker schrieb mühelos die sechs Zeilen, ab denen `spike_min` greift.
+
+Die Regel steht jetzt in **`nc/modstats.py`** und beantwortet zwei Fragen
+getrennt: Ist die Zeile ein Durchgreifen gegen einen Nutzer? Und auf welcher
+Plattform? Gezählt wird nur, was beides beantwortet und in der Auswahl des
+Betreibers liegt — standardmäßig Kick, Twitch und YouTube. Alle elf
+Moderations-Aufrufe tragen ihre Plattform jetzt im `meta`; `sentinel-shield`
+schreibt aus dem Kick-Moderator **und** aus dem Discord-Automod und war über
+den Aktor allein nicht unterscheidbar. TikTok steht nicht in `PLATTFORMEN` und
+lässt sich damit auch per `MOD_TREND_PLATTFORMEN` nicht zuschalten — dieselbe
+Trennlinie wie bei `REVENUE_PLATFORMS`.
+
+Wichtig für den Trend: die **Vorstunde läuft durch dieselbe Regel**. Wäre nur
+die aktuelle Stunde gefiltert, wäre jede TikTok-Sitzung in der Vorstunde eine
+gemeldete „Beruhigung" und jedes Sitzungsende eine gemeldete „Welle". Und die
+Meldung nennt die Plattformen jetzt mit (`[kick 7, twitch 2]`) — vorher wusste
+der Betreiber zwar, *dass* es kracht, aber nicht *wo*.
+
+### Geändert — `/api/kickmod` als Blueprint, zwei Schichten gelöst (v4.1 W18)
+
+Neun Routen aus dem Monolithen, **null neue `nc.ctx`-Einträge** (der Kontext
+steht bei 24 von vertraglich 25). Möglich durch dieselbe Reihenfolge wie
+W117 — erst die Datenschicht lösen, dann sind die Routen umsonst:
+
+* **`nc/badwords.py`** trägt Bannwortliste, Lern-Warteschlange und die
+  LDNOOBW-Basisliste. Geschrieben wird über eine Zwischendatei und
+  `os.replace`: ein Absturz mitten im Schreiben darf die Bannwortliste nicht
+  halbieren, danach moderierte der Bot still schwächer. Ein Netzfehler beim
+  Holen der Basisliste fällt auf die eingebaute Liste zurück, nie auf leer.
+* **`nc/channels.RESTREAM_ACTIVE`** ist ein Register für den primären Restream.
+  Im Monolithen stand dafür `globals()["_RESTREAM_ACTIVE"] = {…}` — in einem
+  Blueprint wäre `globals()` der Namensraum des Blueprints, und das
+  SENTINEL-Panel meldete TikTok für immer als „nicht verbunden", während der
+  Listener läuft. Genau die stille Fehlanzeige aus W116.
+
+Die sieben `.env`-Werte liest der Blueprint bei **jedem Aufruf** statt sie als
+Modul-Konstante einzufrieren — die Regel aus `CLAUDE.md`, weil `.env` teils
+erst nach den ersten Imports geladen wird.
+
+`bot.py` 29.112 → 28.935 Zeilen, Blueprints 24 → 25, eigene Routen im
+Monolithen 143 → 134.
+
+### Geändert — der Übersetzungskatalog reicht bis zum Tabellenkopf (v4.1 W18)
+
+`<th>Datei</th>` ist im DOM ein vollständiger Textknoten, fiel aber aus dem
+Katalog, weil er „weniger als zwei Wörter" hat. Diese Regel gibt es gegen
+Bruchstücke um Platzhalter herum (`Für @${user}` steht im DOM nie für sich) —
+sie traf aber auch die Tabellenköpfe. Ergebnis: der Kopf einer Tabelle blieb
+deutsch, während ihr Inhalt übersetzt war.
+
+`tools/i18n_extract.py` unterscheidet jetzt **Tag-Grenzen von
+Platzhalter-Grenzen**: an einem Tag endet ein Textknoten, an einem Platzhalter
+verschmilzt er mit dem eingesetzten Wert. Belegt sein muss es — ein blankes
+Literal wie `'läuft'` kann genauso gut ein Vergleichswert oder ein
+Objektschlüssel sein, und ein Eintrag dafür wäre **tot**: er zählte als
+übersetzt, während die Stelle deutsch bleibt, und verdeckte damit genau das,
+was die Abdeckungszahl sichtbar machen soll. 41 solcher Kandidaten wurden
+deshalb abgelehnt; **29** echte Tabellenköpfe und Knopfbeschriftungen sind
+dazugekommen (`Datei`, `Datum`, `Grund`, `Größe`, `Quelle`, `Zeit`, `Gebühr`,
+`Priorität`, `Lautstärke`, `Tonhöhe` …). Katalog: 647 → **676 Einträge, 0
+fehlend, 0 verwaist**.
+
+Offen bleibt bewusst: Sätze, die per String-Verkettung um einen Platzhalter
+gebaut werden (`'GESTÖRT · ' + phase`). Die brauchen ein `T()` an der Quelle
+und kommen in einer eigenen Welle — ein Katalogeintrag dafür wäre tot.
+
 ### Geändert — Werkzeuge, Installer, MOTD, Doku und Website (v4.1 W17)
 
 Fünf Befunde des Betreibers, in einer Welle.

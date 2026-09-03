@@ -33,6 +33,23 @@ TWITCH_SEND = {"fn": None}
 # läuft nicht", während er läuft. Genau die stille Fehlanzeige aus W116
 # (_MAIN_LOOP) und aus CLAUDE.md.
 KICK_MOD = {"obj": None}
+
+# v4.1-W18: Register für den PRIMÄREN Restream (zuletzt gestartet) —
+# {"user","label","rid"} oder leer. Der Quell-Streamer, dessen Bild gerade
+# gesendet wird; das Overlay, die Chat-Weiche und das SENTINEL-Panel hängen
+# daran.
+#
+# Register und NICHT Alias, obwohl es ein Dict ist: bot.py bindet den Namen bei
+# jeder Primär-Nachfolge komplett NEU (früher `globals()["_RESTREAM_ACTIVE"] =
+# {...}`). Ein Alias zeigte danach auf das alte, tote Dict — die Blueprints
+# meldeten den zuvor gesendeten User, während längst ein anderer läuft. Genau
+# die Falle aus CLAUDE.md ("Guards als Objekt-Attribut").
+RESTREAM_ACTIVE = {"obj": {}}
+
+
+def restream_active():
+    """Der primäre Restream als Dict — nie None, damit .get() immer trägt."""
+    return RESTREAM_ACTIVE["obj"] or {}
 YT_SEND = {"fn": None, "token": "", "token_exp": 0.0,
            "live_chat_id": "", "lcid_exp": 0.0}
 
