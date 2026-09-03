@@ -633,6 +633,7 @@ from nc.routes import audio as _nc_routes_audio              # v4.1-W20: Signalt
 from nc.routes import brain as _nc_routes_brain              # v4.1-W21: Brain-Panel
 from nc.routes import restream as _nc_routes_restream        # v4.1-W22: Sendeleiste
 from nc.routes import beobachtung as _nc_routes_beobachtung        # v4.1-W23: Beobachtung
+from nc.routes import wartung as _nc_routes_wartung            # v4.1-W24: Wartung
 from nc import updater as _nc_updater                        # v4.0-W115: Selbst-Update aus dem GitHub-Repo
 from nc import donationsdb as _nc_donationsdb                # v4.0-W116: manuell erfasste Spenden lesen
 # Diese beiden Routen ruft der Bot auch INTERN auf (Telegram /sysres und die
@@ -788,7 +789,7 @@ from nc import streamsel as _nc_ss          # v4.0-W29: TikTok-Stream-Auswahl (R
 from nc.cookies import (  # noqa: F401
     _cookies_input_to_netscape, _cookie_alarm_level)
 from nc.textmore import (  # noqa: F401
-    split_for_telegram, _compact_text, _parse_iso, _safe_archive_filename,
+    split_for_telegram, _compact_text, _parse_iso,
     _video_caption, _ov_wrap)
 from nc.scoring import build_report  # noqa: F401
 from nc.persona import (  # noqa: F401
@@ -858,10 +859,13 @@ from nc.dbwrap import db_conn, configure_db  # noqa: F401
 # diese Funktionen hängen an keinem Bot-Global mehr.
 from nc import stats as _nc_stats          # v4.0-W117: get_stats + Status-Verteilung
 from nc.stats import (get_per_user_stats, get_activity_pulse, get_lives_heatmap,
-                      _collect_session_stats, _dir_stats,
+                      _collect_session_stats,
                       get_recordings_heatmap)  # noqa: F401
-from nc.archive import evaluate_archive_rule  # noqa: F401
 from nc import archive as _nc_archive     # v4.0-W110: Archiv-Datenzugriff
+from nc import backupcfg as _nc_backup     # v4.1-W24: Sicherung, Aufbewahrung
+from nc import archiverules as _nc_arules  # v4.1-W24: Auto-Archiv-Regeln
+from nc import retention as _nc_retention  # v4.1-W24: Aufbewahrungs-Scan
+from nc import storage as _nc_storage      # v4.1-W24: Platz und Aufraeumen
 from nc.notes import delete_annotation  # noqa: F401
 # V37-DBX: SQL-Export/Import (SQLite <-> MariaDB). Braucht nur db_conn.
 # V37-DISC: Disconnect-Analyse aus recording_attempts. Die Tabelle protokolliert
@@ -4691,124 +4695,24 @@ def sample_bandwidth_for_active() -> list:
 
 # ---------- X14: Auto-Archive-Rules ----------
 def list_archive_rules() -> list:
-    try:
-        with db_conn() as conn:
-            return conn.execute(
-                "SELECT id, name, condition_json, action_json, enabled, "
-                "       last_run, last_match_count, created_at "
-                "FROM auto_archive_rules ORDER BY id DESC").fetchall()
-    except Exception:
-        return []
+    # v4.1-W24: nach nc/archiverules.py geloest.
+    return _nc_arules.list_archive_rules()
 
 def add_archive_rule(name: str, condition: dict, action: dict) -> Optional[int]:
-    try:
-        with db_conn() as conn:
-            cur = conn.execute(
-                "INSERT INTO auto_archive_rules "
-                "(name, condition_json, action_json, enabled, created_at) "
-                "VALUES (?,?,?,1,?)",
-                (name[:200],
-                 json.dumps(condition, ensure_ascii=False)[:2000],
-                 json.dumps(action, ensure_ascii=False)[:2000],
-                 datetime.now(timezone.utc).isoformat()))
-            conn.commit()
-            return cur.lastrowid
-    except Exception as e:
-        log.warning(f"add_archive_rule: {e}")
-        return None
+    # v4.1-W24: nach nc/archiverules.py geloest.
+    return _nc_arules.add_archive_rule(name, condition, action)
 
 def delete_archive_rule(rule_id: int) -> bool:
-    try:
-        with db_conn() as conn:
-            cur = conn.execute(
-                "DELETE FROM auto_archive_rules WHERE id=?", (rule_id,))
-            conn.commit()
-            return cur.rowcount > 0
-    except Exception:
-        return False
+    # v4.1-W24: nach nc/archiverules.py geloest.
+    return _nc_arules.delete_archive_rule(rule_id)
 
 
 def run_archive_rules(rule_id: Optional[int] = None) -> dict:
-    """Wendet eine oder alle aktiven Regeln an. Action: 'copy_to_archive'
-       (zur Zeit einzige supported action)."""
-    if not ARCHIVE_DIR:
-        return {"ok": False, "error": "ARCHIVE_DIR nicht konfiguriert"}
-    rules = list_archive_rules()
-    if rule_id is not None:
-        rules = [r for r in rules if r["id"] == rule_id]
-    if not rules:
-        return {"ok": True, "processed": 0, "results": []}
-    try:
-        with db_conn() as conn:
-            recs = conn.execute(
-                "SELECT id, username, filepath, file_size, duration_secs, created_at "
-                "FROM recordings WHERE deleted_at IS NULL ORDER BY id DESC LIMIT 5000"
-            ).fetchall()
-    except Exception as e:
-        return {"ok": False, "error": str(e)}
-
-    results = []
-    for rule in rules:
-        if not rule["enabled"]: continue
-        try:
-            cond = json.loads(rule["condition_json"] or "{}")
-            act = json.loads(rule["action_json"] or "{}")
-        except Exception:
-            continue
-        action_kind = (act.get("action") or "").lower()
-        matched = []
-        archived = 0
-        skipped = 0
-        for r in recs:
-            row_dict = {"id": r["id"], "username": r["username"],
-                        "filepath": r["filepath"], "file_size": r["file_size"],
-                        "duration_secs": r["duration_secs"]}
-            if not evaluate_archive_rule(cond, row_dict):
-                continue
-            matched.append(r["id"])
-            if action_kind != "copy_to_archive":
-                continue
-            # Copy zu ARCHIVE_DIR — nur wenn noch nicht da
-            src = r["filepath"]
-            if not src or not os.path.isfile(src):
-                skipped += 1; continue
-            try:
-                base = os.path.basename(src)
-                fname = _safe_archive_filename(base)
-                # Skip wenn schon eingespielt (gleicher Filename existiert)
-                target = os.path.join(ARCHIVE_DIR, fname)
-                if os.path.exists(target):
-                    # Schon vorhanden — skip
-                    skipped += 1; continue
-                shutil.copy2(src, target)
-                size = os.path.getsize(target)
-                add_archive_entry(
-                    filename=fname, filepath=target,
-                    title=None, notes=f"auto-archive von rule '{rule['name']}'",
-                    size=size, mime=None,
-                    source_url=f"recording/{r['id']}")
-                archived += 1
-            except Exception as e:
-                skipped += 1
-                log.warning(f"archive rule '{rule['name']}' on rec#{r['id']}: {e}")
-        try:
-            with db_conn() as conn:
-                conn.execute(
-                    "UPDATE auto_archive_rules SET last_run=?, last_match_count=? WHERE id=?",
-                    (datetime.now(timezone.utc).isoformat(), len(matched), rule["id"]))
-                conn.commit()
-        except Exception: pass
-        results.append({
-            "rule_id": rule["id"],
-            "rule_name": rule["name"],
-            "matched": len(matched),
-            "archived": archived,
-            "skipped": skipped,
-        })
-        log_event("archive.rule.run", "info",
-                  f"Rule '{rule['name']}': matched={len(matched)} archived={archived}",
-                  {"rule_id": rule["id"], "matched": len(matched), "archived": archived})
-    return {"ok": True, "processed": len(results), "results": results}
+    # v4.1-W24: nach nc/archiverules.py geloest. Archivverzeichnis und
+    # Ereignisprotokoll gehen als Argument hinueber — beides kennt nur der
+    # laufende Monolith.
+    return _nc_arules.run_archive_rules(rule_id, archive_dir=ARCHIVE_DIR,
+                                        log_event=log_event)
 
 # ---------- X15: TikTok-Status-Code-Tracker ----------
 _TIKTOK_STATUS_COUNTER = _collections.Counter()    # in-memory counter
@@ -5096,80 +5000,18 @@ RECORDINGS_RETAIN_DAYS = _env_int("RECORDINGS_RETAIN_DAYS", 0)
 
 
 def get_storage_stats() -> dict:
-    """Dashboard-Widget-Daten. Liefert Recordings + Archive + freier Platz."""
-    rec_stats = _dir_stats(RECORDINGS_DIR)
-    arch_stats = _dir_stats(ARCHIVE_DIR) if ARCHIVE_DIR else {"exists": False}
-    # Freier Platz auf der Disk wo RECORDINGS_DIR liegt
-    try:
-        st = shutil.disk_usage(RECORDINGS_DIR if os.path.isdir(RECORDINGS_DIR) else ".")
-        # B1-Fix: used_percent ergänzen. api_health_score und api_ai_diagnose
-        # haben das Feld erwartet, fanden es aber nie — Disk-Component im
-        # Health-Score blieb deshalb permanent bei 70/100 mit Note "?".
-        used_pct = round(st.used / st.total * 100, 1) if st.total else None
-        disk = {"total_bytes": st.total, "used_bytes": st.used,
-                "free_bytes": st.free, "used_percent": used_pct}
-    except Exception as e:
-        log.warning(f"disk_usage failed: {e}")
-        disk = {"total_bytes": None, "used_bytes": None,
-                "free_bytes": None, "used_percent": None}
-    # DB-Count der Recording-Einträge (Datei evt. gelöscht aber DB-Eintrag bleibt)
-    try:
-        with db_conn() as conn:
-            db_count = conn.execute("SELECT COUNT(*) AS c FROM recordings").fetchone()
-            db_count = db_count["c"] if db_count else 0
-    except Exception as e:
-        log.warning(f"recordings count failed: {e}")
-        db_count = None
-    return {
-        "recordings_dir": rec_stats,
-        "archive_dir":    arch_stats,
-        "disk":           disk,
-        "db_recording_count": db_count,
-        "retention_days": RECORDINGS_RETAIN_DAYS,
-    }
+    # v4.1-W24: nach nc/storage.py geloest. Die Verzeichnisse gibt der
+    # Monolith herein — dort stehen sie, und zwei Lesepfade waeren zwei
+    # Wahrheiten ueber dasselbe Verzeichnis.
+    return _nc_storage.stats(RECORDINGS_DIR, ARCHIVE_DIR, RECORDINGS_RETAIN_DAYS)
 
 def cleanup_old_recordings(days: int = None, dry_run: bool = False) -> dict:
-    """Löscht Recordings-Files älter als `days` Tage von Disk. DB-Einträge
-       werden NICHT gelöscht (User kann immer noch sehen dass es Aufnahmen
-       gab — sie sind nur nicht mehr abrufbar). Wenn dry_run=True: zählt nur.
-
-       Aufrufer: hourly background task (wenn RECORDINGS_RETAIN_DAYS > 0)
-       oder manueller Dashboard-Button."""
+    # v4.1-W24: nach nc/storage.py geloest. Der Vorgabewert bleibt HIER: nur
+    # der Monolith kennt RECORDINGS_RETAIN_DAYS als Voreinstellung, und ein
+    # `days=None` darf drueben nicht als 0 durchrutschen.
     if days is None:
         days = RECORDINGS_RETAIN_DAYS
-    if days <= 0:
-        return {"deleted": 0, "freed_bytes": 0, "skipped": 0, "errors": 0,
-                "reason": "RECORDINGS_RETAIN_DAYS=0 (cleanup disabled)"}
-    if not os.path.isdir(RECORDINGS_DIR):
-        return {"deleted": 0, "freed_bytes": 0, "skipped": 0, "errors": 0,
-                "reason": f"{RECORDINGS_DIR} does not exist"}
-    cutoff = _time_mod.time() - (days * 86400)
-    deleted = 0; freed = 0; skipped = 0; errors = 0
-    try:
-        for entry in os.scandir(RECORDINGS_DIR):
-            if not entry.is_file(follow_symlinks=False):
-                continue
-            try:
-                st = entry.stat(follow_symlinks=False)
-            except OSError:
-                errors += 1; continue
-            if st.st_mtime >= cutoff:
-                skipped += 1; continue
-            if dry_run:
-                deleted += 1; freed += st.st_size
-                continue
-            try:
-                os.remove(entry.path)
-                deleted += 1; freed += st.st_size
-            except OSError as e:
-                log.warning(f"cleanup_old_recordings: {entry.path}: {e}")
-                errors += 1
-    except OSError as e:
-        log.warning(f"cleanup_old_recordings scandir: {e}")
-        return {"deleted": deleted, "freed_bytes": freed, "skipped": skipped,
-                "errors": errors + 1, "error": str(e)}
-    return {"deleted": deleted, "freed_bytes": freed, "skipped": skipped,
-            "errors": errors, "dry_run": dry_run, "retain_days": days}
+    return _nc_storage.cleanup(RECORDINGS_DIR, days=days, dry_run=dry_run)
 
 
 # ============================================================
@@ -10440,29 +10282,9 @@ def api_active_recordings():
 
 
 # F47: Storage-Dashboard
-@dashboard_app.route("/api/storage")
-def api_storage():
-    """Disk-Usage, Recording-Verzeichnis und Archive im Überblick."""
-    return jsonify(get_storage_stats())
 
 
 # F47: Manuelle Cleanup-Triggerung (mit Dry-Run-Default für Safety)
-@dashboard_app.route("/api/storage/cleanup", methods=["POST"])
-def api_storage_cleanup():
-    """Cleanup nach Alter. POST-Body: {"days": N, "dry_run": bool}.
-       Defaults: days = RECORDINGS_RETAIN_DAYS, dry_run = True.
-       Schutz: ohne explizites dry_run:false wird NICHT wirklich gelöscht."""
-    payload = request.get_json(silent=True) or {}
-    try:
-        days = int(payload.get("days", RECORDINGS_RETAIN_DAYS))
-    except (TypeError, ValueError):
-        return jsonify(ok=False, error="days muss eine Zahl sein"), 400
-    # F47: Safety — explizit dry_run:false setzen muss der Caller
-    dry_run = payload.get("dry_run", True)
-    if days <= 0 and not payload.get("force"):
-        return jsonify(ok=False, error="days <= 0 hat keinen Effekt"), 400
-    result = cleanup_old_recordings(days=days, dry_run=bool(dry_run))
-    return jsonify(ok=True, **result)
 
 
 # F52: Cookie-Health-Endpoint für Dashboard-Widget
@@ -12094,25 +11916,8 @@ def api_notify_test():
 
 
 # ═══ v37 Welle 3: Retention-Policy (#12) ═══
-@dashboard_app.route("/api/retention/preview")
-def api_retention_preview():
-    days = request.args.get("days", type=int) or (RETENTION_DAYS if RETENTION_DAYS > 0 else 30)
-    if days < 1:
-        return jsonify(ok=False, error="days >= 1"), 400
-    res = _retention_scan(days, delete=False)
-    return jsonify(ok=True, days=days, auto=RETENTION_DAYS, **res)
 
 
-@dashboard_app.route("/api/retention/run", methods=["POST"])
-def api_retention_run():
-    d = request.get_json(silent=True) or {}
-    days = int(d.get("days") or (RETENTION_DAYS if RETENTION_DAYS > 0 else 30))
-    if days < 1:
-        return jsonify(ok=False, error="days >= 1"), 400
-    res = _retention_scan(days, delete=True)
-    log.info("Retention manuell: %d Aufnahmen > %d Tage gelöscht (%.1f GB).",
-             res["count"], days, res["freed_bytes"] / 1024**3)
-    return jsonify(ok=True, days=days, **res)
 
 
 # ═══ v37 Welle 3: Clip-of-the-Week-Stand (#13) ═══
@@ -12265,54 +12070,9 @@ def api_system_resilience():
              "brain_llm": os.getenv("AI_PROVIDER", "").strip().lower() == "brain"})
 
 
-@dashboard_app.route("/api/backup/system", methods=["POST"])
-def api_backup_system():
-    """F94: System-Backup sofort anstoßen (läuft im Daemon-Thread — Flask-Route
-       kehrt sofort zurück, Fortschritt via /api/backup/status → sys.running)."""
-    if _SYS_BACKUP_STATE["running"]:
-        return jsonify(ok=False, error="System-Backup läuft bereits"), 409
-    if not _backup_active():
-        return jsonify(ok=False, error="Kein Backup-Ziel konfiguriert (LOCAL_BACKUP_DIR / S3)"), 400
-    threading.Thread(target=_system_backup, name="sys-backup-manual", daemon=True).start()
-    return jsonify(ok=True, started=True)
-
-@dashboard_app.route("/api/backup/status")
-def api_backup_status():
-    import shutil as _sh
-    import importlib.util as _il
-    out = {"ok": True, "enabled": LOCAL_BACKUP, "dir": LOCAL_BACKUP_DIR or None,
-           "pending": 0, "done": 0, "backup_free_gb": None, "dir_ok": False,
-           "s3_enabled": S3_BACKUP, "s3_bucket": S3_BUCKET or None,
-           "s3_endpoint": (S3_ENDPOINT or "AWS-Standard") if S3_BACKUP else None,
-           "boto3": (_il.find_spec("boto3") is not None) if S3_BACKUP else None,
-           # F94: System-Backup-Status (täglich SYS_BACKUP_HOUR Uhr)
-           "sys": {"enabled": SYS_BACKUP, "hour": SYS_BACKUP_HOUR, "keep": SYS_BACKUP_KEEP,
-                   "running": _SYS_BACKUP_STATE["running"],
-                   "last_ts": _SYS_BACKUP_STATE["last_ts"], "last_file": _SYS_BACKUP_STATE["last_file"],
-                   "size_mb": _SYS_BACKUP_STATE["size_mb"], "files": _SYS_BACKUP_STATE["files"],
-                   "error": _SYS_BACKUP_STATE["error"]}}
-    try:
-        if LOCAL_BACKUP_DIR:
-            out["dir_ok"] = os.path.isdir(LOCAL_BACKUP_DIR)
-            if out["dir_ok"]:
-                du = _sh.disk_usage(LOCAL_BACKUP_DIR)
-                out["backup_free_gb"] = round(du.free / 1024**3, 1)
-    except Exception:
-        pass
-    try:
-        with db_conn() as conn:
-            out["done"] = conn.execute("SELECT COUNT(*) AS c FROM recordings "
-                                       "WHERE COALESCE(backed_up,0)=1").fetchone()["c"]
-            out["pending"] = conn.execute("SELECT COUNT(*) AS c FROM recordings "
-                                          "WHERE COALESCE(backed_up,0)=0").fetchone()["c"]
-    except Exception:
-        pass
-    return jsonify(out)
 
 
-@dashboard_app.route("/api/backup/run", methods=["POST"])
-def api_backup_run():
-    return jsonify(_local_backup_scan(50))
+
 
 
 # ═══ v37: Community-Tab-Ausbau — reiche Discord-Stats + Broadcast ═══
@@ -12805,41 +12565,8 @@ def api_heatmap_lives(username):
 # ---------- X13: Profile-Snapshots ----------
 
 # ---------- X14: Auto-Archive-Rules ----------
-@dashboard_app.route("/api/auto-archive-rules", methods=["GET", "POST"])
-def api_archive_rules():
-    if request.method == "GET":
-        rows = list_archive_rules()
-        return jsonify(ok=True, rules=[{
-            "id": r["id"], "name": r["name"],
-            "condition": json.loads(r["condition_json"] or "{}"),
-            "action": json.loads(r["action_json"] or "{}"),
-            "enabled": bool(r["enabled"]),
-            "last_run": r["last_run"],
-            "last_match_count": r["last_match_count"],
-            "created_at": r["created_at"],
-        } for r in rows])
-    data = request.get_json(silent=True) or {}
-    name = (data.get("name") or "").strip()
-    condition = data.get("condition") or {}
-    action = data.get("action") or {}
-    if not name or not isinstance(condition, dict) or not isinstance(action, dict):
-        return jsonify(ok=False, error="name, condition, action required"), 400
-    rid = add_archive_rule(name, condition, action)
-    if rid is None:
-        return jsonify(ok=False, error="insert failed"), 500
-    return jsonify(ok=True, id=rid)
 
-@dashboard_app.route("/api/auto-archive-rules/<int:rule_id>", methods=["DELETE"])
-def api_archive_rule_delete(rule_id):
-    return jsonify(ok=delete_archive_rule(rule_id))
 
-@dashboard_app.route("/api/auto-archive-rules/run", methods=["POST"])
-def api_archive_rules_run():
-    data = request.get_json(silent=True) or {}
-    rule_id = data.get("rule_id")
-    result = run_archive_rules(rule_id)
-    code = 200 if result.get("ok") else 400
-    return jsonify(result), code
 
 # ---------- X21: Recording-Manifest ----------
 
@@ -21049,8 +20776,10 @@ SYS_BACKUP             = os.getenv("SYS_BACKUP", "1").strip().lower() in ("1", "
 SYS_BACKUP_HOUR        = _env_int("SYS_BACKUP_HOUR", 4)          # lokale Serverzeit, volle Stunde
 SYS_BACKUP_KEEP        = _env_int("SYS_BACKUP_KEEP", 14)
 SYS_BACKUP_MAX_FILE_MB = _env_int("SYS_BACKUP_MAX_FILE_MB", 256) # Einzeldatei-Limit im Archiv
-_SYS_BACKUP_STATE = {"running": False, "last_ts": None, "last_file": None,
-                     "size_mb": None, "files": 0, "error": None}
+# v4.1-W24: Alias auf nc/backupcfg.py, damit /api/backup/status im Blueprint
+# denselben Stand sieht. Der Monolith veraendert das Dict nur an Ort und
+# Stelle und bindet den Namen nie neu — ein Vertrag haelt das fest.
+_SYS_BACKUP_STATE = _nc_backup.STATE
 # v37: S3/B2-Offsite-Backup als optionales ZWEITES Ziel (opt-in; braucht boto3)
 S3_BACKUP = os.getenv("S3_BACKUP", "0").strip().lower() in ("1", "true", "yes", "on", "y")
 S3_ENDPOINT = os.getenv("S3_ENDPOINT", "").strip()             # z.B. https://s3.eu-central-003.backblazeb2.com
@@ -23068,44 +22797,9 @@ async def _scheduler_loop():
 
 
 def _retention_scan(days, delete=False):
-    """v37 W3: findet (und löscht optional) Aufnahmen älter als `days` Tage.
-       Sicherheit: löscht ausschließlich Dateien INNERHALB des Aufnahme-Verzeichnisses."""
-    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
-    rec_root = os.path.abspath(RECORDINGS_DIR)
-    freed = 0
-    count = 0
-    removed = []
-    try:
-        with db_conn() as conn:
-            rows = conn.execute("SELECT id, filepath FROM recordings WHERE created_at < ?", (cutoff,)).fetchall()
-            for r in rows:
-                fp = r["filepath"] or ""
-                # Härtung: nur echte Dateien im Aufnahme-Verzeichnis zählen/löschen
-                try:
-                    safe = bool(fp) and os.path.abspath(fp).startswith(rec_root + os.sep)
-                except Exception:
-                    safe = False
-                if not (safe and os.path.isfile(fp)):
-                    continue
-                sz = 0
-                try:
-                    sz = os.path.getsize(fp)
-                except Exception:
-                    pass
-                count += 1
-                freed += sz
-                if delete:
-                    try:
-                        os.remove(fp)
-                        removed.append(r["id"])
-                    except Exception as e:
-                        log.debug("retention rm %s: %s", fp, e)
-            if delete and removed:
-                marks = ",".join("?" * len(removed))
-                conn.execute("DELETE FROM recordings WHERE id IN (" + marks + ")", removed)
-    except Exception as e:
-        log.debug("retention scan: %s", e)
-    return {"count": count, "freed_bytes": freed}
+    # v4.1-W24: nach nc/retention.py geloest — mitsamt der Haertung, die nur
+    # innerhalb des Aufnahme-Verzeichnisses loescht.
+    return _nc_retention.scan(days, RECORDINGS_DIR, delete=delete)
 
 
 async def _retention_loop():
@@ -23363,6 +23057,12 @@ def _system_backup():
         _SYS_BACKUP_STATE["running"] = False
         import shutil as _sh2
         _sh2.rmtree(tmpdir, ignore_errors=True)
+
+# v4.1-W24: Haken fuer nc/routes/wartung.py. Die eigentliche Sicherung bleibt
+# hier — sie haengt an boto3, tar und dem Aufnahme-Pfad. Sichtbare Kopplung
+# statt eines Kontext-Slots, dessen 25 Plaetze eine andere Frage beantworten.
+_nc_routes_wartung.HAKEN["local_scan"]["fn"] = _local_backup_scan
+_nc_routes_wartung.HAKEN["system"]["fn"] = _system_backup
 
 
 async def _system_backup_loop():
@@ -27209,6 +26909,7 @@ dashboard_app.register_blueprint(_nc_routes_audio.bp)      # v4.1-W20
 dashboard_app.register_blueprint(_nc_routes_brain.bp)      # v4.1-W21
 dashboard_app.register_blueprint(_nc_routes_restream.bp)   # v4.1-W22
 dashboard_app.register_blueprint(_nc_routes_beobachtung.bp)       # v4.1-W23
+dashboard_app.register_blueprint(_nc_routes_wartung.bp)           # v4.1-W24
 
 
 if __name__ == "__main__":
