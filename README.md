@@ -774,7 +774,7 @@ NIGHTCRAWLER/
 │   ├── semantic.py  scheduler.py  llm.py  agents.py  report.py
 │   └── test_m*.py            Modultests
 │
-├── nc/                       89 Fachmodule (bot-frei, configure()-Injection)
+├── nc/                       95 Fachmodule (bot-frei, configure()-Injection)
 │   ├── schema.py             zentrales DB-Schema
 │   ├── restream_*.py         Ziele, Guard, Test-Push, Utils
 │   ├── ledger.py             Einnahmen-Journal (Hash-Kette)
@@ -843,7 +843,7 @@ nicht greifen, gekippte Verträge in `test_restream.py`.
 
 | | |
 |---|---|
-| Aktuelle Version | **4.0** — „Restream Control Room" (2026.08) |
+| Aktuelle Version | **4.1** — „Öffentliche Stimme" (2026.08) |
 | Flask-Routen | 359 (143 in `bot.py` · 216 in `nc/routes/`) |
 | Discord-Slash-Commands | 45 |
 | Fachmodule | 95 in `nc/` (+24 in `nc/routes/`, +3 in `nc/intel/`), 10 in `brain/` |

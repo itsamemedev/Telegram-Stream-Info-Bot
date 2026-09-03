@@ -58,13 +58,20 @@ SCHRITTE_GESAMT=11
 kopf(){ SCHRITT=$((SCHRITT+1))
   printf '\n%s%s[%d/%d] %s%s\n' "$BR" "$B" "$SCHRITT" "$SCHRITTE_GESAMT" "$1" "$R"
   printf '%s%s%s\n' "$DIM" "$(printf '─%.0s' $(seq 1 66))" "$R"; }
-info(){ printf '  %s▸%s %s\n' "$DIM" "$R" "$*"; }
-gut(){  printf '  %s✔%s %s\n' "$OK" "$R" "$*"; }
-warn(){ printf '  %s▲%s %s\n' "$WRN" "$R" "$*"; }
-fehler(){ printf '  %s✘%s %s\n' "$ERR" "$R" "$*" >&2; }
+# v4.1-W17: Mehrsprachigkeit AN DER SENKE. Jede dieser vier Funktionen (und
+# erklaere/frage_ja weiter unten) schickt ihren Text durch t(); damit sind alle
+# 112 Ausgabestellen erfasst, ohne eine einzige davon anzufassen. Fehlt eine
+# Uebersetzung, bleibt Deutsch stehen — dieselbe Regel wie in nc/i18n.py.
+# shellcheck source=lib/i18n.sh
+. "$(cd "$(dirname "$0")" && pwd)/lib/i18n.sh" 2>/dev/null || t(){ printf '%s' "$*"; }
+
+info(){ printf '  %s▸%s %s\n' "$DIM" "$R" "$(t "$*")"; }
+gut(){  printf '  %s✔%s %s\n' "$OK" "$R" "$(t "$*")"; }
+warn(){ printf '  %s▲%s %s\n' "$WRN" "$R" "$(t "$*")"; }
+fehler(){ printf '  %s✘%s %s\n' "$ERR" "$R" "$(t "$*")" >&2; }
 # Erklaerungen sind der halbe Zweck dieses Skripts — deshalb bekommen sie ein
 # eigenes, ruhiges Format und werden auf 72 Zeichen umbrochen.
-erklaere(){ printf '%s' "$FNT"; printf '%s\n' "$*" | fold -s -w 72 | sed 's/^/    /'; printf '%s' "$R"; }
+erklaere(){ printf '%s' "$FNT"; printf '%s\n' "$(t "$*")" | fold -s -w 72 | sed 's/^/    /'; printf '%s' "$R"; }
 
 MERKZETTEL=""
 merke(){ MERKZETTEL="${MERKZETTEL}${1}"$'\n'; }
@@ -103,8 +110,8 @@ frage_ja(){ # frage_ja "Frage" [J|N]   -> 0 = ja
   local f="$1" vor="${2:-J}" a
   if [ "$MODUS" = "unattended" ]; then [ "$vor" = "J" ]; return; fi
   while :; do
-    if [ "$vor" = "J" ]; then printf '  %s?%s %s %s[J/n]%s ' "$BR" "$R" "$f" "$FNT" "$R"
-    else                      printf '  %s?%s %s %s[j/N]%s ' "$BR" "$R" "$f" "$FNT" "$R"; fi
+    if [ "$vor" = "J" ]; then printf '  %s?%s %s %s[J/n]%s ' "$BR" "$R" "$(t "$f")" "$FNT" "$R"
+    else                      printf '  %s?%s %s %s[j/N]%s ' "$BR" "$R" "$(t "$f")" "$FNT" "$R"; fi
     lies a
     a=$(printf '%s' "$a" | tr 'A-Z' 'a-z')
     case "$a" in
@@ -119,8 +126,8 @@ frage_ja(){ # frage_ja "Frage" [J|N]   -> 0 = ja
 frage_text(){ # frage_text VARIABLE "Frage" "Vorgabe"
   local __v="$1" f="$2" vor="${3:-}" a
   if [ "$MODUS" = "unattended" ]; then printf -v "$__v" '%s' "$vor"; return 0; fi
-  if [ -n "$vor" ]; then printf '  %s?%s %s %s[%s]%s ' "$BR" "$R" "$f" "$FNT" "$vor" "$R"
-  else                   printf '  %s?%s %s ' "$BR" "$R" "$f"; fi
+  if [ -n "$vor" ]; then printf '  %s?%s %s %s[%s]%s ' "$BR" "$R" "$(t "$f")" "$FNT" "$vor" "$R"
+  else                   printf '  %s?%s %s ' "$BR" "$R" "$(t "$f")"; fi
   lies a
   [ -z "$a" ] && a="$vor"
   printf -v "$__v" '%s' "$a"
@@ -606,7 +613,7 @@ else warn "Keine Freigabeliste — jeder Telegram-Nutzer kann den Bot bedienen."
 
 # ── Dashboard ────────────────────────────────────────────────
 printf '\n  %s%sDashboard%s\n' "$B" "$TXT" "$R"
-erklaere "Das Dashboard ist die Weboberflaeche mit 283 Routen: Sendeleiste, Aufnahmen, Statistiken, Abwehr. Es bindet standardmaessig NUR auf 127.0.0.1 — also nicht im Netz erreichbar. Der sichere Zugang ist ein SSH-Tunnel; alles andere sperrt man ueber Token oder Firewall auf."
+erklaere "Das Dashboard ist die Weboberflaeche mit 359 Routen: Sendeleiste, Aufnahmen, Statistiken, Abwehr. Es bindet standardmaessig NUR auf 127.0.0.1 — also nicht im Netz erreichbar. Der sichere Zugang ist ein SSH-Tunnel; alles andere sperrt man ueber Token oder Firewall auf."
 frage_text DASH_PORT "Port fuers Dashboard" "$(env_get DASHBOARD_PORT || true)"
 [ -z "${DASH_PORT:-}" ] && DASH_PORT=8050
 env_set DASHBOARD_PORT "$DASH_PORT"
@@ -742,6 +749,78 @@ if [ "$MODUS" = "gefuehrt" ] && [ "$PKG" = "apt" ] && [ "$SKIP_SYSTEM" = 0 ]; th
     $SUDO apt-get install -y crowdsec || warn "CrowdSec fehlt in den Quellen — siehe docs/CROWDSEC.md."
     have cscli && gut "CrowdSec installiert: $(cscli version 2>/dev/null | head -1)"
     merke "CrowdSec: installiert — Feinheiten in docs/CROWDSEC.md"
+  fi
+fi
+
+# ── Reverse-Proxy + HTTPS ────────────────────────────────────
+# v4.1-W17: Bis hierher endete der Installer beim Dashboard auf 127.0.0.1 und
+# ueberliess den Rest der Anleitung. Genau dort brach der haeufigste Weg ab:
+# wer die Oberflaeche von aussen wollte, oeffnete den Port statt einen Proxy
+# davorzusetzen — und stand dann ohne TLS und ohne Zertifikat da. Der Log vom
+# 30.08. zeigt das Ergebnis: Dashboard auf 0.0.0.0:8050, ohne Token, mit
+# Fremdzugriffen im Journal. Der Proxy ist der Weg, der das ueberfluessig macht.
+if [ "$MODUS" = "gefuehrt" ] && [ "$PKG" = "apt" ] && [ "$SKIP_SYSTEM" = 0 ]; then
+  erklaere "Reverse-Proxy: nginx nimmt Port 443 mit einem echten Zertifikat entgegen und reicht nach 127.0.0.1 durch. Damit bleibt der Dashboard-Port zu, die Verbindung ist verschluesselt, und die OAuth-Rueckrufe von Kick, Twitch und YouTube funktionieren ohne SSH-Tunnel — die brauchen eine oeffentlich erreichbare HTTPS-Adresse. Das Zertifikat holt certbot von Let's Encrypt und erneuert es selbst."
+  if frage_ja "nginx als Reverse-Proxy mit HTTPS einrichten?" N; then
+    frage_text PROXY_DOMAIN "Domain, die auf diese Maschine zeigt (z.B. bot.example.dev)" ""
+    if [ -z "${PROXY_DOMAIN:-}" ]; then
+      warn "Ohne Domain kein Zertifikat — uebersprungen."
+    else
+      $SUDO apt-get install -y nginx certbot python3-certbot-nginx \
+        || warn "nginx/certbot liessen sich nicht installieren."
+      if have nginx; then
+        NGX="/etc/nginx/sites-available/nightcrawler"
+        $SUDO tee "$NGX" >/dev/null <<NGXEOF
+# NIGHTCRAWLER — erzeugt von tools/installer.sh
+# certbot traegt die TLS-Zeilen selbst nach (--nginx).
+server {
+    listen 80;
+    listen [::]:80;
+    server_name ${PROXY_DOMAIN};
+
+    # Der Bot bindet auf 127.0.0.1 — der Port bleibt von aussen zu.
+    location / {
+        proxy_pass         http://127.0.0.1:${DASH_PORT};
+        proxy_http_version 1.1;
+        proxy_set_header   Host              \$host;
+        proxy_set_header   X-Real-IP         \$remote_addr;
+        proxy_set_header   X-Forwarded-For   \$proxy_add_x_forwarded_for;
+        # Diese drei liest nc/oauthredirect.py, um die Rueckruf-Adresse zu
+        # bauen. Fehlt X-Forwarded-Proto, baut der Bot http:// und Google
+        # lehnt den OAuth-Rueckruf ab, BEVOR die Kontoauswahl erscheint.
+        proxy_set_header   X-Forwarded-Proto \$scheme;
+        proxy_set_header   X-Forwarded-Host  \$host;
+        proxy_set_header   X-Forwarded-Port  \$server_port;
+        # Server-sent events und lange Antworten (Log-Tail, KI-Streaming).
+        proxy_buffering    off;
+        proxy_read_timeout 300s;
+    }
+}
+NGXEOF
+        $SUDO ln -sf "$NGX" /etc/nginx/sites-enabled/nightcrawler
+        if $SUDO nginx -t >/dev/null 2>&1; then
+          $SUDO systemctl reload nginx 2>/dev/null || $SUDO systemctl restart nginx 2>/dev/null || true
+          gut "nginx eingerichtet."
+        else
+          warn "nginx-Konfiguration fehlerhaft — bitte 'sudo nginx -t' pruefen."
+        fi
+        if have certbot; then
+          erklaere "certbot holt jetzt das Zertifikat. Dafuer muss Port 80 dieser Maschine aus dem Internet erreichbar sein und die Domain hierher zeigen — sonst schlaegt die Pruefung fehl. Die Erneuerung laeuft danach von selbst per systemd-Timer."
+          if frage_ja "Zertifikat jetzt holen (Let's Encrypt)?" J; then
+            $SUDO certbot --nginx -d "$PROXY_DOMAIN" --agree-tos --redirect -n \
+                  --register-unsafely-without-email \
+              && gut "Zertifikat aktiv, HTTP leitet auf HTTPS um." \
+              || warn "certbot fehlgeschlagen — Port 80 offen? Domain zeigt hierher? Erneut: sudo certbot --nginx -d $PROXY_DOMAIN"
+          fi
+        fi
+        # Der Bot muss seine oeffentliche Adresse kennen: sonst baut er die
+        # OAuth-Rueckrufe auf localhost, und kein Anbieter erreicht die.
+        env_set PUBLIC_BASE_URL "https://${PROXY_DOMAIN}"
+        env_set TRUSTED_PROXIES "127.0.0.1"
+        merke "Reverse-Proxy: https://${PROXY_DOMAIN} → 127.0.0.1:${DASH_PORT} (nginx + certbot)"
+        merke "PUBLIC_BASE_URL und TRUSTED_PROXIES sind gesetzt — die OAuth-Rueckrufe stimmen damit ohne weitere Pflege."
+      fi
+    fi
   fi
 fi
 
@@ -930,8 +1009,12 @@ fi
 
 # ── MOTD ─────────────────────────────────────────────────────
 if [ -f "$ZIEL/tools/motd.sh" ] && { [ "$OS" = "Darwin" ] || [ -d /etc/update-motd.d ] || [ "$SYSTEMD" = 1 ]; }; then
-  erklaere "Die MOTD zeigt bei jedem SSH-Login den Zustand in einem Bild: Last, RAM, Platte, Dienst, Dashboard, Fehler heute, wie viele Streamer live sind und ob wirklich aufgenommen wird. Kostet einen Sekundenbruchteil pro Login."
-  if frage_ja "Status-MOTD beim Login einrichten?" J; then
+  erklaere "Die MOTD zeigt bei jedem SSH-Login den Zustand in einem Bild: Last, RAM, Platte, Dienst, Dashboard, Fehler heute, wie viele Streamer live sind und ob wirklich aufgenommen wird. Kostet einen Sekundenbruchteil pro Login. Sie ersetzt dabei die Standard-MOTD der Distribution — die kommt bei 'tools/motd.sh --uninstall' vollstaendig zurueck."
+  # v4.1-W17: gehoert zur Standard-Einrichtung. Im gefuehrten Lauf weiterhin
+  # eine Frage (mit Vorgabe J), im Express- und im unbeaufsichtigten Lauf
+  # kommentarlos AN — vorher blieb sie dort ganz aus, obwohl sie nichts kostet
+  # und das erste ist, was der Betreiber nach einem Login sieht.
+  if [ "$MODUS" != "gefuehrt" ] || frage_ja "Status-MOTD beim Login einrichten?" J; then
     chmod +x "$ZIEL/tools/motd.sh"
     if [ "$OS" = "Darwin" ]; then
       BOT_DIR="$ZIEL" SERVICE="" DASH_PORT="$DASH_PORT" "$ZIEL/tools/motd.sh" --install || warn "MOTD-Einrichtung fehlgeschlagen."

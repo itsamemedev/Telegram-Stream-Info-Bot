@@ -48,7 +48,14 @@ BARW="${BARW:-22}"
 SHOW_REC="${SHOW_REC:-1}"       # Aufnahmen-Block (0 = aus)
 REC_CACHE_TTL="${REC_CACHE_TTL:-900}"   # Sekunden; der Scan ist der teuerste Teil
 CPU_SAMPLE="${CPU_SAMPLE:-0.20}"        # Messfenster; 0 = ueberspringen
-COLOR_MODE="${COLOR_MODE:-auto}"        # auto | truecolor | 256 | off
+# v4.1-W17: 'always' ist die neue Vorgabe und das, was --install festschreibt.
+# Grund: 'auto' waehlt ohne COLORTERM die 256-Farben-Palette — viele
+# Handy-SSH-Apps (Termius, JuiceSSH, Blink) melden aber nur TERM=xterm und
+# stellen 256er-Codes teils gar nicht oder falsch dar. Der Betreiber sah dann
+# eine graue Wand statt der Ampel, fuer die die MOTD gebaut ist.
+# 'always' faellt deshalb bis auf die 16 BASISFARBEN durch, die wirklich jedes
+# Terminal kann — nie auf farblos. Reihenfolge: truecolor > 256 > 16.
+COLOR_MODE="${COLOR_MODE:-always}"      # always | auto | truecolor | 256 | 16 | off
 DEST="${DEST:-/etc/update-motd.d/99-nightcrawler}"
 
 OS="$(uname -s 2>/dev/null || echo unknown)"
@@ -65,19 +72,54 @@ fi
 # shellcheck source=/dev/null
 [ -r "$CONF" ] && . "$CONF"
 
+# v4.1-W17: Mehrsprachigkeit. Der Katalog liegt neben dem Werkzeug; ist er nicht
+# erreichbar (die installierte Kopie unter /etc/update-motd.d/ hat kein
+# locales/ daneben), bleibt alles deutsch statt zu scheitern.
+# shellcheck source=lib/i18n.sh
+if [ -r "$(dirname "$0")/lib/i18n.sh" ]; then
+  . "$(dirname "$0")/lib/i18n.sh"
+elif [ -n "${BOT_DIR:-}" ] && [ -r "${BOT_DIR}/tools/lib/i18n.sh" ]; then
+  # Die INSTALLIERTE Kopie unter /etc/update-motd.d/ hat kein locales/ neben
+  # sich. i18n.sh findet den Katalog trotzdem: es sucht ueber BASH_SOURCE
+  # relativ zu SICH SELBST, also unter ${BOT_DIR}/locales/.
+  . "${BOT_DIR}/tools/lib/i18n.sh"
+else
+  t(){ printf '%s' "$*"; }
+fi
+
 # ── Farben ───────────────────────────────────────────────────
 # Bewusst OHNE TTY-Test: die MOTD laeuft unter run-parts ohne TTY, ein Gate
 # haette sie dauerhaft farblos gemacht. Wer es roh braucht: COLOR_MODE=off.
 e=$'\033'
 _tc=0
+_pal=256
 case "$COLOR_MODE" in
   off)       e=""; ;;
+  16)        _pal=16 ;;
   256)       _tc=0 ;;
   truecolor) _tc=1 ;;
+  always)
+    # Nie farblos. Die reichste Palette, die die Umgebung wirklich zusagt —
+    # und im Zweifel 16, weil das jede Handy-App darstellt.
+    case "${COLORTERM:-}" in
+      *[Tt]ruecolor*|*24bit*) _tc=1 ;;
+      *) case "${TERM:-}" in
+           *256color*|*direct*) _pal=256 ;;
+           ""|dumb)             _pal=16 ;;
+           *)                   _pal=16 ;;
+         esac ;;
+    esac ;;
   *)         case "${COLORTERM:-}" in *[Tt]ruecolor*|*24bit*) _tc=1 ;; esac ;;
 esac
 if [ -z "$e" ]; then
   BR=""; DIM=""; TXT=""; FNT=""; OK=""; WRN=""; ERR=""; B=""; R=""
+elif [ "$_tc" != 1 ] && [ "$_pal" = 16 ]; then
+  # Die 16 Basisfarben. Haesslicher als die Messing-Palette, aber sichtbar —
+  # und sichtbar schlaegt schoen, wenn es die Statusanzeige eines Servers ist.
+  BR="${e}[1;33m"; DIM="${e}[33m"; TXT="${e}[37m"
+  FNT="${e}[90m"; OK="${e}[32m"; WRN="${e}[33m"
+  ERR="${e}[31m"
+  B="${e}[1m"; R="${e}[0m"
 elif [ "$_tc" = 1 ]; then
   BR="${e}[38;2;232;200;106m"; DIM="${e}[38;2;201;162;39m"; TXT="${e}[38;2;239;231;214m"
   FNT="${e}[38;2;138;129;114m"; OK="${e}[38;2;127;168;107m"; WRN="${e}[38;2;224;154;60m"
@@ -164,15 +206,30 @@ fi
 
 # ── Install / Uninstall ──────────────────────────────────────
 NC_STATE="/etc/update-motd.d/.nc-silenced"
-DEFAULTS="00-header 10-help-text 50-landscape-sysinfo 50-motd-news 80-esm-announce 88-esm-announce 90-updates-available 91-contract-ua-esm-status 91-release-upgrade 92-unattended-upgrades 95-hwe-eol"
+NC_MOTD_SAVED="/etc/nightcrawler/motd-static.bak"
+# v4.1-W17: Die feste Liste war der Fehler. Sie kannte Ubuntus Standardstuecke —
+# aber nicht das, was Hoster, Images und Distributionen sonst noch einhaengen
+# (00-hoster-banner, 10-uname, 98-reboot-required, neofetch-Schnipsel, das
+# figlet-Logo des Anbieters). Nach --install standen die alle WEITER da, und
+# die NIGHTCRAWLER-MOTD hing unten an einer fremden Wand aus Text.
+# Jetzt wird ALLES ausser dem eigenen Stueck gedaempft — und jede gedaempfte
+# Datei namentlich vermerkt, damit --uninstall exakt sie zurueckholt und nichts
+# anderes. Die Liste bleibt nur noch als Erklaerung stehen, wofuer sie stand.
 RC_MARK_A="# >>> NIGHTCRAWLER MOTD >>>"
 RC_MARK_E="# <<< NIGHTCRAWLER MOTD <<<"
 
 silence_defaults(){
-  local s="" f p
-  for f in $DEFAULTS; do
-    p="/etc/update-motd.d/$f"
-    [ -x "$p" ] && chmod -x "$p" 2>/dev/null && s="$s $f"
+  local s="" f b
+  # ALLES ausser dem eigenen Stueck. Der Name des eigenen kommt aus DEST,
+  # nicht fest verdrahtet — wer DEST umsetzt, daempft sich sonst selbst.
+  local eigen; eigen="$(basename "$DEST")"
+  for f in /etc/update-motd.d/*; do
+    [ -e "$f" ] || continue                  # leeres Verzeichnis: das Glob bleibt stehen
+    b="$(basename "$f")"
+    [ "$b" = "$eigen" ] && continue
+    case "$b" in .*) continue ;; esac        # .nc-silenced und Konsorten
+    [ -x "$f" ] || continue                  # schon still
+    chmod -x "$f" 2>/dev/null && s="$s $b"
   done
   if [ -n "$s" ]; then
     printf '%s\n' $s > "$NC_STATE"
@@ -180,13 +237,39 @@ silence_defaults(){
   else
     printf "  ${FNT}Standard-MOTD war bereits still${R}\n"
   fi
+  # Die STATISCHE /etc/motd laeuft nicht ueber run-parts und blieb deshalb
+  # sichtbar, egal was hier gedaempft wurde. Auf Debian/Ubuntu steht dort das
+  # Willkommens-Geschwafel des Images. Beiseitelegen statt loeschen — sie kommt
+  # bei --uninstall zurueck.
+  if [ -s /etc/motd ]; then
+    mkdir -p "$(dirname "$NC_MOTD_SAVED")" 2>/dev/null
+    if mv /etc/motd "$NC_MOTD_SAVED" 2>/dev/null; then
+      : > /etc/motd 2>/dev/null || true
+      printf "  ${FNT}statische /etc/motd beiseitegelegt${R} → %s\n" "$NC_MOTD_SAVED"
+    fi
+  fi
 }
 restore_defaults(){
-  [ -f "$NC_STATE" ] || return
-  local f
-  while read -r f; do [ -e "/etc/update-motd.d/$f" ] && chmod +x "/etc/update-motd.d/$f"; done < "$NC_STATE"
-  rm -f "$NC_STATE"
-  printf "  ${FNT}Standard-MOTD wiederhergestellt${R}\n"
+  local f wieder=0
+  if [ -f "$NC_STATE" ]; then
+    while read -r f; do
+      [ -n "$f" ] || continue
+      [ -e "/etc/update-motd.d/$f" ] && chmod +x "/etc/update-motd.d/$f" && wieder=1
+    done < "$NC_STATE"
+    rm -f "$NC_STATE"
+  fi
+  # Die beiseitegelegte statische MOTD zurueck — aber nur, wenn seither nichts
+  # Neues an ihre Stelle geschrieben wurde. Fremdes Zeug zu ueberbuegeln waere
+  # schlimmer als eine Datei zu viel.
+  if [ -f "$NC_MOTD_SAVED" ]; then
+    if [ ! -s /etc/motd ]; then
+      mv "$NC_MOTD_SAVED" /etc/motd 2>/dev/null && wieder=1
+    else
+      printf "  ${WRN}/etc/motd wurde seither neu beschrieben${R} ${FNT}— Sicherung bleibt unter %s${R}\n" "$NC_MOTD_SAVED"
+    fi
+  fi
+  [ "$wieder" = 1 ] && printf "  ${FNT}Standard-MOTD wiederhergestellt${R}\n"
+  return 0
 }
 
 write_conf(){
@@ -292,7 +375,8 @@ case "${1:-}" in
     printf "  --version        Fassung\n\n"
     printf "Anpassen ueber %s oder Umgebung:\n" "$CONF"
     printf "  SERVICE BOT_DIR DASH_PORT DB DISK_TARGET SHOW_REC CPU_SAMPLE COLOR_MODE\n"
-    printf "Beispiel:  BOT_DIR=~/mein-bot COLOR_MODE=off ./motd.sh\n"
+    printf "  COLOR_MODE: always (Vorgabe) | auto | truecolor | 256 | 16 | off\n"
+    printf "Beispiel:  BOT_DIR=~/mein-bot COLOR_MODE=16 ./motd.sh\n"
     exit 0;;
   "") ;;
   *) printf "${WRN}Unbekannte Option: %s${R}  (--help)\n" "$1"; exit 1;;
