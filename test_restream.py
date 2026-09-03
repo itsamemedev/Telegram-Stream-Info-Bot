@@ -8216,6 +8216,118 @@ def test_v41_w16_discord_blueprint():
     ok("v4.1-W16: 6 Routen raus, Client im Register, Session geteilt, 0 neue Slots")
 
 
+
+# ------------------- v4.1-W17) Werkzeuge: Sprache, Proxy, MOTD, Website
+
+def test_v41_w17_werkzeuge():
+    """v4.1-W17: die fuenf Befunde des Betreibers an den Werkzeugen."""
+    inst = open("tools/installer.sh", encoding="utf-8").read()
+    motd = open("tools/motd.sh", encoding="utf-8").read()
+
+    # (1) Mehrsprachigkeit AN DER SENKE. Der Punkt ist, dass keine
+    # Aufrufstelle vergessen werden KANN: wer info/gut/warn/fehler benutzt,
+    # ist automatisch erfasst. Einzeln umschlossen waeren es 141 Stellen
+    # gewesen, und die vergessene faellt niemandem auf.
+    assert "lib/i18n.sh" in inst and "lib/i18n.sh" in motd, "i18n nicht eingebunden"
+    for _f in ("info(){", "gut(){", "warn(){", "fehler(){", "erklaere(){"):
+        _i = inst.index(_f)
+        assert '$(t "' in inst[_i:_i + 220], "%s uebersetzt nicht" % _f
+    # Faellt der Katalog aus, bleibt Deutsch — nie eine leere Zeile.
+    lib = open("tools/lib/i18n.sh", encoding="utf-8").read()
+    assert "printf '%s' \"$_s\"" in lib, "kein Rueckfall auf den deutschen Text"
+    assert 'NC_LANG_EFF" = "de"' in lib, "deutsche Ausgabe geht unnoetig durch den Katalog"
+
+    # (2) Reverse-Proxy. Die drei X-Forwarded-Kopfzeilen sind der Punkt:
+    # ohne sie baut nc/oauthredirect.py http://localhost, und Google lehnt
+    # den Rueckruf ab, BEVOR die Kontoauswahl erscheint (W121).
+    assert "certbot" in inst and "python3-certbot-nginx" in inst, "kein certbot"
+    for _h in ("X-Forwarded-Proto", "X-Forwarded-Host", "X-Forwarded-Port"):
+        assert _h in inst, "%s fehlt in der nginx-Vorlage" % _h
+    assert "env_set PUBLIC_BASE_URL" in inst and "env_set TRUSTED_PROXIES" in inst, \
+        "der Bot erfaehrt seine oeffentliche Adresse nicht"
+
+    # (3) MOTD: standardmaessig mit, und ALLES andere gedaempft.
+    assert '[ "$MODUS" != "gefuehrt" ] || frage_ja "Status-MOTD' in inst, \
+        "MOTD faellt im Express-/unbeaufsichtigten Lauf wieder aus"
+    assert "DEFAULTS=" not in motd, "die feste Liste ist zurueck"
+    assert "for f in /etc/update-motd.d/*" in motd, "es wird wieder nur eine Auswahl gedaempft"
+    assert 'b" = "$eigen"' in motd, "die MOTD daempft sich selbst mit"
+    # Die statische /etc/motd laeuft nicht ueber run-parts — sie blieb sonst stehen.
+    assert "NC_MOTD_SAVED" in motd and "/etc/motd" in motd, "statische MOTD unberuecksichtigt"
+    # Und alles davon muss zurueckkommen.
+    _un = motd[motd.index("restore_defaults(){"):]
+    _un = _un[:_un.index("\nwrite_conf(")]
+    assert "chmod +x" in _un and "NC_MOTD_SAVED" in _un, "--uninstall holt nicht alles zurueck"
+    assert "wurde seither neu beschrieben" in _un, \
+        "die Sicherung wuerde fremden Inhalt ueberbuegeln"
+
+    # (4) Farbe IMMER — auch dort, wo COLORTERM fehlt. Genau das ist der Fall
+    # in den Handy-SSH-Apps: sie melden TERM=xterm und bekamen 256er-Codes.
+    assert 'COLOR_MODE="${COLOR_MODE:-always}"' in motd, "Vorgabe nicht 'always'"
+    assert "_pal=16" in motd, "kein Rueckfall auf die 16 Basisfarben"
+    _c = motd[motd.index("case \"$COLOR_MODE\" in"):]
+    _c = _c[:_c.index("have(){")]
+    assert "always)" in _c and "38;5;" in motd and "[1;33m" in motd, \
+        "die drei Paletten sind nicht vollstaendig"
+
+    # (5) Die Zahlen im README stimmen wieder — und der Drift ist maschinell
+    # gefangen. "4.0 Restume Control Room" stand ein halbes Jahr da, weil
+    # keine Pruefung Versionen kennt; Zahlenpruefung faengt "4.0" nicht.
+    import re as _re
+    _v = open("nc/version.py", encoding="utf-8").read()
+    _ver = _re.search(r'^VERSION\s*=\s*"([^"]+)"', _v, _re.M).group(1)
+    _rd = open("README.md", encoding="utf-8").read()
+    _z = [z for z in _rd.splitlines() if "Aktuelle Version" in z]
+    assert _z and _ver in _z[0], "README nennt eine andere Fassung als nc/version.py"
+    _np = open("tools/ncpatch.py", encoding="utf-8").read()
+    assert "nc/version.py sagt" in _np, "der Versionsdrift wird nicht geprueft"
+    ok("v4.1-W17: Werkzeuge zweisprachig, Proxy+certbot, MOTD raeumt auf, "
+       "Farbe immer, Versionsdrift geprueft")
+
+
+def test_v41_w17_website():
+    """v4.1-W17: die Website hat Material bekommen — ohne Klassen zu brechen."""
+    neu = open("website/lafap_index.html", encoding="utf-8").read()
+
+    # (1) Die Ueberarbeitung haengt an BESTEHENDEN Klassen. Das ist der Grund,
+    # warum sie in einem Zug zurueckrollbar ist: kein Markup angefasst.
+    assert "v4.1-W17 · Grafische Ueberarbeitung" in neu
+    for _k in (".btn", ".stat", ".log", ".acronym", ".tagline", "header"):
+        assert _k in neu, "%s verschwunden" % _k
+
+    # (2) Material statt flacher Kasten — und die Bezel-Kante als das eine
+    # wiedererkennbare Detail, wie im Dashboard.
+    for _t in ("--e1:", "--e2:", "--e3:", "--kante:", "--bezel:", "--tiefe:"):
+        assert _t in neu, "%s fehlt" % _t
+    assert ".log::before" in neu, "keine Bezel-Kante"
+
+    # (3) Fliessende Typo statt fester 15px.
+    for _t in ("--t-xs:", "--t-s:", "--t-m:", "--t-l:", "--t-xl:"):
+        assert _t in neu and "clamp(" in neu, "%s fehlt" % _t
+
+    # (4) Bewegung ist abschaltbar, Finger bekommen 44px, Druck bleibt lesbar.
+    assert "prefers-reduced-motion:reduce" in neu
+    assert "@media (pointer:coarse)" in neu and "min-height:56px" in neu, \
+        "Touch-Ziele zu klein"
+    assert "@media print" in neu, "gedruckt bleibt die Seite schwarz"
+
+    # (5) Schriften weiterhin LOKAL. Das ist kein Geschmack, sondern der
+    # Grund, warum die Seite ueberhaupt ohne Einwilligung ausgeliefert werden
+    # darf (LG Muenchen I, 3 O 17493/20).
+    # Geprueft wird das LADEN, nicht die Erwaehnung: der Kommentar daneben
+    # erklaert ausdruecklich, warum die Schriften NICHT von Google kommen, und
+    # nennt Google dabei beim Namen. Eine Textsuche haette genau die Erklaerung
+    # bestraft, die den Fehler verhindert — dieselbe Falle wie beim
+    # globals()-Docstring in v4.1-W9.
+    import re as _re2
+    _laden = _re2.findall(r'(?:href|src)\s*=\s*["\'][^"\']*fonts\.(?:googleapis|gstatic)\.com',
+                          neu)
+    assert not _laden, \
+        "Schriften kommen wieder von Google — IP jedes Besuchers geht mit: %s" % _laden
+    assert "@font-face" in neu and "fonts/orbitron" in neu
+    ok("v4.1-W17: Website mit Material und Rhythmus, Klassen und Datenschutz intakt")
+
+
 def main():
     print("test_restream — Restream-Kernlogik (Mock-basiert)")
     test_streak()
@@ -8289,6 +8401,8 @@ def main():
     test_v41_w14_watchdog_ursache()
     test_v41_w15_chat_und_cohost()
     test_v41_w16_discord_blueprint()
+    test_v41_w17_werkzeuge()
+    test_v41_w17_website()
     test_b168_moderator_everywhere()
     test_b169_kick_oauth()
     test_b170_azrael_and_youtube()

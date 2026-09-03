@@ -1,0 +1,149 @@
+# NIGHTCRAWLER — Katalog fuer die Shell-Werkzeuge (installer.sh, motd.sh)
+#
+# Format: DEUTSCHER TEXT <TAB> ENGLISCHER TEXT
+# Der deutsche Text ist der SCHLUESSEL — genau wie in locales/en.json fuer den
+# Bot. Fehlt eine Zeile, bleibt Deutsch stehen; ein fehlender Eintrag ist also
+# nie ein Fehler, nur eine Luecke. Neue Zeilen einfach anhaengen.
+#
+# Pruefen:  python3 tools/i18n_tools.py --check en
+.env aus der Vorlage angelegt (alle Vorgaben aktiv, nichts gesetzt).	.env created from the template (all defaults active, nothing set).
+.env, Datenbanken, Aufnahmen und Logs werden dabei NIE angefasst — sie gehoeren dir, nicht dem Build.	.env, databases, recordings and logs are NEVER touched — they belong to you, not to the build.
+Alle Einstellungen leben in einer einzigen Datei: .env. Sie enthaelt Bot-Token, Stream-Keys und Cookies — deshalb bekommt sie Rechte 600 (nur du darfst lesen) und gehoert NIE in ein Archiv oder ein Repository.	Every setting lives in a single file: .env. It holds bot tokens, stream keys and cookies — which is why it gets mode 600 (only you may read it) and NEVER belongs in an archive or a repository.
+Alles Weitere lebt in einer virtuellen Umgebung unter .venv/ — ein eigener Ordner mit eigenem Python und eigenen Bibliotheken. Damit kann keine Installation hier das System-Python beschaedigen und umgekehrt.	Everything else lives in a virtual environment under .venv/ — its own folder with its own Python and its own libraries. That way no install here can damage the system Python, or the other way round.
+Alles hier ist Zubehoer. Der Bot laeuft ohne jedes davon; er kann mit ihnen mehr. Was du jetzt auslaesst, laesst sich spaeter jederzeit nachruesten.	Everything here is optional. The bot runs without any of it; it can do more with it. Whatever you skip now can be added later at any time.
+Auf allen anderen Maschinen bleibt es bei den keylosen Backends. Ein Schluessel von enter.pollinations.ai (POLLINATIONS_API_KEY) macht sie spuerbar zuverlaessiger — eintragen laesst er sich jederzeit in der .env.	On every other machine the keyless backends remain. A key from enter.pollinations.ai (POLLINATIONS_API_KEY) makes them noticeably more reliable — you can add it to .env at any time.
+Bestehende Installation gefunden.	Existing installation found.
+Bestehende Werte bleiben; nur was du jetzt beantwortest, wird ueberschrieben.	Existing values are kept; only what you answer now gets overwritten.
+Bitte selbst bereitstellen: ffmpeg streamlink yt-dlp git curl sqlite3	Please provide these yourself: ffmpeg streamlink yt-dlp git curl sqlite3
+CrowdSec ist die Abwehr: es liest Logs mit, erkennt Angriffsmuster und sperrt IPs. Das Dashboard zeigt Sperren und Angriffswellen an; der sentinel-Agent meldet Spitzen. Sinnvoll, sobald die Maschine aus dem Netz erreichbar ist.	CrowdSec is the defence layer: it reads along in the logs, recognises attack patterns and blocks IPs. The dashboard shows bans and attack waves; the sentinel agent reports spikes. Worth having as soon as the machine is reachable from the network.
+CrowdSec: installiert — Feinheiten in docs/CROWDSEC.md	CrowdSec: installed — details in docs/en/CROWDSEC.md
+Datenbank liess sich nicht anlegen — bleibe bei SQLite.	Could not create the database — staying with SQLite.
+Der Bot laeuft trotzdem — du musst ffmpeg, streamlink und yt-dlp dann selbst installieren. Schritt 5 wird uebersprungen.	The bot still runs — you will have to install ffmpeg, streamlink and yt-dlp yourself. Step 5 is skipped.
+Der Port wird oeffentlich. Token ist damit Pflicht (kommt gleich).	The port becomes public. A token is therefore mandatory (coming up next).
+Die Eingaben waren nicht gleich — noch einmal.	The entries did not match — once more.
+Discord konfiguriert.	Discord configured.
+Ersatzpruefung: Modul-Import	Fallback check: module import
+Es ist bereits ein BOT_TOKEN eingetragen.	A BOT_TOKEN is already configured.
+Homebrew fehlt. Es ist auf macOS der einzige vernuenftige Weg zu ffmpeg.	Homebrew is missing. On macOS it is the only sensible route to ffmpeg.
+Installation direkt im vorhandenen Verzeichnis — nichts zu kopieren.	Installing directly in the existing directory — nothing to copy.
+Kein MariaDB-Client gefunden — bleibe bei SQLite.	No MariaDB client found — staying with SQLite.
+Kein Quelltext neben dem Skript — er wird von GitHub geholt.	No source next to the script — fetching it from GitHub.
+Kein passendes Release gefunden — Handanleitung: docs/SETUP_LLAMACPP.md	No matching release found — manual instructions: docs/en/SETUP_LLAMACPP.md
+Lade das Modell (Qwen2.5-1.5B-Instruct, Q4_K_M, ca. 1 GB) …	Downloading the model (Qwen2.5-1.5B-Instruct, Q4_K_M, approx. 1 GB) …
+Leistungsprofil: sparsam (RESTREAM_SINGLE=1, Bitrate 3500)	Performance profile: frugal (RESTREAM_SINGLE=1, bitrate 3500)
+Lokales LLM ausgelassen (nur fuer x86_64-Linux mit >= 3 GB RAM vorbereitet).	Local LLM skipped (only prepared for x86_64 Linux with >= 3 GB RAM).
+MOTD: aktiv (Vorschau: tools/motd.sh · Erkennung pruefen: tools/motd.sh --doctor)	MOTD: active (preview: tools/motd.sh · check detection: tools/motd.sh --doctor)
+MariaDB eingerichtet (Datenbank und Nutzer 'nightcrawler').	MariaDB set up (database and user 'nightcrawler').
+MariaDB: Nutzer nightcrawler, Passwort in .env (MARIADB_PASSWORD)	MariaDB: user nightcrawler, password in .env (MARIADB_PASSWORD)
+Mindestens ein Paket liess sich nicht installieren.	At least one package could not be installed.
+NIGHTCRAWLER ist eingerichtet.	NIGHTCRAWLER is set up.
+Notieren oder im Passwortmanager ablegen. Es steht ausserdem in der .env (chmod 600) und laesst sich dort jederzeit nachlesen.	Write it down or store it in a password manager. It is also in .env (chmod 600) and can be read there at any time.
+Paketmanager nicht erkannt (weder apt noch brew).	Package manager not recognised (neither apt nor brew).
+Python-Pakete stehen.	Python packages are in place.
+Quelltext geholt.	Source fetched.
+Sparsames Profil gesetzt (jederzeit in der .env aenderbar).	Frugal profile applied (changeable in .env at any time).
+Suche das aktuelle Release-Paket …	Looking for the current release package …
+Systempakete installiert.	System packages installed.
+Totmann-Meldung verdrahtet.	Dead-man alert wired up.
+Uebersprungen (--skip-system oder kein Paketmanager).	Skipped (--skip-system or no package manager).
+Uebersprungen. Ohne ffmpeg gibt es weder Aufnahme noch Restream.	Skipped. Without ffmpeg there is neither recording nor restreaming.
+Umgebung angelegt.	Environment created.
+Weder root noch sudo — Systempakete koennen nicht installiert werden.	Neither root nor sudo — system packages cannot be installed.
+brew install ffmpeg streamlink yt-dlp git sqlite	brew install ffmpeg streamlink yt-dlp git sqlite
+llama.cpp laeuft auf 127.0.0.1:8080.	llama.cpp is running on 127.0.0.1:8080.
+pip install laeuft — das dauert je nach Verbindung 1 bis 15 Minuten.	pip install is running — depending on your connection this takes 1 to 15 minutes.
+venv liess sich nicht anlegen.	Could not create the venv.
+Auf MariaDB umstellen?	Switch to MariaDB?
+Auf den neuesten Stand bringen (git pull)?	Bring it up to date (git pull)?
+CrowdSec installieren?	Install CrowdSec?
+Dashboard im Netz erreichbar machen (0.0.0.0)?	Make the dashboard reachable on the network (0.0.0.0)?
+Dienst aktivieren und starten?	Enable and start the service?
+Diese Pakete jetzt installieren?	Install these packages now?
+Diese Pakete jetzt per Homebrew installieren?	Install these packages via Homebrew now?
+Discord jetzt einrichten?	Set up Discord now?
+Ersetzen?	Replace?
+Homebrew jetzt installieren?	Install Homebrew now?
+Loslegen?	Get started?
+MariaDB-Server lokal installieren?	Install a MariaDB server locally?
+PIN-Login einrichten?	Set up PIN login?
+Sparsames Profil setzen?	Apply the frugal profile?
+Status-MOTD beim Login einrichten?	Set up the status MOTD on login?
+Totmann-Meldung einrichten?	Set up the dead-man alert?
+deadsnakes-PPA hinzufuegen und python3.12 installieren?	Add the deadsnakes PPA and install python3.12?
+launchd-Eintrag anlegen?	Create a launchd entry?
+llama.cpp lokal einrichten (Download ca. 1 GB)?	Set up llama.cpp locally (download approx. 1 GB)?
+python3.12/3.13 aus den Paketquellen installieren?	Install python3.12/3.13 from the package sources?
+python@3.13 per Homebrew installieren?	Install python@3.13 via Homebrew?
+uv installieren und darueber Python 3.13 holen?	Install uv and get Python 3.13 through it?
+Reverse-Proxy: nginx nimmt Port 443 mit einem echten Zertifikat entgegen und reicht nach 127.0.0.1 durch. Damit bleibt der Dashboard-Port zu, die Verbindung ist verschluesselt, und die OAuth-Rueckrufe von Kick, Twitch und YouTube funktionieren ohne SSH-Tunnel — die brauchen eine oeffentlich erreichbare HTTPS-Adresse. Das Zertifikat holt certbot von Let's Encrypt und erneuert es selbst.	Reverse proxy: nginx takes port 443 with a real certificate and forwards to 127.0.0.1. The dashboard port stays closed, the connection is encrypted, and the OAuth callbacks from Kick, Twitch and YouTube work without an SSH tunnel — they need a publicly reachable HTTPS address. certbot fetches the certificate from Let's Encrypt and renews it by itself.
+nginx als Reverse-Proxy mit HTTPS einrichten?	Set up nginx as a reverse proxy with HTTPS?
+Domain, die auf diese Maschine zeigt (z.B. bot.example.dev)	Domain pointing at this machine (e.g. bot.example.dev)
+Ohne Domain kein Zertifikat — uebersprungen.	No domain, no certificate — skipped.
+nginx/certbot liessen sich nicht installieren.	nginx/certbot could not be installed.
+nginx eingerichtet.	nginx configured.
+nginx-Konfiguration fehlerhaft — bitte 'sudo nginx -t' pruefen.	nginx configuration is faulty — please check with 'sudo nginx -t'.
+certbot holt jetzt das Zertifikat. Dafuer muss Port 80 dieser Maschine aus dem Internet erreichbar sein und die Domain hierher zeigen — sonst schlaegt die Pruefung fehl. Die Erneuerung laeuft danach von selbst per systemd-Timer.	certbot will now fetch the certificate. For that, port 80 of this machine must be reachable from the internet and the domain must point here — otherwise the challenge fails. Renewal then runs by itself via a systemd timer.
+Zertifikat jetzt holen (Let's Encrypt)?	Fetch the certificate now (Let's Encrypt)?
+Zertifikat aktiv, HTTP leitet auf HTTPS um.	Certificate active, HTTP redirects to HTTPS.
+Die MOTD zeigt bei jedem SSH-Login den Zustand in einem Bild: Last, RAM, Platte, Dienst, Dashboard, Fehler heute, wie viele Streamer live sind und ob wirklich aufgenommen wird. Kostet einen Sekundenbruchteil pro Login. Sie ersetzt dabei die Standard-MOTD der Distribution — die kommt bei 'tools/motd.sh --uninstall' vollstaendig zurueck.	The MOTD shows the state at every SSH login in one picture: load, RAM, disk, service, dashboard, errors today, how many streamers are live and whether recording is actually happening. Costs a fraction of a second per login. It replaces the distribution's default MOTD — which comes back in full with 'tools/motd.sh --uninstall'.
+Abgebrochen — nichts veraendert.	Aborted — nothing changed.
+Auf einem Raspberry Pi gilt: Aufnahme und EIN Restream-Ziel ohne Transcode sind realistisch. Transcode (mehrere Ziele gleichzeitig) rechnet die CPU in Software und ueberfordert jeden Pi. Aufnahmen gehoeren auf eine USB-SSD, nicht auf die SD-Karte — Dauerschreiben killt SD-Karten binnen Wochen.	On a Raspberry Pi: recording plus ONE restream target without transcoding is realistic. Transcoding (several targets at once) is done in software by the CPU and overwhelms any Pi. Recordings belong on a USB SSD, not on the SD card — continuous writing kills SD cards within weeks.
+BOT_TOKEN gesetzt.	BOT_TOKEN set.
+CrowdSec fehlt in den Quellen — siehe docs/CROWDSEC.md.	CrowdSec is not in the package sources — see docs/en/CROWDSEC.md.
+DASHBOARD_PIN gesetzt.	DASHBOARD_PIN set.
+DASHBOARD_TOKEN gesetzt.	DASHBOARD_TOKEN set.
+Das Dashboard ist die Weboberflaeche mit 359 Routen: Sendeleiste, Aufnahmen, Statistiken, Abwehr. Es bindet standardmaessig NUR auf 127.0.0.1 — also nicht im Netz erreichbar. Der sichere Zugang ist ein SSH-Tunnel; alles andere sperrt man ueber Token oder Firewall auf.	The dashboard is the web interface with 359 routes: broadcast bar, recordings, statistics, defence. By default it binds ONLY to 127.0.0.1 — so it is not reachable on the network. The safe way in is an SSH tunnel; anything else you unlock with a token or a firewall rule.
+Dashboard-Token: steht in .env (DASHBOARD_TOKEN)	Dashboard token: stored in .env (DASHBOARD_TOKEN)
+Datenbank: standardmaessig SQLite — eine Datei, kein Dienst, kein Passwort, und bis in den sechsstelligen Zeilenbereich schnell genug. MariaDB lohnt erst, wenn mehrere Rechner auf dieselben Daten sollen.	Database: SQLite by default — one file, no service, no password, and fast enough into the hundreds of thousands of rows. MariaDB only pays off once several machines need the same data.
+Deine Telegram-Nutzer-ID (mehrere per Komma, leer = keine Sperre)	Your Telegram user ID (several separated by commas, empty = no restriction)
+Der Dashboard-Token schuetzt den Zugriff von aussen (Aufruf einmal mit ?token=..., danach haelt ein Cookie). Loopback und SSH-Tunnel bleiben immer frei. Das ist ein frei waehlbares Geheimnis — hier ist Erzeugen die bessere Wahl als Ausdenken.	The dashboard token protects access from outside (call it once with ?token=..., after that a cookie holds). Loopback and SSH tunnels always stay open. This is a freely chosen secret — generating one is the better choice than inventing one.
+Dienst liess sich nicht aktivieren.	The service could not be enabled.
+Diese Maschine ist klein. Die Vorgaben des Bots sind auf einen 8-Kern-Server gemuenzt; unveraendert fuehrt das hier zu abgebrochenen Aufnahmen und stotternden Restreams. Das sparsame Profil setzt: nur ein Restream-Ziel, 3500 kbit statt 6000, je ein ffmpeg-Thread fuer Aufnahme und Hintergrund, hoechstens eine Transkription gleichzeitig.	This machine is small. The bot's defaults are aimed at an 8-core server; left unchanged they lead to aborted recordings and stuttering restreams here. The frugal profile sets: one restream target only, 3500 kbit instead of 6000, one ffmpeg thread each for recording and background work, at most one transcription at a time.
+Diese Ubuntu-Fassung hat kein 3.12 in den Quellen. Das Zusatz-Repository deadsnakes ist der uebliche Weg dorthin.	This Ubuntu release has no 3.12 in its sources. The additional deadsnakes repository is the usual way to get there.
+Discord-Server-ID (Guild-ID, Rechtsklick auf den Server → ID kopieren)	Discord server ID (guild ID, right-click the server → Copy ID)
+Ein systemd-Dienst startet den Bot beim Booten, startet ihn nach einem Absturz neu und schreibt alles ins Journal (journalctl). Ohne ihn laeuft der Bot nur, solange deine SSH-Sitzung offen ist.	A systemd service starts the bot at boot, restarts it after a crash and writes everything to the journal (journalctl). Without it the bot only runs as long as your SSH session is open.
+Erkannt:   Raspberry Pi	Detected:  Raspberry Pi
+Frage	Question
+Freigabeliste gesetzt.	Allow-list set.
+Haeufigste Ursachen: kein Compiler fuer ein Paket ohne fertiges Rad (dann: sudo apt install build-essential python3-dev), oder eine abgerissene Verbindung. Wiederholen ist gefahrlos: .venv/bin/pip install -r requirements.txt	Most common causes: no compiler for a package without a prebuilt wheel (then: sudo apt install build-essential python3-dev), or a dropped connection. Retrying is harmless: .venv/bin/pip install -r requirements.txt
+In welches Verzeichnis soll NIGHTCRAWLER?	Which directory should NIGHTCRAWLER go into?
+Jetzt wird geprueft, ob das Zusammengestellte wirklich laeuft: bot.py --selfcheck laedt den kompletten Bot, prueft Werkzeuge, Konfiguration und Erreichbarkeiten und beendet sich wieder. Das ist der Unterschied zwischen 'installiert' und 'laeuft'.	Now it checks whether what was assembled actually runs: bot.py --selfcheck loads the complete bot, checks tools, configuration and reachability, and exits again. That is the difference between 'installed' and 'running'.
+KI (AZRAEL): ohne jede Einrichtung laeuft sie ueber keylose freie Backends — das kostet nichts und braucht keinen Schluessel, ist aber langsamer und nicht immer erreichbar. Ein lokales llama.cpp antwortet in Millisekunden, kostet nichts und verlaesst die Maschine nie; es braucht rund 1 GB Platte und 2 GB RAM.	AI (AZRAEL): with no setup at all it runs over keyless free backends — that costs nothing and needs no key, but it is slower and not always reachable. A local llama.cpp answers in milliseconds, costs nothing and never leaves the machine; it needs around 1 GB of disk and 2 GB of RAM.
+MOTD-Einrichtung fehlgeschlagen.	MOTD setup failed.
+Mindestens ein Paket fehlte in den Quellen — es wird spaeter im venv ergaenzt.	At least one package was missing from the sources — it will be added in the venv later.
+Modell-Download fehlgeschlagen — Anleitung: docs/SETUP_LLAMACPP.md	Model download failed — instructions: docs/en/SETUP_LLAMACPP.md
+NIGHTCRAWLER wird ueber Telegram bedient. Ohne Bot-Token startet dieser Teil nicht. Den Token gibt dir @BotFather in Telegram: /newbot, Namen vergeben, fertig — er sieht aus wie 123456789:AAF... Er ist ein Geheimnis und laesst sich nicht erzeugen, nur holen.	NIGHTCRAWLER is operated through Telegram. Without a bot token that part does not start. @BotFather in Telegram gives you the token: /newbot, pick a name, done — it looks like 123456789:AAF... It is a secret and cannot be generated, only obtained.
+Name der Admin-Rolle (fuer /ban, /timeout, /setup_*)	Name of the admin role (for /ban, /timeout, /setup_*)
+Name des Dienstes	Service name
+OPTIONAL: tiktok_cookies.txt anlegen (gegen HTTP 403 bei der Stream-Aufloesung)	OPTIONAL: create tiktok_cookies.txt (against HTTP 403 during stream resolution)
+Ohne Freigabeliste darf JEDER, der deinen Bot findet, ihn bedienen. ALLOWED_USER_IDS ist diese Liste (Zahlen, per Komma getrennt). Deine eigene ID sagt dir @userinfobot in Telegram.	Without an allow-list, ANYONE who finds your bot may operate it. ALLOWED_USER_IDS is that list (numbers, comma separated). @userinfobot in Telegram tells you your own ID.
+Ohne Token und oeffentlich gebunden — bitte wenigstens die Firewall zumachen.	Bound publicly and without a token — please at least close the firewall.
+Optional: dieselben Funktionen als Slash-Commands in deinem Discord-Server, dazu Moderation und Community-Features. Token aus dem Discord Developer Portal (Bot → Reset Token). Ohne Token bleibt der Discord-Teil einfach still — der Bot startet trotzdem.	Optional: the same functions as slash commands in your Discord server, plus moderation and community features. Token from the Discord Developer Portal (Bot → Reset Token). Without a token the Discord part simply stays quiet — the bot starts anyway.
+PUBLIC_BASE_URL und TRUSTED_PROXIES sind gesetzt — die OAuth-Rueckrufe stimmen damit ohne weitere Pflege.	PUBLIC_BASE_URL and TRUSTED_PROXIES are set — the OAuth callbacks are correct without further maintenance.
+Port fuers Dashboard	Dashboard port
+Restream heisst: der TikTok-Stream wird gleichzeitig auf deine eigenen Kanaele gesendet. Der Stream-Key kommt von der jeweiligen Plattform (Kick: Creator-Dashboard → Stream Key; Twitch: Creator Dashboard → Einstellungen → Stream; YouTube: Studio → Livestream). Er ist ein Geheimnis und laesst sich nicht erzeugen. Ohne Key bleibt das Ziel aus.	Restreaming means: the TikTok stream is sent to your own channels at the same time. The stream key comes from the respective platform (Kick: creator dashboard → Stream Key; Twitch: Creator Dashboard → Settings → Stream; YouTube: Studio → Live streaming). It is a secret and cannot be generated. Without a key the target stays off.
+Rueckfallweg ohne Paketquellen: uv (astral.sh) laedt eine fertige, eigenstaendige CPython-Fassung in dein Home — ohne root, ohne das System-Python anzufassen. Genau der Weg fuer Debian 12 und Raspberry Pi OS.	Fallback without package sources: uv (astral.sh) downloads a ready-made, standalone CPython build into your home — without root, without touching the system Python. Exactly the route for Debian 12 and Raspberry Pi OS.
+Selbsttest hatte Befunde: erneut pruefen mit  .venv/bin/python bot.py --selfcheck	Self-test reported findings: re-check with  .venv/bin/python bot.py --selfcheck
+Soll der Bot dauerhaft laufen, braucht er einen Aufpasser: unter WSL 'wsl --shutdown'-fest per Aufgabenplanung, im Container per Restart-Regel, sonst tmux/screen.	If the bot is to run permanently it needs a supervisor: under WSL make it survive 'wsl --shutdown' via Task Scheduler, in a container via a restart policy, otherwise tmux/screen.
+Stirbt der Prozess ganz — OOM-Killer, kaputter Build, Absturz beim Start — sagt dir das sonst NIEMAND. Die Totmann-Meldung schickt bei jedem Ausfall die letzten Logzeilen per Telegram oder Discord.	If the process dies completely — OOM killer, broken build, crash at startup — NOBODY tells you otherwise. The dead-man alert sends the last log lines via Telegram or Discord on every failure.
+TikTok liefert manche Streams nur mit gueltiger Sitzung aus; ohne Cookies bricht die Aufloesung dann mit HTTP 403 ab. Der Bot liest sie aus tiktok_cookies.txt im Netscape-Format (Browser-Erweiterung 'Get cookies.txt'). Ohne die Datei laeuft alles — nur eben nicht bei geschuetzten Streams.	TikTok only serves some streams with a valid session; without cookies the resolution then fails with HTTP 403. The bot reads them from tiktok_cookies.txt in Netscape format (browser extension 'Get cookies.txt'). Everything works without the file — just not for protected streams.
+Unter 2 GB RAM: Transkription (Whisper) und lokales LLM bitte auslassen.	Under 2 GB RAM: please skip transcription (Whisper) and the local LLM.
+Unter 4 GB RAM: Aufnahme und ein Restream-Ziel gehen, mehreres wird eng.	Under 4 GB RAM: recording plus one restream target works, more gets tight.
+Unter 5 GB frei — Aufnahmen fuellen die Platte sehr schnell.	Less than 5 GB free — recordings fill the disk very quickly.
+Vier Dinge kommen NICHT ueber pip, weil es Programme sind und keine Bibliotheken: ffmpeg schneidet, kodiert und sendet; streamlink loest die TikTok-Quelle auf; yt-dlp ist der Rueckfall, wenn TikTok mit 403 blockt; sqlite3 ist die Kommandozeile zur Datenbank (fuer Diagnose, nicht fuer den Betrieb).	Four things do NOT come via pip, because they are programs and not libraries: ffmpeg cuts, encodes and sends; streamlink resolves the TikTok source; yt-dlp is the fallback when TikTok blocks with 403; sqlite3 is the command line to the database (for diagnosis, not for operation).
+Vorhandenes .venv passt nicht (zu altes Python) — wird neu angelegt.	The existing .venv does not fit (Python too old) — it is being recreated.
+Wichtig zur Last: sobald ein zweites Ziel dazukommt, muss ffmpeg umkodieren (Transcode) — das kostet ein Vielfaches an CPU. Ein Ziel ohne Transcode laeuft selbst auf schwacher Hardware.	Important about load: as soon as a second target is added, ffmpeg has to transcode — that costs a multiple of the CPU. One target without transcoding runs even on weak hardware.
+Willst du das Dashboard direkt aus dem Netz erreichen (statt per SSH-Tunnel), muss es auf 0.0.0.0 lauschen. Das ist eine bewusste Oeffnung: wer den Port erreicht, kann Aufnahmen loeschen, Cookies sehen und Logs lesen. Nur mit Token UND Firewall machen.	If you want to reach the dashboard directly from the network (instead of through an SSH tunnel), it has to listen on 0.0.0.0. That is a deliberate opening: whoever reaches the port can delete recordings, see cookies and read logs. Only do it with a token AND a firewall.
+Zusaetzlich gibt es einen PIN-Login fuer die Weboberflaeche und die PWA auf dem Handy — bequemer als ein 40-Zeichen-Token im Browser. Token und PIN duerfen parallel gelten.	There is also a PIN login for the web interface and the PWA on your phone — more convenient than a 40-character token in the browser. Token and PIN may both be active.
+bot.py laesst sich nicht einmal einlesen — Python-Fassung pruefen.	bot.py cannot even be parsed — check the Python version.
+git fehlt und wird zum Holen des Quelltexts gebraucht.	git is missing and is needed to fetch the source.
+git pull fehlgeschlagen — lokale Aenderungen? Quelltext bleibt wie er ist.	git pull failed — local changes? The source stays as it is.
+launchctl load fehlgeschlagen.	launchctl load failed.
+launchd-Eintrag geladen.	launchd entry loaded.
+llamacpp-Dienst startete nicht — journalctl -u llamacpp -n 50	The llamacpp service did not start — journalctl -u llamacpp -n 50
+macOS hat kein systemd. Das Gegenstueck heisst launchd: eine Datei in ~/Library/LaunchAgents, die den Bot beim Anmelden startet und neu startet, wenn er stirbt.	macOS has no systemd. Its counterpart is launchd: a file in ~/Library/LaunchAgents that starts the bot at login and restarts it when it dies.
+pip liess sich nicht aktualisieren — weiter mit der vorhandenen Fassung.	pip could not be upgraded — continuing with the existing version.
+streamlink liess sich nicht nachinstallieren.	streamlink could not be installed afterwards.
+systemctl daemon-reload fehlgeschlagen.	systemctl daemon-reload failed.
+tiktok_cookies.txt ist vorhanden.	tiktok_cookies.txt is present.
+yt-dlp liess sich nicht nachinstallieren.	yt-dlp could not be installed afterwards.

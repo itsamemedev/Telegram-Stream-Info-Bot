@@ -654,6 +654,36 @@ def cmd_docs(args) -> int:
                               f"{' oder '.join(str(v) for v in sorted(erlaubt))}")
                         rc = 1
 
+    # v4.1-W17: Version und Codename gegen nc/version.py. Die Zahlenpruefung
+    # oben faengt sie NICHT — "4.0" ist keine Einheit, und genau deshalb stand
+    # im deutschen README ein halbes Jahr lang "4.0 Restream Control Room",
+    # waehrend nc/version.py und das englische README schon bei 4.1 waren.
+    # Wer die Fassung anhebt, aendert nc/version.py; alles andere zieht nach.
+    vpfad = os.path.join(root, "nc", "version.py")
+    if os.path.exists(vpfad):
+        vq = _read(vpfad)
+        mv = re.search(r'^VERSION\s*=\s*"([^"]+)"', vq, re.M)
+        mc = re.search(r'^CODENAME\s*=\s*"([^"]+)"', vq, re.M)
+        if mv:
+            for datei in ("README.md", "README.en.md"):
+                pfad = os.path.join(root, datei)
+                if not os.path.exists(pfad):
+                    continue
+                for nr, zeile in _doku_zeilen(_read(pfad)):
+                    if not re.search(r"\|\s*(Aktuelle Version|Current version)\s*\|", zeile):
+                        continue
+                    mz = re.search(r"\*\*([0-9]+\.[0-9]+)\*\*", zeile)
+                    if mz and mz.group(1) != mv.group(1):
+                        print(f"  {datei}:{nr}: Version {mz.group(1)} — "
+                              f"nc/version.py sagt {mv.group(1)}")
+                        rc = 1
+                    # Der Codename nur im deutschen README: das englische
+                    # fuehrt bewusst eine Uebersetzung ("Public Voice").
+                    if mc and datei == "README.md" and mc.group(1) not in zeile:
+                        print(f"  {datei}:{nr}: Codename fehlt oder veraltet — "
+                              f"nc/version.py sagt {mc.group(1)!r}")
+                        rc = 1
+
     readme = os.path.join(root, "README.md")
     if os.path.exists(readme):
         text = _read(readme)

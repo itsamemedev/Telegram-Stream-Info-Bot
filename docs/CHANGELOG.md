@@ -11,6 +11,74 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Geändert — Werkzeuge, Installer, MOTD, Doku und Website (v4.1 W17)
+
+Fünf Befunde des Betreibers, in einer Welle.
+
+**Die Werkzeuge sprechen jetzt Englisch — an der Senke übersetzt.**
+`tools/lib/i18n.sh` bringt dieselbe Regel wie `nc/i18n.py`: der deutsche Text
+ist der Schlüssel, eine fehlende Zeile bleibt Deutsch. Entscheidend ist, **wo**
+übersetzt wird: `info`/`gut`/`warn`/`fehler`/`erklaere`/`frage_ja`/`frage_text`
+laufen durch `t()`, damit sind alle **141** Ausgabestellen von `installer.sh`
+und `motd.sh` erfasst, ohne eine einzige davon anzufassen. Jede einzeln zu
+umschliessen wäre ein Diff von 250 Zeilen gewesen, bei dem die vergessene
+Stelle unsichtbar bleibt — dieselbe Überlegung wie bei `_safe_send()` in W7.
+Der Katalog `locales/tools.en.tsv` ist zu **100 %** gefüllt;
+`tools/i18n_tools.py --check en` misst das und meldet **verwaiste** Einträge
+als Fehler (ein Eintrag ohne Quelle heisst: der deutsche Text wurde geändert
+und der Katalog nicht nachgezogen — ab da bliebe die Zeile für immer deutsch).
+
+**Installer: Reverse-Proxy mit HTTPS.** Bisher endete er beim Dashboard auf
+`127.0.0.1` und überliess den Rest der Anleitung — genau dort brach der
+häufigste Weg ab: wer die Oberfläche von aussen wollte, öffnete den Port,
+statt einen Proxy davorzusetzen. Neu: `nginx` + `certbot` +
+`python3-certbot-nginx`, eine vollständige Server-Vorlage und das Zertifikat
+per Let's Encrypt. Die drei `X-Forwarded-*`-Kopfzeilen sind dabei nicht Deko:
+ohne `X-Forwarded-Proto` baut `nc/oauthredirect.py` ein `http://` und Google
+lehnt den OAuth-Rückruf ab, **bevor** die Kontoauswahl erscheint (W121).
+`PUBLIC_BASE_URL` und `TRUSTED_PROXIES` werden gleich mitgesetzt.
+
+**MOTD: räumt jetzt wirklich auf.** `silence_defaults` kannte eine **feste
+Liste** von Ubuntu-Stücken — aber nicht das, was Hoster, Images und
+Distributionen sonst einhängen. Nach `--install` stand das alles weiter da.
+Jetzt wird **alles** in `/etc/update-motd.d/` ausser dem eigenen Stück
+gedämpft, jede Datei namentlich vermerkt, und `--uninstall` holt exakt sie
+zurück. Dazu die **statische** `/etc/motd`, die gar nicht über `run-parts`
+läuft und deshalb bisher unberührt stehen blieb: sie wird beiseitegelegt und
+kommt zurück — ausser jemand hat seither neu hineingeschrieben, dann bleibt
+die Sicherung liegen statt fremden Inhalt zu überbügeln. Ausserdem gehört die
+MOTD jetzt zur Standard-Einrichtung: im Express- und im unbeaufsichtigten Lauf
+kommentarlos an, statt ganz auszufallen.
+
+**MOTD-Farbe: `always` statt `auto`.** `auto` wählte ohne `COLORTERM` die
+256-Farben-Palette — viele Handy-SSH-Apps melden aber nur `TERM=xterm` und
+stellen 256er-Codes teils gar nicht dar. Der Betreiber sah dann eine graue
+Wand statt der Ampel, für die die MOTD gebaut ist. `always` fällt bis auf die
+**16 Basisfarben** durch, die wirklich jedes Terminal kann — nie auf farblos.
+
+**Doku: der Versionsdrift ist jetzt maschinell gefangen.** Im deutschen README
+stand `4.0 — „Restream Control Room"`, während `nc/version.py` und das
+englische README längst bei `4.1 — „Öffentliche Stimme"` waren. Die
+Zahlenprüfung in `ncpatch docs` konnte das nicht sehen: `4.0` ist keine
+Einheit. Sie vergleicht jetzt Version und Codename gegen `nc/version.py`.
+Dazu nachgezogen: `89 Fachmodule` → 95 im Verzeichnisbaum, `283 Routen` → 359
+im Installer-Text.
+
+**Website: Material statt flacher Kästen.** Drei Befunde, in dieser Reihenfolge
+behoben: (1) **alles** leuchtete — der eigene Grundsatz lautet „Leuchten ist
+Signal, nicht Deko", tatsächlich hatten Überschriften, Zahlen, Knöpfe und
+Kanten denselben Schimmer, womit er nichts mehr trug; (2) keine Tiefe — eine
+Fläche, ein Rahmen, fertig; (3) kein Rhythmus — 76 px zwischen allen
+Abschnitten und 15 px Schrift auf jedem Schirm. Jetzt: vier Ebenen, die
+Bezel-Oberkante als das eine wiedererkennbare Detail (dasselbe Motiv wie im
+Dashboard, in Phosphor statt Messing), eine fliessende Typo-Skala, ein
+Farbverlauf im Logo statt des Glows (auf OLED war der ein Fleck), 56-px-Ziele
+für Finger, ein ehrliches `prefers-reduced-motion` und ein Druck-Stylesheet.
+Als **Schicht** am Ende des Stylesheets, an bestehenden Klassennamen — damit
+ist der Diff lesbar und die Änderung in einem Zug rückrollbar.
+
+Drei Verträge sind neu (373).
+
 ### Geändert — Discord als Blueprint (v4.1 W16)
 
 `bot.py`: 29.306 → **29.112 Zeilen**. `nc/routes/` trägt jetzt 24 Blueprints

@@ -112,6 +112,34 @@ a{ color:var(--cyan); }
      Palette — beseitigt das frühere Messing/Blaupause-Mischtheme. */
   --neon:var(--phos); --bg:var(--void); --bg2:var(--panel2);
   --text:var(--white); --text-dim:var(--ash);
+
+  /* ── v4.1-W17: Material und Hoehenstaffelung ────────────────────────
+     Vorher war jede Flaeche derselbe flache Kasten mit 1px-Rahmen; auf
+     einem grossen Schirm sah die Seite dadurch aus wie eine Tabelle,
+     nicht wie ein Geraet. Vier Ebenen statt einer, und die Kante traegt
+     die Tiefe — nicht ein Schlagschatten, den man auf Schwarz ohnehin
+     nicht sieht. */
+  --e0:#05080a;                       /* Grund */
+  --e1:#080d10;                       /* Sektion */
+  --e2:#0b1216;                       /* Panel */
+  --e3:#101a1f;                       /* angehoben (Hover, aktiv) */
+  --kante:rgba(0,255,156,.10);        /* ruhende Kante */
+  --kante-hell:rgba(0,255,156,.24);   /* Kante unter Aufmerksamkeit */
+  /* Die Bezel-Oberkante — dasselbe Motiv wie im Dashboard, hier in
+     Phosphor statt Messing. EIN wiedererkennbares Detail, sonst still. */
+  --bezel:linear-gradient(90deg,transparent,rgba(0,255,156,.45) 22%,
+          rgba(0,229,255,.30) 55%,transparent);
+  --tiefe:0 1px 0 rgba(255,255,255,.03) inset,
+          0 18px 44px -28px rgba(0,0,0,.9);
+  --rund:10px;
+
+  /* Fliessende Typo-Skala. Ein fester 15px-Satz ist auf dem Handy zu
+     gross und auf 27 Zoll zu klein; clamp loest beides ohne Umbruch. */
+  --t-xs:clamp(.64rem,.6rem + .18vw,.72rem);
+  --t-s: clamp(.78rem,.74rem + .2vw,.87rem);
+  --t-m: clamp(.94rem,.9rem + .25vw,1.04rem);
+  --t-l: clamp(1.12rem,1rem + .9vw,1.5rem);
+  --t-xl:clamp(1.7rem,1.1rem + 3.2vw,3.1rem);
 }
 *{margin:0;padding:0;box-sizing:border-box}
 html{scroll-behavior:smooth}
@@ -567,6 +595,136 @@ footer nav a:hover{color:var(--phos)}
 .don-qr .qbox svg{width:100%;height:100%;display:block}
 .don-qr .qcap{font-size:.74rem;color:var(--dim)}
 @media (prefers-reduced-motion:reduce){ .don-bar i{transition:none} }
+
+/* ══════════════════════════════════════════════════════════════════════
+   v4.1-W17 · Grafische Ueberarbeitung
+   ══════════════════════════════════════════════════════════════════════
+   Bewusst als SCHICHT am Ende, nicht als Umbau der 470 Zeilen darueber:
+   die Klassennamen bleiben identisch, jede Regel hier haengt an einer
+   bestehenden Klasse. Damit ist der Diff lesbar und die Aenderung in
+   einem Zug zurueckrollbar — was bei einer Seite, die direkt gegen
+   Produktion ausgeliefert wird, mehr wert ist als ein huebscherer Baum.
+
+   Drei Befunde am alten Stand, in dieser Reihenfolge behoben:
+   1. ALLES leuchtete. Der eigene Grundsatz lautet "Leuchten ist SIGNAL,
+      nicht Deko" — tatsaechlich hatten Ueberschriften, Zahlen, Knoepfe
+      und Kanten denselben Schimmer. Damit trug das Leuchten nichts mehr.
+      Jetzt glimmt, was live ist; der Rest bekommt Material.
+   2. Keine Tiefe. Eine Flaeche, ein Rahmen, fertig. Vier Ebenen und die
+      Bezel-Oberkante geben der Seite ein Geraet statt einer Tabelle.
+   3. Kein Rhythmus. 76px zwischen allen Abschnitten, gleich ob Fliesstext
+      oder Datenblock, und 15px Schrift auf jedem Schirm. Jetzt fliessend.
+   ══════════════════════════════════════════════════════════════════════ */
+
+body{font-size:var(--t-m)}
+/* Das Scanline-Raster lag ueber ALLEM und machte Text auf Panels unruhig.
+   Es gehoert auf den Grund, nicht ueber die Inhalte. */
+body::before{opacity:.5}
+
+section{padding:clamp(52px,7vw,104px) 0; position:relative}
+section + section{border-top:1px solid rgba(255,255,255,.035)}
+#ueber,#ressourcen,#news,#quellcode{background:var(--e1)}
+
+h2{font-size:var(--t-l); letter-spacing:.1em; line-height:1.15}
+h3{font-size:var(--t-s); letter-spacing:.14em; color:var(--phos); opacity:.9}
+.eyebrow{font-size:var(--t-xs); opacity:.85}
+.prose{max-width:66ch}          /* Zeilenlaenge statt fester Pixelbreite */
+.prose p{margin-bottom:1.1em}
+.note{font-size:var(--t-s); color:var(--dim)}
+
+/* ---------- Material ---------- */
+.log,.stat{position:relative; background:var(--e2);
+  border:1px solid var(--kante); border-radius:var(--rund);
+  box-shadow:var(--tiefe)}
+.log::before{content:""; position:absolute; inset:0 0 auto 0; height:1px;
+  background:var(--bezel); border-radius:var(--rund) var(--rund) 0 0}
+.stats{background:transparent; border:0; gap:12px; border-radius:0;
+  overflow:visible}
+.stat{padding:20px 18px; transition:border-color .18s ease,
+      background .18s ease, transform .18s ease}
+.stat:hover{background:var(--e3); border-color:var(--kante-hell);
+      transform:translateY(-2px)}
+.stat b{font-size:var(--t-l); text-shadow:none}
+.stat span{font-size:var(--t-xs)}
+
+/* ---------- Kopfleiste ---------- */
+header{background:rgba(5,8,10,.72); backdrop-filter:blur(14px) saturate(1.4);
+  border-bottom:1px solid rgba(255,255,255,.05)}
+.bar{padding:14px 20px}
+.logo{font-size:var(--t-m); text-shadow:none}
+nav a{position:relative; padding:6px 2px; transition:color .16s ease}
+nav a::after{content:""; position:absolute; left:0; right:0; bottom:0;
+  height:1px; background:var(--phos); transform:scaleX(0);
+  transform-origin:left; transition:transform .2s ease}
+nav a:hover::after,nav a:focus-visible::after{transform:scaleX(1)}
+
+/* ---------- Hero ---------- */
+.hero{padding:clamp(56px,9vw,116px) 0 clamp(40px,5vw,72px)}
+/* Der Farbverlauf ersetzt den Schimmer: dieselbe Energie, ohne den Text
+   auszufransen — auf OLED war der Glow ein Fleck statt einer Kante. */
+.acronym .glyph{font-size:var(--t-xl); text-shadow:none;
+  background:linear-gradient(160deg,var(--phos),#0aa86a);
+  -webkit-background-clip:text; background-clip:text; color:transparent}
+.acronym .row:nth-child(3) .glyph{
+  background:linear-gradient(160deg,var(--mag),#a01050);
+  -webkit-background-clip:text; background-clip:text; color:transparent;
+  text-shadow:none}
+.acronym .word{border-left-color:var(--kante); font-size:var(--t-s)}
+.tagline{font-size:var(--t-m); max-width:60ch; line-height:1.7}
+
+/* ---------- Knoepfe ---------- */
+.btn{border-width:1px; border-radius:var(--rund); background:var(--e2);
+  font-size:var(--t-m); padding:22px 20px; min-height:44px;
+  box-shadow:var(--tiefe);
+  transition:transform .16s ease, background .16s ease,
+             border-color .16s ease, box-shadow .16s ease}
+.btn:hover,.btn:focus-visible{transform:translateY(-2px); background:var(--e3)}
+/* Der Leuchtrand bleibt — hier IST er Signal: der Kanal ist anklickbar und
+   fuehrt nach draussen. Nur schwaecher, damit er nicht blendet. */
+.btn.kick:hover{box-shadow:0 10px 30px -12px rgba(83,252,24,.5)}
+.btn.yt:hover{box-shadow:0 10px 30px -12px rgba(255,64,64,.5)}
+.btn.tw:hover{box-shadow:0 10px 30px -12px rgba(169,112,255,.5)}
+.btn.dc:hover{box-shadow:0 10px 30px -12px rgba(114,137,255,.5)}
+
+/* ---------- Log / Monitor ---------- */
+.log{padding:clamp(20px,3vw,30px); max-width:80ch}
+.log li{border-bottom-color:rgba(255,255,255,.06); padding:11px 0}
+.log .tag{font-size:var(--t-xs)}
+
+/* ---------- Bewegung ---------- */
+.js .rv{transform:translateY(18px)}
+.js .rv.in{transition:opacity .55s cubic-bezier(.22,.61,.36,1),
+                      transform .55s cubic-bezier(.22,.61,.36,1)}
+@media (prefers-reduced-motion:reduce){
+  html{scroll-behavior:auto}
+  .js .rv,.js .rv.in{opacity:1!important; transform:none!important;
+    transition:none!important}
+  .cursor,.btn .dot{animation:none!important}
+  .stat:hover,.btn:hover{transform:none}
+}
+
+/* ---------- Finger statt Maus ---------- */
+@media (pointer:coarse){
+  nav a{padding:12px 6px}
+  .btn{min-height:56px}
+  .stat{padding:22px 18px}
+}
+@media (max-width:640px){
+  .bar{flex-wrap:wrap; gap:8px}
+  nav a{margin-left:0; margin-right:14px}
+  .stats{grid-template-columns:repeat(auto-fit,minmax(132px,1fr))}
+}
+
+/* ---------- Druck ---------- */
+/* Wer die Grundsaetze oder das Impressum ausdruckt, soll Text bekommen
+   und keine schwarze Seite. */
+@media print{
+  body::before,.raum,header,.streams{display:none!important}
+  body{background:#fff; color:#111}
+  .log,.stat{background:#fff; border-color:#bbb; box-shadow:none}
+  h2,h3,.logo,.stat b{color:#111}
+  .acronym .glyph{background:none; -webkit-text-fill-color:#111; color:#111}
+}
 </style>
 <!-- v4.0-W114: der Raum liegt in eigenen Dateien, weil ihn alle drei
      Seiten teilen (Startseite, Impressum, Datenschutz). NACH dem
