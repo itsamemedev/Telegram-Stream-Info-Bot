@@ -11,6 +11,59 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Behoben — die 35 nativen Dialoge waren dauerhaft deutsch (v4.1 W21)
+
+`confirm()` und `prompt()` öffnet der **Browser selbst**. Der
+MutationObserver in `/api/i18n/uebersetzer.js` beobachtet `document.body` —
+ein natives Dialogfenster ist kein DOM-Knoten und taucht dort nie auf. Alle 35
+Rückfragen des Dashboards blieben deshalb Deutsch, egal welche Sprache
+eingestellt war.
+
+Schlimmer als die fehlende Übersetzung war die **stille Buchhaltung**: 26 der
+Texte hatten längst einen Katalogeintrag. Der zählte als übersetzt und traf
+nie — genau die tote Zeile, die die Abdeckungszahl zur Lüge macht.
+
+Übersetzt werden kann so ein Text nur **vor** dem Aufruf, mit dem ohnehin
+exportierten `window.T()`. Alle 35 Stellen laufen jetzt darüber. Sätze, die
+aus Bruchstücken zusammengeklebt waren, sind dabei umgebaut worden — statt
+`'Restream #'+rid+' (@'+user+') stoppen?'` steht dort jetzt ein **ganzer**
+übersetzbarer Satz und die Details darunter. Elf Bruchstück-Einträge sind
+damit aus dem Katalog verschwunden, 38 vollständige Sätze dazugekommen.
+
+Der Extraktor sammelt `T("...")` jetzt **ausdrücklich** ein, wie schon `t(...)`
+in den Blueprints. Ohne das fiele ein einzelnes Wort wie `T('Tage')` durch die
+Bruchstück-Regel — obwohl es ein vollständiger Baustein ist, den der Aufrufer
+selbst zusammensetzt. Katalog: 805 → **825 Einträge**, 0 fehlend, 0 verwaist.
+
+### Geändert — `/api/brain` als Blueprint, zwei Register (v4.1 W21)
+
+Sechs Routen aus dem Monolithen, **null neue `nc.ctx`-Einträge**. Roh wären es
+siebzehn gewesen. **`nc/brainstate.py`** trägt jetzt die Ringpuffer der
+Knoten-Historie, das Übergangs-Gedächtnis, den Brücken-Zustand, die
+Sende-Bremse des Dashboard-Chats und den Wächter-Zustand des Check-Loops.
+
+Zwei davon **müssen** Register sein und können keine Aliase werden:
+
+* **`STALLS`** war eine ganze Zahl (`_LOOP_STALL_COUNT += 1` unter `global`).
+  Eine Zahl lässt sich nicht teilen — ein Alias wäre eine Kopie, die für immer
+  auf 0 steht, und `/api/brain/health` meldete „keine Stalls", während der Loop
+  klemmt. Genau die stille Fehlanzeige, gegen die es die Zahl überhaupt gibt.
+* **`PROXY`** entsteht im Monolithen erst weit unten in der Datei. Dort stand
+  dafür `globals().get("PROXY_ROUTER")` — im Blueprint wäre `globals()` dessen
+  eigener Namensraum, und das Panel meldete den Proxy für immer als „idle".
+
+Die 210 Zeilen von `api_brain` sind **mechanisch** übertragen worden, nicht
+abgetippt: das Skript ersetzt nur Namen und meldet, was danach noch nach
+Monolith aussieht. Es fand prompt zwei Reste (`_AI_DASHBOARD_LOCK`,
+`_AI_DASHBOARD_RATE`), die beim Abtippen niemandem aufgefallen wären.
+
+Zwei Vertrags-Anker sind mitgewandert, keiner gelöscht. Ein neuer Vertrag
+verbietet `globals()` im Blueprint — geprüft per AST, weil die *Erklärung*
+dazu völlig zu Recht im Docstring steht und kein Verstoß ist.
+
+`bot.py` 28.467 → **28.133** Zeilen, Blueprints 28 → 29, eigene Routen im
+Monolithen 111 → **105**.
+
 ### Geändert — jede Route übersetzt an der Quelle (v4.1 W20)
 
 W19 hat den Extraktor bis in `nc/routes/` gebracht, aber nur zwei Blueprints

@@ -1369,7 +1369,12 @@ def test_brain_growth_viz():
     schema_src = open("nc/schema.py").read()   # B164: Schema extrahiert
     assert "CREATE TABLE IF NOT EXISTS brain_growth" in schema_src, "keine Wachstums-Tabelle"
     assert "def _brain_growth_snapshot" in src, "kein Snapshot-Mechanismus"
-    assert '"/api/brain/growth"' in src, "keine Growth-Route"
+    # ANKER GEWANDERT (v4.1-W21, nicht der Vertrag): die Route liegt jetzt in
+    # nc/routes/brain.py. Der Snapshot-Mechanismus und der stuendliche Loop
+    # bleiben im Monolithen, wo der Scheduler sitzt — geprueft wird
+    # unveraendert, dass beide Haelften existieren und zusammenpassen.
+    assert '"/api/brain/growth"' in open("nc/routes/brain.py", encoding="utf-8").read(), \
+        "keine Growth-Route"
     assert "_brain_growth_loop" in src and 'name="brain-growth"' in src, \
         "stündlicher Snapshot-Loop nicht gespawnt"
     # Snapshot liest die echten Brain-Stats (nicht erfundene Zahlen)
@@ -6126,7 +6131,15 @@ def test_v40_w81_env_int_and_bridge_health():
 
     # Bridge-Health sichtbar
     src = open("bot.py").read()
-    assert '@dashboard_app.route("/api/brain/health")' in src and "_BRIDGE_STATUS" in src, "Health-Route fehlt"
+    # ANKER GEWANDERT (v4.1-W21): die Route liegt in nc/routes/brain.py, der
+    # Bruecken-Zustand als Alias in nc/brainstate.py. Die Zusage ist dieselbe:
+    # die Route existiert IMMER und nennt den echten Grund, auch wenn die
+    # Bruecke selbst nicht hochkam.
+    _br = open("nc/routes/brain.py", encoding="utf-8").read()
+    assert '@bp.route("/api/brain/health")' in _br and "_nc_brainstate.BRIDGE" in _br, \
+        "Health-Route fehlt"
+    assert "_BRIDGE_STATUS = _nc_brainstate.BRIDGE" in src, \
+        "der Bruecken-Zustand ist wieder eine Kopie im Monolithen"
     assert "exc_info=True" in src, "kein voller Traceback bei Bridge-Fehler"
     h = open("templates/dashboard.html").read()
     assert "/api/brain/health" in h and "BRIDGE AUS" in h, "Panel zeigt den echten Grund nicht"
@@ -6331,8 +6344,13 @@ def test_v40_w88_ops_observability():
         # 1 faulthandler + SIGUSR1 on-demand Thread-Dump
         "faulthandler/SIGUSR1": ("def _install_faulthandler" in src and "faulthandler.enable()" in src
                                  and "SIGUSR1" in src and "_install_faulthandler()" in src),
-        # 2 Loop-Stall-Zähler
-        "stall-counter": ("_LOOP_STALL_COUNT += 1" in src and "loop_stalls=_LOOP_STALL_COUNT" in src),
+        # 2 Loop-Stall-Zähler. ANKER GEWANDERT (v4.1-W21, nicht der Vertrag):
+        # der Zaehler liegt als Register in nc/brainstate.py, weil eine ganze
+        # Zahl sich nicht per Alias teilen laesst — /api/brain/health saehe
+        # sonst fuer immer 0. Geprueft wird dasselbe: dass hochgezaehlt und
+        # dass der Stand ausgeliefert wird.
+        "stall-counter": ("_nc_brainstate.stall()" in src
+                          and 'loop_stalls=_nc_brainstate.STALLS["n"]' in src),
         # 3 Bridge-Tick-Stillstand-Alarm
         "bridge-tick-alert": ('BRIDGE_TICK_STALL_S' in src and "_BRIDGE_TICK_ALERTED" in src),
         # 4 Dump-Housekeeping
@@ -8552,6 +8570,45 @@ def test_v41_w20_jede_route_uebersetzt():
     ok("v4.1-W20: alle 26 Blueprints uebersetzen an der Quelle, keiner antwortet englisch")
 
 
+def test_v41_w21_native_dialoge_uebersetzt():
+    """v4.1-W21: confirm/prompt sieht der DOM-Uebersetzer nie."""
+    import re as _re
+    roh = open("templates/dashboard.html", encoding="utf-8").read()
+
+    # confirm() und prompt() oeffnet der BROWSER selbst. Der MutationObserver
+    # in /api/i18n/uebersetzer.js beobachtet document.body — ein natives
+    # Dialogfenster ist kein DOM-Knoten und taucht dort nie auf. Diese Texte
+    # koennen deshalb NUR vor dem Aufruf uebersetzt werden, mit window.T().
+    #
+    # Vorher waren 35 Dialoge dauerhaft deutsch, und die Katalogeintraege
+    # dafuer waren tot: sie standen da, zaehlten als uebersetzt und trafen nie.
+    offen = []
+    for m in _re.finditer(r"\b(confirm|prompt)\s*\(\s*(['\"`])", roh):
+        z = roh[:m.start()].count("\n") + 1
+        offen.append((z, roh[m.start():roh.find("\n", m.start())][:70]))
+    assert not offen, "nativer Dialog ohne T(): %r" % offen[:5]
+
+    # Der Uebersetzer stellt T() wirklich bereit — sonst waere jeder Aufruf
+    # oben ein ReferenceError und das Dashboard bliebe stumm.
+    i18n = open("nc/routes/i18n.py", encoding="utf-8").read()
+    assert "window.T = function(text)" in i18n, "T() wird nicht exportiert"
+
+    # Und der Extraktor sammelt T("...") ausdruecklich ein — ohne das fiele
+    # ein einzelnes Wort wie T('Tage') durch die Bruchstueck-Regel, obwohl es
+    # ein vollstaendiger Baustein ist, den der Aufrufer selbst zusammensetzt.
+    import importlib.util as _iu
+    _sp = _iu.spec_from_file_location("_ix3", "tools/i18n_extract.py")
+    ix = _iu.module_from_spec(_sp)
+    _sp.loader.exec_module(ix)
+    kat = __import__("json").load(open("locales/en.json", encoding="utf-8"))["strings"]
+    for wort in ("Tage", "Gruppen", "Clip löschen?", "Restream stoppen?"):
+        assert kat.get(wort), "%s fehlt im Katalog" % wort
+    gefunden = set(ix.sammeln())
+    assert not (gefunden - set(kat)) and not (set(kat) - gefunden), \
+        "Katalog und Quelltext laufen auseinander"
+    ok("v4.1-W21: alle 35 nativen Dialoge uebersetzt, T() im Katalog verankert")
+
+
 def test_v41_w17_website():
     """v4.1-W17: die Website hat Material bekommen — ohne Klassen zu brechen."""
     neu = open("website/lafap_index.html", encoding="utf-8").read()
@@ -8675,6 +8732,7 @@ def main():
     test_v41_w19_aliase_bleiben_aliase()
     test_v41_w19_katalog_kennt_die_blueprints()
     test_v41_w20_jede_route_uebersetzt()
+    test_v41_w21_native_dialoge_uebersetzt()
     test_b168_moderator_everywhere()
     test_b169_kick_oauth()
     test_b170_azrael_and_youtube()
