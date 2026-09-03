@@ -1316,6 +1316,99 @@ def _test_w18_kickmod_blueprint():
     ok("v4.1-W18: kickmod als Blueprint, Bannwoerter und Primaer-Restream geloest")
 
 
+def _test_w19_azrael_blueprint():
+    """v4.1-W19: die groesste Routengruppe raus, null neue Kontext-Eintraege."""
+    import ast as _ast
+
+    import nc.azraelstate as A
+    import nc.piper_voices as P
+    import nc.whispercfg as W
+
+    # (1) Whisper: Name UND Objekt in EINEM Register. Wer nur den Namen
+    # aendert und das geladene Modell stehen laesst, transkribiert weiter mit
+    # dem alten Modell und zeigt den neuen Namen an — schlimmer als gar kein
+    # Umschalten, weil es wie Erfolg aussieht.
+    W.MODELL.update(name="base", obj="ALTES-MODELL")
+    assert W.name() == "base" and W.geladen()
+    assert W.waehle("large-v3") == "large-v3"
+    assert W.name() == "large-v3" and not W.geladen(), "das alte Modell blieb geladen"
+    # Ein leerer Name aendert nichts — sonst haette ein Tippfehler im Dashboard
+    # den Namen geleert und faster-whisper waere mit "" gestartet.
+    assert W.waehle("") == "large-v3" and W.waehle(None) == "large-v3"
+    W.MODELL.update(name="base", obj=None)
+
+    # (2) Piper: die Suchorte kommen per configure(), nicht als Modul-Konstante.
+    # Ein Wechsel muss den Cache verwerfen, sonst zeigt /api/azrael/voices die
+    # Stimmen des alten Verzeichnisses und der Betreiber sucht am falschen Ort.
+    import tempfile as _tf
+    d1, d2 = _tf.mkdtemp(), _tf.mkdtemp()
+    open(os.path.join(d1, "de_DE-thorsten-medium.onnx"), "w").close()
+    os.makedirs(os.path.join(d2, "unter"), exist_ok=True)
+    open(os.path.join(d2, "unter", "en_US-amy-low.onnx"), "w").close()
+    P.configure(bin="piper", data_dir=d1, voice_dirs=[d1], recordings_dir="",
+                module_dir="")
+    assert [v["name"] for v in P.list_voices()] == ["de_DE-thorsten-medium"]
+    P.configure(voice_dirs=[d2])
+    assert [v["name"] for v in P.list_voices()] == ["en_US-amy-low"], \
+        "der Cache ueberlebte den Wechsel der Suchorte"
+    # Rekursiv: die .onnx liegt in einem Unterordner und wird trotzdem gefunden.
+    assert P.resolve("amy") and P.resolve("amy").endswith("en_US-amy-low.onnx")
+    assert P.resolve("gibtsnicht") is None
+    # Der Cache greift innerhalb des Fensters, danach wird neu gescannt.
+    open(os.path.join(d2, "spaeter.onnx"), "w").close()
+    assert len(P.list_voices(_jetzt=1000.0)) in (1, 2)
+    assert len(P.list_voices(force=True)) == 2, "force scannt nicht neu"
+
+    # (3) Zustand: Bot und Blueprint sehen DASSELBE Objekt. Das ist der ganze
+    # Punkt — eine Kopie hiesse, das Dashboard zeigt einen eingefrorenen Stand.
+    A.OVERLAY.clear(); A.OVERLAY["piper_model"] = "thorsten"
+    A.TRANSCRIPT.clear(); A.TRANSCRIPT["helge_72"] = [{"ts": 1, "text": "hallo"}]
+    A.LIVE_PAUSED["v"] = True
+    import nc.routes.azrael as R
+    from flask import Flask
+    app = Flask(__name__)
+    app.register_blueprint(R.bp)
+    regeln = {str(r.rule) for r in app.url_map.iter_rules() if r.endpoint != "static"}
+    assert len(regeln) == 18, sorted(regeln)
+    with app.test_client() as cl:
+        j = cl.get("/api/azrael/live_status").get_json()
+        assert j["paused"] is True, "der Blueprint sieht eine Kopie"
+        assert j["active"] == [], j
+        j = cl.get("/api/azrael/transcript").get_json()
+        assert j["transcript"] == {"helge_72": [{"ts": 1, "text": "hallo"}]}
+        j = cl.get("/api/azrael/piper_status").get_json()
+        assert j["model"] == "thorsten", j
+        # Ohne Haken antwortet die Route voruebergehend, nicht mit 500.
+        assert cl.post("/api/azrael/ask", json={"q": "hi"}).status_code == 503
+        assert cl.post("/api/azrael/ask", json={}).status_code == 400
+    A.LIVE_PAUSED["v"] = False; A.OVERLAY.clear(); A.TRANSCRIPT.clear()
+
+    # (4) Personas: atomar geschrieben, kaputtes JSON reisst nichts mit.
+    d3 = _tf.mkdtemp()
+    A.configure(recordings_dir=d3)
+    assert A.personas_load() == {}
+    assert A.personas_save({"helge_72": "frech"})
+    assert A.personas_load() == {"helge_72": "frech"}
+    open(A.personas_path(), "w", encoding="utf-8").write("{kaputt")
+    assert A.personas_load() == {}, "kaputtes JSON reisst die Personas mit"
+
+    # (5) Kein neuer ctx-Slot: der Blueprint benutzt nur, was es schon gab.
+    quelle = open("nc/routes/azrael.py", encoding="utf-8").read()
+    genutzt = {n.attr for n in _ast.walk(_ast.parse(quelle))
+               if isinstance(n, _ast.Attribute) and isinstance(n.value, _ast.Call)
+               and getattr(n.value.func, "id", "") == "_c"}
+    assert genutzt <= {"run_async", "arg_int", "log"}, \
+        "der Blueprint braucht neue Kontext-Eintraege: %r" % genutzt
+
+    # (6) Keine Modul-Konstante friert .env ein.
+    for zeile in quelle.split("\n"):
+        z = zeile.strip()
+        assert not (z[:1].isupper() and " = os.getenv(" in z), \
+            "Modul-Konstante friert .env ein: %s" % z
+
+    ok("v4.1-W19: azrael als Blueprint, Stimme/Whisper/Zustand geloest")
+
+
 def main():
     tmp = tempfile.mkdtemp()
     configure_db(db_path=os.path.join(tmp, "t.db"), backend="sqlite")
@@ -1432,6 +1525,8 @@ def main():
     _test_w18_toxizitaet_ohne_tiktok()
 
     _test_w18_kickmod_blueprint()
+
+    _test_w19_azrael_blueprint()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)
 

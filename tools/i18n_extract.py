@@ -16,6 +16,7 @@ wuerde ein Lauf des Werkzeugs geleistete Arbeit ueberschreiben.
 
 import argparse
 import ast
+import glob
 import io
 import json
 import os
@@ -29,6 +30,18 @@ HTML_DATEIEN = ["templates/dashboard.html", "templates/brain.html",
                 "templates/overlay.html", "website/lafap_index.html",
                 "website/impressum.html", "website/datenschutz.html"]
 PY_DATEIEN = ["bot.py"]
+
+# v4.1-W19: Was aus bot.py in einen Blueprint zieht, verschwand bisher aus dem
+# Katalog — der Extraktor kannte nur den Monolithen. Bei 225 Routen in
+# nc/routes/ heisst das: die Fehlertexte der halben API waren ausser Reichweite,
+# ohne dass die Abdeckungszahl es zeigte.
+#
+# Eingesammelt wird hier NUR, was ausdruecklich in t(...) steht. Das ist der
+# Unterschied zur Heuristik in den HTML-Dateien und der Grund, warum es keine
+# toten Eintraege geben kann: ein Fehlertext einer API erreicht das DOM meist
+# verkettet ("Fehler: " + error), ein Eintrag fuer den blossen Text traefe dort
+# nie. Er trifft, weil im Blueprint schon uebersetzt wurde.
+BP_GLOB = "nc/routes/*.py"
 
 # Ein Text ist uebersetzbar, wenn er ueberhaupt Sprache enthaelt. Reine Zahlen,
 # Symbole, CSS-Werte und Platzhalter fliegen raus.
@@ -245,6 +258,32 @@ def _py_strings(pfad):
     return raus
 
 
+def _bp_strings(pfad):
+    """Aus einem Blueprint die Texte holen, die ausdruecklich uebersetzt werden.
+
+    Gesucht wird der Aufruf `t("...")` bzw. `_nc_i18n.t("...")` mit einem
+    festen ersten Argument. Kein Heuristik-Raten: was hier steht, hat jemand
+    bewusst als Benutzertext markiert. Ein f-String faellt raus — sein Wert
+    steht erst zur Laufzeit fest und waere als Schluessel wertlos.
+    """
+    baum = ast.parse(io.open(pfad, encoding="utf-8").read())
+    raus = set()
+    for n in ast.walk(baum):
+        if not isinstance(n, ast.Call) or not n.args:
+            continue
+        f = n.func
+        name = f.attr if isinstance(f, ast.Attribute) else (
+            f.id if isinstance(f, ast.Name) else None)
+        if name not in ("t", "_t"):
+            continue
+        a0 = n.args[0]
+        if isinstance(a0, ast.Constant) and isinstance(a0.value, str):
+            txt = a0.value.strip()
+            if len(txt) >= 3 and _WORT.search(txt):
+                raus.add(txt)
+    return raus
+
+
 def sammeln():
     gefunden = {}
     for p in HTML_DATEIEN:
@@ -255,6 +294,10 @@ def sammeln():
         if os.path.exists(os.path.join(ROOT, p)):
             for s in _py_strings(p):
                 gefunden.setdefault(s, set()).add(p)
+    for p in sorted(glob.glob(os.path.join(ROOT, BP_GLOB))):
+        rel = os.path.relpath(p, ROOT).replace("\\", "/")
+        for s in _bp_strings(p):
+            gefunden.setdefault(s, set()).add(rel)
     return gefunden
 
 
@@ -284,7 +327,9 @@ def main():
 
     gefunden = sammeln()
     print("gefunden: %d uebersetzbare Zeichenketten in %d Dateien"
-          % (len(gefunden), len(HTML_DATEIEN) + len(PY_DATEIEN)))
+          % (len(gefunden),
+             len(HTML_DATEIEN) + len(PY_DATEIEN)
+             + len(glob.glob(os.path.join(ROOT, BP_GLOB)))))
 
     sprache = a.write or a.check or a.liste
     if not sprache:

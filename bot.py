@@ -585,6 +585,8 @@ from nc import kickapi as _nc_kickapi  # v4.1-W9: Kick-Slug, Broadcaster-ID, Sen
 from nc import discordstate as _nc_discordstate  # v4.1-W16: Discord-Zustand (DB + laufend)
 from nc import modstats as _nc_modstats  # v4.1-W18: was als Moderations-Aktion gemeldet wird
 from nc import badwords as _nc_badwords  # v4.1-W18: Bannwortliste + Lern-Warteschlange
+from nc import azraelstate as _nc_azrael  # v4.1-W19: AZRAELs Laufzeitzustand (geteilt)
+from nc import whispercfg as _nc_whisper  # v4.1-W19: Whisper-Modell als Register
 from nc import eventquery as _nc_eventquery  # v4.0-W51: Event-Log-Query-Bauer (rein)
 from nc import admod as _nc_admod            # v4.0-W56: Werbe-Allowlist-Bauer (rein)
 from nc import binresolve as _nc_binresolve  # v4.0-W60: Binary-Pfad-Resolver (rein)
@@ -619,6 +621,7 @@ from nc.routes import chat as _nc_routes_chat                # v4.1-W15: Eigener
 from nc.routes import cohost as _nc_routes_cohost            # v4.1-W15: Co-Host-Bremse
 from nc.routes import discord as _nc_routes_discord          # v4.1-W16: Discord-Panel
 from nc.routes import kickmod as _nc_routes_kickmod          # v4.1-W18: SENTINEL-Panel
+from nc.routes import azrael as _nc_routes_azrael            # v4.1-W19: AZRAEL-Panel
 from nc import updater as _nc_updater                        # v4.0-W115: Selbst-Update aus dem GitHub-Repo
 from nc import donationsdb as _nc_donationsdb                # v4.0-W116: manuell erfasste Spenden lesen
 # Diese beiden Routen ruft der Bot auch INTERN auf (Telegram /sysres und die
@@ -11889,24 +11892,6 @@ _AI_DASHBOARD_LOCK = _threading_for_db.Lock()
 # ═══ v37: Log-Tail + AZRAEL-Live-Test fürs Dashboard ═══
 
 
-@dashboard_app.route("/api/azrael/ask", methods=["POST"])
-def api_azrael_ask():
-    """v37: AZRAEL direkt aus dem Dashboard testen (dieselbe eine KI-Identität)."""
-    d = request.get_json(silent=True) or {}
-    q = (d.get("q") or "").strip()[:2000]   # v37: Längen-Cap gegen Missbrauch
-    if not q:
-        return jsonify(ok=False, error="leere Frage"), 400
-    try:
-        txt, err = _run_async_from_flask(azrael_chat("Dashboard-Test", q, timeout=30), timeout=35)
-        if err == "budget":
-            return jsonify(ok=False, error="KI-Budget erreicht — gleich nochmal")
-        return jsonify(ok=bool(txt), answer=txt or "", error=(err or None))
-    except RuntimeError as e:
-        if _loop_not_ready(e):
-            return jsonify(ok=False, error="Bot-Loop startet noch", transient=True), 503
-        return jsonify(ok=False, error=str(e)), 500
-    except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
 
 
 # ═══ v37 Phase 5: Sende-Timeline + Auto-Report ═══
@@ -12739,43 +12724,6 @@ def api_restream_deck():
 
 
 # ═══ F90: AZRAEL CORE — Telemetrie der einen KI fürs Dashboard ═══
-@dashboard_app.route("/api/azrael/core")
-def api_azrael_core():
-    """F90: Live-Zustand + KI-Telemetrie (letzte 24h) für das AZRAEL-Panel.
-       Zeigt, dass alle Kanäle EINE KI mit einem Budget/Gedächtnis sind."""
-    out = {"ok": True, "state": _azrael_live_state(),
-           "budget_used": len(_AI_CALL_TS), "budget_max": AZRAEL_MAX_CALLS_MIN,
-           "calls_24h": 0, "ok_rate": None, "avg_ms": None, "by_purpose": [], "recent": [],
-           "memories": 0, "chapters_24h": 0}
-    try:
-        since = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
-        with db_conn() as conn:
-            agg = conn.execute("SELECT COUNT(*) AS n, AVG(ms) AS avg_ms, "
-                               "SUM(CASE WHEN ok=1 THEN 1 ELSE 0 END) AS oks "
-                               "FROM ai_interactions WHERE created_at >= ?", (since,)).fetchone()
-            n = (agg["n"] if agg else 0) or 0
-            out["calls_24h"] = n
-            if n:
-                out["avg_ms"] = int(agg["avg_ms"] or 0)
-                out["ok_rate"] = round(100.0 * (agg["oks"] or 0) / n, 1)
-            out["by_purpose"] = [{"purpose": r["purpose"] or "?", "n": r["n"],
-                                  "avg_ms": int(r["avg_ms"] or 0)}
-                                 for r in conn.execute(
-                                     "SELECT purpose, COUNT(*) AS n, AVG(ms) AS avg_ms "
-                                     "FROM ai_interactions WHERE created_at >= ? "
-                                     "GROUP BY purpose ORDER BY n DESC LIMIT 8", (since,)).fetchall()]
-            out["recent"] = [{"purpose": r["purpose"] or "?", "ms": r["ms"] or 0,
-                              "ok": bool(r["ok"]), "chars": r["answer_chars"] or 0,
-                              "at": (r["created_at"] or "")[11:19]}
-                             for r in conn.execute(
-                                 "SELECT purpose, ms, ok, answer_chars, created_at "
-                                 "FROM ai_interactions ORDER BY id DESC LIMIT 12").fetchall()]
-            out["memories"] = conn.execute("SELECT COUNT(*) AS c FROM stream_memories").fetchone()["c"]
-            out["chapters_24h"] = conn.execute("SELECT COUNT(*) AS c FROM stream_chapters WHERE created_at >= ?",
-                                               (since,)).fetchone()["c"]
-    except Exception as e:
-        out["db_error"] = str(e)
-    return jsonify(out)
 
 
 # ═══ F92: STREAMER MONITOR WALL — Broadcast-Wall statt Registry-Tabelle ═══
@@ -12941,27 +12889,8 @@ def api_prometheus_metrics():
 
 
 
-@dashboard_app.route("/api/azrael/agents")
-def api_azrael_agents():
-    """v37: die AZRAEL-Agenten (je Rolle ein Agent)."""
-    active = (_restream_active().get("user") or "")
-    items = [{"key": k, "name": a["name"], "role": a["role"], "persona": a["persona"],
-              "channels": list(a["match"])} for k, a in _AZRAEL_AGENTS.items()]
-    return jsonify(ok=True, agents=items, model=AI_MODEL, restream_user=active or None)
 
 
-@dashboard_app.route("/api/azrael/memories")
-def api_azrael_memories():
-    """AZRAELs destillierte Stream-Erinnerungen einsehen."""
-    try:
-        with db_conn() as conn:
-            rows = conn.execute("SELECT username, summary, created_at FROM stream_memories "
-                                "ORDER BY id DESC LIMIT 20").fetchall()
-        mems = [{"username": r["username"], "summary": r["summary"],
-                 "at": (r["created_at"] or "")[:16].replace("T", " ")} for r in rows]
-        return jsonify(ok=True, memories=mems, total=len(mems))
-    except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
 
 
 # ═══ v37: RELIABILITY — Fehler-Analyse (Kategorisierung + Trend, read-only) ═══
@@ -14377,7 +14306,7 @@ def api_check_timing():
                  "urteil": ("noch zu wenige Messungen" if _t["n"] < 50 else
                             "Checks ueberholen sich — Intervall erhoehen"
                             if _t["over_interval"] > _t["n"] * 0.2 else "unauffaellig")},
-        whisper={"modell": WHISPER_MODEL_NAME, "compute": WHISPER_COMPUTE,
+        whisper={"modell": _nc_whisper.MODELL["name"], "compute": WHISPER_COMPUTE,
                  "threads": WHISPER_THREADS, "chunk_s": WHISPER_CHUNK_SECS,
                  "laeufe": _WHISPER_STATE.get("runs", 0),
                  "rtf_letzter": _WHISPER_STATE.get("last_rtf"),
@@ -17261,7 +17190,7 @@ def _ov_clip_text(t, maxlen=None):
     return (cut[:p] if p > n * 0.6 else cut).rstrip(" ,;:") + " …"
 
 # Letzte Live-Reaktion (für das Overlay/„vor der Kamera"). Wird von react() gesetzt.
-_AZRAEL_REACTION = {"ts": 0.0, "statement": "", "text": "", "active": False, "audio": "", "source": "", "emotion": "neutral"}
+_AZRAEL_REACTION = _nc_azrael.REACTION          # v4.1-W19: geteilt mit nc/routes/azrael.py
 
 
 
@@ -17287,26 +17216,11 @@ _learned_load = _nc_badwords.load_learned
 _learned_save = _nc_badwords.save_learned
 
 # UPGRADE: pro-Streamer-Persona — username -> eigener AZRAEL-Persona-Text (JSON).
-def _streamer_personas_path() -> str:
-    return os.path.join(RECORDINGS_DIR, "streamer_personas.json")
-
-def _streamer_personas_load():
-    try:
-        with open(_streamer_personas_path(), "r", encoding="utf-8") as f:
-            d = json.load(f)
-        return d if isinstance(d, dict) else {}
-    except (FileNotFoundError, json.JSONDecodeError, OSError, ValueError):
-        return {}
-
-def _streamer_personas_save(d):
-    try:
-        os.makedirs(RECORDINGS_DIR, exist_ok=True)
-        tmp = _streamer_personas_path() + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(dict(d), f, ensure_ascii=False, indent=2)
-        os.replace(tmp, _streamer_personas_path())
-    except OSError:
-        pass
+# v4.1-W19: nach nc/azraelstate.py geloest, damit /api/azrael/persona sie ohne
+# Kontext-Eintrag erreicht. Es IST AZRAEL-Zustand, nur eben persistent.
+_nc_azrael.configure(recordings_dir=RECORDINGS_DIR)
+_streamer_personas_load = _nc_azrael.personas_load
+_streamer_personas_save = _nc_azrael.personas_save
 
 def _streamer_persona_get(username):
     if not username:
@@ -17318,7 +17232,8 @@ def _streamer_persona_get(username):
         return ""
 
 # Aktueller Stream-Kontext für emotionale, situationsabhängige AZRAEL-Reaktionen.
-_AZRAEL_CONTEXT = {"text": os.getenv("AZRAEL_STREAM_CONTEXT", "").strip(), "ts": 0.0}
+_AZRAEL_CONTEXT = _nc_azrael.CONTEXT            # v4.1-W19: geteilt (Alias, nie neu gebunden)
+_AZRAEL_CONTEXT["text"] = os.getenv("AZRAEL_STREAM_CONTEXT", "").strip()
 
 
 # V37-ADBLOCK: Fremdwerbung unterbinden. Erkennt Eigenwerbung Fremder (fremder
@@ -18171,7 +18086,7 @@ _nc_channels.KICK_MOD["obj"] = _KICK_MOD
 #   Die TikTok-Chat-Quelle (Kommentare/Gifts) folgt als nächster Schritt.
 LIVE_REACT_ENABLED   = os.getenv("LIVE_REACT_ENABLED", "0").strip().lower() in ("1", "true", "yes", "on")
 LIVE_REACT_SPEECH    = os.getenv("LIVE_REACT_SPEECH", "1").strip().lower() in ("1", "true", "yes", "on")
-WHISPER_MODEL_NAME   = os.getenv("WHISPER_MODEL", "base").strip() or "base"
+_nc_whisper.MODELL["name"] = os.getenv("WHISPER_MODEL", "base").strip() or "base"
 WHISPER_DEVICE       = os.getenv("WHISPER_DEVICE", "cpu").strip() or "cpu"
 WHISPER_COMPUTE      = os.getenv("WHISPER_COMPUTE", "int8").strip() or "int8"
 WHISPER_LANG         = os.getenv("WHISPER_LANG", "de").strip() or "de"
@@ -18198,7 +18113,10 @@ LIVE_REACT_BATCH_S   = _env_int("LIVE_REACT_BATCH_S", 20)
 LIVE_REACT_MAX_USERS = _env_int("LIVE_REACT_MAX_USERS", 3)
 LIVE_REACT_CHAT      = os.getenv("LIVE_REACT_CHAT", "1").strip().lower() in ("1", "true", "yes", "on")
 
-_whisper_model = None
+# v4.1-W19: Name UND geladenes Objekt liegen als Register in nc/whispercfg.py.
+# /api/azrael/whisper_model schaltet zur Laufzeit um; im Blueprint waere ein
+# `global` dessen eigener Namensraum gewesen — die Route haette Erfolg
+# gemeldet und der naechste Transkript-Lauf das alte Modell benutzt.
 _whisper_lock = None
 # v4.0-W47: EIGENER Pool für die Live-Transkription. Whisper läuft im Stream
 # quasi ununterbrochen; liefe es über den Default-Pool, konkurrierte es dort mit
@@ -18216,7 +18134,7 @@ def _whisper_pool():
             max_workers=max(1, WHISPER_MAX_CONC) + 1, thread_name_prefix="ncwhisper")
     return _WHISPER_POOL
 _whisper_sem = None
-_live_react_workers = {}                 # username -> {"stop": Event, "task": Task}
+_live_react_workers = _nc_azrael.WORKERS   # username -> {"stop": Event, "task"} (W19: geteilt)
 _live_react_warned = {"whisper": False, "proxy": False}
 _react_fail_ts = {}
 
@@ -18228,7 +18146,7 @@ def _react_warn(key, msg, every=300):
     if now - _react_fail_ts.get(key, -1e9) >= every:
         _react_fail_ts[key] = now
         log.warning(msg)
-_LIVE_REACT_PAUSED = {"v": False}
+_LIVE_REACT_PAUSED = _nc_azrael.LIVE_PAUSED     # v4.1-W19: geteilt
 DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL", "").strip()
 
 # V37-COMMUNITY: Discovery-Loop-Schalter.
@@ -18291,7 +18209,7 @@ _loyalty.configure(
     chat_cooldown_s=_env_int("LOYALTY_CHAT_COOLDOWN_S", 60),
     return_points=_env_int("LOYALTY_RETURN_POINTS", 25))
 LIVE_REACT_GIFT_THRESHOLD = _env_int("LIVE_REACT_GIFT_THRESHOLD", 0)  # Diamanten ab denen sofort reagiert wird (0=aus)
-_LIVE_TRANSCRIPT = {}     # DASHBOARD: username -> [{"ts","text"}] (was Whisper hoert), juengste zuletzt
+_LIVE_TRANSCRIPT = _nc_azrael.TRANSCRIPT   # username -> [{"ts","text"}] (v4.1-W19: geteilt)
 
 # ── B138: AZRAELs Reaktionen in die eigenen Stream-Chats ────────────────────
 # Der Fehler, der lange keinem auffiel: react() verteilte seine Reaktion an
@@ -18430,11 +18348,12 @@ def _oracle_persona(username):
 
 
 # ═══ F90: AZRAEL CORE — die EINE KI hinter allen Kanälen ═══
-_AI_CALL_TS = _collections.deque(maxlen=300)   # V7: globales Call-Budget (Timestamps)
+_AI_CALL_TS = _nc_azrael.CALL_TS   # V7: globales Call-Budget (v4.1-W19: geteilt)
 
 
 # ═══ v37: AZRAEL-AGENTEN — je Rolle ein eigener Agent (eine KI, mehrere Hüte) ═══
-_AZRAEL_AGENTS = {
+_AZRAEL_AGENTS = _nc_azrael.AGENTS
+_AZRAEL_AGENTS.update({
     "moderator": {
         "name": "Moderator",
         "role": "Wacht über den Kick-Chat: reagiert auf Zuschauer, hält den Ton.",
@@ -18465,7 +18384,7 @@ _AZRAEL_AGENTS = {
         "match": ("Discord", "discord"),
         "persona": "Du hilfst der Discord-Community: hilfsbereit, klar, auf den Punkt.",
     },
-}
+})
 
 
 def _agent_for(purpose):
@@ -18515,6 +18434,9 @@ def _azrael_live_state():
     return "; ".join(parts) if parts else "Kein Stream aktiv."
 
 
+_nc_azrael.LIVE_STATE["fn"] = _azrael_live_state   # v4.1-W19: Haken fuer /api/azrael/core
+
+
 def _azrael_system(purpose, extra=""):
     """V2/V3/V4/V5: EIN System-Prompt für alle Kanäle — Identität + Stil +
        Live-Zustand + Streamer-Gedächtnis + Persona + Prompt-Injection-Schild.
@@ -18559,6 +18481,9 @@ async def azrael_chat(purpose, user_content, extra_system="", timeout=25, model=
     ms = int((_time_mod.monotonic() - t0) * 1000)
     _ai_telemetry(purpose, len(user_content or ""), len(txt or ""), ms, bool(txt), err)
     return txt, err
+
+
+_nc_azrael.CHAT["fn"] = azrael_chat        # v4.1-W19: Haken fuer /api/azrael/ask
 
 
 async def oracle_handle(sender, content):
@@ -19001,35 +18926,35 @@ def _faster_whisper_available():
 
 async def _whisper_get_model():
     """Lazy-Load des faster-whisper-Modells (blockierend → Executor). None bei Fehlen."""
-    global _whisper_model, _whisper_lock
-    if _whisper_model is not None:
-        return _whisper_model
+    global _whisper_lock
+    if _nc_whisper.MODELL["obj"] is not None:
+        return _nc_whisper.MODELL["obj"]
     if not _faster_whisper_available():
         if not _live_react_warned["whisper"]:
             log.warning("faster-whisper nicht installiert — Sprach-Reaktion inaktiv. "
-                        "`pip install faster-whisper` (Modell '%s').", WHISPER_MODEL_NAME)
+                        "`pip install faster-whisper` (Modell '%s').", _nc_whisper.MODELL["name"])
             _live_react_warned["whisper"] = True
         return None
     if _whisper_lock is None:
         _whisper_lock = asyncio.Lock()
     async with _whisper_lock:
-        if _whisper_model is not None:
-            return _whisper_model
+        if _nc_whisper.MODELL["obj"] is not None:
+            return _nc_whisper.MODELL["obj"]
         def _load():
             from faster_whisper import WhisperModel
             # v4.0-W76: auch das Laden spinnt native CTranslate2-Threads hoch —
             # unter dieselbe Fork-Koordination stellen.
             with _whisper_native_section():
-                return WhisperModel(WHISPER_MODEL_NAME, device=WHISPER_DEVICE,
+                return WhisperModel(_nc_whisper.MODELL["name"], device=WHISPER_DEVICE,
                                     compute_type=WHISPER_COMPUTE, cpu_threads=WHISPER_THREADS)
         try:
-            _whisper_model = await asyncio.get_running_loop().run_in_executor(None, _load)
+            _nc_whisper.MODELL["obj"] = await asyncio.get_running_loop().run_in_executor(None, _load)
             log.info("faster-whisper geladen: %s (%s/%s, %d Threads)",
-                     WHISPER_MODEL_NAME, WHISPER_DEVICE, WHISPER_COMPUTE, WHISPER_THREADS)
+                     _nc_whisper.MODELL["name"], WHISPER_DEVICE, WHISPER_COMPUTE, WHISPER_THREADS)
         except Exception as e:
             log.warning("faster-whisper Laden fehlgeschlagen: %s", e)
-            _whisper_model = None
-    return _whisper_model
+            _nc_whisper.MODELL["obj"] = None
+    return _nc_whisper.MODELL["obj"]
 
 async def _whisper_transcribe(path):
     """Transkribiert eine WAV-Datei (Executor, semaphore-begrenzt). Text oder ''."""
@@ -19070,7 +18995,7 @@ async def _whisper_transcribe(path):
                             "(Modell %s, %d Threads, %s). Bei RTF>1 staut sich "
                             "der Backlog — kleineres Modell (WHISPER_MODEL=tiny) "
                             "oder WHISPER_CHUNK_SECS senken.",
-                            _rtf, WHISPER_MODEL_NAME, WHISPER_THREADS,
+                            _rtf, _nc_whisper.MODELL["name"], WHISPER_THREADS,
                             "gedrosselt" if _st.get("throttled") else "voll")
         return _txt
     # V37-B98: Bei laufendem Restream serialisieren (Sendebild hat Vorrang).
@@ -20491,51 +20416,10 @@ def api_audio_testtone():
 
 
 
-@dashboard_app.route("/api/azrael/react", methods=["POST"])
-def api_azrael_react():
-    """AZRAEL erzeugt eine Live-Reaktion (Ollama) auf eine Aussage/Behauptung.
-       Optional direkt in den Chat posten. Die Reaktion erscheint im Overlay."""
-    d = request.get_json(silent=True) or {}
-    statement = (d.get("statement") or "").strip()
-    if not statement:
-        return jsonify(ok=False, error="statement fehlt"), 400
-    ctx = d.get("context")
-    if ctx is not None:   # mitgeschickter Kontext wird auch als aktueller gespeichert
-        _AZRAEL_CONTEXT.update(text=str(ctx)[:400], ts=_time_mod.time())
-    try:
-        text, err = _run_async_from_flask(_KICK_MOD.react(statement, context=ctx), timeout=AI_FLASK_TIMEOUT)
-    except RuntimeError as e:
-        if _loop_not_ready(e):
-            return jsonify(ok=False, error="Bot-Loop startet noch", transient=True), 503
-        return jsonify(ok=False, error=str(e)), 500
-    except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
-    if err or not text:
-        return jsonify(ok=False, error=err or "keine Antwort (Ollama erreichbar?)"), 502
-    if d.get("push_chat"):
-        try: _run_async_from_flask(_KICK_MOD.send_message(_nc_i18n.t(f"AZRAEL: {text}")), timeout=15)
-        except Exception: pass
-    return jsonify(ok=True, reaction=text)
 
 
-@dashboard_app.route("/api/azrael/context", methods=["GET", "POST"])
-def api_azrael_context():
-    """Aktuellen Stream-Kontext für emotionale AZRAEL-Reaktionen setzen/lesen."""
-    if request.method == "POST":
-        d = request.get_json(silent=True) or {}
-        _AZRAEL_CONTEXT.update(text=(d.get("context") or "").strip()[:400], ts=_time_mod.time())
-    return jsonify(ok=True, context=_AZRAEL_CONTEXT.get("text", ""))
 
 
-@dashboard_app.route("/api/azrael/reaction")
-def api_azrael_reaction():
-    """Letzte Live-Reaktion (für Overlay-Polling, falls separat genutzt)."""
-    r = _AZRAEL_REACTION
-    active = bool(r.get("text")) and (_time_mod.time() - r.get("ts", 0)) < AZRAEL_REACTION_HOLD_S
-    return jsonify(ok=True, active=active, text=r.get("text", "") if active else "",
-                   statement=r.get("statement", "") if active else "",
-                   audio=r.get("audio", "") if active else "",
-                   emotion=r.get("emotion", "neutral") if active else "neutral")
 
 
 @dashboard_app.route("/api/clips")
@@ -20602,18 +20486,6 @@ def api_clips_clear():
         return jsonify(ok=False, error=str(e)), 500
 
 
-@dashboard_app.route("/api/azrael/voices")
-def api_azrael_voices():
-    """Listet die tatsächlich installierten Piper-Stimmen (rekursiv aus den Verzeichnissen)
-       + Diagnose: welches Modell konfiguriert ist und ob es auflösbar ist."""
-    vs = _piper_list_voices(force=(request.args.get("rescan") == "1"))
-    cur = (_OVERLAY.get("piper_model") or "").strip()
-    resolved = _resolve_piper_model(cur) if cur else None
-    return jsonify(ok=True,
-                   piper_installed=_piper_available(),
-                   current=cur, resolved=resolved,
-                   voices=[{"name": v["name"], "path": v["path"]} for v in vs],
-                   roots=_piper_voice_roots())
 
 
 @dashboard_app.route("/api/tts/<fn>")
@@ -20631,162 +20503,24 @@ def api_tts_file(fn):
                                mimetype="audio/wav")
 
 
-@dashboard_app.route("/api/azrael/tts_test", methods=["POST"])
-def api_azrael_tts_test():
-    """Test: erzeugt mit Piper Audio aus Text und gibt die URL zurück."""
-    if not _piper_available():
-        return jsonify(ok=False, error="Piper-CLI nicht gefunden — `pip install piper-tts`"), 502
-    d = request.get_json(silent=True) or {}
-    text = (d.get("text") or "Friede sei mit dir. Ich bin AZRAEL.").strip()[:300]
-    # optionales Override fürs Testen, ohne die Config zu speichern
-    if d.get("piper_model"):
-        _OVERLAY["piper_model"] = str(d["piper_model"]).strip()[:300]
-    if d.get("piper_length") is not None:
-        try: _OVERLAY["piper_length"] = max(0.5, min(2.0, float(d["piper_length"])))
-        except (TypeError, ValueError): pass
-    if not (_OVERLAY.get("piper_model") or "").strip():
-        return jsonify(ok=False, error="Kein Piper-Modell gesetzt"), 400
-    try:
-        url = _run_async_from_flask(_piper_say(text), timeout=35)
-    except RuntimeError as e:
-        if _loop_not_ready(e):
-            return jsonify(ok=False, error="Bot-Loop startet noch", transient=True), 503
-        return jsonify(ok=False, error=str(e)), 500
-    except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
-    if not url:
-        return jsonify(ok=False, error="Piper fehlgeschlagen (Modell vorhanden? Logs prüfen)"), 502
-    return jsonify(ok=True, url=url)
 
 
-@dashboard_app.route("/api/azrael/live_status")
-def api_azrael_live_status():
-    """Status der Live-Reaction-Engine (für Dashboard/Diagnose)."""
-    return jsonify(ok=True, enabled=LIVE_REACT_ENABLED, paused=_LIVE_REACT_PAUSED["v"],
-                   speech=LIVE_REACT_SPEECH, chat=LIVE_REACT_CHAT,
-                   whisper_ready=_faster_whisper_available(), proxy_set=bool(get_random_proxy()),
-                   record_proxy=bool(RECORD_PROXY),
-                   active=sorted(_live_react_workers.keys()))
 
 
-@dashboard_app.route("/api/azrael/live_pause", methods=["POST"])
-def api_azrael_live_pause():
-    """Reaction-Engine zur Laufzeit pausieren/fortsetzen (ohne Neustart)."""
-    d = request.get_json(silent=True) or {}
-    _LIVE_REACT_PAUSED["v"] = bool(d.get("paused", not _LIVE_REACT_PAUSED["v"]))
-    return jsonify(ok=True, paused=_LIVE_REACT_PAUSED["v"])
 
 
-@dashboard_app.route("/api/azrael/live_test", methods=["POST"])
-def api_azrael_live_test():
-    """Test-Reaktion durch die volle Kette (react → Overlay/Stimme) ohne echten Live-User."""
-    d = request.get_json(silent=True) or {}
-    statement = (d.get("statement") or "Jemand im Chat behauptet etwas Zweifelhaftes.").strip()[:500]
-    try:
-        text, err = _run_async_from_flask(
-            _KICK_MOD.react(statement, context="Manuell ausgelöste Test-Reaktion:"), timeout=AI_FLASK_TIMEOUT)
-    except RuntimeError as e:
-        if _loop_not_ready(e):
-            return jsonify(ok=False, error="Bot-Loop startet noch", transient=True), 503
-        return jsonify(ok=False, error=str(e)), 500
-    except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
-    if err or not text:
-        return jsonify(ok=False, error=err or "keine Antwort"), 502
-    return jsonify(ok=True, text=text)
 
 
-@dashboard_app.route("/api/azrael/reactions")
-def api_azrael_reactions():
-    """UPGRADE: Verlauf der AZRAEL-Reaktionen (aus kick_mod_log)."""
-    limit = _arg_int("limit", 50, 1, 200)
-    try:
-        with db_conn() as conn:
-            rows = conn.execute("SELECT ts, content, meta FROM kick_mod_log WHERE kind='reaction' "
-                                "ORDER BY ts DESC LIMIT ?", (limit,)).fetchall()
-        out = []
-        for r in rows:
-            meta = {}
-            try: meta = json.loads(r["meta"] or "{}")
-            except Exception: pass
-            out.append({"ts": r["ts"], "text": r["content"],
-                        "on": meta.get("on", ""), "src": meta.get("src", "")})
-        return jsonify(ok=True, reactions=out)
-    except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
 
 
-@dashboard_app.route("/api/azrael/personas")
-def api_azrael_personas():
-    """UPGRADE: Liste der pro-Streamer-Persona-Overrides."""
-    try:
-        return jsonify(ok=True, personas=_streamer_personas_load())
-    except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
 
 
-@dashboard_app.route("/api/azrael/persona", methods=["POST"])
-def api_azrael_persona_set():
-    """UPGRADE: setzt/loescht die AZRAEL-Persona fuer einen Streamer.
-       Body {username, persona}; leere persona entfernt den Override."""
-    d = request.get_json(silent=True) or {}
-    user = (d.get("username") or "").strip().lstrip("@").lower()
-    persona = (d.get("persona") or "").strip()
-    if not user:
-        return jsonify(ok=False, error="username fehlt"), 400
-    try:
-        m = _streamer_personas_load()
-        if persona:
-            m[user] = persona
-        else:
-            m.pop(user, None)
-        _streamer_personas_save(m)
-        return jsonify(ok=True, personas=m)
-    except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
 
 
-@dashboard_app.route("/api/azrael/transcript")
-def api_azrael_transcript():
-    """DASHBOARD: aktuelles Live-Transkript (was Whisper hoert), je User."""
-    out = {u: buf[-20:] for u, buf in _LIVE_TRANSCRIPT.items()}
-    return jsonify(ok=True, transcript=out)
 
 
-@dashboard_app.route("/api/azrael/piper_status")
-def api_azrael_piper_status():
-    """DASHBOARD: Piper-TTS-Status (Binary, Engine, Stimm-Modell)."""
-    model = (_OVERLAY.get("piper_model") or "").strip()
-    mp = _resolve_piper_model(model)
-    exists = bool(mp)
-    return jsonify(ok=True, available=_piper_available(), bin=PIPER_BIN,
-                   engine=(_OVERLAY.get("voice_engine") or "browser"),
-                   voice_enabled=bool(_OVERLAY.get("voice_enabled")),
-                   model=model, model_exists=exists, resolved=mp,
-                   data_dir=PIPER_DATA_DIR, voice_dirs=PIPER_VOICE_DIRS)
 
 
-WHISPER_PRESETS = ["tiny", "base", "small", "medium", "large-v3",
-                   "tiny.en", "base.en", "small.en", "medium.en"]
-
-
-@dashboard_app.route("/api/azrael/whisper_model", methods=["GET", "POST"])
-def api_azrael_whisper_model():
-    """DASHBOARD: Whisper-Modell lesen / zur Laufzeit umschalten.
-       POST {model} -> setzt Namen + leert Cache (Reload beim naechsten Transkript)."""
-    global _whisper_model, WHISPER_MODEL_NAME
-    if request.method == "POST":
-        d = request.get_json(silent=True) or {}
-        m = (d.get("model") or "").strip()
-        if not m:
-            return jsonify(ok=False, error="model fehlt"), 400
-        WHISPER_MODEL_NAME = m
-        _whisper_model = None
-        log.info("Whisper-Modell zur Laufzeit umgeschaltet -> %s", m)
-        return jsonify(ok=True, model=WHISPER_MODEL_NAME, presets=WHISPER_PRESETS)
-    return jsonify(ok=True, model=WHISPER_MODEL_NAME, presets=WHISPER_PRESETS,
-                   loaded=bool(_whisper_model is not None),
-                   available=_faster_whisper_available())
 
 
 
@@ -21218,7 +20952,8 @@ def api_channel_set():
 # ===================== STREAM-OVERLAY (vor der Kamera) =====================
 # Eine eigene Seite unter /overlay als OBS-Browser-Source: Sendername,
 # Donations, letzter Follower, virtueller Moderator. Daten via /api/overlay/state.
-_OVERLAY = {
+_OVERLAY = _nc_azrael.OVERLAY   # v4.1-W19: geteilt; .env-Aufloesung bleibt hier
+_OVERLAY.update({
     "title": os.getenv("OVERLAY_TITLE", "Azrael Sentinel").strip(),
     "goal_target": _env_int("DONATION_GOAL_TARGET", 0),
     "goal_label": os.getenv("DONATION_GOAL_LABEL", "Spendenziel").strip(),
@@ -21237,74 +20972,40 @@ _OVERLAY = {
     "piper_length": 1.0,                                          # Tempo (length-scale; >1 = langsamer)
     "voice_reactions": True,   # AZRAEL-Live-Reaktionen vorlesen
     "voice_mod": False,        # Moderations-/Chat-Antworten vorlesen
-}
+})
 
 # ---- Piper TTS (server-seitige, OS-unabhängige Stimme) ----------------------
 # Erzeugt aus Text eine WAV-Datei via Piper-CLI (neuronale TTS, CPU) und liefert
 # sie unter /api/tts/<file> aus. Deutsche Männer-Stimmen z. B. de_DE-thorsten-medium,
 # de_DE-karlsson-low, de_DE-pavoque-low (Modelle einmalig laden, s. .env.example).
 # Untestbar in dieser Umgebung — Modelle müssen am Server liegen.
-PIPER_BIN = os.getenv("PIPER_BIN", "piper").strip() or "piper"
-PIPER_DATA_DIR = os.getenv("PIPER_DATA_DIR", os.path.join(RECORDINGS_DIR, "piper")).strip()
+# v4.1-W19: Suchorte, Scannen, Cache und Verfuegbarkeit liegen jetzt vollstaendig
+# in nc/piper_voices.py. Drei Routen brauchen sie; als Kontext-Eintraege waeren
+# das sieben der 25 vertraglichen Plaetze gewesen. Die Konfiguration wird HIER
+# aufgeloest und hineingereicht — .env ist beim Import des Moduls teils noch
+# nicht geladen.
+_PIPER_DATA_DIR = os.getenv("PIPER_DATA_DIR", os.path.join(RECORDINGS_DIR, "piper")).strip()
+_nc_piper.configure(
+    bin=os.getenv("PIPER_BIN", "piper").strip() or "piper",
+    data_dir=_PIPER_DATA_DIR,
+    # Henry legt die .onnx unter /opt/piper/voices ab → fest mit drin, plus
+    # PIPER_DATA_DIR und ein optionaler PIPER_VOICES_DIR-Override.
+    voice_dirs=[
+        os.getenv("PIPER_VOICES_DIR", "").strip(),
+        _PIPER_DATA_DIR,
+        "/opt/piper/voices",
+        "/opt/piper/voices/de", "/opt/piper/voices/en",
+    ],
+    recordings_dir=RECORDINGS_DIR,
+    module_dir=os.path.dirname(os.path.abspath(__file__)))
 
-# Standard-Suchorte für Piper-Stimmmodelle. Henry legt die .onnx unter /opt/piper/voices
-# ab → fest mit drin, plus PIPER_DATA_DIR und ein optionaler PIPER_VOICES_DIR-Override.
-PIPER_VOICE_DIRS = [d for d in [
-    os.getenv("PIPER_VOICES_DIR", "").strip(),
-    PIPER_DATA_DIR,
-    "/opt/piper/voices",
-    "/opt/piper/voices/de", "/opt/piper/voices/en",
-] if d]
+_piper_voice_roots = _nc_piper.roots
+_piper_list_voices = _nc_piper.list_voices
+_resolve_piper_model = _nc_piper.resolve
+_piper_available = _nc_piper.available
 
-
-_PIPER_VOICE_CACHE = {"ts": 0.0, "voices": []}
-
-
-def _piper_voice_roots():
-    """Alle Wurzeln, in denen nach Piper-Stimmen gesucht wird (B166: nc.piper_voices)."""
-    return _nc_piper.voice_roots(
-        PIPER_VOICE_DIRS, recordings_dir=RECORDINGS_DIR,
-        module_dir=os.path.dirname(os.path.abspath(__file__)))
-
-
-def _piper_list_voices(force=False):
-    """Scannt alle Voice-Wurzeln REKURSIV nach .onnx-Stimmen (auch in Unterordnern).
-       Returns [{name, path}], 60s gecacht. Das ist die 'direkt aus dem Verzeichnis'-Quelle."""
-    now = _time_mod.time()
-    if not force and _PIPER_VOICE_CACHE["voices"] and now - _PIPER_VOICE_CACHE["ts"] < 60:
-        return _PIPER_VOICE_CACHE["voices"]
-    found, seen = [], set()
-    for root in _piper_voice_roots():
-        try:
-            if not (root and os.path.isdir(root)):
-                continue
-            for dirpath, _dirs, files in os.walk(root):
-                for f in files:
-                    if f.endswith(".onnx"):
-                        p = os.path.abspath(os.path.join(dirpath, f))
-                        if p not in seen:
-                            seen.add(p)
-                            found.append({"name": f[:-5], "path": p})
-        except OSError:
-            pass
-    found.sort(key=lambda v: v["name"])
-    _PIPER_VOICE_CACHE.update(ts=now, voices=found)
-    return found
-
-
-def _resolve_piper_model(model):
-    """Löst Modellname/-pfad zur konkreten .onnx auf (absoluter Pfad) oder None.
-       Probiert: exakter Pfad, dann REKURSIVE Suche in allen Voice-Wurzeln —
-       exakter Name, exakter Dateiname, sonst Teilstring (case-insensitiv).
-       So greift z.B. 'thorsten' auf 'de_DE-thorsten-medium.onnx' auch im Unterordner."""
-    # B166: reine Auflöse-Logik in nc.piper_voices; das Scannen bleibt hier.
-    return _nc_piper.resolve_model_path(model, _piper_list_voices())
 _TTS_DIR = os.path.join(RECORDINGS_DIR, "tts")
 _piper_warned = {"done": False}
-
-def _piper_available():
-    import shutil
-    return bool(shutil.which(PIPER_BIN) or os.path.isfile(PIPER_BIN))
 
 _piper_auto = {"model": None, "scanned": False}
 
@@ -21312,7 +21013,7 @@ _piper_auto = {"model": None, "scanned": False}
 def _piper_pick_model():
     """Absoluter .onnx-Pfad der zu nutzenden Stimme. Erst das konfigurierte Modell
        (_OVERLAY['piper_model'] / PIPER_MODEL); ist keins gesetzt/auffindbar, wird
-       AUTOMATISCH die erste installierte Stimme in PIPER_VOICE_DIRS genommen.
+       AUTOMATISCH die erste installierte Stimme in den Piper-Suchorten genommen.
        None + einmalige Warnung, wenn gar keine Stimme installiert ist."""
     model = (_OVERLAY.get("piper_model") or "").strip()
     if model:
@@ -21321,7 +21022,7 @@ def _piper_pick_model():
             return mp
         if not _piper_warned.get("model"):
             log.warning("Piper-Modell '%s' nicht gefunden (gesucht in: %s) — fällt auf "
-                        "Auto-Stimme zurück.", model, ", ".join(PIPER_VOICE_DIRS))
+                        "Auto-Stimme zurück.", model, ", ".join(_nc_piper.voice_dirs()))
             _piper_warned["model"] = True
     if not _piper_auto["scanned"]:
         _piper_auto["scanned"] = True
@@ -21356,7 +21057,7 @@ async def _piper_say(text, rate=None, source_user=None):
     if not _piper_available():
         if not _piper_warned["done"]:
             log.warning("Piper-TTS nicht gefunden (PIPER_BIN=%s). `pip install piper-tts` "
-                        "+ Stimm-Modell laden. Voice-Engine 'piper' bleibt inaktiv.", PIPER_BIN)
+                        "+ Stimm-Modell laden. Voice-Engine 'piper' bleibt inaktiv.", _nc_piper.bin_pfad())
             _piper_warned["done"] = True
         return None
     mp = _piper_pick_model()                # konfiguriertes ODER auto-erkanntes .onnx
@@ -21371,7 +21072,7 @@ async def _piper_say(text, rate=None, source_user=None):
     os.makedirs(_TTS_DIR, exist_ok=True)
     fn = f"az_{int(_time_mod.time()*1000)}_{_rnd.randint(100,999)}.wav"
     out = os.path.join(_TTS_DIR, fn)
-    cmd = [PIPER_BIN, "-m", mp, "-f", out, "--length-scale", str(length)]
+    cmd = [_nc_piper.bin_pfad(), "-m", mp, "-f", out, "--length-scale", str(length)]
     # mp ist absoluter .onnx-Pfad → Piper findet die .onnx.json daneben, kein --data-dir nötig
     proc = None
     try:
@@ -21394,6 +21095,9 @@ async def _piper_say(text, rate=None, source_user=None):
                 await proc.wait()        # reap -> kein Zombie-Piper-Prozess
             except Exception: pass
         return None
+
+
+_nc_piper.SAY["fn"] = _piper_say           # v4.1-W19: Haken fuer /api/azrael/tts_test
 
 
 def _azrael_overlay_state():
@@ -28926,6 +28630,7 @@ dashboard_app.register_blueprint(_nc_routes_chat.bp)       # v4.1-W15
 dashboard_app.register_blueprint(_nc_routes_cohost.bp)     # v4.1-W15
 dashboard_app.register_blueprint(_nc_routes_discord.bp)    # v4.1-W16
 dashboard_app.register_blueprint(_nc_routes_kickmod.bp)    # v4.1-W18
+dashboard_app.register_blueprint(_nc_routes_azrael.bp)     # v4.1-W19
 
 
 if __name__ == "__main__":

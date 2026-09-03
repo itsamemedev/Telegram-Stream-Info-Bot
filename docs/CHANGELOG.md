@@ -11,6 +11,62 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Geändert — `/api/azrael` als Blueprint, drei Schichten gelöst (v4.1 W19)
+
+Die größte Routengruppe, die noch im Monolithen stand: **18 Routen**, und
+**null neue `nc.ctx`-Einträge**. Roh hätte sie 35 gekostet — bei 24 von
+vertraglich 25 belegten Plätzen war das kein knapper Fall, sondern ein
+unmöglicher. Also wieder erst die Schichten, dann die Routen (W117):
+
+* **`nc/azraelstate.py`** trägt die acht Zustands-Container:
+  Overlay-Konfiguration, Stream-Kontext, letzte Reaktion, KI-Aufruf-Budget,
+  Pause-Schalter der Reaction-Engine, Live-Transkript, laufende Worker und die
+  Agenten-Rollen — dazu die Personas auf Platte. Alles **Aliase**: `bot.py`
+  bindet keinen dieser Namen je neu, es verändert sie nur an Ort und Stelle.
+  Ein Vertrag prüft per AST, dass das so bleibt: bei nur einer Neubindung
+  zeigte der Alias danach auf eine tote Kopie, und das Dashboard meldete einen
+  eingefrorenen Stand — ohne Fehler, ohne Logzeile.
+* **`nc/piper_voices.py`** bekam Suchorte, Scannen samt Cache und
+  Verfügbarkeitsprüfung dazu. Der Cache wird beim Wechsel der Suchorte
+  verworfen; sonst zeigte `/api/azrael/voices` die Stimmen des alten
+  Verzeichnisses und der Betreiber suchte am falschen Ort.
+* **`nc/whispercfg.py`** hält Modellname **und** geladenes Modell in *einem*
+  Register. Der Laufzeit-Umschalter tat das im Monolithen mit `global`; in
+  einem Blueprint wäre das dessen eigener Namensraum gewesen — die Route hätte
+  Erfolg gemeldet und der nächste Transkript-Lauf das alte Modell benutzt. Und
+  beides gehört zusammen: wer nur den Namen ändert und das geladene Objekt
+  stehen lässt, transkribiert weiter mit dem alten Modell und sieht den neuen
+  Namen im Dashboard. Das wäre schlimmer als gar kein Umschalten.
+
+Drei Dinge kann nur der Bot — sprechen (`_piper_say`), den zentralen KI-Aufruf
+fahren (`azrael_chat`) und sagen, was NIGHTCRAWLER gerade tut
+(`_azrael_live_state`). Sie kommen als **Haken** aus den Registern, nach dem
+Muster von `TWITCH_SEND`/`YT_SEND`. Das ist Kopplung; sie steht sichtbar in
+`nc/azraelstate.py` statt versteckt im Kontext, dessen 25 Plätze eine andere
+Frage beantworten.
+
+`bot.py` 28.935 → **28.640** Zeilen, Blueprints 25 → 26, eigene Routen im
+Monolithen 134 → **116**.
+
+### Geändert — der Übersetzungskatalog reicht in die Blueprints (v4.1 W19)
+
+Der Extraktor kannte nur `bot.py`. Bei 243 Routen in `nc/routes/` hieß das:
+**die Fehlertexte der halben API waren außer Reichweite** — und die
+Abdeckungszahl zeigte es nicht, weil sie nur zählt, was sie sieht. Jede
+Blueprint-Welle hat diese Lücke bisher stillschweigend vergrößert.
+
+Eingesammelt wird aus `nc/routes/*.py` **nur, was ausdrücklich in `t(...)`
+steht**. Das ist der Unterschied zur Heuristik in den HTML-Dateien und der
+Grund, warum es hier keine toten Einträge geben kann: ein API-Fehlertext
+erreicht das DOM meist verkettet (`"Fehler: " + error`), ein Katalogeintrag
+für den bloßen Text träfe dort nie. Er trifft, weil im Blueprint schon
+übersetzt wurde — an der Quelle, nicht im Browser. Dieselbe Überlegung wie bei
+`_safe_send()` (W7) und der Shell-Übersetzung (W17).
+
+`nc/routes/azrael.py` und `nc/routes/kickmod.py` sind entsprechend umgestellt;
+16 Einträge kamen dazu. Katalog: 676 → **692 Einträge über 34 Dateien**, 0
+fehlend, 0 verwaist.
+
 ### Behoben — TikTok löst keine Toxizitäts-Warnung mehr aus (v4.1 W18)
 
 Der Betreiber bekam Meldungen der Form „Chat-Toxizität steigt: N
