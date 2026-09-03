@@ -3524,7 +3524,7 @@ async function api(path, opts={}){
     const _transient = (r.status===503) && data && typeof data==='object' && data.transient;
     if((r.status===429 || r.status>=500) && !_transient && typeof toast==='function'){
       const nowT=Date.now(); if(nowT-(window._lastErrToast||0)>10000){ window._lastErrToast=nowT;
-        toast(r.status===429?'Rate-Limit erreicht — kurz warten':'Server-Fehler '+r.status,'err'); }
+        toast(r.status===429?T('Rate-Limit erreicht — kurz warten'):T('Server-Fehler ')+r.status,'err'); }
     }
     // VERBESSERUNG: bei wiederholten Fehlern CORE-LED auf err setzen,
     // auch wenn der nächste pollHeader()-Tick noch 5s entfernt ist.
@@ -4622,10 +4622,10 @@ async function sfFindings(){
 }
 async function sfToggle(name,on){ await apiPost('/api/brain/agents/'+encodeURIComponent(name)+'/toggle?on='+on,{}); sfLoad(); }
 async function sfRun(name){
-  if(typeof toast==='function') toast('starte '+name+'…');
+  if(typeof toast==='function') toast(T('starte ')+name+'…');
   const d=await apiPost('/api/brain/agents/'+encodeURIComponent(name)+'/run',{});
   const n=(d&&d.findings&&d.findings.length)||0;
-  if(typeof toast==='function') toast(name+': '+n+' Befund'+(n===1?'':'e'));
+  if(typeof toast==='function') toast(name+': '+n+T(' Befund')+(n===1?'':'e'));
   sfLoad();
 }
 async function loadAzraelLive(){
@@ -4706,7 +4706,7 @@ async function loadAzWhisper(){
 async function azSetWhisper(){
   const sel=$('#al_whisper'); if(!sel) return;
   const d=await apiPost('/api/azrael/whisper_model',{model:sel.value});
-  if(typeof toast==='function') toast(d&&d.ok?('Whisper → '+sel.value):'Fehler', d&&d.ok?'ok':'err');
+  if(typeof toast==='function') toast(d&&d.ok?(T('Whisper → ')+sel.value):T('Fehler'), d&&d.ok?'ok':'err');
   loadAzWhisper();
 }
 async function loadAzVoiceTag(){
@@ -5256,7 +5256,7 @@ async function pfTrkMaxDur(tid, username){
   const raw=(el&&el.value||'').trim();
   const seconds=raw===''?0:parseInt(raw,10);
   const d=await apiPost('/api/trackings/'+tid+'/max-duration',{seconds});
-  if(typeof toast==='function') toast(d&&d.ok?(seconds?('Max-Dauer: '+seconds+'s'):'Override entfernt'):((d&&d.error)||'Fehler'), d&&d.ok?'ok':'err');
+  if(typeof toast==='function') toast(d&&d.ok?(seconds?(T('Max-Dauer: ')+seconds+'s'):T('Override entfernt')):((d&&d.error)||T('Fehler')), d&&d.ok?'ok':'err');
   pfLoadTrkSettings(tid);
 }
 let _heatLast=0;
@@ -5292,7 +5292,7 @@ function renderHeat(el, grid, total){
 
 /* ---- stream inspect (X24) ---- */
 async function inspectStream(username){
-  toast('SCANNING @'+username+' …');
+  toast(T('SCANNING @')+username+' …');
   const d=await apiGet('/api/stream/inspect/'+encodeURIComponent(username));
   if(!d || !d.ok){
     openModal('STREAM SCAN // @'+username,
@@ -5366,7 +5366,7 @@ async function openTargetCtl(tid, username){
 }
 async function setPrio(tid, level){
   const d=await apiPost('/api/trackings/'+tid+'/priority',{level});
-  if(d.ok){ toast('Priorität gesetzt: Stufe '+level); openTargetCtl(tid, _ctlUsername); loadSurveil(); }
+  if(d.ok){ toast(T('Priorität gesetzt: Stufe ')+level); openTargetCtl(tid, _ctlUsername); loadSurveil(); }
   else toast('Priorität nicht gesetzt', 'err');
 }
 async function addTag(tid){
@@ -5384,7 +5384,7 @@ async function rmTag(tid, tag){
 }
 async function quickRestart(tid){
   const d=await apiPost('/api/trackings/'+tid+'/quick-restart');
-  if(d.ok){ toast('Neustart: '+(d.actions||[]).length+' Zustände zurückgesetzt'); }
+  if(d.ok){ toast(T('Neustart: ')+(d.actions||[]).length+T(' Zustände zurückgesetzt')); }
   else toast('Schnell-Neustart fehlgeschlagen','err');
 }
 async function recheckNow(tid){
@@ -5487,12 +5487,12 @@ function annRow(rid,a){ return `<div class="flexc" style="padding:3px 0"><span><
 async function scoreQuality(id){
   $('#rd_q').textContent='…';
   const d=await apiGet('/api/recordings/'+id+'/quality');
-  if(d&&d.ok){ $('#rd_q').textContent=d.score+'/100'; toast('QUALITY // '+d.score+'/100 '+JSON.stringify(d.components)); }
+  if(d&&d.ok){ $('#rd_q').textContent=d.score+'/100'; toast(T('Qualität // ')+d.score+'/100 '+JSON.stringify(d.components)); }
   else { $('#rd_q').innerHTML='<span class="faint">'+esc(d&&d.error||'fail')+'</span>'; }
 }
 async function fingerprint(id){
   const d=await apiPost('/api/recordings/'+id+'/fingerprint');
-  if(d&&d.ok){ const fp=d.fingerprint||''; const du=Array.isArray(d.duplicates)?d.duplicates.length:0; toast('SHA256 // '+fp.slice(0,16)+'… ('+du+' dupes)'); }
+  if(d&&d.ok){ const fp=d.fingerprint||''; const du=Array.isArray(d.duplicates)?d.duplicates.length:0; toast(T('SHA256 // ')+fp.slice(0,16)+'… ('+du+T(' Dubletten)')); }
   else toast(d&&d.error||'fail','err');
 }
 async function bm(id){
@@ -5537,7 +5537,7 @@ async function delAnn(aid, rid){
 }
 async function trashRec(id){
   const d=await apiPost('/api/recordings/'+id+'/trash');
-  if(d.ok){ toast('MOVED TO TRASH // #'+id); closeModal(); loadCaptures(); }
+  if(d.ok){ toast(T('In den Papierkorb // #')+id); closeModal(); loadCaptures(); }
   else toast('failed','err');
 }
 
@@ -5580,14 +5580,14 @@ async function arAdd(){
     {name:name.trim(), condition:{[feld]:wert}, action:{action:'copy_to_archive'}});
   if(d&&d.ok){ toast('Regel angelegt'); const n=$('#ar_name'); if(n) n.value='';
     const w=$('#ar_wert'); if(w) w.value=''; loadRules(); }
-  else toast('Regel anlegen fehlgeschlagen: '+((d&&d.error)||'unbekannter Fehler'),'err');
+  else toast(T('Regel anlegen fehlgeschlagen: ')+((d&&d.error)||T('unbekannter Fehler')),'err');
 }
 async function collAdd(){
   const name=(($('#coll_name')||{}).value||'').trim();
   if(!name){ toast('Die Sammlung braucht einen Namen.','warn'); return; }
   const d=await apiPost('/api/collections',{name, color:($('#coll_farbe')||{}).value||''});
   if(d&&d.ok){ toast('Sammlung angelegt'); const n=$('#coll_name'); if(n) n.value=''; labLoadCollections(); }
-  else toast('Anlegen fehlgeschlagen: '+((d&&d.error)||'unbekannter Fehler'),'err');
+  else toast(T('Anlegen fehlgeschlagen: ')+((d&&d.error)||T('unbekannter Fehler')),'err');
 }
 async function whAdd(){
   const url=(($('#wh_url')||{}).value||'').trim();
@@ -5596,7 +5596,7 @@ async function whAdd(){
   const d=await apiPost('/api/webhooks',{url, events});
   if(d&&d.ok){ toast('Webhook angelegt'); const u=$('#wh_url'); if(u) u.value='';
     const e=$('#wh_events'); if(e) e.value=''; labLoadWebhooks(); }
-  else toast('Anlegen fehlgeschlagen: '+((d&&d.error)||'unbekannter Fehler'),'err');
+  else toast(T('Anlegen fehlgeschlagen: ')+((d&&d.error)||T('unbekannter Fehler')),'err');
 }
 async function loadRules(){
   const d=await apiGet('/api/auto-archive-rules');
@@ -5618,7 +5618,7 @@ async function delRule(id){
 async function runRule(id){
   toast('RUNNING RULE …');
   const d=await apiPost('/api/auto-archive-rules/run',{rule_id:id});
-  if(d.ok){ const r=(d.results||[])[0]; toast(r?('matched '+r.matched+' · archived '+r.archived):'done'); loadRules(); }
+  if(d.ok){ const r=(d.results||[])[0]; toast(r?(T('getroffen: ')+r.matched+T(' · archiviert: ')+r.archived):T('fertig')); loadRules(); }
   else toast(d.error||'failed','err');
 }
 </script>
@@ -6138,7 +6138,7 @@ async function retRun(){
   const r=await api('/api/retention/run',{method:'POST',body:{days}});
   if(!r||r.ok===false){ if(el) el.innerHTML='<span style="color:var(--magenta)">'+esc((r&&r.error)||'Fehler')+'</span>'; return; }
   if(el) el.innerHTML=`<span style="color:var(--amber)">🗑 ${r.count} Aufnahmen gelöscht, ${_gb(r.freed_bytes)} frei.</span>`;
-  if(typeof toast==='function') toast(r.count+' Aufnahmen gelöscht');
+  if(typeof toast==='function') toast(r.count+T(' Aufnahmen gelöscht'));
   loadResources();
 }
 /* v37 W3b: S3/B2-Backup */
@@ -6175,13 +6175,13 @@ async function loadBackup(){
 async function backupRun(){
   const el=$('#bk_body'); if(el) el.innerHTML+='<br><span class="faint">Backup läuft…</span>';
   const r=await api('/api/backup/run',{method:'POST',body:{}});
-  if(r&&r.ok){ if(typeof toast==='function') toast((r.uploaded||0)+' Aufnahmen gesichert'); }
+  if(r&&r.ok){ if(typeof toast==='function') toast((r.uploaded||0)+T(' Aufnahmen gesichert')); }
   else if(typeof toast==='function') toast((r&&r.error)||'Backup-Fehler','err');
   loadBackup();
 }
 async function sysBackupRun(){
   const r=await api('/api/backup/system',{method:'POST',body:{}});
-  if(r&&r.ok){ if(typeof toast==='function') toast('System-Backup gestartet (Bot-Dateien + SQL-Dump)'); }
+  if(r&&r.ok){ if(typeof toast==='function') toast(T('System-Backup gestartet (Bot-Dateien + SQL-Dump)')); }
   else if(typeof toast==='function') toast((r&&r.error)||'System-Backup-Fehler','err');
   setTimeout(loadBackup, 1500);
 }
@@ -6439,7 +6439,7 @@ async function updateCookies(){
       msg.textContent=`✓ ${d.parsed} Cookies übernommen · Auth: ${d.auth_cookie||'ok'} · Status: ${st}`+(d.backed_up?' · Backup angelegt':'');
       msg.style.color='var(--neon)';
       ta.value='';
-      toast('Cookies aktualisiert ('+d.parsed+')');
+      toast(T('Cookies aktualisiert (')+d.parsed+')');
       loadSystem();   // Status-Anzeige sofort neu laden
     } else {
       msg.textContent='✗ '+((d&&d.error)||'Update fehlgeschlagen');
@@ -6469,8 +6469,8 @@ async function arcRename(id, currentFilename){
   /* Das Backend erwartet 'new_name' — es benennt die echte Datei um, nicht
      nur den Anzeigetitel. */
   const d=await apiPost('/api/archive/'+id+'/rename',{new_name:v.trim()});
-  if(d && d.ok){ toast('Umbenannt → '+(d.filename||v.trim())); loadArchive(true); }
-  else toast('Umbenennen fehlgeschlagen: '+((d&&d.error)||'unbekannter Fehler'),'err');
+  if(d && d.ok){ toast(T('Umbenannt → ')+(d.filename||v.trim())); loadArchive(true); }
+  else toast(T('Umbenennen fehlgeschlagen: ')+((d&&d.error)||T('unbekannter Fehler')),'err');
 }
 let _dedupScanRoot='';   // scan_root vom letzten Dedup-Scan (für Delete-Security)
 async function arcDedup(){
@@ -6505,11 +6505,11 @@ async function arcDeleteDupe(path, btn){
   if(btn){ btn.textContent='…'; btn.style.pointerEvents='none'; }
   const d=await apiPost('/api/archive/duplicates/delete',{path:path, scan_root:_dedupScanRoot});
   if(d&&d.ok){
-    toast('Gelöscht'+(d.freed_bytes?' — '+humanBytes(d.freed_bytes)+' frei':''));
+    toast(T('Gelöscht')+(d.freed_bytes?' — '+humanBytes(d.freed_bytes)+T(' frei'):''));
     // Zeile aus dem Modal entfernen
     if(btn){ const row=btn.closest('[data-path]'); if(row) row.remove(); }
     loadArchive(true);
-  } else { toast('Löschen fehlgeschlagen: '+((d&&d.error)||'unbekannter Fehler'),'err'); if(btn){ btn.textContent='✕'; btn.style.pointerEvents=''; } }
+  } else { toast(T('Löschen fehlgeschlagen: ')+((d&&d.error)||T('unbekannter Fehler')),'err'); if(btn){ btn.textContent='✕'; btn.style.pointerEvents=''; } }
 }
 async function arcPurgeGroup(gi){
   const grp=$(`[data-grp="${gi}"]`); if(!grp) return;
@@ -6658,7 +6658,7 @@ async function aiLoadModels(){
 function aiPickModel(v){ _aiModel=v||''; }
 async function aiNewConv(){
   const d=await apiPost('/api/ai/conversations',{});
-  if(!d||!d.ok){ toast('Neue Konversation fehlgeschlagen: '+((d&&d.error)||'unbekannter Fehler'),'err'); return; }
+  if(!d||!d.ok){ toast(T('Neue Konversation fehlgeschlagen: ')+((d&&d.error)||T('unbekannter Fehler')),'err'); return; }
   _aiConvId=d.id;
   await aiLoadConvs();
   aiOpenConv(d.id);
@@ -7361,7 +7361,7 @@ async function loadTunnel(){
 async function tunToggle(){
   const s=await apiGet('/api/tunnel/status');
   const r=await api('/api/tunnel/toggle',{method:'POST',body:{off:!(s&&s.forced_off)}});
-  if(typeof toast==='function') toast('TUNNEL '+(r&&r.forced_off?'AUS · direkt':'AN'));
+  if(typeof toast==='function') toast(T('Tunnel ')+(r&&r.forced_off?T('AUS · direkt'):T('AN')));
   loadTunnel();
 }
 async function tunSet(){
@@ -7449,7 +7449,7 @@ async function csSend(){
   } else if(d&&d.ok){               /* einzelne Plattform, Erfolg */
     $('#cs_text').value=''; toast(plat+': ✓');
   } else {                          /* einzelne Plattform, Fehler mit Grund */
-    toast(plat+': ✗ '+((d&&d.error)||'Senden fehlgeschlagen'),'err');
+    toast(plat+': ✗ '+((d&&d.error)||T('Senden fehlgeschlagen')),'err');
   }
 }
 
@@ -7526,7 +7526,7 @@ async function rsEdit(id,label,ingest,transcode){
   const d=await apiPost('/api/restream/'+id+'/edit',body);
   if(d&&d.ok){toast('Gespeichert');rsLoad();} else toast((d&&d.error)||'Fehler','err');
 }
-async function rsStartAll(){ toast('starte alle live Quellen…'); const d=await apiPost('/api/restream/start_all',{}); if(d&&d.ok)toast('gestartet: '+d.started+' · übersprungen: '+d.skipped); else toast('Fehler','err'); rsLoad(); }
+async function rsStartAll(){ toast('starte alle live Quellen…'); const d=await apiPost('/api/restream/start_all',{}); if(d&&d.ok)toast(T('gestartet: ')+d.started+T(' · übersprungen: ')+d.skipped); else toast('Fehler','err'); rsLoad(); }
 async function rsStopAll(){ if(!confirm(T('Alle Restreams stoppen?')))return; const d=await apiPost('/api/restream/stop_all',{}); if(d&&d.ok)toast('Alle gestoppt'); rsLoad(); }
 async function rsStart(id){ toast('starte…'); const d=await apiPost('/api/restream/'+id+'/start',{}); if(d&&d.ok)toast('Restream läuft'); else toast((d&&d.error)||'Start fehlgeschlagen','err'); rsLoad(); }
 async function rsStop(id){ const d=await apiPost('/api/restream/'+id+'/stop',{}); if(d&&d.ok)toast('Gestoppt'); rsLoad(); }
@@ -7844,7 +7844,7 @@ async function twoauthLoad(){
 async function twoauthSaveRedirect(){
   const el=$('#tw_redir'); if(!el) return;
   const d=await apiPost('/api/twitch/oauth/redirect',{uri:(el.value||'').trim()});
-  if(typeof toast==='function') toast((d&&d.ok)?('Rückruf-Adresse: '+(d.redirect_uri||'')):((d&&d.error)||'Fehler'), (d&&d.ok)?'ok':'err');
+  if(typeof toast==='function') toast((d&&d.ok)?(T('Rückruf-Adresse: ')+(d.redirect_uri||'')):((d&&d.error)||T('Fehler')), (d&&d.ok)?'ok':'err');
   twoauthLoad();
 }
 function twoauthStart(){
@@ -7943,7 +7943,7 @@ async function ytoauthSwitch(){
 async function ytoauthSaveRedirect(){
   const el=$('#yo_redir'); if(!el) return;
   const d=await apiPost('/api/youtube/oauth/redirect',{uri:(el.value||'').trim()});
-  if(typeof toast==='function') toast((d&&d.ok)?('Rückruf-Adresse: '+(d.redirect_uri||'')):((d&&d.error)||'Fehler'), (d&&d.ok)?'ok':'err');
+  if(typeof toast==='function') toast((d&&d.ok)?(T('Rückruf-Adresse: ')+(d.redirect_uri||'')):((d&&d.error)||T('Fehler')), (d&&d.ok)?'ok':'err');
   ytoauthLoad();
 }
 
@@ -8163,7 +8163,7 @@ async function slLoad(){
 }
 async function slSetMode(m){
   const d=await apiPost('/api/restream/layout',{mode:m});
-  if(d&&d.ok) toast('Sendebild: '+m.toUpperCase()+' — '+(d.note||''));
+  if(d&&d.ok) toast(T('Sendebild: ')+m.toUpperCase()+' — '+(d.note||''));
   else toast((d&&d.error)||'Layout-Fehler','err');
   slLoad();
 }
@@ -8235,8 +8235,8 @@ async function kmImportBadwords(){
     if(d&&d.ok){
       if($('#km_banned')) $('#km_banned').value=(d.banned_words||[]).join(', ');
       toast(`${d.total} Wörter aktiv (${d.added} neu · Quelle: ${d.source==='online'?'online':'eingebaut'}) — bitte durchsehen`, d.added>0?'ok':'info');
-    } else { toast('Import fehlgeschlagen: '+((d&&d.error)||'unbekannt'),'err'); }
-  }catch(e){ toast('Import-Fehler: '+e,'err'); }
+    } else { toast(T('Import fehlgeschlagen: ')+((d&&d.error)||T('unbekannt')),'err'); }
+  }catch(e){ toast(T('Import-Fehler: ')+e,'err'); }
   finally{ if(btn){ btn.disabled=false; btn.textContent=old||'Deutsche Basis-Liste laden'; } }
 }
 async function azReact(){
@@ -8328,7 +8328,7 @@ async function voicePiperTest(){
   toast('Piper erzeugt Audio…');
   const d=await apiPost('/api/azrael/tts_test',{text,piper_model:model,piper_length:parseFloat($('#v_plen')?.value||'1')});
   if(d&&d.ok&&d.url){ try{ const a=new Audio(d.url); a.volume=parseFloat($('#v_vol')?.value||'1'); a.play().catch(()=>{}); }catch(e){} toast('Piper OK'); }
-  else { toast('Piper-Fehler: '+((d&&d.error)||'unbekannt'),'err'); }
+  else { toast(T('Piper-Fehler: ')+((d&&d.error)||T('unbekannt')),'err'); }
 }
 function voiceTest(){
   const t=($('#v_test')?.value||'').trim()||'Test.';
@@ -8340,7 +8340,7 @@ function voiceTest(){
     const nm=($('#v_name')?.value||'').trim();
     if(nm){ const vs=window.speechSynthesis.getVoices()||[]; const v=vs.find(x=>x.name===nm); if(v) u.voice=v; }
     window.speechSynthesis.cancel(); window.speechSynthesis.speak(u);
-  }catch(e){ toast('TTS-Fehler: '+e,'err'); }
+  }catch(e){ toast(T('TTS-Fehler: ')+e,'err'); }
 }
 const MALE_HINTS=['stefan','conrad','killian','bernd','viktor','markus','yannick','hans','klaus','jonas','felix',
   'david','mark','guy','ryan','george','james','daniel','alex','fred','eric','thomas',' tom','paul','aaron','liam',
@@ -9064,7 +9064,7 @@ async function loadAutomation(){
 async function toggleAutopilot(){
   const s=await apiGet('/api/automation/status');
   await api('/api/automation/toggle',{method:'POST',body:{key:'autopilot',on:!(s&&s.autopilot)}});
-  if(typeof toast==='function') toast('AUTOPILOT '+((s&&s.autopilot)?'AUS':'AN'), (s&&s.autopilot)?'err':'');
+  if(typeof toast==='function') toast(T('AUTOPILOT ')+((s&&s.autopilot)?T('AUS'):'AN'), (s&&s.autopilot)?'err':'');
   loadAutomation(); pollSendbar();
 }
 async function toggleAuto(key,on){
@@ -9409,8 +9409,8 @@ async function arcBulkDelete(){
   if(typeof confirm==='function' && !confirm(ids.length+' '+T('Archiv-Einträge löschen? (Datei + DB-Eintrag)'))) return;
   const d=await apiPost('/api/archive/bulk-delete',{ids});
   if(typeof toast==='function'){
-    if(d&&d.failed) toast('Teilweise: '+(d.deleted||0)+' gelöscht, '+d.failed+' Fehler','err');
-    else toast(d&&d.ok?('Gelöscht: '+(d.deleted||0)):'Fehler', d&&d.ok?'ok':'err');
+    if(d&&d.failed) toast(T('Teilweise: ')+(d.deleted||0)+T(' gelöscht, ')+d.failed+T(' Fehler'),'err');
+    else toast(d&&d.ok?(T('Gelöscht: ')+(d.deleted||0)):T('Fehler'), d&&d.ok?'ok':'err');
   }
   loadArchive(true);
 }
@@ -9533,7 +9533,7 @@ async function rtManualStart(){
   if(!username){ u.focus(); return; }
   const duration_secs=parseInt((d&&d.value)||'300',10)||300;
   const r=await apiPost('/api/recordings/manual/start',{username,duration_secs});
-  if(typeof toast==='function') toast(r&&r.ok?('Aufnahme @'+username+' gestartet'):((r&&r.error)||'Start fehlgeschlagen'), r&&r.ok?'ok':'err');
+  if(typeof toast==='function') toast(r&&r.ok?(T('Aufnahme @')+username+T(' gestartet')):((r&&r.error)||T('Start fehlgeschlagen')), r&&r.ok?'ok':'err');
   loadRtActive();
 }
 async function loadRtActive(){
@@ -9623,7 +9623,7 @@ async function rtTrash(){
 async function rtRestore(id){
   const d=await apiPost('/api/recordings/'+id+'/restore');
   if(d && d.ok){
-    toast('Aufnahme #'+id+' wiederhergestellt');
+    toast(T('Aufnahme #')+id+T(' wiederhergestellt'));
     rtTrash(); loadRtTrash(); loadRtActive();
   } else toast('Wiederherstellen fehlgeschlagen','err');
 }
@@ -9641,7 +9641,7 @@ async function rtOrphans(){
 async function rtOrphansClean(){
   if(typeof confirm==='function' && !confirm(T('Verwaiste Dateien wirklich löschen?'))) return;
   const d=await apiPost('/api/rec/orphans/clean',{confirm:true});
-  if(typeof toast==='function') toast(d&&d.ok?('Gelöscht: '+(d.deleted||0)+' Dateien'):((d&&d.error)||'Fehler'), d&&d.ok?'ok':'err');
+  if(typeof toast==='function') toast(d&&d.ok?(T('Gelöscht: ')+(d.deleted||0)+T(' Dateien')):((d&&d.error)||T('Fehler')), d&&d.ok?'ok':'err');
   rtOrphans();
 }
 async function rtCompress(){
@@ -9685,7 +9685,7 @@ async function rtRetentionApply(){
   if(!_rtRetRules) return;
   if(typeof confirm==='function' && !confirm(T('Aufnahmen laut Vorschau endgültig löschen?'))) return;
   const d=await apiPost('/api/rec/retention/apply',{confirm:true, rules:_rtRetRules});
-  if(typeof toast==='function') toast(d&&d.ok?('Gelöscht: '+(d.deleted||0)):((d&&d.error)||'Fehler'), d&&d.ok?'ok':'err');
+  if(typeof toast==='function') toast(d&&d.ok?(T('Gelöscht: ')+(d.deleted||0)):((d&&d.error)||T('Fehler')), d&&d.ok?'ok':'err');
   const applyBtn=$('#rt_ret_apply'); if(applyBtn) applyBtn.style.display='none';
   rtRetentionPreview();
 }
@@ -9713,7 +9713,7 @@ async function rtInspect(){
 }
 async function rtRate(id,n){
   const d=await apiPost('/api/recordings/'+id+'/rating',{rating:n});
-  if(typeof toast==='function') toast(d&&d.ok?(n?('Bewertet: '+n+'★'):'Bewertung entfernt'):((d&&d.error)||'Fehler'), d&&d.ok?'ok':'err');
+  if(typeof toast==='function') toast(d&&d.ok?(n?(T('Bewertet: ')+n+'★'):T('Bewertung entfernt')):((d&&d.error)||T('Fehler')), d&&d.ok?'ok':'err');
 }
 async function rtTimeline(){
   const u=($('#rt_tl_user')||{}).value||'';
@@ -10116,7 +10116,7 @@ async function faAdd(){
   }
   const r=await apiPost('/api/finanzamt/entry', body);
   if(r && r.ok){
-    toast('Gebucht als '+r.belegnr+' — netto '+_btEur(r.net_eur));
+    toast(T('Gebucht als ')+r.belegnr+T(' — netto ')+_btEur(r.net_eur));
     ['fa_gross','fa_fee','fa_ref','fa_note'].forEach(id=>{ const e=$('#'+id); if(e) e.value=''; });
     faLoad();
   } else {
@@ -10320,7 +10320,7 @@ async function ops6Cleanup(dry){
 async function ops6ClipsClear(){
   if(typeof confirm==='function' && !confirm(T('Alle Highlight-Clips löschen?'))) return;
   const d=await apiPost('/api/clips/clear',{});
-  if(typeof toast==='function') toast(d&&d.ok?('Clips gelöscht: '+(d.removed||0)):'Fehler', d&&d.ok?'ok':'err');
+  if(typeof toast==='function') toast(d&&d.ok?(T('Clips gelöscht: ')+(d.removed||0)):T('Fehler'), d&&d.ok?'ok':'err');
 }
 async function ops6Schedule(){
   const u=($('#ops6_sch_user')||{}).value||'';
@@ -10494,7 +10494,7 @@ async function tpRun(target){
   const icon=(st==='ok')?'✓':'✕';
   rb.innerHTML='<span style="color:'+col+'">'+icon+' '+esc((d.result&&d.result.detail)||st)+'</span>'
     +' <span class="faint mono">('+esc(d.target)+(d.ingest_host?(' · '+esc(d.ingest_host)):'')+')</span>';
-  toast(st==='ok'?'Test-Push angenommen':('Test-Push: '+st), st==='ok'?'ok':'warn');
+  toast(st==='ok'?T('Test-Push angenommen'):(T('Test-Push: ')+st), st==='ok'?'ok':'warn');
 }
 
 function _mkAgo(ts){ if(!ts) return '—'; const s=Date.now()/1000-ts; if(s<60)return 'gerade'; if(s<3600)return Math.floor(s/60)+'m'; if(s<86400)return (s/3600).toFixed(1)+'h'; return Math.floor(s/86400)+'d'; }
@@ -11032,7 +11032,7 @@ async function loadIn5Watch(){
 }
 async function in5SetPrio(username, level){
   const d=await apiPost('/api/streamer/priority/'+encodeURIComponent(username),{level:parseInt(level,10)});
-  if(typeof toast==='function') toast(d&&d.ok?('Priorität @'+username+' → '+IN5_PRIO[level]):((d&&d.error)||'Fehler'), d&&d.ok?'ok':'err');
+  if(typeof toast==='function') toast(d&&d.ok?(T('Priorität @')+username+' → '+IN5_PRIO[level]):((d&&d.error)||T('Fehler')), d&&d.ok?'ok':'err');
 }
 async function loadIn5Dormant(){
   const box=$('#in5_dormant');
@@ -11078,7 +11078,7 @@ async function in5DeleteStreamer(i){
   if(u==null) return;
   if(typeof confirm==='function' && !confirm(T('Streamer und alle zugehörigen Trackings endgültig löschen?')+'\n\n@'+u)) return;
   const d=await apiPost('/api/streamer/delete/'+encodeURIComponent(u),{});
-  if(typeof toast==='function') toast(d&&d.ok?('@'+u+' gelöscht ('+(d.deleted||0)+' Tracking(s))'):((d&&d.error)||'Fehler'), d&&d.ok?'ok':'err');
+  if(typeof toast==='function') toast(d&&d.ok?('@'+u+T(' gelöscht (')+(d.deleted||0)+T(' Tracking(s))')):((d&&d.error)||T('Fehler')), d&&d.ok?'ok':'err');
   if(d&&d.ok){ loadIn5Dormant(); loadIn5Watch(); }
 }
 async function loadIn5Volume(){
@@ -11695,7 +11695,7 @@ async function updRestart(){
   if(!confirm(T('Dienst jetzt neu starten?')+'\n\n'+T('Laufende Aufnahmen und Restreams brechen ab.'))) return;
   var d=await apiPost('/api/update/restart',{});
   if(typeof toast==='function')
-    toast(d&&d.ok?(d.summary||'Neustart läuft'):((d&&d.hint)?('Bitte selbst neu starten: '+d.hint):((d&&d.error)||'Neustart fehlgeschlagen')),
+    toast(d&&d.ok?(d.summary||T('Neustart läuft')):((d&&d.hint)?(T('Bitte selbst neu starten: ')+d.hint):((d&&d.error)||T('Neustart fehlgeschlagen'))),
           d&&d.ok?'warn':'err');
 }
 

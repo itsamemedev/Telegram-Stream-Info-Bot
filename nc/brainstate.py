@@ -71,6 +71,13 @@ PROXY = {"obj": None}
 NEXT_CHECK_AT = {}          # tracking_id -> monotonic-Zeitstempel
 DEAD_BACKOFF_UNTIL = {}     # tracking_id -> monotonic ts, ab wann wieder erlaubt
 
+# v4.1-W23: die zwei Zaehler daneben — wie oft ist eine Aufnahme in Folge tot
+# geblieben, und wie oft hat die Quelle sofort wieder aufgelegt. Beide gehoeren
+# zum selben Gesundheitsbild wie DEAD_BACKOFF_UNTIL: /api/backoff-watch zeigt
+# sie, der Check-Loop pflegt sie. Aliase — nie neu gebunden.
+DEAD_STREAK = {}            # tracking_id -> aufeinanderfolgende tote Aufnahmen
+EARLY_DISCONNECT = {}       # tracking_id -> aufeinanderfolgende Sofort-Abbrueche
+
 
 def stall():
     """Einen erkannten Loop-Stall zählen. Gibt den neuen Stand zurück."""

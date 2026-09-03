@@ -65,6 +65,11 @@ import collections as _collections
 from nc.textutil import clean_username
 
 RESTREAM_CHAT = _collections.deque(maxlen=160)   # shared: Bot schreibt, Renderer liest
+# v4.1-W23: Zuschauer-Stichproben (ts, count) der letzten ~12 h bei 60-s-Takt.
+# /metrics und der Verlaufs-Graph lesen sie, der Status-Loop schreibt sie.
+# maxlen ist die Bremse: ohne sie waere das ein Leck, das erst nach Tagen
+# auffaellt — dieselbe Ueberlegung wie bei den Ringpuffern in nc/brainstate.py.
+VIEWER_SAMPLES = _collections.deque(maxlen=720)
 _CHAT_LINES = 14
 _CHAT_WIDTH = 62
 

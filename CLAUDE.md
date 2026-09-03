@@ -10,7 +10,7 @@ GitHub-Repo trägt Historie, CI und Issues — es ist nicht der Deploy-Weg.
 
 ## Die eine Regel
 
-`bot.py` hat **27.624 Zeilen / 1,3 MB ≈ 349.000 Token**. Diese Datei wird
+`bot.py` hat **27.218 Zeilen / 1,3 MB ≈ 344.000 Token**. Diese Datei wird
 **nie** ganz gelesen und **nie** blind durchsucht. Erst fragen wo etwas steht,
 dann den Ausschnitt holen:
 
@@ -24,8 +24,8 @@ dann den Ausschnitt holen:
     python tools/ncpatch.py check                          # Templates: doppelte IDs, CSS-Bilanz
     python tools/ncpatch.py docs                           # Doku-Zahlen gegen den Quelltext
 
-`find` antwortet aus `.claude/INDEX.md` — 359 Routen (89 in `bot.py`, 270 in
-`nc/routes/`), 45 Slash-Commands, 483 Funktionen mit Zeilennummern. Nach Änderungen an Routen, Commands oder
+`find` antwortet aus `.claude/INDEX.md` — 359 Routen (81 in `bot.py`, 278 in
+`nc/routes/`), 45 Slash-Commands, 479 Funktionen mit Zeilennummern. Nach Änderungen an Routen, Commands oder
 Top-Level-Funktionen `map` neu laufen lassen. Details: Skill `nc-navigation`.
 
 Für „wer ruft das auf?" und „was ist der Typ?" ist der Sprachserver billiger als
@@ -37,16 +37,16 @@ Auf diesem Windows-Rechner heißt der Interpreter **`python`** (3.13.12);
 ## Aufbau
 
     bot.py               Monolith: Telegram + Discord (45 Slash-Commands),
-                         Flask-Dashboard (89 eigene Routen), Scraper, Recorder,
+                         Flask-Dashboard (81 eigene Routen), Scraper, Recorder,
                          Restream, Schema (init_db).
                          Hiess bis v4.0-W119 bot_v37.py — beim Suchen in
                          alten Notizen und Patch-Dateien daran denken.
     brain_bridge.py      Adapter Bot ↔ brain/ (M2)
     brain/               KI-Kern: state, rules, router, agents, memory,
                          semantic, knowledge, scheduler, llm, report
-    nc/                  104 Fachmodule: db, scraping, restream, oauth, ledger,
+    nc/                  105 Fachmodule: db, scraping, restream, oauth, ledger,
                          i18n, …
-    nc/routes/           30 Flask-Blueprints mit 270 weiteren API-Routen
+    nc/routes/           31 Flask-Blueprints mit 278 weiteren API-Routen
     locales/             de.json, en.json — der Übersetzungskatalog
     templates/           dashboard.html, brain.html, overlay.html, PWA
     website/             lafap_index.html (öffentliche Seite)
@@ -148,7 +148,7 @@ Ledger-Einträge sind append-only mit Hash-Kette; Korrektur = Gegenbuchung.
 
 ## Sicherheit
 
-`.env` hat rund 499 Variablen und enthält Cookies, OAuth-Tokens und Stream-Keys — sie
+`.env` hat rund 500 Variablen und enthält Cookies, OAuth-Tokens und Stream-Keys — sie
 liegt nie im Archiv und wird nie ausgegeben. Beim Logging von
 `streamlink`/`ffmpeg`-Kommandos werden Cookie-Header redacted (F4); dieser
 Redact-Pfad darf bei Änderungen an der Kommandozeile nicht umgangen werden. Das
