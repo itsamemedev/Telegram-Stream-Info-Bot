@@ -10,7 +10,7 @@ GitHub-Repo trägt Historie, CI und Issues — es ist nicht der Deploy-Weg.
 
 ## Die eine Regel
 
-`bot.py` hat **28.640 Zeilen / 1,4 MB ≈ 362.000 Token**. Diese Datei wird
+`bot.py` hat **28.467 Zeilen / 1,4 MB ≈ 360.000 Token**. Diese Datei wird
 **nie** ganz gelesen und **nie** blind durchsucht. Erst fragen wo etwas steht,
 dann den Ausschnitt holen:
 
@@ -24,8 +24,8 @@ dann den Ausschnitt holen:
     python tools/ncpatch.py check                          # Templates: doppelte IDs, CSS-Bilanz
     python tools/ncpatch.py docs                           # Doku-Zahlen gegen den Quelltext
 
-`find` antwortet aus `.claude/INDEX.md` — 359 Routen (116 in `bot.py`, 243 in
-`nc/routes/`), 45 Slash-Commands, 496 Funktionen mit Zeilennummern. Nach Änderungen an Routen, Commands oder
+`find` antwortet aus `.claude/INDEX.md` — 359 Routen (111 in `bot.py`, 248 in
+`nc/routes/`), 45 Slash-Commands, 494 Funktionen mit Zeilennummern. Nach Änderungen an Routen, Commands oder
 Top-Level-Funktionen `map` neu laufen lassen. Details: Skill `nc-navigation`.
 
 Für „wer ruft das auf?" und „was ist der Typ?" ist der Sprachserver billiger als
@@ -37,16 +37,16 @@ Auf diesem Windows-Rechner heißt der Interpreter **`python`** (3.13.12);
 ## Aufbau
 
     bot.py               Monolith: Telegram + Discord (45 Slash-Commands),
-                         Flask-Dashboard (116 eigene Routen), Scraper, Recorder,
+                         Flask-Dashboard (111 eigene Routen), Scraper, Recorder,
                          Restream, Schema (init_db).
                          Hiess bis v4.0-W119 bot_v37.py — beim Suchen in
                          alten Notizen und Patch-Dateien daran denken.
     brain_bridge.py      Adapter Bot ↔ brain/ (M2)
     brain/               KI-Kern: state, rules, router, agents, memory,
                          semantic, knowledge, scheduler, llm, report
-    nc/                  99 Fachmodule: db, scraping, restream, oauth, ledger,
+    nc/                  101 Fachmodule: db, scraping, restream, oauth, ledger,
                          i18n, …
-    nc/routes/           26 Flask-Blueprints mit 243 weiteren API-Routen
+    nc/routes/           28 Flask-Blueprints mit 248 weiteren API-Routen
     locales/             de.json, en.json — der Übersetzungskatalog
     templates/           dashboard.html, brain.html, overlay.html, PWA
     website/             lafap_index.html (öffentliche Seite)

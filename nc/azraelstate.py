@@ -62,6 +62,11 @@ WORKERS = {}
 # /api/azrael/agents liefert sie unveraendert ans Dashboard.
 AGENTS = {}
 
+# v4.1-W20: ISO-Zeitstempel des aktuellen Stream-Starts. Die Spendensumme im
+# Overlay zaehlt erst ab hier — die Historie bleibt vollstaendig in der DB.
+# Alias wie die uebrigen: bot.py setzt nur `["start"] = …`, bindet nie neu.
+OVERLAY_SESSION = {"start": None}
+
 
 # ---- Haken in den Monolithen ------------------------------------------------
 # Was der Bot kann und ein Modul nicht: eine Coroutine auf dem Bot-Loop
@@ -74,12 +79,14 @@ AGENTS = {}
 SAY = {"fn": None}          # async (text, rate=None, source_user=None) -> URL|None
 CHAT = {"fn": None}         # async (purpose, content, ...) -> (text, err)
 LIVE_STATE = {"fn": None}   # () -> str: was NIGHTCRAWLER gerade tut
+PUSH = {"fn": None}         # (kind, name, amount, message, platform) -> None
 
 
 def haken(name):
     """Einen registrierten Haken holen, oder None. Aufruf statt Direktzugriff,
        damit ein fehlender Haken an EINER Stelle behandelt wird."""
-    return {"say": SAY, "chat": CHAT, "live_state": LIVE_STATE}[name]["fn"]
+    return {"say": SAY, "chat": CHAT, "live_state": LIVE_STATE,
+            "push": PUSH}[name]["fn"]
 
 
 def flag(name, default="0") -> bool:

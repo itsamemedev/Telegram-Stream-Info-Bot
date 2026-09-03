@@ -24,6 +24,7 @@ from flask import Blueprint, jsonify, request
 
 from nc import ctx as _ctx
 from nc import recdb
+from nc import i18n as _nc_i18n
 from nc import envnum as _nc_envnum
 from nc.dbwrap import db_conn
 from nc.archive import (get_archive_entries_paged, run_archive_file_check,
@@ -36,6 +37,13 @@ from nc import archivename as _nc_archivename
 from nc.sqlutil import _archive_where_clause
 
 bp = Blueprint("archive", __name__)
+
+def _t(s):
+    """v4.1-W20: an der Quelle uebersetzen. Diese Texte erreichen das DOM
+       meist verkettet ("Fehler: " + error) — ein Katalogeintrag fuer den
+       blossen Text traefe dort nie."""
+    return _nc_i18n.t(s)
+
 
 
 def _c():
@@ -162,7 +170,7 @@ def bulk_delete_archive_entries(ids):
     for eid in deduped:
         if not isinstance(eid, int):
             failed += 1
-            errors.append({"id": str(eid), "error": "ungültige ID"})
+            errors.append({"id": str(eid), "error": _t("ungültige ID")})
             continue
         ok, err = delete_archive_entry(eid)
         if ok:
@@ -336,15 +344,15 @@ def api_archive_duplicates_delete():
     target = payload.get("path", "")
     scan_root = payload.get("scan_root", "")
     if not target or not scan_root:
-        return jsonify(ok=False, error="path + scan_root required"), 400
+        return jsonify(ok=False, error=_t("path und scan_root erforderlich")), 400
     abs_target = os.path.abspath(target)
     abs_root = os.path.abspath(scan_root)
     # SECURITY: target MUSS unter scan_root liegen
     if not abs_target.startswith(abs_root + os.sep):
         return jsonify(ok=False,
-                       error="path not within scan_root (security check failed)"), 403
+                       error=_t("Pfad liegt nicht in scan_root (Sicherheitsprüfung fehlgeschlagen)")), 403
     if not os.path.isfile(abs_target):
-        return jsonify(ok=False, error="file not found"), 404
+        return jsonify(ok=False, error=_t("Datei nicht gefunden")), 404
     try:
         size = os.path.getsize(abs_target)
         os.remove(abs_target)
@@ -478,7 +486,7 @@ def api_archive():
 @bp.route("/api/archive/check")
 def api_archive_check():
     if not _c().cfg["ARCHIVE_DIR"]:
-        return jsonify({"ok": False, "error": "ARCHIVE_DIR nicht konfiguriert"}), 400
+        return jsonify({"ok": False, "error": _t("ARCHIVE_DIR nicht konfiguriert")}), 400
     result = run_archive_file_check()
     return jsonify({"ok": True, **result})
 
@@ -486,13 +494,13 @@ def api_archive_check():
 @bp.route("/api/archive/bulk-delete", methods=["POST"])
 def api_archive_bulk_delete():
     if not _c().cfg["ARCHIVE_DIR"]:
-        return jsonify({"ok": False, "error": "ARCHIVE_DIR nicht konfiguriert"}), 400
+        return jsonify({"ok": False, "error": _t("ARCHIVE_DIR nicht konfiguriert")}), 400
     payload = request.get_json(silent=True) or {}
     ids = payload.get("ids") or []
     if not isinstance(ids, list):
-        return jsonify({"ok": False, "error": "ids muss Liste sein"}), 400
+        return jsonify({"ok": False, "error": _t("ids muss Liste sein")}), 400
     if len(ids) > 500:
-        return jsonify({"ok": False, "error": "max 500 IDs pro Request"}), 400
+        return jsonify({"ok": False, "error": _t("max 500 IDs pro Request")}), 400
     result = bulk_delete_archive_entries(ids)
     log.info(f"archive bulk-delete: requested={len(ids)} "
              f"deleted={result['deleted']} failed={result['failed']}")
@@ -503,7 +511,7 @@ def api_archive_bulk_delete():
 @bp.route("/api/archive/<int:eid>/rename", methods=["POST"])
 def api_archive_rename(eid):
     if not _c().cfg["ARCHIVE_DIR"]:
-        return jsonify({"ok": False, "error": "ARCHIVE_DIR nicht konfiguriert"}), 400
+        return jsonify({"ok": False, "error": _t("ARCHIVE_DIR nicht konfiguriert")}), 400
     # Auch hier accept-or-fail: nur wenn ARCHIVE_DIR beschreibbar ist macht
     # Rename Sinn (sonst kann os.rename fehlschlagen — wir wollen das
     # frühzeitig melden).
@@ -514,9 +522,9 @@ def api_archive_rename(eid):
     payload = request.get_json(silent=True) or {}
     new_name = payload.get("new_name") or payload.get("filename") or ""
     if not isinstance(new_name, str):
-        return jsonify({"ok": False, "error": "new_name muss String sein"}), 400
+        return jsonify({"ok": False, "error": _t("new_name muss String sein")}), 400
     if len(new_name) > 255:
-        return jsonify({"ok": False, "error": "neuer Name zu lang (max 255 Zeichen)"}), 400
+        return jsonify({"ok": False, "error": _t("neuer Name zu lang (max 255 Zeichen)")}), 400
 
     ok, result = rename_archive_entry(eid, new_name)
     if ok:
@@ -537,14 +545,14 @@ def api_archive_rename(eid):
 @bp.route("/api/archive/upload", methods=["POST"])
 def api_archive_upload():
     if not _c().cfg["ARCHIVE_DIR"]:
-        return jsonify({"ok": False, "error": "ARCHIVE_DIR nicht konfiguriert"}), 400
+        return jsonify({"ok": False, "error": _t("ARCHIVE_DIR nicht konfiguriert")}), 400
     if not archive_writeable():
         return jsonify({"ok": False,
                         "error": f"ARCHIVE_DIR '{_c().cfg["ARCHIVE_DIR"]}' nicht schreibbar"}), 500
 
     f = request.files.get("file")
     if not f or not f.filename:
-        return jsonify({"ok": False, "error": "keine Datei im Upload"}), 400
+        return jsonify({"ok": False, "error": _t("keine Datei im Upload")}), 400
 
     title  = (request.form.get("title")      or "").strip()[:200]
     notes  = (request.form.get("notes")      or "").strip()[:2000]
@@ -632,10 +640,10 @@ def api_archive_search():
     """Bedeutungs-Suche über alle transkribierten Aufnahmen."""
     q = (request.args.get("q") or "").strip()
     if not q:
-        return jsonify(ok=False, error="Parameter q fehlt", hits=[])
+        return jsonify(ok=False, error=_t("Parameter q fehlt"), hits=[])
     be = _c().intel_semantic()
     if be is None:
-        return jsonify(ok=False, error="Semantik-Backend (Brain) nicht verfügbar", hits=[])
+        return jsonify(ok=False, error=_t("Semantik-Backend (Brain) nicht verfügbar"), hits=[])
     _c().intel_ensure_schema()
     k = _arg_int("k", 8, 1, 30)
     user = (request.args.get("user") or "").strip() or None
@@ -667,7 +675,7 @@ def api_archive_index_one(rid):
     """Eine bestimmte Aufnahme manuell (neu) transkribieren + indizieren."""
     rec = next((r for r in recdb.get_all_recordings(limit=1000) if r["id"] == rid), None)
     if not rec or not rec.get("filepath"):
-        return jsonify(ok=False, error="Aufnahme/Datei nicht gefunden"), 404
+        return jsonify(ok=False, error=_t("Aufnahme/Datei nicht gefunden")), 404
     try:
         n = _c().run_async(
             _c().intel_index_one(rid, rec["filepath"], username=rec.get("username", "")),

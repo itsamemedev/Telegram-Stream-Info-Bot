@@ -197,10 +197,10 @@ flowchart TB
     DC --> BOT
     TT --> BOT
 
-    BOT["bot.py<br/>monolith · 28,640 lines<br/>scraper · recorder · restream<br/>Flask dashboard · 116 own routes"]:::core
+    BOT["bot.py<br/>monolith · 28,467 lines<br/>scraper · recorder · restream<br/>Flask dashboard · 111 own routes"]:::core
 
     BOT -->|configure| NC["nc/ — 92 domain modules<br/>schema · OAuth · restream<br/>ledger · moderation · intel"]:::lib
-    NC --> RT["nc/routes/ — 26 blueprints<br/>243 further API routes"]:::lib
+    NC --> RT["nc/routes/ — 28 blueprints<br/>248 further API routes"]:::lib
     BOT --> TPL["templates/<br/>dashboard · overlay · PWA"]:::lib
     BOT --> BR["brain_bridge.py"]:::lib
     BR --> BRAIN["brain/ — its own brain.db<br/>state · rules · router · memory<br/>knowledge · semantic · scheduler<br/>llm · agents · report"]:::brain
@@ -709,7 +709,7 @@ broken.**
 
 ### 🧭 Navigating the monolith
 
-`bot.py` has 28,640 lines. It is **never** read in full and **never** searched
+`bot.py` has 28,467 lines. It is **never** read in full and **never** searched
 blindly — first ask where something is, then fetch the excerpt:
 
 ```bash
@@ -724,7 +724,7 @@ python3 tools/ncpatch.py docs                      # documentation numbers vs. t
 ```
 
 `find` answers from **[`.claude/INDEX.md`](.claude/INDEX.md)** — 359 routes
-(116 in `bot.py`, 243 in `nc/routes/`), 45 slash commands, 496 functions, each
+(111 in `bot.py`, 248 in `nc/routes/`), 45 slash commands, 494 functions, each
 with a line number.
 
 ---
@@ -774,7 +774,7 @@ NIGHTCRAWLER/
 │   ├── twitchoauth.py  ytoauth.py  kick_oauth.py
 │   ├── modheuristics.py  shield.py  replygate.py
 │   ├── freeai.py  claude.py  piper_voices.py
-│   ├── routes/               26 Flask blueprints (243 API routes)
+│   ├── routes/               28 Flask blueprints (248 API routes)
 │   ├── intel/                archive index, transcripts, reels
 │   └── _vendor/segno/        vendored QR encoder (BSD)
 │
@@ -841,7 +841,7 @@ service.
 | | |
 |---|---|
 | Current version | **4.1** — “Public Voice” (2026.08) |
-| Flask routes | 359 (116 in `bot.py` · 243 in `nc/routes/`) |
+| Flask routes | 359 (111 in `bot.py` · 248 in `nc/routes/`) |
 | Discord slash commands | 45 |
 | Domain modules | 92 in `nc/` (+18 in `nc/routes/`, +3 in `nc/intel/`), 10 in `brain/` |
 | Sentinel agents | 13 |
@@ -855,7 +855,7 @@ Full history: **[`docs/CHANGELOG.md`](docs/CHANGELOG.md)** ·
 
 ## 🧭 Roadmap
 
-The next big step is not a feature, it is cleaning up: **`bot.py` has 28,640
+The next big step is not a feature, it is cleaning up: **`bot.py` has 28,467
 lines**. That file is the project's bottleneck. The bar for it is not a line
 count though:
 
@@ -863,7 +863,7 @@ count though:
 
 The route there in six waves — measured, not estimated:
 **[`docs/en/ROADMAP.md`](docs/en/ROADMAP.md)**. Wave 2 is done, wave 3 is
-running: `nc/routes/` carries 26 blueprints with 243 API routes today that no
+running: `nc/routes/` carries 28 blueprints with 248 API routes today that no
 longer sit in the monolith.
 
 ---

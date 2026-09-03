@@ -369,17 +369,28 @@ def test_overlay_push_contract():
     assert tagged >= 8, f"nur {tagged} getaggte Callsites"
     assert multiline >= 8, multiline
     assert len(calls) >= 1
-    # Route filtert nach Session
-    i = src.find("def api_overlay_state")
+    # Route filtert nach Session.
+    #
+    # v4.1-W20: Der ANKER ist umgezogen, nicht der Vertrag — /api/overlay/state
+    # liegt jetzt in nc/routes/overlay.py. Geprüft wird unverändert dasselbe:
+    # dass der Zähler-Nullpunkt gelesen und in die Abfrage gehängt wird. Ohne
+    # ihn summiert das Overlay alles seit der Installation und springt beim
+    # Stream-Start nie auf 0 zurück (V37-OVMP-FIX).
+    ov = open("nc/routes/overlay.py", encoding="utf-8").read()
+    i = ov.find("def api_overlay_state")
     # Bis zur nächsten Top-Level-def schneiden, nicht nach fester Zeichenzahl:
     # die Funktion ist über 4000 Zeichen lang gewachsen, das alte Fenster
     # endete vor dem return und der Test meldete fehlende Felder, die zwei
     # Zeilen weiter unten standen.
-    _end = src.find("\ndef ", i + 10)
-    body = src[i:_end if _end > 0 else len(src)]
-    assert '_sess = _OVERLAY_SESSION.get("start")' in body
+    _end = ov.find("\ndef ", i + 10)
+    body = ov[i:_end if _end > 0 else len(ov)]
+    assert '_sess = _nc_azrael.OVERLAY_SESSION.get("start")' in body
     assert '" AND ts >= ?" if _sess else ""' in body
     assert "by_platform" in body and "session_start=_sess" in body
+    # Und der Nullpunkt ist wirklich geteilt — eine Kopie im Bot hiesse, das
+    # Overlay sähe den Stream-Start nie.
+    assert "_OVERLAY_SESSION = _nc_azrael.OVERLAY_SESSION" in src, \
+        "der Zähler-Nullpunkt ist wieder eine Kopie im Monolithen"
     ok("Overlay-Verträge: alle Quellen getaggt, Route filtert nach Session")
 
 
@@ -1089,17 +1100,27 @@ def test_donations_summary():
     assert 'for p in ("kick", "twitch", "youtube")' in body, \
         "TikTok muss aus der Panel-Aggregation raus sein"
     # Der Ausschluss läuft nicht mehr über die Blacklist "platform != 'tiktok'",
-    # sondern über die Positivliste REVENUE_PLATFORMS -> _REVENUE_SQL_IN. Das ist
-    # der schärfere Vertrag: eine neu hinzukommende Fremdgeld-Plattform ist damit
-    # automatisch draußen, statt erst vergessen zu werden. Also die Positivliste
-    # prüfen — und dass TikTok wirklich nicht drinsteht.
-    assert "_REVENUE_SQL_IN" in body, \
+    # sondern über die Positivliste. Das ist der schärfere Vertrag: eine neu
+    # hinzukommende Fremdgeld-Plattform ist damit automatisch draußen, statt
+    # erst vergessen zu werden. Also die Positivliste prüfen — und dass TikTok
+    # wirklich nicht drinsteht.
+    #
+    # v4.1-W20: Der ANKER ist umgezogen, nicht der Vertrag. Die Liste lag als
+    # _REVENUE_SQL_IN im Monolithen und liegt jetzt in nc/revenue.py, damit
+    # Overlay-, Spenden- und Finanzamt-Routen EINE Quelle haben statt je einer
+    # Kopie. Geprüft wird unverändert dasselbe: dass gefiltert wird, und
+    # worüber.
+    assert "sql_in()" in body, \
         "recent-Liste filtert nicht über die Einnahme-Positivliste"
-    assert 'REVENUE_PLATFORMS = ("kick", "twitch", "youtube", "manuell")' in src, \
-        "REVENUE_PLATFORMS verändert — TikTok-Ausschluss neu prüfen"
-    assert "tiktok" not in src[src.find("REVENUE_PLATFORMS ="):
-                               src.find("REVENUE_PLATFORMS =") + 200], \
+    rev = open("nc/revenue.py", encoding="utf-8").read()
+    assert 'PLATFORMS = ("kick", "twitch", "youtube", "manuell")' in rev, \
+        "REVENUE-Positivliste verändert — TikTok-Ausschluss neu prüfen"
+    assert "tiktok" not in rev[rev.find("\nPLATFORMS ="):
+                               rev.find("\nPLATFORMS =") + 200], \
         "TikTok steht in der Einnahme-Positivliste — fremdes Geld wäre Einnahme"
+    # Und der Bot benutzt wirklich diese eine Quelle, statt sie zu spiegeln.
+    assert "REVENUE_PLATFORMS = _nc_revenue.PLATFORMS" in src, \
+        "der Monolith hält wieder eine eigene Kopie der Positivliste"
     ok("donations: Kick/Twitch/YouTube im Panel, TikTok per Positivliste raus")
 
     # Der Donation-Push für Twitch/YouTube existiert (nicht nur Kick/TikTok)
@@ -3176,16 +3197,30 @@ def test_v40_w12_audio_panel():
     """v4.0-W12: Signalton + Ducking zur Laufzeit einstellbar (app_config schlaegt
        .env) statt nur per .env + Neustart; Panel + Ton-Test."""
     src = open("bot.py").read()
-    assert "def _audio_cfg(" in src, "keine Laufzeit-Audio-Konfig"
-    assert '_cfg_get("audio.cue"' in src and '_cfg_set("audio.cue"' in src, "nicht persistent"
+    # v4.1-W20: Die ANKER sind umgezogen, nicht der Vertrag. Die Ton-Konfig
+    # liegt in nc/audiocue.py, die beiden Routen in nc/routes/audio.py.
+    # Geprueft wird unveraendert: dass zur LAUFZEIT gelesen wird (der
+    # gespeicherte Wert schlaegt .env, ohne Neustart), dass es persistent ist,
+    # und dass die Grenzwerte greifen.
+    acfg = open("nc/audiocue.py", encoding="utf-8").read()
+    arts = open("nc/routes/audio.py", encoding="utf-8").read()
+    assert "def config(" in acfg, "keine Laufzeit-Audio-Konfig"
+    assert '_cfgstore.get("audio.cue"' in acfg, "liest den gespeicherten Wert nicht"
+    assert '_nc_cfgstore.set_("audio.cue"' in arts, "nicht persistent"
+    # Die .env-Vorgaben werden hereingereicht, nicht im Modul eingefroren.
+    assert "_nc_audiocue.configure(" in src, "die .env-Vorgaben erreichen das Modul nicht"
+    assert "os.getenv" not in acfg, "nc/audiocue.py friert .env selbst ein"
     # Ton UND Duck lesen zur Laufzeit (keine eingefrorenen Env-Konstanten mehr).
     assert '_audio_cfg()["duck"]' in src, "Ducking nutzt weiter die feste Env-Konstante"
     assert src.count('_nc_audio.mix_chain(tts_idx, _TTS_VOICE_GAIN, _audio_cfg()["duck"])') == 3
     assert '_acfg["tone"]' in src, "Signalton nutzt die Laufzeit-Konfig nicht"
     # Routen inkl. Grenzwerte.
-    assert '"/api/audio/config"' in src and "def api_audio_config(" in src
-    assert '"/api/audio/testtone"' in src and "def api_audio_testtone(" in src
-    assert '("duck", 0.1, 1.0)' in src, "Duck-Faktor nicht begrenzt"
+    assert '"/api/audio/config"' in arts and "def api_audio_config(" in arts
+    assert '"/api/audio/testtone"' in arts and "def api_audio_testtone(" in arts
+    assert '("duck", 0.1, 1.0)' in arts, "Duck-Faktor nicht begrenzt"
+    # Der Testton muss in den LIVE-Mix — eine Kopie hiesse "0 Warteschlangen"
+    # bei laufendem Restream, also eine Fehlanzeige statt eines Tons.
+    assert "_nc_channels.RESTREAM_TTS" in arts, "der Testton greift nicht den geteilten Mix"
     # Grenzwert-Logik nachgestellt (Clamping).
     def clamp(v, lo, hi):
         return max(lo, min(hi, v))
@@ -4268,8 +4303,15 @@ def test_v40_w33_cfgnorm_bundle():
     src = open("bot.py").read()
     assert "from nc import cfgnorm as _nc_cfgnorm" in src
     for call in ("normalize_quiet_hours(_cfg_get", "normalize_highlights(_cfg_get",
-                 "normalize_gate(_cfg_get", "normalize_audio(_cfg_get"):
+                 "normalize_gate(_cfg_get"):
         assert f"_nc_cfgnorm.{call}" in src, f"{call} delegiert nicht"
+    # ANKER GEWANDERT (v4.1-W20, nicht der Vertrag): der Audio-Leser liegt bei
+    # seinen Defaults in nc/audiocue.py, damit /api/audio ihn direkt importieren
+    # kann — wie cohost in W15 und sendrate in W8. Die Zusage ist dieselbe: der
+    # gespeicherte Wert schlaegt .env, und normalisiert wird in nc/cfgnorm.py.
+    _au = open("nc/audiocue.py", encoding="utf-8").read()
+    assert '_cfgnorm.normalize_audio(' in _au and '_cfgstore.get("audio.cue"' in _au, \
+        "normalize_audio delegiert nicht"
     # ANKER GEWANDERT (v4.1-W15, nicht der Vertrag): der cohost-Leser liegt bei
     # seinen Defaults in nc/cohost.py, damit /api/cohost ihn direkt importieren
     # kann. Dieselbe Zusage, andere Datei — wie schon bei sendrate in W8.
@@ -8473,6 +8515,43 @@ def test_v41_w19_katalog_kennt_die_blueprints():
     ok("v4.1-W19: der Katalog reicht in die Blueprints, nur ueber t() und ohne tote Eintraege")
 
 
+def test_v41_w20_jede_route_uebersetzt():
+    """v4.1-W20: kein Benutzertext in nc/routes/ bleibt unuebersetzt."""
+    import importlib.util as _iu
+    _sp = _iu.spec_from_file_location("_wr", "tools/i18n_wrap.py")
+    wr = _iu.module_from_spec(_sp)
+    _sp.loader.exec_module(wr)
+
+    import glob as _glob
+    offen, englisch = [], []
+    for p in sorted(_glob.glob("nc/routes/*.py")):
+        if p.endswith("__init__.py"):
+            continue
+        q = open(p, encoding="utf-8").read()
+        offen += [(p, k[4]) for k in wr._kandidaten(q)]
+        englisch += [(p, t) for t in wr._englisch(q)]
+    # 243 Routen antworten im Fehlerfall. Uebersetzt werden kann das nur AN DER
+    # QUELLE: im Browser landet der Text meist verkettet in einem Knoten
+    # ("Fehler: " + d.error), ein Katalogeintrag fuer den blossen Text traefe
+    # dort nie. Und die EINE vergessene Stelle faellt niemandem auf — eine
+    # deutsch gebliebene Zeile sieht aus wie eine, die es noch nicht gibt.
+    assert not offen, "nicht umschlossene Benutzertexte: %r" % offen[:5]
+    # Und keine englische Fehlermeldung in einer deutschen API. Das ist keine
+    # Uebersetzungs-, sondern eine Formulierungsfrage: der Katalog hat als
+    # Vertrag, dass der Schluessel DEUTSCH ist (nc/i18n.py). Eine
+    # Identitaets-Uebersetzung saehe in der Abdeckungszahl aus wie geleistete
+    # Arbeit, wo keine war.
+    assert not englisch, "englische Benutzertexte im Quelltext: %r" % englisch[:5]
+
+    # Das Umschliessen selbst: UTF-8-Bytes, nicht Zeichen. `col_offset` im AST
+    # ist ein Byte-Offset — bei einem Umlaut vor dem Literal verrutscht ein
+    # Zeichen-Slice um genau die Zahl der Mehrbytes und schreibt kaputten Code.
+    quelle = open("tools/i18n_wrap.py", encoding="utf-8").read()
+    assert 'encode("utf-8")' in quelle, "der Umschliesser schneidet wieder ueber Zeichen"
+    assert "ast.parse(neu)" in quelle, "kein Schutz gegen kaputt geschriebene Dateien"
+    ok("v4.1-W20: alle 26 Blueprints uebersetzen an der Quelle, keiner antwortet englisch")
+
+
 def test_v41_w17_website():
     """v4.1-W17: die Website hat Material bekommen — ohne Klassen zu brechen."""
     neu = open("website/lafap_index.html", encoding="utf-8").read()
@@ -8595,6 +8674,7 @@ def main():
     test_v41_w18_katalog_reicht_bis_zum_tabellenkopf()
     test_v41_w19_aliase_bleiben_aliase()
     test_v41_w19_katalog_kennt_die_blueprints()
+    test_v41_w20_jede_route_uebersetzt()
     test_b168_moderator_everywhere()
     test_b169_kick_oauth()
     test_b170_azrael_and_youtube()

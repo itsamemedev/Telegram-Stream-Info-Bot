@@ -585,6 +585,8 @@ from nc import kickapi as _nc_kickapi  # v4.1-W9: Kick-Slug, Broadcaster-ID, Sen
 from nc import discordstate as _nc_discordstate  # v4.1-W16: Discord-Zustand (DB + laufend)
 from nc import modstats as _nc_modstats  # v4.1-W18: was als Moderations-Aktion gemeldet wird
 from nc import badwords as _nc_badwords  # v4.1-W18: Bannwortliste + Lern-Warteschlange
+from nc import revenue as _nc_revenue  # v4.1-W20: Einnahmen-Gate (B120)
+from nc import audiocue as _nc_audiocue  # v4.1-W20: Signalton/Ducking
 from nc import azraelstate as _nc_azrael  # v4.1-W19: AZRAELs Laufzeitzustand (geteilt)
 from nc import whispercfg as _nc_whisper  # v4.1-W19: Whisper-Modell als Register
 from nc import eventquery as _nc_eventquery  # v4.0-W51: Event-Log-Query-Bauer (rein)
@@ -622,6 +624,8 @@ from nc.routes import cohost as _nc_routes_cohost            # v4.1-W15: Co-Host
 from nc.routes import discord as _nc_routes_discord          # v4.1-W16: Discord-Panel
 from nc.routes import kickmod as _nc_routes_kickmod          # v4.1-W18: SENTINEL-Panel
 from nc.routes import azrael as _nc_routes_azrael            # v4.1-W19: AZRAEL-Panel
+from nc.routes import overlay as _nc_routes_overlay          # v4.1-W20: Sendebild
+from nc.routes import audio as _nc_routes_audio              # v4.1-W20: Signalton
 from nc import updater as _nc_updater                        # v4.0-W115: Selbst-Update aus dem GitHub-Repo
 from nc import donationsdb as _nc_donationsdb                # v4.0-W116: manuell erfasste Spenden lesen
 # Diese beiden Routen ruft der Bot auch INTERN auf (Telegram /sysres und die
@@ -14618,7 +14622,9 @@ def _restream_active_sources():
         if u:
             out.add(u)
     return out
-_OVERLAY_SESSION = {"start": None}   # ISO-ts des aktuellen Stream-Starts → Donations zählen erst ab hier
+_OVERLAY_SESSION = _nc_azrael.OVERLAY_SESSION   # v4.1-W20: geteilt mit
+# nc/routes/overlay.py — ISO-ts des Stream-Starts, ab dem die Overlay-
+# Spendensumme zaehlt (die Historie bleibt vollstaendig in der DB).
 
 
 def _overlay_session_reset():
@@ -14939,7 +14945,7 @@ def _write_restream_overlay(reaction_fresh_secs=None):
                     _sess = _OVERLAY_SESSION.get("start")
                     # B120: Spendenziel zaehlt nur Einnahmen eigener Kanaele.
                     _dq = ("SELECT amount FROM overlay_events WHERE kind='donation'"
-                           " AND platform IN" + _REVENUE_SQL_IN
+                           " AND platform IN" + _nc_revenue.sql_in()
                            + (" AND ts >= ?" if _sess else ""))
                     for r in conn.execute(_dq, ((_sess,) if _sess else ())):
                         try: cur += float(str(r["amount"]).replace(",", ".").replace("\u20ac", "").strip())
@@ -15053,7 +15059,9 @@ def _studio_chain(avatar_idx=None, rid=None):
 # → sauberer Exit; amix=duration=first führt den Quell-Ton ungestört weiter.
 import threading as _threading
 _tts_pcm_queue = _collections.deque(maxlen=200)   # PCM-Häppchen (s16le 44100 stereo)
-_restream_tts = {}                                # rid -> {thread, stop, fifo}
+_restream_tts = _nc_channels.RESTREAM_TTS   # rid -> {thread, stop, fifo, queue}
+# v4.1-W20: geteilt, damit /api/audio/testtone den Ton in den laufenden
+# Mix legen kann. Alias, kein Register: der Name wird nie neu gebunden.
 _TTS_SR, _TTS_CH = 44100, 2
 # Lautstärke-Anhebung der AZRAEL-Stimme im Restream-Mix. Der Mix nutzt amix mit
 # normalize=0 (Quell-Ton bleibt voll), die Stimme wird um diesen Faktor angehoben,
@@ -15076,12 +15084,13 @@ AZRAEL_CUE_GAP_MS = _env_int("AZRAEL_CUE_GAP_MS", 60)
 RESTREAM_DUCK     = float(os.getenv("RESTREAM_DUCK", "0.9") or 0.9)
 
 
-def _audio_cfg():
-    # v4.0-W33: Normalisierung nach nc/cfgnorm.py (bitgenau geprüft); die
-    # aufgelösten .env-Defaults (Modul-Konstanten) werden hereingereicht.
-    return _nc_cfgnorm.normalize_audio(_cfg_get("audio.cue", None),
-                                       AZRAEL_CUE_TONE, AZRAEL_CUE_FREQ, AZRAEL_CUE_MS,
-                                       AZRAEL_CUE_VOL, AZRAEL_CUE_GAP_MS, RESTREAM_DUCK)
+# v4.1-W20: die Ton-Konfiguration liegt in nc/audiocue.py, damit die beiden
+# /api/audio-Routen sie ohne Kontext-Eintrag erreichen. Die .env-Vorgaben
+# werden HIER aufgeloest und hineingereicht — das Modul soll sie nicht
+# einfrieren.
+_nc_audiocue.configure(tone=AZRAEL_CUE_TONE, freq=AZRAEL_CUE_FREQ, ms=AZRAEL_CUE_MS,
+                       vol=AZRAEL_CUE_VOL, gap_ms=AZRAEL_CUE_GAP_MS, duck=RESTREAM_DUCK)
+_audio_cfg = _nc_audiocue.config
 
 def _restream_tts_fifo_path(rid):
     return os.path.join(_RESTREAM_OV_DIR, f"azrael_{rid}.pcm")
@@ -20354,52 +20363,8 @@ def api_highlights_config():
 
 
 
-@dashboard_app.route("/api/audio/config", methods=["GET", "POST"])
-def api_audio_config():
-    """v4.0-W12: Signalton + Ducking im Dashboard einstellen (ohne .env/Neustart)."""
-    if request.method == "GET":
-        c = _audio_cfg()
-        c["duck_percent"] = round((1.0 - c["duck"]) * 100)
-        c["hinweis"] = ("Ton wirkt sofort; Ducking greift beim naechsten "
-                        "Restream-Start (steckt in der ffmpeg-Kette).")
-        return jsonify(ok=True, **c)
-    d = request.get_json(silent=True) or {}
-    cur = _audio_cfg()
-    new = dict(cur)
-    if "tone" in d:
-        new["tone"] = bool(d["tone"])
-    for key, lo, hi in (("freq", 100.0, 4000.0), ("vol", 0.0, 1.0), ("duck", 0.1, 1.0)):
-        if key in d:
-            try:
-                new[key] = max(lo, min(hi, float(d[key])))
-            except (TypeError, ValueError):
-                return jsonify(ok=False, error=f"{key} ungueltig"), 400
-    for key, lo, hi in (("ms", 20, 1000), ("gap_ms", 0, 1000)):
-        if key in d:
-            try:
-                new[key] = max(lo, min(hi, int(d[key])))
-            except (TypeError, ValueError):
-                return jsonify(ok=False, error=f"{key} ungueltig"), 400
-    _cfg_set("audio.cue", new)
-    return jsonify(ok=True, **new)
 
 
-@dashboard_app.route("/api/audio/testtone", methods=["POST"])
-def api_audio_testtone():
-    """Spielt den Signalton EINMAL in den laufenden Restream — zum Abhoeren."""
-    c = _audio_cfg()
-    try:
-        pcm = _nc_audio.cue_pcm(freq=c["freq"], ms=c["ms"], volume=c["vol"],
-                                gap_ms=c["gap_ms"], sr=_TTS_SR, ch=_TTS_CH)
-    except Exception as e:
-        return jsonify(ok=False, error=str(e)[:140]), 200
-    queues = [v.get("queue") for v in _restream_tts.values() if v.get("queue") is not None]
-    if not queues:
-        return jsonify(ok=False, error="kein laufender Restream mit Stimm-Kanal "
-                                       "— Ton kann nur im Live-Mix hoerbar sein"), 200
-    for q in queues:
-        q.append(pcm)
-    return jsonify(ok=True, queues=len(queues), bytes=len(pcm))
 
 
 
@@ -21122,23 +21087,13 @@ def _overlay_src_ok(src):
     return OVERLAY_GIFT_SOURCE == "both" or OVERLAY_GIFT_SOURCE == src
 
 
-_OV_PLATFORMS = ("kick", "twitch", "youtube", "tiktok")
-
-
-# B120: EIN Gate fuer die Einnahmen-Herkunft.
-#
-# Fachliche Begruendung, warum TikTok hier NICHT dazugehoert: TikTok-Gifts
-# gehen an den GETRACKTEN Streamer, nicht an unsere eigenen Kanaele. Sie
-# sind fremdes Geld, das wir nur beim Mitschneiden vorbeifliegen sehen.
-# Sie im Spenden-Panel, im Spendenziel oder gar in der Finanzamt-Auswertung
-# mitzuzaehlen wuerde Einnahmen erfinden, die es nie gegeben hat.
-#
-# Vorher war TikTok nur in der ANZEIGE einer einzigen Route (
-# /api/donations/summary) ausgeblendet — geschrieben wurde weiter, und
-# /api/overlay/state sowie die Spendenziel-Summe zaehlten es mit.
-# Deshalb jetzt EIN Konstantenpaar, an dem alle Stellen haengen.
-REVENUE_PLATFORMS = ("kick", "twitch", "youtube", "manuell")
-_REVENUE_SQL_IN = "('" + "','".join(REVENUE_PLATFORMS) + "')"
+# v4.1-W20: das Einnahmen-Gate (B120) und die Overlay-Plattformen liegen in
+# nc/revenue.py — die Overlay-, Spenden- und Finanzamt-Routen brauchen sie,
+# und drei nc.ctx-Eintraege fuer vier Zeilen Wahrheit waeren nicht bezahlbar.
+# Warum TikTok nicht dazugehoert und warum dort kein COALESCE(platform,'kick')
+# steht, steht im Modul-Kopf.
+_OV_PLATFORMS = _nc_revenue.OV_PLATFORMS
+REVENUE_PLATFORMS = _nc_revenue.PLATFORMS
 
 # B138-GELD: Die Abfragen lauteten frueher COALESCE(platform,'kick') IN (…).
 # Damit wurde jede Zeile OHNE Plattform-Angabe stillschweigend zu Kick erklaert
@@ -21159,9 +21114,7 @@ _REVENUE_SQL_IN = "('" + "','".join(REVENUE_PLATFORMS) + "')"
 
 
 
-def is_revenue_platform(platform) -> bool:
-    """Zaehlt Geld von dieser Plattform auf UNSERE Kanaele ein?"""
-    return (platform or "").strip().lower() in REVENUE_PLATFORMS
+is_revenue_platform = _nc_revenue.is_revenue_platform
 
 
 def _overlay_push(kind, name, amount=None, message=None, platform="kick"):
@@ -21194,6 +21147,9 @@ def _overlay_push(kind, name, amount=None, message=None, platform="kick"):
         "ts": _time_mod.monotonic(), "kind": kind, "name": (name or "?"),
         "amount": (str(amount) if amount is not None else ""),
         "message": (message or ""), "platform": platform}
+
+
+_nc_azrael.PUSH["fn"] = _overlay_push     # v4.1-W20: Haken fuer /api/overlay/event
 
 
 @dashboard_app.route("/overlay")
@@ -21251,140 +21207,10 @@ def api_restream_layout():
                          if running else "aktiv beim nächsten Relay-Start"))
 
 
-@dashboard_app.route("/api/overlay/state")
-def api_overlay_state():
-    """Live-Zustand fürs Overlay: Name, Ziel, letzter Follower, Donations, Moderator."""
-    latest_follower = None
-    donations = []
-    goal_current = 0.0
-    by_platform = {p: {"donations": 0, "amount": 0.0, "follows": 0} for p in _OV_PLATFORMS}
-    followers = []
-    # V37-OVMP-FIX: Der Donation-Zähler MUSS ab Sende-Start zählen. Die
-    # drawtext-Kette filterte längst nach _OVERLAY_SESSION, diese Route NICHT
-    # — die HTML-Overlay-Anzeige summierte deshalb ALLE Donations seit
-    # Installation und sprang beim Stream-Start nie auf 0 zurück.
-    _sess = _OVERLAY_SESSION.get("start")
-    _and_sess = " AND ts >= ?" if _sess else ""
-    _sp = (_sess,) if _sess else ()
-
-    def _amt(v):
-        try:
-            return float(str(v).replace(",", ".").replace("€", "").strip())
-        except (TypeError, ValueError):
-            return 0.0
-
-    try:
-        with db_conn() as conn:
-            fr = conn.execute("SELECT name, ts, platform FROM overlay_events "
-                              "WHERE kind='follow'" + _and_sess +
-                              " ORDER BY id DESC LIMIT 1", _sp).fetchone()
-            if fr:
-                latest_follower = {"name": fr["name"], "ts": (fr["ts"] or "")[:19],
-                                   "platform": fr["platform"] or "kick"}
-            # V37-OVMP: letzte Follower ALLER Plattformen (fürs Ticker-Panel)
-            frows = conn.execute("SELECT name, ts, platform FROM overlay_events "
-                                 "WHERE kind='follow'" + _and_sess +
-                                 " ORDER BY id DESC LIMIT 8", _sp).fetchall()
-            followers = [{"name": r["name"], "ts": (r["ts"] or "")[:19],
-                          "platform": r["platform"] or "kick"} for r in frows]
-            drows = conn.execute("SELECT name, amount, message, ts, platform FROM overlay_events "
-                                 "WHERE kind='donation' "
-                                 # B120: nur eigene Kanaele (siehe REVENUE_PLATFORMS)
-                                 "AND platform IN" + _REVENUE_SQL_IN + " " + _and_sess +
-                                 " ORDER BY id DESC LIMIT 10", _sp).fetchall()
-            donations = [{"name": r["name"], "amount": r["amount"], "message": r["message"],
-                          "ts": (r["ts"] or "")[:19],
-                          "platform": r["platform"] or "kick"} for r in drows]
-            # Ziel-Fortschritt + Plattform-Bilanz über ALLE Session-Events
-            # (nicht nur die letzten 10) — ab Sende-Start.
-            allrows = conn.execute("SELECT kind, amount, platform FROM overlay_events "
-                                   "WHERE (kind='follow' OR (kind='donation' AND "
-                                   "platform IN" + _REVENUE_SQL_IN + ")) " + _and_sess,
-                                   _sp).fetchall()
-            for r in allrows:
-                p = (r["platform"] or "kick")
-                if p not in by_platform:
-                    by_platform[p] = {"donations": 0, "amount": 0.0, "follows": 0}
-                if r["kind"] == "donation":
-                    a = _amt(r["amount"])
-                    goal_current += a
-                    by_platform[p]["donations"] += 1
-                    by_platform[p]["amount"] = round(by_platform[p]["amount"] + a, 2)
-                else:
-                    by_platform[p]["follows"] += 1
-    except Exception:
-        pass
-    spoken_age = _time_mod.monotonic() - _KICK_MOD.last_spoken.get("ts", 0)
-    return jsonify(
-        ok=True,
-        title=_OVERLAY["title"],
-        goal={"current": round(goal_current, 2), "target": _OVERLAY["goal_target"],
-              "label": _OVERLAY["goal_label"], "purpose": _OVERLAY["goal_purpose"]},
-        latest_follower=latest_follower,
-        followers=followers,             # V37-OVMP: Multi-Plattform-Ticker
-        donations=donations,
-        by_platform=by_platform,         # V37-OVMP: Bilanz je Plattform
-        session_start=_sess,             # V37-OVMP-FIX: Zähler-Nullpunkt (Sende-Start)
-        mod={
-            "running": _KICK_MOD.running,
-            "connected": _KICK_MOD.stats.get("connected"),
-            "speaking": spoken_age < 7,
-            "last_line": _KICK_MOD.last_spoken.get("text", "") if spoken_age < 30 else "",
-            "stats": _KICK_MOD.stats,
-        },
-        azrael=_azrael_overlay_state(),
-        voice={
-            "enabled": bool(_OVERLAY.get("voice_enabled")),
-            "engine": _OVERLAY.get("voice_engine", "browser"),
-            "lang": _OVERLAY.get("voice_lang", "de-DE"),
-            "name": _OVERLAY.get("voice_name", ""),
-            "rate": _OVERLAY.get("voice_rate", 1.0),
-            "pitch": _OVERLAY.get("voice_pitch", 1.0),
-            "volume": _OVERLAY.get("voice_volume", 1.0),
-            "reactions": bool(_OVERLAY.get("voice_reactions", True)),
-            "mod": bool(_OVERLAY.get("voice_mod", False)),
-        })
 
 
-@dashboard_app.route("/api/overlay/event", methods=["POST"])
-def api_overlay_event():
-    """Event pushen (Follower/Donation) — für StreamElements-Webhook o.ä. oder manuell.
-       Body: {kind: 'follow'|'donation', name, amount?, message?}"""
-    d = request.get_json(silent=True) or {}
-    kind = (d.get("kind") or "").strip()
-    if kind not in ("follow", "donation"):
-        return jsonify(ok=False, error="kind muss 'follow' oder 'donation' sein"), 400
-    _overlay_push(kind, d.get("name") or "?", d.get("amount"), d.get("message"),
-                  platform=(d.get("platform") or "kick"))
-    return jsonify(ok=True)
 
 
-@dashboard_app.route("/api/overlay/config", methods=["POST"])
-def api_overlay_config():
-    """Sendername + Spendenziel setzen (persistiert über Laufzeit)."""
-    d = request.get_json(silent=True) or {}
-    if "title" in d: _OVERLAY["title"] = (d["title"] or "Azrael Sentinel")[:60]
-    if "goal_label" in d: _OVERLAY["goal_label"] = (d["goal_label"] or "")[:60]
-    if "goal_purpose" in d: _OVERLAY["goal_purpose"] = (d["goal_purpose"] or "")[:160]
-    if "azrael_show" in d: _OVERLAY["azrael_show"] = bool(d["azrael_show"])
-    if "voice_enabled" in d: _OVERLAY["voice_enabled"] = bool(d["voice_enabled"])
-    if "voice_engine" in d: _OVERLAY["voice_engine"] = (d["voice_engine"] or "browser").strip().lower()
-    if "piper_model" in d: _OVERLAY["piper_model"] = (d["piper_model"] or "").strip()[:300]
-    if "piper_length" in d:
-        try: _OVERLAY["piper_length"] = max(0.5, min(2.0, float(d["piper_length"])))
-        except (TypeError, ValueError): pass
-    if "voice_lang" in d: _OVERLAY["voice_lang"] = (d["voice_lang"] or "de-DE")[:20]
-    if "voice_name" in d: _OVERLAY["voice_name"] = (d["voice_name"] or "")[:80]
-    if "voice_reactions" in d: _OVERLAY["voice_reactions"] = bool(d["voice_reactions"])
-    if "voice_mod" in d: _OVERLAY["voice_mod"] = bool(d["voice_mod"])
-    for _k, _lo, _hi in (("voice_rate", 0.5, 2.0), ("voice_pitch", 0.0, 2.0), ("voice_volume", 0.0, 1.0)):
-        if _k in d:
-            try: _OVERLAY[_k] = max(_lo, min(_hi, float(d[_k])))
-            except (TypeError, ValueError): pass
-    if "goal_target" in d:
-        try: _OVERLAY["goal_target"] = max(0, int(d["goal_target"]))
-        except (TypeError, ValueError): pass
-    return jsonify(ok=True, overlay=_OVERLAY)
 
 
 @dashboard_app.route("/api/upload_window")
@@ -26954,7 +26780,7 @@ async def einnahmen_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         year = int(args[0]) if args and args[0].isdigit() else datetime.now(timezone.utc).year
         with db_conn() as conn:
             s = _nc_ledger.summary(conn, year)
-            cc = _nc_ledger.crosscheck(conn, year, _REVENUE_SQL_IN)
+            cc = _nc_ledger.crosscheck(conn, year, _nc_revenue.sql_in())
         if not s["entries"]:
             await update.message.reply_text(
                 f"📒 <b>Einnahmen {year}</b>\n<i>Noch keine Buchungen.</i>\n\n"
@@ -28570,7 +28396,6 @@ _nc_ctx.configure(
         "UPDATE_ENABLED": UPDATE_ENABLED,
         "UPDATE_RESTART_CMD": UPDATE_RESTART_CMD,
         "WATCHDOG_RES_SAMPLE_MIN": WATCHDOG_RES_SAMPLE_MIN,
-        "_REVENUE_SQL_IN": _REVENUE_SQL_IN,
         # Beide sind veraenderlicher Zustand und wandern als REFERENZ: der Bot
         # invalidiert den Cookie-Cache (_COOKIES_CACHE.pop) und der Watchdog
         # schreibt den Ressourcen-Ring (_RES_HISTORY.append), beides muss die
@@ -28631,6 +28456,8 @@ dashboard_app.register_blueprint(_nc_routes_cohost.bp)     # v4.1-W15
 dashboard_app.register_blueprint(_nc_routes_discord.bp)    # v4.1-W16
 dashboard_app.register_blueprint(_nc_routes_kickmod.bp)    # v4.1-W18
 dashboard_app.register_blueprint(_nc_routes_azrael.bp)     # v4.1-W19
+dashboard_app.register_blueprint(_nc_routes_overlay.bp)    # v4.1-W20
+dashboard_app.register_blueprint(_nc_routes_audio.bp)      # v4.1-W20
 
 
 if __name__ == "__main__":

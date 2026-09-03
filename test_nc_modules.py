@@ -1409,6 +1409,94 @@ def _test_w19_azrael_blueprint():
     ok("v4.1-W19: azrael als Blueprint, Stimme/Whisper/Zustand geloest")
 
 
+def _test_w20_overlay_audio_und_geld():
+    """v4.1-W20: fuenf Routen raus, EINE Quelle fuers Einnahmen-Gate."""
+    import ast as _ast
+
+    import nc.audiocue as AC
+    import nc.azraelstate as A
+    import nc.channels as C
+    import nc.revenue as R
+
+    # (1) Das Einnahmen-Gate hat jetzt EINE Quelle. Vorher stand es als
+    # Konstantenpaar im Monolithen und money.py spiegelte es ueber ctx.cfg —
+    # zwei Orte fuer eine Wahrheit, aus der ein Drift wird.
+    assert R.PLATFORMS == ("kick", "twitch", "youtube", "manuell")
+    assert "tiktok" not in R.PLATFORMS, "fremdes Geld waere Einnahme"
+    assert R.is_revenue_platform("KICK ") and R.is_revenue_platform("manuell")
+    assert not R.is_revenue_platform("tiktok") and not R.is_revenue_platform("")
+    assert not R.is_revenue_platform(None)
+    assert R.sql_in() == "('kick','twitch','youtube','manuell')"
+    # TikTok darf sehr wohl ins Sendebild — Follows sind Reichweite, kein Geld.
+    assert "tiktok" in R.OV_PLATFORMS
+    assert R.normalisieren("TikTok") == "tiktok"
+    assert R.normalisieren("erfunden") == "kick" and R.normalisieren(None) == "kick"
+
+    # (2) Ton-Konfig: gespeicherter Wert schlaegt .env-Vorgabe, ohne Neustart.
+    AC.configure(tone=True, freq=880.0, ms=120, vol=0.25, gap_ms=60, duck=0.9)
+    c = AC.config()
+    assert c["freq"] == 880.0 and c["duck"] == 0.9, c
+    AC.configure(freq=440.0)
+    assert AC.config()["freq"] == 440.0, "die .env-Vorgabe wurde eingefroren"
+
+    # (3) Der Testton muss in den LIVE-Mix. Eine Kopie hiesse "0
+    # Warteschlangen" bei laufendem Restream — eine Fehlanzeige, die wie ein
+    # kaputter Ton aussieht.
+    C.RESTREAM_TTS.clear()
+    C.RESTREAM_TTS[7] = {"queue": []}
+    import nc.routes.audio as RA
+    from flask import Flask
+    app = Flask(__name__)
+    app.register_blueprint(RA.bp)
+    with app.test_client() as cl:
+        j = cl.post("/api/audio/testtone", json={}).get_json()
+        assert j["ok"] and j["queues"] == 1, j
+        assert len(C.RESTREAM_TTS[7]["queue"]) == 1, "der Ton landete nicht im Mix"
+    C.RESTREAM_TTS.clear()
+    with app.test_client() as cl:
+        assert cl.post("/api/audio/testtone", json={}).get_json()["ok"] is False
+
+    # (4) Overlay: der Zaehler-Nullpunkt ist geteilt. Ohne ihn summiert das
+    # Overlay alles seit der Installation und springt beim Stream-Start nie
+    # auf 0 zurueck (V37-OVMP-FIX).
+    import nc.routes.overlay as RO
+    app2 = Flask(__name__)
+    app2.register_blueprint(RO.bp)
+    regeln = {str(r.rule) for r in app2.url_map.iter_rules() if r.endpoint != "static"}
+    assert len(regeln) == 3, sorted(regeln)
+    A.OVERLAY.clear(); A.OVERLAY.update(title="Prüfstand", azrael_show=False)
+    A.OVERLAY_SESSION["start"] = "2026-09-03T10:00:00+00:00"
+    with app2.test_client() as cl:
+        j = cl.get("/api/overlay/state").get_json()
+        assert j["title"] == "Prüfstand", j
+        assert j["session_start"] == "2026-09-03T10:00:00+00:00", j
+        assert set(j["by_platform"]) >= set(R.OV_PLATFORMS)
+        # Ohne Haken antwortet die Event-Route voruebergehend, nicht mit 500.
+        A.PUSH["fn"] = None
+        assert cl.post("/api/overlay/event", json={"kind": "follow"}).status_code == 503
+        assert cl.post("/api/overlay/event", json={"kind": "quatsch"}).status_code == 400
+        gesehen = []
+        A.PUSH["fn"] = lambda *a, **k: gesehen.append((a, k))
+        assert cl.post("/api/overlay/event",
+                       json={"kind": "donation", "name": "x"}).status_code == 200
+        assert gesehen and gesehen[0][1]["platform"] == "kick", gesehen
+    A.PUSH["fn"] = None
+    A.OVERLAY_SESSION["start"] = None
+    A.OVERLAY.clear()
+
+    # (5) Kein neuer ctx-Slot: beide Blueprints kommen ohne Kontext aus.
+    for datei in ("nc/routes/overlay.py", "nc/routes/audio.py"):
+        quelle = open(datei, encoding="utf-8").read()
+        assert "from nc import ctx" not in quelle, "%s braucht den Kontext" % datei
+        for zeile in quelle.split("\n"):
+            z = zeile.strip()
+            assert not (z[:1].isupper() and " = os.getenv(" in z), \
+                "Modul-Konstante friert .env ein: %s" % z
+        _ast.parse(quelle)
+
+    ok("v4.1-W20: overlay+audio als Blueprint, Einnahmen-Gate mit einer Quelle")
+
+
 def main():
     tmp = tempfile.mkdtemp()
     configure_db(db_path=os.path.join(tmp, "t.db"), backend="sqlite")
@@ -1527,6 +1615,8 @@ def main():
     _test_w18_kickmod_blueprint()
 
     _test_w19_azrael_blueprint()
+
+    _test_w20_overlay_audio_und_geld()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)
 

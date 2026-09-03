@@ -11,6 +11,8 @@ import json
 import os
 import shutil
 from flask import Blueprint, Response, jsonify, request
+
+from nc import i18n as _nc_i18n
 from nc.dbwrap import db_conn
 from http.cookiejar import MozillaCookieJar
 from typing import Optional
@@ -22,6 +24,13 @@ from nc.dbexport import db_export_sql as _dbx_export, db_import_sql as _dbx_impo
 from nc import ctx as _ctx
 
 bp = Blueprint("settings", __name__)
+
+def _t(s):
+    """v4.1-W20: an der Quelle uebersetzen. Diese Texte erreichen das DOM
+       meist verkettet ("Fehler: " + error) — ein Katalogeintrag fuer den
+       blossen Text traefe dort nie."""
+    return _nc_i18n.t(s)
+
 
 
 def _c():
@@ -77,9 +86,9 @@ def api_cookies_update():
     payload = request.get_json(silent=True) or {}
     raw = (payload.get("cookies") or "").strip()
     if not raw:
-        return jsonify(ok=False, error="Keine Cookie-Daten übergeben."), 400
+        return jsonify(ok=False, error=_t("Keine Cookie-Daten übergeben.")), 400
     if len(raw) > 2_000_000:
-        return jsonify(ok=False, error="Eingabe zu groß (>2 MB)."), 400
+        return jsonify(ok=False, error=_t("Eingabe zu groß (>2 MB).")), 400
 
     # 1) Konvertieren
     try:
@@ -90,8 +99,8 @@ def api_cookies_update():
         return jsonify(ok=False, error=f"Cookies nicht verarbeitbar: {e}"), 400
     if n_parsed == 0:
         return jsonify(ok=False,
-                       error="Keine gültigen Cookies erkannt. Erwartet wird das "
-                             "Netscape-Format (cookies.txt) oder ein JSON-Array."), 400
+                       error=_t("Keine gültigen Cookies erkannt. Erwartet wird das "
+                                "Netscape-Format (cookies.txt) oder ein JSON-Array.")), 400
     # 1b) Doppelte Namen (z.B. msToken unter mehreren Domains) automatisch
     #     bereinigen → verhindert die 'mehrfach unter verschiedenen Domains'-Warnung.
     try:
@@ -122,9 +131,9 @@ def api_cookies_update():
             pass
         return jsonify(
             ok=False,
-            error="Kein Auth-Cookie (sessionid_ss/sessionid) gefunden. Bist du im "
-                  "Browser bei TikTok eingeloggt? Update abgebrochen — die alten "
-                  "Cookies bleiben erhalten.",
+            error=_t("Kein Auth-Cookie (sessionid_ss/sessionid) gefunden. Bist du im "
+                     "Browser bei TikTok eingeloggt? Update abgebrochen — die alten "
+                     "Cookies bleiben erhalten."),
             parsed=n_parsed,
             found=sorted(names)[:20],
         ), 400
@@ -200,7 +209,7 @@ def api_db_export():
     dialect = (request.args.get("dialect") or
                ("mariadb" if _c().cfg["DB_BACKEND"] == "sqlite" else "sqlite")).strip().lower()
     if dialect not in ("sqlite", "mariadb"):
-        return jsonify(ok=False, error="dialect muss sqlite oder mariadb sein"), 400
+        return jsonify(ok=False, error=_t("dialect muss sqlite oder mariadb sein")), 400
     ts = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
     fname = f"nightcrawler-{_c().cfg['DB_BACKEND']}-to-{dialect}-{ts}.sql"
 
@@ -228,14 +237,14 @@ def api_db_import():
     else:
         raw = request.get_data() or b""
     if not raw:
-        return jsonify(ok=False, error="keine Datei/kein Inhalt"), 400
+        return jsonify(ok=False, error=_t("keine Datei/kein Inhalt")), 400
     if len(raw) > _c().cfg["DB_IMPORT_MAX_MB"] * 1024 * 1024:
         return jsonify(ok=False, error=f"Datei > {_c().cfg['DB_IMPORT_MAX_MB']} MB — "
                                        "DB_IMPORT_MAX_MB anheben oder per CLI einspielen"), 413
     try:
         text = raw.decode("utf-8")
     except UnicodeDecodeError:
-        return jsonify(ok=False, error="Datei ist kein UTF-8 — kein gueltiger Export"), 400
+        return jsonify(ok=False, error=_t("Datei ist kein UTF-8 — kein gueltiger Export")), 400
     try:
         rep = _dbx_import(text, expect_dialect=_c().cfg["DB_BACKEND"], dry_run=dry)
         # rep enthaelt "ok" bereits — jsonify(ok=…, **rep) waere ein doppeltes
@@ -267,10 +276,10 @@ def api_config_restore():
        Setzt NUR app_config-Schlüssel (keine learned_params, kein Schema)."""
     data = request.get_json(silent=True) or {}
     if not data.get("confirm"):
-        return jsonify(ok=False, error="confirm=true erforderlich"), 400
+        return jsonify(ok=False, error=_t("confirm=true erforderlich")), 400
     cfg = data.get("app_config") or {}
     if not isinstance(cfg, dict):
-        return jsonify(ok=False, error="app_config muss ein Objekt sein"), 400
+        return jsonify(ok=False, error=_t("app_config muss ein Objekt sein")), 400
     try:
         restored = 0
         failed = 0
@@ -309,7 +318,7 @@ def api_schedule_add():
     data = request.get_json(silent=True) or {}
     u = (data.get("username") or "").lstrip("@")
     if not u:
-        return jsonify(ok=False, error="username erforderlich"), 400
+        return jsonify(ok=False, error=_t("username erforderlich")), 400
     try:
         # BUG-FIX: int(datetime.now().timestamp()) hat Sekunden-Granularität.
         # Zwei Einträge in derselben Sekunde bekommen die gleiche ID →

@@ -42,6 +42,13 @@ from nc import ctx as _ctx
 
 bp = Blueprint("kick", __name__)
 
+def _t(s):
+    """v4.1-W20: an der Quelle uebersetzen. Diese Texte erreichen das DOM
+       meist verkettet ("Fehler: " + error) — ein Katalogeintrag fuer den
+       blossen Text traefe dort nie."""
+    return _nc_i18n.t(s)
+
+
 
 def _c():
     """Laufzeitkontext. Aufruf statt Modul-Konstante — der Kontext wird erst
@@ -68,8 +75,8 @@ def _kick_redirect_uri():
 @bp.route("/api/kick/oauth/start")
 def api_kick_oauth_start():
     if not (_c().cfg["KICK_CLIENT_ID"] and _c().cfg["KICK_CLIENT_SECRET"]):
-        return jsonify(ok=False, error="KICK_CLIENT_ID/SECRET fehlen — Kick-Developer-App "
-                       "unter kick.com/settings/developer anlegen"), 400
+        return jsonify(ok=False, error=_t("KICK_CLIENT_ID/SECRET fehlen — Kick-Developer-App "
+                                          "unter kick.com/settings/developer anlegen")), 400
     redirect = _kick_redirect_uri()
     verifier, challenge = _nc_kickoauth.gen_pkce()
     state = _nc_kickoauth.gen_state()
@@ -136,10 +143,10 @@ def api_kick_oauth_redirect():
     if uri:
         low = uri.lower()
         if not (low.startswith("http://") or low.startswith("https://")):
-            return jsonify(ok=False, error="URI muss mit http:// oder https:// beginnen"), 400
+            return jsonify(ok=False, error=_t("URI muss mit http:// oder https:// beginnen")), 400
         if not low.endswith("/api/kick/oauth/callback"):
-            return jsonify(ok=False, error="URI muss auf /api/kick/oauth/callback enden "
-                           "(exakt dieser Pfad ist die Rueckruf-Route)"), 400
+            return jsonify(ok=False, error=_t("URI muss auf /api/kick/oauth/callback enden "
+                                              "(exakt dieser Pfad ist die Rueckruf-Route)")), 400
     _cfg_set("kick.redirect_uri", uri)
     eff = _kick_redirect_uri()
     return jsonify(ok=True, redirect_uri=eff, redirect_source=_redirect_source("kick"),
@@ -187,7 +194,7 @@ def api_kick_sendcheck():
         return jsonify(out)
     mod = _nc_channels.KICK_MOD["obj"]
     if mod is None:
-        out.update(ok=False, error="Kick-Moderator laeuft nicht (KICK_CHATROOM_ID?)")
+        out.update(ok=False, error=_t("Kick-Moderator laeuft nicht (KICK_CHATROOM_ID?)"))
         return jsonify(out)
     txt = (request.get_json(silent=True) or {}).get("text") or "Azrael Sentinel · Sendetest"
     try:
@@ -228,7 +235,7 @@ def api_kick_channel_set():
     title = d.get("title")
     cat = d.get("category_id")
     if title is None and not cat:
-        return jsonify(ok=False, error="title oder category_id nötig"), 400
+        return jsonify(ok=False, error=_t("title oder category_id nötig")), 400
     try:
         ok, err = _c().run_async(
             _nc_channels.KICK_MOD["obj"].update_channel(
@@ -236,7 +243,7 @@ def api_kick_channel_set():
         return jsonify(ok=ok, error=err), (200 if ok else 502)
     except RuntimeError as e:
         if _loop_not_ready(e):
-            return jsonify(ok=False, error="Bot-Loop startet noch", transient=True), 503
+            return jsonify(ok=False, error=_t("Bot-Loop startet noch"), transient=True), 503
         return jsonify(ok=False, error=str(e)), 500
     except Exception as e:
         return jsonify(ok=False, error=str(e)), 500

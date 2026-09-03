@@ -8,11 +8,20 @@ stellen muss, kommt ueber nc.ctx statt ueber einen Import aus bot.py.
 
 from datetime import datetime, timezone
 from flask import Blueprint, jsonify, request
+
+from nc import i18n as _nc_i18n
 from nc.dbwrap import db_conn
 
 from nc import ctx as _ctx
 
 bp = Blueprint("collections", __name__)
+
+def _t(s):
+    """v4.1-W20: an der Quelle uebersetzen. Diese Texte erreichen das DOM
+       meist verkettet ("Fehler: " + error) — ein Katalogeintrag fuer den
+       blossen Text traefe dort nie."""
+    return _nc_i18n.t(s)
+
 
 
 def _c():
@@ -37,7 +46,7 @@ def api_collections():
         name = (payload.get("name") or "").strip()[:64]
         color = (payload.get("color") or "").strip()[:16] or None
         if not name:
-            return jsonify(ok=False, error="name erforderlich."), 400
+            return jsonify(ok=False, error=_t("name erforderlich.")), 400
         try:
             with db_conn() as conn:
                 cur = conn.execute(
@@ -73,7 +82,7 @@ def api_collection_modify(cid):
             row = conn.execute("SELECT 1 FROM tracking_collections WHERE id=?",
                               (cid,)).fetchone()
             if not row:
-                return jsonify(ok=False, error="Collection nicht gefunden."), 404
+                return jsonify(ok=False, error=_t("Collection nicht gefunden.")), 404
             if request.method == "DELETE":
                 conn.execute("UPDATE trackings SET collection_id=NULL WHERE collection_id=?",
                              (cid,))
@@ -89,7 +98,7 @@ def api_collection_modify(cid):
             if color:
                 sets.append("color=?"); params.append(color)
             if not sets:
-                return jsonify(ok=False, error="Nichts zu ändern."), 400
+                return jsonify(ok=False, error=_t("Nichts zu ändern.")), 400
             params.append(cid)
             conn.execute(f"UPDATE tracking_collections SET {', '.join(sets)} WHERE id=?",
                          tuple(params))
@@ -107,7 +116,7 @@ def api_collection_trackings(cid):
             c = conn.execute("SELECT name FROM tracking_collections WHERE id=?",
                             (cid,)).fetchone()
             if not c:
-                return jsonify(ok=False, error="Collection nicht gefunden."), 404
+                return jsonify(ok=False, error=_t("Collection nicht gefunden.")), 404
             rows = conn.execute(
                 "SELECT id, username, last_live, recording, paused FROM trackings "
                 "WHERE collection_id=? ORDER BY username", (cid,)).fetchall()

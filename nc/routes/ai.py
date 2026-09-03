@@ -16,6 +16,7 @@ from nc.textmore import _parse_iso
 from nc.dbwrap import db_conn
 import threading
 import time as _time_mod
+from nc import i18n as _nc_i18n
 from nc import claude as _nc_claude
 import nc.freeai as _nc_freeai
 from nc import sqlguard as _nc_sqlguard
@@ -32,6 +33,13 @@ from nc.stats import _streamer_health
 from nc import ctx as _ctx
 
 bp = Blueprint("ai", __name__)
+
+def _t(s):
+    """v4.1-W20: an der Quelle uebersetzen. Diese Texte erreichen das DOM
+       meist verkettet ("Fehler: " + error) — ein Katalogeintrag fuer den
+       blossen Text traefe dort nie."""
+    return _nc_i18n.t(s)
+
 
 
 def _c():
@@ -365,7 +373,7 @@ def api_ai_conversation_get(conv_id):
             "FROM ai_conversations WHERE id = ? AND COALESCE(archived, 0) = 0",
             (conv_id,)).fetchone()
     if not meta:
-        return jsonify(ok=False, error="conversation not found"), 404
+        return jsonify(ok=False, error=_t("Konversation nicht gefunden")), 404
     messages = _conv_messages(conv_id)
     return jsonify({
         "ok": True,
@@ -392,7 +400,7 @@ def api_ai_conversation_patch(conv_id):
     payload = request.get_json(silent=True) or {}
     title = payload.get("title")
     if title is None:
-        return jsonify(ok=False, error="title field required"), 400
+        return jsonify(ok=False, error=_t("Feld title erforderlich")), 400
     _conv_rename(conv_id, title)
     return jsonify({"ok": True})
 
@@ -411,7 +419,7 @@ def api_ai_conversation_send(conv_id):
     payload = request.get_json(silent=True) or {}
     prompt = (payload.get("prompt") or "").strip()
     if not prompt:
-        return jsonify(ok=False, error="prompt darf nicht leer sein"), 400
+        return jsonify(ok=False, error=_t("prompt darf nicht leer sein")), 400
     if len(prompt) > _c().cfg["AI_TEXT_MAX_CHARS"]:
         return jsonify(ok=False, error=f"prompt zu lang (max {_c().cfg["AI_TEXT_MAX_CHARS"]} Zeichen)"), 400
 
@@ -421,7 +429,7 @@ def api_ai_conversation_send(conv_id):
             "SELECT 1 FROM ai_conversations WHERE id = ? AND COALESCE(archived, 0) = 0",
             (conv_id,)).fetchone()
     if not exists:
-        return jsonify(ok=False, error="conversation not found"), 404
+        return jsonify(ok=False, error=_t("Konversation nicht gefunden")), 404
 
     # F78: Per-Conversation Model-Wahl (mit Validierung gegen INSTALLIERTE
     # Ollama-Modelle). Vorher: B9 hartcodiert auf AI_MODEL — sicher,
@@ -540,7 +548,7 @@ def api_ai_conversation_stream(conv_id):
     payload = request.get_json(silent=True) or {}
     prompt = (payload.get("prompt") or "").strip()
     if not prompt:
-        return jsonify(ok=False, error="prompt darf nicht leer sein"), 400
+        return jsonify(ok=False, error=_t("prompt darf nicht leer sein")), 400
     if len(prompt) > _c().cfg["AI_TEXT_MAX_CHARS"]:
         return jsonify(ok=False, error=f"prompt zu lang (max {_c().cfg["AI_TEXT_MAX_CHARS"]} Zeichen)"), 400
     with db_conn() as conn:
@@ -548,7 +556,7 @@ def api_ai_conversation_stream(conv_id):
             "SELECT 1 FROM ai_conversations WHERE id = ? AND COALESCE(archived, 0) = 0",
             (conv_id,)).fetchone()
     if not exists:
-        return jsonify(ok=False, error="conversation not found"), 404
+        return jsonify(ok=False, error=_t("Konversation nicht gefunden")), 404
 
     # Model-Auflösung (wie im Nicht-Stream-Endpoint)
     requested = (payload.get("model") or "").strip()
@@ -743,7 +751,7 @@ def api_ai_ask():
     payload = request.get_json(silent=True) or {}
     prompt = (payload.get("prompt") or "").strip()
     if not prompt:
-        return jsonify(ok=False, error="prompt darf nicht leer sein"), 400
+        return jsonify(ok=False, error=_t("prompt darf nicht leer sein")), 400
     if len(prompt) > _c().cfg["AI_TEXT_MAX_CHARS"]:
         return jsonify(ok=False, error=f"prompt zu lang (max {_c().cfg["AI_TEXT_MAX_CHARS"]} Zeichen)"), 400
     # B9: model-Param ignorieren — immer Server-Default nehmen
@@ -861,7 +869,7 @@ def api_claude_save():
     if "key" in payload:
         k = str(payload.get("key") or "").strip()
         if k and not k.startswith("sk-"):
-            return jsonify(ok=False, error="Kein gültiger Anthropic-Key (erwartet 'sk-…')."), 400
+            return jsonify(ok=False, error=_t("Kein gültiger Anthropic-Key (erwartet 'sk-…').")), 400
         _cfg_set("ai.anthropic_key", k)   # leerer String = entfernt
         saved["key"] = bool(k)
     if "model" in payload:
@@ -879,8 +887,8 @@ def api_claude_test():
     payload = request.get_json(silent=True) or {}
     key = str(payload.get("key") or "").strip() or _anthropic_key()
     if not key:
-        return jsonify(ok=False, error="Kein Key gesetzt.",
-                       message="Kein Key im Feld und keiner gespeichert."), 400
+        return jsonify(ok=False, error=_t("Kein Key gesetzt."),
+                       message=_t("Kein Key im Feld und keiner gespeichert.")), 400
     ok_, kind, detail = _nc_claude.probe(key, model=_anthropic_model())
     hint = {"auth": " — Key falsch/gesperrt oder Guthaben leer.",
             "unreachable": " — der Server erreicht api.anthropic.com nicht "
@@ -922,11 +930,11 @@ def api_ai_query():
     data = request.get_json(silent=True) or {}
     q = (data.get("q") or data.get("question") or "").strip()
     if not q:
-        return jsonify(ok=False, error="q (Frage) erforderlich"), 400
+        return jsonify(ok=False, error=_t("q (Frage) erforderlich")), 400
     sql, source = _nl_to_sql(q)
     if not sql:
-        return jsonify(ok=False, error="Konnte die Frage nicht in SQL übersetzen "
-                       "(LLM offline? Versuch eine einfachere Formulierung).",
+        return jsonify(ok=False, error=_t("Konnte die Frage nicht in SQL übersetzen "
+                                          "(LLM offline? Versuch eine einfachere Formulierung)."),
                        question=q), 200
     rows, err = _safe_select(sql)
     if err:

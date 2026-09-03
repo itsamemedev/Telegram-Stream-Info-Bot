@@ -15,6 +15,7 @@ from flask import Blueprint, jsonify, request
 from nc.dbwrap import db_conn
 from flask import current_app
 import time as _time_mod
+from nc import i18n as _nc_i18n
 from nc import restrend as _nc_restrend
 from nc import ffver as _nc_ffver
 from nc import updater as _nc_updater
@@ -24,6 +25,13 @@ from nc import proxyutil as _nc_proxyutil
 from nc import ctx as _ctx
 
 bp = Blueprint("ops", __name__)
+
+def _t(s):
+    """v4.1-W20: an der Quelle uebersetzen. Diese Texte erreichen das DOM
+       meist verkettet ("Fehler: " + error) — ein Katalogeintrag fuer den
+       blossen Text traefe dort nie."""
+    return _nc_i18n.t(s)
+
 
 
 def _c():
@@ -105,7 +113,7 @@ def api_tunnel_set():
     d = request.get_json(silent=True) or {}
     p = (d.get("proxy") or "").strip()
     if p and not re.match(r"^(socks5h?|https?)://", p):
-        return jsonify(ok=False, error="Format: socks5://host:port oder http://host:port"), 400
+        return jsonify(ok=False, error=_t("Format: socks5://host:port oder http://host:port")), 400
     _nc_proxyutil.tunnel_state()["override"] = p or None
     log.info("v37 Tunnel: override=%s (Dashboard)", _tunnel_mask(_nc_proxyutil.tunnel_state()["override"]))
     return jsonify(ok=True, override=_tunnel_mask(_nc_proxyutil.tunnel_state()["override"]), effective=_tunnel_mask(_nc_proxyutil.tunnel_effective()))
@@ -437,7 +445,7 @@ def api_update_start():
     dry = bool(body.get("dry_run"))
     if not dry and not _c().cfg["UPDATE_ENABLED"]:
         return jsonify(ok=False,
-                       error="Update-Schreiben ist abgeschaltet (UPDATE_ENABLED=0)."), 403
+                       error=_t("Update-Schreiben ist abgeschaltet (UPDATE_ENABLED=0).")), 403
     res = _nc_updater.start_update(dry_run=dry)
     return (jsonify(**res), 200 if res.get("ok") else 409)
 
@@ -455,7 +463,7 @@ def api_update_rollback():
     if not name:
         bl = _nc_updater.list_backups()
         if not bl:
-            return jsonify(ok=False, error="Kein Backup vorhanden."), 404
+            return jsonify(ok=False, error=_t("Kein Backup vorhanden.")), 404
         name = bl[0]["name"]
     try:
         res = _nc_updater.rollback(name)
@@ -477,8 +485,8 @@ def api_update_restart():
     if not _c().cfg["UPDATE_RESTART_CMD"]:
         return jsonify(ok=False, needs_manual=True,
                        hint="sudo systemctl restart tiktok-bot",
-                       error="Kein Neustart-Kommando hinterlegt "
-                             "(UPDATE_RESTART_CMD). Bitte von Hand neu starten."), 409
+                       error=_t("Kein Neustart-Kommando hinterlegt "
+                                "(UPDATE_RESTART_CMD). Bitte von Hand neu starten.")), 409
     try:
         # Verzoegert und abgekoppelt: der Neustart killt genau den Prozess, der
         # diese Antwort noch senden muss. Ohne das Fenster sieht der Operator

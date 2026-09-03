@@ -23,6 +23,7 @@ from datetime import datetime, timedelta, timezone
 
 from flask import Blueprint, jsonify, request
 
+from nc import i18n as _nc_i18n
 from nc import discordstate as _nc_discordstate
 from nc.cfgstore import get as _cfg_get
 from nc.dbwrap import db_conn
@@ -34,6 +35,13 @@ from nc.util import _loop_not_ready
 from nc import ctx as _ctx
 
 bp = Blueprint("discord", __name__)
+
+def _t(s):
+    """v4.1-W20: an der Quelle uebersetzen. Diese Texte erreichen das DOM
+       meist verkettet ("Fehler: " + error) — ein Katalogeintrag fuer den
+       blossen Text traefe dort nie."""
+    return _nc_i18n.t(s)
+
 
 
 def _c():
@@ -119,7 +127,7 @@ def api_discord_overview():
 def api_discord_webhook_test():
     """Testet den Discord-Webhook mit einer Testnachricht."""
     if not _c().cfg["DISCORD_WEBHOOK_URL"]:
-        return jsonify(ok=False, error="Kein DISCORD_WEBHOOK_URL konfiguriert"), 400
+        return jsonify(ok=False, error=_t("Kein DISCORD_WEBHOOK_URL konfiguriert")), 400
 
     async def _send():
         import aiohttp
@@ -133,7 +141,7 @@ def api_discord_webhook_test():
         return jsonify(ok=(status in (200, 204)), status=status)
     except RuntimeError as e:
         if _loop_not_ready(e):
-            return jsonify(ok=False, error="Bot-Loop startet noch", transient=True), 503
+            return jsonify(ok=False, error=_t("Bot-Loop startet noch"), transient=True), 503
         return jsonify(ok=False, error=str(e)), 500
     except Exception as e:
         return jsonify(ok=False, error=str(e)), 500
@@ -228,11 +236,11 @@ def api_discord_announce():
     """v37 Feature: Community-Broadcast — Ankündigung aus dem Dashboard an den
        Discord-Webhook posten."""
     if not _c().cfg["DISCORD_WEBHOOK_URL"]:
-        return jsonify(ok=False, error="Kein DISCORD_WEBHOOK_URL in der .env konfiguriert"), 400
+        return jsonify(ok=False, error=_t("Kein DISCORD_WEBHOOK_URL in der .env konfiguriert")), 400
     d = request.get_json(silent=True) or {}
     text = (d.get("text") or "").strip()[:3000]   # v37: Längen-Cap
     if not text:
-        return jsonify(ok=False, error="leere Nachricht"), 400
+        return jsonify(ok=False, error=_t("leere Nachricht")), 400
 
     async def _send():
         import aiohttp
@@ -246,7 +254,7 @@ def api_discord_announce():
         return jsonify(ok=(status in (200, 204)), status=status)
     except RuntimeError as e:
         if _loop_not_ready(e):
-            return jsonify(ok=False, error="Bot-Loop startet noch", transient=True), 503
+            return jsonify(ok=False, error=_t("Bot-Loop startet noch"), transient=True), 503
         return jsonify(ok=False, error=str(e)), 500
     except Exception as e:
         return jsonify(ok=False, error=str(e)), 500
