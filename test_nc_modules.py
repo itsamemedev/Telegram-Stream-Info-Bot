@@ -1583,6 +1583,114 @@ def _test_w21_brain_blueprint():
     ok("v4.1-W21: brain als Blueprint, Zaehler und Router als Register")
 
 
+def _test_w22_restream_blueprint():
+    """v4.1-W22: sechzehn Routen raus; Keys bleiben drinnen."""
+    import ast as _ast
+    import os as _os
+
+    import nc.restreamcfg as C
+    import nc.restreamstate as S
+
+    # (1) Die Sendeziele. Kick hat keinen Schalter — es ist der Hauptkanal und
+    # wird ueber einen fehlenden Key abgeschaltet.
+    alt = {k: _os.environ.get(k) for k in
+           ("TWITCH_ENABLED", "TWITCH_STREAM_KEY", "TWITCH_INGEST_URL",
+            "YOUTUBE_ENABLED", "KICK_STREAM_KEY", "RESTREAM_VERIFY_S")}
+    try:
+        _os.environ.pop("TWITCH_STREAM_KEY", None)
+        _os.environ.pop("KICK_STREAM_KEY", None)
+        _os.environ["TWITCH_ENABLED"] = "0"
+        assert C.aktiv("kick") is True and C.aktiv("twitch") is False
+        assert C.bereite_ziele() == [], C.bereite_ziele()
+        _os.environ["TWITCH_ENABLED"] = "1"
+        _os.environ["TWITCH_STREAM_KEY"] = "geheim123"
+        assert C.aktiv("twitch") is True and C.key_gesetzt("twitch") is True
+        assert C.bereite_ziele() == ["twitch"], C.bereite_ziele()
+        # LIVE gelesen, nicht eingefroren: der Betreiber aendert Keys und
+        # erwartet, dass der naechste Restream sie benutzt.
+        _os.environ["RESTREAM_VERIFY_S"] = "17"
+        assert C.verify_takt() == 17, "die Pruefparameter sind eingefroren"
+        _os.environ["RESTREAM_VERIFY_S"] = "keine-zahl"
+        assert C.verify_takt() == 120, "ein Tippfehler in .env darf nicht crashen"
+        # Der globale Twitch-Ingest ist die Vorgabe (der alte live.twitch.tv
+        # brach Restreams mit rc=8 ab).
+        _os.environ.pop("TWITCH_INGEST_URL", None)
+        assert "ingest.global-contribute" in C.ingest("twitch")
+        assert C.ingest("erfunden") == "" and C.aktiv("erfunden") is False
+    finally:
+        for k, v in alt.items():
+            if v is None:
+                _os.environ.pop(k, None)
+            else:
+                _os.environ[k] = v
+
+    # (2) Der Blueprint gibt KEINEN Stream-Key heraus. Wer das tut, verschenkt
+    # den Kanal — jeder mit dem Key kann darauf senden.
+    quelle = open("nc/routes/restream.py", encoding="utf-8").read()
+    baum = _ast.parse(quelle)
+    # Erlaubt ist der Kommandobauer-Pfad (ffmpeg braucht den Key). Verboten
+    # ist "steht in einer Antwort" — von dort waere er sofort oeffentlich.
+    for zeile in quelle.split("\n"):
+        if "jsonify(" in zeile and '["key"]' in zeile:
+            raise AssertionError("Stream-Key in einer API-Antwort: %s" % zeile.strip())
+    # Und die Diagnose benutzt den bool, nicht den Wert.
+    assert "key_gesetzt(" in quelle, "die Diagnose liest den Key statt des bools"
+
+    # (3) Manager und Waechter sind REGISTER: sie entstehen im Monolithen erst
+    # weit unten, ein Alias waere fuer immer None.
+    S.MGR["obj"] = None
+    assert S.mgr() is None and S.laufende() == [], "laufende() wirft ohne Manager"
+
+    class _M:
+        _procs = {7: object(), 3: object()}
+    S.MGR["obj"] = _M()
+    assert S.laufende() == [3, 7], S.laufende()
+    S.MGR["obj"] = None
+
+    # (4) Das Layout faellt auf 'studio' zurueck. Ein erfundener Modus wuerde
+    # den ffmpeg-Filtergraph brechen.
+    S.LAYOUT["mode"] = "burnin"
+    assert S.layout_mode() == "burnin"
+    S.LAYOUT["mode"] = "quatsch"
+    assert S.layout_mode() == "studio", "ein erfundener Modus kommt durch"
+    S.LAYOUT["mode"] = "studio"
+
+    # (5) Der Blueprint traegt sechzehn Routen und braucht keinen neuen Slot.
+    from flask import Flask
+    import nc.routes.restream as R
+    app = Flask(__name__)
+    app.register_blueprint(R.bp)
+    # REGELN zaehlen, nicht Pfade: /api/restream/testpush ist zweimal
+    # registriert (GET fuer den Status, POST fuer den Lauf) und waere als
+    # Menge nur ein Eintrag.
+    regeln = [r for r in app.url_map.iter_rules() if r.endpoint != "static"]
+    assert len(regeln) == 16, sorted(str(r.rule) for r in regeln)
+    genutzt = {n.attr for n in _ast.walk(baum)
+               if isinstance(n, _ast.Attribute) and isinstance(n.value, _ast.Call)
+               and getattr(n.value.func, "id", "") == "_c"}
+    assert genutzt <= {"run_async", "log_event", "log", "arg_int"}, \
+        "der Blueprint braucht neue Kontext-Eintraege: %r" % genutzt
+    for zeile in quelle.split("\n"):
+        z = zeile.strip()
+        assert not (z[:1].isupper() and " = os.getenv(" in z), \
+            "Modul-Konstante friert .env ein: %s" % z
+
+    # (6) Jeder .env-Name steht WOERTLICH da — sonst findet gen_env_example.py
+    # ihn nicht (beim ersten Entwurf fielen prompt vierzehn Variablen still
+    # aus der Vorlage) und ein grep laeuft ins Leere.
+    cfg = open("nc/restreamcfg.py", encoding="utf-8").read()
+    for name in ("KICK_INGEST_URL", "KICK_STREAM_KEY", "TWITCH_ENABLED",
+                 "TWITCH_INGEST_URL", "TWITCH_STREAM_KEY", "YOUTUBE_ENABLED",
+                 "YOUTUBE_INGEST_URL", "YOUTUBE_STREAM_KEY", "RESTREAM_VERIFY",
+                 "RESTREAM_VERIFY_S", "RESTREAM_VERIFY_GRACE_S",
+                 "RESTREAM_VERIFY_MISSES", "RESTREAM_STALL_TIMEOUT_S",
+                 "RESTREAM_OVERLAY", "KICK_CHANNEL_URL", "DISCORD_INVITE_URL"):
+        assert 'os.getenv("%s"' % name in cfg, \
+            "%s steht nicht woertlich in einem os.getenv" % name
+
+    ok("v4.1-W22: restream als Blueprint, Ziele live gelesen, kein Key nach aussen")
+
+
 def main():
     tmp = tempfile.mkdtemp()
     configure_db(db_path=os.path.join(tmp, "t.db"), backend="sqlite")
@@ -1705,6 +1813,8 @@ def main():
     _test_w20_overlay_audio_und_geld()
 
     _test_w21_brain_blueprint()
+
+    _test_w22_restream_blueprint()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)
 

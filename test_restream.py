@@ -1234,10 +1234,22 @@ def test_twitch_ingest_default():
     Das alte rtmp://live.twitch.tv/app wird nicht mehr angenommen und brach
     Restreams mit rc=8 ab (in der Praxis bestätigt: Wechsel behob es)."""
     src = open("bot.py").read()
-    assert "ingest.global-contribute.live-video.net" in src, \
+    # ANKER GEWANDERT (v4.1-W22, nicht der Vertrag): die Ingest-Vorgaben liegen
+    # in nc/restreamcfg.py, damit Bot und Blueprint DIESELBE Parse-Regel
+    # benutzen. Geprueft wird unveraendert dasselbe — und zusaetzlich, dass der
+    # Bot die Vorgabe wirklich von dort holt statt eine eigene zu halten.
+    cfg = open("nc/restreamcfg.py", encoding="utf-8").read()
+    assert "ingest.global-contribute.live-video.net" in cfg, \
         "globaler Twitch-Ingest fehlt als Default"
+    # Geprueft wird die VORGABE, nicht die Zeichenkette: dass der alte Server
+    # Restreams mit rc=8 abbrach, steht voellig zu Recht als Kommentar im
+    # Monolithen und ist kein Verstoss.
+    assert '"rtmp://live.twitch.tv/app"' not in cfg, \
+        "alter, defekter Ingest-Default darf nicht zurückkehren"
     assert 'os.getenv("TWITCH_INGEST_URL", "rtmp://live.twitch.tv/app")' not in src, \
         "alter, defekter Ingest-Default darf nicht zurückkehren"
+    assert 'TWITCH_INGEST_URL  = _nc_rscfg.ingest("twitch")' in src, \
+        "der Monolith haelt wieder eine eigene Ingest-Vorgabe"
     ok("twitch-ingest: globaler Server als Default (alter live.twitch.tv raus)")
 
 
@@ -3106,8 +3118,15 @@ def test_v40_w9_kick_and_listener():
     ok("v4.0-w9: Kick-Broadcaster-ID Auto-Aufloesung (send + bans + info)")
 
     # Deck-Route liefert error; Panel zeigt den Grund bei getrennt.
-    assert '"error": _WCHAT_STATUS["youtube"].get("error")' in src, "deck ohne YouTube-Grund"
-    assert '"error": _WCHAT_STATUS["twitch"].get("error")' in src, "deck ohne Twitch-Grund"
+    # ANKER GEWANDERT (v4.1-W22, nicht der Vertrag): /api/restream/deck liegt
+    # jetzt in nc/routes/restream.py, der Listener-Status als Alias in
+    # nc/channels.py. Die Zusage ist dieselbe: der Grund muss mitkommen, sonst
+    # steht im Panel nur "getrennt" ohne Warum.
+    _rs = open("nc/routes/restream.py", encoding="utf-8").read()
+    assert '"error": _nc_channels.WCHAT_STATUS["youtube"].get("error")' in _rs, \
+        "deck ohne YouTube-Grund"
+    assert '"error": _nc_channels.WCHAT_STATUS["twitch"].get("error")' in _rs, \
+        "deck ohne Twitch-Grund"
     dash = open("templates/dashboard.html").read()
     assert "'getrennt'+(p.error?' · '+p.error:'')" in dash, "Panel zeigt den Grund nicht"
     ok("v4.0-w9: Chat-Listener zeigt bei 'getrennt' den Grund (offline/Fehler)")
@@ -3137,8 +3156,12 @@ def test_v40_w10_kick_sendcheck():
     assert "from nc.kickapi import SEND_LAST as _KICK_SEND_LAST" in _kb and \
         "_KICK_SEND_LAST = _nc_kickapi.SEND_LAST" in src, \
         "Route und Sendepfad lesen nicht dasselbe Gedaechtnis"
-    # Deck exponiert Kick-Sendezustand.
-    assert '"send_ok": _KICK_SEND_LAST.get("ok")' in src, "deck ohne Kick-Sendezustand"
+    # Deck exponiert Kick-Sendezustand. ANKER GEWANDERT (v4.1-W22): das Deck
+    # liegt in nc/routes/restream.py, das Sendegedaechtnis unveraendert in
+    # nc/kickapi.py. Geprueft wird dasselbe — dass beide DASSELBE lesen.
+    _rs2 = open("nc/routes/restream.py", encoding="utf-8").read()
+    assert '"send_ok": _nc_kickapi.SEND_LAST.get("ok")' in _rs2, \
+        "deck ohne Kick-Sendezustand"
     ok("v4.0-w10: Kick-Sendefehler im Klartext + gemerkt + Diagnose-/Testroute")
 
     dash = open("templates/dashboard.html").read()
@@ -3912,14 +3935,19 @@ def test_v40_w24c_youtube_deck_clickable():
        klickbar — die Deck-URL war None, das Frontend haengt den onclick aber an
        p.url. Jetzt gibt es auch ohne Handle eine URL (Broadcast→Watch, sonst
        Studio); Chip damit klickbar."""
-    src = open("bot.py").read()
+    # ANKER GEWANDERT (v4.1-W22, nicht der Vertrag): das Deck liegt in
+    # nc/routes/restream.py, die YouTube-Konfiguration in nc/restreamcfg.py.
+    # Geprueft wird unveraendert: eine URL auch OHNE Handle, und "configured"
+    # breiter als nur am Handle.
+    src = open("nc/routes/restream.py", encoding="utf-8").read()
     deck = src[src.find("def api_restream_deck("):]
     deck = deck[:deck.find("return jsonify(ok=True,")]
     assert "def _yt_deck_url(" in deck, "keine YT-Deck-URL-Logik"
     assert 'watch?v=' in deck and "studio.youtube.com" in deck, "keine Handle-freie URL-Fallbacks"
     assert '"url": _yt_url' in deck, "youtube-Deck-URL nicht verdrahtet"
     # configured wird im Deck breiter bestimmt (nicht mehr nur am Handle).
-    assert "YOUTUBE_STREAM_KEY or YOUTUBE_ENABLED" in deck, "configured nicht erweitert"
+    assert '_nc_rscfg.ziel("youtube")["key"] or _nc_rscfg.aktiv("youtube")' in deck, \
+        "configured nicht erweitert"
     # Frontend macht den Chip nur mit p.url klickbar — Gegenprobe, dass das so ist.
     dash = open("templates/dashboard.html").read()
     assert "p.url?' onclick=\"window.open(" in dash, "Chip-Klick haengt nicht an p.url"
@@ -7074,7 +7102,13 @@ def test_v40_w115_relay_sicht_und_srcwatch():
         or 'f"{rid}:{_pn}"' in _st, "Relay-Stillstaende nicht getrennt gezaehlt"
 
     # ── 2) Im Panel sichtbar ──────────────────────────────────────────────
-    assert "stall_timeout_s=RESTREAM_STALL_TIMEOUT_S" in src, \
+    # ANKER GEWANDERT (v4.1-W22, nicht der Vertrag): die Grenze kommt aus
+    # nc/restreamcfg.py und die Route aus nc/routes/restream.py. Der Punkt ist
+    # unveraendert: das Panel bekommt die Grenze MITGELIEFERT, statt den
+    # Default ein zweites Mal zu kennen — sonst zeigt es nach einer .env-
+    # Aenderung stillschweigend die falsche Schwelle an.
+    assert "stall_timeout_s=_nc_rscfg.stall_timeout()" in \
+        open("nc/routes/restream.py", encoding="utf-8").read(), \
         "Panel bekommt die Grenze nicht — muesste den Default doppelt kennen"
     assert "ohne_fortschritt_s" in h, "Stillstand im Dashboard weiterhin unsichtbar"
     assert "stillstaende" in h, "Stillstands-Zaehler im Dashboard unsichtbar"

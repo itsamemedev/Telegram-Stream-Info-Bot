@@ -11,6 +11,54 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Geändert — `/api/restream` als Blueprint, Sendeziele mit einer Parse-Regel (v4.1 W22)
+
+Die letzte große Gruppe im Monolithen: **16 Routen**, und **null neue
+`nc.ctx`-Einträge**. Roh wären es **38** gewesen. Zwei neue Module:
+
+* **`nc/restreamcfg.py`** trägt die drei Sendeziele, die Parameter der
+  Sendeprüfung, den Stall-Zeitgeber und die beiden öffentlichen Links. Es liest
+  bei **jedem Aufruf**, nicht als Modul-Konstante. Die 16 Konstanten in `bot.py`
+  kommen jetzt aus demselben Modul — es gibt genau **eine** Parse-Regel für
+  Vorgaben, Leerzeichen und Wahrheitswerte statt zweier, die auseinanderlaufen
+  können.
+* **`nc/restreamstate.py`** trägt die sieben Zustands-Container als Aliase,
+  dazu **Manager und Wächter als Register**: beide entstehen im Monolithen
+  erst weit unten in der Datei, ein Alias wäre für immer `None` und jede
+  Steuerroute meldete „kein Manager", während er läuft.
+
+**Stream-Keys sind Geheimnisse.** Für Anzeige und Diagnose gibt es
+`key_gesetzt(name)` — ein bool, kein Wert. Nur `ziel(name)` gibt einen Key
+heraus, und die Funktion heißt deshalb bewusst nicht wie ein Getter. Ein
+Vertrag verbietet jeden Key in einer API-Antwort.
+
+**Zwei Fehler, die das eigene Werkzeug gefangen hat** — beide wären still
+durchgegangen:
+
+1. Die `.env`-Namen waren zuerst **dynamisch** gebaut
+   (`"%s_INGEST_URL" % ziel.upper()`). `tools/gen_env_example.py` findet solche
+   Namen nicht: **vierzehn Variablen** fielen aus der Vorlage. Jetzt steht jeder
+   Name wörtlich in einem `os.getenv(...)` — auch damit ein `grep` ihn trifft,
+   was in diesem Bestand die halbe Arbeitsgrundlage ist.
+2. Danach fehlte noch `TWITCH_INGEST_URL`: der Aufruf war **umbrochen**, und
+   der Erzeuger suchte zeilenweise. Er setzt die kommentarfreien Zeilen jetzt
+   zusammen, bevor er sucht. Dabei kamen **zwei Variablen zum Vorschein**, die
+   schon vorher still gefehlt hatten (`AI_SYSTEM_PROMPT`,
+   `RESTREAM_OVERLAY_HTML_FALLBACK_SIZE`). Vorlage: 497 → **499**.
+
+Die 525 Zeilen sind **mechanisch** übertragen worden, token-basiert statt per
+`str.replace`: die Konstantennamen stehen auch in deutschen Fehlertexten
+(`"YOUTUBE_ENABLED=0 (in .env aktivieren)"`), und blindes Ersetzen zerlegte
+die. Der `ast.parse()`-Schutz vor dem Schreiben fing genau das beim ersten
+Lauf.
+
+Sechs Vertrags-Anker sind mitgewandert, keiner gelöscht. Der
+Übersetzungs-Vertrag aus W20 griff beim neuen Blueprint sofort und meldete zehn
+nicht umschlossene Texte — genau wofür er gebaut wurde.
+
+`bot.py` 28.133 → **27.624** Zeilen (erstmals unter 28.000), Blueprints 29 →
+30, eigene Routen im Monolithen 105 → **89**.
+
 ### Behoben — die 35 nativen Dialoge waren dauerhaft deutsch (v4.1 W21)
 
 `confirm()` und `prompt()` öffnet der **Browser selbst**. Der
