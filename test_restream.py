@@ -487,9 +487,18 @@ def test_whisper_throttle_contract():
     assert "_st.enter_async_context(_whisper_sem)" in body
     # Drossel NUR bei aktivem Restream (sonst voller Speed)
     assert "if _throttle:" in body
-    # Diagnose nach außen
-    j = src.find("def api_system_resilience")
-    assert "cpu={" in src[j:j + 3000] and '"throttled": _WHISPER_STATE' in src[j:j + 3000]
+    # Diagnose nach außen.
+    # ANKER GEWANDERT (v4.2-W4, nicht der Vertrag): /api/system/resilience
+    # liegt jetzt in nc/routes/systemlage.py, der Zustand kommt als Referenz
+    # ueber ctx.cfg. Geprueft wird unveraendert dasselbe — dass die Drossel
+    # nach aussen sichtbar ist, sonst laeuft sie unbemerkt.
+    _lage = open("nc/routes/systemlage.py", encoding="utf-8").read()
+    j = _lage.find("def api_system_resilience")
+    assert j >= 0, "die Resilienz-Route ist verschwunden"
+    _rumpf = _lage[j:]
+    assert "cpu={" in _rumpf, "kein CPU-Block in der Resilienz-Antwort"
+    assert '"throttled": c["_WHISPER_STATE"]["throttled"]' in _rumpf, \
+        "der Drossel-Zustand steht nicht mehr in der Antwort"
     ok("B98: Whisper serialisiert bei Live, Diagnose in /api/system/resilience")
 
 
@@ -4287,11 +4296,21 @@ def test_v40_w30_fixes_and_sysload():
     assert "def _as_dict(" in src, "kein _as_dict-Helfer"
     assert "_as_dict(_as_dict(data.get(\"data\")).get(\"liveRoom\"))" in src, "liveRoom nicht gehärtet"
     assert "_as_dict(live_room.get(\"streamData\"))" in src, "streamData nicht gehärtet"
-    # sysload delegiert, I/O bleibt.
-    assert "from nc import sysload as _nc_sl" in src
-    assert "_nc_sl.classify_load(" in src and "_nc_sl.parse_meminfo(" in src and "_nc_sl.parse_ps(" in src
-    assert 'with open("/proc/meminfo")' in src, "meminfo-I/O verloren"
-    assert 'ff = [x for x in rows if x["comm"].startswith("ffmpeg")]' not in src, "ps-Parsing noch im Monolithen"
+    # sysload delegiert.
+    # ANKER GEWANDERT (v4.2-W4, nicht der Vertrag): seit W4 liegt auch das
+    # EINSAMMELN in nc/systemprobe.py — der Bot war dort nur noch Durchreiche.
+    # Geprueft wird unveraendert dasselbe: das Parsen ist delegiert und wird
+    # nirgends ein zweites Mal ausgeschrieben.
+    _probe = open("nc/systemprobe.py", encoding="utf-8").read()
+    assert "from nc import sysload as _sl" in _probe, "sysload nicht mehr eingebunden"
+    for f in ("classify_load(", "parse_meminfo(", "parse_ps("):
+        assert "_sl." + f in _probe, "sysload.%s wird nicht mehr benutzt" % f
+    assert 'with open("/proc/meminfo")' in _probe, "meminfo-I/O verloren"
+    assert "_cpu_load_snapshot = _nc_probe.cpu_load_snapshot" in src, \
+        "bot.py sammelt die Systemlast wieder selbst ein"
+    for quelle, wo in ((src, "bot.py"), (_probe, "nc/systemprobe.py")):
+        assert 'ff = [x for x in rows if x["comm"].startswith("ffmpeg")]' not in quelle, \
+            "ps-Parsing wieder ausgeschrieben in %s" % wo
     ok("v4.0-w30: liveRoom gehärtet, sysload-Parsing delegiert, I/O im Bot")
 
 
@@ -5851,7 +5870,15 @@ def test_v40_w68_overview_landing():
     # Übersicht ist Default-Landing.
     assert "dataset.view==='overview'" in h, "Übersicht nicht als Default-Landing"
     # health-score liefert overall (Backend).
-    assert '"overall"' in open("bot.py").read() or "overall=" in open("bot.py").read() or "overall" in open("bot.py").read()
+    # ANKER GEWANDERT (v4.2-W4, nicht der Vertrag): der Wert kam frueher aus
+    # bot.py, weil api_system_preflight dort stand. /api/health-score liegt
+    # seit W110 in nc/routes/health.py, die Preflight-Karte seit W4 in
+    # nc/routes/systemlage.py. Geprueft wird dasselbe: das Deck bekommt ein
+    # Gesamturteil, sonst zeigt die Uebersichtskachel nichts an.
+    assert "overall" in open("nc/routes/health.py", encoding="utf-8").read(), \
+        "/api/health-score liefert kein Gesamturteil mehr"
+    assert "overall" in open("nc/routes/systemlage.py", encoding="utf-8").read(), \
+        "die Preflight-Karte liefert kein Gesamturteil mehr"
     ok("v4.0-w68: Übersichts-Landing — KPIs + 3D-Zentrale (multi-mount) + Schnellzugriff")
 
 

@@ -3483,6 +3483,107 @@ def _test_v42_w3_codeql_barriere_und_setup():
     ok("v4.2-W3: CodeQL-Barriere fuer nach_aussen, Regel ersetzt statt "
        "abgeschaltet, Namen vertraglich gekoppelt")
 
+def _test_v42_w4_preflight_und_resilienz():
+    """v4.2-W4: die letzten grossen System-Routen bis auf selftest."""
+    import ast as _ast
+    import re as _re
+
+    import nc.systemprobe as P
+
+    b = open("bot.py", encoding="utf-8").read()
+    s = open("nc/routes/systemlage.py", encoding="utf-8").read()
+
+    # ── (1) Draussen aus dem Monolithen, drin im Blueprint ─────────────────
+    for name in ("api_system_preflight", "api_system_resilience"):
+        assert ("\ndef %s(" % name) not in b, "%s steht noch in bot.py" % name
+        assert "def %s(" % name in s, "%s fehlt im Blueprint" % name
+
+    # ── (2) KEIN globals() — im Blueprint der falsche Namensraum. Der
+    # Monolith hatte hier `RECORDINGS_DIR if "RECORDINGS_DIR" in globals()
+    # else "/"`. Uebernommen waere der Test dauerhaft False gewesen und die
+    # Preflight-Karte haette die SYSTEMPLATTE gemessen statt des
+    # Aufnahme-Verzeichnisses — eine Zahl, die stimmt aussieht und falsch ist.
+    for k in _ast.walk(_ast.parse(s)):
+        if isinstance(k, _ast.Call) and _ast.unparse(k.func) == "globals":
+            raise AssertionError(
+                "nc/routes/systemlage.py benutzt globals(), Zeile %d" % k.lineno)
+    assert "_c().recordings_dir" in s, \
+        "die Preflight-Karte misst nicht mehr das Aufnahme-Verzeichnis"
+
+    # ── (3) KEINE ZWEITE WAHRHEIT. recordings_dir, ffmpeg_threads_bg und
+    # ffmpeg_nice_bg liegen seit W110/W116 als SLOT im Kontext. Sie
+    # zusaetzlich nach cfg zu legen waeren zwei Werte fuer dieselbe Sache,
+    # die beim naechsten Umbau auseinanderlaufen.
+    i = b.index("_nc_ctx.configure(")
+    block = b[i:b.index("\n)\n", i)]
+    for doppelt in ("RECORDINGS_DIR", "FFMPEG_THREADS_BG", "FFMPEG_NICE_BG"):
+        assert '"%s":' % doppelt not in block, \
+            ("ctx.cfg[%r] dupliziert einen vorhandenen Slot — zwei Werte fuer "
+             "dieselbe Sache" % doppelt)
+
+    # ── (4) Jeder gelesene cfg-Schluessel wird auch geliefert. Ein Tippfehler
+    # waere sonst ein KeyError erst beim Aufruf der Route — im Betrieb, nicht
+    # im Test. (Genau so ist FFMPEG_THREADS_BG in dieser Welle aufgefallen.)
+    benutzt = set(_re.findall(r"""c\[["']([A-Z_][A-Z0-9_]*)["']\]""", s))
+    geliefert = set(_re.findall(r'^\s+"([A-Z_][A-Z0-9_]*)":', block, _re.M))
+    fehlt = sorted(benutzt - geliefert)
+    assert not fehlt, "der Blueprint liest cfg-Schluessel, die der Bot nicht liefert: %r" % fehlt
+
+    # ── (5) Die drei Sonden sind Aliase, kein zweiter Koerper ──────────────
+    for zeile in ("_cpu_load_snapshot = _nc_probe.cpu_load_snapshot",
+                  "_disk_pct = _nc_probe.disk_pct",
+                  "_check_ai_alive_sync = _nc_probe.ai_alive"):
+        assert zeile in b, "bot.py haelt wieder einen eigenen Koerper: %s" % zeile
+
+    # ── (6) disk_pct misst das KONFIGURIERTE Verzeichnis, nicht das
+    # Arbeitsverzeichnis. Sonst zeigt das Deck die Systemplatte und der
+    # Plattenwaechter greift zu spaet.
+    import os as _os
+    import tempfile as _tf
+    d = _tf.mkdtemp()
+    sicher = P.recordings_dir()
+    try:
+        P.configure(recordings_dir=d)
+        assert P.recordings_dir() == d
+        # Womit wirklich gemessen wird: ein Vergleich der Prozentzahlen taugt
+        # nicht — Temp- und Arbeitsverzeichnis liegen oft auf derselben
+        # Platte und liefern denselben Wert. Also den Aufruf abfangen.
+        import shutil as _sh
+        gesehen = []
+        _echt = _sh.disk_usage
+        _sh.disk_usage = lambda pfad: (gesehen.append(pfad), _echt(pfad))[1]
+        try:
+            pct, st = P.disk_pct()
+        finally:
+            _sh.disk_usage = _echt
+        assert gesehen == [d], \
+            ("disk_pct misst %r statt des konfigurierten Verzeichnisses %r — "
+             "das Deck zeigte dann die Systemplatte und der Plattenwaechter "
+             "griffe zu spaet" % (gesehen, d))
+        assert isinstance(pct, int) and 0 <= pct <= 100, pct
+        assert st is not None and st.total > 0
+        # Ein unbrauchbarer Pfad darf keine Ausnahme werfen — der Aufrufer ist
+        # ein Statuspanel, das eine Zahl braucht.
+        P.configure(recordings_dir=_os.path.join(d, "gibtsnicht"))
+        pct2, _ = P.disk_pct()
+        assert isinstance(pct2, int), pct2
+    finally:
+        P.configure(recordings_dir=sicher)
+
+    # ── (7) cpu_load_snapshot liefert die Felder, die das Panel zeigt. Ein
+    # leeres Dict waere kein Fehler, sondern ein leeres Panel.
+    d2 = P.cpu_load_snapshot()
+    for feld in ("state", "mem_total_gb", "swap_pct"):
+        assert feld in d2, "cpu_load_snapshot liefert %r nicht mehr: %r" % (feld, sorted(d2))
+
+    # ── (8) Der Whisper-Drosselzustand bleibt sichtbar — sonst laeuft die
+    # Drossel unbemerkt (B98).
+    assert '"throttled": c["_WHISPER_STATE"]["throttled"]' in s, \
+        "der Drossel-Zustand fehlt in der Resilienz-Antwort"
+
+    ok("v4.2-W4: preflight + resilience im Blueprint, Sonden in nc/, "
+       "keine zweite Wahrheit fuer die drei Slots")
+
 def main():
     tmp = tempfile.mkdtemp()
     configure_db(db_path=os.path.join(tmp, "t.db"), backend="sqlite")
@@ -3637,6 +3738,8 @@ def main():
     _test_v42_w2_ein_riegel_gegen_pfadausbruch()
 
     _test_v42_w3_codeql_barriere_und_setup()
+
+    _test_v42_w4_preflight_und_resilienz()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)
 

@@ -975,7 +975,6 @@ from nc import abo as _nc_abo              # v4.0-W26: Abo-Erkennung (extrahiert
 from nc import sysrun as _nc_sysrun        # v4.0-W26: privilegierter Kommando-Runner (extrahiert)
 from nc import ffmpeg_filters as _nc_ff     # v4.0-W27: Overlay-Filtergraph-Bauer (extrahiert)
 from nc import filepayload as _nc_fp         # v4.0-W28: reine Datei-Klassifikation (extrahiert)
-from nc import sysload as _nc_sl             # v4.0-W30: reine System-Load-Parser (extrahiert)
 from nc import highlights as _nc_highlights  # v4.0-W22: Highlight-Radar
 from nc import evolution as _nc_evolution  # B167: Selbstanalyse-Kern
 from nc import kick_oauth as _nc_kickoauth  # B169: Kick User-OAuth (channel:write)
@@ -3695,18 +3694,9 @@ def llm_chat_sync(messages, model=None, timeout=None):
 
 
 
-def _check_ai_alive_sync(timeout: float = 1.5) -> bool:
-    """Health: Brain-Backend (llama.cpp) ODER freeai erreichbar?"""
-    try:
-        from brain import get_brain
-        if get_brain().llm.alive():
-            return True
-    except Exception:
-        pass
-    try:
-        return _nc_freeai.alive_sync(timeout=max(2.0, timeout))
-    except Exception:
-        return False
+# v4.2-W4: beide Wege (brain, nc.freeai) liegen ausserhalb des Bots — er war
+# hier nur Durchreiche.
+_check_ai_alive_sync = _nc_probe.ai_alive
 
 
 def _check_ai_models_sync(timeout: float = 1.5):
@@ -11379,130 +11369,6 @@ def _sec_headers(resp):
 
 
 # ═══ v37: PREFLIGHT — Betriebsbereitschafts-Check aller Subsysteme (read-only) ═══
-@dashboard_app.route("/api/system/preflight")
-def api_system_preflight():
-    """Professioneller Ops-Check: verifiziert jedes kritische Subsystem und
-       liefert eine farbcodierte Scorecard (ok/warn/fail) + Gesamturteil.
-       Ausschließlich lesend — verändert nichts."""
-    import shutil as _sh
-    checks = []
-
-    def add(cat, name, status, detail):
-        checks.append({"cat": cat, "name": name, "status": status, "detail": detail})
-
-    # ── Core ──
-    try:
-        with db_conn() as conn:
-            conn.execute("SELECT 1").fetchone()
-        add("Core", "Datenbank", "ok", "erreichbar")
-    except Exception as e:
-        add("Core", "Datenbank", "fail", str(e)[:80])
-    try:
-        du = _sh.disk_usage(RECORDINGS_DIR if "RECORDINGS_DIR" in globals() else "/")
-        free_pct = 100 * du.free / du.total
-        free_gb = du.free / (1024 ** 3)
-        st = "ok" if free_pct >= 15 else ("warn" if free_pct >= 5 else "fail")
-        add("Core", "Speicherplatz", st, f"{free_gb:.0f} GB frei ({free_pct:.0f}%)")
-    except Exception as e:
-        add("Core", "Speicherplatz", "warn", str(e)[:60])
-    try:
-        ok_w = os.access(LOG_DIR, os.W_OK)
-        add("Core", "Log-Verzeichnis", "ok" if ok_w else "warn",
-            LOG_DIR if ok_w else "nicht beschreibbar")
-    except Exception:
-        add("Core", "Log-Verzeichnis", "warn", "unbekannt")
-
-    # ── Recording ──
-    for b, crit in (("ffmpeg", True), ("ffprobe", True), ("yt-dlp", False), ("streamlink", False)):
-        p = _sh.which(b)
-        if p:
-            add("Aufnahme", b, "ok", "installiert")
-        else:
-            add("Aufnahme", b, "fail" if crit else "warn",
-                "FEHLT (kritisch)" if crit else "fehlt (Fallback-Tier)")
-    eff = _tunnel_effective()
-    lt = _TUNNEL.get("last_test")
-    if eff:
-        if lt and lt.get("ok"):
-            add("Aufnahme", "Egress-Tunnel", "ok", f"aktiv · letzter Test HTTP {lt.get('http_code')}")
-        else:
-            add("Aufnahme", "Egress-Tunnel", "ok", "aktiv (noch nicht getestet)")
-    else:
-        add("Aufnahme", "Egress-Tunnel", "warn", "direkt (kein Tunnel)")
-
-    # ── Restream ──
-    add("Restream", "Kick-Zugang", "ok" if (KICK_CLIENT_ID and KICK_CLIENT_SECRET) else "warn",
-        "Client-Creds gesetzt" if (KICK_CLIENT_ID and KICK_CLIENT_SECRET) else "keine Kick-Creds")
-    add("Restream", "Kick-Kanal", "ok" if KICK_CHANNEL_URL else "warn",
-        KICK_CHANNEL_URL or "keine Kanal-URL")
-    add("Restream", "Multi-Kick-Failover",
-        "ok" if (KICK_INGEST_URL_BACKUP and KICK_STREAM_KEY_BACKUP) else "warn",
-        "Backup-Ingest scharf" if (KICK_INGEST_URL_BACKUP and KICK_STREAM_KEY_BACKUP)
-        else "kein Backup-Ingest (optional)")
-
-    # ── KI ──
-    add("KI", "Modell", "ok" if AI_MODEL else "warn", AI_MODEL or "kein Modell")
-    ai_ok = _check_ai_alive_sync(timeout=3)
-    add("KI", "LLM-Endpoint", "ok" if ai_ok else "warn",
-        "Brain-Runtime/freeai erreichbar" if ai_ok
-        else "kein LLM erreichbar (Brain + freeai-Basen down)")
-
-    # ── Community ──
-    dc_ok = bool(_nc_discordstate.CLIENT["obj"] and getattr(_nc_discordstate.CLIENT["obj"], "user", None))
-    # B120: Ohne Reconnect-Zaehler und letzten Grund war "nicht verbunden"
-    # nicht von "nie konfiguriert" zu unterscheiden — der stille Gateway-
-    # Tod blieb monatelang unsichtbar.
-    if dc_ok:
-        _dc_detail = f"online als {_nc_discordstate.CLIENT["obj"].user}"
-        if _DISCORD_SESSION.get("reconnects"):
-            _dc_detail += f" · {_DISCORD_SESSION['reconnects']} Reconnects"
-    elif not DISCORD_BOT_TOKEN:
-        _dc_detail = "kein DISCORD_BOT_TOKEN gesetzt"
-    else:
-        _dc_detail = "nicht verbunden"
-        if _DISCORD_SESSION.get("last_error"):
-            _dc_detail += f" · letzter Grund: {_DISCORD_SESSION['last_error'][:120]}"
-        if _DISCORD_SESSION.get("last_disconnect"):
-            _dc_detail += (f" · seit {int((_time_mod.time() - _DISCORD_SESSION['last_disconnect']) // 60)} min")
-    add("Community", "Discord-Bot",
-        "ok" if dc_ok else ("warn" if not DISCORD_BOT_TOKEN else "err"),
-        _dc_detail)
-    add("Community", "Webhook", "ok" if DISCORD_WEBHOOK_URL else "warn",
-        "konfiguriert" if DISCORD_WEBHOOK_URL else "kein Webhook (Broadcast/Alerts aus)")
-
-    # ── Voice ──
-    add("Voice", "Piper TTS", "ok" if _piper_available() else "warn",
-        "verfügbar" if _piper_available() else "nicht installiert (optional)")
-    add("Voice", "faster-whisper", "ok" if _faster_whisper_available() else "warn",
-        "verfügbar" if _faster_whisper_available() else "nicht installiert (Oracle/Transkript aus)")
-
-    # ── Sicherheit ──
-    add("Sicherheit", "Dashboard-Auth", "ok" if DASHBOARD_TOKEN else "warn",
-        "Token aktiv (extern erzwungen, Loopback frei)" if DASHBOARD_TOKEN
-        else "kein Token (nur lokal betreiben!)")
-    add("Sicherheit", "Rate-Limiting", "ok",
-        f"{DASHBOARD_RATE_LIMIT_PER_MIN}/min · {DASHBOARD_RATE_LIMIT_WRITE_PER_MIN}/min schreibend (localhost frei)")
-    add("Sicherheit", "Security-Header", "ok", "nosniff · X-Frame · Referrer-Policy")
-
-    fails = sum(1 for c in checks if c["status"] == "fail")
-    warns = sum(1 for c in checks if c["status"] == "warn")
-    overall = "fail" if fails else ("warn" if warns else "ok")
-    def _hist():
-        try:
-            with db_conn() as conn:
-                conn.execute("INSERT INTO preflight_history (overall, fails, warns, created_at) "
-                             "VALUES (?,?,?,?)",
-                             (overall, fails, warns, datetime.now(timezone.utc).isoformat()))
-                conn.execute("DELETE FROM preflight_history WHERE id NOT IN "
-                             "(SELECT id FROM (SELECT id FROM preflight_history ORDER BY id DESC LIMIT 500) _k)")
-        except Exception:
-            pass
-    # B74-Fix: _spawn(asyncio.to_thread(...)) braucht einen LAUFENDEN Event-Loop —
-    # diese Route läuft aber im Flask-Thread (kein Loop) → RuntimeError bei JEDEM
-    # Preflight-Poll. _hist ist reine synchrone DB-Arbeit → Daemon-Thread reicht.
-    threading.Thread(target=_hist, name="pf-hist", daemon=True).start()
-    return jsonify(ok=True, overall=overall, fails=fails, warns=warns,
-                   total=len(checks), checks=checks)
 
 
 
@@ -11625,92 +11491,11 @@ def api_events_stream():
 
 
 # ═══ v37: Lokales Datei-Backup (#8, ersetzt S3) ═══
-def _cpu_load_snapshot():
-    """Load, Speicher/Swap und die groessten CPU-Fresser — ohne psutil, direkt
-       aus /proc. Zweck: bei Load-Spitzen sofort sehen WER frisst, statt am
-       Handy per SSH htop zu lesen.
-
-       Wichtig fuer die Deutung: die Load zaehlt auch Prozesse im
-       unterbrechbaren I/O-Wait (D-State). Ein vollgelaufener Swap treibt sie
-       also hoch, ohne dass eine CPU rechnet — deshalb steht swap daneben.
-    """
-    out = {}
-    try:
-        la1, la5, la15 = os.getloadavg()
-        cores = os.cpu_count() or 1
-        out.update(_nc_sl.classify_load(la1, la5, la15, cores))
-    except Exception:
-        pass
-    try:
-        # BUG-FIX (Tiefenbughunt): with statt nacktem open() — sonst bleibt der
-        # File-Handle bis zum GC offen. Diese Funktion läuft im Health-Loop,
-        # also summieren sich die Leaks über die Zeit gegen das fd-Limit.
-        with open("/proc/meminfo") as _mf:
-            _meminfo = _mf.read()
-        out.update(_nc_sl.parse_meminfo(_meminfo))     # v4.0-W30: Parsing extrahiert
-    except Exception:
-        pass
-    # Top-Verbraucher: ein einzelner ps-Aufruf, kein Dauer-Sampling
-    try:
-        r = subprocess.run(["ps", "-eo", "comm,pid,pcpu,rss,nlwp", "--sort=-pcpu"],
-                    capture_output=True, text=True, timeout=4)
-        out.update(_nc_sl.parse_ps(r.stdout or ""))    # v4.0-W30: Parsing extrahiert
-    except Exception:
-        pass
-    return out
+# v4.2-W4: das Einsammeln liegt in nc/systemprobe.py — das Parsen lag seit
+# v4.0-W30 ohnehin dort. Alias, kein Wrapper: der Bot bindet den Namen nie neu.
+_cpu_load_snapshot = _nc_probe.cpu_load_snapshot
 
 
-@dashboard_app.route("/api/system/resilience")
-def api_system_resilience():
-    """F103: Bündelt Watchdog, Disk-Guard, Sign-Key-Health, Multistream & KI-
-       Tiefe (Story-Gedächtnis) für ein Dashboard-Resilienz-Panel."""
-    pct, st = _disk_pct()
-    stories = {u: s.snapshot() for u, s in list(_STORY_MEMORIES.items())}
-    return jsonify(
-        ok=True,
-        watchdog={"enabled": WATCHDOG_ENABLED, "last_scan": _WATCHDOG_STATE["last_scan"],
-                  "stalls": [k for k, v in _WATCHDOG_STATE["stalls"].items() if v],
-                  "heartbeats": {k: round(_time_mod.monotonic() - v, 1) for k, v in _HEARTBEATS.items()}},
-        disk={"pct": pct, "autoclean": DISK_AUTOCLEAN, "threshold": DISK_AUTOCLEAN_PCT,
-              "target": DISK_AUTOCLEAN_TARGET, "last_freed_mb": _DISK_GUARD_STATE["freed_mb"],
-              "last_deleted": _DISK_GUARD_STATE["deleted"], "active": _DISK_GUARD_STATE["active"],
-              "free_gb": round(st.free / 1024**3, 1) if st else None},
-        sign={"ok": _SIGN_HEALTH["ok"], "key_set": _SIGN_HEALTH["key_set"],
-              "detail": _SIGN_HEALTH["detail"], "checked": _SIGN_HEALTH["checked"],
-              "cooldown_min": max(0, int((_SIGN_COOLDOWN["until"] - _time_mod.time()) // 60))},
-        multistream={"kick": True,
-                     "youtube": {"enabled": YOUTUBE_ENABLED, "configured": bool(YOUTUBE_STREAM_KEY)},
-                     "twitch": {"enabled": TWITCH_ENABLED, "configured": bool(TWITCH_STREAM_KEY)},
-                     "active_extra": [n for n, _ in _multistream_targets()]},
-        ai={"story_memory": STORY_MEMORY, "hype_clip": HYPE_CLIP_AUTO,
-            "directors": len(_LIVE_DIRECTORS), "stories": stories},
-        # V37-B98: CPU-Konkurrenz sichtbar machen. Ohne GPU teilen sich
-        # Encoder, Whisper und llama.cpp dieselben Kerne — wer wie viel
-        # bekommt, entscheidet, ob das Sendebild ruckelt.
-        cpu={"cores": os.cpu_count(),
-             # V37-CPU: die harten Zahlen. Load > Kerne = Ueberbuchung; Load
-             # zaehlt auch Prozesse im I/O-Wait, deshalb steht Swap daneben —
-             # ein vollgelaufener Swap treibt die Load hoch, ohne dass eine
-             # CPU rechnet.
-             "load": _cpu_load_snapshot(),
-             "ffmpeg_threads": {"live": FFMPEG_THREADS_LIVE,
-                                "relay": FFMPEG_THREADS_RELAY,
-                                "record": FFMPEG_THREADS_RECORD,
-                                "background": FFMPEG_THREADS_BG,
-                                "nice_bg": FFMPEG_NICE_BG,
-                                "nice_record": FFMPEG_NICE_RECORD},
-             "restream_live": len(_RESTREAM_ACTIVE_ALL),
-             "whisper": {"throttled": _WHISPER_STATE["throttled"],
-                         "throttle_enabled": WHISPER_THROTTLE_LIVE,
-                         "max_conc": WHISPER_MAX_CONC,
-                         "threads_each": WHISPER_THREADS,
-                         "runs": _WHISPER_STATE["runs"],
-                         "throttled_runs": _WHISPER_STATE["throttled_runs"],
-                         "dropped_segments": sum(_LIVE_REACT_DROPPED.values())},
-             "encoder": {"preset": RESTREAM_X264_PRESET,
-                         "relay_preset": RESTREAM_RELAY_PRESET,
-                         "mode": RESTREAM_MULTI_MODE},
-             "brain_llm": os.getenv("AI_PROVIDER", "").strip().lower() == "brain"})
 
 
 
@@ -25055,12 +24840,8 @@ DISK_AUTOCLEAN_TARGET  = _env_int("DISK_AUTOCLEAN_TARGET_PCT", 78)  # bis hierhe
 _DISK_GUARD_STATE = {"last_run": 0.0, "freed_mb": 0, "deleted": 0, "active": False}
 
 
-def _disk_pct():
-    try:
-        st = shutil.disk_usage(RECORDINGS_DIR if os.path.isdir(RECORDINGS_DIR) else ".")
-        return int(st.used / st.total * 100), st
-    except Exception:
-        return 0, None
+# v4.2-W4: reine stdlib, hing nur an RECORDINGS_DIR.
+_disk_pct = _nc_probe.disk_pct
 
 
 def _disk_autoclean():
@@ -26098,7 +25879,8 @@ _nc_evolution.configure(log=log,
 # v4.1-W32: die Sonden bekommen ihre zwei .env-Werte gereicht, statt sie
 # selbst zu lesen. CLAUDE.md: Konfiguration nie als Modul-Konstante in einem
 # Fachmodul — .env ist beim Import des Moduls womoeglich noch nicht geladen.
-_nc_probe.configure(redis_url=REDIS_URL, recorder_pref=RECORDER_PREF)
+_nc_probe.configure(redis_url=REDIS_URL, recorder_pref=RECORDER_PREF,
+                    recordings_dir=RECORDINGS_DIR)
 # v4.2-W1: das Upload-Limit beantwortet nc/discordlimits.py selbst.
 _nc_dclimits.configure(guild_id=DISCORD_GUILD_ID,
                        override_mb=_DISCORD_UPLOAD_OVERRIDE)
@@ -26158,6 +25940,38 @@ _nc_ctx.configure(
         "HAT_DISCORD_WEBHOOK": bool(DISCORD_WEBHOOK_URL),
         "HAT_DISCORD_GUILD": bool(DISCORD_GUILD_ID),
         "HAT_KICK_CREDS": bool(KICK_CLIENT_ID and KICK_CLIENT_SECRET),
+        # ── v4.2-W4: preflight und resilience ──
+        "HAT_KICK_BACKUP": bool(KICK_INGEST_URL_BACKUP and KICK_STREAM_KEY_BACKUP),
+        "HAT_TWITCH_KEY": bool(TWITCH_STREAM_KEY),
+        "HAT_YOUTUBE_KEY": bool(YOUTUBE_STREAM_KEY),
+        "DASHBOARD_RATE_LIMIT_WRITE_PER_MIN": DASHBOARD_RATE_LIMIT_WRITE_PER_MIN,
+        "DISK_AUTOCLEAN": DISK_AUTOCLEAN,
+        "DISK_AUTOCLEAN_PCT": DISK_AUTOCLEAN_PCT,
+        "DISK_AUTOCLEAN_TARGET": DISK_AUTOCLEAN_TARGET,
+        "FFMPEG_NICE_RECORD": FFMPEG_NICE_RECORD,
+        "FFMPEG_THREADS_LIVE": FFMPEG_THREADS_LIVE,
+        "FFMPEG_THREADS_RECORD": FFMPEG_THREADS_RECORD,
+        "FFMPEG_THREADS_RELAY": FFMPEG_THREADS_RELAY,
+        "HYPE_CLIP_AUTO": HYPE_CLIP_AUTO,
+        "RESTREAM_MULTI_MODE": RESTREAM_MULTI_MODE,
+        "RESTREAM_RELAY_PRESET": RESTREAM_RELAY_PRESET,
+        "RESTREAM_X264_PRESET": RESTREAM_X264_PRESET,
+        "STORY_MEMORY": STORY_MEMORY,
+        "TWITCH_ENABLED": TWITCH_ENABLED,
+        "WATCHDOG_ENABLED": WATCHDOG_ENABLED,
+        "WHISPER_MAX_CONC": WHISPER_MAX_CONC,
+        "WHISPER_THROTTLE_LIVE": WHISPER_THROTTLE_LIVE,
+        "YOUTUBE_ENABLED": YOUTUBE_ENABLED,
+        # Referenzen, keine Kopien — der Bot schreibt hier weiter hinein.
+        "_DISK_GUARD_STATE": _DISK_GUARD_STATE,
+        "_HEARTBEATS": _HEARTBEATS,
+        "_LIVE_DIRECTORS": _LIVE_DIRECTORS,
+        "_LIVE_REACT_DROPPED": _LIVE_REACT_DROPPED,
+        "_RESTREAM_ACTIVE_ALL": _RESTREAM_ACTIVE_ALL,
+        "_SIGN_COOLDOWN": _SIGN_COOLDOWN,
+        "_SIGN_HEALTH": _SIGN_HEALTH,
+        "_STORY_MEMORIES": _STORY_MEMORIES,
+        "_WATCHDOG_STATE": _WATCHDOG_STATE,
         "HAT_RECORD_PROXY": bool(RECORD_PROXY),
         "PROXY_POOL_GROESSE": len(PROXY_LIST),
         "KICK_CHANNEL_URL": KICK_CHANNEL_URL,
