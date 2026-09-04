@@ -16,7 +16,7 @@ route.
 
 ## The one rule
 
-`bot.py` has **26,392 lines / 1.3 MB ≈ 333,000 tokens**. That file is **never**
+`bot.py` has **26,396 lines / 1.3 MB ≈ 333,000 tokens**. That file is **never**
 read in full and **never** searched blindly. First ask where something is, then
 fetch the excerpt:
 
@@ -30,7 +30,7 @@ fetch the excerpt:
     python tools/ncpatch.py check                      # templates: duplicate IDs, CSS balance
     python tools/ncpatch.py docs                       # documentation numbers vs. the source
 
-`find` answers from `.claude/INDEX.md` — 359 routes (39 in `bot.py`, 320 in
+`find` answers from `.claude/INDEX.md` — 360 routes (39 in `bot.py`, 321 in
 `nc/routes/`), 45 slash commands, 476 functions with line numbers. After changes
 to routes, commands or top-level functions, run `map` again. Details: skill
 `nc-navigation`.
@@ -52,7 +52,7 @@ On the author's Windows machine the interpreter is called **`python`**
     brain/               AI core: state, rules, router, agents, memory,
                          semantic, knowledge, scheduler, llm, report
     nc/                  119 domain modules: db, scraping, restream, oauth, ledger, i18n, …
-    nc/routes/           35 Flask blueprints with 320 further API routes
+    nc/routes/           35 Flask blueprints with 321 further API routes
     locales/             de.json, en.json — the translation catalogue
     templates/           dashboard.html, brain.html, overlay.html, PWA
     website/             lafap_index.html (the public site)

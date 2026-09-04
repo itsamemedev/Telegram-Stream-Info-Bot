@@ -146,6 +146,35 @@ def api_evolution_dismiss(pid):
         return jsonify(ok=False, error=_fehler_text(e, "api_evolution_dismiss")), 500
 
 
+@bp.route("/api/evolution/proposals/bulk", methods=["POST"])
+def api_evolution_bulk():
+    """v4.2: alle offenen Vorschläge auf einmal übernehmen oder verwerfen.
+
+    Warum eine eigene Route und keine Schleife im Browser: bei zwanzig
+    offenen Vorschlägen wären das zwanzig POSTs, zwanzig Transaktionen und
+    zwanzig Audit-Einträge — und bricht einer davon ab, bleibt die Liste
+    halb bearbeitet zurück, ohne dass jemand sagen kann, welche Hälfte.
+    Eine Anweisung, ein Ergebnis, eine Zahl.
+
+    Nur `status='proposed'` wird angefasst. Ein bereits übernommener
+    Vorschlag darf durch einen späteren Klick auf „alles verwerfen“ nicht
+    rückwirkend zu „verworfen“ werden — das wäre eine Umschreibung der
+    Entscheidungshistorie, nicht eine Massenaktion.
+    """
+    payload = request.get_json(silent=True) or {}
+    new_status = "applied" if payload.get("applied") else "dismissed"
+    try:
+        with db_conn() as conn:
+            cur = conn.execute(
+                "UPDATE evolution_proposals SET status=? WHERE status='proposed'",
+                (new_status,))
+            betroffen = cur.rowcount if cur.rowcount is not None else 0
+            conn.commit()
+        return jsonify(ok=True, status=new_status, count=betroffen)
+    except Exception as e:
+        return jsonify(ok=False, error=_fehler_text(e, "api_evolution_bulk")), 500
+
+
 @bp.route("/api/evolution/history")
 def api_evolution_history():
     """Liste der Lern-Zyklen (neueste zuerst)."""

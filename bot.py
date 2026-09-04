@@ -1221,7 +1221,11 @@ AZRAEL_STYLE           = os.getenv("AZRAEL_STYLE", "locker, knapp, deutsch, troc
 AZRAEL_MAX_CALLS_MIN   = _env_int("AZRAEL_MAX_CALLS_MIN", 20)    # globales KI-Budget (Calls/Minute, Schutz vor Fluten/Loops)
 # v37: zentrale Version/Build-Kennung — löst die veralteten v2.0/B65/2026.06-Streuungen ab
 BOT_VERSION = _nc_version.VERSION  # v4.1 (zentral in nc.version)
-BUILD_STAMP = os.getenv("BUILD_STAMP", "2026.08 · v4.1")
+# v4.2: die Vorgabe kommt aus nc.version, nicht als zweite Zeichenkette.
+# Vorher stand "2026.08 · v4.1" hier UND in nc/routes/brain.py UND zweimal
+# im Footer von dashboard.html — wer nc/version.py hochzaehlte, bewegte
+# keine davon. Genau deshalb zeigte das Deck im September noch August.
+BUILD_STAMP = os.getenv("BUILD_STAMP", _nc_version.build_stamp())
 # F91: AZRAEL PROACTIVE — Co-Host, der Funkstille im Kick-Chat füllt
 PROACTIVE_ENABLED      = os.getenv("PROACTIVE_ENABLED", "1").strip().lower() in ("1","true","yes","on","y")
 PROACTIVE_SILENCE_S    = _env_int("PROACTIVE_SILENCE_S", 180)    # so lange Chat-Stille bis AZRAEL eingreift
