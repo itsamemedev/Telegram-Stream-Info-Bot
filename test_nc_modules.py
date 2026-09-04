@@ -1807,6 +1807,159 @@ def _test_w23_beobachtung_und_toasts():
     ok("v4.1-W23: Beobachtungs-Routen als Blueprint, verkettete Toasts uebersetzbar")
 
 
+
+def _test_w24_wartung_blueprint():
+    """v4.1-W24: zehn Wartungsrouten raus — und die drei loeschenden Pfade
+       behalten ihre Sicherungen."""
+    import ast as _ast
+    import os as _os
+    import tempfile as _tf
+
+    import nc.backupcfg as K
+    from nc.backupcfg import aktiv as _nc_backup_aktiv
+    import nc.retention as RET
+    import nc.storage as ST
+
+    # (1) Kein Geheimnis in der Anzeige. s3_konfiguriert() ist ein bool und
+    # gibt nichts heraus; die Zugangsdaten kommen NUR aus s3_zugang(), das
+    # ausschliesslich der boto3-Client aufruft. Wer hier einen Key in eine
+    # Antwort schreibt, verschenkt den Bucket.
+    alt = {k: _os.environ.get(k) for k in
+           ("S3_BACKUP", "S3_BUCKET", "S3_ACCESS_KEY", "S3_SECRET_KEY")}
+    try:
+        _os.environ.update({"S3_BACKUP": "1", "S3_BUCKET": "eimer",
+                            "S3_ACCESS_KEY": "AKIA-GEHEIM",
+                            "S3_SECRET_KEY": "sehr-geheim"})
+        assert K.s3_konfiguriert() is True
+        assert isinstance(K.s3_konfiguriert(), bool)
+        assert K.s3_zugang()["access_key"] == "AKIA-GEHEIM"
+        # Ohne Schluessel gilt S3 als NICHT konfiguriert — sonst meldete das
+        # Deck "gesichert", waehrend jeder Upload scheitert.
+        _os.environ["S3_SECRET_KEY"] = ""
+        assert K.s3_konfiguriert() is False
+    finally:
+        for k, v in alt.items():
+            if v is None:
+                _os.environ.pop(k, None)
+            else:
+                _os.environ[k] = v
+
+    # (2) Live gelesen, nicht eingefroren: der Betreiber schaltet SYS_BACKUP
+    # im Betrieb um und erwartet, dass die naechste Sicherung das sieht.
+    vorher = _os.environ.get("SYS_BACKUP")
+    try:
+        _os.environ["SYS_BACKUP"] = "0"
+        assert K.sys_backup() is False
+        _os.environ["SYS_BACKUP"] = "1"
+        assert K.sys_backup() is True
+    finally:
+        if vorher is None:
+            _os.environ.pop("SYS_BACKUP", None)
+        else:
+            _os.environ["SYS_BACKUP"] = vorher
+
+    # (3) DIE WICHTIGSTE ZUSICHERUNG DIESER WELLE. retention.scan(delete=True)
+    # loescht Dateien. Geloescht wird ausschliesslich, was nachweislich im
+    # Aufnahme-Verzeichnis liegt. Faellt diese Pruefung, wird aus einer
+    # Aufraeumfunktion ein Loeschwerkzeug fuer das ganze Dateisystem.
+    quelle = open("nc/retention.py", encoding="utf-8").read()
+    assert "os.path.abspath(fp).startswith(rec_root + os.sep)" in quelle, \
+        "Pfad-Haertung in nc/retention.py fehlt"
+    # Und sie greift auch wirklich: eine Datei AUSSERHALB bleibt liegen.
+    with _tf.TemporaryDirectory() as tmp:
+        drinnen = _os.path.join(tmp, "rec")
+        _os.makedirs(drinnen)
+        aussen = _os.path.join(tmp, "fremd.txt")
+        open(aussen, "w").write("x")
+        assert _os.path.abspath(aussen).startswith(_os.path.abspath(drinnen) + _os.sep) is False
+        # scan() ohne Datenbank liefert eine wohlgeformte Null-Antwort statt
+        # einer Ausnahme — die Routen rechnen damit.
+        r = RET.scan(1, drinnen, delete=False)
+        assert r == {"count": 0, "freed_bytes": 0}, r
+        assert _os.path.isfile(aussen), "Datei ausserhalb wurde angefasst"
+
+    # (4) storage.cleanup loescht DATEIEN, nie Datenbankeintraege — der
+    # Betreiber soll weiter sehen, DASS es die Aufnahme gab. Und days<=0
+    # loescht gar nichts, auch nicht versehentlich.
+    q = open("nc/storage.py", encoding="utf-8").read()
+    assert "DELETE FROM recordings" not in q, \
+        "storage.cleanup loescht Datenbankeintraege — das macht retention.py"
+    r = ST.cleanup("/nicht/vorhanden", days=0)
+    assert r["deleted"] == 0 and "RECORDINGS_RETAIN_DAYS=0" in r["reason"]
+
+    # (5) Der Zustand des System-Backups ist ein ALIAS, kein Register: der
+    # Monolith veraendert das Dict nur an Ort und Stelle. Bindet er den Namen
+    # neu, meldet /api/backup/status fuer immer "laeuft nicht", waehrend die
+    # Sicherung laeuft — ohne Fehler und ohne Logzeile.
+    b = open("bot.py", encoding="utf-8").read()
+    assert "_SYS_BACKUP_STATE = _nc_backup.STATE" in b, "Alias fehlt"
+    assert b.count("_SYS_BACKUP_STATE = ") == 1, \
+        "_SYS_BACKUP_STATE wird neu gebunden — der Alias zeigt dann auf eine tote Kopie"
+    assert set(K.STATE) == {"running", "last_ts", "last_file", "size_mb",
+                            "files", "error"}
+
+    # (6) Der Blueprint: zehn Routen, kein neuer ctx-Slot.
+    from flask import Flask
+    import nc.routes.wartung as R
+    app = Flask(__name__)
+    app.register_blueprint(R.bp)
+    regeln = [r for r in app.url_map.iter_rules() if r.endpoint != "static"]
+    assert len(regeln) == 10, "10 Regeln erwartet, %d" % len(regeln)
+
+    w = open("nc/routes/wartung.py", encoding="utf-8").read()
+    # Kein Bucket-Geheimnis in einer Antwort. Geprueft wird ueber den AST und
+    # nicht ueber den Text: der Modul-Kopf ERKLAERT s3_zugang() voellig zu
+    # Recht, und ein Textvergleich meldete genau diese Erklaerung als
+    # Verstoss (dieselbe Falle wie bei globals() in W22).
+    _wb = _ast.parse(w)
+    for _n in _ast.walk(_wb):
+        assert not (isinstance(_n, _ast.Attribute) and _n.attr == "s3_zugang"), \
+            "Blueprint liest S3-Zugangsdaten"
+        assert not (isinstance(_n, _ast.Constant) and isinstance(_n.value, str)
+                    and _n.value in ("S3_ACCESS_KEY", "S3_SECRET_KEY")), \
+            "Blueprint liest einen S3-Schluessel direkt aus der Umgebung"
+    # Die zwei Haken sind deklariert und werden im Monolithen eingetragen.
+    assert set(R.HAKEN) == {"local_scan", "system"}
+    for h in R.HAKEN:
+        assert '_nc_routes_wartung.HAKEN["%s"]["fn"]' % h in b, \
+            "Haken %s wird im Monolithen nie eingetragen" % h
+
+    # (7) Der Monolith ruft die geloesten Funktionen auf, statt sie ein
+    # zweites Mal zu halten. Eine Kopie einer loeschenden Funktion laeuft
+    # irgendwann auseinander — genau deshalb sind sie gewandert.
+    for ruf in ("_nc_retention.scan(", "_nc_storage.cleanup(",
+                "_nc_storage.stats(", "_nc_arules.run_archive_rules("):
+        assert ruf in b, "Monolith ruft %s nicht auf" % ruf
+
+    # (8) Ein fehlender Haken sagt es, statt Erfolg zu melden. Ohne diese
+    # Pruefung startet threading.Thread(target=None) klaglos und die Route
+    # antwortet started=True, waehrend nichts sichert — die stille Sorte
+    # Fehler, die CLAUDE.md als Hauptfeind benennt.
+    for h in R.HAKEN:
+        R.HAKEN[h]["fn"] = None
+    c = app.test_client()
+    # Erst ein Ziel konfigurieren: ohne eins antwortet /api/backup/system
+    # zurecht schon vorher mit 400 ("kein Ziel"), und die Haken-Pruefung
+    # dahinter waere nie erreicht.
+    sicher = {k: _os.environ.get(k) for k in ("LOCAL_BACKUP", "LOCAL_BACKUP_DIR")}
+    try:
+        _os.environ.update({"LOCAL_BACKUP": "1", "LOCAL_BACKUP_DIR": "/tmp/nc-backup-test"})
+        assert _nc_backup_aktiv(), "Testaufbau: Ziel nicht erkannt"
+        for pfad in ("/api/backup/system", "/api/backup/run"):
+            antwort = c.post(pfad)
+            assert antwort.status_code == 503, \
+                "%s meldet %d statt 503 ohne Haken" % (pfad, antwort.status_code)
+            assert antwort.get_json()["ok"] is False
+    finally:
+        for k, v in sicher.items():
+            if v is None:
+                _os.environ.pop(k, None)
+            else:
+                _os.environ[k] = v
+
+    ok("v4.1-W24: Wartung als Blueprint, Loeschpfade gehaertet, keine S3-Geheimnisse")
+
+
 def main():
     tmp = tempfile.mkdtemp()
     configure_db(db_path=os.path.join(tmp, "t.db"), backend="sqlite")
@@ -1933,6 +2086,8 @@ def main():
     _test_w22_restream_blueprint()
 
     _test_w23_beobachtung_und_toasts()
+
+    _test_w24_wartung_blueprint()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)
 

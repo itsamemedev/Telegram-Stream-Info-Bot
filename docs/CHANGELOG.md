@@ -11,6 +11,50 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Geändert — Wartungs-Routen als Blueprint, Löschpfade gehärtet (v4.1 W24)
+
+Zehn Routen mit einer Klammer: `/api/storage`, `/api/retention`, `/api/backup`
+und `/api/auto-archive-rules` halten den Bestand in Ordnung. Drei von ihnen
+**löschen oder kopieren** — die gefährlichste Gruppe dieser Zerlegung, und
+deshalb die, bei der eine Kopie am teuersten gewesen wäre.
+
+`_retention_scan`, `cleanup_old_recordings`, `get_storage_stats` und die vier
+Archivregel-Funktionen hatten im Monolithen je zwei Aufrufer: eine Dauerschleife
+und eine Route. Beim Herauslösen der Routen wären daraus Kopien geworden. Eine
+Kopie einer löschenden Funktion läuft irgendwann auseinander, und man merkt es
+an der falschen Stelle. Stattdessen sind sie nach `nc/` gewandert
+(`nc/retention.py`, `nc/storage.py`, `nc/archiverules.py`); der Monolith ruft
+jetzt dieselbe Funktion auf wie der Blueprint.
+
+Die Härtung von `retention.scan()` — gelöscht wird ausschliesslich, was per
+`os.path.abspath` nachweislich **innerhalb** des Aufnahme-Verzeichnisses liegt
+— ist mitgewandert und hat jetzt einen eigenen Vertrag. Ohne sie wäre aus einer
+Aufräumfunktion ein Löschwerkzeug für das ganze Dateisystem geworden, sobald
+ein `filepath` in der Datenbank mit `../` beginnt.
+
+`nc/backupcfg.py` trägt die fünfzehn .env-Werte, jeden Namen wörtlich in einem
+`os.getenv(...)`. **Die S3-Zugangsdaten gibt nur `s3_zugang()` heraus**, das
+ausschliesslich der boto3-Client aufruft; für Anzeige und Diagnose gibt es
+`s3_konfiguriert()` — ein bool. Dieselbe Trennung wie bei den Stream-Keys in
+W22, und aus demselben Grund: wer einen Bucket-Schlüssel in eine API-Antwort
+schreibt, verschenkt den Bucket.
+
+**Null neue Kontext-Einträge**, weiterhin 24 von vertraglich 25 Plätzen.
+
+### Behoben — „Sicherung gestartet", während nichts sicherte (v4.1 W24)
+
+`threading.Thread(target=None)` startet klaglos und tut nichts.
+`/api/backup/system` hätte damit `started: true` gemeldet, ohne dass eine
+Sicherung läuft — genau die stille Sorte Fehler, die CLAUDE.md als Hauptfeind
+benennt. Fehlt der Haken in den Monolithen, antwortet die Route jetzt 503 und
+sagt warum. Ein Vertrag prüft beide Backup-Routen darauf.
+
+Acht Benutzertexte des neuen Blueprints laufen an der Quelle durch `t(...)`;
+drei englische Quelltexte (`insert failed`, `name, condition, action required`,
+`days >= 1`) sind deutsch formuliert statt als Identitäts-Übersetzung in den
+Katalog geschoben — der deutsche String ist der Schlüssel. Katalog: 891 →
+**899**.
+
 ### Behoben — verkettete Toast-Meldungen blieben deutsch (v4.1 W23)
 
 `toast()` erzeugt einen DOM-Knoten, den der Übersetzer sieht — **aber nur, wenn
