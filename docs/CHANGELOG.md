@@ -11,6 +11,75 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Geändert — die Sondenschicht raus, drei System-Routen hinterher (v4.1 W32)
+
+Erste Teillieferung von Vorschlag 2, dem harten Rest des Monolithen. Die acht
+System-Routen greifen zusammen auf **112 verschiedene Namen** aus `bot.py` zu —
+mehr als jede Gruppe, die bisher gewandert ist. Deshalb kommen sie zuletzt, und
+deshalb geht es nach der W117-Regel: **erst die Zustandsschicht auflösen, dann
+kosten die Routen nichts.**
+
+Aufgelöst wurde die Sondenschicht:
+
+- **`nc/systemprobe.py` (neu)** — `redis_alive`, `redis_version`,
+  `ai_calls_total`, `active_recorder` und der 5-Sekunden-Deckel (F24), der sie
+  zusammenhält. Reine stdlib; im Monolithen hingen sie nur an den Konstanten
+  `REDIS_URL` und `RECORDER_PREF` fest. Die Redis-Sonden sprechen weiterhin
+  RESP direkt über einen Socket statt über das `redis`-Paket — Absicht: die
+  Sonde muss auch antworten, wenn das Paket fehlt, sonst meldet das Deck
+  „Redis tot", weil eine Bibliothek nicht installiert ist.
+- **`nc/cookies.load_dict`** — der Leser von `cookies.txt`, wörtlich übernommen.
+  Er lag als einziger Cookie-Teil noch im Bot, während die übrige
+  Format-Verarbeitung längst in diesem Modul steht. 16 Aufrufstellen, alle über
+  einen Alias unverändert.
+- **`nc/logsafe.url_ohne_zugang`** — der Maskierer für Zugangsdaten in URLs
+  (W118). Dieselbe Aufgabe wie `redact_stream_urls`, jetzt dieselbe Datei.
+
+Danach ließen sich drei Routen ohne **einen einzigen neuen `nc.ctx`-Slot**
+herauslösen — `nc/routes/systemlage.py`: `/api/system`,
+`/api/system/preflight_history`, `/api/system/config_drift`.
+Slots weiterhin **24 von 25**.
+
+**Eine stille Fehlanzeige dabei verhindert:** `api_config_drift` übergab
+`__file__` an `nc/confdrift`, das den Quelltext nach `os.getenv`-Vorgaben
+durchsucht. In einem Blueprint zeigt `__file__` auf **dessen** Datei — dort
+steht keine einzige Vorgabe, und die Antwort wäre ein leerer Bericht mit
+`ok: true` gewesen. Der Pfad kommt jetzt aus `cfg["BOT_DATEI"]`; ein Vertrag
+hält es fest.
+
+**Konfiguration als Injektion, nicht als Modul-Konstante.** Beide neuen Module
+lesen kein `os.getenv` auf der Modul-Ebene — CLAUDE.md: „.env wird teils erst
+nach den ersten Imports geladen". Ein Vertrag prüft das per AST für
+`nc/systemprobe.py` und `nc/cookies.py`.
+
+**Ein Cookie-Cache, nicht zwei.** Der Bot leert ihn nach einer
+Cookie-Reparatur, das Deck liest ihn über `ctx.cfg` — eine Kopie wäre ein totes
+Panel und ein Cache, den niemand mehr invalidiert. `nc.cookies.CACHE` ist
+dasselbe Objekt, der Vertrag prüft die Identität.
+
+Vertrag `_test_w32_sondenschicht_und_systemlage`, sechs Negativtests, alle
+feuern: `__file__` im Blueprint, `os.getenv` auf Modul-Ebene, `pref=ytdlp`
+fällt still auf native zurück, der Deckel hält kein negatives Ergebnis fest,
+der Cookie-Cache als Kopie, die Domain-Kollision nur nach Expiry aufgelöst.
+
+**Zwei Anker gewandert, keiner gelöscht:** die Cookie-Log-Drossel
+(`test_deepbughunt_fixes`) und der Maskierer-Vertrag aus W118
+(`test_v40_w118_sicherheitsaudit`) zeigten auf `bot.py`. Beide prüfen jetzt die
+neue Stelle **und** zusätzlich, dass `bot.py` sich keine zweite Wahrheit
+zurückholt.
+
+Doku-Zahlen nachgezogen: `bot.py` 26.585 → **26.392 Zeilen**, `nc/` 118 → **119
+Module**, `nc/routes/` 34 → **35 Blueprints** mit 317 → **320 Routen**, eigene
+Routen in `bot.py` 42 → **39**. `README.en.md` stand noch bei 92 Modulen und
+27.218 Zeilen — `ncpatch docs` prüft die englische Fassung nicht, deshalb war
+die Drift dort unbemerkt gewachsen.
+
+Es bleiben fünf System-Routen im Monolithen: `preflight`, `resilience`,
+`check_timing`, `config_snapshot` und `selftest`. Sie hängen noch am
+Discord-Client, am Restream-Manager und am Watchdog-Zustand und folgen, wenn
+der aufgelöst ist — nicht vorher.
+
+
 ### Behoben — der Rauchtest lief nirgends automatisch (v4.1 W31)
 
 `test_smoke.py` steht seit v37 in der Pflicht-Prüfkette. Ausgeführt hat ihn

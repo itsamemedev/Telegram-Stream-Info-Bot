@@ -557,7 +557,6 @@ import time as _time_mod                  # B4: war mid-file bei Z. 3554 — wir
 import types
 _BOOT_TS = _time_mod.time()               # F82: Prozess-Start für /api/health-Uptime
 import collections as _collections        # B4: war mid-file bei Z. 1175
-import socket as _socket                  # B4: war mid-file bei Z. 9725
 import signal as _signal_mod              # B4: war function-local — zentral importiert
 from datetime import datetime, timezone, timedelta
 from typing import Optional, List, Tuple
@@ -571,6 +570,8 @@ from nc.intel import transcripts as _intel_tx  # v4.0-W90: Transkript-Substrat
 from nc.intel import library as _intel_lib     # v4.0-W90: semantisches Stream-Archiv
 from nc import discordlimits as _nc_dclimits  # v4.0-W80: Discord-Upload-Limit level-genau
 from nc import logsafe as _nc_logsafe        # Stream-Key-Log-Redaction
+from nc import systemprobe as _nc_probe     # v4.1-W32: Redis-/Recorder-Sonden
+from nc import cookies as _nc_cookies_datei  # v4.1-W32: cookies.txt lesen
 from nc import cfgnorm as _nc_cfgnorm        # v4.0-W33: reine Config-Normalisierer (gebündelt)
 from nc import restrend as _nc_restrend      # v4.0-W40: Langzeit-Ressourcen-Trend (Slow-Leak)
 from nc import ffbuild as _nc_ffbuild        # v4.0-W44: ffmpeg-Kommandobauer (extrahiert)
@@ -609,6 +610,7 @@ from nc.routes import scheduler as _nc_routes_scheduler      # v4.0-W108
 from nc.routes import webhooks as _nc_routes_webhooks        # v4.0-W108
 from nc.routes import insights as _nc_routes_insights        # v4.0-W108
 from nc.routes import health as _nc_routes_health            # v4.0-W110
+from nc.routes import systemlage as _nc_routes_systemlage  # v4.1-W32: /api/system
 from nc.routes import ai as _nc_routes_ai                    # v4.0-W112: KI-Blueprint
 from nc.routes import settings as _nc_routes_settings        # v4.0-W116: Einstellungen
 from nc.routes import ops as _nc_routes_ops                  # v4.0-W116: Betrieb
@@ -649,7 +651,7 @@ from nc.routes.health import api_system_resources  # noqa: F401
 from http.cookiejar import MozillaCookieJar
 from logging.handlers import RotatingFileHandler   # B4: war mid-file bei Z. 664
 from urllib.request import urlopen as _urlopen, Request as _UrlRequest
-from urllib.parse import urlparse as _urlparse, quote
+from urllib.parse import quote   # v4.1-W32: urlparse nur noch in nc/systemprobe
 
 # B4: threading alias für DB/Proxy/AI-Locks (vermeidet Konflikt mit `threading` Modul-Name)
 _threading_for_db = threading
@@ -732,24 +734,9 @@ _RE_STREAM_URL = re.compile(
     r"(rtmps?://[^\s'\"]*?/(?:app|live2|live)/)([^\s'\"]+)", re.I)
 
 
-def _url_ohne_zugang(url):
-    """v4.0-W118 (SEC): Zugangsdaten aus einer URL entfernen, Rest lesbar lassen.
-
-    REDIS_URL & Co. duerfen ein Passwort tragen (redis://:geheim@host:6379/0).
-    /api/system gab die URL bisher unveraendert aus — die Antwort landet im
-    Browser-Cache, in Screenshots und in jedem Support-Log. Host und Port
-    bleiben stehen, denn genau die braucht die Fehlersuche.
-    """
-    try:
-        u = (url or "").strip()
-        if "@" not in u or "//" not in u:
-            return u
-        schema, rest = u.split("//", 1)
-        zugang, ziel = rest.rsplit("@", 1)
-        benutzer = zugang.split(":", 1)[0]
-        return f"{schema}//{benutzer + ':' if benutzer else ''}<geheim>@{ziel}"
-    except Exception:
-        return "<URL unterdrueckt>"
+# v4.0-W118 (SEC), v4.1-W32 nach nc/logsafe.py: Zugangsdaten aus einer URL
+# entfernen. Gehoert zu redact_stream_urls — dieselbe Aufgabe, dieselbe Datei.
+_url_ohne_zugang = _nc_logsafe.url_ohne_zugang
 
 
 def _redact_stream_urls(text):
@@ -909,8 +896,10 @@ from nc.notes import delete_annotation  # noqa: F401
 # V37-DRIFT: .env gegen Code-Defaults. Dreimal in einer Session hat eine
 # .env-Zeile still die Absicht des Codes ausgehebelt (Overlay-Groesse,
 # Multi-Mode, Live-React) — jedes Mal mit Fehlersuche bezahlt.
-from nc.confdrift import (config_drift as _cfg_drift,
-                          log_watchlist_drift as _cfg_drift_log)  # noqa: F401
+# v4.1-W32: config_drift wird nur noch im Blueprint gebraucht — die Route
+# ist nach nc/routes/systemlage.py gewandert. Der Watchlist-Logger beim Start
+# bleibt hier.
+from nc.confdrift import log_watchlist_drift as _cfg_drift_log
 # V37-TWOAUTH: Twitch-OAuth-Flow. Nutzer gibt nur Client-ID + Secret an, klickt
 # einmal "Verbinden" — der Bot holt Refresh-Token und erneuert danach selbst.
 # Loest die drei Dauerprobleme des manuellen Tokens: falsche Client-ID-Bindung,
@@ -1790,84 +1779,17 @@ async def _pick_checked_pull_proxy(username=None, exclude=None, tries=3):
     log.info("Pre-Flight: kein Pool-Proxy bestand den TikTok-Test → Pull läuft direkt")
     return None
 
-def _load_cookies_dict() -> dict:
-    """Lädt cookies.txt als dict. B6-Fix: TTL-Cache (5s) damit Recording-
-       Bursts nicht für jeden Resolve+ffmpeg-Bau die Datei neu parsen.
-       Cache wird invalidiert wenn sich die mtime ändert.
+# v4.1-W32: der Leser liegt in nc/cookies.py — dort, wo die uebrige
+# Cookie-Format-Verarbeitung schon lag. Alias, kein Wrapper: 16 Aufrufstellen,
+# der Bot bindet den Namen nie neu, und der 5-Sekunden-Cache (B6) muss EINER
+# bleiben — zwei Caches waeren zwei Wahrheiten ueber dieselbe Datei.
+_load_cookies_dict = _nc_cookies_datei.load_dict
+# Derselbe Cache fuer beide Seiten: der Bot leert ihn nach einer
+# Cookie-Reparatur (siehe _cookie_repair), das Deck liest ihn ueber
+# ctx.cfg. Alias auf DAS Dict, keine Kopie — eine Kopie waere ein
+# totes Panel und ein Cache, den niemand mehr invalidiert.
+_COOKIES_CACHE = _nc_cookies_datei.CACHE
 
-       BUG-FIX (Tiefenbughunt): Browser-Cookie-Exports (z.B. "Get cookies.txt
-       LOCALLY") legen denselben Cookie-NAMEN oft mehrfach mit verschiedenen
-       DOMAIN-Scopes an — TikTok setzt sessionid teils auf '.tiktok.com',
-       teils zusätzlich auf 'www.tiktok.com' je nachdem welche Subdomain
-       zuletzt besucht wurde. Die alte Implementierung baute das Ergebnis-
-       dict per {c.name: c.value for c in cj} — bei Namens-Kollision über
-       mehrere Domains gewinnt schlicht der in MozillaCookieJar zuletzt
-       iterierte Eintrag. Das ist NICHT deterministisch nach Aktualität,
-       sondern nach Datei-Reihenfolge. Symptom exakt wie beobachtet: das
-       Dashboard zeigt 'Cookies aktuell' (get_cookie_health() prüft nur ob
-       der NAME vorkommt, nicht welcher Domain-Wert gewinnt), aber TikTok
-       liefert trotzdem 403 weil der tatsächlich gesendete sessionid-Wert
-       aus einer veralteten/falschen Domain-Variante stammt.
-
-       Fix: bei Namens-Kollision gewinnt der Eintrag mit der SPEZIFISCHEREN
-       Domain (ohne führenden Punkt = Domain-exakt, nicht Subdomain-Wildcard)
-       UND falls beide gleich spezifisch sind, der mit der LÄNGEREN Expiry
-       (= zuletzt vom Server gesetzt/erneuert, meist der frischere Login)."""
-    if not os.path.exists(COOKIE_FILE):
-        # Nicht cachen damit wir's mitbekommen wenn die Datei plötzlich da ist
-        return {}
-    try:
-        mtime = os.path.getmtime(COOKIE_FILE)
-    except OSError:
-        return {}
-    now = _time_mod.monotonic()
-    cached = _COOKIES_CACHE.get("v")
-    if cached and cached[0] == mtime and (now - cached[1]) < 5.0:
-        return cached[2]
-    try:
-        cj = MozillaCookieJar(COOKIE_FILE)
-        cj.load(ignore_discard=True, ignore_expires=True)
-        # best[name] = (specificity_rank, expiry, value)
-        # specificity_rank: 1 = exakte Domain (kein führender Punkt, höchste
-        # Priorität — das ist was ein echter Browser für die aktuell besuchte
-        # Seite tatsächlich sendet), 0 = Wildcard-Domain ('.tiktok.com')
-        best: dict = {}
-        skipped_collisions = 0
-        for c in cj:
-            specificity = 0 if (c.domain or "").startswith(".") else 1
-            expiry = c.expires or 0
-            prev = best.get(c.name)
-            if prev is None:
-                best[c.name] = (specificity, expiry, c.value, c.domain)
-            else:
-                skipped_collisions += 1
-                if (specificity, expiry) > (prev[0], prev[1]):
-                    best[c.name] = (specificity, expiry, c.value, c.domain)
-        d = {name: val for name, (_, _, val, _) in best.items()}
-        if skipped_collisions:
-            log.debug(f"_load_cookies_dict: {skipped_collisions} Domain-Duplikate "
-                      f"aufgelöst (spezifischste/frischeste Variante gewählt)")
-        _COOKIES_CACHE["v"] = (mtime, now, d)
-        return d
-    except Exception as e:
-        # BUG-FIX (Tiefenbughunt): bei Permission-denied/Lesefehler landet JEDER
-        # der 21 Aufrufer hier und loggt erneut — im Live-Log sahen wir mehrere
-        # Warnungen pro Sekunde. Der Erfolgs-Cache greift nicht (wird nur bei
-        # Erfolg gesetzt). Darum die Warnung hier drosseln: max. alle 60s, sonst
-        # verstopft ein einziges Rechteproblem das komplette Log und versteckt
-        # echte Fehler. Der Fehler selbst wird NICHT verschluckt — nur die
-        # Wiederholung entschärft.
-        _now = _time_mod.monotonic()
-        if _now - _COOKIE_WARN_TS.get("last", -1e9) >= 60:
-            _COOKIE_WARN_TS["last"] = _now
-            log.warning(f"Cookies konnten nicht geladen werden: {e}")
-        else:
-            log.debug(f"Cookies konnten nicht geladen werden (gedrosselt): {e}")
-        return {}
-
-
-_COOKIES_CACHE = {}     # B6: {"v": (mtime, loaded_at_monotonic, dict)}
-_COOKIE_WARN_TS = {}    # Tiefenbughunt: drosselt die "Cookies unlesbar"-Warnung (max alle 60s)
 
 def _cookie_header() -> Optional[str]:
     cookies = _load_cookies_dict()
@@ -11605,17 +11527,6 @@ def api_system_preflight():
                    total=len(checks), checks=checks)
 
 
-@dashboard_app.route("/api/system/preflight_history")
-def api_system_preflight_history():
-    try:
-        with db_conn() as conn:
-            rows = conn.execute("SELECT overall, fails, warns, created_at FROM preflight_history "
-                                "ORDER BY id DESC LIMIT 40").fetchall()
-        items = [{"overall": r["overall"], "fails": r["fails"], "warns": r["warns"],
-                  "at": (r["created_at"] or "")[5:16].replace("T", " ")} for r in rows]
-        return jsonify(ok=True, items=list(reversed(items)))
-    except Exception as e:
-        return jsonify(ok=False, error=_fehler_text(e, "api_system_preflight_history")), 500
 
 
 
@@ -11931,35 +11842,6 @@ def archive_download(eid):
 
 
 
-@dashboard_app.route("/api/system")
-def api_system():
-    """F15: Reichere Stack-Infos (Recorder, Modell-Liste, Redis-Version,
-       AI-Counter) für die Dashboard-Detailzeile."""
-    cookies = _load_cookies_dict()
-    important = ["sessionid_ss", "sessionid", "ttwid", "tt_chain_token"]
-    have = [c for c in important if c in cookies]
-    models = _check_ai_models_sync()
-    redis_ver = _check_redis_version_sync()
-    return jsonify(
-        recorder       = _active_recorder_sync(),
-        recorder_pref  = RECORDER_PREF,
-        ai_backend     = ("brain" if os.getenv("AI_PROVIDER","").strip().lower()=="brain"
-                          else "freeai"),
-        ai_model       = AI_MODEL,
-        ai_models      = models if models is not None else [],
-        ai_alive       = models is not None,
-        ai_has_model   = bool(models) and (
-            AI_MODEL in models or
-            any(m.startswith(AI_MODEL + ":") for m in models)
-        ),
-        redis_url      = _url_ohne_zugang(REDIS_URL),   # v4.0-W118 (SEC)
-        redis_alive    = redis_ver is not None,
-        redis_version  = redis_ver,
-        cookies_total  = len(cookies),
-        cookies_critical_have = len(have),
-        cookies_critical_need = len(important),
-        ai_calls_total = _ai_calls_total_sync(),
-    )
 
 @dashboard_app.route("/download/<int:recording_id>")
 def download(recording_id):
@@ -12719,21 +12601,6 @@ def api_check_timing():
 
 
 
-@dashboard_app.route("/api/system/config_drift")
-def api_config_drift():
-    """V37-DRIFT: Welche .env-Werte weichen vom Code-Default ab?
-
-    ?all=1 zeigt auch die harmlosen. Ohne Parameter nur die Watchlist —
-    Einstellungen, bei denen eine Abweichung Verhalten oder Last spuerbar
-    aendert.
-    """
-    try:
-        rep = _cfg_drift(__file__, only_watchlist=(request.args.get("all") != "1"))
-        rep["ok"] = True
-        return jsonify(rep)
-    except Exception as e:
-        log.warning("api_config_drift: %s", e)
-        return jsonify(ok=False, error=_fehler_text(e, "api_config_drift")), 500
 
 
 
@@ -19542,91 +19409,19 @@ Hinweise: Zeitspalten sind ISO-8601-Strings. Erfolg = outcome IN ('ok','stall_ki
 # B4: socket / urllib / time-Imports wurden an den Anfang verschoben.
 # -----------------------------------------------------------------------------
 
-# F24: Probe-Cache (5s TTL). Redis/Ollama-Status muss nicht alle 200ms neu
-# erfragt werden — bei nicht-laufenden Services kostet jede Socket-Connection
-# 1-2 Sekunden Timeout. Cache reduziert das auf vernachlässigbar.
-_PROBE_CACHE = {}     # key -> (value, expires_at)
-_PROBE_TTL = 5.0
-
-def _cached_probe(key, fn, *args, **kwargs):
-    now = _time_mod.monotonic()
-    cached = _PROBE_CACHE.get(key)
-    if cached and cached[1] > now:
-        return cached[0]
-    val = fn(*args, **kwargs)
-    _PROBE_CACHE[key] = (val, now + _PROBE_TTL)
-    return val
-
-def _check_redis_alive_sync(timeout: float = 1.0) -> bool:
-    """RAW-TCP-Ping an Redis. Sendet PING und prüft +PONG."""
-    def _probe():
-        try:
-            u = _urlparse(REDIS_URL)
-            host = u.hostname or "localhost"
-            port = u.port or 6379
-            with _socket.create_connection((host, port), timeout=timeout) as sock:
-                sock.sendall(b"*1\r\n$4\r\nPING\r\n")
-                data = sock.recv(64)
-                return b"PONG" in data
-        except Exception:
-            return False
-    return _cached_probe("redis_alive", _probe)
-
-def _check_redis_version_sync(timeout: float = 1.0):
-    """INFO server → redis_version. None bei Fehler."""
-    def _probe():
-        try:
-            u = _urlparse(REDIS_URL)
-            host = u.hostname or "localhost"
-            port = u.port or 6379
-            with _socket.create_connection((host, port), timeout=timeout) as sock:
-                sock.sendall(b"*2\r\n$4\r\nINFO\r\n$6\r\nserver\r\n")
-                data = b""
-                while b"\r\n\r\n" not in data and len(data) < 8192:
-                    chunk = sock.recv(4096)
-                    if not chunk: break
-                    data += chunk
-            for line in data.decode("utf-8", errors="ignore").splitlines():
-                if line.startswith("redis_version:"):
-                    return line.split(":", 1)[1].strip()
-        except Exception:
-            pass
-        return None
-    return _cached_probe("redis_version", _probe)
-
-
-
-def _active_recorder_sync() -> Optional[str]:
-    """Wie build_recording_cmd's Auswahl-Logik aber ohne Auflösung.
-       F43: streamlink raus."""
-    has_ffmpeg = bool(shutil.which("ffmpeg"))
-    has_ytdlp  = bool(shutil.which("yt-dlp") or shutil.which("yt_dlp"))
-    pref = RECORDER_PREF
-    if pref == "native": return "native" if has_ffmpeg else None
-    if pref == "ytdlp":  return "ytdlp"  if has_ytdlp  else None
-    if has_ffmpeg: return "native"
-    if has_ytdlp:  return "ytdlp"
-    return None
-
-def _ai_calls_total_sync() -> int:
-    """Liest ai_calls_total via raw Redis-RESP. 0 wenn Redis nicht da."""
-    try:
-        u = _urlparse(REDIS_URL)
-        host = u.hostname or "localhost"
-        port = u.port or 6379
-        with _socket.create_connection((host, port), timeout=1.0) as sock:
-            sock.sendall(b"*2\r\n$3\r\nGET\r\n$15\r\nai_calls_total\r\n")
-            data = sock.recv(128).decode("utf-8", errors="ignore")
-        if data.startswith("$-1"):
-            return 0
-        if data.startswith("$"):
-            parts = data.split("\r\n", 2)
-            if len(parts) >= 2:
-                try: return int(parts[1])
-                except ValueError: pass
-    except Exception:
-        pass
-    return 0
+# v4.1-W32: die vier Sonden liegen jetzt in nc/systemprobe.py — samt dem
+# 5-Sekunden-Deckel (F24), der sie zusammenhaelt. Sie sind reine stdlib und
+# hingen hier nur an den Modul-Konstanten REDIS_URL und RECORDER_PREF; das
+# Modul bekommt beide per configure() statt sie selbst zu lesen.
+#
+# Aliase, keine Wrapper: der Bot bindet diese Namen nie neu, und ein Wrapper
+# waere eine zweite Signatur, die beim naechsten Parameter auseinanderlaeuft
+# (dreimal an den Restream-Vertraegen passiert). Ein Deckel fuer beide
+# Aufrufwege — Monolith und Blueprint teilen sich denselben Cache.
+_check_redis_alive_sync   = _nc_probe.redis_alive
+_check_redis_version_sync = _nc_probe.redis_version
+_active_recorder_sync     = _nc_probe.active_recorder
+_ai_calls_total_sync      = _nc_probe.ai_calls_total
 
 # -----------------------------
 # Bootstrap
@@ -26387,6 +26182,12 @@ _nc_evolution.configure(log=log,
                         use_llm=EVOLUTION_USE_LLM,
                         window_days=EVOLUTION_WINDOW_DAYS)
 
+# v4.1-W32: die Sonden bekommen ihre zwei .env-Werte gereicht, statt sie
+# selbst zu lesen. CLAUDE.md: Konfiguration nie als Modul-Konstante in einem
+# Fachmodul — .env ist beim Import des Moduls womoeglich noch nicht geladen.
+_nc_probe.configure(redis_url=REDIS_URL, recorder_pref=RECORDER_PREF)
+_nc_cookies_datei.configure(datei=COOKIE_FILE, log=log)
+
 _nc_ctx.configure(
     log=log,
     log_event=log_event,
@@ -26424,6 +26225,11 @@ _nc_ctx.configure(
         "ARCHIVE_MAX_UPLOAD_MB": ARCHIVE_MAX_UPLOAD_MB,
         "_MANUAL_ARCHIVE_DIR": _MANUAL_ARCHIVE_DIR,
         "DB_INTEGRITY_ERRORS": DB_INTEGRITY_ERRORS,
+        # v4.1-W32: der Pfad von bot.py. nc/confdrift liest die
+        # os.getenv-Vorgaben aus dem Quelltext — im Monolithen stand
+        # dafuer __file__, was in einem Blueprint auf DESSEN Datei zeigt
+        # und still eine leere Drift-Liste ergaebe.
+        "BOT_DATEI": __file__,
         # --- Kick (v4.1-W9). Startwerte aus der .env, keine Helfer — deshalb
         # hier und nicht als eigene Slots. Der Bot friert sie beim Import ein;
         # ein zweiter Lesepfad im Blueprint waere eine stille Abweichung.
@@ -26549,6 +26355,7 @@ dashboard_app.register_blueprint(_nc_routes_scheduler.bp)
 dashboard_app.register_blueprint(_nc_routes_webhooks.bp)
 dashboard_app.register_blueprint(_nc_routes_insights.bp)
 dashboard_app.register_blueprint(_nc_routes_health.bp)
+dashboard_app.register_blueprint(_nc_routes_systemlage.bp)  # v4.1-W32
 dashboard_app.register_blueprint(_nc_routes_ai.bp)
 dashboard_app.register_blueprint(_nc_routes_settings.bp)   # v4.0-W116
 dashboard_app.register_blueprint(_nc_routes_ops.bp)        # v4.0-W116

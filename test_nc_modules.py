@@ -2818,6 +2818,143 @@ def _test_w31_rauchtest_laeuft_in_der_ci():
     ok("v4.1-W31: der Rauchtest laeuft in der CI, %d Datei(en) gegen "
        "requirements-smoke.txt geprueft" % len(dateien))
 
+def _test_w32_sondenschicht_und_systemlage():
+    """v4.1-W32: die Sonden liegen in nc/, drei System-Routen sind draussen."""
+    import ast as _ast
+
+    import nc.cookies as C
+    import nc.logsafe as L
+    import nc.systemprobe as P
+
+    b = open("bot.py", encoding="utf-8").read()
+
+    # (1) Die drei Routen sind WEG aus dem Monolithen und im Blueprint.
+    # Ein Blueprint, den niemand registriert, ist ein 404 mit Rueckendeckung —
+    # deshalb beides pruefen, nicht nur die Datei.
+    for name in ("api_system", "api_system_preflight_history", "api_config_drift"):
+        assert ("\ndef %s(" % name) not in b, \
+            "%s steht noch in bot.py — doppelte Route oder toter Code" % name
+    s = open("nc/routes/systemlage.py", encoding="utf-8").read()
+    for pfad in ("/api/system", "/api/system/preflight_history",
+                 "/api/system/config_drift"):
+        assert '"%s"' % pfad in s, "%s fehlt im Blueprint" % pfad
+    assert "register_blueprint(_nc_routes_systemlage.bp)" in b, \
+        "der Blueprint ist nicht registriert — die drei Routen waeren 404"
+
+    # (2) Der Drift-Bericht liest den QUELLTEXT von bot.py. Im Monolithen stand
+    # dafuer __file__. In einem Blueprint zeigt __file__ auf DIESE Datei, und
+    # nc/confdrift faende dort keine einzige os.getenv-Vorgabe: die Antwort
+    # waere ein leerer Bericht mit ok=true. Genau die stille Fehlanzeige, vor
+    # der CLAUDE.md warnt — deshalb ein Vertrag und kein Kommentar.
+    # Nach AST, nicht nach Text: der Kommentar daneben ERKLAERT die Falle und
+    # nennt __file__ dabei. Eine Textsuche haette den eigenen Warnhinweis als
+    # Verstoss gemeldet — ein Vertrag, der auf seine Begruendung anschlaegt,
+    # wird beim naechsten Mal geloescht statt gelesen.
+    for _k in _ast.walk(_ast.parse(s)):
+        if isinstance(_k, _ast.Name) and _k.id == "__file__":
+            raise AssertionError(
+                "nc/routes/systemlage.py benutzt __file__, Zeile %d — in einem "
+                "Blueprint zeigt das auf die falsche Datei und ergibt eine "
+                "leere Drift-Liste mit ok=true" % _k.lineno)
+    assert 'cfg["BOT_DATEI"]' in s, "der Pfad von bot.py kommt nicht mehr aus cfg"
+    assert '"BOT_DATEI": __file__' in b, "bot.py reicht seinen Pfad nicht mehr durch"
+
+    # (3) Keine Modul-Konstante aus der Umgebung. CLAUDE.md: ".env wird teils
+    # erst nach den ersten Imports geladen" — ein os.getenv auf Modul-Ebene
+    # haette hier die leere Vorgabe fuer immer eingefroren.
+    for datei in ("nc/systemprobe.py", "nc/cookies.py"):
+        baum = _ast.parse(open(datei, encoding="utf-8").read())
+        for k in baum.body:
+            for x in _ast.walk(k):
+                if isinstance(x, _ast.Call) and _ast.unparse(x.func).endswith("getenv"):
+                    raise AssertionError(
+                        "%s liest os.getenv auf Modul-Ebene, Zeile %d — "
+                        "Konfiguration gehoert in configure()" % (datei, x.lineno))
+        assert "def configure(" in open(datei, encoding="utf-8").read(), \
+            "%s hat kein configure()" % datei
+
+    # (4) Die Sonden-Auswahl. `which` ist Parameter, damit der Vertrag sie
+    # pruefen kann, ohne ffmpeg zu installieren.
+    def _da(*was):
+        return lambda x: ("/usr/bin/" + x) if x in was else None
+    P.configure(recorder_pref="auto")
+    assert P.active_recorder(which=_da("ffmpeg", "yt-dlp")) == "native"
+    assert P.active_recorder(which=_da("yt-dlp")) == "ytdlp"
+    assert P.active_recorder(which=_da()) is None
+    P.configure(recorder_pref="ytdlp")
+    assert P.active_recorder(which=_da("ffmpeg")) is None, \
+        "pref=ytdlp darf NICHT auf native zurueckfallen — sonst nimmt der " \
+        "Recorder still einen anderen Weg als eingestellt"
+    assert P.active_recorder(which=_da("yt-dlp")) == "ytdlp"
+    P.configure(recorder_pref="native")
+    assert P.active_recorder(which=_da("yt-dlp")) is None
+    P.configure(recorder_pref="auto")
+
+    # (5) Der Deckel haelt AUCH ein negatives Ergebnis fest. Sonst laeuft jede
+    # Sonde bei totem Redis in einen 1-2-Sekunden-Timeout, und zwar bei jedem
+    # Aufruf — das Dashboard pollt im Sekundentakt.
+    P.cache_leeren()
+    zaehler = {"n": 0}
+
+    def _teuer():
+        zaehler["n"] += 1
+        return False
+    for _ in range(5):
+        assert P.cached_probe("test", _teuer) is False
+    assert zaehler["n"] == 1, \
+        "cached_probe wiederholt eine fehlgeschlagene Sonde (%d Aufrufe)" % zaehler["n"]
+    P.cache_leeren()
+
+    # (6) Zugangsdaten raus, Ziel drin. Die Antwort landet im Browser-Cache,
+    # in Screenshots und in jedem Support-Log (v4.0-W118).
+    assert L.url_ohne_zugang("redis://:geheim@host:6379/0") == \
+        "redis://<geheim>@host:6379/0"
+    assert L.url_ohne_zugang("redis://nutzer:geheim@host:6379/0") == \
+        "redis://nutzer:<geheim>@host:6379/0"
+    assert L.url_ohne_zugang("redis://localhost:6379/0") == "redis://localhost:6379/0"
+    assert L.url_ohne_zugang(None) == ""
+
+    # (7) EIN Cookie-Cache, nicht zwei. Der Bot leert ihn nach einer
+    # Reparatur, das Deck liest ihn ueber ctx.cfg — eine Kopie waere ein
+    # totes Panel und ein Cache, den niemand mehr invalidiert.
+    assert C.CACHE is C._COOKIES_CACHE, \
+        ("nc.cookies.CACHE ist eine Kopie — der Bot leert dann einen "
+         "anderen Cache als den, den load_dict liest")
+    assert "_COOKIES_CACHE = _nc_cookies_datei.CACHE" in b, \
+        "bot.py haelt einen eigenen Cookie-Cache — zwei Wahrheiten ueber eine Datei"
+    assert "_load_cookies_dict = _nc_cookies_datei.load_dict" in b, \
+        "der Cookie-Leser ist kein Alias mehr — ein Wrapper waere eine zweite Signatur"
+
+    # (8) Die Kollisionsaufloesung ist ein Bugfix, dessen Symptom niemand ein
+    # zweites Mal suchen will: Deck meldet "Cookies aktuell", TikTok liefert
+    # trotzdem 403, weil der gesendete sessionid-Wert aus der falschen
+    # Domain-Variante stammt. Spezifischere Domain gewinnt, bei Gleichstand
+    # die laengere Expiry.
+    import os as _os
+    import tempfile as _tf
+    d = _tf.mkdtemp()
+    pfad = _os.path.join(d, "c.txt")
+    with open(pfad, "w", encoding="utf-8") as f:
+        f.write("# Netscape HTTP Cookie File\n")
+        f.write("\t".join([".tiktok.com", "TRUE", "/", "FALSE", "9999999999",
+                           "sessionid", "ALT"]) + "\n")
+        f.write("\t".join(["www.tiktok.com", "FALSE", "/", "FALSE", "1111111111",
+                           "sessionid", "GENAU"]) + "\n")
+
+    class _Still:
+        def __getattr__(self, n):
+            return lambda *a, **k: None
+    C.configure(datei=pfad, log=_Still())
+    C.CACHE.pop("v", None)
+    got = C.load_dict()
+    assert got.get("sessionid") == "GENAU", \
+        ("Domain-Kollision falsch aufgeloest: %r — die exakte Domain muss "
+         "gewinnen, sonst sendet der Bot einen veralteten sessionid" % got)
+    C.CACHE.pop("v", None)
+
+    ok("v4.1-W32: Sondenschicht in nc/, 3 System-Routen im Blueprint, "
+       "ein Cookie-Cache")
+
 def main():
     tmp = tempfile.mkdtemp()
     configure_db(db_path=os.path.join(tmp, "t.db"), backend="sqlite")
@@ -2962,6 +3099,8 @@ def main():
     _test_w30_fehlertext_und_offenes_deck()
 
     _test_w31_rauchtest_laeuft_in_der_ci()
+
+    _test_w32_sondenschicht_und_systemlage()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)
 
