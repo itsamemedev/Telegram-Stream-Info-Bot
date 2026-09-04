@@ -6301,7 +6301,11 @@ def test_v40_w84_brain_reason_when_degraded():
     h = open("templates/dashboard.html").read()
     _seg = h[h.find("async function loadBrainStatus"):h.find("async function loadBrainStatus") + 2400]
     assert "if(o.tick_alive){ t.textContent='ONLINE'; }" in _seg, "ONLINE/GESTÖRT-Zweig nicht umgebaut"
-    assert "'GESTÖRT · '+" in _seg, "Grund wird nicht an GESTÖRT angehängt"
+    # v4.1-W27: Anker mit T(). Der Vertrag ist unveraendert — der Grund wird
+    # an GESTOERT angehaengt — nur laeuft der Text jetzt durch die
+    # Uebersetzung. Ohne das traefe der Katalogeintrag den zusammengesetzten
+    # Knoten ("GESTOERT - <Grund>") nie.
+    assert "T('GESTÖRT · ')+" in _seg, "Grund wird nicht an GESTÖRT angehängt"
     # der Grund kommt aus der immer-präsenten Health-Route (auch im GESTÖRT-Zweig)
     assert _seg.count("/api/brain/health") >= 1, "Grund wird im GESTÖRT-Zweig nicht geholt"
     # W81-Pfad (BRIDGE AUS) bleibt erhalten
@@ -6326,7 +6330,7 @@ def test_v40_w85_truncation_and_legal_pages():
     assert '_arg_int("limit", 50' in _seg, "recordings/list-Limit nicht gehärtet parametrisiert"
     h = open("templates/dashboard.html").read()
     assert "/api/recordings/list?limit=" in h, "Timeline holt nicht mehr Sessions"
-    assert "'letzte '+recs.length+' Sessions'" in h, "Timeline-Tag nicht ehrlich gelabelt"
+    assert "T('letzte ')+recs.length+T(' Sessions')" in h, "Timeline-Tag nicht ehrlich gelabelt"
 
     import os as _os
     for f in ("website/impressum.html", "website/datenschutz.html"):
@@ -6523,7 +6527,7 @@ def test_v40_w91_rec_limit_and_legal_pages():
     assert '_arg_int("limit", 50' in _seg, "recordings/list ohne gehärteten limit-Param"
     h = open("templates/dashboard.html").read()
     assert "/api/recordings/list?limit=300" in h, "Timeline holt nicht mehr als 50"
-    assert "'letzte '+recs.length+' Sessions'" in h, "Timeline-Label nicht ehrlich"
+    assert "T('letzte ')+recs.length+T(' Sessions')" in h, "Timeline-Label nicht ehrlich"
 
     # (B) Rechtsseiten existieren + Grundeigenschaften
     import os as _os
@@ -6671,7 +6675,7 @@ def test_v40_w95_rectimeline_limit_and_legal_pages():
         "nc/routes/recordings.py", encoding="utf-8").read(), "recordings/list limit nicht gehärtet"
     h = open("templates/dashboard.html").read()
     assert "/api/recordings/list?limit=300" in h, "Timeline holt nicht mehr Sessions"
-    assert "'letzte '+recs.length+' Sessions'" in h, "Timeline-Label nicht ehrlich"
+    assert "T('letzte ')+recs.length+T(' Sessions')" in h, "Timeline-Label nicht ehrlich"
 
     # (B) Rechtsseiten existieren, on-brand, DSGVO-fromme Fonts, Entwurf-Banner
     for f in ("website/impressum.html", "website/datenschutz.html"):

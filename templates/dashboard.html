@@ -3454,7 +3454,7 @@ document.addEventListener("DOMContentLoaded",function(){
   <div class="footer">
     <span>NIGHTCRAWLER <b>v4.1</b></span>
     <span>BUILD <b>2026.08</b></span>
-    <span id="modCount">… MODULES ONLINE</span>
+    <span id="modCount">… MODULE ONLINE</span>
   </div>
 </div>
 
@@ -3723,12 +3723,12 @@ document.addEventListener('visibilitychange', function(){
 })();
 
 /* ============ CLOCK ============ */
-pulsIntervall(()=>{ const el=$('#ledClock'); if(el) el.textContent=new Date().toLocaleTimeString('en-GB',{hour12:false})+' UTC'; }, 1000);
+pulsIntervall(()=>{ const el=$('#ledClock'); if(el) el.textContent=new Date().toLocaleTimeString('en-GB',{hour12:false})+T(' UTC'); }, 1000);
 
 /* THEME-SWITCHER (Footer) entfernt — Farbthema steuert der Topbar-Schalter
    (◑ Blaupause / ◐ Messing). Der frühere Footer-Cycler bot u.a. das nirgends
    in CSS definierte "matrix"-Thema an und kollidierte mit dem Topbar-System. */
-async function loadModCount(){ try{ const d=await apiGet('/api/ops/version'); if(d&&d.ok&&d.api_routes){ const el=$('#modCount'); if(el) el.textContent=d.api_routes+' MODULES ONLINE'; } }catch(e){} }
+async function loadModCount(){ try{ const d=await apiGet('/api/ops/version'); if(d&&d.ok&&d.api_routes){ const el=$('#modCount'); if(el) el.textContent=d.api_routes+T(' MODULE ONLINE'); } }catch(e){} }
 loadModCount();
 
 /* ============ TABS ============ */
@@ -3844,7 +3844,7 @@ async function loadBrainStatus(){
           // nur bei komplett fehlender Bridge geholt — hier blieb er verborgen.
           t.textContent='GESTÖRT';
           try{ const h=await apiGet('/api/brain/health');
-            if(h && h.error){ t.textContent='GESTÖRT · '+(h.phase?('['+h.phase+'] '):'')+h.error; }
+            if(h && h.error){ t.textContent=T('GESTÖRT · ')+(h.phase?('['+h.phase+'] '):'')+h.error; }
           }catch(_){}
         }
       }
@@ -3855,7 +3855,7 @@ async function loadBrainStatus(){
       let reason='Bridge nicht gestartet';
       try{ const h=await apiGet('/api/brain/health');
         if(h && h.error){ reason=(h.phase?('['+h.phase+'] '):'')+h.error; } }catch(_){}
-      const t=$('#bz_tag'); if(t) t.textContent='BRIDGE AUS · '+reason;
+      const t=$('#bz_tag'); if(t) t.textContent=T('BRIDGE AUS · ')+reason;
     }
   }catch(e){ const t=$('#bz_tag'); if(t) t.textContent='Bridge offline'; }
   try{
@@ -4567,7 +4567,7 @@ async function loadKiGrowth(){
   if(c.triples!=null) parts.push(fmtNum(c.triples)+' Fakten');
   if(c.vectors!=null) parts.push(fmtNum(c.vectors)+' Vektoren');
   if(c.users!=null) parts.push(fmtNum(c.users)+' Nutzer');
-  if(tag) tag.textContent=parts.length?parts.join(' · '):((d.points||[]).length+' Datenpunkte');
+  if(tag) tag.textContent=parts.length?parts.join(' · '):((d.points||[]).length+T(' Datenpunkte'));
   ncGrowthChart($('#kc_growth_chart'), d.points||[], c);
 }
 async function loadKiAiLog(){
@@ -4590,7 +4590,7 @@ async function sfLoad(){
   if(!grid) return;
   try{
     const rows=(await apiGet('/api/brain/agents'))||[];
-    if(tag) tag.textContent=rows.filter(a=>a.enabled).length+'/'+rows.length+' aktiv';
+    if(tag) tag.textContent=rows.filter(a=>a.enabled).length+'/'+rows.length+T(' aktiv');
     grid.classList.remove('skel'); grid.removeAttribute('aria-busy');
     grid.innerHTML=rows.map(a=>{
       const on=!!a.enabled;
@@ -4647,7 +4647,7 @@ async function loadAzLiveStatus(){
     '<div class="metric"><span class="v">'+((d.active||[]).length)+'</span><span class="l">aktive Worker</span></div>'+
     '<div class="metric"><span class="v">'+(d.whisper_ready?'✓':'✗')+'</span><span class="l">Whisper</span></div>'+
     '<div class="metric"><span class="v">'+(d.paused?'PAUSE':'LÄUFT')+'</span><span class="l">Zustand</span></div>';
-  if(tag) tag.innerHTML='Sprache '+on(d.speech)+' · Chat '+on(d.chat)+' · Proxy '+on(d.proxy_set);
+  if(tag) tag.innerHTML=T('Sprache ')+on(d.speech)+T(' · Chat ')+on(d.chat)+T(' · Proxy ')+on(d.proxy_set);
   if(btn){ btn.textContent=d.paused?'Fortsetzen':'Pausieren'; btn.dataset.paused=d.paused?'1':'0'; }
 }
 async function azToggleLive(){
@@ -4876,7 +4876,7 @@ async function loadBrainAlarms(){
   const d=await apiGet('/api/brain/alarms?limit=120');
   const al=(d&&d.alarms)||[];
   const ncrit=al.filter(a=>a.level==='crit').length;
-  if(tag) tag.textContent=al.length+' Befunde'+(ncrit?' · '+ncrit+' crit':'');
+  if(tag) tag.textContent=al.length+T(' Befunde')+(ncrit?' · '+ncrit+T(' crit'):'');
   if(!al.length){ if(strip)strip.innerHTML=''; list.innerHTML='<div class="empty">Keine Befunde protokolliert.</div>'; return; }
   const colOf=l=>l==='crit'?'var(--red)':(l==='warn'?'var(--amber)':'var(--text-faint)');
   const ts=al.map(a=>a.ts).filter(x=>x), tmin=Math.min.apply(null,ts), tmax=Math.max.apply(null,ts), span=(tmax-tmin)||1;
@@ -4903,7 +4903,7 @@ async function loadCreatorDossier(){
   try{
     const d=await apiGet('/api/news/creators');
     const items=(d&&d.items)||[];
-    if(tag) tag.textContent=items.length?(items.length+' Creator'):'leer';
+    if(tag) tag.textContent=items.length?(items.length+T(' Creator')):'leer';
     if(!items.length){ body.innerHTML='<div class="faint">Noch kein Dossier — „Neu bewerten" starten. Azraels Urteil braucht die KI.</div>'; return; }
     const gen=d.generated_ts?(' · Stand '+esc(String(d.generated_ts).slice(0,16).replace('T',' '))):'';
     body.innerHTML='<div class="faint" style="font-size:11px;margin-bottom:8px">Zeitraum '+(d.days||7)+' Tage'+gen+'</div>'+
@@ -4941,7 +4941,7 @@ async function loadClaudeStatus(){
       : 'Kein Key gesetzt — Claude ist aus, es greift der keyless Fallback. Trag deinen Anthropic-Key unten ein.';
     if(mdl && d.model){
       var has=Array.prototype.some.call(mdl.options,function(o){return o.value===d.model;});
-      if(!has){ var op=document.createElement('option'); op.value=d.model; op.textContent=d.model+' (aktuell)'; mdl.appendChild(op); }
+      if(!has){ var op=document.createElement('option'); op.value=d.model; op.textContent=d.model+T(' (aktuell)'); mdl.appendChild(op); }
       mdl.value=d.model;
     }
   }catch(e){ if(st) st.textContent='Status nicht ladbar.'; }
@@ -6072,7 +6072,7 @@ async function loadPfHistory(){
   const d=await apiGet('/api/system/preflight_history'); const el=$('#pf_hist'); if(!el) return;
   if(!d||d.__neterr||!d.items||!d.items.length){ el.innerHTML=''; return; }
   const col={ok:'var(--neon)',warn:'var(--amber)',fail:'var(--magenta)'};
-  el.innerHTML=d.items.map(x=>`<div title="${esc(x.at)} · ${x.overall}${x.fails?(' · '+x.fails+' Fehler'):''}" style="flex:1;min-width:3px;height:14px;background:${col[x.overall]||'#3a4550'};opacity:.7"></div>`).join('');
+  el.innerHTML=d.items.map(x=>`<div title="${esc(x.at)} · ${x.overall}${x.fails?(' · '+x.fails+T(' Fehler')):''}" style="flex:1;min-width:3px;height:14px;background:${col[x.overall]||'#3a4550'};opacity:.7"></div>`).join('');
 }
 /* v37 Welle 1: Audit-Log */
 async function loadAudit(){
@@ -6128,7 +6128,7 @@ async function retPreview(){
   if(el) el.textContent='prüfe…';
   const r=await apiGet('/api/retention/preview?days='+days);
   if(!r||r.__neterr||r.ok===false){ if(el) el.innerHTML='<span style="color:var(--magenta)">'+esc((r&&r.error)||'Fehler')+'</span>'; return; }
-  const auto=$('#ret_auto'); if(auto) auto.textContent=r.auto>0?('auto: '+r.auto+'T'):'auto: aus';
+  const auto=$('#ret_auto'); if(auto) auto.textContent=r.auto>0?(T('auto: ')+r.auto+'T'):'auto: aus';
   if(el) el.innerHTML=r.count?`<b style="color:var(--amber)">${r.count} Aufnahmen</b> älter als ${days} Tage = <b>${_gb(r.freed_bytes)}</b> würden gelöscht.`:`<span style="color:var(--neon)">Nichts älter als ${days} Tage.</span>`;
 }
 async function retRun(){
@@ -6447,7 +6447,7 @@ async function updateCookies(){
       toast('Cookie-Update fehlgeschlagen','err');
     }
   }catch(e){
-    msg.textContent='✗ Netzwerkfehler: '+e.message;
+    msg.textContent=T('✗ Netzwerkfehler: ')+e.message;
     msg.style.color='var(--magenta)';
   }
 }
@@ -6755,7 +6755,7 @@ async function aiOpenConv(id){
   $$('#ai_convs .ai-conv').forEach(e=>e.classList.toggle('active', e.getAttribute('onclick').includes('('+id+')')));
   const d=await apiGet('/api/ai/conversations/'+id);
   if(!d||!d.ok){ toast('Konversation nicht gefunden','err'); _aiConvId=null; return aiLoadConvs(); }
-  $('#ai_title').textContent=d.title||('Konversation #'+id);
+  $('#ai_title').textContent=d.title||(T('Konversation #')+id);
   // pre-select the conversation's last model
   if(d.last_model && _aiModels.includes(d.last_model)){ _aiModel=d.last_model; const sel=$('#ai_model'); if(sel) sel.value=d.last_model; }
   aiRenderThread(d.messages||[]);
@@ -6812,7 +6812,7 @@ async function loadEvolution(){
   $('#evo_knowbar').style.width=(d.knowledge_level||0)+'%';
   $('#evo_cycles').textContent=d.cycles||0;
   $('#evo_props').textContent=d.open_proposals||0;
-  $('#evo_meta').textContent=d.enabled?('autonom · alle '+d.interval_hours+'h'+(d.use_llm?' · LLM':'')):'deaktiviert';
+  $('#evo_meta').textContent=d.enabled?(T('autonom · alle ')+d.interval_hours+'h'+(d.use_llm?' · LLM':'')):'deaktiviert';
   const last=$('#evo_last');
   if(d.last_cycle){ last.innerHTML='Letzter Zyklus <b>v'+d.last_cycle.version+'</b> ('+esc(d.last_cycle.trigger||'')+') · '+ago(d.last_cycle.ts)+' · '+esc(d.last_cycle.summary||''); }
   else { last.textContent='Noch kein Lern-Zyklus gelaufen — startet automatisch ~90s nach Bot-Start.'; }
@@ -7317,7 +7317,7 @@ function fmtDur(s){s=Math.max(0,Math.floor(s));const h=Math.floor(s/3600),m=Math
 async function loadTimeline(){
   const d=await apiGet('/api/stream/timeline'); const bar=$('#tl_bar'), meta=$('#tl_meta'), info=$('#tl_info'); if(!bar) return;
   if(!d||d.__neterr||!d.user){ bar.innerHTML=''; if(meta)meta.textContent='—'; if(info)info.textContent='Kein aktiver Stream — Timeline erscheint sobald restreamt wird.'; return; }
-  if(meta) meta.textContent=(d.chapters.length)+' Momente';
+  if(meta) meta.textContent=(d.chapters.length)+T(' Momente');
   const dur=d.duration_secs||1;
   bar.innerHTML=(d.chapters||[]).map((c,i)=>{
     const pct=Math.max(0,Math.min(100,100*c.offset/dur));
@@ -7340,7 +7340,7 @@ async function loadLiveNow(){
   const d=await apiGet('/api/streamers/wall'); const el=$('#ln_list'), c=$('#ln_count'); if(!el) return;
   if(!d||d.__neterr){ el.textContent='—'; return; }
   const live=(d.tiles||[]).filter(t=>t.live);
-  if(c) c.textContent=live.length+' live';
+  if(c) c.textContent=live.length+T(' live');
   el.innerHTML=live.length?live.map(t=>`<span class="btn sm" style="margin:0 6px 6px 0" onclick="showProfile('${escJs(t.username)}')">🔴 @${esc(t.username)}${t.recording?' ●REC':''}</span>`).join(''):'<span class="faint">Gerade niemand live.</span>';
 }
 /* v37: Polen-VPS-Tunnel — Aufnahme-Egress steuern */
@@ -7667,7 +7667,7 @@ async function loadResilience(){
   <div class="dh-reg" style="margin-top:5px"><b>Hype-Clip-Auto:</b> ${ai.hype_clip?'<span style="color:var(--neon)">an</span>':'aus'} · <b>Story-Gedächtnis:</b> ${ai.story_memory?'<span style="color:var(--neon)">an</span>':'aus'}</div>
   ${storyHtml}
   ${cpuRow}`;
-  const tag=$('#resil_tag'); if(tag) tag.textContent=(stalls.length?'⚠ '+stalls.length+' Stall':'alles gesund');
+  const tag=$('#resil_tag'); if(tag) tag.textContent=(stalls.length?'⚠ '+stalls.length+T(' Stall'):'alles gesund');
 }
 
 /* ═══ V37-COMMUNITY: Discovery-Loop ═══ */
@@ -7677,7 +7677,7 @@ async function commLoad(){
   $('#comm_known').textContent=d.known??'—';
   $('#comm_regulars').textContent=d.regulars??'—';
   const active=[d.returning,d.live_ping,d.highlight_share].filter(Boolean).length;
-  $('#comm_tag').textContent=active+'/3 aktiv';
+  $('#comm_tag').textContent=active+T('/3 aktiv');
   $('#comm_tag').style.color=active?'var(--neon)':'var(--text-faint)';
   const row=(on,label)=>`<div><span style="color:${on?'var(--neon)':'var(--text-faint)'}">${on?'●':'○'}</span> ${label}</div>`;
   $('#comm_loop').innerHTML=
@@ -7734,7 +7734,7 @@ async function donAddManual(){
   try{
     const r=await apiPost('/api/donations/add',{amount:v, note:(note?note.value:'')});
     if(r&&r.ok){
-      if(msg){msg.style.color='var(--neon)';msg.textContent='+ '+r.amount_eur.toFixed(2)+' € erfasst · Summe '+(r.total_eur||0).toFixed(2)+' €';}
+      if(msg){msg.style.color='var(--neon)';msg.textContent='+ '+r.amount_eur.toFixed(2)+T(' € erfasst · Summe ')+(r.total_eur||0).toFixed(2)+' €';}
       amt.value=''; if(note) note.value='';
       donManualLoad();
     } else if(msg){ msg.style.color='var(--red)'; msg.textContent=(r&&r.error)||'Fehler'; }
@@ -7753,7 +7753,7 @@ async function donReset(){
   if(btn){btn.disabled=true;btn.textContent='🗑 …';}
   try{
     const r=await apiPost('/api/donations/reset',{});
-    if(r&&r.ok){ if(btn) btn.textContent='🗑 '+ (r.removed||0)+' weg'; }
+    if(r&&r.ok){ if(btn) btn.textContent='🗑 '+ (r.removed||0)+T(' weg'); }
     else if(btn){ btn.textContent='🗑 Fehler'; }
   }catch(e){ if(btn) btn.textContent='🗑 Fehler'; }
   donLoad();
@@ -7814,8 +7814,8 @@ async function twoauthLoad(){
   if(trnote){
     const q={config:'im Dashboard gesetzt',env:'aus der .env (TWITCH_REDIRECT_URI)',fallback:'automatisch aus der Adresse dieses Dashboards'}[d.redirect_source]||'—';
     if(d.redirect_public===false){ trnote.style.color='var(--amber)';
-      trnote.textContent='Quelle: '+q+' — zeigt auf localhost. Twitch erreicht das nur über einen Tunnel; besser die öffentliche Adresse eintragen.'; }
-    else { trnote.style.color=''; trnote.textContent='Quelle: '+q+'.'; }
+      trnote.textContent=T('Quelle: ')+q+' — zeigt auf localhost. Twitch erreicht das nur über einen Tunnel; besser die öffentliche Adresse eintragen.'; }
+    else { trnote.style.color=''; trnote.textContent=T('Quelle: ')+q+'.'; }
   }
   const tunnelBox=$('#twoauth_tunnel');
   if(tunnelBox) tunnelBox.style.display = d.needs_tunnel ? 'block' : 'none';
@@ -7868,8 +7868,8 @@ async function ytoauthLoad(){
   if(rnote){
     const q={config:'im Dashboard gesetzt',env:'aus der .env (YOUTUBE_REDIRECT_URI)',fallback:'automatisch aus der Adresse dieses Dashboards'}[d.redirect_source]||'—';
     if(d.redirect_public===false){ rnote.style.color='var(--amber)';
-      rnote.textContent='Quelle: '+q+' — zeigt auf localhost. Google erreicht das nur über einen Tunnel; besser die öffentliche Adresse eintragen.'; }
-    else { rnote.style.color=''; rnote.textContent='Quelle: '+q+'.'; }
+      rnote.textContent=T('Quelle: ')+q+' — zeigt auf localhost. Google erreicht das nur über einen Tunnel; besser die öffentliche Adresse eintragen.'; }
+    else { rnote.style.color=''; rnote.textContent=T('Quelle: ')+q+'.'; }
   }
   const tunnelBox=$('#ytoauth_tunnel');
   if(tunnelBox) tunnelBox.style.display = d.needs_tunnel ? 'block' : 'none';
@@ -7955,7 +7955,7 @@ async function driftLoad(){
   if(!d||!d.ok){ if(box) box.innerHTML='<div class="faint">nicht erreichbar</div>'; return; }
   const n=d.drift_count||0;
   const tag=$('#drift_tag');
-  tag.textContent=n+' von '+(d.total_env_keys||0)+' Keys';
+  tag.textContent=n+T(' von ')+(d.total_env_keys||0)+T(' Keys');
   tag.style.color = d.watched_drift>0 ? 'var(--amber)' : 'var(--neon)';
   if(!n){ box.innerHTML='<div class="faint" style="font-size:11px">keine relevanten Abweichungen — .env und Code sind sich einig</div>'; return; }
   box.innerHTML='<table style="width:100%;font-size:11px"><thead><tr>'
@@ -7979,7 +7979,7 @@ async function discLoad(){
   pe.textContent=ps+'%';
   pe.style.color = ps>40?'var(--red)' : ps>15?'var(--amber)' : 'var(--neon)';
   $('#disc_med').textContent=fmtDur(d.duration?.median_s||0);
-  $('#disc_share').textContent=(d.total||0)+' Versuche / '+(d.window_days||7)+'d';
+  $('#disc_share').textContent=(d.total||0)+T(' Versuche / ')+(d.window_days||7)+'d';
   if(!d.total){ box.innerHTML='<div class="faint" style="font-size:11px">keine Aufnahmeversuche im Zeitraum</div>'; return; }
 
   let h='';
@@ -8033,7 +8033,7 @@ async function dbxLoad(){
   const d=await apiGet('/api/db/summary');
   const bk=$('#dbx_backend');
   if(!d||!d.ok){ if(bk) bk.textContent='nicht erreichbar'; return; }
-  if(bk) bk.textContent='backend: '+d.backend;
+  if(bk) bk.textContent=T('backend: ')+d.backend;
   const t=d.tables||{};
   const names=Object.keys(t);
   $('#dbx_tables').textContent=names.length;
@@ -8090,13 +8090,13 @@ async function dbxImport(dry){
 async function slLoad(){
   const d=await apiGet('/api/restream/chatfeed'); if(!d||!d.ok) return;
   _slMode=d.layout||'studio';
-  const tag=$('#sl_tag'); if(tag) tag.textContent=d.overlay_enabled?('LAYOUT: '+_slMode.toUpperCase()):'OVERLAY AUS (RESTREAM_OVERLAY=0)';
+  const tag=$('#sl_tag'); if(tag) tag.textContent=d.overlay_enabled?(T('LAYOUT: ')+_slMode.toUpperCase()):'OVERLAY AUS (RESTREAM_OVERLAY=0)';
   ['studio','burnin'].forEach(m=>{const b=$('#sl_btn_'+m); if(b) b.classList.toggle('cyan',_slMode===m);});
   const src=$('#sl_src'); if(src) src.textContent=d.active?('@'+d.active):'— KEINE QUELLE —';
   if(d.brand&&$('#sl_brand')) $('#sl_brand').textContent=d.brand;
   const cap=$('#sl_cap');
   if(cap){const lg=[]; if(d.sources?.tiktok)lg.push('▸ TIKTOK'); if(d.sources?.kick)lg.push('● KICK');
-    cap.textContent='LIVE CHAT'+(lg.length?('  '+lg.join(' · ')):'');}
+    cap.textContent=T('LIVE CHAT')+(lg.length?('  '+lg.join(' · ')):'');}
   const ic={tiktok:'▸',kick:'●',event:'◆',twitch:'✦',youtube:'▶'};
   const items=Array.isArray(d.items)?d.items:[];
   const mini=$('#sl_chat_mini');
@@ -8111,7 +8111,7 @@ async function slLoad(){
       : '<div class="empty">noch keine Nachrichten — TikTok kommt über den Live-React-Worker, Kick über AZRAEL SENTINEL</div>';
     if(atBottom) feed.scrollTop=feed.scrollHeight;
   }
-  const meta=$('#sl_feed_meta'); if(meta) meta.textContent=items.length?('· '+items.length+' msgs'):'';
+  const meta=$('#sl_feed_meta'); if(meta) meta.textContent=items.length?('· '+items.length+T(' msgs')):'';
   // F100: Regie-HUD — Stimmung, Energie, Stammchatter, Highlights
   const dh=$('#sl_director'), dir=d.director;
   if(dh){
@@ -8155,7 +8155,7 @@ async function slLoad(){
   }
   const ov=await apiGet('/api/overlay/state');
   if(ov){
-    if($('#sl_title')) $('#sl_title').textContent='[ LIVE ]  '+(ov.title||'NIGHTCRAWLER');
+    if($('#sl_title')) $('#sl_title').textContent=T('[ LIVE ]  ')+(ov.title||'NIGHTCRAWLER');
     const g=$('#sl_goal');
     if(g){const go=ov.goal||{};
       g.textContent=(go.target>0)?((go.label||'Ziel')+'  '+(go.current??0)+' / '+go.target):'';}
@@ -8247,15 +8247,15 @@ async function azReact(){
   if(out){ out.style.display='block'; out.textContent='AZRAEL überlegt…'; }
   try{
     const d=await apiPost('/api/azrael/react',{statement:s, push_chat:!!$('#az_pushchat')?.checked});
-    if(d&&d.ok){ if(out) out.textContent='▲ AZRAEL: '+d.reaction; }
-    else { if(out) out.textContent='Fehler: '+((d&&d.error)||'unbekannt')+' (LLM erreichbar? Modell gesetzt?)'; }
-  }catch(e){ if(out) out.textContent='Fehler: '+e; }
+    if(d&&d.ok){ if(out) out.textContent=T('▲ AZRAEL: ')+d.reaction; }
+    else { if(out) out.textContent=T('Fehler: ')+((d&&d.error)||'unbekannt')+T(' (LLM erreichbar? Modell gesetzt?)'); }
+  }catch(e){ if(out) out.textContent=T('Fehler: ')+e; }
   finally{ if(btn){ btn.disabled=false; btn.textContent='▲ Reagieren'; } }
 }
 async function azOverlay(){
   const on=!!$('#az_overlay')?.checked;
   const d=await apiPost('/api/overlay/config',{azrael_show:on});
-  const t=$('#az_overlaytag'); if(t) t.textContent='Avatar: '+(on?'an':'aus');
+  const t=$('#az_overlaytag'); if(t) t.textContent=T('Avatar: ')+(on?'an':'aus');
   if(!(d&&d.ok)) toast('Overlay-Toggle fehlgeschlagen','err');
 }
 async function voiceCfg(){
@@ -8403,7 +8403,7 @@ async function chLoad(force){
   const d=await apiGet('/api/channels/status'+(force?'?refresh=1':''));
   const st=$('#kc_state');
   if(!d||!d.ok){
-    if(st) st.textContent=(d&&d.error)?('API: '+String(d.error).slice(0,40)):'nicht erreichbar';
+    if(st) st.textContent=(d&&d.error)?(T('API: ')+String(d.error).slice(0,40)):'nicht erreichbar';
     return;
   }
   const P=d.platforms||{};
@@ -8915,7 +8915,7 @@ async function loadCommunity(){
   }
   // F102: Daily-Streaks
   const st=$('#cm_streaks'), dt=$('#cm_daily_tag');
-  if(dt) dt.textContent=(d.daily_active??0)+' aktiv';
+  if(dt) dt.textContent=(d.daily_active??0)+T(' aktiv');
   if(st){
     if(!d.top_streaks||!d.top_streaks.length){ st.innerHTML='<div class="empty">Noch keine Streaks — /daily in Discord startet sie</div>'; }
     else st.innerHTML='<div class="tbl-wrap"><table><tbody>'+d.top_streaks.map((s,i)=>
@@ -9022,7 +9022,7 @@ async function buildAzraelInto(root){
 async function loadAgents(){
   const d=await apiGet('/api/azrael/agents'); const el=$('#ag_body'), tag=$('#ag_tag'); if(!el) return;
   if(!d||d.__neterr){ el.textContent='—'; return; }
-  if(tag) tag.textContent=(d.agents?d.agents.length:0)+' Agenten · '+esc(d.model||'');
+  if(tag) tag.textContent=(d.agents?d.agents.length:0)+T(' Agenten · ')+esc(d.model||'');
   if(!d.agents||!d.agents.length){ el.innerHTML='<div class="empty">—</div>'; return; }
   el.innerHTML=d.agents.map(a=>`<div style="padding:9px 0;border-bottom:1px solid var(--border)">
     <div style="display:flex;justify-content:space-between;align-items:center">
@@ -9034,7 +9034,7 @@ async function loadAgents(){
 async function loadMemories(){
   const d=await apiGet('/api/azrael/memories'); const el=$('#mem_body'), c=$('#mem_count'); if(!el) return;
   if(!d||d.__neterr){ el.textContent='—'; return; }
-  if(c) c.textContent=(d.total||0)+' Erinnerungen';
+  if(c) c.textContent=(d.total||0)+T(' Erinnerungen');
   if(!d.memories||!d.memories.length){ el.innerHTML='<div class="empty">Noch keine Erinnerungen — entstehen nach Stream-Ende</div>'; return; }
   el.innerHTML=d.memories.map(m=>`<div style="padding:8px 0;border-bottom:1px solid var(--border)">
     <div style="display:flex;justify-content:space-between;gap:8px"><b style="color:var(--cyan)">@${esc(m.username)}</b><span class="mono faint" style="font-size:10px">${esc(m.at)}</span></div>
@@ -9048,7 +9048,7 @@ async function loadAutomation(){
      Browser gemessen: "Cannot read properties of undefined (reading 'map')". */
   if(!Array.isArray(d.items)){ el.innerHTML='<div class="empty">Keine Automationen gemeldet.</div>'; return; }
   const m=$('#ap_master');
-  if(m){ m.textContent='AUTOPILOT: '+(d.autopilot?'AN':'AUS');
+  if(m){ m.textContent=T('AUTOPILOT: ')+(d.autopilot?'AN':'AUS');
     m.style.borderColor=d.autopilot?'var(--neon)':'var(--amber)'; m.style.color=d.autopilot?'var(--neon)':'var(--amber)'; }
   el.innerHTML='<div class="tbl-wrap"><table><tbody>'+d.items.map(it=>{
     const cls=it.on?'var(--neon)':'var(--text-faint)';
@@ -9351,7 +9351,7 @@ async function loadArchive(reset){
   const el=$('#arc_list'), more=$('#arc_more'); if(!el) return;
   if(!d||d.__neterr){ el.innerHTML='<div class="empty">Archiv nicht erreichbar</div>'; return; }
   if(d.configured===false){ el.innerHTML='<div class="empty">Kein Archiv konfiguriert (ARCHIVE_DIR)</div>'; if(more)more.innerHTML=''; return; }
-  const cnt=$('#arc_count'); if(cnt) cnt.textContent=(d.total_filtered??d.total??0)+' Dateien';
+  const cnt=$('#arc_count'); if(cnt) cnt.textContent=(d.total_filtered??d.total??0)+T(' Dateien');
   const dk=$('#arc_disk'); if(dk&&d.disk) dk.textContent=`Speicher: ${d.disk.used_gb} / ${d.disk.total_gb} GB belegt (${d.disk.percent}%) · ${d.disk.free_gb} GB frei`;
   const rows=d.entries||[];
   const bigOnly=window._arcBigOnly;
@@ -9398,7 +9398,7 @@ async function arcCheck(){
   const d=await apiGet('/api/archive/check');
   if(!d||!d.ok){ if(out) out.textContent=(d&&d.error)||'Check fehlgeschlagen'; return; }
   const miss=d.missing_count!=null?d.missing_count:'?';
-  if(out) out.textContent='Geprüft: '+(d.checked!=null?d.checked:'?')+' · fehlend: '+miss+
+  if(out) out.textContent=T('Geprüft: ')+(d.checked!=null?d.checked:'?')+T(' · fehlend: ')+miss+
     (miss? ' (Einträge ohne Datei)':'');
   if(miss) loadArchive(true);
 }
@@ -9416,8 +9416,8 @@ async function arcBulkDelete(){
 }
 async function loadWall(){
   const d=await apiGet('/api/streamers/wall'); if(!d||d.__neterr) return;
-  $('#wall_live').textContent=(d.live??0)+' live';
-  $('#wall_total').textContent=(d.total??0)+' gesamt';
+  $('#wall_live').textContent=(d.live??0)+T(' live');
+  $('#wall_total').textContent=(d.total??0)+T(' gesamt');
   const g=$('#wall_grid');
   if(!d.tiles||!d.tiles.length){g.innerHTML='<div class="empty">Noch kein Streamer aufgenommen — Namen oben eintragen und „+ TRACKEN“ drücken.</div>';return;}
   g.innerHTML=d.tiles.map(t=>{
@@ -9497,7 +9497,7 @@ async function trkBulkAdd(){
   const d=await apiPost('/api/trackings/bulk', group_id?{group_id, text}:{text});
   if(!d||!d.ok){ out.innerHTML='<div class="kc-row sev-high"><div class="kc-t">'+esc((d&&d.error)||'Fehler')+'</div></div>'; return; }
   const a=(d.added||[]).length, dup=(d.duplicates||[]).length, inv=(d.invalid||[]).length;
-  out.innerHTML='<div class="kc-row sev-info"><div><div class="kc-t">'+a+' hinzugefügt · '+dup+' Duplikate · '+inv+' ungültig · Gruppe '+esc(String(d.group_id||'—'))+'</div>'+
+  out.innerHTML='<div class="kc-row sev-info"><div><div class="kc-t">'+a+T(' hinzugefügt · ')+dup+T(' Duplikate · ')+inv+T(' ungültig · Gruppe ')+esc(String(d.group_id||'—'))+'</div>'+
     (inv?'<div class="kc-d">ungültig: '+esc((d.invalid||[]).slice(0,10).join(', '))+'</div>':'')+'</div></div>';
   if(a){ t.value=''; if(typeof loadWall==='function') loadWall();
          try{ if(typeof loadOverview==='function') loadOverview(); }catch(e){} }
@@ -9635,7 +9635,7 @@ async function rtOrphans(){
   const d=await apiGet('/api/rec/orphans');
   if(!d||!d.ok){ box.textContent='Fehler'; return; }
   if(!d.count){ box.textContent='keine verwaisten Dateien'; return; }
-  box.innerHTML=d.count+' Dateien · '+rtMb(d.total_mb)+
+  box.innerHTML=d.count+T(' Dateien · ')+rtMb(d.total_mb)+
     ' <button class="btn sm" onclick="rtOrphansClean()" style="margin-left:4px">löschen</button>';
 }
 async function rtOrphansClean(){
@@ -9650,7 +9650,7 @@ async function rtCompress(){
   box.textContent='… scan';
   const d=await apiGet('/api/rec/compress-candidates');
   if(!d||!d.ok){ box.textContent='Fehler'; return; }
-  box.textContent=d.count+' Kandidaten · ~'+rtMb(d.est_total_savings_mb)+' Ersparnis';
+  box.textContent=d.count+T(' Kandidaten · ~')+rtMb(d.est_total_savings_mb)+T(' Ersparnis');
 }
 async function rtDedup(){
   const box=$('#rt_dedup');
@@ -9659,7 +9659,7 @@ async function rtDedup(){
   const d=await apiPost('/api/recordings/dedup-scan',{});
   if(!d||d.ok===false){ box.textContent='Fehler'; return; }
   const groups=(d.groups||d.duplicate_groups||[]);
-  box.textContent=(groups.length||d.dup_groups||0)+' Duplikat-Gruppen'+(d.computed!=null?(' · '+d.computed+' neu gefingerprinted'):'');
+  box.textContent=(groups.length||d.dup_groups||0)+T(' Duplikat-Gruppen')+(d.computed!=null?(' · '+d.computed+T(' neu gefingerprinted')):'');
 }
 function rtRetRules(){
   return {
@@ -9921,7 +9921,7 @@ async function betriebLoad(){
         +'ob ffmpeg läuft — nicht, ob das Bild ankommt.</div>';
     } else {
       const st = d.status||{}, rids = Object.keys(st);
-      vt.textContent = rids.length ? (rids.length+' aktiv') : 'kein Restream';
+      vt.textContent = rids.length ? (rids.length+T(' aktiv')) : 'kein Restream';
       vt.style.color = rids.length ? 'var(--ok)' : 'var(--text-faint)';
       let html='';
       if(!rids.length){
@@ -10065,7 +10065,7 @@ async function faLoad(){
     d.platforms.forEach(p=>{ const o=document.createElement('option'); o.value=o.textContent=p; ps.appendChild(o); });
   }
   const s=d.summary||{}, t=s.total||{}, ch=s.chain||{};
-  if(tag){ tag.textContent=(s.entries||0)+' Buchungen';
+  if(tag){ tag.textContent=(s.entries||0)+T(' Buchungen');
            tag.style.color=(s.entries?'var(--neon)':'var(--text-faint)'); }
   let html='<div class="g2" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-bottom:14px">';
   html+='<div><div class="faint" style="font-size:10.5px;text-transform:uppercase;letter-spacing:.1em">Brutto</div>'
@@ -10199,7 +10199,7 @@ async function loadOps6Timeline(){
   const d=await apiGet('/api/stats/timeline?days=14');
   const t=(d&&d.timeline)||[];
   if(!t.length){ box.innerHTML='<div class="faint" style="font-size:11px">Keine Daten.</div>'; return; }
-  box.innerHTML=in5Bars(t.map(x=>x.attempts), t.map(x=>x.date+': '+x.attempts+' Versuche · '+x.successes+' ok'),
+  box.innerHTML=in5Bars(t.map(x=>x.attempts), t.map(x=>x.date+': '+x.attempts+T(' Versuche · ')+x.successes+' ok'),
     (v,i)=>{const a=t[i].attempts,s=t[i].successes; const r=a?100*s/a:0; return a? (r>=80?'var(--ok)':r>=55?'var(--amber)':'var(--red)') : 'var(--text-faint)';});
 }
 async function loadOps6Outcomes(){
@@ -10366,7 +10366,7 @@ async function loadSendStatus(){
     box.innerHTML=rows;
     var cnt=(j&&j.count)||0;
     if(tag){
-      tag.textContent=cnt+'/3 sende-bereit';
+      tag.textContent=cnt+T('/3 sende-bereit');
       tag.style.color=(cnt>=3?'var(--neon)':(cnt>0?'var(--amber)':'var(--magenta)'));
     }
   }catch(e){ if(box) box.innerHTML='<div class="empty">Sende-Status nicht verfügbar.</div>'; }
@@ -10420,8 +10420,8 @@ async function loadResourceHistory(){
     if(j&&j.fd_trend&&j.fd_trend.trend) leaks.push('fds +'+Math.round(j.fd_trend.rel_growth*100)+'%');
     if(j&&j.rss_trend&&j.rss_trend.trend) leaks.push('RSS +'+Math.round(j.rss_trend.rel_growth*100)+'%');
     if(tag){
-      if(leaks.length){ tag.textContent='⚠ schleichend: '+leaks.join(', '); tag.style.color='var(--magenta)'; }
-      else if(pts.length>=2){ var L=pts[pts.length-1]; tag.textContent='stabil · '+(L.rss_mb!=null?L.rss_mb+'MB':'?')+' · '+(L.fds!=null?L.fds+' fds':'?'); tag.style.color=''; }
+      if(leaks.length){ tag.textContent=T('⚠ schleichend: ')+leaks.join(', '); tag.style.color='var(--magenta)'; }
+      else if(pts.length>=2){ var L=pts[pts.length-1]; tag.textContent=T('stabil · ')+(L.rss_mb!=null?L.rss_mb+'MB':'?')+' · '+(L.fds!=null?L.fds+T(' fds'):'?'); tag.style.color=''; }
       else { tag.textContent='sammelt…'; tag.style.color=''; }
     }
   }catch(e){ if(box) box.innerHTML='<div class="empty">Verlauf nicht verfügbar.</div>'; }
@@ -10431,7 +10431,7 @@ async function loadRestreamHealth(){
   const box=$('#rh_body'), tag=$('#rh_tag'); if(!box) return;
   const d=await apiGet('/api/restream/health');
   const st=(d&&d.streams)||[];
-  if(tag) tag.textContent=st.length?st.length+' aktiv':'—';
+  if(tag) tag.textContent=st.length?st.length+T(' aktiv'):'—';
   if(!st.length){ box.innerHTML='<div class="empty">Kein aktiver Restream.</div>'; return; }
   const fmtUp=s=>s==null?'—':(s<3600?Math.floor(s/60)+'m':(s/3600).toFixed(1)+'h');
   box.innerHTML=st.map(s=>{
@@ -10596,7 +10596,7 @@ function _nwRender(items){ if(!items||!items.length) return '<span class="faint"
     +(bl.length?'<ul class="nw-b" style="margin:5px 0 0 16px">'+bl.map(function(x){return '<li>'+esc(x)+'</li>';}).join('')+'</ul>':'')
     +'</div>'; }).join(''); }
 async function nwPreview(){ const o=$('#nw_out'); if(o)o.innerHTML='<span class="faint">lade…</span>'; const d=await apiGet('/api/news/preview'); if(!o)return; if(!d||!d.ok){o.innerHTML='<span style="color:var(--red)">Vorschau fehlgeschlagen.</span>';return;} o.innerHTML='<div class="faint" style="margin-bottom:4px">Vorschau (statische Fakten — beim echten Generieren formuliert die KI):</div>'+_nwRender(d.items); }
-async function nwGenerate(){ if(!confirm(T('Jetzt News generieren und auf der Website veröffentlichen?')))return; const o=$('#nw_out'); if(o)o.innerHTML='<span class="faint">generiere…</span>'; const d=await apiPost('/api/news/generate-now',{}); if(!o)return; if(!d){o.innerHTML='<span style="color:var(--red)">keine Antwort</span>';return;} if(!d.ok){o.innerHTML='<span style="color:var(--amber)">Fehler: '+esc(d.error||'—')+'</span>';return;} o.innerHTML='<span style="color:var(--ok)">✓ veröffentlicht</span> <span class="faint">'+(d.items||0)+' News auf der Website ('+(d.new||0)+' neu)</span>'; toast('News veröffentlicht'); loadNews(); }
+async function nwGenerate(){ if(!confirm(T('Jetzt News generieren und auf der Website veröffentlichen?')))return; const o=$('#nw_out'); if(o)o.innerHTML='<span class="faint">generiere…</span>'; const d=await apiPost('/api/news/generate-now',{}); if(!o)return; if(!d){o.innerHTML='<span style="color:var(--red)">keine Antwort</span>';return;} if(!d.ok){o.innerHTML='<span style="color:var(--amber)">Fehler: '+esc(d.error||'—')+'</span>';return;} o.innerHTML='<span style="color:var(--ok)">'+T('✓ veröffentlicht')+'</span> <span class="faint">'+(d.items||0)+T(' News auf der Website (')+(d.new||0)+T(' neu)')+'</span>'; toast('News veröffentlicht'); loadNews(); }
 
 async function loadKickOAuth(){
   const box=$('#ko_body'), tag=$('#ko_tag'); if(!box) return;
@@ -10701,7 +10701,7 @@ async function loadHighlights(){
   const box=$('#hl_body'), tag=$('#hl_tag'); if(!box) return;
   const d=await apiGet('/api/highlights');
   if(!d||!d.ok){ if(tag)tag.textContent='—'; box.innerHTML='<div class="empty">Radar nicht erreichbar.</div>'; return; }
-  if(tag) tag.textContent=(d.enabled?(d.count+' Momente'):'aus');
+  if(tag) tag.textContent=(d.enabled?(d.count+T(' Momente')):'aus');
   let h='<div class="hl-live"><span class="hl-c">Chat jetzt <b>'+d.rate+'</b>/min</span>'
       + '<span class="hl-c">Ruhepegel <b>'+d.base+'</b>/min</span>'
       + '<span class="hl-c">Schwelle <b>'+d.min_score+'</b></span></div>';
@@ -10732,7 +10732,7 @@ async function loadCohost(){
   const d=await apiGet('/api/cohost');
   if(!d||!d.ok){ if(tag)tag.textContent='—'; box.innerHTML='<div class="empty">Co-Host nicht erreichbar.</div>'; return; }
   const kinds=d.kinds||{};
-  if(tag) tag.textContent = d.enabled ? (d.in_window+' /15min') : 'aus';
+  if(tag) tag.textContent = d.enabled ? (d.in_window+T(' /15min')) : 'aus';
   let h='<div class="faint" style="font-size:11px;margin-bottom:10px">AZRAEL kommentiert von sich aus — reagiert auf Highlight-Ausschläge im Chat und füllt Funkstille, auf allen verbundenen Plattformen. Eine gemeinsame Bremse verhindert Chat-Flut.</div>';
   h+='<div class="au-row" style="border:0;padding-top:0"><label class="chk"><input type="checkbox" id="co_on" '+(d.enabled?'checked':'')+' onchange="cohostSave()"> Co-Host aktiv</label></div>';
   h+='<div class="au-row"><label class="chk"><input type="checkbox" id="co_hl" '+((kinds.highlight&&kinds.highlight.on!==false)?'checked':'')+' onchange="cohostSave()"> Auf Highlight-Momente reagieren</label></div>';
@@ -10757,7 +10757,7 @@ async function loadAudioCfg(){
   const box=$('#au_body'), tag=$('#au_tag'); if(!box) return;
   const d=await apiGet('/api/audio/config');
   if(!d||!d.ok){ if(tag)tag.textContent='—'; box.innerHTML='<div class="empty">Audio-Einstellungen nicht erreichbar.</div>'; return; }
-  if(tag) tag.textContent=(d.tone?'Ton an':'Ton aus')+' · '+d.duck_percent+'% Ducking';
+  if(tag) tag.textContent=(d.tone?'Ton an':'Ton aus')+' · '+d.duck_percent+T('% Ducking');
   let h='';
   h+='<div class="au-row"><label class="chk"><input type="checkbox" id="au_tone" '+(d.tone?'checked':'')+' onchange="auSave()"> Signalton vor der Stimme</label></div>';
   h+='<div class="au-row"><span class="au-l">Tonhöhe</span><input type="range" id="au_freq" min="200" max="2000" step="10" value="'+d.freq+'" oninput="auEcho()" onchange="auSave()"><span class="au-v" id="au_freq_v">'+Math.round(d.freq)+' Hz</span></div>';
@@ -10785,7 +10785,7 @@ async function auSave(){
     duck: Math.max(0.1, 1 - (pct/100)) };
   const r=await apiPost('/api/audio/config', body);
   const tag=$('#au_tag');
-  if(r&&r.ok&&tag) tag.textContent=(r.tone?'Ton an':'Ton aus')+' · '+Math.round((1-r.duck)*100)+'% Ducking';
+  if(r&&r.ok&&tag) tag.textContent=(r.tone?'Ton an':'Ton aus')+' · '+Math.round((1-r.duck)*100)+T('% Ducking');
   else toast('Speichern fehlgeschlagen');
 }
 async function auTest(){
@@ -11016,7 +11016,7 @@ async function loadIn5Watch(){
   if(!box) return;
   const d=await apiGet('/api/streamer/watchlist');
   if(!d||!d.ok){ box.className=''; box.innerHTML='<div class="empty">Nicht erreichbar.</div>'; return; }
-  if(n) n.textContent=(d.count||0)+' Streamer';
+  if(n) n.textContent=(d.count||0)+T(' Streamer');
   const w=d.watchlist||[];
   if(!w.length){ box.className=''; box.innerHTML='<div class="empty">Keine Trackings.</div>'; return; }
   let t='<div class="tbl-wrap"><table><thead><tr><th>Streamer</th><th>Priorität</th><th>Health</th><th>OK-Rate</th></tr></thead><tbody>';
@@ -11112,7 +11112,7 @@ async function loadIn5Pulse(){
   const p=(d&&d.pulse)||[];
   if(!p.length){ box.innerHTML='<div class="faint" style="font-size:11px">Keine Daten.</div>'; return; }
   const started=p.reduce((a,b)=>a+(b.started||0),0), ok=p.reduce((a,b)=>a+(b.ok||0),0), fail=p.reduce((a,b)=>a+(b.fail||0),0);
-  box.innerHTML=in5Bars(p.map(x=>x.started), p.map(x=>x.minute_ago+' min her'), ()=>'color-mix(in srgb,var(--cyan) 60%,transparent)')+
+  box.innerHTML=in5Bars(p.map(x=>x.started), p.map(x=>x.minute_ago+T(' min her')), ()=>'color-mix(in srgb,var(--cyan) 60%,transparent)')+
     '<div class="faint" style="font-size:11px;margin-top:6px">'+started+' gestartet · <span style="color:var(--ok)">'+ok+' ok</span> · <span style="color:var(--red)">'+fail+' Fehler</span> (60 min)</div>';
 }
 async function loadIn5Sessions(){
@@ -11312,7 +11312,7 @@ async function loadAboStatus(){
   }
   const c=d.counts||{};
   if(tag){
-    tag.textContent = d.enabled ? (c.abo+' live') : 'aus';
+    tag.textContent = d.enabled ? (c.abo+T(' live')) : 'aus';
     tag.style.color = d.enabled ? (c.gated? 'var(--amber)':'var(--ok)') : 'var(--text-faint)';
   }
   st.innerHTML =
@@ -11338,7 +11338,7 @@ async function loadRecTimeline(){
   const box=$('#rtl_body'), tag=$('#rtl_tag'); if(!box) return;
   const d=await apiGet('/api/recordings/list?limit=300');
   const recs=(Array.isArray(d)?d:[]).filter(r=>r&&r.created_at);
-  if(tag) tag.textContent='letzte '+recs.length+' Sessions';
+  if(tag) tag.textContent=T('letzte ')+recs.length+T(' Sessions');
   const parse=s=>{ const t=Date.parse(String(s).replace(' ','T')); return isNaN(t)?null:t/1000; };
   const items=recs.map(r=>{ const st=parse(r.created_at); const dur=(r.duration_secs||0);
     return st?{u:r.username||'?', st:st, en:st+(dur>0?dur:60), dur:dur, mb:r.size_mb||0}:null; }).filter(Boolean);
@@ -11563,7 +11563,7 @@ async function updCheck(manual){
     if(tag){ tag.textContent='nicht erreichbar'; tag.style.color='var(--amber)'; }
     /* Ehrlich benennen, was los ist — der Bot laeuft weiter, nur die
        Pruefung nicht. Ein blosses "Fehler" liesse offen, ob der Dienst haengt. */
-    if(msg) msg.textContent='Repo nicht erreichbar: '+(d.error||'unbekannt')
+    if(msg) msg.textContent=T('Repo nicht erreichbar: ')+(d.error||'unbekannt')
       +' — der Bot läuft davon unberührt weiter.';
   } else {
     var r=d.remote||{};
@@ -11728,7 +11728,7 @@ var ncRecBars3D=(function(){
     bars=arr.map(function(x,idx){return {day:(x&&x.day)||'', val:(x&&x.count)||0,
       xi:(idx/(arr.length-1||1))*2-1};});
     var tag=document.getElementById('rb_tag');
-    if(tag)tag.textContent=((d&&d.total)||0)+' Aufnahmen · '+arr.length+' Tage';
+    if(tag)tag.textContent=((d&&d.total)||0)+T(' Aufnahmen · ')+arr.length+T(' Tage');
   }
   function draw(){
     if(CURRENT_VIEW!==OWNVIEW||document.hidden||!cv){raf=null;return;}
@@ -11850,7 +11850,7 @@ async function loadOverview(){
               getrackten Handles (s.creators); unique_users nur als Rueckfall
               fuer eine aeltere Serverfassung. */
            set('ov_usr',(s.creators!=null?s.creators:(s.unique_users||0)));
-           var tag=document.getElementById('ov_cc_tag'); if(tag) tag.textContent=(s.live_now||0)+' live · '+(s.active_trackings||0)+' getrackt'; }
+           var tag=document.getElementById('ov_cc_tag'); if(tag) tag.textContent=(s.live_now||0)+T(' live · ')+(s.active_trackings||0)+T(' getrackt'); }
   }catch(e){}
   try{
     // v4.0-W109: las frueher hs.overall — das Feld liefert /api/health-score
@@ -11917,7 +11917,7 @@ try{ if(CURRENT_VIEW==='overview') loadOverview(); }catch(e){}
 async function archStatus(){
   var t=document.getElementById('arch_tag'); if(!t) return;
   try{ var s=await apiGet('/api/archive/status');
-    if(s&&s.ok){ t.textContent=(s.transcribed||0)+' transkribiert · '+(s.indexed||0)+' indiziert'+(s.indexer_enabled?'':' · Indexer aus'); }
+    if(s&&s.ok){ t.textContent=(s.transcribed||0)+T(' transkribiert · ')+(s.indexed||0)+T(' indiziert')+(s.indexer_enabled?'':' · Indexer aus'); }
     else t.textContent='—';
   }catch(e){ t.textContent='—'; }
 }
