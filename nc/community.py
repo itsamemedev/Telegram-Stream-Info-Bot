@@ -119,3 +119,26 @@ def live_ping(streamer, platforms=None, title=None):
         line += f"\n> {title}"
     line += "\n\U0001F449 Kommt vorbei und sagt Hallo!"
     return line
+
+
+# v4.1-W26: die drei Schalter liegen jetzt beim Modul. Als Funktionen und
+# nicht als Konstanten: .env wird teils erst nach den ersten Imports geladen
+# (CLAUDE.md). Vorgabe ist ueberall AUS — jede dieser Funktionen schreibt in
+# einen fremden Kanal, und das faengt nicht ungefragt an.
+
+def _flag(name) -> bool:
+    import os
+    return (os.getenv(name, "0") or "0").strip().lower() in (
+        "1", "true", "yes", "on", "y")
+
+
+def returning_enabled() -> bool:
+    return _flag("COMMUNITY_RETURNING_ENABLED")
+
+
+def live_ping_enabled() -> bool:
+    return _flag("COMMUNITY_LIVE_PING_ENABLED")
+
+
+def highlight_share_enabled() -> bool:
+    return _flag("COMMUNITY_HIGHLIGHT_SHARE_ENABLED")

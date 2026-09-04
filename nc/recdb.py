@@ -196,3 +196,13 @@ def get_trash_recordings(limit: int = 50) -> list:
                 (limit,)).fetchall()
     except Exception:
         return []
+
+
+def get_all_checks(limit=100, offset=0):
+    """v4.1-W26: aus bot.py geloest. Reiner Datenzugriff auf die
+       TikTok-Pruefungen — die Route unter /api/checks war der einzige
+       Aufrufer, und ein Blueprint mit eigenem SELECT ist ein Blueprint mit
+       Datenschicht."""
+    with db_conn() as conn:
+        return conn.execute("SELECT * FROM tiktok_checks ORDER BY id DESC LIMIT ? OFFSET ?",
+                            (limit, offset)).fetchall()

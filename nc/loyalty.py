@@ -127,3 +127,16 @@ def status():
             "ranks": [{"at": t, "name": nm} for t, nm in _CFG["ranks"]],
             "chat_points": _CFG["chat_points"],
             "return_points": _CFG["return_points"]}
+
+
+def enabled() -> bool:
+    """v4.1-W26: der Schalter liegt jetzt beim Modul, nicht im Monolithen.
+
+    Als Funktion und nicht als Konstante: .env wird teils erst nach den ersten
+    Imports geladen (CLAUDE.md), und der Betreiber schaltet das im Betrieb um.
+    Vorgabe ist AUS — ein Punktesystem, das ungefragt anfaengt zu zaehlen,
+    will niemand.
+    """
+    import os
+    return (os.getenv("LOYALTY_ENABLED", "0") or "0").strip().lower() in (
+        "1", "true", "yes", "on", "y")

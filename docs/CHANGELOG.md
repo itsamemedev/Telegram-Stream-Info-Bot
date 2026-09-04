@@ -11,6 +11,88 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Behoben — `_living_title_loop` starb bei jedem Lauf (v4.1 W26)
+
+Aus dem Betriebslog vom 2026-09-03, neunmal:
+
+```
+TypeError: _claude_chat_sync_metered() got an unexpected keyword argument 'on_error'
+```
+
+Der Monolith **ersetzt** `nc.claude.chat_sync` durch eine Hülle, die die Token
+zählt. Diese Hülle zählte ihre Parameter einzeln auf. Als v4.1-W13 `on_error`
+zu `chat_sync` hinzufügte, wurde sie nicht mitgezogen — und weil sie die
+Funktion im Modul ersetzt, brach jeder Aufruf mit dem neuen Parameter. Im Log
+stand nur „Schleife gestört"; der Grund kam erst aus dem Traceback.
+
+Beide Zähl-Hüllen (Claude und freeai) reichen jetzt mit `**weitere` alles
+durch, was sie nicht selbst brauchen. Die ersten Parameter bleiben ausdrücklich
+einzeln stehen: drei Aufrufstellen übergeben `model` und `timeout`
+**positionell**, und ein Zusammenfassen hätte das Modell in den falschen
+Parameter geschoben — ein stiller Fehler statt eines lauten.
+
+Ein Vertrag vergleicht die Hüllen jetzt gegen die echte Signatur der Module
+(`inspect.signature`) und prüft zusätzlich die Reihenfolge der
+Positions-Parameter. Gegenprobe gemacht: mit zurückgebauter Hülle meldet er
+genau den Fehler, der neunmal im Log stand.
+
+### Behoben — der Event-Loop stand bis zu 68 Sekunden (v4.1 W26)
+
+Aus demselben Log. Der Wächter meldete Blockaden von 30 bis 68 Sekunden; in
+dieser Zeit stand der ganze Bot: keine Live-Prüfungen, kein Telegram, und
+Discord trennte mit „heartbeat blocked".
+
+`_write_restream_overlay()` schreibt bis zu **vierzehn** Textdateien, jede mit
+`open` + `write` + `os.replace`. Das lief **synchron auf dem Event-Loop**, rund
+einmal pro Sekunde, aus dem `-progress`-Strom von ffmpeg heraus. Im
+Normalbetrieb kostet das Bruchteile einer Millisekunde. Lief daneben aber ein
+685-MB-Upload nach Telegram, schrieb ffmpeg Aufnahmen und lief der Restream,
+blockierte `os.replace` zehnfach Sekunden. **Neunzehn von fünfundzwanzig
+Stack-Abzügen des Wächters zeigten genau diesen Aufruf.**
+
+Der Sekundentakt läuft jetzt über `asyncio.to_thread`, mit einem
+**modul-globalen** Wächter (nicht als Objekt-Attribut, CLAUDE.md): dauert ein
+Schreibvorgang länger als der Takt, wird der nächste übersprungen statt
+aufgestaut. Der Anlauf-Aufruf bleibt synchron — die Dateien müssen existieren,
+bevor `drawtext` sie öffnet.
+
+Zwei weitere Abzüge zeigten `try_acquire_recording_lock` → `db_conn().__exit__`
+→ `close()`. Auch der läuft jetzt neben dem Loop. Der Anspruch bleibt atomar:
+er steckt im einen `UPDATE … WHERE recording=0`, nicht darin, dass der Aufruf
+auf dem Loop läuft.
+
+### Geändert — die lesenden Auskunfts-Routen als Blueprint (v4.1 W26)
+
+Fünfundzwanzig kleine Routen, die einzeln keinen eigenen Blueprint
+rechtfertigen: `/api/top`, `/api/pulse`, `/api/search`, `/api/version`,
+`/api/heatmap/*`, `/api/shield/stats`, `/api/loyalty/leaderboard` und weitere.
+
+Die Klammer ist streng und wird **geprüft**: sie antworten nur. Keine Route
+dort startet, stoppt, löscht oder speichert etwas. `/api/annotations` (DELETE)
+und `/api/highlights/config` (POST) liegen benachbart und sind deshalb
+ausdrücklich **nicht** mitgewandert — ein Vertrag lässt keinen schreibenden
+Pfad in diesen Blueprint. Ohne ihn wäre die Klammer eine Behauptung im
+Docstring statt einer Regel.
+
+Vier Funktionen sind nach `nc/` gelöst statt kopiert: `nc/suche.py`,
+`nc/outcomes.py` (mitsamt der Zuordnung Ausgang → Klartext), `nc/bandbreite.py`
+und die Speicher-Vorhersage in `nc/storage.py` — „wann ist die Platte voll"
+steht jetzt neben „wie viel Platz ist da". `get_all_checks` ging nach
+`nc/recdb.py`.
+
+Die Schalter `LOYALTY_ENABLED` und die drei `COMMUNITY_*` liegen jetzt bei
+ihren Fachmodulen statt im Monolithen — als Funktionen, nicht als Konstanten.
+
+Der Radar-Zustand der Highlights ist ein **Register** in `nc/highlights.py`
+geworden, kein Haken: das ist geteilter Zustand, keine Fähigkeit. Und Register
+statt Alias, weil `bot.py` den Namen mit `new_state()` neu bindet — ein Alias
+zeigte für immer auf das leere Anfangs-Dict, und das Panel meldete dauerhaft
+null Treffer, ohne Fehler und ohne Logzeile.
+
+`bot.py` fällt von 26.805 auf **26.425 Zeilen**, die eigenen Routen von 67 auf
+**42**. Katalog: 901 → **906** Einträge. Weiterhin **null neue
+Kontext-Einträge** — 24 von vertraglich 25 Plätzen.
+
 ### Behoben — der Adress-Cache wuchs bei Angriffswellen unbegrenzt (v4.1 W25)
 
 Für die Geodaten der Abwehr-Karte gab es eine Obergrenze von 5000 Einträgen
