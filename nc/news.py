@@ -110,9 +110,21 @@ def item_id(category: str, title: str, body: str, extra: str = "") -> str:
     """Inhalts-Id fuer den Dedup in merge(). `extra` nimmt ab v4.1 die neuen
        Felder auf: aendert sich NUR eine Kennzahl oder ein Detailpunkt, ist das
        eine neue Meldung — ohne `extra` waere sie als Duplikat verschwunden."""
-    # Starke Hashfunktion fuer Inhalts-Id (Dedup, kein Auth/Secret-Use).
-    # Format bleibt stabil (12 Hex-Zeichen), damit die umgebende Logik unveraendert bleibt.
-    h = hashlib.sha256(f"{category}|{title}|{body}|{extra}".encode("utf-8")).hexdigest()
+    # v4.1-W10 (CodeQL py/weak-sensitive-data-hashing): usedforsecurity=False
+    # sagt Bibliothek und Prüfwerkzeug, was hier wirklich passiert — eine
+    # Inhalts-Id für den Dedup, kein Schutz. Der WERT bleibt derselbe; ein
+    # Wechsel auf sha256 wuerde jede bereits veroeffentlichte Meldung einmalig
+    # zur Neu-Meldung machen, weil ihre Id sich aendert.
+    #
+    # v4.2-W2: GENAU DAS ist am 04.09. passiert. Ein automatischer Fix
+    # (#44, "Potential fix for code scanning alert no. 364") hat diesen
+    # Kommentar geloescht und sha256 eingesetzt — die Aenderung, vor der er
+    # warnt. Die Meldung ist damit formal erledigt und der Dedup kaputt:
+    # jede bereits veroeffentlichte Meldung waere einmal neu erschienen.
+    # Zurueckgesetzt. Der Vertrag test_v41_w10_codeql_befunde haelt den Wert
+    # fest; er hat den Fehler auch gefangen — nur erst nach dem Merge.
+    h = hashlib.new("sha1", f"{category}|{title}|{body}|{extra}".encode("utf-8"),
+                    usedforsecurity=False).hexdigest()
     return h[:12]
 
 

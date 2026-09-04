@@ -35,6 +35,14 @@ QUELLSPRACHE = "de"
 # Was ausgeliefert wird. Reihenfolge = Reihenfolge im Umschalter.
 SPRACHEN = ("de", "en")
 
+# v4.2-W2: Sprache -> Katalogdatei. Eine Erlaubnisliste, kein Namensmuster.
+# Vorher stand im open() ein "%s.json" % sprache; die Pruefung dagegen lag
+# acht Zeilen hoeher in einer anderen Funktion. Wer die open()-Zeile liest,
+# sah eine zusammengesetzte Zeichenkette und musste hoffen. Jetzt steht die
+# Erlaubnis dort, wo sie wirkt — und eine neue Sprache OHNE Eintrag faellt
+# mit KeyError auf, statt still eine Datei danebenzugreifen.
+KATALOGDATEI = {"de": "de.json", "en": "en.json"}
+
 # Anzeigenamen, jeweils in der eigenen Sprache — so findet sich auch jemand
 # zurecht, der die aktuelle Oberflaechensprache nicht liest.
 SPRACHNAMEN = {"de": "Deutsch", "en": "English"}
@@ -116,7 +124,13 @@ def katalog(sprache):
             return _kataloge[sprache]
     daten = {}
     try:
-        with open(os.path.join(_pfad(), "%s.json" % sprache), encoding="utf-8") as f:
+        # v4.2-W2: Nachschlagen statt Zusammensetzen. Die Pruefung oben
+        # ("sprache not in SPRACHEN") haelt, aber sie steht 8 Zeilen
+        # entfernt — wer hier liest, sieht nur eine Zeichenkette im
+        # Pfad. Ein Dict macht die Erlaubnisliste an der Stelle
+        # sichtbar, an der sie wirkt.
+        datei = KATALOGDATEI[sprache]
+        with open(os.path.join(_pfad(), datei), encoding="utf-8") as f:
             roh = json.load(f)
         # Format: {"strings": {"deutsch": "english", ...}}. Ein flaches Dict
         # wird ebenfalls angenommen, damit ein von Hand gebauter Katalog laeuft.

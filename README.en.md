@@ -199,7 +199,7 @@ flowchart TB
 
     BOT["bot.py<br/>monolith · 26,346 lines<br/>scraper · recorder · restream<br/>Flask dashboard · 37 own routes"]:::core
 
-    BOT -->|configure| NC["nc/ — 119 domain modules<br/>schema · OAuth · restream<br/>ledger · moderation · intel"]:::lib
+    BOT -->|configure| NC["nc/ — 120 domain modules<br/>schema · OAuth · restream<br/>ledger · moderation · intel"]:::lib
     NC --> RT["nc/routes/ — 35 blueprints<br/>323 further API routes"]:::lib
     BOT --> TPL["templates/<br/>dashboard · overlay · PWA"]:::lib
     BOT --> BR["brain_bridge.py"]:::lib
@@ -766,7 +766,7 @@ NIGHTCRAWLER/
 │   ├── semantic.py  scheduler.py  llm.py  agents.py  report.py
 │   └── test_m*.py            module tests
 │
-├── nc/                       119 domain modules (bot-free, configure() injection)
+├── nc/                       120 domain modules (bot-free, configure() injection)
 │   ├── schema.py             central database schema
 │   ├── i18n.py               translation catalogue and language detection
 │   ├── restream_*.py         targets, guard, test push, utils

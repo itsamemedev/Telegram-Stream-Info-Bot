@@ -239,6 +239,25 @@ def _js_textstuecke(literal):
     return raus
 
 
+# v4.2-W2: die Tag-Muster als benannte Konstanten. Vorher standen sie
+# woertlich an ihren Fundstellen — und der Vertrag, der sie absichert, musste
+# sie als Zeichenkette im Quelltext wiederfinden. Am 04.09. haben zwei
+# automatische CodeQL-Fixes (#43, #47) genau diese Zeichenketten umformuliert:
+# die Absicht blieb erhalten, der Vertrag kippte trotzdem. Ein Muster, das man
+# absichern will, gehoert an EINE Stelle und wird ueber sein VERHALTEN
+# geprueft, nicht ueber seine Schreibweise.
+#
+# Was sie leisten muessen (v4.1-W10, CodeQL py/bad-tag-filter): `</script>`
+# ist nicht die einzige Schreibweise, die ein Browser als Ende akzeptiert —
+# `</script >` und `</SCRIPT\n>` sind es auch. Ein Muster, das dort nicht
+# anhaelt, verschluckt den Rest der Datei; im Extraktor heisst das: alle
+# folgenden Textknoten fehlen im Katalog, ohne dass es auffaellt.
+RE_BLOECKE_WEG = re.compile(
+    r"<script\b.*?</script\s*>|<style\b.*?</style\s*>|<!--.*?-->",
+    re.S | re.I)
+RE_JS_INHALT = re.compile(r"<script\b[^>]*>(.*?)</script\s*>", re.S | re.I)
+
+
 def _html_strings(pfad):
     """Textknoten, uebersetzbare Attribute und deutschsprachige JS-Literale."""
     roh = io.open(os.path.join(ROOT, pfad), encoding="utf-8").read()
@@ -247,8 +266,7 @@ def _html_strings(pfad):
     # `</SCRIPT\n>` sind es auch. Der alte Ausdruck haette dort weitergesucht
     # und den Rest der Datei als Skript verschluckt; im Extraktor heisst das:
     # alle folgenden Textknoten fehlen im Katalog, ohne dass es auffaellt.
-    ohne_js = re.sub(r"<script\b.*?</script(?:\s+[^>]*)?>|<style\b.*?</style(?:\s+[^>]*)?>|<!--.*?-->", "",
-                     roh, flags=re.S | re.I)
+    ohne_js = RE_BLOECKE_WEG.sub("", roh)
     raus = set()
     # v4.1-W28: Ein Text ZWISCHEN zwei Tags ist per Definition Benutzertext.
     #
@@ -280,8 +298,7 @@ def _html_strings(pfad):
         a = _html.unescape(a)
         if _ist_uebersetzbar(a) and not _SKIP_ATTR_WERTE.match(a):
             raus.add(a.strip())
-    js = "\n".join(re.findall(r"<script\b[^>]*>(.*?)</script\b[^>]*>", roh,
-                              flags=re.S | re.I))
+    js = "\n".join(RE_JS_INHALT.findall(roh))
     # v4.1-W21: was ausdruecklich mit T("...") umschlossen ist, kommt IMMER in
     # den Katalog — ohne Heuristik. Notwendig fuer die nativen Dialoge
     # (confirm/prompt): die oeffnet der Browser selbst, der DOM-Beobachter
