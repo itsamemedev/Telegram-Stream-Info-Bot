@@ -7946,6 +7946,25 @@ async function ytoauthLoad(){
     if(tunnelBox && !viaEnv) tunnelBox.style.display='none';
     return;
   }
+  /* v4.2-W9: „abgelaufen“ und „nie verbunden“ sahen hier gleich aus — beides
+     nur ein graues Feld. Der Betreiber musste raten, ob er einfach neu
+     verbinden soll oder erst in der Google-Konsole nachsehen muss. Steht ein
+     Grund im Status, wird er genannt. */
+  if(d.expired){
+    tag.textContent=T('abgelaufen'); tag.style.color='var(--red,#d4553f)';
+    const wann = d.last_error_ts ? new Date(d.last_error_ts*1000).toLocaleString() : '';
+    box.innerHTML='<div style="display:flex;align-items:center;gap:10px;font-size:13px">'
+      +'<span style="color:var(--red,#d4553f);font-size:18px">✕</span>'
+      +'<span>'+T('Die Verbindung wurde von Google abgelehnt und deshalb gelöst.')+'</span></div>'
+      +'<div class="faint" style="font-size:11px;margin-top:8px">'+esc(d.last_error||'')
+      +(wann?' · '+esc(wann):'')+'</div>'
+      +'<div class="faint" style="font-size:11px;margin-top:8px;color:var(--amber)">'
+      +T('Wiederholt sich das wöchentlich, steht die Google-App noch auf „Testing“ — dort laufen Refresh-Tokens nach 7 Tagen ab. In der Google Cloud Console auf „In production“ setzen.')
+      +'</div>'
+      +'<div style="margin-top:12px"><button class="btn sm" onclick="ytoauthStart()">'
+      +T('Neu verbinden')+'</button></div>';
+    return;
+  }
   tag.textContent='nicht verbunden'; tag.style.color='var(--amber)';
   const miss=[];
   if(!d.has_client_id) miss.push('YOUTUBE_CLIENT_ID');

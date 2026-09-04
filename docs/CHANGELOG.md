@@ -11,6 +11,55 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Behoben — der gespeicherte OAuth-Zustand hat gelogen (v4.2 W9)
+
+Gemeldet als „YouTube-OAuth speichert Daten nicht, ständige Neuverbindung
+nötig". Es waren vier Fehler, und die beiden Hälften des Paares waren
+spiegelbildlich falsch.
+
+**YouTube: der tote Token überlebte den Neustart.** Lehnte Google den
+Refresh-Token ab (`invalid_grant`), leerte `access_token()` ihn **nur im
+Speicher**. Auf der Platte blieb er liegen. Beim nächsten Start las `_load()`
+ihn zurück, `status()` meldete `ready`, das Panel zeigte „verbunden" — und kein
+einziger Aufruf ging durch. Genau das Bild „muss ständig neu verbinden": der
+gespeicherte Zustand log über die Wirklichkeit. Jetzt räumt `forget()` beides
+ab; Platte und Speicher sagen dasselbe.
+
+**Twitch: eine Störung kostete die Verbindung.** Umgekehrter Fehler. Der
+Refresh-Token flog bei **jedem** ausbleibenden Access-Token raus — also auch
+bei einem 500er, einem Wartungsfenster oder einer Antwort, die sich nicht als
+JSON lesen ließ. Ein Schluckauf auf Twitchs Seite kostete die gespeicherte
+Verbindung, und der Betreiber autorisierte neu, obwohl an seinem Token nie
+etwas falsch war. Gelöscht wird jetzt nur noch bei einer ausdrücklichen
+Ablehnung (400/401 mit `invalid`/`expired`).
+
+**Ein Kanalname konnte die Verbindung löschen.** `set_channel()` rief `_save()`,
+und `_save()` schrieb, was gerade im Speicher stand. War der Refresh-Token dort
+schon geleert, überschrieb ein **Kanalname** den Store mit einem leeren Token.
+Neue Regel, in beiden Modulen: `_save()` schreibt nur eine **Verbindung**, nie
+ihre Abwesenheit. Gelöscht wird ausschließlich über `forget()` — das entfernt
+die Datei. `nc/twitchoauth.py` hatte gar kein `forget()` und bekommt eins, sonst
+hätte es den YouTube-Fehler geerbt.
+
+**Der Store-Pfad war relativ.** `bot.py` reicht `recordings/…` herein, also
+relativ zum Arbeitsverzeichnis. Ein Start aus einem anderen Verzeichnis
+(Handstart, cron) hätte den Store woanders gesucht und den Token
+stillschweigend verloren. `configure()` löst ihn jetzt einmal beim Start auf.
+
+**Und es war unsichtbar.** Ein nicht schreibbarer Store meldete `log.warning` —
+ein ERROR-Log zeigt `warning` nie (CLAUDE.md). Genau so blieb „der Token wird
+gar nicht gespeichert" verborgen: der Flow meldete Erfolg, und nach dem
+nächsten Neustart war die Verbindung weg. Beide Module melden das jetzt auf
+`error`, mit dem Pfad.
+
+Das Panel sagt außerdem, **warum** es nicht geht: „abgelaufen" und „nie
+verbunden" sahen bisher gleich aus — beides nur ein graues Feld. `status()`
+trägt jetzt `expired`, `last_error` und `last_error_ts`, und das Dashboard nennt
+den Grund samt Hinweis auf den häufigsten Fall: eine Google-App im Status
+„Testing" lässt Refresh-Tokens nach 7 Tagen ablaufen. **Das** ist die Ursache
+einer wöchentlichen Neuverbindung, und sie steht in der Google Cloud Console,
+nicht im Code.
+
 ### Hinzugefügt — der Windows-Installer spricht Englisch (v4.2 W8)
 
 `tools/install.bat` hatte **gar keine Sprachschicht**: 610 Zeilen, jede Ausgabe
