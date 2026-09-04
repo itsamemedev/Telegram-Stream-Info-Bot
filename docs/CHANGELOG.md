@@ -11,6 +11,49 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Hinzugefügt — Sätze, die ein Inline-Tag zerschneidet (v4.2 W6)
+
+Der Übersetzer im Browser vergleicht ganze Textknoten. Ein Satz wie
+
+    Gebucht wird der <b>Zufluss</b> — der Tag der Gutschrift auf dem Konto …
+
+ist im DOM aber drei Knoten, und **keiner davon ist ein Satz**: „Gebucht wird
+der" endet auf einem Artikel, „— der Tag …" beginnt mit einem Gedankenstrich.
+Beide flogen zu Recht als Bruchstück aus dem Katalog — und damit blieb der
+ganze Absatz deutsch, ohne dass die Abdeckungszahl es zeigte. Das war die
+letzte bekannte Lücke der Mehrsprachigkeit aus v4.1-W6.
+
+Neu ist ein **Platzhalter-Schlüssel**: jedes Inline-Kind wird zu `{0}`, `{1}`, …
+Der Schlüssel trägt den vollständigen Satz und trotzdem kein Markup. Der
+Browser setzt beim Übersetzen die **vorhandenen** Kind-Elemente wieder ein, er
+baut keine neuen — es gibt in diesem Weg keine Stelle, an der HTML geparst
+wird, also auch keine, an der eine Übersetzung ein Tag einschleusen könnte.
+
+Dass die Kinder in der Reihenfolge der **Zielsprache** eingesetzt werden, ist
+kein Beiwerk: Englisch stellt um, und ein Verfahren, das die Elemente an ihrem
+deutschen Platz ließe, wäre für die Hälfte der Sätze unbrauchbar.
+
+Angefasst wird nur, wo es klemmt: trägt jedes Textstück des Elements für sich
+schon als Knoten, bleibt es beim normalen Weg. Sonst hätte ein längerer
+Schlüssel 39 funktionierende Übersetzungen entwertet. Ergebnis: **15 neue
+Sätze** (2 im Dashboard, 8 auf der Website, 5 in Impressum/Datenschutz),
+7 tote Bruchstück-Einträge ersetzt, Katalog **1390 Einträge, 0 fehlend,
+0 verwaist**.
+
+Der Extraktor liest dafür zum ersten Mal die **Struktur** statt nur die
+Zeichen (`html.parser` statt Regex) — die Frage „welche Kinder hat dieses
+Element?" ist genau die, an der ein Regex über HTML scheitert.
+
+Der Vertrag koppelt beide Seiten über ihr **Verhalten**, nicht über ihren
+Wortlaut: Inline-Tag-Liste und Platzhalter-Obergrenze werden aus dem
+ausgelieferten JavaScript geparst und mit den Python-Konstanten verglichen.
+Wer in einer Sprache ein Tag ergänzt und in der anderen nicht, baut sonst eine
+Lücke, die kein Textvergleich sieht — der Extraktor sammelte einen Schlüssel
+ein, den der Browser nie erzeugt. Dazu ein Katalog-Prüfer: fehlt in einer
+Übersetzung ein `{n}`, verschwände das Kind-Element beim Umbau. Ein fehlender
+Link ist schlimmer als ein deutscher Satz, deshalb lässt der Browser so einen
+Eintrag liegen — und der Vertrag meldet ihn, statt ihn still wirken zu lassen.
+
 ### Geändert — der Selbsttest raus, Vorschlag 2 ist fertig (v4.2 W5)
 
 `/api/selftest` (226 Zeilen) liegt jetzt in `nc/routes/selbsttest.py`. Damit

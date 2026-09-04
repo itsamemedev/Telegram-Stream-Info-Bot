@@ -23,6 +23,7 @@ import json
 import os
 import re
 import sys
+from html.parser import HTMLParser as _HTMLParser
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 LOCALES = os.path.join(ROOT, "locales")
@@ -258,6 +259,171 @@ RE_BLOECKE_WEG = re.compile(
 RE_JS_INHALT = re.compile(r"<script\b[^>]*>(.*?)</script\s*[^>]*>", re.S | re.I)
 
 
+# ────────────────────────────────────────────────────────────────────────
+# v4.2-W6: Saetze, die ein Inline-Tag zerschneidet.
+# ────────────────────────────────────────────────────────────────────────
+# Der Uebersetzer im Browser vergleicht GANZE Textknoten. Ein Satz wie
+#
+#     Gebucht wird der <b>Zufluss</b> — der Tag der Gutschrift ...
+#
+# ist im DOM aber drei Knoten, und keiner davon ist ein Satz: "Gebucht wird
+# der" endet auf einem Artikel, "— der Tag ..." beginnt mit einem Gedanken-
+# strich. Beide fliegen zu Recht als Bruchstueck raus (_BRUCHSTUECK_*) — und
+# damit blieb der ganze Absatz deutsch, ohne dass die Abdeckungszahl es zeigte.
+#
+# Die Loesung ist ein PLATZHALTER-Schluessel: jedes Inline-Kind wird zu {0},
+# {1}, … Der Schluessel traegt damit den vollstaendigen Satz und trotzdem kein
+# Markup — der Katalog bleibt frei von HTML, es gibt also keine Stelle, an der
+# eine Uebersetzung Tags einschleusen koennte. Der Browser setzt die
+# VORHANDENEN Kind-Elemente wieder ein, er baut keine neuen.
+#
+# Nur wo es klemmt: traegt jedes Textstueck des Elements fuer sich schon als
+# Knoten, bleibt es beim normalen Weg. Sonst wuerde eine funktionierende
+# Uebersetzung durch einen laengeren Schluessel ersetzt — Arbeit vernichtet,
+# ohne Gewinn.
+_INLINE_TAGS = frozenset({
+    "b", "strong", "i", "em", "u", "code", "kbd", "samp", "span", "a", "small",
+    "mark", "abbr", "br", "sub", "sup", "big", "tt", "var", "q", "cite"})
+# Tags ohne Endtag. Der Parser darf sie nicht auf den Stapel legen, sonst
+# verschluckt ein <br> den Rest des Absatzes.
+_LEERE_TAGS = frozenset({
+    "br", "img", "input", "hr", "meta", "link", "source", "wbr", "col",
+    "embed", "area", "base", "param", "track"})
+# Gleiche Liste wie TABU im Browser-Uebersetzer: was dort Daten ist, darf hier
+# gar nicht erst zum Schluessel werden.
+_TABU_TAGS = frozenset({"script", "style", "code", "pre", "textarea", "kbd", "samp"})
+# Ein Absatz mit einem Dutzend Tags ist ein Layout, kein Satz.
+_MAX_PLATZHALTER = 6
+# Kuerzer ist im Zweifel eine Beschriftung mit Symbol davor, kein Satz.
+_MIN_MUSTER = 25
+
+
+def muster_schluessel(text_stuecke_und_tags):
+    """Aus der Kinderliste eines Elements den Platzhalter-Schluessel bauen.
+
+    Getrennte Funktion, weil der Vertrag sie direkt aufruft: das Verfahren
+    steht und faellt damit, dass Extraktor und Browser DIESELBE Zeichenkette
+    erzeugen. Ein Test, der nur die Ausgabe des ganzen Extraktors prueft,
+    haette diesen Gleichlauf nicht in der Hand.
+    """
+    teile, i = [], 0
+    for art, wert in text_stuecke_und_tags:
+        if art == "t":
+            # Innere Umbrueche zu EINEM Leerzeichen — dieselbe Regel wie bei
+            # den einfachen Knoten (W28). Nicht je Stueck trimmen: das
+            # Leerzeichen VOR und NACH einem Tag gehoert zum Satz.
+            teile.append(re.sub(r"\s+", " ", wert))
+        else:
+            teile.append("{%d}" % i)
+            i += 1
+    return "".join(teile).strip()
+
+
+class _MusterParser(_HTMLParser):
+    """Sammelt Muster-Saetze und merkt sich, welche Textknoten dazu gehoeren.
+
+    Ein eigener Parser statt eines Regex: die Frage "welche Kinder hat dieses
+    Element?" ist genau die, an der ein Regex ueber HTML scheitert. Der
+    Extraktor liest hier zum ersten Mal die Struktur statt nur die Zeichen.
+    """
+
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self._zaehler = 0
+        # [tag, attrs, kinder, id]
+        self._stapel = [["#wurzel", {}, [], 0]]
+        self.muster = []          # (schluessel, [stuecke])
+        self._texte = []          # (element-id, normalisierter text)
+        self._muster_ids = set()
+
+    # --- Aufbau ---------------------------------------------------------
+    def handle_starttag(self, tag, attrs):
+        tag = tag.lower()
+        if tag in _LEERE_TAGS:
+            self._stapel[-1][2].append(("el", tag))
+            return
+        self._zaehler += 1
+        self._stapel.append([tag, dict(attrs), [], self._zaehler])
+
+    def handle_startendtag(self, tag, attrs):
+        self._stapel[-1][2].append(("el", tag.lower()))
+
+    def handle_data(self, daten):
+        self._stapel[-1][2].append(("t", daten))
+        if daten.strip():
+            self._texte.append((self._stapel[-1][3], " ".join(daten.split())))
+
+    def handle_endtag(self, tag):
+        tag = tag.lower()
+        if tag in _LEERE_TAGS:
+            return
+        # Nicht geschlossene Kinder mit abraeumen. Ohne das bleibt ein
+        # vergessenes </span> im Stapel und alle folgenden Absaetze landen
+        # als seine Kinder — der Parser meldet dann nichts mehr.
+        for i in range(len(self._stapel) - 1, 0, -1):
+            if self._stapel[i][0] == tag:
+                while len(self._stapel) > i:
+                    knoten = self._stapel.pop()
+                    self._pruefen(knoten)
+                    self._stapel[-1][2].append(("el", knoten[0]))
+                return
+
+    # --- Bewertung ------------------------------------------------------
+    def _pruefen(self, knoten):
+        tag, attrs, kinder, nid = knoten
+        if tag in _TABU_TAGS or "data-i18n-skip" in attrs:
+            return
+        elemente = [k for k in kinder if k[0] == "el"]
+        texte = [k[1] for k in kinder if k[0] == "t" and k[1].strip()]
+        if not elemente or not texte:
+            return
+        if not all(k[1] in _INLINE_TAGS for k in elemente):
+            return
+        if len(elemente) > _MAX_PLATZHALTER:
+            return
+        # Traegt jedes Stueck fuer sich? Dann macht der normale Knoten-Weg das
+        # schon, und ein Muster wuerde nur eine vorhandene Uebersetzung
+        # entwerten.
+        if all(_ist_uebersetzbar(t.strip(), deutsch_noetig=False,
+                                 bezeichner_moeglich=False) for t in texte):
+            return
+        schluessel = muster_schluessel(kinder)
+        if len(schluessel) < _MIN_MUSTER:
+            return
+        if not _ist_uebersetzbar(schluessel, deutsch_noetig=True,
+                                 bezeichner_moeglich=False):
+            return
+        self.muster.append(schluessel)
+        self._muster_ids.add(nid)
+
+    # --- Ergebnis -------------------------------------------------------
+    def verdraengt(self):
+        """Textstuecke, die NUR noch innerhalb eines Musters vorkommen.
+
+        Die muessen aus der einfachen Sammlung raus, sonst stehen sie als
+        verwaist im Katalog: der Browser ersetzt beim Muster den ganzen
+        Inhalt, den einzelnen Knoten gibt es danach nicht mehr. Steht
+        derselbe Text ANDERSWO noch fuer sich, bleibt er drin — deshalb die
+        Differenz und nicht einfach die Muster-Stuecke.
+        """
+        drin = {t for (i, t) in self._texte if i in self._muster_ids}
+        draussen = {t for (i, t) in self._texte if i not in self._muster_ids}
+        return drin - draussen
+
+
+def _muster_strings(ohne_js):
+    """(Muster-Schluessel, verdraengte Einzelstuecke) einer HTML-Datei."""
+    p = _MusterParser()
+    try:
+        p.feed(ohne_js)
+        p.close()
+    except Exception as e:                      # kaputtes HTML soll den
+        print("   Muster uebersprungen: %s" % e)   # Extraktor nicht toeten
+        return set(), set()
+    return set(p.muster), p.verdraengt()
+
+
+
 def _html_strings(pfad):
     """Textknoten, uebersetzbare Attribute und deutschsprachige JS-Literale."""
     roh = io.open(os.path.join(ROOT, pfad), encoding="utf-8").read()
@@ -268,6 +434,11 @@ def _html_strings(pfad):
     # alle folgenden Textknoten fehlen im Katalog, ohne dass es auffaellt.
     ohne_js = RE_BLOECKE_WEG.sub("", roh)
     raus = set()
+    # v4.2-W6: erst die Muster. Was sie schlucken, darf unten nicht noch
+    # einmal einzeln eingesammelt werden — sonst steht es als verwaist im
+    # Katalog, weil der Browser den Knoten beim Muster ersetzt.
+    muster, verdraengt = _muster_strings(ohne_js)
+    raus |= muster
     # v4.1-W28: Ein Text ZWISCHEN zwei Tags ist per Definition Benutzertext.
     #
     # Vorher lief diese Stelle mit der Deutsch-Heuristik, die einen Umlaut oder
@@ -287,6 +458,8 @@ def _html_strings(pfad):
         # — 22 solcher Eintraege waren auf einen Schlag tot, ohne dass die
         # Abdeckungszahl es gezeigt haette.
         t = _html.unescape(t)
+        if " ".join(t.split()) in verdraengt:
+            continue
         if _ist_uebersetzbar(t, deutsch_noetig=False, bezeichner_moeglich=False):
             # v4.1-W28: Innere Umbrueche zu EINEM Leerzeichen. Der Quelltext
             # bricht Hilfetexte um und rueckt sie ein; haenge der Schluessel
