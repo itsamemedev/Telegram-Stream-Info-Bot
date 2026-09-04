@@ -22,6 +22,12 @@ import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 QUELLEN = ("tools/installer.sh", "tools/motd.sh")
+# v4.2-W8: der Windows-Installer. Er stand bis hierher nicht einmal in dieser
+# Liste — der Prüfer meldete deshalb 100 % Abdeckung für ein Werkzeug, das er
+# gar nicht ansah. Batch hat eine eigene Aufrufform (`call :senke "text"`) und
+# braucht deshalb einen eigenen Ausdruck; dieselbe Datei tools.en.tsv trägt
+# beide Installer.
+QUELLEN_BAT = ("tools/install.bat",)
 
 # Die Senken, die in v4.1-W17 durch t() laufen. Erfasst werden nur Literale
 # OHNE Variablen: alles mit $ oder ` ist zur Laufzeit zusammengesetzt und
@@ -34,6 +40,18 @@ _SENKEN = re.compile(
     r'(?:^|&&|\|\||;|\{)\s*(?:info|gut|warn|fehler|erklaere|merke)\s+"([^"\\$`]{4,})"', re.M)
 _FRAGEN = re.compile(r'(?:frage_ja|frage_text)\s+\w*\s*"([^"\\$`]{4,})"')
 
+# Die Senken von tools/install.bat. Erfasst wird das ERSTE Argument — ausser
+# bei :wert_gut, wo der Wert vorne steht und der feste Text hinten.
+# Kein %: was einen Wert traegt, kann kein Schluessel sein (der Wert steht erst
+# zur Laufzeit fest). Genau dafuer gibt es die *_wert-Senken.
+_BAT_SENKEN = re.compile(
+    r'\bcall :(?:kopf|info|info_wert|gut|gut_wert|warn|fehler|fehler_wert|'
+    r'erklaere|merken|merken_wert|zeile|zeile2|zeile_wert|zeile_wert2|'
+    r'zeile2_wert|punkt|t)\s+"([^"%]{3,})"')
+_BAT_WERT_GUT = re.compile(r'\bcall :wert_gut\s+"[^"]*"\s+"([^"%]{3,})"')
+_BAT_FRAGEN = re.compile(
+    r'\bcall :(?:frage_ja|frage_text|frage_geheimnis)\s+(?:[JN]\s+)?"([^"%]{3,})"')
+
 
 def sammeln():
     raus = set()
@@ -44,6 +62,14 @@ def sammeln():
         text = io.open(pfad, encoding="utf-8").read()
         raus |= set(_SENKEN.findall(text))
         raus |= set(_FRAGEN.findall(text))
+    for rel in QUELLEN_BAT:
+        pfad = os.path.join(ROOT, rel)
+        if not os.path.exists(pfad):
+            continue
+        text = io.open(pfad, encoding="utf-8").read()
+        raus |= set(_BAT_SENKEN.findall(text))
+        raus |= set(_BAT_WERT_GUT.findall(text))
+        raus |= set(_BAT_FRAGEN.findall(text))
     return raus
 
 
@@ -68,7 +94,7 @@ def main():
         for s in sorted(gefunden):
             print(s)
         print("\n%d uebersetzbare Zeichenketten in %d Dateien"
-              % (len(gefunden), len(QUELLEN)))
+              % (len(gefunden), len(QUELLEN) + len(QUELLEN_BAT)))
         return 0
     sprache = "en"
     if "--check" in args:
@@ -79,8 +105,8 @@ def main():
     fehlt = sorted(gefunden - set(kat))
     verwaist = sorted(set(kat) - gefunden)
     quote = (100.0 * (len(gefunden) - len(fehlt)) / len(gefunden)) if gefunden else 100.0
-    print("gefunden: %d Zeichenketten in %d Shell-Werkzeugen"
-          % (len(gefunden), len(QUELLEN)))
+    print("gefunden: %d Zeichenketten in %d Werkzeugen"
+          % (len(gefunden), len(QUELLEN) + len(QUELLEN_BAT)))
     print("Katalog %s: %d Eintraege | fehlend: %d | verwaist: %d | Abdeckung: %.0f%%"
           % (sprache, len(kat), len(fehlt), len(verwaist), quote))
     for v in verwaist[:20]:

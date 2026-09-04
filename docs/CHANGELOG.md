@@ -11,6 +11,51 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Hinzugefügt — der Windows-Installer spricht Englisch (v4.2 W8)
+
+`tools/install.bat` hatte **gar keine Sprachschicht**: 610 Zeilen, jede Ausgabe
+ein deutsches `echo`. Und `tools/i18n_tools.py` kannte die Datei nicht einmal —
+sie stand nicht in seiner Quellenliste. Der Prüfer meldete deshalb **100 %
+Abdeckung** für ein Werkzeug, das er nie angesehen hat. Genau die unehrliche
+Zahl, die W28 fürs Dashboard beseitigt hat, nur eine Etage tiefer.
+
+Der Installer benutzt jetzt denselben Katalog wie `installer.sh` und `motd.sh`
+— **eine** Datei `locales/tools.en.tsv` für beide Installer. 18 der 157
+Schlüssel standen bereits darin und werden mitbenutzt; genau dafür ist es eine
+gemeinsame Datei. 139 kamen dazu, der Katalog steht bei 280 Einträgen,
+0 fehlend, 0 verwaist.
+
+Übersetzt wird **an der Senke**, wie überall sonst im Projekt: `:kopf`, `:info`,
+`:gut`, `:warn`, `:fehler`, `:erklaere`, `:merken` und die drei Frage-Routinen
+laufen durch ein neues `:t`. Für Meldungen mit einem Wert darin gibt es
+`*_wert`-Varianten — „Quelltext liegt in C:\..." kann kein Katalogschlüssel
+sein, der Pfad steht erst zur Laufzeit fest. Für die freien Ausgabezeilen
+(Begrüßung, Schrittliste, „Was unter Windows anders ist") gibt es `:zeile`,
+`:zeile2` und `:punkt`.
+
+**Der deutsche Pfad ist nachweisbar unverändert.** Dieser Installer lässt sich
+auf einem Linux-Rechner nicht ausführen — es gibt kein `cmd.exe`. Was man nicht
+ausprobieren kann, muss so gebaut sein, dass sein Fehlschlag folgenlos bleibt:
+`NC_KATALOG` wird nur gesetzt, wenn ausdrücklich Englisch gewünscht **und** die
+Datei da ist; sonst kehrt `:t` nach zwei Zeilen zurück. Der Rückfallwert steht
+in Zeile eins, **bevor** irgendetwas nachgeschlagen wird. Findet `findstr`
+nichts, läuft der Schleifenrumpf nie; schlägt `findstr` selbst fehl, schluckt
+`2>nul` die Meldung — mit demselben Ergebnis. Es gibt in `:t` keinen Weg, der
+etwas anderes tut als übersetzen oder nichts.
+
+Der Vertrag ersetzt den Lauf, den es hier nicht gibt: `findstr /b /l /c:` wird
+nachgebildet und **jeder** der 280 Schlüssel dagegen geprüft — ein Schlüssel,
+den `findstr` nicht fände, wäre eine Zeile, die für immer deutsch bleibt. Dazu:
+die Datei bleibt reines ASCII (cmd.exe rendert sonst je nach Codepage
+Buchstabensalat), der Tabulator in `delims=` und im Suchmuster ist ein echter
+Tabulator, kein Schlüssel trägt einen Laufzeitwert, und keine Ausgabezeile läuft
+an einer Senke vorbei.
+
+Der letzte Punkt hat sich beim Mutationstest selbst korrigiert: die erste
+Fassung des Prüfers sah nur Zeilen, die mit `echo` **beginnen**, und ließ
+`if exist ... echo Merkzettel` durch — genau die Form, die diese Datei benutzt.
+Der Fehlschlag steht als Begründung im Test.
+
 ### Hinzugefügt — vier neue Anzeigen in der MOTD (v4.2 W7)
 
 `tools/motd.sh` steht jetzt auf **v2.1**. Vier Anzeigen, jede aus einer Frage,
