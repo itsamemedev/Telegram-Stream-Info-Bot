@@ -11,6 +11,50 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Behoben — verkettete Textzuweisungen blieben deutsch (v4.1 W27)
+
+Die dritte Stelle derselben stillen Buchhaltung, nach den nativen Dialogen
+(W21) und den verketteten Toasts (W23). Der DOM-Übersetzer trifft **ganze**
+Textknoten. Bei
+
+```js
+el.textContent = 'Quelle: ' + name
+```
+
+heißt der Knoten „Quelle: kick"; ein Katalogeintrag für `Quelle: ` trifft dort
+nie. **Zehn solcher Einträge standen bereits im Katalog** und zählten als
+übersetzt, ohne je zu greifen.
+
+84 Literale in verketteten `textContent`/`innerText`/`innerHTML`-Zuweisungen
+laufen jetzt durch `T()`. Unberührt bleiben ganze Literale (die sind schon
+vollständige Knoten) und Markup — Tags, Attribute und CSS-Variablen sind kein
+Benutzertext.
+
+**Ein Fall musste aufgetrennt werden.** In
+
+```js
+o.innerHTML='<span …>✓ veröffentlicht</span> …'+n+' News auf der Website ('+m+' neu)</span>'
+```
+
+klebte Prosa am Markup und war deshalb nicht umschließbar — die Meldung wäre
+zur Hälfte übersetzt gewesen, englischer und deutscher Text im selben Satz.
+Markup und Text stehen jetzt getrennt. Ein Vertrag lässt genau das nicht mehr
+zu.
+
+`MODULES ONLINE` war englischer **Quelltext** in einer deutschen Oberfläche.
+Nach der Regel aus W19 ist der deutsche String der Schlüssel: die Anzeige
+heißt jetzt `MODULE ONLINE`, der Katalog trägt das Englische. Ein bestehender
+Vertrag hat das gemeldet — er verbietet Einträge, deren „Übersetzung" mit der
+Quelle identisch ist, weil die als erledigt zählen, ohne etwas zu tun.
+
+Der neue Vertrag prüft drei Dinge: keine verkettete Zuweisung ohne `T()`,
+keine Prosa am Markup, und dass **Nachschlag und Extraktor beide trimmen** —
+fiele eines von beiden weg, wären alle Fragment-Einträge (`Quelle: `,
+` aktiv`) auf einen Schlag tot und die Abdeckungszahl löge wieder.
+
+Katalog: 906 → **970** Einträge, 0 fehlend, 0 verwaist. Vier Vertrags-Anker
+sind mitgewandert, keiner gelöscht.
+
 ### Behoben — `_living_title_loop` starb bei jedem Lauf (v4.1 W26)
 
 Aus dem Betriebslog vom 2026-09-03, neunmal:

@@ -2316,6 +2316,92 @@ def _test_w26_auskunft_blueprint():
     ok("v4.1-W26: Auskunft als Blueprint — 25 Routen, keine davon schreibt")
 
 
+
+def _test_w27_verkettete_knoten():
+    """v4.1-W27: verkettete Textzuweisungen im Dashboard sind uebersetzbar.
+
+    Der DOM-Uebersetzer trifft GANZE Textknoten. Bei
+
+        el.textContent = 'Quelle: ' + name
+
+    heisst der Knoten "Quelle: kick"; ein Katalogeintrag fuer "Quelle: " trifft
+    dort nie. ZEHN solcher Eintraege standen bereits im Katalog und zaehlten
+    als uebersetzt, ohne je zu greifen — dieselbe stille Buchhaltung wie bei
+    den nativen Dialogen (W21) und den verketteten Toasts (W23), nur an der
+    dritten Stelle.
+
+    Das ist der Grund, warum dieser Vertrag existiert: eine Abdeckungszahl,
+    die tote Eintraege mitzaehlt, ist schlimmer als gar keine — sie sagt, die
+    Arbeit sei getan.
+    """
+    import json as _json
+    import re as _re
+
+    dash = open("templates/dashboard.html", encoding="utf-8").read()
+    WORT = _re.compile(r"[A-Za-zÄÖÜäöüß]{3}")
+    MARKUP = _re.compile(r"[<>=]|var\(|&nbsp;|&#")
+    LIT = _re.compile(r"'([^'\\\n]*(?:\\.[^'\\\n]*)*)'")
+    ZUW = _re.compile(r"\.(?:textContent|innerText|innerHTML)\s*=\s*([^;\n]{0,300})")
+
+    offen = []
+    for m in ZUW.finditer(dash):
+        rhs = m.group(1)
+        if "+" not in rhs:
+            continue                       # ganzes Literal ist schon ein Knoten
+        for lm in LIT.finditer(rhs):
+            t = lm.group(1)
+            if not (t.strip() and WORT.search(t)) or MARKUP.search(t):
+                continue
+            davor = rhs[max(0, lm.start() - 2):lm.start()].strip()
+            danach = rhs[lm.end():lm.end() + 2].strip()
+            if not (davor.endswith("+") or danach.startswith("+")):
+                continue
+            if rhs[max(0, lm.start() - 3):lm.start()].endswith("T("):
+                continue
+            offen.append(t)
+    assert not offen, \
+        ("verkettete Textzuweisung ohne T() — der Knoten traegt den Wert mit "
+         "und kein Katalogeintrag trifft ihn: %r" % offen[:6])
+
+    # (2) Der Nachschlag TRIMMT beidseitig, der Extraktor legt getrimmt ab.
+    # Faellt eines von beiden weg, sind alle Fragment-Eintraege ("Quelle: ",
+    # " aktiv") auf einen Schlag tot — und die Abdeckungszahl luegt wieder.
+    i18n = open("nc/routes/i18n.py", encoding="utf-8").read()
+    assert "var roh = text.trim();" in i18n, \
+        "der Nachschlag trimmt nicht mehr — Fragment-Eintraege treffen nie"
+    assert "text.replace(roh, treffer)" in i18n, \
+        "die Rand-Leerzeichen gehen verloren — das Layout verrutscht"
+
+    # (3) Prosa darf nicht mit Markup in EINEM Literal kleben. Sonst ist sie
+    # nicht umschliessbar, und die Meldung steht halb uebersetzt da: der eine
+    # Teil englisch, der andere deutsch, in demselben Satz.
+    TAG = _re.compile(r"</?[a-zA-Z]")
+    halb = []
+    for m in ZUW.finditer(dash):
+        rhs = m.group(1)
+        if "T('" not in rhs:
+            continue
+        for lm in LIT.finditer(rhs):
+            t = lm.group(1)
+            if not TAG.search(t):
+                continue
+            rest = _re.sub(r"<[^>]*>", "", t).strip()
+            if rest and WORT.search(rest):
+                halb.append(rest)
+    assert not halb, \
+        ("Prosa klebt am Markup und bleibt deutsch, waehrend der Rest "
+         "derselben Meldung uebersetzt wird: %r" % halb[:4])
+
+    # (4) Kein Eintrag im Katalog, den niemand nachschlaegt. Das prueft
+    # tools/i18n_extract.py --check bereits als "verwaist" — hier steht die
+    # Gegenrichtung: die Zahl im Katalog muss der Zahl im Quelltext
+    # entsprechen, sonst zaehlt sie etwas mit, das nie greift.
+    kat = _json.load(open("locales/en.json", encoding="utf-8"))["strings"]
+    assert len(kat) >= 970, "Katalog geschrumpft: %d" % len(kat)
+
+    ok("v4.1-W27: verkettete Textknoten uebersetzbar, keine toten Eintraege mehr")
+
+
 def main():
     tmp = tempfile.mkdtemp()
     configure_db(db_path=os.path.join(tmp, "t.db"), backend="sqlite")
@@ -2450,6 +2536,8 @@ def main():
     _test_w26_huellen_schlucken_nichts()
 
     _test_w26_auskunft_blueprint()
+
+    _test_w27_verkettete_knoten()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)
 
