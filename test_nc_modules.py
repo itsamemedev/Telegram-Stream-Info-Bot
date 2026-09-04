@@ -3584,6 +3584,125 @@ def _test_v42_w4_preflight_und_resilienz():
     ok("v4.2-W4: preflight + resilience im Blueprint, Sonden in nc/, "
        "keine zweite Wahrheit fuer die drei Slots")
 
+def _test_v42_w6_zerschnittene_saetze():
+    """v4.2-W6: Saetze, die ein Inline-Tag zerschneidet, sind uebersetzbar."""
+    import json as _json
+    import sys as _sys
+
+    _sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                     "tools"))
+    import i18n_extract as _ex
+
+    # ── (1) BEIDE SEITEN, EIN SCHLUESSEL. Das Verfahren steht und faellt
+    # damit, dass Extraktor (Python) und Uebersetzer (Browser-JS) aus
+    # denselben Kindern dieselbe Zeichenkette bauen. Faellt eine Seite auch
+    # nur um ein Leerzeichen ab, trifft KEIN Eintrag mehr — und der Katalog
+    # meldet trotzdem "0 fehlend", weil er nur zaehlt, was der Extraktor
+    # gesehen hat. Genau die stille Luecke, die W28 schon einmal hatte.
+    kinder = [("t", "Gebucht wird der "), ("el", "b"),
+              ("t", " \u2014 der Tag\n   der Gutschrift.")]
+    assert _ex.muster_schluessel(kinder) == \
+        "Gebucht wird der {0} \u2014 der Tag der Gutschrift.", \
+        "der Muster-Schluessel wird anders gebaut als dokumentiert"
+    # Umbruch und Einrueckung zu EINEM Leerzeichen, aussen getrimmt: sonst
+    # haengt der Schluessel an der Formatierung des HTML und jede
+    # Umformatierung toetet ihn stillschweigend.
+    assert _ex.muster_schluessel([("t", "\n  A  "), ("el", "b"), ("t", "  B\n")]) \
+        == "A {0} B", "Leerraum wird nicht normalisiert"
+
+    js = open("nc/routes/i18n.py", encoding="utf-8").read()
+    for teil in ("function musterSchluessel(", "function musterEinsetzen(",
+                 "musterEinsetzen(n);"):
+        assert teil in js, "der Browser-Uebersetzer kennt %s nicht" % teil
+    # Die JS-Seite muss dieselben drei Regeln fahren wie die Python-Seite.
+    for teil in ("replace(/\\s+/g, ' ')", "replace(/^\\s+|\\s+$/g, '')"):
+        assert teil in js, "im Browser fehlt die Regel %s" % teil
+    # Und dieselben GRENZEN. Nicht als Zeichenkette verglichen, sondern als
+    # Menge: wer in Python ein Inline-Tag ergaenzt und im Browser nicht, baut
+    # eine Luecke, die kein Textvergleich sieht — der Extraktor sammelt dann
+    # einen Schluessel ein, den der Browser nie erzeugt.
+    js_inline = set(re.findall(r"(\w+):1",
+                               re.search(r"var INLINE = \{(.*?)\};", js, re.S).group(1)))
+    assert js_inline == {t.upper() for t in _ex._INLINE_TAGS}, \
+        "Inline-Listen laufen auseinander: nur JS %r / nur Python %r" % (
+            sorted(js_inline - {t.upper() for t in _ex._INLINE_TAGS}),
+            sorted({t.upper() for t in _ex._INLINE_TAGS} - js_inline))
+    js_max = int(re.search(r"var MAX_PLATZ = (\d+)", js).group(1))
+    assert js_max == _ex._MAX_PLATZHALTER, \
+        "MAX_PLATZ %d != _MAX_PLATZHALTER %d" % (js_max, _ex._MAX_PLATZHALTER)
+
+    # ── (2) NUR WO ES KLEMMT. Traegt jedes Textstueck fuer sich schon als
+    # Knoten, macht der normale Weg das laengst — ein Muster wuerde dort eine
+    # vorhandene Uebersetzung durch einen laengeren Schluessel ersetzen und
+    # damit geleistete Arbeit vernichten.
+    def _muster(html):
+        m, _ = _ex._muster_strings(html)
+        return m
+
+    gut = _muster("<p>Der Bot laeuft seit gestern. <b>x</b> "
+                  "Die Aufnahme ist fertig und liegt im Archiv.</p>")
+    assert not gut, "Muster gebaut, obwohl beide Stuecke allein tragen: %r" % gut
+    klemmt = _muster("<p>Gebucht wird der <b>Zufluss</b> \u2014 der Tag der "
+                     "Gutschrift auf dem Konto, nicht der Stream-Tag.</p>")
+    assert klemmt == {"Gebucht wird der {0} \u2014 der Tag der Gutschrift auf "
+                      "dem Konto, nicht der Stream-Tag."}, \
+        "der zerschnittene Satz wird nicht eingesammelt: %r" % klemmt
+    # <code> ist Daten (Befehle, Logzeilen) und darf nie Schluessel werden.
+    assert not _muster("<code>ffmpeg -i <b>x</b> und noch etwas Text dazu</code>"), \
+        "ein <code>-Block wurde zum Muster"
+    # Ein Absatz mit einem Dutzend Tags ist ein Layout, kein Satz.
+    viele = "<p>Ein Satz der lang genug ist %s und weiter geht.</p>" % (
+        "<b>x</b>" * (_ex._MAX_PLATZHALTER + 1))
+    assert not _muster(viele), "Layout mit %d Tags wurde zum Satz" % (
+        _ex._MAX_PLATZHALTER + 1)
+
+    # ── (3) VERDRAENGT, NICHT VERWAIST. Beim Muster ersetzt der Browser den
+    # ganzen Inhalt; die einzelnen Knoten gibt es danach nicht mehr. Ein
+    # Eintrag fuer so ein Stueck waere tot. Steht derselbe Text ANDERSWO noch
+    # fuer sich, muss er dagegen bleiben.
+    _, weg = _ex._muster_strings(
+        "<p>Gebucht wird der <b>Zufluss</b> \u2014 der Tag der Gutschrift auf "
+        "dem Konto, nicht der Stream-Tag.</p>")
+    assert "Gebucht wird der" in weg, "das Bruchstueck wird nicht verdraengt"
+    _, weg2 = _ex._muster_strings(
+        "<p>Gebucht wird der <b>Zufluss</b> \u2014 der Tag der Gutschrift auf "
+        "dem Konto, nicht der Stream-Tag.</p><div>Gebucht wird der</div>")
+    assert "Gebucht wird der" not in weg2, \
+        "ein Text, der anderswo allein steht, wurde mit verdraengt"
+
+    # ── (4) KEIN PLATZHALTER DARF VERLOREN GEHEN. Der Browser setzt die
+    # VORHANDENEN Kind-Elemente wieder ein. Fehlt in der Uebersetzung ein
+    # {n}, verschwaende der Umbau das Element \u2014 ein fehlender Link ist
+    # schlimmer als ein deutscher Satz. Der Uebersetzer laesst so einen
+    # Eintrag deshalb liegen; hier faellt er auf, statt still zu wirken.
+    def _pruefe_katalog(strings):
+        schlecht = []
+        for de, en in strings.items():
+            n = len(re.findall(r"\{(\d+)\}", de))
+            if not n or not en:
+                continue
+            idx = [int(x) for x in re.findall(r"\{(\d+)\}", en)]
+            if sorted(idx) != list(range(n)):
+                schlecht.append(de[:60])
+        return schlecht
+
+    for datei in sorted(os.listdir("locales")):
+        if not datei.endswith(".json"):
+            continue
+        with open(os.path.join("locales", datei), encoding="utf-8") as f:
+            strings = _json.load(f).get("strings", {})
+        schlecht = _pruefe_katalog(strings)
+        assert not schlecht, "locales/%s: Platzhalter passen nicht: %r" % (
+            datei, schlecht)
+    # Der Melder muss auch wirklich anschlagen \u2014 sonst prueft er nichts.
+    assert _pruefe_katalog({"A {0} B {1}": "A {0} B"}), \
+        "fehlender Platzhalter wird nicht gemeldet"
+    assert _pruefe_katalog({"A {0} B": "A {0} B {0}"}), \
+        "doppelter Platzhalter wird nicht gemeldet"
+
+    ok("v4.2-W6: zerschnittene Saetze \u2014 ein Schluessel auf beiden Seiten")
+
+
 def _test_v42_w5_selftest_und_leerer_monolith():
     """v4.2-W5: keine System-Route mehr im Monolithen."""
     import ast as _ast
@@ -3850,6 +3969,8 @@ def main():
     _test_v42_w4_preflight_und_resilienz()
 
     _test_v42_w5_selftest_und_leerer_monolith()
+
+    _test_v42_w6_zerschnittene_saetze()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)
 

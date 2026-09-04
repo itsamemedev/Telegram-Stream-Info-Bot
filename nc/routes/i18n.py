@@ -127,8 +127,93 @@ _UEBERSETZER_JS = r"""(function(){
     return vorn + treffer + hinten;
   }
 
+  // ──────────────────────────────────────────────────────────────────
+  // v4.2-W6: Saetze, die ein Inline-Tag zerschneidet.
+  // ──────────────────────────────────────────────────────────────────
+  // "Gebucht wird der <b>Zufluss</b> — der Tag der Gutschrift ..." ist im DOM
+  // kein Textknoten, sondern drei — und keiner davon ist ein Satz. Der
+  // Katalog haelt deshalb den GANZEN Satz mit {0}, {1}, … an den Stellen der
+  // Inline-Kinder. Hier wird er wieder auseinandergenommen und um die
+  // VORHANDENEN Kind-Elemente herum eingesetzt.
+  //
+  // Warum die vorhandenen Elemente und keine neuen: so kommt kein Markup aus
+  // dem Katalog ins DOM. Eine Uebersetzung kann Text liefern, niemals ein
+  // Tag, ein Attribut oder ein Ereignis — es gibt in diesem Weg keine Stelle,
+  // an der HTML geparst wird.
+  var INLINE = {B:1, STRONG:1, I:1, EM:1, U:1, CODE:1, KBD:1, SAMP:1, SPAN:1,
+                A:1, SMALL:1, MARK:1, ABBR:1, BR:1, SUB:1, SUP:1, BIG:1,
+                TT:1, VAR:1, Q:1, CITE:1};
+  var MAX_PLATZ = 6;                 // ein Absatz mit zwoelf Tags ist Layout
+
+  function musterSchluessel(el){
+    var teile = [], zahl = 0, hatText = false, kinder = el.childNodes;
+    for (var i = 0; i < kinder.length; i++){
+      var k = kinder[i];
+      if (k.nodeType === 3){
+        if (k.nodeValue.replace(/\s/g, '')) hatText = true;
+        teile.push(k.nodeValue.replace(/\s+/g, ' '));
+      } else if (k.nodeType === 8){
+        // Kommentar: der Extraktor entfernt Kommentare vor dem Parsen, hier
+        // muss er deshalb genauso verschwinden — sonst waeren die Schluessel
+        // beider Seiten verschieden und keiner traefe.
+        continue;
+      } else if (k.nodeType === 1){
+        if (!INLINE[k.nodeName]) return null;
+        if (++zahl > MAX_PLATZ) return null;
+        teile.push('{' + (zahl - 1) + '}');
+      } else {
+        return null;
+      }
+    }
+    if (!zahl || !hatText) return null;
+    return teile.join('').replace(/^\s+|\s+$/g, '');
+  }
+
+  function musterEinsetzen(el){
+    if (!KAT || el.__i18nMuster) return;
+    var schluessel = musterSchluessel(el);
+    if (!schluessel) return;
+    var ziel = KAT[schluessel];
+    if (!ziel) ziel = KAT[schluessel.replace(/\s+/g, ' ')];
+    if (!ziel) return;
+    var kinder = [], i;
+    for (i = 0; i < el.childNodes.length; i++){
+      if (el.childNodes[i].nodeType === 1) kinder.push(el.childNodes[i]);
+    }
+    var stuecke = ziel.split(/\{(\d+)\}/);   // gerade = Text, ungerade = Index
+    // Jeder Platzhalter genau einmal, keiner erfunden, keiner vergessen.
+    // Fehlt einer, wuerde das Kind-Element beim Umbau verschwinden — ein
+    // fehlender Link ist schlimmer als ein deutscher Satz. Dann lieber gar
+    // nicht uebersetzen.
+    var benutzt = {};
+    for (i = 1; i < stuecke.length; i += 2){
+      var idx = +stuecke[i];
+      if (!(idx >= 0 && idx < kinder.length) || benutzt[idx]) return;
+      benutzt[idx] = 1;
+    }
+    for (i = 0; i < kinder.length; i++){ if (!benutzt[i]) return; }
+    // Erst den Ersatz bauen: appendChild VERSCHIEBT die Kind-Elemente aus el
+    // in das Fragment. Deshalb trifft das Leeren danach sie nicht mehr —
+    // umgekehrte Reihenfolge wuerde sie loeschen, bevor sie gerettet sind.
+    var frag = document.createDocumentFragment();
+    for (i = 0; i < stuecke.length; i++){
+      if (i % 2 === 0){
+        if (!stuecke[i]) continue;
+        var tn = document.createTextNode(stuecke[i]);
+        tn.__fertig = 1;                 // nicht noch einmal nachschlagen
+        frag.appendChild(tn);
+      } else {
+        frag.appendChild(kinder[+stuecke[i]]);
+      }
+    }
+    el.__i18nMuster = 1;                 // der Beobachter sieht den Umbau
+    while (el.firstChild) el.removeChild(el.firstChild);
+    el.appendChild(frag);
+  }
+
   function knoten(n){
     if (n.nodeType === 3){                       // Textknoten
+      if (n.__fertig) return;                    // v4.2-W6: schon gesetzt
       if (n.parentNode && TABU[n.parentNode.nodeName]) return;
       if (n.parentNode && n.parentNode.closest && n.parentNode.closest('[data-i18n-skip]')) return;
       var neu = uebersetze(n.nodeValue);
@@ -151,6 +236,8 @@ _UEBERSETZER_JS = r"""(function(){
         n.setAttribute(a, neuA);
       }
     }
+    // v4.2-W6 VOR dem Abstieg: danach sind die Textknoten andere.
+    musterEinsetzen(n);
     for (var c = n.firstChild; c; c = c.nextSibling) knoten(c);
   }
 
