@@ -9,6 +9,7 @@ import ast
 import asyncio
 import re
 import sys
+from urllib.parse import urlparse
 
 
 # ---------------------------------------------------------------- Helpers
@@ -1245,7 +1246,13 @@ def test_twitch_ingest_default():
     # benutzen. Geprueft wird unveraendert dasselbe — und zusaetzlich, dass der
     # Bot die Vorgabe wirklich von dort holt statt eine eigene zu halten.
     cfg = open("nc/restreamcfg.py", encoding="utf-8").read()
-    assert "ingest.global-contribute.live-video.net" in cfg, \
+    m = re.search(
+        r'ingest\s*\([^)]*\)\s*:[\s\S]*?"twitch"\s*:\s*"([^"]+)"',
+        cfg
+    )
+    assert m, "Twitch-Ingest-Default in nc/restreamcfg.py nicht gefunden"
+    parsed = urlparse(m.group(1))
+    assert parsed.hostname == "ingest.global-contribute.live-video.net", \
         "globaler Twitch-Ingest fehlt als Default"
     # Geprueft wird die VORGABE, nicht die Zeichenkette: dass der alte Server
     # Restreams mit rc=8 abbrach, steht voellig zu Recht als Kommentar im
