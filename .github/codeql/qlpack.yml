@@ -1,0 +1,23 @@
+# v4.2-W3: eigener Abfrage-Pack fuer CodeQL.
+#
+# Grund: py/stack-trace-exposure meldete 208 Stellen, von denen 193 durch
+# nc/fehlertext.nach_aussen laufen und dort nachweislich gesaeubert werden
+# (Pfade auf den Dateinamen reduziert, Token und Stream-Keys geschwaerzt).
+# Die Datenflussanalyse sieht diese Saeuberung nicht: sie verfolgt str(e)
+# durch die Funktion hindurch bis in die Antwort.
+#
+# 208 Meldungen, die niemand mehr einzeln liest, sind schlimmer als keine —
+# in ihnen geht die eine echte unter, wenn sie kommt. Genau das ist am
+# 04.09. passiert: der Befund in nc/routes/brain.py (str(ex), anderer
+# Variablenname) stand seit Wochen in der Liste.
+#
+# Deshalb NICHT die Regel abschalten, sondern EINE Barriere setzen und die
+# Regel sonst unveraendert laufen lassen. Gemessen auf diesem Bestand:
+# 208 -> 15, und die 15 sind echte Restarbeit (indirekte Fluesse ueber
+# Variablen), keine Fehlalarme.
+name: nightcrawler/python-queries
+version: 0.0.1
+library: false
+dependencies:
+  codeql/python-all: "*"
+  codeql/python-queries: "*"

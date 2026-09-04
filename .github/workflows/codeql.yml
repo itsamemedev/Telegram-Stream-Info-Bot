@@ -1,0 +1,65 @@
+# CodeQL — Advanced Setup (v4.2-W3).
+#
+# WARUM NICHT MEHR DAS DEFAULT-SETUP: py/stack-trace-exposure meldete 208
+# Stellen, von denen 193 durch nc/fehlertext.nach_aussen laufen und dort
+# nachweislich gesaeubert werden. Die Datenflussanalyse sieht die Saeuberung
+# nicht — sie verfolgt str(e) durch die Funktion hindurch bis in die Antwort.
+#
+# 208 Meldungen, die niemand mehr einzeln liest, sind schlimmer als keine: in
+# ihnen geht die eine echte unter. Genau das ist passiert — der Befund in
+# nc/routes/brain.py (str(ex), anderer Variablenname als in der W30-Pruefung)
+# stand wochenlang unbemerkt in der Liste.
+#
+# Das Default-Setup kann keine eigene Abfrage laden. Deshalb dieser Workflow.
+# Er faehrt DIESELBEN Sprachen und DIESELBE Standard-Suite; der einzige
+# Unterschied steht in .github/codeql/codeql-config.yml.
+#
+# ACHTUNG: Solange in den Repo-Einstellungen das Default-Setup aktiv ist,
+# bricht dieser Workflow beim Hochladen ab ("default setup is enabled").
+# Einmalig abschalten unter:
+#   Settings -> Code security -> Code scanning -> CodeQL analysis
+#   -> Default setup -> Disable
+name: CodeQL
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+  schedule:
+    # Woechentlich, damit neue Abfragen aus dem Bundle auch ohne Commit greifen.
+    - cron: "31 4 * * 1"
+
+jobs:
+  analyze:
+    name: Analyze (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+      packages: read
+      actions: read
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - language: actions
+            build-mode: none
+          - language: javascript-typescript
+            build-mode: none
+          - language: python
+            build-mode: none
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: CodeQL initialisieren
+        uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.build-mode }}
+          config-file: ./.github/codeql/codeql-config.yml
+
+      - name: Analyse
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:${{ matrix.language }}"

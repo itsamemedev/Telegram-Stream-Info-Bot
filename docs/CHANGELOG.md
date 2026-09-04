@@ -11,6 +11,63 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Geändert — CodeQL bekommt eine Barriere statt 208 unlesbarer Meldungen (v4.2 W3, Teil 2)
+
+Der Wechsel auf **Advanced Setup**. `py/stack-trace-exposure` meldete 208
+Stellen, von denen 193 durch `nc.fehlertext.nach_aussen` laufen und dort
+nachweislich gesäubert werden. Die Datenflussanalyse sieht die Säuberung
+nicht — sie verfolgt `str(e)` durch die Funktion hindurch bis in die Antwort.
+
+**208 Meldungen, die niemand mehr einzeln liest, sind schlimmer als keine.**
+Genau das ist passiert: der Befund in `nc/routes/brain.py` — `str(ex)`, roh,
+nur mit einem anderen Variablennamen als die W30-Prüfung suchte — stand
+wochenlang unbemerkt in der Liste. Gefunden hat ihn erst das lokal
+installierte CodeQL. Behoben.
+
+**Die Regel wird ersetzt, nicht abgeschaltet.** `.github/codeql/` enthält
+dieselbe Abfrage mit einer Barriere für `nach_aussen`/`_fehler_text`
+(`nc/stack-trace-exposure`), die Konfiguration schließt nur die Standardfassung
+aus. Ein blosses `exclude` hätte auch jeden neuen echten Befund verschluckt.
+
+Vorher lokal geprüft, nicht gehofft:
+
+| | Standard | mit Barriere |
+|---|---:|---:|
+| Testfall `str(e)` roh | gemeldet | **gemeldet** |
+| Testfall über `nach_aussen` | gemeldet | unterdrückt |
+| echte Codebasis | 208 | **14** |
+
+Ein `# codeql[py/stack-trace-exposure]`-Kommentar unterdrückt übrigens
+**nichts** — auch das wurde gemessen, bevor der aufwendigere Weg gewählt wurde.
+
+**Gesamtbilanz über beide Teile von W3:**
+
+| Regel | vorher | nachher |
+|---|---:|---:|
+| `py/stack-trace-exposure` → `nc/stack-trace-exposure` | 208 | **14** |
+| `py/path-injection` | 17 | 17 |
+| `py/incomplete-url-substring-sanitization` | 6 | 6 |
+| `py/bad-tag-filter` | 4 | **0** |
+| `py/url-redirection` | 2 | 2 |
+| `py/sql-injection` | 2 | 2 |
+| `py/weak-sensitive-data-hashing` | 1 | 1 |
+| `py/insecure-temporary-file` | 1 | **0** |
+| `py/cookie-injection` | 1 | 1 |
+| **gesamt** | **242** | **43** |
+
+Ein Vertrag hält die Namen zusammen: die Barriere greift über
+`"nach_aussen"` und `"_fehler_text"`. Wird der Helfer im Python-Code
+umbenannt und die Abfrage nicht, fiele die Barriere still weg und 193
+Meldungen kämen ohne Vorwarnung zurück. Vier Negativtests, alle feuern.
+
+> **Eine Handarbeit bleibt.** Solange in den Repo-Einstellungen das
+> Default-Setup aktiv ist, bricht der neue Workflow beim Hochladen ab
+> („default setup is enabled"). Einmalig abschalten unter
+> **Settings → Code security → Code scanning → CodeQL analysis →
+> Default setup → Disable**. Der Hinweis steht auch im Workflow-Kopf, damit
+> niemand den Fehler im Workflow sucht.
+
+
 ### Behoben — 22 rohe Ausnahmetexte, die W30 durchgelassen hat (v4.2 W3)
 
 **CodeQL läuft jetzt lokal** (Bundle 2.26.4, dieselbe Suite wie GitHubs
