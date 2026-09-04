@@ -11,6 +11,69 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Geändert — Preflight und Resilienz raus, Sondenschicht vollständig (v4.2 W4)
+
+Dritte Teillieferung von Vorschlag 2. `/api/system/preflight` (123 Zeilen) und
+`/api/system/resilience` (50 Zeilen) liegen jetzt in
+`nc/routes/systemlage.py` — **ohne einen einzigen neuen `nc.ctx`-Slot**,
+weiterhin 24 von 25. Von den ursprünglich acht System-Routen bleibt nur noch
+`selftest`.
+
+Drei Sonden sind nach `nc/systemprobe.py` gewandert, dem Modul aus W32:
+
+- **`cpu_load_snapshot`** — Load, Speicher/Swap und die größten CPU-Fresser
+  direkt aus `/proc`. Das *Parsen* lag seit v4.0-W30 ohnehin in
+  `nc/sysload.py`; im Bot stand nur noch das Einsammeln.
+- **`disk_pct`** — reine stdlib, hing nur an `RECORDINGS_DIR`.
+- **`ai_alive`** — beide Wege (`brain`, `nc.freeai`) liegen außerhalb des
+  Bots; er war reine Durchreiche.
+
+Vier weitere Helfer brauchten gar nichts: `_multistream_targets`,
+`_tunnel_effective`, `_faster_whisper_available` und `_piper_available` waren
+längst Aliase auf `nc/`-Funktionen.
+
+**Wieder eine stille Fehlanzeige verhindert.** Die Preflight-Karte maß den
+Plattenplatz mit
+
+```python
+_sh.disk_usage(RECORDINGS_DIR if "RECORDINGS_DIR" in globals() else "/")
+```
+
+Im Blueprint ist `globals()` der Namensraum **dieser** Datei — der Test wäre
+dauerhaft `False` gewesen und gemessen worden wäre die **Systemplatte** statt
+des Aufnahme-Verzeichnisses. Eine Zahl, die richtig aussieht und falsch ist.
+Dritter Fund dieser Art nach W32 (`__file__`) und W33 (`/api/version`).
+
+**Keine zweite Wahrheit.** `recordings_dir`, `ffmpeg_threads_bg` und
+`ffmpeg_nice_bg` liegen seit W110/W116 als **Slot** im Kontext. Sie zusätzlich
+nach `cfg` zu legen wären zwei Werte für dieselbe Sache; der Blueprint liest
+jetzt den Slot. Ein Vertrag hält das fest.
+
+**Geheimnisse bleiben draußen.** Alle sechs im Spiel (`DASHBOARD_TOKEN`,
+`DISCORD_BOT_TOKEN`, `KICK_CLIENT_SECRET`, `KICK_STREAM_KEY_BACKUP`,
+`TWITCH_STREAM_KEY`, `YOUTUBE_STREAM_KEY`) werden ausschließlich als Boolean
+geprüft — es gehen `HAT_…`-Werte in den Kontext. Nachgemessen mit sechs
+unterscheidbaren Testgeheimnissen: keines erscheint in der Antwort, keines im
+Kontext.
+
+**Ein Fehler, den erst der Aufruf zeigte:** `c["FFMPEG_THREADS_BG"]` gab es in
+`cfg` nicht — der Wert liegt als Slot vor. Statisch unsichtbar, im Betrieb ein
+`KeyError` beim ersten Klick. Der Vertrag vergleicht jetzt **jeden** gelesenen
+`cfg`-Schlüssel gegen das, was der Bot wirklich liefert.
+
+Sechs Negativtests, alle feuern. Der Test für „misst das konfigurierte
+Verzeichnis" ist dabei zweimal geschrieben worden: die erste Fassung verglich
+Prozentzahlen und feuerte nicht, weil Temp- und Arbeitsverzeichnis auf
+derselben Platte liegen. Jetzt wird der Aufruf abgefangen und der übergebene
+Pfad geprüft.
+
+**Drei Anker gewandert, keiner gelöscht:** die Whisper-Drossel-Diagnose (B98),
+der sysload-Delegationsnachweis (W30) und das Gesamturteil der
+Übersichtskachel (W68) zeigten alle auf `bot.py`.
+
+`bot.py` 26.346 → **26.160 Zeilen**, eigene Routen 37 → **35**.
+
+
 ### Geändert — CodeQL bekommt eine Barriere statt 208 unlesbarer Meldungen (v4.2 W3, Teil 2)
 
 Der Wechsel auf **Advanced Setup**. `py/stack-trace-exposure` meldete 208

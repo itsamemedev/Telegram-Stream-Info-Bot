@@ -15,13 +15,15 @@ Konfiguration kommt per configure(), nicht per os.getenv() auf Modul-Ebene.
 CLAUDE.md: ".env wird teils erst nach den ersten Imports geladen" — eine
 Modul-Konstante haette hier die leere Vorgabe eingefroren.
 """
+import os as _os
 import socket as _socket
 import time as _time
 from urllib.parse import urlparse as _urlparse
 
 # Der Bot fror diese Werte ebenfalls beim Import ein; hier passiert nichts
 # anderes, nur an einer Stelle, die man ueberschreiben kann.
-_CONF = {"redis_url": "redis://localhost:6379/0", "recorder_pref": "auto"}
+_CONF = {"redis_url": "redis://localhost:6379/0", "recorder_pref": "auto",
+         "recordings_dir": "."}
 
 # 5 Sekunden: das Dashboard pollt /api/system im Sekundentakt. Ohne Deckel
 # haette jede Kachel einen eigenen TCP-Verbindungsaufbau ausgeloest.
@@ -141,3 +143,83 @@ def active_recorder(which=None):
     if hat_ytdlp:
         return "ytdlp"
     return None
+
+
+def recordings_dir():
+    return _CONF["recordings_dir"]
+
+
+def disk_pct():
+    """Belegung des Aufnahme-Verzeichnisses in Prozent, plus das rohe Ergebnis.
+
+    v4.2-W4: aus bot.py. Reine stdlib; hing nur an der Konstanten
+    RECORDINGS_DIR. Bei einem Fehler (0, None) statt einer Ausnahme — der
+    Aufrufer ist ein Statuspanel, das eine Zahl braucht und keinen Abbruch.
+    """
+    import shutil
+    try:
+        ziel = _CONF["recordings_dir"]
+        st = shutil.disk_usage(ziel if _os.path.isdir(ziel) else ".")
+        return int(st.used / st.total * 100), st
+    except Exception:
+        return 0, None
+
+
+def cpu_load_snapshot():
+    """Load, Speicher/Swap und die groessten CPU-Fresser — ohne psutil,
+       direkt aus /proc.
+
+    Zweck: bei Load-Spitzen sofort sehen WER frisst, statt am Handy per SSH
+    htop zu lesen.
+
+    Wichtig fuer die Deutung: die Load zaehlt auch Prozesse im
+    unterbrechbaren I/O-Wait (D-State). Ein vollgelaufener Swap treibt sie
+    also hoch, ohne dass eine CPU rechnet — deshalb steht swap daneben.
+
+    v4.2-W4: aus bot.py. Das Parsen lag seit v4.0-W30 ohnehin in nc/sysload;
+    hier stand nur noch das Einsammeln.
+    """
+    import subprocess
+    from nc import sysload as _sl
+    out = {}
+    try:
+        la1, la5, la15 = _os.getloadavg()
+        kerne = _os.cpu_count() or 1
+        out.update(_sl.classify_load(la1, la5, la15, kerne))
+    except Exception:
+        pass
+    try:
+        # `with` statt nacktem open(): diese Funktion laeuft im Health-Loop,
+        # ein offener File-Handle pro Aufruf summiert sich gegen das fd-Limit.
+        with open("/proc/meminfo") as f:
+            out.update(_sl.parse_meminfo(f.read()))
+    except Exception:
+        pass
+    try:
+        # Ein einzelner ps-Aufruf, kein Dauer-Sampling.
+        r = subprocess.run(["ps", "-eo", "comm,pid,pcpu,rss,nlwp", "--sort=-pcpu"],
+                           capture_output=True, text=True, timeout=4)
+        out.update(_sl.parse_ps(r.stdout or ""))
+    except Exception:
+        pass
+    return out
+
+
+def ai_alive(timeout=1.5):
+    """Health: Brain-Backend (llama.cpp) ODER freeai erreichbar?
+
+    v4.2-W4: aus bot.py. Beide Wege liegen in nc/ bzw. brain/ — der Bot war
+    hier nur Durchreiche. `from brain import ...` steht bewusst IN der
+    Funktion: nc/ soll brain nicht beim Import mitziehen.
+    """
+    try:
+        from brain import get_brain
+        if get_brain().llm.alive():
+            return True
+    except Exception:
+        pass
+    try:
+        from nc import freeai as _freeai
+        return _freeai.alive_sync(timeout=max(2.0, timeout))
+    except Exception:
+        return False

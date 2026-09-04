@@ -15,6 +15,9 @@ selftest — haengen noch am Discord-Client, am Restream-Manager und am
 Watchdog-Zustand. Sie folgen, wenn deren Zustand aufgeloest ist, nicht vorher.
 """
 import os
+import threading
+import time
+from datetime import datetime, timezone
 
 from flask import Blueprint, jsonify, request
 
@@ -23,6 +26,9 @@ from nc import discordlimits as _nc_dclimits
 from nc import fehlertext as _nc_fehlertext
 from nc import i18n as _nc_i18n
 from nc import piper_voices as _nc_piper
+from nc import proxyutil as _nc_proxyutil
+from nc import discordstate as _nc_discordstate
+from nc import restream_targets as _nc_rst
 from nc import restreamstate as _nc_rsstate
 from nc import version as _nc_version
 from nc import whispercfg as _nc_whisper
@@ -226,3 +232,189 @@ def api_check_timing():
                    "ailog_tage": c["AI_LOG_RETENTION_DAYS"],
                    "snapshots_ausduennen_ab_tage": c["SNAPSHOT_THIN_AFTER_DAYS"],
                    "overlay_tage_ohne_spenden": c["OVERLAY_RETENTION_DAYS"]})
+
+
+@bp.route("/api/system/preflight")
+def api_system_preflight():
+    """Professioneller Ops-Check: verifiziert jedes kritische Subsystem und
+       liefert eine farbcodierte Scorecard (ok/warn/fail) + Gesamturteil.
+       Ausschließlich lesend — verändert nichts."""
+    import shutil as _sh
+    c = _c().cfg
+    checks = []
+
+    def add(cat, name, status, detail):
+        checks.append({"cat": cat, "name": name, "status": status, "detail": detail})
+
+    # ── Core ──
+    try:
+        with db_conn() as conn:
+            conn.execute("SELECT 1").fetchone()
+        add("Core", "Datenbank", "ok", "erreichbar")
+    except Exception as e:
+        add("Core", "Datenbank", "fail", _fehler_text(e, "api_system_preflight")[:80])
+    try:
+        # v4.2-W4: kein globals()-Test mehr. Im Monolithen war das eine
+        # Absicherung gegen eine noch nicht gesetzte Konstante; in einem
+        # Blueprint ist globals() der Namensraum DIESER Datei, der Test
+        # waere dauerhaft False und der Pfad still "/" — gemessen wuerde
+        # dann die Systemplatte statt des Aufnahme-Verzeichnisses.
+        du = _sh.disk_usage(_c().recordings_dir)
+        free_pct = 100 * du.free / du.total
+        free_gb = du.free / (1024 ** 3)
+        st = "ok" if free_pct >= 15 else ("warn" if free_pct >= 5 else "fail")
+        add("Core", "Speicherplatz", st, f"{free_gb:.0f} GB frei ({free_pct:.0f}%)")
+    except Exception as e:
+        add("Core", "Speicherplatz", "warn", _fehler_text(e, "api_system_preflight")[:60])
+    try:
+        ok_w = os.access(c["LOG_DIR"], os.W_OK)
+        add("Core", "Log-Verzeichnis", "ok" if ok_w else "warn",
+            c["LOG_DIR"] if ok_w else "nicht beschreibbar")
+    except Exception:
+        add("Core", "Log-Verzeichnis", "warn", "unbekannt")
+
+    # ── Recording ──
+    for b, crit in (("ffmpeg", True), ("ffprobe", True), ("yt-dlp", False), ("streamlink", False)):
+        p = _sh.which(b)
+        if p:
+            add("Aufnahme", b, "ok", "installiert")
+        else:
+            add("Aufnahme", b, "fail" if crit else "warn",
+                "FEHLT (kritisch)" if crit else "fehlt (Fallback-Tier)")
+    eff = _nc_proxyutil.tunnel_effective()
+    lt = _nc_proxyutil.tunnel_state().get("last_test")
+    if eff:
+        if lt and lt.get("ok"):
+            add("Aufnahme", "Egress-Tunnel", "ok", f"aktiv · letzter Test HTTP {lt.get('http_code')}")
+        else:
+            add("Aufnahme", "Egress-Tunnel", "ok", "aktiv (noch nicht getestet)")
+    else:
+        add("Aufnahme", "Egress-Tunnel", "warn", "direkt (kein Tunnel)")
+
+    # ── Restream ──
+    add("Restream", "Kick-Zugang", "ok" if c["HAT_KICK_CREDS"] else "warn",
+        "Client-Creds gesetzt" if c["HAT_KICK_CREDS"] else "keine Kick-Creds")
+    add("Restream", "Kick-Kanal", "ok" if c["KICK_CHANNEL_URL"] else "warn",
+        c["KICK_CHANNEL_URL"] or "keine Kanal-URL")
+    add("Restream", "Multi-Kick-Failover",
+        "ok" if c["HAT_KICK_BACKUP"] else "warn",
+        "Backup-Ingest scharf" if c["HAT_KICK_BACKUP"]
+        else "kein Backup-Ingest (optional)")
+
+    # ── KI ──
+    add("KI", "Modell", "ok" if c["AI_MODEL"] else "warn", c["AI_MODEL"] or "kein Modell")
+    ai_ok = _nc_probe.ai_alive(timeout=3)
+    add("KI", "LLM-Endpoint", "ok" if ai_ok else "warn",
+        "Brain-Runtime/freeai erreichbar" if ai_ok
+        else "kein LLM erreichbar (Brain + freeai-Basen down)")
+
+    # ── Community ──
+    dc_ok = bool(_nc_discordstate.CLIENT["obj"] and getattr(_nc_discordstate.CLIENT["obj"], "user", None))
+    # B120: Ohne Reconnect-Zaehler und letzten Grund war "nicht verbunden"
+    # nicht von "nie konfiguriert" zu unterscheiden — der stille Gateway-
+    # Tod blieb monatelang unsichtbar.
+    if dc_ok:
+        _dc_detail = f"online als {_nc_discordstate.CLIENT['obj'].user}"
+        if _nc_discordstate.SESSION.get("reconnects"):
+            _dc_detail += f" · {_nc_discordstate.SESSION['reconnects']} Reconnects"
+    elif not c["HAT_DISCORD_BOT_TOKEN"]:
+        _dc_detail = "kein DISCORD_BOT_TOKEN gesetzt"
+    else:
+        _dc_detail = "nicht verbunden"
+        if _nc_discordstate.SESSION.get("last_error"):
+            _dc_detail += f" · letzter Grund: {_nc_discordstate.SESSION['last_error'][:120]}"
+        if _nc_discordstate.SESSION.get("last_disconnect"):
+            _dc_detail += (f" · seit {int((time.time() - _nc_discordstate.SESSION['last_disconnect']) // 60)} min")
+    add("Community", "Discord-Bot",
+        "ok" if dc_ok else ("warn" if not c["HAT_DISCORD_BOT_TOKEN"] else "err"),
+        _dc_detail)
+    add("Community", "Webhook", "ok" if c["HAT_DISCORD_WEBHOOK"] else "warn",
+        "konfiguriert" if c["HAT_DISCORD_WEBHOOK"] else "kein Webhook (Broadcast/Alerts aus)")
+
+    # ── Voice ──
+    add("Voice", "Piper TTS", "ok" if _nc_piper.available() else "warn",
+        "verfügbar" if _nc_piper.available() else "nicht installiert (optional)")
+    add("Voice", "faster-whisper", "ok" if _nc_whisper.verfuegbar() else "warn",
+        "verfügbar" if _nc_whisper.verfuegbar() else "nicht installiert (Oracle/Transkript aus)")
+
+    # ── Sicherheit ──
+    add("Sicherheit", "Dashboard-Auth", "ok" if c["HAT_DASHBOARD_TOKEN"] else "warn",
+        "Token aktiv (extern erzwungen, Loopback frei)" if c["HAT_DASHBOARD_TOKEN"]
+        else "kein Token (nur lokal betreiben!)")
+    add("Sicherheit", "Rate-Limiting", "ok",
+        f"{c['DASHBOARD_RATE_LIMIT_PER_MIN']}/min · {c['DASHBOARD_RATE_LIMIT_WRITE_PER_MIN']}/min schreibend (localhost frei)")
+    add("Sicherheit", "Security-Header", "ok", "nosniff · X-Frame · Referrer-Policy")
+
+    fails = sum(1 for c in checks if c["status"] == "fail")
+    warns = sum(1 for c in checks if c["status"] == "warn")
+    overall = "fail" if fails else ("warn" if warns else "ok")
+    def _hist():
+        try:
+            with db_conn() as conn:
+                conn.execute("INSERT INTO preflight_history (overall, fails, warns, created_at) "
+                             "VALUES (?,?,?,?)",
+                             (overall, fails, warns, datetime.now(timezone.utc).isoformat()))
+                conn.execute("DELETE FROM preflight_history WHERE id NOT IN "
+                             "(SELECT id FROM (SELECT id FROM preflight_history ORDER BY id DESC LIMIT 500) _k)")
+        except Exception:
+            pass
+    # B74-Fix: _spawn(asyncio.to_thread(...)) braucht einen LAUFENDEN Event-Loop —
+    # diese Route läuft aber im Flask-Thread (kein Loop) → RuntimeError bei JEDEM
+    # Preflight-Poll. _hist ist reine synchrone DB-Arbeit → Daemon-Thread reicht.
+    threading.Thread(target=_hist, name="pf-hist", daemon=True).start()
+    return jsonify(ok=True, overall=overall, fails=fails, warns=warns,
+                   total=len(checks), checks=checks)
+
+
+@bp.route("/api/system/resilience")
+def api_system_resilience():
+    """F103: Bündelt Watchdog, Disk-Guard, Sign-Key-Health, Multistream & KI-
+       Tiefe (Story-Gedächtnis) für ein Dashboard-Resilienz-Panel."""
+    c = _c().cfg
+    pct, st = _nc_probe.disk_pct()
+    stories = {u: s.snapshot() for u, s in list(c["_STORY_MEMORIES"].items())}
+    return jsonify(
+        ok=True,
+        watchdog={"enabled": c["WATCHDOG_ENABLED"], "last_scan": c["_WATCHDOG_STATE"]["last_scan"],
+                  "stalls": [k for k, v in c["_WATCHDOG_STATE"]["stalls"].items() if v],
+                  "heartbeats": {k: round(time.monotonic() - v, 1) for k, v in c["_HEARTBEATS"].items()}},
+        disk={"pct": pct, "autoclean": c["DISK_AUTOCLEAN"], "threshold": c["DISK_AUTOCLEAN_PCT"],
+              "target": c["DISK_AUTOCLEAN_TARGET"], "last_freed_mb": c["_DISK_GUARD_STATE"]["freed_mb"],
+              "last_deleted": c["_DISK_GUARD_STATE"]["deleted"], "active": c["_DISK_GUARD_STATE"]["active"],
+              "free_gb": round(st.free / 1024**3, 1) if st else None},
+        sign={"ok": c["_SIGN_HEALTH"]["ok"], "key_set": c["_SIGN_HEALTH"]["key_set"],
+              "detail": c["_SIGN_HEALTH"]["detail"], "checked": c["_SIGN_HEALTH"]["checked"],
+              "cooldown_min": max(0, int((c["_SIGN_COOLDOWN"]["until"] - time.time()) // 60))},
+        multistream={"kick": True,
+                     "youtube": {"enabled": c["YOUTUBE_ENABLED"], "configured": c["HAT_YOUTUBE_KEY"]},
+                     "twitch": {"enabled": c["TWITCH_ENABLED"], "configured": c["HAT_TWITCH_KEY"]},
+                     "active_extra": [n for n, _ in _nc_rst.multistream_targets()]},
+        ai={"story_memory": c["STORY_MEMORY"], "hype_clip": c["HYPE_CLIP_AUTO"],
+            "directors": len(c["_LIVE_DIRECTORS"]), "stories": stories},
+        # V37-B98: CPU-Konkurrenz sichtbar machen. Ohne GPU teilen sich
+        # Encoder, Whisper und llama.cpp dieselben Kerne — wer wie viel
+        # bekommt, entscheidet, ob das Sendebild ruckelt.
+        cpu={"cores": os.cpu_count(),
+             # V37-CPU: die harten Zahlen. Load > Kerne = Ueberbuchung; Load
+             # zaehlt auch Prozesse im I/O-Wait, deshalb steht Swap daneben —
+             # ein vollgelaufener Swap treibt die Load hoch, ohne dass eine
+             # CPU rechnet.
+             "load": _nc_probe.cpu_load_snapshot(),
+             "ffmpeg_threads": {"live": c["FFMPEG_THREADS_LIVE"],
+                                "relay": c["FFMPEG_THREADS_RELAY"],
+                                "record": c["FFMPEG_THREADS_RECORD"],
+                                "background": _c().ffmpeg_threads_bg,
+                                "nice_bg": _c().ffmpeg_nice_bg,
+                                "nice_record": c["FFMPEG_NICE_RECORD"]},
+             "restream_live": len(c["_RESTREAM_ACTIVE_ALL"]),
+             "whisper": {"throttled": c["_WHISPER_STATE"]["throttled"],
+                         "throttle_enabled": c["WHISPER_THROTTLE_LIVE"],
+                         "max_conc": c["WHISPER_MAX_CONC"],
+                         "threads_each": c["WHISPER_THREADS"],
+                         "runs": c["_WHISPER_STATE"]["runs"],
+                         "throttled_runs": c["_WHISPER_STATE"]["throttled_runs"],
+                         "dropped_segments": sum(c["_LIVE_REACT_DROPPED"].values())},
+             "encoder": {"preset": c["RESTREAM_X264_PRESET"],
+                         "relay_preset": c["RESTREAM_RELAY_PRESET"],
+                         "mode": c["RESTREAM_MULTI_MODE"]},
+             "brain_llm": os.getenv("AI_PROVIDER", "").strip().lower() == "brain"})

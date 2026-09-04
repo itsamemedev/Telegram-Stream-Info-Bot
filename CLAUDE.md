@@ -10,7 +10,7 @@ GitHub-Repo trägt Historie, CI und Issues — es ist nicht der Deploy-Weg.
 
 ## Die eine Regel
 
-`bot.py` hat **26.346 Zeilen / 1,3 MB ≈ 333.000 Token**. Diese Datei wird
+`bot.py` hat **26.160 Zeilen / 1,3 MB ≈ 333.000 Token**. Diese Datei wird
 **nie** ganz gelesen und **nie** blind durchsucht. Erst fragen wo etwas steht,
 dann den Ausschnitt holen:
 
@@ -24,8 +24,8 @@ dann den Ausschnitt holen:
     python tools/ncpatch.py check                          # Templates: doppelte IDs, CSS-Bilanz
     python tools/ncpatch.py docs                           # Doku-Zahlen gegen den Quelltext
 
-`find` antwortet aus `.claude/INDEX.md` — 360 Routen (37 in `bot.py`, 323 in
-`nc/routes/`), 45 Slash-Commands, 472 Funktionen mit Zeilennummern. Nach Änderungen an Routen, Commands oder
+`find` antwortet aus `.claude/INDEX.md` — 360 Routen (35 in `bot.py`, 325 in
+`nc/routes/`), 45 Slash-Commands, 469 Funktionen mit Zeilennummern. Nach Änderungen an Routen, Commands oder
 Top-Level-Funktionen `map` neu laufen lassen. Details: Skill `nc-navigation`.
 
 Für „wer ruft das auf?" und „was ist der Typ?" ist der Sprachserver billiger als
@@ -46,7 +46,7 @@ Auf diesem Windows-Rechner heißt der Interpreter **`python`** (3.13.12);
                          semantic, knowledge, scheduler, llm, report
     nc/                  120 Fachmodule: db, scraping, restream, oauth, ledger,
                          i18n, …
-    nc/routes/           35 Flask-Blueprints mit 323 weiteren API-Routen
+    nc/routes/           35 Flask-Blueprints mit 325 weiteren API-Routen
     locales/             de.json, en.json — der Übersetzungskatalog
     templates/           dashboard.html, brain.html, overlay.html, PWA
     website/             lafap_index.html (öffentliche Seite)
