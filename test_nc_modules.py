@@ -4459,6 +4459,21 @@ def _test_v42_w10_cookies_reparieren_und_selbst_holen():
     assert pruefung < tausch, \
         "die Reparatur tauscht, bevor sie prueft — ein ungeprueftes Ergebnis"
 
+    # Der Bericht geht als JSON ins Deck, in die Health-Anzeige und nach
+    # Telegram — der Wortlaut einer Ausnahme aus urllib, yt-dlp oder einem
+    # Browser-Profil traegt Pfade. Er muss durch nach_aussen, und zwar an
+    # der Quelle: das ist zugleich die Barriere, die
+    # .github/codeql/NcSanitizer.qll kennt. saeubern() taete sachlich
+    # dasselbe, aber CodeQL sieht es nicht — und meldete hier prompt zwei
+    # py/stack-trace-exposure.
+    h = open("nc/cookieholen.py", encoding="utf-8").read()
+    assert "_nc_fehlertext.nach_aussen(e," in h, \
+        ("nc/cookieholen.py gibt den rohen Ausnahmetext nach aussen — durch "
+         "nach_aussen() schicken, nicht durch str(e) und nicht durch "
+         "saeubern() (dann faellt die CodeQL-Barriere weg)")
+    for muster in ('bericht["error"] = str(e)', "str(e) or e.__class__"):
+        assert muster not in h, "roher Ausnahmetext in nc/cookieholen.py: %s" % muster
+
     from flask import Flask
     from nc.routes import settings as rt
     app = Flask(__name__)

@@ -37,6 +37,7 @@ import time as _time
 import urllib.request
 from http.cookiejar import CookieJar, MozillaCookieJar
 
+from nc import fehlertext as _nc_fehlertext
 from nc.cookies import (DATEI_SPERRE, _cookies_input_to_netscape,
                         _dedupe_cookie_text)
 from nc.tiktokheaders import HEADERS as _TT_HEADERS
@@ -379,7 +380,15 @@ def aktualisiere(datei: str, quelle="gast", browser=None, timeout=15,
             log.warning("Cookies automatisch bezogen (%s): %d neu, %d erneuert, "
                         "%d in der Datei", quelle, len(ergaenzt), len(ersetzt), anzahl)
     except Exception as e:
-        bericht["error"] = str(e) or e.__class__.__name__
+        # nach_aussen() und NICHT str(e): der Wortlaut kommt aus urllib, aus
+        # yt-dlp oder aus einem Browser-Profil und traegt Pfade — und dieser
+        # Bericht geht als JSON ins Deck, in die Health-Anzeige und nach
+        # Telegram. Der volle Text landet im Log, wo er hingehoert; nach
+        # aussen geht die gekuerzte, geschwaerzte Fassung (v4.1-W30).
+        # Zugleich ist es die Barriere, die .github/codeql/NcSanitizer.qll
+        # kennt — saeubern() taete dasselbe, aber CodeQL sieht es nicht und
+        # meldet py/stack-trace-exposure. Genau das ist hier passiert.
+        bericht["error"] = _nc_fehlertext.nach_aussen(e, "cookieholen.aktualisiere")
         if log:
             log.warning("Cookie-Auto-Bezug (%s) fehlgeschlagen: %s", quelle, e)
     return bericht

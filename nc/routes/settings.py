@@ -226,12 +226,10 @@ def api_cookies_fetch():
                  quelle, len(bericht.get("added") or []),
                  len(bericht.get("replaced") or []))
         return jsonify(bericht)
-    # Der Wortlaut kommt aus urllib/yt-dlp und kann Pfade tragen — durch
-    # dieselbe Saeuberung wie ueberall (v4.1-W30). saeubern() statt
-    # nach_aussen(): hier liegt ein fertiger Text vor, keine Ausnahme —
-    # nach_aussen haenge sonst ein "str: " davor.
-    log.warning("Cookie-Bezug (%s) fehlgeschlagen: %s", quelle, bericht.get("error"))
-    bericht["error"] = _nc_fehlertext.saeubern(str(bericht.get("error") or "unbekannt"))
+    # Hier wird NICHT nachgesaeubert: der Wortlaut ist schon durch
+    # nc.fehlertext.nach_aussen gegangen, dort wo die Ausnahme wirklich
+    # anfaellt (nc/cookieholen.aktualisiere). Eine zweite Saeuberung an der
+    # Senke waere die zweite Wahrheit ueber dieselbe Meldung.
     return jsonify(bericht), 502
 
 
