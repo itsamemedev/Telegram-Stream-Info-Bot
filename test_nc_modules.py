@@ -4370,22 +4370,12 @@ def _test_v42_w10_cookies_reparieren_und_selbst_holen():
     except Exception:
         pass
 
-    # (7) Nichts geaendert = nicht schreiben. Sonst wandert die mtime, und das
-    # Deck meldet "Cookies frisch", waehrend alles beim Alten ist.
-    vorher = _os.path.getmtime(ziel)
-    bericht = HOL.aktualisiere(
-        ziel, quelle="gast",
-        # kein Netz: der Bezug scheitert, und genau dann darf erst recht
-        # nichts geschrieben werden.
-        timeout=1)
-    assert bericht["ok"] is False and bericht["error"], bericht
-    assert _os.path.getmtime(ziel) == vorher, \
-        "gescheiterter Bezug hat die Datei angefasst"
-    ok("v4.2-W10: geschrieben wird nur validiert — und nur bei echter Aenderung")
-
-    # (8) Der Abruf selbst, gegen einen Stub auf dem Loopback. Kein TikTok,
-    # kein Netz nach draussen — geprueft wird, dass Set-Cookie wirklich
-    # ausgelesen und der Domain-Filter angewandt wird.
+    # (7) Der ganze Weg — holen, mischen, schreiben — gegen einen Stub auf
+    # dem Loopback. NICHT gegen das echte TikTok: der erste Anlauf dieses
+    # Vertrags nahm an, in der CI gaebe es kein Netz, und wurde prompt rot,
+    # weil der Runner sehr wohl an tiktok.com kommt. Ein Vertrag, der an der
+    # Netzanbindung haengt, prueft nicht das, was er zu pruefen behauptet —
+    # und ruft nebenbei bei jedem Lauf einen fremden Dienst.
     class _Stub(http.server.BaseHTTPRequestHandler):
         def do_GET(self):
             self.send_response(200)
@@ -4402,15 +4392,51 @@ def _test_v42_w10_cookies_reparieren_und_selbst_holen():
     _th.Thread(target=srv.serve_forever, daemon=True).start()
     try:
         url = "http://127.0.0.1:%d/" % srv.server_address[1]
-        geholt = HOL.hole_gastcookies(urls=[url], timeout=5,
-                                      domains=("127.0.0.1",))
+        nur_lokal = ("127.0.0.1",)
+
+        # Der Abruf liest Set-Cookie …
+        geholt = HOL.hole_gastcookies(urls=[url], timeout=5, domains=nur_lokal)
         assert set(geholt) == {"ttwid", "msToken"}, geholt
         assert geholt["ttwid"][0] == "STUB"
-        # Derselbe Abruf mit dem echten Domain-Filter darf NICHTS durchlassen.
+        # … und derselbe Abruf mit dem echten Domain-Filter laesst NICHTS
+        # durch. Ein Browser-Profil traegt die Cookies aller Seiten.
         assert HOL.hole_gastcookies(urls=[url], timeout=5) == {}
+
+        # Der volle Weg: zwei Tokens dazu, der Login bleibt stehen.
+        b1 = HOL.aktualisiere(ziel, quelle="gast", timeout=5,
+                              urls=[url], domains=nur_lokal)
+        assert b1["ok"] and sorted(b1["added"]) == ["msToken", "ttwid"], b1
+        drin, _ = _laden(open(ziel, encoding="utf-8").read())
+        assert drin["sessionid_ss"] == "ALT", "der Login ging beim Schreiben verloren"
+        assert drin["ttwid"] == "STUB" and drin["msToken"] == "STUB2", drin
+        assert _os.path.exists(ziel + ".bak"), "kein Backup vor dem Tausch"
+
+        # Zweiter Lauf, gleiche Werte: nichts geaendert = NICHT schreiben.
+        # Sonst wandert die mtime, und das Deck meldet "Cookies frisch",
+        # waehrend in Wahrheit alles beim Alten ist.
+        vorher = _os.path.getmtime(ziel)
+        b2 = HOL.aktualisiere(ziel, quelle="gast", timeout=5,
+                              urls=[url], domains=nur_lokal)
+        assert b2["ok"] and not b2["added"] and not b2["replaced"], b2
+        assert _os.path.getmtime(ziel) == vorher, \
+            "unveraenderter Bezug hat die Datei trotzdem neu geschrieben"
     finally:
         srv.shutdown()
-    ok("v4.2-W10: Gast-Abruf liest Set-Cookie und filtert nach Domain")
+
+    # Und ein gescheiterter Abruf fasst die Datei erst recht nicht an.
+    # Toter Port statt abgeschaltetem Netz: deterministisch, ohne Wartezeit.
+    import socket as _sock
+    _s = _sock.socket()
+    _s.bind(("127.0.0.1", 0))
+    _tot = "http://127.0.0.1:%d/" % _s.getsockname()[1]
+    _s.close()
+    vorher = _os.path.getmtime(ziel)
+    b3 = HOL.aktualisiere(ziel, quelle="gast", timeout=2, urls=[_tot])
+    assert b3["ok"] is False and b3["error"], b3
+    assert _os.path.getmtime(ziel) == vorher, \
+        "gescheiterter Bezug hat die Datei angefasst"
+    ok("v4.2-W10: Abruf, Mischen und Schreiben am Stueck — validiert, "
+       "mit Backup, und nur bei echter Aenderung")
 
     # (9) Und der Monolith haengt wirklich dran. Ohne diese Haken ist alles
     # oben eine Bibliothek, die niemand aufruft.

@@ -316,7 +316,7 @@ def schreibe(datei: str, netscape_text: str, auth_pflicht=False):
 
 
 def aktualisiere(datei: str, quelle="gast", browser=None, timeout=15,
-                 proxy=None, log=None) -> dict:
+                 proxy=None, log=None, urls=None, domains=None) -> dict:
     """Der eine Aufruf, den Bot, Deck und Telegram-Befehl teilen.
 
        quelle: 'gast'    — Anti-Bot-Tokens per HTTPS holen (kein Login nötig)
@@ -325,6 +325,11 @@ def aktualisiere(datei: str, quelle="gast", browser=None, timeout=15,
        proxy=None heißt NICHT "direkt", sondern "nimm den konfigurierten
        Weg" (siehe configure). Direkt geht es nur, wenn auch kein Wähler
        hinterlegt ist.
+
+       `urls` und `domains` reicht sie an hole_gastcookies durch — damit der
+       Vertrag den ganzen Weg (holen → mischen → schreiben) gegen einen
+       lokalen Stub fahren kann. Ein Test, der dafür das echte TikTok
+       braucht, prüft in Wahrheit die Netzanbindung des Runners.
 
        Returns einen Bericht, der auch im Fehlerfall vollständig ist —
        ok=False plus 'error'. Wirft nicht: die Aufrufer sind eine Route, ein
@@ -340,7 +345,8 @@ def aktualisiere(datei: str, quelle="gast", browser=None, timeout=15,
             neue = aus_browser(browser or "chrome", timeout=max(timeout, 60))
             gast = False
         else:
-            neue = hole_gastcookies(timeout=timeout, proxy=_proxy(proxy))
+            neue = hole_gastcookies(urls=urls, timeout=timeout,
+                                    proxy=_proxy(proxy), domains=domains)
             gast = True
         bericht["fetched"] = len(neue)
         if not neue:
