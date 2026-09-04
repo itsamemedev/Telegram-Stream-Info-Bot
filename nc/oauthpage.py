@@ -26,9 +26,9 @@ def twitch(ok, msg):
 
 
 def kick(ok, msg):
-    """Kick-OAuth-Rückmeldeseite. Verbatim übernommen — MANUELLES Escaping
-       (nur &<>, in dieser Reihenfolge, keine Quotes), bewusst so belassen."""
-    esc = (str(msg).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;"))
+    """Kick-OAuth-Rückmeldeseite. Escaping über Standardbibliothek, damit
+       Nutzereingaben robust und eindeutig HTML-sicher ausgegeben werden."""
+    esc = html.escape(str(msg), quote=True)
     color = "#8FB98F" if ok else "#E0A0A0"
     icon = "✓" if ok else "✕"
     return ("<!DOCTYPE html><html lang=\"de\"><head><meta charset=\"utf-8\">"
