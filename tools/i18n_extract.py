@@ -280,7 +280,7 @@ def _html_strings(pfad):
         a = _html.unescape(a)
         if _ist_uebersetzbar(a) and not _SKIP_ATTR_WERTE.match(a):
             raus.add(a.strip())
-    js = "\n".join(re.findall(r"<script\b[^>]*>(.*?)</script\s*>", roh,
+    js = "\n".join(re.findall(r"<script\b[^>]*>(.*?)</script\b[^>]*>", roh,
                               flags=re.S | re.I))
     # v4.1-W21: was ausdruecklich mit T("...") umschlossen ist, kommt IMMER in
     # den Katalog — ohne Heuristik. Notwendig fuer die nativen Dialoge
