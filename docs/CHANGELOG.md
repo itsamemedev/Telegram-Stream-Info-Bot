@@ -11,6 +11,104 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Behoben — das Ereignisprotokoll blockierte den Event-Loop (v4.1 W29)
+
+Fortsetzung des Befunds aus W26. `log_event` schrieb **synchron** in die
+Datenbank, aus jedem Pfad — auch aus async-Funktionen. Unter Plattenlast
+blockiert SQLite, und dann steht nicht die Abfrage, sondern der ganze Bot.
+Einer der Stack-Abzüge vom 2026-09-03 zeigte genau diese Kette
+(`on_comment` → `log_event`).
+
+Die Funktion hat über dreissig Aufrufer, synchrone wie asynchrone. Sie alle
+auf `await` umzustellen hätte dreissig Stellen angefasst und die Zusicherung
+gebrochen, die in ihrem eigenen Docstring steht: „Caller darf das aus jedem
+Pfad aufrufen ohne Risiko".
+
+Deshalb der andere Weg: **`nc/eventlog.py` — eine Warteschlange und EIN
+Schreiber-Thread.** Der Aufrufer legt ab und geht weiter. **Keine einzige
+Aufrufstelle musste geändert werden**, und die Zusicherung gilt jetzt sogar
+stärker: der Aufruf wartet nie mehr. Gemessen: 500 Einträge in 1 ms
+(0,002 ms je Aufruf), Reihenfolge exakt erhalten.
+
+Drei Entscheidungen, die im Modul begründet stehen:
+
+* **Die Schlange ist begrenzt** (2000). Ein unbegrenzter Puffer vor einer
+  hängenden Platte ist ein Speicherleck mit Anlauf — dieselbe Sorte wie der
+  Adress-Cache in W25. Läuft sie voll, werden neue Einträge verworfen **und
+  gezählt**: ein Prüfprotokoll, das still Einträge verliert, ist schlimmer
+  als keines, denn die Lücke sieht aus wie Ruhe.
+* **Ein Schreiber.** Das Protokoll ist eine Chronik; zwei Threads würden die
+  Reihenfolge zerwürfeln.
+* **Gebündelt** (bis 50 pro Transaktion). Bei einem Chat-Ansturm ist das der
+  Unterschied zwischen zweihundert Schreibvorgängen und zweien — und die
+  Platte war das Problem.
+
+**Ein Fehler in meinem eigenen Entwurf, gefunden im Überlast-Test:** die
+Fehler-Drosselung lief über `_ZÄHLER["fehler"] % 100 == 1`. Der Zähler wächst
+aber in Bündeln von bis zu 50 — 50 und 100 treffen die 1 nie. Der
+Schreibfehler wäre **still** geblieben, ausgerechnet der, der die Chronik
+löchert. Jetzt zeitgedrosselt.
+
+`reaper_loop` läuft ebenfalls neben dem Loop. Er räumt im Minutentakt tote
+Recorder-Prozesse ab und las dabei synchron aus der Datenbank.
+
+### Behoben — offene Transaktion über ein `await` hinweg (v4.1 W29)
+
+Beim Umstellen der Dauerläufer kam ein zweiter, andersartiger Befund zutage:
+in `_community_events_loop` und `/daily` stand ein `await` **innerhalb** eines
+offenen `db_conn()`-Blocks — einmal ein Discord-Versand, einmal eine Antwort
+an den Nutzer.
+
+Das blockiert den Event-Loop **nicht** (das `await` gibt ihn frei) und ist
+deshalb in keinem Stack-Abzug aufgetaucht. Es hält aber die Verbindung und
+damit den Schreib-Lock offen, während auf das Netz gewartet wird. Bei einem
+langsamen Discord bekommt in dieser Zeit **jeder andere Schreiber**
+„database is locked" — und die Ursache steht in einer Schleife, die nur jede
+Minute läuft.
+
+Beide Stellen lesen jetzt zuerst, senden dann, und schreiben zum Schluss. Ein
+Vertrag lässt kein `await` mehr in einem offenen `db_conn()`-Block zu.
+
+Nebenbei gefunden: `_nc_i18n.t(f"@here 🔴 **{r['title']}** geht JETZT los!")`
+— ein `t()` um einen **f-String**. Der Katalogschlüssel hätte den Titel des
+Events enthalten und nie getroffen. Jetzt läuft nur der feste Teil durch die
+Übersetzung.
+
+### Geändert — kein Dauerläufer blockiert mehr (v4.1 W29)
+
+`_restream_verify_loop`, `_intel_index_loop` (zwei Stellen) und
+`_community_events_loop` laufen neben dem Loop. Dauerläufer sind die
+schlimmsten Blocker: sie wiederholen sich für immer, also trifft ihre Blockade
+früher oder später jeden Betriebszustand. Ein Vertrag hält fest, dass keiner
+zurückfällt.
+
+Stand: **71 → 65** blockierende Stellen.
+
+### Hinzugefügt — `db_async` (v4.1 W29)
+
+`nc/dbwrap.db_async(fn)` führt `fn(conn)` mitsamt Verbindungsauf- und -abbau
+in einem Thread aus. Die Verbindung entsteht **im** Thread: eine
+sqlite3-Verbindung gehört dem Thread, der sie geöffnet hat, und eine über die
+Thread-Grenze gereichte wirft zur Laufzeit.
+
+Nachgemessen: derselbe blockierende Zugriff kostet den Takt **411 ms**
+synchron und **50 ms** (also nichts) über `db_async`.
+
+### Ein Vertrag als Ratsche
+
+70 blockierende Stellen sind noch im Bestand. Eine harte Null wäre heute
+unerreichbar und deshalb wertlos — sie würde sofort abgeschaltet. Der Vertrag
+setzt stattdessen eine **Obergrenze, die bei jeder Welle sinkt**: die Zahl
+darf fallen, nie steigen. Gegenprobe gemacht — eine neu eingefügte
+blockierende Stelle meldet er namentlich.
+
+**Korrektur an meiner eigenen Meldung:** ich hatte 115 solcher Stellen
+gemeldet. Die richtige Zahl ist **71** (jetzt 70). Die erste Zählung ordnete
+`db_conn()`-Blöcke der lexikalisch umschliessenden async-Funktion zu, statt
+der unmittelbar umschliessenden — Blöcke in verschachtelten **synchronen**
+Helfern laufen längst über `asyncio.to_thread` und blockieren nichts.
+`_discord_run_once` mit angeblich 31 Stellen fällt damit ganz aus der Liste.
+
 ### Behoben — die Abdeckungszahl maß den kleineren Teil (v4.1 W28)
 
 Gemeldet wurden **970 Einträge, 0 fehlend**. Gemessen am Dashboard waren davon

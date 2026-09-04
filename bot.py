@@ -878,7 +878,7 @@ _nc_freeai.chat_sync = _freeai_chat_sync_metered
 # Modularisierung — über 100 Bot-Funktionen hingen ausschließlich an diesem
 # einen Symbol; jetzt sind sie frei von Bot-Globals. Die Konfiguration wird
 # unten per configure_db() injiziert (das Modul liest selbst KEINE Env).
-from nc.dbwrap import db_conn, configure_db  # noqa: F401
+from nc.dbwrap import db_conn, configure_db, db_async  # noqa: F401
 
 # V37: Drei Domänen-Module, möglich geworden durch die db_conn-Verschiebung —
 # diese Funktionen hängen an keinem Bot-Global mehr.
@@ -892,6 +892,7 @@ from nc import defensecfg as _nc_dcfg     # v4.1-W25: Abwehr-Einstellungen
 from nc import geocache as _nc_geocache   # v4.1-W25: Adress-Cache, EIN Schreibweg
 from nc import geoip as _nc_geoip         # v4.1-W25: ip-api-Stapelabfrage
 from nc import bandbreite as _nc_band      # v4.1-W26: Aufnahme-Durchsatz
+from nc import eventlog as _nc_eventlog   # v4.1-W29: Protokoll ohne Blockade
 from nc import outcomes as _nc_outcomes   # v4.1-W26: Ausgaenge der Aufnahmen
 from nc import suche as _nc_suche         # v4.1-W26: bestandsweite Suche
 from nc import archiverules as _nc_arules  # v4.1-W24: Auto-Archiv-Regeln
@@ -4506,15 +4507,22 @@ def log_event(kind: str, severity: str = "info", summary: str = "",
             _bp(kind, severity, summary or kind, "")   # F98: live ins Dashboard
         except Exception:
             pass
+    # v4.1-W29: NICHT mehr synchron schreiben. Der Aufruf steht in async-
+    # Funktionen (on_comment ist einer der Abzuege des Waechters vom
+    # 2026-09-03), und unter Plattenlast blockierte er dort den ganzen Bot.
+    #
+    # Die Zusicherung im Docstring bleibt woertlich gueltig — "aus jedem Pfad
+    # ohne Risiko" gilt jetzt sogar staerker: der Aufruf wartet nie mehr.
+    # Deshalb musste keine der ueber dreissig Aufrufstellen angefasst werden.
+    #
+    # Das Kuerzen bleibt HIER: nc/eventlog.py nimmt die Werte fertig
+    # zugeschnitten entgegen, damit es keine zweite Wahrheit ueber die
+    # Feldlaengen gibt.
     try:
-        with db_conn() as conn:
-            conn.execute(
-                "INSERT INTO event_log (ts, kind, severity, summary, payload) "
-                "VALUES (?,?,?,?,?)",
-                (datetime.now(timezone.utc).isoformat(),
-                 kind[:64], severity[:16], (summary or "")[:500],
-                 json.dumps(payload, ensure_ascii=False)[:8000] if payload else None))
-            conn.commit()
+        _nc_eventlog.schreibe(
+            datetime.now(timezone.utc).isoformat(),
+            kind[:64], severity[:16], (summary or "")[:500],
+            json.dumps(payload, ensure_ascii=False)[:8000] if payload else None)
     except Exception as e:
         log.debug(f"log_event({kind}) failed: {e}")
     # B65: Outbound-Webhooks feuern (best-effort, eigener Thread, blockt nie).
@@ -7957,7 +7965,12 @@ async def reaper_loop():
        wann der Lock geholt wurde und räumen ältere als 5min auf."""
     while True:
         try:
-            with db_conn() as conn:
+            # v4.1-W29: NEBEN dem Loop. Der Reaper laeuft im Minutentakt und
+            # las bisher synchron aus der Datenbank — unter Plattenlast
+            # blockierte das den ganzen Bot. Der Rumpf ist unveraendert; er
+            # bekommt die Verbindung jetzt als Argument statt sie selbst zu
+            # oeffnen, und db_async fuehrt ihn in einem Thread aus.
+            def _aufraeumen(conn):
                 rows = conn.execute(
                     "SELECT id, pid FROM trackings "
                     "WHERE recording=1 AND pid IS NOT NULL"
@@ -8005,6 +8018,8 @@ async def reaper_loop():
                         log.warning(f"reaper: STUCK lock für tracking#{tid} "
                                     f"({now_mono - spawn_at:.0f}s ohne Subprocess) — Lock freigegeben")
                 conn.commit()
+
+            await db_async(_aufraeumen)
         except Exception as e:
             # v4.1-W5: war log.warning. Der Reaper ist die EINZIGE Instanz, die
             # tote Recorder-Prozesse abraeumt — faellt er aus, bleiben Zombies in
@@ -18131,10 +18146,11 @@ async def _restream_verify_loop():
     await asyncio.sleep(60)
     while True:
         try:
-            with db_conn() as conn:
-                rows = conn.execute(
-                    "SELECT id, source_username, desired FROM restreams "
-                    "WHERE enabled=1 ORDER BY id").fetchall()
+            # v4.1-W29: NEBEN dem Loop. Die Sendepruefung laeuft im
+            # Zweiminutentakt und blockierte hier unter Plattenlast.
+            rows = await db_async(lambda c: c.execute(
+                "SELECT id, source_username, desired FROM restreams "
+                "WHERE enabled=1 ORDER BY id").fetchall())
             desired_rows = [r for r in rows if (r["desired"] or 0) == 1]
             running = set(_RESTREAM_MGR._procs.keys())
             if desired_rows or running:
@@ -18376,8 +18392,8 @@ async def _intel_index_loop():
         try:
             rows = get_all_recordings(limit=200)
             cand = [r["id"] for r in rows if r.get("id") and r.get("filepath")]
-            with db_conn() as c:
-                todo = _intel_tx.pending_ids(c, cand, _INTEL_PS)
+            # v4.1-W29: NEBEN dem Loop.
+            todo = await db_async(_intel_tx.pending_ids, cand, _INTEL_PS)
             if todo:
                 rid = todo[0]
                 rec = next((r for r in rows if r["id"] == rid), None)
@@ -18387,9 +18403,9 @@ async def _intel_index_loop():
                                                created_at=None)
                     log.info("Archiv: Aufnahme #%s transkribiert (%d Segmente)", rid, n)
                 else:
-                    with db_conn() as c:
-                        _intel_tx.set_status(c, rid, _intel_tx.FAILED,
-                                             error="Datei fehlt", paramstyle=_INTEL_PS)
+                    # v4.1-W29: NEBEN dem Loop.
+                    await db_async(_intel_tx.set_status, rid, _intel_tx.FAILED,
+                                   error="Datei fehlt", paramstyle=_INTEL_PS)
         except Exception as e:
             # Vorher log.debug: faellt der Indexer aus (Whisper fehlt, DB-Lock,
             # Platte voll), transkribiert er nie wieder — und in einem ERROR-Log
@@ -20990,21 +21006,31 @@ async def _discord_run_once():
     async def _c_daily(inter):
         try:
             today = datetime.now(timezone.utc).date()
-            with db_conn() as conn:
-                row = conn.execute("SELECT last_claim, streak, best_streak, total_claims "
-                                   "FROM discord_daily WHERE guild_id=? AND user_id=?",
-                                   (inter.guild_id, inter.user.id)).fetchone()
-                last = None
-                if row and row["last_claim"]:
-                    try:
-                        last = datetime.fromisoformat(row["last_claim"]).date()
-                    except Exception:
-                        last = None
-                if last == today:
-                    await inter.response.send_message(
-                        _nc_i18n.t("⏳ Heute schon abgeholt — komm morgen wieder für deinen Streak-Bonus!"),
-                        ephemeral=True)
-                    return
+            # v4.1-W29: Erst LESEN, dann antworten, dann schreiben.
+            #
+            # Vorher lag das `await inter.response.send_message(...)` im
+            # Fruehausstieg INNERHALB des offenen db_conn()-Blocks. Das
+            # blockiert den Loop nicht (das await gibt ihn frei) — es haelt
+            # aber die Verbindung offen, waehrend auf Discord gewartet wird.
+            # Bei einem langsamen Discord bekommt in der Zeit jeder andere
+            # Schreiber "database is locked".
+            row = await db_async(lambda c: c.execute(
+                "SELECT last_claim, streak, best_streak, total_claims "
+                "FROM discord_daily WHERE guild_id=? AND user_id=?",
+                (inter.guild_id, inter.user.id)).fetchone())
+            last = None
+            if row and row["last_claim"]:
+                try:
+                    last = datetime.fromisoformat(row["last_claim"]).date()
+                except Exception:
+                    last = None
+            if last == today:
+                await inter.response.send_message(
+                    _nc_i18n.t("⏳ Heute schon abgeholt — komm morgen wieder für deinen Streak-Bonus!"),
+                    ephemeral=True)
+                return
+
+            def _buchen(conn):
                 # Streak: gestern geclaimt → +1, sonst Reset auf 1
                 streak = (row["streak"] + 1) if (row and last == today - timedelta(days=1)) else 1
                 best = max(streak, row["best_streak"] if row else 0)
@@ -21029,6 +21055,10 @@ async def _discord_run_once():
                 else:
                     conn.execute("INSERT INTO discord_xp (guild_id,user_id,xp,level,last_ts) VALUES (?,?,?,?,?)",
                                  (inter.guild_id, inter.user.id, newxp, newlvl, nowiso))
+                conn.commit()
+                return streak, best, total, gain, bonus, oldlvl, newlvl
+
+            streak, best, total, gain, bonus, oldlvl, newlvl = await db_async(_buchen)
             fire = "🔥" * min(streak, 7)
             await inter.response.send_message(
                 f"🎁 **+{gain} XP** abgeholt!  {fire}\n"
@@ -22918,29 +22948,57 @@ async def _community_events_loop():
         try:
             if _nc_discordstate.CLIENT["obj"] and getattr(_nc_discordstate.CLIENT["obj"], "user", None):
                 now = datetime.now(timezone.utc)
-                with db_conn() as conn:
-                    rows = conn.execute("SELECT id, guild_id, title, description, starts_at, announced "
-                                        "FROM community_events WHERE done=0").fetchall()
-                    for r in rows:
-                        try:
-                            when = datetime.fromisoformat(r["starts_at"])
-                        except Exception:
-                            continue
-                        mins = (when - now).total_seconds() / 60.0
-                        guild = _nc_discordstate.CLIENT["obj"].get_guild(r["guild_id"])
-                        ch = discord.utils.get(guild.text_channels, name=DISCORD_EVENTS_CHANNEL) if guild else None
-                        # 10-Min-Vorwarnung (einmalig via announced=1)
-                        if ch and not r["announced"] and 0 < mins <= 10:
-                            ts = int(when.timestamp())
-                            await ch.send(f"@here ⏰ **{r['title']}** startet <t:{ts}:R>!"
-                                          + (f"\n{r['description']}" if r["description"] else ""))
-                            conn.execute("UPDATE community_events SET announced=1 WHERE id=?", (r["id"],))
-                        # Start erreicht → Go + erledigt
-                        elif ch and mins <= 0:
-                            await ch.send(_nc_i18n.t(f"@here 🔴 **{r['title']}** geht JETZT los!"))
-                            conn.execute("UPDATE community_events SET done=1 WHERE id=?", (r["id"],))
-                        elif mins < -120:      # alte Leichen aufräumen
-                            conn.execute("UPDATE community_events SET done=1 WHERE id=?", (r["id"],))
+                # v4.1-W29: ERST lesen, DANN senden, DANN schreiben.
+                #
+                # Vorher stand `await ch.send(...)` INNERHALB des
+                # `with db_conn()`-Blocks. Das blockierte zwar nicht den Loop
+                # (das await gibt ihn frei) — es hielt aber die Verbindung und
+                # damit den Schreib-Lock offen, waehrend auf Discord gewartet
+                # wurde. Bei einem langsamen Discord bekommt in der Zeit JEDER
+                # andere Schreiber "database is locked", und die Ursache steht
+                # in einer Schleife, die nur alle 60 Sekunden laeuft.
+                rows = await db_async(lambda c: c.execute(
+                    "SELECT id, guild_id, title, description, starts_at, announced "
+                    "FROM community_events WHERE done=0").fetchall())
+                erledigt, angekuendigt = [], []
+                for r in rows:
+                    try:
+                        when = datetime.fromisoformat(r["starts_at"])
+                    except Exception:
+                        continue
+                    mins = (when - now).total_seconds() / 60.0
+                    guild = _nc_discordstate.CLIENT["obj"].get_guild(r["guild_id"])
+                    ch = discord.utils.get(guild.text_channels, name=DISCORD_EVENTS_CHANNEL) if guild else None
+                    # 10-Min-Vorwarnung (einmalig via announced=1)
+                    if ch and not r["announced"] and 0 < mins <= 10:
+                        ts = int(when.timestamp())
+                        await ch.send(f"@here ⏰ **{r['title']}** startet <t:{ts}:R>!"
+                                      + (f"\n{r['description']}" if r["description"] else ""))
+                        angekuendigt.append(r["id"])
+                    # Start erreicht → Go + erledigt
+                    elif ch and mins <= 0:
+                        # v4.1-W29: t() um den FESTEN Teil, nicht um den
+                        # f-String. Vorher lautete der Schluessel
+                        # "@here 🔴 **Filmabend** geht JETZT los!" — mit dem
+                        # Titel drin, und traf im Katalog nie.
+                        await ch.send("@here 🔴 **%s** %s"
+                                      % (r["title"], _nc_i18n.t("geht JETZT los!")))
+                        erledigt.append(r["id"])
+                    elif mins < -120:      # alte Leichen aufräumen
+                        erledigt.append(r["id"])
+
+                if angekuendigt or erledigt:
+                    # Die Listen kommen als ARGUMENT herein, nicht ueber die
+                    # Closure: die Funktion steht in einer while-Schleife, und
+                    # eine eingefangene Schleifenvariable ist die Sorte Fehler,
+                    # die erst bei der zweiten Runde zuschlaegt (ruff B023).
+                    def _fortschreiben(conn, an, erl):
+                        for rid in an:
+                            conn.execute("UPDATE community_events SET announced=1 WHERE id=?", (rid,))
+                        for rid in erl:
+                            conn.execute("UPDATE community_events SET done=1 WHERE id=?", (rid,))
+                        conn.commit()
+                    await db_async(_fortschreiben, angekuendigt, erledigt)
         except Exception as e:
             _loop_fehler("_community_events_loop", e)
         await asyncio.sleep(60)

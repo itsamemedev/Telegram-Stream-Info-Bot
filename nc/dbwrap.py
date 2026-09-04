@@ -9,6 +9,7 @@ Modularisierung — über 100 Bot-Funktionen hingen AUSSCHLIESSLICH an diesem
 einen Symbol. Die Konfiguration kommt per configure_db() vom Bot (keine
 Env-Zugriffe im Modul, damit es testbar bleibt)."""
 
+import asyncio
 import logging
 import sqlite3
 import threading
@@ -380,3 +381,48 @@ def db_conn():
     # _SQLiteConnWrap schließt die Connection zusätzlich in __exit__,
     # analog zum bereits korrekten MariaDB-Pfad oben.
     return _SQLiteConnWrap(conn)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# v4.1-W29: Datenbankarbeit NEBEN dem Event-Loop
+# ═══════════════════════════════════════════════════════════════════════════
+#
+# BEFUND AUS DEM BETRIEBSLOG (2026-09-03). Der Waechter meldete Blockaden von
+# 30 bis 68 Sekunden; die Stack-Abzuege zeigten unter anderem
+#
+#     _handle_single_tracking -> try_acquire_recording_lock
+#       -> db_conn().__exit__ -> close()
+#
+# SQLite blockiert unter Plattenlast. Steht der Aufruf direkt in einer
+# async-Funktion, blockiert er nicht die Abfrage, sondern den GANZEN Bot:
+# keine Live-Pruefungen, kein Telegram, Discord trennt mit "heartbeat
+# blocked". W26 hat die zwei Stellen behoben, die in den Abzuegen standen —
+# im Bestand sind es weit ueber hundert.
+#
+# `db_async` ist der Weg dorthin. Sie nimmt eine Funktion, die eine
+# Verbindung bekommt, und fuehrt sie mitsamt Verbindungsaufbau und -abbau in
+# einem Thread aus:
+#
+#     rows = await db_async(lambda c: c.execute("SELECT …").fetchall())
+#
+# Die Verbindung entsteht IM Thread und stirbt dort. Das ist keine
+# Bequemlichkeit, sondern Pflicht: eine sqlite3-Verbindung gehoert dem
+# Thread, der sie geoeffnet hat (`check_same_thread`), und eine ueber die
+# Thread-Grenze gereichte Verbindung wirft zur Laufzeit.
+
+async def db_async(fn, *args, **kwargs):
+    """`fn(conn, *args, **kwargs)` mit eigener Verbindung in einem Thread.
+
+    Der Rueckgabewert ist der von `fn`. Ausnahmen kommen unveraendert beim
+    Aufrufer an — hier wird bewusst nichts geschluckt: wer eine Abfrage
+    absetzt, muss ihr Scheitern sehen koennen.
+
+    ACHTUNG bei Cursorn: was `fn` zurueckgibt, muss die Verbindung ueberleben.
+    `fetchall()` liefert Zeilen, `execute()` liefert einen Cursor — und der ist
+    nach dem `with`-Block tot. Deshalb IMMER im `fn` auslesen, nie danach.
+    """
+    def _lauf():
+        with db_conn() as conn:
+            return fn(conn, *args, **kwargs)
+
+    return await asyncio.to_thread(_lauf)

@@ -196,9 +196,9 @@ flowchart TB
     DC --> BOT
     TT --> BOT
 
-    BOT["bot.py<br/>Monolith · 26.425 Zeilen<br/>Scraper · Recorder · Restream<br/>Flask-Dashboard · 42 eigene Routen"]:::core
+    BOT["bot.py<br/>Monolith · 26.483 Zeilen<br/>Scraper · Recorder · Restream<br/>Flask-Dashboard · 42 eigene Routen"]:::core
 
-    BOT -->|configure| NC["nc/ — 115 Fachmodule<br/>Schema · OAuth · Restream<br/>Ledger · Moderation · Intel"]:::lib
+    BOT -->|configure| NC["nc/ — 116 Fachmodule<br/>Schema · OAuth · Restream<br/>Ledger · Moderation · Intel"]:::lib
     NC --> RT["nc/routes/ — 34 Blueprints<br/>317 weitere API-Routen"]:::lib
     BOT --> TPL["templates/<br/>Dashboard · Overlay · PWA"]:::lib
     BOT --> BR["brain_bridge.py"]:::lib
@@ -717,7 +717,7 @@ gebrochen ist.**
 
 ### 🧭 Navigation im Monolithen
 
-`bot.py` hat 26.425 Zeilen. Es wird **nie** ganz gelesen und **nie**
+`bot.py` hat 26.483 Zeilen. Es wird **nie** ganz gelesen und **nie**
 blind durchsucht — erst fragen wo etwas steht, dann den Ausschnitt holen:
 
 ```bash
@@ -774,7 +774,7 @@ NIGHTCRAWLER/
 │   ├── semantic.py  scheduler.py  llm.py  agents.py  report.py
 │   └── test_m*.py            Modultests
 │
-├── nc/                       115 Fachmodule (bot-frei, configure()-Injection)
+├── nc/                       116 Fachmodule (bot-frei, configure()-Injection)
 │   ├── schema.py             zentrales DB-Schema
 │   ├── restream_*.py         Ziele, Guard, Test-Push, Utils
 │   ├── ledger.py             Einnahmen-Journal (Hash-Kette)
@@ -846,7 +846,7 @@ nicht greifen, gekippte Verträge in `test_restream.py`.
 | Aktuelle Version | **4.1** — „Öffentliche Stimme" (2026.08) |
 | Flask-Routen | 359 (42 in `bot.py` · 317 in `nc/routes/`) |
 | Discord-Slash-Commands | 45 |
-| Fachmodule | 115 in `nc/` (+34 in `nc/routes/`, +3 in `nc/intel/`), 10 in `brain/` |
+| Fachmodule | 116 in `nc/` (+34 in `nc/routes/`, +3 in `nc/intel/`), 10 in `brain/` |
 | Sentinel-Agenten | 13 |
 | Konfigurationsvariablen | ~500 |
 | Sprachen | Deutsch (Quelle), Englisch |
@@ -859,7 +859,7 @@ Vollständige Historie: **[`docs/CHANGELOG.md`](docs/CHANGELOG.md)** ·
 ## 🧭 Roadmap
 
 Der nächste grosse Schritt ist kein Feature, sondern Aufräumen: **`bot.py` hat
-26.425 Zeilen**. Die Datei ist der Engpass des Projekts. Die Messlatte dafür ist
+26.483 Zeilen**. Die Datei ist der Engpass des Projekts. Die Messlatte dafür ist
 aber keine Zeilenzahl:
 
 > **Eine neue API-Route anlegen, ohne `bot.py` zu öffnen.**

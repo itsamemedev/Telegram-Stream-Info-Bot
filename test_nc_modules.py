@@ -2474,6 +2474,127 @@ def _test_w28_abdeckung_ist_ehrlich():
        % (anteil, len(kat)))
 
 
+
+def _test_w29_kein_sqlite_auf_dem_loop():
+    """v4.1-W29: Datenbankarbeit gehoert NEBEN den Event-Loop.
+
+    BEFUND AUS DEM BETRIEBSLOG (2026-09-03): der Waechter meldete Blockaden
+    von 30 bis 68 Sekunden. Einer der Stack-Abzuege:
+
+        _handle_single_tracking -> try_acquire_recording_lock
+          -> db_conn().__exit__ -> close()
+
+    SQLite blockiert unter Plattenlast. Steht der Aufruf direkt in einer
+    async-Funktion, blockiert er nicht die Abfrage, sondern den GANZEN Bot.
+
+    Dieser Vertrag ist eine RATSCHE: die Zahl darf fallen, nie steigen. Eine
+    harte Null waere heute unerreichbar (siebzig Stellen im Bestand) und
+    deshalb wertlos — sie wuerde sofort abgeschaltet. Eine Obergrenze, die
+    bei jeder Welle sinkt, wirkt dagegen.
+    """
+    import ast as _ast
+
+    # Der Stand nach W29. Wer eine Stelle loest, SETZT DIESE ZAHL HERUNTER —
+    # sonst faellt die naechste Welle wieder zurueck, ohne dass es auffaellt.
+    GRENZE = 65
+
+    quelle = open("bot.py", encoding="utf-8").read()
+    baum = _ast.parse(quelle)
+
+    # Entscheidend ist die UNMITTELBAR umschliessende Funktion, nicht die
+    # lexikalische Verschachtelung: ein db_conn() in einem verschachtelten
+    # SYNCHRONEN Helfer laeuft ueber asyncio.to_thread und blockiert nicht.
+    # Die erste Zaehlung dieser Welle hat das verwechselt und 115 statt 71
+    # gemeldet.
+    treffer = []
+
+    def lauf(knoten, umgebend):
+        for k in _ast.iter_child_nodes(knoten):
+            if isinstance(k, (_ast.FunctionDef, _ast.AsyncFunctionDef)):
+                lauf(k, k)
+            else:
+                if (isinstance(k, _ast.With)
+                        and isinstance(umgebend, _ast.AsyncFunctionDef)
+                        and any(_ast.unparse(i.context_expr).startswith("db_conn(")
+                                for i in k.items)):
+                    treffer.append((umgebend.name, k.lineno))
+                lauf(k, umgebend)
+
+    lauf(baum, None)
+    assert len(treffer) <= GRENZE, \
+        ("%d blockierende db_conn-Bloecke in async-Funktionen (erlaubt: %d). "
+         "Neue Stelle? db_async(...) benutzen. Erste drei: %r"
+         % (len(treffer), GRENZE, treffer[:3]))
+    assert len(treffer) >= GRENZE - 15, \
+        ("nur noch %d von %d — die Grenze im Vertrag gehoert nachgezogen, "
+         "sonst schuetzt sie nicht mehr" % (len(treffer), GRENZE))
+
+    # (2) db_async gibt es, laeuft im Thread und oeffnet die Verbindung DORT.
+    # Eine ueber die Thread-Grenze gereichte sqlite3-Verbindung wirft zur
+    # Laufzeit (check_same_thread) — deshalb muss der `with` INNEN stehen.
+    w = open("nc/dbwrap.py", encoding="utf-8").read()
+    assert "async def db_async(" in w, "db_async fehlt"
+    assert "asyncio.to_thread(_lauf)" in w, "db_async laeuft nicht im Thread"
+    _i = w.index("async def db_async(")
+    _rumpf = w[_i:]
+    assert _rumpf.index("with db_conn() as conn:") < _rumpf.index("asyncio.to_thread"), \
+        "die Verbindung entsteht ausserhalb des Threads — das wirft zur Laufzeit"
+
+    # (3) Das Ereignisprotokoll blockiert nicht mehr. Es hatte ueber dreissig
+    # Aufrufer, synchrone wie asynchrone; sie alle auf await umzustellen haette
+    # die Zusicherung "aus jedem Pfad ohne Risiko" gebrochen.
+    assert "_nc_eventlog.schreibe(" in quelle, \
+        "log_event schreibt wieder synchron in die Datenbank"
+    import nc.eventlog as E
+    assert E.KAPAZITAET > 0, "die Schlange ist unbegrenzt — ein Speicherleck mit Anlauf"
+    st = E.stand()
+    for feld in ("warteschlange", "kapazitaet", "geschrieben", "verworfen", "fehler"):
+        assert feld in st, "die Diagnose verschweigt %s" % feld
+
+    e = open("nc/eventlog.py", encoding="utf-8").read()
+    # Verlust MUSS gezaehlt und gemeldet werden. Ein Pruefprotokoll, das still
+    # Eintraege verliert, ist schlimmer als keines: die Luecke sieht aus wie Ruhe.
+    assert '_ZAEHLER["verworfen"] += 1' in e, "verworfene Eintraege werden nicht gezaehlt"
+    assert "_melde_verworfen()" in e, "verworfene Eintraege werden nicht gemeldet"
+    # Die Fehler-Drosselung laeuft ueber die ZEIT. Ueber den Zaehler ginge es
+    # nicht: der waechst in Buendeln von bis zu 50, ein `% 100 == 1` haette nie
+    # ausgeloest und der Schreibfehler waere still geblieben.
+    assert "_FEHLER_GEMELDET" in e and 'jetzt - _FEHLER_GEMELDET["ts"] >= 60' in e, \
+        "die Fehlermeldung ist nicht zeitgedrosselt — sie loest nie oder dauernd aus"
+    # EIN Schreiber: das Protokoll ist eine Chronik, zwei Threads wuerfeln die
+    # Reihenfolge durcheinander.
+    assert e.count("threading.Thread(target=_schreiber") == 1, "mehr als ein Schreiber"
+    assert '_LAEUFT = {"an": False}' in e, "der Waechter ist kein Modul-Global"
+
+    # (4) KEIN Dauerlaeufer blockiert mehr. Die sind die schlimmsten: sie
+    # wiederholen sich fuer immer, also trifft ihre Blockade frueher oder
+    # spaeter jeden Betriebszustand.
+    laeufer = sorted({n for n, _ in treffer if n.endswith("_loop")})
+    assert not laeufer, "Dauerlaeufer blockieren wieder den Loop: %r" % laeufer
+
+    # (5) Keine offene Transaktion ueber ein `await` hinweg. Das blockiert den
+    # Loop NICHT (das await gibt ihn frei) — es haelt aber die Verbindung und
+    # damit den Schreib-Lock offen, waehrend auf das Netz gewartet wird. Jeder
+    # andere Schreiber bekommt in der Zeit "database is locked", und die
+    # Ursache steht in einer Schleife, die nur jede Minute laeuft.
+    # _community_events_loop hatte genau das (v4.1-W29).
+    for _f in _ast.walk(baum):
+        if not isinstance(_f, (_ast.FunctionDef, _ast.AsyncFunctionDef)):
+            continue
+        for _w in _ast.walk(_f):
+            if not (isinstance(_w, _ast.With) and any(
+                    _ast.unparse(i.context_expr).startswith("db_conn(") for i in _w.items)):
+                continue
+            for _k in _ast.walk(_w):
+                assert not isinstance(_k, (_ast.Await, _ast.AsyncFor)), \
+                    ("%s: await innerhalb eines offenen db_conn()-Blocks (Zeile %d) — "
+                     "haelt den Schreib-Lock ueber das Warten hinweg"
+                     % (_f.name, _w.lineno))
+
+    ok("v4.1-W29: %d blockierende Stellen (Grenze %d), kein Dauerlaeufer, "
+       "keine Transaktion ueber ein await" % (len(treffer), GRENZE))
+
+
 def main():
     tmp = tempfile.mkdtemp()
     configure_db(db_path=os.path.join(tmp, "t.db"), backend="sqlite")
@@ -2612,6 +2733,8 @@ def main():
     _test_w27_verkettete_knoten()
 
     _test_w28_abdeckung_ist_ehrlich()
+
+    _test_w29_kein_sqlite_auf_dem_loop()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)
 
