@@ -37,6 +37,27 @@ set "MODUS=gefuehrt"
 if /i "%~1"=="/express" set "MODUS=express"
 if /i "%~1"=="/auto"    set "MODUS=auto"
 
+rem --- Sprache (v4.2-W8) ----------------------------------------------------
+rem  Dieselbe Regel wie ueberall sonst im Projekt: DER DEUTSCHE TEXT IST DER
+rem  SCHLUESSEL. Fehlt eine Zeile im Katalog, bleibt Deutsch stehen - nie ein
+rem  nackter Schluessel, nie eine leere Zeile.
+rem
+rem  Der DEUTSCHE Pfad ist damit nachweisbar unveraendert: NC_KATALOG wird nur
+rem  gesetzt, wenn ausdruecklich Englisch gewuenscht ist UND die Datei da ist.
+rem  Sonst kehrt :t nach zwei Zeilen zurueck und gibt den Text unveraendert
+rem  heraus. Das ist Absicht - dieser Installer laesst sich auf einem
+rem  Linux-Rechner nicht ausprobieren, und was man nicht ausprobieren kann,
+rem  muss so gebaut sein, dass sein Fehlschlag folgenlos bleibt.
+rem
+rem  Reihenfolge: NC_LANG (ausdruecklich) -> UI_LANG -> LANG des Systems.
+set "NC_LANG_EFF=de"
+if /i "%NC_LANG:~0,2%"=="en" set "NC_LANG_EFF=en"
+if not defined NC_LANG if /i "%UI_LANG:~0,2%"=="en" set "NC_LANG_EFF=en"
+if not defined NC_LANG if not defined UI_LANG if /i "%LANG:~0,2%"=="en" set "NC_LANG_EFF=en"
+set "NC_KATALOG="
+if /i "%NC_LANG_EFF%"=="en" set "NC_KATALOG=%~dp0..\locales\tools.en.tsv"
+if defined NC_KATALOG if not exist "%NC_KATALOG%" set "NC_KATALOG="
+
 set "SCHRITT=0"
 set "GESAMT=10"
 set "MERK=%TEMP%\nc-merkzettel.txt"
@@ -49,18 +70,18 @@ set "OPT_AUS=uvloop"
 rem ---------------------------------------------------------------- 1 -------
 call :kopf "Willkommen"
 echo.
-echo   NIGHTCRAWLER v37 - TikTok-Live-Ueberwachung, Aufnahme,
-echo   Multi-Ziel-Restream und KI-Moderation (AZRAEL).
+call :zeile "NIGHTCRAWLER v37 - TikTok-Live-Ueberwachung, Aufnahme,"
+call :zeile "Multi-Ziel-Restream und KI-Moderation (AZRAEL)."
 echo.
-echo   Dieses Skript richtet den Bot ein und erklaert dabei, was es tut
-echo   und warum. Es fragt vor jedem Eingriff. Strg+C bricht gefahrlos ab.
+call :zeile "Dieses Skript richtet den Bot ein und erklaert dabei, was es tut"
+call :zeile "und warum. Es fragt vor jedem Eingriff. Strg+C bricht gefahrlos ab."
 echo.
-echo   Der Weg in zehn Schritten:
-echo     1  Willkommen            6  Konfiguration (.env)
-echo     2  System pruefen        7  Selbsttest
-echo     3  Python                8  Startskript und Autostart
-echo     4  Zielverzeichnis       9  Was unter Windows anders ist
-echo     5  Pakete               10  Zusammenfassung
+call :zeile "Der Weg in zehn Schritten:"
+call :zeile2 "1  Willkommen            6  Konfiguration (.env)"
+call :zeile2 "2  System pruefen        7  Selbsttest"
+call :zeile2 "3  Python                8  Startskript und Autostart"
+call :zeile2 "4  Zielverzeichnis       9  Was unter Windows anders ist"
+call :zeile2 "5  Pakete               10  Zusammenfassung"
 echo.
 if /i not "%MODUS%"=="gefuehrt" goto :los
 call :frage_ja J "Loslegen?"
@@ -69,8 +90,8 @@ if /i "%ANTWORT%"=="N" goto :abbruch_freiwillig
 
 rem ---------------------------------------------------------------- 2 -------
 call :kopf "System pruefen"
-for /f "tokens=*" %%i in ('ver') do call :info "Windows: %%i"
-call :info "Benutzer: %USERNAME%   Rechner: %COMPUTERNAME%"
+for /f "tokens=*" %%i in ('ver') do call :info_wert "Windows:" "%%i"
+call :info_wert "Benutzer / Rechner:" "%USERNAME% / %COMPUTERNAME%"
 set "WINGET=0"
 where winget >nul 2>&1 && set "WINGET=1"
 if "%WINGET%"=="1" call :info "winget vorhanden - fehlende Programme koennen installiert werden."
@@ -91,12 +112,12 @@ call :finde_python
 if defined PY goto :python_da
 :python_fehlt
 call :fehler "Ohne Python 3.12 oder neuer geht es nicht weiter."
-echo      Download: https://www.python.org/downloads/windows/
-echo      Beim Installieren "Add python.exe to PATH" ankreuzen.
-echo      Danach ein NEUES Fenster oeffnen und dieses Skript erneut starten.
+call :zeile2 "Download: https://www.python.org/downloads/windows/"
+call :zeile2 "Beim Installieren 'Add python.exe to PATH' ankreuzen."
+call :zeile2 "Danach ein NEUES Fenster oeffnen und dieses Skript erneut starten."
 goto :ende_fehler
 :python_da
-for /f "tokens=*" %%i in ('%PY% -V') do call :gut "Python: %%i"
+for /f "tokens=*" %%i in ('%PY% -V') do call :gut_wert "Python:" "%%i"
 
 rem ffmpeg ist ein Programm, keine Bibliothek - es kommt nicht ueber pip.
 where ffmpeg >nul 2>&1 && goto :ffmpeg_da
@@ -109,11 +130,11 @@ winget install --id Gyan.FFmpeg -e --source winget --accept-package-agreements -
 call :warn "winget setzt den PATH erst fuer NEUE Fenster. Steht ffmpeg gleich noch als fehlend da: Fenster schliessen, neu oeffnen, Skript erneut starten."
 goto :ffmpeg_fertig
 :ffmpeg_hand
-echo      Download: https://www.gyan.dev/ffmpeg/builds/   (den Ordner bin in den PATH legen)
+call :zeile2 "Download: https://www.gyan.dev/ffmpeg/builds/   (den Ordner bin in den PATH legen)"
 call :merken "OFFEN: ffmpeg installieren - ohne ihn keine Aufnahme und kein Restream"
 goto :ffmpeg_fertig
 :ffmpeg_da
-for /f "tokens=*" %%i in ('where ffmpeg') do call :gut "ffmpeg: %%i"
+for /f "tokens=*" %%i in ('where ffmpeg') do call :gut_wert "ffmpeg:" "%%i"
 :ffmpeg_fertig
 
 rem ---------------------------------------------------------------- 4 -------
@@ -121,7 +142,7 @@ call :kopf "Zielverzeichnis"
 set "SKRIPTDIR=%~dp0"
 set "QUELLE="
 if exist "%SKRIPTDIR%..\bot.py" call :setze_quelle
-if defined QUELLE call :info "Quelltext liegt bereits hier: %QUELLE%"
+if defined QUELLE call :info_wert "Quelltext liegt bereits hier:" "%QUELLE%"
 if defined QUELLE set "VORGABE=%QUELLE%"
 if not defined QUELLE call :info "Kein Quelltext neben dem Skript - er wird von GitHub geholt."
 if not defined QUELLE set "VORGABE=%USERPROFILE%\nightcrawler"
@@ -142,7 +163,7 @@ if "%WINGET%"=="1" echo      winget install --id Git.Git -e
 goto :ende_fehler
 :kopieren
 if not exist "%ZIEL%" mkdir "%ZIEL%"
-call :info "Kopiere Quelltext nach %ZIEL%"
+call :info_wert "Kopiere Quelltext nach" "%ZIEL%"
 call :erklaere ".env, Datenbanken, Aufnahmen und Logs bleiben dabei unberuehrt - sie gehoeren dir, nicht dem Build."
 robocopy "%QUELLE%" "%ZIEL%" /E /XD .git .venv recordings logs __pycache__ /XF .env *.db /NFL /NDL /NJH /NJS /NP >nul
 rem Rueckgabewert sofort sichern: jedes weitere Kommando - auch ein echo in
@@ -150,9 +171,9 @@ rem einem Unterprogramm - setzt ERRORLEVEL zurueck. Ein zweites
 rem "if errorlevel" haette sonst nie ausgeloest.
 set "RC=%ERRORLEVEL%"
 rem robocopy meldet 0-7 als Erfolg (1 = kopiert, 3 = kopiert und uebersprungen).
-if %RC% GEQ 8 call :fehler "Kopieren fehlgeschlagen (robocopy %RC%)."
+if %RC% GEQ 8 call :fehler_wert "Kopieren fehlgeschlagen, robocopy meldet" "%RC%"
 if %RC% GEQ 8 goto :ende_fehler
-call :gut "Quelltext liegt in %ZIEL%"
+call :gut_wert "Quelltext liegt in" "%ZIEL%"
 :quelle_fertig
 cd /d "%ZIEL%"
 set "ENVF=%ZIEL%\.env"
@@ -195,7 +216,7 @@ goto :opt_fertig
 set "OPT_AUS=%OPT_AUS% faster-whisper PyMySQL redis boto3"
 if /i "%MODUS%"=="auto" set "OPT_AUS=%OPT_AUS% discord.py"
 :opt_fertig
-call :info "Nicht installiert wird:%OPT_AUS%"
+call :info_wert "Nicht installiert wird:" "%OPT_AUS%"
 
 set "NC_REQ=%TEMP%\nc-req.txt"
 set "NC_AUS=%OPT_AUS%"
@@ -227,7 +248,7 @@ call :erklaere "Alle Einstellungen leben in einer einzigen Datei: .env. Sie enth
 if not exist "%ENVF%" goto :env_neu
 call :zeitstempel
 copy /y "%ENVF%" "%ENVF%.bak.%STAMP%" >nul
-call :gut "Vorhandene .env gesichert: .env.bak.%STAMP%"
+call :gut_wert "Vorhandene .env gesichert:" ".env.bak.%STAMP%"
 goto :env_da
 :env_neu
 if exist "%ZIEL%\.env.example" copy /y "%ZIEL%\.env.example" "%ENVF%" >nul
@@ -241,10 +262,10 @@ rem kopiert hat, hatte rund 40 solcher Variablen: der Bot hielt Discord,
 rem Twitch und YouTube fuer eingerichtet und meldete "Token abgelehnt"
 rem statt "kein Token".
 for /f "usebackq delims=" %%i in (`"%VPY%" "%ZIEL%\tools\envset.py" --file "%ENVF%" --heal`) do set "GEHEILT=%%i"
-if not "%GEHEILT%"=="0" call :gut "%GEHEILT% Platzhalter-Werte geleert (sie waeren als echte Werte gelesen worden)."
+if not "%GEHEILT%"=="0" call :wert_gut "%GEHEILT%" "Platzhalter-Werte geleert (sie waeren als echte Werte gelesen worden)."
 
 echo.
-echo   Telegram - der Pflichtteil
+call :zeile "Telegram - der Pflichtteil"
 call :erklaere "NIGHTCRAWLER wird ueber Telegram bedient. Den Bot-Token gibt dir @BotFather in Telegram: /newbot, Namen vergeben, fertig. Er sieht aus wie 123456789:AAF... und laesst sich nicht erzeugen, nur holen."
 call :frage_geheimnis "Telegram Bot-Token (von @BotFather)" 0 0
 if not defined ANTWORT goto :kein_tg
@@ -261,7 +282,7 @@ if defined ANTWORT call :env_set ALLOWED_USER_IDS "%ANTWORT%"
 if not defined ANTWORT call :warn "Keine Freigabeliste - jeder Telegram-Nutzer kann den Bot bedienen."
 
 echo.
-echo   Dashboard
+call :zeile "Dashboard"
 call :erklaere "Das Dashboard ist die Weboberflaeche: Sendeleiste, Aufnahmen, Statistiken, Abwehr. Es bindet nur auf 127.0.0.1, ist also nur auf diesem Rechner erreichbar - unter Windows ist das genau richtig."
 call :frage_text "Port fuers Dashboard" "8050"
 set "DASHPORT=%ANTWORT%"
@@ -277,13 +298,14 @@ call :erklaere "Zusaetzlich gibt es einen PIN-Login fuer die Weboberflaeche und 
 call :frage_ja N "PIN-Login einrichten?"
 if /i "%ANTWORT%"=="N" goto :pin_fertig
 call :erzeuge_pin 6
-echo       erzeugte PIN: %ANTWORT%
+call :t "erzeugte PIN:"
+echo       %UEBERSETZT% %ANTWORT%
 call :env_set DASHBOARD_PIN "%ANTWORT%"
 call :merken "Dashboard-PIN: steht in .env (DASHBOARD_PIN)"
 :pin_fertig
 
 echo.
-echo   Discord
+call :zeile "Discord"
 call :erklaere "Optional: dieselben Funktionen als Slash-Commands in deinem Discord-Server. Token aus dem Discord Developer Portal (Bot, dann Reset Token). Ohne Token bleibt der Discord-Teil still - der Bot startet trotzdem."
 if /i not "%MODUS%"=="gefuehrt" goto :discord_fertig
 call :frage_ja N "Discord jetzt einrichten?"
@@ -298,7 +320,7 @@ call :gut "Discord konfiguriert."
 :discord_fertig
 
 echo.
-echo   Restream-Ziele
+call :zeile "Restream-Ziele"
 call :erklaere "Restream heisst: der TikTok-Stream geht gleichzeitig auf deine eigenen Kanaele. Der Stream-Key kommt von der Plattform (Kick: Creator-Dashboard, Twitch: Einstellungen/Stream, YouTube: Studio/Livestream). Er ist ein Geheimnis und laesst sich nicht erzeugen."
 call :erklaere "Zur Last: sobald ein zweites Ziel dazukommt, muss ffmpeg umkodieren - das kostet ein Vielfaches an CPU. Ein Ziel ohne Transcode laeuft auch auf schwacher Hardware."
 if /i not "%MODUS%"=="gefuehrt" goto :restream_fertig
@@ -306,7 +328,7 @@ call :restream_ziel KICK Kick
 call :restream_ziel TWITCH Twitch
 call :restream_ziel YOUTUBE YouTube
 :restream_fertig
-call :gut "Konfiguration geschrieben: %ENVF%"
+call :gut_wert "Konfiguration geschrieben:" "%ENVF%"
 
 rem ---------------------------------------------------------------- 7 -------
 call :kopf "Selbsttest"
@@ -336,7 +358,7 @@ call :kopf "Startskript und Autostart"
 >>"%ZIEL%\start.bat" echo echo.
 >>"%ZIEL%\start.bat" echo echo Der Bot wurde beendet. Fenster schliessen mit einer beliebigen Taste.
 >>"%ZIEL%\start.bat" echo pause ^>nul
-call :gut "Startskript: %ZIEL%\start.bat"
+call :gut_wert "Startskript:" "%ZIEL%\start.bat"
 call :erklaere "Windows kennt kein systemd. Der uebliche Ersatz ist die Aufgabenplanung: eine Aufgabe, die den Bot bei der Anmeldung startet. Sie startet ihn nicht nach einem Absturz neu - fuer einen echten Dienst mit Neustart gibt es NSSM (nssm.cc)."
 if /i not "%MODUS%"=="gefuehrt" goto :autostart_fertig
 call :frage_ja N "Aufgabe 'NIGHTCRAWLER' anlegen, die bei der Anmeldung startet?"
@@ -351,18 +373,18 @@ if "%RC%"=="0" call :merken "Autostart: Aufgabenplanung, Aufgabe 'NIGHTCRAWLER'"
 rem ---------------------------------------------------------------- 9 -------
 call :kopf "Was unter Windows anders ist"
 echo.
-echo   - Kein systemd. Der Bot laeuft, solange sein Fenster offen ist,
-echo     oder ueber die Aufgabenplanung ab der Anmeldung.
-echo   - Kein MOTD-Statusbild beim Login (tools\motd.sh ist Linux und macOS).
-echo   - Kein CrowdSec-Panel - die Abwehr ist ein Linux-Dienst.
-echo   - Kein uvloop. Das ist reine Beschleunigung der asyncio-Schleife;
-echo     ohne sie laeuft alles, nur etwas gemaechlicher.
-echo   - tools\deploy.sh (Auslieferung mit Vorabpruefung und Rollback) ist
-echo     ebenfalls Linux. Unter Windows aktualisierst du mit git pull.
-echo   - Aufnahmen brauchen Platz: eine Stunde Stream sind grob 1 bis 3 GB.
-echo     Der Ordner recordings gehoert auf die groesste Platte.
-echo   - Der Ruhezustand unterbricht laufende Aufnahmen. Fuer Dauerbetrieb
-echo     in den Energieoptionen den Standbymodus abschalten.
+call :punkt "Kein systemd. Der Bot laeuft, solange sein Fenster offen ist,"
+call :zeile2 "oder ueber die Aufgabenplanung ab der Anmeldung."
+call :punkt "Kein MOTD-Statusbild beim Login (tools\motd.sh ist Linux und macOS)."
+call :punkt "Kein CrowdSec-Panel - die Abwehr ist ein Linux-Dienst."
+call :punkt "Kein uvloop. Das ist reine Beschleunigung der asyncio-Schleife;"
+call :zeile2 "ohne sie laeuft alles, nur etwas gemaechlicher."
+call :punkt "tools\deploy.sh (Auslieferung mit Vorabpruefung und Rollback) ist"
+call :zeile2 "ebenfalls Linux. Unter Windows aktualisierst du mit git pull."
+call :punkt "Aufnahmen brauchen Platz: eine Stunde Stream sind grob 1 bis 3 GB."
+call :zeile2 "Der Ordner recordings gehoert auf die groesste Platte."
+call :punkt "Der Ruhezustand unterbricht laufende Aufnahmen. Fuer Dauerbetrieb"
+call :zeile2 "in den Energieoptionen den Standbymodus abschalten."
 echo.
 
 rem ---------------------------------------------------------------- 10 ------
@@ -389,18 +411,18 @@ if exist "%MERK%" type "%MERK%" >> "%NOTIZ%"
 echo.
 call :gut "NIGHTCRAWLER ist eingerichtet."
 echo.
-echo   Verzeichnis   %ZIEL%
-echo   Dashboard     http://127.0.0.1:%DASHPORT%
+call :zeile_wert "Verzeichnis" "%ZIEL%"
+call :zeile_wert "Dashboard" "http://127.0.0.1:%DASHPORT%"
 echo.
-if exist "%MERK%" echo   Merkzettel
+if exist "%MERK%" call :zeile "Merkzettel"
 if exist "%MERK%" type "%MERK%"
 if exist "%MERK%" echo.
-echo   Naechste Schritte
-echo     1  Starten:  %ZIEL%\start.bat
-echo     2  In Telegram deinen Bot anschreiben:  /start, dann /track NAME
-echo     3  Dashboard oeffnen:  http://127.0.0.1:%DASHPORT%
+call :zeile "Naechste Schritte"
+call :zeile2_wert "1  Starten:" "%ZIEL%\start.bat"
+call :zeile2 "2  In Telegram deinen Bot anschreiben:  /start, dann /track NAME"
+call :zeile2_wert "3  Dashboard oeffnen:" "http://127.0.0.1:%DASHPORT%"
 echo.
-echo   Alles davon steht auch in %NOTIZ%
+call :zeile_wert "Alles davon steht auch in" "%NOTIZ%"
 echo.
 if exist "%NC_REQ%" del "%NC_REQ%"
 if exist "%MERK%" del "%MERK%"
@@ -412,42 +434,146 @@ rem ===========================================================================
 rem  Unterprogramme
 rem ===========================================================================
 
+rem  t "deutscher Text"  ->  %UEBERSETZT%
+rem
+rem  Nachgeschlagen wird mit findstr /b /l /c: - LITERAL (kein regulaerer
+rem  Ausdruck) und am ZEILENANFANG. Beides ist wichtig: die deutschen Texte
+rem  enthalten Punkte, Klammern und Sternchen, die als Ausdruck etwas ganz
+rem  anderes bedeuten wuerden.
+rem
+rem  Der Rueckfall steht in Zeile eins: UEBERSETZT traegt den deutschen Text,
+rem  BEVOR irgendetwas nachgeschlagen wird. Findet findstr nichts, laeuft der
+rem  Schleifenrumpf nie, und Deutsch bleibt stehen. Schlaegt findstr selbst
+rem  fehl, schluckt 2>nul die Meldung - mit demselben Ergebnis. Es gibt in
+rem  diesem Unterprogramm keinen Weg, der etwas anderes tut als uebersetzen
+rem  oder nichts.
+rem
+rem  Das Trennzeichen ist ein echter TABULATOR, in "delims=" wie im Suchmuster.
+rem  Der Vertrag prueft, dass er noch da ist: ein Editor, der Tabs zu
+rem  Leerzeichen macht, wuerde den Nachschlag still wirkungslos machen.
+:t
+set "UEBERSETZT=%~1"
+if not defined NC_KATALOG goto :eof
+for /f "usebackq tokens=1,* delims=	" %%a in (`findstr /b /l /c:"%~1	" "%NC_KATALOG%" 2^>nul`) do if not "%%b"=="" set "UEBERSETZT=%%b"
+goto :eof
+
 :kopf
 set /a SCHRITT+=1
+call :t "%~1"
 echo.
-echo [%SCHRITT%/%GESAMT%] %~1
+echo [%SCHRITT%/%GESAMT%] %UEBERSETZT%
 echo ------------------------------------------------------------------
 goto :eof
 
 :info
-echo   - %~1
+call :t "%~1"
+echo   - %UEBERSETZT%
+goto :eof
+
+rem  info_wert "fester Text" "Wert"  -  fuer Meldungen mit einem Wert darin.
+rem  Ein Satz wie "Quelltext liegt in C:\..." kann kein Katalogschluessel sein:
+rem  der Pfad steht erst zur Laufzeit fest. Uebersetzt wird deshalb der feste
+rem  Teil, der Wert wird angehaengt - dieselbe Loesung wie im Dashboard.
+:info_wert
+call :t "%~1"
+echo   - %UEBERSETZT% %~2
 goto :eof
 
 :gut
-echo   [ok] %~1
+call :t "%~1"
+echo   [ok] %UEBERSETZT%
+goto :eof
+
+:gut_wert
+call :t "%~1"
+echo   [ok] %UEBERSETZT% %~2
+goto :eof
+
+rem  wert_gut "Wert" "fester Text"  -  wenn der Wert VORNE steht
+rem  ("3 Platzhalter-Werte geleert"). Getrennte Senke statt eines Schalters:
+rem  eine Senke, deren Reihenfolge von einem Argument abhaengt, liest sich an
+rem  der Aufrufstelle nicht mehr.
+:wert_gut
+call :t "%~2"
+echo   [ok] %~1 %UEBERSETZT%
+goto :eof
+
+:fehler_wert
+call :t "%~1"
+echo   [X]  %UEBERSETZT% %~2
+goto :eof
+
+:merken_wert
+call :t "%~1"
+>>"%MERK%" echo   - %UEBERSETZT% %~2
 goto :eof
 
 :warn
-echo   [!]  %~1
+call :t "%~1"
+echo   [!]  %UEBERSETZT%
 goto :eof
 
 :fehler
-echo   [X]  %~1
+call :t "%~1"
+echo   [X]  %UEBERSETZT%
 goto :eof
 
 :erklaere
-echo       %~1
+call :t "%~1"
+echo       %UEBERSETZT%
+goto :eof
+
+rem  zeile / zeile2 - freie Ausgabezeilen, die keiner der Senken gehoeren
+rem  (Begruessung, Schrittliste, "Was unter Windows anders ist").
+rem
+rem  Je EIN Schluessel pro Zeile und nicht je Absatz: die Zeilen sind von Hand
+rem  auf Fensterbreite umbrochen. Ein zusammengefasster Absatz waere als
+rem  deutsche Ausgabe eine einzige lange Zeile - der deutsche Pfad soll sich
+rem  aber nicht aendern. Der Preis ist, dass die englische Fassung ebenfalls
+rem  von Hand umbrochen werden muss.
+:zeile
+call :t "%~1"
+echo   %UEBERSETZT%
+goto :eof
+
+:zeile2
+call :t "%~1"
+echo      %UEBERSETZT%
+goto :eof
+
+rem  punkt - ein Aufzaehlungspunkt. Der Bindestrich ist Gestaltung und gehoert
+rem  nicht in den Schluessel: sonst haette jeder Eintrag im Katalog ein
+rem  fuehrendes "- " mitzuschleppen, das nichts bedeutet.
+:punkt
+call :t "%~1"
+echo   - %UEBERSETZT%
+goto :eof
+
+:zeile_wert
+call :t "%~1"
+echo   %UEBERSETZT%   %~2
+goto :eof
+
+:zeile_wert2
+call :t "%~1"
+echo   %UEBERSETZT% %~2.
+goto :eof
+
+:zeile2_wert
+call :t "%~1"
+echo      %UEBERSETZT%  %~2
 goto :eof
 
 :merken
+call :t "%~1"
 rem Umleitung steht VORNE: bei "echo text>> datei" wuerde cmd eine Ziffer am
 rem Textende als Handle-Nummer der Umleitung verschlucken.
->>"%MERK%" echo   - %~1
+>>"%MERK%" echo   - %UEBERSETZT%
 goto :eof
 
 :opt_aus
 set "OPT_AUS=%OPT_AUS% %~1"
-call :merken "Python-Paket %~1 ausgelassen (spaeter: .venv\Scripts\pip install %~1)"
+call :merken_wert "Python-Paket ausgelassen, spaeter nachruestbar mit" ".venv\Scripts\pip install %~1"
 goto :eof
 
 :setze_quelle
@@ -487,7 +613,10 @@ rem  frage_ja VORGABE(J^|N) "Frage"  ->  ANTWORT=J oder N
 rem  Ja/Nein-Fragen betreffen ausschliesslich Zubehoer, deshalb beantwortet
 rem  /express sie mit der Vorgabe. Text- und Geheimnisfragen werden weiter
 rem  gestellt - die kann niemand raten.
-:frage_ja
+:frage_ja_roh
+rem  Wie :frage_ja, aber der Fragetext ist bereits uebersetzt. Noetig, wo die
+rem  Frage einen Wert enthaelt ("Telegram Bot-Token - sicheres Passwort
+rem  erzeugen lassen?") und deshalb selbst kein Schluessel sein kann.
 set "ANTWORT=%~1"
 if /i "%MODUS%"=="auto" goto :eof
 if /i "%MODUS%"=="express" goto :eof
@@ -501,33 +630,65 @@ if /i "%EINGABE:~0,1%"=="y" set "ANTWORT=J"
 if /i "%EINGABE:~0,1%"=="n" set "ANTWORT=N"
 goto :eof
 
+:frage_ja
+set "ANTWORT=%~1"
+if /i "%MODUS%"=="auto" goto :eof
+if /i "%MODUS%"=="express" goto :eof
+set "VORSCHLAG=[J/n]"
+if /i "%~1"=="N" set "VORSCHLAG=[j/N]"
+set "EINGABE="
+call :t "%~2"
+set /p "EINGABE=  ? %UEBERSETZT% %VORSCHLAG% "
+if not defined EINGABE goto :eof
+if /i "%EINGABE:~0,1%"=="j" set "ANTWORT=J"
+if /i "%EINGABE:~0,1%"=="y" set "ANTWORT=J"
+if /i "%EINGABE:~0,1%"=="n" set "ANTWORT=N"
+goto :eof
+
 rem  frage_text "Frage" "Vorgabe"  ->  ANTWORT
 :frage_text
 set "ANTWORT=%~2"
 if /i "%MODUS%"=="auto" goto :eof
 set "EINGABE="
-if "%~2"=="" set /p "EINGABE=  ? %~1: "
-if not "%~2"=="" set /p "EINGABE=  ? %~1 [%~2] "
+call :t "%~1"
+if "%~2"=="" set /p "EINGABE=  ? %UEBERSETZT%: "
+if not "%~2"=="" set /p "EINGABE=  ? %UEBERSETZT% [%~2] "
 if defined EINGABE set "ANTWORT=%EINGABE%"
 goto :eof
 
 rem  frage_geheimnis "Beschreibung" ERZEUGBAR(0^|1) LAENGE  ->  ANTWORT
 rem  Genau der gewuenschte Ablauf: erst fragen, ob erzeugt werden soll -
 rem  sonst auf die Eingabe WARTEN, verdeckt und mit Wiederholung.
-:frage_geheimnis
+:frage_geheimnis_roh
+rem Wie :frage_geheimnis, aber die Beschreibung ist bereits uebersetzt:
+rem "Kick Stream-Key" traegt einen Plattformnamen und kann deshalb selbst
+rem kein Katalogschluessel sein.
 set "ANTWORT="
+set "GEHEIM_NAME=%~1"
+goto :geheim_weiter
+
+:frage_geheimnis
+rem Die Beschreibung wird EINMAL uebersetzt und gemerkt: sie wird an zwei
+rem Stellen gebraucht, und :t schreibt UEBERSETZT bei jedem Aufruf neu.
+set "ANTWORT="
+call :t "%~1"
+set "GEHEIM_NAME=%UEBERSETZT%"
+:geheim_weiter
 if "%~2"=="0" goto :geheim_eingabe
 if /i "%MODUS%"=="auto" goto :geheim_erzeugen
-call :frage_ja J "%~1: sicheres Passwort erzeugen lassen?"
+call :t "sicheres Passwort erzeugen lassen?"
+call :frage_ja_roh J "%GEHEIM_NAME% - %UEBERSETZT%"
 if /i "%ANTWORT%"=="N" goto :geheim_eingabe
 :geheim_erzeugen
 call :erzeuge_pw %~3
-echo       erzeugt: %ANTWORT%
-echo       Notieren oder im Passwortmanager ablegen - es steht auch in der .env.
+call :t "erzeugt:"
+echo       %UEBERSETZT% %ANTWORT%
+call :zeile2 "Notieren oder im Passwortmanager ablegen - es steht auch in der .env."
 goto :eof
 :geheim_eingabe
 if /i "%MODUS%"=="auto" goto :eof
-echo   ? %~1 eingeben (leer = spaeter selbst eintragen):
+call :t "eingeben (leer = spaeter selbst eintragen):"
+echo   ? %GEHEIM_NAME% %UEBERSETZT%
 call :lies_still
 goto :eof
 
@@ -538,15 +699,17 @@ set "PW2="
 where powershell >nul 2>&1 || goto :lies_klartext
 for /f "usebackq delims=" %%i in (`powershell -NoProfile -Command "$s=Read-Host -AsSecureString;[Runtime.InteropServices.Marshal]::PtrToStringAuto([Runtime.InteropServices.Marshal]::SecureStringToBSTR($s))"`) do set "PW1=%%i"
 if not defined PW1 goto :lies_ende
-echo   ? Zur Sicherheit wiederholen:
+call :t "Zur Sicherheit wiederholen:"
+echo   ? %UEBERSETZT%
 for /f "usebackq delims=" %%i in (`powershell -NoProfile -Command "$s=Read-Host -AsSecureString;[Runtime.InteropServices.Marshal]::PtrToStringAuto([Runtime.InteropServices.Marshal]::SecureStringToBSTR($s))"`) do set "PW2=%%i"
 if "%PW1%"=="%PW2%" goto :lies_ok
-echo   [!]  Die Eingaben waren nicht gleich - noch einmal.
+call :warn "Die Eingaben waren nicht gleich - noch einmal."
 goto :lies_still
 :lies_klartext
 rem Ohne PowerShell bleibt nur die sichtbare Eingabe. Besser sichtbar als
 rem gar nicht - der Wert landet ohnehin gleich in der .env.
-set /p "PW1=  (sichtbar, PowerShell fehlt): "
+call :t "(sichtbar, PowerShell fehlt):"
+set /p "PW1=  %UEBERSETZT% "
 :lies_ok
 set "ANTWORT=%PW1%"
 :lies_ende
@@ -568,42 +731,44 @@ goto :eof
 
 rem  restream_ziel PRAEFIX Klarname
 :restream_ziel
-call :frage_ja N "%~2 als Restream-Ziel einrichten?"
+call :t "als Restream-Ziel einrichten?"
+call :frage_ja_roh N "%~2 %UEBERSETZT%"
 if /i "%ANTWORT%"=="N" goto :rz_aus
-call :frage_geheimnis "%~2 Stream-Key" 0 0
+call :t "Stream-Key"
+call :frage_geheimnis_roh "%~2 %UEBERSETZT%" 0 0
 if not defined ANTWORT goto :rz_aus
 call :env_set %~1_STREAM_KEY "%ANTWORT%"
 call :env_set %~1_ENABLED 1
-call :gut "%~2 eingerichtet."
+call :wert_gut "%~2" "eingerichtet."
 goto :eof
 :rz_aus
 call :env_set %~1_ENABLED 0
 goto :eof
 
 :hilfe
-echo NIGHTCRAWLER v37 - Installation fuer Windows
+call :zeile "NIGHTCRAWLER v37 - Installation fuer Windows"
 echo.
-echo   tools\install.bat            gefuehrt, mit Erklaerungen
-echo   tools\install.bat /express   nur Pflichtfragen (Token, Pfade, Keys);
-echo                                alle Ja/Nein-Fragen per Vorgabe
-echo   tools\install.bat /auto      gar keine Fragen, Passwoerter werden erzeugt
-echo   tools\install.bat /?         diese Hilfe
+call :zeile "tools\install.bat            gefuehrt, mit Erklaerungen"
+call :zeile "tools\install.bat /express   nur Pflichtfragen (Token, Pfade, Keys);"
+call :zeile2 "alle Ja/Nein-Fragen per Vorgabe"
+call :zeile "tools\install.bat /auto      gar keine Fragen, Passwoerter werden erzeugt"
+call :zeile "tools\install.bat /?         diese Hilfe"
 echo.
-echo Fuer Linux, Raspberry Pi und macOS: tools/installer.sh
+call :zeile "Fuer Linux, Raspberry Pi und macOS: tools/installer.sh"
 endlocal
 exit /b 0
 
 :abbruch_freiwillig
 echo.
-echo   Abgebrochen - es wurde nichts veraendert.
+call :zeile "Abgebrochen - es wurde nichts veraendert."
 endlocal
 exit /b 0
 
 :ende_fehler
 echo.
-echo   Die Installation wurde in Schritt %SCHRITT% abgebrochen.
-echo   Was bereits geschrieben wurde, bleibt liegen - ein erneuter Lauf
-echo   setzt dort auf, ohne Schaden anzurichten.
+call :zeile_wert2 "Die Installation wurde abgebrochen in Schritt" "%SCHRITT%"
+call :zeile "Was bereits geschrieben wurde, bleibt liegen - ein erneuter Lauf"
+call :zeile "setzt dort auf, ohne Schaden anzurichten."
 echo.
 pause
 endlocal

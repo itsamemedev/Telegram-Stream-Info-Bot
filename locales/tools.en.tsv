@@ -147,3 +147,147 @@ streamlink liess sich nicht nachinstallieren.	streamlink could not be installed 
 systemctl daemon-reload fehlgeschlagen.	systemctl daemon-reload failed.
 tiktok_cookies.txt ist vorhanden.	tiktok_cookies.txt is present.
 yt-dlp liess sich nicht nachinstallieren.	yt-dlp could not be installed afterwards.
+
+# --- tools/install.bat (v4.2-W8) ---------------------------------------
+# Der Windows-Installer hatte bis hierher gar keine Sprachschicht. Er
+# benutzt denselben Katalog wie installer.sh und motd.sh: 18 Zeilen
+# standen schon da und werden mitbenutzt — genau dafuer ist es EINE Datei.
+(sichtbar, PowerShell fehlt):	(visible, PowerShell missing):
+.env, Datenbanken, Aufnahmen und Logs bleiben dabei unberuehrt - sie gehoeren dir, nicht dem Build.	.env, databases, recordings and logs are left untouched - they belong to you, not to the build.
+1  Starten:	1  Start:
+1  Willkommen            6  Konfiguration (.env)	1  Welcome              6  Configuration (.env)
+2  In Telegram deinen Bot anschreiben:  /start, dann /track NAME	2  Message your bot in Telegram:  /start, then /track NAME
+2  System pruefen        7  Selbsttest	2  Check the system     7  Self-test
+3  Dashboard oeffnen:	3  Open the dashboard:
+3  Python                8  Startskript und Autostart	3  Python               8  Start script and autostart
+4  Zielverzeichnis       9  Was unter Windows anders ist	4  Target directory     9  What differs on Windows
+5  Pakete               10  Zusammenfassung	5  Packages            10  Summary
+Abgebrochen - es wurde nichts veraendert.	Cancelled - nothing was changed.
+Alle Einstellungen leben in einer einzigen Datei: .env. Sie enthaelt Bot-Token, Stream-Keys und Cookies - sie gehoert nie in ein Archiv und nie in ein Repository.	Every setting lives in a single file: .env. It holds bot tokens, stream keys and cookies - it never belongs in an archive and never in a repository.
+Alles Weitere lebt in einer virtuellen Umgebung unter .venv - ein eigener Ordner mit eigenem Python und eigenen Bibliotheken. Damit kann keine Installation hier dein System-Python beschaedigen und umgekehrt.	Everything else lives in a virtual environment under .venv - its own folder with its own Python and its own libraries. That way nothing installed here can damage your system Python, or the other way round.
+Alles davon steht auch in	All of this is also written to
+Aufgabe 'NIGHTCRAWLER' anlegen, die bei der Anmeldung startet?	Create a task 'NIGHTCRAWLER' that starts at logon?
+Aufgabe angelegt (entfernen: schtasks /delete /tn NIGHTCRAWLER /f).	Task created (to remove: schtasks /delete /tn NIGHTCRAWLER /f).
+Aufgabe liess sich nicht anlegen (fehlende Rechte?). Von Hand: Aufgabenplanung, Aufgabe erstellen, Ausloeser 'Bei Anmeldung'.	The task could not be created (missing rights?). By hand: Task Scheduler, create task, trigger 'At log on'.
+Aufnahmen brauchen Platz: eine Stunde Stream sind grob 1 bis 3 GB.	Recordings need space: one hour of stream is roughly 1 to 3 GB.
+Autostart: Aufgabenplanung, Aufgabe 'NIGHTCRAWLER'	Autostart: Task Scheduler, task 'NIGHTCRAWLER'
+Beim Installieren 'Add python.exe to PATH' ankreuzen.	Tick 'Add python.exe to PATH' while installing.
+Benutzer / Rechner:	User / machine:
+Bestehende Installation gefunden - Quelltext bleibt unangetastet.	Existing installation found - the source stays untouched.
+Danach ein NEUES Fenster oeffnen und dieses Skript erneut starten.	Then open a NEW window and run this script again.
+Das Dashboard ist die Weboberflaeche: Sendeleiste, Aufnahmen, Statistiken, Abwehr. Es bindet nur auf 127.0.0.1, ist also nur auf diesem Rechner erreichbar - unter Windows ist das genau richtig.	The dashboard is the web interface: broadcast bar, recordings, statistics, defence. It binds to 127.0.0.1 only, so it is reachable from this machine alone - on Windows that is exactly right.
+Dashboard	Dashboard
+Dashboard-PIN: steht in .env (DASHBOARD_PIN)	Dashboard PIN: stored in .env (DASHBOARD_PIN)
+Dashboard-Token	Dashboard token
+Der Dashboard-Token schuetzt den Zugriff von aussen. Er ist frei waehlbar - hier ist Erzeugen die bessere Wahl als Ausdenken.	The dashboard token protects access from outside. You may choose it freely - generating one is the better option than inventing one.
+Der Ordner recordings gehoert auf die groesste Platte.	The recordings folder belongs on the largest disk.
+Der Ruhezustand unterbricht laufende Aufnahmen. Fuer Dauerbetrieb	Sleep mode interrupts running recordings. For continuous operation
+Der Selbsttest liess sich nicht ausfuehren - Ersatzpruefung: laesst sich bot.py einlesen?	The self-test could not be run - fallback check: can bot.py be parsed?
+Der Selbsttest meldet offene Punkte (oben). Meist fehlt ein Token - der Bot startet trotzdem.	The self-test reports open items (above). Usually a token is missing - the bot starts anyway.
+Der Weg in zehn Schritten:	The path in ten steps:
+Die Eingaben waren nicht gleich - noch einmal.	The two entries did not match - once more.
+Die Installation wurde abgebrochen in Schritt	The installation was cancelled at step
+Dieses Skript richtet den Bot ein und erklaert dabei, was es tut	This script sets the bot up and explains what it does
+Discord	Discord
+Discord Bot-Token	Discord bot token
+Discord-Server-ID (Rechtsklick auf den Server, ID kopieren)	Discord server ID (right-click the server, copy ID)
+Download: https://www.gyan.dev/ffmpeg/builds/   (den Ordner bin in den PATH legen)	Download: https://www.gyan.dev/ffmpeg/builds/   (put the bin folder on the PATH)
+Download: https://www.python.org/downloads/windows/	Download: https://www.python.org/downloads/windows/
+Fuenf Pakete sind Zubehoer: jedes kostet Platz und Zeit, keines ist fuer den Kern noetig, jedes laesst sich spaeter nachruesten mit  .venv\Scripts\pip install NAME	Five packages are accessories: each costs space and time, none is needed for the core, and each can be added later with  .venv\Scripts\pip install NAME
+Fuer Linux, Raspberry Pi und macOS: tools/installer.sh	For Linux, Raspberry Pi and macOS: tools/installer.sh
+Haeufigste Ursache unter Windows: ein Paket ohne fertiges Rad braucht einen Compiler. Abhilfe: 'Microsoft C++ Build Tools' installieren, oder das Paket auslassen. Wiederholen ist gefahrlos: .venv\Scripts\pip install -r requirements.txt	Most common cause on Windows: a package without a prebuilt wheel needs a compiler. Remedy: install the 'Microsoft C++ Build Tools', or leave the package out. Retrying is harmless: .venv\Scripts\pip install -r requirements.txt
+Kein CrowdSec-Panel - die Abwehr ist ein Linux-Dienst.	No CrowdSec panel - the defence is a Linux service.
+Kein MOTD-Statusbild beim Login (tools\motd.sh ist Linux und macOS).	No MOTD status screen at login (tools\motd.sh is Linux and macOS).
+Kein Python 3.12 oder neuer gefunden.	No Python 3.12 or newer found.
+Kein Quelltext neben dem Skript - er wird von GitHub geholt.	No source next to the script - it will be fetched from GitHub.
+Kein Token - der Telegram-Teil bleibt still, bis BOT_TOKEN in der .env steht.	No token - the Telegram side stays silent until BOT_TOKEN is in the .env.
+Kein systemd. Der Bot laeuft, solange sein Fenster offen ist,	No systemd. The bot runs as long as its window is open,
+Kein uvloop. Das ist reine Beschleunigung der asyncio-Schleife;	No uvloop. That is pure speed-up of the asyncio loop;
+Keine Freigabeliste - jeder Telegram-Nutzer kann den Bot bedienen.	No allow list - any Telegram user can operate the bot.
+Konfiguration (.env)	Configuration (.env)
+Konfiguration geschrieben:	Configuration written:
+Kopiere Quelltext nach	Copying source to
+Kopieren fehlgeschlagen, robocopy meldet	Copying failed, robocopy reports
+Lege virtuelle Umgebung an	Creating the virtual environment
+Merkzettel	Notes
+Multi-Ziel-Restream und KI-Moderation (AZRAEL).	multi-target restream and AI moderation (AZRAEL).
+NIGHTCRAWLER v37 - Installation fuer Windows	NIGHTCRAWLER v37 - installation for Windows
+NIGHTCRAWLER v37 - TikTok-Live-Ueberwachung, Aufnahme,	NIGHTCRAWLER v37 - TikTok live monitoring, recording,
+NIGHTCRAWLER wird ueber Telegram bedient. Den Bot-Token gibt dir @BotFather in Telegram: /newbot, Namen vergeben, fertig. Er sieht aus wie 123456789:AAF... und laesst sich nicht erzeugen, nur holen.	NIGHTCRAWLER is operated through Telegram. @BotFather in Telegram gives you the bot token: /newbot, pick a name, done. It looks like 123456789:AAF... and cannot be generated, only fetched.
+Naechste Schritte	Next steps
+Name der Admin-Rolle (fuer /ban, /timeout, /setup_...)	Name of the admin role (for /ban, /timeout, /setup_...)
+Nicht installiert wird:	Not installed:
+Notieren oder im Passwortmanager ablegen - es steht auch in der .env.	Write it down or store it in a password manager - it is also in the .env.
+OFFEN: BOT_TOKEN in .env eintragen (von @BotFather)	OPEN: enter BOT_TOKEN in .env (from @BotFather)
+OFFEN: ffmpeg installieren - ohne ihn keine Aufnahme und kein Restream	OPEN: install ffmpeg - without it there is no recording and no restream
+Ohne Freigabeliste darf jeder, der deinen Bot findet, ihn bedienen. ALLOWED_USER_IDS ist diese Liste (Zahlen, per Komma getrennt). Deine eigene ID sagt dir @userinfobot in Telegram.	Without an allow list, anyone who finds your bot may operate it. ALLOWED_USER_IDS is that list (numbers, comma separated). @userinfobot in Telegram tells you your own ID.
+Ohne Python 3.12 oder neuer geht es nicht weiter.	Without Python 3.12 or newer this cannot continue.
+Optional: dieselben Funktionen als Slash-Commands in deinem Discord-Server. Token aus dem Discord Developer Portal (Bot, dann Reset Token). Ohne Token bleibt der Discord-Teil still - der Bot startet trotzdem.	Optional: the same functions as slash commands in your Discord server. Token from the Discord Developer Portal (Bot, then Reset Token). Without a token the Discord side stays silent - the bot starts anyway.
+Pakete	Packages
+Platzhalter-Werte geleert (sie waeren als echte Werte gelesen worden).	placeholder values cleared (they would have been read as real values).
+PyMySQL installieren?  (nur noetig, wenn die Daten in MariaDB statt SQLite liegen sollen)	Install PyMySQL?  (only needed if the data should live in MariaDB instead of SQLite)
+Python	Python
+Python 3.13 jetzt per winget installieren?	Install Python 3.13 now via winget?
+Python-Paket ausgelassen, spaeter nachruestbar mit	Python package left out, can be added later with
+Python:	Python:
+Quelltext liegt bereits hier:	Source is already here:
+Quelltext liegt in	Source is in
+Restream heisst: der TikTok-Stream geht gleichzeitig auf deine eigenen Kanaele. Der Stream-Key kommt von der Plattform (Kick: Creator-Dashboard, Twitch: Einstellungen/Stream, YouTube: Studio/Livestream). Er ist ein Geheimnis und laesst sich nicht erzeugen.	Restream means: the TikTok stream goes to your own channels at the same time. The stream key comes from the platform (Kick: creator dashboard, Twitch: Settings/Stream, YouTube: Studio/Live streaming). It is a secret and cannot be generated.
+Restream-Ziele	Restream targets
+Selbsttest	Self-test
+Selbsttest hatte Befunde - erneut: .venv\Scripts\python.exe bot.py --selfcheck	The self-test had findings - run it again: .venv\Scripts\python.exe bot.py --selfcheck
+Selbsttest ohne Befund.	Self-test without findings.
+Startskript und Autostart	Start script and autostart
+Startskript:	Start script:
+Stream-Key	stream key
+System pruefen	Check the system
+Telegram - der Pflichtteil	Telegram - the mandatory part
+Telegram Bot-Token (von @BotFather)	Telegram bot token (from @BotFather)
+Verzeichnis	Directory
+Vorhandene .env gesichert:	Existing .env backed up:
+Vorhandene Umgebung wird weiterbenutzt.	The existing environment will be reused.
+Vorhandenes .venv passt nicht (zu altes Python) - wird neu angelegt.	The existing .venv does not fit (Python too old) - it will be recreated.
+Was bereits geschrieben wurde, bleibt liegen - ein erneuter Lauf	What has already been written stays - another run
+Was unter Windows anders ist	What differs on Windows
+Willkommen	Welcome
+Windows kennt kein systemd. Der uebliche Ersatz ist die Aufgabenplanung: eine Aufgabe, die den Bot bei der Anmeldung startet. Sie startet ihn nicht nach einem Absturz neu - fuer einen echten Dienst mit Neustart gibt es NSSM (nssm.cc).	Windows has no systemd. The usual substitute is the Task Scheduler: a task that starts the bot at logon. It does not restart it after a crash - for a real service with restart there is NSSM (nssm.cc).
+Windows:	Windows:
+Zielverzeichnis	Target directory
+Zur Last: sobald ein zweites Ziel dazukommt, muss ffmpeg umkodieren - das kostet ein Vielfaches an CPU. Ein Ziel ohne Transcode laeuft auch auf schwacher Hardware.	On load: as soon as a second target is added, ffmpeg has to transcode - that costs several times the CPU. A single target without transcoding runs on weak hardware too.
+Zur Sicherheit wiederholen:	Repeat to be sure:
+Zusaetzlich gibt es einen PIN-Login fuer die Weboberflaeche und die Handy-PWA - bequemer als ein 40-Zeichen-Token im Browser.	There is also a PIN login for the web interface and the phone PWA - more convenient than a 40-character token in the browser.
+Zusammenfassung	Summary
+alle Ja/Nein-Fragen per Vorgabe	all yes/no questions answered by their default
+als Restream-Ziel einrichten?	set up as a restream target?
+bot.py braucht mindestens Python 3.12. Das ist keine Empfehlung: die Datei benutzt f-strings mit Backslash (PEP 701) - unter 3.11 scheitert schon das Einlesen mit einem SyntaxError.	bot.py needs Python 3.12 at least. That is not a recommendation: the file uses f-strings with a backslash (PEP 701) - on 3.11 even parsing fails with a SyntaxError.
+bot.py laesst sich nicht einlesen - Python-Fassung pruefen.	bot.py cannot be parsed - check the Python version.
+boto3 installieren?  (schiebt Aufnahmen automatisch in einen S3-Speicher)	Install boto3?  (pushes recordings into S3 storage automatically)
+discord.py installieren?  (zweite Bedienoberflaeche: 45 Slash-Commands, Moderation, Community)	Install discord.py?  (second interface: 45 slash commands, moderation, community)
+ebenfalls Linux. Unter Windows aktualisierst du mit git pull.	is Linux as well. On Windows you update with git pull.
+eingeben (leer = spaeter selbst eintragen):	- enter it (empty = fill it in yourself later):
+eingerichtet.	configured.
+erzeugt:	generated:
+erzeugte PIN:	generated PIN:
+faster-whisper installieren?  (Transkription des Streams, Grundlage fuer Clips und Highlights; rund 300 MB und viel CPU)	Install faster-whisper?  (transcription of the stream, the basis for clips and highlights; around 300 MB and a lot of CPU)
+ffmpeg fehlt.	ffmpeg is missing.
+ffmpeg jetzt per winget installieren?	Install ffmpeg now via winget?
+ffmpeg schneidet, kodiert und sendet - es ist das Herz von Aufnahme und Restream. Der Bot startet auch ohne, kann dann aber nichts aufzeichnen und nichts weitersenden.	ffmpeg cuts, encodes and sends - it is the heart of recording and restreaming. The bot starts without it, but then cannot record and cannot forward anything.
+ffmpeg:	ffmpeg:
+in den Energieoptionen den Standbymodus abschalten.	turn standby off in the power options.
+oder ueber die Aufgabenplanung ab der Anmeldung.	or through the Task Scheduler from logon onwards.
+ohne sie laeuft alles, nur etwas gemaechlicher.	without it everything runs, just a little more sedately.
+pip install laeuft - je nach Verbindung 1 bis 15 Minuten.	pip install is running - 1 to 15 minutes depending on your connection.
+redis installieren?  (Cache; erst bei sehr vielen gleichzeitigen Dashboard-Zugriffen sinnvoll)	Install redis?  (cache; only worthwhile with very many simultaneous dashboard accesses)
+requirements.txt liess sich nicht auswerten.	requirements.txt could not be evaluated.
+setzt dort auf, ohne Schaden anzurichten.	picks up there without doing any damage.
+sicheres Passwort erzeugen lassen?	generate a secure password?
+tools\deploy.sh (Auslieferung mit Vorabpruefung und Rollback) ist	tools\deploy.sh (delivery with pre-checks and rollback)
+tools\install.bat            gefuehrt, mit Erklaerungen	tools\install.bat            guided, with explanations
+tools\install.bat /?         diese Hilfe	tools\install.bat /?         this help
+tools\install.bat /auto      gar keine Fragen, Passwoerter werden erzeugt	tools\install.bat /auto      no questions at all, passwords are generated
+tools\install.bat /express   nur Pflichtfragen (Token, Pfade, Keys);	tools\install.bat /express   only mandatory questions (tokens, paths, keys);
+und warum. Es fragt vor jedem Eingriff. Strg+C bricht gefahrlos ab.	and why. It asks before every change. Ctrl+C cancels safely.
+winget fehlt - Python und ffmpeg muessten von Hand kommen.	winget is missing - Python and ffmpeg would have to be installed by hand.
+winget ist der Paketmanager von Windows, er steckt in der App 'App Installer' aus dem Microsoft Store.	winget is the Windows package manager; it comes with the 'App Installer' app from the Microsoft Store.
+winget setzt den PATH erst fuer NEUE Fenster. Steht ffmpeg gleich noch als fehlend da: Fenster schliessen, neu oeffnen, Skript erneut starten.	winget only updates the PATH for NEW windows. If ffmpeg still shows as missing in a moment: close the window, open a new one, run the script again.
+winget vorhanden - fehlende Programme koennen installiert werden.	winget is available - missing programs can be installed.

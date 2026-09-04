@@ -3924,6 +3924,126 @@ def _test_v42_w7_motd_optik():
     ok("v4.2-W7: MOTD-Optik \u2014 Ampel vor dem Kopf, ein Messfenster, Balken faellt zurueck")
 
 
+def _test_v42_w8_windows_installer_spricht_englisch():
+    """v4.2-W8: tools/install.bat hatte gar keine Sprachschicht."""
+    import sys as _sys
+
+    _sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                     "tools"))
+    import i18n_tools as _it
+
+    bat = open("tools/install.bat", encoding="utf-8").read()
+
+    # ── (1) DER PRUEFER SAH DIESE DATEI GAR NICHT AN. Genau das ist die
+    # gefaehrliche Sorte Luecke: er meldete 100 % Abdeckung fuer die
+    # Shell-Werkzeuge, waehrend der Windows-Installer zu 0 % uebersetzt war.
+    # Eine Abdeckungszahl, die nur zaehlt, was sie ohnehin kennt, verdeckt
+    # genau das, was sie sichtbar machen soll (dieselbe Lehre wie W28).
+    assert "tools/install.bat" in _it.QUELLEN_BAT, \
+        "der Windows-Installer steht nicht in der Quellenliste des Pruefers"
+    gefunden = _it.sammeln()
+    assert len(gefunden) > 250, \
+        "nur %d Zeichenketten — der Batch-Sammler greift nicht" % len(gefunden)
+
+    # ── (2) REIN ASCII. Steht so in der Kopfzeile der Datei und ist keine
+    # Stilfrage: cmd.exe rendert je nach Codepage sonst Buchstabensalat, und
+    # zwar erst beim Anwender.
+    schlecht = sorted({c for c in bat if ord(c) > 127})
+    assert not schlecht, "nicht-ASCII in install.bat: %r" % schlecht
+
+    # ── (3) DER TABULATOR IST ECHT. Trennzeichen im Katalog, in "delims=" und
+    # im Suchmuster. Ein Editor, der Tabs zu Leerzeichen macht, wuerde den
+    # Nachschlag still wirkungslos machen — die Ausgabe bliebe deutsch, ohne
+    # dass irgendetwas scheitert.
+    assert 'delims=\t"' in bat, "das Trennzeichen in delims= ist kein Tabulator mehr"
+    assert '/c:"%~1\t"' in bat, "das Suchmuster traegt keinen Tabulator mehr"
+    assert "/b /l /c:" in bat, \
+        "findstr laeuft nicht mehr literal und am Zeilenanfang — die deutschen " \
+        "Texte enthalten Punkte und Klammern, die als Ausdruck etwas anderes bedeuten"
+
+    # ── (4) DER DEUTSCHE PFAD BLEIBT UNBERUEHRT. Dieser Installer laesst sich
+    # hier nicht ausfuehren — es gibt kein cmd.exe. Was man nicht ausprobieren
+    # kann, muss so gebaut sein, dass sein Fehlschlag folgenlos ist: ohne
+    # gesetzten Katalog kehrt :t VOR dem Nachschlag zurueck, und der
+    # Rueckfallwert steht schon in der Zeile davor.
+    zeilen = [z.strip() for z in
+              bat[bat.index("\n:t\n") + 1:].split("\n") if z.strip()]
+    assert zeilen[1] == 'set "UEBERSETZT=%~1"', \
+        "der Rueckfall steht nicht als erste Anweisung in :t: %r" % zeilen[1]
+    assert zeilen[2] == "if not defined NC_KATALOG goto :eof", \
+        "ohne Katalog wird trotzdem nachgeschlagen: %r" % zeilen[2]
+    assert "2^>nul" in bat, "ein Fehlschlag von findstr wuerde eine Meldung ausgeben"
+
+    # ── (5) KEINE DEUTSCHE AUSGABE MEHR AN EINER SENKE VORBEI. Ein
+    # vergessenes echo faellt sonst niemandem auf: eine deutsch gebliebene
+    # Zeile sieht aus wie eine, die es noch nicht gibt.
+    uebrig = []
+    for zeile in bat.split("\n"):
+        st = zeile.strip()
+        if st.lower().startswith("rem"):
+            continue
+        # Umleitungen in eine Datei sind keine Bildschirmausgabe.
+        if re.search(r'>+\s*"', zeile):
+            continue
+        # NICHT nur am Zeilenanfang: `if exist ... echo Merkzettel` ist genau
+        # die Form, die diese Datei benutzt — ein Pruefer, der nur auf "echo"
+        # am Anfang sieht, laesst sie durch. (Beim Mutationstest genau so
+        # passiert; deshalb steht es hier.)
+        m = re.search(r'(?<![>\w])echo\s+(\S.*)$', zeile)
+        if not m:
+            continue
+        rest = m.group(1).strip()
+        if "%" in rest or not re.search(r"[A-Za-z]{4}", rest):
+            continue
+        # Ein Befehl zum Abtippen ist kein Satz. Dieselbe Ausnahme wie im
+        # HTML-Extraktor: "winget install --id Git.Git -e" uebersetzt man
+        # nicht — wer es taete, gaebe dem Anwender ein Kommando, das nicht
+        # laeuft.
+        if re.match(r"(winget|git|pip|python|curl|schtasks|robocopy|"
+                    r"powershell|cd|del|mkdir|rmdir)\b", rest):
+            continue
+        uebrig.append(rest[:60])
+    assert not uebrig, "Ausgabe an der Senke vorbei: %r" % uebrig
+
+    # ── (6) DER NACHSCHLAG TRIFFT WIRKLICH. Ohne cmd.exe ist das der Ersatz
+    # fuer den Lauf: findstr /b /l /c: wird nachgebildet und jeder eingesammelte
+    # Schluessel dagegen geprueft. Ein Schluessel, den findstr nicht faende,
+    # waere eine Zeile, die fuer immer deutsch bleibt.
+    roh = open("locales/tools.en.tsv", encoding="utf-8").read().split("\n")
+    doppelt = {}
+    for z in roh:
+        if z.startswith("#") or "\t" not in z:
+            continue
+        doppelt.setdefault(z.split("\t", 1)[0], 0)
+        doppelt[z.split("\t", 1)[0]] += 1
+    mehrfach = sorted(k for k, n in doppelt.items() if n > 1)
+    assert not mehrfach, "doppelte Schluessel im Katalog: %r" % mehrfach[:5]
+
+    def _findstr(schluessel):
+        """findstr /b /l /c:"<schluessel><TAB>" — literal, am Zeilenanfang."""
+        muster = schluessel + "\t"
+        return [z for z in roh if z.startswith(muster)]
+
+    kat = _it.katalog("en")
+    for schluessel in sorted(gefunden):
+        treffer = _findstr(schluessel)
+        assert len(treffer) == 1, \
+            "findstr faende %d Zeilen fuer %r" % (len(treffer), schluessel[:60])
+        wert = treffer[0].split("\t", 1)[1]
+        assert wert.strip(), "leere Uebersetzung fuer %r" % schluessel[:60]
+        assert kat[schluessel] == wert
+    # Und der Melder muss anschlagen — sonst prueft er nichts.
+    assert not _findstr("diesen Text gibt es im Katalog nicht")
+
+    # ── (7) KEIN SCHLUESSEL MIT WERT. Ein Text mit %ZIEL% darin steht erst zur
+    # Laufzeit fest und traefe nie. Dafuer gibt es die *_wert-Senken — der
+    # feste Teil ist der Schluessel, der Wert wird angehaengt.
+    mit_wert = [k for k in gefunden if "%" in k]
+    assert not mit_wert, "Schluessel mit Laufzeitwert: %r" % mit_wert[:3]
+
+    ok("v4.2-W8: install.bat spricht Englisch \u2014 ein Katalog fuer beide Installer")
+
+
 def main():
     tmp = tempfile.mkdtemp()
     configure_db(db_path=os.path.join(tmp, "t.db"), backend="sqlite")
@@ -4086,6 +4206,8 @@ def main():
     _test_v42_w6_zerschnittene_saetze()
 
     _test_v42_w7_motd_optik()
+
+    _test_v42_w8_windows_installer_spricht_englisch()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)
 
