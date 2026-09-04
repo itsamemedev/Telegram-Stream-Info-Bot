@@ -26,6 +26,7 @@ from nc import ctx as _ctx
 from nc import recdb
 from nc import i18n as _nc_i18n
 from nc import envnum as _nc_envnum
+from nc import fehlertext as _nc_fehlertext
 from nc.dbwrap import db_conn
 from nc.archive import (get_archive_entries_paged, run_archive_file_check,
                         _scan_for_duplicates, add_archive_entry,
@@ -37,6 +38,14 @@ from nc import archivename as _nc_archivename
 from nc.sqlutil import _archive_where_clause
 
 bp = Blueprint("archive", __name__)
+
+
+def _fehler_text(e, wo=""):
+    """v4.1-W30: der Wortlaut geht ins Log, nach aussen die gesaeuberte
+       Fassung — ohne Pfade, ohne Zugangsdaten, gekuerzt. Siehe
+       nc/fehlertext.py, dort steht auch, warum nicht einfach "interner
+       Fehler"."""
+    return _nc_fehlertext.nach_aussen(e, wo)
 
 def _t(s):
     """v4.1-W20: an der Quelle uebersetzen. Diese Texte erreichen das DOM
@@ -359,7 +368,7 @@ def api_archive_duplicates_delete():
         log.info(f"manual-archive duplicate deleted: {abs_target} ({size}B)")
         return jsonify(ok=True, deleted=abs_target, freed_bytes=size)
     except OSError as e:
-        return jsonify(ok=False, error=str(e)), 500
+        return jsonify(ok=False, error=_fehler_text(e, "api_archive_duplicates_delete")), 500
 
 
 @bp.route("/api/archive")
@@ -652,7 +661,7 @@ def api_archive_search():
             res = _intel_lib.search(c, be, q, k=k, username=user, paramstyle=_c().intel_ps)
         return jsonify(res)
     except Exception as e:
-        return jsonify(ok=False, error=str(e)[:200], hits=[])
+        return jsonify(ok=False, error=_fehler_text(e, "api_archive_search"), hits=[])
 
 
 @bp.route("/api/archive/status")
@@ -667,7 +676,7 @@ def api_archive_status():
         cov["indexer_enabled"] = _nc_envnum.env_int("ARCHIVE_INDEX_ENABLED", 0) == 1
         return jsonify(cov)
     except Exception as e:
-        return jsonify(ok=False, error=str(e)[:200])
+        return jsonify(ok=False, error=_fehler_text(e, "api_archive_status"))
 
 
 @bp.route("/api/archive/index/<int:rid>", methods=["POST"])
@@ -682,4 +691,4 @@ def api_archive_index_one(rid):
             timeout=900)
         return jsonify(ok=True, recording_id=rid, segments=n)
     except Exception as e:
-        return jsonify(ok=False, error=str(e)[:200]), 500
+        return jsonify(ok=False, error=_fehler_text(e, "api_archive_index_one")), 500

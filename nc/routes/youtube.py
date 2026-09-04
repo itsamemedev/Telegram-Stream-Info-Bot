@@ -25,6 +25,7 @@ from flask import Blueprint, jsonify, redirect, request
 import nc.ytoauth as _ytoauth
 from nc import i18n as _nc_i18n
 from nc import sendrate as _nc_sendrate
+from nc import fehlertext as _nc_fehlertext
 from nc.channels import YT_API_CACHE as _YT_API_CACHE
 from nc.channels import YT_SEND as _YT_SEND
 from nc.channels import YT_SENDRATE as _YT_SENDRATE
@@ -39,6 +40,14 @@ from nc.util import _loop_not_ready
 from nc import ctx as _ctx
 
 bp = Blueprint("youtube", __name__)
+
+
+def _fehler_text(e, wo=""):
+    """v4.1-W30: der Wortlaut geht ins Log, nach aussen die gesaeuberte
+       Fassung — ohne Pfade, ohne Zugangsdaten, gekuerzt. Siehe
+       nc/fehlertext.py, dort steht auch, warum nicht einfach "interner
+       Fehler"."""
+    return _nc_fehlertext.nach_aussen(e, wo)
 
 def _t(s):
     """v4.1-W20: an der Quelle uebersetzen. Diese Texte erreichen das DOM
@@ -73,7 +82,7 @@ def api_youtube_oauth_status():
         st["needs_tunnel"] = not st["redirect_public"]
         return jsonify(ok=True, **st)
     except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
+        return jsonify(ok=False, error=_fehler_text(e, "api_youtube_oauth_status")), 500
 
 
 @bp.route("/api/youtube/oauth/redirect", methods=["POST"])
@@ -148,7 +157,7 @@ def api_youtube_oauth_forget():
         _YT_API_CACHE.update(ts=0.0, data=None)
         return jsonify(ok=True)
     except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
+        return jsonify(ok=False, error=_fehler_text(e, "api_youtube_oauth_forget")), 500
 
 
 @bp.route("/api/youtube/oauth/logout", methods=["POST"])
@@ -174,9 +183,9 @@ def api_youtube_oauth_logout():
             ok, msg = False, ("Bot-Loop startet noch — lokal getrennt, der "
                               "Widerruf bei Google muss wiederholt werden.")
         else:
-            return jsonify(ok=False, error=str(e)), 500
+            return jsonify(ok=False, error=_fehler_text(e, "api_youtube_oauth_logout")), 500
     except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
+        return jsonify(ok=False, error=_fehler_text(e, "api_youtube_oauth_logout")), 500
     _YT_SEND["token"], _YT_SEND["token_exp"] = "", 0
     _YT_API_CACHE.update(ts=0.0, data=None)
     if _aus_env:
@@ -194,4 +203,4 @@ def api_youtube_sendrate():
         snap = _nc_sendrate.snapshot(_YT_SENDRATE, _time_mod.monotonic())
         return jsonify(ok=True, cfg=cfg, **snap)
     except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
+        return jsonify(ok=False, error=_fehler_text(e, "api_youtube_sendrate")), 500

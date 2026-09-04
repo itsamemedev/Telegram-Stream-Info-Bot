@@ -38,6 +38,7 @@ from nc import ctx as _ctx
 from nc import recdb
 from nc import i18n as _nc_i18n
 from nc import inspectcache as _nc_inspectcache
+from nc import fehlertext as _nc_fehlertext
 from nc import ffbuild as _nc_ffbuild
 from nc.dbwrap import db_conn
 from nc import trackingdb as _nc_trackingdb   # v4.0-W117: Tags direkt statt ueber nc.ctx
@@ -48,6 +49,14 @@ from nc.recdiag import disconnect_analysis as _rd_analysis, url_refresh_stats as
 from nc.scoring import compute_quality_score
 
 bp = Blueprint("recordings", __name__)
+
+
+def _fehler_text(e, wo=""):
+    """v4.1-W30: der Wortlaut geht ins Log, nach aussen die gesaeuberte
+       Fassung — ohne Pfade, ohne Zugangsdaten, gekuerzt. Siehe
+       nc/fehlertext.py, dort steht auch, warum nicht einfach "interner
+       Fehler"."""
+    return _nc_fehlertext.nach_aussen(e, wo)
 
 def _t(s):
     """v4.1-W20: an der Quelle uebersetzen. Diese Texte erreichen das DOM
@@ -402,7 +411,7 @@ def api_recordings_daily():
                 total += n
                 out.append({"day": d0.isoformat(), "count": n})
     except Exception as e:
-        return jsonify(ok=False, error=str(e), days=[]), 500
+        return jsonify(ok=False, error=_fehler_text(e, "api_recordings_daily"), days=[]), 500
     return jsonify(ok=True, days=out, total=total,
                    peak=max((d["count"] for d in out), default=0))
 
@@ -626,7 +635,7 @@ def api_recordings_overview():
                        annotated=annotated,
                        avg_quality=round(avg_quality, 1) if avg_quality else None)
     except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
+        return jsonify(ok=False, error=_fehler_text(e, "api_recordings_overview")), 500
 
 
 @bp.route("/api/recordings/dedup-scan", methods=["POST"])
@@ -664,7 +673,7 @@ def api_dedup_scan():
         return jsonify(ok=True, computed=computed, duplicate_groups=groups,
                        group_count=len(groups))
     except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
+        return jsonify(ok=False, error=_fehler_text(e, "api_dedup_scan")), 500
 
 
 @bp.route("/api/recordings/<int:rid>/star", methods=["POST"])
@@ -684,7 +693,7 @@ def api_recording_star(rid):
             conn.commit()
         return jsonify(ok=True, id=rid, starred=bool(new_val))
     except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
+        return jsonify(ok=False, error=_fehler_text(e, "api_recording_star")), 500
 
 
 @bp.route("/api/recordings/starred")
@@ -705,7 +714,7 @@ def api_recordings_starred():
                for r in rows]
         return jsonify(ok=True, recordings=out, count=len(out))
     except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
+        return jsonify(ok=False, error=_fehler_text(e, "api_recordings_starred")), 500
 
 
 @bp.route("/api/recordings/<int:rid>/rating", methods=["POST"])
@@ -731,7 +740,7 @@ def api_recording_rating(rid):
             conn.commit()
         return jsonify(ok=True, id=rid, rating=rating)
     except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
+        return jsonify(ok=False, error=_fehler_text(e, "api_recording_rating")), 500
 
 
 @bp.route("/api/recordings/<int:rid>/label", methods=["POST"])
@@ -748,7 +757,7 @@ def api_recording_label(rid):
             conn.commit()
         return jsonify(ok=True, id=rid, label=label)
     except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
+        return jsonify(ok=False, error=_fehler_text(e, "api_recording_label")), 500
 
 
 @bp.route("/api/recordings/by-label/<label>")
@@ -766,7 +775,7 @@ def api_recordings_by_label(label):
                 "created_at": (r["created_at"] or "")[:19]} for r in rows]
         return jsonify(ok=True, label=label, recordings=out, count=len(out))
     except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
+        return jsonify(ok=False, error=_fehler_text(e, "api_recordings_by_label")), 500
 
 
 @bp.route("/api/recordings/labels")
@@ -781,7 +790,7 @@ def api_recordings_labels():
         return jsonify(ok=True, labels=[{"label": r["label"], "count": int(r["n"])}
                                         for r in rows])
     except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
+        return jsonify(ok=False, error=_fehler_text(e, "api_recordings_labels")), 500
 
 
 @bp.route("/api/recordings/disconnects")
@@ -803,7 +812,7 @@ def api_recording_disconnects():
         return jsonify(rep)
     except Exception as e:
         log.warning("api_recording_disconnects: %s", e)
-        return jsonify(ok=False, error=str(e)), 500
+        return jsonify(ok=False, error=_fehler_text(e, "api_recording_disconnects")), 500
 
 
 @bp.route("/api/rec/quality/<int:rec_id>")
@@ -816,7 +825,7 @@ def api_rec_quality(rec_id):
             return jsonify(ok=False, error=_t("Aufnahme nicht gefunden")), 404
         return jsonify(ok=True, id=rec_id, username=row["username"], **_rec_quality(dict(row)))
     except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
+        return jsonify(ok=False, error=_fehler_text(e, "api_rec_quality")), 500
 
 
 @bp.route("/api/rec/classify/<int:rec_id>")
@@ -833,7 +842,7 @@ def api_rec_classify(rec_id):
         return jsonify(ok=True, id=rec_id, username=d["username"], category=cat,
                        duration_secs=dur, quality=_rec_quality(d))
     except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
+        return jsonify(ok=False, error=_fehler_text(e, "api_rec_classify")), 500
 
 
 @bp.route("/api/rec/timeline/<username>")
@@ -852,7 +861,7 @@ def api_rec_timeline(username):
                   "rating": r["rating"], "label": r["label"]} for r in rows]
         return jsonify(ok=True, username=username, count=len(items), timeline=items)
     except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
+        return jsonify(ok=False, error=_fehler_text(e, "api_rec_timeline")), 500
 
 
 @bp.route("/api/rec/retention/preview", methods=["POST"])
@@ -865,7 +874,7 @@ def api_rec_retention_preview():
         return jsonify(ok=True, rules=rules, would_delete=len(matched),
                        reclaim_mb=total_mb, sample=matched[:50])
     except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
+        return jsonify(ok=False, error=_fehler_text(e, "api_rec_retention_preview")), 500
 
 
 @bp.route("/api/rec/retention/apply", methods=["POST"])
@@ -898,7 +907,7 @@ def api_rec_retention_apply():
             pass
         return jsonify(ok=True, deleted=deleted, freed_mb=round(freed / 1048576.0, 1))
     except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
+        return jsonify(ok=False, error=_fehler_text(e, "api_rec_retention_apply")), 500
 
 
 @bp.route("/api/rec/compress-candidates")
@@ -926,7 +935,7 @@ def api_rec_compress_candidates():
         total_save = round(sum(o["est_savings_mb"] for o in out), 1)
         return jsonify(ok=True, count=len(out), est_total_savings_mb=total_save, candidates=out)
     except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
+        return jsonify(ok=False, error=_fehler_text(e, "api_rec_compress_candidates")), 500
 
 
 @bp.route("/api/rec/orphans")
@@ -937,7 +946,7 @@ def api_rec_orphans():
         return jsonify(ok=True, count=len(o),
                        total_mb=round(sum(x["mb"] for x in o), 1), orphans=o)
     except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
+        return jsonify(ok=False, error=_fehler_text(e, "api_rec_orphans")), 500
 
 
 @bp.route("/api/rec/orphans/clean", methods=["POST"])
@@ -958,4 +967,4 @@ def api_rec_orphans_clean():
                 pass
         return jsonify(ok=True, deleted=deleted, freed_mb=round(freed / 1048576.0, 1))
     except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
+        return jsonify(ok=False, error=_fehler_text(e, "api_rec_orphans_clean")), 500

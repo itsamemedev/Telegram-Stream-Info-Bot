@@ -14,6 +14,8 @@ ohnehin schon gab. Neue Kontext-Eintraege: null.
 import os
 from flask import Blueprint, jsonify, redirect, request
 
+from nc import fehlertext as _nc_fehlertext
+
 from nc import i18n as _nc_i18n
 
 import nc.twitchoauth as _twoauth
@@ -26,6 +28,14 @@ from nc.oauthredirect import redirect_uri as _redirect_uri
 from nc import ctx as _ctx
 
 bp = Blueprint("twitch", __name__)
+
+
+def _fehler_text(e, wo=""):
+    """v4.1-W30: der Wortlaut geht ins Log, nach aussen die gesaeuberte
+       Fassung — ohne Pfade, ohne Zugangsdaten, gekuerzt. Siehe
+       nc/fehlertext.py, dort steht auch, warum nicht einfach "interner
+       Fehler"."""
+    return _nc_fehlertext.nach_aussen(e, wo)
 
 def _t(s):
     """v4.1-W20: an der Quelle uebersetzen. Diese Texte erreichen das DOM
@@ -60,7 +70,7 @@ def api_twitch_oauth_status():
         st["needs_tunnel"] = not st["redirect_public"]
         return jsonify(ok=True, **st)
     except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
+        return jsonify(ok=False, error=_fehler_text(e, "api_twitch_oauth_status")), 500
 
 
 @bp.route("/api/twitch/oauth/redirect", methods=["POST"])

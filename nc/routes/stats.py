@@ -11,6 +11,8 @@ import json
 import re
 from flask import Blueprint, jsonify
 
+from nc import fehlertext as _nc_fehlertext
+
 from nc import i18n as _nc_i18n
 from nc.dbwrap import db_conn
 from nc.stats import get_stats, get_tiktok_status_distribution
@@ -18,6 +20,14 @@ from nc.stats import get_stats, get_tiktok_status_distribution
 from nc import ctx as _ctx
 
 bp = Blueprint("stats", __name__)
+
+
+def _fehler_text(e, wo=""):
+    """v4.1-W30: der Wortlaut geht ins Log, nach aussen die gesaeuberte
+       Fassung — ohne Pfade, ohne Zugangsdaten, gekuerzt. Siehe
+       nc/fehlertext.py, dort steht auch, warum nicht einfach "interner
+       Fehler"."""
+    return _nc_fehlertext.nach_aussen(e, wo)
 
 def _t(s):
     """v4.1-W20: an der Quelle uebersetzen. Diese Texte erreichen das DOM
@@ -85,7 +95,7 @@ def cluster_failures(hours: int = 24) -> dict:
                 "ORDER BY id DESC LIMIT 500",
                 (since,)).fetchall()
     except Exception as e:
-        return {"hours": hours, "total": 0, "error": str(e), "patterns": []}
+        return {"hours": hours, "total": 0, "error": _fehler_text(e, "muster"), "patterns": []}
     for r in rows:
         tail = r["stderr_tail"] or ""
         total_failures += 1
@@ -256,7 +266,7 @@ def api_moderation_feed():
                 "content": (r["content"] or "")[:160],
             })
     except Exception as e:
-        return jsonify(ok=False, error=str(e)[:160]), 200
+        return jsonify(ok=False, error=_fehler_text(e, "api_moderation_feed")), 200
     return jsonify(ok=True, hours=hours, count=len(items), counts=counts, items=items)
 
 
@@ -282,4 +292,4 @@ def api_stats_timeline():
                             "recordings": int(rec["n"] or 0), "mb": round(rec["mb"] or 0)})
         return jsonify(ok=True, days=days, timeline=out)
     except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
+        return jsonify(ok=False, error=_fehler_text(e, "api_stats_timeline")), 500

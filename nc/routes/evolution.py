@@ -19,9 +19,18 @@ from flask import Blueprint, jsonify, request
 
 from nc import i18n as _nc_i18n
 from nc import evolution as _nc_evolution
+from nc import fehlertext as _nc_fehlertext
 from nc.dbwrap import db_conn
 
 bp = Blueprint("evolution", __name__)
+
+
+def _fehler_text(e, wo=""):
+    """v4.1-W30: der Wortlaut geht ins Log, nach aussen die gesaeuberte
+       Fassung — ohne Pfade, ohne Zugangsdaten, gekuerzt. Siehe
+       nc/fehlertext.py, dort steht auch, warum nicht einfach "interner
+       Fehler"."""
+    return _nc_fehlertext.nach_aussen(e, wo)
 
 def _t(s):
     """v4.1-W20: an der Quelle uebersetzen. Diese Texte erreichen das DOM
@@ -64,7 +73,7 @@ def api_evolution_status():
                              proposals=last["proposals"], files=last["files"],
                              trigger=last["trigger"]) if last else None))
     except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
+        return jsonify(ok=False, error=_fehler_text(e, "api_evolution_status")), 500
 
 
 @bp.route("/api/evolution/run", methods=["POST"])
@@ -74,7 +83,7 @@ def api_evolution_run():
         res = _nc_evolution.cycle("manual")
         return jsonify(res)
     except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
+        return jsonify(ok=False, error=_fehler_text(e, "api_evolution_run")), 500
 
 
 @bp.route("/api/evolution/learned")
@@ -96,7 +105,7 @@ def api_evolution_learned():
                         "updated_at": (r["updated_at"] or "")[:19]})
         return jsonify(ok=True, params=out, count=len(out))
     except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
+        return jsonify(ok=False, error=_fehler_text(e, "api_evolution_learned")), 500
 
 
 @bp.route("/api/evolution/proposals")
@@ -117,7 +126,7 @@ def api_evolution_proposals():
              "confidence": round((r["confidence"] or 0) * 100, 0),
              "impact": r["impact"], "status": r["status"]} for r in rows])
     except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
+        return jsonify(ok=False, error=_fehler_text(e, "api_evolution_proposals")), 500
 
 
 @bp.route("/api/evolution/proposals/<int:pid>/dismiss", methods=["POST"])
@@ -134,7 +143,7 @@ def api_evolution_dismiss(pid):
             conn.commit()
         return jsonify(ok=True, id=pid, status=new_status)
     except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
+        return jsonify(ok=False, error=_fehler_text(e, "api_evolution_dismiss")), 500
 
 
 @bp.route("/api/evolution/history")
@@ -149,7 +158,7 @@ def api_evolution_history():
              "insights": r["insights"], "proposals": r["proposals"], "files": r["files"],
              "trigger": r["trigger"]} for r in rows])
     except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
+        return jsonify(ok=False, error=_fehler_text(e, "api_evolution_history")), 500
 
 
 @bp.route("/api/evolution/changelog")
@@ -164,7 +173,7 @@ def api_evolution_changelog():
             content = f.read()[:40000]
         return jsonify(ok=True, exists=True, path=path, content=content)
     except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
+        return jsonify(ok=False, error=_fehler_text(e, "api_evolution_changelog")), 500
 
 
 @bp.route("/api/evolution/snapshots")

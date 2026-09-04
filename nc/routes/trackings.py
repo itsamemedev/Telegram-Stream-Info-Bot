@@ -11,6 +11,8 @@ import json
 import re
 from flask import Blueprint, jsonify, request
 
+from nc import fehlertext as _nc_fehlertext
+
 from nc import i18n as _nc_i18n
 from nc.dbwrap import db_conn
 import io
@@ -28,6 +30,14 @@ from nc.notes import set_tracking_notes
 from nc import ctx as _ctx
 
 bp = Blueprint("trackings", __name__)
+
+
+def _fehler_text(e, wo=""):
+    """v4.1-W30: der Wortlaut geht ins Log, nach aussen die gesaeuberte
+       Fassung — ohne Pfade, ohne Zugangsdaten, gekuerzt. Siehe
+       nc/fehlertext.py, dort steht auch, warum nicht einfach "interner
+       Fehler"."""
+    return _nc_fehlertext.nach_aussen(e, wo)
 
 def _t(s):
     """v4.1-W20: an der Quelle uebersetzen. Diese Texte erreichen das DOM
@@ -65,7 +75,7 @@ def quick_restart_tracking(tracking_id: int) -> dict:
         username = row["username"]
         info["username"] = username
     except Exception as e:
-        return {"ok": False, "error": str(e)}
+        return {"ok": False, "error": _fehler_text(e, "trackings")}
     if _c().cfg["_STREAM_DEAD_STREAK"].pop(tracking_id, None):
         info["actions"].append("cleared stream_dead_streak")
     if _c().cfg["_STREAM_DEAD_BACKOFF_UNTIL"].pop(tracking_id, None):
@@ -142,7 +152,7 @@ def api_trackings_groups():
             groups.append({"group_id": gid, "count": r["n"], "source": _src(gid),
                            "default": gid == default_gid})
     except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
+        return jsonify(ok=False, error=_fehler_text(e, "api_trackings_groups")), 500
     # Die Standardgruppe steht auch dann zur Wahl, wenn dort noch nichts läuft
     # (frische Installation — sonst böte das Dashboard genau nichts an).
     if default_gid and not any(g["group_id"] == default_gid for g in groups):
@@ -370,7 +380,7 @@ def api_trackings_tags_map():
         for r in rows:
             out.setdefault(str(r["tracking_id"]), []).append(r["tag"])
     except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
+        return jsonify(ok=False, error=_fehler_text(e, "api_trackings_tags_map")), 500
     return jsonify(ok=True, map=out)
 
 
@@ -436,7 +446,7 @@ def api_watchlist_export():
                         headers={"Content-Disposition":
                                  "attachment; filename=watchlist.json"})
     except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
+        return jsonify(ok=False, error=_fehler_text(e, "api_watchlist_export")), 500
 
 
 @bp.route("/api/trackings/<int:tid>/collection", methods=["POST"])
@@ -465,7 +475,7 @@ def api_tracking_collection(tid):
             conn.commit()
         return jsonify(ok=True, tracking_id=tid, collection_id=cid)
     except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
+        return jsonify(ok=False, error=_fehler_text(e, "api_tracking_collection")), 500
 
 
 @bp.route("/api/trackings/<int:tid>/max-duration", methods=["POST"])
@@ -494,7 +504,7 @@ def api_tracking_max_duration(tid):
             conn.commit()
         return jsonify(ok=True, tracking_id=tid, seconds=secs)
     except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
+        return jsonify(ok=False, error=_fehler_text(e, "api_tracking_max_duration")), 500
 
 
 @bp.route("/api/trackings/<int:tid>/settings")
@@ -531,4 +541,4 @@ def api_tracking_settings(tid):
                        effective_duration=(tr["max_duration_override"] or _c().cfg["MAX_RECORD_SECS"]),
                        tag_count=int(ntags or 0), note_count=int(nnotes or 0))
     except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
+        return jsonify(ok=False, error=_fehler_text(e, "api_tracking_settings")), 500

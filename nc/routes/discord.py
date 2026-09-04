@@ -25,6 +25,7 @@ from flask import Blueprint, jsonify, request
 
 from nc import i18n as _nc_i18n
 from nc import discordstate as _nc_discordstate
+from nc import fehlertext as _nc_fehlertext
 from nc.cfgstore import get as _cfg_get
 from nc.dbwrap import db_conn
 from nc.discordstate import SESSION as _DISCORD_SESSION
@@ -35,6 +36,14 @@ from nc.util import _loop_not_ready
 from nc import ctx as _ctx
 
 bp = Blueprint("discord", __name__)
+
+
+def _fehler_text(e, wo=""):
+    """v4.1-W30: der Wortlaut geht ins Log, nach aussen die gesaeuberte
+       Fassung — ohne Pfade, ohne Zugangsdaten, gekuerzt. Siehe
+       nc/fehlertext.py, dort steht auch, warum nicht einfach "interner
+       Fehler"."""
+    return _nc_fehlertext.nach_aussen(e, wo)
 
 def _t(s):
     """v4.1-W20: an der Quelle uebersetzen. Diese Texte erreichen das DOM
@@ -114,7 +123,7 @@ def api_discord_overview():
                              (since,)).fetchone()
             out["clips_7d"] = r["c"] if r else 0
     except Exception as e:
-        out["db_error"] = str(e)
+        out["db_error"] = _fehler_text(e, "discord")
     try:
         out["digest_week"] = _disc_state_get("digest_week")
         out["cotw_week"] = _disc_state_get("cotw_week")
@@ -142,9 +151,9 @@ def api_discord_webhook_test():
     except RuntimeError as e:
         if _loop_not_ready(e):
             return jsonify(ok=False, error=_t("Bot-Loop startet noch"), transient=True), 503
-        return jsonify(ok=False, error=str(e)), 500
+        return jsonify(ok=False, error=_fehler_text(e, "api_discord_webhook_test")), 500
     except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
+        return jsonify(ok=False, error=_fehler_text(e, "api_discord_webhook_test")), 500
 
 
 @bp.route("/api/discord/invite")
@@ -172,7 +181,7 @@ def api_discord_clips_week():
                        highlighted=sum(1 for c in clips if c["highlighted"]),
                        total=len(clips), threshold=_c().cfg["CLIP_HIGHLIGHT_STARS"])
     except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
+        return jsonify(ok=False, error=_fehler_text(e, "api_discord_clips_week")), 500
 
 
 @bp.route("/api/discord/community")
@@ -227,7 +236,7 @@ def api_discord_community():
             except Exception:
                 pass
     except Exception as e:
-        out["db_error"] = str(e)
+        out["db_error"] = _fehler_text(e, "discord")
     return jsonify(out)
 
 
@@ -255,6 +264,6 @@ def api_discord_announce():
     except RuntimeError as e:
         if _loop_not_ready(e):
             return jsonify(ok=False, error=_t("Bot-Loop startet noch"), transient=True), 503
-        return jsonify(ok=False, error=str(e)), 500
+        return jsonify(ok=False, error=_fehler_text(e, "api_discord_announce")), 500
     except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
+        return jsonify(ok=False, error=_fehler_text(e, "api_discord_announce")), 500

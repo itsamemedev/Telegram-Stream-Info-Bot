@@ -17,6 +17,7 @@ from flask import current_app
 import time as _time_mod
 from nc import i18n as _nc_i18n
 from nc import restrend as _nc_restrend
+from nc import fehlertext as _nc_fehlertext
 from nc import ffver as _nc_ffver
 from nc import updater as _nc_updater
 from nc.proxyutil import _tunnel_mask
@@ -25,6 +26,14 @@ from nc import proxyutil as _nc_proxyutil
 from nc import ctx as _ctx
 
 bp = Blueprint("ops", __name__)
+
+
+def _fehler_text(e, wo=""):
+    """v4.1-W30: der Wortlaut geht ins Log, nach aussen die gesaeuberte
+       Fassung — ohne Pfade, ohne Zugangsdaten, gekuerzt. Siehe
+       nc/fehlertext.py, dort steht auch, warum nicht einfach "interner
+       Fehler"."""
+    return _nc_fehlertext.nach_aussen(e, wo)
 
 def _t(s):
     """v4.1-W20: an der Quelle uebersetzen. Diese Texte erreichen das DOM
@@ -83,7 +92,7 @@ def api_ops_logtail():
             with open(path, "r", encoding="utf-8", errors="replace") as f:
                 lines = f.readlines()[-n:]
     except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
+        return jsonify(ok=False, error=_fehler_text(e, "api_ops_logtail")), 500
     return jsonify(ok=True, file=fname, lines=[ln.rstrip("\n") for ln in lines])
 
 
@@ -142,7 +151,7 @@ def api_tunnel_test():
                "at": datetime.now(timezone.utc).strftime("%H:%M:%S")}
     except Exception as e:
         res = {"ok": False, "http_code": "0", "via": _tunnel_mask(eff) or "direkt",
-               "ms": int((_time_mod.time() - t0) * 1000), "err": str(e)[:200],
+               "ms": int((_time_mod.time() - t0) * 1000), "err": _fehler_text(e, "ops-probe"),
                "at": datetime.now(timezone.utc).strftime("%H:%M:%S")}
     _nc_proxyutil.tunnel_state()["last_test"] = res
     return jsonify(res)
@@ -213,7 +222,7 @@ def api_ops_errors():
             with open(path, "r", encoding="utf-8", errors="replace") as f:
                 lines = f.readlines()[-1000:]
     except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
+        return jsonify(ok=False, error=_fehler_text(e, "api_ops_errors")), 500
     now = datetime.now(timezone.utc)
     sig_count = _collections.Counter()
     sig_last, sig_sample = {}, {}
@@ -264,7 +273,7 @@ def api_ops_audit():
                   "at": (r["created_at"] or "")[5:19].replace("T", " ")} for r in rows]
         return jsonify(ok=True, items=items)
     except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
+        return jsonify(ok=False, error=_fehler_text(e, "api_ops_audit")), 500
 
 
 @bp.route("/api/ops/healthcheck")
@@ -338,7 +347,7 @@ def api_ops_db_stats():
                 except Exception:
                     counts[t] = None
     except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
+        return jsonify(ok=False, error=_fehler_text(e, "api_ops_db_stats")), 500
     db_size = None
     try:
         if _c().cfg["DB_BACKEND"] != "mariadb" and os.path.exists(_c().cfg["DB_PATH"]):
@@ -384,7 +393,7 @@ def api_ops_disk_breakdown():
         out["total_gb"] = round(usage.total / 1024 / 1024 / 1024, 1)
         out["used_pct"] = round(100.0 * usage.used / usage.total, 1)
     except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
+        return jsonify(ok=False, error=_fehler_text(e, "api_ops_disk_breakdown")), 500
     return jsonify(ok=True, **out)
 
 
@@ -541,4 +550,4 @@ def api_ops_log_tail():
         text_lines = data.decode("utf-8", errors="replace").splitlines()[-lines:]
         return jsonify(ok=True, file=path, count=len(text_lines), lines=text_lines)
     except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
+        return jsonify(ok=False, error=_fehler_text(e, "api_ops_log_tail")), 500

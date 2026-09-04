@@ -27,6 +27,7 @@ from typing import Optional
 from flask import Blueprint, jsonify, request
 
 from nc import azraelstate as _nc_azrael
+from nc import fehlertext as _nc_fehlertext
 from nc import brainstate as _nc_brainstate
 from nc import channels as _nc_channels
 from nc import i18n as _nc_i18n
@@ -41,6 +42,14 @@ from nc.trackingdb import get_all_active_trackings
 from nc import ctx as _ctx
 
 bp = Blueprint("beobachtung", __name__)
+
+
+def _fehler_text(e, wo=""):
+    """v4.1-W30: der Wortlaut geht ins Log, nach aussen die gesaeuberte
+       Fassung — ohne Pfade, ohne Zugangsdaten, gekuerzt. Siehe
+       nc/fehlertext.py, dort steht auch, warum nicht einfach "interner
+       Fehler"."""
+    return _nc_fehlertext.nach_aussen(e, wo)
 
 
 def _c():
@@ -138,7 +147,7 @@ async def inspect_stream_url(username: str, session=None) -> dict:
                     head_info["m3u8_lines"] = text.count("\n")
                     head_info["m3u8_segments"] = text.count(".ts")
         except Exception as e:
-            head_info = {"error": str(e)}
+            head_info = {"error": _fehler_text(e, "inspect_stream_url")}
         return {
             "ok": True,
             "username": username,
@@ -242,7 +251,7 @@ def api_profile(username):
             else:
                 tiktok_profile = {"error": _t("Scraper nicht bereit")}
         except Exception as e:
-            tiktok_profile = {"error": str(e)}
+            tiktok_profile = {"error": _fehler_text(e, "profil")}
 
     return jsonify({
         "ok": True,
@@ -346,7 +355,7 @@ def api_stream_timeline():
                                 "ORDER BY offset_secs ASC LIMIT 40",
                                 (user, since)).fetchall()
     except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
+        return jsonify(ok=False, error=_fehler_text(e, "api_stream_timeline")), 500
     chapters = [{"offset": int(r["offset_secs"] or 0), "reason": r["reason"] or "",
                  "title": r["title"] or "", "at": (r["created_at"] or "")[11:19]} for r in rows]
     _sk = _nc_trackingdb.ci_key(_nc_rsstate.SESSION_START, user)
@@ -474,7 +483,7 @@ def api_profile_lookup_bulk():
                         "viewers": detail.get("viewer_count") or detail.get("viewers"),
                     }
                 except Exception as e:
-                    results[u] = {"error": str(e)}
+                    results[u] = {"error": _fehler_text(e, "bulk-live")}
         finally:
             if own:
                 try: await session.close()

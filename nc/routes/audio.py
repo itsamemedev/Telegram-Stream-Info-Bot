@@ -17,12 +17,21 @@ v4.1-W20: Zwei Routen, **null neue Kontext-Eintraege**. Geloest wurde vorweg:
 from flask import Blueprint, jsonify, request
 
 from nc import audio_cue as _nc_audio
+from nc import fehlertext as _nc_fehlertext
 from nc import audiocue as _nc_audiocue
 from nc import cfgstore as _nc_cfgstore
 from nc import channels as _nc_channels
 from nc import i18n as _nc_i18n
 
 bp = Blueprint("audio", __name__)
+
+
+def _fehler_text(e, wo=""):
+    """v4.1-W30: der Wortlaut geht ins Log, nach aussen die gesaeuberte
+       Fassung — ohne Pfade, ohne Zugangsdaten, gekuerzt. Siehe
+       nc/fehlertext.py, dort steht auch, warum nicht einfach "interner
+       Fehler"."""
+    return _nc_fehlertext.nach_aussen(e, wo)
 
 # Das PCM-Format des Restream-Tonmischers. Der Signalton muss bitgenau dazu
 # passen, sonst rauscht er im Sendebild statt zu piepen.
@@ -73,7 +82,7 @@ def api_audio_testtone():
         pcm = _nc_audio.cue_pcm(freq=c["freq"], ms=c["ms"], volume=c["vol"],
                                 gap_ms=c["gap_ms"], sr=_TTS_SR, ch=_TTS_CH)
     except Exception as e:
-        return jsonify(ok=False, error=str(e)[:140]), 200
+        return jsonify(ok=False, error=_fehler_text(e, "api_audio_testtone")), 200
     queues = [v.get("queue") for v in _nc_channels.RESTREAM_TTS.values()
               if v.get("queue") is not None]
     if not queues:

@@ -2613,6 +2613,88 @@ def _test_w29_kein_sqlite_auf_dem_loop():
        % (len(treffer), GRENZE))
 
 
+
+def _test_w30_fehlertext_und_offenes_deck():
+    """v4.1-W30: was nach aussen geht, und ob das Deck ueberhaupt zu ist."""
+    import ast as _ast
+    import glob as _glob
+    import os as _os
+
+    import nc.dashauth as D
+    import nc.fehlertext as F
+
+    # (1) KEIN roher Ausnahmetext mehr in einer Antwort. Die Schranke des
+    # Decks macht gar nichts, wenn weder Token noch PIN gesetzt ist — dann
+    # geht jede dieser Meldungen an jeden, der den Port erreicht, mitsamt
+    # Dateipfaden und gelegentlich dem Wortlaut einer fremden API-Antwort.
+    offen = []
+    for p in sorted(_glob.glob("nc/routes/*.py")):
+        quelle = open(p, encoding="utf-8").read()
+        if "str(e)" in quelle:
+            offen.append(p)
+    assert not offen, "roher Ausnahmetext in einem Blueprint: %r" % offen
+
+    # Und in bot.py wenigstens nicht mehr in einer HTTP-Antwort.
+    b = open("bot.py", encoding="utf-8").read()
+    for k in _ast.walk(_ast.parse(b)):
+        if isinstance(k, _ast.Call) and isinstance(k.func, _ast.Name) \
+           and k.func.id == "jsonify":
+            for kw in k.keywords:
+                assert not _ast.unparse(kw.value).startswith("str(e)"), \
+                    ("roher Ausnahmetext in einer jsonify-Antwort, Zeile %d"
+                     % kw.value.lineno)
+
+    # (2) Der Saeuberer nimmt raus, was verraeterisch ist, und laesst stehen,
+    # was der Betreiber braucht. "Interner Fehler" waere in einem
+    # Ein-Personen-Betrieb keine Sicherheit, sondern eine Sackgasse.
+    assert F.saeubern("database is locked") == "database is locked"
+    assert "/home/" not in F.saeubern(
+        "[Errno 2] No such file: '/home/ubuntu/tiktok-bot/recordings/x.mp4'")
+    assert "abc123def456" not in F.saeubern('HTTP 401: token=abc123def456')
+    assert "46zAbCdEfGhIjKlMnOpQrStUvWxYz012345" not in F.saeubern(
+        "rtmp://ingest/app/46zAbCdEfGhIjKlMnOpQrStUvWxYz012345 refused")
+    assert len(F.saeubern("x" * 4000)) <= F.MAX
+    # Der Typ bleibt: "OperationalError" sagt Datenbank, "TimeoutError" sagt
+    # Netz — und verraet nichts ueber den Bestand.
+    assert F.nach_aussen(ValueError("kaputt"), "test").startswith("ValueError")
+
+    # (3) Die Lage-Erkennung benutzt DIESELBE Bedingung wie die Schranke:
+    # ein Token ODER ein PIN reicht. Frueher fragte die Warnung nur nach dem
+    # Token und schlug bei einem PIN-geschuetzten Deck faelschlich an — ein
+    # Fehlalarm erzieht dazu, die Meldung zu ueberlesen.
+    sicher = {k: _os.environ.get(k) for k in ("WEB_HOST", "DASHBOARD_TOKEN", "DASHBOARD_PIN")}
+    try:
+        for env, erwartet in (
+                ({"WEB_HOST": "127.0.0.1", "DASHBOARD_TOKEN": "", "DASHBOARD_PIN": ""}, False),
+                ({"WEB_HOST": "0.0.0.0", "DASHBOARD_TOKEN": "", "DASHBOARD_PIN": ""}, True),
+                ({"WEB_HOST": "0.0.0.0", "DASHBOARD_TOKEN": "", "DASHBOARD_PIN": "1234"}, False),
+                ({"WEB_HOST": "0.0.0.0", "DASHBOARD_TOKEN": "geheim", "DASHBOARD_PIN": ""}, False)):
+            _os.environ.update(env)
+            assert D.offen_im_netz() is erwartet, env
+    finally:
+        for k, v in sicher.items():
+            if v is None:
+                _os.environ.pop(k, None)
+            else:
+                _os.environ[k] = v
+
+    # (4) Die Meldung laeuft auf ERROR und WIEDERHOLT sich. Ein log.warning
+    # erscheint in einem ERROR-Log nie (CLAUDE.md), und eine Meldung nur beim
+    # Start sieht niemand: der Betreiber liest das Log, wenn etwas kaputt ist,
+    # nicht beim Hochfahren. Der gefaehrliche Zustand ist ein Dauerzustand.
+    assert "_nc_dashauth.lage()" in b, "die Lage wird nicht mehr abgefragt"
+    assert "async def _sicherheits_erinnerung_loop" in b, "die Erinnerung fehlt"
+    assert '_spawn(_sicherheits_erinnerung_loop(), name="sec-reminder")' in b, \
+        "die Erinnerung wird nie gestartet"
+    _i = b.index("async def _sicherheits_erinnerung_loop")
+    _seg = b[_i:_i + 1400]
+    assert "log.error(" in _seg, "die Erinnerung laeuft nicht auf ERROR"
+    assert "log.warning(" not in _seg, \
+        "die Erinnerung faellt auf warning zurueck — im ERROR-Log unsichtbar"
+
+    ok("v4.1-W30: kein roher Ausnahmetext nach aussen, offenes Deck meldet sich wiederholt")
+
+
 def main():
     tmp = tempfile.mkdtemp()
     configure_db(db_path=os.path.join(tmp, "t.db"), backend="sqlite")
@@ -2753,6 +2835,8 @@ def main():
     _test_w28_abdeckung_ist_ehrlich()
 
     _test_w29_kein_sqlite_auf_dem_loop()
+
+    _test_w30_fehlertext_und_offenes_deck()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)
 

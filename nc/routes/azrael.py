@@ -41,6 +41,7 @@ from datetime import datetime, timedelta, timezone
 from flask import Blueprint, jsonify, request
 
 from nc import azraelstate as _nc_azrael
+from nc import fehlertext as _nc_fehlertext
 from nc import channels as _nc_channels
 from nc import i18n as _nc_i18n
 from nc import piper_voices as _nc_piper
@@ -51,6 +52,14 @@ from nc.util import _loop_not_ready
 from nc import ctx as _ctx
 
 bp = Blueprint("azrael", __name__)
+
+
+def _fehler_text(e, wo=""):
+    """v4.1-W30: der Wortlaut geht ins Log, nach aussen die gesaeuberte
+       Fassung — ohne Pfade, ohne Zugangsdaten, gekuerzt. Siehe
+       nc/fehlertext.py, dort steht auch, warum nicht einfach "interner
+       Fehler"."""
+    return _nc_fehlertext.nach_aussen(e, wo)
 
 
 def _c():
@@ -81,7 +90,7 @@ def _fehler(e, code=500):
        ohne ihn ist 'AZRAEL antwortet nicht' nicht diagnostizierbar."""
     if isinstance(e, RuntimeError) and _loop_not_ready(e):
         return jsonify(ok=False, error=_t("Bot-Loop startet noch"), transient=True), 503
-    return jsonify(ok=False, error=str(e)), code
+    return jsonify(ok=False, error=_fehler_text(e, "_fehler")), code
 
 
 # ---- Identitaet, Telemetrie, Rollen -----------------------------------------
@@ -146,7 +155,7 @@ def api_azrael_core():
                 "SELECT COUNT(*) AS c FROM stream_chapters WHERE created_at >= ?",
                 (since,)).fetchone()["c"]
     except Exception as e:
-        out["db_error"] = str(e)
+        out["db_error"] = _fehler_text(e, "azrael")
     return jsonify(out)
 
 

@@ -12,6 +12,7 @@ from flask import Blueprint, jsonify, request
 from nc.dbwrap import db_conn
 from nc import i18n as _nc_i18n
 from nc import tiktokcheck as _nc_tiktokcheck
+from nc import fehlertext as _nc_fehlertext
 from nc import trackingdb as _nc_trackingdb
 from nc.trackingdb import get_all_active_trackings
 from nc.util import _loop_not_ready
@@ -20,6 +21,14 @@ from nc.stats import _streamer_health
 from nc import ctx as _ctx
 
 bp = Blueprint("streamer", __name__)
+
+
+def _fehler_text(e, wo=""):
+    """v4.1-W30: der Wortlaut geht ins Log, nach aussen die gesaeuberte
+       Fassung — ohne Pfade, ohne Zugangsdaten, gekuerzt. Siehe
+       nc/fehlertext.py, dort steht auch, warum nicht einfach "interner
+       Fehler"."""
+    return _nc_fehlertext.nach_aussen(e, wo)
 
 def _t(s):
     """v4.1-W20: an der Quelle uebersetzen. Diese Texte erreichen das DOM
@@ -51,7 +60,7 @@ def api_streamers_wall():
     try:
         rows = get_all_active_trackings(include_paused=True)
     except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
+        return jsonify(ok=False, error=_fehler_text(e, "api_streamers_wall")), 500
     counts, lasts = {}, {}
     try:
         with db_conn() as conn:
@@ -109,7 +118,7 @@ def api_streamer_detail():
                                 "title": c["title"] or c["reason"] or "Moment",
                                 "at": (c["created_at"] or "")[:16].replace("T", " ")} for c in chaps]
     except Exception as e:
-        out["db_error"] = str(e)
+        out["db_error"] = _fehler_text(e, "streamer")
     return jsonify(out)
 
 
@@ -134,7 +143,7 @@ def api_streamer_compare():
             return jsonify(ok=True, a={"username": a, **stats(a)},
                            b={"username": b, **stats(b)})
     except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
+        return jsonify(ok=False, error=_fehler_text(e, "api_streamer_compare")), 500
 
 
 @bp.route("/api/streamer/priority/<username>", methods=["GET", "POST"])
@@ -169,7 +178,7 @@ def api_streamer_priority(username):
             return jsonify(ok=True, username=username,
                            level=int(row["priority_level"]) if row else 0)
     except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
+        return jsonify(ok=False, error=_fehler_text(e, "api_streamer_priority")), 500
 
 
 @bp.route("/api/streamer/journal/<username>")
@@ -194,7 +203,7 @@ def api_streamer_journal(username):
         items.sort(key=lambda x: x["at"] or "", reverse=True)
         return jsonify(ok=True, username=username, count=len(items), journal=items[:60])
     except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
+        return jsonify(ok=False, error=_fehler_text(e, "api_streamer_journal")), 500
 
 
 @bp.route("/api/streamer/watchlist")
@@ -214,7 +223,7 @@ def api_streamer_watchlist():
                             "grade": h["grade"], "ok_rate": h["ok_rate"]})
         return jsonify(ok=True, count=len(out), watchlist=out)
     except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
+        return jsonify(ok=False, error=_fehler_text(e, "api_streamer_watchlist")), 500
 
 
 @bp.route("/api/streamer/dormant")
@@ -238,7 +247,7 @@ def api_streamer_dormant():
         out = [{"username": r["username"], "last_activity": r["last"]} for r in rows]
         return jsonify(ok=True, count=len(out), days=days, dormant=out)
     except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
+        return jsonify(ok=False, error=_fehler_text(e, "api_streamer_dormant")), 500
 
 
 @bp.route("/api/streamer/exists/<username>")
@@ -254,7 +263,7 @@ def api_streamer_exists(username):
     except Exception as e:
         if _loop_not_ready(e):
             return jsonify(ok=False, error=_t("Bot startet noch — gleich erneut")), 503
-        return jsonify(ok=False, error=str(e)), 500
+        return jsonify(ok=False, error=_fehler_text(e, "api_streamer_exists")), 500
     return jsonify(ok=True, username=uname, status=status,
                    http_status=http_status, detail=detail,
                    deletable=(status == "gone"))
@@ -282,7 +291,7 @@ def api_streamer_delete(username):
                  uname, len(groups))
         return jsonify(ok=True, username=uname, deleted=len(groups))
     except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
+        return jsonify(ok=False, error=_fehler_text(e, "api_streamer_delete")), 500
 
 
 @bp.route("/api/streamer/digest/<username>")
@@ -308,4 +317,4 @@ def api_streamer_digest(username):
                                    "last": rec["last"]},
                        dominant_failure=(domfail["outcome"] if domfail else None))
     except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
+        return jsonify(ok=False, error=_fehler_text(e, "api_streamer_digest")), 500
