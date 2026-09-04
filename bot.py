@@ -879,6 +879,8 @@ _nc_freeai.chat_sync = _freeai_chat_sync_metered
 # einen Symbol; jetzt sind sie frei von Bot-Globals. Die Konfiguration wird
 # unten per configure_db() injiziert (das Modul liest selbst KEINE Env).
 from nc.dbwrap import db_conn, configure_db, db_async  # noqa: F401
+import concurrent.futures as _cf_thread   # v4.1-W29: Ein-Arbeiter-Executor
+import functools as _functools            # v4.1-W29: partial fuer den Executor
 
 # V37: Drei Domänen-Module, möglich geworden durch die db_conn-Verschiebung —
 # diese Funktionen hängen an keinem Bot-Global mehr.
@@ -4690,6 +4692,28 @@ def get_tiktok_status_distribution() -> dict:
 # ---------- X18: Manual Recording ----------
 _MANUAL_RECORDINGS = {}    # manual_id -> asyncio.subprocess.Process
 
+async def _manual_status(manual_id, status):
+    """Status einer manuellen Aufnahme fortschreiben — NEBEN dem Loop.
+
+    v4.1-W29: Diese Anweisung stand viermal wortgleich in
+    trigger_manual_recording, jedes Mal synchron und jedes Mal in einem
+    eigenen `try: ... except Exception: pass`. Ein Helfer loest beides: die
+    Blockade und die Wiederholung. Fehler bleiben folgenlos — der Status ist
+    Diagnose, und der Rueckgabewert der Funktion sagt dem Aufrufer ohnehin,
+    was schiefging.
+    """
+    try:
+        def _setzen(conn):
+            conn.execute(
+                "UPDATE manual_recordings SET status=?, ended_at=? WHERE id=?",
+                (status, datetime.now(timezone.utc).isoformat(), manual_id))
+            conn.commit()
+
+        await db_async(_setzen)
+    except Exception as e:
+        log.debug("manual status %s -> %s: %s", manual_id, status, e)
+
+
 async def trigger_manual_recording(username: str, duration_secs: int = 300,
                                      session=None) -> dict:
     """Startet eine manuelle Aufnahme (max 5min default). Läuft parallel
@@ -4707,7 +4731,9 @@ async def trigger_manual_recording(username: str, duration_secs: int = 300,
 
     # DB-Entry anlegen
     try:
-        with db_conn() as conn:
+        # v4.1-W29: NEBEN dem Loop. lastrowid wird IM Thread ausgelesen — der
+        # Cursor ueberlebt den with-Block nicht.
+        def _anlegen(conn):
             cur = conn.execute(
                 "INSERT INTO manual_recordings "
                 "(username, max_duration_secs, started_at, output_file, status) "
@@ -4716,7 +4742,9 @@ async def trigger_manual_recording(username: str, duration_secs: int = 300,
                  datetime.now(timezone.utc).isoformat(),
                  output_file, "starting"))
             conn.commit()
-            manual_id = cur.lastrowid
+            return cur.lastrowid
+
+        manual_id = await db_async(_anlegen)
     except Exception as e:
         return {"ok": False, "error": f"db: {e}"}
 
@@ -4725,24 +4753,10 @@ async def trigger_manual_recording(username: str, duration_secs: int = 300,
         cmd, recorder = await build_recording_cmd(
             username, output_file, duration_secs, session=session)
     except Exception as e:
-        try:
-            with db_conn() as conn:
-                conn.execute(
-                    "UPDATE manual_recordings SET status='failed', "
-                    "ended_at=? WHERE id=?",
-                    (datetime.now(timezone.utc).isoformat(), manual_id))
-                conn.commit()
-        except Exception: pass
+        await _manual_status(manual_id, "failed")
         return {"ok": False, "error": f"build_cmd: {e}", "manual_id": manual_id}
     if cmd is None:
-        try:
-            with db_conn() as conn:
-                conn.execute(
-                    "UPDATE manual_recordings SET status='resolve_failed', "
-                    "ended_at=? WHERE id=?",
-                    (datetime.now(timezone.utc).isoformat(), manual_id))
-                conn.commit()
-        except Exception: pass
+        await _manual_status(manual_id, "resolve_failed")
         return {"ok": False, "error": "kein Recorder verfügbar / nicht live",
                 "manual_id": manual_id}
 
@@ -4753,22 +4767,15 @@ async def trigger_manual_recording(username: str, duration_secs: int = 300,
             stdout=asyncio.subprocess.DEVNULL,
             stderr=asyncio.subprocess.PIPE)
     except Exception as e:
-        try:
-            with db_conn() as conn:
-                conn.execute(
-                    "UPDATE manual_recordings SET status='spawn_failed', "
-                    "ended_at=? WHERE id=?",
-                    (datetime.now(timezone.utc).isoformat(), manual_id))
-                conn.commit()
-        except Exception: pass
+        await _manual_status(manual_id, "spawn_failed")
         return {"ok": False, "error": f"spawn: {e}", "manual_id": manual_id}
 
+    # Nicht ueber _manual_status: hier wird KEIN ended_at gesetzt (die
+    # Aufnahme laeuft ja gerade), dafuer die PID.
     try:
-        with db_conn() as conn:
-            conn.execute(
-                "UPDATE manual_recordings SET status='running', recorder_pid=? "
-                "WHERE id=?", (proc.pid, manual_id))
-            conn.commit()
+        await db_async(lambda c: (c.execute(
+            "UPDATE manual_recordings SET status='running', recorder_pid=? "
+            "WHERE id=?", (proc.pid, manual_id)), c.commit()))
     except Exception: pass
 
     _MANUAL_RECORDINGS[manual_id] = proc
@@ -13132,6 +13139,41 @@ def _restream_chat_push(src, who, text, origin=None):
         except Exception as _e:
             log.debug("loyalty award: %s", _e)
 
+
+# ─────────────────────────────────────────────────────────────────────────
+# v4.1-W29: derselbe Push, aber NEBEN dem Event-Loop
+# ─────────────────────────────────────────────────────────────────────────
+# _restream_chat_push wird aus DREIZEHN Stellen gerufen, alle in
+# async-Funktionen: TikTok-Kommentare, Geschenke und Follows, der
+# Kick-Websocket, Twitch-Chat und -EventSub, der YouTube-Chat. Also bei
+# JEDER Chat-Nachricht jeder Plattform. Die Funktion schreibt dabei
+# Treuepunkte in die Datenbank — synchron, auf dem Loop.
+#
+# EIN Arbeiter, kein Thread-Pool. Das ist der ganze Punkt: der Chat ist eine
+# Abfolge, und ein Pool mit mehreren Arbeitern wuerfelte die Reihenfolge
+# durcheinander. Bei einem Chat-Fenster ist eine vertauschte Nachricht kein
+# akzeptabler Preis fuer Nebenlaeufigkeit. Mit genau einem Arbeiter bleibt
+# die Reihenfolge exakt die der Einreichung.
+#
+# Der Aufrufer WARTET (await). Das ist Absicht: haengt die Platte, bremst
+# der Rueckstau die Chat-Schleife, statt eine unbegrenzte Schlange
+# aufzubauen. Der Loop bleibt dabei frei — andere Aufgaben laufen weiter.
+_CHAT_PUSH_EXEC = _cf_thread.ThreadPoolExecutor(max_workers=1,
+                                                thread_name_prefix="chatpush")
+
+
+async def _restream_chat_push_async(src, who, text, origin=None):
+    """_restream_chat_push neben dem Loop, Reihenfolge erhalten."""
+    try:
+        await asyncio.get_running_loop().run_in_executor(
+            _CHAT_PUSH_EXEC,
+            _functools.partial(_restream_chat_push, src, who, text, origin=origin))
+    except Exception as e:
+        # Der Sendebild-Chat ist Anzeige, kein Betriebszustand — ein
+        # Fehlschlag darf die Chat-Schleife nicht anhalten.
+        log.debug("chat-push (%s/%s): %s", src, who, e)
+
+
 _RESTREAM_OV_DBCACHE = {"ts": 0.0, "goal": "", "follow": ""}   # B72: DB-Felder nur alle 5s lesen (nicht im Sekunden-Hotpath)
 
 def _ov_bar(cur, tgt, width=12):
@@ -16315,7 +16357,7 @@ class KickModerator:
                                     sender = sender_obj.get("username") or "?"
                                     uid = sender_obj.get("id")
                                     if content:
-                                        _restream_chat_push("kick", sender, content)   # F92: Sendebild-Panel
+                                        await _restream_chat_push_async("kick", sender, content)   # F92: Sendebild-Panel
                                         _roles = _nc_mod.kick_roles(sender_obj)
                                         _spawn(self._handle(sender, content, uid, session,
                                                             roles=_roles), name="mod-handle")
@@ -17503,7 +17545,7 @@ async def _start_chat_listener(username, chat_buf, flags=None):
             txt = (getattr(ev, "comment", None) or "").strip()
             if txt:
                 chat_buf.append(f"{who}: {txt}"); _cap()
-                _restream_chat_push("tiktok", who, txt, origin=username)   # F92/F97: Sendebild, herkunftsmarkiert
+                await _restream_chat_push_async("tiktok", who, txt, origin=username)   # F92/F97: Sendebild, herkunftsmarkiert
                 _CHAT_DIAG["events"] += 1                 # F92d: Lebenszeichen
                 _msg_times.append(_time_mod.monotonic())
                 if len(_msg_times) > 200:
@@ -17537,10 +17579,10 @@ async def _start_chat_listener(username, chat_buf, flags=None):
                 if isinstance(flags, dict):
                     flags["gift_priority"] = True       # Worker reagiert sofort (Cooldown-Bypass)
                 chat_buf.append(f"\U0001f381\u26a1 GROSSES GESCHENK: {who} \u2192 {gname} (~{value} \U0001f48e)!"); _cap()
-                _restream_chat_push("event", who, f"GIFT \u2192 {gname} (~{value})", origin=username)
+                await _restream_chat_push_async("event", who, f"GIFT \u2192 {gname} (~{value})", origin=username)
             else:
                 chat_buf.append(f"\U0001f381 {who} sendet {gname}"); _cap()
-                _restream_chat_push("event", who, f"sendet {gname}", origin=username)
+                await _restream_chat_push_async("event", who, f"sendet {gname}", origin=username)
         except Exception:
             pass
 
@@ -17549,7 +17591,7 @@ async def _start_chat_listener(username, chat_buf, flags=None):
             who = (getattr(getattr(ev, "user", None), "nickname", None)
                    or getattr(getattr(ev, "from_user", None), "nickname", None) or "?")
             chat_buf.append(f"\u2795 {who} folgt jetzt"); _cap()
-            _restream_chat_push("event", who, "folgt jetzt", origin=username)
+            await _restream_chat_push_async("event", who, "folgt jetzt", origin=username)
             if _overlay_src_ok("tiktok"):
                 _overlay_push("follow", who, platform="tiktok")   # nur wenn OVERLAY_GIFT_SOURCE TikTok zulässt (Default kick)
         except Exception:
@@ -23996,7 +24038,7 @@ async def _twitch_eventsub_loop():
                             ev = (pl.get("event") or {})
                             who = (ev.get("user_name") or ev.get("user_login") or "?")
                             _overlay_push("follow", who, platform="twitch")
-                            _restream_chat_push("event", who, "TWITCH FOLLOW \U0001f5a4")
+                            await _restream_chat_push_async("event", who, "TWITCH FOLLOW \U0001f5a4")
         except asyncio.CancelledError:
             raise
         except Exception as e:
@@ -24158,7 +24200,7 @@ async def _twitch_chat_loop():
                 if cmd == "PRIVMSG" and len(parts) > 3:
                     text = parts[3].lstrip(":")
                     _WCHAT_STATUS["twitch"]["last_msg"] = _time_mod.time()
-                    _restream_chat_push("twitch", user, text)
+                    await _restream_chat_push_async("twitch", user, text)
                     # v4.0-W35: ORACLE-Befehle (!recap/!ask/…) auch aus dem
                     # Twitch-Chat — plattformübergreifend, gleiche Antwortquelle.
                     if await _maybe_handle_command("twitch", user, text):
@@ -24213,7 +24255,7 @@ async def _twitch_chat_loop():
                     mid = tags.get("msg-id", "")
                     if mid in ("sub", "resub", "subgift", "submysterygift", "giftpaidupgrade"):
                         _overlay_push("donation", user, message="Twitch Sub", platform="twitch")
-                        _restream_chat_push("event", user, "TWITCH SUB \U0001f5a4")
+                        await _restream_chat_push_async("event", user, "TWITCH SUB \U0001f5a4")
                         if token and os.getenv("AZRAEL_THANK_OWN_GIFTS", "1") in ("1", "true") \
                                 and _wchat_thank_ok("tw:" + user):
                             await _w(f"PRIVMSG #{chan} :🖤 Danke für den Sub, {user}!")
@@ -24299,7 +24341,7 @@ async def _youtube_api_chat_loop():
                     who, txt = m.get("author", ""), m.get("text", "")
                     if not txt or m.get("is_owner"):     # eigene/Owner-Posts überspringen
                         continue
-                    _restream_chat_push("youtube", who, txt[:300])
+                    await _restream_chat_push_async("youtube", who, txt[:300])
                     _WCHAT_STATUS["youtube"]["last_msg"] = _time_mod.time()
                     # v4.0-W35: ORACLE-Befehle (!recap/!ask/…) auch aus dem
                     # YouTube-Chat (Data-API ist sendefähig → Antwort kommt an).
@@ -24423,7 +24465,7 @@ async def _youtube_chat_loop():
                             txt = "".join(x.get("text", "") for x in
                                           ((t.get("message") or {}).get("runs") or []))
                             if txt:
-                                _restream_chat_push("youtube", who, txt[:300])
+                                await _restream_chat_push_async("youtube", who, txt[:300])
                                 # B168: Moderator-Erkennung auch auf YouTube. Der
                                 # YT-Chat wird anonym gelesen → KEIN Timeout/Delete
                                 # (das braucht YouTube-OAuth + Mod-Scope). Wir
@@ -24451,7 +24493,7 @@ async def _youtube_chat_loop():
                             amt = ((st.get("purchaseAmountText") or {}).get("simpleText") or "")
                             _overlay_push("donation", who, amount=amt,
                                           message="Super-Sticker", platform="youtube")
-                            _restream_chat_push("event", who, f"SUPER-STICKER {amt} \U0001f9e8")
+                            await _restream_chat_push_async("event", who, f"SUPER-STICKER {amt} \U0001f9e8")
                         elif mb:
                             who = ((mb.get("authorName") or {}).get("simpleText") or "?")
                             _mtxt = ((mb.get("headerSubtext") or {}).get("simpleText")
@@ -24460,13 +24502,13 @@ async def _youtube_chat_loop():
                                      or "Mitgliedschaft")
                             _overlay_push("donation", who, message=str(_mtxt)[:60],
                                           platform="youtube")
-                            _restream_chat_push("event", who, "YT-MITGLIED \U0001f5a4")
+                            await _restream_chat_push_async("event", who, "YT-MITGLIED \U0001f5a4")
                         elif p:
                             who = ((p.get("authorName") or {}).get("simpleText") or "?")
                             amt = ((p.get("purchaseAmountText") or {}).get("simpleText") or "")
                             _overlay_push("donation", who, amount=amt, message="Superchat",
                                           platform="youtube")
-                            _restream_chat_push("event", who, f"SUPERCHAT {amt} \U0001f4b8")
+                            await _restream_chat_push_async("event", who, f"SUPERCHAT {amt} \U0001f4b8")
                             # V37-YT-SEND: Superchat-Dank im eigenen Chat
                             if _YT_SEND.get("fn") and os.getenv("AZRAEL_THANK_OWN_GIFTS", "1") in ("1", "true") \
                                     and _wchat_thank_ok("yt:" + who):

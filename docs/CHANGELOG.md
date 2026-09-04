@@ -52,6 +52,44 @@ löchert. Jetzt zeitgedrosselt.
 `reaper_loop` läuft ebenfalls neben dem Loop. Er räumt im Minutentakt tote
 Recorder-Prozesse ab und las dabei synchron aus der Datenbank.
 
+### Geändert — der Sendebild-Chat läuft neben dem Loop, mit EINEM Arbeiter (v4.1 W29)
+
+`_restream_chat_push` wird aus **dreizehn** Stellen gerufen, alle in
+async-Funktionen: TikTok-Kommentare, Geschenke und Follows, der
+Kick-Websocket, Twitch-Chat und -EventSub, der YouTube-Chat. Also bei **jeder
+Chat-Nachricht jeder Plattform**. Dabei schreibt die Funktion Treuepunkte in
+die Datenbank — synchron, auf dem Loop.
+
+In W29 hatte ich sie zurückgestellt, weil in einem gewöhnlichen Thread-Pool
+die **Reihenfolge des Chats** an der Scheduling-Reihenfolge der Threads hinge.
+Diese Sorge war berechtigt, nicht bloß vorsichtig — nachgemessen:
+
+| | 200 Nachrichten in Einreichungsreihenfolge? |
+|---|---|
+| ein Arbeiter | **ja** |
+| acht Arbeiter | **nein** |
+
+Deshalb genau **ein** Arbeiter. Damit bleibt die Reihenfolge exakt die der
+Einreichung, und der Loop ist trotzdem frei (nachgemessen: 51 ms Taktlücke bei
+einem 400-ms-Push, also der normale Takt).
+
+Der Aufrufer **wartet** (`await`). Das ist Absicht: hängt die Platte, bremst
+der Rückstau die Chat-Schleife, statt eine unbegrenzte Schlange aufzubauen —
+dieselbe Überlegung wie bei der begrenzten Warteschlange des
+Ereignisprotokolls, nur mit Gegendruck statt Verwerfen.
+
+Ein Vertrag hält beides fest: genau ein Arbeiter, und **kein** Aufrufer, der
+an der nebenläufigen Hülle vorbeigeht.
+
+### Geändert — der Pfad der manuellen Aufnahme (v4.1 W29)
+
+Fünf blockierende Blöcke in `trigger_manual_recording`, **vier davon
+wortgleich** — dieselbe `UPDATE manual_recordings SET status=…`-Anweisung,
+jedes Mal in einem eigenen `try: … except Exception: pass`. Ein Helfer löst
+beides: die Blockade und die Wiederholung.
+
+Stand: **71 → 52** blockierende Stellen.
+
 ### Geändert — die ereignisgetriebenen Pfade laufen neben dem Loop (v4.1 W29)
 
 Nach den Dauerläufern die Stellen, die pro **Ereignis** laufen statt pro

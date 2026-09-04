@@ -2493,10 +2493,11 @@ def _test_w29_kein_sqlite_auf_dem_loop():
     bei jeder Welle sinkt, wirkt dagegen.
     """
     import ast as _ast
+    import re as _re
 
     # Der Stand nach W29. Wer eine Stelle loest, SETZT DIESE ZAHL HERUNTER —
     # sonst faellt die naechste Welle wieder zurueck, ohne dass es auffaellt.
-    GRENZE = 57
+    GRENZE = 52
 
     quelle = open("bot.py", encoding="utf-8").read()
     baum = _ast.parse(quelle)
@@ -2591,8 +2592,25 @@ def _test_w29_kein_sqlite_auf_dem_loop():
                      "haelt den Schreib-Lock ueber das Warten hinweg"
                      % (_f.name, _w.lineno))
 
+    # (6) Der Sendebild-Chat laeuft ueber EINEN Arbeiter. Das ist keine
+    # Feinheit: der Chat ist eine Abfolge. Mit mehreren Arbeitern wuerfelt
+    # der Thread-Pool die Reihenfolge durcheinander — nachgemessen, mit acht
+    # Arbeitern kommen 200 Nachrichten NICHT in der Einreichungsreihenfolge
+    # an. Eine vertauschte Chat-Nachricht ist kein akzeptabler Preis fuer
+    # Nebenlaeufigkeit.
+    assert "_CHAT_PUSH_EXEC = _cf_thread.ThreadPoolExecutor(max_workers=1" in quelle, \
+        "der Chat-Push laeuft nicht mehr ueber genau EINEN Arbeiter"
+    assert "async def _restream_chat_push_async(" in quelle, "die nebenlaeufige Huelle fehlt"
+    # Und alle Aufrufer benutzen sie wirklich. Ein vergessener Aufruf schriebe
+    # weiter synchron und faellt sonst niemandem auf.
+    roh_aufrufe = len(_re.findall(r"(?<!await )(?<!def )\b_restream_chat_push\(", quelle))
+    assert roh_aufrufe <= 1, \
+        ("%d Aufrufe von _restream_chat_push ohne die nebenlaeufige Huelle "
+         "(erlaubt ist nur der eine INNERHALB der Huelle)" % roh_aufrufe)
+
     ok("v4.1-W29: %d blockierende Stellen (Grenze %d), kein Dauerlaeufer, "
-       "keine Transaktion ueber ein await" % (len(treffer), GRENZE))
+       "keine Transaktion ueber ein await, Chat-Reihenfolge gesichert"
+       % (len(treffer), GRENZE))
 
 
 def main():
