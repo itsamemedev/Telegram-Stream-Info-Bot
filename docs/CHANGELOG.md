@@ -52,6 +52,25 @@ löchert. Jetzt zeitgedrosselt.
 `reaper_loop` läuft ebenfalls neben dem Loop. Er räumt im Minutentakt tote
 Recorder-Prozesse ab und las dabei synchron aus der Datenbank.
 
+### Geändert — die ereignisgetriebenen Pfade laufen neben dem Loop (v4.1 W29)
+
+Nach den Dauerläufern die Stellen, die pro **Ereignis** laufen statt pro
+Befehl:
+
+* **`_award_xp`** — bei jeder Discord-Nachricht. Zwei Blöcke: die
+  Live-Prüfung (30 s gecacht, der Cache dämpfte die Zahl der Abfragen, nicht
+  ihre Blockade) und die XP-Buchung. Lesen und Schreiben bleiben in **einer**
+  Transaktion: sonst könnten zwei Nachrichten desselben Nutzers denselben
+  Stand lesen und ein XP-Gewinn ginge verloren. Der 60-s-Cooldown macht das
+  unwahrscheinlich, nicht unmöglich.
+* **`on_raw_reaction_add`** — bei jeder Discord-Reaktion, drei Blöcke.
+* **`handle_recording_finished`** und **`_wait_and_finish`** — nach jeder
+  Aufnahme, drei Blöcke. Die Absicherung gegen das Wettrennen beim
+  Auto-Abschalten steckt im `WHERE` der Anweisung, nicht darin, dass der
+  Aufruf auf dem Loop läuft.
+
+Stand: **71 → 57** blockierende Stellen.
+
 ### Behoben — offene Transaktion über ein `await` hinweg (v4.1 W29)
 
 Beim Umstellen der Dauerläufer kam ein zweiter, andersartiger Befund zutage:

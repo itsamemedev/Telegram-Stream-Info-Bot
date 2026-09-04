@@ -4805,13 +4805,12 @@ async def trigger_manual_recording(username: str, duration_secs: int = 300,
                 except OSError: pass
             status = "completed" if (file_size and file_size > 1024) else "empty"
             try:
-                with db_conn() as conn:
-                    conn.execute(
-                        "UPDATE manual_recordings SET status=?, ended_at=?, file_size=? "
-                        "WHERE id=?",
-                        (status, datetime.now(timezone.utc).isoformat(),
-                         file_size, manual_id))
-                    conn.commit()
+                # v4.1-W29: NEBEN dem Loop.
+                await db_async(lambda c: (c.execute(
+                    "UPDATE manual_recordings SET status=?, ended_at=?, file_size=? "
+                    "WHERE id=?",
+                    (status, datetime.now(timezone.utc).isoformat(),
+                     file_size, manual_id)), c.commit()))
             except Exception: pass
             log_event("manual.recording.end", "info" if status == "completed" else "warning",
                       f"Manual #{manual_id} @{username} → {status} ({(file_size or 0)/1024/1024:.1f} MB)"
@@ -9224,10 +9223,10 @@ async def handle_recording_finished(proc, tid, chat_id, username, output_file,
             # der die Aufnahme "ausgelöst" hat. Vorher: Recording ging nur an
             # chat_id (die Tracking-ID die zuerst den Lock kriegte) — die anderen
             # User waren ausgeschlossen.
-            with db_conn() as conn:
-                fan_rows = conn.execute(
-                    "SELECT id, group_id FROM trackings WHERE username=?",
-                    (username,)).fetchall()
+            # v4.1-W29: NEBEN dem Loop. Laeuft nach JEDER Aufnahme.
+            fan_rows = await db_async(lambda c: c.execute(
+                "SELECT id, group_id FROM trackings WHERE username=?",
+                (username,)).fetchall())
             target_chats = [r["group_id"] for r in fan_rows] or [chat_id]
             target_tids  = [r["id"] for r in fan_rows] or [tid]
             log.info(f"@{username} fan-out: {len(target_chats)} chat(s) bekommen Upload")
@@ -9503,7 +9502,10 @@ async def handle_recording_finished(proc, tid, chat_id, username, output_file,
             # manuell mit /resume reaktivieren nachdem er den Account checkt.
             if data_dead and _STREAM_DEAD_STREAK.get(tid, 0) >= AUTO_DISABLE_STREAK:
                 try:
-                    with db_conn() as conn:
+                    # v4.1-W29: NEBEN dem Loop. Die Absicherung gegen das
+                    # Wettrennen steckt im WHERE der Anweisung, nicht darin,
+                    # dass der Aufruf auf dem Loop laeuft.
+                    def _abschalten(conn):
                         # Sicher gegen race: setze nur wenn nicht schon auto-disabled
                         conn.execute(
                             "UPDATE trackings SET paused = 1, "
@@ -9514,6 +9516,8 @@ async def handle_recording_finished(proc, tid, chat_id, username, output_file,
                              f"Stream wahrscheinlich kaputt von TikTok-Seite",
                              tid))
                         conn.commit()
+
+                    await db_async(_abschalten)
                     # Cleanup unsere in-memory states
                     _STREAM_DEAD_STREAK.pop(tid, None)
                     _STREAM_DEAD_BACKOFF_UNTIL.pop(tid, None)
@@ -21690,9 +21694,10 @@ async def _discord_run_once():
                 return
             if client.user and payload.user_id == client.user.id:
                 return
-            with db_conn() as conn:
-                row = conn.execute("SELECT id, username, filepath, stars_pushed FROM discord_clips "
-                                   "WHERE message_id=?", (payload.message_id,)).fetchone()
+            # v4.1-W29: NEBEN dem Loop. Laeuft bei JEDER Discord-Reaktion.
+            row = await db_async(lambda c: c.execute(
+                "SELECT id, username, filepath, stars_pushed FROM discord_clips "
+                "WHERE message_id=?", (payload.message_id,)).fetchone())
             if not row or row["stars_pushed"] or not row["filepath"]:
                 return
             ch = client.get_channel(payload.channel_id)
@@ -21709,15 +21714,14 @@ async def _discord_run_once():
             fp = row["filepath"]
             if not (os.path.exists(fp) and os.path.getsize(fp) < 48 * 1024 * 1024):
                 return
-            with db_conn() as conn:
-                conn.execute("UPDATE discord_clips SET stars_pushed=1 WHERE id=?", (row["id"],))
+            await db_async(lambda c: c.execute(
+                "UPDATE discord_clips SET stars_pushed=1 WHERE id=?", (row["id"],)))
             app = globals().get("bot_app")
             if not app:
                 return
-            with db_conn() as conn:
-                gids = [r["group_id"] for r in conn.execute(
-                    "SELECT DISTINCT group_id FROM trackings WHERE username=?",
-                    (row["username"],)).fetchall()]
+            gids = await db_async(lambda c: [r["group_id"] for r in c.execute(
+                "SELECT DISTINCT group_id FROM trackings WHERE username=?",
+                (row["username"],)).fetchall()])
             cap = f"⭐ Community-Highlight: @{row['username']} — {votes}× gevotet im Discord"
             for gid in gids:
                 if DISCORD_GUILD_ID and gid == DISCORD_GUILD_ID:
@@ -21756,8 +21760,11 @@ async def _discord_run_once():
             try:
                 c = getattr(_award_xp, "_live_cache", None)
                 if not c or now - c[0] > 30:
-                    with db_conn() as conn:
-                        n = conn.execute("SELECT COUNT(*) AS c FROM trackings WHERE last_live=1").fetchone()["c"]
+                    # v4.1-W29: NEBEN dem Loop. Diese Funktion laeuft bei
+                    # JEDER Discord-Nachricht; der 30-s-Cache daempft die
+                    # Zahl der Abfragen, nicht ihre Blockade.
+                    n = await db_async(lambda cn: cn.execute(
+                        "SELECT COUNT(*) AS c FROM trackings WHERE last_live=1").fetchone()["c"])
                     c = (now, n > 0)
                     _award_xp._live_cache = c
                 if c[1]:
@@ -21765,7 +21772,12 @@ async def _discord_run_once():
             except Exception:
                 pass
         try:
-            with db_conn() as conn:
+            # v4.1-W29: NEBEN dem Loop. Lesen und Schreiben bleiben in EINER
+            # Transaktion — sonst koennten zwei Nachrichten desselben Nutzers
+            # denselben Stand lesen und einer der beiden XP-Gewinne ginge
+            # verloren. Der 60-s-Cooldown oben macht das unwahrscheinlich,
+            # aber nicht unmoeglich.
+            def _buchen(conn):
                 row = conn.execute("SELECT xp, level FROM discord_xp WHERE guild_id=? AND user_id=?",
                                    (message.guild.id, uid)).fetchone()
                 oldlvl = row["level"] if row else 0
@@ -21778,6 +21790,10 @@ async def _discord_run_once():
                 else:
                     conn.execute("INSERT INTO discord_xp (guild_id, user_id, xp, level, last_ts) VALUES (?,?,?,?,?)",
                                  (message.guild.id, uid, newxp, newlvl, nowiso))
+                conn.commit()
+                return oldlvl, newlvl
+
+            oldlvl, newlvl = await db_async(_buchen)
             if newlvl > oldlvl:
                 await _on_level_up(message, newlvl)
         except Exception as e:
