@@ -11363,32 +11363,6 @@ def _sec_headers(resp):
 
 
 
-@dashboard_app.route("/api/system/config_snapshot")
-def api_system_config_snapshot():
-    """Sanitisierter Config-Überblick (ohne Secrets) — für Support/Doku."""
-    def has(v):
-        return bool(v)
-    snap = {
-        "version": globals().get("BOT_VERSION", "?"),
-        "build": globals().get("BUILD_STAMP", "?"),
-        "restream": {"kick_creds": has(KICK_CLIENT_ID and KICK_CLIENT_SECRET),
-                     "kick_channel": KICK_CHANNEL_URL or None,
-                     "restream_enabled": RESTREAM_ENABLED},
-        "egress": {"tunnel_configured": has(RECORD_PROXY), "proxy_pool": len(PROXY_LIST)},
-        "ai": {"model": AI_MODEL,
-               "backend": ("brain" if os.getenv("AI_PROVIDER","").strip().lower()=="brain"
-                           else "freeai"),
-               "budget_per_min": AZRAEL_MAX_CALLS_MIN},
-        "automation": {k: _AUTOMATION.get(k) for k in _AUTOMATION},
-        "discord": {"bot_token_set": has(DISCORD_BOT_TOKEN), "guild": bool(DISCORD_GUILD_ID),
-                    "webhook_set": has(DISCORD_WEBHOOK_URL),
-                    "upload_limit_mb": _discord_upload_limit_mb(),
-                    "upload_limit_label": _discord_upload_limit_label()},
-        "security": {"dashboard_auth": has(DASHBOARD_TOKEN),
-                     "rate_limit_per_min": DASHBOARD_RATE_LIMIT_PER_MIN},
-        "voice": {"piper": _piper_available(), "whisper": _faster_whisper_available()},
-    }
-    return jsonify(ok=True, snapshot=snap)
 
 
 
@@ -12513,56 +12487,6 @@ def _manual_donations_total():
 
 
 
-@dashboard_app.route("/api/system/check_timing")
-def api_check_timing():
-    """B127-PERF: Messwerte statt Bauchgefuehl fuer drei Stellschrauben.
-
-    * Polling: Dauer der Live-Checks gegen das eingestellte Intervall.
-    * Whisper: Echtzeitfaktor (RTF). >1 heisst, die Transkription ist
-      langsamer als das Audio spielt — dann hilft nur ein kleineres Modell.
-    * Restream: laeuft gerade ein Ziel im Transcode (2-4 Kerne) statt copy?
-    """
-    _rs = {}
-    try:
-        for rid, st in _RESTREAM_MGR.status().items():
-            _rs[rid] = {"transcode": st.get("transcode"),
-                        "uptime_s": st.get("uptime_s"),
-                        "speed": (st.get("health") or {}).get("speed"),
-                        "slow_ticks": (st.get("health") or {}).get("slow_ticks", 0)}
-    except Exception:
-        pass
-    _t = _CHECK_TIMING
-    return jsonify(
-        ok=True,
-        polling={"messungen": _t["n"], "mittel_ms": round(_t["avg_ms"]),
-                 "spitze_ms": round(_t["max_ms"]),
-                 "ueber_intervall": _t["over_interval"],
-                 "anteil_prozent": (round(100 * _t["over_interval"] / _t["n"])
-                                    if _t["n"] else 0),
-                 "intervalle": ADAPTIVE_INTERVALS,
-                 "urteil": ("noch zu wenige Messungen" if _t["n"] < 50 else
-                            "Checks ueberholen sich — Intervall erhoehen"
-                            if _t["over_interval"] > _t["n"] * 0.2 else "unauffaellig")},
-        whisper={"modell": _nc_whisper.MODELL["name"], "compute": WHISPER_COMPUTE,
-                 "threads": WHISPER_THREADS, "chunk_s": WHISPER_CHUNK_SECS,
-                 "laeufe": _WHISPER_STATE.get("runs", 0),
-                 "rtf_letzter": _WHISPER_STATE.get("last_rtf"),
-                 "rtf_mittel": _WHISPER_STATE.get("rtf_avg"),
-                 "laeufe_ueber_echtzeit": _WHISPER_STATE.get("slow_runs", 0),
-                 "gedrosselt": _WHISPER_STATE.get("throttled", False),
-                 "urteil": ("noch keine Messung" if not _WHISPER_STATE.get("rtf_avg")
-                            else "langsamer als Echtzeit — kleineres Modell"
-                            if _WHISPER_STATE["rtf_avg"] > 1.0 else "unauffaellig")},
-        restream={"ziele": _rs,
-                  "transcode_default": RESTREAM_TRANSCODE,
-                  "hinweis": ("Transcode kostet 2-4 Kerne (x264 veryfast). "
-                              "copy=false ueberall ist der guenstige Zustand.")},
-        retention={"checks_tage": CHECKS_RETENTION_DAYS,
-                   "checks_max": CHECKS_MAX_ROWS,
-                   "eventlog_tage": EVENTLOG_RETENTION_DAYS,
-                   "ailog_tage": AI_LOG_RETENTION_DAYS,
-                   "snapshots_ausduennen_ab_tage": SNAPSHOT_THIN_AFTER_DAYS,
-                   "overlay_tage_ohne_spenden": OVERLAY_RETENTION_DAYS})
 
 
 
@@ -17194,9 +17118,8 @@ async def _alert(title, message, level="warn", key=None, debounce_s=1800):
     except Exception:
         pass
 
-def _faster_whisper_available():
-    import importlib.util
-    return importlib.util.find_spec("faster_whisper") is not None
+# v4.2-W1: die Frage gehoert zum Whisper-Zustand, nicht in den Monolithen.
+_faster_whisper_available = _nc_whisper.verfuegbar
 
 async def _whisper_get_model():
     """Lazy-Load des faster-whisper-Modells (blockierend → Executor). None bei Fehlen."""
@@ -20071,30 +19994,16 @@ _DISCORD_UPLOAD_OVERRIDE = (DISCORD_UPLOAD_LIMIT_MB
                             if (_DISCORD_UPLOAD_ENV or "").strip() else None)
 
 
-def _discord_guild_filesize_bytes():
-    """v4.0-W80: filesize_limit des verbundenen Guilds (Bytes) — kennt das
-       Boost-Level. 0, wenn (noch) kein Client/Guild verbunden ist."""
-    try:
-        cli = _nc_discordstate.CLIENT["obj"]
-        if cli and getattr(cli, "guilds", None):
-            gid = DISCORD_GUILD_ID or 0
-            gs = list(cli.guilds)
-            g = next((x for x in gs if getattr(x, "id", 0) == gid), None) or (gs[0] if gs else None)
-            if g is not None:
-                return int(getattr(g, "filesize_limit", 0) or 0)
-    except Exception:
-        pass
-    return 0
+# v4.2-W1: das aktuelle Upload-Limit beantwortet nc/discordlimits.py selbst —
+# der Client liegt seit W16 als Register in nc/discordstate.py, Guild-ID und
+# Betreiber-Deckel kommen per configure(). Aliase, keine Wrapper: der Bot
+# bindet die Namen nie neu, und eine zweite Signatur waere die Drift, an der
+# die Restream-Vertraege schon dreimal gekippt sind.
+_discord_guild_filesize_bytes = _nc_dclimits.guild_filesize_bytes
 
 
-def _discord_upload_limit_mb():
-    return _nc_dclimits.effective_upload_mb(_discord_guild_filesize_bytes(),
-                                            _DISCORD_UPLOAD_OVERRIDE)
-
-
-def _discord_upload_limit_label():
-    return _nc_dclimits.describe(_discord_guild_filesize_bytes(),
-                                 _DISCORD_UPLOAD_OVERRIDE)
+_discord_upload_limit_mb    = _nc_dclimits.aktuell_mb
+_discord_upload_limit_label = _nc_dclimits.aktuell_label
 DISCORD_TRACK_GROUP_ID = _env_int("DISCORD_TRACK_GROUP_ID", 0)     # group_id für Discord-/track (0 = Guild-ID; auf Telegram-Chat-ID setzen → geteilte Liste)
 DISCORD_VOICE_AI       = os.getenv("DISCORD_VOICE_AI", "1").strip().lower() in ("1","true","yes","on","y")  # /ai antwortet auch auf Sprachnachrichten (Whisper→KI)
 DISCORD_AUTOMOD        = os.getenv("DISCORD_AUTOMOD", "0").strip().lower() in ("1","true","yes","on","y")   # KI/Heuristik-Auto-Moderation
@@ -26190,6 +26099,9 @@ _nc_evolution.configure(log=log,
 # selbst zu lesen. CLAUDE.md: Konfiguration nie als Modul-Konstante in einem
 # Fachmodul — .env ist beim Import des Moduls womoeglich noch nicht geladen.
 _nc_probe.configure(redis_url=REDIS_URL, recorder_pref=RECORDER_PREF)
+# v4.2-W1: das Upload-Limit beantwortet nc/discordlimits.py selbst.
+_nc_dclimits.configure(guild_id=DISCORD_GUILD_ID,
+                       override_mb=_DISCORD_UPLOAD_OVERRIDE)
 _nc_cookies_datei.configure(datei=COOKIE_FILE, log=log)
 
 _nc_ctx.configure(
@@ -26234,12 +26146,50 @@ _nc_ctx.configure(
         # dafuer __file__, was in einem Blueprint auf DESSEN Datei zeigt
         # und still eine leere Drift-Liste ergaebe.
         "BOT_DATEI": __file__,
+        # ── v4.2-W1: /api/system/config_snapshot und /api/system/check_timing ──
+        #
+        # GEHEIMNISSE GEHEN ALS BOOLEAN, NICHT IM KLARTEXT. Der Schnappschuss
+        # zeigt nur, OB etwas gesetzt ist (`has(DASHBOARD_TOKEN)`). Den Wert
+        # selbst in den Kontext zu legen, damit ein Blueprint ihn zu `True`
+        # verrechnet, waere eine groessere Angriffsflaeche fuer null Gewinn —
+        # dieselbe Ueberlegung wie bei s3_zugang() in W24.
+        "HAT_DASHBOARD_TOKEN": bool(DASHBOARD_TOKEN),
+        "HAT_DISCORD_BOT_TOKEN": bool(DISCORD_BOT_TOKEN),
+        "HAT_DISCORD_WEBHOOK": bool(DISCORD_WEBHOOK_URL),
+        "HAT_DISCORD_GUILD": bool(DISCORD_GUILD_ID),
+        "HAT_KICK_CREDS": bool(KICK_CLIENT_ID and KICK_CLIENT_SECRET),
+        "HAT_RECORD_PROXY": bool(RECORD_PROXY),
+        "PROXY_POOL_GROESSE": len(PROXY_LIST),
+        "KICK_CHANNEL_URL": KICK_CHANNEL_URL,
+        "RESTREAM_ENABLED": RESTREAM_ENABLED,
+        "DASHBOARD_RATE_LIMIT_PER_MIN": DASHBOARD_RATE_LIMIT_PER_MIN,
+        # check_timing: Stellschrauben und Aufbewahrungsfristen
+        "ADAPTIVE_INTERVALS": ADAPTIVE_INTERVALS,
+        "RESTREAM_TRANSCODE": RESTREAM_TRANSCODE,
+        "WHISPER_CHUNK_SECS": WHISPER_CHUNK_SECS,
+        "WHISPER_COMPUTE": WHISPER_COMPUTE,
+        "WHISPER_THREADS": WHISPER_THREADS,
+        "CHECKS_MAX_ROWS": CHECKS_MAX_ROWS,
+        "CHECKS_RETENTION_DAYS": CHECKS_RETENTION_DAYS,
+        "EVENTLOG_RETENTION_DAYS": EVENTLOG_RETENTION_DAYS,
+        "AI_LOG_RETENTION_DAYS": AI_LOG_RETENTION_DAYS,
+        "SNAPSHOT_THIN_AFTER_DAYS": SNAPSHOT_THIN_AFTER_DAYS,
+        "OVERLAY_RETENTION_DAYS": OVERLAY_RETENTION_DAYS,
+        # Referenzen, keine Kopien: der Bot schreibt in diese Dicts weiter
+        # (Messwerte, Whisper-Laeufe, Automatik-Schalter). Eine Kopie waere
+        # ab Start eingefroren — ein Panel, das ewig Null zeigt.
+        "_AUTOMATION": _AUTOMATION,
+        "_CHECK_TIMING": _CHECK_TIMING,
+        "_WHISPER_STATE": _WHISPER_STATE,
         # --- Kick (v4.1-W9). Startwerte aus der .env, keine Helfer — deshalb
         # hier und nicht als eigene Slots. Der Bot friert sie beim Import ein;
         # ein zweiter Lesepfad im Blueprint waere eine stille Abweichung.
         "KICK_BROADCASTER_ID": KICK_BROADCASTER_ID,
         "KICK_CLIENT_ID": KICK_CLIENT_ID,
-        "KICK_CLIENT_SECRET": KICK_CLIENT_SECRET,
+        # v4.2-W1: KICK_CLIENT_SECRET ist RAUS. Es stand hier nur, damit drei
+        # Stellen in nc/routes/kick.py bool(id and secret) rechnen konnten —
+        # dafuer war es fuer jedes Blueprint erreichbar. Der Token-Tausch
+        # laeuft im Bot, nicht in einer Route. Jetzt reicht HAT_KICK_CREDS.
         # --- Discord (v4.1-W16). DISCORD_GUILD_ID und DISCORD_WEBHOOK_URL
         # standen bereits weiter unten in diesem Dict — ruff hat die Dublette
         # gefangen. Neu ist nur die Sternchen-Schwelle der Clip-Woche.

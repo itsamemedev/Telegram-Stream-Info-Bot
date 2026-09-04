@@ -83,7 +83,10 @@ def _kick_redirect_uri():
 
 @bp.route("/api/kick/oauth/start")
 def api_kick_oauth_start():
-    if not (_c().cfg["KICK_CLIENT_ID"] and _c().cfg["KICK_CLIENT_SECRET"]):
+    # v4.2-W1: das Boolean statt der beiden Werte. Das Secret stand nur fuer
+    # diese drei Ja/Nein-Fragen im Kontext und war damit fuer JEDES der 35
+    # Blueprints erreichbar — Angriffsflaeche ohne Gegenwert.
+    if not _c().cfg["HAT_KICK_CREDS"]:
         return jsonify(ok=False, error=_t("KICK_CLIENT_ID/SECRET fehlen — Kick-Developer-App "
                                           "unter kick.com/settings/developer anlegen")), 400
     redirect = _kick_redirect_uri()
@@ -133,7 +136,7 @@ def api_kick_oauth_status():
                    has_moderation=_nc_kickoauth.has_scope(tok, "moderation:ban"),
                    expired=(_nc_kickoauth.is_expired(tok, now) if connected else None),
                    expires_in=(int(tok.get("expires_at", 0) - now) if tok.get("expires_at") else None),
-                   client_configured=bool(_c().cfg["KICK_CLIENT_ID"] and _c().cfg["KICK_CLIENT_SECRET"]),
+                   client_configured=_c().cfg["HAT_KICK_CREDS"],   # v4.2-W1
                    redirect_uri=_kick_redirect_uri(),
                    # v4.0-W23: woher kommt die Redirect-URI + ist sie extern
                    # erreichbar? Das Panel warnt, wenn noch der localhost-Fallback
@@ -176,7 +179,7 @@ def api_kick_sendcheck():
     """v4.0-W10: Warum schweigt AZRAEL auf Kick? GET = Diagnose ohne zu senden
        (Zugangsdaten da? Broadcaster-ID aufloesbar? letzter Sendeversuch/Fehler).
        POST = schickt EINE kurze Testzeile und meldet den echten Grund im Klartext."""
-    creds = bool(_c().cfg["KICK_CLIENT_ID"] and _c().cfg["KICK_CLIENT_SECRET"])
+    creds = _c().cfg["HAT_KICK_CREDS"]   # v4.2-W1
     out = {
         "ok": True,
         "creds_configured": creds,

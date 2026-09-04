@@ -70,3 +70,51 @@ def describe(filesize_limit_bytes, env_override_mb=None) -> str:
     if guild_mb > FREE_DEFAULT_MB:
         return f"{eff} MB (Server-Level)"
     return f"{eff} MB (Free)"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# v4.2-W1: das AKTUELLE Limit — die Seite, die den laufenden Client kennt.
+#
+# Bis hierher war dieses Modul reine Rechnung: Bytes rein, MB raus. Wer das
+# Ergebnis wollte, musste im Bot `_discord_guild_filesize_bytes()` rufen, und
+# genau das hing `/api/system/config_snapshot` am Monolithen fest.
+#
+# Der verbundene Client liegt seit v4.1-W16 als Register in nc/discordstate.py,
+# die Guild-ID und der Betreiber-Deckel kommen per configure(). Damit kann das
+# Limit von hier aus beantwortet werden, ohne dass jemand aus bot.py importiert.
+from nc import discordstate as _discordstate
+
+_KONF = {"guild_id": 0, "override_mb": None}
+
+
+def configure(guild_id=None, override_mb=None):
+    """Vom Bot einmal beim Start gerufen."""
+    if guild_id is not None:
+        _KONF["guild_id"] = guild_id
+    _KONF["override_mb"] = override_mb
+
+
+def guild_filesize_bytes():
+    """v4.0-W80: filesize_limit des verbundenen Guilds (Bytes) — kennt das
+       Boost-Level. 0, wenn (noch) kein Client/Guild verbunden ist."""
+    try:
+        cli = _discordstate.CLIENT["obj"]
+        if cli and getattr(cli, "guilds", None):
+            gid = _KONF["guild_id"] or 0
+            gs = list(cli.guilds)
+            g = next((x for x in gs if getattr(x, "id", 0) == gid), None) or (gs[0] if gs else None)
+            if g is not None:
+                return int(getattr(g, "filesize_limit", 0) or 0)
+    except Exception:
+        pass
+    return 0
+
+
+def aktuell_mb():
+    """Das Limit, das JETZT gilt — Guild-Wahrheit gedeckelt vom Betreiber."""
+    return effective_upload_mb(guild_filesize_bytes(), _KONF["override_mb"])
+
+
+def aktuell_label():
+    """Kurzlabel fürs Dashboard, z. B. '50 MB (Server-Level)'."""
+    return describe(guild_filesize_bytes(), _KONF["override_mb"])

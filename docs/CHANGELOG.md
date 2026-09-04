@@ -9,6 +9,66 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ---
 
+## [Unveröffentlicht]
+
+### Geändert — Schnappschuss und Messwerte raus, ohne Geheimnisse (v4.2 W1)
+
+Zweite Teillieferung von Vorschlag 2. `/api/system/config_snapshot` und
+`/api/system/check_timing` liegen jetzt in `nc/routes/systemlage.py` —
+**ohne einen einzigen neuen `nc.ctx`-Slot**, weiterhin 24 von 25.
+
+Aufgelöst wurden vier Helfer:
+
+- **`nc/discordlimits.py`** beantwortet das Upload-Limit jetzt selbst
+  (`aktuell_mb`, `aktuell_label`, `guild_filesize_bytes`). Bisher war das
+  Modul reine Rechnung — Bytes rein, MB raus — und wer das Ergebnis wollte,
+  musste im Bot fragen. Der verbundene Client liegt seit W16 ohnehin als
+  Register in `nc/discordstate.py`.
+- **`_faster_whisper_available`** war eine **zweite, schwächere Kopie** von
+  `nc.whispercfg.verfuegbar()`: dieselben drei Zeilen, aber ohne das `try`.
+  Ein kaputter Paket-Baum hätte dort eine Ausnahme geworfen, statt „nein" zu
+  sagen. Der Bot benutzt jetzt die vorhandene Fassung.
+- **`_piper_available`** war bereits ein Alias auf `nc.piper_voices`.
+- Der **Restream-Manager** kommt aus dem Register `nc/restreamstate.py` — mit
+  Wache gegen `None`: vor dem Start stirbt sonst die ganze Antwort an einem
+  `AttributeError`, statt eine leere Zielliste zu melden.
+
+**Ein Geheimnis weniger im Umlauf.** Der Schnappschuss beantwortet nur, **ob**
+etwas gesetzt ist. Die Werte dafür durch den Kontext zu reichen, damit ein
+Blueprint sie zu `True` verrechnet, wäre größere Angriffsfläche für null
+Gewinn — dieselbe Überlegung wie bei `s3_zugang()` in W24. Es gehen daher
+`HAT_DASHBOARD_TOKEN`, `HAT_DISCORD_BOT_TOKEN`, `HAT_KICK_CREDS` und so
+weiter, keine Klartextwerte.
+
+**Der Vertrag fand dabei einen Altbestand:** `KICK_CLIENT_SECRET` lag seit W9
+im Kontext und war damit für **jedes der 35 Blueprints** erreichbar — benutzt
+wurde es an genau drei Stellen in `nc/routes/kick.py`, und zwar ausschließlich
+für `bool(id and secret)`. Der Token-Tausch läuft im Bot, nicht in einer
+Route. Ersetzt durch `HAT_KICK_CREDS`, der Eintrag ist raus. Nachgemessen: von
+zwei gesetzten Testgeheimnissen erscheint keines in der Antwort **und** keines
+im Kontext.
+
+**Das Panel war nie übersetzbar.** Fünf Urteilstexte und der Transcode-Hinweis
+erreichen das DOM in einem JSON-Feld — der Browser-Übersetzer sieht ganze
+Textknoten, ein Wert in einer JSON-Antwort ist keiner. Im Monolithen blieb das
+Panel deshalb dauerhaft deutsch, auch im englischen Deck. Jetzt an der Quelle
+übersetzt; Katalog 1376 → **1382**.
+
+Sechs Negativtests, alle feuern: Geheimnis wieder im Kontext, Zustand als
+Kopie statt Referenz, `globals()` im Blueprint, fehlende `None`-Wache,
+durchbrochene Qualitäts-Untergrenze beim Upload-Limit, eigene
+Whisper-Prüfung im Bot.
+
+**Ein eigener Irrtum, den der Vertrag korrigiert hat:** ich hatte erwartet,
+dass ein Betreiber-Deckel von 5 MB auf 5 MB führt. Er führt auf 8 —
+`FLOOR_MB` ist eine bewusste Qualitäts-Untergrenze. Der Vertrag prüft jetzt
+genau das, statt meine falsche Annahme.
+
+Es bleiben drei System-Routen im Monolithen: `preflight`, `resilience` und
+`selftest`.
+
+---
+
 ## [4.2] — 2026-09 · „Zerlegter Kern"
 
 ### Neu — Vorschläge gesammelt entscheiden (v4.2)
