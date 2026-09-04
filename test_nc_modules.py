@@ -2496,7 +2496,7 @@ def _test_w29_kein_sqlite_auf_dem_loop():
 
     # Der Stand nach W29. Wer eine Stelle loest, SETZT DIESE ZAHL HERUNTER —
     # sonst faellt die naechste Welle wieder zurueck, ohne dass es auffaellt.
-    GRENZE = 65
+    GRENZE = 57
 
     quelle = open("bot.py", encoding="utf-8").read()
     baum = _ast.parse(quelle)
