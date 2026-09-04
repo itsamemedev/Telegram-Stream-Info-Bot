@@ -247,7 +247,7 @@ def _html_strings(pfad):
     # `</SCRIPT\n>` sind es auch. Der alte Ausdruck haette dort weitergesucht
     # und den Rest der Datei als Skript verschluckt; im Extraktor heisst das:
     # alle folgenden Textknoten fehlen im Katalog, ohne dass es auffaellt.
-    ohne_js = re.sub(r"<script\b.*?</script\s*>|<style\b.*?</style\s*>|<!--.*?-->", "",
+    ohne_js = re.sub(r"<script\b.*?</script(?:\s+[^>]*)?>|<style\b.*?</style(?:\s+[^>]*)?>|<!--.*?-->", "",
                      roh, flags=re.S | re.I)
     raus = set()
     # v4.1-W28: Ein Text ZWISCHEN zwei Tags ist per Definition Benutzertext.
