@@ -11,6 +11,53 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Geändert — der Selbsttest raus, Vorschlag 2 ist fertig (v4.2 W5)
+
+`/api/selftest` (226 Zeilen) liegt jetzt in `nc/routes/selbsttest.py`. Damit
+steht **keine der acht System-Routen** mehr im Monolithen — der Rest von
+Vorschlag 2 ist abgearbeitet. Der Kontext bleibt bei **24 von 25 Slots**;
+fünf Wellen Routenabbau, null neue Einträge.
+
+Der Selbsttest kam zuletzt, weil er als einziger quer durch alle Domänen
+liest — Dauerläufer, Restream-Ziele, Moderation, Abwehr. Erst musste der
+Zustand, den er abfragt, überall sonst aufgelöst sein.
+
+**Er kostet keinen neuen Eintrag**, weil alles schon da war:
+
+- Der Restream-Manager kommt aus dem Register `nc/restreamstate.py` (W18).
+- Sperrliste und Angriffe kommen über die **Haken**, die
+  `nc/routes/abwehr.py` seit W25 ohnehin hält — dieselben zwei Funktionen,
+  die das Abwehr-Panel benutzt. Ein zweiter Weg zu denselben Daten wäre eine
+  zweite Wahrheit, und die beiden Panels könnten Widersprüchliches melden.
+- `_st_befund` ist mitgewandert: 23 Aufrufe, alle in dieser einen Funktion.
+
+**„Gar nicht nachgesehen" bleibt von „nichts gefunden" getrennt.** Fehlt ein
+Haken (Bot läuft nicht), liefert `_haken()` ein leeres Dict — nicht
+`{"total_banned": 0}`. Bei einer Sicherheitsanzeige ist „alles ruhig" die
+gefährlichste aller Antworten, wenn niemand nachgesehen hat. Dieselbe
+Überlegung wie in `abwehr._nicht_bereit()`.
+
+**Wache am Manager.** Vor dem Start ist er `None`; ein nacktes `_mgr()._procs`
+hätte die **ganze** Antwort gekippt — also auch die zwanzig Befunde, die mit
+Restream nichts zu tun haben. Alle Zugriffe laufen über `getattr` mit Vorgabe,
+ein Vertrag prüft jede Stelle.
+
+Nachgemessen an einer bewusst falsch gesetzten `TWITCH_INGEST_URL`: der Befund
+kommt als `rot` mit der richtigen Adresse im Fix-Hinweis. Der YouTube-Schlüssel
+erscheint weder in der Antwort noch im Kontext — geprüft wird nur, **ob** einer
+gesetzt ist.
+
+Fünf Negativtests, alle feuern. Zwei davon musste ich nachschärfen: die
+Haken-Prüfung lief zuerst über Text und konnte das `return {}` im
+`except`-Zweig nicht vom richtigen unterscheiden — jetzt läuft sie über das
+Verhalten. Und der Teilcheck mit dem werfenden Haken braucht einen gefüllten
+Kontext (er loggt); ohne Absicherung wäre er ein Fehlalarm über etwas, das im
+Betrieb nie vorkommt.
+
+`bot.py` 26.160 → **25.949 Zeilen**, eigene Routen 35 → **34**,
+`nc/routes/` 35 → **36 Blueprints**.
+
+
 ### Geändert — Preflight und Resilienz raus, Sondenschicht vollständig (v4.2 W4)
 
 Dritte Teillieferung von Vorschlag 2. `/api/system/preflight` (123 Zeilen) und

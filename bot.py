@@ -611,6 +611,7 @@ from nc.routes import webhooks as _nc_routes_webhooks        # v4.0-W108
 from nc.routes import insights as _nc_routes_insights        # v4.0-W108
 from nc.routes import health as _nc_routes_health            # v4.0-W110
 from nc.routes import systemlage as _nc_routes_systemlage  # v4.1-W32: /api/system
+from nc.routes import selbsttest as _nc_routes_selbsttest  # v4.2-W5: /api/selftest
 from nc.routes import ai as _nc_routes_ai                    # v4.0-W112: KI-Blueprint
 from nc.routes import settings as _nc_routes_settings        # v4.0-W116: Einstellungen
 from nc.routes import ops as _nc_routes_ops                  # v4.0-W116: Betrieb
@@ -19512,239 +19513,8 @@ _nc_routes_abwehr.HAKEN["angriffe"]["fn"] = _parse_ssh_attacks
 # kennen. Hier laufen sie zusammen — jeder Befund mit dem Befehl, der ihn
 # behebt. Bewusst KEINE neue Datenerhebung: nur Zusammenfuehrung.
 
-def _st_befund(liste, schwere, bereich, befund, fix=None):
-    """schwere: 'rot' (sendet nicht / Datenverlust) | 'gelb' (eingeschraenkt)."""
-    liste.append({"schwere": schwere, "bereich": bereich,
-                  "befund": befund, "fix": fix})
 
 
-@dashboard_app.route("/api/selftest")
-def api_selftest():
-    """Aggregierte Selbstdiagnose. Ueber den SSH-Tunnel:
-       curl -s localhost:8050/api/selftest | python3 -m json.tool"""
-    b = []
-    try:
-        # ── gestoerte Dauerschleifen ────────────────────────────────────
-        # Das Wertvollste hier: _LOOP_FEHLER weiss, WELCHE Schleife klemmt.
-        # Faellt _backup_loop aus, laufen Backups nicht — das sah man bisher
-        # nirgends, weil die Schleifen auf log.debug abfingen.
-        for name, st in sorted(_LOOP_FEHLER.items()):
-            alter = _time_mod.monotonic() - st[0]
-            _st_befund(b, "rot", "Schleife",
-                       f"{name} ist gestoert (letzte Meldung vor {int(alter)}s, "
-                       f"{st[1]} weitere unterdrueckt)",
-                       f"journalctl -u tiktok-bot | grep 'Schleife {name}'")
-
-        # ── Restream: sendet ueberhaupt etwas? ──────────────────────────
-        laeuft = sorted((_RESTREAM_MGR._procs or {}).keys())
-        ziele = [n for n, _u in _nc_rst.active_targets()]   # v4.0-W77
-        if not laeuft:
-            _st_befund(b, "gelb", "Restream", "kein Restream aktiv",
-                       "Normal, wenn gerade keine Quelle live ist.")
-
-        # ── Encoder-Rueckstand: CPU-gebunden oder nicht? ────────────────
-        # Die entscheidende Zahl bei "der Restream laggt". ffmpeg meldet
-        # speed=1.0x, wenn es Echtzeit schafft. Faellt der Wert darunter,
-        # kommt der Encoder NICHT hinterher — dann ist es wirklich CPU.
-        # Bleibt er bei ~1.0x und es ruckelt trotzdem, ist es Puffer oder
-        # Netz, und mehr CPU aendert nichts. Ohne diese Unterscheidung dreht
-        # man an den falschen Schrauben.
-        for rid, info in sorted((_RESTREAM_MGR._procs or {}).items()):
-            h = info.get("health") or {}
-            sp = h.get("speed")
-            langsam = h.get("slow_ticks", 0)
-            try:
-                spf = float(str(sp).rstrip("x")) if sp else None
-            except (TypeError, ValueError):
-                spf = None
-            if spf is not None and spf < 0.95:
-                _st_befund(b, "rot", "Encoder",
-                           f"Restream #{rid}: ffmpeg schafft nur {sp} Echtzeit "
-                           f"({langsam} langsame Takte) — CPU-gebunden, das Bild "
-                           f"laeuft dem Encoder davon",
-                           "FFMPEG_THREADS_LIVE erhoehen (Default 3, bei tee laeuft "
-                           "nur EIN Encoder) oder RESTREAM_BITRATE_K senken")
-            elif langsam >= 3:
-                _st_befund(b, "gelb", "Encoder",
-                           f"Restream #{rid}: {langsam} langsame Takte, aktuell {sp}",
-                           "Grenzwertig — bei Lastspitzen reisst es ab.")
-            if info.get("transcode"):
-                _st_befund(b, "gelb", "Encoder",
-                           f"Restream #{rid} laeuft im Transcode (kostet CPU). "
-                           f"Ziele: {', '.join(ziele) or '?'}",
-                           "Nur EIN Ziel? Dann ist Transcode vermeidbar. Mehrere "
-                           "Ziele erzwingen ihn (RESTREAM_MULTI_ALLOW_COPY=0).")
-
-        # ── Kick: welcher Ausgang ist tot? ──────────────────────────────
-        for zielname, tf in _RESTREAM_MGR.tee_fehler().items():   # v4.0-W116
-            alter = _time_mod.time() - (tf.get("ts") or 0)
-            if alter < 3600:
-                _st_befund(b, "rot", "Restream",
-                           f"ffmpeg meldet Ziel '{zielname}' abgelehnt "
-                           f"(vor {int(alter)}s): {(tf.get('msg') or '')[:160]}",
-                           "journalctl -u tiktok-bot | grep 'Kick-Ziel:' "
-                           "— zeigt Ingest und Key-Herkunft (db schlaegt .env)")
-
-        # ── YouTube ─────────────────────────────────────────────────────
-        yt_grund = _YT_INGEST_CACHE.get("reason") or ""
-        # Bodenwahrheit zuerst: steht YouTube wirklich in der Zielliste? Alles
-        # andere ist Absicht, das hier ist Wirkung. multistream_targets()
-        # verlangt enabled UND ingest UND key — faellt eines aus, fehlt das
-        # Ziel im tee, ohne dass irgendwo "YouTube" auftaucht.
-        if YOUTUBE_ENABLED and YOUTUBE_STREAM_KEY and "youtube" not in ziele:
-            fehlt = []
-            if not YOUTUBE_INGEST_URL:
-                fehlt.append("YOUTUBE_INGEST_URL ist leer")
-            if not _nc_rst._CFG.get("youtube_enabled"):
-                fehlt.append("youtube_enabled im Restream-Modul steht auf False")
-            if not _nc_rst._CFG.get("youtube_key"):
-                fehlt.append("youtube_key im Restream-Modul ist leer "
-                             "(wurde von _youtube_restream_autoconfig geleert?)")
-            _st_befund(b, "rot", "YouTube",
-                       "YOUTUBE_ENABLED=1 und YOUTUBE_STREAM_KEY gesetzt, aber "
-                       "YouTube ist KEIN Sendeziel. " + ("; ".join(fehlt) or
-                       "Grund unklar — .env nach dem Setzen neu geladen? "
-                       "Modul-Konstanten werden nur beim Start gelesen."),
-                       "sudo systemctl restart tiktok-bot   # .env wirkt erst "
-                       "nach Neustart")
-        if YOUTUBE_ENABLED and not YOUTUBE_STREAM_KEY:
-            if not _YT_INGEST_CACHE.get("key"):
-                _st_befund(b, "rot", "YouTube",
-                           f"kein Stream-Key aufgeloest: {yt_grund or 'noch nicht versucht'}",
-                           "In YouTube Studio einen Live-Stream anlegen, dann: "
-                           "curl -s localhost:8050/api/restream/deck")
-            elif not _YT_INGEST_CACHE.get("bound"):
-                _st_befund(b, "gelb", "YouTube",
-                           "sendet auf den persistenten Key — kein aktiver oder "
-                           "geplanter Broadcast gefunden. Bild erscheint erst, "
-                           "wenn YouTube den Broadcast selbst startet.",
-                           "In YouTube Studio den Stream starten.")
-        elif not YOUTUBE_ENABLED:
-            _st_befund(b, "gelb", "YouTube", "YOUTUBE_ENABLED=0",
-                       "In der .env auf 1 setzen und Dienst neu starten.")
-
-        # ── Ingest-Adressen auf offensichtlich Falsches pruefen ─────────
-        # Aus dem echten error.log: rtmp://live.twitch.tv/app/<key> — das ist
-        # Twitchs WEBserver, kein RTMP-Ingest. ffmpeg meldet darauf nur
-        # "Input/output error"; dass die Adresse selbst falsch ist, sieht man
-        # der Meldung nicht an. Solche Adressen sind statisch pruefbar.
-        if TWITCH_ENABLED and TWITCH_INGEST_URL:
-            _t = TWITCH_INGEST_URL.lower()
-            if "contribute.live-video.net" not in _t:
-                _st_befund(b, "rot", "Twitch",
-                           f"TWITCH_INGEST_URL zeigt auf '{TWITCH_INGEST_URL}' — "
-                           "Twitch nimmt RTMP nur auf *.contribute.live-video.net "
-                           "an. Jede andere Adresse endet in 'Input/output error'.",
-                           "TWITCH_INGEST_URL=rtmp://ingest.global-contribute."
-                           "live-video.net/app  (dann Dienst neu starten)")
-        if KICK_INGEST_URL and not KICK_INGEST_URL.lower().startswith(("rtmp://", "rtmps://")):
-            _st_befund(b, "rot", "Kick",
-                       f"KICK_INGEST_URL ist keine RTMP-Adresse: {KICK_INGEST_URL}",
-                       "Im Kick-Dashboard die Ingest-URL kopieren (rtmps://…).")
-
-        # ── Quell-URL-Ablauf: Telemetrie, kein Fehler ───────────────────
-        for rid, n in sorted((_RESTREAM_MGR._srcexpired or {}).items()):
-            if n >= 3:
-                _st_befund(b, "gelb", "Quelle",
-                           f"Restream #{rid}: TikTok-Quell-URL lief {n}x ab und "
-                           "wurde jedesmal erneuert — der Stream laeuft, es "
-                           "kostet nur je ~2s Unterbrechung",
-                           "Normal. Nur wenn es im Minutentakt passiert, lohnt "
-                           "ein Blick auf RECORD_PROXY.")
-
-        # ── AZRAEL: antwortet er auf Ansprache? ─────────────────────────
-        # AZRAEL_CHAT_REPLY steht per Default auf 0 — dann gibt der Gate
-        # _azrael_chat_should_reply() sofort False zurueck und AZRAEL
-        # schweigt auf Kick, Twitch UND YouTube. Von aussen sieht das aus
-        # wie ein kaputter Bot, ist aber eine nie gesetzte Variable.
-        if not AZRAEL_CHAT_REPLY:
-            _st_befund(b, "gelb", "AZRAEL",
-                       "antwortet NICHT auf Ansprache im Stream-Chat "
-                       "(AZRAEL_CHAT_REPLY=0) — betrifft Kick, Twitch und "
-                       "YouTube gleichzeitig",
-                       "AZRAEL_CHAT_REPLY=1 in die .env, dann Dienst neu starten")
-
-        # ── AZRAEL: kommt er ueberhaupt ins Publikum? ───────────────────
-        # Lange unbemerkt: die Reaktionen liefen in Stimme, Overlay, Dashboard
-        # und Discord, aber in keinen Stream-Chat. Wenn kein Kanal sendefaehig
-        # ist, soll das hier stehen und nicht erst auffallen, wenn jemand die
-        # Chats vergleicht.
-        if AZRAEL_REACT_TO_CHAT:
-            _kanaele = []
-            if _KICK_MOD:
-                _kanaele.append("kick")
-            if _TWITCH_SEND.get("fn"):
-                _kanaele.append("twitch")
-            if _YT_SEND.get("fn"):
-                _kanaele.append("youtube")
-            if not _kanaele:
-                _st_befund(b, "rot", "AZRAEL",
-                           "kein Stream-Chat sendefaehig — Reaktionen erscheinen "
-                           "nur in Overlay/Stimme/Discord, nicht im Chat",
-                           "Kick: KICK_CLIENT_ID/SECRET · Twitch: OAuth im "
-                           "Dashboard verbinden · YouTube: aktiver Live-Chat")
-            elif len(_kanaele) < 3:
-                _st_befund(b, "gelb", "AZRAEL",
-                           f"sendet nur nach: {', '.join(_kanaele)}",
-                           "Die fehlenden Kanaele sind nicht verbunden.")
-
-        # ── Abwehr ──────────────────────────────────────────────────────
-        try:
-            f2b = _crowdsec_status()
-            if not f2b.get("ok"):
-                _st_befund(b, "gelb", "Abwehr",
-                           f"CrowdSec: {f2b.get('hint') or f2b.get('error')}",
-                           f2b.get("fix"))
-            atk = _parse_ssh_attacks()
-            if not atk.get("ok"):
-                _st_befund(b, "gelb", "Abwehr",
-                           f"Auth-Log: {atk.get('hint') or atk.get('error')}",
-                           atk.get("fix"))
-        except Exception as e:
-            _st_befund(b, "gelb", "Abwehr", f"Abwehr-Pruefung selbst gescheitert: {e}")
-
-        # ── Herzschlaege: schweigt ein Kern-Loop? ───────────────────────
-        now = _time_mod.monotonic()
-        for name, last in sorted((_HEARTBEATS or {}).items()):
-            still = now - last
-            if still > 900:
-                _st_befund(b, "rot", "Herzschlag",
-                           f"{name} meldet sich seit {int(still)}s nicht mehr",
-                           "journalctl -u tiktok-bot -n 200 --no-pager")
-
-        # ── Platte ──────────────────────────────────────────────────────
-        try:
-            # shutil, nicht _sh: '_sh' ist nur ein lokaler Alias innerhalb von
-            # _alert_monitor_loop und hier nicht sichtbar.
-            du = shutil.disk_usage(RECORDINGS_DIR if os.path.isdir(RECORDINGS_DIR) else "/")
-            pct = 100 * (du.total - du.free) / du.total if du.total else 0
-            if pct >= 90:
-                _st_befund(b, "rot", "Platte", f"zu {pct:.0f}% voll",
-                           "curl -X POST localhost:8050/api/system/cleanup")
-            elif pct >= 80:
-                _st_befund(b, "gelb", "Platte", f"zu {pct:.0f}% voll")
-        except Exception:
-            pass
-
-        rot = sum(1 for x in b if x["schwere"] == "rot")
-        return jsonify(
-            ok=True,
-            urteil=("kaputt" if rot else ("eingeschraenkt" if b else "gesund")),
-            befunde=b, anzahl_rot=rot, anzahl_gelb=len(b) - rot,
-            kontext={
-                "restreams_aktiv": laeuft,
-                "restream_ziele": ziele,
-                "youtube": {"aktiviert": bool(YOUTUBE_ENABLED),
-                            "key_quelle": ("env" if YOUTUBE_STREAM_KEY
-                                           else (_YT_INGEST_CACHE.get("source") or "")),
-                            "broadcast": _YT_INGEST_CACHE.get("broadcast", ""),
-                            "grund": yt_grund},
-                "db_backend": DB_BACKEND,
-                "schleifen_gestoert": sorted(_LOOP_FEHLER.keys()),
-            })
-    except Exception as e:
-        log.error("api_selftest: %s", e, exc_info=True)
-        return jsonify(ok=False, error=_fehler_text(e, "api_selftest")), 500
 
 
 
@@ -25940,6 +25710,24 @@ _nc_ctx.configure(
         "HAT_DISCORD_WEBHOOK": bool(DISCORD_WEBHOOK_URL),
         "HAT_DISCORD_GUILD": bool(DISCORD_GUILD_ID),
         "HAT_KICK_CREDS": bool(KICK_CLIENT_ID and KICK_CLIENT_SECRET),
+        # ── v4.2-W5: selftest ──
+        # Ingest-Adressen sind oeffentliche Endpunkte, keine Geheimnisse — der
+        # Selbsttest prueft ihre FORM und nennt sie in der Meldung, damit der
+        # Betreiber die falsche Adresse sieht statt nur "Input/output error".
+        "KICK_INGEST_URL": KICK_INGEST_URL,
+        "TWITCH_INGEST_URL": TWITCH_INGEST_URL,
+        "YOUTUBE_INGEST_URL": YOUTUBE_INGEST_URL,
+        "AZRAEL_CHAT_REPLY": AZRAEL_CHAT_REPLY,
+        "AZRAEL_REACT_TO_CHAT": AZRAEL_REACT_TO_CHAT,
+        # Referenzen, keine Kopien: der Selbsttest liest hier den LAUFENDEN
+        # Zustand. Eine Kopie meldete den Stand beim Hochfahren — also immer
+        # "alles ruhig", was bei einer Stoerungsanzeige die gefaehrlichste
+        # aller Antworten ist.
+        "_KICK_MOD": _KICK_MOD,
+        "_LOOP_FEHLER": _LOOP_FEHLER,
+        "_TWITCH_SEND": _TWITCH_SEND,
+        "_YT_INGEST_CACHE": _YT_INGEST_CACHE,
+        "_YT_SEND": _YT_SEND,
         # ── v4.2-W4: preflight und resilience ──
         "HAT_KICK_BACKUP": bool(KICK_INGEST_URL_BACKUP and KICK_STREAM_KEY_BACKUP),
         "HAT_TWITCH_KEY": bool(TWITCH_STREAM_KEY),
@@ -26124,6 +25912,7 @@ dashboard_app.register_blueprint(_nc_routes_webhooks.bp)
 dashboard_app.register_blueprint(_nc_routes_insights.bp)
 dashboard_app.register_blueprint(_nc_routes_health.bp)
 dashboard_app.register_blueprint(_nc_routes_systemlage.bp)  # v4.1-W32
+dashboard_app.register_blueprint(_nc_routes_selbsttest.bp)  # v4.2-W5
 dashboard_app.register_blueprint(_nc_routes_ai.bp)
 dashboard_app.register_blueprint(_nc_routes_settings.bp)   # v4.0-W116
 dashboard_app.register_blueprint(_nc_routes_ops.bp)        # v4.0-W116
