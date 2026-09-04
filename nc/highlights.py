@@ -77,3 +77,20 @@ def check(state, now, text="", *, min_score=55, min_msgs=8, cooldown_s=90.0,
            "hype": info["hype"], "msgs": info["msgs"]}
     state["hits"] = (state.get("hits") or [])[-49:] + [hit]
     return hit, info
+
+
+# ---- Der laufende Zustand ---------------------------------------------------
+
+# REGISTER und NICHT Alias: bot.py erzeugt den Zustand mit new_state() und
+# BINDET den Namen damit neu. Ein Alias zeigte danach fuer immer auf das
+# leere Anfangs-Dict, und das Radar-Panel meldete dauerhaft null Treffer,
+# ohne Fehler und ohne Logzeile (v4.1-W26 — dieselbe Ueberlegung wie bei
+# MGR in nc/restreamstate.py und STALLS in nc/brainstate.py).
+STATE = {"obj": None}
+
+
+def zustand():
+    """Der laufende Radar-Zustand, oder ein leeres Dict. Nie None — die
+       Auskunfts-Route liest hier im Sekundentakt und soll nicht bei jedem
+       Zugriff pruefen muessen."""
+    return STATE["obj"] if STATE["obj"] is not None else {}

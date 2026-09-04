@@ -635,15 +635,17 @@ from nc.routes import restream as _nc_routes_restream        # v4.1-W22: Sendele
 from nc.routes import beobachtung as _nc_routes_beobachtung        # v4.1-W23: Beobachtung
 from nc.routes import wartung as _nc_routes_wartung            # v4.1-W24: Wartung
 from nc.routes import abwehr as _nc_routes_abwehr              # v4.1-W25: Abwehr
+from nc.routes import auskunft as _nc_routes_auskunft          # v4.1-W26: Auskunft
 from nc import updater as _nc_updater                        # v4.0-W115: Selbst-Update aus dem GitHub-Repo
 from nc import donationsdb as _nc_donationsdb                # v4.0-W116: manuell erfasste Spenden lesen
 # Diese beiden Routen ruft der Bot auch INTERN auf (Telegram /sysres und die
 # Aggregat-Route /api/dashboard-bundle) — sie sind dort gewoehnliche
 # Funktionen, keine Endpunkte. Deshalb importiert statt kopiert.
-from nc.routes.health import api_health_score, api_system_resources  # noqa: F401
-# v4.0-W117: /api/bulk ruft die View-Funktion direkt auf, damit die
-# Datenstruktur 1:1 identisch bleibt — deshalb der Name auch hier.
-from nc.routes.stats import api_stats  # noqa: F401
+# v4.1-W26: api_health_score und api_stats sind hier nicht mehr noetig —
+# /api/pulse und /api/bulk sind die Aufrufer und liegen jetzt selbst in
+# nc/routes/. api_system_resources bleibt: die Aggregat-Route
+# /api/dashboard-bundle steht weiterhin hier.
+from nc.routes.health import api_system_resources  # noqa: F401
 from http.cookiejar import MozillaCookieJar
 from logging.handlers import RotatingFileHandler   # B4: war mid-file bei Z. 664
 from urllib.request import urlopen as _urlopen, Request as _UrlRequest
@@ -823,10 +825,28 @@ def _usage_record_claude(model, tin, tout):
 
 
 def _claude_chat_sync_metered(messages, api_key, model=None, timeout=None,
-                              max_tokens=None, opener=None, on_usage=None):
+                              max_tokens=None, opener=None, on_usage=None,
+                              **weitere):
+    """Zaehl-Huelle um nc.claude.chat_sync. Sie ersetzt NUR on_usage und reicht
+       alles andere durch.
+
+    **`**weitere` ist hier keine Bequemlichkeit, sondern der Fix eines
+    Produktionsfehlers.** Diese Huelle zaehlte die Parameter frueher einzeln
+    auf. Als W13 `on_error` zu chat_sync hinzufuegte, wurde die Huelle nicht
+    mitgezogen — und weil sie chat_sync im Modul ERSETZT, lief jeder Aufruf
+    mit on_error in einen TypeError. Getroffen hat es _living_title_loop:
+    neunmal im Log, jedes Mal die ganze Runde verloren, sichtbar nur als
+    "Schleife gestoert".
+
+    Die ersten sieben Parameter bleiben ausdruecklich einzeln stehen: drei
+    Aufrufstellen uebergeben `model` und `timeout` POSITIONELL. Wuerde man sie
+    zu **weitere zusammenfassen, landete das Modell im falschen Parameter —
+    ein stiller Fehler statt eines lauten.
+    """
     return _orig_claude_chat_sync(messages, api_key, model=model, timeout=timeout,
                                   max_tokens=max_tokens, opener=opener,
-                                  on_usage=(on_usage or _usage_record_claude))
+                                  on_usage=(on_usage or _usage_record_claude),
+                                  **weitere)
 
 
 _nc_claude.chat_sync = _claude_chat_sync_metered
@@ -837,8 +857,12 @@ _nc_claude.chat_sync = _claude_chat_sync_metered
 _orig_freeai_chat_sync = _nc_freeai.chat_sync
 
 
-def _freeai_chat_sync_metered(messages, model=None, timeout=None):
-    txt, err = _orig_freeai_chat_sync(messages, model=model, timeout=timeout)
+def _freeai_chat_sync_metered(messages, model=None, timeout=None, **weitere):
+    # **weitere aus demselben Grund wie oben: die Huelle ERSETZT chat_sync im
+    # Modul, also bricht jeder kuenftige Parameter dort jeden Aufruf, der ihn
+    # benutzt. Heute passt die Signatur — das tat sie bei Claude auch mal.
+    txt, err = _orig_freeai_chat_sync(messages, model=model, timeout=timeout,
+                                      **weitere)
     if txt:
         try:
             _nc_usage.record("freeai", model or "freeai",
@@ -859,14 +883,17 @@ from nc.dbwrap import db_conn, configure_db  # noqa: F401
 # V37: Drei Domänen-Module, möglich geworden durch die db_conn-Verschiebung —
 # diese Funktionen hängen an keinem Bot-Global mehr.
 from nc import stats as _nc_stats          # v4.0-W117: get_stats + Status-Verteilung
-from nc.stats import (get_per_user_stats, get_activity_pulse, get_lives_heatmap,
-                      _collect_session_stats,
-                      get_recordings_heatmap)  # noqa: F401
+# v4.1-W26: get_activity_pulse, get_lives_heatmap und get_recordings_heatmap
+# sind mit ihren Routen nach nc/routes/auskunft.py gewandert.
+from nc.stats import get_per_user_stats, _collect_session_stats  # noqa: F401
 from nc import archive as _nc_archive     # v4.0-W110: Archiv-Datenzugriff
 from nc import backupcfg as _nc_backup     # v4.1-W24: Sicherung, Aufbewahrung
 from nc import defensecfg as _nc_dcfg     # v4.1-W25: Abwehr-Einstellungen
 from nc import geocache as _nc_geocache   # v4.1-W25: Adress-Cache, EIN Schreibweg
 from nc import geoip as _nc_geoip         # v4.1-W25: ip-api-Stapelabfrage
+from nc import bandbreite as _nc_band      # v4.1-W26: Aufnahme-Durchsatz
+from nc import outcomes as _nc_outcomes   # v4.1-W26: Ausgaenge der Aufnahmen
+from nc import suche as _nc_suche         # v4.1-W26: bestandsweite Suche
 from nc import archiverules as _nc_arules  # v4.1-W24: Auto-Archiv-Regeln
 from nc import retention as _nc_retention  # v4.1-W24: Aufbewahrungs-Scan
 from nc import storage as _nc_storage      # v4.1-W24: Platz und Aufraeumen
@@ -1625,6 +1652,9 @@ def _proc_is_recorder(pid: Optional[int]) -> bool:
     except (PermissionError, OSError):
         # Können /proc/{pid}/comm nicht lesen — defensiv False annehmen.
         return False
+
+# v4.1-W26: Haken fuer nc/routes/auskunft.py.
+_nc_routes_auskunft.HAKEN["ist_aufnehmer"]["fn"] = _proc_is_recorder
 
 # V37-MOD: reine Text-Utils nach nc/textutil.py extrahiert.
 from nc.textutil import (clean_username, fmt_number, safe,  # noqa: F401
@@ -4138,9 +4168,8 @@ def save_tiktok_check(user_id: int, username: str, data: dict):
         conn.commit()
 
 def get_all_checks(limit=100, offset=0):
-    with db_conn() as conn:
-        return conn.execute("SELECT * FROM tiktok_checks ORDER BY id DESC LIMIT ? OFFSET ?",
-                            (limit, offset)).fetchall()
+    # v4.1-W26: nach nc/recdb.py geloest.
+    return _nc_recdb.get_all_checks(limit=limit, offset=offset)
 
 # B122-PERF: Ergebnis-Cache fuer die teuren Gesamt-Aggregate.
 #
@@ -4570,55 +4599,9 @@ def find_recordings_by_fingerprint(h: str) -> list:
 
 # ---------- X10: Storage-Forecast ----------
 def compute_storage_forecast() -> dict:
-    """Linear regression über recordings der letzten 7d → wann ist die Disk voll?
-       Returns: {days_until_full, daily_growth_mb, recordings_per_day, ...}"""
-    try:
-        with db_conn() as conn:
-            # Last 7d, daily aggregates
-            cutoff = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
-            rows = conn.execute(
-                "SELECT SUBSTR(created_at, 1, 10) AS day, "
-                "  COUNT(*) AS n, SUM(COALESCE(file_size, 0)) AS bytes "
-                "FROM recordings "
-                "WHERE created_at >= ? AND deleted_at IS NULL "
-                "GROUP BY SUBSTR(created_at, 1, 10) "
-                "ORDER BY day ASC",
-                (cutoff,)).fetchall()
-    except Exception as e:
-        log.warning(f"compute_storage_forecast: {e}")
-        return {"days_until_full": None, "daily_growth_mb": 0, "error": str(e)}
-
-    if not rows:
-        return {"days_until_full": None, "daily_growth_mb": 0,
-                "recordings_per_day": 0, "samples": 0,
-                "free_gb": None, "note": "no recordings in last 7d"}
-
-    daily_bytes = [(r["bytes"] or 0) for r in rows]
-    daily_count = [r["n"] for r in rows]
-    avg_bytes = sum(daily_bytes) / len(daily_bytes)
-    avg_count = sum(daily_count) / len(daily_count)
-
-    free_gb = None
-    try:
-        st = shutil.disk_usage(RECORDINGS_DIR if os.path.isdir(RECORDINGS_DIR) else ".")
-        free_bytes = st.free
-        free_gb = round(free_bytes / 1024**3, 2)
-        if avg_bytes > 0:
-            days = free_bytes / avg_bytes
-            return {
-                "days_until_full": round(days, 1),
-                "daily_growth_mb": round(avg_bytes / 1024 / 1024, 1),
-                "recordings_per_day": round(avg_count, 1),
-                "samples": len(rows),
-                "free_gb": free_gb,
-                "trend": [{"day": r["day"], "mb": round((r["bytes"] or 0)/1024/1024, 1),
-                           "count": r["n"]} for r in rows],
-            }
-    except Exception as e:
-        log.warning(f"forecast disk_usage failed: {e}")
-    return {"days_until_full": None, "daily_growth_mb": round(avg_bytes/1024/1024, 1),
-            "recordings_per_day": round(avg_count, 1), "samples": len(rows),
-            "free_gb": free_gb}
+    # v4.1-W26: nach nc/storage.py geloest — "wann ist die Platte voll" steht
+    # dort neben "wie viel Platz ist da".
+    return _nc_storage.forecast(RECORDINGS_DIR)
 
 # ---------- X11: Live-Bandwidth-Monitor ----------
 _BANDWIDTH_SAMPLES = {}    # tracking_id -> [(monotonic_ts, file_size), ...]
@@ -4643,53 +4626,14 @@ def _sample_net_throughput():
     # Delta-Rechnung (Guards gegen Erststart/Counter-Reset) ebenfalls in nc/netstat.
     return _nc_netstat.throughput_kbps(prev_ts, prev_bytes, now, total)
 
+# v4.1-W26: Haken fuer nc/routes/auskunft.py.
+_nc_routes_auskunft.HAKEN["netzdurchsatz"]["fn"] = _sample_net_throughput
+
 
 def sample_bandwidth_for_active() -> list:
-    """Pollt die file_size aller laufenden Aufnahmen, vergleicht mit
-       vorigem Sample → berechnet B/s. Wird vom Dashboard alle paar
-       Sekunden aufgerufen. State pro tracking_id."""
-    out = []
-    now = _time_mod.monotonic()
-    try:
-        with db_conn() as conn:
-            rows = conn.execute(
-                "SELECT id, username, output_file, pid FROM trackings "
-                "WHERE recording=1 AND output_file IS NOT NULL "
-                "  AND output_file != ''"
-            ).fetchall()
-    except Exception:
-        return []
-    for r in rows:
-        tid = r["id"]
-        fp = r["output_file"]
-        try:
-            sz = os.path.getsize(fp) if os.path.exists(fp) else 0
-        except OSError:
-            sz = 0
-        samples = _BANDWIDTH_SAMPLES.setdefault(tid, [])
-        samples.append((now, sz))
-        # Nur die letzten 10s behalten — für die Rate-Berechnung
-        cutoff = now - 10
-        samples[:] = [(t, s) for (t, s) in samples if t >= cutoff]
-        rate_bps = 0
-        if len(samples) >= 2:
-            t0, s0 = samples[0]
-            t1, s1 = samples[-1]
-            dt = t1 - t0
-            if dt > 0.5:
-                rate_bps = max(0, (s1 - s0) / dt)
-        out.append({
-            "tracking_id": tid,
-            "username": r["username"],
-            "filename": os.path.basename(fp) if fp else "",
-            "size_mb": round(sz / 1024 / 1024, 2),
-            "rate_kbps": round(rate_bps * 8 / 1000, 1),    # kilobits/s
-        })
-    # Cleanup state für Trackings die nicht mehr aufnehmen
-    active_tids = {r["id"] for r in rows}
-    stale = [k for k in _BANDWIDTH_SAMPLES if k not in active_tids]
-    for k in stale: _BANDWIDTH_SAMPLES.pop(k, None)
-    return out
+    # v4.1-W26: nach nc/bandbreite.py geloest. Die Messreihe liegt dort, damit
+    # es nur EINE Wahrheit ueber den Durchsatz einer Aufnahme gibt.
+    return _nc_band.messen()
 
 # ---------- X12: Heatmaps ----------
 
@@ -4913,66 +4857,9 @@ def get_trash_recordings(limit: int = 50) -> list:
     return _nc_recdb.get_trash_recordings(limit=limit)
 
 # ---------- X20: Universal Search ----------
-def universal_search(query: str, limit: int = 30) -> dict:
-    """Sucht über trackings, recordings, archive, profile_snapshots.
-       Returns kategorisierte Treffer."""
-    q = (query or "").strip().lower()
-    if not q or len(q) < 2:
-        return {"query": q, "results": {}}
-    like = f"%{q}%"
-    results = {"trackings": [], "recordings": [], "archive": [], "tags": []}
-    try:
-        with db_conn() as conn:
-            # Trackings — username + notes
-            rows = conn.execute(
-                "SELECT id, username, group_id, COALESCE(notes, '') AS notes, "
-                "  last_live, recording, COALESCE(paused, 0) AS paused "
-                "FROM trackings WHERE LOWER(username) LIKE ? "
-                "  OR LOWER(COALESCE(notes, '')) LIKE ? LIMIT ?",
-                (like, like, limit)).fetchall()
-            results["trackings"] = [{
-                "id": r["id"], "username": r["username"],
-                "group_id": r["group_id"], "notes": r["notes"],
-                "live": bool(r["last_live"]), "recording": bool(r["recording"]),
-                "paused": bool(r["paused"]),
-            } for r in rows]
-            # Recordings — username + file basename
-            rows = conn.execute(
-                "SELECT id, username, filepath, file_size, created_at "
-                "FROM recordings WHERE deleted_at IS NULL "
-                "  AND (LOWER(username) LIKE ? OR LOWER(filepath) LIKE ?) "
-                "ORDER BY id DESC LIMIT ?",
-                (like, like, limit)).fetchall()
-            results["recordings"] = [{
-                "id": r["id"], "username": r["username"],
-                "filename": os.path.basename(r["filepath"] or ""),
-                "size_mb": round((r["file_size"] or 0)/1024/1024, 1),
-                "created_at": r["created_at"],
-            } for r in rows]
-            # Archive — filename, title, notes
-            rows = conn.execute(
-                "SELECT id, filename, title, COALESCE(notes, '') AS notes, "
-                "  size_bytes, created_at "
-                "FROM archive "
-                "WHERE LOWER(filename) LIKE ? OR LOWER(COALESCE(title, '')) LIKE ? "
-                "  OR LOWER(COALESCE(notes, '')) LIKE ? LIMIT ?",
-                (like, like, like, limit)).fetchall()
-            results["archive"] = [{
-                "id": r["id"], "filename": r["filename"],
-                "title": r["title"], "notes": r["notes"],
-                "size_mb": round((r["size_bytes"] or 0)/1024/1024, 1),
-                "created_at": r["created_at"],
-            } for r in rows]
-            # Tags
-            rows = conn.execute(
-                "SELECT tag, COUNT(*) AS c FROM tracking_tags "
-                "WHERE LOWER(tag) LIKE ? GROUP BY tag LIMIT ?",
-                (like, limit)).fetchall()
-            results["tags"] = [{"tag": r["tag"], "count": r["c"]} for r in rows]
-    except Exception as e:
-        log.warning(f"universal_search: {e}")
-    return {"query": q, "results": results,
-            "total": sum(len(v) for v in results.values())}
+def universal_search(q, limit=20):
+    # v4.1-W26: nach nc/suche.py geloest.
+    return _nc_suche.universal_search(q, limit=limit)
 
 # ---------- X21: Recording-Manifest-Export ----------
 
@@ -5050,51 +4937,10 @@ _OUTCOME_META = {
     "running":               ("Running",            "muted"),
 }
 
-def get_outcome_breakdown(hours: int = 24) -> dict:
-    """Returns {total, since_iso, by_outcome:[{key,label,status,count,pct}],
-                top_failing_users:[{username, fail_count}], early_disconnect_users:[...]}.
-       hours: Zeitfenster (max 168 = 7 Tage)."""
-    hours = max(1, min(int(hours or 24), 168))
-    since = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
-
-    with db_conn() as conn:
-        rows = conn.execute(
-            "SELECT outcome, COUNT(*) AS c FROM recording_attempts "
-            "WHERE started_at >= ? GROUP BY outcome ORDER BY c DESC",
-            (since,)).fetchall()
-        total = sum(r["c"] for r in rows)
-        # F57: Top User mit Failures (alles außer ok/partial)
-        top_fail = conn.execute(
-            "SELECT username, COUNT(*) AS c FROM recording_attempts "
-            "WHERE started_at >= ? "
-            "AND outcome NOT IN ('ok', 'stall_killed_partial', 'running') "
-            "GROUP BY username ORDER BY c DESC LIMIT 5",
-            (since,)).fetchall()
-        # F57: Top User mit early_disconnect (das ist der TikTok-Pain-Point)
-        top_ed = conn.execute(
-            "SELECT username, COUNT(*) AS c FROM recording_attempts "
-            "WHERE started_at >= ? AND outcome = 'early_disconnect' "
-            "GROUP BY username ORDER BY c DESC LIMIT 5",
-            (since,)).fetchall()
-
-    by_outcome = []
-    for r in rows:
-        key = r["outcome"] or "unknown"
-        label, status = _OUTCOME_META.get(key, (key, "muted"))
-        pct = round(r["c"] / total * 100, 1) if total else 0
-        by_outcome.append({"key": key, "label": label, "status": status,
-                           "count": r["c"], "pct": pct})
-
-    return {
-        "total":      total,
-        "hours":      hours,
-        "since":      since,
-        "by_outcome": by_outcome,
-        "top_failing_users": [{"username": r["username"], "fail_count": r["c"]}
-                              for r in top_fail],
-        "early_disconnect_users": [{"username": r["username"], "count": r["c"]}
-                                    for r in top_ed],
-    }
+def get_outcome_breakdown(days: int = 7) -> dict:
+    # v4.1-W26: nach nc/outcomes.py geloest — mitsamt _OUTCOME_META, damit
+    # Ausgang und Klartext nicht an zwei Stellen gepflegt werden muessen.
+    return _nc_outcomes.get_outcome_breakdown(days)
 
 # -----------------------------
 # TikTok Profil-Scraper
@@ -6435,6 +6281,9 @@ def _build_daily_summary() -> str:
     lines.append(f"  {icon} {ch['headline']}")
 
     return "\n".join(lines)
+
+# v4.1-W26: Haken fuer nc/routes/auskunft.py.
+_nc_routes_auskunft.HAKEN["tagesbericht"]["fn"] = _build_daily_summary
 
 
 async def summary_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -7960,7 +7809,18 @@ async def _handle_single_tracking(t, bot_app):
                              "nächster Versuch in ~%ds (Stream evtl. region-/zugriffs-"
                              "gesperrt).", username, int(_bo_until - _time_mod.time()))
                 return
-        if not try_acquire_recording_lock(tid, username=username):    # C4 + R1
+        # v4.1-W26: NEBEN dem Loop. Synchron stand dieser Aufruf in zwei
+        # Stack-Abzuegen des Waechters als Blocker: `db_conn().__exit__` ->
+        # `close()` haengt, wenn die Platte unter Last steht, und friert
+        # damit den ganzen Bot ein.
+        #
+        # Der Anspruch bleibt atomar: er steckt im EINEN UPDATE mit
+        # `WHERE recording=0` (siehe try_acquire_recording_lock), nicht
+        # darin, dass der Aufruf auf dem Loop laeuft. Zwei nebenlaeufige
+        # Worker koennen die Anweisung jetzt gleichzeitig absetzen — genau
+        # einer gewinnt, wie vorher.
+        if not await asyncio.to_thread(try_acquire_recording_lock,
+                                       tid, username=username):    # C4 + R1
             # Anderer Worker hält den Lock (für diesen Tracking ODER
             # für ein anderes Tracking mit gleichem username) — nichts tun
             # F41: INFO statt DEBUG damit der User in Multi-User-Setups
@@ -10225,64 +10085,11 @@ def dashboard():
         )
         return msg, 500
 
-@dashboard_app.route("/api/pulse")
-def api_pulse():
-    """V37: gebündelter Header/Sendbar-Puls — ersetzt 4 separate 5s-Poller
-       (stats, bandwidth/live, health-score, restream/deck) durch EINEN
-       Request. Ruft die bestehenden View-Funktionen intern auf, sodass die
-       Datenstruktur 1:1 identisch bleibt (kein Frontend-Format-Drift)."""
-    def _j(fn):
-        try:
-            r = fn()
-            return r.get_json(silent=True) if hasattr(r, "get_json") else None
-        except Exception:
-            return None
-    return jsonify(ok=True,
-                   stats=_j(lambda: api_stats(lean=True)),
-                   bandwidth=_j(api_bandwidth_live),
-                   health=_j(api_health_score),
-                   deck=_j(_nc_routes_restream.api_restream_deck))
 
 
 
-@dashboard_app.route("/api/checks")
-def api_checks():
-    rows = get_all_checks(limit=50)
-    res = []
-    for c in rows:
-        d = json.loads(c["data"]) if c["data"] else {}
-        res.append({"id": c["id"], "created_at": c["created_at"][:19] if c["created_at"] else "",
-                    "username": c["username"],
-                    "follower_count": d.get("follower_count"),
-                    "heart_count": d.get("heart_count"),
-                    "video_count": d.get("video_count"),
-                    "verified": d.get("verified")})
-    return jsonify(res)
 
-@dashboard_app.route("/api/top")
-def api_top():
-    _, _, top = get_stats()
-    return jsonify([{"username": r["username"], "count": r["cnt"]} for r in top])
 
-@dashboard_app.route("/api/active-recordings")
-def api_active_recordings():
-    # READ ONLY – Aufräumen passiert im Reaper, nicht im HTTP-Handler.
-    # F59: id mitliefern damit der STOP-Button im Dashboard den richtigen
-    # Endpoint /api/recordings/<tracking_id>/stop ansprechen kann.
-    with db_conn() as conn:
-        rows = conn.execute(
-            "SELECT id, username, output_file, created_at, pid FROM trackings WHERE recording=1"
-        ).fetchall()
-    return jsonify([{
-        "tracking_id": r["id"],
-        "username": r["username"],
-        "output_file": os.path.basename(r["output_file"]) if r["output_file"] else "",
-        "started_at": r["created_at"][:19] if r["created_at"] else "",
-        # B36: PID-Reuse-Schutz. Ohne den Check würde "alive=true" zurück-
-        # gegeben werden auch wenn die PID inzwischen einem fremden Prozess
-        # gehört → User sieht grünen Dot obwohl Aufnahme tot ist.
-        "alive": _proc_is_recorder(r["pid"]),
-    } for r in rows])
 
 
 # F47: Storage-Dashboard
@@ -10297,20 +10104,6 @@ def api_active_recordings():
 
 
 # F55: Daily-Summary Preview + Send-Now
-@dashboard_app.route("/api/summary/preview")
-def api_summary_preview():
-    """Liefert den Daily-Summary-Text (HTML) ohne ihn zu posten — für
-       Dashboard-Vorschau. Beinhaltet 24h-Aktivität, Top-User, Storage,
-       Cookies."""
-    try:
-        text = _build_daily_summary()
-        return jsonify(ok=True, text=text,
-                       configured=bool(DAILY_SUMMARY_CHAT_ID),
-                       chat_id=DAILY_SUMMARY_CHAT_ID,
-                       hour=DAILY_SUMMARY_HOUR)
-    except Exception as e:
-        log.warning(f"summary preview failed: {e}")
-        return jsonify(ok=False, error=str(e)), 500
 
 
 # ── Zielgruppe für Trackings, die im Dashboard entstehen ────────────────
@@ -10329,32 +10122,9 @@ def api_summary_preview():
 
 
 # F57: Outcome-Breakdown für Diagnose-Widget
-@dashboard_app.route("/api/outcomes")
-def api_outcomes():
-    """Recording-Outcome-Verteilung über Zeitfenster. Query-Param 'hours'
-       (default 24, max 168). Hilft bei der Frage 'wieso scheitern Aufnahmen
-       gerade häufig?' — zeigt Anteil pro Outcome + die User mit den meisten
-       Fehlern + dedizierte Liste für early_disconnect (TikTok-CDN-Pain)."""
-    try:
-        hours = _arg_int("hours", 24)
-    except (TypeError, ValueError):
-        hours = 24
-    return jsonify(get_outcome_breakdown(hours))
 
 
 # F48: Per-User-Statistiken
-@dashboard_app.route("/api/userstats")
-def api_userstats():
-    """Aggregat-Stats pro User. Query-Params:
-         limit (default 20, max 200)
-         sort  (rec_count|total_bytes|success_rate|last_recording)"""
-    try:
-        limit = _arg_int("limit", 20, 1, 200)
-    except (TypeError, ValueError):
-        limit = 20
-    sort_by = request.args.get("sort", "rec_count")
-    rows = get_per_user_stats(limit=limit, sort_by=sort_by)
-    return jsonify(rows)
 
 
 # B49: Per-User-Profil-Endpoint für Dashboard-Hover-Popup.
@@ -10439,36 +10209,6 @@ def _conv_messages(conv_id):
 
 
 # F72: 7-Tage Recording-Success-Trend
-@dashboard_app.route("/api/trend-7d")
-def api_trend_7d():
-    """Pro Tag der letzten 7 Tage: total, ok, success-rate. Für Sparkline."""
-    days = []
-    cutoff = datetime.now(timezone.utc) - timedelta(days=7)
-    with db_conn() as conn:
-        # Portabel über SQLite und MariaDB: pro Tag SUBSTR(started_at, 1, 10)
-        rows = conn.execute(
-            "SELECT SUBSTR(started_at, 1, 10) AS day, "
-            "  COUNT(*) AS total, "
-            "  SUM(CASE WHEN outcome IN ('ok', 'stall_killed_partial') "
-            "    THEN 1 ELSE 0 END) AS ok_count "
-            "FROM recording_attempts "
-            "WHERE started_at >= ? "
-            "GROUP BY SUBSTR(started_at, 1, 10) "
-            "ORDER BY day ASC",
-            (cutoff.isoformat(),)).fetchall()
-    by_day = {r["day"]: (r["total"] or 0, r["ok_count"] or 0) for r in rows}
-    # Ensure 7 days even if some have no data (so the bar chart has consistent layout)
-    for i in range(7):
-        d = (datetime.now(timezone.utc) - timedelta(days=6 - i)).strftime("%Y-%m-%d")
-        total, ok = by_day.get(d, (0, 0))
-        days.append({
-            "day": d,
-            "weekday": (datetime.now(timezone.utc) - timedelta(days=6 - i)).strftime("%a"),
-            "total": total,
-            "ok": ok,
-            "rate": int(100.0 * ok / total) if total else None,
-        })
-    return jsonify({"days": days})
 
 
 # ============================================================================
@@ -11137,16 +10877,6 @@ def api_automation_toggle():
     return jsonify(ok=True, key=key, override=_AUTOMATION[key])
 
 
-@dashboard_app.route("/api/freeai/status")
-def api_freeai_status():
-    """V37: Status der keyless Cloud-Basen (Rotation/Cooldown) fürs Dashboard."""
-    try:
-        return jsonify(ok=True, bases=_nc_freeai.bases_status(),
-                       model=AI_MODEL,
-                       provider=("brain" if os.getenv("AI_PROVIDER","").strip().lower()=="brain"
-                                 else "freeai"))
-    except Exception as e:
-        return jsonify(ok=False, error=str(e)[:200])
 
 
 
@@ -11422,6 +11152,9 @@ def _public_stats() -> dict:
         stats["crypto"] = {"addresses": []}
     return stats
 
+# v4.1-W26: Haken fuer nc/routes/auskunft.py.
+_nc_routes_auskunft.HAKEN["oeffentlich"]["fn"] = _public_stats
+
 
 def _stats_output_path() -> str:
     d = os.getenv("NEWS_OUTPUT_DIR", "").strip() or \
@@ -11475,10 +11208,6 @@ async def _stats_loop():
         await asyncio.sleep(max(60, interval))
 
 
-@dashboard_app.route("/api/public/stats")
-def api_public_stats():
-    """Live-Abruf derselben sicheren Metriken (Dashboard/Debug)."""
-    return jsonify(ok=True, **_public_stats())
 
 
 async def _news_loop():
@@ -11523,13 +11252,6 @@ async def _news_loop():
 
 
 
-@dashboard_app.route("/api/version")
-def api_version():
-    """v4.0: zentrale Versions-/Changelog-Auskunft für Footer + „Was ist neu"-Panel."""
-    data = _nc_version.current()
-    return jsonify(ok=True, build=globals().get("BUILD_STAMP", ""),
-                   summary=_nc_version.summary_line(),
-                   changelog=_nc_version.changelog(), **data)
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -12120,23 +11842,6 @@ def health():
 # crashen ließ ("View function mapping is overwriting an existing endpoint").
 
 
-@dashboard_app.route("/api/recording-attempts")
-def api_recording_attempts():
-    """F19: letzte Aufnahme-Versuche für Dashboard-Stream."""
-    rows = get_recent_recording_attempts(limit=50)
-    return jsonify([{
-        "id": r["id"],
-        "username": r["username"],
-        "recorder": r["recorder"],
-        "started_at": (r["started_at"] or "")[:19].replace("T", " "),
-        "ended_at": (r["ended_at"] or "")[:19].replace("T", " ") if r["ended_at"] else None,
-        "duration_secs": r["duration_secs"],
-        "returncode": r["returncode"],
-        "file_size": r["file_size"],
-        "outcome": r["outcome"],
-        "stderr_tail": (r["stderr_tail"] or "")[-400:] if r["stderr_tail"] else None,
-        "error": r["error"],
-    } for r in rows])
 
 # =============================================================================
 # F21: Manuelles Archiv (separat von Telegram-Recording-Pipeline)
@@ -12471,14 +12176,6 @@ def _scraper_session():
 
 
 # ---------- X20: Universal Search ----------
-@dashboard_app.route("/api/search")
-def api_search():
-    q = (request.args.get("q") or "").strip()
-    limit = _arg_int("limit", 30, 1, 100)
-    if len(q) < 2:
-        return jsonify(query=q, results={}, total=0,
-                       note="query too short (min 2 chars)")
-    return jsonify(universal_search(q, limit))
 
 # ---------- X7+X8: Recording-Inspect (ffprobe) ----------
 
@@ -12486,17 +12183,6 @@ def api_search():
 # ---------- X4: Recording-Notes ----------
 
 # ---------- X5: Bookmarks ----------
-@dashboard_app.route("/api/bookmarks", methods=["GET"])
-def api_bookmarks_list():
-    rows = get_bookmarked_recordings(100)
-    return jsonify(ok=True, bookmarks=[{
-        "id": r["id"], "username": r["username"],
-        "filename": os.path.basename(r["filepath"] or ""),
-        "size_mb": round((r["file_size"] or 0)/1024/1024, 1),
-        "duration_secs": r["duration_secs"],
-        "created_at": r["created_at"],
-        "bookmarked_at": r["bookmarked_at"],
-    } for r in rows])
 
 
 # ---------- X6: Annotations ----------
@@ -12506,9 +12192,6 @@ def api_annotation_delete(aid):
     return jsonify(ok=delete_annotation(aid))
 
 # ---------- X2: Tags ----------
-@dashboard_app.route("/api/tags")
-def api_tags_list():
-    return jsonify(ok=True, tags=get_all_tags_with_counts())
 
 
 
@@ -12528,30 +12211,11 @@ def api_events():
     } for r in rows])
 
 # ---------- X10: Storage-Forecast ----------
-@dashboard_app.route("/api/forecast/storage")
-def api_forecast_storage():
-    return jsonify(ok=True, **compute_storage_forecast())
 
 # ---------- X11: Bandwidth-Live ----------
-@dashboard_app.route("/api/bandwidth/live")
-def api_bandwidth_live():
-    streams = sample_bandwidth_for_active()
-    total_kbps = round(sum(s["rate_kbps"] for s in streams), 1)
-    net_kbps = _sample_net_throughput()
-    return jsonify(ok=True, streams=streams, total_kbps=total_kbps,
-                   net_kbps=net_kbps, count=len(streams))
 
 # ---------- X12: Heatmaps ----------
-@dashboard_app.route("/api/heatmap/recordings")
-def api_heatmap_recordings():
-    return jsonify(ok=True, **get_recordings_heatmap())
 
-@dashboard_app.route("/api/heatmap/lives/<username>")
-def api_heatmap_lives(username):
-    username = clean_username(username)
-    if not username:
-        return jsonify(ok=False, error="invalid username"), 400
-    return jsonify(ok=True, username=username, **get_lives_heatmap(username))
 
 # ---------- X13: Profile-Snapshots ----------
 
@@ -12640,10 +12304,6 @@ def api_proxy_heatmap():
 # ---------- X16: Failure-Patterns ----------
 
 # ---------- X17: Activity-Pulse ----------
-@dashboard_app.route("/api/activity-pulse")
-def api_activity_pulse():
-    minutes = _arg_int("minutes", 60, 5, 1440)
-    return jsonify(ok=True, minutes=minutes, pulse=get_activity_pulse(minutes))
 
 # ---------- X18: Manual Recording ----------
 
@@ -12897,32 +12557,8 @@ def api_quiet_hours():
 # legt _init_db() auf dem Ziel selbst an (kennt beide Dialekte). Details und
 # der Backslash-Fallstrick stehen in nc/dbexport.py.
 
-@dashboard_app.route("/api/loyalty/leaderboard")
-def api_loyalty_leaderboard():
-    """V37-LOYALTY: Top-Stammzuschauer nach Punkten, mit Rang."""
-    try:
-        n = _arg_int("n", 10, 1, 50)
-    except ValueError:
-        n = 10
-    try:
-        return jsonify(ok=True, enabled=LOYALTY_ENABLED,
-                       leaderboard=_loyalty.leaderboard(n),
-                       ranks=_loyalty.status()["ranks"])
-    except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
 
 
-@dashboard_app.route("/api/community/stats")
-def api_community_stats():
-    """V37-COMMUNITY: Wiedererkennungs-Stats + welche Loop-Teile aktiv sind."""
-    try:
-        st = _community.seen_stats()
-        return jsonify(ok=True, known=st["known"], regulars=st["regulars"],
-                       returning=COMMUNITY_RETURNING_ENABLED,
-                       live_ping=COMMUNITY_LIVE_PING_ENABLED,
-                       highlight_share=COMMUNITY_HIGHLIGHT_SHARE_ENABLED)
-    except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
 
 
 
@@ -13359,6 +12995,11 @@ def _chat_sanitize(s, maxlen=200):
 _chat_src_ok = _nc_rscfg.chat_src_ok   # v4.1-W22
 
 _HIGHLIGHTS = _nc_highlights.new_state()      # W22: Radar-Zustand (Chat-Tempo)
+# v4.1-W26: ins Register, damit /api/highlights denselben Stand sieht.
+# REGISTER und nicht Alias: die Zeile darueber BINDET den Namen neu — ein
+# Alias zeigte fuer immer auf das leere Anfangs-Dict, und das Radar-Panel
+# meldete dauerhaft null Treffer, ohne Fehler und ohne Logzeile.
+_nc_highlights.STATE["obj"] = _HIGHLIGHTS
 
 
 def _highlight_cfg():
@@ -13495,6 +13136,51 @@ def _ov_atomic_write(path, text):
         os.replace(tmp, path)          # atomar → drawtext liest nie halb geschriebene Datei
     except Exception:
         pass
+
+# v4.1-W26: Ein Wächter, MODUL-GLOBAL und nicht als Objekt-Attribut (CLAUDE.md:
+# ein getattr(obj, "_läuft") bricht, sobald das Objekt neu erzeugt wird).
+# Ohne ihn stapeln sich bei langsamer Platte die Schreib-Threads: der Takt
+# kommt jede Sekunde, ein Schreibvorgang dauerte im Störfall über 60.
+_OVERLAY_SCHREIBT = {"an": False}
+
+
+async def _write_restream_overlay_async(reaction_fresh_secs=None):
+    """Das Overlay NEBEN dem Event-Loop schreiben.
+
+    ════════════════════════════════════════════════════════════════════
+    WARUM — Befund aus dem Betriebslog vom 2026-09-03
+    ════════════════════════════════════════════════════════════════════
+    `_write_restream_overlay()` legt bis zu vierzehn Textdateien an, jede mit
+    open + write + os.replace. Das lief **synchron auf dem Event-Loop**, rund
+    einmal pro Sekunde, aus dem -progress-Strom von ffmpeg heraus.
+
+    Im Normalbetrieb kostet das Bruchteile einer Millisekunde. Lief daneben
+    aber ein 685-MB-Upload nach Telegram, schrieb ffmpeg Aufnahmen und lief
+    der Restream, blockierte `os.replace` bis zu **68 Sekunden**. In dieser
+    Zeit stand der ganze Bot: keine Live-Prüfungen, kein Telegram, Discord
+    meldete "heartbeat blocked" und trennte die Verbindung. Neunzehn von
+    fünfundzwanzig Stack-Abzügen des Wächters zeigten genau diesen Aufruf.
+
+    Ein Auslassen des Overlays für eine Sekunde ist unsichtbar — der
+    drawtext-Filter liest die Datei ohnehin in seinem eigenen Takt. Ein
+    stehender Event-Loop ist es nicht.
+
+    Der Wächter lässt nur EINEN Schreibvorgang zu: dauert er länger als der
+    Takt, wird der nächste übersprungen statt aufgestaut.
+    """
+    if _OVERLAY_SCHREIBT["an"]:
+        return
+    _OVERLAY_SCHREIBT["an"] = True
+    try:
+        await asyncio.to_thread(_write_restream_overlay, reaction_fresh_secs)
+    except Exception as e:
+        # Nicht still: ein dauerhaft scheiterndes Overlay heisst, dass der
+        # Sendebild-Text einfriert, und das sieht der Betreiber sonst nur im
+        # Stream. _loop_fehler drosselt auf hoechstens alle 15 Minuten.
+        _loop_fehler("_write_restream_overlay_async", e)
+    finally:
+        _OVERLAY_SCHREIBT["an"] = False
+
 
 def _write_restream_overlay(reaction_fresh_secs=None):
     """Aktualisiert ALLE Overlay-Textdateien aus dem aktuellen Zustand.
@@ -14556,7 +14242,9 @@ class RestreamManager:
                         # Relay-Takt zusaetzlich zu schreiben hiesse, dieselbe
                         # Datei drei Mal pro Sekunde neu zu erzeugen.
                         if RESTREAM_OVERLAY and pname is None:
-                            _write_restream_overlay()   # ~1×/Sek: frische AZRAEL-Reaktion einblenden
+                            # ~1×/Sek. NEBEN dem Loop: synchron hat dieser
+                            # Aufruf den Bot bis zu 68s eingefroren (W26).
+                            await _write_restream_overlay_async()
         except asyncio.CancelledError:
             # Der Normalfall beim Prozessende: _monitor cancelt beide Leser,
             # nachdem ffmpeg gewartet wurde. Das ist KEINE Blindheit — hier
@@ -18613,33 +18301,6 @@ async def _auto_restream_loop():
 
 
 
-@dashboard_app.route("/api/shield/stats")
-def api_shield_stats():
-    """V37-W-CTRL: Was SENTINEL-SHIELD in 24h abgewehrt hat — Doxxing/Hate/
-    Drohungen aus dem Moderations-Log, für das AZRAEL-Panel."""
-    since = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
-    by_cat, recent, total = {}, [], 0
-    try:
-        with db_conn() as conn:
-            rows = conn.execute(
-                "SELECT ts, actor, content, meta FROM kick_mod_log "
-                "WHERE actor='sentinel-shield' AND ts>=? ORDER BY ts DESC LIMIT 200",
-                (since,)).fetchall()
-        for r in rows:
-            total += 1
-            try:
-                m = json.loads(r["meta"] or "{}")
-            except Exception:
-                m = {}
-            cat = m.get("cat") or (m.get("reason", "").split(":")[0].replace("🛑", "").strip()) or "?"
-            by_cat[cat] = by_cat.get(cat, 0) + 1
-            if len(recent) < 12:
-                recent.append({"ts": r["ts"], "cat": cat,
-                               "what": m.get("what", ""),
-                               "text": (r["content"] or "")[:80]})
-    except Exception as e:
-        return jsonify(ok=False, error=str(e))
-    return jsonify(ok=True, total_24h=total, by_cat=by_cat, recent=recent)
 
 
 
@@ -18807,16 +18468,6 @@ def api_debug_threads():
 
 
 
-@dashboard_app.route("/api/highlights")
-def api_highlights():
-    """v4.0-W22: erkannte Highlight-Momente + aktuelle Chat-Lage."""
-    cfg = _highlight_cfg()
-    hits = list(_HIGHLIGHTS.get("hits") or [])[-40:]
-    return jsonify(ok=True, enabled=cfg["enabled"], min_score=cfg["min_score"],
-                   now=_time_mod.time(),
-                   rate=round(len(_HIGHLIGHTS.get("events") or []) / 20.0 * 60.0, 1),
-                   base=round(len(_HIGHLIGHTS.get("base") or []) / 600.0 * 60.0, 1),
-                   count=len(hits), items=list(reversed(hits)))
 
 
 @dashboard_app.route("/api/highlights/config", methods=["POST"])
@@ -19787,38 +19438,6 @@ Hinweise: Zeitspalten sind ISO-8601-Strings. Erfolg = outcome IN ('ok','stall_ki
 
 # ---- DATA / OPS TOOLS -------------------------------------------------------
 
-@dashboard_app.route("/api/data/export")
-def api_data_export():
-    """Exportiert Daten als CSV oder JSON. ?kind=recordings|streamers|attempts&format=csv|json"""
-    kind = (request.args.get("kind") or "recordings").lower()
-    fmt = (request.args.get("format") or "json").lower()
-    queries = {
-        "recordings": ("SELECT id, username, created_at, file_size, duration_secs, rating, label "
-                       "FROM recordings ORDER BY created_at DESC LIMIT 5000"),
-        "streamers": ("SELECT id, username, created_at, last_live, paused FROM trackings "
-                      "ORDER BY username LIMIT 5000"),
-        "attempts": ("SELECT id, username, started_at, outcome, duration_secs, file_size "
-                     "FROM recording_attempts ORDER BY started_at DESC LIMIT 5000"),
-    }
-    if kind not in queries:
-        return jsonify(ok=False, error="kind: recordings|streamers|attempts"), 400
-    try:
-        with db_conn() as conn:
-            rows = [dict(r) for r in conn.execute(queries[kind]).fetchall()]
-        if fmt == "csv":
-            import csv as _csv
-            import io as _io
-            buf = _io.StringIO()
-            if rows:
-                w = _csv.DictWriter(buf, fieldnames=list(rows[0].keys()))
-                w.writeheader()
-                w.writerows(rows)
-            from flask import Response
-            return Response(buf.getvalue(), mimetype="text/csv",
-                            headers={"Content-Disposition": f"attachment; filename={kind}.csv"})
-        return jsonify(ok=True, kind=kind, count=len(rows), rows=rows)
-    except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
 
 
 
@@ -26796,6 +26415,7 @@ dashboard_app.register_blueprint(_nc_routes_restream.bp)   # v4.1-W22
 dashboard_app.register_blueprint(_nc_routes_beobachtung.bp)       # v4.1-W23
 dashboard_app.register_blueprint(_nc_routes_wartung.bp)           # v4.1-W24
 dashboard_app.register_blueprint(_nc_routes_abwehr.bp)            # v4.1-W25
+dashboard_app.register_blueprint(_nc_routes_auskunft.bp)          # v4.1-W26
 
 
 if __name__ == "__main__":

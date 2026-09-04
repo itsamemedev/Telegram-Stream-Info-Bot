@@ -593,8 +593,33 @@ def _test_routes_health():
     # Aggregat-Route). Nach dem Umzug muessen sie importiert sein, sonst
     # sterben diese Pfade mit NameError — statisch sichtbar, aber leicht zu
     # uebersehen.
-    assert "from nc.routes.health import api_health_score, api_system_resources" in src, \
-        "interne Aufrufer verlieren die Funktionen"
+    # v4.1-W26: als REGEL statt als Namensliste. Frueher stand hier die
+    # woertliche Import-Zeile — die kippte, sobald ein interner Aufrufer
+    # selbst in einen Blueprint wanderte (/api/pulse nahm api_health_score
+    # mit). Die Zusicherung ist dieselbe geblieben, sie prueft jetzt nur den
+    # Sachverhalt statt seiner damaligen Schreibweise: jede Blueprint-Funktion,
+    # die bot.py AUFRUFT, muss dort auch importiert sein.
+    import ast as _ast
+    b = _ast.parse(src)
+    importiert = set()
+    for n in _ast.walk(b):
+        if isinstance(n, _ast.ImportFrom) and (n.module or "").startswith("nc.routes"):
+            importiert |= {(a.asname or a.name) for a in n.names}
+        elif isinstance(n, _ast.Import):
+            importiert |= {(a.asname or a.name.split(".")[0]) for a in n.names}
+    definiert = {n.name for n in b.body
+                 if isinstance(n, (_ast.FunctionDef, _ast.AsyncFunctionDef))}
+    gerufen = {n.func.id for n in _ast.walk(b)
+               if isinstance(n, _ast.Call) and isinstance(n.func, _ast.Name)}
+    for name in ("api_health_score", "api_system_resources"):
+        if name in gerufen:
+            assert name in importiert or name in definiert, \
+                ("bot.py ruft %s auf, importiert es aber nicht — NameError zur "
+                 "Laufzeit" % name)
+    # api_system_resources hat weiterhin einen internen Aufrufer (Telegram
+    # /sysres und die Aggregat-Route) und MUSS deshalb importiert sein.
+    assert "api_system_resources" in importiert, \
+        "api_system_resources ist nicht mehr importiert — /sysres stirbt"
     ok("routes.health: Startzeit als Getter, interne Aufrufer versorgt")
 
 
@@ -2081,6 +2106,191 @@ def _test_w25_abwehr_blueprint():
     ok("v4.1-W25: Abwehr als Blueprint, Adress-Cache mit EINEM Schreibweg")
 
 
+
+def _test_w26_huellen_schlucken_nichts():
+    """v4.1-W26: die Zaehl-Huellen im Monolithen duerfen kein Argument
+       verlieren.
+
+    ECHTER PRODUKTIONSFEHLER, gefunden im error.log vom 2026-09-03:
+
+        TypeError: _claude_chat_sync_metered() got an unexpected keyword
+                   argument 'on_error'
+
+    Der Monolith ERSETZT nc.claude.chat_sync durch eine Huelle, die die Token
+    zaehlt. Die Huelle zaehlte ihre Parameter einzeln auf. Als v4.1-W13
+    `on_error` zu chat_sync hinzufuegte, wurde sie nicht mitgezogen — und
+    damit brach jeder Aufruf, der den neuen Parameter benutzte.
+    _living_title_loop lief neunmal genau da hinein, jedes Mal die ganze Runde
+    verloren. Im Log stand nur "Schleife gestoert", der Grund kam erst aus dem
+    Traceback.
+
+    Geprueft wird ueber den AST von bot.py gegen die ECHTE Signatur des
+    umhuellten Moduls — bot.py laesst sich hier nicht importieren (voller
+    Laufzeitstack), die nc-Module schon.
+    """
+    import ast as _ast
+    import inspect as _inspect
+
+    import nc.claude as _claude
+    import nc.freeai as _freeai
+
+    baum = _ast.parse(open("bot.py", encoding="utf-8").read())
+    huellen = {n.name: n for n in baum.body if isinstance(n, _ast.FunctionDef)}
+
+    for huelle, modul, fn in (("_claude_chat_sync_metered", _claude, "chat_sync"),
+                              ("_freeai_chat_sync_metered", _freeai, "chat_sync")):
+        n = huellen.get(huelle)
+        assert n is not None, "%s gibt es nicht mehr" % huelle
+        eigen = {a.arg for a in n.args.args} | {a.arg for a in n.args.kwonlyargs}
+        echt = set(_inspect.signature(getattr(modul, fn)).parameters)
+
+        # (1) Entweder nennt die Huelle jeden Parameter selbst, ODER sie hat
+        # ein **kwargs, das den Rest durchreicht. Alles andere heisst: ein
+        # Aufruf mit dem fehlenden Parameter stirbt zur Laufzeit.
+        fehlt = echt - eigen
+        assert not fehlt or n.args.kwarg is not None, \
+            ("%s verliert %s — genau der Fehler, der _living_title_loop "
+             "neunmal gekillt hat" % (huelle, sorted(fehlt)))
+
+        # (2) Die Positions-Parameter muessen in DERSELBEN Reihenfolge stehen.
+        # Drei Aufrufstellen uebergeben model und timeout positionell; eine
+        # Umsortierung schoebe das Modell in den falschen Parameter — ein
+        # stiller Fehler statt eines lauten.
+        echt_pos = [k for k in _inspect.signature(getattr(modul, fn)).parameters]
+        eigen_pos = [a.arg for a in n.args.args]
+        gemeinsam = [k for k in echt_pos if k in set(eigen_pos)]
+        assert eigen_pos[:len(gemeinsam)] == gemeinsam, \
+            ("%s hat die Parameter umsortiert: %r statt %r — positionelle "
+             "Aufrufe landen im falschen Parameter" % (huelle, eigen_pos, gemeinsam))
+
+        # (3) Die Huelle ersetzt das Modul wirklich. Faellt diese Zeile weg,
+        # zaehlt niemand mehr Token, ohne dass irgendetwas bricht.
+        assert "_nc_%s.%s = %s" % (
+            {"nc.claude": "claude", "nc.freeai": "freeai"}[modul.__name__],
+            fn, huelle) in open("bot.py", encoding="utf-8").read(), \
+            "%s wird nie eingehaengt" % huelle
+
+    # ---- Zweiter Befund aus demselben Log: der eingefrorene Event-Loop ----
+    #
+    # `_write_restream_overlay()` schreibt bis zu vierzehn Textdateien und lief
+    # rund einmal pro Sekunde SYNCHRON auf dem Event-Loop. Unter Plattenlast
+    # (685-MB-Upload, ffmpeg, Restream) blockierte os.replace bis zu 68
+    # Sekunden — in der Zeit stand der ganze Bot. Neunzehn von fuenfundzwanzig
+    # Stack-Abzuegen des Waechters zeigten genau diesen Aufruf.
+    quelle = open("bot.py", encoding="utf-8").read()
+    baum2 = _ast.parse(quelle)
+
+    # (1) Der Sekundentakt laeuft NEBEN dem Loop.
+    assert "await _write_restream_overlay_async()" in quelle, \
+        "der Sekundentakt schreibt wieder synchron auf dem Loop"
+    for n in baum2.body:
+        if isinstance(n, _ast.AsyncFunctionDef) and n.name == "_write_restream_overlay_async":
+            break
+    else:
+        raise AssertionError("_write_restream_overlay_async gibt es nicht mehr")
+    assert "asyncio.to_thread(_write_restream_overlay" in quelle, \
+        "die nebenlaeufige Fassung ruft den Schreiber nicht im Thread"
+
+    # (2) EIN Waechter, und zwar modul-global. Als Objekt-Attribut braeche er,
+    # sobald das Objekt neu erzeugt wird (CLAUDE.md) — dann stapeln sich bei
+    # langsamer Platte die Schreib-Threads, weil der Takt jede Sekunde kommt
+    # und ein Schreibvorgang im Stoerfall ueber sechzig dauerte.
+    assert '_OVERLAY_SCHREIBT = {"an": False}' in quelle, "Waechter fehlt"
+    assert "if _OVERLAY_SCHREIBT[\"an\"]:" in quelle, "Waechter wird nicht geprueft"
+    assert '_OVERLAY_SCHREIBT["an"] = False' in quelle, \
+        "Waechter wird nie zurueckgesetzt — nach dem ersten Fehler schreibt nie wieder jemand"
+
+    # (3) Der Anlauf-Aufruf bleibt SYNCHRON: die Textdateien muessen da sein,
+    # BEVOR drawtext sie oeffnet. Ein await davor waere eine Wettlaufsituation
+    # mit dem gerade startenden ffmpeg.
+    assert "_write_restream_overlay()      # Textdateien anlegen" in quelle, \
+        "der Anlauf-Aufruf ist verschwunden oder nebenlaeufig geworden"
+
+    # (4) Der Aufnahme-Anspruch laeuft ebenfalls neben dem Loop — er stand in
+    # zwei Abzuegen als Blocker (db_conn().__exit__ -> close()).
+    assert "await asyncio.to_thread(try_acquire_recording_lock," in quelle, \
+        "der Aufnahme-Anspruch blockiert wieder den Loop"
+
+    ok("v4.1-W26: Zaehl-Huellen reichen alles durch, Overlay blockiert den Loop nicht mehr")
+
+
+def _test_w26_auskunft_blueprint():
+    """v4.1-W26: fuenfundzwanzig lesende Routen raus — und die Klammer haelt."""
+    import ast as _ast
+
+    from flask import Flask
+    import nc.routes.auskunft as R
+
+    app = Flask(__name__)
+    app.register_blueprint(R.bp)
+    regeln = [r for r in app.url_map.iter_rules() if r.endpoint != "static"]
+    assert len(regeln) == 25, "25 Regeln erwartet, %d" % len(regeln)
+
+    # (1) DIE KLAMMER DIESES BLUEPRINTS: er ANTWORTET nur. Keine Route hier
+    # startet, stoppt, loescht oder speichert etwas. /api/annotations (DELETE)
+    # und /api/highlights/config (POST) liegen benachbart und sind deshalb
+    # ausdruecklich NICHT mitgewandert. Ohne diese Pruefung waere die Klammer
+    # eine Behauptung im Docstring statt einer Regel.
+    for r in regeln:
+        schreibend = r.methods - {"GET", "HEAD", "OPTIONS"}
+        assert not schreibend, \
+            ("%s ist schreibend (%s) — dieser Blueprint antwortet nur"
+             % (r.rule, sorted(schreibend)))
+
+    # (2) Die Fachlogik ist mitgewandert, nicht kopiert. Der Monolith ruft
+    # dieselben Funktionen auf wie der Blueprint — sonst gaebe es zwei
+    # Wahrheiten ueber denselben Wert.
+    b = open("bot.py", encoding="utf-8").read()
+    for ruf in ("_nc_suche.universal_search(", "_nc_outcomes.get_outcome_breakdown(",
+                "_nc_band.messen()", "_nc_storage.forecast(",
+                "_nc_recdb.get_all_checks("):
+        assert ruf in b, "Monolith ruft %s nicht auf" % ruf
+
+    # (3) Der Radar-Zustand ist ein REGISTER, kein Haken: das ist geteilter
+    # ZUSTAND, keine Faehigkeit. Und Register und nicht Alias, weil bot.py den
+    # Namen mit new_state() neu bindet — ein Alias zeigte fuer immer auf das
+    # leere Anfangs-Dict, und das Panel meldete dauerhaft null Treffer.
+    import nc.highlights as H
+    assert "STATE" in dir(H) and H.zustand() == {} or H.STATE["obj"] is not None
+    assert '_nc_highlights.STATE["obj"] = _HIGHLIGHTS' in b, \
+        "der Radar-Zustand wird nie ins Register gelegt"
+    assert "highlights" not in R.HAKEN, \
+        "geteilter Zustand als Haken — das ist die falsche Schublade"
+
+    # (4) Ohne Haken sagt die Auskunft das, statt Leere zu melden. Eine leere
+    # Liste sieht aus wie "nichts gefunden"; der Betreiber sucht dann an der
+    # falschen Stelle.
+    for h in R.HAKEN:
+        R.HAKEN[h]["fn"] = None
+    c = app.test_client()
+    for pfad in ("/api/public/stats", "/api/summary/preview"):
+        antwort = c.get(pfad)
+        assert antwort.status_code == 503, \
+            "%s meldet %d statt 503 ohne Haken" % (pfad, antwort.status_code)
+        assert antwort.get_json()["status"] == "nicht_bereit"
+    # Und alle vier werden im Monolithen wirklich eingetragen.
+    for h in R.HAKEN:
+        assert '_nc_routes_auskunft.HAKEN["%s"]["fn"]' % h in b, \
+            "Haken %s wird im Monolithen nie eingetragen" % h
+
+    # (5) Kein toter Import: was der Blueprint aus nc/ holt, benutzt er auch.
+    # pyflakes prueft das ohnehin — hier steht es, weil dieser Blueprint mit
+    # Abstand die meisten Importe hat und ein vergessener leicht durchrutscht.
+    q = open("nc/routes/auskunft.py", encoding="utf-8").read()
+    baum = _ast.parse(q)
+    benutzt = {n.id for n in _ast.walk(baum) if isinstance(n, _ast.Name)} | \
+              {n.attr for n in _ast.walk(baum) if isinstance(n, _ast.Attribute)} | \
+              {n.value.id for n in _ast.walk(baum)
+               if isinstance(n, _ast.Attribute) and isinstance(n.value, _ast.Name)}
+    for n in baum.body:
+        if isinstance(n, _ast.ImportFrom) and (n.module or "").startswith("nc"):
+            for a in n.names:
+                assert (a.asname or a.name) in benutzt, \
+                    "toter Import: %s" % (a.asname or a.name)
+
+    ok("v4.1-W26: Auskunft als Blueprint — 25 Routen, keine davon schreibt")
+
+
 def main():
     tmp = tempfile.mkdtemp()
     configure_db(db_path=os.path.join(tmp, "t.db"), backend="sqlite")
@@ -2211,6 +2421,10 @@ def main():
     _test_w24_wartung_blueprint()
 
     _test_w25_abwehr_blueprint()
+
+    _test_w26_huellen_schlucken_nichts()
+
+    _test_w26_auskunft_blueprint()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)
 

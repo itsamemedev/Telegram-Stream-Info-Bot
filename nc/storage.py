@@ -21,6 +21,7 @@ import logging
 import os
 import shutil
 import time
+from datetime import datetime, timedelta, timezone
 
 from nc.dbwrap import db_conn
 from nc.stats import _dir_stats
@@ -103,3 +104,57 @@ def cleanup(recordings_dir: str, days: int = 0,
                 "errors": errors + 1, "error": str(e)}
     return {"deleted": deleted, "freed_bytes": freed, "skipped": skipped,
             "errors": errors, "dry_run": dry_run, "retain_days": days}
+
+
+# ---- Wann ist die Platte voll? ----------------------------------------------
+
+def forecast(recordings_dir: str) -> dict:
+    """Linear regression über recordings der letzten 7d → wann ist die Disk voll?
+       Returns: {days_until_full, daily_growth_mb, recordings_per_day, ...}"""
+    try:
+        with db_conn() as conn:
+            # Last 7d, daily aggregates
+            cutoff = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
+            rows = conn.execute(
+                "SELECT SUBSTR(created_at, 1, 10) AS day, "
+                "  COUNT(*) AS n, SUM(COALESCE(file_size, 0)) AS bytes "
+                "FROM recordings "
+                "WHERE created_at >= ? AND deleted_at IS NULL "
+                "GROUP BY SUBSTR(created_at, 1, 10) "
+                "ORDER BY day ASC",
+                (cutoff,)).fetchall()
+    except Exception as e:
+        log.warning(f"compute_storage_forecast: {e}")
+        return {"days_until_full": None, "daily_growth_mb": 0, "error": str(e)}
+
+    if not rows:
+        return {"days_until_full": None, "daily_growth_mb": 0,
+                "recordings_per_day": 0, "samples": 0,
+                "free_gb": None, "note": "no recordings in last 7d"}
+
+    daily_bytes = [(r["bytes"] or 0) for r in rows]
+    daily_count = [r["n"] for r in rows]
+    avg_bytes = sum(daily_bytes) / len(daily_bytes)
+    avg_count = sum(daily_count) / len(daily_count)
+
+    free_gb = None
+    try:
+        st = shutil.disk_usage(recordings_dir if os.path.isdir(recordings_dir) else ".")
+        free_bytes = st.free
+        free_gb = round(free_bytes / 1024**3, 2)
+        if avg_bytes > 0:
+            days = free_bytes / avg_bytes
+            return {
+                "days_until_full": round(days, 1),
+                "daily_growth_mb": round(avg_bytes / 1024 / 1024, 1),
+                "recordings_per_day": round(avg_count, 1),
+                "samples": len(rows),
+                "free_gb": free_gb,
+                "trend": [{"day": r["day"], "mb": round((r["bytes"] or 0)/1024/1024, 1),
+                           "count": r["n"]} for r in rows],
+            }
+    except Exception as e:
+        log.warning(f"forecast disk_usage failed: {e}")
+    return {"days_until_full": None, "daily_growth_mb": round(avg_bytes/1024/1024, 1),
+            "recordings_per_day": round(avg_count, 1), "samples": len(rows),
+            "free_gb": free_gb}

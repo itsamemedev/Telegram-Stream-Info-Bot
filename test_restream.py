@@ -530,7 +530,13 @@ def test_azrael_overlay_source():
     Chat → AZRAELs Antworten tauchten im Restream nie auf. Primärquelle muss
     _AZRAEL_REACTION sein (das setzt react() selbst)."""
     src = open("bot.py").read()
-    i = src.find("def _write_restream_overlay")
+    # v4.1-W26: Anker praezisiert, Vertrag unveraendert. Seit der Overlay-
+    # Schreiber eine nebenlaeufige Huelle bekommen hat, trifft ein
+    # find("def _write_restream_overlay") zuerst `..._async` — und das
+    # 3000-Zeichen-Fenster lag dann auf deren Docstring statt auf dem
+    # Funktionsrumpf. Der Parameter im Anker macht die Fundstelle eindeutig.
+    i = src.find("def _write_restream_overlay(reaction_fresh_secs")
+    assert i > 0, "Overlay-Schreiber nicht gefunden"
     body = src[i:i + 3000]
     j = body.find("AZRAEL-Reaktion unten")
     zone = body[j:j + 1100]
@@ -2801,10 +2807,17 @@ def test_v40_version():
     src = open("bot.py").read()
     assert 'BOT_VERSION = _nc_version.VERSION' in src, "BOT_VERSION nicht zentralisiert"
     assert '"2026.08 · v4.1"' in src, "BUILD_STAMP nicht auf v4.1"
-    assert '"/api/version"' in src and "def api_version(" in src, "keine /api/version-Route"
+    # v4.1-W26: Anker mitgewandert. Die Route liegt jetzt in
+    # nc/routes/auskunft.py — der VERTRAG ist unveraendert (es gibt sie, und
+    # sie meldet die Version), nur ihre Fundstelle nicht.
+    _ausk = open("nc/routes/auskunft.py", encoding="utf-8").read()
+    assert '"/api/version"' in _ausk and "def api_version(" in _ausk, \
+        "keine /api/version-Route"
     dash = open("templates/dashboard.html").read()
     assert "<b>v4.1</b>" in dash, "Footer nicht auf v4.1"
-    assert "/api/version" in src  # Panel entfernt (v4.0-w2), Route bleibt
+    # Dieselbe Zusicherung wie oben, deshalb dieselbe Fundstelle (v4.1-W26):
+    # das Panel ist seit v4.0-w2 weg, die Route bleibt.
+    assert "/api/version" in _ausk
     ok("v4.1: Footer v4.1 + /api/version + Was-ist-neu-Panel verdrahtet")
 
 
@@ -2864,7 +2877,14 @@ def test_v40_website():
     # oeffentliche stats sicher: kein "aufnahme"/"recording" auf der Seite
     assert "aufnahme" not in h.lower().replace("keine aufzeichnung","").replace("keine aufnahme","")
     src=open("bot.py").read()
-    assert "def _public_stats(" in src and "def _stats_write(" in src and '"/api/public/stats"' in src
+    # v4.1-W26: der Erzeuger bleibt im Monolithen (er haengt am laufenden
+    # Bot), die ROUTE ist nach nc/routes/auskunft.py gewandert. Der Vertrag
+    # ist unveraendert: es gibt beides, und die Route reicht den Erzeuger durch.
+    assert "def _public_stats(" in src and "def _stats_write(" in src
+    _ausk_ps = open("nc/routes/auskunft.py", encoding="utf-8").read()
+    assert '"/api/public/stats"' in _ausk_ps, "keine /api/public/stats-Route"
+    assert '_nc_routes_auskunft.HAKEN["oeffentlich"]["fn"] = _public_stats' in src, \
+        "die Route bekommt den Erzeuger nie — sie meldete dann dauerhaft 503"
     ok("v4.0: Website vereinheitlicht (void), Lagebild+Chart aus stats.json")
 
 
@@ -3709,7 +3729,14 @@ def test_v40_w22_highlights():
 
     src = open("bot.py").read()
     assert "_highlight_observe(src, text)" in src, "Radar nicht im Chat-Pfad"
-    assert '"/api/highlights"' in src and '"/api/highlights/config"' in src
+    # v4.1-W26: die beiden Routen liegen jetzt getrennt, und das ist Absicht.
+    # Die LESENDE ist mit den anderen Auskuenften nach nc/routes/auskunft.py
+    # gewandert; die SCHREIBENDE (POST auf /config) blieb im Monolithen, weil
+    # jener Blueprint ausdruecklich nichts schreibt. Der Vertrag ist derselbe:
+    # es gibt beide.
+    assert '"/api/highlights"' in open("nc/routes/auskunft.py", encoding="utf-8").read(), \
+        "keine lesende /api/highlights-Route"
+    assert '"/api/highlights/config"' in src, "keine /api/highlights/config-Route"
     assert "HIGHLIGHTS_ENABLED" in open("nc/cfgnorm.py").read() and \
         "HIGHLIGHT_MIN_SCORE" in open("nc/cfgnorm.py").read(), \
         "nicht konfigurierbar (Normalisierung seit W33 in nc.cfgnorm)"
@@ -5142,8 +5169,15 @@ def test_v40_w55_record_fail_backoff():
     assert "_REC_BACKOFF_UNTIL[username] = _time_mod.time() + _bo" in src, "Backoff wird nicht gesetzt"
     assert "RECORD_FAIL_BACKOFF_BASE_S * (2 ** (_n403 - RECORD_403_HITS))" in src, "nicht exponentiell aus dem 403-Streak"
     # Skip-Gate sitzt VOR dem Aufnahme-Lock.
+    # v4.1-W26: Anker nachgezogen, Vertrag unveraendert. Der Lock-Aufruf
+    # laeuft seit dem Loop-Fix ueber asyncio.to_thread — die REIHENFOLGE, die
+    # dieser Vertrag zusichert (erst Backoff pruefen, dann Lock anfordern),
+    # ist dieselbe geblieben. Der Anker haengt jetzt am Funktionsnamen statt
+    # an der Aufrufform, damit ihn die naechste Umstellung nicht wieder kippt.
     gate = src.find("if _time_mod.time() < _bo_until:")
-    lock = src.find("if not try_acquire_recording_lock(tid, username=username):")
+    lock = src.find("try_acquire_recording_lock,\n", src.find("def _handle_single_tracking"))
+    if lock < 0:
+        lock = src.find("try_acquire_recording_lock(tid, username=username)")
     assert 0 < gate < lock, "Skip-Gate nicht vor dem Aufnahme-Lock"
     # Reset bei Erfolg und bei Offline.
     assert src.count("_REC_BACKOFF_UNTIL.pop(username, None)") >= 2, "Backoff wird nicht zurückgesetzt"
