@@ -2638,6 +2638,53 @@ def _test_w30_fehlertext_und_offenes_deck():
             offen.append(p)
     assert not offen, "roher Ausnahmetext in einem Blueprint: %r" % offen
 
+    # v4.2-W3: DIE LUECKE, DIE W30 GELASSEN HAT. Der Vertrag oben verbietet
+    # `str(e)` — aber `f"JSON nicht lesbar: {e}"` ist genau derselbe Leck-Weg
+    # und stand danach noch an 22 Stellen. Ein lokal installiertes CodeQL hat
+    # sie gefunden (py/stack-trace-exposure); die Textsuche nach "str(e)"
+    # konnte das nie sehen.
+    #
+    # Geprueft wird jetzt die FORM, nicht die Zeichenkette: in einem
+    # `except … as e` darf `{e}` in keinem f-string stehen, ausser der Name
+    # laeuft durch _fehler_text. Nach AST, weil ein f-string beliebig
+    # verschachtelt sein kann und ein Regex daran zerbricht.
+    # NUR Antwort-Bauer, nicht das Log. Im Log ist der volle Wortlaut richtig
+    # — nach_aussen() schreibt ihn selbst dorthin. Ein Vertrag, der auch
+    # log.warning(f"... {e}") meldet, waere ein Dauer-Fehlalarm und flöge
+    # nach der dritten Welle raus.
+    ANTWORT = {"jsonify", "Response", "make_response", "abort", "_oauth_page"}
+
+    def _rohe_ausnahme_in_fstring(pfad):
+        baum = _ast.parse(open(pfad, encoding="utf-8").read())
+        raus = []
+        for k in _ast.walk(baum):
+            if not isinstance(k, _ast.ExceptHandler) or not k.name:
+                continue
+            for aufruf in _ast.walk(k):
+                if not (isinstance(aufruf, _ast.Call)
+                        and _ast.unparse(aufruf.func).split(".")[-1] in ANTWORT):
+                    continue
+                for j in _ast.walk(aufruf):
+                    if not isinstance(j, _ast.JoinedStr):
+                        continue
+                    for teil in j.values:
+                        # Bare `{e}` — ein Aufruf drumherum (also
+                        # _fehler_text(e)) ist genau das, was hier verlangt
+                        # wird, und faellt deshalb nicht auf.
+                        if (isinstance(teil, _ast.FormattedValue)
+                                and isinstance(teil.value, _ast.Name)
+                                and teil.value.id == k.name):
+                            raus.append((pfad, j.lineno))
+        return raus
+
+    roh_fstring = []
+    for p in sorted(_glob.glob("nc/routes/*.py")) + ["bot.py"]:
+        roh_fstring += _rohe_ausnahme_in_fstring(p)
+    assert not roh_fstring, (
+        "roher Ausnahmetext in einem f-string — dasselbe Leck wie str(e), "
+        "nur anders geschrieben. Durch _fehler_text(e, \"<funktion>\") "
+        "ersetzen: %r" % (roh_fstring[:8],))
+
     # Und in bot.py wenigstens nicht mehr in einer HTTP-Antwort.
     b = open("bot.py", encoding="utf-8").read()
     for k in _ast.walk(_ast.parse(b)):

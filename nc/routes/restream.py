@@ -253,7 +253,7 @@ def api_testpush_run():
     except Exception as e:
         if _loop_not_ready(e):
             return jsonify(ok=False, error=_t("Event-Loop startet noch — kurz erneut versuchen.")), 503
-        return jsonify(ok=False, error=f"Test-Push-Ausführung: {e}"), 500
+        return jsonify(ok=False, error=f"Test-Push-Ausführung: {_fehler_text(e, 'api_testpush_run')}"), 500
     result = _nc_testpush.classify_result(res.get("rc"), res.get("stderr", ""))
     return jsonify(ok=(result["state"] == "ok"), allowed=True,
                    target=tgt.source, is_live_key=tgt.is_live_key,

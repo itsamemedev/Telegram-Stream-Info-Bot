@@ -258,4 +258,4 @@ def api_finanzamt_csv():
                                  f'attachment; filename="einnahmen_{year}.csv"'})
     except Exception as e:
         log.warning("api_finanzamt_csv: %s", e)
-        return Response(f"Export fehlgeschlagen: {e}", status=500)
+        return Response(f"Export fehlgeschlagen: {_fehler_text(e, 'api_finanzamt_csv')}", status=500)

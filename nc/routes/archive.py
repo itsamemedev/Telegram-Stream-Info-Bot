@@ -610,7 +610,7 @@ def api_archive_upload():
         fd, target = _archive_open_unique(fname)
     except Exception as e:
         log.error(f"archive open failed: {e}")
-        return jsonify({"ok": False, "error": f"file allocation failed: {e}"}), 500
+        return jsonify({"ok": False, "error": f"file allocation failed: {_fehler_text(e, 'api_archive_upload')}"}), 500
     try:
         # Stream Werkzeug-FileStorage in den exclusively geöffneten fd
         with os.fdopen(fd, "wb") as out:
@@ -625,7 +625,7 @@ def api_archive_upload():
             if os.path.exists(target): os.remove(target)
         except Exception: pass
         log.error(f"archive upload save failed: {e}")
-        return jsonify({"ok": False, "error": f"save failed: {e}"}), 500
+        return jsonify({"ok": False, "error": f"save failed: {_fehler_text(e, 'api_archive_upload')}"}), 500
 
     # Nach-Hoc-Limit-Check (falls multipart-Stream durchkam)
     if size > _c().cfg["ARCHIVE_MAX_UPLOAD_MB"] * 1024 * 1024:

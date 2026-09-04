@@ -104,9 +104,9 @@ def api_cookies_update():
     try:
         netscape, n_parsed = _cookies_input_to_netscape(raw)
     except json.JSONDecodeError as e:
-        return jsonify(ok=False, error=f"JSON nicht lesbar: {e}"), 400
+        return jsonify(ok=False, error=f"JSON nicht lesbar: {_fehler_text(e, 'api_cookies_update')}"), 400
     except Exception as e:
-        return jsonify(ok=False, error=f"Cookies nicht verarbeitbar: {e}"), 400
+        return jsonify(ok=False, error=f"Cookies nicht verarbeitbar: {_fehler_text(e, 'api_cookies_update')}"), 400
     if n_parsed == 0:
         return jsonify(ok=False,
                        error=_t("Keine gültigen Cookies erkannt. Erwartet wird das "
@@ -131,7 +131,7 @@ def api_cookies_update():
             os.remove(tmp)
         except OSError:
             pass
-        return jsonify(ok=False, error=f"Validierung fehlgeschlagen: {e}"), 400
+        return jsonify(ok=False, error=f"Validierung fehlgeschlagen: {_fehler_text(e, 'api_cookies_update')}"), 400
 
     # 3) Auth-Cookie verlangen — sonst nicht überschreiben
     if "sessionid_ss" not in names and "sessionid" not in names:
@@ -165,7 +165,7 @@ def api_cookies_update():
             os.remove(tmp)
         except OSError:
             pass
-        return jsonify(ok=False, error=f"Schreiben fehlgeschlagen: {e}"), 500
+        return jsonify(ok=False, error=f"Schreiben fehlgeschlagen: {_fehler_text(e, 'api_cookies_update')}"), 500
 
     # Cache invalidieren → _load_cookies_dict() lädt beim nächsten Zugriff neu
     try:

@@ -19162,7 +19162,7 @@ def overlay_page():
                 with open(cand, "r", encoding="utf-8") as f:
                     return Response(f.read(), mimetype="text/html")
             except Exception as e:
-                return Response(f"overlay.html Lesefehler: {e}", status=500)
+                return Response(f"overlay.html Lesefehler: {_fehler_text(e, 'overlay_page')}", status=500)
     return Response("<h1>overlay.html fehlt</h1><p>Lege <code>overlay.html</code> nach "
                     "<code>templates/</code> (neben dashboard.html).</p>", status=404,
                     mimetype="text/html")

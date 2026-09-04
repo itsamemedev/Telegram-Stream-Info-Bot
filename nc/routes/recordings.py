@@ -332,9 +332,9 @@ def api_recording_stop(tracking_id):
         return jsonify(ok=True, username=row["username"], pid=pid,
                        note="process bereits beendet, cleanup läuft"), 200
     except PermissionError as e:
-        return jsonify(ok=False, error=f"keine Permission den Prozess zu stoppen: {e}"), 500
+        return jsonify(ok=False, error=f"keine Permission den Prozess zu stoppen: {_fehler_text(e, 'api_recording_stop')}"), 500
     except Exception as e:
-        return jsonify(ok=False, error=f"kill fehlgeschlagen: {e}"), 500
+        return jsonify(ok=False, error=f"kill fehlgeschlagen: {_fehler_text(e, 'api_recording_stop')}"), 500
     return jsonify(ok=True, username=row["username"], pid=pid,
                    message=_t("SIGTERM gesendet — file wird grazil finalisiert"))
 
@@ -433,7 +433,7 @@ def api_recording_inspect(rid):
     try:
         data = _c().run_async(ffprobe_inspect(fp), timeout=30)
     except Exception as e:
-        return jsonify(ok=False, error=f"ffprobe failed: {e}",
+        return jsonify(ok=False, error=f"ffprobe failed: {_fehler_text(e, 'api_recording_inspect')}",
                        inspect=cached), 503
     if not data:
         return jsonify(ok=False, error=_t("ffprobe lieferte nichts"),
@@ -527,7 +527,7 @@ def api_recording_waveform(rid):
     try:
         peaks = _c().run_async(compute_waveform_peaks(fp, samples), timeout=70)
     except Exception as e:
-        return jsonify(ok=False, error=f"waveform failed: {e}"), 503
+        return jsonify(ok=False, error=f"waveform failed: {_fehler_text(e, 'api_recording_waveform')}"), 503
     if peaks is None:
         return jsonify(ok=False, error=_t("Wellenform nicht berechenbar")), 502
     return jsonify(ok=True, peaks=peaks, count=len(peaks))
@@ -558,7 +558,7 @@ def api_manual_start():
             _c().trigger_manual_recording(username, duration, session=_c().scraper_session()),
             timeout=60)
     except Exception as e:
-        return jsonify(ok=False, error=f"start failed: {e}"), 503
+        return jsonify(ok=False, error=f"start failed: {_fehler_text(e, 'api_manual_start')}"), 503
     code = 200 if result.get("ok") else 400
     return jsonify(result), code
 
