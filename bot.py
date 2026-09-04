@@ -878,7 +878,7 @@ _nc_freeai.chat_sync = _freeai_chat_sync_metered
 # Modularisierung — über 100 Bot-Funktionen hingen ausschließlich an diesem
 # einen Symbol; jetzt sind sie frei von Bot-Globals. Die Konfiguration wird
 # unten per configure_db() injiziert (das Modul liest selbst KEINE Env).
-from nc.dbwrap import db_conn, configure_db  # noqa: F401
+from nc.dbwrap import db_conn, configure_db, db_async  # noqa: F401
 
 # V37: Drei Domänen-Module, möglich geworden durch die db_conn-Verschiebung —
 # diese Funktionen hängen an keinem Bot-Global mehr.
@@ -892,6 +892,7 @@ from nc import defensecfg as _nc_dcfg     # v4.1-W25: Abwehr-Einstellungen
 from nc import geocache as _nc_geocache   # v4.1-W25: Adress-Cache, EIN Schreibweg
 from nc import geoip as _nc_geoip         # v4.1-W25: ip-api-Stapelabfrage
 from nc import bandbreite as _nc_band      # v4.1-W26: Aufnahme-Durchsatz
+from nc import eventlog as _nc_eventlog   # v4.1-W29: Protokoll ohne Blockade
 from nc import outcomes as _nc_outcomes   # v4.1-W26: Ausgaenge der Aufnahmen
 from nc import suche as _nc_suche         # v4.1-W26: bestandsweite Suche
 from nc import archiverules as _nc_arules  # v4.1-W24: Auto-Archiv-Regeln
@@ -4506,15 +4507,22 @@ def log_event(kind: str, severity: str = "info", summary: str = "",
             _bp(kind, severity, summary or kind, "")   # F98: live ins Dashboard
         except Exception:
             pass
+    # v4.1-W29: NICHT mehr synchron schreiben. Der Aufruf steht in async-
+    # Funktionen (on_comment ist einer der Abzuege des Waechters vom
+    # 2026-09-03), und unter Plattenlast blockierte er dort den ganzen Bot.
+    #
+    # Die Zusicherung im Docstring bleibt woertlich gueltig — "aus jedem Pfad
+    # ohne Risiko" gilt jetzt sogar staerker: der Aufruf wartet nie mehr.
+    # Deshalb musste keine der ueber dreissig Aufrufstellen angefasst werden.
+    #
+    # Das Kuerzen bleibt HIER: nc/eventlog.py nimmt die Werte fertig
+    # zugeschnitten entgegen, damit es keine zweite Wahrheit ueber die
+    # Feldlaengen gibt.
     try:
-        with db_conn() as conn:
-            conn.execute(
-                "INSERT INTO event_log (ts, kind, severity, summary, payload) "
-                "VALUES (?,?,?,?,?)",
-                (datetime.now(timezone.utc).isoformat(),
-                 kind[:64], severity[:16], (summary or "")[:500],
-                 json.dumps(payload, ensure_ascii=False)[:8000] if payload else None))
-            conn.commit()
+        _nc_eventlog.schreibe(
+            datetime.now(timezone.utc).isoformat(),
+            kind[:64], severity[:16], (summary or "")[:500],
+            json.dumps(payload, ensure_ascii=False)[:8000] if payload else None)
     except Exception as e:
         log.debug(f"log_event({kind}) failed: {e}")
     # B65: Outbound-Webhooks feuern (best-effort, eigener Thread, blockt nie).
@@ -7957,7 +7965,12 @@ async def reaper_loop():
        wann der Lock geholt wurde und räumen ältere als 5min auf."""
     while True:
         try:
-            with db_conn() as conn:
+            # v4.1-W29: NEBEN dem Loop. Der Reaper laeuft im Minutentakt und
+            # las bisher synchron aus der Datenbank — unter Plattenlast
+            # blockierte das den ganzen Bot. Der Rumpf ist unveraendert; er
+            # bekommt die Verbindung jetzt als Argument statt sie selbst zu
+            # oeffnen, und db_async fuehrt ihn in einem Thread aus.
+            def _aufraeumen(conn):
                 rows = conn.execute(
                     "SELECT id, pid FROM trackings "
                     "WHERE recording=1 AND pid IS NOT NULL"
@@ -8005,6 +8018,8 @@ async def reaper_loop():
                         log.warning(f"reaper: STUCK lock für tracking#{tid} "
                                     f"({now_mono - spawn_at:.0f}s ohne Subprocess) — Lock freigegeben")
                 conn.commit()
+
+            await db_async(_aufraeumen)
         except Exception as e:
             # v4.1-W5: war log.warning. Der Reaper ist die EINZIGE Instanz, die
             # tote Recorder-Prozesse abraeumt — faellt er aus, bleiben Zombies in

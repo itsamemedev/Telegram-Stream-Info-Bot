@@ -10,7 +10,7 @@ GitHub-Repo trägt Historie, CI und Issues — es ist nicht der Deploy-Weg.
 
 ## Die eine Regel
 
-`bot.py` hat **26.425 Zeilen / 1,3 MB ≈ 333.000 Token**. Diese Datei wird
+`bot.py` hat **26.440 Zeilen / 1,3 MB ≈ 333.000 Token**. Diese Datei wird
 **nie** ganz gelesen und **nie** blind durchsucht. Erst fragen wo etwas steht,
 dann den Ausschnitt holen:
 
@@ -44,7 +44,7 @@ Auf diesem Windows-Rechner heißt der Interpreter **`python`** (3.13.12);
     brain_bridge.py      Adapter Bot ↔ brain/ (M2)
     brain/               KI-Kern: state, rules, router, agents, memory,
                          semantic, knowledge, scheduler, llm, report
-    nc/                  115 Fachmodule: db, scraping, restream, oauth, ledger,
+    nc/                  116 Fachmodule: db, scraping, restream, oauth, ledger,
                          i18n, …
     nc/routes/           34 Flask-Blueprints mit 317 weiteren API-Routen
     locales/             de.json, en.json — der Übersetzungskatalog
