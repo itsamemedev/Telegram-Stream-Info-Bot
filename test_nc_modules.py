@@ -3811,6 +3811,119 @@ def _test_v42_w5_selftest_und_leerer_monolith():
     ok("v4.2-W5: /api/selftest im Blueprint — keine der acht System-Routen "
        "steht mehr im Monolithen")
 
+def _test_v42_w7_motd_optik():
+    """v4.2-W7: die vier neuen MOTD-Anzeigen — und die eine Grundregel."""
+    import subprocess as _sp
+
+    motd = "tools/motd.sh"
+    quelle = open(motd, encoding="utf-8").read()
+
+    # ── (1) DIE GRUNDREGEL. Eine MOTD darf NIE einen Login blockieren. Jedes
+    # neue Kommando, das haengen kann, gehoert hinter tmo(); ein set -e wuerde
+    # bei der ersten leeren Ausgabe den Login abbrechen. Beides ist keine
+    # Stilfrage: ein blockierter Login auf einem Server ohne Konsole ist ein
+    # Ausfall, der sich nicht mehr aus der Ferne beheben laesst.
+    assert "\nset -e" not in quelle, "set -e in der MOTD — ein Login darf nie abbrechen"
+    for befehl in ("ip route show default", "tail -n 50000"):
+        stelle = quelle.find(befehl)
+        assert stelle > 0, "%r fehlt" % befehl
+        zeile = quelle[quelle.rfind("\n", 0, stelle) + 1:stelle]
+        assert "tmo " in zeile, "%r laeuft ohne Zeitdeckel: %r" % (befehl, zeile.strip())
+
+    # ── (2) EIN MESSFENSTER, NICHT ZWEI. Der Durchsatz braucht zwei Proben
+    # mit Abstand. Ein eigener sleep waere der teuerste Posten der ganzen
+    # Anzeige geworden — teurer als alles andere zusammen. Er haengt sich
+    # deshalb an das Fenster, das fuer die CPU ohnehin gewartet wird.
+    assert quelle.count('sleep "$CPU_SAMPLE"') == 1, \
+        "mehr als ein Messfenster — der Durchsatz kostet jetzt einen eigenen sleep"
+    fenster = quelle[quelle.find("CPU_LINES=\"\"; NET_RX="):]
+    fenster = fenster[:fenster.find('\nfi\n')]
+    assert fenster.find("_n1=") < fenster.find('sleep "$CPU_SAMPLE"') < fenster.find("_n2="), \
+        "die Netz-Proben liegen nicht um das Messfenster herum"
+
+    # ── (3) DIE AMPEL BRAUCHT IHRE MESSWERTE VOR DEM KOPF. Genau deshalb sind
+    # die Proben fuer Dienst und Dashboard hochgezogen worden. Rutscht eine
+    # zurueck hinter den Kopf, zeigt die Ampel wieder "alles im Griff",
+    # waehrend zwei Zeilen tiefer "gestoppt" steht — der gefaehrlichste aller
+    # Zustaende, weil er falsche Sicherheit gibt.
+    kopf = quelle.find("# ── Kopf ─")
+    for name in ("BOT_STATE=unbekannt", "DASH_STATE=aus", "LAGE=ok", "DPCT=0"):
+        assert 0 < quelle.find(name) < kopf, "%s wird erst NACH dem Kopf gesetzt" % name
+    # Und die Ursache muss die Folge schlagen: ein toter Bot macht das
+    # Dashboard unerreichbar — stuende dort die Folge, suchte der Betreiber
+    # am falschen Ende.
+    assert quelle.find('lage_setz err "Bot laeuft nicht"') < \
+        quelle.find('lage_setz err  "Dashboard nicht erreichbar"'), \
+        "die Folge wird vor der Ursache geprueft"
+
+    # ── (4) VERHALTEN, nicht Wortlaut. Die vier Anzeigen werden ausgefuehrt
+    # und ihr Ergebnis geprueft — ein Textvergleich haette bei jeder der drei
+    # Umformulierungen dieser Datei gekippt, ohne dass etwas kaputt war.
+    def _lauf(*teile, **umgebung):
+        # Erst der Vorgabewert, dann der Aufrufer — sonst entschiede die
+        # Umgebung des Testlaufs mit, und der Vertrag waere von der Maschine
+        # abhaengig, auf der er laeuft.
+        umg = dict(os.environ)
+        umg["COLOR_MODE"] = "off"
+        umg.update(umgebung)
+        return _sp.run(["bash", motd] + list(teile), capture_output=True,
+                       text=True, timeout=60, env=umg).stdout
+
+    # Der Miniverlauf: sieben Zahlen, sieben Zeichen, das Maximum als Vollblock
+    # und die Null als Grundlinie. Ohne diese Skalierung waere er bei kleinen
+    # Zahlen platt und bei grossen abgeschnitten.
+    hilf = _sp.run(["bash", "-c",
+                    "source /dev/stdin <<'X'\n%s\nX\nspark 0 1 0 12 0 3 0"
+                    % re.search(r"^spark\(\)\{.*?^\}", quelle, re.S | re.M).group(0)],
+                   capture_output=True, text=True, timeout=30).stdout
+    assert len(hilf) == 7, "der Verlauf hat %d Zeichen statt sieben: %r" % (len(hilf), hilf)
+    assert hilf[3] == "\u2588", "der Hoechstwert ist kein Vollblock: %r" % hilf
+    assert hilf[0] == hilf[2] == "\u2581", "die Null liegt nicht auf der Grundlinie: %r" % hilf
+
+    # Die Ampel: gruen nur, wenn wirklich alles steht. Geprueft mit
+    # vorgetaeuschtem systemctl/curl, weil die echten Zustaende sich in einem
+    # Testlauf nicht herstellen lassen — und ungeprueft waere ausgerechnet der
+    # Pfad, den der Betreiber jeden Tag sieht, der einzige ohne Deckung.
+    stub = tempfile.mkdtemp()
+    with open(os.path.join(stub, "systemctl"), "w", encoding="utf-8") as f:
+        f.write('#!/bin/bash\ncase "$*" in\n'
+                '  *"is-active --quiet"*) [ "$FAKE_BOT" = up ] && exit 0 || exit 1;;\n'
+                '  *"show -p Result"*) echo "exit-code";;\n'
+                '  *"show -p NRestarts"*) echo 0;;\n'
+                '  *list-unit-files*) exit 1;;\nesac\nexit 0\n')
+    with open(os.path.join(stub, "curl"), "w", encoding="utf-8") as f:
+        f.write('#!/bin/bash\n[ "$FAKE_DASH" = none ] && exit 7\n'
+                'echo \'{"ok": true, "procs": 4, "zombies": 0}\'\n')
+    for name in ("systemctl", "curl"):
+        os.chmod(os.path.join(stub, name), 0o755)
+    botdir = tempfile.mkdtemp()
+    open(os.path.join(botdir, "bot.py"), "w").close()
+
+    pfad = stub + os.pathsep + os.environ.get("PATH", "")
+    gruen = _lauf(PATH=pfad, FAKE_BOT="up", FAKE_DASH="ok",
+                  SERVICE="nightcrawler", BOT_DIR=botdir)
+    rot = _lauf(PATH=pfad, FAKE_BOT="down", FAKE_DASH="none",
+                SERVICE="nightcrawler", BOT_DIR=botdir)
+    assert "alles im Griff" in gruen, "der gesunde Zustand meldet keine gruene Ampel"
+    assert "Bot laeuft nicht" in rot, "der gestoppte Bot erreicht die Ampel nicht"
+    assert "alles im Griff" not in rot, \
+        "gruene Ampel trotz gestopptem Bot — falsche Sicherheit"
+    # Die Ampel darf die Zeile darunter nie ueberholen: was oben steht, muss
+    # unten belegt sein.
+    assert "gestoppt" in rot, "die Ampel meldet mehr, als die Zeilen darunter zeigen"
+
+    # ── (5) DER VERLAUFSBALKEN faellt zurueck, statt zu verschwinden. Auf
+    # einer 16-Farben-Handy-App gibt es keinen Verlauf; dort muss der Balken
+    # trotzdem dastehen. Ein "schoen oder gar nicht" waere hier der falsche
+    # Handel — die MOTD ist eine Statusanzeige, kein Plakat.
+    for modus in ("truecolor", "256", "16", "off"):
+        aus = _lauf(COLOR_MODE=modus, BOT_DIR=botdir)
+        assert "\u2588" in aus or "\u2592" in aus, \
+            "COLOR_MODE=%s zeigt gar keinen Balken" % modus
+
+    ok("v4.2-W7: MOTD-Optik \u2014 Ampel vor dem Kopf, ein Messfenster, Balken faellt zurueck")
+
+
 def main():
     tmp = tempfile.mkdtemp()
     configure_db(db_path=os.path.join(tmp, "t.db"), backend="sqlite")
@@ -3971,6 +4084,8 @@ def main():
     _test_v42_w5_selftest_und_leerer_monolith()
 
     _test_v42_w6_zerschnittene_saetze()
+
+    _test_v42_w7_motd_optik()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)
 

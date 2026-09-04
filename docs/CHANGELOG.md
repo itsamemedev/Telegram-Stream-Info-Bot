@@ -11,6 +11,49 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Hinzugefügt — vier neue Anzeigen in der MOTD (v4.2 W7)
+
+`tools/motd.sh` steht jetzt auf **v2.1**. Vier Anzeigen, jede aus einer Frage,
+die die alte Fassung nicht beantwortet hat:
+
+**Gesamtampel im Kopf.** Die MOTD hat acht Blöcke; wer per Handy-SSH einloggt,
+sieht davon drei, ohne zu scrollen. Der schlimmste Befund steht deshalb jetzt
+in Zeile zwei — `● alles im Griff`, `▲ Dashboard antwortet nicht sauber` oder
+`✘ Bot läuft nicht`. Rot schlägt Gelb, und innerhalb einer Stufe gewinnt der
+**erste** Befund: „Bot läuft nicht" ist die Ursache, „Dashboard nicht
+erreichbar" meist nur die Folge — stünde dort die Folge, suchte der Betreiber
+am falschen Ende.
+
+Dafür laufen die Proben für Dienst und Dashboard **vor** dem Kopf statt mitten
+in der Ausgabe. Es sind dieselben zwei Aufrufe mit denselben Zeitdeckeln, nur
+früher; die Anzeige kostet keine Millisekunde mehr.
+
+**Netzdurchsatz.** „Bot läuft" und „es geht wirklich etwas raus" sind zwei
+verschiedene Fragen — für eine Restream-Box ist die zweite die wichtigere, und
+sie blieb bisher offen. Gemessen wird im **selben** Fenster wie die CPU: ein
+Durchsatz braucht zwei Proben mit Abstand, und ein eigener `sleep` wäre der
+teuerste Posten der ganzen MOTD geworden.
+
+**Fehlerverlauf über sieben Tage.** Eine nackte 4 sagt nichts. Vier Fehler
+hinter sechs stillen Tagen sind ein Ausbruch, vier hinter sechs Tagen mit je
+dreißig sind eine Verbesserung. Ein `awk`-Durchgang über das Ende der Datei
+statt sieben `grep`-Läufen.
+
+**Verlaufsbalken in Truecolor.** Jede Zelle trägt die Farbe ihrer Position, der
+Balken liest sich als Thermometer: 85 % sind sichtbar heiß, bevor die
+90er-Schwelle reißt. In 256 und 16 Farben gäbe das Bandenbildung statt Verlauf
+— dort bleibt es bei der einen Farbe. Der Balken **verschwindet nie**: eine
+Statusanzeige ist kein Plakat, „schön oder gar nicht" wäre hier der falsche
+Handel.
+
+Der Vertrag prüft das **Verhalten**, nicht den Wortlaut: die MOTD wird mit
+vorgetäuschtem `systemctl` und `curl` in den grünen und den roten Zustand
+gefahren, der Miniverlauf gegen bekannte Zahlen gerechnet und der Balken in
+allen vier Farbmodi nachgewiesen. Dazu die Grundregel, die diese Datei trägt:
+kein `set -e`, und jedes neue Kommando, das hängen kann, hinter `tmo()` — ein
+blockierter Login auf einem Server ohne Konsole ist ein Ausfall, der sich nicht
+mehr aus der Ferne beheben lässt.
+
 ### Hinzugefügt — Sätze, die ein Inline-Tag zerschneidet (v4.2 W6)
 
 Der Übersetzer im Browser vergleicht ganze Textknoten. Ein Satz wie
