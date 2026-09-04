@@ -2435,8 +2435,12 @@ def _test_w28_abdeckung_ist_ehrlich():
     # was nicht uebersetzt ist, muss ausdruecklich als Eigenname gefuehrt
     # sein oder ein von Inline-Tags zerschnittenes Bruchstueck.
     roh = open("templates/dashboard.html", encoding="utf-8").read()
-    ohne = _re.sub(r"<script\b.*?</script\s*>|<style\b.*?</style\s*>|<!--.*?-->", "",
-                   roh, flags=_re.S | _re.I)
+    ohne = _re.sub(
+        r"<script\b.*?</script\b[^>]*>|<style\b.*?</style\b[^>]*>|<!--.*?-->",
+        "",
+        roh,
+        flags=_re.S | _re.I,
+    )
     knoten = {" ".join(_html.unescape(t).split())
               for t in _re.findall(r">([^<>]+)<", ohne)
               if t.strip() and WORT.search(t) and len(t.strip()) >= 3}
