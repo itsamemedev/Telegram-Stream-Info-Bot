@@ -16,6 +16,7 @@ wuerde ein Lauf des Werkzeugs geleistete Arbeit ueberschreiben.
 
 import argparse
 import ast
+import html as _html
 import glob
 import io
 import json
@@ -68,6 +69,49 @@ _BRUCHSTUECK_ANFANG = re.compile(r'^[)\],;:%.\u2014\u2013+*/|=&#-]')
 _BRUCHSTUECK_ENDE = re.compile(r'[(\[{=]$|\b(?:und|oder|der|die|das|von|mit|im|in|am|auf|zu|bei)$')
 
 
+# v4.1-W28: Was KEIN uebersetzbarer Text ist, obwohl es wie einer aussieht.
+#
+# Diese Liste steht ausdruecklich und namentlich hier, nicht als Heuristik:
+# eine Regel wie "alles in Grossbuchstaben ist ein Name" wuerde spaeter still
+# echte Beschriftungen verschlucken. Wer etwas hinzufuegt, muss es begruenden
+# koennen.
+#
+# Die Alternative waere ein Identitaets-Eintrag im Katalog ("Kick" -> "Kick").
+# Genau das verbietet der Vertrag aus W6, und zu Recht: ein Eintrag, der
+# nichts tut, zaehlt trotzdem als erledigt und schoent die Abdeckung.
+#
+# Drei Gruppen:
+#   * PRODUKT- UND MARKENNAMEN. "Kick" heisst auf Englisch "Kick". Wer sie
+#     uebersetzt, erfindet ein Produkt, das es nicht gibt.
+#   * TECHNISCHE BEZEICHNER, die woertlich stimmen muessen — Formatnamen,
+#     Modellkuerzel, Versionsangaben.
+#   * BEWUSST ENGLISCHE GESTALTUNG. Das "surveillance grid"-Motiv ist eine
+#     Gestaltungsentscheidung des Betreibers, keine vergessene Uebersetzung.
+#     Sie einzudeutschen ist eine Produktfrage, keine Aufgabe des Extraktors.
+_KEIN_TEXT = frozenset({
+    # Produkt- und Markennamen
+    "NIGHTCRAWLER", "LAFAP", "LAF", "Azrael", "Sentinel", "Azrael Sentinel",
+    "Kick", "Twitch", "YouTube", "Discord", "PayPal:", "· lafap.de",
+    "NIGHTCRAWLER // AI-MOD", "NIGHTCRAWLER · Stream Overlay",
+    "NIGHTCRAWLER — AI BRAIN", "NIGHTCRAWLER ▚ TIKTOK SURVEILLANCE GRID",
+    "SENTINEL\u00a0CORE", "AI-MOD", "AI-STREAM", "bot.py-SNAPSHOTS",
+    # Technische Bezeichner, die woertlich stimmen muessen
+    "CSV", "JSON", "LLM", "SYS", "CORE", "BUILD", "NEXT", "TICK", "TRACK",
+    "REC", "●REC", "LIVE", "OFF AIR", "Esc", "Control", "Changelog",
+    "Python 3.13", "4-Bit (INT4, Q4_K_M)", "ffmpeg · Voice Activity Detection",
+    # Deutsch und Englisch sind hier WORTGLEICH. Ein Katalogeintrag waere
+    # reines Rauschen — und genau den verbietet der Vertrag aus W6, weil ein
+    # Eintrag, der nichts tut, trotzdem als erledigt zaehlt.
+    "BACKUP & EXPORT", "Kick · Discord · TikTok", "[kontakt@lafap.de]",
+    "· Logik Absolut Fehl am Platz", "▚ AZRAEL BRAIN",
+    "🧠 Logik Absolut Fehl am Platz",
+    # Bewusst englische Gestaltung
+    "click to skip", "standby", "live · surveillance grid",
+    "surveillance & capture grid", "tiktok surveillance & capture grid",
+    "[ / ] focus · [esc] clear",
+})
+
+
 def _ist_uebersetzbar(text, deutsch_noetig=True, bezeichner_moeglich=True):
     """deutsch_noetig=False fuer Stellen, die per Definition Benutzertext sind.
 
@@ -85,15 +129,43 @@ def _ist_uebersetzbar(text, deutsch_noetig=True, bezeichner_moeglich=True):
     t = (text or "").strip()
     if len(t) < 3 or not _WORT.search(t):
         return False
+    if t in _KEIN_TEXT:
+        return False
     if t.startswith("{{") or t.startswith("${") or t.startswith("&"):
         return False
     # Reine Bezeichner (CSS-Klassen, IDs, Dateinamen, URLs) sind kein Text —
     # ausser an Stellen, die per Definition Benutzertext sind. "Restream-Status"
     # sieht fuer diese Pruefung aus wie ein Bezeichner und ist doch die
     # Beschreibung eines Slash-Befehls.
-    if deutsch_noetig and bezeichner_moeglich and re.fullmatch(r"[\w./#:-]+", t):
+    # v4.1-W28: Die Bezeichner-Pruefung haengt NICHT mehr an deutsch_noetig.
+    # Vorher war sie daran gekoppelt — wer die Deutsch-Heuristik abschaltete
+    # (weil an einer Stelle per Definition Benutzertext steht), verlor damit
+    # zugleich den Schutz vor Dateinamen und CSS-Werten. Beides sind getrennte
+    # Fragen: "ist das ueberhaupt Text?" und "ist das DEUTSCHER Text?".
+    if bezeichner_moeglich and re.fullmatch(r"[\w./#:-]+", t):
         return False
+    # v4.1-W28: URLs und Befehle sind Daten, kein Text — auch mitten im Satz.
+    # Ein `git clone https://…` im Dashboard ist zum Abtippen da; uebersetzt
+    # waere er falsch, und ein Katalogeintrag dafuer wuerde ihn irgendwann
+    # kaputtmachen.
     if t.startswith("http://") or t.startswith("https://"):
+        return False
+    # Ein Befehl zum Abtippen ist kein Satz. Nur wenn er wirklich mit einem
+    # Kommando beginnt — "Die Adresse muss mit https:// beginnen." ist ein
+    # deutscher Satz, der eine URL bloss ERWAEHNT, und der gehoert uebersetzt.
+    if re.match(r"(git|curl|wget|ssh|scp|sudo|python3?|pip3?|systemctl|docker)\s",
+                t) and ("://" in t or "/" in t.split()[-1]):
+        return False
+    # Pfade, Dateinamen und Optionen. Sie fallen sonst durch, wo die
+    # Bezeichner-Pruefung ausgesetzt ist (bezeichner_moeglich=False, also
+    # zwischen zwei Tags). "docs/DEPLOY.md" uebersetzt man nicht — wer es
+    # taete, schickte den Betreiber zu einer Datei, die es nicht gibt, und
+    # "onfail=ignore" ist eine ffmpeg-Option, die woertlich stimmen muss.
+    # Ein blosser Schraegstrich reicht NICHT als Merkmal: "laeuft/vorbei" ist
+    # eine Beschriftung, kein Pfad. Es braucht eine Dateiendung oder ein
+    # Gleichheitszeichen.
+    if " " not in t and re.fullmatch(r"[\w./#:=+-]+", t) and (
+            "=" in t or re.search(r"\.[A-Za-z0-9]{1,5}$", t)):
         return False
     # v4.1-W6: Bruchstuecke aussortieren. Der Uebersetzer im Browser vergleicht
     # GANZE Textknoten; ein Stueck wie ") — bitte durchsehen" oder
@@ -103,8 +175,6 @@ def _ist_uebersetzbar(text, deutsch_noetig=True, bezeichner_moeglich=True):
     if _MARKUP.search(t):
         return False
     if _BRUCHSTUECK_ANFANG.match(t) or _BRUCHSTUECK_ENDE.search(t):
-        return False
-    if "\n" in t:
         return False
     return bool(_DEUTSCH.search(t)) if deutsch_noetig else True
 
@@ -180,10 +250,34 @@ def _html_strings(pfad):
     ohne_js = re.sub(r"<script\b.*?</script\s*>|<style\b.*?</style\s*>|<!--.*?-->", "",
                      roh, flags=re.S | re.I)
     raus = set()
+    # v4.1-W28: Ein Text ZWISCHEN zwei Tags ist per Definition Benutzertext.
+    #
+    # Vorher lief diese Stelle mit der Deutsch-Heuristik, die einen Umlaut oder
+    # ein Funktionswort verlangt. Damit fielen "Aufnahmen", "Analysieren",
+    # "BEFUNDE", "7-TAGE-TREND" und rund zweihundert weitere Beschriftungen
+    # heraus — sie sahen fuer die Pruefung aus wie Bezeichner. Der Katalog
+    # meldete trotzdem "0 fehlend", weil er nur zaehlt, was er eingesammelt
+    # hat. Gemessen am Dashboard waren 82 % der Textknoten nie erfasst.
+    #
+    # Die Ausnahme, die W18 fuer <th>Datei</th> beschrieben hat, gilt hier
+    # genauso und wird jetzt auch angewandt: was zwischen zwei Tags steht, ist
+    # im DOM ein vollstaendiger Textknoten und niemals eine CSS-Klasse.
     for t in re.findall(r">([^<>]+)<", ohne_js):
-        if _ist_uebersetzbar(t):
-            raus.add(t.strip())
+        # v4.1-W28: Entities AUFLOESEN. Der Browser sieht den dekodierten
+        # Text: aus `BACKUP &amp; EXPORT` im Quelltext wird im DOM der Knoten
+        # "BACKUP & EXPORT". Ein Katalogschluessel mit `&amp;` traefe ihn nie
+        # — 22 solcher Eintraege waren auf einen Schlag tot, ohne dass die
+        # Abdeckungszahl es gezeigt haette.
+        t = _html.unescape(t)
+        if _ist_uebersetzbar(t, deutsch_noetig=False, bezeichner_moeglich=False):
+            # v4.1-W28: Innere Umbrueche zu EINEM Leerzeichen. Der Quelltext
+            # bricht Hilfetexte um und rueckt sie ein; haenge der Schluessel
+            # daran, wuerde jede Umformatierung des HTML ihn stillschweigend
+            # toeten. Der Nachschlag im Browser normalisiert genauso — beide
+            # Seiten muessen dieselbe Regel benutzen, sonst trifft nichts.
+            raus.add(" ".join(t.split()))
     for a in re.findall(r'(?:placeholder|title|aria-label|alt)="([^"]{3,})"', ohne_js):
+        a = _html.unescape(a)
         if _ist_uebersetzbar(a) and not _SKIP_ATTR_WERTE.match(a):
             raus.add(a.strip())
     js = "\n".join(re.findall(r"<script\b[^>]*>(.*?)</script\s*>", roh,
@@ -200,7 +294,9 @@ def _html_strings(pfad):
         if len(stueck) >= 3 and _WORT.search(stueck):
             raus.add(stueck)
     for a, b, c in re.findall(r"'([^'\\\n]{4,})'|\"([^\"\\\n]{4,})\"|`([^`\\\n]{4,})`", js):
-        for stueck in _js_textstuecke(a or b or c):
+        # v4.1-W28: auch hier Entities aufloesen — was per innerHTML ins DOM
+        # geht, steht dort dekodiert ("&mdash;" wird zu "—").
+        for stueck in _js_textstuecke(_html.unescape(a or b or c)):
             raus.add(stueck)
     return raus
 
@@ -238,7 +334,14 @@ def _py_strings(pfad):
 
     def _aus_knoten(n, deutsch_noetig=True):
         if isinstance(n, ast.Constant) and isinstance(n.value, str):
-            if _ist_uebersetzbar(n.value, deutsch_noetig):
+            # v4.1-W28: Wo die Deutsch-Heuristik ausgesetzt ist (Slash-
+            # Beschreibungen), muss auch die Bezeichner-Pruefung aussetzen.
+            # Seit beide entkoppelt sind, greift sie sonst zu: "Restream-Status"
+            # ist die Beschreibung eines Befehls und sieht bloss aus wie ein
+            # Bezeichner (der Fall, den W6 schon beschrieben hat). Der
+            # Verwaisten-Melder hat genau das gemeldet.
+            if _ist_uebersetzbar(n.value, deutsch_noetig,
+                                 bezeichner_moeglich=deutsch_noetig):
                 raus.add(n.value.strip())
         elif isinstance(n, ast.JoinedStr):
             for x in n.values:
