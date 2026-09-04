@@ -198,7 +198,7 @@ flowchart TB
 
     BOT["bot.py<br/>Monolith · 26.346 Zeilen<br/>Scraper · Recorder · Restream<br/>Flask-Dashboard · 37 eigene Routen"]:::core
 
-    BOT -->|configure| NC["nc/ — 119 Fachmodule<br/>Schema · OAuth · Restream<br/>Ledger · Moderation · Intel"]:::lib
+    BOT -->|configure| NC["nc/ — 120 Fachmodule<br/>Schema · OAuth · Restream<br/>Ledger · Moderation · Intel"]:::lib
     NC --> RT["nc/routes/ — 35 Blueprints<br/>323 weitere API-Routen"]:::lib
     BOT --> TPL["templates/<br/>Dashboard · Overlay · PWA"]:::lib
     BOT --> BR["brain_bridge.py"]:::lib
@@ -846,7 +846,7 @@ nicht greifen, gekippte Verträge in `test_restream.py`.
 | Aktuelle Version | **4.2** — „Zerlegter Kern" (2026.09) |
 | Flask-Routen | 360 (37 in `bot.py` · 323 in `nc/routes/`) |
 | Discord-Slash-Commands | 45 |
-| Fachmodule | 119 in `nc/` (+35 in `nc/routes/`, +3 in `nc/intel/`), 10 in `brain/` |
+| Fachmodule | 120 in `nc/` (+35 in `nc/routes/`, +3 in `nc/intel/`), 10 in `brain/` |
 | Sentinel-Agenten | 13 |
 | Konfigurationsvariablen | ~500 |
 | Sprachen | Deutsch (Quelle), Englisch |

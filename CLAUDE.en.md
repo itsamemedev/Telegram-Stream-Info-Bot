@@ -51,7 +51,7 @@ On the author's Windows machine the interpreter is called **`python`**
     brain_bridge.py      adapter bot ↔ brain/ (M2)
     brain/               AI core: state, rules, router, agents, memory,
                          semantic, knowledge, scheduler, llm, report
-    nc/                  119 domain modules: db, scraping, restream, oauth, ledger, i18n, …
+    nc/                  120 domain modules: db, scraping, restream, oauth, ledger, i18n, …
     nc/routes/           35 Flask blueprints with 323 further API routes
     locales/             de.json, en.json — the translation catalogue
     templates/           dashboard.html, brain.html, overlay.html, PWA

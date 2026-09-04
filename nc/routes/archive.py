@@ -35,6 +35,7 @@ from nc.archive import (get_archive_entries_paged, run_archive_file_check,
 from nc.textmore import _safe_archive_filename
 from nc.intel import library as _intel_lib
 from nc import archivename as _nc_archivename
+from nc import sicherpfad as _nc_sicherpfad   # v4.2-W2
 from nc.sqlutil import _archive_where_clause
 
 bp = Blueprint("archive", __name__)
@@ -248,7 +249,16 @@ def rename_archive_entry(eid: int, new_name: str):
     # ist unnötiger File-Bounce). Jetzt prüfen wir beides.
     base, ext = os.path.splitext(candidate)
     target_filename = candidate
-    target_path = os.path.join(_c().cfg["ARCHIVE_DIR"], target_filename)
+    # v4.2-W2: derselbe Riegel wie ueberall. Der ALTE Pfad wurde oben schon
+    # gegen ARCHIVE_DIR geprueft, der neue bisher nicht — die Sanitisierung
+    # in _safe_archive_filename haelt zwar (basename + Zeichensatz), aber sie
+    # steht in einem anderen Modul und ist an dieser Stelle nicht zu sehen.
+    # Ein Riegel, den man beim Lesen der Zeile nicht bemerkt, ist beim
+    # naechsten Umbau weg.
+    try:
+        target_path = _nc_sicherpfad.sicher_join(_c().cfg["ARCHIVE_DIR"], target_filename)
+    except ValueError:
+        return False, "neuer Name verlaesst das Archivverzeichnis"
 
     def _target_in_use(path):
         if os.path.exists(path):
@@ -279,7 +289,11 @@ def rename_archive_entry(eid: int, new_name: str):
         if not _target_in_use(target_path):
             break
         target_filename = f"{base}_{n}{ext}"
-        target_path = os.path.join(_c().cfg["ARCHIVE_DIR"], target_filename)
+        try:
+            target_path = _nc_sicherpfad.sicher_join(_c().cfg["ARCHIVE_DIR"],
+                                                     target_filename)
+        except ValueError:
+            return False, "neuer Name verlaesst das Archivverzeichnis"
     else:
         return False, "zu viele Namenskollisionen"
 

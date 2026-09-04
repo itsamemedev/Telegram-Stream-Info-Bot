@@ -1246,12 +1246,27 @@ def test_twitch_ingest_default():
     # benutzen. Geprueft wird unveraendert dasselbe — und zusaetzlich, dass der
     # Bot die Vorgabe wirklich von dort holt statt eine eigene zu halten.
     cfg = open("nc/restreamcfg.py", encoding="utf-8").read()
-    m = re.search(
-        r'ingest\s*\([^)]*\)\s*:[\s\S]*?"twitch"\s*:\s*"([^"]+)"',
-        cfg
-    )
-    assert m, "Twitch-Ingest-Default in nc/restreamcfg.py nicht gefunden"
-    parsed = urlparse(m.group(1))
+    # ANKER GEWANDERT (v4.2-W2, nicht der Vertrag). Der alte Anker war ein
+    # Quelltext-Muster `ingest\s*\([^)]*\)\s*:` — es zielte auf eine Funktion,
+    # deren Signatur inzwischen `def ingest(name) -> str:` lautet. Zwischen
+    # `)` und `:` steht ein Rueckgabetyp, `\s*` passt darauf nicht. Damit
+    # konnte das Muster NICHT mehr greifen, und der Vertrag haette den
+    # Ingest-Default nie wieder geprueft.
+    #
+    # Ersetzt durch einen VERHALTENSTEST: gefragt ist, was die Vorgabe
+    # WIRKLICH liefert, nicht wie sie im Quelltext geschrieben steht. Das ist
+    # dieselbe Entscheidung wie bei W105 (Audit-Log) — nur das Verhalten
+    # zaehlt, und ein Verhaltenstest ueberlebt jede Umformulierung.
+    import os as _os
+    from nc import restreamcfg as _rcfg
+    _sicher = _os.environ.pop("TWITCH_INGEST_URL", None)
+    try:
+        vorgabe = _rcfg.ingest("twitch")
+    finally:
+        if _sicher is not None:
+            _os.environ["TWITCH_INGEST_URL"] = _sicher
+    assert vorgabe, "Twitch-Ingest-Default in nc/restreamcfg.py nicht gefunden"
+    parsed = urlparse(vorgabe)
     assert parsed.hostname == "ingest.global-contribute.live-video.net", \
         "globaler Twitch-Ingest fehlt als Default"
     # Geprueft wird die VORGABE, nicht die Zeichenkette: dass der alte Server
@@ -4934,16 +4949,29 @@ def test_v40_w48_loop_lag_monitor():
 def test_v40_w49_oauthpage():
     """v4.0-W49: Monolith-Abtrag — die zwei OAuth-Rückmeldeseiten (_twitch_oauth_page,
        _kick_oauth_page) sind nach nc.oauthpage gewandert. Bitgenau, mit dem jeweils
-       eigenen Escaping (Twitch: html.escape inkl. Quotes; Kick: manuell nur &<>)."""
+       eigenen Escaping. v4.2-W2: beide escapen jetzt gleich (html.escape
+       inkl. Quotes) — Kick hatte bis dahin manuelles Escaping ohne
+       Anfuehrungszeichen."""
     from nc import oauthpage as OP
     # Twitch: html.escape → escaped inkl. Quotes; ok/Fehler-Farbe.
     tp = OP.twitch(True, "<b>x</b> & \"q\"")
     assert "&lt;b&gt;" in tp and "&amp;" in tp and "&quot;" in tp, "Twitch escaping falsch"
     assert "#0f9d76" in OP.twitch(True, "x") and "#e11d48" in OP.twitch(False, "x"), "Twitch-Farbe falsch"
-    # Kick: manuelles Escaping (nur &<>, KEINE Quotes) — bewusst so.
+    # Kick: seit v4.2-W2 ebenfalls html.escape INKLUSIVE Quotes.
+    #
+    # VERTRAG GEAENDERT, nicht nur der Anker. Bis hierher hielt er fest, dass
+    # Kick nur &<> ersetzt und Anfuehrungszeichen stehen laesst — "bewusst
+    # so", weil bitgenau aus dem Monolithen uebernommen. Ein automatischer
+    # CodeQL-Fix (#48) hat daraus html.escape(str(msg), quote=True) gemacht,
+    # und das ist die staerkere Zusicherung: der Text landet in einer Seite,
+    # deren Attribute mit " begrenzt sind. Ein nicht ersetztes " kann dort
+    # ausbrechen. Der alte Vertrag hat also das schwaechere Verhalten
+    # festgeschrieben — deshalb wird hier die Erwartung angehoben und nicht
+    # der Code zurueckgedreht. Beide Seiten escapen jetzt gleich.
     kp = OP.kick(False, "<a> & \"q\"")
     assert "&lt;a&gt;" in kp and "&amp;" in kp, "Kick escaping falsch"
-    assert "\"q\"" in kp, "Kick escaped Quotes fälschlich (manuelles Escaping erwartet)"
+    assert "&quot;" in kp and "\"q\"" not in kp, \
+        "Kick laesst Anfuehrungszeichen stehen — in einem Attribut ist das ein Ausbruch"
     assert "#8FB98F" in OP.kick(True, "x") and "#E0A0A0" in OP.kick(False, "x"), "Kick-Farbe falsch"
     ok("v4.0-w49: nc.oauthpage — beide Seiten bitgenau, Escaping je Plattform erhalten")
 
@@ -8192,9 +8220,28 @@ def test_v41_w10_codeql_befunde():
     assert "usedforsecurity=False" in news, "Hash nicht als Nicht-Sicherheitshash deklariert"
 
     # (5) Der HTML-Filter im Extraktor endet auch bei '</script >'.
-    ex = open("tools/i18n_extract.py", encoding="utf-8").read()
-    assert "</script\\s*>" in ex and "re.I" in ex, \
-        "Skript-Ende nur in einer Schreibweise erkannt"
+    # ANKER GEWANDERT (v4.2-W2, nicht der Vertrag). Er suchte die Zeichenkette
+    # "</script\\s*>" im Quelltext. Am 04.09. haben zwei automatische
+    # CodeQL-Fixes (#43, #47) das Muster umformuliert — die Absicht blieb, die
+    # Schreibweise nicht, und der Vertrag kippte an einer Aenderung, die gar
+    # kein Verstoss war. Geprueft wird jetzt das VERHALTEN der Muster.
+    import importlib.util as _iu
+    _sp = _iu.spec_from_file_location("_i18n_extract_pruef", "tools/i18n_extract.py")
+    _ex = _iu.module_from_spec(_sp)
+    _sp.loader.exec_module(_ex)
+    for _schreibweise in ("</script>", "</script >", "</SCRIPT\n>"):
+        _probe = ('<p>vorher</p><script>var x="<p>drin</p>";' + _schreibweise
+                  + "<p>nachher</p>")
+        _weg = _ex.RE_BLOECKE_WEG.sub("", _probe)
+        assert "drin" not in _weg, \
+            ("Skript-Ende %r nicht erkannt — der Rest der Datei wird als "
+             "Skript verschluckt, alle folgenden Textknoten fehlen im "
+             "Katalog" % _schreibweise)
+        assert "nachher" in _weg, \
+            ("Skript-Ende %r frisst den Rest der Datei" % _schreibweise)
+        assert _ex.RE_JS_INHALT.findall(_probe), \
+            ("JS-Inhalt bei %r nicht gefunden — die T()-Aufrufe im Skript "
+             "kaemen nie in den Katalog" % _schreibweise)
     ok("v4.1-W10: Kommandozeile, Ausliefer-Pfade, Log-Pfad, Hash und HTML-Filter")
 
 

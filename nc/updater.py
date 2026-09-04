@@ -45,6 +45,8 @@ import urllib.request
 import zipfile
 from dataclasses import dataclass, field
 
+from nc import sicherpfad as _nc_sicherpfad   # v4.2-W2: ein Riegel fuer alle
+
 # ───────────────────────────────────────────────────────────────────────
 # Vorgaben
 # ───────────────────────────────────────────────────────────────────────
@@ -285,10 +287,21 @@ def _abs(rel: str) -> str:
 
     Die Pruefung ist bewusst doppelt: `normalize()` faengt `../` im Archiv-
     namen, diese hier faengt zusaetzlich Symlinks und Sonderfaelle des
-    Dateisystems. Ein Zip-Slip schreibt sonst nach /etc."""
+    Dateisystems. Ein Zip-Slip schreibt sonst nach /etc.
+
+    v4.2-W2: Der Anspruch stand schon im Kommentar, die Umsetzung hielt ihn
+    NICHT ein. `os.path.abspath` loest Symlinks nicht auf — steht in der
+    Wurzel ein Link `raus -> /etc`, dann ist `abspath(root/raus/passwd)`
+    genau `root/raus/passwd`, die startswith-Pruefung sagt "drin", und
+    geschrieben wird nach /etc/passwd. Nur `realpath` loest den Link auf.
+    Nachgemessen: abspath+startswith = True, realpath+commonpath = False.
+
+    Ausserdem `commonpath` statt `startswith`: `/opt/nc2` beginnt mit
+    `/opt/nc`, liegt aber nicht darin.
+    """
     root = _root()
     p = os.path.abspath(os.path.join(root, rel))
-    if p != root and not p.startswith(root + os.sep):
+    if not _nc_sicherpfad.unter(root, p):
         raise ValueError(f"Pfad verlaesst die Wurzel: {rel}")
     return p
 
@@ -669,10 +682,18 @@ def rollback(name: str) -> dict:
     """Ein Backup zurueckspielen. Nur Dateien aus genau diesem ZIP."""
     if not _CFG.enabled:
         return {"ok": False, "error": "Update-Schreiben ist abgeschaltet."}
-    safe = os.path.basename(name or "")
+    # v4.2-W2: derselbe Riegel wie ueberall. Die Praefix-/Suffix-Pruefung
+    # bleibt — sie sagt "nur ein Backup, kein beliebiges ZIP" und ist damit
+    # eine fachliche Regel, keine Pfad-Pruefung. Die Pfad-Pruefung macht
+    # sicher_join, und zwar mit realpath: ein Symlink im Backup-Ordner
+    # ueberlebt jede reine Namenspruefung.
+    safe = _nc_sicherpfad.sicherer_name(name or "", vorgabe="")
     if not (safe.startswith("nc_update_") and safe.endswith(".zip")):
         return {"ok": False, "error": "Unbekanntes Backup."}
-    path = os.path.join(_root(), BACKUP_DIR, safe)
+    try:
+        path = _nc_sicherpfad.sicher_join(os.path.join(_root(), BACKUP_DIR), safe)
+    except ValueError:
+        return {"ok": False, "error": "Unbekanntes Backup."}
     if not os.path.isfile(path):
         return {"ok": False, "error": f"Backup {safe} nicht gefunden."}
     restored, failed = [], []

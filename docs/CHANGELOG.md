@@ -11,6 +11,92 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Behoben — `main` war rot, und zwei automatische Sicherheits-Fixes waren der Grund (v4.2 W2)
+
+Am 04.09. wurden sechs von GitHub erzeugte CodeQL-Auto-Fixes (#43–#48) direkt
+nach `main` gemergt. **Zwei davon haben Schaden angerichtet, einer hat den
+Testlauf zerstört.** Die CI von PR #42 lief noch gegen den Stand davor und war
+grün — der Bruch fiel erst beim nächsten `fetch` auf.
+
+| PR | Datei | Urteil |
+|---|---|---|
+| #44 | `nc/news.py` | **Regression** — sha1 → sha256 |
+| #46 | `test_restream.py` | **kaputt** — die neue Zusicherung kann nicht greifen |
+| #48 | `nc/oauthpage.py` | **Verbesserung** — behalten |
+| #43, #45, #47 | Extraktor, Verträge | Umformulierungen, gleichwertig |
+
+**#44 ist der schwerwiegendste.** `item_id()` trug seit v4.1-W10 genau den
+richtigen Fix — `hashlib.new("sha1", …, usedforsecurity=False)` — mit dieser
+Begründung darüber:
+
+> *„Der WERT bleibt derselbe; ein Wechsel auf sha256 würde jede bereits
+> veröffentlichte Meldung einmalig zur Neu-Meldung machen, weil ihre Id sich
+> ändert."*
+
+Der Auto-Fix hat diesen Kommentar **gelöscht** und genau die Änderung gemacht,
+vor der er warnt. Der CodeQL-Befund ist damit formal erledigt und der Dedup
+kaputt: jede bereits veröffentlichte News-Meldung wäre einmal neu erschienen.
+Zurückgesetzt.
+
+**#46 hat eine funktionierende Zusicherung durch eine unmögliche ersetzt.**
+Aus `assert "ingest.global-contribute.live-video.net" in cfg` wurde ein
+Regex-Muster `ingest\s*\([^)]*\)\s*:…`, das auf die Signatur
+`def ingest(name) -> str:` **nicht passen kann** — zwischen `)` und `:` steht
+ein Rückgabetyp. Damit schlug `test_restream.py` fehl, und der Ingest-Default
+wäre nie wieder geprüft worden. Ersetzt durch einen Verhaltenstest.
+
+**#48 wird behalten und der Vertrag angehoben.** `nc.oauthpage.kick()` ersetzte
+manuell nur `&<>` und ließ Anführungszeichen stehen — „bewusst so", weil
+bitgenau aus dem Monolithen übernommen. `html.escape(…, quote=True)` ist die
+stärkere Zusicherung. Hier wurde der Vertrag korrigiert, nicht der Code
+zurückgedreht.
+
+**Drei weitere Anker gewandert, keiner gelöscht** — Muster, deren Absicht hielt,
+deren Schreibweise die Auto-Fixes aber änderten. Die betroffenen Ausdrücke in
+`tools/i18n_extract.py` und `tools/ncpatch.py` liegen jetzt als benannte
+Konstanten an **einer** Stelle (`RE_BLOECKE_WEG`, `RE_JS_INHALT`,
+`RE_SCRIPT_WEG`, `RE_SCRIPT_BLOCK`) und werden über ihr **Verhalten** geprüft,
+nicht über ihre Schreibweise: `</script>`, `</script >` und `</SCRIPT\n>`
+müssen alle drei als Ende gelten.
+
+### Geändert — ein Riegel gegen Pfad-Ausbruch, überall derselbe (v4.2 W2)
+
+`nc/sicherpfad.py` (neu): `sicherer_name`, `unter`, `sicher_join`,
+`pruefe_unter`.
+
+Die 241 offenen CodeQL-Befunde sind zum weit überwiegenden Teil **„Uncontrolled
+data used in path expression"** — und nachgesehen trug fast jede betroffene
+Stelle bereits eine Prüfung, nur jede in einer anderen Form: `abspath` +
+`startswith` + `raise` (updater), `basename` + Zeichensatz-Regex (Archiv),
+`basename` + Präfix-Erlaubnisliste (rollback), Mitgliedschaft in einem Tupel
+(i18n), Nachschlagen in einem Dict (ops). Fünf Formen für eine Frage. Folge:
+die statische Analyse erkennt keine davon, und eine neue Route erbt keinen
+Riegel.
+
+**Ein echtes Loch war trotzdem dabei.** `nc/updater._abs` prüfte mit
+`os.path.abspath` — das löst **keine Symlinks** auf. Steht in der Wurzel ein
+Link `raus -> /etc`, dann ist `abspath(root/raus/passwd)` genau
+`root/raus/passwd`, die `startswith`-Prüfung sagt „drin", und geschrieben wird
+nach `/etc/passwd`. Genau der Fall, den der Kommentar darüber ausschließen
+wollte („Ein Zip-Slip schreibt sonst nach /etc"). Nachgemessen:
+`abspath+startswith = True`, `realpath+commonpath = False`.
+
+Ebenso `commonpath` statt `startswith`: `/daten/archiv2` beginnt mit
+`/daten/archiv`, liegt aber nicht darin.
+
+Angewendet in `nc/updater.py` (`_abs`, `rollback`), `nc/routes/archive.py`
+(beide Zielpfade beim Umbenennen). `nc/i18n.py` schlägt die Katalogdatei jetzt
+in `KATALOGDATEI` nach, statt `"%s.json" % sprache` zu bauen — die
+Erlaubnisliste steht damit dort, wo sie wirkt.
+
+Sieben Negativtests, alle feuern.
+
+**Was das an den 241 Befunden ändert, ist offen.** Die Alarme lassen sich aus
+dieser Sitzung heraus weder auflisten (API gesperrt) noch nachrechnen (kein
+CodeQL lokal). Ob die statische Analyse den neuen Riegel als solchen erkennt,
+sagt erst der nächste Lauf auf `main`.
+
+
 ### Geändert — Schnappschuss und Messwerte raus, ohne Geheimnisse (v4.2 W1)
 
 Zweite Teillieferung von Vorschlag 2. `/api/system/config_snapshot` und

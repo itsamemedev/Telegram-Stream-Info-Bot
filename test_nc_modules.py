@@ -3181,6 +3181,154 @@ def _test_v42_w1_schnappschuss_ohne_geheimnis():
     ok("v4.2-W1: config_snapshot + check_timing im Blueprint, kein Geheimnis "
        "im Kontext, Zustand als Referenz")
 
+def _test_v42_w2_ein_riegel_gegen_pfadausbruch():
+    """v4.2-W2: ein Riegel, ueberall derselbe — und er faengt Symlinks."""
+    import ast as _ast
+    import os as _os
+    import re as _re
+    import tempfile as _tf
+
+    def _nackt(pfad):
+        """Quelltext OHNE Kommentare und ohne Docstrings.
+
+        Dreimal ist in dieser Reihe ein Vertrag auf seine eigene Begruendung
+        angeschlagen (W32 __file__, W33 Versionszahl, hier). Ein Vertrag, der
+        den Kommentar meldet, der ihn erklaert, wird beim naechsten Mal
+        geloescht statt gelesen — deshalb einmal richtig: ast.unparse wirft
+        Kommentare weg, die Docstrings raeumen wir selbst heraus.
+        """
+        baum = _ast.parse(open(pfad, encoding="utf-8").read())
+        for k in _ast.walk(baum):
+            if not isinstance(k, (_ast.Module, _ast.FunctionDef,
+                                  _ast.AsyncFunctionDef, _ast.ClassDef)):
+                continue
+            if (k.body and isinstance(k.body[0], _ast.Expr)
+                    and isinstance(k.body[0].value, _ast.Constant)
+                    and isinstance(k.body[0].value.value, str)):
+                k.body.pop(0)
+                if not k.body:
+                    k.body.append(_ast.Pass())
+        return _ast.unparse(_ast.fix_missing_locations(baum))
+
+    from nc import sicherpfad as S
+
+    # ── (1) Der Name verliert jeden Pfadanteil ─────────────────────────────
+    for roh, erwartet in (("../../etc/passwd", "passwd"),
+                          ("/etc/shadow", "shadow"),
+                          ("a/b/c.txt", "c.txt"),
+                          (".", "datei.bin"),
+                          ("..", "datei.bin"),
+                          ("", "datei.bin")):
+        assert S.sicherer_name(roh) == erwartet, (roh, S.sicherer_name(roh))
+    # Windows-Trenner: auf Linux ist "\\" ein NORMALES Zeichen, os.path.basename
+    # laesst "..\\..\\x" komplett stehen. Wer nur basename benutzt, haelt das
+    # fuer einen Dateinamen — auf einem Windows-Ziel ist es ein Ausbruch.
+    assert S.sicherer_name("..\\..\\windows\\x.dll") == "x.dll", \
+        ("Windows-Trenner nicht behandelt: %r. os.path.basename laesst auf "
+         "Linux jeden Backslash stehen — der Name sieht harmlos aus und ist "
+         "auf einem Windows-Ziel ein Ausbruch"
+         % S.sicherer_name("..\\..\\windows\\x.dll"))
+    # Harmloses bleibt unangetastet.
+    assert S.sicherer_name("norm al-1(a).mp4") == "norm al-1(a).mp4"
+
+    # ── (2) DER PUNKT DER WELLE: realpath faengt, was abspath durchlaesst.
+    # Steht im Zielverzeichnis ein Symlink nach draussen, dann ist
+    # abspath(basis/link/datei) == basis/link/datei — jede startswith-Pruefung
+    # sagt "drin", geschrieben wird nach /etc. Genau so pruefte nc/updater.py
+    # bei der Update-Entpackung, mit "Ein Zip-Slip schreibt sonst nach /etc"
+    # als Kommentar darueber.
+    basis = _tf.mkdtemp()
+    _os.symlink("/etc", _os.path.join(basis, "raus"))
+    ausbruch = _os.path.join(basis, "raus", "passwd")
+    assert _os.path.abspath(ausbruch).startswith(basis + _os.sep), \
+        "Vorbedingung: abspath haelt den Ausbruch faelschlich fuer sicher"
+    assert S.unter(basis, ausbruch) is False, \
+        "unter() laesst einen Symlink-Ausbruch durch — der ganze Riegel taugt nichts"
+    assert S.unter(basis, _os.path.join(basis, "drin.txt")) is True
+
+    # Nachbarverzeichnis mit gleichem Praefix: /x/archiv2 beginnt mit
+    # /x/archiv, liegt aber nicht darin. Ein startswith ohne Trenner irrt.
+    eltern = _tf.mkdtemp()
+    a = _os.path.join(eltern, "archiv"); _os.makedirs(a)
+    b = _os.path.join(eltern, "archiv2"); _os.makedirs(b)
+    assert _os.path.join(b, "x").startswith(a), "Vorbedingung des Praefix-Falls"
+    assert S.unter(a, _os.path.join(b, "x")) is False, \
+        "unter() verwechselt ein Nachbarverzeichnis mit gleichem Praefix"
+
+    # ── (3) sicher_join wirft, statt still danebenzugreifen. Ein Rueckfall
+    # auf einen Ersatzpfad waere hier falsch: der Aufrufer schriebe in eine
+    # Datei, die er nicht gemeint hat.
+    assert S.sicher_join(basis, "../../etc/passwd") == _os.path.join(basis, "passwd")
+    # Der Fall, den KEINE reine Namenspruefung faengt: der Name ist harmlos,
+    # aber die Datei unter dem Namen ist ein Symlink nach draussen. Wer nur
+    # basename() und einen Zeichensatz prueft, schreibt hier nach /etc.
+    _os.symlink("/etc/passwd", _os.path.join(basis, "harmlos.txt"))
+    try:
+        S.sicher_join(basis, "harmlos.txt")
+        raise AssertionError(
+            "sicher_join laesst einen Symlink auf /etc/passwd durch — genau "
+            "das faengt eine reine Namenspruefung nicht")
+    except ValueError:
+        pass
+
+    # ── (4) Die Aufrufstellen benutzen ihn wirklich ────────────────────────
+    up = _nackt("nc/updater.py")
+    assert "_nc_sicherpfad.unter(root, p)" in up, \
+        "nc/updater._abs prueft nicht mehr ueber nc.sicherpfad"
+    assert "p.startswith(root + os.sep)" not in up, \
+        ("nc/updater.py prueft wieder mit startswith+abspath — das laesst "
+         "einen Symlink-Ausbruch durch")
+    assert "_nc_sicherpfad.sicher_join(" in up, "rollback ohne Riegel"
+
+    arc = _nackt("nc/routes/archive.py")
+    assert "os.path.join(_c().cfg['ARCHIVE_DIR'], target_filename)" not in arc, \
+        "der Zielpfad beim Umbenennen wird wieder ungeprueft zusammengesetzt"
+    assert arc.count("_nc_sicherpfad.sicher_join(") >= 2, \
+        "nicht alle Zielpfade im Archiv laufen ueber den Riegel"
+
+    # ── (5) Der Katalogpfad wird nachgeschlagen, nicht zusammengesetzt ─────
+    from nc import i18n as I
+    assert set(I.KATALOGDATEI) == set(I.SPRACHEN), \
+        "SPRACHEN und KATALOGDATEI laufen auseinander — eine Sprache ohne "\
+        "Eintrag wuerde beim Laden mit KeyError sterben"
+    i18nsrc = _nackt("nc/i18n.py")
+    assert "'%s.json' % sprache" not in i18nsrc, \
+        "der Katalogpfad wird wieder aus der Sprache zusammengesetzt"
+    assert len(I.katalog("en")) > 1000, "der englische Katalog laedt nicht mehr"
+    assert I.katalog("xx") == {}, "eine unbekannte Sprache muss leer bleiben"
+
+    # ── (6) Die Tag-Muster halten an einer echten Tag-Grenze ───────────────
+    # `</script >` beendet das Element im Browser. Ein Muster ohne \s* haelt
+    # dort NICHT an und frisst den Rest der Datei: eine ID aus einem
+    # JS-String wurde dann als doppelte Markup-ID gemeldet — ein Fehlalarm,
+    # der das Werkzeug unglaubwuerdig macht.
+    # Das echte Muster-Objekt pruefen, nicht seinen Quelltext: ein Regex,
+    # den man aus der Datei zurueckparst, kommt mit verdoppelten Backslashes
+    # zurueck und testet dann etwas anderes als das, was laeuft.
+    import importlib.util as _iu
+    _sp = _iu.spec_from_file_location("_ncpatch_pruef", "tools/ncpatch.py")
+    _m = _iu.module_from_spec(_sp)
+    _sp.loader.exec_module(_m)
+    probe = ('<div id="echt"></div><script>var s=\'<div id="echt"></div>\';'
+             '</script ><p>x</p>')
+    for name in ("RE_SCRIPT_WEG", "RE_SCRIPT_BLOCK"):
+        assert hasattr(_m, name), "tools/ncpatch.py hat kein %s mehr" % name
+    weg = _m.RE_SCRIPT_WEG.sub("", probe)
+    ids = _re.findall(r'id="([^"]+)"', weg)
+    assert len(ids) == len(set(ids)) == 1, \
+        ("das Tag-Muster laesst eine ID aus dem Skriptblock stehen (%r) — "
+         "Fehlalarm 'doppelte ID' bei jedem `</script >` im Deck" % (ids,))
+    # Und es haelt an einer echten Tag-Grenze, nicht an einem Praefix.
+    assert _m.RE_SCRIPT_WEG.sub("", "<scriptfoo>x</scriptfoo>") == \
+        "<scriptfoo>x</scriptfoo>", "das Muster passt auf <scriptfoo>"
+    assert len(_m.RE_SCRIPT_BLOCK.findall(
+        "<script>a</script >\n<script>b</script>")) == 2, \
+        "zwei Bloecke werden zu einem verschmolzen — node --check liefe dann "\
+        "an einer Datei, die es so nie gab"
+
+    ok("v4.2-W2: ein Riegel gegen Pfadausbruch (realpath, nicht abspath), "
+       "Katalog per Erlaubnisliste, Tag-Muster an der Tag-Grenze")
+
 def main():
     tmp = tempfile.mkdtemp()
     configure_db(db_path=os.path.join(tmp, "t.db"), backend="sqlite")
@@ -3331,6 +3479,8 @@ def main():
     _test_w33_sammelentscheid_und_ein_stempel()
 
     _test_v42_w1_schnappschuss_ohne_geheimnis()
+
+    _test_v42_w2_ein_riegel_gegen_pfadausbruch()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)
 
