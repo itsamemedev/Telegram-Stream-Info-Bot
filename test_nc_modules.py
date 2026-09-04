@@ -3584,6 +3584,114 @@ def _test_v42_w4_preflight_und_resilienz():
     ok("v4.2-W4: preflight + resilience im Blueprint, Sonden in nc/, "
        "keine zweite Wahrheit fuer die drei Slots")
 
+def _test_v42_w5_selftest_und_leerer_monolith():
+    """v4.2-W5: keine System-Route mehr im Monolithen."""
+    import ast as _ast
+    import re as _re
+
+    b = open("bot.py", encoding="utf-8").read()
+    s = open("nc/routes/selbsttest.py", encoding="utf-8").read()
+
+    # ── (1) DER ABSCHLUSS von Vorschlag 2. Alle acht System-Routen sind
+    # draussen. Steht eine wieder in bot.py, ist der Abbau rueckwaerts
+    # gelaufen — und das faellt sonst niemandem auf.
+    ACHT = ("api_system", "api_system_config_snapshot", "api_system_preflight",
+            "api_system_preflight_history", "api_system_resilience",
+            "api_check_timing", "api_config_drift", "api_selftest")
+    drin = [n for n in ACHT if ("\ndef %s(" % n) in b]
+    assert not drin, "wieder im Monolithen: %r" % drin
+    assert "def api_selftest(" in s, "api_selftest fehlt im Blueprint"
+    assert "register_blueprint(_nc_routes_selbsttest.bp)" in b, \
+        "der Blueprint ist nicht registriert — /api/selftest waere 404"
+
+    # ── (2) Der Helfer ist mitgewandert. 23 Aufrufe, alle in dieser einen
+    # Funktion — er im Monolithen, sie im Blueprint waere ein Import ueber
+    # die Architektur-Grenze.
+    assert "def _st_befund(" in s, "_st_befund fehlt im Blueprint"
+    assert "\ndef _st_befund(" not in b, "_st_befund steht noch in bot.py"
+
+    # ── (3) EIN WEG zu Sperrliste und Angriffen. nc/routes/abwehr.py haelt
+    # seit W25 die Haken, die der Bot eintraegt. Ein zweiter Weg zu denselben
+    # Daten waere eine zweite Wahrheit — und die beiden Panels koennten
+    # Widerspruechliches melden.
+    assert "_nc_routes_abwehr.HAKEN[name][\"fn\"]" in s, \
+        "der Selbsttest holt Sperrliste/Angriffe nicht ueber die Abwehr-Haken"
+    for haken in ('_haken("sperrliste")', '_haken("angriffe")'):
+        assert haken in s, "%s wird nicht benutzt" % haken
+    # Fehlt der Haken (Bot laeuft nicht), darf NICHT "nichts gefunden"
+    # herauskommen. Bei einer Sicherheitsanzeige ist das die gefaehrlichste
+    # aller Antworten — dieselbe Ueberlegung wie in abwehr._nicht_bereit().
+    # Nach VERHALTEN, nicht nach Text: ein `return {}` steht auch im
+    # except-Zweig, die Textsuche kann beides nicht unterscheiden.
+    from nc import ctx as _nc_ctx_modul
+    from nc.routes import abwehr as _A
+
+    def _ctx_konfiguriert():
+        return _nc_ctx_modul.is_configured()
+
+    from nc.routes import selbsttest as _S
+    _sicher = _A.HAKEN["sperrliste"]["fn"]
+    try:
+        _A.HAKEN["sperrliste"]["fn"] = None
+        assert _S._haken("sperrliste") == {}, \
+            ("ein fehlender Haken liefert ein Ergebnis statt Leere — der "
+             "Selbsttest meldete dann 'keine Sperren', obwohl gar nicht "
+             "nachgesehen wurde")
+        _A.HAKEN["sperrliste"]["fn"] = lambda: {"total_banned": 7}
+        assert _S._haken("sperrliste") == {"total_banned": 7}, \
+            "ein vorhandener Haken wird nicht durchgereicht"
+        # Der werfende Haken loggt — und Loggen braucht den gefuellten
+        # Kontext. Ohne ihn (Vertrag allein aufgerufen) waere der Test ein
+        # Fehlalarm ueber etwas, das im Betrieb nie vorkommt.
+        if _ctx_konfiguriert():
+            def _kaputt():
+                raise RuntimeError("absichtlich")
+            _A.HAKEN["sperrliste"]["fn"] = _kaputt
+            assert _S._haken("sperrliste") == {}, \
+                "ein werfender Haken reisst den ganzen Selbsttest mit"
+    finally:
+        _A.HAKEN["sperrliste"]["fn"] = _sicher
+
+    # ── (4) Der Restream-Manager kommt aus dem Register — MIT Wache. Vor dem
+    # Start ist er None; ohne Wache kippte ein AttributeError die GANZE
+    # Antwort, also auch die 20 Befunde ohne Restream-Bezug.
+    assert '_nc_rsstate.MGR["obj"]' in s, "der Manager kommt nicht aus dem Register"
+    # Jeder Zugriff auf seine privaten Felder laeuft ueber getattr mit
+    # Vorgabe. Ein nacktes _mgr()._procs waere vor dem Start ein
+    # AttributeError auf None.
+    for feld in ("_procs", "_srcexpired"):
+        for treffer in _re.finditer(r"[\w()]+\.%s\b" % feld, s):
+            zeile = s[:treffer.start()].count("\n") + 1
+            assert "getattr(" in s.splitlines()[zeile - 1], \
+                ("ungeschuetzter Zugriff auf %s in Zeile %d — vor dem Start "
+                 "ist der Manager None und die GANZE Antwort kippt, nicht nur "
+                 "der Restream-Teil" % (feld, zeile))
+    assert s.count("getattr(_mgr()") + s.count('getattr(_m, "_procs"') >= 3, \
+        "zu wenige geschuetzte Zugriffe — eine Stelle wurde vergessen"
+
+    # ── (5) Kein globals() — dieselbe Falle wie in W32/W33/W4.
+    for k in _ast.walk(_ast.parse(s)):
+        if isinstance(k, _ast.Call) and _ast.unparse(k.func) == "globals":
+            raise AssertionError("nc/routes/selbsttest.py benutzt globals(), Zeile %d" % k.lineno)
+
+    # ── (6) Jeder gelesene cfg-Schluessel wird auch geliefert. Sonst ein
+    # KeyError beim ersten Aufruf — im Betrieb, nicht im Test.
+    i = b.index("_nc_ctx.configure(")
+    block = b[i:b.index("\n)\n", i)]
+    benutzt = set(_re.findall(r"""c\[["']([A-Z_][A-Z0-9_]*)["']\]""", s))
+    geliefert = set(_re.findall(r'^\s+"([A-Z_][A-Z0-9_]*)":', block, _re.M))
+    fehlt = sorted(benutzt - geliefert)
+    assert not fehlt, "der Blueprint liest cfg-Schluessel, die der Bot nicht liefert: %r" % fehlt
+
+    # ── (7) Kein Stream-Schluessel im Kontext. Der Selbsttest fragt nur, OB
+    # einer gesetzt ist.
+    assert '"YOUTUBE_STREAM_KEY"' not in s, \
+        "der Selbsttest greift auf den YouTube-Schluessel zu statt auf HAT_YOUTUBE_KEY"
+    assert 'c["HAT_YOUTUBE_KEY"]' in s, "die Boolean-Pruefung fehlt"
+
+    ok("v4.2-W5: /api/selftest im Blueprint — keine der acht System-Routen "
+       "steht mehr im Monolithen")
+
 def main():
     tmp = tempfile.mkdtemp()
     configure_db(db_path=os.path.join(tmp, "t.db"), backend="sqlite")
@@ -3740,6 +3848,8 @@ def main():
     _test_v42_w3_codeql_barriere_und_setup()
 
     _test_v42_w4_preflight_und_resilienz()
+
+    _test_v42_w5_selftest_und_leerer_monolith()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)
 
