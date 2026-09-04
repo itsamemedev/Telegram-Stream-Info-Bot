@@ -29,6 +29,7 @@ from datetime import datetime, timedelta, timezone
 from flask import Blueprint, jsonify, request
 
 from nc import bandbreite as _nc_band
+from nc import fehlertext as _nc_fehlertext
 from nc import cfgnorm as _nc_cfgnorm
 from nc import community as _community
 from nc import freeai as _nc_freeai
@@ -61,6 +62,14 @@ from nc.routes import stats as _nc_routes_stats
 from nc import ctx as _ctx
 
 bp = Blueprint("auskunft", __name__)
+
+
+def _fehler_text(e, wo=""):
+    """v4.1-W30: der Wortlaut geht ins Log, nach aussen die gesaeuberte
+       Fassung — ohne Pfade, ohne Zugangsdaten, gekuerzt. Siehe
+       nc/fehlertext.py, dort steht auch, warum nicht einfach "interner
+       Fehler"."""
+    return _nc_fehlertext.nach_aussen(e, wo)
 
 
 def _c():
@@ -209,7 +218,7 @@ def api_summary_preview():
                        hour=_tagesbericht_stunde())
     except Exception as e:
         _c().log.warning(f"summary preview failed: {e}")
-        return jsonify(ok=False, error=str(e)), 500
+        return jsonify(ok=False, error=_fehler_text(e, "api_summary_preview")), 500
 
 
 @bp.route("/api/outcomes")
@@ -280,7 +289,7 @@ def api_freeai_status():
                        provider=("brain" if os.getenv("AI_PROVIDER","").strip().lower()=="brain"
                                  else "freeai"))
     except Exception as e:
-        return jsonify(ok=False, error=str(e)[:200])
+        return jsonify(ok=False, error=_fehler_text(e, "api_freeai_status"))
 
 
 @bp.route("/api/public/stats")
@@ -394,7 +403,7 @@ def api_loyalty_leaderboard():
                        leaderboard=_loyalty.leaderboard(n),
                        ranks=_loyalty.status()["ranks"])
     except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
+        return jsonify(ok=False, error=_fehler_text(e, "api_loyalty_leaderboard")), 500
 
 
 @bp.route("/api/community/stats")
@@ -407,7 +416,7 @@ def api_community_stats():
                        live_ping=_community.live_ping_enabled(),
                        highlight_share=_community.highlight_share_enabled())
     except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
+        return jsonify(ok=False, error=_fehler_text(e, "api_community_stats")), 500
 
 
 @bp.route("/api/shield/stats")
@@ -435,7 +444,7 @@ def api_shield_stats():
                                "what": m.get("what", ""),
                                "text": (r["content"] or "")[:80]})
     except Exception as e:
-        return jsonify(ok=False, error=str(e))
+        return jsonify(ok=False, error=_fehler_text(e, "api_shield_stats"))
     return jsonify(ok=True, total_24h=total, by_cat=by_cat, recent=recent)
 
 
@@ -482,4 +491,4 @@ def api_data_export():
                             headers={"Content-Disposition": f"attachment; filename={kind}.csv"})
         return jsonify(ok=True, kind=kind, count=len(rows), rows=rows)
     except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
+        return jsonify(ok=False, error=_fehler_text(e, "api_data_export")), 500

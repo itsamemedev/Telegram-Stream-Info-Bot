@@ -18,6 +18,7 @@ import os
 from flask import Blueprint, jsonify, request
 
 from nc import channels as _nc_channels
+from nc import fehlertext as _nc_fehlertext
 from nc import i18n as _nc_i18n
 from nc.channels import TWITCH_SEND as _TWITCH_SEND
 from nc.channels import YT_SEND as _YT_SEND
@@ -25,6 +26,14 @@ from nc.channels import YT_SEND as _YT_SEND
 from nc import ctx as _ctx
 
 bp = Blueprint("chat", __name__)
+
+
+def _fehler_text(e, wo=""):
+    """v4.1-W30: der Wortlaut geht ins Log, nach aussen die gesaeuberte
+       Fassung — ohne Pfade, ohne Zugangsdaten, gekuerzt. Siehe
+       nc/fehlertext.py, dort steht auch, warum nicht einfach "interner
+       Fehler"."""
+    return _nc_fehlertext.nach_aussen(e, wo)
 
 def _t(s):
     """v4.1-W20: an der Quelle uebersetzen. Diese Texte erreichen das DOM
@@ -92,7 +101,7 @@ def api_chat_send():
             _c().run_async(fn(text), timeout=10)
             return jsonify(ok=True)
         except Exception as e:
-            return jsonify(ok=False, error=str(e)), 500
+            return jsonify(ok=False, error=_fehler_text(e, "api_chat_send")), 500
     if platform == "youtube":
         fn = _YT_SEND.get("fn")
         if not fn:
@@ -103,7 +112,7 @@ def api_chat_send():
             _c().run_async(fn(text), timeout=15)
             return jsonify(ok=True)
         except Exception as e:
-            return jsonify(ok=False, error=str(e)), 500
+            return jsonify(ok=False, error=_fehler_text(e, "api_chat_send")), 500
     if platform in ("all", "broadcast"):
         # V37-W-CTRL: eine Ansage in ALLE sendefähigen eigenen Chats
         # (Kick + Twitch-mit-Token). Eine Aktion für "gleich gehts los".
@@ -124,7 +133,7 @@ def api_chat_send():
                 results["twitch"] = {"ok": True, "error": None}
             except Exception as e:
                 fails.append(f"twitch ({e})")
-                results["twitch"] = {"ok": False, "error": str(e)}
+                results["twitch"] = {"ok": False, "error": _fehler_text(e, "chat-twitch")}
         else:
             results["twitch"] = {"ok": False, "error": _t("Twitch nicht verbunden (IRC/chat:edit)")}
         ytf = _YT_SEND.get("fn")
@@ -134,7 +143,7 @@ def api_chat_send():
                 results["youtube"] = {"ok": True, "error": None}
             except Exception as e:
                 fails.append(f"youtube ({e})")
-                results["youtube"] = {"ok": False, "error": str(e)}
+                results["youtube"] = {"ok": False, "error": _fehler_text(e, "chat-youtube")}
         else:
             results["youtube"] = {"ok": False, "error": _t("YouTube nicht verbunden (OAuth)")}
         return jsonify(ok=bool(done), sent=done, failed=fails, results=results)

@@ -12,6 +12,8 @@ import os
 import shutil
 from flask import Blueprint, Response, jsonify, request
 
+from nc import fehlertext as _nc_fehlertext
+
 from nc import i18n as _nc_i18n
 from nc.dbwrap import db_conn
 from http.cookiejar import MozillaCookieJar
@@ -24,6 +26,14 @@ from nc.dbexport import db_export_sql as _dbx_export, db_import_sql as _dbx_impo
 from nc import ctx as _ctx
 
 bp = Blueprint("settings", __name__)
+
+
+def _fehler_text(e, wo=""):
+    """v4.1-W30: der Wortlaut geht ins Log, nach aussen die gesaeuberte
+       Fassung — ohne Pfade, ohne Zugangsdaten, gekuerzt. Siehe
+       nc/fehlertext.py, dort steht auch, warum nicht einfach "interner
+       Fehler"."""
+    return _nc_fehlertext.nach_aussen(e, wo)
 
 def _t(s):
     """v4.1-W20: an der Quelle uebersetzen. Diese Texte erreichen das DOM
@@ -196,7 +206,7 @@ def api_db_summary():
                        other=("mariadb" if _c().cfg["DB_BACKEND"] == "sqlite" else "sqlite"))
     except Exception as e:
         log.warning("api_db_summary: %s", e)
-        return jsonify(ok=False, error=str(e)), 500
+        return jsonify(ok=False, error=_fehler_text(e, "api_db_summary")), 500
 
 
 @bp.route("/api/db/export")
@@ -252,7 +262,7 @@ def api_db_import():
         return jsonify(**rep), (200 if rep.get("ok") else 400)
     except Exception as e:
         log.error("DB-Import fehlgeschlagen: %s", e)
-        return jsonify(ok=False, error=str(e)), 500
+        return jsonify(ok=False, error=_fehler_text(e, "api_db_import")), 500
 
 
 @bp.route("/api/config/snapshot")
@@ -267,7 +277,7 @@ def api_config_snapshot():
                        app_config=cfg, learned_params=learned,
                        counts={"config": len(cfg), "learned": len(learned)})
     except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
+        return jsonify(ok=False, error=_fehler_text(e, "api_config_snapshot")), 500
 
 
 @bp.route("/api/config/restore", methods=["POST"])
@@ -298,7 +308,7 @@ def api_config_restore():
                     failed += 1
         return jsonify(ok=True, restored=restored, failed=failed)
     except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
+        return jsonify(ok=False, error=_fehler_text(e, "api_config_restore")), 500
 
 
 @bp.route("/api/schedule/list")
@@ -308,7 +318,7 @@ def api_schedule_list():
         sched = _cfg_get("scheduled_recordings", []) or []
         return jsonify(ok=True, count=len(sched), schedules=sched)
     except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
+        return jsonify(ok=False, error=_fehler_text(e, "api_schedule_list")), 500
 
 
 @bp.route("/api/schedule/add", methods=["POST"])
@@ -333,7 +343,7 @@ def api_schedule_add():
         _cfg_set("scheduled_recordings", sched)
         return jsonify(ok=True, added=entry, count=len(sched))
     except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
+        return jsonify(ok=False, error=_fehler_text(e, "api_schedule_add")), 500
 
 
 @bp.route("/api/schedule/remove", methods=["POST"])
@@ -347,4 +357,4 @@ def api_schedule_remove():
         _cfg_set("scheduled_recordings", new)
         return jsonify(ok=True, removed=len(sched) - len(new), count=len(new))
     except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
+        return jsonify(ok=False, error=_fehler_text(e, "api_schedule_remove")), 500

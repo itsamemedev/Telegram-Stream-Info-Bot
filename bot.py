@@ -895,6 +895,8 @@ from nc import geocache as _nc_geocache   # v4.1-W25: Adress-Cache, EIN Schreibw
 from nc import geoip as _nc_geoip         # v4.1-W25: ip-api-Stapelabfrage
 from nc import bandbreite as _nc_band      # v4.1-W26: Aufnahme-Durchsatz
 from nc import eventlog as _nc_eventlog   # v4.1-W29: Protokoll ohne Blockade
+from nc import dashauth as _nc_dashauth   # v4.1-W30: ist das Deck offen?
+from nc import fehlertext as _nc_fehlertext  # v4.1-W30: Fehlertext nach aussen
 from nc import outcomes as _nc_outcomes   # v4.1-W26: Ausgaenge der Aufnahmen
 from nc import suche as _nc_suche         # v4.1-W26: bestandsweite Suche
 from nc import archiverules as _nc_arules  # v4.1-W24: Auto-Archiv-Regeln
@@ -4498,6 +4500,19 @@ def get_recording_by_id(recording_id: int):
 # ============================================================================
 
 # ---------- X1: Event-Log ----------
+def _fehler_text(e, wo=""):
+    """v4.1-W30: der Wortlaut geht ins Log, nach aussen die gesaeuberte
+       Fassung — ohne Pfade, ohne Zugangsdaten, gekuerzt.
+
+    WARUM nicht einfach "interner Fehler": der Betreiber ist der einzige
+    gewollte Leser dieses Decks. Ihm den Grund wegzunehmen waere keine
+    Sicherheit, sondern eine Sackgasse. Was die Meldung verraeterisch machte
+    — Pfade, Schluessel, Seitenlange Stacktraces — ist raus; der Grund bleibt.
+    Siehe nc/fehlertext.py.
+    """
+    return _nc_fehlertext.nach_aussen(e, wo)
+
+
 def log_event(kind: str, severity: str = "info", summary: str = "",
               payload: Optional[dict] = None):
     """Schreibt einen Eintrag ins event_log. Best-effort — Fehler werden
@@ -9753,7 +9768,7 @@ def _json_error_handler(e):
         return jsonify(ok=False, error="Bot-Loop startet noch — gleich erneut versuchen",
                        transient=True), 503
     log.error("Unhandled Exception auf %s %s: %s", request.method, request.path, e, exc_info=True)
-    return jsonify(ok=False, error=str(e), where=request.path), 500
+    return jsonify(ok=False, error=_fehler_text(e, "_json_error_handler"), where=request.path), 500
 
 
 def _arg_int(name: str, default: int, lo: int = None, hi: int = None) -> int:
@@ -11600,7 +11615,7 @@ def api_system_preflight_history():
                   "at": (r["created_at"] or "")[5:16].replace("T", " ")} for r in rows]
         return jsonify(ok=True, items=list(reversed(items)))
     except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
+        return jsonify(ok=False, error=_fehler_text(e, "api_system_preflight_history")), 500
 
 
 
@@ -11630,9 +11645,9 @@ def api_notify_test():
     except RuntimeError as e:
         if _loop_not_ready(e):
             return jsonify(ok=False, error="Bot-Loop startet noch", transient=True), 503
-        return jsonify(ok=False, error=str(e)), 500
+        return jsonify(ok=False, error=_fehler_text(e, "api_notify_test")), 500
     except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
+        return jsonify(ok=False, error=_fehler_text(e, "api_notify_test")), 500
 
 
 
@@ -11972,16 +11987,21 @@ def run_flask():
     # Frontend keinen Authorization-Header sendet → auf einer Public-Box ist
     # eine Firewall-Regel die saubere Absicherung:
     #   ufw allow from <DEINE-IP> to any port <PORT>   (+ sonst Port dichtmachen)
-    if not DASHBOARD_TOKEN and WEB_HOST not in ("127.0.0.1", "localhost", "::1"):
-        log.warning("=" * 70)
-        log.warning("SICHERHEIT: Dashboard hört auf %s:%s OHNE Token — damit im "
-                    "Netz erreichbar (Cookie-Zugriff, Recordings löschen, "
-                    "Config-Restore, Log-Tail).", WEB_HOST, DASHBOARD_PORT)
-        log.warning("→ Zwei Wege: (a) DASHBOARD_TOKEN=<langes Geheimnis> in die "
-                    ".env — seit v4.0-W13 wird er WIRKLICH geprueft (Aufruf "
-                    "einmalig mit ?token=..., danach Cookie); (b) Port per "
-                    "Firewall auf deine IP beschraenken: "
-                    "ufw allow from <DEINE-IP> to any port %s", DASHBOARD_PORT)
+    # v4.1-W30: Der Zustand kommt aus nc/dashauth.py — genau die Bedingung,
+    # die auch die Schranke selbst benutzt, und auf log.ERROR statt warning.
+    #
+    # Drei Maengel hatte die Meldung hier vorher, zwei davon sind die Fallen
+    # aus CLAUDE.md:
+    #   * log.warning erscheint in einem ERROR-Log NIE.
+    #   * Sie kam nur beim Start; wer das Bootlog nicht liest, sah sie nie.
+    #   * Sie fragte nur nach dem Token. Ein PIN-geschuetztes Deck loeste sie
+    #     faelschlich aus — und ein Fehlalarm erzieht dazu, die Meldung zu
+    #     ueberlesen. Das ist schlimmer als keine Meldung.
+    _offen, _text = _nc_dashauth.lage()
+    if _offen:
+        log.error("=" * 70)
+        log.error("%s (Port %s)", _text, DASHBOARD_PORT)
+        log.error("=" * 70)
     if DASHBOARD_TOKEN:
         log.info("Dashboard-Token AKTIV: extern nur mit Token (?token=... setzt ein "
                  "Cookie). Frei bleiben: Loopback/SSH-Tunnel, OAuth-Rueckrufe, "
@@ -12284,7 +12304,7 @@ def api_abo_status():
                     else:
                         gated += 1
     except Exception as e:
-        return jsonify(ok=False, error=str(e)), 200
+        return jsonify(ok=False, error=_fehler_text(e, "api_abo_status")), 200
     live.sort(key=lambda x: (x["recording"], x["user"].lower()))
     return jsonify(ok=True, enabled=bool(ABO_STREAM_MODE), probe=bool(ABO_PROBE),
                    counts={"abo": len(live), "captured": captured, "gated": gated},
@@ -12713,7 +12733,7 @@ def api_config_drift():
         return jsonify(rep)
     except Exception as e:
         log.warning("api_config_drift: %s", e)
-        return jsonify(ok=False, error=str(e)), 500
+        return jsonify(ok=False, error=_fehler_text(e, "api_config_drift")), 500
 
 
 
@@ -18586,7 +18606,7 @@ def api_clips():
                 out.append({"name": f, "size": os.path.getsize(p),
                             "mtime": os.path.getmtime(p)})
     except Exception as e:
-        return jsonify(ok=False, error=str(e), clips=[])
+        return jsonify(ok=False, error=_fehler_text(e, "api_clips"), clips=[])
     return jsonify(ok=True, enabled=CLIP_ENABLED, clips=out, dir=CLIP_DIR)
 
 
@@ -18614,7 +18634,7 @@ def api_clip_file(fn):
                 os.remove(p)
             return jsonify(ok=True, deleted=fn)
         except OSError as e:
-            return jsonify(ok=False, error=str(e)), 500
+            return jsonify(ok=False, error=_fehler_text(e, "api_clip_file")), 500
     return send_from_directory(os.path.abspath(CLIP_DIR), os.path.basename(p),
                                mimetype="video/mp4")
 
@@ -18634,7 +18654,7 @@ def api_clips_clear():
         log.info("Clips: alle gelöscht (%d Dateien).", removed)
         return jsonify(ok=True, removed=removed)
     except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
+        return jsonify(ok=False, error=_fehler_text(e, "api_clips_clear")), 500
 
 
 
@@ -18951,10 +18971,10 @@ def api_channels_status():
         _CHST_CACHE.update(ts=now, data=out)
         return jsonify(out)
     except RuntimeError as e:
-        return jsonify(ok=False, error=str(e), transient=True), 503
+        return jsonify(ok=False, error=_fehler_text(e, "api_channels_status"), transient=True), 503
     except Exception as e:
         log.warning("api_channels_status: %s", e)
-        return jsonify(ok=False, error=str(e)), 500
+        return jsonify(ok=False, error=_fehler_text(e, "api_channels_status")), 500
 
 
 
@@ -19094,10 +19114,10 @@ def api_channel_set():
     except RuntimeError as e:
         if _loop_not_ready(e):
             return jsonify(ok=False, error="Bot-Loop startet noch", transient=True), 503
-        return jsonify(ok=False, error=str(e)), 500
+        return jsonify(ok=False, error=_fehler_text(e, "api_channel_set")), 500
     except Exception as e:
         log.warning("api_channel_set: %s", e)
-        return jsonify(ok=False, error=str(e)), 500
+        return jsonify(ok=False, error=_fehler_text(e, "api_channel_set")), 500
 
 
 # ===================== STREAM-OVERLAY (vor der Kamera) =====================
@@ -20217,7 +20237,7 @@ def api_selftest():
             })
     except Exception as e:
         log.error("api_selftest: %s", e, exc_info=True)
-        return jsonify(ok=False, error=str(e)), 500
+        return jsonify(ok=False, error=_fehler_text(e, "api_selftest")), 500
 
 
 
@@ -22261,6 +22281,29 @@ async def _brain_growth_loop():
         except Exception as e:
             _loop_fehler("_brain_growth_loop", e)
         await asyncio.sleep(3600)                # stündlich
+
+
+async def _sicherheits_erinnerung_loop():
+    """v4.1-W30: erinnert alle sechs Stunden daran, dass das Deck offen steht.
+
+    Eine Meldung NUR beim Start ist eine, die niemand sieht: der Betreiber
+    liest das Log, wenn etwas kaputt ist, nicht beim Hochfahren. Und der
+    gefaehrliche Zustand ist ein DAUERZUSTAND — er verschwindet nicht, bis
+    jemand die .env anfasst.
+
+    Sie schweigt vollstaendig, sobald ein Token oder ein PIN gesetzt ist oder
+    das Deck nur auf dem Loopback hoert. Eine Meldung, die auch im guten Fall
+    kommt, wird ueberlesen — und dann auch die im schlechten.
+    """
+    await asyncio.sleep(600)              # Boot-Phase nicht zumuellen
+    while True:
+        try:
+            offen, text = _nc_dashauth.lage()
+            if offen:
+                log.error("%s (Port %s)", text, DASHBOARD_PORT)
+        except Exception as e:
+            _loop_fehler("_sicherheits_erinnerung_loop", e)
+        await asyncio.sleep(6 * 3600)
 
 
 async def _db_maintenance_loop():
@@ -25000,6 +25043,7 @@ async def run_bot():
     _spawn(check_all_trackings(app), name="check-all-trackings")
     _spawn(_discord_start(), name="discord-bot")        # optional, env-gated (no-op ohne Token)
     _spawn(_db_maintenance_loop(), name="db-maint")     # F82: WAL-Checkpoint + optimize (nur SQLite)
+    _spawn(_sicherheits_erinnerung_loop(), name="sec-reminder")  # v4.1-W30
     _spawn(_brain_growth_loop(), name="brain-growth")   # V37-BRAINVIZ: stündliche Lernkurve
     _spawn(_announce_loop(), name="announce")  # v4.0-W35: Willkommens-/Invite-Post auf Kick+Twitch+YouTube
     _spawn(_living_title_loop(), name="living-title")   # F89: selbst-aktualisierender Kick-Titel (env-gated)

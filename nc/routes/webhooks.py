@@ -9,12 +9,22 @@ stellen muss, kommt ueber nc.ctx statt ueber einen Import aus bot.py.
 from datetime import datetime, timezone
 from flask import Blueprint, jsonify, request
 
+from nc import fehlertext as _nc_fehlertext
+
 from nc import i18n as _nc_i18n
 from nc.dbwrap import db_conn
 
 from nc import ctx as _ctx
 
 bp = Blueprint("webhooks", __name__)
+
+
+def _fehler_text(e, wo=""):
+    """v4.1-W30: der Wortlaut geht ins Log, nach aussen die gesaeuberte
+       Fassung — ohne Pfade, ohne Zugangsdaten, gekuerzt. Siehe
+       nc/fehlertext.py, dort steht auch, warum nicht einfach "interner
+       Fehler"."""
+    return _nc_fehlertext.nach_aussen(e, wo)
 
 def _t(s):
     """v4.1-W20: an der Quelle uebersetzen. Diese Texte erreichen das DOM
@@ -62,7 +72,7 @@ def api_webhooks():
             return jsonify(ok=True, id=new_id, url=url, events=events,
                            enabled=bool(enabled))
         except Exception as e:
-            return jsonify(ok=False, error=str(e)), 500
+            return jsonify(ok=False, error=_fehler_text(e, "api_webhooks")), 500
     # GET
     try:
         with db_conn() as conn:
@@ -75,7 +85,7 @@ def api_webhooks():
              "last_fired_at": (r["last_fired_at"] or "")[:19] if r["last_fired_at"] else None,
              "fail_count": int(r["fail_count"] or 0)} for r in rows])
     except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
+        return jsonify(ok=False, error=_fehler_text(e, "api_webhooks")), 500
 
 
 @bp.route("/api/webhooks/<int:wid>", methods=["DELETE"])
@@ -90,7 +100,7 @@ def api_webhook_delete(wid):
             conn.commit()
         return jsonify(ok=True, deleted=wid)
     except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
+        return jsonify(ok=False, error=_fehler_text(e, "api_webhook_delete")), 500
 
 
 @bp.route("/api/webhooks/<int:wid>/toggle", methods=["POST"])
@@ -106,7 +116,7 @@ def api_webhook_toggle(wid):
             conn.commit()
         return jsonify(ok=True, id=wid, enabled=bool(new_val))
     except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
+        return jsonify(ok=False, error=_fehler_text(e, "api_webhook_toggle")), 500
 
 
 @bp.route("/api/webhooks/<int:wid>/test", methods=["POST"])
@@ -126,4 +136,4 @@ def api_webhook_test(wid):
         return jsonify(ok=True, id=wid, dispatched=True,
                        note="Test gesendet — Ergebnis in 'last_status' nach kurzer Zeit.")
     except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
+        return jsonify(ok=False, error=_fehler_text(e, "api_webhook_test")), 500

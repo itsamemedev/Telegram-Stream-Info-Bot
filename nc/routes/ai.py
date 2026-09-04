@@ -18,6 +18,7 @@ import threading
 import time as _time_mod
 from nc import i18n as _nc_i18n
 from nc import claude as _nc_claude
+from nc import fehlertext as _nc_fehlertext
 import nc.freeai as _nc_freeai
 from nc import sqlguard as _nc_sqlguard
 from nc.claude import (api_key as _anthropic_key, model as _anthropic_model,
@@ -33,6 +34,14 @@ from nc.stats import _streamer_health
 from nc import ctx as _ctx
 
 bp = Blueprint("ai", __name__)
+
+
+def _fehler_text(e, wo=""):
+    """v4.1-W30: der Wortlaut geht ins Log, nach aussen die gesaeuberte
+       Fassung — ohne Pfade, ohne Zugangsdaten, gekuerzt. Siehe
+       nc/fehlertext.py, dort steht auch, warum nicht einfach "interner
+       Fehler"."""
+    return _nc_fehlertext.nach_aussen(e, wo)
 
 def _t(s):
     """v4.1-W20: an der Quelle uebersetzen. Diese Texte erreichen das DOM
@@ -987,7 +996,7 @@ def api_ai_predict_golive(username):
                                   "pct": round(100.0 * by_dow[d] / n)} for d in top_days if by_dow[d] > 0],
                        histogram_hours=by_hour, histogram_days=by_dow)
     except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
+        return jsonify(ok=False, error=_fehler_text(e, "api_ai_predict_golive")), 500
 
 
 @bp.route("/api/ai/anomalies")
@@ -1051,7 +1060,7 @@ def api_ai_anomalies():
         return jsonify(ok=True, count=len(out), anomalies=out,
                        checked_at=now.isoformat())
     except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
+        return jsonify(ok=False, error=_fehler_text(e, "api_ai_anomalies")), 500
 
 
 @bp.route("/api/ai/segments")
@@ -1093,7 +1102,7 @@ def api_ai_segments():
         summary = {k: len(v) for k, v in seg.items()}
         return jsonify(ok=True, summary=summary, segments=seg)
     except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
+        return jsonify(ok=False, error=_fehler_text(e, "api_ai_segments")), 500
 
 
 @bp.route("/api/ai/recommendations")
@@ -1141,7 +1150,7 @@ def api_ai_recommendations():
                          "reason": "Das System läuft im erwarteten Rahmen."})
         return jsonify(ok=True, count=len(recs), recommendations=recs)
     except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
+        return jsonify(ok=False, error=_fehler_text(e, "api_ai_recommendations")), 500
 
 
 @bp.route("/api/ai/report")
@@ -1192,7 +1201,7 @@ def api_ai_report():
                 pass
         return jsonify(ok=True, stats=stats, report=text)
     except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
+        return jsonify(ok=False, error=_fehler_text(e, "api_ai_report")), 500
 
 
 @bp.route("/api/ai/retry-advice/<username>")
@@ -1225,7 +1234,7 @@ def api_ai_retry_advice(username):
         return jsonify(ok=True, username=username, samples=total,
                        dominant_failure=dom, breakdown=by, advice=advice)
     except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
+        return jsonify(ok=False, error=_fehler_text(e, "api_ai_retry_advice")), 500
 
 
 @bp.route("/api/ai/forecast-storage")
@@ -1257,7 +1266,7 @@ def api_ai_forecast_storage():
                        note=("Stabil — kaum Wachstum." if days_left is None
                              else f"Bei aktuellem Tempo in ~{days_left} Tagen voll."))
     except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
+        return jsonify(ok=False, error=_fehler_text(e, "api_ai_forecast_storage")), 500
 
 
 @bp.route("/api/ai/health-score/<username>")
@@ -1268,4 +1277,4 @@ def api_ai_health_score(username):
         with db_conn() as conn:
             return jsonify(ok=True, username=username, **_streamer_health(username, conn))
     except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
+        return jsonify(ok=False, error=_fehler_text(e, "api_ai_health_score")), 500

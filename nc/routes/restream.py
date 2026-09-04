@@ -33,6 +33,7 @@ from datetime import datetime, timezone
 from flask import Blueprint, jsonify, request
 
 from nc import channels as _nc_channels
+from nc import fehlertext as _nc_fehlertext
 from nc import i18n as _nc_i18n
 from nc import kickapi as _nc_kickapi
 from nc import restream_targets as _nc_rst
@@ -51,6 +52,14 @@ from nc.util import _loop_not_ready
 from nc import ctx as _ctx
 
 bp = Blueprint("restream", __name__)
+
+
+def _fehler_text(e, wo=""):
+    """v4.1-W30: der Wortlaut geht ins Log, nach aussen die gesaeuberte
+       Fassung — ohne Pfade, ohne Zugangsdaten, gekuerzt. Siehe
+       nc/fehlertext.py, dort steht auch, warum nicht einfach "interner
+       Fehler"."""
+    return _nc_fehlertext.nach_aussen(e, wo)
 
 
 def _c():
@@ -174,7 +183,7 @@ def api_restream_health():
                 "uptime_s": up, "ntargets": (len(tt) if hasattr(tt, "__len__") else 0),
             })
     except Exception as e:
-        return jsonify(ok=False, error=str(e)[:120], streams=[])
+        return jsonify(ok=False, error=_fehler_text(e, "api_restream_health"), streams=[])
     return jsonify(ok=True, streams=out, count=len(out))
 
 
@@ -397,7 +406,7 @@ def api_restream_verify():
                        guard=_nc_rsstate.guard().snapshot(),
                        status=_nc_rsstate.mgr().status())
     except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
+        return jsonify(ok=False, error=_fehler_text(e, "api_restream_verify")), 500
 
 
 @bp.route("/api/restream/list")
@@ -424,7 +433,7 @@ def api_restream_list():
                            "active_transcode": live.get(r["id"], {}).get("transcode"),
                            "health": live.get(r["id"], {}).get("health")} for r in rows])
     except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
+        return jsonify(ok=False, error=_fehler_text(e, "api_restream_list")), 500
 
 
 @bp.route("/api/restream/create", methods=["POST"])
@@ -448,7 +457,7 @@ def api_restream_create():
             conn.commit()
         return jsonify(ok=True)
     except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
+        return jsonify(ok=False, error=_fehler_text(e, "api_restream_create")), 500
 
 
 @bp.route("/api/restream/<int:rid>/edit", methods=["POST"])
@@ -470,7 +479,7 @@ def api_restream_edit(rid):
             conn.commit()
         return jsonify(ok=True)
     except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
+        return jsonify(ok=False, error=_fehler_text(e, "api_restream_edit")), 500
 
 
 @bp.route("/api/restream/<int:rid>/delete", methods=["POST"])
@@ -487,9 +496,9 @@ def api_restream_delete(rid):
     except RuntimeError as e:
         if _loop_not_ready(e):
             return jsonify(ok=False, error=_t("Bot-Loop startet noch"), transient=True), 503
-        return jsonify(ok=False, error=str(e)), 500
+        return jsonify(ok=False, error=_fehler_text(e, "api_restream_delete")), 500
     except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
+        return jsonify(ok=False, error=_fehler_text(e, "api_restream_delete")), 500
 
 
 @bp.route("/api/restream/<int:rid>/start", methods=["POST"])
@@ -506,7 +515,7 @@ def api_restream_start(rid):
     except RuntimeError:
         return jsonify(ok=False, error=_t("Event-Loop nicht bereit")), 503
     except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
+        return jsonify(ok=False, error=_fehler_text(e, "api_restream_start")), 500
 
 
 @bp.route("/api/restream/<int:rid>/stop", methods=["POST"])
@@ -517,9 +526,9 @@ def api_restream_stop(rid):
     except RuntimeError as e:
         if _loop_not_ready(e):
             return jsonify(ok=False, error=_t("Bot-Loop startet noch"), transient=True), 503
-        return jsonify(ok=False, error=str(e)), 500
+        return jsonify(ok=False, error=_fehler_text(e, "api_restream_stop")), 500
     except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
+        return jsonify(ok=False, error=_fehler_text(e, "api_restream_stop")), 500
 
 
 @bp.route("/api/restream/start_all", methods=["POST"])
@@ -543,9 +552,9 @@ def api_restream_start_all():
     except RuntimeError as e:
         if _loop_not_ready(e):
             return jsonify(ok=False, error=_t("Bot-Loop startet noch"), transient=True), 503
-        return jsonify(ok=False, error=str(e)), 500
+        return jsonify(ok=False, error=_fehler_text(e, "api_restream_start_all")), 500
     except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
+        return jsonify(ok=False, error=_fehler_text(e, "api_restream_start_all")), 500
 
 
 @bp.route("/api/restream/stop_all", methods=["POST"])
@@ -556,9 +565,9 @@ def api_restream_stop_all():
     except RuntimeError as e:
         if _loop_not_ready(e):
             return jsonify(ok=False, error=_t("Bot-Loop startet noch"), transient=True), 503
-        return jsonify(ok=False, error=str(e)), 500
+        return jsonify(ok=False, error=_fehler_text(e, "api_restream_stop_all")), 500
     except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
+        return jsonify(ok=False, error=_fehler_text(e, "api_restream_stop_all")), 500
 
 
 @bp.route("/api/restream/chatfeed")

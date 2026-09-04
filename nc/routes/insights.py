@@ -7,12 +7,22 @@ stellen muss, kommt ueber nc.ctx statt ueber einen Import aus bot.py.
 """
 
 from flask import Blueprint, jsonify
+
+from nc import fehlertext as _nc_fehlertext
 from nc.textmore import _parse_iso
 from nc.dbwrap import db_conn
 
 from nc import ctx as _ctx
 
 bp = Blueprint("insights", __name__)
+
+
+def _fehler_text(e, wo=""):
+    """v4.1-W30: der Wortlaut geht ins Log, nach aussen die gesaeuberte
+       Fassung — ohne Pfade, ohne Zugangsdaten, gekuerzt. Siehe
+       nc/fehlertext.py, dort steht auch, warum nicht einfach "interner
+       Fehler"."""
+    return _nc_fehlertext.nach_aussen(e, wo)
 
 
 def _c():
@@ -59,7 +69,7 @@ def api_insights_best_times(username):
         return jsonify(ok=True, username=username, samples=total,
                        top_hours=top_hours, top_days=top_dows, recommendation=rec)
     except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
+        return jsonify(ok=False, error=_fehler_text(e, "api_insights_best_times")), 500
 
 
 @bp.route("/api/insights/reliability")
@@ -82,7 +92,7 @@ def api_insights_reliability():
         out.sort(key=lambda x: (x["success_rate"], -x["attempts"]))
         return jsonify(ok=True, streamers=out, count=len(out))
     except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
+        return jsonify(ok=False, error=_fehler_text(e, "api_insights_reliability")), 500
 
 
 @bp.route("/api/insights/session-stats")
@@ -108,7 +118,7 @@ def api_insights_session_stats():
         out.sort(key=lambda x: x["total_hours"], reverse=True)
         return jsonify(ok=True, streamers=out, count=len(out))
     except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
+        return jsonify(ok=False, error=_fehler_text(e, "api_insights_session_stats")), 500
 
 
 @bp.route("/api/insights/growth/<username>")
@@ -133,7 +143,7 @@ def api_insights_growth(username):
                        followers_per_day=round(d_follow / days, 1),
                        current_followers=last["follower_count"])
     except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
+        return jsonify(ok=False, error=_fehler_text(e, "api_insights_growth")), 500
 
 
 @bp.route("/api/insights/catch-rate")
@@ -151,7 +161,7 @@ def api_insights_catch_rate():
         return jsonify(ok=True, total_attempts=total, successful=ok,
                        catch_rate=rate)
     except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
+        return jsonify(ok=False, error=_fehler_text(e, "api_insights_catch_rate")), 500
 
 
 @bp.route("/api/insights/activity-clock")
@@ -172,7 +182,7 @@ def api_insights_activity_clock():
         return jsonify(ok=True, by_hour=by_hour, peak_hour=peak,
                        total=sum(by_hour))
     except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
+        return jsonify(ok=False, error=_fehler_text(e, "api_insights_activity_clock")), 500
 
 
 @bp.route("/api/insights/leaderboard")
@@ -206,7 +216,7 @@ def api_insights_leaderboard():
         out.sort(key=lambda x: x["score"], reverse=True)
         return jsonify(ok=True, leaderboard=out[:50], count=len(out))
     except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
+        return jsonify(ok=False, error=_fehler_text(e, "api_insights_leaderboard")), 500
 
 
 @bp.route("/api/insights/storage-by-streamer")
@@ -225,4 +235,4 @@ def api_insights_storage_by_streamer():
         total_gb = round(sum(x["gb"] for x in out), 2)
         return jsonify(ok=True, streamers=out, total_gb=total_gb, count=len(out))
     except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
+        return jsonify(ok=False, error=_fehler_text(e, "api_insights_storage_by_streamer")), 500

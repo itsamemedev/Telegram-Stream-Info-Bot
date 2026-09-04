@@ -24,6 +24,7 @@ import time as _time_mod
 from flask import Blueprint, jsonify, request
 
 from nc import channels as _nc_channels
+from nc import fehlertext as _nc_fehlertext
 from nc import i18n as _nc_i18n
 from nc import kick_oauth as _nc_kickoauth
 from nc.cfgstore import get as _cfg_get
@@ -41,6 +42,14 @@ from nc.util import _loop_not_ready
 from nc import ctx as _ctx
 
 bp = Blueprint("kick", __name__)
+
+
+def _fehler_text(e, wo=""):
+    """v4.1-W30: der Wortlaut geht ins Log, nach aussen die gesaeuberte
+       Fassung — ohne Pfade, ohne Zugangsdaten, gekuerzt. Siehe
+       nc/fehlertext.py, dort steht auch, warum nicht einfach "interner
+       Fehler"."""
+    return _nc_fehlertext.nach_aussen(e, wo)
 
 def _t(s):
     """v4.1-W20: an der Quelle uebersetzen. Diese Texte erreichen das DOM
@@ -190,7 +199,7 @@ def api_kick_sendcheck():
                 _kick_broadcaster_id(), timeout=15)
         except Exception as e:
             out["broadcaster_id_resolved"] = 0
-            out["hinweis"] = f"Broadcaster-ID nicht aufloesbar: {str(e)[:120]}"
+            out["hinweis"] = "Broadcaster-ID nicht aufloesbar: " + _fehler_text(e, "kick-broadcaster")
         return jsonify(out)
     mod = _nc_channels.KICK_MOD["obj"]
     if mod is None:
@@ -200,7 +209,7 @@ def api_kick_sendcheck():
     try:
         sent, err = _c().run_async(mod.send_message(_nc_i18n.t(str(txt)[:120])), timeout=30)
     except Exception as e:
-        out.update(ok=False, error=str(e)[:160])
+        out.update(ok=False, error=_fehler_text(e, "kick"))
         return jsonify(out)
     out.update(sent=bool(sent), error=(err or ""), last=dict(_KICK_SEND_LAST))
     return jsonify(out)
@@ -222,10 +231,10 @@ def api_kick_channel():
         # 500-Zweig → Dashboard zeigte "Server-Fehler 500" als Push, aber nichts
         # stand im Log (still gefangen). Jetzt 503 (transient) — das Frontend
         # toastet 503 NICHT als Serverfehler.
-        return jsonify(ok=False, error=str(e), transient=True), 503
+        return jsonify(ok=False, error=_fehler_text(e, "api_kick_channel"), transient=True), 503
     except Exception as e:
         log.warning("api_kick_channel: %s", e)   # B85: jetzt auch geloggt
-        return jsonify(ok=False, error=str(e)), 500
+        return jsonify(ok=False, error=_fehler_text(e, "api_kick_channel")), 500
 
 
 @bp.route("/api/kick/channel", methods=["POST"])
@@ -244,6 +253,6 @@ def api_kick_channel_set():
     except RuntimeError as e:
         if _loop_not_ready(e):
             return jsonify(ok=False, error=_t("Bot-Loop startet noch"), transient=True), 503
-        return jsonify(ok=False, error=str(e)), 500
+        return jsonify(ok=False, error=_fehler_text(e, "api_kick_channel_set")), 500
     except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
+        return jsonify(ok=False, error=_fehler_text(e, "api_kick_channel_set")), 500

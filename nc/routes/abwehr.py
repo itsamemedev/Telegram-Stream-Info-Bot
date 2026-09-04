@@ -22,6 +22,7 @@ kommt als Haken herein.
 from flask import Blueprint, jsonify
 
 from nc import crowdsec as _nc_crowdsec
+from nc import fehlertext as _nc_fehlertext
 from nc import defensecfg as _nc_dcfg
 from nc import geoip as _nc_geoip
 from nc import i18n as _nc_i18n
@@ -29,6 +30,14 @@ from nc import i18n as _nc_i18n
 from nc import ctx as _ctx
 
 bp = Blueprint("abwehr", __name__)
+
+
+def _fehler_text(e, wo=""):
+    """v4.1-W30: der Wortlaut geht ins Log, nach aussen die gesaeuberte
+       Fassung — ohne Pfade, ohne Zugangsdaten, gekuerzt. Siehe
+       nc/fehlertext.py, dort steht auch, warum nicht einfach "interner
+       Fehler"."""
+    return _nc_fehlertext.nach_aussen(e, wo)
 
 
 def _c():
@@ -109,7 +118,7 @@ def api_defense_overview():
                        top_countries=[{"country": c, "hits": n} for c, n in top_countries],
                        server={"lat": _nc_dcfg.server_lat(), "lon": _nc_dcfg.server_lon()})
     except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
+        return jsonify(ok=False, error=_fehler_text(e, "api_defense_overview")), 500
 
 
 @bp.route("/api/defense/crowdsec")
@@ -130,7 +139,7 @@ def api_defense_crowdsec():
         st["bouncer_key_set"] = bool(_nc_dcfg.bouncer_gesetzt())
         return jsonify(st)
     except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
+        return jsonify(ok=False, error=_fehler_text(e, "api_defense_crowdsec")), 500
 
 
 @bp.route("/api/defense/fail2ban")
@@ -148,7 +157,7 @@ def api_defense_fail2ban():
             j["ip_geo"] = [dict(ip=ip, **(geo.get(ip) or {})) for ip in j.get("ips", [])]
         return jsonify(**f2b)
     except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
+        return jsonify(ok=False, error=_fehler_text(e, "api_defense_fail2ban")), 500
 
 
 @bp.route("/api/defense/attacks")
@@ -168,4 +177,4 @@ def api_defense_attacks():
         atk["server"] = {"lat": _nc_dcfg.server_lat(), "lon": _nc_dcfg.server_lon()}
         return jsonify(**atk)
     except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
+        return jsonify(ok=False, error=_fehler_text(e, "api_defense_attacks")), 500

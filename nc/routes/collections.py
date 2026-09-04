@@ -9,12 +9,22 @@ stellen muss, kommt ueber nc.ctx statt ueber einen Import aus bot.py.
 from datetime import datetime, timezone
 from flask import Blueprint, jsonify, request
 
+from nc import fehlertext as _nc_fehlertext
+
 from nc import i18n as _nc_i18n
 from nc.dbwrap import db_conn
 
 from nc import ctx as _ctx
 
 bp = Blueprint("collections", __name__)
+
+
+def _fehler_text(e, wo=""):
+    """v4.1-W30: der Wortlaut geht ins Log, nach aussen die gesaeuberte
+       Fassung — ohne Pfade, ohne Zugangsdaten, gekuerzt. Siehe
+       nc/fehlertext.py, dort steht auch, warum nicht einfach "interner
+       Fehler"."""
+    return _nc_fehlertext.nach_aussen(e, wo)
 
 def _t(s):
     """v4.1-W20: an der Quelle uebersetzen. Diese Texte erreichen das DOM
@@ -57,7 +67,7 @@ def api_collections():
                 new_id = cur.lastrowid
             return jsonify(ok=True, id=new_id, name=name, color=color)
         except Exception as e:
-            return jsonify(ok=False, error=str(e)), 500
+            return jsonify(ok=False, error=_fehler_text(e, "api_collections")), 500
     # GET
     try:
         with db_conn() as conn:
@@ -70,7 +80,7 @@ def api_collections():
              "members": int(r["members"] or 0),
              "created_at": (r["created_at"] or "")[:19]} for r in rows])
     except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
+        return jsonify(ok=False, error=_fehler_text(e, "api_collections")), 500
 
 
 @bp.route("/api/collections/<int:cid>", methods=["POST", "DELETE"])
@@ -105,7 +115,7 @@ def api_collection_modify(cid):
             conn.commit()
         return jsonify(ok=True, id=cid)
     except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
+        return jsonify(ok=False, error=_fehler_text(e, "api_collection_modify")), 500
 
 
 @bp.route("/api/collections/<int:cid>/trackings")
@@ -125,4 +135,4 @@ def api_collection_trackings(cid):
              "live": bool(r["last_live"]), "recording": bool(r["recording"]),
              "paused": bool(r["paused"])} for r in rows])
     except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
+        return jsonify(ok=False, error=_fehler_text(e, "api_collection_trackings")), 500

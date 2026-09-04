@@ -11,6 +11,70 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Behoben — die Warnung vor dem offenen Dashboard war unsichtbar (v4.1 W30)
+
+Die Schranke des Dashboards (`_auth_guard`) macht **gar nichts**, wenn weder
+`DASHBOARD_TOKEN` noch `DASHBOARD_PIN` gesetzt ist:
+
+```python
+if not DASHBOARD_TOKEN and not DASHBOARD_PIN:
+    return None          # jede Adresse, jeder Pfad, frei
+```
+
+Solange `WEB_HOST` auf dem Loopback steht, ist das gewollt — dann kommt nur
+der SSH-Tunnel durch. Steht dort etwas anderes, ist das Deck offen im Netz:
+Aufnahmen löschen, Konfiguration zurückspielen, Log mitlesen.
+
+Eine Warnung dafür gab es. Sie hatte **drei Mängel**, zwei davon sind die
+Fallen, die CLAUDE.md selbst benennt:
+
+1. **Sie lief auf `log.warning`.** „Ein `log.warning` erscheint in einem
+   ERROR-Log **nie**" — so blieb der Discord-Gateway-Tod monatelang
+   unsichtbar. Für einen Sicherheitszustand ist das die falsche Stufe.
+2. **Sie kam nur beim Start.** Der Betreiber liest das Log, wenn etwas kaputt
+   ist, nicht beim Hochfahren. Der gefährliche Zustand ist aber ein
+   **Dauerzustand** — er verschwindet nicht, bis jemand die `.env` anfasst.
+3. **Sie fragte nur nach dem Token, nicht nach dem PIN.** Ein PIN-geschütztes
+   Deck löste sie fälschlich aus. Ein Fehlalarm erzieht dazu, die Meldung zu
+   überlesen — und dann auch die im echten Fall.
+
+`nc/dashauth.py` beantwortet die Frage jetzt an einer Stelle, mit **derselben
+Bedingung, die die Schranke selbst benutzt**. Die Meldung läuft auf `error`
+und wiederholt sich alle sechs Stunden, solange der Zustand anhält — und
+schweigt vollständig, sobald ein Token oder ein PIN gesetzt ist.
+
+### Behoben — roher Ausnahmetext in API-Antworten (v4.1 W30)
+
+**161 Stellen** antworteten mit `jsonify(ok=False, error=str(e))`, weitere 15
+reichten den Wortlaut über ein Dict nach draussen. CodeQL meldete das als
+`py/stack-trace-exposure` und bei jeder Verschiebung in einen Blueprint
+erneut als „neu" — fünfmal habe ich in einer PR vorgerechnet, dass die Bilanz
+stimmt. Das war die Antwort auf die Meldung, nicht auf die Sache.
+
+Ob es ein echtes Problem ist, hängt am Betrieb — und nach dem Befund oben ist
+es eines: bei offener Schranke geht jede dieser Meldungen an jeden, der den
+Port erreicht, mitsamt Dateipfaden, Datenbank-Interna und gelegentlich dem
+Wortlaut einer Antwort einer fremden API.
+
+**Kein Entweder-Oder.** „Interner Fehler" wäre in einem Ein-Personen-Betrieb
+keine Sicherheit, sondern eine Sackgasse — der Betreiber ist der einzige
+gewollte Leser. `nc/fehlertext.py` löst es anders:
+
+* **Der Wortlaut geht ins Log**, vollständig, mit Ausnahmetyp.
+* **Nach aussen geht eine gesäuberte Fassung**: absolute Pfade auf den
+  Dateinamen gekürzt, alles nach `token=`/`key=`/`secret=` geschwärzt, lange
+  Zufallsketten (Stream-Keys) geschwärzt, auf 200 Zeichen begrenzt.
+* **Der Ausnahmetyp bleibt.** „OperationalError" sagt Datenbank,
+  „TimeoutError" sagt Netz — das ist die halbe Diagnose und verrät nichts
+  über den Bestand.
+
+Umgeschrieben wurde über den AST mit **Byte-Offsets**, nicht über Zeichen:
+`col_offset` ist ein UTF-8-Byte-Offset, und in diesen Dateien stehen Umlaute
+(die Falle aus W20, dort schrieb ein Zeichen-Slice prompt `), )400`).
+
+`str(e)` in **allen** Blueprints: **0**. In `bot.py` bleiben 45 — Logzeilen
+und interne Rückgabewerte, wo der Wortlaut hingehört.
+
 ### Behoben — das Ereignisprotokoll blockierte den Event-Loop (v4.1 W29)
 
 Fortsetzung des Befunds aus W26. `log_event` schrieb **synchron** in die

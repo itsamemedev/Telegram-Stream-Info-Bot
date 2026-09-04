@@ -32,6 +32,7 @@ from datetime import datetime, timedelta, timezone
 from flask import Blueprint, jsonify, request
 
 from nc import brainstate as _nc_brainstate
+from nc import fehlertext as _nc_fehlertext
 from nc import i18n as _nc_i18n
 from nc.dbwrap import db_conn
 from nc.stats import get_tiktok_status_distribution
@@ -39,6 +40,14 @@ from nc.stats import get_tiktok_status_distribution
 from nc import ctx as _ctx
 
 bp = Blueprint("brain", __name__)
+
+
+def _fehler_text(e, wo=""):
+    """v4.1-W30: der Wortlaut geht ins Log, nach aussen die gesaeuberte
+       Fassung — ohne Pfade, ohne Zugangsdaten, gekuerzt. Siehe
+       nc/fehlertext.py, dort steht auch, warum nicht einfach "interner
+       Fehler"."""
+    return _nc_fehlertext.nach_aussen(e, wo)
 
 
 def _c():
@@ -97,7 +106,7 @@ def api_brain_graph():
         out["triples"] = kg.stats().get("triples", 0)
         out["creators"] = sum(1 for n in out["nodes"] if n.get("kind") == "subject")
     except Exception as e:
-        out = {"ok": False, "error": str(e)[:120], "nodes": [], "edges": [],
+        out = {"ok": False, "error": _fehler_text(e, "brain-graph"), "nodes": [], "edges": [],
                "triples": 0, "creators": 0}
     return jsonify(out)
 
@@ -113,7 +122,7 @@ def api_brain_creator():
         facts = [{"p": t["p"], "o": t["o"], "weight": round(float(t.get("weight") or 0), 2)}
                  for t in get_brain().knowledge.query(s=cid, limit=60)]
     except Exception as e:
-        return jsonify(ok=False, error=str(e)[:120], id=cid, facts=[])
+        return jsonify(ok=False, error=_fehler_text(e, "api_brain_creator"), id=cid, facts=[])
     return jsonify(ok=True, id=cid, facts=facts, count=len(facts))
 
 
@@ -177,7 +186,7 @@ def api_brain_growth():
             pass
         return jsonify(out)
     except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
+        return jsonify(ok=False, error=_fehler_text(e, "api_brain_growth")), 500
 
 
 @bp.route("/api/brain")

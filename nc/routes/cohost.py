@@ -19,12 +19,21 @@ import time as _time_mod
 from flask import Blueprint, jsonify, request
 
 from nc import cohost as _nc_cohost
+from nc import fehlertext as _nc_fehlertext
 from nc.cfgstore import get as _cfg_get
 from nc.cfgstore import set_ as _cfg_set
 from nc.cohost import STATE as _COHOST
 from nc.cohost import config as _cohost_cfg
 
 bp = Blueprint("cohost", __name__)
+
+
+def _fehler_text(e, wo=""):
+    """v4.1-W30: der Wortlaut geht ins Log, nach aussen die gesaeuberte
+       Fassung — ohne Pfade, ohne Zugangsdaten, gekuerzt. Siehe
+       nc/fehlertext.py, dort steht auch, warum nicht einfach "interner
+       Fehler"."""
+    return _nc_fehlertext.nach_aussen(e, wo)
 
 
 @bp.route("/api/cohost")
@@ -36,7 +45,7 @@ def api_cohost():
         return jsonify(ok=True, enabled=cfg["enabled"], min_gap_s=cfg["min_gap_s"],
                        per_15min=cfg["per_15min"], kinds=cfg["kinds"], **snap)
     except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
+        return jsonify(ok=False, error=_fehler_text(e, "api_cohost")), 500
 
 
 @bp.route("/api/cohost/config", methods=["POST"])

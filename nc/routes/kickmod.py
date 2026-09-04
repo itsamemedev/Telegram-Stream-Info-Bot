@@ -29,6 +29,7 @@ import os
 from flask import Blueprint, jsonify, request
 
 from nc import badwords as _nc_badwords
+from nc import fehlertext as _nc_fehlertext
 from nc import channels as _nc_channels
 from nc import discordstate as _nc_discordstate
 from nc import i18n as _nc_i18n
@@ -39,6 +40,14 @@ from nc.util import _loop_not_ready
 from nc import ctx as _ctx
 
 bp = Blueprint("kickmod", __name__)
+
+
+def _fehler_text(e, wo=""):
+    """v4.1-W30: der Wortlaut geht ins Log, nach aussen die gesaeuberte
+       Fassung — ohne Pfade, ohne Zugangsdaten, gekuerzt. Siehe
+       nc/fehlertext.py, dort steht auch, warum nicht einfach "interner
+       Fehler"."""
+    return _nc_fehlertext.nach_aussen(e, wo)
 
 _WAHR = ("1", "true", "yes", "on", "y")
 
@@ -219,7 +228,7 @@ def api_kickmod_start():
     except RuntimeError:
         return jsonify(ok=False, error=_t("Event-Loop nicht bereit")), 503
     except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
+        return jsonify(ok=False, error=_fehler_text(e, "api_kickmod_start")), 500
 
 
 @bp.route("/api/kickmod/stop", methods=["POST"])
@@ -233,9 +242,9 @@ def api_kickmod_stop():
     except RuntimeError as e:
         if _loop_not_ready(e):
             return jsonify(ok=False, error=_t("Bot-Loop startet noch"), transient=True), 503
-        return jsonify(ok=False, error=str(e)), 500
+        return jsonify(ok=False, error=_fehler_text(e, "api_kickmod_stop")), 500
     except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
+        return jsonify(ok=False, error=_fehler_text(e, "api_kickmod_stop")), 500
 
 
 @bp.route("/api/kickmod/say", methods=["POST"])
@@ -254,6 +263,6 @@ def api_kickmod_say():
     except RuntimeError as e:
         if _loop_not_ready(e):
             return jsonify(ok=False, error=_t("Bot-Loop startet noch"), transient=True), 503
-        return jsonify(ok=False, error=str(e)), 500
+        return jsonify(ok=False, error=_fehler_text(e, "api_kickmod_say")), 500
     except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
+        return jsonify(ok=False, error=_fehler_text(e, "api_kickmod_say")), 500

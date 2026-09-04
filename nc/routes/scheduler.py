@@ -11,11 +11,20 @@ import re
 from flask import Blueprint, jsonify, request
 from nc import i18n as _nc_i18n
 from nc import envnum as _nc_envnum
+from nc import fehlertext as _nc_fehlertext
 from nc.dbwrap import db_conn
 
 from nc import ctx as _ctx
 
 bp = Blueprint("scheduler", __name__)
+
+
+def _fehler_text(e, wo=""):
+    """v4.1-W30: der Wortlaut geht ins Log, nach aussen die gesaeuberte
+       Fassung — ohne Pfade, ohne Zugangsdaten, gekuerzt. Siehe
+       nc/fehlertext.py, dort steht auch, warum nicht einfach "interner
+       Fehler"."""
+    return _nc_fehlertext.nach_aussen(e, wo)
 
 def _t(s):
     """v4.1-W20: an der Quelle uebersetzen. Diese Texte erreichen das DOM
@@ -49,7 +58,7 @@ def api_scheduler_list():
                   "enabled": bool(r["enabled"]), "last": r["last_run_date"] or "—"} for r in rows]
         return jsonify(ok=True, items=items)
     except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
+        return jsonify(ok=False, error=_fehler_text(e, "api_scheduler_list")), 500
 
 
 @bp.route("/api/scheduler/add", methods=["POST"])
@@ -70,7 +79,7 @@ def api_scheduler_add():
                          "VALUES (?,?,?,1,?)", (kind, at, payload, datetime.now(timezone.utc).isoformat()))
         return jsonify(ok=True)
     except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
+        return jsonify(ok=False, error=_fehler_text(e, "api_scheduler_add")), 500
 
 
 @bp.route("/api/scheduler/delete", methods=["POST"])
@@ -86,7 +95,7 @@ def api_scheduler_delete():
             conn.execute("DELETE FROM scheduled_tasks WHERE id=?", (tid,))
         return jsonify(ok=True)
     except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
+        return jsonify(ok=False, error=_fehler_text(e, "api_scheduler_delete")), 500
 
 
 @bp.route("/api/scheduler/toggle", methods=["POST"])
@@ -102,4 +111,4 @@ def api_scheduler_toggle():
                          (1 if d.get("enabled") else 0, tid))
         return jsonify(ok=True)
     except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
+        return jsonify(ok=False, error=_fehler_text(e, "api_scheduler_toggle")), 500

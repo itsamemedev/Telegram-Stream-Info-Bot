@@ -11,6 +11,7 @@ from flask import Blueprint, Response, jsonify, request
 from nc.dbwrap import db_conn
 from nc import i18n as _nc_i18n
 from nc import revenue as _nc_revenue
+from nc import fehlertext as _nc_fehlertext
 from nc import ledger as _nc_ledger
 from nc import donations as _nc_donations
 from nc.donationsdb import parse_eur as _parse_eur, manual_rows as _manual_donations_rows, manual_total as _manual_donations_total
@@ -18,6 +19,14 @@ from nc.donationsdb import parse_eur as _parse_eur, manual_rows as _manual_donat
 from nc import ctx as _ctx
 
 bp = Blueprint("money", __name__)
+
+
+def _fehler_text(e, wo=""):
+    """v4.1-W30: der Wortlaut geht ins Log, nach aussen die gesaeuberte
+       Fassung — ohne Pfade, ohne Zugangsdaten, gekuerzt. Siehe
+       nc/fehlertext.py, dort steht auch, warum nicht einfach "interner
+       Fehler"."""
+    return _nc_fehlertext.nach_aussen(e, wo)
 
 def _t(s):
     """v4.1-W20: an der Quelle uebersetzen. Diese Texte erreichen das DOM
@@ -63,7 +72,7 @@ def api_donations_reset():
         return jsonify(ok=True, removed=int(removed))
     except Exception as e:
         log.error("Spenden-Reset fehlgeschlagen: %s", e)
-        return jsonify(ok=False, error=str(e)), 500
+        return jsonify(ok=False, error=_fehler_text(e, "api_donations_reset")), 500
 
 
 @bp.route("/api/donations/add", methods=["POST"])
@@ -96,7 +105,7 @@ def api_donations_add():
                        total_eur=_manual_donations_total())
     except Exception as e:
         log.error("Manuelle Spende fehlgeschlagen: %s", e)
-        return jsonify(ok=False, error=str(e)), 500
+        return jsonify(ok=False, error=_fehler_text(e, "api_donations_add")), 500
 
 
 @bp.route("/api/donations/manual")
@@ -120,7 +129,7 @@ def api_donations_manual_delete(rid):
         return jsonify(ok=bool(removed), removed=int(removed),
                        total_eur=_manual_donations_total())
     except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
+        return jsonify(ok=False, error=_fehler_text(e, "api_donations_manual_delete")), 500
 
 
 @bp.route("/api/donations/summary")
@@ -184,7 +193,7 @@ def api_donations_summary():
         return jsonify(out)
     except Exception as e:
         log.warning("api_donations_summary: %s", e)
-        return jsonify(ok=False, error=str(e)), 500
+        return jsonify(ok=False, error=_fehler_text(e, "api_donations_summary")), 500
 
 
 @bp.route("/api/finanzamt/entries")
@@ -204,7 +213,7 @@ def api_finanzamt_entries():
                            disclaimer=_nc_ledger.DISCLAIMER)
     except Exception as e:
         log.warning("api_finanzamt_entries: %s", e)
-        return jsonify(ok=False, error=str(e)), 500
+        return jsonify(ok=False, error=_fehler_text(e, "api_finanzamt_entries")), 500
 
 
 @bp.route("/api/finanzamt/entry", methods=["POST"])
@@ -228,10 +237,10 @@ def api_finanzamt_add():
             conn.commit()
         return jsonify(ok=True, **res)
     except _nc_ledger.LedgerError as e:
-        return jsonify(ok=False, error=str(e)), 400
+        return jsonify(ok=False, error=_fehler_text(e, "api_finanzamt_add")), 400
     except Exception as e:
         log.warning("api_finanzamt_add: %s", e)
-        return jsonify(ok=False, error=str(e)), 500
+        return jsonify(ok=False, error=_fehler_text(e, "api_finanzamt_add")), 500
 
 
 @bp.route("/api/finanzamt/export.csv")
