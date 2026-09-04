@@ -197,10 +197,10 @@ flowchart TB
     DC --> BOT
     TT --> BOT
 
-    BOT["bot.py<br/>monolith · 27,218 lines<br/>scraper · recorder · restream<br/>Flask dashboard · 81 own routes"]:::core
+    BOT["bot.py<br/>monolith · 26,392 lines<br/>scraper · recorder · restream<br/>Flask dashboard · 39 own routes"]:::core
 
-    BOT -->|configure| NC["nc/ — 92 domain modules<br/>schema · OAuth · restream<br/>ledger · moderation · intel"]:::lib
-    NC --> RT["nc/routes/ — 31 blueprints<br/>278 further API routes"]:::lib
+    BOT -->|configure| NC["nc/ — 119 domain modules<br/>schema · OAuth · restream<br/>ledger · moderation · intel"]:::lib
+    NC --> RT["nc/routes/ — 35 blueprints<br/>320 further API routes"]:::lib
     BOT --> TPL["templates/<br/>dashboard · overlay · PWA"]:::lib
     BOT --> BR["brain_bridge.py"]:::lib
     BR --> BRAIN["brain/ — its own brain.db<br/>state · rules · router · memory<br/>knowledge · semantic · scheduler<br/>llm · agents · report"]:::brain
@@ -709,7 +709,7 @@ broken.**
 
 ### 🧭 Navigating the monolith
 
-`bot.py` has 27,218 lines. It is **never** read in full and **never** searched
+`bot.py` has 26,392 lines. It is **never** read in full and **never** searched
 blindly — first ask where something is, then fetch the excerpt:
 
 ```bash
@@ -724,7 +724,7 @@ python3 tools/ncpatch.py docs                      # documentation numbers vs. t
 ```
 
 `find` answers from **[`.claude/INDEX.md`](.claude/INDEX.md)** — 359 routes
-(81 in `bot.py`, 278 in `nc/routes/`), 45 slash commands, 479 functions, each
+(39 in `bot.py`, 320 in `nc/routes/`), 45 slash commands, 476 functions, each
 with a line number.
 
 ---
@@ -766,7 +766,7 @@ NIGHTCRAWLER/
 │   ├── semantic.py  scheduler.py  llm.py  agents.py  report.py
 │   └── test_m*.py            module tests
 │
-├── nc/                       92 domain modules (bot-free, configure() injection)
+├── nc/                       119 domain modules (bot-free, configure() injection)
 │   ├── schema.py             central database schema
 │   ├── i18n.py               translation catalogue and language detection
 │   ├── restream_*.py         targets, guard, test push, utils
@@ -774,7 +774,7 @@ NIGHTCRAWLER/
 │   ├── twitchoauth.py  ytoauth.py  kick_oauth.py
 │   ├── modheuristics.py  shield.py  replygate.py
 │   ├── freeai.py  claude.py  piper_voices.py
-│   ├── routes/               31 Flask blueprints (278 API routes)
+│   ├── routes/               35 Flask blueprints (320 API routes)
 │   ├── intel/                archive index, transcripts, reels
 │   └── _vendor/segno/        vendored QR encoder (BSD)
 │
@@ -855,7 +855,7 @@ Full history: **[`docs/CHANGELOG.md`](docs/CHANGELOG.md)** ·
 
 ## 🧭 Roadmap
 
-The next big step is not a feature, it is cleaning up: **`bot.py` has 27,218
+The next big step is not a feature, it is cleaning up: **`bot.py` has 26,392
 lines**. That file is the project's bottleneck. The bar for it is not a line
 count though:
 
@@ -863,7 +863,7 @@ count though:
 
 The route there in six waves — measured, not estimated:
 **[`docs/en/ROADMAP.md`](docs/en/ROADMAP.md)**. Wave 2 is done, wave 3 is
-running: `nc/routes/` carries 31 blueprints with 278 API routes today that no
+running: `nc/routes/` carries 35 blueprints with 320 API routes today that no
 longer sit in the monolith.
 
 ---

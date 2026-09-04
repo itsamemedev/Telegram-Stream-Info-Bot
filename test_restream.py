@@ -1507,9 +1507,17 @@ def test_deepbughunt_fixes():
     Race Condition bei Dict-Iteration, File-Handle-Leaks)."""
     src = open("bot.py").read()
     # Bug 1: Cookie-Warnung gedrosselt (nicht mehr pro Aufruf)
-    assert "_COOKIE_WARN_TS" in src, "Cookie-Log-Spam-Drossel fehlt"
-    assert "gedrosselt" in src, "Drossel-Logik nicht verdrahtet"
-    ok("deepbughunt: Cookie-Log-Spam gedrosselt (max alle 60s)")
+    # v4.1-W32: Anker gewandert, nicht geloescht — der Leser liegt jetzt in
+    # nc/cookies.py (load_dict). Der Vertrag selbst gilt unveraendert: bei
+    # einem Rechteproblem landen alle Aufrufer im except, der Erfolgs-Cache
+    # greift nicht, und ohne Drossel standen mehrere Warnungen PRO SEKUNDE im
+    # Log und versteckten echte Fehler.
+    cookiesrc = open("nc/cookies.py", encoding="utf-8").read()
+    assert "_COOKIE_WARN_TS" in cookiesrc, "Cookie-Log-Spam-Drossel fehlt"
+    assert "gedrosselt" in cookiesrc, "Drossel-Logik nicht verdrahtet"
+    assert "_load_cookies_dict = _nc_cookies_datei.load_dict" in src, \
+        "bot.py liest cookies.txt wieder selbst — dann greift die Drossel dort nicht"
+    ok("deepbughunt: Cookie-Log-Spam gedrosselt (max alle 60s, seit W32 in nc/cookies.py)")
 
     # Bug 2: Race-sichere Iteration über _RESTREAM_ACTIVE_ALL (list())
     # Es darf keine ungeschützte for-Schleife über .items() mehr geben, die
@@ -7480,8 +7488,18 @@ def test_v40_w118_sicherheitsaudit():
     assert "compare_digest" in _po, "Vergleich nicht zeitkonstant"
 
     # ── S6 ────────────────────────────────────────────────────────────────
-    assert "def _url_ohne_zugang(url):" in src, "kein Maskierer fuer Zugangsdaten in URLs"
-    assert "redis_url      = _url_ohne_zugang(REDIS_URL)" in src, \
+    # v4.1-W32: Anker gewandert, nicht geloescht. Der Maskierer liegt jetzt in
+    # nc/logsafe.py neben redact_stream_urls — dieselbe Aufgabe, dieselbe
+    # Datei — und die Route /api/system in nc/routes/systemlage.py. Geprueft
+    # wird weiterhin dasselbe: es gibt GENAU EINEN Maskierer, und die
+    # Redis-URL laeuft durch ihn, bevor sie das Deck verlaesst.
+    logsafesrc = open("nc/logsafe.py", encoding="utf-8").read()
+    assert "def url_ohne_zugang(url):" in logsafesrc, \
+        "kein Maskierer fuer Zugangsdaten in URLs"
+    assert "_url_ohne_zugang = _nc_logsafe.url_ohne_zugang" in src, \
+        "bot.py hat wieder einen eigenen Maskierer — zwei Wahrheiten, eine davon veraltet"
+    lagesrc = open("nc/routes/systemlage.py", encoding="utf-8").read()
+    assert "redis_url      = _nc_logsafe.url_ohne_zugang(_nc_probe.redis_url())" in lagesrc, \
         "REDIS_URL geht weiterhin im Klartext raus"
     ok("v4.0-w118: XSS geschlossen, KI-SQL read-only, OAuth-state erzwungen, "
        "Open Redirect dicht, ein Maskierer, Zugangsdaten maskiert")

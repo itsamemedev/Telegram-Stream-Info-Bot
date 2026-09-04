@@ -31,3 +31,27 @@ def redact_stream_urls(text, rx=RE_STREAM_URL):
     except Exception:
         # Im Zweifel lieber die ganze Zeile verwerfen als einen Key ausgeben.
         return "<Zeile wegen Redact-Fehler unterdrueckt>"
+
+
+def url_ohne_zugang(url):
+    """v4.0-W118 (SEC): Zugangsdaten aus einer URL entfernen, Rest lesbar lassen.
+
+    REDIS_URL & Co. duerfen ein Passwort tragen (redis://:geheim@host:6379/0).
+    /api/system gab die URL bisher unveraendert aus — die Antwort landet im
+    Browser-Cache, in Screenshots und in jedem Support-Log. Host und Port
+    bleiben stehen, denn genau die braucht die Fehlersuche.
+
+    v4.1-W32: aus bot.py hierher. Es ist dieselbe Aufgabe wie
+    redact_stream_urls — etwas Geheimes aus einem Text nehmen, ohne den Text
+    unbrauchbar zu machen — und gehoert deshalb in dieselbe Datei.
+    """
+    try:
+        u = (url or "").strip()
+        if "@" not in u or "//" not in u:
+            return u
+        schema, rest = u.split("//", 1)
+        zugang, ziel = rest.rsplit("@", 1)
+        benutzer = zugang.split(":", 1)[0]
+        return f"{schema}//{benutzer + ':' if benutzer else ''}<geheim>@{ziel}"
+    except Exception:
+        return "<URL unterdrueckt>"

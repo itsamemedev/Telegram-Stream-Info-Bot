@@ -149,3 +149,114 @@ def _cookie_alarm_level(h):
         return "warn", ("⚠️ <b>COOKIE-WARNUNG</b>\n\n" + head + extra +
                         "\n\nVor Ablauf neu exportieren — sonst brechen Aufnahmen still ab.")
     return "ok", ""
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# v4.1-W32: cookies.txt lesen — aus bot.py hierher.
+#
+# Warum es hierher gehoert: die Funktion parst eine Datei und loest eine
+# Namenskollision auf. Beides ist Cookie-Format-Verarbeitung, also genau das,
+# wofuer dieses Modul da ist. Im Monolithen hing sie nur an der Konstanten
+# COOKIE_FILE und am Logger fest.
+#
+# Der Rumpf ist woertlich uebernommen — die Aufloesung nach Domain-Spezifitaet
+# und Expiry ist ein Bugfix, dessen Symptom ("Dashboard zeigt Cookies aktuell,
+# TikTok liefert trotzdem 403") niemand ein zweites Mal suchen will.
+import os
+import time as _time
+from http.cookiejar import MozillaCookieJar
+
+_KONF = {"datei": "tiktok_cookies.txt", "log": None}
+
+
+def configure(datei=None, log=None):
+    """Vom Bot einmal beim Start gerufen."""
+    if datei is not None:
+        _KONF["datei"] = datei
+    if log is not None:
+        _KONF["log"] = log
+
+
+def load_dict() -> dict:
+    """Lädt cookies.txt als dict. B6-Fix: TTL-Cache (5s) damit Recording-
+       Bursts nicht für jeden Resolve+ffmpeg-Bau die Datei neu parsen.
+       Cache wird invalidiert wenn sich die mtime ändert.
+
+       BUG-FIX (Tiefenbughunt): Browser-Cookie-Exports (z.B. "Get cookies.txt
+       LOCALLY") legen denselben Cookie-NAMEN oft mehrfach mit verschiedenen
+       DOMAIN-Scopes an — TikTok setzt sessionid teils auf '.tiktok.com',
+       teils zusätzlich auf 'www.tiktok.com' je nachdem welche Subdomain
+       zuletzt besucht wurde. Die alte Implementierung baute das Ergebnis-
+       dict per {c.name: c.value for c in cj} — bei Namens-Kollision über
+       mehrere Domains gewinnt schlicht der in MozillaCookieJar zuletzt
+       iterierte Eintrag. Das ist NICHT deterministisch nach Aktualität,
+       sondern nach Datei-Reihenfolge. Symptom exakt wie beobachtet: das
+       Dashboard zeigt 'Cookies aktuell' (get_cookie_health() prüft nur ob
+       der NAME vorkommt, nicht welcher Domain-Wert gewinnt), aber TikTok
+       liefert trotzdem 403 weil der tatsächlich gesendete sessionid-Wert
+       aus einer veralteten/falschen Domain-Variante stammt.
+
+       Fix: bei Namens-Kollision gewinnt der Eintrag mit der SPEZIFISCHEREN
+       Domain (ohne führenden Punkt = Domain-exakt, nicht Subdomain-Wildcard)
+       UND falls beide gleich spezifisch sind, der mit der LÄNGEREN Expiry
+       (= zuletzt vom Server gesetzt/erneuert, meist der frischere Login)."""
+    if not os.path.exists(_KONF["datei"]):
+        # Nicht cachen damit wir's mitbekommen wenn die Datei plötzlich da ist
+        return {}
+    try:
+        mtime = os.path.getmtime(_KONF["datei"])
+    except OSError:
+        return {}
+    now = _time.monotonic()
+    cached = _COOKIES_CACHE.get("v")
+    if cached and cached[0] == mtime and (now - cached[1]) < 5.0:
+        return cached[2]
+    try:
+        cj = MozillaCookieJar(_KONF["datei"])
+        cj.load(ignore_discard=True, ignore_expires=True)
+        # best[name] = (specificity_rank, expiry, value)
+        # specificity_rank: 1 = exakte Domain (kein führender Punkt, höchste
+        # Priorität — das ist was ein echter Browser für die aktuell besuchte
+        # Seite tatsächlich sendet), 0 = Wildcard-Domain ('.tiktok.com')
+        best: dict = {}
+        skipped_collisions = 0
+        for c in cj:
+            specificity = 0 if (c.domain or "").startswith(".") else 1
+            expiry = c.expires or 0
+            prev = best.get(c.name)
+            if prev is None:
+                best[c.name] = (specificity, expiry, c.value, c.domain)
+            else:
+                skipped_collisions += 1
+                if (specificity, expiry) > (prev[0], prev[1]):
+                    best[c.name] = (specificity, expiry, c.value, c.domain)
+        d = {name: val for name, (_, _, val, _) in best.items()}
+        if skipped_collisions:
+            _KONF["log"].debug(f"load_dict: {skipped_collisions} Domain-Duplikate "
+                      f"aufgelöst (spezifischste/frischeste Variante gewählt)")
+        _COOKIES_CACHE["v"] = (mtime, now, d)
+        return d
+    except Exception as e:
+        # BUG-FIX (Tiefenbughunt): bei Permission-denied/Lesefehler landet JEDER
+        # der 21 Aufrufer hier und loggt erneut — im Live-Log sahen wir mehrere
+        # Warnungen pro Sekunde. Der Erfolgs-Cache greift nicht (wird nur bei
+        # Erfolg gesetzt). Darum die Warnung hier drosseln: max. alle 60s, sonst
+        # verstopft ein einziges Rechteproblem das komplette Log und versteckt
+        # echte Fehler. Der Fehler selbst wird NICHT verschluckt — nur die
+        # Wiederholung entschärft.
+        _now = _time.monotonic()
+        if _now - _COOKIE_WARN_TS.get("last", -1e9) >= 60:
+            _COOKIE_WARN_TS["last"] = _now
+            _KONF["log"].warning(f"Cookies konnten nicht geladen werden: {e}")
+        else:
+            _KONF["log"].debug(f"Cookies konnten nicht geladen werden (gedrosselt): {e}")
+        return {}
+
+
+_COOKIES_CACHE = {}     # B6: {"v": (mtime, loaded_at_monotonic, dict)}
+_COOKIE_WARN_TS = {}    # Tiefenbughunt: drosselt die "Cookies unlesbar"-Warnung (max alle 60s)
+
+# Geteilter Zustand, kein Implementierungsdetail: der Bot leert den Cache nach
+# einer Cookie-Reparatur, und das Deck liest ihn ueber ctx.cfg. Beide muessen
+# DASSELBE Dict sehen — deshalb ein oeffentlicher Name statt einer Kopie.
+CACHE = _COOKIES_CACHE
