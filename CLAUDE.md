@@ -10,7 +10,7 @@ GitHub-Repo trägt Historie, CI und Issues — es ist nicht der Deploy-Weg.
 
 ## Die eine Regel
 
-`bot.py` hat **26.919 Zeilen / 1,3 MB ≈ 340.000 Token**. Diese Datei wird
+`bot.py` hat **26.805 Zeilen / 1,3 MB ≈ 338.000 Token**. Diese Datei wird
 **nie** ganz gelesen und **nie** blind durchsucht. Erst fragen wo etwas steht,
 dann den Ausschnitt holen:
 
@@ -24,8 +24,8 @@ dann den Ausschnitt holen:
     python tools/ncpatch.py check                          # Templates: doppelte IDs, CSS-Bilanz
     python tools/ncpatch.py docs                           # Doku-Zahlen gegen den Quelltext
 
-`find` antwortet aus `.claude/INDEX.md` — 359 Routen (71 in `bot.py`, 288 in
-`nc/routes/`), 45 Slash-Commands, 479 Funktionen mit Zeilennummern. Nach Änderungen an Routen, Commands oder
+`find` antwortet aus `.claude/INDEX.md` — 359 Routen (67 in `bot.py`, 292 in
+`nc/routes/`), 45 Slash-Commands, 478 Funktionen mit Zeilennummern. Nach Änderungen an Routen, Commands oder
 Top-Level-Funktionen `map` neu laufen lassen. Details: Skill `nc-navigation`.
 
 Für „wer ruft das auf?" und „was ist der Typ?" ist der Sprachserver billiger als
@@ -44,9 +44,9 @@ Auf diesem Windows-Rechner heißt der Interpreter **`python`** (3.13.12);
     brain_bridge.py      Adapter Bot ↔ brain/ (M2)
     brain/               KI-Kern: state, rules, router, agents, memory,
                          semantic, knowledge, scheduler, llm, report
-    nc/                  109 Fachmodule: db, scraping, restream, oauth, ledger,
+    nc/                  112 Fachmodule: db, scraping, restream, oauth, ledger,
                          i18n, …
-    nc/routes/           32 Flask-Blueprints mit 288 weiteren API-Routen
+    nc/routes/           33 Flask-Blueprints mit 292 weiteren API-Routen
     locales/             de.json, en.json — der Übersetzungskatalog
     templates/           dashboard.html, brain.html, overlay.html, PWA
     website/             lafap_index.html (öffentliche Seite)

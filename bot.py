@@ -634,6 +634,7 @@ from nc.routes import brain as _nc_routes_brain              # v4.1-W21: Brain-P
 from nc.routes import restream as _nc_routes_restream        # v4.1-W22: Sendeleiste
 from nc.routes import beobachtung as _nc_routes_beobachtung        # v4.1-W23: Beobachtung
 from nc.routes import wartung as _nc_routes_wartung            # v4.1-W24: Wartung
+from nc.routes import abwehr as _nc_routes_abwehr              # v4.1-W25: Abwehr
 from nc import updater as _nc_updater                        # v4.0-W115: Selbst-Update aus dem GitHub-Repo
 from nc import donationsdb as _nc_donationsdb                # v4.0-W116: manuell erfasste Spenden lesen
 # Diese beiden Routen ruft der Bot auch INTERN auf (Telegram /sysres und die
@@ -863,6 +864,9 @@ from nc.stats import (get_per_user_stats, get_activity_pulse, get_lives_heatmap,
                       get_recordings_heatmap)  # noqa: F401
 from nc import archive as _nc_archive     # v4.0-W110: Archiv-Datenzugriff
 from nc import backupcfg as _nc_backup     # v4.1-W24: Sicherung, Aufbewahrung
+from nc import defensecfg as _nc_dcfg     # v4.1-W25: Abwehr-Einstellungen
+from nc import geocache as _nc_geocache   # v4.1-W25: Adress-Cache, EIN Schreibweg
+from nc import geoip as _nc_geoip         # v4.1-W25: ip-api-Stapelabfrage
 from nc import archiverules as _nc_arules  # v4.1-W24: Auto-Archiv-Regeln
 from nc import retention as _nc_retention  # v4.1-W24: Aufbewahrungs-Scan
 from nc import storage as _nc_storage      # v4.1-W24: Platz und Aufraeumen
@@ -10687,25 +10691,13 @@ def _quick_validate_proxy(proxy):
 # Source: ip-api.com Batch-Endpoint (free, no API-Key, 45 req/min limit).
 # B57 (Bug-Hunt): Cache hatte kein Limit → unbounded growth. Bei Pool-Refresh
 # alle 30min × neue IPs jedesmal sind das ~10MB/Jahr. Jetzt: einfacher LRU-
-# Cap auf 5000 Einträge. Drüber: ältester wird verworfen. Da Geo-Location
-# pro IP stabil ist, ist ein FIFO-Eviction OK.
-_PROXY_GEO_CACHE = {}    # ip -> {lat, lon, country, city, isp}
-_PROXY_GEO_LOCK = _threading_for_db.Lock()
+# v4.1-W25: Cache, Sperre und Obergrenze liegen jetzt in nc/geocache.py — mit
+# genau EINEM Schreibweg. Vorher gab es hier zwei: diesen Helfer, der die
+# Grenze durchsetzt, und einen Direktzugriff in der Geo-Auflösung der Abwehr,
+# der an ihr vorbeiging. Bei einer Angriffswelle mit vielen verschiedenen
+# Adressen wuchs der Cache dadurch unbegrenzt — ohne Fehler und ohne Logzeile.
 _PROXY_GEO_LAST_FETCH = 0   # monotonic ts der letzten ip-api Anfrage
-_PROXY_GEO_CACHE_MAX = 5000   # B57: max entries before FIFO-eviction
-
-def _proxy_geo_cache_put(ip, geo):
-    """B57: Cache-write mit Größenlimit. Pythons dict behält insertion-order
-       → wir können den ältesten Eintrag mit next(iter(...)) finden und poppen."""
-    with _PROXY_GEO_LOCK:
-        if ip in _PROXY_GEO_CACHE:
-            # Move-to-end für LRU-Verhalten
-            _PROXY_GEO_CACHE.pop(ip)
-        _PROXY_GEO_CACHE[ip] = geo
-        # Evict oldest wenn überm Limit
-        while len(_PROXY_GEO_CACHE) > _PROXY_GEO_CACHE_MAX:
-            oldest_ip = next(iter(_PROXY_GEO_CACHE))
-            _PROXY_GEO_CACHE.pop(oldest_ip, None)
+_proxy_geo_cache_put = _nc_geocache.put
 
 def _enrich_proxies_with_geo(proxies):
     """Fügt jedem Proxy-Dict {lat, lon, country, city, isp} hinzu.
@@ -10720,8 +10712,7 @@ def _enrich_proxies_with_geo(proxies):
         ip = (p.get("url", "").split(":") or [""])[0]
         if not ip:
             continue
-        with _PROXY_GEO_LOCK:
-            cached = _PROXY_GEO_CACHE.get(ip)
+        cached = _nc_geocache.get(ip)
         if cached:
             p.update(cached)
         else:
@@ -19969,7 +19960,10 @@ def _cscli_bin():
         shutil.which, os.path.exists)
 
 _CSCLI_CACHE = [None]      # gefundener Pfad; solange None wird neu gesucht
-_DEFENSE_GEO_ERR = ""      # letzter Fehler der Geo-Aufloesung, fuer das Panel
+# v4.1-W25: liegt als Register in nc/defensecfg.py. REGISTER und nicht Alias,
+# weil eine Zeichenkette unteilbar ist: der frueher hier stehende `global`
+# band den Namen neu, ein Alias haette danach fuer immer auf den alten leeren
+# Wert gezeigt.
 
 
 def _cscli_path():
@@ -20024,12 +20018,8 @@ def _darf_journal_lesen():
 
 
 def _is_private_ip(ip):
-    try:
-        import ipaddress
-        a = ipaddress.ip_address(ip)
-        return a.is_private or a.is_loopback or a.is_link_local or a.is_reserved
-    except Exception:
-        return ip.startswith(("10.", "192.168.", "127.", "169.254.", "172.1", "172.2", "172.3"))
+    # v4.1-W25: nach nc/geoip.py geloest.
+    return _nc_geoip.ist_privat(ip)
 
 
 def _run_priv(args, timeout=6, sudo_first=False):
@@ -20039,48 +20029,10 @@ def _run_priv(args, timeout=6, sudo_first=False):
 
 
 def _geo_lookup_ips(ips):
-    """Geolokalisiert IPs für die Defense-Karte (gleicher Cache + ip-api-Batch wie die
-       Proxy-Globe). Private/lokale IPs werden übersprungen. Returns {ip:{lat,lon,country,cc,city}}."""
-    import urllib.request, json as _json
-    global _DEFENSE_GEO_ERR
-    _DEFENSE_GEO_ERR = ""
-    out, unknown = {}, []
-    for ip in {i for i in ips if i}:
-        if _is_private_ip(ip):
-            continue
-        with _PROXY_GEO_LOCK:
-            c = _PROXY_GEO_CACHE.get(ip)
-        if c and c.get("lat") is not None:
-            out[ip] = c
-        else:
-            unknown.append(ip)
-    if unknown:
-        pub = unknown[:100]
-        try:
-            body = _json.dumps([{"query": ip,
-                                 "fields": "status,lat,lon,country,countryCode,city,query"}
-                                for ip in pub]).encode()
-            req = urllib.request.Request("http://ip-api.com/batch", data=body,
-                                         headers={"Content-Type": "application/json",
-                                                  "User-Agent": "nc-defense/1"})
-            with urllib.request.urlopen(req, timeout=8) as r:
-                arr = _json.loads(r.read().decode())
-            for item in arr or []:
-                if item.get("status") == "success":
-                    ip = item.get("query")
-                    g = {"lat": item.get("lat"), "lon": item.get("lon"),
-                         "country": item.get("country"), "cc": item.get("countryCode"),
-                         "city": item.get("city")}
-                    with _PROXY_GEO_LOCK:
-                        _PROXY_GEO_CACHE[ip] = g
-                    out[ip] = g
-        except Exception as e:
-            # B138: war log.debug — in einem ERROR-Log unsichtbar. Fiel ip-api
-            # aus (Rate-Limit 45/min oder ausgehender Port 80 zu), blieben
-            # TOP-LÄNDER und Weltkarte leer und niemand erfuhr warum.
-            _DEFENSE_GEO_ERR = str(e)[:160]
-            log.warning("Abwehr: Geo-Auflösung (ip-api) fehlgeschlagen: %s", e)
-    return out
+    # v4.1-W25: nach nc/geoip.py geloest. Dort liegt der Cache mit genau EINEM
+    # Schreibweg — der Direktzugriff, der hier stand, ging an der Obergrenze
+    # vorbei und liess den Cache bei Angriffswellen unbegrenzt wachsen.
+    return _nc_geoip.lookup(ips, fehler_setzen=_nc_dcfg.geo_fehler_setzen)
 
 
 def _crowdsec_via_lapi():
@@ -20333,36 +20285,13 @@ def _parse_ssh_attacks(limit=300):
             "attacks": attacks, "total": sum(a["count"] for a in agg.values()),
             "unique_ips": len(agg)}
 
+# v4.1-W25: Haken fuer nc/routes/abwehr.py. Beide brauchen den laufenden
+# Server — cscli (Root, ausser mit Bouncer-Schluessel) und das Journal.
+# Sichtbare Kopplung statt eines Kontext-Slots.
+_nc_routes_abwehr.HAKEN["sperrliste"]["fn"] = _crowdsec_status
+_nc_routes_abwehr.HAKEN["angriffe"]["fn"] = _parse_ssh_attacks
 
-@dashboard_app.route("/api/defense/overview")
-def api_defense_overview():
-    try:
-        f2b = _fail2ban_status()
-        atk = _parse_ssh_attacks(limit=250)
-        top_ips = [a["ip"] for a in atk.get("attacks", [])[:60]]
-        geo = _geo_lookup_ips(top_ips) if top_ips else {}
-        by_country = {}
-        for a in atk.get("attacks", []):
-            g = geo.get(a["ip"])
-            if g and g.get("country"):
-                by_country[g["country"]] = by_country.get(g["country"], 0) + a["count"]
-        top_countries = sorted(by_country.items(), key=lambda x: x[1], reverse=True)[:8]
-        # B138: status + fix mitliefern. Ohne sie kann das Panel "nichts
-        # gefunden" nicht von "darf nicht nachsehen" unterscheiden.
-        return jsonify(ok=True, banned=f2b.get("total_banned", 0), f2b_ok=f2b.get("ok"),
-                       f2b_status=f2b.get("status"),
-                       f2b_hint=(None if f2b.get("ok") else f2b.get("hint")),
-                       f2b_fix=(None if f2b.get("ok") else f2b.get("fix")),
-                       attacks_total=atk.get("total", 0), unique_ips=atk.get("unique_ips", 0),
-                       attacks_ok=atk.get("ok"), attacks_status=atk.get("status"),
-                       attacks_source=atk.get("source"),
-                       attacks_hint=(None if atk.get("ok") else atk.get("hint")),
-                       attacks_fix=(None if atk.get("ok") else atk.get("fix")),
-                       geo_error=(_DEFENSE_GEO_ERR or None),
-                       top_countries=[{"country": c, "hits": n} for c, n in top_countries],
-                       server={"lat": DEFENSE_SERVER_LAT, "lon": DEFENSE_SERVER_LON})
-    except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
+
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -20610,54 +20539,10 @@ def api_selftest():
         return jsonify(ok=False, error=str(e)), 500
 
 
-@dashboard_app.route("/api/defense/crowdsec")
-def api_defense_crowdsec():
-    """v4.0-W23: Verbindungs-Diagnose zu CrowdSec — genau der Weg, den der Bot
-       geht (LAPI via Bouncer-Schluessel, sonst cscli). Zeigt Modus, die exakt
-       abgefragte LAPI-URL, ob ein Schluessel gesetzt ist, sowie ok/hint/fix.
-       Der 'Verbindung testen'-Knopf im Dashboard ruft genau das auf."""
-    try:
-        st = dict(_crowdsec_status() or {})
-        st.setdefault("ok", False)
-        st["mode"] = "lapi" if CROWDSEC_BOUNCER_KEY else "cscli"
-        st["lapi_url"] = _nc_crowdsec.base_url(CROWDSEC_LAPI_URL, CROWDSEC_LAPI_HOST,
-                                               CROWDSEC_LAPI_PORT)
-        st["bouncer_key_set"] = bool(CROWDSEC_BOUNCER_KEY)
-        return jsonify(st)
-    except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
 
 
-@dashboard_app.route("/api/defense/fail2ban")
-def api_defense_fail2ban():
-    try:
-        f2b = _fail2ban_status()
-        all_ips = []
-        for j in f2b.get("jails", []):
-            all_ips += j.get("ips", [])
-        geo = _geo_lookup_ips(all_ips[:100]) if all_ips else {}
-        for j in f2b.get("jails", []):
-            j["ip_geo"] = [dict(ip=ip, **(geo.get(ip) or {})) for ip in j.get("ips", [])]
-        return jsonify(**f2b)
-    except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
 
 
-@dashboard_app.route("/api/defense/attacks")
-def api_defense_attacks():
-    try:
-        atk = _parse_ssh_attacks(limit=300)
-        ips = [a["ip"] for a in atk.get("attacks", [])]
-        geo = _geo_lookup_ips(ips[:100]) if ips else {}
-        for a in atk.get("attacks", []):
-            g = geo.get(a["ip"])
-            if g:
-                a.update(lat=g.get("lat"), lon=g.get("lon"), country=g.get("country"),
-                         cc=g.get("cc"), city=g.get("city"))
-        atk["server"] = {"lat": DEFENSE_SERVER_LAT, "lon": DEFENSE_SERVER_LON}
-        return jsonify(**atk)
-    except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
 
 
 # ===================== DISCORD-BOT (optional, env-gated) =====================
@@ -26910,6 +26795,7 @@ dashboard_app.register_blueprint(_nc_routes_brain.bp)      # v4.1-W21
 dashboard_app.register_blueprint(_nc_routes_restream.bp)   # v4.1-W22
 dashboard_app.register_blueprint(_nc_routes_beobachtung.bp)       # v4.1-W23
 dashboard_app.register_blueprint(_nc_routes_wartung.bp)           # v4.1-W24
+dashboard_app.register_blueprint(_nc_routes_abwehr.bp)            # v4.1-W25
 
 
 if __name__ == "__main__":

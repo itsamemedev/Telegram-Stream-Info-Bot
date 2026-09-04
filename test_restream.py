@@ -3811,11 +3811,19 @@ def test_v40_w23_crowdsec_panel():
     """v4.0-W23: CrowdSec-Verbindungsstatus im Dashboard (der letzte Integrations-
        schritt hatte keine eigene Anzeige) + praezisere Doku (Port ermitteln,
        Schluessel-Falle beim curl-Test)."""
-    src = open("bot.py").read()
+    # v4.1-W25: Anker mitgewandert. Die Route liegt seit der Zerlegung in
+    # nc/routes/abwehr.py, nicht mehr im Monolithen — der VERTRAG ist
+    # unveraendert (Modus, exakte LAPI-URL, Schluesselstatus), nur seine
+    # Fundstelle nicht. Genau der Fall aus CLAUDE.md: erst pruefen, ob der
+    # Vertrag oder bloss sein Anker gebrochen ist.
+    src = open("nc/routes/abwehr.py", encoding="utf-8").read()
     assert '"/api/defense/crowdsec"' in src and "def api_defense_crowdsec(" in src, "keine Diagnose-Route"
     route = src[src.find("def api_defense_crowdsec("):]
-    route = route[:route.find("@dashboard_app.route(\"/api/defense/fail2ban\")")]
+    route = route[:route.find('@bp.route("/api/defense/fail2ban")')]
     assert '"mode"' in route and "lapi_url" in route and "bouncer_key_set" in route, "Route ohne Modus/URL/Schluesselstatus"
+    # Und der Schluesselstatus bleibt ein bool: die Diagnose sagt OB einer da
+    # ist, nie WELCHER. bouncer_gesetzt() gibt nichts heraus.
+    assert "bouncer_key()" not in route, "Diagnose gibt den Bouncer-Schluessel heraus"
     dash = open("templates/dashboard.html").read()
     assert 'id="def_conn"' in dash and "async function crowdsecConn(" in dash, "kein Verbindungs-Panel"
     assert "Verbindung testen" in dash, "kein Test-Knopf im Panel"
