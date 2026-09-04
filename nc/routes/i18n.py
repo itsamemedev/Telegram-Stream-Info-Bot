@@ -109,13 +109,22 @@ _UEBERSETZER_JS = r"""(function(){
 
   function uebersetze(text){
     if (!KAT || !text) return null;
-    var roh = text.trim();
-    if (!roh) return null;
-    var treffer = KAT[roh];
-    if (!treffer) return null;
+    var teile = text.match(/^(\s*)([\s\S]*?)(\s*)$/);
+    var vorn = teile[1], kern = teile[2], hinten = teile[3];
+    if (!kern) return null;
+    var treffer = KAT[kern];
+    if (!treffer){
+      // v4.1-W28: Mehrzeilige Knoten. Der Quelltext bricht Hilfetexte um und
+      // rueckt sie ein — im DOM steht der Umbruch mit drin. Der Katalog haelt
+      // sie mit einfachen Leerzeichen, sonst waere der Schluessel von der
+      // Einrueckung im HTML abhaengig und jede Umformatierung wuerde ihn
+      // stillschweigend toeten. Der Extraktor normalisiert genauso.
+      treffer = KAT[kern.replace(/\s+/g, ' ')];
+      if (!treffer) return null;
+    }
     // Rand-Leerzeichen erhalten: viele Knoten sind " Text " mit Einrueckung,
     // und ein Trim wuerde das Layout veraendern.
-    return text.replace(roh, treffer);
+    return vorn + treffer + hinten;
   }
 
   function knoten(n){

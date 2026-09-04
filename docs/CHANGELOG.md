@@ -11,6 +11,53 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Behoben — die Abdeckungszahl maß den kleineren Teil (v4.1 W28)
+
+Gemeldet wurden **970 Einträge, 0 fehlend**. Gemessen am Dashboard waren davon
+**18 % der Textknoten** erfasst. Die Zahl war nicht falsch gerechnet — sie
+zählte nur, was der Extraktor eingesammelt hatte, und das war der kleinere
+Teil.
+
+**Ursache:** Für Texte zwischen zwei Tags verlangte der Extraktor einen
+deutschen Marker (Umlaut oder Funktionswort). „Aufnahmen", „Analysieren",
+„BEFUNDE", „7-TAGE-TREND" haben weder das eine noch das andere und sahen
+deshalb aus wie Bezeichner. Die Ausnahme, die W18 für `<th>Datei</th>`
+beschrieben hatte, stand im Kommentar der Funktion — angewandt wurde sie an
+dieser Aufrufstelle nie.
+
+Dieselbe Krankheit wie die toten Einträge aus W21/W23/W27, nur umgekehrt:
+dort zählte Erfasstes mit, das nie griff; hier fehlte das meiste und wurde
+nie gezählt.
+
+**Vier Befunde beim Aufräumen, alle behoben:**
+
+1. **Die Bezeichner-Prüfung hing an der Deutsch-Heuristik.** Wer die eine
+   abschaltete, verlor die andere. Das sind zwei getrennte Fragen: „ist das
+   überhaupt Text?" und „ist das *deutscher* Text?". Jetzt entkoppelt.
+2. **22 Katalogschlüssel trugen HTML-Entities.** Der Browser sieht den
+   dekodierten Text — aus `BACKUP &amp; EXPORT` wird im DOM
+   „BACKUP & EXPORT". Diese Einträge waren tot. Extraktor und Katalog lösen
+   Entities jetzt auf.
+3. **Mehrzeilige Hilfetexte waren ganz ausgeschlossen** — die längsten und
+   nützlichsten Texte im Deck. Extraktor **und** Browser normalisieren innere
+   Umbrüche jetzt gleich; hinge der Schlüssel an der Einrückung im HTML,
+   würde jede Umformatierung ihn stillschweigend töten.
+4. **Ein Regressions-Fehler meiner eigenen Entkopplung** — „Restream-Status"
+   ist die Beschreibung eines Slash-Befehls und sieht bloß aus wie ein
+   Bezeichner. Der Verwaisten-Melder hat ihn gemeldet.
+
+**Was bewusst NICHT übersetzt wird**, steht jetzt als namentliche Liste im
+Extraktor (`_KEIN_TEXT`), nicht als Heuristik: Produkt- und Markennamen
+(„Kick" heißt auf Englisch „Kick"), technische Bezeichner, bewusst englische
+Gestaltung und Fälle, in denen Deutsch und Englisch wortgleich sind. Ein
+Identitäts-Eintrag wäre Rauschen — und genau den verbietet der Vertrag aus W6.
+
+Katalog: 970 → **1367** Einträge. Dashboard-Abdeckung **18 % → 89 %**,
+brain.html 85 %, Website 79 %. Der Rest sind von Inline-Tags zerschnittene
+Sätze: die lassen sich nicht knotenweise übersetzen, ohne das HTML umzubauen.
+
+Ein Vertrag misst die Abdeckung jetzt selbst und fällt unter 85 %.
+
 ### Behoben — verkettete Textzuweisungen blieben deutsch (v4.1 W27)
 
 Die dritte Stelle derselben stillen Buchhaltung, nach den nativen Dialogen

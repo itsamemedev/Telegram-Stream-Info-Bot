@@ -2367,9 +2367,14 @@ def _test_w27_verkettete_knoten():
     # Faellt eines von beiden weg, sind alle Fragment-Eintraege ("Quelle: ",
     # " aktiv") auf einen Schlag tot — und die Abdeckungszahl luegt wieder.
     i18n = open("nc/routes/i18n.py", encoding="utf-8").read()
-    assert "var roh = text.trim();" in i18n, \
-        "der Nachschlag trimmt nicht mehr — Fragment-Eintraege treffen nie"
-    assert "text.replace(roh, treffer)" in i18n, \
+    # v4.1-W28: Anker nachgezogen, Zusicherung unveraendert. Der Nachschlag
+    # trennt Rand und Kern jetzt per Ausdruck, statt zu trimmen und den Kern
+    # zurueckzuersetzen — noetig fuer mehrzeilige Knoten, wo der getrimmte
+    # Kern im Original gar nicht mehr woertlich vorkommt. Beide Eigenschaften
+    # gelten weiter: der Rand wird abgetrennt UND wieder angesetzt.
+    assert "text.match(/^(\\s*)([\\s\\S]*?)(\\s*)$/)" in i18n, \
+        "der Nachschlag trennt Rand und Kern nicht mehr — Fragment-Eintraege treffen nie"
+    assert "return vorn + treffer + hinten;" in i18n, \
         "die Rand-Leerzeichen gehen verloren — das Layout verrutscht"
 
     # (3) Prosa darf nicht mit Markup in EINEM Literal kleben. Sonst ist sie
@@ -2400,6 +2405,73 @@ def _test_w27_verkettete_knoten():
     assert len(kat) >= 970, "Katalog geschrumpft: %d" % len(kat)
 
     ok("v4.1-W27: verkettete Textknoten uebersetzbar, keine toten Eintraege mehr")
+
+
+
+def _test_w28_abdeckung_ist_ehrlich():
+    """v4.1-W28: die Abdeckungszahl muss messen, was WIRKLICH im Deck steht.
+
+    Gemeldet wurde "0 fehlend" bei 970 Eintraegen. Gemessen am Dashboard waren
+    davon **18 % der Textknoten** erfasst. Der Rest fiel im Extraktor durch die
+    Deutsch-Heuristik: "Aufnahmen", "Analysieren", "BEFUNDE", "7-TAGE-TREND"
+    haben weder Umlaut noch Funktionswort und sahen deshalb aus wie Bezeichner.
+    Die Zahl war nicht falsch berechnet — sie zaehlte nur, was der Extraktor
+    eingesammelt hatte, und das war der kleinere Teil.
+
+    Das ist dieselbe Krankheit wie die toten Eintraege aus W21/W23/W27, nur
+    umgekehrt: dort zaehlte Erfasstes mit, das nie griff; hier fehlte das
+    meiste und wurde nie gezaehlt.
+    """
+    import html as _html
+    import json as _json
+    import re as _re
+
+    import tools.i18n_extract as _X  # noqa: F401  (nur fuer _KEIN_TEXT)
+
+    kat = _json.load(open("locales/en.json", encoding="utf-8"))["strings"]
+    WORT = _re.compile(r"[A-Za-zÄÖÜäöüß]{3}")
+
+    # (1) Die Abdeckung im Dashboard wird GEMESSEN, nicht behauptet. Alles,
+    # was nicht uebersetzt ist, muss ausdruecklich als Eigenname gefuehrt
+    # sein oder ein von Inline-Tags zerschnittenes Bruchstueck.
+    roh = open("templates/dashboard.html", encoding="utf-8").read()
+    ohne = _re.sub(r"<script\b.*?</script\s*>|<style\b.*?</style\s*>|<!--.*?-->", "",
+                   roh, flags=_re.S | _re.I)
+    knoten = {" ".join(_html.unescape(t).split())
+              for t in _re.findall(r">([^<>]+)<", ohne)
+              if t.strip() and WORT.search(t) and len(t.strip()) >= 3}
+    drin = {t for t in knoten if t in kat}
+    anteil = 100.0 * len(drin) / max(1, len(knoten))
+    assert anteil >= 85.0, \
+        ("nur %.0f%% der Dashboard-Textknoten sind uebersetzt (%d von %d)"
+         % (anteil, len(drin), len(knoten)))
+
+    # (2) Kein Schluessel mit HTML-Entity. Der Browser sieht den DEKODIERTEN
+    # Text: aus `BACKUP &amp; EXPORT` wird im DOM "BACKUP & EXPORT". 22 solcher
+    # Eintraege waren auf einen Schlag tot, ohne dass es auffiel.
+    ent = [k for k in kat if "&amp;" in k or "&nbsp;" in k or "&#" in k]
+    assert not ent, "Katalogschluessel mit HTML-Entity — trifft den DOM nie: %r" % ent[:4]
+
+    # (3) Beide Seiten normalisieren mehrzeilige Knoten GLEICH. Faellt eine
+    # Seite weg, sind alle Hilfetexte tot: der Quelltext bricht sie um, der
+    # Katalog haelt sie mit einfachen Leerzeichen.
+    i18n = open("nc/routes/i18n.py", encoding="utf-8").read()
+    assert "kern.replace(/\\s+/g, ' ')" in i18n, \
+        "der Nachschlag normalisiert mehrzeilige Knoten nicht mehr"
+    ext = open("tools/i18n_extract.py", encoding="utf-8").read()
+    assert 'raus.add(" ".join(t.split()))' in ext, \
+        "der Extraktor normalisiert nicht mehr — die Schluessel haengen wieder an der Einrueckung"
+    assert "_html.unescape(t)" in ext, "der Extraktor loest keine Entities mehr auf"
+
+    # (4) Die Ausnahmeliste bleibt eine LISTE, keine Heuristik. Eine Regel wie
+    # "alles in Grossbuchstaben ist ein Name" wuerde spaeter still echte
+    # Beschriftungen verschlucken.
+    assert "_KEIN_TEXT = frozenset({" in ext, "die Ausnahmen sind keine Liste mehr"
+    assert len(_X._KEIN_TEXT) < 80, \
+        ("die Ausnahmeliste waechst zur Muellhalde: %d Eintraege" % len(_X._KEIN_TEXT))
+
+    ok("v4.1-W28: Dashboard-Abdeckung %.0f%% (vorher 18%%), Katalog %d Eintraege"
+       % (anteil, len(kat)))
 
 
 def main():
@@ -2538,6 +2610,8 @@ def main():
     _test_w26_auskunft_blueprint()
 
     _test_w27_verkettete_knoten()
+
+    _test_w28_abdeckung_ist_ehrlich()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)
 
