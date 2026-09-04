@@ -3068,6 +3068,115 @@ def _test_w33_sammelentscheid_und_ein_stempel():
     ok("v4.2: Vorschlaege gesammelt entscheiden, ein Build-Stempel, "
        "Footer holt die Version")
 
+def _test_v42_w1_schnappschuss_ohne_geheimnis():
+    """v4.2-W1: config_snapshot und check_timing raus — ohne Geheimnisse."""
+    import ast as _ast
+
+    import nc.discordlimits as D
+    import nc.whispercfg as W
+
+    b = open("bot.py", encoding="utf-8").read()
+    s = open("nc/routes/systemlage.py", encoding="utf-8").read()
+
+    # ── (1) Die Routen sind weg aus dem Monolithen und im Blueprint ─────────
+    for name in ("api_system_config_snapshot", "api_check_timing"):
+        assert ("\ndef %s(" % name) not in b, "%s steht noch in bot.py" % name
+        assert "def %s(" % name in s, "%s fehlt im Blueprint" % name
+    for pfad in ("/api/system/config_snapshot", "/api/system/check_timing"):
+        assert '"%s"' % pfad in s, "%s fehlt" % pfad
+
+    # ── (2) KEIN GEHEIMNIS IM KONTEXT. Der Schnappschuss beantwortet nur, OB
+    # etwas gesetzt ist. Den Wert dafuer durch den Kontext zu reichen, damit
+    # ein Blueprint ihn zu True verrechnet, waere groessere Angriffsflaeche
+    # fuer null Gewinn — dieselbe Ueberlegung wie bei s3_zugang() in W24.
+    # Die .env traegt rund 500 Variablen mit Cookies, OAuth-Token und
+    # Stream-Schluesseln; jede davon, die unnoetig wandert, ist ein Risiko.
+    GEHEIM = ("DASHBOARD_TOKEN", "DASHBOARD_PIN", "DISCORD_BOT_TOKEN",
+              "KICK_CLIENT_SECRET", "TWITCH_STREAM_KEY", "YOUTUBE_STREAM_KEY",
+              "KICK_STREAM_KEY", "KICK_STREAM_KEY_BACKUP")
+    _cfg = None
+    for k in _ast.walk(_ast.parse(b)):
+        if (isinstance(k, _ast.Call) and _ast.unparse(k.func).endswith("ctx.configure")):
+            for kw in k.keywords:
+                if kw.arg == "cfg":
+                    _cfg = kw.value
+    assert _cfg is not None, "nc.ctx.configure(cfg=…) nicht gefunden"
+    for schluessel, wert in zip(_cfg.keys, _cfg.values):
+        roh = _ast.unparse(wert)
+        for g in GEHEIM:
+            # bool(X) und "a and b"-Verrechnungen sind erlaubt: dabei verlaesst
+            # nur das Ergebnis den Bot, nicht der Wert.
+            if roh == g:
+                raise AssertionError(
+                    "ctx.cfg[%s] reicht das Geheimnis %s im Klartext an die "
+                    "Blueprints weiter — als bool(%s) uebergeben"
+                    % (_ast.unparse(schluessel), g, g))
+    # Und der Blueprint fragt auch gar nicht danach.
+    for g in GEHEIM:
+        assert '"%s"' % g not in s, \
+            "der Blueprint greift auf %s zu — er braucht nur das HAT_-Boolean" % g
+    for hat in ("HAT_DASHBOARD_TOKEN", "HAT_KICK_CREDS", "HAT_DISCORD_BOT_TOKEN"):
+        assert '"%s"' % hat in b and '"%s"' % hat in s, "%s nicht verdrahtet" % hat
+
+    # ── (3) Kein globals() im Blueprint. Der Schnappschuss las
+    # globals().get("BOT_VERSION", "?") — dort ist das der Namensraum DIESER
+    # Datei, das Deck haette dauerhaft "?" gemeldet. Dieselbe stille
+    # Fehlanzeige wie bei /api/version (W33) und config_drift (W32).
+    for k in _ast.walk(_ast.parse(s)):
+        if isinstance(k, _ast.Call) and _ast.unparse(k.func) == "globals":
+            raise AssertionError(
+                "nc/routes/systemlage.py benutzt globals(), Zeile %d — im "
+                "Blueprint der falsche Namensraum" % k.lineno)
+
+    # ── (4) Die drei Zustands-Dicts wandern als REFERENZ. Eine Kopie waere ab
+    # Start eingefroren: das Panel zeigte ewig null Messungen, null
+    # Whisper-Laeufe und die Automatik-Schalter vom Bootzeitpunkt.
+    for name in ("_AUTOMATION", "_CHECK_TIMING", "_WHISPER_STATE"):
+        gefunden = False
+        for schluessel, wert in zip(_cfg.keys, _cfg.values):
+            if isinstance(schluessel, _ast.Constant) and schluessel.value == name:
+                gefunden = True
+                assert _ast.unparse(wert) == name, \
+                    ("ctx.cfg[%r] ist keine Referenz sondern %s — das Panel "
+                     "waere ab Start eingefroren" % (name, _ast.unparse(wert)))
+        assert gefunden, "%s fehlt im Kontext" % name
+
+    # ── (5) Das Upload-Limit beantwortet nc/discordlimits.py selbst ─────────
+    assert hasattr(D, "aktuell_mb") and hasattr(D, "aktuell_label")
+    assert "_discord_upload_limit_mb    = _nc_dclimits.aktuell_mb" in b, \
+        "der Bot rechnet das Limit wieder selbst aus"
+    D.configure(guild_id=0, override_mb=None)
+    assert D.guild_filesize_bytes() == 0, "ohne Client muss 0 herauskommen"
+    # Ohne Guild greift das Free-Limit, nicht 0 — sonst meldete das Deck
+    # "0 MB" und der Betreiber suchte einen Fehler, den es nicht gibt.
+    assert D.aktuell_mb() == D.FREE_DEFAULT_MB, D.aktuell_mb()
+    assert "Free" in D.aktuell_label(), D.aktuell_label()
+    # Der Betreiber-Deckel senkt — aber nie unter die Qualitaets-Untergrenze.
+    D.configure(guild_id=0, override_mb=9)
+    assert D.aktuell_mb() == 9, D.aktuell_mb()
+    D.configure(guild_id=0, override_mb=5)
+    assert D.aktuell_mb() == D.FLOOR_MB, \
+        ("ein Betreiber-Deckel unter FLOOR_MB darf nicht durchschlagen — "
+         "sonst komprimiert der Bot Aufnahmen bis zur Unbrauchbarkeit, "
+         "bekommen: %s" % D.aktuell_mb())
+    D.configure(guild_id=0, override_mb=None)
+
+    # ── (6) EINE Antwort auf "laeuft Whisper hier". bot.py hielt eine zweite
+    # Fassung ohne try — ein kaputter Paket-Baum haette dort geworfen statt
+    # "nein" zu sagen.
+    assert "_faster_whisper_available = _nc_whisper.verfuegbar" in b, \
+        "bot.py hat wieder eine eigene Whisper-Pruefung"
+    assert isinstance(W.verfuegbar(), bool)
+
+    # ── (7) Der Restream-Manager kommt aus dem Register — MIT Wache. Vor dem
+    # Start ist er None; ohne die Wache staerbe die ganze Antwort an einem
+    # AttributeError, statt eine leere Zielliste zu melden.
+    assert '_nc_rsstate.MGR["obj"]' in s, "der Manager kommt nicht aus dem Register"
+    assert "if _mgr is not None:" in s, "keine Wache gegen den None-Manager"
+
+    ok("v4.2-W1: config_snapshot + check_timing im Blueprint, kein Geheimnis "
+       "im Kontext, Zustand als Referenz")
+
 def main():
     tmp = tempfile.mkdtemp()
     configure_db(db_path=os.path.join(tmp, "t.db"), backend="sqlite")
@@ -3216,6 +3325,8 @@ def main():
     _test_w32_sondenschicht_und_systemlage()
 
     _test_w33_sammelentscheid_und_ein_stempel()
+
+    _test_v42_w1_schnappschuss_ohne_geheimnis()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)
 

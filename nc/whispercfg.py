@@ -54,7 +54,13 @@ def waehle(neuer_name: str):
 def verfuegbar() -> bool:
     """Ist faster-whisper installiert? Nur der Import, kein Modell-Laden —
        die Frage im Dashboard lautet 'kann der Server das ueberhaupt', nicht
-       'ist es schon warm'."""
+       'ist es schon warm'.
+
+       v4.2-W1: bot.py hielt bis hierher eine ZWEITE Fassung
+       (`_faster_whisper_available`) — dieselben drei Zeilen, aber ohne das
+       try. Ein kaputter Paket-Baum haette dort eine Ausnahme geworfen statt
+       "nein" zu sagen. Der Bot benutzt jetzt diese hier.
+       """
     try:
         import importlib.util
         return importlib.util.find_spec("faster_whisper") is not None
