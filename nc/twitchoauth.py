@@ -58,7 +58,10 @@ _state = {
 
 def configure(store_path, redirect_uri=None):
     """Beim Start aufrufen: wo der Refresh-Token liegt, welche Redirect-URI gilt."""
-    _state["store_path"] = store_path
+    # v4.2-W9: absolut. bot.py reicht "recordings/..." herein, also relativ
+    # zum Arbeitsverzeichnis — ein Start aus einem anderen Verzeichnis haette
+    # den Store woanders gesucht und den Token stillschweigend verloren.
+    _state["store_path"] = os.path.abspath(store_path) if store_path else store_path
     if redirect_uri:
         _state["redirect_uri"] = redirect_uri.strip()
     _load()
@@ -83,8 +86,19 @@ def _load():
 
 
 def _save():
+    """Die Verbindung sichern.
+
+    v4.2-W9: _save schreibt nur eine VERBINDUNG, nie ihre Abwesenheit —
+    dieselbe Regel wie in nc.ytoauth. Geloescht wird ueber forget(), und das
+    entfernt die Datei. Sonst kann jeder beliebige Speichervorgang eine
+    gueltige Verbindung ausloeschen, sobald der Speicher gerade leer ist.
+    """
     p = _state.get("store_path")
     if not p:
+        return
+    if not (_state.get("refresh") or "").strip():
+        log.debug("twitchoauth: _save ohne Refresh-Token uebersprungen "
+                  "(Loeschen laeuft ueber forget())")
         return
     try:
         os.makedirs(os.path.dirname(p), exist_ok=True)
@@ -97,7 +111,29 @@ def _save():
         except OSError:
             pass
     except Exception as e:
-        log.warning("twitchoauth: Store nicht schreibbar: %s", e)
+        # v4.2-W9 auf error: ein ERROR-Log zeigt warning NIE (CLAUDE.md).
+        # Genau so blieb "der Token wird nicht gespeichert" unsichtbar.
+        log.error("twitchoauth: Store nicht schreibbar (%s) — die Verbindung "
+                  "ueberlebt den naechsten Neustart NICHT: %s", p, e)
+
+
+def forget():
+    """Verbindung loesen: Refresh-Token verwerfen und Store LOESCHEN.
+
+    v4.2-W9. Vorher gab es das hier nicht: access_token() setzte
+    _state["refresh"]="" und rief _save(). Seit _save() nur noch Verbindungen
+    schreibt, waere das ein Nichts-Tun — der tote Token bliebe auf der Platte
+    liegen und kaeme beim naechsten Start zurueck. Genau der Fehler, der in
+    nc.ytoauth jahrelang drinsteckte; hier wird er nicht wiederholt.
+    """
+    _state.update(refresh="", access="", access_exp=0.0)
+    p = _state.get("store_path")
+    if p and os.path.exists(p):
+        try:
+            os.remove(p)
+        except OSError as e:
+            log.error("twitchoauth: Store nicht loeschbar (%s): %s", p, e)
+    return True
 
 
 def status():
@@ -261,17 +297,38 @@ async def access_token(aiohttp):
                     "client_id": cid, "client_secret": csec,
                     "refresh_token": rt, "grant_type": "refresh_token"},
                     timeout=aiohttp.ClientTimeout(total=15)) as r:
+                _status = r.status
                 j = await r.json(content_type=None)
     except Exception as e:
         log.warning("twitchoauth: Refresh-Netzwerkfehler: %s", e)
         return None
     at = j.get("access_token")
     if not at:
-        # Refresh-Token ungueltig geworden (Passwortwechsel, Entzug) → neu autorisieren
-        log.warning("twitchoauth: Refresh fehlgeschlagen (%s) — neu autorisieren",
-                    j.get("message", j.get("error", "?")))
-        _state["refresh"] = ""
-        _save()
+        # v4.2-W9: NUR loeschen, wenn Twitch den Token wirklich ablehnt.
+        #
+        # Vorher flog der Refresh-Token bei jedem ausbleibenden Access-Token
+        # raus — also auch bei einem 500er von Twitch, einem Wartungsfenster
+        # oder einer Antwort, die sich nicht als JSON lesen liess. Ein
+        # Schluckauf auf Twitchs Seite kostete damit die gespeicherte
+        # Verbindung, und der Betreiber musste neu autorisieren, obwohl an
+        # seinem Token nie etwas falsch war.
+        #
+        # Tot ist ein Grant nur bei 400/401 mit ausdruecklicher Ablehnung.
+        # Alles andere ist eine Stoerung: dann behalten wir den Token und
+        # versuchen es beim naechsten Mal wieder.
+        _grund = str(j.get("message", j.get("error", "?")))
+        _tot = (_status in (400, 401)
+                and ("invalid" in _grund.lower() or "expired" in _grund.lower()
+                     or j.get("error") == "invalid_grant"))
+        if not _tot:
+            log.warning("twitchoauth: Refresh vorerst fehlgeschlagen "
+                        "(HTTP %s, %s) — Token BLEIBT, naechster Versuch "
+                        "spaeter", _status, _grund)
+            return None
+        log.error("twitchoauth: Refresh-Token abgelehnt (HTTP %s, %s) — "
+                  "Verbindung geloest, im Dashboard neu autorisieren",
+                  _status, _grund)
+        forget()
         return None
     _state["access"] = at
     _state["access_exp"] = now + int(j.get("expires_in", 3600)) - 120

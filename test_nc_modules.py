@@ -4044,6 +4044,161 @@ def _test_v42_w8_windows_installer_spricht_englisch():
     ok("v4.2-W8: install.bat spricht Englisch \u2014 ein Katalog fuer beide Installer")
 
 
+def _test_v42_w9_oauth_ueberlebt_neustart_und_stoerung():
+    """v4.2-W9: der gespeicherte OAuth-Zustand darf nicht luegen."""
+    import asyncio as _asyncio
+    import json as _json
+    import logging as _logging
+
+    import nc.twitchoauth as _tw
+    import nc.ytoauth as _yt
+
+    # Antwort-Attrappe: die beiden Module reden nur ueber aiohttp mit der
+    # Aussenwelt, und genau die Antwort ist hier der Prueffall.
+    class _Antwort:
+        def __init__(self, status, payload):
+            self.status, self._p = status, payload
+
+        async def json(self, content_type=None):
+            return self._p
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+    class _Sitzung:
+        def __init__(self, r):
+            self._r = r
+
+        def post(self, *a, **k):
+            return self._r
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+    class _Aio:
+        def __init__(self, r):
+            self._r = r
+
+        def ClientSession(self):
+            return _Sitzung(self._r)
+
+        def ClientTimeout(self, **k):
+            return None
+
+    alt_level = _logging.getLogger("TikTokBot").level
+    _logging.getLogger("TikTokBot").setLevel(_logging.CRITICAL)
+    umgebung = {k: os.environ.get(k) for k in
+                ("TWITCH_CLIENT_ID", "TWITCH_CLIENT_SECRET",
+                 "YOUTUBE_CLIENT_ID", "YOUTUBE_CLIENT_SECRET")}
+    try:
+        os.environ.update(TWITCH_CLIENT_ID="x", TWITCH_CLIENT_SECRET="y",
+                          YOUTUBE_CLIENT_ID="x", YOUTUBE_CLIENT_SECRET="y")
+        d = tempfile.mkdtemp()
+        pt = os.path.join(d, "twitch_oauth.json")
+        py = os.path.join(d, "youtube_oauth.json")
+        _tw.configure(pt)
+        _yt.configure(py)
+
+        # ── (1) DER PFAD IST ABSOLUT. bot.py reicht "recordings/..." herein,
+        # also relativ zum Arbeitsverzeichnis. Ein Start aus einem anderen
+        # Verzeichnis haette den Store woanders gesucht — und der gespeicherte
+        # Token waere weg gewesen, ohne dass irgendetwas scheitert.
+        _tw.configure("recordings/twitch_oauth.json")
+        assert os.path.isabs(_tw._state["store_path"]), \
+            "twitchoauth: Store-Pfad bleibt relativ"
+        _yt.configure("recordings/youtube_oauth.json")
+        assert os.path.isabs(_yt._state["store_path"]), \
+            "ytoauth: Store-Pfad bleibt relativ"
+        _tw.configure(pt)
+        _yt.configure(py)
+
+        # ── (2) _save SCHREIBT NUR EINE VERBINDUNG, NIE IHRE ABWESENHEIT.
+        # set_channel() rief _save(); war der Refresh-Token im Speicher gerade
+        # geleert, ueberschrieb ein KANALNAME die gespeicherte Verbindung mit
+        # einem leeren Token. Loeschen laeuft ausschliesslich ueber forget().
+        _yt._state["refresh"] = "rt-gut"
+        _yt._save()
+        _yt._state["refresh"] = ""
+        _yt.set_channel("Mein Kanal")
+        with open(py, encoding="utf-8") as f:
+            assert _json.load(f)["refresh_token"] == "rt-gut", \
+                "ein Kanalname hat die gespeicherte Verbindung geloescht"
+
+        # ── (3) EINE STOERUNG IST KEIN TOTER TOKEN. Twitch warf den
+        # Refresh-Token bei JEDEM ausbleibenden Access-Token weg — also auch
+        # bei einem 500er oder einem Wartungsfenster. Der Betreiber musste
+        # dann neu autorisieren, obwohl an seinem Token nie etwas falsch war.
+        _tw._state.update(refresh="rt-gut", access="", access_exp=0.0)
+        _tw._save()
+        _asyncio.run(_tw.access_token(_Aio(_Antwort(500, {"message": "Internal Server Error"}))))
+        assert _tw._state["refresh"] == "rt-gut" and os.path.exists(pt), \
+            "ein 500er von Twitch kostet die gespeicherte Verbindung"
+        _yt._state.update(refresh="rt-gut", access="", access_exp=0.0)
+        _yt._save()
+        _asyncio.run(_yt.access_token(_Aio(_Antwort(503, {"error": "backendError"}))))
+        assert _yt._state["refresh"] == "rt-gut" and os.path.exists(py), \
+            "eine Google-Stoerung kostet die gespeicherte Verbindung"
+
+        # ── (4) PLATTE UND SPEICHER SAGEN DASSELBE. ytoauth leerte den toten
+        # Token NUR im Speicher; auf der Platte blieb er liegen. Beim naechsten
+        # Neustart las _load() ihn zurueck, status() meldete "ready" und das
+        # Panel zeigte "verbunden" — waehrend kein einziger Aufruf durchging.
+        # DAS ist das Bild "muss staendig neu verbinden".
+        _asyncio.run(_yt.access_token(_Aio(_Antwort(400, {"error": "invalid_grant"}))))
+        assert not _yt._state["refresh"], "der tote Token bleibt im Speicher"
+        assert not os.path.exists(py), \
+            "der tote Token bleibt auf der Platte — er kommt beim Neustart zurueck"
+        _yt._load()
+        assert not _yt._state["refresh"], "der tote Token kommt beim Neustart zurueck"
+        _tw._state.update(refresh="rt-gut", access="", access_exp=0.0)
+        _tw._save()
+        _asyncio.run(_tw.access_token(_Aio(_Antwort(400, {"message": "Invalid refresh token"}))))
+        assert not _tw._state["refresh"] and not os.path.exists(pt), \
+            "twitchoauth raeumt die abgelehnte Verbindung nicht ab"
+
+        # ── (5) DAS PANEL DARF NICHT LUEGEN. "abgelaufen" und "nie verbunden"
+        # sahen gleich aus; der Betreiber musste raten, ob er neu verbinden
+        # oder erst die Google-Konsole pruefen muss.
+        st = _yt.status()
+        assert st["expired"] is True, "status() verschweigt den Ablauf"
+        assert "invalid_grant" in st["last_error"], st["last_error"]
+        assert st["last_error_ts"] > 0
+        assert st["ready"] is False
+        # Nach einer Handabmeldung ist nichts "abgelaufen" — nur leer.
+        _yt._state["refresh"] = "rt-gut"
+        _yt._save()
+        _yt.forget()
+        assert _yt.status()["expired"] is False, \
+            "forget() laesst einen alten Fehlergrund stehen"
+    finally:
+        for k, v in umgebung.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+        _logging.getLogger("TikTokBot").setLevel(alt_level)
+
+    # ── (6) DER FEHLERKANAL. Ein nicht schreibbarer Store hiess bisher
+    # log.warning — und ein ERROR-Log zeigt warning NIE (CLAUDE.md). Genau so
+    # blieb "der Token wird gar nicht gespeichert" unsichtbar.
+    for datei in ("nc/ytoauth.py", "nc/twitchoauth.py"):
+        quelle = open(datei, encoding="utf-8").read()
+        stelle = quelle.find("Store nicht schreibbar")
+        assert stelle > 0, "%s meldet einen unschreibbaren Store gar nicht" % datei
+        umfeld = quelle[max(0, stelle - 400):stelle + 200]
+        assert "log.error" in umfeld, \
+            "%s meldet den unschreibbaren Store nicht auf error" % datei
+
+    ok("v4.2-W9: OAuth \u2014 Stoerung kostet keinen Token, toter Token ueberlebt "
+       "keinen Neustart")
+
+
 def main():
     tmp = tempfile.mkdtemp()
     configure_db(db_path=os.path.join(tmp, "t.db"), backend="sqlite")
@@ -4208,6 +4363,8 @@ def main():
     _test_v42_w7_motd_optik()
 
     _test_v42_w8_windows_installer_spricht_englisch()
+
+    _test_v42_w9_oauth_ueberlebt_neustart_und_stoerung()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)
 

@@ -67,12 +67,24 @@ _state = {
     "refresh": "",
     "csrf": "",
     "channel": "",
+    # v4.2-W9: warum die Verbindung weg ist und seit wann. Ohne das meldet
+    # das Panel nach einem abgelaufenen Token weiter "verbunden" — und der
+    # Betreiber sucht den Fehler im Chat-Code statt bei Google.
+    "last_error": "",
+    "last_error_ts": 0.0,
 }
 
 
 def configure(store_path, redirect_uri=None):
-    """Beim Start aufrufen: wo der Refresh-Token liegt, welche Redirect-URI gilt."""
-    _state["store_path"] = store_path
+    """Beim Start aufrufen: wo der Refresh-Token liegt, welche Redirect-URI gilt.
+
+    v4.2-W9: der Pfad wird ABSOLUT gemacht. bot.py reicht "recordings/..."
+    herein, also relativ zum Arbeitsverzeichnis — ein spaeteres os.chdir oder
+    ein Start aus einem anderen Verzeichnis (Handstart, cron) haette den Store
+    woanders gesucht und den gespeicherten Token damit stillschweigend
+    verloren. Einmal beim Start aufgeloest gilt er fuer die ganze Laufzeit.
+    """
+    _state["store_path"] = os.path.abspath(store_path) if store_path else store_path
     if redirect_uri:
         _state["redirect_uri"] = redirect_uri.strip()
     _load()
@@ -102,8 +114,20 @@ def _load():
 
 
 def _save():
+    """Die Verbindung sichern.
+
+    v4.2-W9: _save schreibt nur eine VERBINDUNG, nie ihre Abwesenheit.
+    Vorher konnte set_channel() den Store mit einem leeren Refresh-Token
+    ueberschreiben, sobald access_token() ihn im Speicher geleert hatte — ein
+    Kanalname, der die gespeicherte Verbindung vernichtet. Geloescht wird
+    ausschliesslich ueber forget(), und das entfernt die Datei.
+    """
     p = _state.get("store_path")
     if not p:
+        return
+    if not (_state.get("refresh") or "").strip():
+        log.debug("ytoauth: _save ohne Refresh-Token uebersprungen "
+                  "(Loeschen laeuft ueber forget())")
         return
     try:
         os.makedirs(os.path.dirname(p), exist_ok=True)
@@ -117,7 +141,18 @@ def _save():
         except OSError:
             pass
     except Exception as e:
-        log.warning("ytoauth: Store nicht schreibbar: %s", e)
+        # v4.2-W9 auf error, nicht warning: ein ERROR-Log zeigt warning NIE
+        # (CLAUDE.md). Genau so blieb "der Token wird nicht gespeichert"
+        # unsichtbar — der Flow meldete Erfolg, und nach dem naechsten
+        # Neustart war die Verbindung weg.
+        _merke_fehler("Store nicht schreibbar: %s" % e)
+        log.error("ytoauth: Store nicht schreibbar (%s) — die Verbindung "
+                  "ueberlebt den naechsten Neustart NICHT: %s", p, e)
+
+
+def _merke_fehler(text):
+    _state["last_error"] = text
+    _state["last_error_ts"] = time.time()
 
 
 def status():
@@ -135,6 +170,14 @@ def status():
         "redirect_uri": _state["redirect_uri"],
         "scopes": SCOPES,
         "channel": _state.get("channel", ""),
+        # v4.2-W9: warum es nicht geht. "abgelaufen" und "nie verbunden"
+        # sahen im Panel bisher gleich aus — beides nur ein graues Feld.
+        # Der Betreiber musste raten, ob er neu verbinden oder erst die
+        # Google-Konsole pruefen muss.
+        "expired": bool(cid and csec and not _state["refresh"]
+                        and _state.get("last_error")),
+        "last_error": _state.get("last_error", ""),
+        "last_error_ts": _state.get("last_error_ts", 0.0),
     }
 
 
@@ -240,13 +283,30 @@ async def access_token(aiohttp):
         if err == "invalid_grant":
             # Der Refresh-Token ist tot: Zugriff entzogen, Passwort
             # geaendert, oder die App steht auf "Testing" (7-Tage-Ablauf).
-            # Klartext ins Log, sonst sucht der Operator im Chat-Code.
-            log.warning("ytoauth: Refresh-Token abgelehnt (invalid_grant) — "
-                        "neu verbinden. Steht die Google-App noch auf "
-                        "'Testing'? Dann laufen Tokens nach 7 Tagen ab; "
-                        "auf 'In production' setzen.")
-            _state["refresh"] = ""
+            #
+            # v4.2-W9: frueher wurde er NUR im Speicher geleert. Auf der
+            # Platte blieb er stehen — und beim naechsten Neustart las _load()
+            # den toten Token zurueck, status() meldete "ready", das Panel
+            # zeigte "verbunden" und kein einziger Aufruf ging durch. Genau
+            # das ist das Bild "muss staendig neu verbinden": der gespeicherte
+            # Zustand log ueber die Wirklichkeit.
+            #
+            # Jetzt raeumt forget() beides ab. Platte und Speicher sagen
+            # dasselbe, und status() traegt das WARUM.
+            # Reihenfolge: erst raeumen, dann den Grund setzen — forget()
+            # loescht ihn absichtlich mit, damit eine Handabmeldung keinen
+            # alten Fehler stehen laesst.
+            forget()
+            _merke_fehler("Refresh-Token abgelehnt (invalid_grant)")
+            log.error("ytoauth: Refresh-Token abgelehnt (invalid_grant) — "
+                      "Verbindung geloest, im Dashboard neu verbinden. "
+                      "Steht die Google-App noch auf 'Testing'? Dann laufen "
+                      "Refresh-Tokens nach 7 Tagen ab; auf 'In production' "
+                      "setzen, sonst wiederholt sich das jede Woche.")
         else:
+            # KEIN Loeschen: eine Stoerung bei Google (5xx, Zeitablauf,
+            # Netzwerk) ist kein toter Token. Wer hier aufraeumt, wirft eine
+            # funktionierende Verbindung wegen eines Schluckaufs weg.
             log.debug("ytoauth: kein Access-Token (%s)", err)
         return None
     _state["access"] = at
@@ -313,8 +373,14 @@ async def revoke(aiohttp):
 
 
 def forget():
-    """Verbindung loesen: Refresh-Token verwerfen und Store loeschen."""
-    _state.update(refresh="", access="", access_exp=0.0, channel="")
+    """Verbindung loesen: Refresh-Token verwerfen und Store loeschen.
+
+    Der EINZIGE Weg, eine gespeicherte Verbindung loszuwerden. _save()
+    schreibt seit v4.2-W9 nur noch Verbindungen, nie ihre Abwesenheit —
+    sonst konnte ein Kanalname den Store leeren.
+    """
+    _state.update(refresh="", access="", access_exp=0.0, channel="",
+                  last_error="", last_error_ts=0.0)
     p = _state.get("store_path")
     if p and os.path.exists(p):
         try:
