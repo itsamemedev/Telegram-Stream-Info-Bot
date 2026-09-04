@@ -196,7 +196,7 @@ flowchart TB
     DC --> BOT
     TT --> BOT
 
-    BOT["bot.py<br/>Monolith · 26.499 Zeilen<br/>Scraper · Recorder · Restream<br/>Flask-Dashboard · 42 eigene Routen"]:::core
+    BOT["bot.py<br/>Monolith · 26.541 Zeilen<br/>Scraper · Recorder · Restream<br/>Flask-Dashboard · 42 eigene Routen"]:::core
 
     BOT -->|configure| NC["nc/ — 116 Fachmodule<br/>Schema · OAuth · Restream<br/>Ledger · Moderation · Intel"]:::lib
     NC --> RT["nc/routes/ — 34 Blueprints<br/>317 weitere API-Routen"]:::lib
@@ -717,7 +717,7 @@ gebrochen ist.**
 
 ### 🧭 Navigation im Monolithen
 
-`bot.py` hat 26.499 Zeilen. Es wird **nie** ganz gelesen und **nie**
+`bot.py` hat 26.541 Zeilen. Es wird **nie** ganz gelesen und **nie**
 blind durchsucht — erst fragen wo etwas steht, dann den Ausschnitt holen:
 
 ```bash
@@ -732,7 +732,7 @@ python3 tools/ncpatch.py docs                          # Doku-Zahlen gegen den C
 ```
 
 `find` antwortet aus **[`.claude/INDEX.md`](.claude/INDEX.md)** — 359 Routen
-(81 in `bot.py`, 278 in `nc/routes/`), 45 Slash-Commands, 479 Funktionen,
+(81 in `bot.py`, 278 in `nc/routes/`), 45 Slash-Commands, 481 Funktionen,
 jeweils mit Zeilennummer.
 
 ---
@@ -859,7 +859,7 @@ Vollständige Historie: **[`docs/CHANGELOG.md`](docs/CHANGELOG.md)** ·
 ## 🧭 Roadmap
 
 Der nächste grosse Schritt ist kein Feature, sondern Aufräumen: **`bot.py` hat
-26.499 Zeilen**. Die Datei ist der Engpass des Projekts. Die Messlatte dafür ist
+26.541 Zeilen**. Die Datei ist der Engpass des Projekts. Die Messlatte dafür ist
 aber keine Zeilenzahl:
 
 > **Eine neue API-Route anlegen, ohne `bot.py` zu öffnen.**
