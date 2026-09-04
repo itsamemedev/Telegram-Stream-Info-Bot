@@ -1960,6 +1960,127 @@ def _test_w24_wartung_blueprint():
     ok("v4.1-W24: Wartung als Blueprint, Loeschpfade gehaertet, keine S3-Geheimnisse")
 
 
+
+def _test_w25_abwehr_blueprint():
+    """v4.1-W25: vier Abwehr-Routen raus, ein Schreibweg fuer den Adress-Cache."""
+    import ast as _ast
+    import os as _os
+
+    import nc.defensecfg as D
+    import nc.geocache as G
+    import nc.geoip as GI
+
+    # (1) DER BEFUND DIESER WELLE. Der Adress-Cache hat genau EINEN
+    # Schreibweg, und der setzt die Obergrenze durch. Vorher gab es zwei:
+    # einen Helfer mit Grenze und einen Direktzugriff daran vorbei. Bei einer
+    # Angriffswelle mit vielen verschiedenen Adressen wuchs der Cache
+    # unbegrenzt — kein Fehler, keine Logzeile, nur Speicher.
+    G.leeren()
+    for i in range(G.MAX + 250):
+        G.put("203.0.113.%d-%d" % (i // 256, i % 256), {"lat": i})
+    assert G.groesse() == G.MAX, \
+        "Obergrenze greift nicht: %d Eintraege" % G.groesse()
+    G.leeren()
+    # Und es gibt wirklich nur den einen Weg: das Modul gibt den Cache nicht
+    # heraus. Wer ihn direkt fuellen wollte, muesste an einen privaten Namen.
+    assert not hasattr(G, "CACHE"), "Cache liegt offen — der zweite Schreibweg"
+
+    # (2) Ein vorhandener Eintrag wandert ans Ende, damit die Verdraengung den
+    # aeltesten trifft und nicht den zuletzt benutzten.
+    G.leeren()
+    for name in ("a", "b", "c"):
+        G.put(name, {"lat": 1})
+    G.put("a", {"lat": 2})          # a ist jetzt der juengste
+    assert G.get("a")["lat"] == 2
+    G.leeren()
+
+    # (3) Private und lokale Adressen kosten nur Kontingent (45/min bei
+    # ip-api) und fallen still raus — ohne Netzzugriff.
+    for ip in ("10.0.0.1", "127.0.0.1", "192.168.5.9", "169.254.1.1"):
+        assert GI.ist_privat(ip), ip
+    assert not GI.ist_privat("8.8.8.8")
+    gemeldet = []
+    assert GI.lookup(["10.0.0.1", "127.0.0.1"],
+                     fehler_setzen=gemeldet.append) == {}
+    assert G.groesse() == 0, "private Adressen im Cache gelandet"
+
+    # (4) Kein Geheimnis in der Anzeige. bouncer_gesetzt() ist ein bool; den
+    # Schluessel gibt nur bouncer_key() heraus, und das ruft ausschliesslich
+    # der LAPI-Aufruf im Monolithen.
+    vorher = _os.environ.get("CROWDSEC_BOUNCER_KEY")
+    try:
+        _os.environ["CROWDSEC_BOUNCER_KEY"] = "geheim-123"
+        assert D.bouncer_gesetzt() is True
+        assert isinstance(D.bouncer_gesetzt(), bool)
+        assert D.bouncer_key() == "geheim-123"
+        _os.environ["CROWDSEC_BOUNCER_KEY"] = ""
+        assert D.bouncer_gesetzt() is False
+    finally:
+        if vorher is None:
+            _os.environ.pop("CROWDSEC_BOUNCER_KEY", None)
+        else:
+            _os.environ["CROWDSEC_BOUNCER_KEY"] = vorher
+
+    # (5) Leere .env-Zeilen kippen den Standort nicht. Eine gesetzte, leere
+    # Variable ist der haeufigste Fall (v4.0-W82) — sie muss auf den
+    # Vorgabewert zurueckfallen, nicht werfen.
+    sicher = {k: _os.environ.get(k) for k in ("DEFENSE_SERVER_LAT", "DEFENSE_SERVER_LON")}
+    try:
+        _os.environ.update({"DEFENSE_SERVER_LAT": "", "DEFENSE_SERVER_LON": "quatsch"})
+        assert D.server_lat() == 50.69 and D.server_lon() == 2.13
+        _os.environ["DEFENSE_SERVER_LAT"] = "48,21"      # Komma statt Punkt
+        assert abs(D.server_lat() - 48.21) < 1e-9
+    finally:
+        for k, v in sicher.items():
+            if v is None:
+                _os.environ.pop(k, None)
+            else:
+                _os.environ[k] = v
+
+    # (6) Der Fehlgrund der Geo-Aufloesung ist ein REGISTER, kein Alias: eine
+    # Zeichenkette ist unteilbar, und der Monolith band den Namen frueher neu.
+    D.geo_fehler_setzen("x" * 400)
+    assert len(D.geo_fehler()) == 160, "Fehlgrund nicht gekuerzt"
+    D.geo_fehler_setzen("")
+    b = open("bot.py", encoding="utf-8").read()
+    assert "_DEFENSE_GEO_ERR" not in b, \
+        "der alte Modul-Global steht noch — zwei Wahrheiten ueber denselben Fehlgrund"
+
+    # (7) Der Blueprint: vier Routen, kein neuer ctx-Slot, kein Schluessel
+    # nach aussen.
+    from flask import Flask
+    import nc.routes.abwehr as R
+    app = Flask(__name__)
+    app.register_blueprint(R.bp)
+    regeln = [r for r in app.url_map.iter_rules() if r.endpoint != "static"]
+    assert len(regeln) == 4, "4 Regeln erwartet, %d" % len(regeln)
+
+    w = open("nc/routes/abwehr.py", encoding="utf-8").read()
+    for _n in _ast.walk(_ast.parse(w)):
+        assert not (isinstance(_n, _ast.Attribute) and _n.attr == "bouncer_key"), \
+            "Blueprint liest den Bouncer-Schluessel"
+
+    # (8) Ohne Haken meldet die Ansicht NICHT "alles ruhig". Bei einer
+    # Sicherheitsanzeige ist 0 Sperren / 0 Angriffe die gefaehrlichste aller
+    # falschen Antworten — sie sieht aus wie ein gutes Ergebnis.
+    for h in R.HAKEN:
+        R.HAKEN[h]["fn"] = None
+    c = app.test_client()
+    for pfad in ("/api/defense/overview", "/api/defense/crowdsec",
+                 "/api/defense/fail2ban", "/api/defense/attacks"):
+        antwort = c.get(pfad)
+        assert antwort.status_code == 503, \
+            "%s meldet %d statt 503 ohne Haken" % (pfad, antwort.status_code)
+        d = antwort.get_json()
+        assert d["ok"] is False and d["status"] == "nicht_bereit"
+    # Der Monolith traegt beide wirklich ein.
+    for h in R.HAKEN:
+        assert '_nc_routes_abwehr.HAKEN["%s"]["fn"]' % h in b, \
+            "Haken %s wird im Monolithen nie eingetragen" % h
+
+    ok("v4.1-W25: Abwehr als Blueprint, Adress-Cache mit EINEM Schreibweg")
+
+
 def main():
     tmp = tempfile.mkdtemp()
     configure_db(db_path=os.path.join(tmp, "t.db"), backend="sqlite")
@@ -2088,6 +2209,8 @@ def main():
     _test_w23_beobachtung_und_toasts()
 
     _test_w24_wartung_blueprint()
+
+    _test_w25_abwehr_blueprint()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)
 

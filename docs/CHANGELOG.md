@@ -11,6 +11,57 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Behoben — der Adress-Cache wuchs bei Angriffswellen unbegrenzt (v4.1 W25)
+
+Für die Geodaten der Abwehr-Karte gab es eine Obergrenze von 5000 Einträgen
+und einen Helfer, der sie durchsetzt. Zwei Aufrufer benutzten ihn — **einer
+nicht**: die Geo-Auflösung der Abwehr schrieb
+
+```python
+with _PROXY_GEO_LOCK:
+    _PROXY_GEO_CACHE[ip] = g
+```
+
+direkt unter der Sperre und ging damit an der Verdrängung vorbei. Bei einer
+Angriffswelle mit vielen verschiedenen Adressen wuchs der Cache unbegrenzt.
+Kein Fehler, keine Logzeile — nur Speicher, der nicht mehr zurückkommt. Der
+Befund kam beim Verschieben zutage, nicht beim Suchen.
+
+Behoben wird er **strukturell**: `nc/geocache.py` hat genau einen Schreibweg
+(`put()`), und der setzt die Grenze durch. Es gibt keinen zweiten Weg mehr, an
+dem man vorbeikommen könnte; der Cache selbst ist nicht Teil der öffentlichen
+Fläche. Ein Vertrag prüft beides.
+
+### Geändert — Abwehr-Routen als Blueprint (v4.1 W25)
+
+`/api/defense/overview`, `/crowdsec`, `/fail2ban` und `/attacks` liegen in
+`nc/routes/abwehr.py`. Sie zeigen nur; keine davon sperrt oder entsperrt.
+
+`nc/defensecfg.py` trägt den Serverstandort und die vier LAPI-Angaben.
+**Der Bouncer-Schlüssel kommt nur aus `bouncer_key()`**, das ausschliesslich
+der LAPI-Aufruf benutzt; für Anzeige und Diagnose gibt es `bouncer_gesetzt()`
+— ein bool. Dieselbe Trennung wie bei den Stream-Keys (W22) und den
+S3-Zugangsdaten (W24). Dass *kein* Schlüssel gesetzt ist, darf die Anzeige
+sehr wohl sagen: es erklärt dem Betreiber, warum der sudo-Weg über `cscli`
+genommen wird.
+
+Der letzte Fehlgrund der Geo-Auflösung ist ein **Register**, kein Alias: eine
+Zeichenkette ist unteilbar, und der Monolith band den Namen früher mit
+`global` neu — ein Alias hätte danach für immer auf den alten leeren Wert
+gezeigt.
+
+**Fehlt der Haken in den Monolithen, antworten alle vier Routen 503** statt
+0 Sperren und 0 Angriffe zu melden. Bei einer Sicherheitsanzeige ist „alles
+ruhig" die gefährlichste aller falschen Antworten — sie sieht aus wie ein
+gutes Ergebnis.
+
+Ein Vertrag aus W23 (`test_v40_w23_crowdsec_panel`) ist **mitgewandert, nicht
+gelöscht**: was er zusichert, gilt unverändert, nur seine Fundstelle hat sich
+geändert. Er prüft jetzt zusätzlich, dass die Diagnose den Schlüssel nicht
+herausgibt.
+
+**Null neue Kontext-Einträge**, weiterhin 24 von vertraglich 25 Plätzen.
+
 ### Geändert — Wartungs-Routen als Blueprint, Löschpfade gehärtet (v4.1 W24)
 
 Zehn Routen mit einer Klammer: `/api/storage`, `/api/retention`, `/api/backup`
