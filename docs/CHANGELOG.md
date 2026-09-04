@@ -52,6 +52,38 @@ löchert. Jetzt zeitgedrosselt.
 `reaper_loop` läuft ebenfalls neben dem Loop. Er räumt im Minutentakt tote
 Recorder-Prozesse ab und las dabei synchron aus der Datenbank.
 
+### Behoben — offene Transaktion über ein `await` hinweg (v4.1 W29)
+
+Beim Umstellen der Dauerläufer kam ein zweiter, andersartiger Befund zutage:
+in `_community_events_loop` und `/daily` stand ein `await` **innerhalb** eines
+offenen `db_conn()`-Blocks — einmal ein Discord-Versand, einmal eine Antwort
+an den Nutzer.
+
+Das blockiert den Event-Loop **nicht** (das `await` gibt ihn frei) und ist
+deshalb in keinem Stack-Abzug aufgetaucht. Es hält aber die Verbindung und
+damit den Schreib-Lock offen, während auf das Netz gewartet wird. Bei einem
+langsamen Discord bekommt in dieser Zeit **jeder andere Schreiber**
+„database is locked" — und die Ursache steht in einer Schleife, die nur jede
+Minute läuft.
+
+Beide Stellen lesen jetzt zuerst, senden dann, und schreiben zum Schluss. Ein
+Vertrag lässt kein `await` mehr in einem offenen `db_conn()`-Block zu.
+
+Nebenbei gefunden: `_nc_i18n.t(f"@here 🔴 **{r['title']}** geht JETZT los!")`
+— ein `t()` um einen **f-String**. Der Katalogschlüssel hätte den Titel des
+Events enthalten und nie getroffen. Jetzt läuft nur der feste Teil durch die
+Übersetzung.
+
+### Geändert — kein Dauerläufer blockiert mehr (v4.1 W29)
+
+`_restream_verify_loop`, `_intel_index_loop` (zwei Stellen) und
+`_community_events_loop` laufen neben dem Loop. Dauerläufer sind die
+schlimmsten Blocker: sie wiederholen sich für immer, also trifft ihre Blockade
+früher oder später jeden Betriebszustand. Ein Vertrag hält fest, dass keiner
+zurückfällt.
+
+Stand: **71 → 65** blockierende Stellen.
+
 ### Hinzugefügt — `db_async` (v4.1 W29)
 
 `nc/dbwrap.db_async(fn)` führt `fn(conn)` mitsamt Verbindungsauf- und -abbau

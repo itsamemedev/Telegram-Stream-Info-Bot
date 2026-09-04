@@ -2496,7 +2496,7 @@ def _test_w29_kein_sqlite_auf_dem_loop():
 
     # Der Stand nach W29. Wer eine Stelle loest, SETZT DIESE ZAHL HERUNTER —
     # sonst faellt die naechste Welle wieder zurueck, ohne dass es auffaellt.
-    GRENZE = 70
+    GRENZE = 65
 
     quelle = open("bot.py", encoding="utf-8").read()
     baum = _ast.parse(quelle)
@@ -2566,8 +2566,33 @@ def _test_w29_kein_sqlite_auf_dem_loop():
     assert e.count("threading.Thread(target=_schreiber") == 1, "mehr als ein Schreiber"
     assert '_LAEUFT = {"an": False}' in e, "der Waechter ist kein Modul-Global"
 
-    ok("v4.1-W29: %d blockierende Stellen (Grenze %d), Protokoll ueber die Schlange"
-       % (len(treffer), GRENZE))
+    # (4) KEIN Dauerlaeufer blockiert mehr. Die sind die schlimmsten: sie
+    # wiederholen sich fuer immer, also trifft ihre Blockade frueher oder
+    # spaeter jeden Betriebszustand.
+    laeufer = sorted({n for n, _ in treffer if n.endswith("_loop")})
+    assert not laeufer, "Dauerlaeufer blockieren wieder den Loop: %r" % laeufer
+
+    # (5) Keine offene Transaktion ueber ein `await` hinweg. Das blockiert den
+    # Loop NICHT (das await gibt ihn frei) — es haelt aber die Verbindung und
+    # damit den Schreib-Lock offen, waehrend auf das Netz gewartet wird. Jeder
+    # andere Schreiber bekommt in der Zeit "database is locked", und die
+    # Ursache steht in einer Schleife, die nur jede Minute laeuft.
+    # _community_events_loop hatte genau das (v4.1-W29).
+    for _f in _ast.walk(baum):
+        if not isinstance(_f, (_ast.FunctionDef, _ast.AsyncFunctionDef)):
+            continue
+        for _w in _ast.walk(_f):
+            if not (isinstance(_w, _ast.With) and any(
+                    _ast.unparse(i.context_expr).startswith("db_conn(") for i in _w.items)):
+                continue
+            for _k in _ast.walk(_w):
+                assert not isinstance(_k, (_ast.Await, _ast.AsyncFor)), \
+                    ("%s: await innerhalb eines offenen db_conn()-Blocks (Zeile %d) — "
+                     "haelt den Schreib-Lock ueber das Warten hinweg"
+                     % (_f.name, _w.lineno))
+
+    ok("v4.1-W29: %d blockierende Stellen (Grenze %d), kein Dauerlaeufer, "
+       "keine Transaktion ueber ein await" % (len(treffer), GRENZE))
 
 
 def main():
