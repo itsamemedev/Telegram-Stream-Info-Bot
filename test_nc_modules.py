@@ -3415,20 +3415,26 @@ def _test_v42_w3_codeql_barriere_und_setup():
     # haette auch jeden neuen, echten Befund verschluckt — und genau so einer
     # (str(ex) in nc/routes/brain.py) stand wochenlang unbemerkt in der Liste,
     # weil 208 Meldungen niemand mehr einzeln liest.
-    # Die GEPARSTE Struktur pruefen, nicht den Text: die Begruendung daneben
-    # nennt dieselben Schluessel, und ein Vertrag, der auf seinen eigenen
-    # Kommentar anschlaegt, wird beim naechsten Mal geloescht statt gelesen
-    # (dieselbe Falle wie in W32 und W33).
-    import yaml as _yaml
-    kfg = _yaml.safe_load(cfg)
-    filt = kfg.get("query-filters") or []
-    assert any(f.get("exclude", {}).get("id") == "py/stack-trace-exposure"
-               for f in filt), "die Standardregel wird nicht ersetzt"
-    assert any(str(q.get("uses", "")).endswith(".github/codeql")
-               for q in (kfg.get("queries") or [])), \
-        "die eigene Abfrage wird nicht geladen"
+    # OHNE Kommentarzeilen pruefen, und OHNE PyYAML.
+    #
+    # Ohne Kommentare, weil die Begruendung daneben dieselben Schluessel nennt
+    # — ein Vertrag, der auf seine eigene Erklaerung anschlaegt, wird beim
+    # naechsten Mal geloescht statt gelesen (dieselbe Falle wie in W32/W33).
+    #
+    # Ohne PyYAML, weil der Vertrags-Job in der CI nur `orjson flask`
+    # installiert. Das steht seit W23 als Regel in ci.yml — und ich bin beim
+    # ersten Versuch trotzdem hineingelaufen: `import yaml` liess beide
+    # Vertrags-Jobs mit ModuleNotFoundError sterben.
+    def _ohne_kommentar(text):
+        return "\n".join(z for z in text.splitlines()
+                         if not z.lstrip().startswith("#"))
+
+    knapp = _ohne_kommentar(cfg)
+    assert "id: py/stack-trace-exposure" in knapp, \
+        "die Standardregel wird nicht ersetzt"
+    assert "uses: ./.github/codeql" in knapp, "die eigene Abfrage wird nicht geladen"
     assert "@id nc/stack-trace-exposure" in ql, "die Ersatzabfrage hat keine eigene Id"
-    assert kfg.get("disable-default-queries") is not True, \
+    assert "disable-default-queries" not in knapp, \
         ("die Standard-Suite waere abgeschaltet — dann faellt weit mehr weg "
          "als die eine Regel")
 
@@ -3459,8 +3465,10 @@ def _test_v42_w3_codeql_barriere_und_setup():
 
     # ── (4) Der Workflow faehrt dieselben Sprachen wie das Default-Setup.
     # Faellt eine weg, hoert die Analyse dort still auf — ohne rote Meldung.
+    wf_knapp = _ohne_kommentar(wf)
     for sprache in ("actions", "javascript-typescript", "python"):
-        assert "language: %s" % sprache in wf, "Sprache %s fehlt im Workflow" % sprache
+        assert "language: %s" % sprache in wf_knapp, \
+            "Sprache %s fehlt im Workflow" % sprache
     assert "security-events: write" in wf, "ohne dieses Recht laedt nichts hoch"
     assert "config-file: ./.github/codeql/codeql-config.yml" in wf, \
         "der Workflow benutzt die Konfiguration nicht"

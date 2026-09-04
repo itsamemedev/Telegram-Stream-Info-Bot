@@ -29,6 +29,10 @@ on:
   schedule:
     # Woechentlich, damit neue Abfragen aus dem Bundle auch ohne Commit greifen.
     - cron: "31 4 * * 1"
+  # Von Hand anstossbar. Gebraucht beim ersten Mal: der Lauf direkt nach dem
+  # Umstellen scheitert noch am Default-Setup, und ohne workflow_dispatch
+  # bleibt nur ein Leer-Commit, um ihn zu wiederholen.
+  workflow_dispatch:
 
 jobs:
   analyze:
