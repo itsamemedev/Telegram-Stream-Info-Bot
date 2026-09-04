@@ -30,7 +30,7 @@ Prüfkette. Sie ist keine Formalie: Deploy geht direkt gegen Produktion.
 - [ ] `python3 tools/ncpatch.py check`
 - [ ] `python3 test_nc_modules.py`
 - [ ] `python3 test_restream.py`
-- [ ] `python3 test_smoke.py` <!-- braucht den vollen Laufzeitstack, sonst begründen -->
+- [ ] `python3 test_smoke.py` <!-- pip install -r requirements-smoke.txt; läuft seit W31 auch in der CI -->
 
 ```
 Ausgabe hier einfügen

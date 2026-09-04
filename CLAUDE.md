@@ -82,11 +82,22 @@ stdlib-only (`urllib`, kein `aiohttp`).
 sterben mit `UnicodeDecodeError` statt zu prüfen. Auf dem Server ist UTF-8
 Default, dort ist nichts zu setzen.
 
-`test_smoke.py` läuft hier **nicht** — es führt `bot.py` wirklich aus und
-braucht dafür den ganzen Laufzeitstack (flask, telegram, discord, dotenv,
-streamlink, yt-dlp, psutil), der auf der Autorenmaschine bewusst fehlt. Der
-Test gehört auf den Server. Was er abdeckt (NameError, Reihenfolge-Fallen),
-fangen hier `py_compile` und `pyflakes` weitgehend mit ab.
+**`test_smoke.py` läuft seit v4.1-W31 in der CI** — Job `Rauchtest (bot.py
+laeuft wirklich)`. Die alte Begründung („braucht den vollen Serverbestand")
+war falsch: TikTokLive und python-telegram-bot stubbt der Test selbst, alles
+andere wird erst in Funktionen importiert. Übrig bleiben fünf Pakete in
+`requirements-smoke.txt`, Installation rund 20 Sekunden. Lokal:
+
+    python -m pip install -r requirements-smoke.txt
+    python test_smoke.py
+
+`requirements-smoke.txt` ist die **einzige** Stelle, an der ein neues
+Fremdpaket für den Rauchtest einzutragen ist. Der Vertrag
+`_test_w31_rauchtest_laeuft_in_der_ci` vergleicht die Modul-Ebene von
+`bot.py`, `nc/` und `brain/` gegen diese Liste und meldet jedes fehlende
+Paket mit Datei und Namen — statt den CI-Job an einem nackten `ImportError`
+sterben zu lassen. Er meldet auch tote Einträge: eine Liste, die still
+wächst, macht den Job wieder teuer.
 
 Die statischen Verträge in `test_restream.py` verankern sich an **wörtlichem
 Quelltext** von `bot.py`. Ändert sich eine Signatur, kippt der Vertrag,

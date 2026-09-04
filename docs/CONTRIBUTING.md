@@ -66,13 +66,29 @@ Zusätzlich immer:
 - Bei JavaScript in `templates/*.html`: Script-Blöcke extrahieren und
   `node --check` fahren. JSON-LD als JSON prüfen, nicht als JS.
 
-### `test_smoke.py` läuft nicht überall
+### `test_smoke.py` — fünf Pakete, keine Serverumgebung
 
-Es führt `bot.py` **wirklich** aus und braucht dafür den ganzen
-Laufzeitstack (flask, telegram, discord, dotenv, streamlink, yt-dlp, psutil).
-Auf einer Entwicklermaschine ohne diesen Stack fällt es aus — dort fangen
-`py_compile` und `pyflakes` das Meiste ab (NameError, Reihenfolge-Fallen). Der
-Test gehört auf den Server.
+Es führt `bot.py` **wirklich** aus, und genau das fängt, was keine statische
+Prüfung sieht: `NameError` auf der Modul-Ebene, eine Route, die beim ersten
+Aufruf in einen 500er läuft, ein Rückruf, der nie verdrahtet wurde.
+
+Bis v4.1-W31 galt der Test als „nur auf dem Server lauffähig". Das stimmte
+nicht: TikTokLive und python-telegram-bot stubbt er selbst,
+requests/httpx/boto3/redis/PyMySQL/PySocks/faster-whisper werden erst **in**
+Funktionen importiert, und ffmpeg/streamlink/yt-dlp fasst er gar nicht an.
+Ein `.env` braucht er auch nicht — er setzt sich die nötigen Variablen selbst.
+Übrig bleiben fünf Pakete:
+
+```bash
+python3 -m pip install -r requirements-smoke.txt
+PYTHONUTF8=1 python3 test_smoke.py
+```
+
+Seitdem läuft er in der CI als Job `Rauchtest (bot.py laeuft wirklich)`.
+Kommt ein neues Fremdpaket auf die Modul-Ebene, gehört es in
+`requirements-smoke.txt` — der Vertrag
+`_test_w31_rauchtest_laeuft_in_der_ci` in `test_nc_modules.py` meldet es
+sonst mit Datei und Paketnamen.
 
 ### Wenn ein Vertrag in `test_restream.py` kippt
 

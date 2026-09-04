@@ -66,12 +66,28 @@ Always in addition:
 - For JavaScript in `templates/*.html`: extract the script blocks and run
   `node --check`. Check JSON-LD as JSON, not as JS.
 
-### `test_smoke.py` does not run everywhere
+### `test_smoke.py` — five packages, no server environment
 
-It **actually** executes `bot.py` and needs the whole runtime stack for that
-(flask, telegram, discord, dotenv, streamlink, yt-dlp, psutil). On a development
-machine without that stack it fails — there `py_compile` and `pyflakes` catch
-most of it (NameError, ordering traps). This test belongs on the server.
+It **actually** executes `bot.py`, and that is exactly what catches what no
+static check sees: a `NameError` on the module level, a route that runs into a
+500 on its first call, a callback that was never wired up.
+
+Until v4.1-W31 the test counted as "only runnable on the server". That was not
+true: it stubs TikTokLive and python-telegram-bot itself,
+requests/httpx/boto3/redis/PyMySQL/PySocks/faster-whisper are imported **inside**
+functions, and it never touches ffmpeg, streamlink or yt-dlp. It needs no `.env`
+either — it sets the variables it needs itself. Five packages remain:
+
+```bash
+python3 -m pip install -r requirements-smoke.txt
+PYTHONUTF8=1 python3 test_smoke.py
+```
+
+Since then it runs in CI as job `Rauchtest (bot.py laeuft wirklich)`. When a new
+third-party package appears on the module level it belongs in
+`requirements-smoke.txt` — otherwise the contract
+`_test_w31_rauchtest_laeuft_in_der_ci` in `test_nc_modules.py` reports it with
+file and package name.
 
 ### When a contract in `test_restream.py` breaks
 

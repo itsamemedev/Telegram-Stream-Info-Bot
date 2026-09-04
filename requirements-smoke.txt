@@ -1,0 +1,28 @@
+# NIGHTCRAWLER — Abhaengigkeiten NUR fuer test_smoke.py (v4.1-W31)
+#
+# Warum eine zweite Liste neben requirements.txt: test_smoke.py fuehrt bot.py
+# wirklich aus, aber es braucht dafuer NICHT den Serverbestand. TikTokLive und
+# python-telegram-bot stubbt es selbst, requests/httpx/boto3/redis/pymysql/
+# PySocks/faster-whisper werden erst IN Funktionen importiert, und
+# ffmpeg/streamlink/yt-dlp fasst der Rauchtest gar nicht an. Uebrig bleiben
+# genau die fuenf Pakete, ohne die schon die Modul-Ebene stirbt.
+#
+# Das war der Grund, warum der Rauchtest jahrelang nirgends automatisch lief:
+# requirements.txt zieht faster-whisper, boto3 und uvloop mit, das ist in der
+# CI teuer und schlicht unnoetig. Mit dieser Liste dauert die Installation
+# rund 20 Sekunden.
+#
+# ACHTUNG: diese Datei ist die EINZIGE Stelle, an der ein neues Fremdpaket
+# fuer den Rauchtest eingetragen wird. Der Vertrag
+# _test_w31_rauchtest_laeuft_in_der_ci in test_nc_modules.py vergleicht die
+# Modul-Ebene von bot.py, nc/ und brain/ gegen genau diese Liste und meldet
+# jedes Paket, das hier fehlt — bevor der Rauchtest in der CI mit einem
+# nackten ImportError stirbt und niemand weiss, warum.
+#
+# Versionen bleiben offen, wie in requirements.txt begruendet.
+
+Flask                          # Dashboard-App, 359 Routen
+Werkzeug                       # von Flask mitgebracht, aber direkt importiert
+aiohttp                        # nc/scraper.py auf Modul-Ebene
+discord.py                     # import discord — Gateway + Slash-Commands
+python-dotenv                  # import dotenv — .env laden
