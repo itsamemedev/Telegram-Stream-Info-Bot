@@ -2206,7 +2206,32 @@ def _test_w26_huellen_schlucken_nichts():
     assert "_write_restream_overlay()      # Textdateien anlegen" in quelle, \
         "der Anlauf-Aufruf ist verschwunden oder nebenlaeufig geworden"
 
-    # (4) Der Aufnahme-Anspruch laeuft ebenfalls neben dem Loop — er stand in
+    # (4) DER SCHREIBER DARF NUR LESEN. Er laeuft jetzt in einem Thread,
+    # waehrend der Loop den geteilten Zustand weiter veraendert. Ein
+    # Schreibzugriff von dort waere ein echtes Wettrennen — bei einem
+    # `global` sogar eines, das den Zustand des ganzen Bots trifft. Geprueft
+    # wird ueber den AST: keine global-Anweisung, und jede Mutation nur auf
+    # Namen, die die Funktion selbst angelegt hat.
+    for _n in baum2.body:
+        if isinstance(_n, _ast.FunctionDef) and _n.name == "_write_restream_overlay":
+            break
+    else:
+        raise AssertionError("_write_restream_overlay gibt es nicht mehr")
+    assert not [g for g in _ast.walk(_n) if isinstance(g, _ast.Global)], \
+        "der Overlay-Schreiber bindet einen globalen Namen neu — im Thread ein Wettrennen"
+    _lokal = {t.id for k in _ast.walk(_n) if isinstance(k, _ast.Assign)
+              for t in k.targets if isinstance(t, _ast.Name)}
+    _lokal |= {a.arg for a in _n.args.args}
+    for k in _ast.walk(_n):
+        if isinstance(k, _ast.Call) and isinstance(k.func, _ast.Attribute) \
+           and k.func.attr in ("append", "pop", "update", "clear", "setdefault",
+                               "add", "remove", "insert", "extend") \
+           and isinstance(k.func.value, _ast.Name):
+            assert k.func.value.id in _lokal, \
+                ("der Overlay-Schreiber veraendert %s — das ist geteilter Zustand, "
+                 "und er laeuft seit W26 in einem Thread" % k.func.value.id)
+
+    # (5) Der Aufnahme-Anspruch laeuft ebenfalls neben dem Loop — er stand in
     # zwei Abzuegen als Blocker (db_conn().__exit__ -> close()).
     assert "await asyncio.to_thread(try_acquire_recording_lock," in quelle, \
         "der Aufnahme-Anspruch blockiert wieder den Loop"
