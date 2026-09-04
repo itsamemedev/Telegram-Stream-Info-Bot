@@ -2804,17 +2804,23 @@ def test_v40_version():
        BUILD_STAMP und nc.version NICHT auseinanderlaufen (schon dreimal
        passiert: Modul auf neu, Footer blieb auf alt)."""
     from nc import version as v
-    assert v.VERSION == "4.1" and v.current()["version"] == "4.1"
-    assert v.summary_line().startswith("NIGHTCRAWLER v4.1")
+    assert v.VERSION == "4.2" and v.current()["version"] == "4.2"
+    assert v.summary_line().startswith("NIGHTCRAWLER v4.2")
     top = v.latest()
-    assert top["version"] == "4.1" and len(top["highlights"]) >= 5
-    assert [c["version"] for c in v.changelog()][:2] == ["4.1", "4.0"]
+    assert top["version"] == "4.2" and len(top["highlights"]) >= 5
+    assert [c["version"] for c in v.changelog()][:3] == ["4.2", "4.1", "4.0"]
     assert v.changelog()[-1]["version"] == "3.7"   # Historie erhalten
-    ok("v4.1: nc.version — 4.1 + Changelog mit Historie")
+    ok("v4.2: nc.version — 4.2 + Changelog mit Historie")
 
     src = open("bot.py").read()
     assert 'BOT_VERSION = _nc_version.VERSION' in src, "BOT_VERSION nicht zentralisiert"
-    assert '"2026.08 · v4.1"' in src, "BUILD_STAMP nicht auf v4.1"
+    # v4.2: der Stempel steht NICHT mehr woertlich in bot.py. Er stand dort und
+    # in nc/routes/brain.py und zweimal im Footer — vier Kopien einer Zahl, von
+    # denen keine mitwanderte, wenn nc/version.py hochgezaehlt wurde. Genau
+    # deshalb zeigte das Deck im September noch August an.
+    assert 'BUILD_STAMP = os.getenv("BUILD_STAMP", _nc_version.build_stamp())' in src, \
+        "BUILD_STAMP haengt nicht an nc.version"
+    assert v.build_stamp() == "2026.09 · v4.2", v.build_stamp()
     # v4.1-W26: Anker mitgewandert. Die Route liegt jetzt in
     # nc/routes/auskunft.py — der VERTRAG ist unveraendert (es gibt sie, und
     # sie meldet die Version), nur ihre Fundstelle nicht.
@@ -2822,11 +2828,17 @@ def test_v40_version():
     assert '"/api/version"' in _ausk and "def api_version(" in _ausk, \
         "keine /api/version-Route"
     dash = open("templates/dashboard.html").read()
-    assert "<b>v4.1</b>" in dash, "Footer nicht auf v4.1"
+    # v4.2: der Footer BEHAUPTET die Version nicht mehr, er holt sie. Der
+    # Wert im Markup ist nur der Auslieferungsstand und wird beim Laden
+    # ueberschrieben — geprueft wird deshalb die Verdrahtung, nicht die Zahl.
+    assert 'id="footVer"' in dash and 'id="footBuild"' in dash, \
+        "Footer hat keine Anker fuer Version und Build"
+    assert "loadFooterVersion()" in dash, "Footer wird nie gefuellt"
+    assert "<b>v4.1</b>" not in dash, "alte fest verdrahtete Version im Footer"
     # Dieselbe Zusicherung wie oben, deshalb dieselbe Fundstelle (v4.1-W26):
     # das Panel ist seit v4.0-w2 weg, die Route bleibt.
     assert "/api/version" in _ausk
-    ok("v4.1: Footer v4.1 + /api/version + Was-ist-neu-Panel verdrahtet")
+    ok("v4.2: Footer holt Version + /api/version + Was-ist-neu-Panel verdrahtet")
 
 
 # ------------------------------------------------- v4.0-2) YouTube-API, News-ohne-Aufnahmen, Website

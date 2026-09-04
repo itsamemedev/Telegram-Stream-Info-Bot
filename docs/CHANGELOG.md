@@ -9,7 +9,68 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ---
 
-## [Unveröffentlicht]
+## [4.2] — 2026-09 · „Zerlegter Kern"
+
+### Neu — Vorschläge gesammelt entscheiden (v4.2)
+
+Der Evolutions-Kern legt Vorschläge an; abgearbeitet wurde bisher **einzeln**.
+Bei zwanzig offenen Einträgen heißt das vierzig Klicks — die Liste wurde
+dadurch nicht gelesen, sondern ignoriert.
+
+Zwei Knöpfe über der Liste: **„✓ alles übernehmen"** und **„alles verwerfen"**.
+Dazu eine eigene Route `POST /api/evolution/proposals/bulk`.
+
+**Warum eine Route und keine Schleife im Browser:** zwanzig POSTs wären zwanzig
+Transaktionen und zwanzig Audit-Einträge — und bricht einer davon ab, bleibt
+die Liste halb bearbeitet zurück, ohne dass jemand sagen kann, welche Hälfte.
+Eine Anweisung, ein Ergebnis, eine Zahl.
+
+**Die Aktion fasst nur `status='proposed'` an.** Ein bereits übernommener
+Vorschlag darf durch einen späteren Klick auf „alles verwerfen" nicht
+rückwirkend zu „verworfen" werden — das wäre eine Umschreibung der
+Entscheidungshistorie, nicht eine Massenaktion.
+
+Die Rückfrage vor dem Verwerfen nennt die **Zahl**: eine Frage ohne Zahl
+beantwortet man anders als eine, die 17 nennt. Die Knöpfe sind ausgeblendet,
+solange nichts offen ist — ein Knopf, der auf eine leere Liste wirkt, tut
+nichts und sieht wie ein Fehler aus.
+
+### Behoben — der Build-Stempel stand vier Mal im Code und wanderte nie mit (v4.2)
+
+Gemeldet als „Build steht immer noch auf 08.2026". Der Befund war schlimmer
+als die Meldung:
+
+1. **Der Footer war statisches HTML.** `<b>v4.1</b>` und `<b>2026.08</b>`
+   standen wörtlich in `dashboard.html`. Wer `nc/version.py` hochzählte,
+   bewegte den Footer nicht mit.
+2. **`/api/version` lieferte `build: ""`.** Die Route las
+   `globals().get("BUILD_STAMP", "")` — seit W26 liegt sie in einem Blueprint,
+   und dort ist `globals()` der Namensraum **dieser** Datei, in dem
+   `BUILD_STAMP` nie stand. Der Bot reicht ihn seit W116 über `ctx.cfg`
+   herein; die Route benutzte ihn nur nie. Eine stille Fehlanzeige, die
+   niemand sah, weil der Footer ohnehin fest verdrahtet war.
+3. **Vier Kopien derselben Zeichenkette:** `nc/version.py`, `bot.py`,
+   `nc/routes/brain.py` und der Footer. Ein Modul, das sich „eine einzige
+   Wahrheit" nennt, darf keine Kopien haben.
+
+Jetzt: `nc.version.build_stamp()` ist die einzige Vorgabe, `bot.py` und
+`nc/routes/brain.py` leiten davon ab, `/api/version` liest aus `ctx.cfg`, und
+der Footer **holt** die Version, statt sie zu behaupten. Der Wert im Markup ist
+nur noch der Auslieferungsstand.
+
+Nachgemessen nach dem Fix: `/api/version` meldet `build='2026.09 · v4.2'`,
+`/api/brain/health` dasselbe.
+
+### Version 4.2 — „Zerlegter Kern"
+
+Der September in einer Zahl. Zehn Wellen (W22–W33): sieben Routengruppen aus
+dem Monolithen, Dashboard-Übersetzung von 18 % auf 89 %, kein blockierter
+Ereignis-Loop mehr, gesäuberte Fehlertexte, Dauerwarnung beim offenen Deck,
+Rauchtest in der CI. Die Wellenzählung beginnt mit 4.2 neu — wie beim Übergang
+von v4.0-W126 auf v4.1-W2. Die Wellen W22 bis W32 tragen deshalb noch die
+Marke `v4.1-Wxx` — sie sind unter dieser Nummer entstanden und werden nicht
+rückwirkend umbenannt; die Verträge und Commits verweisen darauf.
+
 
 ### Geändert — die Sondenschicht raus, drei System-Routen hinterher (v4.1 W32)
 

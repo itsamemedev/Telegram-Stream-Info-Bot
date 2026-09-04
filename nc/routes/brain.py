@@ -32,6 +32,7 @@ from datetime import datetime, timedelta, timezone
 from flask import Blueprint, jsonify, request
 
 from nc import brainstate as _nc_brainstate
+from nc import version as _nc_version
 from nc import fehlertext as _nc_fehlertext
 from nc import i18n as _nc_i18n
 from nc.dbwrap import db_conn
@@ -83,7 +84,7 @@ def api_brain_health():
     return jsonify(ok=bool(_nc_brainstate.BRIDGE.get("ok")),
                    phase=_nc_brainstate.BRIDGE.get("phase"),
                    error=_nc_brainstate.BRIDGE.get("error"),
-                   version=os.getenv("BUILD_STAMP", "2026.08 · v4.1"),                       # v4.0-W88
+                   version=os.getenv("BUILD_STAMP", _nc_version.build_stamp()),   # v4.0-W88, v4.2: eine Quelle
                    uptime_s=_uptime_s(),                      # v4.0-W88
                    loop_stalls=_nc_brainstate.STALLS["n"])             # v4.0-W88
 

@@ -4,13 +4,39 @@ Eine einzige Wahrheit für die Versionsanzeige (Dashboard-Footer, /api/version,
 „Was ist neu"-Panel). Reine Daten + kleine Helfer, voll testbar.
 """
 
-VERSION = "4.1"
-CODENAME = "Öffentliche Stimme"
-RELEASE = "2026.08"
+VERSION = "4.2"
+CODENAME = "Zerlegter Kern"
+RELEASE = "2026.09"
+
+
+def build_stamp():
+    """Die EINE Vorgabe für den Build-Stempel.
+
+    v4.2: vorher stand die Zeichenkette "2026.08 · v4.1" wörtlich an vier
+    Stellen — bot.py, nc/routes/brain.py und zweimal im Footer von
+    dashboard.html. Genau deshalb zeigte das Deck im September noch August an:
+    wer nc/version.py hochzählt, bewegt den Footer nicht mit. Ein Modul, das
+    sich "eine einzige Wahrheit" nennt, darf keine Kopien haben.
+    """
+    return f"{RELEASE} · v{VERSION}"
 
 # Meilenstein-Changelog, neueste Version zuerst. highlights = kurze, ehrliche
 # Stichpunkte dessen, was die Version bringt.
 CHANGELOG = [
+    {
+        "version": "4.2",
+        "date": "2026-09",
+        "title": "Zerlegter Kern",
+        "highlights": [
+            "Das Dashboard spricht wirklich Englisch: die Abdeckung stieg von 18 % auf 89 % — vorher meldete die Prüfung „0 fehlend“, weil sie nur zählte, was der Sammler überhaupt eingesammelt hatte",
+            "Sieben weitere Routengruppen aus dem Monolithen gelöst — Wartung, Abwehr, Auskunft, Beobachtung, Systemlage — ohne einen einzigen neuen Kontext-Eintrag",
+            "Kein Dauerläufer blockiert mehr die Ereignisschleife: die Stillstände von 30 bis 68 Sekunden sind weg, Datenbankzugriffe laufen neben der Schleife",
+            "Fehlermeldungen nach außen tragen keine Dateipfade, Zugangsdaten oder Stream-Schlüssel mehr — der Wortlaut bleibt im Log",
+            "Ein offenes Dashboard ohne Token und PIN meldet sich alle sechs Stunden auf Fehler-Ebene, nicht nur einmal beim Start",
+            "Der Rauchtest führt bot.py in der CI wirklich aus — vorher stand er in der Pflichtliste, lief aber auf keiner Maschine automatisch",
+            "Vorschläge des Evolutions-Kerns lassen sich gesammelt übernehmen oder verwerfen",
+        ],
+    },
     {
         "version": "4.1",
         "date": "2026-08",

@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="docs/assets/banner.svg" alt="NIGHTCRAWLER — v4.1 Public Voice" width="100%">
+<img src="docs/assets/banner.svg" alt="NIGHTCRAWLER — v4.2 Decomposed Core" width="100%">
 
 ### The control room for live streaming
 #### Monitoring · Recording · Multi-target restream · AI moderation
@@ -129,7 +129,7 @@ reacts live to the outgoing stream and overlays itself on the broadcast.
 <td valign="top">
 
 ### 📊 Analyse
-Flask dashboard with **359 API routes**, knowledge-graph visualisation, a
+Flask dashboard with **360 API routes**, knowledge-graph visualisation, a
 revenue journal (tax-office ready, append-only with a hash chain) and a PWA for
 your phone.
 
@@ -153,7 +153,7 @@ your phone.
 | **Sentinel fleet** | 13 watchdog agents (health, recovery, scout, analytics, learning, sentinel, disk, swap, restream, toxicity, uptime, recording, proxy) with Telegram alarms, individually switchable |
 | **Community** | Recognition of regular viewers · loyalty points & ranks · Discord XP, levels, daily streak · live ping · highlight share · community events |
 | **Money** | Donation telemetry (estimates) · separate revenue journal (`nc/ledger.py`) with a hash chain and CSV export for the tax office |
-| **Dashboard** | 359 Flask routes · live panels · brain visualisation with a learning curve · overlay for OBS · installable PWA (Android) · QR login |
+| **Dashboard** | 360 Flask routes · live panels · brain visualisation with a learning curve · overlay for OBS · installable PWA (Android) · QR login |
 | **Operations** | systemd service · deploy script with pre-check and auto-rollback · self-test route · dead-man's report on process death · CrowdSec integration · log redaction for cookies and stream keys |
 | **Multilingual** | German and English, switchable in the dashboard · `UI_LANG` for the bot · browser language detection · translation catalogue in `locales/` |
 | **Database** | SQLite **or** MariaDB · central schema module · export tool · SQL guard |
@@ -197,10 +197,10 @@ flowchart TB
     DC --> BOT
     TT --> BOT
 
-    BOT["bot.py<br/>monolith · 26,392 lines<br/>scraper · recorder · restream<br/>Flask dashboard · 39 own routes"]:::core
+    BOT["bot.py<br/>monolith · 26,396 lines<br/>scraper · recorder · restream<br/>Flask dashboard · 39 own routes"]:::core
 
     BOT -->|configure| NC["nc/ — 119 domain modules<br/>schema · OAuth · restream<br/>ledger · moderation · intel"]:::lib
-    NC --> RT["nc/routes/ — 35 blueprints<br/>320 further API routes"]:::lib
+    NC --> RT["nc/routes/ — 35 blueprints<br/>321 further API routes"]:::lib
     BOT --> TPL["templates/<br/>dashboard · overlay · PWA"]:::lib
     BOT --> BR["brain_bridge.py"]:::lib
     BR --> BRAIN["brain/ — its own brain.db<br/>state · rules · router · memory<br/>knowledge · semantic · scheduler<br/>llm · agents · report"]:::brain
@@ -541,7 +541,7 @@ Deterministic detection **before** banned words and **before** any AI:
 
 ## 🖥️ Dashboard
 
-A Flask dashboard with **359 routes** on `127.0.0.1:8050`.
+A Flask dashboard with **360 routes** on `127.0.0.1:8050`.
 
 ```bash
 # From your laptop — never open the port:
@@ -709,7 +709,7 @@ broken.**
 
 ### 🧭 Navigating the monolith
 
-`bot.py` has 26,392 lines. It is **never** read in full and **never** searched
+`bot.py` has 26,396 lines. It is **never** read in full and **never** searched
 blindly — first ask where something is, then fetch the excerpt:
 
 ```bash
@@ -723,8 +723,8 @@ python3 tools/ncpatch.py apply  patches/x.json     # all-or-nothing, writes a .b
 python3 tools/ncpatch.py docs                      # documentation numbers vs. the code
 ```
 
-`find` answers from **[`.claude/INDEX.md`](.claude/INDEX.md)** — 359 routes
-(39 in `bot.py`, 320 in `nc/routes/`), 45 slash commands, 476 functions, each
+`find` answers from **[`.claude/INDEX.md`](.claude/INDEX.md)** — 360 routes
+(39 in `bot.py`, 321 in `nc/routes/`), 45 slash commands, 476 functions, each
 with a line number.
 
 ---
@@ -774,7 +774,7 @@ NIGHTCRAWLER/
 │   ├── twitchoauth.py  ytoauth.py  kick_oauth.py
 │   ├── modheuristics.py  shield.py  replygate.py
 │   ├── freeai.py  claude.py  piper_voices.py
-│   ├── routes/               35 Flask blueprints (320 API routes)
+│   ├── routes/               35 Flask blueprints (321 API routes)
 │   ├── intel/                archive index, transcripts, reels
 │   └── _vendor/segno/        vendored QR encoder (BSD)
 │
@@ -840,8 +840,8 @@ service.
 
 | | |
 |---|---|
-| Current version | **4.1** — “Public Voice” (2026.08) |
-| Flask routes | 359 (81 in `bot.py` · 278 in `nc/routes/`) |
+| Current version | **4.2** — “Decomposed Core” (2026.09) |
+| Flask routes | 360 (39 in `bot.py` · 321 in `nc/routes/`) |
 | Discord slash commands | 45 |
 | Domain modules | 92 in `nc/` (+18 in `nc/routes/`, +3 in `nc/intel/`), 10 in `brain/` |
 | Sentinel agents | 13 |
@@ -855,7 +855,7 @@ Full history: **[`docs/CHANGELOG.md`](docs/CHANGELOG.md)** ·
 
 ## 🧭 Roadmap
 
-The next big step is not a feature, it is cleaning up: **`bot.py` has 26,392
+The next big step is not a feature, it is cleaning up: **`bot.py` has 26,396
 lines**. That file is the project's bottleneck. The bar for it is not a line
 count though:
 
@@ -863,7 +863,7 @@ count though:
 
 The route there in six waves — measured, not estimated:
 **[`docs/en/ROADMAP.md`](docs/en/ROADMAP.md)**. Wave 2 is done, wave 3 is
-running: `nc/routes/` carries 35 blueprints with 320 API routes today that no
+running: `nc/routes/` carries 35 blueprints with 321 API routes today that no
 longer sit in the monolith.
 
 ---
@@ -940,7 +940,7 @@ Third-party code and its licences:
 
 <div align="center">
 
-**NIGHTCRAWLER v4.1 · “Public Voice”**
+**NIGHTCRAWLER v4.2 · “Decomposed Core”**
 
 **[🌐 lafap.de](https://lafap.de)** · **[💬 Discord](https://discord.gg/psvnxm7tSV)** · **[📓 Changelog](docs/CHANGELOG.md)**
 

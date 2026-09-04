@@ -2955,6 +2955,119 @@ def _test_w32_sondenschicht_und_systemlage():
     ok("v4.1-W32: Sondenschicht in nc/, 3 System-Routen im Blueprint, "
        "ein Cookie-Cache")
 
+def _test_w33_sammelentscheid_und_ein_stempel():
+    """v4.2: Vorschläge gesammelt entscheiden, und EIN Build-Stempel."""
+    import ast as _ast
+    import json as _json
+    import re as _re
+
+    from nc import version as V
+
+    dash = open("templates/dashboard.html", encoding="utf-8").read()
+    evo = open("nc/routes/evolution.py", encoding="utf-8").read()
+
+    # ── (1) Die beiden Knoepfe und ihre Route ───────────────────────────────
+    assert 'onclick="evoBulk(true)"' in dash and 'onclick="evoBulk(false)"' in dash, \
+        "die Sammelknoepfe fehlen im Deck"
+    assert '"/api/evolution/proposals/bulk"' in evo, "keine Sammel-Route"
+    assert "def evoBulk(" not in dash and "async function evoBulk(" in dash, \
+        "evoBulk ist nicht als Funktion verdrahtet"
+
+    # ── (2) Sie fassen NUR offene Vorschlaege an. Ein bereits uebernommener
+    # Vorschlag darf durch einen spaeteren Klick auf "alles verwerfen" nicht
+    # rueckwirkend zu "verworfen" werden — das waere eine Umschreibung der
+    # Entscheidungshistorie, nicht eine Massenaktion.
+    _i = evo.index("def api_evolution_bulk(")
+    _rumpf = evo[_i:evo.index("@bp.route", _i)]
+    assert "WHERE status='proposed'" in _rumpf, \
+        ("die Sammelaktion filtert nicht auf offene Vorschlaege — sie wuerde "
+         "bereits getroffene Entscheidungen ueberschreiben")
+    assert "rowcount" in _rumpf, \
+        "die Route meldet nicht, wie viele sie angefasst hat"
+
+    # ── (3) Eine Anweisung, nicht N. Bei zwanzig offenen Vorschlaegen waeren
+    # zwanzig POSTs zwanzig Transaktionen; bricht einer ab, bleibt die Liste
+    # halb bearbeitet zurueck, ohne dass jemand sagen kann welche Haelfte.
+    assert _rumpf.count("UPDATE evolution_proposals") == 1, \
+        "die Sammelaktion laeuft nicht in EINER Anweisung"
+    _bulkjs = dash[dash.index("async function evoBulk("):]
+    _bulkjs = _bulkjs[:_bulkjs.index("\n}")]
+    assert "for(" not in _bulkjs and "forEach" not in _bulkjs, \
+        "das Deck schleift ueber die Vorschlaege statt die Sammel-Route zu rufen"
+
+    # ── (4) Rueckfrage vor dem Verwerfen, und sie nennt die Zahl. Eine Frage
+    # ohne Zahl beantwortet man anders als eine, die 17 nennt.
+    assert "confirm(" in _bulkjs, "verwirft ohne Rueckfrage"
+    assert "offen+' '+T(" in _bulkjs, "die Rueckfrage nennt die Zahl nicht"
+    # T() um den Text, nicht um das Ergebnis: ein nativer Dialog laeuft nie
+    # durch die DOM-Uebersetzung (CLAUDE.md, W21).
+    for stueck in ("T('Vorschläge verwerfen?')",
+                   "T('Vorschläge als angewendet markieren?')"):
+        assert stueck in _bulkjs, "Dialogtext nicht an der Quelle uebersetzt: %s" % stueck
+
+    # ── (5) Knoepfe nur, wenn es etwas zu sammeln gibt. Ein Knopf, der auf
+    # eine leere Liste wirkt, tut nichts und sieht wie ein Fehler aus.
+    assert 'id="evo_bulk"' in dash and "bulk.hidden = !ps.length" in dash, \
+        "die Sammelknoepfe werden bei leerer Liste nicht ausgeblendet"
+
+    # ── (6) EIN Build-Stempel. Er stand woertlich in bot.py, in
+    # nc/routes/brain.py und zweimal im Footer — vier Kopien einer Zahl, von
+    # denen keine mitwanderte, wenn nc/version.py hochgezaehlt wurde. Genau
+    # deshalb zeigte das Deck im September noch August an.
+    assert V.build_stamp() == "%s · v%s" % (V.RELEASE, V.VERSION)
+    # Nach AST, nicht nach Regex: ein Ausdruck als Vorgabe enthaelt selbst
+    # Klammern, an denen jedes "bis zur naechsten )"-Muster falsch abschneidet.
+    for datei in ("bot.py", "nc/routes/brain.py"):
+        for k in _ast.walk(_ast.parse(open(datei, encoding="utf-8").read())):
+            if not (isinstance(k, _ast.Call)
+                    and _ast.unparse(k.func).endswith("getenv")
+                    and k.args and isinstance(k.args[0], _ast.Constant)
+                    and k.args[0].value == "BUILD_STAMP"):
+                continue
+            assert len(k.args) >= 2, "%s: BUILD_STAMP ohne Vorgabe" % datei
+            vorgabe = _ast.unparse(k.args[1])
+            assert vorgabe.endswith("build_stamp()"), \
+                ("%s haelt eine eigene Vorgabe fuer BUILD_STAMP (%s), Zeile %d — "
+                 "beim naechsten Hochzaehlen laeuft sie auseinander"
+                 % (datei, vorgabe, k.lineno))
+    # Ohne Kommentare zaehlen: die Wellen-Marken ("v4.2: …") und das Beispiel
+    # im Kommentar daneben sind keine Anzeige. Ein Vertrag, der auf seine
+    # eigene Begruendung anschlaegt, wird beim naechsten Mal geloescht statt
+    # gelesen — dieselbe Falle wie beim __file__-Vertrag in W32.
+    _nackt = _re.sub(r"<!--.*?-->", "", dash, flags=_re.S)
+    _nackt = _re.sub(r"/\*.*?\*/", "", _nackt, flags=_re.S)
+    _nackt = _re.sub(r"(?m)^\s*//.*$", "", _nackt)
+    for zahl in (V.RELEASE, "v" + V.VERSION):
+        assert _nackt.count(zahl) <= 1, \
+            ("%r steht %dx fest im Deck — der Footer soll die Version HOLEN, "
+             "nicht behaupten" % (zahl, _nackt.count(zahl)))
+
+    # ── (7) Und die Route liefert ihn wirklich. Sie las ihn ueber globals()
+    # aus einem Blueprint-Namensraum, in dem er nie stand: /api/version gab
+    # seit W26 still build="" zurueck, und niemand sah es, weil der Footer
+    # ohnehin fest verdrahtet war.
+    ausk = open("nc/routes/auskunft.py", encoding="utf-8").read()
+    _a = ausk.index("def api_version(")
+    _r = ausk[_a:ausk.index("@bp.route", _a)]
+    for k in _ast.walk(_ast.parse("def f():\n" + "\n".join(
+            " " + z for z in _r.splitlines()[1:]))):
+        if isinstance(k, _ast.Call) and _ast.unparse(k.func) == "globals":
+            raise AssertionError(
+                "api_version liest wieder ueber globals() — im Blueprint ist "
+                "das der falsche Namensraum, die Antwort waere still leer")
+    assert 'cfg.get("BUILD_STAMP")' in _r, "der Stempel kommt nicht aus ctx.cfg"
+    assert "loadFooterVersion()" in dash, "der Footer holt die Version nicht"
+
+    # ── (8) Der Katalog kennt die neuen Texte. Ein fehlender Eintrag faellt
+    # auf Deutsch zurueck — die Knoepfe blieben im englischen Deck deutsch.
+    kat = _json.load(open("locales/en.json", encoding="utf-8"))["strings"]
+    for s in ("✓ alles übernehmen", "alles verwerfen", "Vorschläge verwerfen?",
+              "Vorschläge als angewendet markieren?"):
+        assert s in kat, "Katalogeintrag fehlt: %r" % s
+
+    ok("v4.2: Vorschlaege gesammelt entscheiden, ein Build-Stempel, "
+       "Footer holt die Version")
+
 def main():
     tmp = tempfile.mkdtemp()
     configure_db(db_path=os.path.join(tmp, "t.db"), backend="sqlite")
@@ -3101,6 +3214,8 @@ def main():
     _test_w31_rauchtest_laeuft_in_der_ci()
 
     _test_w32_sondenschicht_und_systemlage()
+
+    _test_w33_sammelentscheid_und_ein_stempel()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)
 

@@ -3431,7 +3431,19 @@ document.addEventListener("DOMContentLoaded",function(){
             <div id="evo_learned" class="skel" aria-busy="true"><i></i><i></i></div>
           </div>
           <div>
-            <div class="kc-sub">VORSCHLÄGE <span class="faint" style="font-size:10px;letter-spacing:0">warten auf deine Entscheidung</span></div>
+            <!-- v4.2: Sammelaktionen. Bei zwanzig offenen Vorschlaegen war
+                 jeder einzeln wegzuklicken; die Liste wurde dadurch nicht
+                 gelesen, sondern ignoriert. Die beiden Knoepfe blendet
+                 evoLoadProposals() aus, solange nichts offen ist — ein Knopf,
+                 der auf eine leere Liste wirkt, macht nichts und sieht wie
+                 ein Fehler aus. -->
+            <div class="kc-sub flexc" style="gap:8px">
+              <span>VORSCHLÄGE <span class="faint" style="font-size:10px;letter-spacing:0">warten auf deine Entscheidung</span></span>
+              <span id="evo_bulk" hidden>
+                <span class="btn xs" onclick="evoBulk(true)" title="Alle offenen Vorschläge als angewendet markieren">✓ alles übernehmen</span>
+                <span class="btn xs" onclick="evoBulk(false)" title="Alle offenen Vorschläge verwerfen">alles verwerfen</span>
+              </span>
+            </div>
             <div id="evo_proposals" class="skel" aria-busy="true"><i></i><i></i></div>
           </div>
         </div>
@@ -3452,8 +3464,13 @@ document.addEventListener("DOMContentLoaded",function(){
   </div>
 
   <div class="footer">
-    <span>NIGHTCRAWLER <b>v4.1</b></span>
-    <span>BUILD <b>2026.08</b></span>
+    <!-- v4.2: Version und Build kommen aus /api/version, nicht aus dieser
+         Datei. Vorher standen sie hier woertlich — wer nc/version.py
+         hochzaehlte, bewegte den Footer nicht mit, und das Deck zeigte im
+         September noch August an. Die Werte im Markup sind nur der Stand
+         beim Ausliefern; sie werden beim Laden ueberschrieben. -->
+    <span>NIGHTCRAWLER <b id="footVer">v4.2</b></span>
+    <span>BUILD <b id="footBuild">2026.09</b></span>
     <span id="modCount">… MODULE ONLINE</span>
   </div>
 </div>
@@ -3730,6 +3747,24 @@ pulsIntervall(()=>{ const el=$('#ledClock'); if(el) el.textContent=new Date().to
    in CSS definierte "matrix"-Thema an und kollidierte mit dem Topbar-System. */
 async function loadModCount(){ try{ const d=await apiGet('/api/ops/version'); if(d&&d.ok&&d.api_routes){ const el=$('#modCount'); if(el) el.textContent=d.api_routes+T(' MODULE ONLINE'); } }catch(e){} }
 loadModCount();
+
+/* v4.2: Footer aus /api/version. Die Route lieferte bis v4.2 still build=""
+   (globals() im Blueprint, siehe nc/routes/auskunft.py) — deshalb faellt der
+   Anzeigewert hier auf das zurueck, was im Markup steht, statt den Footer zu
+   leeren. Ein leerer Build-Stempel waere schlimmer als ein alter: beim alten
+   sieht man wenigstens, DASS etwas nicht stimmt. */
+async function loadFooterVersion(){
+  try{
+    const d = await apiGet('/api/version');
+    if(!d || !d.ok) return;
+    const v = $('#footVer');   if(v && d.version) v.textContent = 'v' + d.version;
+    const b = $('#footBuild');
+    /* build ist "2026.09 · v4.2" — im Footer steht die Version schon daneben. */
+    if(b && d.build) b.textContent = String(d.build).split('·')[0].trim();
+    else if(b && d.release) b.textContent = d.release;
+  }catch(e){}
+}
+loadFooterVersion();
 
 /* ============ TABS ============ */
 let CURRENT_VIEW='restream';
@@ -6830,6 +6865,8 @@ async function evoLoadLearned(){
 async function evoLoadProposals(){
   const el=$('#evo_proposals'); if(!el) return;
   const d=await apiGet('/api/evolution/proposals'); const ps=(d&&d.proposals)||[];
+  /* v4.2: die Sammelknoepfe nur zeigen, wenn es etwas zu sammeln gibt. */
+  const bulk=$('#evo_bulk'); if(bulk) bulk.hidden = !ps.length;
   if(!ps.length){ el.innerHTML='<div class="empty">keine offenen Vorschläge ✓</div>'; return; }
   const ic={codec:'🎞',reliability:'⚠',connectivity:'🔌',storage:'💾',trend:'📉'};
   el.innerHTML=ps.map(p=>`<div class="evo-p">
@@ -6843,6 +6880,23 @@ async function evoDismiss(id,applied){
   const d=await apiPost('/api/evolution/proposals/'+id+'/dismiss',{applied:!!applied});
   if(d&&d.ok){ toast(applied?'als angewendet markiert':'verworfen'); evoLoadProposals(); loadEvolution(); }
   else toast('Fehler','err');
+}
+/* v4.2: alles auf einmal. Die Bestaetigung nennt die Zahl: eine Rueckfrage
+   ohne Zahl beantwortet man anders als eine, die 17 nennt.
+   T() um den Text herum, nicht um das Ergebnis: ein nativer Dialog laeuft nie
+   durch die DOM-Uebersetzung (CLAUDE.md, W21). */
+async function evoBulk(applied){
+  const offen=$('#evo_proposals') ? $('#evo_proposals').querySelectorAll('.evo-p').length : 0;
+  if(!offen){ toast(T('keine offenen Vorschläge')); return; }
+  const frage = applied
+    ? offen+' '+T('Vorschläge als angewendet markieren?')
+    : offen+' '+T('Vorschläge verwerfen?');
+  if(!confirm(frage)) return;
+  const d=await apiPost('/api/evolution/proposals/bulk',{applied:!!applied});
+  if(d&&d.ok){
+    toast((d.count||0)+' '+(applied?T('als angewendet markiert'):T('verworfen')));
+    evoLoadProposals(); loadEvolution();
+  } else toast('Fehler','err');
 }
 
 

@@ -305,7 +305,12 @@ def api_public_stats():
 def api_version():
     """v4.0: zentrale Versions-/Changelog-Auskunft für Footer + „Was ist neu"-Panel."""
     data = _nc_version.current()
-    return jsonify(ok=True, build=globals().get("BUILD_STAMP", ""),
+    # v4.2: KEIN globals() mehr. Diese Route liegt seit W26 in einem
+    # Blueprint — dort ist globals() der Namensraum DIESER Datei, in dem
+    # BUILD_STAMP nie stand. Die Route lieferte deshalb still build="",
+    # und niemand sah es, weil der Footer ohnehin fest verdrahtet war.
+    # Der Bot reicht den Stempel seit W116 ueber ctx.cfg herein.
+    return jsonify(ok=True, build=_c().cfg.get("BUILD_STAMP") or _nc_version.build_stamp(),
                    summary=_nc_version.summary_line(),
                    changelog=_nc_version.changelog(), **data)
 
