@@ -4,6 +4,76 @@ Extrahiert aus bot.py: beliebige Cookie-Eingaben (Header-String, JSON-
 Export, Netscape) → Netscape-Format, Dedupe, Alarm-Stufen-Bewertung."""
 
 import json
+import re
+import threading
+
+# v4.2-W10: Dieselbe Erkennung, die http.cookiejar benutzt. Wer hier einen
+# eigenen Test schreibt ("beginnt mit '# Netscape'"), baut sich eine zweite
+# Wahrheit — und genau die hat die Reparatur vorher scheitern lassen: eine
+# Datei mit Leerzeile VOR dem Kopf galt als "hat Kopf", MozillaCookieJar
+# liest den Kopf aber ausschliesslich in der ERSTEN Zeile.
+_NETSCAPE_KOPF_RE = re.compile(r"#( Netscape)? HTTP Cookie File")
+_KOPF = "# Netscape HTTP Cookie File"
+
+# Der Schreib-Lock der cookies.txt. Liegt hier und nicht in bot.py, weil
+# inzwischen drei Wege schreiben (Auto-Refresh, Dashboard-Update, Auto-Bezug)
+# und zwei davon bot-frei sind. Zwei Locks waeren keiner.
+DATEI_SPERRE = threading.Lock()
+
+
+def _ganzzahl(x) -> int:
+    """Ablaufzeit als int. MozillaCookieJar ruft int(float(feld)) — ein
+       'Session', ein leeres Feld oder ein Datumstext toetet dort das GANZE
+       Laden mit LoadError, nicht nur die eine Zeile. 0 = Sitzungs-Cookie."""
+    try:
+        n = int(float(str(x).strip()))
+    except (TypeError, ValueError):
+        return 0
+    return n if n > 0 else 0
+
+
+def _sauber(x) -> str:
+    """Tabs und Zeilenumbrueche raus — im Netscape-Format sind sie Feld- bzw.
+       Satztrenner, in Name und Wert also schlicht illegal."""
+    return (str(x).replace("\t", "").replace("\r", "").replace("\n", ""))
+
+
+def _feld_zeile(felder) -> str:
+    """Baut aus rohen Feldern EINE Zeile, die MozillaCookieJar wirklich liest.
+       '' wenn nichts Brauchbares drin steht.
+
+       Warum jedes Feld angefasst wird statt nur gezaehlt: der Parser in
+       http.cookiejar ist streng und stirbt an der ganzen Datei, sobald eine
+       Zeile nicht passt (LoadError → get_cookie_health meldet 'parse_error',
+       yt-dlp bricht mit rc=1 ab, _load_cookies_dict liefert leer → TikTok 403).
+       Drei Faelle sind uns real begegnet:
+
+         1. Feld 2 passt nicht zur Domain. cookiejar prueft
+            `assert domain_specified == initial_dot` — '.tiktok.com' mit FALSE
+            (oder 'www.tiktok.com' mit TRUE) ist ein harter Abbruch. Wir
+            LEITEN das Feld aus der Domain ab, statt es zu glauben.
+         2. Mehr als 7 Felder. cookiejar entpackt in genau sieben Namen →
+            ValueError. Ein zusaetzlicher Tab im Wert reicht.
+         3. Weniger als 7 Felder. Ein leerer Wert plus ein Editor, der
+            Zeilenenden trimmt, ergibt sechs — der Cookie fiel vorher still
+            unter den Tisch."""
+    if len(felder) < 6:
+        return ""
+    domain = felder[0].strip()
+    if not domain or domain.startswith("#"):
+        return ""
+    path = felder[2].strip() or "/"
+    secure = "TRUE" if felder[3].strip().upper() in ("TRUE", "1", "YES") else "FALSE"
+    expiry = _ganzzahl(felder[4])
+    name = _sauber(felder[5]).strip()
+    # Alles ab Feld 7 gehoert zum Wert. Tabs darin sind der Grund, warum
+    # cookiejar die Datei sonst gar nicht laedt — also fallen sie weg.
+    wert = _sauber("".join(felder[6:])) if len(felder) > 6 else ""
+    if not name and not wert:
+        return ""
+    # Feld 2 aus der Domain ABGELEITET, nicht uebernommen (Fall 1 oben).
+    sub = "TRUE" if domain.startswith(".") else "FALSE"
+    return "\t".join([domain, sub, path, secure, str(expiry), name, wert])
 
 
 def _cookies_input_to_netscape(raw: str):
@@ -17,6 +87,11 @@ def _cookies_input_to_netscape(raw: str):
 
        Returns (netscape_text, anzahl_cookies). Wirft bei kaputtem JSON.
 
+       Die Ausgabe ist NORMALISIERT, nicht durchgereicht: jede Datenzeile hat
+       exakt sieben Felder, Feld 2 passt zur Domain, die Ablaufzeit ist eine
+       Zahl, und der Kopf steht in Zeile 1. Alles andere hat MozillaCookieJar
+       schon abgelehnt — siehe _feld_zeile().
+
        Wichtig:
          - HttpOnly-Cookies: manche Tools schreiben '#HttpOnly_<domain>' an den
            Zeilenanfang. MozillaCookieJar würde die als Kommentar werfen → die
@@ -24,10 +99,13 @@ def _cookies_input_to_netscape(raw: str):
            den Marker, damit sie geparst werden.
          - Tabs-zu-Spaces: Copy-Paste macht aus Tabs oft Spaces. Wir reparieren
            solche Zeilen, damit MozillaCookieJar sie wieder versteht.
+         - BOM: Editoren unter Windows schreiben ein U+FEFF vor den Kopf.
+           Das verschiebt die Formaterkennung um ein Zeichen.
     """
-    s = (raw or "").lstrip()
+    roh = (raw or "").lstrip("\ufeff")
+    s = roh.lstrip().lstrip("\ufeff")
     if not s:
-        return "# Netscape HTTP Cookie File\n", 0
+        return _KOPF + "\n", 0
 
     # ── Format 1: JSON (Cookie-Editor / EditThisCookie) ──────────────────────
     if s[:1] in ("[", "{"):
@@ -36,9 +114,8 @@ def _cookies_input_to_netscape(raw: str):
             # manche Tools wrappen: {"cookies":[...]} oder {"data":[...]}
             data = data.get("cookies") or data.get("data") or []
         if not isinstance(data, list):
-            return "# Netscape HTTP Cookie File\n", 0
-        out = ["# Netscape HTTP Cookie File",
-               "# Aktualisiert via TikTokBot-Dashboard", ""]
+            return _KOPF + "\n", 0
+        out = [_KOPF, "# Aktualisiert via TikTokBot-Dashboard", ""]
         count = 0
         for c in data:
             if not isinstance(c, dict):
@@ -46,56 +123,53 @@ def _cookies_input_to_netscape(raw: str):
             name = c.get("name")
             if not name:
                 continue
-            value = c.get("value", "")
-            domain = c.get("domain") or ".tiktok.com"
-            include_sub = "TRUE" if str(domain).startswith(".") else "FALSE"
-            path = c.get("path") or "/"
-            secure = "TRUE" if c.get("secure") else "FALSE"
             exp = (c.get("expirationDate") or c.get("expires")
                    or c.get("expiry") or 0)
-            try:
-                exp = int(float(exp))
-            except (TypeError, ValueError):
-                exp = 0
-            # Tabs/Newlines in name/value sind im Netscape-Format illegal
-            name = str(name).replace("\t", "").replace("\n", "").replace("\r", "")
-            value = str(value).replace("\t", "").replace("\n", "").replace("\r", "")
-            out.append(f"{domain}\t{include_sub}\t{path}\t{secure}\t{exp}\t{name}\t{value}")
-            count += 1
+            zeile = _feld_zeile([
+                str(c.get("domain") or ".tiktok.com"),
+                "",                                    # wird abgeleitet
+                str(c.get("path") or "/"),
+                "TRUE" if c.get("secure") else "FALSE",
+                exp,
+                name,
+                "" if c.get("value") is None else c.get("value"),
+            ])
+            if zeile:
+                out.append(zeile)
+                count += 1
         return "\n".join(out) + "\n", count
 
     # ── Format 2: Netscape-Text ──────────────────────────────────────────────
-    lines = raw.splitlines()
-    has_header = any(l.lstrip().startswith("# Netscape") for l in lines[:3])
+    lines = roh.splitlines()
     out = []
-    if not has_header:
-        out.append("# Netscape HTTP Cookie File")
+    # Der Kopf muss in ZEILE 1 stehen — cookiejar liest genau eine Zeile weit.
+    if not (lines and _NETSCAPE_KOPF_RE.search(lines[0])):
+        out.append(_KOPF)
     count = 0
     for l in lines:
         ls = l.strip()
         # HttpOnly-Marker entfernen, damit der Cookie nicht als Kommentar verschwindet
         if ls.startswith("#HttpOnly_"):
             ls = ls[len("#HttpOnly_"):]
-            l = ls
         if not ls:
-            out.append(l)
+            out.append("")
             continue
-        if ls.startswith("#"):
-            out.append(l)
+        if ls.startswith(("#", "$")):
+            out.append(ls)
             continue
-        # gültige Datenzeile: >= 7 tab-getrennte Felder
-        if len(ls.split("\t")) >= 7:
-            out.append(l)
+        felder = ls.split("\t")
+        if len(felder) < 6:
+            # evtl. mit Spaces statt Tabs (Copy-Paste-Schaden)? reparieren.
+            # Ab Feld 7 wieder mit Space zusammensetzen — der Wert selbst darf
+            # welche enthalten, die sechs Kopffelder nie.
+            teile = ls.split()
+            if len(teile) < 6:
+                continue                     # Muell-Zeile ueberspringen
+            felder = teile[:6] + ([" ".join(teile[6:])] if len(teile) > 6 else [])
+        zeile = _feld_zeile(felder)
+        if zeile:
+            out.append(zeile)
             count += 1
-        else:
-            # evtl. mit Spaces statt Tabs (Copy-Paste-Schaden)? reparieren
-            parts = ls.split()
-            if len(parts) >= 7:
-                # Felder 1-6 sind feldlos, ab 7 ist der Value (kann theoretisch
-                # Spaces enthalten — bei TikTok aber nie, daher rejoin per Space)
-                out.append("\t".join(parts[:6]) + "\t" + " ".join(parts[6:]))
-                count += 1
-            # sonst: Müll-Zeile überspringen
     return "\n".join(out) + "\n", count
 
 def _dedupe_cookie_text(netscape_text: str):
@@ -164,7 +238,7 @@ def _cookie_alarm_level(h):
 # TikTok liefert trotzdem 403") niemand ein zweites Mal suchen will.
 import os
 import time as _time
-from http.cookiejar import MozillaCookieJar
+from http.cookiejar import LoadError, MozillaCookieJar
 
 _KONF = {"datei": "tiktok_cookies.txt", "log": None}
 
@@ -175,6 +249,86 @@ def configure(datei=None, log=None):
         _KONF["datei"] = datei
     if log is not None:
         _KONF["log"] = log
+
+
+def _warnen(text: str):
+    """Gedrosselte Warnung (max. alle 60s).
+
+    BUG-FIX (Tiefenbughunt): bei Permission-denied/Lesefehler landet JEDER der
+    21 Aufrufer hier und loggt erneut — im Live-Log sahen wir mehrere Warnungen
+    pro Sekunde. Der Erfolgs-Cache greift nicht (wird nur bei Erfolg gesetzt).
+    Der Fehler selbst wird NICHT verschluckt — nur die Wiederholung entschaerft."""
+    log = _KONF["log"]
+    if log is None:
+        return
+    _now = _time.monotonic()
+    if _now - _COOKIE_WARN_TS.get("last", -1e9) >= 60:
+        _COOKIE_WARN_TS["last"] = _now
+        log.warning(text)
+    else:
+        log.debug(text + " (gedrosselt)")
+
+
+def lade_jar(datei=None):
+    """v4.2-W10: cookies.txt als MozillaCookieJar — auch wenn die Datei KEIN
+       sauberes Netscape-Format ist. Returns (jar, normalisiert).
+
+       Warum es das braucht: cookiejar.load() ist alles-oder-nichts. Eine
+       einzige Zeile mit falschem Domain-Flag, einem Extra-Tab oder einer
+       Ablaufzeit 'Session' liess bisher JEDEN Leser leer ausgehen — der
+       Recorder fuhr ohne Cookies los (TikTok 403), und das Deck meldete
+       'parse_error', obwohl 40 gueltige Cookies in der Datei standen.
+       Hier wird deshalb im Fehlerfall die normalisierte Fassung gelesen.
+
+       Diese Funktion SCHREIBT NICHT zurueck. Das Reparieren der Datei bleibt
+       bei _ensure_cookie_file_netscape() im Bot — ein Leser, der nebenbei
+       Dateien umschreibt, ist genau die Sorte Nebenwirkung, die man um drei
+       Uhr nachts nicht sucht."""
+    pfad = datei or _KONF["datei"]
+    cj = MozillaCookieJar(pfad)
+    try:
+        cj.load(ignore_discard=True, ignore_expires=True)
+        return cj, False
+    except LoadError as e:
+        # ACHTUNG: LoadError ERBT VON OSError. Ein "except OSError: raise" davor
+        # faengt genau den Formatfehler weg, um den es hier geht — die
+        # Normalisierung liefe dann nie. Deshalb steht dieser Zweig zuerst.
+        urspruenglich = e
+    except OSError:
+        raise                       # fehlt/keine Rechte — nichts zu normalisieren
+    except Exception as e:
+        # Festhalten: Python raeumt den Namen am Ende des except-Blocks weg,
+        # und weiter unten ist genau DIESE Meldung die aussagekraeftige.
+        urspruenglich = e
+
+    try:
+        with open(pfad, "r", encoding="utf-8", errors="replace") as f:
+            text, anzahl = _cookies_input_to_netscape(f.read())
+        if anzahl <= 0:
+            raise urspruenglich
+        # Ueber eine Temp-Datei NEBEN dem Original, nicht im System-Temp:
+        # das hier sind Zugangsdaten, und /tmp ist welt-lesbar. 0600, und
+        # weg ist sie wieder, bevor die Funktion zurueckkehrt.
+        tmp = pfad + ".lesen.tmp"
+        fd = os.open(tmp, os.O_CREAT | os.O_WRONLY | os.O_TRUNC, 0o600)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write(text)
+            cj2 = MozillaCookieJar(tmp)
+            cj2.load(ignore_discard=True, ignore_expires=True)
+        finally:
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
+        cj2.filename = pfad         # sonst zeigt ein spaeteres save() ins Nirwana
+        return cj2, True
+    except LoadError:
+        raise urspruenglich from None   # auch normalisiert unlesbar
+    except OSError:
+        raise
+    except Exception:
+        raise urspruenglich from None
 
 
 def load_dict() -> dict:
@@ -212,8 +366,11 @@ def load_dict() -> dict:
     if cached and cached[0] == mtime and (now - cached[1]) < 5.0:
         return cached[2]
     try:
-        cj = MozillaCookieJar(_KONF["datei"])
-        cj.load(ignore_discard=True, ignore_expires=True)
+        cj, normalisiert = lade_jar(_KONF["datei"])
+        if normalisiert:
+            _warnen("cookies.txt ist kein sauberes Netscape-Format — beim Lesen "
+                    "normalisiert. Einmal ueber das Deck neu einspielen oder "
+                    "automatisch holen lassen, sonst bleibt es Gluecksache.")
         # best[name] = (specificity_rank, expiry, value)
         # specificity_rank: 1 = exakte Domain (kein führender Punkt, höchste
         # Priorität — das ist was ein echter Browser für die aktuell besuchte
@@ -244,12 +401,7 @@ def load_dict() -> dict:
         # verstopft ein einziges Rechteproblem das komplette Log und versteckt
         # echte Fehler. Der Fehler selbst wird NICHT verschluckt — nur die
         # Wiederholung entschärft.
-        _now = _time.monotonic()
-        if _now - _COOKIE_WARN_TS.get("last", -1e9) >= 60:
-            _COOKIE_WARN_TS["last"] = _now
-            _KONF["log"].warning(f"Cookies konnten nicht geladen werden: {e}")
-        else:
-            _KONF["log"].debug(f"Cookies konnten nicht geladen werden (gedrosselt): {e}")
+        _warnen(f"Cookies konnten nicht geladen werden: {e}")
         return {}
 
 
