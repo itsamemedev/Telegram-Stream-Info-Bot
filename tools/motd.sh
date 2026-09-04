@@ -29,13 +29,32 @@
 #   * Laeuft auf bash 3.2 (macOS) mit: keine assoziativen Arrays, /proc-Zugriffe
 #     sind eingezaeunt, fuer Darwin gibt es eigene Zweige.
 #
+# NEU IN v2.1 (v4.2-W7) — vier Anzeigen, jede aus einer Frage, die die alte
+# Fassung nicht beantwortet hat:
+#   * GESAMTAMPEL im Kopf. Acht Bloecke sind zu viel fuer einen Blick; per
+#     Handy-SSH sieht man drei, ohne zu scrollen. Der schlimmste Befund steht
+#     jetzt in Zeile zwei. Dafuer laufen die Proben fuer Dienst und Dashboard
+#     VOR dem Kopf statt mitten in der Ausgabe — dieselben Aufrufe, nur
+#     frueher, die Anzeige kostet keine Millisekunde mehr.
+#   * NETZDURCHSATZ. "Bot laeuft" und "es geht wirklich etwas raus" sind zwei
+#     verschiedene Fragen; die zweite blieb bisher offen. Gemessen im SELBEN
+#     Fenster wie die CPU — ein eigener sleep waere der teuerste Posten der
+#     ganzen MOTD geworden.
+#   * FEHLERVERLAUF ueber sieben Tage. Eine nackte 4 sagt nichts: vier Fehler
+#     hinter sechs stillen Tagen sind ein Ausbruch, vier hinter sechs Tagen mit
+#     je dreissig sind eine Verbesserung.
+#   * VERLAUFSBALKEN in Truecolor. Jede Zelle traegt die Farbe ihrer Position,
+#     der Balken liest sich als Thermometer — 85 % sind sichtbar heiss, bevor
+#     die 90er-Schwelle reisst. In 256 und 16 Farben gaebe das Bandenbildung
+#     statt Verlauf; dort bleibt es bei der einen Farbe.
+#
 # Grundregel: eine MOTD darf NIE einen Login blockieren. Deshalb kein set -e,
 # kein Kommando ohne Zeitdeckel und jedes externe Werkzeug nur nach have().
 
 LC_ALL=C
 export LC_ALL
 
-NC_MOTD_VERSION="2.0"
+NC_MOTD_VERSION="2.1"
 
 # ── Vorgaben (jede per /etc/nightcrawler/motd.conf oder Umgebung ueberschreibbar)
 SERVICE="${SERVICE:-}"          # leer = automatisch suchen
@@ -154,6 +173,21 @@ detect_service(){
 }
 
 is_botdir(){ [ -f "$1/bot.py" ] || [ -f "$1/bot_v37.py" ]; }
+
+# v4.2-W7: Welche Schnittstelle traegt den Upstream? Als FUNKTION und nicht
+# inline in der Messung, weil --doctor sie ebenfalls zeigen muss — und
+# --doctor laeuft VOR der Messung. Eine zweite Kopie waere die zweite
+# Wahrheit, die genau dann auseinanderlaeuft, wenn man sie braucht.
+detect_netif(){
+  [ -n "${NET_IF:-}" ] && { printf '%s' "$NET_IF"; return; }
+  [ -r /proc/net/dev ] || return
+  local i=""
+  have ip && i=$(tmo 2 ip route show default 2>/dev/null | awk '{print $5; exit}')
+  # Ohne Standardroute (Container, reines LAN): die erste Schnittstelle, die
+  # nicht loopback ist und schon Daten gesehen hat.
+  [ -z "$i" ] && i=$(awk -F'[: ]+' 'NR>2 && $2!="lo" && $3+0>0 {print $2; exit}' /proc/net/dev 2>/dev/null)
+  printf '%s' "$i"
+}
 
 detect_botdir(){
   [ -n "$BOT_DIR" ] && is_botdir "$BOT_DIR" && { printf '%s' "$BOT_DIR"; return; }
@@ -346,6 +380,8 @@ doctor(){
   printf "  %-12s %s\n" "Log"       "$([ -f "$LOGF" ] && echo "$LOGF" || echo "— fehlt")"
   printf "  %-12s %s\n" "Aufnahmen" "$([ -d "$RECDIR" ] && echo "$RECDIR" || echo "— fehlt")"
   printf "  %-12s %s\n" "Dashboard" ":$DASH_PORT"
+  _ni="$(detect_netif)"
+  printf "  %-12s %s\n" "Netz"      "${_ni:-— keine Schnittstelle erkannt}"
   printf "  %-12s %s\n" "Werkzeuge" "$(for t in systemctl ss curl sqlite3 python3 free df find du; do have $t && printf '%s ' "$t"; done)"
   printf "\n  ${FNT}Falsch erkannt? Werte in %s eintragen (oder als Umgebung setzen).${R}\n\n" "$CONF"
   exit 0
@@ -392,12 +428,50 @@ bar(){  # bar <prozent> [breite]  — Breite als ARGUMENT: eine Zuweisung vor de
         # verstellte in der Vorfassung alle folgenden Balken.
   local p=${1:-0} w=${2:-$BARW} i fill col out=""
   [ "$p" -lt 0 ] 2>/dev/null && p=0; [ "$p" -gt 100 ] 2>/dev/null && p=100
-  fill=$(( (p*w+50)/100 )); col=$(col4 "$p"); out="${col}"
+  fill=$(( (p*w+50)/100 ))
+  # v4.2-W7: Verlauf statt einer Farbe — aber NUR in Truecolor. Jede Zelle
+  # traegt die Farbe IHRER Position, der Balken liest sich damit wie ein
+  # Thermometer: eine RAM-Anzeige bei 85 % ist sichtbar heiss, bevor sie die
+  # 90er-Schwelle reisst. In der 256er- und erst recht in der 16er-Palette
+  # gaebe das Bandenbildung statt Verlauf; dort bleibt die eine Farbe.
+  #
+  # In EINEM awk gebaut und nicht in einer Shell-Schleife: 22 Zellen waeren
+  # 22 Rechenschritte je Balken und fuenf Balken je Login.
+  if [ "$_tc" = 1 ] && [ -n "$e" ]; then
+    awk -v fill="$fill" -v w="$w" -v esc="$e" 'BEGIN{
+      for (i = 0; i < w; i++) {
+        if (i >= fill) { printf "%s[38;2;138;129;114m▒", esc; continue }
+        q = (w > 1) ? (i * 100.0 / (w - 1)) : 0
+        # Gruen 127,168,107 → Bernstein 224,154,60 bei 70 % → Rot 212,85,63
+        if (q < 70) { r=127+(224-127)*q/70;      g=168+(154-168)*q/70;      b=107+(60-107)*q/70 }
+        else        { r=224+(212-224)*(q-70)/30; g=154+(85-154)*(q-70)/30;  b=60+(63-60)*(q-70)/30 }
+        printf "%s[38;2;%d;%d;%dm█", esc, r+0.5, g+0.5, b+0.5
+      }
+      printf "%s[0m", esc }'
+    return
+  fi
+  col=$(col4 "$p"); out="${col}"
   i=0; while [ "$i" -lt "$w" ]; do
     if [ "$i" -lt "$fill" ]; then out="${out}█"; else out="${out}${FNT}▒${col}"; fi
     i=$((i+1))
   done
   printf "%b" "${out}${R}"
+}
+# v4.2-W7: Miniverlauf. Sieben Zahlen als sieben Blockzeichen — die Frage bei
+# einer Fehlerzahl ist nie "wie viele", sondern "mehr als sonst?". Eine 4 sagt
+# nichts; eine 4 hinter sechs Nullen sagt alles.
+# Skaliert auf das Maximum der Reihe, nicht auf einen festen Deckel: sonst
+# waere der Verlauf bei kleinen Zahlen platt und bei grossen abgeschnitten.
+spark(){
+  awk -v vals="$*" 'BEGIN{
+    n = split(vals, v, " "); if (!n) exit
+    max = 0; for (i = 1; i <= n; i++) if (v[i] + 0 > max) max = v[i] + 0
+    n8 = split("▁ ▂ ▃ ▄ ▅ ▆ ▇ █", g, " ")
+    for (i = 1; i <= n; i++) {
+      if (max <= 0) { printf "%s", g[1]; continue }
+      k = int(v[i] * (n8 - 1) / max + 0.5) + 1; if (k > n8) k = n8
+      printf "%s", g[k]
+    } }'
 }
 gauge(){ printf "  ${DIM}%-6s${R} %b ${FNT}%s${R}\n" "$1" "$(bar "$2")" "$3"; }
 dot(){ case "$1" in ok) printf "${OK}●${R}";; warn) printf "${WRN}●${R}";;
@@ -418,13 +492,38 @@ WARN_LINES=""
 warn_add(){ WARN_LINES="${WARN_LINES}${1}"$'\n'; }
 
 # ── Messwerte einsammeln ─────────────────────────────────────
-CPU_LINES=""
-if [ "$OS" = "Linux" ] && [ -r /proc/stat ] && [ "$CPU_SAMPLE" != "0" ]; then
+# v4.2-W7: Netzdurchsatz im SELBEN Messfenster wie die CPU.
+#
+# Fuer eine Restream-Box ist der Upstream die aussagekraeftigste Zahl
+# ueberhaupt: "Bot laeuft" und "es geht wirklich etwas raus" sind zwei
+# verschiedene Fragen, und die zweite beantwortete die MOTD bisher nicht.
+# Ein Durchsatz braucht aber zwei Messungen mit Abstand — ein eigener sleep
+# waere der teuerste Posten der ganzen Anzeige geworden. Er haengt sich
+# deshalb an das Fenster, das fuer die CPU ohnehin schon gewartet wird.
+[ "$OS" = "Linux" ] && NET_IF="$(detect_netif)"
+_netsnap(){ awk -v i="$NET_IF" '{sub(/:/, " ")} $1==i {print $2, $10; exit}' /proc/net/dev 2>/dev/null; }
+
+CPU_LINES=""; NET_RX=""; NET_TX=""
+if [ "$OS" = "Linux" ] && [ "$CPU_SAMPLE" != "0" ]; then
   _snap(){ awk '/^cpu[0-9]*[ \t]/{idle=$5+$6; tot=0; for(i=2;i<=NF;i++) tot+=$i; print $1, idle, tot}' /proc/stat; }
-  _s1=$(_snap); sleep "$CPU_SAMPLE"; _s2=$(_snap)
-  CPU_LINES=$(printf '%s\n%s\n' "$_s1" "$_s2" | awk '
-    { if (seen[$1]++) { di=$2-i[$1]; dt=$3-t[$1]; p=(dt>0)?int(100*(dt-di)/dt+0.5):0; print $1, p }
-      else { i[$1]=$2; t[$1]=$3 } }')
+  _s1=""; [ -r /proc/stat ] && _s1=$(_snap)
+  _n1=""; [ -n "$NET_IF" ] && _n1=$(_netsnap)
+  sleep "$CPU_SAMPLE"
+  if [ -n "$_s1" ]; then
+    _s2=$(_snap)
+    CPU_LINES=$(printf '%s\n%s\n' "$_s1" "$_s2" | awk '
+      { if (seen[$1]++) { di=$2-i[$1]; dt=$3-t[$1]; p=(dt>0)?int(100*(dt-di)/dt+0.5):0; print $1, p }
+        else { i[$1]=$2; t[$1]=$3 } }')
+  fi
+  if [ -n "$_n1" ]; then
+    _n2=$(_netsnap)
+    # Zaehleruberlauf und Schnittstellen-Neustart geben negative Differenzen —
+    # dann lieber gar nichts zeigen als eine erfundene Zahl.
+    eval "$(awk -v a="$_n1" -v b="$_n2" -v w="$CPU_SAMPLE" 'BEGIN{
+      split(a,x," "); split(b,y," "); if (w+0 <= 0) exit
+      dr=(y[1]-x[1])/w; dt=(y[2]-x[2])/w
+      if (dr>=0 && dt>=0) printf "NET_RX=%d NET_TX=%d", dr, dt }')"
+  fi
 fi
 CPU_ALL=$(printf '%s\n' "$CPU_LINES" | awk '$1=="cpu"{print $2; exit}')
 if [ -z "$CPU_ALL" ] && [ "$OS" = "Darwin" ]; then
@@ -457,6 +556,7 @@ fi
 # Platte — POSIX-df (-Pk laeuft auch auf macOS; --output ist GNU-only)
 DISK_U=0; DISK_T=0; DISK_A=0
 eval "$(tmo 3 df -Pk "$DISK_TARGET" 2>/dev/null | awk 'NR==2{printf "DISK_U=%d DISK_T=%d DISK_A=%d", $3, $2, $4}')"
+DPCT=0; [ "$DISK_T" -gt 0 ] 2>/dev/null && DPCT=$(( DISK_U * 100 / DISK_T ))
 
 # Temperatur — Raspberry Pi und alles mit thermal_zone
 TEMP=""
@@ -472,6 +572,78 @@ if have vcgencmd; then
   _tv=$(tmo 2 vcgencmd get_throttled 2>/dev/null | cut -d= -f2)
   case "$_tv" in 0x0|"") ;; *) THROTTLE="$_tv" ;; esac
 fi
+
+# ── Lage: Dienst und Dashboard (v4.2-W7) ─────────────────────
+# Beide Proben liefen bisher MITTEN in der Ausgabe. Sie stehen jetzt davor,
+# weil die Gesamtampel im Kopf ihr Ergebnis braucht — und eine Statusanzeige,
+# die ihr Urteil erst am Ende faellt, hilft niemandem, der nach dem Login nur
+# einmal kurz hinsieht. Es sind dieselben zwei Aufrufe mit denselben
+# Zeitdeckeln, nur frueher; die Anzeige kostet keine Millisekunde mehr.
+BOT_STATE=unbekannt; BOT_SINCE=""; BOT_NRS=""; BOT_RES=""
+if [ -n "$SERVICE" ] && have systemctl; then
+  if systemctl is-active --quiet "$SERVICE" 2>/dev/null; then
+    BOT_STATE=laeuft
+    BOT_SINCE=$(systemctl show -p ActiveEnterTimestamp --value "$SERVICE" 2>/dev/null | cut -d' ' -f2-3)
+    BOT_NRS=$(systemctl show -p NRestarts --value "$SERVICE" 2>/dev/null)
+  else
+    BOT_STATE=gestoppt
+    BOT_RES=$(systemctl show -p Result --value "$SERVICE" 2>/dev/null)
+  fi
+elif [ -n "$BOT_DIR" ]; then
+  # Ohne systemd (macOS, Container, Handstart): am Prozess erkennen.
+  # Muster bewusst eng: ein blosses "bot.py" trifft auch einen Editor, ein
+  # grep oder ein Deploy-Skript in der Prozessliste — und meldet dann froehlich
+  # "laeuft", waehrend der Bot tot ist.
+  if tmo 2 pgrep -f "python[0-9.]*[^|]*bot(_v37)?\.py" >/dev/null 2>&1; then
+    BOT_STATE=prozess
+  else
+    BOT_STATE=tot
+  fi
+fi
+
+# Dashboard: nicht "lauscht der Port", sondern "antwortet die App". Ein
+# haengender Flask-Thread haelt den Port offen — die alte Anzeige blieb gruen.
+DASH_STATE=aus; DASH_PROCS=""; DASH_ZOMB=""; DASH_JSON=""
+if have curl; then
+  DASH_JSON=$(tmo 2 curl -s --max-time 1.5 "http://127.0.0.1:${DASH_PORT}/healthz" 2>/dev/null)
+fi
+if [ -n "$DASH_JSON" ]; then
+  _ok=$(printf '%s' "$DASH_JSON" | sed -n 's/.*"ok"[: ]*\([a-z]*\).*/\1/p')
+  DASH_PROCS=$(printf '%s' "$DASH_JSON" | sed -n 's/.*"procs"[: ]*\([0-9]*\).*/\1/p')
+  DASH_ZOMB=$(printf '%s' "$DASH_JSON" | sed -n 's/.*"zombies"[: ]*\([0-9]*\).*/\1/p')
+  if [ "$_ok" = "true" ]; then DASH_STATE=gesund; else DASH_STATE=degradiert; fi
+elif have ss && tmo 2 ss -ltn 2>/dev/null | grep -q ":${DASH_PORT} "; then
+  DASH_STATE=stumm
+elif have lsof && tmo 2 lsof -nP -iTCP:"${DASH_PORT}" -sTCP:LISTEN >/dev/null 2>&1; then
+  DASH_STATE=stumm
+fi
+
+# ── Gesamtampel ──────────────────────────────────────────────
+# Ein Urteil in einer Zeile. Die MOTD hat acht Bloecke; wer per Handy-SSH
+# einloggt, sieht davon drei, ohne zu scrollen. Genau deshalb steht der
+# schlimmste Befund oben und nicht nur unten in den Hinweisen.
+#
+# Rot schlaegt Gelb, und innerhalb einer Stufe gewinnt der ERSTE Befund:
+# "Bot laeuft nicht" ist die Ursache, "Dashboard nicht erreichbar" meist nur
+# die Folge — sie darf die Ursache nicht ueberschreiben.
+LAGE=ok; LAGE_TEXT="alles im Griff"
+lage_setz(){
+  case "$1" in
+    err)  [ "$LAGE" = err ] || { LAGE=err; LAGE_TEXT="$2"; } ;;
+    warn) [ "$LAGE" = ok ] && { LAGE=warn; LAGE_TEXT="$2"; } ;;
+  esac
+}
+if [ -z "$BOT_DIR" ] && [ -z "$SERVICE" ]; then
+  lage_setz warn "Installation nicht gefunden"
+else
+  case "$BOT_STATE" in gestoppt|tot) lage_setz err "Bot laeuft nicht";; esac
+  case "$DASH_STATE" in
+    aus)               lage_setz err  "Dashboard nicht erreichbar";;
+    degradiert|stumm)  lage_setz warn "Dashboard antwortet nicht sauber";;
+  esac
+fi
+[ "$DPCT" -ge 90 ] 2>/dev/null && lage_setz err "Platte fast voll (${DPCT}%)"
+[ -n "$THROTTLE" ] && lage_setz warn "Drosselung gemeldet"
 
 # ── Kopf ─────────────────────────────────────────────────────
 # BUILD_STAMP steht seit v4.0 als Klartext in bot.py ("2026.08 · v4.0"); die
@@ -496,7 +668,12 @@ if have uptime; then UP=$(uptime -p 2>/dev/null | sed 's/^up //'); fi
 
 printf "\n"; rule
 printf "  ${BR}${B}◤ NIGHTCRAWLER${R}${VER:+ ${DIM}${VER}${R}}${GITREF:+ ${FNT}·${R} ${FNT}${GITREF}${R}}   ${TXT}%s${R}\n" "$(hostname 2>/dev/null)"
-printf "  ${FNT}Restream Control Room${R}   ${FNT}up %s${R}\n" "$UP"
+case "$LAGE" in
+  ok)   LAGE_BADGE="${OK}●${R} ${OK}${LAGE_TEXT}${R}";;
+  warn) LAGE_BADGE="${WRN}▲${R} ${WRN}${LAGE_TEXT}${R}";;
+  *)    LAGE_BADGE="${ERR}✘${R} ${B}${ERR}${LAGE_TEXT}${R}";;
+esac
+printf "  %b   ${FNT}Restream Control Room${R}   ${FNT}up %s${R}\n" "$LAGE_BADGE" "$UP"
 rule
 
 # ── System ───────────────────────────────────────────────────
@@ -527,9 +704,15 @@ printf "%b\n" "$LOADLINE"
 [ "$SWP_T" -gt 0 ] && gauge "Swap" "$(pct "$SWP_U" "$SWP_T")" \
   "$(awk -v u="$SWP_U" -v t="$SWP_T" 'BEGIN{printf "%.1f/%.1fG",u/1024,t/1024}')  $(pct "$SWP_U" "$SWP_T")%"
 if [ "$DISK_T" -gt 0 ]; then
-  DPCT=$(pct "$DISK_U" "$DISK_T")
   gauge "Disk" "$DPCT" "$(human $((DISK_U*1024)))/$(human $((DISK_T*1024)))  ${DPCT}% · $(human $((DISK_A*1024))) frei"
   [ "$DPCT" -ge 90 ] && warn_add "Platte zu ${DPCT}% voll — Aufnahmen brechen ab: ${TXT}/cleanup${R}${FNT} oder alte Dateien loeschen${R}"
+fi
+# v4.2-W7: Der Upstream ist bei einer Restream-Box die Zahl, die "laeuft" von
+# "sendet wirklich" trennt. Rauf zuerst und hervorgehoben — runter ist bei
+# diesem Geraet die Nebensache.
+if [ -n "$NET_TX" ]; then
+  printf "  ${DIM}%-6s${R} ${TXT}↑ %s/s${R}   ${FNT}↓ %s/s${R}   ${FNT}%s${R}\n" \
+    "Netz" "$(human "$NET_TX")" "$(human "${NET_RX:-0}")" "$NET_IF"
 fi
 [ -n "$THROTTLE" ] && warn_add "Pi meldet Drosselung (get_throttled=${THROTTLE}) — Netzteil pruefen, sonst bricht ffmpeg weg"
 rule
@@ -540,61 +723,40 @@ if [ -z "$BOT_DIR" ]; then
   row "Installation" "$(dot warn)" "${WRN}nicht gefunden${R} ${FNT}— BOT_DIR in ${CONF} setzen (./motd.sh --doctor)${R}"
 fi
 
-if [ -n "$SERVICE" ] && have systemctl; then
-  if systemctl is-active --quiet "$SERVICE" 2>/dev/null; then
-    _since=$(systemctl show -p ActiveEnterTimestamp --value "$SERVICE" 2>/dev/null | cut -d' ' -f2-3)
-    _nrs=$(systemctl show -p NRestarts --value "$SERVICE" 2>/dev/null)
+# v4.2-W7: gemessen wurde oben, hier wird nur noch gezeichnet.
+case "$BOT_STATE" in
+  laeuft)
     _extra=""
-    [ -n "$_since" ] && _extra="seit $_since"
+    [ -n "$BOT_SINCE" ] && _extra="seit $BOT_SINCE"
     # NRestarts > 0 heisst: der Dienst ist zwar oben, faellt aber. Genau das
     # sieht man an "is-active" NIE — und es ist der wichtigere Befund.
-    if [ -n "$_nrs" ] && [ "$_nrs" -gt 0 ] 2>/dev/null; then
-      _extra="${_extra} · ${_nrs}x neugestartet"
-      warn_add "Dienst wurde ${_nrs}x neu gestartet — Grund: ${TXT}journalctl -u ${SERVICE} -p err -n 50${R}"
+    if [ -n "$BOT_NRS" ] && [ "$BOT_NRS" -gt 0 ] 2>/dev/null; then
+      _extra="${_extra} · ${BOT_NRS}x neugestartet"
+      warn_add "Dienst wurde ${BOT_NRS}x neu gestartet — Grund: ${TXT}journalctl -u ${SERVICE} -p err -n 50${R}"
     fi
-    row "Bot" "$(dot ok)" "${TXT}laeuft${R} ${FNT}${_extra}${R}"
-  else
-    _res=$(systemctl show -p Result --value "$SERVICE" 2>/dev/null)
-    row "Bot" "$(dot err)" "${ERR}gestoppt${R} ${FNT}${_res:+(${_res})}${R}"
-    warn_add "Bot laeuft nicht: ${TXT}sudo systemctl start ${SERVICE}${R}${FNT} — Grund: journalctl -u ${SERVICE} -n 80${R}"
-  fi
-elif [ -n "$BOT_DIR" ]; then
-  # Ohne systemd (macOS, Container, Handstart): am Prozess erkennen.
-  # Muster bewusst eng: ein blosses "bot.py" trifft auch einen Editor, ein
-  # grep oder ein Deploy-Skript in der Prozessliste — und meldet dann froehlich
-  # "laeuft", waehrend der Bot tot ist.
-  if tmo 2 pgrep -f "python[0-9.]*[^|]*bot(_v37)?\.py" >/dev/null 2>&1; then
-    row "Bot" "$(dot ok)" "${TXT}laeuft${R} ${FNT}(Prozess, kein systemd-Dienst)${R}"
-  else
-    row "Bot" "$(dot err)" "${ERR}kein Prozess${R} ${FNT}(kein systemd-Dienst gefunden)${R}"
-  fi
-fi
+    row "Bot" "$(dot ok)" "${TXT}laeuft${R} ${FNT}${_extra}${R}";;
+  gestoppt)
+    row "Bot" "$(dot err)" "${ERR}gestoppt${R} ${FNT}${BOT_RES:+(${BOT_RES})}${R}"
+    warn_add "Bot laeuft nicht: ${TXT}sudo systemctl start ${SERVICE}${R}${FNT} — Grund: journalctl -u ${SERVICE} -n 80${R}";;
+  prozess)
+    row "Bot" "$(dot ok)" "${TXT}laeuft${R} ${FNT}(Prozess, kein systemd-Dienst)${R}";;
+  tot)
+    row "Bot" "$(dot err)" "${ERR}kein Prozess${R} ${FNT}(kein systemd-Dienst gefunden)${R}";;
+esac
 
-# Dashboard: nicht "lauscht der Port", sondern "antwortet die App". Ein
-# haengender Flask-Thread haelt den Port offen — die alte Anzeige blieb gruen.
-DASH_JSON=""
-if have curl; then
-  DASH_JSON=$(tmo 2 curl -s --max-time 1.5 "http://127.0.0.1:${DASH_PORT}/healthz" 2>/dev/null)
-fi
-if [ -n "$DASH_JSON" ]; then
-  _ok=$(printf '%s' "$DASH_JSON" | sed -n 's/.*"ok"[: ]*\([a-z]*\).*/\1/p')
-  _procs=$(printf '%s' "$DASH_JSON" | sed -n 's/.*"procs"[: ]*\([0-9]*\).*/\1/p')
-  _zomb=$(printf '%s' "$DASH_JSON" | sed -n 's/.*"zombies"[: ]*\([0-9]*\).*/\1/p')
-  if [ "$_ok" = "true" ]; then
-    row "Dashboard" "$(dot ok)" "${TXT}gesund${R} ${FNT}:${DASH_PORT}${_procs:+ · ${_procs} Kindprozesse}${R}"
-  else
+case "$DASH_STATE" in
+  gesund)
+    row "Dashboard" "$(dot ok)" "${TXT}gesund${R} ${FNT}:${DASH_PORT}${DASH_PROCS:+ · ${DASH_PROCS} Kindprozesse}${R}";;
+  degradiert)
     row "Dashboard" "$(dot warn)" "${WRN}degradiert${R} ${FNT}:${DASH_PORT} — /healthz meldet ok=false${R}"
-    warn_add "Dashboard degradiert (DB oder Dauerschleifen): ${TXT}curl -s localhost:${DASH_PORT}/api/selftest${R}"
-  fi
-  [ -n "$_zomb" ] && [ "$_zomb" -gt 0 ] 2>/dev/null && \
-    warn_add "${_zomb} Zombie-Kindprozesse — ffmpeg/streamlink werden nicht abgeraeumt"
-elif have ss && tmo 2 ss -ltn 2>/dev/null | grep -q ":${DASH_PORT} "; then
-  row "Dashboard" "$(dot warn)" "${WRN}Port offen, keine Antwort${R} ${FNT}:${DASH_PORT}${R}"
-elif have lsof && tmo 2 lsof -nP -iTCP:"${DASH_PORT}" -sTCP:LISTEN >/dev/null 2>&1; then
-  row "Dashboard" "$(dot warn)" "${WRN}Port offen, keine Antwort${R} ${FNT}:${DASH_PORT}${R}"
-else
-  row "Dashboard" "$(dot err)" "${ERR}kein Listener${R} ${FNT}:${DASH_PORT}${R}"
-fi
+    warn_add "Dashboard degradiert (DB oder Dauerschleifen): ${TXT}curl -s localhost:${DASH_PORT}/api/selftest${R}";;
+  stumm)
+    row "Dashboard" "$(dot warn)" "${WRN}Port offen, keine Antwort${R} ${FNT}:${DASH_PORT}${R}";;
+  *)
+    row "Dashboard" "$(dot err)" "${ERR}kein Listener${R} ${FNT}:${DASH_PORT}${R}";;
+esac
+[ -n "$DASH_ZOMB" ] && [ "$DASH_ZOMB" -gt 0 ] 2>/dev/null && \
+  warn_add "${DASH_ZOMB} Zombie-Kindprozesse — ffmpeg/streamlink werden nicht abgeraeumt"
 
 if have systemctl && systemctl list-unit-files --no-legend 'crowdsec.service' 2>/dev/null | grep -q .; then
   if systemctl is-active --quiet crowdsec 2>/dev/null; then
@@ -610,6 +772,18 @@ fi
 if [ -f "$LOGF" ]; then
   # error.log enthaelt NUR ERROR+ (eigener Handler). Interessant ist deshalb
   # nicht "gibt es Fehler", sondern "wie viele HEUTE und wie alt der letzte".
+  #
+  # v4.2-W7: und wie viele an den sechs Tagen davor. Eine nackte 4 sagt
+  # nichts — vier Fehler hinter sechs stillen Tagen sind ein Ausbruch, vier
+  # hinter sechs Tagen mit je dreissig sind eine Verbesserung. Genau diese
+  # Frage beantwortete die Anzeige bisher nicht, und ohne sie wird die Zahl
+  # nach drei Tagen nicht mehr gelesen.
+  #
+  # EIN Durchgang ueber das Ende der Datei statt sieben grep-Laeufe: die
+  # sieben Tage werden vorab als Datumsliste gebaut und awk zaehlt sie in
+  # einem Rutsch. Der Deckel von 50000 Zeilen ist der Preis dafuer, dass eine
+  # gewachsene Logdatei den Login nicht ausbremst — bei mehr Fehlern als das
+  # ist der Verlauf ohnehin nicht die dringendste Frage.
   ETODAY=$(tmo 3 grep -c "^$(date +%F)" "$LOGF" 2>/dev/null | tr -d ' ')
   ETODAY=${ETODAY:-0}
   ELAST=""
@@ -618,9 +792,29 @@ if [ -f "$LOGF" ]; then
     [ -n "$_lt" ] && ELAST=$(date -d "$_lt" +%s 2>/dev/null)
     [ -n "$ELAST" ] && ELAST=" · letzter vor $(ago "$ELAST")"
   fi
-  if   [ "$ETODAY" -eq 0 ] 2>/dev/null; then row "Fehler" "$(dot ok)"   "${TXT}0${R} ${FNT}heute${R}"
-  elif [ "$ETODAY" -lt 5 ] 2>/dev/null; then row "Fehler" "$(dot warn)" "${WRN}${ETODAY}${R} ${FNT}heute${ELAST}${R}"
-  else row "Fehler" "$(dot err)" "${ERR}${ETODAY}${R} ${FNT}heute${ELAST}${R}"
+  ESPARK=""
+  _tage=""
+  for _i in 6 5 4 3 2 1 0; do
+    # GNU date kann -d, BSD/macOS braucht -v. Faellt beides aus, bleibt die
+    # Liste leer und der Verlauf entfaellt — er ist Beiwerk, kein Befund.
+    _d=$(date -d "-${_i} days" +%F 2>/dev/null || date -v-"${_i}"d +%F 2>/dev/null)
+    [ -n "$_d" ] && _tage="${_tage}${_tage:+ }${_d}"
+  done
+  if [ -n "$_tage" ]; then
+    _hist=$(tmo 3 tail -n 50000 "$LOGF" 2>/dev/null | awk -v tage="$_tage" '
+      BEGIN{ n = split(tage, d, " "); for (i = 1; i <= n; i++) c[d[i]] = 0 }
+      { k = substr($0, 1, 10); if (k in c) c[k]++ }
+      END{ for (i = 1; i <= n; i++) printf "%s%d", (i > 1 ? " " : ""), c[d[i]] }')
+    # Der Verlauf traegt dieselbe Ampel wie die Zahl daneben — zwei
+    # verschiedene Farben fuer denselben Befund liest niemand als einen.
+    if   [ "$ETODAY" -eq 0 ] 2>/dev/null; then _sc="$OK"
+    elif [ "$ETODAY" -lt 5 ] 2>/dev/null; then _sc="$WRN"
+    else _sc="$ERR"; fi
+    [ -n "$_hist" ] && ESPARK="  ${_sc}$(spark $_hist)${R} ${FNT}7d${R}"
+  fi
+  if   [ "$ETODAY" -eq 0 ] 2>/dev/null; then row "Fehler" "$(dot ok)"   "${TXT}0${R} ${FNT}heute${R}${ESPARK}"
+  elif [ "$ETODAY" -lt 5 ] 2>/dev/null; then row "Fehler" "$(dot warn)" "${WRN}${ETODAY}${R} ${FNT}heute${ELAST}${R}${ESPARK}"
+  else row "Fehler" "$(dot err)" "${ERR}${ETODAY}${R} ${FNT}heute${ELAST}${R}${ESPARK}"
        warn_add "${ETODAY} Fehler heute: ${TXT}tail -n 40 ${LOGF}${R}"
   fi
 fi
