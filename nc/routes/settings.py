@@ -21,6 +21,7 @@ from typing import Optional
 import time as _time_mod
 from nc.cfgstore import get as _cfg_get, set_ as _cfg_set
 from nc.cookies import _cookies_input_to_netscape, _dedupe_cookie_text
+from nc import cookieholen as _nc_cookieholen
 from nc.dbexport import db_export_sql as _dbx_export, db_import_sql as _dbx_import, export_summary as _dbx_summary
 
 from nc import ctx as _ctx
@@ -186,6 +187,50 @@ def api_cookies_update():
                    deduped=n_dupes,
                    auth_cookie=("sessionid_ss" if "sessionid_ss" in names else "sessionid"),
                    health=health)
+
+
+@bp.route("/api/cookies/fetch", methods=["POST"])
+def api_cookies_fetch():
+    """v4.2-W10: Cookies selbst beziehen, ohne Browser-Extension und ohne SSH.
+
+       Body: {"source": "gast"|"browser", "browser": "chrome"}
+
+       'gast'    — ein HTTPS-Aufruf auf tiktok.com holt die rotierenden
+                   Anti-Bot-Tokens (ttwid, msToken, tt_chain_token, …). Kein
+                   Login noetig, und Auth-Cookies werden dabei NICHT angefasst.
+       'browser' — liest das TikTok-Profil eines lokal installierten Browsers.
+                   Nur so kommt ein echter sessionid herein. Auf dem Server
+                   (kein Browser) scheitert das mit klarer Meldung.
+
+       Warum das nicht einfach /api/cookies/update mitmacht: update erwartet
+       einen Text vom Menschen und verlangt ein Auth-Cookie. Der Gast-Bezug
+       hat keins und darf trotzdem schreiben — zwei verschiedene Vertraege in
+       einer Route waeren die naechste stille Fehlbedienung."""
+    payload = request.get_json(silent=True) or {}
+    quelle = (payload.get("source") or "gast").strip().lower()
+    browser = (payload.get("browser") or "").strip().lower() or None
+    if quelle not in ("gast", "guest", "browser"):
+        return jsonify(ok=False, error=_t("Unbekannte Quelle.")), 400
+    if quelle == "guest":
+        quelle = "gast"
+
+    bericht = _nc_cookieholen.aktualisiere(
+        _c().cfg["COOKIE_FILE"], quelle=quelle, browser=browser, log=log)
+    if bericht.get("ok"):
+        try:                       # Cache leeren, sonst liest der Recorder 5s alt
+            _c().cfg["_COOKIES_CACHE"].pop("v", None)
+        except Exception:
+            pass
+        bericht["health"] = _c().get_cookie_health()
+        log.info("Cookies via Deck bezogen (%s): %d neu, %d erneuert",
+                 quelle, len(bericht.get("added") or []),
+                 len(bericht.get("replaced") or []))
+        return jsonify(bericht)
+    # Hier wird NICHT nachgesaeubert: der Wortlaut ist schon durch
+    # nc.fehlertext.nach_aussen gegangen, dort wo die Ausnahme wirklich
+    # anfaellt (nc/cookieholen.aktualisiere). Eine zweite Saeuberung an der
+    # Senke waere die zweite Wahrheit ueber dieselbe Meldung.
+    return jsonify(bericht), 502
 
 
 @bp.route("/api/cookies/age")

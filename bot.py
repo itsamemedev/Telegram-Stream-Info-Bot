@@ -572,6 +572,7 @@ from nc import discordlimits as _nc_dclimits  # v4.0-W80: Discord-Upload-Limit l
 from nc import logsafe as _nc_logsafe        # Stream-Key-Log-Redaction
 from nc import systemprobe as _nc_probe     # v4.1-W32: Redis-/Recorder-Sonden
 from nc import cookies as _nc_cookies_datei  # v4.1-W32: cookies.txt lesen
+from nc import cookieholen as _nc_cookieholen  # v4.2-W10: Cookies selbst beziehen
 from nc import cfgnorm as _nc_cfgnorm        # v4.0-W33: reine Config-Normalisierer (gebündelt)
 from nc import restrend as _nc_restrend      # v4.0-W40: Langzeit-Ressourcen-Trend (Slow-Leak)
 from nc import ffbuild as _nc_ffbuild        # v4.0-W44: ffmpeg-Kommandobauer (extrahiert)
@@ -1406,6 +1407,14 @@ COOKIE_FILE    = "tiktok_cookies.txt"
 # frisch (reduziert 403/Staleness). Den Login-sessionid kann das NICHT erneuern
 # (dafür ist ein Browser-Login nötig) — dafür gibt es die Ablauf-Warnung.
 COOKIE_AUTO_REFRESH = os.getenv("COOKIE_AUTO_REFRESH", "1").lower() in ("1","true","yes","y")
+# v4.2-W10: Auto-Bezug. Der Refresh oben kann nur erneuern, was schon durch
+# eine Antwort kam — fehlt ein Anti-Bot-Token ganz (frische Installation,
+# abgelaufenes ttwid), half bisher nur Handarbeit. Der Auto-Bezug holt sie
+# per Gast-Aufruf bei TikTok. Er fasst Auth-Cookies NICHT an (siehe
+# nc/cookieholen.py) und laeuft hoechstens alle COOKIE_AUTO_FETCH_INTERVAL_H
+# Stunden, und auch nur wenn der Health-Check nicht "ok" sagt.
+COOKIE_AUTO_FETCH = os.getenv("COOKIE_AUTO_FETCH", "1").lower() in ("1","true","yes","y")
+COOKIE_AUTO_FETCH_INTERVAL_H = _nc_envnum.env_float("COOKIE_AUTO_FETCH_INTERVAL_H", 6.0)
 RECORDINGS_DIR = "recordings"
 
 os.makedirs(RECORDINGS_DIR, exist_ok=True)
@@ -1842,7 +1851,9 @@ def _capture_set_cookies(resp):
     except Exception:
         pass
 
-_COOKIE_FILE_LOCK = threading.Lock()   # serialisiert Schreibzugriffe auf cookies.txt
+# v4.2-W10: derselbe Lock fuer ALLE Schreiber der cookies.txt — Auto-Refresh
+# hier, Deck-Update und Auto-Bezug in nc/. Ein zweiter Lock waere keiner.
+_COOKIE_FILE_LOCK = _nc_cookies_datei.DATEI_SPERRE
 
 def _persist_refreshed_cookies(force=False):
     """Schreibt erneuerte Tokens gedrosselt in die cookies.txt zurück (<=1×/90s).
@@ -1897,6 +1908,69 @@ def _cookie_autorefresh_info() -> dict:
             "tracked_now": sorted(_COOKIE_REFRESH.keys())}
 
 
+# ---- Cookie-Auto-Bezug (v4.2-W10) -------------------------------------------
+# Der Auto-Refresh oben erneuert nur, was ohnehin per Set-Cookie zurueckkam.
+# Fehlt ein Anti-Bot-Token ganz — frische Installation, abgelaufenes ttwid,
+# eine Woche Stillstand — half bisher nur Handarbeit im Deck. Hier holt der
+# Bot sie selbst: ein Gast-Aufruf auf tiktok.com, ohne Login, ohne Extension.
+# Was er NICHT kann, steht in nc/cookieholen.py: einen sessionid erzeugen.
+_COOKIE_AUTOFETCH: dict = {"last_try": 0.0, "last_ok": None, "count": 0,
+                           "last_error": None, "last_report": None}
+
+
+def _cookie_autofetch_info() -> dict:
+    return {"enabled": COOKIE_AUTO_FETCH,
+            "interval_h": COOKIE_AUTO_FETCH_INTERVAL_H,
+            "last_ok": _COOKIE_AUTOFETCH["last_ok"],
+            "fetched_total": _COOKIE_AUTOFETCH["count"],
+            "last_error": _COOKIE_AUTOFETCH["last_error"]}
+
+
+def _pull_proxy_still():
+    """_pick_pull_proxy(), aber ohne Anspruch: ist der Pool leer oder der
+       Router noch nicht da, geht der Abruf direkt raus statt zu scheitern."""
+    try:
+        return _pick_pull_proxy()
+    except Exception:
+        return None
+
+
+def _cookies_selbst_holen(quelle="gast", browser=None, erzwingen=False) -> dict:
+    """Holt Cookies automatisch und legt sie in COOKIE_FILE ab. Gibt den
+       Bericht aus nc/cookieholen.py zurueck (wirft nie — die Aufrufer sind
+       eine Flask-Route, ein Telegram-Befehl und eine Dauerschleife).
+
+       `erzwingen=False` haelt die Drossel ein: der Gast-Aufruf laeuft
+       hoechstens alle COOKIE_AUTO_FETCH_INTERVAL_H Stunden. Ohne die Drossel
+       hinge an jedem Health-Poll des Decks ein HTTPS-Aufruf zu TikTok — das
+       ist genau die Sorte Selbstbeschuss, die eine IP auf die Sperrliste
+       bringt."""
+    jetzt = _time_mod.monotonic()
+    if not erzwingen:
+        if not COOKIE_AUTO_FETCH:
+            return {"ok": False, "error": "COOKIE_AUTO_FETCH=0", "skipped": True}
+        wartezeit = COOKIE_AUTO_FETCH_INTERVAL_H * 3600
+        if _COOKIE_AUTOFETCH["last_try"] and (jetzt - _COOKIE_AUTOFETCH["last_try"]) < wartezeit:
+            return {"ok": False, "skipped": True,
+                    "error": "gedrosselt (%.1fh Intervall)" % COOKIE_AUTO_FETCH_INTERVAL_H}
+    _COOKIE_AUTOFETCH["last_try"] = jetzt
+
+    bericht = _nc_cookieholen.aktualisiere(
+        COOKIE_FILE, quelle=quelle, browser=browser,
+        timeout=_nc_envnum.env_int("COOKIE_FETCH_TIMEOUT", 15),
+        log=log)
+    if bericht.get("ok"):
+        _COOKIES_CACHE.pop("v", None)     # sonst liest der Recorder 5s lang alt
+        _COOKIE_AUTOFETCH["last_ok"] = datetime.now(timezone.utc).isoformat()
+        _COOKIE_AUTOFETCH["count"] += len(bericht.get("added") or []) + \
+            len(bericht.get("replaced") or [])
+        _COOKIE_AUTOFETCH["last_error"] = None
+    else:
+        _COOKIE_AUTOFETCH["last_error"] = bericht.get("error")
+    _COOKIE_AUTOFETCH["last_report"] = bericht
+    return bericht
+
+
 # F52: Cookie-Health-Check
 # Cookies laufen still ab — wenn 'sessionid_ss' z.B. expired ist, scheitern
 # alle authentifizierten Resolve-Calls, aber der Bot sieht nichts davon und
@@ -1910,6 +1984,11 @@ def _cookie_autorefresh_info() -> dict:
 # Wichtigkeit. sessionid_ss ist der echte Auth-Token, der Rest ist Anti-Bot.
 _TIKTOK_CRITICAL_COOKIES = ("sessionid_ss", "sessionid", "sid_tt", "tt_chain_token",
                             "ttwid", "msToken")
+
+# Merkt sich, fuer welchen Dateistand die Reparatur schon versucht wurde.
+# Siehe get_cookie_health(): ohne das laeuft der Versuch bei jedem Poll.
+_COOKIE_REPAIR_STAND: dict = {"mtime": None}
+
 
 def get_cookie_health() -> dict:
     """Liefert Dashboard-Widget-Daten. Defensive — gibt immer was zurück,
@@ -1932,10 +2011,26 @@ def get_cookie_health() -> dict:
     except OSError:
         mtime = None; age_days = None
 
+    # v4.2-W10: NICHT mehr direkt MozillaCookieJar.load(). Der Parser ist
+    # alles-oder-nichts — ein falsches Domain-Flag, ein Extra-Tab oder eine
+    # Ablaufzeit "Session" reichte, und das Deck meldete "parse_error", obwohl
+    # 40 gueltige Cookies in der Datei standen. lade_jar() liest solche Dateien
+    # normalisiert; ist das noetig, wird die Datei EINMAL wirklich repariert
+    # (mit Backup), damit auch yt-dlp sie wieder frisst.
+    krumm = repariert = False
     try:
-        cj = MozillaCookieJar(COOKIE_FILE)
-        cj.load(ignore_discard=True, ignore_expires=True)
+        cj, normalisiert = _nc_cookies_datei.lade_jar(COOKIE_FILE)
         all_cookies = list(cj)
+        if normalisiert:
+            krumm = True
+            # Der Versuch haengt an der mtime, nicht am Aufruf: das Deck pollt
+            # diese Funktion im Sekundentakt. Scheitert das Schreiben (Datei
+            # nur lesbar, volle Platte), stuende sonst jede Sekunde ein
+            # log.error im Journal — und der eine echte Grund ginge darin
+            # unter. Aendert sich die Datei, wird es neu versucht.
+            if _COOKIE_REPAIR_STAND.get("mtime") != mtime:
+                _COOKIE_REPAIR_STAND["mtime"] = mtime
+                repariert = _ensure_cookie_file_netscape()
     except Exception as e:
         return {
             "exists": True, "status": "parse_error",
@@ -1945,6 +2040,7 @@ def get_cookie_health() -> dict:
             "critical_present": [], "critical_missing": list(_TIKTOK_CRITICAL_COOKIES),
             "oldest_expiry_days": None,
             "duplicate_domain_cookies": [],
+            "repaired": False,
         }
 
     now = _time_mod.time()
@@ -2013,6 +2109,16 @@ def get_cookie_health() -> dict:
     elif age_days and age_days > 30:
         status = "warning"
         headline = f"cookies.txt seit {int(age_days)}d nicht aktualisiert"
+    elif krumm:
+        # Sichtbar machen, aber nur wenn sonst nichts ansteht: der Betreiber
+        # soll wissen, dass sein Export kaputt war — sonst exportiert er beim
+        # naechsten Mal wieder genauso, und die Reparatur bleibt Dauerzustand.
+        status = "warning"
+        headline = ("cookies.txt war kein gueltiges Netscape-Format — "
+                    "automatisch repariert (Backup: .bak)" if repariert else
+                    "cookies.txt ist kein gueltiges Netscape-Format und liess "
+                    "sich nicht reparieren — sie wird nur notduerftig gelesen, "
+                    "yt-dlp scheitert daran. Bitte neu exportieren.")
     else:
         status = "ok"
         headline = "Cookies sehen gesund aus"
@@ -2027,7 +2133,9 @@ def get_cookie_health() -> dict:
         "critical_missing": critical_missing,
         "oldest_expiry_days": oldest_expiry_days,
         "duplicate_domain_cookies": duplicate_domain_cookies,
+        "repaired": krumm,
         "autorefresh": _cookie_autorefresh_info(),
+        "autofetch": _cookie_autofetch_info(),
     }
 
 
@@ -2063,15 +2171,32 @@ def _ensure_cookie_file_netscape() -> bool:
                       "(TikTok evtl. 403). Bitte Cookies neu exportieren (Netscape oder JSON).",
                       COOKIE_FILE)
             return False
+        # v4.2-W10: erst schreiben und LADEN, dann tauschen. Vorher wurde die
+        # Datei ersetzt und nie nachgeprueft — blieb sie kaputt (das war bis
+        # W10 der Normalfall: die Reparatur hat Domain-Flag, Feldzahl und
+        # Ablaufzeit gar nicht angefasst), lief die naechste Aufnahme wieder
+        # ins Leere und das Deck meldete weiter "parse_error". Ein Tausch, den
+        # niemand geprueft hat, ist kein Fix, sondern ein zweiter Fehler.
+        tmp = COOKIE_FILE + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            f.write(netscape)
+        try:
+            MozillaCookieJar(tmp).load(ignore_discard=True, ignore_expires=True)
+        except Exception as e:
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
+            log.error("Cookie-Reparatur ergab wieder kein ladbares Netscape-Format "
+                      "(%s) — Datei bleibt unangetastet, Aufnahmen laufen ohne "
+                      "Cookies. Bitte cookies.txt neu exportieren.", e)
+            return False
         with _COOKIE_FILE_LOCK:
             try:                          # Backup des Originals vor dem Überschreiben
                 with open(COOKIE_FILE, "rb") as fsrc, open(COOKIE_FILE + ".bak", "wb") as fdst:
                     fdst.write(fsrc.read())
             except OSError:
                 pass
-            tmp = COOKIE_FILE + ".tmp"
-            with open(tmp, "w", encoding="utf-8") as f:
-                f.write(netscape)
             os.replace(tmp, COOKIE_FILE)  # atomarer Austausch
         _COOKIES_CACHE.pop("v", None)     # TTL-Cache invalidieren → nächster Load liest frisch
         log.warning("Cookie-Datei %s war kein gültiges Netscape-Format → automatisch "
@@ -6513,6 +6638,24 @@ async def _cookie_alarm_loop(bot_app):
             try:
                 h = get_cookie_health()
                 level, msg = _cookie_alarm_level(h)
+                # v4.2-W10: bevor jemand geweckt wird, erst selbst versuchen.
+                # Die Anti-Bot-Tokens (ttwid/msToken/tt_chain_token) laufen als
+                # erste ab und lassen sich ohne Login nachholen — dafuer muss
+                # niemand nachts an ein Deck. Bleibt es danach rot, ist es ein
+                # echter Login-Ablauf, und genau DANN soll die Meldung kommen.
+                # Die Drossel steckt in _cookies_selbst_holen (Intervall), hier
+                # steht bewusst kein zweiter Zeitvergleich daneben.
+                if level != "ok" and COOKIE_AUTO_FETCH:
+                    # In einen Thread: der Abruf ist blockierendes urllib mit
+                    # bis zu 2x15s Timeout. Direkt hier haette er den ganzen
+                    # Bot-Loop angehalten — Aufnahmen, Telegram, alles.
+                    b = await asyncio.to_thread(_cookies_selbst_holen, "gast")
+                    if b.get("ok") and (b.get("added") or b.get("replaced")):
+                        log.warning("Cookie-Alarm: %d Token(s) automatisch "
+                                    "nachgeholt — Zustand wird neu bewertet",
+                                    len(b.get("added") or []) + len(b.get("replaced") or []))
+                        h = get_cookie_health()
+                        level, msg = _cookie_alarm_level(h)
                 last = _COOKIE_ALARM_LAST["level"]
                 if level != "ok" and level != last:
                     try:
@@ -6671,6 +6814,33 @@ async def cookies_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
        funktionieren plötzlich nicht mehr' — wenn die TikTok-Auth-Cookies
        abgelaufen sind, scheitern Resolves still und der User wundert sich."""
     if not _is_authorized(update): return
+
+    # v4.2-W10: '/cookies holen [browser]' beschafft sie selbst. Bewusst ein
+    # Unterbefehl und kein 46. Slash-Command: der Bezug gehoert zum Cookie-
+    # Zustand, und die Befehlsliste ist keine Ablage.
+    arg = (context.args[0].lower() if context.args else "")
+    if arg in ("holen", "fetch", "refresh", "beziehen"):
+        quelle = "gast"
+        browser = None
+        if len(context.args) > 1:
+            browser = context.args[1].lower()
+            quelle = "browser"
+        await update.message.reply_text(
+            _nc_i18n.t("🍪 Hole Cookies…"), parse_mode=ParseMode.HTML)
+        b = await asyncio.to_thread(_cookies_selbst_holen, quelle, browser, True)
+        if b.get("ok"):
+            txt = (f"✅ <b>Cookies bezogen</b> ({safe(b.get('source'))})\n"
+                   f"neu: {len(b.get('added') or [])} · erneuert: {len(b.get('replaced') or [])} · "
+                   f"in der Datei: {b.get('total', 0)}")
+            if not b.get("auth_cookie"):
+                txt += ("\n\n<i>Achtung: kein sessionid — ein Login-Cookie kann nur "
+                        "ein Browser liefern. Die Anti-Bot-Tokens sind trotzdem frisch.</i>")
+        else:
+            txt = ("❌ <b>Cookie-Bezug fehlgeschlagen</b>\n<code>"
+                   + safe(str(b.get("error") or "unbekannt")) + "</code>")
+        await update.message.reply_text(_nc_i18n.t(txt), parse_mode=ParseMode.HTML)
+        return
+
     h = get_cookie_health()
     icon = {"ok": "✅", "warning": "⚠️", "critical": "🚨",
             "missing": "❌", "parse_error": "❌"}.get(h["status"], "❓")
@@ -6708,6 +6878,8 @@ async def cookies_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                  "Export als Netscape-Format.</i>")
     elif h["status"] == "warning":
         extra = ("\n<i>→ Cookies bald erneuern um Probleme zu vermeiden.</i>")
+    extra += "\n<i>→ <code>/cookies holen</code> holt die Anti-Bot-Tokens selbst " \
+             "(<code>/cookies holen chrome</code> liest ein Browser-Profil).</i>"
 
     await update.message.reply_text(_nc_i18n.t(f"<b>🍪 COOKIES</b>\n{body}{extra}"),
                                     parse_mode=ParseMode.HTML)
@@ -25655,6 +25827,9 @@ _nc_probe.configure(redis_url=REDIS_URL, recorder_pref=RECORDER_PREF,
 _nc_dclimits.configure(guild_id=DISCORD_GUILD_ID,
                        override_mb=_DISCORD_UPLOAD_OVERRIDE)
 _nc_cookies_datei.configure(datei=COOKIE_FILE, log=log)
+# v4.2-W10: der Auto-Bezug nimmt denselben Weg nach draussen wie Resolve
+# und Pull — ueber die Server-IP antwortet TikTok auf denselben Aufruf 403.
+_nc_cookieholen.configure(proxy_waehler=_pull_proxy_still, log=log)
 
 _nc_ctx.configure(
     log=log,

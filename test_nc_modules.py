@@ -4199,6 +4199,294 @@ def _test_v42_w9_oauth_ueberlebt_neustart_und_stoerung():
        "keinen Neustart")
 
 
+
+def _test_v42_w10_cookies_reparieren_und_selbst_holen():
+    """v4.2-W10: die kaputte cookies.txt wird wirklich repariert — und der Bot
+       holt sich fehlende Anti-Bot-Tokens selbst.
+
+       Hintergrund, damit das hier niemand als Formalie liest: die alte
+       "Reparatur" hat den Text nur durchgereicht. Genau die drei Sachen, an
+       denen MozillaCookieJar TATSAECHLICH stirbt — Domain-Flag passt nicht zur
+       Domain, mehr oder weniger als sieben Felder, eine Ablaufzeit die keine
+       Zahl ist — hat sie nicht angefasst. Ergebnis: 'parse_error' im Deck,
+       rc=1 in yt-dlp, leeres dict im Recorder, TikTok 403. Und weil danach
+       niemand nachgeprueft hat, ob die geschriebene Datei ladbar ist, blieb
+       das im Kreis."""
+    import http.server
+    import os as _os
+    import tempfile as _tf
+    import threading as _th
+    import warnings as _warn
+    from http.cookiejar import MozillaCookieJar
+
+    import nc.cookieholen as HOL
+    import nc.cookies as C
+
+    # http.cookiejar druckt bei JEDEM Formatfehler einen kompletten Traceback
+    # als UserWarning ("http.cookiejar bug!"). Dieser Vertrag fuettert es
+    # absichtlich mit acht kaputten Dateien — ohne den Filter versinkt die
+    # Testausgabe in Tracebacks, die alle erwartet sind, und niemand liest
+    # sie mehr. Nur die MELDUNG wird unterdrueckt, nicht der Fehler.
+    _alte_filter = _warn.filters[:]
+    _warn.filterwarnings("ignore", message=r"http\.cookiejar bug!")
+
+    def _laden(text):
+        d = _tf.mkdtemp()
+        pfad = _os.path.join(d, "c.txt")
+        with open(pfad, "w", encoding="utf-8") as f:
+            f.write(text)
+        cj = MozillaCookieJar(pfad)
+        cj.load(ignore_discard=True, ignore_expires=True)
+        return {c.name: c.value for c in cj}, pfad
+
+    # (1) Die Fehlerbilder. Jedes einzelne hat MozillaCookieJar vorher die
+    # GANZE Datei verweigern lassen — nicht nur die eine Zeile.
+    kaputt = {
+        "Domain-Flag FALSE bei .tiktok.com":
+            "# Netscape HTTP Cookie File\n"
+            ".tiktok.com\tFALSE\t/\tTRUE\t9999999999\tsessionid_ss\tW",
+        "Domain-Flag TRUE bei www.tiktok.com":
+            "# Netscape HTTP Cookie File\n"
+            "www.tiktok.com\tTRUE\t/\tTRUE\t9999999999\tsessionid_ss\tW",
+        # Acht Felder: cookiejar entpackt in genau sieben Namen und stirbt an
+        # der ganzen Datei. Der ueberzaehlige Tab faellt weg, der Wert wird
+        # zusammengezogen — im Netscape-Format ist ein Tab im Wert illegal,
+        # also ist er entweder Schaden oder ein leeres Zusatzfeld.
+        "acht Felder statt sieben":
+            "# Netscape HTTP Cookie File\n"
+            ".tiktok.com\tTRUE\t/\tTRUE\t9999999999\tsessionid_ss\t\tW",
+        "Ablaufzeit 'Session' statt Zahl":
+            "# Netscape HTTP Cookie File\n"
+            ".tiktok.com\tTRUE\t/\tTRUE\tSession\tsessionid_ss\tW",
+        "Leerzeile vor dem Kopf":
+            "\n# Netscape HTTP Cookie File\n"
+            ".tiktok.com\tTRUE\t/\tTRUE\t9999999999\tsessionid_ss\tW",
+        "BOM vor dem Kopf":
+            "\ufeff# Netscape HTTP Cookie File\n"
+            ".tiktok.com\tTRUE\t/\tTRUE\t9999999999\tsessionid_ss\tW",
+        "Spaces statt Tabs (Copy-Paste)":
+            "# Netscape HTTP Cookie File\r\n"
+            ".tiktok.com FALSE / TRUE 9999999999 sessionid_ss W\r\n",
+        "gar kein Kopf":
+            ".tiktok.com\tTRUE\t/\tTRUE\t9999999999\tsessionid_ss\tW\n",
+    }
+    for was, roh in kaputt.items():
+        try:
+            _laden(roh)
+            raise AssertionError(
+                "Testfall '%s' laedt bereits roh — er prueft nichts mehr" % was)
+        except AssertionError:
+            raise
+        except Exception:
+            pass
+        text, anzahl = C._cookies_input_to_netscape(roh)
+        assert anzahl == 1, "%s: %d Cookies erkannt statt 1" % (was, anzahl)
+        got, _ = _laden(text)
+        assert got.get("sessionid_ss") == "W", \
+            ("%s: nach der Reparatur nicht ladbar/falscher Wert (%r) — genau "
+             "hier kam vorher 'parse_error' her" % (was, got))
+    ok("v4.2-W10: %d Formatfehler repariert, die cookiejar vorher toeteten"
+       % len(kaputt))
+
+    # (2) Ein leerer Wert ist ein Cookie, kein Muell. Vorher fiel er raus,
+    # weil strip() den letzten Tab frisst und dann sechs Felder uebrig sind.
+    text, anzahl = C._cookies_input_to_netscape(
+        "# Netscape HTTP Cookie File\n.tiktok.com\tTRUE\t/\tTRUE\t0\tmsToken\t")
+    assert anzahl == 1, "Cookie mit leerem Wert verschwindet (%d)" % anzahl
+
+    # (3) Der Leser gibt nicht mehr leer zurueck, nur weil das Format krumm ist.
+    # Das ist der Pfad, an dem der Recorder ohne Cookies losfuhr.
+    d = _tf.mkdtemp()
+    pfad = _os.path.join(d, "c.txt")
+    with open(pfad, "w", encoding="utf-8") as f:
+        f.write("# Netscape HTTP Cookie File\n"
+                ".tiktok.com\tFALSE\t/\tTRUE\t9999999999\tsessionid_ss\tECHT\n")
+    jar, normalisiert = C.lade_jar(pfad)
+    assert normalisiert is True and {c.name for c in jar} == {"sessionid_ss"}
+
+    class _Still:
+        def __getattr__(self, n):
+            return lambda *a, **k: None
+    C.configure(datei=pfad, log=_Still())
+    C.CACHE.pop("v", None)
+    assert C.load_dict().get("sessionid_ss") == "ECHT", \
+        "load_dict laeuft bei krummem Format immer noch leer — das ist der 403"
+    C.CACHE.pop("v", None)
+    # ... und die Datei bleibt dabei unangetastet. Ein Leser, der nebenbei
+    # schreibt, ist die Sorte Nebenwirkung, die man nachts nicht sucht.
+    assert "FALSE\t/" in open(pfad, encoding="utf-8").read(), \
+        "lade_jar hat die Datei umgeschrieben"
+    ok("v4.2-W10: krumme cookies.txt wird gelesen statt verworfen, ohne sie anzufassen")
+
+    # (4) Der Auto-Bezug fasst den Login NICHT an. Ein Gast-sessionid ueber
+    # einen echten geschrieben waere ein stiller Logout.
+    alt = ("# Netscape HTTP Cookie File\n"
+           ".tiktok.com\tTRUE\t/\tTRUE\t9999999999\tsessionid_ss\tECHTE_SESSION\n"
+           ".tiktok.com\tTRUE\t/\tTRUE\t1000\tttwid\tALT\n"
+           ".tiktok.com\tTRUE\t/\tTRUE\t1000\tirgendwas\tBLEIBT\n")
+    neu = {"sessionid_ss": ("GAST", ".tiktok.com", 9999999999),
+           "odin_tt": ("GAST", ".tiktok.com", 9999999999),
+           "ttwid": ("NEU", ".tiktok.com", 9999999999),
+           "msToken": ("NEU", ".tiktok.com", 0)}
+    text, ergaenzt, ersetzt = HOL.zusammenfuehren(alt, neu, gast=True)
+    got, _ = _laden(text)
+    assert got["sessionid_ss"] == "ECHTE_SESSION", \
+        "Gast-Bezug hat den Login ueberschrieben — das ist der stille Logout"
+    assert "odin_tt" not in got, "Gast-odin_tt neben echtem Login = 403"
+    assert got["ttwid"] == "NEU" and got["msToken"] == "NEU"
+    assert got["irgendwas"] == "BLEIBT", "unbekannter Cookie ging verloren"
+    assert ergaenzt == ["msToken"] and ersetzt == ["ttwid"], (ergaenzt, ersetzt)
+
+    # (5) Fremde Domains kommen NICHT in die Datei. Ein Browser-Profil traegt
+    # die Cookies aller Seiten; tiktok_cookies.txt liegt im Backup.
+    assert HOL._gehoert_zu_tiktok(".tiktok.com")
+    assert HOL._gehoert_zu_tiktok("www.tiktok.com")
+    for fremd in ("bank.example", "tiktok.com.evil.tld", "nottiktok.com", ""):
+        assert not HOL._gehoert_zu_tiktok(fremd), fremd
+    ok("v4.2-W10: Gast-Bezug laesst Auth-Cookies in Ruhe, fremde Domains draussen")
+
+    # (6) Geschrieben wird erst, wenn das Ergebnis ladbar ist. Wer zuerst
+    # tauscht und dann prueft, hat den funktionierenden Bestand schon weg.
+    ziel = _os.path.join(_tf.mkdtemp(), "c.txt")
+    with open(ziel, "w", encoding="utf-8") as f:
+        f.write("# Netscape HTTP Cookie File\n"
+                ".tiktok.com\tTRUE\t/\tTRUE\t9999999999\tsessionid_ss\tALT\n")
+    try:
+        HOL.schreibe(ziel, "das ist kein Netscape-Format")
+        raise AssertionError("schreibe() nimmt unladbaren Text an")
+    except AssertionError:
+        raise
+    except Exception:
+        pass
+    assert "sessionid_ss\tALT" in open(ziel, encoding="utf-8").read(), \
+        "der alte Bestand wurde von einem ungeprueften Schreibvorgang zerstoert"
+    try:
+        HOL.schreibe(ziel, "# Netscape HTTP Cookie File\n"
+                     ".tiktok.com\tTRUE\t/\tTRUE\t0\tttwid\tX\n",
+                     auth_pflicht=True)
+        raise AssertionError("schreibe() ignoriert auth_pflicht")
+    except AssertionError:
+        raise
+    except Exception:
+        pass
+
+    # (7) Der ganze Weg — holen, mischen, schreiben — gegen einen Stub auf
+    # dem Loopback. NICHT gegen das echte TikTok: der erste Anlauf dieses
+    # Vertrags nahm an, in der CI gaebe es kein Netz, und wurde prompt rot,
+    # weil der Runner sehr wohl an tiktok.com kommt. Ein Vertrag, der an der
+    # Netzanbindung haengt, prueft nicht das, was er zu pruefen behauptet —
+    # und ruft nebenbei bei jedem Lauf einen fremden Dienst.
+    class _Stub(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(200)
+            self.send_header("Set-Cookie", "ttwid=STUB; Path=/; Max-Age=99999")
+            self.send_header("Set-Cookie", "msToken=STUB2; Path=/")
+            self.send_header("Content-Length", "2")
+            self.end_headers()
+            self.wfile.write(b"ok")
+
+        def log_message(self, *a):
+            pass
+
+    srv = http.server.HTTPServer(("127.0.0.1", 0), _Stub)
+    _th.Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+        url = "http://127.0.0.1:%d/" % srv.server_address[1]
+        nur_lokal = ("127.0.0.1",)
+
+        # Der Abruf liest Set-Cookie …
+        geholt = HOL.hole_gastcookies(urls=[url], timeout=5, domains=nur_lokal)
+        assert set(geholt) == {"ttwid", "msToken"}, geholt
+        assert geholt["ttwid"][0] == "STUB"
+        # … und derselbe Abruf mit dem echten Domain-Filter laesst NICHTS
+        # durch. Ein Browser-Profil traegt die Cookies aller Seiten.
+        assert HOL.hole_gastcookies(urls=[url], timeout=5) == {}
+
+        # Der volle Weg: zwei Tokens dazu, der Login bleibt stehen.
+        b1 = HOL.aktualisiere(ziel, quelle="gast", timeout=5,
+                              urls=[url], domains=nur_lokal)
+        assert b1["ok"] and sorted(b1["added"]) == ["msToken", "ttwid"], b1
+        drin, _ = _laden(open(ziel, encoding="utf-8").read())
+        assert drin["sessionid_ss"] == "ALT", "der Login ging beim Schreiben verloren"
+        assert drin["ttwid"] == "STUB" and drin["msToken"] == "STUB2", drin
+        assert _os.path.exists(ziel + ".bak"), "kein Backup vor dem Tausch"
+
+        # Zweiter Lauf, gleiche Werte: nichts geaendert = NICHT schreiben.
+        # Sonst wandert die mtime, und das Deck meldet "Cookies frisch",
+        # waehrend in Wahrheit alles beim Alten ist.
+        vorher = _os.path.getmtime(ziel)
+        b2 = HOL.aktualisiere(ziel, quelle="gast", timeout=5,
+                              urls=[url], domains=nur_lokal)
+        assert b2["ok"] and not b2["added"] and not b2["replaced"], b2
+        assert _os.path.getmtime(ziel) == vorher, \
+            "unveraenderter Bezug hat die Datei trotzdem neu geschrieben"
+    finally:
+        srv.shutdown()
+
+    # Und ein gescheiterter Abruf fasst die Datei erst recht nicht an.
+    # Toter Port statt abgeschaltetem Netz: deterministisch, ohne Wartezeit.
+    import socket as _sock
+    _s = _sock.socket()
+    _s.bind(("127.0.0.1", 0))
+    _tot = "http://127.0.0.1:%d/" % _s.getsockname()[1]
+    _s.close()
+    vorher = _os.path.getmtime(ziel)
+    b3 = HOL.aktualisiere(ziel, quelle="gast", timeout=2, urls=[_tot])
+    assert b3["ok"] is False and b3["error"], b3
+    assert _os.path.getmtime(ziel) == vorher, \
+        "gescheiterter Bezug hat die Datei angefasst"
+    ok("v4.2-W10: Abruf, Mischen und Schreiben am Stueck — validiert, "
+       "mit Backup, und nur bei echter Aenderung")
+
+    # (9) Und der Monolith haengt wirklich dran. Ohne diese Haken ist alles
+    # oben eine Bibliothek, die niemand aufruft.
+    b = open("bot.py", encoding="utf-8").read()
+    assert "_nc_cookies_datei.lade_jar(COOKIE_FILE)" in b, \
+        "get_cookie_health laedt wieder direkt — dann ist 'parse_error' zurueck"
+    assert "_COOKIE_FILE_LOCK = _nc_cookies_datei.DATEI_SPERRE" in b, \
+        "zwei Schreib-Locks auf dieselbe Datei sind keiner"
+    assert "_nc_cookieholen.configure(proxy_waehler=_pull_proxy_still" in b, \
+        "der Auto-Bezug geht ohne Proxy raus — TikTok antwortet der Server-IP mit 403"
+    assert "await asyncio.to_thread(_cookies_selbst_holen, \"gast\")" in b, \
+        ("der Cookie-Alarm holt nicht selbst nach, bevor er jemanden weckt — "
+         "und wenn doch, dann bitte im Thread: der Abruf ist blockierendes "
+         "urllib mit bis zu 2x15s, das haelt sonst den ganzen Bot-Loop an")
+    # Die Reparatur prueft, BEVOR sie tauscht.
+    stelle = b.index("def _ensure_cookie_file_netscape")
+    rumpf = b[stelle:stelle + 4000]
+    pruefung = rumpf.index("MozillaCookieJar(tmp).load")
+    tausch = rumpf.index("os.replace(tmp, COOKIE_FILE)")
+    assert pruefung < tausch, \
+        "die Reparatur tauscht, bevor sie prueft — ein ungeprueftes Ergebnis"
+
+    # Der Bericht geht als JSON ins Deck, in die Health-Anzeige und nach
+    # Telegram — der Wortlaut einer Ausnahme aus urllib, yt-dlp oder einem
+    # Browser-Profil traegt Pfade. Er muss durch nach_aussen, und zwar an
+    # der Quelle: das ist zugleich die Barriere, die
+    # .github/codeql/NcSanitizer.qll kennt. saeubern() taete sachlich
+    # dasselbe, aber CodeQL sieht es nicht — und meldete hier prompt zwei
+    # py/stack-trace-exposure.
+    h = open("nc/cookieholen.py", encoding="utf-8").read()
+    assert "_nc_fehlertext.nach_aussen(e," in h, \
+        ("nc/cookieholen.py gibt den rohen Ausnahmetext nach aussen — durch "
+         "nach_aussen() schicken, nicht durch str(e) und nicht durch "
+         "saeubern() (dann faellt die CodeQL-Barriere weg)")
+    for muster in ('bericht["error"] = str(e)', "str(e) or e.__class__"):
+        assert muster not in h, "roher Ausnahmetext in nc/cookieholen.py: %s" % muster
+
+    from flask import Flask
+    from nc.routes import settings as rt
+    app = Flask(__name__)
+    app.register_blueprint(rt.bp)
+    rules = {str(r.rule) for r in app.url_map.iter_rules()}
+    assert "/api/cookies/fetch" in rules, "die Bezugs-Route ist nicht registriert"
+    haus = open("templates/dashboard.html", encoding="utf-8").read()
+    assert "/api/cookies/fetch" in haus and "function fetchCookies(" in haus, \
+        "das Deck kann den Bezug nicht ausloesen"
+    ok("v4.2-W10: Bot, Route und Deck haengen am Auto-Bezug")
+    _warn.filters[:] = _alte_filter
+
+
 def main():
     tmp = tempfile.mkdtemp()
     configure_db(db_path=os.path.join(tmp, "t.db"), backend="sqlite")
@@ -4365,6 +4653,8 @@ def main():
     _test_v42_w8_windows_installer_spricht_englisch()
 
     _test_v42_w9_oauth_ueberlebt_neustart_und_stoerung()
+
+    _test_v42_w10_cookies_reparieren_und_selbst_holen()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)
 
