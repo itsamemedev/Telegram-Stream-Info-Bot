@@ -451,7 +451,7 @@ def api_stream_inspect(username):
             inspect_stream_url(username, session=_c().scraper_session()),
             timeout=45)
     except Exception as e:
-        return jsonify(ok=False, error=f"inspect failed: {e}"), 503
+        return jsonify(ok=False, error=f"inspect failed: {_fehler_text(e, 'api_stream_inspect')}"), 503
     code = 200 if result.get("ok") else 502
     return jsonify(result), code
 
@@ -492,5 +492,5 @@ def api_profile_lookup_bulk():
     try:
         results = _c().run_async(_lookup_all(), timeout=60)
     except Exception as e:
-        return jsonify(ok=False, error=f"lookup failed: {e}"), 503
+        return jsonify(ok=False, error=f"lookup failed: {_fehler_text(e, 'api_profile_lookup_bulk')}"), 503
     return jsonify(ok=True, results=results)

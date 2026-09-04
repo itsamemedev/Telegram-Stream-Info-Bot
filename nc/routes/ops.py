@@ -432,7 +432,7 @@ def api_update_check():
         res = _nc_updater.check()
     except Exception as e:
         log.error("Update-Pruefung fehlgeschlagen: %s", e, exc_info=True)
-        return jsonify(ok=False, error=f"Update-Pruefung: {e}"), 500
+        return jsonify(ok=False, error=f"Update-Pruefung: {_fehler_text(e, 'api_update_check')}"), 500
     res["job"] = _nc_updater.job_state()
     res["backups"] = _nc_updater.list_backups()[:5]
     res["local_version"] = _c().cfg.get("BOT_VERSION", "")
@@ -478,7 +478,7 @@ def api_update_rollback():
         res = _nc_updater.rollback(name)
     except Exception as e:
         log.error("Rollback fehlgeschlagen: %s", e, exc_info=True)
-        return jsonify(ok=False, error=f"Rollback: {e}"), 500
+        return jsonify(ok=False, error=f"Rollback: {_fehler_text(e, 'api_update_rollback')}"), 500
     if res.get("ok"):
         _c().log_event("update_rollback", "warning", f"Backup {name} zurueckgespielt")
     return (jsonify(**res), 200 if res.get("ok") else 500)
@@ -505,7 +505,7 @@ def api_update_restart():
                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     except Exception as e:
         log.error("Neustart nicht ausgeloest: %s", e, exc_info=True)
-        return jsonify(ok=False, error=f"Neustart nicht ausgeloest: {e}"), 500
+        return jsonify(ok=False, error=f"Neustart nicht ausgeloest: {_fehler_text(e, 'api_update_restart')}"), 500
     _c().log_event("update_restart", "warning", f"Neustart ausgeloest: {_c().cfg['UPDATE_RESTART_CMD']}")
     return jsonify(ok=True, cmd=_c().cfg["UPDATE_RESTART_CMD"],
                    summary="Neustart in 2 Sekunden — das Dashboard ist kurz weg.")

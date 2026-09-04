@@ -8,6 +8,7 @@ stellen muss, kommt ueber nc.ctx statt ueber einen Import aus bot.py.
 
 import os
 from flask import Blueprint, jsonify, request
+from nc import fehlertext as _nc_fehlertext
 from nc import i18n as _nc_i18n
 from nc import marketing as _nc_marketing
 from nc.util import _loop_not_ready
@@ -16,6 +17,14 @@ from nc.cfgstore import get as _cfg_get, set_ as _cfg_set
 from nc import ctx as _ctx
 
 bp = Blueprint("marketing", __name__)
+
+def _fehler_text(e, wo=""):
+    """v4.1-W30: der Wortlaut geht ins Log, nach aussen die gesaeuberte
+       Fassung — ohne Pfade, ohne Zugangsdaten, gekuerzt. Siehe
+       nc/fehlertext.py, dort steht auch, warum nicht einfach "interner
+       Fehler"."""
+    return _nc_fehlertext.nach_aussen(e, wo)
+
 
 def _t(s):
     """v4.1-W20: an der Quelle uebersetzen. Diese Texte erreichen das DOM
@@ -108,5 +117,5 @@ def api_marketing_send_now():
     except Exception as e:
         if _loop_not_ready(e):
             return jsonify(ok=False, error=_t("Event-Loop startet noch — kurz erneut versuchen.")), 503
-        return jsonify(ok=False, error=f"Marketing-Post: {e}"), 500
+        return jsonify(ok=False, error=f"Marketing-Post: {_fehler_text(e, 'api_marketing_post')}"), 500
     return jsonify(**res)

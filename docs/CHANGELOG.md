@@ -11,6 +11,161 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Geändert — CodeQL bekommt eine Barriere statt 208 unlesbarer Meldungen (v4.2 W3, Teil 2)
+
+Der Wechsel auf **Advanced Setup**. `py/stack-trace-exposure` meldete 208
+Stellen, von denen 193 durch `nc.fehlertext.nach_aussen` laufen und dort
+nachweislich gesäubert werden. Die Datenflussanalyse sieht die Säuberung
+nicht — sie verfolgt `str(e)` durch die Funktion hindurch bis in die Antwort.
+
+**208 Meldungen, die niemand mehr einzeln liest, sind schlimmer als keine.**
+Genau das ist passiert: der Befund in `nc/routes/brain.py` — `str(ex)`, roh,
+nur mit einem anderen Variablennamen als die W30-Prüfung suchte — stand
+wochenlang unbemerkt in der Liste. Gefunden hat ihn erst das lokal
+installierte CodeQL. Behoben.
+
+**Die Regel wird ersetzt, nicht abgeschaltet.** `.github/codeql/` enthält
+dieselbe Abfrage mit einer Barriere für `nach_aussen`/`_fehler_text`
+(`nc/stack-trace-exposure`), die Konfiguration schließt nur die Standardfassung
+aus. Ein blosses `exclude` hätte auch jeden neuen echten Befund verschluckt.
+
+Vorher lokal geprüft, nicht gehofft:
+
+| | Standard | mit Barriere |
+|---|---:|---:|
+| Testfall `str(e)` roh | gemeldet | **gemeldet** |
+| Testfall über `nach_aussen` | gemeldet | unterdrückt |
+| echte Codebasis | 208 | **14** |
+
+Ein `# codeql[py/stack-trace-exposure]`-Kommentar unterdrückt übrigens
+**nichts** — auch das wurde gemessen, bevor der aufwendigere Weg gewählt wurde.
+
+**Gesamtbilanz über beide Teile von W3:**
+
+| Regel | vorher | nachher |
+|---|---:|---:|
+| `py/stack-trace-exposure` → `nc/stack-trace-exposure` | 208 | **14** |
+| `py/path-injection` | 17 | 17 |
+| `py/incomplete-url-substring-sanitization` | 6 | 6 |
+| `py/bad-tag-filter` | 4 | **0** |
+| `py/url-redirection` | 2 | 2 |
+| `py/sql-injection` | 2 | 2 |
+| `py/weak-sensitive-data-hashing` | 1 | 1 |
+| `py/insecure-temporary-file` | 1 | **0** |
+| `py/cookie-injection` | 1 | 1 |
+| **gesamt** | **242** | **43** |
+
+Ein Vertrag hält die Namen zusammen: die Barriere greift über
+`"nach_aussen"` und `"_fehler_text"`. Wird der Helfer im Python-Code
+umbenannt und die Abfrage nicht, fiele die Barriere still weg und 193
+Meldungen kämen ohne Vorwarnung zurück. Vier Negativtests, alle feuern.
+
+> **Eine Handarbeit bleibt.** Solange in den Repo-Einstellungen das
+> Default-Setup aktiv ist, bricht der neue Workflow beim Hochladen ab
+> („default setup is enabled"). Einmalig abschalten unter
+> **Settings → Code security → Code scanning → CodeQL analysis →
+> Default setup → Disable**. Der Hinweis steht auch im Workflow-Kopf, damit
+> niemand den Fehler im Workflow sucht.
+
+
+### Behoben — 22 rohe Ausnahmetexte, die W30 durchgelassen hat (v4.2 W3)
+
+**CodeQL läuft jetzt lokal** (Bundle 2.26.4, dieselbe Suite wie GitHubs
+Default-Setup: `python-code-scanning.qls`). Damit lässt sich vor jedem Push
+nachrechnen, was eine Änderung wirklich schließt — statt „sagt erst der
+nächste Lauf".
+
+Notwendig wurde das, weil die Alarme aus dieser Umgebung nicht abrufbar sind:
+`api.github.com/rate_limit` antwortet 200, **jeder** `/repos/…`-Pfad 403;
+Repo-Zugriff läuft nur über den GitHub-MCP, und der hat kein
+Code-Scanning-Werkzeug. Der Umweg über CI-Artefakte fiel ebenfalls aus — das
+CodeQL läuft über Default-Setup, also ohne Workflow-Datei im Repo, und erzeugt
+keine Artefakte.
+
+**Der erste Lauf hat das Bild korrigiert.** 242 Alarme, aber nicht die
+Verteilung, die die Oberfläche nahelegt:
+
+| Regel | Alarme | Urteil |
+|---|---:|---|
+| `py/stack-trace-exposure` | 208 | **22 echt**, 166 bereits gesäubert, 20 zu prüfen |
+| `py/path-injection` | 17 | überwiegend bereits geriegelt (W2) |
+| `py/incomplete-url-substring-sanitization` | 6 | 3 in Testdateien |
+| `py/bad-tag-filter` | 4 | präzisiert |
+| `py/sql-injection` | 2 | `dbwrap` mit gebundenen Parametern — Fehlalarm |
+| `py/url-redirection` | 2 | **Fehlalarm, verifiziert** |
+| `py/insecure-temporary-file` | 1 | behoben |
+| `py/weak-sensitive-data-hashing` | 1 | bewusst so (Dedup-Id, siehe W2) |
+| `py/cookie-injection` | 1 | **Fehlalarm, verifiziert** |
+
+Die beiden „high"-Befunde sind nachweislich falsch: `_sicheres_ziel()` weist
+alles ab, was nicht mit `/` beginnt — inklusive `//` und `/\`; und
+`normalisieren()` kann nur `de`, `en` oder `None` liefern (gegen `'../etc'`,
+`'<script>'`, `'fr'` durchgemessen).
+
+**Die 22 echten sind eine Lücke in meinem eigenen W30-Vertrag.** Er verbot
+`error=str(e)` — aber `error=f"JSON nicht lesbar: {e}"` ist derselbe
+Leck-Weg, nur anders geschrieben, und stand danach noch an 22 Stellen. Sie
+gaben genau das preis, wogegen W30 gebaut wurde: Dateipfade, den Wortlaut
+fremder API-Antworten, bei `nc/routes/settings.py` potenziell Cookie-Inhalte.
+
+Alle 22 laufen jetzt durch `_fehler_text`. `nc/routes/marketing.py` und
+`nc/routes/news.py` hatten den Helfer noch nicht — nachgezogen.
+
+**Der Vertrag prüft jetzt die FORM, nicht die Zeichenkette:** in einem
+`except … as e` darf `{e}` in keinem f-string stehen, der an `jsonify`,
+`Response`, `make_response`, `abort` oder `_oauth_page` geht. Nach AST, weil
+ein f-string beliebig verschachtelt sein kann. **Log-Zeilen bleiben
+ausdrücklich unangetastet** — dort ist der volle Wortlaut richtig, `nach_aussen()`
+schreibt ihn selbst dorthin; ein Vertrag, der `log.warning(f"… {e}")` meldet,
+wäre ein Dauer-Fehlalarm und flöge nach der dritten Welle raus.
+
+**Zwei billige Präzisierungen mitgenommen:** die Tag-Muster akzeptieren jetzt
+auch Attribute im schließenden Tag (`</script foo>`, was Browser durchgehen
+lassen), und `tempfile.mktemp()` in `test_restream.py` ist `mkstemp()` gewichen —
+`mktemp` vergibt nur einen Namen, zwischen Vergabe und Anlegen kann ein anderer
+Prozess dort einen Symlink hinlegen.
+
+#### Nachgemessen — und das Ergebnis widerspricht der Erwartung
+
+Zweiter CodeQL-Lauf über denselben Baum:
+
+| Regel | vorher | nachher | Delta |
+|---|---:|---:|---:|
+| `py/stack-trace-exposure` | 208 | 208 | **±0** |
+| `py/bad-tag-filter` | 4 | 0 | −4 |
+| `py/insecure-temporary-file` | 1 | 0 | −1 |
+| **gesamt** | **242** | **237** | **−5** |
+
+**Die 22 Fixes senken die Zahl nicht.** `_fehler_text` liest intern `str(e)`
+und gibt das gesäuberte Ergebnis zurück — für die Datenflussanalyse fließt der
+Ausnahmetext damit weiterhin bis in die Antwort. Sie sieht die Säuberung
+dazwischen nicht.
+
+Das Leck ist trotzdem zu. Nachgemessen am Säuberer selbst:
+
+```
+roh    : [Errno 2] No such file or directory: '/home/ubuntu/tiktok-bot/recordings/x.mp4'
+aussen : FileNotFoundError: [Errno 2] No such file or directory: '<x.mp4>'
+
+roh    : HTTP 401 von kick.com: token=abc123def456ghi789
+aussen : RuntimeError: HTTP 401 von kick.com: token=<geschwärzt>
+
+roh    : rtmp://ingest/app/46zAbCdEfGhIjKlMnOpQrStUvWxYz012345 refused
+aussen : ValueError: rtmp://ingest/app/<geschwärzt> refused
+```
+
+Vorher gingen genau diese Zeichenketten unverändert nach draußen. Die
+Alarmzahl misst hier also nicht die Sicherheit — sie misst, was die Analyse
+erkennt.
+
+Um die 208 wirklich zu schließen, gäbe es zwei Wege, beide eine
+Betreiber-Entscheidung: ein **CodeQL-Model-Pack**, das `nach_aussen` als
+Sanitizer deklariert (setzt Advanced Setup voraus und ersetzt damit das
+Default-Setup), oder ein gesammeltes Abweisen der Meldungen mit Begründung.
+Den Grund aus der Meldung zu entfernen, ist keine Option — das hat W30 aus
+gutem Grund abgelehnt.
+
+
 ### Behoben — `main` war rot, und zwei automatische Sicherheits-Fixes waren der Grund (v4.2 W2)
 
 Am 04.09. wurden sechs von GitHub erzeugte CodeQL-Auto-Fixes (#43–#48) direkt

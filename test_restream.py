@@ -7,6 +7,7 @@
 
 import ast
 import asyncio
+import os
 import re
 import sys
 from urllib.parse import urlparse
@@ -305,7 +306,12 @@ def test_overlay_session_and_platforms():
     import sqlite3, tempfile
     from datetime import datetime, timezone, timedelta
 
-    c = sqlite3.connect(tempfile.mktemp())
+    # v4.2-W3: mkstemp statt mktemp. mktemp() vergibt nur einen NAMEN;
+    # zwischen Vergabe und Anlegen kann ein anderer Prozess dort eine
+    # Datei oder einen Symlink hinlegen (CodeQL py/insecure-temporary-file).
+    _fd, _pfad = tempfile.mkstemp(suffix=".db")
+    os.close(_fd)
+    c = sqlite3.connect(_pfad)
     c.row_factory = sqlite3.Row
     c.execute("""CREATE TABLE overlay_events (id INTEGER PRIMARY KEY AUTOINCREMENT,
                  ts TEXT NOT NULL, kind TEXT, name TEXT, amount TEXT,

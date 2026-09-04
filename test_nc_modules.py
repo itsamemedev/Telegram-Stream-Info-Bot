@@ -2631,12 +2631,78 @@ def _test_w30_fehlertext_und_offenes_deck():
     # Decks macht gar nichts, wenn weder Token noch PIN gesetzt ist — dann
     # geht jede dieser Meldungen an jeden, der den Port erreicht, mitsamt
     # Dateipfaden und gelegentlich dem Wortlaut einer fremden API-Antwort.
+    # v4.2-W3: nach AST statt nach der Zeichenkette "str(e)". Die Textsuche
+    # sah nur den Namen `e` — ein `except Exception as ex:` mit `str(ex)`
+    # blieb unsichtbar und stand genau so in nc/routes/brain.py. Gefunden hat
+    # ihn erst das lokal installierte CodeQL.
+    def _roher_str_aufruf(pfad):
+        baum = _ast.parse(open(pfad, encoding="utf-8").read())
+        raus = []
+        for k in _ast.walk(baum):
+            if not isinstance(k, _ast.ExceptHandler) or not k.name:
+                continue
+            for j in _ast.walk(k):
+                if (isinstance(j, _ast.Call)
+                        and isinstance(j.func, _ast.Name) and j.func.id == "str"
+                        and len(j.args) == 1
+                        and isinstance(j.args[0], _ast.Name)
+                        and j.args[0].id == k.name):
+                    raus.append((pfad, j.lineno))
+        return raus
+
     offen = []
     for p in sorted(_glob.glob("nc/routes/*.py")):
-        quelle = open(p, encoding="utf-8").read()
-        if "str(e)" in quelle:
-            offen.append(p)
-    assert not offen, "roher Ausnahmetext in einem Blueprint: %r" % offen
+        offen += _roher_str_aufruf(p)
+    assert not offen, (
+        "roher Ausnahmetext in einem Blueprint — str(<ausnahme>) ohne "
+        "Saeuberung: %r" % (offen[:8],))
+
+    # v4.2-W3: DIE LUECKE, DIE W30 GELASSEN HAT. Der Vertrag oben verbietet
+    # `str(e)` — aber `f"JSON nicht lesbar: {e}"` ist genau derselbe Leck-Weg
+    # und stand danach noch an 22 Stellen. Ein lokal installiertes CodeQL hat
+    # sie gefunden (py/stack-trace-exposure); die Textsuche nach "str(e)"
+    # konnte das nie sehen.
+    #
+    # Geprueft wird jetzt die FORM, nicht die Zeichenkette: in einem
+    # `except … as e` darf `{e}` in keinem f-string stehen, ausser der Name
+    # laeuft durch _fehler_text. Nach AST, weil ein f-string beliebig
+    # verschachtelt sein kann und ein Regex daran zerbricht.
+    # NUR Antwort-Bauer, nicht das Log. Im Log ist der volle Wortlaut richtig
+    # — nach_aussen() schreibt ihn selbst dorthin. Ein Vertrag, der auch
+    # log.warning(f"... {e}") meldet, waere ein Dauer-Fehlalarm und flöge
+    # nach der dritten Welle raus.
+    ANTWORT = {"jsonify", "Response", "make_response", "abort", "_oauth_page"}
+
+    def _rohe_ausnahme_in_fstring(pfad):
+        baum = _ast.parse(open(pfad, encoding="utf-8").read())
+        raus = []
+        for k in _ast.walk(baum):
+            if not isinstance(k, _ast.ExceptHandler) or not k.name:
+                continue
+            for aufruf in _ast.walk(k):
+                if not (isinstance(aufruf, _ast.Call)
+                        and _ast.unparse(aufruf.func).split(".")[-1] in ANTWORT):
+                    continue
+                for j in _ast.walk(aufruf):
+                    if not isinstance(j, _ast.JoinedStr):
+                        continue
+                    for teil in j.values:
+                        # Bare `{e}` — ein Aufruf drumherum (also
+                        # _fehler_text(e)) ist genau das, was hier verlangt
+                        # wird, und faellt deshalb nicht auf.
+                        if (isinstance(teil, _ast.FormattedValue)
+                                and isinstance(teil.value, _ast.Name)
+                                and teil.value.id == k.name):
+                            raus.append((pfad, j.lineno))
+        return raus
+
+    roh_fstring = []
+    for p in sorted(_glob.glob("nc/routes/*.py")) + ["bot.py"]:
+        roh_fstring += _rohe_ausnahme_in_fstring(p)
+    assert not roh_fstring, (
+        "roher Ausnahmetext in einem f-string — dasselbe Leck wie str(e), "
+        "nur anders geschrieben. Durch _fehler_text(e, \"<funktion>\") "
+        "ersetzen: %r" % (roh_fstring[:8],))
 
     # Und in bot.py wenigstens nicht mehr in einer HTTP-Antwort.
     b = open("bot.py", encoding="utf-8").read()
@@ -3329,6 +3395,94 @@ def _test_v42_w2_ein_riegel_gegen_pfadausbruch():
     ok("v4.2-W2: ein Riegel gegen Pfadausbruch (realpath, nicht abspath), "
        "Katalog per Erlaubnisliste, Tag-Muster an der Tag-Grenze")
 
+def _test_v42_w3_codeql_barriere_und_setup():
+    """v4.2-W3: eigene CodeQL-Abfrage statt 208 unlesbarer Meldungen."""
+    import ast as _ast
+    import os as _os
+
+    for datei in (".github/codeql/qlpack.yml", ".github/codeql/NcSanitizer.qll",
+                  ".github/codeql/NcStackTraceExposure.ql",
+                  ".github/codeql/codeql-config.yml",
+                  ".github/workflows/codeql.yml"):
+        assert _os.path.exists(datei), "%s fehlt" % datei
+
+    qll = open(".github/codeql/NcSanitizer.qll", encoding="utf-8").read()
+    ql = open(".github/codeql/NcStackTraceExposure.ql", encoding="utf-8").read()
+    cfg = open(".github/codeql/codeql-config.yml", encoding="utf-8").read()
+    wf = open(".github/workflows/codeql.yml", encoding="utf-8").read()
+
+    # ── (1) Die Regel wird ERSETZT, nicht abgeschaltet. Ein blosses exclude
+    # haette auch jeden neuen, echten Befund verschluckt — und genau so einer
+    # (str(ex) in nc/routes/brain.py) stand wochenlang unbemerkt in der Liste,
+    # weil 208 Meldungen niemand mehr einzeln liest.
+    # OHNE Kommentarzeilen pruefen, und OHNE PyYAML.
+    #
+    # Ohne Kommentare, weil die Begruendung daneben dieselben Schluessel nennt
+    # — ein Vertrag, der auf seine eigene Erklaerung anschlaegt, wird beim
+    # naechsten Mal geloescht statt gelesen (dieselbe Falle wie in W32/W33).
+    #
+    # Ohne PyYAML, weil der Vertrags-Job in der CI nur `orjson flask`
+    # installiert. Das steht seit W23 als Regel in ci.yml — und ich bin beim
+    # ersten Versuch trotzdem hineingelaufen: `import yaml` liess beide
+    # Vertrags-Jobs mit ModuleNotFoundError sterben.
+    def _ohne_kommentar(text):
+        return "\n".join(z for z in text.splitlines()
+                         if not z.lstrip().startswith("#"))
+
+    knapp = _ohne_kommentar(cfg)
+    assert "id: py/stack-trace-exposure" in knapp, \
+        "die Standardregel wird nicht ersetzt"
+    assert "uses: ./.github/codeql" in knapp, "die eigene Abfrage wird nicht geladen"
+    assert "@id nc/stack-trace-exposure" in ql, "die Ersatzabfrage hat keine eigene Id"
+    assert "disable-default-queries" not in knapp, \
+        ("die Standard-Suite waere abgeschaltet — dann faellt weit mehr weg "
+         "als die eine Regel")
+
+    # ── (2) Die Ersatzabfrage ist die GLEICHE Abfrage. Nur die Barriere kommt
+    # dazu. Waeren Quelle, Senke oder der Select veraendert, hiesse sie zu
+    # Unrecht so und wuerde etwas anderes messen.
+    assert "StackTraceExposureFlow::flowPath(source, sink)" in ql, \
+        "die Ersatzabfrage folgt nicht mehr demselben Datenfluss"
+    assert "import NcSanitizer" in ql, "die Barriere ist nicht eingebunden"
+    assert "StackTraceExposure::Sanitizer" in qll, \
+        "die Barriere haengt nicht am vorgesehenen Erweiterungspunkt"
+
+    # ── (3) DIE NAMEN MUESSEN ZUSAMMENBLEIBEN. Die Barriere greift ueber die
+    # Namen "nach_aussen" und "_fehler_text". Wird der Helfer im Python-Code
+    # umbenannt und hier nicht, faellt die Barriere still weg — und 193
+    # Meldungen kommen ohne Vorwarnung zurueck.
+    for name in ("nach_aussen", "_fehler_text"):
+        assert '"%s"' % name in qll, "die Barriere kennt %s nicht" % name
+    import nc.fehlertext as F
+    assert hasattr(F, "nach_aussen"), \
+        "nc.fehlertext.nach_aussen heisst anders — die CodeQL-Barriere zeigt ins Leere"
+    # Und der lokale Name in den Blueprints ist wirklich _fehler_text.
+    baum = _ast.parse(open("nc/routes/systemlage.py", encoding="utf-8").read())
+    namen = {k.name for k in _ast.walk(baum)
+             if isinstance(k, (_ast.FunctionDef, _ast.AsyncFunctionDef))}
+    assert "_fehler_text" in namen, \
+        "die Blueprints nennen den Helfer anders — die Barriere greift dort nicht"
+
+    # ── (4) Der Workflow faehrt dieselben Sprachen wie das Default-Setup.
+    # Faellt eine weg, hoert die Analyse dort still auf — ohne rote Meldung.
+    wf_knapp = _ohne_kommentar(wf)
+    for sprache in ("actions", "javascript-typescript", "python"):
+        assert "language: %s" % sprache in wf_knapp, \
+            "Sprache %s fehlt im Workflow" % sprache
+    assert "security-events: write" in wf, "ohne dieses Recht laedt nichts hoch"
+    assert "config-file: ./.github/codeql/codeql-config.yml" in wf, \
+        "der Workflow benutzt die Konfiguration nicht"
+
+    # ── (5) Der Umstellungs-Hinweis steht drin. Solange das Default-Setup in
+    # den Repo-Einstellungen aktiv ist, bricht dieser Workflow beim Hochladen
+    # ab — das ist eine Handarbeit, die nur der Betreiber machen kann, und
+    # ohne Hinweis sucht er den Fehler im Workflow.
+    assert "Default setup" in wf and "Disable" in wf, \
+        "der Hinweis auf das abzuschaltende Default-Setup fehlt"
+
+    ok("v4.2-W3: CodeQL-Barriere fuer nach_aussen, Regel ersetzt statt "
+       "abgeschaltet, Namen vertraglich gekoppelt")
+
 def main():
     tmp = tempfile.mkdtemp()
     configure_db(db_path=os.path.join(tmp, "t.db"), backend="sqlite")
@@ -3481,6 +3635,8 @@ def main():
     _test_v42_w1_schnappschuss_ohne_geheimnis()
 
     _test_v42_w2_ein_riegel_gegen_pfadausbruch()
+
+    _test_v42_w3_codeql_barriere_und_setup()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)
 

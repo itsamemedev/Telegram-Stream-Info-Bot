@@ -1,0 +1,26 @@
+# v4.2-W3: Konfiguration fuer das Advanced Setup von CodeQL.
+#
+# Zwei Aenderungen gegenueber dem Default-Setup, beide begruendet:
+#
+# 1. py/stack-trace-exposure wird ausgeschlossen und durch die eigene
+#    Fassung nc/stack-trace-exposure ersetzt. Die eigene Fassung ist die
+#    GLEICHE Abfrage — nur mit einer Barriere fuer nc.fehlertext.nach_aussen,
+#    das den Wortlaut nachweislich saeubert. Gemessen: 208 -> 15 Befunde,
+#    und die 15 sind echte Restarbeit, keine Fehlalarme.
+#
+#    Die Regel wird NICHT abgeschaltet. Ein `exclude` ohne Ersatz haette
+#    auch jeden neuen, echten Befund verschluckt.
+#
+# 2. Sonst laeuft weiterhin die Standard-Suite, damit sich der Bestand
+#    gegenueber dem Default-Setup nicht heimlich veraendert.
+name: NIGHTCRAWLER CodeQL
+
+# `queries` ERGAENZT die Standard-Suite, es ersetzt sie nicht (kein
+# disable-default-queries). Damit laeuft weiterhin genau das, was das
+# Default-Setup lief — plus unsere Fassung der einen Abfrage.
+queries:
+  - uses: ./.github/codeql
+
+query-filters:
+  - exclude:
+      id: py/stack-trace-exposure

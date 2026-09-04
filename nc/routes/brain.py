@@ -146,7 +146,11 @@ def api_brain_alarms():
             out.append({"ts": e.get("ts"), "agent": e.get("key", ""),
                         "level": lv, "text": str(d.get("text", ""))[:200]})
     except Exception as ex:
-        return jsonify(ok=False, error=str(ex)[:120], alarms=[])
+        # v4.2-W3: str(ex) ist derselbe Leck-Weg wie str(e) — die
+        # W30-Textsuche hat ihn nur wegen des anderen Variablennamens
+        # nicht gesehen. Lokales CodeQL hat ihn gefunden.
+        return jsonify(ok=False, error=_fehler_text(ex, "api_brain_alarms"),
+                       alarms=[])
     return jsonify(ok=True, alarms=out, count=len(out))
 
 

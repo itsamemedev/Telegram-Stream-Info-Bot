@@ -253,9 +253,9 @@ def _js_textstuecke(literal):
 # anhaelt, verschluckt den Rest der Datei; im Extraktor heisst das: alle
 # folgenden Textknoten fehlen im Katalog, ohne dass es auffaellt.
 RE_BLOECKE_WEG = re.compile(
-    r"<script\b.*?</script\s*>|<style\b.*?</style\s*>|<!--.*?-->",
+    r"<script\b.*?</script\s*[^>]*>|<style\b.*?</style\s*[^>]*>|<!--.*?-->",
     re.S | re.I)
-RE_JS_INHALT = re.compile(r"<script\b[^>]*>(.*?)</script\s*>", re.S | re.I)
+RE_JS_INHALT = re.compile(r"<script\b[^>]*>(.*?)</script\s*[^>]*>", re.S | re.I)
 
 
 def _html_strings(pfad):

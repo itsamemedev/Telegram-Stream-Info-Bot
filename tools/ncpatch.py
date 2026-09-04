@@ -54,12 +54,12 @@ import sys
 # zurueckparsen. Ein Muster, das man testen will, gehoert an EINE Stelle.
 #
 # `\b` nach dem Namen: sonst passt auch `<scriptfoo`.
-# `</script\s*>`: der Browser beendet das Element auch bei `</script >` und
+# `</script\s*[^>]*>`: der Browser beendet das Element auch bei `</script >` und
 # `</script\n>`. Ein Muster ohne das `\s*` haelt dort NICHT an und frisst den
 # Rest der Datei — eine ID aus einem JS-String wurde dann als doppelte
 # Markup-ID gemeldet, ein Fehlalarm, der das Werkzeug unglaubwuerdig macht.
-RE_SCRIPT_WEG = re.compile(r"<script\b[^>]*>.*?</script\s*>", re.S | re.I)
-RE_SCRIPT_BLOCK = re.compile(r"<script\b([^>]*)>(.*?)</script\s*>", re.S | re.I)
+RE_SCRIPT_WEG = re.compile(r"<script\b[^>]*>.*?</script\s*[^>]*>", re.S | re.I)
+RE_SCRIPT_BLOCK = re.compile(r"<script\b([^>]*)>(.*?)</script\s*[^>]*>", re.S | re.I)
 
 
 def _read(path: str) -> str:
@@ -216,7 +216,7 @@ def validate(root: str, files: list | None = None) -> int:
             # id="..." aus HTML-Kommentaren und aus JS-Strings mit, die Markup
             # bauen — beides erzeugt Fehlalarme statt Befunde.
             markup = re.sub(r"<!--.*?-->", "", html, flags=re.S)
-            # v4.2-W2: `</script\s*>` statt `</script>`. Der Browser beendet
+            # v4.2-W2: `</script\s*[^>]*>` statt `</script>`. Der Browser beendet
             # das Element auch bei `</script >` und `</script\n>`; ein Muster
             # ohne das \s* haelt an so einer Stelle NICHT an und frisst den
             # Rest der Datei — hier waeren dann alle folgenden IDs still

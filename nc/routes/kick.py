@@ -115,7 +115,7 @@ def api_kick_oauth_callback():
     except Exception as e:
         if _loop_not_ready(e):
             return _oauth_page(False, "Event-Loop startet noch — kurz erneut versuchen.")
-        return _oauth_page(False, f"Token-Tausch fehlgeschlagen: {e}")
+        return _oauth_page(False, f"Token-Tausch fehlgeschlagen: {_fehler_text(e, 'api_kick_oauth_callback')}")
     _cfg_set("kick.oauth_pending", {})
     if not res.get("ok"):
         return _oauth_page(False, res.get("error") or "Token-Tausch fehlgeschlagen.")

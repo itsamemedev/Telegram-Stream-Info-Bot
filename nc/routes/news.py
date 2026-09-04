@@ -9,6 +9,7 @@ stellen muss, kommt ueber nc.ctx statt ueber einen Import aus bot.py.
 import asyncio
 from flask import Blueprint, jsonify, request
 import time as _time_mod
+from nc import fehlertext as _nc_fehlertext
 from nc import i18n as _nc_i18n
 from nc import news as _nc_news
 from nc.util import _loop_not_ready
@@ -17,6 +18,14 @@ from nc.cfgstore import get as _cfg_get, set_ as _cfg_set
 from nc import ctx as _ctx
 
 bp = Blueprint("news", __name__)
+
+def _fehler_text(e, wo=""):
+    """v4.1-W30: der Wortlaut geht ins Log, nach aussen die gesaeuberte
+       Fassung — ohne Pfade, ohne Zugangsdaten, gekuerzt. Siehe
+       nc/fehlertext.py, dort steht auch, warum nicht einfach "interner
+       Fehler"."""
+    return _nc_fehlertext.nach_aussen(e, wo)
+
 
 def _t(s):
     """v4.1-W20: an der Quelle uebersetzen. Diese Texte erreichen das DOM
@@ -136,5 +145,5 @@ def api_news_generate_now():
     except Exception as e:
         if _loop_not_ready(e):
             return jsonify(ok=False, error=_t("Event-Loop startet noch — kurz erneut versuchen.")), 503
-        return jsonify(ok=False, error=f"News-Generierung: {e}"), 500
+        return jsonify(ok=False, error=f"News-Generierung: {_fehler_text(e, 'api_news_generate')}"), 500
     return jsonify(**res)
