@@ -1,10 +1,11 @@
 # Die Pflicht-Prüfkette als CI — dieselben Schritte wie in docs/CONTRIBUTING.md.
 #
-# Bewusst OHNE den vollen Laufzeitstack: test_smoke.py führt bot.py wirklich
-# aus und braucht flask, telegram, discord, streamlink, yt-dlp, psutil und ein
-# konfiguriertes .env. Das gehört auf den Server, nicht in die CI. Was hier
-# läuft, deckt genau das ab, was ohne Laufzeitumgebung prüfbar ist: Syntax,
-# undefinierte Namen, die statischen Verträge und die bot-freien Bibliotheken.
+# Seit v4.1-W31 läuft auch test_smoke.py hier — der Job `smoke` führt bot.py
+# wirklich aus. Die alte Begründung ("braucht den vollen Serverbestand") war
+# falsch: TikTokLive und python-telegram-bot stubbt der Test selbst, alles
+# andere wird erst in Funktionen importiert. Übrig bleiben fünf Pakete in
+# requirements-smoke.txt. ffmpeg, streamlink und yt-dlp fasst er nicht an,
+# ein .env braucht er nicht — er setzt sich die nötigen Variablen selbst.
 #
 # Python 3.12 ist Mindestversion: bot.py nutzt f-strings mit Backslash
 # (PEP 701) — unter 3.11 stirbt schon ast.parse().
@@ -174,6 +175,35 @@ jobs:
         env:
           PYTHONPATH: ${{ github.workspace }}
         run: python nc/intel/test_intel.py
+
+  smoke:
+    name: Rauchtest (bot.py laeuft wirklich)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      # requirements-smoke.txt statt requirements.txt: der Rauchtest braucht
+      # weder faster-whisper noch boto3 noch uvloop, und genau deren
+      # Installationsdauer war die Begruendung, warum dieser Job jahrelang
+      # fehlte. Fuenf Pakete, rund 20 Sekunden.
+      - name: Laufzeitstack (nur was die Modul-Ebene braucht)
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-smoke.txt
+
+      # Das hier prueft, was KEINE der statischen Suiten pruefen kann: ob
+      # bot.py ueberhaupt importierbar ist, ob die Modul-Ebene ohne NameError
+      # durchlaeuft, ob alle Routen registriert werden und ob sie beim Aufruf
+      # nicht in einen 500er laufen. Genau solche Fehler haben in W26 und W29
+      # in Produktion zugeschlagen — statisch waren sie unsichtbar.
+      - name: test_smoke.py
+        env:
+          PYTHONUTF8: "1"
+        run: python test_smoke.py
 
   secrets:
     name: Kein Geheimnis im Diff

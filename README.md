@@ -674,7 +674,7 @@ python3 test_restream.py
 
 | Test | Deckt ab |
 |---|---|
-| `test_smoke.py` | Führt `bot.py` **wirklich** aus — NameError, Reihenfolge-Fallen. Braucht den ganzen Laufzeitstack, gehört auf den Server. |
+| `test_smoke.py` | Führt `bot.py` **wirklich** aus — NameError, Reihenfolge-Fallen, 500er beim ersten Aufruf. Braucht `pip install -r requirements-smoke.txt` (5 Pakete); läuft seit v4.1-W31 in der CI. |
 | `test_nc_modules.py` | Die Fachmodule in `nc/` isoliert, ohne Netz und ohne DB |
 | `test_restream.py` | Statische Verträge gegen den Restream-Pfad |
 | `test_m2_bridge.py` | Adapter Bot ↔ `brain/` |

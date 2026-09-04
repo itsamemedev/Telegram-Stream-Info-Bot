@@ -665,7 +665,7 @@ python3 test_restream.py
 
 | Test | Covers |
 |---|---|
-| `test_smoke.py` | **Actually** executes `bot.py` — NameError, ordering traps. Needs the whole runtime stack, belongs on the server. |
+| `test_smoke.py` | **Actually** executes `bot.py` — NameError, ordering traps, a 500 on first call. Needs `pip install -r requirements-smoke.txt` (5 packages); runs in CI since v4.1-W31. |
 | `test_nc_modules.py` | The domain modules in `nc/` in isolation, without network and without a database |
 | `test_restream.py` | Static contracts against the restream path |
 | `test_m2_bridge.py` | Adapter bot ↔ `brain/` |

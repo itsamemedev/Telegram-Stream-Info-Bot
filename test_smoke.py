@@ -116,6 +116,19 @@ def main():
     spec.loader.exec_module(m)          # NameError/Reihenfolge-Fallen knallen hier
     ok("bot.py importiert — Modul-Ebene laeuft ohne Fehler durch")
 
+    # v4.1-W31: discord.py ist im Code OPTIONAL (`except Exception: discord =
+    # None`). Fehlt das Paket, laeuft dieser Test bis zum Ende gruen — und hat
+    # dabei die gesamte Slash-Command-Registrierung nie angefasst. Genau dort
+    # sass B79: eine Annotation `member: discord.Member` wird von discord.py
+    # ueber callback.__globals__ aufgeloest, ein fehlender Modul-Import liess
+    # den ganzen Discord-Bot beim Registrieren crashen. Ein Rauchtest, der das
+    # stillschweigend ueberspringt, ist ein Rauchtest ohne Rauch.
+    assert m.discord is not None, (
+        "discord.py ist nicht installiert — dieser Test wuerde die "
+        "Discord-Pfade ueberspringen und trotzdem gruen melden. "
+        "pip install -r requirements-smoke.txt")
+    ok("discord.py geladen — die Slash-Command-Pfade sind wirklich mit drin")
+
     rules = list(m.dashboard_app.url_map.iter_rules())
     assert len(rules) > 200, "nur %d Routen registriert?" % len(rules)
     ok("Flask: %d Routen registriert" % len(rules))

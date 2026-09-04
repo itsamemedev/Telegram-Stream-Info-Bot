@@ -11,6 +11,64 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Behoben — der Rauchtest lief nirgends automatisch (v4.1 W31)
+
+`test_smoke.py` steht seit v37 in der Pflicht-Prüfkette. Ausgeführt hat ihn
+trotzdem **keine Maschine regelmäßig**: auf der Autorenmaschine fehlte der
+Laufzeitstack, die CI schloss ihn ausdrücklich aus, und auf dem Server lief er
+nur, wenn jemand daran dachte. Ein Test in der Pflichtkette, den niemand
+ausführt, ist eine Zeile Dokumentation, keine Prüfung.
+
+Er ist zugleich der einzige, der `bot.py` **wirklich ausführt** — und damit der
+einzige, der `NameError` auf der Modul-Ebene, eine Route mit 500er beim ersten
+Aufruf oder einen nie verdrahteten Rückruf überhaupt sehen kann. Genau solche
+Fehler haben in W26 (`_claude_chat_sync_metered`, 9× in Produktion) und W29 in
+Produktion zugeschlagen.
+
+**Die Begründung für den Ausschluss war falsch.** Nachgemessen braucht der Test
+*nicht* den Serverbestand:
+
+- TikTokLive und python-telegram-bot **stubbt er selbst**.
+- requests, httpx, boto3, redis, PyMySQL, PySocks und faster-whisper werden
+  erst **innerhalb** von Funktionen importiert.
+- ffmpeg, streamlink und yt-dlp fasst er **gar nicht** an.
+- Ein `.env` braucht er nicht — er setzt sich die nötigen Variablen selbst.
+
+Übrig bleiben **fünf** Pakete. Sie stehen jetzt in `requirements-smoke.txt`
+(nicht in `requirements.txt`: die zieht faster-whisper, boto3 und uvloop mit,
+und genau deren Installationsdauer war die Begründung, warum der Job fehlte).
+Installation rund 20 Sekunden.
+
+**Neu:** CI-Job `Rauchtest (bot.py laeuft wirklich)` — Python 3.13,
+`PYTHONUTF8=1`, Installation aus `requirements-smoke.txt`, dann
+`python test_smoke.py`. Ergebnis auf dieser Codebasis: **10 Verträge grün**,
+360 Routen registriert, 203 GET-Routen aufgerufen, 0 unerwartete 5xx.
+
+**Damit er lauffähig bleibt** — der eigentliche Punkt der Welle: der Vertrag
+`_test_w31_rauchtest_laeuft_in_der_ci` vergleicht die Modul-Ebene von `bot.py`,
+`nc/` (178 Dateien) und `brain/` gegen `requirements-smoke.txt`. Ein neuer
+Import ohne Eintrag würde den CI-Job an einem nackten `ImportError` töten,
+mitten in der Liste, ohne Hinweis worauf — der Vertrag meldet ihn stattdessen
+mit Datei, Import- und Paketnamen. Umgekehrt meldet er tote Einträge: eine
+Liste, die still wächst, macht den Job wieder teuer. Importe in einem `try`
+mit `except ImportError` zählen als optional und dürfen fehlen.
+
+**Ein Loch im Rauchtest selbst mitgeschlossen:** `discord` ist im Code optional
+(`except Exception: discord = None`). Ohne das Paket lief der Test bis zum Ende
+grün — und hatte dabei die gesamte Slash-Command-Registrierung nie angefasst.
+Dort saß B79: discord.py löst Annotationen wie `member: discord.Member` über
+`callback.__globals__` auf, ein fehlender Modul-Import ließ den ganzen
+Discord-Bot beim Registrieren crashen. `test_smoke.py` prüft jetzt
+`m.discord is not None` und sagt, warum.
+
+Vier Negativtests, alle feuern: neuer Modul-Import ohne Eintrag, entfernter
+Eintrag, toter Eintrag, entkernter CI-Job.
+
+Doku nachgezogen: `CLAUDE.md`, `CLAUDE.en.md`, `docs/CONTRIBUTING.md`,
+`docs/en/CONTRIBUTING.md`, `README.md`, `README.en.md`, der Kopfkommentar von
+`ci.yml` und die PR-Vorlage behaupteten alle das Gegenteil.
+
+
 ### Behoben — die Warnung vor dem offenen Dashboard war unsichtbar (v4.1 W30)
 
 Die Schranke des Dashboards (`_auth_guard`) macht **gar nichts**, wenn weder

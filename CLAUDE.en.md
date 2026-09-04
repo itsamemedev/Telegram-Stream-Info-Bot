@@ -89,11 +89,22 @@ open `bot.py` without `encoding=`; without UTF-8 mode cp1252 kicks in and they
 die with a `UnicodeDecodeError` instead of checking anything. On the server
 UTF-8 is the default and nothing needs setting.
 
-`test_smoke.py` does **not** run on the author's machine — it actually executes
-`bot.py` and needs the whole runtime stack for that (flask, telegram, discord,
-dotenv, streamlink, yt-dlp, psutil), which is deliberately absent there. That
-test belongs on the server. What it covers (NameError, ordering traps) is
-largely caught by `py_compile` and `pyflakes` locally.
+**`test_smoke.py` has run in CI since v4.1-W31** — job `Rauchtest (bot.py
+laeuft wirklich)`. The old reasoning ("needs the full server stack") was wrong:
+the test stubs TikTokLive and python-telegram-bot itself, everything else is
+imported inside functions. What remains is five packages in
+`requirements-smoke.txt`, about 20 seconds to install. Locally:
+
+    python -m pip install -r requirements-smoke.txt
+    python test_smoke.py
+
+`requirements-smoke.txt` is the **only** place a new third-party package for
+the smoke test gets entered. The contract
+`_test_w31_rauchtest_laeuft_in_der_ci` compares the module level of `bot.py`,
+`nc/` and `brain/` against that list and reports every missing package with
+file and name — instead of letting the CI job die on a bare `ImportError`. It
+reports dead entries too: a list that quietly grows makes the job expensive
+again.
 
 The static contracts in `test_restream.py` anchor themselves to the **literal
 source text** of `bot.py`. If a signature changes, the contract breaks even

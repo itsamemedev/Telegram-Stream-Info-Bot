@@ -2695,6 +2695,129 @@ def _test_w30_fehlertext_und_offenes_deck():
     ok("v4.1-W30: kein roher Ausnahmetext nach aussen, offenes Deck meldet sich wiederholt")
 
 
+def _test_w31_rauchtest_laeuft_in_der_ci():
+    """v4.1-W31: der Rauchtest laeuft automatisch — und bleibt lauffaehig."""
+    import ast as _ast
+    import pathlib as _pl
+    import sys as _sys
+
+    ci = open(".github/workflows/ci.yml", encoding="utf-8").read()
+
+    # (1) Er laeuft ueberhaupt. Bis W31 stand in der Pflicht-Pruefkette ein
+    # Test, den KEINE Maschine je ausfuehrte: auf der Autorenmaschine fehlt
+    # der Laufzeitstack, in der CI war er ausgeschlossen, und auf dem Server
+    # lief er nur, wenn jemand daran dachte. Genau die Fehler, die er faengt
+    # (NameError auf der Modul-Ebene, 500er beim ersten Aufruf), haben in W26
+    # und W29 in Produktion zugeschlagen.
+    assert "python test_smoke.py" in ci, \
+        "test_smoke.py laeuft in der CI nicht mehr — der Job wurde entfernt"
+    assert "requirements-smoke.txt" in ci, \
+        "der Rauchtest-Job installiert nicht mehr aus requirements-smoke.txt"
+    _i = ci.index("python test_smoke.py")
+    assert 'PYTHONUTF8: "1"' in ci[max(0, _i - 400):_i], \
+        ("test_smoke.py laeuft ohne PYTHONUTF8=1 — es oeffnet bot.py ohne "
+         "encoding=, das stirbt ausserhalb einer UTF-8-Umgebung mit "
+         "UnicodeDecodeError statt zu pruefen")
+
+    # (2) Und er BLEIBT lauffaehig. Ein neuer Import auf der Modul-Ebene, der
+    # in requirements-smoke.txt fehlt, wuerde den Job mit einem nackten
+    # ImportError toeten — mitten in der Liste, ohne Hinweis worauf. Dieser
+    # Vergleich meldet das hier, mit Datei und Paketname.
+    quelle = open("requirements-smoke.txt", encoding="utf-8").read()
+    gelistet = {z.split("#")[0].strip().lower()
+                for z in quelle.splitlines() if z.split("#")[0].strip()}
+
+    # Importname -> pip-Name. Nur was sich unterscheidet steht hier drin.
+    PIPNAME = {"dotenv": "python-dotenv", "discord": "discord.py",
+               "socks": "PySocks", "pymysql": "PyMySQL",
+               "telegram": "python-telegram-bot", "faster_whisper": "faster-whisper"}
+    # Diese stubbt test_smoke.py selbst — sie duerfen fehlen.
+    GESTUBBT = {"TikTokLive", "telegram"}
+    LOKAL = {"nc", "brain", "bot", "brain_bridge", "tools"}
+
+    def _fremd_auf_modulebene(pfad):
+        """Importe der Modul-Ebene, getrennt nach 'muss da sein' und 'optional'.
+
+        Optional heisst: in einem try mit except ImportError. Solche Pakete
+        darf der Rauchtest nicht haben — der Code faengt ihr Fehlen ab.
+        """
+        baum = _ast.parse(_pl.Path(pfad).read_text(encoding="utf-8"))
+        pflicht, optional = set(), set()
+
+        def _namen(knoten):
+            if isinstance(knoten, _ast.Import):
+                return [a.name.split(".")[0] for a in knoten.names]
+            if isinstance(knoten, _ast.ImportFrom) and knoten.level == 0 and knoten.module:
+                return [knoten.module.split(".")[0]]
+            return []
+
+        def _lauf(koerper, weich):
+            for k in koerper:
+                for n in _namen(k):
+                    if n in _sys.stdlib_module_names or n in LOKAL:
+                        continue
+                    (optional if weich else pflicht).add(n)
+                if isinstance(k, _ast.Try):
+                    # Ein Handler, der ImportError faengt, macht den Import
+                    # optional. `except Exception` und das nackte `except:`
+                    # fangen ihn mit — deshalb zaehlen die hier auch.
+                    faengt_import = False
+                    for h in k.handlers:
+                        art = "" if h.type is None else _ast.unparse(h.type)
+                        if h.type is None or any(
+                                w in art for w in ("ImportError", "ModuleNotFoundError",
+                                                   "Exception", "BaseException")):
+                            faengt_import = True
+                    _lauf(k.body, weich or faengt_import)
+                    for h in k.handlers:
+                        _lauf(h.body, True)
+                    _lauf(k.orelse, weich or faengt_import)
+                    _lauf(k.finalbody, weich)
+                elif isinstance(k, _ast.If):
+                    _lauf(k.body, weich)
+                    _lauf(k.orelse, weich)
+        _lauf(baum.body, False)
+        return pflicht, optional - pflicht
+
+    dateien = ["bot.py"] + [str(p) for p in sorted(_pl.Path(".").glob("nc/**/*.py"))
+                            if "_vendor" not in str(p)] \
+                        + [str(p) for p in sorted(_pl.Path(".").glob("brain/**/*.py"))]
+    fehlt = []
+    for d in dateien:
+        pflicht, _ = _fremd_auf_modulebene(d)
+        for n in pflicht:
+            if n in GESTUBBT:
+                continue
+            if PIPNAME.get(n, n).lower() not in gelistet:
+                fehlt.append((d, n, PIPNAME.get(n, n)))
+    assert not fehlt, (
+        "Import auf der Modul-Ebene ohne Eintrag in requirements-smoke.txt — "
+        "der Rauchtest stirbt damit in der CI an einem ImportError. "
+        "Eintragen oder in eine Funktion verschieben: %r" % (fehlt,))
+
+    # (3) Umgekehrt: kein toter Eintrag. Eine Liste, die mehr enthaelt als
+    # noetig, waechst still weiter und macht den Job wieder teuer — genau der
+    # Grund, warum requirements.txt hier nicht taugt.
+    # Optionale Importe zaehlen hier MIT. discord ist der Fall, um den es
+    # geht: bot.py faengt sein Fehlen ab (`except Exception: discord = None`),
+    # der Rauchtest liefe also auch ohne das Paket gruen — und wuerde dabei
+    # die gesamte Slash-Command-Registrierung ueberspringen. Genau dort sass
+    # B79. Ein optionales Paket gehoert deshalb in die Liste, wenn ohne es
+    # ein Stueck bot.py ungeprueft bleibt.
+    gebraucht = set()
+    for d in dateien:
+        pflicht, optional = _fremd_auf_modulebene(d)
+        for n in pflicht | optional:
+            if n not in GESTUBBT:
+                gebraucht.add(PIPNAME.get(n, n).lower())
+    tot = gelistet - gebraucht
+    assert not tot, (
+        "requirements-smoke.txt listet Pakete, die keine Modul-Ebene mehr "
+        "braucht: %r — raus damit, sonst wird der Job wieder teuer" % sorted(tot))
+
+    ok("v4.1-W31: der Rauchtest laeuft in der CI, %d Datei(en) gegen "
+       "requirements-smoke.txt geprueft" % len(dateien))
+
 def main():
     tmp = tempfile.mkdtemp()
     configure_db(db_path=os.path.join(tmp, "t.db"), backend="sqlite")
@@ -2837,6 +2960,8 @@ def main():
     _test_w29_kein_sqlite_auf_dem_loop()
 
     _test_w30_fehlertext_und_offenes_deck()
+
+    _test_w31_rauchtest_laeuft_in_der_ci()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)
 
