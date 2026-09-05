@@ -18842,10 +18842,16 @@ _CLIP_LAST = {}            # username -> monotonic (Cooldown)
 _CLIP_LOCK = threading.Lock()
 
 
-# v4.2-W24: KI-Meme-Erkennung — quellenuebergreifende Ergaenzung zur reinen
-# Chat-Velocity oben. AUS per Default: ein Fehlalarm postet automatisch nach
-# Discord (CLIP_DISCORD_UPLOAD), das soll der Betreiber bewusst anschalten.
-MEME_CLIP_ENABLED    = os.getenv("MEME_CLIP_ENABLED", "0").strip().lower() in ("1", "true", "yes", "on")
+# v4.2-W24/W25: KI-Meme-Erkennung — quellenuebergreifende Ergaenzung zur
+# reinen Chat-Velocity oben. AN per Default (v4.2-W25): der Klassifikator
+# selbst laeuft nur ueber die kostenlose Basen-Rotation (nie Claude, siehe
+# _meme_klassifizieren) und schluckt jeden Fehler. Ein positiver Fund postet
+# aber automatisch nach Discord, WENN zusaetzlich CLIP_DISCORD_UPLOAD=1
+# gesetzt ist — und der ganze Clip-Pfad greift ueberhaupt nur bei
+# CLIP_ENABLED=1 (Default weiterhin AUS, siehe unten). MEME_CLIP_ENABLED
+# allein macht also noch keinen sichtbaren Clip; es startet nur das
+# Beobachten.
+MEME_CLIP_ENABLED    = os.getenv("MEME_CLIP_ENABLED", "1").strip().lower() in ("1", "true", "yes", "on")
 MEME_CLIP_SCHWELLE   = _nc_envnum.env_float("MEME_CLIP_SCHWELLE", 0.72)
 # 0.72 ist nc.memeklip.STANDARD_SCHWELLE als Literal, wie es der env-Scanner
 # in tools/gen_env_example.py braucht (der Default muss dort woertlich als
