@@ -243,12 +243,27 @@ from http.cookiejar import LoadError, MozillaCookieJar
 _KONF = {"datei": "tiktok_cookies.txt", "log": None}
 
 
-def configure(datei=None, log=None):
-    """Vom Bot einmal beim Start gerufen."""
+def configure(datei=None, log=None, kritisch=None, reparieren=None,
+              autorefresh_info=None, autofetch_info=None):
+    """Vom Bot einmal beim Start gerufen.
+
+    Die vier Zusaetze aus v4.2-W21 gehoeren zu gesundheit(): die Liste der
+    kritischen Cookie-Namen, der Reparaturweg (schreibt die Datei neu, liegt
+    bot-seitig weil er den Schreib-Lock und das Backup fuehrt) und die beiden
+    Auskuenfte ueber Auto-Refresh und Auto-Bezug fuers Deck.
+    """
+    global _KRITISCH
     if datei is not None:
         _KONF["datei"] = datei
     if log is not None:
         _KONF["log"] = log
+    if kritisch is not None:
+        _KRITISCH = tuple(kritisch)
+    for k, v in (("reparieren", reparieren),
+                 ("autorefresh_info", autorefresh_info),
+                 ("autofetch_info", autofetch_info)):
+        if v is not None:
+            _KONF[k] = v
 
 
 def _warnen(text: str):
@@ -412,3 +427,179 @@ _COOKIE_WARN_TS = {}    # Tiefenbughunt: drosselt die "Cookies unlesbar"-Warnung
 # einer Cookie-Reparatur, und das Deck liest ihn ueber ctx.cfg. Beide muessen
 # DASSELBE Dict sehen — deshalb ein oeffentlicher Name statt einer Kopie.
 CACHE = _COOKIES_CACHE
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# v4.2-W21: die Gesundheitsbewertung der cookies.txt, aus bot.py heraus.
+#
+# Sie stand dort als 147-Zeilen-Funktion mitten im Monolithen und war NIE
+# ausgefuehrt worden — obwohl sie die Leiter ist, an der der Betreiber
+# ablesen soll, warum ein Pull 403 bekommt. Genau in dieser Leiter steckt
+# die Diagnose fuer "403 trotz aktuellem Cookie laut Dashboard": ein
+# kritischer Cookie, der unter MEHREREN Domains in der Datei steht. Der
+# Browser waehlt je Subdomain situativ, der Bot statisch — er kann den
+# falschen erwischen.
+#
+# Sie gehoert hierher und nicht in ein eigenes Modul: lade_jar() liest die
+# Datei, _cookie_alarm_level() liest das Ergebnis. Drei Teile einer Frage.
+# ══════════════════════════════════════════════════════════════════════════
+
+# Cookies, ohne die TikTok den Pull ablehnt. Der Bot reicht die Liste herein,
+# damit sie an EINER Stelle in .env/bot.py steht.
+_KRITISCH: tuple = ()
+
+# Merkt sich, fuer welchen Dateistand die Reparatur schon versucht wurde.
+# Der Versuch haengt an der mtime, NICHT am Aufruf: das Deck pollt diese
+# Funktion im Sekundentakt. Scheitert das Schreiben (Datei nur lesbar, volle
+# Platte), stuende sonst jede Sekunde ein log.error im Journal — und der eine
+# echte Grund ginge darin unter.
+_COOKIE_REPAIR_STAND: dict = {"mtime": None}
+
+
+def gesundheit() -> dict:
+    """Liefert Dashboard-Widget-Daten. Defensive — gibt immer was zurück,
+       auch wenn Datei fehlt."""
+    if not os.path.exists(_KONF["datei"]):
+        return {
+            "exists": False,
+            "status": "missing",
+            "headline": "cookies.txt fehlt",
+            "file_mtime": None, "file_age_days": None,
+            "total": 0, "expiring_soon": [], "expired": [],
+            "critical_present": [], "critical_missing": list(_KRITISCH),
+            "oldest_expiry_days": None,
+            "duplicate_domain_cookies": [],
+        }
+    try:
+        st = os.stat(_KONF["datei"])
+        mtime = st.st_mtime
+        age_days = (_time.time() - mtime) / 86400
+    except OSError:
+        mtime = None; age_days = None
+
+    # v4.2-W10: NICHT mehr direkt MozillaCookieJar.load(). Der Parser ist
+    # alles-oder-nichts — ein falsches Domain-Flag, ein Extra-Tab oder eine
+    # Ablaufzeit "Session" reichte, und das Deck meldete "parse_error", obwohl
+    # 40 gueltige Cookies in der Datei standen. lade_jar() liest solche Dateien
+    # normalisiert; ist das noetig, wird die Datei EINMAL wirklich repariert
+    # (mit Backup), damit auch yt-dlp sie wieder frisst.
+    krumm = repariert = False
+    try:
+        cj, normalisiert = lade_jar(_KONF["datei"])
+        all_cookies = list(cj)
+        if normalisiert:
+            krumm = True
+            # Der Versuch haengt an der mtime, nicht am Aufruf: das Deck pollt
+            # diese Funktion im Sekundentakt. Scheitert das Schreiben (Datei
+            # nur lesbar, volle Platte), stuende sonst jede Sekunde ein
+            # log.error im Journal — und der eine echte Grund ginge darin
+            # unter. Aendert sich die Datei, wird es neu versucht.
+            if _COOKIE_REPAIR_STAND.get("mtime") != mtime:
+                _COOKIE_REPAIR_STAND["mtime"] = mtime
+                repariert = _KONF["reparieren"]()
+    except Exception as e:
+        return {
+            "exists": True, "status": "parse_error",
+            "headline": f"cookies.txt unleserlich: {e}",
+            "file_mtime": mtime, "file_age_days": age_days,
+            "total": 0, "expiring_soon": [], "expired": [],
+            "critical_present": [], "critical_missing": list(_KRITISCH),
+            "oldest_expiry_days": None,
+            "duplicate_domain_cookies": [],
+            "repaired": False,
+        }
+
+    now = _time.time()
+    expiring_soon = []   # < 7 Tage
+    expired = []
+    present_names = set()
+    oldest_expiry_days = None
+    # BUG-FIX: trackt pro Cookie-Name ALLE Domain-Varianten. Wenn ein
+    # kritischer Cookie (sessionid etc.) unter mehreren Domains gleichzeitig
+    # existiert, sendet _load_cookies_dict() nur EINEN davon — der Browser
+    # selbst entscheidet je Subdomain situativ, der Bot aber statisch. Das
+    # ist die Hauptursache für "403 trotz aktuellem Cookie laut Dashboard".
+    name_domains: dict = {}
+
+    for c in all_cookies:
+        present_names.add(c.name)
+        name_domains.setdefault(c.name, set()).add(c.domain or "?")
+        exp = c.expires
+        if not exp or exp <= 0:
+            # session cookie ohne Expiry — überleben den Browser-Close eh nicht,
+            # aber für unsere Zwecke ist das "ewig gültig"
+            continue
+        days_left = (exp - now) / 86400
+        if days_left < 0:
+            expired.append({"name": c.name, "days_ago": round(-days_left, 1)})
+        elif days_left < 7:
+            expiring_soon.append({"name": c.name, "days_left": round(days_left, 1)})
+        # Track oldest (nur kritische zählen — Bot-Cookies wie analytics sind egal)
+        if c.name in _KRITISCH:
+            if oldest_expiry_days is None or days_left < oldest_expiry_days:
+                oldest_expiry_days = round(days_left, 1)
+
+    critical_present = [n for n in _KRITISCH if n in present_names]
+    critical_missing = [n for n in _KRITISCH if n not in present_names]
+    # BUG-FIX: kritische Cookies mit >1 Domain-Variante in der Datei —
+    # potenzielle Quelle für falsch aufgelöste/veraltete Werte beim Senden.
+    duplicate_domain_cookies = sorted(
+        n for n in _KRITISCH
+        if len(name_domains.get(n, set())) > 1
+    )
+
+    # Status-Bewertung — drei Stufen
+    if not critical_present:
+        status = "critical"
+        headline = "Keine kritischen Auth-Cookies vorhanden"
+    elif "sessionid_ss" not in present_names and "sessionid" not in present_names:
+        status = "critical"
+        headline = "Auth-Cookie sessionid(_ss) fehlt"
+    elif expired:
+        status = "warning"
+        headline = f"{len(expired)} Cookie(s) abgelaufen"
+    elif duplicate_domain_cookies:
+        # BUG-FIX: das ist die neue, sichtbare Warnung für genau das Problem
+        # das du gemeldet hast — "403 trotz aktuellem Cookie".
+        status = "warning"
+        headline = (f"{', '.join(duplicate_domain_cookies)} mehrfach unter "
+                    f"verschiedenen Domains vorhanden — Bot kann den falschen "
+                    f"Wert wählen. cookies.txt bereinigen (alte Einträge löschen, "
+                    f"frisch exportieren).")
+    elif oldest_expiry_days is not None and oldest_expiry_days < 3:
+        status = "warning"
+        headline = f"Kritischer Cookie läuft in {oldest_expiry_days}d ab"
+    elif oldest_expiry_days is not None and oldest_expiry_days < 7:
+        status = "warning"
+        headline = f"Kritischer Cookie läuft in {oldest_expiry_days}d ab"
+    elif age_days and age_days > 30:
+        status = "warning"
+        headline = f"cookies.txt seit {int(age_days)}d nicht aktualisiert"
+    elif krumm:
+        # Sichtbar machen, aber nur wenn sonst nichts ansteht: der Betreiber
+        # soll wissen, dass sein Export kaputt war — sonst exportiert er beim
+        # naechsten Mal wieder genauso, und die Reparatur bleibt Dauerzustand.
+        status = "warning"
+        headline = ("cookies.txt war kein gueltiges Netscape-Format — "
+                    "automatisch repariert (Backup: .bak)" if repariert else
+                    "cookies.txt ist kein gueltiges Netscape-Format und liess "
+                    "sich nicht reparieren — sie wird nur notduerftig gelesen, "
+                    "yt-dlp scheitert daran. Bitte neu exportieren.")
+    else:
+        status = "ok"
+        headline = "Cookies sehen gesund aus"
+
+    return {
+        "exists": True, "status": status, "headline": headline,
+        "file_mtime": mtime, "file_age_days": round(age_days, 1) if age_days else None,
+        "total": len(all_cookies),
+        "expiring_soon": sorted(expiring_soon, key=lambda x: x["days_left"]),
+        "expired": expired,
+        "critical_present": critical_present,
+        "critical_missing": critical_missing,
+        "oldest_expiry_days": oldest_expiry_days,
+        "duplicate_domain_cookies": duplicate_domain_cookies,
+        "repaired": krumm,
+        "autorefresh": _KONF["autorefresh_info"](),
+        "autofetch": _KONF["autofetch_info"](),
+    }

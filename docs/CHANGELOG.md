@@ -11,6 +11,44 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Geändert — die Cookie-Gesundheit wird jetzt in `nc/cookies.py` bewertet (v4.2 W21)
+
+147 Zeilen aus `bot.py` (→ **22.580 Zeilen**), die **nie ausgeführt worden
+waren** — obwohl sie die Leiter sind, an der der Betreiber ablesen soll, warum
+ein Pull 403 bekommt.
+
+Sie liegen jetzt neben den beiden Funktionen, die zu derselben Frage gehören:
+`lade_jar()` liest die Datei, `gesundheit()` bewertet sie, `_cookie_alarm_level()`
+liest das Ergebnis. Kein neues Modul — drei Teile einer Frage, eine Datei.
+
+**Sieben Zusicherungen, die vorher nicht formulierbar waren.** Die wichtigste
+betrifft den Fall, der am meisten Zeit gekostet hat:
+
+* **„403 trotz aktuellem Cookie laut Dashboard".** Ursache ist ein kritischer
+  Cookie, der unter *mehreren Domains* in der Datei steht — der Browser wählt
+  je Subdomain situativ, der Bot statisch und kann den falschen erwischen. Der
+  Vertrag schreibt genau diese Datei und prüft, dass die Warnung kommt **und
+  dass sie sagt, was zu tun ist** („bereinigen, frisch exportieren"). Ohne
+  diese Meldung sieht das Deck grün aus.
+* **Die Reihenfolge der Leiter hält**: kritisch vor abgelaufen vor Dubletten.
+  Kippte sie, verdeckte eine Warnung einen kritischen Zustand.
+* **Session-Cookies ohne Ablaufzeit gelten nicht als abgelaufen** — sonst
+  meldete jede normale Datei Alarm.
+* **Die Reparatur hängt an der `mtime`, nicht am Aufruf.** Das Deck pollt im
+  Sekundentakt; hinge sie am Aufruf, stünde bei einer nur lesbaren Datei jede
+  Sekunde ein `log.error` im Journal — und der eine echte Grund ginge darin
+  unter. Der Vertrag ruft dreimal und zählt einen Reparaturversuch.
+* Fehlende Datei meldet `missing` statt zu krachen; eine 45 Tage alte Datei
+  ist eine Warnung; bald ablaufende Cookies melden sich vorher.
+
+Sechs Mutationen geprüft, alle sechs schlagen an.
+
+**Ein Anker war zu weit gefasst.** Die W10-Prüfung „lädt nicht direkt über
+`MozillaCookieJar`" suchte in der ganzen Datei — und `lade_jar(` steht dort
+auch in `load_dict()` und in der Definition selbst. Sie wäre grün geblieben,
+während `gesundheit()` längst wieder direkt parst. Sie sucht jetzt nur noch im
+Rumpf von `gesundheit()`; die Mutation bestätigt es.
+
 ### Behoben — die Pause-Grace war ab dem zweiten Aussetzer einer Sitzung wirkungslos (v4.2 W20)
 
 **Der Fund.** In `_handle_single_tracking` stand für den Fall „Streamer ist

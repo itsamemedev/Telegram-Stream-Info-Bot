@@ -16,7 +16,7 @@ route.
 
 ## The one rule
 
-`bot.py` has **22,718 lines / 1.2 MB ≈ 295,000 tokens**. That file is **never**
+`bot.py` has **22,580 lines / 1.2 MB ≈ 293,000 tokens**. That file is **never**
 read in full and **never** searched blindly. First ask where something is, then
 fetch the excerpt:
 
