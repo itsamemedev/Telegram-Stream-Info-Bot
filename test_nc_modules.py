@@ -4448,8 +4448,22 @@ def _test_v42_w10_cookies_reparieren_und_selbst_holen():
     # (9) Und der Monolith haengt wirklich dran. Ohne diese Haken ist alles
     # oben eine Bibliothek, die niemand aufruft.
     b = open("bot.py", encoding="utf-8").read()
-    assert "_nc_cookies_datei.lade_jar(COOKIE_FILE)" in b, \
-        "get_cookie_health laedt wieder direkt — dann ist 'parse_error' zurueck"
+    # ANKER GEWANDERT (v4.2-W21, nicht der Vertrag): get_cookie_health steht
+    # als gesundheit() in nc/cookies.py — dort, wo lade_jar() selbst liegt.
+    # Der Vertrag fragt, ob die Bewertung ueber lade_jar() geht statt direkt
+    # ueber MozillaCookieJar.load(); genau das war der Unterschied zwischen
+    # "parse_error" und 40 lesbaren Cookies.
+    _ckq = open("nc/cookies.py", encoding="utf-8").read()
+    # Nur der Rumpf von gesundheit(): `lade_jar(` steht auch in load_dict()
+    # und in der Definition selbst — eine Suche ueber die ganze Datei waere
+    # gruen geblieben, waehrend gesundheit() laengst direkt parst.
+    _gs = _ckq.split("def gesundheit(")[1]
+    assert "cj, normalisiert = lade_jar(" in _gs, \
+        "gesundheit() laedt wieder direkt — dann ist 'parse_error' zurueck"
+    assert "MozillaCookieJar(" not in _gs, \
+        "gesundheit() greift wieder selbst zum Parser"
+    assert "_nc_cookies_datei.gesundheit()" in b, \
+        "der Bot fragt die Bewertung nicht mehr ab"
     assert "_COOKIE_FILE_LOCK = _nc_cookies_datei.DATEI_SPERRE" in b, \
         "zwei Schreib-Locks auf dieselbe Datei sind keiner"
     assert "_nc_cookieholen.configure(proxy_waehler=_pull_proxy_still" in b, \
@@ -6061,6 +6075,157 @@ def _test_v42_w20_livesignal():
     ok("W20: die Pause-Grace rechnet in monotoner Zeit")
 
 
+def _test_v42_w21_cookiegesundheit():
+    """v4.2-W21: die Gesundheitsbewertung der cookies.txt steht in nc/cookies.py.
+
+    147 Zeilen, die im Monolithen NIE ausgefuehrt worden sind — obwohl sie die
+    Leiter ist, an der der Betreiber ablesen soll, warum ein Pull 403 bekommt.
+    In dieser Leiter steckt die Diagnose fuer den Fall, der am meisten Zeit
+    gekostet hat: "403 TROTZ aktuellem Cookie laut Dashboard". Ursache ist ein
+    kritischer Cookie, der unter MEHREREN Domains in der Datei steht — der
+    Browser waehlt je Subdomain situativ, der Bot statisch und kann den
+    falschen erwischen. Ohne diese Meldung sieht das Deck gruen aus.
+    """
+    import os as _os
+    import tempfile as _tf
+    import time as _t
+    from nc import cookies as _ck
+
+    KRIT = ("sessionid", "sessionid_ss", "tt_csrf_token")
+    verzeichnis = _tf.mkdtemp()
+    pfad = _os.path.join(verzeichnis, "cookies.txt")
+    PROT = {"repariert": 0}
+
+    def _schreibe(zeilen, alter_tage=0.0):
+        with open(pfad, "w", encoding="utf-8") as f:
+            f.write("# Netscape HTTP Cookie File\n")
+            for z in zeilen:
+                f.write(z + "\n")
+        if alter_tage:
+            t = _t.time() - alter_tage * 86400
+            _os.utime(pfad, (t, t))
+
+    def _zeile(name, wert="x", domain=".tiktok.com", ablauf=None):
+        # Netscape: domain, flag, pfad, secure, expiry, name, wert
+        exp = int(_t.time() + 86400 * 30) if ablauf is None else int(ablauf)
+        return f"{domain}\tTRUE\t/\tTRUE\t{exp}\t{name}\t{wert}"
+
+    def _konf():
+        PROT["repariert"] = 0
+
+        def _rep():
+            PROT["repariert"] += 1
+            return True
+        _ck.configure(datei=pfad, kritisch=KRIT, reparieren=_rep,
+                      autorefresh_info=lambda: {"an": False},
+                      autofetch_info=lambda: {"an": False})
+        _ck._COOKIE_REPAIR_STAND["mtime"] = None
+
+    _konf()
+
+    # --- 1) Fehlende Datei ist kein Absturz -----------------------------
+    if _os.path.exists(pfad):
+        _os.remove(pfad)
+    h = _ck.gesundheit()
+    assert h["exists"] is False and h["status"] == "missing", h
+    assert list(h["critical_missing"]) == list(KRIT), h["critical_missing"]
+    ok("W21: fehlende cookies.txt meldet 'missing' statt zu krachen")
+
+    # --- 2) Der gesunde Fall --------------------------------------------
+    _schreibe([_zeile("sessionid"), _zeile("sessionid_ss"),
+               _zeile("tt_csrf_token"), _zeile("ttwid")])
+    h = _ck.gesundheit()
+    assert h["status"] == "ok", (h["status"], h["headline"])
+    assert h["total"] == 4 and not h["expired"] and not h["expiring_soon"]
+    assert sorted(h["critical_present"]) == sorted(KRIT)
+    assert h["duplicate_domain_cookies"] == []
+    ok("W21: vier frische Cookies unter einer Domain — Status ok")
+
+    # --- 3) DER FALL: derselbe Cookie unter zwei Domains ----------------
+    # Das ist "403 trotz aktuellem Cookie". Ohne diese Warnung meldet das Deck
+    # gruen, waehrend der Bot beim Senden den falschen Wert waehlen kann.
+    _schreibe([_zeile("sessionid", "neu", ".tiktok.com"),
+               _zeile("sessionid", "alt", ".www.tiktok.com"),
+               _zeile("sessionid_ss"), _zeile("tt_csrf_token")])
+    h = _ck.gesundheit()
+    assert h["duplicate_domain_cookies"] == ["sessionid"], h["duplicate_domain_cookies"]
+    assert h["status"] == "warning", h["status"]
+    assert "mehrfach" in h["headline"] and "sessionid" in h["headline"], h["headline"]
+    assert "bereinigen" in h["headline"], \
+        "die Meldung sagt nicht, was der Betreiber TUN soll"
+    ok("W21: derselbe kritische Cookie unter zwei Domains wird gemeldet")
+
+    # --- 4) Die Leiter haelt ihre Reihenfolge ---------------------------
+    # 'kritisch' schlaegt 'abgelaufen' schlaegt 'Dubletten'. Kippte die
+    # Reihenfolge, verdeckte eine Warnung einen kritischen Zustand.
+    _schreibe([_zeile("ttwid")])                      # kein einziger kritischer
+    h = _ck.gesundheit()
+    assert h["status"] == "critical" and "Keine kritischen" in h["headline"], h
+    _schreibe([_zeile("tt_csrf_token")])              # kritisch da, aber keine sessionid
+    h = _ck.gesundheit()
+    assert h["status"] == "critical" and "sessionid" in h["headline"], h
+    # abgelaufen schlaegt Dubletten: beides gleichzeitig -> 'abgelaufen'
+    _schreibe([_zeile("sessionid", "a", ".tiktok.com"),
+               _zeile("sessionid", "b", ".www.tiktok.com"),
+               _zeile("tt_csrf_token", ablauf=_t.time() - 86400)])
+    h = _ck.gesundheit()
+    assert h["status"] == "warning" and "abgelaufen" in h["headline"], h["headline"]
+    assert h["expired"] and h["expired"][0]["name"] == "tt_csrf_token"
+    ok("W21: kritisch vor abgelaufen vor Dubletten — die Reihenfolge haelt")
+
+    # --- 5) Ablaufende Cookies werden vorher sichtbar -------------------
+    _schreibe([_zeile("sessionid", ablauf=_t.time() + 86400 * 2),
+               _zeile("sessionid_ss"), _zeile("tt_csrf_token")])
+    h = _ck.gesundheit()
+    assert h["status"] == "warning" and "laeuft" in h["headline"].replace("ä", "ae"), h["headline"]
+    assert h["oldest_expiry_days"] is not None and h["oldest_expiry_days"] < 3, h
+    assert [c["name"] for c in h["expiring_soon"]] == ["sessionid"], h["expiring_soon"]
+    # Ein Session-Cookie ohne Ablauf ist NICHT abgelaufen — sonst meldete
+    # jede normale Datei Alarm.
+    _schreibe([_zeile("sessionid", ablauf=0), _zeile("sessionid_ss"),
+               _zeile("tt_csrf_token")])
+    h = _ck.gesundheit()
+    assert not h["expired"] and h["status"] == "ok", (h["status"], h["headline"])
+    ok("W21: bald ablaufende Cookies melden sich, Session-Cookies nicht")
+
+    # --- 6) Eine alte Datei ist eine Warnung, kein Fehler ---------------
+    _schreibe([_zeile("sessionid"), _zeile("sessionid_ss"),
+               _zeile("tt_csrf_token")], alter_tage=45)
+    h = _ck.gesundheit()
+    assert h["status"] == "warning" and "45d" in h["headline"], h["headline"]
+    assert h["file_age_days"] and 44 < h["file_age_days"] < 47, h["file_age_days"]
+    ok("W21: eine 45 Tage alte cookies.txt wird als Warnung gemeldet")
+
+    # --- 7) Die Reparatur haengt an der mtime, nicht am Aufruf ----------
+    # Das Deck pollt im Sekundentakt. Haenge der Versuch am Aufruf, stuende
+    # bei einer nur lesbaren Datei jede Sekunde ein log.error im Journal —
+    # und der eine echte Grund ginge darin unter.
+    with open(pfad, "w", encoding="utf-8") as f:
+        f.write("# Netscape HTTP Cookie File\n")
+        f.write(".tiktok.com\tTRUE\t/\tTRUE\tSession\tsessionid\tx\n")
+        f.write(".tiktok.com\tTRUE\t/\tTRUE\t0\tsessionid_ss\ty\n")
+        f.write(".tiktok.com\tTRUE\t/\tTRUE\t0\ttt_csrf_token\tz\n")
+    _konf()
+    h1 = _ck.gesundheit()
+    h2 = _ck.gesundheit()
+    h3 = _ck.gesundheit()
+    assert h1["total"] >= 1, "die krumme Datei wurde gar nicht gelesen: %r" % h1
+    assert PROT["repariert"] == 1, \
+        "die Reparatur laeuft bei jedem Poll (%dx statt 1x)" % PROT["repariert"]
+    assert h2["status"] == h3["status"]
+    ok("W21: eine krumme Datei wird EINMAL je Dateistand repariert, nicht je Poll")
+
+    for _f in (pfad,):
+        try:
+            _os.remove(_f)
+        except OSError:
+            pass
+    try:
+        _os.rmdir(verzeichnis)
+    except OSError:
+        pass
+
+
 def _test_v42_w14_motd_spricht_englisch():
     """v4.2-W14: die MOTD war zu 0 % uebersetzt und meldete 100 %."""
     import subprocess as _sp
@@ -6347,6 +6512,8 @@ def main():
     _test_v42_w19_versandweg()
 
     _test_v42_w20_livesignal()
+
+    _test_v42_w21_cookiegesundheit()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)
 

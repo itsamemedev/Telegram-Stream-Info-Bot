@@ -2000,158 +2000,12 @@ def _cookies_selbst_holen(quelle="gast", browser=None, erzwingen=False) -> dict:
 _TIKTOK_CRITICAL_COOKIES = ("sessionid_ss", "sessionid", "sid_tt", "tt_chain_token",
                             "ttwid", "msToken")
 
-# Merkt sich, fuer welchen Dateistand die Reparatur schon versucht wurde.
-# Siehe get_cookie_health(): ohne das laeuft der Versuch bei jedem Poll.
-_COOKIE_REPAIR_STAND: dict = {"mtime": None}
-
-
 def get_cookie_health() -> dict:
-    """Liefert Dashboard-Widget-Daten. Defensive — gibt immer was zurück,
-       auch wenn Datei fehlt."""
-    if not os.path.exists(COOKIE_FILE):
-        return {
-            "exists": False,
-            "status": "missing",
-            "headline": "cookies.txt fehlt",
-            "file_mtime": None, "file_age_days": None,
-            "total": 0, "expiring_soon": [], "expired": [],
-            "critical_present": [], "critical_missing": list(_TIKTOK_CRITICAL_COOKIES),
-            "oldest_expiry_days": None,
-            "duplicate_domain_cookies": [],
-        }
-    try:
-        st = os.stat(COOKIE_FILE)
-        mtime = st.st_mtime
-        age_days = (_time_mod.time() - mtime) / 86400
-    except OSError:
-        mtime = None; age_days = None
-
-    # v4.2-W10: NICHT mehr direkt MozillaCookieJar.load(). Der Parser ist
-    # alles-oder-nichts — ein falsches Domain-Flag, ein Extra-Tab oder eine
-    # Ablaufzeit "Session" reichte, und das Deck meldete "parse_error", obwohl
-    # 40 gueltige Cookies in der Datei standen. lade_jar() liest solche Dateien
-    # normalisiert; ist das noetig, wird die Datei EINMAL wirklich repariert
-    # (mit Backup), damit auch yt-dlp sie wieder frisst.
-    krumm = repariert = False
-    try:
-        cj, normalisiert = _nc_cookies_datei.lade_jar(COOKIE_FILE)
-        all_cookies = list(cj)
-        if normalisiert:
-            krumm = True
-            # Der Versuch haengt an der mtime, nicht am Aufruf: das Deck pollt
-            # diese Funktion im Sekundentakt. Scheitert das Schreiben (Datei
-            # nur lesbar, volle Platte), stuende sonst jede Sekunde ein
-            # log.error im Journal — und der eine echte Grund ginge darin
-            # unter. Aendert sich die Datei, wird es neu versucht.
-            if _COOKIE_REPAIR_STAND.get("mtime") != mtime:
-                _COOKIE_REPAIR_STAND["mtime"] = mtime
-                repariert = _ensure_cookie_file_netscape()
-    except Exception as e:
-        return {
-            "exists": True, "status": "parse_error",
-            "headline": f"cookies.txt unleserlich: {e}",
-            "file_mtime": mtime, "file_age_days": age_days,
-            "total": 0, "expiring_soon": [], "expired": [],
-            "critical_present": [], "critical_missing": list(_TIKTOK_CRITICAL_COOKIES),
-            "oldest_expiry_days": None,
-            "duplicate_domain_cookies": [],
-            "repaired": False,
-        }
-
-    now = _time_mod.time()
-    expiring_soon = []   # < 7 Tage
-    expired = []
-    present_names = set()
-    oldest_expiry_days = None
-    # BUG-FIX: trackt pro Cookie-Name ALLE Domain-Varianten. Wenn ein
-    # kritischer Cookie (sessionid etc.) unter mehreren Domains gleichzeitig
-    # existiert, sendet _load_cookies_dict() nur EINEN davon — der Browser
-    # selbst entscheidet je Subdomain situativ, der Bot aber statisch. Das
-    # ist die Hauptursache für "403 trotz aktuellem Cookie laut Dashboard".
-    name_domains: dict = {}
-
-    for c in all_cookies:
-        present_names.add(c.name)
-        name_domains.setdefault(c.name, set()).add(c.domain or "?")
-        exp = c.expires
-        if not exp or exp <= 0:
-            # session cookie ohne Expiry — überleben den Browser-Close eh nicht,
-            # aber für unsere Zwecke ist das "ewig gültig"
-            continue
-        days_left = (exp - now) / 86400
-        if days_left < 0:
-            expired.append({"name": c.name, "days_ago": round(-days_left, 1)})
-        elif days_left < 7:
-            expiring_soon.append({"name": c.name, "days_left": round(days_left, 1)})
-        # Track oldest (nur kritische zählen — Bot-Cookies wie analytics sind egal)
-        if c.name in _TIKTOK_CRITICAL_COOKIES:
-            if oldest_expiry_days is None or days_left < oldest_expiry_days:
-                oldest_expiry_days = round(days_left, 1)
-
-    critical_present = [n for n in _TIKTOK_CRITICAL_COOKIES if n in present_names]
-    critical_missing = [n for n in _TIKTOK_CRITICAL_COOKIES if n not in present_names]
-    # BUG-FIX: kritische Cookies mit >1 Domain-Variante in der Datei —
-    # potenzielle Quelle für falsch aufgelöste/veraltete Werte beim Senden.
-    duplicate_domain_cookies = sorted(
-        n for n in _TIKTOK_CRITICAL_COOKIES
-        if len(name_domains.get(n, set())) > 1
-    )
-
-    # Status-Bewertung — drei Stufen
-    if not critical_present:
-        status = "critical"
-        headline = "Keine kritischen Auth-Cookies vorhanden"
-    elif "sessionid_ss" not in present_names and "sessionid" not in present_names:
-        status = "critical"
-        headline = "Auth-Cookie sessionid(_ss) fehlt"
-    elif expired:
-        status = "warning"
-        headline = f"{len(expired)} Cookie(s) abgelaufen"
-    elif duplicate_domain_cookies:
-        # BUG-FIX: das ist die neue, sichtbare Warnung für genau das Problem
-        # das du gemeldet hast — "403 trotz aktuellem Cookie".
-        status = "warning"
-        headline = (f"{', '.join(duplicate_domain_cookies)} mehrfach unter "
-                    f"verschiedenen Domains vorhanden — Bot kann den falschen "
-                    f"Wert wählen. cookies.txt bereinigen (alte Einträge löschen, "
-                    f"frisch exportieren).")
-    elif oldest_expiry_days is not None and oldest_expiry_days < 3:
-        status = "warning"
-        headline = f"Kritischer Cookie läuft in {oldest_expiry_days}d ab"
-    elif oldest_expiry_days is not None and oldest_expiry_days < 7:
-        status = "warning"
-        headline = f"Kritischer Cookie läuft in {oldest_expiry_days}d ab"
-    elif age_days and age_days > 30:
-        status = "warning"
-        headline = f"cookies.txt seit {int(age_days)}d nicht aktualisiert"
-    elif krumm:
-        # Sichtbar machen, aber nur wenn sonst nichts ansteht: der Betreiber
-        # soll wissen, dass sein Export kaputt war — sonst exportiert er beim
-        # naechsten Mal wieder genauso, und die Reparatur bleibt Dauerzustand.
-        status = "warning"
-        headline = ("cookies.txt war kein gueltiges Netscape-Format — "
-                    "automatisch repariert (Backup: .bak)" if repariert else
-                    "cookies.txt ist kein gueltiges Netscape-Format und liess "
-                    "sich nicht reparieren — sie wird nur notduerftig gelesen, "
-                    "yt-dlp scheitert daran. Bitte neu exportieren.")
-    else:
-        status = "ok"
-        headline = "Cookies sehen gesund aus"
-
-    return {
-        "exists": True, "status": status, "headline": headline,
-        "file_mtime": mtime, "file_age_days": round(age_days, 1) if age_days else None,
-        "total": len(all_cookies),
-        "expiring_soon": sorted(expiring_soon, key=lambda x: x["days_left"]),
-        "expired": expired,
-        "critical_present": critical_present,
-        "critical_missing": critical_missing,
-        "oldest_expiry_days": oldest_expiry_days,
-        "duplicate_domain_cookies": duplicate_domain_cookies,
-        "repaired": krumm,
-        "autorefresh": _cookie_autorefresh_info(),
-        "autofetch": _cookie_autofetch_info(),
-    }
+    # v4.2-W21: verbatim nach nc/cookies.gesundheit() extrahiert (Code
+    # bitgenau geprueft). Sie liegt dort neben lade_jar(), das die Datei
+    # liest, und _cookie_alarm_level(), das ihr Ergebnis liest — drei Teile
+    # derselben Frage.
+    return _nc_cookies_datei.gesundheit()
 
 
 
@@ -22420,7 +22274,15 @@ _nc_reccmd.configure(
     RECORD_403_YTDLP=RECORD_403_YTDLP,
     STREAM_URL_MIN_TTL=_STREAM_URL_MIN_TTL)
 
-_nc_cookies_datei.configure(datei=COOKIE_FILE, log=log)
+_nc_cookies_datei.configure(
+    datei=COOKIE_FILE, log=log,
+    # v4.2-W21: gesundheit() braucht die kritischen Namen, den Reparaturweg
+    # (fuehrt Schreib-Lock und Backup, bleibt deshalb bot-seitig) und die
+    # beiden Auskuenfte fuers Deck.
+    kritisch=_TIKTOK_CRITICAL_COOKIES,
+    reparieren=_ensure_cookie_file_netscape,
+    autorefresh_info=_cookie_autorefresh_info,
+    autofetch_info=_cookie_autofetch_info)
 # v4.2-W10: der Auto-Bezug nimmt denselben Weg nach draussen wie Resolve
 # und Pull — ueber die Server-IP antwortet TikTok auf denselben Aufruf 403.
 _nc_cookieholen.configure(proxy_waehler=_pull_proxy_still, log=log)
