@@ -4905,6 +4905,132 @@ def _test_v42_w12_kick_rest_aus_dem_monolithen():
        "liest, SEND_LAST meldet immer")
 
 
+def _test_v42_w13_gesundheit_und_modki():
+    """v4.2-W13: was nur rechnet, rechnet jetzt ausserhalb des Monolithen."""
+    import ast as _ast
+
+    import nc.modki as _mk
+    import nc.restreamgesundheit as _rg
+
+    # ── (1) DIE ANZEIGE MUSS MESSEN, NICHT NUR ZEIGEN. Drei Fehler der
+    # Vorgeschichte (W113, W116, v4.1-W10) hatten dieselbe Form: eine Zahl
+    # stand still und galt weiter als Messung. Das ist die gefaehrlichere
+    # Haelfte — ein leeres Feld faellt auf, eine eingefrorene Bitrate nicht.
+
+    # W113: nur ZUWACHS zaehlt. ffmpeg schreibt seine Schnappschuesse auch
+    # dann weiter, wenn der Ausgang blockiert.
+    e = {}
+    assert _rg.marke_setzen(e, {"frame": 5}, {"total_size": 50}, 100.0) is True
+    assert _rg.marke_setzen(e, {"frame": 5}, {"total_size": 50}, 200.0) is False, \
+        "Stillstand gilt als Fortschritt"
+    assert e["watch"]["advanced"] == 100.0
+    # Bytes ALLEIN reichen auch: ein Standbild sendet weiter.
+    assert _rg.marke_setzen(e, {"frame": 5}, {"total_size": 51}, 300.0) is True
+    assert e["watch"]["advanced"] == 300.0
+    # Muell darf die Marke nicht zuruecksetzen — ffmpeg liefert bei
+    # Abbruch teils leere Felder.
+    assert _rg.marke_setzen(e, {"frame": "?"}, {"total_size": None}, 400.0) is False
+    assert e["watch"]["frame"] == 5 and e["watch"]["advanced"] == 300.0
+    assert _rg.marke_setzen(None, {}, {}, 500.0) is False
+
+    # v4.1-W10: blind heisst blind, und zwar EINMAL.
+    info = {}
+    assert _rg.blind_markieren(info, "Leser tot", 42.0) is True
+    assert info["health"]["blind"] is True
+    assert info["health"]["blind_reason"] == "Leser tot"
+    assert info["health"]["blind_ts"] == 42.0
+    assert _rg.blind_markieren(info, "nochmal", 99.0) is False, \
+        "die Blind-Meldung feuert dauernd"
+    assert info["health"]["blind_ts"] == 42.0, "der erste Grund wird ueberschrieben"
+    assert _rg.blind_markieren(None, "x", 1.0) is False
+
+    # W116: tee-Ziel-Fehler verfallen. Ohne Verfall stand eine einmalige
+    # Ablehnung von YouTube bis zum Bot-Neustart im Panel, im Alarm und im
+    # Selbsttest — man jagt dann einem Zustand von vorgestern hinterher.
+    roh = {"youtube": {"ts": 1000.0}, "twitch": {"ts": 1900.0}}
+    frisch, verfallen = _rg.frische_tee_fehler(roh, ttl=600, jetzt=2000.0)
+    assert verfallen is True and set(frisch) == {"twitch"}, frisch
+    # Beide frisch: 1500 - 1000 = 500 < 600.
+    frisch, verfallen = _rg.frische_tee_fehler(roh, ttl=600, jetzt=1500.0)
+    assert verfallen is False and set(frisch) == {"youtube", "twitch"}
+    # ttl <= 0 ist die Notbremse: dann gilt wieder alles, ohne Codeaenderung.
+    frisch, verfallen = _rg.frische_tee_fehler(roh, ttl=0, jetzt=10 ** 9)
+    assert set(frisch) == {"youtube", "twitch"} and verfallen is False
+    assert _rg.frische_tee_fehler(None, ttl=60, jetzt=1.0) == ({}, False)
+
+    # ── (2) DIE ZEIT KOMMT VON AUSSEN. Ohne das liesse sich Verfall nicht
+    # pruefen, ohne im Test zu warten — und ein Verfall, den man nicht pruefen
+    # kann, ist genau der, der jahrelang nicht stattfindet.
+    # Wieder geparst statt gelesen: das Modul-Docstring NENNT time.monotonic(),
+    # um zu erklaeren, dass es sie nicht benutzt. Ein Textvergleich schlaegt
+    # auf genau dieser Erklaerung an — dasselbe Muster wie in W32, W33,
+    # v4.2-W3 und W12.
+    rg_baum = _ast.parse(open("nc/restreamgesundheit.py", encoding="utf-8").read())
+    for knoten in _ast.walk(rg_baum):
+        if (isinstance(knoten, (_ast.FunctionDef, _ast.AsyncFunctionDef,
+                                _ast.ClassDef, _ast.Module))
+                and _ast.get_docstring(knoten)):
+            knoten.body = knoten.body[1:]
+    rg_code = _ast.unparse(rg_baum)
+    assert "time" not in rg_code, \
+        "nc/restreamgesundheit liest die Uhr selbst — dann ist Verfall nicht pruefbar"
+
+    # ── (3) DIE MODELLANTWORT IST DER TEIL, DER SCHIEFGEHT. Ein Sprachmodell
+    # antwortet mal mit ```json, mal nackt, mal mit einem Satz davor. Faengt
+    # das niemand ab, kippt eine Moderation still ins Nichts.
+    assert _mk.lies_klassifikation('{"toxic": 0.9, "question": true}') == \
+        {"toxic": 0.9, "question": True}
+    assert _mk.lies_klassifikation('```json\n{"toxic": 0.5, "question": false}\n```') == \
+        {"toxic": 0.5, "question": False}
+    # UNLESBAR ist NICHT unauffaellig. None und {"toxic": 0.0} sind zwei
+    # verschiedene Aussagen — sonst gilt ein ausgefallenes Modell als
+    # Freispruch.
+    assert _mk.lies_klassifikation("Das ist toxisch, wuerde ich sagen.") is None
+    assert _mk.lies_klassifikation("") is None
+    assert _mk.lies_klassifikation(None) is None
+
+    # Beim Lernen ist die leere Liste richtig: ein unlesbares Ergebnis darf
+    # keine Sperrliste erweitern. Im Zweifel wird NICHT gelernt.
+    assert _mk.lies_schimpfwoerter("kaputt") == []
+    assert _mk.lies_schimpfwoerter('{"nicht": "eine Liste"}') == []
+    assert _mk.lies_schimpfwoerter('[{"word": "  Idiot  ", "lang": "DE"}]') == \
+        [{"word": "Idiot", "lang": "de"}]
+    # Ohne Sprache trotzdem lernen — aber sichtbar ohne.
+    assert _mk.lies_schimpfwoerter('[{"word": "x"}]') == [{"word": "x", "lang": "?"}]
+    # Leere Woerter fliegen raus, Muell in der Liste ebenso.
+    assert _mk.lies_schimpfwoerter('[{"word": "  "}, "text", 5]') == []
+    # Ein Modell, das hundert Woerter liefert, darf die Liste nicht fluten.
+    viele = "[" + ",".join('{"word": "w%d"}' % i for i in range(50)) + "]"
+    assert len(_mk.lies_schimpfwoerter(viele)) == _mk.MAX_WOERTER
+
+    # Die Frage kuerzt den Inhalt: ein Chat-Roman kostet Budget und aendert am
+    # Urteil nichts.
+    n = _mk.frage(_mk.KLASSIFIKATION, "x" * 5000, 500)
+    assert n[0]["role"] == "system" and n[0]["content"] == _mk.KLASSIFIKATION
+    assert len(n[1]["content"]) == 500
+    assert _mk.frage(_mk.SCHIMPFWOERTER, None, 300)[1]["content"] == ""
+
+    # ── (4) DER AUFRUF BLEIBT IM BOT. ai_chat haengt am Router, am Budget und
+    # an der Basen-Rotation — er gehoert nicht nach nc/.
+    quelle_mk = open("nc/modki.py", encoding="utf-8").read()
+    mk_baum = _ast.parse(quelle_mk)
+    for knoten in _ast.walk(mk_baum):
+        if (isinstance(knoten, (_ast.FunctionDef, _ast.AsyncFunctionDef,
+                                _ast.ClassDef, _ast.Module))
+                and _ast.get_docstring(knoten)):
+            knoten.body = knoten.body[1:]
+    assert "ai_chat" not in _ast.unparse(mk_baum), "nc/modki ruft das Modell selbst"
+    b = open("bot.py", encoding="utf-8").read()
+    assert "_nc_modki.frage(" in b and "_nc_modki.lies_klassifikation(" in b, \
+        "der Bot benutzt nc/modki gar nicht"
+    assert "_nc_rgesund.marke_setzen(" in b and "_nc_rgesund.blind_markieren(" in b \
+        and "_nc_rgesund.frische_tee_fehler(" in b, \
+        "der Bot benutzt nc/restreamgesundheit gar nicht"
+
+    ok("v4.2-W13: Sendeanzeige und Mod-KI rechnen ausserhalb des Monolithen "
+       "\u2014 Stillstand ist kein Fortschritt, unlesbar ist kein Freispruch")
+
+
 def main():
     tmp = tempfile.mkdtemp()
     configure_db(db_path=os.path.join(tmp, "t.db"), backend="sqlite")
@@ -5077,6 +5203,8 @@ def main():
     _test_v42_w11_videoteil_aus_dem_monolithen()
 
     _test_v42_w12_kick_rest_aus_dem_monolithen()
+
+    _test_v42_w13_gesundheit_und_modki()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)
 
