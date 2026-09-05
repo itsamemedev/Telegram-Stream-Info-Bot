@@ -196,9 +196,9 @@ flowchart TB
     DC --> BOT
     TT --> BOT
 
-    BOT["bot.py<br/>Monolith · 22.527 Zeilen<br/>Scraper · Recorder · Restream<br/>Flask-Dashboard · 34 eigene Routen"]:::core
+    BOT["bot.py<br/>Monolith · 22.609 Zeilen<br/>Scraper · Recorder · Restream<br/>Flask-Dashboard · 34 eigene Routen"]:::core
 
-    BOT -->|configure| NC["nc/ — 131 Fachmodule<br/>Schema · OAuth · Restream<br/>Ledger · Moderation · Intel"]:::lib
+    BOT -->|configure| NC["nc/ — 132 Fachmodule<br/>Schema · OAuth · Restream<br/>Ledger · Moderation · Intel"]:::lib
     NC --> RT["nc/routes/ — 36 Blueprints<br/>327 weitere API-Routen"]:::lib
     BOT --> TPL["templates/<br/>Dashboard · Overlay · PWA"]:::lib
     BOT --> BR["brain_bridge.py"]:::lib
@@ -298,7 +298,7 @@ OAuth-Flows — Schritt für Schritt in
 
 ## ⚙️ Konfiguration
 
-Alle Einstellungen leben in `.env`. Die Vorlage `.env.example` kennt **rund 503 Variablen** — das Minimum ist klein:
+Alle Einstellungen leben in `.env`. Die Vorlage `.env.example` kennt **rund 508 Variablen** — das Minimum ist klein:
 
 ### 🔑 Pflicht
 
@@ -717,7 +717,7 @@ gebrochen ist.**
 
 ### 🧭 Navigation im Monolithen
 
-`bot.py` hat 22.527 Zeilen. Es wird **nie** ganz gelesen und **nie**
+`bot.py` hat 22.609 Zeilen. Es wird **nie** ganz gelesen und **nie**
 blind durchsucht — erst fragen wo etwas steht, dann den Ausschnitt holen:
 
 ```bash
@@ -732,7 +732,7 @@ python3 tools/ncpatch.py docs                          # Doku-Zahlen gegen den C
 ```
 
 `find` antwortet aus **[`.claude/INDEX.md`](.claude/INDEX.md)** — 361 Routen
-(34 in `bot.py`, 327 in `nc/routes/`), 45 Slash-Commands, 473 Funktionen,
+(34 in `bot.py`, 327 in `nc/routes/`), 45 Slash-Commands, 474 Funktionen,
 jeweils mit Zeilennummer.
 
 ---
@@ -741,7 +741,7 @@ jeweils mit Zeilennummer.
 
 | Regel | Warum |
 |---|---|
-| **`.env` liegt nie im Repo und nie im Archiv** | ~503 Variablen inkl. Cookies, OAuth-Tokens und Stream-Keys |
+| **`.env` liegt nie im Repo und nie im Archiv** | ~508 Variablen inkl. Cookies, OAuth-Tokens und Stream-Keys |
 | **Dashboard bindet auf `127.0.0.1`** | Zugriff läuft über SSH-Tunnel, nicht über einen offenen Port |
 | **Cookie- und Key-Redaction beim Logging** | `streamlink`/`ffmpeg`-Kommandozeilen werden vor dem Loggen bereinigt |
 | **Ledger ist append-only mit Hash-Kette** | Eine Korrektur ist eine Gegenbuchung, kein Überschreiben |
@@ -846,9 +846,9 @@ nicht greifen, gekippte Verträge in `test_restream.py`.
 | Aktuelle Version | **4.2** — „Zerlegter Kern" (2026.09) |
 | Flask-Routen | 361 (34 in `bot.py` · 327 in `nc/routes/`) |
 | Discord-Slash-Commands | 45 |
-| Fachmodule | 131 in `nc/` (+36 in `nc/routes/`, +3 in `nc/intel/`), 10 in `brain/` |
+| Fachmodule | 132 in `nc/` (+36 in `nc/routes/`, +3 in `nc/intel/`), 10 in `brain/` |
 | Sentinel-Agenten | 13 |
-| Konfigurationsvariablen | ~503 |
+| Konfigurationsvariablen | ~508 |
 | Sprachen | Deutsch (Quelle), Englisch |
 
 Vollständige Historie: **[`docs/CHANGELOG.md`](docs/CHANGELOG.md)** ·
@@ -859,7 +859,7 @@ Vollständige Historie: **[`docs/CHANGELOG.md`](docs/CHANGELOG.md)** ·
 ## 🧭 Roadmap
 
 Der nächste grosse Schritt ist kein Feature, sondern Aufräumen: **`bot.py` hat
-22.527 Zeilen**. Die Datei ist der Engpass des Projekts. Die Messlatte dafür ist
+22.609 Zeilen**. Die Datei ist der Engpass des Projekts. Die Messlatte dafür ist
 aber keine Zeilenzahl:
 
 > **Eine neue API-Route anlegen, ohne `bot.py` zu öffnen.**

@@ -598,6 +598,7 @@ from nc import restreamcmd as _nc_rscmd  # v4.2-W16: die ffmpeg-Zeile des Relays
 from nc import reccmd as _nc_reccmd  # v4.2-W17: die Kommandozeilen des Recorders
 from nc import aufnahmefolge as _nc_folge  # v4.2-W18: die Eskalationsrechnung
 from nc import aufnahmekategorie as _nc_kat  # v4.2-W23: warum eine Aufnahme so endete
+from nc import memeklip as _nc_memeklip  # v4.2-W24: erkennt meme-wuerdige Chat-Momente
 from nc import livefolge as _nc_live  # v4.2-W20: was aus einem Live-Signal folgt
 from nc import azraelstate as _nc_azrael  # v4.1-W19: AZRAELs Laufzeitzustand (geteilt)
 from nc import whispercfg as _nc_whisper  # v4.1-W19: Whisper-Modell als Register
@@ -14335,6 +14336,20 @@ class KickModerator:
 
     async def _handle(self, sender, content, user_id, session, roles=None):
         self.stats["seen"] += 1
+        if MEME_CLIP_ENABLED:
+            try:
+                _jetzt = _time_mod.monotonic()
+                _KICK_MEME_FENSTER.merken("kick", f"{sender}: {content}", _jetzt)
+                _urteil, _ = await _meme_klassifizieren(
+                    _KICK_MEME_FENSTER, _jetzt, _KICK_MEME_LETZTE_FRAGE)
+                if _urteil is not None and _nc_memeklip.soll_clippen(_urteil, MEME_CLIP_SCHWELLE):
+                    _src = _restream_active().get("user")
+                    if _src:
+                        _KICK_MEME_FENSTER.leeren()
+                        _spawn(clip_moment(_src, "Meme erkannt (Kick)", _urteil["grund"]),
+                              name="clip-meme-kick")
+            except Exception as e:
+                log.debug("meme-klip kick: %s", e)
         # v4.0-W16: das EIGENE Team nicht automoderieren. Vorher wurden Kicks
         # Badges gar nicht ausgewertet — ein Moderator (oder der Broadcaster)
         # mit Link/GROSSSCHRIFT kassierte einen Timeout vom eigenen Bot.
@@ -15141,6 +15156,12 @@ async def _oracle_memorize(username):
 # ═══ F87: AUTO-DIRECTOR — Momente markieren, ankündigen, betiteln ═══
 _KICK_MSG_TIMES = []        # monotonic-Timestamps der Kick-Chat-Messages (Hype-Signal)
 _KICK_VELO_LAST = 0.0
+# v4.2-W24: eigenes Fenster/Cooldown fuer die KI-Meme-Erkennung — bewusst
+# UNABHAENGIG von auto_reply/auto_moderate weiter unten in _handle(), damit
+# MEME_CLIP_ENABLED allein reicht und ein Betreiber ohne AI-Moderation nicht
+# stillschweigend leer auslaeuft.
+_KICK_MEME_FENSTER = _nc_memeklip.Fenster()
+_KICK_MEME_LETZTE_FRAGE = [0.0]
 _DIRECTOR_ANN_LAST = 0.0
 
 
@@ -15663,6 +15684,11 @@ async def _start_chat_listener(username, chat_buf, flags=None):
         if len(chat_buf) > 60:
             del chat_buf[:len(chat_buf) - 60]
     _msg_times = []          # Zeitstempel für Chat-Velocity (Auto-Clipper)
+    # v4.2-W24: KI-Meme-Erkennung NEBEN der reinen Velocity-Heuristik oben —
+    # eigenes Fenster, eigener Frage-Cooldown, pro Tracking (ein Fund bei
+    # @henry loest keinen Clip bei @sarah aus).
+    _meme_fenster = _nc_memeklip.Fenster()
+    _meme_letzte_frage = [0.0]
 
     async def on_comment(ev):
         try:
@@ -15677,6 +15703,17 @@ async def _start_chat_listener(username, chat_buf, flags=None):
                     del _msg_times[:100]
                 if _clip_should_velocity(_msg_times):
                     _spawn(clip_moment(username, "Chat-Hype", "CHAT GEHT AB"), name="clip-velocity")
+                elif MEME_CLIP_ENABLED:
+                    _jetzt = _time_mod.monotonic()
+                    _meme_fenster.merken("tiktok", f"{who}: {txt}", _jetzt)
+                    _urteil, _gefragt = await _meme_klassifizieren(
+                        _meme_fenster, _jetzt, _meme_letzte_frage)
+                    if _gefragt:
+                        log.debug("meme-klip @%s: urteil=%r", username, _urteil)
+                    if _nc_memeklip.soll_clippen(_urteil, MEME_CLIP_SCHWELLE):
+                        _meme_fenster.leeren()
+                        _spawn(clip_moment(username, "Meme erkannt", _urteil["grund"]),
+                              name="clip-meme")
         except Exception:
             pass
 
@@ -18803,6 +18840,51 @@ CLIP_MAX_COUNT     = _env_int("CLIP_MAX_COUNT", 50)      # max. Clips behalten (
 CLIP_MAX_AGE_DAYS  = _env_int("CLIP_MAX_AGE_DAYS", 0)    # Clips älter als X Tage automatisch löschen (0 = aus)
 _CLIP_LAST = {}            # username -> monotonic (Cooldown)
 _CLIP_LOCK = threading.Lock()
+
+
+# v4.2-W24: KI-Meme-Erkennung — quellenuebergreifende Ergaenzung zur reinen
+# Chat-Velocity oben. AUS per Default: ein Fehlalarm postet automatisch nach
+# Discord (CLIP_DISCORD_UPLOAD), das soll der Betreiber bewusst anschalten.
+MEME_CLIP_ENABLED    = os.getenv("MEME_CLIP_ENABLED", "0").strip().lower() in ("1", "true", "yes", "on")
+MEME_CLIP_SCHWELLE   = _nc_envnum.env_float("MEME_CLIP_SCHWELLE", 0.72)
+# 0.72 ist nc.memeklip.STANDARD_SCHWELLE als Literal, wie es der env-Scanner
+# in tools/gen_env_example.py braucht (der Default muss dort woertlich als
+# Zahl stehen, sonst verschwindet die Variable klanglos aus .env.example).
+MEME_CLIP_ASK_S      = _env_int("MEME_CLIP_ASK_S", 20)     # Mindestabstand zwischen KI-Anfragen
+MEME_CLIP_FENSTER_S  = _env_int("MEME_CLIP_FENSTER_S", 90)  # wie weit zurueck das Chat-Fenster reicht
+MEME_CLIP_MAX_MIN    = _env_int("MEME_CLIP_MAX_MIN", 6)    # eigenes KI-Budget/Minute (getrennt von AZRAEL)
+_MEME_CALL_TS = _collections.deque()   # geteilter Budget-Deckel ueber alle Quellen
+
+
+async def _meme_klassifizieren(fenster, jetzt, letzte_frage):
+    """Fragt (hoechstens alle MEME_CLIP_ASK_S) die freie KI-Rotation, ob das
+    Chat-Fenster GERADE meme-wuerdig ist. Rueckgabe (urteil|None, gefragt:bool)
+    — gefragt=False heisst: Cooldown/Budget/leeres Fenster, kein API-Call.
+
+    LAEUFT NIE UEBER ai_chat/azrael_chat: beide bevorzugen Claude, sobald ein
+    Anthropic-Key gesetzt ist (v4.0-W65) — ein Poll alle paar Sekunden wuerde
+    laufend Claude-Budget verbrennen. nc.freeai.chat() ist der einzige Pfad
+    hier: keylose Basen-Rotation, nie Claude.
+    """
+    if jetzt - letzte_frage[0] < MEME_CLIP_ASK_S:
+        return None, False
+    text = fenster.text(jetzt, MEME_CLIP_FENSTER_S)
+    if not text.strip():
+        return None, False
+    while _MEME_CALL_TS and jetzt - _MEME_CALL_TS[0] > 60:
+        _MEME_CALL_TS.popleft()
+    if len(_MEME_CALL_TS) >= max(1, MEME_CLIP_MAX_MIN):
+        return None, False
+    letzte_frage[0] = jetzt
+    _MEME_CALL_TS.append(jetzt)
+    try:
+        antwort, err = await _nc_freeai.chat(_nc_memeklip.frage(text), timeout=15)
+    except Exception as e:
+        log.debug("meme-klip: freeai-Aufruf fehlgeschlagen: %s", e)
+        return None, True
+    if err or not antwort:
+        return None, True
+    return _nc_memeklip.lies_urteil(antwort), True
 
 
 def _clip_prune():
