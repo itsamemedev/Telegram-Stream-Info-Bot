@@ -11,6 +11,20 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Geändert — die volle Auto-Clip-Kette ist jetzt per Default AN (v4.2 W26)
+
+Nach W25 (`MEME_CLIP_ENABLED=1`) fehlten noch zwei Schalter, ohne die die
+Erkennung leer lief: `CLIP_ENABLED` und `CLIP_DISCORD_UPLOAD` stehen jetzt
+ebenfalls auf `1` — auf ausdrücklichen Wunsch des Betreibers. Erkennung →
+Clip → Discord-Post läuft damit ab dieser Version **vollständig ohne
+manuelles Zuschalten**.
+
+`CLIP_ENABLED` schaltet dabei mehr als nur die Meme-Erkennung ein — auch die
+schon lange bestehenden Gift- und Chat-Velocity-Trigger laufen jetzt per
+Default mit. Das ist beabsichtigt: alle drei Auslöser hängen an derselben
+`clip_moment()`, ein separates Fein-Gate nur für den KI-Pfad gibt es nicht
+und wurde auch nicht verlangt.
+
 ### Geändert — die Meme-Erkennung ist jetzt per Default AN (v4.2 W25)
 
 `MEME_CLIP_ENABLED` steht jetzt auf `1` statt `0` — der Betreiber hat das

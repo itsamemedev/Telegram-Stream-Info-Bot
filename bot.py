@@ -18096,7 +18096,7 @@ DISCORD_LOG_CHANNEL_ID = _env_int("DISCORD_LOG_CHANNEL_ID", 0)   # optional: Cha
 DISCORD_LEVELING       = os.getenv("DISCORD_LEVELING", "1").strip().lower() in ("1","true","yes","on","y")  # XP/Level-Ranking an/aus
 DISCORD_LEVELUP_CHANNEL= os.getenv("DISCORD_LEVELUP_CHANNEL", "").strip()   # optional: Channel-Name für Level-Up-Ansagen (sonst im selben Channel)
 DISCORD_TARGET_CAP     = _env_int("DISCORD_TARGET_CAP", 25)        # max. getrackte User für /setup_targets (schützt Discord-Channel-Limit)
-CLIP_DISCORD_UPLOAD    = os.getenv("CLIP_DISCORD_UPLOAD", "0").strip().lower() in ("1","true","yes","on","y")  # Highlight-Clips in den User-Clips-Channel posten
+CLIP_DISCORD_UPLOAD    = os.getenv("CLIP_DISCORD_UPLOAD", "1").strip().lower() in ("1","true","yes","on","y")  # Highlight-Clips in den User-Clips-Channel posten
 # V37-B90: Default 25→10. Discord hat das Free-Limit 2023 von 25 auf 10 MB
 # gesenkt — Dateien zwischen 10 und 25 MB passierten unseren lokalen Check
 # und Discord antwortete 413 (genau das beobachtete "Uploads bis 25 MB gehen
@@ -18822,12 +18822,15 @@ async def _discord_stop():
         pass
 
 
-# ===================== AUTO-CLIPPER (optional, env-gated) =====================
-# Erkennt Highlight-Momente (große Gifts, Chat-Velocity) während eines Lives und
-# schneidet automatisch einen vertikalen 9:16-Clip mit Caption aus der LAUFENDEN
-# Aufnahme — kein zweiter Stream-Pull (nutzt die vorhandene Recording-Datei).
+# ===================== AUTO-CLIPPER (env-gated) =====================
+# Erkennt Highlight-Momente (große Gifts, Chat-Velocity, seit W24/W25 auch
+# KI-Meme-Erkennung) während eines Lives und schneidet automatisch einen
+# vertikalen 9:16-Clip mit Caption aus der LAUFENDEN Aufnahme — kein zweiter
+# Stream-Pull (nutzt die vorhandene Recording-Datei). AN per Default
+# (v4.2-W26): der Betreiber will die volle Kette — Erkennung, Clip, Auto-Post
+# nach Discord — ohne manuelles Zuschalten dreier Schalter.
 # Komplett aus wenn CLIP_ENABLED=0. Gedacht als Reichweiten-Motor (TikTok/Shorts).
-CLIP_ENABLED       = os.getenv("CLIP_ENABLED", "0").strip().lower() in ("1", "true", "yes", "on")
+CLIP_ENABLED       = os.getenv("CLIP_ENABLED", "1").strip().lower() in ("1", "true", "yes", "on")
 CLIP_PRE_SECS      = _env_int("CLIP_PRE_SECS", 12)        # Sekunden VOR dem Moment
 CLIP_POST_SECS     = _env_int("CLIP_POST_SECS", 6)        # Sekunden NACH dem Moment
 CLIP_GIFT_MIN      = _env_int("CLIP_GIFT_MIN", 50)        # Gift-Wert (Diamanten) der einen Clip auslöst
@@ -18842,15 +18845,13 @@ _CLIP_LAST = {}            # username -> monotonic (Cooldown)
 _CLIP_LOCK = threading.Lock()
 
 
-# v4.2-W24/W25: KI-Meme-Erkennung — quellenuebergreifende Ergaenzung zur
-# reinen Chat-Velocity oben. AN per Default (v4.2-W25): der Klassifikator
-# selbst laeuft nur ueber die kostenlose Basen-Rotation (nie Claude, siehe
-# _meme_klassifizieren) und schluckt jeden Fehler. Ein positiver Fund postet
-# aber automatisch nach Discord, WENN zusaetzlich CLIP_DISCORD_UPLOAD=1
-# gesetzt ist — und der ganze Clip-Pfad greift ueberhaupt nur bei
-# CLIP_ENABLED=1 (Default weiterhin AUS, siehe unten). MEME_CLIP_ENABLED
-# allein macht also noch keinen sichtbaren Clip; es startet nur das
-# Beobachten.
+# v4.2-W24/W25/W26: KI-Meme-Erkennung — quellenuebergreifende Ergaenzung zur
+# reinen Chat-Velocity oben. AN per Default: der Klassifikator laeuft nur
+# ueber die kostenlose Basen-Rotation (nie Claude, siehe _meme_klassifizieren)
+# und schluckt jeden Fehler. Seit W26 ist auch CLIP_ENABLED und
+# CLIP_DISCORD_UPLOAD per Default an (siehe AUTO-CLIPPER-Block unten) — die
+# volle Kette Erkennung -> Clip -> Discord-Post laeuft also ohne manuelles
+# Zuschalten dreier Schalter.
 MEME_CLIP_ENABLED    = os.getenv("MEME_CLIP_ENABLED", "1").strip().lower() in ("1", "true", "yes", "on")
 MEME_CLIP_SCHWELLE   = _nc_envnum.env_float("MEME_CLIP_SCHWELLE", 0.72)
 # 0.72 ist nc.memeklip.STANDARD_SCHWELLE als Literal, wie es der env-Scanner
