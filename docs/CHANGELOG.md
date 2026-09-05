@@ -11,6 +11,45 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Geändert — die Fehlerkategorisierung der Aufnahme steht jetzt in `nc/aufnahmekategorie.py` (v4.2 W23)
+
+Ein 87-Zeilen-`if`/`elif` über `stderr`, Returncode, Dateigröße und Dauer
+entscheidet, in welche von zehn Kategorien eine beendete Aufnahme fällt —
+die Grundlage jeder Fehlerstatistik im Dashboard. Es stand mitten in
+`handle_recording_finished` (658 Zeilen) und war nie einzeln aufrufbar.
+`bot.py` fällt auf **22.527 Zeilen**.
+
+**Der eigentliche Vertrag ist die Reihenfolge, nicht die einzelnen Muster.**
+Mehrere Kategorien konkurrieren um dieselbe `stderr`-Zeile:
+
+* `hevc_unsupported` steht ZUERST — sonst geht ein HEVC-Stream mal als
+  `stall_killed`, mal als früher Fehlschlag durch.
+* `stream_dead` (HTTP 404, die Quell-URL ist abgelaufen) steht VOR
+  `codec_header_fail`: das nachgelagerte „could not write header" ist nur
+  eine *Folge* des toten Streams, kein Codec-Problem. Vertauscht, zählte ein
+  toter Stream als Codec-Fehler, und der Backoff, der genau für tote Streams
+  existiert (`nc/aufnahmefolge`, W18), griffe nie.
+* `codec_header_fail` gilt nur *innerhalb* von `stall_killed` — dieselbe
+  Signatur ohne Stall bleibt unspezifisch.
+* `early_disconnect` ist keine eigene Zeile, sondern eine nachträgliche
+  Umwidmung: nur ein generisches `"fail"` unter 30s mit Fehler-Returncode
+  wird umgeschrieben — jede spezifischere Kategorie sagt bereits mehr als
+  „gekickt" und bleibt stehen.
+
+Sieben Zusicherungen an der Reihenfolge, dazu ein **erschöpfender
+Verhaltensvergleich**: eine wörtliche Kopie der alten Kette (Stand vor
+dieser Welle) gegen die neue Funktion über 756 Kombinationen aus 21
+`stderr`-Fragmenten × Stall-Flag × Returncode × Datei-Existenz × Dauer —
+alle 756 identisch. Das ist der eigentliche Beweis, dass das Verschieben
+nichts verschoben hat: die Prioritäten *und* die Übergänge zwischen ihnen.
+
+Sechs Mutationen geprüft, alle sechs schlagen an.
+
+`bot.py` behält das Loggen (braucht `username`/`RECORD_PROXY`, die die reine
+Funktion nicht kennt) und die Eskalation (`nc/aufnahmefolge`, hängt an
+geteiltem Zustand) — beides jetzt dispatcht auf die zurückgegebene Kategorie
+statt in dieselbe Kette verschachtelt zu sein.
+
 ### Geändert — die kleinen Bausteine der Sendebild-Texte stehen jetzt in `nc/overlaytext.py` (v4.2 W22)
 
 Fünf Helfer, quer durch die Restream-Overlay-Logik an über 30 Stellen benutzt
