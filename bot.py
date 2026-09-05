@@ -596,6 +596,7 @@ from nc import restreamstate as _nc_rsstate  # v4.1-W22: Restream-Laufzeitzustan
 from nc import restreamcmd as _nc_rscmd  # v4.2-W16: die ffmpeg-Zeile des Relays
 from nc import reccmd as _nc_reccmd  # v4.2-W17: die Kommandozeilen des Recorders
 from nc import aufnahmefolge as _nc_folge  # v4.2-W18: die Eskalationsrechnung
+from nc import livefolge as _nc_live  # v4.2-W20: was aus einem Live-Signal folgt
 from nc import azraelstate as _nc_azrael  # v4.1-W19: AZRAELs Laufzeitzustand (geteilt)
 from nc import whispercfg as _nc_whisper  # v4.1-W19: Whisper-Modell als Register
 from nc import eventquery as _nc_eventquery  # v4.0-W51: Event-Log-Query-Bauer (rein)
@@ -2569,16 +2570,10 @@ def _schedule_next_check(tracking_id: int, last_status: str, was_live_before: bo
     """F35: Setzt next_check_at adaptiv basierend auf dem letzten Ergebnis.
        X3: Priority-aware — VIP/high-Trackings bekommen kürzere Intervalle
        (via get_priority_poll_interval) clamped gegen den adaptiven Default."""
-    if last_status == "live":
-        delay = ADAPTIVE_INTERVALS["live"]
-    elif last_status == "offline":
-        # Übergang live → offline: kurz danach noch genauer schauen
-        if was_live_before:
-            delay = ADAPTIVE_INTERVALS["just_went_offline"]
-        else:
-            delay = ADAPTIVE_INTERVALS["offline"]
-    else:  # unknown
-        delay = ADAPTIVE_INTERVALS["unknown"]
+    # v4.2-W20: der Grundabstand kommt aus nc/livefolge.py. Was danach folgt,
+    # darf ihn nur VERKUERZEN (X3, M5) — ein Hinweis, der verlaengern darf,
+    # kann ein Tracking still einschlafen lassen.
+    delay = _nc_live.poll_abstand(last_status, was_live_before, ADAPTIVE_INTERVALS)
     # X3: Priority kann das Intervall nur VERKÜRZEN (min), nie verlängern.
     try:
         delay = get_priority_poll_interval(tracking_id, int(delay))
@@ -5861,14 +5856,10 @@ def _is_quiet_hours(now: Optional[datetime] = None) -> bool:
     """F63: True wenn die aktuelle LOKALE Uhrzeit in der quiet-window liegt.
        Window wraps over midnight wenn END < START (z.B. 22-7 = von 22:00
        bis 07:00 next day). Falls START==END: deaktiviert."""
-    if QUIET_HOURS_START == QUIET_HOURS_END:
-        return False
-    h = (now or datetime.now()).hour
-    if QUIET_HOURS_START < QUIET_HOURS_END:
-        # z.B. 9-17 → quiet von 9 bis 17 (Geschäftszeiten Suppression)
-        return QUIET_HOURS_START <= h < QUIET_HOURS_END
-    # z.B. 22-7 → quiet von 22-23 ODER 0-6 (wraps midnight)
-    return h >= QUIET_HOURS_START or h < QUIET_HOURS_END
+    # v4.2-W20: die Fensterrechnung inkl. Mitternachts-Umbruch steht in
+    # nc/livefolge.py. Hier bleibt nur, welche Uhr gemeint ist: die LOKALE.
+    return _nc_live.ruhezeit((now or datetime.now()).hour,
+                             QUIET_HOURS_START, QUIET_HOURS_END)
 
 
 def _build_daily_summary() -> str:
@@ -7371,33 +7362,26 @@ async def _handle_single_tracking(t, bot_app):
     # zwischendurch wird der Counter zurückgesetzt (alles wieder gut).
     if is_live:
         # Reset on ANY observed-live — egal ob F35 verify oder primary check
-        if _PENDING_OFFLINE_COUNT.pop(tid, None) or _PENDING_OFFLINE_SINCE.pop(tid, None):
+        if _nc_live.live_gesehen(_PENDING_OFFLINE_COUNT, _PENDING_OFFLINE_SINCE, tid):
             log.info(f"@{username} | offline-debounce/pause-grace cleared (saw live again)")
     elif old_last_live and is_live is False:
-        # Confirmed offline (post-F35-verify). Counter + Startzeit der Offline-Phase.
-        pending = _PENDING_OFFLINE_COUNT.get(tid, 0) + 1
-        _PENDING_OFFLINE_COUNT[tid] = pending
-        now_m = _time_mod.monotonic()
-        since = _PENDING_OFFLINE_SINCE.get(tid)
-        if since is None:
-            since = now_m
-            _PENDING_OFFLINE_SINCE[tid] = since
-        offline_for = now_m - since
-        # Pause-Grace: OFFLINE-Transition erst wenn BEIDE Schwellen erreicht sind —
-        # genug Ticks (Debounce) UND lange genug offline (Grace). Solange eine
-        # fehlt, behandeln wir es als PAUSE: kein Notif, kein State-Change,
-        # last_live bleibt 1 → Aufnahme resumed später ohne neue LIVE-Notif.
-        if pending < OFFLINE_DEBOUNCE_COUNT or offline_for < RECORD_PAUSE_GRACE_SECS:
-            log.info(f"@{username} | pause-grace: offline {offline_for:.0f}s/"
-                     f"{RECORD_PAUSE_GRACE_SECS}s, debounce {pending}/{OFFLINE_DEBOUNCE_COUNT} "
+        # v4.2-W20: die beiden Schwellen rechnet nc/livefolge.py — mit der
+        # MONOTONEN Uhr, weil die Pause-Grace eine DAUER misst. Mit der
+        # Wanduhr haette ein NTP-Sprung mitten im Stream entweder sofort
+        # "offline" gemeldet oder eine Stunde lang gar nicht.
+        _lf = _nc_live.offline_bestaetigt(
+            _PENDING_OFFLINE_COUNT, _PENDING_OFFLINE_SINCE, tid,
+            _time_mod.monotonic(),
+            debounce=OFFLINE_DEBOUNCE_COUNT, grace_s=RECORD_PAUSE_GRACE_SECS)
+        if not _lf["bestaetigt"]:
+            log.info(f"@{username} | pause-grace: offline {_lf['offline_for']:.0f}s/"
+                     f"{RECORD_PAUSE_GRACE_SECS}s, debounce {_lf['pending']}/{OFFLINE_DEBOUNCE_COUNT} "
                      f"— als Pause behandelt, keine OFFLINE-Notif")
             # KEINE State-Change, KEIN OFFLINE-Notif, KEIN Recording-Spawn.
             return
         # Beide Schwellen erreicht → echte Transition unten gleich claimen
-        log.info(f"@{username} | offline bestätigt ({pending}/{OFFLINE_DEBOUNCE_COUNT}, "
-                 f"{offline_for:.0f}s) — OFFLINE-Transition kommt jetzt")
-        _PENDING_OFFLINE_COUNT.pop(tid, None)
-        _PENDING_OFFLINE_SINCE.pop(tid, None)
+        log.info(f"@{username} | offline bestätigt ({_lf['pending']}/{OFFLINE_DEBOUNCE_COUNT}, "
+                 f"{_lf['offline_for']:.0f}s) — OFFLINE-Transition kommt jetzt")
 
     # F27: Atomare Transition-Claims.
     if is_live and not old_last_live:
