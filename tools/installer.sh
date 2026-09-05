@@ -460,7 +460,14 @@ else
 fi
 for prog in ffmpeg streamlink yt-dlp; do
   if have "$prog"; then gut "$prog: $(command -v "$prog")"
-  else warn "$prog fehlt — $( [ "$prog" = ffmpeg ] && printf 'ohne ihn laeuft KEINE Aufnahme und kein Restream' || printf 'wird spaeter im venv ergaenzt')."; fi
+  else
+    # v4.2-W14: die Begruendung EINZELN uebersetzen. Vorher stand sie in einem
+    # printf innerhalb der Ersetzung — der aeussere Text laeuft durch t(),
+    # traegt aber einen Laufzeitwert und trifft deshalb nie einen Schluessel.
+    if [ "$prog" = ffmpeg ]; then _grund="$(t 'ohne ihn laeuft KEINE Aufnahme und kein Restream')"
+    else _grund="$(t 'wird spaeter im venv ergaenzt')"; fi
+    warn "$prog $(t 'fehlt') — ${_grund}."
+  fi
 done
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -521,7 +528,9 @@ NC_AUS="$OPT_AUS" awk '
   BEGIN{ n=split(tolower(ENVIRON["NC_AUS"]), a, /[[:space:]]+/)
          for(i=1;i<=n;i++){ k=a[i]; gsub(/_/,"-",k); if(k!="") aus[k]=1 } }
 ' requirements.txt > "$REQ_TMP"
-info "$(wc -l < "$REQ_TMP" | tr -d ' ') Pakete werden installiert$( [ -n "$OPT_AUS" ] && printf ', ausgelassen:%s' "$OPT_AUS" )"
+_ausgelassen=""
+[ -n "$OPT_AUS" ] && _ausgelassen=", $(t 'ausgelassen:')$OPT_AUS"
+info "$(wc -l < "$REQ_TMP" | tr -d ' ') $(t 'Pakete werden installiert')${_ausgelassen}"
 
 "$VPY" -m pip install --upgrade pip wheel >/dev/null 2>&1 || warn "pip liess sich nicht aktualisieren — weiter mit der vorhandenen Fassung."
 info "pip install laeuft — das dauert je nach Verbindung 1 bis 15 Minuten."

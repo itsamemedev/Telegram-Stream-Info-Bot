@@ -5031,6 +5031,104 @@ def _test_v42_w13_gesundheit_und_modki():
        "\u2014 Stillstand ist kein Fortschritt, unlesbar ist kein Freispruch")
 
 
+def _test_v42_w14_motd_spricht_englisch():
+    """v4.2-W14: die MOTD war zu 0 % uebersetzt und meldete 100 %."""
+    import subprocess as _sp
+    import sys as _sys
+
+    _sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                     "tools"))
+    import i18n_tools as _it
+
+    # ── (1) DIE UNEHRLICHE ZAHL. tools/i18n_tools.py sammelte nur aus den
+    # Senken von installer.sh — die es in motd.sh gar nicht gibt. Ergebnis:
+    # NICHTS eingesammelt, und trotzdem "100 % Abdeckung" gemeldet, waehrend
+    # die Datei zu 0 % uebersetzt war. Eine Zahl, die nur zaehlt, was sie
+    # ohnehin kennt, verdeckt genau das, was sie sichtbar machen soll.
+    gefunden = _it.sammeln()
+    aus_motd = _it._MOTD_SENKEN.findall(
+        open("tools/motd.sh", encoding="utf-8").read())
+    assert len(aus_motd) > 20, \
+        "nur %d Zeichenketten aus den motd-Senken — der Sammler sieht sie nicht" \
+        % len(aus_motd)
+    assert len(gefunden) > 360, "nur %d insgesamt" % len(gefunden)
+
+    # ── (2) DER EHRLICHE MELDER. Er ist die zweite Haelfte: die Quote sagt,
+    # wie viel von dem uebersetzt ist, was der Sammler FINDET. Der Melder
+    # sagt, was er gar nicht erst findet.
+    for datei in ("tools/motd.sh", "tools/installer.sh", "tools/install.bat"):
+        offen = _it.unumschlossen(datei)
+        assert not offen, "%s: deutsche Ausgabe an keiner Senke: %r" % (
+            datei, offen[:4])
+
+    # Und er muss wirklich anschlagen — sonst prueft er nichts. Zwei Formen,
+    # die beide einmal durchgerutscht sind: die nackte printf-Zeile und die
+    # ZUWEISUNG mit Farbcode (`EQ="  ${FNT}Kerne  ${R}"` hat kein printf, und
+    # der englische Lauf zeigte prompt "Kerne").
+    probe = tempfile.mkdtemp()
+    _alt_root = _it.ROOT
+    try:
+        _it.ROOT = probe
+        with open(os.path.join(probe, "x.sh"), "w", encoding="utf-8") as f:
+            f.write('printf "  Dienst nicht gefunden\\n"\n')
+        assert _it.unumschlossen("x.sh"), "die nackte printf-Zeile faellt durch"
+        with open(os.path.join(probe, "x.sh"), "w", encoding="utf-8") as f:
+            f.write('EQ="  ${FNT}Kerne  ${R}"\n')
+        assert _it.unumschlossen("x.sh"), \
+            "die Zuweisung mit Farbcode faellt durch"
+        # Umschlossenes darf NICHT gemeldet werden: ein Melder mit Fehlalarm
+        # wird nicht gelesen, und dann faellt der echte Befund mit durch.
+        with open(os.path.join(probe, "x.sh"), "w", encoding="utf-8") as f:
+            f.write('printf "  %s\\n" "$(t "Dienst nicht gefunden")"\n')
+        assert not _it.unumschlossen("x.sh"), "Fehlalarm auf umschlossenem Text"
+    finally:
+        _it.ROOT = _alt_root
+
+    # ── (2b) DIE DREI SENKEN LAUFEN DURCH t(). Hier hilft der Verhaltenstest
+    # unten NICHT: gauge traegt CPU, RAM, Swap und Disk — die lauten in beiden
+    # Sprachen gleich. Faellt gauge aus der Uebersetzung, sieht man es an der
+    # Ausgabe nicht, und beim naechsten Label waere es zu spaet. Deshalb hier
+    # ausnahmsweise am Wortlaut, mit genau dieser Begruendung.
+    motd = open("tools/motd.sh", encoding="utf-8").read()
+    for senke in ('sect(){ printf "  ${DIM}${B}%s${R}\\n" "$(t "$1")"',
+                  'gauge(){ printf "  ${DIM}%-6s${R} %b ${FNT}%s${R}\\n" "$(t "$1")"',
+                  'row(){ printf "  ${DIM}%-11s${R}%b %b\\n" "$(t "$1")"'):
+        assert senke in motd, \
+            "eine Senke uebersetzt ihre Beschriftung nicht mehr: %s" % senke[:14]
+
+    # ── (3) ES WIRKT WIRKLICH. Der Vertrag laesst die MOTD zweimal laufen und
+    # vergleicht. Ohne diesen Lauf waere alles oben nur die Behauptung, dass
+    # die Verdrahtung stimmt — und genau die stimmte seit v4.1-W17 nicht.
+    def _lauf(**umgebung):
+        umg = dict(os.environ)
+        umg["COLOR_MODE"] = "off"
+        umg.pop("NC_LANG", None)
+        umg.update(umgebung)
+        return _sp.run(["bash", "tools/motd.sh"], capture_output=True,
+                       text=True, timeout=90, env=umg).stdout
+
+    de = _lauf()
+    en = _lauf(NC_LANG="en")
+    assert de and en, "die MOTD gibt gar nichts aus"
+    for wort in ("Kerne", "frei", "nicht gefunden"):
+        assert wort in de, "der deutsche Lauf zeigt %r nicht mehr" % wort
+        assert wort not in en, \
+            "der englische Lauf zeigt weiterhin %r" % wort
+    for wort in ("cores", "free", "not found"):
+        assert wort in en, "der englische Lauf zeigt %r nicht" % wort
+
+    # ── (4) OHNE KATALOG BLEIBT ALLES DEUTSCH. Das ist der Rueckfall, auf dem
+    # das ganze Verfahren steht: nie ein nackter Schluessel, nie eine leere
+    # Zeile. Eine MOTD, die bei einem fehlenden Katalog Luecken zeigt, waere
+    # schlimmer als eine, die deutsch bleibt.
+    ohne = _lauf(NC_LANG="en", NC_I18N_KATALOG="/gibt/es/nicht.tsv")
+    assert "Kerne" in ohne and "cores" not in ohne, \
+        "ohne Katalog kommt nicht Deutsch heraus"
+
+    ok("v4.2-W14: die MOTD spricht Englisch \u2014 und die Abdeckungszahl "
+       "zaehlt endlich, was sie nicht findet")
+
+
 def main():
     tmp = tempfile.mkdtemp()
     configure_db(db_path=os.path.join(tmp, "t.db"), backend="sqlite")
@@ -5205,6 +5303,8 @@ def main():
     _test_v42_w12_kick_rest_aus_dem_monolithen()
 
     _test_v42_w13_gesundheit_und_modki()
+
+    _test_v42_w14_motd_spricht_englisch()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)
 

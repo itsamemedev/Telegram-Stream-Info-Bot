@@ -291,3 +291,104 @@ winget fehlt - Python und ffmpeg muessten von Hand kommen.	winget is missing - P
 winget ist der Paketmanager von Windows, er steckt in der App 'App Installer' aus dem Microsoft Store.	winget is the Windows package manager; it comes with the 'App Installer' app from the Microsoft Store.
 winget setzt den PATH erst fuer NEUE Fenster. Steht ffmpeg gleich noch als fehlend da: Fenster schliessen, neu oeffnen, Skript erneut starten.	winget only updates the PATH for NEW windows. If ffmpeg still shows as missing in a moment: close the window, open a new one, run the script again.
 winget vorhanden - fehlende Programme koennen installiert werden.	winget is available - missing programs can be installed.
+
+# --- tools/motd.sh (v4.2-W14) -----------------------------------------
+# Die MOTD band lib/i18n.sh seit v4.1-W17 ein und rief t() KEIN EINZIGES
+# Mal auf. Der Pruefer sammelte nichts aus ihr und meldete trotzdem
+# 100 % Abdeckung — jetzt 362 Zeichenketten statt 280.
+# Kurze Beschriftungen stehen bewusst mit drin, auch wo Deutsch und
+# Englisch gleich lauten (CPU, RAM, Bot): sie sind Senken-Argumente und
+# muessen einen Eintrag haben, sonst meldet --check sie als fehlend.
+(Stand: vor	(as of
+(ohne Argument)  Vorschau — aendert nichts	(no argument)     preview — changes nothing
+.env	.env
+/etc/motd wurde seither neu beschrieben	/etc/motd has been rewritten since then
+/etc/pam.d/sshd laedt pam_motd nicht — dann bleibt der Login still.	/etc/pam.d/sshd does not load pam_motd — then the login stays silent.
+/healthz meldet ok=false	/healthz reports ok=false
+AUFNAHMEN	RECORDINGS
+Abwehr blind	defence blind
+Anpassen ueber	Adjust via
+Aufnahme	Recording
+Aufnahmen brechen ab	recordings will abort
+BOT_DIR in der Konfiguration setzen	set BOT_DIR in the configuration
+BOT_TOKEN fehlt in der .env — ohne ihn startet der Telegram-Teil nicht	BOT_TOKEN missing from .env — without it the Telegram side will not start
+Bitte mit sudo:	Please use sudo:
+Bot	Bot
+Bot laeuft nicht	Bot is not running
+CPU	CPU
+CrowdSec	CrowdSec
+DB meldet Aufnahmen, es laeuft aber KEIN ffmpeg — Karteileichen	the DB reports recordings but NO ffmpeg is running — stale entries
+Dashboard degradiert (DB oder Dauerschleifen)	Dashboard degraded (database or long-running loops)
+Datenbank	Database
+Dienst	Service
+Dienst wurde neu gestartet	Service was restarted
+Disk	Disk
+Erkennung	Detection
+Falsch erkannt? Werte in	Detected wrongly? Enter values in
+Fehler	Errors
+Fehler heute	errors today
+Getrackt	Tracked
+Grund	Reason
+HINWEISE	NOTES
+Hinweis:	Note:
+Installation	Installation
+KANAELE	CHANNELS
+Kerne	cores
+Kindprozesse	child processes
+Konfig	Config
+Log	Log
+NIGHTCRAWLER	NIGHTCRAWLER
+Netzteil pruefen, sonst bricht ffmpeg weg	check the power supply, otherwise ffmpeg will drop out
+Pi meldet Drosselung	Pi reports throttling
+Platte fast voll	Disk almost full
+Port offen, keine Antwort	port open, no answer
+Prozess, kein systemd-Dienst	process, not a systemd service
+RAM	RAM
+RESTREAM	RESTREAM
+Restream	Restream
+Restream Control Room	Restream Control Room
+SYSTEM	SYSTEM
+Sicherung bleibt unter	the backup stays at
+Standard-MOTD war bereits still	the default MOTD was already silent
+Streamer	streamers
+Swap	Swap
+System	System
+TRACKING	TRACKING
+Wirksam nach:	Takes effect after:
+Zahlen nur im Dashboard	figures only in the dashboard
+Ziel(e) live	target(s) live
+Zombie-Kindprozesse — ffmpeg/streamlink werden nicht abgeraeumt	zombie child processes — ffmpeg/streamlink are not being reaped
+aktiv	active
+bleibt liegen (harmlos, enthaelt nur Pfade)	stays behind (harmless, contains only paths)
+degradiert	degraded
+eintragen (oder als Umgebung setzen).	(or set them in the environment).
+fehlt	missing
+frei	free
+gestoppt	stopped
+gesund	healthy
+heute	today
+inaktiv	inactive
+kein Listener	no listener
+kein Prozess	no process
+kein systemd-Dienst gefunden	no systemd service found
+keine, alles erkannt	(none, everything detected)
+laeuft	running
+nicht gefunden	not found
+nicht installiert	not installed
+oder Umgebung:	or the environment:
+oder alte Dateien loeschen	or delete old files
+pausiert	paused
+up	up
+zeigt, was erkannt wurde und woher	shows what was detected and from where
+▣ bereit · ▨ ohne Key · ▢ aus	▣ ready · ▨ no key · ▢ off
+Aufnahmen	Recordings
+Dashboard antwortet nicht sauber	Dashboard is not answering cleanly
+Dashboard nicht erreichbar	Dashboard unreachable
+Drosselung gemeldet	throttling reported
+Installation nicht gefunden	installation not found
+Netz	Net
+Sicherung:	backup:
+Vorschau:	Preview:
+Werkzeuge	Tools
+entfernt aus	removed from
+keine Schnittstelle erkannt	no interface detected

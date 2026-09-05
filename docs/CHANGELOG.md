@@ -11,6 +11,60 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Hinzugefügt — die MOTD spricht Englisch (v4.2 W14)
+
+`tools/motd.sh` band `lib/i18n.sh` seit v4.1-W17 ein und rief `t()` **kein
+einziges Mal** auf. Jede Zeile war ein `printf` mit deutschem Literal. Und
+`tools/i18n_tools.py` sammelte nur aus den Senken von `installer.sh` — die es
+in `motd.sh` gar nicht gibt. Ergebnis: **nichts** eingesammelt, und trotzdem
+„100 % Abdeckung" gemeldet für eine Datei, die zu 0 % übersetzt war.
+
+Eine Zahl, die nur zählt, was sie ohnehin kennt, verdeckt genau das, was sie
+sichtbar machen soll. Das war schon die Lehre aus W28 (Dashboard) und W8
+(`install.bat`) — hier zum dritten Mal, in derselben Datei, die die beiden
+anderen prüft.
+
+Der Katalog steht jetzt bei **373 Einträgen** statt 280, drei Werkzeuge,
+0 fehlend, 0 verwaist. Die MOTD läuft vollständig auf Englisch.
+
+**Neu ist ein ehrlicher Melder.** Die Quote sagt, wie viel von dem übersetzt
+ist, was der Sammler *findet*. Der Melder sagt, was er **gar nicht erst
+findet**: deutscher Ausgabetext, der an keiner Senke hängt. Hartes Tor bei
+**null** — eine Ausnahmeliste „vier bekannte Fälle" verrottet, nach dem fünften
+liest niemand mehr hin.
+
+Der Melder hat sich dabei dreimal selbst korrigiert, und jedes Mal aus einem
+echten Fehlschlag:
+
+* Er zog die inneren Zeichenketten **aus** `$(t "…")` heraus und meldete
+  ausgerechnet die als unumschlossen. Ein Melder mit Fehlalarm wird nicht
+  gelesen — dann fällt der echte Befund mit durch.
+* Er sah nur `printf`/`echo`-Zeilen. `lage_setz "…"` und Zuweisungen wie
+  `EQ="  ${FNT}Kerne  ${R}"` fielen durch — und der englische Lauf zeigte
+  prompt „Kerne". Jetzt gilt: **ein Literal mit Farbcode ist Anzeige**, egal
+  wohin es geht.
+* Seine Wortliste kannte „Kerne", „Netz", „Werkzeuge" nicht. Ein Marker-Satz,
+  den man nicht nachzieht, wird blind.
+
+Nach jeder Korrektur fand er weitere Stellen — insgesamt acht, die vorher
+unsichtbar waren, plus zwei echte Lücken in `installer.sh` (deutscher Text in
+einem `printf` **innerhalb** einer Ersetzung: der äußere Text läuft durch
+`t()`, trägt aber einen Laufzeitwert und trifft nie einen Schlüssel).
+
+**Der deutsche Text ändert sich an fünf Stellen leicht** — dort, wo ein Wert
+mitten im Satz stand und der feste Teil zum Schlüssel werden musste: „Platte zu
+92 % voll" wird „Platte fast voll (92 %)", „BOT_DIR in /etc/… setzen" wird
+„BOT_DIR in der Konfiguration setzen (/etc/…)". Dieselbe Aussage, andere
+Satzstellung.
+
+Der Vertrag lässt die MOTD **zweimal laufen** und vergleicht — ohne diesen Lauf
+wäre alles andere nur die Behauptung, die Verdrahtung stimme, und genau die
+stimmte seit v4.1-W17 nicht. Dazu: ohne Katalog bleibt alles deutsch (nie ein
+nackter Schlüssel, nie eine leere Zeile), und die drei Senken werden
+ausnahmsweise am Wortlaut geprüft — `gauge` trägt CPU, RAM, Swap und Disk, die
+in beiden Sprachen gleich lauten, und ein Verhaltenstest kann den Ausfall dort
+nicht sehen.
+
 ### Geändert — was nur rechnet, rechnet jetzt außerhalb (v4.2 W13)
 
 Angefragt war „alles in einer großen Welle": die vier verbliebenen Brocken
