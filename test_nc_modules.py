@@ -4752,8 +4752,10 @@ def _test_v42_w12_kick_rest_aus_dem_monolithen():
             self.antwort = _Antwort(200, {"data": [{"id": 7, "name": "Chess"}]})
 
         def _merk(self, art, url, **kw):
-            self.rufe.append((art, url, kw.get("headers", {}), kw.get("json"),
-                              kw.get("params"), kw.get("data")))
+            eintrag = (art, url, kw.get("headers", {}), kw.get("json"),
+                       kw.get("params"), kw.get("data"))
+            self.rufe.append(eintrag)
+            _alle_rufe.append(eintrag)
             return self.antwort
 
         def post(self, url, **kw):
@@ -4767,6 +4769,35 @@ def _test_v42_w12_kick_rest_aus_dem_monolithen():
 
         async def close(self):
             pass
+
+    # aiohttp wird GESTUBBT, nicht installiert. Der Vertrags-Job der CI zieht
+    # nur orjson und flask — eine Regel seit W23, und sie ist richtig: dieser
+    # Vertrag prueft NC-Code, nicht aiohttp. Lokal war aiohttp da (es steckt in
+    # requirements-smoke.txt), deshalb lief er hier gruen und in der CI rot.
+    #
+    # Der Stub ist dabei mehr als ein Behelf: er zaehlt mit, mit welchem
+    # Zeitdeckel gerufen wird. Ein Kick-Aufruf OHNE Deckel blockiert den
+    # Event-Loop unbegrenzt — dieselbe Klasse Fehler wie beim ffmpeg-Split in
+    # W11, nur an einer Schnittstelle, die noch oefter haengt.
+    class _Deckel:
+        def __init__(self, total=None, **kw):
+            self.total = total
+            _deckel_gesehen.append(total)
+
+    _deckel_gesehen = []
+    _alle_rufe = []
+
+    class _AiohttpStub:
+        ClientTimeout = _Deckel
+
+        @staticmethod
+        def ClientSession(*a, **kw):
+            raise AssertionError(
+                "der Vertrag reicht immer eine Sitzung herein — wer hier eine "
+                "eigene oeffnet, umgeht den Sitzungs-Pool des Bots")
+
+    alt_aiohttp = sys.modules.get("aiohttp")
+    sys.modules["aiohttp"] = _AiohttpStub
 
     speicher = {"kick.user_token": {"access_token": "USER", "expires_at": 1 << 40}}
     alt_level = _logging.getLogger("TikTokBot").level
@@ -4846,12 +4877,29 @@ def _test_v42_w12_kick_rest_aus_dem_monolithen():
         gut, fehler = _asyncio.run(_ka.update_channel(title="Neu", session=sitz))
         assert gut is False and "channel:write" in fehler, fehler
         assert sitz.rufe[-1][0] == "PATCH"
+
+        # ── (7) JEDER KICK-AUFRUF TRAEGT EINEN ZEITDECKEL. Ohne ihn haengt ein
+        # stiller Kick-Endpunkt den Event-Loop auf — und mit ihm jede Aufnahme,
+        # den Restream und das Dashboard.
+        # Gezaehlt wird DECKEL GEGEN ANFRAGE, nicht "es gab welche": beim
+        # Mutationstest blieb ein Aufruf ohne Deckel unentdeckt, weil die
+        # anderen vier weiterhin einen setzten. Eine Zusage, die man mit vier
+        # richtigen Aufrufen erschleichen kann, ist keine.
+        assert len(_deckel_gesehen) == len(_alle_rufe), \
+            "%d Anfragen, aber nur %d Zeitdeckel — ein Aufruf haengt " \
+            "unbegrenzt" % (len(_alle_rufe), len(_deckel_gesehen))
+        assert all(t == 15 for t in _deckel_gesehen), \
+            "Aufrufe ohne 15-Sekunden-Deckel: %r" % _deckel_gesehen
     finally:
         _ka._conf.clear()
         _ka._conf.update(alt_conf)
         _ka.APP_TOKEN.clear()
         _ka.APP_TOKEN.update(alt_app)
         _logging.getLogger("TikTokBot").setLevel(alt_level)
+        if alt_aiohttp is None:
+            sys.modules.pop("aiohttp", None)
+        else:
+            sys.modules["aiohttp"] = alt_aiohttp
 
     ok("v4.2-W12: Kick-REST in nc/kickapi \u2014 User-Token schreibt, App-Token "
        "liest, SEND_LAST meldet immer")

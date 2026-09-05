@@ -48,6 +48,26 @@ und wo es enger geht als vorher: der Sendepfad muss auf **jedem** Fehlerweg
 eine Spur in `SEND_LAST` hinterlassen, nicht nur an der Stelle, die der alte
 Anker traf.
 
+**Die CI hat einen Fehler gefunden, den der lokale Lauf nicht finden konnte.**
+Der Vertrags-Job zieht nur `orjson` und `flask` — eine Regel seit W23. Der neue
+Vertrag ruft `send_message()` wirklich auf, und dort steht ein `import aiohttp`.
+Lokal ist `aiohttp` vorhanden (es steckt in `requirements-smoke.txt`), also lief
+er grün; in der CI starb er mit `ModuleNotFoundError`. `aiohttp` wird jetzt
+gestubbt statt installiert, wie `test_smoke.py` es mit TikTokLive und
+python-telegram-bot tut — der Vertrag prüft NC-Code, nicht aiohttp. Nachgestellt
+wird die CI-Lage seitdem lokal über einen Importblocker.
+
+Aus dem Behelf ist eine **zusätzliche Zusage** geworden: der Stub zählt mit,
+mit welchem Zeitdeckel gerufen wird. Jede Kick-Anfrage muss einen tragen — ein
+stiller Kick-Endpunkt ohne Deckel hängt den Event-Loop auf, und mit ihm jede
+Aufnahme, den Restream und das Dashboard.
+
+Die erste Fassung dieser Zusage war wertlos: sie prüfte „es gab Zeitdeckel, und
+alle waren 15 Sekunden". Beim Mutationstest blieb ein Aufruf **ohne** Deckel
+unentdeckt, weil die anderen vier weiterhin einen setzten. Gezählt wird jetzt
+Deckel gegen Anfrage. Eine Zusage, die man mit vier richtigen Aufrufen
+erschleichen kann, ist keine.
+
 ### Geändert — das ffmpeg-Handwerk der Upload-Zerlegung raus (v4.2 W11)
 
 Parallel zur Cookie-Welle oben, und unabhängig davon. Nach fünf Wellen Routenabbau sind die Routen nicht mehr das Problem: die 34
