@@ -597,6 +597,7 @@ from nc import restreamstate as _nc_rsstate  # v4.1-W22: Restream-Laufzeitzustan
 from nc import restreamcmd as _nc_rscmd  # v4.2-W16: die ffmpeg-Zeile des Relays
 from nc import reccmd as _nc_reccmd  # v4.2-W17: die Kommandozeilen des Recorders
 from nc import aufnahmefolge as _nc_folge  # v4.2-W18: die Eskalationsrechnung
+from nc import aufnahmekategorie as _nc_kat  # v4.2-W23: warum eine Aufnahme so endete
 from nc import livefolge as _nc_live  # v4.2-W20: was aus einem Live-Signal folgt
 from nc import azraelstate as _nc_azrael  # v4.1-W19: AZRAELs Laufzeitzustand (geteilt)
 from nc import whispercfg as _nc_whisper  # v4.1-W19: Whisper-Modell als Register
@@ -8258,59 +8259,29 @@ async def handle_recording_finished(proc, tid, chat_id, username, output_file,
             else:
                 stderr_text = _ffmpeg_stderr_diagnostic(stderr_text, max_len=2000)
 
-            # Kategorisierung — wird auch in DB gespeichert
-            stderr_lc = stderr_text.lower()
-            # B64: HEVC-in-FLV (codec-id 12 / bytevc1) — ffmpeg < 7.x kann das im
-            # FLV-Container NICHT demuxen → "Video codec is not implemented",
-            # "unknown codec", codec-tag 0x000C/[12][0][0][0] → kein Header,
-            # 0-Byte-Datei. ZUERST geprüft, weil's mal als stall_killed, mal als
-            # fast-fail/early_disconnect auftritt. Eigene aktionable Kategorie.
-            # PREFER_H264 wählt normalerweise einen H.264-Stream und vermeidet das
-            # komplett — diese Kategorie bleibt für HEVC-ONLY-Streamer (kein
-            # H.264-Fallback verfügbar) bzw. PREFER_H264=0 ohne ffmpeg-Upgrade.
-            _hevc_sig = ("is not implemented" in stderr_lc
-                         or "update your ffmpeg" in stderr_lc
-                         or "0x000c" in stderr_lc
-                         or "[12][0][0][0]" in stderr_lc
-                         or ("unknown codec" in stderr_lc and "video" in stderr_lc))
-            if _hevc_sig:
-                category = "hevc_unsupported"
+            # Kategorisierung — wird auch in DB gespeichert.
+            # v4.2-W23: die Prioritaetskette (inkl. der early_disconnect-
+            # Umwidmung) steht in nc/aufnahmekategorie.py. Hier bleibt nur
+            # das Loggen (braucht username/RECORD_PROXY) und die Eskalation
+            # (haengt an geteiltem Zustand aus nc/aufnahmefolge.py, W18).
+            category = _nc_kat.kategorisiere(
+                stderr_text, stall_killed[0], proc.returncode, file_exists, duration)
+            if category == "hevc_unsupported":
                 log.warning("Stream-Kategorie: hevc_unsupported — TikTok streamt "
                             "HEVC/bytevc1 (FLV codec-id 12), ffmpeg kann das nicht "
                             "demuxen. PREFER_H264 sollte das vermeiden; ggf. "
                             "HEVC-only-Streamer oder ffmpeg-Upgrade ≥7.x nötig. "
                             "user=@%s", username)
-            elif ("http error 404" in stderr_lc or "404 not found" in stderr_lc
-                  or "server returned 404" in stderr_lc):
-                # B68: Wiederholte HTTP 404 = Stream-URL tot/abgelaufen (Stream
-                # beendet oder HLS/FLV-URL expired). Das nachgelagerte "could not
-                # write header / incorrect codec parameters" ist nur Folge des Kills
-                # OHNE Daten — KEIN Codec-Problem. ZUERST geprüft (vor dem
-                # codec_header_fail-Zweig), sonst landet ein toter Stream
-                # fälschlich als Codec-Fehler. Korrekt: stream_dead (→ Backoff).
-                category = "stream_dead"
+            elif category == "stream_dead":
                 log.warning("Stream-Kategorie: stream_dead (HTTP 404 — Stream-URL "
                             "abgelaufen oder Stream beendet) | user=@%s", username)
-            elif stall_killed[0]:
-                # F40-Fix R3: Stall-killed ohne File-Content kriegt eigene Kategorie
-                # B59: aber wenn das stderr den Codec-Header-Fail zeigt (ffmpeg
-                # konnte Codec-Params nicht ermitteln, "Could not write header"),
-                # ist das KEIN generischer Stall sondern ein Input-Codec-Problem.
-                # Eigene Kategorie für klare Diagnose im Dashboard.
-                if ("could not write header" in stderr_lc
-                        or "incorrect codec parameters" in stderr_lc
-                        or "error opening output file" in stderr_lc):
-                    category = "codec_header_fail"
-                    log.warning("Stream-Kategorie: codec_header_fail (ffmpeg konnte "
-                                "Codec-Params nicht ermitteln, Input-I/O-Fehler) | "
-                                "user=@%s", username)
-                else:
-                    category = "stall_killed"
-            elif "no playable streams" in stderr_lc or "this user is offline" in stderr_lc:
-                category = "offline_or_protected"
+            elif category == "codec_header_fail":
+                log.warning("Stream-Kategorie: codec_header_fail (ffmpeg konnte "
+                            "Codec-Params nicht ermitteln, Input-I/O-Fehler) | "
+                            "user=@%s", username)
+            elif category == "offline_or_protected":
                 log.warning("Stream-Kategorie: offline/protected | user=@%s", username)
-            elif "403" in stderr_text or "forbidden" in stderr_lc:
-                category = "forbidden_403"
+            elif category == "forbidden_403":
                 # V37-403: Streak hochzählen; ab RECORD_403_HITS auf yt-dlp umstellen
                 if RECORD_403_YTDLP:
                     # v4.2-W18: gerechnet wird in nc/aufnahmefolge.py. Die
@@ -8338,23 +8309,10 @@ async def handle_recording_finished(proc, tid, chat_id, username, output_file,
                                 "Cookies sind frisch? Dann ist es fast sicher die "
                                 "Server-IP (Datacenter) die TikTok blockt. RECORD_PROXY "
                                 "auf einen Residential-/Mobile-Proxy setzen.", username)
-            elif "timeout" in stderr_lc:
-                category = "timeout"
+            elif category == "timeout":
                 log.warning("Stream-Kategorie: timeout | user=@%s", username)
-            elif "no plugin" in stderr_lc:
-                category = "no_plugin"
-            elif proc.returncode == 0 and not file_exists:
-                category = "empty_output"
-            else:
-                category = "fail"
 
-            # F45: Bei sehr kurzer Aufnahme (<30s) mit non-zero rc ist das fast
-            # immer ein TikTok-CDN-Disconnect oder Network-Error. Klar markieren
-            # damit der User unterscheiden kann zwischen "TikTok kickt uns raus"
-            # und "ffmpeg-Konfig-Fehler". Eigene Outcome-Kategorie + WARNUNG.
-            if (duration < 30 and proc.returncode != 0
-                    and category == "fail" and not stall_killed[0]):
-                category = "early_disconnect"
+            if category == "early_disconnect":
                 # F50: Auto-Retry mit exponentieller Backoff. Wenn das schon
                 # mehrfach kurz hintereinander passiert, machen wir größere
                 # Pausen. Reset passiert im success-Pfad.

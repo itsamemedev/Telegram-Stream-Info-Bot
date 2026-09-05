@@ -6319,6 +6319,141 @@ def _test_v42_w22_overlaytext():
     ok("W22: overlay_src_ok folgt der konfigurierten Gift-Quelle, 'both' oeffnet alles")
 
 
+def _test_v42_w23_aufnahmekategorie():
+    """v4.2-W23: warum eine Aufnahme so geendet hat, steht in
+    nc/aufnahmekategorie.py — ein 87-Zeilen-if/elif ueber stderr, Returncode,
+    Dateigroesse und Dauer, das mitten in handle_recording_finished (658
+    Zeilen) stand. Das ist die Grundlage JEDER Fehlerstatistik im Dashboard,
+    und die Kette war nie einzeln aufrufbar.
+
+    Der eigentliche Vertrag ist die REIHENFOLGE, nicht die einzelnen Muster:
+    mehrere Kategorien konkurrieren um dieselbe stderr-Zeile, und vertauscht
+    zaehlt ein toter Stream als Codec-Fehler oder ein HEVC-Stream als
+    generischer Stall.
+    """
+    from nc import aufnahmekategorie as _ak
+
+    def kat(text, stall=False, rc=1, fe=True, dur=60):
+        return _ak.kategorisiere(text, stall, rc, fe, dur)
+
+    # --- 1) HEVC steht VOR allem anderen ---------------------------------
+    # Ohne Vorrang faellt ein HEVC-Stream, der auch "Could not write header"
+    # zeigt, als codec_header_fail durch — dieselbe Zeile, falsche Antwort.
+    assert kat("Video codec is not implemented", stall=True) == "hevc_unsupported"
+    assert kat("update your ffmpeg to a more recent version") == "hevc_unsupported"
+    assert kat("stream 0:0: unknown codec: Video none") == "hevc_unsupported"
+    assert kat("unknown codec: Audio none") != "hevc_unsupported", \
+        "unknown codec OHNE 'video' darf nicht als HEVC zaehlen"
+    ok("W23: hevc_unsupported hat Vorrang, auch vor stall_killed")
+
+    # --- 2) stream_dead steht VOR codec_header_fail ----------------------
+    # Ein 404 (tote URL) zeigt oft AUCH "could not write header" als Folge —
+    # das darf nicht als Codec-Fehler gezaehlt werden, sonst greift der
+    # Stream-Tod-Backoff (nc/aufnahmefolge) nie.
+    assert kat("HTTP error 404 Not Found. Could not write header for output") \
+        == "stream_dead"
+    assert kat("Server returned 404") == "stream_dead"
+    ok("W23: eine tote URL zaehlt als stream_dead, nicht als Codec-Fehler")
+
+    # --- 3) codec_header_fail nur INNERHALB von stall_killed -------------
+    assert kat("Could not write header for output file", stall=True) == "codec_header_fail"
+    assert kat("incorrect codec parameters", stall=True) == "codec_header_fail"
+    # Dieselbe Zeile OHNE stall_killed darf NICHT codec_header_fail werden —
+    # das Signal gilt nur als Erklaerung fuer einen echten Stall.
+    assert kat("Could not write header for output file", stall=False) != "codec_header_fail"
+    assert kat("random garbage stderr", stall=True) == "stall_killed"
+    ok("W23: codec_header_fail nur als Erklaerung eines echten Stalls")
+
+    # --- 4) '403' zaehlt GROSS/klein-unabhaengig, gegen den ROHEN Text ---
+    # Der numerische Code hat keine Gross-/Kleinschreibung; "forbidden" ist
+    # ein Wort und laeuft ueber die kleingeschriebene Fassung.
+    assert kat("HTTP 403") == "forbidden_403"
+    assert kat("FORBIDDEN") == "forbidden_403"
+    assert kat("Forbidden") == "forbidden_403"
+    ok("W23: 403 und 'forbidden' fuehren beide zu forbidden_403")
+
+    # --- 5) empty_output nur bei rc==0 UND fehlender Datei ---------------
+    assert kat("irgendwas unbekanntes", rc=0, fe=False) == "empty_output"
+    assert kat("irgendwas unbekanntes", rc=0, fe=True) == "fail"
+    assert kat("irgendwas unbekanntes", rc=1, fe=False) == "fail"
+    ok("W23: empty_output verlangt rc==0 UND keine Datei, nicht nur eins von beiden")
+
+    # --- 6) early_disconnect ist eine UMWIDMUNG, kein eigener Zweig ------
+    # Nur "fail" wird umgewidmet — jede spezifischere Kategorie (403, tot,
+    # Codec, HEVC, Timeout, …) sagt schon mehr als "gekickt" und bleibt
+    # stehen, selbst wenn sie <30s und rc!=0 ist.
+    assert kat("irgendwas unbekanntes", rc=1, fe=True, dur=10) == "early_disconnect"
+    assert kat("irgendwas unbekanntes", rc=1, fe=True, dur=30) == "fail", \
+        "30s ist NICHT mehr 'kurz' (Grenze: <30, nicht <=30)"
+    assert kat("irgendwas unbekanntes", rc=0, fe=True, dur=10) == "fail", \
+        "rc==0 mit Fehlertext bleibt 'fail', kein Disconnect ohne Fehler-rc"
+    assert kat("HTTP 403", rc=1, fe=True, dur=5) == "forbidden_403", \
+        "eine spezifischere Kategorie wird NICHT von early_disconnect ueberschrieben"
+    assert kat("random garbage", stall=True, rc=1, fe=True, dur=5) == "stall_killed", \
+        "ein echter Stall wird nicht zum Disconnect umgewidmet, auch wenn er kurz war"
+    ok("W23: early_disconnect widmet nur ein generisches 'fail' um, nichts Spezifischeres")
+
+    # --- 7) Verhaltensgleichheit gegen die ALTE Kette, erschoepfend ------
+    # Referenzimplementierung ist eine woertliche Kopie der Kette, wie sie
+    # vor W23 in bot.py stand — ueber ein Gitter aus 756 Kombinationen
+    # verglichen. Das ist der eigentliche Beweis, dass das Verschieben
+    # nichts verschoben hat: die Prioritaeten UND die Uebergaenge.
+    def _alte_kette(stderr_text, stall_killed0, returncode, file_exists, duration):
+        stderr_lc = stderr_text.lower()
+        _hevc_sig = ("is not implemented" in stderr_lc
+                     or "update your ffmpeg" in stderr_lc
+                     or "0x000c" in stderr_lc
+                     or "[12][0][0][0]" in stderr_lc
+                     or ("unknown codec" in stderr_lc and "video" in stderr_lc))
+        if _hevc_sig:
+            category = "hevc_unsupported"
+        elif ("http error 404" in stderr_lc or "404 not found" in stderr_lc
+              or "server returned 404" in stderr_lc):
+            category = "stream_dead"
+        elif stall_killed0:
+            if ("could not write header" in stderr_lc
+                    or "incorrect codec parameters" in stderr_lc
+                    or "error opening output file" in stderr_lc):
+                category = "codec_header_fail"
+            else:
+                category = "stall_killed"
+        elif "no playable streams" in stderr_lc or "this user is offline" in stderr_lc:
+            category = "offline_or_protected"
+        elif "403" in stderr_text or "forbidden" in stderr_lc:
+            category = "forbidden_403"
+        elif "timeout" in stderr_lc:
+            category = "timeout"
+        elif "no plugin" in stderr_lc:
+            category = "no_plugin"
+        elif returncode == 0 and not file_exists:
+            category = "empty_output"
+        else:
+            category = "fail"
+        if (duration < 30 and returncode != 0
+                and category == "fail" and not stall_killed0):
+            category = "early_disconnect"
+        return category
+
+    import itertools
+    FRAGMENTE = ["", "empty stderr", "Video codec is not implemented",
+                 "Update your FFmpeg", "0x000C codec tag", "[12][0][0][0]",
+                 "unknown codec: Video stream", "HTTP error 404", "404 Not Found",
+                 "Server returned 404", "Could not write header for output",
+                 "incorrect codec parameters", "Error opening output file /tmp/x.mp4",
+                 "No playable streams found", "This user is offline",
+                 "403 Forbidden", "FORBIDDEN", "Connection timeout",
+                 "no plugin found", "random garbage stderr text",
+                 "moov atom not found"]
+    n = 0
+    for text, stall, rc, fe, dur in itertools.product(
+            FRAGMENTE, (False, True), (0, 1, -9), (False, True), (5, 25, 45)):
+        a = _alte_kette(text, stall, rc, fe, dur)
+        b = _ak.kategorisiere(text, stall, rc, fe, dur)
+        assert a == b, (text, stall, rc, fe, dur, "alt=%s neu=%s" % (a, b))
+        n += 1
+    ok(f"W23: {n} Kombinationen verhaltensgleich zur alten Kette")
+
+
 def _test_v42_w14_motd_spricht_englisch():
     """v4.2-W14: die MOTD war zu 0 % uebersetzt und meldete 100 %."""
     import subprocess as _sp
@@ -6609,6 +6744,8 @@ def main():
     _test_v42_w21_cookiegesundheit()
 
     _test_v42_w22_overlaytext()
+
+    _test_v42_w23_aufnahmekategorie()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)
 
