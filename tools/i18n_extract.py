@@ -36,7 +36,11 @@ HTML_DATEIEN = ["templates/dashboard.html", "templates/brain.html",
 # Slash-Commands — die sind BENUTZERTEXT und stehen im Katalog. Ohne diesen
 # Eintrag haette der --check-Lauf sie als 61 verwaiste Eintraege gemeldet und
 # der naechste Aufraeumlauf haette sie geloescht.
-PY_DATEIEN = ["bot.py", "discordbot.py"]
+# v4.2-W19: telegramversand.py kam dazu. Es traegt die Fehlermeldungen des
+# Upload-Wegs — "UPLOAD FEHLGESCHLAGEN", "ÜBERSPRUNGEN" — und die liest der
+# Betreiber. Ohne den Eintrag haette der naechste --check sie als verwaist
+# gemeldet und der naechste Aufraeumlauf sie geloescht.
+PY_DATEIEN = ["bot.py", "discordbot.py", "telegramversand.py"]
 
 # v4.1-W19: Was aus bot.py in einen Blueprint zieht, verschwand bisher aus dem
 # Katalog — der Extraktor kannte nur den Monolithen. Bei 225 Routen in

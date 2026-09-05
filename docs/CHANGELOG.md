@@ -11,6 +11,55 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Geändert — der Versandweg der Aufnahmen steht jetzt in `telegramversand.py` (v4.2 W19)
+
+381 Zeilen, die eine fertige Aufnahme nach Telegram bringen: teilen, hochladen,
+auf Sperren und Fehler reagieren, das Forum-Thema treffen, tote Chats merken.
+`bot.py` fällt auf **22.734 Zeilen**. Zusammen mit `nc/videoteil.py` (W11, das
+ffmpeg-Teilen) ist damit der komplette Weg von der Datei zum Abonnenten aus dem
+Monolithen heraus.
+
+**Bot-seitig, nicht unter `nc/`** — dieselbe Grenze wie bei `discordbot.py`
+(W15): die Datei fängt `telegram.error`-Ausnahmen ab und braucht die echten
+Klassen zur Laufzeit. Unter `nc/` wäre der Vertrags-Job an einem nackten
+`ImportError` gestorben; dort sind nur `orjson` und `flask` installiert. Die
+Grenze in die andere Richtung gilt auch hier: **kein `from bot import`.**
+
+**Das ist der Pfad, der im Betrieb schon wehgetan hat.** Eine Chat-ID, die
+Telegram mit `chat not found` beantwortet, ließ den Bot für *jede* Aufnahme
+durch die komplette Teil- und Retry-Kette laufen — 176 identische Fehlerzeilen
+in einer Nacht (B97). Die Sperre dagegen war Text-, aber nie verhaltensgeprüft.
+Jetzt baut der Vertrag den Upload mit einer Attrappe und zählt nach:
+
+* **Eine gesperrte Chat-ID kostet null `send_video`-Aufrufe** — und der
+  Betreiber bekommt eine Meldung, die `TELEGRAM_CHAT_ID` beim Namen nennt.
+* **`RetryAfter` wartet einmal und spult die Datei zurück.** Ohne `seek(0)`
+  lädt der zweite Versuch **null Bytes** hoch; Telegram nimmt das an, und im
+  Chat liegt eine leere Datei. Das fällt sonst nirgends auf.
+* **Rate-Limit als `BadRequest`** (B46): PTB wickelt manche 429-Antworten so
+  ein, der `RetryAfter`-Pfad wird dann nie erreicht.
+* **Gelöschtes Forum-Thema** → Mapping verworfen und der Zweitversuch geht
+  ohne `message_thread_id` in den Haupt-Chat, statt den Upload zu verlieren.
+* `Forbidden` und `chat not found` sperren die Chat-ID; ein Formatfehler
+  (`VIDEO_FILE_INVALID`) tut das **nicht** und erreicht stattdessen den
+  Betreiber.
+
+Sechs Mutationen geprüft, alle sechs schlagen an.
+
+Der Rumpf ist bitgenau übernommen (gegen `git show HEAD:bot.py` verglichen).
+`konfiguriere()` lehnt unbekannte und fehlende Helfer ab: ein stilles `None`
+hieße hier, dass eine fertige Aufnahme beim Versand mit
+`NoneType is not callable` verschwindet — also genau dann, wenn die Daten schon
+da sind und nur noch rausgehen müssen.
+
+**Anker nachgezogen, Verträge unverändert:** B97 (toter Chat) und die
+W11-Prüfung, dass die vier ffmpeg-Hüllen nicht in den Monolithen
+zurückkommen — letztere prüft jetzt zusätzlich, dass `bot.py` nur noch die
+dünne Hülle hält. `tools/ncpatch.py` (Karte, Funktionszahl) und
+`tools/i18n_extract.py` kennen die dritte bot-seitige Datei; ohne den
+Extraktor-Eintrag hätte der nächste Aufräumlauf die Upload-Fehlermeldungen als
+verwaist gelöscht.
+
 ### Geändert — die Eskalationsrechnung des Recorders steht jetzt in `nc/aufnahmefolge.py` (v4.2 W18)
 
 Diesmal geht es nicht um Zeilen (`bot.py`: 23.111 → **23.103**), sondern um
