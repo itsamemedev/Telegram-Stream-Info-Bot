@@ -5402,6 +5402,212 @@ def _test_v42_w16_relaykommando():
             pass
 
 
+def _test_v42_w17_recorderkommando():
+    """v4.2-W17: die Recorder-Kommandozeilen stehen in nc/reccmd.py.
+
+    Das ist der Pfad, an dem der Betrieb haengt: faellt er aus, gibt es keine
+    Aufnahme. Im Monolithen war er aus demselben Grund ungetestet wie der
+    Relay-Bauer — er hing an zwanzig Bot-Globals, und hier laeuft kein ffmpeg.
+    Geprueft wird, WAS aufgerufen wird und WELCHER Recorder gewaehlt wird.
+
+    Die beiden Risikotraeger sind der Cookie (F4, beide Befehle transportieren
+    die Session) und der 403-Umschalter: faellt die Weiche falsch, nimmt der
+    Bot mit dem Pfad auf, der garantiert 403 bekommt — und das sieht im Log
+    aus wie ein toter Stream, nicht wie ein Konfigurationsfehler.
+    """
+    import asyncio as _aio
+    import shutil as _sh
+    import threading as _th
+    import time as _t
+    from nc import reccmd as _rc
+    from nc.ffdiag import redact_cmd_for_log
+
+    # In dieser Umgebung gibt es weder ffmpeg noch yt-dlp — und der Preflight
+    # wuerde die CDN wirklich anfragen. Beides wird ersetzt, damit der Vertrag
+    # die AUSWAHL und die ARGUMENTE pruefen kann statt an der Werkzeugsuche zu
+    # scheitern. Was ffmpeg dann aus dem Befehl macht, ist ohnehin nicht die
+    # Frage dieses Vertrags; das zeigt erst der Server.
+    class _WieAlsWaerenSieDa:
+        def __getattr__(self, n):
+            return getattr(_sh, n)
+
+        @staticmethod
+        def which(name):
+            if name in ("ffmpeg", "yt-dlp"):
+                return "/usr/bin/" + name
+            if name == "yt_dlp":
+                return None
+            return _sh.which(name)
+
+    async def _preflight_durchreichen(u, who="?"):
+        return u
+
+    _echt_shutil, _echt_preflight = _rc.shutil, _rc._preflight_url
+    _rc.shutil = _WieAlsWaerenSieDa()
+    _rc._preflight_url = _preflight_durchreichen
+
+    KEKS = "sessionid=GEHEIM777; tt_csrf=XYZ"
+    LAUF = {"resolve": 0, "proxy_exclude": None}
+
+    async def _resolve(username, session, mode="auto"):
+        LAUF["resolve"] += 1
+        # "leer" statt eines leeren Dicts als Marke: {} ist falsch-artig und
+        # waere unten durch das `or` wieder zum Standardfall geworden — der
+        # Vertrag haette dann grün gemeldet, was er gar nicht geprueft hat.
+        if LAUF.get("leer"):
+            return {}
+        return dict(LAUF.get("info") or {"hls_url": "https://cdn/x.m3u8", "via": "webcast_api"})
+
+    async def _proxy(username=None, exclude=None):
+        LAUF["proxy_exclude"] = set(exclude or ())
+        return LAUF.get("proxy")
+
+    zustand = {}
+
+    def _konf(**ab):
+        zustand.clear()
+        zustand.update(UNTIL={}, PROXY={}, FAILED={}, LOCK=_th.Lock())
+        basis = dict(
+            cookie_header=lambda: KEKS,
+            ensure_cookie_file_netscape=lambda: True,
+            pick_checked_pull_proxy=_proxy,
+            stream_url_ttl=lambda u: LAUF.get("ttl"),
+            log_event=lambda *a, **k: None,
+            resolve_tiktok_live_stream=_resolve,
+            REC_403_UNTIL=zustand["UNTIL"], REC_PROXY=zustand["PROXY"],
+            REC_PROXY_FAILED=zustand["FAILED"], REC_PROXY_LOCK=zustand["LOCK"],
+            COOKIE_FILE="cookies.txt", FFMPEG_NICE_RECORD=5,
+            FFMPEG_THREADS_RECORD=1, RECORDER_PREF="auto",
+            RECORD_403_YTDLP=True, STREAM_URL_MIN_TTL=300)
+        basis.update(ab)
+        _rc.configure(**basis)
+
+    def _bau(**kw):
+        return _aio.run(_rc.build_recording_cmd(
+            "henry", "/tmp/out.mp4", 3600, session=object(), **kw))
+
+    # --- 1) configure schweigt nicht ------------------------------------
+    for kaputt in ("unbekannt", "fehlt"):
+        try:
+            if kaputt == "unbekannt":
+                _konf(RECORDER_TIPPFEHLER=1)
+            else:
+                _rc.configure(RECORDER_PREF="auto")
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("configure akzeptiert %s" % kaputt)
+    _konf()
+    ok("W17: configure meldet unbekannte und fehlende Schluessel")
+
+    # --- 2) F4: beide Befehle tragen die Session, das Log keine ---------
+    # Der native Pfad steckt sie in einen -headers-Blob, yt-dlp in eine Datei.
+    # Zwei Formen, ein Redaktionspfad — und genau deshalb kann eine davon
+    # unbemerkt durchrutschen.
+    cmd, name = _bau(preferred="native")
+    assert name.startswith("native"), name
+    kopf = cmd[cmd.index("-headers") + 1]
+    assert "GEHEIM777" in kopf, "der native Befehl traegt die Session nicht"
+    sauber = redact_cmd_for_log(cmd)
+    assert not any("GEHEIM777" in str(a) for a in sauber), \
+        "redact_cmd_for_log laesst die Session im nativen Pfad durch"
+    assert any("Referer:" in str(a) for a in sauber), "Redaktion frisst den Referer"
+
+    ycmd, yname = _bau(preferred="ytdlp")
+    assert yname == "ytdlp" and "--cookies" in ycmd
+    ysauber = redact_cmd_for_log(ycmd)
+    assert ysauber[ysauber.index("--cookies") + 1] == "<COOKIE_FILE>", \
+        "der Cookie-Dateipfad steht unredigiert im Log"
+    ok("W17: Session im Befehl, im Log redigiert — nativ UND yt-dlp (F4)")
+
+    # --- 3) Der 403-Umschalter -----------------------------------------
+    # Blockt TikTok die CDN-URL, wird der User zeitweise auf yt-dlp gezwungen.
+    # Ein expliziter Force des Operators hat aber Vorrang — sonst kann er den
+    # nativen Pfad nach der Fehlerbehebung nicht mehr testen.
+    _konf(RECORDER_PREF="native")
+    zustand["UNTIL"]["henry"] = _t.time() + 600
+    _, name = _bau()
+    assert name == "ytdlp", "403-Schutz erzwingt yt-dlp nicht (bekommen: %r)" % name
+    _, name = _bau(preferred="native")
+    assert name and name.startswith("native"), \
+        "der explizite Force des Operators wird vom 403-Schutz ueberstimmt"
+    # Abgelaufener Cooldown wird ENTFERNT, nicht nur ignoriert — sonst waechst
+    # das Dict mit jedem je geblockten User weiter.
+    zustand["UNTIL"]["henry"] = _t.time() - 1
+    _bau()
+    assert "henry" not in zustand["UNTIL"], "abgelaufener 403-Cooldown bleibt liegen"
+    ok("W17: 403-Schutz erzwingt yt-dlp, weicht dem Operator, raeumt sich auf")
+
+    # --- 4) B58: eine fast abgelaufene URL wird verworfen ---------------
+    # Die Detection liefert die URL mit; ist ihr expire-Token fast durch,
+    # startet die Aufnahme in ein sofortiges 404. Genau die "Sofort-404"-
+    # Aufnahmen waren das Fehlerbild.
+    _konf(RECORDER_PREF="native")
+    LAUF["resolve"] = 0
+    LAUF["ttl"] = 30                      # < STREAM_URL_MIN_TTL=300
+    _bau(prefetched_info={"hls_url": "https://cdn/alt.m3u8", "via": "x"})
+    assert LAUF["resolve"] == 1, "abgelaufene prefetch-URL wird trotzdem benutzt"
+    LAUF["resolve"] = 0
+    LAUF["ttl"] = 3600                    # frisch
+    cmd, _ = _bau(prefetched_info={"hls_url": "https://cdn/alt.m3u8", "via": "x"})
+    assert LAUF["resolve"] == 0, "frische prefetch-URL wird unnoetig neu aufgeloest"
+    assert "https://cdn/alt.m3u8" in cmd, "die prefetch-URL landet nicht im Befehl"
+    ok("W17: stale Stream-URL wird verworfen, frische gespart (B58)")
+
+    # --- 5) Proxy-Rotation: geblockte werden ausgeschlossen und gemerkt --
+    _konf(RECORDER_PREF="native")
+    LAUF["ttl"] = None
+    zustand["FAILED"]["henry"] = {"http://tot:3128"}
+    LAUF["proxy"] = "http://frisch:3128"
+    cmd, _ = _bau()
+    assert LAUF["proxy_exclude"] == {"http://tot:3128"}, \
+        "geblockte Proxys werden nicht ausgeschlossen: %r" % (LAUF["proxy_exclude"],)
+    assert zustand["PROXY"]["henry"] == "http://frisch:3128", \
+        "der benutzte Proxy wird nicht gemerkt — handle_recording_finished kann ihn nicht bewerten"
+    assert cmd[cmd.index("-http_proxy") + 1] == "http://frisch:3128"
+    ok("W17: Proxy-Rotation schliesst Geblockte aus und merkt den benutzten")
+
+    # --- 6) F44: nur FLV ist kein Grund, nicht aufzunehmen --------------
+    # Vorher wurde nur auf hls_url geprueft; reine FLV-Rooms galten als
+    # "kein Recorder verfuegbar", obwohl ffmpeg FLV genauso aufnimmt.
+    _konf(RECORDER_PREF="native")
+    LAUF["proxy"] = None
+    LAUF["info"] = {"flv_url": "https://cdn/x.flv", "via": "webcast_api"}
+    cmd, name = _bau()
+    assert cmd and name.endswith("-flv"), "reiner FLV-Stream wird nicht aufgenommen: %r" % name
+    assert "https://cdn/x.flv" in cmd
+    LAUF.pop("info")
+    ok("W17: reine FLV-Streams werden aufgenommen und als solche benannt (F44)")
+
+    # --- 7) native_api ist kein harter Pin (F42) ------------------------
+    # Vorher sah der Operator "kein Recorder verfuegbar", obwohl yt-dlp da war.
+    _konf(RECORDER_PREF="auto")
+    LAUF["leer"] = True                   # Resolver liefert nichts
+    _, name = _bau(preferred="native_api")
+    assert name == "ytdlp", "native_api faellt nicht auf yt-dlp zurueck: %r" % name
+    LAUF.pop("leer")
+    ok("W17: native_api faellt auf yt-dlp zurueck statt hart zu scheitern (F42)")
+
+    # --- 8) Aufnahme wird genice't, das Sendebild nicht -----------------
+    # Der Gegensatz ist Absicht: der Relay-Bauer setzt NIE nice (W16), die
+    # Aufnahme schon — sie darf der Live-Ausspielung nicht die Kerne wegnehmen.
+    _konf(RECORDER_PREF="native")
+    cmd, _ = _bau()
+    assert cmd[:3] == ["nice", "-n", "5"], cmd[:5]
+    assert "-threads" in cmd and cmd[cmd.index("-threads") + 1] == "1"
+    ok("W17: die Aufnahme laeuft genice't und gedeckelt (anders als das Relay)")
+
+    # --- 9) Kein Recorder heisst (None, None), kein Absturz -------------
+    _konf(RECORDER_PREF="native")
+    LAUF["leer"] = True
+    cmd, name = _bau()
+    assert cmd is None and name is None, (cmd, name)
+    LAUF.pop("leer")
+    ok("W17: ohne brauchbaren Recorder kommt (None, None) zurueck")
+
+    _rc.shutil, _rc._preflight_url = _echt_shutil, _echt_preflight
+
+
 def _test_v42_w14_motd_spricht_englisch():
     """v4.2-W14: die MOTD war zu 0 % uebersetzt und meldete 100 %."""
     import subprocess as _sp
@@ -5680,6 +5886,8 @@ def main():
     _test_v42_w15_discord_aus_dem_monolithen()
 
     _test_v42_w16_relaykommando()
+
+    _test_v42_w17_recorderkommando()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)
 

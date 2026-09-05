@@ -732,7 +732,6 @@ def test_ffmpeg_thread_budget():
     die Ursache. Dieser Test haelt fest, dass der Deckel nicht wieder verschwindet.
     """
     src = open("bot.py").read()
-    tree = ast.parse(src)
 
     # _ff_cmd existiert (delegiert seit W44) und die -threads-Logik lebt in nc.ffbuild
     assert "def _ff_cmd(" in src, "_ff_cmd fehlt"
@@ -767,26 +766,52 @@ def test_ffmpeg_thread_budget():
     assert "nice=" not in fn, "das Sendebild darf NICHT genice't werden"
     ok("Relay-Befehl: gedeckelt, ohne nice (Vorrang fuers Sendebild)")
 
-    # Jede ffmpeg-Befehlsliste muss durch _ff_cmd — Ausnahme: 'ffmpeg -version'
+    # Jede ffmpeg-Befehlsliste muss durch _ff_cmd — Ausnahme: 'ffmpeg -version'.
+    #
+    # ANKER GEWANDERT (v4.2-W17, nicht der Vertrag) — und der Anker war hier
+    # sogar STILL SCHWAECHER GEWORDEN: die Suche las nur bot.py. Seit die
+    # Kommandobauer nach nc/restreamcmd.py (W16) und nc/reccmd.py (W17)
+    # gewandert sind, lagen die beiden groessten ffmpeg-Pfade des Projekts
+    # ausserhalb der Suche, ohne dass irgendetwas rot wurde. Gesucht wird
+    # jetzt in ALLEN Dateien, die ffmpeg aufrufen koennen.
+    import glob as _glob
+    QUELLEN = (["bot.py", "discordbot.py"]
+               + sorted(_glob.glob("nc/*.py")) + sorted(_glob.glob("nc/*/*.py")))
+    # Erlaubte Deckel-Formen: _ff_cmd/ff_cmd direkt, oder nc/videoteil._bau(),
+    # das nichts anderes tut als ff_cmd mit den Hintergrund-Werten zu rufen.
+    DECKEL = ("_ff_cmd(", "ff_cmd(", "_bau(")
+    # EINE benannte Ausnahme, mit Grund — keine Liste, die still waechst:
+    # nc/restream_testpush.build_cmd baut einen synthetischen Testbild-Push
+    # (testsrc2, kein Quell-Pull), der im Bauer selbst auf 30 Sekunden hart
+    # gedeckelt ist. Er ist NICHT thread-gedeckelt; das ist eine bekannte,
+    # kleine Luecke und bewusst nicht in dieser Welle geaendert worden, weil
+    # eine Aenderung am Test-Argv misst, was der Ingest-Test misst.
+    AUSNAHMEN = {("nc/restream_testpush.py", "build_cmd")}
     unguarded = []
-    for n in ast.walk(tree):
-        if not (isinstance(n, ast.List) and n.elts
-                and isinstance(n.elts[0], ast.Constant)
-                and n.elts[0].value == "ffmpeg"):
-            continue
-        if len(n.elts) > 1 and isinstance(n.elts[1], ast.Constant) \
-                and n.elts[1].value == "-version":
-            continue          # rechnet nichts
-        owner = None
-        for f in ast.walk(tree):
-            if isinstance(f, (ast.FunctionDef, ast.AsyncFunctionDef)) \
-                    and f.lineno <= n.lineno <= (f.end_lineno or 0):
-                owner = f
-        body = ast.get_source_segment(src, owner) if owner else ""
-        if "_ff_cmd(" not in (body or ""):
-            unguarded.append((n.lineno, owner.name if owner else "?"))
+    for _pfad in QUELLEN:
+        _src = open(_pfad, encoding="utf-8").read()
+        _tree = ast.parse(_src)
+        for n in ast.walk(_tree):
+            if not (isinstance(n, ast.List) and n.elts
+                    and isinstance(n.elts[0], ast.Constant)
+                    and n.elts[0].value == "ffmpeg"):
+                continue
+            if len(n.elts) > 1 and isinstance(n.elts[1], ast.Constant) \
+                    and n.elts[1].value == "-version":
+                continue          # rechnet nichts
+            owner = None
+            for f in ast.walk(_tree):
+                if isinstance(f, (ast.FunctionDef, ast.AsyncFunctionDef)) \
+                        and f.lineno <= n.lineno <= (f.end_lineno or 0):
+                    owner = f
+            name = owner.name if owner else "?"
+            if (_pfad, name) in AUSNAHMEN:
+                continue
+            body = ast.get_source_segment(_src, owner) if owner else ""
+            if not any(d in (body or "") for d in DECKEL):
+                unguarded.append((_pfad, n.lineno, name))
     assert not unguarded, f"ffmpeg ohne Thread-Deckel: {unguarded}"
-    ok("alle rechnenden ffmpeg-Pfade laufen durch _ff_cmd")
+    ok(f"alle rechnenden ffmpeg-Pfade in {len(QUELLEN)} Dateien laufen durch _ff_cmd")
 
 
 def test_ai_timeout_capped():

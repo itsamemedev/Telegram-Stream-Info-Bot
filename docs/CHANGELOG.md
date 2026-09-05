@@ -11,6 +11,60 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Geändert — die Recorder-Kommandozeilen stehen jetzt in `nc/reccmd.py` (v4.2 W17)
+
+400 Zeilen, die entscheiden **womit** aufgenommen wird (nativer ffmpeg-Pull
+oder yt-dlp) und mit welchen Argumenten. `bot.py` fällt auf **23.111 Zeilen**.
+Wie bei W16 ist der Gewinn nicht die Zeilenzahl, sondern dass dieser Pfad
+erstmals geprüft wird — und er ist der, an dem der Betrieb hängt: fällt er
+aus, gibt es keine Aufnahme.
+
+Neun Zusicherungen, die vorher nicht formulierbar waren:
+
+* **F4, zwei Formen.** Der native Befehl trägt die TikTok-Session in einem
+  `-headers`-Blob, yt-dlp als `--cookies <Datei>`. Zwei Formen, ein
+  Redaktionspfad — und genau deshalb kann eine davon unbemerkt durchrutschen.
+  Der Vertrag baut beide und prüft, dass `redact_cmd_for_log` beide leert.
+* **Der 403-Umschalter.** Blockt TikTok die CDN-URL für unsere Egress-IP,
+  wird der User zeitweise auf yt-dlp gezwungen. Drei Dinge werden festgehalten:
+  der Zwang greift, ein **expliziter Force des Operators hat Vorrang** (sonst
+  ließe sich der native Pfad nach der Behebung nicht mehr testen), und ein
+  abgelaufener Cooldown wird **entfernt**, nicht nur ignoriert — sonst wächst
+  das Dict mit jedem je geblockten User weiter.
+* **B58.** Eine von der Detection mitgelieferte Stream-URL mit fast
+  abgelaufenem `expire`-Token wird verworfen und frisch aufgelöst. Genau die
+  „Sofort-404"-Aufnahmen waren das Fehlerbild. Umgekehrt wird eine frische URL
+  **nicht** unnötig neu aufgelöst — der Vertrag zählt die Resolver-Aufrufe.
+* **Proxy-Rotation.** Zuletzt geblockte Proxys werden ausgeschlossen, und der
+  tatsächlich benutzte wird gemerkt — ohne das kann
+  `handle_recording_finished` ihn hinterher weder belohnen noch rauswerfen.
+* **F44:** reine FLV-Rooms werden aufgenommen (vorher galten sie als „kein
+  Recorder verfügbar"). **F42:** `native_api` fällt auf yt-dlp zurück statt
+  hart zu scheitern. Ohne brauchbaren Recorder kommt `(None, None)` zurück.
+* **Die Aufnahme läuft `nice`-t und gedeckelt** — anders als das Relay, das
+  nie genice't wird (W16). Der Gegensatz ist Absicht und steht jetzt fest.
+
+Acht Mutationen geprüft, alle acht schlagen an.
+
+**Ein Anker war still schwächer geworden — schon seit W16.** Die Prüfung „jede
+rechnende ffmpeg-Befehlsliste läuft durch `_ff_cmd`" las **nur `bot.py`**. Seit
+die beiden großen Kommandobauer nach `nc/` gewandert sind, lagen die größten
+ffmpeg-Pfade des Projekts außerhalb der Suche, ohne dass irgendetwas rot wurde.
+Gesucht wird jetzt in allen 173 Dateien, die ffmpeg aufrufen können; die
+Mutation bestätigt, dass die Suche in `nc/` wirklich greift.
+
+Dabei ist **eine echte Lücke** aufgefallen und bewusst nicht in dieser Welle
+geschlossen worden: `nc/restream_testpush.build_cmd` baut einen synthetischen
+Testbild-Push ohne `-threads`. Er ist im Bauer auf 30 Sekunden hart gedeckelt,
+aber während eines laufenden Streams nimmt sich dieser x264 für die Dauer alle
+Kerne. Die Ausnahme steht **benannt und begründet** im Vertrag, nicht in einer
+still wachsenden Liste.
+
+Der Rumpf ist bitgenau übernommen (gegen `git show HEAD:bot.py` verglichen,
+alle fünf Funktionen). `configure()` lehnt unbekannte und fehlende Schlüssel
+ab — ein stiller Default hieße hier: falscher Recorder, fehlende Cookies, kein
+Thread-Deckel.
+
 ### Geändert — die ffmpeg-Zeile des Relays steht jetzt in `nc/restreamcmd.py` (v4.2 W16)
 
 188 Zeilen, die nichts tun außer eine Argumentliste bauen: Input-Härtung,
