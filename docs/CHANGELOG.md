@@ -11,6 +11,43 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Geändert — die Kick-REST-Aufrufe raus (v4.2 W12)
+
+`nc/kickapi.py` gab es schon — mit `slug()`, `broadcaster_id()` und dem
+gemeinsamen `SEND_LAST`. Die fünf Aufrufe, die es eigentlich beherbergen
+sollte, standen weiter in `KickModerator`: Chat senden, Timeout setzen,
+Kanalzustand lesen, Titel/Kategorie ändern, Kategorie suchen. Dazu die
+Tokenbeschaffung. **196 Zeilen raus**, 25.898 → 25.702.
+
+In `bot.py` bleiben Durchreicher — und der **Bot-Zustand**: der
+Moderations-Logeintrag und `last_spoken` gehören nicht nach `nc/`. Der
+Vertrag prüft beides, und zwar am geparsten Quelltext ohne Kommentare: der
+Modulkopf von `nc/kickapi.py` *nennt* `_modlog`, um zu erklären, dass es dort
+nicht hingehört — ein Textvergleich über die rohe Datei schlägt auf genau
+dieser Erklärung an. Derselbe Fehler wie in W32, W33 und v4.2-W3, diesmal
+gleich beim ersten Lauf gefangen.
+
+**Die Zwei-Token-Regel steht jetzt an einer Stelle statt an dreien.** Kick
+kennt einen App-Token (`client_credentials`) und einen User-Token. Der
+App-Token darf lesen, aber weder chatten noch moderieren noch den Kanal
+ändern — dort antwortet Kick mit einem nackten 401, das nach einem kaputten
+Schlüssel aussieht und in Wahrheit „falsche Token-Art" heißt. Das war v4.0-W17
+und hat Wochen gekostet. `_schreib_token()` bedient jetzt Chat, Timeout und
+Kanaländerung gemeinsam; die Mutationsprobe stellt den alten Fehler wieder her
+und der Vertrag fängt ihn.
+
+Auch der App-Token-Cache ist gewandert: er lag am `KickModerator`-Objekt, hängt
+aber an genau einem Kick-Zugang. Bei jedem Neustart der Chat-Schleife holte das
+einen frischen Token.
+
+**Vier Anker in `test_restream.py` sind gewandert, keiner gelöscht.** Die
+Verträge B169, v4.0-W9, v4.0-W10 und v4.0-W17 verankern sich an wörtlichem
+`bot.py`-Quelltext; der Code hat sich nicht geändert, nur sein Ort. Jeder Anker
+trägt jetzt die Notiz, was gewandert ist und warum die Zusage dieselbe blieb —
+und wo es enger geht als vorher: der Sendepfad muss auf **jedem** Fehlerweg
+eine Spur in `SEND_LAST` hinterlassen, nicht nur an der Stelle, die der alte
+Anker traf.
+
 ### Geändert — das ffmpeg-Handwerk der Upload-Zerlegung raus (v4.2 W11)
 
 Parallel zur Cookie-Welle oben, und unabhängig davon. Nach fünf Wellen Routenabbau sind die Routen nicht mehr das Problem: die 34

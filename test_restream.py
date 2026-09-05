@@ -2770,8 +2770,17 @@ def test_b169_kick_oauth():
 
     # Verdrahtung im Bot.
     src = open("bot.py").read()
-    assert "await _kick_user_token(session) or await self._get_token(session)" in src, \
-        "update_channel bevorzugt den User-Token nicht"
+    # ANKER GEWANDERT (v4.2-W12, nicht der Vertrag): update_channel ist ein
+    # Durchreicher geworden, der Koerper liegt in nc/kickapi.py. Die Zusage ist
+    # dieselbe geblieben — schreibende Kick-Aufrufe nehmen ZUERST den
+    # User-Token — sie steht nur an einer Stelle statt an dreien: _schreib_token
+    # bedient Chat, Timeout und Kanalaenderung gemeinsam.
+    _kapi = open("nc/kickapi.py", encoding="utf-8").read()
+    assert "ut = await user_token(session)" in _kapi and \
+        "return (ut or await app_token(session)), bool(ut)" in _kapi, \
+        "schreibende Kick-Aufrufe bevorzugen den User-Token nicht"
+    assert "await _schreib_token(session)" in _kapi.split("async def update_channel")[1], \
+        "update_channel geht nicht ueber _schreib_token"
     # ANKER GEWANDERT (v4.1-W9, nicht der Vertrag): die vier OAuth-Routen
     # liegen in nc/routes/kick.py, der Token-Tausch in nc/kickapi.py. Geprueft
     # wird dieselbe Zusage — der Flow ist vollstaendig verdrahtet — nur dort,
@@ -3182,8 +3191,14 @@ def test_v40_w9_kick_and_listener():
     assert "BID_CACHE" in _ka, "keine Cache-Struktur"
     assert "_KICK_BID_CACHE = _nc_kickapi.BID_CACHE" in src, \
         "Bot haelt einen EIGENEN Cache — zweimal aufgeloest, zweimal Fremdabruf"
-    # send_message + bans + channel_info loesen die ID auto auf (kein nacktes KICK_BROADCASTER_ID mehr im payload).
-    assert "KICK_BROADCASTER_ID or await _kick_broadcaster_id()" in src, "Auto-Aufloesung nicht verdrahtet"
+    # send_message + bans + channel_info loesen die ID auto auf (kein nacktes
+    # KICK_BROADCASTER_ID mehr im payload).
+    # ANKER GEWANDERT (v4.2-W12, nicht der Vertrag): die drei Aufrufe liegen in
+    # nc/kickapi.py und fragen dort dieselbe Kette — gesetzter Wert schlaegt
+    # Aufloesung. Der Bot reicht KICK_BROADCASTER_ID beim configure() als WERT
+    # herein, deshalb heisst die erste Haelfte dort _conf["broadcaster_id_env"].
+    assert _ka.count('_conf["broadcaster_id_env"] or await broadcaster_id()') >= 3, \
+        "Auto-Aufloesung nicht in allen drei Aufrufen verdrahtet"
     assert 'payload["broadcaster_user_id"] = KICK_BROADCASTER_ID' not in src, "alter payload-Pfad ohne Aufloesung"
     assert 'params["broadcaster_user_id"] = KICK_BROADCASTER_ID' not in src, "alter params-Pfad ohne Aufloesung"
     # Parse-Logik nachgestellt.
@@ -3217,10 +3232,22 @@ def test_v40_w10_kick_sendcheck():
     src = open("bot.py").read()
     # Gedaechtnis + Klartext-Fehler im Sendepfad.
     assert "_KICK_SEND_LAST" in src, "kein Gedaechtnis fuer den letzten Sendeversuch"
-    body = _meth(src, "KickModerator", "send_message")   # v4.0-W117
+    # ANKER GEWANDERT (v4.2-W12, nicht der Vertrag): der Sendepfad liegt in
+    # nc/kickapi.py. Die Zusage ist unveraendert — Kicks Fehlertext wird
+    # mitgelesen, die fehlende Broadcaster-ID benannt, und der Versuch IMMER
+    # gemerkt. Das Gedaechtnis heisst dort SEND_LAST; der Bot bindet es unter
+    # dem alten Namen, damit die Diagnose-Route dieselbe Struktur liest.
+    _kapi = open("nc/kickapi.py", encoding="utf-8").read()
+    body = _kapi.split("async def send_message")[1].split("\nasync def ")[0]
     assert "await resp.text()" in body, "Kicks Fehlertext wird nicht gelesen"
     assert "keine Broadcaster-ID aufloesbar" in body, "fehlende Broadcaster-ID wird nicht benannt"
-    assert "_KICK_SEND_LAST.update(" in body, "Sendeversuch wird nicht gemerkt"
+    assert "SEND_LAST.update(" in body, "Sendeversuch wird nicht gemerkt"
+    # Und zwar auf JEDEM Weg: ohne Token, bei Kicks Antwort, und im
+    # Ausnahmefall. Faellt einer weg, meldet die Diagnose "noch kein
+    # Sendeversuch", waehrend der Chat stumm ist — genau der Zustand, gegen den
+    # diese Welle gebaut wurde.
+    assert body.count("SEND_LAST.update(") >= 3, \
+        "nicht jeder Fehlerweg hinterlaesst eine Spur"
     # Diagnose-/Testroute. ANKER GEWANDERT (v4.1-W9): sie liegt in
     # nc/routes/kick.py. Der Vertrag ist derselbe — und er haengt daran, dass
     # Route und Sendepfad DASSELBE Gedaechtnis lesen: eine eigene Kopie im
@@ -3527,17 +3554,25 @@ def test_v40_w17_kick401_crowdsec():
         assert sc in k.DEFAULT_SCOPES, "Scope fehlt: " + sc
 
     src = open("bot.py").read()
-    # Chat-Senden: User-Token bevorzugt, dann type "user".
-    body = _meth(src, "KickModerator", "send_message")   # v4.0-W117
-    assert "_utok = await _kick_user_token(session)" in body, "Chat nutzt den User-Token nicht"
-    assert 'payload = {"type": "user" if _utok else "bot"' in body, "Poster-Typ nicht gesetzt"
-    assert 'App-Token darf nicht chatten' in body, "kein Klartext-Hinweis bei 401"
+    # ANKER GEWANDERT (v4.2-W12, nicht der Vertrag): die REST-Aufrufe liegen in
+    # nc/kickapi.py, in KickModerator stehen nur noch Durchreicher. Geprueft
+    # wird dieselbe Zusage an ihrem neuen Ort — und zusaetzlich, dass der Bot
+    # den Weg wirklich nimmt, damit ein toter Durchreicher auffaellt.
+    _kapi = open("nc/kickapi.py", encoding="utf-8").read()
+    _sm = _kapi.split("async def send_message")[1]
+    assert "tok, ist_user = await _schreib_token(session)" in _sm, \
+        "Chat nutzt den User-Token nicht"
+    assert 'payload = {"type": "user" if ist_user else "bot"' in _sm, \
+        "Poster-Typ nicht gesetzt"
+    assert "App-Token darf nicht chatten" in _sm, "kein Klartext-Hinweis bei 401"
+    assert "_nc_kickapi.send_message(" in src, "der Bot ruft den Kick-Chat nicht mehr auf"
     # Timeouts brauchen ebenfalls Nutzerrechte.
-    j = src.find("async def timeout_user")
-    tbody = src[j:j + 1200]
-    assert "await _kick_user_token(session) or await self._get_token(session)" in tbody, \
+    _tu = _kapi.split("async def timeout_user")[1]
+    assert "await _schreib_token(session)" in _tu, \
         "Kick-Timeout nutzt weiter nur den App-Token"
-    assert "moderation/bans" in tbody, "falscher Moderations-Endpunkt"
+    assert "moderation/bans" in _tu.lower() or "BANS_URL" in _tu, \
+        "falscher Moderations-Endpunkt"
+    assert "_nc_kickapi.timeout_user(" in src, "der Bot ruft den Kick-Timeout nicht mehr auf"
     # Panel/Status zeigen die entscheidenden Scopes.
     # ANKER GEWANDERT (v4.1-W9): die Status-Route liegt in nc/routes/kick.py.
     _kb = open("nc/routes/kick.py", encoding="utf-8").read()

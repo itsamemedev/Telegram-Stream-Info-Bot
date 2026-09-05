@@ -4680,6 +4680,183 @@ def _test_v42_w11_videoteil_aus_dem_monolithen():
        "ohne Bot")
 
 
+def _test_v42_w12_kick_rest_aus_dem_monolithen():
+    """v4.2-W12: die Kick-REST-Aufrufe liegen in nc/kickapi.py."""
+    import ast as _ast
+    import asyncio as _asyncio
+    import logging as _logging
+    import time as _time
+
+    import nc.kickapi as _ka
+
+    # ── (1) DIE KOERPER SIND RAUS. In KickModerator stehen nur noch
+    # Durchreicher; wer einen Aufruf wieder dort einbaut, hat zwei Wahrheiten
+    # ueber dieselbe Kick-Schnittstelle.
+    b = open("bot.py", encoding="utf-8").read()
+    baum = _ast.parse(b)
+    klasse = next(n for n in baum.body if getattr(n, "name", "") == "KickModerator")
+    laenge = {x.name: (x.end_lineno or x.lineno) - x.lineno + 1
+              for x in klasse.body
+              if isinstance(x, (_ast.FunctionDef, _ast.AsyncFunctionDef))}
+    for name, deckel in (("_get_token", 8), ("timeout_user", 4),
+                         ("channel_info", 6), ("update_channel", 7),
+                         ("search_category", 7), ("send_message", 12)):
+        assert laenge.get(name, 999) <= deckel, \
+            "%s ist mit %d Zeilen kein Durchreicher mehr" % (name, laenge.get(name))
+    # Aber der BOT-Zustand bleibt im Bot: der Moderations-Logeintrag und
+    # last_spoken gehoeren nicht nach nc/.
+    quelle_sm = b[b.index("    async def send_message(self, content"):]
+    quelle_sm = quelle_sm[:quelle_sm.index("\n    async def ")]
+    assert "_modlog(" in quelle_sm and "self.last_spoken" in quelle_sm, \
+        "der Moderations-Logeintrag ist nach nc/ gewandert"
+    # Ohne Kommentare und Docstrings pruefen: der Modulkopf von nc/kickapi
+    # NENNT _modlog und last_spoken, um zu erklaeren, dass sie dort nicht
+    # hingehoeren. Ein Textvergleich ueber die rohe Datei schlaegt auf genau
+    # dieser Erklaerung an — derselbe Fehler wie in W32, W33 und v4.2-W3.
+    ka_baum = _ast.parse(open("nc/kickapi.py", encoding="utf-8").read())
+    for knoten in _ast.walk(ka_baum):
+        if (isinstance(knoten, (_ast.FunctionDef, _ast.AsyncFunctionDef,
+                                _ast.ClassDef, _ast.Module))
+                and _ast.get_docstring(knoten)):
+            knoten.body = knoten.body[1:]
+    ka_code = _ast.unparse(ka_baum)
+    for verboten in ("_modlog", "last_spoken"):
+        assert verboten not in ka_code, \
+            "nc/kickapi kennt Bot-Zustand: %s" % verboten
+
+    # ── (2) DIE ZWEI-TOKEN-REGEL (v4.0-W17). Kick kennt einen APP-Token
+    # (client_credentials) und einen USER-Token. Der App-Token darf LESEN, aber
+    # weder chatten noch moderieren noch den Kanal aendern — dort antwortet Kick
+    # mit einem nackten 401, das nach einem kaputten Schluessel aussieht und in
+    # Wahrheit "falsche Token-Art" heisst. Das hat Wochen gekostet; deshalb
+    # steht es hier als Vertrag und nicht nur als Kommentar.
+    class _Antwort:
+        def __init__(self, status=200, payload=None, text=""):
+            self.status, self._p, self._t = status, payload, text
+
+        async def json(self, content_type=None):
+            return self._p
+
+        async def text(self):
+            return self._t
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+    class _Sitzung:
+        def __init__(self):
+            self.rufe = []
+            self.antwort = _Antwort(200, {"data": [{"id": 7, "name": "Chess"}]})
+
+        def _merk(self, art, url, **kw):
+            self.rufe.append((art, url, kw.get("headers", {}), kw.get("json"),
+                              kw.get("params"), kw.get("data")))
+            return self.antwort
+
+        def post(self, url, **kw):
+            return self._merk("POST", url, **kw)
+
+        def get(self, url, **kw):
+            return self._merk("GET", url, **kw)
+
+        def patch(self, url, **kw):
+            return self._merk("PATCH", url, **kw)
+
+        async def close(self):
+            pass
+
+    speicher = {"kick.user_token": {"access_token": "USER", "expires_at": 1 << 40}}
+    alt_level = _logging.getLogger("TikTokBot").level
+    _logging.getLogger("TikTokBot").setLevel(_logging.CRITICAL)
+    alt_conf = dict(_ka._conf)
+    alt_app = dict(_ka.APP_TOKEN)
+    try:
+        _ka.configure(log=_logging.getLogger("TikTokBot"),
+                      get_session=None, time_mod=_time,
+                      broadcaster_id_env=4242,
+                      client_id="cid", client_secret="csec",
+                      cfg_get=lambda k, d=None: speicher.get(k, d),
+                      cfg_set=lambda k, v: speicher.__setitem__(k, v),
+                      follower_count=None)
+        _ka.APP_TOKEN.update(token="APP", exp=_time.monotonic() + 9999)
+
+        # SCHREIBEND -> User-Token
+        sitz = _Sitzung()
+        sitz.antwort = _Antwort(200, {})
+        gut, _ = _asyncio.run(_ka.send_message("hallo", session=sitz))
+        assert gut
+        art, url, kopf, koerper, _, _ = sitz.rufe[-1]
+        assert url == _ka.CHAT_URL and art == "POST"
+        assert kopf["Authorization"] == "Bearer USER", \
+            "der Chat-POST nimmt nicht den User-Token: %r" % kopf
+        assert koerper["type"] == "user", "Kick bekommt den falschen Absendertyp"
+        assert koerper["broadcaster_user_id"] == 4242
+
+        # LESEND -> App-Token reicht
+        sitz = _Sitzung()
+        sitz.antwort = _Antwort(200, {"data": [{"slug": "x", "stream": {}}]})
+        _asyncio.run(_ka.channel_info(session=sitz))
+        assert sitz.rufe[-1][2]["Authorization"] == "Bearer APP", \
+            "der Lese-Aufruf verbraucht unnoetig den User-Token"
+
+        # OHNE User-Token faellt der Chat auf den App-Token zurueck — und die
+        # Fehlermeldung MUSS den Grund nennen, sonst sucht der Betreiber am
+        # Schluessel statt an der Token-Art.
+        speicher.clear()
+        sitz = _Sitzung()
+        sitz.antwort = _Antwort(401, {}, "Unauthorized")
+        gut, fehler = _asyncio.run(_ka.send_message("hallo", session=sitz))
+        assert gut is False
+        assert "chat:write" in fehler, "die 401 erklaert die Token-Art nicht: %r" % fehler
+        assert sitz.rufe[-1][3]["type"] == "bot"
+
+        # ── (3) SEND_LAST WIRD IMMER GESETZT. Es ist die einzige Stelle, an der
+        # ein stummer Kick-Chat sichtbar wird (v4.0-W10) — ohne sie meldete die
+        # Diagnose ewig "noch kein Sendeversuch", waehrend Kick seit Stunden
+        # abweist.
+        assert _ka.SEND_LAST["ok"] is False and _ka.SEND_LAST["status"] == 401
+
+        # ── (4) DIE TIMEOUT-DAUER WIRD GEKLEMMT. Kick lehnt alles ausserhalb
+        # 1..10080 ab, und eine abgelehnte Moderation sieht im Log aus wie eine
+        # durchgefuehrte.
+        for rein, raus in ((0, 1), (-5, 1), (999999, 10080), (30, 30)):
+            sitz = _Sitzung()
+            sitz.antwort = _Antwort(200, {})
+            _asyncio.run(_ka.timeout_user(1, rein, "Grund", sitz))
+            assert sitz.rufe[-1][3]["duration"] == raus, \
+                "Dauer %r wurde zu %r statt %r" % (rein, sitz.rufe[-1][3]["duration"], raus)
+
+        # ── (5) EXAKTER NAMENSTREFFER SCHLAEGT DEN ERSTEN. Kick sortiert nach
+        # Beliebtheit — ohne diese Regel waere "Just Chatting" die Antwort auf
+        # fast jede Suche.
+        sitz = _Sitzung()
+        sitz.antwort = _Antwort(200, {"data": [{"id": 1, "name": "Just Chatting"},
+                                               {"id": 9, "name": "Chess"}]})
+        cid, nam = _asyncio.run(_ka.search_category("chess", session=sitz))
+        assert (cid, nam) == (9, "Chess"), "der exakte Treffer verliert: %r" % ((cid, nam),)
+
+        # ── (6) KANAL AENDERN braucht den User-Token, und ohne ihn muss die
+        # Meldung den Scope nennen (B164).
+        speicher.clear()
+        sitz = _Sitzung()
+        sitz.antwort = _Antwort(403, {}, "")
+        gut, fehler = _asyncio.run(_ka.update_channel(title="Neu", session=sitz))
+        assert gut is False and "channel:write" in fehler, fehler
+        assert sitz.rufe[-1][0] == "PATCH"
+    finally:
+        _ka._conf.clear()
+        _ka._conf.update(alt_conf)
+        _ka.APP_TOKEN.clear()
+        _ka.APP_TOKEN.update(alt_app)
+        _logging.getLogger("TikTokBot").setLevel(alt_level)
+
+    ok("v4.2-W12: Kick-REST in nc/kickapi \u2014 User-Token schreibt, App-Token "
+       "liest, SEND_LAST meldet immer")
+
+
 def main():
     tmp = tempfile.mkdtemp()
     configure_db(db_path=os.path.join(tmp, "t.db"), backend="sqlite")
@@ -4850,6 +5027,8 @@ def main():
     _test_v42_w10_cookies_reparieren_und_selbst_holen()
 
     _test_v42_w11_videoteil_aus_dem_monolithen()
+
+    _test_v42_w12_kick_rest_aus_dem_monolithen()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)
 
