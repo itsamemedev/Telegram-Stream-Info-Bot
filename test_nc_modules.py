@@ -4508,7 +4508,12 @@ def _test_v42_w11_videoteil_aus_dem_monolithen():
     # den Import verschattete. Zwei gleichnamige Funktionen mit verschiedenem
     # Verhalten in einer Datei — beim naechsten Aufraeumen behaelt jemand die
     # falsche.
-    b = open("bot.py", encoding="utf-8").read()
+    # ANKER GEWANDERT (v4.2-W19, nicht der Vertrag): split_and_send_video
+    # steht in telegramversand.py — bot-seitig, weil es telegram.error-
+    # Ausnahmen zur Laufzeit braucht. Der Vertrag fragt, ob die vier
+    # ffmpeg-Huellen weg sind und _send_one geblieben ist; beides ist von der
+    # Datei unabhaengig.
+    b = open("telegramversand.py", encoding="utf-8").read()
     baum = _ast.parse(b)
     fn = None
     for n in baum.body:
@@ -4516,6 +4521,14 @@ def _test_v42_w11_videoteil_aus_dem_monolithen():
             fn = n
             break
     assert fn is not None, "split_and_send_video ist verschwunden"
+    # Und im Monolithen darf keine zweite Fassung zurueckkommen: dort steht
+    # nur noch die duenne Huelle, die durchreicht.
+    _bq = open("bot.py", encoding="utf-8").read()
+    for _n in _ast.parse(_bq).body:
+        if getattr(_n, "name", "") == "split_and_send_video":
+            _h = _ast.get_source_segment(_bq, _n) or ""
+            assert "_tv.split_and_send_video(" in _h and len(_h.splitlines()) < 20, \
+                "bot.py haelt wieder eine eigene Fassung des Versands"
     verschachtelt = {x.name for x in fn.body
                      if isinstance(x, (_ast.FunctionDef, _ast.AsyncFunctionDef))}
     for weg in ("_ffprobe_duration", "_split_to_parts", "_reencode_segment",
@@ -5770,6 +5783,169 @@ def _test_v42_w18_eskalationsrechnung():
     ok("W18: 403 rechnet in Wanduhr, Stream-Tod in monotoner Zeit")
 
 
+def _test_v42_w19_versandweg():
+    """v4.2-W19: der Versandweg der Aufnahmen steht in telegramversand.py.
+
+    Bot-seitig wie discordbot.py: die Datei faengt telegram.error-Ausnahmen ab
+    und braucht die echten Klassen zur Laufzeit. Unter nc/ waere sie im
+    Vertrags-Job an einem nackten ImportError gestorben — dort sind nur orjson
+    und flask installiert. Genau deshalb stubbt dieser Vertrag `telegram`,
+    so wie test_smoke.py es fuer bot.py tut: geprueft wird der Kontrollfluss
+    des Versands, nicht die Bibliothek.
+
+    DAS IST DER PFAD, DER IM BETRIEB SCHON WEHGETAN HAT: eine Chat-ID, die
+    Telegram mit 'chat not found' beantwortet, liess den Bot fuer JEDE
+    Aufnahme durch die komplette Teil- und Retry-Kette laufen — 176 identische
+    Fehlerzeilen in einer Nacht, 327 verworfene Upload-Teile. Die Sperre
+    dagegen hatte nie ein Test angefasst.
+    """
+    import asyncio as _aio
+    import os as _os
+    import sys as _sys
+    import tempfile as _tf
+    import types as _ty
+
+    # --- telegram stubben, VOR dem Import des Moduls -------------------
+    if "telegram" not in _sys.modules:
+        _tg = _ty.ModuleType("telegram")
+        _err = _ty.ModuleType("telegram.error")
+        _con = _ty.ModuleType("telegram.constants")
+        for _n in ("TelegramError",):
+            setattr(_err, _n, type(_n, (Exception,), {}))
+        for _n in ("BadRequest", "Forbidden", "NetworkError", "RetryAfter"):
+            setattr(_err, _n, type(_n, (_err.TelegramError,), {}))
+        _con.ParseMode = _ty.SimpleNamespace(HTML="HTML")
+        _sys.modules.update({"telegram": _tg, "telegram.error": _err,
+                             "telegram.constants": _con})
+    import telegramversand as _tv
+
+    # Kein echtes Warten: die Retry-Pfade schlafen bis zu 120 Sekunden.
+    _echt_sleep = _tv.asyncio.sleep
+
+    async def _kein_schlaf(_s):
+        PROT["geschlafen"].append(_s)
+    _tv.asyncio.sleep = _kein_schlaf
+
+    PROT = {}
+
+    class _Bot:
+        def __init__(self, fehler=None):
+            self.fehler = list(fehler or [])
+
+        async def send_video(self, chat_id, datei, **kw):
+            gelesen = datei.read() if hasattr(datei, "read") else b""
+            PROT["sends"].append({"chat": chat_id, "bytes": len(gelesen),
+                                  "thread": kw.get("message_thread_id")})
+            if self.fehler:
+                raise self.fehler.pop(0)
+
+    def _neu(fehler=None, tot=False):
+        PROT.clear()
+        PROT.update(sends=[], texte=[], tot=[], vergessen=[], geschlafen=[])
+
+        async def _ensure_topic(chat_id, username, bot):
+            return 4711
+
+        async def _safe_send(bot, chat_id, text, **kw):
+            PROT["texte"].append(text)
+        _tv.konfiguriere(
+            ensure_topic=_ensure_topic,
+            is_dead=lambda c: tot,
+            mark_dead=lambda c: PROT["tot"].append(c),
+            safe_send=_safe_send,
+            topic_forget=lambda c, u: PROT["vergessen"].append((c, u)))
+        return _ty.SimpleNamespace(bot=_Bot(fehler))
+
+    datei = _tf.NamedTemporaryFile(suffix=".mp4", delete=False)
+    datei.write(b"x" * 4096)
+    datei.close()
+
+    def _lauf(bot_app):
+        _aio.run(_tv.split_and_send_video(-100123, datei.name, bot_app, "henry"))
+
+    # --- 1) konfiguriere schweigt nicht ---------------------------------
+    for kaputt, arg in (("unbekannt", {"tippfehler": 1}), ("fehlt", {"is_dead": 1})):
+        try:
+            _tv.konfiguriere(**arg)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("konfiguriere akzeptiert %s" % kaputt)
+    ok("W19: konfiguriere meldet unbekannte und fehlende Helfer")
+
+    # --- 2) Eine gesperrte Chat-ID kostet keinen einzigen Versuch -------
+    _lauf(_neu(tot=True))
+    assert PROT["sends"] == [], \
+        "der Upload rennt trotz gesperrter Chat-ID in Telegram: %r" % PROT["sends"]
+    assert any("gesperrt" in t for t in PROT["texte"]), \
+        "der Betreiber erfaehrt nicht, WARUM nichts hochgeladen wurde"
+    assert any("TELEGRAM_CHAT_ID" in t for t in PROT["texte"]), \
+        "die Meldung nennt nicht die Stellschraube, an der es liegt"
+    ok("W19: gesperrte Chat-ID — kein Upload-Versuch, aber eine klare Meldung")
+
+    # --- 3) Der Normalfall: genau EIN Versand, kein Teilen --------------
+    _lauf(_neu())
+    assert len(PROT["sends"]) == 1, PROT["sends"]
+    assert PROT["sends"][0]["bytes"] == 4096, "die Datei geht leer raus"
+    assert PROT["sends"][0]["thread"] == 4711, "das Forum-Thema wird nicht getroffen"
+    assert not PROT["texte"], "der Erfolgsfall meldet einen Fehler: %r" % PROT["texte"]
+    ok("W19: kleine Datei — ein Versand, ins richtige Thema, mit Inhalt")
+
+    # --- 4) Forbidden und 'chat not found' sperren die Chat-ID ----------
+    # Ohne das laeuft der Bot bei jeder Aufnahme erneut hinein.
+    _lauf(_neu(fehler=[_tv.Forbidden("bot was blocked by the user")]))
+    assert PROT["tot"] == [-100123], "Forbidden sperrt die Chat-ID nicht"
+    _lauf(_neu(fehler=[_tv.BadRequest("Chat not found")]))
+    assert PROT["tot"] == [-100123], "'chat not found' als BadRequest sperrt nicht"
+    ok("W19: Forbidden und 'chat not found' sperren die Chat-ID")
+
+    # --- 5) RetryAfter: einmal warten, und den Zeiger ZURUECKSPULEN -----
+    # Ohne seek(0) laedt der zweite Versuch null Bytes hoch — Telegram nimmt
+    # ihn an, und im Chat liegt eine leere Datei. Das faellt nirgends auf.
+    _fehler = _tv.RetryAfter("flood")
+    _fehler.retry_after = 7
+    bot = _neu(fehler=[_fehler])
+    _lauf(bot)
+    assert len(PROT["sends"]) == 2, PROT["sends"]
+    assert PROT["geschlafen"] == [8], "wartet nicht retry_after+1: %r" % PROT["geschlafen"]
+    assert PROT["sends"][1]["bytes"] == 4096, \
+        "der zweite Versuch laedt %d Bytes hoch statt 4096 — kein seek(0)" \
+        % PROT["sends"][1]["bytes"]
+    assert not PROT["texte"], "der geglueckte Retry meldet trotzdem einen Fehler"
+    ok("W19: RetryAfter wartet einmal und spult die Datei zurueck")
+
+    # --- 6) B46: Rate-Limit kommt manchmal als BadRequest ---------------
+    # PTB wickelt manche 429-Antworten als BadRequest — der RetryAfter-Pfad
+    # wird dann nie erreicht, und der Upload waere ohne diesen Zweig verloren.
+    _lauf(_neu(fehler=[_tv.BadRequest("Too many requests: retry after 8")]))
+    assert len(PROT["sends"]) == 2 and PROT["geschlafen"] == [9], \
+        (PROT["sends"], PROT["geschlafen"])
+    assert not PROT["tot"], "ein Rate-Limit sperrt faelschlich die Chat-ID"
+    ok("W19: Rate-Limit als BadRequest wird wie RetryAfter behandelt (B46)")
+
+    # --- 7) Geloeschtes Thema: in den Haupt-Chat statt verloren ---------
+    _lauf(_neu(fehler=[_tv.BadRequest("Message thread not found")]))
+    assert PROT["vergessen"] == [(-100123, "henry")], \
+        "das tote Thema wird nicht vergessen: %r" % PROT["vergessen"]
+    assert len(PROT["sends"]) == 2, PROT["sends"]
+    assert PROT["sends"][1]["thread"] is None, \
+        "der Zweitversuch geht wieder ins tote Thema statt in den Haupt-Chat"
+    assert PROT["sends"][1]["bytes"] == 4096, "auch hier fehlt das Zuruecksetzen"
+    ok("W19: geloeschtes Thema — Mapping verworfen, Upload in den Haupt-Chat")
+
+    # --- 8) Ein echter Fehler wird gemeldet, nicht verschluckt ----------
+    _lauf(_neu(fehler=[_tv.BadRequest("VIDEO_FILE_INVALID")]))
+    assert any("UPLOAD FEHLGESCHLAGEN" in t for t in PROT["texte"]), PROT["texte"]
+    assert not PROT["tot"], "ein Formatfehler sperrt faelschlich die Chat-ID"
+    ok("W19: ein echter Upload-Fehler erreicht den Betreiber")
+
+    _tv.asyncio.sleep = _echt_sleep
+    try:
+        _os.remove(datei.name)
+    except OSError:
+        pass
+
+
 def _test_v42_w14_motd_spricht_englisch():
     """v4.2-W14: die MOTD war zu 0 % uebersetzt und meldete 100 %."""
     import subprocess as _sp
@@ -6052,6 +6228,8 @@ def main():
     _test_v42_w17_recorderkommando()
 
     _test_v42_w18_eskalationsrechnung()
+
+    _test_v42_w19_versandweg()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)
 

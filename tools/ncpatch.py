@@ -407,6 +407,14 @@ def _scan(path: str) -> dict:
 # neben bot.py.
 DISCORD_DATEI = "discordbot.py"
 
+# v4.2-W19: der Versandweg der Aufnahmen. Bot-seitig aus demselben Grund wie
+# discordbot.py — er braucht telegram.error zur Laufzeit.
+VERSAND_DATEI = "telegramversand.py"
+
+# Alles, was bot-seitig Funktionen traegt. Die Doku nennt eine Gesamtzahl;
+# nur bot.py zu zaehlen haette die herausgeloesten Teile verschwinden lassen.
+BOT_DATEIEN = ("bot.py", DISCORD_DATEI, VERSAND_DATEI)
+
 
 def _index_path(root: str) -> str:
     return os.path.join(root, ".claude", "INDEX.md")
@@ -466,6 +474,14 @@ def cmd_map(args) -> int:
         for ln, name in sorted(dcb["events"], key=lambda r: r[1]):
             z.append(f"{ln:>6}  {name}")
         z.append("```\n")
+
+    _vs = _scan(os.path.join(root, VERSAND_DATEI))
+    z.append(f"## Top-Level-Symbole in {VERSAND_DATEI} "
+             f"({len(_vs['defs'])} Funktionen)\n")
+    z.append("```")
+    for lo, hi, name in sorted(_vs["defs"], key=lambda r: r[2]):
+        z.append(f"{lo:>6}-{hi:<6} {name}")
+    z.append("```\n")
 
     z.append(f"## Top-Level-Symbole in {DISCORD_DATEI} "
              f"({len(dcb['defs'])} Funktionen)\n")
@@ -597,7 +613,8 @@ def _kennzahlen(root: str) -> tuple[dict, dict]:
         # v4.2-W15: Funktionen zaehlen ueber BEIDE bot-seitigen Dateien. Die
         # Doku nennt eine Gesamtzahl; nur bot.py zu zaehlen haette den
         # herausgeloesten Discord-Teil einfach verschwinden lassen.
-        "Funktionen":        {len(d["defs"]) + len(dcb["defs"]),
+        "Funktionen":        {sum(len(_scan(os.path.join(root, f))["defs"])
+                                  for f in BOT_DATEIEN),
                               len(d["defs"]), len(dcb["defs"])},
         "Fachmodule":        {_module("nc")},
         # Auf Tausender abgerundet ist zulaessig ("bot.py hat ueber 32.000

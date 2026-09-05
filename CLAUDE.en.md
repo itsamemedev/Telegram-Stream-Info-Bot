@@ -16,7 +16,7 @@ route.
 
 ## The one rule
 
-`bot.py` has **23,103 lines / 1.2 MB ≈ 300,000 tokens**. That file is **never**
+`bot.py` has **22,734 lines / 1.2 MB ≈ 295,000 tokens**. That file is **never**
 read in full and **never** searched blindly. First ask where something is, then
 fetch the excerpt:
 
@@ -31,7 +31,7 @@ fetch the excerpt:
     python tools/ncpatch.py docs                       # documentation numbers vs. the source
 
 `find` answers from `.claude/INDEX.md` — 361 routes (34 in `bot.py`, 327 in
-`nc/routes/`), 45 slash commands, 471 functions with line numbers. After changes
+`nc/routes/`), 45 slash commands, 473 functions with line numbers. After changes
 to routes, commands or top-level functions, run `map` again. Details: skill
 `nc-navigation`.
 
@@ -53,6 +53,10 @@ On the author's Windows machine the interpreter is called **`python`**
                          stays bot-free. Everything reaches it via starte(ctx);
                          it NEVER imports from bot.py.
     nc/botctx.py         the one channel there: BotKontext (frozen).
+    telegramversand.py   the delivery path for recordings (split_and_send_video),
+                         lifted out in v4.2-W19. Bot-side as well: it needs
+                         telegram.error at runtime. Gets five helpers via
+                         konfiguriere(); never imports from bot.py.
     brain_bridge.py      adapter bot ↔ brain/ (M2)
     brain/               AI core: state, rules, router, agents, memory,
                          semantic, knowledge, scheduler, llm, report

@@ -461,7 +461,13 @@ def test_heartbeat_contract():
 def test_dead_chat_contract():
     """B97: 'chat not found' setzt eine Sperre — der Video-Upload hat sie nie
     gelesen und produzierte 176 identische Fehler in einer Nacht."""
-    src = open("bot.py").read()
+    # ANKER GEWANDERT (v4.2-W19, nicht der Vertrag): der Versandweg steht in
+    # telegramversand.py. Der Vertrag selbst ist seit W19 zusaetzlich
+    # VERHALTENSGEPRUEFT — _test_v42_w19_versandweg baut den Upload mit einer
+    # Attrappe und zaehlt nach, dass eine gesperrte Chat-ID KEINEN einzigen
+    # send_video-Aufruf mehr kostet. Diese Textpruefung bleibt als billiger
+    # Frueherkenner daneben stehen.
+    src = open("telegramversand.py", encoding="utf-8").read()
     i = src.find("async def _send_one(fh_or_path, caption):")
     body = src[i:i + 900]
     assert "if _is_dead(chat_id):" in body, "_send_one prüft die Sperre nicht"

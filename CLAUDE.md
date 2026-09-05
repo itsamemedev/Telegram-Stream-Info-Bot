@@ -10,7 +10,7 @@ GitHub-Repo trägt Historie, CI und Issues — es ist nicht der Deploy-Weg.
 
 ## Die eine Regel
 
-`bot.py` hat **23.103 Zeilen / 1,2 MB ≈ 300.000 Token**. Diese Datei wird
+`bot.py` hat **22.734 Zeilen / 1,2 MB ≈ 295.000 Token**. Diese Datei wird
 **nie** ganz gelesen und **nie** blind durchsucht. Erst fragen wo etwas steht,
 dann den Ausschnitt holen:
 
@@ -25,7 +25,7 @@ dann den Ausschnitt holen:
     python tools/ncpatch.py docs                           # Doku-Zahlen gegen den Quelltext
 
 `find` antwortet aus `.claude/INDEX.md` — 361 Routen (34 in `bot.py`, 327 in
-`nc/routes/`), 45 Slash-Commands, 471 Funktionen mit Zeilennummern. Nach Änderungen an Routen, Commands oder
+`nc/routes/`), 45 Slash-Commands, 473 Funktionen mit Zeilennummern. Nach Änderungen an Routen, Commands oder
 Top-Level-Funktionen `map` neu laufen lassen. Details: Skill `nc-navigation`.
 
 Für „wer ruft das auf?" und „was ist der Typ?" ist der Sprachserver billiger als
@@ -46,6 +46,10 @@ Auf diesem Windows-Rechner heißt der Interpreter **`python`** (3.13.12);
                          bleibt. Bekommt alles per starte(ctx), importiert
                          NIE aus bot.py.
     nc/botctx.py         Der eine Kanal dorthin: BotKontext (eingefroren).
+    telegramversand.py   Der Versandweg der Aufnahmen (split_and_send_video),
+                         seit v4.2-W19 heraus. Ebenfalls bot-seitig: er braucht
+                         telegram.error zur Laufzeit. Bekommt fuenf Helfer per
+                         konfiguriere(), importiert NIE aus bot.py.
     brain_bridge.py      Adapter Bot ↔ brain/ (M2)
     brain/               KI-Kern: state, rules, router, agents, memory,
                          semantic, knowledge, scheduler, llm, report
