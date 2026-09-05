@@ -1,6 +1,6 @@
 """nc.videoteil — eine Aufnahme in telegramtaugliche Teile zerlegen.
 
-v4.2-W10. Herausgeloest aus `split_and_send_video` in bot.py (614 Zeilen).
+v4.2-W11. Herausgeloest aus `split_and_send_video` in bot.py (614 Zeilen).
 Was hier steht, ist der ffmpeg-Teil: messen, teilen, notfalls neu kodieren,
 kaputte Container reparieren. Was NICHT hier steht, ist alles Telegram —
 Versand, Bildunterschriften, Fehlermeldungen an den Nutzer. Genau an dieser

@@ -5743,6 +5743,36 @@ VIEW_LOADERS.system = async function(){
             <span class="btn cyan" onclick="updateCookies()">⟳ COOKIES AKTUALISIEREN</span>
             <span class="muted" id="ck_msg"></span>
           </div>
+          <!-- v4.2-W10: Selbst beziehen. Der Gast-Weg holt die rotierenden
+               Anti-Bot-Tokens ohne Login und ohne Extension — das ist der Teil,
+               der zuerst ablaeuft. Ein sessionid kann er NICHT erzeugen, das
+               sagt der Hinweis darunter auch so deutlich. -->
+          <div class="ck-help" style="margin-top:14px">
+            <div class="ck-help-t">Oder automatisch beziehen — <b>ohne Extension</b>:</div>
+            <div class="faint" style="font-size:11px">
+              <b>Gast</b> holt die rotierenden Anti-Bot-Tokens (<code>ttwid</code>,
+              <code>msToken</code>, <code>tt_chain_token</code>) direkt bei TikTok.
+              Kein Login noetig, vorhandene Auth-Cookies bleiben unangetastet.
+              <b>Browser</b> liest das TikTok-Profil eines lokal installierten
+              Browsers — nur dieser Weg liefert einen echten <code>sessionid</code>,
+              und nur auf dem Rechner, auf dem der Browser laeuft.
+            </div>
+          </div>
+          <div class="ck-actions">
+            <span class="btn" id="ck_fetch_guest" onclick="fetchCookies('gast')">⤓ GAST-TOKENS HOLEN</span>
+            <select class="field" id="ck_browser" style="font-size:11px;max-width:130px">
+              <option value="chrome">chrome</option>
+              <option value="firefox">firefox</option>
+              <option value="edge">edge</option>
+              <option value="brave">brave</option>
+              <option value="chromium">chromium</option>
+              <option value="opera">opera</option>
+              <option value="vivaldi">vivaldi</option>
+              <option value="safari">safari</option>
+            </select>
+            <span class="btn" id="ck_fetch_browser" onclick="fetchCookies('browser')">⤓ AUS BROWSER</span>
+            <span class="muted" id="ck_fetch_msg"></span>
+          </div>
         </div>
       </div>
       <div class="panel mt">
@@ -6456,6 +6486,15 @@ async function loadSystem(){
     if(soon.length) ch+=`<tr><th>L&auml;uft bald ab</th><td class="mono amber">${soon.map(x=>esc(x.name)+' ('+x.days_left+'d)').join(', ')}</td></tr>`;
     if(cookHealth.oldest_expiry_days!=null) ch+=`<tr><th>K&uuml;rzeste G&uuml;ltigkeit</th><td class="mono">${cookHealth.oldest_expiry_days} Tage</td></tr>`;
     if(cookHealth.total!=null) ch+=`<tr><th>Cookies gesamt</th><td class="mono faint">${cookHealth.total}</td></tr>`;
+    // v4.2-W10: der Auto-Bezug. Ohne Anzeige weiss niemand, ob er laeuft —
+    // und ein stiller Automat, der seit Wochen scheitert, ist schlimmer als
+    // gar keiner.
+    const af = cookHealth.autofetch;
+    if(af){
+      const t = af.enabled ? (af.last_ok ? new Date(af.last_ok).toLocaleString('de-DE') : T('noch nie gelaufen')) : T('aus');
+      ch+=`<tr><th>Auto-Bezug</th><td class="mono faint">${esc(t)}${af.fetched_total?` · ${af.fetched_total} Token`:''}</td></tr>`;
+      if(af.last_error) ch+=`<tr><th>&#9888; Auto-Bezug</th><td class="mono" style="color:var(--amber)">${esc(af.last_error)}</td></tr>`;
+    }
     ch+='</table></div>';
   }
   $('#sy_cookies').innerHTML=ch||'<div class="empty">no data</div>';
@@ -6484,6 +6523,39 @@ async function updateCookies(){
   }catch(e){
     msg.textContent=T('✗ Netzwerkfehler: ')+e.message;
     msg.style.color='var(--magenta)';
+  }
+}
+
+/* v4.2-W10: Cookies selbst beziehen. Zwei Quellen, eine Route.
+   Die Knoepfe werden waehrend des Laufs gesperrt — ein zweiter Klick auf
+   "Gast" schickt sonst einen zweiten Aufruf zu TikTok hinterher, und genau
+   solche Doppelabrufe bringen eine IP auf die Sperrliste. */
+async function fetchCookies(source){
+  const msg=$('#ck_fetch_msg'), knoepfe=[$('#ck_fetch_guest'),$('#ck_fetch_browser')];
+  const body={source:source};
+  if(source==='browser') body.browser=($('#ck_browser')||{}).value||'chrome';
+  msg.textContent=T('Hole Cookies…'); msg.style.color='var(--text-dim)';
+  knoepfe.forEach(b=>{ if(b) b.style.pointerEvents='none'; if(b) b.style.opacity='.5'; });
+  try{
+    const r=await fetch('/api/cookies/fetch',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    const d=await r.json().catch(()=>({ok:false,error:'ungültige Antwort'}));
+    if(d && d.ok){
+      const neu=(d.added||[]).length, alt=(d.replaced||[]).length;
+      msg.textContent=`✓ ${neu} neu · ${alt} erneuert · ${d.total||0} in der Datei`
+        +(d.auth_cookie?'':T(' · kein sessionid (nur ein Browser-Login liefert den)'));
+      msg.style.color=(neu||alt)?'var(--neon)':'var(--text-dim)';
+      toast(T('Cookies bezogen (')+(neu+alt)+')');
+      loadSystem();
+    } else {
+      msg.textContent='✗ '+((d&&d.error)||T('Bezug fehlgeschlagen'));
+      msg.style.color='var(--magenta)';
+      toast(T('Cookie-Bezug fehlgeschlagen'),'err');
+    }
+  }catch(e){
+    msg.textContent=T('✗ Netzwerkfehler: ')+e.message;
+    msg.style.color='var(--magenta)';
+  }finally{
+    knoepfe.forEach(b=>{ if(b) b.style.pointerEvents=''; if(b) b.style.opacity=''; });
   }
 }
 

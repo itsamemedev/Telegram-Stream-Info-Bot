@@ -3,7 +3,7 @@
 > 🌐 **Deutsch** · [English](en/ROADMAP.md)
 
 Der nächste grosse Schritt ist kein Feature, sondern Aufräumen: **`bot.py` hat
-25.723 Zeilen**. Die Datei ist der Engpass des Projekts — sie lässt sich nicht
+25.898 Zeilen**. Die Datei ist der Engpass des Projekts — sie lässt sich nicht
 überblicken und nur mit Werkzeug bearbeiten.
 
 Der vollständige, gemessene Plan steht in
@@ -24,7 +24,7 @@ Der vollständige, gemessene Plan steht in
 | **6** | Kern aufräumen, `bot.py` wird Kompositionswurzel | Rest |
 
 Welle 2 ist erledigt, Welle 3 läuft: `nc/routes/` trägt heute 36 Blueprints mit
-326 API-Routen, die nicht mehr im Monolithen stehen.
+327 API-Routen, die nicht mehr im Monolithen stehen.
 
 ---
 

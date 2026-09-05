@@ -11,9 +11,9 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
-### Geändert — das ffmpeg-Handwerk der Upload-Zerlegung raus (v4.2 W10)
+### Geändert — das ffmpeg-Handwerk der Upload-Zerlegung raus (v4.2 W11)
 
-Nach fünf Wellen Routenabbau sind die Routen nicht mehr das Problem: die 34
+Parallel zur Cookie-Welle oben, und unabhängig davon. Nach fünf Wellen Routenabbau sind die Routen nicht mehr das Problem: die 34
 verbliebenen in `bot.py` sind zusammen **554 Zeilen**, zwei Prozent der Datei.
 Die Masse liegt in wenigen sehr großen Funktionen — sechs Definitionen tragen
 5.698 Zeilen.
@@ -52,6 +52,61 @@ voll), eine gescheiterte Platzprobe blockiert **keinen** Upload, der
 funktioniert hätte, und der Repair springt nur bei einem wirklich kaputten
 Container an — wer dort zu breit erkennt, startet nach jedem beliebigen
 ffmpeg-Fehler einen Reparaturlauf über die volle Dateigröße.
+
+### Behoben — der Cookie-Parse-Fehler, und Cookies holt sich der Bot jetzt selbst (v4.2 W10)
+
+Gemeldet als „Cookie parse error". Die Reparatur, die es dafür seit B63 gab,
+hat den Text nur **durchgereicht**. Genau die drei Dinge, an denen
+`MozillaCookieJar` tatsächlich stirbt, hat sie nie angefasst:
+
+* **Feld 2 passt nicht zur Domain.** Der Parser prüft
+  `assert domain_specified == initial_dot`. Ein `.tiktok.com` mit `FALSE`
+  (oder `www.tiktok.com` mit `TRUE`) ist ein harter Abbruch — nicht der
+  Zeile, sondern der **ganzen Datei**.
+* **Nicht genau sieben Felder.** Ein Tab zu viel im Wert: `ValueError`.
+  Ein Editor, der das leere letzte Feld wegtrimmt: derselbe Fehler von der
+  anderen Seite — und der Cookie verschwand vorher still.
+* **Eine Ablaufzeit, die keine Zahl ist.** `Session` statt `0` reicht.
+
+Dazu ein Kopf, der nicht in **Zeile 1** steht (eine Leerzeile davor genügt,
+denn der Parser liest genau eine Zeile weit), und ein BOM aus einem
+Windows-Editor. Acht Fehlerbilder, jedes einzeln reproduziert, jedes jetzt
+repariert — festgehalten in `test_nc_modules.py`.
+
+Die Folgen waren überall dieselbe stille Fehlanzeige: das Deck meldete
+`parse_error`, yt-dlp brach mit `rc=1` ab („early_disconnect" nach zwei
+Sekunden), und `_load_cookies_dict()` lieferte ein **leeres dict** — der
+Recorder fuhr ohne Cookies los und bekam von TikTok 403. Drei verschiedene
+Symptome, eine Ursache.
+
+Drei weitere Löcher im selben Pfad sind mit zu:
+
+* **`lade_jar()` liest jetzt auch eine krumme Datei** (normalisiert, ohne sie
+  anzufassen). Vorher war ein Formatfehler gleichbedeutend mit „keine Cookies".
+* **Die Reparatur prüft, bevor sie tauscht.** Sie schrieb bisher erst und
+  sah nie nach, ob das Ergebnis ladbar ist. Blieb es kaputt, lief die nächste
+  Aufnahme wieder ins Leere.
+* **`LoadError` erbt von `OSError`** — ein `except OSError` an der falschen
+  Stelle hätte den ganzen neuen Weg wieder ausgehebelt. Steht als Vertrag drin.
+
+**Und der Bot holt sich Cookies jetzt selbst** (`nc/cookieholen.py`, neu).
+Der Gast-Abruf holt die rotierenden Anti-Bot-Tokens (`ttwid`, `msToken`,
+`tt_chain_token`, …) mit einem HTTPS-Aufruf bei TikTok — ohne Login, ohne
+Extension, über denselben Proxy wie Resolve und Pull. Das ist der Teil, der
+zuerst abläuft. Der Cookie-Alarm versucht das **bevor** er jemanden weckt:
+lässt sich der Zustand selbst reparieren, kommt keine Meldung mehr. Höchstens
+alle `COOKIE_AUTO_FETCH_INTERVAL_H` Stunden (Vorgabe 6).
+
+Auth-Cookies fasst der Gast-Weg **grundsätzlich nicht an**. Ein Gast-`odin_tt`
+neben einem echten Login ist genau die Mischung, die 403 erzeugt — ein stiller
+Logout wäre die schlechtere Version des Fehlers, den wir gerade beheben. Einen
+`sessionid` kann nur ein Browser liefern: dafür gibt es den Browser-Import
+(`browser_cookie3`, sonst `yt-dlp --cookies-from-browser`), der **nach Domain
+filtert** — ein Browser-Profil trägt die Cookies aller Seiten, und
+`tiktok_cookies.txt` liegt in jedem Backup.
+
+Erreichbar über `POST /api/cookies/fetch`, zwei Knöpfe im Cookie-Panel des
+Decks und `/cookies holen [browser]` in Telegram.
 
 ### Behoben — der gespeicherte OAuth-Zustand hat gelogen (v4.2 W9)
 
