@@ -7,40 +7,40 @@ Zahlen sind Zeilennummern für `ncpatch show` / `ncpatch sym`.
 ## Flask-Routen in bot.py (34)
 
 ```
- 10185  GET              /                                                dashboard
- 12101  GET              /api/abo/status                                  api_abo_status
- 12055  DELETE           /api/annotations/<int:aid>                       api_annotation_delete
- 10973  GET              /api/automation/status                           api_automation_status
- 10995  POST             /api/automation/toggle                           api_automation_toggle
- 18839  GET              /api/channel/categories                          api_channel_categories
- 18845  POST             /api/channel/set                                 api_channel_set
- 18692  GET              /api/channels/status                             api_channels_status
- 18366  GET/DELETE       /api/clip/<fn>                                   api_clip_file
- 18349  GET              /api/clips                                       api_clips
- 18395  POST/DELETE      /api/clips/clear                                 api_clips_clear
- 18274  GET              /api/debug/threads                               api_debug_threads
- 12066  GET              /api/events                                      api_events
- 11638  GET              /api/events/stream                               api_events_stream
- 11465  GET              /api/health                                      api_health
- 18308  POST             /api/highlights/config                           api_highlights_config
- 10119  POST             /api/login                                       dashboard_login_submit
- 12394  GET/POST         /api/notifications/quiet-hours                   api_quiet_hours
- 11553  GET              /api/notify/status                               api_notify_status
- 11564  POST             /api/notify/test                                 api_notify_test
- 12155  GET              /api/proxy/heatmap                               api_proxy_heatmap
- 12132  GET              /api/proxy/trend                                 api_proxy_trend
- 18415  GET              /api/tts/<fn>                                    api_tts_file
- 19141  GET              /api/upload_window                               api_upload_window
- 11755  GET              /archive/<int:eid>/download                      archive_download
- 11783  GET              /download/<int:recording_id>                     download
- 11712  GET              /health                                          health
- 18243  GET              /healthz                                         healthz
- 10110  GET              /login                                           dashboard_login_page
- 10140  GET              /logout                                          dashboard_logout
- 10147  GET              /manifest.webmanifest                            pwa_manifest
- 19114  GET              /overlay                                         overlay_page
- 10171  GET              /pwa-icon-<variant>.png                          pwa_icon
- 10157  GET              /sw.js                                           pwa_service_worker
+  9959  GET              /                                                dashboard
+ 11875  GET              /api/abo/status                                  api_abo_status
+ 11829  DELETE           /api/annotations/<int:aid>                       api_annotation_delete
+ 10747  GET              /api/automation/status                           api_automation_status
+ 10769  POST             /api/automation/toggle                           api_automation_toggle
+ 18613  GET              /api/channel/categories                          api_channel_categories
+ 18619  POST             /api/channel/set                                 api_channel_set
+ 18466  GET              /api/channels/status                             api_channels_status
+ 18140  GET/DELETE       /api/clip/<fn>                                   api_clip_file
+ 18123  GET              /api/clips                                       api_clips
+ 18169  POST/DELETE      /api/clips/clear                                 api_clips_clear
+ 18048  GET              /api/debug/threads                               api_debug_threads
+ 11840  GET              /api/events                                      api_events
+ 11412  GET              /api/events/stream                               api_events_stream
+ 11239  GET              /api/health                                      api_health
+ 18082  POST             /api/highlights/config                           api_highlights_config
+  9893  POST             /api/login                                       dashboard_login_submit
+ 12168  GET/POST         /api/notifications/quiet-hours                   api_quiet_hours
+ 11327  GET              /api/notify/status                               api_notify_status
+ 11338  POST             /api/notify/test                                 api_notify_test
+ 11929  GET              /api/proxy/heatmap                               api_proxy_heatmap
+ 11906  GET              /api/proxy/trend                                 api_proxy_trend
+ 18189  GET              /api/tts/<fn>                                    api_tts_file
+ 18915  GET              /api/upload_window                               api_upload_window
+ 11529  GET              /archive/<int:eid>/download                      archive_download
+ 11557  GET              /download/<int:recording_id>                     download
+ 11486  GET              /health                                          health
+ 18017  GET              /healthz                                         healthz
+  9884  GET              /login                                           dashboard_login_page
+  9914  GET              /logout                                          dashboard_logout
+  9921  GET              /manifest.webmanifest                            pwa_manifest
+ 18888  GET              /overlay                                         overlay_page
+  9945  GET              /pwa-icon-<variant>.png                          pwa_icon
+  9931  GET              /sw.js                                           pwa_service_worker
 ```
 
 ## Flask-Routen in Blueprints, nc/routes/ (327)
@@ -129,16 +129,16 @@ Zahlen sind Zeilennummern für `ncpatch show` / `ncpatch sym`.
     87  POST/DELETE      /api/collections/<int:cid>                       api_collection_modify   [nc/routes/collections.py]
    122  GET              /api/collections/<int:cid>/trackings             api_collection_trackings   [nc/routes/collections.py]
    415  GET              /api/community/stats                             api_community_stats   [nc/routes/auskunft.py]
-   331  POST             /api/config/restore                              api_config_restore   [nc/routes/settings.py]
-   316  GET              /api/config/snapshot                             api_config_snapshot   [nc/routes/settings.py]
-   239  GET              /api/cookies/age                                 api_cookies_age   [nc/routes/settings.py]
+   329  POST             /api/config/restore                              api_config_restore   [nc/routes/settings.py]
+   314  GET              /api/config/snapshot                             api_config_snapshot   [nc/routes/settings.py]
+   237  GET              /api/cookies/age                                 api_cookies_age   [nc/routes/settings.py]
    193  POST             /api/cookies/fetch                               api_cookies_fetch   [nc/routes/settings.py]
     71  GET              /api/cookies/health                              api_cookies_health   [nc/routes/settings.py]
     78  POST             /api/cookies/update                              api_cookies_update   [nc/routes/settings.py]
    469  GET              /api/data/export                                 api_data_export   [nc/routes/auskunft.py]
-   260  GET              /api/db/export                                   api_db_export   [nc/routes/settings.py]
-   287  POST             /api/db/import                                   api_db_import   [nc/routes/settings.py]
-   247  GET              /api/db/summary                                  api_db_summary   [nc/routes/settings.py]
+   258  GET              /api/db/export                                   api_db_export   [nc/routes/settings.py]
+   285  POST             /api/db/import                                   api_db_import   [nc/routes/settings.py]
+   245  GET              /api/db/summary                                  api_db_summary   [nc/routes/settings.py]
    164  GET              /api/defense/attacks                             api_defense_attacks   [nc/routes/abwehr.py]
    125  GET              /api/defense/crowdsec                            api_defense_crowdsec   [nc/routes/abwehr.py]
    146  GET              /api/defense/fail2ban                            api_defense_fail2ban   [nc/routes/abwehr.py]
@@ -288,9 +288,9 @@ Zahlen sind Zeilennummern für `ncpatch show` / `ncpatch sym`.
    388  GET              /api/restream/verify                             api_restream_verify   [nc/routes/restream.py]
    134  GET              /api/retention/preview                           api_retention_preview   [nc/routes/wartung.py]
    144  POST             /api/retention/run                               api_retention_run   [nc/routes/wartung.py]
-   372  POST             /api/schedule/add                                api_schedule_add   [nc/routes/settings.py]
-   362  GET              /api/schedule/list                               api_schedule_list   [nc/routes/settings.py]
-   397  POST             /api/schedule/remove                             api_schedule_remove   [nc/routes/settings.py]
+   370  POST             /api/schedule/add                                api_schedule_add   [nc/routes/settings.py]
+   360  GET              /api/schedule/list                               api_schedule_list   [nc/routes/settings.py]
+   395  POST             /api/schedule/remove                             api_schedule_remove   [nc/routes/settings.py]
     65  POST             /api/scheduler/add                               api_scheduler_add   [nc/routes/scheduler.py]
     86  POST             /api/scheduler/delete                            api_scheduler_delete   [nc/routes/scheduler.py]
     52  GET              /api/scheduler/list                              api_scheduler_list   [nc/routes/scheduler.py]
@@ -378,538 +378,538 @@ Zahlen sind Zeilennummern für `ncpatch show` / `ncpatch sym`.
 ## Discord-Slash-Commands (45)
 
 ```
- 20134  /ai                     
- 20607  /ask                    
- 20225  /assign_role            
- 20271  /ban                    
- 20939  /botstats               
- 20863  /clearwarns             
- 20903  /clip                   
- 20888  /clipoftheweek          
- 20730  /clips                  
- 20186  /create_category        
- 20155  /create_channel         
- 20214  /create_group           
- 20197  /create_role            
- 20171  /create_voice           
- 20507  /daily                  
- 20637  /event                  
- 20680  /events                 
- 20776  /follow                 
- 20760  /help                   
- 20260  /kick                   
- 20489  /leaderboard            
- 20716  /livenow                
- 20746  /post_test              
- 20577  /profile                
- 20295  /purge                  
- 20475  /rank                   
- 20703  /recstatus              
- 20236  /remove_role            
- 20148  /restream_status        
- 20247  /set_channel_perms      
- 20440  /setup_community        
- 20458  /setup_targets          
- 20802  /stats                  
- 20060  /status                 
- 21098  /streaminfo             
- 20995  /sys_report             
- 20971  /sys_unpause            
- 20282  /timeout                
- 20874  /topstreamers           
- 20090  /track                  
- 20074  /tracklist              
- 20791  /unfollow               
- 20123  /untrack                
- 20824  /warn                   
- 20848  /warnings               
+ 19908  /ai                     
+ 20381  /ask                    
+ 19999  /assign_role            
+ 20045  /ban                    
+ 20713  /botstats               
+ 20637  /clearwarns             
+ 20677  /clip                   
+ 20662  /clipoftheweek          
+ 20504  /clips                  
+ 19960  /create_category        
+ 19929  /create_channel         
+ 19988  /create_group           
+ 19971  /create_role            
+ 19945  /create_voice           
+ 20281  /daily                  
+ 20411  /event                  
+ 20454  /events                 
+ 20550  /follow                 
+ 20534  /help                   
+ 20034  /kick                   
+ 20263  /leaderboard            
+ 20490  /livenow                
+ 20520  /post_test              
+ 20351  /profile                
+ 20069  /purge                  
+ 20249  /rank                   
+ 20477  /recstatus              
+ 20010  /remove_role            
+ 19922  /restream_status        
+ 20021  /set_channel_perms      
+ 20214  /setup_community        
+ 20232  /setup_targets          
+ 20576  /stats                  
+ 19834  /status                 
+ 20872  /streaminfo             
+ 20769  /sys_report             
+ 20745  /sys_unpause            
+ 20056  /timeout                
+ 20648  /topstreamers           
+ 19864  /track                  
+ 19848  /tracklist              
+ 20565  /unfollow               
+ 19897  /untrack                
+ 20598  /warn                   
+ 20622  /warnings               
 ```
 
 ## Discord-Events (4)
 
 ```
- 21596  on_member_join
- 21558  on_message
- 21185  on_raw_reaction_add
- 21631  on_ready
+ 21370  on_member_join
+ 21332  on_message
+ 20959  on_raw_reaction_add
+ 21405  on_ready
 ```
 
 ## Top-Level-Symbole in bot.py (471 Funktionen, 2 Klassen)
 
 ```
-  2603-2604   _abo_key
-  2624-2642   _abo_probe_dump
- 15404-15411  _ad_allowlist
- 16545-16551  _agent_for
- 16554-16570  _ai_telemetry
- 17059-17077  _alert
- 21770-21820  _alert_monitor_loop
- 22172-22234  _announce_loop
-  3545-3548   _anthropic_key
-  3555-3557   _anthropic_model
-  9863-9866   _arg_int
-  2595-2600   _as_dict
- 17212-17234  _audio_tap_cmd
- 10031-10042  _auth_cookie
-  9998-10027  _auth_guard
-  1717-1722   _auto_on
- 18105-18123  _auto_restream_loop
- 23313-23328  _azrael_broadcast_reply
- 23213-23235  _azrael_chat_reply
- 23196-23210  _azrael_chat_should_reply
- 23241-23243  _azrael_gate_cfg
- 16575-16589  _azrael_live_state
- 19026-19040  _azrael_overlay_state
- 16941-16995  _azrael_proactive_loop
- 16393-16449  _azrael_reaction_to_chats
- 23246-23253  _azrael_reply_all_chats
- 23183-23193  _azrael_self_names
- 23281-23310  _azrael_send_to
- 16595-16616  _azrael_system
- 21904-21907  _backup_active
- 21985-21998  _backup_loop
- 21709-21718  _brain_growth_loop
- 10364-10391  _brain_growth_snapshot
-  2531-2551   _brain_hint_delay
-  6223-6251   _brain_notify
- 11617-11634  _browser_push
-  6267-6354   _build_daily_summary
-  3034-3214   _build_native_cmd
- 13590-13777  _build_restream_cmd
-  3258-3291   _build_ytdlp_cmd
-  5045-5072   _can_stop_tracking
-  1830-1852   _capture_set_cookies
- 12209-12212  _cfg_get
- 12215-12217  _cfg_set
- 18800-18835  _channel_set_all
- 12748-12751  _chat_connected
- 12754-12770  _chat_disconnected
-  8349-8360   _chat_is_forum
- 12790-12792  _chat_sanitize
- 12733-12745  _chat_stat
- 12773-12776  _chat_stats_snapshot
-  3828-3840   _check_ai_models_sync
- 10646-10689  _classify_pool_anonymity
- 10692-10709  _classify_pool_anonymity_bg
-   816-838    _claude_chat_sync_metered
-  9892-9899   _client_ip
- 22266-22293  _clip_prune
- 22296-22306  _clip_recfile_for
- 22847-22853  _clip_should_velocity
- 22347-22429  _clip_to_discord
-  3721-3730   _close_ai_session
- 23359-23374  _cohost_broadcast
- 23344-23345  _cohost_cfg
- 23400-23412  _cohost_fire_highlight
- 23348-23356  _cohost_gate
- 23377-23397  _cohost_highlight
- 22478-22540  _community_events_loop
- 10294-10296  _conv_messages
-  6626-6687   _cookie_alarm_loop
-  1921-1926   _cookie_autofetch_info
-  1904-1908   _cookie_autorefresh_info
-  1807-1811   _cookie_header
-  1938-1971   _cookies_selbst_holen
-  4034-4046   _create_index_safe
- 19473-19579  _crowdsec_status
- 19419-19470  _crowdsec_via_lapi
- 19323-19341  _cscli_bin
- 19350-19363  _cscli_path
-  6516-6541   _daily_summary_loop
- 19381-19398  _darf_journal_lesen
- 21744-21767  _db_maintenance_loop
-  6485-6513   _db_vacuum_loop
- 15427-15451  _detect_foreign_ad
-  1452-1463   _diag_path_owner
- 16847-16891  _director_finalize
- 17658-17665  _director_for
- 16796-16844  _director_mark
- 22741-22776  _disc_automod_check
- 22717-22720  _disc_state_get
- 22723-22730  _disc_state_set
- 19917-19921  _discord_invite
- 22678-22714  _discord_live_thread
- 16998-17010  _discord_notify
- 19816-19841  _discord_ops_alert
- 22576-22674  _discord_post_user
- 19977-21706  _discord_run_once
- 19856-19914  _discord_start
- 22237-22243  _discord_stop
-  6544-6621   _disk_alarm_loop
- 24789-24838  _disk_autoclean
- 24841-24854  _disk_guard_loop
- 13183-13185  _drawtext_chain
- 11887-11889  _dump_all_threads
- 10572-10635  _enrich_proxies_with_geo
-  2146-2207   _ensure_cookie_file_netscape
- 19924-19974  _ensure_discord_invite
- 22443-22475  _ensure_error_channel
-  8408-8411   _ensure_notify_topic
- 10816-10853  _ensure_proxy_ready
-  8362-8389   _ensure_topic
+  2610-2611   _abo_key
+  2631-2649   _abo_probe_dump
+ 15178-15185  _ad_allowlist
+ 16319-16325  _agent_for
+ 16328-16344  _ai_telemetry
+ 16833-16851  _alert
+ 21544-21594  _alert_monitor_loop
+ 21946-22008  _announce_loop
+  3552-3555   _anthropic_key
+  3562-3564   _anthropic_model
+  9637-9640   _arg_int
+  2602-2607   _as_dict
+ 16986-17008  _audio_tap_cmd
+  9805-9816   _auth_cookie
+  9772-9801   _auth_guard
+  1724-1729   _auto_on
+ 17879-17897  _auto_restream_loop
+ 23087-23102  _azrael_broadcast_reply
+ 22987-23009  _azrael_chat_reply
+ 22970-22984  _azrael_chat_should_reply
+ 23015-23017  _azrael_gate_cfg
+ 16349-16363  _azrael_live_state
+ 18800-18814  _azrael_overlay_state
+ 16715-16769  _azrael_proactive_loop
+ 16167-16223  _azrael_reaction_to_chats
+ 23020-23027  _azrael_reply_all_chats
+ 22957-22967  _azrael_self_names
+ 23055-23084  _azrael_send_to
+ 16369-16390  _azrael_system
+ 21678-21681  _backup_active
+ 21759-21772  _backup_loop
+ 21483-21492  _brain_growth_loop
+ 10138-10165  _brain_growth_snapshot
+  2538-2558   _brain_hint_delay
+  6230-6258   _brain_notify
+ 11391-11408  _browser_push
+  6274-6361   _build_daily_summary
+  3041-3221   _build_native_cmd
+ 13364-13551  _build_restream_cmd
+  3265-3298   _build_ytdlp_cmd
+  5052-5079   _can_stop_tracking
+  1837-1859   _capture_set_cookies
+ 11983-11986  _cfg_get
+ 11989-11991  _cfg_set
+ 18574-18609  _channel_set_all
+ 12522-12525  _chat_connected
+ 12528-12544  _chat_disconnected
+  8356-8367   _chat_is_forum
+ 12564-12566  _chat_sanitize
+ 12507-12519  _chat_stat
+ 12547-12550  _chat_stats_snapshot
+  3835-3847   _check_ai_models_sync
+ 10420-10463  _classify_pool_anonymity
+ 10466-10483  _classify_pool_anonymity_bg
+   823-845    _claude_chat_sync_metered
+  9666-9673   _client_ip
+ 22040-22067  _clip_prune
+ 22070-22080  _clip_recfile_for
+ 22621-22627  _clip_should_velocity
+ 22121-22203  _clip_to_discord
+  3728-3737   _close_ai_session
+ 23133-23148  _cohost_broadcast
+ 23118-23119  _cohost_cfg
+ 23174-23186  _cohost_fire_highlight
+ 23122-23130  _cohost_gate
+ 23151-23171  _cohost_highlight
+ 22252-22314  _community_events_loop
+ 10068-10070  _conv_messages
+  6633-6694   _cookie_alarm_loop
+  1928-1933   _cookie_autofetch_info
+  1911-1915   _cookie_autorefresh_info
+  1814-1818   _cookie_header
+  1945-1978   _cookies_selbst_holen
+  4041-4053   _create_index_safe
+ 19247-19353  _crowdsec_status
+ 19193-19244  _crowdsec_via_lapi
+ 19097-19115  _cscli_bin
+ 19124-19137  _cscli_path
+  6523-6548   _daily_summary_loop
+ 19155-19172  _darf_journal_lesen
+ 21518-21541  _db_maintenance_loop
+  6492-6520   _db_vacuum_loop
+ 15201-15225  _detect_foreign_ad
+  1459-1470   _diag_path_owner
+ 16621-16665  _director_finalize
+ 17432-17439  _director_for
+ 16570-16618  _director_mark
+ 22515-22550  _disc_automod_check
+ 22491-22494  _disc_state_get
+ 22497-22504  _disc_state_set
+ 19691-19695  _discord_invite
+ 22452-22488  _discord_live_thread
+ 16772-16784  _discord_notify
+ 19590-19615  _discord_ops_alert
+ 22350-22448  _discord_post_user
+ 19751-21480  _discord_run_once
+ 19630-19688  _discord_start
+ 22011-22017  _discord_stop
+  6551-6628   _disk_alarm_loop
+ 24563-24612  _disk_autoclean
+ 24615-24628  _disk_guard_loop
+ 12957-12959  _drawtext_chain
+ 11661-11663  _dump_all_threads
+ 10346-10409  _enrich_proxies_with_geo
+  2153-2214   _ensure_cookie_file_netscape
+ 19698-19748  _ensure_discord_invite
+ 22217-22249  _ensure_error_channel
+  8415-8418   _ensure_notify_topic
+ 10590-10627  _ensure_proxy_ready
+  8369-8396   _ensure_topic
    688-690    _env_int
    693-695    _env_int_range
- 22543-22573  _error_channel_loop
- 17043-17056  _event_webhook
- 12563-12576  _evolution_loop
-  5665-5699   _extract_file_payload
-  2279-2281   _extract_urls_from_streamurl_node
- 19366-19373  _f2b_sudo_hint
-  4545-4555   _fehler_text
- 10473-10491  _fetch_proxy_list
- 17492-17520  _fetch_tiktok_room_id
-   749-752    _ff_cmd
- 13349-13354  _find_chromium
-  3251-3255   _find_external_recorder
-  2284-2286   _find_stream_urls
- 12260-12285  _fire_webhooks
-  7453-7462   _fork_safe
-   849-862    _freeai_chat_sync_metered
- 19412-19416  _geo_lookup_ips
-  3709-3718   _get_ai_session
-  7286-7326   _get_live_info
-  2821-2828   _get_resolve_semaphore
-  7686-8063   _handle_single_tracking
- 24611-24613  _hb
- 24616-24633  _hb_while
- 12804-12806  _highlight_cfg
- 12809-12838  _highlight_observe
- 13357-13375  _htmlov_screenshot_cmd
- 17236-17246  _httpx_proxy
- 12293-12305  _in_quiet_hours
- 25680-25711  _install_fast_eventloop
-  9758-9812   _install_fast_json
- 11892-11908  _install_faulthandler
- 18151-18160  _intel_ensure_schema
- 18198-18233  _intel_index_loop
- 18172-18182  _intel_index_one
- 18163-18169  _intel_semantic
-  5034-5043   _is_authorized
-  7587-7593   _is_dead
-  2269-2271   _is_hevc
- 19401-19403  _is_private_ip
-  1616-1623   _is_process_running
-  6253-6264   _is_quiet_hours
-  1245-1254   _is_upload_window
-  9847-9860   _json_error_handler
-  6479-6480   _kick_broadcaster_id
-  6391-6433   _kick_follower_count
-  6375-6378   _kick_slug
- 11406-11437  _kick_user_token
-  4083-4086   _kind_from_filename
- 12322-12327  _latest_popularity
- 17873-17906  _live_react_loop
- 17669-17862  _live_react_worker
- 16452-16463  _live_transcript_push
- 17864-17871  _live_users
- 16894-16938  _living_title_loop
- 21910-21982  _local_backup_scan
-  9829-9843   _log_5xx
- 13785-13797  _looks_like_codec_err
- 13780-13782  _looks_like_source_expired
-  7503-7533   _loop_fehler
- 11912-11921  _loop_heartbeat
- 24581-24608  _loop_lag_monitor
- 11924-11992  _loop_watchdog_thread
- 16332-16346  _loyalty_add
- 16323-16329  _loyalty_get
- 16349-16357  _loyalty_top
- 12435-12437  _manual_donations_total
-  4752-4771   _manual_status
-  7595-7596   _mark_dead
- 11092-11108  _marketing_loop
- 23260-23278  _maybe_handle_command
- 24940-24964  _maybe_hype_clip
-  4001-4024   _migrate_columns
- 23539-23550  _mod_is_exempt
- 23553-23558  _mod_warn_first
- 23561-23564  _mod_warn_text
- 12603-12611  _modlog
-   992-994    _multistream_targets
-  7465-7466   _nc_create_subprocess_exec
-  7469-7470   _nc_create_subprocess_shell
- 11343-11360  _news_loop
- 12630-12632  _normalize_ingest
-  2462-2479   _note_check_duration
-  8402-8405   _notify_topic_name
- 16478-16486  _oracle_memories
- 16751-16785  _oracle_memorize
- 16489-16502  _oracle_persona
- 16471-16475  _oracle_recent_text
- 12964-12972  _ov_atomic_write
- 12952-12958  _ov_bar
- 15330-15342  _ov_clip_text
- 12961-12962  _ov_oneline
- 19078-19107  _overlay_push
- 13303-13346  _overlay_render_size
- 12696-12700  _overlay_session_reset
- 19042-19045  _overlay_src_ok
- 15414-15424  _own_invites
- 13298-13300  _parse_size
- 19587-19667  _parse_ssh_attacks
-  6888-6921   _pause_resume_cmd
-  1858-1902   _persist_refreshed_cookies
-  1761-1793   _pick_checked_pull_proxy
-  9928-9941   _pin_auth_value
-  9987-9988   _pin_clear_fail
-  9967-9970   _pin_locked
-  9973-9984   _pin_note_fail
-  9944-9964   _pin_ok
- 18936-18961  _piper_pick_model
- 18973-19020  _piper_say
- 12222-12257  _post_json_threaded
- 13277-13295  _probe_video_size
-  1644-1661   _proc_is_recorder
- 10785-10813  _proxy_pool_refresh_loop
-  1727-1758   _proxy_report_recording
- 11877-11879  _prune_stall_dumps
- 11162-11283  _public_stats
-  1929-1935   _pull_proxy_still
- 17014-17040  _push_notify
- 10089-10091  _pwa_dir
- 10542-10557  _quick_validate_proxy
- 12288-12290  _quiet_hours_config
- 10054-10087  _rate_guard
- 16297-16303  _react_warn
-  7373-7412   _reap_proc
-  2502-2524   _record_check_outcome
-   744-746    _redact_stream_urls
- 10712-10782  _refresh_proxy_pool
-  2295-2385   _resolve_via_html
-  2644-2798   _resolve_via_webcast_api_v2
-  2861-2923   _resolve_via_ytdlp
- 22887-23016  _resolve_youtube_ingest
- 12679-12690  _restream_active_sources
- 17523-17622  _restream_chat_guardian
- 12841-12913  _restream_chat_push
- 12938-12947  _restream_chat_push_async
- 13378-13465  _restream_html_overlay_start
- 13468-13481  _restream_html_overlay_stop
- 12641-12664  _restream_overlay_files
- 17910-17942  _restream_platform_state
- 18067-18102  _restream_resume_after_restart
- 13529-13587  _restream_tts_enqueue_wav
- 13239-13271  _restream_tts_feeder
- 13236-13237  _restream_tts_fifo_path
- 13484-13511  _restream_tts_start
- 13513-13527  _restream_tts_stop
- 17948-18064  _restream_verify_loop
- 21875-21887  _retention_loop
- 21869-21872  _retention_scan
-  2606-2608   _room_is_abo
-  5703-5820   _run_ai_call
- 12015-12028  _run_async_from_flask
- 19406-19409  _run_priv
- 25668-25676  _run_selfcheck_and_exit
- 21890-21901  _s3_client
-  7622-7673   _safe_send
-  4678-4694   _sample_net_throughput
-  2554-2581   _schedule_next_check
- 21823-21866  _scheduler_loop
-  4027-4031   _schema_pk
- 12032-12037  _scraper_session
- 23567-23606  _screen_full
- 11481-11518  _sec_headers
-  2274-2276   _select_stream_from_data_section
- 25481-25665  _selfcheck
-  8414-8448   _send_live_notice
-  1268-1272   _should_defer_upload
- 22309-22344  _shrink_for_discord
- 10094-10106  _sicheres_ziel
- 21721-21741  _sicherheits_erinnerung_loop
- 24861-24878  _sign_health_check
- 24881-24900  _sign_health_loop
-  7482-7493   _spawn
- 26046-26076  _spawn_from_flask
- 17248-17489  _start_chat_listener
- 11995-12012  _start_loop_watchdog
- 11310-11338  _stats_loop
- 11289-11292  _stats_output_path
- 11295-11307  _stats_write
-  8142-8158   _storage_cleanup_loop
- 24920-24927  _story_for
-  3313-3319   _stream_url_expiry
-  3328-3334   _stream_url_is_fresh
-  3321-3326   _stream_url_ttl
- 15377-15384  _streamer_persona_get
- 13188-13192  _studio_chain
- 22007-22129  _system_backup
- 22138-22168  _system_backup_loop
- 10494-10533  _test_proxy
- 11040-11056  _testpush_resolve_live
-  7598-7619   _tg_sprache_setzen
-  8321-8331   _tg_topics_load_into_mem
-  8318-8319   _tg_topics_path
-  8333-8340   _tg_topics_save
-  9902-9910   _token_ok
-  8343-8347   _topic_forget
- 12308-12319  _tracking_max_duration
-  4291-4305   _tracking_remove_cleanup
-  4322-4334   _tracking_resume_cleanup
-  1510-1533   _try_attach_file_handler
- 18963-18971  _tts_cleanup
- 11016-11020  _tunnel_effective
- 18459-18512  _twitch_channel_status
- 23609-23754  _twitch_chat_loop
- 23423-23526  _twitch_eventsub_loop
-  1291-1304   _upload_queue_add
-  1315-1317   _upload_queue_count
-  1274-1283   _upload_queue_load
-  1264-1266   _upload_queue_path
-  1306-1313   _upload_queue_remove
-  1285-1289   _upload_queue_save
-  1319-1360   _upload_window_loop
-  7346-7353   _uptime_s
- 12618-12627  _url_host
-   809-813    _usage_record_claude
-  7536-7580   _verbindung_verloren
-  6436-6467   _viewer_sample_loop
-  9991-9994   _wants_html
-  7356-7370   _warn_empty_env
- 24654-24775  _watchdog_loop
- 23162-23170  _wchat_thank_ok
- 17082-17112  _whisper_get_model
-  7443-7450   _whisper_native_section
- 16284-16290  _whisper_pool
- 17181-17210  _whisper_segments
- 17114-17178  _whisper_transcribe
- 13019-13181  _write_restream_overlay
- 12981-13016  _write_restream_overlay_async
- 23778-23858  _youtube_api_chat_loop
- 18515-18618  _youtube_api_status
- 18621-18688  _youtube_channel_status
- 23861-24022  _youtube_chat_loop
- 23022-23035  _youtube_restream_autoconfig
- 23038-23062  _youtube_restream_autoconfig_inner
- 23129-23157  _youtube_send
- 18756-18797  _youtube_set_channel
- 23065-23099  _yt_access_token
- 23102-23117  _yt_live_chat_id
- 23125-23126  _yt_sendrate_cfg
- 23757-23772  _yt_timeout
-  2845-2846   _ytdlp_detect_available
-  2848-2859   _ytdlp_note_result
- 11882-11884  _zombie_child_count
-  7222-7246   about
-  4202-4206   add_ai_log_entry
-  4119-4122   add_archive_entry
-  4716-4718   add_archive_rule
-  4493-4527   add_recording
-  4266-4283   add_tracking
-  5823-5856   ai
-  3854-3905   ai_chat
-  3939-3949   ai_history_append
-  3951-3956   ai_history_clear
-  3928-3937   ai_history_load
-  3913-3926   ai_rate_limit_check
-  5885-5893   aireset
- 16619-16638  azrael_chat
- 24027-24149  brain_cmd
-  3337-3521   build_recording_cmd
-  4286-4289   bulk_add_trackings
-  6690-6749   bulkadd
-  8161-8301   check_all_trackings
-  4338-4350   claim_live_transition
- 15454-16216  class KickModerator
- 13800-15217  class RestreamManager
- 10899-10941  classify_proxy_anonymity
-  5931-6129   cleanup
-  4970-4976   cleanup_old_recordings
-  4484-4491   clear_recording
- 22779-22844  clip_moment
-  4668-4671   compute_storage_forecast
-  6812-6885   cookies_cmd
-  4257-4263   count_trackings_for_chat
-  4189-4200   decide_preferred_recorder
-  4129-4132   delete_archive_entry
-  4720-4722   delete_archive_rule
-  5360-5507   diag
- 24261-24322  einnahmen_cmd
-  4662-4665   find_recordings_by_fingerprint
-  4150-4166   finish_recording_attempt
-  4310-4312   get_all_active_trackings
-  4217-4219   get_all_checks
-  4529-4532   get_all_recordings
-  4611-4613   get_all_tags_with_counts
-  4639-4642   get_annotations_for_recording
-  4124-4127   get_archive_entry
-  4632-4635   get_bookmarked_recordings
-  1993-2139   get_cookie_health
-  4599-4605   get_event_log
-  4173-4187   get_last_recording_attempt
-  2926-3031   get_live_status
-  4909-4912   get_manual_recordings
-  4647-4650   get_or_compute_inspect_sync
-  5011-5014   get_outcome_breakdown
-  4618-4621   get_priority_poll_interval
-  4168-4171   get_recent_recording_attempts
-  4534-4537   get_recording_by_id
-  4625-4628   get_recording_note
-  3655-3678   get_redis
-  4246-4249   get_stats
-  4964-4968   get_storage_stats
-  4740-4742   get_tiktok_status_distribution
-  4352-4361   get_tracking_state
-  4307-4308   get_trackings_for_group
-  4925-4928   get_trash_recordings
-  9069-9737   handle_recording_finished
-  4049-4074   init_db
-  4712-4714   list_archive_rules
-  5164-5202   live
-  7676-7684   live_check_worker
-  3733-3767   llm_chat
-  3790-3818   llm_chat_sync
-  3775-3787   llm_list_models
-  4558-4591   log_event
-  1578-1611   log_recording_failure
-  7035-7084   logs_cmd
- 24968-25471  main
-  5859-5882   on_ai_media
-  7161-7187   on_ai_reply
-  7190-7219   on_azrael_mention
-  7251-7281   on_callback
- 16644-16748  oracle_handle
-  6924-6927   pause_tracking
-  5024-5029   profile_keyboard
-  6986-7032   quota
-  8065-8139   reaper_loop
-  4736-4738   record_tiktok_status
-  5898-5928   recstatus
-  3680-3688   redis_get_json
-  3691-3697   redis_set_json
- 24325-24335  report_cmd
- 10944-10946  report_proxy_result
-  2388-2415   resolve_tiktok_live_stream
-  4920-4923   restore_recording
-  6930-6933   resume_tracking
-  4725-4730   run_archive_rules
- 24338-24561  run_bot
- 11797-11849  run_flask
-  4700-4703   sample_bandwidth_for_active
-  4209-4215   save_tiktok_check
-  4476-4482   set_recording_file
-  4315-4319   set_tracking_paused
-  4915-4918   soft_delete_recording
-  8454-9067   split_and_send_video
-  5077-5119   start
-  4134-4148   start_recording_attempt
-  6132-6170   stats
-  4890-4907   stop_manual_recording
-  6936-6983   stoprec
-  6360-6368   summary_cmd
-  7087-7158   sysres
-  5509-5653   teststream
-  5121-5162   tiktok
-  6752-6809   topusers
-  5239-5296   track
-  5204-5236   track_exact
-  5310-5358   tracklist
-  4774-4888   trigger_manual_recording
-  4437-4474   try_acquire_recording_lock
-  4931-4933   universal_search
-  5298-5308   untrack
- 24152-24258  update_cmd
-  4657-4660   update_recording_fingerprint
+ 22317-22347  _error_channel_loop
+ 16817-16830  _event_webhook
+ 12337-12350  _evolution_loop
+  5672-5706   _extract_file_payload
+  2286-2288   _extract_urls_from_streamurl_node
+ 19140-19147  _f2b_sudo_hint
+  4552-4562   _fehler_text
+ 10247-10265  _fetch_proxy_list
+ 17266-17294  _fetch_tiktok_room_id
+   756-759    _ff_cmd
+ 13123-13128  _find_chromium
+  3258-3262   _find_external_recorder
+  2291-2293   _find_stream_urls
+ 12034-12059  _fire_webhooks
+  7460-7469   _fork_safe
+   856-869    _freeai_chat_sync_metered
+ 19186-19190  _geo_lookup_ips
+  3716-3725   _get_ai_session
+  7293-7333   _get_live_info
+  2828-2835   _get_resolve_semaphore
+  7693-8070   _handle_single_tracking
+ 24385-24387  _hb
+ 24390-24407  _hb_while
+ 12578-12580  _highlight_cfg
+ 12583-12612  _highlight_observe
+ 13131-13149  _htmlov_screenshot_cmd
+ 17010-17020  _httpx_proxy
+ 12067-12079  _in_quiet_hours
+ 25454-25485  _install_fast_eventloop
+  9532-9586   _install_fast_json
+ 11666-11682  _install_faulthandler
+ 17925-17934  _intel_ensure_schema
+ 17972-18007  _intel_index_loop
+ 17946-17956  _intel_index_one
+ 17937-17943  _intel_semantic
+  5041-5050   _is_authorized
+  7594-7600   _is_dead
+  2276-2278   _is_hevc
+ 19175-19177  _is_private_ip
+  1623-1630   _is_process_running
+  6260-6271   _is_quiet_hours
+  1252-1261   _is_upload_window
+  9621-9634   _json_error_handler
+  6486-6487   _kick_broadcaster_id
+  6398-6440   _kick_follower_count
+  6382-6385   _kick_slug
+ 11180-11211  _kick_user_token
+  4090-4093   _kind_from_filename
+ 12096-12101  _latest_popularity
+ 17647-17680  _live_react_loop
+ 17443-17636  _live_react_worker
+ 16226-16237  _live_transcript_push
+ 17638-17645  _live_users
+ 16668-16712  _living_title_loop
+ 21684-21756  _local_backup_scan
+  9603-9617   _log_5xx
+ 13559-13571  _looks_like_codec_err
+ 13554-13556  _looks_like_source_expired
+  7510-7540   _loop_fehler
+ 11686-11695  _loop_heartbeat
+ 24355-24382  _loop_lag_monitor
+ 11698-11766  _loop_watchdog_thread
+ 16106-16120  _loyalty_add
+ 16097-16103  _loyalty_get
+ 16123-16131  _loyalty_top
+ 12209-12211  _manual_donations_total
+  4759-4778   _manual_status
+  7602-7603   _mark_dead
+ 10866-10882  _marketing_loop
+ 23034-23052  _maybe_handle_command
+ 24714-24738  _maybe_hype_clip
+  4008-4031   _migrate_columns
+ 23313-23324  _mod_is_exempt
+ 23327-23332  _mod_warn_first
+ 23335-23338  _mod_warn_text
+ 12377-12385  _modlog
+   999-1001   _multistream_targets
+  7472-7473   _nc_create_subprocess_exec
+  7476-7477   _nc_create_subprocess_shell
+ 11117-11134  _news_loop
+ 12404-12406  _normalize_ingest
+  2469-2486   _note_check_duration
+  8409-8412   _notify_topic_name
+ 16252-16260  _oracle_memories
+ 16525-16559  _oracle_memorize
+ 16263-16276  _oracle_persona
+ 16245-16249  _oracle_recent_text
+ 12738-12746  _ov_atomic_write
+ 12726-12732  _ov_bar
+ 15104-15116  _ov_clip_text
+ 12735-12736  _ov_oneline
+ 18852-18881  _overlay_push
+ 13077-13120  _overlay_render_size
+ 12470-12474  _overlay_session_reset
+ 18816-18819  _overlay_src_ok
+ 15188-15198  _own_invites
+ 13072-13074  _parse_size
+ 19361-19441  _parse_ssh_attacks
+  6895-6928   _pause_resume_cmd
+  1865-1909   _persist_refreshed_cookies
+  1768-1800   _pick_checked_pull_proxy
+  9702-9715   _pin_auth_value
+  9761-9762   _pin_clear_fail
+  9741-9744   _pin_locked
+  9747-9758   _pin_note_fail
+  9718-9738   _pin_ok
+ 18710-18735  _piper_pick_model
+ 18747-18794  _piper_say
+ 11996-12031  _post_json_threaded
+ 13051-13069  _probe_video_size
+  1651-1668   _proc_is_recorder
+ 10559-10587  _proxy_pool_refresh_loop
+  1734-1765   _proxy_report_recording
+ 11651-11653  _prune_stall_dumps
+ 10936-11057  _public_stats
+  1936-1942   _pull_proxy_still
+ 16788-16814  _push_notify
+  9863-9865   _pwa_dir
+ 10316-10331  _quick_validate_proxy
+ 12062-12064  _quiet_hours_config
+  9828-9861   _rate_guard
+ 16071-16077  _react_warn
+  7380-7419   _reap_proc
+  2509-2531   _record_check_outcome
+   751-753    _redact_stream_urls
+ 10486-10556  _refresh_proxy_pool
+  2302-2392   _resolve_via_html
+  2651-2805   _resolve_via_webcast_api_v2
+  2868-2930   _resolve_via_ytdlp
+ 22661-22790  _resolve_youtube_ingest
+ 12453-12464  _restream_active_sources
+ 17297-17396  _restream_chat_guardian
+ 12615-12687  _restream_chat_push
+ 12712-12721  _restream_chat_push_async
+ 13152-13239  _restream_html_overlay_start
+ 13242-13255  _restream_html_overlay_stop
+ 12415-12438  _restream_overlay_files
+ 17684-17716  _restream_platform_state
+ 17841-17876  _restream_resume_after_restart
+ 13303-13361  _restream_tts_enqueue_wav
+ 13013-13045  _restream_tts_feeder
+ 13010-13011  _restream_tts_fifo_path
+ 13258-13285  _restream_tts_start
+ 13287-13301  _restream_tts_stop
+ 17722-17838  _restream_verify_loop
+ 21649-21661  _retention_loop
+ 21643-21646  _retention_scan
+  2613-2615   _room_is_abo
+  5710-5827   _run_ai_call
+ 11789-11802  _run_async_from_flask
+ 19180-19183  _run_priv
+ 25442-25450  _run_selfcheck_and_exit
+ 21664-21675  _s3_client
+  7629-7680   _safe_send
+  4685-4701   _sample_net_throughput
+  2561-2588   _schedule_next_check
+ 21597-21640  _scheduler_loop
+  4034-4038   _schema_pk
+ 11806-11811  _scraper_session
+ 23341-23380  _screen_full
+ 11255-11292  _sec_headers
+  2281-2283   _select_stream_from_data_section
+ 25255-25439  _selfcheck
+  8421-8455   _send_live_notice
+  1275-1279   _should_defer_upload
+ 22083-22118  _shrink_for_discord
+  9868-9880   _sicheres_ziel
+ 21495-21515  _sicherheits_erinnerung_loop
+ 24635-24652  _sign_health_check
+ 24655-24674  _sign_health_loop
+  7489-7500   _spawn
+ 25820-25850  _spawn_from_flask
+ 17022-17263  _start_chat_listener
+ 11769-11786  _start_loop_watchdog
+ 11084-11112  _stats_loop
+ 11063-11066  _stats_output_path
+ 11069-11081  _stats_write
+  8149-8165   _storage_cleanup_loop
+ 24694-24701  _story_for
+  3320-3326   _stream_url_expiry
+  3335-3341   _stream_url_is_fresh
+  3328-3333   _stream_url_ttl
+ 15151-15158  _streamer_persona_get
+ 12962-12966  _studio_chain
+ 21781-21903  _system_backup
+ 21912-21942  _system_backup_loop
+ 10268-10307  _test_proxy
+ 10814-10830  _testpush_resolve_live
+  7605-7626   _tg_sprache_setzen
+  8328-8338   _tg_topics_load_into_mem
+  8325-8326   _tg_topics_path
+  8340-8347   _tg_topics_save
+  9676-9684   _token_ok
+  8350-8354   _topic_forget
+ 12082-12093  _tracking_max_duration
+  4298-4312   _tracking_remove_cleanup
+  4329-4341   _tracking_resume_cleanup
+  1517-1540   _try_attach_file_handler
+ 18737-18745  _tts_cleanup
+ 10790-10794  _tunnel_effective
+ 18233-18286  _twitch_channel_status
+ 23383-23528  _twitch_chat_loop
+ 23197-23300  _twitch_eventsub_loop
+  1298-1311   _upload_queue_add
+  1322-1324   _upload_queue_count
+  1281-1290   _upload_queue_load
+  1271-1273   _upload_queue_path
+  1313-1320   _upload_queue_remove
+  1292-1296   _upload_queue_save
+  1326-1367   _upload_window_loop
+  7353-7360   _uptime_s
+ 12392-12401  _url_host
+   816-820    _usage_record_claude
+  7543-7587   _verbindung_verloren
+  6443-6474   _viewer_sample_loop
+  9765-9768   _wants_html
+  7363-7377   _warn_empty_env
+ 24428-24549  _watchdog_loop
+ 22936-22944  _wchat_thank_ok
+ 16856-16886  _whisper_get_model
+  7450-7457   _whisper_native_section
+ 16058-16064  _whisper_pool
+ 16955-16984  _whisper_segments
+ 16888-16952  _whisper_transcribe
+ 12793-12955  _write_restream_overlay
+ 12755-12790  _write_restream_overlay_async
+ 23552-23632  _youtube_api_chat_loop
+ 18289-18392  _youtube_api_status
+ 18395-18462  _youtube_channel_status
+ 23635-23796  _youtube_chat_loop
+ 22796-22809  _youtube_restream_autoconfig
+ 22812-22836  _youtube_restream_autoconfig_inner
+ 22903-22931  _youtube_send
+ 18530-18571  _youtube_set_channel
+ 22839-22873  _yt_access_token
+ 22876-22891  _yt_live_chat_id
+ 22899-22900  _yt_sendrate_cfg
+ 23531-23546  _yt_timeout
+  2852-2853   _ytdlp_detect_available
+  2855-2866   _ytdlp_note_result
+ 11656-11658  _zombie_child_count
+  7229-7253   about
+  4209-4213   add_ai_log_entry
+  4126-4129   add_archive_entry
+  4723-4725   add_archive_rule
+  4500-4534   add_recording
+  4273-4290   add_tracking
+  5830-5863   ai
+  3861-3912   ai_chat
+  3946-3956   ai_history_append
+  3958-3963   ai_history_clear
+  3935-3944   ai_history_load
+  3920-3933   ai_rate_limit_check
+  5892-5900   aireset
+ 16393-16412  azrael_chat
+ 23801-23923  brain_cmd
+  3344-3528   build_recording_cmd
+  4293-4296   bulk_add_trackings
+  6697-6756   bulkadd
+  8168-8308   check_all_trackings
+  4345-4357   claim_live_transition
+ 15228-15990  class KickModerator
+ 13574-14991  class RestreamManager
+ 10673-10715  classify_proxy_anonymity
+  5938-6136   cleanup
+  4977-4983   cleanup_old_recordings
+  4491-4498   clear_recording
+ 22553-22618  clip_moment
+  4675-4678   compute_storage_forecast
+  6819-6892   cookies_cmd
+  4264-4270   count_trackings_for_chat
+  4196-4207   decide_preferred_recorder
+  4136-4139   delete_archive_entry
+  4727-4729   delete_archive_rule
+  5367-5514   diag
+ 24035-24096  einnahmen_cmd
+  4669-4672   find_recordings_by_fingerprint
+  4157-4173   finish_recording_attempt
+  4317-4319   get_all_active_trackings
+  4224-4226   get_all_checks
+  4536-4539   get_all_recordings
+  4618-4620   get_all_tags_with_counts
+  4646-4649   get_annotations_for_recording
+  4131-4134   get_archive_entry
+  4639-4642   get_bookmarked_recordings
+  2000-2146   get_cookie_health
+  4606-4612   get_event_log
+  4180-4194   get_last_recording_attempt
+  2933-3038   get_live_status
+  4916-4919   get_manual_recordings
+  4654-4657   get_or_compute_inspect_sync
+  5018-5021   get_outcome_breakdown
+  4625-4628   get_priority_poll_interval
+  4175-4178   get_recent_recording_attempts
+  4541-4544   get_recording_by_id
+  4632-4635   get_recording_note
+  3662-3685   get_redis
+  4253-4256   get_stats
+  4971-4975   get_storage_stats
+  4747-4749   get_tiktok_status_distribution
+  4359-4368   get_tracking_state
+  4314-4315   get_trackings_for_group
+  4932-4935   get_trash_recordings
+  8843-9511   handle_recording_finished
+  4056-4081   init_db
+  4719-4721   list_archive_rules
+  5171-5209   live
+  7683-7691   live_check_worker
+  3740-3774   llm_chat
+  3797-3825   llm_chat_sync
+  3782-3794   llm_list_models
+  4565-4598   log_event
+  1585-1618   log_recording_failure
+  7042-7091   logs_cmd
+ 24742-25245  main
+  5866-5889   on_ai_media
+  7168-7194   on_ai_reply
+  7197-7226   on_azrael_mention
+  7258-7288   on_callback
+ 16418-16522  oracle_handle
+  6931-6934   pause_tracking
+  5031-5036   profile_keyboard
+  6993-7039   quota
+  8072-8146   reaper_loop
+  4743-4745   record_tiktok_status
+  5905-5935   recstatus
+  3687-3695   redis_get_json
+  3698-3704   redis_set_json
+ 24099-24109  report_cmd
+ 10718-10720  report_proxy_result
+  2395-2422   resolve_tiktok_live_stream
+  4927-4930   restore_recording
+  6937-6940   resume_tracking
+  4732-4737   run_archive_rules
+ 24112-24335  run_bot
+ 11571-11623  run_flask
+  4707-4710   sample_bandwidth_for_active
+  4216-4222   save_tiktok_check
+  4483-4489   set_recording_file
+  4322-4326   set_tracking_paused
+  4922-4925   soft_delete_recording
+  8461-8841   split_and_send_video
+  5084-5126   start
+  4141-4155   start_recording_attempt
+  6139-6177   stats
+  4897-4914   stop_manual_recording
+  6943-6990   stoprec
+  6367-6375   summary_cmd
+  7094-7165   sysres
+  5516-5660   teststream
+  5128-5169   tiktok
+  6759-6816   topusers
+  5246-5303   track
+  5211-5243   track_exact
+  5317-5365   tracklist
+  4781-4895   trigger_manual_recording
+  4444-4481   try_acquire_recording_lock
+  4938-4940   universal_search
+  5305-5315   untrack
+ 23926-24032  update_cmd
+  4664-4667   update_recording_fingerprint
 ```
 
 ## nc/ — öffentliche Symbole
@@ -1034,6 +1034,7 @@ updater.py             build_plan, check, class Plan, class UpdaterConfig, confi
 usage.py               configure, estimate_tokens, flush, record, snapshot
 util.py                datei_in
 version.py             build_stamp, changelog, current, latest, summary_line
+videoteil.py           configure, dauer, ist_kaputter_container, kopier_teilen, neu_kodieren, platz_reicht, reparieren, wegwerfen, zeitstempel_richten, zu_gross
 whispercfg.py          geladen, name, verfuegbar, waehle
 youtube_api.py         active_broadcast_params, ban_payload, is_self, list_params, merge_video_snippet, parse_broadcast_id, parse_error, parse_messages, parse_video_snippet, video_list_params, video_update_body
 ytoauth.py             access_token, authorize_url, configure, exchange_code, forget, invalidate_access, revoke, set_channel, status
