@@ -269,7 +269,7 @@ silence_defaults(){
     printf '%s\n' $s > "$NC_STATE"
     printf "  ${FNT}Standard-MOTD gedaempft:${R}%s\n" "$s"
   else
-    printf "  ${FNT}Standard-MOTD war bereits still${R}\n"
+    printf "  ${FNT}%s${R}\n" "$(t "Standard-MOTD war bereits still")"
   fi
   # Die STATISCHE /etc/motd laeuft nicht ueber run-parts und blieb deshalb
   # sichtbar, egal was hier gedaempft wurde. Auf Debian/Ubuntu steht dort das
@@ -299,7 +299,9 @@ restore_defaults(){
     if [ ! -s /etc/motd ]; then
       mv "$NC_MOTD_SAVED" /etc/motd 2>/dev/null && wieder=1
     else
-      printf "  ${WRN}/etc/motd wurde seither neu beschrieben${R} ${FNT}— Sicherung bleibt unter %s${R}\n" "$NC_MOTD_SAVED"
+      printf "  ${WRN}%s${R} ${FNT}— %s %s${R}\n" \
+           "$(t "/etc/motd wurde seither neu beschrieben")" \
+           "$(t "Sicherung bleibt unter")" "$NC_MOTD_SAVED"
     fi
   fi
   [ "$wieder" = 1 ] && printf "  ${FNT}Standard-MOTD wiederhergestellt${R}\n"
@@ -327,7 +329,7 @@ write_conf(){
 }
 qq(){ printf "'%s'" "$(printf '%s' "${1:-}" | sed "s/'/'\\\\''/g")"; }
 
-need_root(){ [ "$(id -u)" -eq 0 ] || { printf "${WRN}Bitte mit sudo:${R} sudo %s %s\n" "$0" "$1"; exit 1; }; }
+need_root(){ [ "$(id -u)" -eq 0 ] || { printf "${WRN}%s${R} sudo %s %s\n" "$(t "Bitte mit sudo:")" "$0" "$1"; exit 1; }; }
 
 install_linux(){
   local src; src="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
@@ -336,10 +338,11 @@ install_linux(){
   printf "${OK}✔ installiert${R} → %s\n" "$DEST"
   write_conf
   silence_defaults
-  printf "  ${FNT}Vorschau:  sudo run-parts /etc/update-motd.d/${R}\n"
+  printf "  ${FNT}%s  sudo run-parts /etc/update-motd.d/${R}\n" "$(t "Vorschau:")"
   printf "  ${FNT}'Last login' kommt von SSH — optional 'PrintLastLog no' in sshd_config${R}\n"
   if ! grep -rqs 'pam_motd' /etc/pam.d/sshd 2>/dev/null; then
-    printf "  ${WRN}Hinweis:${R} ${FNT}/etc/pam.d/sshd laedt pam_motd nicht — dann bleibt der Login still.${R}\n"
+    printf "  ${WRN}%s${R} ${FNT}%s${R}\n" "$(t "Hinweis:")" \
+           "$(t "/etc/pam.d/sshd laedt pam_motd nicht — dann bleibt der Login still.")"
   fi
 }
 
@@ -357,7 +360,7 @@ install_darwin(){
     printf "${OK}✔ eingetragen${R} → %s\n" "$rc"
   fi
   write_conf
-  printf "  ${FNT}Wirksam nach:  exec \$SHELL -l${R}\n"
+  printf "  ${FNT}%s  exec \$SHELL -l${R}\n" "$(t "Wirksam nach:")"
 }
 
 uninstall_darwin(){
@@ -365,25 +368,27 @@ uninstall_darwin(){
   for rc in "$HOME/.zshrc" "$HOME/.bash_profile" "$HOME/.bashrc"; do
     [ -f "$rc" ] && grep -qs "$RC_MARK_A" "$rc" || continue
     sed -i.nc-bak "/$(printf '%s' "$RC_MARK_A" | sed 's/[][\.*^$\/]/\\&/g')/,/$(printf '%s' "$RC_MARK_E" | sed 's/[][\.*^$\/]/\\&/g')/d" "$rc"
-    printf "${OK}✔ entfernt aus${R} %s ${FNT}(Sicherung: %s.nc-bak)${R}\n" "$rc" "$rc"
+    printf "${OK}✔ %s${R} %s ${FNT}(%s %s.nc-bak)${R}\n" \
+             "$(t "entfernt aus")" "$rc" "$(t "Sicherung:")" "$rc"
   done
 }
 
 doctor(){
-  printf "\n${BR}${B}NIGHTCRAWLER MOTD — Erkennung${R}  ${FNT}v%s${R}\n\n" "$NC_MOTD_VERSION"
-  printf "  %-12s %s\n" "System"    "$OS $(uname -r 2>/dev/null)"
-  printf "  %-12s %s\n" "Konfig"    "$([ -r "$CONF" ] && echo "$CONF" || echo "— (keine, alles erkannt)")"
-  printf "  %-12s %s\n" "Dienst"    "${SERVICE:-— nicht gefunden}"
+  printf "\n${BR}${B}NIGHTCRAWLER MOTD — %s${R}  ${FNT}v%s${R}\n\n" "$(t "Erkennung")" "$NC_MOTD_VERSION"
+  printf "  %-12s %s\n" "$(t "System")"    "$OS $(uname -r 2>/dev/null)"
+  printf "  %-12s %s\n" "$(t "Konfig")"    "$([ -r "$CONF" ] && echo "$CONF" || echo "— $(t "keine, alles erkannt")")"
+  printf "  %-12s %s\n" "$(t "Dienst")"    "${SERVICE:-— $(t "nicht gefunden")}"
   printf "  %-12s %s\n" "BOT_DIR"   "${BOT_DIR:-— nicht gefunden}"
   printf "  %-12s %s\n" ".env"      "$([ -f "$ENVF" ] && echo "$ENVF" || echo "— fehlt")"
   printf "  %-12s %s\n" "Datenbank" "${DB:-— keine gefunden}${DB_BACKEND:+  (DB_BACKEND=$DB_BACKEND)}"
-  printf "  %-12s %s\n" "Log"       "$([ -f "$LOGF" ] && echo "$LOGF" || echo "— fehlt")"
-  printf "  %-12s %s\n" "Aufnahmen" "$([ -d "$RECDIR" ] && echo "$RECDIR" || echo "— fehlt")"
+  printf "  %-12s %s\n" "$(t "Log")"       "$([ -f "$LOGF" ] && echo "$LOGF" || echo "— $(t "fehlt")")"
+  printf "  %-12s %s\n" "$(t "Aufnahmen")" "$([ -d "$RECDIR" ] && echo "$RECDIR" || echo "— $(t "fehlt")")"
   printf "  %-12s %s\n" "Dashboard" ":$DASH_PORT"
   _ni="$(detect_netif)"
-  printf "  %-12s %s\n" "Netz"      "${_ni:-— keine Schnittstelle erkannt}"
-  printf "  %-12s %s\n" "Werkzeuge" "$(for t in systemctl ss curl sqlite3 python3 free df find du; do have $t && printf '%s ' "$t"; done)"
-  printf "\n  ${FNT}Falsch erkannt? Werte in %s eintragen (oder als Umgebung setzen).${R}\n\n" "$CONF"
+  printf "  %-12s %s\n" "$(t "Netz")"      "${_ni:-— $(t "keine Schnittstelle erkannt")}"
+  printf "  %-12s %s\n" "$(t "Werkzeuge")" "$(for t in systemctl ss curl sqlite3 python3 free df find du; do have $t && printf '%s ' "$t"; done)"
+  printf "\n  ${FNT}%s %s %s${R}\n\n" "$(t "Falsch erkannt? Werte in")" "$CONF" \
+         "$(t "eintragen (oder als Umgebung setzen).")"
   exit 0
 }
 
@@ -396,20 +401,20 @@ case "${1:-}" in
     if [ "$OS" = "Darwin" ]; then uninstall_darwin; exit 0; fi
     need_root --uninstall
     if [ -f "$DEST" ]; then rm -f "$DEST" && printf "${OK}✔ entfernt${R} → %s\n" "$DEST"
-    else printf "${FNT}nicht installiert${R}\n"; fi
+    else printf "${FNT}%s${R}\n" "$(t "nicht installiert")"; fi
     restore_defaults
-    printf "  ${FNT}%s bleibt liegen (harmlos, enthaelt nur Pfade)${R}\n" "$CONF"
+    printf "  ${FNT}%s %s${R}\n" "$CONF" "$(t "bleibt liegen (harmlos, enthaelt nur Pfade)")"
     exit 0;;
   --doctor)  doctor;;
   --version) printf 'NIGHTCRAWLER MOTD %s\n' "$NC_MOTD_VERSION"; exit 0;;
   --help|-h)
     printf "NIGHTCRAWLER MOTD %s\n\n" "$NC_MOTD_VERSION"
-    printf "  (ohne Argument)  Vorschau — aendert nichts\n"
+    printf "  %s\n" "$(t "(ohne Argument)  Vorschau — aendert nichts")"
     printf "  --install        einhaengen + Standard-MOTD daempfen (sudo; macOS: Shell-rc)\n"
     printf "  --uninstall      entfernen + Standard-MOTD wiederherstellen\n"
-    printf "  --doctor         zeigt, was erkannt wurde und woher\n"
+    printf "  --doctor         %s\n" "$(t "zeigt, was erkannt wurde und woher")"
     printf "  --version        Fassung\n\n"
-    printf "Anpassen ueber %s oder Umgebung:\n" "$CONF"
+    printf "%s %s %s\n" "$(t "Anpassen ueber")" "$CONF" "$(t "oder Umgebung:")"
     printf "  SERVICE BOT_DIR DASH_PORT DB DISK_TARGET SHOW_REC CPU_SAMPLE COLOR_MODE\n"
     printf "  COLOR_MODE: always (Vorgabe) | auto | truecolor | 256 | 16 | off\n"
     printf "Beispiel:  BOT_DIR=~/mein-bot COLOR_MODE=16 ./motd.sh\n"
@@ -422,7 +427,12 @@ esac
 col4(){ local p=${1:-0}; if [ "$p" -ge 90 ]; then printf '%s' "$ERR"
         elif [ "$p" -ge 70 ]; then printf '%s' "$WRN"; else printf '%s' "$OK"; fi; }
 rule(){ printf "${DIM}"; awk -v n="$WIDTH" 'BEGIN{while(n-->0)printf "━"}'; printf "${R}\n"; }
-sect(){ printf "  ${DIM}${B}%s${R}\n" "$1"; }
+# v4.2-W14: die Senken uebersetzen. motd.sh band lib/i18n.sh seit v4.1-W17
+# ein und rief t() KEIN EINZIGES MAL auf — jede Zeile war ein printf mit
+# deutschem Literal. Und tools/i18n_tools.py sammelte nur aus den Senken
+# von installer.sh, die es hier gar nicht gibt, und meldete deshalb 100 %
+# Abdeckung fuer eine Datei, die zu 0 % uebersetzt war.
+sect(){ printf "  ${DIM}${B}%s${R}\n" "$(t "$1")"; }
 bar(){  # bar <prozent> [breite]  — Breite als ARGUMENT: eine Zuweisung vor dem
         # Funktionsaufruf (BARW=10 bar 50) bleibt in bash danach stehen und
         # verstellte in der Vorfassung alle folgenden Balken.
@@ -473,10 +483,13 @@ spark(){
       printf "%s", g[k]
     } }'
 }
-gauge(){ printf "  ${DIM}%-6s${R} %b ${FNT}%s${R}\n" "$1" "$(bar "$2")" "$3"; }
+gauge(){ printf "  ${DIM}%-6s${R} %b ${FNT}%s${R}\n" "$(t "$1")" "$(bar "$2")" "$3"; }
 dot(){ case "$1" in ok) printf "${OK}●${R}";; warn) printf "${WRN}●${R}";;
                     err) printf "${ERR}●${R}";; *) printf "${FNT}●${R}";; esac; }
-row(){ printf "  ${DIM}%-11s${R}%b %b\n" "$1" "$2" "$3"; }
+# Nur die BESCHRIFTUNG laeuft durch t(): das dritte Argument traegt
+# Farbcodes und Laufzeitwerte und kann deshalb kein Schluessel sein —
+# dort wird an der Quelle uebersetzt.
+row(){ printf "  ${DIM}%-11s${R}%b %b\n" "$(t "$1")" "$2" "$3"; }
 human(){ awk -v b="${1:-0}" 'BEGIN{s="B K M G T P";n=split(s,u," ");x=b+0;i=1;
          while(x>=1024&&i<n){x/=1024;i++} printf (x<10?"%.1f%s":"%.0f%s"),x,u[i]}'; }
 ago(){ local d=$(( $(date +%s) - ${1%.*} ))
@@ -642,7 +655,7 @@ else
     degradiert|stumm)  lage_setz warn "Dashboard antwortet nicht sauber";;
   esac
 fi
-[ "$DPCT" -ge 90 ] 2>/dev/null && lage_setz err "Platte fast voll (${DPCT}%)"
+[ "$DPCT" -ge 90 ] 2>/dev/null && lage_setz err "Platte fast voll"
 [ -n "$THROTTLE" ] && lage_setz warn "Drosselung gemeldet"
 
 # ── Kopf ─────────────────────────────────────────────────────
@@ -669,20 +682,21 @@ if have uptime; then UP=$(uptime -p 2>/dev/null | sed 's/^up //'); fi
 printf "\n"; rule
 printf "  ${BR}${B}◤ NIGHTCRAWLER${R}${VER:+ ${DIM}${VER}${R}}${GITREF:+ ${FNT}·${R} ${FNT}${GITREF}${R}}   ${TXT}%s${R}\n" "$(hostname 2>/dev/null)"
 case "$LAGE" in
-  ok)   LAGE_BADGE="${OK}●${R} ${OK}${LAGE_TEXT}${R}";;
-  warn) LAGE_BADGE="${WRN}▲${R} ${WRN}${LAGE_TEXT}${R}";;
-  *)    LAGE_BADGE="${ERR}✘${R} ${B}${ERR}${LAGE_TEXT}${R}";;
+  ok)   LAGE_BADGE="${OK}●${R} ${OK}$(t "$LAGE_TEXT")${R}";;
+  warn) LAGE_BADGE="${WRN}▲${R} ${WRN}$(t "$LAGE_TEXT")${R}";;
+  *)    LAGE_BADGE="${ERR}✘${R} ${B}${ERR}$(t "$LAGE_TEXT")${R}";;
 esac
-printf "  %b   ${FNT}Restream Control Room${R}   ${FNT}up %s${R}\n" "$LAGE_BADGE" "$UP"
+printf "  %b   ${FNT}%s${R}   ${FNT}%s %s${R}\n" "$LAGE_BADGE" \
+       "$(t "Restream Control Room")" "$(t "up")" "$UP"
 rule
 
 # ── System ───────────────────────────────────────────────────
 sect "SYSTEM"
-gauge "CPU" "$CPU_ALL" "${CPU_ALL}% · ${NPC} Kerne"
+gauge "CPU" "$CPU_ALL" "${CPU_ALL}% · ${NPC} $(t "Kerne")"
 if [ -n "$CPU_LINES" ]; then
   # Ein Zeichen je Kern: sieht sofort, ob EIN ffmpeg einen Kern festhaelt oder
   # ob wirklich alle unter Last stehen.
-  EQ="  ${FNT}Kerne  ${R}"
+  EQ="  ${FNT}$(t "Kerne")  ${R}"
   while read -r _n _p; do
     case "$_n" in cpu[0-9]*) ;; *) continue;; esac
     _l=$(( (_p*8+50)/100 )); [ "$_l" -gt 8 ] && _l=8
@@ -704,23 +718,23 @@ printf "%b\n" "$LOADLINE"
 [ "$SWP_T" -gt 0 ] && gauge "Swap" "$(pct "$SWP_U" "$SWP_T")" \
   "$(awk -v u="$SWP_U" -v t="$SWP_T" 'BEGIN{printf "%.1f/%.1fG",u/1024,t/1024}')  $(pct "$SWP_U" "$SWP_T")%"
 if [ "$DISK_T" -gt 0 ]; then
-  gauge "Disk" "$DPCT" "$(human $((DISK_U*1024)))/$(human $((DISK_T*1024)))  ${DPCT}% · $(human $((DISK_A*1024))) frei"
-  [ "$DPCT" -ge 90 ] && warn_add "Platte zu ${DPCT}% voll — Aufnahmen brechen ab: ${TXT}/cleanup${R}${FNT} oder alte Dateien loeschen${R}"
+  gauge "Disk" "$DPCT" "$(human $((DISK_U*1024)))/$(human $((DISK_T*1024)))  ${DPCT}% · $(human $((DISK_A*1024))) $(t "frei")"
+  [ "$DPCT" -ge 90 ] && warn_add "$(t "Platte fast voll") (${DPCT}%) — $(t "Aufnahmen brechen ab"): ${TXT}/cleanup${R}${FNT} $(t "oder alte Dateien loeschen")${R}"
 fi
 # v4.2-W7: Der Upstream ist bei einer Restream-Box die Zahl, die "laeuft" von
 # "sendet wirklich" trennt. Rauf zuerst und hervorgehoben — runter ist bei
 # diesem Geraet die Nebensache.
 if [ -n "$NET_TX" ]; then
   printf "  ${DIM}%-6s${R} ${TXT}↑ %s/s${R}   ${FNT}↓ %s/s${R}   ${FNT}%s${R}\n" \
-    "Netz" "$(human "$NET_TX")" "$(human "${NET_RX:-0}")" "$NET_IF"
+    "$(t "Netz")" "$(human "$NET_TX")" "$(human "${NET_RX:-0}")" "$NET_IF"
 fi
-[ -n "$THROTTLE" ] && warn_add "Pi meldet Drosselung (get_throttled=${THROTTLE}) — Netzteil pruefen, sonst bricht ffmpeg weg"
+[ -n "$THROTTLE" ] && warn_add "$(t "Pi meldet Drosselung") (get_throttled=${THROTTLE}) — $(t "Netzteil pruefen, sonst bricht ffmpeg weg")"
 rule
 
 # ── NIGHTCRAWLER: Dienst, Dashboard, Abwehr, Fehler ──────────
 sect "NIGHTCRAWLER"
 if [ -z "$BOT_DIR" ]; then
-  row "Installation" "$(dot warn)" "${WRN}nicht gefunden${R} ${FNT}— BOT_DIR in ${CONF} setzen (./motd.sh --doctor)${R}"
+  row "Installation" "$(dot warn)" "${WRN}$(t "nicht gefunden")${R} ${FNT}— $(t "BOT_DIR in der Konfiguration setzen") (${CONF}, ./motd.sh --doctor)${R}"
 fi
 
 # v4.2-W7: gemessen wurde oben, hier wird nur noch gezeichnet.
@@ -732,40 +746,40 @@ case "$BOT_STATE" in
     # sieht man an "is-active" NIE — und es ist der wichtigere Befund.
     if [ -n "$BOT_NRS" ] && [ "$BOT_NRS" -gt 0 ] 2>/dev/null; then
       _extra="${_extra} · ${BOT_NRS}x neugestartet"
-      warn_add "Dienst wurde ${BOT_NRS}x neu gestartet — Grund: ${TXT}journalctl -u ${SERVICE} -p err -n 50${R}"
+      warn_add "$(t "Dienst wurde neu gestartet") (${BOT_NRS}x) — $(t "Grund"): ${TXT}journalctl -u ${SERVICE} -p err -n 50${R}"
     fi
-    row "Bot" "$(dot ok)" "${TXT}laeuft${R} ${FNT}${_extra}${R}";;
+    row "Bot" "$(dot ok)" "${TXT}$(t "laeuft")${R} ${FNT}${_extra}${R}";;
   gestoppt)
-    row "Bot" "$(dot err)" "${ERR}gestoppt${R} ${FNT}${BOT_RES:+(${BOT_RES})}${R}"
-    warn_add "Bot laeuft nicht: ${TXT}sudo systemctl start ${SERVICE}${R}${FNT} — Grund: journalctl -u ${SERVICE} -n 80${R}";;
+    row "Bot" "$(dot err)" "${ERR}$(t "gestoppt")${R} ${FNT}${BOT_RES:+(${BOT_RES})}${R}"
+    warn_add "$(t "Bot laeuft nicht"): ${TXT}sudo systemctl start ${SERVICE}${R}${FNT} — $(t "Grund"): journalctl -u ${SERVICE} -n 80${R}";;
   prozess)
-    row "Bot" "$(dot ok)" "${TXT}laeuft${R} ${FNT}(Prozess, kein systemd-Dienst)${R}";;
+    row "Bot" "$(dot ok)" "${TXT}$(t "laeuft")${R} ${FNT}($(t "Prozess, kein systemd-Dienst"))${R}";;
   tot)
-    row "Bot" "$(dot err)" "${ERR}kein Prozess${R} ${FNT}(kein systemd-Dienst gefunden)${R}";;
+    row "Bot" "$(dot err)" "${ERR}$(t "kein Prozess")${R} ${FNT}($(t "kein systemd-Dienst gefunden"))${R}";;
 esac
 
 case "$DASH_STATE" in
   gesund)
-    row "Dashboard" "$(dot ok)" "${TXT}gesund${R} ${FNT}:${DASH_PORT}${DASH_PROCS:+ · ${DASH_PROCS} Kindprozesse}${R}";;
+    row "Dashboard" "$(dot ok)" "${TXT}$(t "gesund")${R} ${FNT}:${DASH_PORT}${DASH_PROCS:+ · ${DASH_PROCS} $(t "Kindprozesse")}${R}";;
   degradiert)
-    row "Dashboard" "$(dot warn)" "${WRN}degradiert${R} ${FNT}:${DASH_PORT} — /healthz meldet ok=false${R}"
-    warn_add "Dashboard degradiert (DB oder Dauerschleifen): ${TXT}curl -s localhost:${DASH_PORT}/api/selftest${R}";;
+    row "Dashboard" "$(dot warn)" "${WRN}$(t "degradiert")${R} ${FNT}:${DASH_PORT} — $(t "/healthz meldet ok=false")${R}"
+    warn_add "$(t "Dashboard degradiert (DB oder Dauerschleifen)"): ${TXT}curl -s localhost:${DASH_PORT}/api/selftest${R}";;
   stumm)
-    row "Dashboard" "$(dot warn)" "${WRN}Port offen, keine Antwort${R} ${FNT}:${DASH_PORT}${R}";;
+    row "Dashboard" "$(dot warn)" "${WRN}$(t "Port offen, keine Antwort")${R} ${FNT}:${DASH_PORT}${R}";;
   *)
-    row "Dashboard" "$(dot err)" "${ERR}kein Listener${R} ${FNT}:${DASH_PORT}${R}";;
+    row "Dashboard" "$(dot err)" "${ERR}$(t "kein Listener")${R} ${FNT}:${DASH_PORT}${R}";;
 esac
 [ -n "$DASH_ZOMB" ] && [ "$DASH_ZOMB" -gt 0 ] 2>/dev/null && \
-  warn_add "${DASH_ZOMB} Zombie-Kindprozesse — ffmpeg/streamlink werden nicht abgeraeumt"
+  warn_add "${DASH_ZOMB} $(t "Zombie-Kindprozesse — ffmpeg/streamlink werden nicht abgeraeumt")"
 
 if have systemctl && systemctl list-unit-files --no-legend 'crowdsec.service' 2>/dev/null | grep -q .; then
   if systemctl is-active --quiet crowdsec 2>/dev/null; then
     CS=$(command -v cscli 2>/dev/null || echo /usr/bin/cscli)
     BANS=""
     [ -x "$CS" ] && BANS=$(tmo 3 "$CS" decisions list -o raw 2>/dev/null | tail -n +2 | wc -l | tr -d ' ')
-    row "CrowdSec" "$(dot ok)" "${TXT}aktiv${R} ${FNT}${BANS:+· ${BANS} Bans}${R}"
+    row "CrowdSec" "$(dot ok)" "${TXT}$(t "aktiv")${R} ${FNT}${BANS:+· ${BANS} Bans}${R}"
   else
-    row "CrowdSec" "$(dot err)" "${ERR}inaktiv${R} ${FNT}— Abwehr blind${R}"
+    row "CrowdSec" "$(dot err)" "${ERR}$(t "inaktiv")${R} ${FNT}— $(t "Abwehr blind")${R}"
   fi
 fi
 
@@ -812,10 +826,10 @@ if [ -f "$LOGF" ]; then
     else _sc="$ERR"; fi
     [ -n "$_hist" ] && ESPARK="  ${_sc}$(spark $_hist)${R} ${FNT}7d${R}"
   fi
-  if   [ "$ETODAY" -eq 0 ] 2>/dev/null; then row "Fehler" "$(dot ok)"   "${TXT}0${R} ${FNT}heute${R}${ESPARK}"
-  elif [ "$ETODAY" -lt 5 ] 2>/dev/null; then row "Fehler" "$(dot warn)" "${WRN}${ETODAY}${R} ${FNT}heute${ELAST}${R}${ESPARK}"
-  else row "Fehler" "$(dot err)" "${ERR}${ETODAY}${R} ${FNT}heute${ELAST}${R}${ESPARK}"
-       warn_add "${ETODAY} Fehler heute: ${TXT}tail -n 40 ${LOGF}${R}"
+  if   [ "$ETODAY" -eq 0 ] 2>/dev/null; then row "Fehler" "$(dot ok)"   "${TXT}0${R} ${FNT}$(t "heute")${R}${ESPARK}"
+  elif [ "$ETODAY" -lt 5 ] 2>/dev/null; then row "Fehler" "$(dot warn)" "${WRN}${ETODAY}${R} ${FNT}$(t "heute")${ELAST}${R}${ESPARK}"
+  else row "Fehler" "$(dot err)" "${ERR}${ETODAY}${R} ${FNT}$(t "heute")${ELAST}${R}${ESPARK}"
+       warn_add "${ETODAY} $(t "Fehler heute"): ${TXT}tail -n 40 ${LOGF}${R}"
   fi
 fi
 rule
@@ -835,7 +849,7 @@ except Exception:
 case "$DB_BACKEND" in
   mariadb|mysql)
     sect "TRACKING"
-    row "Datenbank" "$(dot faint)" "${FNT}MariaDB — Zahlen nur im Dashboard (:${DASH_PORT})${R}"
+    row "Datenbank" "$(dot faint)" "${FNT}MariaDB — $(t "Zahlen nur im Dashboard") (:${DASH_PORT})${R}"
     rule;;
   *)
   if [ -n "$DB" ] && [ -f "$DB" ] && { have sqlite3 || have python3; }; then
@@ -858,16 +872,16 @@ EOF
       TT=${TT:-0}; LVN=${LVN:-0}; REC=${REC:-0}; PAU=${PAU:-0}; RSL=${RSL:--1}
       FFN=$(tmo 2 pgrep -c ffmpeg 2>/dev/null | tr -d ' '); FFN=${FFN:-0}
       sect "TRACKING"
-      row "Getrackt" "$(dot faint)" "${TXT}${TT}${R} ${FNT}Streamer${R}${FNT}$([ "$PAU" -gt 0 ] 2>/dev/null && printf ' · %s pausiert' "$PAU")${R}"
+      row "Getrackt" "$(dot faint)" "${TXT}${TT}${R} ${FNT}$(t "Streamer")${R}${FNT}$([ "$PAU" -gt 0 ] 2>/dev/null && printf ' · %s %s' "$PAU" "$(t "pausiert")")${R}"
       printf "  ${DIM}%-11s${R}%b ${TXT}%s${R} ${FNT}von %s${R}  %b\n" \
         "Live jetzt" "$(dot "$(onoff "$LVN")")" "$LVN" "$TT" "$(bar "$(pct "$LVN" "$TT")" 10)"
-      row "Aufnahme" "$(dot "$(onoff "$REC")")" "${TXT}${REC}${R} ${FNT}aktiv · ${FFN} ffmpeg${R}"
+      row "Aufnahme" "$(dot "$(onoff "$REC")")" "${TXT}${REC}${R} ${FNT}$(t "aktiv") · ${FFN} ffmpeg${R}"
       # Genau diese Luecke jagt der recording-Sentinel: DB sagt "nimmt auf",
       # es laeuft aber kein einziges ffmpeg.
       if [ "$REC" -gt 0 ] 2>/dev/null && [ "$FFN" -eq 0 ] 2>/dev/null; then
-        warn_add "DB meldet ${REC} Aufnahmen, es laeuft aber KEIN ffmpeg — Karteileichen: ${TXT}/recstatus${R}"
+        warn_add "$(t "DB meldet Aufnahmen, es laeuft aber KEIN ffmpeg — Karteileichen") (${REC}): ${TXT}/recstatus${R}"
       fi
-      [ "$RSL" -ge 0 ] 2>/dev/null && row "Restream" "$(dot "$(onoff "$RSL")")" "${TXT}${RSL}${R} ${FNT}Ziel(e) live${R}"
+      [ "$RSL" -ge 0 ] 2>/dev/null && row "Restream" "$(dot "$(onoff "$RSL")")" "${TXT}${RSL}${R} ${FNT}$(t "Ziel(e) live")${R}"
       rule
     fi
   fi;;
@@ -893,7 +907,8 @@ if [ -f "$ENVF" ]; then
     if [ -n "$key" ]; then echo on; else echo halb; fi
   }
   sect "RESTREAM"
-  printf "  %b%b%b${FNT}  ▣ bereit · ▨ ohne Key · ▢ aus${R}\n" \
+  printf "  %b%b%b${FNT}  %s${R}\n" \
+    "$(t "▣ bereit · ▨ ohne Key · ▢ aus")" \
     "$(chip Kick    "$(plat KICK    KICK_STREAM_KEY)")" \
     "$(chip Twitch  "$(plat TWITCH  TWITCH_STREAM_KEY)")" \
     "$(chip YouTube "$(plat YOUTUBE YOUTUBE_STREAM_KEY)")"
@@ -905,10 +920,10 @@ if [ -f "$ENVF" ]; then
     [ -n "$(envget "$k")" ] && { _ai=on; break; }
   done
   printf "  %b%b%b\n" "$(chip Telegram "$_tg")" "$(chip Discord "$_dc")" "$(chip AZRAEL "$_ai")"
-  [ "$_tg" = off ] && warn_add "BOT_TOKEN fehlt in der .env — ohne ihn startet der Telegram-Teil nicht"
+  [ "$_tg" = off ] && warn_add "$(t "BOT_TOKEN fehlt in der .env — ohne ihn startet der Telegram-Teil nicht")"
   rule
 elif [ -n "$BOT_DIR" ]; then
-  row ".env" "$(dot err)" "${ERR}fehlt${R} ${FNT}— cp .env.example .env && chmod 600 .env${R}"
+  row ".env" "$(dot err)" "${ERR}$(t "fehlt")${R} ${FNT}— cp .env.example .env && chmod 600 .env${R}"
   rule
 fi
 
@@ -938,7 +953,7 @@ if [ "$SHOW_REC" = 1 ] && [ -d "$RECDIR" ]; then
     "${RC:-0}" \
     "$([ -n "${RKB:-}" ] && human $(( ${RKB:-0} * 1024 )) || echo '—')" \
     "$([ -n "${RNEW:-}" ] && printf "   ${FNT}neuste vor${R} ${TXT}%s${R}" "$(ago "$RNEW")")" \
-    "$([ -n "${_age:-}" ] && [ "${_age:-0}" -lt "$REC_CACHE_TTL" ] 2>/dev/null && printf '(Stand: vor %ss)' "$_age")"
+    "$([ -n "${_age:-}" ] && [ "${_age:-0}" -lt "$REC_CACHE_TTL" ] 2>/dev/null && printf '%s %ss)' "$(t "(Stand: vor")" "$_age")"
   rule
 fi
 
