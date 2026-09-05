@@ -11,6 +11,55 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Geändert — die ffmpeg-Zeile des Relays steht jetzt in `nc/restreamcmd.py` (v4.2 W16)
+
+188 Zeilen, die nichts tun außer eine Argumentliste bauen: Input-Härtung,
+Filtergraph, Encoder-Profil, tee-Ausgänge. `bot.py` fällt auf **23.494 Zeilen**.
+
+**Der Gewinn ist nicht die Zeilenzahl, sondern dass dieser Teil erstmals
+geprüft wird.** Im Monolithen hing er an zwanzig Bot-Globals, und in der
+Entwicklungsumgebung gibt es kein ffmpeg — der Bauer war damit faktisch
+ungetestet. Herausgelöst ist er importierbar und mit Attrappen aufrufbar.
+Geprüft wird, **was aufgerufen wird**, nicht was ffmpeg daraus macht. Zehn
+neue Zusicherungen, die vorher nicht formulierbar waren:
+
+* **Der Cookie (F4).** Der gebaute Befehl trägt in `-headers` die komplette
+  TikTok-Session. Der Vertrag baut ihn, schickt ihn durch
+  `redact_cmd_for_log` und prüft, dass die Session verschwindet — **und** dass
+  der `Referer` stehen bleibt. Eine Redaktion, die zu viel wegnimmt, macht das
+  Log für die Fehlersuche wertlos; das fiel bisher niemandem auf.
+* **B124.** `-reconnect_on_http_error` darf 403 und 404 nicht enthalten. Auf
+  `4xx,5xx` hämmerte ffmpeg 30 Sekunden lang die tote Quell-URL, bis der ganze
+  tee kollabierte („All tee outputs failed") — die Ursache der
+  Restream-Abbrüche alle paar Minuten.
+* **HLS bekommt `+genpts+igndts`, FLV nicht.** TikTok liefert HLS-Pakete ohne
+  PTS und mit nicht-monotonem DTS; ohne das bricht der FLV-Muxer mit rc=187 ab.
+* **Die Eingangs-Reihenfolge bestimmt die Filter-Indizes.** TTS ist Eingang 1,
+  Avatar Eingang 2. Ein vertauschter Index legt nichts lahm, das man *sieht* —
+  ffmpeg mischt dann einfach den falschen Stream.
+* Thread-Deckel je Profil (Relay 2, Transcode 3) und **nie** `nice`;
+  copy bleibt copy; `only_target` sendet ohne tee; `-http_proxy` nur mit Proxy;
+  leere Zielliste fällt auf den Notausgang zurück statt ohne Ausgang zu senden.
+
+Sechs Mutationen geprüft, alle sechs schlagen an.
+
+**`configure()` lehnt ab, statt zu schlucken.** `nc/restream_targets` ignoriert
+unbekannte Schlüssel bewusst; hier wäre das falsch. Ein Tippfehler liefe sonst
+mit dem Default weiter — andere Bitrate, anderes Preset, kein Overlay — und
+nichts würde rot. Sichtbar erst auf dem Sendebild. Fehlende Schlüssel ebenso.
+
+Der Rumpf ist **bitgenau** übernommen (gegen `git show HEAD:bot.py` verglichen);
+die Werte, die vorher Modul-Globale von `bot.py` waren, sind jetzt
+Modul-Globale, die `configure()` belegt. Die beiden Ketten-Hüllen
+`_drawtext_chain`/`_studio_chain` hatten nur diesen einen Nutzer und sind
+mitgegangen.
+
+**Anker nachgezogen, Verträge unverändert:** Overlay-Seitenverhältnis (B94),
+Thread-Budget, die drei Duck-Mix-Stellen (v4.0-W11/W12) und die
+Ketten-Delegation (v4.0-W27). Die verbietenden Zusicherungen lesen weiterhin
+*beide* Dateien — ein nackter Stretch oder ein nachgebauter Filtergraph darf
+nirgends zurückkommen.
+
 ### Geändert — der Discord-Teil ist aus dem Monolithen heraus (v4.2 W15)
 
 `bot.py` fällt von **25.650 auf 23.661 Zeilen**. Der gesamte Discord-Teil —
