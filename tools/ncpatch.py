@@ -401,6 +401,13 @@ def _scan(path: str) -> dict:
     return out
 
 
+# v4.2-W15: der Discord-Teil ist aus dem Monolithen heraus. Er steht bewusst
+# bot-seitig und nicht unter nc/ — er importiert discord.py und macht ein
+# Gateway auf. Fuer die Karte und die Doku-Pruefung ist er die zweite Quelle
+# neben bot.py.
+DISCORD_DATEI = "discordbot.py"
+
+
 def _index_path(root: str) -> str:
     return os.path.join(root, ".claude", "INDEX.md")
 
@@ -412,6 +419,10 @@ def cmd_map(args) -> int:
 
     haupt = "bot.py"
     d = _scan(os.path.join(root, haupt))
+    # v4.2-W15: der Discord-Teil steht in discordbot.py. Ohne ihn hier faende
+    # `ncpatch find` genau die 45 Slash-Commands nicht mehr — und die Kernregel
+    # des Projekts ("erst fragen wo etwas steht") liefe fuer Discord ins Leere.
+    dcb = _scan(os.path.join(root, DISCORD_DATEI))
     z = ["# NIGHTCRAWLER — Navigationskarte\n",
          "Erzeugt von `python tools/ncpatch.py map`. Nach jeder Änderung an",
          "Routen, Slash-Commands oder Top-Level-Funktionen neu erzeugen.",
@@ -443,18 +454,25 @@ def cmd_map(args) -> int:
             z.append(f"{ln:>6}  {meth:<16} {pfad:<48} {fn}   [{rel}]")
         z.append("```\n")
 
-    z.append(f"## Discord-Slash-Commands ({len(d['slash'])})\n")
+    z.append(f"## Discord-Slash-Commands in {DISCORD_DATEI} ({len(dcb['slash'])})\n")
     z.append("```")
-    for ln, name, beschr in sorted(d["slash"], key=lambda r: r[1]):
+    for ln, name, beschr in sorted(dcb["slash"], key=lambda r: r[1]):
         z.append(f"{ln:>6}  /{name:<22} {beschr}")
     z.append("```\n")
 
-    if d["events"]:
-        z.append(f"## Discord-Events ({len(d['events'])})\n")
+    if dcb["events"]:
+        z.append(f"## Discord-Events in {DISCORD_DATEI} ({len(dcb['events'])})\n")
         z.append("```")
-        for ln, name in sorted(d["events"], key=lambda r: r[1]):
+        for ln, name in sorted(dcb["events"], key=lambda r: r[1]):
             z.append(f"{ln:>6}  {name}")
         z.append("```\n")
+
+    z.append(f"## Top-Level-Symbole in {DISCORD_DATEI} "
+             f"({len(dcb['defs'])} Funktionen)\n")
+    z.append("```")
+    for lo, hi, name in sorted(dcb["defs"], key=lambda r: r[2]):
+        z.append(f"{lo:>6}-{hi:<6} {name}")
+    z.append("```\n")
 
     z.append(f"## Top-Level-Symbole in {haupt} "
              f"({len(d['defs'])} Funktionen, {len(d['classes'])} Klassen)\n")
@@ -492,8 +510,8 @@ def cmd_map(args) -> int:
           f"({len(text)//1024} KB, ~{len(text)//4} Token)")
     # ASCII in der Konsolen-Ausgabe: die Windows-Konsole faellt sonst auf
     # cp1252 zurueck und ersetzt Sonderzeichen durch Fragezeichen.
-    print(f"  {len(d['routes'])} Routen | {len(d['slash'])} Slash-Commands | "
-          f"{len(d['defs'])} Funktionen | {len(d['classes'])} Klassen")
+    print(f"  {len(d['routes'])} Routen | {len(dcb['slash'])} Slash-Commands | "
+          f"{len(d['defs']) + len(dcb['defs'])} Funktionen | {len(d['classes'])} Klassen")
     return 0
 
 
@@ -532,6 +550,7 @@ def cmd_find(args) -> int:
 def _kennzahlen(root: str) -> tuple[dict, dict]:
     d = _scan(os.path.join(root, "bot.py"))
     zeilen = len(_read(os.path.join(root, "bot.py")).splitlines())
+    dcb = _scan(os.path.join(root, DISCORD_DATEI))
 
     bp_dir = os.path.join(root, "nc", "routes")
     bp_dateien = [f for f in sorted(os.listdir(bp_dir))
@@ -574,8 +593,12 @@ def _kennzahlen(root: str) -> tuple[dict, dict]:
         "Flask-Routen":      {routen, len(d["routes"]), bp_routen},
         "Blueprints":        {len(bp_dateien)},
         "Flask-Blueprints":  {len(bp_dateien)},
-        "Slash-Commands":    {len(d["slash"])},
-        "Funktionen":        {len(d["defs"])},
+        "Slash-Commands":    {len(dcb["slash"])},
+        # v4.2-W15: Funktionen zaehlen ueber BEIDE bot-seitigen Dateien. Die
+        # Doku nennt eine Gesamtzahl; nur bot.py zu zaehlen haette den
+        # herausgeloesten Discord-Teil einfach verschwinden lassen.
+        "Funktionen":        {len(d["defs"]) + len(dcb["defs"]),
+                              len(d["defs"]), len(dcb["defs"])},
         "Fachmodule":        {_module("nc")},
         # Auf Tausender abgerundet ist zulaessig ("bot.py hat ueber 32.000
         # Zeilen") — alles andere muss die exakte Zahl sein.
@@ -601,7 +624,8 @@ def _befehle(root: str) -> dict[str, set[str]]:
     46. Slash-Command hinzufuegt und im README brav "46" schreibt, ohne den
     Namen in die Liste zu setzen, kaeme durch eine reine Zaehlpruefung."""
     pfad = os.path.join(root, "bot.py")
-    discord = {name for _, name, _ in _scan(pfad)["slash"]}
+    discord = {name for _, name, _
+               in _scan(os.path.join(root, DISCORD_DATEI))["slash"]}
 
     # Telegram registriert ueber eine Tupel-Liste, nicht ueber Dekoratoren.
     telegram: set[str] = set()

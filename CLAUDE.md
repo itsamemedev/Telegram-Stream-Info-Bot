@@ -10,7 +10,7 @@ GitHub-Repo trägt Historie, CI und Issues — es ist nicht der Deploy-Weg.
 
 ## Die eine Regel
 
-`bot.py` hat **25.650 Zeilen / 1,3 MB ≈ 333.000 Token**. Diese Datei wird
+`bot.py` hat **23.661 Zeilen / 1,2 MB ≈ 307.000 Token**. Diese Datei wird
 **nie** ganz gelesen und **nie** blind durchsucht. Erst fragen wo etwas steht,
 dann den Ausschnitt holen:
 
@@ -25,7 +25,7 @@ dann den Ausschnitt holen:
     python tools/ncpatch.py docs                           # Doku-Zahlen gegen den Quelltext
 
 `find` antwortet aus `.claude/INDEX.md` — 361 Routen (34 in `bot.py`, 327 in
-`nc/routes/`), 45 Slash-Commands, 471 Funktionen mit Zeilennummern. Nach Änderungen an Routen, Commands oder
+`nc/routes/`), 45 Slash-Commands, 476 Funktionen mit Zeilennummern. Nach Änderungen an Routen, Commands oder
 Top-Level-Funktionen `map` neu laufen lassen. Details: Skill `nc-navigation`.
 
 Für „wer ruft das auf?" und „was ist der Typ?" ist der Sprachserver billiger als
@@ -36,15 +36,20 @@ Auf diesem Windows-Rechner heißt der Interpreter **`python`** (3.13.12);
 
 ## Aufbau
 
-    bot.py               Monolith: Telegram + Discord (45 Slash-Commands),
-                         Flask-Dashboard (81 eigene Routen), Scraper, Recorder,
-                         Restream, Schema (init_db).
+    bot.py               Monolith: Telegram, Flask-Dashboard (34 eigene
+                         Routen), Scraper, Recorder, Restream, Schema (init_db).
                          Hiess bis v4.0-W119 bot_v37.py — beim Suchen in
                          alten Notizen und Patch-Dateien daran denken.
+    discordbot.py        Der Discord-Teil (45 Slash-Commands), seit v4.2-W15
+                         heraus. Bot-seitig, weil er discord.py importiert und
+                         ein Gateway aufmacht — nicht nach nc/, das bot-frei
+                         bleibt. Bekommt alles per starte(ctx), importiert
+                         NIE aus bot.py.
+    nc/botctx.py         Der eine Kanal dorthin: BotKontext (eingefroren).
     brain_bridge.py      Adapter Bot ↔ brain/ (M2)
     brain/               KI-Kern: state, rules, router, agents, memory,
                          semantic, knowledge, scheduler, llm, report
-    nc/                  124 Fachmodule: db, scraping, restream, oauth, ledger,
+    nc/                  125 Fachmodule: db, scraping, restream, oauth, ledger,
                          i18n, …
     nc/routes/           36 Flask-Blueprints mit 327 weiteren API-Routen
     locales/             de.json, en.json — der Übersetzungskatalog
@@ -62,8 +67,8 @@ Auf diesem Windows-Rechner heißt der Interpreter **`python`** (3.13.12);
                          (früher lagen sie unter skills/, dort wurden sie nie
                          geladen).
 
-**Architektur-Grenze, die gilt:** `nc/*` und `brain/*` importieren **nie** aus
-`bot.py`. Konfiguration kommt per `configure(...)`-Injection. Das hält beides
+**Architektur-Grenze, die gilt:** `nc/*`, `brain/*` und `discordbot.py`
+importieren **nie** aus `bot.py`. Konfiguration kommt per `configure(...)`-Injection. Das hält beides
 isoliert testbar und verhindert Zirkularimporte. `brain/` ist thread-basiert und
 stdlib-only (`urllib`, kein `aiohttp`).
 

@@ -2503,6 +2503,13 @@ def _test_w29_kein_sqlite_auf_dem_loop():
     # sonst faellt die naechste Welle wieder zurueck, ohne dass es auffaellt.
     GRENZE = 52
 
+    # ANKER GEWANDERT (v4.2-W15, nicht der Vertrag): 24 dieser Stellen stehen
+    # seit der Herausloesung in discordbot.py. Nur bot.py zu zaehlen haette die
+    # Ratsche von 52 auf 28 fallen lassen, ohne dass EINE Blockade beseitigt
+    # ist — die Grenze haette danach nichts mehr geschuetzt. Gezaehlt wird
+    # deshalb ueber beide bot-seitigen Dateien.
+    DATEIEN = ("bot.py", "discordbot.py")
+
     quelle = open("bot.py", encoding="utf-8").read()
     baum = _ast.parse(quelle)
 
@@ -2525,7 +2532,8 @@ def _test_w29_kein_sqlite_auf_dem_loop():
                     treffer.append((umgebend.name, k.lineno))
                 lauf(k, umgebend)
 
-    lauf(baum, None)
+    for _d in DATEIEN:
+        lauf(_ast.parse(open(_d, encoding="utf-8").read()), None)
     assert len(treffer) <= GRENZE, \
         ("%d blockierende db_conn-Bloecke in async-Funktionen (erlaubt: %d). "
          "Neue Stelle? db_async(...) benutzen. Erste drei: %r"
@@ -5031,6 +5039,199 @@ def _test_v42_w13_gesundheit_und_modki():
        "\u2014 Stillstand ist kein Fortschritt, unlesbar ist kein Freispruch")
 
 
+def _test_v42_w15_discord_aus_dem_monolithen():
+    """v4.2-W15: der Discord-Teil steht in discordbot.py und bekommt alles
+    durch EINEN Kanal (nc.botctx.BotKontext).
+
+    WAS HIER NICHT GEPRUEFT WERDEN KANN: ob ein Slash-Command antwortet. Es
+    gibt in dieser Umgebung kein Discord-Gateway; test_smoke.py stubbt
+    discord.py sogar bewusst weg. Pruefbar ist die FORM — und genau die ist
+    hier der Risikotraeger: 1.900 Zeilen sind aus einem Namensraum in einen
+    anderen gewandert, in dem 51 Namen vorher implizite Globals waren. Faellt
+    einer davon durch, ist er still None und kracht erst im Betrieb.
+
+    Deshalb sind die beiden harten Zusicherungen:
+      * jeder Platzhalter in discordbot.py wird von _uebernehmen() belegt,
+      * jeder Schluessel, den der Kontext verlangt, existiert in bot.py.
+    Zusammen schliessen sie die Luecke, die ein Import-Test offen laesst.
+    """
+    import ast as _ast
+    from nc import botctx as _botctx
+
+    dcb_src = open("discordbot.py", encoding="utf-8").read()
+    dcb = _ast.parse(dcb_src)
+    bot_src = open("bot.py", encoding="utf-8").read()
+    bot = _ast.parse(bot_src)
+
+    # --- 1) Die Architektur-Grenze --------------------------------------
+    # discordbot.py darf nicht zurueckimportieren, sonst ist es keine
+    # Herausloesung, sondern ein Zirkel mit zwei Dateinamen.
+    for datei, baum in (("discordbot.py", dcb), ("nc/botctx.py",
+                        _ast.parse(open("nc/botctx.py", encoding="utf-8").read()))):
+        for n in _ast.walk(baum):
+            if isinstance(n, _ast.Import):
+                assert not any(a.name.split(".")[0] == "bot" for a in n.names), \
+                    "%s importiert bot" % datei
+            if isinstance(n, _ast.ImportFrom):
+                assert (n.module or "").split(".")[0] != "bot", \
+                    "%s importiert aus bot" % datei
+    ok("W15: discordbot.py und nc/botctx.py importieren nicht aus bot.py")
+
+    # --- 2) Jeder Platzhalter wird belegt --------------------------------
+    # Platzhalter = Modul-Zuweisung auf exakt None. Lebender Modulzustand
+    # (_disc_automod_hist = {} und Konsorten) ist bewusst NICHT None und
+    # faellt damit nicht in diese Menge.
+    platz = {t.id for n in dcb.body if isinstance(n, _ast.Assign)
+             for t in n.targets
+             if isinstance(t, _ast.Name)
+             and isinstance(n.value, _ast.Constant) and n.value.value is None}
+    assert len(platz) > 50, "zu wenige Platzhalter gefunden: %d" % len(platz)
+
+    uebern = next((n for n in dcb.body
+                   if isinstance(n, _ast.FunctionDef) and n.name == "_uebernehmen"), None)
+    assert uebern is not None, "_uebernehmen fehlt"
+    belegt = {t.id for k in _ast.walk(uebern) if isinstance(k, _ast.Assign)
+              for t in k.targets if isinstance(t, _ast.Name)}
+    global_erklaert = {nm for k in _ast.walk(uebern)
+                       if isinstance(k, _ast.Global) for nm in k.names}
+    fehlt = sorted(platz - belegt)
+    assert not fehlt, "Platzhalter ohne Belegung in _uebernehmen: %s" % fehlt
+    # Ohne `global` schriebe die Zuweisung nur eine lokale Variable — die
+    # Funktion liefe gruen durch und der Modulname bliebe None.
+    fehlt_global = sorted(platz - global_erklaert)
+    assert not fehlt_global, "in _uebernehmen nicht global erklaert: %s" % fehlt_global
+    ok("W15: alle %d Platzhalter werden von _uebernehmen belegt" % len(platz))
+
+    # --- 3) Der Kontext verlangt nichts, was es nicht gibt ---------------
+    bot_top = set()
+    for n in bot.body:
+        if isinstance(n, (_ast.FunctionDef, _ast.AsyncFunctionDef, _ast.ClassDef)):
+            bot_top.add(n.name)
+        elif isinstance(n, _ast.Assign):
+            bot_top.update(t.id for t in n.targets if isinstance(t, _ast.Name))
+        elif isinstance(n, _ast.AnnAssign) and isinstance(n.target, _ast.Name):
+            bot_top.add(n.target.id)
+    fehlt = [k for k in list(_botctx.BEFEHLE) + list(_botctx.SCHALTER)
+             if k not in bot_top]
+    assert not fehlt, "vom Kontext verlangt, in bot.py nicht definiert: %s" % fehlt
+    # Und umgekehrt: die Platzhalter muessen die Schluesselmengen abdecken.
+    fehlt = [k for k in list(_botctx.BEFEHLE) + list(_botctx.SCHALTER) if k not in platz]
+    assert not fehlt, "Schluessel ohne Platzhalter in discordbot.py: %s" % fehlt
+    ok("W15: alle %d Kontext-Schluessel existieren beidseitig"
+       % (len(_botctx.BEFEHLE) + len(_botctx.SCHALTER)))
+
+    # --- 4) Der Kontext meldet Luecken beim BAU, nicht im Betrieb --------
+    def _voll():
+        return dict(
+            log=None, spawn=print, loop_fehler=print, modlog=print,
+            auto_on=print, cfg_get=print, cfg_set=print, discord_notify=print,
+            discord_post_user=print, disc_state_get=print, disc_state_set=print,
+            whisper_transcribe=print, add_tracking=print, azrael_chat=print,
+            clip_moment=print, einladung_merken=print, kick_mod=None,
+            fehler_schlange=None, boot_ts=0.0,
+            befehle={k: print for k in _botctx.BEFEHLE},
+            schalter={k: "" for k in _botctx.SCHALTER})
+
+    _botctx.BotKontext(**_voll())                       # vollstaendig: geht
+    for kaputt, was in (("befehle", "fehlt"), ("schalter", "fehlt"),
+                        ("befehle", "zuviel"), ("schalter", "zuviel")):
+        arg = _voll()
+        d = dict(arg[kaputt])
+        if was == "fehlt":
+            d.pop(sorted(d)[0])
+        else:
+            d["ein_name_den_es_nicht_gibt"] = ""
+        arg[kaputt] = d
+        try:
+            _botctx.BotKontext(**arg)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("BotKontext akzeptiert %s/%s" % (kaputt, was))
+    # Ein nicht-aufrufbarer Befehl ist der stille Fall: er kracht sonst erst
+    # beim Aufruf, mitten in einem Slash-Command.
+    arg = _voll()
+    arg["befehle"] = dict(arg["befehle"], diag="kein Handler")
+    try:
+        _botctx.BotKontext(**arg)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("BotKontext akzeptiert einen nicht-aufrufbaren Befehl")
+    ok("W15: BotKontext meldet fehlende, unbekannte und tote Eintraege")
+
+    # --- 5) Eingefroren -------------------------------------------------
+    k = _botctx.BotKontext(**_voll())
+    try:
+        k.spawn = print
+    except Exception:
+        pass
+    else:
+        raise AssertionError("BotKontext laesst sich nachtraeglich umbiegen")
+    ok("W15: BotKontext ist eingefroren")
+
+    # --- 6) Der Einladungs-Pfad ------------------------------------------
+    # Das war der EINE Fall, den das blosse Verschieben kaputtgemacht haette:
+    # _ensure_discord_invite schrieb per `global` nach DISCORD_INVITE_URL —
+    # in discordbot.py haette das nur die dortige Kopie gesetzt, waehrend der
+    # Announcer in bot.py weiter die leere URL verschickt haette.
+    assert "DISCORD_INVITE_URL" not in platz, \
+        "DISCORD_INVITE_URL darf in discordbot.py nicht existieren"
+    for n in _ast.walk(dcb):
+        assert not (isinstance(n, _ast.Global) and "DISCORD_INVITE_URL" in n.names), \
+            "discordbot.py bindet DISCORD_INVITE_URL selbst"
+    setzer = next((n for n in bot.body if isinstance(n, _ast.FunctionDef)
+                   and n.name == "_discord_einladung_merken"), None)
+    assert setzer is not None, "_discord_einladung_merken fehlt in bot.py"
+    raum = {"DISCORD_INVITE_URL": ""}
+    exec(compile(_ast.Module(body=[setzer], type_ignores=[]), "<w15>", "exec"), raum)
+    raum["_discord_einladung_merken"]("https://discord.gg/neu")
+    assert raum["DISCORD_INVITE_URL"] == "https://discord.gg/neu"
+    raum["_discord_einladung_merken"]("https://discord.gg/spaeter")
+    assert raum["DISCORD_INVITE_URL"] == "https://discord.gg/neu", \
+        "der Setzer ueberschreibt einen bereits gesetzten Invite"
+    ok("W15: der Invite landet in bot.py und wird nie ueberschrieben")
+
+    # --- 7) Der Import bleibt spaet --------------------------------------
+    # Am Dateikopf wuerde er die Reihenfolge festschreiben, bevor .env steht —
+    # dieselbe Falle wie Modul-Konstanten, die .env einfrieren (CLAUDE.md).
+    for n in bot.body:
+        if isinstance(n, _ast.Import):
+            assert not any(a.name == "discordbot" for a in n.names), \
+                "bot.py importiert discordbot am Dateikopf"
+    tief = [n for n in _ast.walk(bot) if isinstance(n, _ast.Import)
+            and any(a.name == "discordbot" for a in n.names)]
+    assert len(tief) == 1, "discordbot wird %dx importiert, erwartet 1" % len(tief)
+    ok("W15: bot.py importiert discordbot erst zur Laufzeit, genau einmal")
+
+    # --- 8) Die Datei laesst sich wirklich importieren -------------------
+    # Der Formcheck oben liest nur den AST. Ein falscher Modulpfad in einem
+    # der zwoelf nc-Importe faellt dabei NICHT auf — er kraecht erst beim
+    # Start des Bots, also in Produktion. discord.py fehlt in der CI; genau
+    # deshalb faengt discordbot.py den Import ab und setzt discord = None.
+    import importlib
+    _m = importlib.import_module("discordbot")
+    assert _m.log is None, "discordbot haelt beim Import schon Bot-Zustand"
+    ok("W15: discordbot.py importiert ohne discord.py und ohne bot.py")
+
+    # --- 9) Die Slash-Commands sind vollstaendig mitgewandert ------------
+    def _slash(baum):
+        namen = set()
+        for n in _ast.walk(baum):
+            if not isinstance(n, _ast.Call):
+                continue
+            f = n.func
+            if isinstance(f, _ast.Attribute) and f.attr == "command":
+                for kw in n.keywords:
+                    if kw.arg == "name" and isinstance(kw.value, _ast.Constant):
+                        namen.add(kw.value.value)
+        return namen
+    assert not _slash(bot), "in bot.py stehen noch Slash-Commands: %s" % sorted(_slash(bot))
+    assert len(_slash(dcb)) >= 40, "zu wenige Slash-Commands gewandert: %d" % len(_slash(dcb))
+    ok("W15: %d Slash-Commands stehen in discordbot.py, keiner mehr in bot.py"
+       % len(_slash(dcb)))
+
+
 def _test_v42_w14_motd_spricht_englisch():
     """v4.2-W14: die MOTD war zu 0 % uebersetzt und meldete 100 %."""
     import subprocess as _sp
@@ -5305,6 +5506,8 @@ def main():
     _test_v42_w13_gesundheit_und_modki()
 
     _test_v42_w14_motd_spricht_englisch()
+
+    _test_v42_w15_discord_aus_dem_monolithen()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)
 

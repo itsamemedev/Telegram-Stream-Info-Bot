@@ -11,6 +11,62 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Geändert — der Discord-Teil ist aus dem Monolithen heraus (v4.2 W15)
+
+`bot.py` fällt von **25.650 auf 23.661 Zeilen**. Der gesamte Discord-Teil —
+Supervisor, Session, alle 45 Slash-Commands, Automod, Fehler-Kanal,
+Community-Loops — steht jetzt in `discordbot.py`.
+
+**Warum bot-seitig und nicht unter `nc/`:** die Datei importiert `discord.py`
+und macht ein Gateway auf. `nc/*` ist bewusst bot-frei und bibliotheksartig;
+ein Modul, das eine Verbindung hält, gehört dort nicht hin. Die Grenze, die
+gilt, ist die andere Richtung: **kein einziges `from bot import`.** Alles
+kommt durch genau einen Kanal, `starte(ctx)` mit einem `nc.botctx.BotKontext`.
+
+**Der Entwurf lag falsch, und die Messung hat ihn umgeworfen.** Er zählte
+13 Funktionen als „Discord-eigen" und wollte sie mitnehmen. Gezählt hatte er
+*Aufrufe*. Es sind aber **Telegram-Handler, die Discord mitbenutzt**: `/sys_diag`
+in Discord ruft denselben `diag`, den `/diag` in Telegram ruft — registriert
+als Paar-Liste, referenziert statt aufgerufen. Nach Referenzen gemessen bleiben
+**vier** Funktionen, die wirklich nur Discord gehören. Die geteilte
+Befehlsschicht durfte nicht mitwandern; sie kommt als `befehle`-Tabelle herein.
+
+**Der Kontext hat 21 Felder, nicht 57.** Aufrufbares und lebender Zustand sind
+Felder — sie haben eine Signatur bzw. eine Identität, deren Änderung im Diff
+auffallen muss. Konfiguration ist *ein* Wörterbuch mit fester Schlüsselmenge.
+`.env` wird weiter an genau einer Stelle gelesen, in `bot.py`; zwei Dateien mit
+eigenem `os.getenv("DISCORD_…")` wären zwei Orte, an denen ein Default
+auseinanderläuft — und `tools/gen_env_example.py` müsste beide kennen.
+
+**Der eine Fall, den bloßes Verschieben kaputtgemacht hätte:**
+`_ensure_discord_invite` schrieb per `global` nach `DISCORD_INVITE_URL`. In der
+neuen Datei hätte das nur die dortige Kopie gesetzt, während der Announcer in
+`bot.py` weiter die leere URL verschickt hätte — still, ohne Fehlermeldung.
+Der Invite geht deshalb durch einen Setzer im Kontext.
+
+**Was hier nicht geprüft werden kann:** ob ein Slash-Command antwortet. Es gibt
+in der Entwicklungsumgebung kein Discord-Gateway. Geprüft wird die Form — und
+genau die trägt das Risiko: 1.900 Zeilen wechseln den Namensraum, in dem
+51 Namen implizite Globals waren. Fällt einer durch, ist er still `None`. Die
+beiden harten Zusicherungen schließen das: jeder Platzhalter wird von
+`_uebernehmen()` belegt (und ist dort `global` erklärt — ohne das schriebe die
+Zuweisung nur eine lokale Variable und der Vertrag liefe grün durch), und jeder
+Schlüssel, den der Kontext verlangt, existiert in `bot.py`. Dazu ein echter
+Import unter CI-Bedingungen, ohne `discord.py`.
+
+Sechs Mutationen geprüft, alle sechs schlagen an. Verträge: 131 in
+`test_nc_modules`, 379 in `test_restream`.
+
+**Anker nachgezogen, Verträge unverändert:** die Ratsche aus W29
+(blockierende `db_conn`-Blöcke, Grenze 52) zählt jetzt über **beide**
+bot-seitigen Dateien — nur `bot.py` zu zählen hätte sie auf 28 fallen lassen,
+ohne dass eine einzige Blockade beseitigt ist. Ebenso der Marken-Sweep aus
+v4.0-W7, der Invite-Vertrag aus v4.0-W35, das Client-Register aus v4.1-W16,
+der Sprach-Haken aus v4.1-W7 und die drei Flood-Historien aus v4.0-W14.
+`tools/ncpatch.py` (Karte, `docs`, Befehlsliste) und `tools/i18n_extract.py`
+kennen die zweite Datei jetzt — ohne den Extraktor-Eintrag hätte der nächste
+Aufräumlauf 61 Slash-Command-Beschreibungen als verwaist gelöscht.
+
 ### Hinzugefügt — die MOTD spricht Englisch (v4.2 W14)
 
 `tools/motd.sh` band `lib/i18n.sh` seit v4.1-W17 ein und rief `t()` **kein

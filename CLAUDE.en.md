@@ -16,7 +16,7 @@ route.
 
 ## The one rule
 
-`bot.py` has **26,124 lines / 1.3 MB ≈ 333,000 tokens**. That file is **never**
+`bot.py` has **23,661 lines / 1.2 MB ≈ 307,000 tokens**. That file is **never**
 read in full and **never** searched blindly. First ask where something is, then
 fetch the excerpt:
 
@@ -31,7 +31,7 @@ fetch the excerpt:
     python tools/ncpatch.py docs                       # documentation numbers vs. the source
 
 `find` answers from `.claude/INDEX.md` — 361 routes (34 in `bot.py`, 327 in
-`nc/routes/`), 45 slash commands, 471 functions with line numbers. After changes
+`nc/routes/`), 45 slash commands, 476 functions with line numbers. After changes
 to routes, commands or top-level functions, run `map` again. Details: skill
 `nc-navigation`.
 
@@ -43,15 +43,20 @@ On the author's Windows machine the interpreter is called **`python`**
 
 ## Layout
 
-    bot.py               monolith: Telegram + Discord (45 slash commands),
-                         Flask dashboard (81 own routes), scraper, recorder,
-                         restream, schema (init_db).
+    bot.py               monolith: Telegram, Flask dashboard (34 own
+                         routes), scraper, recorder, restream, schema (init_db).
                          Was called bot_v37.py until v4.0-W119 — keep that in
                          mind when searching old notes and patch files.
+    discordbot.py        the Discord part (45 slash commands), lifted out in
+                         v4.2-W15. It lives bot-side because it imports
+                         discord.py and opens a gateway — not under nc/, which
+                         stays bot-free. Everything reaches it via starte(ctx);
+                         it NEVER imports from bot.py.
+    nc/botctx.py         the one channel there: BotKontext (frozen).
     brain_bridge.py      adapter bot ↔ brain/ (M2)
     brain/               AI core: state, rules, router, agents, memory,
                          semantic, knowledge, scheduler, llm, report
-    nc/                  120 domain modules: db, scraping, restream, oauth, ledger, i18n, …
+    nc/                  125 domain modules: db, scraping, restream, oauth, ledger, i18n, …
     nc/routes/           36 Flask blueprints with 327 further API routes
     locales/             de.json, en.json — the translation catalogue
     templates/           dashboard.html, brain.html, overlay.html, PWA
@@ -69,7 +74,8 @@ On the author's Windows machine the interpreter is called **`python`**
                          (they used to live under skills/, where they were
                          never loaded).
 
-**The architectural boundary that holds:** `nc/*` and `brain/*` **never** import
+**The architectural boundary that holds:** `nc/*`, `brain/*` and
+`discordbot.py` **never** import
 from `bot.py`. Configuration comes through `configure(...)` injection. That
 keeps both testable in isolation and prevents circular imports. `brain/` is
 thread-based and stdlib-only (`urllib`, no `aiohttp`).

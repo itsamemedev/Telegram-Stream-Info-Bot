@@ -31,7 +31,12 @@ LOCALES = os.path.join(ROOT, "locales")
 HTML_DATEIEN = ["templates/dashboard.html", "templates/brain.html",
                 "templates/overlay.html", "website/lafap_index.html",
                 "website/impressum.html", "website/datenschutz.html"]
-PY_DATEIEN = ["bot.py"]
+# v4.2-W15: discordbot.py steht hier gleichberechtigt neben bot.py. Der
+# Discord-Teil ist herausgeloest, und mit ihm die Beschreibungen der 45
+# Slash-Commands — die sind BENUTZERTEXT und stehen im Katalog. Ohne diesen
+# Eintrag haette der --check-Lauf sie als 61 verwaiste Eintraege gemeldet und
+# der naechste Aufraeumlauf haette sie geloescht.
+PY_DATEIEN = ["bot.py", "discordbot.py"]
 
 # v4.1-W19: Was aus bot.py in einen Blueprint zieht, verschwand bisher aus dem
 # Katalog — der Extraktor kannte nur den Monolithen. Bei 225 Routen in

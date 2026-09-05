@@ -1324,7 +1324,14 @@ def test_community_discovery_loop():
     ok("community: Highlight-Post ruft zum Teilen auf")
 
     # Verdrahtung im Bot: alle drei Trigger-Punkte
-    src = open("bot.py").read()
+    # ANKER GEWANDERT (v4.2-W15, nicht der Vertrag): der Highlight-Share sitzt
+    # im Discord-Teil und steht seit der Herausloesung in discordbot.py. Der
+    # Vertrag will wissen, ob ALLE DREI Trigger-Punkte verdrahtet sind — nicht,
+    # in welcher Datei sie stehen. Gelesen werden deshalb beide bot-seitigen
+    # Dateien; nur bot.py zu lesen haette hier eine Regression gemeldet, wo
+    # keine ist.
+    src = (open("bot.py", encoding="utf-8").read()
+           + open("discordbot.py", encoding="utf-8").read())
     assert "_community.note_chatter" in src, "Wiedererkennung nicht im Chat-Push"
     assert "_community.live_ping" in src, "Live-Ping nicht am Restream-Start"
     assert "_community.highlight_post" in src, "Highlight-Share nicht am Clip-Highlight"
@@ -2492,8 +2499,12 @@ def test_v41_w6_i18n_fundament():
     # Discord schlicht weg — ohne dass hier irgendetwas rot wuerde.
     import ast as _ast
     import re as _re2
+    # ANKER GEWANDERT (v4.2-W15, nicht der Vertrag): die Slash-Commands stehen
+    # seit der Herausloesung in discordbot.py. `b` ist weiterhin bot.py — die
+    # Punkte oben pruefen den Telegram-Sendeweg und gehoeren dorthin.
+    _dcb = open("discordbot.py", encoding="utf-8").read()
     _befunde, _n = [], 0
-    for _k in _ast.walk(_ast.parse(b)):
+    for _k in _ast.walk(_ast.parse(_dcb)):
         if not isinstance(_k, _ast.Call):
             continue
         if not _ast.unparse(_k.func).endswith(("tree.command", "app_commands.command")):
@@ -2628,7 +2639,11 @@ def test_v41_w7_sprache_je_benutzer():
 
     # (4) Beide Plattformen setzen die Sprache VOR dem Handler — sonst greift
     # sie erst bei der uebernaechsten Antwort.
-    src = open("bot.py", encoding="utf-8").read()
+    # ANKER GEWANDERT (v4.2-W15, nicht der Vertrag): der Discord-Haken sitzt
+    # jetzt in discordbot.py, der Telegram-Haken weiter in bot.py. Der Vertrag
+    # will beide Plattformen sehen — deshalb beide Dateien.
+    src = (open("bot.py", encoding="utf-8").read()
+           + open("discordbot.py", encoding="utf-8").read())
     assert "TypeHandler(Update, _tg_sprache_setzen), group=-1" in src, \
         "Telegram setzt die Sprache nicht vor allen Handlern"
     assert "tree.interaction_check = _disc_sprache_setzen" in src, \
@@ -3135,7 +3150,12 @@ def test_v40_w7_public_brand_sweep():
     """v4.0-W7: KEINE oeffentlich sichtbare Flaeche nennt den internen Codenamen —
        Overlay (auf dem Stream), Living-Title, Discord-Community-Embeds/Commands.
        (Admin-only Telegram/Alarme/CLI/Fehler-Channel duerfen ihn intern behalten.)"""
-    src = open("bot.py").read()
+    # ANKER GEWANDERT (v4.2-W15, nicht der Vertrag): die Discord-Flaechen
+    # stehen in discordbot.py. Der Sweep fragt "nennt IRGENDEINE oeffentliche
+    # Flaeche den Codenamen" — die verbietenden Zusicherungen werden durch die
+    # zweite Datei sogar staerker, nicht schwaecher.
+    src = (open("bot.py", encoding="utf-8").read()
+           + open("discordbot.py", encoding="utf-8").read())
     # Overlay-Titel (wird ins Video gerendert) -> Azrael Sentinel, kein NIGHTCRAWLER-Default.
     assert 'os.getenv("OVERLAY_TITLE", "Azrael Sentinel")' in src, "Overlay-Default nicht rebrandet"
     assert '"NIGHTCRAWLER").strip(),' not in src, "Overlay-Default noch NIGHTCRAWLER"
@@ -3458,7 +3478,11 @@ def test_v40_w14_audit2():
     prune_history(big, 9999.0, 7, max_users=5000)
     assert len(big) == 5000 and "u0" not in big and "u5999" in big, "Deckel greift nicht"
     assert prune_history(None, 1, 1) == 0 and prune_history({}, 1, 1) == 0
-    assert src.count("prune_history(") == 3, "nicht alle 3 Flood-Historien aufgeraeumt"
+    # ANKER GEWANDERT (v4.2-W15, nicht der Vertrag): die dritte Historie ist
+    # die Discord-Automod-Historie und steht in discordbot.py. Der Vertrag
+    # zaehlt, ob ALLE DREI aufgeraeumt werden — die Zahl bleibt 3.
+    _beide = src + open("discordbot.py", encoding="utf-8").read()
+    assert _beide.count("prune_history(") == 3, "nicht alle 3 Flood-Historien aufgeraeumt"
     ok("v4.0-w14: Flood-Historien (Kick/Twitch+YT/Discord) wachsen nicht mehr unbegrenzt")
 
 
@@ -4551,9 +4575,14 @@ def test_v40_w35_crossplatform_restream():
     assert 0 < ora < gate, "Kick-Befehle laufen noch HINTER dem Bot-Stumm-Gate"
     # (3) Invite: einmalig, nie ablaufend, aufgelöst.
     assert "def _discord_invite(" in src, "Invite-Resolver fehlt"
-    assert "max_age=0, max_uses=0, unique=False" in src, "Invite nicht nie-ablaufend/einmalig"
-    assert '_cfg_set("discord.invite_url"' in src, "Invite wird nicht persistiert (einmalig)"
-    assert "_spawn(_ensure_discord_invite" in src, "Invite-Erzeugung nicht in on_ready verdrahtet"
+    # ANKER GEWANDERT (v4.2-W15, nicht der Vertrag): die Erzeugung steht in
+    # discordbot.py, der Resolver blieb in bot.py. Getrennte Variable statt
+    # Verkettung, weil `src` oben mit _fn() zerlegt wird — ein angehaengter
+    # zweiter Quelltext haette dort die Zeilenzuordnung verschoben.
+    _dcb = open("discordbot.py", encoding="utf-8").read()
+    assert "max_age=0, max_uses=0, unique=False" in _dcb, "Invite nicht nie-ablaufend/einmalig"
+    assert '_cfg_set("discord.invite_url"' in _dcb, "Invite wird nicht persistiert (einmalig)"
+    assert "_spawn(_ensure_discord_invite" in _dcb, "Invite-Erzeugung nicht in on_ready verdrahtet"
     # ANKER GEWANDERT (v4.1-W16, nicht der Vertrag): die Route liegt in
     # nc/routes/discord.py und liest DIESELBE Funktion wie Announcer, Marketing
     # und Website — das ist der eigentliche Kern von W35 ("die EINE Wahrheit"),
@@ -8479,7 +8508,11 @@ def test_v41_w16_discord_blueprint():
     danach auf den alten, geschlossenen Client — das Panel meldete "online",
     waehrend nichts mehr durchging. Deshalb ein Register, wie bei KICK_MOD.
     """
-    src = open("bot.py", encoding="utf-8").read()
+    # ANKER GEWANDERT (v4.2-W15, nicht der Vertrag): Register und Buchfuehrung
+    # stehen seit der Herausloesung in discordbot.py. Der Vertrag fragt, ob der
+    # BOT sie fuehrt — nicht, in welcher seiner beiden Dateien.
+    src = (open("bot.py", encoding="utf-8").read()
+           + open("discordbot.py", encoding="utf-8").read())
     _db = open("nc/routes/discord.py", encoding="utf-8").read()
 
     # (1) Kein Modul-Global mehr — weder im Bot noch im Blueprint.
