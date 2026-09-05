@@ -6758,6 +6758,194 @@ def _test_v42_w27_twitch_clip():
         _tw._state["access_exp"] = 0.0
 
 
+def _test_v42_w29_youtube_upload():
+    """v4.2-W29: der YouTube-Teil des Auto-Clippers — nc.ytoauth.upload_clip().
+
+    Anders als Twitch (schneidet aus dem laufenden Stream) nimmt YouTube eine
+    echte Datei entgegen, in zwei Schritten — resumable Upload: ein POST legt
+    die Session an und liefert die Upload-URL im Location-Header, ein PUT
+    traegt die Bytes. Der Risikofall: Schritt 1 darf bei 401/403/Quota NIE zu
+    Schritt 2 fuehren — das waere ein Upload ohne gueltige Session, oder
+    einer, der das schon leere Tageskontingent weiter verbrennt.
+    """
+    import asyncio as _asyncio
+    import logging as _logging
+    import tempfile as _tempfile
+    import time as _time
+
+    import nc.ytoauth as _yt
+
+    class _Antwort:
+        def __init__(self, status, payload=None, text="", headers=None):
+            self.status = status
+            self._payload = payload if payload is not None else {}
+            self._text = text
+            self.headers = headers or {}
+
+        async def json(self, content_type=None):
+            return self._payload
+
+        async def text(self):
+            return self._text
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+    class _Sitzung:
+        def __init__(self, post_antwort, put_antwort=None):
+            self._post = post_antwort
+            self._put = put_antwort
+            self.aufrufe = []
+
+        def post(self, url, **kw):
+            self.aufrufe.append(("post", url, kw))
+            return self._post
+
+        def put(self, url, **kw):
+            self.aufrufe.append(("put", url, kw))
+            return self._put
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+    class _Aio:
+        def __init__(self, post_antwort, put_antwort=None):
+            self._post, self._put = post_antwort, put_antwort
+            self.sitzung = None
+
+        def ClientSession(self):
+            self.sitzung = _Sitzung(self._post, self._put)
+            return self.sitzung
+
+        def ClientTimeout(self, **k):
+            return None
+
+    alt_level = _logging.getLogger("TikTokBot").level
+    _logging.getLogger("TikTokBot").setLevel(_logging.CRITICAL)
+    umgebung = {k: os.environ.get(k) for k in
+                ("YOUTUBE_CLIENT_ID", "YOUTUBE_CLIENT_SECRET")}
+    tmp = _tempfile.NamedTemporaryFile(suffix=".mp4", delete=False)
+    tmp.write(b"x" * 2048)
+    tmp.close()
+    try:
+        os.environ.update(YOUTUBE_CLIENT_ID="x", YOUTUBE_CLIENT_SECRET="y")
+        _yt._state["access"] = "faketoken"
+        _yt._state["access_exp"] = _time.time() + 3600
+
+        # --- 1) Erfolg: Session angelegt, Datei hochgeladen, Video-URL kommt zurueck
+        aio = _Aio(_Antwort(200, headers={"Location": "https://upload.example/session1"}),
+                   _Antwort(200, {"id": "vid123"}))
+        ok_, wert = _asyncio.run(_yt.upload_clip(aio, tmp.name, "Titel"))
+        assert ok_ and wert == "https://youtu.be/vid123", (ok_, wert)
+        assert aio.sitzung.aufrufe[0][0] == "post" and aio.sitzung.aufrufe[1][0] == "put", \
+            "die Session muss VOR dem Datei-Upload angelegt werden"
+        assert aio.sitzung.aufrufe[1][1] == "https://upload.example/session1", \
+            "der PUT geht nicht an die vom Location-Header gelieferte Session-URL"
+        ok("W29: erfolgreicher Upload liefert die Video-URL, Session zuerst angelegt")
+
+        # --- 1b) eine Erfolgsantwort ohne Video-ID ist KEIN Erfolg ----------
+        aio1b = _Aio(_Antwort(200, headers={"Location": "https://upload.example/s"}),
+                     _Antwort(200, {}))
+        ok_, wert = _asyncio.run(_yt.upload_clip(aio1b, tmp.name, "Titel"))
+        assert not ok_, "eine Antwort ohne Video-ID gilt als Erfolg"
+        ok("W29: eine Erfolgsantwort ohne Video-ID zaehlt nicht als Erfolg")
+
+        # --- 2) Fehlender Scope: 401 wird ERKANNT, kein PUT wird versucht ---
+        aio2 = _Aio(_Antwort(401, text="missing scope"))
+        ok_, wert = _asyncio.run(_yt.upload_clip(aio2, tmp.name, "Titel"))
+        assert not ok_ and "youtube.upload" in wert and "neu verbinden" in wert, wert
+        assert not any(a[0] == "put" for a in aio2.sitzung.aufrufe), \
+            "ein PUT wird trotz fehlendem Scope versucht"
+        ok("W29: ein fehlender Scope wird als klare Handlungsanweisung gemeldet, kein Upload-Versuch")
+
+        # --- 3) Tageskontingent leer: 403 mit 'quota' wird erkannt ----------
+        aio3 = _Aio(_Antwort(403, text="quotaExceeded: Daily Limit"))
+        ok_, wert = _asyncio.run(_yt.upload_clip(aio3, tmp.name, "Titel"))
+        assert not ok_ and "Tageskontingent" in wert, wert
+        ok("W29: ein leeres Tageskontingent wird als solches erkannt, nicht als nackter 403")
+
+        # --- 4) Ohne Location-Header keine Upload-URL -> kein PUT -----------
+        aio4 = _Aio(_Antwort(200, headers={}))
+        ok_, wert = _asyncio.run(_yt.upload_clip(aio4, tmp.name, "Titel"))
+        assert not ok_ and "Upload-Session" in wert, wert
+        ok("W29: ohne Location-Header wird kein Upload versucht")
+
+        # --- 5) Ein Netzwerkfehler ist ein Ergebnis, kein Absturz -----------
+        class _KaputteSitzung:
+            async def __aenter__(self):
+                raise ConnectionError("kein Netz")
+            async def __aexit__(self, *a):
+                return False
+        class _KaputtesAio:
+            def ClientSession(self):
+                return _KaputteSitzung()
+            def ClientTimeout(self, **k):
+                return None
+        ok_, wert = _asyncio.run(_yt.upload_clip(_KaputtesAio(), tmp.name, "Titel"))
+        assert not ok_ and wert, wert
+        ok("W29: ein Netzwerkfehler liefert (False, Grund) statt eine Exception hochzureichen")
+
+        # --- 6) Fehlende Datei -> kein Netzwerkzugriff ----------------------
+        aio6 = _Aio(_Antwort(200, headers={"Location": "https://upload.example/s"}))
+        ok_, wert = _asyncio.run(_yt.upload_clip(aio6, "/pfad/existiert/nicht.mp4", "Titel"))
+        assert not ok_ and "Datei" in wert, wert
+        assert aio6.sitzung is None, "ohne vorhandene Datei wird trotzdem eine Session eroeffnet"
+        ok("W29: eine fehlende Datei fuehrt zu keinem Netzwerkzugriff")
+
+        # --- 7) Ohne Token gar kein Netzwerkzugriff -------------------------
+        _yt._state["access"] = ""
+        _yt._state["access_exp"] = 0.0
+        _yt._state["refresh"] = ""
+        aio7 = _Aio(_Antwort(200, headers={"Location": "https://upload.example/s"}))
+        ok_, wert = _asyncio.run(_yt.upload_clip(aio7, tmp.name, "Titel"))
+        assert not ok_ and wert == "kein Token", wert
+        assert aio7.sitzung is None, "ohne Token wird trotzdem eine Session eroeffnet"
+        ok("W29: ohne Token wird gar nicht erst versucht, ein Netzwerkzugriff bleibt aus")
+
+        # --- 8) Scope-Vertrag: youtube.upload ergaenzt, nicht ueberzogen ----
+        assert set(_yt.SCOPES) == {
+            "https://www.googleapis.com/auth/youtube.readonly",
+            "https://www.googleapis.com/auth/youtube.force-ssl",
+            "https://www.googleapis.com/auth/youtube.upload",
+        }, "Readonly + Chat/Moderation + Upload, nicht mehr"
+        ok("W29: der Scope-Vertrag deckt genau die drei benoetigten Scopes ab, kein Overreach")
+
+        # --- 9) Verdrahtung im Bot: nach Twitch, nebenlaeufig, Tageskontingent-Deckel
+        b = open("bot.py", encoding="utf-8").read()
+        i = b.find("async def clip_moment(")
+        rumpf = b[i:i + 6600]
+        assert 'YOUTUBE_CLIP_ENABLED and _ytoauth.status().get("ready")' in rumpf, \
+            "YouTube-Upload wird ohne Bereitschaftspruefung versucht"
+        assert '_spawn(_youtube_clip_versuchen(username, out, reason)' in rumpf, \
+            "YouTube-Upload laeuft nicht nebenlaeufig — ein Fehlschlag wuerde den lokalen Clip verzoegern"
+        assert rumpf.find("TWITCH_CLIP_ENABLED") < rumpf.find("YOUTUBE_CLIP_ENABLED"), \
+            "YouTube-Versuch steht nicht nach dem Twitch-Versuch"
+        vg = b.find("async def _youtube_clip_versuchen(")
+        deckel = b[vg:vg + 900]
+        assert "YOUTUBE_CLIP_MAX_PER_DAY" in deckel and "_YOUTUBE_UPLOAD_TS" in deckel, \
+            "kein Tageskontingent-Deckel im YouTube-Upload-Pfad"
+        ok("W29: der Bot versucht YouTube erst nach Twitch, nebenlaeufig, mit Tageskontingent-Deckel")
+    finally:
+        _logging.getLogger("TikTokBot").setLevel(alt_level)
+        for k, v in umgebung.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+        _yt._state["access"] = ""
+        _yt._state["access_exp"] = 0.0
+        try:
+            os.remove(tmp.name)
+        except OSError:
+            pass
+
+
 def _test_v42_w14_motd_spricht_englisch():
     """v4.2-W14: die MOTD war zu 0 % uebersetzt und meldete 100 %."""
     import subprocess as _sp
@@ -7054,6 +7242,8 @@ def main():
     _test_v42_w24_memeklip()
 
     _test_v42_w27_twitch_clip()
+
+    _test_v42_w29_youtube_upload()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)
 

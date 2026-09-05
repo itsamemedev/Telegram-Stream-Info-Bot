@@ -18105,6 +18105,20 @@ CLIP_DISCORD_UPLOAD    = os.getenv("CLIP_DISCORD_UPLOAD", "1").strip().lower() i
 # bis dahin False bzw. der Helix-Call liefert 401, beides sauber abgefangen in
 # _twitch_clip_versuchen(); kein Absturz, nur ein still verpuffter Versuch.
 TWITCH_CLIP_ENABLED    = os.getenv("TWITCH_CLIP_ENABLED", "1").strip().lower() in ("1","true","yes","on","y")
+# v4.2-W29: den lokalen Clip zusaetzlich als YouTube-Video hochladen
+# (resumable Upload, Scope youtube.upload — siehe nc/ytoauth.py). Per
+# Default AN, wie TWITCH_CLIP_ENABLED (W28): der neue Scope greift trotzdem
+# erst nach erneuter YouTube-Autorisierung, bis dahin liefert der Helix-
+# aehnliche Init-Call 401/403, sauber abgefangen in _youtube_clip_versuchen().
+# YOUTUBE_CLIP_MAX_PER_DAY deckelt zusaetzlich das TAGESKONTINGENT: ein
+# Upload kostet 1600 von 10000 Google-Quota-Einheiten am Tag (~6 moeglich,
+# wenn sonst nichts die Quota anfasst) — ohne eigenen Deckel wuerde eine
+# Chat-Velocity-Serie (Clip alle CLIP_COOLDOWN_S=75s moeglich) das ganze
+# Tageskontingent binnen Minuten verbrennen und auch Zuschauerzahlen/Chat
+# (dieselbe Quota) lahmlegen.
+YOUTUBE_CLIP_ENABLED     = os.getenv("YOUTUBE_CLIP_ENABLED", "1").strip().lower() in ("1","true","yes","on","y")
+YOUTUBE_CLIP_MAX_PER_DAY = _env_int("YOUTUBE_CLIP_MAX_PER_DAY", 4)
+_YOUTUBE_UPLOAD_TS = _collections.deque()   # Fenster: die letzten 24h, Klarnamen s.u.
 # V37-B90: Default 25→10. Discord hat das Free-Limit 2023 von 25 auf 10 MB
 # gesenkt — Dateien zwischen 10 und 25 MB passierten unseren lokalen Check
 # und Discord antwortete 413 (genau das beobachtete "Uploads bis 25 MB gehen
@@ -19252,6 +19266,34 @@ async def _twitch_clip_versuchen(username, reason):
         log.info("Twitch-Clip @%s übersprungen: %s", username, wert)
 
 
+async def _youtube_clip_versuchen(username, dateipfad, reason):
+    """v4.2-W29: der YouTube-Teil von clip_moment() — ausgelagert wie
+    _twitch_clip_versuchen(), aus demselben Grund: nebenlaeufig gespawnt,
+    ein Fehlschlag (Scope fehlt, Quota leer) darf den lokalen Clip nicht
+    verzoegern. Zusaetzlich der Tageskontingent-Deckel (YOUTUBE_CLIP_MAX_PER_DAY):
+    anders als bei Twitch kostet jeder Versuch hier echte Google-Quota, auch
+    ein spaeter fehlschlagender.
+    """
+    jetzt = _time_mod.monotonic()
+    while _YOUTUBE_UPLOAD_TS and jetzt - _YOUTUBE_UPLOAD_TS[0] > 86400:
+        _YOUTUBE_UPLOAD_TS.popleft()
+    if len(_YOUTUBE_UPLOAD_TS) >= max(1, YOUTUBE_CLIP_MAX_PER_DAY):
+        log.info("YouTube-Clip @%s übersprungen: Tageskontingent-Deckel erreicht (%d/Tag)",
+                  username, YOUTUBE_CLIP_MAX_PER_DAY)
+        return
+    _YOUTUBE_UPLOAD_TS.append(jetzt)
+    titel = f"@{username} — {reason}" if reason else f"@{username} LIVE-Highlight"
+    try:
+        ok, wert = await _ytoauth.upload_clip(aiohttp, dateipfad, titel)
+    except Exception as e:
+        log.debug("YouTube-Clip @%s: %s", username, e)
+        return
+    if ok:
+        log.info("✂ YouTube-Clip @%s (%s): %s", username, reason, wert)
+    else:
+        log.info("YouTube-Clip @%s übersprungen: %s", username, wert)
+
+
 async def clip_moment(username, reason="", caption=""):
     """Schneidet einen vertikalen Highlight-Clip rund um JETZT aus der laufenden Aufnahme.
        Wartet CLIP_POST_SECS (damit der Nachlauf aufgenommen ist), bestimmt die Dauer per
@@ -19314,6 +19356,8 @@ async def clip_moment(username, reason="", caption=""):
                 except Exception: pass
             if TWITCH_CLIP_ENABLED and _twoauth.status().get("ready"):
                 _spawn(_twitch_clip_versuchen(username, reason), name="clip-twitch")
+            if YOUTUBE_CLIP_ENABLED and _ytoauth.status().get("ready"):
+                _spawn(_youtube_clip_versuchen(username, out, reason), name="clip-youtube")
             return out
         log.warning("Clip @%s ffmpeg rc=%s: %s", username, proc.returncode,
                     (err or b"")[-200:].decode("utf-8", "ignore"))
