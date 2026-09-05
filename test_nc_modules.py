@@ -6454,6 +6454,138 @@ def _test_v42_w23_aufnahmekategorie():
     ok(f"W23: {n} Kombinationen verhaltensgleich zur alten Kette")
 
 
+def _test_v42_w24_memeklip():
+    """v4.2-W24: die Meme-Erkennung fuer den Auto-Clipper steht in
+    nc/memeklip.py — erste Welle eines mehrteiligen Vorhabens (Discord-
+    Auto-Post jetzt; Twitch-Clips waehrend Restream und YouTube-Upload sind
+    eigene, spaetere Wellen mit eigenem OAuth-Scope).
+
+    Der Risikotraeger ist NICHT das Prompt-Muster, sondern: (a) dass der Pfad
+    NIE ueber ai_chat/azrael_chat laeuft — beide bevorzugen Claude, sobald
+    ein Anthropic-Key gesetzt ist, und ein Chat-Poll alle paar Sekunden
+    wuerde laufend Claude-Budget verbrennen; (b) dass ein Fehlalarm nicht
+    grundlos einen OEFFENTLICHEN Auto-Post ausloest, weil `soll_clippen`
+    ein unlesbares Modellergebnis als Nein wertet, nie als Ja.
+    """
+    from nc import memeklip as _mk
+
+    # --- 1) Ein unlesbares Urteil ist NIE ein Freispruch, aber auch NIE
+    # ein Clip — beides waere falsch: ein Freispruch verstecke ein totes
+    # Modell, ein Clip poste automatisch bei Muell.
+    assert _mk.lies_urteil("kein json hier") is None
+    assert _mk.lies_urteil("") is None
+    assert _mk.lies_urteil(None) is None
+    assert not _mk.soll_clippen(None)
+    assert not _mk.soll_clippen(_mk.lies_urteil("garbage"))
+    ok("W24: ein unlesbares Urteil ist weder Freispruch noch Clip-Ausloeser")
+
+    # --- 2) Der Codeblock-Zaun wird abgestreift, wie bei nc.modki -------
+    roh = '```json\n{"meme": 0.9, "grund": "alle spammen dasselbe Wort"}\n```'
+    u = _mk.lies_urteil(roh)
+    assert u == {"meme": 0.9, "grund": "alle spammen dasselbe Wort"}, u
+    ok("W24: ``` json ... ``` wird erkannt, wie beim Moderations-Klassifikator")
+
+    # --- 3) Der Wert wird auf [0,1] gedeckelt, der Grund auf 60 Zeichen -
+    u = _mk.lies_urteil('{"meme": 5.0, "grund": "' + "x" * 100 + '"}')
+    assert u["meme"] == 1.0, u
+    assert len(u["grund"]) == 60, len(u["grund"])
+    u = _mk.lies_urteil('{"meme": -3.0}')
+    assert u["meme"] == 0.0, u
+    ok("W24: meme-Wert gedeckelt auf [0,1], Grund auf 60 Zeichen gekappt")
+
+    # --- 4) NaN aus kaputtem JSON darf nicht durchrutschen --------------
+    # Pythons json.loads akzeptiert NaN als Erweiterung; float('nan') >= x
+    # ist IMMER False, ABER auch nie eine saubere Ablehnung — ohne den
+    # Sonderfall waere ein NaN-Urteil weder Ja noch klar Nein, sondern ein
+    # stiller Bug, der erst im Dashboard als "NaN%" auffaellt.
+    u = _mk.lies_urteil('{"meme": NaN, "grund": "x"}')
+    assert u is None, u
+    ok("W24: ein NaN-Wert gilt als unlesbar, nicht als Zahl")
+
+    # --- 5) Die Schwelle entscheidet hart, kein Runden -------------------
+    genau = _mk.lies_urteil('{"meme": 0.72, "grund": "grenzwertig"}')
+    assert _mk.soll_clippen(genau, 0.72), "die Schwelle selbst muss noch zaehlen"
+    knapp_drunter = _mk.lies_urteil('{"meme": 0.71, "grund": "knapp drunter"}')
+    assert not _mk.soll_clippen(knapp_drunter, 0.72)
+    ok("W24: die Schwelle ist inklusiv, knapp drunter zaehlt nicht")
+
+    # --- 6) Das Fenster verfaellt nach ALTER, nicht nach Zeilenzahl -----
+    f = _mk.Fenster()
+    f.merken("kick", "alt: vor drei Minuten", 0.0)
+    f.merken("tiktok", "neu: gerade eben", 170.0)
+    aktuell = f.text(180.0, max_alter_s=90)
+    assert "neu" in aktuell and "alt" not in aktuell, aktuell
+    # Beide Quellen erscheinen quellmarkiert, in der Reihenfolge, in der sie
+    # eintrafen.
+    f2 = _mk.Fenster()
+    f2.merken("kick", "erstes", 10.0)
+    f2.merken("discord", "zweites", 11.0)
+    text = f2.text(11.0, max_alter_s=90)
+    assert text == "[kick] erstes\n[discord] zweites", repr(text)
+    ok("W24: das Fenster verfaellt nach Alter, quellmarkiert, chronologisch")
+
+    # --- 7) Ein Hart-Deckel verhindert unbegrenztes Wachstum ------------
+    f3 = _mk.Fenster(max_eintraege=5)
+    for i in range(20):
+        f3.merken("kick", f"zeile{i}", float(i))
+    assert len(f3.text(1000.0, max_alter_s=10_000).splitlines()) == 5
+    ok("W24: der Puffer waechst nicht unbegrenzt, auch bei einem haengenden Aufrufer")
+
+    # --- 8) leeren() nach einem Treffer verhindert Doppel-Clips ---------
+    f4 = _mk.Fenster()
+    f4.merken("kick", "hype hype hype", 5.0)
+    assert f4.text(5.0) != ""
+    f4.leeren()
+    assert f4.text(5.0) == ""
+    ok("W24: leeren() nach einem Treffer nimmt dem Fenster den Hype weg")
+
+    # --- 9) NIE ueber ai_chat/azrael_chat — nur ueber nc.freeai direkt --
+    # ai_chat bevorzugt Claude, sobald ein Anthropic-Key gesetzt ist
+    # (v4.0-W65). Ein Poll alle paar Sekunden ueber diesen Pfad wuerde
+    # laufend Claude-Budget verbrennen, obwohl der Betreiber explizit die
+    # KOSTENLOSE Erkennung wollte.
+    import ast as _ast
+    q = open("bot.py", encoding="utf-8").read()
+    fn = next(n for n in _ast.walk(_ast.parse(q))
+              if isinstance(n, _ast.AsyncFunctionDef) and n.name == "_meme_klassifizieren")
+    rumpf = _ast.get_source_segment(q, fn)
+    assert "_nc_freeai.chat(" in rumpf, "der Meme-Klassifikator ruft nc.freeai nicht direkt"
+    assert "ai_chat(" not in rumpf and "azrael_chat(" not in rumpf, \
+        "der Meme-Klassifikator laeuft ueber einen Pfad, der Claude bevorzugt"
+    ok("W24: der Klassifikator ruft nc.freeai direkt, nie ai_chat/azrael_chat")
+
+    # --- 9b) Der env-Default in bot.py muss die Konstante hier widerspiegeln
+    # tools/gen_env_example.py verlangt fuer env_float() einen WOERTLICHEN
+    # Zahlenwert (kein Konstantenverweis) — sonst verschwindet die Variable
+    # klanglos aus .env.example. Der Literalwert kann deshalb von der
+    # Konstante hier abdriften, ohne dass irgendetwas es meldet, ausser
+    # dieser Vertrag.
+    _lit = _ast.parse(q)
+    _wert = None
+    for _n in _ast.walk(_lit):
+        if (isinstance(_n, _ast.Call) and isinstance(_n.func, _ast.Attribute)
+                and _n.func.attr == "env_float" and _n.args
+                and isinstance(_n.args[0], _ast.Constant)
+                and _n.args[0].value == "MEME_CLIP_SCHWELLE"):
+            _wert = _n.args[1].value
+    assert _wert == _mk.STANDARD_SCHWELLE, \
+        "bot.py's env-Default (%r) weicht von nc.memeklip.STANDARD_SCHWELLE (%r) ab" \
+        % (_wert, _mk.STANDARD_SCHWELLE)
+    ok("W24: der .env-Default fuer die Schwelle stimmt mit der Konstante ueberein")
+
+    # --- 10) Eigenes Budget, getrennt von AZRAEL_MAX_CALLS_MIN ----------
+    # Ein gemeinsamer Deckel mit AZRAEL koennte die Chat-Antworten
+    # verhungern lassen, sobald der Chat gerade hyped (also genau dann,
+    # wenn AZRAEL am ehesten gefragt wird UND ein Meme am wahrscheinlichsten
+    # ist) — ein eigener Deckel entkoppelt beide Budgets voneinander.
+    assert "_MEME_CALL_TS = _collections.deque()" in q, \
+        "_MEME_CALL_TS ist keine eigene, frische Deque mehr — geteilt mit AZRAEL " \
+        "koennte ein hypender Chat (genau der Moment, in dem beide Pfade am " \
+        "ehesten anfragen) den jeweils anderen Budget-Deckel verhungern lassen"
+    assert "_MEME_CALL_TS.append(" in rumpf, "das Meme-Budget wird nicht fortgeschrieben"
+    ok("W24: das Meme-Budget ist ein eigenes Register, getrennt von AZRAEL")
+
+
 def _test_v42_w14_motd_spricht_englisch():
     """v4.2-W14: die MOTD war zu 0 % uebersetzt und meldete 100 %."""
     import subprocess as _sp
@@ -6746,6 +6878,8 @@ def main():
     _test_v42_w22_overlaytext()
 
     _test_v42_w23_aufnahmekategorie()
+
+    _test_v42_w24_memeklip()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)
 

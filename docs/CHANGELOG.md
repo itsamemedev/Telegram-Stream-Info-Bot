@@ -11,6 +11,66 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Hinzugefügt — KI-Meme-Erkennung für den Auto-Clipper (v4.2 W24)
+
+Erste Welle eines mehrteiligen Vorhabens: `nc/memeklip.py` liest ein
+gleitendes Fenster aus Kick- und TikTok-Chat und lässt eine kostenlose
+KI-Rotation entscheiden, ob GERADE ein meme-würdiger Moment läuft — dann
+schneidet die vorhandene `clip_moment()` einen Clip und postet ihn (bei
+`CLIP_DISCORD_UPLOAD=1`) automatisch in den Discord-Clips-Feed. AUS per
+Default (`MEME_CLIP_ENABLED=0`): ein Fehlalarm postet öffentlich, das soll
+der Betreiber bewusst anschalten.
+
+**Zwei Plattformen bleiben in dieser Welle bewusst außen vor, weil sie
+technisch etwas anderes verlangen, als „Clip hochladen" nahelegt:**
+
+* **Kick** hat keine öffentliche Clip-Erstellungs-API. `nc/kickapi.py`
+  deckt Chat, Bans, Channels und Kategorien ab — einen Endpunkt für Clips
+  gibt es dort schlicht nicht.
+* **Twitch-Clips** entstehen nur aus einer *laufenden* Twitch-Übertragung
+  (`CreateClip` schneidet den letzten Moment einer Live-Sendung, nimmt aber
+  keine fremde Videodatei an) und bräuchten einen neuen OAuth-Scope
+  (`clips:edit`).
+* **YouTube-Upload** ist technisch möglich, aber teuer: die aktuelle
+  Autorisierung (`youtube.force-ssl`) deckt kein Hochladen ab, dafür
+  bräuchte es `youtube.upload` — jeder verbundene Kanal müsste neu
+  autorisiert werden — und ein einzelner Upload kostet 1.600 von 10.000
+  Tages-Quota-Einheiten (~6 Uploads/Tag im Standardkontingent).
+
+Beide werden als eigene, spätere Wellen mit eigener OAuth-Erweiterung
+gebaut, nicht stillschweigend übersprungen.
+
+**Der Klassifikator läuft NIE über `ai_chat`/`azrael_chat`.** Beide
+bevorzugen Claude, sobald ein Anthropic-Key gesetzt ist (v4.0-W65) — ein
+Chat-Poll alle paar Sekunden würde darüber laufend Claude-Budget
+verbrennen, obwohl der Betreiber ausdrücklich die kostenlose Erkennung
+wollte. `nc.freeai.chat()` wird direkt gerufen: keylose Basen-Rotation, nie
+Claude. Ein eigenes Budget-Register (`_MEME_CALL_TS`, getrennt von
+`_AI_CALL_TS`) verhindert, dass ein hypender Chat — genau der Moment, in dem
+sowohl AZRAEL-Antworten als auch Meme-Erkennung am ehesten anfragen —
+den jeweils anderen Pfad verhungern lässt.
+
+Elf Zusicherungen: ein unlesbares Modellergebnis ist nie ein Freispruch,
+aber auch nie ein Clip-Auslöser; der Codeblock-Zaun wird abgestreift wie bei
+`nc.modki` (W13); der `meme`-Wert wird auf `[0,1]` gedeckelt und der Grund
+auf 60 Zeichen; ein `NaN` aus kaputtem JSON (Pythons `json.loads` akzeptiert
+`NaN` als Erweiterung) gilt als unlesbar, nicht als Zahl; das Fenster
+verfällt nach ALTER statt nach Zeilenzahl, mit Hart-Deckel gegen
+unbegrenztes Wachstum; `leeren()` nach einem Treffer verhindert
+Doppel-Clips; und ein Drift-Wächter hält den `.env`-Default synchron mit der
+internen Konstante — der env-Scanner (`tools/gen_env_example.py`) verlangt
+für `env_float()` einen wörtlichen Zahlenwert, kein Konstantenverweis, sonst
+verschwindet die Variable klanglos aus `.env.example`.
+
+Neun Mutationen geprüft, alle neun schlagen an.
+
+**Ein Fund während der Pflicht-Prüfkette selbst:** `test_restream.py`s
+eigener Vertrag gegen ungeschützte `float(os.getenv(...))`-Aufrufe auf
+Modul-Ebene schlug beim ersten Lauf zu — mein erster Entwurf hätte den Bot
+bei einer leeren `MEME_CLIP_SCHWELLE=`-Zeile in `.env` mit einem
+`ValueError` beim Import sterben lassen. Behoben mit `nc.envnum.env_float`,
+demselben Muster wie bei allen anderen Zahlen-Env-Variablen.
+
 ### Geändert — die Fehlerkategorisierung der Aufnahme steht jetzt in `nc/aufnahmekategorie.py` (v4.2 W23)
 
 Ein 87-Zeilen-`if`/`elif` über `stderr`, Returncode, Dateigröße und Dauer
