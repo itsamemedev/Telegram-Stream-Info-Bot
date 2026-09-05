@@ -593,6 +593,7 @@ from nc import brainstate as _nc_brainstate  # v4.1-W21: Brain-Panel-Zustand
 from nc import tiktokheaders as _nc_tthdr  # v4.1-W23: Kopfzeilen fuer TikTok-Abrufe
 from nc import restreamcfg as _nc_rscfg  # v4.1-W22: Sendeziele + Pruef-Parameter
 from nc import restreamstate as _nc_rsstate  # v4.1-W22: Restream-Laufzeitzustand
+from nc import restreamcmd as _nc_rscmd  # v4.2-W16: die ffmpeg-Zeile des Relays
 from nc import azraelstate as _nc_azrael  # v4.1-W19: AZRAELs Laufzeitzustand (geteilt)
 from nc import whispercfg as _nc_whisper  # v4.1-W19: Whisper-Modell als Register
 from nc import eventquery as _nc_eventquery  # v4.0-W51: Event-Log-Query-Bauer (rein)
@@ -987,7 +988,6 @@ from nc import flapguard as _nc_flap  # v4.0-W116: flatternde Verbindungen (rein
 from nc import recdiag as _nc_recdiag  # v4.0-W116: Raten-Einbruch (rein)
 from nc import abo as _nc_abo              # v4.0-W26: Abo-Erkennung (extrahiert)
 from nc import sysrun as _nc_sysrun        # v4.0-W26: privilegierter Kommando-Runner (extrahiert)
-from nc import ffmpeg_filters as _nc_ff     # v4.0-W27: Overlay-Filtergraph-Bauer (extrahiert)
 from nc import filepayload as _nc_fp         # v4.0-W28: reine Datei-Klassifikation (extrahiert)
 from nc import highlights as _nc_highlights  # v4.0-W22: Highlight-Radar
 from nc import evolution as _nc_evolution  # B167: Selbstanalyse-Kern
@@ -12934,18 +12934,6 @@ def _write_restream_overlay(reaction_fresh_secs=None):
     except Exception:
         pass
 
-def _drawtext_chain(rid=None):
-    # v4.0-W27: verbatim nach nc/ffmpeg_filters.py extrahiert (bitgenau geprüft).
-    return _nc_ff.drawtext_chain(_restream_overlay_files(rid), RESTREAM_FONT)
-
-
-def _studio_chain(avatar_idx=None, rid=None):
-    # v4.0-W27: verbatim nach nc/ffmpeg_filters.py extrahiert (bitgenau geprüft).
-    return _nc_ff.studio_chain(_restream_overlay_files(rid), RESTREAM_FONT,
-                               RESTREAM_CANVAS_W, RESTREAM_CANVAS_H, RESTREAM_FPS,
-                               avatar_idx=avatar_idx)
-
-
 # ---- AZRAEL-Stimme in den Restream-Ton mischen (ohne OBS) -------------------
 # WHY: Piper erzeugt WAVs, die sonst nur eine OBS-Browser-Source abspielen würde.
 # Henry hat kein OBS → wir speisen die TTS per Named-Pipe (s16le 44100 stereo) als
@@ -13341,194 +13329,39 @@ async def _restream_tts_enqueue_wav(wav_path, source_user=None):
         pass
 
 
-def _build_restream_cmd(source_url, ingest_url, stream_key, transcode=False, tts_fifo=None, rid=None, only_target=None, relay_profile=False, html_ov_fifo=None, targets=None):
-    """ffmpeg-Relay: zieht die TikTok-Quelle und pusht per RTMP(S)/FLV an Kick/AWS-IVS.
-       Input-Flags spiegeln den BEWÄHRTEN Aufnahme-Pfad (_build_native_cmd): FLV =
-       eine saubere Dauerverbindung (bevorzugt); HLS braucht +genpts+igndts, weil
-       TikTok HLS-Pakete OHNE PTS / mit non-monotonic DTS liefert — sonst bricht
-       der FLV-Muxer mit 'Error submitting a packet to the muxer: End of file'
-       ab (rc=187). copy = kein Re-Encoding; transcode = IVS-konformes H.264/AAC
-       (CFR, 2s-Keyframes) + optionales gebranntes Overlay.
-       -progress pipe:1 → maschinenlesbare Health-Daten auf stdout."""
-    # V37-INDEP: only_target erzwingt EIN konkretes Ausgabeziel (unabhängiger
-    # Modus, ein Prozess pro Plattform). Sonst Standard: Kick-Ingest + tee.
-    target = only_target or (_normalize_ingest(ingest_url) + "/" + stream_key)
-    cookie_hdr = _cookie_header()
-    headers_list = []
-    if cookie_hdr:
-        headers_list.append(f"Cookie: {cookie_hdr}")
-    headers_list.append("Referer: https://www.tiktok.com/")
-    headers_blob = "\r\n".join(headers_list) + "\r\n"
+# v4.2-W16: der Kommandobauer steht in nc/restreamcmd.py. Der Aufruf hier
+# konfiguriert ihn EINMAL beim Import — an dieser Stelle, weil erst hier alle
+# Werte existieren (_TTS_* stehen bei Z. 12960, RESTREAM_* bei Z. 1192). Ein
+# Aufruf oben bei den uebrigen configure()-Zeilen haette sie als None gesetzt.
+_nc_rscmd.configure(
+    cookie_header=_cookie_header,
+    pick_pull_proxy=_pick_pull_proxy,
+    restream_overlay_files=_restream_overlay_files,
+    FFMPEG_THREADS_LIVE=FFMPEG_THREADS_LIVE,
+    FFMPEG_THREADS_RELAY=FFMPEG_THREADS_RELAY,
+    RESTREAM_AVATAR=RESTREAM_AVATAR,
+    RESTREAM_BITRATE_K=RESTREAM_BITRATE_K,
+    RESTREAM_CANVAS_H=RESTREAM_CANVAS_H,
+    RESTREAM_CANVAS_W=RESTREAM_CANVAS_W,
+    RESTREAM_FONT=RESTREAM_FONT,
+    RESTREAM_FPS=RESTREAM_FPS,
+    RESTREAM_LOW_LATENCY=RESTREAM_LOW_LATENCY,
+    RESTREAM_OVERLAY=RESTREAM_OVERLAY,
+    RESTREAM_OVERLAY_HTML_FPS=RESTREAM_OVERLAY_HTML_FPS,
+    RESTREAM_RELAY_BITRATE_K=RESTREAM_RELAY_BITRATE_K,
+    RESTREAM_RELAY_PRESET=RESTREAM_RELAY_PRESET,
+    RESTREAM_X264_PRESET=RESTREAM_X264_PRESET,
+    RESTREAM_UA=_RESTREAM_UA,
+    TTS_CH=_TTS_CH,
+    TTS_SR=_TTS_SR,
+    TTS_VOICE_GAIN=_TTS_VOICE_GAIN)
 
-    url_lc = source_url.lower()
-    is_hls = ".m3u8" in url_lc                      # FLV/sonstiges → else-Zweig
 
-    fps = max(15, min(60, RESTREAM_FPS))
-    gop = fps * 2                                   # IVS/Kick: Keyframe-Intervall ≤ 2s
-    # --- Input-Härtung: identisch zum stabilen Recorder (F45/B56/B60) ---
-    cmd = ["ffmpeg", "-hide_banner", "-loglevel", "warning", "-nostats",
-           "-progress", "pipe:1",
-           "-reconnect", "1", "-reconnect_streamed", "1",
-           "-reconnect_delay_max", "30",                 # 30s reconnect-window (wie Recorder)
-           # B124-Analog (bisher fehlte der Fix HIER): NICHT "4xx,5xx". Das schloss
-           # 404 und 403 ein — beide sind bei TikTok TERMINAL, nicht vorübergehend
-           # (404 = CDN-Pull-URL mit expire=<ts> abgelaufen/Edge-Wechsel; 403 =
-           # blockiert). Auf "4xx,5xx" hämmerte der Restream-ffmpeg die tote
-           # Quell-URL 30s lang, bevor der ganze tee kollabierte ("All tee outputs
-           # failed") und der Prozess starb → TikTok-Input weg → Neuaufbau alle
-           # paar Minuten. Jetzt nur die WIRKLICH vorübergehenden Codes; bei 404/403
-           # gibt ffmpeg sofort auf, der Manager löst eine FRISCHE Quell-URL auf.
-           "-reconnect_on_http_error", "408,429,500,502,503,504",
-           "-reconnect_on_network_error", "1",
-           "-rw_timeout", "30000000",                    # 30s I/O-timeout (gilt für HTTP Connect+Read, versionsübergreifend)
-           "-analyzeduration", "10000000", "-probesize", "15000000"]
-    if is_hls:
-        # B60-Analog: HLS ohne PTS + non-monotonic DTS → +genpts erzeugt PTS,
-        # +igndts ignoriert kaputte DTS, +flush_packets schreibt sofort raus.
-        # -timeout komplett entfernt: älteres ffmpeg kennt die Option für HTTP/HLS
-        # nicht ("Option timeout not found"). rw_timeout (oben) deckt Connect+Read ab.
-        cmd += ["-multiple_requests", "1", "-fflags", "+genpts+igndts+flush_packets"]
-    else:
-        cmd += ["-fflags", "+flush_packets"]             # FLV: sofort flushen, kein Buffern
-    cmd += ["-user_agent", _RESTREAM_UA, "-headers", headers_blob]
-    _rp = _pick_pull_proxy()                             # RECORD_PROXY → PROXY_LIST → TikTok-Pool
-    if _rp:
-        cmd += ["-http_proxy", _rp]
-    cmd += ["-i", source_url]
-    # Optionale Zusatz-Inputs — Reihenfolge bestimmt den Index! 1) AZRAEL-Stimme (FIFO),
-    # 2) Avatar-PNG. Beides nur im Transcode-Modus (Overlay/amix brauchen Re-Encoding).
-    use_tts = bool(tts_fifo)            # Stimme auch im Copy-Modus mischen (Audio wird eh re-enkodiert)
-    overlay_on = bool(transcode and RESTREAM_OVERLAY and os.path.isfile(RESTREAM_FONT))
-    if transcode and RESTREAM_OVERLAY and not overlay_on:
-        log.warning("RESTREAM_OVERLAY=1, aber Font fehlt (%s) — Overlay übersprungen", RESTREAM_FONT)
-    avatar_on = bool(overlay_on and RESTREAM_AVATAR and os.path.isfile(RESTREAM_AVATAR))
-    _idx = 1
-    tts_idx = avatar_idx = None
-    if use_tts:
-        cmd += ["-thread_queue_size", "1024", "-f", "s16le",
-                "-ar", str(_TTS_SR), "-ac", str(_TTS_CH), "-i", tts_fifo]
-        tts_idx = _idx; _idx += 1
-    if avatar_on:
-        cmd += ["-i", RESTREAM_AVATAR]
-        avatar_idx = _idx; _idx += 1
-    htmlov_idx = None
-    if html_ov_fifo and transcode:
-        # V37-HTMLOV: PNG-Frames aus der Feeder-FIFO. thread_queue großzügig,
-        # der Writer taktet fest — ffmpeg hungert nie.
-        cmd += ["-thread_queue_size", "512", "-f", "image2pipe",
-                "-framerate", str(RESTREAM_OVERLAY_HTML_FPS), "-i", html_ov_fifo]
-        htmlov_idx = _idx; _idx += 1
-    if transcode:
-        br = f"{RESTREAM_BITRATE_K}k"
-        studio_on = bool(overlay_on and _restream_layout_mode() == "studio")
-        if htmlov_idx is not None:
-            # HTML-Overlay. Normalfall: das PNG wird bereits in der echten
-            # Quellauflösung gerendert (_overlay_render_size) → scale2ref ist
-            # ein No-Op und das Overlay sitzt pixelgenau.
-            # Sicherheitsnetz: weicht die Größe doch ab (feste Größe erzwungen
-            # oder Probe fehlgeschlagen), skaliert force_original_aspect_ratio
-            # =decrease SEITENVERHÄLTNIS-TREU und zentriert. Vorher zerrte ein
-            # nacktes w=iw:h=ih ein 9:16-Overlay auf eine 16:9-Quelle breit.
-            # eof_action=repeat hält das letzte Bild, shortest=0 → das Overlay
-            # beendet den Stream nie.
-            fc = [f"[{htmlov_idx}:v][0:v]scale2ref=w=iw:h=ih:"
-                  f"force_original_aspect_ratio=decrease[ovs][base]",
-                  "[base][ovs]overlay=(W-w)/2:(H-h)/2:eof_action=repeat:shortest=0[vh]"]
-            vlabel = "vh"
-            if avatar_on:
-                fc.append(f"[{avatar_idx}:v]scale=-1:105[av]")
-                fc.append(f"[{vlabel}][av]overlay=W-w-W*0.06:(H-h)/2[v]"); vlabel = "v"
-            if use_tts:
-                fc.extend(_nc_audio.mix_chain(tts_idx, _TTS_VOICE_GAIN, _audio_cfg()["duck"]))
-            cmd += ["-filter_complex", ";".join(fc)]
-            cmd += ["-map", f"[{vlabel}]"]
-            cmd += ["-map", "[a]" if use_tts else "0:a"]
-        elif use_tts or avatar_on or studio_on:
-            # filter_complex: Studio-Leinwand ODER drawtext-Kette → optional
-            # Avatar-Overlay → amix Quelle+Stimme.
-            fc = []
-            vlabel = "0:v"
-            if studio_on:
-                sparts, vlabel = _studio_chain(avatar_idx if avatar_on else None, rid=rid)
-                fc.extend(sparts)
-            else:
-                if overlay_on:
-                    fc.append(f"[0:v]{_drawtext_chain(rid)}[vt]"); vlabel = "vt"
-                if avatar_on:
-                    fc.append(f"[{avatar_idx}:v]scale=-1:105[av]")
-                    fc.append(f"[{vlabel}][av]overlay=W-w-W*0.06:(H-h)/2[v]"); vlabel = "v"
-            if use_tts:
-                # normalize=0 → Quell-Ton bleibt VOLL (amix halbiert sonst beide Inputs);
-                # Stimme angehoben damit klar hörbar, alimiter fängt Clipping ab.
-                fc.extend(_nc_audio.mix_chain(tts_idx, _TTS_VOICE_GAIN, _audio_cfg()["duck"]))
-            cmd += ["-filter_complex", ";".join(fc)]
-            cmd += ["-map", (f"[{vlabel}]" if vlabel != "0:v" else "0:v")]
-            cmd += ["-map", "[a]" if use_tts else "0:a"]
-        elif overlay_on:
-            cmd += ["-vf", _drawtext_chain(rid)]
-        _preset = RESTREAM_RELAY_PRESET if relay_profile else RESTREAM_X264_PRESET
-        if relay_profile:
-            br = f"{RESTREAM_RELAY_BITRATE_K}k"
-        # B137: VBV-Puffer bestimmt maßgeblich die Encoder-Latenz. 2×Bitrate ≈ 2s
-        # Puffer (robust, aber träge); im Low-Latency-Modus 1×Bitrate ≈ 1s.
-        _bufmult = 1 if RESTREAM_LOW_LATENCY else 2
-        _bufk = (RESTREAM_RELAY_BITRATE_K if relay_profile else RESTREAM_BITRATE_K) * _bufmult
-        cmd += ["-c:v", "libx264", "-preset", _preset, "-profile:v", "main",
-                "-level", "4.1", "-pix_fmt", "yuv420p"]
-        if RESTREAM_LOW_LATENCY:
-            # -tune zerolatency: x264 ohne B-Frames, ohne rc-/sync-lookahead →
-            # der Encoder gibt Frames sofort raus statt sie für bessere Kompression
-            # zurückzuhalten. DAS ist der große Latenz-Hebel. Fixe Keyframes (unten,
-            # -g/-keyint_min/-sc_threshold 0) bleiben plattformkonform.
-            cmd += ["-tune", "zerolatency", "-bf", "0"]
-        cmd += ["-b:v", br, "-maxrate", br, "-bufsize", f"{_bufk}k",
-                "-r", str(fps), "-fps_mode", "cfr",
-                "-g", str(gop), "-keyint_min", str(gop), "-sc_threshold", "0",
-                # V37-STAB: großer Muxing-Queue gegen "Too many packets buffered"
-                # bei kurzem Encode-Rückstand → kein harter Abbruch.
-                "-max_muxing_queue_size", "1024",
-                "-c:a", "aac", "-b:a", "160k", "-ar", "44100", "-ac", "2"]
-    else:
-        # copy-Modus: Video bleibt Copy. Audio → AAC (FLV/RTMP mag kein HE-AAC/Opus).
-        cmd += ["-c:v", "copy"]
-        if use_tts:
-            # Stimme reinmischen — dadurch wird NUR der Ton re-enkodiert, Video bleibt copy.
-            cmd += ["-filter_complex",
-                    ";".join(_nc_audio.mix_chain(tts_idx, _TTS_VOICE_GAIN, _audio_cfg()["duck"]))]
-            cmd += ["-map", "0:v", "-map", "[a]"]
-        cmd += ["-c:a", "aac", "-b:a", "160k", "-ar", "44100"]
-        if is_hls and not use_tts:
-            cmd += ["-bsf:a", "aac_adtstoasc"]           # nur bei reinem Copy-Audio nötig (kein Re-Mix)
-    # no_duration_filesize: unterdrückt 'Failed to update header with correct duration'.
-    # F103: MULTISTREAM — sind Zusatzplattformen aktiv (YT/Twitch), über den
-    # tee-Muxer parallel an alle Ziele fan-outen. Aktuell KEINE aktiv (YT/Twitch
-    # per Default deaktiviert) → identisches Single-Target-Verhalten wie bisher.
-    if RESTREAM_LOW_LATENCY:
-        # B137: Muxer-Vorlauf auf 0 → keine anfängliche Mux-Pufferung. Gilt für
-        # tee, Single- und Copy-Pfad.
-        cmd += ["-muxdelay", "0", "-muxpreload", "0"]
-    if only_target:
-        # Unabhängiger Modus: genau EIN Ziel, eigener Prozess, kein tee.
-        cmd += _nc_rst.single_output_args(target)
-    else:
-        # v4.0-W77: GLEICHSTELLUNG — alle konfigurierten Plattformen als flache,
-        # gleichberechtigte Zielliste (kein Primär mehr). `targets` reicht der
-        # Aufrufer (inkl. Pro-Restream-Overrides) durch; fehlt es, wird es aus
-        # der Kick-Basis + globalen Env-Zielen abgeleitet (Kick-only = identisch
-        # zum bisherigen Single-Pfad).
-        _tgts = targets if targets is not None else _nc_rst.active_targets(
-            overrides={"kick": (ingest_url, stream_key)})
-        if not _tgts:
-            _tgts = [("kick", target)]      # Notausgang: nie ohne Ziel senden
-        cmd += _nc_rst.build_output_args(_tgts)
-        if len(_tgts) > 1:
-            log.info("Restream MULTISTREAM (tee) aktiv — gleichberechtigt: %s "
-                     "(alle onfail=ignore)", ", ".join(n for n, _ in _tgts))
-    # V37-CPU: Thread-Deckel. Ohne -threads greift sich x264 ~1.5x alle Kerne —
-    # bei parallelem Transcode+Relay+Nachbearbeitung war das die Ursache fuer
-    # Load 113 auf 8 Kernen. Kein nice: das Sendebild hat Vorrang.
-    return _ff_cmd(cmd, threads=(FFMPEG_THREADS_RELAY if relay_profile
-                                 else FFMPEG_THREADS_LIVE))
+def _build_restream_cmd(*a, **kw):
+    # v4.2-W16: verbatim nach nc/restreamcmd.py extrahiert (bitgenau geprueft).
+    # Der gebaute Befehl traegt in -headers einen vollstaendigen Cookie-Header —
+    # er darf NIE ungefiltert geloggt werden, nur ueber nc/logsafe.py (F4).
+    return _nc_rscmd.build(*a, **kw)
 
 
 def _looks_like_source_expired(text):

@@ -5232,6 +5232,176 @@ def _test_v42_w15_discord_aus_dem_monolithen():
        % len(_slash(dcb)))
 
 
+def _test_v42_w16_relaykommando():
+    """v4.2-W16: die ffmpeg-Zeile des Relays steht in nc/restreamcmd.py.
+
+    WARUM DAS DIE WICHTIGE HAELFTE IST: 188 Zeilen, die nichts tun ausser eine
+    Argumentliste zu bauen — vollstaendig pruefbar, OHNE dass ein ffmpeg
+    laeuft. Im Monolithen war genau dieser Teil faktisch ungetestet: er hing an
+    zwanzig Bot-Globals, und in dieser Umgebung gibt es kein ffmpeg. Geprueft
+    wird deshalb, WAS aufgerufen wird — nicht, was das Werkzeug daraus macht.
+
+    Der Rumpf ist bitgenau aus bot.py uebernommen; die Zusicherungen unten sind
+    NEU und haetten im Monolithen nicht geschrieben werden koennen.
+    """
+    import os as _os
+    import tempfile as _tf
+    from nc import restreamcmd as _rc
+    from nc import restream_targets as _rst
+    from nc.ffdiag import redact_cmd_for_log
+
+    KEKS = "sessionid=GEHEIM123; tt_csrf=ABC"
+    schrift = _tf.NamedTemporaryFile(suffix=".ttf", delete=False)
+    schrift.write(b"x"); schrift.close()
+    avatar = _tf.NamedTemporaryFile(suffix=".png", delete=False)
+    avatar.write(b"x"); avatar.close()
+
+    def _konf(**ab):
+        basis = dict(
+            cookie_header=lambda: KEKS,
+            pick_pull_proxy=lambda: "",
+            # Dieselben Schluessel, die nc/ffmpeg_filters erwartet — ein
+            # unvollstaendiges Dict flog dort frueher als KeyError auf, und
+            # zwar erst im Studio-Zweig, also nur bei einem von zwei Layouts.
+            restream_overlay_files=lambda rid=None: {
+                k: "/tmp/ov_%s.txt" % k for k in
+                ("alert", "brand", "caption", "chat", "follow", "goal",
+                 "react", "source", "title")},
+            FFMPEG_THREADS_LIVE=3, FFMPEG_THREADS_RELAY=2,
+            RESTREAM_AVATAR=avatar.name, RESTREAM_BITRATE_K=6000,
+            RESTREAM_CANVAS_H=1080, RESTREAM_CANVAS_W=1920,
+            RESTREAM_FONT=schrift.name, RESTREAM_FPS=30,
+            RESTREAM_LOW_LATENCY=True, RESTREAM_OVERLAY=False,
+            RESTREAM_OVERLAY_HTML_FPS=1, RESTREAM_RELAY_BITRATE_K=3500,
+            RESTREAM_RELAY_PRESET="ultrafast", RESTREAM_X264_PRESET="veryfast",
+            RESTREAM_UA="UA/1.0", TTS_CH=2, TTS_SR=44100, TTS_VOICE_GAIN="1.8")
+        basis.update(ab)
+        _rc.configure(**basis)
+
+    # --- 1) configure schweigt nicht ------------------------------------
+    # nc/restream_targets ignoriert unbekannte Schluessel bewusst. Hier waere
+    # das falsch: ein Tippfehler liefe mit dem Default weiter — andere Bitrate,
+    # anderes Preset, kein Overlay, und NICHTS wird rot. Sichtbar erst auf dem
+    # Sendebild.
+    for kaputt in ("unbekannt", "fehlt"):
+        try:
+            if kaputt == "unbekannt":
+                _konf(RESTREAM_TIPPFEHLER=1)
+            else:
+                _rc.configure(RESTREAM_FPS=30)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("configure akzeptiert %s" % kaputt)
+    _konf()
+    ok("W16: configure meldet unbekannte und fehlende Schluessel")
+
+    FLV = "https://pull.tiktok.com/stage/x.flv"
+    HLS = "https://pull.tiktok.com/stage/x.m3u8"
+    ZIEL = ("kick", "rtmps://ingest.example/app/SCHLUESSEL")
+
+    # --- 2) Der Cookie steht drin — und faellt beim Loggen raus ----------
+    # F4. Der gebaute Befehl traegt die komplette TikTok-Session in -headers.
+    # Wer ihn ungefiltert loggt, schreibt sie ins Klartext-Log.
+    cmd = _rc.build(FLV, "", "", targets=[ZIEL])
+    kopf = cmd[cmd.index("-headers") + 1]
+    assert "sessionid=GEHEIM123" in kopf, "Cookie-Header fehlt im Befehl"
+    sauber = redact_cmd_for_log(cmd)
+    assert not any("GEHEIM123" in str(a) for a in sauber), \
+        "redact_cmd_for_log laesst die Session durch"
+    assert any("Cookie: <redacted>" in str(a) for a in sauber), \
+        "der Cookie wird gar nicht erst erkannt"
+    # Und der Referer bleibt stehen — Redaktion darf nicht zu viel wegnehmen,
+    # sonst ist das Log fuer die Fehlersuche wertlos.
+    assert any("Referer:" in str(a) for a in sauber), "Redaktion frisst den Referer"
+    ok("W16: Cookie im Befehl, im Log redigiert, Referer bleibt (F4)")
+
+    # --- 3) B124: 403 und 404 sind TERMINAL, kein Wiederverbinden --------
+    # Auf "4xx,5xx" haemmerte ffmpeg 30s lang die tote Quell-URL, bis der
+    # ganze tee kollabierte ("All tee outputs failed"). Genau das war die
+    # Ursache der Restream-Abbrueche alle paar Minuten.
+    codes = cmd[cmd.index("-reconnect_on_http_error") + 1]
+    assert "403" not in codes and "404" not in codes, \
+        "403/404 wieder im Reconnect: %s" % codes
+    assert "429" in codes and "503" in codes, "vorübergehende Codes fehlen: %s" % codes
+    ok("W16: Reconnect nur auf wirklich voruebergehende HTTP-Codes")
+
+    # --- 4) HLS braucht PTS, FLV nicht ----------------------------------
+    # TikTok liefert HLS-Pakete OHNE PTS und mit nicht-monotonem DTS; ohne
+    # +genpts+igndts bricht der FLV-Muxer mit rc=187 ab.
+    hls = _rc.build(HLS, "", "", targets=[ZIEL])
+    assert "+genpts+igndts+flush_packets" in hls, "HLS ohne genpts/igndts"
+    assert "-multiple_requests" in hls, "HLS ohne multiple_requests"
+    assert "+genpts" not in " ".join(cmd), "FLV bekommt faelschlich genpts"
+    assert "+flush_packets" in cmd, "FLV ohne flush_packets"
+    ok("W16: HLS erhaelt +genpts+igndts, FLV nicht")
+
+    # --- 5) Thread-Deckel, niemals nice ---------------------------------
+    # Ohne -threads greift x264 ~1.5x alle Kerne; das war die Ursache fuer
+    # Load 113 auf 8 Kernen. nice waere hier falsch: das Sendebild hat Vorrang.
+    assert cmd[0] == "ffmpeg" and cmd[1:3] == ["-threads", "3"], cmd[:4]
+    relay = _rc.build(FLV, "", "", targets=[ZIEL], relay_profile=True)
+    assert relay[1:3] == ["-threads", "2"], relay[:4]
+    assert "nice" not in cmd and "nice" not in relay, "nice im Sendepfad"
+    ok("W16: Relay-Profil deckelt auf 2, Transcode-Profil auf 3, nie nice")
+
+    # --- 6) Die Eingangs-Reihenfolge bestimmt die Filter-Indizes --------
+    # Ein vertauschter Index legt nichts lahm, das man SIEHT: ffmpeg mischt
+    # dann den falschen Stream. Deshalb hier hart nachgerechnet.
+    _konf(RESTREAM_OVERLAY=True)
+    voll = _rc.build(FLV, "", "", transcode=True, tts_fifo="/tmp/tts.fifo",
+                     rid=1, targets=[ZIEL])
+    eing = [voll[i + 1] for i, a in enumerate(voll) if a == "-i"]
+    assert eing[0] == FLV, eing
+    assert eing[1] == "/tmp/tts.fifo", "TTS ist nicht Eingang 1: %s" % eing
+    assert eing[2] == avatar.name, "Avatar ist nicht Eingang 2: %s" % eing
+    fc = voll[voll.index("-filter_complex") + 1]
+    assert "[1:a]" in fc or "[1]" in fc, "Filtergraph greift nicht auf Eingang 1: %s" % fc[:120]
+    assert "[2:v]" in fc, "Avatar-Overlay greift nicht auf Eingang 2: %s" % fc[:120]
+    ok("W16: TTS ist Eingang 1, Avatar Eingang 2, der Filtergraph zeigt darauf")
+
+    # --- 7) copy heisst copy --------------------------------------------
+    _konf()
+    kopie = _rc.build(FLV, "", "", targets=[ZIEL])
+    assert "-c:v" in kopie and kopie[kopie.index("-c:v") + 1] == "copy"
+    assert "libx264" not in kopie, "copy-Modus kodiert Video neu"
+    trans = _rc.build(FLV, "", "", transcode=True, targets=[ZIEL])
+    assert "libx264" in trans and "veryfast" in trans, "Transcode ohne x264/Preset"
+    assert trans[trans.index("-g") + 1] == "60", "Keyframe-Abstand nicht 2s bei 30fps"
+    ok("W16: copy bleibt copy, Transcode setzt x264 und 2s-Keyframes")
+
+    # --- 8) only_target sendet an genau EIN Ziel, ohne tee ---------------
+    einzel = _rc.build(FLV, "rtmps://a/app", "K", only_target="rtmps://b/app/K2")
+    assert not any(str(a).startswith("[f=flv") or "onfail=" in str(a) for a in einzel), \
+        "only_target baut trotzdem einen tee"
+    assert "rtmps://b/app/K2" in einzel, einzel[-4:]
+    ok("W16: only_target sendet an genau ein Ziel, ohne tee")
+
+    # --- 9) Der Pull-Proxy steht nur drin, wenn es einen gibt -----------
+    assert "-http_proxy" not in kopie, "Proxy-Flag ohne Proxy"
+    _konf(pick_pull_proxy=lambda: "http://proxy:3128")
+    mit = _rc.build(FLV, "", "", targets=[ZIEL])
+    assert mit[mit.index("-http_proxy") + 1] == "http://proxy:3128"
+    ok("W16: -http_proxy nur bei gesetztem Pull-Proxy")
+
+    # --- 10) Ohne Ziel wird nie gesendet ---------------------------------
+    # Notausgang im Bauer: eine leere Zielliste darf keinen ffmpeg ohne
+    # Ausgang erzeugen — der liefe endlos und saugte die Quelle leer.
+    _konf()
+    _rst.configure(kick_ingest="", kick_key="", twitch_ingest="", twitch_key="",
+                   youtube_ingest="", youtube_key="")
+    leer = _rc.build(FLV, "rtmps://ingest.example/app", "SCHLUESSEL")
+    assert any("rtmps://ingest.example/app/SCHLUESSEL" in str(a) for a in leer), \
+        "ohne konfigurierte Ziele faellt der Notausgang aus"
+    ok("W16: leere Zielliste faellt auf das uebergebene Ziel zurueck")
+
+    for _p in (schrift.name, avatar.name):
+        try:
+            _os.remove(_p)
+        except OSError:
+            pass
+
+
 def _test_v42_w14_motd_spricht_englisch():
     """v4.2-W14: die MOTD war zu 0 % uebersetzt und meldete 100 %."""
     import subprocess as _sp
@@ -5508,6 +5678,8 @@ def main():
     _test_v42_w14_motd_spricht_englisch()
 
     _test_v42_w15_discord_aus_dem_monolithen()
+
+    _test_v42_w16_relaykommando()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)
 

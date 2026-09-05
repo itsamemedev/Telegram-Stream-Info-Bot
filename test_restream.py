@@ -431,10 +431,14 @@ def test_overlay_size_contract():
     assert "_htmlov_screenshot_cmd(binpath, png, _size)" in body
     # Aufrufer reicht die Quelle durch
     assert "_restream_html_overlay_start(rid, source_url=src)" in src
-    # Filter verzerrt nicht mehr
-    assert "force_original_aspect_ratio=decrease[ovs][base]" in src
-    assert "overlay=(W-w)/2:(H-h)/2:eof_action=repeat:shortest=0[vh]" in src
-    assert "scale2ref=w=iw:h=ih[ovs][base]" not in src, "nackter Stretch zurück!"
+    # Filter verzerrt nicht mehr.
+    # ANKER GEWANDERT (v4.2-W16, nicht der Vertrag): der Filtergraph wird in
+    # nc/restreamcmd.py gebaut. Die VERBIETENDE Zusicherung liest weiter beide
+    # Dateien — ein nackter Stretch darf nirgends zurueckkommen.
+    _rc = open("nc/restreamcmd.py", encoding="utf-8").read()
+    assert "force_original_aspect_ratio=decrease[ovs][base]" in _rc
+    assert "overlay=(W-w)/2:(H-h)/2:eof_action=repeat:shortest=0[vh]" in _rc
+    assert "scale2ref=w=iw:h=ih[ovs][base]" not in (src + _rc), "nackter Stretch zurück!"
     ok("B94: Overlay rendert in Quellauflösung, Filter bleibt proportional")
 
 
@@ -749,15 +753,19 @@ def test_ffmpeg_thread_budget():
     ok(f"Sendebild {m.group(1)}T > Hintergrund {b.group(1)}T")
 
     # Restream-Builder: gedeckelt, aber NICHT genice't (Vorrang!)
+    # ANKER GEWANDERT (v4.2-W16, nicht der Vertrag): der Bauer heisst jetzt
+    # nc.restreamcmd.build. Der Vertrag will wissen, ob DER RELAY-BEFEHL
+    # gedeckelt und ungenice't ist — nicht, wie die Funktion heisst.
+    _rcs = open("nc/restreamcmd.py", encoding="utf-8").read()
     fn = ""
-    for n in ast.walk(tree):
-        if isinstance(n, ast.FunctionDef) and n.name == "_build_restream_cmd":
-            fn = ast.get_source_segment(src, n) or ""
-    assert fn, "_build_restream_cmd nicht gefunden"
+    for n in ast.walk(ast.parse(_rcs)):
+        if isinstance(n, ast.FunctionDef) and n.name == "build":
+            fn = ast.get_source_segment(_rcs, n) or ""
+    assert fn, "nc.restreamcmd.build nicht gefunden"
     assert "_ff_cmd(cmd, threads=(FFMPEG_THREADS_RELAY" in fn, \
-        "_build_restream_cmd ohne Thread-Deckel"
+        "der Relay-Befehl kommt ohne Thread-Deckel"
     assert "nice=" not in fn, "das Sendebild darf NICHT genice't werden"
-    ok("_build_restream_cmd: gedeckelt, ohne nice (Vorrang fuers Sendebild)")
+    ok("Relay-Befehl: gedeckelt, ohne nice (Vorrang fuers Sendebild)")
 
     # Jede ffmpeg-Befehlsliste muss durch _ff_cmd — Ausnahme: 'ffmpeg -version'
     unguarded = []
@@ -3338,8 +3346,13 @@ def test_v40_w11_cue_and_duck():
     src = open("bot.py").read()
     assert "_nc_audio.cue_pcm(" in src, "Signalton wird nicht in die Stimm-Queue gelegt"
     assert "AZRAEL_CUE_TONE" in src and "RESTREAM_DUCK" in src, "Schalter fehlen"
-    assert src.count("_nc_audio.mix_chain(") == 3, "nicht alle 3 Mix-Stellen nutzen die Kette"
-    assert "amix=inputs=2" not in src, "alte Mix-Literale noch im Bot"
+    # ANKER GEWANDERT (v4.2-W16, nicht der Vertrag): alle drei Mix-Stellen
+    # sitzen im Relay-Kommandobauer und stehen seit W16 in nc/restreamcmd.py.
+    # Die Zahl bleibt 3; die verbietende Zusicherung liest weiter beide.
+    _rcs = open("nc/restreamcmd.py", encoding="utf-8").read()
+    assert (src + _rcs).count("_nc_audio.mix_chain(") == 3, \
+        "nicht alle 3 Mix-Stellen nutzen die Kette"
+    assert "amix=inputs=2" not in (src + _rcs), "alte Mix-Literale noch im Bot"
     ok("v4.0-w11: Ton vor der Stimme + Ducking an allen 3 Mix-Stellen")
 
 
@@ -3363,8 +3376,12 @@ def test_v40_w12_audio_panel():
     assert "_nc_audiocue.configure(" in src, "die .env-Vorgaben erreichen das Modul nicht"
     assert "os.getenv" not in acfg, "nc/audiocue.py friert .env selbst ein"
     # Ton UND Duck lesen zur Laufzeit (keine eingefrorenen Env-Konstanten mehr).
-    assert '_audio_cfg()["duck"]' in src, "Ducking nutzt weiter die feste Env-Konstante"
-    assert src.count('_nc_audio.mix_chain(tts_idx, _TTS_VOICE_GAIN, _audio_cfg()["duck"])') == 3
+    # ANKER GEWANDERT (v4.2-W16, nicht der Vertrag): die drei Duck-Aufrufe
+    # stehen im Relay-Kommandobauer, also in nc/restreamcmd.py. Der Vertrag
+    # fragt, ob zur LAUFZEIT gelesen wird — nicht, in welcher Datei.
+    _rcs = open("nc/restreamcmd.py", encoding="utf-8").read()
+    assert '_audio_cfg()["duck"]' in _rcs, "Ducking nutzt weiter die feste Env-Konstante"
+    assert _rcs.count('_nc_audio.mix_chain(tts_idx, _TTS_VOICE_GAIN, _audio_cfg()["duck"])') == 3
     assert '_acfg["tone"]' in src, "Signalton nutzt die Laufzeit-Konfig nicht"
     # Routen inkl. Grenzwerte.
     assert '"/api/audio/config"' in arts and "def api_audio_config(" in arts
@@ -4238,13 +4255,18 @@ def test_v40_w27_ffmpeg_filters():
     assert len(parts2) == len(parts) + 2, "Avatar fügt genau 2 Teile hinzu"
     ok("v4.0-w27: drawtext_chain + studio_chain bitgenau, Escaping + Avatar korrekt")
 
-    src = open("bot.py").read()
-    assert "from nc import ffmpeg_filters as _nc_ff" in src, "Modul nicht importiert"
-    assert "_nc_ff.drawtext_chain(_restream_overlay_files(rid), RESTREAM_FONT)" in src
-    assert "_nc_ff.studio_chain(_restream_overlay_files(rid), RESTREAM_FONT," in src
-    # Alte Ketten-Logik darf nicht mehr im Monolithen liegen.
-    assert "[cnv][vsrc]overlay" not in src, "alte studio-Logik noch im Monolithen"
-    ok("v4.0-w27: Bot delegiert beide Ketten, keine Doppel-Logik mehr")
+    # ANKER GEWANDERT (v4.2-W16, nicht der Vertrag): die beiden Ketten-Huellen
+    # hatten NUR EINEN Nutzer, den Relay-Kommandobauer, und sind mit ihm nach
+    # nc/restreamcmd.py gegangen. Der Vertrag fragt, ob delegiert statt
+    # nachgebaut wird; die verbietende Zusicherung liest weiter beide Dateien.
+    src = open("bot.py", encoding="utf-8").read()
+    _rcs = open("nc/restreamcmd.py", encoding="utf-8").read()
+    assert "from nc import ffmpeg_filters as _nc_ff" in _rcs, "Modul nicht importiert"
+    assert "_nc_ff.drawtext_chain(_restream_overlay_files(rid), RESTREAM_FONT)" in _rcs
+    assert "_nc_ff.studio_chain(_restream_overlay_files(rid), RESTREAM_FONT," in _rcs
+    # Alte Ketten-Logik darf nirgends nachgebaut werden.
+    assert "[cnv][vsrc]overlay" not in (src + _rcs), "alte studio-Logik nachgebaut"
+    ok("v4.0-w27: der Bauer delegiert beide Ketten, keine Doppel-Logik mehr")
 
 
 def test_v40_w28_filepayload():
