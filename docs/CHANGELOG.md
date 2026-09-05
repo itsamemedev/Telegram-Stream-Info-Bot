@@ -11,6 +11,17 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Geändert — echte Twitch-Clips sind jetzt per Default AN (v4.2 W28)
+
+`TWITCH_CLIP_ENABLED` von „0" auf „1" — ausdrücklich so gewollt, dieselbe
+Linie wie W25 (Meme-Erkennung) und W26 (volle Auto-Clip-Kette). Ändert nichts
+an der Vorsicht aus W27: der neue Scope `clips:edit` greift trotzdem erst
+nach einer erneuten Twitch-Autorisierung, bis dahin liefert der Helix-Aufruf
+schlicht 401 und `_twitch_clip_versuchen()` fängt das sauber ab — kein
+Absturz, nur ein still verpuffter Versuch, bis der Betreiber neu verbindet.
+Kein neuer Vertrag nötig: die sieben Zusicherungen aus W27 prüfen bereits das
+Verhalten, nicht den Default-Wert.
+
 ### Hinzugefügt — echte Twitch-Clips für den Auto-Clipper (v4.2 W27)
 
 Zweite Welle des in W24 skizzierten Vorhabens: `nc.twitchoauth.create_clip()`

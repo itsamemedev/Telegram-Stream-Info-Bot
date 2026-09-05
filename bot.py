@@ -18099,11 +18099,12 @@ DISCORD_TARGET_CAP     = _env_int("DISCORD_TARGET_CAP", 25)        # max. getrac
 CLIP_DISCORD_UPLOAD    = os.getenv("CLIP_DISCORD_UPLOAD", "1").strip().lower() in ("1","true","yes","on","y")  # Highlight-Clips in den User-Clips-Channel posten
 # v4.2-W27: zusaetzlich einen ECHTEN Twitch-Clip anlegen (Helix POST /clips) —
 # nur moeglich, waehrend der Kanal GERADE live auf Twitch sendet (eigener
-# Restream). AUS per Default: das ist ein neuer OAuth-Scope (clips:edit),
-# den eine bestehende Autorisierung noch nicht traegt, und ein weiterer
-# oeffentlicher Auto-Post — der Betreiber soll das bewusst anschalten,
-# genau wie MEME_CLIP_ENABLED es in W24 war.
-TWITCH_CLIP_ENABLED    = os.getenv("TWITCH_CLIP_ENABLED", "0").strip().lower() in ("1","true","yes","on","y")
+# Restream). Seit v4.2-W28 per Default AN, wie CLIP_ENABLED/CLIP_DISCORD_UPLOAD
+# (W26) und MEME_CLIP_ENABLED (W25) — der neue Scope clips:edit greift trotzdem
+# erst nach erneuter Twitch-Autorisierung: _twoauth.status().get("ready") bleibt
+# bis dahin False bzw. der Helix-Call liefert 401, beides sauber abgefangen in
+# _twitch_clip_versuchen(); kein Absturz, nur ein still verpuffter Versuch.
+TWITCH_CLIP_ENABLED    = os.getenv("TWITCH_CLIP_ENABLED", "1").strip().lower() in ("1","true","yes","on","y")
 # V37-B90: Default 25→10. Discord hat das Free-Limit 2023 von 25 auf 10 MB
 # gesenkt — Dateien zwischen 10 und 25 MB passierten unseren lokalen Check
 # und Discord antwortete 413 (genau das beobachtete "Uploads bis 25 MB gehen
