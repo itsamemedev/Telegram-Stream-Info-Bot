@@ -16,7 +16,7 @@ route.
 
 ## The one rule
 
-`bot.py` has **22,616 lines / 1.2 MB ≈ 293,000 tokens**. That file is **never**
+`bot.py` has **22,641 lines / 1.2 MB ≈ 294,000 tokens**. That file is **never**
 read in full and **never** searched blindly. First ask where something is, then
 fetch the excerpt:
 
@@ -31,7 +31,7 @@ fetch the excerpt:
     python tools/ncpatch.py docs                       # documentation numbers vs. the source
 
 `find` answers from `.claude/INDEX.md` — 361 routes (34 in `bot.py`, 327 in
-`nc/routes/`), 45 slash commands, 474 functions with line numbers. After changes
+`nc/routes/`), 45 slash commands, 475 functions with line numbers. After changes
 to routes, commands or top-level functions, run `map` again. Details: skill
 `nc-navigation`.
 

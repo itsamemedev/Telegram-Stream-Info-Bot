@@ -11,6 +11,36 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Hinzugefügt — echte Twitch-Clips für den Auto-Clipper (v4.2 W27)
+
+Zweite Welle des in W24 skizzierten Vorhabens: `nc.twitchoauth.create_clip()`
+legt bei jedem Auto-Clip-Auslöser (Meme, Gift, Chat-Velocity) zusätzlich
+einen *echten* Twitch-Clip an — Helix `POST /clips`, neuer Scope
+`clips:edit`. AUS per Default (`TWITCH_CLIP_ENABLED=0`): der Scope ist neu,
+eine bestehende Autorisierung trägt ihn nicht, und es ist ein weiterer
+öffentlicher Auto-Post.
+
+**Anders als ein Datei-Upload.** Twitch nimmt keine Videodatei entgegen —
+`create_clip()` schneidet aus der *gerade laufenden eigenen* Übertragung.
+Ist der Kanal nicht live auf Twitch, lehnt Twitch ab; das ist ein normales
+Ergebnis `(False, "…nicht live")`, kein Fehlerfall.
+
+Sieben Zusicherungen, mit Schwerpunkt auf den drei Wegen, auf denen es
+fehlschlagen *muss*, ohne den Aufrufer mitzureißen: fehlender Scope (401,
+mit der Handlungsanweisung „neu verbinden" statt einem nackten Statuscode),
+Kanal nicht live (404), kein Token überhaupt (kein Netzwerkzugriff wird
+erst versucht). Dazu: die `broadcaster_id` wird *vor* dem Clip-Aufruf
+aufgelöst, nicht danach geraten; ein 202 mit leerem `data[]` zählt **nicht**
+als Erfolg (sonst ein Clip, den niemand wiederfindet, weil nirgends eine
+`edit_url` landet); und der Twitch-Versuch läuft *nebenläufig* nach dem
+lokalen Clip — ein Twitch-Fehlschlag darf den lokalen Clip nicht verzögern.
+
+Fünf Mutationen an `create_clip()` selbst, zwei an der Verdrahtung in
+`bot.py` (Nebenläufigkeit, Bereitschaftsprüfung) — alle sieben schlagen an.
+
+Der bestehende Scope-Vertrag (`set(tw.SCOPES) == {…}`, „kein Overreach")
+wurde um `clips:edit` erweitert, nicht gelockert — er zählt weiterhin exakt.
+
 ### Geändert — die volle Auto-Clip-Kette ist jetzt per Default AN (v4.2 W26)
 
 Nach W25 (`MEME_CLIP_ENABLED=1`) fehlten noch zwei Schalter, ohne die die

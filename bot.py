@@ -18097,6 +18097,13 @@ DISCORD_LEVELING       = os.getenv("DISCORD_LEVELING", "1").strip().lower() in (
 DISCORD_LEVELUP_CHANNEL= os.getenv("DISCORD_LEVELUP_CHANNEL", "").strip()   # optional: Channel-Name für Level-Up-Ansagen (sonst im selben Channel)
 DISCORD_TARGET_CAP     = _env_int("DISCORD_TARGET_CAP", 25)        # max. getrackte User für /setup_targets (schützt Discord-Channel-Limit)
 CLIP_DISCORD_UPLOAD    = os.getenv("CLIP_DISCORD_UPLOAD", "1").strip().lower() in ("1","true","yes","on","y")  # Highlight-Clips in den User-Clips-Channel posten
+# v4.2-W27: zusaetzlich einen ECHTEN Twitch-Clip anlegen (Helix POST /clips) —
+# nur moeglich, waehrend der Kanal GERADE live auf Twitch sendet (eigener
+# Restream). AUS per Default: das ist ein neuer OAuth-Scope (clips:edit),
+# den eine bestehende Autorisierung noch nicht traegt, und ein weiterer
+# oeffentlicher Auto-Post — der Betreiber soll das bewusst anschalten,
+# genau wie MEME_CLIP_ENABLED es in W24 war.
+TWITCH_CLIP_ENABLED    = os.getenv("TWITCH_CLIP_ENABLED", "0").strip().lower() in ("1","true","yes","on","y")
 # V37-B90: Default 25→10. Discord hat das Free-Limit 2023 von 25 auf 10 MB
 # gesenkt — Dateien zwischen 10 und 25 MB passierten unseren lokalen Check
 # und Discord antwortete 413 (genau das beobachtete "Uploads bis 25 MB gehen
@@ -19228,6 +19235,22 @@ def _disc_state_set(k, v):
 # V37-MOD: SENTINEL-SHIELD nach nc/shield.py — Import steht im frühen Block.
 
 
+async def _twitch_clip_versuchen(username, reason):
+    """v4.2-W27: der Twitch-Teil von clip_moment() — ausgelagert, damit ein
+    Twitch-Fehlschlag (Kanal nicht live dort, Scope fehlt) den lokalen Clip
+    nicht verzoegert; clip_moment() spawnt das und wartet nicht darauf.
+    """
+    try:
+        ok, wert = await _twoauth.create_clip(aiohttp)
+    except Exception as e:
+        log.debug("Twitch-Clip @%s: %s", username, e)
+        return
+    if ok:
+        log.info("✂ Twitch-Clip @%s (%s): %s", username, reason, wert)
+    else:
+        log.info("Twitch-Clip @%s übersprungen: %s", username, wert)
+
+
 async def clip_moment(username, reason="", caption=""):
     """Schneidet einen vertikalen Highlight-Clip rund um JETZT aus der laufenden Aufnahme.
        Wartet CLIP_POST_SECS (damit der Nachlauf aufgenommen ist), bestimmt die Dauer per
@@ -19288,6 +19311,8 @@ async def clip_moment(username, reason="", caption=""):
             if CLIP_DISCORD_UPLOAD:
                 try: await _clip_to_discord(username, out, caption or reason)
                 except Exception: pass
+            if TWITCH_CLIP_ENABLED and _twoauth.status().get("ready"):
+                _spawn(_twitch_clip_versuchen(username, reason), name="clip-twitch")
             return out
         log.warning("Clip @%s ffmpeg rc=%s: %s", username, proc.returncode,
                     (err or b"")[-200:].decode("utf-8", "ignore"))

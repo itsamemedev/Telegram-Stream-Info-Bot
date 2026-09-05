@@ -40,7 +40,14 @@ log = logging.getLogger("TikTokBot")
 SCOPES = ["moderator:read:followers", "chat:read", "chat:edit",
           "moderator:manage:banned_users",
           # B142: erlaubt Titel + Kategorie (game_id) via Helix PATCH /channels
-          "channel:manage:broadcast"]
+          "channel:manage:broadcast",
+          # v4.2-W27: erlaubt POST /helix/clips — nur waehrend der Kanal
+          # WIRKLICH live auf Twitch sendet (Create Clip schneidet aus der
+          # laufenden Uebertragung, nimmt keine Datei entgegen). Eine VOR
+          # dieser Version erteilte Autorisierung traegt den Scope nicht;
+          # Twitch antwortet dann 401, bis einmal neu verbunden wird — siehe
+          # create_clip().
+          "clips:edit"]
 AUTHORIZE = "https://id.twitch.tv/oauth2/authorize"
 TOKEN = "https://id.twitch.tv/oauth2/token"
 VALIDATE = "https://id.twitch.tv/oauth2/validate"
@@ -415,6 +422,51 @@ async def update_channel(aiohttp, title=None, game_id=None):
                 txt = (await r.text())[:200]
                 if r.status == 401:
                     return False, "401 — Scope channel:manage:broadcast fehlt, Twitch neu verbinden"
+                return False, f"HTTP {r.status}: {txt}"
+    except Exception as e:
+        return False, str(e)
+
+
+async def create_clip(aiohttp):
+    """v4.2-W27: schneidet einen Clip aus der GERADE LAUFENDEN Twitch-
+    Übertragung — Helix POST /clips, Scope clips:edit.
+
+    ANDERS ALS ein Datei-Upload: Twitch nimmt keine Videodatei entgegen, es
+    kapselt die letzten Sekunden der eigenen, live sendenden Übertragung. Ist
+    der Kanal gerade nicht live auf Twitch (kein aktiver Restream dorthin),
+    lehnt Twitch ab — der Aufrufer bekommt das als (False, Fehlertext)
+    zurück, nie als Absturz.
+
+    Die Erstellung ist bei Twitch selbst ASYNCHRON: der Rückgabewert enthält
+    eine `edit_url`, der fertige Clip kann aber noch ein paar Sekunden
+    brauchen, bis er wirklich abspielbar ist. Rückgabe (ok, wert) — wert ist
+    bei Erfolg die edit_url, sonst ein Fehlertext.
+    """
+    tok = await access_token(aiohttp)
+    cid, _ = _client()
+    if not (tok and cid):
+        return False, "kein Token"
+    hdr = {"Authorization": f"Bearer {tok}", "Client-Id": cid}
+    try:
+        async with aiohttp.ClientSession() as s:
+            bid = await _own_broadcaster_id(s, hdr)
+            if not bid:
+                return False, "broadcaster_id nicht auflösbar"
+            async with s.post("https://api.twitch.tv/helix/clips",
+                              params={"broadcaster_id": bid},
+                              headers=hdr,
+                              timeout=aiohttp.ClientTimeout(total=15)) as r:
+                if r.status in (200, 202):
+                    j = await r.json(content_type=None)
+                    data = j.get("data") or []
+                    if not data:
+                        return False, "Twitch meldet Erfolg ohne Clip-Daten"
+                    return True, data[0].get("edit_url") or data[0].get("id")
+                txt = (await r.text())[:200]
+                if r.status == 401:
+                    return False, "401 — Scope clips:edit fehlt, Twitch neu verbinden"
+                if r.status == 404:
+                    return False, "404 — Kanal ist gerade nicht live auf Twitch"
                 return False, f"HTTP {r.status}: {txt}"
     except Exception as e:
         return False, str(e)
