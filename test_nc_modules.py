@@ -5608,6 +5608,168 @@ def _test_v42_w17_recorderkommando():
     _rc.shutil, _rc._preflight_url = _echt_shutil, _echt_preflight
 
 
+def _test_v42_w18_eskalationsrechnung():
+    """v4.2-W18: die Eskalationsrechnung des Recorders steht in nc/aufnahmefolge.py.
+
+    Sie lag an DREI Stellen in bot.py — gesetzt beim Aufnahme-Ende,
+    zurueckgesetzt beim Offline-Uebergang, durchgesetzt vor dem naechsten
+    Spawn — und war nie ausgefuehrt worden, weil sie in einer 669-Zeilen-
+    Funktion steckt, die einen laufenden ffmpeg-Prozess braucht. Genau in
+    dieser Rechnung stecken vier Exponenten mit Schwellen-Offset; ein
+    Vorzeichenfehler darin ist im Betrieb nicht zu sehen, sondern nur daran,
+    dass ein Streamer entweder gar nicht mehr oder viel zu oft probiert wird.
+    """
+    from nc import aufnahmefolge as _af
+
+    # --- 1) Die 403-Stufen ----------------------------------------------
+    # Der heikle Teil ist `2 ** (n - hits)`: beim ERSTEN erzwungenen Wechsel
+    # muss die Basis stehen, nicht Basis * 2**hits. Mit Standardwerten waere
+    # der Unterschied Faktor 4 — 4 Minuten statt einer.
+    streak, sperre, backoff = {}, {}, {}
+    arg = dict(hits=2, cooldown_s=1800, backoff_an=True, basis_s=60, max_s=1800)
+    r = _af.nach_403(streak, sperre, backoff, "henry", 1000.0, **arg)
+    assert r == {"streak": 1, "erzwingt_ytdlp": False, "backoff_s": None}, r
+    assert "henry" not in sperre, "der erste 403 erzwingt schon yt-dlp"
+    stufen = []
+    for _ in range(5):
+        r = _af.nach_403(streak, sperre, backoff, "henry", 1000.0, **arg)
+        stufen.append(r["backoff_s"])
+    assert stufen == [60, 120, 240, 480, 960], stufen
+    assert sperre["henry"] == 1000.0 + 1800, sperre
+    for _ in range(3):
+        r = _af.nach_403(streak, sperre, backoff, "henry", 1000.0, **arg)
+    assert r["backoff_s"] == 1800, "der Deckel greift nicht: %r" % r
+    # Ohne Backoff-Schalter wird die Sperre trotzdem gesetzt — der 403-Schutz
+    # und die Retry-Drosselung sind zwei Dinge.
+    s2, sp2, bo2 = {}, {}, {}
+    r = _af.nach_403(s2, sp2, bo2, "x", 5.0, hits=1, cooldown_s=10,
+                     backoff_an=False, basis_s=60, max_s=1800)
+    assert r["erzwingt_ytdlp"] and r["backoff_s"] is None and not bo2
+    assert sp2["x"] == 15.0
+    ok("W18: 403-Stufen 60/120/240/…/1800, erster Wechsel auf der Basis")
+
+    # --- 2) Die Stream-Tod-Stufen ---------------------------------------
+    tstreak, tsperre, faellig = {}, {}, {}
+    warg = dict(schwelle=3, kurz_s=45)
+    got = []
+    for _ in range(7):
+        got.append(_af.nach_totem_versuch(tstreak, tsperre, faellig, 7, 100.0, **warg))
+    assert [g["sekunden"] for g in got] == [45, 45, 300, 600, 1200, 1800, 1800], \
+        [g["sekunden"] for g in got]
+    assert [g["eskaliert"] for g in got] == [False, False, True, True, True, True, True]
+    # Beide Zweige stellen den Worker-Tick faellig. Ohne das bremst die Sperre
+    # nur den Spawn, waehrend der Live-Check weiter im 20s-Takt laeuft.
+    assert faellig[7] == tsperre[7] == 100.0 + 1800
+    # kurz_s = 0 heisst: keine Sperre setzen, aber trotzdem zaehlen.
+    t2, s3, f3 = {}, {}, {}
+    r = _af.nach_totem_versuch(t2, s3, f3, 1, 50.0, schwelle=3, kurz_s=0)
+    assert r["streak"] == 1 and not s3 and not f3
+    ok("W18: Tod-Stufen 300/600/1200/1800, Worker-Tick wird mitverschoben")
+
+    # --- 3) Was als "keine Daten" zaehlt ---------------------------------
+    # Der gefaehrliche Fall ist die GROSSE Datei mit stall_killed: das ist ein
+    # echter, abgeschnittener Mitschnitt. Als tot zu zaehlen hiesse, einen
+    # Streamer in den Backoff zu schicken, der gerade sendet.
+    assert not _af.daten_geflossen("stall_killed", 500, 1_000_000)
+    assert _af.daten_geflossen("stall_killed", 5_000_000, 1_000_000), \
+        "eine grosse Datei mit stall_killed gilt faelschlich als tot"
+    assert _af.daten_geflossen("fail", 10, 1_000_000), \
+        "eine unbekannte Kategorie mit kleiner Datei gilt faelschlich als tot"
+    assert not _af.daten_geflossen("hevc_unsupported", 0, 1)
+    ok("W18: nur bekannte Kategorie UND kleine Datei zaehlen als tot")
+
+    # --- 4) Die fruehe Trennung -----------------------------------------
+    frueh = {}
+    w = [_af.nach_frueher_trennung(frueh, 3, max_versuche=5)["wartet"] for _ in range(5)]
+    assert w == [10, 20, 40, 80, 160], w
+    r = _af.nach_frueher_trennung(frueh, 3, max_versuche=5)
+    assert r["wartet"] is None, r
+    # Der Zaehler MUSS weg sein. Bliebe er stehen, bekaeme die naechste fruehe
+    # Trennung sofort den laengsten Backoff, obwohl das Netz inzwischen wieder
+    # geht (F50-Bug B12).
+    assert 3 not in frueh, "der Zaehler bleibt nach Max-Retries stehen"
+    # Deckel: mit hohem max bleibt es bei 160.
+    f2 = {}
+    for _ in range(9):
+        r = _af.nach_frueher_trennung(f2, 1, max_versuche=99)
+    assert r["wartet"] == 160, r
+    ok("W18: fruehe Trennung 10/20/40/80/160, Zaehler faellt nach Max weg")
+
+    # --- 5) Sperren runden nie auf "frei" ab -----------------------------
+    # int(0.4) waere 0 gewesen — die Meldung haette "frei" gesagt, waehrend
+    # die Sperre den Spawn weiter verhindert.
+    assert _af.sperre_rest({"a": 100.4}, "a", 100.0) == 1
+    assert _af.sperre_rest({"a": 100.0}, "a", 100.0) == 0
+    assert _af.sperre_rest({"a": 160.0}, "a", 100.0) == 60
+    assert _af.sperre_rest({}, "a", 100.0) == 0
+    assert _af.sperre_rest({"a": 0}, "a", 100.0) == 0
+    ok("W18: Restzeit rundet auf, eine halbe Sekunde ist nicht 'frei'")
+
+    # --- 6) Die Backoff-Meldung entspammt sich --------------------------
+    zuletzt = {}
+    assert _af.melden_erlaubt(zuletzt, "u", 1000.0, abstand_s=300)
+    assert zuletzt["u"] == 1000.0
+    assert not _af.melden_erlaubt(zuletzt, "u", 1290.0, abstand_s=300)
+    assert not _af.melden_erlaubt(zuletzt, "u", 1300.0, abstand_s=300)
+    assert _af.melden_erlaubt(zuletzt, "u", 1301.0, abstand_s=300)
+    ok("W18: hoechstens eine Backoff-Zeile je Abstand")
+
+    # --- 7) Zuruecksetzen: Erfolg raeumt alles, Offline nicht ganz -------
+    reg = [dict(a=1) for _ in range(3)] + [dict(b=1) for _ in range(3)]
+    _af.aufnahme_geglueckt(*reg, "a", "b")
+    assert not any(reg), "eine geglueckte Aufnahme laesst Zaehler stehen: %r" % reg
+    r5 = [dict(a=1), dict(a=1), dict(a=1), dict(b=2), dict(b=3)]
+    frueh = {"b": 4}
+    stand = _af.sitzung_zuende(*r5, "a", "b")
+    assert stand is True, "sitzung_zuende meldet den stehenden Tod-Zaehler nicht"
+    assert not any(r5), r5
+    assert frueh == {"b": 4}, \
+        "das Sitzungsende loescht den Frueh-Trennungs-Zaehler mit"
+    assert _af.sitzung_zuende(*[{} for _ in range(5)], "a", "b") is False
+    # Die Asymmetrie ist der Punkt und muss ABSICHT bleiben: sitzung_zuende
+    # bekommt fuenf Register, aufnahme_geglueckt sechs. Wuerde der
+    # Frueh-Trennungs-Zaehler hier stillschweigend mitgereicht, waere die
+    # Netzspur nach jedem Offline weg — und die naechste fruehe Trennung
+    # begaenne wieder bei 10s, obwohl das Netz seit Stunden wackelt.
+    import inspect as _insp
+    _z = [p for p in _insp.signature(_af.sitzung_zuende).parameters]
+    _g = [p for p in _insp.signature(_af.aufnahme_geglueckt).parameters]
+    assert len(_z) == 7 and len(_g) == 8, (_z, _g)
+    assert "frueh" in _g and "frueh" not in _z, (_z, _g)
+    # Und bot.py darf den Zaehler am Offline-Uebergang auch nicht selbst
+    # loeschen — sonst waere die Trennung in der Datei nur Kosmetik.
+    _q = open("bot.py", encoding="utf-8").read()
+    _i = _q.index("_nc_folge.sitzung_zuende(")
+    _fenster = _q[_i:_i + 1200]
+    assert "_EARLY_DISCONNECT_RETRY" not in _fenster, \
+        "bot.py raeumt den Frueh-Trennungs-Zaehler am Sitzungsende doch weg"
+    ok("W18: Erfolg raeumt alle sechs Register, Offline laesst die Netzspur stehen")
+
+    # --- 8) Zwei Uhren, und der Bot benutzt an jeder Stelle die richtige --
+    # Ein vertauschtes time()/monotonic() setzt eine Sperre, die entweder
+    # sofort abgelaufen oder Jahrzehnte gueltig ist. Im Betrieb sieht beides
+    # aus wie "der Bot nimmt nicht auf" bzw. "der Bot haemmert".
+    import ast as _ast
+    quelle = open("bot.py", encoding="utf-8").read()
+    baum = _ast.parse(quelle)
+    uhren = {}
+    for n in _ast.walk(baum):
+        if not (isinstance(n, _ast.Call) and isinstance(n.func, _ast.Attribute)
+                and isinstance(n.func.value, _ast.Name)
+                and n.func.value.id == "_nc_folge"):
+            continue
+        uhren.setdefault(n.func.attr, set()).add(_ast.unparse(n))
+    def _uhr(name, erwartet):
+        rufe = uhren.get(name) or set()
+        assert rufe, "%s wird in bot.py gar nicht gerufen" % name
+        for r in rufe:
+            assert erwartet in r, \
+                "%s bekommt die falsche Uhr: %s" % (name, r[:120])
+    _uhr("nach_403", "_time_mod.time()")
+    _uhr("nach_totem_versuch", "_time_mod.monotonic()")
+    ok("W18: 403 rechnet in Wanduhr, Stream-Tod in monotoner Zeit")
+
+
 def _test_v42_w14_motd_spricht_englisch():
     """v4.2-W14: die MOTD war zu 0 % uebersetzt und meldete 100 %."""
     import subprocess as _sp
@@ -5888,6 +6050,8 @@ def main():
     _test_v42_w16_relaykommando()
 
     _test_v42_w17_recorderkommando()
+
+    _test_v42_w18_eskalationsrechnung()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)
 

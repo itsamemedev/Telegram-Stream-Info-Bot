@@ -595,6 +595,7 @@ from nc import restreamcfg as _nc_rscfg  # v4.1-W22: Sendeziele + Pruef-Paramete
 from nc import restreamstate as _nc_rsstate  # v4.1-W22: Restream-Laufzeitzustand
 from nc import restreamcmd as _nc_rscmd  # v4.2-W16: die ffmpeg-Zeile des Relays
 from nc import reccmd as _nc_reccmd  # v4.2-W17: die Kommandozeilen des Recorders
+from nc import aufnahmefolge as _nc_folge  # v4.2-W18: die Eskalationsrechnung
 from nc import azraelstate as _nc_azrael  # v4.1-W19: AZRAELs Laufzeitzustand (geteilt)
 from nc import whispercfg as _nc_whisper  # v4.1-W19: Whisper-Modell als Register
 from nc import eventquery as _nc_eventquery  # v4.0-W51: Event-Log-Query-Bauer (rein)
@@ -7471,9 +7472,12 @@ async def _handle_single_tracking(t, bot_app):
         if claim_live_transition(tid, going_live=False):
             # v4.0-W55: Offline = Session-Ende → Fehler-Backoff/Streak zurücksetzen,
             # damit eine neue Live-Session einen sauberen Aufnahmeversuch bekommt.
-            _REC_BACKOFF_UNTIL.pop(username, None)
-            _REC_BACKOFF_LOGGED.pop(username, None)
-            _REC_403_STREAK.pop(username, None)
+            # v4.2-W18: siehe nc/aufnahmefolge.sitzung_zuende — bewusst OHNE
+            # den Frueh-Trennungs-Zaehler; der haengt an der Netzqualitaet zur
+            # Verbindung, nicht an der Sitzung.
+            _tot_stand = _nc_folge.sitzung_zuende(
+                _REC_403_STREAK, _REC_BACKOFF_UNTIL, _REC_BACKOFF_LOGGED,
+                _STREAM_DEAD_STREAK, _STREAM_DEAD_BACKOFF_UNTIL, username, tid)
             # F84: Session-Bilanz (Dauer/Aufnahmen/Größe) fürs Offline-Embed
             _sess_start = _LIVE_SESSION_START.pop(username, None)
             _ACTIVE_TIER.pop(username, None)   # v37 W3: Tier-Sichtbarkeit aufräumen
@@ -7486,7 +7490,7 @@ async def _handle_single_tracking(t, bot_app):
             # B45: Echter Stream-Tod (TikTok meldet offline) → Stream-Dead-
             # Tracking resetten. Sonst würde der nächste Live-Start sofort wieder
             # mit aktivem Backoff blockiert sein.
-            if _STREAM_DEAD_STREAK.pop(tid, None) or _STREAM_DEAD_BACKOFF_UNTIL.pop(tid, None):
+            if _tot_stand:
                 log.info(f"@{username} OFFLINE — stream-dead Streak reset")
             # F63: OFFLINE-Notif auch in Quiet Hours unterdrücken — sonst
             # gibt's nachts "OFFLINE"-Spam ohne vorheriges "LIVE".
@@ -7510,9 +7514,9 @@ async def _handle_single_tracking(t, bot_app):
         # geht der Reset-Pfad oben drüber, oder beim nächsten live-Start
         # ist die Aufnahme dann erfolgreich → Streak resettet.
         try:
-            backoff_until = _STREAM_DEAD_BACKOFF_UNTIL.get(tid, 0)
-            if backoff_until and _time_mod.monotonic() < backoff_until:
-                remaining = int(backoff_until - _time_mod.monotonic())
+            remaining = _nc_folge.sperre_rest(
+                _STREAM_DEAD_BACKOFF_UNTIL, tid, _time_mod.monotonic())
+            if remaining:
                 log.debug(f"@{username}: stream-pause Backoff aktiv ({remaining}s übrig) — "
                           f"kein Recording-Spawn")
                 return
@@ -7523,14 +7527,13 @@ async def _handle_single_tracking(t, bot_app):
         # und hält das Error-Log sauber. Der Backoff wächst exponentiell und läuft
         # von selbst ab; eine erfolgreiche Aufnahme oder Offline setzt ihn zurück.
         if RECORD_FAIL_BACKOFF:
-            _bo_until = _REC_BACKOFF_UNTIL.get(username, 0)
-            if _time_mod.time() < _bo_until:
-                _lastlog = _REC_BACKOFF_LOGGED.get(username, 0)
-                if _time_mod.time() - _lastlog > 300:      # höchstens 1 Zeile / 5min
-                    _REC_BACKOFF_LOGGED[username] = _time_mod.time()
+            _jetzt = _time_mod.time()
+            _rest = _nc_folge.sperre_rest(_REC_BACKOFF_UNTIL, username, _jetzt)
+            if _rest:
+                if _nc_folge.melden_erlaubt(_REC_BACKOFF_LOGGED, username, _jetzt):
                     log.info("@%s: Aufnahme im Backoff nach wiederholten Fehlern — "
                              "nächster Versuch in ~%ds (Stream evtl. region-/zugriffs-"
-                             "gesperrt).", username, int(_bo_until - _time_mod.time()))
+                             "gesperrt).", username, _rest)
                 return
         # v4.1-W26: NEBEN dem Loop. Synchron stand dieser Aufruf in zwei
         # Stack-Abzuegen des Waechters als Blocker: `db_conn().__exit__` ->
@@ -8641,12 +8644,13 @@ async def handle_recording_finished(proc, tid, chat_id, username, output_file,
         file_size = os.path.getsize(output_file) if file_exists else 0
 
         if file_exists and file_size > 0:
-            # V37-403: erfolgreiche Aufnahme → 403-Streak für diesen User zurück.
-            if RECORD_403_YTDLP:
-                _REC_403_STREAK.pop(username, None)
-            # v4.0-W55: erfolgreiche Aufnahme hebt den Fehler-Backoff auf.
-            _REC_BACKOFF_UNTIL.pop(username, None)
-            _REC_BACKOFF_LOGGED.pop(username, None)
+            # v4.2-W18: EIN Einstiegspunkt fuer alle Fehlerzaehler dieses
+            # Users. Vorher standen die pop()-Zeilen dreimal im Monolithen
+            # verteilt, und zweimal fehlte einer der Zaehler.
+            _nc_folge.aufnahme_geglueckt(
+                _REC_403_STREAK, _REC_BACKOFF_UNTIL, _REC_BACKOFF_LOGGED,
+                _STREAM_DEAD_STREAK, _STREAM_DEAD_BACKOFF_UNTIL,
+                _EARLY_DISCONNECT_RETRY, username, tid)
             # F40-Fix R3: Stall-killed-Recordings mit Teil-File werden jetzt als
             # 'stall_killed_partial' markiert statt 'ok'. Der Upload-Flow läuft
             # unverändert (User bekommt den Teil-Recording-File trotzdem), aber
@@ -8666,9 +8670,6 @@ async def handle_recording_finished(proc, tid, chat_id, username, output_file,
                 stderr_tail=stderr_text[-1500:] if stderr_text else None,
                 duration_secs=int(duration))
 
-            # F50: Erfolgreiche/lange Aufnahme → Early-Disconnect-Counter zurücksetzen
-            _EARLY_DISCONNECT_RETRY.pop(tid, None)
-
             # V37-DISC: Der URL-Refresh-Watchdog hat ffmpeg ABSICHTLICH beendet,
             # weil die signierte Stream-URL gleich ablaeuft (~30min TTL). Der User
             # ist dabei nachweislich noch live — trotzdem fiel der Code danach in
@@ -8684,9 +8685,6 @@ async def handle_recording_finished(proc, tid, chat_id, username, output_file,
                              username, duration)
                 except Exception as e:
                     log.debug("url-refresh reschedule: %s", e)
-            # B45: Stream-dead Streak/Backoff resetten — Aufnahme hat geklappt
-            _STREAM_DEAD_STREAK.pop(tid, None)
-            _STREAM_DEAD_BACKOFF_UNTIL.pop(tid, None)
             # Pull-Proxy hat funktioniert (Datei da) → belohnen + Block-Liste leeren
             _proxy_report_recording(username, success_outcome, stderr_text,
                                     proc.returncode, duration)
@@ -8845,19 +8843,20 @@ async def handle_recording_finished(proc, tid, chat_id, username, output_file,
                 category = "forbidden_403"
                 # V37-403: Streak hochzählen; ab RECORD_403_HITS auf yt-dlp umstellen
                 if RECORD_403_YTDLP:
-                    _n403 = _REC_403_STREAK.get(username, 0) + 1
-                    _REC_403_STREAK[username] = _n403
-                    if _n403 >= RECORD_403_HITS:
-                        _REC_403_UNTIL[username] = _time_mod.time() + RECORD_403_COOLDOWN_S
-                        # v4.0-W55: zusätzlich die RETRY-Frequenz drosseln (exponentiell),
-                        # sonst hämmert der Poll-Zyklus den 403-Stream weiter alle ~20s.
-                        if RECORD_FAIL_BACKOFF:
-                            _bo = min(RECORD_FAIL_BACKOFF_MAX_S,
-                                      RECORD_FAIL_BACKOFF_BASE_S * (2 ** (_n403 - RECORD_403_HITS)))
-                            _REC_BACKOFF_UNTIL[username] = _time_mod.time() + _bo
+                    # v4.2-W18: gerechnet wird in nc/aufnahmefolge.py. Die
+                    # Register bleiben DIESELBEN Objekte — das Brain-Panel
+                    # liest sie mit.
+                    _f = _nc_folge.nach_403(
+                        _REC_403_STREAK, _REC_403_UNTIL, _REC_BACKOFF_UNTIL,
+                        username, _time_mod.time(),
+                        hits=RECORD_403_HITS, cooldown_s=RECORD_403_COOLDOWN_S,
+                        backoff_an=RECORD_FAIL_BACKOFF,
+                        basis_s=RECORD_FAIL_BACKOFF_BASE_S,
+                        max_s=RECORD_FAIL_BACKOFF_MAX_S)
+                    if _f["erzwingt_ytdlp"]:
                         log.warning("V37-403: @%s %d× nativ-403 → erzwinge yt-dlp "
                                     "für %dmin (signiert Requests selbst, umgeht "
-                                    "das CDN-403 meist).", username, _n403,
+                                    "das CDN-403 meist).", username, _f["streak"],
                                     RECORD_403_COOLDOWN_S // 60)
                 if RECORD_PROXY:
                     log.warning("Stream-Kategorie: 403/forbidden TROTZ RECORD_PROXY | "
@@ -8889,19 +8888,21 @@ async def handle_recording_finished(proc, tid, chat_id, username, output_file,
                 # F50: Auto-Retry mit exponentieller Backoff. Wenn das schon
                 # mehrfach kurz hintereinander passiert, machen wir größere
                 # Pausen. Reset passiert im success-Pfad.
-                count = _EARLY_DISCONNECT_RETRY.get(tid, 0) + 1
-                _EARLY_DISCONNECT_RETRY[tid] = count
-                if count <= _EARLY_DISCONNECT_MAX_RETRIES:
-                    # 10, 20, 40, 80, 160s — Cap bei 160 ist wertvoller als bei 300
-                    # weil danach eh der reguläre 30s-Live-Check übernimmt.
-                    retry_delay = min(10 * (2 ** (count - 1)), 160)
+                # v4.2-W18: Zaehlen und Stufe rechnet nc/aufnahmefolge.py;
+                # das Faellig-Stellen bleibt hier, weil _NEXT_CHECK_AT der
+                # Takt des Workers ist.
+                _f = _nc_folge.nach_frueher_trennung(
+                    _EARLY_DISCONNECT_RETRY, tid,
+                    max_versuche=_EARLY_DISCONNECT_MAX_RETRIES)
+                count = _f["anzahl"]
+                if _f["wartet"] is not None:
                     try:
-                        _NEXT_CHECK_AT[tid] = _time_mod.monotonic() + retry_delay
+                        _NEXT_CHECK_AT[tid] = _time_mod.monotonic() + _f["wartet"]
                         log.warning(
                             "EARLY DISCONNECT @%s nach %.1fs (#%d/%d) — Auto-Retry in %ds. "
                             "ffmpeg rc=%s.",
                             username, duration, count, _EARLY_DISCONNECT_MAX_RETRIES,
-                            retry_delay, proc.returncode)
+                            _f["wartet"], proc.returncode)
                     except Exception as e:
                         log.warning(f"Auto-Retry scheduling failed: {e}")
                 else:
@@ -8910,7 +8911,6 @@ async def handle_recording_finished(proc, tid, chat_id, username, output_file,
                         "EARLY DISCONNECT @%s nach %.1fs — Max-Retries (%d) erreicht, "
                         "kein Auto-Retry mehr. Bot polled normal weiter (30-60s).",
                         username, duration, _EARLY_DISCONNECT_MAX_RETRIES)
-                    _EARLY_DISCONNECT_RETRY.pop(tid, None)
             elif duration >= 30:
                 # F50-Bug-Fix B12: Auch lange Aufnahmen (>=30s) die mit Fehler
                 # endeten setzen den Counter zurück. Wenn die Aufnahme 30s+
@@ -8926,46 +8926,38 @@ async def handle_recording_finished(proc, tid, chat_id, username, output_file,
             # stream_dead mit < 1 MB File (= keine echten Daten geflossen).
             # Backoff steigt exponentiell (5/10/20/30min Cap) damit wir
             # nicht alle 70s ein neues ffmpeg starten das sofort wieder stirbt.
-            data_dead = (category in ("stall_killed", "stream_dead",
-                                       "codec_header_fail", "hevc_unsupported")
-                         and file_size < _STREAM_DEAD_MIN_BYTES)
+            data_dead = not _nc_folge.daten_geflossen(
+                category, file_size, _STREAM_DEAD_MIN_BYTES)
             if data_dead:
-                streak = _STREAM_DEAD_STREAK.get(tid, 0) + 1
-                _STREAM_DEAD_STREAK[tid] = streak
-                if streak >= _STREAM_DEAD_THRESHOLD:
-                    # Backoff-Stufen: 5min, 10min, 20min, 30min (Cap)
-                    extra_steps = streak - _STREAM_DEAD_THRESHOLD
-                    backoff_secs = min(300 * (2 ** extra_steps), 1800)
-                    try:
-                        until = _time_mod.monotonic() + backoff_secs
-                        _STREAM_DEAD_BACKOFF_UNTIL[tid] = until
-                        # Worker-Tick auch verzögern damit Live-Check seltener läuft
-                        _NEXT_CHECK_AT[tid] = until
-                        log.warning(
-                            "STREAM-DEAD STREAK @%s: %d× (file<%dKB) — wahrscheinlich "
-                            "Live pausiert vom Streamer. Backoff %ds (%dmin). "
-                            "Wir warten bis TikTok-Status auf 'offline' geht oder Stream "
-                            "wieder Daten liefert.",
-                            username, streak, _STREAM_DEAD_MIN_BYTES // 1024,
-                            backoff_secs, backoff_secs // 60)
-                    except Exception as e:
-                        log.warning(f"Stream-dead backoff scheduling failed: {e}")
-                else:
-                    # B62: vor der Backoff-Schwelle einen KURZEN Cooldown setzen, damit der
-                    # schnelle Sofort-Retry (~50s) entfällt. Statt sofort neu zu starten warten
-                    # wir auf den naechsten Poll-Zyklus, der Live-Status frisch verifiziert + URL
-                    # neu aufloest. Nutzt dieselbe Backoff-Durchsetzung wie die Eskalationsstufen.
-                    if _STREAM_DEAD_QUICK_COOLDOWN > 0:
-                        try:
-                            until = _time_mod.monotonic() + _STREAM_DEAD_QUICK_COOLDOWN
-                            _STREAM_DEAD_BACKOFF_UNTIL[tid] = until
-                            _NEXT_CHECK_AT[tid] = until
-                        except Exception:
-                            pass
+                # v4.2-W18: Zaehlen, Stufe und Faellig-Stellen rechnet
+                # nc/aufnahmefolge.py — mit der MONOTONEN Uhr, weil
+                # _NEXT_CHECK_AT der monotone Takt des Workers ist. Die
+                # Wanduhr wuerde hier eine Sperre setzen, die entweder sofort
+                # abgelaufen oder Jahrzehnte gueltig ist.
+                try:
+                    _f = _nc_folge.nach_totem_versuch(
+                        _STREAM_DEAD_STREAK, _STREAM_DEAD_BACKOFF_UNTIL,
+                        _NEXT_CHECK_AT, tid, _time_mod.monotonic(),
+                        schwelle=_STREAM_DEAD_THRESHOLD,
+                        kurz_s=_STREAM_DEAD_QUICK_COOLDOWN)
+                except Exception as e:
+                    log.warning(f"Stream-dead backoff scheduling failed: {e}")
+                    _f = None
+                if _f and _f["eskaliert"]:
+                    log.warning(
+                        "STREAM-DEAD STREAK @%s: %d× (file<%dKB) — wahrscheinlich "
+                        "Live pausiert vom Streamer. Backoff %ds (%dmin). "
+                        "Wir warten bis TikTok-Status auf 'offline' geht oder Stream "
+                        "wieder Daten liefert.",
+                        username, _f["streak"], _STREAM_DEAD_MIN_BYTES // 1024,
+                        _f["sekunden"], _f["sekunden"] // 60)
+                elif _f:
+                    # B62: vor der Schwelle nur ein KURZER Cooldown, damit der
+                    # schnelle Sofort-Retry (~50s) entfaellt.
                     log.info(
                         "stream-dead @%s streak=%d/%d (file=%dKB, category=%s) — "
                         "kurzer Cooldown %ds (kein Sofort-Retry)",
-                        username, streak, _STREAM_DEAD_THRESHOLD,
+                        username, _f["streak"], _STREAM_DEAD_THRESHOLD,
                         file_size // 1024, category, _STREAM_DEAD_QUICK_COOLDOWN)
             elif file_size >= _STREAM_DEAD_MIN_BYTES:
                 # Echter Daten-Fluss → Streak resetten

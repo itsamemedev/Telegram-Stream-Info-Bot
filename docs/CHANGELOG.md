@@ -11,6 +11,52 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Geändert — die Eskalationsrechnung des Recorders steht jetzt in `nc/aufnahmefolge.py` (v4.2 W18)
+
+Diesmal geht es nicht um Zeilen (`bot.py`: 23.111 → **23.103**), sondern um
+**einen Zustandsautomaten, der an drei Stellen lag**: gesetzt beim
+Aufnahme-Ende, zurückgesetzt beim Offline-Übergang, durchgesetzt vor dem
+nächsten Spawn. Vier exponentielle Kurven mit Schwellen-Offset — und keine
+davon war je ausgeführt worden, weil sie in einer 669-Zeilen-Funktion steckt,
+die einen laufenden ffmpeg-Prozess braucht.
+
+Acht Zusicherungen, die vorher nicht formulierbar waren:
+
+* **Die 403-Kurve.** `2 ** (n - hits)`: beim *ersten* erzwungenen Wechsel muss
+  die Basis stehen, nicht Basis × 2^hits. Mit den Standardwerten wäre der
+  Unterschied Faktor 4 — vier Minuten statt einer.
+* **Die Stream-Tod-Kurve** (300/600/1200/1800) **und dass beide Zweige den
+  Worker-Tick mitverschieben.** Ohne das bremst die Sperre nur den Spawn,
+  während der Live-Check weiter im 20-Sekunden-Takt läuft — die Last bleibt.
+* **Was als „keine Daten" zählt.** Der gefährliche Fall ist die *große* Datei
+  mit `stall_killed`: das ist ein echter, abgeschnittener Mitschnitt. Als tot
+  gezählt, schickt er einen Streamer in den Backoff, der gerade sendet.
+* **Der Früh-Trennungs-Zähler fällt nach Max-Retries weg**, statt oben stehen
+  zu bleiben — sonst bekäme die nächste frühe Trennung sofort den längsten
+  Backoff (F50-Bug B12).
+* **Restzeiten runden auf.** `int(0.4)` wäre 0 gewesen: die Meldung hätte
+  „frei" gesagt, während die Sperre den Spawn weiter verhindert.
+* **Zwei Uhren, und der Bot benutzt an jeder Stelle die richtige.** Der
+  403-Zweig rechnet in `time.time()`, der Stream-Tod-Zweig in
+  `time.monotonic()` — weil er den Worker-Tick fällig stellt, und der ist
+  monoton. Ein vertauschtes Paar setzt eine Sperre, die entweder sofort
+  abgelaufen oder Jahrzehnte gültig ist; im Betrieb sieht beides aus wie „der
+  Bot nimmt nicht auf" bzw. „der Bot hämmert". Der Vertrag liest die
+  Aufrufstellen in `bot.py` und prüft die Uhr je Stelle.
+* **Erfolg räumt alle sechs Register, das Sitzungsende nur fünf.** Die
+  Asymmetrie ist Absicht: der Früh-Trennungs-Zähler hängt an der Netzqualität
+  zur Verbindung, nicht an der Sitzung. Sie wird über die Signaturen und über
+  die Aufrufstelle in `bot.py` festgehalten. Die Reset-Menge stand vorher
+  dreimal verteilt im Monolithen — und zweimal fehlte einer der Zähler.
+
+Acht Mutationen geprüft, alle acht schlagen an.
+
+**Ein Vertrag hat sich selbst blind gemacht.** `test_v40_w55_record_fail_backoff`
+prüfte die Backoff-Kurve, indem er sie **selbst nachbaute** — eine Kopie der
+Formel, die mit dem Original nie verglichen wurde. Er wäre grün geblieben, auch
+wenn die echte Rechnung falsch wird. Er ruft jetzt die echte Funktion; eine
+Mutation an der Formel bringt ihn zu Fall.
+
 ### Geändert — die Recorder-Kommandozeilen stehen jetzt in `nc/reccmd.py` (v4.2 W17)
 
 400 Zeilen, die entscheiden **womit** aufgenommen wird (nativer ffmpeg-Pull
