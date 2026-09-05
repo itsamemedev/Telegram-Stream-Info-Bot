@@ -1094,15 +1094,15 @@ def test_twitch_oauth():
     assert "state=csrf1" in url, "CSRF-state fehlt"
     ok("twitchoauth: Authorize-URL mit korrektem Scope + CSRF")
 
-    # V37-TWCHAT / B142: Scopes = Follower + Chat (lesen/schreiben) + Bann-
-    # Moderation + Broadcast-Verwaltung (Titel/Kategorie via Helix PATCH
-    # /channels, s. nc.twitchoauth.update_channel, aufgerufen in _set_channel).
+    # V37-TWCHAT / B142 / v4.2-W27: Scopes = Follower + Chat (lesen/schreiben)
+    # + Bann-Moderation + Broadcast-Verwaltung (Titel/Kategorie via Helix
+    # PATCH /channels) + Clip-Erstellung (POST /clips, nur waehrend live).
     # Kein Overreach darüber hinaus.
     assert set(tw.SCOPES) == {"moderator:read:followers", "chat:read",
                               "chat:edit", "moderator:manage:banned_users",
-                              "channel:manage:broadcast"}, \
-        "Follower + Chat + Moderation + Broadcast, nicht mehr"
-    ok("twitchoauth: Follower + Chat + Moderation + Broadcast-Scope, kein Overreach")
+                              "channel:manage:broadcast", "clips:edit"}, \
+        "Follower + Chat + Moderation + Broadcast + Clips, nicht mehr"
+    ok("twitchoauth: Follower + Chat + Moderation + Broadcast + Clips-Scope, kein Overreach")
 
     # Persistenz + 0600
     tw._state["refresh"] = "rt_abc"

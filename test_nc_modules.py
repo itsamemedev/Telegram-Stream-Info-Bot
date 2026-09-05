@@ -6586,6 +6586,178 @@ def _test_v42_w24_memeklip():
     ok("W24: das Meme-Budget ist ein eigenes Register, getrennt von AZRAEL")
 
 
+def _test_v42_w27_twitch_clip():
+    """v4.2-W27: der Twitch-Teil des Auto-Clippers — nc.twitchoauth.create_clip().
+
+    Twitch-Clips sind ANDERS als YouTube-Upload oder eine lokale Datei: die
+    Clip-Erstellung schneidet aus der GERADE LAUFENDEN eigenen Twitch-
+    Uebertragung, nimmt keine Datei entgegen und braucht den Scope
+    clips:edit — den eine vor dieser Welle erteilte Autorisierung nicht
+    traegt. Der Risikotraeger ist deshalb nicht der Erfolgsfall, sondern die
+    DREI Wege, auf denen es fehlschlagen MUSS, ohne den Aufrufer abstuerzen
+    zu lassen: fehlender Scope, Kanal nicht live, kein Token ueberhaupt.
+    """
+    import asyncio as _asyncio
+    import logging as _logging
+    import time as _time
+
+    import nc.twitchoauth as _tw
+
+    class _Antwort:
+        def __init__(self, status, payload=None, text=""):
+            self.status = status
+            self._payload = payload if payload is not None else {}
+            self._text = text
+
+        async def json(self, content_type=None):
+            return self._payload
+
+        async def text(self):
+            return self._text
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+    class _Sitzung:
+        def __init__(self, get_antwort, post_antwort):
+            self._get = get_antwort
+            self._post = post_antwort
+            self._timeout = None    # _own_broadcaster_id liest session._timeout
+            self.aufrufe = []
+
+        def get(self, url, **kw):
+            self.aufrufe.append(("get", url, kw))
+            return self._get
+
+        def post(self, url, **kw):
+            self.aufrufe.append(("post", url, kw))
+            return self._post
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+    class _Aio:
+        def __init__(self, get_antwort, post_antwort):
+            self._get, self._post = get_antwort, post_antwort
+            self.sitzung = None
+
+        def ClientSession(self):
+            self.sitzung = _Sitzung(self._get, self._post)
+            return self.sitzung
+
+        def ClientTimeout(self, **k):
+            return None
+
+    alt_level = _logging.getLogger("TikTokBot").level
+    _logging.getLogger("TikTokBot").setLevel(_logging.CRITICAL)
+    umgebung = {k: os.environ.get(k) for k in
+                ("TWITCH_CLIENT_ID", "TWITCH_CLIENT_SECRET")}
+    try:
+        os.environ.update(TWITCH_CLIENT_ID="x", TWITCH_CLIENT_SECRET="y")
+        # access_token() liest zuerst den Cache — mit einem gueltigen
+        # Eintrag darin faellt der ganze Refresh-Netzwerk-Pfad weg, und die
+        # Attrappe unten muss nur GET /users + POST /clips beantworten,
+        # genau die zwei Aufrufe, um die es in diesem Vertrag geht.
+        _tw._state["access"] = "faketoken"
+        _tw._state["access_exp"] = _time.time() + 3600
+
+        # --- 1) Erfolg: broadcaster_id aufgeloest, Clip angenommen -------
+        aio = _Aio(_Antwort(200, {"data": [{"id": "b1"}]}),
+                   _Antwort(202, {"data": [{"id": "c1",
+                                            "edit_url": "https://clips.twitch.tv/c1/edit"}]}))
+        ok_, wert = _asyncio.run(_tw.create_clip(aio))
+        assert ok_ and wert == "https://clips.twitch.tv/c1/edit", (ok_, wert)
+        assert aio.sitzung.aufrufe[0][0] == "get" and aio.sitzung.aufrufe[1][0] == "post", \
+            "broadcaster_id muss VOR dem Clip-POST aufgeloest werden"
+        assert aio.sitzung.aufrufe[1][2]["params"]["broadcaster_id"] == "b1", \
+            "der POST traegt nicht die aufgeloeste broadcaster_id"
+        ok("W27: erfolgreicher Clip liefert die edit_url, broadcaster_id zuerst aufgeloest")
+
+        # --- 1b) Ein "Erfolg" ohne Clip-Daten ist KEIN Erfolg ---------------
+        # 202 mit leerem data[] waere sonst (True, None) — ein Clip, den
+        # niemand wiederfindet, weil keine edit_url je irgendwo landet.
+        aio1b = _Aio(_Antwort(200, {"data": [{"id": "b1"}]}), _Antwort(202, {"data": []}))
+        ok_, wert = _asyncio.run(_tw.create_clip(aio1b))
+        assert not ok_, "202 mit leerem data[] gilt als Erfolg — der Clip ist unauffindbar"
+        ok("W27: ein 202 ohne Clip-Daten zaehlt nicht als Erfolg")
+
+        # --- 2) Fehlender Scope: 401 wird ERKANNT, nicht nur durchgereicht -
+        aio2 = _Aio(_Antwort(200, {"data": [{"id": "b1"}]}),
+                    _Antwort(401, text="missing scope clips:edit"))
+        ok_, wert = _asyncio.run(_tw.create_clip(aio2))
+        assert not ok_ and "clips:edit" in wert and "neu verbinden" in wert, wert
+        ok("W27: ein fehlender Scope wird als klare Handlungsanweisung gemeldet")
+
+        # --- 3) Kanal nicht live: 404 ist ein Ergebnis, kein Absturz ------
+        aio3 = _Aio(_Antwort(200, {"data": [{"id": "b1"}]}),
+                    _Antwort(404, text="not found"))
+        ok_, wert = _asyncio.run(_tw.create_clip(aio3))
+        assert not ok_ and "nicht live" in wert, wert
+        ok("W27: ein nicht-live-Kanal fuehrt zu einer verstaendlichen Ablehnung, keinem Crash")
+
+        # --- 4) broadcaster_id nicht aufloesbar -> gar kein POST ----------
+        aio4 = _Aio(_Antwort(200, {"data": []}), _Antwort(202, {"data": [{"id": "sollte-nie-gerufen"}]}))
+        ok_, wert = _asyncio.run(_tw.create_clip(aio4))
+        assert not ok_ and "broadcaster_id" in wert, wert
+        assert not any(a[0] == "post" for a in aio4.sitzung.aufrufe), \
+            "es wird trotz unaufloesbarer broadcaster_id ein Clip versucht"
+        ok("W27: ohne aufloesbare broadcaster_id wird gar nicht erst gepostet")
+
+        # --- 5) Ein Netzwerkfehler ist ein Ergebnis, kein Absturz ---------
+        class _KaputteSitzung:
+            async def __aenter__(self):
+                raise ConnectionError("kein Netz")
+            async def __aexit__(self, *a):
+                return False
+        class _KaputtesAio:
+            def ClientSession(self):
+                return _KaputteSitzung()
+            def ClientTimeout(self, **k):
+                return None
+        ok_, wert = _asyncio.run(_tw.create_clip(_KaputtesAio()))
+        assert not ok_ and wert, wert
+        ok("W27: ein Netzwerkfehler liefert (False, Grund) statt eine Exception hochzureichen")
+
+        # --- 6) Ohne Token gar kein Netzwerkzugriff -----------------------
+        _tw._state["access"] = ""
+        _tw._state["access_exp"] = 0.0
+        _tw._state["refresh"] = ""
+        aio5 = _Aio(_Antwort(200, {"data": [{"id": "b1"}]}), _Antwort(202, {"data": [{"id": "x"}]}))
+        ok_, wert = _asyncio.run(_tw.create_clip(aio5))
+        assert not ok_ and wert == "kein Token", wert
+        assert aio5.sitzung is None, "ohne Token wird trotzdem eine Session eroeffnet"
+        ok("W27: ohne Token wird gar nicht erst versucht, ein Netzwerkzugriff bleibt aus")
+
+        # --- 7) Die Verdrahtung im Bot: erst NACH dem lokalen Clip, ------
+        # nebenlaeufig gespawnt (ein Twitch-Fehlschlag darf den lokalen
+        # Clip nicht verzoegern), und nur wenn ein Token bereitsteht.
+        b = open("bot.py", encoding="utf-8").read()
+        i = b.find("async def clip_moment(")
+        rumpf = b[i:i + 6200]
+        assert "TWITCH_CLIP_ENABLED and _twoauth.status().get(\"ready\")" in rumpf, \
+            "Twitch-Clip wird ohne Bereitschaftspruefung versucht"
+        assert '_spawn(_twitch_clip_versuchen(username, reason)' in rumpf, \
+            "Twitch-Clip laeuft nicht nebenlaeufig — ein Fehlschlag wuerde den lokalen Clip verzoegern"
+        assert rumpf.find("CLIP_DISCORD_UPLOAD") < rumpf.find("TWITCH_CLIP_ENABLED"), \
+            "Twitch-Versuch steht vor dem Discord-Post statt danach"
+        ok("W27: der Bot versucht Twitch erst nach dem lokalen Clip, nebenlaeufig, bereitschaftsgeprueft")
+    finally:
+        _logging.getLogger("TikTokBot").setLevel(alt_level)
+        for k, v in umgebung.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+        _tw._state["access"] = ""
+        _tw._state["access_exp"] = 0.0
+
+
 def _test_v42_w14_motd_spricht_englisch():
     """v4.2-W14: die MOTD war zu 0 % uebersetzt und meldete 100 %."""
     import subprocess as _sp
@@ -6880,6 +7052,8 @@ def main():
     _test_v42_w23_aufnahmekategorie()
 
     _test_v42_w24_memeklip()
+
+    _test_v42_w27_twitch_clip()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)
 
