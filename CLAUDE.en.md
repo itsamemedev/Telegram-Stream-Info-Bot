@@ -16,7 +16,7 @@ route.
 
 ## The one rule
 
-`bot.py` has **22,734 lines / 1.2 MB ≈ 295,000 tokens**. That file is **never**
+`bot.py` has **22,718 lines / 1.2 MB ≈ 295,000 tokens**. That file is **never**
 read in full and **never** searched blindly. First ask where something is, then
 fetch the excerpt:
 
@@ -60,7 +60,7 @@ On the author's Windows machine the interpreter is called **`python`**
     brain_bridge.py      adapter bot ↔ brain/ (M2)
     brain/               AI core: state, rules, router, agents, memory,
                          semantic, knowledge, scheduler, llm, report
-    nc/                  128 domain modules: db, scraping, restream, oauth, ledger, i18n, …
+    nc/                  129 domain modules: db, scraping, restream, oauth, ledger, i18n, …
     nc/routes/           36 Flask blueprints with 327 further API routes
     locales/             de.json, en.json — the translation catalogue
     templates/           dashboard.html, brain.html, overlay.html, PWA

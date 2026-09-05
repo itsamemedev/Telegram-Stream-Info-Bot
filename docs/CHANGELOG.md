@@ -11,6 +11,63 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Behoben — die Pause-Grace war ab dem zweiten Aussetzer einer Sitzung wirkungslos (v4.2 W20)
+
+**Der Fund.** In `_handle_single_tracking` stand für den Fall „Streamer ist
+wieder da":
+
+```python
+if _PENDING_OFFLINE_COUNT.pop(tid, None) or _PENDING_OFFLINE_SINCE.pop(tid, None):
+```
+
+Ein `or` mit Kurzschluss. Sobald der Zähler gesetzt war — also immer, wenn
+überhaupt ein Aussetzer beobachtet worden war — wurde der **zweite `pop` nie
+ausgeführt**: der Startzeitpunkt der Offline-Phase blieb stehen.
+
+Beim nächsten Aussetzer misst die Pause-Grace dann ab dem *ersten* Aussetzer
+der Sitzung statt ab jetzt. `offline_for` ist sofort riesig, die
+Grace-Schwelle fällt augenblicklich, und es entscheidet allein der
+Debounce-Zähler. Damit war genau der Schutz weg, für den es die Grace gibt:
+„Live pausiert" wird als Stream-Ende gelesen — OFFLINE-Meldung, Aufnahme
+beendet, neue LIVE-Meldung beim Zurückkommen.
+
+Die vier anderen Reset-Stellen im Monolithen räumen beide Register in zwei
+getrennten Zeilen. Nur diese eine nicht.
+
+Gefunden hat es der Vertrag, der beim Herauslösen entstand — beim allerersten
+Lauf. Der Code war seit W20-Vorgeschichte unverändert; ohne die Zerlegung
+hätte ihn nichts angefasst.
+
+### Geändert — die Entscheidungen aus dem Live-Signal stehen jetzt in `nc/livefolge.py` (v4.2 W20)
+
+Drei Rechnungen aus `_handle_single_tracking` (`bot.py`: 22.734 → **22.718**),
+die reine Arithmetik sind und trotzdem in einer 380-Zeilen-Funktion steckten,
+die eine Datenbank, einen Scraper und einen Recorder braucht — also hier nie
+ausgeführt wurde:
+
+* **Ist „offline" wirklich offline?** Zwei Schwellen müssen **beide** fallen:
+  genug aufeinanderfolgende Beobachtungen (Debounce) *und* lange genug offline
+  (Pause-Grace). Ein `or` hätte die häufigste Störung durchgelassen — zwei
+  schnelle Ticks hintereinander erfüllen den Debounce, aber nicht die Grace,
+  und das ist das Bild eines TikTok-Aussetzers, nicht eines beendeten Streams.
+* **Ist gerade Ruhezeit?** Ein Fenster über Mitternacht (22-7) ist die
+  Standardfalle: `start <= h < ende` trifft dort *nie*. Der Vertrag zählt
+  jetzt alle 24 Stunden durch, für beide Fensterformen, plus `start == ende`
+  (schaltet ab) und die Grenzen (Beginn zählt, Ende nicht).
+* **Wann wird das nächste Mal geschaut?** Und: **„unbekannt" ist nicht
+  „offline"** — die Abfrage kam nicht durch, der Streamer kann laufen. Mit
+  dem Offline-Intervall behandelt hieße das, einen laufenden Stream fünf
+  Minuten lang nicht anzusehen.
+
+Dazu zwei Zusicherungen an den Aufrufstellen in `bot.py`: die Pause-Grace
+rechnet in **monotoner** Zeit (mit der Wanduhr hätte ein NTP-Sprung mitten im
+Stream entweder sofort „offline" gemeldet oder eine Stunde lang gar nicht),
+und Priorität wie Brain-Hinweise dürfen das Poll-Intervall nur **verkürzen** —
+ein Hinweis, der verlängern darf, kann ein Tracking still einschlafen lassen.
+
+Neun Mutationen geprüft, alle neun schlagen an — die erste davon ist der oben
+beschriebene Kurzschluss.
+
 ### Geändert — der Versandweg der Aufnahmen steht jetzt in `telegramversand.py` (v4.2 W19)
 
 381 Zeilen, die eine fertige Aufnahme nach Telegram bringen: teilen, hochladen,

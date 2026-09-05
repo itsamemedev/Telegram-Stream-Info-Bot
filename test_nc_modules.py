@@ -5946,6 +5946,121 @@ def _test_v42_w19_versandweg():
         pass
 
 
+def _test_v42_w20_livesignal():
+    """v4.2-W20: die Entscheidungen aus dem Live-Signal stehen in nc/livefolge.py.
+
+    Drei Rechnungen, die in einer 380-Zeilen-Funktion steckten, die eine
+    Datenbank, einen Scraper und einen Recorder braucht — hier also nie
+    ausgefuehrt wurde. Zwei davon haben Randfaelle, die im Betrieb genau
+    einmal im Jahr bzw. genau bei Stoerungen auffallen: das Ruhefenster ueber
+    Mitternacht und die Frage, ob ein verpasster Live-Ping schon "offline"
+    heisst.
+    """
+    from nc import livefolge as _lf
+
+    # --- 1) Ein Aussetzer ist kein Stream-Ende --------------------------
+    # BEIDE Schwellen muessen fallen. Ein `or` haette genau die haeufigste
+    # Stoerung durchgelassen: zwei schnelle Ticks hintereinander erfuellen
+    # den Debounce, aber nicht die Grace — und das ist das Bild eines
+    # TikTok-Aussetzers, nicht das eines beendeten Streams.
+    z, seit = {}, {}
+    arg = dict(debounce=2, grace_s=120)
+    r1 = _lf.offline_bestaetigt(z, seit, 7, 1000.0, **arg)
+    assert r1 == {"pending": 1, "offline_for": 0.0, "bestaetigt": False}, r1
+    r2 = _lf.offline_bestaetigt(z, seit, 7, 1002.0, **arg)   # Debounce ja, Grace nein
+    assert not r2["bestaetigt"], "zwei schnelle Ticks gelten schon als offline"
+    assert r2["offline_for"] == 2.0, r2
+    r3 = _lf.offline_bestaetigt(z, seit, 7, 1130.0, **arg)   # beide erfuellt
+    assert r3["bestaetigt"] and r3["pending"] == 3 and r3["offline_for"] == 130.0, r3
+    # Nach der Bestaetigung sind BEIDE Register leer. Blieben sie stehen,
+    # waere die naechste Sitzung sofort "bestaetigt offline", noch bevor sie
+    # richtig begonnen hat.
+    assert 7 not in z and 7 not in seit, (z, seit)
+    # Und die Grace allein reicht auch nicht: lange offline, aber erst ein Tick.
+    z2, s2 = {}, {}
+    r = _lf.offline_bestaetigt(z2, s2, 1, 0.0, debounce=3, grace_s=10)
+    r = _lf.offline_bestaetigt(z2, s2, 1, 9999.0, debounce=3, grace_s=10)
+    assert not r["bestaetigt"], "die Grace allein bestaetigt schon offline"
+    ok("W20: offline erst wenn Debounce UND Pause-Grace fallen")
+
+    # --- 2) Ein Lebenszeichen raeumt beide Register ---------------------
+    z3, s3 = {5: 2}, {5: 100.0}
+    assert _lf.live_gesehen(z3, s3, 5) is True
+    assert not z3 and not s3, (z3, s3)
+    assert _lf.live_gesehen(z3, s3, 5) is False, "meldet ein Aufraeumen ohne Anlass"
+    # Ohne das Zuruecksetzen zaehlte ein Aussetzer von heute Mittag noch auf
+    # die Schwelle von heute Abend.
+    z4, s4 = {}, {}
+    _lf.offline_bestaetigt(z4, s4, 9, 0.0, debounce=2, grace_s=0)
+    _lf.live_gesehen(z4, s4, 9)
+    r = _lf.offline_bestaetigt(z4, s4, 9, 500.0, debounce=2, grace_s=0)
+    assert r["pending"] == 1 and not r["bestaetigt"], \
+        "der alte Aussetzer zaehlt noch mit: %r" % r
+    ok("W20: ein Lebenszeichen setzt den Aussetzer-Zaehler zurueck")
+
+    # --- 3) Das Ruhefenster ueber Mitternacht ---------------------------
+    # Der Standardfall (22-7) ist genau der, den `start <= h < ende` NIE
+    # trifft — die Ruhezeit haette schlicht nicht existiert.
+    nachts = [h for h in range(24) if _lf.ruhezeit(h, 22, 7)]
+    assert nachts == [0, 1, 2, 3, 4, 5, 6, 22, 23], nachts
+    tags = [h for h in range(24) if _lf.ruhezeit(h, 9, 17)]
+    assert tags == list(range(9, 17)), tags
+    # start == ende schaltet ab. Sonst waere "0 bis 0" entweder keine oder
+    # eine volle Ruhe — beide Lesarten hat schon jemand gemeint.
+    assert not any(_lf.ruhezeit(h, 0, 0) for h in range(24))
+    assert not any(_lf.ruhezeit(h, 13, 13) for h in range(24))
+    # Die Grenzen: Beginn gehoert dazu, Ende nicht.
+    assert _lf.ruhezeit(22, 22, 7) and not _lf.ruhezeit(7, 22, 7)
+    assert _lf.ruhezeit(9, 9, 17) and not _lf.ruhezeit(17, 9, 17)
+    ok("W20: Ruhefenster laeuft ueber Mitternacht, start==ende schaltet ab")
+
+    # --- 4) Der Poll-Abstand --------------------------------------------
+    IV = {"live": 20, "offline": 300, "just_went_offline": 45, "unknown": 90}
+    assert _lf.poll_abstand("live", True, IV) == 20
+    assert _lf.poll_abstand("live", False, IV) == 20
+    # Direkt nach einem Live-Ende wird kuerzer nachgeschaut: genau dann faellt
+    # die Unterscheidung zwischen Pause und echtem Ende.
+    assert _lf.poll_abstand("offline", True, IV) == 45
+    assert _lf.poll_abstand("offline", False, IV) == 300
+    # "unknown" ist NICHT offline — die Abfrage kam nicht durch, der Streamer
+    # kann laufen. Es mit dem Offline-Intervall zu behandeln hiesse, einen
+    # laufenden Stream fuenf Minuten lang nicht anzusehen.
+    assert _lf.poll_abstand("unknown", True, IV) == 90
+    assert _lf.poll_abstand("kaputt", False, IV) == 90
+    ok("W20: Poll-Abstand je Status, 'unbekannt' ist nicht 'offline'")
+
+    # --- 5) Hinweise duerfen nur verkuerzen -----------------------------
+    # X3 (Prioritaet) und M5 (Brain-Hinweise) sitzen HINTER poll_abstand.
+    # Ein Hinweis, der verlaengern darf, kann ein Tracking still einschlafen
+    # lassen — deshalb muss die Richtung im Monolithen ein min() bleiben.
+    import ast as _ast
+    q = open("bot.py", encoding="utf-8").read()
+    fn = None
+    for n in _ast.walk(_ast.parse(q)):
+        if isinstance(n, _ast.FunctionDef) and n.name == "_schedule_next_check":
+            fn = _ast.get_source_segment(q, n) or ""
+    assert fn, "_schedule_next_check nicht gefunden"
+    assert "_nc_live.poll_abstand(" in fn, "der Grundabstand wird nicht mehr geholt"
+    assert "min(delay, _brain_hint_delay(" in fn, \
+        "der Brain-Hinweis darf das Intervall verlaengern"
+    assert "get_priority_poll_interval(tracking_id, int(delay))" in fn, \
+        "die Prioritaet bekommt den Grundabstand nicht als Deckel"
+    ok("W20: Prioritaet und Brain-Hinweis koennen nur verkuerzen")
+
+    # --- 6) Die Uhr an der Aufrufstelle ---------------------------------
+    # Die Pause-Grace misst eine DAUER. Mit der Wanduhr haette ein NTP-Sprung
+    # oder eine Zeitumstellung mitten im Stream entweder sofort "offline"
+    # gemeldet oder eine Stunde lang gar nicht.
+    rufe = [_ast.unparse(n) for n in _ast.walk(_ast.parse(q))
+            if isinstance(n, _ast.Call) and isinstance(n.func, _ast.Attribute)
+            and isinstance(n.func.value, _ast.Name) and n.func.value.id == "_nc_live"
+            and n.func.attr == "offline_bestaetigt"]
+    assert rufe, "offline_bestaetigt wird in bot.py gar nicht gerufen"
+    for r in rufe:
+        assert "_time_mod.monotonic()" in r, "die Pause-Grace laeuft auf der Wanduhr: %s" % r[:120]
+    ok("W20: die Pause-Grace rechnet in monotoner Zeit")
+
+
 def _test_v42_w14_motd_spricht_englisch():
     """v4.2-W14: die MOTD war zu 0 % uebersetzt und meldete 100 %."""
     import subprocess as _sp
@@ -6230,6 +6345,8 @@ def main():
     _test_v42_w18_eskalationsrechnung()
 
     _test_v42_w19_versandweg()
+
+    _test_v42_w20_livesignal()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)
 
