@@ -11,6 +11,41 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Geändert — die kleinen Bausteine der Sendebild-Texte stehen jetzt in `nc/overlaytext.py` (v4.2 W22)
+
+Fünf Helfer, quer durch die Restream-Overlay-Logik an über 30 Stellen benutzt
+(`ov_oneline` 14×, `ov_atomic_write` 14×, `overlay_src_ok` 6×, `latest_popularity`
+3×, `ov_bar` 2×) — und keiner davon war einzeln aufrufbar, weil alle mitten in
+`bot.py` standen. `bot.py` fällt auf **22.569 Zeilen**.
+
+**Der Risikoträger ist `ov_atomic_write`.** Schreibt es nicht wirklich atomar
+(Tmp-Datei + `os.replace`, statt direktem `open(path, "w")`), sieht
+ffmpeg/drawtext für einen Frame eine halb geschriebene Datei — ein Fehler, den
+man nur *im Sendebild selbst* sieht, nie im Log. Eine echte Race lässt sich in
+einem schnellen Unit-Test nicht zuverlässig provozieren; geprüft wird deshalb
+zusätzlich strukturell, dass der Rumpf über die Tmp-Datei geht, *in dieser
+Reihenfolge* (Schreiben vor `os.replace`).
+
+**Ein zweiter Fund beim Testen selbst:** die erste Fassung des
+`latest_popularity`-Tests testete nichts, ohne es zu merken — die Testdaten
+hatten den höchsten Follower-Wert zufällig auch beim neuesten Datensatz, also
+hätte ein `ORDER BY` auf der falschen Spalte (`follower_count` statt
+`captured_at`) unbemerkt durchgerutscht. Neu aufgesetzt mit einem *alten*
+Höchstwert und einem *neueren*, niedrigeren — jetzt unterscheidet der Test
+tatsächlich „neuester" von „höchster".
+
+Sechs Mutationen geprüft, alle sechs schlagen an (zwei davon erst nach dieser
+Korrektur — vorher wären sie durchgerutscht).
+
+Weitere Zusicherungen: `ov_bar` deckelt auf `[0,1]`, egal ob der Wert unter 0
+oder über dem Ziel liegt; `latest_popularity` gibt `0` zurück statt zu
+crashen, wenn `follower_count` `NULL` ist; `overlay_src_ok` folgt der
+konfigurierten Gift-Quelle, `"both"` öffnet beide.
+
+`configure()` nimmt die einzige echte `.env`-Abhängigkeit
+(`OVERLAY_GIFT_SOURCE`) — als Wert, nicht als Getter, weil dieser Wert im
+Monolithen nie neu gebunden wird (anders als `DISCORD_INVITE_URL` in W15).
+
 ### Geändert — die Cookie-Gesundheit wird jetzt in `nc/cookies.py` bewertet (v4.2 W21)
 
 147 Zeilen aus `bot.py` (→ **22.580 Zeilen**), die **nie ausgeführt worden

@@ -571,6 +571,7 @@ from nc import discordlimits as _nc_dclimits  # v4.0-W80: Discord-Upload-Limit l
 from nc import logsafe as _nc_logsafe        # Stream-Key-Log-Redaction
 from nc import systemprobe as _nc_probe     # v4.1-W32: Redis-/Recorder-Sonden
 from nc import cookies as _nc_cookies_datei  # v4.1-W32: cookies.txt lesen
+from nc import overlaytext as _nc_ovtext  # v4.2-W22: die kleinen Sendebild-Textbausteine
 from nc import cookieholen as _nc_cookieholen  # v4.2-W10: Cookies selbst beziehen
 from nc import cfgnorm as _nc_cfgnorm        # v4.0-W33: reine Config-Normalisierer (gebündelt)
 from nc import restrend as _nc_restrend      # v4.0-W40: Langzeit-Ressourcen-Trend (Slow-Leak)
@@ -11129,11 +11130,8 @@ def _tracking_max_duration(tid):
 
 
 def _latest_popularity(conn, username):
-    """Neuester follower_count für einen User aus profile_snapshots (oder 0)."""
-    row = conn.execute(
-        "SELECT follower_count FROM profile_snapshots WHERE username=? "
-        "ORDER BY captured_at DESC LIMIT 1", (username,)).fetchone()
-    return int(row["follower_count"]) if row and row["follower_count"] else 0
+    # v4.2-W22: verbatim nach nc/overlaytext.py extrahiert.
+    return _nc_ovtext.latest_popularity(conn, username)
 
 
 
@@ -11759,26 +11757,16 @@ async def _restream_chat_push_async(src, who, text, origin=None):
 _RESTREAM_OV_DBCACHE = {"ts": 0.0, "goal": "", "follow": ""}   # B72: DB-Felder nur alle 5s lesen (nicht im Sekunden-Hotpath)
 
 def _ov_bar(cur, tgt, width=12):
-    """Unicode-Fortschrittsbalken als TEXT (reloadbar — kein starres drawbox)."""
-    if not tgt or float(tgt) <= 0:
-        return ""
-    frac = max(0.0, min(1.0, float(cur) / float(tgt)))
-    filled = int(round(width * frac))
-    return "\u2588" * filled + "\u2591" * (width - filled)
+    # v4.2-W22: verbatim nach nc/overlaytext.py extrahiert.
+    return _nc_ovtext.ov_bar(cur, tgt, width)
 
 
 def _ov_oneline(s, maxlen):
-    return " ".join((s or "").split())[:maxlen]   # reload mag keine Zeilenumbrüche
+    return _nc_ovtext.ov_oneline(s, maxlen)
+
 
 def _ov_atomic_write(path, text):
-    try:
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        tmp = f"{path}.{os.getpid()}.tmp"
-        with open(tmp, "w", encoding="utf-8") as f:
-            f.write(text)
-        os.replace(tmp, path)          # atomar → drawtext liest nie halb geschriebene Datei
-    except Exception:
-        pass
+    return _nc_ovtext.ov_atomic_write(path, text)
 
 # v4.1-W26: Ein Wächter, MODUL-GLOBAL und nicht als Objekt-Attribut (CLAUDE.md:
 # ein getattr(obj, "_läuft") bricht, sobald das Objekt neu erzeugt wird).
@@ -17447,9 +17435,8 @@ def _azrael_overlay_state():
             "source": r.get("source", "") if active else ""}
 
 def _overlay_src_ok(src):
-    """True wenn Events von 'src' (kick|tiktok) ins Overlay dürfen. Default 'kick' —
-       beim Restream sitzt das Publikum auf Kick, TikTok-Gifts sind das fremde Publikum."""
-    return OVERLAY_GIFT_SOURCE == "both" or OVERLAY_GIFT_SOURCE == src
+    # v4.2-W22: verbatim nach nc/overlaytext.py extrahiert.
+    return _nc_ovtext.overlay_src_ok(src)
 
 
 # v4.1-W20: das Einnahmen-Gate (B120) und die Overlay-Plattformen liegen in
@@ -22273,6 +22260,8 @@ _nc_reccmd.configure(
     RECORDER_PREF=RECORDER_PREF,
     RECORD_403_YTDLP=RECORD_403_YTDLP,
     STREAM_URL_MIN_TTL=_STREAM_URL_MIN_TTL)
+
+_nc_ovtext.configure(gift_source=OVERLAY_GIFT_SOURCE)
 
 _nc_cookies_datei.configure(
     datei=COOKIE_FILE, log=log,

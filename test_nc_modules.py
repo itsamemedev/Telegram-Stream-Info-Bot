@@ -6226,6 +6226,99 @@ def _test_v42_w21_cookiegesundheit():
         pass
 
 
+def _test_v42_w22_overlaytext():
+    """v4.2-W22: die kleinen Bausteine der Sendebild-Texte stehen in
+    nc/overlaytext.py — fuenf Helfer, quer durch die Restream-Overlay-Logik
+    an 14+6+2+9+3 Stellen benutzt, aber selbst nie einzeln aufrufbar, weil
+    sie mitten in bot.py standen.
+
+    Der Risikotraeger ist ov_atomic_write: schreibt es nicht wirklich atomar,
+    sieht ffmpeg/drawtext fuer einen Frame eine halb geschriebene Datei —
+    ein Fehler, den man nur im Sendebild selbst sieht, nie im Log.
+    """
+    import os as _os
+    import tempfile as _tf
+    from nc import overlaytext as _ot
+
+    # --- 1) ov_oneline: eine Zeile, gekappt, ohne doppelte Leerzeichen ---
+    assert _ot.ov_oneline("  hallo   welt  ", 80) == "hallo welt"
+    assert _ot.ov_oneline("a\nb\tc", 80) == "a b c", "Zeilenumbruch/Tab bleibt stehen"
+    assert _ot.ov_oneline(None, 80) == ""
+    assert _ot.ov_oneline("x" * 100, 10) == "x" * 10
+    ok("W22: ov_oneline glaettet Whitespace und kappt hart bei maxlen")
+
+    # --- 2) ov_bar: Balken proportional, ohne Ziel leer ------------------
+    assert _ot.ov_bar(0, 0) == "", "ohne Ziel darf kein Balken erscheinen"
+    assert _ot.ov_bar(5, 10, width=10) == "█████░░░░░"
+    assert _ot.ov_bar(-5, 10, width=4) == "░░░░", "negativer Stand wird nicht negativ gefuellt"
+    assert _ot.ov_bar(999, 10, width=4) == "████", "ueber dem Ziel laeuft der Balken nicht ueber"
+    ok("W22: ov_bar fuellt proportional, gedeckelt auf [0,1]")
+
+    # --- 3) ov_atomic_write: DAS ist der Risikotraeger -------------------
+    # Eine Race zwischen einem lesenden ffmpeg und einem schreibenden Bot
+    # laesst sich in einem schnellen Unit-Test nicht zuverlaessig provozieren
+    # — deshalb zusaetzlich strukturell geprueft: es MUSS ueber eine Tmp-Datei
+    # + os.replace() gehen, in dieser Reihenfolge. Ein direktes open(path,"w")
+    # waere nicht atomar; ffmpeg koennte fuer einen Frame eine halb
+    # geschriebene Datei sehen.
+    import ast as _ast
+    _oq = open("nc/overlaytext.py", encoding="utf-8").read()
+    _fn = next(n for n in _ast.walk(_ast.parse(_oq))
+               if isinstance(n, _ast.FunctionDef) and n.name == "ov_atomic_write")
+    _rumpf = _ast.get_source_segment(_oq, _fn)
+    _schreib = _rumpf.find('open(tmp, "w"')
+    _tausch = _rumpf.find("os.replace(tmp, path)")
+    assert _schreib >= 0 and _tausch > _schreib, \
+        "ov_atomic_write schreibt nicht mehr ueber eine Tmp-Datei + os.replace"
+
+    d = _tf.mkdtemp()
+    ziel = _os.path.join(d, "unter", "ordner", "titel.txt")
+    _ot.ov_atomic_write(ziel, "erster Text")
+    assert open(ziel, encoding="utf-8").read() == "erster Text"
+    # Verzeichnis wird bei Bedarf angelegt — drawtext braucht den Pfad VOR
+    # dem ersten Schreiben, sonst zeigt es dauerhaft nichts.
+    assert _os.path.isdir(_os.path.dirname(ziel))
+    # Kein Tmp-Rest nach einem geglueckten Schreiben.
+    reste = [f for f in _os.listdir(_os.path.dirname(ziel)) if f != "titel.txt"]
+    assert not reste, "Tmp-Datei bleibt nach erfolgreichem Schreiben liegen: %r" % reste
+    # Ueberschreiben ersetzt vollstaendig, kein Anhaengen.
+    _ot.ov_atomic_write(ziel, "kurz")
+    assert open(ziel, encoding="utf-8").read() == "kurz"
+    # Ein Fehler wird geschluckt, nicht geworfen — ein Overlay-Feld, das
+    # nicht schreibt, darf die Aufnahme nicht mitreissen.
+    _ot.ov_atomic_write("/root/darf-hier-nicht-existieren/x.txt", "x")
+    ok("W22: ov_atomic_write legt Ordner an, ersetzt statt anzuhaengen, schluckt Fehler")
+
+    # --- 4) latest_popularity: neuester Wert, 0 ohne Treffer -------------
+    import sqlite3
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    conn.execute("CREATE TABLE profile_snapshots(username TEXT, follower_count INT, captured_at TEXT)")
+    assert _ot.latest_popularity(conn, "henry") == 0, "ohne Zeilen muss 0 kommen, nicht None/Crash"
+    # Der hoechste Wert ist absichtlich NICHT der neueste: ein ORDER BY auf
+    # der falschen Spalte (follower_count statt captured_at) faellt sonst
+    # nicht auf, weil beide Sortierungen zufaellig dasselbe Ergebnis gaeben.
+    conn.execute("INSERT INTO profile_snapshots VALUES ('henry', 999, '2020-01-01')")
+    conn.execute("INSERT INTO profile_snapshots VALUES ('henry', 250, '2026-01-02')")
+    conn.execute("INSERT INTO profile_snapshots VALUES ('henry', 10, '2025-01-01')")
+    assert _ot.latest_popularity(conn, "henry") == 250, \
+        "es muss der NEUESTE Stand sein (250), nicht der hoechste (999)"
+    assert _ot.latest_popularity(conn, "jemand_anders") == 0
+    conn.execute("INSERT INTO profile_snapshots VALUES ('null_wert', NULL, '2026-01-01')")
+    assert _ot.latest_popularity(conn, "null_wert") == 0, "NULL darf nicht crashen"
+    ok("W22: latest_popularity liest den neuesten, nicht den hoechsten Stand")
+
+    # --- 5) overlay_src_ok: 'kick' ist Default, 'both' oeffnet alles -----
+    _ot.configure(gift_source="kick")
+    assert _ot.overlay_src_ok("kick") and not _ot.overlay_src_ok("tiktok")
+    _ot.configure(gift_source="both")
+    assert _ot.overlay_src_ok("kick") and _ot.overlay_src_ok("tiktok")
+    _ot.configure(gift_source="tiktok")
+    assert _ot.overlay_src_ok("tiktok") and not _ot.overlay_src_ok("kick")
+    _ot.configure(gift_source="kick")   # zurueck auf den Default fuer andere Tests
+    ok("W22: overlay_src_ok folgt der konfigurierten Gift-Quelle, 'both' oeffnet alles")
+
+
 def _test_v42_w14_motd_spricht_englisch():
     """v4.2-W14: die MOTD war zu 0 % uebersetzt und meldete 100 %."""
     import subprocess as _sp
@@ -6514,6 +6607,8 @@ def main():
     _test_v42_w20_livesignal()
 
     _test_v42_w21_cookiegesundheit()
+
+    _test_v42_w22_overlaytext()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)
 
