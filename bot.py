@@ -986,7 +986,6 @@ from nc import ffmpeg_filters as _nc_ff     # v4.0-W27: Overlay-Filtergraph-Baue
 from nc import filepayload as _nc_fp         # v4.0-W28: reine Datei-Klassifikation (extrahiert)
 from nc import highlights as _nc_highlights  # v4.0-W22: Highlight-Radar
 from nc import evolution as _nc_evolution  # B167: Selbstanalyse-Kern
-from nc import kick_oauth as _nc_kickoauth  # B169: Kick User-OAuth (channel:write)
 from nc import version as _nc_version  # v4.0: zentrale Versions-/Changelog-Quelle
 from nc import youtube_api as _nc_ytapi  # v4.0: YouTube-Chat via Data-API + Moderation
 _nc_rst.configure(
@@ -11178,37 +11177,13 @@ async def _news_loop():
 
 
 async def _kick_user_token(session=None):
-    """Gültiger Kick-USER-Access-Token (channel:write) oder None. Lädt aus
-       app_config, refresht bei Ablauf. None → update_channel fällt auf App-Token."""
-    tok = _cfg_get("kick.user_token", None) or {}
-    if not tok.get("access_token"):
-        return None
-    if not _nc_kickoauth.is_expired(tok, _time_mod.time()):
-        return tok["access_token"]
-    rt = tok.get("refresh_token")
-    if not (rt and KICK_CLIENT_ID and KICK_CLIENT_SECRET):
-        return tok.get("access_token")          # kein Refresh möglich → 401 entscheidet
-    own = session is None
-    if own:
-        session = aiohttp.ClientSession()
-    try:
-        payload = _nc_kickoauth.token_refresh_payload(KICK_CLIENT_ID, KICK_CLIENT_SECRET, rt)
-        async with session.post(_nc_kickoauth.TOKEN_URL, data=payload,
-                                timeout=aiohttp.ClientTimeout(total=15)) as r:
-            data = await r.json(content_type=None)
-        new, err = _nc_kickoauth.parse_token_response(data, _time_mod.time())
-        if new:
-            _cfg_set("kick.user_token", new)
-            log.info("Kick-User-Token erneuert (Scope: %s)", new.get("scope", ""))
-            return new["access_token"]
-        log.warning("Kick-Token-Refresh abgelehnt: %s", err)
-        return tok.get("access_token")
-    except Exception as e:
-        log.debug("Kick-Token-Refresh Fehler: %s", e)
-        return tok.get("access_token")
-    finally:
-        if own:
-            await session.close()
+    """Gueltiger Kick-USER-Access-Token (channel:write) oder None.
+
+    v4.2-W12: der Koerper liegt in nc.kickapi.user_token — dieselbe Datei wie
+    die Aufrufe, die ihn brauchen. Der Name bleibt hier, weil sechs Stellen im
+    Bot ihn benutzen und ein Alias billiger ist als sechs Umschreibungen.
+    """
+    return await _nc_kickapi.user_token(session)
 
 
 
@@ -15272,26 +15247,10 @@ class KickModerator:
         self.cfg.setdefault("intensity", 1)          # Persona-Ton: 0=sanft, 1=normal, 2=streng
 
     async def _get_token(self, session):
-        if self._token and _time_mod.monotonic() < self._token_exp - 30:
-            return self._token
-        if not (KICK_CLIENT_ID and KICK_CLIENT_SECRET):
-            return None
-        try:
-            async with session.post(
-                "https://id.kick.com/oauth/token",
-                data={"grant_type": "client_credentials",
-                      "client_id": KICK_CLIENT_ID, "client_secret": KICK_CLIENT_SECRET},
-                timeout=aiohttp.ClientTimeout(total=15)) as resp:
-                if resp.status != 200:
-                    log.warning(f"Kick OAuth HTTP {resp.status}")
-                    return None
-                d = await resp.json()
-                self._token = d.get("access_token")
-                self._token_exp = _time_mod.monotonic() + int(d.get("expires_in", 3600))
-                return self._token
-        except Exception as e:
-            log.warning(f"Kick OAuth Fehler: {e}")
-            return None
+        # v4.2-W12: der App-Token liegt jetzt modulweit in nc.kickapi — es gibt
+        # genau EINEN Kick-Zugang, und ein Cache je Objekt holte bei jedem
+        # Neustart der Chat-Schleife einen frischen.
+        return await _nc_kickapi.app_token(session)
 
     # V37-P4b: Dank für Subs/Gifts im EIGENEN Kick-Kanal. Template statt
     # LLM: ein Dankeschön muss in <1s raus und darf nie am LLM-Budget oder
@@ -15323,192 +15282,30 @@ class KickModerator:
             log.debug("Kick-Dank fehlgeschlagen: %s", e)
 
     async def send_message(self, content, session=None):
-        own = False
-        if session is None:
-            session = aiohttp.ClientSession(); own = True
-        try:
-            # v4.0-W17: Kick lehnte den Chat-POST mit HTTP 401 "Unauthorized" ab.
-            # Ursache: der APP-Token (client_credentials) darf NICHT im Chat
-            # schreiben — dafuer braucht es den USER-Token mit Scope chat:write
-            # (seit B169 vorhanden, wird schon fuer Titel/Kategorie genutzt).
-            # Mit User-Token posten wir als "user", sonst Fallback "bot".
-            _utok = await _kick_user_token(session)
-            tok = _utok or await self._get_token(session)
-            if not tok:
-                _KICK_SEND_LAST.update(ts=_time_mod.time(), ok=False, status=0, bid=0,
-                                       error="kein Token — KICK_CLIENT_ID/SECRET pruefen "
-                                             "bzw. Kick im Dashboard verbinden")
-                return False, "kein Token (client id/secret?)"
-            payload = {"type": "user" if _utok else "bot", "content": content[:480]}
-            _bid = KICK_BROADCASTER_ID or await _kick_broadcaster_id()
-            if _bid:
-                payload["broadcaster_user_id"] = _bid
-            async with session.post(
-                "https://api.kick.com/public/v1/chat",
-                json=payload, headers={"Authorization": f"Bearer {tok}"},
-                timeout=aiohttp.ClientTimeout(total=15)) as resp:
-                ok = 200 <= resp.status < 300
-                # v4.0-W10: bei Fehlern Kicks ANTWORTTEXT mitnehmen — "HTTP 400"
-                # allein sagt nicht, ob Broadcaster-ID, Scope oder Inhalt schuld ist.
-                detail = ""
-                if not ok:
-                    try:
-                        detail = (await resp.text())[:180].replace("\n", " ").strip()
-                    except Exception:
-                        detail = ""
-                    if not _bid:
-                        detail = (detail + " · keine Broadcaster-ID aufloesbar "
-                                  "(KICK_BROADCASTER_ID setzen)").strip()
-                    if resp.status in (401, 403) and not _utok:
-                        detail = (detail + " · App-Token darf nicht chatten — Kick im "
-                                  "Dashboard verbinden (Scope chat:write)").strip()
-                if ok:
-                    _modlog("send", "bot", content)
-                    self.last_spoken = {"text": content, "ts": _time_mod.monotonic()}
-                _KICK_SEND_LAST.update(
-                    ts=_time_mod.time(), ok=ok, status=resp.status, bid=_bid,
-                    error=("" if ok else f"HTTP {resp.status}"
-                           + (f": {detail}" if detail else "")))
-                return ok, (None if ok else _KICK_SEND_LAST["error"])
-        except Exception as e:
-            _KICK_SEND_LAST.update(ts=_time_mod.time(), ok=False, status=0,
-                                   error=str(e)[:180])
-            return False, str(e)
-        finally:
-            if own:
-                await session.close()
+        # v4.2-W12: der REST-Aufruf liegt in nc.kickapi. Hier bleibt, was Bot
+        # ist: der Moderations-Logeintrag und last_spoken.
+        ok, fehler = await _nc_kickapi.send_message(content, session=session)
+        if ok:
+            _modlog("send", "bot", content)
+            self.last_spoken = {"text": content, "ts": _time_mod.monotonic()}
+        return ok, fehler
 
     async def timeout_user(self, user_id, minutes, reason, session):
-        try:
-            # v4.0-W17: Moderation braucht Nutzerrechte (Scope moderation:ban).
-            # Mit reinem App-Token antwortet Kick 401 — wie beim Chat-Senden.
-            tok = await _kick_user_token(session) or await self._get_token(session)
-            if not tok:
-                return False
-            payload = {"user_id": user_id, "duration": max(1, min(minutes, 10080)),
-                       "reason": reason[:100]}
-            _bid = KICK_BROADCASTER_ID or await _kick_broadcaster_id()
-            if _bid:
-                payload["broadcaster_user_id"] = _bid
-            async with session.post(
-                "https://api.kick.com/public/v1/moderation/bans",
-                json=payload, headers={"Authorization": f"Bearer {tok}"},
-                timeout=aiohttp.ClientTimeout(total=15)) as resp:
-                return 200 <= resp.status < 300
-        except Exception:
-            return False
+        return await _nc_kickapi.timeout_user(user_id, minutes, reason, session)
 
     async def channel_info(self, session=None):
         """Kanal-Infos (live-Status, Zuschauer, Titel) via offizielle API."""
-        own = False
-        if session is None:
-            session = aiohttp.ClientSession(); own = True
-        try:
-            tok = await self._get_token(session)
-            if not tok:
-                return None, "kein Token"
-            params = {}
-            _bid = KICK_BROADCASTER_ID or await _kick_broadcaster_id()
-            if _bid:
-                params["broadcaster_user_id"] = _bid
-            async with session.get(
-                "https://api.kick.com/public/v1/channels",
-                params=params, headers={"Authorization": f"Bearer {tok}"},
-                timeout=aiohttp.ClientTimeout(total=15)) as resp:
-                if not (200 <= resp.status < 300):
-                    return None, f"HTTP {resp.status}"
-                d = await resp.json()
-                row = (d.get("data") or [None])
-                row = row[0] if isinstance(row, list) and row else d
-                stream = (row or {}).get("stream") or {}
-                # B138: followers_count steht in der v1-Antwort NICHT drin —
-                # deshalb blieb die Anzeige auf "—", obwohl Zuschauer und Titel
-                # ankamen. Rueckfall auf den keyless v2-Endpunkt (gecacht).
-                _fol = (row or {}).get("followers_count")
-                if _fol is None:
-                    _fol = await _kick_follower_count(session)
-                return {
-                    "slug": (row or {}).get("slug"),
-                    "title": (row or {}).get("stream_title") or stream.get("title"),
-                    "category": ((row or {}).get("category") or {}).get("name"),
-                    "is_live": bool(stream.get("is_live")),
-                    "viewers": stream.get("viewer_count"),
-                    "followers": _fol,
-                }, None
-        except Exception as e:
-            return None, str(e)
-        finally:
-            if own:
-                await session.close()
+        return await _nc_kickapi.channel_info(session=session)
 
     async def update_channel(self, title=None, category_id=None, session=None):
-        own = False
-        if session is None:
-            session = aiohttp.ClientSession(); own = True
-        try:
-            # B169: erst der USER-Token (channel:write), sonst App-Token-Fallback.
-            tok = await _kick_user_token(session) or await self._get_token(session)
-            if not tok:
-                return False, "kein Token"
-            payload = {}
-            if title is not None: payload["stream_title"] = title[:140]
-            if category_id: payload["category_id"] = int(category_id)
-            if not payload:
-                return False, "nichts zu ändern"
-            async with session.patch(
-                "https://api.kick.com/public/v1/channels",
-                json=payload, headers={"Authorization": f"Bearer {tok}"},
-                timeout=aiohttp.ClientTimeout(total=15)) as resp:
-                if 200 <= resp.status < 300:
-                    return True, None
-                # B164: App-Token (client_credentials) darf einen Kanal NICHT
-                # editieren — Kick verlangt dafür einen User-OAuth-Token mit
-                # Scope channel:write. Klartext statt nacktem „HTTP 401".
-                if resp.status in (401, 403):
-                    return False, ("Kick: App-Token darf Titel/Kategorie nicht setzen — "
-                                   "User-OAuth mit Scope channel:write nötig")
-                return False, f"HTTP {resp.status}"
-        except Exception as e:
-            return False, str(e)
-        finally:
-            if own:
-                await session.close()
+        return await _nc_kickapi.update_channel(title=title,
+                                                category_id=category_id,
+                                                session=session)
 
     async def search_category(self, query, session=None):
         """B142: Kick-Kategorie per Name suchen → (category_id, name) oder
-           (None, None). Nutzt GET /public/v1/categories?q=. Nimmt bevorzugt
-           einen exakten (case-insensitiven) Namenstreffer, sonst den ersten."""
-        q = (query or "").strip()
-        if not q:
-            return None, None
-        own = False
-        if session is None:
-            session = aiohttp.ClientSession(); own = True
-        try:
-            tok = await self._get_token(session)
-            if not tok:
-                return None, None
-            async with session.get(
-                "https://api.kick.com/public/v1/categories",
-                params={"q": q}, headers={"Authorization": f"Bearer {tok}"},
-                timeout=aiohttp.ClientTimeout(total=15)) as resp:
-                if not (200 <= resp.status < 300):
-                    return None, None
-                j = await resp.json(content_type=None)
-            data = j.get("data") if isinstance(j, dict) else j
-            data = data or []
-            if not data:
-                return None, None
-            exact = next((d for d in data
-                          if (d.get("name") or "").strip().lower() == q.lower()), None)
-            pick = exact or data[0]
-            return pick.get("id"), pick.get("name")
-        except Exception as e:
-            log.debug("Kick search_category: %s", e)
-            return None, None
-        finally:
-            if own:
-                await session.close()
+           (None, None)."""
+        return await _nc_kickapi.search_category(query, session=session)
 
     async def _classify(self, content):
         """Ollama-Klassifikation: gibt dict {toxic:0..1, question:bool} oder None."""
@@ -25550,7 +25347,14 @@ _nc_kickapi.configure(log=log,
                       time_mod=_time_mod,
                       broadcaster_id_env=KICK_BROADCASTER_ID,
                       client_id=KICK_CLIENT_ID,
-                      client_secret=KICK_CLIENT_SECRET)
+                      client_secret=KICK_CLIENT_SECRET,
+                      # v4.2-W12: der User-Token liegt im app_config-Speicher
+                      # (er wird zur Laufzeit erneuert), und die Follower-Zahl
+                      # haengt an einem ANDEREN Session-Pool als get_session —
+                      # deshalb beides als Rueckruf statt als zweite Lesestelle.
+                      cfg_get=_cfg_get,
+                      cfg_set=_cfg_set,
+                      follower_count=_kick_follower_count)
 
 # v4.1-W5: die Existenzpruefung laeuft ueber denselben Weg wie die
 # Live-Aufloesung — gepoolte Session, geprueter Pull-Proxy, gleiche Kopfzeilen.
