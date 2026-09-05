@@ -729,6 +729,11 @@ MAX_RECORD_SECS    = _env_int("MAX_RECORD_SECS", 10800)   # 3h cap by default
 # beiden Werte kommen aus der .env und duerfen im Modul keine Konstante sein
 # (CLAUDE.md — .env wird teils erst nach den ersten Importen geladen).
 import nc.videoteil as _nc_videoteil  # noqa: E402
+# v4.2-W13: die Buchfuehrung hinter der Sendeanzeige und die zwei KI-Fragen
+# der Chat-Moderation. Beide rechnen nur — ohne ffmpeg, ohne Prozess, ohne
+# Sprachmodell — und sind deshalb ohne laufenden Stream nachpruefbar.
+import nc.restreamgesundheit as _nc_rgesund  # noqa: E402
+import nc.modki as _nc_modki  # noqa: E402
 
 FFMPEG_THREADS_LIVE   = _env_int("FFMPEG_THREADS_LIVE", 3)    # Restream-Transcode: muss fluessig bleiben
 FFMPEG_THREADS_RELAY  = _env_int("FFMPEG_THREADS_RELAY", 2)   # Relay: leichter als der Transcode
@@ -13712,31 +13717,11 @@ class RestreamManager:
     @staticmethod
     def _marke_setzen(eintrag, h, p):
         """v4.0-W113/W115: Fortschrittsmarke fuer den Stillstands-Waechter.
-
-        Es zaehlt NICHT, dass ein progress-Block ankam — ffmpeg schreibt seine
-        Schnappschuesse auch dann weiter, wenn der Ausgang blockiert und
-        frame/total_size stehenbleiben. Beweis fuer eine lebende Sendung ist
-        nur der ZUWACHS an Bild oder Bytes."""
-        if eintrag is None:
-            return
+           v4.2-W13: die Rechnung liegt in nc/restreamgesundheit.py — sie ist
+           ohne laufenden Stream nachpruefbar, und genau daran hat es
+           gefehlt."""
         try:
-            w = eintrag.setdefault("watch", {"frame": -1, "bytes": -1,
-                                             "advanced": _time_mod.monotonic()})
-            adv = False
-            try:
-                _fr = int((h or {}).get("frame") or 0)
-                if _fr > w["frame"]:
-                    w["frame"], adv = _fr, True
-            except (TypeError, ValueError):
-                pass
-            try:
-                _by = int((p or {}).get("total_size"))
-                if _by > w["bytes"]:
-                    w["bytes"], adv = _by, True
-            except (TypeError, ValueError):
-                pass
-            if adv:
-                w["advanced"] = _time_mod.monotonic()
+            _nc_rgesund.marke_setzen(eintrag, h, p, _time_mod.monotonic())
         except Exception:
             pass
 
@@ -13856,14 +13841,11 @@ class RestreamManager:
         """
         try:
             info = self._eintrag(rid, pname)
-            if not info:
+            # v4.2-W13: die Markierung selbst liegt in nc/restreamgesundheit.
+            # Sie meldet True nur beim ERSTEN Mal — eine Blindheit, die im Log
+            # dauerfeuert, wird weggeblendet wie jede Wiederholung.
+            if not _nc_rgesund.blind_markieren(info, grund, _time_mod.time()):
                 return
-            h = info.setdefault("health", {})
-            if h.get("blind"):
-                return                      # schon gemeldet, nicht doppelt
-            h["blind"] = True
-            h["blind_reason"] = grund
-            h["blind_ts"] = _time_mod.time()
             _wer = f"#{rid}" + (f" [{pname}]" if pname else "")
             log.error("Restream %s: -progress-Leser beendet (%s). Die "
                       "Health-Werte frieren auf dem letzten Stand ein und "
@@ -14875,26 +14857,16 @@ class RestreamManager:
         Selbsttest —, aber an keiner einzigen geleert. Eine einmalige
         Ablehnung von YouTube stand damit bis zum Bot-Neustart im Panel,
         im Alarm und im Selbsttest, auch wenn das Ziel seit Stunden wieder
-        sendet. Bei der Fehlersuche jagt man dann einem Zustand von
-        vorgestern hinterher, und der Sentinel meldet Dauerfehlalarm.
+        sendet.
 
-        Zwei Wege raus, beide noetig:
-          * hier die Verfallszeit — auch wenn RESTREAM_VERIFY=0 ist und
-            niemand ein Ziel je wieder bestaetigt;
-          * tee_fehler_klaeren() aus der Verify-Schleife, sobald die
-            Plattform selbst sagt, dass sie wieder sendet — das ist der
-            schnelle Weg und braucht keinen Ablauf abzuwarten.
+        v4.2-W13: der Verfall liegt in nc/restreamgesundheit.py. Der zweite
+        Weg raus bleibt tee_fehler_klaeren() aus der Verify-Schleife — sobald
+        die Plattform selbst sagt, dass sie wieder sendet.
         """
         ttl = RESTREAM_TEE_FAIL_TTL_S if ttl_s is None else ttl_s
-        roh = getattr(self, "_tee_fail", None) or {}
-        if ttl <= 0:
-            return dict(roh)
-        jetzt = _time_mod.time()
-        frisch = {k: v for k, v in roh.items()
-                  if (jetzt - (v.get("ts") or 0)) < ttl}
-        if len(frisch) != len(roh):
-            # Verfallene Eintraege gleich entsorgen, nicht nur ausblenden —
-            # sonst waechst das Dict ueber Wochen mit toten Zielen voll.
+        frisch, verfallen = _nc_rgesund.frische_tee_fehler(
+            getattr(self, "_tee_fail", None), ttl, _time_mod.time())
+        if verfallen:
             self._tee_fail = frisch
         return dict(frisch)
 
@@ -15308,48 +15280,24 @@ class KickModerator:
         return await _nc_kickapi.search_category(query, session=session)
 
     async def _classify(self, content):
-        """Ollama-Klassifikation: gibt dict {toxic:0..1, question:bool} oder None."""
-        sys = ("Klassifiziere die Chat-Nachricht. Antworte NUR mit JSON: "
-               '{"toxic": <0.0-1.0>, "question": <true|false>}. '
-               "toxic=Wahrscheinlichkeit für Spam/Beleidigung/Hass.")
+        """Klassifikation: {toxic:0..1, question:bool} oder None.
+           v4.2-W13: Aufforderung und Auswertung liegen in nc/modki.py — der
+           Aufruf bleibt hier, weil ai_chat am Router und am Budget haengt."""
         text, err = await ai_chat(
-            [{"role": "system", "content": sys}, {"role": "user", "content": content[:500]}],
-            timeout=20)
+            _nc_modki.frage(_nc_modki.KLASSIFIKATION, content, 500), timeout=20)
         if err or not text:
             return None
-        try:
-            raw = re.sub(r"^```(?:json)?|```$", "", text.strip(), flags=re.MULTILINE).strip()
-            d = json.loads(raw)
-            return {"toxic": float(d.get("toxic", 0)), "question": bool(d.get("question"))}
-        except Exception:
-            return None
+        return _nc_modki.lies_klassifikation(text)
 
     async def _extract_badwords(self, content):
-        """Ollama: extrahiert aus einer als toxisch geflaggten Nachricht NUR echte
-           Schimpf-/Hasswörter + Sprache. -> [{"word","lang"}] (leer bei Unklarheit)."""
-        sys = ("Extrahiere aus der Chat-Nachricht NUR echte Schimpf-/Hasswörter "
-               "(Beleidigungen, Slurs) — KEINE harmlosen Wörter. Antworte NUR mit JSON-Array "
-               '[{"word":"<wort>","lang":"<ISO-639-1>"}]. Leeres Array [] wenn keines eindeutig.')
+        """Schimpf-/Hasswoerter aus einer als toxisch geflaggten Nachricht.
+           -> [{"word","lang"}], leer bei Unklarheit (nie None: ein unlesbares
+           Modellergebnis darf keine Sperrliste erweitern)."""
         text, err = await ai_chat(
-            [{"role": "system", "content": sys}, {"role": "user", "content": content[:300]}],
-            timeout=20)
+            _nc_modki.frage(_nc_modki.SCHIMPFWOERTER, content, 300), timeout=20)
         if err or not text:
             return []
-        try:
-            raw = re.sub(r"^```(?:json)?|```$", "", text.strip(), flags=re.MULTILINE).strip()
-            arr = json.loads(raw)
-            out = []
-            if isinstance(arr, list):
-                for it in arr[:8]:
-                    if not isinstance(it, dict):
-                        continue
-                    w = str(it.get("word", "")).strip()[:40]
-                    lg = str(it.get("lang", "")).strip()[:5].lower()
-                    if w:
-                        out.append({"word": w, "lang": lg or "?"})
-            return out
-        except Exception:
-            return []
+        return _nc_modki.lies_schimpfwoerter(text)
 
     async def _learn_from(self, content):
         """Lernt neue Schimpfwörter aus einer toxischen Nachricht: neue Kandidaten →

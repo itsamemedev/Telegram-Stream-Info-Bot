@@ -7096,7 +7096,22 @@ def test_v40_w113_restream_stability():
     # 5) Stillstands-Waechter: Marke, Task, Start, Abbau, Anzeige
     # v4.0-W115: Marke und Waechter bedienen jetzt BEIDE Pfade (Hauptprozess
     # und unabhaengige Relays). Die Anker wandern mit, der Vertrag bleibt.
-    assert 'w = eintrag.setdefault("watch"' in src, "keine Fortschrittsmarke"
+    # ANKER GEWANDERT (v4.2-W13, nicht der Vertrag): die Marke wird in
+    # nc/restreamgesundheit.py fortgeschrieben — sie ist reine Rechnung und
+    # damit ohne laufenden Stream nachpruefbar. Die Zusage bleibt dieselbe:
+    # gezaehlt wird der ZUWACHS an Bild oder Bytes, nicht der blosse Eingang
+    # eines progress-Blocks (W113). Geprueft wird sie hier ueber ihr
+    # VERHALTEN, nicht ueber ihren Wortlaut.
+    from nc import restreamgesundheit as _rg
+    _e = {}
+    assert _rg.marke_setzen(_e, {"frame": 10}, {"total_size": 100}, 1000.0) is True
+    assert _e["watch"]["advanced"] == 1000.0
+    # Derselbe Stand noch einmal: ffmpeg schreibt weiter, es bewegt sich aber
+    # nichts. Genau hier hing der alte Fehler.
+    assert _rg.marke_setzen(_e, {"frame": 10}, {"total_size": 100}, 2000.0) is False
+    assert _e["watch"]["advanced"] == 1000.0, "Stillstand gilt als Fortschritt"
+    assert _rg.marke_setzen(_e, {"frame": 11}, {"total_size": 100}, 3000.0) is True
+    assert _e["watch"]["advanced"] == 3000.0
     assert "self._marke_setzen(info, h, p)" in src, "_update_health setzt die Marke nicht"
     assert "async def _stall_watch(self, rid, proc, pname=None):" in src, "Waechter fehlt"
     _sw = src[src.index("    async def _stall_watch(self, rid, proc, pname=None):"):

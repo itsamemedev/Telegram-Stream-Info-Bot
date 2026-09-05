@@ -11,6 +11,52 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Geändert — was nur rechnet, rechnet jetzt außerhalb (v4.2 W13)
+
+Angefragt war „alles in einer großen Welle": die vier verbliebenen Brocken
+`_discord_run_once` (1730), `RestreamManager` (1418), `handle_recording_finished`
+(669) und der Rest von `KickModerator` (585).
+
+**Das geht so nicht, und das ist ein Befund, keine Ausrede.** Diese Blöcke lesen
+56 bis 88 Bot-Namen. Ein `nc/`-Modul mit 88 eingespritzten Abhängigkeiten wäre
+kein Modul, sondern derselbe Monolith in zwei Dateien — mit einer Schnittstelle
+obendrauf, die niemand überblickt. Die Messung „wenige Außenbezüge" trügt dabei
+zusätzlich: `_award_xp` hat sechs, bekommt aber ein Discord-`message`;
+`_clip_week_leader` liest `client.guilds`; die beiden Aufnahme-Wächter sind
+Closures über einen laufenden Prozess. Wenige Namen heißt nicht wenig Bindung.
+
+Herausgelöst wurde deshalb aus **allen vier** Blöcken das, was wirklich nur
+rechnet — 52 Zeilen weniger im Monolithen, aber zwei Module, die man ohne
+laufenden Stream und ohne Sprachmodell nachprüfen kann.
+
+**`nc/restreamgesundheit.py`** — Fortschrittsmarke, Blind-Markierung, Verfall
+der tee-Ziel-Fehler. Diese drei beantworten dieselbe Frage: misst eine Anzeige
+noch etwas, oder zeigt sie nur noch etwas? Das ist die gefährlichere Hälfte
+jedes Befunds — ein leeres Feld fällt auf, eine eingefrorene Bitrate nicht. In
+der Vorgeschichte stecken drei Fehler genau dieser Form (W113, W116, v4.1-W10),
+und alle drei waren Rechenfehler, keine ffmpeg-Fehler. Der Vertrag rechnet sie
+jetzt nach, statt ihre Quelltextzeilen wiederzuerkennen.
+
+**`nc/modki.py`** — die zwei KI-Fragen der Chat-Moderation: Aufforderung und
+Auswertung. Der Aufruf bleibt im Bot, weil `ai_chat` am Router, am Budget und
+an der Basen-Rotation hängt. Die Auswertung ist der Teil, der schiefgeht: ein
+Modell antwortet mal mit ```json, mal nackt, mal mit einem Satz davor. **Und
+`None` ist nicht `unauffällig`** — sonst gilt ein ausgefallenes Modell als
+Freispruch. Beim Lernen gilt das Gegenteil: ein unlesbares Ergebnis darf keine
+Sperrliste erweitern, im Zweifel wird nicht gelernt.
+
+**Der Vertrag hat dabei einen Fehler gefunden, den ich selbst eingebaut habe.**
+`blind_markieren` prüfte `if not info` — ein **leeres** Wörterbuch gilt damit
+als „kein Eintrag". Im Monolithen fiel das nie auf, weil `_eintrag()` dort
+immer ein gefülltes liefert; als allgemeine Funktion wäre es ein stiller
+Ausfall genau in dem Fall, für den die Markierung gedacht ist. Jetzt
+`is None`.
+
+Ein Anker in `test_restream.py` ist gewandert — und dabei **besser geworden**:
+er prüfte, dass die Zeile `w = eintrag.setdefault("watch"` im Monolithen steht.
+Jetzt prüft er, dass Stillstand nicht als Fortschritt zählt. Das war die ganze
+Zeit die eigentliche Zusage.
+
 ### Geändert — die Kick-REST-Aufrufe raus (v4.2 W12)
 
 `nc/kickapi.py` gab es schon — mit `slug()`, `broadcaster_id()` und dem
