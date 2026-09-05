@@ -11,6 +11,30 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Geändert — die Meme-Erkennung ist jetzt per Default AN (v4.2 W25)
+
+`MEME_CLIP_ENABLED` steht jetzt auf `1` statt `0` — der Betreiber hat das
+ausdrücklich so gewollt, nachdem W24 die Plattform-Grenzen (kein Kick-Clip,
+Twitch nur live, YouTube nur mit neuem Scope + Quota-Kosten) geklärt hatte.
+
+**Das allein macht noch keinen sichtbaren Clip.** Der Klassifikator selbst
+beobachtet jetzt automatisch — läuft nur über die kostenlose Basen-Rotation,
+verbraucht kein Claude-Budget, schluckt jeden eigenen Fehler. Ob daraus ein
+Clip *entsteht*, hängt an zwei weiteren, weiterhin standardmäßig
+ausgeschalteten Schaltern:
+
+* **`CLIP_ENABLED=0`** (Default unverändert) — ohne das schneidet
+  `clip_moment()` schlicht gar nichts, auch bei einem positiven
+  Meme-Urteil nicht. Der Klassifikator liefe leer.
+* **`CLIP_DISCORD_UPLOAD`** — steuert, ob ein entstandener Clip automatisch
+  nach Discord geht oder nur lokal liegen bleibt, zur manuellen Durchsicht.
+
+Wer den Meme-Agenten wirklich *wirken* sehen will, muss also zusätzlich
+`CLIP_ENABLED=1` setzen (und optional `CLIP_DISCORD_UPLOAD=1` für den
+Auto-Post) — bewusst getrennt gehalten, weil `CLIP_ENABLED` den *gesamten*
+bestehenden Highlight-Clip-Pfad ein-/ausschaltet (auch Gift- und
+Chat-Velocity-Trigger), nicht nur die neue KI-Erkennung.
+
 ### Hinzugefügt — KI-Meme-Erkennung für den Auto-Clipper (v4.2 W24)
 
 Erste Welle eines mehrteiligen Vorhabens: `nc/memeklip.py` liest ein
