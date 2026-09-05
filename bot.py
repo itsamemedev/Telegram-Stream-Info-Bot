@@ -723,11 +723,18 @@ MAX_RECORD_SECS    = _env_int("MAX_RECORD_SECS", 10800)   # 3h cap by default
 # Die Aufteilung folgt der Wichtigkeit: das SENDEBILD hat Vorrang, alles andere
 # tritt zurueck. Nachbearbeitung darf langsam sein — sie darf den Live-Stream
 # nicht ruckeln lassen.
+# v4.2-W10: das ffmpeg-Handwerk der Upload-Zerlegung liegt in nc/videoteil.py.
+# Der Import steht VOR den Konstanten, das configure() direkt dahinter: die
+# beiden Werte kommen aus der .env und duerfen im Modul keine Konstante sein
+# (CLAUDE.md — .env wird teils erst nach den ersten Importen geladen).
+import nc.videoteil as _nc_videoteil  # noqa: E402
+
 FFMPEG_THREADS_LIVE   = _env_int("FFMPEG_THREADS_LIVE", 3)    # Restream-Transcode: muss fluessig bleiben
 FFMPEG_THREADS_RELAY  = _env_int("FFMPEG_THREADS_RELAY", 2)   # Relay: leichter als der Transcode
 FFMPEG_THREADS_BG     = _env_int("FFMPEG_THREADS_BG", 1)      # Shrink/Clip/Split: darf dauern
 FFMPEG_THREADS_RECORD = _env_int("FFMPEG_THREADS_RECORD", 1)  # -c copy braucht praktisch nichts
 FFMPEG_NICE_BG        = _env_int("FFMPEG_NICE_BG", 12)        # 0=aus. Nachbearbeitung tritt zurueck
+_nc_videoteil.configure(threads_bg=FFMPEG_THREADS_BG, nice_bg=FFMPEG_NICE_BG)
 FFMPEG_NICE_RECORD    = _env_int("FFMPEG_NICE_RECORD", 5)     # Aufnahme: wichtig, aber nach dem Sendebild
 
 
@@ -8412,212 +8419,9 @@ async def split_and_send_video(chat_id, filepath, bot_app, username,
         except TelegramError as e:
             return False, f"Telegram: {e}"
 
-    # F34: Telegram-Bot-Hard-Limit = 50 MB pro File. Wir zielen auf 45 MB
-    # damit Multipart-Overhead + Container-Metadaten reinpassen. Die alte
-    # Logik benutzte CHUNK_SIZE_MB*60 als segment_time → das waren bei
-    # CHUNK_SIZE_MB=50 ganze 50 MINUTEN pro Segment, was bei normalen
-    # TikTok-Bitraten 300-700 MB pro Part ergab → immer 413.
-    TELEGRAM_BOT_HARD_MB = 50
-    TARGET_PART_MB = 45            # Reserve für Overhead
-
-    async def _ffprobe_duration(path):
-        """Holt die exakte Dauer in Sekunden via ffprobe. Bei Fehler: None.
-           F42-Bug-Hunt-Fix B4: nach kill auch wait() — sonst Zombie."""
-        p = None
-        try:
-            p = await asyncio.create_subprocess_exec(
-                "ffprobe", "-v", "error", "-show_entries", "format=duration",
-                "-of", "csv=p=0", path,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.DEVNULL)
-            try:
-                out, _ = await asyncio.wait_for(p.communicate(), timeout=15)
-            except asyncio.TimeoutError:
-                try: p.kill()
-                except Exception: pass
-                try: await asyncio.wait_for(p.wait(), timeout=2)
-                except Exception: pass
-                return None
-            if p.returncode != 0: return None
-            return float((out or b"").strip() or 0) or None
-        except Exception:
-            if p and p.returncode is None:
-                try: p.kill()
-                except Exception: pass
-                try: await asyncio.wait_for(p.wait(), timeout=2)
-                except Exception: pass
-            return None
-
-    async def _split_to_parts(path, prefix, target_mb):
-        """Splittet via ffmpeg-segment-muxer. Bitrate-basiert: wir bestimmen
-           die echte Bitrate über size/duration und wählen segment_time so,
-           dass jeder Part ≤ target_mb wird (mit etwas Reserve).
-           Wenn ffprobe scheitert: konservativer Fallback (annahme 2 Mbps).
-
-           B52: ffprobe-Verifikation jedes Parts NACH dem Split — fängt
-           ungültige Outputs (zu kleine Header-only-Files, fehlende Streams)
-           bevor wir versuchen sie zu Telegram hochzuladen. Ungültige Parts
-           werden gelöscht und nicht zurückgegeben."""
-        size_mb = os.path.getsize(path) / 1024 / 1024
-        duration = await _ffprobe_duration(path)
-        if duration and duration > 0:
-            avg_mb_per_sec = size_mb / duration
-            # Wieviele Sekunden ergeben target_mb? (mit 10% Sicherheitsreserve)
-            seg_time = max(15, int((target_mb * 0.9) / max(avg_mb_per_sec, 0.001)))
-            log.info(f"split: duration={duration:.0f}s, bitrate≈{avg_mb_per_sec*8:.1f}Mbps, segment_time={seg_time}s")
-        else:
-            # Fallback: 2 Mbps angenommen → 1 MB / 4s → target_mb braucht ~ target*4s
-            seg_time = max(60, target_mb * 4)
-            log.warning(f"split: ffprobe-Duration fehlgeschlagen, fallback segment_time={seg_time}s")
-
-        cmd = _ff_cmd(["ffmpeg", "-y", "-i", path, "-c", "copy", "-map", "0",
-               "-f", "segment", "-segment_time", str(seg_time),
-               "-segment_format", "mp4", "-reset_timestamps", "1",
-               "-movflags", "+faststart",
-               f"{prefix}_%03d.mp4"], threads=FFMPEG_THREADS_BG, nice=FFMPEG_NICE_BG)
-        p = await asyncio.create_subprocess_exec(
-            *cmd, stdout=asyncio.subprocess.DEVNULL,
-            stderr=asyncio.subprocess.PIPE)
-        # BUG-FIX: communicate() war ohne Timeout → bei hängendem ffmpeg (z.B.
-        # korrupter Input mit read-hang) blockiert der Event-Loop unbegrenzt und
-        # alle anderen Aufnahmen werden eingefroren. Timeout = seg_time * 4 +
-        # 120s Reserve reicht für jeden realistischen Split.
-        split_timeout = max(300, int(seg_time * 4) + 120)
-        try:
-            _, stderr = await asyncio.wait_for(p.communicate(), timeout=split_timeout)
-        except asyncio.TimeoutError:
-            try: p.kill()
-            except Exception: pass
-            try: await asyncio.wait_for(p.wait(), timeout=5)
-            except Exception: pass
-            return None, f"ffmpeg split timeout nach {split_timeout}s (segment_time={seg_time})"
-        if p.returncode != 0:
-            # B44: stderr-Tail nehmen (echte Fehlermeldung steht am Ende),
-            # plus cmd-Args für Reproducibility. Banner-Lines werden weggetrimmt.
-            err_tail = _ffmpeg_stderr_tail(stderr.decode(errors='ignore'), max_len=800)
-            cmd_for_log = f"ffmpeg -segment_time {seg_time} → {prefix}_%03d.mp4"
-            return None, f"[rc={p.returncode}] {cmd_for_log}\n{err_tail}"
-        # B52: Verifiziere jeden Part. Ungültige Parts (zu klein, kein Video-
-        # Stream) löschen wir und melden. So enden keine kaputten Parts bei Telegram.
-        candidate_parts = sorted(glob.glob(f"{prefix}_*.mp4"))
-        valid_parts = []
-        for part in candidate_parts:
-            try:
-                part_size = os.path.getsize(part)
-                if part_size < 10_240:    # < 10KB = leerer/header-only
-                    log.warning(f"split: Part {os.path.basename(part)} ist nur "
-                                f"{part_size}B — gelöscht")
-                    try: os.remove(part)
-                    except OSError: pass
-                    continue
-                # ffprobe-Schnellcheck: hat Stream(s)?
-                part_dur = await _ffprobe_duration(part)
-                if part_dur is None or part_dur <= 0:
-                    log.warning(f"split: Part {os.path.basename(part)} hat keine "
-                                f"erkennbare Duration — vermutlich kaputt, gelöscht")
-                    try: os.remove(part)
-                    except OSError: pass
-                    continue
-                valid_parts.append(part)
-            except Exception as e:
-                log.warning(f"split: Part {os.path.basename(part)}: {e}")
-        if not valid_parts:
-            return None, "Alle Parts vom Split waren ungültig (ffprobe-failed)"
-        if len(valid_parts) < len(candidate_parts):
-            dropped = len(candidate_parts) - len(valid_parts)
-            log.warning(f"split: {dropped}/{len(candidate_parts)} Parts verworfen "
-                        f"wegen Validierungsfehler — {len(valid_parts)} verbleiben")
-        return valid_parts, None
-
-    async def _reencode_segment(path, prefix, target_mb):
-        """B70-Fix: Re-Encode-Fallback wenn Copy-Split die Parts nicht klein genug
-           bekommt. Ursache: der Segment-Muxer mit -c copy kann NUR an vorhandenen
-           Keyframes schneiden. Hat ein TikTok-Stream sehr wenige Keyframes (langer
-           GOP), entsteht ein einziger riesiger Part der durch erneutes Halbieren
-           nicht teilbar ist. Hier re-encoden wir mit ERZWUNGENEN Keyframes an den
-           Segmentgrenzen und einer gedeckelten Bitrate, sodass jeder Part ≤ target_mb
-           wird. Langsamer als Copy, aber zuverlässig — und nur als letzter Ausweg."""
-        duration = await _ffprobe_duration(path)
-        size_mb = os.path.getsize(path) / 1024 / 1024
-        if not duration or duration <= 0:
-            duration = max(30.0, size_mb)        # grobe Annahme
-        orig_mbps = (size_mb * 8) / duration
-        # Bitrate moderat deckeln (max 4 Mbps) → begrenzt Part-Größe, hält Qualität
-        vbps = max(0.4, min(orig_mbps, 4.0))     # 0.4–4 Mbps
-        total_mbps = vbps + 0.128                # + AAC 128k
-        # Segmentlänge so dass bitrate*seg/8 ≤ target_mb (8% Reserve)
-        seg_time = max(15, int((target_mb * 8 * 0.92) / max(total_mbps, 0.3)))
-        vbr = f"{int(vbps * 1000)}k"
-        # V37-CPU: Nachbearbeitung tritt zurueck — sie darf dauern, aber NIE
-        # den laufenden Restream ruckeln lassen.
-        cmd = _ff_cmd(["ffmpeg", "-y",
-               "-fflags", "+igndts",   # BUG-FIX: toleriert Non-monotonic DTS (pts has no value)
-               "-i", path,
-               "-c:v", "libx264", "-preset", "veryfast", "-b:v", vbr,
-               "-maxrate", f"{int(vbps * 1000 * 1.2)}k",
-               "-bufsize", f"{int(vbps * 1000 * 2)}k",
-               "-force_key_frames", f"expr:gte(t,n_forced*{seg_time})",
-               "-c:a", "aac", "-b:a", "128k",
-               "-f", "segment", "-segment_time", str(seg_time),
-               "-segment_format", "mp4", "-reset_timestamps", "1",
-               "-movflags", "+faststart", f"{prefix}_re_%03d.mp4"],
-               threads=FFMPEG_THREADS_BG, nice=FFMPEG_NICE_BG)
-        log.info(f"re-encode split: dur={duration:.0f}s, vbr={vbr}, seg={seg_time}s "
-                 f"(orig≈{orig_mbps:.1f}Mbps)")
-        try:
-            p = await asyncio.create_subprocess_exec(
-                *cmd, stdout=asyncio.subprocess.DEVNULL,
-                stderr=asyncio.subprocess.PIPE)
-            timeout = max(600, int(duration * 3))    # großzügig, re-encode ist langsamer
-            _, stderr = await asyncio.wait_for(p.communicate(), timeout=timeout)
-        except asyncio.TimeoutError:
-            try: p.kill()
-            except Exception: pass
-            try: await asyncio.wait_for(p.wait(), timeout=3)
-            except Exception: pass
-            return None, "re-encode timeout"
-        except Exception as e:
-            return None, f"re-encode exception: {e}"
-        if p.returncode != 0:
-            return None, _ffmpeg_stderr_tail(stderr.decode(errors='ignore'), 600)
-        # Gleiche Validierung wie beim Copy-Split
-        candidate = sorted(glob.glob(f"{prefix}_re_*.mp4"))
-        valid = []
-        for part in candidate:
-            try:
-                if os.path.getsize(part) < 10_240:
-                    try: os.remove(part)
-                    except OSError: pass
-                    continue
-                if (await _ffprobe_duration(part) or 0) <= 0:
-                    try: os.remove(part)
-                    except OSError: pass
-                    continue
-                valid.append(part)
-            except Exception:
-                pass
-        if not valid:
-            return None, "re-encode: keine gültigen Parts"
-        return valid, None
-
-    # B53: Pre-flight Disk-Check.
-    # Bevor wir einen Split starten der die DATEIGRÖSSE als temporäre Parts
-    # noch mal auf der Disk braucht, verifizieren dass auch wirklich Platz da
-    # ist. Sonst crasht ffmpeg mit "No space left on device" mitten im Split.
-    def _check_disk_space_for_split(filepath, multiplier=1.2):
-        """Returns (ok, free_mb_or_msg). multiplier=1.2 → wir brauchen 20% mehr
-           als die Originaldatei (Parts + ein bisschen Reserve)."""
-        try:
-            file_mb = os.path.getsize(filepath) / 1024 / 1024
-            stat = shutil.disk_usage(os.path.dirname(filepath) or ".")
-            free_mb = stat.free / 1024 / 1024
-            needed_mb = file_mb * multiplier
-            if free_mb < needed_mb:
-                return False, (f"nur {free_mb:.0f} MB frei, brauche ~{needed_mb:.0f} MB "
-                               f"(Datei: {file_mb:.0f} MB)")
-            return True, free_mb
-        except Exception as e:
-            return True, f"disk-check failed: {e}"   # bei Unsicherheit weitermachen
+    # v4.2-W10: das ffmpeg-Handwerk liegt in nc/videoteil.py — messen,
+    # teilen, notfalls neu kodieren, kaputte Container reparieren. Hier bleibt
+    # nur, was Telegram kennt: Versand, Bildunterschrift, Fehlermeldung.
 
     # BUG-FIX: B47-Repair erzeugt eine .repaired.mp4 (~Originalgröße) und macht
     # sie zur neuen Split-Quelle. Vorher wurde sie nach erfolgreichem Repair NIE
@@ -8630,7 +8434,7 @@ async def split_and_send_video(chat_id, filepath, bot_app, username,
         log.info(f"Upload @{username}: {filepath} ({size_mb:.1f} MB) → chat {chat_id}")
 
         # Single-File-Pfad nur wenn die Datei selbst unter Telegram-Hard-Limit liegt
-        if size_mb <= TARGET_PART_MB:
+        if size_mb <= _nc_videoteil.ZIEL_TEIL_MB:
             with open(filepath, "rb") as fh:                          # C5
                 ok, err = await _send_one(
                     fh, _video_caption(username, started_at, ended_at, size_mb))
@@ -8652,7 +8456,7 @@ async def split_and_send_video(chat_id, filepath, bot_app, username,
         prefix = f"{filepath}_part"
         # B53: Pre-flight Disk-Check — sonst crasht ffmpeg mitten im Split mit
         # "No space left on device" und wir haben verstreute Half-Parts.
-        disk_ok, disk_info = _check_disk_space_for_split(filepath)
+        disk_ok, disk_info = _nc_videoteil.platz_reicht(filepath)
         if not disk_ok:
             log.error(f"split @{username} abgebrochen: {disk_info}")
             try:
@@ -8664,46 +8468,32 @@ async def split_and_send_video(chat_id, filepath, bot_app, username,
                     parse_mode=ParseMode.HTML, disable_notification=True)
             except Exception: pass
             return
-        part_files, split_err = await _split_to_parts(filepath, prefix, TARGET_PART_MB)
+        part_files, split_err = await _nc_videoteil.kopier_teilen(
+            filepath, prefix, _nc_videoteil.ZIEL_TEIL_MB)
         if part_files is None:
             # B47: "moov atom not found" / "Invalid data found when processing input"
             # → die Quelle-Datei ist korrupt (ffmpeg wurde mit SIGKILL beendet
             # bevor er das moov-atom schreiben konnte, z.B. durch unseren Stall-
             # Watchdog). Repair-Versuch: ffmpeg mit -err_detect ignore_err lesen
             # und neu muxen. Wenn das klappt, retry mit der reparierten Datei.
-            is_moov_err = ("moov atom not found" in (split_err or "").lower()
-                           or "invalid data found" in (split_err or "").lower())
+            is_moov_err = _nc_videoteil.ist_kaputter_container(split_err)
             if is_moov_err:
                 log.warning(f"split @{username}: moov-atom-Fehler erkannt — versuche MP4-Repair")
                 repaired = filepath + ".repaired.mp4"
-                try:
-                    p = await asyncio.create_subprocess_exec(
-                        "ffmpeg", "-y", "-err_detect", "ignore_err",
-                        "-i", filepath, "-c", "copy", "-movflags", "+faststart",
-                        repaired,
-                        stdout=asyncio.subprocess.DEVNULL,
-                        stderr=asyncio.subprocess.PIPE)
-                    _, rep_stderr = await asyncio.wait_for(p.communicate(), timeout=300)
-                    if p.returncode == 0 and os.path.exists(repaired) and os.path.getsize(repaired) > 0:
-                        rep_size_mb = os.path.getsize(repaired) / 1024 / 1024
-                        log.warning(f"B47 Repair OK: {rep_size_mb:.1f} MB nach Repair "
-                                    f"(Original war {size_mb:.1f} MB) — retry split")
-                        # B47: Retry split mit der reparierten Datei.
-                        _b47_repaired = repaired   # Temp im finally aufräumen
-                        filepath = repaired
-                        # ffprobe-Cache invalidieren: neuer Split mit repariertem File
-                        part_files, split_err = await _split_to_parts(filepath, prefix, TARGET_PART_MB)
-                    else:
-                        # Repair selbst gescheitert
-                        if os.path.exists(repaired):
-                            try: os.remove(repaired)
-                            except OSError: pass
-                        log.error(f"B47 Repair fehlgeschlagen für @{username}: "
-                                  f"{_ffmpeg_stderr_tail(rep_stderr.decode(errors='ignore'), 400) if rep_stderr else 'no stderr'}")
-                except asyncio.TimeoutError:
-                    log.error(f"B47 Repair timed out für @{username}")
-                except Exception as e:
-                    log.error(f"B47 Repair exception @{username}: {e}")
+                rep_ok, rep_err = await _nc_videoteil.reparieren(filepath, repaired)
+                if rep_ok:
+                    rep_size_mb = os.path.getsize(repaired) / 1024 / 1024
+                    log.warning(f"B47 Repair OK: {rep_size_mb:.1f} MB nach Repair "
+                                f"(Original war {size_mb:.1f} MB) — retry split")
+                    # Temp im finally aufraeumen; die reparierte Datei wird zur
+                    # neuen Split-Quelle.
+                    _b47_repaired = repaired
+                    filepath = repaired
+                    part_files, split_err = await _nc_videoteil.kopier_teilen(
+                        filepath, prefix, _nc_videoteil.ZIEL_TEIL_MB)
+                else:
+                    log.error("B47 Repair fehlgeschlagen für @%s: %s",
+                              username, rep_err or "?")
         if part_files is None:
             log.error(f"ffmpeg split failed: {split_err}")
             for orphan in glob.glob(f"{prefix}_*.mp4"):
@@ -8730,21 +8520,20 @@ async def split_and_send_video(chat_id, filepath, bot_app, username,
         # bis target_mb < 5 (dann gibt's keine sinnvolle weitere Halbierung).
         max_resplits = 4   # max 4 Halbierungen: 22, 11, 5, 2 MB
         attempt = 0
-        cur_target = TARGET_PART_MB
+        cur_target = _nc_videoteil.ZIEL_TEIL_MB
         while attempt < max_resplits:
-            oversized = [p for p in part_files
-                         if os.path.getsize(p) / 1024 / 1024 > TELEGRAM_BOT_HARD_MB]
+            oversized = _nc_videoteil.zu_gross(part_files)
             if not oversized:
                 break
             attempt += 1
             cur_target = max(5, cur_target // 2)
-            log.warning(f"split: {len(oversized)} part(s) > {TELEGRAM_BOT_HARD_MB} MB "
+            log.warning(f"split: {len(oversized)} part(s) > "
+                        f"{_nc_videoteil.TELEGRAM_HARD_MB} MB "
                         f"— re-split #{attempt} mit target={cur_target} MB")
             # Reste löschen + neuer Versuch
-            for p in part_files:
-                try: os.remove(p)
-                except OSError: pass
-            part_files, split_err = await _split_to_parts(filepath, prefix, cur_target)
+            _nc_videoteil.wegwerfen(part_files)
+            part_files, split_err = await _nc_videoteil.kopier_teilen(
+                filepath, prefix, cur_target)
             if part_files is None:
                 log.error(f"re-split #{attempt} failed: {split_err}")
                 # F42-Bug-Hunt-Fix B3: User-Notif beim Re-Split-Fail. Vorher
@@ -8764,15 +8553,12 @@ async def split_and_send_video(chat_id, filepath, bot_app, username,
         # Keyframes → Segment-Muxer kann nicht zwischen ihnen schneiden, Symptom:
         # "part 1/1 bleibt 68 MB"), greift jetzt ein Re-Encode-Fallback mit
         # erzwungenen Keyframes. Vorher wurde der Part einfach übersprungen.
-        still_oversized = [p for p in part_files
-                           if os.path.getsize(p) / 1024 / 1024 > TELEGRAM_BOT_HARD_MB]
+        still_oversized = _nc_videoteil.zu_gross(part_files)
         if still_oversized:
             log.warning(f"split: {len(still_oversized)} part(s) weiterhin > "
-                        f"{TELEGRAM_BOT_HARD_MB} MB nach Copy-Re-Splits — "
+                        f"{_nc_videoteil.TELEGRAM_HARD_MB} MB nach Copy-Re-Splits — "
                         f"Re-Encode-Fallback (erzwungene Keyframes)")
-            for p in part_files:
-                try: os.remove(p)
-                except OSError: pass
+            _nc_videoteil.wegwerfen(part_files)
 
             # BUG-FIX (B70+): Vor dem Re-Encode erst einen sauberen Re-Mux-Schritt
             # durchführen. Streams mit "pts has no value" / "Non-monotonic DTS"
@@ -8781,30 +8567,17 @@ async def split_and_send_video(chat_id, filepath, bot_app, username,
             # kaputten Timestamps toleriert. Ein vorheriger Re-Mux mit
             # -fflags +genpts erzeugt saubere Timestamps → Re-Encode klappt dann.
             remux_path = filepath + ".remux.mp4"
-            _remux_ok = False
-            try:
-                p_rm = await asyncio.create_subprocess_exec(
-                    "ffmpeg", "-y", "-fflags", "+genpts+igndts",
-                    "-i", filepath,
-                    "-c", "copy", "-movflags", "+faststart",
-                    remux_path,
-                    stdout=asyncio.subprocess.DEVNULL,
-                    stderr=asyncio.subprocess.PIPE)
-                _, _rm_err = await asyncio.wait_for(p_rm.communicate(), timeout=300)
-                if (p_rm.returncode == 0 and os.path.exists(remux_path)
-                        and os.path.getsize(remux_path) > 0):
-                    _remux_ok = True
-                    log.info("split: Re-Mux (genpts) OK → Re-Encode auf remuxed file")
-                else:
-                    log.warning(f"split: Re-Mux fehlgeschlagen (rc={p_rm.returncode})"
-                                f" — Re-Encode direkt auf Original")
-                    try: os.remove(remux_path)
-                    except OSError: pass
-            except Exception as _rme:
-                log.warning(f"split: Re-Mux exception: {_rme} — Re-Encode direkt")
+            _remux_ok, _rm_err = await _nc_videoteil.zeitstempel_richten(
+                filepath, remux_path)
+            if _remux_ok:
+                log.info("split: Re-Mux (genpts) OK → Re-Encode auf remuxed file")
+            else:
+                log.warning("split: Re-Mux fehlgeschlagen (%s) — Re-Encode direkt "
+                            "auf Original", _rm_err or "?")
 
             _encode_src = remux_path if _remux_ok else filepath
-            re_parts, re_err = await _reencode_segment(_encode_src, prefix, TARGET_PART_MB)
+            re_parts, re_err = await _nc_videoteil.neu_kodieren(
+                _encode_src, prefix, _nc_videoteil.ZIEL_TEIL_MB)
             if _remux_ok:
                 try: os.remove(remux_path)
                 except OSError: pass
@@ -8838,8 +8611,9 @@ async def split_and_send_video(chat_id, filepath, bot_app, username,
                 part_size_mb = os.path.getsize(part) / 1024 / 1024
                 # Letzter Safety-Check vor Upload: wenn Part immer noch > Hard-Limit,
                 # gar nicht erst versuchen (würde 413 zurückkommen)
-                if part_size_mb > TELEGRAM_BOT_HARD_MB:
-                    log.error(f"part {i}/{total} bleibt {part_size_mb:.1f} MB > {TELEGRAM_BOT_HARD_MB} MB hard limit — skip")
+                if part_size_mb > _nc_videoteil.TELEGRAM_HARD_MB:
+                    log.error(f"part {i}/{total} bleibt {part_size_mb:.1f} MB > "
+                              f"{_nc_videoteil.TELEGRAM_HARD_MB} MB hard limit — skip")
                     try:
                         await _safe_send(
                             bot_app.bot, chat_id,

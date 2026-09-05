@@ -4199,6 +4199,200 @@ def _test_v42_w9_oauth_ueberlebt_neustart_und_stoerung():
        "keinen Neustart")
 
 
+def _test_v42_w10_videoteil_aus_dem_monolithen():
+    """v4.2-W10: das ffmpeg-Handwerk der Upload-Zerlegung liegt in nc/."""
+    import asyncio as _asyncio
+    import ast as _ast
+
+    import nc.ffdiag as _ffdiag
+    import nc.videoteil as _vt
+
+    # ── (1) DIE VERSCHATTETE ZWEITKOPIE IST WEG. bot.py importierte
+    # nc.ffdiag.ffprobe_duration als _ffprobe_duration UND definierte in
+    # split_and_send_video eine verschachtelte Funktion desselben Namens, die
+    # den Import verschattete. Zwei gleichnamige Funktionen mit verschiedenem
+    # Verhalten in einer Datei — beim naechsten Aufraeumen behaelt jemand die
+    # falsche.
+    b = open("bot.py", encoding="utf-8").read()
+    baum = _ast.parse(b)
+    fn = None
+    for n in baum.body:
+        if getattr(n, "name", "") == "split_and_send_video":
+            fn = n
+            break
+    assert fn is not None, "split_and_send_video ist verschwunden"
+    verschachtelt = {x.name for x in fn.body
+                     if isinstance(x, (_ast.FunctionDef, _ast.AsyncFunctionDef))}
+    for weg in ("_ffprobe_duration", "_split_to_parts", "_reencode_segment",
+                "_check_disk_space_for_split"):
+        assert weg not in verschachtelt, "%s steht wieder im Monolithen" % weg
+    assert "_send_one" in verschachtelt, \
+        "_send_one gehoert NICHT nach nc/ — es kennt Telegram"
+
+    # ── (2) SYNC UND ASYNC SIND ZWEI WERKZEUGE, KEINE DUBLETTE.
+    # nc.ffdiag.ffprobe_duration ist synchron und richtig so fuer Aufrufer
+    # ausserhalb des Event-Loops. nc.videoteil.dauer ist asynchron. Sie
+    # zusammenzulegen ist keine Aufraeumarbeit: ein subprocess.run mit 15 s
+    # Timeout auf dem Loop friert jede andere Aufnahme, den Restream und das
+    # Dashboard fuer 15 Sekunden ein.
+    assert not _asyncio.iscoroutinefunction(_ffdiag.ffprobe_duration), \
+        "nc.ffdiag.ffprobe_duration ist asynchron geworden"
+    assert _asyncio.iscoroutinefunction(_vt.dauer), \
+        "nc.videoteil.dauer ist synchron geworden — das blockiert den Loop"
+
+    # ── (3) DIE BITRATEN-RECHNUNG. Der Fehler, der das alles ausgeloest hat:
+    # die Vorfassung nahm CHUNK_SIZE_MB*60 als segment_time — bei 50 waren das
+    # 50 MINUTEN je Segment und damit 300-700 MB je Teil, also immer ein 413.
+    # Gerechnet wird jetzt aus der ECHTEN Bitrate. Geprueft wird die
+    # Kommandozeile, weil genau dort der Rechenfehler landete.
+    class _Proc:
+        def __init__(self, out=b"", rc=0, haenge=False):
+            self._out, self.returncode, self._haenge = out, rc, haenge
+            self.getoetet = False
+
+        async def communicate(self):
+            if self._haenge:
+                await _asyncio.sleep(3600)
+            return self._out, b""
+
+        def kill(self):
+            self.getoetet = True
+
+        async def wait(self):
+            self.returncode = -9
+            return -9
+
+    gerufen = []
+
+    def _falle(*proc_args, **kw):
+        gerufen.append(list(proc_args))
+
+        async def _mach():
+            if proc_args[0] == "ffprobe":
+                return _Proc(out=_falle.dauer)
+            return _Proc(out=b"")
+        return _mach()
+
+    _falle.dauer = b"600\n"          # 600 s Laufzeit
+
+    echt = _asyncio.create_subprocess_exec
+    tmp = tempfile.mkdtemp()
+    quelle = os.path.join(tmp, "aufnahme.mp4")
+    with open(quelle, "wb") as f:
+        f.write(b"\0" * (300 * 1024 * 1024))    # 300 MB (sparse)
+    try:
+        _asyncio.create_subprocess_exec = _falle
+        _vt.configure(threads_bg=1, nice_bg=12)
+        _asyncio.run(_vt.kopier_teilen(quelle, os.path.join(tmp, "t"), 45))
+    finally:
+        _asyncio.create_subprocess_exec = echt
+
+    # ff_cmd stellt "nice -n N" voran und schiebt "-threads N" ein — der
+    # Aufruf beginnt deshalb NICHT mit "ffmpeg".
+    ff = [g for g in gerufen if "ffmpeg" in g]
+    assert ff, "kein ffmpeg-Aufruf: %r" % gerufen
+    argv = ff[0]
+    assert argv[0] == "nice", "der Hintergrund-Split laeuft ohne nice: %r" % argv[:3]
+    seg = int(argv[argv.index("-segment_time") + 1])
+    # 300 MB / 600 s = 0,5 MB/s. 45 MB mit 10 % Reserve -> 40,5 / 0,5 = 81 s.
+    assert seg == 81, "segment_time=%d statt 81 — die Bitraten-Rechnung stimmt nicht" % seg
+    assert "-c" in argv and argv[argv.index("-c") + 1] == "copy", \
+        "der Kopier-Split kodiert neu"
+
+    # Ohne ffprobe-Dauer: konservativer Rueckfall, NICHT die Bitratenrechnung
+    # mit einer geratenen Dauer.
+    gerufen.clear()
+    _falle.dauer = b""
+    try:
+        _asyncio.create_subprocess_exec = _falle
+        _asyncio.run(_vt.kopier_teilen(quelle, os.path.join(tmp, "t"), 45))
+    finally:
+        _asyncio.create_subprocess_exec = echt
+    argv = [g for g in gerufen if "ffmpeg" in g][0]
+    seg = int(argv[argv.index("-segment_time") + 1])
+    assert seg == 180, "Rueckfall segment_time=%d statt 180 (45*4)" % seg
+
+    # ── (4) ZEITDECKEL UND KEIN ZOMBIE. Ohne Deckel blockiert ein haengendes
+    # ffmpeg den Event-Loop unbegrenzt. Und kill() ALLEIN reicht nicht: ohne
+    # wait() bleibt ein Zombie stehen, und nach ein paar hundert Aufnahmen ist
+    # die Prozesstabelle voll (F42-B4).
+    haenger = _Proc(haenge=True)
+
+    def _falle2(*a, **kw):
+        async def _mach():
+            return haenger
+        return _mach()
+
+    try:
+        _asyncio.create_subprocess_exec = _falle2
+        # Deckel kuenstlich klein: sonst wartet der Vertrag 300 Sekunden.
+        echt_wait = _asyncio.wait_for
+
+        async def _kurz(aw, timeout=None):
+            return await echt_wait(aw, timeout=min(timeout or 1, 0.3))
+        _asyncio.wait_for = _kurz
+        try:
+            ergebnis = _asyncio.run(_vt.dauer(quelle))
+        finally:
+            _asyncio.wait_for = echt_wait
+    finally:
+        _asyncio.create_subprocess_exec = echt
+    assert ergebnis is None, "ein haengendes ffprobe liefert einen Wert"
+    assert haenger.getoetet, "der haengende Prozess wurde nicht getoetet"
+    assert haenger.returncode == -9, "kill ohne wait — der Zombie bleibt stehen"
+
+    # ── (5) DIE PLATZPROBE. Vor einem Split muss noch einmal die Dateigroesse
+    # frei sein; sonst stirbt ffmpeg mittendrin und hinterlaesst halbe Teile.
+    # ABER: scheitert die Probe selbst, wird weitergemacht — eine kaputte
+    # Messung darf keinen Upload verhindern, der funktioniert haette.
+    gemessen = {}
+
+    class _Erg:
+        def __init__(self, free):
+            self.free = free
+    echt_du = _vt.shutil.disk_usage
+    try:
+        _vt.shutil.disk_usage = lambda pfad: (gemessen.update(pfad=pfad)
+                                              or _Erg(1024 * 1024))
+        ok_, info = _vt.platz_reicht(quelle)
+    finally:
+        _vt.shutil.disk_usage = echt_du
+    assert ok_ is False, "300 MB Datei bei 1 MB frei gilt als machbar"
+    assert gemessen["pfad"] == tmp, \
+        "gemessen wurde %r statt des Verzeichnisses der Datei" % gemessen["pfad"]
+    try:
+        _vt.shutil.disk_usage = lambda pfad: (_ for _ in ()).throw(OSError("kaputt"))
+        ok_, info = _vt.platz_reicht(quelle)
+    finally:
+        _vt.shutil.disk_usage = echt_du
+    assert ok_ is True, "eine gescheiterte Platzprobe blockiert den Upload"
+
+    # ── (6) DAS TELEGRAM-LIMIT. 50 MB hart, 45 MB Ziel — die Reserve ist fuer
+    # Multipart-Overhead und Container-Metadaten, nicht Zierde.
+    assert _vt.TELEGRAM_HARD_MB == 50 and _vt.ZIEL_TEIL_MB == 45
+    klein = os.path.join(tmp, "klein.mp4")
+    gross = os.path.join(tmp, "gross.mp4")
+    with open(klein, "wb") as f:
+        f.write(b"\0" * (10 * 1024 * 1024))
+    with open(gross, "wb") as f:
+        f.write(b"\0" * (60 * 1024 * 1024))
+    assert _vt.zu_gross([klein, gross]) == [gross]
+    _vt.wegwerfen([klein, gross])
+    assert not os.path.exists(klein) and not os.path.exists(gross)
+    _vt.wegwerfen([klein])          # zweimal wegwerfen darf nicht scheitern
+
+    # ── (7) B47: nur ein KAPUTTER CONTAINER wird repariert. Wer hier zu breit
+    # erkennt, startet nach jedem beliebigen ffmpeg-Fehler einen Repair-Lauf
+    # ueber die volle Dateigroesse.
+    assert _vt.ist_kaputter_container("moov atom not found")
+    assert _vt.ist_kaputter_container("Invalid data found when processing input")
+    assert not _vt.ist_kaputter_container("No space left on device")
+    assert not _vt.ist_kaputter_container("")
+
+    ok("v4.2-W10: nc/videoteil \u2014 Bitratenrechnung, Zeitdeckel und Zombie-Schutz "
+       "ohne Bot")
+
+
 def main():
     tmp = tempfile.mkdtemp()
     configure_db(db_path=os.path.join(tmp, "t.db"), backend="sqlite")
@@ -4365,6 +4559,8 @@ def main():
     _test_v42_w8_windows_installer_spricht_englisch()
 
     _test_v42_w9_oauth_ueberlebt_neustart_und_stoerung()
+
+    _test_v42_w10_videoteil_aus_dem_monolithen()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)
 

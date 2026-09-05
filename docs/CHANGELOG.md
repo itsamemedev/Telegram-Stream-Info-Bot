@@ -11,6 +11,48 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Geändert — das ffmpeg-Handwerk der Upload-Zerlegung raus (v4.2 W10)
+
+Nach fünf Wellen Routenabbau sind die Routen nicht mehr das Problem: die 34
+verbliebenen in `bot.py` sind zusammen **554 Zeilen**, zwei Prozent der Datei.
+Die Masse liegt in wenigen sehr großen Funktionen — sechs Definitionen tragen
+5.698 Zeilen.
+
+Gewählt wurde nicht die größte, sondern die **lösbarste**: `split_and_send_video`
+(614 Zeilen) hängt an nur **23** Bot-Namen. Zum Vergleich: `RestreamManager` 69,
+`KickModerator` 67, `_discord_run_once` 88. Und es gab eine saubere Naht — der
+ffmpeg-Teil kennt Telegram nicht, und der Telegram-Teil kennt ffmpeg nicht.
+
+`nc/videoteil.py` (neu) übernimmt: messen, teilen, notfalls neu kodieren,
+kaputte Container reparieren, Zeitstempel geradeziehen. `bot.py` behält
+`_send_one` und die gesamte Ablaufsteuerung samt aller Meldungen an den Nutzer.
+**226 Zeilen raus**, 25.949 → 25.723.
+
+**Eine verschattete Zweitkopie ist dabei aufgeflogen.** `bot.py` importiert
+`nc.ffdiag.ffprobe_duration` als `_ffprobe_duration` — und
+`split_and_send_video` definierte eine verschachtelte Funktion **desselben
+Namens**, die den Import verschattete. Die beiden sind nicht austauschbar: die
+im Modul ist **synchron** (`subprocess.run`), die verschachtelte **asynchron**
+mit Zombie-Schutz. Sie zusammenzulegen sieht nach Aufräumen aus und ist ein
+Ausfall — ein `subprocess.run` mit 15 s Timeout auf dem Event-Loop friert jede
+andere Aufnahme, den Restream und das Dashboard für 15 Sekunden ein. Beide
+bleiben, jetzt mit verschiedenen Namen und einem Vertrag, der ihre Rollen
+festhält.
+
+Der Vertrag prüft die Zerlegung über ihr **Verhalten**, ohne ffmpeg: der
+Subprozess wird abgefangen und die **Kommandozeile** geprüft. 300 MB über 600 s
+müssen `segment_time=81` ergeben; ohne ffprobe-Dauer greift der konservative
+Rückfall auf 180. Das ist genau die Rechnung, deren Vorfassung
+`CHUNK_SIZE_MB*60` benutzte — 45 Minuten je Segment, 300–700 MB je Teil, also
+immer ein 413. Die Mutationsprobe reproduziert sie: `segment_time=2700`.
+
+Dazu: ein hängendes ffprobe wird getötet **und** abgewartet (ohne `wait()`
+bleibt ein Zombie, und nach ein paar hundert Aufnahmen ist die Prozesstabelle
+voll), eine gescheiterte Platzprobe blockiert **keinen** Upload, der
+funktioniert hätte, und der Repair springt nur bei einem wirklich kaputten
+Container an — wer dort zu breit erkennt, startet nach jedem beliebigen
+ffmpeg-Fehler einen Reparaturlauf über die volle Dateigröße.
+
 ### Behoben — der gespeicherte OAuth-Zustand hat gelogen (v4.2 W9)
 
 Gemeldet als „YouTube-OAuth speichert Daten nicht, ständige Neuverbindung
