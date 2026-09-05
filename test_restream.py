@@ -5341,37 +5341,52 @@ def test_v40_w55_record_fail_backoff():
        (das ganze Log war ein einziger 403-Stream). Jetzt exponentieller Backoff
        (60s→…→30min-Cap), Skip-Gate vor dem Aufnahme-Lock, Log höchstens 1×/5min,
        Reset bei Erfolg/Offline."""
+    # ANKER GEWANDERT (v4.2-W18, nicht der Vertrag): die Rechnung steht in
+    # nc/aufnahmefolge.py. Der Vertrag hatte die Kurve BISHER SELBST
+    # nachgebaut — und genau deshalb haette er einen Fehler in der echten
+    # Formel nie gesehen. Jetzt wird die echte Funktion gerufen.
+    from nc import aufnahmefolge as _af
     BASE, MAX, HITS = 60, 1800, 2
-    def backoff(n403):
-        return min(MAX, BASE * (2 ** (n403 - HITS)))
-    assert [backoff(n) for n in range(HITS, HITS + 6)] == [60, 120, 240, 480, 960, 1800], "Backoff-Kurve falsch"
-    assert backoff(20) == 1800, "Cap greift nicht"
-    # Skip-Gate: solange now < until überspringen.
-    assert (1000 < 1060) and not (1100 < 1060)
+    _streak, _sperre, _backoff = {}, {}, {}
+    kurve = []
+    for _ in range(20):
+        kurve.append(_af.nach_403(_streak, _sperre, _backoff, "u", 0.0,
+                                  hits=HITS, cooldown_s=1800, backoff_an=True,
+                                  basis_s=BASE, max_s=MAX)["backoff_s"])
+    assert kurve[:HITS - 1] == [None], kurve[:HITS]
+    assert kurve[HITS - 1:HITS + 5] == [60, 120, 240, 480, 960, 1800], kurve
+    assert kurve[-1] == 1800, "Cap greift nicht"
+    # Skip-Gate: solange die Sperre steht, wird uebersprungen.
+    assert _af.sperre_rest({"u": 1060}, "u", 1000) and not _af.sperre_rest({"u": 1060}, "u", 1100)
     # Log-Drossel: höchstens 1 Zeile / 5min.
-    def log_ok(now, last):
-        return now - last > 300
-    assert log_ok(1000, 0) and not log_ok(1200, 1000) and log_ok(1400, 1000)
+    _z = {}
+    assert _af.melden_erlaubt(_z, "u", 1000) and not _af.melden_erlaubt(_z, "u", 1200) \
+        and _af.melden_erlaubt(_z, "u", 1400)
     # Effekt: über 30min statt ~90 Versuchen (alle 20s) nur noch ~6.
     assert (30 * 60 // 20) == 90
 
     src = open("bot.py").read()
     assert "RECORD_FAIL_BACKOFF = os.getenv" in src, "Backoff-Config fehlt"
-    assert "_REC_BACKOFF_UNTIL[username] = _time_mod.time() + _bo" in src, "Backoff wird nicht gesetzt"
-    assert "RECORD_FAIL_BACKOFF_BASE_S * (2 ** (_n403 - RECORD_403_HITS))" in src, "nicht exponentiell aus dem 403-Streak"
+    _afq = open("nc/aufnahmefolge.py", encoding="utf-8").read()
+    assert "backoff[user] = jetzt + bo" in _afq, "Backoff wird nicht gesetzt"
+    assert "basis_s * (2 ** (n - hits))" in _afq, "nicht exponentiell aus dem 403-Streak"
+    assert "_nc_folge.nach_403(" in src, "der Bot rechnet den 403-Streak nicht mehr fort"
     # Skip-Gate sitzt VOR dem Aufnahme-Lock.
     # v4.1-W26: Anker nachgezogen, Vertrag unveraendert. Der Lock-Aufruf
     # laeuft seit dem Loop-Fix ueber asyncio.to_thread — die REIHENFOLGE, die
     # dieser Vertrag zusichert (erst Backoff pruefen, dann Lock anfordern),
     # ist dieselbe geblieben. Der Anker haengt jetzt am Funktionsnamen statt
     # an der Aufrufform, damit ihn die naechste Umstellung nicht wieder kippt.
-    gate = src.find("if _time_mod.time() < _bo_until:")
+    gate = src.find("_rest = _nc_folge.sperre_rest(_REC_BACKOFF_UNTIL")
     lock = src.find("try_acquire_recording_lock,\n", src.find("def _handle_single_tracking"))
     if lock < 0:
         lock = src.find("try_acquire_recording_lock(tid, username=username)")
     assert 0 < gate < lock, "Skip-Gate nicht vor dem Aufnahme-Lock"
-    # Reset bei Erfolg und bei Offline.
-    assert src.count("_REC_BACKOFF_UNTIL.pop(username, None)") >= 2, "Backoff wird nicht zurückgesetzt"
+    # Reset bei Erfolg und bei Offline — seit W18 je EIN benannter Einstieg
+    # statt verstreuter pop()-Zeilen. Vorher standen sie dreimal im Monolithen,
+    # und zweimal fehlte einer der Zaehler.
+    assert "_nc_folge.aufnahme_geglueckt(" in src, "kein Reset nach geglueckter Aufnahme"
+    assert "_nc_folge.sitzung_zuende(" in src, "kein Reset beim Offline-Uebergang"
     ok("v4.0-w55: 403-Retry-Storm gedrosselt (~90→~6/30min), Log entspammt, Reset korrekt")
 
 
