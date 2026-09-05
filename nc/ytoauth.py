@@ -50,13 +50,23 @@ log = logging.getLogger("TikTokBot")
 #   youtube.readonly  — Kanalstatus: Zuschauer, Abonnenten, laufender Stream
 #   youtube.force-ssl — Live-Chat lesen UND schreiben (AZRAEL) sowie
 #                       moderieren (Nachricht loeschen, User timeouten)
-# Ein Token traegt beide; damit deckt EINE Autorisierung Zahlen, Chat und
-# Moderation ab — genau wie beim Twitch-Flow.
+#   youtube.upload    — v4.2-W29: Auto-Clipper laedt Highlight-Clips hoch.
+#                       Neu seit W29 — eine vor dieser Welle erteilte
+#                       Autorisierung traegt ihn nicht, der Upload-Aufruf
+#                       antwortet dann mit 401/403 bis neu verbunden wird.
+# Ein Token traegt alle drei; damit deckt EINE Autorisierung Zahlen, Chat,
+# Moderation und Upload ab — genau wie beim Twitch-Flow.
 SCOPES = ["https://www.googleapis.com/auth/youtube.readonly",
-          "https://www.googleapis.com/auth/youtube.force-ssl"]
+          "https://www.googleapis.com/auth/youtube.force-ssl",
+          "https://www.googleapis.com/auth/youtube.upload"]
 AUTHORIZE = "https://accounts.google.com/o/oauth2/v2/auth"
 TOKEN = "https://oauth2.googleapis.com/token"
 REVOKE = "https://oauth2.googleapis.com/revoke"
+# v4.2-W29: resumable Upload — zwei Schritte, keine Datei im Request-Body
+# des ersten Aufrufs (der legt nur die Session an, Location-Header traegt
+# die Upload-URL fuer den zweiten, den eigentlichen PUT).
+UPLOAD_INIT = ("https://www.googleapis.com/upload/youtube/v3/videos"
+               "?uploadType=resumable&part=snippet,status")
 
 _state = {
     "store_path": None,
@@ -312,6 +322,70 @@ async def access_token(aiohttp):
     _state["access"] = at
     _state["access_exp"] = now + int(j.get("expires_in", 3600)) - 120
     return at
+
+
+async def upload_clip(aiohttp, dateipfad, titel, beschreibung=""):
+    """v4.2-W29: einen lokalen Clip als YouTube-Video hochladen. -> (ok, url_oder_grund)
+
+    ANDERS als Twitch: YouTube nimmt eine echte Datei entgegen (kein
+    Live-Cut), dafuer in zwei Schritten — resumable Upload:
+      1. POST an UPLOAD_INIT mit den Metadaten (JSON) legt die Session an
+         und liefert die Upload-URL im Location-Header.
+      2. PUT der Videodatei an genau diese URL.
+    Ein Fehlschlag in Schritt 1 (401/403/Quota) darf keinen Schritt 2
+    ausloesen — das waere ein Upload ohne gueltige Session.
+
+    privacyStatus bewusst 'unlisted', nicht 'public': ein automatisch
+    getriggerter Upload (Meme/Gift/Chat-Velocity) landet sonst ungefiltert
+    im oeffentlichen Kanal-Feed und im Abo-Feed der Zuschauer. 'unlisted'
+    bleibt ueber den Link teilbar (z.B. im selben Discord-Post wie der
+    lokale Clip) ohne den Kanal zuzuspammen.
+    """
+    tok = await access_token(aiohttp)
+    if not tok:
+        return False, "kein Token"
+    if not os.path.isfile(dateipfad):
+        return False, "Datei fehlt"
+    meta = {
+        "snippet": {"title": (titel or "Clip")[:100],
+                    "description": (beschreibung or "")[:4900],
+                    "categoryId": "24"},          # 24 = Entertainment
+        "status": {"privacyStatus": "unlisted", "selfDeclaredMadeForKids": False},
+    }
+    groesse = os.path.getsize(dateipfad)
+    hdr = {"Authorization": f"Bearer {tok}",
+           "Content-Type": "application/json; charset=UTF-8",
+           "X-Upload-Content-Type": "video/mp4",
+           "X-Upload-Content-Length": str(groesse)}
+    try:
+        async with aiohttp.ClientSession() as s:
+            async with s.post(UPLOAD_INIT, headers=hdr, json=meta,
+                              timeout=aiohttp.ClientTimeout(total=15)) as r:
+                if r.status == 401:
+                    return False, "401 — Scope youtube.upload fehlt, YouTube neu verbinden"
+                if r.status == 403:
+                    txt = (await r.text())[:200]
+                    if "quota" in txt.lower():
+                        return False, "403 — Tageskontingent aufgebraucht"
+                    return False, f"403: {txt}"
+                if r.status != 200:
+                    return False, f"HTTP {r.status}: {(await r.text())[:200]}"
+                ort = r.headers.get("Location")
+            if not ort:
+                return False, "keine Upload-Session-URL erhalten"
+            with open(dateipfad, "rb") as f:
+                daten = f.read()
+            async with s.put(ort, data=daten, headers={"Content-Type": "video/mp4"},
+                             timeout=aiohttp.ClientTimeout(total=120)) as r2:
+                if r2.status not in (200, 201):
+                    return False, f"Upload HTTP {r2.status}: {(await r2.text())[:200]}"
+                j = await r2.json(content_type=None)
+    except Exception as e:
+        return False, str(e)
+    vid = j.get("id")
+    if not vid:
+        return False, "YouTube meldet Erfolg ohne Video-ID"
+    return True, f"https://youtu.be/{vid}"
 
 
 def invalidate_access():

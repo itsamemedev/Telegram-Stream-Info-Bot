@@ -11,6 +11,50 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Hinzugefügt — YouTube-Upload für den Auto-Clipper, per Default AN (v4.2 W29)
+
+Dritte Plattform nach Discord (W24) und Twitch (W27/W28): `nc.ytoauth.upload_clip()`
+laedt den lokalen Highlight-Clip zusaetzlich als YouTube-Video hoch, sobald
+ein Auto-Clip-Ausloeser (Meme, Gift, Chat-Velocity) feuert. Auf Wunsch des
+Betreibers direkt per Default AN (`YOUTUBE_CLIP_ENABLED=1`) — keine
+Zwei-Wellen-Vorsicht wie bei Twitch, aber dieselbe Absicherung: der neue
+Scope `youtube.upload` greift erst nach einer erneuten YouTube-Autorisierung,
+bis dahin liefert der Upload-Init-Call 401/403 und `_youtube_clip_versuchen()`
+faengt das sauber ab.
+
+**Anders als Twitch: eine echte Datei, resumable Upload in zwei Schritten.**
+YouTube schneidet nichts aus einem laufenden Stream — `upload_clip()` schickt
+zuerst die Metadaten per POST (legt die Session an, liefert die Upload-URL
+im `Location`-Header), dann die Videodatei per PUT an genau diese URL. Ein
+Fehlschlag in Schritt 1 (401/403/Quota) darf nie zu Schritt 2 fuehren — das
+waere ein Upload ohne gueltige Session.
+
+**Tageskontingent-Deckel, den Twitch nicht braucht.** Ein Upload kostet 1600
+von 10000 Google-Quota-Einheiten am Tag (~6 möglich, wenn sonst nichts die
+Quota anfasst — dieselbe Quota tragen auch Zuschauerzahlen und Live-Chat).
+Ohne eigenen Deckel haette eine Chat-Velocity-Serie (Clip alle 75s moeglich)
+das Tageskontingent binnen Minuten verbrannt und Zuschauerzahlen/Chat mit
+lahmgelegt. `YOUTUBE_CLIP_MAX_PER_DAY` (Default 4) zaehlt per rollierendem
+24h-Fenster, unabhaengig vom Erfolg — auch ein fehlschlagender Versuch hat
+schon Quota gekostet.
+
+**`privacyStatus=unlisted`, nicht `public`.** Ein automatisch getriggerter
+Upload landet sonst ungefiltert im oeffentlichen Kanal- und Abo-Feed der
+Zuschauer. Unlisted bleibt ueber den Link teilbar (z.B. im selben
+Discord-Post wie der lokale Clip), ohne den Kanal zuzuspammen — eine
+bewusste Sicherheitsentscheidung, kein technischer Zwang.
+
+Zehn Zusicherungen, mutationsgetestet (drei echte Mutationen: fehlende
+Video-ID-Pruefung entfernt, 401-Erkennung entfernt, Tageskontingent-Deckel
+entfernt — alle drei schlagen zuverlaessig an): Erfolgsfall inkl. Reihenfolge
+POST-vor-PUT, eine Erfolgsantwort ohne Video-ID zaehlt nicht als Erfolg,
+fehlender Scope (401) fuehrt zu keinem PUT-Versuch, ein leeres Tageskontingent
+(403 mit „quota") wird erkannt, ohne `Location`-Header kein Upload, ein
+Netzwerkfehler stuerzt nicht ab, eine fehlende Datei loest keinen
+Netzwerkzugriff aus, ohne Token ebenso, der Scope-Vertrag deckt genau die
+drei benoetigten Scopes ab, und die Verdrahtung in `bot.py` laeuft nach
+Twitch, nebenlaeufig, mit Tageskontingent-Deckel.
+
 ### Geändert — echte Twitch-Clips sind jetzt per Default AN (v4.2 W28)
 
 `TWITCH_CLIP_ENABLED` von „0" auf „1" — ausdrücklich so gewollt, dieselbe
