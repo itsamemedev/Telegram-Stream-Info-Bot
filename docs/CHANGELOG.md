@@ -11,6 +11,65 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Behoben — Chat-Reconnect verbrannte die Sign-Quota, MOTD log über das Dashboard (v4.2 W37)
+
+Zwei Befunde aus debug.log/error.log vom 10.09. und der MOTD desselben Tages.
+
+**Der Reconnect war die Ursache, nicht die Reaktion.** In 85 Minuten stehen 122
+Listener-Starts im Log, 47 der 48 Sessions hielten 13–17 Sekunden. Das war kein
+Zufall, sondern eine Grenze, die ihrer eigenen Beschreibung widersprach: über
+`CHAT_FLAP_S` stand „ein Trennen nach **Minuten** ist NORMAL", der Wert war
+**10 Sekunden**. Damit galt jede 15-Sekunden-Session als gesund, der Backoff fiel
+jedes Mal auf 0, und der nächste `connect()` ging sofort raus — jeder davon
+kostet Sign-Quota. Am Ende antwortete die Sign-API mit `SIGN_NOT_200 … status
+code 500`. Der Bot hat sich selbst ausgesperrt und den Rate-Limit-Fehler dann als
+fremdes Problem gemeldet.
+
+Die Grenze steht jetzt auf 60 s. Weil sich eine feste Grenze aber immer knapp
+überbieten lässt — genau das ist hier passiert —, kommt eine zweite Sicherung
+dazu, die nicht auf die einzelne Session schaut, sondern auf die Rate: mehr als
+`CHAT_CHURN_MAX` (6) Neuaufbauten in `CHAT_CHURN_WINDOW_S` (600 s) sind Flattern
+und erzwingen Backoff, **egal** wie lang die einzelne Session war. Gegen die
+echten Zahlen des Tages nachgerechnet: 194 → 14 Starts pro Stunde. Die Sperre
+löst sich von selbst, sobald wieder eine Session über 60 s hält.
+
+**Die MOTD meldete ein gesundes Dashboard als krank.** „▲ Dashboard antwortet
+nicht sauber · Port offen, keine Antwort :8050" — während im selben Log
+`werkzeug` 200er ausliefert. Der Grund steht zwei Zeilen darüber: „Dashboard-TLS
+aktiv". Der Test in `tools/motd.sh` fragte fest `http://127.0.0.1:8050/healthz`,
+bekam gegen den TLS-Port nichts zurück, fiel auf den `ss`-Zweig durch und
+schloss „Port lauscht, aber die App schweigt". Er prüft jetzt das Schema aus
+`DASHBOARD_TLS_CERT`/`-KEY` und probiert im Zweifel beide. Nachgestellt gegen
+einen echten TLS-`/healthz`: vorher leer → Fehlalarm, jetzt `ok=true` → gesund;
+Klartext-Dashboard und wirklich totes Dashboard bleiben unverändert richtig.
+
+Ein Fehlalarm erzieht dazu, die Meldung zu überlesen — dieselbe Begründung, aus
+der W-99 schon die Dashboard-Auth-Warnung entschärft hat.
+
+**Nebenbei:** die Meldung „Guardian versucht es alle 30s erneut" stimmte seit
+V37-CHAT nicht mehr — der Guardian wartet auf den Task und staffelt den Backoff.
+Sie nennt jetzt das, was wirklich passiert.
+### Behoben — parallele Arbeitskopien wären ins Auslieferungsarchiv gefahren (v4.2 W37)
+
+Nachtrag zum Archiv-Befund aus W36, gefunden beim Arbeiten mit mehreren
+Agenten gleichzeitig. `git worktree` legt deren Arbeitskopien unter
+`.claude/worktrees/` ab — und `.claude/` fährt im Archiv **mit**.
+`AUS_ORDNER` in `tools/build_release.py` kannte den Namen nicht.
+
+Ein `.gitignore`-Eintrag allein hätte das **nicht** verhindert: gepackt wird
+aus dem Dateisystem, nicht aus dem git-Index. Der Riegel steht deshalb an
+beiden Stellen.
+
+Mutationsprobe mit zwei realen Arbeitskopien auf der Platte:
+
+| | Dateien | Größe |
+|---|---|---|
+| mit Riegel | 305 | 3,33 MB |
+| ohne Riegel | 949 | 10,10 MB |
+
+644 fremde Dateien — drei vollständige Kopien des Repos — wären ausgeliefert
+worden.
+
 ### Behoben — das Auslieferungsarchiv war seit v4.2-W15 unvollständig (v4.2 W36)
 
 Beim Bauen des ersten Archivs nach der Avatar-Kette kam heraus, dass die

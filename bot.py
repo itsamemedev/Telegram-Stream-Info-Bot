@@ -11511,8 +11511,20 @@ _CHAT_STATS_MAX_REASONS = 8
 # einen sofortigen Reconnect. Faellt sie frueher, stimmt etwas Grundsaetzliches
 # (Tunnel, Sign-Quota, User offline) — dann waere sofortiges Neuverbinden nur
 # Quota-Verbrennen.
-CHAT_FLAP_S = _env_int("CHAT_FLAP_S", 10)
+# 10s war der falsche Wert und widersprach dem Absatz darueber: am 10.09.
+# trennte JEDE Session nach 13-17s, lag damit ueber der Grenze und galt als
+# gesund — 122 Listener-Starts in 85 Minuten. Normale Rotation dauert Minuten
+# (die eine gesunde Session an dem Tag: 183s), also gehoert die Grenze auch in
+# den Minutenbereich.
+CHAT_FLAP_S = _env_int("CHAT_FLAP_S", 60)
 CHAT_BACKOFF_MAX_S = _env_int("CHAT_BACKOFF_MAX_S", 300)
+# Zweite Sicherung gegen genau denselben Fehler: eine feste Grenze laesst sich
+# immer knapp ueberbieten. Mehr als CHAT_CHURN_MAX Neuaufbauten in
+# CHAT_CHURN_WINDOW_S Sekunden sind Flattern — egal wie lang die einzelne
+# Session war. Jeder connect() kostet Sign-Quota; genau daran starb die
+# Sign-API an dem Tag mit HTTP 500.
+CHAT_CHURN_MAX = _env_int("CHAT_CHURN_MAX", 6)
+CHAT_CHURN_WINDOW_S = _env_int("CHAT_CHURN_WINDOW_S", 600)
 
 
 def _chat_stat(username):
@@ -16056,8 +16068,9 @@ async def _start_chat_listener(username, chat_buf, flags=None):
                 if not _live_react_warned.get(_k):
                     log.warning("TikTok-Chat-Listener @%s: Verbindung fehlgeschlagen (%s) — "
                                 "typische Ursachen: Sign-Server, Tunnel/Proxy down, oder User "
-                                "nicht (mehr) live. Guardian versucht es alle 30s erneut.",
-                                username, e)
+                                "nicht (mehr) live. Guardian wiederholt mit wachsendem "
+                                "Backoff (ab 5s, hoechstens %ds).",
+                                username, e, CHAT_BACKOFF_MAX_S)
                     _live_react_warned[_k] = True
                 else:
                     log.debug("chat connect %s: %s", username, e)
@@ -16125,6 +16138,7 @@ async def _restream_chat_guardian(rid, username):
         return
     client = task = None
     backoff = 0
+    _reconnects = []          # monotone Zeitstempel der letzten Neuaufbauten
     try:
         while rid in getattr(_RESTREAM_MGR, "_procs", {}):
             # Ein anderer Listener bedient den User bereits (Push-Dedup)
@@ -16174,7 +16188,31 @@ async def _restream_chat_guardian(rid, username):
             if rid not in getattr(_RESTREAM_MGR, "_procs", {}):
                 break            # Restream ist weg — kein Reconnect mehr
 
-            if dur >= CHAT_FLAP_S:
+            # Churn-Wache: auch eine "gesunde" Session darf nicht beliebig oft
+            # neu aufgebaut werden. Am 10.09. hielt jede Session 13-17s, lag
+            # damit ueber der damaligen Grenze von 10s und galt als gesund —
+            # der Backoff wurde jedes Mal auf 0 zurueckgesetzt. Ergebnis: 122
+            # Listener-Starts in 85 Minuten, bis die Sign-API mit HTTP 500
+            # dichtmachte. Der schnelle Reconnect war die URSACHE des
+            # Rate-Limits, nicht die Reaktion darauf.
+            jetzt = _time_mod.monotonic()
+            _reconnects.append(jetzt)
+            _reconnects[:] = [t for t in _reconnects
+                              if jetzt - t <= CHAT_CHURN_WINDOW_S]
+            flattert = len(_reconnects) >= CHAT_CHURN_MAX
+
+            if flattert:
+                backoff = min(max(5, backoff * 2), CHAT_BACKOFF_MAX_S)
+                _chat_stat(username)["backoff_s"] = backoff
+                log.warning("Restream #%s: Chat @%s — %d Neuaufbauten in %d min "
+                            "(letzte Session %.0fs). Das ist Flattern und "
+                            "verbrennt Sign-Quota, deshalb Backoff %ds. Haelt "
+                            "es an: TIKTOK_SIGN_API_KEY setzen "
+                            "(eulerstream.com) oder Tunnel/Proxy pruefen.",
+                            rid, username, len(_reconnects),
+                            CHAT_CHURN_WINDOW_S // 60, dur, backoff)
+                await asyncio.sleep(backoff)
+            elif dur >= CHAT_FLAP_S:
                 # Gesunde Session (TikTok rotiert seine WS-Verbindungen regelmaessig)
                 backoff = 0
                 _chat_stat(username)["backoff_s"] = 0

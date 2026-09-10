@@ -62,7 +62,11 @@ AUS = {".env"}
 AUS_ENDUNG = (".pyc", ".pyo", ".bak", ".tmp", ".log", ".sqlite", ".sqlite3",
               ".db", ".zip", ".tgz", ".pem", ".key")
 AUS_ORDNER = {"__pycache__", ".ruff_cache", ".git", "recordings", "build",
-              "node_modules", ".pytest_cache"}
+              "node_modules", ".pytest_cache",
+              # Arbeitskopien paralleler Agenten liegen unter .claude/, und
+              # .claude/ faehrt mit. Gepackt wird aus dem Dateisystem, nicht
+              # aus dem git-Index — .gitignore allein haelt sie NICHT auf.
+              "worktrees"}
 
 
 def erlaubt(relpfad, name):
