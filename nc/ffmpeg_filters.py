@@ -117,8 +117,15 @@ def studio_chain(files, font, canvas_w, canvas_h, fps, avatar_idx=None):
     parts.append("[sb]" + ",".join(deco + texts) + "[vdeco]")
     vlabel = "vdeco"
     if avatar_idx is not None:
-        # Avatar oben rechts INS PANEL — nach der Deko, sonst übermalt drawbox ihn
+        # v4.2-W30: unten rechts im Panel statt oben — nach der Deko, sonst
+        # übermalt drawbox ihn. y=H-148 sitzt sicher ÜBER dem Footer-Band
+        # (H-52) und rechts NEBEN goal/follow/react (die bei PX links im
+        # Panel stehen, react bei AZRAEL_OVERLAY_WRAP_W=38 Zeichen bleibt
+        # deutlich schmaler als die Panel-Breite). +6*sin(...) = sanftes
+        # Schweben, dieselbe Bewegung wie beim HTML-Avatar (azFloat) und der
+        # Nicht-Studio-Kette oben in restreamcmd.py, nur kleinere Amplitude
+        # (Panel ist enger als das freie Sendebild).
         parts.append(f"[{avatar_idx}:v]scale=-1:92[sav]")
-        parts.append("[vdeco][sav]overlay=x=W-w-26:y=22[vstudio]")
+        parts.append("[vdeco][sav]overlay=x=W-w-26:y=H-148+6*sin(2*PI*t/6)[vstudio]")
         vlabel = "vstudio"
     return parts, vlabel
