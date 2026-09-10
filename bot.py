@@ -1196,6 +1196,13 @@ RESTREAM_AVATAR_ALPHA = os.getenv("RESTREAM_AVATAR_ALPHA", "assets/azrael/alpha.
 # v4.2-W33: 360 -> 420. Die Kopf-Ausblendung (siehe tools/azrael_frames.py)
 # kostet oben Flaeche; ohne Ausgleich wirkt die Figur kleiner als in W32.
 RESTREAM_AVATAR_H     = _env_int("RESTREAM_AVATAR_H", 420)
+# v4.2-W34: die Sprechschleife. Der Feeder schaltet zwischen ihr und der
+# Ruheschleife um, sobald AZRAEL wirklich reagiert — ffmpeg allein kann das
+# nicht, es liest einen Input genau einmal. Der Takt MUSS zu dem passen, mit
+# dem tools/azrael_frames.py die Schleifen gebaut hat (dort FPS), sonst laeuft
+# die Figur zu schnell oder zu langsam.
+RESTREAM_AVATAR_TALK  = os.getenv("RESTREAM_AVATAR_TALK", "assets/azrael/sprich.webm").strip()
+RESTREAM_AVATAR_FPS   = _env_int("RESTREAM_AVATAR_FPS", 10)
 # Wie lange (Sek.) eine AZRAEL-Reaktion im gebrannten Overlay stehen bleibt.
 RESTREAM_REACT_HOLD = _env_int("RESTREAM_REACT_HOLD", 20)
 
@@ -12237,6 +12244,145 @@ def _restream_html_overlay_stop(rid):
             pass
 
 
+_AVATARFEED = {}
+
+
+def _azrael_spricht():
+    """Redet AZRAEL GERADE? Dieselbe Frische wie im Overlay-Text — eine
+    Reaktion gilt AZRAEL_REACTION_HOLD_S lang als laufend.
+
+    Bewusst NICHT ueber _azrael_overlay_state(): das haengt zusaetzlich am
+    Panel-Schalter azrael_show, der den HTML-Avatar steuert. Der gebrannte
+    Avatar soll nicht verstummen, weil jemand ein Dashboard-Panel ausblendet.
+    """
+    r = _AZRAEL_REACTION
+    return bool(r.get("text")) and \
+        (_time_mod.time() - r.get("ts", 0)) < AZRAEL_REACTION_HOLD_S
+
+
+def _avatar_frames_laden(schleife, maske):
+    """Eine Schleife EINMAL in rohe RGBA-Frames dekodieren. -> (frames, w, h)
+
+    Warum roh und nicht als PNG-Folge: die Frames gehen durch eine FIFO in
+    ffmpeg, und rawvideo spart auf beiden Seiten das Kodieren. Warum ueberhaupt
+    im Speicher: 46 Frames sind rund 22 MB — einmal beim Start dekodiert kostet
+    der Takt danach nichts mehr als einen Speicherzugriff.
+
+    Hier faellt auch die Transparenz wieder an ihren Platz: alphamerge legt die
+    Graustufenmaske auf die Farbe, der Rohstrom traegt sie dann mit. Der
+    Live-Filtergraph braucht dafuer nichts mehr.
+    """
+    if not (schleife and maske and os.path.isfile(schleife) and os.path.isfile(maske)):
+        return None
+    try:
+        p = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0",
+                            "-show_entries", "stream=width,height",
+                            "-of", "csv=p=0:s=x", schleife],
+                           capture_output=True, text=True, timeout=20)
+        w, h = (int(v) for v in p.stdout.strip().split("x")[:2])
+    except Exception as e:
+        log.warning("Avatar-Feeder: Masse von %s nicht lesbar (%s)", schleife, e)
+        return None
+    try:
+        # Thread-Deckel wie bei jeder Nachbearbeitung: das laeuft beim
+        # Restream-Start, waehrend nebenan schon transkodiert wird — es darf
+        # sich keine Kerne nehmen, die das Sendebild braucht.
+        r = subprocess.run(_ff_cmd(["ffmpeg", "-hide_banner", "-loglevel", "error",
+                                    "-i", schleife, "-i", maske,
+                                    "-filter_complex", "[0:v][1:v]alphamerge",
+                                    "-f", "rawvideo", "-pix_fmt", "rgba", "-"],
+                                   threads=FFMPEG_THREADS_BG, nice=FFMPEG_NICE_BG),
+                           capture_output=True, timeout=120)
+    except Exception as e:
+        log.warning("Avatar-Feeder: %s nicht dekodierbar (%s)", schleife, e)
+        return None
+    gross = w * h * 4
+    roh = r.stdout or b""
+    if len(roh) < gross:
+        log.warning("Avatar-Feeder: %s lieferte kein vollstaendiges Bild (%d B)",
+                    schleife, len(roh))
+        return None
+    return [roh[i:i + gross] for i in range(0, len(roh) - gross + 1, gross)], w, h
+
+
+def _restream_avatar_feeder_start(rid):
+    """v4.2-W34: schiebt AZRAELs Frames in eine FIFO — Ruhe oder Sprechen, je
+       nachdem ob gerade eine Reaktion frisch ist. -> (fifo, w, h, fps) oder None.
+
+       Scheitert irgendetwas daran, gibt es None zurueck und der Kommandobauer
+       nimmt die feste Schleife aus W32: dann bewegt sich AZRAEL weiter, nur
+       eben ohne auf den Chat einzugehen. Ein Avatar ist kein Grund, einen
+       Restream nicht zu starten.
+
+       Bauart wie beim HTML-Overlay-Feeder und aus demselben Grund: ein
+       stallender Overlay-Input stallt den GANZEN ffmpeg. Der Writer taktet
+       deshalb fest und schreibt in jeder Periode ein Bild — notfalls dasselbe
+       nochmal. open() blockt, bis ffmpeg liest, darum ein eigener Thread.
+    """
+    ruhe = _avatar_frames_laden(RESTREAM_AVATAR_LOOP, RESTREAM_AVATAR_ALPHA)
+    if not ruhe:
+        return None
+    ruhe_bilder, w, h = ruhe
+    sprich = _avatar_frames_laden(RESTREAM_AVATAR_TALK, RESTREAM_AVATAR_ALPHA)
+    # Ohne Sprechschleife (oder bei abweichender Groesse) bleibt es bei Ruhe —
+    # ein Groessenwechsel mitten im Strom wuerde ffmpeg zerlegen.
+    sprich_bilder = sprich[0] if (sprich and sprich[1] == w and sprich[2] == h) else ruhe_bilder
+    d = os.path.join(RECORDINGS_DIR, "overlay_live")
+    os.makedirs(d, exist_ok=True)
+    fifo = os.path.join(d, f"avatar_{rid}.fifo")
+    try:
+        if os.path.exists(fifo):
+            os.unlink(fifo)
+        os.mkfifo(fifo)
+    except Exception as e:
+        log.warning("Avatar-Feeder: FIFO fehlgeschlagen (%s) → feste Schleife.", e)
+        return None
+    stop = threading.Event()
+    fps = max(1, RESTREAM_AVATAR_FPS)
+
+    def _writer():
+        try:
+            with open(fifo, "wb") as f:
+                takt, i, sprach = 1.0 / fps, 0, False
+                while not stop.is_set():
+                    jetzt = _azrael_spricht()
+                    if jetzt != sprach:
+                        # Am Schleifenanfang wechseln, nicht mitten in der Bewegung —
+                        # sonst springt der Kiefer beim Umschalten.
+                        sprach, i = jetzt, 0
+                    bilder = sprich_bilder if sprach else ruhe_bilder
+                    try:
+                        f.write(bilder[i % len(bilder)])
+                        f.flush()
+                    except (BrokenPipeError, OSError):
+                        return                     # ffmpeg weg → Writer endet
+                    except Exception:
+                        pass
+                    i += 1
+                    stop.wait(takt)
+        except Exception:
+            pass
+
+    th = threading.Thread(target=_writer, daemon=True)
+    th.start()
+    _AVATARFEED[rid] = {"fifo": fifo, "stop": stop, "thread": th}
+    log.info("Avatar-Feeder #%s: %dx%d @%sfps, %d Ruhe- / %d Sprech-Bilder",
+             rid, w, h, fps, len(ruhe_bilder), len(sprich_bilder))
+    return fifo, w, h, fps
+
+
+def _restream_avatar_feeder_stop(rid):
+    st = _AVATARFEED.pop(rid, None)
+    if not st:
+        return
+    st["stop"].set()
+    try:
+        if os.path.exists(st["fifo"]):
+            os.unlink(st["fifo"])
+    except Exception:
+        pass
+
+
 def _restream_tts_start(rid):
     """Legt die FIFO an und startet den Feeder-Thread. Gibt den FIFO-Pfad zurück
        (für _build_restream_cmd) oder None wenn TTS aus/fehlgeschlagen."""
@@ -13054,6 +13200,10 @@ class RestreamManager:
                         "sauberen Quell-Keyframes, sonst ruckelt eine Plattform.", rid)
         tts_fifo = _restream_tts_start(rid)   # self-gated auf RESTREAM_TTS; Stimme auch im Copy-Modus
         _html_ov = _restream_html_overlay_start(rid, source_url=src) if RESTREAM_OVERLAY else None
+        # v4.2-W34: AZRAELs Frames-Feeder. Scheitert er, bleibt _av_feed None
+        # und der Bauer nimmt die feste Schleife aus W32 — der Restream
+        # startet in jedem Fall.
+        _av_feed = _restream_avatar_feeder_start(rid) if (RESTREAM_OVERLAY and transcode) else None
         _independent = (RESTREAM_MULTI_MODE == "independent" and _multi)
         try:
             if _independent:
@@ -13064,10 +13214,12 @@ class RestreamManager:
                 cmd = _build_restream_cmd(src, ingest, key, transcode,
                                           tts_fifo=tts_fifo, rid=rid,
                                           only_target=_base_target,
-                                          html_ov_fifo=_html_ov)
+                                          html_ov_fifo=_html_ov,
+                                          avatar_feed=_av_feed)
             else:
                 cmd = _build_restream_cmd(src, ingest, key, transcode, tts_fifo=tts_fifo, rid=rid,
-                                          html_ov_fifo=_html_ov, targets=_targets)
+                                          html_ov_fifo=_html_ov, targets=_targets,
+                                          avatar_feed=_av_feed)
             if RESTREAM_OVERLAY:
                 _write_restream_overlay()      # Textdateien anlegen, BEVOR drawtext sie öffnet
             proc = await asyncio.create_subprocess_exec(
@@ -13624,6 +13776,7 @@ class RestreamManager:
         if _sw and not _sw.done():
             _sw.cancel()
         _restream_html_overlay_stop(rid)      # V37-HTMLOV: Feeder + FIFO abräumen
+        _restream_avatar_feeder_stop(rid)     # v4.2-W34: Avatar-Feeder ebenso
         # V37-INDEP: unabhängige Relay-Tasks + deren ffmpeg-Prozesse abräumen.
         for _pn, _t in (info.get("indep_tasks") or {}).items():
             if _t and not _t.done():

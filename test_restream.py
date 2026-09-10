@@ -4467,6 +4467,77 @@ def test_v42_w32_azrael_animation():
     ok("v4.2-w32/33: Animation, getrennte Alpha, Kopf nicht abgeschnitten, Artefakte klein")
 
 
+def test_v42_w34_azrael_feeder():
+    """v4.2-W34: der Avatar reagiert — der Feeder schaltet zwischen Ruhe- und
+       Sprechschleife um, sobald AZRAEL wirklich redet.
+
+       Der teuerste Fehler in diesem Pfad ist nicht ein falsches Bild, sondern
+       ein STEHENDER Overlay-Input: der stallt den ganzen ffmpeg und damit die
+       Sendung. Deshalb prueft dieser Vertrag vor allem die Bauart des Writers
+       (fester Takt, Abbruch wenn ffmpeg weg) und die Rueckfallkette.
+    """
+    src = open("bot.py", encoding="utf-8").read()
+    rcs = open("nc/restreamcmd.py", encoding="utf-8").read()
+
+    # --- 1) Sprechzustand aus der Reaktion, NICHT aus dem Panel-Schalter ----
+    i = src.find("def _azrael_spricht(")
+    assert i > 0, "_azrael_spricht fehlt"
+    # Ohne Docstring pruefen: der erklaert, warum NICHT ueber
+    # _azrael_overlay_state gegangen wird, und liesse die Zusicherung sonst
+    # an ihrer eigenen Begruendung scheitern.
+    _doc = src.find('"""', i)
+    rumpf = src[src.find('"""', _doc + 3) + 3:][:600]
+    assert "_AZRAEL_REACTION" in rumpf and "AZRAEL_REACTION_HOLD_S" in rumpf, \
+        "Sprechzustand haengt nicht an der Reaktion und ihrer Frische"
+    assert "_azrael_overlay_state" not in rumpf, \
+        ("Sprechzustand ueber _azrael_overlay_state — der haengt zusaetzlich am "
+         "Panel-Schalter azrael_show; der gebrannte Avatar wuerde verstummen, "
+         "sobald jemand ein Dashboard-Panel ausblendet")
+
+    # --- 2) Writer: fester Takt, sauberes Ende, Wechsel am Schleifenanfang --
+    j = src.find("def _restream_avatar_feeder_start(")
+    assert j > 0, "Feeder fehlt"
+    feeder = src[j:j + 4200]
+    assert "stop.wait(takt)" in feeder, \
+        "kein fester Takt — ein stehender Overlay-Input stallt den ganzen ffmpeg"
+    assert "BrokenPipeError" in feeder, "Writer endet nicht, wenn ffmpeg weg ist"
+    assert "sprach, i = jetzt, 0" in feeder, \
+        "Umschalten mitten in der Bewegung — der Kiefer springt"
+    assert "threading.Thread" in feeder and "daemon=True" in feeder, \
+        "Writer nicht im eigenen Thread — open() auf eine FIFO blockt"
+
+    # --- 3) Rueckfallkette: Feeder -> feste Schleife -> Standbild -----------
+    assert "if not ruhe:\n        return None" in feeder, \
+        "ohne Frames kein sauberes None — der Restream darf daran nicht scheitern"
+    assert rcs.find("if feed_on:") < rcs.find("elif anim_on:") < rcs.find("elif avatar_on:"), \
+        "Reihenfolge der Rueckfallkette stimmt nicht"
+
+    # --- 4) Roher Strom traegt die Alpha schon, also KEIN alphamerge -------
+    k = rcs.find("if feed_on:")
+    # Genau bis zum naechsten Zweig — dahinter steht avatar_alpha_idx zu Recht.
+    # UND ohne Kommentarzeilen: geprueft wird der Code, nicht seine Begruendung
+    # (die nennt avatar_alpha_idx und alphamerge naturgemaess beim Namen).
+    zweig = "\n".join(z for z in rcs[k:rcs.find("elif anim_on:", k)].splitlines()
+                      if not z.lstrip().startswith("#"))
+    assert '"-f", "rawvideo", "-pix_fmt", "rgba"' in zweig, \
+        "Feeder-Strom nicht als rohes RGBA angemeldet"
+    assert "-thread_queue_size" in zweig, "kein Puffer am FIFO-Input"
+    assert "avatar_alpha_idx" not in zweig, \
+        "alphamerge im Feeder-Zweig — die Transparenz steckt schon im Rohstrom"
+
+    # --- 5) Lebenszyklus: gestartet UND wieder abgeraeumt ------------------
+    # Zaehlen, nicht nur suchen: der Name steht schon in der def-Zeile, ein
+    # blosses "in src" waere auch ohne jeden Aufruf gruen (beim Mutationstest
+    # aufgefallen).
+    assert src.count("_restream_avatar_feeder_start(rid)") >= 2, \
+        "Feeder wird nie gestartet"
+    assert src.count("_restream_avatar_feeder_stop(rid)") >= 2, \
+        "Feeder wird nie gestoppt — Thread und FIFO bleiben liegen"
+    assert src.find("_restream_avatar_feeder_start(rid)") < \
+        src.find("avatar_feed=_av_feed"), "Feeder startet nach dem Kommandobau"
+    ok("v4.2-w34: Feeder reagiert auf AZRAEL, fester Takt, Rueckfallkette, sauberer Abbau")
+
+
 def test_v40_w28_filepayload():
     """v4.0-W28: reine Datei-Klassifikation aus _extract_file_payload gelöst —
        der Telegram-Download bleibt im Bot, die Bytes→dict-Logik (Größen-
@@ -9290,6 +9361,7 @@ def main():
     test_v40_w27_ffmpeg_filters()
     test_v42_w31_azrael_avatar_bild()
     test_v42_w32_azrael_animation()
+    test_v42_w34_azrael_feeder()
     test_v40_w28_filepayload()
     test_v40_w29_streamsel()
     test_v40_w30_fixes_and_sysload()

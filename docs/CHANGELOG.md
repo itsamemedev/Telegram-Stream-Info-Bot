@@ -11,6 +11,49 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Hinzugefügt — AZRAEL redet, wenn er redet (v4.2 W34)
+
+Die Sprechschleife lag seit W32 fertig im Repo, aber unverdrahtet: ffmpeg liest
+einen Input genau einmal, ein Umschalten still ↔ spricht zur Laufzeit geht damit
+nicht. Jetzt speist ein Feeder die Frames durch eine FIFO, und der Mund bewegt
+sich genau dann, wenn `_AZRAEL_REACTION` frisch ist — dieselbe Frische, die auch
+den Reaktionstext im Overlay stehen lässt.
+
+**Bauart aus dem HTML-Overlay-Feeder übernommen, samt seiner Lehre:** ein
+stehender Overlay-Input stallt den **ganzen** ffmpeg und damit die Sendung. Der
+Writer taktet deshalb fest und schreibt in jeder Periode ein Bild, notfalls
+dasselbe nochmal; er läuft im eigenen Thread, weil `open()` auf eine FIFO
+blockt, bis ffmpeg liest, und endet still bei `BrokenPipeError`.
+
+**Frames einmal beim Start in den Speicher.** Die WebM-Schleifen werden mit der
+Alphamaske zusammengeführt und als rohes RGBA dekodiert — 97 ms, rund 22 MB für
+beide Schleifen. Danach kostet jeder Takt nur noch einen Speicherzugriff. Weil
+die Transparenz dabei schon eingemischt wird, braucht der Live-Filtergraph für
+diesen Weg **kein** `alphamerge` mehr. Der Dekodier-Aufruf läuft unter dem
+Thread-Deckel (`FFMPEG_THREADS_BG`/`FFMPEG_NICE_BG`) — er startet, während
+nebenan bereits transkodiert wird, und darf dem Sendebild keine Kerne nehmen.
+Ein bestehender Vertrag hat genau das eingefordert.
+
+**Umgeschaltet wird am Schleifenanfang**, nicht mitten in der Bewegung — sonst
+springt der Kiefer beim Wechsel.
+
+**Dreistufige Rückfallkette:** Feeder → feste Schleife (W32) → Standbild (W31).
+Scheitert der Feeder (keine Frames, keine FIFO, kein ffmpeg), bewegt sich AZRAEL
+weiter, nur ohne auf den Chat einzugehen. Ein Avatar ist kein Grund, einen
+Restream nicht zu starten.
+
+Der Umschaltvorgang wurde **echt gemessen**, nicht nur behauptet: Feeder mit
+echter FIFO gestartet, ffmpeg am anderen Ende lesend, Sprechfenster von 1,5 bis
+3,5 s. Rotwert in der Mundregion — davor konstant 29, im Fenster Spitzen bis 38,
+danach wieder konstant 29. Gegenprobe an der Schleife selbst: ihr Höchstwert
+liegt bei 38 und trifft exakt jedes 4. Bild, also den Silbentakt.
+
+Sechs Mutationen bestätigt (fester Takt entfernt, Sprechzustand über den
+Panel-Schalter, Umschalten mitten in der Bewegung, Rückfallkette verdreht,
+Start bzw. Stopp entfernt). Die letzten beiden schlugen zunächst **nicht** an —
+die Zusicherung fand den Namen schon in der `def`-Zeile; sie zählt jetzt
+Vorkommen statt nur zu suchen.
+
 ### Behoben — AZRAELs Kopf stand abgeschnitten im Sendebild (v4.2 W33)
 
 Vom Betreiber gemeldet und reproduziert: die Kapuze endete oben an einer
