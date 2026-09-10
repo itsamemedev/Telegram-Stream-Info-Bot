@@ -11,6 +11,50 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Hinzugefügt — AZRAEL bekommt sein Gesicht: `azrael_avatar.png` (v4.2 W31)
+
+W30 hat den Avatar unten rechts positioniert und zum Schweben gebracht — nur
+gab es gar kein Bild. `RESTREAM_AVATAR` zeigt seit jeher per Default auf
+`azrael_avatar.png`, und weil `avatar_on` auf `os.path.isfile()` prüft, blieb
+der ganze Zweig still aus. Genau deshalb war im Sendebild nie etwas zu sehen.
+Die Datei liegt jetzt im Repo (436×448, RGBA), gebaut aus der Vorlage des
+Betreibers.
+
+**Freistellen ging nicht, weicher Auslauf schon.** Die Vorlage ist randlos:
+der rote Glow reicht bis an die Bildkante, es gibt keinen Hintergrund zum
+Wegschneiden. Ein Luminanz-Key scheitert zusätzlich daran, dass die Figur
+selbst fast schwarz ist — drei Härtegrade durchprobiert, die harten haben
+Kapuze und Rüstung aufgefressen und einen Geist übrig gelassen. Die Alpha ist
+deshalb eine Superellipsen-Vignette: Kern voll deckend (68 % der Fläche),
+nach außen weich aus, und nur ganz außen (r > 0.8) nimmt eine sanfte
+Dunkel-Maske die schwarzen Ecken weg. Über dunklem Sendebild wächst die Figur
+aus dem Schwarz, über hellem bleibt ein weicher Schatten statt eines Kastens.
+
+**92 px zeigten nichts, jetzt 170 px.** Bei der alten Höhe war das Gesicht im
+Sendebild ein roter Fleck (8 % Bildhöhe). Vier Größen gerendert und
+angesehen; ab 170 tragen Kapuze, Augen und Klinge. Der react-Text links
+behält seine volle Zeilenbreite (`AZRAEL_OVERLAY_WRAP_W=38`), es kollidiert
+nichts. Die Nicht-Studio-Kette geht dieselben 105 → 170.
+
+**Die y-Formel rechnet jetzt mit `h` statt gegen eine feste Zahl.** Die
+Studio-Position stand auf `H-148` — bei 170 px Höhe wäre der Avatar damit
+unter den Bildrand gerutscht. Jetzt `H-72-h` (52 px Footer-Band + 20 px
+Luft), also stabil gegen jede künftige Größenänderung. Ein Vertrag hält das
+fest.
+
+Neuer Vertrag `test_v42_w31_azrael_avatar_bild`: das Bild ist Teil des
+Sendebilds, also Teil der Prüfkette. Er liest das PNG **ohne Pillow** (das
+Paket liegt nicht in der CI) — IHDR-Kopf plus eigenes Entfiltern der
+Scanlines — und prüft: Datei vorhanden, 8-bit RGBA, Ecken transparent
+(sonst brennt ein schwarzer Kasten ins Bild), Mitte deckend, mindestens 35 %
+voll deckend, mindestens 170 px hoch. Vier Mutationen bestätigt (Alpha
+plattgemacht, Datei entfernt, zu klein skaliert, y-Formel zurückgedreht) —
+alle schlagen an.
+
+Beide Layouts zum Schluss mit echtem ffmpeg gerendert und angesehen, nicht
+nur getestet: Studio-Panel und Nicht-Studio-Bänder, jeweils mit der real aus
+dem Quelltext gezogenen Filterkette.
+
 ### Geändert — AZRAEL-Avatar im Restream-Sendebild jetzt unten rechts, animiert (v4.2 W30)
 
 Der `RESTREAM_AVATAR`-Overlay (Default `azrael_avatar.png`, sofern die Datei

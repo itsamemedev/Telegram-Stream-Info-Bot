@@ -125,7 +125,14 @@ def studio_chain(files, font, canvas_w, canvas_h, fps, avatar_idx=None):
         # Schweben, dieselbe Bewegung wie beim HTML-Avatar (azFloat) und der
         # Nicht-Studio-Kette oben in restreamcmd.py, nur kleinere Amplitude
         # (Panel ist enger als das freie Sendebild).
-        parts.append(f"[{avatar_idx}:v]scale=-1:92[sav]")
-        parts.append("[vdeco][sav]overlay=x=W-w-26:y=H-148+6*sin(2*PI*t/6)[vstudio]")
+        # v4.2-W31: 92 -> 170 px. Bei 92 war vom Gesicht nichts mehr zu
+        # erkennen (8 % Bildhoehe, im Sendebild ein roter Fleck); 170 traegt
+        # Kapuze, Augen und Klinge und laesst dem react-Text links trotzdem
+        # seine volle Zeilenbreite. y rechnet jetzt MIT h statt gegen eine
+        # feste Pixelzahl — wer die Hoehe aendert, verschiebt den Avatar
+        # sonst aus dem Panel heraus (bei 170 waere H-148 unter den Rand
+        # gerutscht). 72 = 52 px Footer-Band + 20 px Luft darueber.
+        parts.append(f"[{avatar_idx}:v]scale=-1:170[sav]")
+        parts.append("[vdeco][sav]overlay=x=W-w-26:y=H-72-h+6*sin(2*PI*t/6)[vstudio]")
         vlabel = "vstudio"
     return parts, vlabel

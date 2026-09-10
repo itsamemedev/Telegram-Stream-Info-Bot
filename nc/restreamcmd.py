@@ -218,7 +218,7 @@ def build(source_url, ingest_url, stream_key, transcode=False, tts_fifo=None, ri
                   "[base][ovs]overlay=(W-w)/2:(H-h)/2:eof_action=repeat:shortest=0[vh]"]
             vlabel = "vh"
             if avatar_on:
-                fc.append(f"[{avatar_idx}:v]scale=-1:105[av]")
+                fc.append(f"[{avatar_idx}:v]scale=-1:170[av]")
                 # v4.2-W30: bottom-right statt vertikal mittig, mit sanftem
                 # Schweben (Amplitude 8px, Periode 6s) — dieselbe Bewegung wie
                 # die azFloat-Animation des HTML-Avatars in overlay.html, nur
@@ -242,7 +242,7 @@ def build(source_url, ingest_url, stream_key, transcode=False, tts_fifo=None, ri
                 if overlay_on:
                     fc.append(f"[0:v]{_drawtext_chain(rid)}[vt]"); vlabel = "vt"
                 if avatar_on:
-                    fc.append(f"[{avatar_idx}:v]scale=-1:105[av]")
+                    fc.append(f"[{avatar_idx}:v]scale=-1:170[av]")
                     # v4.2-W30: bottom-right + Schweben, siehe Kommentar oben am
                     # htmlov-Zweig — derselbe Ausdruck, hier fuer Text-/Studio-Modus.
                     fc.append(f"[{vlabel}][av]overlay=W-w-W*0.06:H-h-40-8*sin(2*PI*t/6)[v]"); vlabel = "v"
