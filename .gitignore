@@ -28,6 +28,10 @@ __pycache__/
 *.py[cod]
 .ruff_cache/
 .pytest_cache/
+# Arbeitskopien paralleler Agenten (git worktree). Sie liegen unter .claude/,
+# und .claude/ faehrt im Auslieferungsarchiv MIT — ohne diesen Riegel landet
+# eine vollstaendige zweite Kopie des Repos im ZIP.
+.claude/worktrees/
 *.bak
 *.tmp
 

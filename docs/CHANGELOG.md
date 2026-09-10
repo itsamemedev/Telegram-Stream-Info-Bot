@@ -49,6 +49,27 @@ der W-99 schon die Dashboard-Auth-Warnung entschärft hat.
 **Nebenbei:** die Meldung „Guardian versucht es alle 30s erneut" stimmte seit
 V37-CHAT nicht mehr — der Guardian wartet auf den Task und staffelt den Backoff.
 Sie nennt jetzt das, was wirklich passiert.
+### Behoben — parallele Arbeitskopien wären ins Auslieferungsarchiv gefahren (v4.2 W37)
+
+Nachtrag zum Archiv-Befund aus W36, gefunden beim Arbeiten mit mehreren
+Agenten gleichzeitig. `git worktree` legt deren Arbeitskopien unter
+`.claude/worktrees/` ab — und `.claude/` fährt im Archiv **mit**.
+`AUS_ORDNER` in `tools/build_release.py` kannte den Namen nicht.
+
+Ein `.gitignore`-Eintrag allein hätte das **nicht** verhindert: gepackt wird
+aus dem Dateisystem, nicht aus dem git-Index. Der Riegel steht deshalb an
+beiden Stellen.
+
+Mutationsprobe mit zwei realen Arbeitskopien auf der Platte:
+
+| | Dateien | Größe |
+|---|---|---|
+| mit Riegel | 305 | 3,33 MB |
+| ohne Riegel | 949 | 10,10 MB |
+
+644 fremde Dateien — drei vollständige Kopien des Repos — wären ausgeliefert
+worden.
+
 ### Behoben — das Auslieferungsarchiv war seit v4.2-W15 unvollständig (v4.2 W36)
 
 Beim Bauen des ersten Archivs nach der Avatar-Kette kam heraus, dass die
