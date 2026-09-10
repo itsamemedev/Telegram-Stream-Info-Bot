@@ -11,6 +11,57 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Behoben — das Auslieferungsarchiv war seit v4.2-W15 unvollständig (v4.2 W36)
+
+Beim Bauen des ersten Archivs nach der Avatar-Kette kam heraus, dass die
+Dateiliste in `tools/build_release.py` seit v4.0 nicht mitgewachsen ist. Ein
+Trockenlauf gegen den fertigen ZIP zeigte, was fehlte:
+
+* **`discordbot.py`** (herausgelöst v4.2-W15) und **`telegramversand.py`**
+  (v4.2-W19) — beide werden von `bot.py` **zur Laufzeit in der Funktion**
+  importiert. Fehlen sie, stirbt der Import in einem breiten `except`: Discord
+  und der Aufnahme-Versand sind still tot, ohne eine Zeile im ERROR-Log. Genau
+  das Fehlerbild, vor dem CLAUDE.md im ersten Absatz warnt.
+* **`locales/`** — der Übersetzungskatalog (v4.1-W6). Fehlt er, fällt jede
+  Ausgabe kommentarlos auf Deutsch zurück, weil das der gewollte Rückfall ist.
+* **`assets/azrael/`** und **`azrael_avatar.png`** — die gesamte Avatar-Kette
+  aus W31–W35 wäre auf dem Server nicht angekommen.
+* `requirements-smoke.txt`, `CLAUDE.en.md`, `README.en.md`.
+
+**Statt die Liste zu pflegen wird sie jetzt geprüft.** Eine neue Gegenprobe im
+Bau-Skript liest jede mitgelieferte Datei, sammelt die importierten Namen und
+bricht ab, sobald einer davon als Modul in der Wurzel liegt, aber nicht im
+Archiv ist. Ein reiner Namensabgleich hätte dieselbe Lücke gehabt — deshalb
+zählt, was importiert wird, nicht was jemand aufgeschrieben hat.
+
+Der Bau bricht damit ab, statt ein halbes Archiv auszuliefern. Mutationsprobe:
+beide Module wieder aus der Liste genommen → `ABBRUCH — importiert, aber nicht
+im Archiv: ['discordbot', 'telegramversand']`.
+
+**Gegengeprüft am entpackten Archiv**, nicht am Repo: `test_smoke.py` läuft aus
+dem entpackten ZIP durch, beide Module sind parsebar, der englische Katalog
+lesbar, die drei Avatar-Artefakte vorhanden.
+
+### Hinzugefügt — Doku: der gebrannte Overlay und der Archivbau (v4.2 W36)
+
+`README.md` und `README.en.md` beschreiben jetzt das gebrannte Overlay (bisher
+gar nicht dokumentiert): Studio-Layout, AZRAEL als animierter Moderator, die
+beiden Sprechquellen, die dreistufige Rückfallkette und die fünf
+`RESTREAM_AVATAR_*`-Variablen — samt der Warnung, dass `RESTREAM_AVATAR_FPS` zum
+Takt der erzeugten Schleifen passen muss. Dazu ein Abschnitt über
+`tools/build_release.py` und seine drei Gegenproben.
+
+`docs/START_HIER.txt` steht auf B147 und nennt den Archiv-Befund zuerst — mit
+dem `journalctl`-Aufruf, mit dem der Betreiber prüfen kann, ob ihn die Lücke
+getroffen hat.
+
+**Neu übersetzt:** `docs/en/START_HIER.txt`. Übersetzt sind die betrieblichen
+Teile (Ausrollen, Dashboard-Zugang, was in diesem Build neu ist, die
+Störungsbilder, die keine Code-Fehler sind). Die Build-Historie älterer
+Releases bleibt bewusst deutsch — sie wächst mit jedem Build, eine übersetzte
+Kopie wäre in einer Woche veraltet. `docs/en/README.md` führt die Datei jetzt
+als übersetzt.
+
 ### Behoben — AZRAEL schwieg zu seinen eigenen Chat-Antworten (v4.2 W35)
 
 Vom Betreiber gemeldet: „nicht alle Reaktionen aus der Default-Persona haben

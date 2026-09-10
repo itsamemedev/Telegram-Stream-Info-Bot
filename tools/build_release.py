@@ -30,18 +30,31 @@ BUILD = (sys.argv[1] if len(sys.argv) > 1 else "B138").upper()
 ZIEL = os.path.join(WURZEL, f"NIGHTCRAWLER_v37_{BUILD}.zip")
 
 DATEIEN = [
-    "bot.py", "brain_bridge.py",
+    # Bot-seitig, alle vier: bot.py importiert discordbot und telegramversand
+    # ZUR LAUFZEIT (erst in der Funktion, nicht am Dateikopf). Fehlen sie im
+    # Archiv, stirbt der Import in einem breiten except und Discord bzw. der
+    # Aufnahme-Versand sind still tot — genau das Fehlerbild, das laut
+    # CLAUDE.md schon einmal monatelang unsichtbar blieb.
+    "bot.py", "brain_bridge.py", "discordbot.py", "telegramversand.py",
     # Die Anleitungen liegen seit dem Aufraeumen unter docs/ und kommen ueber
     # ORDNER mit — hier einzeln aufzuzaehlen wuerde sie doppelt einpacken und
     # bei jeder Umbenennung ein "FEHLT:" ins Protokoll schreiben.
-    "CLAUDE.md", "README.md", "LICENSE",
-    "llama-server.service", "requirements.txt",
+    "CLAUDE.md", "CLAUDE.en.md", "README.md", "README.en.md", "LICENSE",
+    "llama-server.service", "requirements.txt", "requirements-smoke.txt",
     ".gitignore", ".gitattributes",
     "test_smoke.py", "test_nc_modules.py", "test_restream.py",
     "test_m2_bridge.py",
     ".env.example",
+    # Standbild-Rueckfall des gebrannten Avatars (v4.2-W31). Ohne die Datei
+    # faellt die Kette Feeder -> Schleife -> Standbild ins Leere und die Ecke
+    # bleibt leer, ohne dass irgendwo ein Fehler steht.
+    "azrael_avatar.png",
 ]
-ORDNER = ["brain", "nc", "templates", "website", "tools", ".claude", "docs"]
+# locales/ traegt den Uebersetzungskatalog (v4.1-W6): fehlt er, faellt jede
+# Ausgabe auf Deutsch zurueck — ohne Fehlermeldung, weil genau das der
+# gewollte Rueckfall ist. assets/ traegt die Avatar-Schleifen (v4.2-W32).
+ORDNER = ["brain", "nc", "templates", "website", "tools", ".claude", "docs",
+          "locales", "assets"]
 
 # .env bleibt DRAUSSEN (echte Secrets). .env.example (nur Vorlage, überschreibt
 # nie eine bestehende .env) faehrt seit v4.0-W100 MIT — Doku aller Variablen.
@@ -90,6 +103,36 @@ def main():
                 or n.lower().endswith((".sqlite", ".db", ".pem", ".key"))]
     if verdacht:
         print(f"ABBRUCH — Geheimnisverdacht im Archiv: {verdacht}")
+        os.remove(ZIEL)
+        return 1
+
+    # ── Gegenprobe 1b: kein eigener Modul-Import ins Leere ───────────────
+    # DATEIEN ist eine Liste von Hand, und die veraltet still: discordbot.py
+    # (v4.2-W15) und telegramversand.py (v4.2-W19) wurden aus dem Monolithen
+    # geloest und standen ueber vier Wellen NICHT im Archiv. bot.py importiert
+    # beide erst zur Laufzeit in der Funktion — der ImportError landet dann in
+    # einem breiten except und der Betreiber sieht nur, dass Discord und der
+    # Aufnahme-Versand "nicht mehr gehen".
+    #
+    # Statt die Liste zu pflegen wird sie deshalb geprueft: welcher Name im
+    # Archiv wird importiert und liegt als Modul in der Wurzel, ist aber selbst
+    # nicht mitgekommen? Ein Namensvergleich haette dieselbe Luecke gehabt.
+    eigene = {f[:-3] for f in os.listdir(WURZEL)
+              if f.endswith(".py") and os.path.isfile(os.path.join(WURZEL, f))}
+    mit = {n for n in drin if n.endswith(".py") and "/" not in n}
+    gebraucht = set()
+    for rel in sorted(mit):
+        with open(os.path.join(WURZEL, rel), encoding="utf-8") as _fh:
+            for zeile in _fh:
+                w = zeile.split()
+                if len(w) >= 2 and w[0] in ("import", "from"):
+                    name = w[1].split(".")[0].rstrip(",")
+                    if name in eigene:
+                        gebraucht.add(name)
+    fehlt_modul = sorted(m for m in gebraucht if f"{m}.py" not in mit)
+    if fehlt_modul:
+        print(f"ABBRUCH — importiert, aber nicht im Archiv: {fehlt_modul}")
+        print("          (in DATEIEN aufnehmen — sonst stirbt der Import still)")
         os.remove(ZIEL)
         return 1
 
