@@ -4374,6 +4374,70 @@ def test_v42_w31_azrael_avatar_bild():
     ok("v4.2-w31: Avatar-Bild vorhanden, RGBA, Ecken transparent, Figur deckend")
 
 
+def test_v42_w32_azrael_animation():
+    """v4.2-W32: AZRAEL bewegt sich — Schleife + getrennte Alphamaske.
+
+    Drei Dinge koennen hier still schiefgehen und zeigen sich erst auf dem
+    Stream: (1) die Alpha wird vergessen, dann liegt ein schwarzer Kasten im
+    Bild — VP9 kann keine Transparenz, deshalb MUSS alphamerge in der Kette
+    stehen; (2) die Schleife ist endlich, das Sendebild nicht — ohne
+    eof_action=repeat/shortest=0 endet der Stream mit dem letzten Frame;
+    (3) die Artefakte wachsen unbemerkt (die PNG-Sequenz waere 11 MB gewesen).
+    """
+    import struct
+
+    from nc import ffmpeg_filters as FF
+
+    # --- 1) Filterkette: mit Alpha-Index MUSS alphamerge entstehen ---------
+    teile, lab = FF.avatar_kette(1, 2, 360, "av")
+    assert lab == "av" and any("alphamerge" in t for t in teile), \
+        "kein alphamerge — die Transparenz geht verloren, es bleibt ein Kasten"
+    assert any("[1:v]scale=-1:360" in t for t in teile) and \
+           any("[2:v]scale=-1:360" in t for t in teile), \
+        "Bild und Maske muessen auf dieselbe Hoehe — sonst passt alphamerge nicht"
+    # --- 2) ohne Alpha-Index: das alte Standbild, eine Stufe, kein Merge ---
+    teile_s, _ = FF.avatar_kette(1, None, 170, "av")
+    assert teile_s == ["[1:v]scale=-1:170[av]"], teile_s
+
+    # --- 3) Studio-Kette reicht Hoehe und Alpha durch ----------------------
+    files = {k: f"/ov/{k}.txt" for k in
+             ("title", "react", "source", "goal", "follow", "alert", "chat",
+              "caption", "brand")}
+    parts, label = FF.studio_chain(files, "f.ttf", 1920, 1080, 30,
+                                   avatar_idx=1, avatar_alpha_idx=2, avatar_h=360)
+    assert label == "vstudio" and any("alphamerge" in p for p in parts), \
+        "Studio-Panel verliert die Alpha"
+    ueberlagerung = [p for p in parts if "overlay=x=W-w-26" in p]
+    assert ueberlagerung and "eof_action=repeat" in ueberlagerung[0] \
+        and "shortest=0" in ueberlagerung[0], \
+        "endliche Schleife ohne eof_action/shortest — der Stream endet mit ihr"
+
+    # --- 4) Der Bauer: Animation bevorzugt, Standbild als Rueckfall -------
+    rcs = open("nc/restreamcmd.py", encoding="utf-8").read()
+    assert "-stream_loop" in rcs and '"-loop", "1", "-i", RESTREAM_AVATAR_ALPHA' in rcs, \
+        "Schleife/Maske werden nicht endlos eingespeist"
+    assert "elif avatar_on:" in rcs and "RESTREAM_AVATAR]" in rcs, \
+        "kein Rueckfall auf das Standbild, wenn die Schleife fehlt"
+    assert "os.path.isfile(RESTREAM_AVATAR_LOOP)" in rcs, \
+        "fehlende Schleifendatei wird nicht geprueft — ffmpeg stirbt am Input"
+
+    # --- 5) Die Artefakte selbst ------------------------------------------
+    alpha = os.path.join("assets", "azrael", "alpha.png")
+    assert os.path.isfile(alpha), "Alphamaske fehlt"
+    kopf = open(alpha, "rb").read(26)
+    aw, ah, tiefe, farbtyp = struct.unpack(">IIBB", kopf[16:26])
+    # Farbtyp 0 = Graustufen. alphamerge liest den Grauwert; ein RGB-Bild
+    # waere dreimal so gross fuer denselben Inhalt.
+    assert (tiefe, farbtyp) == (8, 0), f"Maske muss 8bit-Graustufen sein, ist {(tiefe, farbtyp)}"
+    for name in ("ruhe.webm", "sprich.webm"):
+        pfad = os.path.join("assets", "azrael", name)
+        assert os.path.isfile(pfad), f"{name} fehlt"
+        assert open(pfad, "rb").read(4) == b"\x1a\x45\xdf\xa3", f"{name} ist kein WebM"
+        kb = os.path.getsize(pfad) / 1024
+        assert kb < 400, f"{name} ist {kb:.0f} KB — Schleifen gehoeren klein ins Repo"
+    ok("v4.2-w32: Animation + getrennte Alpha, Rueckfall aufs Standbild, Artefakte klein")
+
+
 def test_v40_w28_filepayload():
     """v4.0-W28: reine Datei-Klassifikation aus _extract_file_payload gelöst —
        der Telegram-Download bleibt im Bot, die Bytes→dict-Logik (Größen-
@@ -9196,6 +9260,7 @@ def main():
     test_v40_w26_abo_and_sysrun()
     test_v40_w27_ffmpeg_filters()
     test_v42_w31_azrael_avatar_bild()
+    test_v42_w32_azrael_animation()
     test_v40_w28_filepayload()
     test_v40_w29_streamsel()
     test_v40_w30_fixes_and_sysload()

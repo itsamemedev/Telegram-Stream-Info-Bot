@@ -5296,6 +5296,10 @@ def _test_v42_w16_relaykommando():
                  "react", "source", "title")},
             FFMPEG_THREADS_LIVE=3, FFMPEG_THREADS_RELAY=2,
             RESTREAM_AVATAR=avatar.name, RESTREAM_BITRATE_K=6000,
+            # v4.2-W32: leer = kein Animationspfad, der Bauer nimmt das
+            # Standbild. Genau der Rueckfall, den dieser Test durchspielt.
+            RESTREAM_AVATAR_ALPHA="", RESTREAM_AVATAR_H=360,
+            RESTREAM_AVATAR_LOOP="",
             RESTREAM_CANVAS_H=1080, RESTREAM_CANVAS_W=1920,
             RESTREAM_FONT=schrift.name, RESTREAM_FPS=30,
             RESTREAM_LOW_LATENCY=True, RESTREAM_OVERLAY=False,

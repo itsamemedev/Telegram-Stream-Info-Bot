@@ -11,6 +11,60 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Hinzugefügt — AZRAEL bewegt sich: Mund, Schwertarm, Aura (v4.2 W32)
+
+W31 hat ein Standbild ins Sendebild gestellt, das auf und ab wippte. Ein
+Standbild hat aber weder Mund- noch Handbewegung — der Einwand des Betreibers
+war berechtigt. AZRAEL ist jetzt eine animierte Figur und mit 360 px (vorher
+170) so groß, wie es ein optischer Moderator sein muss.
+
+**Aus einem Standbild wird eine Figur.** `tools/azrael_frames.py` zerlegt die
+Vorlage in Teil-Ebenen und bewegt sie gegeneinander: der Unterkiefer fällt im
+Silbentakt, in der Mundhöhle glimmt Glut, der Schwertarm dreht um den
+Unterarm, die Aura atmet, die Augen glimmen mit. Die Ebenen tragen absichtlich
+einen großzügigen dunklen Rand — beim Verschieben deckt eine Ebene damit ihre
+eigene alte Lage zu, sonst steht die Klinge doppelt im Bild.
+
+Die Rig-Punkte sind am Original ausgemessen, nicht geschätzt: Lippenlinie
+y=495, Augen (455,321) und (612,318), Unterarm-Drehpunkt (800,795). Der erste
+Entwurf hatte den rechten Augenpunkt 60 px daneben und schnitt den Kiefer
+oberhalb der Lippe — dabei wanderte die Nase mit und das Gesicht verschmierte
+zu Brei. Beides fiel nur auf, weil die Zwischenstände als Filmleiste
+angesehen wurden statt nur getestet.
+
+**Warum vorgerendert und nicht zur Laufzeit:** Pillow ist keine
+Laufzeit-Abhängigkeit des Bots (steht nicht in `requirements.txt`, wird
+nirgends importiert). Ein Avatar, der sich live selbst zeichnet, hätte erst
+ein Bildpaket in den Serverbestand gezogen — für eine Figur, die sich immer
+gleich bewegt. Die Frames laufen deshalb einmal durch das Werkzeug und liegen
+fertig im Repo.
+
+**Warum WebM plus eine einzelne Alphadatei:** 46 Einzel-PNGs sind 11 MB, das
+gehört nicht in ein Repo. VP9 packt dieselben Frames auf 50 KB, kann aber
+keine Transparenz — ffmpegs `libvpx-vp9` verwirft den Alphakanal wortlos
+(`ffprobe` zeigt danach `yuv420p` statt `yuva420p`). APNG kann Alpha, ist mit
+14,6 MB aber noch schlimmer. Der Ausweg ergab sich aus einer Messung: die
+Alpha ist bei allen 46 Frames **bitgleich**, weil die Vignette nicht von der
+Pose abhängt. Also einmal als 11-KB-Graustufenbild daneben, und `alphamerge`
+fügt im Filtergraph beides pro Frame zusammen. **117 KB statt 11 MB.**
+
+Fehlt eines der beiden Artefakte, fällt der Kommandobauer stillschweigend auf
+das Standbild aus W31 zurück; fehlt auch das, bleibt es wie bisher ohne
+Avatar. `RESTREAM_AVATAR_H` (Default 360) macht die Größe zur `.env`-Sache —
+wie groß der Moderator steht, ist Geschmack und gehört nicht in den Quelltext.
+
+Neuer Vertrag `test_v42_w32_azrael_animation` gegen die drei Fehler, die sich
+erst auf dem Stream zeigen: fehlendes `alphamerge` (schwarzer Kasten im Bild),
+fehlendes `eof_action=repeat`/`shortest=0` (die endliche Schleife beendet den
+Stream), und stillschweigend wachsende Artefakte. Vier Mutationen bestätigt.
+Beide Layouts wieder mit echtem ffmpeg gerendert und angesehen.
+
+**Noch offen:** die Sprechschleife liegt fertig im Repo, ist aber noch nicht
+verdrahtet — ffmpeg liest einen Input einmal, ein Umschalten still ↔ spricht
+zur Laufzeit braucht den FIFO-Feeder, den der HTML-Overlay-Modus schon
+benutzt. Das ist die nächste Welle; dann bewegt sich der Mund genau dann,
+wenn AZRAEL wirklich redet.
+
 ### Hinzugefügt — AZRAEL bekommt sein Gesicht: `azrael_avatar.png` (v4.2 W31)
 
 W30 hat den Avatar unten rechts positioniert und zum Schweben gebracht — nur

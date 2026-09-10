@@ -11,6 +11,23 @@ bitgenau geprüft. Keine Bot-Kopplung: alles, was vorher aus Modul-Globals kam
 """
 
 
+def avatar_kette(avatar_idx, alpha_idx, hoehe, label):
+    """v4.2-W32: der Avatar als Filter-Teilkette. -> (teile, label)
+
+    Zwei Faelle, EINE Stelle: das alte Standbild ist ein Input und wird nur
+    skaliert; die Animation sind ZWEI Inputs, weil VP9 keine Transparenz
+    tragen kann (ffmpegs libvpx-vp9 verwirft den Alphakanal wortlos). Die
+    Bewegung steckt also im WebM, die Deckung in einem einzelnen Graustufen-
+    bild — alphamerge fuegt beides pro Frame wieder zusammen. Ohne diesen
+    Schritt liegt ein undurchsichtiger Kasten im Sendebild.
+    """
+    if alpha_idx is None:
+        return [f"[{avatar_idx}:v]scale=-1:{hoehe}[{label}]"], label
+    return ([f"[{avatar_idx}:v]scale=-1:{hoehe}[{label}f]",
+             f"[{alpha_idx}:v]scale=-1:{hoehe}[{label}d]",
+             f"[{label}f][{label}d]alphamerge[{label}]"], label)
+
+
 def drawtext_chain(files, font):
     """Alle Overlays als drawtext-Kette (auf [0:v]). Cyberpunk/Terminal-Look, MOBILE-
        tauglich: zwei VOLLBREITE Hintergrund-Bänder (oben/unten) — die bleiben sichtbar,
@@ -53,7 +70,8 @@ def drawtext_chain(files, font):
     return ",".join(bands + texts)
 
 
-def studio_chain(files, font, canvas_w, canvas_h, fps, avatar_idx=None):
+def studio_chain(files, font, canvas_w, canvas_h, fps, avatar_idx=None,
+                 avatar_alpha_idx=None, avatar_h=170):
     """F92: STUDIO-LAYOUT als filter_complex-Kette. Komponiert eine 16:9-Leinwand:
        Quell-Video links (aspect-fit, funktioniert für Hochkant-TikTok UND 16:9),
        rechts ein Info-Panel mit LIVE-CHAT (TikTok+Kick), Titel, Quelle, Ziel,
@@ -126,13 +144,17 @@ def studio_chain(files, font, canvas_w, canvas_h, fps, avatar_idx=None):
         # Nicht-Studio-Kette oben in restreamcmd.py, nur kleinere Amplitude
         # (Panel ist enger als das freie Sendebild).
         # v4.2-W31: 92 -> 170 px. Bei 92 war vom Gesicht nichts mehr zu
-        # erkennen (8 % Bildhoehe, im Sendebild ein roter Fleck); 170 traegt
-        # Kapuze, Augen und Klinge und laesst dem react-Text links trotzdem
-        # seine volle Zeilenbreite. y rechnet jetzt MIT h statt gegen eine
-        # feste Pixelzahl — wer die Hoehe aendert, verschiebt den Avatar
-        # sonst aus dem Panel heraus (bei 170 waere H-148 unter den Rand
-        # gerutscht). 72 = 52 px Footer-Band + 20 px Luft darueber.
-        parts.append(f"[{avatar_idx}:v]scale=-1:170[sav]")
-        parts.append("[vdeco][sav]overlay=x=W-w-26:y=H-72-h+6*sin(2*PI*t/6)[vstudio]")
+        # erkennen (8 % Bildhoehe, im Sendebild ein roter Fleck). Seit W32
+        # kommt die Hoehe von aussen (RESTREAM_AVATAR_H) — der Avatar ist der
+        # optische Moderator, wie gross er sein soll ist Geschmack und gehoert
+        # nicht in den Quelltext. y rechnet MIT h statt gegen eine feste
+        # Pixelzahl, sonst rutscht er bei jeder Groessenaenderung aus dem
+        # Panel. 72 = 52 px Footer-Band + 20 px Luft darueber.
+        teile, lab = avatar_kette(avatar_idx, avatar_alpha_idx, avatar_h, "sav")
+        parts.extend(teile)
+        # eof_action=repeat + shortest=0: die Schleife ist endlich, das
+        # Sendebild nicht. Ohne beides endet der Stream mit dem Avatar.
+        parts.append(f"[vdeco][{lab}]overlay=x=W-w-26:y=H-72-h+6*sin(2*PI*t/6):"
+                     f"eof_action=repeat:shortest=0[vstudio]")
         vlabel = "vstudio"
     return parts, vlabel
