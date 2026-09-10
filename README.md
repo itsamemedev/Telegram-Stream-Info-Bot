@@ -476,6 +476,51 @@ und es der Zuschauer merkt.
 
 </details>
 
+### 🎭 Das gebrannte Overlay — AZRAEL steht im Bild
+
+Nicht zu verwechseln mit `/overlay`: **das** ist eine Browser-Quelle für OBS und
+setzt voraus, dass jemand OBS bedient. Das gebrannte Overlay backt ffmpeg
+direkt ins Sendebild — es ist auf jeder Plattform zu sehen, auch wenn der
+Restream unbeaufsichtigt läuft.
+
+```ini
+RESTREAM_OVERLAY=1
+RESTREAM_OVERLAY_MODE=text     # text = ffmpeg zeichnet selbst · html = Dashboard-Seite
+```
+
+Im **Studio-Layout** steht das Video links, rechts die Infotafel — und unten
+rechts AZRAEL selbst, als animierte 2D-Figur. Er ist der optische Moderator:
+Kiefer, Schwertarm und Aura bewegen sich, und der Mund geht genau dann, wenn er
+wirklich etwas sagt.
+
+**Sprechen heißt sprechen, auf beiden Wegen.** Die Persona äußert sich über die
+Live-Reaktion aufs Sendebild *und* über echte Chat-Antworten (Antworten an
+Zuschauer, Dank für Gifts, Begrüßungen, Verwarnungen). Beide bewegen den Mund,
+beide für dieselbe Dauer wie der eingeblendete Text — sonst verstummt die Figur,
+während ihr eigener Satz noch im Bild steht.
+
+**Dreistufige Rückfallkette:** Feeder → feste Schleife → Standbild. Scheitert
+die Animation, bewegt sich AZRAEL weiter, nur ohne auf den Chat einzugehen. Ein
+Avatar ist kein Grund, einen Restream nicht zu starten.
+
+| Variable | Standard | Wofür |
+|---|---|---|
+| `RESTREAM_AVATAR_H` | `420` | Höhe der Figur im Sendebild |
+| `RESTREAM_AVATAR_FPS` | `10` | **Muss** zum Takt passen, mit dem `tools/azrael_frames.py` die Schleifen gebaut hat — sonst läuft die Figur zu schnell oder zu langsam |
+| `RESTREAM_AVATAR_LOOP` · `_TALK` | `assets/azrael/ruhe.webm` · `sprich.webm` | Ruhe- und Sprechschleife |
+| `RESTREAM_AVATAR_ALPHA` | `assets/azrael/alpha.png` | Deckungsmaske — getrennt, weil VP9 den Alphakanal still verwirft |
+| `RESTREAM_AVATAR` | `azrael_avatar.png` | Standbild, letzter Rückfall |
+
+Die Schleifen liegen als Artefakte im Repo (zusammen 117 KB) und werden von
+`tools/azrael_frames.py` aus dem Referenzbild erzeugt — als PNG-Folge wären es
+11 MB. Der Feeder lädt sie einmal beim Start als rohes RGBA in den Speicher;
+danach kostet jedes Bild nur noch einen Speicherzugriff.
+
+> **Warum die Maske getrennt liegt:** `libvpx-vp9` wirft den Alphakanal
+> kommentarlos weg — `ffprobe` meldet hinterher `yuv420p` statt `yuva420p`, ohne
+> dass irgendwo eine Warnung steht. Farbe und Deckung fahren deshalb getrennt
+> und werden erst beim Laden wieder zusammengeführt.
+
 ---
 
 ## 🧠 Das Gehirn (AZRAEL)
@@ -619,6 +664,30 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now nightcrawler
 journalctl -u nightcrawler -f          # Strg+C beendet nur das Mitlesen
 ```
+
+### Archiv bauen — `tools/build_release.py`
+
+```bash
+python tools/build_release.py B142
+```
+
+Was ins Archiv gehört, ist eine Projektentscheidung und steht deshalb
+versioniert im Skript, nicht in einem Wegwerf-Befehl. `.env`, Datenbank,
+Aufnahmen und Logs bleiben grundsätzlich draußen; `.env.example` fährt als
+Vorlage mit (anderer Dateiname, überschreibt nie eine bestehende `.env`).
+
+Drei Gegenproben laufen, bevor ein Archiv die Maschine verlässt:
+
+1. **Nichts Geheimes** — kein Treffer auf `.env`, `.sqlite`, `.pem`, `.key`.
+2. **Kein Import ins Leere** — jeder Modulname, den eine mitgelieferte Datei
+   importiert und der als Modul in der Wurzel liegt, **muss** selbst im Archiv
+   sein. `bot.py` importiert `discordbot` und `telegramversand` erst zur
+   Laufzeit in der Funktion; fehlen sie, stirbt der Import in einem breiten
+   `except` und Discord bzw. der Aufnahme-Versand sind still tot. Genau das ist
+   passiert — eine Liste von Hand veraltet, ohne dass es jemand merkt.
+3. **Compiliert wirklich** — jede `.py` wird aus dem *entpackten* Archiv
+   nachcompiliert. Ein Archiv, das nicht compiliert, wird gelöscht statt
+   ausgeliefert.
 
 ### Sicheres Ausrollen — `tools/deploy.sh`
 

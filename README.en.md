@@ -481,6 +481,51 @@ notices instead.
 
 </details>
 
+### 🎭 The burned-in overlay — AZRAEL on screen
+
+Not to be confused with `/overlay`: **that** one is a browser source for OBS and
+assumes somebody is operating OBS. The burned-in overlay is baked straight into
+the outgoing picture by ffmpeg — it shows on every platform, including a
+restream nobody is watching over.
+
+```ini
+RESTREAM_OVERLAY=1
+RESTREAM_OVERLAY_MODE=text     # text = ffmpeg draws it itself · html = dashboard page
+```
+
+In the **studio layout** the video sits on the left, the info panel on the
+right — and AZRAEL himself in the bottom-right corner, as an animated 2D
+figure. He is the on-screen host: jaw, sword arm and aura move, and the mouth
+runs exactly when he actually says something.
+
+**Speaking means speaking, on both channels.** The persona talks through the
+live reaction to the outgoing picture *and* through real chat replies (answers
+to viewers, thanks for gifts, greetings, warnings). Both move the mouth, both
+for the same span as the on-screen text — otherwise the figure falls silent
+while its own sentence is still on screen.
+
+**Three-stage fallback chain:** feeder → fixed loop → still image. If the
+animation fails, AZRAEL keeps moving, just without responding to chat. An avatar
+is no reason not to start a restream.
+
+| Variable | Default | What for |
+|---|---|---|
+| `RESTREAM_AVATAR_H` | `420` | Height of the figure in the outgoing picture |
+| `RESTREAM_AVATAR_FPS` | `10` | **Must** match the rate `tools/azrael_frames.py` built the loops at — otherwise the figure runs too fast or too slow |
+| `RESTREAM_AVATAR_LOOP` · `_TALK` | `assets/azrael/ruhe.webm` · `sprich.webm` | Idle and talking loop |
+| `RESTREAM_AVATAR_ALPHA` | `assets/azrael/alpha.png` | Coverage mask — kept separate because VP9 silently discards the alpha channel |
+| `RESTREAM_AVATAR` | `azrael_avatar.png` | Still image, last fallback |
+
+The loops ship as artifacts in the repo (117 KB for both) and are generated from
+the reference image by `tools/azrael_frames.py` — as a PNG sequence they would be
+11 MB. The feeder loads them into memory once at startup as raw RGBA; after that
+each frame costs nothing but a memory read.
+
+> **Why the mask is separate:** `libvpx-vp9` throws the alpha channel away
+> without a word — `ffprobe` afterwards reports `yuv420p` instead of `yuva420p`,
+> and no warning appears anywhere. Colour and coverage therefore travel
+> separately and are merged back together at load time.
+
 ---
 
 ## 🧠 The brain (AZRAEL)
@@ -608,6 +653,29 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now nightcrawler
 journalctl -u nightcrawler -f          # Ctrl+C only ends the tailing
 ```
+
+### Building the archive — `tools/build_release.py`
+
+```bash
+python tools/build_release.py B142
+```
+
+What belongs in the archive is a project decision, so it lives versioned in the
+script rather than in a throwaway command. `.env`, the database, recordings and
+logs stay out on principle; `.env.example` ships as a template (different
+filename, never overwrites an existing `.env`).
+
+Three counter-checks run before an archive leaves the machine:
+
+1. **Nothing secret** — no hit on `.env`, `.sqlite`, `.pem`, `.key`.
+2. **No import into the void** — every module name imported by a shipped file
+   that also exists as a root-level module **must** itself be in the archive.
+   `bot.py` imports `discordbot` and `telegramversand` at runtime, inside the
+   function; if they are missing the import dies in a broad `except` and Discord
+   and the recording dispatch are silently dead. That is exactly what happened —
+   a hand-maintained list went stale without anyone noticing.
+3. **It really compiles** — every `.py` is recompiled from the *extracted*
+   archive. An archive that does not compile gets deleted instead of shipped.
 
 ### Safe rollout — `tools/deploy.sh`
 
