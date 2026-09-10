@@ -219,7 +219,12 @@ def build(source_url, ingest_url, stream_key, transcode=False, tts_fifo=None, ri
             vlabel = "vh"
             if avatar_on:
                 fc.append(f"[{avatar_idx}:v]scale=-1:105[av]")
-                fc.append(f"[{vlabel}][av]overlay=W-w-W*0.06:(H-h)/2[v]"); vlabel = "v"
+                # v4.2-W30: bottom-right statt vertikal mittig, mit sanftem
+                # Schweben (Amplitude 8px, Periode 6s) — dieselbe Bewegung wie
+                # die azFloat-Animation des HTML-Avatars in overlay.html, nur
+                # hier als ffmpeg-Ausdruck (eval=frame ist overlay()s Default,
+                # t laeuft also live mit statt einmalig beim Filter-Init).
+                fc.append(f"[{vlabel}][av]overlay=W-w-W*0.06:H-h-40-8*sin(2*PI*t/6)[v]"); vlabel = "v"
             if use_tts:
                 fc.extend(_nc_audio.mix_chain(tts_idx, _TTS_VOICE_GAIN, _audio_cfg()["duck"]))
             cmd += ["-filter_complex", ";".join(fc)]
@@ -238,7 +243,9 @@ def build(source_url, ingest_url, stream_key, transcode=False, tts_fifo=None, ri
                     fc.append(f"[0:v]{_drawtext_chain(rid)}[vt]"); vlabel = "vt"
                 if avatar_on:
                     fc.append(f"[{avatar_idx}:v]scale=-1:105[av]")
-                    fc.append(f"[{vlabel}][av]overlay=W-w-W*0.06:(H-h)/2[v]"); vlabel = "v"
+                    # v4.2-W30: bottom-right + Schweben, siehe Kommentar oben am
+                    # htmlov-Zweig — derselbe Ausdruck, hier fuer Text-/Studio-Modus.
+                    fc.append(f"[{vlabel}][av]overlay=W-w-W*0.06:H-h-40-8*sin(2*PI*t/6)[v]"); vlabel = "v"
             if use_tts:
                 # normalize=0 → Quell-Ton bleibt VOLL (amix halbiert sonst beide Inputs);
                 # Stimme angehoben damit klar hörbar, alimiter fängt Clipping ab.

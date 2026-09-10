@@ -11,6 +11,38 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Geändert — AZRAEL-Avatar im Restream-Sendebild jetzt unten rechts, animiert (v4.2 W30)
+
+Der `RESTREAM_AVATAR`-Overlay (Default `azrael_avatar.png`, sofern die Datei
+existiert) saß bisher vertikal mittig am rechten Bildrand (Nicht-Studio-Layout)
+bzw. oben rechts im Info-Panel (Studio-Layout, seit v4.1 Standard-Layout) —
+und stand vollkommen still, ein einzelnes statisches PNG-Bild. Auf Wunsch des
+Betreibers jetzt an beiden Stellen **unten rechts** und mit sanftem Schweben
+(`y = ... + 8*sin(2*PI*t/6)` bzw. `6*sin(...)` im engeren Studio-Panel) —
+dieselbe Bewegung wie die `azFloat`-CSS-Animation des HTML-Overlay-Avatars
+in `templates/overlay.html`, nur als ffmpeg-Ausdruck statt CSS-Keyframe.
+
+**Warum das ueberhaupt geht, ohne ein neues Bild/Video zu brauchen:** ffmpegs
+`overlay`-Filter wertet `x`/`y` per Default **pro Frame** aus (`eval=frame`,
+nicht `init`) — `t` (Zeit in Sekunden) ist darin eine gueltige Variable.
+Verifiziert mit einem echten ffmpeg-Lauf (Testbild + `overlay`-Kette,
+Pixel-Differenz zwischen zwei Frames auf verschiedenen `t` gemessen, nicht nur
+die Doku gelesen), nicht nur angenommen.
+
+Im Studio-Panel (das Standard-Layout) musste die neue Position zusaetzlich
+mit dem vorhandenen Text-Layout (goal/follow/react, alle linksbuendig ab `PX`)
+kollisionsfrei bleiben: `AZRAEL_OVERLAY_WRAP_W=38` Zeichen react-Text bleibt
+bei 1920px Panel-Breite deutlich schmaler als die volle Panel-Breite — genug
+Platz rechts fuer den Avatar, ohne dass ein langer AZRAEL-Satz ihn ueberdeckt.
+
+Zwei Fundstellen geaendert (`nc/restreamcmd.py` fuer Nicht-Studio, wird
+aktuell im Text-Overlay-Modus fuer beide Faelle durchlaufen — mit und ohne
+Studio-Layout — sowie `nc/ffmpeg_filters.py::studio_chain` fuer das
+Studio-Panel). Kein neuer Vertrag noetig: der bestehende Vertrag
+`test_v40_w27_ffmpeg_filters` prueft Struktur (Avatar-Zweig vorhanden,
+`scale=-1:92`, Teile-Anzahl), nicht die exakte Positions-Formel — bleibt
+unveraendert gruen.
+
 ### Hinzugefügt — YouTube-Upload für den Auto-Clipper, per Default AN (v4.2 W29)
 
 Dritte Plattform nach Discord (W24) und Twitch (W27/W28): `nc.ytoauth.upload_clip()`
