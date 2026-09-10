@@ -129,7 +129,7 @@ def _studio_chain(avatar_idx=None, rid=None, avatar_alpha_idx=None):
                                avatar_h=RESTREAM_AVATAR_H)
 
 
-def build(source_url, ingest_url, stream_key, transcode=False, tts_fifo=None, rid=None, only_target=None, relay_profile=False, html_ov_fifo=None, targets=None):
+def build(source_url, ingest_url, stream_key, transcode=False, tts_fifo=None, rid=None, only_target=None, relay_profile=False, html_ov_fifo=None, targets=None, avatar_feed=None):
     """ffmpeg-Relay: zieht die TikTok-Quelle und pusht per RTMP(S)/FLV an Kick/AWS-IVS.
        Input-Flags spiegeln den BEWÄHRTEN Aufnahme-Pfad (_build_native_cmd): FLV =
        eine saubere Dauerverbindung (bevorzugt); HLS braucht +genpts+igndts, weil
@@ -194,15 +194,28 @@ def build(source_url, ingest_url, stream_key, transcode=False, tts_fifo=None, ri
     anim_on = bool(overlay_on and RESTREAM_AVATAR_LOOP and RESTREAM_AVATAR_ALPHA
                    and os.path.isfile(RESTREAM_AVATAR_LOOP)
                    and os.path.isfile(RESTREAM_AVATAR_ALPHA))
-    avatar_on = bool(anim_on or (overlay_on and RESTREAM_AVATAR
-                                 and os.path.isfile(RESTREAM_AVATAR)))
+    # v4.2-W34: laeuft ein Feeder, hat er Vorrang — nur er kann auf eine
+    # AZRAEL-Reaktion umschalten. Ohne ihn die feste Schleife (W32), ohne die
+    # das Standbild (W31).
+    feed_on = bool(overlay_on and avatar_feed)
+    avatar_on = bool(feed_on or anim_on or (overlay_on and RESTREAM_AVATAR
+                                            and os.path.isfile(RESTREAM_AVATAR)))
     _idx = 1
     tts_idx = avatar_idx = avatar_alpha_idx = None
     if use_tts:
         cmd += ["-thread_queue_size", "1024", "-f", "s16le",
                 "-ar", str(_TTS_SR), "-ac", str(_TTS_CH), "-i", tts_fifo]
         tts_idx = _idx; _idx += 1
-    if anim_on:
+    if feed_on:
+        # Roher RGBA-Strom aus der FIFO: die Transparenz steckt schon drin
+        # (der Feeder hat sie beim Dekodieren untergemischt), also bleibt
+        # avatar_alpha_idx None und die Kette braucht kein alphamerge.
+        # thread_queue grosszuegig — der Writer taktet fest, ffmpeg hungert nie.
+        _ffifo, _fw, _fh, _ffps = avatar_feed
+        cmd += ["-thread_queue_size", "512", "-f", "rawvideo", "-pix_fmt", "rgba",
+                "-s", f"{_fw}x{_fh}", "-framerate", str(_ffps), "-i", _ffifo]
+        avatar_idx = _idx; _idx += 1
+    elif anim_on:
         # -stream_loop -1: die Schleife laeuft endlos weiter, das Sendebild
         # bestimmt die Laenge. -loop 1 auf der Maske aus demselben Grund.
         cmd += ["-stream_loop", "-1", "-i", RESTREAM_AVATAR_LOOP]
