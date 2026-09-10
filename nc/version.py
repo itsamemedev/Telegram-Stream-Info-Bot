@@ -33,7 +33,7 @@ CHANGELOG = [
         # mehr gab. Verwandte Wellen stehen bewusst in EINEM Stichpunkt: eine
         # Liste mit dreissig Zeilen liest niemand mehr durch.
         "highlights": [
-            "Der Monolith ist zerlegt: bot.py fällt von 26.346 auf 22.527 Zeilen — der gesamte Discord-Teil mit seinen 45 Slash-Commands und der Versandweg der Aufnahmen nach Telegram stehen in eigenen Dateien, ohne einen einzigen Rückgriff auf bot.py",
+            "Der Monolith ist zerlegt: rund 2.900 Zeilen weniger in bot.py — der gesamte Discord-Teil mit seinen 45 Slash-Commands und der Versandweg der Aufnahmen nach Telegram stehen in eigenen Dateien, ohne einen einzigen Rückgriff auf bot.py",
             "Sieben weitere Routengruppen aus dem Monolithen gelöst — Wartung, Abwehr, Auskunft, Beobachtung, Systemlage — ohne einen einzigen neuen Kontext-Eintrag; mit Preflight, Resilienz und Selbsttest steht dort jetzt keine System-Route mehr",
             "Zehn Rechenkerne des Betriebs liegen in eigenen Modulen und werden damit erstmals einzeln geprüft: Recorder-Kommandozeilen, die ffmpeg-Zeile des Relays, der Eskalations-Backoff, die Entscheidungen aus dem Live-Signal, die Cookie-Bewertung, die Sendebild-Texte, die Fehlerkategorien der Aufnahme und die Kick-REST-Aufrufe",
             "„Live pausiert“ wird nicht mehr als Stream-Ende gelesen: die Pause-Grace war ab dem zweiten Aussetzer einer Sitzung wirkungslos — jede Pause kostete eine OFFLINE-Meldung, das Ende der Aufnahme und eine neue LIVE-Meldung",
