@@ -1184,6 +1184,16 @@ RESTREAM_TTS       = os.getenv("RESTREAM_TTS", "0").strip().lower() in ("1","tru
 # Statisches AZRAEL-Avatar-Bild (transparente PNG) oben rechts ins Overlay brennen.
 # Leer ODER Datei fehlt = aus. Pfad relativ zum Arbeitsverzeichnis des Bots.
 RESTREAM_AVATAR    = os.getenv("RESTREAM_AVATAR", "azrael_avatar.png").strip()
+# v4.2-W32: AZRAEL bewegt sich. Die Schleife traegt NUR die Farbe (VP9 kann
+# keine Transparenz), die Deckung liegt daneben in einer Graustufenmaske;
+# alphamerge fuegt beides im Filtergraph zusammen. Fehlt eines von beiden,
+# faellt der Bauer stillschweigend auf das Standbild RESTREAM_AVATAR zurueck.
+# Gebaut wird beides mit tools/azrael_frames.py.
+RESTREAM_AVATAR_LOOP  = os.getenv("RESTREAM_AVATAR_LOOP", "assets/azrael/ruhe.webm").strip()
+RESTREAM_AVATAR_ALPHA = os.getenv("RESTREAM_AVATAR_ALPHA", "assets/azrael/alpha.png").strip()
+# Er ist der optische Moderator — wie gross er im Sendebild steht, ist
+# Geschmack und gehoert deshalb in die .env, nicht in den Quelltext.
+RESTREAM_AVATAR_H     = _env_int("RESTREAM_AVATAR_H", 360)
 # Wie lange (Sek.) eine AZRAEL-Reaktion im gebrannten Overlay stehen bleibt.
 RESTREAM_REACT_HOLD = _env_int("RESTREAM_REACT_HOLD", 20)
 
@@ -12342,6 +12352,9 @@ _nc_rscmd.configure(
     FFMPEG_THREADS_LIVE=FFMPEG_THREADS_LIVE,
     FFMPEG_THREADS_RELAY=FFMPEG_THREADS_RELAY,
     RESTREAM_AVATAR=RESTREAM_AVATAR,
+    RESTREAM_AVATAR_ALPHA=RESTREAM_AVATAR_ALPHA,
+    RESTREAM_AVATAR_H=RESTREAM_AVATAR_H,
+    RESTREAM_AVATAR_LOOP=RESTREAM_AVATAR_LOOP,
     RESTREAM_BITRATE_K=RESTREAM_BITRATE_K,
     RESTREAM_CANVAS_H=RESTREAM_CANVAS_H,
     RESTREAM_CANVAS_W=RESTREAM_CANVAS_W,

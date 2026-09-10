@@ -64,6 +64,9 @@ _restream_overlay_files = None   # Overlay-Textdateien je Restream-ID
 FFMPEG_THREADS_LIVE = None
 FFMPEG_THREADS_RELAY = None
 RESTREAM_AVATAR = None
+RESTREAM_AVATAR_ALPHA = None
+RESTREAM_AVATAR_H = None
+RESTREAM_AVATAR_LOOP = None
 RESTREAM_BITRATE_K = None
 RESTREAM_CANVAS_H = None
 RESTREAM_CANVAS_W = None
@@ -83,6 +86,7 @@ _TTS_VOICE_GAIN = None
 _PFLICHT = (
     "cookie_header", "pick_pull_proxy", "restream_overlay_files",
     "FFMPEG_THREADS_LIVE", "FFMPEG_THREADS_RELAY", "RESTREAM_AVATAR",
+    "RESTREAM_AVATAR_ALPHA", "RESTREAM_AVATAR_H", "RESTREAM_AVATAR_LOOP",
     "RESTREAM_BITRATE_K", "RESTREAM_CANVAS_H", "RESTREAM_CANVAS_W",
     "RESTREAM_FONT", "RESTREAM_FPS", "RESTREAM_LOW_LATENCY",
     "RESTREAM_OVERLAY", "RESTREAM_OVERLAY_HTML_FPS",
@@ -116,11 +120,13 @@ def _drawtext_chain(rid=None):
     return _nc_ff.drawtext_chain(_restream_overlay_files(rid), RESTREAM_FONT)
 
 
-def _studio_chain(avatar_idx=None, rid=None):
+def _studio_chain(avatar_idx=None, rid=None, avatar_alpha_idx=None):
     # v4.0-W27: verbatim nach nc/ffmpeg_filters.py extrahiert (bitgenau geprüft).
     return _nc_ff.studio_chain(_restream_overlay_files(rid), RESTREAM_FONT,
                                RESTREAM_CANVAS_W, RESTREAM_CANVAS_H, RESTREAM_FPS,
-                               avatar_idx=avatar_idx)
+                               avatar_idx=avatar_idx,
+                               avatar_alpha_idx=avatar_alpha_idx,
+                               avatar_h=RESTREAM_AVATAR_H)
 
 
 def build(source_url, ingest_url, stream_key, transcode=False, tts_fifo=None, rid=None, only_target=None, relay_profile=False, html_ov_fifo=None, targets=None):
@@ -183,14 +189,27 @@ def build(source_url, ingest_url, stream_key, transcode=False, tts_fifo=None, ri
     overlay_on = bool(transcode and RESTREAM_OVERLAY and os.path.isfile(RESTREAM_FONT))
     if transcode and RESTREAM_OVERLAY and not overlay_on:
         log.warning("RESTREAM_OVERLAY=1, aber Font fehlt (%s) — Overlay übersprungen", RESTREAM_FONT)
-    avatar_on = bool(overlay_on and RESTREAM_AVATAR and os.path.isfile(RESTREAM_AVATAR))
+    # v4.2-W32: bewegter Avatar, wenn Schleife UND Alphamaske dastehen —
+    # sonst wie bisher das Standbild. Beides fehlt: kein Avatar.
+    anim_on = bool(overlay_on and RESTREAM_AVATAR_LOOP and RESTREAM_AVATAR_ALPHA
+                   and os.path.isfile(RESTREAM_AVATAR_LOOP)
+                   and os.path.isfile(RESTREAM_AVATAR_ALPHA))
+    avatar_on = bool(anim_on or (overlay_on and RESTREAM_AVATAR
+                                 and os.path.isfile(RESTREAM_AVATAR)))
     _idx = 1
-    tts_idx = avatar_idx = None
+    tts_idx = avatar_idx = avatar_alpha_idx = None
     if use_tts:
         cmd += ["-thread_queue_size", "1024", "-f", "s16le",
                 "-ar", str(_TTS_SR), "-ac", str(_TTS_CH), "-i", tts_fifo]
         tts_idx = _idx; _idx += 1
-    if avatar_on:
+    if anim_on:
+        # -stream_loop -1: die Schleife laeuft endlos weiter, das Sendebild
+        # bestimmt die Laenge. -loop 1 auf der Maske aus demselben Grund.
+        cmd += ["-stream_loop", "-1", "-i", RESTREAM_AVATAR_LOOP]
+        avatar_idx = _idx; _idx += 1
+        cmd += ["-loop", "1", "-i", RESTREAM_AVATAR_ALPHA]
+        avatar_alpha_idx = _idx; _idx += 1
+    elif avatar_on:
         cmd += ["-i", RESTREAM_AVATAR]
         avatar_idx = _idx; _idx += 1
     htmlov_idx = None
@@ -218,13 +237,15 @@ def build(source_url, ingest_url, stream_key, transcode=False, tts_fifo=None, ri
                   "[base][ovs]overlay=(W-w)/2:(H-h)/2:eof_action=repeat:shortest=0[vh]"]
             vlabel = "vh"
             if avatar_on:
-                fc.append(f"[{avatar_idx}:v]scale=-1:170[av]")
+                _t, _l = _nc_ff.avatar_kette(avatar_idx, avatar_alpha_idx,
+                                             RESTREAM_AVATAR_H, "av")
+                fc.extend(_t)
                 # v4.2-W30: bottom-right statt vertikal mittig, mit sanftem
                 # Schweben (Amplitude 8px, Periode 6s) — dieselbe Bewegung wie
                 # die azFloat-Animation des HTML-Avatars in overlay.html, nur
                 # hier als ffmpeg-Ausdruck (eval=frame ist overlay()s Default,
                 # t laeuft also live mit statt einmalig beim Filter-Init).
-                fc.append(f"[{vlabel}][av]overlay=W-w-W*0.06:H-h-40-8*sin(2*PI*t/6)[v]"); vlabel = "v"
+                fc.append(f"[{vlabel}][av]overlay=W-w-W*0.06:H-h-40-8*sin(2*PI*t/6):eof_action=repeat:shortest=0[v]"); vlabel = "v"
             if use_tts:
                 fc.extend(_nc_audio.mix_chain(tts_idx, _TTS_VOICE_GAIN, _audio_cfg()["duck"]))
             cmd += ["-filter_complex", ";".join(fc)]
@@ -236,16 +257,19 @@ def build(source_url, ingest_url, stream_key, transcode=False, tts_fifo=None, ri
             fc = []
             vlabel = "0:v"
             if studio_on:
-                sparts, vlabel = _studio_chain(avatar_idx if avatar_on else None, rid=rid)
+                sparts, vlabel = _studio_chain(avatar_idx if avatar_on else None, rid=rid,
+                                               avatar_alpha_idx=avatar_alpha_idx)
                 fc.extend(sparts)
             else:
                 if overlay_on:
                     fc.append(f"[0:v]{_drawtext_chain(rid)}[vt]"); vlabel = "vt"
                 if avatar_on:
-                    fc.append(f"[{avatar_idx}:v]scale=-1:170[av]")
+                    _t, _l = _nc_ff.avatar_kette(avatar_idx, avatar_alpha_idx,
+                                                 RESTREAM_AVATAR_H, "av")
+                    fc.extend(_t)
                     # v4.2-W30: bottom-right + Schweben, siehe Kommentar oben am
                     # htmlov-Zweig — derselbe Ausdruck, hier fuer Text-/Studio-Modus.
-                    fc.append(f"[{vlabel}][av]overlay=W-w-W*0.06:H-h-40-8*sin(2*PI*t/6)[v]"); vlabel = "v"
+                    fc.append(f"[{vlabel}][av]overlay=W-w-W*0.06:H-h-40-8*sin(2*PI*t/6):eof_action=repeat:shortest=0[v]"); vlabel = "v"
             if use_tts:
                 # normalize=0 → Quell-Ton bleibt VOLL (amix halbiert sonst beide Inputs);
                 # Stimme angehoben damit klar hörbar, alimiter fängt Clipping ab.
