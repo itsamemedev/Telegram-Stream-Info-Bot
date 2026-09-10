@@ -11,6 +11,38 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Behoben — AZRAEL schwieg zu seinen eigenen Chat-Antworten (v4.2 W35)
+
+Vom Betreiber gemeldet: „nicht alle Reaktionen aus der Default-Persona haben
+eine Animation." Stimmt — und der Quelltext sagte es selbst. Die Persona spricht
+auf **zwei** Wegen, und W34 las nur einen:
+
+* `_AZRAEL_REACTION` setzt die Live-Reaction-Engine. Sie reagiert auf das
+  Sendebild und schickt **nichts** in den Chat.
+* `_KICK_MOD.last_spoken` setzt `send_message()` — also jede Nachricht, die
+  AZRAEL wirklich in den Kick-Chat schreibt: Antworten an Zuschauer, Dank für
+  Gifts, Begrüßungen, Verwarnungen. Das ist die **häufigere** Quelle.
+
+Der gebrannte Reaktionstext liest seit V37-B99 bereits beide. Der Mund las nur
+die erste — bei jeder Chat-Antwort stand der Satz im Bild und die Figur schwieg
+dazu. Genau das Bild, das gemeldet wurde.
+
+**Die Falle sind die zwei Uhren.** `_AZRAEL_REACTION` stempelt mit `time()`
+(Wanduhr), `last_spoken` mit `monotonic()` (Sekunden seit Boot). Wer sie
+verwechselt, bekommt kein kleines Zeitfehlerchen, sondern einen Schalter, der je
+nach Richtung **nie** oder **immer** anspringt. `_azrael_spricht()` liest jetzt
+jede Quelle mit ihrer eigenen Uhr.
+
+**Eine Frist statt zweier.** Der Mund hing an `AZRAEL_REACTION_HOLD_S` (18 s),
+der Text an `RESTREAM_REACT_HOLD` (20 s) — die Figur verstummte, während ihr
+Satz noch im Bild stand. Beides läuft jetzt über `RESTREAM_REACT_HOLD`.
+
+**Der Vertrag prüft Verhalten, nicht Text:** `_azrael_spricht` wird aus `bot.py`
+geschnitten und mit gestellten Uhren ausgeführt — leer, frische Reaktion, alte
+Reaktion, frische Chat-Antwort, alte Chat-Antwort. Vier Mutationen (Uhren
+vertauscht, Chat-Zweig entfernt, alte Frist zurück, Frischeprüfung entfernt)
+lassen ihn feuern.
+
 ### Hinzugefügt — AZRAEL redet, wenn er redet (v4.2 W34)
 
 Die Sprechschleife lag seit W32 fertig im Repo, aber unverdrahtet: ffmpeg liest

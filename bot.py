@@ -12248,16 +12248,42 @@ _AVATARFEED = {}
 
 
 def _azrael_spricht():
-    """Redet AZRAEL GERADE? Dieselbe Frische wie im Overlay-Text — eine
-    Reaktion gilt AZRAEL_REACTION_HOLD_S lang als laufend.
+    """Redet AZRAEL GERADE? -> bool
+
+    ZWEI QUELLEN, und W34 kannte nur eine (vom Betreiber bemerkt: „nicht alle
+    Reaktionen haben eine Animation"). Die Persona spricht auf zwei Wegen:
+
+      _AZRAEL_REACTION      setzt die Live-Reaction-Engine (react()) — sie
+                            reagiert auf das Sendebild und schickt NICHTS in
+                            den Chat.
+      _KICK_MOD.last_spoken setzt send_message() — also JEDE Nachricht, die
+                            AZRAEL wirklich in den Kick-Chat schreibt:
+                            Antworten an Zuschauer, Dank fuer Gifts,
+                            Begruessungen, Verwarnungen.
+
+    Der gebrannte Reaktionstext liest seit V37-B99 beide (siehe
+    _write_restream_overlay). Der Mund las nur die erste — bei jeder
+    Chat-Antwort stand der Text im Bild und die Figur schwieg dazu.
+
+    ZWEI UHREN: _AZRAEL_REACTION stempelt mit time() (Wanduhr),
+    last_spoken mit monotonic() (Sekunden seit Boot). Wer sie verwechselt,
+    bekommt kein kleines Zeitfehlerchen, sondern einen Schalter, der
+    entweder nie oder immer anspringt — je nach Richtung.
+
+    Frist ist RESTREAM_REACT_HOLD, dieselbe wie beim gebrannten Text: Mund
+    und Text beschreiben dasselbe Ereignis und sollen nicht auseinanderlaufen
+    (vorher 18 s Mund gegen 20 s Text).
 
     Bewusst NICHT ueber _azrael_overlay_state(): das haengt zusaetzlich am
     Panel-Schalter azrael_show, der den HTML-Avatar steuert. Der gebrannte
     Avatar soll nicht verstummen, weil jemand ein Dashboard-Panel ausblendet.
     """
     r = _AZRAEL_REACTION
-    return bool(r.get("text")) and \
-        (_time_mod.time() - r.get("ts", 0)) < AZRAEL_REACTION_HOLD_S
+    if r.get("text") and (_time_mod.time() - (r.get("ts") or 0.0)) < RESTREAM_REACT_HOLD:
+        return True
+    ls = getattr(_KICK_MOD, "last_spoken", None) or {}
+    return bool(ls.get("text")) and \
+        (_time_mod.monotonic() - (ls.get("ts") or 0.0)) < RESTREAM_REACT_HOLD
 
 
 def _avatar_frames_laden(schleife, maske):
