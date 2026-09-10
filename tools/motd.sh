@@ -617,8 +617,26 @@ fi
 # Dashboard: nicht "lauscht der Port", sondern "antwortet die App". Ein
 # haengender Flask-Thread haelt den Port offen — die alte Anzeige blieb gruen.
 DASH_STATE=aus; DASH_PROCS=""; DASH_ZOMB=""; DASH_JSON=""
+# Das Schema muss zum Dienst passen. Laeuft das Dashboard mit
+# DASHBOARD_TLS_CERT/-KEY, spricht es TLS — ein http://-Probe bekommt dann
+# NICHTS zurueck, faellt auf den ss-Zweig durch und meldet "Port offen, keine
+# Antwort", waehrend das Dashboard in Wahrheit sauber 200er liefert. Genau
+# dieser Fehlalarm stand am 10.09. in der MOTD. Deshalb: Schema aus der .env
+# bestimmen und im Zweifel BEIDE probieren.
+# -k ist hier richtig und keine Nachlaessigkeit: das Zertifikat lautet auf den
+# Domainnamen, geprobt wird gegen 127.0.0.1 — die Pruefung MUSS scheitern.
+dash_probe(){ # $1=Schema — leere Ausgabe heisst "keine Antwort"
+  tmo 2 curl -s -k --max-time 1.5 "$1://127.0.0.1:${DASH_PORT}/healthz" 2>/dev/null
+}
 if have curl; then
-  DASH_JSON=$(tmo 2 curl -s --max-time 1.5 "http://127.0.0.1:${DASH_PORT}/healthz" 2>/dev/null)
+  DASH_SCHEMES="http https"
+  if [ -n "$(envget DASHBOARD_TLS_CERT)" ] && [ -n "$(envget DASHBOARD_TLS_KEY)" ]; then
+    DASH_SCHEMES="https http"
+  fi
+  for _sch in $DASH_SCHEMES; do
+    DASH_JSON=$(dash_probe "$_sch")
+    [ -n "$DASH_JSON" ] && break
+  done
 fi
 if [ -n "$DASH_JSON" ]; then
   _ok=$(printf '%s' "$DASH_JSON" | sed -n 's/.*"ok"[: ]*\([a-z]*\).*/\1/p')
