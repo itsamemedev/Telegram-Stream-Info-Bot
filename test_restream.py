@@ -4281,8 +4281,14 @@ def test_v40_w27_ffmpeg_filters():
     assert any("color=c=0x05070d:s=1280x720:r=15" in p for p in parts), \
         "Canvas nicht gerade/geklemmt (min 1280x720, fps>=15)"
     parts2, label2 = FF.studio_chain(files, "f.ttf", 1920, 1080, 30, avatar_idx=2)
-    assert label2 == "vstudio" and any("[2:v]scale=-1:92[sav]" in p for p in parts2), \
+    # ANKER GEWANDERT (v4.2-W31, nicht der Vertrag): 92 -> 170 px Avatar-Hoehe.
+    assert label2 == "vstudio" and any("[2:v]scale=-1:170[sav]" in p for p in parts2), \
         "Avatar-Overlay-Zweig fehlt"
+    # v4.2-W31: y MUSS mit h rechnen, nicht gegen eine feste Pixelzahl. Sonst
+    # rutscht der Avatar bei jeder Hoehenaenderung aus dem Panel (bei 170 lag
+    # die alte Formel H-148 unter dem Bildrand).
+    assert any("y=H-72-h+" in p for p in parts2), \
+        "Avatar-Position rechnet nicht mit der Avatar-Hoehe h"
     assert len(parts2) == len(parts) + 2, "Avatar fügt genau 2 Teile hinzu"
     ok("v4.0-w27: drawtext_chain + studio_chain bitgenau, Escaping + Avatar korrekt")
 
@@ -4298,6 +4304,74 @@ def test_v40_w27_ffmpeg_filters():
     # Alte Ketten-Logik darf nirgends nachgebaut werden.
     assert "[cnv][vsrc]overlay" not in (src + _rcs), "alte studio-Logik nachgebaut"
     ok("v4.0-w27: der Bauer delegiert beide Ketten, keine Doppel-Logik mehr")
+
+
+def test_v42_w31_azrael_avatar_bild():
+    """v4.2-W31: das Avatar-Bild selbst ist Teil des Sendebilds, also Teil des
+       Vertrags. Der Fehlerfall ist teuer und faellt NUR auf dem Stream auf:
+       ein Bild ohne Alpha brennt einen schwarzen Kasten in die Ecke, ein zu
+       kleines wird auf 170 px hochskaliert und matscht. Beides sieht man im
+       Log nie. Geprueft wird ohne Pillow — das Paket liegt nicht in der CI."""
+    import struct
+    import zlib
+
+    pfad = "azrael_avatar.png"
+    assert os.path.isfile(pfad), (
+        "azrael_avatar.png fehlt — RESTREAM_AVATAR zeigt per Default hierher, "
+        "ohne die Datei bleibt avatar_on aus und im Sendebild fehlt AZRAEL")
+
+    d = open(pfad, "rb").read()
+    assert d[:8] == b"\x89PNG\r\n\x1a\n", "kein PNG"
+    i, idat, ihdr = 8, bytearray(), None
+    while i < len(d):
+        ln, typ = struct.unpack(">I4s", d[i:i + 8])
+        if typ == b"IHDR":
+            ihdr = struct.unpack(">IIBBBBB", d[i + 8:i + 8 + ln])
+        elif typ == b"IDAT":
+            idat += d[i + 8:i + 8 + ln]
+        elif typ == b"IEND":
+            break
+        i += 12 + ln
+    w, h, tiefe, farbtyp, _komp, _filt, verschraenkt = ihdr
+    # Farbtyp 6 = Truecolor MIT Alpha. 2 (ohne Alpha) waere der schwarze Kasten.
+    assert (tiefe, farbtyp, verschraenkt) == (8, 6, 0), \
+        f"PNG muss 8bit RGBA nicht-verschraenkt sein, ist {(tiefe, farbtyp, verschraenkt)}"
+    assert h >= 170, f"kleiner als die Sendehoehe (170) — wird hochskaliert: {w}x{h}"
+
+    # Scanlines entfiltern (PNG-Filter 0-4), nur so kommt man an die Alphawerte.
+    roh = zlib.decompress(bytes(idat))
+    bpp, stride = 4, w * 4
+    alpha, vor, p = [], bytearray(stride), 0
+    for _y in range(h):
+        f = roh[p]; p += 1
+        z = bytearray(roh[p:p + stride]); p += stride
+        if f == 1:
+            for x in range(bpp, stride):
+                z[x] = (z[x] + z[x - bpp]) & 255
+        elif f == 2:
+            for x in range(stride):
+                z[x] = (z[x] + vor[x]) & 255
+        elif f == 3:
+            for x in range(stride):
+                a = z[x - bpp] if x >= bpp else 0
+                z[x] = (z[x] + ((a + vor[x]) >> 1)) & 255
+        elif f == 4:
+            for x in range(stride):
+                a = z[x - bpp] if x >= bpp else 0
+                b, c = vor[x], (vor[x - bpp] if x >= bpp else 0)
+                pa, pb, pc = abs(b - c), abs(a - c), abs(a + b - 2 * c)
+                pr = a if (pa <= pb and pa <= pc) else (b if pb <= pc else c)
+                z[x] = (z[x] + pr) & 255
+        alpha.append(z[3::4])
+        vor = z
+
+    ecken = (alpha[0][0], alpha[0][-1], alpha[-1][0], alpha[-1][-1])
+    assert max(ecken) == 0, f"Ecken nicht transparent {ecken} — das gibt einen Kasten im Bild"
+    assert alpha[h // 2][w // 2] == 255, "Bildmitte durchsichtig — die Figur fehlt"
+    voll = sum(1 for z in alpha for a in z if a == 255)
+    assert voll > 0.35 * w * h, \
+        f"nur {voll * 100 // (w * h)} %% voll deckend — als Geist ist AZRAEL nicht zu erkennen"
+    ok("v4.2-w31: Avatar-Bild vorhanden, RGBA, Ecken transparent, Figur deckend")
 
 
 def test_v40_w28_filepayload():
@@ -9121,6 +9195,7 @@ def main():
     test_v40_w25_restream_util()
     test_v40_w26_abo_and_sysrun()
     test_v40_w27_ffmpeg_filters()
+    test_v42_w31_azrael_avatar_bild()
     test_v40_w28_filepayload()
     test_v40_w29_streamsel()
     test_v40_w30_fixes_and_sysload()
