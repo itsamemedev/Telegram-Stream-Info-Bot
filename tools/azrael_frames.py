@@ -90,11 +90,23 @@ def _bloom(bild):
                        ).filter(ImageFilter.GaussianBlur(14))
 
 
+KOPF_AUSBLENDUNG = 0.26     # oberste 26 % der Hoehe weich auf 0 ziehen
+
+
 def _alpha(bild):
     """Freistellen geht bei dieser Vorlage nicht: der Glow reicht bis an die
     Kante, und die Figur ist selbst fast schwarz — ein Luminanz-Key frisst
     Kapuze und Ruestung. Deshalb Superellipsen-Vignette, und erst ganz aussen
-    nimmt eine sanfte Dunkel-Maske die schwarzen Ecken weg."""
+    nimmt eine sanfte Dunkel-Maske die schwarzen Ecken weg.
+
+    v4.2-W33 — KOPF NICHT ABSCHNEIDEN: in der Vorlage beruehrt die Kapuze
+    bereits die obere Bildkante, und die Vignette war dort noch voll deckend
+    (Alpha 255 in der obersten Zeile). Im Sendebild stand der Kopf damit glatt
+    abgeschnitten. Nach oben gibt es keine Pixel zum Nachwachsen, also blendet
+    die Kapuze aus, statt zu enden — was zur Figur passt, die ohnehin aus dem
+    Dunkel kommt. Unten passiert das von selbst, weil der Ellipsenmittelpunkt
+    bei 0.47 liegt und der untere Rand damit weiter weg ist als der obere.
+    """
     W, H = bild.size
     lum = bild.convert("L")
     maske = Image.new("L", (W, H))
@@ -112,6 +124,12 @@ def _alpha(bild):
                 m = min(1.0, (r - 0.80) / 0.22)
                 k *= (1 - m) + m * d
             px[x, y] = int(k * 255)
+    aus = int(H * KOPF_AUSBLENDUNG)
+    for y in range(aus):
+        t = y / aus
+        f = t * t * (3 - 2 * t)          # smoothstep, kein linearer Keil
+        for x in range(W):
+            px[x, y] = int(px[x, y] * f)
     return maske.filter(ImageFilter.GaussianBlur(5))
 
 

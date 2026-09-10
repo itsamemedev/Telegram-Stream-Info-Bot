@@ -1193,7 +1193,9 @@ RESTREAM_AVATAR_LOOP  = os.getenv("RESTREAM_AVATAR_LOOP", "assets/azrael/ruhe.we
 RESTREAM_AVATAR_ALPHA = os.getenv("RESTREAM_AVATAR_ALPHA", "assets/azrael/alpha.png").strip()
 # Er ist der optische Moderator — wie gross er im Sendebild steht, ist
 # Geschmack und gehoert deshalb in die .env, nicht in den Quelltext.
-RESTREAM_AVATAR_H     = _env_int("RESTREAM_AVATAR_H", 360)
+# v4.2-W33: 360 -> 420. Die Kopf-Ausblendung (siehe tools/azrael_frames.py)
+# kostet oben Flaeche; ohne Ausgleich wirkt die Figur kleiner als in W32.
+RESTREAM_AVATAR_H     = _env_int("RESTREAM_AVATAR_H", 420)
 # Wie lange (Sek.) eine AZRAEL-Reaktion im gebrannten Overlay stehen bleibt.
 RESTREAM_REACT_HOLD = _env_int("RESTREAM_REACT_HOLD", 20)
 
