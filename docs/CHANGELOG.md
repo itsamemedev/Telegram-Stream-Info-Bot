@@ -11,6 +11,34 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Behoben — AZRAELs Kopf stand abgeschnitten im Sendebild (v4.2 W33)
+
+Vom Betreiber gemeldet und reproduziert: die Kapuze endete oben an einer
+glatten waagerechten Kante. Messbar in der Maske — **die oberste Zeile stand
+mittig auf Alpha 255**, der Inhalt war dort also voll deckend und brach an der
+Bildkante einfach ab.
+
+Ursache liegt in der Vorlage selbst: dort berührt die Kapuze bereits y=0, es
+gibt nach oben keine Pixel zum Nachwachsen. Die Superellipsen-Vignette aus W32
+half nicht, weil ihr Mittelpunkt bei 0.47 sitzt — der obere Rand ist damit
+*näher* am Zentrum als der untere und blieb deckend, während unten von selbst
+ausblendete (dort ist ein Brustbild-Anschnitt ohnehin normal, bei einem Kopf
+nie).
+
+Die Kapuze blendet jetzt über die obersten 26 % weich aus, statt zu enden — das
+passt zur Figur, die ohnehin aus dem Dunkel kommt. Drei Stärken gerendert und
+verglichen: bei 18 % bleibt die Kante spürbar, bei 34 % löst sich die Kapuze
+auf. Weil die Ausblendung oben Fläche kostet, geht `RESTREAM_AVATAR_H` von 360
+auf 420 — die Figur wirkt sonst kleiner als vorher.
+
+Der Vertrag aus W32 prüft jetzt zusätzlich die oberste Maskenzeile (≤ 8 statt
+bis 255). Zwei Mutationen bestätigt, darunter die End-zu-End-Probe: die
+Ausblendung im Generator auf 0 gedreht und neu erzeugt stellt exakt den
+ausgelieferten Fehler wieder her — und der Vertrag fängt ihn.
+
+Nur `alpha.png` trägt die Korrektur; die Bewegung in den WebM-Schleifen war nie
+betroffen. Genau dafür liegen Farbe und Deckung getrennt.
+
 ### Hinzugefügt — AZRAEL bewegt sich: Mund, Schwertarm, Aura (v4.2 W32)
 
 W31 hat ein Standbild ins Sendebild gestellt, das auf und ab wippte. Ein

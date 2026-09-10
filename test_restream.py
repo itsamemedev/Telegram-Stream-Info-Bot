@@ -4385,6 +4385,7 @@ def test_v42_w32_azrael_animation():
     (3) die Artefakte wachsen unbemerkt (die PNG-Sequenz waere 11 MB gewesen).
     """
     import struct
+    import zlib
 
     from nc import ffmpeg_filters as FF
 
@@ -4429,13 +4430,41 @@ def test_v42_w32_azrael_animation():
     # Farbtyp 0 = Graustufen. alphamerge liest den Grauwert; ein RGB-Bild
     # waere dreimal so gross fuer denselben Inhalt.
     assert (tiefe, farbtyp) == (8, 0), f"Maske muss 8bit-Graustufen sein, ist {(tiefe, farbtyp)}"
+
+    # v4.2-W33: die oberste Zeile MUSS durchsichtig sein. In der Vorlage
+    # beruehrt die Kapuze die obere Bildkante; stand die Maske dort auf 255,
+    # war der Kopf im Sendebild glatt abgeschnitten — genau so ausgeliefert
+    # und vom Betreiber gemeldet. Unten darf gekappt werden (Brustbild), oben
+    # nie. Ohne Pillow gelesen: nur die erste Scanline entfiltern reicht,
+    # Filter 0/1 brauchen keine Vorzeile, bei 2-4 ist sie definitionsgemaess 0.
+    roh_a = bytearray()
+    d2, i2 = open(alpha, "rb").read(), 8
+    while i2 < len(d2):
+        ln2, typ2 = struct.unpack(">I4s", d2[i2:i2 + 8])
+        if typ2 == b"IDAT":
+            roh_a += d2[i2 + 8:i2 + 8 + ln2]
+        elif typ2 == b"IEND":
+            break
+        i2 += 12 + ln2
+    scan = zlib.decompress(bytes(roh_a))
+    filt, zeile0 = scan[0], bytearray(scan[1:1 + aw])   # Graustufen: 1 Byte je Pixel
+    # Nur die ERSTE Scanline: fuer die ist die Vorzeile definitionsgemaess 0,
+    # damit fallen Up/Average/Paeth auf Sub bzw. auf gar nichts zurueck.
+    if filt in (1, 4):
+        for x in range(1, aw):
+            zeile0[x] = (zeile0[x] + zeile0[x - 1]) & 255
+    elif filt == 3:
+        for x in range(1, aw):
+            zeile0[x] = (zeile0[x] + (zeile0[x - 1] >> 1)) & 255
+    assert max(zeile0) <= 8, \
+        f"oberste Maskenzeile deckt bis {max(zeile0)} — der Kopf steht abgeschnitten im Bild"
     for name in ("ruhe.webm", "sprich.webm"):
         pfad = os.path.join("assets", "azrael", name)
         assert os.path.isfile(pfad), f"{name} fehlt"
         assert open(pfad, "rb").read(4) == b"\x1a\x45\xdf\xa3", f"{name} ist kein WebM"
         kb = os.path.getsize(pfad) / 1024
         assert kb < 400, f"{name} ist {kb:.0f} KB — Schleifen gehoeren klein ins Repo"
-    ok("v4.2-w32: Animation + getrennte Alpha, Rueckfall aufs Standbild, Artefakte klein")
+    ok("v4.2-w32/33: Animation, getrennte Alpha, Kopf nicht abgeschnitten, Artefakte klein")
 
 
 def test_v40_w28_filepayload():
