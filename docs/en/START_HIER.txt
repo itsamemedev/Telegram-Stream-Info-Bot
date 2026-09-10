@@ -1,0 +1,229 @@
+NIGHTCRAWLER v37 — B147 — START HERE
+=====================================
+
+This archive is the complete project state. You lay it over your existing
+installation and restart the service. Your .env, cookies, recordings and
+the database are NOT in the archive and stay untouched.
+
+Note on scope: this file translates the operational parts — rollout,
+dashboard access, what is new in this build, and the fault patterns that
+are not code bugs. The per-build history of older releases stays in the
+German original (../START_HIER.txt); it grows with every build and a
+translated copy would rot within a week.
+
+
+────────────────────────────────────────────────────────────────────
+ROLLOUT — ONE COMMAND
+────────────────────────────────────────────────────────────────────
+
+Upload NIGHTCRAWLER_v37_B147.zip to your home directory (~) on the
+server via Termius/scp. Then:
+
+       unzip -o ~/NIGHTCRAWLER_v37_B147.zip -d /tmp/nc-deploy
+       bash /tmp/nc-deploy/tools/deploy.sh ~/NIGHTCRAWLER_v37_B147.zip
+
+The deploy script (since B138) replaces the old "stop, unpack, start".
+The difference matters: the script unpacks the new build into a SIDE
+DIRECTORY first and checks it there completely — py_compile, pyflakes,
+ruff, test_smoke, test_nc_modules, test_restream, ncpatch check and
+node --check on the dashboard scripts. Your running bot is NOT touched
+while this happens.
+
+Only when everything is green does it stop, switch over and start.
+Afterwards it verifies for itself: is the service running, does the
+dashboard answer, what does the self-test say. If anything goes wrong it
+restores the backup automatically.
+
+If the pre-check fails, NOTHING happens — your bot keeps running
+unchanged. That was not the case before: a broken build took your bot
+down and the only rescue was a tarball.
+
+Different paths or service names:
+
+       BOT_DIR=~/my-bot SERVICE=mybot bash .../deploy.sh <zip>
+
+Find the service name with:  systemctl list-units | grep -i tiktok
+
+
+THE OLD WAY (if you need it)
+
+       cd ~/tiktok-bot && tar czf ../backup_$(date +%F_%H%M).tgz .
+       sudo systemctl stop tiktok-bot
+       unzip -o ~/NIGHTCRAWLER_v37_B147.zip -d ~/tiktok-bot
+       sudo systemctl start tiktok-bot
+
+
+IS IT RUNNING?  Follow the log
+
+       journalctl -u tiktok-bot -f
+
+   Ctrl+C only ends the log tail, NOT the bot.
+   Expected lines: Discord verbunden … / Brain-LLM … / Dashboard läuft.
+   (Log lines stay German on purpose — they are for the operator and
+   never pass through the translation layer.)
+
+
+WHAT IS BROKEN RIGHT NOW?  (since B138)
+
+       curl -s localhost:8050/api/selftest | python3 -m json.tool
+
+   Sums up what used to be five different log greps: dead restream
+   targets, the YouTube reason, defence permissions, disturbed
+   long-running loops, silent core loops, disk fill level — each finding
+   with the command that fixes it.
+
+
+ONE-TIME SETUP — DEAD-MAN ALERT  (strongly recommended)
+
+   If the bot process dies completely, NOBODY tells you today. The
+   instructions are at the top of tools/notify_failure.sh; in short:
+
+       chmod +x ~/tiktok-bot/tools/notify_failure.sh
+       sudo systemctl edit tiktok-bot     → [Unit] OnFailure=nightcrawler-notify@%n.service
+
+   After that every failure sends a Telegram/Discord message with the
+   last log lines.
+
+
+────────────────────────────────────────────────────────────────────
+OPENING THE DASHBOARD  (from your laptop; no phone needed)
+────────────────────────────────────────────────────────────────────
+
+       ssh -L 3000:localhost:8050 ubuntu@<server-ip>
+
+   Then in the browser:  http://localhost:3000
+   (The dashboard runs on the server on port 8050; the tunnel puts it on
+    3000 locally. The port stays on loopback — anyone who makes the
+    dashboard "easily reachable" opens 361 routes with config restore,
+    log tail and file download to the network.)
+
+
+────────────────────────────────────────────────────────────────────
+WHAT IS NEW IN B147  (AZRAEL on screen — and the archive had holes)
+────────────────────────────────────────────────────────────────────
+
+PLEASE READ FIRST — THIS ARCHIVE IS BIGGER THAN THE PREVIOUS ONES, AND
+THAT IS THE ACTUAL POINT.
+
+While building this release it turned out that the file list in the
+build script had not grown since v4.0. Every archive since discordbot.py
+(v4.2-W15) and telegramversand.py (v4.2-W19) were split out of the
+monolith did NOT contain those two files. bot.py imports them at runtime,
+inside the function — the ImportError then lands in a broad except, and
+Discord and the recording dispatch are silently dead, without a single
+line in the ERROR log. Also missing: locales/ (the translation catalogue,
+since v4.1-W6) and the avatar loops.
+
+If Discord or the recording dispatch on your server has "just not been
+working" for a while: that is very likely the cause, and this build fixes
+it. To confirm, search the log for:
+
+       journalctl -u tiktok-bot --since "1 hour ago" | grep -i "discordbot\|telegramversand\|ModuleNotFound"
+
+The build script now checks this itself: every module name imported by a
+shipped file that also exists as a root-level module MUST be in the
+archive — otherwise the build aborts instead of shipping half an archive.
+
+
+AZRAEL IS NOW VISIBLE  (v4.2-W31 through W35)
+
+In the burned-in overlay (RESTREAM_OVERLAY=1) AZRAEL stands in the
+bottom-right of the outgoing picture — as an animated 2D figure, not a
+still image. Jaw, sword arm and aura move, and the mouth runs exactly
+when he actually says something: both for the live reaction to the
+outgoing picture and for real chat replies (answers to viewers, thanks
+for gifts, greetings, warnings).
+
+Three-stage fallback chain: feeder -> fixed loop -> still image. If the
+animation fails, AZRAEL keeps moving, just without responding to chat. An
+avatar is no reason not to start a restream.
+
+Two values in the .env if you want to adjust:
+
+       RESTREAM_AVATAR_H=420      height of the figure in the picture
+       RESTREAM_AVATAR_FPS=10     MUST match the rate of the loops
+
+RESTREAM_AVATAR_FPS is the one value where "just change it" goes wrong:
+the loops in assets/azrael/ are built at 10 frames per second. Set 20 and
+the figure runs twice as fast. If you regenerate the loops
+(tools/azrael_frames.py), change both together.
+
+None of this is active when RESTREAM_OVERLAY=0 or the restream runs in
+copy mode — there is no burned-in picture then anyway.
+
+
+YOUTUBE CLIPS  (v4.2-W29, ON by default)
+
+Automatically cut clips now also go to YouTube, with a cap of 4 uploads
+per 24 hours (rolling, not a calendar day). Turn off with
+YOUTUBE_CLIP_ENABLED=0, cap via YOUTUBE_CLIP_MAX_PER_DAY.
+
+IMPORTANT — one-time step in the Google Cloud Console: if your app is
+still set to "Testing" there, refresh tokens expire after 7 days and the
+upload fails with a scope/auth message. Switch it to "In production" and
+they stay long-lived. Until then the panel reports the reason honestly
+instead of silently doing nothing.
+
+
+Changed against B146:  bot.py, nc/ffmpeg_filters.py, nc/restreamcmd.py,
+nc/ytoauth.py, tools/build_release.py, tools/azrael_frames.py (new),
+assets/azrael/ (new), azrael_avatar.png (new), test_restream.py,
+test_nc_modules.py, README.md, README.en.md, CLAUDE.md, CLAUDE.en.md,
+docs/.
+
+
+────────────────────────────────────────────────────────────────────
+IF THE CROWDSEC / DEFENCE PANEL STAYS EMPTY
+────────────────────────────────────────────────────────────────────
+
+That is a server permission topic, not a bot bug. cscli must run as root
+(it reads root-only credentials). Check the real path first:
+
+       which cscli
+       sudo systemctl status crowdsec        (must be "active (running)")
+
+Put THE SAME path into sudoers without a password (example for
+/usr/local/bin/cscli — use your own path from "which cscli"):
+
+       echo 'ubuntu ALL=(root) NOPASSWD: /usr/local/bin/cscli' | sudo tee /etc/sudoers.d/nightcrawler
+       sudo chmod 440 /etc/sudoers.d/nightcrawler
+
+Test — must return clean JSON:
+
+       sudo -n cscli decisions list -o json
+
+For the "attacks" list the bot user additionally needs read access to the
+auth logs:
+
+       sudo usermod -aG adm ubuntu        (then restart the service once)
+
+
+────────────────────────────────────────────────────────────────────
+IF KICK STILL DOES NOT SEND (only Kick; Twitch/YouTube are fine)
+────────────────────────────────────────────────────────────────────
+
+The 'Input/output error' on the Kick ingest URL (rtmps ...live-video.net)
+in error.log means: Kick is not accepting the connection. That is NOT a
+code bug — the bot now merely keeps TikTok and the other targets stable
+while Kick is stuck. Check on the Kick side:
+  1. Stream key current? (Kick dashboard → copy the stream key again →
+     update KICK_STREAM_KEY / ingest in the .env)
+  2. Is a stream already running elsewhere on the same key? (only one
+     allowed)
+  3. Server IP possibly blocked regionally — test from another IP.
+Then restart the service.
+
+Note: values on the restream target in the DATABASE beat the .env. A
+target created in the dashboard with an old key ignores every .env change,
+even after a restart. Search the log for:  Kick-Ziel:
+
+
+────────────────────────────────────────────────────────────────────
+IF SOMETHING GOES WRONG
+────────────────────────────────────────────────────────────────────
+
+Restore the backup from step 1:
+
+       sudo systemctl stop tiktok-bot
+       cd ~/tiktok-bot && tar xzf ../nightcrawler_backup_<date>.tgz
+       sudo systemctl start tiktok-bot

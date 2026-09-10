@@ -11,7 +11,7 @@ All guides and the project history live here. The repository root carries only
 
 | File | What for |
 |---|---|
-| [`START_HIER.txt`](../START_HIER.txt) | Deploy in one command, read the log, first aid (German) |
+| [`START_HIER.txt`](START_HIER.txt) | Deploy in one command, read the log, first aid |
 | [`DEPLOY.md`](DEPLOY.md) | Complete deployment and verification guide |
 | [`SETUP_LLAMACPP.md`](SETUP_LLAMACPP.md) | Local LLM, no cloud and no cost |
 | [`SETUP_TWITCH_OAUTH.md`](SETUP_TWITCH_OAUTH.md) | Set up Twitch OAuth |

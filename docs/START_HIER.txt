@@ -1,4 +1,4 @@
-NIGHTCRAWLER v37 — B146 — START HIER
+NIGHTCRAWLER v37 — B147 — START HIER
 =====================================
 
 Dieses Archiv ist der komplette Projektstand. Du legst es über deine
@@ -10,11 +10,11 @@ Aufnahmen und die Datenbank sind NICHT im Archiv und bleiben unangetastet.
 EINSPIELEN — EIN BEFEHL
 ────────────────────────────────────────────────────────────────────
 
-Lade NIGHTCRAWLER_v37_B146.zip per Termius/scp in dein Home-Verzeichnis
+Lade NIGHTCRAWLER_v37_B147.zip per Termius/scp in dein Home-Verzeichnis
 (~) auf dem Server hoch. Dann:
 
-       unzip -o ~/NIGHTCRAWLER_v37_B146.zip -d /tmp/nc-deploy
-       bash /tmp/nc-deploy/tools/deploy.sh ~/NIGHTCRAWLER_v37_B146.zip
+       unzip -o ~/NIGHTCRAWLER_v37_B147.zip -d /tmp/nc-deploy
+       bash /tmp/nc-deploy/tools/deploy.sh ~/NIGHTCRAWLER_v37_B147.zip
 
 Das Deploy-Skript (seit B138) ersetzt das alte "stoppen, entpacken,
 starten". Der Unterschied ist wichtig: das Skript packt den neuen Build
@@ -43,7 +43,7 @@ DER ALTE WEG (falls du ihn brauchst)
 
        cd ~/tiktok-bot && tar czf ../backup_$(date +%F_%H%M).tgz .
        sudo systemctl stop tiktok-bot
-       unzip -o ~/NIGHTCRAWLER_v37_B146.zip -d ~/tiktok-bot
+       unzip -o ~/NIGHTCRAWLER_v37_B147.zip -d ~/tiktok-bot
        sudo systemctl start tiktok-bot
 
 
@@ -89,7 +89,85 @@ DASHBOARD ÖFFNEN  (von deinem Laptop, nicht vom Handy nötig)
 
 
 ────────────────────────────────────────────────────────────────────
-WAS IN B146 NEU IST  (Aufnahme-Waechter + Dashboard aufgeraeumt)
+WAS IN B147 NEU IST  (AZRAEL steht im Bild — und das Archiv war luecken-
+                      haft)
+────────────────────────────────────────────────────────────────────
+
+BITTE ZUERST LESEN — DIESES ARCHIV IST GROESSER ALS DIE VORHERIGEN, UND
+DAS IST DER EIGENTLICHE PUNKT.
+
+Beim Bauen dieses Builds kam heraus, dass die Dateiliste im Bau-Skript
+seit v4.0 nicht mitgewachsen ist. Alle Archive seit dem Herausloesen von
+discordbot.py (v4.2-W15) und telegramversand.py (v4.2-W19) haben diese
+beiden Dateien NICHT enthalten. bot.py importiert sie erst zur Laufzeit
+in der Funktion — der ImportError landet dann in einem breiten except,
+und Discord bzw. der Aufnahme-Versand sind still tot, ohne eine Zeile im
+ERROR-Log. Ebenfalls gefehlt haben: locales/ (der Uebersetzungskatalog,
+seit v4.1-W6) und die Avatar-Schleifen.
+
+Falls auf deinem Server Discord oder der Aufnahme-Versand seit einiger
+Zeit "einfach nicht mehr geht": das ist sehr wahrscheinlich die Ursache,
+und dieser Build behebt sie. Suche zur Bestaetigung im Log nach:
+
+       journalctl -u tiktok-bot --since "1 hour ago" | grep -i "discordbot\|telegramversand\|ModuleNotFound"
+
+Das Bau-Skript prueft das jetzt selbst: jeder Modulname, den eine
+mitgelieferte Datei importiert und der als Modul in der Wurzel liegt,
+MUSS im Archiv sein — sonst bricht der Bau ab, statt ein halbes Archiv
+auszuliefern.
+
+
+AZRAEL IST JETZT SICHTBAR  (v4.2-W31 bis W35)
+
+Im gebrannten Overlay (RESTREAM_OVERLAY=1) steht AZRAEL unten rechts im
+Sendebild — als animierte 2D-Figur, nicht als Standbild. Kiefer,
+Schwertarm und Aura bewegen sich, und der Mund geht genau dann, wenn er
+wirklich etwas sagt: sowohl bei der Live-Reaktion aufs Sendebild als
+auch bei echten Chat-Antworten (Antworten an Zuschauer, Dank fuer Gifts,
+Begruessungen, Verwarnungen).
+
+Dreistufige Rueckfallkette: Feeder -> feste Schleife -> Standbild.
+Scheitert die Animation, bewegt sich AZRAEL weiter, nur ohne auf den
+Chat einzugehen. Ein Avatar ist kein Grund, einen Restream nicht zu
+starten.
+
+Zwei Werte in der .env, falls du drehen willst:
+
+       RESTREAM_AVATAR_H=420      Hoehe der Figur im Sendebild
+       RESTREAM_AVATAR_FPS=10     MUSS zum Takt der Schleifen passen
+
+RESTREAM_AVATAR_FPS ist der einzige Wert, bei dem "einfach mal aendern"
+schiefgeht: die Schleifen in assets/azrael/ sind mit 10 Bildern je
+Sekunde gebaut. Stellst du 20 ein, laeuft die Figur doppelt so schnell.
+Wer die Schleifen neu erzeugt (tools/azrael_frames.py), aendert beides
+gemeinsam.
+
+Nichts davon ist aktiv, wenn RESTREAM_OVERLAY=0 steht oder der Restream
+im Copy-Modus laeuft — dann gibt es ohnehin kein gebranntes Bild.
+
+
+YOUTUBE-CLIPS  (v4.2-W29, standardmaessig AN)
+
+Automatisch geschnittene Clips gehen jetzt zusaetzlich zu YouTube, mit
+einem Deckel von 4 Uploads je 24 Stunden (rollend, kein Kalendertag).
+Abschaltbar: YOUTUBE_CLIP_ENABLED=0, Deckel: YOUTUBE_CLIP_MAX_PER_DAY.
+
+WICHTIG — einmalig in der Google Cloud Console: steht deine App dort auf
+"Testing", laufen die Refresh-Tokens nach 7 Tagen ab und der Upload
+scheitert mit einer Scope-/Auth-Meldung. Auf "In production" umstellen,
+dann bleiben sie langlebig. Bis dahin meldet das Panel den Grund ehrlich,
+statt still nichts zu tun.
+
+
+Geaendert gegenueber B146:  bot.py, nc/ffmpeg_filters.py,
+nc/restreamcmd.py, nc/ytoauth.py, tools/build_release.py,
+tools/azrael_frames.py (neu), assets/azrael/ (neu),
+azrael_avatar.png (neu), test_restream.py, test_nc_modules.py,
+README.md, README.en.md, CLAUDE.md, CLAUDE.en.md, docs/.
+
+
+────────────────────────────────────────────────────────────────────
+AUS B146 ÜBERNOMMEN  (Aufnahme-Waechter + Dashboard aufgeraeumt)
 ────────────────────────────────────────────────────────────────────
 
 recording — 11. Sentinel-Agent. Erkennt Aufnahmen, die als recording=1
