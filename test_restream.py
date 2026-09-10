@@ -4467,6 +4467,86 @@ def test_v42_w32_azrael_animation():
     ok("v4.2-w32/33: Animation, getrennte Alpha, Kopf nicht abgeschnitten, Artefakte klein")
 
 
+def test_v42_w35_azrael_spricht_beide_quellen():
+    """v4.2-W35: der Mund muss ALLE Aeusserungen der Persona kennen.
+
+    W34 hing nur an _AZRAEL_REACTION — das setzt die Live-Reaction-Engine.
+    AZRAELs haeufigste Aeusserung ist aber die Chat-Antwort, und die setzt
+    _KICK_MOD.last_spoken. Ergebnis: der gebrannte Text zeigte die Antwort,
+    die Figur schwieg dazu. Genau so gemeldet.
+
+    Die Falle dabei sind die ZWEI UHREN: die Reaktion stempelt mit time()
+    (Wanduhr), last_spoken mit monotonic() (seit Boot). Wer sie vertauscht,
+    baut keinen Zeitversatz, sondern einen Schalter, der nie oder immer
+    anspringt. Deshalb wird hier das VERHALTEN ausgefuehrt, nicht der Text
+    gelesen: die Funktion wird aus bot.py geschnitten und mit gestellten
+    Uhren laufen gelassen.
+    """
+    src = open("bot.py", encoding="utf-8").read()
+    i = src.find("def _azrael_spricht(")
+    assert i > 0, "_azrael_spricht fehlt"
+    j = src.find("\ndef ", i + 1)
+    quelle = src[i:j if j > 0 else None]
+
+    # Zuerst die Frist pruefen: ein anderer Konstantenname stirbt sonst weiter
+    # unten als nackter NameError aus dem exec, und der sagt nicht, warum das
+    # falsch ist.
+    assert "RESTREAM_REACT_HOLD" in quelle and "AZRAEL_REACTION_HOLD_S" not in quelle, \
+        ("Mund und gebrannter Text haetten verschiedene Fristen — die Figur "
+         "verstummt, waehrend ihr Satz noch im Bild steht")
+
+    class _Uhr:
+        def __init__(self):
+            self.wand, self.mono = 1_700_000_000.0, 5_000.0
+
+        def time(self):
+            return self.wand
+
+        def monotonic(self):
+            return self.mono
+
+    class _Mod:
+        def __init__(self):
+            self.last_spoken = {"text": "", "ts": 0.0}
+
+    def bau(reaktion, gesprochen, uhr):
+        raum = {"_AZRAEL_REACTION": reaktion, "_time_mod": uhr,
+                "RESTREAM_REACT_HOLD": 20, "_KICK_MOD": gesprochen,
+                "getattr": getattr, "bool": bool}
+        exec(compile(quelle, "<azrael_spricht>", "exec"), raum)
+        return raum["_azrael_spricht"]
+
+    uhr, mod = _Uhr(), _Mod()
+    leer = {"text": "", "ts": 0.0}
+
+    # 1) Nichts gesagt -> still
+    assert bau(dict(leer), mod, uhr)() is False, "schweigt nicht bei leerem Zustand"
+
+    # 2) Frische Live-Reaktion -> spricht (Wanduhr!)
+    reakt = {"text": "Der Stuhl bleibt gut.", "ts": uhr.wand - 3}
+    assert bau(reakt, mod, uhr)() is True, \
+        "frische Reaktion bewegt den Mund nicht — oder die falsche Uhr wird gelesen"
+
+    # 3) Alte Reaktion -> still
+    assert bau({"text": "alt", "ts": uhr.wand - 60}, mod, uhr)() is False, \
+        "alte Reaktion laesst den Mund weiterlaufen"
+
+    # 4) DER GEMELDETE FALL: Chat-Antwort, keine Live-Reaktion (monotonic!)
+    mod_frisch = _Mod()
+    mod_frisch.last_spoken = {"text": "Moin Suse!", "ts": uhr.mono - 2}
+    assert bau(dict(leer), mod_frisch, uhr)() is True, \
+        ("Chat-Antwort bewegt den Mund nicht — genau der gemeldete Fehler: "
+         "der Text steht im Bild, die Figur schweigt dazu")
+
+    # 5) Alte Chat-Antwort -> still
+    mod_alt = _Mod()
+    mod_alt.last_spoken = {"text": "vorhin", "ts": uhr.mono - 120}
+    assert bau(dict(leer), mod_alt, uhr)() is False, \
+        "alte Chat-Antwort laesst den Mund weiterlaufen"
+
+    ok("v4.2-w35: Mund kennt beide Sprechquellen, jede mit ihrer Uhr, Frist wie der Text")
+
+
 def test_v42_w34_azrael_feeder():
     """v4.2-W34: der Avatar reagiert — der Feeder schaltet zwischen Ruhe- und
        Sprechschleife um, sobald AZRAEL wirklich redet.
@@ -4487,7 +4567,9 @@ def test_v42_w34_azrael_feeder():
     # an ihrer eigenen Begruendung scheitern.
     _doc = src.find('"""', i)
     rumpf = src[src.find('"""', _doc + 3) + 3:][:600]
-    assert "_AZRAEL_REACTION" in rumpf and "AZRAEL_REACTION_HOLD_S" in rumpf, \
+    # Die Frist heisst seit W35 RESTREAM_REACT_HOLD statt AZRAEL_REACTION_HOLD_S
+    # — dieselbe wie beim gebrannten Text, damit Mund und Satz zusammen enden.
+    assert "_AZRAEL_REACTION" in rumpf and "RESTREAM_REACT_HOLD" in rumpf, \
         "Sprechzustand haengt nicht an der Reaktion und ihrer Frische"
     assert "_azrael_overlay_state" not in rumpf, \
         ("Sprechzustand ueber _azrael_overlay_state — der haengt zusaetzlich am "
@@ -9362,6 +9444,7 @@ def main():
     test_v42_w31_azrael_avatar_bild()
     test_v42_w32_azrael_animation()
     test_v42_w34_azrael_feeder()
+    test_v42_w35_azrael_spricht_beide_quellen()
     test_v40_w28_filepayload()
     test_v40_w29_streamsel()
     test_v40_w30_fixes_and_sysload()
