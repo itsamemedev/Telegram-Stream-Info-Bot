@@ -39,7 +39,8 @@ DATEIEN = [
     # Die Anleitungen liegen seit dem Aufraeumen unter docs/ und kommen ueber
     # ORDNER mit — hier einzeln aufzuzaehlen wuerde sie doppelt einpacken und
     # bei jeder Umbenennung ein "FEHLT:" ins Protokoll schreiben.
-    "CLAUDE.md", "CLAUDE.en.md", "README.md", "README.en.md", "LICENSE",
+    "CLAUDE.md", "CLAUDE.en.md", "AGENTS.md", "README.md", "README.en.md",
+    "LICENSE",
     "llama-server.service", "requirements.txt", "requirements-smoke.txt",
     ".gitignore", ".gitattributes",
     "test_smoke.py", "test_nc_modules.py", "test_restream.py",

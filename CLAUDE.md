@@ -205,3 +205,4 @@ müssen deshalb einzeln verifizierbar und rückrollbar sein.
 | `nc-betrieb` | Deploy, systemd, Log-Lesen, Rollback, CrowdSec, Kick-Störungen |
 | `nc-datenbank` | SQL und Schema unter SQLite **und** MariaDB |
 | `nc-ki-backends` | `nc/freeai`, `brain/llm`, AZRAEL, Tier-Modell, Budget |
+| `nc-sicherheit` | Secrets, Redact-Pfad, Pfad-Riegel, Dashboard-Zugang, CodeQL, Ledger |

@@ -11,6 +11,37 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Hinzugefügt — `AGENTS.md` und ein Sicherheits-Skill fürs Projekt (v4.2 W41)
+
+**`AGENTS.md` verweist auf `CLAUDE.md` statt sie zu kopieren.** Werkzeuge, die
+nach `AGENTS.md` suchen — Codex, Cursor, Jules — fanden hier bisher gar keinen
+Einstieg. Eine zweite Kopie derselben Regeln wäre aber die schlechtere Antwort:
+sie läuft auseinander, sobald eine gepflegt wird und die andere nicht, und
+genau dieses Fehlerbild hatte das Projekt schon (der Build-Stempel stand vier
+Mal im Code und wanderte nie mit). Die Datei nennt deshalb nur die vier Dinge,
+an denen hier real Arbeit gescheitert ist, und schickt sonst weiter.
+
+**`.claude/skills/nc-sicherheit`** füllt die Lücke, die der generische
+Sicherheits-Durchgang lässt: er kennt die Riegel dieses Projekts nicht. Der
+Skill nennt für jede Gefahr die **eine** zuständige Stelle — `nc/logsafe.py`
+und `nc/ffdiag.py` für Stream-Keys im Log, `nc/sicherpfad.py` gegen
+Pfad-Ausbruch, `_fehler_text` für API-Antworten, `nc/dashauth.py` für das
+offene Deck, die Hash-Kette in `nc/ledger.py`.
+
+Der wichtigste Teil ist, was man **nicht** tun darf: eine zweite Lösung
+danebenstellen. `nc/sicherpfad.py` entstand, weil die Riegel schon überall da
+waren — jeder in einer anderen Form, und keiner prüfbar. Ebenso die
+CodeQL-Barriere: wer eine Sanitizer-Funktion umbenennt, hebt sie auf, und der
+nächste Lauf meldet 242 statt 43 Befunde, ohne dass eine Prüfung entfernt
+wurde.
+
+Dazu der Abschnitt, der im Ernstfall zählt: **erst den Schlüssel drehen, dann
+aufräumen.** Ein Log zu löschen, ohne den Stream-Key zu rotieren, ist Kosmetik.
+
+Beide Dateien fahren im Archiv mit (`AGENTS.md` in `DATEIEN`, der Skill über
+`.claude/`) — gegengeprüft am gebauten ZIP, 307 Dateien, Geheimnis-Gegenprobe
+sauber.
+
 ### Behoben — der Avatar bewegte den Mund, ohne zu reden (v4.2 W40)
 
 Vom Betreiber gemeldet: „KI-Moderator, Avatar und Ton sind noch nicht
