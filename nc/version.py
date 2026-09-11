@@ -27,12 +27,26 @@ CHANGELOG = [
         "version": "4.2",
         "date": "2026-09",
         "title": "Zerlegter Kern",
+        # Die Liste wandert mit den Wellen mit. Sie stand bis v4.2-W38 auf dem
+        # Stand von W13 — Footer und „Was ist neu"-Panel lesen von hier, also
+        # zeigte das Deck einen Funktionsstand, den es seit zwanzig Wellen nicht
+        # mehr gab. Verwandte Wellen stehen bewusst in EINEM Stichpunkt: eine
+        # Liste mit dreissig Zeilen liest niemand mehr durch.
         "highlights": [
-            "Das Dashboard spricht wirklich Englisch: die Abdeckung stieg von 18 % auf 89 % — vorher meldete die Prüfung „0 fehlend“, weil sie nur zählte, was der Sammler überhaupt eingesammelt hatte",
-            "Sieben weitere Routengruppen aus dem Monolithen gelöst — Wartung, Abwehr, Auskunft, Beobachtung, Systemlage — ohne einen einzigen neuen Kontext-Eintrag",
+            "Der Monolith ist zerlegt: rund 2.900 Zeilen weniger in bot.py — der gesamte Discord-Teil mit seinen 45 Slash-Commands und der Versandweg der Aufnahmen nach Telegram stehen in eigenen Dateien, ohne einen einzigen Rückgriff auf bot.py",
+            "Sieben weitere Routengruppen aus dem Monolithen gelöst — Wartung, Abwehr, Auskunft, Beobachtung, Systemlage — ohne einen einzigen neuen Kontext-Eintrag; mit Preflight, Resilienz und Selbsttest steht dort jetzt keine System-Route mehr",
+            "Zehn Rechenkerne des Betriebs liegen in eigenen Modulen und werden damit erstmals einzeln geprüft: Recorder-Kommandozeilen, die ffmpeg-Zeile des Relays, der Eskalations-Backoff, die Entscheidungen aus dem Live-Signal, die Cookie-Bewertung, die Sendebild-Texte, die Fehlerkategorien der Aufnahme und die Kick-REST-Aufrufe",
+            "„Live pausiert“ wird nicht mehr als Stream-Ende gelesen: die Pause-Grace war ab dem zweiten Aussetzer einer Sitzung wirkungslos — jede Pause kostete eine OFFLINE-Meldung, das Ende der Aufnahme und eine neue LIVE-Meldung",
+            "Der TikTok-Chat baut die Verbindung nicht mehr im 15-Sekunden-Takt neu auf: 122 Listener-Starts in 85 Minuten hatten die Sign-Quota verbrannt, bis TikTok den Bot aussperrte — jetzt 14 statt 194 Neuaufbauten pro Stunde",
+            "Acht Fehlerbilder, an denen die Cookie-Datei bisher komplett unlesbar wurde, sind repariert — und der Bot holt sich die rotierenden Gast-Tokens selbst, statt wegen 403 Alarm zu schlagen",
+            "Der gespeicherte OAuth-Zustand lügt nicht mehr: ein von Google abgelehnter YouTube-Token überlebte den Neustart und meldete weiter „verbunden“, während Twitch die Verbindung schon bei einem 500er wegwarf — das Panel nennt jetzt auch den Grund",
+            "Der Auto-Clipper erkennt meme-würdige Momente über eine kostenlose KI-Rotation (kein Claude-Budget), schneidet und postet sie nach Discord, legt zusätzlich einen echten Twitch-Clip an und lädt den Clip als ungelistetes YouTube-Video hoch — alles per Default an, YouTube gedeckelt auf vier Uploads am Tag",
+            "AZRAEL steht als animierte Figur im Sendebild: unten rechts, schwebend, mit Mundbewegung im Silbentakt, Schwertarm und atmender Aura — und der Mund geht genau dann, wenn er wirklich redet, auch bei seinen Antworten im Chat",
+            "Das Auslieferungsarchiv war seit der Discord-Herauslösung unvollständig — ohne discordbot.py, telegramversand.py, Übersetzungskatalog und Avatar-Dateien waren Discord und der Aufnahme-Versand auf dem Server still tot; der Bau prüft jetzt selbst, was importiert wird, und bricht ab, statt ein halbes Archiv zu liefern",
+            "Die MOTD beim Einloggen nennt den schlimmsten Befund in Zeile zwei, misst den Netzdurchsatz, zeigt den Fehlerverlauf über sieben Tage, meldet ein Dashboard mit TLS nicht länger fälschlich als tot — und läuft wie der Windows-Installer jetzt vollständig auf Englisch",
+            "Das Dashboard spricht wirklich Englisch: die Abdeckung stieg von 18 % auf 89 %, und Sätze, die ein Inline-Tag zerschneidet, verfallen nicht mehr als Bruchstücke — vorher meldete die Prüfung „0 fehlend“, weil sie nur zählte, was der Sammler überhaupt eingesammelt hatte",
+            "Fehlermeldungen nach außen tragen keine Dateipfade, Zugangsdaten oder Stream-Schlüssel mehr — 22 Stellen, die die erste Runde durchgelassen hatte, sind zu, ein einheitlicher Riegel schließt ein echtes Symlink-Loch im Updater, und CodeQL meldet statt 242 nur noch 43 Befunde; ein offenes Dashboard ohne Token und PIN meldet sich zudem alle sechs Stunden auf Fehler-Ebene statt nur einmal beim Start",
             "Kein Dauerläufer blockiert mehr die Ereignisschleife: die Stillstände von 30 bis 68 Sekunden sind weg, Datenbankzugriffe laufen neben der Schleife",
-            "Fehlermeldungen nach außen tragen keine Dateipfade, Zugangsdaten oder Stream-Schlüssel mehr — der Wortlaut bleibt im Log",
-            "Ein offenes Dashboard ohne Token und PIN meldet sich alle sechs Stunden auf Fehler-Ebene, nicht nur einmal beim Start",
             "Der Rauchtest führt bot.py in der CI wirklich aus — vorher stand er in der Pflichtliste, lief aber auf keiner Maschine automatisch",
             "Vorschläge des Evolutions-Kerns lassen sich gesammelt übernehmen oder verwerfen",
         ],

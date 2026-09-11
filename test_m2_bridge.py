@@ -130,7 +130,38 @@ def main():
                           "payload": {"user": "alpha"}}).get_json()
         assert j["ok"] and j["tier"] == "db"
 
-    print("test_m2 OK — Sync/Regeln/Cooldown/Router-DB/Flask/Cleanup grün"
+        # --- Wochenreport: der Abrufweg des Betreibers -------------------
+        # WARUM als Vertrag: brain/report.weekly() haengt an genau drei
+        # Aufrufern (Telegram /report, Discord /sys_report, dieser Route)
+        # und der Button "REPORT 7T" in templates/brain.html zeigt auf
+        # diese Route. Ohne Vertrag laesst sich _register_routes um den
+        # Report kuerzen, ohne dass irgendetwas rot wird — der Button
+        # lieferte dann still 404, und genau solche stillen Ausfaelle
+        # sind hier schon monatelang unbemerkt geblieben.
+        # Geprueft wird der Inhalt, nicht die blosse Existenz: eine Route,
+        # die 200 mit leerem Rumpf liefert, waere kein Report.
+        _now = time.time()
+        with b._db_lock, b._conn() as _c:
+            _c.execute(
+                "INSERT INTO stream_sessions(username, started, ended, "
+                "duration_s, recorded) VALUES(?,?,?,?,1)",
+                ("reportcanary", _now - 7200, _now - 3600, 3600))
+            _c.execute("INSERT INTO metrics(name, value, ts) "
+                       "VALUES('cpu', 0.5, ?)", (_now - 60,))
+        rv = tc.get("/api/brain/report/weekly")
+        assert rv.status_code == 200, rv.status_code
+        # Markdown, nicht JSON — der Browser soll den Text zeigen.
+        assert "text/markdown" in rv.headers.get("Content-Type", ""), \
+            rv.headers.get("Content-Type")
+        md = rv.get_data(as_text=True)
+        assert md.startswith("# NIGHTCRAWLER Wochenreport"), md[:80]
+        # Die gesetzte Session muss aggregiert wieder herauskommen:
+        # 3600s duration_s ⇒ "1h00m" aus _fmt_dur.
+        assert "@reportcanary" in md, md
+        assert "1h00m" in md, md
+        assert "## System" in md and "Ø 50%" in md, md
+
+    print("test_m2 OK — Sync/Regeln/Cooldown/Router-DB/Flask/Report/Cleanup grün"
           + ("" if app else " (Flask übersprungen)"))
 
 

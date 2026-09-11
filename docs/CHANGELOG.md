@@ -49,6 +49,46 @@ der W-99 schon die Dashboard-Auth-Warnung entschärft hat.
 **Nebenbei:** die Meldung „Guardian versucht es alle 30s erneut" stimmte seit
 V37-CHAT nicht mehr — der Guardian wartet auf den Task und staffelt den Backoff.
 Sie nennt jetzt das, was wirklich passiert.
+### Behoben — das „Was ist neu"-Panel zeigte den Stand von W13 (v4.2 W38)
+
+`nc/version.py` nennt sich im eigenen Docstring „die EINE Wahrheit" für die
+Versionsanzeige — Dashboard-Footer, `/api/version` und das „Was ist neu"-Panel
+lesen von dort. Die Highlight-Liste für 4.2 trug aber sieben Stichpunkte, und
+die endeten inhaltlich bei W13. Alles danach war im Deck unsichtbar: die
+Discord-Auslösung, die zehn Fachmodul-Herauslösungen, der Auto-Clipper mit
+Meme-Erkennung, Twitch-Clips und YouTube-Upload, die gesamte AZRAEL-Avatar-Kette
+und der Archiv-Befund aus W36.
+
+Jetzt sechzehn Stichpunkte, verwandte Wellen gebündelt — eine Liste mit dreißig
+Zeilen liest niemand mehr durch. `VERSION`, `CODENAME` und `RELEASE` bleiben
+unangetastet: ob 4.2 als Release geschnitten wird, ist eine Entscheidung des
+Betreibers.
+
+**Eine Zahl im ersten Entwurf stimmte nicht** und ist gegen die Historie
+nachgerechnet worden: die Herauslösung von Discord und Telegram-Versand nahm
+`bot.py` von 25.650 auf 22.734 Zeilen, nicht von 26.346 auf 22.527. Im Panel
+steht jetzt die Differenz („rund 2.900 Zeilen weniger") statt einer absoluten
+Zahl — eine absolute veraltet mit der nächsten Welle ohnehin, `bot.py` steht
+heute wieder bei 22.918.
+
+### Hinzugefügt — Vertrag für den Wochenreport-Abrufweg (v4.2 W38)
+
+Der Verdacht war, `brain/report.py` sei fertig gebaut und nie verdrahtet. Das
+war falsch: `weekly()` hängt an drei Aufrufern — Telegram `/report`, Discord
+`/sys_report` und `GET /api/brain/report/weekly` — und der Knopf „REPORT 7T" in
+`templates/brain.html` zeigt auf genau diese Route.
+
+Was wirklich fehlte, war die Absicherung: **keine** der vier Test-Dateien fasste
+den Report an. `_register_routes` ließ sich um den Report kürzen, ohne dass
+irgendetwas rot wurde — der Knopf hätte still 404 geliefert, und genau solche
+stillen Ausfälle sind hier schon monatelang unbemerkt geblieben.
+
+Der neue Vertrag prüft Verhalten statt Existenz: eine Kanarien-Session in
+`brain.db`, dann Status, Content-Type (`text/markdown`, nicht JSON), Überschrift
+und die aggregierten Werte (`1h00m` aus `_fmt_dur`, CPU-Mittel). Zwei
+Mutationen lassen ihn feuern — Route entfernt (404) und `ended IS NOT NULL` zu
+`ended IS NULL` gedreht (Kanarienvogel fehlt).
+
 ### Behoben — parallele Arbeitskopien wären ins Auslieferungsarchiv gefahren (v4.2 W37)
 
 Nachtrag zum Archiv-Befund aus W36, gefunden beim Arbeiten mit mehreren
