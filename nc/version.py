@@ -51,6 +51,7 @@ CHANGELOG = [
             "Vorschläge des Evolutions-Kerns lassen sich gesammelt übernehmen oder verwerfen",
             "Ein Stream ist wieder EIN Stream: die sechs bis zehn Dateien, in die ein dreistündiger Live-Auftritt zerfällt (Ablauf der signierten TikTok-URL alle ~30 Minuten, dazu je eine nach 403 oder Abriss), tragen jetzt eine gemeinsame Sitzungs-Kennung mit Start- und Endzeit — das Deck zeigt Abdeckung und die echten Nahtlücken, und auf Knopfdruck werden die Segmente ohne Neukodierung zu einer Datei zusammengefügt",
             "Die Live-Ankündigung nach Discord kommt wieder einmal pro Stream statt einmal pro Reparatur-Neustart — und sie trägt den Namen und die Rolle aus der Konfiguration, nicht mehr den danebenstehenden Kommentar",
+            "Der Audio-Abgriff der Live-Reaktion sagt jetzt, warum er gestorben ist: er starb im Betrieb 57 Mal je eine Sekunde nach dem Start, warf den Grund aber jedes Mal weg — AZRAEL reagierte deshalb auf den gesendeten TikTok-Stream kein einziges Mal, sondern nur noch auf die Plattform-Chats",
         ],
     },
     {

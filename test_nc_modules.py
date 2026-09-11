@@ -7514,6 +7514,153 @@ def _test_v42_w45_live_ping_nicht_bei_jeder_reparatur():
     ok("W45: nur der Stop des Betreibers beendet die Ping-Sperre")
 
 
+def _test_v42_w46_audiotap_sagt_warum_er_starb():
+    """v4.2-W46: der Audio-Tap starb 57 Mal und sagte kein einziges Mal warum.
+
+    Befund aus dem Log vom 10.09. (101 Minuten):
+
+        225  live-react gestartet / gestoppt      (Median-Lebensdauer 4 s)
+         57  "Audio-Tap beendet -> Worker-Neustart", je 1 s nach dem Start
+          0  "triggere AZRAEL-Reaktion"
+          0  "AZRAEL @... reagierte"
+
+    Ohne Tap hoert AZRAEL nichts von dem, was der gesendete Streamer SAGT —
+    die Reaktion faellt auf den blossen Chat zurueck. Genau das hat der
+    Betreiber gemeldet. Der Grund wurde 57 Mal erzeugt und 57 Mal
+    weggeworfen, weil der Prozess mit `stderr=DEVNULL` lief.
+
+    Diese Welle macht NUR den Kanal auf. Solange der Grund im DEVNULL
+    verschwindet, waere jede weitere Reparatur geraten.
+    """
+    from nc import audiotap as A
+    from nc import logsafe as L
+
+    # --- 1) Die Kategorie kommt aus der EINEN zustaendigen Stelle --------
+    # nc.aufnahmekategorie beantwortet dieselbe Frage fuer den Recorder.
+    # Sie ein zweites Mal zu beantworten hiesse, zwei Wahrheiten zu haben,
+    # von denen eine veraltet — derselbe Fehler wie beim Build-Stempel (v4.2).
+    quelle = open(os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                               "nc", "audiotap.py"), encoding="utf-8").read()
+    assert "from nc.aufnahmekategorie import kategorisiere" in quelle, \
+        "audiotap muss die vorhandene Kategorie-Kette benutzen, keine eigene"
+    for eigen in ("403 in", "404 in", 'lower()'):
+        assert eigen not in quelle, \
+            "audiotap baut die Musterkette nach statt sie zu benutzen: %s" % eigen
+
+    d = A.diagnose("[https @ 0x1] HTTP error 403 Forbidden", 1, 1.0, 0)
+    assert d["kategorie"] == "forbidden_403", d
+    assert "RECORD_PROXY" in d["abhilfe"], d["abhilfe"]
+    assert A.diagnose("Server returned 404 Not Found", 1, 1.0, 0)["kategorie"] \
+        == "stream_dead"
+    assert A.diagnose("rw_timeout reached", 1, 90.0, 3)["kategorie"] == "timeout"
+    # NEBENBEFUND, bewusst NICHT in dieser Welle repariert: die Kette sucht
+    # "timeout", ffmpeg schreibt aber meist "Connection timed out". Dieser
+    # Wortlaut faellt deshalb auf "fail" durch. Das ist die Kette des
+    # RECORDERS (W23) — sie hier anzufassen aendert dessen Statistik und
+    # Backoff, und diese Welle macht nur den Log-Kanal auf. Festgehalten,
+    # damit der Befund nicht verlorengeht.
+    assert A.diagnose("Connection timed out", 1, 90.0, 3)["kategorie"] == "fail"
+    assert A.diagnose("", 0, 1.0, 0)["kategorie"] == "empty_output"
+    # Der reale Fall vom 10.09.: eine Sekunde, kein Segment, kein Muster.
+    d = A.diagnose("irgendwas Unbekanntes", 1, 1.0, 0)
+    assert d["kategorie"] == "early_disconnect", d
+    ok("W46: die Kategorie kommt aus nc.aufnahmekategorie, mit Abhilfe je Fall")
+
+    # --- 2) Jede Kategorie hat eine Abhilfe ------------------------------
+    # Eine Meldung ohne Handlungsanweisung ist eine Meldung, die man
+    # ueberliest. Der Deckungs-Test faengt die Kategorie, die spaeter in
+    # nc.aufnahmekategorie dazukommt und hier vergessen wird.
+    from nc import aufnahmekategorie as _ak
+    _bekannt = set()
+    for _txt, _stall, _rc, _fe, _dur in [
+            ("Video codec is not implemented", True, 1, False, 5),
+            ("HTTP error 404 Not Found", False, 1, False, 5),
+            ("Could not write header for output file", True, 1, False, 5),
+            ("etwas anderes", True, 1, False, 5),
+            ("no playable streams", False, 1, False, 5),
+            ("HTTP error 403 Forbidden", False, 1, False, 5),
+            ("Connection timed out", False, 1, False, 90),
+            ("no plugin can handle URL", False, 1, False, 5),
+            ("", 0, 0, False, 90),
+            ("etwas anderes", False, 1, True, 90),
+            ("etwas anderes", False, 1, False, 5)]:
+        _bekannt.add(_ak.kategorisiere(_txt, _stall, _rc, _fe, _dur))
+    fehlend = sorted(_bekannt - set(A.ABHILFE))
+    assert not fehlend, "Kategorien ohne Abhilfe-Text: %s" % fehlend
+    assert len(_bekannt) >= 10, sorted(_bekannt)
+    ok("W46: alle %d Kategorien tragen einen Abhilfe-Satz" % len(_bekannt))
+
+    # --- 3) Die Drosselung meldet den WECHSEL sofort ---------------------
+    # Der Tap stirbt im Acht-Sekunden-Takt; 225 gleichlautende Warnungen
+    # sind ihr eigenes Rauschen und erziehen dazu, sie zu ueberlesen. Aber
+    # wird aus einem 403-Sturm ein Codec-Fehler, ist das eine neue Lage.
+    # Wer nur nach der Zeit drosselt, sucht bis zur naechsten Viertelstunde
+    # den falschen Fehler.
+    assert A.melden(None, 100.0, "forbidden_403", None) is True
+    assert A.melden(100.0, 108.0, "forbidden_403", "forbidden_403") is False, \
+        "acht Sekunden spaeter derselbe Fehler — das ist der reale Takt"
+    assert A.melden(100.0, 100.0 + A.MELDE_ABSTAND_S, "forbidden_403",
+                    "forbidden_403") is True
+    assert A.melden(100.0, 101.0, "hevc_unsupported", "forbidden_403") is True, \
+        "ein Wechsel der Kategorie muss SOFORT durchkommen"
+    # Kaputte Werte duerfen nicht dauerhaft stummschalten.
+    assert A.melden(100.0, 101.0, "fail", "fail", abstand_s="murks") is True
+    assert A.MELDE_ABSTAND_S >= 300, "zu knapp — dann rauscht es wieder"
+    ok("W46: gedrosselt wie _loop_fehler, aber ein Kategorie-Wechsel kommt sofort")
+
+    # --- 4) Der Riegel VOR dem ersten Log --------------------------------
+    # Bis W46 ging das stderr des Taps nach DEVNULL — es war egal, was
+    # drinstand. Genau das aendert diese Welle, und im stderr steht die
+    # signierte TikTok-Quell-URL. redact_stream_urls deckte nur RTMP-
+    # SENDE-Schluessel ab, also die andere Seite.
+    roh = ("Cookie: sessionid=streng_geheim; tt_csrf=abc\n"
+           "[hls @ 0x5] Failed to open "
+           "https://pull-hls-f16.tiktokcdn.com/stage/stream-1.m3u8"
+           "?expire=1757620800&sign=8f3c9d&session_id=deadbeef\n"
+           "rtmps://x.live-video.net/app/live_1234_geheimerkey")
+    sauber = L.fuer_log(roh)
+    for geheim in ("streng_geheim", "8f3c9d", "deadbeef", "geheimerkey",
+                   "expire=", "sign=", "session_id="):
+        assert geheim not in sauber, (geheim, sauber)
+    # ... und trotzdem brauchbar: Host und Pfad muessen bleiben, sonst ist
+    # die Zeile fuer die Fehlersuche wertlos.
+    for bleibt in ("pull-hls-f16.tiktokcdn.com", "stream-1.m3u8",
+                   "live-video.net", "Failed to open"):
+        assert bleibt in sauber, (bleibt, sauber)
+    assert "<signiert:3p>" in sauber, sauber
+    assert L.fuer_log("") == "" and L.fuer_log(None) == ""
+    ok("W46: Cookie, Signatur und Sendeschluessel raus — Host und Pfad bleiben")
+
+    # --- 5) Und bot.py benutzt das auch ----------------------------------
+    hier = os.path.dirname(os.path.abspath(__file__))
+    bot = open(os.path.join(hier, "bot.py"), encoding="utf-8").read()
+    flach = " ".join(bot.split())
+    # Der Kern: KEIN DEVNULL mehr auf dem stderr des Taps.
+    i = flach.find("*_audio_tap_cmd(stream_url, out_pat, proxy=_lr_proxy),")
+    assert i > 0, "der Tap-Start ist nicht mehr auffindbar"
+    fenster = flach[i:i + 200]
+    assert "stderr=asyncio.subprocess.PIPE" in fenster, \
+        "das stderr des Audio-Taps geht wieder ins Leere — genau der Befund"
+    assert "stderr=asyncio.subprocess.DEVNULL" not in fenster, fenster
+    # Gelesen werden MUSS es auch: mit PIPE und ohne Leser blockiert ffmpeg,
+    # sobald der Pipe-Puffer des Kerns voll ist. Ein haengender Tap waere
+    # schlimmer als der Zustand vor W46.
+    assert "_audio_tap_sammler(proc, tap_err)" in flach, \
+        "PIPE ohne Leser — ffmpeg blockiert bei vollem Puffer"
+    assert "maxlen=AUDIOTAP_STDERR_ZEILEN" in flach, \
+        "der Puffer ist ungedeckelt"
+    assert "tap_sammler.cancel()" in flach, \
+        "der Sammler wird nicht abgeraeumt — eine Aufgabe je Tap-Tod"
+    # Der Nachruf steht auf warning, nicht auf info: ein log.info geht in
+    # 5284 anderen info-Zeilen unter, und genau so blieb es unsichtbar.
+    j = flach.find("log.warning(\"live-react: Audio-Tap @%s nach %.1fs tot")
+    assert j > 0, "der Nachruf steht nicht auf warning"
+    assert "_nc_audiotap.diagnose(roh, proc.returncode" in flach
+    assert "_log_sicher(_ffmpeg_stderr_diagnostic(roh" in flach, \
+        "der Wortlaut geht ungeschwaerzt ins Log"
+    ok("W46: bot.py liest das stderr, deckelt es, raeumt auf und meldet auf warning")
+
+
 def main():
     tmp = tempfile.mkdtemp()
     configure_db(db_path=os.path.join(tmp, "t.db"), backend="sqlite")
@@ -7721,6 +7868,8 @@ def main():
     _test_v42_w44_aufnahmesitzung()
 
     _test_v42_w45_live_ping_nicht_bei_jeder_reparatur()
+
+    _test_v42_w46_audiotap_sagt_warum_er_starb()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)
 

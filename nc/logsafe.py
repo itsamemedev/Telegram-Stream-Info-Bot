@@ -55,3 +55,67 @@ def url_ohne_zugang(url):
         return f"{schema}//{benutzer + ':' if benutzer else ''}<geheim>@{ziel}"
     except Exception:
         return "<URL unterdrueckt>"
+
+
+# --- v4.2-W46: was in einem ffmpeg-stderr sonst noch geheim ist -----------
+#
+# redact_stream_urls oben deckt RTMP-Sendeschluessel ab — also die Ziel-Seite.
+# Der Audio-Tap der Live-Reaktion zieht aber von der QUELL-Seite, und dort
+# steht die signierte TikTok-Pull-URL:
+#
+#   https://pull-hls-f16-va01.tiktokcdn.com/stage/stream-123.m3u8
+#       ?expire=1757620800&sign=8f3c...&session_id=...
+#
+# Wer diese URL hat, zieht den Stream mit — und bekommt mit session_id unter
+# Umstaenden mehr. Bis W46 war das egal, weil das stderr des Taps nach
+# DEVNULL ging und nie jemand sah. Genau das aendert W46, und deshalb muss
+# der Riegel VOR dem ersten Log stehen, nicht danach.
+
+RE_PULL_URL = re.compile(r"(https?://[^\s'\"]+?)\?([^\s'\"]+)", re.I)
+
+RE_COOKIE_ZEILE = re.compile(r"(?im)^(\s*cookie\s*:).*$")
+
+
+def redact_pull_urls(text, rx=RE_PULL_URL):
+    """Signatur und Sitzungsdaten aus einer Quell-URL nehmen, Rest lesbar lassen.
+
+    Der Query-Teil traegt die Signatur; Schema, Host und Pfad bleiben stehen,
+    weil genau die die Fehlersuche braucht (welches CDN, welcher Knoten,
+    welcher Stream). Die Zahl der Parameter bleibt als Hinweis erhalten —
+    eine URL ganz ohne Query sieht sonst aus wie eine, der die Signatur
+    fehlt, und das ist ein anderer Fehler.
+    """
+    def _ersetz(m):
+        n = len([p for p in m.group(2).split("&") if p])
+        return f"{m.group(1)}?<signiert:{n}p>"
+    try:
+        return rx.sub(_ersetz, text)
+    except Exception:
+        return "<Zeile wegen Redact-Fehler unterdrueckt>"
+
+
+def redact_cookie_zeilen(text, rx=RE_COOKIE_ZEILE):
+    """Eine ganze Cookie-Kopfzeile schwaerzen.
+
+    ffmpeg echot bei hoeherem Loglevel den -headers-Block zurueck. Anders als
+    bei einer URL gibt es hier nichts Erhaltenswertes: dass ein Cookie gesetzt
+    war, ist die ganze Information.
+    """
+    try:
+        return rx.sub(r"\1 <redacted>", text)
+    except Exception:
+        return "<Zeile wegen Redact-Fehler unterdrueckt>"
+
+
+def fuer_log(text, rx_stream=None):
+    """Alle drei Riegel in EINEM Aufruf — der Weg, den neuer Code nimmt.
+
+    Warum gebuendelt: bis W46 musste jede neue Log-Stelle selbst wissen,
+    welche Redact-Funktionen es gibt. Genau so entsteht die Stelle, die eine
+    davon vergisst. Wer Fremdtext loggt, ruft diese Funktion und ist fertig.
+    """
+    if not text:
+        return ""
+    t = redact_stream_urls(text, rx_stream) if rx_stream else redact_stream_urls(text)
+    t = redact_pull_urls(t)
+    return redact_cookie_zeilen(t)

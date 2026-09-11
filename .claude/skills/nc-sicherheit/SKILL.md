@@ -12,7 +12,7 @@ Plattformen und ein Dashboard mit 361 Routen — darunter Konfigurations-
 Wiederherstellung, Log-Auszug und Dateidownload. Ein Leck ist hier nicht „eine
 Zeile im Log zu viel", sondern der Übernahme-Schlüssel für fremde Kanäle.
 
-Die `.env` trägt **520 Variablen**: Cookies, OAuth-Tokens, Stream-Keys,
+Die `.env` trägt **521 Variablen**: Cookies, OAuth-Tokens, Stream-Keys,
 API-Schlüssel. Sie liegt **nie** im Auslieferungsarchiv, wird **nie** ausgegeben
 und **nie** in eine Fehlermeldung geschrieben. `.env.example` fährt mit — andere
 Datei, nur Namen, keine Werte.
