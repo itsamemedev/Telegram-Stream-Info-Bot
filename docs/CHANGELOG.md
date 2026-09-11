@@ -94,6 +94,19 @@ ein Selbstvergleich (hält auch, wenn beide Seiten falsch sind), und
 noch einmal im Aufruf von `split_and_send_video` — die Prüfung hängt jetzt am
 vollständigen `add_recording`-Aufruf.
 
+**Nachtrag aus dem CodeQL-Lauf:** die erste Fassung reichte die Sitzungs-Kennung
+aus dem URL-Pfad direkt an `zieldatei` weiter. `nc.sicherpfad.sicher_join`
+säubert das nachweislich, aber die Datenflussanalyse sieht die Säuberung nicht —
+die Barriere in `.github/codeql/NcSanitizer.qll` deckt nur
+`py/stack-trace-exposure` ab, nicht `py/path-injection`. Der Befund war also
+richtig. Die Barriere blind um eine zweite Abfrage zu erweitern hieße, eine
+Prüfung zu entschärfen, die sich lokal nicht nachvollziehen lässt (CodeQL ist
+auf der Entwicklungsmaschine nicht installiert). Stattdessen wird der Zielpfad
+jetzt aus dem gebaut, was die **Datenbank** hält — Nutzername und Startzeit der
+ersten Zeile —; die Kennung des Aufrufers ist nur noch Nachschlage-Schlüssel
+(gebundener SQL-Parameter) und Dict-Schlüssel und berührt keinen Dateipfad mehr.
+Ein Vertrag hält beide Hälften fest, damit der Befund nicht zurückkommt.
+
 `ffmpeg` ist im Prüf-Container nicht installiert; die Quotierung der
 concat-Liste ist deshalb über `shlex` gegengeprüft und nicht über einen echten
 Lauf. Der Thread-Deckel sitzt in `concat_cmd` selbst und nicht beim Aufrufer,

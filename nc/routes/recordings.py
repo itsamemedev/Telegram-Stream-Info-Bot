@@ -1160,7 +1160,21 @@ def api_recording_session_join(sid):
             return jsonify(ok=False, error=_t(
                 "Weniger als zwei vorhandene Segmente — nichts zusammenzufügen")), 400
         c = _c()
-        ziel = _sitzung.zieldatei(c.recordings_dir, sid)
+        # Der Zielpfad wird aus dem gebaut, was die DATENBANK haelt — nicht aus
+        # der Kennung, die der Aufrufer geschickt hat. Die URL-Kennung ist ab
+        # hier nur noch Nachschlage-Schluessel (gebundener SQL-Parameter oben)
+        # und Dict-Schluessel; sie beruehrt den Dateipfad nicht mehr.
+        #
+        # Warum das nicht paranoid ist: nc.sicherpfad.sicher_join saeubert
+        # zwar nachweislich, aber die CodeQL-Datenflussanalyse sieht das nicht
+        # (die Barriere in .github/codeql deckt nur py/stack-trace-exposure ab)
+        # — der Lauf meldete hier zu Recht einen py/path-injection-Befund.
+        # Die Barriere blind zu erweitern hiesse, eine Abfrage zu entschaerfen,
+        # die sich hier nicht nachpruefen laesst. Den Pfad gar nicht erst aus
+        # Fremdeingabe zu bauen ist die kleinere und ehrlichere Aenderung.
+        sid_db = _sitzung.sitzung_id(rows[0]["username"],
+                                     rows[0]["started_at"] or rows[0]["created_at"])
+        ziel = _sitzung.zieldatei(c.recordings_dir, sid_db)
         if os.path.exists(ziel) and not (request.get_json(silent=True) or {}).get("force"):
             return jsonify(ok=False, error=_t("Datei existiert bereits — force=true zum Überschreiben"),
                            ziel=os.path.basename(ziel)), 409

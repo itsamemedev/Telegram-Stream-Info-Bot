@@ -7369,7 +7369,17 @@ def _test_v42_w44_aufnahmesitzung():
         "der concat-Lauf blockiert die HTTP-Anfrage"
     assert 'log.error("Sitzung %s zusammenfuegen fehlgeschlagen' in rt, \
         "ein fehlgeschlagener Join gehoert auf error — auf warning sieht ihn niemand"
-    ok("W44: Spalten, Index und die drei Sitzungs-Routen stehen")
+    # Der Zielpfad wird aus DB-Werten gebaut, nicht aus der URL-Kennung. Die
+    # erste Fassung reichte sid direkt an zieldatei — nc.sicherpfad saeubert
+    # das zwar nachweislich, aber CodeQL sieht die Saeuberung nicht (die
+    # Barriere in .github/codeql deckt nur py/stack-trace-exposure ab) und
+    # meldete zu Recht py/path-injection. Wer das rueckgaengig macht, holt
+    # den Befund zurueck.
+    assert "_sitzung.zieldatei(c.recordings_dir, sid_db)" in fr, \
+        "der Join-Zielpfad muss aus DB-Werten kommen"
+    assert "_sitzung.zieldatei(c.recordings_dir, sid)" not in fr, \
+        "die URL-Kennung darf nicht in den Dateipfad — py/path-injection"
+    ok("W44: Spalten, Index, drei Routen — und der Zielpfad ohne Fremdeingabe")
 
 
 def main():
