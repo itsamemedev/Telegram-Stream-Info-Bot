@@ -14352,6 +14352,25 @@ class KickModerator:
         if ok:
             _modlog("send", "bot", content)
             self.last_spoken = {"text": content, "ts": _time_mod.monotonic()}
+            # v4.2-W40: HIER war die Luecke zwischen Moderator, Avatar und Ton.
+            # last_spoken darueber bewegt seit W35 den Mund des gebrannten
+            # Avatars — gesprochen wurde die Zeile aber nie. Nur react() (die
+            # Reaktion aufs Sendebild, die NICHTS in den Chat schickt) rief
+            # _piper_say. Ergebnis im Stream: bei jeder Chat-Antwort, jedem
+            # Gift-Dank und jeder Verwarnung ging der Mund lautlos.
+            #
+            # Zentral hier und nicht an den einzelnen Aufrufern: JEDER
+            # Chat-Weg nach Kick laeuft durch diese Methode — auch
+            # _azrael_send_to("kick", …) und der Co-Host-Broadcast. Eine
+            # Stelle statt sieben, und die naechste neue Sendestelle spricht
+            # von selbst mit.
+            #
+            # _spawn und nicht await: Piper braucht auf dieser Box Sekunden,
+            # und der Chat-Versand darf darauf nicht warten — sonst haengt die
+            # Moderation an der Sprachsynthese. _piper_say ist ohne Piper ein
+            # no-op und riegelt Doppelsprechen selbst ab.
+            if ORACLE_VOICE:
+                _spawn(_piper_say(content), name="chat-voice")
         return ok, fehler
 
     async def timeout_user(self, user_id, minutes, reason, session):
@@ -17672,12 +17691,62 @@ def _tts_cleanup(keep=40):
     except OSError:
         pass
 
+def _stimme_saubern(text):
+    """Chat-Text → sprechbarer Text.
+
+    Was in den Chat gehoert, gehoert nicht ins Mikrofon: die Anrede "@nutzer"
+    vor einer Orakel-Antwort, das Fledermaus-Zeichen vor einer proaktiven
+    Zeile, eine URL. Vorgelesen wird daraus "at nutzername h t t p s doppel-
+    punkt" — das klingt nicht nach Moderator, sondern nach Fehler.
+    """
+    t = (text or "").strip()
+    t = re.sub(r"https?://\S+", "", t)           # Links spricht niemand vor
+    t = re.sub(r"^\s*@\S+\s*", "", t)            # fuehrende Anrede
+    # Fuehrende Symbole/Emoji abraeumen, aber nur am Anfang: mitten im Satz
+    # kann ein Zeichen bedeutungstragend sein.
+    t = re.sub(r'^[^\w("\'\[ÄÖÜäöüß]+', "", t)
+    return " ".join(t.split())
+
+
+# Zuletzt gesprochene Saetze — Schluessel ist der gesaeuberte Text.
+_STIMME_ZULETZT = _collections.OrderedDict()
+
+
+def _stimme_schon_gesagt(text):
+    """True, wenn derselbe Satz gerade eben schon gesprochen wurde.
+
+    WARUM das noetig ist: seit W40 spricht send_message() JEDE Chat-Aeusserung,
+    und drei aeltere Stellen sprechen zusaetzlich selbst (Orakel-Antwort,
+    proaktive Zeile, Co-Host-Broadcast). Alle drei landen ueber
+    _azrael_send_to bzw. direkt wieder in send_message — ohne Riegel saehe der
+    Zuschauer den Mund einmal gehen und hoerte den Satz zweimal.
+
+    Bewusst hier und nicht durch Entfernen der drei Aufrufe: der
+    Co-Host-Broadcast geht an kick, twitch und youtube, und nur der
+    Kick-Zweig laeuft ueber send_message. Wer die Aufrufe streicht, macht den
+    Broadcast stumm, sobald Kick nicht dabei ist.
+    """
+    jetzt = _time_mod.monotonic()
+    fenster = max(1, _env_int("AZRAEL_VOICE_DEDUP_S", 20))
+    for k, t in list(_STIMME_ZULETZT.items()):     # Alteintraege abraeumen
+        if jetzt - t > fenster:
+            _STIMME_ZULETZT.pop(k, None)
+    if text in _STIMME_ZULETZT:
+        return True
+    _STIMME_ZULETZT[text] = jetzt
+    while len(_STIMME_ZULETZT) > 50:               # Deckel, siehe W39
+        _STIMME_ZULETZT.popitem(last=False)
+    return False
+
+
 async def _piper_say(text, rate=None, source_user=None):
     """text → WAV via Piper; gibt Overlay-URL (/api/tts/..) zurück oder None.
        rate: F100-Regie-Faktor (>1 = schneller/hyped, <1 = ruhiger)."""
     import random as _rnd
-    text = (text or "").strip()
+    text = _stimme_saubern(text)
     if not text:
+        return None
+    if _stimme_schon_gesagt(text):
         return None
     if not _piper_available():
         if not _piper_warned["done"]:
@@ -22420,6 +22489,31 @@ async def _selfcheck(verbose=True):
             add("warn", "Piper-TTS", "Voice=piper aktiv, aber Binary fehlt (`pip install piper-tts`)")
     else:
         add("ok", "Piper-TTS", "nicht aktiviert (ok)")
+
+    # 9b) v4.2-W40: Mund ohne Stimme. Der gebrannte Avatar bewegt den Mund,
+    # sobald AZRAEL etwas sagt — bewusst ohne Panel-Schalter (siehe
+    # _azrael_spricht). Der TON haengt dagegen an DREI Werten, die alle ab Werk
+    # auf aus stehen: RESTREAM_TTS (mischt die Stimme ueberhaupt in den
+    # ffmpeg-Ton), OVERLAY_VOICE und OVERLAY_VOICE_ENGINE=piper (erzeugen sie).
+    # Stimmt eines nicht, mimt die Figur stumm — und genau dazu sagte der
+    # Selbsttest bisher NICHTS, weil Punkt 9 Piper erst prueft, wenn schon auf
+    # piper geschaltet ist. Ein stummer Moderator sieht aus wie ein Defekt.
+    if RESTREAM_OVERLAY:
+        _fehlt = []
+        if not RESTREAM_TTS:
+            _fehlt.append("RESTREAM_TTS=1")
+        if not _OVERLAY.get("voice_enabled"):
+            _fehlt.append("OVERLAY_VOICE=1")
+        if _OVERLAY.get("voice_engine") != "piper":
+            _fehlt.append("OVERLAY_VOICE_ENGINE=piper")
+        if _fehlt:
+            add("warn", "AZRAEL-Stimme",
+                "Avatar bewegt den Mund, aber es geht kein Ton in den Stream — "
+                "fehlt in der .env: " + ", ".join(_fehlt) +
+                ". Achtung: Piper rechnet auf derselben Box wie Aufnahme und "
+                "Restream.")
+        else:
+            add("ok", "AZRAEL-Stimme", "Mund und Ton sind verdrahtet")
 
     # 10) Whisper (Speech-Reaction)
     if LIVE_REACT_SPEECH:

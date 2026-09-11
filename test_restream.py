@@ -4636,6 +4636,53 @@ def test_v42_w35_azrael_spricht_beide_quellen():
     ok("v4.2-w35: Mund kennt beide Sprechquellen, jede mit ihrer Uhr, Frist wie der Text")
 
 
+def test_v42_w40_moderator_avatar_ton():
+    """v4.2-W40: Was AZRAEL in den Chat schreibt, wird auch gesprochen.
+
+    Befund des Betreibers: "Ki Moderator, Avatar und Ton sind noch nicht
+    miteinander verknuepft, daher redet der Avatar im Stream nicht." Stimmt —
+    und der Quelltext sagte, warum:
+
+      send_message()  setzt last_spoken -> _azrael_spricht() bewegt den Mund
+                      (W35), rief aber KEIN _piper_say. Stumm.
+      react()         ruft _piper_say, schickt aber nichts in den Chat.
+
+    Die haeufigere Quelle (Chat-Antworten, Gift-Dank, Begruessung, Verwarnung)
+    hatte damit Mundbewegung ohne Ton.
+    """
+    src = open("bot.py", encoding="utf-8").read()
+
+    # --- 1) Der Chat-Versand spricht ---------------------------------------
+    sm = _meth(src, "KickModerator", "send_message") or _meth(src, "_KickMod", "send_message")
+    if not sm:                      # Klassenname robust suchen
+        i = src.find("    async def send_message(self, content, session=None):")
+        assert i > 0, "send_message nicht gefunden"
+        sm = src[i:i + 2000]
+    assert "_piper_say(" in sm, \
+        ("send_message spricht nicht — Mund bewegt sich (last_spoken), aber der "
+         "Zuschauer hoert nichts. Genau das war der W40-Befund.")
+    assert "last_spoken" in sm, "send_message setzt last_spoken nicht mehr — Mund bliebe stehen"
+    # Nicht awaiten: Piper braucht Sekunden, der Chat-Versand darf nicht warten.
+    assert "_spawn(_piper_say(" in sm, \
+        "TTS im Chat-Versand nicht ausgelagert — die Moderation haengt sonst an der Synthese"
+
+    # --- 2) Doppelsprech-Riegel --------------------------------------------
+    # Orakel, proaktive Zeile und Co-Host sprechen zusaetzlich selbst und
+    # landen ueber _azrael_send_to wieder in send_message.
+    assert "def _stimme_schon_gesagt(" in src, "Doppelsprech-Riegel fehlt"
+    say = _fn(src, "_piper_say")
+    assert "_stimme_schon_gesagt(" in say, \
+        "_piper_say prueft nicht auf Wiederholung — derselbe Satz kaeme zweimal"
+    assert "_stimme_saubern(" in say, \
+        "_piper_say liest den Rohtext vor — '@nutzer' und Links gehoeren nicht ins Mikrofon"
+
+    # --- 3) Der Selbsttest meldet den stummen Mund -------------------------
+    for wert in ("RESTREAM_TTS=1", "OVERLAY_VOICE=1", "OVERLAY_VOICE_ENGINE=piper"):
+        assert wert in src, f"Selbsttest nennt {wert} nicht — der Betreiber raet sonst"
+    assert "AZRAEL-Stimme" in src, "kein Selbsttest-Befund zur Stimme"
+    ok("v4.2-w40: Chat-Antworten werden gesprochen, kein Doppelsprech, Selbsttest meldet stummen Mund")
+
+
 def test_v42_w34_azrael_feeder():
     """v4.2-W34: der Avatar reagiert — der Feeder schaltet zwischen Ruhe- und
        Sprechschleife um, sobald AZRAEL wirklich redet.
@@ -9644,6 +9691,7 @@ def main():
     test_v42_w31_azrael_avatar_bild()
     test_v42_w32_azrael_animation()
     test_v42_w34_azrael_feeder()
+    test_v42_w40_moderator_avatar_ton()
     test_v42_w35_azrael_spricht_beide_quellen()
     test_v42_w39_sendestart_blockiert_den_loop_nicht()
     test_v40_w28_filepayload()
