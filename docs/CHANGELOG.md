@@ -11,6 +11,80 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Behoben — der Live-React-Worker starb alle vier Sekunden und fing jedes Mal bei null an (v4.2 W47)
+
+Punkt 2 und 3 der Diagnose aus W46. Punkt 1 (der Log-Kanal) steht seit W46;
+Punkt 4 fehlt noch.
+
+**Der Worker konnte seinen Chat nicht neu verbinden.** Im Rumpf stand
+
+    if proc is None and chat_task is not None and chat_task.done():
+        break
+    if (LIVE_REACT_CHAT and proc is not None and (chat_task is None or chat_task.done())
+            and (_time_mod.time() - last_chat_try) > 30):
+        # Reconnect
+
+Ohne Audio (`proc is None`) griff der Reconnect **nie** — der Worker beendete
+sich, und die Engine startete ihn acht Sekunden später neu. Jeder Neustart ein
+frischer Sign-API-Request. Am 10.09. lebte ein Worker im Median **vier
+Sekunden**; eine Reaktion braucht aber
+`max(LIVE_REACT_COOLDOWN, LIVE_REACT_BATCH_S)` = **25 Sekunden** Sammelzeit. Er
+kam nie an: null Reaktionen in 101 Minuten.
+
+Bitter daran: genau dieses Flattern hat W37 abgestellt — aber nur im
+Restream-Chat-Wächter. Der Live-React-Worker hat einen **zweiten** Listener auf
+denselben TikTok-Chat, und der hatte gar keinen Backoff. Ein Neuaufbau alle
+acht Sekunden ist schneller als das, was W37 als Flattern erkannt und
+abgestellt hat.
+
+Die Regel liegt jetzt in `nc/chatfolge.py` und wird von **beiden** benutzt.
+Zwei Kopien wären der nächste Fehler gewesen — eine wird gepflegt, die andere
+nicht, dasselbe Bild wie beim Build-Stempel.
+
+Gerechnet gegen den realen Verlauf, Sitzungen von je drei Sekunden, eine
+Stunde: **328 Sign-Requests vorher, 17 jetzt.** Bei Sitzungen von 15 s
+(das Muster aus dem Wächter-Log): 157 → 17.
+
+**Eine Falle, in die der erste Entwurf dieser Welle selbst lief.** Er mass die
+Sitzungslänge als „Zeit seit dem letzten Versuch" — das ist Sitzung **plus**
+Backoff-Wartezeit. Nach 80 s Backoff gilt damit jede Sitzung als gesund
+(≥ 60 s), der Backoff fällt auf 0, und die Eskalation hebt sich selbst auf —
+genau dann, wenn sie gebraucht wird. Nachgestellt, vierzehn Abrisse:
+
+    falsch:  k5 k10 k20 k40 k80 f160 f300  g0  f5 f10 f20 f40 f80 f160
+    richtig: k5 k10 k20 k40 k80 f160 f300 k300 k300 k300 k300 k300 k300 k300
+
+Gemessen wird jetzt zwischen `chat_seit` (Verbindungsaufbau) und `chat_tot`
+(Abriss); der Backoff wird getrennt davon abgewartet. Der mehrdeutige
+`last_chat_try` ist weg.
+
+**Und über die Neustarts hinweg sammelte sich nichts an.** Das `finally` des
+Workers warf Regie (F100) und Story-Gedächtnis (F103) weg — bei jedem Ende,
+also alle vier Sekunden. Das ist alles, was AZRAEL über den laufenden Stream
+weiss: Stimmung, Momentum, Stammchatter, was er schon gesagt hat, damit er sich
+nicht wiederholt. Ein Director, der gerade erst entstanden ist, sagt bei einer
+einzelnen Chat-Zeile völlig richtig „noch nicht reagieren" — nur kam er nie
+darüber hinaus.
+
+Freigegeben wird jetzt in `_live_react_loop`, wenn der User **wirklich** offline
+geht. Das ist nicht nur sauberer, es ist nötig: der Watchdog benutzt
+`_LIVE_DIRECTORS` als Stellvertreter für „es läuft ein Worker" (B81). Blieben
+die Einträge nach dem Offline-Gehen stehen, meldete er einen Stillstand, den es
+nicht gibt, und die Selbstheilung liefe gegen Karteileichen. Der Durchlauf geht
+deshalb über **alle** Einträge, nicht nur über die mit laufendem Worker — ein
+Worker wird auch bei `task.done()` aus der Liste genommen, und geht der User
+danach offline, gäbe es sonst keine Stelle mehr, die aufräumt.
+
+Gegenprobe: 248 statt 242 Verträge. Elf Mutationsproben — Reconnect wieder ans
+Audio gekoppelt, Sitzungslänge wieder mit Wartezeit, Backoff berechnet aber
+nicht gewartet, Regie wieder im `finally` weggeworfen, Offline-Freigabe
+entfernt, Wächter baut die Regel wieder selbst, `entscheide` mutiert die Liste,
+Churn-Wache abgeschaltet, gesunde Sitzung setzt nicht zurück, Backoff ohne
+Deckel, Fenster läuft nie ab.
+
+**Was das nicht repariert:** warum der Audio-Tap nach einer Sekunde stirbt. Das
+sagt erst der Log-Kanal aus W46, und danach richtet sich Punkt 4.
+
 ### Behoben — der Audio-Tap starb 57 Mal und sagte kein einziges Mal warum (v4.2 W46)
 
 Gemeldet als Frage: „Seit wann gibt es keine Reaktion mehr auf die gerestreamten

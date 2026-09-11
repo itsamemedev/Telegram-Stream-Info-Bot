@@ -7661,6 +7661,132 @@ def _test_v42_w46_audiotap_sagt_warum_er_starb():
     ok("W46: bot.py liest das stderr, deckelt es, raeumt auf und meldet auf warning")
 
 
+def _test_v42_w47_chat_reconnect_und_gedaechtnis():
+    """v4.2-W47: der Live-React-Worker starb alle vier Sekunden und fing
+    jedes Mal bei null an.
+
+    Zwei Befunde aus dem Log vom 10.09., beide hier geschlossen.
+
+    **Der Worker konnte seinen Chat nicht neu verbinden.** Im Rumpf stand
+
+        if proc is None and chat_task is not None and chat_task.done():
+            break
+        if (LIVE_REACT_CHAT and proc is not None and ...):
+            # Reconnect
+
+    Ohne Audio (`proc is None`) griff der Reconnect also nie — der Worker
+    beendete sich, und die Engine startete ihn acht Sekunden spaeter neu.
+    Jeder Neustart ein frischer Sign-API-Request. Median-Lebensdauer: vier
+    Sekunden. Eine Reaktion braucht aber
+    `max(LIVE_REACT_COOLDOWN, LIVE_REACT_BATCH_S)` = 25 Sekunden Sammelzeit;
+    er kam nie an. Null Reaktionen in 101 Minuten.
+
+    **Und ueber die Neustarts hinweg sammelte sich nichts an.** Das `finally`
+    des Workers warf Regie (F100) und Story-Gedaechtnis (F103) weg — bei
+    jedem Ende, also alle vier Sekunden.
+    """
+    from nc import chatfolge as C
+
+    # --- 1) Die Rechnung liegt an EINER Stelle ---------------------------
+    # Der Restream-Waechter hat seit W37 dieselbe Regel. Sie ein zweites Mal
+    # hinzuschreiben waere der naechste Build-Stempel-Fehler gewesen: eine
+    # Kopie wird gepflegt, die andere nicht.
+    hier = os.path.dirname(os.path.abspath(__file__))
+    bot = open(os.path.join(hier, "bot.py"), encoding="utf-8").read()
+    flach = " ".join(bot.split())
+    assert flach.count("_nc_chatfolge.entscheide(") == 2, \
+        "beide Listener muessen dieselbe Rechnung benutzen (Waechter + Worker)"
+    assert "flattert = len(_reconnects) >= CHAT_CHURN_MAX" not in flach, \
+        "die alte Inline-Fassung im Waechter steht noch da"
+    ok("W47: Waechter und Live-React-Worker teilen sich nc/chatfolge.py")
+
+    # --- 2) Eskalation und Erholung --------------------------------------
+    assert C.entscheide([], 100.0, 3.0, 0)[1:] == (5, "kurz")
+    assert C.entscheide([], 100.0, 120.0, 0)[1:] == (0, "gesund"), \
+        "eine lange Sitzung ist TikToks normale WS-Rotation, kein Fehler"
+    # Der Deckel haelt.
+    _r, _b, _g = C.entscheide([], 100.0, 3.0, 10_000)
+    assert _b == C.BACKOFF_MAX_S, _b
+    # Churn schlaegt auch bei 'gesunden' Sitzungen zu — genau die Luecke, an
+    # der W37 gescheitert war (13-17s galten als gesund, Backoff blieb 0).
+    _rec = [100.0 + i for i in range(C.CHURN_MAX - 1)]
+    _r, _b, _g = C.entscheide(_rec, 200.0, 999.0, 0)
+    assert _g == "flattert" and _b > 0, (_g, _b)
+    # Ausserhalb des Fensters zaehlt nichts mehr nach — sonst erholt sich ein
+    # Stream nie mehr von einer schlechten Stunde.
+    _r, _b, _g = C.entscheide(_rec, 100.0 + C.CHURN_WINDOW_S + 10, 999.0, 0)
+    assert _g == "gesund" and _b == 0, (_g, _b)
+    ok("W47: Backoff eskaliert, deckelt und erholt sich nach dem Fenster")
+
+    # --- 3) Die Liste wird NICHT an Ort und Stelle geaendert -------------
+    # Zwei Aufrufer teilen sich die Funktion, einer haelt seine Liste in einer
+    # Closure. Eine Funktion, die mal mutiert und mal nicht, ist die Sorte
+    # Falle, die erst im Betrieb auffaellt.
+    _orig = [1.0, 2.0]
+    _neu, _, _ = C.entscheide(_orig, 3.0, 1.0, 0)
+    assert _orig == [1.0, 2.0], _orig
+    assert _neu is not _orig and len(_neu) == 3, _neu
+    assert C.entscheide(None, 1.0, 1.0, None)[0] == [1.0]
+    ok("W47: entscheide() laesst die uebergebene Liste unberuehrt")
+
+    # --- 4) Sitzungslaenge ist NICHT Sitzung plus Wartezeit --------------
+    # Der erste Entwurf dieser Welle mass "seit dem letzten Versuch" — also
+    # Sitzung PLUS Backoff. Nach 80s Backoff gilt damit jede Sitzung als
+    # gesund (>= 60s), der Backoff faellt auf 0 und die Eskalation hebt sich
+    # selbst auf, und zwar genau dann, wenn sie gebraucht wird.
+    def _spiel(falsch):
+        rec, bo, t, spur = [], 0, 0.0, []
+        for _ in range(14):
+            t += 3.0
+            rec, bo, _g = C.entscheide(rec, t, 3.0 + bo if falsch else 3.0, bo)
+            spur.append(bo)
+            t += bo
+        return spur
+    assert 0 in _spiel(True)[3:], "die Falle ist nicht mehr nachstellbar?"
+    assert 0 not in _spiel(False)[3:], _spiel(False)
+    # Und der Code misst wirklich den Abriss, nicht den Versuch.
+    assert "_dauer = max(0.0, chat_tot - chat_seit)" in flach, \
+        "die Sitzungslaenge wird nicht zwischen Aufbau und Abriss gemessen"
+    # Und der berechnete Backoff muss auch WIRKLICH gewartet werden. Die erste
+    # Fassung dieses Vertrags prueft nur, dass er ausgerechnet wird — mit
+    # ">= 0" statt ">= chat_backoff" blieb sie gruen, und der Worker haette
+    # trotz sauberer Rechnung sofort neu verbunden. Die Mutationsprobe hat
+    # genau dieses Loch aufgedeckt.
+    assert ("and (_time_mod.monotonic() - chat_tot) >= chat_backoff):") in flach, \
+        "der Backoff wird berechnet, aber nicht abgewartet"
+    assert "last_chat_try" not in bot, \
+        "der alte, mehrdeutige Zeitbegriff steht noch da"
+    ok("W47: gemessen wird der Abriss, nicht der Versuch — sonst kippt die Eskalation")
+
+    # --- 5) Der Reconnect haengt nicht mehr am Audio ---------------------
+    assert "proc is not None and (chat_task is None or chat_task.done())" not in flach, \
+        "der Chat-Reconnect haengt wieder am Audio-Tap"
+    assert "if proc is None and chat_task is not None and chat_task.done(): break" \
+        not in flach, "der Chat-only-Worker beendet sich wieder sofort"
+    assert "if (LIVE_REACT_CHAT and chat_tot is None and chat_task is not None and chat_task.done()):" in flach
+    # Enden darf er nur noch, wenn es wirklich nichts zu tun gibt.
+    assert "if proc is None and not LIVE_REACT_CHAT:" in flach, \
+        "ohne Audio UND ohne Chat muss der Worker enden, sonst dreht er leer"
+    ok("W47: der Chat baut selbst neu auf — mit Audio wie ohne")
+
+    # --- 6) Das Gedaechtnis ueberlebt den Neustart -----------------------
+    # ... wird aber freigegeben, sobald der User wirklich offline ist. Das
+    # ist nicht nur Hygiene: der Watchdog benutzt _LIVE_DIRECTORS als
+    # Stellvertreter fuer "ein Worker laeuft" (B81). Karteileichen dort
+    # bedeuten Stillstands-Fehlalarm und Selbstheilung gegen Geister.
+    assert "_LIVE_DIRECTORS.pop(username, None)" not in flach, \
+        "die Regie wird wieder bei jedem Worker-Ende weggeworfen"
+    assert "_STORY_MEMORIES.pop(username, None)" not in flach, \
+        "das Story-Gedaechtnis wird wieder bei jedem Worker-Ende weggeworfen"
+    assert "for _u in [x for x in list(_LIVE_DIRECTORS) if x not in live]:" in flach, \
+        "niemand raeumt die Regie auf, wenn der User offline geht"
+    assert "for _u in [x for x in list(_STORY_MEMORIES) if x not in live]:" in flach
+    # Und der Watchdog verlaesst sich weiterhin darauf.
+    assert 'if name == "live-react" and not _LIVE_DIRECTORS:' in flach, \
+        "B81 haengt an _LIVE_DIRECTORS — wer das aendert, muss hier nachziehen"
+    ok("W47: Regie und Story ueberleben den Neustart, fallen aber beim Offline-Gehen")
+
+
 def main():
     tmp = tempfile.mkdtemp()
     configure_db(db_path=os.path.join(tmp, "t.db"), backend="sqlite")
@@ -7870,6 +7996,8 @@ def main():
     _test_v42_w45_live_ping_nicht_bei_jeder_reparatur()
 
     _test_v42_w46_audiotap_sagt_warum_er_starb()
+
+    _test_v42_w47_chat_reconnect_und_gedaechtnis()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)
 
