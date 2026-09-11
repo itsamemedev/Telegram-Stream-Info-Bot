@@ -11565,7 +11565,10 @@ _restream_active = _nc_channels.restream_active
 _RESTREAM_ACTIVE_ALL = _nc_rsstate.ACTIVE_ALL   # v4.1-W22: geteilt (Alias)
 # V37-COMMUNITY: welche rids in dieser Session schon einen Live-Ping bekamen
 # (verhindert Ping-Spam bei Reconnects). Wird beim Stop des Restreams geleert.
-_COMMUNITY_PINGED = set()
+# v4.2-W45: rid -> monotonic des letzten Live-Pings. War eine Menge; der
+# Eintrag wurde in stop() bedingungslos entfernt, auch beim internen
+# Reparatur-Neustart. Siehe nc.community.darf_pingen.
+_COMMUNITY_PINGED = {}
 
 def _restream_active_sources():
     """Quell-Usernames aller aktiven Restreams (clean), für Chat-Routing."""
@@ -13505,15 +13508,27 @@ class RestreamManager:
                   + (f" reconnect#{_attempts}" if _attempts else ""),
                   {"id": rid, "source": row["source_username"]})
         # V37-COMMUNITY: Live-Ping nach Discord — NUR bei frischem Start
-        # (_attempts == 0), nie bei Reconnects, sonst Ping-Spam. Einmal pro
-        # Restream-Session, entprellt ueber _COMMUNITY_PINGED.
+        # (_attempts == 0), nie bei Reconnects.
+        #
+        # v4.2-W45: Der Kommentar hier behauptete "einmal pro Restream-Session".
+        # Das stimmte nicht. stop() entfernte den Eintrag BEDINGUNGSLOS aus
+        # _COMMUNITY_PINGED — auch beim internen Reparatur-Neustart. Der
+        # Verify-Waechter macht genau das (stop(_keep_desired=True), 3 s warten,
+        # start() ohne _attempts, also 0), und damit war jeder Reparaturzyklus
+        # ein frischer Start mit frischem Ping. Bei einem zaehen Ziel sind das
+        # Dutzende identischer Nachrichten im Kanal.
+        #
+        # Deshalb jetzt eine ZEITSPERRE neben dem Mengen-Schutz: sie haelt auch
+        # dann, wenn ein kuenftiger Pfad das Vergessen wieder einbaut.
+        _jetzt_ping = _time_mod.monotonic()
         if (COMMUNITY_LIVE_PING_ENABLED and _attempts == 0 and DISCORD_WEBHOOK_URL
-                and rid not in _COMMUNITY_PINGED):
-            _COMMUNITY_PINGED.add(rid)
+                and _community.darf_pingen(_COMMUNITY_PINGED.get(rid), _jetzt_ping,
+                                           COMMUNITY_LIVE_PING_MIN_GAP_S)):
+            _COMMUNITY_PINGED[rid] = _jetzt_ping
             try:
                 _plats = [n.capitalize() for n, _ in _nc_rst.active_targets()] or ["Kick"]   # v4.0-W77
                 _msg = _community.live_ping(
-                    os.getenv("STREAMER_NAME", "").strip() or "Der Stream",
+                    _community.anzeigename(os.getenv("STREAMER_NAME"), "Der Stream"),
                     platforms=_plats)
                 _spawn(_discord_notify(_msg), name="comm-liveping")
             except Exception as _e:
@@ -13996,7 +14011,12 @@ class RestreamManager:
         self._srcspin.pop(rid, None)      # v4.0-W113: Serien enden mit dem Stop
         if not _keep_desired:
             self._stallkills.pop(rid, None)
-        _COMMUNITY_PINGED.discard(rid)   # V37-COMMUNITY: naechster Start darf wieder pingen
+        if not _keep_desired:
+            # v4.2-W45: NUR der Stop des Betreibers beendet die Session. Ein
+            # interner Reparatur-Neustart ist kein neuer Stream — vorher stand
+            # diese Zeile ohne Bedingung hier und war die Quelle des Ping-Spams.
+            # Die Zeitsperre an der Aufrufstelle greift trotzdem noch.
+            _COMMUNITY_PINGED.pop(rid, None)
         _restream_tts_stop(rid)
         info = self._procs.pop(rid, None)
         if not info:
@@ -15101,6 +15121,10 @@ COMMUNITY_RETURNING_ENABLED = os.getenv("COMMUNITY_RETURNING_ENABLED", "0").stri
 COMMUNITY_LIVE_PING_ENABLED = os.getenv("COMMUNITY_LIVE_PING_ENABLED", "0").strip().lower() in ("1", "true", "yes", "on", "y")
 COMMUNITY_HIGHLIGHT_SHARE_ENABLED = os.getenv("COMMUNITY_HIGHLIGHT_SHARE_ENABLED", "0").strip().lower() in ("1", "true", "yes", "on", "y")
 COMMUNITY_LIVE_ROLE_ID = os.getenv("COMMUNITY_LIVE_ROLE_ID", "").strip()
+# v4.2-W45: Mindestabstand zwischen zwei Live-Pings je Restream. Eine Stunde
+# reicht: ein Stream geht nicht oefter neu los, und jeder Reparatur-Neustart
+# dazwischen ist kein Ereignis fuer die Community.
+COMMUNITY_LIVE_PING_MIN_GAP_S = _env_int("COMMUNITY_LIVE_PING_MIN_GAP_S", 3600)
 _community.configure(
     returning_enabled=COMMUNITY_RETURNING_ENABLED,
     returning_min_gap_s=_env_int("COMMUNITY_RETURNING_MIN_GAP_S", 3600),

@@ -17,6 +17,7 @@ Dieses Modul baut nur die INHALTE/Logik (was gemeldet wird, wer neu/bekannt ist)
 — das tatsaechliche Senden an Discord macht der Aufrufer mit seinem vorhandenen
 Webhook. So bleibt das Modul testbar ohne Netzwerk.
 """
+import re
 import time
 
 # --- 1. Wiedererkennung ---------------------------------------------------
@@ -109,7 +110,8 @@ def highlight_post(username, clip_url=None, stars=None):
 
 def live_ping(streamer, platforms=None, title=None):
     """Die 'geht live'-Ankuendigung fuer Discord, mit optionalem Rollen-Ping."""
-    role = _CFG["live_role_id"]
+    # v4.2-W45: Form-Pruefung statt blossem Wahrheitswert — siehe rollen_id().
+    role = rollen_id(_CFG["live_role_id"])
     ping = f"<@&{role}> " if role else ""
     plats = ""
     if platforms:
@@ -142,3 +144,77 @@ def live_ping_enabled() -> bool:
 
 def highlight_share_enabled() -> bool:
     return _flag("COMMUNITY_HIGHLIGHT_SHARE_ENABLED")
+
+
+# --- 4. Was nach aussen geht, wird vorher geprueft (v4.2-W45) --------------
+#
+# Befund vom 11.09.: im Discord-Kanal stand wieder und wieder
+#
+#   <@&# Discord-Rollen-ID, die gepingt wird (optional)>
+#   \U0001F534 **# dein Name fuer die Live-Ankuendigung ist LIVE!**
+#
+# Zwei Fehler in einer Zeile, und beide sind hier zu schliessen.
+
+# Ziffern, sonst nichts. Bewusst OHNE Mindestlaenge: echte Snowflakes haben
+# 17-19 Stellen, aber eine Untergrenze faengt keinen einzigen realen Fehler
+# mehr ab (der Fehlerfall ist ein ganzer Kommentar, keine kurze Zahl) und
+# brach den bestehenden Vertrag test_community_discovery_loop, der mit
+# "999" prueft. Eine Pruefung zu verschaerfen, die dadurch nichts mehr
+# leistet, ausser einen gueltigen Test zu brechen, ist kein Gewinn.
+_ROLLE = re.compile(r"^[0-9]{1,25}$")
+
+
+def rollen_id(roh) -> str:
+    """Eine Discord-Rollen-ID oder nichts.
+
+    Eine Snowflake ist eine Zahl, und nur eine Zahl. Steht in der .env
+
+        COMMUNITY_LIVE_ROLE_ID=# Discord-Rollen-ID, die gepingt wird (optional)
+
+    ohne Leerzeichen vor dem Doppelkreuz, dann nimmt python-dotenv die GANZE
+    Zeile als Wert — es kuerzt einen Kommentar nur, wenn ein Leerzeichen davor
+    steht. Der Kommentar landete so als Rollen-Ping im Kanal.
+
+    Deshalb hier eine Form-Pruefung statt eines blossen strip(): ein Wert, der
+    keine Zahl ist, ist keine Rollen-ID, egal wie er zustande kam. Ein globales
+    "schneide alles ab #" waere falsch — OVERLAY-Farben fangen mit # an.
+    """
+    t = (str(roh or "")).strip()
+    return t if _ROLLE.match(t) else ""
+
+
+def anzeigename(roh, vorgabe: str) -> str:
+    """Der Name, der in der Ankuendigung steht — oder die Vorgabe.
+
+    Dieselbe Ursache wie oben: `STREAMER_NAME=# dein Name fuer die
+    Live-Ankuendigung` liefert den Kommentar als Namen. Ein Wert, der mit einem
+    Doppelkreuz BEGINNT, ist ein stehengebliebener Kommentar und kein Name —
+    hier ist die Regel eng genug, um sicher zu sein.
+    """
+    t = (str(roh or "")).strip()
+    if not t or t.startswith("#"):
+        return vorgabe
+    return t
+
+
+def darf_pingen(zuletzt, jetzt, abstand_s) -> bool:
+    """Ist seit dem letzten Live-Ping genug Zeit vergangen?
+
+    Der alte Schutz war eine Menge `_COMMUNITY_PINGED`, aus der `stop()` den
+    Eintrag BEDINGUNGSLOS entfernte — auch beim internen Reparatur-Neustart
+    (`_keep_desired=True`). Der Verify-Waechter macht aber genau das: stop,
+    drei Sekunden warten, start ohne `_attempts` (also 0). Jede Reparatur war
+    damit ein frischer Start und ein frischer Ping. Der Kommentar im Bot
+    behauptete "einmal pro Restream-Session"; in Wahrheit war es einmal pro
+    Reparaturzyklus, und davon gibt es bei einem zaehen Ziel Dutzende.
+
+    Die Zeitsperre steht deshalb NEBEN dem Mengen-Schutz und nicht an seiner
+    Stelle: sie haelt auch dann, wenn ein kuenftiger Pfad das Vergessen wieder
+    einbaut. `zuletzt=None` heisst: noch nie gepingt.
+    """
+    if zuletzt is None:
+        return True
+    try:
+        return (jetzt - zuletzt) >= float(abstand_s)
+    except (TypeError, ValueError):
+        return True

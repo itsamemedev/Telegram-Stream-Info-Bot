@@ -7382,6 +7382,138 @@ def _test_v42_w44_aufnahmesitzung():
     ok("W44: Spalten, Index, drei Routen — und der Zielpfad ohne Fremdeingabe")
 
 
+def _test_v42_w45_live_ping_nicht_bei_jeder_reparatur():
+    """v4.2-W45: der Bot schrieb bei jedem Reparatur-Neustart eine
+    Live-Ankuendigung nach Discord — und schrieb dabei den .env-Kommentar
+    statt der Werte.
+
+    Gemeldet mit Bildschirmfoto: dieselbe Nachricht viermal hintereinander im
+    Kanal `#ki-moderator`, und ihr Inhalt lautete
+
+        <@&# Discord-Rollen-ID, die gepingt wird (optional)>
+        \U0001F534 **# dein Name fuer die Live-Ankuendigung ist LIVE!**
+
+    Zwei getrennte Fehler in einer Zeile.
+
+    **Der Inhalt.** python-dotenv kuerzt einen Kommentar nur, wenn ein
+    Leerzeichen davor steht. `COMMUNITY_LIVE_ROLE_ID=# Discord-Rollen-ID, …`
+    liefert also die ganze Zeile als Wert, und ein blosses `.strip()` macht
+    daraus einen wahrheitswertigen String. Die Antwort ist eine FORM-Pruefung:
+    eine Rollen-ID ist eine Zahl, ein Name faengt nicht mit einem Doppelkreuz
+    an. Ein globales "schneide alles ab #" waere falsch — Overlay-Farben
+    fangen mit # an.
+
+    **Die Wiederholung.** Der Kommentar im Bot behauptete "einmal pro
+    Restream-Session, entprellt ueber _COMMUNITY_PINGED". Tatsaechlich entfernte
+    `stop()` den Eintrag BEDINGUNGSLOS, auch beim internen Reparatur-Neustart
+    (`_keep_desired=True`). Der Verify-Waechter macht genau das: stop, 3 s
+    warten, `start()` ohne `_attempts` — also 0. Jeder Reparaturzyklus war damit
+    ein frischer Start mit frischem Ping.
+    """
+    from nc import community as C
+
+    # --- 1) Der .env-Kommentar wird nie zum Rollen-Ping ------------------
+    for murks in ("# Discord-Rollen-ID, die gepingt wird (optional)",
+                  "", "   ", None, "abc", "@everyone", "<@&123>", "12 34",
+                  "123a", "-1", "1.0",
+                  "1234567890123456789012345678901234"):               # zu lang
+        assert C.rollen_id(murks) == "", repr(murks)
+    # Eine kurze Zahl ist KEIN Fehlerfall: echte Snowflakes haben 17-19
+    # Stellen, aber eine Untergrenze faengt nichts Reales ab (der Fehlerfall
+    # ist ein ganzer Kommentar) und braeche test_community_discovery_loop,
+    # das mit "999" prueft.
+    assert C.rollen_id("999") == "999"
+    assert C.rollen_id("1547914245138812948") == "1547914245138812948"
+    assert C.rollen_id("  1547914245138812948  ") == "1547914245138812948"
+    ok("W45: nur eine Snowflake wird gepingt, kein .env-Kommentar")
+
+    # --- 2) Der Name ebenso -----------------------------------------------
+    assert C.anzeigename("# dein Name fuer die Live-Ankuendigung", "Der Stream") \
+        == "Der Stream"
+    assert C.anzeigename("", "Der Stream") == "Der Stream"
+    assert C.anzeigename(None, "Der Stream") == "Der Stream"
+    assert C.anzeigename("  Helge  ", "Der Stream") == "Helge"
+    # Ein Name DARF ein Doppelkreuz tragen, nur nicht damit anfangen.
+    assert C.anzeigename("Helge #1", "Der Stream") == "Helge #1"
+    ok("W45: ein stehengebliebener Kommentar wird nicht zum Streamer-Namen")
+
+    # --- 3) Die fertige Nachricht -----------------------------------------
+    C.configure(live_role_id="# Discord-Rollen-ID, die gepingt wird (optional)")
+    text = C.live_ping("Der Stream", platforms=["Kick", "Twitch"])
+    assert "<@&" not in text, text
+    assert "Discord-Rollen-ID" not in text, text
+    assert "Der Stream ist LIVE!" in text
+    C.configure(live_role_id="1547914245138812948")
+    assert C.live_ping("Helge", platforms=["Kick"]).startswith(
+        "<@&1547914245138812948> ")
+    C.configure(live_role_id="")          # Zustand nicht an den naechsten Test vererben
+    ok("W45: die Ankuendigung traegt entweder eine echte Rolle oder gar keine")
+
+    # --- 4) Die Zeitsperre ------------------------------------------------
+    assert C.darf_pingen(None, 1000.0, 3600) is True, "der erste Ping geht immer"
+    assert C.darf_pingen(1000.0, 1003.0, 3600) is False, \
+        "drei Sekunden spaeter ist derselbe Stream — genau der Abstand, den " \
+        "der Verify-Waechter zwischen stop und start wartet"
+    assert C.darf_pingen(1000.0, 1000.0 + 3600, 3600) is True
+    assert C.darf_pingen(1000.0, 1000.0 + 3599, 3600) is False
+    # Ein kaputter Wert darf den Ping nicht dauerhaft verhindern: lieber eine
+    # Nachricht zu viel als eine Live-Ankuendigung, die nie mehr kommt.
+    assert C.darf_pingen("murks", 1000.0, 3600) is True
+    assert C.darf_pingen(1000.0, 1001.0, "murks") is True
+    ok("W45: Zeitsperre haelt den Reparatur-Zyklus auf, blockiert aber nicht dauerhaft")
+
+    # --- 5) Und der Bot benutzt das auch ----------------------------------
+    hier = os.path.dirname(os.path.abspath(__file__))
+    bot = open(os.path.join(hier, "bot.py"), encoding="utf-8").read()
+    flach = " ".join(bot.split())
+    assert "_community.darf_pingen(_COMMUNITY_PINGED.get(rid)" in flach, \
+        "die Aufrufstelle prueft die Zeitsperre nicht"
+    assert "_community.anzeigename(os.getenv(\"STREAMER_NAME\")" in flach, \
+        "der Streamer-Name geht ungeprueft nach Discord"
+    assert "COMMUNITY_LIVE_PING_MIN_GAP_S" in bot
+    # Der Kern des Befunds: das Vergessen darf NUR beim Betreiber-Stop
+    # passieren — und das wird am SYNTAXBAUM geprueft, nicht an einem
+    # Textfenster. Die erste Fassung dieses Vertrags sah 400 Zeichen vor dem
+    # pop() nach "if not _keep_desired:" und war damit gruen, obwohl die
+    # Bedingung auf "if True:" stand: in stop() steht dieselbe Bedingung
+    # wenige Zeilen darueber noch einmal (fuer _stallkills). Die
+    # Mutationsprobe hat genau dieses Loch aufgedeckt.
+    import ast as _ast
+    _baum = _ast.parse(bot)
+    def _ist_betreiber_stop(knoten):
+        t = knoten.test
+        return (isinstance(t, _ast.UnaryOp) and isinstance(t.op, _ast.Not)
+                and isinstance(t.operand, _ast.Name)
+                and t.operand.id == "_keep_desired")
+    _pops, _geschuetzt = 0, 0
+    for _f in _ast.walk(_baum):
+        if not (isinstance(_f, (_ast.FunctionDef, _ast.AsyncFunctionDef))
+                and _f.name == "stop"):
+            continue
+        for _n in _ast.walk(_f):
+            if not (isinstance(_n, _ast.Call)
+                    and isinstance(_n.func, _ast.Attribute)
+                    and _n.func.attr == "pop"
+                    and isinstance(_n.func.value, _ast.Name)
+                    and _n.func.value.id == "_COMMUNITY_PINGED"):
+                continue
+            _pops += 1
+            # Steht dieser Aufruf im Rumpf eines "if not _keep_desired"?
+            for _if in _ast.walk(_f):
+                if (isinstance(_if, _ast.If) and _ist_betreiber_stop(_if)
+                        and any(_if.body[0].lineno <= _n.lineno
+                                <= (_k.end_lineno or 0) for _k in _if.body)):
+                    _geschuetzt += 1
+                    break
+    assert _pops == 1, "_COMMUNITY_PINGED wird in stop() %dx geraeumt" % _pops
+    assert _geschuetzt == 1, \
+        "das Raeumen haengt nicht an 'if not _keep_desired' — jeder " \
+        "Reparatur-Neustart pingt dann wieder"
+    assert "_COMMUNITY_PINGED.discard(rid)" not in flach, \
+        "die alte, bedingungslose Fassung steht noch da"
+    ok("W45: nur der Stop des Betreibers beendet die Ping-Sperre")
+
+
 def main():
     tmp = tempfile.mkdtemp()
     configure_db(db_path=os.path.join(tmp, "t.db"), backend="sqlite")
@@ -7587,6 +7719,8 @@ def main():
     _test_v42_w39_treuepunkte_cooldown_gedeckelt()
 
     _test_v42_w44_aufnahmesitzung()
+
+    _test_v42_w45_live_ping_nicht_bei_jeder_reparatur()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)
 

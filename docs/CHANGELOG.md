@@ -11,6 +11,64 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Behoben — der Live-Ping kam bei jeder Reparatur, und mit dem falschen Text (v4.2 W45)
+
+Gemeldet mit Bildschirmfoto: dieselbe Ankündigung viermal hintereinander in
+`#ki-moderator`, und ihr Inhalt lautete
+
+    <@&# Discord-Rollen-ID, die gepingt wird (optional)>
+    🔴 **# dein Name für die Live-Ankündigung ist LIVE!**
+
+Zwei getrennte Fehler in einer Zeile.
+
+**Der Inhalt.** `python-dotenv` kürzt einen Kommentar nur, wenn ein Leerzeichen
+davor steht. Eine Zeile der Form
+
+    COMMUNITY_LIVE_ROLE_ID=# Discord-Rollen-ID, die gepingt wird (optional)
+
+liefert also die **ganze Zeile** als Wert, und ein bloßes `.strip()` macht
+daraus einen wahrheitswertigen String, der brav als Rollen-Ping in den Kanal
+geht. Dasselbe bei `STREAMER_NAME`. Die Antwort ist eine Form-Prüfung statt
+eines Schnitts: eine Rollen-ID ist eine Zahl (`nc.community.rollen_id`), ein
+Name fängt nicht mit einem Doppelkreuz an (`anzeigename`). Ein globales
+„schneide alles ab `#`" wäre falsch — Overlay-Farben fangen mit `#` an.
+
+**Die Wiederholung.** Der Kommentar an der Aufrufstelle behauptete „einmal pro
+Restream-Session, entprellt über `_COMMUNITY_PINGED`". Das stimmte nicht.
+`stop()` entfernte den Eintrag **bedingungslos** — auch beim internen
+Reparatur-Neustart mit `_keep_desired=True`. Der Verify-Wächter macht aber
+genau das:
+
+    await _RESTREAM_MGR.stop(rid, _keep_desired=True)
+    await asyncio.sleep(3)
+    await _RESTREAM_MGR.start(rid, _src_watch=True)     # _attempts = 0
+
+Jeder Reparaturzyklus war damit ein frischer Start mit frischem Ping, und bei
+einem zähen Ziel sind das Dutzende. Der Schutz stand da, hat aber nie
+gegriffen — die klassische stille Fehlanzeige: niemand liest den Code nach,
+wenn ein Kommentar behauptet, das Problem sei gelöst.
+
+Jetzt zweifach abgesichert: das Räumen hängt am Betreiber-Stop
+(`if not _keep_desired`), und daneben steht eine **Zeitsperre**
+(`COMMUNITY_LIVE_PING_MIN_GAP_S`, Vorgabe 3600 s). Die Sperre ist bewusst
+redundant — sie hält auch dann, wenn ein künftiger Pfad das Vergessen wieder
+einbaut. Ein kaputter Wert in der Rechnung lässt den Ping durch statt ihn
+dauerhaft zu blockieren: lieber eine Nachricht zu viel als eine
+Live-Ankündigung, die nie mehr kommt.
+
+Gegenprobe: 237 statt 232 Verträge. Acht Mutationsproben — Rollen-ID wieder
+ungeprüft, Name wieder ungeprüft, `live_ping` nimmt den Rohwert, Zeitsperre
+sperrt nie, Zeitsperre sperrt für immer, Räumen wieder bedingungslos,
+Aufrufstelle ohne Zeitsperre, Streamer-Name wieder roh — kippen alle den
+Vertrag. Die Prüfung auf die Bedingung vor dem Räumen sieht bewusst in ein
+400-Zeichen-Fenster davor: `if not _keep_desired:` steht in `stop()` ohnehin
+zweimal, eine Suche über die ganze Datei wäre immer grün gewesen.
+
+**Zu tun auf dem Server:** die beiden `.env`-Zeilen korrigieren — entweder den
+Wert eintragen oder den Kommentar mit einem Leerzeichen abtrennen. Der Bot
+sendet ab dieser Fassung auch mit der kaputten Zeile keinen Unsinn mehr, aber
+dann eben ohne Rollen-Ping und mit „Der Stream" als Namen.
+
 ### Hinzugefügt — ein Stream ist wieder ein Stream (v4.2 W44)
 
 Gewünscht: „irgendwas, das uns die Streams stabil abfangen lässt, ohne dass die
