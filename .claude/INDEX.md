@@ -1049,7 +1049,7 @@ restream_targets.py    active_targets, build_output_args, configure, multistream
 restream_testpush.py   build_cmd, class GuardDecision, class ResolvedTarget, class TestPushConfig, classify_result, fingerprint, guard, resolve_target
 restream_util.py       betroffene_ziele, fenstergroesse, http_url, looks_like_source_expired, normalize_ingest, slot_belegt, url_host
 restreamcfg.py         active_platforms, aktiv, bereite_ziele, chat_src_ok, discord_invite, enabled, ingest, key_gesetzt, kick_channel_url, overlay, stall_timeout, verify, verify_karenz, verify_misses, verify_takt, yt_oauth_configured, ziel
-restreamcmd.py         build, configure, drossel_bitrate, drossel_overlay_aus, drossel_preset
+restreamcmd.py         build, configure, drossel_bitrate, drossel_overlay_aus, drossel_preset, schriftart
 restreamgesundheit.py  blind_markieren, frische_tee_fehler, marke_setzen
 restreamstate.py       guard, haken, laufende, layout_mode, mgr
 restrend.py            rising_trend
