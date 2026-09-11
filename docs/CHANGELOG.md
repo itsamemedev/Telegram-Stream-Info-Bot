@@ -49,6 +49,67 @@ der W-99 schon die Dashboard-Auth-Warnung entschärft hat.
 **Nebenbei:** die Meldung „Guardian versucht es alle 30s erneut" stimmte seit
 V37-CHAT nicht mehr — der Guardian wartet auf den Task und staffelt den Backoff.
 Sie nennt jetzt das, was wirklich passiert.
+### Behoben — der Sendestart hielt die Ereignisschleife an (v4.2 W39)
+
+Am 10.09. meldete `_loop_lag_monitor` 57 Sekunden nach dem Bot-Start **7,3 s
+Blockade**. Der Zeitpunkt passt auf die Sekunde: der Watchdog feuerte um
+14:04:12,237, der Restream-Start lief um 14:04:12,346.
+
+`RestreamManager.start()` ist eine Coroutine und rief **beide** Overlay-Starter
+synchron auf:
+
+* `_restream_html_overlay_start` → `subprocess.run(…, timeout=20)`, ein
+  Chromium-Kaltstart für den Preflight-Screenshot.
+* `_restream_avatar_feeder_start` → `_avatar_frames_laden`, und das macht
+  `ffprobe` (Deckel 20 s) plus `ffmpeg` (Deckel 120 s), das eine ganze
+  Avatar-Schleife nach rohem RGBA dekodiert — **zweimal** aufgerufen, für Ruhe-
+  und Sprechschleife.
+
+Das ist der Rest, den die Loop-Welle von v4.2 übrig gelassen hat. Ein
+blockierter Loop hält Aufnahmen, Telegram-Polling und das Dashboard gleich mit
+an; das Fehlerbild beim Betreiber ist „der Bot hängt beim Sendestart".
+
+**Die Auslagerung hat eine Falle, die mitbehoben ist.** Wer eine Startfunktion
+in `asyncio.to_thread` schiebt, reißt den Task mit, den sie nebenbei aufmacht:
+`asyncio.get_event_loop()` wirft im Worker-Thread `RuntimeError`. Der
+Screenshot-Task des html-Modus wäre still gestorben und auf `drawtext`
+zurückgefallen — ohne eine Zeile im Log. `_task_auf_bot_schleife()` plant
+deshalb auf die Bot-Schleife, egal von wo: `create_task` auf ihr,
+`run_coroutine_threadsafe` von außen. Beide Rückgaben tragen `.done()` und
+`.cancel()`, die der Abbau-Pfad allein benutzt.
+
+### Behoben — jeder Chat-Reconnect ließ seinen Client im Speicher zurück (v4.2 W39)
+
+Der zweite Befund desselben Logs: RSS wuchs von 354 auf 524 MB (+48 %) in 96
+Minuten. Im selben Zeitraum lief die Reconnect-Flut aus W37 — 122
+Listener-Starts in 85 Minuten.
+
+`_restream_chat_guardian` und `_live_react_worker` weisen `client` in ihrer
+Schleife bei **jedem** Reconnect neu zu, der aufräumende `finally`-Block steht
+aber am Ende der ganzen Funktion. Er erwischt damit immer nur den **letzten**
+Client — alle vorherigen blieben samt HTTP-Pool, WS-Reader-Task und offenen
+Sockets am Leben. Der Task hält eine Referenz auf seinen Client, also nimmt der
+Garbage Collector sie auch nicht mit.
+
+Nachgestellt mit dem echten Muster (Client, der einen Task auf sich selbst
+hält), 122 Runden wie am 10.09.:
+
+| | Clients noch im Speicher |
+|---|---|
+| ohne Abbau | **122 von 122** |
+| mit Abbau | 1 von 122 |
+
+`_chat_listener_abbauen(client, task)` läuft jetzt vor jedem Neuaufbau. Der
+Aufruf steht auch vor dem **ersten** Start, wo `client` noch `None` und der
+Abbau ein No-op ist: eine Ausnahme von der Regel hält genau so lange, bis
+jemand um den Block eine Wiederhol-Schleife legt — und dann leckt es wieder,
+ohne dass ein Vertrag anschlägt.
+
+Dazu ein Deckel in `nc/loyalty.py`: `_chat_cool` bekam pro Chatter einen
+Eintrag und wurde nie kleiner. Abgelaufene Einträge fliegen ab 2000 Einträgen
+raus — das ändert nichts an der Cooldown-Entscheidung, weil nur entfernt wird,
+was ohnehin abgelaufen ist.
+
 ### Behoben — das „Was ist neu"-Panel zeigte den Stand von W13 (v4.2 W38)
 
 `nc/version.py` nennt sich im eigenen Docstring „die EINE Wahrheit" für die

@@ -10642,6 +10642,27 @@ def run_flask():
 _MAIN_LOOP = None          # gesetzt in run_bot()
 _GLOBAL_SCRAPER = None      # gesetzt in run_bot()
 
+
+def _task_auf_bot_schleife(coro):
+    """Plant coro auf der Bot-Ereignisschleife — egal ob wir gerade auf ihr
+    laufen oder in einem Worker-Thread (asyncio.to_thread).
+
+    Warum das noetig ist: `asyncio.get_event_loop()` wirft in einem Thread ohne
+    laufende Schleife RuntimeError ("no current event loop"). Wer also eine
+    Startfunktion auslagert, WEIL sie den Loop blockiert hat, reisst damit den
+    Task mit, den sie nebenbei aufmacht — der Aufrufer sieht nur, dass der
+    Modus "nicht mehr geht". Die Rueckgabe traegt in beiden Faellen .done()
+    und .cancel(), die Abbau-Pfade brauchen also keine Fallunterscheidung.
+    """
+    try:
+        return asyncio.get_running_loop().create_task(coro)
+    except RuntimeError:
+        pass
+    if _MAIN_LOOP is None:
+        coro.close()           # sonst "coroutine was never awaited"
+        raise RuntimeError("keine Bot-Ereignisschleife verfuegbar")
+    return asyncio.run_coroutine_threadsafe(coro, _MAIN_LOOP)
+
 # ─────────────────────────────────────────────────────────────────────────────
 # v4.0-W83: LOOP-STALL-WATCHDOG — Selbstdiagnose eines eingefrorenen Event-Loops.
 #
@@ -12231,7 +12252,21 @@ def _restream_html_overlay_start(rid, source_url=None):
         except Exception:
             pass
 
-    task = asyncio.get_event_loop().create_task(_shooter())
+    # v4.2-W39: NICHT mehr asyncio.get_event_loop(). Diese Funktion laeuft seit
+    # W39 in einem Worker-Thread (der Preflight-Screenshot oben ist ein
+    # Chromium-Kaltstart und hielt den Event-Loop sekundenlang an). Dort gibt es
+    # keine laufende Schleife — get_event_loop() stirbt mit RuntimeError, und
+    # der html-Modus waere still weg gewesen.
+    try:
+        task = _task_auf_bot_schleife(_shooter())
+    except Exception as e:
+        log.warning("OVERLAY html: Screenshot-Schleife nicht planbar (%s) "
+                    "→ Fallback drawtext.", e)
+        try:
+            os.unlink(fifo)
+        except Exception:
+            pass
+        return None
     th = threading.Thread(target=_writer, daemon=True)
     th.start()
     _HTMLOV[rid] = {"fifo": fifo, "png": png, "stop": stop, "task": task, "thread": th}
@@ -13237,11 +13272,27 @@ class RestreamManager:
                         "(RESTREAM_MULTI_ALLOW_COPY=1) — funktioniert nur bei "
                         "sauberen Quell-Keyframes, sonst ruckelt eine Plattform.", rid)
         tts_fifo = _restream_tts_start(rid)   # self-gated auf RESTREAM_TTS; Stimme auch im Copy-Modus
-        _html_ov = _restream_html_overlay_start(rid, source_url=src) if RESTREAM_OVERLAY else None
+        # v4.2-W39: beide Starter liefen SYNCHRON in dieser Coroutine — der
+        # Rest, den die Loop-Welle von v4.2 uebrig gelassen hat. Das Overlay
+        # bringt einen Chromium-Kaltstart mit (Preflight-Screenshot, Deckel
+        # 20 s) plus ein ffprobe gegen die QUELL-URL (Deckel 12 s), der
+        # Avatar-Feeder zweimal ffprobe und zweimal ffmpeg, die je eine
+        # Schleife komplett nach rohem RGBA dekodieren (~22 MB pro Schleife,
+        # niced, waehrend nebenan schon transkodiert wird). Am 10.09. meldete
+        # _loop_lag_monitor 57 s nach dem Start 7,3 s Blockade — das war
+        # dieser Sendestart. Ein blockierter Loop haelt Aufnahmen, Telegram
+        # und das Dashboard gleich mit an.
+        _html_ov = None
+        if RESTREAM_OVERLAY:
+            _html_ov = await asyncio.to_thread(_restream_html_overlay_start,
+                                               rid, source_url=src)
         # v4.2-W34: AZRAELs Frames-Feeder. Scheitert er, bleibt _av_feed None
         # und der Bauer nimmt die feste Schleife aus W32 — der Restream
         # startet in jedem Fall.
-        _av_feed = _restream_avatar_feeder_start(rid) if (RESTREAM_OVERLAY and transcode) else None
+        _av_feed = None
+        if RESTREAM_OVERLAY and transcode:
+            _av_feed = await asyncio.to_thread(_restream_avatar_feeder_start,
+                                               rid)
         _independent = (RESTREAM_MULTI_MODE == "independent" and _multi)
         try:
             if _independent:
@@ -16117,6 +16168,34 @@ async def _fetch_tiktok_room_id(username):
         return None
 
 
+async def _chat_listener_abbauen(client, task):
+    """v4.2-W39: Ein Listener-Paar (TikTokLiveClient + Runner-Task) wirklich
+       freigeben.
+
+    WARUM als eigene Funktion: Guardian und Live-React-Worker weisen `client`
+    in ihrer Schleife bei JEDEM Reconnect neu zu. Der aufraeumende
+    finally-Block steht aber am Ende der ganzen Funktion und erwischt damit
+    immer nur den LETZTEN Client — alle vorherigen blieben samt HTTP-Pool,
+    WS-Reader-Task und offenen Sockets am Leben. Am 10.09. waren das 122
+    verwaiste Clients in 85 Minuten, im selben Zeitraum wuchs das RSS um
+    170 MB (354 -> 524).
+    """
+    if task is not None and not task.done():
+        task.cancel()
+    if client is None:
+        return
+    try:
+        fn = getattr(client, "disconnect", None) or getattr(client, "close", None)
+        if fn:
+            res = fn()
+            if asyncio.iscoroutine(res):
+                await res
+    except Exception as e:
+        # Aufraeumpfad: ein bereits toter Client laesst sich nicht mehr trennen.
+        # Das ist bedeutungslos — aber ganz still darf es trotzdem nicht bleiben.
+        log.debug("chat-listener abbauen: %s", e)
+
+
 async def _restream_chat_guardian(rid, username):
     """F92b/V37-CHAT: Der Restream garantiert seinen EIGENEN TikTok-Chat-Feed.
 
@@ -16152,6 +16231,11 @@ async def _restream_chat_guardian(rid, username):
                 await asyncio.sleep(min(30, cd))
                 continue
 
+            # v4.2-W39: erst den vorigen Client abbauen, dann den neuen
+            # bauen. Ohne diese Zeile ueberschreibt die Zuweisung darunter den
+            # alten Client, und der bleibt mitsamt seinem HTTP-Pool liegen.
+            await _chat_listener_abbauen(client, task)
+            client = task = None
             client, task = await _start_chat_listener(username, [], None)
             if not client or not task:
                 s = _chat_stat(username)
@@ -16231,17 +16315,7 @@ async def _restream_chat_guardian(rid, username):
     finally:
         if username in _CHAT_STATS:
             _CHAT_STATS[username]["connected_since"] = 0.0
-        if task and not task.done():
-            task.cancel()
-        if client is not None:
-            try:
-                fn = getattr(client, "disconnect", None) or getattr(client, "close", None)
-                if fn:
-                    res = fn()
-                    if asyncio.iscoroutine(res):
-                        await res
-            except Exception:
-                pass
+        await _chat_listener_abbauen(client, task)
 
 # ═══════════════════════════════════════════════════════════════════════════
 # F100: AZRAEL LIVE-DIRECTOR-ENGINE — vom Chatbot zum echten Reaction-Streamer
@@ -16324,6 +16398,7 @@ async def _live_react_worker(username, stop_evt):
                 *_audio_tap_cmd(stream_url, out_pat, proxy=_lr_proxy),
                 stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)
         if LIVE_REACT_CHAT:
+            await _chat_listener_abbauen(chat_client, chat_task)
             chat_client, chat_task = await _start_chat_listener(username, chat_buf, gift_flags)
             last_chat_try = _time_mod.time()
         log.info("live-react gestartet für @%s (audio=%s, chat=%s)",
@@ -16339,6 +16414,11 @@ async def _live_react_worker(username, stop_evt):
             if (LIVE_REACT_CHAT and proc is not None and (chat_task is None or chat_task.done())
                     and (_time_mod.time() - last_chat_try) > 30):
                 last_chat_try = _time_mod.time()      # Chat-Reconnect (max alle 30s), solange Audio läuft
+                # v4.2-W39: der alte Client wurde hier nur ueberschrieben. Bei
+                # einem Stream mit vielen Chat-Abbruechen sammelten sich so
+                # ueber Stunden Dutzende toter Clients im Speicher an.
+                await _chat_listener_abbauen(chat_client, chat_task)
+                chat_client = chat_task = None
                 chat_client, chat_task = await _start_chat_listener(username, chat_buf, gift_flags)
             if proc:
                 wavs = sorted(_glob.glob(os.path.join(seg_dir, "seg_*.wav")))
