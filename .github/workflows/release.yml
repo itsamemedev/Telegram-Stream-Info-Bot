@@ -1,0 +1,116 @@
+# Release anlegen — Tag, Release-Text und das Auslieferungsarchiv in einem Lauf.
+#
+# WARUM DIESER WORKFLOW: das Repo ist öffentlich und hatte bis v4.2 kein
+# einziges Release und keinen einzigen Tag. Wer hier landet, sieht 23.000
+# Zeilen Python und keinen Stand, den er herunterladen könnte. Das Archiv ist
+# aber genau der Auslieferungsweg des Projekts (ZIP über den Bestand, nicht
+# `git pull`) — es gehört also an die Release-Seite.
+#
+# Der Lauf über `workflow_dispatch` legt den Tag SELBST an (`gh release create`
+# tut das, wenn er noch nicht existiert). Das ist Absicht und kein Umweg: es
+# gibt Umgebungen, aus denen ein Tag-Push mit HTTP 403 abgelehnt wird, während
+# Branch-Pushes durchgehen. Wer dort einen Stand veröffentlichen will, braucht
+# sonst eine zweite Maschine.
+#
+# Der Release-Text kommt aus tools/release_notes.py und damit aus
+# nc/version.py — derselben Quelle wie Dashboard-Footer und "Was ist neu".
+# Vier Kopien derselben Wahrheit hatte das Projekt schon einmal (Build-Stempel).
+
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      fassung:
+        description: 'Fassung aus nc/version.py, z.B. 4.2 (leer = aktuelle)'
+        required: false
+        default: ''
+      entwurf:
+        description: 'Als Entwurf anlegen (nicht sofort öffentlich)'
+        type: boolean
+        required: false
+        default: true
+
+permissions:
+  contents: write          # Tag und Release anlegen, Archiv anhängen
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false   # ein halb angelegtes Release ist schlimmer als ein doppelter Lauf
+
+jobs:
+  release:
+    name: Release anlegen (Tag · Text · Archiv)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0     # release_notes.py liest den CHANGELOG
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Fassung und Tag bestimmen
+        id: stand
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "push" ]; then
+            TAG="${GITHUB_REF#refs/tags/}"
+            FASSUNG="${TAG#v}"
+          else
+            FASSUNG="${{ github.event.inputs.fassung }}"
+            if [ -z "$FASSUNG" ]; then
+              FASSUNG=$(python -c "import nc.version as v; print(v.VERSION)")
+            fi
+            TAG="v${FASSUNG}"
+          fi
+          echo "tag=$TAG"           >> "$GITHUB_OUTPUT"
+          echo "fassung=$FASSUNG"   >> "$GITHUB_OUTPUT"
+          echo "Fassung $FASSUNG → Tag $TAG"
+
+      - name: Release-Text erzeugen
+        run: |
+          set -euo pipefail
+          python tools/release_notes.py "${{ steps.stand.outputs.fassung }}" > release_notes.md
+          echo "--- erzeugt, $(wc -c < release_notes.md) Zeichen ---"
+          head -5 release_notes.md
+
+      - name: Auslieferungsarchiv bauen
+        id: archiv
+        run: |
+          set -euo pipefail
+          # build_release.py prüft selbst: nichts Geheimes im ZIP, kein Import
+          # ins Leere, und jede .py compiliert aus dem ENTPACKTEN Archiv. Bricht
+          # eine der drei Gegenproben, gibt es kein Release statt eines halben.
+          python tools/build_release.py "${{ steps.stand.outputs.tag }}"
+          ZIP=$(ls -1 NIGHTCRAWLER_v37_*.zip | head -1)
+          echo "zip=$ZIP" >> "$GITHUB_OUTPUT"
+          ls -lh "$ZIP"
+
+      - name: Release veröffentlichen
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG="${{ steps.stand.outputs.tag }}"
+          ENTWURF=""
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] \
+             && [ "${{ github.event.inputs.entwurf }}" = "true" ]; then
+            ENTWURF="--draft"
+          fi
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            # Erneuter Lauf: Text und Archiv aktualisieren statt zu scheitern.
+            gh release edit "$TAG" --notes-file release_notes.md
+            gh release upload "$TAG" "${{ steps.archiv.outputs.zip }}" --clobber
+            echo "Release $TAG aktualisiert"
+          else
+            gh release create "$TAG" "${{ steps.archiv.outputs.zip }}" \
+              --title "NIGHTCRAWLER $TAG" \
+              --notes-file release_notes.md \
+              --target "${{ github.sha }}" \
+              $ENTWURF
+            echo "Release $TAG angelegt"
+          fi
