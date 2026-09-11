@@ -618,7 +618,20 @@ def create_schema(conn, *, pk, txt_idx, txt_long, txt_big, iv, tbl_opts, is_my,
         "quality_score":  "INT",       # 0-100
         "deleted_at":     ts,    # Soft-delete für trash/restore
         "tracking_id":    "INT",       # Backlink für analytics
+        # v4.2-W44: die Sitzungs-Klammer. Ein 3h-Stream liegt als sechs bis
+        # zehn Dateien da (URL-Ablauf alle ~30min, dazu je eine nach 403 oder
+        # Stall) — und nichts sagte bisher, dass sie EIN Stream sind.
+        # session_id ist indiziert, weil danach gruppiert wird.
+        "session_id":     txt_idx,
+        # started_at explizit, nicht aus created_at minus duration_secs
+        # gerechnet: created_at entsteht beim INSERT, also NACH dem Ende und
+        # nach der Dateigroessen-Ermittlung. Fuer die Luecken-Rechnung waere
+        # das ein wandernder Fehler von Sekunden je Segment.
+        "started_at":     ts,
+        "ended_at":       ts,
     })
+    _create_index_safe(conn,
+        "CREATE INDEX IF NOT EXISTS idx_recordings_session ON recordings(session_id)")
 
     # =====================================================================
     # B65: 30-Module-Pack — Schema (Insights/Kuratierung/Collections/
