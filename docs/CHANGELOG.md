@@ -11,6 +11,42 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Hinzugefügt — Releases anlegen, ohne Tag-Push-Recht (v4.2 W42)
+
+Das Repo ist **öffentlich** und hatte bis 4.2 kein einziges Release und keinen
+einzigen Tag. Wer hier landet, sieht 23.000 Zeilen Python und keinen Stand, den
+er laden könnte — dabei ist das ZIP-Archiv genau der Auslieferungsweg des
+Projekts. Es gehört an die Release-Seite.
+
+`.github/workflows/release.yml` legt Tag, Release-Text und Archiv in einem Lauf
+an. Der manuelle Auslöser (`workflow_dispatch`) ist dabei kein Komfort, sondern
+der eigentliche Punkt: **es gibt Umgebungen, aus denen ein Tag-Push mit HTTP
+403 abgelehnt wird, während Branch-Pushes durchgehen** — genau daran ist der
+Tag `v4.2` aus dieser Sitzung gescheitert. `gh release create` legt den Tag
+selbst an, mit `contents: write` aus dem Lauf heraus. Ein erneuter Lauf
+aktualisiert das Release, statt zu scheitern.
+
+**Der Release-Text kommt aus `nc/version.py`**, derselben Quelle wie
+Dashboard-Footer und „Was ist neu"-Panel. Ihn im Workflow zusammenzubauen wäre
+die vierte Kopie derselben Wahrheit gewesen — daran ist der Build-Stempel schon
+einmal auseinandergelaufen.
+
+**Warum nicht der ganze CHANGELOG-Abschnitt:** `[4.2]` trägt 126 Einträge und
+**239.000 Zeichen**. Das GitHub-Limit für einen Release-Text liegt bei 125.000
+— ein Release mit angehängtem Volltext wäre nicht lang, sondern abgelehnt.
+`tools/release_notes.py` liefert deshalb die Highlights (4,4 KB) plus Verweis,
+und hat den Längen-Riegel eingebaut, damit eine wachsende Liste nicht erst beim
+Anlegen auffällt.
+
+Das Archiv wird im selben Lauf gebaut und angehängt — mit den drei Gegenproben
+aus W36 (nichts Geheimes, kein Import ins Leere, compiliert aus dem entpackten
+ZIP). Bricht eine davon, gibt es kein Release statt eines halben.
+
+Der Vertrag prüft ohne PyYAML: der Verträge-Job installiert bewusst nur
+`orjson` und `flask`, und eine Abhängigkeit für vier Zusicherungen wäre der
+teurere Weg.
+
+
 ### Hinzugefügt — `AGENTS.md` und ein Sicherheits-Skill fürs Projekt (v4.2 W41)
 
 **`AGENTS.md` verweist auf `CLAUDE.md` statt sie zu kopieren.** Werkzeuge, die

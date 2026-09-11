@@ -4715,6 +4715,61 @@ def _test_v42_w11_videoteil_aus_dem_monolithen():
        "ohne Bot")
 
 
+def _test_v42_w42_release_text_und_workflow():
+    """v4.2-W42: Ein oeffentliches Repo ohne Release ist ein Stand, den niemand
+    laden kann.
+
+    Der Release-Text kommt aus nc/version.py — derselben Quelle wie
+    Dashboard-Footer und "Was ist neu"-Panel. Wer ihn im Workflow
+    zusammenbaut, hat die vierte Kopie derselben Wahrheit; genau daran ist der
+    Build-Stempel schon einmal auseinandergelaufen.
+    """
+    import subprocess as _sp
+    import sys as _sys
+
+    # --- 1) Der Text baut, und zwar aus der Versions-Quelle ----------------
+    r = _sp.run([_sys.executable, "tools/release_notes.py"],
+                capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr[:300]
+    text = r.stdout
+    import nc.version as _v
+    assert f"v{_v.VERSION}" in text, "Release-Text nennt die Fassung nicht"
+    hl = [c for c in _v.CHANGELOG if c["version"] == _v.VERSION][0]["highlights"]
+    assert hl, "keine Highlights fuer die aktuelle Fassung"
+    # Jeder Stichpunkt muss drinstehen — sonst veroeffentlicht das Release
+    # einen anderen Stand als das Panel.
+    for punkt in hl:
+        assert punkt in text, "Highlight fehlt im Release-Text: " + punkt[:60]
+
+    # --- 2) Das GitHub-Limit wird eingehalten ------------------------------
+    # Der Abschnitt [4.2] im CHANGELOG hat 239.000 Zeichen, das Limit liegt bei
+    # 125.000. Wer den Volltext anhaengt, bekommt kein langes Release, sondern
+    # gar keins.
+    assert len(text) < 125_000, "Release-Text ueber dem GitHub-Limit"
+    quelle = open("tools/release_notes.py", encoding="utf-8").read()
+    assert "MAX_ZEICHEN" in quelle and "125" in quelle, \
+        "kein Laengen-Riegel — ein wachsender Text scheitert sonst erst beim Anlegen"
+
+    # --- 3) Unbekannte Fassung bricht ab, statt Leeres zu liefern ----------
+    r2 = _sp.run([_sys.executable, "tools/release_notes.py", "9.9"],
+                 capture_output=True, text=True)
+    assert r2.returncode != 0, "unbekannte Fassung liefert stillschweigend Text"
+
+    # --- 4) Der Workflow kann wirklich ein Release anlegen -----------------
+    roh = open(".github/workflows/release.yml", encoding="utf-8").read()
+    assert "workflow_dispatch:" in roh, \
+        ("kein manueller Ausloeser — es gibt Umgebungen, aus denen ein Tag-Push "
+         "mit HTTP 403 abgelehnt wird; dort waere sonst kein Release moeglich")
+    assert 'tags: ["v*"]' in roh, "kein Tag-Ausloeser"
+    assert "contents: write" in roh, \
+        "ohne contents:write kann der Lauf weder Tag noch Release anlegen"
+    assert "tools/release_notes.py" in roh, "Workflow baut den Text selbst zusammen"
+    assert "tools/build_release.py" in roh, "Archiv wird nicht gebaut"
+    assert "gh release create" in roh and "gh release edit" in roh, \
+        "erneuter Lauf scheitert, statt das Release zu aktualisieren"
+    ok("v4.2-w42: Release-Text aus nc/version.py, Limit geprueft, Workflow legt Tag und Archiv an")
+
+
 def _test_v42_w12_kick_rest_aus_dem_monolithen():
     """v4.2-W12: die Kick-REST-Aufrufe liegen in nc/kickapi.py."""
     import ast as _ast
@@ -7274,6 +7329,7 @@ def main():
     _test_v42_w11_videoteil_aus_dem_monolithen()
 
     _test_v42_w12_kick_rest_aus_dem_monolithen()
+    _test_v42_w42_release_text_und_workflow()
 
     _test_v42_w13_gesundheit_und_modki()
 
