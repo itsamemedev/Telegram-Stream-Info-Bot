@@ -598,6 +598,7 @@ from nc import restreamcmd as _nc_rscmd  # v4.2-W16: die ffmpeg-Zeile des Relays
 from nc import reccmd as _nc_reccmd  # v4.2-W17: die Kommandozeilen des Recorders
 from nc import aufnahmefolge as _nc_folge  # v4.2-W18: die Eskalationsrechnung
 from nc import aufnahmekategorie as _nc_kat  # v4.2-W23: warum eine Aufnahme so endete
+from nc import audiotap as _nc_audiotap  # v4.2-W46: warum der Audio-Tap starb
 from nc import aufnahmesitzung as _nc_sitzung  # v4.2-W44: die Klammer um die Segmente EINES Streams
 from nc import memeklip as _nc_memeklip  # v4.2-W24: erkennt meme-wuerdige Chat-Momente
 from nc import livefolge as _nc_live  # v4.2-W20: was aus einem Live-Signal folgt
@@ -764,6 +765,16 @@ _url_ohne_zugang = _nc_logsafe.url_ohne_zugang
 def _redact_stream_urls(text):
     # v4.0-W32: verbatim nach nc/logsafe.py extrahiert (bitgenau geprüft).
     return _nc_logsafe.redact_stream_urls(text, _RE_STREAM_URL)
+
+
+def _log_sicher(text):
+    """v4.2-W46: Fremdtext, der ins Log geht — durch ALLE Riegel auf einmal.
+
+    Sendeschluessel, signierte Quell-URL und Cookie-Kopfzeile. Vorher musste
+    jede neue Log-Stelle selbst wissen, welche Redact-Funktionen es gibt;
+    genau so entsteht die eine, die eine davon vergisst.
+    """
+    return _nc_logsafe.fuer_log(text, _RE_STREAM_URL)
 
 
 def _ff_cmd(cmd, threads=None, nice=None):
@@ -16055,6 +16066,44 @@ def _audio_tap_cmd(stream_url, out_pattern, proxy=None):
     # fuettert die Live-Reaktion und darf nicht ins Stocken geraten.
     return _ff_cmd(cmd, threads=1)
 
+
+# v4.2-W46: username -> (monotonic der letzten ausfuehrlichen Meldung,
+# Kategorie, Zahl der seitdem unterdrueckten Faelle).
+_AUDIOTAP_MELDUNG = {}
+
+# Wieviele stderr-Zeilen des Taps aufgehoben werden. ffmpeg laeuft mit
+# -loglevel error, da kommt normalerweise fast nichts. Der Deckel ist gegen
+# den Fall, der bis W46 unsichtbar war: eine Quelle, die im Sekundentakt
+# denselben Fehler wirft, waehrend der Tap stundenlang lebt.
+AUDIOTAP_STDERR_ZEILEN = _env_int("AUDIOTAP_STDERR_ZEILEN", 40)
+
+
+async def _audio_tap_sammler(proc, puffer):
+    """Liest das stderr des Audio-Taps mit, damit es nicht verlorengeht.
+
+    Warum ueberhaupt eine eigene Aufgabe: mit stderr=PIPE und ohne Leser
+    blockiert ffmpeg, sobald der Pipe-Puffer des Kerns voll ist (64 KB) —
+    und zwar mitten im Demuxen. Ein Tap, der haengt statt zu sterben, waere
+    schlimmer als der Zustand vor W46. Deshalb wird durchgehend gelesen und
+    in einen gedeckelten Ring gelegt, nie in eine wachsende Liste.
+
+    Fehler hier bleiben still, und das ist einer der wenigen Faelle, in denen
+    das richtig ist: das hier IST der Fehlerkanal. Wer im Fehlerkanal loggt,
+    baut eine Rekursion (CLAUDE.md).
+    """
+    try:
+        while True:
+            zeile = await proc.stderr.readline()
+            if not zeile:
+                break
+            t = zeile.decode("utf-8", "replace").rstrip()
+            if t:
+                puffer.append(t)
+    except (asyncio.CancelledError, GeneratorExit):
+        raise
+    except Exception:
+        pass
+
 def _httpx_proxy():
     """RECORD_PROXY → PROXY_LIST → TikTok-validierter Pool (URL) -> httpx.Proxy für
        TikTokLive, oder None. Gleiche Quelle wie Resolver/Audio-Tap."""
@@ -16553,6 +16602,68 @@ def _director_for(username):
 
 
 
+async def _audio_tap_melden(username, proc, start, puffer, sammler, seg_dir):
+    """Der Nachruf auf einen gestorbenen Audio-Tap.
+
+    Er steht bewusst auf `warning` und nicht auf `info`: ohne Tap hoert
+    AZRAEL nichts von dem, was der gesendete Streamer SAGT — die Reaktion
+    faellt auf den blossen Chat zurueck, und genau das war monatelang der
+    Zustand, ohne dass eine einzige Zeile es gesagt haette.
+
+    Gedrosselt ueber nc.audiotap.melden: der Tap stirbt im Acht-Sekunden-Takt,
+    225 gleichlautende Warnungen waeren ihr eigenes Rauschen. Eine neue
+    Kategorie meldet trotzdem sofort — dass sich das Fehlerbild geaendert
+    hat, ist die eigentliche Nachricht.
+    """
+    import glob as _g
+    # Erst den Sammler einholen: die letzte, entscheidende Zeile schreibt
+    # ffmpeg unmittelbar vor dem Beenden, und die waere sonst noch unterwegs.
+    if sammler is not None and not sammler.done():
+        try:
+            # shield, damit der Timeout den Sammler nicht mitreisst — sonst
+            # verliert man genau die Zeile, auf die man gewartet hat.
+            await asyncio.wait_for(asyncio.shield(sammler), timeout=2)
+        except Exception:
+            sammler.cancel()
+    try:
+        segmente = len(_g.glob(os.path.join(seg_dir, "seg_*.wav")))
+    except OSError:
+        segmente = 0
+    laufzeit = max(0.0, _time_mod.monotonic() - (start or 0.0))
+    roh = "\n".join(puffer or [])
+    d = _nc_audiotap.diagnose(roh, proc.returncode, laufzeit, segmente)
+
+    jetzt = _time_mod.monotonic()
+    zuletzt, letzte_kat, unterdrueckt = _AUDIOTAP_MELDUNG.get(
+        username, (None, None, 0))
+    if not _nc_audiotap.melden(zuletzt, jetzt, d["kategorie"], letzte_kat):
+        _AUDIOTAP_MELDUNG[username] = (zuletzt, letzte_kat, unterdrueckt + 1)
+        log.info("live-react: Audio-Tap @%s beendet (%s, wie gehabt) → "
+                 "Worker-Neustart", username, d["kategorie"])
+        return
+    _AUDIOTAP_MELDUNG[username] = (jetzt, d["kategorie"], 0)
+    # Der Wortlaut geht durch ALLE Riegel: im stderr des Taps steht die
+    # signierte Quell-URL, und seit W46 wird dieser Text ueberhaupt erst
+    # geloggt (siehe nc/logsafe.redact_pull_urls).
+    schwanz = _log_sicher(_ffmpeg_stderr_diagnostic(roh, max_len=600))
+    log.warning("live-react: Audio-Tap @%s nach %.1fs tot (rc=%s, %d Segmente) "
+                "— %s. %s%s\nffmpeg: %s",
+                username, d["laufzeit_s"], d["returncode"], d["segmente"],
+                d["kategorie"], d["abhilfe"],
+                (f" ({unterdrueckt} gleichartige Faelle seitdem "
+                 f"nicht einzeln gemeldet)") if unterdrueckt else "",
+                schwanz or "(kein stderr)")
+    try:
+        log_event("live_react.tap_dead", "warning",
+                  f"Audio-Tap @{username} tot nach {d['laufzeit_s']}s "
+                  f"({d['kategorie']})",
+                  {"username": username, "kategorie": d["kategorie"],
+                   "laufzeit_s": d["laufzeit_s"], "segmente": d["segmente"],
+                   "unterdrueckt": unterdrueckt})
+    except Exception as e:
+        log.debug("live-react tap-event: %s", e)
+
+
 async def _live_react_worker(username, stop_evt):
     """Pro Live-User: Audio abgreifen → transkribieren → puffern → AZRAEL reagiert."""
     import tempfile, glob as _glob
@@ -16581,13 +16692,26 @@ async def _live_react_worker(username, stop_evt):
     chat_buf, chat_client, chat_task, last_chat_try = [], None, None, 0.0
     gift_flags = {"gift_priority": False}       # UPGRADE: Gift-Schwellen-Sofort-Trigger
     transcript, seen, last_react = [], set(), 0.0
+    # v4.2-W46: auch wenn kein Tap laeuft, muessen die Namen existieren —
+    # der finally-Block raeumt sie bedingungslos auf.
+    tap_start, tap_err, tap_sammler = 0.0, None, None
     director = _director_for(username)   # F100: Regie-Engine (Gedächtnis/Momentum/Timing)
     story = _story_for(username)         # F103: Story-Gedächtnis (roter Faden)
     try:
         if LIVE_REACT_SPEECH and stream_url and _faster_whisper_available():
+            # v4.2-W46: stderr war DEVNULL. Am 10.09. starb der Tap 57 Mal,
+            # jedes Mal exakt eine Sekunde nach dem Start — und der Grund
+            # wurde 57 Mal erzeugt und 57 Mal weggeworfen. In denselben 101
+            # Minuten hat AZRAEL kein einziges Mal auf den gesendeten Stream
+            # reagiert. Ohne diesen Kanal ist jede weitere Reparatur geraten.
             proc = await asyncio.create_subprocess_exec(
                 *_audio_tap_cmd(stream_url, out_pat, proxy=_lr_proxy),
-                stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.PIPE)
+            tap_start = _time_mod.monotonic()
+            tap_err = _collections.deque(maxlen=AUDIOTAP_STDERR_ZEILEN)
+            tap_sammler = _spawn(_audio_tap_sammler(proc, tap_err),
+                                 name=f"audiotap-err-{username}")
         if LIVE_REACT_CHAT:
             await _chat_listener_abbauen(chat_client, chat_task)
             chat_client, chat_task = await _start_chat_listener(username, chat_buf, gift_flags)
@@ -16599,7 +16723,12 @@ async def _live_react_worker(username, stop_evt):
             # ihn nur NACH einer Reaktion; ruhige Streams (kein Trigger) und
             # laufende KI-Calls lösten Watchdog-Fehlalarme aus.
             if proc is not None and proc.returncode is not None:
-                log.info("live-react: Audio-Tap @%s beendet → Worker-Neustart", username); break
+                # v4.2-W46: bis hierher stand nur "beendet → Worker-Neustart"
+                # auf info. 57 gleichlautende Zeilen, kein Grund. Jetzt sagt
+                # der Tap, WARUM er gestorben ist — und was zu tun ist.
+                await _audio_tap_melden(username, proc, tap_start, tap_err,
+                                        tap_sammler, seg_dir)
+                break
             if proc is None and chat_task is not None and chat_task.done():
                 break
             if (LIVE_REACT_CHAT and proc is not None and (chat_task is None or chat_task.done())
@@ -16735,6 +16864,11 @@ async def _live_react_worker(username, stop_evt):
             except Exception: pass
         if chat_task:
             chat_task.cancel()
+        if tap_sammler is not None and not tap_sammler.done():
+            # v4.2-W46: der Sammler haengt an proc.stderr. Bleibt er stehen,
+            # sammeln sich ueber Stunden so viele Aufgaben an wie Tap-Tode —
+            # und das sind bei acht Sekunden Takt schnell Hunderte.
+            tap_sammler.cancel()
         if proc:
             try:
                 proc.kill()

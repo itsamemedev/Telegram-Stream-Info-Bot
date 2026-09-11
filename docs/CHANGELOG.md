@@ -11,6 +11,94 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Behoben — der Audio-Tap starb 57 Mal und sagte kein einziges Mal warum (v4.2 W46)
+
+Gemeldet als Frage: „Seit wann gibt es keine Reaktion mehr auf die gerestreamten
+TikTok-Nutzer, auf deren Verhalten und Aussagen? Stattdessen nur noch auf
+Chat-Nachrichten auf Kick, YouTube und Twitch."
+
+Das Log vom 10.09. (101 Minuten) beantwortet es:
+
+| | |
+|---|---|
+| Engine gestartet | 1× (`speech=True, max=3`) |
+| Worker-Starts | 225 |
+| Median-Lebensdauer eines Workers | **4 s** |
+| Audio-Tap gestartet | 57× — jedes Mal **exakt 1 s** später tot |
+| `live-react: triggere AZRAEL-Reaktion` | **0** |
+| `AZRAEL @… reagierte` | **0** |
+
+Die Konfiguration war dabei in Ordnung (`LIVE_REACT_ENABLED=1`,
+`LIVE_REACT_SPEECH=1`, `LIVE_REACT_CHAT=1`), und in der Git-Historie wurde
+nichts entfernt — der Code steht unverändert seit dem ersten Commit.
+
+**Der Grund war 57 Mal da und wurde 57 Mal weggeworfen.** Der Tap lief mit
+
+    stderr=asyncio.subprocess.DEVNULL
+
+Der Recorder hat für genau diesen Fall eine ganze Diagnosekette
+(`nc/aufnahmekategorie.py` — 403, Stall, Codec, toter Stream); der Tap hatte
+nichts. Ohne Tap hört AZRAEL nichts von dem, was der gesendete Streamer
+**sagt**, und fällt auf den blossen Chat zurück — genau das beschriebene Bild.
+
+Diese Welle macht **nur den Kanal auf**. Solange der Grund im `DEVNULL`
+verschwindet, wäre jede weitere Reparatur geraten.
+
+**Was jetzt passiert.** `stderr` geht auf eine Pipe, ein eigener Sammler liest
+sie durchgehend in einen gedeckelten Ring (`AUDIOTAP_STDERR_ZEILEN`, Vorgabe
+40). Stirbt der Tap, sagt eine Zeile auf `warning`, wie lange er lief, wie
+viele Segmente ankamen, in welche Kategorie der Tod fällt, **was zu tun ist**
+und was ffmpeg wörtlich gesagt hat.
+
+Warum überhaupt gelesen werden **muss**: mit `PIPE` und ohne Leser blockiert
+ffmpeg, sobald der Pipe-Puffer des Kerns voll ist — mitten im Demuxen. Ein
+hängender Tap wäre schlimmer als der Zustand vorher. Nachgemessen: derselbe
+Prozess, 1,2 MB stderr, ohne Leser nach 4 s noch am Leben und blockiert; mit
+Leser 20.000 Zeilen gelesen und sauber beendet.
+
+**Der Riegel kommt vor dem ersten Log.** Im stderr des Taps steht die signierte
+TikTok-Quell-URL, und `redact_stream_urls` deckte nur RTMP-**Sende**-Schlüssel
+ab, also die andere Seite. Bis W46 war das egal, weil der Text nie jemand sah —
+diese Welle ändert genau das. Deshalb neu in `nc/logsafe.py`:
+`redact_pull_urls` (Query-Teil → `?<signiert:3p>`, Host und Pfad bleiben, denn
+die braucht die Fehlersuche), `redact_cookie_zeilen` und `fuer_log`, das alle
+drei Riegel in **einem** Aufruf bündelt. Gebündelt, weil sonst jede neue
+Log-Stelle selbst wissen muss, welche Redact-Funktionen es gibt — und genau so
+entsteht die eine, die eine davon vergisst.
+
+**Die Drosselung.** Der Tap stirbt im Acht-Sekunden-Takt; 225 gleichlautende
+Warnungen sind ihr eigenes Rauschen und erziehen dazu, die Meldung zu
+überlesen. Regel wie bei `_loop_fehler` (CLAUDE.md): der erste Fall sofort,
+danach höchstens alle 15 Minuten, mit der Zahl der unterdrückten Fälle. **Ein
+Wechsel der Kategorie meldet aber immer sofort** — wird aus einem 403-Sturm ein
+Codec-Fehler, ist das eine neue Lage, und wer nur nach der Zeit drosselt, sucht
+bis zur nächsten Viertelstunde den falschen Fehler.
+
+Die Kategorie rechnet `nc/audiotap.py` **nicht selbst**, sondern reicht sie an
+`nc.aufnahmekategorie` weiter; hier steht nur die Abbildung der Tap-Grössen auf
+deren Parameter (`segmente` an Stelle von `file_exists` — die Frage ist beide
+Male dieselbe) und die Abhilfe im Klartext. Dieselbe Frage zweimal zu
+beantworten hiesse, zwei Wahrheiten zu haben, von denen eine veraltet.
+
+**Nebenbefund, bewusst nicht repariert:** die Kette sucht `"timeout"`, ffmpeg
+schreibt aber meist `"Connection timed out"` — dieser Wortlaut fällt auf
+`fail` durch. Das ist die Kette des **Recorders** (W23); sie hier anzufassen
+ändert dessen Statistik und Backoff. Als Vertrag festgehalten, damit der Befund
+nicht verlorengeht.
+
+Gegenprobe: 242 statt 237 Verträge. Vierzehn Mutationsproben — `stderr` wieder
+nach `DEVNULL`, `PIPE` ohne Leser, Puffer ungedeckelt, Sammler nicht
+abgeräumt, Nachruf wieder auf `info`, Wortlaut ungeschwärzt, eigene
+Musterkette statt der vorhandenen, Abhilfe-Texte entkernt, Kategorie-Wechsel
+verschluckt, Drosselung abgeschaltet, `melden()` sperrt bei Murks, Signatur
+bleibt in der URL, Cookie-Zeile bleibt stehen, Host und Pfad mit weggeworfen.
+
+**Noch offen** (Punkte 2–4 der Diagnose, bewusst nicht in dieser Welle): der
+Chat-Reconnect des Workers hängt an `proc is not None`, ein Chat-only-Worker
+kann sich also gar nicht neu verbinden; Regie- und Story-Gedächtnis werden im
+`finally` weggeworfen, also sammelt sich über Neustarts hinweg nichts; und eine
+Reaktion braucht 25 s Sammelzeit, die ein 4-Sekunden-Worker nie erreicht.
+
 ### Behoben — der Live-Ping kam bei jeder Reparatur, und mit dem falschen Text (v4.2 W45)
 
 Gemeldet mit Bildschirmfoto: dieselbe Ankündigung viermal hintereinander in
