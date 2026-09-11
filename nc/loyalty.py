@@ -88,6 +88,18 @@ def award_chat(who, platform, now=None):
     if now - _chat_cool.get(k, 0) < _CFG["chat_cooldown_s"]:
         return None
     _chat_cool[k] = now
+    # v4.2-W39: Speicher deckeln. Der Eintrag hat NUR bis zum Ablauf des
+    # Cooldowns eine Bedeutung, danach ist er Ballast — ohne diese Zeilen
+    # wuchs das Dict mit jedem neuen Chatter und wurde nie wieder kleiner
+    # (gemessen: 10.000 verschiedene Chatter = 10.000 Eintraege, ~1 MB, und
+    # das ueber Wochen Laufzeit). Abgelaufene Eintraege zu entfernen aendert
+    # nichts an der Entscheidung oben, deshalb ist das kein Semantik-Bruch.
+    # Aufgeraeumt wird erst ab 2000 Eintraegen, damit der Normalfall
+    # (kleiner Chat) nichts kostet — dieselbe Bremse wie in nc/community.py.
+    if len(_chat_cool) > 2000:
+        _abgelaufen = now - _CFG["chat_cooldown_s"]
+        for _k in [k2 for k2, t in _chat_cool.items() if t < _abgelaufen]:
+            _chat_cool.pop(_k, None)
     return _award(k, who, _CFG["chat_points"])
 
 

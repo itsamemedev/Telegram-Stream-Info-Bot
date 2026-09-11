@@ -7048,6 +7048,49 @@ def _test_v42_w14_motd_spricht_englisch():
        "zaehlt endlich, was sie nicht findet")
 
 
+def _test_v42_w39_treuepunkte_cooldown_gedeckelt():
+    """v4.2-W39: der Anti-Farming-Cooldown der Treuepunkte darf nicht wachsen.
+
+    nc.loyalty._chat_cool bekommt bei JEDER gewerteten Chat-Nachricht einen
+    Eintrag pro Chatter und Plattform — und hatte als einziger der geprueften
+    Zaehler-Container keinen Deckel (der Speicher-Audit v4.0-W37 sah nur
+    bot.py). Gemessen: 10.000 verschiedene Chatter = 10.000 Eintraege, rund
+    1 MB, und ueber Wochen Laufzeit wird das nie wieder kleiner.
+
+    Abgelaufene Eintraege zu entfernen ist kein Semantik-Bruch: nach Ablauf
+    des Cooldowns darf derselbe Chatter ohnehin wieder Punkte bekommen.
+    Genau das prueft der zweite Teil.
+    """
+    import nc.loyalty as L
+
+    L._chat_cool.clear()
+    L.configure(enabled=True, db_get=lambda k: 0,
+                db_add=lambda k, d, n: d, db_top=lambda n: [])
+    try:
+        # 10.000 verschiedene Chatter, verteilt ueber 500 s (20/s) — der
+        # Alltag eines gut laufenden Live-Chats.
+        t = 1_000_000.0
+        for i in range(10000):
+            t += 0.05
+            L.award_chat("zuschauer%d" % i, "tiktok", now=t)
+        assert len(L._chat_cool) <= 2500, \
+            "Cooldown-Dict waechst pro Chatter (%d Eintraege)" % len(L._chat_cool)
+        ok("v4.2-W39: Treuepunkt-Cooldown gedeckelt \u2014 %d statt 10.000 "
+           "Eintraege" % len(L._chat_cool))
+
+        # Der Deckel darf den Cooldown nicht aushebeln.
+        L._chat_cool.clear()
+        assert L.award_chat("bob", "kick", now=3_000_000.0) is not None
+        assert L.award_chat("bob", "kick", now=3_000_005.0) is None, \
+            "Cooldown greift nicht mehr"
+        assert L.award_chat("bob", "kick", now=3_000_061.0) is not None, \
+            "Cooldown laeuft nicht mehr ab"
+        ok("v4.2-W39: der Deckel aendert nichts am Anti-Farming-Cooldown")
+    finally:
+        L._chat_cool.clear()
+        L.configure(enabled=False)
+
+
 def main():
     tmp = tempfile.mkdtemp()
     configure_db(db_path=os.path.join(tmp, "t.db"), backend="sqlite")
@@ -7248,6 +7291,8 @@ def main():
     _test_v42_w27_twitch_clip()
 
     _test_v42_w29_youtube_upload()
+
+    _test_v42_w39_treuepunkte_cooldown_gedeckelt()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)
 

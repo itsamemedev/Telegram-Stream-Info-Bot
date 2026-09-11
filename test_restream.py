@@ -429,8 +429,16 @@ def test_overlay_size_contract():
     body = src[i:i + 3000]
     assert "_size = _overlay_render_size(source_url)" in body
     assert "_htmlov_screenshot_cmd(binpath, png, _size)" in body
-    # Aufrufer reicht die Quelle durch
-    assert "_restream_html_overlay_start(rid, source_url=src)" in src
+    # Aufrufer reicht die Quelle durch.
+    # ANKER GEWANDERT (v4.2-W39, nicht der Vertrag): der Starter laeuft seit
+    # W39 ueber asyncio.to_thread, der Aufruf steht deshalb als Argumentliste
+    # statt als Klammerausdruck da. Geprueft wird weiterhin dasselbe — dass
+    # die Quell-URL beim Overlay ankommt.
+    # Auf zusammengefalteten Leerraum geprueft: die Argumentliste umbricht je
+    # nach Formatierung, und ein Anker, der an der Einrueckung haengt, meldet
+    # sonst einen Fehler, wo nur der Zeilenumbruch gewandert ist.
+    _flach = " ".join(src.split())
+    assert "_restream_html_overlay_start, rid, source_url=src" in _flach
     # Filter verzerrt nicht mehr.
     # ANKER GEWANDERT (v4.2-W16, nicht der Vertrag): der Filtergraph wird in
     # nc/restreamcmd.py gebaut. Die VERBIETENDE Zusicherung liest weiter beide
@@ -980,6 +988,87 @@ def test_chat_guardian_reconnect():
     for c in ("CHAT_FLAP_S", "CHAT_BACKOFF_MAX_S"):
         assert re.search(rf"^{c}\s*=\s*_env_int", src, re.M), f"{c} nicht per Env"
     ok("Chat: Flap-Schwelle + Backoff-Deckel per Env steuerbar")
+
+
+def test_v42_w39_chat_listener_wird_abgebaut():
+    """v4.2-W39: kein verwaister TikTokLiveClient pro Reconnect.
+
+    Befund vom 10.09.: 122 Listener-Starts in 85 Minuten, im selben Zeitraum
+    +170 MB RSS (354 -> 524). Ursache im Code: Guardian und Live-React-Worker
+    weisen `client` in ihrer SCHLEIFE neu zu, der aufraeumende finally-Block
+    steht aber am Ende der ganzen Funktion — er erwischt immer nur den
+    letzten. Alle vorherigen blieben samt HTTP-Pool und WS-Reader liegen.
+
+    Der Vertrag haelt beides fest: den Abbau VOR jedem Neuaufbau, und dass
+    diese Form die Objekte tatsaechlich freigibt.
+    """
+    import asyncio as _asyncio
+    import gc as _gc
+
+    src_bot = open("bot.py").read()
+    tree = ast.parse(src_bot)
+
+    assert "async def _chat_listener_abbauen(" in src_bot, \
+        "der Abbau-Helfer fehlt"
+
+    for name in ("_restream_chat_guardian", "_live_react_worker"):
+        fn = ""
+        for n in ast.walk(tree):
+            if isinstance(n, ast.AsyncFunctionDef) and n.name == name:
+                fn = ast.get_source_segment(src_bot, n) or ""
+        assert fn, f"{name} nicht gefunden"
+        # Jedem Neuaufbau muss ein Abbau VORAUSGEHEN — sonst ueberschreibt die
+        # Zuweisung den alten Client und der bleibt im Speicher.
+        zeilen = fn.split("\n")
+        starts = [i for i, z in enumerate(zeilen) if "_start_chat_listener(" in z]
+        assert starts, f"{name} startet gar keinen Listener mehr?"
+        for i in starts:
+            davor = "\n".join(zeilen[max(0, i - 8):i])
+            assert "_chat_listener_abbauen(" in davor, \
+                (f"{name}: Listener-Neuaufbau in Zeile {i} ohne vorherigen "
+                 "Abbau — genau so entstehen verwaiste Clients")
+        ok(f"{name}: jeder Neuaufbau baut den vorigen Client vorher ab")
+
+    # Und der Abbau wirkt auch: nachgebaute Schleife mit einem Client, der —
+    # wie der echte — einen laufenden Task auf sich selbst haelt.
+    class _Client:
+        def __init__(self):
+            self.puffer = bytearray(100_000)
+            self.offen = True
+            self._t = None
+
+        async def connect(self):
+            self._t = _asyncio.ensure_future(self._reader())
+            await _asyncio.sleep(0.001)
+
+        async def _reader(self):
+            while self.offen:                      # haelt self am Leben
+                await _asyncio.sleep(0.01)
+
+        async def disconnect(self):
+            self.offen = False
+            if self._t:
+                self._t.cancel()
+
+    async def _lauf(abbauen):
+        client = None
+        for _ in range(122):                       # 122 Neuaufbauten wie am 10.09.
+            if abbauen and client is not None:
+                await client.disconnect()
+            client = _Client()
+            await client.connect()
+        await _asyncio.sleep(0.05)
+        _gc.collect()
+        lebend = sum(1 for o in _gc.get_objects() if isinstance(o, _Client))
+        if client is not None:
+            await client.disconnect()
+        return lebend
+
+    ohne = _asyncio.run(_lauf(False))
+    mit = _asyncio.run(_lauf(True))
+    assert ohne >= 100, f"Nachbau zeigt das Leck nicht (nur {ohne} lebende)"
+    assert mit <= 2, f"Abbau gibt nicht frei ({mit} lebende Clients)"
+    ok(f"Abbau gibt frei: {ohne} verwaiste Clients ohne, {mit} mit disconnect()")
 
 
 def test_config_drift():
@@ -4611,13 +4700,123 @@ def test_v42_w34_azrael_feeder():
     # Zaehlen, nicht nur suchen: der Name steht schon in der def-Zeile, ein
     # blosses "in src" waere auch ohne jeden Aufruf gruen (beim Mutationstest
     # aufgefallen).
-    assert src.count("_restream_avatar_feeder_start(rid)") >= 2, \
+    # ANKER GEWANDERT (v4.2-W39, nicht der Vertrag): der Starter laeuft seit
+    # W39 ueber asyncio.to_thread — der Aufruf heisst deshalb
+    # "to_thread(_restream_avatar_feeder_start, rid)" und nicht mehr
+    # "_restream_avatar_feeder_start(rid)". Gezaehlt wird weiter, damit die
+    # def-Zeile allein den Vertrag nicht gruen faerbt.
+    # Auf zusammengefalteten Leerraum geprueft: die Argumentliste umbricht je
+    # nach Formatierung, und ein Anker, der an der Einrueckung haengt, meldet
+    # sonst einen Fehler, wo nur der Zeilenumbruch gewandert ist.
+    _flach = " ".join(src.split())
+    _start = "asyncio.to_thread(_restream_avatar_feeder_start, rid)"
+    assert src.count("_restream_avatar_feeder_start") >= 2, \
         "Feeder wird nie gestartet"
+    assert _start in _flach, \
+        "Feeder nicht ausgelagert — zweimal ffprobe plus zweimal ffmpeg (je eine " \
+        "komplette Schleife nach rohem RGBA) blockieren sonst den Event-Loop"
     assert src.count("_restream_avatar_feeder_stop(rid)") >= 2, \
         "Feeder wird nie gestoppt — Thread und FIFO bleiben liegen"
-    assert src.find("_restream_avatar_feeder_start(rid)") < \
-        src.find("avatar_feed=_av_feed"), "Feeder startet nach dem Kommandobau"
+    assert _flach.find(_start) < _flach.find("avatar_feed=_av_feed"), \
+        "Feeder startet nach dem Kommandobau"
     ok("v4.2-w34: Feeder reagiert auf AZRAEL, fester Takt, Rueckfallkette, sauberer Abbau")
+
+
+def test_v42_w39_sendestart_blockiert_den_loop_nicht():
+    """v4.2-W39: Der Sendestart darf die Ereignisschleife nicht anhalten.
+
+    Befund aus dem Produktionslog vom 10.09.: 57 s nach dem Bot-Start meldete
+    _loop_lag_monitor 7,3 s Blockade. Zu dem Zeitpunkt laeuft der Wiederanlauf
+    (_restream_resume_after_restart, +25 s) bzw. der Auto-Restream (+45 s), und
+    RestreamManager.start() rief BEIDE Overlay-Starter synchron auf:
+
+      _restream_html_overlay_start  -> ffprobe gegen die Quell-URL (Deckel 12 s)
+                                       + Chromium-Kaltstart (Deckel 20 s)
+      _restream_avatar_feeder_start -> 2x ffprobe + 2x ffmpeg, die je eine
+                                       Avatar-Schleife komplett nach rohem
+                                       RGBA dekodieren (~22 MB pro Schleife)
+
+    Ein blockierter Loop haelt Aufnahmen, Telegram-Polling und das Dashboard
+    gleich mit an — das Fehlerbild ist "der Bot haengt beim Sendestart".
+    """
+    src = open("bot.py", encoding="utf-8").read()
+    rumpf = _meth(src, "RestreamManager", "start")
+
+    # --- 1) Beide Starter ausgelagert, keiner mehr nackt auf dem Loop ------
+    # Zusammengefalteter Leerraum, gleiche Begruendung wie oben: die beiden
+    # Aufrufe umbrechen, weil sie sonst ueber 79 Zeichen laufen.
+    rumpf_flach = " ".join(rumpf.split())
+    for name in ("_restream_html_overlay_start", "_restream_avatar_feeder_start"):
+        assert f"asyncio.to_thread({name}" in rumpf_flach, \
+            f"{name} nicht ueber asyncio.to_thread — der Sendestart haelt den Loop an"
+        assert f"{name}(rid" not in rumpf_flach, \
+            (f"{name} wird im Sendestart direkt aufgerufen (Klammerausdruck) — "
+             "genau das war die 7,3-s-Blockade vom 10.09.")
+
+    # --- 2) Der Screenshot-Loop ueberlebt die Auslagerung ------------------
+    # asyncio.get_event_loop() wirft im Worker-Thread RuntimeError. Bleibt die
+    # Zeile stehen, stirbt der html-Modus still und faellt auf drawtext zurueck
+    # — das Overlay waere "auf einmal weg", ohne dass jemand etwas sieht.
+    ov = _fn(src, "_restream_html_overlay_start")
+    # Ohne Kommentarzeilen pruefen: der Kommentar, der die verbotene Zeile
+    # ERKLAERT, zitiert sie zwangslaeufig — ein roher Substring-Test wuerde
+    # daran haengenbleiben und einen Fehler melden, wo nur eine Begruendung
+    # steht.
+    ov_code = "\n".join(z.split("#")[0] for z in ov.splitlines())
+    assert "asyncio.get_event_loop()" not in ov_code, \
+        ("get_event_loop() im ausgelagerten Overlay-Start — im Worker-Thread "
+         "gibt es keine laufende Schleife, der Screenshot-Task stirbt still")
+    assert "_task_auf_bot_schleife(_shooter())" in ov, \
+        "Screenshot-Task wird nicht auf der Bot-Schleife geplant"
+
+    # --- 3) Der Planer deckt beide Herkuenfte ab --------------------------
+    planer = _fn(src, "_task_auf_bot_schleife")
+    assert "asyncio.get_running_loop().create_task" in planer, \
+        "Planer nutzt den laufenden Loop nicht, wenn er auf ihm laeuft"
+    assert "asyncio.run_coroutine_threadsafe" in planer and "_MAIN_LOOP" in planer, \
+        "Planer hat keinen threadsicheren Weg auf die Bot-Schleife"
+    assert "coro.close()" in planer, \
+        ("ohne close() meldet Python 'coroutine was never awaited' und "
+         "verschleiert den eigentlichen Fehler")
+
+    # --- 4) Verhaltensprobe: derselbe Planer, beide Herkuenfte ------------
+    # Nachgestellt statt nur gelesen — der Vertrag soll auch kippen, wenn der
+    # Code zwar so AUSSIEHT, aber im Thread nicht mehr traegt.
+    import threading as _th
+    ns = {"asyncio": asyncio, "_MAIN_LOOP": None}
+    exec(compile(planer, "<planer>", "exec"), ns)      # noqa: S102 - Testrahmen
+    plan = ns["_task_auf_bot_schleife"]
+
+    async def _nichts():
+        return 42
+
+    ergebnis = {}
+
+    async def _probe():
+        ns["_MAIN_LOOP"] = asyncio.get_running_loop()
+        ergebnis["auf_loop"] = await plan(_nichts())          # Task
+        aus_thread = {}
+
+        def _im_thread():
+            aus_thread["f"] = plan(_nichts())                 # Future
+
+        t = _th.Thread(target=_im_thread)
+        t.start()
+        t.join(5)
+        ergebnis["aus_thread"] = await asyncio.wrap_future(aus_thread["f"])
+
+    asyncio.run(_probe())
+    assert ergebnis["auf_loop"] == 42 and ergebnis["aus_thread"] == 42, \
+        "Planer liefert aus einem der beiden Wege kein Ergebnis"
+    ns["_MAIN_LOOP"] = None
+    try:
+        plan(_nichts())
+    except RuntimeError:
+        pass
+    else:
+        raise AssertionError("ohne Bot-Schleife muss der Planer klar scheitern")
+
+    ok("v4.2-w39: Sendestart laeuft neben der Schleife, Screenshot-Task ueberlebt")
 
 
 def test_v40_w28_filepayload():
@@ -9349,6 +9548,7 @@ def main():
     test_uvloop_optional()
     test_url_refresh_no_wait()
     test_chat_guardian_reconnect()
+    test_v42_w39_chat_listener_wird_abgebaut()
     test_config_drift()
     test_overlay_react_wrap()
     test_twitch_oauth()
@@ -9445,6 +9645,7 @@ def main():
     test_v42_w32_azrael_animation()
     test_v42_w34_azrael_feeder()
     test_v42_w35_azrael_spricht_beide_quellen()
+    test_v42_w39_sendestart_blockiert_den_loop_nicht()
     test_v40_w28_filepayload()
     test_v40_w29_streamsel()
     test_v40_w30_fixes_and_sysload()
