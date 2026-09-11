@@ -11,6 +11,64 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Behoben — der Encode-Rückstand wurde beklagt, nicht behoben (v4.2 W43)
+
+Gemeldet: „die Restreams sind instabil". Die Kette steht vollständig im
+Quelltext, jedes Glied belegt:
+
+1. **Drei Ziele erzwingen den Transcode.** `bot.py:13262`:
+   `_multi_forces_tc = _multi and not RESTREAM_MULTI_ALLOW_COPY`, und das
+   fließt in `transcode = … or _multi_forces_tc`. Mit Kick **und** Twitch
+   **und** YouTube ist das unausweichlich — unabhängig von
+   `RESTREAM_TRANSCODE`. Der gebrannte Overlay erzwingt es zusätzlich.
+2. **Der Transcode läuft auf `FFMPEG_THREADS_LIVE` Kernen** (Default 3 von 8),
+   mit `veryfast`, 6000 kbit/s, 30 fps und der Filterkette. Im Log: **0,47×**.
+3. **Der Rückstand wurde erkannt und einmal geloggt.** `_update_health` zählte
+   `slow_ticks`, setzte `slow_warned` — und sonst nichts.
+4. **Dann rissen die Ausgänge:** `Slave muxer #0 failed: Broken pipe` (Kick),
+   `#1` (Twitch), `All tee outputs failed`.
+5. **tee koppelt alle drei.** Der Kommentar bei `bot.py:16754` sagt es selbst:
+   „Bei tee lässt sich KEIN einzelnes Ziel neu verbinden — der Muxer hält alle
+   Slaves in einem Prozess." Deshalb reißt auch ein **falsches**
+   YouTube-„offline" Kick und Twitch mit.
+6. **Der Neuaufbau startete mit derselben Last.** Schleife.
+
+**Der Bot regelt jetzt selbst ab**, in drei Stufen, sortiert nach Sichtbarkeit
+für den Zuschauer: Preset (merkt kaum jemand) → Bitrate (merkt man) → Overlay
+aus (sieht jeder). Deshalb fällt AZRAEL zuletzt.
+
+| Stufe | Preset | Bitrate | Overlay |
+|---|---|---|---|
+| 0 | veryfast | 6000k | an |
+| 1 | faster | 6000k | an |
+| 2 | superfast | 4500k | an |
+| 3 | ultrafast | 3300k | **aus** |
+
+Am Anschlag meldet der Bot auf Fehler-Ebene, dass die Box diesen Transcode
+nicht schafft — statt weiter zu regeln, was nichts mehr bringt.
+
+**Die Stufe hängt modul-global am `rid`, nicht am Prozess-Eintrag.** Das ist
+der Kern: der Eintrag stirbt beim Neuaufbau, und genau darüber hinweg muss die
+Stufe halten — sonst läuft jeder Versuch wieder mit der Last auf, die gerade
+gescheitert ist.
+
+**Zurückgesetzt wird nur beim ausdrücklichen Stop** (`_set_desired(rid,
+False)`; laut `nc/schema.py:598` setzt das nur ein bewusstes `stop()`).
+Bewusst **nicht** aus `_src_watch` oder `_attempts` abgeleitet: der
+Failover-Pfad ruft `start(rid, _attempts=0)` ohne `_src_watch`, eine daraus
+abgeleitete Rücksetzung hätte die Drossel bei jedem Reconnect verworfen — und
+damit genau die Schleife wiederhergestellt.
+
+**Kein automatisches Hochregeln.** Die Last schwankt mit der Quelle; ein Bot,
+der die Qualität ständig hoch- und runterdreht, liefert ein sichtbar pumpendes
+Bild. Eine stabile niedrigere Stufe ist besser als eine schwankende hohe.
+
+**Der alte Rat war falsch.** Die Warnung empfahl `RESTREAM_MULTI_MODE=tee` —
+das **ist** der Default. Wer ihn befolgte, änderte nichts und suchte weiter.
+Sie nennt jetzt die Hebel, die wirklich tragen, samt der aktuellen
+Thread-Zahl gegen die Kernzahl der Box.
+
+
 ### Hinzugefügt — Releases anlegen, ohne Tag-Push-Recht (v4.2 W42)
 
 Das Repo ist **öffentlich** und hatte bis 4.2 kein einziges Release und keinen
