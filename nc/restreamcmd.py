@@ -129,7 +129,50 @@ def _studio_chain(avatar_idx=None, rid=None, avatar_alpha_idx=None):
                                avatar_h=RESTREAM_AVATAR_H)
 
 
-def build(source_url, ingest_url, stream_key, transcode=False, tts_fifo=None, rid=None, only_target=None, relay_profile=False, html_ov_fifo=None, targets=None, avatar_feed=None):
+# v4.2-W43: Drossel-Stufen gegen den Encode-Rueckstand.
+#
+# WARUM ueberhaupt: drei Ziele erzwingen den Transcode (_multi_forces_tc in
+# bot.py), der Transcode laeuft mit FFMPEG_THREADS_LIVE Kernen, und faellt er
+# unter Echtzeit, laufen die RTMP-Puffer leer. Dann meldet tee "Slave muxer
+# failed: Broken pipe" und reisst ALLE Ziele mit, weil sie in einem Prozess
+# haengen. Bis W43 hat der Bot das erkannt, einmal gewarnt und zugesehen.
+#
+# Die Reihenfolge ist nach Sichtbarkeit fuer den Zuschauer sortiert: ein
+# schnelleres Preset kostet Bildqualitaet, die kaum jemand bemerkt; die
+# Bitrate merkt man; den fehlenden Avatar sieht jeder. Deshalb faellt er
+# zuletzt.
+_PRESET_LEITER = ("veryfast", "faster", "superfast", "ultrafast")
+
+
+def drossel_preset(preset, stufe):
+    """Preset um `stufe` Schritte in Richtung schneller ruecken."""
+    if stufe <= 0:
+        return preset
+    try:
+        i = _PRESET_LEITER.index((preset or "").strip())
+    except ValueError:
+        # Unbekanntes Preset (z.B. "medium"): nicht raten, sondern von vorn
+        # in die Leiter einsteigen — langsamer als medium ist hier nie gewollt.
+        i = 0
+    return _PRESET_LEITER[min(i + stufe, len(_PRESET_LEITER) - 1)]
+
+
+def drossel_bitrate(bitrate_k, stufe):
+    """Ab Stufe 2 die Bitrate senken, aber nie unter 1500k."""
+    if stufe < 2:
+        return bitrate_k
+    return max(1500, int(bitrate_k * (0.75 if stufe == 2 else 0.55)))
+
+
+def drossel_overlay_aus(stufe):
+    """Ab Stufe 3 faellt der gebrannte Overlay — die teuerste Filterkette."""
+    return stufe >= 3
+
+
+DROSSEL_MAX = 3
+
+
+def build(source_url, ingest_url, stream_key, transcode=False, tts_fifo=None, rid=None, only_target=None, relay_profile=False, html_ov_fifo=None, targets=None, avatar_feed=None, drossel=0):
     """ffmpeg-Relay: zieht die TikTok-Quelle und pusht per RTMP(S)/FLV an Kick/AWS-IVS.
        Input-Flags spiegeln den BEWÄHRTEN Aufnahme-Pfad (_build_native_cmd): FLV =
        eine saubere Dauerverbindung (bevorzugt); HLS braucht +genpts+igndts, weil
@@ -186,7 +229,9 @@ def build(source_url, ingest_url, stream_key, transcode=False, tts_fifo=None, ri
     # Optionale Zusatz-Inputs — Reihenfolge bestimmt den Index! 1) AZRAEL-Stimme (FIFO),
     # 2) Avatar-PNG. Beides nur im Transcode-Modus (Overlay/amix brauchen Re-Encoding).
     use_tts = bool(tts_fifo)            # Stimme auch im Copy-Modus mischen (Audio wird eh re-enkodiert)
-    overlay_on = bool(transcode and RESTREAM_OVERLAY and os.path.isfile(RESTREAM_FONT))
+    overlay_on = bool(transcode and RESTREAM_OVERLAY
+                      and not drossel_overlay_aus(drossel)
+                      and os.path.isfile(RESTREAM_FONT))
     if transcode and RESTREAM_OVERLAY and not overlay_on:
         log.warning("RESTREAM_OVERLAY=1, aber Font fehlt (%s) — Overlay übersprungen", RESTREAM_FONT)
     # v4.2-W32: bewegter Avatar, wenn Schleife UND Alphamaske dastehen —
@@ -293,12 +338,18 @@ def build(source_url, ingest_url, stream_key, transcode=False, tts_fifo=None, ri
         elif overlay_on:
             cmd += ["-vf", _drawtext_chain(rid)]
         _preset = RESTREAM_RELAY_PRESET if relay_profile else RESTREAM_X264_PRESET
+        _preset = drossel_preset(_preset, drossel)
         if relay_profile:
             br = f"{RESTREAM_RELAY_BITRATE_K}k"
         # B137: VBV-Puffer bestimmt maßgeblich die Encoder-Latenz. 2×Bitrate ≈ 2s
         # Puffer (robust, aber träge); im Low-Latency-Modus 1×Bitrate ≈ 1s.
         _bufmult = 1 if RESTREAM_LOW_LATENCY else 2
-        _bufk = (RESTREAM_RELAY_BITRATE_K if relay_profile else RESTREAM_BITRATE_K) * _bufmult
+        _brk = drossel_bitrate(
+            RESTREAM_RELAY_BITRATE_K if relay_profile else RESTREAM_BITRATE_K,
+            drossel)
+        if drossel >= 2:
+            br = f"{_brk}k"          # -b:v/-maxrate ziehen mit
+        _bufk = _brk * _bufmult
         cmd += ["-c:v", "libx264", "-preset", _preset, "-profile:v", "main",
                 "-level", "4.1", "-pix_fmt", "yuv420p"]
         if RESTREAM_LOW_LATENCY:

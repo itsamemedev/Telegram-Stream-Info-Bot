@@ -4636,6 +4636,68 @@ def test_v42_w35_azrael_spricht_beide_quellen():
     ok("v4.2-w35: Mund kennt beide Sprechquellen, jede mit ihrer Uhr, Frist wie der Text")
 
 
+def test_v42_w43_encode_rueckstand_wird_abgeregelt():
+    """v4.2-W43: Der Encode-Rueckstand wird nicht mehr nur beklagt.
+
+    Kette aus dem Log vom 10.09., alle Glieder im Quelltext belegt:
+      drei Ziele  -> _multi_forces_tc erzwingt den Transcode
+      Transcode   -> FFMPEG_THREADS_LIVE Kerne, speed 0.47x
+      Rueckstand  -> RTMP-Puffer leer -> "Slave muxer failed: Broken pipe"
+      tee         -> haelt alle Ziele in EINEM Prozess, also sterben alle
+      Neuaufbau   -> gleiche Last -> derselbe Rueckstand -> Schleife
+
+    Bis W43 hat _update_health das erkannt, einmal gewarnt und zugesehen.
+    """
+    import nc.restreamcmd as _rc
+    src = open("bot.py", encoding="utf-8").read()
+
+    # --- 1) Die Leiter regelt wirklich ab, in dieser Reihenfolge -----------
+    # Nach Sichtbarkeit sortiert: Preset merkt kaum jemand, Bitrate schon,
+    # den fehlenden Avatar sieht jeder. Deshalb faellt er zuletzt.
+    assert _rc.drossel_preset("veryfast", 0) == "veryfast", "Stufe 0 aendert etwas"
+    assert _rc.drossel_preset("veryfast", 1) == "faster"
+    assert _rc.drossel_bitrate(6000, 1) == 6000, "Stufe 1 senkt schon die Bitrate"
+    assert _rc.drossel_bitrate(6000, 2) < 6000, "Stufe 2 senkt die Bitrate nicht"
+    assert not _rc.drossel_overlay_aus(2), "Overlay faellt zu frueh"
+    assert _rc.drossel_overlay_aus(_rc.DROSSEL_MAX), "Overlay faellt nie"
+    # Saettigung statt Absturz jenseits des Anschlags.
+    assert _rc.drossel_preset("veryfast", 99) == _rc.drossel_preset("veryfast", _rc.DROSSEL_MAX)
+    assert _rc.drossel_bitrate(1800, 3) >= 1500, "Bitrate faellt ins Bodenlose"
+
+    # --- 2) Der Bot fordert die Abregelung an und fuehrt sie aus ----------
+    uh = _meth(src, "RestreamManager", "_update_health") or ""
+    assert "drossel_noetig" in uh, \
+        "_update_health warnt nur — genau das war der Zustand vor W43"
+    # Kommentarfrei pruefen: der Kommentar, der den alten Rat WIDERLEGT, muss
+    # ihn zitieren — ein roher Substring-Test haengt sonst an der Begruendung
+    # fest statt am Code (dieselbe Falle wie in W39).
+    uh_code = "\n".join(z.split("#")[0] for z in uh.splitlines())
+    assert "RESTREAM_MULTI_MODE=tee" not in uh_code, \
+        ("die Warnung empfiehlt weiter tee — das IST der Default, der Rat "
+         "schickt den Betreiber seit jeher in die falsche Richtung")
+    vl = _fn(src, "_restream_verify_loop")
+    assert "_drossel_hoeher(" in vl, "die Schleife regelt nicht ab"
+    assert "_keep_desired=True" in vl, "Neuaufbau verliert den Soll-Zustand"
+
+    # --- 3) Die Stufe ueberlebt den Neuaufbau -----------------------------
+    # Das ist der Kern: ein Zustand am Prozess-Eintrag waere beim Neustart weg,
+    # und der naechste Versuch liefe mit derselben Last erneut auf.
+    assert "_RESTREAM_DROSSEL = {}" in src, "kein Zustand ueber den Neuaufbau hinweg"
+    for stelle in ("drossel=_drossel_stufe(rid)",):
+        assert src.count(stelle) >= 2, \
+            "die Stufe erreicht nicht beide Kommandobau-Pfade (tee und single)"
+
+    # --- 4) Zurueckgesetzt wird NUR beim ausdruecklichen Stop --------------
+    sd = _meth(src, "RestreamManager", "_set_desired") or ""
+    assert "_drossel_zuruecksetzen(" in sd, "Drossel wird nie zurueckgesetzt"
+    st = _meth(src, "RestreamManager", "start") or ""
+    assert "_drossel_zuruecksetzen(" not in st, \
+        ("Ruecksetzung im Start-Pfad: der Failover ruft start(rid, _attempts=0) "
+         "ohne _src_watch — die Drossel waere bei jedem Reconnect weg und die "
+         "Schleife zurueck")
+    ok("v4.2-w43: Encode-Rueckstand regelt ab, Stufe ueberlebt den Neuaufbau, Rat korrigiert")
+
+
 def test_v42_w40_moderator_avatar_ton():
     """v4.2-W40: Was AZRAEL in den Chat schreibt, wird auch gesprochen.
 
@@ -9692,6 +9754,7 @@ def main():
     test_v42_w32_azrael_animation()
     test_v42_w34_azrael_feeder()
     test_v42_w40_moderator_avatar_ton()
+    test_v42_w43_encode_rueckstand_wird_abgeregelt()
     test_v42_w35_azrael_spricht_beide_quellen()
     test_v42_w39_sendestart_blockiert_den_loop_nicht()
     test_v40_w28_filepayload()

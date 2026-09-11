@@ -12293,6 +12293,39 @@ def _restream_html_overlay_stop(rid):
 
 _AVATARFEED = {}
 
+# v4.2-W43: erreichte Drossel-Stufe je Restream (0 = volle Qualitaet).
+# Modul-global und NICHT am Prozess-Eintrag: der Eintrag stirbt beim Neuaufbau,
+# und genau ueber den Neuaufbau hinweg muss die Stufe halten — sonst startet
+# jeder Versuch wieder mit derselben Last, die gerade gescheitert ist. Das war
+# die Schleife: Rueckstand -> Broken pipe -> Neuaufbau -> Rueckstand.
+_RESTREAM_DROSSEL = {}
+
+
+def _drossel_stufe(rid):
+    return int(_RESTREAM_DROSSEL.get(int(rid), 0))
+
+
+def _drossel_hoeher(rid):
+    """Eine Stufe abregeln. Gibt die neue Stufe zurueck, oder None am Anschlag."""
+    rid = int(rid)
+    alt = _drossel_stufe(rid)
+    if alt >= _nc_rscmd.DROSSEL_MAX:
+        return None
+    _RESTREAM_DROSSEL[rid] = alt + 1
+    return alt + 1
+
+
+def _drossel_zuruecksetzen(rid):
+    """Beim bewussten Start durch den Betreiber wieder volle Qualitaet.
+
+    Bewusst KEIN automatisches Hochregeln nach einer gesunden Phase: die Last
+    schwankt mit der Quelle, und ein Bot, der die Qualitaet staendig hoch- und
+    runterdreht, liefert ein sichtbar pumpendes Bild. Eine stabile niedrigere
+    Stufe ist besser als eine schwankende hohe.
+    """
+    _RESTREAM_DROSSEL.pop(int(rid), None)
+
+
 
 def _azrael_spricht():
     """Redet AZRAEL GERADE? -> bool
@@ -12702,6 +12735,16 @@ class RestreamManager:
             log.debug("Soll-Zustand #%s nicht speicherbar: %s", rid, e)
         if not on:
             _RESTREAM_GUARD.forget(rid)
+            # v4.2-W43: Die Drossel gehoert zur Sende-Sitzung, nicht zum
+            # Restream-Eintrag. desired=0 setzt laut nc/schema.py NUR ein
+            # ausdrueckliches stop() — also der Betreiber. Genau dann (und nur
+            # dann) beginnt der naechste Start wieder bei voller Qualitaet.
+            # Wichtig, dass es NICHT am _src_watch- oder _attempts-Flag haengt:
+            # der Failover-Pfad ruft start(rid, _attempts=0) ohne _src_watch,
+            # und eine daraus abgeleitete Ruecksetzung haette die Drossel bei
+            # jedem Reconnect verworfen — also genau die Schleife wieder
+            # hergestellt, die W43 aufmacht.
+            _drossel_zuruecksetzen(rid)
 
     def _reflect_source_status(self, rid, err):
         """Hält den angezeigten Status eines NICHT gestarteten Ziels frisch, damit das
@@ -12823,13 +12866,31 @@ class RestreamManager:
                         h["slow_ticks"] = h.get("slow_ticks", 0) + 1
                         if h["slow_ticks"] == 5 and not h.get("slow_warned"):
                             h["slow_warned"] = True
+                            # v4.2-W43: Der alte Rat war falsch — er empfahl
+                            # RESTREAM_MULTI_MODE=tee, und das IST der Default.
+                            # Wer ihn befolgte, aenderte nichts und suchte
+                            # weiter. Jetzt steht hier, was wirklich traegt,
+                            # und die Drossel greift ohnehin selbst.
                             log.warning("Restream %s: ENCODE-RÜCKSTAND — "
                                         "speed %.2fx < Echtzeit. ffmpeg kommt "
-                                        "nicht hinterher (CPU-Limit). Das ist "
-                                        "die typische Disconnect-Ursache. "
-                                        "Abhilfe: RESTREAM_MULTI_MODE=tee, "
-                                        "Bitrate/FPS senken, oder weniger "
-                                        "Ziele.", _wer, _sp)
+                                        "nicht hinterher (CPU-Limit) → die "
+                                        "RTMP-Puffer laufen leer und tee "
+                                        "meldet 'Broken pipe' fuer ALLE Ziele. "
+                                        "Der Bot regelt jetzt selbst ab. "
+                                        "Dauerhaft hilft: FFMPEG_THREADS_LIVE "
+                                        "erhoehen (steht auf %d von %d Kernen), "
+                                        "RESTREAM_BITRATE_K senken, oder "
+                                        "RESTREAM_OVERLAY=0 — der gebrannte "
+                                        "Overlay erzwingt das Re-Encoding.",
+                                        _wer, _sp, FFMPEG_THREADS_LIVE,
+                                        (os.cpu_count() or 0))
+                        # Ab 10 Ticks unter Echtzeit ist es kein Ausreisser
+                        # mehr, sondern der Dauerzustand: abregeln lassen. Die
+                        # Schleife, die neu startet, liest das Flag — hier im
+                        # -progress-Leser wird NICHT neu gestartet, sonst
+                        # raeumt ein Prozess sich selbst unter den Fuessen weg.
+                        if h["slow_ticks"] >= 10 and not pname:
+                            h["drossel_noetig"] = True
                     else:
                         h["slow_ticks"] = 0
                 except (TypeError, ValueError):
@@ -13304,11 +13365,13 @@ class RestreamManager:
                                           tts_fifo=tts_fifo, rid=rid,
                                           only_target=_base_target,
                                           html_ov_fifo=_html_ov,
-                                          avatar_feed=_av_feed)
+                                          avatar_feed=_av_feed,
+                                          drossel=_drossel_stufe(rid))
             else:
                 cmd = _build_restream_cmd(src, ingest, key, transcode, tts_fifo=tts_fifo, rid=rid,
                                           html_ov_fifo=_html_ov, targets=_targets,
-                                          avatar_feed=_av_feed)
+                                          avatar_feed=_av_feed,
+                                          drossel=_drossel_stufe(rid))
             if RESTREAM_OVERLAY:
                 _write_restream_overlay()      # Textdateien anlegen, BEVOR drawtext sie öffnet
             proc = await asyncio.create_subprocess_exec(
@@ -16703,6 +16766,38 @@ async def _restream_verify_loop():
                 for _p, _r in plat.items():
                     if _r == _nc_guard.LIVE:
                         _RESTREAM_MGR.tee_fehler_klaeren(_p)
+
+                # v4.2-W43: Encode-Rueckstand abregeln, BEVOR der Guard einen
+                # toten Ingest sieht. Der Rueckstand ist die Ursache, der tote
+                # Ingest die Folge — wer erst auf den Guard wartet, baut den
+                # Restream mit genau der Last neu auf, die gerade gescheitert
+                # ist. Deshalb hier, vor der Guard-Entscheidung.
+                for _rid in sorted(running):
+                    _info = _RESTREAM_MGR._procs.get(_rid) or {}
+                    _h = _info.get("health") or {}
+                    if not _h.pop("drossel_noetig", False):
+                        continue
+                    _neu = _drossel_hoeher(_rid)
+                    if _neu is None:
+                        log.error("Restream #%s: Encode-Rueckstand haelt an, "
+                                  "aber die Drossel ist am Anschlag (Stufe %d: "
+                                  "ultrafast, Bitrate gesenkt, Overlay aus). "
+                                  "Die Box schafft diesen Transcode nicht — "
+                                  "weniger Ziele, kleinere Aufloesung oder mehr "
+                                  "Kerne sind jetzt die einzigen Hebel.",
+                                  _rid, _nc_rscmd.DROSSEL_MAX)
+                        continue
+                    log.warning("Restream #%s: Encode-Rueckstand haelt an → "
+                                "Drossel Stufe %d von %d (Preset %s, Bitrate "
+                                "%dk%s). Lieber kleineres Bild als ein "
+                                "abgerissener Stream.",
+                                _rid, _neu, _nc_rscmd.DROSSEL_MAX,
+                                _nc_rscmd.drossel_preset(RESTREAM_X264_PRESET, _neu),
+                                _nc_rscmd.drossel_bitrate(RESTREAM_BITRATE_K, _neu),
+                                ", Overlay aus" if _nc_rscmd.drossel_overlay_aus(_neu) else "")
+                    await _RESTREAM_MGR.stop(_rid, _keep_desired=True)
+                    await asyncio.sleep(2)
+                    await _RESTREAM_MGR.start(_rid, _src_watch=True)
             else:
                 plat = {}
             now = _time_mod.monotonic()
