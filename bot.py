@@ -600,6 +600,7 @@ from nc import aufnahmefolge as _nc_folge  # v4.2-W18: die Eskalationsrechnung
 from nc import aufnahmekategorie as _nc_kat  # v4.2-W23: warum eine Aufnahme so endete
 from nc import audiotap as _nc_audiotap  # v4.2-W46: warum der Audio-Tap starb
 from nc import aufnahmesitzung as _nc_sitzung  # v4.2-W44: die Klammer um die Segmente EINES Streams
+from nc import chatfolge as _nc_chatfolge  # v4.2-W47: wie oft der TikTok-Chat neu darf
 from nc import memeklip as _nc_memeklip  # v4.2-W24: erkennt meme-wuerdige Chat-Momente
 from nc import livefolge as _nc_live  # v4.2-W20: was aus einem Live-Signal folgt
 from nc import azraelstate as _nc_azrael  # v4.1-W19: AZRAELs Laufzeitzustand (geteilt)
@@ -16519,15 +16520,18 @@ async def _restream_chat_guardian(rid, username):
             # Listener-Starts in 85 Minuten, bis die Sign-API mit HTTP 500
             # dichtmachte. Der schnelle Reconnect war die URSACHE des
             # Rate-Limits, nicht die Reaktion darauf.
-            jetzt = _time_mod.monotonic()
-            _reconnects.append(jetzt)
-            _reconnects[:] = [t for t in _reconnects
-                              if jetzt - t <= CHAT_CHURN_WINDOW_S]
-            flattert = len(_reconnects) >= CHAT_CHURN_MAX
+            #
+            # v4.2-W47: die Rechnung steht in nc/chatfolge.py, weil der
+            # Live-Reaction-Worker einen ZWEITEN Listener auf denselben Chat
+            # hat und dieselbe Regel braucht. Zwei Kopien waeren der naechste
+            # Fehler gewesen.
+            _reconnects[:], backoff, _grund = _nc_chatfolge.entscheide(
+                _reconnects, _time_mod.monotonic(), dur, backoff,
+                churn_max=CHAT_CHURN_MAX, fenster_s=CHAT_CHURN_WINDOW_S,
+                flap_s=CHAT_FLAP_S, max_s=CHAT_BACKOFF_MAX_S)
+            _chat_stat(username)["backoff_s"] = backoff
 
-            if flattert:
-                backoff = min(max(5, backoff * 2), CHAT_BACKOFF_MAX_S)
-                _chat_stat(username)["backoff_s"] = backoff
+            if _grund == "flattert":
                 log.warning("Restream #%s: Chat @%s — %d Neuaufbauten in %d min "
                             "(letzte Session %.0fs). Das ist Flattern und "
                             "verbrennt Sign-Quota, deshalb Backoff %ds. Haelt "
@@ -16536,15 +16540,11 @@ async def _restream_chat_guardian(rid, username):
                             rid, username, len(_reconnects),
                             CHAT_CHURN_WINDOW_S // 60, dur, backoff)
                 await asyncio.sleep(backoff)
-            elif dur >= CHAT_FLAP_S:
+            elif _grund == "gesund":
                 # Gesunde Session (TikTok rotiert seine WS-Verbindungen regelmaessig)
-                backoff = 0
-                _chat_stat(username)["backoff_s"] = 0
                 log.info("Restream #%s: Chat @%s nach %.0fs getrennt — "
                          "reconnect sofort", rid, username, dur)
             else:
-                backoff = min(max(5, backoff * 2), CHAT_BACKOFF_MAX_S)
-                _chat_stat(username)["backoff_s"] = backoff
                 log.warning("Restream #%s: Chat @%s brach nach nur %.0fs ab (%s) — "
                             "Backoff %ds. Haeufig heisst das: Tunnel instabil, "
                             "Sign-Quota knapp, oder der User ist nicht mehr live.",
@@ -16689,7 +16689,12 @@ async def _live_react_worker(username, stop_evt):
     seg_dir = tempfile.mkdtemp(prefix=f"azr_{username}_")
     out_pat = os.path.join(seg_dir, "seg_%05d.wav")
     proc = None
-    chat_buf, chat_client, chat_task, last_chat_try = [], None, None, 0.0
+    chat_buf, chat_client, chat_task = [], None, None
+    # v4.2-W47: eigener Backoff-Zustand fuer DIESEN Listener. Der
+    # Restream-Waechter hat einen eigenen — es sind zwei Verbindungen auf
+    # denselben Chat, und sie duerfen sich nicht gegenseitig entdrosseln.
+    chat_backoff, _chat_rec, _grund = 0, [], ""
+    chat_seit, chat_tot = 0.0, None
     gift_flags = {"gift_priority": False}       # UPGRADE: Gift-Schwellen-Sofort-Trigger
     transcript, seen, last_react = [], set(), 0.0
     # v4.2-W46: auch wenn kein Tap laeuft, muessen die Namen existieren —
@@ -16715,7 +16720,7 @@ async def _live_react_worker(username, stop_evt):
         if LIVE_REACT_CHAT:
             await _chat_listener_abbauen(chat_client, chat_task)
             chat_client, chat_task = await _start_chat_listener(username, chat_buf, gift_flags)
-            last_chat_try = _time_mod.time()
+            chat_seit = _time_mod.monotonic()
         log.info("live-react gestartet für @%s (audio=%s, chat=%s)",
                  username, bool(proc), bool(chat_client))
         while not stop_evt.is_set():
@@ -16729,17 +16734,67 @@ async def _live_react_worker(username, stop_evt):
                 await _audio_tap_melden(username, proc, tap_start, tap_err,
                                         tap_sammler, seg_dir)
                 break
-            if proc is None and chat_task is not None and chat_task.done():
-                break
-            if (LIVE_REACT_CHAT and proc is not None and (chat_task is None or chat_task.done())
-                    and (_time_mod.time() - last_chat_try) > 30):
-                last_chat_try = _time_mod.time()      # Chat-Reconnect (max alle 30s), solange Audio läuft
+            # v4.2-W47: die beiden Zeilen hier waren der Grund, warum ein
+            # Worker OHNE Audio im Acht-Sekunden-Takt starb und neu entstand.
+            #
+            # Vorher stand da: "proc is None und Chat fertig -> break", und der
+            # Reconnect eine Zeile darunter verlangte "proc is not None". Ein
+            # Chat-only-Worker konnte sich also gar nicht neu verbinden — er
+            # beendete sich, und die Engine startete ihn acht Sekunden spaeter
+            # neu. Jeder Neustart ein frischer Sign-API-Request. Am 10.09.
+            # lebte ein Worker im Median VIER Sekunden; eine Reaktion braucht
+            # aber max(LIVE_REACT_COOLDOWN, LIVE_REACT_BATCH_S) = 25 Sekunden
+            # Sammelzeit. Er kam nie an — 0 Reaktionen in 101 Minuten.
+            #
+            # Der Chat baut jetzt IMMER selbst neu auf, mit Audio wie ohne,
+            # und zwar mit demselben Backoff wie der Restream-Waechter
+            # (nc/chatfolge.py). Der Worker stirbt nur noch, wenn er soll.
+            # Zwei getrennte Zeitpunkte, und das ist der Kern: `chat_seit` ist
+            # der Verbindungsaufbau, `chat_tot` der Moment des Abrisses. Ein
+            # erster Entwurf mass stattdessen "seit dem letzten Versuch" — das
+            # ist Sitzungslaenge PLUS Backoff-Wartezeit, und nach 80s Backoff
+            # gilt damit jede Sitzung als gesund (>= 60s). Die Eskalation haette
+            # sich selbst aufgehoben, und zwar genau dann, wenn sie gebraucht
+            # wird.
+            if (LIVE_REACT_CHAT and chat_tot is None
+                    and chat_task is not None and chat_task.done()):
+                chat_tot = _time_mod.monotonic()
+                _dauer = max(0.0, chat_tot - chat_seit)
+                _chat_rec[:], chat_backoff, _grund = _nc_chatfolge.entscheide(
+                    _chat_rec, chat_tot, _dauer, chat_backoff,
+                    churn_max=CHAT_CHURN_MAX, fenster_s=CHAT_CHURN_WINDOW_S,
+                    flap_s=CHAT_FLAP_S, max_s=CHAT_BACKOFF_MAX_S)
+                if _grund == "flattert":
+                    # Auf warning, nicht auf info: genau diese Wiederholung war
+                    # 101 Minuten lang unsichtbar, weil sie als Worker-Neustart
+                    # in 225 gleichlautenden info-Zeilen unterging.
+                    log.warning("live-react: Chat @%s — %d Neuaufbauten in "
+                                "%d min (letzte Sitzung %.0fs). Das verbrennt "
+                                "Sign-Quota, deshalb Backoff %ds. Haelt es an: "
+                                "TIKTOK_SIGN_API_KEY setzen (eulerstream.com).",
+                                username, len(_chat_rec),
+                                CHAT_CHURN_WINDOW_S // 60, _dauer, chat_backoff)
+                elif _grund == "kurz":
+                    log.info("live-react: Chat @%s brach nach %.0fs ab — "
+                             "Backoff %ds", username, _dauer, chat_backoff)
+            # Der Neuaufbau selbst, sobald der Backoff abgelaufen ist. Getrennt
+            # von der Rechnung oben, damit der Backoff wirklich gewartet wird
+            # und nicht bloss berechnet.
+            if (LIVE_REACT_CHAT and chat_tot is not None
+                    and (_time_mod.monotonic() - chat_tot) >= chat_backoff):
                 # v4.2-W39: der alte Client wurde hier nur ueberschrieben. Bei
                 # einem Stream mit vielen Chat-Abbruechen sammelten sich so
                 # ueber Stunden Dutzende toter Clients im Speicher an.
                 await _chat_listener_abbauen(chat_client, chat_task)
                 chat_client = chat_task = None
                 chat_client, chat_task = await _start_chat_listener(username, chat_buf, gift_flags)
+                chat_seit, chat_tot = _time_mod.monotonic(), None
+            # Ohne Audio UND ohne Chat gibt es nichts mehr zu tun — dann darf
+            # der Worker enden, sonst dreht er leer.
+            if proc is None and not LIVE_REACT_CHAT:
+                log.info("live-react @%s: weder Audio noch Chat → Worker endet",
+                         username)
+                break
             if proc:
                 wavs = sorted(_glob.glob(os.path.join(seg_dir, "seg_*.wav")))
                 _todo = [w for w in wavs[:-1] if w not in seen]   # jüngstes liegt lassen (wird noch geschrieben)
@@ -16881,11 +16936,23 @@ async def _live_react_worker(username, stop_evt):
             os.rmdir(seg_dir)
         except OSError:
             pass
-        try:
-            _LIVE_DIRECTORS.pop(username, None)   # F100: Regie-Instanz freigeben
-            _STORY_MEMORIES.pop(username, None)   # F103: Story-Gedächtnis freigeben
-        except Exception:
-            pass
+        # v4.2-W47: HIER wird NICHTS mehr freigegeben.
+        #
+        # Regie (F100) und Story-Gedaechtnis (F103) sind das, was AZRAEL ueber
+        # diesen Stream weiss: Stimmung, Momentum, Stammchatter, was er schon
+        # gesagt hat, damit er sich nicht wiederholt. Sie wurden bei JEDEM
+        # Worker-Ende weggeworfen — und der Worker endete am 10.09. im Median
+        # nach vier Sekunden. Ueber 225 Neustarts hinweg sammelte sich also
+        # nichts an; jeder Start begann bei null. Ein Director, der gerade erst
+        # entstanden ist, sagt bei einer einzelnen Chat-Zeile "noch nicht
+        # reagieren" — voellig richtig, nur kam er nie darueber hinaus.
+        #
+        # Freigegeben wird jetzt dort, wo der User WIRKLICH offline geht:
+        # in _live_react_loop. Das ist nicht nur sauberer, es ist noetig —
+        # der Watchdog benutzt `_LIVE_DIRECTORS` als Stellvertreter fuer
+        # "es laeuft ein Worker" (B81). Blieben die Eintraege nach dem
+        # Offline-Gehen stehen, meldete er einen Stillstand, den es nicht
+        # gibt, und die Selbstheilung liefe gegen Karteileichen.
         log.info("live-react gestoppt für @%s", username)
 
 def _live_users():
@@ -16925,6 +16992,22 @@ async def _live_react_loop():
                 ev = asyncio.Event()
                 t = _spawn(_live_react_worker(u, ev), name=f"live-react-{u}")
                 _live_react_workers[u] = {"stop": ev, "task": t}
+            # v4.2-W47: Gedaechtnis freigeben — aber erst, wenn der User
+            # WIRKLICH offline ist, nicht bei jedem Worker-Neustart. Vorher
+            # stand das im finally des Workers und traf damit jeden Neustart
+            # (am 10.09. im Median alle vier Sekunden), sodass sich ueber 225
+            # Neustarts hinweg nichts ansammeln konnte.
+            #
+            # Ueber ALLE Eintraege und nicht nur ueber die mit laufendem
+            # Worker: ein Worker wird auch bei task.done() aus der Liste
+            # genommen. Geht der User DANACH offline, gaebe es sonst keine
+            # Stelle mehr, die aufraeumt — und der Watchdog benutzt
+            # _LIVE_DIRECTORS als Stellvertreter fuer "ein Worker laeuft"
+            # (B81). Karteileichen dort bedeuten Stillstands-Fehlalarm.
+            for _u in [x for x in list(_LIVE_DIRECTORS) if x not in live]:
+                _LIVE_DIRECTORS.pop(_u, None)        # F100: Regie
+            for _u in [x for x in list(_STORY_MEMORIES) if x not in live]:
+                _STORY_MEMORIES.pop(_u, None)        # F103: Story-Gedaechtnis
         except Exception as e:
             # v4.1-W5: war log.warning. Faellt die Schleife aus, reagiert AZRAEL im
             # Live-Chat auf nichts mehr — und das sieht aus wie "die KI antwortet
