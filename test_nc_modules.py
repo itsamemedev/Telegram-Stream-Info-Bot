@@ -4730,7 +4730,18 @@ def _test_v42_w12_kick_rest_aus_dem_monolithen():
     b = open("bot.py", encoding="utf-8").read()
     baum = _ast.parse(b)
     klasse = next(n for n in baum.body if getattr(n, "name", "") == "KickModerator")
-    laenge = {x.name: (x.end_lineno or x.lineno) - x.lineno + 1
+    _zeilen = b.splitlines()
+
+    def _codezeilen(x):
+        """Nur Code zaehlen — Kommentar und Leerzeile sind kein Koerper."""
+        n = 0
+        for z in _zeilen[x.lineno - 1:(x.end_lineno or x.lineno)]:
+            z = z.strip()
+            if z and not z.startswith("#"):
+                n += 1
+        return n
+
+    laenge = {x.name: _codezeilen(x)
               for x in klasse.body
               if isinstance(x, (_ast.FunctionDef, _ast.AsyncFunctionDef))}
     for name, deckel in (("_get_token", 8), ("timeout_user", 4),

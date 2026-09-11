@@ -16,7 +16,7 @@ route.
 
 ## The one rule
 
-`bot.py` has **22,998 lines / 1.2 MB ≈ 294,000 tokens**. That file is **never**
+`bot.py` has **23,092 lines / 1.2 MB ≈ 294,000 tokens**. That file is **never**
 read in full and **never** searched blindly. First ask where something is, then
 fetch the excerpt:
 
@@ -212,3 +212,4 @@ individually verifiable and roll-back-able.
 | `nc-betrieb` | Deployment, systemd, reading logs, rollback, CrowdSec, Kick outages |
 | `nc-datenbank` | SQL and schema under SQLite **and** MariaDB |
 | `nc-ki-backends` | `nc/freeai`, `brain/llm`, AZRAEL, the tier model, budget |
+| `nc-sicherheit` | Secrets, redaction, path guard, dashboard access, CodeQL, ledger |

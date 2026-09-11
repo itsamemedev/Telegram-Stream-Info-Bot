@@ -11,7 +11,88 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
-Noch nichts — 4.2 ist geschnitten, die nächste Welle beginnt hier.
+### Hinzugefügt — `AGENTS.md` und ein Sicherheits-Skill fürs Projekt (v4.2 W41)
+
+**`AGENTS.md` verweist auf `CLAUDE.md` statt sie zu kopieren.** Werkzeuge, die
+nach `AGENTS.md` suchen — Codex, Cursor, Jules — fanden hier bisher gar keinen
+Einstieg. Eine zweite Kopie derselben Regeln wäre aber die schlechtere Antwort:
+sie läuft auseinander, sobald eine gepflegt wird und die andere nicht, und
+genau dieses Fehlerbild hatte das Projekt schon (der Build-Stempel stand vier
+Mal im Code und wanderte nie mit). Die Datei nennt deshalb nur die vier Dinge,
+an denen hier real Arbeit gescheitert ist, und schickt sonst weiter.
+
+**`.claude/skills/nc-sicherheit`** füllt die Lücke, die der generische
+Sicherheits-Durchgang lässt: er kennt die Riegel dieses Projekts nicht. Der
+Skill nennt für jede Gefahr die **eine** zuständige Stelle — `nc/logsafe.py`
+und `nc/ffdiag.py` für Stream-Keys im Log, `nc/sicherpfad.py` gegen
+Pfad-Ausbruch, `_fehler_text` für API-Antworten, `nc/dashauth.py` für das
+offene Deck, die Hash-Kette in `nc/ledger.py`.
+
+Der wichtigste Teil ist, was man **nicht** tun darf: eine zweite Lösung
+danebenstellen. `nc/sicherpfad.py` entstand, weil die Riegel schon überall da
+waren — jeder in einer anderen Form, und keiner prüfbar. Ebenso die
+CodeQL-Barriere: wer eine Sanitizer-Funktion umbenennt, hebt sie auf, und der
+nächste Lauf meldet 242 statt 43 Befunde, ohne dass eine Prüfung entfernt
+wurde.
+
+Dazu der Abschnitt, der im Ernstfall zählt: **erst den Schlüssel drehen, dann
+aufräumen.** Ein Log zu löschen, ohne den Stream-Key zu rotieren, ist Kosmetik.
+
+Beide Dateien fahren im Archiv mit (`AGENTS.md` in `DATEIEN`, der Skill über
+`.claude/`) — gegengeprüft am gebauten ZIP, 307 Dateien, Geheimnis-Gegenprobe
+sauber.
+
+### Behoben — der Avatar bewegte den Mund, ohne zu reden (v4.2 W40)
+
+Vom Betreiber gemeldet: „KI-Moderator, Avatar und Ton sind noch nicht
+miteinander verknüpft, daher redet der Avatar im Stream nicht." Stimmt — und
+der Quelltext nannte drei voneinander unabhängige Gründe.
+
+**Die Lücke im Code.** `send_message()` setzt `last_spoken`, und davon bewegt
+sich seit W35 der Mund des gebrannten Avatars — gesprochen wurde die Zeile
+aber nie. Die vollständige Aufruferliste von `_piper_say` war `react()`,
+`oracle_handle` und der Proaktiv-Loop. `react()` reagiert auf das Sendebild und
+schickt **nichts** in den Chat; die häufigere Quelle — Antworten an Zuschauer,
+Gift-Dank, Begrüßungen, Verwarnungen — hatte damit Mundbewegung ohne Ton.
+
+Die Stimme sitzt jetzt **zentral in `send_message`**, nicht an den einzelnen
+Aufrufern: jeder Chat-Weg nach Kick läuft durch diese Methode, auch
+`_azrael_send_to("kick", …)` und der Co-Host-Broadcast. Eine Stelle statt
+sieben, und die nächste neue Sendestelle spricht von selbst mit. Ausgelagert
+über `_spawn`, weil Piper auf dieser Box Sekunden braucht und die Moderation
+nicht an der Sprachsynthese hängen darf.
+
+**Doppelsprechen, das dabei entstanden wäre.** Orakel-Antwort, proaktive Zeile
+und Co-Host-Broadcast sprechen zusätzlich selbst und landen über
+`_azrael_send_to` wieder in `send_message` — der Zuschauer hätte den Mund
+einmal gehen sehen und den Satz zweimal gehört. `_piper_say` riegelt das mit
+einem Zeitfenster ab (`AZRAEL_VOICE_DEDUP_S`, 20 s). Bewusst als Riegel und
+nicht durch Streichen der drei Aufrufe: der Co-Host-Broadcast geht an Kick,
+Twitch und YouTube, und nur der Kick-Zweig läuft über `send_message` — wer die
+Aufrufe streicht, macht den Broadcast stumm, sobald Kick nicht dabei ist.
+
+**Was in den Chat gehört, gehört nicht ins Mikrofon.** Die Anrede `@nutzer` vor
+einer Orakel-Antwort, das Fledermaus-Zeichen vor einer proaktiven Zeile, eine
+URL — vorgelesen wird daraus „at nutzername h t t p s doppelpunkt". Das klingt
+nicht nach Moderator, sondern nach Fehler. `_stimme_saubern()` räumt Links und
+**führende** Symbole ab; ein `@name` mitten im Satz bleibt stehen, weil es dort
+bedeutungstragend ist.
+
+**Drei Schalter, alle ab Werk aus.** `RESTREAM_TTS=0` (mischt die Stimme
+überhaupt erst in den ffmpeg-Ton), `OVERLAY_VOICE=0` und
+`OVERLAY_VOICE_ENGINE=browser` (erzeugen sie). Der Mund hängt bewusst an
+keinem davon. Der Selbsttest sagte dazu bisher **nichts**, weil er Piper erst
+prüft, wenn schon auf Piper geschaltet ist — ein stummer Moderator sieht aber
+aus wie ein Defekt. Er nennt jetzt genau die fehlenden `.env`-Werte, mit dem
+Hinweis, dass Piper auf derselben Box rechnet wie Aufnahme und Restream.
+
+**Ein Anker ist gewandert, nicht der Vertrag:** der W12-Deckel („in
+`KickModerator` stehen nur noch Durchreicher") zählte rohe Zeilen inklusive
+Kommentar. W40 hängt zwei Code-Zeilen und achtzehn Zeilen Begründung an
+`send_message` — der Deckel riss, obwohl Bot-Zustand dort ausdrücklich erlaubt
+ist. Gezählt wird jetzt Code; die Deckel selbst bleiben unverändert, und REST-
+Logik zurück in der Klasse reißt sie weiterhin (nachgestellt: 15 Zeilen).
+
 
 ---
 
