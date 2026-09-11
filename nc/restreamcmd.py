@@ -115,14 +115,54 @@ def configure(**kw):
         g[k if k in g else "_" + k] = v
 
 
+# v4.2-W48: Wo eine Schrift liegen kann, wenn die konfigurierte fehlt.
+# Reihenfolge = Vorliebe: erst fette DejaVu (das ist, was RESTREAM_FONT
+# ueblicherweise meint), dann die ueblichen Ersatzfamilien der Distributionen.
+FONT_KANDIDATEN = (
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+    "/usr/share/fonts/truetype/liberation2/LiberationSans-Bold.ttf",
+    "/usr/share/fonts/truetype/freefont/FreeSansBold.ttf",
+    "/usr/share/fonts/dejavu/DejaVuSans-Bold.ttf",
+    "/usr/share/fonts/TTF/DejaVuSans-Bold.ttf",
+    "/usr/share/fonts/truetype/ubuntu/Ubuntu-B.ttf",
+)
+
+
+def schriftart(vorgabe, kandidaten=None, pruefer=None):
+    """Die erste Schrift, die wirklich auf der Platte liegt — oder None.
+
+    Am 11.09. stand im Log zweimal "RESTREAM_OVERLAY=1, aber Font fehlt
+    (/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf) — Overlay
+    uebersprungen". Der Betreiber hatte das Overlay eingeschaltet und bekam
+    es nicht, weil ein Paket fehlte (fonts-dejavu-core), das auf einer
+    Server-Installation ueblicherweise gar nicht dabei ist. Eine Schrift
+    ist aber austauschbar: fuer eine Bauchbinde zaehlt, DASS Text erscheint.
+
+    Die konfigurierte Vorgabe hat Vorrang — wer sie setzt, will sie. Erst
+    wenn sie fehlt, wird gesucht. `pruefer` ist nur fuer den Test da; ohne
+    ihn entscheidet das Dateisystem.
+    """
+    pruef = pruefer or os.path.isfile
+    if vorgabe and pruef(vorgabe):
+        return vorgabe
+    for pfad in (kandidaten if kandidaten is not None else FONT_KANDIDATEN):
+        if pfad != vorgabe and pruef(pfad):
+            return pfad
+    return None
+
+
 def _drawtext_chain(rid=None):
     # v4.0-W27: verbatim nach nc/ffmpeg_filters.py extrahiert (bitgenau geprüft).
-    return _nc_ff.drawtext_chain(_restream_overlay_files(rid), RESTREAM_FONT)
+    return _nc_ff.drawtext_chain(_restream_overlay_files(rid),
+                                 schriftart(RESTREAM_FONT))
 
 
 def _studio_chain(avatar_idx=None, rid=None, avatar_alpha_idx=None):
     # v4.0-W27: verbatim nach nc/ffmpeg_filters.py extrahiert (bitgenau geprüft).
-    return _nc_ff.studio_chain(_restream_overlay_files(rid), RESTREAM_FONT,
+    return _nc_ff.studio_chain(_restream_overlay_files(rid),
+                               schriftart(RESTREAM_FONT),
                                RESTREAM_CANVAS_W, RESTREAM_CANVAS_H, RESTREAM_FPS,
                                avatar_idx=avatar_idx,
                                avatar_alpha_idx=avatar_alpha_idx,
@@ -229,11 +269,24 @@ def build(source_url, ingest_url, stream_key, transcode=False, tts_fifo=None, ri
     # Optionale Zusatz-Inputs — Reihenfolge bestimmt den Index! 1) AZRAEL-Stimme (FIFO),
     # 2) Avatar-PNG. Beides nur im Transcode-Modus (Overlay/amix brauchen Re-Encoding).
     use_tts = bool(tts_fifo)            # Stimme auch im Copy-Modus mischen (Audio wird eh re-enkodiert)
+    # v4.2-W48: nicht mehr nur die konfigurierte Schrift, sondern die erste,
+    # die es gibt. Vorher entschied os.path.isfile(RESTREAM_FONT) allein —
+    # und ein fehlendes Schrift-Paket kostete das komplette Overlay.
+    _font = schriftart(RESTREAM_FONT)
     overlay_on = bool(transcode and RESTREAM_OVERLAY
                       and not drossel_overlay_aus(drossel)
-                      and os.path.isfile(RESTREAM_FONT))
-    if transcode and RESTREAM_OVERLAY and not overlay_on:
-        log.warning("RESTREAM_OVERLAY=1, aber Font fehlt (%s) — Overlay übersprungen", RESTREAM_FONT)
+                      and _font)
+    if transcode and RESTREAM_OVERLAY and not overlay_on and not drossel_overlay_aus(drossel):
+        # Der Nachsatz nennt die Abhilfe. "Font fehlt" allein schickte den
+        # Betreiber auf die Suche nach einer Datei, die er nicht anlegen will.
+        log.warning("RESTREAM_OVERLAY=1, aber keine Schrift gefunden (weder %s "
+                    "noch eine der %d Ersatzschriften) — Overlay übersprungen. "
+                    "Abhilfe: apt install fonts-dejavu-core, oder RESTREAM_FONT "
+                    "auf eine vorhandene .ttf setzen.",
+                    RESTREAM_FONT, len(FONT_KANDIDATEN))
+    elif transcode and RESTREAM_OVERLAY and _font and _font != RESTREAM_FONT:
+        log.warning("RESTREAM_FONT (%s) fehlt — Overlay laeuft mit Ersatzschrift %s.",
+                    RESTREAM_FONT, _font)
     # v4.2-W32: bewegter Avatar, wenn Schleife UND Alphamaske dastehen —
     # sonst wie bisher das Standbild. Beides fehlt: kein Avatar.
     anim_on = bool(overlay_on and RESTREAM_AVATAR_LOOP and RESTREAM_AVATAR_ALPHA

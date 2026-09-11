@@ -53,6 +53,7 @@ CHANGELOG = [
             "Die Live-Ankündigung nach Discord kommt wieder einmal pro Stream statt einmal pro Reparatur-Neustart — und sie trägt den Namen und die Rolle aus der Konfiguration, nicht mehr den danebenstehenden Kommentar",
             "Der Audio-Abgriff der Live-Reaktion sagt jetzt, warum er gestorben ist: er starb im Betrieb 57 Mal je eine Sekunde nach dem Start, warf den Grund aber jedes Mal weg — AZRAEL reagierte deshalb auf den gesendeten TikTok-Stream kein einziges Mal, sondern nur noch auf die Plattform-Chats",
             "AZRAELs Live-Reaktion bleibt am Stream: der Worker starb im Betrieb alle vier Sekunden, weil er seinen TikTok-Chat ohne laufenden Audio-Abgriff gar nicht neu verbinden konnte — und warf bei jedem Ende sein Gedächtnis über den Stream weg. Statt 328 Verbindungsversuchen pro Stunde sind es jetzt 17",
+            "Kein Wiederholungs-Sturm mehr gegen Kanäle, die gar nicht senden: der Bot las yt-dlps „The channel is not currently live“ als frühen Abriss und versuchte es fünfmal erneut — und das Sendebild-Overlay fällt nicht mehr ganz aus, wenn die eingestellte Schrift fehlt, sondern nimmt eine Ersatzschrift",
         ],
     },
     {

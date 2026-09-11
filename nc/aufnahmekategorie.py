@@ -69,11 +69,24 @@ def kategorisiere(stderr_text, stall_killed, returncode, file_exists, duration):
             category = "codec_header_fail"
         else:
             category = "stall_killed"
-    elif "no playable streams" in stderr_lc or "this user is offline" in stderr_lc:
+    elif ("no playable streams" in stderr_lc or "this user is offline" in stderr_lc
+          # v4.2-W48: der Wortlaut von yt-dlp. Am 11.09. stand er 28 Mal in
+          # zehn Minuten im Log — und fiel jedes Mal bis ans Ende der Kette
+          # durch, also auf "fail" und von dort (kurz + Fehler) auf
+          # "early_disconnect". Das loeste den Auto-Retry aus: fuenf Versuche
+          # mit wachsendem Backoff gegen einen Kanal, der schlicht nicht
+          # sendet. Ein Retry kann daran nichts aendern; er kostet nur
+          # Zugriffe von einer IP, die TikTok ohnehin schon beobachtet.
+          or "is not currently live" in stderr_lc):
         category = "offline_or_protected"
     elif "403" in stderr_text or "forbidden" in stderr_lc:
         category = "forbidden_403"
-    elif "timeout" in stderr_lc:
+    elif "timeout" in stderr_lc or "timed out" in stderr_lc:
+        # v4.2-W48: "timed out" fehlte. ffmpeg schreibt "Connection timed out"
+        # und "Operation timed out" — das Wort "timeout" am Stueck kommt in
+        # der Praxis kaum vor, und so landete jeder echte Timeout auf "fail".
+        # bot.py::_proxy_report_recording prueft seit jeher auf "timed out";
+        # die beiden Stellen widersprachen sich also.
         category = "timeout"
     elif "no plugin" in stderr_lc:
         category = "no_plugin"

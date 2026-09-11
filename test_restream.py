@@ -4388,8 +4388,18 @@ def test_v40_w27_ffmpeg_filters():
     src = open("bot.py", encoding="utf-8").read()
     _rcs = open("nc/restreamcmd.py", encoding="utf-8").read()
     assert "from nc import ffmpeg_filters as _nc_ff" in _rcs, "Modul nicht importiert"
-    assert "_nc_ff.drawtext_chain(_restream_overlay_files(rid), RESTREAM_FONT)" in _rcs
-    assert "_nc_ff.studio_chain(_restream_overlay_files(rid), RESTREAM_FONT," in _rcs
+    # ANKER ERNEUT GEWANDERT (v4.2-W48, nicht der Vertrag): die Schrift wird
+    # jetzt ueber schriftart() aufgeloest, weil ein fehlendes Schrift-Paket
+    # sonst das ganze Overlay kostet. Der Vertrag fragt weiterhin nur, ob
+    # delegiert statt nachgebaut wird.
+    #
+    # Geflacht verglichen: der Aufruf steht seither ueber zwei Zeilen, und ein
+    # woertlicher Vergleich wuerde am Umbruch scheitern statt an der Sache.
+    _flach = " ".join(_rcs.split())
+    assert ("_nc_ff.drawtext_chain(_restream_overlay_files(rid), "
+            "schriftart(RESTREAM_FONT))") in _flach
+    assert ("_nc_ff.studio_chain(_restream_overlay_files(rid), "
+            "schriftart(RESTREAM_FONT),") in _flach
     # Alte Ketten-Logik darf nirgends nachgebaut werden.
     assert "[cnv][vsrc]overlay" not in (src + _rcs), "alte studio-Logik nachgebaut"
     ok("v4.0-w27: der Bauer delegiert beide Ketten, keine Doppel-Logik mehr")

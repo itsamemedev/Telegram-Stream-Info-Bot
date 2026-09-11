@@ -7553,13 +7553,11 @@ def _test_v42_w46_audiotap_sagt_warum_er_starb():
     assert A.diagnose("Server returned 404 Not Found", 1, 1.0, 0)["kategorie"] \
         == "stream_dead"
     assert A.diagnose("rw_timeout reached", 1, 90.0, 3)["kategorie"] == "timeout"
-    # NEBENBEFUND, bewusst NICHT in dieser Welle repariert: die Kette sucht
-    # "timeout", ffmpeg schreibt aber meist "Connection timed out". Dieser
-    # Wortlaut faellt deshalb auf "fail" durch. Das ist die Kette des
-    # RECORDERS (W23) — sie hier anzufassen aendert dessen Statistik und
-    # Backoff, und diese Welle macht nur den Log-Kanal auf. Festgehalten,
-    # damit der Befund nicht verlorengeht.
-    assert A.diagnose("Connection timed out", 1, 90.0, 3)["kategorie"] == "fail"
+    # Der Nebenbefund aus W46 — die Kette suchte "timeout", ffmpeg schreibt
+    # aber meist "Connection timed out" — ist in W48 geschlossen. Die Zeile
+    # bleibt stehen und prueft jetzt die Gegenrichtung: sie hat den Befund
+    # aufgehoben, bis er behoben war, und haelt die Behebung nun fest.
+    assert A.diagnose("Connection timed out", 1, 90.0, 3)["kategorie"] == "timeout"
     assert A.diagnose("", 0, 1.0, 0)["kategorie"] == "empty_output"
     # Der reale Fall vom 10.09.: eine Sekunde, kein Segment, kein Muster.
     d = A.diagnose("irgendwas Unbekanntes", 1, 1.0, 0)
@@ -7787,6 +7785,142 @@ def _test_v42_w47_chat_reconnect_und_gedaechtnis():
     ok("W47: Regie und Story ueberleben den Neustart, fallen aber beim Offline-Gehen")
 
 
+def _test_v42_w48_wortlaut_der_werkzeuge():
+    """v4.2-W48: die Kategorie-Kette kannte den Wortlaut nicht, den die
+    Werkzeuge wirklich schreiben.
+
+    Aus dem Log vom 11.09., zehn Minuten:
+
+        28x  ytdlp @USER rc=1: ERROR: [tiktok:live] USER:
+             The channel is not currently live
+        25x  EARLY DISCONNECT @USER nach 1.8s (#1/5) — Auto-Retry in 10s
+         3x  EARLY DISCONNECT ... Max-Retries (5) erreicht
+
+    Der Kanal sendet nicht — und der Bot antwortet mit fuenf Wiederholungen
+    und wachsendem Backoff. Ein Retry kann daran nichts aendern; er kostet
+    nur Zugriffe von einer IP, die TikTok ohnehin schon beobachtet.
+
+    Die Ursache ist eine Luecke in der Musterkette: yt-dlps Wortlaut passte
+    auf keinen Zweig, fiel bis ans Ende durch (`fail`) und wurde dort wegen
+    "kurz und mit Fehler" nachtraeglich zu `early_disconnect` umgewidmet —
+    also genau in die Kategorie, an der `bot.py` den Auto-Retry aufhaengt.
+
+    Dieselbe Sorte Luecke beim Timeout, und die war noch aergerlicher: die
+    Kette sucht "timeout", ffmpeg schreibt aber "Connection timed out". In
+    `bot.py::_proxy_report_recording` steht seit jeher "timed out" in der
+    Liste — zwei Stellen, zwei Wahrheiten.
+    """
+    from nc import aufnahmekategorie as K
+
+    # --- 1) Der Kanal sendet nicht -> kein Retry -------------------------
+    for roh in ("ERROR: [tiktok:live] hasischaosqueen1601k25: "
+                "The channel is not currently live",
+                "ERROR: [tiktok:live] thomasschwarz180: The channel is not currently live",
+                "the channel is NOT CURRENTLY LIVE"):
+        assert K.kategorisiere(roh, False, 1, False, 1.8) == "offline_or_protected", roh
+    # Die alten Wortlaute gelten unveraendert weiter.
+    assert K.kategorisiere("no playable streams", False, 1, False, 5) == "offline_or_protected"
+    assert K.kategorisiere("this user is offline", False, 1, False, 5) == "offline_or_protected"
+    ok("W48: 'is not currently live' ist offline, nicht early_disconnect")
+
+    # --- 2) Und der Auto-Retry haengt wirklich daran ---------------------
+    # Ohne diese Haelfte waere der Vertrag Kosmetik: die Kategorie stimmte,
+    # und der Bot wiederholte trotzdem.
+    hier = os.path.dirname(os.path.abspath(__file__))
+    bot = open(os.path.join(hier, "bot.py"), encoding="utf-8").read()
+    flach = " ".join(bot.split())
+    assert 'if category == "early_disconnect":' in flach, \
+        "der Auto-Retry haengt nicht mehr an der Kategorie — dann greift " \
+        "diese Welle ins Leere"
+    assert "_nc_folge.nach_frueher_trennung(" in flach
+    ok("W48: der Auto-Retry haengt an der Kategorie, also greift die Aenderung")
+
+    # --- 3) Timeout: der Wortlaut, den ffmpeg wirklich schreibt ----------
+    for roh in ("Connection timed out", "Operation timed out",
+                "error: Connection timed out (110)", "rw_timeout reached"):
+        assert K.kategorisiere(roh, False, 1, False, 90.0) == "timeout", roh
+    # Die zweite Stelle im Bot prueft dasselbe Wort — sie darf nicht
+    # auseinanderlaufen.
+    assert '"timed out"' in flach, \
+        "_proxy_report_recording kennt 'timed out' nicht mehr"
+    ok("W48: 'Connection timed out' zaehlt als timeout, wie an der zweiten Stelle auch")
+
+    # --- 4) Die Reihenfolge bleibt unangetastet --------------------------
+    # Die Kette ist eine PRIORITAETS-Kette (W23). Ein neues Muster weiter
+    # oben haette stillschweigend Faelle abgefangen, die unten praeziser
+    # beantwortet werden.
+    assert K.kategorisiere("Video codec is not implemented", True, 1, False, 5) \
+        == "hevc_unsupported"
+    assert K.kategorisiere("HTTP error 404 Not Found. Could not write header",
+                           False, 1, False, 5) == "stream_dead"
+    assert K.kategorisiere("Could not write header for output file", True, 1, False, 5) \
+        == "codec_header_fail"
+    assert K.kategorisiere("HTTP error 403 Forbidden", False, 1, False, 5) == "forbidden_403"
+    # Ein 404, der zusaetzlich "not currently live" traegt, bleibt stream_dead:
+    # die tote URL ist die praezisere Aussage.
+    assert K.kategorisiere("HTTP error 404: the channel is not currently live",
+                           False, 1, False, 5) == "stream_dead"
+    # Ein echter Abriss bleibt ein echter Abriss.
+    assert K.kategorisiere("irgendein Abriss ohne Muster", False, 1, False, 2.0) \
+        == "early_disconnect"
+    ok("W48: die Prioritaetskette aus W23 steht unveraendert")
+
+    # --- 5) Jede Kategorie traegt weiterhin einen Abhilfe-Satz -----------
+    # W46 haelt das fuer den Audio-Tap fest; eine neue Kategorie ohne Text
+    # faellt sonst auf den nichtssagenden Default zurueck.
+    from nc import audiotap as A
+    for kat in ("offline_or_protected", "timeout"):
+        assert kat in A.ABHILFE and len(A.ABHILFE[kat]) > 20, kat
+    ok("W48: die betroffenen Kategorien haben weiterhin eine Abhilfe")
+
+    # --- 6) Das Overlay stirbt nicht an einer fehlenden Schrift ----------
+    # Zweimal im Log: "RESTREAM_OVERLAY=1, aber Font fehlt (...) — Overlay
+    # uebersprungen". Der Betreiber hatte es eingeschaltet und bekam es
+    # nicht, weil ein Paket fehlte, das auf einem Server ueblicherweise gar
+    # nicht dabei ist. Eine Schrift ist austauschbar: fuer eine Bauchbinde
+    # zaehlt, DASS Text erscheint.
+    from nc import restreamcmd as R
+    _da = {"/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf"}
+    _p = lambda x: x in _da            # noqa: E731 — Testsonde, kein Produktivcode
+    assert R.schriftart("/weg/DejaVuSans-Bold.ttf", pruefer=_p) in R.FONT_KANDIDATEN
+    # Die Vorgabe hat Vorrang, wenn es sie gibt — wer sie setzt, will sie.
+    _da.add("/weg/eigene.ttf")
+    assert R.schriftart("/weg/eigene.ttf", pruefer=_p) == "/weg/eigene.ttf"
+    # Gar nichts da: ehrlich None, kein erfundener Pfad.
+    assert R.schriftart("/weg/x.ttf", pruefer=lambda _x: False) is None
+    assert R.schriftart(None, pruefer=lambda _x: False) is None
+    assert R.schriftart("", pruefer=lambda x: x.endswith("DejaVuSans-Bold.ttf")) \
+        == R.FONT_KANDIDATEN[0]
+    assert len(R.FONT_KANDIDATEN) >= 5 and len(set(R.FONT_KANDIDATEN)) == len(R.FONT_KANDIDATEN)
+    # Nicht nur die LAENGE pruefen — eine Liste aus fuenf Fantasiepfaden
+    # bestuende den Test und faende auf dem Server nichts. Diese beiden sind
+    # die Pakete, die auf Debian/Ubuntu tatsaechlich in Frage kommen:
+    # fonts-dejavu-core und fonts-liberation.
+    assert any("dejavu" in k.lower() for k in R.FONT_KANDIDATEN), R.FONT_KANDIDATEN
+    assert any("liberation" in k.lower() for k in R.FONT_KANDIDATEN), R.FONT_KANDIDATEN
+    assert all(k.lower().endswith((".ttf", ".ttc", ".otf")) for k in R.FONT_KANDIDATEN)
+    # Und die Kette benutzt das auch — an ALLEN drei Stellen.
+    rq = open(os.path.join(hier, "nc", "restreamcmd.py"), encoding="utf-8").read()
+    fr = " ".join(rq.split())
+    assert fr.count("schriftart(RESTREAM_FONT)") == 3, \
+        "Overlay-Schalter, drawtext_chain und studio_chain muessen dieselbe " \
+        "Schrift benutzen — sonst zeichnet die eine, was die andere verbot"
+    # Gegen den KOMMENTARFREIEN Quelltext pruefen: der Kommentar, der die
+    # alte Fassung erklaert, zitiert sie zwangslaeufig. Genau daran sind in
+    # diesem Projekt schon zwei Vertraege gestolpert (W39, W43).
+    _ohne_kommentar = " ".join(
+        zeile.split("#")[0] for zeile in rq.splitlines()).split()
+    assert "os.path.isfile(RESTREAM_FONT)" not in " ".join(_ohne_kommentar), \
+        "die alte, harte Pruefung steht noch im Code"
+    # "apt install" mitpruefen, nicht nur den Paketnamen: der Docstring der
+    # Funktion nennt "(fonts-dejavu-core)" ebenfalls, und ein Vertrag, der
+    # darauf trifft, bliebe gruen, waehrend die WARNUNG ihre Abhilfe verliert.
+    # Genau so ist er beim Bauen einmal durchgerutscht.
+    assert "apt install fonts-dejavu-core" in rq, \
+        "die Warnung nennt die Abhilfe nicht mehr"
+    ok("W48: fehlt die konfigurierte Schrift, nimmt das Overlay eine Ersatzschrift")
+
+
 def main():
     tmp = tempfile.mkdtemp()
     configure_db(db_path=os.path.join(tmp, "t.db"), backend="sqlite")
@@ -7998,6 +8132,8 @@ def main():
     _test_v42_w46_audiotap_sagt_warum_er_starb()
 
     _test_v42_w47_chat_reconnect_und_gedaechtnis()
+
+    _test_v42_w48_wortlaut_der_werkzeuge()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)
 

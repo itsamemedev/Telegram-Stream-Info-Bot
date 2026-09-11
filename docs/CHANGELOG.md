@@ -11,6 +11,76 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Behoben — die Kategorie-Kette kannte den Wortlaut der Werkzeuge nicht (v4.2 W48)
+
+Aus dem Log vom 11.09., zehn Minuten Betrieb:
+
+    28x  ytdlp @USER rc=1: ERROR: [tiktok:live] USER: The channel is not currently live
+    25x  EARLY DISCONNECT @USER nach 1.8s (#1/5) — Auto-Retry in 10s
+     3x  EARLY DISCONNECT ... Max-Retries (5) erreicht
+
+Der Kanal sendet nicht — und der Bot antwortet mit fünf Wiederholungen und
+wachsendem Backoff. Ein Retry kann daran nichts ändern; er kostet nur Zugriffe
+von einer IP, die TikTok ohnehin schon beobachtet.
+
+Die Ursache ist eine Lücke in der Musterkette (`nc/aufnahmekategorie.py`):
+yt-dlps Wortlaut passte auf keinen Zweig, fiel bis ans Ende durch (`fail`) und
+wurde dort wegen „kurz und mit Fehler" nachträglich zu `early_disconnect`
+umgewidmet — also genau in die Kategorie, an der `bot.py` den Auto-Retry
+aufhängt. Die Umwidmung ist richtig für einen echten CDN-Abriss; sie traf hier
+nur den Falschen.
+
+Dieselbe Sorte Lücke beim Timeout, und die war ärgerlicher: die Kette suchte
+`"timeout"`, ffmpeg schreibt aber `"Connection timed out"` und `"Operation
+timed out"`. In `bot.py::_proxy_report_recording` steht `"timed out"` seit jeher
+in der Blocklist — zwei Stellen im selben Programm, zwei Wahrheiten. Der Befund
+stand seit W46 als Vertrag fest; jetzt ist er behoben, und der Vertrag hält die
+Behebung fest statt des Mangels.
+
+**Und das Overlay stirbt nicht mehr an einer fehlenden Schrift.** Zweimal im
+Log: „RESTREAM_OVERLAY=1, aber Font fehlt (…) — Overlay übersprungen". Der
+Betreiber hatte es eingeschaltet und bekam es nicht, weil `fonts-dejavu-core`
+fehlte — ein Paket, das auf einer Server-Installation üblicherweise gar nicht
+dabei ist. Eine Schrift ist aber austauschbar: für eine Bauchbinde zählt, DASS
+Text erscheint. `schriftart()` nimmt die konfigurierte Vorgabe, wenn es sie
+gibt, sonst die erste von acht üblichen Ersatzschriften; die Warnung nennt
+jetzt `apt install fonts-dejavu-core`. Alle drei Stellen (Overlay-Schalter,
+`drawtext_chain`, `studio_chain`) benutzen dieselbe Auflösung — sonst zeichnet
+die eine, was die andere verboten hat.
+
+Gegenprobe: 254 statt 248 Verträge. Zwölf Mutationsproben. Zwei Löcher fielen
+dabei im eigenen Vertrag auf:
+
+* Die Prüfung auf die Abhilfe in der Warnung traf den **Docstring** derselben
+  Funktion, der den Paketnamen ebenfalls nennt — sie blieb grün, während die
+  Warnung ihre Abhilfe verlor. Jetzt wird `apt install fonts-dejavu-core`
+  geprüft, was nur in der Warnung steht. Das ist der dritte Vertrag in diesem
+  Projekt, der über einen erklärenden Kommentar gestolpert ist.
+* Die Kandidatenliste war nur auf ihre **Länge** geprüft — fünf Fantasiepfade
+  hätten bestanden und auf dem Server nichts gefunden. Jetzt müssen DejaVu und
+  Liberation darin vorkommen.
+
+`test_restream.test_v40_w27_ffmpeg_filters` kippte, weil sein Anker am
+wörtlichen Aufruf `_nc_ff.drawtext_chain(..., RESTREAM_FONT)` hängt. Geprüft:
+der **Anker** war gebrochen, nicht der Vertrag — er fragt, ob delegiert statt
+nachgebaut wird, und das gilt unverändert. Anker nachgezogen (die Datei kennt
+das Muster schon aus W16) und geflacht verglichen, weil der Aufruf jetzt über
+zwei Zeilen steht. Gegenprobe: Delegation entfernt → Vertrag kippt.
+
+**Nicht im Code, sondern in der Konfiguration** — diese Wellen ändern daran
+nichts:
+
+* **Restream #88 und #39 teilen sich den Kick-Key.** Das ist das gesamte
+  `error.log`: ein RTMP-Key erlaubt genau einen Publisher, der zweite bekommt
+  `Input/output error`, und der Verify-Wächter startet beide alle drei Minuten
+  neu. B141 meldet es siebenmal im Klartext. Abhilfe: einen der beiden
+  stoppen, `RESTREAM_SINGLE=1`, oder eigene Keys.
+* **Das Anthropic-Guthaben ist aufgebraucht** (`HTTP 400: Your credit balance
+  is too low`). Damit fällt die Reaktions-Kette auf die kostenlosen Basen
+  zurück, und die sind rate-limited (`429`) oder liefern ein abgeschaltetes
+  Modell (`gpt-4.1-nano-2025-04-14 is currently unavailable`). Alle vier
+  ausgelösten AZRAEL-Reaktionen endeten deshalb mit „OHNE Ausgabe".
+
 ### Behoben — der Live-React-Worker starb alle vier Sekunden und fing jedes Mal bei null an (v4.2 W47)
 
 Punkt 2 und 3 der Diagnose aus W46. Punkt 1 (der Log-Kanal) steht seit W46;
