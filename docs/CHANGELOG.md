@@ -11,6 +11,12 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+Noch nichts — 4.2 ist geschnitten, die nächste Welle beginnt hier.
+
+---
+
+## [4.2] — 2026-09 · „Zerlegter Kern"
+
 ### Behoben — Chat-Reconnect verbrannte die Sign-Quota, MOTD log über das Dashboard (v4.2 W37)
 
 Zwei Befunde aus debug.log/error.log vom 10.09. und der MOTD desselben Tages.
@@ -1901,10 +1907,6 @@ genau das, statt meine falsche Annahme.
 
 Es bleiben drei System-Routen im Monolithen: `preflight`, `resilience` und
 `selftest`.
-
----
-
-## [4.2] — 2026-09 · „Zerlegter Kern"
 
 ### Neu — Vorschläge gesammelt entscheiden (v4.2)
 
