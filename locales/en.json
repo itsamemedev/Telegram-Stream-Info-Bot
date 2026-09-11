@@ -1403,6 +1403,9 @@
     "🔕 Keine Live-Pings mehr für **@": "🔕 No more live pings for **@",
     "🔴 läuft ·": "🔴 running ·",
     "🗑 Fehler": "🗑 Error",
-    "🗞 Azraels Creator-Dossier": "🗞 Azrael's creator dossier"
+    "🗞 Azraels Creator-Dossier": "🗞 Azrael's creator dossier",
+    "Sitzung nicht gefunden": "Session not found",
+    "Weniger als zwei vorhandene Segmente — nichts zusammenzufügen": "Fewer than two existing segments — nothing to join",
+    "Datei existiert bereits — force=true zum Überschreiben": "File already exists — pass force=true to overwrite"
   }
 }

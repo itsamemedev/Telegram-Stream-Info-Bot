@@ -598,6 +598,7 @@ from nc import restreamcmd as _nc_rscmd  # v4.2-W16: die ffmpeg-Zeile des Relays
 from nc import reccmd as _nc_reccmd  # v4.2-W17: die Kommandozeilen des Recorders
 from nc import aufnahmefolge as _nc_folge  # v4.2-W18: die Eskalationsrechnung
 from nc import aufnahmekategorie as _nc_kat  # v4.2-W23: warum eine Aufnahme so endete
+from nc import aufnahmesitzung as _nc_sitzung  # v4.2-W44: die Klammer um die Segmente EINES Streams
 from nc import memeklip as _nc_memeklip  # v4.2-W24: erkennt meme-wuerdige Chat-Momente
 from nc import livefolge as _nc_live  # v4.2-W20: was aus einem Live-Signal folgt
 from nc import azraelstate as _nc_azrael  # v4.1-W19: AZRAELs Laufzeitzustand (geteilt)
@@ -3968,27 +3969,92 @@ def clear_recording(tracking_id: int):
     # vor set_recording_file aufgerufen wird, etwa bei resolve_failed).
     _RECORDING_SPAWN_AT.pop(tracking_id, None)
 
+def _iso(wert):
+    """datetime oder ISO-Text → ISO-Text in UTC, sonst None.
+
+    v4.2-W44: der Aufrufer hat mal ein datetime (handle_recording_finished),
+    mal nichts. Eine naive Zeit wird als UTC gelesen — der ganze Bot schreibt
+    ausschliesslich UTC, und ein einziger als Ortszeit gelesener Stempel
+    verschoebe die Luecken-Rechnung um eine Stunde.
+    """
+    if wert is None:
+        return None
+    if isinstance(wert, datetime):
+        if wert.tzinfo is None:
+            wert = wert.replace(tzinfo=timezone.utc)
+        return wert.astimezone(timezone.utc).isoformat()
+    t = str(wert).strip()
+    return t or None
+
+
+def _sitzung_bestimmen(conn, username: str, start_iso: str):
+    """Fortsetzung der laufenden Sitzung oder Beginn einer neuen?
+
+    v4.2-W44: die eigentliche Klammer. Sieht nur auf das JUENGSTE Segment
+    desselben Users — mehr braucht es nicht, weil Sitzungen per Definition
+    zusammenhaengend sind und ein aelteres Segment die Kette schon an das
+    juengste weitergereicht hat.
+
+    Fehlerpfad ist bewusst weich: kippt die Abfrage (alte Datenbank ohne die
+    W44-Spalten, gesperrte Datei), gibt es keine Sitzung statt keiner
+    Aufnahme. Eine Aufnahme ohne Klammer ist unbequem, eine verlorene
+    Aufnahme ist weg.
+    """
+    try:
+        row = conn.execute(
+            "SELECT session_id, ended_at, created_at FROM recordings "
+            "WHERE username=? ORDER BY id DESC LIMIT 1", (username,)).fetchone()
+    except Exception as e:
+        log.debug("Sitzungs-Zuordnung @%s: %s", username, e)
+        return None
+    if row:
+        vorher = row["session_id"]
+        ende = _nc_sitzung.sekunden(row["ended_at"] or row["created_at"])
+        if vorher and _nc_sitzung.gehoert_dazu(ende, _nc_sitzung.sekunden(start_iso)):
+            return vorher
+    return _nc_sitzung.sitzung_id(username, start_iso)
+
+
 def add_recording(username: str, filepath: str, *,
                   file_size: Optional[int] = None,
                   duration_secs: Optional[int] = None,
-                  tracking_id: Optional[int] = None):
+                  tracking_id: Optional[int] = None,
+                  started_at=None, ended_at=None):
     """X-Series: add_recording captured optional file_size + duration_secs
        für Quality-Score, Storage-Forecast, Bandwidth-Calc. Beide optional —
        Caller die diese Werte nicht haben, übergeben einfach None.
        F41-Fix F4: try/except — DB-locked-Fehler crashed nicht die ganze
        handle_recording_finished Coroutine. Upload läuft weiter, nur Dashboard
-       zeigt's evtl. nicht."""
+       zeigt's evtl. nicht.
+       v4.2-W44: started_at/ended_at werden mitgeschrieben und daraus die
+       session_id bestimmt. Warum nicht aus created_at minus duration_secs
+       gerechnet: created_at entsteht erst beim INSERT, also nach dem Ende der
+       Aufnahme und nach dem Ermitteln der Dateigroesse — je Segment ein paar
+       Sekunden daneben, und genau diese Sekunden sind die Naht, die wir
+       messen wollen."""
     if file_size is None and filepath and os.path.exists(filepath):
         try: file_size = os.path.getsize(filepath)
         except OSError: file_size = None
+    jetzt_iso = datetime.now(timezone.utc).isoformat()
+    end_iso   = _iso(ended_at) or jetzt_iso
+    start_iso = _iso(started_at)
+    if start_iso is None and duration_secs:
+        # Nur als Notnagel: besser eine geschaetzte Startzeit als gar keine
+        # Klammer. Der reale Aufrufer gibt started_at mit.
+        start_iso = _iso(datetime.now(timezone.utc)
+                         - timedelta(seconds=int(duration_secs)))
+    start_iso = start_iso or end_iso
     try:
         with db_conn() as conn:
+            sid = _sitzung_bestimmen(conn, username, start_iso)
             cur = conn.execute(
                 "INSERT INTO recordings (username, filepath, created_at, "
-                "  file_size, duration_secs, tracking_id) "
-                "VALUES (?,?,?,?,?,?)",
-                (username, filepath, datetime.now(timezone.utc).isoformat(),
-                 file_size, duration_secs, tracking_id))
+                "  file_size, duration_secs, tracking_id, "
+                "  session_id, started_at, ended_at) "
+                "VALUES (?,?,?,?,?,?,?,?,?)",
+                (username, filepath, jetzt_iso,
+                 file_size, duration_secs, tracking_id,
+                 sid, start_iso, end_iso))
             conn.commit()
             new_id = cur.lastrowid
         # X-Event: Aufnahme abgeschlossen → Event-Log
@@ -3996,9 +4062,27 @@ def add_recording(username: str, filepath: str, *,
             log_event("recording.saved", "info",
                       f"Aufnahme @{username} gespeichert ({(file_size or 0)/1024/1024:.1f} MB)",
                       {"recording_id": new_id, "username": username,
-                       "file_size": file_size, "duration_secs": duration_secs})
+                       "file_size": file_size, "duration_secs": duration_secs,
+                       "session_id": sid})
         except Exception: pass
         return new_id
+    except Exception as e:
+        log.warning(f"add_recording @{username} → {filepath}: {e} "
+                    f"(zweiter Versuch ohne Sitzungs-Spalten)")
+    # v4.2-W44: Rueckfall auf den Spaltensatz vor dieser Welle. Wenn
+    # _migrate_columns auf einem Bestand nicht durchkam, waere der INSERT oben
+    # dauerhaft kaputt — und dann fehlte nicht die Klammer, sondern JEDE
+    # Aufnahme im Dashboard. Die Klammer ist Komfort, der Eintrag ist Pflicht.
+    try:
+        with db_conn() as conn:
+            cur = conn.execute(
+                "INSERT INTO recordings (username, filepath, created_at, "
+                "  file_size, duration_secs, tracking_id) "
+                "VALUES (?,?,?,?,?,?)",
+                (username, filepath, jetzt_iso,
+                 file_size, duration_secs, tracking_id))
+            conn.commit()
+            return cur.lastrowid
     except Exception as e:
         log.warning(f"add_recording @{username} → {filepath}: {e} "
                     f"(Upload läuft weiter, aber Dashboard zeigt diese Aufnahme nicht)")
@@ -8188,7 +8272,8 @@ async def handle_recording_finished(proc, tid, chat_id, username, output_file,
             add_recording(username, output_file,
                           file_size=file_size,
                           duration_secs=int(duration),
-                          tracking_id=tid)
+                          tracking_id=tid,
+                          started_at=started_at, ended_at=ended_at)
 
             # F37: Multi-Chat-Fan-Out. Wenn mehrere Chats denselben User tracken,
             # sollen ALLE die OFFLINE-Notif + Upload bekommen, nicht nur der Chat
@@ -11480,7 +11565,10 @@ _restream_active = _nc_channels.restream_active
 _RESTREAM_ACTIVE_ALL = _nc_rsstate.ACTIVE_ALL   # v4.1-W22: geteilt (Alias)
 # V37-COMMUNITY: welche rids in dieser Session schon einen Live-Ping bekamen
 # (verhindert Ping-Spam bei Reconnects). Wird beim Stop des Restreams geleert.
-_COMMUNITY_PINGED = set()
+# v4.2-W45: rid -> monotonic des letzten Live-Pings. War eine Menge; der
+# Eintrag wurde in stop() bedingungslos entfernt, auch beim internen
+# Reparatur-Neustart. Siehe nc.community.darf_pingen.
+_COMMUNITY_PINGED = {}
 
 def _restream_active_sources():
     """Quell-Usernames aller aktiven Restreams (clean), für Chat-Routing."""
@@ -13420,15 +13508,27 @@ class RestreamManager:
                   + (f" reconnect#{_attempts}" if _attempts else ""),
                   {"id": rid, "source": row["source_username"]})
         # V37-COMMUNITY: Live-Ping nach Discord — NUR bei frischem Start
-        # (_attempts == 0), nie bei Reconnects, sonst Ping-Spam. Einmal pro
-        # Restream-Session, entprellt ueber _COMMUNITY_PINGED.
+        # (_attempts == 0), nie bei Reconnects.
+        #
+        # v4.2-W45: Der Kommentar hier behauptete "einmal pro Restream-Session".
+        # Das stimmte nicht. stop() entfernte den Eintrag BEDINGUNGSLOS aus
+        # _COMMUNITY_PINGED — auch beim internen Reparatur-Neustart. Der
+        # Verify-Waechter macht genau das (stop(_keep_desired=True), 3 s warten,
+        # start() ohne _attempts, also 0), und damit war jeder Reparaturzyklus
+        # ein frischer Start mit frischem Ping. Bei einem zaehen Ziel sind das
+        # Dutzende identischer Nachrichten im Kanal.
+        #
+        # Deshalb jetzt eine ZEITSPERRE neben dem Mengen-Schutz: sie haelt auch
+        # dann, wenn ein kuenftiger Pfad das Vergessen wieder einbaut.
+        _jetzt_ping = _time_mod.monotonic()
         if (COMMUNITY_LIVE_PING_ENABLED and _attempts == 0 and DISCORD_WEBHOOK_URL
-                and rid not in _COMMUNITY_PINGED):
-            _COMMUNITY_PINGED.add(rid)
+                and _community.darf_pingen(_COMMUNITY_PINGED.get(rid), _jetzt_ping,
+                                           COMMUNITY_LIVE_PING_MIN_GAP_S)):
+            _COMMUNITY_PINGED[rid] = _jetzt_ping
             try:
                 _plats = [n.capitalize() for n, _ in _nc_rst.active_targets()] or ["Kick"]   # v4.0-W77
                 _msg = _community.live_ping(
-                    os.getenv("STREAMER_NAME", "").strip() or "Der Stream",
+                    _community.anzeigename(os.getenv("STREAMER_NAME"), "Der Stream"),
                     platforms=_plats)
                 _spawn(_discord_notify(_msg), name="comm-liveping")
             except Exception as _e:
@@ -13911,7 +14011,12 @@ class RestreamManager:
         self._srcspin.pop(rid, None)      # v4.0-W113: Serien enden mit dem Stop
         if not _keep_desired:
             self._stallkills.pop(rid, None)
-        _COMMUNITY_PINGED.discard(rid)   # V37-COMMUNITY: naechster Start darf wieder pingen
+        if not _keep_desired:
+            # v4.2-W45: NUR der Stop des Betreibers beendet die Session. Ein
+            # interner Reparatur-Neustart ist kein neuer Stream — vorher stand
+            # diese Zeile ohne Bedingung hier und war die Quelle des Ping-Spams.
+            # Die Zeitsperre an der Aufrufstelle greift trotzdem noch.
+            _COMMUNITY_PINGED.pop(rid, None)
         _restream_tts_stop(rid)
         info = self._procs.pop(rid, None)
         if not info:
@@ -15016,6 +15121,10 @@ COMMUNITY_RETURNING_ENABLED = os.getenv("COMMUNITY_RETURNING_ENABLED", "0").stri
 COMMUNITY_LIVE_PING_ENABLED = os.getenv("COMMUNITY_LIVE_PING_ENABLED", "0").strip().lower() in ("1", "true", "yes", "on", "y")
 COMMUNITY_HIGHLIGHT_SHARE_ENABLED = os.getenv("COMMUNITY_HIGHLIGHT_SHARE_ENABLED", "0").strip().lower() in ("1", "true", "yes", "on", "y")
 COMMUNITY_LIVE_ROLE_ID = os.getenv("COMMUNITY_LIVE_ROLE_ID", "").strip()
+# v4.2-W45: Mindestabstand zwischen zwei Live-Pings je Restream. Eine Stunde
+# reicht: ein Stream geht nicht oefter neu los, und jeder Reparatur-Neustart
+# dazwischen ist kein Ereignis fuer die Community.
+COMMUNITY_LIVE_PING_MIN_GAP_S = _env_int("COMMUNITY_LIVE_PING_MIN_GAP_S", 3600)
 _community.configure(
     returning_enabled=COMMUNITY_RETURNING_ENABLED,
     returning_min_gap_s=_env_int("COMMUNITY_RETURNING_MIN_GAP_S", 3600),

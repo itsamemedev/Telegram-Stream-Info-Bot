@@ -29,6 +29,8 @@ import json
 import os
 import shutil
 import signal as _signal_mod
+import subprocess
+import threading
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
@@ -40,6 +42,7 @@ from nc import i18n as _nc_i18n
 from nc import inspectcache as _nc_inspectcache
 from nc import fehlertext as _nc_fehlertext
 from nc import ffbuild as _nc_ffbuild
+from nc import aufnahmesitzung as _sitzung   # v4.2-W44: die Sitzungs-Rechnung, bot-frei
 from nc.dbwrap import db_conn
 from nc import trackingdb as _nc_trackingdb   # v4.0-W117: Tags direkt statt ueber nc.ctx
 from nc.archive import compute_recording_fingerprint, _retention_match
@@ -968,3 +971,224 @@ def api_rec_orphans_clean():
         return jsonify(ok=True, deleted=deleted, freed_mb=round(freed / 1048576.0, 1))
     except Exception as e:
         return jsonify(ok=False, error=_fehler_text(e, "api_rec_orphans_clean")), 500
+
+
+# =========================================================================
+# v4.2-W44 — Aufnahme-Sitzungen: die Klammer um die Segmente EINES Streams
+#
+# Ein dreistuendiger Stream liegt bei uns als sechs bis zehn Dateien auf der
+# Platte: die signierte TikTok-URL laeuft nach rund 30 Minuten ab (B58 schneidet
+# vorher sauber), dazu je eine Datei nach 403, Stall oder Abriss. Das Material
+# war also vollstaendig da — nur sagte nichts, dass diese sieben Zeilen EIN
+# Stream von 20:00 bis 23:30 sind. Genau deshalb konnte der Betreiber den
+# Stream nicht von Anfang bis Ende sehen.
+#
+# Drei Routen, mehr braucht es nicht: was gibt es (Liste), wie vollstaendig ist
+# es (Bericht mit den echten Naht-Luecken), und mach mir eine Datei daraus.
+# =========================================================================
+
+_JOIN_LAGE = {}      # session_id -> {"status", "ziel", "seit", "fehler", "mb"}
+_JOIN_LOCK = threading.Lock()
+
+
+def _sitzung_zeilen(conn, sid):
+    """Die Segmente einer Sitzung, in Aufnahme-Reihenfolge.
+
+    `deleted_at IS NULL`: eine in den Papierkorb gelegte Datei gehoert nicht in
+    das Zusammengefuegte — sie liegt zwar noch auf der Platte, ist aber genau
+    deshalb geloescht worden.
+    """
+    return conn.execute(
+        "SELECT id, username, filepath, file_size, duration_secs, "
+        "       started_at, ended_at, created_at FROM recordings "
+        "WHERE session_id=? AND deleted_at IS NULL ORDER BY id ASC",
+        (sid,)).fetchall()
+
+
+def _sitzung_bericht(rows):
+    """Brutto, Netto, Luecken und Abdeckung einer Sitzung.
+
+    Die Rechnung steht in nc/aufnahmesitzung.py und nicht hier: sie ist rein,
+    und rein heisst pruefbar ohne Datenbank und ohne Stream.
+    """
+    seg = []
+    for r in rows:
+        s = _sitzung.sekunden(r["started_at"])
+        e = _sitzung.sekunden(r["ended_at"] or r["created_at"])
+        if s is None and e is not None and r["duration_secs"]:
+            s = e - float(r["duration_secs"])
+        if s is not None and e is not None:
+            seg.append((s, e))
+    lst, summe, brutto, netto = _sitzung.luecken(seg)
+    return {
+        "segments":     len(rows),
+        "gaps":         len(lst),
+        "gap_total_s":  round(summe, 1),
+        "gap_max_s":    round(max(lst), 1) if lst else 0.0,
+        "brutto_s":     round(brutto, 1),
+        "netto_s":      round(netto, 1),
+        "coverage_pct": _sitzung.abdeckung(seg),
+    }
+
+
+@bp.route("/api/recordings/sessions")
+def api_recording_sessions():
+    """Welche Streams liegen als Sitzung vor, und wie vollstaendig?"""
+    limit = _arg_int("limit", 25, 1, 200)
+    user = (request.args.get("user") or "").lstrip("@").strip()
+    try:
+        with db_conn() as conn:
+            sql = ("SELECT session_id FROM recordings "
+                   "WHERE session_id IS NOT NULL AND deleted_at IS NULL ")
+            args = []
+            if user:
+                sql += "AND LOWER(username)=LOWER(?) "
+                args.append(user)
+            sql += "GROUP BY session_id ORDER BY MAX(id) DESC LIMIT ?"
+            args.append(limit)
+            sids = [r["session_id"] for r in conn.execute(sql, tuple(args)).fetchall()]
+            out = []
+            for sid in sids:
+                rows = _sitzung_zeilen(conn, sid)
+                if not rows:
+                    continue
+                b = _sitzung_bericht(rows)
+                b.update({
+                    "session_id": sid,
+                    "username":   rows[0]["username"],
+                    "start":      rows[0]["started_at"] or rows[0]["created_at"],
+                    "end":        rows[-1]["ended_at"] or rows[-1]["created_at"],
+                    "size_mb":    round(sum((r["file_size"] or 0) for r in rows) / 1048576.0, 1),
+                    "joined":     _JOIN_LAGE.get(sid, {}).get("status"),
+                })
+                out.append(b)
+        return jsonify(ok=True, count=len(out), sessions=out)
+    except Exception as e:
+        return jsonify(ok=False, error=_fehler_text(e, "api_recording_sessions")), 500
+
+
+@bp.route("/api/recordings/session/<sid>")
+def api_recording_session(sid):
+    """Eine Sitzung mit ihren Segmenten und den Naehten dazwischen."""
+    try:
+        with db_conn() as conn:
+            rows = _sitzung_zeilen(conn, sid)
+            if not rows:
+                return jsonify(ok=False, error=_t("Sitzung nicht gefunden")), 404
+            bericht = _sitzung_bericht(rows)
+            segs = []
+            vor_ende = None
+            for r in rows:
+                s = _sitzung.sekunden(r["started_at"])
+                e = _sitzung.sekunden(r["ended_at"] or r["created_at"])
+                luecke = None
+                if vor_ende is not None and s is not None:
+                    luecke = round(max(0.0, s - vor_ende), 1)
+                vor_ende = e if e is not None else vor_ende
+                segs.append({
+                    "id": r["id"],
+                    "filename": os.path.basename(r["filepath"] or ""),
+                    "exists": bool(r["filepath"] and os.path.exists(r["filepath"])),
+                    "size_mb": round((r["file_size"] or 0) / 1048576.0, 1),
+                    "duration_secs": r["duration_secs"],
+                    "started_at": r["started_at"], "ended_at": r["ended_at"],
+                    "gap_before_s": luecke,
+                })
+        return jsonify(ok=True, session_id=sid, report=bericht, segments=segs,
+                       join=_JOIN_LAGE.get(sid))
+    except Exception as e:
+        return jsonify(ok=False, error=_fehler_text(e, "api_recording_session")), 500
+
+
+def _join_lauf(sid, pfade, ziel, threads, nice):
+    """Der eigentliche concat-Lauf, im eigenen Thread.
+
+    Warum ein Thread und keine blockierende Antwort: ein Drei-Stunden-Stream
+    sind schnell sechs Gigabyte, und selbst mit -c copy ist das eine Minute
+    Plattenarbeit. Eine HTTP-Anfrage, die so lange haengt, blockiert einen
+    Flask-Worker und laeuft am Reverse-Proxy in einen Timeout — der Betreiber
+    saehe einen Fehler, waehrend ffmpeg fleissig weiterarbeitet.
+    """
+    listendatei = ziel + ".txt"
+    try:
+        with open(listendatei, "w", encoding="utf-8") as fh:
+            fh.write(_sitzung.concat_liste(pfade))
+        cmd = _sitzung.concat_cmd(listendatei, ziel, threads=threads, nice=nice)
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=3600)
+        if r.returncode != 0 or not os.path.exists(ziel):
+            raise RuntimeError((r.stderr or "").strip()[-400:] or f"rc={r.returncode}")
+        mb = round(os.path.getsize(ziel) / 1048576.0, 1)
+        with _JOIN_LOCK:
+            _JOIN_LAGE[sid] = {"status": "fertig", "ziel": ziel, "mb": mb,
+                               "seit": datetime.now(timezone.utc).isoformat(),
+                               "fehler": None}
+        log.info("Sitzung %s zusammengefuegt: %d Segmente → %s (%.1f MB)",
+                 sid, len(pfade), os.path.basename(ziel), mb)
+        log_event("recording.session.joined", "info",
+                  f"Sitzung {sid} zusammengefügt ({len(pfade)} Segmente, {mb} MB)",
+                  {"session_id": sid, "segments": len(pfade), "size_mb": mb})
+    except Exception as e:
+        # Bewusst auf error, nicht auf warning: der Betreiber hat diesen Lauf
+        # angestossen und wartet auf ein Ergebnis. Eine Zeile auf warning saehe
+        # er in einem ERROR-Log nie — genau das Fehlerbild aus CLAUDE.md.
+        log.error("Sitzung %s zusammenfuegen fehlgeschlagen: %s", sid, e)
+        with _JOIN_LOCK:
+            _JOIN_LAGE[sid] = {"status": "fehler", "ziel": ziel, "mb": 0,
+                               "seit": datetime.now(timezone.utc).isoformat(),
+                               "fehler": _fehler_text(e, "join")}
+    finally:
+        # Aufraeumpfad: schlaegt das Loeschen fehl, ist das bedeutungslos.
+        try: os.remove(listendatei)
+        except OSError: pass
+
+
+@bp.route("/api/recordings/session/<sid>/join", methods=["POST"])
+def api_recording_session_join(sid):
+    """Segmente einer Sitzung zu EINER Datei zusammenfuegen (ohne Neukodierung)."""
+    with _JOIN_LOCK:
+        lage = _JOIN_LAGE.get(sid)
+        if lage and lage.get("status") == "laeuft":
+            return jsonify(ok=True, status="laeuft", join=lage), 202
+    try:
+        with db_conn() as conn:
+            rows = _sitzung_zeilen(conn, sid)
+        if not rows:
+            return jsonify(ok=False, error=_t("Sitzung nicht gefunden")), 404
+        pfade = [r["filepath"] for r in rows
+                 if r["filepath"] and os.path.exists(r["filepath"])]
+        if len(pfade) < 2:
+            return jsonify(ok=False, error=_t(
+                "Weniger als zwei vorhandene Segmente — nichts zusammenzufügen")), 400
+        c = _c()
+        # Der Zielpfad wird aus dem gebaut, was die DATENBANK haelt — nicht aus
+        # der Kennung, die der Aufrufer geschickt hat. Die URL-Kennung ist ab
+        # hier nur noch Nachschlage-Schluessel (gebundener SQL-Parameter oben)
+        # und Dict-Schluessel; sie beruehrt den Dateipfad nicht mehr.
+        #
+        # Warum das nicht paranoid ist: nc.sicherpfad.sicher_join saeubert
+        # zwar nachweislich, aber die CodeQL-Datenflussanalyse sieht das nicht
+        # (die Barriere in .github/codeql deckt nur py/stack-trace-exposure ab)
+        # — der Lauf meldete hier zu Recht einen py/path-injection-Befund.
+        # Die Barriere blind zu erweitern hiesse, eine Abfrage zu entschaerfen,
+        # die sich hier nicht nachpruefen laesst. Den Pfad gar nicht erst aus
+        # Fremdeingabe zu bauen ist die kleinere und ehrlichere Aenderung.
+        sid_db = _sitzung.sitzung_id(rows[0]["username"],
+                                     rows[0]["started_at"] or rows[0]["created_at"])
+        ziel = _sitzung.zieldatei(c.recordings_dir, sid_db)
+        if os.path.exists(ziel) and not (request.get_json(silent=True) or {}).get("force"):
+            return jsonify(ok=False, error=_t("Datei existiert bereits — force=true zum Überschreiben"),
+                           ziel=os.path.basename(ziel)), 409
+        with _JOIN_LOCK:
+            _JOIN_LAGE[sid] = {"status": "laeuft", "ziel": ziel, "mb": 0,
+                               "seit": datetime.now(timezone.utc).isoformat(),
+                               "fehler": None}
+        threading.Thread(target=_join_lauf, name=f"join-{sid}"[:15],
+                         args=(sid, pfade, ziel, c.ffmpeg_threads_bg, c.ffmpeg_nice_bg),
+                         daemon=True).start()
+        return jsonify(ok=True, status="laeuft", segments=len(pfade),
+                       ziel=os.path.basename(ziel)), 202
+    except ValueError as e:
+        # nc.sicherpfad wirft, statt still auf einen Ersatzpfad zu fallen.
+        return jsonify(ok=False, error=_fehler_text(e, "session_join")), 400
+    except Exception as e:
+        return jsonify(ok=False, error=_fehler_text(e, "api_recording_session_join")), 500

@@ -324,8 +324,9 @@ def _test_recdb():
 
 
 def _test_routes_recordings():
-    """Welle 2 der Zerlegung (v4.0-W106): die 34 Aufnahmen-Routen liegen als
-       Flask-Blueprint in nc/routes/recordings.py. Geprueft wird, dass das
+    """Welle 2 der Zerlegung (v4.0-W106): die Aufnahmen-Routen liegen als
+       Flask-Blueprint in nc/routes/recordings.py. 34 waren es bei der
+       Zerlegung, 37 seit v4.2-W44 (die drei Sitzungs-Routen). Geprueft wird, dass das
        Blueprint fuer sich allein funktioniert (ohne Bot), dass der Kontext
        laut scheitert statt still None zu liefern, und dass im Monolithen keine
        zweite Kopie zurueckgeblieben ist."""
@@ -339,14 +340,17 @@ def _test_routes_recordings():
     app = Flask(__name__)
     app.register_blueprint(rt.bp)
     rules = {str(r.rule) for r in app.url_map.iter_rules() if r.endpoint != "static"}
-    assert len(rules) == 34, "34 Routen erwartet, %d registriert" % len(rules)
+    assert len(rules) == 37, "37 Routen erwartet, %d registriert" % len(rules)
     for want in ("/api/recordings/list", "/api/recordings/daily",
                  "/api/recordings/<int:rid>/manifest", "/api/recordings/trash",
-                 "/api/rec/orphans", "/api/rec/quality/<int:rec_id>"):
+                 "/api/rec/orphans", "/api/rec/quality/<int:rec_id>",
+                 # v4.2-W44: die Klammer um die Segmente EINES Streams
+                 "/api/recordings/sessions", "/api/recordings/session/<sid>",
+                 "/api/recordings/session/<sid>/join"):
         assert want in rules, "Pfad fehlt oder umbenannt: %s" % want
     assert not any(r.startswith("/recordings") for r in rules), \
         "url_prefix gesetzt — die Pfade haben sich verschoben"
-    ok("routes.recordings: 34 Routen, Pfade woertlich unveraendert")
+    ok("routes.recordings: 37 Routen, Pfade woertlich unveraendert")
 
     # (2) Endpunkt-Namen sind blueprint-qualifiziert. Das ist die EINZIGE
     # erlaubte Aenderung — sie ist folgenlos, weil es im Projekt kein url_for gibt.
@@ -7157,6 +7161,359 @@ def _test_v42_w39_treuepunkte_cooldown_gedeckelt():
         L.configure(enabled=False)
 
 
+def _test_v42_w44_aufnahmesitzung():
+    """v4.2-W44: sechs bis zehn Dateien sind EIN Stream — und das steht jetzt
+    auch so in der Datenbank.
+
+    Der Befund: ein dreistuendiger TikTok-Stream liegt bei uns als sechs bis
+    zehn Dateien auf der Platte. Das ist Absicht (die signierte Stream-URL
+    laeuft nach ~30 Minuten ab, B58 schneidet vorher sauber; dazu je eine
+    Datei nach 403, Stall oder Abriss), aber `recordings` kannte keine Spalte,
+    die sagt, dass diese sieben Zeilen zusammengehoeren. Der Betreiber konnte
+    den Stream deshalb nicht von Anfang bis Ende sehen — nicht weil das
+    Material fehlte, sondern weil es unsortiert herumlag.
+
+    Vier Dinge werden hier festgehalten, und jedes davon war beim Bauen
+    einmal falsch:
+      1. Ein 403-Backoff (Minuten) trennt NICHT, eine echte Pause schon.
+      2. Ein nackter ISO-Stempel wird als UTC gelesen, nicht als Ortszeit.
+      3. Eine Ueberlappung ist keine negative Luecke.
+      4. Ein Apostroph im Dateinamen bricht die concat-Liste nicht.
+    """
+    import calendar
+    import shlex
+    from nc import aufnahmesitzung as A
+
+    # --- 1) Die Klammer haelt ueber den Backoff, bricht bei echter Pause --
+    # SITZUNG_MAX_LUECKE_S ist mit 900 s bewusst grosszuegig: der 403-Backoff
+    # in nc/aufnahmefolge kostet Minuten, und danach ist es immer noch
+    # derselbe Stream. Ein knapper Wert (etwa 60 s) zerlegte jeden gestoerten
+    # Stream in ein Dutzend Sitzungen — also genau der Zustand vor W44, nur
+    # mit Spalte.
+    assert A.SITZUNG_MAX_LUECKE_S >= 600, \
+        "unter 10 Minuten zerlegt ein 403-Backoff den Stream in Scheiben"
+    assert A.gehoert_dazu(1000.0, 1002.0) is True          # B58-Schnitt
+    assert A.gehoert_dazu(1000.0, 1000.0 + 300) is True    # 403 mit Backoff
+    assert A.gehoert_dazu(1000.0, 1000.0 + 1200) is False  # 20 min = neu
+    assert A.gehoert_dazu(None, 5.0) is False, \
+        "ohne vorheriges Segment gibt es keine laufende Sitzung"
+    assert A.gehoert_dazu(1000.0, 995.0) is True, \
+        "Ueberlappung ist ein nahtloser Schnitt, keine neue Sitzung"
+    ok("W44: 403-Backoff haelt die Sitzung zusammen, echte Pause trennt sie")
+
+    # --- 2) Ein nackter Stempel ist UTC, nicht Ortszeit ------------------
+    # Der Bot schreibt ausschliesslich UTC. Wuerde ein Stempel ohne Zone als
+    # LOKALE Zeit gelesen, staende er auf einer Box mit TZ=Europe/Berlin ein
+    # bis zwei Stunden neben einem mit "+00:00" — und jede Sitzung braeche
+    # genau an der Stelle, an der das Format wechselt.
+    # Absoluter Wert, kein Selbstvergleich: "== sekunden(...+00:00)" haelt auch
+    # dann, wenn beide Seiten falsch als Ortszeit gelesen werden — auf einer
+    # Box mit TZ=UTC faellt der Fehler damit nie auf, auf der Berliner Kiste
+    # des Betreibers stuende jede Sitzungsgrenze zwei Stunden daneben.
+    soll = calendar.timegm((2026, 9, 11, 20, 0, 0, 0, 0, 0))
+    for form in ("2026-09-11T20:00:00+00:00", "2026-09-11T20:00:00",
+                 "2026-09-11T20:00:00Z", "2026-09-11 20:00:00+00:00"):
+        assert A.sekunden(form) == soll, (form, A.sekunden(form), soll)
+    for murks in (None, "", "   ", "kein Datum", "2026-13-45"):
+        assert A.sekunden(murks) is None, murks
+    assert A.sekunden(1757620800.0) == 1757620800.0
+    ok("W44: Zeitstempel ohne Zone gelten als UTC, Murks als None")
+
+    # --- 3) Die Naht-Rechnung sagt die Wahrheit --------------------------
+    t0 = A.sekunden("2026-09-11T20:00:00Z")
+    seg, cur = [], t0
+    # Ein realer Verlauf: fuenf URL-Schnitte a 2-4 s, ein 403 mit 5 min Backoff.
+    for laenge, pause in [(1740, 3), (1740, 2), (1740, 301), (1740, 2),
+                          (1740, 4), (1740, 2), (900, 0)]:
+        seg.append((cur, cur + laenge))
+        cur += laenge + pause
+    lst, summe, brutto, netto = A.luecken(seg)
+    assert len(lst) == 6, lst
+    assert abs(summe - 314) < 0.5, summe
+    assert abs(brutto - netto - 314) < 0.5, (brutto, netto)
+    assert 97.0 < A.abdeckung(seg) < 98.0, A.abdeckung(seg)
+    # Eine Ueberlappung darf die Bilanz NICHT schoenrechnen: mit einem naiven
+    # sum(start - vorheriges_ende) haette ein einziger doppelt aufgenommener
+    # Abschnitt die 314 s Loch rechnerisch aufgefressen.
+    ueber = [(0.0, 100.0), (50.0, 150.0), (400.0, 500.0)]
+    lst2, summe2, _b2, _n2 = A.luecken(ueber)
+    assert lst2 == [250.0] and summe2 == 250.0, (lst2, summe2)
+    # Leere und entartete Eingabe darf nicht werfen.
+    assert A.luecken([]) == ([], 0.0, 0.0, 0.0)
+    assert A.abdeckung([]) == 100.0
+    assert A.abdeckung([(5.0, 5.0)]) == 100.0, \
+        "eine Sitzung ohne Brutto-Zeit ist vollstaendig, nicht 0 %"
+    ok("W44: Luecken-Bilanz stimmt, Ueberlappung rechnet sie nicht schoen")
+
+    # --- 4) Die concat-Liste ueberlebt jeden Dateinamen ------------------
+    # Der concat-Demuxer liest  file 'pfad'  mit der Quoting-Regel von
+    # POSIX-sh — genau deshalb ist die Form '\'' richtig, und genau deshalb
+    # prueft shlex hier stellvertretend (ffmpeg selbst laeuft in der CI nicht).
+    # Ein roher Apostroph beendete die Zeichenkette mitten im Pfad; alles
+    # danach waere ein eigenes Argument.
+    boese = ["/rec/it's here.mp4", "/rec/'; rm -rf / ;'.mp4",
+             "/rec/a b  c.mp4", "/rec/ü mlaut'.mp4", "/rec/'''.mp4",
+             "/rec/normal.mp4"]
+    zeilen = A.concat_liste(boese).rstrip("\n").split("\n")
+    assert len(zeilen) == len(boese)
+    for zeile, erwartet in zip(zeilen, boese):
+        assert shlex.split(zeile) == ["file", erwartet], (zeile, erwartet)
+    assert A.concat_liste([]) == "", "leere Liste darf keine Leerzeile erzeugen"
+    ok("W44: concat-Liste haelt Apostroph, Leerzeichen und Umlaut aus")
+
+    # --- 5) -c copy, nicht neu kodieren ----------------------------------
+    # Der ganze Punkt: alle Segmente stammen aus derselben Quelle mit
+    # demselben Recorder-Kommando, haben also identische Codec-Parameter.
+    # Eine Neukodierung kostete auf dieser Box eine Stunde CPU, die der
+    # Restream-Transcode gerade braucht.
+    cmd = A.concat_cmd("/tmp/l.txt", "/tmp/z.mp4")
+    assert "-c" in cmd and cmd[cmd.index("-c") + 1] == "copy", cmd
+    assert "-safe" in cmd and cmd[cmd.index("-safe") + 1] == "0", \
+        "-safe 0 fehlt — die Liste traegt absolute Pfade"
+    assert cmd[-1] == "/tmp/z.mp4" and "+faststart" in cmd
+    for verboten in ("libx264", "-crf", "-b:v", "-preset"):
+        assert verboten not in cmd, verboten
+    # Der Thread-Deckel gehoert in den Kommandobauer, nicht zum Aufrufer.
+    # test_restream.test_ffmpeg_thread_budget prueft an genau dieser Funktion;
+    # ein Deckel eine Ebene hoeher waere korrekt und trotzdem unsichtbar.
+    gedeckelt = A.concat_cmd("/tmp/l.txt", "/tmp/z.mp4", threads=1, nice=12)
+    assert "-threads" in gedeckelt and gedeckelt[gedeckelt.index("-threads") + 1] == "1"
+    assert gedeckelt[gedeckelt.index("-threads") - 1] == "ffmpeg", \
+        "-threads muss direkt hinter ffmpeg stehen, sonst gilt es nur fuer den Encoder"
+    ok("W44: concat laeuft mit -c copy, ohne Neukodierung, mit Thread-Deckel")
+
+    # --- 6) Der Pfad-Riegel kommt aus nc.sicherpfad ----------------------
+    # Die Sitzungs-ID traegt einen TikTok-Nutzernamen, also fremde Eingabe.
+    # Ein zweiter, selbstgebauter Riegel daneben war schon einmal der Grund
+    # fuer 241 CodeQL-Befunde, die keiner mehr pruefen konnte.
+    hier = os.path.dirname(os.path.abspath(__file__))
+    quelle = open(os.path.join(hier, "nc", "aufnahmesitzung.py"),
+                  encoding="utf-8").read()
+    assert "sicher_join" in quelle, \
+        "zieldatei muss nc.sicherpfad benutzen, keinen eigenen Riegel"
+    tmp = tempfile.mkdtemp()
+    # ROHE Kennungen, nicht durch sitzung_id gewaschen: die Join-Route reicht
+    # die sid aus dem URL-Pfad direkt an zieldatei weiter. Wuerde hier nur
+    # sitzung_id("../../etc/passwd") geprueft, liefe der Test gegen einen
+    # bereits entschaerften Namen und der Riegel in zieldatei waere ungeprueft
+    # — er koennte ersatzlos entfallen, ohne dass ein Vertrag kippt.
+    for roh in ("../../etc/passwd", "..\\..\\windows", "/absolut/weg",
+                "....//....//x", "..", ".", "", "@u/../../x_20260911T2000"):
+        ziel = A.zieldatei(tmp, roh)
+        assert os.path.dirname(os.path.realpath(ziel)) == os.path.realpath(tmp), \
+            (roh, ziel)
+        basis = os.path.basename(ziel)
+        assert basis.startswith("sitzung_") and basis.endswith(".mp4"), (roh, basis)
+        assert "/" not in basis and ".." not in basis, (roh, basis)
+    # Und die gewaschene Form bleibt natuerlich auch drin.
+    for boeser_name in ("../../etc/passwd", "@helge_72"):
+        sid = A.sitzung_id(boeser_name, "2026-09-11T20:00:00Z")
+        assert "/" not in sid and ".." not in sid, sid
+        ziel = A.zieldatei(tmp, sid)
+        assert os.path.dirname(os.path.realpath(ziel)) == os.path.realpath(tmp), ziel
+    ok("W44: Sitzungs-Datei bleibt unter recordings/, auch bei boesem Namen")
+
+    # --- 7) Das Modul bleibt bot-frei ------------------------------------
+    for muster in ("import bot", "from bot"):
+        assert muster not in quelle, muster
+    assert "sqlite3" not in quelle and "db_conn" not in quelle, \
+        "die Sitzungsrechnung darf keine Datenbank kennen — sonst ist sie " \
+        "nur mit laufendem Bot pruefbar"
+    ok("W44: nc/aufnahmesitzung.py rechnet nur — keine DB, kein Bot, keine Uhr")
+
+    # --- 8) bot.py schreibt die Klammer wirklich -------------------------
+    # Ein Modul, das niemand aufruft, ist keine Loesung. brain/report.py stand
+    # aus genau diesem Grund monatelang fertig und tot herum.
+    bot = open(os.path.join(hier, "bot.py"), encoding="utf-8").read()
+    flach = " ".join(bot.split())
+    assert "from nc import aufnahmesitzung as _nc_sitzung" in bot
+    assert "session_id, started_at, ended_at" in flach, \
+        "der INSERT in add_recording traegt die W44-Spalten nicht"
+    # Am add_recording-AUFRUF festmachen, nicht am blossen Vorkommen der
+    # Zeichenkette: "started_at=started_at, ended_at=ended_at" steht auch im
+    # Aufruf von split_and_send_video zwei Bildschirme weiter unten. Ein
+    # Vertrag, der nur nach dem Text sucht, bleibt gruen, waehrend die Klammer
+    # in Wahrheit auf geschaetzte Zeiten faellt — genau so ist er beim Bauen
+    # einmal durchgerutscht.
+    assert ("add_recording(username, output_file, file_size=file_size, "
+            "duration_secs=int(duration), tracking_id=tid, "
+            "started_at=started_at, ended_at=ended_at)") in flach, \
+        "handle_recording_finished gibt die echten Zeiten nicht an " \
+        "add_recording weiter — ohne sie wird die Startzeit geschaetzt"
+    assert "_nc_sitzung.gehoert_dazu(" in bot and "_nc_sitzung.sitzung_id(" in bot
+    # Der Rueckfall auf den alten Spaltensatz muss bleiben: kam
+    # _migrate_columns auf einem Bestand nicht durch, fehlte sonst nicht die
+    # Klammer, sondern JEDE Aufnahme im Dashboard.
+    assert flach.count("INSERT INTO recordings (username, filepath, created_at,") == 2, \
+        "der Rueckfall-INSERT ohne Sitzungs-Spalten fehlt"
+    ok("W44: bot.py bestimmt die Sitzung, mit Rueckfall auf den alten INSERT")
+
+    # --- 9) Schema, Index und die drei Routen ----------------------------
+    sch = open(os.path.join(hier, "nc", "schema.py"), encoding="utf-8").read()
+    fs = " ".join(sch.split())
+    for spalte in ('"session_id": txt_idx', '"started_at": ts', '"ended_at": ts'):
+        assert spalte in fs, spalte
+    assert "idx_recordings_session" in fs, \
+        "ohne Index wird jede Sitzungsabfrage ein Full Scan"
+    rt = open(os.path.join(hier, "nc", "routes", "recordings.py"),
+              encoding="utf-8").read()
+    fr = " ".join(rt.split())
+    for pfad in ('"/api/recordings/sessions"',
+                 '"/api/recordings/session/<sid>"',
+                 '"/api/recordings/session/<sid>/join", methods=["POST"]'):
+        assert pfad in fr, pfad
+    # Der Join laeuft im Thread, nicht in der Anfrage: ein 6-GB-concat haelt
+    # sonst einen Flask-Worker minutenlang fest und der Proxy bricht ab,
+    # waehrend ffmpeg fleissig weiterarbeitet.
+    assert "threading.Thread(target=_join_lauf" in fr, \
+        "der concat-Lauf blockiert die HTTP-Anfrage"
+    assert 'log.error("Sitzung %s zusammenfuegen fehlgeschlagen' in rt, \
+        "ein fehlgeschlagener Join gehoert auf error — auf warning sieht ihn niemand"
+    # Der Zielpfad wird aus DB-Werten gebaut, nicht aus der URL-Kennung. Die
+    # erste Fassung reichte sid direkt an zieldatei — nc.sicherpfad saeubert
+    # das zwar nachweislich, aber CodeQL sieht die Saeuberung nicht (die
+    # Barriere in .github/codeql deckt nur py/stack-trace-exposure ab) und
+    # meldete zu Recht py/path-injection. Wer das rueckgaengig macht, holt
+    # den Befund zurueck.
+    assert "_sitzung.zieldatei(c.recordings_dir, sid_db)" in fr, \
+        "der Join-Zielpfad muss aus DB-Werten kommen"
+    assert "_sitzung.zieldatei(c.recordings_dir, sid)" not in fr, \
+        "die URL-Kennung darf nicht in den Dateipfad — py/path-injection"
+    ok("W44: Spalten, Index, drei Routen — und der Zielpfad ohne Fremdeingabe")
+
+
+def _test_v42_w45_live_ping_nicht_bei_jeder_reparatur():
+    """v4.2-W45: der Bot schrieb bei jedem Reparatur-Neustart eine
+    Live-Ankuendigung nach Discord — und schrieb dabei den .env-Kommentar
+    statt der Werte.
+
+    Gemeldet mit Bildschirmfoto: dieselbe Nachricht viermal hintereinander im
+    Kanal `#ki-moderator`, und ihr Inhalt lautete
+
+        <@&# Discord-Rollen-ID, die gepingt wird (optional)>
+        \U0001F534 **# dein Name fuer die Live-Ankuendigung ist LIVE!**
+
+    Zwei getrennte Fehler in einer Zeile.
+
+    **Der Inhalt.** python-dotenv kuerzt einen Kommentar nur, wenn ein
+    Leerzeichen davor steht. `COMMUNITY_LIVE_ROLE_ID=# Discord-Rollen-ID, …`
+    liefert also die ganze Zeile als Wert, und ein blosses `.strip()` macht
+    daraus einen wahrheitswertigen String. Die Antwort ist eine FORM-Pruefung:
+    eine Rollen-ID ist eine Zahl, ein Name faengt nicht mit einem Doppelkreuz
+    an. Ein globales "schneide alles ab #" waere falsch — Overlay-Farben
+    fangen mit # an.
+
+    **Die Wiederholung.** Der Kommentar im Bot behauptete "einmal pro
+    Restream-Session, entprellt ueber _COMMUNITY_PINGED". Tatsaechlich entfernte
+    `stop()` den Eintrag BEDINGUNGSLOS, auch beim internen Reparatur-Neustart
+    (`_keep_desired=True`). Der Verify-Waechter macht genau das: stop, 3 s
+    warten, `start()` ohne `_attempts` — also 0. Jeder Reparaturzyklus war damit
+    ein frischer Start mit frischem Ping.
+    """
+    from nc import community as C
+
+    # --- 1) Der .env-Kommentar wird nie zum Rollen-Ping ------------------
+    for murks in ("# Discord-Rollen-ID, die gepingt wird (optional)",
+                  "", "   ", None, "abc", "@everyone", "<@&123>", "12 34",
+                  "123a", "-1", "1.0",
+                  "1234567890123456789012345678901234"):               # zu lang
+        assert C.rollen_id(murks) == "", repr(murks)
+    # Eine kurze Zahl ist KEIN Fehlerfall: echte Snowflakes haben 17-19
+    # Stellen, aber eine Untergrenze faengt nichts Reales ab (der Fehlerfall
+    # ist ein ganzer Kommentar) und braeche test_community_discovery_loop,
+    # das mit "999" prueft.
+    assert C.rollen_id("999") == "999"
+    assert C.rollen_id("1547914245138812948") == "1547914245138812948"
+    assert C.rollen_id("  1547914245138812948  ") == "1547914245138812948"
+    ok("W45: nur eine Snowflake wird gepingt, kein .env-Kommentar")
+
+    # --- 2) Der Name ebenso -----------------------------------------------
+    assert C.anzeigename("# dein Name fuer die Live-Ankuendigung", "Der Stream") \
+        == "Der Stream"
+    assert C.anzeigename("", "Der Stream") == "Der Stream"
+    assert C.anzeigename(None, "Der Stream") == "Der Stream"
+    assert C.anzeigename("  Helge  ", "Der Stream") == "Helge"
+    # Ein Name DARF ein Doppelkreuz tragen, nur nicht damit anfangen.
+    assert C.anzeigename("Helge #1", "Der Stream") == "Helge #1"
+    ok("W45: ein stehengebliebener Kommentar wird nicht zum Streamer-Namen")
+
+    # --- 3) Die fertige Nachricht -----------------------------------------
+    C.configure(live_role_id="# Discord-Rollen-ID, die gepingt wird (optional)")
+    text = C.live_ping("Der Stream", platforms=["Kick", "Twitch"])
+    assert "<@&" not in text, text
+    assert "Discord-Rollen-ID" not in text, text
+    assert "Der Stream ist LIVE!" in text
+    C.configure(live_role_id="1547914245138812948")
+    assert C.live_ping("Helge", platforms=["Kick"]).startswith(
+        "<@&1547914245138812948> ")
+    C.configure(live_role_id="")          # Zustand nicht an den naechsten Test vererben
+    ok("W45: die Ankuendigung traegt entweder eine echte Rolle oder gar keine")
+
+    # --- 4) Die Zeitsperre ------------------------------------------------
+    assert C.darf_pingen(None, 1000.0, 3600) is True, "der erste Ping geht immer"
+    assert C.darf_pingen(1000.0, 1003.0, 3600) is False, \
+        "drei Sekunden spaeter ist derselbe Stream — genau der Abstand, den " \
+        "der Verify-Waechter zwischen stop und start wartet"
+    assert C.darf_pingen(1000.0, 1000.0 + 3600, 3600) is True
+    assert C.darf_pingen(1000.0, 1000.0 + 3599, 3600) is False
+    # Ein kaputter Wert darf den Ping nicht dauerhaft verhindern: lieber eine
+    # Nachricht zu viel als eine Live-Ankuendigung, die nie mehr kommt.
+    assert C.darf_pingen("murks", 1000.0, 3600) is True
+    assert C.darf_pingen(1000.0, 1001.0, "murks") is True
+    ok("W45: Zeitsperre haelt den Reparatur-Zyklus auf, blockiert aber nicht dauerhaft")
+
+    # --- 5) Und der Bot benutzt das auch ----------------------------------
+    hier = os.path.dirname(os.path.abspath(__file__))
+    bot = open(os.path.join(hier, "bot.py"), encoding="utf-8").read()
+    flach = " ".join(bot.split())
+    assert "_community.darf_pingen(_COMMUNITY_PINGED.get(rid)" in flach, \
+        "die Aufrufstelle prueft die Zeitsperre nicht"
+    assert "_community.anzeigename(os.getenv(\"STREAMER_NAME\")" in flach, \
+        "der Streamer-Name geht ungeprueft nach Discord"
+    assert "COMMUNITY_LIVE_PING_MIN_GAP_S" in bot
+    # Der Kern des Befunds: das Vergessen darf NUR beim Betreiber-Stop
+    # passieren — und das wird am SYNTAXBAUM geprueft, nicht an einem
+    # Textfenster. Die erste Fassung dieses Vertrags sah 400 Zeichen vor dem
+    # pop() nach "if not _keep_desired:" und war damit gruen, obwohl die
+    # Bedingung auf "if True:" stand: in stop() steht dieselbe Bedingung
+    # wenige Zeilen darueber noch einmal (fuer _stallkills). Die
+    # Mutationsprobe hat genau dieses Loch aufgedeckt.
+    import ast as _ast
+    _baum = _ast.parse(bot)
+    def _ist_betreiber_stop(knoten):
+        t = knoten.test
+        return (isinstance(t, _ast.UnaryOp) and isinstance(t.op, _ast.Not)
+                and isinstance(t.operand, _ast.Name)
+                and t.operand.id == "_keep_desired")
+    _pops, _geschuetzt = 0, 0
+    for _f in _ast.walk(_baum):
+        if not (isinstance(_f, (_ast.FunctionDef, _ast.AsyncFunctionDef))
+                and _f.name == "stop"):
+            continue
+        for _n in _ast.walk(_f):
+            if not (isinstance(_n, _ast.Call)
+                    and isinstance(_n.func, _ast.Attribute)
+                    and _n.func.attr == "pop"
+                    and isinstance(_n.func.value, _ast.Name)
+                    and _n.func.value.id == "_COMMUNITY_PINGED"):
+                continue
+            _pops += 1
+            # Steht dieser Aufruf im Rumpf eines "if not _keep_desired"?
+            for _if in _ast.walk(_f):
+                if (isinstance(_if, _ast.If) and _ist_betreiber_stop(_if)
+                        and any(_if.body[0].lineno <= _n.lineno
+                                <= (_k.end_lineno or 0) for _k in _if.body)):
+                    _geschuetzt += 1
+                    break
+    assert _pops == 1, "_COMMUNITY_PINGED wird in stop() %dx geraeumt" % _pops
+    assert _geschuetzt == 1, \
+        "das Raeumen haengt nicht an 'if not _keep_desired' — jeder " \
+        "Reparatur-Neustart pingt dann wieder"
+    assert "_COMMUNITY_PINGED.discard(rid)" not in flach, \
+        "die alte, bedingungslose Fassung steht noch da"
+    ok("W45: nur der Stop des Betreibers beendet die Ping-Sperre")
+
+
 def main():
     tmp = tempfile.mkdtemp()
     configure_db(db_path=os.path.join(tmp, "t.db"), backend="sqlite")
@@ -7360,6 +7717,10 @@ def main():
     _test_v42_w29_youtube_upload()
 
     _test_v42_w39_treuepunkte_cooldown_gedeckelt()
+
+    _test_v42_w44_aufnahmesitzung()
+
+    _test_v42_w45_live_ping_nicht_bei_jeder_reparatur()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)
 

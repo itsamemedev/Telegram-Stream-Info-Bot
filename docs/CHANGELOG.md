@@ -11,6 +11,171 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Behoben — der Live-Ping kam bei jeder Reparatur, und mit dem falschen Text (v4.2 W45)
+
+Gemeldet mit Bildschirmfoto: dieselbe Ankündigung viermal hintereinander in
+`#ki-moderator`, und ihr Inhalt lautete
+
+    <@&# Discord-Rollen-ID, die gepingt wird (optional)>
+    🔴 **# dein Name für die Live-Ankündigung ist LIVE!**
+
+Zwei getrennte Fehler in einer Zeile.
+
+**Der Inhalt.** `python-dotenv` kürzt einen Kommentar nur, wenn ein Leerzeichen
+davor steht. Eine Zeile der Form
+
+    COMMUNITY_LIVE_ROLE_ID=# Discord-Rollen-ID, die gepingt wird (optional)
+
+liefert also die **ganze Zeile** als Wert, und ein bloßes `.strip()` macht
+daraus einen wahrheitswertigen String, der brav als Rollen-Ping in den Kanal
+geht. Dasselbe bei `STREAMER_NAME`. Die Antwort ist eine Form-Prüfung statt
+eines Schnitts: eine Rollen-ID ist eine Zahl (`nc.community.rollen_id`), ein
+Name fängt nicht mit einem Doppelkreuz an (`anzeigename`). Ein globales
+„schneide alles ab `#`" wäre falsch — Overlay-Farben fangen mit `#` an.
+
+**Die Wiederholung.** Der Kommentar an der Aufrufstelle behauptete „einmal pro
+Restream-Session, entprellt über `_COMMUNITY_PINGED`". Das stimmte nicht.
+`stop()` entfernte den Eintrag **bedingungslos** — auch beim internen
+Reparatur-Neustart mit `_keep_desired=True`. Der Verify-Wächter macht aber
+genau das:
+
+    await _RESTREAM_MGR.stop(rid, _keep_desired=True)
+    await asyncio.sleep(3)
+    await _RESTREAM_MGR.start(rid, _src_watch=True)     # _attempts = 0
+
+Jeder Reparaturzyklus war damit ein frischer Start mit frischem Ping, und bei
+einem zähen Ziel sind das Dutzende. Der Schutz stand da, hat aber nie
+gegriffen — die klassische stille Fehlanzeige: niemand liest den Code nach,
+wenn ein Kommentar behauptet, das Problem sei gelöst.
+
+Jetzt zweifach abgesichert: das Räumen hängt am Betreiber-Stop
+(`if not _keep_desired`), und daneben steht eine **Zeitsperre**
+(`COMMUNITY_LIVE_PING_MIN_GAP_S`, Vorgabe 3600 s). Die Sperre ist bewusst
+redundant — sie hält auch dann, wenn ein künftiger Pfad das Vergessen wieder
+einbaut. Ein kaputter Wert in der Rechnung lässt den Ping durch statt ihn
+dauerhaft zu blockieren: lieber eine Nachricht zu viel als eine
+Live-Ankündigung, die nie mehr kommt.
+
+Gegenprobe: 237 statt 232 Verträge. Acht Mutationsproben — Rollen-ID wieder
+ungeprüft, Name wieder ungeprüft, `live_ping` nimmt den Rohwert, Zeitsperre
+sperrt nie, Zeitsperre sperrt für immer, Räumen wieder bedingungslos,
+Aufrufstelle ohne Zeitsperre, Streamer-Name wieder roh — kippen alle den
+Vertrag. Die Prüfung auf die Bedingung vor dem Räumen sieht bewusst in ein
+400-Zeichen-Fenster davor: `if not _keep_desired:` steht in `stop()` ohnehin
+zweimal, eine Suche über die ganze Datei wäre immer grün gewesen.
+
+**Zu tun auf dem Server:** die beiden `.env`-Zeilen korrigieren — entweder den
+Wert eintragen oder den Kommentar mit einem Leerzeichen abtrennen. Der Bot
+sendet ab dieser Fassung auch mit der kaputten Zeile keinen Unsinn mehr, aber
+dann eben ohne Rollen-Ping und mit „Der Stream" als Namen.
+
+### Hinzugefügt — ein Stream ist wieder ein Stream (v4.2 W44)
+
+Gewünscht: „irgendwas, das uns die Streams stabil abfangen lässt, ohne dass die
+Verbindung abreißt und man den gesamten Stream von Anfang bis Ende sehen kann."
+
+Die Aufnahme reißt nicht ab — das war die erste Überraschung beim Nachsehen.
+Die signierte TikTok-Stream-URL läuft nach rund 30 Minuten ab, und der
+B58-Watchdog beendet `ffmpeg` lieber ein paar Sekunden vorher sauber, als auf
+den 404 zu warten; seit V37-DISC setzt der Erfolgspfad danach
+`_NEXT_CHECK_AT[tid] = 0` und startet sofort neu statt das 20-Sekunden-Intervall
+abzuwarten. Ein dreistündiger Stream kostet über diesen Weg also rund 15
+Sekunden, nicht 15 Minuten.
+
+Was fehlte, war die Klammer. `recordings` kannte
+
+    id, username, filepath, created_at, file_size, duration_secs, tracking_id
+
+und nichts darin sagte, dass sieben dieser Zeilen **ein** Stream von 20:00 bis
+23:30 sind. Das Material lag vollständig auf der Platte — nur unsortiert, in
+sechs bis zehn Dateien, ohne Reihenfolge und ohne Aussage darüber, ob zwischen
+zwei Dateien zwei Sekunden oder zwanzig Minuten fehlen. Genau deshalb ließ sich
+der Stream nicht von Anfang bis Ende ansehen.
+
+**Die Klammer.** `recordings` trägt jetzt `session_id`, `started_at` und
+`ended_at`, `session_id` indiziert. `add_recording` bekommt die echten Zeiten
+aus `handle_recording_finished` gereicht und entscheidet über
+`nc/aufnahmesitzung.gehoert_dazu()`, ob das Segment die laufende Sitzung
+fortsetzt: bis 15 Minuten Pause ja, darüber beginnt eine neue. Der Wert ist
+bewusst großzügig — ein 403 mit Backoff kostet Minuten, und danach ist es
+immer noch derselbe Stream. Bei 60 Sekunden zerfiele jeder gestörte Stream in
+ein Dutzend Sitzungen, also genau der Zustand von vorher, nur mit Spalte.
+
+`started_at` wird geschrieben und nicht aus `created_at` minus `duration_secs`
+gerechnet: `created_at` entsteht beim `INSERT`, also nach dem Ende der Aufnahme
+und nach dem Ermitteln der Dateigröße. Das sind je Segment ein paar Sekunden —
+und genau diese Sekunden sind die Naht, die gemessen werden soll.
+
+**Die Ehrlichkeit über die Nähte.** `GET /api/recordings/sessions` und
+`GET /api/recordings/session/<sid>` liefern Brutto (Wanduhr), Netto
+(tatsächlich aufgenommen), jede einzelne Lücke und die Abdeckung in Prozent.
+Eine Überlappung zählt dabei **nicht** als negative Lücke — mit einem naiven
+`sum(start − vorheriges_ende)` hätte ein einziger doppelt aufgenommener
+Abschnitt die echten Löcher rechnerisch aufgefressen.
+
+**Das Zusammenfügen.** `POST /api/recordings/session/<sid>/join` hängt die
+Segmente über den concat-Demuxer mit `-c copy` aneinander: alle stammen aus
+derselben Quelle mit demselben Recorder-Kommando, haben also identische
+Codec-Parameter. Das kostet praktisch keine CPU — wichtig auf einer Box, die
+schon beim Restream-Transcode nicht hinterherkommt. Der Lauf geht in einen
+eigenen Thread und die Route antwortet mit 202: ein Sechs-Gigabyte-`concat`
+hielte sonst minutenlang einen Flask-Worker fest und liefe am Reverse-Proxy in
+einen Timeout, während `ffmpeg` fleißig weiterarbeitet.
+
+Drei Fallstricke, jeder davon beim Bauen einmal zugeschlagen:
+
+* Ein Apostroph im Dateinamen beendet die concat-Liste vorzeitig. Die
+  Demuxer-Quotierung entspricht der von POSIX-sh, also `'\''`; ohne das ist ein
+  Pfad mit Apostroph nicht nur kaputt, sondern hebelt die Argumentgrenze aus.
+* Ein ISO-Stempel ohne Zeitzone wird von Python als **Ortszeit** gelesen. Der
+  Bot schreibt ausschließlich UTC — auf der Berliner Box stünde jede
+  Sitzungsgrenze sonst zwei Stunden daneben. Der Container der CI läuft auf
+  UTC, dort ist der Fehler unsichtbar; die Mutationsprobe läuft deshalb unter
+  `TZ=Europe/Berlin`.
+* Die Kennung kommt bei der Join-Route aus dem URL-Pfad, ist also fremde
+  Eingabe. Der Pfad-Riegel ist `nc.sicherpfad.sicher_join` und wird nicht
+  danebengebaut; zusätzlich werden Punktfolgen eingedampft, damit gar kein
+  `sitzung_.._.._x.mp4` entsteht, das ein späterer `normpath` wieder als
+  Aufstieg liest.
+
+Gegenprobe: 232 statt 223 Verträge in `test_nc_modules.py`
+(`_test_v42_w44_aufnahmesitzung`, neun Blöcke). Sechzehn Mutationsproben —
+Klammer auf 60 s verkürzt, naive Zeit als Ortszeit, Überlappung
+schöngerechnet, Apostroph roh, `-c copy` durch `libx264` ersetzt, `-safe 0`
+entfernt, Pfad-Riegel durch Verkettung ersetzt, Punktfolge nicht eingedampft,
+Startzeit nicht durchgereicht, Sitzung nie fortgesetzt, Rückfall-`INSERT`
+entfernt, Index entfernt, `session_id` nicht indizierbar, Join blockiert die
+Anfrage, Join-Fehler auf `warning`, Route entfernt — kippen alle den Vertrag.
+Zwei Löcher fielen dabei auf und sind geschlossen: der Zeitzonen-Vergleich war
+ein Selbstvergleich (hält auch, wenn beide Seiten falsch sind), und
+`started_at=started_at, ended_at=ended_at` steht zwei Bildschirme weiter unten
+noch einmal im Aufruf von `split_and_send_video` — die Prüfung hängt jetzt am
+vollständigen `add_recording`-Aufruf.
+
+**Nachtrag aus dem CodeQL-Lauf:** die erste Fassung reichte die Sitzungs-Kennung
+aus dem URL-Pfad direkt an `zieldatei` weiter. `nc.sicherpfad.sicher_join`
+säubert das nachweislich, aber die Datenflussanalyse sieht die Säuberung nicht —
+die Barriere in `.github/codeql/NcSanitizer.qll` deckt nur
+`py/stack-trace-exposure` ab, nicht `py/path-injection`. Der Befund war also
+richtig. Die Barriere blind um eine zweite Abfrage zu erweitern hieße, eine
+Prüfung zu entschärfen, die sich lokal nicht nachvollziehen lässt (CodeQL ist
+auf der Entwicklungsmaschine nicht installiert). Stattdessen wird der Zielpfad
+jetzt aus dem gebaut, was die **Datenbank** hält — Nutzername und Startzeit der
+ersten Zeile —; die Kennung des Aufrufers ist nur noch Nachschlage-Schlüssel
+(gebundener SQL-Parameter) und Dict-Schlüssel und berührt keinen Dateipfad mehr.
+Ein Vertrag hält beide Hälften fest, damit der Befund nicht zurückkommt.
+
+`ffmpeg` ist im Prüf-Container nicht installiert; die Quotierung der
+concat-Liste ist deshalb über `shlex` gegengeprüft und nicht über einen echten
+Lauf. Der Thread-Deckel sitzt in `concat_cmd` selbst und nicht beim Aufrufer,
+weil `test_restream.test_ffmpeg_thread_budget` an der bauenden Funktion prüft —
+ein Deckel eine Ebene höher wäre richtig und trotzdem unsichtbar.
+
+Der `INSERT` fällt bei einem Fehler auf den Spaltensatz von vor dieser Welle
+zurück. Kam `_migrate_columns` auf einem Bestand nicht durch, fehlte sonst
+nicht die Klammer, sondern **jede** Aufnahme im Dashboard. Die Klammer ist
+Komfort, der Eintrag ist Pflicht.
+
 ### Behoben — der Encode-Rückstand wurde beklagt, nicht behoben (v4.2 W43)
 
 Gemeldet: „die Restreams sind instabil". Die Kette steht vollständig im

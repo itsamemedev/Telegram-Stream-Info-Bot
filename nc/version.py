@@ -49,6 +49,8 @@ CHANGELOG = [
             "Kein Dauerläufer blockiert mehr die Ereignisschleife: die Stillstände von 30 bis 68 Sekunden sind weg, Datenbankzugriffe laufen neben der Schleife",
             "Der Rauchtest führt bot.py in der CI wirklich aus — vorher stand er in der Pflichtliste, lief aber auf keiner Maschine automatisch",
             "Vorschläge des Evolutions-Kerns lassen sich gesammelt übernehmen oder verwerfen",
+            "Ein Stream ist wieder EIN Stream: die sechs bis zehn Dateien, in die ein dreistündiger Live-Auftritt zerfällt (Ablauf der signierten TikTok-URL alle ~30 Minuten, dazu je eine nach 403 oder Abriss), tragen jetzt eine gemeinsame Sitzungs-Kennung mit Start- und Endzeit — das Deck zeigt Abdeckung und die echten Nahtlücken, und auf Knopfdruck werden die Segmente ohne Neukodierung zu einer Datei zusammengefügt",
+            "Die Live-Ankündigung nach Discord kommt wieder einmal pro Stream statt einmal pro Reparatur-Neustart — und sie trägt den Namen und die Rolle aus der Konfiguration, nicht mehr den danebenstehenden Kommentar",
         ],
     },
     {
