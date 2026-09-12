@@ -15,6 +15,37 @@ from urllib.parse import urlparse
 
 # ---------------------------------------------------------------- Helpers
 
+
+def rumpf_ab(quelle, ab):
+    """Von Offset `ab` bis zur naechsten Top-Level-Definition. -> str
+
+    v4.2-W66. DER ERSATZ FUER `src[i:i + 3000]`. CLAUDE.md nennt die feste
+    Zahl namentlich als Bruchstelle, und in W62 hat sie zugeschlagen:
+    `src[j:j + 4200]` reichte nicht mehr ueber den gewachsenen Frame-Feeder
+    und meldete „kein fester Takt", waehrend `stop.wait(takt)` zwei Zeilen
+    dahinter stand. Ein Vertrag, der bei gesundem Code faellt, kostet eine
+    Runde und lehrt, Vertragsbrueche nicht ernst zu nehmen.
+
+    Das Fenster endet jetzt dort, wo die gepruefte Einheit endet, und waechst
+    mit ihr. Zwei Formen, weil beide Quellen vorkommen:
+
+      mit Zeilenumbruechen   „\ndef " trifft nur Top-Level — verschachtelte
+                             Definitionen sind eingerueckt.
+      zusammengefaltet       " ".join(quelle.split()) hat keine Zeilen mehr;
+                             dort trennt " def ". Das schneidet notfalls an
+                             einer verschachtelten Definition zu frueh ab —
+                             und das ist die richtige Richtung: ein zu kurzer
+                             Bereich laesst den Vertrag LAUT fallen, ein zu
+                             langer laesst ihn still durchgehen. Genau der
+                             stille Fall hat in W64 eine Mutationsprobe
+                             durchrutschen lassen.
+    """
+    marken = (("\ndef ", "\nasync def ", "\nclass ") if "\n" in quelle[:4000]
+              else (" def ", " async def ", " class "))
+    enden = [quelle.find(m, ab + 1) for m in marken]
+    ende = min([e for e in enden if e > 0] or [len(quelle)])
+    return quelle[ab:ende]
+
 def clean_username(u):
     return (u or "").lstrip("@").strip().lower()
 
@@ -460,7 +491,7 @@ def test_heartbeat_contract():
     assert "LIVE_REACT_MAX_BACKLOG" in src
     i = src.find("_todo = [w for w in wavs[:-1]")
     assert i > 0
-    body = src[i:i + 1200]
+    body = rumpf_ab(src, i)
     assert "if len(_todo) > LIVE_REACT_MAX_BACKLOG:" in body
     assert "_todo = _todo[-LIVE_REACT_MAX_BACKLOG:]" in body
     ok("B96: live-react beat während Transkription + Rückstau-Cap")
@@ -573,7 +604,7 @@ def test_azrael_overlay_source():
     assert i > 0, "Overlay-Schreiber nicht gefunden"
     body = src[i:i + 3000]
     j = body.find("AZRAEL-Reaktion unten")
-    zone = body[j:j + 1100]
+    zone = body[j:]
     assert "r = _AZRAEL_REACTION" in zone, "drawtext liest die Reaktion nicht"
     assert 'if r.get("text"):' in zone
     # last_spoken bleibt Fallback, ist aber NICHT mehr die einzige Quelle
@@ -672,7 +703,7 @@ def test_overlay_size_selfcorrect():
     assert "abs(fa - pa) > 0.05" in body, "Aspekt-Abgleich fehlt"
     # Bei Abweichung gewinnt die Quelle
     j = body.find("abs(fa - pa) > 0.05")
-    assert 'return f"{probed[0]},{probed[1]}"' in body[j:j + 700]
+    assert 'return f"{probed[0]},{probed[1]}"' in body[j:]
 
     # Entscheidungsmatrix nachrechnen
     import re as _re
@@ -1345,7 +1376,7 @@ def test_twitch_sentinel_timeout():
 
     src = open("bot.py").read()
     i = src.find("V37-TWMOD")
-    body = src[i:i + 2200]      # W19: Fenster groesser (Team-Ausnahme + Verwarnung kamen dazu)
+    body = rumpf_ab(src, i)
     assert "_twoauth.timeout_user" in body, "Twitch-Timeout wird nicht ausgelöst"
     assert 'cfg.get("auto_moderate")' in body, \
         "Twitch-Timeout muss am selben Sentinel-Schalter wie Kick hängen"
@@ -1529,7 +1560,7 @@ def test_sentinel_chat_reach():
 
     # Kick nutzt die gemeinsame @Azrael-Erkennung (nicht nur die alte Frage-Logik)
     i = src.find("V37-SENTINEL-REACH")
-    body = src[i:i + 800]
+    body = rumpf_ab(src, i)
     assert "_azrael_chat_should_reply" in body and '_azrael_broadcast_reply("kick"' in body, \
         "Kick-@Azrael-Pfad nicht korrekt verdrahtet (B170: Broadcast-Fan-out)"
     ok("sentinel-reach: Kick nutzt @Azrael-Erkennung + Broadcast an alle Chats")
@@ -2962,7 +2993,7 @@ def test_b170_azrael_and_youtube():
     assert "if _azrael_reply_all_chats():" in body, "Schalter fehlt"
     src_all = open("bot.py").read()
     i2 = src_all.find("async def _azrael_send_to")
-    sender = src_all[i2:i2 + 1400]      # W41: Fenster größer (Status-Rückgabe + Doc)
+    sender = rumpf_ab(src_all, i2)
     assert all(p in sender for p in ("kick", "twitch", "youtube")), "nicht alle drei Chats moeglich"
 
     # alte Ein-Plattform-Sends sind ersetzt.
@@ -4791,7 +4822,7 @@ def test_v42_w40_moderator_avatar_ton():
     if not sm:                      # Klassenname robust suchen
         i = src.find("    async def send_message(self, content, session=None):")
         assert i > 0, "send_message nicht gefunden"
-        sm = src[i:i + 2000]
+        sm = rumpf_ab(src, i)
     assert "_piper_say(" in sm, \
         ("send_message spricht nicht — Mund bewegt sich (last_spoken), aber der "
          "Zuschauer hoert nichts. Genau das war der W40-Befund.")
@@ -5564,7 +5595,7 @@ def test_v40_w41_send_observability():
     src = open("bot.py").read()
     # _azrael_send_to gibt Status zurück.
     i = src.find("async def _azrael_send_to(")
-    body = src[i:i + 1400]
+    body = rumpf_ab(src, i)
     assert body.count('return "sent"') == 3 and 'return "offline"' in body and 'return "error"' in body, \
         "_azrael_send_to gibt keinen Status zurück"
     # Announcer nennt Skip-Gründe.
@@ -9414,7 +9445,7 @@ def test_v41_w18_toxizitaet_nur_eigene_kanaele():
 
     # Der Schnappschuss zaehlt nicht mehr blind jede Zeile der Tabelle.
     _i = src.index("def _brain_moderation_snap():")
-    blk = src[_i:_i + 2600]
+    blk = rumpf_ab(src, _i)
     assert "SELECT kind, actor, meta FROM kick_mod_log" in blk,         "der Schnappschuss liest die Art der Zeile nicht mehr mit"
     assert "_nc_modstats.verdichte(" in blk, "die Regel liegt nicht in nc/modstats.py"
     assert "COUNT(*)" not in blk, "die Vorstunde wird wieder ungefiltert gezaehlt"

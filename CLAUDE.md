@@ -84,6 +84,7 @@ stdlib-only (`urllib`, kein `aiohttp`).
     python tools/ncpatch.py check
     python tools/ncpatch.py docs
     python tools/stillecheck.py --sperre
+    python tools/vertragscheck.py --sperre
     python tools/i18n_extract.py --check en
     python test_smoke.py ; python test_nc_modules.py ; python test_restream.py
 
@@ -114,7 +115,14 @@ Quelltext** von `bot.py`. Ändert sich eine Signatur, kippt der Vertrag,
 obwohl der Code stimmt — dreimal passiert (`stop(self, rid)` wurde
 `stop(self, rid, _keep_desired=False)`). Ebenso die Fenster der Form
 `src[i:i + 3000]`: wächst die Funktion darüber hinaus, meldet der Test etwas
-als fehlend, das zwei Zeilen weiter unten steht. **Vor jedem Fix am Code erst
+als fehlend, das zwei Zeilen weiter unten steht.
+
+Seit v4.2-W66 ist auch das gemessen: **34 solche Fenster** im Code der beiden
+Suiten (`tools/vertragscheck.py`). Die elf, die randvoll waren, laufen jetzt
+über `rumpf_ab(quelle, ab)` — von der Fundstelle bis zur nächsten
+Top-Level-Definition, also mitwachsend. Die übrigen haben gemessen Luft
+(`--spielraum` verkleinert jedes Fenster einzeln und fährt die Suite); sie
+anzufassen wäre Risiko ohne Nutzen gewesen. `--sperre` verhindert neue. **Vor jedem Fix am Code erst
 prüfen, ob der Vertrag oder nur sein Anker gebrochen ist.**
 
 Bei JS in `templates/*.html` zusätzlich Script-Blöcke extrahieren und

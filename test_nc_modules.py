@@ -37,6 +37,37 @@ PLACEHOLDERS = {"txt_idx": "TEXT", "txt_long": "TEXT", "txt_big": "TEXT",
 PASS = 0
 
 
+
+def rumpf_ab(quelle, ab):
+    """Von Offset `ab` bis zur naechsten Top-Level-Definition. -> str
+
+    v4.2-W66. DER ERSATZ FUER `src[i:i + 3000]`. CLAUDE.md nennt die feste
+    Zahl namentlich als Bruchstelle, und in W62 hat sie zugeschlagen:
+    `src[j:j + 4200]` reichte nicht mehr ueber den gewachsenen Frame-Feeder
+    und meldete „kein fester Takt", waehrend `stop.wait(takt)` zwei Zeilen
+    dahinter stand. Ein Vertrag, der bei gesundem Code faellt, kostet eine
+    Runde und lehrt, Vertragsbrueche nicht ernst zu nehmen.
+
+    Das Fenster endet jetzt dort, wo die gepruefte Einheit endet, und waechst
+    mit ihr. Zwei Formen, weil beide Quellen vorkommen:
+
+      mit Zeilenumbruechen   „\ndef " trifft nur Top-Level — verschachtelte
+                             Definitionen sind eingerueckt.
+      zusammengefaltet       " ".join(quelle.split()) hat keine Zeilen mehr;
+                             dort trennt " def ". Das schneidet notfalls an
+                             einer verschachtelten Definition zu frueh ab —
+                             und das ist die richtige Richtung: ein zu kurzer
+                             Bereich laesst den Vertrag LAUT fallen, ein zu
+                             langer laesst ihn still durchgehen. Genau der
+                             stille Fall hat in W64 eine Mutationsprobe
+                             durchrutschen lassen.
+    """
+    marken = (("\ndef ", "\nasync def ", "\nclass ") if "\n" in quelle[:4000]
+              else (" def ", " async def ", " class "))
+    enden = [quelle.find(m, ab + 1) for m in marken]
+    ende = min([e for e in enden if e > 0] or [len(quelle)])
+    return quelle[ab:ende]
+
 def ok(msg):
     global PASS
     PASS += 1
@@ -4480,7 +4511,7 @@ def _test_v42_w10_cookies_reparieren_und_selbst_holen():
          "urllib mit bis zu 2x15s, das haelt sonst den ganzen Bot-Loop an")
     # Die Reparatur prueft, BEVOR sie tauscht.
     stelle = b.index("def _ensure_cookie_file_netscape")
-    rumpf = b[stelle:stelle + 4000]
+    rumpf = rumpf_ab(b, stelle)
     pruefung = rumpf.index("MozillaCookieJar(tmp).load")
     tausch = rumpf.index("os.replace(tmp, COOKIE_FILE)")
     assert pruefung < tausch, \
@@ -9240,6 +9271,128 @@ def _test_v42_w65_stille_wird_gemessen_und_gesperrt():
     ok("W65: der DDL-Helfer schluckt nur 'existiert schon', sonst nichts")
 
 
+def _test_v42_w66_fenster_wachsen_mit():
+    """v4.2-W66: 47 Fenster fester Laenge — elf davon randvoll.
+
+    CLAUDE.md warnt vor dieser Bruchstelle mit Namen: „waechst die Funktion
+    darueber hinaus, meldet der Test etwas als fehlend, das zwei Zeilen weiter
+    unten steht." In W62 hat sie zugeschlagen — `src[j:j + 4200]` reichte nicht
+    mehr ueber den gewachsenen Frame-Feeder.
+
+    ALLE 47 BLIND UMZUBAUEN WAERE SCHLIMMER GEWESEN, als sie zu lassen: ein zu
+    grosses Fenster laesst einen Vertrag durchgehen, der durchfallen muesste.
+    Genau das hat in W64 eine Mutationsprobe still durchrutschen lassen.
+
+    Gemessen wurde deshalb erst — jedes Fenster einzeln auf 70 % verkleinert
+    und die Suite gefahren (`vertragscheck.py --spielraum`). Faellt sie, war
+    das Fenster fast voll. Ergebnis: 11 eng, 36 mit Luft. Umgebaut wurden die
+    elf; die uebrigen anzufassen haette nur Risiko ohne Nutzen gebracht.
+    Nach dem Umbau: 0 eng.
+
+    Die Zahlen sind zweimal gefallen, und beide Male war das Messgeraet
+    schuld, nicht der Bestand: 47 waren es, solange der Pruefer auch
+    Kommentare und Docstrings mitzaehlte — und die zitieren `src[i:i + 3000]`
+    reichlich als abschreckendes Beispiel. Im CODE sind es 45, nach dem
+    Umbau 34.
+    """
+    import sys as _sys
+    hier = os.path.dirname(os.path.abspath(__file__))
+    if os.path.join(hier, "tools") not in _sys.path:
+        _sys.path.insert(0, os.path.join(hier, "tools"))
+    import vertragscheck as V
+
+    # --- 1) Der Anker waechst mit -------------------------------------
+    quelle = "\n".join(["def eins():", "    a = 1", "    b = 2", "",
+                        "def zwei():", "    c = 3", ""])
+    ab = quelle.index("def eins")
+    r = rumpf_ab(quelle, ab)
+    assert "a = 1" in r and "b = 2" in r, r
+    assert "def zwei" not in r and "c = 3" not in r, \
+        "der Bereich laeuft in die naechste Funktion — dann findet ein " \
+        "Vertrag Zeichenketten, die gar nicht zu seiner Einheit gehoeren"
+    # Und er waechst wirklich: sechzig Zeilen mehr in eins() sind auch drin.
+    groesser = quelle.replace("    b = 2", "    b = 2\n" + "    d = 4\n" * 60)
+    assert "d = 4" in rumpf_ab(groesser, groesser.index("def eins")), \
+        "der Bereich waechst nicht mit — genau der Fehler aus W62"
+
+    # --- 2) Auch in zusammengefaltetem Quelltext ----------------------
+    # `flach = " ".join(bot.split())` hat keine Zeilen mehr. Ohne den zweiten
+    # Fall haette der Anker dort bis zum Dateiende gereicht.
+    flach = " ".join(quelle.split())
+    rf = rumpf_ab(flach, flach.index("def eins"))
+    assert "a = 1" in rf, rf
+    assert "def zwei" not in rf, \
+        "im zusammengefalteten Text trennt ' def ' — sonst reicht der Bereich " \
+        "bis zum Dateiende und der Vertrag prueft die ganze Datei"
+
+    # --- 3) Am Dateiende hoert er auf, statt zu werfen ----------------
+    letzte = quelle.index("def zwei")
+    assert "c = 3" in rumpf_ab(quelle, letzte)
+    # Und mitten in einer Funktion angesetzt: bis zu deren Ende, nicht weiter.
+    mitten = quelle.index("b = 2")
+    assert "def zwei" not in rumpf_ab(quelle, mitten)
+    ok("W66: der Bereich waechst mit und endet an der naechsten Definition")
+
+    # --- 4) Kein Fenster ist mehr randvoll ----------------------------
+    # GEZAEHLT, NICHT VERBOTEN. Der erste Entwurf verlangte, dass Ausdruecke
+    # wie `src[i:i + 2200]` nirgends mehr vorkommen — der steht aber ein
+    # zweites Mal an einer Stelle MIT Luft und darf dort bleiben. Ein Verbot
+    # haette also einen gesunden Vertrag angeklagt. Gezaehlt wird deshalb,
+    # was wirklich gemacht wurde: elf Umbauten auf den mitwachsenden Anker.
+    umbauten = sum(open(os.path.join(hier, d), encoding="utf-8").read()
+                   .count("rumpf_ab(") for d in ("test_nc_modules.py",
+                                                 "test_restream.py"))
+    # Elf Umbauten, dazu je Datei die Definition und in dieser Datei die
+    # Aufrufe des Vertrags selbst.
+    assert umbauten >= 11, \
+        f"nur {umbauten} Stellen benutzen den mitwachsenden Anker — die " \
+        f"randvollen Fenster sind nicht umgebaut"
+    fenster = V.bericht()
+    gesamt = sum(len(t) for t in fenster.values())
+    assert gesamt <= 34, \
+        f"{gesamt} Fenster fester Laenge im CODE — vor W66 waren es 45, " \
+        f"nach dem Umbau 34. Es sind wieder mehr geworden."
+    assert "rumpf_ab(" in open(os.path.join(hier, "test_restream.py"),
+                               encoding="utf-8").read(), \
+        "test_restream benutzt den mitwachsenden Anker nicht"
+    ok("W66: die elf randvollen Fenster sind durch mitwachsende Anker ersetzt")
+
+    # --- 5) Und die Sperre gegen NEUE Fenster faellt auch -------------
+    # Wie in W65 am CLI-Pfad geprueft, den die CI faehrt — nicht daneben
+    # nachgerechnet. Genau dort blieb in W65 eine Mutationsprobe still.
+    import contextlib as _ctx
+    import json as _json
+    import tempfile as _tf
+
+    def _sperre():
+        with _ctx.redirect_stdout(io.StringIO()):
+            return V.main()
+
+    # Auch die Attrappe steht zerlegt da: sie ist Testdaten, kein Fenster im
+    # Bestand, und der Pruefer liest diese Datei mit.
+    _attrappe = (1, "x[i:i + " + "10]", 10)
+    _echt_b, _echt_g, _echt_a = V.bericht, V.GRUNDLINIE, _sys.argv
+    _tmp = _tf.NamedTemporaryFile("w", suffix=".json", delete=False,
+                                  encoding="utf-8")
+    try:
+        _json.dump({"fenster": {"a.py": 2}, "summe": 2}, _tmp)
+        _tmp.close()
+        V.GRUNDLINIE, _sys.argv = _tmp.name, ["vertragscheck.py", "--sperre"]
+        V.bericht = lambda: {"a.py": [_attrappe] * 2}
+        assert _sperre() == 0, "die Sperre faellt, obwohl nichts dazukam"
+        V.bericht = lambda: {"a.py": [_attrappe]}
+        assert _sperre() == 0, "die Sperre faellt beim ABBAU von Fenstern"
+        V.bericht = lambda: {"a.py": [_attrappe] * 3}
+        assert _sperre() == 1, \
+            "die Sperre laesst ein NEUES Fenster fester Laenge durch"
+        V.GRUNDLINIE = _tmp.name + ".gibtsnicht"
+        assert _sperre() == 1, "ohne Grundlinie meldet die Sperre OK"
+    finally:
+        V.bericht, V.GRUNDLINIE, _sys.argv = _echt_b, _echt_g, _echt_a
+        os.unlink(_tmp.name)
+    ok("W66: die Sperre faellt bei neuen Fenstern und ohne Grundlinie")
+
+
 def _test_v42_w60_azrael_cooldown_je_plattform():
     """v4.2-W60: ein Cooldown fuer drei Chats verschluckte zwei davon.
 
@@ -9269,7 +9422,7 @@ def _test_v42_w60_azrael_cooldown_je_plattform():
     # --- 2) Und er wird JE PLATTFORM gelesen und geschrieben -------------
     i = flach.find("def _azrael_chat_should_reply(")
     assert i > 0
-    rumpf = flach[i:i + 1200]
+    rumpf = rumpf_ab(flach, i)
     assert "platform" in rumpf.split(")")[0], \
         "die Funktion bekommt die Plattform gar nicht uebergeben"
     assert "_AZRAEL_CHAT_LAST.get(platform)" in rumpf, \
@@ -10252,6 +10405,7 @@ def main():
     _test_v42_w63_manuelle_aufnahme_sichtbar_und_stoppbar()
     _test_v42_w64_dienstmeldung_statt_antwort()
     _test_v42_w65_stille_wird_gemessen_und_gesperrt()
+    _test_v42_w66_fenster_wachsen_mit()
     _test_v42_w60_azrael_cooldown_je_plattform()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)
