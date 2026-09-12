@@ -8288,6 +8288,28 @@ def _test_v42_w56_sitzungen_haben_eine_oberflaeche():
     assert 'onclick="sitzungJoin(' in deck, \
         "es gibt kein Bedienelement, das sitzungJoin ruft — genau der Knopf, " \
         "den der Release-Text verspricht"
+    # v4.2-W58: und der Knopf muss auch FUNKTIONIEREN. In W56 stand hier
+    #     onclick="sitzungJoin('+JSON.stringify(sid)+')"
+    # JSON.stringify liefert DOPPELTE Anfuehrungszeichen, die das Attribut
+    # beenden: erzeugt wurde onclick="sitzungJoin(" und der Rest zerfiel in
+    # Schrott-Attribute. Der Knopf tat nichts — in genau der Welle, deren
+    # Zweck ein fehlender Knopf war. Die Zusicherung darueber hat das nicht
+    # gemerkt, weil die Zeichenkette ja vorhanden war.
+    #
+    # Deshalb hier keine Zeichenkette, sondern die EIGENSCHAFT: der Wert des
+    # onclick-Attributs muss ein vollstaendiger Aufruf sein.
+    for zeile in deck.split("\n"):
+        # Nur Aufrufe MIT verkettetem Parameter. onclick="sitzungenLoad()" im
+        # statischen Markup hat keinen und braucht nichts.
+        if 'onclick="sitzung' not in zeile or "'+" not in zeile:
+            continue
+        assert "JSON.stringify" not in zeile, (
+            "der Knopf baut sein onclick wieder mit JSON.stringify — die "
+            "doppelten Anfuehrungszeichen beenden das Attribut und der Knopf "
+            "tut nichts")
+        assert "escJs(" in zeile, (
+            "der Knopf setzt seinen Parameter ohne escJs ein — ein "
+            "Anfuehrungszeichen in der Kennung bricht aus dem Attribut aus")
     assert "async function sitzungJoin" in deck, "die Funktion selbst fehlt"
     ok("W56: Liste, Detail und Zusammenfuegen werden aus dem Deck gerufen")
 

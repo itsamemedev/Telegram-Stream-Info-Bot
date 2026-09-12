@@ -11,6 +11,36 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Behoben — der Knopf aus W56 hat nicht funktioniert (v4.2 W58)
+
+Beim Sicherheits-Audit aufgefallen, beim Durchgang „XSS in den Templates".
+W56 baute den Knopf so:
+
+```js
+onclick="sitzungJoin('+JSON.stringify(sid)+')"
+```
+
+`JSON.stringify` liefert **doppelte** Anführungszeichen. Erzeugt wurde damit
+
+```html
+<button onclick="sitzungJoin("azrael_2026-09-12")">
+```
+
+— das Attribut endet nach `sitzungJoin(`, der Rest zerfällt in
+Schrott-Attribute, und der Knopf tut nichts. **In genau der Welle, deren
+Zweck ein fehlender Knopf war.**
+
+Die Zusicherung aus W56 hat das nicht bemerkt: sie prüfte, ob
+`onclick="sitzungJoin(` im Deck vorkommt — das tat es ja. Wieder eine
+Anwesenheits- statt Eigenschaftsprüfung, die dritte in dieser Reihe.
+
+Jetzt wie überall sonst im Deck: einfache Anführungszeichen innen, `escJs()`
+gegen den Ausbruch. Der Vertrag prüft nicht mehr die Zeichenkette, sondern
+verbietet `JSON.stringify` in einem `onclick` mit Parameter und verlangt
+`escJs`. Gegengeprüft mit einer Probe, die das erzeugte Markup wirklich
+ausführt und das Attribut parst — auch mit `"`, `'`, `<` und `&` in der
+Kennung.
+
 ### Behoben — YouTube timeoutete sofort, Kick und Twitch verwarnten erst (v4.2 W57)
 
 Der Betreiber meldete, der Moderator sei Kick-only und solle auf YouTube und
