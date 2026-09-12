@@ -11,6 +11,56 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Behoben — die manuelle Aufnahme war unsichtbar, und das Deck sagte das Gegenteil (v4.2 W63)
+
+Letzter offener Kandidat aus der Dashboard-Prüfung, diesmal **von Hand
+nachgesehen** statt dem Matcher geglaubt — der lag in derselben Prüfung
+fünfmal falsch.
+
+| Route | Zustand |
+|---|---|
+| `/api/recordings/manual/start` | verdrahtet |
+| `/api/recordings/manual/list` | nirgends gerufen |
+| `/api/recordings/manual/<mid>/stop` | nirgends gerufen |
+
+Eine manuelle Aufnahme liegt in der Tabelle `manual_recordings`. Das Panel
+AKTIVE AUFNAHMEN liest `/api/active-recordings`, und das kommt aus
+`trackings WHERE recording=1` — eine **andere Tabelle**. Die manuelle Aufnahme
+stand dort noch nie drin.
+
+`rtManualStart` rief danach ausgerechnet `loadRtActive()`. Das Deck antwortete
+auf einen erfolgreichen Start also mit **„Keine laufende Aufnahme."**, während
+eine lief. Bis zu ihrer eigenen Laufzeitgrenze (maximal eine Stunde) war sie
+weder sichtbar noch abbrechbar. Das ist nicht nur ein fehlender Knopf, das ist
+eine Anzeige, die das Gegenteil behauptet.
+
+Neu ist eine dritte Spalte MANUELLE AUFNAHMEN neben AKTIVE AUFNAHMEN und
+LETZTE VERSUCHE: Zustand als Wort **und** Punkt (Farbe trägt die Information
+nie allein), Dateigröße, Dateiname, und ein Stop-Knopf — nur an laufenden
+Zeilen, denn an einer fertigen könnte er ausschließlich scheitern.
+
+**Die Falle, die eine Oberfläche erst sichtbar macht.** `_MANUAL_RECORDINGS`
+lebt im Prozess. Nach einem Bot-Neustart ist das Dict leer, die DB-Zeile steht
+aber weiter auf `running` — und `_wait_and_finish`, das sie abschließen würde,
+gibt es nicht mehr. Die Zeile bleibt für immer auf „läuft". Ohne Oberfläche
+fiel das niemandem auf; mit Oberfläche stünde dort eine Aufnahme, die es nicht
+gibt, mit einem Knopf, der nur eine Fehlermeldung erzeugen kann.
+
+`stop_manual_recording` **räumt so eine Zeile jetzt auf**, statt über sie zu
+berichten: Status auf `abgebrochen`, `ended_at` gesetzt, Warnung ins Log, und
+der Klick meldet den Grund zurück statt „Aufnahme gestoppt" zu behaupten. Das
+ist keine Notlüge — ein Prozess, den dieser Bot nicht kennt, wird von ihm auch
+nicht mehr beendet: die Aufnahme *war* vorbei, nur die Zeile wusste es nicht.
+Aufgeräumt wird ausschließlich, was auf `running` steht.
+
+Zwölf Mutationsproben. Eine blieb zuerst **still**: die Zusicherung „das Panel
+hängt am Ansichts-Lader" suchte die Zeilenfolge im ganzen Deck, und dieselbe
+Folge steht auch in `rtManualStart` — grün, während `loadRecTools` das Panel
+nicht mehr lud. Vorhandensein statt Eigenschaft, in dieser Reihe zum
+wiederholten Mal. Jetzt wird im Rumpf von `loadRecTools` nachgesehen, und eine
+zweite Probe hält fest, dass der Vertrag nicht ins Leere prüft, wenn die
+Funktion umbenannt wird.
+
 ### Hinzugefügt — AZRAEL bekommt eine dritte Haltung (v4.2 W62)
 
 Offen seit dem Layout-Umbau in W54: **„Der Avatar braucht idle/afk
