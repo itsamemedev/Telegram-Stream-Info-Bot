@@ -11,6 +11,98 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Behoben — die Notbremse trat aufs Gas (v4.2 W49)
+
+Gemeldet: „bei den Restreams im Text-Modus brechen Chat und Avatar weg", dazu
+der Wunsch, das fehlende Anthropic-Guthaben als Warnung statt als Fehler zu
+behandeln. Drei Ursachen.
+
+**Die Preset-Leiter stand falsch herum.** Seit W43:
+
+    _PRESET_LEITER = ("veryfast", "faster", "superfast", "ultrafast")
+
+vorwärts durchlaufen. In x264 ist die Reihenfolge von schnell nach langsam aber
+`ultrafast, superfast, veryfast, faster, fast, medium, …` — `faster` ist
+**langsamer** als `veryfast`. Drossel-Stufe 1 machte das Encoding also teurer.
+Im Log vom 11.09. steht die Folge:
+
+    Drossel Stufe 1 von 3 (Preset faster, Bitrate 6000k)
+    Drossel Stufe 2 von 3 (Preset superfast, Bitrate 4500k)
+
+Danach Stufe 3 — und auf Stufe 3 fällt der eingebrannte Overlay. Der Weg zum
+leeren Sendebild führte durch den Versuch, es zu verhindern. Gemessene
+Encode-Geschwindigkeit in diesem Zeitraum: **0,44x bis 0,53x**, also etwa halbe
+Echtzeit.
+
+Der Vertrag aus W43 hat den Fehler **festgeschrieben**
+(`assert drossel_preset("veryfast", 1) == "faster"`). Das war kein gebrochener
+Anker, sondern ein Vertrag, der einen Defekt zementiert hat. Er prüft jetzt
+nicht mehr auf einen Namen, sondern auf die Eigenschaft: jede Stufe muss echt
+schneller sein als die vorige. Ein Name lässt sich wieder falsch eintragen, die
+Eigenschaft nicht.
+
+**Der Avatar hing an der Schrift.** `avatar_on` verlangte `overlay_on`, und das
+verlangte eine vorhandene Schriftdatei — obwohl ein Avatar keine Schrift
+braucht. Eine fehlende DejaVu-Datei nahm ihn also mit, und die Drossel auf
+Stufe 3 ebenso. Zwei Ursachen, ein Symptom. Jetzt zwei Schalter:
+`sendebild_on` (wird überhaupt etwas gebrannt?) und `overlay_on`
+(= `sendebild_on` **und** eine Schrift). Der Avatar hängt am ersten.
+
+Dazu ist `drossel_overlay_aus` zu `drossel_text_aus` geworden und lässt auf
+Stufe 3 nur noch den Text fallen. Der Kommentar in W43 behauptete ohnehin „den
+fehlenden Avatar sieht jeder, deshalb fällt er zuletzt" — tatsächlich fielen
+beide zusammen. Und es ist sachlich falsch herum: eine `drawtext`-Kette mit
+mehreren Boxen kostet ein Vielfaches eines `overlay`-Filters auf ein kleines
+PNG. Wer im Notfall etwas fallen lässt, lässt das Teure fallen.
+
+**Ein leeres Guthaben ist kein `bad_request`.** Anthropic meldet es mit
+HTTP 400, also mit demselben Code wie einen kaputten Request:
+
+    {"error":{"message":"Your credit balance is too low to access the
+     Anthropic API. Please go to Plans & Billing to upgrade or purchase
+     credits.","type":"invalid_request_error"}}
+
+Beides gleich zu benennen ist formal richtig und praktisch nutzlos: der eine
+Fall ist ein Programmierfehler, der andere eine Rechnung. Im Log stand deshalb
+„Reaction-AI Claude fehlgeschlagen (bad_request)", während die eigentliche
+Nachricht „dein Guthaben ist leer" lautete.
+
+`_error_kind` liest jetzt zusätzlich den Wortlaut und kennt `kein_guthaben` als
+eigene Klasse. Der Bot sagt es im Klartext auf `warning` — **und klopft eine
+Stunde nicht mehr an** (`CLAUDE_GUTHABEN_PAUSE_S`). Vorher kostete jede
+einzelne Reaktion einen vollen, sicher scheiternden Rundlauf zu Anthropic,
+bevor die kostenlose Kette überhaupt anfing. Die Sperre sitzt in
+`_anthropic_key()` und damit an **einer** Stelle — es gibt drei Claude-Aufrufer
+— und löst sich, sobald Claude wieder antwortet; sonst bliebe er nach dem
+Aufladen bis zum Neustart stumm.
+
+Ein Detail, das leicht kippt: `fehlertext(e)` liest `e.read()`, und beim
+zweiten Mal ist der Body leer. Wer erst klassifiziert und dann liest, bekommt
+eine leere Meldung und landet wieder bei `bad_request`. Der Body wird deshalb
+einmal gelesen und für beides benutzt; ein Vertrag hält genau diese Reihenfolge
+fest.
+
+Gegenprobe: 260 statt 254 Verträge. Dreizehn Mutationsproben — alte Leiter
+zurück, Drossel in die falsche Richtung, Tippfehler springt auf ultrafast,
+Avatar wieder an der Schrift (zweimal), Text ohne Schrift, Drossel entfernt,
+Guthaben wieder `bad_request`, Body zweimal gelesen, Sperre nur im
+Reaktionspfad, Sperre wird nie aufgehoben, Warnung ohne Klartext, und die
+Leiter-Eigenschaft gegen `test_restream` — kippen alle.
+
+**Zur Einstellung auf dem Server:** das Standard-Layout ist `studio`, und das
+rendert eine Leinwand von 1920×1080 bei 30 fps aus einer 9:16-Handyquelle, die
+höchstens 720×1280 liefert. Das Bild wird also hochskaliert und kostet dabei
+2,25-mal so viele Pixel wie 1280×720, ohne einen Deut mehr Detail zu zeigen.
+Empfohlen und ausgeliefert: Leinwand 1280×720, 24 fps, 4500k. Zusammen mit dem
+Wegfall des zweiten gleichzeitigen Transcodes (`RESTREAM_SINGLE=1`) ist das
+grob Faktor vier weniger Encode-Arbeit.
+
+Wichtig dabei: **W48 macht die Sache zunächst teurer.** Solange die Schrift
+fehlte, war `overlay_on` falsch und damit auch `studio_on` — es wurde gar keine
+Leinwand gerechnet. Mit dem Schrift-Rückfall rendert das Studio-Layout jetzt
+wirklich. Ohne die kleinere Leinwand wäre der Rückstand nach W48 größer als
+vorher.
+
 ### Behoben — die Kategorie-Kette kannte den Wortlaut der Werkzeuge nicht (v4.2 W48)
 
 Aus dem Log vom 11.09., zehn Minuten Betrieb:

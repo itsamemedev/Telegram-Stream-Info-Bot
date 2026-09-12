@@ -150,12 +150,38 @@ def fehlertext(e):
         return roh
 
 
-def _error_kind(code):
+# v4.2-W49: Anthropic meldet ein leeres Guthaben mit HTTP 400 —
+#
+#   {"error":{"message":"Your credit balance is too low to access the
+#    Anthropic API. Please go to Plans & Billing to upgrade or purchase
+#    credits.","type":"invalid_request_error"}}
+#
+# ... also mit demselben Code wie ein kaputter Request. Beides "bad_request"
+# zu nennen ist zwar formal richtig und praktisch nutzlos: der eine Fall ist
+# ein Programmierfehler, der andere eine Rechnung. Im Log des Betreibers stand
+# deshalb "Reaction-AI Claude fehlgeschlagen (bad_request)", waehrend die
+# eigentliche Nachricht "dein Guthaben ist leer" lautete.
+_KEIN_GUTHABEN = ("credit balance is too low", "credit balance too low",
+                  "purchase credits", "insufficient credits", "billing")
+
+
+def _error_kind(code, meldung=""):
+    """Fehlerklasse aus Status UND Wortlaut.
+
+    Der Wortlaut ist noetig, weil 400 zwei voellig verschiedene Lagen
+    abdeckt. `kein_guthaben` ist bewusst eine eigene Klasse und nicht "auth":
+    der Schluessel ist gueltig, es fehlt nur Geld. Der Aufrufer soll deshalb
+    weiter auf die kostenlose Kette fallen (bei "auth" tut er das nicht),
+    aber nicht mehr bei jeder Reaktion erneut anklopfen.
+    """
     if code == 401 or code == 403:
         return "auth"
     if code == 429:
         return "rate"
     if code == 400:
+        m = (meldung or "").lower()
+        if any(w in m for w in _KEIN_GUTHABEN):
+            return "kein_guthaben"
         return "bad_request"
     return f"http_{code}"
 
@@ -205,10 +231,13 @@ def chat_sync(messages, api_key, model=None, timeout=None, max_tokens=None, open
                 pass
         return (text, None) if text else (None, "empty")
     except urllib.error.HTTPError as e:
-        kind = _error_kind(e.code)
+        # fehlertext() liest den Body EINMAL — danach ist er leer. Deshalb
+        # zuerst lesen, dann klassifizieren, und beides aus derselben Kopie.
+        _detail = fehlertext(e) or "abgelehnt"
+        kind = _error_kind(e.code, _detail)
         if on_error:
             try:
-                on_error(kind, "HTTP %s: %s" % (e.code, fehlertext(e) or "abgelehnt"),
+                on_error(kind, "HTTP %s: %s" % (e.code, _detail),
                          body.get("model"))
             except Exception:
                 pass
@@ -243,7 +272,7 @@ def probe(api_key, model=None, opener=None):
             else (False, "empty", "Verbunden, aber leere Antwort.")
     except urllib.error.HTTPError as e:
         amsg = fehlertext(e)
-        return (False, _error_kind(e.code),
+        return (False, _error_kind(e.code, amsg),
                 "HTTP %s: %s" % (e.code, amsg or getattr(e, "reason", "") or "abgelehnt"))
     except urllib.error.URLError as e:
         return (False, "unreachable", "Netzwerk nicht erreichbar: %s" % getattr(e, "reason", e))

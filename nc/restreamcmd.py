@@ -181,20 +181,41 @@ def _studio_chain(avatar_idx=None, rid=None, avatar_alpha_idx=None):
 # schnelleres Preset kostet Bildqualitaet, die kaum jemand bemerkt; die
 # Bitrate merkt man; den fehlenden Avatar sieht jeder. Deshalb faellt er
 # zuletzt.
-_PRESET_LEITER = ("veryfast", "faster", "superfast", "ultrafast")
+# v4.2-W49: die x264-Presets in ihrer ECHTEN Reihenfolge, schnell -> langsam.
+#
+# Bis hierher stand hier ("veryfast", "faster", "superfast", "ultrafast") und
+# wurde vorwaerts durchlaufen. In x264 ist "faster" aber LANGSAMER als
+# "veryfast" — die Notbremse trat also auf Stufe 1 aufs Gas. Im Log des
+# Betreibers vom 11.09. steht genau das:
+#
+#     Drossel Stufe 1 von 3 (Preset faster, Bitrate 6000k)
+#
+# Danach wuchs der Rueckstand weiter, Stufe 2 und 3 folgten — und auf Stufe 3
+# faellt der Overlay. Der Weg zum schwarzen Sendebild fuehrte durch den
+# Versuch, ihn zu verhindern.
+_X264_TEMPO = ("ultrafast", "superfast", "veryfast", "faster", "fast",
+               "medium", "slow", "slower", "veryslow")
 
 
 def drossel_preset(preset, stufe):
-    """Preset um `stufe` Schritte in Richtung schneller ruecken."""
+    """Preset um `stufe` Schritte in Richtung SCHNELLER ruecken.
+
+    Schneller heisst in dieser Liste: kleinerer Index. Es sind genau `stufe`
+    Schritte, nicht "bis ans Ende" — wer `medium` konfiguriert hat, landet auf
+    der hoechsten Drossel bei `veryfast`, nicht bei `ultrafast`. Das ist
+    Absicht: die Drossel ist eine Notbremse gegen einen Rueckstand, kein
+    Urteil ueber die Einstellung des Betreibers.
+    """
     if stufe <= 0:
         return preset
     try:
-        i = _PRESET_LEITER.index((preset or "").strip())
+        i = _X264_TEMPO.index((preset or "").strip().lower())
     except ValueError:
-        # Unbekanntes Preset (z.B. "medium"): nicht raten, sondern von vorn
-        # in die Leiter einsteigen — langsamer als medium ist hier nie gewollt.
-        i = 0
-    return _PRESET_LEITER[min(i + stufe, len(_PRESET_LEITER) - 1)]
+        # Unbekanntes Preset: bei veryfast einsteigen. Nicht bei ultrafast —
+        # sonst springt ein Tippfehler in der .env sofort auf die schlechteste
+        # Qualitaetsstufe, ohne dass je ein Rueckstand vorlag.
+        i = _X264_TEMPO.index("veryfast")
+    return _X264_TEMPO[max(0, i - stufe)]
 
 
 def drossel_bitrate(bitrate_k, stufe):
@@ -204,8 +225,18 @@ def drossel_bitrate(bitrate_k, stufe):
     return max(1500, int(bitrate_k * (0.75 if stufe == 2 else 0.55)))
 
 
-def drossel_overlay_aus(stufe):
-    """Ab Stufe 3 faellt der gebrannte Overlay — die teuerste Filterkette."""
+def drossel_text_aus(stufe):
+    """Ab Stufe 3 faellt der eingebrannte TEXT — die teuerste Filterkette.
+
+    v4.2-W49: hiess drossel_overlay_aus und nahm den Avatar mit. Der
+    Kommentar oben behauptete das Gegenteil ("den fehlenden Avatar sieht
+    jeder. Deshalb faellt er zuletzt") — tatsaechlich fielen beide auf
+    derselben Stufe, weil avatar_on an overlay_on haengt.
+
+    Und es ist auch sachlich falsch herum: eine drawtext-Kette mit mehreren
+    Boxen kostet ein Vielfaches eines einzelnen overlay-Filters auf ein
+    kleines PNG. Wer im Notfall etwas fallen laesst, laesst das Teure fallen.
+    """
     return stufe >= 3
 
 
@@ -273,10 +304,19 @@ def build(source_url, ingest_url, stream_key, transcode=False, tts_fifo=None, ri
     # die es gibt. Vorher entschied os.path.isfile(RESTREAM_FONT) allein —
     # und ein fehlendes Schrift-Paket kostete das komplette Overlay.
     _font = schriftart(RESTREAM_FONT)
-    overlay_on = bool(transcode and RESTREAM_OVERLAY
-                      and not drossel_overlay_aus(drossel)
-                      and _font)
-    if transcode and RESTREAM_OVERLAY and not overlay_on and not drossel_overlay_aus(drossel):
+    # v4.2-W49: ZWEI Schalter statt einem.
+    #
+    # `sendebild_on` sagt, ob ueberhaupt etwas ins Bild gebrannt wird.
+    # `overlay_on` sagt zusaetzlich, ob TEXT gebrannt wird — dafuer braucht es
+    # eine Schrift. Der Avatar braucht keine.
+    #
+    # Vorher war das eins: eine fehlende Schriftdatei nahm den Avatar mit, und
+    # die Drossel auf Stufe 3 ebenso. Gemeldet als "im Text-Modus brechen Chat
+    # UND Avatar weg" — zwei Ursachen, ein Symptom.
+    sendebild_on = bool(transcode and RESTREAM_OVERLAY
+                        and not drossel_text_aus(drossel))
+    overlay_on = bool(sendebild_on and _font)
+    if transcode and RESTREAM_OVERLAY and not overlay_on and not drossel_text_aus(drossel):
         # Der Nachsatz nennt die Abhilfe. "Font fehlt" allein schickte den
         # Betreiber auf die Suche nach einer Datei, die er nicht anlegen will.
         log.warning("RESTREAM_OVERLAY=1, aber keine Schrift gefunden (weder %s "
@@ -289,14 +329,16 @@ def build(source_url, ingest_url, stream_key, transcode=False, tts_fifo=None, ri
                     RESTREAM_FONT, _font)
     # v4.2-W32: bewegter Avatar, wenn Schleife UND Alphamaske dastehen —
     # sonst wie bisher das Standbild. Beides fehlt: kein Avatar.
-    anim_on = bool(overlay_on and RESTREAM_AVATAR_LOOP and RESTREAM_AVATAR_ALPHA
+    # Ab hier haengt der Avatar an `sendebild_on`, nicht mehr an `overlay_on`:
+    # ohne Schrift kein Text, aber sehr wohl ein Avatar.
+    anim_on = bool(sendebild_on and RESTREAM_AVATAR_LOOP and RESTREAM_AVATAR_ALPHA
                    and os.path.isfile(RESTREAM_AVATAR_LOOP)
                    and os.path.isfile(RESTREAM_AVATAR_ALPHA))
     # v4.2-W34: laeuft ein Feeder, hat er Vorrang — nur er kann auf eine
     # AZRAEL-Reaktion umschalten. Ohne ihn die feste Schleife (W32), ohne die
     # das Standbild (W31).
-    feed_on = bool(overlay_on and avatar_feed)
-    avatar_on = bool(feed_on or anim_on or (overlay_on and RESTREAM_AVATAR
+    feed_on = bool(sendebild_on and avatar_feed)
+    avatar_on = bool(feed_on or anim_on or (sendebild_on and RESTREAM_AVATAR
                                             and os.path.isfile(RESTREAM_AVATAR)))
     _idx = 1
     tts_idx = avatar_idx = avatar_alpha_idx = None

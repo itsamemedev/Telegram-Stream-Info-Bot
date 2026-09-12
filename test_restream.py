@@ -4663,15 +4663,37 @@ def test_v42_w43_encode_rueckstand_wird_abgeregelt():
 
     # --- 1) Die Leiter regelt wirklich ab, in dieser Reihenfolge -----------
     # Nach Sichtbarkeit sortiert: Preset merkt kaum jemand, Bitrate schon,
-    # den fehlenden Avatar sieht jeder. Deshalb faellt er zuletzt.
+    # den fehlenden Text sieht jeder. Deshalb faellt er zuletzt.
+    #
+    # v4.2-W49 — DIESER VERTRAG WAR FALSCH, nicht nur sein Anker: er hielt
+    # `drossel_preset("veryfast", 1) == "faster"` fest. In x264 ist "faster"
+    # aber LANGSAMER als "veryfast" (Reihenfolge schnell->langsam: ultrafast,
+    # superfast, veryfast, faster, fast, medium, ...). Die Notbremse trat auf
+    # Stufe 1 also aufs Gas, und der Vertrag hat genau das zementiert. Im Log
+    # des Betreibers vom 11.09. steht die Folge: "Drossel Stufe 1 von 3
+    # (Preset faster, Bitrate 6000k)", danach Stufe 2 und 3 — und auf 3 faellt
+    # der Text. Der Weg zum leeren Sendebild fuehrte durch den Versuch, es zu
+    # verhindern.
+    #
+    # Deshalb wird jetzt nicht auf einen Namen geprueft, sondern auf die
+    # EIGENSCHAFT: jede Stufe muss echt schneller sein als die vorige. Ein
+    # Name laesst sich wieder falsch eintragen, die Eigenschaft nicht.
+    _TEMPO = ["ultrafast", "superfast", "veryfast", "faster", "fast",
+              "medium", "slow", "slower", "veryslow"]
     assert _rc.drossel_preset("veryfast", 0) == "veryfast", "Stufe 0 aendert etwas"
-    assert _rc.drossel_preset("veryfast", 1) == "faster"
+    for _start in ("veryfast", "medium", "fast"):
+        _kette = [_rc.drossel_preset(_start, st) for st in range(_rc.DROSSEL_MAX + 1)]
+        _idx = [_TEMPO.index(p) for p in _kette]
+        assert all(b <= a for a, b in zip(_idx, _idx[1:])), \
+            "Drossel wird langsamer statt schneller: %s" % (_kette,)
+        assert _idx[-1] < _idx[0], "hoechste Stufe ist nicht schneller: %s" % (_kette,)
     assert _rc.drossel_bitrate(6000, 1) == 6000, "Stufe 1 senkt schon die Bitrate"
     assert _rc.drossel_bitrate(6000, 2) < 6000, "Stufe 2 senkt die Bitrate nicht"
-    assert not _rc.drossel_overlay_aus(2), "Overlay faellt zu frueh"
-    assert _rc.drossel_overlay_aus(_rc.DROSSEL_MAX), "Overlay faellt nie"
+    assert not _rc.drossel_text_aus(2), "Text faellt zu frueh"
+    assert _rc.drossel_text_aus(_rc.DROSSEL_MAX), "Text faellt nie"
     # Saettigung statt Absturz jenseits des Anschlags.
     assert _rc.drossel_preset("veryfast", 99) == _rc.drossel_preset("veryfast", _rc.DROSSEL_MAX)
+    assert _rc.drossel_preset("ultrafast", 3) == "ultrafast", "unter ultrafast gibt es nichts"
     assert _rc.drossel_bitrate(1800, 3) >= 1500, "Bitrate faellt ins Bodenlose"
 
     # --- 2) Der Bot fordert die Abregelung an und fuehrt sie aus ----------

@@ -7921,6 +7921,135 @@ def _test_v42_w48_wortlaut_der_werkzeuge():
     ok("W48: fehlt die konfigurierte Schrift, nimmt das Overlay eine Ersatzschrift")
 
 
+def _test_v42_w49_notbremse_und_guthaben():
+    """v4.2-W49: die Notbremse trat aufs Gas, und eine Rechnung sah aus wie ein
+    Programmierfehler.
+
+    Gemeldet: „bei den Restreams im Text-Modus brechen Chat und Avatar weg",
+    dazu der Wunsch, das fehlende Guthaben als Warnung statt als Fehler zu
+    behandeln. Drei Ursachen, alle hier:
+
+    1. **Die Preset-Leiter stand falsch herum.** `("veryfast", "faster",
+       "superfast", "ultrafast")`, vorwaerts durchlaufen — aber in x264 ist
+       "faster" LANGSAMER als "veryfast". Stufe 1 machte das Encoding teurer,
+       der Rueckstand wuchs, Stufe 2 und 3 folgten. Und auf Stufe 3 faellt der
+       eingebrannte Text. Der Weg zum leeren Sendebild fuehrte durch den
+       Versuch, es zu verhindern.
+
+    2. **Der Avatar hing an der Schrift.** `avatar_on` verlangte `overlay_on`,
+       und das verlangte eine vorhandene Schriftdatei. Eine fehlende
+       DejaVu-Datei nahm damit den Avatar mit — obwohl er keine Schrift
+       braucht. Dasselbe auf Drossel-Stufe 3.
+
+    3. **Ein leeres Anthropic-Guthaben kommt als HTTP 400**, also mit
+       demselben Code wie ein kaputter Request. Beides "bad_request" zu nennen
+       ist formal richtig und praktisch nutzlos.
+    """
+    from nc import restreamcmd as R
+    from nc import claude as C
+
+    # --- 1) Jede Drossel-Stufe muss ECHT schneller sein ------------------
+    # Auf die Eigenschaft geprueft, nicht auf Namen: ein Name laesst sich
+    # wieder falsch eintragen (genau das ist passiert), die Eigenschaft nicht.
+    TEMPO = ["ultrafast", "superfast", "veryfast", "faster", "fast",
+             "medium", "slow", "slower", "veryslow"]
+    for start in ("veryfast", "medium", "fast", "superfast"):
+        kette = [R.drossel_preset(start, st) for st in range(R.DROSSEL_MAX + 1)]
+        idx = [TEMPO.index(p) for p in kette]
+        assert all(b <= a for a, b in zip(idx, idx[1:])), \
+            "Drossel wird langsamer statt schneller: %s" % (kette,)
+        assert idx[-1] < idx[0], "hoechste Stufe spart nichts: %s" % (kette,)
+    # Der konkrete Fall aus dem Log: veryfast, Stufe 1.
+    assert R.drossel_preset("veryfast", 1) == "superfast", \
+        "Stufe 1 ab veryfast muss superfast sein — 'faster' war der Fehler"
+    assert R.drossel_preset("ultrafast", 3) == "ultrafast", "unter ultrafast: nichts"
+    # Ein Tippfehler in der .env darf nicht sofort auf die schlechteste Stufe
+    # springen, solange gar kein Rueckstand vorliegt.
+    assert R.drossel_preset("tippfehler", 0) == "tippfehler"
+    assert R.drossel_preset("tippfehler", 1) == "superfast"
+    ok("W49: jede Drossel-Stufe ist echt schneller als die vorige")
+
+    # --- 2) Der Avatar haengt nicht mehr an der Schrift ------------------
+    hier = os.path.dirname(os.path.abspath(__file__))
+    rq = open(os.path.join(hier, "nc", "restreamcmd.py"), encoding="utf-8").read()
+    fr = " ".join(rq.split())
+    assert "sendebild_on = bool(transcode and RESTREAM_OVERLAY" in fr, \
+        "der Schalter fuer 'ueberhaupt etwas brennen' fehlt"
+    assert "overlay_on = bool(sendebild_on and _font)" in fr, \
+        "Text muss an der Schrift haengen"
+    # ... und der Avatar an sendebild_on, NICHT an overlay_on.
+    for zeile in ("feed_on = bool(sendebild_on and avatar_feed)",
+                  "avatar_on = bool(feed_on or anim_on or (sendebild_on and RESTREAM_AVATAR"):
+        assert zeile in fr, zeile
+    assert "feed_on = bool(overlay_on and avatar_feed)" not in fr, \
+        "der Avatar haengt wieder an der Schrift"
+    assert "anim_on = bool(overlay_on and" not in fr, \
+        "die Avatar-Animation haengt wieder an der Schrift"
+    ok("W49: ohne Schrift kein Text — aber sehr wohl ein Avatar")
+
+    # --- 3) Auf Stufe 3 faellt der TEXT, nicht der Avatar ----------------
+    # Der Kommentar in W43 behauptete "den fehlenden Avatar sieht jeder,
+    # deshalb faellt er zuletzt" — tatsaechlich fielen beide zusammen. Und es
+    # ist auch sachlich falsch herum: eine drawtext-Kette mit mehreren Boxen
+    # kostet ein Vielfaches eines overlay-Filters auf ein kleines PNG.
+    assert hasattr(R, "drossel_text_aus"), "drossel_text_aus fehlt"
+    assert not hasattr(R, "drossel_overlay_aus"), \
+        "der alte, irrefuehrende Name steht noch da"
+    assert not R.drossel_text_aus(2) and R.drossel_text_aus(3)
+    assert "not drossel_text_aus(drossel)" in fr
+    # sendebild_on ist der EINZIGE, der die Drossel liest — haenge der Avatar
+    # noch an einer zweiten Drossel-Pruefung, faellt er weiter mit.
+    assert fr.count("drossel_text_aus(drossel)") == 2, \
+        "die Drossel wird an mehr Stellen gelesen als gedacht"
+    ok("W49: auf der hoechsten Drossel faellt der Text, der Avatar bleibt")
+
+    # --- 4) Ein leeres Guthaben ist kein bad_request ---------------------
+    echt = ("Your credit balance is too low to access the Anthropic API. "
+            "Please go to Plans & Billing to upgrade or purchase credits.")
+    assert C._error_kind(400, echt) == "kein_guthaben"
+    assert C._error_kind(400, echt.upper()) == "kein_guthaben", "Gross/Klein"
+    # Ein ECHTER bad_request bleibt einer — sonst waere die Unterscheidung
+    # wertlos und der naechste Programmierfehler haette eine Stunde Sperre.
+    assert C._error_kind(400, "messages.0.content: text content blocks must "
+                              "be non-empty") == "bad_request"
+    assert C._error_kind(400, "") == "bad_request"
+    assert C._error_kind(401, echt) == "auth", "401 bleibt auth"
+    assert C._error_kind(429, "x") == "rate"
+    assert C._error_kind(500, "x") == "http_500"
+    ok("W49: leeres Guthaben ist eine eigene Klasse, kein bad_request")
+
+    # --- 5) Der Body wird EINMAL gelesen ---------------------------------
+    # fehlertext() liest e.read() — beim zweiten Mal ist der Body leer. Wer
+    # erst klassifiziert und dann liest (oder umgekehrt zweimal liest),
+    # bekommt eine leere Meldung und damit wieder "bad_request".
+    fc = " ".join(open(os.path.join(hier, "nc", "claude.py"),
+                       encoding="utf-8").read().split())
+    assert "_detail = fehlertext(e) or \"abgelehnt\" kind = _error_kind(e.code, _detail)" in fc, \
+        "Body wird nicht einmal gelesen und dann klassifiziert"
+    ok("W49: der Fehlertext wird einmal gelesen und fuer beides benutzt")
+
+    # --- 6) Der Bot sperrt Claude, statt bei jeder Reaktion anzuklopfen --
+    bot = open(os.path.join(hier, "bot.py"), encoding="utf-8").read()
+    fb = " ".join(bot.split())
+    assert 'if _cerr == "kein_guthaben":' in fb
+    assert "Anthropic-Guthaben aufgebraucht" in fb, \
+        "die Warnung nennt die Ursache nicht im Klartext"
+    assert "_CLAUDE_PAUSE[\"bis\"] = _time_mod.monotonic() + CLAUDE_GUTHABEN_PAUSE_S" in fb
+    # Die Sperre sitzt an EINER Stelle — es gibt drei Claude-Aufrufer.
+    assert fb.count("_akey = _anthropic_key()") >= 3, \
+        "weniger Aufrufer als erwartet — Sperre neu pruefen"
+    assert "if _CLAUDE_PAUSE[\"bis\"] > _time_mod.monotonic(): return \"\"" in fb, \
+        "die Sperre steht nicht in _anthropic_key — dann hat sie nur ein Aufrufer"
+    # Und sie loest sich, sobald Claude wieder antwortet. Sonst bliebe er nach
+    # dem Aufladen bis zum naechsten Neustart stumm.
+    assert "_CLAUDE_PAUSE[\"bis\"] = 0.0" in fb, "die Sperre wird nie aufgehoben"
+    # Definition VOR dem ersten Nutzer: _anthropic_key liest das Dict, und ein
+    # Aufruf waehrend des Imports haette sonst einen NameError geworfen.
+    assert bot.index('_CLAUDE_PAUSE = {') < bot.index('_CLAUDE_PAUSE["bis"] >'), \
+        "_CLAUDE_PAUSE steht hinter seinem ersten Nutzer"
+    ok("W49: leeres Guthaben sperrt Claude eine Stunde, an genau einer Stelle")
+
+
 def main():
     tmp = tempfile.mkdtemp()
     configure_db(db_path=os.path.join(tmp, "t.db"), backend="sqlite")
@@ -8134,6 +8263,8 @@ def main():
     _test_v42_w47_chat_reconnect_und_gedaechtnis()
 
     _test_v42_w48_wortlaut_der_werkzeuge()
+
+    _test_v42_w49_notbremse_und_guthaben()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)
 
