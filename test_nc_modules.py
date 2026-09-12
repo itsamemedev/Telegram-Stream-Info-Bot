@@ -8188,6 +8188,88 @@ def _test_v42_w50_avatar_ueberlebt_die_drossel():
     ok("W50: eine Zeile nennt Text, Avatar und jeden fehlenden Grund")
 
 
+def _test_v42_w55_kein_tap_sagt_warum():
+    """v4.2-W55: „audio=False" war EIN Boolescher Wert fuer DREI Ursachen.
+
+    Der Betreiber meldete ein leeres Live-Transkript („Noch nichts gehoert").
+    Im Log stand dazu nur:
+
+        live-react gestartet fuer @user (audio=False, chat=True)
+
+    Diese Zeile sagt, DASS nichts geht, und verschweigt als Einzige, WAS. Der
+    Tap startet nur bei LIVE_REACT_SPEECH **und** einer Stream-URL **und**
+    importierbarem faster-whisper — drei Bedingungen, eine Und-Kette, ein
+    Ergebnis. Der Grund musste per Hand rekonstruiert werden, und die
+    tatsaechliche Ursache blieb dabei wochenlang unentdeckt: es fehlte die
+    STREAM-URL, derselbe Befund wie in v4.2-W51.
+
+    Die Kette dahinter, vollstaendig:
+
+        get_live_status -> ("live", None)        (71 % der Faelle, vor W51)
+          -> _get_live_info gibt info=None
+          -> _live_react_worker: stream_url = None
+          -> kein Audio-Tap, kein Whisper
+          -> _live_transcript_push wird nie gerufen
+          -> das Deck zeigt "Noch nichts gehoert"
+
+    Genau der stille Schalter, vor dem CLAUDE.md warnt.
+    """
+    from nc.audiotap import warum_kein_tap as w, KEIN_TAP
+
+    # --- 1) Jede Ursache bekommt ihren eigenen Grund --------------------
+    for args, erwartet in (((False, "u", True), "aus"),
+                           ((True, None, True), "keine_url"),
+                           ((True, "", True), "keine_url"),
+                           ((True, "u", False), "kein_whisper")):
+        an, grund, text = w(*args)
+        assert an is False, args
+        assert grund == erwartet, (args, grund, erwartet)
+        assert text and text == KEIN_TAP[erwartet], args
+    ok("W55: jede der drei Ursachen bekommt ihren eigenen Grund, nicht False")
+
+    # --- 2) Alles da -> Tap laeuft, kein Rauschen -----------------------
+    an, grund, text = w(True, "https://x/y.m3u8", True)
+    assert an is True and grund == "" and text == "", (an, grund, text)
+    ok("W55: sind alle Voraussetzungen da, meldet die Zeile nichts weiter")
+
+    # --- 3) Reihenfolge: das zuerst Behebbare zuerst --------------------
+    # Fehlen mehrere, muss der Schalter genannt werden — er erklaert alles
+    # Weitere und ist in einer Sekunde umgelegt. Naennte man stattdessen das
+    # fehlende Paket, installiert der Betreiber etwas, das er gar nicht
+    # gebraucht haette.
+    assert w(False, None, False)[1] == "aus"
+    assert w(True, None, False)[1] == "keine_url"
+    ok("W55: bei mehreren Luecken wird die zuerst behebbare genannt")
+
+    # --- 4) Der Proxy ist KEINE Startbedingung --------------------------
+    # Ohne Proxy startet der Tap und stirbt dann ggf. an 403 — das
+    # diagnostiziert W46. Ihn hier zur Bedingung zu machen wuerde einen
+    # funktionierenden Abgriff ueber eine Direktverbindung verhindern.
+    an, grund, text = w(True, "u", True, proxy_da=False)
+    assert an is True and grund == "", "der Proxy blockiert den Start"
+    assert "403" in text and "RECORD_PROXY" in text, text
+    ok("W55: fehlender Proxy verhindert den Start nicht, wird aber genannt")
+
+    # --- 5) bot.py benutzt das, und meldet OHNE Audio auf warning -------
+    hier = os.path.dirname(os.path.abspath(__file__))
+    bot = open(os.path.join(hier, "bot.py"), encoding="utf-8").read()
+    flach = " ".join(bot.split())
+    assert "_nc_audiotap.warum_kein_tap(" in flach, \
+        "der Worker wertet die Startbedingungen wieder selbst aus"
+    assert "LIVE_REACT_SPEECH and stream_url and _faster_whisper_available()" not in flach, \
+        "die alte Und-Kette steht noch da — dann gibt es den Grund wieder nicht"
+    # Die entscheidende Zusicherung: OHNE Audio darf das nicht auf info stehen.
+    i = flach.find("OHNE Audio")
+    assert i > 0, "die Zeile ohne Audio-Tap fehlt"
+    davor = flach[max(0, i - 200):i]
+    assert "log.warning" in davor, \
+        "die Meldung ohne Audio-Tap steht auf info — in einem ERROR-Log " \
+        "erscheint sie damit NIE, und genau so blieb sie unentdeckt"
+    assert "_tap_grund" in flach and "_tap_text" in flach, \
+        "Grund und Abhilfe stehen nicht in der Meldung"
+    ok("W55: bot.py meldet den Grund, und ohne Audio auf warning statt info")
+
+
 def _test_v42_w54_sendebild_ausgerichtet():
     """v4.2-W54: der Avatar lag ueber dem Chat, und der Chat lief aus dem Bild.
 
@@ -8861,6 +8943,7 @@ def main():
     _test_v42_w52_flv_zaehlt_auch()
     _test_v42_w53_avatar_kopf_hand_schwert()
     _test_v42_w54_sendebild_ausgerichtet()
+    _test_v42_w55_kein_tap_sagt_warum()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)
 
