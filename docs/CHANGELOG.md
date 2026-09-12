@@ -11,6 +11,73 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Behoben — die Schlüssel aus der `.env` erreichten nie einen Request (v4.2 W67)
+
+Dritte Welle der Bestandsaufnahme, und die erste, die einen Produktionsfehler
+freilegt statt nur Schulden zu messen. CLAUDE.md warnt seit Langem:
+
+> Modul-Konstanten frieren `.env` ein. `.env` wird teils erst nach den ersten
+> Imports geladen. Konfiguration als Funktion lesen, nie als Modul-Konstante.
+
+Geprüft hat diesen Satz nichts — und der Bestand hat ihn an der teuersten
+Stelle gebrochen.
+
+**Riss 1: `nc/freeai.py` baute seine Basen-Liste beim Import.** `_BASES =
+_default_bases()` stand auf Modul-Ebene, und weil `nc/news.py`,
+`nc/marketing.py` und `nc/routes/ai.py` das Modul in die Import-Reihe von
+`bot.py` ziehen, geschah das rund 130 Zeilen **vor** `load_dotenv()`. Damit
+waren `POLLINATIONS_API_KEY` und `LLM7_TOKEN` beim Bau der Liste immer leer.
+Der Betreiber trug sie in die `.env` ein, und kein einziger Request hat je
+einen gesehen.
+
+**Riss 2: `bot.py` strich den Katalog auf eine einzige Base zusammen.** Der
+Zweig „keine Base konfiguriert" baute aus `REACTION_AI_BASE` bedingungslos
+einen Eintrag — die Liste war damit **nie** leer, und `configure(bases=…)`
+ersetzte den Katalog jedes Mal. In Produktion lief die Kette deshalb mit
+**einer statt vier** Basen. Die Rotation, auf die sich der Skill
+`nc-ki-backends` beruft, gab es nicht: sagte Pollinations „budget exceeded",
+war Schluss, weil kein Ausweichziel existierte.
+
+Das ist die Ursache hinter W64. Dort wurde die Symptomseite behandelt — die
+Rechnung des Anbieters nicht mehr im Chat vorlesen —, und die dortige
+Entscheidung „der Schlüssel geht nur an den Gateway, nicht an den keylosen
+Altpfad" war in Produktion wirkungslos, weil der Gateway gar nicht in der
+Liste stand.
+
+Gemessen statt vermutet, mit dem Bot als Zeugen:
+
+| Konfiguration | vorher | nachher |
+|---|---|---|
+| nur die Schlüssel in der `.env` (der Normalfall) | 1 Base, keylos | 4 Basen, Schlüssel am Gateway und an LLM7 |
+| `REACTION_AI_BASE` auf eine Katalog-Base | 1 Base | 4 Basen |
+| eigener Endpunkt | 1 Base | unverändert 1 Base |
+| `REACTION_API_KEY` (Altweg) | 1 Base | unverändert 1 Base |
+| `FREEAI_BASES` explizit | wie angegeben | unverändert |
+
+Jede bewusste Ansage des Betreibers gilt weiter exklusiv. Zusammengestrichen
+wird nur noch, wenn er wirklich etwas anderes will — nicht, weil ein Default
+zufällig auf eine Base zeigt, die ohnehin im Katalog steht.
+
+### Hinzugefügt — `tools/importzeit.py`
+
+Der Prüfer **startet den Bot wirklich**, statt den Quelltext zu lesen. Das ist
+der Kern: ein AST-Lauf findet nur das wörtliche `os.getenv` auf Modul-Ebene
+und fand damit **einen von fünf** Fällen. Die anderen vier standen in
+`_default_bases()` — einer Funktion, die auf Modul-Ebene *aufgerufen* wird.
+Die Aufrufkette sieht man statisch nicht, die Ausführung schon.
+
+Er fängt alle drei Schreibweisen ab (`os.getenv`, `os.environ.get`,
+`os.environ[…]`); nur die erste zu kennen hätte zwei Drittel der Zugriffe
+unsichtbar gelassen. Die 178 Lesungen in `bot.py` sind ausdrücklich in
+Ordnung — sie stehen alle **nach** `load_dotenv()`, und genau darum misst der
+Prüfer die Reihenfolge und nicht die Menge.
+
+`python3 tools/importzeit.py --sperre` läuft in der CI, im Rauchtest-Job, weil
+er den Laufzeitstack braucht. Anders als bei W65 und W66 ist die Grenze hier
+**null** und keine eingefrorene Grundlinie: der Bestand ist sauber, jede neue
+Lesung vor `load_dotenv()` ist ein echter Fehler.
+
+
 ### Geändert — Verträge, die nicht mehr an ihrem eigenen Fenster ersticken (v4.2 W66)
 
 Zweite Welle der Bestandsaufnahme. CLAUDE.md warnt vor dieser Bruchstelle mit

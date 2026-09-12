@@ -8856,7 +8856,10 @@ def _test_v42_w64_dienstmeldung_statt_antwort():
         _th.Thread(target=srv.serve_forever, daemon=True).start()
         return srv
 
-    _sicherung = (list(F._BASES), F._MODEL, F._TIMEOUT)
+    # v4.2-W67: _BASES ist None, solange configure() keine Liste gesetzt
+    # hat — dann gilt der Katalog, zur Laufzeit gelesen. list(None) knallt.
+    _sicherung = (list(F._BASES) if F._BASES is not None else None,
+                  F._MODEL, F._TIMEOUT)
     pleite = _server(ECHT)
     frei = _server("Klar, mach ich.")
     try:
@@ -9269,6 +9272,148 @@ def _test_v42_w65_stille_wird_gemessen_und_gesperrt():
                  lambda t, e: gemeldet.append(t)) is False
     assert gemeldet and "DDL" in gemeldet[0], gemeldet
     ok("W65: der DDL-Helfer schluckt nur 'existiert schon', sonst nichts")
+
+
+def _test_v42_w67_env_erreicht_die_cloud_kette():
+    """v4.2-W67: die .env-Keys haben nie einen Request gesehen.
+
+    CLAUDE.md warnt seit langem: „Modul-Konstanten frieren `.env` ein. `.env`
+    wird teils erst nach den ersten Imports geladen." Der Bestand hat den Satz
+    gebrochen, und zwar an der teuersten Stelle. `nc/freeai.py` baute seine
+    Basen-Liste auf Modul-Ebene (`_BASES = _default_bases()`), und weil
+    nc/news.py, nc/marketing.py und nc/routes/ai.py das Modul in der
+    Import-Reihe von bot.py mitziehen, geschah das VOR load_dotenv().
+    POLLINATIONS_API_KEY und LLM7_TOKEN standen in der .env und kamen nirgends
+    an — gemessen, nicht vermutet.
+
+    Der zweite Riss lag in bot.py: der Zweig „keine Base konfiguriert" baute
+    aus REACTION_AI_BASE bedingungslos EINE Base und reichte sie an
+    configure() — das ersetzte den Katalog. In Produktion lief die Kette
+    deshalb mit EINER statt VIER Basen. Die Rotation, auf die sich der Skill
+    nc-ki-backends beruft, gab es nicht: sagte Pollinations „budget
+    exceeded", war Schluss, weil es kein Ausweichziel gab. Genau dieses
+    Moderator-Log hat W64 ausgeloest — W64 hat die Symptomseite behandelt
+    (die Rechnung nicht mehr vorlesen), die Ursache lag hier.
+    """
+    import sys as _sys
+    hier = os.path.dirname(os.path.abspath(__file__))
+    if os.path.join(hier, "tools") not in _sys.path:
+        _sys.path.insert(0, os.path.join(hier, "tools"))
+    import importzeit as I
+    import nc.freeai as F
+
+    # --- 1) Beim Import wird KEINE Basen-Liste gebaut -------------------
+    assert F._BASES is None, \
+        "nc.freeai baut die Basen-Liste wieder beim Import — dann sind die " \
+        "Keys aus der .env leer, weil load_dotenv() noch nicht lief"
+
+    # --- 2) …und die Keys kommen zur LAUFZEIT an ------------------------
+    # Das ist der Punkt, an dem „presence" nicht genuegt: dass _basen()
+    # existiert, sagt nichts. Der Key wird NACH dem Import gesetzt — genau
+    # wie es load_dotenv() tut — und muss trotzdem ankommen.
+    _alt = {k: os.environ.get(k) for k in ("POLLINATIONS_API_KEY", "LLM7_TOKEN")}
+    try:
+        os.environ["POLLINATIONS_API_KEY"] = "SPAET-GESETZT-P"
+        os.environ["LLM7_TOKEN"] = "SPAET-GESETZT-L"
+        keys = {b["url"]: b.get("key") for b in F._basen()}
+        assert "SPAET-GESETZT-P" in keys.values(), \
+            "der Pollinations-Key aus der Umgebung erreicht keine Base"
+        assert "SPAET-GESETZT-L" in keys.values(), \
+            "der LLM7-Key aus der Umgebung erreicht keine Base"
+        # W64 bleibt gueltig: der Key geht NUR an den Gateway, nicht an den
+        # keylosen Altpfad — sonst teilen sich beide ein Budget und fallen
+        # gemeinsam aus, und die kostenlose Alternative ist genau dann weg,
+        # wenn man sie braucht.
+        for url, k in keys.items():
+            if "text.pollinations.ai" in url:
+                assert not k, \
+                    "der keylose Altpfad hat wieder einen Key — dann teilen " \
+                    "sich beide Pollinations-Basen ein Budget (W64)"
+    finally:
+        for k, v in _alt.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+
+    # --- 3) Der Referrer ebenfalls zur Laufzeit -------------------------
+    _r = os.environ.get("FREEAI_REFERRER")
+    try:
+        os.environ["FREEAI_REFERRER"] = "spaet-gesetzt"
+        assert F._referrer() == "spaet-gesetzt", \
+            "FREEAI_REFERRER wird wieder beim Import eingefroren"
+    finally:
+        if _r is None:
+            os.environ.pop("FREEAI_REFERRER", None)
+        else:
+            os.environ["FREEAI_REFERRER"] = _r
+    assert F._referrer(), "ohne Umgebung muss der Default stehen"
+    ok("W67: freeai liest Keys und Referrer zur Laufzeit, nicht beim Import")
+
+    # --- 4) bot.py streicht den Katalog nicht mehr zusammen -------------
+    src = io.open(os.path.join(hier, "bot.py"), encoding="utf-8").read()
+    i = src.find("_freeai_bases = [b for b in os.getenv(\"FREEAI_BASES\"")
+    assert i > 0, "der Zweig, der die Basen waehlt, ist nicht mehr auffindbar"
+    rumpf = rumpf_ab(src, i)
+    assert "katalog_kennt" in rumpf, \
+        "bot.py fragt nicht mehr, ob die Wunsch-Base ohnehin im Katalog " \
+        "steht — dann ersetzt sie den Katalog wieder und es bleibt EINE Base"
+    # Die eigentliche Aussage: der Zweig ist BEDINGT. Vorher stand dort ein
+    # nacktes `if not _freeai_bases:` und damit war die Liste nie leer.
+    assert "if not _freeai_bases:" not in rumpf, \
+        "der Zweig fuellt die Basen-Liste wieder bedingungslos — dann ist " \
+        "sie nie leer und configure() ersetzt den Katalog immer"
+    assert F.katalog_kennt("https://api.llm7.io/v1"), \
+        "katalog_kennt erkennt eine Base des eigenen Katalogs nicht"
+    assert F.katalog_kennt("https://api.llm7.io/v1/"), \
+        "katalog_kennt stolpert ueber den Schraegstrich am Ende"
+    assert not F.katalog_kennt("https://mein.eigener.host/v1"), \
+        "katalog_kennt haelt einen fremden Endpunkt fuer bekannt — dann " \
+        "wird der eigene Endpunkt des Betreibers ignoriert"
+    ok("W67: eine Wunsch-Base aus dem Katalog loescht die Ausweichbasen nicht")
+
+    # --- 5) Der Pruefer sieht ALLE DREI Schreibweisen -------------------
+    # Nur os.getenv abzufangen reicht nicht: os.environ.get() und
+    # os.environ[...] gehen daran vorbei, und beide stehen im Bestand. Ein
+    # Pruefer, der zwei Drittel nicht sieht, meldet Ruhe, wo keine ist —
+    # dieselbe Klasse Fehler wie das Messgeraet in W65 und W66.
+    with I.mitschnitt() as (stand, roh):
+        os.getenv("W67_PROBE_A", "")
+        os.environ.get("W67_PROBE_B", "")
+        os.environ["PATH"]
+        stand["geladen"] = True
+        os.getenv("W67_ZU_SPAET", "")
+    namen = [n for _d, _z, n in roh]
+    for erwartet, wie in (("W67_PROBE_A", "os.getenv"),
+                          ("W67_PROBE_B", "os.environ.get"),
+                          ("PATH", "os.environ[...]")):
+        assert erwartet in namen, \
+            "der Pruefer sieht %s nicht — damit bleibt jede .env-Lesung in " \
+            "dieser Schreibweise unsichtbar" % wie
+    assert "W67_ZU_SPAET" not in namen, \
+        "der Pruefer schreibt noch NACH load_dotenv() mit — dann meldet er " \
+        "die 178 voellig korrekten Lesungen aus bot.py als Fehler"
+    ok("W67: der Pruefer sieht getenv, environ.get und environ[...]")
+
+    # --- 6) Und die Sperre faellt wirklich ------------------------------
+    # Am CLI-Pfad geprueft, den die CI faehrt, nicht daneben nachgerechnet:
+    # in W65 blieb genau deshalb eine Mutationsprobe still.
+    import contextlib as _ctx
+    _echt = I.messen
+    try:
+        I.messen = lambda: [("nc/beispiel.py", 12, "IRGENDEIN_KEY")]
+        with _ctx.redirect_stdout(io.StringIO()):
+            assert I.main(["--sperre"]) == 1, \
+                "die Sperre laesst eine .env-Lesung vor load_dotenv() " \
+                "durch — der CI-Job ist dann eine Attrappe"
+            assert I.main([]) == 0, \
+                "ohne --sperre soll der Bericht nicht rot sein"
+            I.messen = lambda: []
+            assert I.main(["--sperre"]) == 0, \
+                "die Sperre faellt, obwohl nichts vor load_dotenv() liest"
+    finally:
+        I.messen = _echt
+    ok("W67: die Sperre faellt bei jeder Lesung vor load_dotenv()")
 
 
 def _test_v42_w66_fenster_wachsen_mit():
@@ -10406,6 +10551,7 @@ def main():
     _test_v42_w64_dienstmeldung_statt_antwort()
     _test_v42_w65_stille_wird_gemessen_und_gesperrt()
     _test_v42_w66_fenster_wachsen_mit()
+    _test_v42_w67_env_erreicht_die_cloud_kette()
     _test_v42_w60_azrael_cooldown_je_plattform()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)

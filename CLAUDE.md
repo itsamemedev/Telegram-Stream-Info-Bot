@@ -10,7 +10,7 @@ GitHub-Repo trägt Historie, CI und Issues — es ist nicht der Deploy-Weg.
 
 ## Die eine Regel
 
-`bot.py` hat **23.793 Zeilen / 1,2 MB ≈ 295.000 Token**. Diese Datei wird
+`bot.py` hat **23.806 Zeilen / 1,2 MB ≈ 295.000 Token**. Diese Datei wird
 **nie** ganz gelesen und **nie** blind durchsucht. Erst fragen wo etwas steht,
 dann den Ausschnitt holen:
 
@@ -85,6 +85,7 @@ stdlib-only (`urllib`, kein `aiohttp`).
     python tools/ncpatch.py docs
     python tools/stillecheck.py --sperre
     python tools/vertragscheck.py --sperre
+    python tools/importzeit.py    --sperre   # braucht requirements-smoke.txt
     python tools/i18n_extract.py --check en
     python test_smoke.py ; python test_nc_modules.py ; python test_restream.py
 
@@ -158,6 +159,21 @@ Fehlerkanal selbst — dort erzeugt Loggen eine Rekursion.
 **Modul-Konstanten frieren `.env` ein.** `.env` wird teils erst nach den ersten
 Imports geladen. Konfiguration als Funktion lesen (`_backend_conf()`), nie als
 Modul-Konstante.
+
+Dieser Satz stand hier jahrelang ungeprüft, und der Bestand hat ihn an der
+teuersten Stelle gebrochen: `nc/freeai.py` baute seine Basen-Liste beim Import,
+und weil `nc/news.py`, `nc/marketing.py` und `nc/routes/ai.py` das Modul in die
+Import-Reihe ziehen, geschah das **vor** `load_dotenv()` (bot.py:696).
+`POLLINATIONS_API_KEY` und `LLM7_TOKEN` standen in der `.env` und haben nie
+einen Request erreicht. Seit v4.2-W67 misst das `tools/importzeit.py`, und die
+Grenze ist **null** — anders als bei den Ratschen aus W65/W66 gibt es hier
+keinen Bestand zu dulden.
+
+Der Prüfer **startet den Bot**, statt den Quelltext zu lesen: ein AST-Lauf
+findet nur das wörtliche `os.getenv` auf Modul-Ebene und fand damit einen von
+fünf Fällen — die anderen vier standen in einer Funktion, die auf Modul-Ebene
+*aufgerufen* wird. Die 178 Lesungen in `bot.py` sind in Ordnung; sie stehen
+alle nach `load_dotenv()`. Es zählt die Reihenfolge, nicht die Menge.
 
 **Einmal-`await` ohne Supervisor.** Jeder Long-Running-Client braucht Reconnect
 mit Backoff **und** ein Abbruchkriterium für deterministische Fehler.
