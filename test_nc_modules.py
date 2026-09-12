@@ -10,7 +10,9 @@ Hintergrund: db_conn() ist nach nc.dbwrap gewandert. Das war der Schluessel zur
 weiteren Modularisierung — ueber 100 Bot-Funktionen hingen AUSSCHLIESSLICH an
 diesem einen Symbol und sind seitdem frei von Bot-Globals.
 """
+import io
 import os
+import textwrap
 import re
 import sys
 import tempfile
@@ -9004,6 +9006,240 @@ def _test_v42_w64_dienstmeldung_statt_antwort():
     ok("W64: mit Key bleibt eine Pollinations-Base keylos — die Alternative")
 
 
+def _test_v42_w65_stille_wird_gemessen_und_gesperrt():
+    """v4.2-W65: der Hauptfeind, endlich gezaehlt — und das Messgeraet geprueft.
+
+    CLAUDE.md nennt stille except-Bloecke seit Langem „den Hauptfeind".
+    Gemessen wurde es nie. Beim Nachzaehlen: 1746 Bloecke, 1086 ohne jede
+    Meldung. Jede Welle dieser Reihe kam aus dieser Klasse — W51 (blinder
+    Recorder), W55 (taubes Ohr), W60 (Panel weg), W63 (unsichtbare Aufnahme),
+    W64 (Rechnung im Chat).
+
+    WARUM DIESER VERTRAG DAS WERKZEUG PRUEFT UND NICHT DEN BESTAND: der
+    Klassierer hat sich beim Bauen DREIMAL geirrt, und jedes Mal in die
+    gefaehrliche Richtung — er zeigte auf Stellen, an denen nichts zu tun war:
+
+      1. `"log." in ast.dump(...)` findet nie etwas. dump rendert einen
+         Attributzugriff als Attribute(value=Name(id='log'), attr='warning').
+         Ergebnis: 121 Melder statt 550, der Bestand um Faktor vier zu
+         schwarz gezeichnet.
+      2. `except asyncio.CancelledError: raise` galt als Stille. Ein Abbruch
+         ist kein Ausfall, er wurde angeordnet. Die Zielliste bestand zu drei
+         Vierteln aus Nicht-Aufgaben.
+      3. Die handgeschriebene Melder-Liste kannte `_verbindung_verloren`
+         nicht — den Melder von vier Twitch- und YouTube-Dauerlaeufern.
+
+    Ein Messgeraet, das falsch misst, ist schlimmer als keines: es erzeugt
+    Arbeit an den falschen Stellen und Vertrauen an den falschen. Deshalb
+    steht hier jeder der drei Irrtuemer als eigene Zusicherung.
+    """
+    import ast as _ast
+    import sys as _sys
+    hier = os.path.dirname(os.path.abspath(__file__))
+    if os.path.join(hier, "tools") not in _sys.path:
+        _sys.path.insert(0, os.path.join(hier, "tools"))
+    import stillecheck as S
+
+    def _handler(quelltext):
+        """Den ersten except-Block aus einem Schnipsel holen."""
+        baum = _ast.parse(textwrap.dedent(quelltext))
+        for n in _ast.walk(baum):
+            if isinstance(n, _ast.Try):
+                return n, n.handlers[0]
+        raise AssertionError("kein try im Schnipsel")
+
+    # --- 1) Ein Attributzugriff als Melder erkannt ----------------------
+    # Der Irrtum, der 429 Melder verschluckte.
+    _t, _h = _handler("""
+        try:
+            riskant()
+        except Exception as e:
+            log.warning("ging nicht: %s", e)
+        """)
+    assert S._meldet(_h), \
+        "log.warning gilt nicht als Meldung — der Klassierer liest wieder " \
+        "ast.dump statt des Syntaxbaums"
+    _t, _h = _handler("""
+        try:
+            riskant()
+        except Exception:
+            pass
+        """)
+    assert not S._meldet(_h), "ein blankes pass gilt als Meldung"
+    # Weiterwerfen ist auch eine Antwort — nur nach oben.
+    _t, _h = _handler("""
+        try:
+            riskant()
+        except Exception:
+            raise
+        """)
+    assert S._meldet(_h), "weiterwerfen gilt nicht als Antwort"
+    ok("W65: der Klassierer erkennt Melder ueber den Syntaxbaum")
+
+    # --- 2) Abbruch ist kein Ausfall ------------------------------------
+    for typ in ("asyncio.CancelledError", "KeyboardInterrupt", "GeneratorExit"):
+        _t, _h = _handler(f"""
+            try:
+                riskant()
+            except {typ}:
+                return
+            """)
+        assert S._ist_ablaufsteuerung(_h), f"{typ} gilt als verschluckter Fehler"
+    # Ein blankes except faengt AUCH echte Fehler und ist deshalb NIE
+    # Ablaufsteuerung — sonst waere `except: pass` plotzlich in Ordnung.
+    _t, _h = _handler("""
+        try:
+            riskant()
+        except:
+            pass
+        """)
+    assert not S._ist_ablaufsteuerung(_h), \
+        "ein blankes except gilt als Ablaufsteuerung — damit waere jedes " \
+        "'except: pass' entschuldigt"
+    # Und eine Mischung faengt echte Fehler mit.
+    _t, _h = _handler("""
+        try:
+            riskant()
+        except (asyncio.CancelledError, ValueError):
+            pass
+        """)
+    assert not S._ist_ablaufsteuerung(_h), \
+        "ein Tupel MIT echtem Fehlertyp gilt als reine Ablaufsteuerung"
+    ok("W65: Abbruch-Signale sind kein Ausfall, ein blankes except schon")
+
+    # --- 3) Melder werden abgeleitet, nicht aufgezaehlt -----------------
+    # `_verbindung_verloren` steht in keiner Liste und meldet trotzdem.
+    abgeleitet = S._melder_sammeln()
+    assert "_verbindung_verloren" in abgeleitet, \
+        "der Melder von vier Twitch-/YouTube-Dauerlaeufern wird nicht erkannt"
+    assert "_loop_fehler" in abgeleitet, "_loop_fehler gilt nicht als Melder"
+    assert len(abgeleitet) > 100, \
+        f"nur {len(abgeleitet)} abgeleitete Melder — die Ableitung greift nicht"
+    ok("W65: Melder werden aus dem Bestand abgeleitet, nicht geraten")
+
+    # --- 4) Aufraeumpfade bleiben legitim still -------------------------
+    # CLAUDE.md nennt sie namentlich. Wuerden sie mitzaehlen, waere die Zahl
+    # nicht handhabbar und die Sperre unbrauchbar.
+    _t, _h = _handler("""
+        try:
+            proc.terminate()
+        except Exception:
+            pass
+        """)
+    assert S._nur_aufraeumen(_t), "proc.terminate() gilt nicht als Aufraeumen"
+    _t, _h = _handler("""
+        try:
+            conn.execute("INSERT INTO x VALUES (1)")
+        except Exception:
+            pass
+        """)
+    assert not S._nur_aufraeumen(_t), \
+        "ein INSERT gilt als Aufraeumen — damit waere jeder verschluckte " \
+        "Schreibfehler entschuldigt"
+    ok("W65: Aufraeumpfade sind legitim still, ein INSERT nicht")
+
+    # --- 5) Die Sperre hat eine Grundlinie und sie passt ----------------
+    # Ohne Grundlinie ist die CI-Sperre eine Attrappe; mit einer veralteten
+    # meldet sie bei jedem Merge etwas, das laengst behoben ist.
+    basis = S._lade_grundlinie()
+    assert basis is not None, \
+        "keine Grundlinie — die CI-Sperre kann nichts vergleichen"
+    stand, gesamt = S.bericht()
+    alt = basis.get("stille_bloecke", {})
+    gewachsen = {d: (alt.get(d, 0), n) for d, n in stand.items()
+                 if n > alt.get(d, 0)}
+    assert not gewachsen, f"neue stille except-Bloecke: {gewachsen}"
+    assert gesamt["still"] <= basis.get("summe", 0), (
+        f"die Summe ist gewachsen: {gesamt['still']} > {basis.get('summe')}")
+    ok("W65: die Grundlinie steht, und der Bestand ist nicht gewachsen")
+
+    # --- 5b) Und die SPERRE SELBST faellt auch --------------------------
+    # Die Zusicherung oben rechnet selbst nach — sie faehrt nicht den Weg,
+    # den die CI faehrt. Die Mutationsprobe, die `gewachsen = []` in main()
+    # setzt, lief deshalb still durch: die CI-Sperre waere eine Attrappe
+    # gewesen, und der Vertrag daneben gruen. Hier wird main() wirklich
+    # aufgerufen, mit einer eigenen Grundlinie in einer temporaeren Datei.
+    import contextlib as _ctx
+    import json as _json
+    import tempfile as _tf
+
+    def _sperre():
+        """main() fahren, ohne dass sein Bericht die Testausgabe flutet."""
+        with _ctx.redirect_stdout(io.StringIO()):
+            return S.main()
+
+    _echt_bericht, _echt_grund, _echt_argv = S.bericht, S.GRUNDLINIE, _sys.argv
+    _tmp = _tf.NamedTemporaryFile("w", suffix=".json", delete=False,
+                                  encoding="utf-8")
+    try:
+        _json.dump({"stille_bloecke": {"a.py": 2}, "summe": 2}, _tmp)
+        _tmp.close()
+        S.GRUNDLINIE = _tmp.name
+        # Unveraendert -> 0
+        S.bericht = lambda: ({"a.py": 2}, {"still": 2, "laut": 0, "aufraeumen": 0})
+        _sys.argv = ["stillecheck.py", "--sperre"]
+        assert _sperre() == 0, "die Sperre faellt, obwohl nichts gewachsen ist"
+        # Weniger -> 0 (Abbau muss erlaubt sein, sonst friert der Bestand ein)
+        S.bericht = lambda: ({"a.py": 1}, {"still": 1, "laut": 0, "aufraeumen": 0})
+        assert _sperre() == 0, "die Sperre faellt beim ABBAU stiller Bloecke"
+        # Mehr -> 1
+        S.bericht = lambda: ({"a.py": 3}, {"still": 3, "laut": 0, "aufraeumen": 0})
+        assert _sperre() == 1, \
+            "die Sperre laesst einen NEUEN stillen except-Block durch — " \
+            "der CI-Job ist dann eine Attrappe"
+        # Neue Datei mit stillem Block -> 1
+        S.bericht = lambda: ({"a.py": 2, "neu.py": 1},
+                             {"still": 3, "laut": 0, "aufraeumen": 0})
+        assert _sperre() == 1, "eine NEUE Datei mit stillem Block faellt durch"
+        # Ohne Grundlinie -> 1 (sonst waere ein geloeschtes Basisfile gruen)
+        S.GRUNDLINIE = _tmp.name + ".gibtsnicht"
+        assert _sperre() == 1, \
+            "ohne Grundlinie meldet die Sperre OK — dann genuegt es, die " \
+            "Basisdatei zu loeschen, um sie loszuwerden"
+    finally:
+        S.bericht, S.GRUNDLINIE, _sys.argv = _echt_bericht, _echt_grund, _echt_argv
+        os.unlink(_tmp.name)
+    ok("W65: die Sperre faellt bei Zuwachs und ohne Grundlinie, nicht bei Abbau")
+
+    # --- 6) Und der DDL-Helfer trennt Erwartetes von Echtem -------------
+    # Die drei behobenen Faelle haengen daran. Schluckt er zu viel, ist nichts
+    # gewonnen; schluckt er zu wenig, faellt der Dienst beim zweiten Start um.
+    from nc import ddlsafe as D
+    for bekannt in ("index idx_x already exists",
+                    "duplicate column name: filepath",
+                    "(1061, \"Duplicate key name 'idx_x'\")",
+                    "(1060, 'Duplicate column name')"):
+        assert D.ist_schon_da(Exception(bekannt)), bekannt
+    for echt in ("database is locked", "no such table: ledger",
+                 "near \"CRAETE\": syntax error", "disk I/O error"):
+        assert not D.ist_schon_da(Exception(echt)), echt
+
+    class _Konn:
+        def __init__(self, fehler=None):
+            self.fehler, self.laeufe = fehler, 0
+        def execute(self, sql):
+            self.laeufe += 1
+            if self.fehler:
+                raise Exception(self.fehler)
+    assert D.ddl(_Konn(), "CREATE INDEX x") is True
+    assert D.ddl(_Konn("index x already exists"), "CREATE INDEX x") is False
+    # OHNE Melder wird ein echter Fehler GEWORFEN, nicht geschluckt. Genau
+    # das ist der Punkt: eine Bibliothek ohne Logger soll nicht still
+    # danebengreifen.
+    try:
+        D.ddl(_Konn("database is locked"), "CREATE INDEX x")
+    except Exception as e:
+        assert "locked" in str(e)
+    else:
+        raise AssertionError("ein echter Fehler wird ohne Melder geschluckt")
+    # MIT Melder wird er gemeldet und der Aufrufer laeuft weiter.
+    gemeldet = []
+    assert D.ddl(_Konn("database is locked"), "CREATE INDEX x",
+                 lambda t, e: gemeldet.append(t)) is False
+    assert gemeldet and "DDL" in gemeldet[0], gemeldet
+    ok("W65: der DDL-Helfer schluckt nur 'existiert schon', sonst nichts")
+
+
 def _test_v42_w60_azrael_cooldown_je_plattform():
     """v4.2-W60: ein Cooldown fuer drei Chats verschluckte zwei davon.
 
@@ -10015,6 +10251,7 @@ def main():
     _test_v42_w62_avatar_afk_zustand()
     _test_v42_w63_manuelle_aufnahme_sichtbar_und_stoppbar()
     _test_v42_w64_dienstmeldung_statt_antwort()
+    _test_v42_w65_stille_wird_gemessen_und_gesperrt()
     _test_v42_w60_azrael_cooldown_je_plattform()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)

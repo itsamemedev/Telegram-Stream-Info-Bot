@@ -55,6 +55,8 @@ anfaengt. Die Zahlen musst du gegen deine Kontoauszuege und die
 Plattform-Abrechnungen pruefen.
 """
 
+from nc import ddlsafe as _ddlsafe
+
 import csv
 import hashlib
 import io
@@ -110,13 +112,23 @@ class LedgerError(ValueError):
 
 # ───────────────────────────────────────────────────────────── Setup
 
-def ensure_schema(conn):
+def ensure_schema(conn, melden=None):
+    """Tabelle und Indizes anlegen. Idempotent.
+
+    v4.2-W65: die Indizes liefen bis hierher durch `except Exception: pass`.
+    „Index existiert bereits" ist der Normalfall ab dem zweiten Start und
+    gehoert geschluckt — eine gesperrte Datenbank oder ein Tippfehler im DDL
+    aber nicht. DAS HIER IST DAS STEUER-JOURNAL mit Hash-Kette; ein Schema,
+    das anders aussieht als der Code annimmt, faellt sonst erst bei der
+    Jahresauswertung auf.
+
+    Ohne `melden` wirft nc.ddlsafe.ddl einen unerwarteten Fehler weiter —
+    genau richtig fuer ein Modul ohne Logger. Wer das ueberleben will, reicht
+    einen Melder herein.
+    """
     conn.execute(_SCHEMA)
     for stmt in _IDX:
-        try:
-            conn.execute(stmt)
-        except Exception:
-            pass
+        _ddlsafe.ddl(conn, stmt, melden)
 
 
 # ─────────────────────────────────────────────────────── Hash-Kette
