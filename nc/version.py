@@ -57,6 +57,7 @@ CHANGELOG = [
             "Die Notbremse gegen Encode-Rückstand trat bisher aufs Gas: ihre erste Stufe schaltete auf ein LANGSAMERES x264-Preset, wodurch der Rückstand wuchs, bis auf der höchsten Stufe das ganze Sendebild fiel — Chat und Avatar gleich mit. Der Avatar hängt jetzt nicht mehr an der Schriftdatei, und ein leeres Anthropic-Guthaben wird als das gemeldet, was es ist, statt als Programmierfehler",
             "Der Avatar bleibt im Sendebild, auch wenn die Notbremse den eingebrannten Text abwirft — und eine Zeile im Log nennt bei jedem Start, ob Text und Avatar an sind und welche Bedingung sonst fehlt",
             "Zwei von drei Live-Erkennungen liefen bisher ohne Stream-URL weiter: die TikTok-API meldet einer Server-IP zwar „sendet“, rückt die Adresse aber nicht heraus — der Bot fragte den einzigen Weg, der sie noch liefert, ausgerechnet in diesem Fall nicht mehr ab und schickte den Recorder blind los",
+            "Und der so gefundene Zugang wird nicht mehr verworfen, wenn er in der stabileren von zwei Formen kommt: die durchgehende Verbindung fiel durch die Prüfung, die nur die segmentierte kannte — dabei ist gerade die Kette signierter Segmente die, die im Betrieb abreißt",
         ],
     },
     {

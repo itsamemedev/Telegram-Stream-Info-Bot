@@ -11,6 +11,40 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Behoben — der Nachschlag warf ausgerechnet die stabilere Quelle weg (v4.2 W52)
+
+Beim Nachziehen von W51 aufgefallen: drei Stellen beantworten die Frage
+„trägt das eine Stream-URL?", und eine davon war enger als die beiden anderen.
+
+| Stelle | gelten lässt |
+|---|---|
+| `braucht_url_nachschlag` (W51) | `hls_url` **oder** `flv_url` |
+| `reccmd._has_stream_url` | `hls_url` **oder** `flv_url` |
+| bot.py, Annahme des HTML-Treffers | **nur** `hls_url` |
+
+Ein HTML-Treffer mit nur `flv_url` fiel damit durch: der Bot blieb bei
+`("live", None)`, und der Recorder löste wieder selbst auf — genau der
+Zustand, den W51 beseitigen sollte.
+
+Ausgerechnet FLV. Der Restream-Pfad bevorzugt es aus gutem Grund:
+
+> für Restream FLV bevorzugen — HLS triggert bei manchen TikTok-Streams
+> „mime type is not rfc8216 compliant" + ist segmentiert (Relay-Abbrüche,
+> rc=187)
+
+FLV ist **eine** fortlaufende Verbindung, HLS eine Kette signierter Segmente.
+Der Nachschlag verwarf also die stabile Quelle und machte mit der brüchigen
+weiter.
+
+Die Enge ist alt — bis W51 hing an ihr nur der seltene `unknown`-Fall. Seit
+W51 entscheidet dieser Test über rund zwei Drittel aller Auflösungen, und
+damit fällt sie täglich ins Gewicht.
+
+Jetzt gibt es **einen** Test, `nc/livefolge.py::hat_stream_url(info)`, den
+`braucht_url_nachschlag` und die Annahme in `bot.py` beide benutzen. Ein
+Vertrag hält fest, dass bei `live` der Nachschlag exakt die Umkehrung davon
+ist — driften die beiden wieder auseinander, kippt er.
+
 ### Behoben — 71 % der Live-Erkennungen liefen ohne Stream-URL weiter (v4.2 W51)
 
 Aus dem Log vom 11.09., 84 Auflösungen in zehn Minuten:

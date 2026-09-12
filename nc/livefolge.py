@@ -149,4 +149,30 @@ def braucht_url_nachschlag(status, info) -> bool:
         return True
     if status != "live":
         return False
-    return not (info or {}).get("hls_url") and not (info or {}).get("flv_url")
+    return not hat_stream_url(info)
+
+
+def hat_stream_url(info) -> bool:
+    """Traegt dieses Info-Woerterbuch eine brauchbare Stream-URL?
+
+    v4.2-W52. Es gab dafuer DREI Fassungen, und eine davon war enger als die
+    anderen beiden: der Annahme-Test hinter dem HTML-Weg in bot.py verlangte
+    `hls_url`, waehrend `braucht_url_nachschlag` und `reccmd._has_stream_url`
+    beide Formen gelten liessen. Ein HTML-Treffer mit NUR flv_url wurde
+    deshalb weggeworfen — und zwar ausgerechnet die stabilere Quelle:
+
+        # nc/restreamcmd, sinngemaess: fuer den Restream FLV bevorzugen —
+        # HLS ist segmentiert und reisst ab (rc=187, "mime type is not
+        # rfc8216 compliant").
+
+    FLV ist EINE fortlaufende Verbindung, HLS eine Kette signierter Segmente.
+    Wer den FLV-Treffer verwirft und mit HLS weitermacht, tauscht die stabile
+    Quelle gegen die bruechige. Seit W51 entscheidet dieser Test ueber rund
+    zwei Drittel aller Aufloesungen statt ueber den seltenen `unknown`-Fall —
+    die Enge faellt damit erst richtig ins Gewicht.
+
+    Leere Zeichenketten zaehlen nicht: `{"hls_url": ""}` ist keine URL,
+    sondern ein Resolver, der nichts gefunden hat.
+    """
+    d = info or {}
+    return bool(d.get("hls_url") or d.get("flv_url"))

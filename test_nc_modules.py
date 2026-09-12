@@ -8188,6 +8188,76 @@ def _test_v42_w50_avatar_ueberlebt_die_drossel():
     ok("W50: eine Zeile nennt Text, Avatar und jeden fehlenden Grund")
 
 
+def _test_v42_w52_flv_zaehlt_auch():
+    """v4.2-W52: der Annahme-Test hinter dem HTML-Weg war enger als der
+    Nachschlag, der ihn ausloest — und warf die stabilere Quelle weg.
+
+    Drei Stellen beantworten „traegt das eine Stream-URL?", zwei liessen
+    hls ODER flv gelten, eine verlangte hls:
+
+        braucht_url_nachschlag   hls oder flv    (W51)
+        reccmd._has_stream_url   hls oder flv
+        bot.py, Annahme des HTML-Treffers        NUR hls   <-- eng
+
+    Ein HTML-Treffer mit nur flv_url fiel damit durch, der Bot blieb bei
+    ("live", None) und der Recorder loeste wieder selbst auf. Ausgerechnet
+    FLV: der Restream-Pfad bevorzugt es, weil HLS eine Kette signierter
+    Segmente ist, die abreisst (rc=187), FLV dagegen EINE Verbindung.
+
+    Seit W51 haengen daran rund zwei Drittel aller Aufloesungen statt des
+    seltenen `unknown`-Falls. Die Enge ist dadurch von einer Randnotiz zu
+    einem taeglichen Verlust geworden.
+    """
+    from nc import livefolge as L
+
+    # --- 1) Der eine Test, beide Formen ---------------------------------
+    h = L.hat_stream_url
+    assert h({"flv_url": "https://x/y.flv"}) is True, \
+        "FLV allein muss zaehlen — es ist die stabilere Quelle, nicht die " \
+        "schlechtere"
+    assert h({"hls_url": "https://x/y.m3u8"}) is True
+    assert h({"hls_url": "https://a", "flv_url": "https://b"}) is True
+    assert h({}) is False and h(None) is False
+    assert h({"title": "nur Titel"}) is False
+    assert h({"hls_url": "", "flv_url": ""}) is False, \
+        "leere Zeichenketten sind keine URL, sondern ein leerer Resolver"
+    ok("W52: hat_stream_url laesst hls UND flv gelten, Leeres nicht")
+
+    # --- 2) Nachschlag und Annahme benutzen DENSELBEN Test ---------------
+    # Sonst driften sie wieder auseinander: genau so entstand der Befund.
+    import inspect as _inspect
+    src = _inspect.getsource(L.braucht_url_nachschlag)
+    assert "hat_stream_url(info)" in src, \
+        "braucht_url_nachschlag rechnet wieder selbst statt hat_stream_url " \
+        "zu benutzen — die beiden koennen dann erneut auseinanderlaufen"
+    # Und die Umkehrung muss ueber alle vier Ecken gelten.
+    for inf in ({}, None, {"hls_url": "u"}, {"flv_url": "u"},
+                {"hls_url": "", "flv_url": ""}, {"hls_url": "a", "flv_url": "b"}):
+        assert L.braucht_url_nachschlag("live", inf) is (not h(inf)), inf
+    ok("W52: bei 'live' ist Nachschlag exakt die Umkehrung von hat_stream_url")
+
+    # --- 3) bot.py nimmt den HTML-Treffer ueber denselben Test an --------
+    hier = os.path.dirname(os.path.abspath(__file__))
+    bot = open(os.path.join(hier, "bot.py"), encoding="utf-8").read()
+    flach = " ".join(bot.split())
+    assert "_nc_live.hat_stream_url(html_info)" in flach, \
+        "der HTML-Treffer wird nicht ueber den gemeinsamen Test angenommen"
+    assert 'if html_info and html_info.get("hls_url"):' not in flach, \
+        "die enge Fassung steht noch da — flv-only faellt weiter durch"
+    ok("W52: bot.py nimmt auch einen reinen FLV-Treffer an")
+
+    # --- 4) Und der Recorder-Test bleibt gleichbedeutend -----------------
+    # reccmd hat eine eigene, gleichlautende Fassung. Sie darf abweichen,
+    # solange sie DASSELBE sagt — driftet sie, liegt hier wieder ein Loch.
+    rc = open(os.path.join(hier, "nc", "reccmd.py"), encoding="utf-8").read()
+    i = rc.find("def _has_stream_url")
+    assert i > 0
+    rumpf = rc[i:i + 200]
+    assert 'get("hls_url")' in rumpf and 'get("flv_url")' in rumpf, \
+        "reccmd._has_stream_url laesst nicht mehr beide Formen gelten"
+    ok("W52: der Recorder-Test sagt dasselbe wie hat_stream_url")
+
+
 def _test_v42_w51_live_ohne_url():
     """v4.2-W51: der Weg zur Stream-URL lief ausgerechnet im haeufigsten Fall
     nicht.
@@ -8504,6 +8574,7 @@ def main():
     _test_v42_w50_avatar_ueberlebt_die_drossel()
 
     _test_v42_w51_live_ohne_url()
+    _test_v42_w52_flv_zaehlt_auch()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)
 

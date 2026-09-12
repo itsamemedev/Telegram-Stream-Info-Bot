@@ -2910,7 +2910,12 @@ async def get_live_status(username: str, session, force_fresh: bool = False) -> 
             _blind = status == "live"
             try:
                 html_info = await _resolve_via_html(username, session)
-                if html_info and html_info.get("hls_url"):
+                # v4.2-W52: frueher `html_info.get("hls_url")` — ein
+                # HTML-Treffer mit NUR flv_url fiel durch, obwohl FLV die
+                # stabilere Quelle ist (eine Verbindung statt einer Kette
+                # signierter Segmente). Derselbe Test wie oben, damit
+                # Nachschlag-Bedingung und Annahme nicht auseinanderlaufen.
+                if _nc_live.hat_stream_url(html_info):
                     status, info = "live", html_info
                     if _blind:
                         log.info("live-ohne-URL @%s: HTML-Weg liefert die "
