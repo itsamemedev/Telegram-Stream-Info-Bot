@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="docs/assets/banner.svg" alt="NIGHTCRAWLER — v4.3 Freie Sicht" width="100%">
+<img src="docs/assets/banner.svg" alt="NIGHTCRAWLER — v4.3.1 Freie Sicht" width="100%">
 
 ### Der Kontrollraum für Live-Streaming
 #### Überwachung · Aufnahme · Multi-Ziel-Restream · KI-Moderation
@@ -912,7 +912,7 @@ nicht greifen, gekippte Verträge in `test_restream.py`.
 
 | | |
 |---|---|
-| Aktuelle Version | **4.3** — „Freie Sicht" (2026.09) |
+| Aktuelle Version | **4.3.1** — „Freie Sicht" (2026.09) |
 | Flask-Routen | 364 (34 in `bot.py` · 330 in `nc/routes/`) |
 | Discord-Slash-Commands | 45 |
 | Fachmodule | 135 in `nc/` (+36 in `nc/routes/`, +3 in `nc/intel/`), 10 in `brain/` |
@@ -1008,7 +1008,7 @@ Fremdcode und dessen Lizenzen: **[`docs/THIRD_PARTY_LICENSES.md`](docs/THIRD_PAR
 
 <div align="center">
 
-**NIGHTCRAWLER v4.3 · „Freie Sicht"**
+**NIGHTCRAWLER v4.3.1 · „Freie Sicht"**
 
 **[🌐 lafap.de](https://lafap.de)** · **[💬 Discord](https://discord.gg/psvnxm7tSV)** · **[📓 Changelog](docs/CHANGELOG.md)**
 

@@ -11,6 +11,22 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+_Noch nichts._
+
+---
+
+## [4.3.1] — 2026-09-12 · „Freie Sicht"
+
+Erste Patch-Fassung. 4.3 stand keinen halben Tag, dann kamen drei Befunde
+dazu, die jeder für sich das Archiv erneuern rechtfertigen: AZRAELs taubes
+Ohr (W55), eine Funktion ohne Knopf (W56, W58) und eine Plattform, die
+härter bestraft als die anderen (W57). Dazu der Auditstand (W59).
+
+**Eigener Tag statt Überschreiben:** der Release-Workflow aktualisiert bei
+einem zweiten Lauf Text und Archiv, verschiebt den Tag aber nicht. `v4.3`
+hätte danach auf den alten Stand gezeigt, während das Archiv den neuen
+trägt — genau die Art stiller Abweichung, die dieses Projekt vermeidet.
+
 ### Geändert — Sicherheits-Audit v4.3-W58 und Bughunt (v4.2 W59)
 
 `docs/SECURITY.md` und `docs/en/SECURITY.md` waren an drei Stellen veraltet:
