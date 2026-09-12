@@ -7975,16 +7975,22 @@ def _test_v42_w49_notbremse_und_guthaben():
     fr = " ".join(rq.split())
     assert "sendebild_on = bool(transcode and RESTREAM_OVERLAY" in fr, \
         "der Schalter fuer 'ueberhaupt etwas brennen' fehlt"
-    assert "overlay_on = bool(sendebild_on and _font)" in fr, \
-        "Text muss an der Schrift haengen"
-    # ... und der Avatar an sendebild_on, NICHT an overlay_on.
+    # Die genaue Verdrahtung von Schrift und Drossel prueft
+    # _test_v42_w50_avatar_ueberlebt_die_drossel — und zwar an der
+    # ABLEITUNGSKETTE im Syntaxbaum statt an Textzeilen.
+    #
+    # Der Grund steht in W50: diese Stelle hier hat den halben Fix aus W49
+    # durchgelassen. Sie prueft Zeichenketten, und die stimmten — nur hing
+    # `sendebild_on` selbst noch an der Drossel, sodass der Avatar sie ueber
+    # zwei Ecken doch erbte. Wer Struktur pruefen will, muss die Struktur
+    # lesen, nicht ihre Schreibweise.
     for zeile in ("feed_on = bool(sendebild_on and avatar_feed)",
                   "avatar_on = bool(feed_on or anim_on or (sendebild_on and RESTREAM_AVATAR"):
         assert zeile in fr, zeile
     assert "feed_on = bool(overlay_on and avatar_feed)" not in fr, \
-        "der Avatar haengt wieder an der Schrift"
+        "der Avatar haengt wieder am Text-Schalter"
     assert "anim_on = bool(overlay_on and" not in fr, \
-        "die Avatar-Animation haengt wieder an der Schrift"
+        "die Avatar-Animation haengt wieder am Text-Schalter"
     ok("W49: ohne Schrift kein Text — aber sehr wohl ein Avatar")
 
     # --- 3) Auf Stufe 3 faellt der TEXT, nicht der Avatar ----------------
@@ -7997,10 +8003,9 @@ def _test_v42_w49_notbremse_und_guthaben():
         "der alte, irrefuehrende Name steht noch da"
     assert not R.drossel_text_aus(2) and R.drossel_text_aus(3)
     assert "not drossel_text_aus(drossel)" in fr
-    # sendebild_on ist der EINZIGE, der die Drossel liest — haenge der Avatar
-    # noch an einer zweiten Drossel-Pruefung, faellt er weiter mit.
-    assert fr.count("drossel_text_aus(drossel)") == 2, \
-        "die Drossel wird an mehr Stellen gelesen als gedacht"
+    # HIER STAND EIN ZAEHLTEST (`count(...) == 2`) — und der war der Grund,
+    # warum der halbe Fix aus W49 durchkam: eine Zaehlung sagt nichts darueber,
+    # WER die Drossel liest. W50 prueft stattdessen die Ableitungskette.
     ok("W49: auf der hoechsten Drossel faellt der Text, der Avatar bleibt")
 
     # --- 4) Ein leeres Guthaben ist kein bad_request ---------------------
@@ -8048,6 +8053,139 @@ def _test_v42_w49_notbremse_und_guthaben():
     assert bot.index('_CLAUDE_PAUSE = {') < bot.index('_CLAUDE_PAUSE["bis"] >'), \
         "_CLAUDE_PAUSE steht hinter seinem ersten Nutzer"
     ok("W49: leeres Guthaben sperrt Claude eine Stunde, an genau einer Stelle")
+
+
+def _test_v42_w50_avatar_ueberlebt_die_drossel():
+    """v4.2-W50: W49 hat nur die halbe Entkopplung geliefert — und der eigene
+    Vertrag hat es nicht gemerkt.
+
+    W49 behauptete in Changelog und PR, der Avatar haenge nicht mehr an der
+    Schrift UND falle auf Drossel-Stufe 3 nicht mehr mit. Der Code tat nur das
+    Erste:
+
+        sendebild_on = bool(transcode and RESTREAM_OVERLAY
+                            and not drossel_text_aus(drossel))   # <- Drossel
+        overlay_on   = bool(sendebild_on and _font)
+        avatar_on    = bool(... sendebild_on ...)                # erbt sie
+
+    Der Avatar leitete ueber `sendebild_on` ab und erbte die Drossel damit
+    weiter. Im Betrieb erreichte sie Stufe 3, und der Avatar verschwand erneut.
+
+    **Warum der W49-Vertrag das durchliess:** er zaehlte, wie oft
+    `drossel_text_aus(drossel)` im Quelltext vorkommt (`== 2`), statt zu
+    pruefen, ob der AVATAR-PFAD sie beruehrt. Eine Zaehlung ist keine
+    Eigenschaft. Dieser Vertrag prueft deshalb die Ableitungskette selbst.
+    """
+    import ast as _ast
+    from nc import restreamcmd as R
+
+    hier = os.path.dirname(os.path.abspath(__file__))
+    quelle = open(os.path.join(hier, "nc", "restreamcmd.py"), encoding="utf-8").read()
+    baum = _ast.parse(quelle)
+    bau = next(n for n in baum.body
+               if isinstance(n, _ast.FunctionDef) and n.name == "build")
+
+    # Die Zuweisungen der fuenf Schalter einsammeln — als SYNTAXBAUM, nicht als
+    # Text. Ein Textvergleich haengt an der Formatierung; hier zaehlt, welche
+    # Namen im Ausdruck wirklich vorkommen.
+    zuweisung = {}
+    for n in _ast.walk(bau):
+        if isinstance(n, _ast.Assign) and len(n.targets) == 1 \
+                and isinstance(n.targets[0], _ast.Name):
+            zuweisung.setdefault(n.targets[0].id, n.value)
+    for name in ("sendebild_on", "overlay_on", "avatar_on", "anim_on", "feed_on"):
+        assert name in zuweisung, "Schalter %s fehlt" % name
+
+    def namen(knoten):
+        return {k.id for k in _ast.walk(knoten) if isinstance(k, _ast.Name)}
+
+    def aufrufe(knoten):
+        return {k.func.id for k in _ast.walk(knoten)
+                if isinstance(k, _ast.Call) and isinstance(k.func, _ast.Name)}
+
+    def kette(name, tiefe=0):
+        """Alle Namen und Aufrufe, aus denen `name` transitiv abgeleitet ist."""
+        if tiefe > 6 or name not in zuweisung:
+            return set(), set()
+        n, a = namen(zuweisung[name]), aufrufe(zuweisung[name])
+        for weiter in list(n):
+            if weiter != name and weiter in zuweisung:
+                un, ua = kette(weiter, tiefe + 1)
+                n |= un
+                a |= ua
+        return n, a
+
+    # --- 1) Der Avatar darf die Drossel NICHT beruehren ------------------
+    a_namen, a_aufrufe = kette("avatar_on")
+    assert "drossel_text_aus" not in a_aufrufe, \
+        ("avatar_on leitet ueber %s von der Drossel ab — genau der Fehler aus "
+         "W49" % sorted(a_namen & set(zuweisung)))
+    assert "_font" not in a_namen, "avatar_on haengt wieder an der Schrift"
+    # ... aber sehr wohl an transcode und dem Schalter, sonst brennt er im
+    # Copy-Modus ins Leere.
+    assert "transcode" in a_namen and "RESTREAM_OVERLAY" in a_namen
+    ok("W50: der Avatar leitet weder von der Drossel noch von der Schrift ab")
+
+    # --- 2) Der Text MUSS beides beruehren -------------------------------
+    t_namen, t_aufrufe = kette("overlay_on")
+    assert "drossel_text_aus" in t_aufrufe, "der Text ignoriert die Drossel"
+    assert "_font" in t_namen, "der Text braucht keine Schrift mehr?"
+    ok("W50: der Text haengt an Schrift UND Drossel — der Avatar an keinem von beiden")
+
+    # --- 3) Und das Verhalten, nicht nur die Struktur --------------------
+    # drossel_text_aus ist die einzige Stelle, die die Stufe auswertet; ihre
+    # Schwelle darf nicht wandern, ohne dass es hier auffaellt.
+    assert not R.drossel_text_aus(0) and not R.drossel_text_aus(2)
+    assert R.drossel_text_aus(3) and R.drossel_text_aus(R.DROSSEL_MAX)
+    ok("W50: die Drossel wirft den Text ab Stufe 3, keine Stufe frueher")
+
+    # --- 4) Das Sendebild sagt, warum es so aussieht ---------------------
+    # Fuenf stille Boolesche haben in W47 bis W49 drei Runden gekostet. Eine
+    # Bedingung, die stumm False wird, ist so schlimm wie ein except, das den
+    # Grund frisst (CLAUDE.md).
+    # KOMMENTARFREI pruefen. "kein Avatar" und "copy-Modus" stehen beide auch
+    # in erklaerenden Kommentaren derselben Datei — ein roher Substring-Test
+    # bleibt gruen, waehrend die Meldung verschwindet. Das ist in dieser
+    # Sitzung der vierte Vertrag, der ueber einen Kommentar stolpert.
+    #
+    # Mit tokenize und NICHT mit split("#"): die Meldung selbst enthaelt ein
+    # Doppelkreuz ("Sendebild #%s"), und der naive Schnitt haette genau die
+    # Zeile zerstoert, die geprueft werden soll. Auch das ist beim Bauen
+    # einmal passiert.
+    import io as _io
+    import tokenize as _tok
+    _zeilen = quelle.splitlines()
+    for _t in _tok.generate_tokens(_io.StringIO(quelle).readline):
+        if _t.type == _tok.COMMENT:
+            # Ein Kommentar laeuft bis Zeilenende — an seiner Spalte
+            # abzuschneiden ist exakt richtig, und tokenize garantiert, dass
+            # es ein echter Kommentar ist und kein Doppelkreuz in einem
+            # String. (Die Token einzeln zusammenzufuegen ginge NICHT: dabei
+            # kommt zwischen jedes Token ein Leerzeichen und die gesuchten
+            # Zeichenketten zerfallen.)
+            _r, _c = _t.start
+            _zeilen[_r - 1] = _zeilen[_r - 1][:_c]
+    fr = " ".join(" ".join(_zeilen).split())
+    assert 'log.warning("Sendebild #%s: Text=%s Avatar=%s' in fr, \
+        "es gibt keine Zeile, die den Zustand des Sendebilds nennt"
+    # Jeder Grund MIT seiner Fundstelle — sonst prueft man nur, dass die
+    # Woerter irgendwo vorkommen, nicht dass sie gemeldet werden.
+    for fundstelle in (
+            '_gruende.append("Text aus (Drossel Stufe %d',
+            '_gruende.append("keine Schrift gefunden',
+            '_gruende.append("kein Avatar (RESTREAM_AVATAR=%r'):
+        assert fundstelle in fr, "der Grund fehlt: %s" % fundstelle
+    # Der Copy-Modus bekommt eine eigene WARNUNG — auf debug saehe der
+    # Betreiber ein leeres Sendebild ohne jeden Hinweis, und genau so sieht
+    # ein Defekt aus.
+    assert ('log.warning("Sendebild #%s: RESTREAM_OVERLAY=1, aber copy-Modus'
+            in fr), "der Copy-Modus meldet sich nicht als Warnung"
+    # Der gesunde Fall darf NICHT warnen — eine Warnung bei jedem Start
+    # erzieht dazu, sie zu ueberlesen.
+    assert 'log.info("Sendebild #%s: Text an, Avatar an' in fr, \
+        "der gesunde Fall meldet sich gar nicht oder als Warnung"
+    assert "apt install fonts-dejavu-core" in fr, "die Abhilfe fehlt"
+    ok("W50: eine Zeile nennt Text, Avatar und jeden fehlenden Grund")
 
 
 def main():
@@ -8265,6 +8403,8 @@ def main():
     _test_v42_w48_wortlaut_der_werkzeuge()
 
     _test_v42_w49_notbremse_und_guthaben()
+
+    _test_v42_w50_avatar_ueberlebt_die_drossel()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)
 

@@ -11,6 +11,71 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Behoben — W49 hat nur die halbe Entkopplung geliefert (v4.2 W50)
+
+Gemeldet mit Bildschirmfoto: Chat und Avatar weiterhin nicht im Sendebild,
+obwohl W48 und W49 auf dem Server liefen. Die Prüfung ergab: Schrift
+vorhanden, Avatar-Datei vorhanden, Arbeitsverzeichnis richtig, beide Wellen
+deployt — und `Drossel Stufe 3` einmal im Log.
+
+**Der Fehler ist meiner.** W49 behauptete in Changelog und PR, der Avatar hänge
+weder an der Schrift noch an der Drossel. Der Code tat nur das Erste:
+
+```python
+sendebild_on = bool(transcode and RESTREAM_OVERLAY
+                    and not drossel_text_aus(drossel))   # <- Drossel HIER
+overlay_on   = bool(sendebild_on and _font)
+avatar_on    = bool(... sendebild_on ...)                # erbt sie
+```
+
+Der Avatar leitet über `sendebild_on` ab und erbte die Drossel damit über zwei
+Ecken. Auf Stufe 3 verschwand er erneut. Jetzt sitzt die Drossel an
+`overlay_on`, wo sie hingehört:
+
+```python
+sendebild_on = bool(transcode and RESTREAM_OVERLAY)
+overlay_on   = bool(sendebild_on and _font and not drossel_text_aus(drossel))
+```
+
+**Warum der W49-Vertrag das durchgelassen hat.** Er zählte, wie oft
+`drossel_text_aus(drossel)` im Quelltext vorkommt (`== 2`) — eine Zählung sagt
+aber nichts darüber, **wer** die Drossel liest. Der neue Vertrag liest deshalb
+die **Ableitungskette im Syntaxbaum**: er sammelt die Zuweisungen der fünf
+Schalter, folgt jedem Namen transitiv und prüft, ob `drossel_text_aus` oder
+`_font` im Kegel von `avatar_on` auftaucht. Gegenprobe: mit dem exakten
+W49-Stand meldet er
+
+    avatar_on leitet ueber ['anim_on', 'feed_on', 'sendebild_on'] von der
+    Drossel ab — genau der Fehler aus W49
+
+Er hätte die Welle also gestoppt. Wer Struktur prüfen will, muss die Struktur
+lesen, nicht ihre Schreibweise.
+
+**Und das Sendebild sagt jetzt, warum es so aussieht.** `overlay_on` und
+`avatar_on` waren stille Boolesche aus fünf Bedingungen — transcode, Schalter,
+Drossel, Schrift, Avatar-Datei. Fiel eine um, stand **nichts** im Log. Genau
+diese Lücke hat W47 bis W49 drei Runden gekostet, und es ist dieselbe wie beim
+Audio-Tap vor W46: eine Bedingung, die stumm `False` wird, ist so schlimm wie
+ein `except`, das den Grund frisst. Jetzt eine Zeile je Start:
+
+    Sendebild #12: Text=AUS Avatar=an — Text aus (Drossel Stufe 3 — CPU-Rueckstand)
+    Sendebild #12: Text an, Avatar an (Schrift /usr/share/fonts/…/DejaVuSans-Bold.ttf)
+
+Auf `warning` nur, wenn etwas fehlt, das der Betreiber eingeschaltet hat, sonst
+auf `info` — eine Warnung bei jedem gesunden Start erzieht dazu, sie zu
+überlesen. Der Copy-Modus bekommt eine eigene Zeile: dort gibt es keine Filter
+und damit prinzipiell kein Overlay, was ohne Hinweis wie ein Defekt aussieht.
+
+Gegenprobe: 264 statt 260 Verträge. Elf Mutationsproben, dazu die
+W49-Rückstellung als zwölfte.
+
+**Was das nicht löst:** die Drossel greift überhaupt. Gemessen wurden nach dem
+Deploy `speed 0.51x`, `0.48x`, `0.92x` — unter Echtzeit, also läuft der
+Rückstand weiter auf Stufe 3 zu. Der Text bleibt dann weg, der Avatar nicht
+mehr. Die Ursache ist CPU, nicht Code; dazu die Empfehlungen aus W49
+(Leinwand 1280×720, 24 fps) und, falls das nicht reicht,
+`RESTREAM_X264_PRESET=superfast` fest.
+
 ### Behoben — die Notbremse trat aufs Gas (v4.2 W49)
 
 Gemeldet: „bei den Restreams im Text-Modus brechen Chat und Avatar weg", dazu
