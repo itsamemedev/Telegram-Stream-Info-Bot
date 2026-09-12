@@ -4,7 +4,7 @@ Eine einzige Wahrheit für die Versionsanzeige (Dashboard-Footer, /api/version,
 „Was ist neu"-Panel). Reine Daten + kleine Helfer, voll testbar.
 """
 
-VERSION = "4.3"
+VERSION = "4.3.1"
 CODENAME = "Freie Sicht"
 RELEASE = "2026.09"
 
@@ -23,6 +23,22 @@ def build_stamp():
 # Meilenstein-Changelog, neueste Version zuerst. highlights = kurze, ehrliche
 # Stichpunkte dessen, was die Version bringt.
 CHANGELOG = [
+    {
+        "version": "4.3.1",
+        "date": "2026-09",
+        "title": "Freie Sicht",
+        # Erste Patch-Fassung. 4.3 stand keinen halben Tag, dann kamen drei
+        # Befunde dazu, die jeder fuer sich das Archiv erneuern rechtfertigen:
+        # AZRAELs taubes Ohr, eine Funktion ohne Knopf und eine Plattform, die
+        # haerter bestraft als die anderen. Eigener Tag statt Ueberschreiben —
+        # der Release-Workflow verschiebt beim zweiten Lauf den Tag NICHT, das
+        # Archiv haette sonst nicht mehr zu seiner Marke gepasst.
+        "highlights": [
+            "AZRAELs Ohr war aus demselben Grund taub wie der Recorder blind: ohne Stream-URL kein Audio-Abgriff, ohne Abgriff kein Transkript — gemeldet hat das Log davon nur „audio=False“, ein Wort für drei mögliche Ursachen. Jetzt nennt es die Ursache und meldet sie als Warnung statt als Beiwerk",
+            "Aufnahme-Sitzungen haben endlich eine Oberfläche: die Funktion, die einen zerstückelten Stream auf Knopfdruck zu einer Datei zusammenfügt, gab es seit W44 nur als Schnittstelle — der versprochene Knopf fehlte. Jetzt zeigt die Betrieb-Ansicht je Sitzung Segmente, Nahtlücken und Abdeckung, und fügt auf Klick zusammen",
+            "Auf YouTube gab es für denselben Verstoß sofort eine Auszeit, während Kick und Twitch erst verwarnen — die Moderation läuft auf allen drei Plattformen, nur dieser eine Schritt fehlte dort",
+        ],
+    },
     {
         "version": "4.3",
         "date": "2026-09",
@@ -44,9 +60,6 @@ CHANGELOG = [
             "Und der so gefundene Zugang wird nicht mehr verworfen, wenn er in der stabileren von zwei Formen kommt: die durchgehende Verbindung fiel durch die Prüfung, die nur die segmentierte kannte — dabei ist gerade die Kette signierter Segmente die, die im Betrieb abreißt",
             "AZRAEL steht nicht mehr da wie ein Standbild mit zuckendem Mund: Kopf, Hand und Schwert bewegen sich jetzt einzeln — die Klinge dreht um den Griff in der Faust statt um den Unterarm, und der Kopf neigt sich und hebt sich, ohne dass die Kapuze an der Schulter aufreißt",
             "Der Chat steht im Sendebild wieder vorn: der Avatar lag über der halben rechten Spalte, und die Zeilen liefen zusätzlich rechts aus dem Bild, weil die Umbruchbreite eine feste Zahl für eine Schrift mit fester Zeichenbreite war — die Schrift ist aber proportional. Beides rechnet jetzt aus der Panel-Geometrie",
-            "AZRAELs Ohr war aus demselben Grund taub wie der Recorder blind: ohne Stream-URL kein Audio-Abgriff, ohne Abgriff kein Transkript — gemeldet hat das Log davon nur „audio=False“, ein Wort für drei mögliche Ursachen. Jetzt nennt es die Ursache und meldet sie als Warnung statt als Beiwerk",
-            "Aufnahme-Sitzungen haben endlich eine Oberfläche: die Funktion, die einen zerstückelten Stream auf Knopfdruck zu einer Datei zusammenfügt, gab es seit W44 nur als Schnittstelle — der versprochene Knopf fehlte. Jetzt zeigt die Betrieb-Ansicht je Sitzung Segmente, Nahtlücken und Abdeckung, und fügt auf Klick zusammen",
-            "Auf YouTube gab es für denselben Verstoß sofort eine Auszeit, während Kick und Twitch erst verwarnen — die Moderation läuft auf allen drei Plattformen, nur dieser eine Schritt fehlte dort",
         ],
     },
     {
