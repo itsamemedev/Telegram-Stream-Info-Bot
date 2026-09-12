@@ -14997,7 +14997,7 @@ class KickModerator:
             # auch im Kick-Chat — dieselbe Logik wie Twitch/YouTube. Vorher
             # antwortete AZRAEL auf Kick NUR auf erkannte Fragen (auto_reply),
             # nicht auf namentliche Ansprache. Shield screent in _azrael_chat_reply.
-            elif _azrael_chat_should_reply(content, "azrael"):
+            elif _azrael_chat_should_reply(content, "azrael", platform="kick"):
                 _r = await _azrael_chat_reply("kick", sender, content)
                 if _r:
                     await _azrael_broadcast_reply("kick", sender, _r, session)
@@ -17215,7 +17215,9 @@ async def _restream_verify_loop():
                     if _neu is None:
                         log.error("Restream #%s: Encode-Rueckstand haelt an, "
                                   "aber die Drossel ist am Anschlag (Stufe %d: "
-                                  "ultrafast, Bitrate gesenkt, Overlay aus). "
+                                  "ultrafast, Bitrate, Bildrate und Leinwand "
+                                  "gesenkt — aus dem Bild faellt seit v4.2-W60 "
+                                  "nichts mehr). "
                                   "Die Box schafft diesen Transcode nicht — "
                                   "weniger Ziele, kleinere Aufloesung oder mehr "
                                   "Kerne sind jetzt die einzigen Hebel.",
@@ -17228,7 +17230,9 @@ async def _restream_verify_loop():
                                 _rid, _neu, _nc_rscmd.DROSSEL_MAX,
                                 _nc_rscmd.drossel_preset(RESTREAM_X264_PRESET, _neu),
                                 _nc_rscmd.drossel_bitrate(RESTREAM_BITRATE_K, _neu),
-                                ", Text aus" if _nc_rscmd.drossel_text_aus(_neu) else "")
+                                _nc_rscmd.drossel_zusatz(RESTREAM_FPS,
+                                                         RESTREAM_CANVAS_W,
+                                                         RESTREAM_CANVAS_H, _neu))
                     await _RESTREAM_MGR.stop(_rid, _keep_desired=True)
                     await asyncio.sleep(2)
                     await _RESTREAM_MGR.start(_rid, _src_watch=True)
@@ -20609,7 +20613,14 @@ def _wchat_thank_ok(user):
 AZRAEL_CHAT_REPLY = os.getenv("AZRAEL_CHAT_REPLY", "0").strip().lower() in (
     "1", "true", "yes", "on", "y")
 AZRAEL_CHAT_REPLY_COOLDOWN = _env_int("AZRAEL_CHAT_REPLY_COOLDOWN_S", 20)
-_AZRAEL_CHAT_LAST = {"ts": 0.0}
+# v4.2-W60: EIN Zeitstempel JE PLATTFORM, nicht einer fuer alle drei.
+# Vorher stand hier {"ts": 0.0} — ein globaler Cooldown. Bei
+# AZRAEL_CHAT_REPLY_COOLDOWN_S=20 hiess das: fragt jemand auf Kick nach
+# AZRAEL, werden dieselben Fragen auf Twitch und YouTube in den naechsten
+# 20 Sekunden STUMM verworfen. Kein Log, keine Antwort, kein Hinweis. Der
+# Betreiber hat das als „reagiert nicht plattformspezifisch" gemeldet, und
+# genau das war es: die Erkennung stimmte, die Bremse war es nicht.
+_AZRAEL_CHAT_LAST = {}
 
 
 def _azrael_self_names():
@@ -20625,9 +20636,20 @@ def _azrael_self_names():
     return names
 
 
-def _azrael_chat_should_reply(text, nick_hint=""):
-    """Nur antworten, wenn AZRAEL angesprochen ist (Name/@) und der globale
-       Cooldown abgelaufen ist. Verhindert, dass AZRAEL jeden Satz kommentiert."""
+def _azrael_chat_should_reply(text, nick_hint="", platform="?"):
+    """Nur antworten, wenn AZRAEL angesprochen ist (Name/@) und der Cooldown
+       DIESER PLATTFORM abgelaufen ist.
+
+    v4.2-W60: der Cooldown war global. Drei Chats teilten sich ein
+    20-Sekunden-Fenster, also verschluckte eine Frage auf Kick die Fragen auf
+    Twitch und YouTube — stumm. Er zaehlt jetzt je Plattform: AZRAEL soll
+    nicht jeden Satz kommentieren, aber jede Plattform hat ihr eigenes
+    Publikum, und dessen Frage darf nicht daran scheitern, dass woanders
+    gerade jemand schneller war.
+
+    Die Erkennung selbst fasst diese Welle nicht an: `"azrael" in t` auf
+    kleingeschriebenem Text faengt Azrael, azrael, @Azrael und @azrael.
+    """
     if not AZRAEL_CHAT_REPLY:
         return False
     t = (text or "").lower()
@@ -20636,9 +20658,9 @@ def _azrael_chat_should_reply(text, nick_hint=""):
     if not addressed:
         return False
     now = _time_mod.monotonic()
-    if now - _AZRAEL_CHAT_LAST["ts"] < AZRAEL_CHAT_REPLY_COOLDOWN:
+    if now - float(_AZRAEL_CHAT_LAST.get(platform) or 0.0) < AZRAEL_CHAT_REPLY_COOLDOWN:
         return False
-    _AZRAEL_CHAT_LAST["ts"] = now
+    _AZRAEL_CHAT_LAST[platform] = now
     return True
 
 
@@ -21150,7 +21172,7 @@ async def _twitch_chat_loop():
                                 log.debug("twitch-timeout %s: %s", user, _m)
                     # V37-TWCHAT: AZRAEL antwortet, wenn angesprochen (send-fähiger
                     # Token nötig — der OAuth-Flow liefert chat:edit).
-                    if token and _azrael_chat_should_reply(text, nick):
+                    if token and _azrael_chat_should_reply(text, nick, platform="twitch"):
                         _reply = await _azrael_chat_reply("twitch", user, text)
                         if _reply:
                             await _azrael_broadcast_reply("twitch", user, _reply)
@@ -21285,7 +21307,7 @@ async def _youtube_api_chat_loop():
                                      "platform": "youtube"})
                             continue
                     # AZRAEL — an alle drei Chats, adressiert an diesen User.
-                    if _YT_SEND.get("fn") and _azrael_chat_should_reply(txt):
+                    if _YT_SEND.get("fn") and _azrael_chat_should_reply(txt, platform="youtube"):
                         _reply = await _azrael_chat_reply("youtube", who, txt)
                         if _reply:
                             await _azrael_broadcast_reply("youtube", who, _reply)
@@ -21407,7 +21429,7 @@ async def _youtube_chat_loop():
                                 # V37-TWCHAT: AZRAEL antwortet auf YouTube, wenn
                                 # angesprochen und der Sendekanal bereit ist.
                                 if _yt_send_ready and _YT_SEND.get("fn") \
-                                        and _azrael_chat_should_reply(txt):
+                                        and _azrael_chat_should_reply(txt, platform="youtube"):
                                     _reply = await _azrael_chat_reply("youtube", who, txt)
                                     if _reply:
                                         try:

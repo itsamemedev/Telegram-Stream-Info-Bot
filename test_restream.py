@@ -4717,12 +4717,24 @@ def test_v42_w43_encode_rueckstand_wird_abgeregelt():
         assert _idx[-1] < _idx[0], "hoechste Stufe ist nicht schneller: %s" % (_kette,)
     assert _rc.drossel_bitrate(6000, 1) == 6000, "Stufe 1 senkt schon die Bitrate"
     assert _rc.drossel_bitrate(6000, 2) < 6000, "Stufe 2 senkt die Bitrate nicht"
-    assert not _rc.drossel_text_aus(2), "Text faellt zu frueh"
-    assert _rc.drossel_text_aus(_rc.DROSSEL_MAX), "Text faellt nie"
+    # ANKER GEWANDERT (v4.2-W60, nicht der Vertrag): drossel_text_aus gibt es
+    # nicht mehr. Die Stufe warf nicht "den Text", sondern ueber
+    # studio_on = overlay_on and ... das ganze Panel. Die Leiter regelt jetzt
+    # nur noch Encode-Groessen — an ihre Stelle treten Bildrate und Leinwand.
+    assert not hasattr(_rc, "drossel_text_aus"), \
+        "die Drossel kann wieder Inhalt aus dem Bild nehmen"
+    assert _rc.drossel_fps(24, 2) == 24, "Bildrate faellt zu frueh"
+    assert _rc.drossel_fps(24, 3) < 24, "Bildrate faellt nie"
+    assert _rc.drossel_canvas(1280, 720, 3) == (1280, 720), "Leinwand faellt zu frueh"
+    assert _rc.drossel_canvas(1280, 720, _rc.DROSSEL_MAX) != (1280, 720), \
+        "Leinwand faellt nie"
     # Saettigung statt Absturz jenseits des Anschlags.
     assert _rc.drossel_preset("veryfast", 99) == _rc.drossel_preset("veryfast", _rc.DROSSEL_MAX)
     assert _rc.drossel_preset("ultrafast", 3) == "ultrafast", "unter ultrafast gibt es nichts"
     assert _rc.drossel_bitrate(1800, 3) >= 1500, "Bitrate faellt ins Bodenlose"
+    assert _rc.drossel_fps(20, 99) >= 15, "Bildrate faellt ins Bodenlose"
+    _w99, _h99 = _rc.drossel_canvas(1280, 720, 99)
+    assert _w99 >= 960 and _h99 >= 540, "Leinwand faellt ins Bodenlose"
 
     # --- 2) Der Bot fordert die Abregelung an und fuehrt sie aus ----------
     uh = _meth(src, "RestreamManager", "_update_health") or ""

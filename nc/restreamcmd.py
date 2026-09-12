@@ -159,11 +159,15 @@ def _drawtext_chain(rid=None):
                                  schriftart(RESTREAM_FONT))
 
 
-def _studio_chain(avatar_idx=None, rid=None, avatar_alpha_idx=None):
+def _studio_chain(avatar_idx=None, rid=None, avatar_alpha_idx=None, drossel=0):
     # v4.0-W27: verbatim nach nc/ffmpeg_filters.py extrahiert (bitgenau geprüft).
+    # v4.2-W60: die Leinwand kommt gedrosselt herein. Sie muss dieselbe sein,
+    # die der Encoder bekommt — sonst skaliert ffmpeg das fertige Sendebild
+    # noch einmal, und der Chat wird unscharf statt kleiner.
+    _cw, _ch = drossel_canvas(RESTREAM_CANVAS_W, RESTREAM_CANVAS_H, drossel)
     return _nc_ff.studio_chain(_restream_overlay_files(rid),
                                schriftart(RESTREAM_FONT),
-                               RESTREAM_CANVAS_W, RESTREAM_CANVAS_H, RESTREAM_FPS,
+                               _cw, _ch, drossel_fps(RESTREAM_FPS, drossel),
                                avatar_idx=avatar_idx,
                                avatar_alpha_idx=avatar_alpha_idx,
                                avatar_h=RESTREAM_AVATAR_H)
@@ -225,22 +229,82 @@ def drossel_bitrate(bitrate_k, stufe):
     return max(1500, int(bitrate_k * (0.75 if stufe == 2 else 0.55)))
 
 
-def drossel_text_aus(stufe):
-    """Ab Stufe 3 faellt der eingebrannte TEXT — die teuerste Filterkette.
+# v4.2-W60 — DIE DROSSEL FASST DEN BILDINHALT NICHT MEHR AN.
+#
+# Bis hierher gab es `drossel_text_aus(stufe)`: ab Stufe 3 fiel `overlay_on`,
+# und weil `studio_on = overlay_on and layout == "studio"` daran haengt, fiel
+# damit das GANZE Panel — Chat, Titel, Quelle, Follower, AZRAEL-Zeile. Uebrig
+# blieben Quellvideo und Avatar. Der Betreiber hat das zweimal als „der Chat
+# bricht weg" gemeldet, beim zweiten Mal mit der Ansage: es hat gar nichts
+# auszufallen, es soll nicht einmal die Moeglichkeit dazu geben.
+#
+# Die alte Begruendung war ausserdem gemessen falsch. 12 s Quelle, 1280x720,
+# superfast, vier Threads:
+#
+#     nackt, ohne alles              1.1 s
+#     + Leinwand und Deko            1.9 s   (Leinwand  0.8 s)
+#     + alle neun Textfelder         2.9 s   (Text      1.0 s)
+#     + Avatar                       4.1 s   (Avatar    1.2 s)
+#
+# Der Avatar allein kostet mehr als saemtliche Texte zusammen. Stufe 3 warf
+# also das Panel weg und behielt das Teuerste.
+#
+# Die Leiter regelt jetzt ausschliesslich, WIE kodiert wird — nie, WAS im Bild
+# steht. Ein Drossel-Schritt baut das Kommando ohnehin neu (stop + start),
+# Bildrate und Leinwandgroesse sind damit genauso regelbar wie Preset und
+# Bitrate:
+#
+#     Stufe 1   Preset einen Schritt schneller
+#     Stufe 2   + Bitrate runter
+#     Stufe 3   + Bildrate runter
+#     Stufe 4   + Leinwand kleiner
+#
+# Eine kleinere Leinwand kostet quadratisch weniger und laesst jedes Element
+# sichtbar. Das ist der Unterschied zwischen „kleiner" und „weg".
 
-    v4.2-W49: hiess drossel_overlay_aus und nahm den Avatar mit. Der
-    Kommentar oben behauptete das Gegenteil ("den fehlenden Avatar sieht
-    jeder. Deshalb faellt er zuletzt") — tatsaechlich fielen beide auf
-    derselben Stufe, weil avatar_on an overlay_on haengt.
 
-    Und es ist auch sachlich falsch herum: eine drawtext-Kette mit mehreren
-    Boxen kostet ein Vielfaches eines einzelnen overlay-Filters auf ein
-    kleines PNG. Wer im Notfall etwas fallen laesst, laesst das Teure fallen.
+def drossel_fps(fps, stufe):
+    """Ab Stufe 3 die Bildrate senken, aber nie unter 15.
+
+    Linear in der Encode-Last und fuer den Zuschauer die unauffaelligste
+    Stufe: 24 auf 18 sieht man bei einem Talking-Head-Stream kaum, ein
+    fehlendes Chat-Panel dagegen sofort.
     """
-    return stufe >= 3
+    if stufe < 3:
+        return fps
+    return max(15, int(round(fps * 0.75)))
 
 
-DROSSEL_MAX = 3
+def drossel_canvas(w, h, stufe):
+    """Ab Stufe 4 die Leinwand verkleinern, aber nie unter 960x540.
+
+    Der letzte Hebel vor dem Anschlag. Quadratisch in der Last — 1280x720 auf
+    960x540 sind 44 % weniger Pixel — und jedes Element bleibt im Bild, nur
+    kleiner. Die Untergrenze ist bewusst 960x540 und nicht weniger: darunter
+    ist der eingebrannte Chat nicht mehr lesbar, und ein unlesbares Panel
+    waere dasselbe wie ein fehlendes.
+    """
+    if stufe < 4:
+        return w, h
+    return max(960, int(w * 0.75)) & ~1, max(540, int(h * 0.75)) & ~1
+
+
+def drossel_zusatz(fps, w, h, stufe):
+    """Was diese Stufe ZUSAETZLICH zu Preset und Bitrate tut. Fuer das Log.
+
+    v4.2-W60. Vorher stand hier ", Text aus" — die Drossel kann seit dieser
+    Welle nichts mehr aus dem Bild nehmen, also nennt die Zeile jetzt, was
+    sie stattdessen regelt.
+    """
+    teile = []
+    if drossel_fps(fps, stufe) != fps:
+        teile.append("%d fps" % drossel_fps(fps, stufe))
+    if drossel_canvas(w, h, stufe) != (w, h):
+        teile.append("%dx%d" % drossel_canvas(w, h, stufe))
+    return (", " + ", ".join(teile)) if teile else ""
+
+
+DROSSEL_MAX = 4
 
 
 def build(source_url, ingest_url, stream_key, transcode=False, tts_fifo=None, rid=None, only_target=None, relay_profile=False, html_ov_fifo=None, targets=None, avatar_feed=None, drossel=0):
@@ -265,7 +329,9 @@ def build(source_url, ingest_url, stream_key, transcode=False, tts_fifo=None, ri
     url_lc = source_url.lower()
     is_hls = ".m3u8" in url_lc                      # FLV/sonstiges → else-Zweig
 
-    fps = max(15, min(60, RESTREAM_FPS))
+    # v4.2-W60: ab Stufe 3 senkt die Drossel die Bildrate, ab Stufe 4 die
+    # Leinwand. Beides kostet Last, ohne dass etwas aus dem Bild faellt.
+    fps = max(15, min(60, drossel_fps(RESTREAM_FPS, drossel)))
     gop = fps * 2                                   # IVS/Kick: Keyframe-Intervall ≤ 2s
     # --- Input-Härtung: identisch zum stabilen Recorder (F45/B56/B60) ---
     cmd = ["ffmpeg", "-hide_banner", "-loglevel", "warning", "-nostats",
@@ -321,7 +387,7 @@ def build(source_url, ingest_url, stream_key, transcode=False, tts_fifo=None, ri
     # behaupteten beides. Im Betrieb erreichte die Drossel Stufe 3 und der
     # Avatar verschwand erneut — genau das gemeldete Bild.
     sendebild_on = bool(transcode and RESTREAM_OVERLAY)
-    overlay_on = bool(sendebild_on and _font and not drossel_text_aus(drossel))
+    overlay_on = bool(sendebild_on and _font)
     if transcode and RESTREAM_OVERLAY and _font and _font != RESTREAM_FONT:
         log.warning("RESTREAM_FONT (%s) fehlt — Overlay laeuft mit Ersatzschrift %s.",
                     RESTREAM_FONT, _font)
@@ -354,8 +420,10 @@ def build(source_url, ingest_url, stream_key, transcode=False, tts_fifo=None, ri
     # erzieht dazu, sie zu ueberlesen.
     if transcode and RESTREAM_OVERLAY:
         _gruende = []
-        if drossel_text_aus(drossel):
-            _gruende.append("Text aus (Drossel Stufe %d — CPU-Rueckstand)" % drossel)
+        # v4.2-W60: die Drossel steht hier NICHT mehr als Grund. Sie kann
+        # seit dieser Welle nichts mehr aus dem Bild nehmen — was sie regelt
+        # (Preset, Bitrate, Bildrate, Leinwand) steht in der Drossel-Meldung
+        # des Waechters, nicht in der Sendebild-Zeile.
         if not _font:
             _gruende.append("keine Schrift gefunden (weder %s noch eine der %d "
                             "Ersatzschriften; apt install fonts-dejavu-core)"
@@ -444,6 +512,7 @@ def build(source_url, ingest_url, stream_key, transcode=False, tts_fifo=None, ri
             vlabel = "0:v"
             if studio_on:
                 sparts, vlabel = _studio_chain(avatar_idx if avatar_on else None, rid=rid,
+                                               drossel=drossel,
                                                avatar_alpha_idx=avatar_alpha_idx)
                 fc.extend(sparts)
             else:

@@ -7998,15 +7998,18 @@ def _test_v42_w49_notbremse_und_guthaben():
     # deshalb faellt er zuletzt" — tatsaechlich fielen beide zusammen. Und es
     # ist auch sachlich falsch herum: eine drawtext-Kette mit mehreren Boxen
     # kostet ein Vielfaches eines overlay-Filters auf ein kleines PNG.
-    assert hasattr(R, "drossel_text_aus"), "drossel_text_aus fehlt"
+    # ANKER GEWANDERT (v4.2-W60, nicht der Vertrag): drossel_text_aus GIBT ES
+    # NICHT MEHR. Die Stufe warf nicht "den Text", sondern ueber
+    # studio_on = overlay_on and ... das GANZE Panel — Chat inklusive. Der
+    # Betreiber: "Es hat gar nichts auszufallen. Es sollte nicht mal die
+    # Moeglichkeit dazu geben." Die Leiter regelt jetzt nur noch Preset,
+    # Bitrate, Bildrate und Leinwand.
+    assert not hasattr(R, "drossel_text_aus"), \
+        "drossel_text_aus ist zurueck — damit kann die Drossel wieder Inhalt " \
+        "aus dem Bild nehmen"
     assert not hasattr(R, "drossel_overlay_aus"), \
         "der alte, irrefuehrende Name steht noch da"
-    assert not R.drossel_text_aus(2) and R.drossel_text_aus(3)
-    assert "not drossel_text_aus(drossel)" in fr
-    # HIER STAND EIN ZAEHLTEST (`count(...) == 2`) — und der war der Grund,
-    # warum der halbe Fix aus W49 durchkam: eine Zaehlung sagt nichts darueber,
-    # WER die Drossel liest. W50 prueft stattdessen die Ableitungskette.
-    ok("W49: auf der hoechsten Drossel faellt der Text, der Avatar bleibt")
+    ok("W60: die Drossel kann den Text nicht mehr abschalten")
 
     # --- 4) Ein leeres Guthaben ist kein bad_request ---------------------
     echt = ("Your credit balance is too low to access the Anthropic API. "
@@ -8115,29 +8118,52 @@ def _test_v42_w50_avatar_ueberlebt_die_drossel():
                 a |= ua
         return n, a
 
-    # --- 1) Der Avatar darf die Drossel NICHT beruehren ------------------
-    a_namen, a_aufrufe = kette("avatar_on")
-    assert "drossel_text_aus" not in a_aufrufe, \
-        ("avatar_on leitet ueber %s von der Drossel ab — genau der Fehler aus "
-         "W49" % sorted(a_namen & set(zuweisung)))
-    assert "_font" not in a_namen, "avatar_on haengt wieder an der Schrift"
-    # ... aber sehr wohl an transcode und dem Schalter, sonst brennt er im
-    # Copy-Modus ins Leere.
+    # --- 1) KEIN Bild-Element darf von der Drossel ableiten --------------
+    # v4.2-W60. Vorher hiess dieser Abschnitt "der Avatar darf die Drossel
+    # nicht beruehren" — jetzt gilt es fuer ALLE vier. Die Drossel regelt,
+    # WIE kodiert wird, nie WAS im Bild steht.
+    for gate in ("avatar_on", "overlay_on", "anim_on", "feed_on"):
+        g_namen, g_aufrufe = kette(gate)
+        assert "drossel" not in g_namen, (
+            f"{gate} leitet wieder von der Drossel ab — damit kann eine "
+            f"CPU-Spitze wieder Inhalt aus dem Bild nehmen")
+        assert not any("drossel" in a for a in g_aufrufe), (
+            f"{gate} ruft eine drossel_*-Funktion: {sorted(g_aufrufe)}")
+    assert "_font" not in kette("avatar_on")[0], "avatar_on haengt wieder an der Schrift"
+    a_namen = kette("avatar_on")[0]
     assert "transcode" in a_namen and "RESTREAM_OVERLAY" in a_namen
-    ok("W50: der Avatar leitet weder von der Drossel noch von der Schrift ab")
+    ok("W60: kein Bild-Element leitet von der Drossel ab")
 
-    # --- 2) Der Text MUSS beides beruehren -------------------------------
-    t_namen, t_aufrufe = kette("overlay_on")
-    assert "drossel_text_aus" in t_aufrufe, "der Text ignoriert die Drossel"
+    # --- 2) Der Text haengt weiter an der Schrift, sonst an nichts -------
+    t_namen, _ = kette("overlay_on")
     assert "_font" in t_namen, "der Text braucht keine Schrift mehr?"
-    ok("W50: der Text haengt an Schrift UND Drossel — der Avatar an keinem von beiden")
+    ok("W60: der Text haengt an der Schrift — und an keiner Drossel mehr")
 
-    # --- 3) Und das Verhalten, nicht nur die Struktur --------------------
-    # drossel_text_aus ist die einzige Stelle, die die Stufe auswertet; ihre
-    # Schwelle darf nicht wandern, ohne dass es hier auffaellt.
-    assert not R.drossel_text_aus(0) and not R.drossel_text_aus(2)
-    assert R.drossel_text_aus(3) and R.drossel_text_aus(R.DROSSEL_MAX)
-    ok("W50: die Drossel wirft den Text ab Stufe 3, keine Stufe frueher")
+    # --- 3) Und das Verhalten: KEINE Stufe nimmt etwas aus dem Bild ------
+    # v4.2-W60. Der Vertrag prueft nicht mehr eine Schwelle, sondern die
+    # Abwesenheit der Moeglichkeit: ueber ALLE Stufen inklusive Anschlag muss
+    # das Sendebild dieselben Elemente enthalten. Nur Preset, Bitrate,
+    # Bildrate und Leinwand duerfen sich unterscheiden.
+    import inspect as _isp
+    _quelle_build = _isp.getsource(R.build)
+    for _st in range(0, R.DROSSEL_MAX + 2):
+        # Kein drossel_*-Aufruf darf in einer Gate-Zeile stehen.
+        for _zeile in _quelle_build.splitlines():
+            _z = _zeile.split("#", 1)[0]
+            if "_on = " in _z and "drossel" in _z:
+                raise AssertionError(
+                    f"eine Gate-Zeile liest die Drossel: {_zeile.strip()!r}")
+    # Und die Leiter regelt genau die vier erlaubten Groessen.
+    assert R.drossel_preset("superfast", 1) != R.drossel_preset("superfast", 0)
+    assert R.drossel_bitrate(4500, 2) < 4500
+    assert R.drossel_fps(24, 3) < 24 and R.drossel_fps(24, 2) == 24
+    assert R.drossel_canvas(1280, 720, 4) != (1280, 720)
+    assert R.drossel_canvas(1280, 720, 3) == (1280, 720)
+    # Untergrenzen: nichts wird unlesbar klein oder unbrauchbar langsam.
+    assert R.drossel_fps(24, 99) >= 15
+    _w, _h = R.drossel_canvas(1280, 720, 99)
+    assert _w >= 960 and _h >= 540 and _w % 2 == 0 and _h % 2 == 0
+    ok("W60: ueber alle Stufen faellt nichts aus dem Bild — nur Encode-Groessen")
 
     # --- 4) Das Sendebild sagt, warum es so aussieht ---------------------
     # Fuenf stille Boolesche haben in W47 bis W49 drei Runden gekostet. Eine
@@ -8171,10 +8197,14 @@ def _test_v42_w50_avatar_ueberlebt_die_drossel():
     # Jeder Grund MIT seiner Fundstelle — sonst prueft man nur, dass die
     # Woerter irgendwo vorkommen, nicht dass sie gemeldet werden.
     for fundstelle in (
-            '_gruende.append("Text aus (Drossel Stufe %d',
+            # ANKER GEWANDERT (v4.2-W60): "Text aus (Drossel Stufe …)" gibt es
+            # nicht mehr — die Drossel kann den Text nicht mehr abschalten.
             '_gruende.append("keine Schrift gefunden',
             '_gruende.append("kein Avatar (RESTREAM_AVATAR=%r'):
         assert fundstelle in fr, "der Grund fehlt: %s" % fundstelle
+    assert "Text aus (Drossel" not in fr, \
+        "die Sendebild-Zeile nennt die Drossel wieder als Grund fuer fehlenden " \
+        "Text — sie kann ihn seit W60 gar nicht mehr abschalten"
     # Der Copy-Modus bekommt eine eigene WARNUNG — auf debug saehe der
     # Betreiber ein leeres Sendebild ohne jeden Hinweis, und genau so sieht
     # ein Defekt aus.
@@ -8186,6 +8216,73 @@ def _test_v42_w50_avatar_ueberlebt_die_drossel():
         "der gesunde Fall meldet sich gar nicht oder als Warnung"
     assert "apt install fonts-dejavu-core" in fr, "die Abhilfe fehlt"
     ok("W50: eine Zeile nennt Text, Avatar und jeden fehlenden Grund")
+
+
+def _test_v42_w60_azrael_cooldown_je_plattform():
+    """v4.2-W60: ein Cooldown fuer drei Chats verschluckte zwei davon.
+
+    Gemeldet als „AZRAEL reagiert nicht plattformspezifisch auf Anfragen per
+    @Azrael, @azrael, Azrael und azrael". Die Erkennung war nie das Problem —
+    `"azrael" in text.lower()` faengt alle vier Schreibweisen. Die Bremse war
+    es:
+
+        _AZRAEL_CHAT_LAST = {"ts": 0.0}      # EIN Wert fuer alle drei
+
+    Bei AZRAEL_CHAT_REPLY_COOLDOWN_S=20 hiess das: fragt jemand auf Kick,
+    werden dieselben Fragen auf Twitch und YouTube in den naechsten 20
+    Sekunden STUMM verworfen. Kein Log, keine Antwort. Bei drei laufenden
+    Chats trifft das statistisch zwei von drei Fragestellern.
+    """
+    hier = os.path.dirname(os.path.abspath(__file__))
+    bot = open(os.path.join(hier, "bot.py"), encoding="utf-8").read()
+    flach = " ".join(bot.split())
+
+    # --- 1) Der Zeitstempel ist kein Einzelwert mehr ---------------------
+    assert '_AZRAEL_CHAT_LAST = {}' in flach, \
+        "der Cooldown haengt wieder an einem globalen Zeitstempel"
+    assert '_AZRAEL_CHAT_LAST = {"ts": 0.0}' not in flach, \
+        "der alte globale Zeitstempel steht noch da"
+    ok("W60: der AZRAEL-Cooldown ist ein Woerterbuch, kein Einzelwert")
+
+    # --- 2) Und er wird JE PLATTFORM gelesen und geschrieben -------------
+    i = flach.find("def _azrael_chat_should_reply(")
+    assert i > 0
+    rumpf = flach[i:i + 1200]
+    assert "platform" in rumpf.split(")")[0], \
+        "die Funktion bekommt die Plattform gar nicht uebergeben"
+    assert "_AZRAEL_CHAT_LAST.get(platform)" in rumpf, \
+        "gelesen wird weiter global"
+    assert "_AZRAEL_CHAT_LAST[platform] = now" in rumpf, \
+        "geschrieben wird weiter global"
+    ok("W60: gelesen und geschrieben wird je Plattform")
+
+    # --- 3) Jede Aufrufstelle nennt ihre Plattform -----------------------
+    # Ohne das liefen alle unter dem Vorgabe-Schluessel "?" — also wieder
+    # unter EINEM gemeinsamen Cooldown, nur unauffaelliger.
+    import re as _re
+    rufe = _re.findall(r"_azrael_chat_should_reply\(([^)]*)\)", bot)
+    rufe = [r for r in rufe if "def " not in r]
+    assert len(rufe) >= 4, f"nur {len(rufe)} Aufrufstellen gefunden"
+    ohne = [r for r in rufe if "platform=" not in r]
+    assert not ohne, (
+        f"{len(ohne)} Aufrufstelle(n) ohne Plattform — sie landen alle im "
+        f"selben Vorgabe-Eimer und teilen sich wieder einen Cooldown: {ohne}")
+    plattformen = set(_re.findall(r'platform="([a-z]+)"', " ".join(rufe)))
+    assert plattformen >= {"kick", "twitch", "youtube"}, plattformen
+    ok("W60: Kick, Twitch und YouTube haben je einen eigenen Cooldown")
+
+    # --- 4) Die Erkennung selbst bleibt, wie sie war ---------------------
+    # Sie war nie kaputt. Ein Vertrag, der sie mitaendert, waere eine
+    # Verschlimmbesserung an einer Stelle, die funktioniert.
+    # Im RUMPF der Funktion, nicht irgendwo in bot.py: `t = (text or "").lower()`
+    # kommt auch anderswo vor, und ein dateiweiter Test bleibt gruen, waehrend
+    # genau diese Erkennung ihr lower() verliert. Die Mutationsprobe ist beim
+    # Bauen prompt durchgerutscht.
+    assert 'addressed = ("azrael" in t' in rumpf, \
+        "die Erkennung wurde angefasst — sie fing alle vier Schreibweisen"
+    assert 't = (text or "").lower()' in rumpf, \
+        "ohne lower() faengt sie 'Azrael' und '@Azrael' nicht mehr"
+    ok("W60: die Erkennung faengt weiter Azrael, azrael, @Azrael und @azrael")
 
 
 def _test_v42_w57_verwarnung_auf_allen_plattformen():
@@ -9108,6 +9205,7 @@ def main():
     _test_v42_w55_kein_tap_sagt_warum()
     _test_v42_w56_sitzungen_haben_eine_oberflaeche()
     _test_v42_w57_verwarnung_auf_allen_plattformen()
+    _test_v42_w60_azrael_cooldown_je_plattform()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)
 
