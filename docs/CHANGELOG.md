@@ -11,6 +11,58 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Behoben — AZRAEL sagte die Rechnung des KI-Anbieters im Chat auf (v4.2 W64)
+
+Aus dem Moderator-Log, Einträge `send` **und** `reaction`:
+
+> The API key used for this request has exceeded budget. Please
+> [raise the key budget](https://enter.pollinations.ai/edit-key?id=…) then try again
+
+**Pollinations meldet ein erschöpftes Budget nicht als HTTP 402, sondern als
+HTTP 200 mit dem Fehlertext im Antwortinhalt.** `_classify_status` sieht 200 und
+schweigt, `_extract_text` findet Text, und `if txt: return (txt, None)` erklärt
+die Base für gesund. Zwei Folgen:
+
+1. **Die Rotation greift nie.** Die Base gilt als arbeitsfähig — obwohl genau
+   für diesen Fall vier Basen im Katalog stehen.
+2. **Der Text geht in den öffentlichen Chat**, samt der URL, die die Kennung
+   des Keys trägt.
+
+Neu ist `dienstmeldung(txt)`: erkennt Anbieter-Meldungen, die als Antwort
+ankommen, und gibt die **gefundene Marke** zurück, nicht den Text — nur so
+nennt das Log, was erkannt wurde, ohne die Key-Kennung zu wiederholen. Ein
+Treffer wird als `auth` geführt, die Base gesperrt, es wird rotiert. Der Riegel
+steht in allen drei Pfaden: `chat()` (Bot), `chat_sync()` (`brain/llm.py`) und
+`chat_stream()` (`/ai`-Route).
+
+Die Abwägung steht im Code: ein Fehlalarm kostet eine Anfrage, ein übersehener
+Treffer eine Anbieter-Meldung mit Key-Kennung im öffentlichen Chat. Im Zweifel
+wird erkannt.
+
+**Zweiter Befund an derselben Stelle.** `if "pollinations.ai" in b["url"]`
+hängte den Key an **beide** Pollinations-Basen — auch an die, die ihr eigener
+Kommentar „keyless, offener Altpfad" nennt. Beide teilten sich damit ein Budget
+und fielen gemeinsam aus. Es gab also genau dann keine kostenlose Alternative
+mehr, wenn man sie braucht. Der Key geht jetzt nur noch an den Gateway.
+
+**Der Stream musste zweimal gebaut werden.** Der erste Entwurf hielt die ersten
+200 Zeichen zurück und prüfte sie **einmal**. Beim Durchspielen fiel er durch:
+180 Zeichen Vorrede genügen, um die Marke aus dem Fenster zu schieben — die
+Rechnungsmeldung lief vollständig durch. Jetzt wird bei jedem Häppchen auf allem
+bisher Gesichteten geprüft. Dass die Wache nach Freigabe des Rückhalts
+unvollständig bleibt, ist bewusst und steht so im Code: Streaming heißt, Text
+herzugeben, bevor man ihn ganz kennt. Der Weg in den öffentlichen Chat streamt
+nicht — er läuft über `chat()`/`chat_sync()`, und die sehen den vollständigen
+Text.
+
+Eine Mutationsprobe entlarvte außerdem **toten Code**: die zweite Prüfung im
+Nachspiel des Streams konnte per Konstruktion nie zuschlagen, seit die
+fortlaufende Prüfung existiert. Sie ist raus; an ihre Stelle tritt ein Vertrag
+über die Invariante, auf der die Vereinfachung ruht. Eine Zusicherung, die nicht
+feuern kann, ist keine Sicherheit, sondern eine Beruhigung.
+
+23 Mutationsproben über beide Runden.
+
 ### Behoben — die manuelle Aufnahme war unsichtbar, und das Deck sagte das Gegenteil (v4.2 W63)
 
 Letzter offener Kandidat aus der Dashboard-Prüfung, diesmal **von Hand

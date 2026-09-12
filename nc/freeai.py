@@ -78,6 +78,16 @@ _REFERRER = os.getenv("FREEAI_REFERRER", "nightcrawler").strip() or "nightcrawle
 _WARN = lambda topic, msg: None          # noqa: E731
 _TELEMETRY = lambda **kw: None           # noqa: E731
 
+# v4.2-W64: so viele Zeichen werden im Stream zurueckgehalten, bevor das
+# erste Stueck rausgeht. Die laengste Marke hat 30 Zeichen; 200 gibt genug
+# Luft, falls eine Meldung mit einer Hoeflichkeitsfloskel beginnt, und
+# verzoegert eine echte Antwort um hoechstens diese 200 Zeichen.
+_STREAM_PRUEF_ZEICHEN = 200
+# Bis hierhin wird weiter mitgelesen, nachdem der Rueckhalt freigegeben ist.
+# Danach ist es eine echte Antwort — und der Speicher soll nicht mit der
+# Antwortlaenge wachsen.
+_STREAM_PRUEF_MAX = 2000
+
 _COOLDOWN_S = 90.0           # 429-Sperre pro Base
 # v4.1-W14: Ein "Model is currently unavailable" ist kein Ausrutscher, sondern
 # meist eine Abschaltung beim Anbieter. 90s waeren zu kurz — die Base wuerde
@@ -106,7 +116,12 @@ def _default_bases() -> List[dict]:
     for entry in _CATALOG:
         b = dict(entry)
         b["models"] = list(entry["models"])
-        if "pollinations.ai" in b["url"] and poll_key:
+        # v4.2-W64: der Key geht NUR an den Gateway. Base 1 ist laut ihrem
+        # eigenen Kommentar der "keylose, offene Altpfad" — bekam sie den Key
+        # trotzdem, teilten sich beide Pollinations-Basen EIN Budget, und war
+        # das erschoepft, fielen beide gleichzeitig aus. Damit gab es genau
+        # dann keine kostenlose Alternative mehr, wenn man sie braucht.
+        if "gen.pollinations.ai" in b["url"] and poll_key:
             b["key"] = poll_key
         if "llm7.io" in b["url"] and llm7_key:
             b["key"] = llm7_key
@@ -336,6 +351,141 @@ def _extract_text(data) -> str:
         return ""
 
 
+# ---- v4.2-W64: Dienstmeldungen, die als ANTWORT ankommen -------------------
+#
+# Pollinations meldet ein erschoepftes Key-Budget NICHT als HTTP 402, sondern
+# als HTTP 200 mit dem Fehlertext im Antwortinhalt:
+#
+#   "The API key used for this request has exceeded budget. Please
+#    [raise the key budget](https://enter.pollinations.ai/edit-key?id=…)
+#    then try again"
+#
+# _classify_status sieht 200 und schweigt, _extract_text findet Text, und
+# `if txt: return (txt, None)` erklaert die Base fuer gesund. Zwei Folgen,
+# beide im Moderator-Log des Betreibers zu sehen gewesen:
+#
+#   1. DIE ROTATION GREIFT NIE. Die Base gilt als arbeitsfaehig, also wird
+#      nie auf eine freie Alternative umgeschaltet — obwohl es genau dafuer
+#      vier Basen im Katalog gibt.
+#   2. DER FEHLERTEXT GEHT ALS AZRAELS ANTWORT IN DEN CHAT. Im Log stehen
+#      "send" und "reaction" mit dem Wortlaut der Rechnungsmeldung, samt der
+#      URL, die die Kennung des Keys traegt. Das ist eine Anbieter-Meldung in
+#      einem oeffentlichen Chat.
+#
+# WOHIN DIE ABWAEGUNG FAELLT: ein Fehlalarm unterdrueckt eine echte Antwort,
+# der Aufrufer rotiert auf die naechste Base und fragt erneut — Kosten: eine
+# Anfrage. Ein uebersehener Treffer schickt eine Anbieter-Meldung mit
+# Key-Kennung in den oeffentlichen Chat. Deshalb wird im Zweifel erkannt.
+_DIENSTMELDUNGEN = (
+    "enter.pollinations.ai/edit-key",
+    "raise the key budget",
+    "exceeded budget",
+    "api key used for this request",
+    "insufficient_quota",
+    "exceeded your current quota",
+    "rate limit reached for",
+    "payment required",
+    "please provide an api key",
+    "invalid api key",
+)
+
+
+def dienstmeldung(txt) -> str:
+    """Ist `txt` in Wahrheit eine Anbieter-Meldung? -> Marke oder "".
+
+    Gibt die GEFUNDENE MARKE zurueck, nicht True: nur so nennt das Log, WAS
+    erkannt wurde, ohne den Text selbst zu wiederholen — und der traegt die
+    Kennung des Keys.
+
+    Auch ein roher Fehler-Umschlag zaehlt: manche Basen liefern bei HTTP 200
+    ein {"error": …} statt einer Nachricht, und _extract_text macht daraus
+    einen leeren oder halben String. Steht der Umschlag am Anfang, ist es
+    keine Antwort.
+    """
+    t = (txt or "").strip()
+    if not t:
+        return ""
+    k = t.lower()
+    for marke in _DIENSTMELDUNGEN:
+        if marke in k:
+            return marke
+    if k.startswith(('{"error"', "{'error'", '{"detail"')):
+        return "fehler-umschlag"
+    return ""
+
+
+def stream_haeppchen(delta, gesehen, offen):
+    """Ein Stream-Delta durch den Rueckhalt. -> (ausgabe, gesehen, offen, abbruch)
+
+    v4.2-W64. WARUM ALS EIGENE FUNKTION und nicht als vier Zeilen im
+    async-Generator: der Generator braucht aiohttp und eine Session, also
+    laesst er sich in der CI nicht fahren — die Vertraege dort laufen mit
+    minimalen Abhaengigkeiten. Die Zusicherung „der Riegel steht im Rumpf"
+    ist waehrenddessen kein Beweis: bei der Mutationsprobe blieb genau die
+    gruen, waehrend der Riegel ausgehebelt war (im selben Rumpf stand ein
+    zweiter Aufruf desselben Namens). Als reine Funktion ist der Rueckhalt
+    Haeppchen fuer Haeppchen durchspielbar — und genau dabei ist der erste
+    Entwurf durchgefallen.
+
+    DER ERSTE ENTWURF PRUEFTE NUR EINMAL, am Ende des Rueckhalts. Eine
+    Vorrede genuegte, um die Marke aus dem Fenster zu schieben: 180 Zeichen
+    „We are sorry — " davor, und die Rechnungsmeldung lief vollstaendig
+    durch. Geprueft wird deshalb bei JEDEM Haeppchen, auf allem bisher
+    Gesichteten, bis _STREAM_PRUEF_MAX.
+
+    Zwei Stufen:
+
+      Rueckhalt   bis _STREAM_PRUEF_ZEICHEN geht NICHTS raus. Was hier
+                  auffliegt, hat den Aufrufer nie erreicht.
+      Wache       danach laeuft der Strom, die Pruefung aber weiter. Ein
+                  spaeter Treffer bricht ab — das schon Ausgegebene laesst
+                  sich nicht zurueckholen, aber der Rest bleibt drin und die
+                  Base wird gesperrt.
+
+    Dass die zweite Stufe unvollstaendig ist, ist bewusst und kein Versehen:
+    Streaming heisst, Text herzugeben, bevor man ihn ganz kennt. Der Weg in
+    den OEFFENTLICHEN Chat streamt nicht — er laeuft ueber chat()/chat_sync(),
+    und die sehen den vollstaendigen Text. Gestreamt wird nur die /ai-Route
+    im Dashboard des Betreibers.
+
+      ausgabe   was jetzt raus darf ("" = noch nichts)
+      gesehen   alles bisher Gesichtete (waechst bis _STREAM_PRUEF_MAX)
+      offen     True = Rueckhalt freigegeben, Deltas gehen direkt raus
+      abbruch   True: Dienstmeldung erkannt — abbrechen, Base wechseln
+    """
+    gesehen = gesehen + delta if len(gesehen) < _STREAM_PRUEF_MAX else gesehen
+    if len(gesehen) <= _STREAM_PRUEF_MAX and dienstmeldung(gesehen):
+        return "", gesehen, offen, True
+    if offen:
+        return delta, gesehen, True, False
+    if len(gesehen) < _STREAM_PRUEF_ZEICHEN:
+        return "", gesehen, False, False
+    return gesehen, gesehen, True, False       # Rueckhalt freigeben
+
+
+def stream_rest(gesehen, offen):
+    """Was am Stream-Ende noch im Rueckhalt liegt. -> ausgabe ("" = verwerfen)
+
+    Eine kurze Antwort erreicht _STREAM_PRUEF_ZEICHEN nie — ohne dieses
+    Nachspiel bliebe sie im Rueckhalt stecken und der Aufrufer saehe gar
+    nichts.
+
+    HIER WIRD NICHT NOCHMAL GEPRUEFT, und das ist Absicht mit Begruendung:
+    stream_haeppchen prueft bei JEDEM Haeppchen auf allem bisher
+    Gesichteten. Ist der Strom hier angekommen, ohne abzubrechen, dann ist
+    genau dieser Text schon geprueft worden — eine zweite Pruefung koennte
+    per Konstruktion nie zuschlagen. Sie stand im ersten Entwurf trotzdem
+    da; die Mutationsprobe, die sie entfernt, blieb still und hat sie damit
+    als toten Code entlarvt. Eine Zusicherung, die nicht feuern kann, ist
+    keine Sicherheit, sondern eine Beruhigung.
+
+    Die Invariante, auf der das ruht, haelt ein eigener Vertrag fest: nach
+    einer Folge von stream_haeppchen ohne Abbruch ist `gesehen` keine
+    Dienstmeldung. Wer stream_haeppchen aendert, bringt den zum Kippen.
+    """
+    return "" if offen else (gesehen or "")
+
+
 def _classify_status(status: int) -> Optional[str]:
     if status in (401, 402, 403):
         # 402 = Gateway verlangt Guthaben/Key. Als 'auth' fuehren, nicht als
@@ -410,6 +560,22 @@ async def chat(messages: List[dict], model=None, timeout=None
                     data = await resp.json(content_type=None)
                     txt = _extract_text(data)
                     ms = round((_time_mod.monotonic() - t0) * 1000)
+                    # v4.2-W64: HTTP 200 mit einer Anbieter-Meldung darin.
+                    # Als 'auth' fuehren und die Base sperren — ein anderes
+                    # Modell derselben Base teilt sich dasselbe Budget, es zu
+                    # versuchen kostet nur Zeit.
+                    _dm = dienstmeldung(txt)
+                    if _dm:
+                        _block_base(base["url"])
+                        _record_error(base["url"], "auth",
+                                      f"HTTP 200 mit Dienstmeldung ({_dm})")
+                        _WARN("freeaidienst",
+                              f"freeai: {base['url']} antwortet mit einer "
+                              f"Dienstmeldung ({_dm}) statt mit Text — Budget "
+                              f"oder Key erschoepft. Base gesperrt, rotiere "
+                              f"auf die naechste.")
+                        last_err = "auth"
+                        break                       # Base-Ebene → naechste Base
                     if txt:
                         _record_latency(base["url"], ms)
                         _TELEMETRY(purpose="freeai", ok=True, ms=ms,
@@ -454,23 +620,46 @@ async def chat_stream(messages: List[dict], model=None, timeout=None
                                   f"HTTP {resp.status} (stream)")
                     continue
                 got = False
+                # v4.2-W64: der Anfang wird ZURUECKGEHALTEN, bis klar ist, dass
+                # es eine Antwort und keine Dienstmeldung ist. Ein Stueck davon
+                # ist schon draussen, sobald das erste Delta raus ist — und ein
+                # halb ausgegebener Rechnungshinweis laesst sich nicht
+                # zurueckholen. Die Marken stehen alle am Textanfang, deshalb
+                # reichen die ersten Zeichen; danach laeuft der Strom wie zuvor.
+                gesehen, offen = "", False
                 async for raw in resp.content:
                     line = raw.decode("utf-8", "ignore").strip()
                     if not line.startswith("data:"):
                         continue
                     body = line[5:].strip()
                     if body == "[DONE]":
-                        return
+                        break
                     try:
                         delta = ((json.loads(body).get("choices") or [{}])[0]
                                  .get("delta") or {}).get("content") or ""
                     except Exception:
                         delta = ""
-                    if delta:
+                    if not delta:
+                        continue
+                    ausgabe, gesehen, offen, abbruch = stream_haeppchen(
+                        delta, gesehen, offen)
+                    if abbruch:
+                        break               # nichts ausgeben, Base wechseln
+                    if ausgabe:
                         got = True
-                        yield delta
+                        yield ausgabe
+                # Kurze Antwort: der Puffer wurde nie voll und ist noch drin.
+                rest = stream_rest(gesehen, offen)
+                if rest:
+                    got = True
+                    yield rest
                 if got:
                     return          # Stream lief — nicht weiterrotieren
+                _block_base(base["url"])
+                _record_error(base["url"], "auth", "Stream: Dienstmeldung statt Text")
+                _WARN("freeaidienst",
+                      f"freeai: {base['url']} streamt eine Dienstmeldung statt "
+                      f"Text — Base gesperrt, rotiere.")
         except Exception as e:
             _record_error(base["url"], "net", f"{type(e).__name__}: {e}")
             continue
@@ -494,6 +683,21 @@ def chat_sync(messages: List[dict], model=None, timeout=None
             with urllib.request.urlopen(req, timeout=to) as resp:
                 data = json.loads(resp.read().decode("utf-8", "ignore"))
                 txt = _extract_text(data)
+                # v4.2-W64: derselbe Riegel wie im async-Pfad. Er muss an
+                # BEIDEN Stellen stehen — brain/llm.py nimmt chat_sync, der
+                # Bot-Pfad chat(), und ein Riegel an nur einer Stelle laesst
+                # genau den anderen Weg die Meldung in den Chat tragen.
+                _dm = dienstmeldung(txt)
+                if _dm:
+                    _block_base(base["url"])
+                    _record_error(base["url"], "auth",
+                                  f"HTTP 200 mit Dienstmeldung ({_dm})")
+                    _WARN("freeaidienst",
+                          f"freeai: {base['url']} antwortet mit einer "
+                          f"Dienstmeldung ({_dm}) statt mit Text — Budget oder "
+                          f"Key erschoepft. Base gesperrt, rotiere.")
+                    last_err = "auth"
+                    continue
                 if txt:
                     _record_latency(base["url"], (_time_mod.monotonic() - _t0) * 1000)
                     return (txt, None)

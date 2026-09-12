@@ -8741,6 +8741,269 @@ def _test_v42_w63_manuelle_aufnahme_sichtbar_und_stoppbar():
     ok("W63: ein Neustart-Rest wird abgeschlossen, geloggt und gemeldet")
 
 
+def _test_v42_w64_dienstmeldung_statt_antwort():
+    """v4.2-W64: der Anbieter schickt seine Rechnung, der Bot sagt sie im Chat auf.
+
+    Aus dem Moderator-Log des Betreibers, Eintraege `send` UND `reaction`:
+
+        The API key used for this request has exceeded budget. Please
+        [raise the key budget](https://enter.pollinations.ai/edit-key?id=…)
+        then try again
+
+    Pollinations meldet ein erschoepftes Budget NICHT als HTTP 402, sondern
+    als **HTTP 200 mit dem Fehlertext im Antwortinhalt**. `_classify_status`
+    sieht 200 und schweigt, `_extract_text` findet Text, und
+    `if txt: return (txt, None)` erklaert die Base fuer gesund.
+
+    Zwei Folgen, beide schlimm:
+
+      1. DIE ROTATION GREIFT NIE. Die Base gilt als arbeitsfaehig — obwohl
+         genau fuer diesen Fall vier Basen im Katalog stehen. Der Betreiber:
+         „Auch hier brauchen wir eine kostenlose Alternative."
+      2. DER TEXT GEHT IN DEN OEFFENTLICHEN CHAT, samt der URL, die die
+         Kennung des Keys traegt.
+
+    Dazu ein zweiter Befund an derselben Stelle: `if "pollinations.ai" in
+    b["url"]` haengte den Key an BEIDE Pollinations-Basen — auch an die, die
+    ihr eigener Kommentar „keyless, offener Altpfad" nennt. Beide teilten sich
+    damit ein Budget und fielen gemeinsam aus. Es gab also genau dann keine
+    kostenlose Alternative mehr, wenn man sie braucht.
+    """
+    import json as _json
+    import http.server as _hs
+    import socketserver as _ss
+    import threading as _th
+    from nc import freeai as F
+
+    ECHT = ("The API key used for this request has exceeded budget. Please "
+            "[raise the key budget](https://enter.pollinations.ai/edit-key"
+            "?id=89idjaTSg2hI4YwZDuO8ZME5Ma6GrFps) then try again")
+
+    # --- 1) Die Meldung aus dem Screenshot wird erkannt ------------------
+    marke = F.dienstmeldung(ECHT)
+    assert marke, "die gemeldete Budget-Meldung wird nicht als solche erkannt"
+    # Zurueck kommt die MARKE, nicht der Text: nur so kann das Log sagen, was
+    # erkannt wurde, ohne die Key-Kennung zu wiederholen.
+    assert marke in ECHT.lower() and len(marke) < 40, marke
+    assert "89idjaTSg" not in marke, "die Marke traegt die Key-Kennung"
+    for weitere in ("Insufficient_quota", "You exceeded your current quota.",
+                    "Rate limit reached for gpt-4", "Payment Required",
+                    '{"error": {"message": "nope"}}'):
+        assert F.dienstmeldung(weitere), weitere
+    ok("W64: die Budget-Meldung wird als Dienstmeldung erkannt")
+
+    # --- 2) Eine echte Antwort wird NICHT erkannt ------------------------
+    # Ein Fehlalarm kostet eine Anfrage, ein uebersehener Treffer eine
+    # Anbieter-Meldung im oeffentlichen Chat — aber gaenzlich blind darf die
+    # Erkennung deshalb trotzdem nicht zuschlagen.
+    for echt in ("Klar, mach ich.", "", "   ",
+                 "Der Stream laeuft seit 20 Minuten, alles ruhig.",
+                 "budget", "Ich habe kein Budget fuer sowas.",
+                 "Mein Schwert ist scharf und mein Geduldsfaden kurz."):
+        assert not F.dienstmeldung(echt), f"Fehlalarm auf {echt!r}"
+    ok("W64: normale Antworten loesen keinen Fehlalarm aus")
+
+    # --- 3) Und die Rotation greift wirklich -----------------------------
+    # AM ECHTEN AUFRUF gemessen, nicht am Quelltext: die Zusicherung „der
+    # Riegel steht da" waere gruen, auch wenn er nach dem return steht.
+    def _server(text):
+        class _H(_hs.BaseHTTPRequestHandler):
+            def do_POST(self):
+                _n = int(self.headers.get("Content-Length") or 0)
+                self.rfile.read(_n)
+                _b = _json.dumps({"choices": [{"message": {"content": text}}]}).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(_b)))
+                self.end_headers()
+                self.wfile.write(_b)
+            def log_message(self, *a):
+                pass
+        srv = _ss.TCPServer(("127.0.0.1", 0), _H)
+        _th.Thread(target=srv.serve_forever, daemon=True).start()
+        return srv
+
+    _sicherung = (list(F._BASES), F._MODEL, F._TIMEOUT)
+    pleite = _server(ECHT)
+    frei = _server("Klar, mach ich.")
+    try:
+        F.configure(bases=[{"url": "http://127.0.0.1:%d/v1" % s.server_address[1],
+                            "key": "", "models": ["m"]}
+                           for s in (pleite, frei)], model="m", timeout=5)
+        txt, err = F.chat_sync([{"role": "user", "content": "hi"}])
+        assert txt == "Klar, mach ich.", (
+            f"die Rotation erreicht die freie Base nicht — geliefert wurde "
+            f"{txt!r}")
+        assert err is None, err
+        assert "exceeded budget" not in (txt or ""), \
+            "die Anbieter-Meldung geht weiter als Antwort raus"
+
+        # Die tote Base ist gesperrt, nicht bloss uebersprungen: sonst faellt
+        # jeder naechste Aufruf wieder zuerst auf sie.
+        _pleite_url = "http://127.0.0.1:%d/v1" % pleite.server_address[1]
+        _st = {z["url"]: z for z in F.bases_status()}
+        assert _st[_pleite_url]["blocked_s"] > 0, \
+            "die Base mit erschoepftem Budget wird nicht gesperrt"
+
+        # Und der Fehler ist als 'auth' vermerkt — nicht als 'http' oder gar
+        # nicht. Der Unterschied entscheidet, ob der Betreiber einen Key
+        # nachlaedt oder das Netz debuggt.
+        _fehler = F.last_errors()[_pleite_url]
+        assert _fehler["kind"] == "auth", _fehler
+        # DIE SICHERHEITS-EIGENSCHAFT: im Vermerk steht die Marke, nicht der
+        # Text — der traegt die Kennung des Keys.
+        assert "89idjaTSg" not in _fehler["detail"], \
+            "der Fehlervermerk enthaelt die Key-Kennung aus der Meldung"
+        assert "Dienstmeldung" in _fehler["detail"], _fehler
+    finally:
+        for _s in (pleite, frei):
+            _s.shutdown()
+            _s.server_close()
+        F._BASES, F._MODEL, F._TIMEOUT = _sicherung
+    ok("W64: die Rotation erreicht die freie Base, die tote wird gesperrt")
+
+    # --- 4) Der Riegel steht in ALLEN DREI Pfaden ------------------------
+    # chat() nimmt der Bot, chat_sync() nimmt brain/llm.py, chat_stream()
+    # nimmt die /ai-Route. Ein Riegel an nur einer Stelle laesst genau den
+    # anderen Weg die Meldung in den Chat tragen.
+    hier = os.path.dirname(os.path.abspath(__file__))
+    quelle = open(os.path.join(hier, "nc", "freeai.py"), encoding="utf-8").read()
+    for fn in ("async def chat(", "def chat_sync("):
+        i = quelle.find(fn)
+        assert i > 0, fn
+        _e = quelle.find("\ndef ", i + 1)
+        _e2 = quelle.find("\nasync def ", i + 1)
+        _e = min(x for x in (_e, _e2, len(quelle)) if x > 0)
+        assert "dienstmeldung(" in quelle[i:_e], \
+            f"{fn.strip()} prueft nicht auf Dienstmeldungen"
+
+    # chat_stream braucht aiohttp und eine Session — in der CI nicht fahrbar.
+    # Deshalb liegt sein Rueckhalt als REINE FUNKTION daneben und wird hier
+    # Haeppchen fuer Haeppchen durchgespielt.
+    #
+    # WARUM NICHT WIE OBEN AM QUELLTEXT: genau das war gruen, waehrend die
+    # Mutationsprobe den Riegel ausgehebelt hatte — im selben Rumpf stand ein
+    # zweiter Aufruf desselben Namens. Vorhandensein statt Eigenschaft, in
+    # dieser Reihe zum wiederholten Mal.
+    def _stream(text, haeppchen=17):
+        """Den Strom stueckweise durchschieben. -> (ausgegeben, abgebrochen)"""
+        puffer, geprueft, raus = "", False, []
+        for i in range(0, len(text), haeppchen):
+            a, puffer, geprueft, ab = F.stream_haeppchen(
+                text[i:i + haeppchen], puffer, geprueft)
+            if ab:
+                return "".join(raus), True
+            if a:
+                raus.append(a)
+        return "".join(raus) + F.stream_rest(puffer, geprueft), False
+
+    # Die Meldung darf in KEINER Stueckelung auch nur teilweise rausgehen.
+    # Ein halb ausgegebener Rechnungshinweis laesst sich nicht zurueckholen.
+    #
+    # ZWEI LAENGEN, und das ist kein Zierrat: die gemeldete Meldung ist
+    # kuerzer als der Pruefpuffer und wird deshalb erst im NACHSPIEL erkannt.
+    # Mit ihr allein blieb der Riegel MITTEN IM STROM ungetestet — die
+    # Mutationsprobe, die ihn entfernt, lief still durch. Die lange Fassung
+    # ueberschreitet den Puffer und uebt genau diesen Zweig.
+    LANG = ("We are sorry — " * 12) + ECHT
+    assert len(LANG) > F._STREAM_PRUEF_ZEICHEN > len(ECHT), (
+        "die beiden Pruefsaetze liegen nicht mehr auf verschiedenen Seiten "
+        "des Rueckhalts — dann uebt einer von beiden seinen Zweig nicht")
+
+    # Die kurze Meldung faellt im Nachspiel: NICHTS geht raus.
+    for _h in (1, 3, 17, 64, 500):
+        _aus, _ab = _stream(ECHT, _h)
+        assert _aus == "", (
+            f"bei {_h}-Zeichen-Haeppchen gehen {len(_aus)} Zeichen der "
+            f"Dienstmeldung raus: {_aus[:60]!r}")
+
+    # Die lange mit Vorrede faellt MITTEN IM STROM. Hier ist die harte
+    # Zusicherung nicht „nichts geht raus" — das waere gelogen, denn beim
+    # Streamen ist die Vorrede schon draussen, bevor die Marke ueberhaupt
+    # ankommt. Gefordert ist, was zaehlt: die MELDUNG SELBST geht nie raus,
+    # und der Strom bricht ab.
+    #
+    # Der erste Entwurf pruefte nur einmal am Ende des Rueckhalts und liess
+    # genau diesen Fall vollstaendig durch — 180 Zeichen Vorrede genuegten.
+    for _h in (1, 3, 17, 64, 500):
+        _aus, _ab = _stream(LANG, _h)
+        assert _ab, f"bei {_h}-Zeichen-Haeppchen bricht der Strom nicht ab"
+        for _marke in ("exceeded budget", "enter.pollinations.ai",
+                       "89idjaTSg", "raise the key budget"):
+            assert _marke not in _aus, (
+                f"bei {_h}-Zeichen-Haeppchen geht {_marke!r} raus: {_aus[-80:]!r}")
+        assert not F.dienstmeldung(_aus), \
+            f"das Ausgegebene ist selbst eine Dienstmeldung: {_aus[:60]!r}"
+    # Eine echte Antwort geht vollstaendig raus — auch die kurze, die den
+    # Pruefpuffer nie fuellt.
+    for _echt in ("Klar, mach ich.",
+                  "Alles ruhig im Chat. " * 30):
+        for _h in (1, 17, 500):
+            _aus, _ab = _stream(_echt, _h)
+            assert not _ab and _aus == _echt, (
+                f"echte Antwort verstuemmelt bei {_h}: {_aus[:60]!r}")
+    # DIE INVARIANTE, auf der stream_rest ruht: kommt eine Folge ohne
+    # Abbruch durch, ist das Gesichtete keine Dienstmeldung. Nur deshalb darf
+    # das Nachspiel ungeprueft freigeben. Ohne diesen Vertrag waere die
+    # Vereinfachung dort ein blinder Fleck — und eine zweite Pruefung, die
+    # per Konstruktion nie zuschlaegt, ist keine Sicherheit, sondern eine
+    # Beruhigung (genau das hat die Mutationsprobe gezeigt: sie blieb still).
+    for _text in (ECHT, LANG, "Klar.", "Alles ruhig. " * 30,
+                  "Rate limit reached for gpt-4o", '{"error": {"code": 1}}'):
+        for _h in (1, 7, 200, 5000):
+            _g, _o, _abgebrochen = "", False, False
+            for _i in range(0, len(_text), _h):
+                _a, _g, _o, _ab = F.stream_haeppchen(_text[_i:_i + _h], _g, _o)
+                if _ab:
+                    _abgebrochen = True
+                    break
+            if not _abgebrochen:
+                assert not F.dienstmeldung(_g), (
+                    f"Folge lief ohne Abbruch durch, das Gesichtete ist aber "
+                    f"eine Dienstmeldung — stream_rest gaebe sie frei: "
+                    f"{_g[:60]!r}")
+    ok("W64: was ohne Abbruch durchkommt, ist keine Dienstmeldung mehr")
+
+    # Und der Generator benutzt den Rueckhalt auch. Die Eigenschaft steckt
+    # oben im Durchspielen; hier geht es nur um die VERDRAHTUNG — ohne sie
+    # waere die schoenste reine Funktion tot (W56).
+    i = quelle.find("async def chat_stream(")
+    assert i > 0
+    _e = quelle.find("\n# ---- sync", i)
+    rumpf_stream = quelle[i:_e if _e > 0 else len(quelle)]
+    for name in ("stream_haeppchen(", "stream_rest("):
+        assert name in rumpf_stream, f"chat_stream benutzt {name} nicht"
+    # Kein Delta darf am Rueckhalt vorbei rausgehen.
+    assert "yield delta" not in rumpf_stream, \
+        "chat_stream gibt ein Delta direkt aus — am Rueckhalt vorbei"
+    ok("W64: chat und chat_sync pruefen, und der Stream haelt den Anfang zurueck")
+
+    # --- 5) Der Key geht nur an den Gateway ------------------------------
+    # Sonst teilen sich beide Pollinations-Basen EIN Budget und fallen
+    # gemeinsam aus — dann gibt es die kostenlose Alternative genau dann
+    # nicht, wenn man sie braucht.
+    assert 'if "pollinations.ai" in b["url"] and poll_key:' not in quelle, \
+        "der Key haengt wieder an BEIDEN Pollinations-Basen"
+    assert 'if "gen.pollinations.ai" in b["url"] and poll_key:' in quelle, \
+        "der Key erreicht den Gateway nicht mehr"
+    _alt = os.environ.get("POLLINATIONS_API_KEY")
+    os.environ["POLLINATIONS_API_KEY"] = "test-key-w64"
+    try:
+        _basen = F._default_bases()
+    finally:
+        if _alt is None:
+            os.environ.pop("POLLINATIONS_API_KEY", None)
+        else:
+            os.environ["POLLINATIONS_API_KEY"] = _alt
+    _poll = [b for b in _basen if "pollinations.ai" in b["url"]]
+    assert len(_poll) >= 2, "es gibt keine zwei Pollinations-Basen mehr"
+    _ohne = [b for b in _poll if not b.get("key")]
+    assert _ohne, ("mit gesetztem Key traegt JEDE Pollinations-Base ihn — "
+                   "damit gibt es keine keylose Alternative mehr")
+    assert any(b.get("key") for b in _poll), "der Gateway bekommt keinen Key"
+    ok("W64: mit Key bleibt eine Pollinations-Base keylos — die Alternative")
+
+
 def _test_v42_w60_azrael_cooldown_je_plattform():
     """v4.2-W60: ein Cooldown fuer drei Chats verschluckte zwei davon.
 
@@ -9751,6 +10014,7 @@ def main():
     _test_v42_w61_avatar_faellt_vor_dem_panel()
     _test_v42_w62_avatar_afk_zustand()
     _test_v42_w63_manuelle_aufnahme_sichtbar_und_stoppbar()
+    _test_v42_w64_dienstmeldung_statt_antwort()
     _test_v42_w60_azrael_cooldown_je_plattform()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)
