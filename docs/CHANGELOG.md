@@ -11,6 +11,39 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Behoben — W44 lieferte drei Routen und keinen Knopf (v4.2 W56)
+
+Gefunden bei der Dashboard-Prüfung: von 359 Flask-Routen ruft die Oberfläche
+320. Unter den übrigen stand die **komplette Sitzungs-Funktion aus W44**:
+
+```
+/api/recordings/sessions
+/api/recordings/session/<sid>
+/api/recordings/session/<sid>/join
+```
+
+Im Release-Text von v4.3 steht trotzdem *„auf Knopfdruck werden die Segmente
+ohne Neukodierung zu einer Datei zusammengefügt"*. **Den Knopf gab es nicht** —
+erreichbar war das nur per `curl`. Der Satz war falsch, und er stammt aus
+derselben Welle, die die Routen gebaut hat.
+
+Dieselbe Fehlerklasse wie B132 („acht Routen, die es im Backend gab und die nie
+eine Oberfläche hatten"). Neu in der Ansicht **Betrieb**: ein Panel mit
+Streamer, Beginn, Segmentzahl, Nahtlücken, Abdeckung und Größe je Sitzung, ein
+Aufklapper für die einzelnen Segmente samt Lücke davor, und der Knopf zum
+Zusammenfügen.
+
+Antwortet die Route mit `409` (die Zieldatei gibt es schon), fragt die
+Oberfläche nach, statt einen Fehler zu melden — überschrieben wird nur nach
+Zustimmung, sonst wäre eine fertige Datei weg.
+
+Vier Verträge halten das fest, darunter zwei, die über den Einzelfall
+hinausgehen: dass `sitzungenLoad` an einem Ansichts-Loader hängt (eine
+Funktion, die niemand aufruft, ist so tot wie eine Route ohne Knopf), und dass
+das Panel wirklich im Markup steht. Warnendes Beispiel im selben Deck:
+`loadCaptures()` gibt es noch, ihr Panel nicht mehr — sie steigt seit einem
+Bugfix per Wächter still aus.
+
 ### Behoben — „audio=False" war ein Boolescher Wert für drei Ursachen (v4.2 W55)
 
 Gemeldet mit Bildschirmfoto des Live-Transkript-Panels: **„Noch nichts gehört
