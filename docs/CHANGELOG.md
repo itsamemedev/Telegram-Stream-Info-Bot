@@ -11,6 +11,54 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Geändert — Sicherheits-Audit v4.3-W58 und Bughunt (v4.2 W59)
+
+`docs/SECURITY.md` und `docs/en/SECURITY.md` waren an drei Stellen veraltet:
+unterstützte Versionen endeten bei 4.0.x, als letzter Audit-Durchgang stand
+v4.0-W118, und die `.env` wurde mit „rund 470 Variablen" beziffert (es sind
+523). Alle drei nachgezogen.
+
+**Auditstand neu — geprüft, nicht behauptet.** Abgedeckt wurden dieselben
+Klassen wie in W118:
+
+| Klasse | Ergebnis |
+|---|---|
+| `eval`/`exec`/`pickle`/`yaml.load` | kein Treffer |
+| `shell=True` | ein Treffer — `SWAP_CLEAR_CMD`, die dokumentierte Ausnahme |
+| SQL-Injektion inkl. LLM-Abfrage | kein Treffer |
+| Pfad-Traversal | kein Treffer |
+| Dashboard-Auth | kein Treffer |
+| Geheimnisse in Logs und API-Antworten | kein Treffer |
+| XSS | **ein Befund, behoben in W58** |
+| SSRF | kein Treffer |
+| OAuth-CSRF | ein Hinweis, jetzt dokumentiert |
+
+Der OAuth-Hinweis ist neu in der Datei: Twitch und YouTube halten den `state`
+nur im Speicher und prüfen ihn nur, wenn einer ausgegeben wurde. Kick macht es
+strenger und legt ihn persistent ab. Gleichzuziehen hieße, ihn ebenfalls zu
+persistieren — sonst bricht ein legitimer Flow über einen Neustart hinweg ab.
+Deshalb dokumentiert statt still geändert.
+
+**Bughunt** über die Fehlerklassen, die CLAUDE.md selbst als wiederkehrend
+benennt — Ergebnis: die Klassen sind sauber.
+
+- *Stille `except`-Blöcke in Dauerläufern.* 319 `except: pass` im Bestand, davon
+  9 in echten Dauerläufer-Schleifen. Alle neun sind Wächter, der Fehlerkanal
+  selbst oder `except asyncio.CancelledError` — genau die Fälle, in denen
+  CLAUDE.md Schweigen ausdrücklich erlaubt, weil Loggen dort eine Rekursion
+  baut. **Null Befunde.**
+- *Zwei Uhren.* Jede `ts`-Schreibstelle gegen ihre Lesestelle geprüft:
+  `monotonic` wird mit `monotonic` gelesen, `time` mit `time`. **Konsistent.**
+- *Guards als Objekt-Attribut.* Keine (die drei Treffer liegen im
+  mitgelieferten `segno` und sind `__getattr__`).
+- *Doppelte Top-Level-Definitionen.* Keine, über alle 180 Module.
+- *Vertragsbruch zum `brain/`.* `router.route` benutzt in Produktivcode und
+  Tests durchgängig denselben Schlüssel `prompt`; der historische Drift
+  (`prompt` vs. `question`) ist nicht zurück.
+
+Der einzige echte Fund dieser Runde war der kaputte Knopf aus W56 — gefunden
+beim XSS-Durchgang, behoben in W58.
+
 ### Behoben — der Knopf aus W56 hat nicht funktioniert (v4.2 W58)
 
 Beim Sicherheits-Audit aufgefallen, beim Durchgang „XSS in den Templates".

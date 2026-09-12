@@ -6,9 +6,9 @@
 
 | Version | Unterstützt |
 |---|---|
-| 4.0.x (`Restream Control Room`) | ✅ |
-| 3.7.x (`Kontrollraum-Fundament`) | ⚠️ nur kritische Lücken |
-| < 3.7 | ❌ |
+| 4.3.x (`Freie Sicht`) | ✅ |
+| 4.2.x (`Zerlegter Kern`) | ⚠️ nur kritische Lücken |
+| < 4.2 | ❌ |
 
 ## Eine Lücke melden
 
@@ -47,7 +47,7 @@ Code. Diese Punkte sind Pflicht:
 
 ### `.env` ist der Kronjuwelen-Speicher
 
-Rund 470 Variablen, darunter Cookies, OAuth-Tokens, API-Schlüssel und
+Rund 523 Variablen, darunter Cookies, OAuth-Tokens, API-Schlüssel und
 RTMP-Stream-Keys. Ein Stream-Key erlaubt jedem, auf deinem Kanal zu senden.
 
 ```bash
@@ -99,28 +99,67 @@ python3 -m pip freeze > requirements.lock.txt
 
 ## Auditstand
 
-Letzter vollständiger Durchgang: **v4.0-W118**. Abgedeckt: Code-Ausführung
-(`eval`/`exec`/`pickle`/`yaml.load`), `shell=True`, SQL-Injektion inklusive der
-LLM-übersetzten Abfrage, Pfad-Traversal in allen Datei-Routen, Dashboard-Auth
-(Token, PIN, Rate-Limit, Zeitkonstanz), XSS in allen drei Templates, SSRF,
-OAuth-CSRF, Open Redirect, Geheimnisse in Logs und API-Antworten,
-Dateirechte der Token-Speicher, Abhängigkeiten.
+Letzter vollständiger Durchgang: **v4.3-W58** (der davor: v4.0-W118).
+Abgedeckt wurden dieselben Klassen wie damals, gegen den heutigen Stand:
 
-Sieben Befunde behoben — Einzelheiten im [CHANGELOG](CHANGELOG.md) unter W118.
-Jeder hat einen Vertrag in `test_restream.py`
-(`test_v40_w118_sicherheitsaudit`); ein Rückfall fällt damit in der Prüfkette
-auf, nicht im Betrieb.
+| Klasse | Ergebnis |
+|---|---|
+| Code-Ausführung (`eval`/`exec`/`pickle`/`yaml.load`) | kein Treffer |
+| `shell=True` | ein Treffer — `SWAP_CLEAR_CMD`, die unten begründete Ausnahme |
+| SQL-Injektion, inkl. der LLM-übersetzten Abfrage | kein Treffer |
+| Pfad-Traversal in allen Datei-Routen | kein Treffer |
+| Dashboard-Auth (Token, PIN, Rate-Limit, Zeitkonstanz) | kein Treffer |
+| Geheimnisse in Logs und API-Antworten | kein Treffer |
+| XSS in den drei Templates | **ein Befund, behoben (W58)** |
+| SSRF | kein Treffer |
+| OAuth-CSRF | ein Hinweis, siehe unten |
+| Abhängigkeiten | unverändert offen, siehe unten |
 
-Zwei Dinge bleiben bewusst offen und sind **keine** Nachlässigkeit, sondern
-Betreiber-Entscheidungen:
+**Was geprüft wurde, nicht nur behauptet:**
+
+*SQL.* Sechs Stellen bauen ihr Statement mit einem f-String. Alle
+interpolieren ausschließlich fest verdrahtete Spaltennamen (`"name=?"`) oder
+eine im Quelltext stehende Tabellenliste; die Werte sind durchweg gebunden.
+Der NL→SQL-Rückfall `_rule_based_sql` setzt den Fragetext **nie** ins
+Statement — nur eine interne Zeitfenster-Konstante. Die LLM-Variante ist auf
+`select`/`with` und ein einzelnes Statement begrenzt.
+
+*Geheimnisse in Logs.* Der heikelste Pfad ist neu: seit v4.2-W46 wird der
+`stderr` des Audio-Taps überhaupt erst gelesen, und darin steht die signierte
+Quell-URL. Er geht durch `_log_sicher` (`nc/logsafe.redact_pull_urls`), mit
+Begründung an der Zeile. Keine rohe Stream-URL im Log, keine in einer
+API-Antwort.
+
+*Pfad-Traversal.* Icons über eine Whitelist, Downloads über `realpath` +
+`commonpath` gegen das erlaubte Verzeichnis, dreizehn weitere Stellen über
+`nc.sicherpfad`.
+
+*Dashboard-Auth.* Token und PIN werden mit `hmac.compare_digest` verglichen;
+Fehlversuche zählen pro IP und sperren 60 Sekunden, die Tabelle ist gedeckelt.
+
+Der XSS-Befund aus W58 hat einen Vertrag in `test_nc_modules.py`; ein Rückfall
+fällt in der Prüfkette auf, nicht im Betrieb.
+
+### Drei Dinge bleiben bewusst offen
+
+Sie sind **keine** Nachlässigkeit, sondern Betreiber-Entscheidungen:
 
 - **`SWAP_CLEAR_CMD` läuft mit `shell=True`.** Die Shell wird für `&&`
   gebraucht. Wer `.env` schreiben kann, kann ohnehin beliebigen Code
   ausführen — die Datei ist die Vertrauenswurzel, nicht diese Zeile.
-- **Ungepinnte Abhängigkeiten** (siehe oben). Einfrieren ist Server-Arbeit;
-  geratene Versionsnummern wären schlimmer als keine.
 
----
+- **Ungepinnte Abhängigkeiten** (siehe oben). Einfrieren ist Server-Arbeit;
+  geratene Versionsnummern wären schlimmer als keine. Stand heute: null von 63
+  Einträgen in `requirements.txt` sind gepinnt.
+
+- **Der OAuth-`state` von Twitch und YouTube liegt nur im Speicher.** Beide
+  prüfen ihn, wenn einer ausgegeben wurde — aber nicht, wenn gerade kein Flow
+  läuft. Kick macht es strenger: es legt den `state` persistent ab und lehnt
+  jeden Rückruf ab, der nicht dazu passt. Twitch und YouTube genauso streng zu
+  machen hieße, den `state` ebenfalls zu persistieren, sonst bricht ein
+  legitimer Flow über einen Neustart hinweg ab. Solange das Dashboard wie
+  vorgesehen auf `127.0.0.1` hört, ist der Rückruf von außen nicht erreichbar;
+  wer es öffentlich stellt, sollte diesen Punkt zuerst nachziehen.
 
 ## Was ausdrücklich **keine** Lücke ist
 
