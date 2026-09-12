@@ -11,6 +11,52 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Behoben — der Avatar lag über dem Chat, und der Chat lief aus dem Bild (v4.2 W54)
+
+Gemeldet mit Bildschirmfoto: der Avatar verdeckt die halbe rechte Spalte, von
+„S E L I N A  schrecklich, …" ist nur der Anfang zu lesen. Das Sendebild wurde
+hier nachgestellt (`studio_chain` gegen echte Textdateien und die
+ausgelieferte Avatar-Schleife gerendert) — der Befund war eins zu eins
+reproduzierbar, und es waren **zwei unabhängige Ursachen plus zwei weitere,
+die erst im Nachbau auffielen.**
+
+**1. Die Reihenfolge.** `studio_chain` hängte Deko *und* Texte in EINE Kette
+und legte den Avatar danach darüber:
+
+```python
+parts.append("[sb]" + ",".join(deco + texts) + "[vdeco]")   # alles zusammen
+...
+parts.append(f"[vdeco][{lab}]overlay=...")                  # Avatar ganz oben
+```
+
+Jetzt drei Ketten: **Deko → Avatar → Texte.** Nach der Deko muss er bleiben
+(die drawboxen sind fast deckend und würden ihn übermalen), vor die Texte
+gehört er hin.
+
+**2. Vorn allein reicht nicht.** Die Chat-Zeile stand auf `borderw=0`. Heller
+Text ohne Kontur ist auf dem roten Gesicht auch im Vordergrund nicht zu
+lesen. Chat und AZRAEL-Zeile tragen jetzt eine Kontur.
+
+**3. Die Umbruchbreite war geraten.** `RESTREAM_CHAT_WIDTH` stand fest auf 62
+mit dem Kommentar „(Mono)" — die Schrift ist aber proportional. Gemessen an
+DejaVuSans-Bold: 0,56 × Schriftgröße pro Zeichen bei deutschem Fließtext,
+0,69 mit Großbuchstaben und Ziffern. 62 Zeichen sind damit rund 780 px, das
+Panel hat 632. Jede längere Zeile lief rechts aus dem Bild.
+
+Vorgabe und Layout rechnen jetzt beide aus `studio_masse()` — 47 Zeichen und
+10 Zeilen bei 1280×720, 74 und 23 bei 1920×1080. Wer eine eigene Zahl in die
+`.env` schreibt, behält den Vorrang.
+
+**4. Zwei Kleinigkeiten aus dem Nachbau.** Die oberste Chat-Zeile war
+regelmäßig eine nackte Fortsetzungszeile ohne Absender („    gleiche Frisur")
+— der Schnitt auf `maxlines` landete mitten in einer Nachricht. Und die
+unterste Zeile stand auf der Fortschrittsleiste, weil `drawtext` etwas
+großzügiger misst als `fontsize + line_spacing` und die Kontur unten noch
+aufträgt. Beides behoben, beides durch einen Vertrag verriegelt.
+
+Die Chat-Schrift geht von 22 auf 20: auf einem Chat-Panel zählt Inhalt mehr
+als Schriftgröße, und die Kontur trägt sie auch klein.
+
 ### Hinzugefügt — der Avatar bewegt Kopf, Hand und Schwert (v4.2 W53)
 
 Bis hierher bewegten sich an AZRAEL genau vier Dinge: Kiefer, Aura, Augen und

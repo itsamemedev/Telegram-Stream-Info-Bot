@@ -90,6 +90,7 @@ def _chat_block(maxlines=None, width=None, source_user=None):
     maxlines = maxlines or _CHAT_LINES
     width = width or _CHAT_WIDTH
     icon = {"tiktok": "\u25b8", "kick": "\u25cf", "event": "\u25c6"}
+    indent_marke = "    "     # v4.2-W54: kennzeichnet eine Fortsetzungszeile
     dot = "\u00b7"
     out = []
     _items = list(RESTREAM_CHAT)
@@ -120,7 +121,16 @@ def _chat_block(maxlines=None, width=None, source_user=None):
             out.append(indent + seg)
             if len(out) > maxlines * 3:      # Notbremse gegen Endlos-Wraps
                 break
-    return "\n".join(out[-maxlines:])
+    # v4.2-W54: der Schnitt auf maxlines darf nicht mitten in einer Nachricht
+    # landen. Vorher stand oben im Panel regelmaessig eine nackte
+    # Fortsetzungszeile ("    gleiche Frisur") ohne Namen davor — im
+    # Sendebild sieht das aus wie ein Textfehler, nicht wie ein Umbruch.
+    # Also vorne so lange Fortsetzungszeilen wegwerfen, bis die erste Zeile
+    # wieder eine mit Absender ist.
+    rest_zeilen = out[-maxlines:]
+    while rest_zeilen and rest_zeilen[0].startswith(indent_marke):
+        rest_zeilen.pop(0)
+    return "\n".join(rest_zeilen)
 
 
 # ---- YouTube: Kontingent-Cache und Sende-Bremse (v4.1-W8) -------------------

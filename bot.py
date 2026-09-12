@@ -576,6 +576,7 @@ from nc import cookieholen as _nc_cookieholen  # v4.2-W10: Cookies selbst bezieh
 from nc import cfgnorm as _nc_cfgnorm        # v4.0-W33: reine Config-Normalisierer (gebündelt)
 from nc import restrend as _nc_restrend      # v4.0-W40: Langzeit-Ressourcen-Trend (Slow-Leak)
 from nc import ffbuild as _nc_ffbuild        # v4.0-W44: ffmpeg-Kommandobauer (extrahiert)
+from nc import ffmpeg_filters as _nc_ff    # v4.2-W54: Panel-Masse (Chat-Umbruch)
 from nc import chatstats as _nc_chatstats    # v4.0-W45: Chat-Health-Aggregation (extrahiert)
 # v4.1-W9: nc.oauthpage ist raus — beide Rueckmeldeseiten (Kick, Twitch)
 # werden nur noch von den OAuth-Blueprints gebaut, nicht mehr vom Monolithen.
@@ -1231,8 +1232,19 @@ _RESTREAM_LAYOUT_RT["mode"] = RESTREAM_LAYOUT if RESTREAM_LAYOUT in ("studio", "
 RESTREAM_CANVAS_W    = _env_int("RESTREAM_CANVAS_W", 1920)
 RESTREAM_CANVAS_H    = _env_int("RESTREAM_CANVAS_H", 1080)
 RESTREAM_CHAT_SOURCE = os.getenv("RESTREAM_CHAT_SOURCE", "both").strip().lower()   # tiktok|kick|both|off
-RESTREAM_CHAT_LINES  = _env_int("RESTREAM_CHAT_LINES", 14)                          # sichtbare Chat-Zeilen im Panel
-RESTREAM_CHAT_WIDTH  = _env_int("RESTREAM_CHAT_WIDTH", 62)                          # Zeichen pro Chat-Zeile (Mono)
+# v4.2-W54: Vorgabe kommt aus der PANEL-GEOMETRIE, nicht mehr aus einer festen
+# Zahl. Die alte 62 stand hier mit dem Kommentar "(Mono)" — die Schrift ist
+# aber proportional: 62 Zeichen DejaVu Bold sind bei Schriftgroesse 22 rund
+# 780 px, das Panel hat 632. Jede laengere Chat-Zeile lief rechts aus dem
+# Bild, mitten im Wort. Wer eine eigene Zahl in die .env schreibt, behaelt
+# den Vorrang — die Vorgabe rechnet nur nach, was hineinpasst.
+RESTREAM_CHAT_LINES  = _env_int(
+    "RESTREAM_CHAT_LINES",
+    _nc_ff.chat_zeilen(_nc_ff.studio_masse(RESTREAM_CANVAS_W, RESTREAM_CANVAS_H)["chat_h"],
+                       _nc_ff.CHAT_FS, _nc_ff.CHAT_ABSTAND))
+RESTREAM_CHAT_WIDTH  = _env_int(
+    "RESTREAM_CHAT_WIDTH",
+    _nc_ff.chat_umbruch_w(RESTREAM_CANVAS_W, _nc_ff.CHAT_FS))
 configure_chat(lines=RESTREAM_CHAT_LINES, width=RESTREAM_CHAT_WIDTH)  # V37 W3: nc.channels
 # F93: AZRAEL SENTINEL — KI-Moderator automatisch mit dem Bot starten (statt
 # manuell übers Dashboard). Läuft nur an, wenn die Kick-Credentials da sind.

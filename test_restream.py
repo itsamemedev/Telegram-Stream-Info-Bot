@@ -4366,7 +4366,16 @@ def test_v40_w27_ffmpeg_filters():
     assert vf.count("drawbox=") == 4 and vf.count("drawtext=") == 6, "Anzahl Bänder/Texte falsch"
     # studio: Tuple (parts, label), Canvas gerade + geklemmt, Avatar-Zweig.
     parts, label = FF.studio_chain(files, "f.ttf", 1281, 721, 7, avatar_idx=None)
-    assert label == "vdeco" and any("[cnv]" in p for p in parts), "Studio-Grundlayout falsch"
+    # ANKER GEWANDERT (v4.2-W54, nicht der Vertrag): ohne Avatar hiess das
+    # letzte Label frueher "vdeco", weil Deko UND Texte in einer Kette lagen.
+    # Seit W54 sind es zwei Ketten (der Avatar muss dazwischen), also endet
+    # auch der avatarlose Fall auf "vstudio". Statt den neuen Namen erneut
+    # festzunageln pruefen wir die EIGENSCHAFT: das zurueckgegebene Label ist
+    # das, was das letzte Kettenglied erzeugt. Das haelt auch die naechste
+    # Umstellung aus und faengt trotzdem einen echten Bruch.
+    assert any("[cnv]" in p for p in parts), "Studio-Grundlayout falsch"
+    assert parts[-1].endswith(f"[{label}]"), \
+        f"das Label {label!r} kommt nicht aus dem letzten Kettenglied: {parts[-1][-60:]!r}"
     assert any("color=c=0x05070d:s=1280x720:r=15" in p for p in parts), \
         "Canvas nicht gerade/geklemmt (min 1280x720, fps>=15)"
     parts2, label2 = FF.studio_chain(files, "f.ttf", 1920, 1080, 30, avatar_idx=2)
@@ -4378,6 +4387,9 @@ def test_v40_w27_ffmpeg_filters():
     # die alte Formel H-148 unter dem Bildrand).
     assert any("y=H-72-h+" in p for p in parts2), \
         "Avatar-Position rechnet nicht mit der Avatar-Hoehe h"
+    assert parts2[-1].endswith(f"[{label2}]")
+    # ANKER GEWANDERT (v4.2-W54): der Avatar bringt weiter genau zwei Teile
+    # mit (scale + overlay), die Textkette gibt es in BEIDEN Faellen.
     assert len(parts2) == len(parts) + 2, "Avatar fügt genau 2 Teile hinzu"
     ok("v4.0-w27: drawtext_chain + studio_chain bitgenau, Escaping + Avatar korrekt")
 
