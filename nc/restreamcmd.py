@@ -260,7 +260,49 @@ def drossel_bitrate(bitrate_k, stufe):
 #     Stufe 4   + Leinwand kleiner
 #
 # Eine kleinere Leinwand kostet quadratisch weniger und laesst jedes Element
-# sichtbar. Das ist der Unterschied zwischen „kleiner" und „weg".
+# sichtbar. Das ist der Unterschied zwischen „kleiner“ und „weg“.
+#
+# v4.2-W61 — WENN DOCH ETWAS WEICHEN MUSS, DANN DER AVATAR.
+#
+# Die Ansage des Betreibers auf W60: „wenn dann sollte doch der Avatar
+# abgeschalten werden und nicht das ganze panel. Somit kann der Zuschauer
+# immer noch live den chat verfolgen.“ Das ist die richtige Rangfolge, und
+# W60 hatte sie nicht — dort gab es ueberhaupt keinen Hebel mehr am
+# Bildinhalt, also blieb am Anschlag nur noch „die Box schafft es nicht“.
+#
+# Nachgemessen wurde die ganze Leiter, drei Laeufe je Fall, Median, 12 s
+# Quelle, 1280x720, superfast, vier Threads, Avatar als bewegte VP9-Schleife
+# mit getrennter Alphamaske (dieselbe Bauart wie im Betrieb):
+#
+#     Stufe 0   Referenz                             3.23 s
+#     Stufe 3   fps 24 -> 18                         2.59 s    -19.9 %
+#     Stufe 4   + Leinwand 960x540                   2.63 s    -18.7 %
+#     Stufe 5   + Avatar aus                         2.13 s    -33.9 %
+#
+# Die Leinwand bringt nach der Bildrate NICHTS — 18,7 gegen 19,9 Prozent ist
+# innerhalb des Rauschens sogar schlechter. Der Grund: die Last steckt nicht
+# im Encoder (superfast ist billig), sondern in der Filterkette, und die
+# arbeitet pro Bild, nicht pro Pixel — neun drawtext mit reload=1 lesen ihre
+# Dateien einmal je Bild, unabhaengig von der Aufloesung. Der Avatar dagegen
+# bringt 14 Punkte, weil mit ihm zwei Inputs, ein alphamerge und ein overlay
+# je Bild wegfallen.
+#
+# Damit ist die Reihenfolge auf beiden Achsen eindeutig, und der Avatar
+# rueckt VOR die Leinwand:
+#
+#     Stufe 4   Avatar aus     -14 Punkte, Chat bleibt in voller Groesse
+#     Stufe 5   Leinwand       ~0 Punkte hier, und der Chat wird kleiner
+#
+# Die Leinwand bleibt als letzte Sprosse stehen: auf einer Box mit teurerem
+# Preset oder hoeherer Bitrate waechst der Encoder-Anteil, und dann greift
+# sie. Sie ist nur nicht mehr der Hebel, auf den man zuerst tritt.
+#
+# Was der Avatar-Schritt NICHT abschaltet: AZRAELs Reaktion. Sie erreicht den
+# Zuschauer weiter auf zwei Wegen, die beide nichts mit dem Avatarbild zu tun
+# haben — die react-Zeile im Panel (ein drawtext wie jeder andere, seit W60
+# fuer die Drossel unerreichbar) und die Stimme (use_tts haengt allein an der
+# TTS-FIFO). Sichtbar bleibt also, DASS AZRAEL antwortet und WAS er sagt; weg
+# ist nur das Gesicht dazu.
 
 
 def drossel_fps(fps, stufe):
@@ -275,16 +317,37 @@ def drossel_fps(fps, stufe):
     return max(15, int(round(fps * 0.75)))
 
 
-def drossel_canvas(w, h, stufe):
-    """Ab Stufe 4 die Leinwand verkleinern, aber nie unter 960x540.
+def drossel_avatar_aus(stufe):
+    """Ab Stufe 4 faellt der Avatar aus dem Sendebild. -> bool
 
-    Der letzte Hebel vor dem Anschlag. Quadratisch in der Last — 1280x720 auf
-    960x540 sind 44 % weniger Pixel — und jedes Element bleibt im Bild, nur
-    kleiner. Die Untergrenze ist bewusst 960x540 und nicht weniger: darunter
-    ist der eingebrannte Chat nicht mehr lesbar, und ein unlesbares Panel
-    waere dasselbe wie ein fehlendes.
+    v4.2-W61. Die einzige Sprosse, die etwas aus dem Bild nimmt, und sie
+    nimmt bewusst das Gesicht statt des Panels: der Chat laeuft weiter, die
+    react-Zeile nennt AZRAELs Antwort im Wortlaut, die Stimme bleibt. Gemessen
+    bringt der Schritt 14 Prozentpunkte — zwei Inputs, ein alphamerge und ein
+    overlay je Bild fallen weg.
+
+    Wer das aufruft, muss ausserdem den Frame-Feeder unterlassen: sein Writer
+    haengt in open(fifo, "wb"), bis ein Leser kommt. Faellt der Avatar-Input
+    aus dem Kommando, kommt nie einer, und der Thread steht bis zum
+    Prozessende. Siehe _restream_avatar_feeder_start in bot.py.
     """
-    if stufe < 4:
+    return stufe >= 4
+
+
+def drossel_canvas(w, h, stufe):
+    """Ab Stufe 5 die Leinwand verkleinern, aber nie unter 960x540.
+
+    Die letzte Sprosse. Sie stand bis v4.2-W61 auf Stufe 4 und vor dem
+    Avatar — gemessen bringt sie nach der Bildrate aber nichts (18,7 gegen
+    19,9 Prozent, also null), weil die Last in der Filterkette steckt und die
+    pro Bild arbeitet, nicht pro Pixel. Sie bleibt trotzdem stehen: auf einer
+    Box mit teurerem Preset waechst der Encoder-Anteil und dann greift sie.
+
+    Die Untergrenze ist bewusst 960x540 und nicht weniger: darunter ist der
+    eingebrannte Chat nicht mehr lesbar, und ein unlesbares Panel waere
+    dasselbe wie ein fehlendes.
+    """
+    if stufe < 5:
         return w, h
     return max(960, int(w * 0.75)) & ~1, max(540, int(h * 0.75)) & ~1
 
@@ -295,16 +358,22 @@ def drossel_zusatz(fps, w, h, stufe):
     v4.2-W60. Vorher stand hier ", Text aus" — die Drossel kann seit dieser
     Welle nichts mehr aus dem Bild nehmen, also nennt die Zeile jetzt, was
     sie stattdessen regelt.
+
+    v4.2-W61: der Avatar steht mit dabei, und zwar mit dem Zusatz, was
+    trotzdem bleibt. Ohne ihn liest sich die Zeile wie „AZRAEL ist weg“, und
+    genau das ist sie nicht.
     """
     teile = []
     if drossel_fps(fps, stufe) != fps:
         teile.append("%d fps" % drossel_fps(fps, stufe))
+    if drossel_avatar_aus(stufe):
+        teile.append("Avatar aus (Chat, react-Zeile und Stimme bleiben)")
     if drossel_canvas(w, h, stufe) != (w, h):
         teile.append("%dx%d" % drossel_canvas(w, h, stufe))
     return (", " + ", ".join(teile)) if teile else ""
 
 
-DROSSEL_MAX = 4
+DROSSEL_MAX = 5
 
 
 def build(source_url, ingest_url, stream_key, transcode=False, tts_fifo=None, rid=None, only_target=None, relay_profile=False, html_ov_fifo=None, targets=None, avatar_feed=None, drossel=0):
@@ -395,15 +464,24 @@ def build(source_url, ingest_url, stream_key, transcode=False, tts_fifo=None, ri
     # sonst wie bisher das Standbild. Beides fehlt: kein Avatar.
     # Ab hier haengt der Avatar an `sendebild_on`, nicht mehr an `overlay_on`:
     # ohne Schrift kein Text, aber sehr wohl ein Avatar.
-    anim_on = bool(sendebild_on and RESTREAM_AVATAR_LOOP and RESTREAM_AVATAR_ALPHA
+    # v4.2-W61: ab Stufe 4 nimmt die Drossel den Avatar aus dem Bild — die
+    # EINZIGE Sprosse, die den Bildinhalt anfasst, und sie nimmt bewusst das
+    # Gesicht statt des Panels. Sie steht hier bei den Avatar-Schaltern und
+    # NICHT oben bei `sendebild_on`/`overlay_on`: dort haette sie wieder das
+    # ganze Panel mitgenommen, und genau das war der Fehler, den W60 behoben
+    # hat.
+    _av_gedrosselt = drossel_avatar_aus(drossel)
+    anim_on = bool(sendebild_on and not _av_gedrosselt
+                   and RESTREAM_AVATAR_LOOP and RESTREAM_AVATAR_ALPHA
                    and os.path.isfile(RESTREAM_AVATAR_LOOP)
                    and os.path.isfile(RESTREAM_AVATAR_ALPHA))
     # v4.2-W34: laeuft ein Feeder, hat er Vorrang — nur er kann auf eine
     # AZRAEL-Reaktion umschalten. Ohne ihn die feste Schleife (W32), ohne die
     # das Standbild (W31).
-    feed_on = bool(sendebild_on and avatar_feed)
-    avatar_on = bool(feed_on or anim_on or (sendebild_on and RESTREAM_AVATAR
-                                            and os.path.isfile(RESTREAM_AVATAR)))
+    feed_on = bool(sendebild_on and not _av_gedrosselt and avatar_feed)
+    avatar_on = bool(feed_on or anim_on
+                     or (sendebild_on and not _av_gedrosselt and RESTREAM_AVATAR
+                         and os.path.isfile(RESTREAM_AVATAR)))
     # v4.2-W50: EINE Zeile, die sagt, warum das Sendebild so aussieht, wie es
     # aussieht.
     #
@@ -428,9 +506,18 @@ def build(source_url, ingest_url, stream_key, transcode=False, tts_fifo=None, ri
             _gruende.append("keine Schrift gefunden (weder %s noch eine der %d "
                             "Ersatzschriften; apt install fonts-dejavu-core)"
                             % (RESTREAM_FONT, len(FONT_KANDIDATEN)))
-        if not avatar_on:
+        if not avatar_on and not _av_gedrosselt:
             _gruende.append("kein Avatar (RESTREAM_AVATAR=%r liegt nicht im "
                             "Arbeitsverzeichnis des Dienstes)" % (RESTREAM_AVATAR,))
+        # v4.2-W61: ein gedrosselter Avatar ist kein Defekt, sondern eine
+        # Entscheidung — er gehoert deshalb nicht unter die Gruende, die auf
+        # `warning` gehen. Er bekommt eine eigene Zeile, die dazusagt, was
+        # bleibt: sonst liest der Betreiber „Avatar AUS" und sucht den Fehler,
+        # den es nicht gibt.
+        if _av_gedrosselt:
+            log.info("Sendebild #%s: Avatar wegen Drossel Stufe %d aus. Chat, "
+                     "react-Zeile und AZRAELs Stimme laufen weiter — nur das "
+                     "Gesicht fehlt.", rid, drossel)
         if _gruende:
             log.warning("Sendebild #%s: Text=%s Avatar=%s — %s",
                         rid, "an" if overlay_on else "AUS",

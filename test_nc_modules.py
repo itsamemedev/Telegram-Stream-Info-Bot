@@ -7984,8 +7984,12 @@ def _test_v42_w49_notbremse_und_guthaben():
     # `sendebild_on` selbst noch an der Drossel, sodass der Avatar sie ueber
     # zwei Ecken doch erbte. Wer Struktur pruefen will, muss die Struktur
     # lesen, nicht ihre Schreibweise.
-    for zeile in ("feed_on = bool(sendebild_on and avatar_feed)",
-                  "avatar_on = bool(feed_on or anim_on or (sendebild_on and RESTREAM_AVATAR"):
+    # ANKER GEWANDERT (v4.2-W61, nicht der Vertrag): die drei Zeilen tragen
+    # jetzt zusaetzlich `not _av_gedrosselt`. Die Eigenschaft, die hier zaehlt,
+    # ist unveraendert — der Avatar leitet von `sendebild_on` ab, nicht von
+    # `overlay_on`, haengt also nicht an der Schrift.
+    for zeile in ("feed_on = bool(sendebild_on and not _av_gedrosselt and avatar_feed)",
+                  "avatar_on = bool(feed_on or anim_on"):
         assert zeile in fr, zeile
     assert "feed_on = bool(overlay_on and avatar_feed)" not in fr, \
         "der Avatar haengt wieder am Text-Schalter"
@@ -8118,21 +8122,39 @@ def _test_v42_w50_avatar_ueberlebt_die_drossel():
                 a |= ua
         return n, a
 
-    # --- 1) KEIN Bild-Element darf von der Drossel ableiten --------------
-    # v4.2-W60. Vorher hiess dieser Abschnitt "der Avatar darf die Drossel
-    # nicht beruehren" — jetzt gilt es fuer ALLE vier. Die Drossel regelt,
-    # WIE kodiert wird, nie WAS im Bild steht.
-    for gate in ("avatar_on", "overlay_on", "anim_on", "feed_on"):
+    # --- 1) Das PANEL darf die Drossel nicht beruehren -------------------
+    # v4.2-W60 hat das fuer alle vier Schalter verlangt. v4.2-W61 nimmt genau
+    # einen davon heraus, und zwar auf Ansage des Betreibers: „wenn dann
+    # sollte doch der Avatar abgeschalten werden und nicht das ganze panel.“
+    #
+    # Die Grenze verlaeuft jetzt zwischen Panel und Gesicht, nicht mehr
+    # zwischen Bild und Encoder:
+    #
+    #   sendebild_on / overlay_on   duerfen KEINE drossel_*-Funktion sehen.
+    #                               Sie tragen Chat, Titel, react-Zeile — das
+    #                               ist der Teil, der nie fallen darf.
+    #   avatar_on / anim_on / feed_on   duerfen GENAU EINE sehen:
+    #                               drossel_avatar_aus. Jede andere waere ein
+    #                               Rueckfall in die Kopplung aus W49/W50.
+    for gate in ("overlay_on", "sendebild_on"):
         g_namen, g_aufrufe = kette(gate)
         assert "drossel" not in g_namen, (
             f"{gate} leitet wieder von der Drossel ab — damit kann eine "
-            f"CPU-Spitze wieder Inhalt aus dem Bild nehmen")
+            f"CPU-Spitze wieder das Panel aus dem Bild nehmen")
         assert not any("drossel" in a for a in g_aufrufe), (
             f"{gate} ruft eine drossel_*-Funktion: {sorted(g_aufrufe)}")
+    for gate in ("avatar_on", "anim_on", "feed_on"):
+        _, g_aufrufe = kette(gate)
+        _fremd = {a for a in g_aufrufe
+                  if "drossel" in a and a != "drossel_avatar_aus"}
+        assert not _fremd, (
+            f"{gate} ruft eine andere Drossel-Funktion als drossel_avatar_aus: "
+            f"{sorted(_fremd)} — der Avatar faellt genau auf einer Stufe, "
+            f"nicht als Nebenwirkung von Bildrate oder Leinwand")
     assert "_font" not in kette("avatar_on")[0], "avatar_on haengt wieder an der Schrift"
     a_namen = kette("avatar_on")[0]
     assert "transcode" in a_namen and "RESTREAM_OVERLAY" in a_namen
-    ok("W60: kein Bild-Element leitet von der Drossel ab")
+    ok("W61: das Panel sieht keine Drossel, der Avatar genau eine Sprosse")
 
     # --- 2) Der Text haengt weiter an der Schrift, sonst an nichts -------
     t_namen, _ = kette("overlay_on")
@@ -8145,25 +8167,66 @@ def _test_v42_w50_avatar_ueberlebt_die_drossel():
     # das Sendebild dieselben Elemente enthalten. Nur Preset, Bitrate,
     # Bildrate und Leinwand duerfen sich unterscheiden.
     import inspect as _isp
+    import re as _re
     _quelle_build = _isp.getsource(R.build)
-    for _st in range(0, R.DROSSEL_MAX + 2):
-        # Kein drossel_*-Aufruf darf in einer Gate-Zeile stehen.
-        for _zeile in _quelle_build.splitlines():
-            _z = _zeile.split("#", 1)[0]
-            if "_on = " in _z and "drossel" in _z:
-                raise AssertionError(
-                    f"eine Gate-Zeile liest die Drossel: {_zeile.strip()!r}")
-    # Und die Leiter regelt genau die vier erlaubten Groessen.
+    # Keine Gate-Zeile darf die Drossel lesen — ausser der einen, die den
+    # Avatar bestimmt. Sie wird namentlich zugelassen, damit ein zweiter
+    # Griff in den Bildinhalt hier auffliegt statt durchzurutschen.
+    # Die Gate-Zeilen werden mitsamt Fortsetzung betrachtet: `anim_on` und
+    # `avatar_on` sind mehrzeilig, und ein Test, der nur die erste Zeile
+    # liest, sieht die Haelfte nicht.
+    _gates = {}
+    _akt = None
+    for _zeile in _quelle_build.splitlines():
+        _z = _zeile.split("#", 1)[0]
+        _m = _re.match(r"\s*([A-Za-z_]+_on) = ", _z)
+        if _m:
+            _akt = _m.group(1)
+            _gates[_akt] = _z
+        elif _akt and _z.startswith(" " * 8) and not _re.match(r"\s*[a-z_]+ =", _z):
+            _gates[_akt] += " " + _z.strip()
+        else:
+            _akt = None
+    assert set(_gates) >= {"sendebild_on", "overlay_on", "avatar_on",
+                           "anim_on", "feed_on"}, sorted(_gates)
+    for _name, _z in _gates.items():
+        # Ein direkter drossel_*-Aufruf hat in KEINEM Gate etwas zu suchen —
+        # auch nicht im Avatar-Gate. Die Entscheidung faellt einmal, oben, in
+        # `_av_gedrosselt`; hier steht nur noch ihr Ergebnis.
+        assert "drossel_" not in _z, \
+            f"{_name} ruft eine Drossel-Funktion direkt: {_z.strip()!r}"
+        if "_av_gedrosselt" in _z:
+            assert _name in ("avatar_on", "anim_on", "feed_on"), \
+                (f"{_name} liest die Avatar-Drossel — sie darf nur das Gesicht "
+                 f"nehmen, nie das Panel: {_z.strip()!r}")
+    # Und umgekehrt: das Avatar-Gate MUSS sie lesen, sonst gibt es die Sprosse
+    # gar nicht und der Vertrag prueft ins Leere.
+    assert "_av_gedrosselt" in _gates["avatar_on"] \
+        or all("_av_gedrosselt" in _gates[g] for g in ("anim_on", "feed_on")), \
+        "kein Avatar-Gate liest die Drossel — Stufe 4 tut nichts"
+    # Und die Leiter regelt genau die fuenf erlaubten Groessen, in dieser
+    # Reihenfolge. Der Avatar steht VOR der Leinwand — gemessen bringt er 14
+    # Punkte und laesst den Chat in voller Groesse, die Leinwand bringt nach
+    # der Bildrate null und macht den Chat kleiner (v4.2-W61).
     assert R.drossel_preset("superfast", 1) != R.drossel_preset("superfast", 0)
     assert R.drossel_bitrate(4500, 2) < 4500
     assert R.drossel_fps(24, 3) < 24 and R.drossel_fps(24, 2) == 24
-    assert R.drossel_canvas(1280, 720, 4) != (1280, 720)
-    assert R.drossel_canvas(1280, 720, 3) == (1280, 720)
+    assert R.drossel_avatar_aus(4) and not R.drossel_avatar_aus(3)
+    assert R.drossel_canvas(1280, 720, 5) != (1280, 720)
+    assert R.drossel_canvas(1280, 720, 4) == (1280, 720), \
+        "die Leinwand schrumpft wieder vor dem Avatar"
+    # Der Anschlag muss JEDE Sprosse erreichen. Steht DROSSEL_MAX zu niedrig,
+    # gibt es die letzte Stufe nur auf dem Papier — der Waechter zaehlt dann
+    # nie so weit hoch, und niemand merkt es.
+    assert R.drossel_avatar_aus(R.DROSSEL_MAX), \
+        "DROSSEL_MAX erreicht die Avatar-Sprosse nicht"
+    assert R.drossel_canvas(1280, 720, R.DROSSEL_MAX) != (1280, 720), \
+        "DROSSEL_MAX erreicht die Leinwand-Sprosse nicht"
     # Untergrenzen: nichts wird unlesbar klein oder unbrauchbar langsam.
     assert R.drossel_fps(24, 99) >= 15
     _w, _h = R.drossel_canvas(1280, 720, 99)
     assert _w >= 960 and _h >= 540 and _w % 2 == 0 and _h % 2 == 0
-    ok("W60: ueber alle Stufen faellt nichts aus dem Bild — nur Encode-Groessen")
+    ok("W61: die Leiter regelt Encode-Groessen und genau ein Bild-Element")
 
     # --- 4) Das Sendebild sagt, warum es so aussieht ---------------------
     # Fuenf stille Boolesche haben in W47 bis W49 drei Runden gekostet. Eine
@@ -8216,6 +8279,145 @@ def _test_v42_w50_avatar_ueberlebt_die_drossel():
         "der gesunde Fall meldet sich gar nicht oder als Warnung"
     assert "apt install fonts-dejavu-core" in fr, "die Abhilfe fehlt"
     ok("W50: eine Zeile nennt Text, Avatar und jeden fehlenden Grund")
+
+
+def _test_v42_w61_avatar_faellt_vor_dem_panel():
+    """v4.2-W61: wenn etwas weichen muss, dann das Gesicht — nie der Chat.
+
+    W60 hat die Drossel vom Bildinhalt getrennt: Preset, Bitrate, Bildrate,
+    Leinwand, sonst nichts. Am Anschlag blieb damit nur noch „die Box schafft
+    es nicht". Der Betreiber hat die fehlende Sprosse benannt: „wenn dann
+    sollte doch der Avatar abgeschalten werden und nicht das ganze panel.
+    Somit kann der Zuschauer immer noch live den chat verfolgen. Zusaetzlich
+    sollte dann aber noch die live Reaction von Azrael/Avatar weiter laufen."
+
+    Zwei Zusicherungen also, und beide werden am ECHTEN gebauten Kommando
+    geprueft, nicht an Quelltextzeilen — der Unterschied hat in dieser Reihe
+    schon dreimal einen Vertrag durchgelassen, der gruen war, waehrend die
+    Sache kaputt war:
+
+      1. Ueber ALLE Stufen inklusive Anschlag stehen Chat und react-Zeile im
+         Filtergraph. Der Avatar faellt genau auf Stufe 4 und keine frueher.
+      2. AZRAELs Reaktion erreicht den Zuschauer auch ohne Avatarbild: die
+         react-Zeile nennt den Wortlaut, und die Stimme (der TTS-Zweig) haengt
+         nirgends am Avatar.
+
+    Dazu die Falle, die der Schritt aufmacht: `_restream_avatar_feeder_start`
+    haengt in `open(fifo, "wb")`, bis ein Leser kommt. Faellt der Avatar-Input
+    aus dem Kommando, kommt nie einer — und weil ein Drossel-Schritt den
+    Restream neu startet, waere das ein haengender Thread JE Neustart.
+    """
+    import os as _os
+    import tempfile as _tf
+    from nc import restreamcmd as R
+
+    hier = _os.path.dirname(_os.path.abspath(__file__))
+
+    schrift = _tf.NamedTemporaryFile(suffix=".ttf", delete=False)
+    schrift.write(b"x"); schrift.close()
+    avatar = _tf.NamedTemporaryFile(suffix=".png", delete=False)
+    avatar.write(b"x"); avatar.close()
+    OVDIR = _tf.mkdtemp()
+    OV = {k: _os.path.join(OVDIR, k + ".txt") for k in
+          ("alert", "brand", "caption", "chat", "follow", "goal",
+           "react", "source", "title")}
+    for _pfad in OV.values():
+        open(_pfad, "w").write("x")
+
+    R.configure(
+        cookie_header=lambda: "", pick_pull_proxy=lambda: "",
+        restream_overlay_files=lambda rid=None: OV,
+        FFMPEG_THREADS_LIVE=3, FFMPEG_THREADS_RELAY=2,
+        RESTREAM_AVATAR=avatar.name, RESTREAM_BITRATE_K=4500,
+        RESTREAM_AVATAR_ALPHA="", RESTREAM_AVATAR_H=170,
+        RESTREAM_AVATAR_LOOP="",
+        RESTREAM_CANVAS_H=720, RESTREAM_CANVAS_W=1280,
+        RESTREAM_FONT=schrift.name, RESTREAM_FPS=24,
+        RESTREAM_LOW_LATENCY=True, RESTREAM_OVERLAY=True,
+        RESTREAM_OVERLAY_HTML_FPS=1, RESTREAM_RELAY_BITRATE_K=3500,
+        RESTREAM_RELAY_PRESET="ultrafast", RESTREAM_X264_PRESET="veryfast",
+        RESTREAM_UA="UA/1.0", TTS_CH=2, TTS_SR=44100, TTS_VOICE_GAIN="1.8")
+
+    QUELLE = "https://pull.tiktok.com/stage/x.flv"
+    ZIEL = ("kick", "rtmps://ingest.example/app/SCHLUESSEL")
+
+    def graph(stufe, tts=True):
+        cmd = R.build(QUELLE, "", "", transcode=True, targets=[ZIEL],
+                      tts_fifo=("/tmp/tts.fifo" if tts else None),
+                      drossel=stufe)
+        return cmd, cmd[cmd.index("-filter_complex") + 1]
+
+    # --- 1) Chat und react-Zeile ueberleben JEDE Stufe -------------------
+    # Ueber den Anschlag hinaus mitgeprueft: eine Stufe, die es (noch) nicht
+    # gibt, darf nicht zufaellig etwas anderes tun als der Anschlag.
+    for stufe in range(0, R.DROSSEL_MAX + 3):
+        cmd, fc = graph(stufe)
+        assert OV["chat"] in fc, \
+            f"Stufe {stufe}: der Chat steht nicht mehr im Sendebild"
+        assert OV["react"] in fc, \
+            f"Stufe {stufe}: AZRAELs react-Zeile steht nicht mehr im Sendebild"
+        assert OV["title"] in fc and OV["follow"] in fc, \
+            f"Stufe {stufe}: das Panel ist unvollstaendig"
+    ok("W61: Chat, Titel und react-Zeile stehen auf jeder Drossel-Stufe im Bild")
+
+    # --- 2) Der Avatar faellt auf Stufe 4 — und keine frueher ------------
+    # Am Kommando gemessen, nicht am Schalter: der Avatar ist genau dann im
+    # Bild, wenn seine Datei als Input dasteht UND ein overlay ihn einblendet.
+    for stufe in range(0, R.DROSSEL_MAX + 3):
+        cmd, fc = graph(stufe)
+        drin = (avatar.name in cmd)
+        erwartet = stufe < 4
+        assert drin is erwartet, (
+            f"Stufe {stufe}: Avatar {'im' if drin else 'nicht im'} Kommando, "
+            f"erwartet war {'im' if erwartet else 'nicht im'} Kommando")
+        # Und der Overlay-Filter dazu, sonst laege die Datei nur ungenutzt an.
+        assert ("[sav]" in fc) is erwartet, \
+            f"Stufe {stufe}: Avatar-Input und Overlay-Filter sind uneins"
+    ok("W61: der Avatar faellt genau auf Stufe 4, keine Stufe frueher")
+
+    # --- 3) AZRAELs Stimme haengt nicht am Gesicht -----------------------
+    # Ohne diese Zusicherung koennte ein spaeterer Umbau den TTS-Zweig an
+    # `avatar_on` haengen — dann waere AZRAEL ab Stufe 4 auch stumm, und das
+    # ist genau das Gegenteil der Ansage.
+    for stufe in (0, 4, R.DROSSEL_MAX):
+        cmd, fc = graph(stufe, tts=True)
+        assert "/tmp/tts.fifo" in cmd, f"Stufe {stufe}: die TTS-FIFO fehlt"
+        assert "[a]" in cmd, f"Stufe {stufe}: der gemischte Ton wird nicht gemappt"
+    # Gegenprobe: ohne TTS-FIFO faellt der Zweig weg — sonst prueft der Test
+    # nur, dass irgendein "[a]" im Kommando steht.
+    cmd, _fc = graph(4, tts=False)
+    assert "/tmp/tts.fifo" not in cmd and "[a]" not in cmd
+    ok("W61: AZRAELs Stimme laeuft weiter, wenn sein Bild gedrosselt ist")
+
+    # --- 4) Der Frame-Feeder wird bei gedrosseltem Avatar nicht gestartet -
+    # Sonst haengt sein Writer fuer immer in open(fifo, "wb") — es kommt kein
+    # Leser mehr. Ein Drossel-Schritt startet den Restream neu, das waere also
+    # ein haengender Thread je Schritt.
+    bot = open(_os.path.join(hier, "bot.py"), encoding="utf-8").read()
+    flach = " ".join(bot.split())
+    assert ("if (RESTREAM_OVERLAY and transcode and not "
+            "_nc_rscmd.drossel_avatar_aus(_drossel_stufe(rid))):" in flach), \
+        "der Avatar-Feeder startet auch dann, wenn kein ffmpeg ihn liest"
+    # Und die Bedingung steht VOR dem Start, nicht irgendwo in der Datei.
+    _i = flach.find("_av_feed = await asyncio.to_thread(_restream_avatar_feeder_start")
+    assert _i > 0, "der Feeder-Start ist verschwunden"
+    assert "drossel_avatar_aus(_drossel_stufe(rid))" in flach[max(0, _i - 400):_i], \
+        "die Drossel-Pruefung steht nicht unmittelbar vor dem Feeder-Start"
+    # Das open() ist der Grund — bleibt es blockierend, bleibt die Pruefung noetig.
+    assert 'with open(fifo, "wb") as f:' in flach, \
+        "der Writer oeffnet die FIFO anders — die Begruendung oben neu pruefen"
+    ok("W61: bei gedrosseltem Avatar startet kein Feeder, der niemanden findet")
+
+    # --- 5) Das Log sagt, was weg ist UND was bleibt ---------------------
+    # "Avatar aus" allein liest sich wie "AZRAEL ist weg". Er ist es nicht.
+    zusatz = R.drossel_zusatz(24, 1280, 720, 4)
+    assert "Avatar aus" in zusatz, "die Waechter-Zeile verschweigt den Avatar"
+    for wort in ("Chat", "react", "Stimme"):
+        assert wort in zusatz, \
+            f"die Waechter-Zeile sagt nicht, dass {wort} bleibt: {zusatz!r}"
+    assert "Avatar aus" not in R.drossel_zusatz(24, 1280, 720, 3), \
+        "die Zeile meldet den Avatar schon auf Stufe 3 als weg"
+    ok("W61: die Waechter-Zeile nennt den Verlust und das, was steht")
 
 
 def _test_v42_w60_azrael_cooldown_je_plattform():
@@ -9205,6 +9407,7 @@ def main():
     _test_v42_w55_kein_tap_sagt_warum()
     _test_v42_w56_sitzungen_haben_eine_oberflaeche()
     _test_v42_w57_verwarnung_auf_allen_plattformen()
+    _test_v42_w61_avatar_faellt_vor_dem_panel()
     _test_v42_w60_azrael_cooldown_je_plattform()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)
