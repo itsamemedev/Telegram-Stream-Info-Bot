@@ -8188,6 +8188,178 @@ def _test_v42_w50_avatar_ueberlebt_die_drossel():
     ok("W50: eine Zeile nennt Text, Avatar und jeden fehlenden Grund")
 
 
+def _test_v42_w53_avatar_kopf_hand_schwert():
+    """v4.2-W53: der Avatar bewegte Kiefer, Aura und Augen — sonst nichts.
+
+    Der Kopf stand still, und Faust und Klinge waren aneinandergenagelt:
+    ARM_BOX deckt beide ab und drehte sie um EINEN Punkt. Eine Figur, deren
+    Kopf sich minutenlang nicht ruehrt, liest sich als Standbild mit
+    zuckendem Mund.
+
+    Neu: Kopf (Neigung um den Hals + Heben/Senken), Klinge (dreht um den
+    Griff, die Faust haelt sie), Hand (gibt im Gelenk nach).
+
+    Zwei Fehler sind beim Bauen aufgetreten, und beide stehen hier fest:
+
+    (1) DIE SCHLEIFE MUSS SICH SCHLIESSEN. Das Ergebnis ist eine Schleife —
+        nach RUHE_S bzw. SPRECH_S springt der Feeder auf t=0 zurueck. Eine
+        Schwingung, deren Periode die Schleifenlaenge nicht ganzzahlig teilt,
+        steht dort auf einem anderen Wert als am Anfang und zuckt einmal pro
+        Runde. Der erste Entwurf nahm absichtlich teilerfremde Perioden, um
+        Gleichtakt zu vermeiden — und zerlegte damit genau die Schleife. Der
+        Bestand hatte denselben Fehler schon in der Sprechschleife (Arm auf
+        1.15 s, Aura und Augen auf 1.4 s bei 1.6 s Laenge).
+
+    (2) JEDES PIXEL GEHOERT GENAU EINER EBENE. Der erste Entwurf hatte Klinge
+        und Hand als Teilmengen des Arms und drehte nacheinander: Arm dreht
+        die Klinge mit, danach dreht die Klinge nochmal. Wo die Masken sich
+        unterscheiden, blieb die einfach gedrehte Klinge neben der doppelt
+        gedrehten stehen — die Spitze stand zweimal im Bild.
+    """
+    import tools.azrael_frames as A
+
+    # --- 1) Alle drei Glieder bewegen sich ueberhaupt --------------------
+    # Ohne diesen Test waere ein Rig, das versehentlich auf 0 steht, unsichtbar:
+    # das Bild sieht dann einfach aus wie vorher.
+    for spricht, laenge in ((False, A.RUHE_S), (True, A.SPRECH_S)):
+        proben = [A.bewegung(i * laenge / 60.0, spricht) for i in range(60)]
+        for glied in ("kopf_grad", "kopf_hoch", "arm_grad", "klinge_grad", "hand_grad"):
+            spanne = max(p[glied] for p in proben) - min(p[glied] for p in proben)
+            assert spanne > 0.5, (
+                f"{glied} bewegt sich {'beim Sprechen' if spricht else 'in Ruhe'} "
+                f"nur um {spanne:.2f} — das sieht niemand")
+    ok("W53: Kopf, Arm, Klinge und Hand bewegen sich in BEIDEN Schleifen")
+
+    # --- 2) Die Schleife schliesst sich ---------------------------------
+    # Das ist Fehler (1). Gilt bewegung(t) == bewegung(t + L) fuer beliebige t,
+    # dann teilt JEDE Periode die Schleifenlaenge ganzzahlig — und nur dann.
+    for spricht, laenge in ((False, A.RUHE_S), (True, A.SPRECH_S)):
+        for i in range(17):
+            t = i * laenge / 17.0
+            a, b = A.bewegung(t, spricht), A.bewegung(t + laenge, spricht)
+            for k in a:
+                assert abs(a[k] - b[k]) < 1e-9, (
+                    f"{k} steht am Nahtpunkt anders da ({a[k]:.4f} vs {b[k]:.4f}): "
+                    f"seine Periode teilt {laenge}s nicht ganzzahlig — das Glied "
+                    f"zuckt einmal pro Schleifendurchlauf")
+    ok("W53: beide Schleifen schliessen sich — keine Periode bricht die Naht")
+
+    # --- 3) Der Kopf bekommt am wenigsten -------------------------------
+    # Er ist das groesste Glied: ein Grad am Hals sind an der Kapuzenspitze
+    # zehn Pixel. Was am Arm lebendig aussieht, ist am Kopf ein Wackelkopf.
+    for spricht in (False, True):
+        laenge = A.SPRECH_S if spricht else A.RUHE_S
+        proben = [A.bewegung(i * laenge / 60.0, spricht) for i in range(60)]
+        kopf = max(abs(p["kopf_grad"]) for p in proben)
+        klinge = max(abs(p["klinge_grad"]) for p in proben)
+        assert kopf <= klinge, \
+            f"der Kopf schlaegt weiter aus als die Klinge ({kopf:.1f} vs " \
+            f"{klinge:.1f} Grad) — das ist ein Wackelkopf"
+    ok("W53: der Kopf schlaegt nie weiter aus als die Klinge")
+
+    # --- 4) In Ruhe kleiner als beim Sprechen, aber nie still ------------
+    # Ein Glied, das in Ruhe exakt stillsteht, faellt beim Umschalten auf die
+    # Sprechschleife ruckartig an.
+    for glied in ("kopf_grad", "arm_grad", "klinge_grad", "hand_grad"):
+        r = max(abs(A.bewegung(i * A.RUHE_S / 60.0, False)[glied]) for i in range(60))
+        sp = max(abs(A.bewegung(i * A.SPRECH_S / 60.0, True)[glied]) for i in range(60))
+        assert 0.3 < r < sp, f"{glied}: Ruhe {r:.2f}, Sprechen {sp:.2f}"
+    ok("W53: in Ruhe gedaempft, beim Sprechen groesser — und nirgends Null")
+
+    # --- 5) Die Drehpunkte liegen dort, wo das Gelenk ist ----------------
+    # Der Griff MUSS in der Faust liegen: dreht die Klinge um den Unterarm,
+    # wandert die Faust mit und die Bewegung sieht aus wie ein Achselzucken.
+    hx, hy = A.KLINGE_DREHPUNKT
+    assert A.HAND_BOX[0] <= hx <= A.HAND_BOX[2], "Griff liegt nicht in der Faust"
+    assert A.HAND_BOX[1] <= hy <= A.HAND_BOX[3], "Griff liegt nicht in der Faust"
+    # Der Halsdrehpunkt gehoert in den weichen Auslauf der Kopfmaske: dort
+    # bewirkt die Drehung fast nichts und die Naht zur Schulter bleibt heil.
+    assert A.KOPF_DREHPUNKT[1] > A.KOPF_SAUM, \
+        "der Halsdrehpunkt liegt oberhalb des Kopfsaums — die Kapuze reisst " \
+        "dann an der Schulter auf"
+    assert A.KOPF_BOX[1] <= A.KOPF_SAUM <= A.KOPF_BOX[3]
+    # Und das Handgelenk unterhalb der Faust: der Unterarm kommt von unten.
+    assert A.HAND_DREHPUNKT[1] >= A.HAND_BOX[3] - 30
+    ok("W53: Griff in der Faust, Hals im Maskenauslauf, Gelenk unter der Faust")
+
+    # --- 6) Jede Ebene wird aus BASIS gedreht, nie aus dem Zwischenbild ---
+    # Das ist Fehler (2). Steht hier wieder `bild.rotate(`, traegt die zweite
+    # Drehung die erste huckepack und die Klinge steht doppelt im Bild.
+    import inspect as _inspect
+    fq = _inspect.getsource(A.frame)
+    assert "bild.rotate(" not in fq, \
+        "frame() dreht das halbfertige Bild weiter — die Ebene steht dann doppelt"
+    assert "(quelle or basis).rotate(" in fq and "basis.rotate(" in fq, \
+        "frame() dreht nicht mehr aus basis heraus"
+    # Und die Winkel der unteren Ebene wandern in die obere, sonst wiegt der
+    # Arm die Klinge nicht mehr mit.
+    flach = " ".join(fq.split())
+    assert 'b["arm_grad"] + b["klinge_grad"]' in flach, \
+        "die Klinge traegt den Armwinkel nicht mehr mit"
+    assert 'b["arm_grad"] + b["hand_grad"]' in flach, \
+        "die Hand traegt den Armwinkel nicht mehr mit"
+    # Jede einzelne Abziehung namentlich — eine Zaehlung (">= 3 mal subtract")
+    # haette hier nicht gereicht: faellt eine von vieren weg, zaehlt sie noch
+    # drei und bleibt gruen. Genau das ist die Mutationsprobe durchgerutscht.
+    fm = _inspect.getsource(A._masken)
+    fmf = " ".join(fm.split())
+    for wer, muster in (
+            ("Klinge", "klinge = ImageChops.subtract(_ellipse(groesse, KLINGE_BOX, 20), hand)"),
+            ("Kopf", "kopf = ImageChops.subtract(_kopf_maske(groesse), ImageChops.lighter(hand, klinge))"),
+            ("Arm", "arm = ImageChops.subtract(_ellipse(groesse, ARM_BOX, 22), belegt)")):
+        assert muster in fmf, (
+            f"der {wer}-Maske wird nichts mehr abgezogen — sie ueberlappt wieder "
+            f"mit einer hoeher liegenden Ebene, und dieselben Pixel werden zweimal "
+            f"gedreht gezeichnet")
+    ok("W53: jede Ebene dreht aus basis, jede Maske bekommt ihren Abzug")
+
+    # --- 6b) Und die Masken ueberlappen wirklich nicht -------------------
+    # Der Quelltext-Test oben sagt nur, dass DA ein subtract steht. Ob die
+    # Masken dadurch tatsaechlich auseinandergehen, sagt nur die Geometrie.
+    # Sie braucht Pillow — das fehlt in der CI bewusst, hier laeuft der Test
+    # also nur auf der Baumaschine. Gemessen wird der Anteil einer Maske, der
+    # unter einer anderen liegt: bei Verschachtelung geht er gegen 1.
+    try:
+        A._pil()
+    except SystemExit:
+        ok("W53: (Maskengeometrie uebersprungen — kein Pillow, das ist hier richtig)")
+    else:
+        m = A._masken((1024, 1024))
+        roh = {k: list(v.getdata()) for k, v in m.items() if k != "kiefer"}
+        schlimmster, wo = 0.0, None
+        for a_ in roh:
+            for b_ in roh:
+                if a_ == b_:
+                    continue
+                ueber = sum(min(x, y) for x, y in zip(roh[a_], roh[b_]))
+                anteil = ueber / max(1, sum(roh[a_]))
+                if anteil > schlimmster:
+                    schlimmster, wo = anteil, f"{a_} liegt zu {anteil:.0%} unter {b_}"
+        # Gemessen: 0.21 im schlimmsten Fall (Hand/Arm, das weiche Nahtband).
+        # Mit der alten Verschachtelung waren es 0.93 (Klinge im Arm) und
+        # 0.96 (Hand im Arm). 0.35 trennt beides sauber.
+        assert schlimmster < 0.35, (
+            f"die Masken liegen wieder ineinander ({wo}) — dieselben Pixel "
+            f"werden zweimal gedreht, die Klinge steht doppelt im Bild")
+        ok(f"W53: die Masken ueberlappen nur im Nahtband (schlimmstenfalls {schlimmster:.0%})")
+
+    # --- 7) Pillow bleibt draussen ---------------------------------------
+    # Der ganze Vertrag oben laeuft nur, weil das Modul ohne Pillow
+    # importierbar ist. Pillow steht bewusst in keiner requirements-Datei.
+    kopf = open(os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                             "tools", "azrael_frames.py"), encoding="utf-8").read()
+    vor_def = kopf[:kopf.find("def _pil(")]
+    assert "from PIL import" not in vor_def, \
+        "Pillow wird wieder auf Modulebene importiert — dann laeuft dieser " \
+        "Vertrag in der CI nicht mehr, wo Pillow fehlt"
+    for datei in ("requirements.txt", "requirements-smoke.txt"):
+        pfad = os.path.join(os.path.dirname(os.path.abspath(__file__)), datei)
+        if os.path.isfile(pfad):
+            assert "pillow" not in open(pfad, encoding="utf-8").read().lower(), \
+                f"Pillow ist in {datei} gerutscht — es ist ein Werkzeug, keine Laufzeit"
+    ok("W53: die Bewegungsrechnung braucht kein Pillow, der Bot erst recht nicht")
+
+
 def _test_v42_w52_flv_zaehlt_auch():
     """v4.2-W52: der Annahme-Test hinter dem HTML-Weg war enger als der
     Nachschlag, der ihn ausloest — und warf die stabilere Quelle weg.
@@ -8575,6 +8747,7 @@ def main():
 
     _test_v42_w51_live_ohne_url()
     _test_v42_w52_flv_zaehlt_auch()
+    _test_v42_w53_avatar_kopf_hand_schwert()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)
 
