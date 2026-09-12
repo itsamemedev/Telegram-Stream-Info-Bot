@@ -11,6 +11,18 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+_Noch nichts._
+
+---
+
+## [4.3] — 2026-09-12 · „Freie Sicht"
+
+4.2 hat den Monolithen zerlegt — an der Oberfläche sah der Betreiber davon
+nichts. 4.3 ist die Fassung, in der der Bot den Stream überhaupt erst
+zuverlässig **findet** und das Sendebild wieder **lesbar** ist: zwei von drei
+Live-Erkennungen liefen ins Leere, der Chat lag unter dem Avatar, und die
+Notbremse gegen Encode-Rückstand trat aufs Gas statt auf die Bremse.
+
 ### Behoben — der Avatar lag über dem Chat, und der Chat lief aus dem Bild (v4.2 W54)
 
 Gemeldet mit Bildschirmfoto: der Avatar verdeckt die halbe rechte Spalte, von

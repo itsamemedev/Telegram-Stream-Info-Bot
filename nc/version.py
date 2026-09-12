@@ -4,8 +4,8 @@ Eine einzige Wahrheit für die Versionsanzeige (Dashboard-Footer, /api/version,
 „Was ist neu"-Panel). Reine Daten + kleine Helfer, voll testbar.
 """
 
-VERSION = "4.2"
-CODENAME = "Zerlegter Kern"
+VERSION = "4.3"
+CODENAME = "Freie Sicht"
 RELEASE = "2026.09"
 
 
@@ -23,6 +23,29 @@ def build_stamp():
 # Meilenstein-Changelog, neueste Version zuerst. highlights = kurze, ehrliche
 # Stichpunkte dessen, was die Version bringt.
 CHANGELOG = [
+    {
+        "version": "4.3",
+        "date": "2026-09",
+        "title": "Freie Sicht",
+        # v4.3 ist die Fassung, in der der Bot den Stream ueberhaupt erst
+        # zuverlaessig FINDET und das Sendebild wieder LESBAR ist. 4.2 hatte
+        # den Monolithen zerlegt — an der Oberflaeche sah der Betreiber davon
+        # nichts. Hier sieht er es: zwei von drei Live-Erkennungen liefen ins
+        # Leere, der Chat lag unter dem Avatar, die Notbremse trat aufs Gas.
+        "highlights": [
+            "Ein Stream ist wieder EIN Stream: die sechs bis zehn Dateien, in die ein dreistündiger Live-Auftritt zerfällt (Ablauf der signierten TikTok-URL alle ~30 Minuten, dazu je eine nach 403 oder Abriss), tragen jetzt eine gemeinsame Sitzungs-Kennung mit Start- und Endzeit — das Deck zeigt Abdeckung und die echten Nahtlücken, und auf Knopfdruck werden die Segmente ohne Neukodierung zu einer Datei zusammengefügt",
+            "Die Live-Ankündigung nach Discord kommt wieder einmal pro Stream statt einmal pro Reparatur-Neustart — und sie trägt den Namen und die Rolle aus der Konfiguration, nicht mehr den danebenstehenden Kommentar",
+            "Der Audio-Abgriff der Live-Reaktion sagt jetzt, warum er gestorben ist: er starb im Betrieb 57 Mal je eine Sekunde nach dem Start, warf den Grund aber jedes Mal weg — AZRAEL reagierte deshalb auf den gesendeten TikTok-Stream kein einziges Mal, sondern nur noch auf die Plattform-Chats",
+            "AZRAELs Live-Reaktion bleibt am Stream: der Worker starb im Betrieb alle vier Sekunden, weil er seinen TikTok-Chat ohne laufenden Audio-Abgriff gar nicht neu verbinden konnte — und warf bei jedem Ende sein Gedächtnis über den Stream weg. Statt 328 Verbindungsversuchen pro Stunde sind es jetzt 17",
+            "Kein Wiederholungs-Sturm mehr gegen Kanäle, die gar nicht senden: der Bot las yt-dlps „The channel is not currently live“ als frühen Abriss und versuchte es fünfmal erneut — und das Sendebild-Overlay fällt nicht mehr ganz aus, wenn die eingestellte Schrift fehlt, sondern nimmt eine Ersatzschrift",
+            "Die Notbremse gegen Encode-Rückstand trat bisher aufs Gas: ihre erste Stufe schaltete auf ein LANGSAMERES x264-Preset, wodurch der Rückstand wuchs, bis auf der höchsten Stufe das ganze Sendebild fiel — Chat und Avatar gleich mit. Der Avatar hängt jetzt nicht mehr an der Schriftdatei, und ein leeres Anthropic-Guthaben wird als das gemeldet, was es ist, statt als Programmierfehler",
+            "Der Avatar bleibt im Sendebild, auch wenn die Notbremse den eingebrannten Text abwirft — und eine Zeile im Log nennt bei jedem Start, ob Text und Avatar an sind und welche Bedingung sonst fehlt",
+            "Zwei von drei Live-Erkennungen liefen bisher ohne Stream-URL weiter: die TikTok-API meldet einer Server-IP zwar „sendet“, rückt die Adresse aber nicht heraus — der Bot fragte den einzigen Weg, der sie noch liefert, ausgerechnet in diesem Fall nicht mehr ab und schickte den Recorder blind los",
+            "Und der so gefundene Zugang wird nicht mehr verworfen, wenn er in der stabileren von zwei Formen kommt: die durchgehende Verbindung fiel durch die Prüfung, die nur die segmentierte kannte — dabei ist gerade die Kette signierter Segmente die, die im Betrieb abreißt",
+            "AZRAEL steht nicht mehr da wie ein Standbild mit zuckendem Mund: Kopf, Hand und Schwert bewegen sich jetzt einzeln — die Klinge dreht um den Griff in der Faust statt um den Unterarm, und der Kopf neigt sich und hebt sich, ohne dass die Kapuze an der Schulter aufreißt",
+            "Der Chat steht im Sendebild wieder vorn: der Avatar lag über der halben rechten Spalte, und die Zeilen liefen zusätzlich rechts aus dem Bild, weil die Umbruchbreite eine feste Zahl für eine Schrift mit fester Zeichenbreite war — die Schrift ist aber proportional. Beides rechnet jetzt aus der Panel-Geometrie",
+        ],
+    },
     {
         "version": "4.2",
         "date": "2026-09",
@@ -49,17 +72,6 @@ CHANGELOG = [
             "Kein Dauerläufer blockiert mehr die Ereignisschleife: die Stillstände von 30 bis 68 Sekunden sind weg, Datenbankzugriffe laufen neben der Schleife",
             "Der Rauchtest führt bot.py in der CI wirklich aus — vorher stand er in der Pflichtliste, lief aber auf keiner Maschine automatisch",
             "Vorschläge des Evolutions-Kerns lassen sich gesammelt übernehmen oder verwerfen",
-            "Ein Stream ist wieder EIN Stream: die sechs bis zehn Dateien, in die ein dreistündiger Live-Auftritt zerfällt (Ablauf der signierten TikTok-URL alle ~30 Minuten, dazu je eine nach 403 oder Abriss), tragen jetzt eine gemeinsame Sitzungs-Kennung mit Start- und Endzeit — das Deck zeigt Abdeckung und die echten Nahtlücken, und auf Knopfdruck werden die Segmente ohne Neukodierung zu einer Datei zusammengefügt",
-            "Die Live-Ankündigung nach Discord kommt wieder einmal pro Stream statt einmal pro Reparatur-Neustart — und sie trägt den Namen und die Rolle aus der Konfiguration, nicht mehr den danebenstehenden Kommentar",
-            "Der Audio-Abgriff der Live-Reaktion sagt jetzt, warum er gestorben ist: er starb im Betrieb 57 Mal je eine Sekunde nach dem Start, warf den Grund aber jedes Mal weg — AZRAEL reagierte deshalb auf den gesendeten TikTok-Stream kein einziges Mal, sondern nur noch auf die Plattform-Chats",
-            "AZRAELs Live-Reaktion bleibt am Stream: der Worker starb im Betrieb alle vier Sekunden, weil er seinen TikTok-Chat ohne laufenden Audio-Abgriff gar nicht neu verbinden konnte — und warf bei jedem Ende sein Gedächtnis über den Stream weg. Statt 328 Verbindungsversuchen pro Stunde sind es jetzt 17",
-            "Kein Wiederholungs-Sturm mehr gegen Kanäle, die gar nicht senden: der Bot las yt-dlps „The channel is not currently live“ als frühen Abriss und versuchte es fünfmal erneut — und das Sendebild-Overlay fällt nicht mehr ganz aus, wenn die eingestellte Schrift fehlt, sondern nimmt eine Ersatzschrift",
-            "Die Notbremse gegen Encode-Rückstand trat bisher aufs Gas: ihre erste Stufe schaltete auf ein LANGSAMERES x264-Preset, wodurch der Rückstand wuchs, bis auf der höchsten Stufe das ganze Sendebild fiel — Chat und Avatar gleich mit. Der Avatar hängt jetzt nicht mehr an der Schriftdatei, und ein leeres Anthropic-Guthaben wird als das gemeldet, was es ist, statt als Programmierfehler",
-            "Der Avatar bleibt im Sendebild, auch wenn die Notbremse den eingebrannten Text abwirft — und eine Zeile im Log nennt bei jedem Start, ob Text und Avatar an sind und welche Bedingung sonst fehlt",
-            "Zwei von drei Live-Erkennungen liefen bisher ohne Stream-URL weiter: die TikTok-API meldet einer Server-IP zwar „sendet“, rückt die Adresse aber nicht heraus — der Bot fragte den einzigen Weg, der sie noch liefert, ausgerechnet in diesem Fall nicht mehr ab und schickte den Recorder blind los",
-            "Und der so gefundene Zugang wird nicht mehr verworfen, wenn er in der stabileren von zwei Formen kommt: die durchgehende Verbindung fiel durch die Prüfung, die nur die segmentierte kannte — dabei ist gerade die Kette signierter Segmente die, die im Betrieb abreißt",
-            "AZRAEL steht nicht mehr da wie ein Standbild mit zuckendem Mund: Kopf, Hand und Schwert bewegen sich jetzt einzeln — die Klinge dreht um den Griff in der Faust statt um den Unterarm, und der Kopf neigt sich und hebt sich, ohne dass die Kapuze an der Schulter aufreißt",
-            "Der Chat steht im Sendebild wieder vorn: der Avatar lag ueber der halben rechten Spalte, und die Zeilen liefen zusaetzlich rechts aus dem Bild, weil die Umbruchbreite eine feste Zahl fuer eine Schrift mit fester Zeichenbreite war — die Schrift ist aber proportional. Beides rechnet jetzt aus der Panel-Geometrie",
         ],
     },
     {
