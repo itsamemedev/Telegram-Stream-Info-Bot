@@ -34,6 +34,7 @@ CHANGELOG = [
         # der Release-Workflow verschiebt beim zweiten Lauf den Tag NICHT, das
         # Archiv haette sonst nicht mehr zu seiner Marke gepasst.
         "highlights": [
+            "Der „Hauptfeind“ ist zum ersten Mal gezählt: 1746 except-Blöcke, davon 1086 ohne jede Meldung — jede Welle von W51 bis W64 kam aus genau dieser Klasse. Ein Werkzeug sortiert sie jetzt (Aufräumpfade und Abbruch-Signale sind legitim still) und die CI verhindert, dass die Zahl wächst",
             "AZRAEL sagte die Rechnung des KI-Anbieters im Chat auf: Pollinations meldet ein erschöpftes Budget nicht als Fehlercode, sondern als HTTP 200 mit dem Fehlertext als Antwort — samt der URL, die die Kennung des Keys trägt. Der Bot hielt das für eine Antwort, schaltete deshalb nie auf eine freie Base um und schickte den Text in den öffentlichen Chat. Jetzt wird die Meldung erkannt, die Base gesperrt und rotiert",
             "Eine manuelle Aufnahme war nach dem Start unsichtbar und nicht abbrechbar: sie liegt in einer eigenen Tabelle, das Panel AKTIVE AUFNAHMEN liest aber eine andere — das Deck antwortete auf einen erfolgreichen Start mit „Keine laufende Aufnahme.“. Jetzt gibt es eine Liste mit Zustand, Größe und Stop-Knopf",
             "AZRAEL hat eine dritte Haltung: bleibt der Chat anderthalb Minuten still, senkt er Kinn und Klingenspitze, dimmt die Glut und blinzelt alle drei Sekunden. Vorher kannte er genau zwei Bilder von sich — reden oder dieselben drei Sekunden, stundenlang, und das sieht im Sendebild aus wie ein abgestürzter Restream",

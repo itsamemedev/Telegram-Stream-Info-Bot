@@ -12465,8 +12465,16 @@ def _restream_html_overlay_start(rid, source_url=None):
                     os.replace(tmp, png)          # atomar
             except asyncio.CancelledError:
                 return
-            except Exception:
-                pass
+            except Exception as e:
+                # v4.2-W65: war `pass`. Der Kommentar oben sagt zu Recht, dass
+                # ein einzelner misslungener Schuss egal ist — der Writer
+                # wiederholt das letzte gute Bild. Aber genau deshalb sieht
+                # NIEMAND, wenn gar keiner mehr gelingt: das Overlay friert
+                # ein und das Sendebild zeigt weiter ein Standbild von vorhin.
+                # _loop_fehler meldet den ersten Ausfall sofort und danach
+                # hoechstens alle 15 Minuten einen — die Drosselung ist genau
+                # fuer diesen Fall gebaut.
+                _loop_fehler("html-overlay-screenshot", e)
             try:
                 await asyncio.sleep(max(0.5, 1.0 / RESTREAM_OVERLAY_HTML_FPS))
             except asyncio.CancelledError:

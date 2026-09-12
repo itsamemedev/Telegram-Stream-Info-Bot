@@ -478,11 +478,14 @@ def create_schema(conn, *, pk, txt_idx, txt_long, txt_big, iv, tbl_opts, is_my,
     ){tbl_opts}""")
     # F84: Migration falls die Tabelle auf dem Server schon ohne die neuen
     # Spalten existiert (Feature kam nach dem ersten Deploy).
-    for _coldef in ("filepath TEXT", "stars_pushed INTEGER DEFAULT 0"):
-        try:
-            conn.execute(f"ALTER TABLE discord_clips ADD COLUMN {_coldef}")
-        except Exception:
-            pass
+    # v4.2-W65: war ein rohes ALTER TABLE mit `except Exception: pass`.
+    # „Duplicate column" ist der Normalfall ab dem zweiten Start, alles andere
+    # nicht — und geschluckt wurde beides. _migrate_columns ist der Weg, den
+    # der nc-datenbank-Skill dafuer vorschreibt: er fragt erst, welche Spalten
+    # da sind, legt nur die fehlenden an und meldet, wenn das misslingt.
+    _migrate_columns(conn, "discord_clips",
+                     {"filepath": "TEXT",
+                      "stars_pushed": "INTEGER DEFAULT 0"})
     # v37 W3b: Backup-Status-Spalte für Aufnahmen (idempotent)
     try:
         conn.execute("ALTER TABLE recordings ADD COLUMN backed_up INTEGER DEFAULT 0")

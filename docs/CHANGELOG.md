@@ -11,6 +11,71 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Hinzugefügt — der Hauptfeind wird gemessen und eingesperrt (v4.2 W65)
+
+Erste Welle aus der Bestandsaufnahme des ganzen Projekts. CLAUDE.md nennt
+stille `except`-Blöcke seit Langem „den Hauptfeind" — **gemessen wurde es
+nie**. Beim Nachzählen:
+
+| | |
+|---|---|
+| `except`-Blöcke gesamt | 1746 |
+| melden etwas | 550 |
+| legitim still (Aufräumpfade, Fehlerkanal, Abbruch-Signale) | 110 |
+| **still** | **1086 (62 %)** |
+
+Jede Welle dieser Reihe kam aus dieser Klasse: W51 (blinder Recorder), W55
+(taubes Ohr), W60 (Panel weg), W63 (unsichtbare Aufnahme), W64 (Rechnung im
+Chat).
+
+**Alle 1086 auf einmal wären ein Quartal und ein unprüfbarer Diff.**
+`tools/stillecheck.py` macht stattdessen zwei Dinge, die sofort wirken: es
+sortiert (nicht jede Stille ist falsch — CLAUDE.md nennt die Ausnahmen selbst),
+und es **sperrt den Zuwachs**. Ein CI-Job vergleicht gegen eine eingefrorene
+Grundlinie je Datei und fällt, sobald irgendwo ein stiller Block dazukommt. Der
+Unterschied zwischen einer Schuld, die man abträgt, und einer, die sich
+verzinst.
+
+**Das Messgerät hat sich beim Bauen dreimal geirrt**, und jedes Mal in die
+gefährliche Richtung — es zeigte auf Stellen, an denen nichts zu tun war:
+
+1. `"log." in ast.dump(...)` findet nie etwas: `dump` rendert einen
+   Attributzugriff als `Attribute(value=Name(id='log'), attr='warning')`. Das
+   Werkzeug meldete 121 Melder statt 550 und zeichnete den Bestand um den
+   Faktor vier zu schwarz.
+2. `except asyncio.CancelledError: raise` galt als Stille. Ein Abbruch ist kein
+   Ausfall, er wurde angeordnet — die Zielliste bestand zu drei Vierteln aus
+   Nicht-Aufgaben.
+3. Die handgeschriebene Melder-Liste kannte `_verbindung_verloren` nicht, den
+   Melder von vier Twitch- und YouTube-Dauerläufern. Melder werden jetzt aus
+   dem Bestand **abgeleitet** statt aufgezählt (451 gefunden).
+
+Ein Messgerät, das falsch misst, ist schlimmer als keines. Jeder der drei
+Irrtümer steht deshalb als eigene Zusicherung im Vertrag.
+
+**Drei echte Befunde behoben** — die Zielliste schrumpfte von 24 (grobe
+Zählung) über 17 auf 11, und davon waren diese drei die gewichtigen:
+
+- **`nc/ledger.py`** — das Steuer-Journal mit Hash-Kette legte seine Indizes
+  mit `except Exception: pass` an. „Index existiert bereits" gehört geschluckt,
+  eine gesperrte Datenbank nicht. Neu ist `nc/ddlsafe.py` (bot-frei, weil
+  `nc/*` nicht aus `bot.py` importieren darf): es unterscheidet beides und
+  **wirft** ohne Melder weiter, statt still danebenzugreifen.
+- **`nc/schema.py`** — rohes `ALTER TABLE … ADD COLUMN` mit `pass`. Läuft jetzt
+  über `_migrate_columns`, den Weg, den der `nc-datenbank`-Skill dafür
+  vorschreibt.
+- **`bot.py`, Screenshot-Dauerläufer des HTML-Overlays** — `pass`. Der
+  Kommentar daneben sagt zu Recht, dass ein einzelner misslungener Schuss egal
+  ist. Genau deshalb sah niemand, wenn *gar keiner* mehr gelang: das Overlay
+  friert ein und das Sendebild zeigt weiter ein Standbild von vorhin. Jetzt
+  `_loop_fehler`.
+
+Eine Mutationsprobe blieb zuerst still: der Vertrag rechnete die Sperre selbst
+nach, statt den CLI-Pfad zu fahren, den die CI benutzt — `gewachsen = []` in
+`main()` lief grün durch. Jetzt wird `main()` wirklich aufgerufen, gegen eine
+temporäre Grundlinie, und geprüft, dass die Sperre bei Zuwachs **und** ohne
+Grundlinie fällt, beim Abbau aber nicht. 16 Mutationsproben.
+
 ### Behoben — AZRAEL sagte die Rechnung des KI-Anbieters im Chat auf (v4.2 W64)
 
 Aus dem Moderator-Log, Einträge `send` **und** `reaction`:

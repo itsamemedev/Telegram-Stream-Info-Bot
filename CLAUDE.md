@@ -10,7 +10,7 @@ GitHub-Repo trägt Historie, CI und Issues — es ist nicht der Deploy-Weg.
 
 ## Die eine Regel
 
-`bot.py` hat **23.785 Zeilen / 1,2 MB ≈ 295.000 Token**. Diese Datei wird
+`bot.py` hat **23.793 Zeilen / 1,2 MB ≈ 295.000 Token**. Diese Datei wird
 **nie** ganz gelesen und **nie** blind durchsucht. Erst fragen wo etwas steht,
 dann den Ausschnitt holen:
 
@@ -53,7 +53,7 @@ Auf diesem Windows-Rechner heißt der Interpreter **`python`** (3.13.12);
     brain_bridge.py      Adapter Bot ↔ brain/ (M2)
     brain/               KI-Kern: state, rules, router, agents, memory,
                          semantic, knowledge, scheduler, llm, report
-    nc/                  136 Fachmodule: db, scraping, restream, oauth, ledger,
+    nc/                  137 Fachmodule: db, scraping, restream, oauth, ledger,
                          i18n, …
     nc/routes/           36 Flask-Blueprints mit 327 weiteren API-Routen
     locales/             de.json, en.json — der Übersetzungskatalog
@@ -83,6 +83,7 @@ stdlib-only (`urllib`, kein `aiohttp`).
     python -m ruff check --select F,E9,B --ignore B905 <geänderte .py>
     python tools/ncpatch.py check
     python tools/ncpatch.py docs
+    python tools/stillecheck.py --sperre
     python tools/i18n_extract.py --check en
     python test_smoke.py ; python test_nc_modules.py ; python test_restream.py
 
@@ -125,7 +126,15 @@ GET und POST ist kein Duplikat — ein naiver Regex meldet Fehlalarm).
 
 ## Fallstricke, die schon zugeschlagen haben
 
-**Stille `except`-Blöcke sind der Hauptfeind.** Der Bot fängt großflächig ab und
+**Stille `except`-Blöcke sind der Hauptfeind.** Seit v4.2-W65 ist das keine
+Behauptung mehr, sondern gemessen: **1746 `except`-Blöcke, davon 1086 ohne
+jede Meldung** (`python tools/stillecheck.py`). Jede Welle der Reihe W51–W64
+kam aus dieser Klasse. Der Bestand darf bleiben, er darf nur nicht *wachsen* —
+`stillecheck.py --sperre` fällt in der CI, sobald irgendwo ein stiller Block
+dazukommt. Legitim still sind Aufräumpfade, der Fehlerkanal und
+Abbruch-Signale (`CancelledError`); die erkennt der Klassierer selbst.
+
+Der Bot fängt großflächig ab und
 loggt auf `warning`/`debug`. Ein `log.warning` erscheint in einem ERROR-Log
 **nie** — so blieb der Discord-Gateway-Tod monatelang unsichtbar. Wenn etwas
 „nicht mehr geht", suche zuerst das `except`, das den Grund frisst.
