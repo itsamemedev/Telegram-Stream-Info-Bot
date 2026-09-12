@@ -11,6 +11,37 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Behoben — YouTube timeoutete sofort, Kick und Twitch verwarnten erst (v4.2 W57)
+
+Der Betreiber meldete, der Moderator sei Kick-only und solle auf YouTube und
+Twitch erweitert werden. **Das trifft nicht zu:** die Erkennung
+(`_screen_full` — Bannwörter, Spam-Heuristik, Toxizitäts-Klassifikation) läuft
+für alle drei, und im Moderations-Log stehen `auto-mod-kick`,
+`auto-mod-twitch` und `auto-mod-youtube`. Twitch kam mit B168 dazu, YouTube
+ist ebenfalls verdrahtet, und das Panel heißt bereits „AZRAEL SENTINEL —
+Multi-Channel-Moderation".
+
+Beim Nachsehen fiel aber etwas anderes auf:
+
+| Plattform | erkennt | verwarnt zuerst | Timeout |
+|---|---|---|---|
+| Kick | ✓ | ✓ (W19, in `_handle`) | ✓ |
+| Twitch | ✓ | ✓ (B168) | ✓ |
+| YouTube | ✓ | **✗** | ✓ |
+
+Gleicher Verstoß, härtere Strafe, nur weil der Zuschauer auf der anderen
+Plattform sitzt. Das war keine Entscheidung, sondern eine vergessene Zeile:
+`_mod_warn_first` wird an drei Stellen gebraucht und stand an zweien.
+
+YouTube verwarnt jetzt ebenso beim ersten Verstoß, mit eigenem
+Eskalations-Zähler (`yt:<user>`, getrennt von `tw:<user>` — sonst zählte ein
+Verstoß auf Twitch für die Auszeit auf YouTube mit).
+
+Der Vertrag prüft die **Symmetrie**, nicht den Wortlaut: er zählt, an wie
+vielen Sanktionsstellen die Verwarnung vorgeschaltet ist, und dass sie den
+Chat wirklich erreicht statt nur im Log zu stehen — eine Verwarnung, die der
+Zuschauer nicht sieht, ist für ihn keine.
+
 ### Behoben — W44 lieferte drei Routen und keinen Knopf (v4.2 W56)
 
 Gefunden bei der Dashboard-Prüfung: von 359 Flask-Routen ruft die Oberfläche

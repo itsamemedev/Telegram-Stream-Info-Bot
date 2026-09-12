@@ -8188,6 +8188,71 @@ def _test_v42_w50_avatar_ueberlebt_die_drossel():
     ok("W50: eine Zeile nennt Text, Avatar und jeden fehlenden Grund")
 
 
+def _test_v42_w57_verwarnung_auf_allen_plattformen():
+    """v4.2-W57: YouTube timeoutete sofort, Kick und Twitch verwarnten erst.
+
+    Der Betreiber meinte, der Moderator sei Kick-only. Das stimmt nicht — die
+    Erkennung (`_screen_full`) laeuft fuer alle drei, und im Moderations-Log
+    gibt es auto-mod-kick, auto-mod-twitch und auto-mod-youtube. Beim
+    Nachsehen fiel aber etwas anderes auf:
+
+        Kick     _handle -> _escalation_decide, warn_first   (W19)
+        Twitch   _mod_warn_first(...) and _escalation_decide (B168)
+        YouTube  -- nichts --                    -> sofort Timeout
+
+    Gleicher Verstoss, haertere Strafe, nur weil der Zuschauer auf der
+    anderen Plattform sitzt. Das war keine Entscheidung, sondern eine
+    vergessene Zeile: `_mod_warn_first` wird an drei Stellen gebraucht und
+    stand an zweien.
+
+    Der Vertrag prueft die SYMMETRIE, nicht den Wortlaut: er zaehlt, an wie
+    vielen Sanktionsstellen die Verwarnung vorgeschaltet ist. Ein Test auf
+    „steht das Wort youtube irgendwo" waere hier wertlos gewesen — es stand
+    ja schon vorher ueberall.
+    """
+    hier = os.path.dirname(os.path.abspath(__file__))
+    bot = open(os.path.join(hier, "bot.py"), encoding="utf-8").read()
+
+    # --- 1) Alle drei Plattformen sanktionieren ueberhaupt ---------------
+    for platt in ("kick", "twitch", "youtube"):
+        assert f'"auto-mod-{platt}"' in bot, \
+            f"{platt} taucht im Moderations-Log nicht mehr auf — moderiert " \
+            f"der Bot dort noch?"
+    ok("W57: Kick, Twitch und YouTube laufen alle durch die Moderation")
+
+    # --- 2) Und alle drei verwarnen ZUERST -------------------------------
+    # Gezaehlt wird die vorgeschaltete Bedingung, nicht das Vorkommen des
+    # Plattformnamens: _mod_warn_first ist genau der Schalter, der aus einer
+    # Sanktion eine Verwarnung macht.
+    n = bot.count("_mod_warn_first(")
+    assert n >= 4, (
+        f"_mod_warn_first kommt nur {n}x vor (Definition + Kick + Twitch + "
+        f"YouTube = 4). Eine Plattform sanktioniert wieder ohne Verwarnung")
+    # Und zwar je einmal pro Eskalations-Schluessel.
+    for schluessel in ('f"tw:{user}"', 'f"yt:{who}"'):
+        assert schluessel in bot, \
+            f"der Eskalations-Zaehler {schluessel} fehlt — ohne ihn zaehlt die " \
+            f"Plattform Wiederholungstaeter nicht mit"
+    ok("W57: alle drei verwarnen beim ersten Verstoss, mit eigenem Zaehler")
+
+    # --- 3) Die Verwarnung geht auch wirklich raus -----------------------
+    # Eine Verwarnung, die nur im Log steht, ist fuer den Zuschauer keine:
+    # er sieht nichts und wird beim naechsten Mal ohne Vorwarnung getimeoutet.
+    i = bot.find('f"yt:{who}"')
+    assert i > 0
+    zweig = bot[i:i + 700]
+    assert "_YT_SEND" in zweig and "_mod_warn_text(" in zweig, \
+        "die YouTube-Verwarnung wird nicht in den Chat geschickt — sie stuende " \
+        "nur im Log, und der Zuschauer wuesste von nichts"
+    assert '_modlog("warn", "auto-mod-youtube"' in zweig, \
+        "die YouTube-Verwarnung wird nicht protokolliert"
+    # ... und danach darf NICHT trotzdem noch getimeoutet werden.
+    assert "continue" in zweig.split('_modlog("warn"')[1][:400], \
+        "nach der Verwarnung laeuft der Timeout-Zweig weiter — dann ist die " \
+        "Verwarnung wirkungslos und der Zuschauer bekommt beides"
+    ok("W57: die Verwarnung erreicht den Chat und ersetzt den Timeout")
+
+
 def _test_v42_w56_sitzungen_haben_eine_oberflaeche():
     """v4.2-W56: W44 lieferte drei Routen und keinen einzigen Knopf.
 
@@ -9020,6 +9085,7 @@ def main():
     _test_v42_w54_sendebild_ausgerichtet()
     _test_v42_w55_kein_tap_sagt_warum()
     _test_v42_w56_sitzungen_haben_eine_oberflaeche()
+    _test_v42_w57_verwarnung_auf_allen_plattformen()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)
 

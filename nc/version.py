@@ -46,6 +46,7 @@ CHANGELOG = [
             "Der Chat steht im Sendebild wieder vorn: der Avatar lag über der halben rechten Spalte, und die Zeilen liefen zusätzlich rechts aus dem Bild, weil die Umbruchbreite eine feste Zahl für eine Schrift mit fester Zeichenbreite war — die Schrift ist aber proportional. Beides rechnet jetzt aus der Panel-Geometrie",
             "AZRAELs Ohr war aus demselben Grund taub wie der Recorder blind: ohne Stream-URL kein Audio-Abgriff, ohne Abgriff kein Transkript — gemeldet hat das Log davon nur „audio=False“, ein Wort für drei mögliche Ursachen. Jetzt nennt es die Ursache und meldet sie als Warnung statt als Beiwerk",
             "Aufnahme-Sitzungen haben endlich eine Oberfläche: die Funktion, die einen zerstückelten Stream auf Knopfdruck zu einer Datei zusammenfügt, gab es seit W44 nur als Schnittstelle — der versprochene Knopf fehlte. Jetzt zeigt die Betrieb-Ansicht je Sitzung Segmente, Nahtlücken und Abdeckung, und fügt auf Klick zusammen",
+            "Auf YouTube gab es für denselben Verstoß sofort eine Auszeit, während Kick und Twitch erst verwarnen — die Moderation läuft auf allen drei Plattformen, nur dieser eine Schritt fehlte dort",
         ],
     },
     {
