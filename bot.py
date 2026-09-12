@@ -21261,6 +21261,22 @@ async def _youtube_api_chat_loop():
                     if (mod is not None and mod.cfg.get("auto_moderate")
                             and not (m.get("is_mod") or m.get("is_owner"))):
                         verdict = _screen_full(txt, who, _YT_MSG_HIST, mod.cfg)
+                        # v4.2-W57: HIER fehlte die Verwarnung. Kick (W19, in
+                        # _handle) und Twitch (B168) geben beim ersten Verstoss
+                        # eine oeffentliche Verwarnung und erst beim zweiten
+                        # eine Auszeit — YouTube sprang sofort auf Timeout.
+                        # Gleicher Verstoss, haertere Strafe, nur weil der
+                        # Zuschauer auf der anderen Plattform sitzt. Das war
+                        # keine Entscheidung, sondern eine vergessene Zeile:
+                        # _mod_warn_first stand an zwei von drei Stellen.
+                        if verdict and _mod_warn_first(mod.cfg) \
+                                and mod._escalation_decide(f"yt:{who}")[0] == "warn":
+                            if _YT_SEND.get("fn"):
+                                await _YT_SEND["fn"](_mod_warn_text(who, verdict[1]))
+                            _modlog("warn", "auto-mod-youtube", txt,
+                                    {"user": who, "cat": verdict[0], "detail": verdict[1],
+                                     "platform": "youtube"})
+                            continue
                         if verdict and m.get("channel_id"):
                             await _yt_timeout(tok, lcid, m["channel_id"],
                                               MOD_AUTO_TIMEOUT_MAX_MIN * 60)

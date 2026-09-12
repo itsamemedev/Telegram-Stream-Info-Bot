@@ -11011,7 +11011,11 @@ async function sitzungenLoad(){
     }else if((x.segments||0)<2){
       knopf='<span class="faint">ein Segment</span>';
     }else{
-      knopf='<button class="btn sm" onclick="sitzungJoin('+JSON.stringify(sid)+')">'
+      /* v4.2-W58: JSON.stringify liefert DOPPELTE Anfuehrungszeichen — in
+         einem onclick="…" beenden die das Attribut, und der Knopf tut nichts.
+         Der Bestand macht es ueberall so: einfache Anfuehrungszeichen innen,
+         escJs() gegen den Ausbruch. */
+      knopf='<button class="btn sm" onclick="sitzungJoin(\''+escJs(sid)+'\')">'
         +'Zusammenfügen</button>';
     }
     h+='<tr><td>'+esc(x.username||'—')+'</td><td class="mono">'+_szZeit(x.start)+'</td>'
@@ -11020,7 +11024,7 @@ async function sitzungenLoad(){
       +'<td class="right mono">'+abTxt+'</td>'
       +'<td class="right mono">'+(x.size_mb!=null?x.size_mb+' MB':'—')+'</td>'
       +'<td class="right">'+knopf+' <button class="btn sm" aria-label="Segmente zeigen" '
-      +'title="Segmente zeigen" onclick="sitzungDetail('+JSON.stringify(sid)+')">⋯</button></td></tr>';
+      +'title="Segmente zeigen" onclick="sitzungDetail(\''+escJs(sid)+'\')">⋯</button></td></tr>';
   });
   box.innerHTML=h+'</tbody></table></div><div id="sz_detail"></div>';
 }

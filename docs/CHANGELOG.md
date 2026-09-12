@@ -11,6 +11,67 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Behoben — der Knopf aus W56 hat nicht funktioniert (v4.2 W58)
+
+Beim Sicherheits-Audit aufgefallen, beim Durchgang „XSS in den Templates".
+W56 baute den Knopf so:
+
+```js
+onclick="sitzungJoin('+JSON.stringify(sid)+')"
+```
+
+`JSON.stringify` liefert **doppelte** Anführungszeichen. Erzeugt wurde damit
+
+```html
+<button onclick="sitzungJoin("azrael_2026-09-12")">
+```
+
+— das Attribut endet nach `sitzungJoin(`, der Rest zerfällt in
+Schrott-Attribute, und der Knopf tut nichts. **In genau der Welle, deren
+Zweck ein fehlender Knopf war.**
+
+Die Zusicherung aus W56 hat das nicht bemerkt: sie prüfte, ob
+`onclick="sitzungJoin(` im Deck vorkommt — das tat es ja. Wieder eine
+Anwesenheits- statt Eigenschaftsprüfung, die dritte in dieser Reihe.
+
+Jetzt wie überall sonst im Deck: einfache Anführungszeichen innen, `escJs()`
+gegen den Ausbruch. Der Vertrag prüft nicht mehr die Zeichenkette, sondern
+verbietet `JSON.stringify` in einem `onclick` mit Parameter und verlangt
+`escJs`. Gegengeprüft mit einer Probe, die das erzeugte Markup wirklich
+ausführt und das Attribut parst — auch mit `"`, `'`, `<` und `&` in der
+Kennung.
+
+### Behoben — YouTube timeoutete sofort, Kick und Twitch verwarnten erst (v4.2 W57)
+
+Der Betreiber meldete, der Moderator sei Kick-only und solle auf YouTube und
+Twitch erweitert werden. **Das trifft nicht zu:** die Erkennung
+(`_screen_full` — Bannwörter, Spam-Heuristik, Toxizitäts-Klassifikation) läuft
+für alle drei, und im Moderations-Log stehen `auto-mod-kick`,
+`auto-mod-twitch` und `auto-mod-youtube`. Twitch kam mit B168 dazu, YouTube
+ist ebenfalls verdrahtet, und das Panel heißt bereits „AZRAEL SENTINEL —
+Multi-Channel-Moderation".
+
+Beim Nachsehen fiel aber etwas anderes auf:
+
+| Plattform | erkennt | verwarnt zuerst | Timeout |
+|---|---|---|---|
+| Kick | ✓ | ✓ (W19, in `_handle`) | ✓ |
+| Twitch | ✓ | ✓ (B168) | ✓ |
+| YouTube | ✓ | **✗** | ✓ |
+
+Gleicher Verstoß, härtere Strafe, nur weil der Zuschauer auf der anderen
+Plattform sitzt. Das war keine Entscheidung, sondern eine vergessene Zeile:
+`_mod_warn_first` wird an drei Stellen gebraucht und stand an zweien.
+
+YouTube verwarnt jetzt ebenso beim ersten Verstoß, mit eigenem
+Eskalations-Zähler (`yt:<user>`, getrennt von `tw:<user>` — sonst zählte ein
+Verstoß auf Twitch für die Auszeit auf YouTube mit).
+
+Der Vertrag prüft die **Symmetrie**, nicht den Wortlaut: er zählt, an wie
+vielen Sanktionsstellen die Verwarnung vorgeschaltet ist, und dass sie den
+Chat wirklich erreicht statt nur im Log zu stehen — eine Verwarnung, die der
+Zuschauer nicht sieht, ist für ihn keine.
+
 ### Behoben — W44 lieferte drei Routen und keinen Knopf (v4.2 W56)
 
 Gefunden bei der Dashboard-Prüfung: von 359 Flask-Routen ruft die Oberfläche
