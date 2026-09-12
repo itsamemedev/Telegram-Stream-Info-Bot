@@ -119,3 +119,34 @@ def poll_abstand(status, war_live, intervalle):
     if status == "offline":
         return intervalle["just_went_offline"] if war_live else intervalle["offline"]
     return intervalle["unknown"]
+
+
+def braucht_url_nachschlag(status, info) -> bool:
+    """Muss nach der Webcast-API noch ein zweiter Weg nach der Stream-URL suchen?
+
+    v4.2-W51. Bis hierher lief der HTML-Weg NUR bei `unknown`. Damit
+    uebersprang er ausgerechnet den haeufigsten Fall. Gemessen am 11.09., 84
+    Aufloesungen in zehn Minuten:
+
+        60x  webcast-api: status=live ohne Stream-URL -> live
+        24x  webcast-api resolved (hls=yes, flv=yes)
+
+    71 % melden „live", liefern aber keine URL — TikTok gibt sie einer
+    Datacenter-IP nicht heraus. Der Bot gab ("live", None) zurueck und kehrte
+    SOFORT zurueck; der Weg, der die URL haette liefern koennen, lief nie. Der
+    Recorder startete blind und quittierte mit „The channel is not currently
+    live" (28x im selben Zeitraum).
+
+    Warum nicht auch bei „offline" nachschlagen: sagt die API klar offline,
+    glauben wir das. Ein zweiter Rundlauf pro Poll und Nutzer kostet nur
+    Anfragen bei einem Dienst, der uns ohnehin schon rate-limitet.
+
+    Warum yt-dlp hier NICHT hilft: `_resolve_via_ytdlp` gibt auch bei „live"
+    grundsaetzlich info=None zurueck — es beantwortet die Frage „sendet er?",
+    nicht „wohin greife ich?". Nur der HTML-Weg traegt eine URL.
+    """
+    if status == "unknown":
+        return True
+    if status != "live":
+        return False
+    return not (info or {}).get("hls_url") and not (info or {}).get("flv_url")

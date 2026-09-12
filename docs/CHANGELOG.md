@@ -11,6 +11,43 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Behoben — 71 % der Live-Erkennungen liefen ohne Stream-URL weiter (v4.2 W51)
+
+Aus dem Log vom 11.09., 84 Auflösungen in zehn Minuten:
+
+```
+60x  webcast-api @USER: status=live ohne Stream-URL → live (Recorder löst auf)
+24x  webcast-api resolved @USER (hls=yes, flv=yes, codec=h264, q=hd)
+28x  ytdlp @USER rc=1: The channel is not currently live
+```
+
+Zweimal von drei meldet die Webcast-API „live", gibt einer Datacenter-IP aber
+keine Stream-URL heraus. `get_live_status` gab das als `("live", None)` zurück
+und **kehrte sofort zurück** — der HTML-Weg, der einzige, der die URL noch
+liefern kann, lief nur im `unknown`-Zweig:
+
+```python
+if status == "unknown":                     # <- der häufigste Fall ist "live"
+    html_info = await _resolve_via_html(username, session)
+```
+
+Der Recorder startete also blind und quittierte mit „not currently live". Genau
+diese 28 yt-dlp-Fehlschläge sind die Folge, nicht die Ursache.
+
+Jetzt entscheidet `nc/livefolge.py::braucht_url_nachschlag(status, info)`:
+nachgeschlagen wird bei `unknown` **und** bei `live` ohne `hls_url`/`flv_url`.
+Bei `offline` oder `ratelimited` nicht — sonst kostet jeder Poll einen zweiten
+Rundlauf gegen einen Dienst, der ohnehin drosselt.
+
+`_resolve_via_ytdlp` bleibt bewusst außen vor: es gibt auch bei „live"
+grundsätzlich `info=None` zurück und beantwortet „sendet er?", nicht „wohin
+greife ich?". Ein Vertrag hält das fest, damit niemand später einen
+Subprozess mit 20 s Timeout in den häufigsten Pfad einbaut.
+
+Beide Ausgänge stehen im Log (`live-ohne-URL @…`) — sonst ließe sich nach dem
+Deploy nicht sagen, wie oft der Nachschlag wirklich eine URL bringt. Der
+Fehlschlag nennt `RECORD_PROXY` als das, was dann noch hilft.
+
 ### Behoben — W49 hat nur die halbe Entkopplung geliefert (v4.2 W50)
 
 Gemeldet mit Bildschirmfoto: Chat und Avatar weiterhin nicht im Sendebild,

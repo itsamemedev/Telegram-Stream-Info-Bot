@@ -2890,16 +2890,44 @@ async def get_live_status(username: str, session, force_fresh: bool = False) -> 
             _RATE_LIMIT_BACKOFF.pop(username, None)
         # status == "unknown" (Netzwerkfehler / 5xx / Parse) → kein Backoff ändern
 
-        if status == "unknown":
-            # 2. HTML-Fallback nur bei unknown — wenn API klar 'offline' sagt,
-            #    glauben wir das (sonst sinnloser zweiter Roundtrip)
+        # v4.2-W51: der HTML-Fallback lief NUR bei 'unknown'. Damit uebersprang
+        # ihn ausgerechnet der haeufigste Fall.
+        #
+        # Gemessen am 11.09., 84 Aufloesungen in zehn Minuten:
+        #     60x  webcast-api: status=live ohne Stream-URL -> live
+        #     24x  webcast-api resolved (hls=yes, flv=yes)
+        #
+        # 71 % melden also "live", liefern aber keine URL — TikTok gibt sie
+        # unserer Datacenter-IP nicht heraus. Der Bot gab das als
+        # ("live", None) zurueck und KEHRTE SOFORT ZURUECK; der HTML-Weg, der
+        # die URL haette liefern koennen, lief nie. Der Recorder startete
+        # blind, fand nichts, und quittierte mit "The channel is not currently
+        # live" (28x im selben Zeitraum).
+        #
+        # yt-dlp hilft hier NICHT: _resolve_via_ytdlp gibt auch bei 'live'
+        # grundsaetzlich info=None zurueck. Nur der HTML-Weg traegt eine URL.
+        if _nc_live.braucht_url_nachschlag(status, info):
+            _blind = status == "live"
             try:
                 html_info = await _resolve_via_html(username, session)
                 if html_info and html_info.get("hls_url"):
                     status, info = "live", html_info
+                    if _blind:
+                        log.info("live-ohne-URL @%s: HTML-Weg liefert die "
+                                 "Stream-URL nach — der Recorder startet nicht "
+                                 "mehr blind.", username)
                     # HTML-Erfolg → backoff zurücksetzen
                     _RATE_LIMIT_PENALTY.pop(username, None)
                     _RATE_LIMIT_BACKOFF.pop(username, None)
+                elif _blind:
+                    # Bleibt bei ("live", None) — das ist KEINE Verschlechterung
+                    # gegenueber vorher, aber jetzt steht im Log, dass beide
+                    # Wege leer ausgingen. Vorher sah es aus wie eine normale
+                    # Erkennung.
+                    log.info("live-ohne-URL @%s: auch der HTML-Weg findet "
+                             "keine Stream-URL — der Recorder muss selbst "
+                             "aufloesen (Proxy pruefen: RECORD_PROXY).",
+                             username)
             except Exception as e:
                 log.debug(f"html-fallback @{username}: {e}")
 
