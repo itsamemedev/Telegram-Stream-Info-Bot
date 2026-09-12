@@ -3033,9 +3033,27 @@ AI_TIMEOUT            = _env_int("AI_TIMEOUT", 240)         # Sekunden; 0 = UNBE
 AI_FLASK_TIMEOUT      = _env_int("AI_FLASK_TIMEOUT", 300)   # Cap für Dashboard-AI-Requests (Flask blockt solange)
 
 
+# v4.2-W49: bis wann Claude nicht mehr gefragt wird (monotonic). Ein leeres
+# Guthaben aendert sich nicht in Sekunden, und jeder Versuch kostet einen
+# vollen Rundlauf, bevor die kostenlose Kette ueberhaupt anfaengt.
+#
+# Steht VOR _anthropic_key und nicht bei den uebrigen Reaktions-Schaltern
+# weiter unten: die Funktion liest das Dict, und ein Aufruf waehrend des
+# Imports haette sonst einen NameError geworfen.
+_CLAUDE_PAUSE = {"bis": 0.0}
+CLAUDE_GUTHABEN_PAUSE_S = _env_int("CLAUDE_GUTHABEN_PAUSE_S", 3600)
+
+
 def _anthropic_key():
     # v4.0-W111: nach nc/claude.py geloest — Anthropic-Belange
     # gehoeren in den Anthropic-Provider.
+    #
+    # v4.2-W49: waehrend der Guthaben-Sperre gibt es hier KEINEN Key. Die
+    # Sperre sitzt bewusst an dieser einen Stelle und nicht an den drei
+    # Aufrufern (ai_chat, llm_chat, llm_chat_sync) — sonst haette der naechste
+    # Aufrufer sie wieder nicht.
+    if _CLAUDE_PAUSE["bis"] > _time_mod.monotonic():
+        return ""
     return _nc_claude.api_key()
 
 
@@ -3370,13 +3388,35 @@ async def ai_chat(messages, model=None, timeout=None):
             _nc_claude.chat_sync, messages, _akey, _anthropic_model(model), timeout,
             on_error=_claude_grund)
         if _ctxt:
+            _CLAUDE_PAUSE["bis"] = 0.0        # es geht wieder
             return (_ctxt, None)
         if _cerr == "auth":
             return (None, "auth")
-        _react_warn("claudefb", "Reaction-AI Claude fehlgeschlagen (%s) → Kette. "
-                    "Modell=%s, Antwort der API: %s"
-                    % (_cerr, _cdetail.get("model") or "?",
-                       _cdetail.get("detail") or "kein Text mitgeliefert"))
+        if _cerr == "kein_guthaben":
+            # v4.2-W49: kein Fehler des Bots, sondern eine Rechnung. Vorher
+            # stand hier "fehlgeschlagen (bad_request)" — formal richtig,
+            # praktisch nutzlos: der eine 400er ist ein Programmierfehler, der
+            # andere ein leeres Konto, und im Log sahen beide gleich aus.
+            #
+            # Und es wurde bei JEDER Reaktion neu versucht. Jeder Versuch ein
+            # voller Rundlauf zu Anthropic, der sicher scheitert, bevor die
+            # kostenlose Kette ueberhaupt anfaengt. Deshalb eine Sperre: eine
+            # Stunde nicht mehr anklopfen, danach einmal probieren — sonst
+            # bliebe Claude nach dem Aufladen bis zum Neustart stumm.
+            _CLAUDE_PAUSE["bis"] = _time_mod.monotonic() + CLAUDE_GUTHABEN_PAUSE_S
+            _react_warn("claudegeld",
+                        "⚠ Anthropic-Guthaben aufgebraucht — AZRAEL laeuft ab "
+                        "jetzt auf der kostenlosen Kette weiter (freeai/brain) "
+                        "und klopft %d Minuten nicht mehr bei Claude an. "
+                        "Abhilfe: Guthaben aufladen. Wortlaut der API: %s"
+                        % (CLAUDE_GUTHABEN_PAUSE_S // 60,
+                           _cdetail.get("detail") or "kein Text mitgeliefert"),
+                        every=CLAUDE_GUTHABEN_PAUSE_S)
+        else:
+            _react_warn("claudefb", "Reaction-AI Claude fehlgeschlagen (%s) → Kette. "
+                        "Modell=%s, Antwort der API: %s"
+                        % (_cerr, _cdetail.get("model") or "?",
+                           _cdetail.get("detail") or "kein Text mitgeliefert"))
     # V37-B92: provider=brain → llama.cpp-Runtime (Ollama ist auf den 8 Kernen
     # messbar langsamer). Fail-open-Kette: brain → ollama.
     if REACTION_AI_PROVIDER in ("brain", "llamacpp"):
@@ -17120,7 +17160,7 @@ async def _restream_verify_loop():
                                 _rid, _neu, _nc_rscmd.DROSSEL_MAX,
                                 _nc_rscmd.drossel_preset(RESTREAM_X264_PRESET, _neu),
                                 _nc_rscmd.drossel_bitrate(RESTREAM_BITRATE_K, _neu),
-                                ", Overlay aus" if _nc_rscmd.drossel_overlay_aus(_neu) else "")
+                                ", Text aus" if _nc_rscmd.drossel_text_aus(_neu) else "")
                     await _RESTREAM_MGR.stop(_rid, _keep_desired=True)
                     await asyncio.sleep(2)
                     await _RESTREAM_MGR.start(_rid, _src_watch=True)
