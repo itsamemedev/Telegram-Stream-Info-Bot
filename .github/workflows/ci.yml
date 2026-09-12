@@ -151,6 +151,18 @@ jobs:
       - name: Kein Zuwachs an stillen except-Blöcken
         run: python tools/stillecheck.py --sperre
 
+      # v4.2-W66. CLAUDE.md nennt die Fenster der Form src[i:i + 3000]
+      # namentlich als Bruchstelle, und in W62 hat eines zugeschlagen:
+      # src[j:j + 4200] reichte nicht mehr über den gewachsenen Frame-Feeder
+      # und meldete "kein fester Takt", während stop.wait(takt) zwei Zeilen
+      # dahinter stand. Ein Vertrag, der bei gesundem Code fällt, lehrt,
+      # Vertragsbrüche nicht ernst zu nehmen.
+      #
+      # Die 34 verbliebenen haben gemessen Luft (--spielraum). Verhindert
+      # wird, dass NEUE dazukommen.
+      - name: Keine neuen Fenster fester Länge in Verträgen
+        run: python tools/vertragscheck.py --sperre
+
   tests:
     name: Verträge & Module (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest

@@ -11,6 +11,71 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Geändert — Verträge, die nicht mehr an ihrem eigenen Fenster ersticken (v4.2 W66)
+
+Zweite Welle der Bestandsaufnahme. CLAUDE.md warnt vor dieser Bruchstelle mit
+Namen:
+
+> Ebenso die Fenster der Form `src[i:i + 3000]`: wächst die Funktion darüber
+> hinaus, meldet der Test etwas als fehlend, das zwei Zeilen weiter unten steht.
+
+In W62 hat sie zugeschlagen — `src[j:j + 4200]` reichte nicht mehr über den
+gewachsenen Frame-Feeder und meldete „kein fester Takt", während
+`stop.wait(takt)` zwei Zeilen dahinter stand. Ein Vertrag, der bei gesundem
+Code fällt, kostet eine Runde und lehrt, Vertragsbrüche nicht ernst zu nehmen.
+
+**Alle blind umzubauen wäre schlimmer gewesen, als sie zu lassen.** Ein zu
+großes Fenster lässt einen Vertrag durchgehen, der durchfallen müsste — genau
+das hat in W64 eine Mutationsprobe still durchrutschen lassen, weil im selben
+Rumpf ein zweiter Aufruf desselben Namens stand.
+
+**Also erst messen.** `vertragscheck.py --spielraum` verkleinert jedes Fenster
+einzeln auf 70 % und fährt die zugehörige Suite. Fällt sie, war das Fenster
+fast voll. Dieselbe Idee wie die Mutationsproben dieser Reihe, nur umgekehrt:
+statt „merkt der Vertrag einen Fehler?" fragt es „merkt der Vertrag, dass sein
+Fenster schrumpft?".
+
+| | |
+|---|---|
+| Fenster im Code | 45 |
+| davon randvoll (Vertrag fällt bei −30 %) | **11** |
+| mit Luft | 34 |
+| nach dem Umbau randvoll | **0** |
+
+Die elf laufen jetzt über `rumpf_ab(quelle, ab)` — von der Fundstelle bis zur
+nächsten Top-Level-Definition, also mitwachsend. Zwei Formen, weil beide
+Quellen vorkommen: mit Zeilenumbrüchen trifft `\ndef ` nur Top-Level, im
+zusammengefalteten `" ".join(bot.split())` trennt `" def "`. Letzteres schneidet
+notfalls an einer verschachtelten Definition zu früh ab — **und das ist die
+richtige Richtung**: ein zu kurzer Bereich lässt den Vertrag *laut* fallen, ein
+zu langer lässt ihn still durchgehen.
+
+**Gegenprobe, dass die aufgeweiteten Verträge noch prüfen.** Das Aufweiten ist
+die eigentliche Gefahr dieser Welle, also wurden die geprüften Eigenschaften im
+Bot kaputtgemacht: Cookie-Reparatur tauscht vor der Prüfung, AZRAEL-Cooldown
+wieder global, Rückstau-Cap entfernt, Drossel wird nie zurückgesetzt. Alle vier
+fliegen auf.
+
+**Das Messgerät hat sich zweimal geirrt, beide Male zu meinen Ungunsten:**
+
+1. Es ersetzte per Zeichenkette statt je Zeile und übersprang damit jeden
+   Ausdruck, der mehr als einmal vorkommt — **17 von 47**, ein Drittel der
+   Messung fiel unter den Tisch.
+2. Es zählte Fenster mit, die in **Kommentaren und Docstrings** bloß *erwähnt*
+   werden — und die zitieren `src[i:i + 3000]` reichlich als abschreckendes
+   Beispiel. Es verschluckte sich prompt an seiner eigenen Dokumentation und
+   behauptete, umgebaute Fenster seien zurück. Jetzt werden Kommentare und
+   Zeichenketten per `tokenize` geleert, bevor gezählt wird.
+
+Auch der Vertrag musste zweimal: er verbot zuerst bestimmte Ausdrücke ganz —
+aber `src[i:i + 2200]` steht ein zweites Mal an einer Stelle *mit* Luft und
+darf dort bleiben. Ein Verbot hätte einen gesunden Vertrag angeklagt. Gezählt
+wird jetzt, was wirklich getan wurde. Und die eigenen Beispielausdrücke stehen
+zerlegt da (`"src[i:i + " + "2200]"`), weil der Prüfer diese Datei mitliest.
+
+`--sperre` verhindert neue Fenster, wie in W65 am CLI-Pfad geprüft, den die CI
+wirklich fährt.
+
 ### Hinzugefügt — der Hauptfeind wird gemessen und eingesperrt (v4.2 W65)
 
 Erste Welle aus der Bestandsaufnahme des ganzen Projekts. CLAUDE.md nennt
