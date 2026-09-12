@@ -39,6 +39,13 @@ import subprocess
 import sys
 import tempfile
 
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# v4.2-W62: die Namen der Schleifen kommen aus nc.avatarloop, nicht aus einer
+# zweiten Liste hier. Der Feeder in bot.py sucht die Dateien nach genau diesen
+# Namen — zwei Listen waeren zwei Wahrheiten, und die Abweichung faellt erst
+# im Sendebild auf (fehlende Schleife = stiller Rueckfall auf Ruhe).
+from nc.avatarloop import AFK, RUHE, SPRICH, ZUSTAENDE, blinzeln     # noqa: E402
+
 # Pillow wird ERST in den zeichnenden Funktionen geholt, nicht hier oben.
 # Grund: die Bewegungsrechnung (bewegung()) soll in der CI pruefbar sein, und
 # dort ist Pillow nicht installiert — es steht bewusst weder in
@@ -64,6 +71,16 @@ HOEHE = 360                 # Kantenlaenge der fertigen Frames
 FPS = 10                    # Takt der Schleifen
 RUHE_S = 3.0                # Laenge der Ruheschleife
 SPRECH_S = 1.6              # Laenge der Sprechschleife
+# v4.2-W62. Doppelt so lang wie die Ruheschleife, und das ist der Punkt: eine
+# AFK-Figur soll nicht schneller wiederkehren als die aktive. Sechs Sekunden
+# teilen sich sauber in 3.0, 2.0, 1.5, 1.2 und 1.0 — genug Perioden fuer eine
+# Bewegung, die sich nicht offensichtlich wiederholt, ohne die Naht zu brechen.
+AFK_S = 6.0                 # Laenge der AFK-Schleife
+# Ueber ZUSTAENDE aufgebaut und nicht von Hand aufgezaehlt: kommt spaeter ein
+# vierter Zustand dazu, faellt hier ein KeyError beim Import — statt dass der
+# Generator still zwei Schleifen schreibt und die dritte im Betrieb fehlt.
+_LAENGE = {RUHE: RUHE_S, SPRICH: SPRECH_S, AFK: AFK_S}
+SCHLEIFEN = tuple((z, _LAENGE[z]) for z in ZUSTAENDE)
 
 # --- am Original ausgemessen -------------------------------------------------
 LIPPE = 495
@@ -104,8 +121,13 @@ HAND_BOX = (692, 580, 867, 762)
 HAND_DREHPUNKT = (780, 770)
 
 
-def bewegung(t, spricht):
+def bewegung(t, zust):
     """Alle Rig-Groessen fuer den Zeitpunkt t. -> dict, keine Bilder.
+
+    `zust` ist einer aus nc.avatarloop.ZUSTAENDE. Bis v4.2-W62 stand hier ein
+    Boolescher `spricht` — mit dem dritten Zustand geht das nicht mehr, und
+    ein `spricht=False, afk=True` waeren zwei Flaggen fuer eine Entscheidung,
+    die genau einen Wert hat.
 
     v4.2-W53. Getrennt vom Zeichnen, damit die Bewegung ohne Pillow pruefbar
     ist: Pillow steht bewusst in keiner requirements-Datei, ein Vertrag ueber
@@ -137,7 +159,52 @@ def bewegung(t, spricht):
     def w(amplitude, periode, phase=0.0):
         return amplitude * math.sin(2 * math.pi * t / periode + phase)
 
-    if spricht:
+    if zust == AFK:
+        # Einmal gerechnet, zweimal gebraucht: die Glut geht aus UND das Lid
+        # faellt. Zwei getrennte Aufrufe waeren zwei Wahrheiten ueber
+        # denselben Lidschlag.
+        _bl = blinzeln(t, AFK_S / 2)
+        # Schleife AFK_S = 6.0 s -> erlaubt sind 6.0, 3.0, 2.0, 1.5, 1.2, 1.0 …
+        #
+        # AFK IST EINE HALTUNG, KEIN LANGSAMERES ZAPPELN. Der erste Entwurf
+        # nahm nur die Ruhewerte und halbierte sie — das Ergebnis war von der
+        # Ruheschleife nicht zu unterscheiden, weil die Amplituden dort ohnehin
+        # bei ein bis zwei Grad liegen. Der Unterschied muss im FESTEN VERSATZ
+        # stecken: Kinn auf die Brust, Klingenspitze gesenkt. Daran erkennt
+        # man die Abwesenheit auf den ersten Blick, auch im Standbild.
+        #
+        # Still stehen darf sie trotzdem nicht. Ein bewegungsloser Avatar ist
+        # im Sendebild von einem abgestuerzten Restream nicht zu unterscheiden
+        # — genau die Verwechslung, die dieses Projekt sonst ueberall vermeidet.
+        return {
+            "kopf_grad":   w(1.1, AFK_S),
+            # +5 = Kinn nach unten (positives kopf_hoch versetzt die Ebene
+            # nach unten, siehe frame()). Das Atmen darueber ist langsam und
+            # klein: es soll auffallen, DASS sie noch lebt, nicht wie.
+            "kopf_hoch":   5.0 + w(2.0, AFK_S / 2, 1.9),
+            "arm_grad":    w(0.8, AFK_S, 2.6),
+            # Klinge gesenkt. Der Griff bleibt in der Faust (der Drehpunkt
+            # liegt dort), es faellt also nur die Spitze — kein Wegrutschen
+            # der ganzen Waffe.
+            "klinge_grad": -4.0 + w(1.2, AFK_S, 0.7),
+            "hand_grad":   w(0.7, AFK_S, 4.2),
+            "mund_auf":    0.0,
+            # Aura heruntergefahren, aber nicht aus: die Figur glimmt weiter.
+            "aura":        0.08 + w(0.05, AFK_S),
+            # Halb geschlossene Augen, dazu alle drei Sekunden ein Blinzeln.
+            # 34 - 30 heisst: im Zufallen bleibt ein Rest von vier, das Auge
+            # wird dunkel statt schwarz. Ein hart auf 0 fallender Wert liest
+            # sich als Bildfehler, nicht als Lid.
+            "augen":       34.0 + w(12.0, AFK_S / 2) - _bl,
+            # Das Lid ist der eigentliche Lidschlag. Die Glut wegzunehmen
+            # genuegt NICHT: die Vorlage hat schon leuchtende Augen, und das
+            # Leuchten kommt per screen OBEN DRAUF. Gemessen faellt der
+            # Augenkasten dabei bloss von 63 auf 55 — 13 Prozent, das liest
+            # kein Zuschauer als Blinzeln. Erst das Abdunkeln in frame()
+            # macht daraus ein zufallendes Auge.
+            "lid":         _bl / 30.0,
+        }
+    if zust == SPRICH:
         # Schleife SPRECH_S = 1.6 s -> erlaubt sind 1.6, 0.8, 0.4, 0.32, 0.2 …
         return {
             "kopf_grad":   w(2.6, 1.6),          # dreht ueber den ganzen Satz
@@ -148,6 +215,7 @@ def bewegung(t, spricht):
             "mund_auf":    13.0 - 13.0 * math.cos(2 * math.pi * t / 0.40),
             "aura":        0.30 + w(0.22, 1.6),
             "augen":       120.0 + w(70.0, 0.8),
+            "lid":         0.0,        # beim Sprechen blinzelt niemand
         }
     # Schleife RUHE_S = 3.0 s -> erlaubt sind 3.0, 1.5, 1.0, 0.75, 0.6 …
     return {
@@ -159,6 +227,7 @@ def bewegung(t, spricht):
         "mund_auf":    0.0,
         "aura":        0.14 + w(0.10, RUHE_S),
         "augen":       70.0 + w(26.0, RUHE_S / 2),
+        "lid":         0.0,
     }
 
 
@@ -282,7 +351,7 @@ def _alpha(bild):
     return maske.filter(ImageFilter.GaussianBlur(5))
 
 
-def frame(basis, bloom, masken, t, spricht):
+def frame(basis, bloom, masken, t, zust):
     """Ein Einzelbild. t laeuft in Sekunden durch die jeweilige Schleife.
 
     **Jede Ebene wird aus BASIS gedreht, nie aus dem halbfertigen Bild.**
@@ -299,7 +368,7 @@ def frame(basis, bloom, masken, t, spricht):
     """
     _pil()
     G = basis.size
-    b = bewegung(t, spricht)
+    b = bewegung(t, zust)
     bild = basis.copy()
 
     def ebene(grad, punkt, maske, quelle=None):
@@ -375,8 +444,36 @@ def frame(basis, bloom, masken, t, spricht):
     if hoch:
         aug = ImageChops.offset(aug, 0, hoch)
     aug = aug.filter(ImageFilter.GaussianBlur(9))
-    return ImageChops.screen(bild, Image.merge(
+    bild = ImageChops.screen(bild, Image.merge(
         "RGB", (aug, aug.point(lambda v: v // 5), aug.point(lambda v: v // 4))))
+
+    # v4.2-W62: DAS LID. Es kommt ZULETZT, nach der Glut — davor gesetzt
+    # leuchtete das Auge durch das geschlossene Lid hindurch wieder auf.
+    #
+    # Der Kasten ist absichtlich groesser als der Glut-Kasten (34x16 gegen
+    # 26x11): abgedunkelt werden muss die Augenhoehle der VORLAGE, und die
+    # ist breiter als der Fleck, den die Glut daraufsetzt. Weichgezeichnet,
+    # damit kein Rechteck im Gesicht steht.
+    lid = b.get("lid", 0.0)
+    if lid > 0.02:
+        zu = Image.new("L", G, 0)
+        dz = ImageDraw.Draw(zu)
+        for cx, cy in AUGEN:
+            dz.ellipse((cx - 34, cy - 16, cx + 34, cy + 16),
+                       fill=int(255 * min(1.0, lid)))
+        # Dieselbe Kopfbewegung wie die Glut — sonst faellt das Lid neben das
+        # Auge, sobald der Kopf sich neigt.
+        if abs(kopf_grad) >= 0.1:
+            zu = zu.rotate(kopf_grad, resample=Image.BICUBIC, center=KOPF_DREHPUNKT)
+        if hoch:
+            zu = ImageChops.offset(zu, 0, hoch)
+        zu = zu.filter(ImageFilter.GaussianBlur(7))
+        # multiply mit dem INVERTIERTEN Lid: ausserhalb der Ellipse ist die
+        # Maske 0, invertiert 255, und multiply damit die Identitaet — das
+        # uebrige Bild bleibt unangetastet, ohne zweite Maske.
+        offen = ImageChops.invert(zu)
+        bild = ImageChops.multiply(bild, Image.merge("RGB", (offen, offen, offen)))
+    return bild
 
 
 def main():
@@ -399,11 +496,11 @@ def main():
     alpha.save(os.path.join(ZIEL, "alpha.png"), optimize=True)
     gesamt = os.path.getsize(os.path.join(ZIEL, "alpha.png"))
 
-    for name, dauer, spricht in (("ruhe", RUHE_S, False), ("sprich", SPRECH_S, True)):
+    for name, dauer in SCHLEIFEN:
         anzahl = int(round(dauer * FPS))
         with tempfile.TemporaryDirectory() as tmp:
             for i in range(anzahl):
-                f = frame(basis, bloom, masken, i / FPS, spricht)
+                f = frame(basis, bloom, masken, i / FPS, name)
                 f.crop(zuschnitt).resize((breite, HOEHE), Image.LANCZOS).save(
                     os.path.join(tmp, f"{i:03d}.png"))
             ziel = os.path.join(ZIEL, f"{name}.webm")
@@ -416,7 +513,9 @@ def main():
                  "-crf", "28", "-b:v", "0", "-an", ziel], check=True)
         gesamt += os.path.getsize(ziel)
         print(f"{name}.webm: {anzahl} Frames a {breite}x{HOEHE} @ {FPS} fps")
-    print(f"gesamt {gesamt / 1024:.0f} KB in {ZIEL}/ (alpha.png + zwei Schleifen)")
+    print(f"gesamt {gesamt / 1024:.0f} KB in {ZIEL}/ "
+          f"(alpha.png + {len(SCHLEIFEN)} Schleifen: "
+          f"{', '.join(n for n, _ in SCHLEIFEN)})")
 
 
 if __name__ == "__main__":
