@@ -44,6 +44,7 @@ CHANGELOG = [
             "Und der so gefundene Zugang wird nicht mehr verworfen, wenn er in der stabileren von zwei Formen kommt: die durchgehende Verbindung fiel durch die Prüfung, die nur die segmentierte kannte — dabei ist gerade die Kette signierter Segmente die, die im Betrieb abreißt",
             "AZRAEL steht nicht mehr da wie ein Standbild mit zuckendem Mund: Kopf, Hand und Schwert bewegen sich jetzt einzeln — die Klinge dreht um den Griff in der Faust statt um den Unterarm, und der Kopf neigt sich und hebt sich, ohne dass die Kapuze an der Schulter aufreißt",
             "Der Chat steht im Sendebild wieder vorn: der Avatar lag über der halben rechten Spalte, und die Zeilen liefen zusätzlich rechts aus dem Bild, weil die Umbruchbreite eine feste Zahl für eine Schrift mit fester Zeichenbreite war — die Schrift ist aber proportional. Beides rechnet jetzt aus der Panel-Geometrie",
+            "AZRAELs Ohr war aus demselben Grund taub wie der Recorder blind: ohne Stream-URL kein Audio-Abgriff, ohne Abgriff kein Transkript — gemeldet hat das Log davon nur „audio=False“, ein Wort für drei mögliche Ursachen. Jetzt nennt es die Ursache und meldet sie als Warnung statt als Beiwerk",
         ],
     },
     {

@@ -16788,7 +16788,15 @@ async def _live_react_worker(username, stop_evt):
     director = _director_for(username)   # F100: Regie-Engine (Gedächtnis/Momentum/Timing)
     story = _story_for(username)         # F103: Story-Gedächtnis (roter Faden)
     try:
-        if LIVE_REACT_SPEECH and stream_url and _faster_whisper_available():
+        # v4.2-W55: die drei Startbedingungen des Taps EINMAL auswerten und
+        # den Grund behalten. Vorher standen sie hier als eine Und-Kette, und
+        # die Startzeile meldete nur "audio=False" — ein Boolescher Wert fuer
+        # drei Ursachen. Das leere Live-Transkript des Betreibers war
+        # deswegen nicht aus dem Log zu erklaeren.
+        _tap_an, _tap_grund, _tap_text = _nc_audiotap.warum_kein_tap(
+            LIVE_REACT_SPEECH, stream_url, _faster_whisper_available(),
+            proxy_da=bool(_lr_proxy))
+        if _tap_an:
             # v4.2-W46: stderr war DEVNULL. Am 10.09. starb der Tap 57 Mal,
             # jedes Mal exakt eine Sekunde nach dem Start — und der Grund
             # wurde 57 Mal erzeugt und 57 Mal weggeworfen. In denselben 101
@@ -16806,8 +16814,23 @@ async def _live_react_worker(username, stop_evt):
             await _chat_listener_abbauen(chat_client, chat_task)
             chat_client, chat_task = await _start_chat_listener(username, chat_buf, gift_flags)
             chat_seit = _time_mod.monotonic()
-        log.info("live-react gestartet für @%s (audio=%s, chat=%s)",
-                 username, bool(proc), bool(chat_client))
+        # v4.2-W55: der Grund gehoert in dieselbe Zeile wie die Diagnose. Ein
+        # stummer Avatar ohne Transkript ist sonst nicht vom abgeschalteten
+        # Schalter zu unterscheiden.
+        if _tap_an and not _tap_text:
+            log.info("live-react gestartet für @%s (audio=an, chat=%s)",
+                     username, bool(chat_client))
+        elif _tap_an:
+            log.warning("live-react gestartet für @%s (audio=an, chat=%s) — %s",
+                        username, bool(chat_client), _tap_text)
+        else:
+            # Auf WARNING, nicht auf INFO: ohne Tap gibt es kein Transkript und
+            # AZRAEL hoert den gesendeten Stream nicht. Das ist kein Zustand,
+            # der in einem INFO-Strom untergehen darf — genau so blieb er es.
+            log.warning("live-react gestartet für @%s OHNE Audio (chat=%s) — "
+                        "kein Transkript, AZRAEL hoert den Stream nicht. "
+                        "Grund [%s]: %s",
+                        username, bool(chat_client), _tap_grund, _tap_text)
         while not stop_evt.is_set():
             _hb("live-react")   # V37-B93: Beat pro Iteration — vorher gab es
             # ihn nur NACH einer Reaktion; ruhige Streams (kein Trigger) und

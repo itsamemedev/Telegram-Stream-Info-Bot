@@ -78,6 +78,66 @@ ABHILFE = {
 }
 
 
+# v4.2-W55 — warum der Tap gar nicht erst STARTET.
+#
+# W46 hat beantwortet, warum er STIRBT. Der Betreiber hat jetzt aber ein
+# leeres Live-Transkript gemeldet ("Noch nichts gehoert"), und im Log stand
+# dazu nur:
+#
+#     live-react gestartet fuer @user (audio=False, chat=True)
+#
+# EIN Boolescher Wert fuer DREI voellig verschiedene Ursachen — Schalter aus,
+# keine Stream-URL, Whisper fehlt. Genau der stille Schalter, vor dem CLAUDE.md
+# warnt: die Zeile sagt, DASS nichts geht, und verschweigt als Einzige, WAS.
+# Der Grund musste per Hand aus drei Bedingungen rekonstruiert werden, und die
+# tatsaechliche Ursache (keine Stream-URL, siehe W51) blieb dabei wochenlang
+# unentdeckt.
+KEIN_TAP = {
+    "aus":
+        "LIVE_REACT_SPEECH=0 — der Sprach-Abgriff ist abgeschaltet. Ohne ihn "
+        "hoert AZRAEL den gesendeten Stream nicht, nur die Plattform-Chats.",
+    "keine_url":
+        "Die Aufloesung hat keine Stream-URL geliefert. Das ist der Fall aus "
+        "v4.2-W51: die TikTok-API meldet einer Datacenter-IP zwar „live\", "
+        "rueckt die Adresse aber nicht heraus. Ohne URL gibt es nichts "
+        "abzugreifen — und damit kein Transkript. RECORD_PROXY setzen.",
+    "kein_whisper":
+        "faster-whisper ist nicht importierbar. Es steht in requirements.txt; "
+        "auf dem Server nachinstallieren (pip install -r requirements.txt).",
+}
+
+
+def warum_kein_tap(sprache_an, stream_url, whisper_da, proxy_da=True):
+    """Startet der Audio-Abgriff — und wenn nicht, warum? -> (an, grund, text)
+
+    v4.2-W55. `grund` ist "" wenn der Tap startet. Sonst einer der Schluessel
+    aus KEIN_TAP, und `text` der Satz dazu.
+
+    **Die Reihenfolge ist die der Behebbarkeit, nicht die des Quelltextes.**
+    Fehlen mehrere Voraussetzungen, wird die genannt, die der Betreiber zuerst
+    anfassen muss: ein abgeschalteter Schalter erklaert alles Weitere und ist
+    in einer Sekunde umgelegt; eine fehlende URL ist ein Betriebsproblem; ein
+    fehlendes Paket ist eine Installation.
+
+    Der Proxy ist bewusst KEINE Startbedingung. Ohne ihn startet der Tap und
+    stirbt dann an 403 — was W46 diagnostiziert. Er wird hier nur als Zusatz
+    gemeldet, weil er die haeufigste Ursache des naechsten Fehlerbildes ist;
+    ihn zur Startbedingung zu machen wuerde einen laufenden Abgriff ueber
+    eine funktionierende Direktverbindung verhindern.
+    """
+    if not sprache_an:
+        return False, "aus", KEIN_TAP["aus"]
+    if not stream_url:
+        return False, "keine_url", KEIN_TAP["keine_url"]
+    if not whisper_da:
+        return False, "kein_whisper", KEIN_TAP["kein_whisper"]
+    if not proxy_da:
+        return True, "", ("Tap startet, aber ohne Proxy: TikTok beantwortet "
+                          "den Abgriff von einer Datacenter-IP oft mit 403. "
+                          "RECORD_PROXY setzen.")
+    return True, "", ""
+
+
 def diagnose(stderr_text, returncode, laufzeit_s, segmente) -> dict:
     """Warum ist der Tap gestorben, und was kann der Betreiber tun?
 

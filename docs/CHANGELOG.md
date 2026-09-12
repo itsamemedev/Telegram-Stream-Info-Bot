@@ -11,7 +11,52 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
-_Noch nichts._
+### Behoben — „audio=False" war ein Boolescher Wert für drei Ursachen (v4.2 W55)
+
+Gemeldet mit Bildschirmfoto des Live-Transkript-Panels: **„Noch nichts gehört
+(Whisper/Reaction-Engine aktiv?)".** Im Log stand dazu genau eine Zeile:
+
+```
+live-react gestartet für @user (audio=False, chat=True)
+```
+
+Diese Zeile sagt, *dass* nichts geht, und verschweigt als Einzige, *was*. Der
+Tap startet nur bei `LIVE_REACT_SPEECH` **und** einer Stream-URL **und**
+importierbarem `faster-whisper` — drei Bedingungen, eine Und-Kette, ein
+Ergebnis. Genau der stille Schalter, vor dem CLAUDE.md warnt.
+
+**Die Kette dahinter, vollständig:**
+
+```
+get_live_status → ("live", None)        71 % der Fälle, vor W51
+  → _get_live_info gibt info=None
+  → _live_react_worker: stream_url = None
+  → kein Audio-Tap, kein Whisper
+  → _live_transcript_push wird nie gerufen
+  → das Deck zeigt „Noch nichts gehört"
+```
+
+Die eigentliche Ursache war also **dieselbe fehlende Stream-URL, die W51/W52
+behoben haben** — nur an einem zweiten Verbraucher, den bis dahin niemand mit
+dem Befund verbunden hatte. `_get_live_info` ruft `get_live_status`; der
+Recorder und AZRAELs Gehör hängen am selben Strang.
+
+`nc/audiotap.py::warum_kein_tap()` gibt jetzt `(an, grund, text)` zurück.
+Genannt wird bei mehreren Lücken die **zuerst behebbare**: ein abgeschalteter
+Schalter erklärt alles Weitere und ist in einer Sekunde umgelegt; eine
+fehlende URL ist ein Betriebsproblem; ein fehlendes Paket eine Installation.
+Nennte man das Paket zuerst, installiert der Betreiber etwas, das er gar nicht
+gebraucht hätte.
+
+Der Proxy ist bewusst **keine** Startbedingung: ohne ihn startet der Tap und
+stirbt gegebenenfalls an 403 — das diagnostiziert W46. Er wird nur als Zusatz
+gemeldet.
+
+Und die Meldung ohne Tap steht jetzt auf `warning` statt `info`. Ohne Tap gibt
+es kein Transkript und AZRAEL hört den gesendeten Stream nicht; in einem
+ERROR-Log erschien diese Zeile bisher **nie** — und genau so blieb der Zustand
+wochenlang unentdeckt.
+
 
 ---
 
