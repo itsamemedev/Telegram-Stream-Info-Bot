@@ -3143,9 +3143,22 @@ REACTION_API_KEY       = os.getenv("REACTION_API_KEY", "").strip()              
 # V37: nc.freeai konfigurieren — der EINZIGE Cloud-AI-Pfad (keyless).
 # FREEAI_BASES: Komma-Liste "url" oder "url|key"; Default Pollinations.
 _freeai_bases = [b for b in os.getenv("FREEAI_BASES", "").split(",") if b.strip()]
-if not _freeai_bases:
-    _freeai_bases = [REACTION_AI_BASE + ("/openai" if "pollinations" in REACTION_AI_BASE else "")
-                     + ("|" + REACTION_API_KEY if REACTION_API_KEY else "")]
+# v4.2-W67: Diese Liste hat bis hierhin den KATALOG ERSETZT — und sie war nie
+# leer, weil der Zweig darunter aus REACTION_AI_BASE bedingungslos eine Base
+# baute. Ergebnis in Produktion: EINE Base statt vier. Die Rotation, auf die
+# sich nc-ki-backends beruft, gab es nicht; sagte Pollinations „budget
+# exceeded“, war die Kette am Ende, weil es kein Ausweichziel gab. Genau das
+# stand im Moderator-Log, das W64 ausgeloest hat.
+#
+# Deshalb jetzt: nur ERSETZEN, wenn der Betreiber wirklich etwas anderes will.
+_freeai_wunsch = REACTION_AI_BASE + ("/openai" if "pollinations" in REACTION_AI_BASE else "")
+if not _freeai_bases and (REACTION_API_KEY
+                          or not _nc_freeai.katalog_kennt(_freeai_wunsch)):
+    # Eigener Endpunkt oder eigener Key: das ist eine bewusste Ansage und
+    # gilt exklusiv, wie bisher. Zeigt REACTION_AI_BASE dagegen auf eine
+    # Base, die ohnehin im Katalog steht, bleibt der Katalog stehen — die
+    # Reihenfolge macht danach sowieso die gemessene Latenz.
+    _freeai_bases = [_freeai_wunsch + ("|" + REACTION_API_KEY if REACTION_API_KEY else "")]
 _nc_freeai.configure(bases=_freeai_bases, model=REACTION_AI_MODEL,
                      timeout=REACTION_AI_TIMEOUT,
                      cooldown_s=_env_int("FREEAI_429_COOLDOWN_S", 90),

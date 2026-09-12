@@ -240,6 +240,22 @@ jobs:
           PYTHONUTF8: "1"
         run: python test_smoke.py
 
+      # v4.2-W67. CLAUDE.md warnt seit Langem: "Modul-Konstanten frieren .env
+      # ein" — geprüft hat es nichts, und der Bestand hat den Satz an der
+      # teuersten Stelle gebrochen. nc/freeai.py baute seine Basen-Liste beim
+      # Import, also VOR load_dotenv(), und damit haben POLLINATIONS_API_KEY
+      # und LLM7_TOKEN nie einen Request erreicht.
+      #
+      # Dieser Schritt steht hier und nicht bei den statischen Prüfungen,
+      # weil er den Bot WIRKLICH STARTEN muss: ein AST-Lauf sieht nur das
+      # wörtliche os.getenv auf Modul-Ebene und fand einen von fünf Fällen.
+      # Die anderen vier standen in einer Funktion, die auf Modul-Ebene
+      # aufgerufen wird — die Aufrufkette sieht man nur beim Ausführen.
+      - name: Keine .env-Lesung vor load_dotenv()
+        env:
+          PYTHONUTF8: "1"
+        run: python tools/importzeit.py --sperre
+
   secrets:
     name: Kein Geheimnis im Diff
     runs-on: ubuntu-latest

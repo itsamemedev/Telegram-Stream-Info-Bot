@@ -74,9 +74,22 @@ _CATALOG = [
 _MODEL = "openai"           # Wunschmodell des Bots (nur wenn Base es kennt)
 _TIMEOUT = 60.0
 _SESSION_GET = None          # async () -> aiohttp.ClientSession (gepoolt)
-_REFERRER = os.getenv("FREEAI_REFERRER", "nightcrawler").strip() or "nightcrawler"
+# v4.2-W67: NICHT beim Import lesen. nc/freeai wird ueber nc/news.py,
+# nc/marketing.py und nc/routes/ai.py schon in der Import-Reihe von bot.py
+# gezogen — rund 130 Zeilen BEVOR bot.py load_dotenv() aufruft. Ein
+# os.getenv() auf Modul-Ebene sieht die .env deshalb nicht und friert den
+# Default ein. Genau davor warnt CLAUDE.md: „Konfiguration als Funktion
+# lesen, nie als Modul-Konstante.“
+_REFERRER = None            # von configure() gesetzt; sonst zur Laufzeit
 _WARN = lambda topic, msg: None          # noqa: E731
 _TELEMETRY = lambda **kw: None           # noqa: E731
+
+
+def _referrer() -> str:
+    """Der Referer-Wert, zur Laufzeit gelesen. -> nie leer."""
+    if _REFERRER:
+        return _REFERRER
+    return os.getenv("FREEAI_REFERRER", "nightcrawler").strip() or "nightcrawler"
 
 # v4.2-W64: so viele Zeichen werden im Stream zurueckgehalten, bevor das
 # erste Stueck rausgeht. Die laengste Marke hat 30 Zeichen; 200 gibt genug
@@ -129,7 +142,24 @@ def _default_bases() -> List[dict]:
     return out
 
 
-_BASES: List[dict] = _default_bases()
+# v4.2-W67: ebenfalls leer beim Import. Vorher stand hier
+# `_BASES = _default_bases()` — und weil dieses Modul vor load_dotenv()
+# geladen wird, waren POLLINATIONS_API_KEY und LLM7_TOKEN aus der .env in
+# der Basen-Liste IMMER leer. Der Betreiber setzte die Keys, und kein
+# einziger Request hat je einen gesehen.
+_BASES: Optional[List[dict]] = None      # None = Katalog, zur Laufzeit gelesen
+
+
+def _basen() -> List[dict]:
+    """Die aktive Basen-Liste. -> immer mindestens der Katalog.
+
+    Wurde configure(bases=...) mit einer echten Liste gerufen, gilt die.
+    Sonst wird der Katalog bei JEDEM Aufruf frisch mit den Keys aus der
+    Umgebung bestueckt — das ist der Preis dafuer, dass eine .env, die erst
+    nach dem Import da ist, trotzdem ankommt. Vier dict-Kopien pro Anfrage,
+    die ohnehin ins Netz geht.
+    """
+    return _BASES if _BASES is not None else _default_bases()
 
 
 def configure(bases=None, model=None, timeout=None, session_getter=None,
@@ -180,6 +210,19 @@ def configure(bases=None, model=None, timeout=None, session_getter=None,
         _REFERRER = str(referrer).strip()
 
 
+def katalog_kennt(url: str) -> bool:
+    """Steht diese URL schon im eingebauten Katalog? -> bool
+
+    v4.2-W67. Der Aufrufer braucht das, um zu entscheiden, ob eine gesetzte
+    Wunsch-Base eine ERGAENZUNG ist (dann muss er sie durchreichen) oder nur
+    die Lieblings-Base aus dem Katalog (dann darf er die Liste NICHT darauf
+    zusammenstreichen — sonst gibt es keine Ausweichbase mehr, und genau das
+    war der Zustand: eine Base statt vier, Rotation als Attrappe).
+    """
+    u = (url or "").strip().rstrip("/")
+    return any(c["url"].rstrip("/") == u for c in _CATALOG)
+
+
 def bases_status() -> List[dict]:
     """Fuer Dashboards/Diagnose: Basen + Sperr-Status + letzter Fehler."""
     now = _time_mod.monotonic()
@@ -189,7 +232,7 @@ def bases_status() -> List[dict]:
                  "blocked_s": max(0, round(_base_block.get(b["url"], 0) - now)),
                  "avg_ms": round(_base_lat[b["url"]]) if b["url"] in _base_lat else None,
                  "last_error": _base_err.get(b["url"])}
-                for b in _BASES]
+                for b in _basen()]
 
 
 def last_errors() -> dict:
@@ -219,8 +262,9 @@ def _eligible_bases() -> List[dict]:
     Scheitern)."""
     now = _time_mod.monotonic()
     with _state_lock:
-        free = [b for b in _BASES if _base_block.get(b["url"], 0) <= now]
-        pool = free or list(_BASES)
+        alle = _basen()
+        free = [b for b in alle if _base_block.get(b["url"], 0) <= now]
+        pool = free or list(alle)
         return sorted(pool, key=lambda b: _base_lat.get(b["url"], 0.0))
 
 
@@ -317,7 +361,7 @@ def _payload(base: dict, messages, model, stream=False) -> dict:
             "messages": _convert_messages(messages),
             "stream": stream}
     if base.get("referrer"):
-        body["referrer"] = _REFERRER      # Pollinations akzeptiert es im Body
+        body["referrer"] = _referrer()    # Pollinations akzeptiert es im Body
     return body
 
 
@@ -327,8 +371,8 @@ def _headers(base: dict) -> dict:
     if base.get("key"):
         h["Authorization"] = "Bearer " + base["key"]
     if base.get("referrer"):
-        h["Referer"] = (_REFERRER if "://" in _REFERRER
-                        else f"https://{_REFERRER}.local/")
+        _r = _referrer()
+        h["Referer"] = (_r if "://" in _r else f"https://{_r}.local/")
     return h
 
 
@@ -751,7 +795,7 @@ def list_models_sync(timeout: float = 6.0) -> List[str]:
     # B120: Katalog-Fallback — das Dashboard darf nie eine leere Modell-
     # Auswahl zeigen, nur weil /models gerade nicht antwortet.
     seen, out = set(), []
-    for b in _BASES:
+    for b in _basen():
         for m in b.get("models") or []:
             if m not in seen:
                 seen.add(m)
