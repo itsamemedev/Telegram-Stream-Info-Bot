@@ -313,18 +313,16 @@ def build(source_url, ingest_url, stream_key, transcode=False, tts_fifo=None, ri
     # Vorher war das eins: eine fehlende Schriftdatei nahm den Avatar mit, und
     # die Drossel auf Stufe 3 ebenso. Gemeldet als "im Text-Modus brechen Chat
     # UND Avatar weg" — zwei Ursachen, ein Symptom.
-    sendebild_on = bool(transcode and RESTREAM_OVERLAY
-                        and not drossel_text_aus(drossel))
-    overlay_on = bool(sendebild_on and _font)
-    if transcode and RESTREAM_OVERLAY and not overlay_on and not drossel_text_aus(drossel):
-        # Der Nachsatz nennt die Abhilfe. "Font fehlt" allein schickte den
-        # Betreiber auf die Suche nach einer Datei, die er nicht anlegen will.
-        log.warning("RESTREAM_OVERLAY=1, aber keine Schrift gefunden (weder %s "
-                    "noch eine der %d Ersatzschriften) — Overlay übersprungen. "
-                    "Abhilfe: apt install fonts-dejavu-core, oder RESTREAM_FONT "
-                    "auf eine vorhandene .ttf setzen.",
-                    RESTREAM_FONT, len(FONT_KANDIDATEN))
-    elif transcode and RESTREAM_OVERLAY and _font and _font != RESTREAM_FONT:
+    # v4.2-W50: die Drossel gehoert an `overlay_on`, NICHT an `sendebild_on`.
+    #
+    # W49 hat sie hier oben gelassen und damit nur die halbe Entkopplung
+    # geliefert: der Avatar war frei von der SCHRIFT, hing aber weiter an der
+    # Drossel, weil er ueber sendebild_on ableitet. Changelog und PR
+    # behaupteten beides. Im Betrieb erreichte die Drossel Stufe 3 und der
+    # Avatar verschwand erneut — genau das gemeldete Bild.
+    sendebild_on = bool(transcode and RESTREAM_OVERLAY)
+    overlay_on = bool(sendebild_on and _font and not drossel_text_aus(drossel))
+    if transcode and RESTREAM_OVERLAY and _font and _font != RESTREAM_FONT:
         log.warning("RESTREAM_FONT (%s) fehlt — Overlay laeuft mit Ersatzschrift %s.",
                     RESTREAM_FONT, _font)
     # v4.2-W32: bewegter Avatar, wenn Schleife UND Alphamaske dastehen —
@@ -340,6 +338,41 @@ def build(source_url, ingest_url, stream_key, transcode=False, tts_fifo=None, ri
     feed_on = bool(sendebild_on and avatar_feed)
     avatar_on = bool(feed_on or anim_on or (sendebild_on and RESTREAM_AVATAR
                                             and os.path.isfile(RESTREAM_AVATAR)))
+    # v4.2-W50: EINE Zeile, die sagt, warum das Sendebild so aussieht, wie es
+    # aussieht.
+    #
+    # Bis hierher waren `overlay_on` und `avatar_on` stille Boolesche aus fuenf
+    # Bedingungen (transcode, Schalter, Drossel, Schrift, Avatar-Datei). Fiel
+    # eine davon um, stand NICHTS im Log — der Betreiber sah ein leeres
+    # Sendebild und musste raten. Genau das hat in W47 bis W49 drei Runden
+    # gekostet, und es ist dieselbe Luecke wie beim Audio-Tap vor W46: eine
+    # Bedingung, die stumm False wird, ist so schlimm wie ein except, das den
+    # Grund frisst (CLAUDE.md).
+    #
+    # Auf `warning` nur, wenn etwas FEHLT, das der Betreiber eingeschaltet hat
+    # — sonst auf `info`. Eine Warnung, die bei jedem gesunden Start kommt,
+    # erzieht dazu, sie zu ueberlesen.
+    if transcode and RESTREAM_OVERLAY:
+        _gruende = []
+        if drossel_text_aus(drossel):
+            _gruende.append("Text aus (Drossel Stufe %d — CPU-Rueckstand)" % drossel)
+        if not _font:
+            _gruende.append("keine Schrift gefunden (weder %s noch eine der %d "
+                            "Ersatzschriften; apt install fonts-dejavu-core)"
+                            % (RESTREAM_FONT, len(FONT_KANDIDATEN)))
+        if not avatar_on:
+            _gruende.append("kein Avatar (RESTREAM_AVATAR=%r liegt nicht im "
+                            "Arbeitsverzeichnis des Dienstes)" % (RESTREAM_AVATAR,))
+        if _gruende:
+            log.warning("Sendebild #%s: Text=%s Avatar=%s — %s",
+                        rid, "an" if overlay_on else "AUS",
+                        "an" if avatar_on else "AUS", "; ".join(_gruende))
+        else:
+            log.info("Sendebild #%s: Text an, Avatar an (Schrift %s)", rid, _font)
+    elif RESTREAM_OVERLAY and not transcode:
+        log.warning("Sendebild #%s: RESTREAM_OVERLAY=1, aber copy-Modus — im "
+                    "Copy-Modus gibt es keine Filter und damit kein Overlay.", rid)
+
     _idx = 1
     tts_idx = avatar_idx = avatar_alpha_idx = None
     if use_tts:
