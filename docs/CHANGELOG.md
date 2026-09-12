@@ -11,6 +11,66 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Hinzugefügt — AZRAEL bekommt eine dritte Haltung (v4.2 W62)
+
+Offen seit dem Layout-Umbau in W54: **„Der Avatar braucht idle/afk
+Animationen."**
+
+Der Feeder entschied bis hierher mit einer Zeile — `jetzt = _azrael_spricht()`
+— und hatte damit genau zwei Zustände. Über Stunden ohne Chat spielte die
+Figur dieselben drei Sekunden. Das liest sich im Sendebild als Standbild, und
+ein Standbild sieht genauso aus wie ein abgestürzter Restream: der Zuschauer
+kann nicht unterscheiden, ob nichts passiert oder nichts mehr geht.
+
+**Die Entscheidung liegt jetzt in `nc/avatarloop.py`** — reine Funktionen,
+kein Zustand, keine Uhr, kein Import aus `bot.py`. Dieselbe Bauart wie
+`nc/livefolge.py` (W51) und `nc/audiotap.py` (W55), und aus demselben Grund:
+was im Writer-Thread hinter einer FIFO entschieden wird, lässt sich nicht
+prüfen, ohne ffmpeg zu starten.
+
+| Zustand | wann |
+|---|---|
+| `sprich` | AZRAEL sagt gerade etwas — schlägt alles andere |
+| `ruhe` | wie bisher |
+| `afk` | 90 s ohne Chat und ohne AZRAEL (`RESTREAM_AVATAR_AFK_S`, 0 schaltet ab) |
+
+**AFK ist eine Haltung, kein langsameres Zappeln.** Der erste Entwurf
+halbierte bloß die Ruhe-Amplituden — bei ein bis zwei Grad Ausschlag war das
+Ergebnis von der Ruheschleife nicht zu unterscheiden. Der Unterschied steckt
+im festen Versatz: Kinn auf die Brust (+5 px), Klingenspitze gesenkt (−4°),
+Glut heruntergefahren. Daran erkennt man die Abwesenheit auch im Standbild.
+Still stehen darf sie trotzdem nicht — siehe oben.
+
+**Das Blinzeln musste zweimal gebaut werden.** Erst nahm es nur die
+Augenglut weg. Gemessen am gerenderten Bild fiel der Augenkasten dabei von
+63 auf 55 — 13 Prozent, weil die Vorlage schon leuchtende Augen hat und die
+Glut per `screen` obendrauf kommt. Das ist ein Flackern, kein Lidschlag. Jetzt
+dunkelt ein eigenes Lid die Augenhöhle zusätzlich ab: derselbe Kasten fällt
+auf 9,3, also um 85 Prozent. Das Lid wird **zuletzt** gezeichnet — davor
+gesetzt leuchtet die Glut hindurch.
+
+Gerechnet wird das Blinzeln als hohe Potenz des angehobenen Kosinus, nicht
+über `t % periode`: der Naht-Vertrag aus W53 vergleicht `bewegung(t)` mit
+`bewegung(t + Schleifenlänge)` auf 1e-9 genau, und ein Modulo liefert dort
+Gleitkomma-Reste. So ist es exakt periodisch und trotzdem spitz genug.
+
+**Zwei Fallen, die der dritte Zustand aufmacht:**
+
+- **Der Feeder-Start muss als Aktivität zählen.** Sonst stünde die Figur beim
+  Stream-Beginn sofort in AFK — dann hat noch niemand geschrieben, und das
+  Sendebild ginge mit einem schlafenden Avatar auf Sendung.
+- **Die `afk.webm` fehlt in jedem Bestand**, der `tools/azrael_frames.py`
+  seit W62 nicht neu laufen ließ. Fehlt sie, läuft die Ruheschleife weiter
+  *und es steht im Log*, mit dem Befehl zum Erzeugen daneben. Vorher standen
+  zwei stille Rückfälle (Datei fehlt / Größe passt nicht) in einem Ausdruck;
+  beide sahen im Sendebild identisch aus und keiner stand im Log.
+
+`bewegung(t, spricht)` heißt jetzt `bewegung(t, zust)`. Der Boolesche wäre
+still weitergelaufen: `True` ist kein bekannter Zustand, fiele also in den
+Ruhe-Zweig — und der W53-Vertrag hätte die Sprechschleife gegen die Ruhewerte
+geprüft. Er deckt jetzt alle drei Schleifen ab, inklusive der Rangfolge
+`0 < AFK ≤ Ruhe < Sprechen`. Zwanzig Mutationsproben, alle feuern.
+
 ### Geändert — wenn doch etwas weichen muss, dann der Avatar (v4.2 W61)
 
 Die Antwort des Betreibers auf W60: **„Ja aber wenn dann sollte doch der

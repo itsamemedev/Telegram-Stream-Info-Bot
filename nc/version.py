@@ -34,6 +34,7 @@ CHANGELOG = [
         # der Release-Workflow verschiebt beim zweiten Lauf den Tag NICHT, das
         # Archiv haette sonst nicht mehr zu seiner Marke gepasst.
         "highlights": [
+            "AZRAEL hat eine dritte Haltung: bleibt der Chat anderthalb Minuten still, senkt er Kinn und Klingenspitze, dimmt die Glut und blinzelt alle drei Sekunden. Vorher kannte er genau zwei Bilder von sich — reden oder dieselben drei Sekunden, stundenlang, und das sieht im Sendebild aus wie ein abgestürzter Restream",
             "Muss die Notbremse doch etwas aus dem Bild nehmen, dann den Avatar — nie das Panel: der Chat läuft weiter, AZRAELs Antwort steht weiter im Wortlaut da und seine Stimme bleibt hörbar. Weg ist nur das Gesicht dazu. Gemessen bringt der Schritt 14 Prozentpunkte, die Leinwandverkleinerung davor null — deshalb steht der Avatar jetzt vor ihr",
             "Aus dem Sendebild fällt nichts mehr heraus: die Notbremse gegen Encode-Rückstand warf ab ihrer dritten Stufe das komplette Panel weg — Chat, Titel, Quelle — und behielt ausgerechnet den Avatar, der gemessen mehr kostet als sämtliche Texte zusammen. Sie regelt jetzt nur noch Preset, Bitrate, Bildrate und Leinwandgröße",
             "AZRAEL antwortet wieder auf jeder Plattform: alle drei Chats teilten sich EINEN Antwort-Cooldown, eine Frage auf Kick verschluckte damit die Fragen auf Twitch und YouTube für zwanzig Sekunden — stumm, ohne Log",

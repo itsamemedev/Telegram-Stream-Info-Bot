@@ -8420,6 +8420,210 @@ def _test_v42_w61_avatar_faellt_vor_dem_panel():
     ok("W61: die Waechter-Zeile nennt den Verlust und das, was steht")
 
 
+def _test_v42_w62_avatar_afk_zustand():
+    """v4.2-W62: AZRAEL kannte zwei Bilder von sich. Der dritte fehlte.
+
+    Gemeldet zusammen mit dem Layout-Umbau: „Der Avatar braucht idle/afk
+    Animationen." Der Feeder entschied bis hierher mit einer Zeile —
+    `jetzt = _azrael_spricht()` — und hatte damit genau zwei Zustaende. Ueber
+    Stunden ohne Chat spielte die Figur dieselben drei Sekunden, und das liest
+    sich im Sendebild als Standbild. Ein Standbild sieht aber genauso aus wie
+    ein abgestuerzter Restream: der Zuschauer kann nicht unterscheiden, ob
+    nichts passiert oder nichts mehr geht.
+
+    Geprueft werden die drei Stellen, an denen das schiefgehen kann:
+
+      1. Die Entscheidung selbst (nc/avatarloop.py, reine Funktionen).
+      2. Der Bezugspunkt: ohne den Feeder-Start in der Ruhezeit stuende die
+         Figur beim Stream-Beginn sofort in AFK.
+      3. Der Rueckfall: die AFK-Schleife FEHLT in jedem Bestand, der den
+         Generator seit W62 nicht laufen liess. Fehlt sie, muss Ruhe
+         weiterlaufen — und es muss im Log stehen.
+    """
+    import os as _os
+    from nc import avatarloop as L
+    import tools.azrael_frames as A
+
+    # --- 1) Sprechen schlaegt alles -------------------------------------
+    # Sagt AZRAEL gerade etwas, ist er nicht abwesend — egal wie lange der
+    # Chat davor still war. Ohne diesen Vorrang antwortete eine schlafende
+    # Figur mit geschlossenen Augen.
+    for ruhe_s in (0.0, 10.0, 89.9, 90.0, 1e6):
+        assert L.zustand(True, ruhe_s) == L.SPRICH, ruhe_s
+    ok("W62: Sprechen gewinnt gegen jede Ruhezeit")
+
+    # --- 2) Die Schwelle liegt, wo sie liegt ----------------------------
+    assert L.zustand(False, 0.0) == L.RUHE
+    assert L.zustand(False, L.AFK_NACH_S - 0.01) == L.RUHE
+    assert L.zustand(False, L.AFK_NACH_S) == L.AFK, \
+        "genau auf der Schwelle passiert nichts — dann ist sie unerreichbar"
+    assert L.zustand(False, L.AFK_NACH_S * 10) == L.AFK
+    # Eigene Schwelle, und die 0 als Ausschalter. Ohne den Ausschalter waere
+    # der Rueckweg auf das Verhalten vor W62 ein Codeeingriff.
+    assert L.zustand(False, 5.0, afk_nach_s=4.0) == L.AFK
+    assert L.zustand(False, 5.0, afk_nach_s=6.0) == L.RUHE
+    for aus in (0, 0.0, -1):
+        assert L.zustand(False, 1e9, afk_nach_s=aus) == L.RUHE, \
+            f"afk_nach_s={aus} schaltet AFK nicht ab"
+    ok("W62: die AFK-Schwelle greift genau ab ihrem Wert und ist abschaltbar")
+
+    # --- 3) Der Feeder-Start zaehlt als Aktivitaet ----------------------
+    # DAS IST DIE STELLE, DIE DEN STREAM-BEGINN RETTET. Beim Start hat noch
+    # niemand geschrieben; ohne den Startstempel waere die juengste Aktivitaet
+    # "nie" und die Figur ginge mit geschlossenen Augen auf Sendung.
+    jetzt = 1_000_000.0
+    assert L.ruhe_seit(jetzt, None, 0.0, jetzt) == 0.0, \
+        "der Feeder-Start zaehlt nicht — die Figur startet in AFK"
+    assert L.zustand(False, L.ruhe_seit(jetzt, None, 0.0, jetzt)) == L.RUHE
+    # Gar nichts bekannt = gerade eben, nicht seit jeher.
+    assert L.ruhe_seit(jetzt) == 0.0
+    assert L.ruhe_seit(jetzt, None, 0.0, None) == 0.0
+    # Die juengste Quelle gewinnt, egal in welcher Reihenfolge sie kommt.
+    assert L.ruhe_seit(jetzt, jetzt - 500, jetzt - 30) == 30.0
+    assert L.ruhe_seit(jetzt, jetzt - 30, jetzt - 500) == 30.0
+    # Eine vorlaufende Uhr darf keine negative Ruhezeit liefern.
+    assert L.ruhe_seit(jetzt, jetzt + 5) == 0.0
+    ok("W62: die Ruhezeit zaehlt ab der juengsten Quelle und wird nie negativ")
+
+    # --- 4) Fehlt eine Schleife, laeuft Ruhe weiter ---------------------
+    # Jeder Bestand von vor W62 hat keine afk.webm. Ohne den Rueckfall
+    # bekaeme der Writer None und schriebe nichts mehr in die FIFO — ffmpeg
+    # stallt daran, und mit ihm der ganze Restream.
+    voll = {L.RUHE: ["r"], L.SPRICH: ["s"], L.AFK: ["a"]}
+    for z in L.ZUSTAENDE:
+        assert L.schleife(z, voll) == (voll[z], z)
+    ohne = {L.RUHE: ["r"]}
+    for z in (L.SPRICH, L.AFK):
+        assert L.schleife(z, ohne) == (["r"], L.RUHE), \
+            f"{z} faellt nicht auf Ruhe zurueck — der Writer bekaeme None"
+    # Zurueck kommt IMMER auch, was wirklich gespielt wird. Nur so kann der
+    # Aufrufer melden, dass etwas fehlt, statt stumm etwas anderes zu zeigen.
+    assert L.schleife(L.AFK, ohne)[1] == L.RUHE
+    assert L.schleife(L.AFK, {}) == (None, L.RUHE)
+    ok("W62: eine fehlende Schleife faellt auf Ruhe zurueck und sagt es")
+
+    # --- 5) Das Blinzeln ist exakt periodisch ---------------------------
+    # Mit `t % periode` gerechnet kippt der Naht-Vertrag aus W53 an einer
+    # Stelle, an der die Bewegung in Ordnung ist — Gleitkomma-Reste.
+    for t in (0.0, 0.37, 1.4, 2.9):
+        assert abs(L.blinzeln(t, 3.0) - L.blinzeln(t + 3.0, 3.0)) < 1e-12
+        assert abs(L.blinzeln(t, 3.0) - L.blinzeln(t + 6.0, 3.0)) < 1e-12
+    # Bei t=0 muss das Auge OFFEN sein: sonst blinzelt die Figur genau im
+    # Moment des Umschaltens auf AFK.
+    assert L.blinzeln(0.0, 3.0) < 1e-6, "die Schleife beginnt mit zugefallenem Auge"
+    # Und es muss ein Blinzeln sein, kein langsames Verdunkeln: der Abzug
+    # steht nur einen Bruchteil der Periode ueber der Haelfte.
+    n = 600
+    zu = sum(1 for i in range(n) if L.blinzeln(i * 3.0 / n, 3.0) > 15.0)
+    assert 0 < zu / n < 0.15, \
+        f"das Auge ist {100 * zu / n:.0f} %% der Zeit zu — das ist kein Blinzeln"
+    ok("W62: das Blinzeln ist exakt periodisch, kurz, und beginnt offen")
+
+    # --- 6) AFK ist eine HALTUNG, nicht nur langsamer -------------------
+    # Der erste Entwurf halbierte bloss die Ruhe-Amplituden. Bei ein bis zwei
+    # Grad Ausschlag war das Ergebnis von der Ruheschleife nicht zu
+    # unterscheiden. Erkennbar wird die Abwesenheit am festen Versatz.
+    def mittel(zust, laenge, glied, n=120):
+        return sum(A.bewegung(i * laenge / n, zust)[glied] for i in range(n)) / n
+    kopf_ruhe = mittel(A.RUHE, A.RUHE_S, "kopf_hoch")
+    kopf_afk = mittel(A.AFK, A.AFK_S, "kopf_hoch")
+    assert kopf_afk - kopf_ruhe > 3.0, (
+        f"das Kinn sinkt in AFK nur um {kopf_afk - kopf_ruhe:.1f} px gegenueber "
+        f"Ruhe — im Standbild sieht man keinen Unterschied")
+    kl_ruhe = mittel(A.RUHE, A.RUHE_S, "klinge_grad")
+    kl_afk = mittel(A.AFK, A.AFK_S, "klinge_grad")
+    assert kl_ruhe - kl_afk > 2.0, (
+        f"die Klingenspitze faellt in AFK nur um {kl_ruhe - kl_afk:.1f} Grad")
+    # Augen und Aura heruntergefahren — aber nie ganz aus. Eine schwarze
+    # Figur ohne Glut liest sich als Bildfehler.
+    for glied, n in (("augen", 240), ("aura", 240)):
+        r = max(A.bewegung(i * A.RUHE_S / n, A.RUHE)[glied] for i in range(n))
+        a = max(A.bewegung(i * A.AFK_S / n, A.AFK)[glied] for i in range(n))
+        tief = min(A.bewegung(i * A.AFK_S / n, A.AFK)[glied] for i in range(n))
+        assert 0 < a < r, f"{glied}: AFK {a:.2f} nicht gedaempft gegen Ruhe {r:.2f}"
+        assert tief > 0, f"{glied} faellt in AFK auf {tief:.2f} — das ist ein Loch"
+    # Der Mund bleibt zu. Ein sprechender AFK-Avatar waere ein Widerspruch.
+    assert all(A.bewegung(i * A.AFK_S / 120, A.AFK)["mund_auf"] == 0.0
+               for i in range(120))
+    ok("W62: AFK senkt Kinn und Klinge, daempft Glut und haelt den Mund zu")
+
+    # --- 6b) Das Lid faellt wirklich zu ---------------------------------
+    # GEMESSEN, WARUM ES DAS BRAUCHT: nur die Glut wegzunehmen liess den
+    # Augenkasten im gerenderten Bild von 63 auf 55 fallen — 13 Prozent. Das
+    # ist kein Blinzeln, das ist ein Flackern. Mit dem Lid faellt derselbe
+    # Kasten auf 9,3, also um 85 Prozent. Gerechnet wird das hier nicht
+    # nach: Pillow steht bewusst in keiner requirements-Datei und fehlt in
+    # der CI. Geprueft wird stattdessen, dass es das Lid GIBT, dass es nur
+    # in AFK faellt, und dass es an der richtigen Stelle gezeichnet wird.
+    for zust, laenge in ((A.RUHE, A.RUHE_S), (A.SPRICH, A.SPRECH_S)):
+        assert all(A.bewegung(i * laenge / 60, zust)["lid"] == 0.0
+                   for i in range(60)), f"in {zust} faellt ein Lid"
+    lids = [A.bewegung(i * A.AFK_S / 240, A.AFK)["lid"] for i in range(240)]
+    assert max(lids) > 0.95, f"das Lid faellt nur bis {max(lids):.2f} — halb zu"
+    assert min(lids) < 0.01, "das Lid geht nie ganz auf"
+    assert A.bewegung(0.0, A.AFK)["lid"] < 1e-6, \
+        "die AFK-Schleife beginnt mit geschlossenem Auge"
+    # Lid und Glut gehoeren zum SELBEN Lidschlag: dunkelstes Auge und
+    # tiefstes Lid muessen im selben Moment liegen. Zwei getrennte Rechnungen
+    # ergaeben ein Auge, das erlischt, waehrend das Lid noch offen ist.
+    _t_lid = max(range(240), key=lambda i: lids[i])
+    _t_glut = min(range(240),
+                  key=lambda i: A.bewegung(i * A.AFK_S / 240, A.AFK)["augen"])
+    assert abs(_t_lid - _t_glut) <= 2, \
+        f"Lid faellt bei Frame {_t_lid}, die Glut geht bei {_t_glut} aus"
+    # Und die Zeichenreihenfolge: das Lid ZULETZT. Davor gesetzt leuchtet die
+    # Glut durch das geschlossene Lid wieder hindurch — beim Bauen passiert.
+    quelle_f = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)),
+                             "tools", "azrael_frames.py")
+    ftxt = open(quelle_f, encoding="utf-8").read()
+    i_frame = ftxt.index("def frame(")
+    rumpf = ftxt[i_frame:]
+    assert rumpf.index('lid = b.get("lid"') > rumpf.index("aug.point(lambda v: v // 4)"), \
+        "das Lid wird VOR der Augenglut gezeichnet — dann leuchtet sie hindurch"
+    ok("W62: das Lid faellt nur in AFK, ganz, im Takt der Glut und zuletzt")
+
+    # --- 7) Generator und Zustandsautomat kennen dieselben Schleifen ----
+    # ZWEI LISTEN WAEREN ZWEI WAHRHEITEN. Der Generator schreibt Dateien nach
+    # diesen Namen, der Feeder sucht sie danach — eine Abweichung faellt erst
+    # im Sendebild auf, als stiller Rueckfall auf Ruhe.
+    assert tuple(n for n, _ in A.SCHLEIFEN) == tuple(L.ZUSTAENDE), \
+        f"{[n for n, _ in A.SCHLEIFEN]} vs {list(L.ZUSTAENDE)}"
+    assert len(set(L.ZUSTAENDE)) == len(L.ZUSTAENDE), "doppelter Zustand"
+    # Und jeder Zustand, den die Entscheidung liefern KANN, hat eine Schleife.
+    erreichbar = {L.zustand(sp, r, a)
+                  for sp in (True, False) for r in (0.0, 1e6) for a in (0, 90.0)}
+    assert erreichbar <= set(n for n, _ in A.SCHLEIFEN), \
+        f"die Entscheidung kann {erreichbar} liefern, gebaut wird nur " \
+        f"{[n for n, _ in A.SCHLEIFEN]}"
+    assert erreichbar == set(L.ZUSTAENDE), \
+        f"ein Zustand ist unerreichbar: {set(L.ZUSTAENDE) - erreichbar}"
+    ok("W62: jeder erreichbare Zustand hat eine Schleife, und keine zu viel")
+
+    # --- 8) Der Feeder benutzt das alles auch --------------------------
+    # Die schoenste reine Funktion nuetzt nichts, wenn der Writer weiter
+    # seinen Booleschen liest.
+    hier = _os.path.dirname(_os.path.abspath(__file__))
+    bot = open(_os.path.join(hier, "bot.py"), encoding="utf-8").read()
+    flach = " ".join(bot.split())
+    assert "sprich_bilder if sprach else ruhe_bilder" not in flach, \
+        "der Writer waehlt weiter zwischen genau zwei Schleifen"
+    assert "soll = _nc_avloop.zustand(" in flach, \
+        "der Writer fragt den Zustandsautomaten nicht"
+    assert "bilder, echt = _nc_avloop.schleife(soll, vorrat)" in flach, \
+        "der Writer holt die Frames nicht ueber den Rueckfall"
+    # Der Startstempel MUSS in die Ruhezeit — sonst startet die Figur in AFK.
+    i = flach.find("soll = _nc_avloop.zustand(")
+    assert "begonnen)" in flach[i:i + 400], \
+        "der Feeder-Start steht nicht in der Ruhezeit — die Figur startet in AFK"
+    assert "begonnen = _time_mod.time()" in flach, "kein Startstempel"
+    # Und die Schwelle kommt aus der .env, nicht als Zahl im Quelltext.
+    assert "RESTREAM_AVATAR_AFK_S" in flach[i:i + 400], \
+        "die Schwelle steht nicht als .env-Wert in der Entscheidung"
+    assert 'RESTREAM_AVATAR_AFK = os.getenv("RESTREAM_AVATAR_AFK"' in flach, \
+        "der Pfad zur AFK-Schleife ist nicht einstellbar"
+    ok("W62: der Feeder entscheidet ueber nc.avatarloop, mit Startstempel")
+
+
 def _test_v42_w60_azrael_cooldown_je_plattform():
     """v4.2-W60: ein Cooldown fuer drei Chats verschluckte zwei davon.
 
@@ -8873,53 +9077,73 @@ def _test_v42_w53_avatar_kopf_hand_schwert():
     """
     import tools.azrael_frames as A
 
+    # ANKER GEWANDERT (v4.2-W62, nicht der Vertrag): bewegung() bekommt einen
+    # ZUSTAND statt eines Booleschen, und es sind drei statt zwei. Die vier
+    # Eigenschaften unten gelten unveraendert — nur eben fuer alle drei
+    # Schleifen. Der Bool haette hier still weitergelaufen: True ist kein
+    # bekannter Zustand, faellt also in den Ruhe-Zweig, und der Vertrag
+    # haette die Sprechschleife gegen die Ruhewerte geprueft.
+    GLIEDER = ("kopf_grad", "kopf_hoch", "arm_grad", "klinge_grad", "hand_grad")
+
+    def proben(zust, laenge, n=60):
+        return [A.bewegung(i * laenge / n, zust) for i in range(n)]
+
+    def spanne(pr, glied):
+        return max(p[glied] for p in pr) - min(p[glied] for p in pr)
+
     # --- 1) Alle drei Glieder bewegen sich ueberhaupt --------------------
     # Ohne diesen Test waere ein Rig, das versehentlich auf 0 steht, unsichtbar:
     # das Bild sieht dann einfach aus wie vorher.
-    for spricht, laenge in ((False, A.RUHE_S), (True, A.SPRECH_S)):
-        proben = [A.bewegung(i * laenge / 60.0, spricht) for i in range(60)]
-        for glied in ("kopf_grad", "kopf_hoch", "arm_grad", "klinge_grad", "hand_grad"):
-            spanne = max(p[glied] for p in proben) - min(p[glied] for p in proben)
-            assert spanne > 0.5, (
-                f"{glied} bewegt sich {'beim Sprechen' if spricht else 'in Ruhe'} "
-                f"nur um {spanne:.2f} — das sieht niemand")
-    ok("W53: Kopf, Arm, Klinge und Hand bewegen sich in BEIDEN Schleifen")
+    for zust, laenge in A.SCHLEIFEN:
+        pr = proben(zust, laenge)
+        for glied in GLIEDER:
+            assert spanne(pr, glied) > 0.5, (
+                f"{glied} bewegt sich in der {zust}-Schleife nur um "
+                f"{spanne(pr, glied):.2f} — das sieht niemand")
+    ok("W62: Kopf, Arm, Klinge und Hand bewegen sich in ALLEN DREI Schleifen")
 
     # --- 2) Die Schleife schliesst sich ---------------------------------
     # Das ist Fehler (1). Gilt bewegung(t) == bewegung(t + L) fuer beliebige t,
     # dann teilt JEDE Periode die Schleifenlaenge ganzzahlig — und nur dann.
-    for spricht, laenge in ((False, A.RUHE_S), (True, A.SPRECH_S)):
+    for zust, laenge in A.SCHLEIFEN:
         for i in range(17):
             t = i * laenge / 17.0
-            a, b = A.bewegung(t, spricht), A.bewegung(t + laenge, spricht)
+            a, b = A.bewegung(t, zust), A.bewegung(t + laenge, zust)
             for k in a:
                 assert abs(a[k] - b[k]) < 1e-9, (
-                    f"{k} steht am Nahtpunkt anders da ({a[k]:.4f} vs {b[k]:.4f}): "
-                    f"seine Periode teilt {laenge}s nicht ganzzahlig — das Glied "
-                    f"zuckt einmal pro Schleifendurchlauf")
-    ok("W53: beide Schleifen schliessen sich — keine Periode bricht die Naht")
+                    f"{k} steht in der {zust}-Schleife am Nahtpunkt anders da "
+                    f"({a[k]:.4f} vs {b[k]:.4f}): seine Periode teilt {laenge}s "
+                    f"nicht ganzzahlig — das Glied zuckt einmal pro Durchlauf")
+    ok("W62: alle drei Schleifen schliessen sich — keine Periode bricht die Naht")
 
     # --- 3) Der Kopf bekommt am wenigsten -------------------------------
     # Er ist das groesste Glied: ein Grad am Hals sind an der Kapuzenspitze
     # zehn Pixel. Was am Arm lebendig aussieht, ist am Kopf ein Wackelkopf.
-    for spricht in (False, True):
-        laenge = A.SPRECH_S if spricht else A.RUHE_S
-        proben = [A.bewegung(i * laenge / 60.0, spricht) for i in range(60)]
-        kopf = max(abs(p["kopf_grad"]) for p in proben)
-        klinge = max(abs(p["klinge_grad"]) for p in proben)
-        assert kopf <= klinge, \
-            f"der Kopf schlaegt weiter aus als die Klinge ({kopf:.1f} vs " \
-            f"{klinge:.1f} Grad) — das ist ein Wackelkopf"
-    ok("W53: der Kopf schlaegt nie weiter aus als die Klinge")
+    #
+    # Auf die SPANNE gerechnet, nicht auf max|.|: die AFK-Klinge traegt einen
+    # festen Versatz von -4 Grad (gesenkte Spitze), und ein Betragsmaximum
+    # vergliche dort Haltung mit Bewegung.
+    for zust, laenge in A.SCHLEIFEN:
+        pr = proben(zust, laenge)
+        assert spanne(pr, "kopf_grad") <= spanne(pr, "klinge_grad"), (
+            f"in der {zust}-Schleife schlaegt der Kopf weiter aus als die "
+            f"Klinge ({spanne(pr, 'kopf_grad'):.1f} vs "
+            f"{spanne(pr, 'klinge_grad'):.1f} Grad) — das ist ein Wackelkopf")
+    ok("W62: der Kopf schlaegt in keiner Schleife weiter aus als die Klinge")
 
-    # --- 4) In Ruhe kleiner als beim Sprechen, aber nie still ------------
-    # Ein Glied, das in Ruhe exakt stillsteht, faellt beim Umschalten auf die
-    # Sprechschleife ruckartig an.
+    # --- 4) Ruhig, ruhiger, am ruhigsten — aber nirgends still -----------
+    # Ein Glied, das in einer Schleife exakt stillsteht, faellt beim
+    # Umschalten ruckartig an. Und die Rangfolge muss stimmen: AFK ist
+    # ruhiger als Ruhe, Ruhe ruhiger als Sprechen. Ohne diesen Vergleich
+    # koennte die AFK-Schleife heftiger zappeln als die aktive, und niemand
+    # merkt es ausser dem Zuschauer.
     for glied in ("kopf_grad", "arm_grad", "klinge_grad", "hand_grad"):
-        r = max(abs(A.bewegung(i * A.RUHE_S / 60.0, False)[glied]) for i in range(60))
-        sp = max(abs(A.bewegung(i * A.SPRECH_S / 60.0, True)[glied]) for i in range(60))
-        assert 0.3 < r < sp, f"{glied}: Ruhe {r:.2f}, Sprechen {sp:.2f}"
-    ok("W53: in Ruhe gedaempft, beim Sprechen groesser — und nirgends Null")
+        a_, r_, s_ = (spanne(proben(z, L), glied) for z, L in
+                      ((A.AFK, A.AFK_S), (A.RUHE, A.RUHE_S), (A.SPRICH, A.SPRECH_S)))
+        assert 0.5 < a_ <= r_ < s_, (
+            f"{glied}: AFK {a_:.2f}, Ruhe {r_:.2f}, Sprechen {s_:.2f} — "
+            f"erwartet ist 0 < AFK <= Ruhe < Sprechen")
+    ok("W62: AFK ruhiger als Ruhe, Ruhe ruhiger als Sprechen, nirgends Null")
 
     # --- 5) Die Drehpunkte liegen dort, wo das Gelenk ist ----------------
     # Der Griff MUSS in der Faust liegen: dreht die Klinge um den Unterarm,
@@ -9408,6 +9632,7 @@ def main():
     _test_v42_w56_sitzungen_haben_eine_oberflaeche()
     _test_v42_w57_verwarnung_auf_allen_plattformen()
     _test_v42_w61_avatar_faellt_vor_dem_panel()
+    _test_v42_w62_avatar_afk_zustand()
     _test_v42_w60_azrael_cooldown_je_plattform()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)

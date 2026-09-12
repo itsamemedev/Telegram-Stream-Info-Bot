@@ -4849,12 +4849,27 @@ def test_v42_w34_azrael_feeder():
     # --- 2) Writer: fester Takt, sauberes Ende, Wechsel am Schleifenanfang --
     j = src.find("def _restream_avatar_feeder_start(")
     assert j > 0, "Feeder fehlt"
-    feeder = src[j:j + 4200]
+    # ANKER GEWANDERT (v4.2-W62, nicht der Vertrag): das feste Fenster
+    # src[j:j + 4200] reichte nicht mehr ueber die gewachsene Funktion und
+    # meldete "kein fester Takt", waehrend stop.wait(takt) zwei Zeilen
+    # dahinter stand. Genau der Fall, vor dem CLAUDE.md warnt. Das Fenster
+    # endet jetzt an der NAECHSTEN Top-Level-Definition statt nach einer
+    # geratenen Zeichenzahl — damit waechst es mit.
+    _ende = src.find("\ndef ", j + 1)
+    feeder = src[j:_ende if _ende > 0 else len(src)]
     assert "stop.wait(takt)" in feeder, \
         "kein fester Takt — ein stehender Overlay-Input stallt den ganzen ffmpeg"
     assert "BrokenPipeError" in feeder, "Writer endet nicht, wenn ffmpeg weg ist"
-    assert "sprach, i = jetzt, 0" in feeder, \
+    # ANKER GEWANDERT (v4.2-W62): der Writer kennt drei Zustaende statt eines
+    # Booleschen, das Umschalten heisst deshalb "zust, i = echt, 0". Die
+    # Eigenschaft ist dieselbe — der Bildzaehler faellt beim Wechsel auf 0
+    # zurueck, sonst setzt die neue Schleife mitten in der Bewegung ein.
+    assert "zust, i = echt, 0" in feeder, \
         "Umschalten mitten in der Bewegung — der Kiefer springt"
+    # v4.2-W62: und es sind wirklich drei. Ohne diese Zusicherung faellt ein
+    # spaeterer Rueckbau auf zwei Schleifen hier nicht auf.
+    assert "_nc_avloop.zustand(" in feeder and "_nc_avloop.schleife(" in feeder, \
+        "der Writer entscheidet nicht ueber nc.avatarloop"
     assert "threading.Thread" in feeder and "daemon=True" in feeder, \
         "Writer nicht im eigenen Thread — open() auf eine FIFO blockt"
 

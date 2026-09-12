@@ -603,6 +603,7 @@ from nc import audiotap as _nc_audiotap  # v4.2-W46: warum der Audio-Tap starb
 from nc import aufnahmesitzung as _nc_sitzung  # v4.2-W44: die Klammer um die Segmente EINES Streams
 from nc import chatfolge as _nc_chatfolge  # v4.2-W47: wie oft der TikTok-Chat neu darf
 from nc import memeklip as _nc_memeklip  # v4.2-W24: erkennt meme-wuerdige Chat-Momente
+from nc import avatarloop as _nc_avloop  # v4.2-W62: welche Avatar-Schleife jetzt
 from nc import livefolge as _nc_live  # v4.2-W20: was aus einem Live-Signal folgt
 from nc import azraelstate as _nc_azrael  # v4.1-W19: AZRAELs Laufzeitzustand (geteilt)
 from nc import whispercfg as _nc_whisper  # v4.1-W19: Whisper-Modell als Register
@@ -1216,6 +1217,23 @@ RESTREAM_AVATAR_H     = _env_int("RESTREAM_AVATAR_H", 420)
 # dem tools/azrael_frames.py die Schleifen gebaut hat (dort FPS), sonst laeuft
 # die Figur zu schnell oder zu langsam.
 RESTREAM_AVATAR_TALK  = os.getenv("RESTREAM_AVATAR_TALK", "assets/azrael/sprich.webm").strip()
+# v4.2-W62: die dritte Schleife. Ohne sie kannte AZRAEL genau zwei Bilder von
+# sich — er redet, oder er spielt dieselben drei Sekunden. Ueber Stunden liest
+# sich das als Standbild, und ein Standbild sieht im Sendebild genauso aus wie
+# ein abgestuerzter Restream. FEHLT die Datei, faellt der Feeder auf die
+# Ruheschleife zurueck und sagt es im Log — jeder Bestand von vor W62 hat sie
+# noch nicht, sie entsteht erst beim naechsten Lauf von tools/azrael_frames.py.
+RESTREAM_AVATAR_AFK   = os.getenv("RESTREAM_AVATAR_AFK", "assets/azrael/afk.webm").strip()
+# Nach so vielen Sekunden ohne Chat und ohne AZRAEL geht die Figur in die
+# AFK-Haltung; Vorgabe 90 s (nc.avatarloop.AFK_NACH_S — dort steht auch,
+# warum so lang). 0 schaltet den dritten Zustand ab: der Rueckweg auf das
+# Verhalten vor W62 ist eine Zahl in der .env, kein Codeeingriff.
+#
+# In .env.example steht der Wert leer. Das ist gewollt und kein Versehen —
+# der Generator traegt nur Defaults ein, die als Zahl im Quelltext stehen,
+# und eine leere Zeile laesst laut Kopf der Vorlage den Default greifen.
+RESTREAM_AVATAR_AFK_S = _nc_envnum.env_float("RESTREAM_AVATAR_AFK_S",
+                                             _nc_avloop.AFK_NACH_S)
 RESTREAM_AVATAR_FPS   = _env_int("RESTREAM_AVATAR_FPS", 10)
 # Wie lange (Sek.) eine AZRAEL-Reaktion im gebrannten Overlay stehen bleibt.
 RESTREAM_REACT_HOLD = _env_int("RESTREAM_REACT_HOLD", 20)
@@ -12614,10 +12632,48 @@ def _restream_avatar_feeder_start(rid):
     if not ruhe:
         return None
     ruhe_bilder, w, h = ruhe
-    sprich = _avatar_frames_laden(RESTREAM_AVATAR_TALK, RESTREAM_AVATAR_ALPHA)
-    # Ohne Sprechschleife (oder bei abweichender Groesse) bleibt es bei Ruhe —
-    # ein Groessenwechsel mitten im Strom wuerde ffmpeg zerlegen.
-    sprich_bilder = sprich[0] if (sprich and sprich[1] == w and sprich[2] == h) else ruhe_bilder
+
+    def _nebenschleife(pfad, name):
+        """Eine Schleife neben der Ruheschleife laden. -> frames oder None.
+
+        v4.2-W62. Vorher stand hier eine Zeile mit zwei stillen Rueckfaellen
+        in einem Ausdruck (Datei fehlt / Groesse passt nicht). Beide sahen im
+        Sendebild identisch aus — die Figur bewegte sich einfach nicht anders
+        — und keiner von beiden stand im Log. Jetzt sagt jeder Fall, WAS
+        fehlt und WIE es zu beheben ist.
+        """
+        if not pfad:
+            return None
+        neben = _avatar_frames_laden(pfad, RESTREAM_AVATAR_ALPHA)
+        if not neben:
+            log.info("Avatar-Feeder #%s: %s-Schleife %s fehlt oder ist nicht "
+                     "lesbar — es bleibt bei der Ruheschleife. Erzeugen mit "
+                     "python3 tools/azrael_frames.py <vorlage.png>",
+                     rid, name, pfad)
+            return None
+        if (neben[1], neben[2]) != (w, h):
+            # Ein Groessenwechsel mitten im rohen RGBA-Strom zerlegt ffmpeg:
+            # es liest feste Bildgroessen, ein abweichendes Bild verschiebt
+            # alles danach um seine Differenz.
+            log.warning("Avatar-Feeder #%s: %s-Schleife ist %dx%d, die "
+                        "Ruheschleife %dx%d — beide muessen aus DEMSELBEN "
+                        "Generatorlauf stammen. Es bleibt bei Ruhe.",
+                        rid, name, neben[1], neben[2], w, h)
+            return None
+        return neben[0]
+
+    # Der Vorrat wird ueber ZUSTAENDE aufgebaut, nicht von Hand aufgezaehlt:
+    # kommt ein vierter Zustand dazu, faellt er hier auf, statt still zu
+    # fehlen.
+    _pfad = {_nc_avloop.SPRICH: RESTREAM_AVATAR_TALK,
+             _nc_avloop.AFK: RESTREAM_AVATAR_AFK}
+    vorrat = {_nc_avloop.RUHE: ruhe_bilder}
+    for _z in _nc_avloop.ZUSTAENDE:
+        if _z == _nc_avloop.RUHE:
+            continue
+        _b = _nebenschleife(_pfad.get(_z), _z)
+        if _b:
+            vorrat[_z] = _b
     d = os.path.join(RECORDINGS_DIR, "overlay_live")
     os.makedirs(d, exist_ok=True)
     fifo = os.path.join(d, f"avatar_{rid}.fifo")
@@ -12631,17 +12687,37 @@ def _restream_avatar_feeder_start(rid):
     stop = threading.Event()
     fps = max(1, RESTREAM_AVATAR_FPS)
 
+    # v4.2-W62: Bezugspunkt fuer die Ruhezeit. OHNE IHN STUENDE DIE FIGUR BEIM
+    # STREAM-BEGINN SOFORT IN AFK — dann hat naemlich noch niemand etwas
+    # geschrieben, und das Sendebild ginge mit einem schlafenden Avatar auf
+    # Sendung. Wanduhr, weil die Chat-Stempel dieselbe benutzen.
+    begonnen = _time_mod.time()
+
     def _writer():
         try:
             with open(fifo, "wb") as f:
-                takt, i, sprach = 1.0 / fps, 0, False
+                takt, i, zust = 1.0 / fps, 0, None
                 while not stop.is_set():
-                    jetzt = _azrael_spricht()
-                    if jetzt != sprach:
+                    # ZWEI UHREN, EINE BENUTZT: _RESTREAM_CHAT und
+                    # _AZRAEL_REACTION stempeln beide mit time(). Das dritte
+                    # Signal, _KICK_MOD.last_spoken, laeuft auf monotonic()
+                    # und gehoert deshalb NICHT in dieselbe Rechnung — es ist
+                    # ohnehin abgedeckt, weil _azrael_spricht() es liest und
+                    # Sprechen jeden anderen Zustand schlaegt.
+                    letzte = _RESTREAM_CHAT[-1]["ts"] if _RESTREAM_CHAT else 0.0
+                    soll = _nc_avloop.zustand(
+                        _azrael_spricht(),
+                        _nc_avloop.ruhe_seit(_time_mod.time(), letzte,
+                                             _AZRAEL_REACTION.get("ts"),
+                                             begonnen),
+                        RESTREAM_AVATAR_AFK_S)
+                    bilder, echt = _nc_avloop.schleife(soll, vorrat)
+                    if echt != zust:
                         # Am Schleifenanfang wechseln, nicht mitten in der Bewegung —
                         # sonst springt der Kiefer beim Umschalten.
-                        sprach, i = jetzt, 0
-                    bilder = sprich_bilder if sprach else ruhe_bilder
+                        if zust is not None:
+                            log.info("Avatar #%s: %s -> %s", rid, zust, echt)
+                        zust, i = echt, 0
                     try:
                         f.write(bilder[i % len(bilder)])
                         f.flush()
@@ -12657,8 +12733,11 @@ def _restream_avatar_feeder_start(rid):
     th = threading.Thread(target=_writer, daemon=True)
     th.start()
     _AVATARFEED[rid] = {"fifo": fifo, "stop": stop, "thread": th}
-    log.info("Avatar-Feeder #%s: %dx%d @%sfps, %d Ruhe- / %d Sprech-Bilder",
-             rid, w, h, fps, len(ruhe_bilder), len(sprich_bilder))
+    log.info("Avatar-Feeder #%s: %dx%d @%sfps, %s%s",
+             rid, w, h, fps,
+             ", ".join("%d %s" % (len(v), k) for k, v in vorrat.items()),
+             "" if _nc_avloop.AFK in vorrat else
+             " — AFK-Schleife fehlt, die Figur bleibt in Ruhe")
     return fifo, w, h, fps
 
 
