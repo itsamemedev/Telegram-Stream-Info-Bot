@@ -8188,6 +8188,81 @@ def _test_v42_w50_avatar_ueberlebt_die_drossel():
     ok("W50: eine Zeile nennt Text, Avatar und jeden fehlenden Grund")
 
 
+def _test_v42_w56_sitzungen_haben_eine_oberflaeche():
+    """v4.2-W56: W44 lieferte drei Routen und keinen einzigen Knopf.
+
+    Gefunden bei der Dashboard-Pruefung: von 359 Routen ruft das Deck 320.
+    Unter den uebrigen standen
+
+        /api/recordings/sessions
+        /api/recordings/session/<sid>
+        /api/recordings/session/<sid>/join
+
+    — die komplette Sitzungs-Funktion aus W44. Im Release-Text von v4.3
+    stand trotzdem „auf Knopfdruck werden die Segmente ohne Neukodierung zu
+    einer Datei zusammengefuegt". Erreichbar war das nur per curl.
+
+    Dieselbe Klasse Fehler wie B132 („acht Routen, die es im Backend gab und
+    die nie eine Oberflaeche hatten"). Der Vertrag haelt fest, dass diese
+    drei jetzt gerufen werden — und zwar an der Eigenschaft, nicht an einer
+    Zeilennummer.
+    """
+    hier = os.path.dirname(os.path.abspath(__file__))
+    deck = open(os.path.join(hier, "templates", "dashboard.html"),
+                encoding="utf-8").read()
+
+    # --- 1) Alle drei Routen werden gerufen ------------------------------
+    assert "/api/recordings/sessions" in deck, \
+        "die Sitzungs-Liste wird nicht geladen"
+    assert "/api/recordings/session/" in deck, \
+        "weder Detail noch Zusammenfuegen werden gerufen"
+    # Nicht nur der NAME: die Funktion darf es geben und trotzdem von keinem
+    # Knopf gerufen werden. Die Mutationsprobe „Knopf entfernt" ist genau
+    # daran vorbeigelaufen, solange hier nur `"sitzungJoin" in deck` stand.
+    assert "/join" in deck, "die Zusammenfuegen-Route wird nicht gerufen"
+    assert 'onclick="sitzungJoin(' in deck, \
+        "es gibt kein Bedienelement, das sitzungJoin ruft — genau der Knopf, " \
+        "den der Release-Text verspricht"
+    assert "async function sitzungJoin" in deck, "die Funktion selbst fehlt"
+    ok("W56: Liste, Detail und Zusammenfuegen werden aus dem Deck gerufen")
+
+    # --- 2) Und die Ansicht laedt sie auch von selbst --------------------
+    # Eine Funktion, die niemand aufruft, ist so tot wie eine Route ohne
+    # Knopf — nur schwerer zu finden.
+    i = deck.find("VIEW_LOADERS['betrieb']")
+    assert i > 0, "die Betrieb-Ansicht hat keinen Loader mehr"
+    zeile = deck[i:deck.find("\n", i)]
+    assert "sitzungenLoad()" in zeile, \
+        "sitzungenLoad haengt an keinem Ansichts-Loader — das Panel bliebe leer"
+    ok("W56: die Betrieb-Ansicht laedt das Panel beim Oeffnen")
+
+    # --- 3) Das Ziel-Panel existiert wirklich ----------------------------
+    # loadCaptures() im selben Deck ist die Warnung: die Funktion gibt es
+    # noch, ihr Panel nicht mehr, und sie steigt seither per Waechter aus.
+    for eid in ("pnl_sitzungen", "sz_body", "sz_tag"):
+        assert f'id="{eid}"' in deck, f"das Element {eid} fehlt"
+    ok("W56: das Panel und seine Anker stehen im Markup")
+
+    # --- 4) Der 409-Fall wird behandelt ----------------------------------
+    # Die Route antwortet mit 409, wenn die Zieldatei schon existiert, und
+    # verlangt force=true. Ohne diesen Zweig meldet das Deck einen Fehler,
+    # obwohl nur eine Rueckfrage noetig waere — und der Betreiber haelt die
+    # Funktion fuer kaputt.
+    j = deck.find("async function sitzungJoin")
+    assert j > 0
+    rumpf = deck[j:j + 1400]
+    assert "409" in rumpf, "der Fall 'Datei existiert bereits' wird verschluckt"
+    assert "force" in rumpf, "ohne force kann nicht ueberschrieben werden"
+    # Wieder: nicht die Anwesenheit von confirm, sondern die BEDINGUNG. Ein
+    # `if(true||confirm(...))` enthaelt das Wort und fragt trotzdem nie.
+    assert "if(confirm(T(" in rumpf, \
+        "ueberschrieben wird ohne Rueckfrage — eine fertige Datei waere weg"
+    k = rumpf.find("if(confirm(")
+    assert "sitzungJoin(sid, true)" in rumpf[k:k + 200], \
+        "das Ueberschreiben haengt nicht mehr an der Rueckfrage"
+    ok("W56: 'Datei existiert bereits' fuehrt zur Rueckfrage, nicht zum Fehler")
+
+
 def _test_v42_w55_kein_tap_sagt_warum():
     """v4.2-W55: „audio=False" war EIN Boolescher Wert fuer DREI Ursachen.
 
@@ -8944,6 +9019,7 @@ def main():
     _test_v42_w53_avatar_kopf_hand_schwert()
     _test_v42_w54_sendebild_ausgerichtet()
     _test_v42_w55_kein_tap_sagt_warum()
+    _test_v42_w56_sitzungen_haben_eine_oberflaeche()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)
 

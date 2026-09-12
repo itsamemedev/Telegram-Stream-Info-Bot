@@ -2841,6 +2841,23 @@ document.addEventListener("DOMContentLoaded",function(){
       </div>
     </div>
 
+    <div class="panel mb" id="pnl_sitzungen">
+      <div class="head"><h3>Aufnahme-Sitzungen</h3>
+        <span class="tag" id="sz_tag">—</span><div class="spacer"></div>
+        <button class="btn sm" onclick="sitzungenLoad()" aria-label="Aktualisieren" title="Aktualisieren">↻</button></div>
+      <div class="body">
+        <div class="faint" style="font-size:11px;line-height:1.55;margin-bottom:12px">
+          Ein dreistündiger Live-Auftritt liegt als sechs bis zehn Dateien auf der
+          Platte: die signierte TikTok-URL läuft alle rund 30 Minuten ab, dazu je
+          eine Datei nach einem 403 oder einem Abriss. Die Sitzungs-Kennung hält
+          sie zusammen. <b>Abdeckung</b> ist der Anteil der Sendezeit, der
+          wirklich auf der Platte liegt — der Rest sind die Nahtlücken.
+          Zusammenfügen kopiert nur, es kodiert nicht neu.
+        </div>
+        <div id="sz_body" class="skel" aria-busy="true"><i></i><i></i></div>
+      </div>
+    </div>
+
     <div class="panel" id="pnl_fa">
       <div class="head"><h3>Einnahmen · Finanzamt</h3>
         <span class="tag" id="fa_tag">—</span><div class="spacer"></div>
@@ -10941,7 +10958,110 @@ async function auTest(){
     : '<span style="color:var(--amber)">'+esc((r&&r.error)||'nicht möglich')+'</span>';
 }
 
-VIEW_LOADERS['betrieb'] = async ()=>{ await betriebLoad(); loadAutomatisierung(); bpLoadSchedule(); loadOps6(); loadStats6(); loadMaint6(); loadRestreamHealth(); loadResourceHistory(); loadSendStatus(); loadTestPush(); loadMarketing(); loadNews(); loadKickOAuth(); loadModFeed(); loadAudioCfg(); loadHighlights(); loadCohost(); };
+/* ═══════════════════════════════════════════════════════════════════════
+   v4.2-W56 · Aufnahme-Sitzungen — Oberflaeche zu den Routen aus W44.
+   W44 hat drei Routen geliefert (/api/recordings/sessions, /session/<sid>,
+   /session/<sid>/join) und KEINEN Knopf. Der Release-Text von v4.3
+   versprach trotzdem "auf Knopfdruck werden die Segmente ohne Neukodierung
+   zu einer Datei zusammengefuegt" — erreichbar war das nur per curl.
+   Gefunden bei der Dashboard-Pruefung, gleiche Klasse wie B132.
+   ═══════════════════════════════════════════════════════════════════════ */
+function _szDauer(sek){
+  if(sek==null) return '—';
+  const s=Math.max(0,Math.round(sek)), h=Math.floor(s/3600), m=Math.floor((s%3600)/60);
+  return h ? h+' h '+String(m).padStart(2,'0')+' min' : m+' min';
+}
+function _szZeit(iso){
+  if(!iso) return '—';
+  const d=new Date(iso); return isNaN(d) ? String(iso).slice(0,16).replace('T',' ')
+    : d.toLocaleString('de-DE',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'});
+}
+async function sitzungenLoad(){
+  const box=$('#sz_body'), tag=$('#sz_tag');
+  if(!box) return;
+  const d=await apiGet('/api/recordings/sessions?limit=25');
+  box.className='';
+  if(!d || !d.ok){
+    box.innerHTML='<div class="empty">Sitzungen nicht abrufbar. Läuft der Bot?</div>';
+    if(tag) tag.textContent='—'; return;
+  }
+  const ss=d.sessions||[];
+  if(tag) tag.textContent=ss.length+(ss.length===1?' Sitzung':' Sitzungen');
+  if(!ss.length){
+    box.innerHTML='<div class="empty">Noch keine Sitzung — sie entsteht mit der '
+      +'ersten Aufnahme eines getrackten Streamers.</div>'; return;
+  }
+  let h='<div class="tbl-wrap"><table><thead><tr><th>Streamer</th><th>Beginn</th>'
+    +'<th class="right">Segmente</th><th class="right">Lücken</th>'
+    +'<th class="right">Abdeckung</th><th class="right">Größe</th>'
+    +'<th class="right">Aktion</th></tr></thead><tbody>';
+  ss.forEach(x=>{
+    const sid=x.session_id, ab=x.coverage_pct;
+    /* Farbe traegt hier nichts allein: die Zahl steht daneben. */
+    const abTxt=(ab==null?'—':ab+' %');
+    const luecken=(x.gaps||0)+(x.gap_total_s?' · '+_szDauer(x.gap_total_s):'');
+    let knopf;
+    if(x.joined==='laeuft'){
+      knopf='<span class="tag">fügt zusammen…</span>';
+    }else if(x.joined==='fertig'){
+      /* Kein eigener Farb-Modifikator: '.tag.ok' gibt es im CSS nicht, und
+         laut Skill traegt Farbe hier ohnehin nie die Aussage allein. Das
+         Wort sagt es. */
+      knopf='<span class="tag">zusammengefügt</span>';
+    }else if((x.segments||0)<2){
+      knopf='<span class="faint">ein Segment</span>';
+    }else{
+      knopf='<button class="btn sm" onclick="sitzungJoin('+JSON.stringify(sid)+')">'
+        +'Zusammenfügen</button>';
+    }
+    h+='<tr><td>'+esc(x.username||'—')+'</td><td class="mono">'+_szZeit(x.start)+'</td>'
+      +'<td class="right mono">'+(x.segments??'—')+'</td>'
+      +'<td class="right mono">'+esc(String(luecken))+'</td>'
+      +'<td class="right mono">'+abTxt+'</td>'
+      +'<td class="right mono">'+(x.size_mb!=null?x.size_mb+' MB':'—')+'</td>'
+      +'<td class="right">'+knopf+' <button class="btn sm" aria-label="Segmente zeigen" '
+      +'title="Segmente zeigen" onclick="sitzungDetail('+JSON.stringify(sid)+')">⋯</button></td></tr>';
+  });
+  box.innerHTML=h+'</tbody></table></div><div id="sz_detail"></div>';
+}
+async function sitzungDetail(sid){
+  const ziel=$('#sz_detail'); if(!ziel) return;
+  ziel.innerHTML='<div class="skel" aria-busy="true"><i></i></div>';
+  const d=await apiGet('/api/recordings/session/'+encodeURIComponent(sid));
+  if(!d || !d.ok){ ziel.innerHTML='<div class="empty">Sitzung nicht gefunden.</div>'; return; }
+  let h='<div class="faint" style="margin:12px 0 6px">Segmente dieser Sitzung — '
+    +'„Lücke davor" ist die Naht zum vorigen Segment.</div>'
+    +'<div class="tbl-wrap"><table><thead><tr><th>Datei</th><th class="right">Größe</th>'
+    +'<th class="right">Dauer</th><th class="right">Lücke davor</th><th>Da</th>'
+    +'</tr></thead><tbody>';
+  (d.segments||[]).forEach(g=>{
+    h+='<tr><td class="mono">'+esc(g.filename||'—')+'</td>'
+      +'<td class="right mono">'+(g.size_mb!=null?g.size_mb+' MB':'—')+'</td>'
+      +'<td class="right mono">'+_szDauer(g.duration_secs)+'</td>'
+      +'<td class="right mono">'+(g.gap_before_s!=null?_szDauer(g.gap_before_s):'—')+'</td>'
+      +'<td>'+(g.exists?'ja':'<b>fehlt</b>')+'</td></tr>';
+  });
+  ziel.innerHTML=h+'</tbody></table></div>';
+}
+async function sitzungJoin(sid, force){
+  const d=await apiPost('/api/recordings/session/'+encodeURIComponent(sid)+'/join',
+                        force?{force:true}:{});
+  if(d && d.__http===409){
+    /* Die Zieldatei gibt es schon. Ueberschreiben ist eine Entscheidung des
+       Betreibers, keine stille Vorgabe — sonst ist eine fertige Datei weg. */
+    if(confirm(T('Die Datei')+' '+(d.ziel||'')+' '+T('gibt es schon. Überschreiben?')))
+      return sitzungJoin(sid, true);
+    return;
+  }
+  if(d && (d.ok || d.status==='laeuft')){
+    toast('Zusammenfügen gestartet — läuft im Hintergrund.');
+    setTimeout(sitzungenLoad, 1500);
+  }else{
+    toast((d && d.error) ? d.error : 'Zusammenfügen fehlgeschlagen.', 'err');
+  }
+}
+
+VIEW_LOADERS['betrieb'] = async ()=>{ await betriebLoad(); sitzungenLoad(); loadAutomatisierung(); bpLoadSchedule(); loadOps6(); loadStats6(); loadMaint6(); loadRestreamHealth(); loadResourceHistory(); loadSendStatus(); loadTestPush(); loadMarketing(); loadNews(); loadKickOAuth(); loadModFeed(); loadAudioCfg(); loadHighlights(); loadCohost(); };
 
 
 /* ═══════════════════════════════════════════════════════════════════════
