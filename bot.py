@@ -13535,8 +13535,17 @@ class RestreamManager:
         # v4.2-W34: AZRAELs Frames-Feeder. Scheitert er, bleibt _av_feed None
         # und der Bauer nimmt die feste Schleife aus W32 — der Restream
         # startet in jedem Fall.
+        #
+        # v4.2-W61: bei gedrosseltem Avatar gar nicht erst starten. Der Writer
+        # haengt in open(fifo, "wb"), bis ein Leser kommt — faellt der
+        # Avatar-Input aus dem ffmpeg-Kommando, kommt nie einer, und der
+        # Thread steht bis zum Prozessende. Das waere ein stiller Leak je
+        # Neustart, und Neustarts sind bei der Drossel genau der Normalfall.
+        # AZRAELs Reaktion haengt nicht daran: der Feeder LIEST nur
+        # _azrael_spricht(), react-Zeile und Stimme laufen ohne ihn.
         _av_feed = None
-        if RESTREAM_OVERLAY and transcode:
+        if (RESTREAM_OVERLAY and transcode
+                and not _nc_rscmd.drossel_avatar_aus(_drossel_stufe(rid))):
             _av_feed = await asyncio.to_thread(_restream_avatar_feeder_start,
                                                rid)
         _independent = (RESTREAM_MULTI_MODE == "independent" and _multi)
@@ -17215,12 +17224,14 @@ async def _restream_verify_loop():
                     if _neu is None:
                         log.error("Restream #%s: Encode-Rueckstand haelt an, "
                                   "aber die Drossel ist am Anschlag (Stufe %d: "
-                                  "ultrafast, Bitrate, Bildrate und Leinwand "
-                                  "gesenkt — aus dem Bild faellt seit v4.2-W60 "
-                                  "nichts mehr). "
-                                  "Die Box schafft diesen Transcode nicht — "
-                                  "weniger Ziele, kleinere Aufloesung oder mehr "
-                                  "Kerne sind jetzt die einzigen Hebel.",
+                                  "ultrafast, Bitrate und Bildrate gesenkt, "
+                                  "Avatar aus, Leinwand verkleinert). Chat, "
+                                  "Titel, react-Zeile und AZRAELs Stimme "
+                                  "stehen noch — die gibt die Drossel nicht "
+                                  "her. Die Box schafft diesen Transcode "
+                                  "nicht: weniger Ziele, kleinere Quell"
+                                  "aufloesung oder mehr Kerne sind jetzt die "
+                                  "einzigen Hebel.",
                                   _rid, _nc_rscmd.DROSSEL_MAX)
                         continue
                     log.warning("Restream #%s: Encode-Rueckstand haelt an → "

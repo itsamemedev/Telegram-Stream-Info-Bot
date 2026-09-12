@@ -11,6 +11,73 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Geändert — wenn doch etwas weichen muss, dann der Avatar (v4.2 W61)
+
+Die Antwort des Betreibers auf W60: **„Ja aber wenn dann sollte doch der
+Avatar abgeschalten werden und nicht das ganze panel. Somit kann der Zuschauer
+immer noch live den chat verfolgen. Zusätzlich sollte dann aber noch die live
+Reaction von Azrael/Avatar weiter laufen."**
+
+W60 hatte die Drossel vollständig vom Bildinhalt getrennt — richtig gegen den
+gemeldeten Fehler, aber damit gab es am Anschlag keinen Hebel mehr ausser der
+Meldung „die Box schafft es nicht". Die fehlende Sprosse ist der Avatar.
+
+**Die ganze Leiter nachgemessen**, drei Läufe je Fall, Median, 12 s Quelle,
+1280×720, superfast, vier Threads, Avatar als bewegte VP9-Schleife mit
+getrennter Alphamaske (dieselbe Bauart wie im Betrieb):
+
+| Stufe | | Zeit | kumuliert |
+|---|---|---|---|
+| 0 | Referenz | 3,23 s | — |
+| 3 | fps 24 → 18 | 2,59 s | −19,9 % |
+| 4 | + Leinwand 960×540 | 2,63 s | −18,7 % |
+| 5 | + Avatar aus | 2,13 s | −33,9 % |
+
+Die Leinwand bringt nach der Bildrate **nichts** — 18,7 gegen 19,9 Prozent ist
+innerhalb des Rauschens sogar schlechter. Der Grund: die Last steckt nicht im
+Encoder (superfast ist billig), sondern in der Filterkette, und die arbeitet
+pro Bild, nicht pro Pixel — neun `drawtext` mit `reload=1` lesen ihre Dateien
+einmal je Bild, unabhängig von der Auflösung. Der Avatar dagegen bringt 14
+Punkte, weil mit ihm zwei Inputs, ein `alphamerge` und ein `overlay` je Bild
+wegfallen.
+
+Damit ist die Reihenfolge auf beiden Achsen eindeutig, und der Avatar rückt
+**vor** die Leinwand:
+
+| Stufe | Wirkung |
+|---|---|
+| 1 | Preset eine Stufe schneller |
+| 2 | Bitrate herunter |
+| 3 | `drossel_fps()` −25 %, Boden 15 fps |
+| 4 | **`drossel_avatar_aus()`** — Panel, Chat und AZRAEL-Zeile bleiben |
+| 5 | `drossel_canvas()` −25 %, Boden 960×540 |
+
+`DROSSEL_MAX = 5`. Die Leinwand bleibt als letzte Sprosse stehen: auf einer Box
+mit teurerem Preset oder höherer Bitrate wächst der Encoder-Anteil, und dann
+greift sie. Sie ist nur nicht mehr der Hebel, auf den man zuerst tritt.
+
+**Was der Avatar-Schritt nicht abschaltet, ist AZRAEL.** Seine Reaktion
+erreicht den Zuschauer weiter auf zwei Wegen, die beide nichts mit dem
+Avatarbild zu tun haben: die `react`-Zeile im Panel (ein `drawtext` wie jeder
+andere, seit W60 für die Drossel unerreichbar) und die Stimme (`use_tts` hängt
+allein an der TTS-FIFO). Sichtbar bleibt also, *dass* AZRAEL antwortet und
+*was* er sagt.
+
+**Die Falle, die der Schritt aufmacht:** `_restream_avatar_feeder_start` hängt
+in `open(fifo, "wb")`, bis ein Leser kommt. Fällt der Avatar-Input aus dem
+ffmpeg-Kommando, kommt nie einer — und weil jeder Drossel-Schritt den Restream
+neu startet, wäre das ein hängender Thread *je Schritt*. Der Feeder wird
+deshalb bei gedrosseltem Avatar gar nicht erst gestartet. AZRAELs Reaktion
+hängt nicht daran: der Feeder *liest* nur `_azrael_spricht()`.
+
+Die Grenze in den Verträgen verläuft jetzt zwischen Panel und Gesicht statt
+zwischen Bild und Encoder. `sendebild_on` und `overlay_on` dürfen keine
+`drossel_*`-Funktion sehen; `avatar_on`, `anim_on` und `feed_on` dürfen genau
+eine sehen — `drossel_avatar_aus`. Geprüft wird zusätzlich am **echten
+gebauten Kommando** über alle Stufen inklusive Anschlag: Chat, Titel und
+`react`-Zeile stehen immer im Filtergraph, der Avatar fällt genau auf Stufe 4,
+und die TTS-FIFO bleibt gemappt. Zwölf Mutationsproben, alle feuern.
+
 ### Behoben — die Drossel warf das Panel weg und behielt das Teuerste (v4.2 W60)
 
 Zum zweiten Mal gemeldet: „Der Chat bricht wieder weg. Es bleiben nur noch
