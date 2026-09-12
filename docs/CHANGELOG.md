@@ -11,6 +11,73 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Hinzugefügt — der Avatar bewegt Kopf, Hand und Schwert (v4.2 W53)
+
+Bis hierher bewegten sich an AZRAEL genau vier Dinge: Kiefer, Aura, Augen und
+der Arm. Der **Kopf stand still**, und Faust und Klinge waren aneinander­
+genagelt — `ARM_BOX` deckt beide ab und drehte sie um denselben Punkt. Eine
+Figur, deren Kopf sich minutenlang nicht rührt, liest sich als Standbild mit
+zuckendem Mund.
+
+Drei neue Rig-Punkte, am selben Original ausgemessen wie die alten:
+
+| Glied | Drehpunkt | Ruhe | Sprechen |
+|---|---|---|---|
+| Kopf | Halsansatz (521, 561) | 1,4° + 2,6 px heben | 2,6° + 3,4 px |
+| Klinge | Griffmitte (800, 640) | 1,8° | 3,2° |
+| Hand | Handgelenk (780, 770) | 0,9° | 1,8° |
+
+Der Griff liegt **in der Faust**: die Klinge wischt, während die Hand sie
+hält. Drehte sie um den Unterarm wie bisher, wanderte die Faust mit und die
+Bewegung sähe aus wie ein Achselzucken. Gemessen am fertigen Bild wandert die
+Klingenspitze 17 px, die Kapuzenspitze 10 px.
+
+Der Kopf bekommt bewusst am wenigsten — er ist das größte Glied, ein Grad am
+Hals sind an der Kapuzenspitze zehn Pixel. Die Kopfmaske läuft oberhalb des
+Halses weich aus und der Drehpunkt liegt in diesem Auslauf: sonst schert die
+Kapuze gegen die stillstehende Schulter und reißt dort auf.
+
+**Zwei Fehler beim Bauen, beide jetzt durch Verträge verriegelt:**
+
+*Die Schleife muss sich schließen.* Der erste Entwurf nahm absichtlich
+teilerfremde Perioden (2,7 s / 3,1 s / 3,7 s), damit die Glieder nicht im
+Gleichtakt laufen — und zerlegte damit genau die Schleife: nach `RUHE_S`
+springt der Feeder auf t=0 zurück, und eine Schwingung, deren Periode die
+Schleifenlänge nicht ganzzahlig teilt, steht dort auf einem anderen Wert.
+Jedes Glied hätte einmal pro Runde gezuckt. Unterschiedlich aussehen die
+Glieder jetzt über die **Phasen**, nicht über krumme Perioden.
+
+Derselbe Fehler steckte schon im Bestand, in der Sprechschleife: Arm auf
+1,15 s, Aura und Augen auf 1,4 s bei 1,6 s Schleifenlänge — 1,39 bzw. 1,14
+Durchläufe. Der Arm sprang alle 1,6 Sekunden. Solange sich sonst nichts
+bewegte, ging das unter. Ist mitbehoben.
+
+*Jedes Pixel gehört genau einer Ebene.* Der erste Entwurf hatte Klinge und
+Hand als Teilmengen des Arms und drehte nacheinander: Arm dreht die Klinge
+mit, danach dreht die Klinge nochmal. Wo die Masken sich unterscheiden, blieb
+die einfach gedrehte Klinge neben der doppelt gedrehten stehen — **die Spitze
+stand zweimal im Bild.** Genau das Gespenst, vor dem der Kopf der Datei
+warnt, nur über zwei Ebenen statt über eine. Jetzt Vorrang statt
+Verschachtelung (Hand vor Klinge vor Kopf vor Arm), jede Ebene wird aus dem
+Grundbild gedreht und nie aus dem halbfertigen, und die Winkel der unteren
+Ebene wandern in die obere.
+
+Pillow wird jetzt erst in den zeichnenden Funktionen geladen. Damit ist die
+Bewegungsrechnung in der CI prüfbar, wo Pillow bewusst fehlt — es ist ein
+Werkzeug, keine Laufzeit-Abhängigkeit, und steht in keiner
+requirements-Datei.
+
+**Die Schleifen im Repo sind noch die alten.** Sie entstehen aus einer
+1024×1024-Vorlage, die nicht im Repo liegt (nur der 436×448-Standbild-
+Rückfall). Nach dem Einspielen einmal:
+
+```
+python tools/azrael_frames.py azrael_vorlage.png
+```
+
+Das schreibt `assets/azrael/{alpha.png,ruhe.webm,sprich.webm}` neu, rund
+128 KB. Braucht Pillow und ffmpeg, beides nur auf der Baumaschine.
+
 ### Behoben — der Nachschlag warf ausgerechnet die stabilere Quelle weg (v4.2 W52)
 
 Beim Nachziehen von W51 aufgefallen: drei Stellen beantworten die Frage

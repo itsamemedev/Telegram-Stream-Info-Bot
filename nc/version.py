@@ -58,6 +58,7 @@ CHANGELOG = [
             "Der Avatar bleibt im Sendebild, auch wenn die Notbremse den eingebrannten Text abwirft — und eine Zeile im Log nennt bei jedem Start, ob Text und Avatar an sind und welche Bedingung sonst fehlt",
             "Zwei von drei Live-Erkennungen liefen bisher ohne Stream-URL weiter: die TikTok-API meldet einer Server-IP zwar „sendet“, rückt die Adresse aber nicht heraus — der Bot fragte den einzigen Weg, der sie noch liefert, ausgerechnet in diesem Fall nicht mehr ab und schickte den Recorder blind los",
             "Und der so gefundene Zugang wird nicht mehr verworfen, wenn er in der stabileren von zwei Formen kommt: die durchgehende Verbindung fiel durch die Prüfung, die nur die segmentierte kannte — dabei ist gerade die Kette signierter Segmente die, die im Betrieb abreißt",
+            "AZRAEL steht nicht mehr da wie ein Standbild mit zuckendem Mund: Kopf, Hand und Schwert bewegen sich jetzt einzeln — die Klinge dreht um den Griff in der Faust statt um den Unterarm, und der Kopf neigt sich und hebt sich, ohne dass die Kapuze an der Schulter aufreißt",
         ],
     },
     {
