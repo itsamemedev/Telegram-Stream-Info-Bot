@@ -20,6 +20,14 @@ OUT = os.path.join(ROOT, ".env.example")
 
 # env_int/env_float/env_int_range/clamp_*("NAME", default …) → numerischer Default
 _NUM = re.compile(r'env_(?:int|float)(?:_range)?\(\s*["\']([A-Z][A-Z0-9_]+)["\']\s*,\s*([0-9.]+)')
+# v4.2-W54: dieselbe Form, aber mit BERECHNETER Vorgabe statt einer Zahl —
+# z.B. _env_int("RESTREAM_CHAT_WIDTH", _nc_ff.chat_umbruch_w(...)). _NUM
+# verlangt eine Ziffer und liess solche Variablen lautlos aus der Vorlage
+# fallen; genau so verschwanden RESTREAM_CHAT_LINES und RESTREAM_CHAT_WIDTH,
+# als ihre Vorgabe aus der Panel-Geometrie kam. Eine Variable, die es gibt,
+# gehoert in die Vorlage — auch wenn ihre Vorgabe erst zur Laufzeit feststeht.
+_BERECHNET = re.compile(
+    r'env_(?:int|float)(?:_range)?\(\s*["\']([A-Z][A-Z0-9_]+)["\']\s*,\s*(?![0-9.\'"])')
 # os.getenv("NAME"[, "default"]) → String-Default (oder leer)
 _STR = re.compile(r'os\.getenv\(\s*["\']([A-Z][A-Z0-9_]+)["\']\s*(?:,\s*["\']((?:[^"\'\\]|\\.)*)["\'])?')
 
@@ -85,6 +93,12 @@ def collect():
         ohne = "\n".join(_ohne_kommentar(z) for z in txt.splitlines())
         for m in _NUM.finditer(ohne):
             seen.setdefault(m.group(1), m.group(2))
+        for m in _BERECHNET.finditer(ohne):
+            # Leerer Wert: der Default steht nicht als Zahl im Quelltext,
+            # sondern wird gerechnet. Leer ist hier korrekt und sicher — die
+            # Zeile ist ohnehin auskommentiert, und ein leerer Wert laesst
+            # laut Kopf der Vorlage den Default greifen.
+            seen.setdefault(m.group(1), "")
         for m in _STR.finditer(ohne):
             seen.setdefault(m.group(1), (m.group(2) or ""))
     return seen

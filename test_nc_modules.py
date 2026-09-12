@@ -8188,6 +8188,118 @@ def _test_v42_w50_avatar_ueberlebt_die_drossel():
     ok("W50: eine Zeile nennt Text, Avatar und jeden fehlenden Grund")
 
 
+def _test_v42_w54_sendebild_ausgerichtet():
+    """v4.2-W54: der Avatar lag ueber dem Chat, und der Chat lief aus dem Bild.
+
+    Bildschirmfoto des Betreibers: der Avatar verdeckt die halbe rechte
+    Spalte — von „S E L I N A  schrecklich, ..." ist nur der Anfang zu lesen.
+    Zwei unabhaengige Ursachen, hier nachgestellt und beide behoben.
+
+    (1) REIHENFOLGE. studio_chain haengte Deko UND Texte in EINE Kette und
+        legte den Avatar danach darueber. Er lag damit ueber allem.
+        Jetzt drei Ketten: Deko -> Avatar -> Texte. Nach der Deko muss er
+        bleiben (die drawboxen sind fast deckend und wuerden ihn uebermalen),
+        vor die Texte muss er hin.
+
+    (2) UMBRUCHBREITE. RESTREAM_CHAT_WIDTH stand fest auf 62 mit dem
+        Kommentar „(Mono)" — die Schrift ist aber proportional. 62 Zeichen
+        DejaVu Bold sind bei Schriftgroesse 22 rund 780 px, das Panel hat
+        632. Jede laengere Zeile lief rechts raus, mitten im Wort.
+
+    Dazu zwei Dinge, die erst im nachgestellten Bild auffielen: die oberste
+    Chat-Zeile war regelmaessig eine nackte Fortsetzungszeile ohne Absender,
+    und die unterste stand auf der Fortschrittsleiste.
+    """
+    from nc import ffmpeg_filters as FF
+
+    # --- 1) Der Avatar liegt zwischen Deko und Text ----------------------
+    dateien = {k: f"/tmp/{k}.txt" for k in
+               ("title", "source", "caption", "chat", "goal", "follow",
+                "react", "brand", "alert")}
+    teile, label = FF.studio_chain(dateien, "/f.ttf", 1280, 720, 30,
+                                   avatar_idx=1, avatar_alpha_idx=2, avatar_h=420)
+    ganz = ";".join(teile)
+    i_deko = ganz.find("drawbox=x=588")          # Panel-Grund
+    i_av = ganz.find("overlay=x=W-w-")           # der Avatar
+    i_chat = ganz.find(dateien["chat"])          # die Chat-Zeile
+    assert i_deko >= 0 and i_av >= 0 and i_chat >= 0, (i_deko, i_av, i_chat)
+    assert i_deko < i_av < i_chat, (
+        "die Reihenfolge stimmt nicht: Deko muss vor dem Avatar liegen (sonst "
+        "uebermalt sie ihn) und der Avatar vor dem Chat (sonst verdeckt er ihn)")
+    # Und der Avatar darf nicht mehr das letzte Glied sein.
+    assert label == "vstudio" and teile[-1].endswith("[vstudio]")
+    assert dateien["chat"] in teile[-1], \
+        "die Texte sind nicht mehr die letzte Kette — irgendetwas liegt wieder " \
+        "ueber dem Chat"
+    ok("W54: Deko -> Avatar -> Texte, der Chat liegt vorn")
+
+    # --- 2) Vorn allein reicht nicht: er braucht eine Kontur -------------
+    # Heller Text ohne Kontur auf dem roten Gesicht ist auch im Vordergrund
+    # nicht zu lesen. borderw=0 stand vorher genau dort.
+    chat_filter = [t for t in teile if dateien["chat"] in t][0]
+    stueck = chat_filter[chat_filter.find(dateien["chat"]):]
+    stueck = stueck[:stueck.find("drawtext") if "drawtext" in stueck[10:] else len(stueck)]
+    assert "borderw=0" not in stueck, \
+        "der Chat hat wieder borderw=0 — ueber dem Avatar ist er dann unlesbar"
+    assert "borderw=3" in stueck, "dem Chat fehlt die Kontur"
+    ok("W54: der Chat traegt eine Kontur und bleibt ueber dem Avatar lesbar")
+
+    # --- 3) Der Umbruch kommt aus der Panel-Breite -----------------------
+    for w, h in ((1280, 720), (1920, 1080), (2560, 1440)):
+        m = FF.studio_masse(w, h)
+        n = FF.chat_umbruch_w(w, FF.CHAT_FS)
+        breite_px = n * FF.CHAT_FS * FF.ZEICHENBREITE
+        assert breite_px <= m["panel_b"], (
+            f"bei {w}x{h} braucht eine volle Zeile {breite_px:.0f} px, das Panel "
+            f"hat {m['panel_b']} px — der Chat laeuft wieder aus dem Bild")
+        # ... aber auch nicht laecherlich schmal: mindestens 85 % ausnutzen.
+        assert breite_px >= m["panel_b"] * 0.85, (
+            f"bei {w}x{h} nutzt der Chat nur {breite_px:.0f} von {m['panel_b']} px")
+    # Die alte feste 62 haette bei 1280 nicht gepasst — das ist der Befund.
+    assert 62 * FF.CHAT_FS * FF.ZEICHENBREITE > FF.studio_masse(1280, 720)["panel_b"], \
+        "die alte 62 passt ploetzlich doch? Dann stimmt die Zeichenbreite nicht"
+    ok("W54: die Umbruchbreite folgt der Panel-Breite, auf jeder Leinwand")
+
+    # --- 4) Der Block bleibt ueber der Ziel-Leiste -----------------------
+    for w, h in ((1280, 720), (1920, 1080)):
+        m = FF.studio_masse(w, h)
+        z = FF.chat_zeilen(m["chat_h"], FF.CHAT_FS, FF.CHAT_ABSTAND)
+        hoch = z * (FF.CHAT_FS + FF.CHAT_ABSTAND)
+        assert m["chat_y"] + hoch <= m["ziel_y"], (
+            f"bei {w}x{h} reicht der Chat bis {m['chat_y'] + hoch}, die "
+            f"Fortschrittsleiste steht bei {m['ziel_y']}")
+        assert z >= 8, f"nur {z} Chat-Zeilen bei {w}x{h} — das ist kein Chat mehr"
+    ok("W54: der Chatblock endet ueber der Fortschrittsleiste")
+
+    # --- 5) Keine nackte Fortsetzungszeile mehr oben ---------------------
+    from nc import channels as CH
+    alt_l, alt_w = CH._CHAT_LINES, CH._CHAT_WIDTH
+    sicherung = list(CH.RESTREAM_CHAT)
+    try:
+        CH.configure_chat(lines=4, width=40)
+        CH.RESTREAM_CHAT.clear()
+        for txt in ("kurz",
+                    "eine ziemlich lange Nachricht die ganz sicher ueber mehrere "
+                    "Zeilen umgebrochen werden muss damit der Schnitt greift",
+                    "auch kurz"):
+            CH.RESTREAM_CHAT.append({"who": "Tester", "src": "kick",
+                                     "text": txt, "origin": ""})
+        block = CH._chat_block()
+        zeilen = block.split("\n")
+        assert zeilen, "leerer Block"
+        assert not zeilen[0].startswith("    "), (
+            f"die oberste Zeile ist eine Fortsetzung ohne Absender: {zeilen[0]!r} — "
+            f"im Sendebild liest sich das wie ein Textfehler")
+        assert len(zeilen) <= 4
+        # Und jede Zeile bleibt in der Breite.
+        for z in zeilen:
+            assert len(z) <= 40, (len(z), z)
+    finally:
+        CH.RESTREAM_CHAT.clear(); CH.RESTREAM_CHAT.extend(sicherung)
+        CH.configure_chat(lines=alt_l, width=alt_w)
+    ok("W54: der Schnitt landet nie mitten in einer Nachricht")
+
+
 def _test_v42_w53_avatar_kopf_hand_schwert():
     """v4.2-W53: der Avatar bewegte Kiefer, Aura und Augen — sonst nichts.
 
@@ -8748,6 +8860,7 @@ def main():
     _test_v42_w51_live_ohne_url()
     _test_v42_w52_flv_zaehlt_auch()
     _test_v42_w53_avatar_kopf_hand_schwert()
+    _test_v42_w54_sendebild_ausgerichtet()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)
 
