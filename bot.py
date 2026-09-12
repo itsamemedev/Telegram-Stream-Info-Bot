@@ -4567,6 +4567,42 @@ async def trigger_manual_recording(username: str, duration_secs: int = 300,
 def stop_manual_recording(manual_id: int) -> dict:
     proc = _MANUAL_RECORDINGS.get(manual_id)
     if proc is None:
+        # v4.2-W63: EIN PHANTOM AUFRAEUMEN, STATT UEBER ES ZU BERICHTEN.
+        #
+        # _MANUAL_RECORDINGS lebt nur im Prozess. Nach einem Bot-Neustart ist
+        # das Dict leer, die DB-Zeile steht aber weiter auf 'running' — und
+        # _wait_and_finish, das sie sonst abschliesst, gibt es nicht mehr. Die
+        # Zeile bleibt damit BIS IN ALLE EWIGKEIT auf "laeuft".
+        #
+        # Vorher fiel das niemandem auf, weil die Liste keine Oberflaeche
+        # hatte. Seit W63 hat sie eine, und dort stuende eine Aufnahme, die
+        # angeblich laeuft, mit einem Stop-Knopf, der nur eine Fehlermeldung
+        # erzeugen kann. Ein Knopf, der ausschliesslich scheitern kann, ist
+        # schlimmer als keiner.
+        #
+        # Der Klick schliesst die Zeile deshalb ab. Das ist keine Notluege:
+        # ein Prozess, den dieser Bot nicht kennt, wird von ihm auch nicht
+        # mehr beendet — die Aufnahme IST vorbei, nur die Zeile wusste es
+        # nicht.
+        try:
+            with db_conn() as conn:
+                z = conn.execute("SELECT status FROM manual_recordings WHERE id=?",
+                                 (manual_id,)).fetchone()
+                if z and z["status"] == "running":
+                    conn.execute(
+                        "UPDATE manual_recordings SET status='abgebrochen', "
+                        "ended_at=? WHERE id=?",
+                        (datetime.now(timezone.utc).isoformat(), manual_id))
+                    conn.commit()
+                    log.warning("Manuelle Aufnahme #%s stand auf 'running', der "
+                                "Prozess ist diesem Bot aber unbekannt (Neustart?) "
+                                "— Zeile als abgebrochen abgeschlossen.", manual_id)
+                    return {"ok": True, "aufgeraeumt": True,
+                            "error": "Der Aufnahmeprozess war schon weg "
+                                     "(vermutlich Bot-Neustart). Der Eintrag ist "
+                                     "jetzt abgeschlossen."}
+        except Exception as e:
+            _loop_fehler("stop_manual_recording/aufraeumen", e)
         return {"ok": False, "error": "manual recording not running"}
     # BUG-FIX: proc ist ein asyncio-Subprocess — .terminate() manipuliert den
     # Transport und MUSS auf dem Event-Loop-Thread laufen. Diese Funktion wird

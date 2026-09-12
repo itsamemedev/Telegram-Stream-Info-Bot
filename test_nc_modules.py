@@ -8624,6 +8624,123 @@ def _test_v42_w62_avatar_afk_zustand():
     ok("W62: der Feeder entscheidet ueber nc.avatarloop, mit Startstempel")
 
 
+def _test_v42_w63_manuelle_aufnahme_sichtbar_und_stoppbar():
+    """v4.2-W63: Start ohne Liste, Liste ohne Knopf — und ein Deck, das luegt.
+
+    Letzter offener Kandidat aus der Dashboard-Pruefung, diesmal von Hand
+    nachgesehen statt dem Matcher geglaubt. Der Befund ist echt und
+    schlimmer als „Knopf fehlt":
+
+        /api/recordings/manual/start        verdrahtet
+        /api/recordings/manual/list         NIRGENDS gerufen
+        /api/recordings/manual/<mid>/stop   NIRGENDS gerufen
+
+    Eine manuelle Aufnahme liegt in der Tabelle `manual_recordings`. Das
+    Panel AKTIVE AUFNAHMEN liest `/api/active-recordings`, und das kommt aus
+    `trackings WHERE recording=1` — eine andere Tabelle. Die manuelle
+    Aufnahme stand dort noch nie drin.
+
+    `rtManualStart` rief danach ausgerechnet `loadRtActive()`. Das Deck
+    antwortete auf einen erfolgreichen Start also mit „Keine laufende
+    Aufnahme.", waehrend eine lief. Bis zur eigenen Laufzeitgrenze (max eine
+    Stunde) war sie weder sichtbar noch abbrechbar.
+
+    Dazu die Falle, die eine Oberflaeche erst sichtbar macht:
+    `_MANUAL_RECORDINGS` lebt im Prozess. Nach einem Bot-Neustart ist das
+    Dict leer, die DB-Zeile steht aber weiter auf 'running' — und
+    `_wait_and_finish`, das sie abschliessen wuerde, gibt es nicht mehr. Die
+    Zeile bleibt fuer immer auf „laeuft", mit einem Stop-Knopf, der nur
+    scheitern kann.
+    """
+    hier = os.path.dirname(os.path.abspath(__file__))
+    deck = open(os.path.join(hier, "templates", "dashboard.html"),
+                encoding="utf-8").read()
+    bot = open(os.path.join(hier, "bot.py"), encoding="utf-8").read()
+
+    # --- 1) Alle drei Routen werden aus dem Deck gerufen -----------------
+    for route in ("/api/recordings/manual/start",
+                  "/api/recordings/manual/list",
+                  "/api/recordings/manual/"):
+        assert route in deck, f"{route} wird aus dem Deck nicht gerufen"
+    assert "'/api/recordings/manual/'+mid+'/stop'" in deck, \
+        "die Stop-Route wird nicht mit einer Kennung gerufen"
+    ok("W63: Start, Liste und Stopp der manuellen Aufnahme sind verdrahtet")
+
+    # --- 2) Der Start laedt die RICHTIGE Liste nach ----------------------
+    # Das ist der eigentliche Befund. loadRtActive() allein war schlimmer als
+    # gar nichts: es behauptet aktiv, es laufe nichts.
+    i = deck.find("async function rtManualStart(")
+    assert i > 0, "rtManualStart fehlt"
+    rumpf = deck[i:deck.find("\nasync function loadRtManual", i)]
+    assert "loadRtManual()" in rumpf, \
+        "nach dem Start wird die manuelle Liste nicht geladen — das Deck " \
+        "zeigt weiter 'Keine laufende Aufnahme.', waehrend eine laeuft"
+    ok("W63: nach dem Start laedt das Deck die manuelle Liste")
+
+    # --- 3) Das Panel existiert und haengt am Ansichts-Lader -------------
+    # Eine Funktion, die niemand aufruft, ist so tot wie eine Route ohne
+    # Knopf (W56).
+    assert 'id="rt_manual"' in deck, "das Ziel-Panel gibt es nicht"
+    assert 'id="rt_manual_n"' in deck, "der Zaehler am Panel fehlt"
+    # IM ANSICHTS-LADER nachsehen, nicht irgendwo im Deck. Genau daran ist
+    # die Mutationsprobe „Panel haengt an keinem Lader" zuerst vorbeigelaufen:
+    # dieselbe Zeilenfolge steht auch in rtManualStart, die Zusicherung war
+    # gruen, waehrend loadRecTools das Panel nicht mehr lud. Vorhandensein
+    # statt Eigenschaft — in dieser Reihe zum wiederholten Mal.
+    j = deck.find("async function loadRecTools(")
+    assert j > 0, "der Lader der Aufnahme-Ansicht fehlt"
+    lader = deck[j:deck.find("\n}", j)]
+    assert "loadRtManual()" in lader, \
+        "loadRtManual haengt nicht am Lader der Aufnahme-Ansicht — das Panel " \
+        "bliebe beim Oeffnen leer"
+    ok("W63: das Panel existiert und wird beim Oeffnen der Ansicht geladen")
+
+    # --- 4) Der Stop-Knopf nur, solange es etwas zu stoppen gibt ---------
+    # Sonst antwortet der Endpunkt "manual recording not running" — ein
+    # Knopf, der ausschliesslich scheitern kann, ist schlimmer als keiner.
+    k = deck.find("async function loadRtManual(")
+    assert k > 0
+    lade = deck[k:deck.find("\nasync function rtStopManual", k)]
+    assert "rtStopManual(" in lade, "die Liste bietet keinen Stop-Knopf"
+    _kn = lade[lade.find("const knopf="):]
+    _kn = _kn[:_kn.find("\n    return")]
+    assert "st==='running'" in _kn, \
+        "der Stop-Knopf haengt nicht am Zustand — er stuende auch an einer " \
+        "laengst fertigen Aufnahme und koennte dort nur scheitern"
+    # Und er ist fuer Screenreader benannt: "Stop" allein sagt nicht, wovon.
+    assert "aria-label=" in _kn, "der Stop-Knopf hat keine Beschriftung"
+    ok("W63: der Stop-Knopf steht nur an laufenden Aufnahmen, und benannt")
+
+    # --- 5) Farbe traegt die Information nicht allein --------------------
+    # Regel aus dem html-templates-Skill. Ein roter Punkt ohne Wort ist fuer
+    # jeden unlesbar, der Rot und Gruen nicht unterscheidet.
+    assert "const wort={running:" in lade, \
+        "die Zustaende stehen nur als Farbe da, nicht als Wort"
+    for zustand in ("running", "completed", "empty", "abgebrochen"):
+        assert zustand + ":" in lade, f"der Zustand {zustand} hat kein Wort"
+    ok("W63: jeder Zustand steht als Wort da, nicht nur als Farbe")
+
+    # --- 6) Ein Phantom wird aufgeraeumt, nicht bloss gemeldet -----------
+    # Nach einem Neustart steht die Zeile fuer immer auf 'running'. Ohne
+    # diesen Zweig zeigte das neue Panel eine Aufnahme, die es nicht gibt.
+    i = bot.find("def stop_manual_recording(")
+    assert i > 0, "stop_manual_recording fehlt"
+    rumpf = bot[i:bot.find("\ndef ", i + 1)]
+    assert "UPDATE manual_recordings SET status='abgebrochen'" in rumpf, \
+        "eine Zeile, die auf 'running' steht ohne Prozess dahinter, bleibt " \
+        "fuer immer stehen — der Stop-Knopf kann sie nur anmeckern"
+    assert 'z["status"] == "running"' in rumpf, \
+        "aufgeraeumt wird ohne Pruefung — das schriebe auch fertige Zeilen um"
+    assert "ended_at=?" in rumpf, "die aufgeraeumte Zeile bekommt kein Ende"
+    # Still darf das nicht passieren: der Betreiber soll wissen, dass hier
+    # ein Neustart-Rest lag (CLAUDE.md, stille except-Bloecke).
+    assert "log.warning(" in rumpf, "das Aufraeumen steht in keinem Log"
+    # Und der Klick meldet es zurueck, statt 'Aufnahme gestoppt' zu behaupten.
+    assert "r.error||'Aufnahme gestoppt'" in deck, \
+        "der Erfolgsfall verschluckt den Hinweis auf den Neustart-Rest"
+    ok("W63: ein Neustart-Rest wird abgeschlossen, geloggt und gemeldet")
+
+
 def _test_v42_w60_azrael_cooldown_je_plattform():
     """v4.2-W60: ein Cooldown fuer drei Chats verschluckte zwei davon.
 
@@ -9633,6 +9750,7 @@ def main():
     _test_v42_w57_verwarnung_auf_allen_plattformen()
     _test_v42_w61_avatar_faellt_vor_dem_panel()
     _test_v42_w62_avatar_afk_zustand()
+    _test_v42_w63_manuelle_aufnahme_sichtbar_und_stoppbar()
     _test_v42_w60_azrael_cooldown_je_plattform()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)

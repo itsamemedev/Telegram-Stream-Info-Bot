@@ -9357,6 +9357,10 @@ VIEW_LOADERS.wall = async function(){
               <div id="rt_active" class="skel" aria-busy="true"><i></i></div>
             </div>
             <div>
+              <div class="kc-sub">MANUELLE AUFNAHMEN <span class="tag" id="rt_manual_n">…</span></div>
+              <div id="rt_manual" class="skel" aria-busy="true"><i></i></div>
+            </div>
+            <div>
               <div class="kc-sub">LETZTE VERSUCHE</div>
               <div id="rt_attempts" class="skel" aria-busy="true"><i></i></div>
             </div>
@@ -9683,6 +9687,7 @@ async function trkGroupsFill(){
 let _rtRetRules=null;
 async function loadRecTools(){
   loadRtActive();
+  loadRtManual();
   loadRtAttempts();
   loadRtLabels();
   loadRtTrash();
@@ -9696,7 +9701,58 @@ async function rtManualStart(){
   const duration_secs=parseInt((d&&d.value)||'300',10)||300;
   const r=await apiPost('/api/recordings/manual/start',{username,duration_secs});
   if(typeof toast==='function') toast(r&&r.ok?(T('Aufnahme @')+username+T(' gestartet')):((r&&r.error)||T('Start fehlgeschlagen')), r&&r.ok?'ok':'err');
+  // v4.2-W63: BEIDE Listen. Eine manuelle Aufnahme landet in
+  // manual_recordings, AKTIVE AUFNAHMEN liest aber trackings — sie stand
+  // dort noch nie drin. Vorher lud der Start nur loadRtActive(), und das
+  // Deck antwortete auf einen erfolgreichen Start mit "Keine laufende
+  // Aufnahme.", waehrend eine lief.
   loadRtActive();
+  loadRtManual();
+}
+async function loadRtManual(){
+  const box=$('#rt_manual'), n=$('#rt_manual_n');
+  if(!box) return;
+  const d=await apiGet('/api/recordings/manual/list');
+  const rows=(d&&Array.isArray(d.recordings))?d.recordings:[];
+  const laufend=rows.filter(r=>r.status==='running');
+  if(n) n.textContent=laufend.length;
+  if(!rows.length){
+    box.innerHTML='<div class="faint" style="font-size:11px">Noch keine manuelle Aufnahme. Oben Namen und Dauer eintragen.</div>';
+    return;
+  }
+  // Farbe traegt hier NICHT allein die Information: der Punkt steht neben
+  // dem ausgeschriebenen Status, sonst ist die Zeile fuer jeden unlesbar,
+  // der Rot und Gruen nicht unterscheidet.
+  const wort={running:'läuft', completed:'fertig', empty:'leer geblieben',
+              spawn_failed:'Start fehlgeschlagen', stopped:'gestoppt',
+              abgebrochen:'abgebrochen (Bot-Neustart)'};
+  const farbe={running:'var(--ok)', completed:'var(--ok)'};
+  box.innerHTML=rows.slice(0,12).map(r=>{
+    const st=r.status||'?';
+    const punkt='<span style="color:'+(farbe[st]||'var(--red)')+'">●</span>';
+    const groesse=(r.size_mb==null)?'':(' · '+rtMb(r.size_mb));
+    // Der Stop-Knopf nur, solange etwas zu stoppen ist. Sonst meldete der
+    // Endpunkt "manual recording not running" — ein Knopf, der nur eine
+    // Fehlermeldung erzeugen kann, ist schlimmer als keiner.
+    const knopf=(st==='running')
+      ? '<button class="btn sm" onclick="rtStopManual('+(r.id|0)+')" '
+        +'aria-label="Manuelle Aufnahme '+esc(r.username)+' stoppen">Stop</button>'
+      : '';
+    return '<div class="kc-row"><div style="flex:1"><div class="kc-t">@'+esc(r.username)+' '+punkt+
+      '</div><div class="kc-d">'+esc(wort[st]||st)+groesse+' · '+
+      esc((r.started_at||'').slice(0,19).replace('T',' '))+
+      (r.filename?(' · '+esc(r.filename)):'')+'</div></div>'+knopf+'</div>';
+  }).join('');
+}
+async function rtStopManual(mid){
+  const r=await apiPost('/api/recordings/manual/'+mid+'/stop',{});
+  // Der Aufraeum-Fall meldet ok=true UND einen Text: die Zeile stand auf
+  // "laeuft", der Prozess war aber schon weg. Wer da nur 'Aufnahme gestoppt'
+  // liest, haelt einen Neustart-Rest fuer eine echte Aufnahme.
+  const txt = r&&r.ok ? (r.error||'Aufnahme gestoppt')
+                      : ((r&&r.error)||'Stopp fehlgeschlagen');
+  if(typeof toast==='function') toast(txt, r&&r.ok?'ok':'err');
+  loadRtManual();
 }
 async function loadRtActive(){
   const box=$('#rt_active'), n=$('#rt_active_n');
