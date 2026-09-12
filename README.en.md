@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="docs/assets/banner.svg" alt="NIGHTCRAWLER — v4.2 Decomposed Core" width="100%">
+<img src="docs/assets/banner.svg" alt="NIGHTCRAWLER — v4.3 Clear View" width="100%">
 
 ### The control room for live streaming
 #### Monitoring · Recording · Multi-target restream · AI moderation
@@ -908,7 +908,7 @@ service.
 
 | | |
 |---|---|
-| Current version | **4.2** — “Decomposed Core” (2026.09) |
+| Current version | **4.3** — “Clear View” (2026.09) |
 | Flask routes | 361 (34 in `bot.py` · 327 in `nc/routes/`) |
 | Discord slash commands | 45 |
 | Domain modules | 92 in `nc/` (+18 in `nc/routes/`, +3 in `nc/intel/`), 10 in `brain/` |
@@ -1008,7 +1008,7 @@ Third-party code and its licences:
 
 <div align="center">
 
-**NIGHTCRAWLER v4.2 · “Decomposed Core”**
+**NIGHTCRAWLER v4.3 · “Clear View”**
 
 **[🌐 lafap.de](https://lafap.de)** · **[💬 Discord](https://discord.gg/psvnxm7tSV)** · **[📓 Changelog](docs/CHANGELOG.md)**
 
