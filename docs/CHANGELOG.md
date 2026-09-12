@@ -11,6 +11,72 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Behoben — die Drossel warf das Panel weg und behielt das Teuerste (v4.2 W60)
+
+Zum zweiten Mal gemeldet: „Der Chat bricht wieder weg. Es bleiben nur noch
+Avatar und TikTok-Stream." Beim dritten Mal die Ansage des Betreibers: **„Es
+hat gar nichts auszufallen. Es sollte nicht mal die Möglichkeit dazu geben."**
+
+Die Kette: Encode unter Echtzeit → Drossel-Stufe steigt → ab Stufe 3 fällt
+`overlay_on`, und weil `studio_on = overlay_on and layout == "studio"` daran
+hängt, fällt damit das **ganze Panel** — Chat, Titel, Quelle, Follower,
+AZRAEL-Zeile. Der Name der Funktion (`drossel_text_aus`) und ihr Docstring
+sprachen von „Text".
+
+**Die Begründung war ausserdem gemessen falsch.** 12 s Quelle, 1280×720,
+superfast, vier Threads:
+
+| | Zeit | Kosten |
+|---|---|---|
+| nackt, ohne alles | 1,1 s | — |
+| + Leinwand und Deko | 1,9 s | 0,8 s |
+| + alle neun Textfelder | 2,9 s | **1,0 s** |
+| + Avatar | 4,1 s | **1,2 s** |
+
+Der Avatar allein kostet mehr als sämtliche Texte zusammen. Stufe 3 warf also
+das Panel weg und behielt das Teuerste.
+
+**Die Leiter regelt jetzt ausschließlich, WIE kodiert wird — nie, WAS im Bild
+steht:**
+
+| Stufe | |
+|---|---|
+| 1 | Preset einen Schritt schneller |
+| 2 | + Bitrate runter |
+| 3 | + Bildrate runter (nie unter 15) |
+| 4 | + Leinwand kleiner (nie unter 960×540) |
+
+Ein Drossel-Schritt baut das Kommando ohnehin neu (`stop` + `start`), Bildrate
+und Leinwand sind damit genauso regelbar wie Preset und Bitrate. Eine kleinere
+Leinwand kostet quadratisch weniger und lässt jedes Element sichtbar — das ist
+der Unterschied zwischen „kleiner" und „weg". Die Untergrenze 960×540 ist
+bewusst gesetzt: darunter wäre der eingebrannte Chat nicht mehr lesbar, und
+ein unlesbares Panel wäre dasselbe wie ein fehlendes.
+
+`drossel_text_aus` ist **entfernt**. Der Vertrag prüft nicht mehr eine
+Schwelle, sondern die Abwesenheit der Möglichkeit: keine Gate-Zeile darf die
+Drossel lesen, über alle Stufen inklusive Anschlag.
+
+### Behoben — ein AZRAEL-Cooldown für drei Chats verschluckte zwei davon (v4.2 W60)
+
+Gemeldet als „AZRAEL reagiert nicht plattformspezifisch auf Anfragen per
+@Azrael, @azrael, Azrael und azrael". Die Erkennung war nie das Problem —
+`"azrael" in text.lower()` fängt alle vier Schreibweisen. Die Bremse war es:
+
+```python
+_AZRAEL_CHAT_LAST = {"ts": 0.0}      # EIN Wert für alle drei Plattformen
+```
+
+Bei `AZRAEL_CHAT_REPLY_COOLDOWN_S=20` heißt das: fragt jemand auf Kick, werden
+dieselben Fragen auf Twitch und YouTube in den nächsten 20 Sekunden **stumm
+verworfen** — kein Log, keine Antwort. Bei drei laufenden Chats trifft das
+statistisch zwei von drei Fragestellern.
+
+Der Cooldown zählt jetzt je Plattform; die vier Aufrufstellen (Kick, Twitch,
+YouTube ×2) geben ihre Plattform mit. Ein Vertrag hält fest, dass keine
+Aufrufstelle sie vergisst — ohne Plattform landeten alle wieder im selben
+Vorgabe-Eimer, nur unauffälliger.
+
 _Noch nichts._
 
 ---
