@@ -119,3 +119,60 @@ def poll_abstand(status, war_live, intervalle):
     if status == "offline":
         return intervalle["just_went_offline"] if war_live else intervalle["offline"]
     return intervalle["unknown"]
+
+
+def braucht_url_nachschlag(status, info) -> bool:
+    """Muss nach der Webcast-API noch ein zweiter Weg nach der Stream-URL suchen?
+
+    v4.2-W51. Bis hierher lief der HTML-Weg NUR bei `unknown`. Damit
+    uebersprang er ausgerechnet den haeufigsten Fall. Gemessen am 11.09., 84
+    Aufloesungen in zehn Minuten:
+
+        60x  webcast-api: status=live ohne Stream-URL -> live
+        24x  webcast-api resolved (hls=yes, flv=yes)
+
+    71 % melden „live", liefern aber keine URL — TikTok gibt sie einer
+    Datacenter-IP nicht heraus. Der Bot gab ("live", None) zurueck und kehrte
+    SOFORT zurueck; der Weg, der die URL haette liefern koennen, lief nie. Der
+    Recorder startete blind und quittierte mit „The channel is not currently
+    live" (28x im selben Zeitraum).
+
+    Warum nicht auch bei „offline" nachschlagen: sagt die API klar offline,
+    glauben wir das. Ein zweiter Rundlauf pro Poll und Nutzer kostet nur
+    Anfragen bei einem Dienst, der uns ohnehin schon rate-limitet.
+
+    Warum yt-dlp hier NICHT hilft: `_resolve_via_ytdlp` gibt auch bei „live"
+    grundsaetzlich info=None zurueck — es beantwortet die Frage „sendet er?",
+    nicht „wohin greife ich?". Nur der HTML-Weg traegt eine URL.
+    """
+    if status == "unknown":
+        return True
+    if status != "live":
+        return False
+    return not hat_stream_url(info)
+
+
+def hat_stream_url(info) -> bool:
+    """Traegt dieses Info-Woerterbuch eine brauchbare Stream-URL?
+
+    v4.2-W52. Es gab dafuer DREI Fassungen, und eine davon war enger als die
+    anderen beiden: der Annahme-Test hinter dem HTML-Weg in bot.py verlangte
+    `hls_url`, waehrend `braucht_url_nachschlag` und `reccmd._has_stream_url`
+    beide Formen gelten liessen. Ein HTML-Treffer mit NUR flv_url wurde
+    deshalb weggeworfen — und zwar ausgerechnet die stabilere Quelle:
+
+        # nc/restreamcmd, sinngemaess: fuer den Restream FLV bevorzugen —
+        # HLS ist segmentiert und reisst ab (rc=187, "mime type is not
+        # rfc8216 compliant").
+
+    FLV ist EINE fortlaufende Verbindung, HLS eine Kette signierter Segmente.
+    Wer den FLV-Treffer verwirft und mit HLS weitermacht, tauscht die stabile
+    Quelle gegen die bruechige. Seit W51 entscheidet dieser Test ueber rund
+    zwei Drittel aller Aufloesungen statt ueber den seltenen `unknown`-Fall —
+    die Enge faellt damit erst richtig ins Gewicht.
+
+    Leere Zeichenketten zaehlen nicht: `{"hls_url": ""}` ist keine URL,
+    sondern ein Resolver, der nichts gefunden hat.
+    """
+    d = info or {}
+    return bool(d.get("hls_url") or d.get("flv_url"))

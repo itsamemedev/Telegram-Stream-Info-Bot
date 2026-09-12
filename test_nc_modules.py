@@ -8188,6 +8188,173 @@ def _test_v42_w50_avatar_ueberlebt_die_drossel():
     ok("W50: eine Zeile nennt Text, Avatar und jeden fehlenden Grund")
 
 
+def _test_v42_w52_flv_zaehlt_auch():
+    """v4.2-W52: der Annahme-Test hinter dem HTML-Weg war enger als der
+    Nachschlag, der ihn ausloest — und warf die stabilere Quelle weg.
+
+    Drei Stellen beantworten „traegt das eine Stream-URL?", zwei liessen
+    hls ODER flv gelten, eine verlangte hls:
+
+        braucht_url_nachschlag   hls oder flv    (W51)
+        reccmd._has_stream_url   hls oder flv
+        bot.py, Annahme des HTML-Treffers        NUR hls   <-- eng
+
+    Ein HTML-Treffer mit nur flv_url fiel damit durch, der Bot blieb bei
+    ("live", None) und der Recorder loeste wieder selbst auf. Ausgerechnet
+    FLV: der Restream-Pfad bevorzugt es, weil HLS eine Kette signierter
+    Segmente ist, die abreisst (rc=187), FLV dagegen EINE Verbindung.
+
+    Seit W51 haengen daran rund zwei Drittel aller Aufloesungen statt des
+    seltenen `unknown`-Falls. Die Enge ist dadurch von einer Randnotiz zu
+    einem taeglichen Verlust geworden.
+    """
+    from nc import livefolge as L
+
+    # --- 1) Der eine Test, beide Formen ---------------------------------
+    h = L.hat_stream_url
+    assert h({"flv_url": "https://x/y.flv"}) is True, \
+        "FLV allein muss zaehlen — es ist die stabilere Quelle, nicht die " \
+        "schlechtere"
+    assert h({"hls_url": "https://x/y.m3u8"}) is True
+    assert h({"hls_url": "https://a", "flv_url": "https://b"}) is True
+    assert h({}) is False and h(None) is False
+    assert h({"title": "nur Titel"}) is False
+    assert h({"hls_url": "", "flv_url": ""}) is False, \
+        "leere Zeichenketten sind keine URL, sondern ein leerer Resolver"
+    ok("W52: hat_stream_url laesst hls UND flv gelten, Leeres nicht")
+
+    # --- 2) Nachschlag und Annahme benutzen DENSELBEN Test ---------------
+    # Sonst driften sie wieder auseinander: genau so entstand der Befund.
+    import inspect as _inspect
+    src = _inspect.getsource(L.braucht_url_nachschlag)
+    assert "hat_stream_url(info)" in src, \
+        "braucht_url_nachschlag rechnet wieder selbst statt hat_stream_url " \
+        "zu benutzen — die beiden koennen dann erneut auseinanderlaufen"
+    # Und die Umkehrung muss ueber alle vier Ecken gelten.
+    for inf in ({}, None, {"hls_url": "u"}, {"flv_url": "u"},
+                {"hls_url": "", "flv_url": ""}, {"hls_url": "a", "flv_url": "b"}):
+        assert L.braucht_url_nachschlag("live", inf) is (not h(inf)), inf
+    ok("W52: bei 'live' ist Nachschlag exakt die Umkehrung von hat_stream_url")
+
+    # --- 3) bot.py nimmt den HTML-Treffer ueber denselben Test an --------
+    hier = os.path.dirname(os.path.abspath(__file__))
+    bot = open(os.path.join(hier, "bot.py"), encoding="utf-8").read()
+    flach = " ".join(bot.split())
+    assert "_nc_live.hat_stream_url(html_info)" in flach, \
+        "der HTML-Treffer wird nicht ueber den gemeinsamen Test angenommen"
+    assert 'if html_info and html_info.get("hls_url"):' not in flach, \
+        "die enge Fassung steht noch da — flv-only faellt weiter durch"
+    ok("W52: bot.py nimmt auch einen reinen FLV-Treffer an")
+
+    # --- 4) Und der Recorder-Test bleibt gleichbedeutend -----------------
+    # reccmd hat eine eigene, gleichlautende Fassung. Sie darf abweichen,
+    # solange sie DASSELBE sagt — driftet sie, liegt hier wieder ein Loch.
+    rc = open(os.path.join(hier, "nc", "reccmd.py"), encoding="utf-8").read()
+    i = rc.find("def _has_stream_url")
+    assert i > 0
+    rumpf = rc[i:i + 200]
+    assert 'get("hls_url")' in rumpf and 'get("flv_url")' in rumpf, \
+        "reccmd._has_stream_url laesst nicht mehr beide Formen gelten"
+    ok("W52: der Recorder-Test sagt dasselbe wie hat_stream_url")
+
+
+def _test_v42_w51_live_ohne_url():
+    """v4.2-W51: der Weg zur Stream-URL lief ausgerechnet im haeufigsten Fall
+    nicht.
+
+    Gemessen im Log vom 11.09., 84 Aufloesungen in zehn Minuten:
+
+        60x  webcast-api @USER: status=live ohne Stream-URL -> live
+        24x  webcast-api resolved @USER (hls=yes, flv=yes, codec=h264, q=hd)
+        28x  ytdlp @USER rc=1: The channel is not currently live
+
+    **71 % der Erkennungen melden „live" ohne URL.** TikTok gibt sie einer
+    Datacenter-IP nicht heraus. `get_live_status` gab das als ("live", None)
+    zurueck — und kehrte SOFORT zurueck. Der HTML-Weg, der die URL haette
+    liefern koennen, lief nur bei `unknown`:
+
+        if status == "unknown":
+            html_info = await _resolve_via_html(...)
+
+    Der Recorder startete also blind und quittierte mit „not currently live".
+
+    yt-dlp hilft hier nicht: `_resolve_via_ytdlp` gibt auch bei „live"
+    grundsaetzlich info=None zurueck. Es beantwortet „sendet er?", nicht
+    „wohin greife ich?".
+    """
+    from nc import livefolge as L
+
+    # --- 1) Wann wird nachgeschlagen ------------------------------------
+    f = L.braucht_url_nachschlag
+    assert f("unknown", None) is True, "unknown muss weitersuchen (wie bisher)"
+    assert f("live", None) is True, "genau der Fall, der 60x auftrat"
+    assert f("live", {}) is True
+    assert f("live", {"title": "nur Titel"}) is True, \
+        "info ohne URL ist so gut wie kein info"
+    # ... und wann NICHT.
+    assert f("live", {"hls_url": "https://x/y.m3u8"}) is False
+    assert f("live", {"flv_url": "https://x/y.flv"}) is False
+    assert f("offline", None) is False, \
+        "sagt die API klar offline, glauben wir das — sonst ein zweiter " \
+        "Rundlauf pro Poll und Nutzer bei einem Dienst, der rate-limitet"
+    assert f("ratelimited", None) is False, "ein 429 wird nicht nachgefasst"
+    ok("W51: nachgeschlagen wird bei unknown UND bei live-ohne-URL, sonst nicht")
+
+    # --- 2) Kein Absturz an kaputten Eingaben ----------------------------
+    for st, inf in (("live", {"hls_url": ""}), ("live", {"hls_url": None}),
+                    (None, None), ("", {})):
+        assert isinstance(f(st, inf), bool), (st, inf)
+    assert f("live", {"hls_url": ""}) is True, "leere URL ist keine URL"
+    ok("W51: leere und kaputte Eingaben ergeben eine Entscheidung, keinen Fehler")
+
+    # --- 3) Und bot.py benutzt genau diese Entscheidung ------------------
+    hier = os.path.dirname(os.path.abspath(__file__))
+    bot = open(os.path.join(hier, "bot.py"), encoding="utf-8").read()
+    flach = " ".join(bot.split())
+    assert "_nc_live.braucht_url_nachschlag(status, info)" in flach, \
+        "get_live_status benutzt die Entscheidung nicht"
+    # Die alte, engere Bedingung darf nicht daneben stehenbleiben.
+    assert 'if status == "unknown": # 2. HTML-Fallback' not in flach, \
+        "die alte Fassung steht noch da"
+    # Der HTML-Weg ist der einzige, der eine URL liefern kann — er muss im
+    # selben Zweig gerufen werden.
+    i = flach.find("_nc_live.braucht_url_nachschlag(status, info)")
+    assert i > 0
+    fenster = flach[i:i + 700]
+    assert "_resolve_via_html(username, session)" in fenster, \
+        "im Nachschlag-Zweig wird der HTML-Weg nicht gerufen"
+    ok("W51: bot.py schlaegt im selben Zweig ueber den HTML-Weg nach")
+
+    # --- 4) Beide Ausgaenge stehen im Log --------------------------------
+    # Ohne das waere die Welle nicht messbar: niemand koennte sagen, wie oft
+    # der Nachschlag wirklich eine URL bringt. Genau diese Frage stellt sich
+    # nach jeder dieser Wellen.
+    # Auf die MARKIERUNG pruefen, nicht auf den ganzen Satz: beide Meldungen
+    # sind ueber zwei Zeilen umbrochen, und ein zusammenhaengender Anker
+    # faende sie nie — auch nicht in der geflachten Fassung, weil zwischen
+    # zwei Literalen ein Leerzeichen steht. Das Praefix steht in EINEM Literal.
+    assert bot.count('log.info("live-ohne-URL @%s:') == 2, \
+        ("beide Ausgaenge des Nachschlags muessen im Log stehen — sonst kann "
+         "niemand sagen, wie oft er wirklich eine URL bringt")
+    assert "HTML-Weg liefert die " in bot, "der Erfolgsfall fehlt"
+    assert "auch der HTML-Weg findet " in bot, "der Misserfolg fehlt"
+    assert "RECORD_PROXY" in bot
+    ok("W51: Treffer und Fehlschlag des Nachschlags stehen beide im Log")
+
+    # --- 5) yt-dlp bleibt aussen vor, und zwar begruendet ----------------
+    # Wer das spaeter „vergisst", baut einen Subprozess-Aufruf in den
+    # haeufigsten Pfad ein — 20 s Timeout, je Poll und Nutzer.
+    yq = open(os.path.join(hier, "nc", "livefolge.py"), encoding="utf-8").read()
+    assert "info=None" in yq and "yt-dlp" in yq, \
+        "die Begruendung, warum yt-dlp hier nichts beitraegt, fehlt"
+    _yt = bot[bot.find("async def _resolve_via_ytdlp"):]
+    _yt = _yt[:_yt.find("\nasync def ", 10)]
+    assert 'return "live", None' in " ".join(_yt.split()), \
+        "_resolve_via_ytdlp liefert jetzt doch eine URL? Dann gehoert es in " \
+        "den Nachschlag — und dieser Vertrag angepasst"
+    ok("W51: yt-dlp liefert weiterhin keine URL und bleibt aus dem Nachschlag")
+
+
 def main():
     tmp = tempfile.mkdtemp()
     configure_db(db_path=os.path.join(tmp, "t.db"), backend="sqlite")
@@ -8405,6 +8572,9 @@ def main():
     _test_v42_w49_notbremse_und_guthaben()
 
     _test_v42_w50_avatar_ueberlebt_die_drossel()
+
+    _test_v42_w51_live_ohne_url()
+    _test_v42_w52_flv_zaehlt_auch()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)
 
