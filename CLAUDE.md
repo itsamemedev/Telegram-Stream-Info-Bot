@@ -87,6 +87,7 @@ stdlib-only (`urllib`, kein `aiohttp`).
     python tools/vertragscheck.py --sperre
     python tools/importzeit.py    --sperre   # braucht requirements-smoke.txt
     python tools/abhaengigkeiten.py --sperre
+    python tools/monolith.py      --sperre
     python tools/i18n_extract.py --check en
     python test_smoke.py ; python test_nc_modules.py ; python test_restream.py
 
@@ -175,6 +176,29 @@ findet nur das wörtliche `os.getenv` auf Modul-Ebene und fand damit einen von
 fünf Fällen — die anderen vier standen in einer Funktion, die auf Modul-Ebene
 *aufgerufen* wird. Die 178 Lesungen in `bot.py` sind in Ordnung; sie stehen
 alle nach `load_dotenv()`. Es zählt die Reihenfolge, nicht die Menge.
+
+**Riesenfunktionen — und wo sie wirklich stehen.** Der Plan wollte lange
+`RestreamManager`, `handle_recording_finished` und `KickModerator` nach `nc/`
+holen. v4.2-W70 hat nachgemessen: **das ist die falsche Arbeit.** Was sich
+sauber herauslösen ließ, ist heraus (`bot.py` ruft 674-mal in `nc/`); übrig
+blieb Orchestrierung mit Zustand — 58 bis 77 fremde Globals je Kandidat, und
+zusammen kaum reine Logik (47 + 6 + 0). Ein Umzug hieße, bis zu 77 Namen per
+`configure()` hineinzureichen: kein Zerlegen, sondern ein Parameterobjekt, an
+der heikelsten Stelle des Bestands. **Bitte nicht neu aufrollen.**
+
+Die größte Funktion steht ohnehin nicht in `bot.py`:
+
+    1730 Z  discordbot.py  _discord_run_once
+     718 Z  nc/schema.py   create_schema
+     616 Z  bot.py         handle_recording_finished
+
+`discordbot.py` wurde in v4.2-W15 aus `bot.py` herausgelöst, genau gegen dieses
+Problem. Die Masse zog um, statt zu schrumpfen. `tools/monolith.py` misst deshalb den **ganzen**
+Produktionscode und zählt, wie viele Funktionen über einer Stufe liegen —
+63 über 100, 16 über 200, 9 über 300, 4 über 500 —, nicht ihre Länge: eine Sperre, die jede zusätzliche
+Zeile meldet, fällt bei jeder Fehlerbehebung und ist in einer Woche
+abgeschaltet. Eine Riesenfunktion bloß in eine andere Datei zu verschieben
+besteht die Sperre nicht.
 
 **Fremdpakete ohne Untergrenze.** Bis v4.2-W68 trug keiner der 17 Einträge in
 `requirements.txt` ein `>=`. Jede Grenze dort ist jetzt **nachgesehen**, nicht

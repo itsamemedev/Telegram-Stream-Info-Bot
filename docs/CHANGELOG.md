@@ -11,6 +11,61 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Geändert — der Monolith wird gemessen, statt am falschen Ende zerlegt (v4.2 W70)
+
+Der Plan dieser Reihe endete mit „Monolith zerlegen — `RestreamManager`
+(1463), `handle_recording_finished` (615), `KickModerator` (593)".
+Nachgemessen stimmt daran zweierlei nicht.
+
+**Erstens ist in den drei Genannten fast nichts mehr zu holen.** Was sich
+sauber herauslösen ließ, *ist* heraus — `bot.py` ruft **674-mal** in `nc/`
+hinein. Die Entscheidungslogik der Moderation etwa steht seit B165 und W14/W19
+in `nc/modheuristics.py`; in `bot.py` blieben Zustand und Konfiguration.
+
+| Kandidat | fremde Globals | reine Methoden |
+|---|---|---|
+| `RestreamManager` | 77 | 3 (47 Zeilen) |
+| `KickModerator` | 70 | 1 (6 Zeilen) |
+| `handle_recording_finished` | 58 | 0 |
+
+Diese drei nach `nc/` zu schieben hieße, 45 bis 77 Namen per `configure()`
+hineinzureichen. Das wäre kein Zerlegen, sondern ein riesiges Parameterobjekt
+— und es fände an der heikelsten Stelle des Bestands statt, dort wo Aufnahme
+und Restream hängen. **Deshalb unterbleibt es, und zwar begründet statt
+stillschweigend.**
+
+**Zweitens steht die größte Funktion gar nicht in `bot.py`:**
+
+    1730 Z  discordbot.py  _discord_run_once
+     718 Z  nc/schema.py   create_schema
+     616 Z  bot.py         handle_recording_finished
+     504 Z  bot.py         main
+     381 Z  telegramversand.py  split_and_send_video
+
+`discordbot.py` wurde in v4.2-W15 **aus `bot.py` herausgelöst**, genau gegen
+dieses Problem. Die Masse ist dabei umgezogen, nicht kleiner geworden. Ein
+Maß, das nur `bot.py` anschaut, hätte die Verlagerung als Erfolg verbucht.
+
+Zur Einordnung: `bot.py` hat 560 Funktionen mit einem **Median von 15 Zeilen**.
+Die Datei ist nicht flächig aufgebläht, sondern ein langer Schwanz kleiner
+Orchestrierung plus wenige Riesen.
+
+### Hinzugefügt — `tools/monolith.py`
+
+Misst jede Funktion im **gesamten** Produktionscode (202 Dateien, 2224
+Funktionen) und friert die Zahl über vier Stufen ein: 63 über 100 Zeilen, 16
+über 200, 9 über 300, 4 über 500.
+
+**Gezählt wird die Anzahl, nicht die Länge.** Eine Sperre, die jede
+zusätzliche Zeile in einer großen Funktion meldet, fällt bei jeder normalen
+Fehlerbehebung — und ist binnen einer Woche abgeschaltet. Interessant ist
+etwas anderes: dass keine *neue* Riesenfunktion entsteht und keine bestehende
+in die nächste Stufe rutscht. Dieselbe Überlegung wie bei den stillen
+`except`-Blöcken in W65. Geprüft ist auch der Fall, der hier schon einmal
+eingetreten ist: eine Riesenfunktion in eine andere Datei zu verschieben
+besteht die Sperre **nicht**.
+
+
 ### Behoben — das Diagnose-Kommando log über die Schlüssel (v4.2 W69)
 
 An acht Stellen — zwei Skills, sechs Doku-Dateien — stand:
