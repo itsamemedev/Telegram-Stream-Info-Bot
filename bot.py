@@ -22582,6 +22582,260 @@ async def _maybe_hype_clip(username, director):
 
 
 
+# ---------------------------------------------------------------------------
+# v4.2-W75: Zehn Rueckrufe, die in main() standen. Sie brauchen von dort
+# KEINE einzige Variable — nur Modul-Namen. Acht davon sind die
+# Brain-Bridge-Verdrahtung, die allein 245 der 504 Zeilen von main()
+# ausmachte: Momentaufnahmen fuer den Router (Restream-Gesundheit,
+# Moderation, Aufnahmen, TikTok-Status) und drei Stellhebel.
+#
+# Sie standen in einem try-Block, dessen except den Import von
+# brain_bridge auffaengt. Auf Modulebene entstehen sie jetzt immer —
+# das ist gefahrlos, weil sie nur ueber init_bridge() benutzt werden und
+# der Aufruf im try bleibt.
+# ---------------------------------------------------------------------------
+
+# B84: Globaler asyncio-Exception-Handler. TikTokLive wirft beim WS-Abbruch
+# (Stream endet/Netz-Blip) in seinem internen _ping_loop einen
+# ConnectionClosedError, den WIR nicht awaiten können (fremder Task) → flutet
+# den Log als 'Task exception was never retrieved'. Der Handler schluckt genau
+# dieses Rauschen leise und lässt echte Fehler normal durch.
+def _async_exc_handler(loop, context):
+    exc = context.get("exception")
+    msg = str(context.get("message", ""))
+    if exc is not None:
+        en = type(exc).__name__
+        if en in ("ConnectionClosedError", "ConnectionClosedOK", "ConnectionResetError") \
+                or "ping_loop" in msg or "no close frame" in str(exc):
+            log.debug("asyncio: WS-Abbruch geschluckt (%s)", en)
+            return
+    loop.default_exception_handler(context)
+
+
+def _v37_restream_restart(_rid):
+    """V37-P7c: Neustart aus dem Brain-Thread — threadsicher über
+    die Bot-Eventloop. Gibt True zurück, wenn der Task geplant ist."""
+    try:
+        if _MAIN_LOOP and _RESTREAM_MGR:
+            asyncio.run_coroutine_threadsafe(
+                _RESTREAM_MGR.start(_rid), _MAIN_LOOP)
+            return True
+    except Exception as _e:
+        log.warning("Brain-Restart für Restream %s fehlgeschlagen: %s", _rid, _e)
+    return False
+
+
+def _v37_unpause_source(username):
+    """V37-B91f: Auto-Pause aufheben (Reaktivierung). Nur Zeilen, die
+    NOCH pausiert sind — reaktiviert der Operator manuell, ist paused
+    schon 0 und wir fassen nichts an. Gibt True bei Reaktivierung."""
+    try:
+        u = str(username).lstrip("@").strip()
+        if not u or ":" in u:
+            return False
+        with db_conn() as conn:
+            cur = conn.execute(
+                "UPDATE trackings SET paused=0 WHERE username=? "
+                "AND paused=1", (u,))
+            conn.commit()
+            n = cur.rowcount
+        if n:
+            log.info("Brain: @%s reaktiviert (zweite Chance nach "
+                     "Auto-Pause)", u)
+        return bool(n)
+    except Exception as _e:
+        log.warning("Brain-Unpause für %s: %s", username, _e)
+        return False
+
+
+def _v37_pause_source(username):
+    """V37-B91e: Chronisch tote Quelle pausieren (RecoveryAgent
+    Stufe 3). username kommt als 'restream:<rid>' oder '@user' aus
+    dem Preflight-who — hier nur echte Tracking-User (@...) behandeln,
+    Restream-Quellen ignoriert der Agent bereits. Gibt True zurück,
+    wenn eine Zeile pausiert wurde."""
+    try:
+        u = str(username).lstrip("@").strip()
+        if not u or ":" in u:      # 'restream:5' o.ä. → nicht hier
+            return False
+        with db_conn() as conn:
+            cur = conn.execute(
+                "UPDATE trackings SET paused=1 WHERE username=? "
+                "AND paused=0", (u,))
+            conn.commit()
+            n = cur.rowcount
+        if n:
+            log.warning("Brain: @%s wegen chronisch toter Quelle "
+                        "pausiert (Recovery Stufe 3)", u)
+        return bool(n)
+    except Exception as _e:
+        log.warning("Brain-Pause für %s fehlgeschlagen: %s", username, _e)
+        return False
+
+
+def _brain_crowdsec_snap():
+    # M8: schlanker Snapshot fuer den SentinelAgent — kein cscli-Parsing
+    # in brain/. running/bans/hint aus _crowdsec_status().
+    try:
+        cs = _crowdsec_status() or {}
+    except Exception as e:
+        return {"running": False, "hint": str(e)}
+    return {"running": bool(cs.get("ok")),
+            "bans": int(cs.get("total_banned") or 0),
+            "hint": cs.get("hint") or ""}
+
+
+def _brain_restream_health():
+    # M8: tee-Fehler + Ziel-Doppelbelegungen fuer den RestreamSentinel.
+    #
+    # WARUM das hier umgebaut wurde: seit v4.0-W77 ist die Zielliste
+    # GLOBAL (nc.restream_targets liest Kick/Twitch/YouTube aus der
+    # .env). 'kick_url' ist seitdem nur noch "die erste konfigurierte
+    # Plattform" — bei EINEM Restream, der auf drei Plattformen
+    # ausspielt, ist das voellig normal. Der alte Vergleich lief ueber
+    # genau dieses Feld und meldete deshalb "Kick-Key-Kollision",
+    # sobald ueberhaupt zwei Restreams liefen: ohne Plattformnamen,
+    # ohne Quelle, mit einem Rat ("eigene Keys je Channel"), der zur
+    # heutigen Konfiguration nicht mehr passt.
+    #
+    # Jetzt: je Prozess ALLE Ziele vergleichen, nur LEBENDE Prozesse
+    # zaehlen, RESTREAM_SINGLE respektieren (dann kann es die Lage
+    # gar nicht geben) und Quelle + Plattform mitgeben, damit der
+    # Befund benennt, welche zwei Zeilen sich in die Quere kommen.
+    mgr = _RESTREAM_MGR
+    tf = mgr.tee_fehler()          # v4.0-W116
+    procs = getattr(mgr, "_procs", {}) or {}
+    live = {}
+    for _rid, _info in procs.items():
+        _proc = (_info or {}).get("proc")
+        if _proc is not None and _proc.returncode is not None:
+            continue           # beendet, wird gleich aus _procs geraeumt
+        live[_rid] = _info or {}
+    quellen = {}
+    try:
+        if live:
+            with db_conn() as conn:
+                rows = conn.execute(
+                    "SELECT id, source_username FROM restreams WHERE id IN ("
+                    + ",".join("?" * len(live)) + ")",
+                    list(live)).fetchall()
+            quellen = {r["id"]: (r["source_username"] or "") for r in rows}
+    except Exception as e:
+        log.debug("restream-health: Quellen nicht lesbar: %s", e)
+    by_url = {}
+    for _rid, _info in live.items():
+        _ziele = _info.get("tee_targets") or []
+        if not _ziele and _info.get("kick_url"):
+            _ziele = [("?", _info["kick_url"])]
+        for _name, _url in _ziele:
+            if _url:
+                by_url.setdefault(_url, {"platform": _name, "rids": []})
+                by_url[_url]["rids"].append(_rid)
+    collisions = []
+    if not RESTREAM_SINGLE:
+        for _eintrag in by_url.values():
+            _rids = sorted(_eintrag["rids"])
+            if len(_rids) > 1:
+                collisions.append({
+                    "platform": _eintrag["platform"],
+                    "rids": _rids,
+                    "sources": [quellen.get(r, "") for r in _rids],
+                    "same_source": len({quellen.get(r, "") for r in _rids}) == 1,
+                })
+    return {"tee_fail": tf, "key_collisions": collisions}
+
+
+def _brain_moderation_snap():
+    # M8: Moderations-Trend fuer den ToxicityAgent — aus kick_mod_log.
+    # v4.1-W18: NICHT mehr jede Zeile. In der Tabelle liegt auch, was
+    # AZRAEL auf einem TikTok-Live sagt (kind="reaction", im
+    # Sekundentakt) und was der Highlight-Radar meldet. Beides zaehlte
+    # als "Moderations-Aktion" und loeste beim Betreiber eine
+    # Toxizitaets-Warnung fuer einen Chat aus, den er gar nicht
+    # moderiert. Die Regel steht jetzt in nc/modstats.py — dort auch,
+    # warum TikTok sich nicht per Konfiguration zuschalten laesst.
+    now = datetime.now(timezone.utc)
+    h1 = (now - timedelta(hours=1)).isoformat()
+    h2 = (now - timedelta(hours=2)).isoformat()
+    try:
+        with db_conn() as conn:
+            rows1 = conn.execute(
+                "SELECT kind, actor, meta FROM kick_mod_log WHERE ts>=?",
+                (h1,)).fetchall()
+            rows0 = conn.execute(
+                "SELECT kind, actor, meta FROM kick_mod_log "
+                "WHERE ts>=? AND ts<?", (h2, h1)).fetchall()
+    except Exception:
+        return {}
+
+    def _tripel(rows):
+        for r in rows:
+            k, a, m = (r[0], r[1], r[2]) if isinstance(r, tuple) else (
+                r["kind"], r["actor"], r["meta"])
+            try:
+                meta = json.loads(m or "{}")
+            except Exception:
+                meta = {}
+            yield k, a, meta if isinstance(meta, dict) else {}
+
+    return _nc_modstats.verdichte(
+        list(_tripel(rows1)), list(_tripel(rows0)),
+        erlaubt=_nc_modstats.quellen(os.getenv("MOD_TREND_PLATTFORMEN") or None))
+
+
+def _brain_recording_snap():
+    # M8: aktuelle Groesse+alive je laufender Aufnahme fuer den RecordingAgent.
+    out = {}
+    try:
+        with db_conn() as conn:
+            rows = conn.execute(
+                "SELECT username, output_file, pid FROM trackings "
+                "WHERE recording=1").fetchall()
+    except Exception:
+        return {}
+    for r in rows:
+        user = r["username"] if not isinstance(r, tuple) else r[0]
+        of = r["output_file"] if not isinstance(r, tuple) else r[1]
+        pid = r["pid"] if not isinstance(r, tuple) else r[2]
+        if not of:
+            out[user] = {"bytes": None, "alive": _proc_is_recorder(pid)}
+            continue
+        try:
+            sz = os.path.getsize(of)
+        except Exception:
+            sz = None
+        out[user] = {"bytes": sz, "alive": _proc_is_recorder(pid)}
+    return out
+
+
+def _brain_tiktok_status_snap():
+    # B152: HTTP-Status-Verteilung der TikTok-Webcast-Fetches fuer den
+    # ProxyHealthAgent (mode-agnostisch). Kumulativ; Agent bildet Delta.
+    try:
+        by_code = {int(k): int(v) for k, v in _TIKTOK_STATUS_COUNTER.items()}
+    except Exception:
+        by_code = {}
+    try:
+        with _PROXY_POOL_LOCK:
+            pool_size = len(_PROXY_POOL)
+    except Exception:
+        pool_size = 0
+    return {"by_code": by_code, "total": sum(by_code.values()),
+            "record_proxy": bool(RECORD_PROXY), "pool_size": pool_size}
+
+
+async def _kickmod_boot():
+    await asyncio.sleep(3)              # Flask/DB erst atmen lassen
+    try:
+        res = await _KICK_MOD.start()
+        if res.get("ok"):
+            log.info("AZRAEL SENTINEL: KI-Moderator auto-gestartet (Kick-Chat-Wache aktiv).")
+        else:
+            log.warning("AZRAEL SENTINEL Autostart: %s", res.get("error"))
+    except Exception as e:
+        log.warning("AZRAEL SENTINEL Autostart fehlgeschlagen: %s", e)
+
+
 async def main():
     # V37-DRIFT: Einmal beim Start die verhaltensrelevanten .env-Abweichungen
     # loggen. Dreimal in einer Session hat eine .env-Zeile still die Absicht des
@@ -22612,21 +22866,7 @@ async def main():
     except Exception as _e:
         log.warning("Default-Executor-Setup übersprungen: %s", _e)
 
-    # B84: Globaler asyncio-Exception-Handler. TikTokLive wirft beim WS-Abbruch
-    # (Stream endet/Netz-Blip) in seinem internen _ping_loop einen
-    # ConnectionClosedError, den WIR nicht awaiten können (fremder Task) → flutet
-    # den Log als 'Task exception was never retrieved'. Der Handler schluckt genau
-    # dieses Rauschen leise und lässt echte Fehler normal durch.
-    def _async_exc_handler(loop, context):
-        exc = context.get("exception")
-        msg = str(context.get("message", ""))
-        if exc is not None:
-            en = type(exc).__name__
-            if en in ("ConnectionClosedError", "ConnectionClosedOK", "ConnectionResetError") \
-                    or "ping_loop" in msg or "no close frame" in str(exc):
-                log.debug("asyncio: WS-Abbruch geschluckt (%s)", en)
-                return
-        loop.default_exception_handler(context)
+    # v4.2-W75: _async_exc_handler steht jetzt auf Modulebene.
     try:
         asyncio.get_running_loop().set_exception_handler(_async_exc_handler)
     except Exception:
@@ -22703,209 +22943,21 @@ async def main():
     try:
         _BRIDGE_STATUS.update(phase="import", error=None)
         from brain_bridge import init_bridge
-        def _v37_restream_restart(_rid):
-            """V37-P7c: Neustart aus dem Brain-Thread — threadsicher über
-            die Bot-Eventloop. Gibt True zurück, wenn der Task geplant ist."""
-            try:
-                if _MAIN_LOOP and _RESTREAM_MGR:
-                    asyncio.run_coroutine_threadsafe(
-                        _RESTREAM_MGR.start(_rid), _MAIN_LOOP)
-                    return True
-            except Exception as _e:
-                log.warning("Brain-Restart für Restream %s fehlgeschlagen: %s", _rid, _e)
-            return False
+        # v4.2-W75: _v37_restream_restart steht jetzt auf Modulebene.
 
-        def _v37_unpause_source(username):
-            """V37-B91f: Auto-Pause aufheben (Reaktivierung). Nur Zeilen, die
-            NOCH pausiert sind — reaktiviert der Operator manuell, ist paused
-            schon 0 und wir fassen nichts an. Gibt True bei Reaktivierung."""
-            try:
-                u = str(username).lstrip("@").strip()
-                if not u or ":" in u:
-                    return False
-                with db_conn() as conn:
-                    cur = conn.execute(
-                        "UPDATE trackings SET paused=0 WHERE username=? "
-                        "AND paused=1", (u,))
-                    conn.commit()
-                    n = cur.rowcount
-                if n:
-                    log.info("Brain: @%s reaktiviert (zweite Chance nach "
-                             "Auto-Pause)", u)
-                return bool(n)
-            except Exception as _e:
-                log.warning("Brain-Unpause für %s: %s", username, _e)
-                return False
+        # v4.2-W75: _v37_unpause_source steht jetzt auf Modulebene.
 
-        def _v37_pause_source(username):
-            """V37-B91e: Chronisch tote Quelle pausieren (RecoveryAgent
-            Stufe 3). username kommt als 'restream:<rid>' oder '@user' aus
-            dem Preflight-who — hier nur echte Tracking-User (@...) behandeln,
-            Restream-Quellen ignoriert der Agent bereits. Gibt True zurück,
-            wenn eine Zeile pausiert wurde."""
-            try:
-                u = str(username).lstrip("@").strip()
-                if not u or ":" in u:      # 'restream:5' o.ä. → nicht hier
-                    return False
-                with db_conn() as conn:
-                    cur = conn.execute(
-                        "UPDATE trackings SET paused=1 WHERE username=? "
-                        "AND paused=0", (u,))
-                    conn.commit()
-                    n = cur.rowcount
-                if n:
-                    log.warning("Brain: @%s wegen chronisch toter Quelle "
-                                "pausiert (Recovery Stufe 3)", u)
-                return bool(n)
-            except Exception as _e:
-                log.warning("Brain-Pause für %s fehlgeschlagen: %s", username, _e)
-                return False
+        # v4.2-W75: _v37_pause_source steht jetzt auf Modulebene.
 
-        def _brain_crowdsec_snap():
-            # M8: schlanker Snapshot fuer den SentinelAgent — kein cscli-Parsing
-            # in brain/. running/bans/hint aus _crowdsec_status().
-            try:
-                cs = _crowdsec_status() or {}
-            except Exception as e:
-                return {"running": False, "hint": str(e)}
-            return {"running": bool(cs.get("ok")),
-                    "bans": int(cs.get("total_banned") or 0),
-                    "hint": cs.get("hint") or ""}
+        # v4.2-W75: _brain_crowdsec_snap steht jetzt auf Modulebene.
 
-        def _brain_restream_health():
-            # M8: tee-Fehler + Ziel-Doppelbelegungen fuer den RestreamSentinel.
-            #
-            # WARUM das hier umgebaut wurde: seit v4.0-W77 ist die Zielliste
-            # GLOBAL (nc.restream_targets liest Kick/Twitch/YouTube aus der
-            # .env). 'kick_url' ist seitdem nur noch "die erste konfigurierte
-            # Plattform" — bei EINEM Restream, der auf drei Plattformen
-            # ausspielt, ist das voellig normal. Der alte Vergleich lief ueber
-            # genau dieses Feld und meldete deshalb "Kick-Key-Kollision",
-            # sobald ueberhaupt zwei Restreams liefen: ohne Plattformnamen,
-            # ohne Quelle, mit einem Rat ("eigene Keys je Channel"), der zur
-            # heutigen Konfiguration nicht mehr passt.
-            #
-            # Jetzt: je Prozess ALLE Ziele vergleichen, nur LEBENDE Prozesse
-            # zaehlen, RESTREAM_SINGLE respektieren (dann kann es die Lage
-            # gar nicht geben) und Quelle + Plattform mitgeben, damit der
-            # Befund benennt, welche zwei Zeilen sich in die Quere kommen.
-            mgr = _RESTREAM_MGR
-            tf = mgr.tee_fehler()          # v4.0-W116
-            procs = getattr(mgr, "_procs", {}) or {}
-            live = {}
-            for _rid, _info in procs.items():
-                _proc = (_info or {}).get("proc")
-                if _proc is not None and _proc.returncode is not None:
-                    continue           # beendet, wird gleich aus _procs geraeumt
-                live[_rid] = _info or {}
-            quellen = {}
-            try:
-                if live:
-                    with db_conn() as conn:
-                        rows = conn.execute(
-                            "SELECT id, source_username FROM restreams WHERE id IN ("
-                            + ",".join("?" * len(live)) + ")",
-                            list(live)).fetchall()
-                    quellen = {r["id"]: (r["source_username"] or "") for r in rows}
-            except Exception as e:
-                log.debug("restream-health: Quellen nicht lesbar: %s", e)
-            by_url = {}
-            for _rid, _info in live.items():
-                _ziele = _info.get("tee_targets") or []
-                if not _ziele and _info.get("kick_url"):
-                    _ziele = [("?", _info["kick_url"])]
-                for _name, _url in _ziele:
-                    if _url:
-                        by_url.setdefault(_url, {"platform": _name, "rids": []})
-                        by_url[_url]["rids"].append(_rid)
-            collisions = []
-            if not RESTREAM_SINGLE:
-                for _eintrag in by_url.values():
-                    _rids = sorted(_eintrag["rids"])
-                    if len(_rids) > 1:
-                        collisions.append({
-                            "platform": _eintrag["platform"],
-                            "rids": _rids,
-                            "sources": [quellen.get(r, "") for r in _rids],
-                            "same_source": len({quellen.get(r, "") for r in _rids}) == 1,
-                        })
-            return {"tee_fail": tf, "key_collisions": collisions}
+        # v4.2-W75: _brain_restream_health steht jetzt auf Modulebene.
 
-        def _brain_moderation_snap():
-            # M8: Moderations-Trend fuer den ToxicityAgent — aus kick_mod_log.
-            # v4.1-W18: NICHT mehr jede Zeile. In der Tabelle liegt auch, was
-            # AZRAEL auf einem TikTok-Live sagt (kind="reaction", im
-            # Sekundentakt) und was der Highlight-Radar meldet. Beides zaehlte
-            # als "Moderations-Aktion" und loeste beim Betreiber eine
-            # Toxizitaets-Warnung fuer einen Chat aus, den er gar nicht
-            # moderiert. Die Regel steht jetzt in nc/modstats.py — dort auch,
-            # warum TikTok sich nicht per Konfiguration zuschalten laesst.
-            now = datetime.now(timezone.utc)
-            h1 = (now - timedelta(hours=1)).isoformat()
-            h2 = (now - timedelta(hours=2)).isoformat()
-            try:
-                with db_conn() as conn:
-                    rows1 = conn.execute(
-                        "SELECT kind, actor, meta FROM kick_mod_log WHERE ts>=?",
-                        (h1,)).fetchall()
-                    rows0 = conn.execute(
-                        "SELECT kind, actor, meta FROM kick_mod_log "
-                        "WHERE ts>=? AND ts<?", (h2, h1)).fetchall()
-            except Exception:
-                return {}
+        # v4.2-W75: _brain_moderation_snap steht jetzt auf Modulebene.
 
-            def _tripel(rows):
-                for r in rows:
-                    k, a, m = (r[0], r[1], r[2]) if isinstance(r, tuple) else (
-                        r["kind"], r["actor"], r["meta"])
-                    try:
-                        meta = json.loads(m or "{}")
-                    except Exception:
-                        meta = {}
-                    yield k, a, meta if isinstance(meta, dict) else {}
+        # v4.2-W75: _brain_recording_snap steht jetzt auf Modulebene.
 
-            return _nc_modstats.verdichte(
-                list(_tripel(rows1)), list(_tripel(rows0)),
-                erlaubt=_nc_modstats.quellen(os.getenv("MOD_TREND_PLATTFORMEN") or None))
-
-        def _brain_recording_snap():
-            # M8: aktuelle Groesse+alive je laufender Aufnahme fuer den RecordingAgent.
-            out = {}
-            try:
-                with db_conn() as conn:
-                    rows = conn.execute(
-                        "SELECT username, output_file, pid FROM trackings "
-                        "WHERE recording=1").fetchall()
-            except Exception:
-                return {}
-            for r in rows:
-                user = r["username"] if not isinstance(r, tuple) else r[0]
-                of = r["output_file"] if not isinstance(r, tuple) else r[1]
-                pid = r["pid"] if not isinstance(r, tuple) else r[2]
-                if not of:
-                    out[user] = {"bytes": None, "alive": _proc_is_recorder(pid)}
-                    continue
-                try:
-                    sz = os.path.getsize(of)
-                except Exception:
-                    sz = None
-                out[user] = {"bytes": sz, "alive": _proc_is_recorder(pid)}
-            return out
-
-        def _brain_tiktok_status_snap():
-            # B152: HTTP-Status-Verteilung der TikTok-Webcast-Fetches fuer den
-            # ProxyHealthAgent (mode-agnostisch). Kumulativ; Agent bildet Delta.
-            try:
-                by_code = {int(k): int(v) for k, v in _TIKTOK_STATUS_COUNTER.items()}
-            except Exception:
-                by_code = {}
-            try:
-                with _PROXY_POOL_LOCK:
-                    pool_size = len(_PROXY_POOL)
-            except Exception:
-                pool_size = 0
-            return {"by_code": by_code, "total": sum(by_code.values()),
-                    "record_proxy": bool(RECORD_PROXY), "pool_size": pool_size}
+        # v4.2-W75: _brain_tiktok_status_snap steht jetzt auf Modulebene.
 
         _BRIDGE_STATUS.update(phase="init")
         init_bridge(
@@ -23030,16 +23082,7 @@ async def main():
     # NUR nach manuellem Dashboard-Klick → Kick-Chat war nach jedem Neustart
     # unbewacht. Der WS-Loop reconnected selbst; start() ist idempotent.
     if KICKMOD_AUTOSTART and KICK_CLIENT_ID and KICK_CLIENT_SECRET:
-        async def _kickmod_boot():
-            await asyncio.sleep(3)              # Flask/DB erst atmen lassen
-            try:
-                res = await _KICK_MOD.start()
-                if res.get("ok"):
-                    log.info("AZRAEL SENTINEL: KI-Moderator auto-gestartet (Kick-Chat-Wache aktiv).")
-                else:
-                    log.warning("AZRAEL SENTINEL Autostart: %s", res.get("error"))
-            except Exception as e:
-                log.warning("AZRAEL SENTINEL Autostart fehlgeschlagen: %s", e)
+        # v4.2-W75: _kickmod_boot steht jetzt auf Modulebene.
         _spawn(_kickmod_boot(), name="kickmod-autostart")
     elif KICKMOD_AUTOSTART:
         log.info("AZRAEL SENTINEL: Autostart übersprungen — KICK_CLIENT_ID/SECRET fehlen.")
