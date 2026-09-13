@@ -5,7 +5,22 @@
 # dem Server lief — es fuehrt bot.py wirklich aus. Die Pflicht-Pruefkette
 # war damit dauerhaft zerrissen.
 #
-# ACHTUNG, VERSIONEN SIND HIER BEWUSST OFFEN. Die Wahrheit ueber die real
+# UNTERGRENZE HIER, EXAKTE FASSUNG IM LOCKFILE. Seit v4.2-W68 traegt jede
+# Zeile ein >=. Das ist keine Kehrtwende gegen den Absatz darunter, sondern
+# seine Ergaenzung: die Untergrenze sagt, ab wann der Code ueberhaupt laufen
+# KANN, die exakte Fassung sagt, was nachweislich laeuft. Ohne Untergrenze
+# loest pip auf einer aelteren Maschine irgendetwas auf, und der Fehler kommt
+# nicht als klare Ansage, sondern als AttributeError tief im Code an.
+#
+# Jede Untergrenze unten ist nachgeprueft, nicht geschaetzt: fuer die sechs
+# mit API-Zwang wurde das Rad der Fassung darunter geladen und nachgesehen,
+# dass die benutzte Schnittstelle dort fehlt (steht am jeweiligen Eintrag).
+# Fuer die uebrigen elf ist kein API-Zwang bekannt; dort ist die Grenze die
+# aelteste Fassung, die es wirklich gibt und die unser Python zulaesst.
+# `python3 tools/abhaengigkeiten.py` haelt fest, dass keine Zeile ohne
+# Grenze dazukommt.
+#
+# Die Wahrheit ueber die real
 # funktionierenden Versionen steht auf dem Server, nicht in dieser Datei.
 # Einmalig dort einfrieren und die erzeugte Datei ins Repo uebernehmen:
 #
@@ -20,35 +35,52 @@
 # den der nachweislich laufenden Version.
 
 # ── Kern: Bot-Plattformen ────────────────────────────────────────────────
-python-telegram-bot            # import telegram — Telegram-Bot
-discord.py                     # import discord  — Discord-Gateway + Slash-Commands
-TikTokLive                     # Live-Erkennung (undokumentierte API, s.o.)
+python-telegram-bot >= 20.0    # import telegram — Telegram-Bot
+#   API-Zwang: Application.builder() (bot.py:22032) und telegram.constants.
+#   ParseMode. Nachgesehen: 13.15 hat kein telegram/ext/_application.py,
+#   20.0 hat es. Die 13er-Reihe kannte nur Updater — anderer Bauplan.
+discord.py >= 2.0              # import discord  — Discord-Gateway + Slash-Commands
+#   API-Zwang: app_commands (die 45 Slash-Commands). Nachgesehen: 1.7.3
+#   hat kein discord/app_commands/, 2.0.0 hat es.
+TikTokLive >= 6.0              # Live-Erkennung (undokumentierte API, s.o.)
+#   API-Zwang: `from TikTokLive.events import CommentEvent, GiftEvent`
+#   (bot.py:16356). Nachgesehen: 5.0.0 hat kein TikTokLive/events/, 6.0.0
+#   hat es. GENAU HIER ist die Untergrenze am wenigsten wert: die Grenze
+#   schuetzt vor zu ALT, das Risiko liegt aber bei zu NEU. Diese eine
+#   Fassung gehoert auf dem Server exakt festgenagelt.
 
 # ── Web / Dashboard ──────────────────────────────────────────────────────
-Flask                          # Dashboard, 283 Routen
-Werkzeug                       # von Flask mitgebracht, hier explizit (WSGI-Server)
+Flask >= 2.2                   # Dashboard, 283 Routen
+#   API-Zwang: app.json (bot.py:8869), der JSON-Provider. Nachgesehen:
+#   2.1.0 hat kein flask/json/provider.py, 2.2.0 hat es.
+Werkzeug >= 2.0                # von Flask mitgebracht, hier explizit (WSGI-Server)
+#   API-Zwang: `from werkzeug.utils import safe_join` (bot.py:688) — der
+#   Pfad-Riegel. Nachgesehen: werkzeug/utils.py reicht safe_join seit 2.0.0
+#   aus werkzeug.security durch (`from .security import safe_join`).
 
 # ── HTTP / Netz ──────────────────────────────────────────────────────────
-aiohttp                        # async HTTP (Scraper, Restream-Steuerung, APIs)
-requests                       # sync HTTP
-httpx                          # HTTP/2-faehiger Client
-PySocks                        # import socks — SOCKS-Proxy fuer den Scraper
-websockets_proxy               # WebSocket ueber Proxy (Kick-Chat)
+aiohttp >= 3.9                 # async HTTP (Scraper, Restream-Steuerung, APIs)
+requests >= 2.31               # sync HTTP
+httpx >= 0.27                  # HTTP/2-faehiger Client
+PySocks >= 1.7.1               # import socks — SOCKS-Proxy fuer den Scraper
+websockets_proxy >= 0.1.3      # WebSocket ueber Proxy (Kick-Chat)
 
 # ── Konfiguration / Daten ────────────────────────────────────────────────
-python-dotenv                  # import dotenv — .env laden
-orjson                         # schnelles JSON
-PyMySQL                        # import pymysql — nur bei DB_BACKEND=mariadb
-redis                          # optionaler Cache
+python-dotenv >= 1.0           # import dotenv — .env laden
+orjson >= 3.9                  # schnelles JSON
+PyMySQL >= 1.1                 # import pymysql — nur bei DB_BACKEND=mariadb
+redis >= 4.2                   # optionaler Cache
+#   API-Zwang: `import redis.asyncio` (bot.py:3233). Nachgesehen: 4.1.0 hat
+#   kein redis/asyncio/, 4.2.0 hat es (dort ging aioredis darin auf).
 
 # ── KI / Medien ──────────────────────────────────────────────────────────
-faster-whisper                 # import faster_whisper — Transkription
+faster-whisper >= 1.0          # import faster_whisper — Transkription
 
 # ── Ablage ───────────────────────────────────────────────────────────────
-boto3                          # S3-Backup (optional, nur bei S3_BACKUP=1)
+boto3 >= 1.34                  # S3-Backup (optional, nur bei S3_BACKUP=1)
 
 # ── Optional, spuerbarer Gewinn ──────────────────────────────────────────
-uvloop; sys_platform != "win32"   # schnellere asyncio-Schleife
+uvloop >= 0.19; sys_platform != "win32"   # schnellere asyncio-Schleife
 #   Der Marker ist kein Schmuck: uvloop hat KEINE Windows-Fassung, und
 #   ohne ihn bricht  pip install -r requirements.txt  dort komplett ab —
 #   mitten in der Installation, mit einem Compiler-Fehler als Begruendung.

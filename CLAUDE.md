@@ -86,6 +86,7 @@ stdlib-only (`urllib`, kein `aiohttp`).
     python tools/stillecheck.py --sperre
     python tools/vertragscheck.py --sperre
     python tools/importzeit.py    --sperre   # braucht requirements-smoke.txt
+    python tools/abhaengigkeiten.py --sperre
     python tools/i18n_extract.py --check en
     python test_smoke.py ; python test_nc_modules.py ; python test_restream.py
 
@@ -174,6 +175,21 @@ findet nur das wörtliche `os.getenv` auf Modul-Ebene und fand damit einen von
 fünf Fällen — die anderen vier standen in einer Funktion, die auf Modul-Ebene
 *aufgerufen* wird. Die 178 Lesungen in `bot.py` sind in Ordnung; sie stehen
 alle nach `load_dotenv()`. Es zählt die Reihenfolge, nicht die Menge.
+
+**Fremdpakete ohne Untergrenze.** Bis v4.2-W68 trug keiner der 17 Einträge in
+`requirements.txt` ein `>=`. Jede Grenze dort ist jetzt **nachgesehen**, nicht
+geschätzt — für die sechs mit API-Zwang wurde das Paket der Fassung darunter
+geladen und geprüft, dass die benutzte Schnittstelle fehlt. Wer eine Grenze
+ändert, prüft sie genauso, statt sie zu erben.
+
+Der zweite Teil ist die wichtigere Lücke: der Vertrag aus v4.1-W31 prüft nur
+die **Modul-Ebene** und nur gegen `requirements-smoke.txt`. Die teuren Pakete
+werden erst **in Funktionen** importiert (`boto3`, `redis`, `pymysql`,
+`httpx`, `faster_whisper`) — dafür gab es keine Prüfung.
+`tools/abhaengigkeiten.py` deckt beides ab, Grenze null. Drei Importe sind
+ausgenommen und müssen es bleiben: `segno` (mitgeliefert unter `nc/_vendor/`),
+`browser_cookie3` (optional mit `ImportError`-Auffang) und Pillow (nur
+`tools/`, siehe W53).
 
 **Einmal-`await` ohne Supervisor.** Jeder Long-Running-Client braucht Reconnect
 mit Backoff **und** ein Abbruchkriterium für deterministische Fehler.

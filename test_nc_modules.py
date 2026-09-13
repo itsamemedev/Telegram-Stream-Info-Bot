@@ -2839,8 +2839,22 @@ def _test_w31_rauchtest_laeuft_in_der_ci():
     # ImportError toeten — mitten in der Liste, ohne Hinweis worauf. Dieser
     # Vergleich meldet das hier, mit Datei und Paketname.
     quelle = open("requirements-smoke.txt", encoding="utf-8").read()
-    gelistet = {z.split("#")[0].strip().lower()
-                for z in quelle.splitlines() if z.split("#")[0].strip()}
+
+    def _nur_name(zeile):
+        """'Flask >= 2.2  # Kommentar' -> 'flask'.
+
+        v4.2-W68: vorher stand hier `z.split("#")[0].strip().lower()`, also
+        die ganze Zeile MIT Fassungsangabe. Solange keine Zeile ein `>=`
+        trug, war das dasselbe — seit W68 tragen alle eines, und der
+        Vergleich unten fand kein einziges Paket mehr wieder. 43 Fehlalarme
+        auf einen Schlag, und kein Wort davon stimmte.
+        """
+        name = zeile.split("#")[0].strip().split(";")[0]
+        for trenn in (">=", "==", "<=", "~=", "!=", ">", "<"):
+            name = name.split(trenn)[0]
+        return name.strip().lower()
+
+    gelistet = {_nur_name(z) for z in quelle.splitlines() if _nur_name(z)}
 
     # Importname -> pip-Name. Nur was sich unterscheidet steht hier drin.
     PIPNAME = {"dotenv": "python-dotenv", "discord": "discord.py",
@@ -9274,6 +9288,184 @@ def _test_v42_w65_stille_wird_gemessen_und_gesperrt():
     ok("W65: der DDL-Helfer schluckt nur 'existiert schon', sonst nichts")
 
 
+def _test_v42_w68_abhaengigkeiten_haben_untergrenzen():
+    """v4.2-W68: 17 Fremdpakete, 0 Untergrenzen — und eine Luecke daneben.
+
+    Ohne `>=` loest pip auf einer aelteren Maschine irgendetwas auf, und der
+    Fehler kommt nicht als klare Ansage, sondern als AttributeError tief im
+    Code an. Die sechs Grenzen mit API-Zwang sind NACHGESEHEN, nicht
+    geschaetzt: fuer jede wurde das Rad der Fassung darunter geladen und
+    geprueft, dass die benutzte Schnittstelle dort fehlt.
+
+        python-telegram-bot  20.0  hat telegram/ext/_application.py, 13.15 nicht
+        discord.py           2.0   hat discord/app_commands/,        1.7.3 nicht
+        TikTokLive           6.0   hat TikTokLive/events/,           5.0.0 nicht
+        Flask                2.2   hat flask/json/provider.py,       2.1.0 nicht
+        redis                4.2   hat redis/asyncio/,               4.1.0 nicht
+        Werkzeug             2.0   reicht safe_join durch
+
+    Die Luecke daneben: der Vertrag aus v4.1-W31 prueft nur die MODUL-EBENE
+    und nur gegen requirements-smoke.txt. Genau die teuren Pakete werden aber
+    erst IN Funktionen importiert — boto3, faster_whisper, redis, pymysql,
+    httpx, requests, socks, websockets_proxy. Fuer die gab es keine Pruefung.
+
+    Drei Importe zaehlen bewusst NICHT als Verstoss, und alle drei stehen so
+    im Bestand: `segno` liegt mitgeliefert unter nc/_vendor/,
+    `browser_cookie3` ist optional mit ImportError-Auffang, und Pillow steht
+    nur in tools/ — ein Vertrag aus W53 haelt ausdruecklich fest, dass es in
+    keiner requirements-Datei auftauchen darf. Ein Pruefer, der diese drei
+    nicht kennt, meldet drei Fehlalarme und wird abgeschaltet.
+    """
+    import sys as _sys
+    hier = os.path.dirname(os.path.abspath(__file__))
+    if os.path.join(hier, "tools") not in _sys.path:
+        _sys.path.insert(0, os.path.join(hier, "tools"))
+    import abhaengigkeiten as A
+
+    # --- 1) Jede Zeile traegt eine Untergrenze ---------------------------
+    unerklaert, ohne, tot, uneins = A.bericht()
+    assert not ohne, \
+        "Eintrag in requirements.txt ohne Untergrenze: %r — ohne >= loest " \
+        "pip auf einer alten Maschine irgendetwas auf" % (ohne,)
+    assert not unerklaert, \
+        "Import ohne Eintrag in requirements.txt: %r — auf dem Server laeuft " \
+        "das (von Hand nachinstalliert), eine frische Installation stirbt " \
+        "daran" % (unerklaert,)
+    assert not tot, "requirements.txt listet Pakete, die niemand importiert: %r" % (tot,)
+    assert not uneins, \
+        "requirements.txt und requirements-smoke.txt nennen verschiedene " \
+        "Untergrenzen %r — dann prueft die CI eine Fassungsreihe, die der " \
+        "Bot gar nicht benutzt" % (uneins,)
+    ok("W68: 17 Pakete, alle erklaert, alle mit Untergrenze, beide Dateien einig")
+
+    # --- 2) Die Grenzen mit API-Zwang haengen an DER Stelle im Code ------
+    # Ohne diese Kopplung ist die Grenze eine Zahl, die jemand irgendwann
+    # gesenkt hat, weil pip gemeckert hat. Mit ihr faellt der Vertrag, sobald
+    # Grenze und benutzte Schnittstelle auseinanderlaufen.
+    gelistet = A._gelistet()
+    src = io.open(os.path.join(hier, "bot.py"), encoding="utf-8").read()
+    for paket, mindestens, beweis in (
+            ("python-telegram-bot", (20, 0), "Application.builder()"),
+            ("discord.py",          (2, 0),  None),
+            ("tiktoklive",          (6, 0),  "from TikTokLive.events import"),
+            ("flask",               (2, 2),  "app.json"),
+            ("redis",               (4, 2),  "import redis.asyncio"),
+            ("werkzeug",            (2, 0),  "from werkzeug.utils import safe_join")):
+        roh = gelistet.get(paket)
+        assert roh, "%s steht nicht mehr in requirements.txt" % paket
+        teile = tuple(int(t) for t in A.grenze(roh).split(".")[:2])
+        assert teile >= mindestens, \
+            "%s: Untergrenze %s liegt unter %s — die Fassung darunter hat " \
+            "die benutzte Schnittstelle nachweislich nicht" % (
+                paket, A.grenze(roh), ".".join(str(z) for z in mindestens))
+        if beweis:
+            assert beweis in src, \
+                "bot.py benutzt %r nicht mehr — dann ist die Untergrenze " \
+                "von %s unbegruendet und gehoert geprueft, nicht vererbt" % (
+                    beweis, paket)
+    assert "app_commands" in io.open(
+        os.path.join(hier, "discordbot.py"), encoding="utf-8").read(), \
+        "discordbot.py benutzt app_commands nicht mehr — dann ist die " \
+        "Untergrenze discord.py >= 2.0 unbegruendet"
+    ok("W68: jede Untergrenze mit API-Zwang haengt an der Stelle, die sie erzwingt")
+
+    # --- 3) Der Pruefer sieht Importe in FUNKTIONEN ----------------------
+    # Das ist die Luecke, die W31 gelassen hat, und sie ist der ganze Grund
+    # fuer dieses Werkzeug. Ein Import auf Modul-Ebene faellt frueher oder
+    # spaeter im Rauchtest auf; einer in einer selten benutzten Funktion nie.
+    import tempfile as _tf
+    _t = _tf.NamedTemporaryFile("w", suffix=".py", delete=False, encoding="utf-8")
+    try:
+        _t.write("import os\n\n\n"
+                 "def spaeter():\n"
+                 "    import irgendwas_fremdes\n"
+                 "    return irgendwas_fremdes\n\n\n"
+                 "def weich():\n"
+                 "    try:\n"
+                 "        import auch_fremd\n"
+                 "    except ImportError:\n"
+                 "        auch_fremd = None\n"
+                 "    return auch_fremd\n")
+        _t.close()
+        pflicht, optional = A._importe(_t.name)
+        assert "irgendwas_fremdes" in pflicht, \
+            "ein Import im FUNKTIONSRUMPF wird nicht gesehen — genau die " \
+            "Luecke, die dieses Werkzeug schliessen soll"
+        assert "auch_fremd" in optional and "auch_fremd" not in pflicht, \
+            "ein Import mit ImportError-Auffang gilt als Pflicht — dann " \
+            "meldet der Pruefer jedes bewusst optionale Paket als Fehler"
+        assert "os" not in pflicht, "die Standardbibliothek wird mitgezaehlt"
+    finally:
+        os.unlink(_t.name)
+
+    # --- 4) Die drei legitimen Faelle bleiben still ----------------------
+    # Der Fehlalarm ist hier die groessere Gefahr als der uebersehene Fall:
+    # ein Pruefer, der bei gesundem Bestand meckert, wird abgeschaltet.
+    _fehlend = {n for _d, n, _p in unerklaert}
+    # segno UNGESCHUETZT gegenpruefen. Die beiden echten Aufrufstellen in
+    # nc/qrsvg.py stehen in einem try/except Exception, gelten damit ohnehin
+    # als optional — die Ausnahmeliste traegt dort also gar nichts bei. Eine
+    # Zusicherung „segno wird nicht gemeldet" ginge deshalb aus dem falschen
+    # Grund durch: sie faellt nicht, wenn jemand MITGELIEFERT leert. Genau das
+    # hat die Mutationsprobe zu W68 gezeigt. Hier steht deshalb ein
+    # ungeschuetzter Import, an dem die Liste wirklich haengt.
+    _probe = os.path.join(hier, "nc", "_w68_probe.py")
+    try:
+        io.open(_probe, "w", encoding="utf-8").write("import segno\n")
+        _u, _o, _t, _un = A.bericht()
+        assert "segno" not in {n for _d, n, _p in _u}, \
+            "ein ungeschuetztes `import segno` wird als fehlendes Paket " \
+            "gemeldet — es liegt mitgeliefert unter nc/_vendor/ und gehoert " \
+            "in keine requirements-Datei"
+        _alt = A.MITGELIEFERT
+        try:
+            A.MITGELIEFERT = set()
+            _u2, _, _, _ = A.bericht()
+            assert "segno" in {n for _d, n, _p in _u2}, \
+                "ohne die Ausnahmeliste wird das mitgelieferte segno TROTZDEM " \
+                "nicht gemeldet — dann prueft diese Zusicherung nichts"
+        finally:
+            A.MITGELIEFERT = _alt
+    finally:
+        if os.path.exists(_probe):
+            os.unlink(_probe)
+    assert "browser_cookie3" not in _fehlend, \
+        "browser_cookie3 wird als fehlend gemeldet — es ist optional und " \
+        "der Code faengt sein Fehlen ausdruecklich ab"
+    for datei in ("requirements.txt", "requirements-smoke.txt"):
+        assert "pillow" not in io.open(
+            os.path.join(hier, datei), encoding="utf-8").read().lower(), \
+            "Pillow ist in %s gerutscht — es ist ein Werkzeug, keine " \
+            "Laufzeit (W53)" % datei
+    # Und der Beweis, dass die Ausnahmen echte Importe verdecken und nicht
+    # bloss Namen in einer Liste sind:
+    assert "import segno" in io.open(
+        os.path.join(hier, "nc", "qrsvg.py"), encoding="utf-8").read(), \
+        "nc/qrsvg.py importiert segno nicht mehr — dann ist die Ausnahme tot"
+    ok("W68: mitgeliefert, optional und Werkzeug loesen keinen Fehlalarm aus")
+
+    # --- 5) Und die Sperre faellt wirklich -------------------------------
+    import contextlib as _ctx
+    _echt = A.bericht
+    try:
+        with _ctx.redirect_stdout(io.StringIO()):
+            A.bericht = lambda: ([("nc/x.py", "stripe", "stripe")], [], [], [])
+            assert A.main(["--sperre"]) == 1, \
+                "die Sperre laesst ein undeklariertes Paket durch"
+            A.bericht = lambda: ([], ["orjson"], [], [])
+            assert A.main(["--sperre"]) == 1, \
+                "die Sperre laesst einen Eintrag ohne Untergrenze durch"
+            A.bericht = lambda: ([], [], [], [("aiohttp", "3.9", "3.8")])
+            assert A.main(["--sperre"]) == 1, \
+                "die Sperre laesst zwei uneinige Untergrenzen durch"
+            A.bericht = lambda: ([], [], [], [])
+            assert A.main(["--sperre"]) == 0, \
+                "die Sperre faellt, obwohl nichts zu beanstanden ist"
+    finally:
+        A.bericht = _echt
+    ok("W68: die Sperre faellt bei fehlendem Paket, fehlender Grenze und Uneinigkeit")
+
+
 def _test_v42_w67_env_erreicht_die_cloud_kette():
     """v4.2-W67: die .env-Keys haben nie einen Request gesehen.
 
@@ -10552,6 +10744,7 @@ def main():
     _test_v42_w65_stille_wird_gemessen_und_gesperrt()
     _test_v42_w66_fenster_wachsen_mit()
     _test_v42_w67_env_erreicht_die_cloud_kette()
+    _test_v42_w68_abhaengigkeiten_haben_untergrenzen()
     _test_v42_w60_azrael_cooldown_je_plattform()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)
