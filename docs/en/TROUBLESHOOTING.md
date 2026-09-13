@@ -59,7 +59,7 @@ against a 404.
 ## The AI does not answer / answers are cut off
 
 ```bash
-python3 -c "import nc.freeai as f; print(f.diagnose())"
+python3 -c "from dotenv import load_dotenv; load_dotenv(); import nc.freeai as f; print(f.diagnose())"
 ```
 
 Shows per backend: free/blocked, latency, keyless/KEY, last error. For truncated

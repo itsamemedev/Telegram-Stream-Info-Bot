@@ -46,7 +46,7 @@ vorher war das ein WARNING und damit in einem Fehlerlog unsichtbar.
 
 **KI-Basen**
 
-    cd ~/tiktok-bot && python3 -c "import nc.freeai as f; print(f.diagnose())"
+    cd ~/tiktok-bot && python3 -c "from dotenv import load_dotenv; load_dotenv(); import nc.freeai as f; print(f.diagnose())"
 
 Zeigt pro Base: frei/gesperrt, Latenz, keyless/KEY, letzter Fehler.
 Melden alle Pollinations-Basen "auth", brauchst du einen Key von

@@ -75,7 +75,7 @@ Der Port bleibt auf Loopback. Wer das Dashboard „einfach erreichbar" macht,
 ## Prüfschritte nach dem Start
 
     # KI-Basen: pro Base frei/gesperrt, Latenz, keyless/KEY, letzter Fehler
-    cd ~/tiktok-bot && python3 -c "import nc.freeai as f; print(f.diagnose())"
+    cd ~/tiktok-bot && python3 -c "from dotenv import load_dotenv; load_dotenv(); import nc.freeai as f; print(f.diagnose())"
 
     Telegram:  /brain        Statuszeile mit aktivem Backend
                /brain teste  echte Antwort statt "keine Antwort"

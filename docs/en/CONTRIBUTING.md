@@ -303,7 +303,7 @@ Use the issue template. Always helpful:
 ```bash
 journalctl -u nightcrawler -n 200 --no-pager     # log excerpt
 curl -s localhost:8050/api/selftest | python3 -m json.tool
-python3 -c "import nc.freeai as f; print(f.diagnose())"   # for AI problems
+python3 -c "from dotenv import load_dotenv; load_dotenv(); import nc.freeai as f; print(f.diagnose())"   # for AI problems
 ```
 
 > **Redact before pasting:** logs can contain cookies, tokens and stream keys.

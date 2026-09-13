@@ -49,7 +49,7 @@ previously it was a WARNING and therefore invisible in an error log.
 
 **AI backends**
 
-    cd ~/tiktok-bot && python3 -c "import nc.freeai as f; print(f.diagnose())"
+    cd ~/tiktok-bot && python3 -c "from dotenv import load_dotenv; load_dotenv(); import nc.freeai as f; print(f.diagnose())"
 
 Shows per base: free/blocked, latency, keyless/KEY, last error. If every
 Pollinations base reports "auth", you need a key from enter.pollinations.ai →
