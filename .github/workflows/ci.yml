@@ -190,6 +190,22 @@ jobs:
       - name: Keine neue Riesenfunktion
         run: python tools/monolith.py --sperre
 
+      # v4.2-W81. stillecheck misst stille `except`-Blöcke. Das ist die eine
+      # Hälfte. Die andere hat der Betreiber am 13.09. gemeldet: whisper
+      # liefert kein Transkript, und für live erkannte TikTok-Nutzer kommt
+      # keine gültige Stream-URL. Beide Wege scheitern OHNE Absturz — sie
+      # kehren ordentlich zurück, nur mit leerem Ergebnis. stillecheck fällt
+      # dort nicht: es gibt keinen stillen `except`, sondern ein stilles
+      # `return`.
+      #
+      # _resolve_via_webcast_api_v2 hatte elf solche Ausgänge, acht auf
+      # log.debug und drei ganz ohne Zeile. Ein log.debug erscheint in einem
+      # INFO- oder ERROR-Log nie — für den Betreiber ist das dasselbe wie
+      # `pass`. Wie bei W65/W66 wird der Bestand (478) nicht eingefordert,
+      # nur sein Wachstum verhindert.
+      - name: Kein Zuwachs an stummen Fehlerpfaden
+        run: python tools/blindstellen.py --sperre
+
   tests:
     name: Verträge & Module (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest

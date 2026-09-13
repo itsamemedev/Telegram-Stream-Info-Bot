@@ -9288,6 +9288,127 @@ def _test_v42_w65_stille_wird_gemessen_und_gesperrt():
     ok("W65: der DDL-Helfer schluckt nur 'existiert schon', sonst nichts")
 
 
+def _test_v42_w81_fehlerpfade_sprechen():
+    """v4.2-W81: die stummen Misserfolgs-Rueckgaben der beiden Ketten, die
+       der Betreiber am 13.09. als kaputt gemeldet hat.
+
+    Die zwei Meldungen waren:
+
+        "whisper/transkript funktioniert immer noch nicht"
+        "Chats koennen von online tiktok Usern geladen werden aber keine
+         gueltigen streams"
+
+    Beide Wege scheitern OHNE Absturz — sie kehren ordentlich zurueck, nur
+    eben mit leerem Ergebnis. `stillecheck` faellt dort nicht: es gibt
+    keinen stillen `except`, sondern ein stilles `return`. Gemessen hatte
+    `_resolve_via_webcast_api_v2` elf solche Ausgaenge, acht davon auf
+    `log.debug` und drei ganz ohne Zeile; `_whisper_transcribe` verschluckte
+    jeden Fehler auf `debug`.
+
+    Ein `log.debug` erscheint in einem INFO- oder ERROR-Log NIE. Fuer den
+    Betreiber ist ein Fehlerpfad auf `debug` deshalb dasselbe wie `pass` —
+    genau die Klasse, vor der CLAUDE.md warnt.
+
+    WAS HIER SCHIEFGEHEN KANN, ohne dass es jemand merkt:
+
+      1. Jemand hebt die Meldungen auf `warning`, LAESST ABER DIE DROSSEL
+         WEG. Der Resolver laeuft pro Poll und pro verfolgtem Nutzer; das
+         Log waere nach einer Stunde unlesbar, und eine unlesbare Warnung
+         ist so gut wie keine. Die Drossel ist die Voraussetzung dafuer,
+         dass die Meldung laut sein DARF.
+      2. Jemand drosselt pro NUTZER statt pro Kanal. Bei 200 Trackings
+         drosselt das nichts.
+      3. Der Erfolgspfad vergisst, die Drossel zurueckzusetzen — dann bleibt
+         ein Ausfall, der zwischendurch einmal geklappt hat, bis zu 15
+         Minuten stumm.
+    """
+    import ast as _ast
+    hier = os.path.dirname(os.path.abspath(__file__))
+    quelle = io.open(os.path.join(hier, "bot.py"), encoding="utf-8").read()
+    baum = _ast.parse(quelle)
+    oben = {n.name: n for n in baum.body
+            if isinstance(n, (_ast.FunctionDef, _ast.AsyncFunctionDef))}
+
+    # --- 1) Die beiden Melder existieren und sind reine Kanaele ----------
+    for name in ("_resolver_stumm", "_whisper_stumm"):
+        fn = oben.get(name)
+        assert fn is not None, f"{name} steht nicht auf Modulebene"
+        rueck = [n for n in _ast.walk(fn)
+                 if isinstance(n, _ast.Return) and n.value is not None]
+        assert not rueck, \
+            f"{name} liefert ein Ergebnis — dann ist sie Fachlogik und kein " \
+            f"Meldekanal, und tools/blindstellen.py darf sie nicht mehr " \
+            f"als Meldung anrechnen"
+
+    # --- 2) Sie melden LAUT, nicht auf debug -----------------------------
+    for name in ("_resolver_stumm", "_whisper_stumm"):
+        fn = oben[name]
+        stufen = {n.func.attr for n in _ast.walk(fn)
+                  if isinstance(n, _ast.Call)
+                  and isinstance(n.func, _ast.Attribute)
+                  and isinstance(n.func.value, _ast.Name)
+                  and n.func.value.id == "log"}
+        assert stufen & {"warning", "error"}, \
+            f"{name} meldet nicht auf warning/error (gefunden: {stufen or 'nichts'}) " \
+            f"— auf debug ist die Meldung fuer den Betreiber unsichtbar"
+
+    # --- 3) Beide gehen durch die Drossel, mit dem KANAL als Schluessel --
+    for name, kanal in (("_resolver_stumm", "resolver"), ("_whisper_stumm", "whisper")):
+        fn = oben[name]
+        rufe = [n for n in _ast.walk(fn)
+                if isinstance(n, _ast.Call)
+                and isinstance(n.func, _ast.Attribute)
+                and n.func.attr == "melden"]
+        assert rufe, f"{name} ruft nc.meldetakt.melden nicht — ungedrosselt " \
+                     f"flutet der Kanal das Log"
+        erst = rufe[0].args[0] if rufe[0].args else None
+        assert isinstance(erst, _ast.Constant) and erst.value == kanal, \
+            f"{name} drosselt nicht auf den festen Kanal '{kanal}'. Ein " \
+            f"Schluessel je Nutzer drosselt bei 200 Trackings gar nichts."
+
+    # --- 4) Der Erfolgspfad vergisst die Drossel -------------------------
+    for fname, kanal in (("_resolve_via_webcast_api_v2", "resolver"),
+                         ("resolve_tiktok_live_stream", "resolver"),
+                         ("_whisper_transcribe", "whisper"),
+                         ("_whisper_segments", "whisper")):
+        fn = oben.get(fname)
+        assert fn is not None, f"{fname} ist verschwunden"
+        resets = [n for n in _ast.walk(fn)
+                  if isinstance(n, _ast.Call)
+                  and isinstance(n.func, _ast.Attribute)
+                  and n.func.attr == "zuruecksetzen"
+                  and n.args and isinstance(n.args[0], _ast.Constant)
+                  and n.args[0].value == kanal]
+        assert resets, \
+            f"{fname} setzt die Drossel '{kanal}' im Erfolgsfall nicht " \
+            f"zurueck — ein wiederkehrender Ausfall bliebe bis zu 15 " \
+            f"Minuten unsichtbar"
+
+    # --- 5) Der gemeldete Fall hat einen eigenen Grund -------------------
+    from nc import resolvergrund as _rg
+    assert "beide_wege_leer" in _rg.GRUND, \
+        "der Grund 'beide_wege_leer' fehlt — genau das Bild des Betreibers: " \
+        "der Chat verbindet sich, aber keine Aufloesung liefert eine Adresse"
+    assert "RECORD_PROXY" in _rg.GRUND["beide_wege_leer"], \
+        "der Grund nennt die Abhilfe nicht. 'keine URL' allein hat schon " \
+        "einmal wochenlang niemandem geholfen."
+    assert _rg.text("gibtsnicht") == "gibtsnicht", \
+        "ein unbekannter Grund muss im Log sichtbar bleiben statt zu " \
+        "verschwinden — sonst faellt eine neue Kategorie niemandem auf"
+
+    # --- 6) Die Drossel selbst haelt ihre Regel --------------------------
+    from nc import meldetakt as _mt
+    _mt.zuruecksetzen()
+    assert _mt.melden("t", "a", 0.0) == (True, 0), "erste Meldung muss laut sein"
+    assert _mt.melden("t", "a", 1.0) == (False, 1), "Wiederholung muss still sein"
+    assert _mt.melden("t", "b", 2.0) == (True, 1), \
+        "ein WECHSEL des Grundes muss sofort melden — dass sich das " \
+        "Fehlerbild geaendert hat, ist die eigentliche Nachricht"
+    assert _mt.melden("t", "b", 2.0 + _mt.ABSTAND_S) == (True, 0), \
+        "nach Ablauf des Fensters muss wieder gemeldet werden"
+    _mt.zuruecksetzen()
+
+
 def _test_v42_w80_notbremse_heraus():
     """v4.2-W80: die B54-Notbremse heraus — der Schnitt mit await und DB.
 
@@ -11948,6 +12069,7 @@ def main():
     _test_v42_w78_aufnahmeschluss_erste_schnitte()
     _test_v42_w79_frueher_abriss_heraus()
     _test_v42_w80_notbremse_heraus()
+    _test_v42_w81_fehlerpfade_sprechen()
     _test_v42_w60_azrael_cooldown_je_plattform()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)

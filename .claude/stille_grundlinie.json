@@ -1,6 +1,6 @@
 {
   "stille_bloecke": {
-    "bot.py": 304,
+    "bot.py": 303,
     "brain/__init__.py": 1,
     "brain/agents.py": 19,
     "brain/llm.py": 3,
@@ -142,5 +142,5 @@
     "nc/ytoauth.py": 4,
     "telegramversand.py": 13
   },
-  "summe": 1086
+  "summe": 1085
 }
