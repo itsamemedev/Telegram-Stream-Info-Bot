@@ -32,9 +32,20 @@ from __future__ import annotations
 # "HTTP 403" allein hat schon einmal wochenlang niemandem geholfen.
 GRUND = {
     "http_5xx":
-        "TikToks API antwortet mit einem Serverfehler, auch nach dem "
-        "Zweitversuch mit frischem Proxy. Meist transient; haelt es an, ist "
-        "der Proxy-Pool schlecht.",
+        "TikToks API antwortet mit einem Serverfehler (500/503/504), auch nach "
+        "dem Zweitversuch. Meist transient; haelt es an, ist der Proxy-Pool "
+        "schlecht.",
+    "http_502":
+        "502 vom TikTok-Edge, auch nach dem Zweitversuch. Wichtig fuer die "
+        "Unterscheidung: Diese Antwort kam ueber die stehende TLS-Verbindung "
+        "ZURUECK — ein Proxy, der selbst nicht durchkommt, laesst schon den "
+        "CONNECT scheitern und erscheint hier als 'netz', nicht als 502. Ein "
+        "502 heisst also: die Verbindung stand, und die Gegenseite hat "
+        "abgelehnt. Dauerhaft auf allen Nutzern deutet das auf eine "
+        "IP-Reputation hin, die TikTok am Edge abweist statt sie zu "
+        "bedienen — dieselbe Abhilfe wie bei 403 (RECORD_PROXY mit "
+        "Residential/Mobile). Die Verteilung ueber alle Statuscodes zeigt "
+        "/api/stats/tiktok-status.",
     "http_403":
         "TikTok blockt die abfragende IP. Das ist der haeufigste Fall bei "
         "einer Datacenter-Adresse: der Chat kommt ueber die signierte "
@@ -103,6 +114,12 @@ def http_grund(status: int) -> str:
         return "http_andere"
     if status == 403:
         return "http_403"
+    if status == 502:
+        # v4.2-W82: eigener Grund. Der Betreiber meldete am 13.09. "die
+        # Live-Abfragen geben 502 aus", und die Sammelkategorie 5xx haette
+        # das als "meist transient" abgetan — waehrend ein dauerhafter 502
+        # ueber alle Nutzer dieselbe Ursache hat wie ein 403.
+        return "http_502"
     if 500 <= status <= 599:
         return "http_5xx"
     return "http_andere"
