@@ -11,6 +11,47 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Geändert — `main()` von 504 auf 293 Zeilen, 135 auf 59 Verzweigungen (v4.2 W75)
+
+Nach der Rangliste aus W74 der dritte Platz. Ein **einziger** `try`-Block
+machte 245 der 504 Zeilen aus: acht Rückrufe für die Brain-Bridge
+(Momentaufnahmen zu Restream-Gesundheit, Moderation, Aufnahmen, TikTok-Status;
+dazu drei Stellhebel), gefolgt von `init_bridge(...)`.
+
+Zehn dieser Rückrufe brauchten von `main` **keine einzige Variable** und
+stehen jetzt auf Modulebene. Nur `_on_signal` hängt echt an `stop_evt` und
+bleibt drin.
+
+### Die Schattenprüfung war zuerst ein Fehlalarm
+
+Sie meldete `live` als Local von `main`, das einen Modul-Namen überdeckt — was
+den Umzug **verboten** hätte, denn genau dieser Fall geht still schief. Nach
+W71 ist das die Prüfung, an der ein Umbau scheitern soll.
+
+Tatsächlich steht `live = {}` **innerhalb** von `_brain_restream_health`. Der
+Fehler lag im Messskript: `ast.walk` steigt trotz `continue` in innere
+Funktionsrümpfe hinab — ein `continue` überspringt nur den Knoten, nicht
+seinen Unterbaum. Mit kontrolliertem Abstieg: 38 echte Locals, **null
+Schatten**.
+
+Das ist die Umkehrung des Musters aus W72: dort meldete ein Werkzeug zu Recht
+einen Fehler, hier hätte ein falsch gebautes Werkzeug eine saubere Arbeit
+verhindert. Beide Richtungen kosten, wenn man dem Instrument ungeprüft glaubt.
+Der Vertrag hält die korrigierte Variante fest.
+
+### Was nachweislich unverändert blieb
+
+Der **ausführbare** Teil aller zehn Rückrufe ist identisch (`ast.dump` ohne
+Zeilennummern, Docstrings abgezogen), und der Docstring-Inhalt ebenfalls.
+Geändert hat sich allein der Roh-Leerraum einer Docstring-Fortsetzungszeile,
+die beim Ausrücken mitging — nichts, was irgendwer beobachtet.
+
+Die Grundlinie von `tools/monolith.py` wurde **nach unten** nachgezogen:
+9 → 8 Funktionen über 300 Zeilen, 4 → 3 über 500, 3 → 2 über 100
+Verzweigungen. Der W70-Vertrag verlangt das ausdrücklich — bliebe sie stehen,
+wäre der gewonnene Abstand als Luft nach oben eingefroren.
+
+
 ### Geändert — `tools/monolith.py` misst Verzweigungen, nicht nur Zeilen (v4.2 W74)
 
 Das Maß aus W70 rankte nach **Zeilen**. Ganz oben stand damit

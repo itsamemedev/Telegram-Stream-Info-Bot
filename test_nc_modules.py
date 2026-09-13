@@ -9288,6 +9288,112 @@ def _test_v42_w65_stille_wird_gemessen_und_gesperrt():
     ok("W65: der DDL-Helfer schluckt nur 'existiert schon', sonst nichts")
 
 
+def _test_v42_w75_main_ohne_bridge_verdrahtung():
+    """v4.2-W75: main() war zur Haelfte Brain-Bridge-Verdrahtung.
+
+    504 Zeilen, 135 Verzweigungen — nach der Rangliste aus W74 der dritte
+    Platz. Ein einziger try-Block machte 245 davon aus: acht Rueckrufe fuer
+    den Router (Momentaufnahmen zu Restream-Gesundheit, Moderation, Aufnahmen,
+    TikTok-Status; dazu drei Stellhebel), gefolgt von init_bridge(...).
+
+    Zehn dieser Rueckrufe brauchten von main KEINE einzige Variable. Nur
+    `_on_signal` haengt echt an `stop_evt` und bleibt deshalb drin.
+
+    DIE SCHATTENPRUEFUNG WAR ZUERST EIN FEHLALARM, und das gehoert
+    festgehalten: sie meldete `live` als Local von main, das einen
+    Modul-Namen ueberdeckt — was den Umzug verboten haette. Tatsaechlich
+    steht `live = {}` INNERHALB von _brain_restream_health. Der Fehler lag im
+    Messskript: `ast.walk` steigt trotz `continue` in innere Funktionsruempfe
+    hinab, ein `continue` ueberspringt nur den Knoten, nicht seinen Unterbaum.
+    Mit kontrolliertem Abstieg: 38 echte Locals, null Schatten.
+
+    Nach dem Umzug: 293 Zeilen, 59 Verzweigungen. Der ausfuehrbare Teil aller
+    zehn ist unveraendert; geaendert hat sich allein der Roh-Leerraum einer
+    Docstring-Fortsetzungszeile, die beim Ausruecken mitging.
+    """
+    import ast as _ast
+    import sys as _sys
+    hier = os.path.dirname(os.path.abspath(__file__))
+    if os.path.join(hier, "tools") not in _sys.path:
+        _sys.path.insert(0, os.path.join(hier, "tools"))
+    import monolith as M
+
+    src = io.open(os.path.join(hier, "bot.py"), encoding="utf-8").read()
+    baum = _ast.parse(src)
+    oben = {n.name: n for n in baum.body
+            if isinstance(n, (_ast.FunctionDef, _ast.AsyncFunctionDef))}
+
+    # --- 1) Die zehn stehen auf Modulebene ------------------------------
+    GEHOBEN = ("_async_exc_handler", "_v37_restream_restart",
+               "_v37_unpause_source", "_v37_pause_source",
+               "_brain_crowdsec_snap", "_brain_restream_health",
+               "_brain_moderation_snap", "_brain_recording_snap",
+               "_brain_tiktok_status_snap", "_kickmod_boot")
+    for n in GEHOBEN:
+        assert n in oben, \
+            "%s ist wieder in main gewandert — dort ist es weder einzeln " \
+            "lesbar noch prueft pyflakes seine Namen gegen die Modulebene" % n
+
+    # --- 2) …und werden von main auch benutzt ---------------------------
+    # Ein gehobener Rueckruf, den niemand mehr uebergibt, ist schlimmer als
+    # einer in der Closure: die Bridge liefe dann ohne ihn weiter und meldete
+    # stillschweigend leere Momentaufnahmen.
+    mainf = oben.get("main")
+    assert mainf is not None, "main ist verschwunden"
+    rumpf = _ast.unparse(mainf)
+    for n in GEHOBEN:
+        if n == "_async_exc_handler":
+            continue          # wird an den Loop gehaengt, nicht an die Bridge
+        assert n in rumpf, \
+            "main reicht %s nirgends mehr weiter — die Brain-Bridge bekommt " \
+            "dann eine Momentaufnahme weniger, ohne dass etwas meldet" % n
+
+    # --- 3) main ist wirklich kleiner UND flacher ------------------------
+    treffer = [f for f in M.funktionen()
+               if f[0] == "bot.py" and f[1] == "main"]
+    assert treffer, "main wird nicht mehr gemessen"
+    zeilen, zweige = treffer[0][3], treffer[0][4]
+    assert zeilen <= 340, \
+        "main ist mit %d Zeilen wieder ueber 340 — der Schnitt ist zu" % zeilen
+    assert zweige <= 75, \
+        "main hat wieder %d Verzweigungen (vor W75: 135) — die Verdrahtung " \
+        "ist zurueckgewandert" % zweige
+    ok("W75: zehn Rueckrufe heraus, main von 504/135 auf %d/%d" % (zeilen, zweige))
+
+    # --- 4) Die Schattenpruefung, diesmal mit kontrolliertem Abstieg -----
+    # Der Fehlalarm von oben darf nicht zurueckkommen: wer `ast.walk` nimmt,
+    # zaehlt Locals innerer Funktionen der aeusseren zu.
+    def bindungen(knoten):
+        aus = set()
+
+        def geh(n):
+            for kind in _ast.iter_child_nodes(n):
+                if isinstance(kind, (_ast.FunctionDef, _ast.AsyncFunctionDef,
+                                     _ast.ClassDef, _ast.Lambda)):
+                    if hasattr(kind, "name"):
+                        aus.add(kind.name)
+                    continue          # Rumpf NICHT betreten
+                if isinstance(kind, _ast.Name) and isinstance(kind.ctx, _ast.Store):
+                    aus.add(kind.id)
+                geh(kind)
+
+        geh(knoten)
+        return aus
+
+    lok = bindungen(mainf)
+    assert "live" not in lok, \
+        "'live' gilt wieder als Local von main — dann zaehlt das Messskript " \
+        "Bindungen innerer Funktionen mit, und der naechste Umzug wird aus " \
+        "einem Fehlalarm heraus abgelehnt"
+    innere = [k for k in _ast.walk(mainf)
+              if isinstance(k, (_ast.FunctionDef, _ast.AsyncFunctionDef))
+              and k is not mainf]
+    assert any(k.name == "_on_signal" for k in innere), \
+        "_on_signal ist nicht mehr in main — es haengt echt an stop_evt und " \
+        "gehoert dorthin"
+    ok("W75: 'live' ist ein Local von _brain_restream_health, kein Schatten")
+
+
 def _test_v42_w74_verzweigung_statt_nur_laenge():
     """v4.2-W74: das Mass aus W70 zeigte aufs falsche Ziel.
 
@@ -11424,6 +11530,7 @@ def main():
     _test_v42_w72_befehle_haben_eine_registrierung()
     _test_v42_w73_schleifen_befehle_werden_gezaehlt()
     _test_v42_w74_verzweigung_statt_nur_laenge()
+    _test_v42_w75_main_ohne_bridge_verdrahtung()
     _test_v42_w60_azrael_cooldown_je_plattform()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)
