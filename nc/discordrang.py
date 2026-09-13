@@ -68,3 +68,23 @@ def slug(username: str) -> str:
     """
     s = re.sub(r"[^a-z0-9]+", "-", (username or "").lstrip("@").lower()).strip("-")
     return (s or "user")[:90]
+
+
+# Funktionale Rollen mit Rechten und Farben, zusaetzlich zu den Rang-Rollen.
+# (Name, Farbe, hoist=getrennt anzeigen, {Permission: True})
+#
+# v4.2-W72: ebenfalls reine Daten und deshalb hier statt in der Closure. Die
+# Rechte stehen als einfache Wahrheitswerte da und nicht als
+# discord.Permissions — dieses Modul kennt die Bibliothek nicht, und
+# discordbot.py baut daraus das, was Discord sehen will.
+TEAM_ROLLEN = (
+    ("\U0001f451 Owner",     0xff2e88, True,  {"administrator": True}),
+    ("\U0001f6e1 Moderator", 0xffb000, True,  {"kick_members": True, "ban_members": True,
+                                       "manage_messages": True, "moderate_members": True,
+                                       "manage_nicknames": True, "mute_members": True,
+                                       "deafen_members": True, "move_members": True}),
+    ("\U0001f3ac Streamer",  0x00ff9c, True,  {"priority_speaker": True, "stream": True}),
+    ("\u2b50 VIP",        0x00e5ff, True,  {}),
+    ("\U0001f916 Bot",        0x8892a0, False, {}),
+    ("\U0001f464 Member",     0x5a6472, False, {}),
+)
