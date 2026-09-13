@@ -812,7 +812,7 @@ python3 tools/ncpatch.py docs                          # Doku-Zahlen gegen den C
 ```
 
 `find` antwortet aus **[`.claude/INDEX.md`](.claude/INDEX.md)** — 364 Routen
-(34 in `bot.py`, 330 in `nc/routes/`), 60 Slash-Commands, 526 Funktionen,
+(34 in `bot.py`, 330 in `nc/routes/`), 60 Slash-Commands, 538 Funktionen,
 jeweils mit Zeilennummer.
 
 ---

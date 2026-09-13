@@ -9288,6 +9288,124 @@ def _test_v42_w65_stille_wird_gemessen_und_gesperrt():
     ok("W65: der DDL-Helfer schluckt nur 'existiert schon', sonst nichts")
 
 
+def _test_v42_w77_schleifen_folgen_dem_aktuellen_client():
+    """v4.2-W77: die Dauerlaeufer hielten den Client der ERSTEN Sitzung fest.
+
+    Das ist die erste Welle dieser Reihe mit einer echten
+    VERHALTENSAENDERUNG, und sie steht hier, damit niemand sie fuer eine
+    Verschiebung haelt.
+
+    B120 startet die Hintergrund-Schleifen (Liveboard, Wochen-Digest, Clip der
+    Woche) EINMALIG ueber alle Sitzungen hinweg — sonst liefen nach n
+    Reconnects n parallele Schleifen. Der Guard dafuer wurde damals von einem
+    Objekt-Attribut auf ein Modul-Global gezogen. Die Client-Referenz IN den
+    Schleifen blieb aber eine Closure-Variable und zeigte damit weiter auf den
+    Client der ersten Sitzung.
+
+    Nach einem Reconnect ist das ein totes Objekt: discord.Client.close() ruft
+    self.http.close(), und jeder Aufruf darueber scheitert. Die Schleifen
+    liefen also weiter und griffen ins Leere — derselbe Fehler, den B120 fuer
+    den Guard behoben und fuer die Referenz stehen gelassen hat.
+
+    nc.discordstate.CLIENT ist genau dafuer da und sagt es im eigenen
+    Docstring: „Register statt Modul-Global, weil der Bot ihn NEU BINDET".
+    """
+    import ast as _ast
+    hier = os.path.dirname(os.path.abspath(__file__))
+    src = io.open(os.path.join(hier, "discordbot.py"), encoding="utf-8").read()
+    baum = _ast.parse(src)
+    oben = {n.name: n for n in baum.body
+            if isinstance(n, (_ast.FunctionDef, _ast.AsyncFunctionDef))}
+
+    # --- 1) Die Dauerlaeufer holen den Client ueber das Register ---------
+    LAEUFER = ("_update_liveboard", "_liveboard_loop", "_post_weekly_digest",
+               "_weekly_digest_loop", "_clip_week_leader",
+               "_post_clip_of_week", "_clipoftheweek_loop")
+    for n in LAEUFER:
+        assert n in oben, "%s steht nicht mehr auf Modulebene" % n
+        rumpf = _ast.unparse(oben[n])
+        assert "_dc_client()" in rumpf or "_dc_offen()" in rumpf, \
+            "%s holt den Client nicht mehr ueber das Register — nach einem " \
+            "Reconnect spricht es dann wieder den toten Client der ersten " \
+            "Sitzung an" % n
+
+    # --- 2) Das Register liefert wirklich den aktuellen Client -----------
+    import nc.discordstate as DS
+    import discordbot as DB
+    _alt = DS.CLIENT["obj"]
+    try:
+        DS.CLIENT["obj"] = "ERSTER"
+        assert DB._dc_client() == "ERSTER", DB._dc_client()
+        DS.CLIENT["obj"] = "ZWEITER"          # so wirkt ein Reconnect
+        assert DB._dc_client() == "ZWEITER", \
+            "_dc_client() liefert nach dem Neubinden noch den alten Client — " \
+            "genau der Fehler, den diese Welle behebt"
+        DS.CLIENT["obj"] = None
+        assert DB._dc_client() is None
+    finally:
+        DS.CLIENT["obj"] = _alt
+
+    # --- 3) Die Schleifenbedingung haelt None aus ------------------------
+    # `_dc_client().is_closed()` waere ein AttributeError, sobald der
+    # Supervisor beim Aufraeumen CLIENT["obj"] = None setzt — in einer
+    # Endlosschleife, die niemand beobachtet. Der erste Entwurf hatte genau
+    # das.
+    try:
+        DS.CLIENT["obj"] = None
+        assert DB._dc_offen() is False, \
+            "_dc_offen() meldet bei fehlendem Client nicht False"
+
+        class _Zu:
+            def is_closed(self):
+                return True
+
+        class _Offen:
+            def is_closed(self):
+                return False
+
+        DS.CLIENT["obj"] = _Zu()
+        assert DB._dc_offen() is False, "ein geschlossener Client gilt als offen"
+        DS.CLIENT["obj"] = _Offen()
+        assert DB._dc_offen() is True, "ein offener Client gilt als geschlossen"
+    finally:
+        DS.CLIENT["obj"] = _alt
+    assert "while _dc_offen():" in src, \
+        "die Dauerschleifen pruefen nicht mehr ueber _dc_offen() — dann " \
+        "steht dort wieder ein Aufruf, der auf None knallt"
+    ok("W77: die Dauerlaeufer folgen dem aktuellen Client und ueberleben None")
+
+    # --- 4) Der Sitzungszustand behaelt seine Lebensdauer ----------------
+    # Er steht jetzt auf Modulebene, wird aber je Sitzung zurueckgesetzt.
+    # Ohne das Zuruecksetzen ueberlebten Cooldowns einen Reconnect: ein
+    # Nutzer, der vorher XP bekam, bekaeme danach 60 Sekunden lang keine.
+    lauf = oben.get("_discord_run_once")
+    assert lauf is not None, "_discord_run_once ist verschwunden"
+    rumpf = _ast.unparse(lauf)
+    for zeile in ("_disc_clip_last.clear()", "_xp_cool.clear()",
+                  "_dc_ai_last['ts'] = 0.0", "_dc_reply_last['ts'] = 0.0",
+                  "_dc_ai_sema['obj'] = asyncio.Semaphore(2)"):
+        assert zeile in rumpf, \
+            "_discord_run_once setzt %r nicht mehr zurueck — der " \
+            "Zwischenspeicher ueberlebt dann einen Reconnect, und das ist " \
+            "eine andere Wirkung als vorher" % zeile
+
+    # --- 5) `= None` bleibt fuer Kontext-Platzhalter reserviert ----------
+    # Der Vertrag aus W15 liest jede Modul-Zuweisung auf None als Platzhalter,
+    # den _uebernehmen(ctx) belegen muss. Der erste Entwurf dieser Welle hat
+    # `_dc_ai_sema = None` geschrieben und wurde prompt gemeldet.
+    for name in ("_dc_ai_sema", "_dc_ai_last", "_dc_reply_last",
+                 "_xp_cool", "_disc_clip_last"):
+        zuw = [n for n in baum.body if isinstance(n, _ast.Assign)
+               and any(isinstance(t, _ast.Name) and t.id == name for t in n.targets)]
+        assert zuw, "%s steht nicht mehr auf Modulebene" % name
+        wert = zuw[0].value
+        assert not (isinstance(wert, _ast.Constant) and wert.value is None), \
+            "%s ist auf None gesetzt — in dieser Datei ist das die Marke " \
+            "fuer einen Kontext-Platzhalter, und _uebernehmen(ctx) muesste " \
+            "ihn belegen" % name
+    ok("W77: Sitzungszustand wird je Sitzung geleert und ist kein Platzhalter")
+
+
 def _test_v42_w75_main_ohne_bridge_verdrahtung():
     """v4.2-W75: main() war zur Haelfte Brain-Bridge-Verdrahtung.
 
@@ -11549,6 +11667,7 @@ def main():
     _test_v42_w73_schleifen_befehle_werden_gezaehlt()
     _test_v42_w74_verzweigung_statt_nur_laenge()
     _test_v42_w75_main_ohne_bridge_verdrahtung()
+    _test_v42_w77_schleifen_folgen_dem_aktuellen_client()
     _test_v42_w60_azrael_cooldown_je_plattform()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)

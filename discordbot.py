@@ -334,7 +334,8 @@ async def _ensure_discord_invite(client):
         if DISCORD_GUILD_ID:
             guild = client.get_guild(DISCORD_GUILD_ID)
         if guild is None:
-            guild = client.guilds[0] if client.guilds else None
+            _c = _dc_client()
+        guild = (_c.guilds[0] if _c and _c.guilds else None)
         if guild is None:
             log.info("Discord-Invite: Bot in keiner Guild — übersprungen.")
             return
@@ -370,6 +371,33 @@ async def _ensure_discord_invite(client):
                  "Für die .env kannst du eintragen: DISCORD_INVITE_URL=%s", url, url)
     except Exception as e:
         log.warning("Discord-Invite konnte nicht erzeugt werden: %s", e)
+
+
+# ---------------------------------------------------------------------------
+# v4.2-W77: Sitzungs-Zwischenspeicher. Sie standen in _discord_run_once und
+# waren damit der Grund, warum die letzten Rueckrufe nicht heraus konnten.
+#
+# WICHTIG — die Lebensdauer bleibt DIESELBE: _discord_run_once leert sie zu
+# Beginn jeder Sitzung. Sie einfach hier stehen zu lassen waere eine
+# Verhaltensaenderung gewesen: Cooldowns wuerden dann einen Reconnect
+# ueberleben, und ein Nutzer, der vor dem Abriss XP bekommen hat, bekaeme
+# danach 60 Sekunden lang keine.
+_disc_clip_last = {}      # F84: user_id -> monotonic (Cooldown fuer /clip)
+_xp_cool = {}             # user_id -> monotonic (max 1x XP / 60s)
+_dc_ai_last = {"ts": 0.0}
+_dc_reply_last = {"ts": 0.0}
+
+# Der Semaphor wird je Sitzung NEU erzeugt statt geleert: er gehoert an die
+# laufende Ereignisschleife, und ein aus einer toten Schleife stammender
+# Warteplatz waere ein Haenger, den niemand findet.
+#
+# Als Register-Dict und nicht als `= None`, aus zwei Gruenden. Erstens ist es
+# dasselbe Idiom wie nc.discordstate.CLIENT — „Register statt Modul-Global,
+# weil der Bot ihn NEU BINDET". Zweitens ist `= None` auf Modulebene in dieser
+# Datei RESERVIERT: der Vertrag aus v4.2-W15 liest jede solche Zuweisung als
+# Platzhalter, den _uebernehmen(ctx) belegen muss, und hat den ersten Entwurf
+# dieser Welle prompt gemeldet. Lebender Sitzungszustand ist nie None.
+_dc_ai_sema = {"obj": None}
 
 
 # ---------------------------------------------------------------------------
@@ -1540,6 +1568,339 @@ def _reg_system(tree):
             await inter.response.send_message(_nc_i18n.t(f"Fehler: {e}"), ephemeral=True)
 
 
+def _dc_client():
+    """Der AKTUELL verbundene Discord-Client, oder None.
+
+    v4.2-W77 — und das ist eine VERHALTENSAENDERUNG, keine Verschiebung.
+
+    Die Hintergrund-Schleifen (Liveboard, Wochen-Digest, Clip der Woche)
+    starten laut B120 EINMALIG ueber alle Sitzungen hinweg; der Guard
+    `_DISCORD_BGTASKS_STARTED` sorgt dafuer, weil sonst nach n Reconnects n
+    parallele Schleifen liefen. Sie hielten dabei aber den `client` aus der
+    ERSTEN Sitzung fest — als Closure-Variable.
+
+    Nach einem Reconnect ist das ein totes Objekt: discord.Client.close()
+    schliesst die HTTP-Sitzung (`self.http.close()`), und jeder Aufruf
+    darueber scheitert. Die Schleifen liefen also weiter und griffen ins
+    Leere. Es ist derselbe Fehler, den B120 fuer den GUARD behoben hat und
+    fuer die Client-Referenz stehen liess.
+
+    nc.discordstate.CLIENT ist genau dafuer da; sein Docstring sagt es
+    woertlich: „Register statt Modul-Global, weil der Bot ihn NEU BINDET
+    (bei Reconnect und beim Aufraeumen) — ein direkter Alias zeigte danach
+    auf den alten Client."
+    """
+    return _nc_discordstate.CLIENT["obj"]
+
+
+def _dc_offen() -> bool:
+    """Laeuft gerade ein verbundener Client? -> bool
+
+    Fuer die Schleifenbedingung der Dauerlaeufer. `_dc_client().is_closed()`
+    allein reicht NICHT: beim Aufraeumen setzt der Supervisor
+    CLIENT["obj"] = None, und genau in diesem Fenster waere das ein
+    AttributeError auf None — in einer Endlosschleife, die niemand beobachtet.
+    """
+    c = _dc_client()
+    return c is not None and not c.is_closed()
+
+
+# ---------------------------------------------------------------------------
+# v4.2-W77: Diese drei brauchten von _discord_run_once nur noch die
+# Sitzungs-Zwischenspeicher — und die stehen seit dieser Welle oben.
+# Damit gehen sie unveraendert heraus, ohne einen einzigen Parameter.
+# ---------------------------------------------------------------------------
+
+async def _award_xp(message):
+    uid = message.author.id
+    now = _time_mod.monotonic()
+    if now - _xp_cool.get(uid, 0) < 60:
+        return
+    _xp_cool[uid] = now
+    gain = 15 + int(now) % 11               # 15–25 XP
+    # F84: Doppelte XP solange irgendein getrackter Stream live ist —
+    # zieht Leute genau dann in den Chat. Live-Status 30s gecacht
+    # (kein DB-Hit pro Message).
+    if DISCORD_XP_LIVE_BOOST > 1:
+        try:
+            c = getattr(_award_xp, "_live_cache", None)
+            if not c or now - c[0] > 30:
+                # v4.1-W29: NEBEN dem Loop. Diese Funktion laeuft bei
+                # JEDER Discord-Nachricht; der 30-s-Cache daempft die
+                # Zahl der Abfragen, nicht ihre Blockade.
+                n = await db_async(lambda cn: cn.execute(
+                    "SELECT COUNT(*) AS c FROM trackings WHERE last_live=1").fetchone()["c"])
+                c = (now, n > 0)
+                _award_xp._live_cache = c
+            if c[1]:
+                gain *= DISCORD_XP_LIVE_BOOST
+        except Exception:
+            pass
+    try:
+        # v4.1-W29: NEBEN dem Loop. Lesen und Schreiben bleiben in EINER
+        # Transaktion — sonst koennten zwei Nachrichten desselben Nutzers
+        # denselben Stand lesen und einer der beiden XP-Gewinne ginge
+        # verloren. Der 60-s-Cooldown oben macht das unwahrscheinlich,
+        # aber nicht unmoeglich.
+        def _buchen(conn):
+            row = conn.execute("SELECT xp, level FROM discord_xp WHERE guild_id=? AND user_id=?",
+                               (message.guild.id, uid)).fetchone()
+            oldlvl = row["level"] if row else 0
+            newxp = (row["xp"] if row else 0) + gain
+            newlvl = _nc_rang.xp_zu_level(newxp)
+            nowiso = datetime.now(timezone.utc).isoformat()
+            if row:
+                conn.execute("UPDATE discord_xp SET xp=?, level=?, last_ts=? WHERE guild_id=? AND user_id=?",
+                             (newxp, newlvl, nowiso, message.guild.id, uid))
+            else:
+                conn.execute("INSERT INTO discord_xp (guild_id, user_id, xp, level, last_ts) VALUES (?,?,?,?,?)",
+                             (message.guild.id, uid, newxp, newlvl, nowiso))
+            conn.commit()
+            return oldlvl, newlvl
+
+        oldlvl, newlvl = await db_async(_buchen)
+        if newlvl > oldlvl:
+            await _on_level_up(message, newlvl)
+    except Exception as e:
+        log.debug("Discord XP-Update: %s", e)
+
+
+async def _discord_ai_automod(message) -> bool:
+    c = (message.content or "").strip()
+    if len(c) < 12 or c.startswith(("/", "!")):
+        return False
+    if {r.name for r in getattr(message.author, "roles", [])} & {"👑 Owner", "🛡 Moderator"}:
+        return False
+    now = _time_mod.monotonic()
+    if now - _dc_ai_last["ts"] < 3.0:               # max ~1 Klassifikation / 3s
+        return False
+    if len(_AI_CALL_TS) >= max(1, AZRAEL_MAX_CALLS_MIN):   # globales KI-Budget voll
+        return False
+    if _dc_ai_sema["obj"].locked():
+        return False                                 # kein freier Slot → skip statt Stau
+    _dc_ai_last["ts"] = now
+    _KICK_MOD.stats["dc_seen"] = _KICK_MOD.stats.get("dc_seen", 0) + 1
+    async with _dc_ai_sema["obj"]:
+        cls = await _KICK_MOD._classify(c)
+    if not cls or cls["toxic"] < float(_KICK_MOD.cfg.get("sensitivity", 0.85)):
+        return False
+    # Verstoß: löschen + eskalierender Timeout + Mod-Log (Discord + Dashboard)
+    mins = _KICK_MOD._escalation_minutes(f"dc:{message.author.id}")
+    acted = []
+    try:
+        await message.delete(); acted.append("gelöscht")
+    except Exception:
+        pass
+    try:
+        await message.author.timeout(timedelta(minutes=mins),
+                                     reason=f"AZRAEL: Toxizität {cls['toxic']:.2f}")
+        acted.append(f"Timeout {mins}min")
+    except Exception:
+        pass
+    _KICK_MOD.stats["dc_moderated"] = _KICK_MOD.stats.get("dc_moderated", 0) + 1
+    _modlog("timeout", "ai-discord", c[:200],
+            {"user": str(message.author), "toxic": round(cls["toxic"], 2), "min": mins,
+             "platform": "discord"})
+    try:
+        mlog = discord.utils.get(message.guild.text_channels, name=DISCORD_MODLOG_CHANNEL)
+        if mlog:
+            await mlog.send(f"🦇 **AZRAEL KI-Mod** ({', '.join(acted) or 'nur geflaggt'}) · "
+                            f"{message.author.mention} · Toxizität `{cls['toxic']:.2f}`\n"
+                            f"`{c[:180]}`")
+    except Exception:
+        pass
+    try:
+        await _KICK_MOD._learn_from(c)               # neue Schimpfwörter → Review-Queue
+    except Exception:
+        pass
+    return True
+
+
+async def _discord_azrael_reply(message):
+    """AZRAEL antwortet, wenn er im Discord direkt erwähnt wird — dieselbe
+       eine KI-Identität wie im Kick-Chat/Overlay. 10s-Cooldown gegen Fluten."""
+    now = _time_mod.monotonic()
+    if now - _dc_reply_last["ts"] < 10:
+        return
+    _dc_reply_last["ts"] = now
+    q = re.sub(r"<@!?\d+>", "", message.content or "").strip()[:600]
+    if not q:
+        return
+    try:
+        async with message.channel.typing():
+            txt, err = await azrael_chat(
+                "Discord-Chat",
+                f"{message.author.display_name} schreibt im Discord: {q}",
+                extra_system="Antworte kurz (max 3 Sätze), locker, deutsch.")
+        if txt and not err:
+            await message.reply(_nc_i18n.t(txt[:1900]), mention_author=False)
+            _KICK_MOD.last_spoken = {"text": txt[:200], "ts": _time_mod.monotonic()}
+    except Exception as e:
+        log.debug("discord azrael reply: %s", e)
+
+
+# ---------------------------------------------------------------------------
+# v4.2-W77: Die Hintergrund-Schleifen und ihre Erzeuger. Sie hingen als
+# einziges noch an `client` — und zwar an dem der ERSTEN Sitzung, siehe
+# _dc_client(). Ueber das Register gehen sie jetzt auf den aktuellen.
+# ---------------------------------------------------------------------------
+
+async def _update_liveboard():
+    _c = _dc_client()
+    guild = (_c.guilds[0] if _c and _c.guilds else None)
+    if not guild:
+        return
+    ch = discord.utils.get(guild.text_channels, name="live-feed")
+    if not ch:
+        return
+    with db_conn() as conn:
+        rows = conn.execute("SELECT username, recording FROM trackings WHERE last_live=1 ORDER BY username").fetchall()
+    desc = "\n".join((("🔴 " if r["recording"] else "🟢 ") + f"@{r['username']}") for r in rows) if rows else "Gerade niemand live."
+    # F84: Restream-Status direkt im Board — Community sieht sofort ob Kick läuft
+    _ra = _restream_active()
+    if _ra.get("user"):
+        desc += f"\n\n📡 **Kick-Restream läuft** — Quelle: @{_ra['user']}"
+        if KICK_CHANNEL_URL:
+            desc += f"\n{KICK_CHANNEL_URL}"
+    emb = discord.Embed(title="🔴 LIVE JETZT", colour=discord.Colour(0x00ff9c), description=desc[:4000])
+    emb.set_footer(text=f"{len(rows)} live · aktualisiert")
+    emb.timestamp = datetime.now(timezone.utc)
+    mid = _disc_state_get("liveboard_msg")
+    msg = None
+    if mid:
+        try: msg = await ch.fetch_message(int(mid))
+        except Exception: msg = None
+    if msg:
+        await msg.edit(embed=emb)
+    else:
+        m = await ch.send(embed=emb)
+        try: await m.pin()
+        except Exception: pass
+        _disc_state_set("liveboard_msg", m.id)
+
+
+async def _liveboard_loop():
+    _c = _dc_client()
+    if _c is None:
+        return
+    await _c.wait_until_ready()
+    while _dc_offen():
+        try:
+            if DISCORD_LIVEBOARD:
+                await _update_liveboard()
+        except Exception as e:
+            _loop_fehler("_liveboard_loop", e)
+        await asyncio.sleep(60)
+
+
+async def _post_weekly_digest():
+    _c = _dc_client()
+    guild = (_c.guilds[0] if _c and _c.guilds else None)
+    if not guild:
+        return
+    ch = discord.utils.get(guild.text_channels, name="live-feed") or discord.utils.get(guild.text_channels, name="general")
+    if not ch:
+        return
+    since = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
+    with db_conn() as conn:
+        recs = conn.execute("SELECT COUNT(*) AS n FROM recordings WHERE created_at >= ?", (since,)).fetchone()
+        top = conn.execute("SELECT username, COUNT(*) AS n FROM recordings WHERE created_at >= ? "
+                           "GROUP BY username ORDER BY n DESC LIMIT 5", (since,)).fetchall()
+    emb = discord.Embed(title="📅 Wochenrückblick", colour=discord.Colour(0x00e5ff))
+    emb.add_field(name="Aufnahmen diese Woche", value=str(recs["n"] if recs else 0), inline=False)
+    if top:
+        emb.add_field(name="Top-Streamer", value="\n".join(f"**@{r['username']}** — {r['n']}" for r in top), inline=False)
+    emb.timestamp = datetime.now(timezone.utc)
+    await ch.send(embed=emb)
+
+
+async def _weekly_digest_loop():
+    _c = _dc_client()
+    if _c is None:
+        return
+    await _c.wait_until_ready()
+    while _dc_offen():
+        try:
+            now = datetime.now(timezone.utc)
+            wk = now.strftime("%Y-W%W")
+            if DISCORD_WEEKLY_DIGEST and now.weekday() == 6 and now.hour >= 18 and _disc_state_get("digest_week") != wk:
+                await _post_weekly_digest()
+                _disc_state_set("digest_week", wk)
+        except Exception as e:
+            _loop_fehler("_weekly_digest_loop", e)
+        await asyncio.sleep(1800)   # alle 30min prüfen
+
+
+async def _clip_week_leader():
+    """Clip der letzten 7 Tage mit den meisten ⭐-Votes → (msg, votes, username) oder None."""
+    _c = _dc_client()
+    guild = (_c.guilds[0] if _c and _c.guilds else None)
+    if not guild:
+        return None
+    since = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
+    with db_conn() as conn:
+        rows = conn.execute("SELECT channel_id, message_id, username FROM discord_clips "
+                            "WHERE created_at >= ? ORDER BY id DESC LIMIT 100", (since,)).fetchall()
+    best = None
+    for r in rows:
+        ch = guild.get_channel(int(r["channel_id"]))
+        if not ch:
+            continue
+        try:
+            msg = await ch.fetch_message(int(r["message_id"]))
+        except Exception:
+            continue
+        votes = 0
+        for rc in msg.reactions:
+            if str(rc.emoji) == "⭐":
+                # B64: Bot-Seed nur abziehen wenn die Bot-Reaction wirklich
+                # existiert (add_reaction kann fehlgeschlagen sein → sonst
+                # zählt jeder Clip 1 Vote zu wenig).
+                votes = max(0, rc.count - (1 if rc.me else 0))
+                break
+        if best is None or votes > best[1]:
+            best = (msg, votes, r["username"])
+    return best
+
+
+async def _post_clip_of_week():
+    leader = await _clip_week_leader()
+    if not leader or leader[1] <= 0:
+        return
+    msg, votes, username = leader
+    _c = _dc_client()
+    guild = (_c.guilds[0] if _c and _c.guilds else None)
+    ch = discord.utils.get(guild.text_channels, name="clips-feed") or discord.utils.get(guild.text_channels, name="live-feed")
+    if not ch:
+        return
+    emb = discord.Embed(title="🏆 Clip of the Week",
+                        description=f"**@{username}** · {votes} ⭐\n[▶ zum Clip]({msg.jump_url})",
+                        colour=discord.Colour(0xffb000))
+    emb.timestamp = datetime.now(timezone.utc)
+    w = await ch.send(embed=emb)
+    try:
+        await w.pin()
+    except Exception:
+        pass
+
+
+async def _clipoftheweek_loop():
+    _c = _dc_client()
+    if _c is None:
+        return
+    await _c.wait_until_ready()
+    while _dc_offen():
+        try:
+            now = datetime.now(timezone.utc)
+            wk = now.strftime("%Y-CW%W")
+            if DISCORD_CLIP_OF_WEEK and now.weekday() == 6 and now.hour >= 19 and _disc_state_get("cotw_week") != wk:
+                await _post_clip_of_week()
+                _disc_state_set("cotw_week", wk)
+        except Exception as e:
+            _loop_fehler("_clipoftheweek_loop", e)
+        await asyncio.sleep(1800)
+
+
 async def _discord_run_once():
     """EINE Discord-Session. Rueckgabe True = nicht neu versuchen."""
     if not DISCORD_BOT_TOKEN:
@@ -1572,6 +1933,13 @@ async def _discord_run_once():
 
     client = discord.Client(intents=intents)
     tree = app_commands.CommandTree(client)
+    # v4.2-W77: Sitzungs-Zwischenspeicher zuruecksetzen. Vorher entstanden sie
+    # hier neu, weil sie Closure-Variablen waren; die Wirkung ist dieselbe.
+    _disc_clip_last.clear()
+    _xp_cool.clear()
+    _dc_ai_last["ts"] = 0.0
+    _dc_reply_last["ts"] = 0.0
+    _dc_ai_sema["obj"] = asyncio.Semaphore(2)
 
     # v4.2-W71: _disc_sprache_setzen steht jetzt auf Modulebene (brauchte keine
     # einzige Closure-Variable).
@@ -1654,7 +2022,7 @@ async def _discord_run_once():
         except Exception as e:
             await inter.followup.send(_nc_i18n.t(f"Fehler: {e}"))
 
-    _disc_clip_last = {}    # F84: user_id -> monotonic (Cooldown für /clip)
+    # v4.2-W77: _disc_clip_last steht jetzt auf Modulebene.
 
     @tree.command(name="clip", description=_nc_i18n.t("Highlight-Clip der letzten Sekunden vom laufenden Stream"))
     @app_commands.describe(username="Streamer (leer = der einzige der gerade aufgenommen wird)")
@@ -1764,7 +2132,7 @@ async def _discord_run_once():
         tree.command(name=_pname, description=_pdesc[:100])(_mk())
 
     # ───────── XP/Leveling via on_message ─────────
-    _xp_cool = {}   # user_id -> monotonic (Anti-Spam: max 1× XP / 60s)
+    # v4.2-W77: _xp_cool steht jetzt auf Modulebene.
 
     # v4.2-W72: _on_level_up steht jetzt auf Modulebene.
 
@@ -1833,58 +2201,7 @@ async def _discord_run_once():
         except Exception as e:
             log.debug("raw-reaction: %s", e)
 
-    async def _award_xp(message):
-        uid = message.author.id
-        now = _time_mod.monotonic()
-        if now - _xp_cool.get(uid, 0) < 60:
-            return
-        _xp_cool[uid] = now
-        gain = 15 + int(now) % 11               # 15–25 XP
-        # F84: Doppelte XP solange irgendein getrackter Stream live ist —
-        # zieht Leute genau dann in den Chat. Live-Status 30s gecacht
-        # (kein DB-Hit pro Message).
-        if DISCORD_XP_LIVE_BOOST > 1:
-            try:
-                c = getattr(_award_xp, "_live_cache", None)
-                if not c or now - c[0] > 30:
-                    # v4.1-W29: NEBEN dem Loop. Diese Funktion laeuft bei
-                    # JEDER Discord-Nachricht; der 30-s-Cache daempft die
-                    # Zahl der Abfragen, nicht ihre Blockade.
-                    n = await db_async(lambda cn: cn.execute(
-                        "SELECT COUNT(*) AS c FROM trackings WHERE last_live=1").fetchone()["c"])
-                    c = (now, n > 0)
-                    _award_xp._live_cache = c
-                if c[1]:
-                    gain *= DISCORD_XP_LIVE_BOOST
-            except Exception:
-                pass
-        try:
-            # v4.1-W29: NEBEN dem Loop. Lesen und Schreiben bleiben in EINER
-            # Transaktion — sonst koennten zwei Nachrichten desselben Nutzers
-            # denselben Stand lesen und einer der beiden XP-Gewinne ginge
-            # verloren. Der 60-s-Cooldown oben macht das unwahrscheinlich,
-            # aber nicht unmoeglich.
-            def _buchen(conn):
-                row = conn.execute("SELECT xp, level FROM discord_xp WHERE guild_id=? AND user_id=?",
-                                   (message.guild.id, uid)).fetchone()
-                oldlvl = row["level"] if row else 0
-                newxp = (row["xp"] if row else 0) + gain
-                newlvl = _nc_rang.xp_zu_level(newxp)
-                nowiso = datetime.now(timezone.utc).isoformat()
-                if row:
-                    conn.execute("UPDATE discord_xp SET xp=?, level=?, last_ts=? WHERE guild_id=? AND user_id=?",
-                                 (newxp, newlvl, nowiso, message.guild.id, uid))
-                else:
-                    conn.execute("INSERT INTO discord_xp (guild_id, user_id, xp, level, last_ts) VALUES (?,?,?,?,?)",
-                                 (message.guild.id, uid, newxp, newlvl, nowiso))
-                conn.commit()
-                return oldlvl, newlvl
-
-            oldlvl, newlvl = await db_async(_buchen)
-            if newlvl > oldlvl:
-                await _on_level_up(message, newlvl)
-        except Exception as e:
-            log.debug("Discord XP-Update: %s", e)
+    # v4.2-W77: _award_xp steht jetzt auf Modulebene.
 
     # v4.2-W71: _discord_automod steht jetzt auf Modulebene (brauchte keine
     # einzige Closure-Variable).
@@ -1893,218 +2210,27 @@ async def _discord_run_once():
     # Dieselbe eine KI-Identität, die den Kick-Chat bewacht, klassifiziert jetzt
     # auch Discord-Nachrichten (Toxizität via Ollama). CPU-Schutz: Semaphore(2)
     # ohne Warteschlange, min. 3s Abstand, globales KI-Budget wird respektiert.
-    _dc_ai_sema = asyncio.Semaphore(2)
-    _dc_ai_last = {"ts": 0.0}
+    # v4.2-W77: _dc_ai_sema und _dc_ai_last stehen jetzt auf Modulebene.
 
-    async def _discord_ai_automod(message) -> bool:
-        c = (message.content or "").strip()
-        if len(c) < 12 or c.startswith(("/", "!")):
-            return False
-        if {r.name for r in getattr(message.author, "roles", [])} & {"👑 Owner", "🛡 Moderator"}:
-            return False
-        now = _time_mod.monotonic()
-        if now - _dc_ai_last["ts"] < 3.0:               # max ~1 Klassifikation / 3s
-            return False
-        if len(_AI_CALL_TS) >= max(1, AZRAEL_MAX_CALLS_MIN):   # globales KI-Budget voll
-            return False
-        if _dc_ai_sema.locked():
-            return False                                 # kein freier Slot → skip statt Stau
-        _dc_ai_last["ts"] = now
-        _KICK_MOD.stats["dc_seen"] = _KICK_MOD.stats.get("dc_seen", 0) + 1
-        async with _dc_ai_sema:
-            cls = await _KICK_MOD._classify(c)
-        if not cls or cls["toxic"] < float(_KICK_MOD.cfg.get("sensitivity", 0.85)):
-            return False
-        # Verstoß: löschen + eskalierender Timeout + Mod-Log (Discord + Dashboard)
-        mins = _KICK_MOD._escalation_minutes(f"dc:{message.author.id}")
-        acted = []
-        try:
-            await message.delete(); acted.append("gelöscht")
-        except Exception:
-            pass
-        try:
-            await message.author.timeout(timedelta(minutes=mins),
-                                         reason=f"AZRAEL: Toxizität {cls['toxic']:.2f}")
-            acted.append(f"Timeout {mins}min")
-        except Exception:
-            pass
-        _KICK_MOD.stats["dc_moderated"] = _KICK_MOD.stats.get("dc_moderated", 0) + 1
-        _modlog("timeout", "ai-discord", c[:200],
-                {"user": str(message.author), "toxic": round(cls["toxic"], 2), "min": mins,
-                 "platform": "discord"})
-        try:
-            mlog = discord.utils.get(message.guild.text_channels, name=DISCORD_MODLOG_CHANNEL)
-            if mlog:
-                await mlog.send(f"🦇 **AZRAEL KI-Mod** ({', '.join(acted) or 'nur geflaggt'}) · "
-                                f"{message.author.mention} · Toxizität `{cls['toxic']:.2f}`\n"
-                                f"`{c[:180]}`")
-        except Exception:
-            pass
-        try:
-            await _KICK_MOD._learn_from(c)               # neue Schimpfwörter → Review-Queue
-        except Exception:
-            pass
-        return True
+    # v4.2-W77: _discord_ai_automod steht jetzt auf Modulebene.
 
-    _dc_reply_last = {"ts": 0.0}
+    # v4.2-W77: _dc_reply_last steht jetzt auf Modulebene.
 
-    async def _discord_azrael_reply(message):
-        """AZRAEL antwortet, wenn er im Discord direkt erwähnt wird — dieselbe
-           eine KI-Identität wie im Kick-Chat/Overlay. 10s-Cooldown gegen Fluten."""
-        now = _time_mod.monotonic()
-        if now - _dc_reply_last["ts"] < 10:
-            return
-        _dc_reply_last["ts"] = now
-        q = re.sub(r"<@!?\d+>", "", message.content or "").strip()[:600]
-        if not q:
-            return
-        try:
-            async with message.channel.typing():
-                txt, err = await azrael_chat(
-                    "Discord-Chat",
-                    f"{message.author.display_name} schreibt im Discord: {q}",
-                    extra_system="Antworte kurz (max 3 Sätze), locker, deutsch.")
-            if txt and not err:
-                await message.reply(_nc_i18n.t(txt[:1900]), mention_author=False)
-                _KICK_MOD.last_spoken = {"text": txt[:200], "ts": _time_mod.monotonic()}
-        except Exception as e:
-            log.debug("discord azrael reply: %s", e)
+    # v4.2-W77: _discord_azrael_reply steht jetzt auf Modulebene.
 
-    async def _update_liveboard():
-        guild = client.guilds[0] if client.guilds else None
-        if not guild:
-            return
-        ch = discord.utils.get(guild.text_channels, name="live-feed")
-        if not ch:
-            return
-        with db_conn() as conn:
-            rows = conn.execute("SELECT username, recording FROM trackings WHERE last_live=1 ORDER BY username").fetchall()
-        desc = "\n".join((("🔴 " if r["recording"] else "🟢 ") + f"@{r['username']}") for r in rows) if rows else "Gerade niemand live."
-        # F84: Restream-Status direkt im Board — Community sieht sofort ob Kick läuft
-        _ra = _restream_active()
-        if _ra.get("user"):
-            desc += f"\n\n📡 **Kick-Restream läuft** — Quelle: @{_ra['user']}"
-            if KICK_CHANNEL_URL:
-                desc += f"\n{KICK_CHANNEL_URL}"
-        emb = discord.Embed(title="🔴 LIVE JETZT", colour=discord.Colour(0x00ff9c), description=desc[:4000])
-        emb.set_footer(text=f"{len(rows)} live · aktualisiert")
-        emb.timestamp = datetime.now(timezone.utc)
-        mid = _disc_state_get("liveboard_msg")
-        msg = None
-        if mid:
-            try: msg = await ch.fetch_message(int(mid))
-            except Exception: msg = None
-        if msg:
-            await msg.edit(embed=emb)
-        else:
-            m = await ch.send(embed=emb)
-            try: await m.pin()
-            except Exception: pass
-            _disc_state_set("liveboard_msg", m.id)
+    # v4.2-W77: _update_liveboard steht jetzt auf Modulebene.
 
-    async def _liveboard_loop():
-        await client.wait_until_ready()
-        while not client.is_closed():
-            try:
-                if DISCORD_LIVEBOARD:
-                    await _update_liveboard()
-            except Exception as e:
-                _loop_fehler("_liveboard_loop", e)
-            await asyncio.sleep(60)
+    # v4.2-W77: _liveboard_loop steht jetzt auf Modulebene.
 
-    async def _post_weekly_digest():
-        guild = client.guilds[0] if client.guilds else None
-        if not guild:
-            return
-        ch = discord.utils.get(guild.text_channels, name="live-feed") or discord.utils.get(guild.text_channels, name="general")
-        if not ch:
-            return
-        since = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
-        with db_conn() as conn:
-            recs = conn.execute("SELECT COUNT(*) AS n FROM recordings WHERE created_at >= ?", (since,)).fetchone()
-            top = conn.execute("SELECT username, COUNT(*) AS n FROM recordings WHERE created_at >= ? "
-                               "GROUP BY username ORDER BY n DESC LIMIT 5", (since,)).fetchall()
-        emb = discord.Embed(title="📅 Wochenrückblick", colour=discord.Colour(0x00e5ff))
-        emb.add_field(name="Aufnahmen diese Woche", value=str(recs["n"] if recs else 0), inline=False)
-        if top:
-            emb.add_field(name="Top-Streamer", value="\n".join(f"**@{r['username']}** — {r['n']}" for r in top), inline=False)
-        emb.timestamp = datetime.now(timezone.utc)
-        await ch.send(embed=emb)
+    # v4.2-W77: _post_weekly_digest steht jetzt auf Modulebene.
 
-    async def _weekly_digest_loop():
-        await client.wait_until_ready()
-        while not client.is_closed():
-            try:
-                now = datetime.now(timezone.utc)
-                wk = now.strftime("%Y-W%W")
-                if DISCORD_WEEKLY_DIGEST and now.weekday() == 6 and now.hour >= 18 and _disc_state_get("digest_week") != wk:
-                    await _post_weekly_digest()
-                    _disc_state_set("digest_week", wk)
-            except Exception as e:
-                _loop_fehler("_weekly_digest_loop", e)
-            await asyncio.sleep(1800)   # alle 30min prüfen
+    # v4.2-W77: _weekly_digest_loop steht jetzt auf Modulebene.
 
-    async def _clip_week_leader():
-        """Clip der letzten 7 Tage mit den meisten ⭐-Votes → (msg, votes, username) oder None."""
-        guild = client.guilds[0] if client.guilds else None
-        if not guild:
-            return None
-        since = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
-        with db_conn() as conn:
-            rows = conn.execute("SELECT channel_id, message_id, username FROM discord_clips "
-                                "WHERE created_at >= ? ORDER BY id DESC LIMIT 100", (since,)).fetchall()
-        best = None
-        for r in rows:
-            ch = guild.get_channel(int(r["channel_id"]))
-            if not ch:
-                continue
-            try:
-                msg = await ch.fetch_message(int(r["message_id"]))
-            except Exception:
-                continue
-            votes = 0
-            for rc in msg.reactions:
-                if str(rc.emoji) == "⭐":
-                    # B64: Bot-Seed nur abziehen wenn die Bot-Reaction wirklich
-                    # existiert (add_reaction kann fehlgeschlagen sein → sonst
-                    # zählt jeder Clip 1 Vote zu wenig).
-                    votes = max(0, rc.count - (1 if rc.me else 0))
-                    break
-            if best is None or votes > best[1]:
-                best = (msg, votes, r["username"])
-        return best
+    # v4.2-W77: _clip_week_leader steht jetzt auf Modulebene.
 
-    async def _post_clip_of_week():
-        leader = await _clip_week_leader()
-        if not leader or leader[1] <= 0:
-            return
-        msg, votes, username = leader
-        guild = client.guilds[0] if client.guilds else None
-        ch = discord.utils.get(guild.text_channels, name="clips-feed") or discord.utils.get(guild.text_channels, name="live-feed")
-        if not ch:
-            return
-        emb = discord.Embed(title="🏆 Clip of the Week",
-                            description=f"**@{username}** · {votes} ⭐\n[▶ zum Clip]({msg.jump_url})",
-                            colour=discord.Colour(0xffb000))
-        emb.timestamp = datetime.now(timezone.utc)
-        w = await ch.send(embed=emb)
-        try:
-            await w.pin()
-        except Exception:
-            pass
+    # v4.2-W77: _post_clip_of_week steht jetzt auf Modulebene.
 
-    async def _clipoftheweek_loop():
-        await client.wait_until_ready()
-        while not client.is_closed():
-            try:
-                now = datetime.now(timezone.utc)
-                wk = now.strftime("%Y-CW%W")
-                if DISCORD_CLIP_OF_WEEK and now.weekday() == 6 and now.hour >= 19 and _disc_state_get("cotw_week") != wk:
-                    await _post_clip_of_week()
-                    _disc_state_set("cotw_week", wk)
-            except Exception as e:
-                _loop_fehler("_clipoftheweek_loop", e)
-            await asyncio.sleep(1800)
+    # v4.2-W77: _clipoftheweek_loop steht jetzt auf Modulebene.
 
     @client.event
     async def on_message(message):
