@@ -9288,6 +9288,96 @@ def _test_v42_w65_stille_wird_gemessen_und_gesperrt():
     ok("W65: der DDL-Helfer schluckt nur 'existiert schon', sonst nichts")
 
 
+def _test_v42_w80_notbremse_heraus():
+    """v4.2-W80: die B54-Notbremse heraus — der Schnitt mit await und DB.
+
+    Vierter und letzter der geplanten Schnitte am Aufnahmeschluss:
+
+        616 Z / 141 Zweige   vor W78
+        455 Z / 113 Zweige   jetzt
+
+    Dieser Block ist anders als die drei davor. Er WARTET (zwei await) und
+    er SCHREIBT IN DIE DATENBANK — er schaltet ein Tracking ab, wenn der
+    Stream AUTO_DISABLE_STREAK-mal in Folge tot war. Deshalb bekam er eine
+    eigene Welle statt mitzufahren.
+
+    DIE GEFAHR BEI GENAU DIESEM UMZUG ist ein vergessenes `await` an der
+    Aufrufstelle. Der Aufruf liefert dann eine Koroutine, die nie laeuft: das
+    Tracking bleibt an, die Notbremse greift nie, und zu sehen ist
+    hoechstens eine RuntimeWarning, die zwischen allem anderen untergeht.
+    Weder py_compile noch pyflakes melden das. Deshalb steht die Pruefung
+    darauf hier ausdruecklich.
+    """
+    import ast as _ast
+    import sys as _sys
+    hier = os.path.dirname(os.path.abspath(__file__))
+    if os.path.join(hier, "tools") not in _sys.path:
+        _sys.path.insert(0, os.path.join(hier, "tools"))
+    import monolith as M
+
+    baum = _ast.parse(io.open(os.path.join(hier, "bot.py"), encoding="utf-8").read())
+    oben = {n.name: n for n in baum.body
+            if isinstance(n, (_ast.FunctionDef, _ast.AsyncFunctionDef))}
+    lauf = oben.get("handle_recording_finished")
+    assert lauf is not None, "handle_recording_finished ist verschwunden"
+
+    # --- 1) Sie ist heraus und async geblieben ---------------------------
+    k = oben.get("_rec_auto_abschalten")
+    assert k is not None, "_rec_auto_abschalten steht nicht auf Modulebene"
+    assert isinstance(k, _ast.AsyncFunctionDef), \
+        "_rec_auto_abschalten ist nicht mehr async — sie wartet auf die " \
+        "Datenbank und auf Telegram, das geht nicht synchron"
+
+    # --- 2) …und wird AWAITED aufgerufen, nicht bloss aufgerufen ---------
+    # Das ist die eigentliche Zusicherung dieser Welle.
+    awaited = {_ast.unparse(x.value.func) for x in _ast.walk(lauf)
+               if isinstance(x, _ast.Await) and isinstance(x.value, _ast.Call)}
+    nur_gerufen = {_ast.unparse(x.func) for x in _ast.walk(lauf)
+                   if isinstance(x, _ast.Call)}
+    assert "_rec_auto_abschalten" in nur_gerufen, \
+        "_rec_auto_abschalten wird gar nicht mehr aufgerufen — die Notbremse " \
+        "greift dann nie, und ein toter Stream startet weiter alle 30 Minuten " \
+        "ein ffmpeg (genau der Fall aus B54)"
+    assert "_rec_auto_abschalten" in awaited, \
+        "_rec_auto_abschalten wird OHNE await aufgerufen — der Aufruf liefert " \
+        "eine Koroutine, die nie laeuft. Das Tracking bleibt an, und zu sehen " \
+        "ist hoechstens eine RuntimeWarning im Log"
+
+    # --- 3) Die Absicherung gegen das Wettrennen steht im WHERE ----------
+    # v4.1-W29: nicht der Loop schuetzt, sondern die Bedingung der Anweisung.
+    # Faellt sie weg, kann eine zweite Aufnahme denselben Eintrag ein zweites
+    # Mal abschalten und den Grund ueberschreiben.
+    rumpf = _ast.unparse(k)
+    assert "COALESCE(auto_disabled_at, '') = ''" in rumpf, \
+        "die WHERE-Bedingung gegen das doppelte Abschalten fehlt — dann " \
+        "ueberschreibt ein zweiter Lauf Zeitpunkt und Grund"
+    assert "paused = 1" in rumpf, "die Notbremse pausiert das Tracking nicht mehr"
+
+    # --- 4) Die Register werden geleert, nicht neu gebunden --------------
+    neu_gebunden = {t.id for x in _ast.walk(k) if isinstance(x, _ast.Assign)
+                    for t in x.targets if isinstance(t, _ast.Name)}
+    for reg in ("_STREAM_DEAD_STREAK", "_STREAM_DEAD_BACKOFF_UNTIL",
+                "_PENDING_OFFLINE_COUNT", "_NEXT_CHECK_AT"):
+        assert reg not in neu_gebunden, "%s wird NEU GEBUNDEN" % reg
+        assert reg in rumpf, \
+            "%s wird nach dem Abschalten nicht mehr geleert — der Zustand " \
+            "des abgeschalteten Trackings bliebe im Speicher stehen" % reg
+
+    # --- 5) Und der Operator wird weiterhin laut benachrichtigt ----------
+    assert "disable_notification=False" in rumpf, \
+        "die Benachrichtigung ist wieder still — das Abschalten eines " \
+        "Trackings ist genau der Fall, den der Betreiber mitbekommen muss"
+
+    treffer = [f for f in M.funktionen()
+               if f[0] == "bot.py" and f[1] == "handle_recording_finished"]
+    zeilen, zweige = treffer[0][3], treffer[0][4]
+    assert zeilen <= 470 and zweige <= 116, \
+        "handle_recording_finished ist auf %d Z / %d Zweige zurueckgewachsen" % (
+            zeilen, zweige)
+    ok("W80: die Notbremse ist heraus und wird awaited, %d Z / %d Zweige "
+       "(vor W78: 616/141)" % (zeilen, zweige))
+
+
 def _test_v42_w79_frueher_abriss_heraus():
     """v4.2-W79: dritter Schnitt am Aufnahmeschluss — der fruehe Abriss.
 
@@ -9352,10 +9442,11 @@ def _test_v42_w79_frueher_abriss_heraus():
         "der Zaehler wird nach einer Aufnahme ab 30s nicht mehr " \
         "zurueckgesetzt — dann waechst die Pause immer weiter (B12)"
 
-    # --- 4) Der Auto-Abschalt-Block ist WEITERHIN drin -------------------
-    assert "_STREAM_DEAD_STREAK.get(tid" in _ast.unparse(lauf), \
-        "der Auto-Abschalt-Block ist heraus — er hat ein await und schreibt " \
-        "in die Datenbank, das gehoert in eine eigene Welle"
+    # --- 4) Der Auto-Abschalt-Block kam in EIGENER Welle heraus (W80) ----
+    _aw = {_ast.unparse(x.value.func) for x in _ast.walk(lauf)
+           if isinstance(x, _ast.Await) and isinstance(x.value, _ast.Call)}
+    assert "_rec_auto_abschalten" in _aw, \
+        "die Notbremse wird nicht mehr awaited gerufen — siehe W80"
 
     # --- 5) Die Funktion schrumpft weiter --------------------------------
     treffer = [f for f in M.funktionen()
@@ -9447,14 +9538,19 @@ def _test_v42_w78_aufnahmeschluss_erste_schnitte():
         assert reg in _ast.unparse(k), \
             "%s wird gar nicht mehr fortgeschrieben" % reg
 
-    # --- 4) Der Auto-Abschalt-Block ist bewusst DRIN geblieben -----------
+    # --- 4) Der Auto-Abschalt-Block kam in EIGENER Welle heraus ----------
+    # Diese Zusicherung verlangte bis v4.2-W80, dass er DRIN bleibt — damit
+    # ihn niemand nebenbei mitnimmt. W80 hat ihn dann als eigene Welle
+    # herausgeloest, mit eigener Pruefung auf das `await` an der
+    # Aufrufstelle. Sie verlangt jetzt das Gegenstueck: er steht in seiner
+    # eigenen Funktion, und die wird awaited.
     lauf = oben.get("handle_recording_finished")
     assert lauf is not None, "handle_recording_finished ist verschwunden"
-    rumpf = _ast.unparse(lauf)
-    assert "_STREAM_DEAD_STREAK.get(tid" in rumpf, \
-        "der Auto-Abschalt-Block ist aus handle_recording_finished heraus — " \
-        "er hat ein await und schreibt in die Datenbank, das gehoert in eine " \
-        "eigene Welle mit eigener Beobachtung, nicht nebenbei"
+    _aw = {_ast.unparse(x.value.func) for x in _ast.walk(lauf)
+           if isinstance(x, _ast.Await) and isinstance(x.value, _ast.Call)}
+    assert "_rec_auto_abschalten" in _aw, \
+        "die Notbremse wird nicht mehr awaited aus handle_recording_finished " \
+        "gerufen — siehe den Vertrag zu W80"
 
     # --- 5) Und die Funktion ist wirklich kleiner geworden ---------------
     treffer = [f for f in M.funktionen()
@@ -11851,6 +11947,7 @@ def main():
     _test_v42_w77_schleifen_folgen_dem_aktuellen_client()
     _test_v42_w78_aufnahmeschluss_erste_schnitte()
     _test_v42_w79_frueher_abriss_heraus()
+    _test_v42_w80_notbremse_heraus()
     _test_v42_w60_azrael_cooldown_je_plattform()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)
