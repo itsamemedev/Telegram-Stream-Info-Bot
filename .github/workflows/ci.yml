@@ -163,6 +163,20 @@ jobs:
       - name: Keine neuen Fenster fester Länge in Verträgen
         run: python tools/vertragscheck.py --sperre
 
+      # v4.2-W68. Zwei Fragen, die vorher niemand gestellt hat: trägt jeder
+      # Eintrag in requirements.txt eine Untergrenze (bis W68 keiner von 17),
+      # und ist überhaupt jedes importierte Fremdpaket dort erklärt?
+      #
+      # Der Vertrag aus v4.1-W31 prüft nur die MODUL-EBENE und nur gegen
+      # requirements-smoke.txt. Genau die teuren Pakete werden aber erst IN
+      # Funktionen importiert — boto3, faster_whisper, redis, pymysql, httpx,
+      # requests, socks, websockets_proxy. Ein `import stripe` in einer
+      # Funktion fiele heute niemandem auf: auf dem Server läuft es, eine
+      # frische Installation stirbt Monate später an einer Stelle, die
+      # niemand mit dem Import in Verbindung bringt.
+      - name: Abhängigkeiten erklärt und mit Untergrenze
+        run: python tools/abhaengigkeiten.py --sperre
+
   tests:
     name: Verträge & Module (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest

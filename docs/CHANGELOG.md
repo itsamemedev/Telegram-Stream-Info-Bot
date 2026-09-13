@@ -11,6 +11,80 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Geändert — Untergrenzen für alle 17 Fremdpakete (v4.2 W68)
+
+Vierte Welle der Bestandsaufnahme. Keiner der 17 Einträge in
+`requirements.txt` trug eine Fassungsangabe. Ohne `>=` löst pip auf einer
+älteren Maschine irgendetwas auf, und der Fehler kommt nicht als klare Ansage,
+sondern als `AttributeError` tief im Code an — dort, wo niemand ihn mit einer
+Paketfassung in Verbindung bringt.
+
+**Das ist keine Kehrtwende gegen den Kopfkommentar der Datei.** Der sagt seit
+jeher: die exakten Fassungen kennt nur der Server, einzufrieren per
+`pip freeze > requirements.lock.txt`. Das bleibt richtig und bleibt offen (die
+Datei fehlt weiterhin — nur der Betreiber kann sie erzeugen, und der Prüfer
+erinnert jetzt daran). Untergrenze und Lockfile beantworten verschiedene
+Fragen: *ab wann kann der Code überhaupt laufen* gegen *was läuft nachweislich*.
+
+**Jede Grenze ist nachgesehen, nicht geschätzt.** Für die sechs mit API-Zwang
+wurde das Paket der Fassung darunter geladen und nachgesehen, dass die
+benutzte Schnittstelle dort wirklich fehlt:
+
+| Paket | Grenze | Beweis |
+|---|---|---|
+| python-telegram-bot | 20.0 | `Application.builder()` — 13.15 hat kein `telegram/ext/_application.py` |
+| discord.py | 2.0 | `app_commands` — 1.7.3 hat kein `discord/app_commands/` |
+| TikTokLive | 6.0 | `TikTokLive.events` — 5.0.0 hat kein `TikTokLive/events/` |
+| Flask | 2.2 | `app.json` — 2.1.0 hat kein `flask/json/provider.py` |
+| redis | 4.2 | `redis.asyncio` — 4.1.0 hat kein `redis/asyncio/` |
+| Werkzeug | 2.0 | reicht `safe_join` seit 2.0.0 aus `werkzeug.security` durch |
+
+Bei den übrigen elf ist kein API-Zwang bekannt; dort ist die Grenze die
+älteste Fassung, die es wirklich gibt und die unser Python zulässt — geprüft,
+dass jede davon existiert und sich unter Python 3.13 laden lässt.
+
+Zwei Messfehler auf dem Weg, beide beim Prüfen aufgefallen und nicht im
+Nachhinein: `Werkzeug 2.0` schien `safe_join` nicht zu haben, weil nur nach
+`def safe_join` gesucht wurde — `werkzeug/utils.py` **reicht es durch**
+(`from .security import safe_join`). Und `PySocks 1.7.1` galt kurz als
+nicht existent, was an der Auswertung der Versionsliste lag, nicht am Paket.
+
+### Hinzugefügt — `tools/abhaengigkeiten.py`
+
+Der Prüfer beantwortet zwei Fragen. Trägt jeder Eintrag eine Untergrenze, und
+ist überhaupt jedes importierte Fremdpaket erklärt?
+
+Die zweite Frage schließt eine echte Lücke. Der Vertrag aus v4.1-W31 prüft nur
+die **Modul-Ebene** und nur gegen `requirements-smoke.txt`. Genau die teuren
+Pakete werden aber erst **in Funktionen** importiert — `boto3`,
+`faster_whisper`, `redis`, `pymysql`, `httpx`, `requests`, `socks`,
+`websockets_proxy`. Für die gab es keinerlei Prüfung. Ein `import stripe` in
+einer selten benutzten Funktion fiele heute niemandem auf: auf dem Server
+läuft es, weil dort irgendwann von Hand nachinstalliert wurde, und eine
+frische Installation stirbt Monate später an einer Stelle, die niemand mit dem
+Import in Verbindung bringt. Der Bestand ist sauber — die Grenze ist deshalb
+**null**, keine eingefrorene Grundlinie.
+
+Drei Importe zählen bewusst nicht als Verstoß, und alle drei stehen so im
+Bestand: `segno` liegt mitgeliefert unter `nc/_vendor/`, `browser_cookie3` ist
+optional mit `ImportError`-Auffang, und Pillow steht nur in `tools/`. Der
+Fehlalarm ist hier die größere Gefahr als der übersehene Fall: ein Prüfer, der
+bei gesundem Bestand meckert, wird abgeschaltet.
+
+Zusätzlich vergleicht er die Untergrenzen beider requirements-Dateien. Stünden
+dort verschiedene, prüfte die CI eine Fassungsreihe, die der Bot in Produktion
+gar nicht benutzt — ein grüner Rauchtest wäre dann eine Aussage über die
+falsche Bibliothek.
+
+### Behoben — der W31-Vertrag verglich Zeilen statt Namen
+
+Er las `requirements-smoke.txt` als `zeile.split("#")[0].strip()`, also die
+ganze Zeile **mit** Fassungsangabe. Solange keine Zeile ein `>=` trug, war das
+dasselbe wie der Paketname. Mit den Untergrenzen aus dieser Welle fand der
+Vergleich kein einziges Paket mehr wieder und meldete 43 fehlende Pakete auf
+einen Schlag — kein Wort davon stimmte. Er zerlegt die Zeile jetzt richtig.
+
+
 ### Behoben — die Schlüssel aus der `.env` erreichten nie einen Request (v4.2 W67)
 
 Dritte Welle der Bestandsaufnahme, und die erste, die einen Produktionsfehler
