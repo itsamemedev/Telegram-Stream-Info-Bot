@@ -25,7 +25,7 @@ dann den Ausschnitt holen:
     python tools/ncpatch.py docs                           # Doku-Zahlen gegen den Quelltext
 
 `find` antwortet aus `.claude/INDEX.md` — 364 Routen (34 in `bot.py`, 330 in
-`nc/routes/`), 45 Slash-Commands, 516 Funktionen mit Zeilennummern. Nach Änderungen an Routen, Commands oder
+`nc/routes/`), 60 Slash-Commands, 516 Funktionen mit Zeilennummern. Nach Änderungen an Routen, Commands oder
 Top-Level-Funktionen `map` neu laufen lassen. Details: Skill `nc-navigation`.
 
 Für „wer ruft das auf?" und „was ist der Typ?" ist der Sprachserver billiger als
@@ -40,7 +40,8 @@ Auf diesem Windows-Rechner heißt der Interpreter **`python`** (3.13.12);
                          Routen), Scraper, Recorder, Restream, Schema (init_db).
                          Hiess bis v4.0-W119 bot_v37.py — beim Suchen in
                          alten Notizen und Patch-Dateien daran denken.
-    discordbot.py        Der Discord-Teil (45 Slash-Commands), seit v4.2-W15
+    discordbot.py        Der Discord-Teil (60 Slash-Commands, davon 15 in
+                         einer Schleife statt per Dekorator), seit v4.2-W15
                          heraus. Bot-seitig, weil er discord.py importiert und
                          ein Gateway aufmacht — nicht nach nc/, das bot-frei
                          bleibt. Bekommt alles per starte(ctx), importiert

@@ -363,6 +363,58 @@ def _kw(dec, key):
     return None
 
 
+def _schleifen_befehle(schleife, ruf, baum) -> list:
+    """Namen der in einer Schleife registrierten Befehle. -> [(zeile, name, beschr)]
+
+    Die Zuordnung laeuft ueber die SCHLEIFENVARIABLEN, nicht ueber geratene
+    Spalten: `name=_pname` sagt, welche Stelle des Tupels der Name ist, und
+    `description=_pdesc[:100]` ebenso fuer die Beschreibung. Wer stattdessen
+    Spalte 0 und 1 annimmt, liegt beim naechsten Aufrufer daneben, der seine
+    Tupel anders herum baut.
+    """
+    if not isinstance(schleife.target, ast.Tuple):
+        return []
+    stelle = {e.id: i for i, e in enumerate(schleife.target.elts)
+              if isinstance(e, ast.Name)}
+
+    def spalte(schluessel):
+        wert = next((k.value for k in ruf.keywords if k.arg == schluessel), None)
+        if wert is None:
+            return None
+        namen = [n.id for n in ast.walk(wert) if isinstance(n, ast.Name)]
+        for n in namen:
+            if n in stelle:
+                return stelle[n]
+        return None
+
+    i_name, i_beschr = spalte("name"), spalte("description")
+    if i_name is None or not isinstance(schleife.iter, ast.Name):
+        return []
+    # Die Tabelle selbst suchen — sie steht als Zuweisung irgendwo im Baum.
+    tabelle = None
+    for n in ast.walk(baum):
+        if isinstance(n, ast.Assign) and any(
+                isinstance(t, ast.Name) and t.id == schleife.iter.id
+                for t in n.targets):
+            tabelle = n.value
+    if not isinstance(tabelle, (ast.Tuple, ast.List)):
+        return []
+    aus = []
+    for eintrag in tabelle.elts:
+        if not isinstance(eintrag, (ast.Tuple, ast.List)):
+            continue
+        if i_name >= len(eintrag.elts):
+            continue
+        nm = _const(eintrag.elts[i_name])
+        if not isinstance(nm, str):
+            continue
+        beschr = ""
+        if i_beschr is not None and i_beschr < len(eintrag.elts):
+            beschr = _const(eintrag.elts[i_beschr]) or ""
+        aus.append((eintrag.lineno, nm, str(beschr)[:60]))
+    return aus
+
+
 def _scan(path: str) -> dict:
     """Ein AST-Durchlauf, alle Fakten. Kein Regex auf Quelltext."""
     tree = ast.parse(_read(path))
@@ -398,6 +450,26 @@ def _scan(path: str) -> dict:
                 tagged = True
         if not tagged and id(node) in toplevel:
             out["defs"].append((node.lineno, node.end_lineno, node.name))
+
+    # v4.2-W73: Befehle, die NICHT ueber einen Dekorator entstehen.
+    #
+    # discordbot.py registriert 15 sys_*-Befehle in einer Schleife:
+    #
+    #     for _pname, _pdesc, _pfn, _pargs in _PAR_CMDS:
+    #         ...
+    #         tree.command(name=_pname, description=_pdesc[:100])(_mk())
+    #
+    # Der Durchlauf oben sieht nur Dekoratoren und hat sie deshalb nie
+    # mitgezaehlt: der Bot bot 60 Slash-Commands an, gemeldet wurden 45. Waere
+    # die Schleife weggefallen, haette das kein Werkzeug bemerkt — auch die
+    # Namenspruefung in _befehle() nicht, die auf dieser Liste aufbaut.
+    for schleife in [n for n in ast.walk(tree) if isinstance(n, ast.For)]:
+        rufe = [c for c in ast.walk(schleife)
+                if isinstance(c, ast.Call) and isinstance(c.func, ast.Call)
+                and _dec_name(c.func).endswith("tree.command")]
+        if not rufe:
+            continue
+        out["slash"].extend(_schleifen_befehle(schleife, rufe[0].func, tree))
     return out
 
 

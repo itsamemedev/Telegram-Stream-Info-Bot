@@ -9288,6 +9288,105 @@ def _test_v42_w65_stille_wird_gemessen_und_gesperrt():
     ok("W65: der DDL-Helfer schluckt nur 'existiert schon', sonst nichts")
 
 
+def _test_v42_w73_schleifen_befehle_werden_gezaehlt():
+    """v4.2-W73: 15 Slash-Commands waren fuer Werkzeug und Doku unsichtbar.
+
+    `tools/ncpatch.py` zaehlte nur DEKORIERTE Registrierungen. Die 15
+    sys_*-Befehle in discordbot.py entstehen anders:
+
+        for _pname, _pdesc, _pfn, _pargs in _PAR_CMDS:
+            tree.command(name=_pname, description=_pdesc[:100])(_mk())
+
+    Der Bot bot damit 60 Slash-Commands an, gemeldet wurden 45. Die Doku nannte
+    45, listete die 15 nirgends — und erwaehnte sie in einer Fussnote trotzdem.
+    Waere die Schleife weggefallen, haette das kein Werkzeug bemerkt: auch die
+    Namenspruefung in _befehle() baut auf derselben Liste auf.
+
+    Die Zuordnung laeuft ueber die SCHLEIFENVARIABLEN, nicht ueber geratene
+    Spalten: `name=_pname` sagt, welche Stelle des Tupels der Name ist. Wer
+    Spalte 0 annimmt, liegt beim naechsten Aufrufer daneben, der seine Tupel
+    anders herum baut — und merkt es nie, weil hier zufaellig 0 stimmt.
+    """
+    import sys as _sys
+    hier = os.path.dirname(os.path.abspath(__file__))
+    if os.path.join(hier, "tools") not in _sys.path:
+        _sys.path.insert(0, os.path.join(hier, "tools"))
+    import ncpatch as N
+
+    # --- 1) Alle 60 werden gesehen, keiner doppelt -----------------------
+    treffer = N._scan(os.path.join(hier, "discordbot.py"))["slash"]
+    namen = [n for _z, n, _b in treffer]
+    assert len(namen) == 60, \
+        "es werden %d statt 60 Slash-Commands gezaehlt (45 dekoriert + 15 " \
+        "in der Schleife)" % len(namen)
+    assert len(set(namen)) == 60, \
+        "ein Befehl wird doppelt gezaehlt: %r" % [
+            n for n in set(namen) if namen.count(n) > 1]
+    for pflicht in ("sys_pause", "sys_cookies", "sys_teststream", "sys_diag"):
+        assert pflicht in namen, \
+            "%s wird nicht gefunden — die Schleifen-Erkennung greift nicht" % pflicht
+
+    # --- 2) Die Spalten werden AUFGELOEST, nicht geraten -----------------
+    # Der Beweis: eine Tabelle, in der Name und Beschreibung VERTAUSCHT sind.
+    # Wer Spalte 0 fest annimmt, liefert hier die Beschreibung als Namen.
+    import ast as _ast
+    import tempfile as _tf
+    quelle = (
+        "TAB = (\n"
+        "    ('Erste Beschreibung', 'echt_eins'),\n"
+        "    ('Zweite Beschreibung', 'echt_zwei'),\n"
+        ")\n"
+        "def bauen(tree):\n"
+        "    for _beschr, _name in TAB:\n"
+        "        tree.command(name=_name, description=_beschr[:100])(None)\n")
+    _t = _tf.NamedTemporaryFile("w", suffix=".py", delete=False, encoding="utf-8")
+    try:
+        _t.write(quelle)
+        _t.close()
+        got = N._scan(_t.name)["slash"]
+        gn = sorted(n for _z, n, _b in got)
+        assert gn == ["echt_eins", "echt_zwei"], \
+            "bei vertauschten Spalten liefert der Pruefer %r — er raet die " \
+            "Spalte, statt sie ueber die Schleifenvariable aufzuloesen" % (gn,)
+        beschr = {n: b for _z, n, b in got}
+        assert beschr["echt_eins"] == "Erste Beschreibung", beschr
+    finally:
+        os.unlink(_t.name)
+    ok("W73: die 15 Schleifen-Befehle werden gezaehlt, Spalten aufgeloest statt geraten")
+
+    # --- 3) Ohne Schleife faellt die Zahl — und das merkt jemand ---------
+    baum = _ast.parse(io.open(os.path.join(hier, "discordbot.py"),
+                              encoding="utf-8").read())
+    schleifen = [n for n in _ast.walk(baum) if isinstance(n, _ast.For)
+                 and any(isinstance(c, _ast.Call) and isinstance(c.func, _ast.Call)
+                         and "tree.command" in _ast.unparse(c.func)
+                         for c in _ast.walk(n))]
+    assert len(schleifen) == 1, \
+        "es gibt %d Schleifen, die Befehle registrieren — kommt eine zweite " \
+        "dazu, ist die Doku-Zahl neu zu pruefen" % len(schleifen)
+
+    # --- 4) Und die Doku nennt sie jetzt beim Namen ----------------------
+    # Die Zahl allein genuegt nicht: vor W73 stand in einer Fussnote sogar,
+    # dass es die sys_*-Befehle gibt — aufgelistet waren sie trotzdem nie.
+    readme = io.open(os.path.join(hier, "README.md"), encoding="utf-8").read()
+    fehlen = [n for n in namen if n.startswith("sys_")
+              and ("/" + n) not in readme]
+    assert not fehlen, \
+        "diese Befehle sind registriert, stehen aber in keiner Liste im " \
+        "README: %r" % fehlen
+    # Nicht bloss „steht 60 irgendwo" — das ginge durch, solange EINE der
+    # sechs Stellen stimmt. Die Mutationsprobe zu W73 hat genau das gezeigt:
+    # eine zurueckgedrehte Ueberschrift blieb still. (Der Doku-Job faengt es
+    # ueber tools/ncpatch.py docs; hier soll es die Suite ebenfalls sehen.)
+    assert "60 Slash-Commands" in readme, \
+        "das README nennt nirgends die gezaehlten 60 Slash-Commands"
+    veraltet = [z for z in readme.splitlines() if "45 Slash-Commands" in z]
+    assert not veraltet, \
+        "im README steht weiterhin die alte Zahl 45: %r — sie stammt aus " \
+        "der Zeit, als die 15 Schleifen-Befehle nicht mitgezaehlt wurden" % veraltet
+    ok("W73: alle 60 stehen im README, die 15 sys_*-Befehle namentlich")
+
+
 def _test_v42_w72_befehle_haben_eine_registrierung():
     """v4.2-W72: die 42 Befehle, die nur `tree` brauchen, sind heraus.
 
@@ -11197,6 +11296,7 @@ def main():
     _test_v42_w70_keine_neue_riesenfunktion()
     _test_v42_w71_discord_run_once_geschrumpft()
     _test_v42_w72_befehle_haben_eine_registrierung()
+    _test_v42_w73_schleifen_befehle_werden_gezaehlt()
     _test_v42_w60_azrael_cooldown_je_plattform()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)
