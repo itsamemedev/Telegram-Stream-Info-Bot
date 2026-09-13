@@ -9288,6 +9288,131 @@ def _test_v42_w65_stille_wird_gemessen_und_gesperrt():
     ok("W65: der DDL-Helfer schluckt nur 'existiert schon', sonst nichts")
 
 
+def _test_v42_w70_keine_neue_riesenfunktion():
+    """v4.2-W70: der Plan zeigte beim Monolithen auf die falsche Arbeit.
+
+    „Monolith zerlegen — RestreamManager (1463), handle_recording_finished
+    (615), KickModerator (593)." Nachgemessen stimmt daran zweierlei nicht.
+
+    ERSTENS ist in den drei Genannten fast nichts mehr zu holen. Was sich
+    sauber herausloesen liess, IST heraus — bot.py ruft ueber 600-mal in nc/
+    hinein. Die Entscheidungslogik der Moderation etwa steht seit B165 und
+    W14/W19 in nc/modheuristics.py; in bot.py blieb der Zustand. Gezaehlt:
+    RestreamManager 77 fremde Globals und 3 reine Methoden (47 Zeilen),
+    KickModerator 70 und eine (6 Zeilen), handle_recording_finished 58 und
+    keine. Diese drei nach nc/ zu schieben hiesse, 45 bis 77 Namen per
+    configure() hineinzureichen — kein Zerlegen, sondern ein riesiges
+    Parameterobjekt, und das an der heikelsten Stelle des Bestands.
+
+    ZWEITENS steht die groesste Funktion gar nicht in bot.py:
+
+        1730 Z  discordbot.py  _discord_run_once
+         718 Z  nc/schema.py   create_schema
+         616 Z  bot.py         handle_recording_finished
+
+    discordbot.py wurde in v4.2-W15 AUS bot.py herausgeloest, genau gegen
+    dieses Problem. Die Masse ist umgezogen, nicht geschrumpft. Ein Mass, das
+    nur bot.py anschaut, haette die Verlagerung als Erfolg verbucht.
+
+    Gezaehlt wird deshalb die ANZAHL ueber Stufen, nicht die Laenge: eine
+    Sperre, die jede zusaetzliche Zeile meldet, faellt bei jeder normalen
+    Fehlerbehebung und ist in einer Woche abgeschaltet. Dieselbe Ueberlegung
+    wie bei den stillen except-Bloecken in W65.
+    """
+    import sys as _sys
+    hier = os.path.dirname(os.path.abspath(__file__))
+    if os.path.join(hier, "tools") not in _sys.path:
+        _sys.path.insert(0, os.path.join(hier, "tools"))
+    import monolith as M
+
+    # --- 1) Der Blick reicht ueber bot.py hinaus ------------------------
+    # Das ist die eigentliche Lehre der Welle. Ein Pruefer, der nur bot.py
+    # misst, belohnt das Verschieben einer Riesenfunktion in eine andere
+    # Datei — und genau das ist hier schon einmal passiert.
+    alle = M.funktionen()
+    dateien = {d for d, _n, _z, _l in alle}
+    assert "discordbot.py" in dateien, \
+        "discordbot.py wird nicht mehr gemessen — dort steht die groesste " \
+        "Funktion des Bestands, und sie kam aus bot.py"
+    assert any(d.startswith("nc/") for d in dateien), \
+        "nc/ wird nicht mehr gemessen — dann genuegt es, eine Riesenfunktion " \
+        "dorthin zu verschieben, um die Sperre zu bestehen"
+    groesste = max(alle, key=lambda f: f[3])
+    assert groesste[0] != "bot.py", \
+        "die groesste Funktion steht wieder in bot.py — dann stimmt die " \
+        "Begruendung dieser Welle nicht mehr und die Zahlen gehoeren neu " \
+        "erhoben, statt den Text zu erben"
+
+    # --- 2) Die Entscheidungslogik der Moderation ist WIRKLICH draussen --
+    # Ohne diesen Beleg ist „da ist nichts mehr zu holen" eine Behauptung.
+    import nc.modheuristics as MH
+    for name in ("stateless_reason", "flood_reason", "escalation_minutes",
+                 "escalation_step", "prune_history", "prune_infractions"):
+        assert hasattr(MH, name), \
+            "nc/modheuristics.%s fehlt — die Moderationslogik waere damit " \
+            "zurueck in bot.py gewandert" % name
+    src = io.open(os.path.join(hier, "bot.py"), encoding="utf-8").read()
+    i = src.find("class KickModerator")
+    assert i > 0, "KickModerator ist nicht mehr auffindbar"
+    rumpf = rumpf_ab(src, i)
+    for ruft in ("_nc_mod.escalation_step(", "_nc_mod.stateless_reason(",
+                 "_nc_mod.flood_reason("):
+        assert ruft in rumpf, \
+            "KickModerator ruft %s nicht mehr — die Logik ist dann wieder " \
+            "inline und der Befund dieser Welle hinfaellig" % ruft
+    ok("W70: die Entscheidungslogik steht in nc/, in bot.py blieb der Zustand")
+
+    # --- 3) Die Sperre faellt bei einer NEUEN Riesenfunktion -------------
+    import contextlib as _ctx
+    import json as _json
+    import tempfile as _tf
+    _echt_b, _echt_g, _echt_a = M.bericht, M.GRUNDLINIE, _sys.argv
+
+    def _sperre():
+        with _ctx.redirect_stdout(io.StringIO()):
+            return M.main(["--sperre"])
+
+    _tmp = _tf.NamedTemporaryFile("w", suffix=".json", delete=False,
+                                  encoding="utf-8")
+    try:
+        _json.dump({"stufen": {"100": 63, "200": 16, "300": 9, "500": 4}}, _tmp)
+        _tmp.close()
+        M.GRUNDLINIE = _tmp.name
+        M.bericht = lambda: {"100": 63, "200": 16, "300": 9, "500": 4}
+        assert _sperre() == 0, "die Sperre faellt, obwohl nichts dazukam"
+        M.bericht = lambda: {"100": 62, "200": 15, "300": 9, "500": 4}
+        assert _sperre() == 0, \
+            "die Sperre faellt beim ABBAU — dann bestraft sie genau die " \
+            "Arbeit, um die es geht"
+        M.bericht = lambda: {"100": 64, "200": 16, "300": 9, "500": 4}
+        assert _sperre() == 1, \
+            "eine NEUE Funktion ueber 100 Zeilen kommt durch"
+        M.bericht = lambda: {"100": 63, "200": 16, "300": 10, "500": 4}
+        assert _sperre() == 1, \
+            "eine Funktion, die in die naechste Stufe rutscht, kommt durch"
+        M.GRUNDLINIE = _tmp.name + ".gibtsnicht"
+        assert _sperre() == 1, \
+            "ohne Grundlinie meldet die Sperre OK — dann genuegt es, die " \
+            "Basisdatei zu loeschen, um sie loszuwerden"
+    finally:
+        M.bericht, M.GRUNDLINIE, _sys.argv = _echt_b, _echt_g, _echt_a
+        os.unlink(_tmp.name)
+    ok("W70: die Sperre faellt bei neuer und bei gewachsener Riesenfunktion")
+
+    # --- 4) Und die eingecheckte Grundlinie passt zum Bestand ------------
+    basis = M._lade()
+    assert basis is not None, \
+        ".claude/monolith_grundlinie.json fehlt — die Sperre ist dann in " \
+        "der CI wirkungslos"
+    jetzt = M.bericht()
+    zu_hoch = [(s, basis["stufen"].get(s), n) for s, n in jetzt.items()
+               if basis["stufen"].get(s, 0) > n]
+    assert not zu_hoch, (
+        "die Grundlinie liegt UEBER dem Bestand %r — dann ist Luft nach oben "
+        "eingefroren und eine neue Riesenfunktion faellt nicht auf" % (zu_hoch,))
+    ok("W70: die Grundlinie sitzt auf dem Bestand, nicht darueber")
+
+
 def _test_v42_w69_diagnose_sieht_die_schluessel():
     """v4.2-W69: das Diagnose-Kommando log ueber die Schluessel.
 
@@ -10843,6 +10968,7 @@ def main():
     _test_v42_w67_env_erreicht_die_cloud_kette()
     _test_v42_w68_abhaengigkeiten_haben_untergrenzen()
     _test_v42_w69_diagnose_sieht_die_schluessel()
+    _test_v42_w70_keine_neue_riesenfunktion()
     _test_v42_w60_azrael_cooldown_je_plattform()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)

@@ -177,6 +177,19 @@ jobs:
       - name: Abhängigkeiten erklärt und mit Untergrenze
         run: python tools/abhaengigkeiten.py --sperre
 
+      # v4.2-W70. Gemessen wird der GANZE Produktionscode, nicht nur bot.py —
+      # und das ist der ganze Witz. Die größte Funktion des Bestands steht in
+      # discordbot.py (_discord_run_once, 1730 Zeilen), und diese Datei wurde
+      # in v4.2-W15 AUS bot.py herausgelöst, genau gegen dieses Problem. Die
+      # Masse ist umgezogen, nicht geschrumpft. Ein Maß, das nur bot.py
+      # anschaut, hätte die Verlagerung als Erfolg verbucht.
+      #
+      # Gezählt wird die ANZAHL über Stufen, nicht die Länge: eine Sperre, die
+      # jede zusätzliche Zeile in einer großen Funktion meldet, fällt bei jeder
+      # normalen Fehlerbehebung und ist in einer Woche abgeschaltet.
+      - name: Keine neue Riesenfunktion
+        run: python tools/monolith.py --sperre
+
   tests:
     name: Verträge & Module (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest
