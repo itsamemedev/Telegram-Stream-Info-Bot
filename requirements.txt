@@ -54,6 +54,17 @@ Flask >= 2.2                   # Dashboard, 283 Routen
 #   API-Zwang: app.json (bot.py:8869), der JSON-Provider. Nachgesehen:
 #   2.1.0 hat kein flask/json/provider.py, 2.2.0 hat es.
 Werkzeug >= 2.0                # von Flask mitgebracht, hier explizit (WSGI-Server)
+waitress >= 3.0.1              # import waitress — WSGI-Server fuer das Dashboard
+#   NACHGESEHEN (v4.2-W84): 1.1.0 importiert unter Python 3.12+ gar nicht
+#   mehr (asyncore ist aus der Standardbibliothek raus). Der benutzte
+#   Parameter clear_untrusted_proxy_headers kam in 1.2.0 — ohne ihn wuerde
+#   waitress ab 2.0 die X-Forwarded-*-Kopfzeilen selbst entfernen und
+#   _client_ip() bekaeme hinter einem Reverse-Proxy nur dessen Adresse.
+#   Die Grenze steht trotzdem auf 3.0.1: das ist die Fassung mit den
+#   behobenen Request-Smuggling-Befunden, und dieses Paket traegt ein
+#   Bedienpult, das Aufnahmen loeschen und Konfiguration zurueckspielen kann.
+#   Faellt es aus, laeuft das Deck weiter auf dem Werkzeug-Server — mit einer
+#   Warnung, nicht still (nc/webserver.py).
 #   API-Zwang: `from werkzeug.utils import safe_join` (bot.py:688) — der
 #   Pfad-Riegel. Nachgesehen: werkzeug/utils.py reicht safe_join seit 2.0.0
 #   aus werkzeug.security durch (`from .security import safe_join`).

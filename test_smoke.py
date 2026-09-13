@@ -247,6 +247,62 @@ def main():
                                                           "pct": 66.7}, _dist
     ok("W117: Status-Zaehler als Referenz geteilt (Scraper zaehlt, Auswertung sieht es)")
 
+    # ── v4.2-W84: der Token gehört nicht in die Adresszeile ──────────────
+    # Ein Query-String ist der schlechteste Ort fuer ein Geheimnis, den es
+    # gibt: er landet im Zugriffslog jedes Proxys davor, in der
+    # Browser-Historie, in der Sitzungswiederherstellung und im Referer jeder
+    # Verlinkung nach aussen. Und er ueberlebt einen geteilten Link oder einen
+    # Screenshot der Adresszeile — anders als der Cookie, der httponly ist.
+    #
+    # Der Weg bleibt erhalten (Lesezeichen zeigen darauf), aber danach wird auf
+    # denselben Pfad OHNE Token umgeleitet. Verhaltenstest, kein Quelltext-
+    # Anker: nur der Rundlauf zeigt, ob das Cookie auf der Umleitung sitzt.
+    m.DASHBOARD_TOKEN = "w84-geheimnis"
+    try:
+        r = client.get("/healthz?token=w84-geheimnis&modus=kurz")
+        assert r.status_code == 302, \
+            "?token=... leitet nicht um (%s) — das Geheimnis bliebe in der " \
+            "Adresszeile stehen" % r.status_code
+        ziel = r.headers.get("Location", "")
+        assert "token=" not in ziel, \
+            "die Umleitung traegt den Token weiter: %s" % ziel
+        assert "modus=kurz" in ziel, \
+            "die Umleitung verliert die uebrigen Parameter: %s" % ziel
+        kekse = r.headers.getlist("Set-Cookie")
+        assert any("nc_token=" in k for k in kekse), \
+            "kein Cookie auf der Umleitung — der Browser kaeme ohne " \
+            "Berechtigung am Ziel an und landete im Login: %s" % kekse
+        assert any("HttpOnly" in k for k in kekse), \
+            "das Token-Cookie ist nicht httponly: %s" % kekse
+
+        # Keine Schleife: das Ziel traegt keinen Token mehr, der Zweig greift
+        # genau einmal.
+        r2 = client.get(ziel)
+        assert r2.status_code != 302, \
+            "Umleitungsschleife — das Ziel leitet erneut um"
+
+        # POST darf NICHT umgeleitet werden, sonst geht der Rumpf verloren.
+        r3 = client.post("/api/automation/toggle?token=w84-geheimnis",
+                         json={"enabled": False})
+        assert r3.status_code != 302, \
+            "ein POST mit ?token=... wird umgeleitet und verliert den Rumpf"
+        ok("W84: ?token=... setzt das Cookie und verschwindet aus der Adresszeile")
+
+        # Die Umleitung ist die EINZIGE Antwort, deren Ausloeser den Token in
+        # der Adresse trug — ausgerechnet dort waere no-referrer am
+        # wichtigsten. _sec_headers setzt die Kopfzeilen sonst, laeuft hier
+        # aber FRUEHER (Flask arbeitet after_request in umgekehrter
+        # Reihenfolge ab) und sieht diese Antwort nie.
+        assert r.headers.get("Referrer-Policy") == "no-referrer", \
+            "die Umleitung kommt ohne Referrer-Policy heraus: %s" \
+            % dict(r.headers)
+        assert r.headers.get("X-Content-Type-Options") == "nosniff", \
+            "die Umleitung kommt ohne Schutz-Kopfzeilen heraus: %s" \
+            % dict(r.headers)
+        ok("W84: auch die Umleitung traegt die Schutz-Kopfzeilen")
+    finally:
+        m.DASHBOARD_TOKEN = ""
+
     # Konfig-Wahrheit: greifen die Defaults, die wir gesetzt haben?
     assert m.RESTREAM_OVERLAY_MODE == "html", m.RESTREAM_OVERLAY_MODE
     assert m.RESTREAM_OVERLAY_HTML_SIZE == "auto", m.RESTREAM_OVERLAY_HTML_SIZE

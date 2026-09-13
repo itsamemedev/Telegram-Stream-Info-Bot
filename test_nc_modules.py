@@ -2777,13 +2777,30 @@ def _test_w30_fehlertext_und_offenes_deck():
     # ein Token ODER ein PIN reicht. Frueher fragte die Warnung nur nach dem
     # Token und schlug bei einem PIN-geschuetzten Deck faelschlich an — ein
     # Fehlalarm erzieht dazu, die Meldung zu ueberlesen.
-    sicher = {k: _os.environ.get(k) for k in ("WEB_HOST", "DASHBOARD_TOKEN", "DASHBOARD_PIN")}
+    #
+    # v4.2-W84 HAT DIESE TABELLE GEAENDERT, und zwar in der Sache, nicht am
+    # Anker. Die Zeile "0.0.0.0 ohne Token und ohne PIN" stand hier auf True.
+    # Seit W84 faellt die Bindung in genau diesem Fall auf Loopback zurueck
+    # (nc/webserver.bindung) — dann ist NICHTS offen, und ein "offen"-Befund
+    # waere der Fehlalarm, vor dem der Kopf von nc/dashauth.py warnt. Offen
+    # ist das Deck nur noch, wenn DASHBOARD_OFFEN_ERLAUBEN=1 es offen HAELT.
+    sicher = {k: _os.environ.get(k) for k in ("WEB_HOST", "DASHBOARD_TOKEN",
+                                              "DASHBOARD_PIN",
+                                              "DASHBOARD_OFFEN_ERLAUBEN")}
     try:
         for env, erwartet in (
-                ({"WEB_HOST": "127.0.0.1", "DASHBOARD_TOKEN": "", "DASHBOARD_PIN": ""}, False),
-                ({"WEB_HOST": "0.0.0.0", "DASHBOARD_TOKEN": "", "DASHBOARD_PIN": ""}, True),
-                ({"WEB_HOST": "0.0.0.0", "DASHBOARD_TOKEN": "", "DASHBOARD_PIN": "1234"}, False),
-                ({"WEB_HOST": "0.0.0.0", "DASHBOARD_TOKEN": "geheim", "DASHBOARD_PIN": ""}, False)):
+                ({"WEB_HOST": "127.0.0.1", "DASHBOARD_TOKEN": "", "DASHBOARD_PIN": "",
+                  "DASHBOARD_OFFEN_ERLAUBEN": ""}, False),
+                # ohne Schalter: Rueckfall auf Loopback, also nicht offen
+                ({"WEB_HOST": "0.0.0.0", "DASHBOARD_TOKEN": "", "DASHBOARD_PIN": "",
+                  "DASHBOARD_OFFEN_ERLAUBEN": ""}, False),
+                # mit Schalter: wirklich offen, und das muss gemeldet werden
+                ({"WEB_HOST": "0.0.0.0", "DASHBOARD_TOKEN": "", "DASHBOARD_PIN": "",
+                  "DASHBOARD_OFFEN_ERLAUBEN": "1"}, True),
+                ({"WEB_HOST": "0.0.0.0", "DASHBOARD_TOKEN": "", "DASHBOARD_PIN": "1234",
+                  "DASHBOARD_OFFEN_ERLAUBEN": "1"}, False),
+                ({"WEB_HOST": "0.0.0.0", "DASHBOARD_TOKEN": "geheim", "DASHBOARD_PIN": "",
+                  "DASHBOARD_OFFEN_ERLAUBEN": "1"}, False)):
             _os.environ.update(env)
             assert D.offen_im_netz() is erwartet, env
     finally:
@@ -12089,6 +12106,161 @@ def _test_v42_w83_werkzeuge_messen_oder_brechen():
     ok("W83: die Navigationskarte ist aktuell")
 
 
+def _test_v42_w84_deck_bindet_dicht_und_laeuft_auf_waitress():
+    """v4.2-W84: die Schranke war fail-open, der Server war der Entwicklungs-
+    server, und der Token stand in der Adresszeile.
+
+    **Fail-open.** `_auth_guard` macht GAR NICHTS, wenn weder DASHBOARD_TOKEN
+    noch DASHBOARD_PIN gesetzt ist:
+
+        if not DASHBOARD_TOKEN and not DASHBOARD_PIN:
+            return None          # jede Adresse, jeder Pfad, frei
+
+    Bei WEB_HOST=127.0.0.1 ist das richtig. Bei jeder anderen Adresse ist es
+    ein offenes Bedienpult im Netz: Cookies lesen, Aufnahmen loeschen,
+    Konfiguration zurueckspielen, Log mitlesen. Gemeldet wurde dieser Zustand
+    seit v4.1-W30 — laut und auf ERROR. Das war der richtige erste Schritt und
+    der falsche letzte: eine Meldung hilft nur dem, der das Log liest.
+
+    Jetzt faellt die Bindung auf Loopback zurueck. Der gefaehrliche Zustand
+    ist damit nicht mehr erreichbar, statt beschrieben zu werden. Der Bot
+    laeuft weiter — er ist nicht das Dashboard, und ihn wegen einer
+    Dashboard-Einstellung sterben zu lassen traefe genau die Arbeit, die
+    niemand angefasst hat.
+
+    **Der Server.** `dashboard_app.run(threaded=True)` ist der
+    ENTWICKLUNGSSERVER von Werkzeug: ein Thread je Anfrage, unbegrenzt, ohne
+    Backlog-Management und ohne sauberes Herunterfahren. Wer den Port
+    erreicht, hat den Thread laengst, bevor das Rate-Limit ihn zaehlt.
+
+    Und der Zustand darf nie STILL sein: ein Dev-Server, der unbemerkt im
+    Betrieb steht, ist genau die Klasse Blindheit, die dieses Projekt sonst
+    misst.
+    """
+    import sys as _sys
+    hier = os.path.dirname(os.path.abspath(__file__))
+    if hier not in _sys.path:
+        _sys.path.insert(0, hier)
+    from nc import dashauth as D
+    from nc import webserver as W
+
+    def _umgebung(**kv):
+        alt = {}
+        for k, v in kv.items():
+            alt[k] = os.environ.get(k)
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+        return alt
+
+    sicher = _umgebung(DASHBOARD_OFFEN_ERLAUBEN=None, DASHBOARD_WERKZEUG=None,
+                       DASHBOARD_THREADS=None, WEB_HOST=None,
+                       DASHBOARD_TOKEN=None, DASHBOARD_PIN=None)
+    try:
+        # --- 1) Loopback bleibt Loopback, still -------------------------
+        for h in ("127.0.0.1", "localhost", "::1"):
+            ziel, meldung = W.bindung(h, False)
+            assert ziel == h and meldung == "", \
+                "%s ist Loopback und braucht weder Rueckfall noch Meldung" % h
+
+        # --- 2) Geschuetzt darf offen binden, still ---------------------
+        ziel, meldung = W.bindung("0.0.0.0", True)
+        assert ziel == "0.0.0.0" and meldung == "", \
+            "mit Token oder PIN ist offen binden in Ordnung und kein Anlass " \
+            "fuer eine Meldung — ein Fehlalarm erzieht zum Ueberlesen"
+
+        # --- 3) Offen UND ungeschuetzt: Rueckfall, nicht nur Meldung ----
+        ziel, meldung = W.bindung("0.0.0.0", False)
+        assert ziel == "127.0.0.1", \
+            "ohne Token und ohne PIN darf das Deck NICHT offen binden — " \
+            "gebunden wurde auf %s" % ziel
+        for wort in ("DASHBOARD_PIN", "DASHBOARD_TOKEN",
+                     "DASHBOARD_OFFEN_ERLAUBEN"):
+            assert wort in meldung, \
+                "die Meldung nennt den Weg zurueck nicht (%s fehlt)" % wort
+        assert "Aufnahme" in meldung, \
+            "die Meldung sagt nicht, dass der Bot normal weiterlaeuft — " \
+            "dann sucht der Betreiber den Fehler an der falschen Stelle"
+
+        # --- 4) Mit Schalter bleibt es offen, aber laut -----------------
+        _umgebung(DASHBOARD_OFFEN_ERLAUBEN="1")
+        ziel, meldung = W.bindung("0.0.0.0", False)
+        assert ziel == "0.0.0.0", \
+            "DASHBOARD_OFFEN_ERLAUBEN=1 muss den alten Weg offen halten — " \
+            "eine Sperre ohne Ausweg wird umgangen"
+        assert meldung, "offen und ungeschuetzt darf nie still sein"
+
+        # --- 5) dashauth und webserver duerfen nicht auseinanderlaufen --
+        # Ohne den Schalter faellt die Bindung zurueck; dann ist NICHTS offen,
+        # und lage() duerfte nicht "offen" melden. Genau das waere der
+        # Fehlalarm, vor dem der Kopf von nc/dashauth.py warnt.
+        _umgebung(WEB_HOST="0.0.0.0", DASHBOARD_OFFEN_ERLAUBEN=None)
+        assert D.offen_im_netz() is False, \
+            "dashauth meldet das Deck als offen, obwohl die Bindung " \
+            "zurueckfaellt — ein Fehlalarm erzieht zum Ueberlesen"
+        assert D.zurueckgefallen() is True, \
+            "der Rueckfall muss als eigener Zustand sichtbar sein, sonst " \
+            "sucht der Betreiber WEB_HOST vergeblich im Netz"
+        assert D.lage()[0] is False
+
+        _umgebung(DASHBOARD_OFFEN_ERLAUBEN="1")
+        assert D.offen_im_netz() is True and D.zurueckgefallen() is False, \
+            "mit Schalter steht das Deck wirklich offen — das muss lage() " \
+            "weiterhin melden"
+        assert D.lage()[0] is True
+        _umgebung(DASHBOARD_OFFEN_ERLAUBEN=None)
+
+        # --- 6) Serverwahl: nie still auf dem Entwicklungsserver --------
+        name, warum = W.waehle(False)
+        assert name == "waitress", \
+            "ohne TLS gehoert das Deck auf waitress, nicht auf den " \
+            "Werkzeug-Entwicklungsserver (bekommen: %s)" % name
+        assert warum == "", "der Normalfall braucht keine Meldung"
+
+        name, warum = W.waehle(True)
+        assert name == "werkzeug" and "TLS" in warum, \
+            "waitress kann kein TLS — dann muss es beim Werkzeug-Server " \
+            "bleiben UND gesagt werden, warum"
+        assert "Reverse-Proxy" in warum, \
+            "die Meldung nennt den sauberen Ausweg nicht"
+
+        _umgebung(DASHBOARD_WERKZEUG="1")
+        name, warum = W.waehle(False)
+        assert name == "werkzeug" and warum, \
+            "der Notausgang DASHBOARD_WERKZEUG=1 muss greifen und sich " \
+            "melden — ein Dev-Server, der unbemerkt im Betrieb steht, ist " \
+            "genau die Blindheit, die dieses Projekt sonst misst"
+        _umgebung(DASHBOARD_WERKZEUG=None)
+
+        # --- 7) Thread-Pool ist gedeckelt und einstellbar ---------------
+        assert W.threads() == W.THREADS_VORGABE
+        _umgebung(DASHBOARD_THREADS="16")
+        assert W.threads() == 16
+        _umgebung(DASHBOARD_THREADS="0")
+        assert W.threads() == W.THREADS_VORGABE, \
+            "0 Threads waere ein Deck, das nie antwortet"
+        _umgebung(DASHBOARD_THREADS="acht")
+        assert W.threads() == W.THREADS_VORGABE, \
+            "Unsinn in der .env darf den Start nicht kippen"
+
+        # --- 8) Die beiden Loopback-Listen muessen gleich bleiben -------
+        assert set(W.LOOPBACK) == set(D.LOOPBACK), \
+            "nc/webserver und nc/dashauth kennen verschiedene " \
+            "Loopback-Adressen — dann weichen Meldung und Verhalten " \
+            "voneinander ab"
+    finally:
+        for k, v in sicher.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+
+    ok("W84: ohne Geheimnis bindet das Deck auf Loopback statt offen ins Netz")
+    ok("W84: dashauth meldet den Rueckfall getrennt vom offenen Deck")
+    ok("W84: ohne TLS traegt waitress das Deck, mit TLS sagt es warum nicht")
+
+
 def main():
     tmp = tempfile.mkdtemp()
     configure_db(db_path=os.path.join(tmp, "t.db"), backend="sqlite")
@@ -12336,6 +12508,7 @@ def main():
     _test_v42_w81_fehlerpfade_sprechen()
     _test_v42_w82_zweitversuch_rotiert_wirklich()
     _test_v42_w83_werkzeuge_messen_oder_brechen()
+    _test_v42_w84_deck_bindet_dicht_und_laeuft_auf_waitress()
     _test_v42_w60_azrael_cooldown_je_plattform()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)

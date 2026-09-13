@@ -58,9 +58,41 @@ def geschuetzt() -> bool:
     return bool(_wert("DASHBOARD_TOKEN") or _wert("DASHBOARD_PIN"))
 
 
+def erlaubt_offen() -> bool:
+    """Hat der Betreiber das offene Deck ausdrücklich gewollt?
+
+    v4.2-W84. Seit dieser Welle bindet `nc/webserver.bindung()` ohne
+    Geheimnis auf Loopback zurück, statt offen ins Netz zu gehen. Wer es
+    trotzdem offen will, setzt DASHBOARD_OFFEN_ERLAUBEN=1.
+    """
+    # Woertlich, damit tools/gen_env_example.py die Variable findet — ein
+    # Helfer mit Namensparameter macht sie fuer den Generator unsichtbar.
+    roh = (os.getenv("DASHBOARD_OFFEN_ERLAUBEN", "") or "").strip().lower()
+    return roh in ("1", "true", "yes", "ja", "on")
+
+
 def offen_im_netz() -> bool:
-    """Der gefährliche Fall: erreichbar von aussen UND ohne jede Schranke."""
-    return not nur_lokal() and not geschuetzt()
+    """Der gefährliche Fall: erreichbar von aussen UND ohne jede Schranke.
+
+    v4.2-W84: `erlaubt_offen()` gehört in die Bedingung, aber ANDERSHERUM als
+    man zuerst denkt. Ohne den Schalter fällt die Bindung auf Loopback zurück
+    — dann ist gar nichts offen, und die Meldung wäre ein Fehlalarm. Genau
+    davor warnt der Kopf dieses Moduls: ein Fehlalarm erzieht den Betreiber
+    dazu, die Meldung zu überlesen, und das ist schlimmer als keine Meldung.
+    Offen im Netz ist das Deck also nur, wenn der Schalter es offen HÄLT.
+    """
+    return not nur_lokal() and not geschuetzt() and erlaubt_offen()
+
+
+def zurueckgefallen() -> bool:
+    """Wurde die Bindung wegen fehlender Geheimnisse auf Loopback gezogen?
+
+    Der andere neue Zustand: der Betreiber hat WEB_HOST gesetzt und bekommt
+    es trotzdem nicht zu sehen. Das ist kein Sicherheitsproblem mehr, aber
+    eine Überraschung — und eine Überraschung ohne Erklärung im Log ist die
+    naechste Stunde Fehlersuche.
+    """
+    return not nur_lokal() and not geschuetzt() and not erlaubt_offen()
 
 
 def lage():

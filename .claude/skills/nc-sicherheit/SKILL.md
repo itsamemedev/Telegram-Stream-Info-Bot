@@ -28,7 +28,8 @@ Wahrheiten, und eine davon veraltet.
 | Stream-Keys/Cookies im Log | `nc/logsafe.py::redact_stream_urls`, `nc/ffdiag.py::redact_cmd_for_log` |
 | Pfad-Ausbruch aus Nutzereingabe | `nc/sicherpfad.py` — `sicherer_name`, `unter`, `sicher_join`, `pruefe_unter` |
 | Roher Ausnahmetext in einer API-Antwort | `_fehler_text(e, wo)` in `bot.py` |
-| Offenes Dashboard ohne Token und PIN | `nc/dashauth.py::lage()` |
+| Offenes Dashboard ohne Token und PIN | `nc/webserver.py::bindung()` bindet auf Loopback zurück, `nc/dashauth.py::lage()` meldet |
+| Token in der Adresszeile | `_auth_cookie` leitet nach dem Cookie-Setzen ohne `?token=` um |
 | Nachträglich geänderte Auszahlung | Hash-Kette in `nc/ledger.py` |
 
 ### ffmpeg- und streamlink-Kommandos
@@ -63,10 +64,28 @@ Bindung ist `127.0.0.1:8050`. Zugriff läuft über SSH-Tunnel:
 eine Übernahme.** 361 Routen, darunter Konfigurations-Wiederherstellung,
 Log-Auszug und Dateidownload.
 
+**Der Token gehört nicht in die Adresszeile.** `?token=…` funktioniert weiter
+(Lesezeichen zeigen darauf), setzt aber nur noch das Cookie und wird dann auf
+denselben Pfad ohne Token umgeleitet. Ein Query-String ist der schlechteste
+Ort für ein Geheimnis: Zugriffslog jedes Proxys, Browser-Historie,
+Sitzungswiederherstellung, Referer. Wer einen neuen Weg für Geheimnisse baut,
+baut ihn als Kopfzeile oder als POST — nie als Parameter.
+
 `DASHBOARD_TOKEN` **oder** `DASHBOARD_PIN` reicht als Schutz. Fehlen beide,
-meldet `dashauth.lage()` das alle sechs Stunden auf Fehler-Ebene — nicht nur
-einmal beim Start, weil eine Startmeldung niemand liest, der das Bootlog nicht
-aufhebt.
+**bindet das Deck seit v4.2-W84 gar nicht mehr offen**: `nc/webserver.bindung()`
+zieht die Adresse auf `127.0.0.1` zurück und sagt im Fehlerlog, warum und wie
+man zurückkommt. Der Bot läuft normal weiter — Aufnahme, Restream und
+Moderation sind nicht betroffen; ihn wegen einer Dashboard-Einstellung sterben
+zu lassen träfe genau die Arbeit, die niemand angefasst hat.
+
+Wer den Port wirklich offen will, setzt `DASHBOARD_OFFEN_ERLAUBEN=1` — dann
+gilt das alte Verhalten und `dashauth.lage()` meldet es alle sechs Stunden auf
+Fehler-Ebene. **Eine Sperre ohne Ausweg wird umgangen, und ein Umgehungsweg,
+den der Bestand nicht kennt, ist schlimmer als ein dokumentierter.**
+
+Das war die Lehre aus v4.1-W30: dort wurde der Zustand nur *gemeldet*. Das war
+der richtige erste Schritt und der falsche letzte — eine Meldung hilft nur dem,
+der das Log liest.
 
 **Warum nicht schärfer:** die Warnung fragte früher nur nach dem Token. Ein
 PIN-geschütztes Deck löste sie fälschlich aus — und ein Fehlalarm erzieht dazu,
