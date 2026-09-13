@@ -50,6 +50,12 @@ import json
 import pathlib
 import sys
 
+# v4.2-W83: gemeinsamer Parser. Dieses Werkzeug hatte den weitesten Auffang
+# von allen — `except Exception: return []`. Eine Datei, die nicht parst,
+# meldete damit NULL Blindstellen, und null liest sich in der Summe wie ein
+# sauberer Befund.
+import quelle as _quelle
+
 WURZEL = pathlib.Path(__file__).resolve().parent.parent
 GRUNDLINIE = WURZEL / ".claude" / "blindstellen_grundlinie.json"
 
@@ -215,12 +221,14 @@ def returns_von(fn):
     return aus
 
 
-def sammle(pfad: pathlib.Path):
-    try:
-        quelle = pfad.read_text(encoding="utf-8")
-        baum = ast.parse(quelle)
-    except Exception:
-        return []
+def sammle(pfad: pathlib.Path, baum=None):
+    """-> [(datei, zeile, funktion)]
+
+    v4.2-W83: parst ueber tools/quelle.py und wirft QuelleUnlesbar, statt
+    eine unlesbare Datei als "null Blindstellen" zu verbuchen.
+    """
+    if baum is None:
+        baum = _quelle.parse(pfad)
     rel = str(pfad.relative_to(WURZEL)).replace("\\", "/")
     global LAUTE_HELFER
     LAUTE_HELFER = sammle_laute_helfer(baum)
@@ -283,9 +291,15 @@ def main():
     ap.add_argument("--datei", help="nur diese Datei zeigen")
     args = ap.parse_args()
 
+    liste = dateien()
+    fehlt = _quelle.pflicht_erfuellt(liste)
+    if fehlt:
+        raise _quelle.QuelleUnlesbar(
+            "Diese Dateien gehoeren in die Messung, stehen aber nicht in der "
+            "Liste: " + ", ".join(fehlt))
     alle = []
-    for p in dateien():
-        alle.extend(sammle(p))
+    for p, baum in _quelle.baeume(liste):
+        alle.extend(sammle(WURZEL / p, baum))
 
     proDatei = {}
     for rel, ln, fn in alle:
@@ -328,4 +342,7 @@ def main():
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    try:
+        sys.exit(main())
+    except _quelle.QuelleUnlesbar as e:
+        sys.exit(_quelle.abbruch(e))

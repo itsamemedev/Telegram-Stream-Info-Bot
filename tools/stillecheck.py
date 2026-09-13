@@ -47,6 +47,9 @@ import json
 import os
 import sys
 
+# v4.2-W83: gemeinsamer Parser, der eine unlesbare Datei NICHT ueberspringt.
+import quelle
+
 WURZEL = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 GRUNDLINIE = os.path.join(WURZEL, ".claude", "stille_grundlinie.json")
 
@@ -89,6 +92,31 @@ def _dateien():
     return [p for p in aus
             if os.path.isfile(os.path.join(WURZEL, p))
             and not os.path.basename(p).startswith("test_")]
+
+
+_BAEUME = None
+
+
+def _alle_baeume():
+    """-> [(pfad, ast.Module)] fuer den ganzen Produktionscode, einmal geparst.
+
+    v4.2-W83. Vorher parste dieses Werkzeug an ZWEI Stellen, beide mit
+    `except (OSError, SyntaxError): continue`. Auf Python 3.11 faellt bot.py
+    damit lautlos aus der Zaehlung — und `--sperre` meldete dann nicht etwa
+    "unvollstaendig", sondern "OK, 733 stille Bloecke, –352 seit der
+    Grundlinie". Eine Sperre, die einen erfundenen Fortschritt feiert, ist
+    schlimmer als gar keine.
+    """
+    global _BAEUME
+    if _BAEUME is None:
+        dateien = _dateien()
+        fehlt = quelle.pflicht_erfuellt(dateien)
+        if fehlt:
+            raise quelle.QuelleUnlesbar(
+                "Diese Dateien gehoeren in die Messung, stehen aber nicht in "
+                "der Liste: " + ", ".join(fehlt))
+        _BAEUME = quelle.baeume(dateien)
+    return _BAEUME
 
 
 def _punktname(knoten) -> str:
@@ -143,12 +171,7 @@ def _melder_sammeln():
     if _ABGELEITETE_MELDER is not None:
         return _ABGELEITETE_MELDER
     gefunden = set()
-    for pfad in _dateien():
-        try:
-            baum = ast.parse(io.open(os.path.join(WURZEL, pfad),
-                                     encoding="utf-8").read())
-        except (OSError, SyntaxError):
-            continue
+    for _pfad, baum in _alle_baeume():
         for n in ast.walk(baum):
             if not isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 continue
@@ -191,13 +214,15 @@ def _nur_aufraeumen(versuch) -> bool:
     return all(any(a in (n or "") for a in AUFRAEUMEN) for n in namen)
 
 
-def pruefe_datei(pfad):
-    """-> (still, laut, aufraeumen, [zeilennummern der stillen])"""
-    try:
-        quelle = io.open(os.path.join(WURZEL, pfad), encoding="utf-8").read()
-        baum = ast.parse(quelle)
-    except (OSError, SyntaxError):
-        return 0, 0, 0, []
+def pruefe_datei(pfad, baum=None):
+    """-> (still, laut, aufraeumen, [zeilennummern der stillen])
+
+    v4.2-W83: kein stilles (0, 0, 0, []) mehr bei einer unlesbaren Datei —
+    das war die Null, die sich in der Summe wie ein Erfolg las. `baum` reicht
+    der Aufrufer durch, wenn er ohnehin schon geparst hat.
+    """
+    if baum is None:
+        baum = quelle.parse(pfad)          # wirft QuelleUnlesbar
     still, laut, aufr, zeilen = 0, 0, 0, []
     kanal = any(pfad.endswith(k) for k in FEHLERKANAL)
     for n in ast.walk(baum):
@@ -218,8 +243,8 @@ def pruefe_datei(pfad):
 def bericht():
     """-> (stand, gesamt) — stand ist {datei: stille Bloecke}"""
     stand, gesamt = {}, {"still": 0, "laut": 0, "aufraeumen": 0}
-    for pfad in _dateien():
-        s, l, a, _ = pruefe_datei(pfad)
+    for pfad, baum in _alle_baeume():
+        s, l, a, _ = pruefe_datei(pfad, baum)
         if s:
             stand[pfad] = s
         gesamt["still"] += s
@@ -304,6 +329,8 @@ def main():
 if __name__ == "__main__":
     try:
         sys.exit(main())
+    except quelle.QuelleUnlesbar as e:
+        sys.exit(quelle.abbruch(e))
     except BrokenPipeError:
         # `stillecheck.py | head` — kein Fehler, sondern ein Leser, der genug
         # gesehen hat. Ohne das steht bei jedem gekuerzten Aufruf ein

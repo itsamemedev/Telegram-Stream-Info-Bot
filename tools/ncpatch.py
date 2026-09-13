@@ -593,6 +593,44 @@ def cmd_map(args) -> int:
         z.append("```\n")
 
     text = "\n".join(z)
+
+    # v4.2-W83: --check schreibt nicht, sondern vergleicht. Die "eine Regel"
+    # des Projekts steht auf dieser Datei: nie im Monolithen suchen, sondern
+    # erst fragen wo etwas steht. Gemessen am 13.09. war die eingecheckte
+    # Karte 483 Zeilen veraltet — /healthz stand auf 17805 und lag auf 17839.
+    # Ein Index, der um 34 Zeilen danebenliegt, ist schlimmer als keiner: er
+    # schickt jeden `ncpatch show` an die falsche Stelle, und der Leser merkt
+    # es erst, wenn der Ausschnitt nicht passt.
+    if getattr(args, "check", False):
+        try:
+            with open(ziel, encoding="utf-8") as _fh:
+                ist = _fh.read()
+        except OSError:
+            print("ncpatch map --check: KEINE Karte vorhanden. "
+                  "`python tools/ncpatch.py map` laufen lassen und "
+                  f"{os.path.relpath(ziel, root)} mit einchecken.")
+            return 1
+        if ist.rstrip("\n") == text.rstrip("\n"):
+            print(f"ncpatch map: OK — {os.path.relpath(ziel, root)} ist aktuell "
+                  f"({len(d['routes']) + len(bp_routes)} Routen, "
+                  f"{len(dcb['slash'])} Slash-Commands)")
+            return 0
+        altz = ist.rstrip("\n").splitlines()
+        neuz = text.rstrip("\n").splitlines()
+        abw = sum(1 for a, b in zip(altz, neuz) if a != b) \
+            + abs(len(altz) - len(neuz))
+        print(f"ncpatch map: VERALTET — {abw} Zeilen weichen ab.")
+        for a, b in zip(altz, neuz):
+            if a != b:
+                print(f"  Karte sagt:  {a.strip()[:88]}")
+                print(f"  Quelltext:   {b.strip()[:88]}")
+                break
+        print("\n  Abhilfe: `python tools/ncpatch.py map` und die Karte "
+              "mit einchecken. Ohne sie zeigt `ncpatch show` auf die "
+              "falschen Zeilen, und genau darauf steht die Arbeitsweise "
+              "dieses Projekts.")
+        return 1
+
     _write(ziel, text)
     print(f"geschrieben: {os.path.relpath(ziel, root)}  "
           f"({len(text)//1024} KB, ~{len(text)//4} Token)")
@@ -895,7 +933,10 @@ def main() -> int:
     s.add_argument("file"); s.add_argument("name")
     s.set_defaults(func=cmd_sym)
 
-    s = sub.add_parser("map"); s.set_defaults(func=cmd_map)
+    s = sub.add_parser("map")
+    s.add_argument("--check", action="store_true",
+                   help="nicht schreiben, sondern melden ob die Karte veraltet ist")
+    s.set_defaults(func=cmd_map)
 
     s = sub.add_parser("find")
     s.add_argument("query")

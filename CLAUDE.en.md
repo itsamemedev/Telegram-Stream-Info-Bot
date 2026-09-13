@@ -25,6 +25,7 @@ fetch the excerpt:
     python tools/ncpatch.py show bot.py 24750 24810    # only this excerpt
     python tools/ncpatch.py grep "tree.command" bot.py -C 3
     python tools/ncpatch.py map                        # rebuild the map
+    python tools/ncpatch.py map --check                # is the map current?
     python tools/ncpatch.py verify patches/x.json      # dry run
     python tools/ncpatch.py apply  patches/x.json      # all-or-nothing, writes a .bak
     python tools/ncpatch.py check                      # templates: duplicate IDs, CSS balance
@@ -91,6 +92,7 @@ thread-based and stdlib-only (`urllib`, no `aiohttp`).
     python -m ruff check --select F,E9,B --ignore B905 <changed .py>
     python tools/ncpatch.py check
     python tools/ncpatch.py docs
+    python tools/ncpatch.py map --check
     python tools/i18n_extract.py --check en
     python test_smoke.py ; python test_nc_modules.py ; python test_restream.py
 
@@ -145,6 +147,29 @@ watchdog belongs there, never on `log.debug` and never on `pass`. The only paths
 that may legitimately stay silent are cleanup paths whose failure is meaningless
 (`proc.terminate()` on a dead process, `os.remove()` on an already-deleted file)
 and the error channel itself — logging there creates recursion.
+
+**The gates were blind themselves.** Four of the counting tools — `monolith`,
+`stillecheck`, `blindstellen`, `importzeit` — shared the same loop, and each
+ended in `except (OSError, SyntaxError): continue`. That is the silent
+`except` they were built against, at the spot where it costs most: `bot.py` is
+roughly half the production code. Drop that file from the measurement and the
+gate does not report "I could not look" — it reports **progress**. Measured on
+Python 3.11: `stillecheck: OK — 733 silent blocks, –352 since the baseline`
+when the true number is 1085, and `monolith:` reporting 22 instead of 63 on
+the 100er step. Both with exit code 0.
+
+Since v4.2-W83 everything parses through **`tools/quelle.py`**, and an
+unreadable file aborts: exit code **2**, kept separate from the 1 that means
+"the estate grew". Plus `pflicht_erfuellt` for the case no exception reports —
+a glob pointing nowhere drops `bot.py` from the count just as quietly.
+`vertragscheck` never had the bug; it reads without catching.
+
+**Nothing checked the navigation map.** `.claude/INDEX.md` carries this
+project's "one rule" and was stale in **483 entries** on 13.09. — `/healthz`
+was listed at 17805 and sat at 17839. An index whose line numbers are off by
+34 is worse than none: it sends every `ncpatch show` to the wrong place.
+`ncpatch map --check` has been in the verification chain and in CI since
+v4.2-W83.
 
 **Module constants freeze the `.env`.** The `.env` is partly loaded only after
 the first imports. Read configuration through a function (`_backend_conf()`),

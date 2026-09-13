@@ -128,6 +128,16 @@ jobs:
       - name: ncpatch docs
         run: python tools/ncpatch.py docs
 
+      # v4.2-W83. Die "eine Regel" des Projekts steht auf .claude/INDEX.md:
+      # nie im Monolithen suchen, sondern erst fragen wo etwas steht. Genau
+      # diese Datei wurde von nichts geprueft. Am 13.09. war sie 483 Zeilen
+      # veraltet — /healthz stand auf 17805 und lag auf 17839. Ein Index, der
+      # um 34 Zeilen danebenliegt, ist schlimmer als keiner: er schickt jeden
+      # `ncpatch show` an die falsche Stelle, und der Leser merkt es erst,
+      # wenn der Ausschnitt nicht passt.
+      - name: Navigationskarte ist aktuell
+        run: python tools/ncpatch.py map --check
+
   stille:
     name: Stille except-Blöcke (kein Zuwachs)
     runs-on: ubuntu-latest
