@@ -53,6 +53,33 @@ WURZEL = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 GRUNDLINIE = os.path.join(WURZEL, ".claude", "monolith_grundlinie.json")
 STUFEN = (100, 200, 300, 500)
 
+# v4.2-W74: Zeilen allein zeigen aufs falsche Ziel. nc/schema.py:create_schema
+# ist mit 718 Zeilen die laengste Funktion des Bestands — und hat 18
+# Verzweigungen, also EINE je 40 Zeilen. Jede andere Riesenfunktion hat eine
+# je 3 bis 5:
+#
+#     718 Z   18 Zweige   40.0 Z/Zw   nc/schema.py:create_schema
+#     716 Z  204 Zweige    3.5 Z/Zw   discordbot.py:_discord_run_once
+#     616 Z  141 Zweige    4.4 Z/Zw   bot.py:handle_recording_finished
+#
+# create_schema ist eine Liste aus 42 CREATE TABLE, kein Geflecht: 82 der 88
+# Anweisungen sind ein schlichtes conn.execute(...). Sie zu zerlegen waere
+# Kosmetik und wuerde an Schema-Code stattfinden, der gegen die
+# Produktionsdatenbank laeuft. Deshalb zaehlt dieses Werkzeug jetzt BEIDES.
+ZWEIG_STUFEN = (50, 100, 150)
+
+# Was als Verzweigung zaehlt: alles, was den Leser zwingt, sich einen zweiten
+# Fall zu merken. Bewusst inklusive `with` und Komprehensionen — auch die
+# tragen Zustand, den man beim Lesen mitfuehrt.
+_VERZWEIGT = (ast.If, ast.For, ast.AsyncFor, ast.While, ast.Try,
+              ast.ExceptHandler, ast.With, ast.AsyncWith, ast.BoolOp,
+              ast.IfExp, ast.comprehension, ast.Assert)
+
+
+def zweige(knoten) -> int:
+    """Wie viele Verzweigungen stecken in dieser Funktion? -> int"""
+    return sum(1 for n in ast.walk(knoten) if isinstance(n, _VERZWEIGT))
+
 
 def _dateien():
     aus = ["bot.py", "discordbot.py", "telegramversand.py", "brain_bridge.py"]
@@ -82,7 +109,7 @@ def funktionen():
             for n in knoten.body:
                 if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)):
                     aus.append((datei, praefix + n.name, n.lineno,
-                                n.end_lineno - n.lineno + 1))
+                                n.end_lineno - n.lineno + 1, zweige(n)))
                 elif isinstance(n, ast.ClassDef):
                     geh(n, datei, n.name + ".")
 
@@ -91,9 +118,16 @@ def funktionen():
 
 
 def bericht():
-    """-> {stufe: anzahl} — wie viele Funktionen ueber jeder Stufe liegen."""
+    """-> {stufe: anzahl} ueber BEIDE Achsen.
+
+    Zeilen als "100" … und Verzweigungen als "zw50" … — in einem Woerterbuch,
+    damit die Sperre und die Grundlinie unveraendert damit umgehen koennen.
+    """
     alle = funktionen()
-    return {str(s): len([f for f in alle if f[3] > s]) for s in STUFEN}
+    aus = {str(s): len([f for f in alle if f[3] > s]) for s in STUFEN}
+    aus.update({"zw%d" % s: len([f for f in alle if f[4] > s])
+                for s in ZWEIG_STUFEN})
+    return aus
 
 
 def _lade():
@@ -116,7 +150,9 @@ def main(argv=None):
         io.open(GRUNDLINIE, "w", encoding="utf-8").write(
             json.dumps({"stufen": zahlen}, ensure_ascii=False, indent=2) + "\n")
         print("Grundlinie eingefroren: "
-              + ", ".join(f"ueber {s}: {n}" for s, n in zahlen.items()))
+              + ", ".join("%s %s: %d" % (s.removeprefix("zw"),
+                                         "Zw" if s.startswith("zw") else "Z", n)
+                          for s, n in zahlen.items()))
         return 0
 
     if a.sperre:
@@ -133,7 +169,8 @@ def main(argv=None):
                   "dazugekommen, oder eine bestehende ist in die naechste "
                   "Stufe gerutscht.")
             for s, war, ist in gewachsen:
-                print(f"  ueber {s} Zeilen: {war} -> {ist}")
+                einheit = ("Verzweigungen" if s.startswith("zw") else "Zeilen")
+                print(f"  ueber {s.removeprefix('zw')} {einheit}: {war} -> {ist}")
             print("\n  Abhilfe: die Funktion in benannte Schritte zerlegen. "
                   "Sie in eine andere Datei zu verschieben hilft NICHT — "
                   "gemessen wird der ganze Produktionscode, genau weil "
@@ -141,17 +178,26 @@ def main(argv=None):
                   "sie kleiner zu machen.")
             return 1
         print("monolith: OK — "
-              + ", ".join(f"ueber {s}: {n}" for s, n in zahlen.items())
-              + ", keine neue")
+              + ", ".join("%s %s: %d" % (s.removeprefix("zw"),
+                                         "Zw" if s.startswith("zw") else "Z", n)
+                          for s, n in zahlen.items())
+              + " — keine neue")
         return 0
 
-    alle = sorted(funktionen(), key=lambda f: -f[3])
+    alle = funktionen()
     print("Funktionen im Produktionscode: %d" % len(alle))
     for s in STUFEN:
-        print(f"  ueber {s:3d} Zeilen: {zahlen[str(s)]}")
-    print("\nDie groessten:")
-    for d, nm, z, n in alle[:15]:
-        print(f"  {n:5d} Z  {d}:{z}  {nm}")
+        print(f"  ueber {s:3d} Zeilen:       {zahlen[str(s)]}")
+    for s in ZWEIG_STUFEN:
+        print(f"  ueber {s:3d} Verzweigungen: {zahlen['zw%d' % s]}")
+    print("\nNach VERZWEIGUNGEN — das ist die Liste, die zaehlt:")
+    print(f"  {'Zeilen':>6} {'Zweige':>6} {'Z/Zw':>5}  Funktion")
+    for d, nm, z, n, v in sorted(alle, key=lambda f: -f[4])[:12]:
+        print(f"  {n:6d} {v:6d} {n / v if v else 0:5.1f}  {d}:{z}  {nm}")
+    print("\nNach ZEILEN — lang heisst nicht schwer:")
+    print(f"  {'Zeilen':>6} {'Zweige':>6} {'Z/Zw':>5}  Funktion")
+    for d, nm, z, n, v in sorted(alle, key=lambda f: -f[3])[:8]:
+        print(f"  {n:6d} {v:6d} {n / v if v else 0:5.1f}  {d}:{z}  {nm}")
     return 0
 
 
