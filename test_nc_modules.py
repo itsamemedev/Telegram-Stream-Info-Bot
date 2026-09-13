@@ -9288,6 +9288,121 @@ def _test_v42_w65_stille_wird_gemessen_und_gesperrt():
     ok("W65: der DDL-Helfer schluckt nur 'existiert schon', sonst nichts")
 
 
+def _test_v42_w71_discord_run_once_geschrumpft():
+    """v4.2-W71: die groesste Funktion des Bestands, erster echter Schnitt.
+
+    `_discord_run_once` hatte 1730 Zeilen — 45 Slash-Commands und ihre Helfer,
+    alle als Closures. W70 hatte gezeigt, dass sie und nicht bot.py der
+    eigentliche Riese ist, und dass sie aus der Datei stammt, die in W15 GEGEN
+    dieses Problem aus bot.py herausgeloest wurde.
+
+    Zwei Voraussetzungen wurden vor dem Anfassen gemessen, nicht gehofft:
+
+      1. pyflakes meldet einen vergessenen Closure-Namen als `undefined name`.
+         Damit ist ein Umzug ueberhaupt pruefbar.
+      2. KEINES der 88 Locals ueberdeckt einen Modul-Namen. Der gefaehrliche
+         stille Fall — eine verschobene Funktion greift statt auf das lokale
+         auf ein gleichnamiges globales Ding — kann hier also nicht eintreten.
+
+    Herausgegangen sind zwei Sorten:
+
+      nc/discordrang.py   reine Rechnung (Rangstufen, XP-Kurve, Kanal-Slug),
+                          bot-frei UND discord-frei
+      Modulebene          neun Helfer, die keine einzige Closure-Variable
+                          brauchten und nur Modul-Namen benutzen
+
+    Der Umzug wurde als neutral BEWIESEN: die Ruempfe der neun sind vor und
+    nach dem Heben strukturell identisch (ast.dump ohne Zeilennummern), nach
+    Abzug allein der Rang-Umbenennungen. Und die XP-Kurve stand vorher dreimal
+    im Code — einmal als Schleife, zweimal woertlich als
+    `100 * (lvl + 1) * (lvl + 1)` im Anzeigecode.
+    """
+    import nc.discordrang as R
+
+    # --- 1) Die Rang-Rechnung stimmt mit der alten Schleife ueberein -----
+    # Beim Umzug einer laufenden Rechnung ist Gleichheit wichtiger als
+    # Eleganz. Deshalb steht die Schleife dort noch, und deshalb wird sie
+    # hier gegen die urspruengliche Fassung gehalten.
+    def alt(xp):
+        lvl = 0
+        while xp >= 100 * (lvl + 1) * (lvl + 1):
+            lvl += 1
+        return lvl
+
+    proben = list(range(0, 5000)) + [99, 100, 101, 399, 400, 401, 899, 900,
+                                     901, 249999, 250000, 250001]
+    schlecht = [x for x in proben if alt(x) != R.xp_zu_level(x)]
+    assert not schlecht, \
+        "xp_zu_level weicht von der urspruenglichen Schleife ab, zuerst bei " \
+        "%r — jemandem fehlt dann ein Level" % schlecht[:3]
+    assert R.xp_fuer_level(1) == 100 and R.xp_fuer_level(3) == 900, \
+        "die XP-Kurve ist nicht mehr 100*N^2"
+    assert R.rang_fuer_level(0) is None, "Level 0 hat einen Rang bekommen"
+    assert R.rang_fuer_level(2) == "GHOST" and R.rang_fuer_level(3) == "RUNNER", \
+        "die Rangschwellen haben sich verschoben"
+    assert R.rang_fuer_level(999) == "LEGENDE", \
+        "oberhalb der hoechsten Stufe faellt der Rang wieder weg — die " \
+        "Schleife behaelt absichtlich den LETZTEN Treffer"
+    assert R.slug("@Test_User!!") == "test-user", R.slug("@Test_User!!")
+    assert R.slug("@@@") == "user", \
+        "ein Name ohne brauchbare Zeichen ergibt einen leeren Slug — dann " \
+        "entstuende ein Kanal '#-clips'"
+    assert len(R.slug("a" * 200)) == 90, \
+        "der Slug ist nicht mehr auf 90 Zeichen begrenzt (Discord-Riegel)"
+
+    # --- 2) Das Modul bleibt bot-frei UND discord-frei -------------------
+    hier = os.path.dirname(os.path.abspath(__file__))
+    quelle = io.open(os.path.join(hier, "nc", "discordrang.py"),
+                     encoding="utf-8").read()
+    for verboten in ("import discord", "from discord", "import bot", "from bot"):
+        assert verboten not in quelle, \
+            "nc/discordrang.py importiert %r — es ist reine Rechnung und " \
+            "muss ohne die Bibliothek pruefbar bleiben" % verboten
+    ok("W71: die Rang-Rechnung ist heraus, bot-frei und deckungsgleich")
+
+    # --- 3) _discord_run_once ist wirklich kleiner geworden --------------
+    import sys as _sys
+    if os.path.join(hier, "tools") not in _sys.path:
+        _sys.path.insert(0, os.path.join(hier, "tools"))
+    import monolith as M
+    treffer = [f for f in M.funktionen()
+               if f[0] == "discordbot.py" and f[1] == "_discord_run_once"]
+    assert treffer, "_discord_run_once ist nicht mehr auffindbar"
+    laenge = treffer[0][3]
+    assert laenge < 1730, \
+        "_discord_run_once ist mit %d Zeilen nicht kleiner als vor W71" % laenge
+    assert laenge <= 1600, \
+        "_discord_run_once ist auf %d Zeilen zurueckgewachsen — der Schnitt " \
+        "aus W71 ist damit wieder zu" % laenge
+
+    # --- 4) Die neun Helfer stehen auf Modulebene ------------------------
+    import ast as _ast
+    dsrc = io.open(os.path.join(hier, "discordbot.py"), encoding="utf-8").read()
+    baum = _ast.parse(dsrc)
+    oben = {n.name for n in baum.body
+            if isinstance(n, (_ast.FunctionDef, _ast.AsyncFunctionDef))}
+    for name in ("_disc_sprache_setzen", "_is_admin", "_ensure_rank_roles",
+                 "_provision_base_channels", "_provision_user_channels",
+                 "_tracked_usernames", "_par_chat_id", "_handle_voice_ai",
+                 "_discord_automod"):
+        assert name in oben, \
+            "%s ist wieder in die Closure gewandert — dort ist es weder " \
+            "einzeln lesbar noch prueft pyflakes seine Namen gegen die " \
+            "Modulebene" % name
+
+    # --- 5) Und ALLE 45 Slash-Commands sind noch registriert -------------
+    # Die eigentliche Gefahr dieses Umbaus: ein Command faellt beim
+    # Verschieben aus dem Baum und niemand merkt es, weil discordbot.py in
+    # keinem Test ausgefuehrt wird.
+    befehle = [d for x in _ast.walk(baum)
+               if isinstance(x, (_ast.FunctionDef, _ast.AsyncFunctionDef))
+               for d in x.decorator_list if "tree.command" in _ast.unparse(d)]
+    assert len(befehle) == 45, \
+        "es sind %d statt 45 Slash-Commands registriert — beim Umbau ist " \
+        "einer verlorengegangen" % len(befehle)
+    ok("W71: neun Helfer auf Modulebene, 45 Slash-Commands unveraendert")
+
+
 def _test_v42_w70_keine_neue_riesenfunktion():
     """v4.2-W70: der Plan zeigte beim Monolithen auf die falsche Arbeit.
 
@@ -10969,6 +11084,7 @@ def main():
     _test_v42_w68_abhaengigkeiten_haben_untergrenzen()
     _test_v42_w69_diagnose_sieht_die_schluessel()
     _test_v42_w70_keine_neue_riesenfunktion()
+    _test_v42_w71_discord_run_once_geschrumpft()
     _test_v42_w60_azrael_cooldown_je_plattform()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)

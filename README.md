@@ -198,7 +198,7 @@ flowchart TB
 
     BOT["bot.py<br/>Monolith · 23.806 Zeilen<br/>Scraper · Recorder · Restream<br/>Flask-Dashboard · 34 eigene Routen"]:::core
 
-    BOT -->|configure| NC["nc/ — 137 Fachmodule<br/>Schema · OAuth · Restream<br/>Ledger · Moderation · Intel"]:::lib
+    BOT -->|configure| NC["nc/ — 138 Fachmodule<br/>Schema · OAuth · Restream<br/>Ledger · Moderation · Intel"]:::lib
     NC --> RT["nc/routes/ — 36 Blueprints<br/>327 weitere API-Routen"]:::lib
     BOT --> TPL["templates/<br/>Dashboard · Overlay · PWA"]:::lib
     BOT --> BR["brain_bridge.py"]:::lib
@@ -801,7 +801,7 @@ python3 tools/ncpatch.py docs                          # Doku-Zahlen gegen den C
 ```
 
 `find` antwortet aus **[`.claude/INDEX.md`](.claude/INDEX.md)** — 364 Routen
-(34 in `bot.py`, 330 in `nc/routes/`), 45 Slash-Commands, 492 Funktionen,
+(34 in `bot.py`, 330 in `nc/routes/`), 45 Slash-Commands, 501 Funktionen,
 jeweils mit Zeilennummer.
 
 ---
@@ -915,7 +915,7 @@ nicht greifen, gekippte Verträge in `test_restream.py`.
 | Aktuelle Version | **4.3.1** — „Freie Sicht" (2026.09) |
 | Flask-Routen | 364 (34 in `bot.py` · 330 in `nc/routes/`) |
 | Discord-Slash-Commands | 45 |
-| Fachmodule | 137 in `nc/` (+36 in `nc/routes/`, +3 in `nc/intel/`), 10 in `brain/` |
+| Fachmodule | 138 in `nc/` (+36 in `nc/routes/`, +3 in `nc/intel/`), 10 in `brain/` |
 | Sentinel-Agenten | 13 |
 | Konfigurationsvariablen | ~525 |
 | Sprachen | Deutsch (Quelle), Englisch |

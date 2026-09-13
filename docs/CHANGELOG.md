@@ -11,6 +11,48 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Geändert — `_discord_run_once` von 1730 auf 1560 Zeilen (v4.2 W71)
+
+W70 hatte gezeigt, dass die größte Funktion des Bestands nicht in `bot.py`
+steht, sondern in `discordbot.py` — der Datei, die in v4.2-W15 **gegen** dieses
+Problem aus `bot.py` herausgelöst wurde. Das ist der erste echte Schnitt daran.
+
+**Zwei Voraussetzungen wurden vor dem Anfassen gemessen, nicht gehofft:**
+
+1. `pyflakes` meldet einen vergessenen Closure-Namen als `undefined name`.
+   Damit ist ein Umzug überhaupt prüfbar.
+2. **Keines der 88 Locals überdeckt einen Modul-Namen.** Der gefährliche
+   stille Fall — eine verschobene Funktion greift statt auf das lokale auf ein
+   gleichnamiges globales Ding — kann hier also nicht eintreten. Ohne diese
+   Messung wäre der Umbau nicht zu verantworten gewesen.
+
+**Heraus gingen zwei Sorten.** `nc/discordrang.py` nimmt die reine Rechnung
+auf: Rangstufen, XP-Kurve, Kanal-Slug. Bot-frei *und* discord-frei — das Modul
+importiert die Bibliothek nicht, das Anlegen der Rollen bleibt drüben, weil es
+ein Guild-Objekt braucht. Die XP-Kurve stand vorher **dreimal** im Code: einmal
+als Schleife und zweimal wörtlich als `100 * (lvl + 1) * (lvl + 1)` im
+Anzeigecode von `/rank` und `/profile`.
+
+Dazu neun Helfer, die **keine einzige Closure-Variable** brauchten und nur
+Modul-Namen benutzen — `_is_admin`, `_ensure_rank_roles`,
+`_provision_base_channels`, `_provision_user_channels`, `_tracked_usernames`,
+`_par_chat_id`, `_handle_voice_ai`, `_discord_automod`,
+`_disc_sprache_setzen`. In der Closure entstanden sie bei jeder
+Discord-Sitzung neu, ohne dass das etwas gebracht hätte.
+
+**Der Umzug ist als neutral bewiesen, nicht angenommen:** die Rümpfe aller neun
+sind vor und nach dem Heben strukturell identisch (`ast.dump` ohne
+Zeilennummern), nach Abzug allein der Rang-Umbenennungen. Und alle **45
+Slash-Commands** sind unverändert registriert — die eigentliche Gefahr des
+Umbaus, weil `discordbot.py` in keinem Test ausgeführt wird.
+
+Die Rang-Rechnung selbst behält bewusst ihre Schleife statt einer
+Wurzel-Formel: beim Umzug einer laufenden Rechnung ist Gleichheit wichtiger als
+Eleganz, eine geschlossene Form kann an den Rundungsrändern um eins
+danebenliegen. Der Vertrag hält beide Fassungen über 5000 Werte plus
+Randfälle gegeneinander.
+
+
 ### Geändert — der Monolith wird gemessen, statt am falschen Ende zerlegt (v4.2 W70)
 
 Der Plan dieser Reihe endete mit „Monolith zerlegen — `RestreamManager`

@@ -40,6 +40,7 @@ from nc import azraelstate as _nc_azrael
 from nc import badwords as _nc_badwords
 from nc import brainstate as _nc_brainstate
 from nc import channels as _nc_channels
+from nc import discordrang as _nc_rang
 from nc import discordstate as _nc_discordstate
 from nc import i18n as _nc_i18n
 from nc import modheuristics as _nc_mod
@@ -359,6 +360,201 @@ async def _ensure_discord_invite(client):
         log.warning("Discord-Invite konnte nicht erzeugt werden: %s", e)
 
 
+# ---------------------------------------------------------------------------
+# v4.2-W71: Diese neun Helfer standen in _discord_run_once — der mit 1730
+# Zeilen groessten Funktion des Bestands. Sie brauchen KEINE einzige
+# Closure-Variable von dort, nur Modul-Namen. Auf Modulebene sind sie
+# einzeln lesbar, und pyflakes prueft jeden Namen darin; in der Closure
+# entstanden sie bei jeder Discord-Sitzung neu, ohne dass das etwas
+# gebracht haette.
+# ---------------------------------------------------------------------------
+
+# v4.1-W7: die Sprache dieses Discord-Benutzers fuer diese Anfrage merken.
+#
+# interaction_check laeuft vor JEDEM Slash-Befehl — das ist der einzige
+# Punkt, an dem man alle 46 erwischt, ohne 46 Dekoratoren anzufassen.
+# discord.py liefert die Sprache als Locale-Objekt ("de", "en-US", …);
+# str() darauf ergibt das Kuerzel, das nc.i18n normalisiert.
+#
+# Der Rueckgabewert MUSS True sein: interaction_check ist eigentlich eine
+# Berechtigungspruefung. Gaebe diese Funktion False oder wuerfe sie, waere
+# jeder Slash-Befehl im Discord tot — die Spracherkennung haette den Bot
+# abgeschaltet. Deshalb faengt sie alles und antwortet immer True.
+async def _disc_sprache_setzen(inter):
+    try:
+        _nc_i18n.sprache_setzen(str(getattr(inter, "locale", "") or ""))
+    except Exception as e:
+        log.debug("Spracherkennung (Discord): %s", e)
+    return True
+
+
+def _is_admin(inter) -> bool:
+    """Guild-Admin/Manage-Guild ODER konfigurierte DISCORD_ADMIN_ROLE."""
+    try:
+        perms = getattr(inter.user, "guild_permissions", None)
+        if perms and (perms.administrator or perms.manage_guild):
+            return True
+        if DISCORD_ADMIN_ROLE and getattr(inter.user, "roles", None):
+            return any(r.name == DISCORD_ADMIN_ROLE for r in inter.user.roles)
+    except Exception:
+        pass
+    return False
+
+
+async def _ensure_rank_roles(guild):
+    """Legt fehlende Rang-Rollen an (hoist=sichtbar getrennt). Gibt {name: role}."""
+    roles = {}
+    for _need, rname, color in _nc_rang.RANG_STUFEN:
+        r = discord.utils.get(guild.roles, name=rname)
+        if r is None:
+            try:
+                r = await guild.create_role(name=rname, colour=discord.Colour(color),
+                                            hoist=True, mentionable=False,
+                                            reason="Azrael Sentinel Community-Setup")
+            except Exception as e:
+                log.warning("Discord: Rolle %s nicht erstellt: %s", rname, e); continue
+        roles[rname] = r
+    return roles
+
+
+async def _provision_base_channels(guild):
+    created = []
+    ev = guild.default_role
+    ro = discord.PermissionOverwrite(send_messages=False, view_channel=True)
+    info = discord.utils.get(guild.categories, name="📋 INFO")
+    if info is None:
+        info = await guild.create_category("📋 INFO"); created.append("📋 INFO")
+    for nm in ("willkommen", "regeln", "ankündigungen"):
+        if discord.utils.get(guild.text_channels, name=nm) is None:
+            await guild.create_text_channel(nm, category=info, overwrites={ev: ro}); created.append(nm)
+    comm = discord.utils.get(guild.categories, name="💬 COMMUNITY")
+    if comm is None:
+        comm = await guild.create_category("💬 COMMUNITY"); created.append("💬 COMMUNITY")
+    for nm in ("general", "live-feed", "clips-feed", "ki-moderator"):
+        if discord.utils.get(guild.text_channels, name=nm) is None:
+            await guild.create_text_channel(nm, category=comm); created.append(nm)
+    if discord.utils.get(guild.voice_channels, name="🔊 Lounge") is None:
+        await guild.create_voice_channel("🔊 Lounge", category=comm); created.append("🔊 Lounge")
+    # mod-log: nur Owner/Moderator sichtbar (Auto-Moderation-Flags)
+    if discord.utils.get(guild.text_channels, name=DISCORD_MODLOG_CHANNEL) is None:
+        ovw = {guild.default_role: discord.PermissionOverwrite(view_channel=False)}
+        for rn in ("👑 Owner", "🛡 Moderator"):
+            rr = discord.utils.get(guild.roles, name=rn)
+            if rr: ovw[rr] = discord.PermissionOverwrite(view_channel=True)
+        await guild.create_text_channel(DISCORD_MODLOG_CHANNEL, category=comm, overwrites=ovw)
+        created.append(DISCORD_MODLOG_CHANNEL)
+    return created
+
+
+async def _provision_user_channels(guild, usernames):
+    made = []
+    for u in usernames:
+        slug = _nc_rang.slug(u)
+        catname = f"🎯 {slug}"
+        if discord.utils.get(guild.categories, name=catname):
+            continue   # idempotent: schon vorhanden
+        try:
+            cat = await guild.create_category(catname)
+            await guild.create_text_channel(f"{slug}-clips", category=cat,
+                                             topic=f"Highlight-Clips von @{u}")
+            await guild.create_text_channel(f"{slug}-chat", category=cat)
+            await guild.create_voice_channel(f"{slug} 🔊", category=cat)
+            made.append(slug)
+        except Exception as e:
+            log.warning("Discord: User-Channels für %s fehlgeschlagen: %s", u, e)
+    return made
+
+
+def _tracked_usernames(limit):
+    out = []
+    try:
+        with db_conn() as conn:
+            rows = conn.execute("SELECT DISTINCT username FROM trackings "
+                                "WHERE COALESCE(paused,0)=0 ORDER BY username "
+                                f"LIMIT {int(limit)}").fetchall()
+        out = [r["username"] for r in rows if r["username"]]
+    except Exception as e:
+        log.warning("Discord: Tracked-User-Query fehlgeschlagen: %s", e)
+    return out
+
+
+def _par_chat_id():
+    return next(iter(ALLOWED_CHAT_IDS), next(iter(ALLOWED_USER_IDS), 0))
+
+
+async def _handle_voice_ai(message, att):
+    """Sprachnachricht → ffmpeg→16k-WAV → Whisper → ai_chat → Antwort."""
+    import tempfile
+    tmp_in = os.path.join(tempfile.gettempdir(), f"disc_voice_{message.id}_{_nc_rang.slug(att.filename)}")
+    tmp_wav = tmp_in + ".wav"
+    try:
+        await att.save(tmp_in)
+        proc = await asyncio.create_subprocess_exec(
+            "ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-i", tmp_in,
+            "-ar", "16000", "-ac", "1", tmp_wav,
+            stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)
+        await proc.wait()
+        if not os.path.exists(tmp_wav) or os.path.getsize(tmp_wav) < 100:
+            return
+        async with message.channel.typing():
+            text = await _whisper_transcribe(tmp_wav)
+            if not text:
+                await message.reply(_nc_i18n.t("🎤 Konnte die Sprachnachricht nicht transkribieren."), mention_author=False)
+                return
+            txt, err = await azrael_chat("Telegram Voice", text, timeout=30)   # F90: eine KI-Identität
+        await message.reply(_nc_i18n.t(f"🎤 **Du:** {text[:300]}\n\n🤖 {(txt or err or '—')[:1700]}"), mention_author=False)
+    except Exception as e:
+        log.debug("Discord Voice-AI: %s", e)
+    finally:
+        for f in (tmp_in, tmp_wav):
+            try:
+                if os.path.exists(f): os.remove(f)
+            except OSError:
+                pass
+
+
+async def _discord_automod(message):
+    # Owner/Moderator nicht moderieren
+    if {r.name for r in getattr(message.author, "roles", [])} & {"👑 Owner", "🛡 Moderator"}:
+        return
+    reason = _disc_automod_check(message.content, message.author.id)
+    if not reason:
+        return
+    try:
+        mlog = discord.utils.get(message.guild.text_channels, name=DISCORD_MODLOG_CHANNEL)
+        if mlog:
+            await mlog.send(f"⚠️ **{reason}** · {message.author.mention} in {message.channel.mention}: "
+                            f"`{(message.content or '')[:180]}`")
+    except Exception:
+        pass
+    # V37-W-SHIELD: Doxxing/Volksverhetzung/Drohung wird IMMER entfernt
+    # + eskalierender Timeout — unabhängig von DISCORD_AUTOMOD_ACTION.
+    if reason.startswith("🛑"):
+        try:
+            await message.delete()
+        except Exception:
+            pass
+        try:
+            mins = _KICK_MOD._escalation_minutes(f"dc:{message.author.id}")
+            await message.author.timeout(timedelta(minutes=mins),
+                                         reason=f"SENTINEL: {reason}")
+        except Exception:
+            pass
+        _modlog("timeout", "sentinel-shield", (message.content or "")[:200],
+                {"user": str(message.author), "reason": reason,
+                 "platform": "discord"})
+        return True
+    if DISCORD_AUTOMOD_ACTION == "delete":
+        try:
+            await message.delete()
+            w = await message.channel.send(_nc_i18n.t(f"{message.author.mention} Nachricht entfernt — {reason}."))
+            await w.delete(delay=6)
+            return True
+        except Exception:
+            pass
+    return False
+
+
 async def _discord_run_once():
     """EINE Discord-Session. Rueckgabe True = nicht neu versuchen."""
     if not DISCORD_BOT_TOKEN:
@@ -392,23 +588,8 @@ async def _discord_run_once():
     client = discord.Client(intents=intents)
     tree = app_commands.CommandTree(client)
 
-    # v4.1-W7: die Sprache dieses Discord-Benutzers fuer diese Anfrage merken.
-    #
-    # interaction_check laeuft vor JEDEM Slash-Befehl — das ist der einzige
-    # Punkt, an dem man alle 46 erwischt, ohne 46 Dekoratoren anzufassen.
-    # discord.py liefert die Sprache als Locale-Objekt ("de", "en-US", …);
-    # str() darauf ergibt das Kuerzel, das nc.i18n normalisiert.
-    #
-    # Der Rueckgabewert MUSS True sein: interaction_check ist eigentlich eine
-    # Berechtigungspruefung. Gaebe diese Funktion False oder wuerfe sie, waere
-    # jeder Slash-Befehl im Discord tot — die Spracherkennung haette den Bot
-    # abgeschaltet. Deshalb faengt sie alles und antwortet immer True.
-    async def _disc_sprache_setzen(inter):
-        try:
-            _nc_i18n.sprache_setzen(str(getattr(inter, "locale", "") or ""))
-        except Exception as e:
-            log.debug("Spracherkennung (Discord): %s", e)
-        return True
+    # v4.2-W71: _disc_sprache_setzen steht jetzt auf Modulebene (brauchte keine
+    # einzige Closure-Variable).
 
     tree.interaction_check = _disc_sprache_setzen
 
@@ -422,17 +603,8 @@ async def _discord_run_once():
         logging.getLogger().addHandler(_eh)
         logging.getLogger()._nc_errhandler = True
 
-    def _is_admin(inter) -> bool:
-        """Guild-Admin/Manage-Guild ODER konfigurierte DISCORD_ADMIN_ROLE."""
-        try:
-            perms = getattr(inter.user, "guild_permissions", None)
-            if perms and (perms.administrator or perms.manage_guild):
-                return True
-            if DISCORD_ADMIN_ROLE and getattr(inter.user, "roles", None):
-                return any(r.name == DISCORD_ADMIN_ROLE for r in inter.user.roles)
-        except Exception:
-            pass
-        return False
+    # v4.2-W71: _is_admin steht jetzt auf Modulebene (brauchte keine
+    # einzige Closure-Variable).
 
     async def _guard(inter) -> bool:
         if _is_admin(inter):
@@ -692,46 +864,12 @@ async def _discord_run_once():
 
     # ───────── COMMUNITY-SETUP: Ranking, Channels, Rechte, Target-Channels ─────────
     # Rang-Tiers: (min_level, Rollenname, Farbe). Reihenfolge niedrig→hoch (Cyberpunk).
-    RANK_TIERS = [
-        (1,  "GHOST",      0x5a6472),
-        (3,  "RUNNER",     0x00e5ff),
-        (7,  "NETRUNNER",  0x00ff9c),
-        (15, "ICEBREAKER", 0xffb000),
-        (25, "LEGENDE",    0xff2e88),
-    ]
+    # v4.2-W71: Rang-Stufen, XP-Kurve und der Kanal-Slug stehen jetzt in
+    # nc/discordrang.py. Reine Rechnung, die hier 330 Zeilen tief in einer
+    # Closure sass — nicht einzeln aufrufbar und nicht pruefbar.
 
-    def _xp_to_level(xp):
-        """Level N benötigt 100*N^2 XP (Lvl1=100, 2=400, 3=900 …)."""
-        lvl = 0
-        while xp >= 100 * (lvl + 1) * (lvl + 1):
-            lvl += 1
-        return lvl
-
-    def _rank_for_level(lvl):
-        name = None
-        for need, rname, _c in RANK_TIERS:
-            if lvl >= need:
-                name = rname
-        return name
-
-    def _disc_slug(username):
-        s = re.sub(r"[^a-z0-9]+", "-", (username or "").lstrip("@").lower()).strip("-")
-        return (s or "user")[:90]
-
-    async def _ensure_rank_roles(guild):
-        """Legt fehlende Rang-Rollen an (hoist=sichtbar getrennt). Gibt {name: role}."""
-        roles = {}
-        for _need, rname, color in RANK_TIERS:
-            r = discord.utils.get(guild.roles, name=rname)
-            if r is None:
-                try:
-                    r = await guild.create_role(name=rname, colour=discord.Colour(color),
-                                                hoist=True, mentionable=False,
-                                                reason="Azrael Sentinel Community-Setup")
-                except Exception as e:
-                    log.warning("Discord: Rolle %s nicht erstellt: %s", rname, e); continue
-            roles[rname] = r
-        return roles
+    # v4.2-W71: _ensure_rank_roles steht jetzt auf Modulebene (brauchte keine
+    # einzige Closure-Variable).
 
     # Funktionale Rollen mit Rechten + Farben (zusätzlich zu den Rang-Rollen).
     # (Name, Farbe, hoist=getrennt anzeigen, {Permission: True})
@@ -763,63 +901,14 @@ async def _discord_run_once():
             out[name] = r
         return out
 
-    async def _provision_base_channels(guild):
-        created = []
-        ev = guild.default_role
-        ro = discord.PermissionOverwrite(send_messages=False, view_channel=True)
-        info = discord.utils.get(guild.categories, name="📋 INFO")
-        if info is None:
-            info = await guild.create_category("📋 INFO"); created.append("📋 INFO")
-        for nm in ("willkommen", "regeln", "ankündigungen"):
-            if discord.utils.get(guild.text_channels, name=nm) is None:
-                await guild.create_text_channel(nm, category=info, overwrites={ev: ro}); created.append(nm)
-        comm = discord.utils.get(guild.categories, name="💬 COMMUNITY")
-        if comm is None:
-            comm = await guild.create_category("💬 COMMUNITY"); created.append("💬 COMMUNITY")
-        for nm in ("general", "live-feed", "clips-feed", "ki-moderator"):
-            if discord.utils.get(guild.text_channels, name=nm) is None:
-                await guild.create_text_channel(nm, category=comm); created.append(nm)
-        if discord.utils.get(guild.voice_channels, name="🔊 Lounge") is None:
-            await guild.create_voice_channel("🔊 Lounge", category=comm); created.append("🔊 Lounge")
-        # mod-log: nur Owner/Moderator sichtbar (Auto-Moderation-Flags)
-        if discord.utils.get(guild.text_channels, name=DISCORD_MODLOG_CHANNEL) is None:
-            ovw = {guild.default_role: discord.PermissionOverwrite(view_channel=False)}
-            for rn in ("👑 Owner", "🛡 Moderator"):
-                rr = discord.utils.get(guild.roles, name=rn)
-                if rr: ovw[rr] = discord.PermissionOverwrite(view_channel=True)
-            await guild.create_text_channel(DISCORD_MODLOG_CHANNEL, category=comm, overwrites=ovw)
-            created.append(DISCORD_MODLOG_CHANNEL)
-        return created
+    # v4.2-W71: _provision_base_channels steht jetzt auf Modulebene (brauchte keine
+    # einzige Closure-Variable).
 
-    async def _provision_user_channels(guild, usernames):
-        made = []
-        for u in usernames:
-            slug = _disc_slug(u)
-            catname = f"🎯 {slug}"
-            if discord.utils.get(guild.categories, name=catname):
-                continue   # idempotent: schon vorhanden
-            try:
-                cat = await guild.create_category(catname)
-                await guild.create_text_channel(f"{slug}-clips", category=cat,
-                                                 topic=f"Highlight-Clips von @{u}")
-                await guild.create_text_channel(f"{slug}-chat", category=cat)
-                await guild.create_voice_channel(f"{slug} 🔊", category=cat)
-                made.append(slug)
-            except Exception as e:
-                log.warning("Discord: User-Channels für %s fehlgeschlagen: %s", u, e)
-        return made
+    # v4.2-W71: _provision_user_channels steht jetzt auf Modulebene (brauchte keine
+    # einzige Closure-Variable).
 
-    def _tracked_usernames(limit):
-        out = []
-        try:
-            with db_conn() as conn:
-                rows = conn.execute("SELECT DISTINCT username FROM trackings "
-                                    "WHERE COALESCE(paused,0)=0 ORDER BY username "
-                                    f"LIMIT {int(limit)}").fetchall()
-            out = [r["username"] for r in rows if r["username"]]
-        except Exception as e:
-            log.warning("Discord: Tracked-User-Query fehlgeschlagen: %s", e)
-        return out
+    # v4.2-W71: _tracked_usernames steht jetzt auf Modulebene (brauchte keine
+    # einzige Closure-Variable).
 
     @tree.command(name="setup_community", description=_nc_i18n.t("Community-Server einrichten: Ränge, Channels, Rechte"))
     async def _c_setup_community(inter):
@@ -863,9 +952,9 @@ async def _discord_run_once():
                 row = conn.execute("SELECT xp FROM discord_xp WHERE guild_id=? AND user_id=?",
                                    (inter.guild_id, inter.user.id)).fetchone()
             xp = row["xp"] if row else 0
-            lvl = _xp_to_level(xp); need = 100 * (lvl + 1) * (lvl + 1)
+            lvl = _nc_rang.xp_zu_level(xp); need = _nc_rang.xp_fuer_level(lvl + 1)
             await inter.response.send_message(
-                f"🏅 **{inter.user.display_name}** · Level **{lvl}** · Rang **{_rank_for_level(lvl) or '—'}**\n"
+                f"🏅 **{inter.user.display_name}** · Level **{lvl}** · Rang **{_nc_rang.rang_fuer_level(lvl) or '—'}**\n"
                 f"XP: {xp} / {need} (nächstes Level)", ephemeral=True)
         except Exception as e:
             await inter.response.send_message(_nc_i18n.t(f"Fehler: {e}"), ephemeral=True)
@@ -882,7 +971,7 @@ async def _discord_run_once():
             for i, r in enumerate(rows, 1):
                 m = inter.guild.get_member(r["user_id"])
                 nm = m.display_name if m else f"User {r['user_id']}"
-                lines.append(f"`{i:2}.` **{nm}** — Lvl {_xp_to_level(r['xp'])} ({r['xp']} XP)")
+                lines.append(f"`{i:2}.` **{nm}** — Lvl {_nc_rang.xp_zu_level(r['xp'])} ({r['xp']} XP)")
             await inter.response.send_message(_nc_i18n.t("🏆 **Leaderboard**\n" + "\n".join(lines)))
         except Exception as e:
             await inter.response.send_message(_nc_i18n.t(f"Fehler: {e}"), ephemeral=True)
@@ -933,7 +1022,7 @@ async def _discord_run_once():
                                      (inter.guild_id, inter.user.id)).fetchone()
                 oldlvl = xprow["level"] if xprow else 0
                 newxp = (xprow["xp"] if xprow else 0) + gain
-                newlvl = _xp_to_level(newxp)
+                newlvl = _nc_rang.xp_zu_level(newxp)
                 nowiso = datetime.now(timezone.utc).isoformat()
                 if xprow:
                     conn.execute("UPDATE discord_xp SET xp=?, level=?, last_ts=? WHERE guild_id=? AND user_id=?",
@@ -972,11 +1061,13 @@ async def _discord_run_once():
                                      (inter.guild_id, xp)).fetchone()["p"]
                 total_members = conn.execute("SELECT COUNT(*) AS c FROM discord_xp WHERE guild_id=?",
                                              (inter.guild_id,)).fetchone()["c"]
-            lvl = _xp_to_level(xp); need = 100 * (lvl + 1) * (lvl + 1); prev = 100 * lvl * lvl
+            lvl = _nc_rang.xp_zu_level(xp)
+            need = _nc_rang.xp_fuer_level(lvl + 1)
+            prev = _nc_rang.xp_fuer_level(lvl)
             pct = int(100 * (xp - prev) / max(1, need - prev))
             bar = "█" * (pct // 10) + "░" * (10 - pct // 10)
             emb = discord.Embed(title=f"🦇 {target.display_name}", color=0x00ff9c)
-            emb.add_field(name="Level", value=f"**{lvl}** · {_rank_for_level(lvl) or 'GHOST'}", inline=True)
+            emb.add_field(name="Level", value=f"**{lvl}** · {_nc_rang.rang_fuer_level(lvl) or 'GHOST'}", inline=True)
             emb.add_field(name="Rang-Platz", value=f"#{place} / {total_members}", inline=True)
             emb.add_field(name="XP", value=f"{xp}", inline=True)
             emb.add_field(name="Fortschritt", value=f"`{bar}` {pct}%  ({xp}/{need})", inline=False)
@@ -1114,7 +1205,7 @@ async def _discord_run_once():
     @app_commands.describe(username="TikTok-Username")
     async def _c_clips(inter, username: str):
         try:
-            slug = _disc_slug(username)
+            slug = _nc_rang.slug(username)
             if not os.path.isdir(CLIP_DIR):
                 await inter.response.send_message(_nc_i18n.t("Keine Clips vorhanden."), ephemeral=True); return
             files = [f for f in os.listdir(CLIP_DIR) if f.endswith(".mp4") and slug in f.lower()]
@@ -1136,7 +1227,7 @@ async def _discord_run_once():
             u = username.lstrip("@")
             await _discord_post_user(u, f"✅ Test-Post für **@{u}** — der Upload-Channel funktioniert.", feed=None)
             await inter.followup.send(
-                _nc_i18n.t(f"Test-Nachricht an `#{_disc_slug(u)}-clips` gesendet (falls Channel existiert — sonst erst `/setup_targets`)."),
+                _nc_i18n.t(f"Test-Nachricht an `#{_nc_rang.slug(u)}-clips` gesendet (falls Channel existiert — sonst erst `/setup_targets`)."),
                 ephemeral=True)
         except Exception as e:
             await inter.followup.send(_nc_i18n.t(f"Fehler: {e}"), ephemeral=True)
@@ -1160,7 +1251,7 @@ async def _discord_run_once():
     @app_commands.describe(username="TikTok-Username")
     async def _c_follow(inter, username: str):
         u = username.lstrip("@")
-        rname = f"🔔 {_disc_slug(u)}"
+        rname = f"🔔 {_nc_rang.slug(u)}"
         try:
             role = discord.utils.get(inter.guild.roles, name=rname)
             if role is None:
@@ -1175,7 +1266,7 @@ async def _discord_run_once():
     @app_commands.describe(username="TikTok-Username")
     async def _c_unfollow(inter, username: str):
         try:
-            role = discord.utils.get(inter.guild.roles, name=f"🔔 {_disc_slug(username.lstrip('@'))}")
+            role = discord.utils.get(inter.guild.roles, name=f"🔔 {_nc_rang.slug(username.lstrip('@'))}")
             if role and role in inter.user.roles:
                 await inter.user.remove_roles(role, reason="unfollow")
             await inter.response.send_message(_nc_i18n.t(f"🔕 Keine Live-Pings mehr für **@{username.lstrip('@')}**."), ephemeral=True)
@@ -1411,8 +1502,8 @@ async def _discord_run_once():
         async def edit_text(self, text, **kw):
             await self._sink(str(text)); return self
 
-    def _par_chat_id():
-        return next(iter(ALLOWED_CHAT_IDS), next(iter(ALLOWED_USER_IDS), 0))
+    # v4.2-W71: _par_chat_id steht jetzt auf Modulebene (brauchte keine
+    # einzige Closure-Variable).
 
     class _ParBot:
         def __init__(self, sink): self._sink = sink
@@ -1518,12 +1609,12 @@ async def _discord_run_once():
 
     async def _on_level_up(message, newlvl):
         try:
-            rkname = _rank_for_level(newlvl)
+            rkname = _nc_rang.rang_fuer_level(newlvl)
             if rkname:
                 roles = await _ensure_rank_roles(message.guild)
                 role = roles.get(rkname)
                 if role and role not in getattr(message.author, "roles", []):
-                    old = [discord.utils.get(message.guild.roles, name=n) for _, n, _c in RANK_TIERS]
+                    old = [discord.utils.get(message.guild.roles, name=n) for _, n, _c in _nc_rang.RANG_STUFEN]
                     old = [r for r in old if r and r != role and r in message.author.roles]
                     try:
                         if old: await message.author.remove_roles(*old, reason="Rang-Upgrade")
@@ -1536,35 +1627,8 @@ async def _discord_run_once():
         except Exception as e:
             log.debug("Discord Level-Up: %s", e)
 
-    async def _handle_voice_ai(message, att):
-        """Sprachnachricht → ffmpeg→16k-WAV → Whisper → ai_chat → Antwort."""
-        import tempfile
-        tmp_in = os.path.join(tempfile.gettempdir(), f"disc_voice_{message.id}_{_disc_slug(att.filename)}")
-        tmp_wav = tmp_in + ".wav"
-        try:
-            await att.save(tmp_in)
-            proc = await asyncio.create_subprocess_exec(
-                "ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-i", tmp_in,
-                "-ar", "16000", "-ac", "1", tmp_wav,
-                stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)
-            await proc.wait()
-            if not os.path.exists(tmp_wav) or os.path.getsize(tmp_wav) < 100:
-                return
-            async with message.channel.typing():
-                text = await _whisper_transcribe(tmp_wav)
-                if not text:
-                    await message.reply(_nc_i18n.t("🎤 Konnte die Sprachnachricht nicht transkribieren."), mention_author=False)
-                    return
-                txt, err = await azrael_chat("Telegram Voice", text, timeout=30)   # F90: eine KI-Identität
-            await message.reply(_nc_i18n.t(f"🎤 **Du:** {text[:300]}\n\n🤖 {(txt or err or '—')[:1700]}"), mention_author=False)
-        except Exception as e:
-            log.debug("Discord Voice-AI: %s", e)
-        finally:
-            for f in (tmp_in, tmp_wav):
-                try:
-                    if os.path.exists(f): os.remove(f)
-                except OSError:
-                    pass
+    # v4.2-W71: _handle_voice_ai steht jetzt auf Modulebene (brauchte keine
+    # einzige Closure-Variable).
 
     @client.event
     async def on_raw_reaction_add(payload):
@@ -1664,7 +1728,7 @@ async def _discord_run_once():
                                    (message.guild.id, uid)).fetchone()
                 oldlvl = row["level"] if row else 0
                 newxp = (row["xp"] if row else 0) + gain
-                newlvl = _xp_to_level(newxp)
+                newlvl = _nc_rang.xp_zu_level(newxp)
                 nowiso = datetime.now(timezone.utc).isoformat()
                 if row:
                     conn.execute("UPDATE discord_xp SET xp=?, level=?, last_ts=? WHERE guild_id=? AND user_id=?",
@@ -1681,46 +1745,8 @@ async def _discord_run_once():
         except Exception as e:
             log.debug("Discord XP-Update: %s", e)
 
-    async def _discord_automod(message):
-        # Owner/Moderator nicht moderieren
-        if {r.name for r in getattr(message.author, "roles", [])} & {"👑 Owner", "🛡 Moderator"}:
-            return
-        reason = _disc_automod_check(message.content, message.author.id)
-        if not reason:
-            return
-        try:
-            mlog = discord.utils.get(message.guild.text_channels, name=DISCORD_MODLOG_CHANNEL)
-            if mlog:
-                await mlog.send(f"⚠️ **{reason}** · {message.author.mention} in {message.channel.mention}: "
-                                f"`{(message.content or '')[:180]}`")
-        except Exception:
-            pass
-        # V37-W-SHIELD: Doxxing/Volksverhetzung/Drohung wird IMMER entfernt
-        # + eskalierender Timeout — unabhängig von DISCORD_AUTOMOD_ACTION.
-        if reason.startswith("🛑"):
-            try:
-                await message.delete()
-            except Exception:
-                pass
-            try:
-                mins = _KICK_MOD._escalation_minutes(f"dc:{message.author.id}")
-                await message.author.timeout(timedelta(minutes=mins),
-                                             reason=f"SENTINEL: {reason}")
-            except Exception:
-                pass
-            _modlog("timeout", "sentinel-shield", (message.content or "")[:200],
-                    {"user": str(message.author), "reason": reason,
-                     "platform": "discord"})
-            return True
-        if DISCORD_AUTOMOD_ACTION == "delete":
-            try:
-                await message.delete()
-                w = await message.channel.send(_nc_i18n.t(f"{message.author.mention} Nachricht entfernt — {reason}."))
-                await w.delete(delay=6)
-                return True
-            except Exception:
-                pass
-        return False
+    # v4.2-W71: _discord_automod steht jetzt auf Modulebene (brauchte keine
+    # einzige Closure-Variable).
 
     # ───────── F93: AZRAEL SENTINEL — KI-Moderation im Discord ─────────
     # Dieselbe eine KI-Identität, die den Kick-Chat bewacht, klassifiziert jetzt
