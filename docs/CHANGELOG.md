@@ -11,6 +11,54 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Geändert — die 45 Discord-Befehle haben eine Registrierung (v4.2 W72)
+
+Nach W71 blieben 1560 Zeilen in `_discord_run_once`. Gemessen brauchten **42
+der 45 Befehle** von dort nichts außer `tree` — nachdem `_guard`,
+`_on_level_up`, `_ensure_team_roles`, `_ParBot`, `_ParMsg` und
+`_run_tg_handler` gehoben waren. Solche Ketten lösen sich nacheinander:
+`_guard` hängt nur noch an `_is_admin`, und das ging erst in W71 nach oben.
+Nach jeder Hebung ist neu zu messen, was dadurch frei geworden ist.
+
+Die Befehle stehen jetzt in **elf Registrier-Funktionen** auf Modulebene, je
+unter 100 Zeilen. Bewusst mehrere kleine statt einer großen: eine einzige
+Sammelfunktion wäre mit über 600 Zeilen selbst wieder ein Riese gewesen.
+
+**Ergebnis: `_discord_run_once` von 1730 (vor W71) auf 716 Zeilen, −59 %.**
+
+Die Rümpfe stehen **wörtlich** wie vorher da, ohne eine Zeile Einrückung zu
+ändern: innerhalb von `_discord_run_once` lagen sie eine Ebene tief, in einer
+Registrier-Funktion liegen sie ebenso tief. Alle 45 sind nachweislich
+unverändert (`ast.dump` ohne Zeilennummern).
+
+### Zwei Werkzeuge haben den Umbau unterwegs korrigiert
+
+**`app_commands` war gar kein Modul-Name.** Die Messung hatte es dafür
+gehalten und damit „42 brauchen nur `tree`" behauptet — tatsächlich war es ein
+Local aus `from discord import app_commands` in einem `try`-Block, und die
+Analyse sammelte Zuweisungen und Definitionen, aber keine Importe innerhalb
+von `try`. **pyflakes hat den Umzug mit 25 Meldungen gestoppt.** Genau dafür
+war vor dem Anfassen geprüft worden, dass pyflakes verlorene Closure-Namen
+meldet. Der Import steht jetzt oben, aus demselben Grund, den der
+B79-Kommentar für `discord` nennt — mit `None`-Zweig, weil discord.py optional
+bleibt.
+
+**Zwei Sammelfunktionen kamen über 100 Zeilen.** `tools/monolith.py` aus W70
+hat das gemeldet. Die Grundlinie wurde **nicht** hochgesetzt, sondern die
+beiden geteilt — eine Sperre, die man bei der ersten Unbequemlichkeit
+aufweicht, ist keine. Die Zahlen bleiben bei 63/16/9/4.
+
+### Nebenbefund — 15 Slash-Commands sind für Werkzeug und Doku unsichtbar
+
+`tools/ncpatch.py` zählt nur **dekorierte** Registrierungen. Die 15
+`sys_*`-Befehle aus der `_PAR_CMDS`-Schleife entstehen über
+`tree.command(name=…)(…)` und werden deshalb nirgends mitgezählt: der Bot
+bietet **60** Slash-Commands an, die Doku nennt 45. Fiele die Schleife weg,
+meldete das kein Werkzeug. Der Vertrag zu dieser Welle prüft sie jetzt
+ausdrücklich mit — die Zählung in `ncpatch` selbst zu korrigieren ist eine
+eigene Änderung, weil sie die dokumentierte Zahl an mehreren Stellen bewegt.
+
+
 ### Geändert — `_discord_run_once` von 1730 auf 1560 Zeilen (v4.2 W71)
 
 W70 hatte gezeigt, dass die größte Funktion des Bestands nicht in `bot.py`

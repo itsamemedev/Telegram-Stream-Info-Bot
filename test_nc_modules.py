@@ -9288,6 +9288,117 @@ def _test_v42_w65_stille_wird_gemessen_und_gesperrt():
     ok("W65: der DDL-Helfer schluckt nur 'existiert schon', sonst nichts")
 
 
+def _test_v42_w72_befehle_haben_eine_registrierung():
+    """v4.2-W72: die 42 Befehle, die nur `tree` brauchen, sind heraus.
+
+    Nach W71 blieben 1560 Zeilen. Gemessen brauchten 42 der 45 Befehle von
+    dort nichts ausser `tree` — nachdem `_guard`, `_on_level_up`,
+    `_ensure_team_roles`, `_ParBot`, `_ParMsg` und `_run_tg_handler` gehoben
+    waren. Solche Ketten loesen sich nacheinander: `_guard` haengt nur noch an
+    `_is_admin`, und das ging erst in W71 nach oben.
+
+    ZWEI DINGE HABEN DEN UMBAU UNTERWEGS KORRIGIERT, und beide gehoeren
+    festgehalten, weil sie beim naechsten Schnitt wieder auftreten:
+
+    1. `app_commands` war KEIN Modul-Name, sondern ein Local von
+       `_discord_run_once` (`from discord import app_commands` in einem
+       try-Block). Die Messung hatte das uebersehen — sie sammelte Zuweisungen
+       und Definitionen, aber keine Importe innerhalb von try. pyflakes hat
+       den Umzug prompt mit 25 Meldungen gestoppt. Genau dafuer wurde vor dem
+       Anfassen geprueft, dass pyflakes das tut. Der Import steht jetzt oben,
+       aus demselben Grund, den der B79-Kommentar fuer `discord` nennt.
+
+    2. Zwei der neun Sammelfunktionen kamen mit Kopfzeilen ueber 100 Zeilen.
+       tools/monolith.py aus W70 hat das gemeldet — und die Grundlinie wurde
+       NICHT neu gesetzt, sondern die beiden geteilt. Eine Sperre, die man bei
+       der ersten Unbequemlichkeit hochsetzt, ist keine.
+    """
+    import ast as _ast
+    hier = os.path.dirname(os.path.abspath(__file__))
+    src = io.open(os.path.join(hier, "discordbot.py"), encoding="utf-8").read()
+    baum = _ast.parse(src)
+    oben = {n.name: n for n in baum.body
+            if isinstance(n, (_ast.FunctionDef, _ast.AsyncFunctionDef))}
+
+    # --- 1) Die Registrierungen stehen auf Modulebene --------------------
+    regs = sorted(n for n in oben if n.startswith("_reg_"))
+    assert len(regs) >= 11, \
+        "es gibt nur %d Registrier-Funktionen — sind welche wieder in die " \
+        "Closure gewandert? %r" % (len(regs), regs)
+    for n in regs:
+        laenge = oben[n].end_lineno - oben[n].lineno + 1
+        assert laenge < 100, \
+            "%s ist mit %d Zeilen selbst ein Fall fuer tools/monolith.py — " \
+            "eine Sammelfunktion darf nicht der naechste Riese werden" % (n, laenge)
+
+    # --- 2) …und werden auch WIRKLICH aufgerufen -------------------------
+    # Eine nicht aufgerufene Registrierung faellt weder py_compile noch
+    # pyflakes auf: die Befehle waeren schlicht weg, und zwar still.
+    lauf = oben.get("_discord_run_once")
+    assert lauf is not None, "_discord_run_once ist verschwunden"
+    gerufen = {_ast.unparse(k.func) for k in _ast.walk(lauf)
+               if isinstance(k, _ast.Call) and isinstance(k.func, _ast.Name)}
+    for n in regs:
+        assert n in gerufen, \
+            "%s wird nirgends aufgerufen — die Befehle darin sind damit " \
+            "still verschwunden, ohne dass ein Werkzeug meckert" % n
+
+    # --- 3) Der Aufruf steht NACH der tree-Erzeugung ---------------------
+    zeilen = src.splitlines()
+    # Bewusst kein next()/min() ohne Auffang: faellt eine der beiden Stellen
+    # weg, war die Meldung ein nacktes StopIteration — ein Vertrag, der so
+    # scheitert, sagt dem Leser nichts ueber den Schaden.
+    _tree = [i for i, z in enumerate(zeilen, 1)
+             if "tree = app_commands.CommandTree(" in z]
+    assert _tree, \
+        "die Erzeugung des CommandTree ist verschwunden — ohne sie hat " \
+        "keine Registrierung etwas, woran sie ihre Befehle haengen kann"
+    _reg = [i for i, z in enumerate(zeilen, 1)
+            if z.strip().startswith("_reg_") and z.strip().endswith("(tree)")]
+    assert _reg, "keine einzige Registrierung wird mehr aufgerufen"
+    z_tree, z_erst = _tree[0], min(_reg)
+    assert z_erst > z_tree, \
+        "eine Registrierung laeuft vor `tree = ...` — das ist ein NameError " \
+        "beim Start, und der ganze Discord-Teil faellt aus"
+    ok("W72: elf Registrierungen auf Modulebene, alle aufgerufen, alle unter 100 Zeilen")
+
+    # --- 4) app_commands steht oben, nicht in der Closure ----------------
+    kopf = src[:src.find("def _reg_")]
+    assert "from discord import app_commands" in kopf, \
+        "app_commands wird nicht mehr auf Modulebene importiert — die " \
+        "`@app_commands.describe(...)` in den Registrier-Funktionen loesen " \
+        "dann gegen nichts auf (25x undefined name)"
+    assert "app_commands = None" in kopf, \
+        "ohne den None-Zweig stirbt der Import des ganzen Moduls, wenn " \
+        "discord.py fehlt — es ist ausdruecklich optional"
+
+    # --- 5) ALLE Befehle sind noch da, auch die 15 dynamischen -----------
+    # Die dekorierten zaehlt tools/ncpatch.py; die 15 aus der _PAR_CMDS-
+    # Schleife sieht es NICHT, weil sie ueber tree.command(...)(...) statt
+    # ueber einen Dekorator registriert werden. Faellt die Schleife weg,
+    # meldet das sonst nichts — deshalb stehen sie hier mit.
+    dek = [d for x in _ast.walk(baum)
+           if isinstance(x, (_ast.FunctionDef, _ast.AsyncFunctionDef))
+           for d in x.decorator_list if "tree.command" in _ast.unparse(d)]
+    assert len(dek) == 45, \
+        "es sind %d statt 45 dekorierte Slash-Commands" % len(dek)
+    par = [n for n in _ast.walk(baum) if isinstance(n, _ast.Assign)
+           and any(isinstance(t, _ast.Name) and t.id == "_PAR_CMDS" for t in n.targets)]
+    assert par, "_PAR_CMDS ist weg — damit fehlen 15 sys_*-Befehle"
+    assert len(par[0].value.elts) == 15, \
+        "_PAR_CMDS hat %d statt 15 Eintraege" % len(par[0].value.elts)
+    assert "tree.command(name=_pname" in src, \
+        "die Schleife registriert die 15 sys_*-Befehle nicht mehr"
+    ok("W72: 45 dekorierte und 15 dynamische Befehle — zusammen 60, alle da")
+
+    # --- 6) _discord_run_once ist wirklich geschrumpft -------------------
+    laenge = lauf.end_lineno - lauf.lineno + 1
+    assert laenge <= 800, \
+        "_discord_run_once ist mit %d Zeilen wieder ueber 800 — der Schnitt " \
+        "aus W72 ist damit zu" % laenge
+    ok("W72: _discord_run_once ist von 1730 (vor W71) auf unter 800 Zeilen")
+
+
 def _test_v42_w71_discord_run_once_geschrumpft():
     """v4.2-W71: die groesste Funktion des Bestands, erster echter Schnitt.
 
@@ -11085,6 +11196,7 @@ def main():
     _test_v42_w69_diagnose_sieht_die_schluessel()
     _test_v42_w70_keine_neue_riesenfunktion()
     _test_v42_w71_discord_run_once_geschrumpft()
+    _test_v42_w72_befehle_haben_eine_registrierung()
     _test_v42_w60_azrael_cooldown_je_plattform()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)

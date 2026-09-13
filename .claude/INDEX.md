@@ -381,60 +381,60 @@ Zahlen sind Zeilennummern für `ncpatch show` / `ncpatch sym`.
 ## Discord-Slash-Commands in discordbot.py (45)
 
 ```
-   691  /ai                     
-  1083  /ask                    
-   782  /assign_role            
-   828  /ban                    
-  1415  /botstats               
-  1339  /clearwarns             
-  1379  /clip                   
-  1364  /clipoftheweek          
-  1206  /clips                  
-   743  /create_category        
-   712  /create_channel         
-   771  /create_group           
-   754  /create_role            
-   728  /create_voice           
-   981  /daily                  
-  1113  /event                  
-  1156  /events                 
-  1252  /follow                 
-  1236  /help                   
-   817  /kick                   
-   963  /leaderboard            
-  1192  /livenow                
-  1222  /post_test              
-  1051  /profile                
-   852  /purge                  
-   949  /rank                   
-  1179  /recstatus              
-   793  /remove_role            
-   705  /restream_status        
-   804  /set_channel_perms      
-   914  /setup_community        
-   932  /setup_targets          
-  1278  /stats                  
-   617  /status                 
-  1574  /streaminfo             
-  1471  /sys_report             
-  1447  /sys_unpause            
-   839  /timeout                
-  1350  /topstreamers           
-   647  /track                  
-   631  /tracklist              
-  1267  /unfollow               
-   680  /untrack                
-  1300  /warn                   
-  1324  /warnings               
+   775  /ai                     
+  1179  /ask                    
+   876  /assign_role            
+   926  /ban                    
+  1697  /botstats               
+  1438  /clearwarns             
+  1661  /clip                   
+  1646  /clipoftheweek          
+  1305  /clips                  
+   831  /create_category        
+   802  /create_channel         
+   866  /create_group           
+   841  /create_role            
+   817  /create_voice           
+  1062  /daily                  
+  1208  /event                  
+  1250  /events                 
+  1348  /follow                 
+  1333  /help                   
+   916  /kick                   
+  1037  /leaderboard            
+  1292  /livenow                
+  1320  /post_test              
+  1140  /profile                
+   948  /purge                  
+  1024  /rank                   
+  1280  /recstatus              
+   886  /remove_role            
+   788  /restream_status        
+   896  /set_channel_perms      
+   991  /setup_community        
+  1008  /setup_targets          
+  1380  /stats                  
+   705  /status                 
+  1509  /streaminfo             
+  1493  /sys_report             
+  1470  /sys_unpause            
+   936  /timeout                
+  1448  /topstreamers           
+   733  /track                  
+   718  /tracklist              
+  1362  /unfollow               
+   765  /untrack                
+  1401  /warn                   
+  1424  /warnings               
 ```
 
 ## Discord-Events in discordbot.py (4)
 
 ```
-  2007  on_member_join
-  1969  on_message
-  1634  on_raw_reaction_add
-  2042  on_ready
+  2147  on_member_join
+  2109  on_message
+  1774  on_raw_reaction_add
+  2182  on_ready
 ```
 
 ## Top-Level-Symbole in telegramversand.py (2 Funktionen)
@@ -444,27 +444,42 @@ Zahlen sind Zeilennummern für `ncpatch show` / `ncpatch sym`.
     76-456    split_and_send_video
 ```
 
-## Top-Level-Symbole in discordbot.py (18 Funktionen)
+## Top-Level-Symbole in discordbot.py (33 Funktionen)
 
 ```
-  2158-2220   _community_events_loop
-  2260-2295   _disc_automod_check
-   383-388    _disc_sprache_setzen
-   516-555    _discord_automod
-   558-2117   _discord_run_once
-   246-304    _discord_start
-   307-360    _ensure_discord_invite
-  2123-2155   _ensure_error_channel
-   404-417    _ensure_rank_roles
-  2223-2253   _error_channel_loop
-   485-513    _handle_voice_ai
-   391-401    _is_admin
-   481-482    _par_chat_id
-   420-446    _provision_base_channels
-   449-465    _provision_user_channels
-   468-478    _tracked_usernames
-   151-225    _uebernehmen
-   228-231    starte
+  2298-2360   _community_events_loop
+  2400-2435   _disc_automod_check
+   395-400    _disc_sprache_setzen
+   528-567    _discord_automod
+  1543-2257   _discord_run_once
+   258-316    _discord_start
+   319-372    _ensure_discord_invite
+  2263-2295   _ensure_error_channel
+   416-429    _ensure_rank_roles
+   664-678    _ensure_team_roles
+  2363-2393   _error_channel_loop
+   577-581    _guard
+   497-525    _handle_voice_ai
+   403-413    _is_admin
+   584-602    _on_level_up
+   493-494    _par_chat_id
+   432-458    _provision_base_channels
+   461-477    _provision_user_channels
+  1272-1369   _reg_betrieb
+   962-1051   _reg_community_setup
+  1054-1129   _reg_daily_profil
+  1172-1269   _reg_frage_events
+   692-790    _reg_info
+   908-959    _reg_moderation
+  1132-1169   _reg_profil
+   857-905    _reg_rollen
+   793-854    _reg_server
+  1372-1459   _reg_streamer
+  1462-1540   _reg_system
+   637-661    _run_tg_handler
+   480-490    _tracked_usernames
+   163-237    _uebernehmen
+   240-243    starte
 ```
 
 ## Top-Level-Symbole in bot.py (481 Funktionen, 2 Klassen)

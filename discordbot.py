@@ -55,8 +55,20 @@ from nc.shield import _sentinel_screen
 # Registrieren, und der GESAMTE Discord-Bot faellt aus.
 try:
     import discord as discord   # noqa: F401 — modulweite Sichtbarkeit fuer Annotationen
+    from discord import app_commands   # noqa: F401
 except Exception:
     discord = None
+    app_commands = None
+# v4.2-W72: app_commands aus demselben Grund wie discord hier oben. Die
+# Befehle stehen jetzt in Registrier-Funktionen auf Modulebene, und deren
+# `@app_commands.describe(...)` wird beim Aufruf im MODUL-Namensraum
+# aufgeloest — vorher war es eine Closure-Variable von _discord_run_once.
+# pyflakes hat den Umzug prompt mit 25x "undefined name 'app_commands'"
+# gemeldet; genau dafuer wurde vorher geprueft, dass es das tut.
+#
+# Fehlt discord.py, bleibt hier None stehen. Das ist gefahrlos: die
+# Dekoratoren laufen erst, wenn eine Registrier-Funktion aufgerufen wird, und
+# dazu kommt es nur, nachdem _discord_run_once den Import geprueft hat.
 
 # Aliase auf nc-Register. Direkt statt ueber den Kontext, weil sie ohnehin
 # bot-frei sind und der Bot sie nie neu bindet — ein Kontextfeld waere hier
@@ -555,62 +567,138 @@ async def _discord_automod(message):
     return False
 
 
-async def _discord_run_once():
-    """EINE Discord-Session. Rueckgabe True = nicht neu versuchen."""
-    if not DISCORD_BOT_TOKEN:
-        log.info("Discord deaktiviert (kein DISCORD_BOT_TOKEN gesetzt).")
+# ---------------------------------------------------------------------------
+# v4.2-W72: Zweite Hebung. Diese sechs wurden erst durch W71 frei — `_guard`
+# etwa haengt nur noch an `_is_admin`, und das steht seit W71 oben. Solche
+# Ketten loesen sich nacheinander, nicht auf einmal: nach jeder Hebung ist
+# neu zu messen, was dadurch frei geworden ist.
+# ---------------------------------------------------------------------------
+
+async def _guard(inter) -> bool:
+    if _is_admin(inter):
         return True
+    await inter.response.send_message(_nc_i18n.t("⛔ Nur Admins (oder konfigurierte Admin-Rolle)."), ephemeral=True)
+    return False
+
+
+async def _on_level_up(message, newlvl):
     try:
-        import discord
-        from discord import app_commands
-    except Exception:
-        log.warning("Discord aktiviert, aber discord.py fehlt — 'pip install discord.py'. Discord übersprungen.")
-        return True
+        rkname = _nc_rang.rang_fuer_level(newlvl)
+        if rkname:
+            roles = await _ensure_rank_roles(message.guild)
+            role = roles.get(rkname)
+            if role and role not in getattr(message.author, "roles", []):
+                old = [discord.utils.get(message.guild.roles, name=n) for _, n, _c in _nc_rang.RANG_STUFEN]
+                old = [r for r in old if r and r != role and r in message.author.roles]
+                try:
+                    if old: await message.author.remove_roles(*old, reason="Rang-Upgrade")
+                    await message.author.add_roles(role, reason=f"Level {newlvl}")
+                except Exception:
+                    pass
+        txt = f"🎉 {message.author.mention} ist jetzt **Level {newlvl}**" + (f" — Rang **{rkname}**!" if rkname else "!")
+        ch = discord.utils.get(message.guild.text_channels, name=DISCORD_LEVELUP_CHANNEL) if DISCORD_LEVELUP_CHANNEL else None
+        await (ch or message.channel).send(_nc_i18n.t(txt))
+    except Exception as e:
+        log.debug("Discord Level-Up: %s", e)
 
-    # B129: Selbstpruefung VOR dem Login. Die beiden folgenden Intents sind
-    # PRIVILEGIERT — sie muessen im Developer Portal ausdruecklich
-    # eingeschaltet sein (Applications -> Bot -> Privileged Gateway Intents).
-    # Sind sie es nicht, verweigert Discord den Login komplett und KEIN
-    # einziger Slash-Command funktioniert. Das ist mit Abstand die haeufigste
-    # Ursache fuer "der Bot reagiert auf gar nichts", und der Fehler war
-    # bisher nur als generische Exception sichtbar.
-    log.info("Discord: fordere privilegierte Intents an (message_content, "
-             "members). Falls der Login mit PrivilegedIntentsRequired "
-             "scheitert, sind sie im Developer Portal nicht aktiviert.")
-    intents = discord.Intents.default()
-    intents.message_content = True
-    intents.members = True
+
+class _ParBot:
+    def __init__(self, sink): self._sink = sink
+    async def send_message(self, chat_id=None, text="", **kw):
+        await self._sink(str(text))
+    async def send_document(self, chat_id=None, document=None, filename=None,
+                            caption=None, **kw):
+        await self._sink(f"[Datei: {filename or 'dokument'}] {caption or ''}".strip())
+    async def send_chat_action(self, *a, **kw): pass
+
+
+# ===================== V37-W-PAR: Telegram-Parität ======================
+# Die restlichen TG-Kommandos laufen über einen Shim, der die ORIGINAL-
+# Handler (pause_tracking, sysres, …) unverändert ausführt: ein Fake-
+# Update/Context sammelt jede reply_text-Ausgabe ein und schickt sie als
+# Interaction-Followup. Eine Logik, null Code-Duplikate — Fixes an den
+# TG-Handlern wirken automatisch auch in Discord.
+class _ParMsg:
+    def __init__(self, sink):
+        self._sink = sink
+        self.text = ""
+        self.message_id = 0
+        self.chat = types.SimpleNamespace(id=_par_chat_id())
+    async def reply_text(self, text, **kw):
+        await self._sink(str(text)); return self
+    reply_html = reply_markdown = reply_markdown_v2 = reply_text
+    async def reply_document(self, document=None, filename=None, caption=None, **kw):
+        await self._sink(f"[Datei: {filename or 'dokument'}] {caption or ''}".strip())
+        return self
+    async def edit_text(self, text, **kw):
+        await self._sink(str(text)); return self
+
+
+async def _run_tg_handler(inter, fn, args_str=""):
+    if not _is_admin(inter):
+        await inter.response.send_message(_nc_i18n.t("Nur Admins."), ephemeral=True); return
+    await inter.response.defer(thinking=True)
+    chunks = []
+    async def _sink(t):
+        chunks.append(t)
+    msg = _ParMsg(_sink)
+    uid = next(iter(ALLOWED_USER_IDS), 0)
+    upd = types.SimpleNamespace(
+        effective_user=types.SimpleNamespace(id=uid, first_name="discord",
+                                             username="discord"),
+        effective_chat=types.SimpleNamespace(id=_par_chat_id()),
+        effective_message=msg, message=msg, callback_query=None)
+    ctx = types.SimpleNamespace(args=(args_str or "").split(),
+                                bot=_ParBot(_sink),
+                                user_data={}, chat_data={}, bot_data={})
     try:
-        intents.moderation = True
-    except Exception:
-        pass
+        await fn(upd, ctx)
+    except Exception as e:
+        chunks.append(f"❌ Handler-Fehler: {type(e).__name__}: {e}")
+    out = "\n\n".join(c for c in chunks if c) or "✅ Ausgeführt (keine Ausgabe)."
+    out = re.sub(r"</?(?:b|i|code|pre|u|s)>", "**", out)     # grobes HTML→MD
+    for i in range(0, len(out), 1900):
+        await inter.followup.send(_nc_i18n.t(out[i:i + 1900]))
 
-    client = discord.Client(intents=intents)
-    tree = app_commands.CommandTree(client)
 
-    # v4.2-W71: _disc_sprache_setzen steht jetzt auf Modulebene (brauchte keine
-    # einzige Closure-Variable).
+async def _ensure_team_roles(guild):
+    """Legt funktionale Rollen mit Rechten+Farbe an (idempotent). Gibt {name: role}."""
+    out = {}
+    for name, color, hoist, perms in _nc_rang.TEAM_ROLLEN:
+        r = discord.utils.get(guild.roles, name=name)
+        if r is None:
+            try:
+                p = discord.Permissions(**perms) if perms else discord.Permissions.none()
+                r = await guild.create_role(name=name, colour=discord.Colour(color),
+                                            hoist=hoist, mentionable=False, permissions=p,
+                                            reason="Azrael Sentinel Community-Setup")
+            except Exception as e:
+                log.warning("Discord: Team-Rolle %s nicht erstellt: %s", name, e); continue
+        out[name] = r
+    return out
 
-    tree.interaction_check = _disc_sprache_setzen
 
-    _nc_discordstate.CLIENT["obj"] = client
-    # F96: ERROR-Logs aller Logger (bot, TikTokBot, Flask) in die Discord-Queue.
-    # Am ROOT-Logger, damit auch Flask-Exceptions (log_exception) mitkommen.
-    if DISCORD_ERROR_PUSH and not getattr(logging.getLogger(), "_nc_errhandler", False):
-        _eh = _DiscordErrorHandler(level=logging.ERROR)
-        _eh.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s:%(lineno)d %(message)s",
-                                           "%d.%m %H:%M:%S"))
-        logging.getLogger().addHandler(_eh)
-        logging.getLogger()._nc_errhandler = True
+# ---------------------------------------------------------------------------
+# v4.2-W72: Registrier-Funktionen. Jede nimmt `tree` und haengt ihre Befehle
+# dort ein. Bewusst mehrere kleine statt einer grossen: eine einzige
+# Sammelfunktion waere mit ueber 600 Zeilen selbst wieder ein Riese gewesen,
+# und tools/monolith.py haette sie zu Recht gemeldet.
+#
+# Die Ruempfe stehen WOERTLICH wie vorher da, ohne eine Zeile Einrueckung zu
+# aendern: innerhalb von _discord_run_once lagen sie eine Ebene tief, hier
+# liegen sie ebenso tief. Das macht den Umzug pruefbar.
+# ---------------------------------------------------------------------------
 
+def _reg_info(tree):
+    """Info und Telegram-Paritaet.
+
+    v4.2-W72: aus _discord_run_once herausgeloest. Diese Befehle brauchen
+    von dort nichts ausser `tree` — gemessen, nicht angenommen.
+    """
     # v4.2-W71: _is_admin steht jetzt auf Modulebene (brauchte keine
     # einzige Closure-Variable).
 
-    async def _guard(inter) -> bool:
-        if _is_admin(inter):
-            return True
-        await inter.response.send_message(_nc_i18n.t("⛔ Nur Admins (oder konfigurierte Admin-Rolle)."), ephemeral=True)
-        return False
+    # v4.2-W72: _guard steht jetzt auf Modulebene.
 
     # ───────── INFO / Telegram-Parität ─────────
     @tree.command(name="status", description=_nc_i18n.t("Azrael Sentinel Status: Trackings, Live, Restream"))
@@ -626,7 +714,6 @@ async def _discord_run_once():
                 _nc_i18n.t(f"**Azrael Sentinel**\n• Trackings: `{at}`   • Live: `{ln}`   • Recordings: `{rc}`\n• Restream: `{rs}`"))
         except Exception as e:
             await inter.response.send_message(_nc_i18n.t(f"Fehler: {e}"), ephemeral=True)
-
     @tree.command(name="tracklist", description=_nc_i18n.t("Getrackte TikTok-User dieses Servers"))
     async def _c_tracklist(inter):
         gid = DISCORD_TRACK_GROUP_ID or (inter.guild_id or 0)   # B63: Schalter wurde ignoriert
@@ -641,7 +728,6 @@ async def _discord_run_once():
             await inter.response.send_message(_nc_i18n.t("**Trackings**\n" + "\n".join(lines[:50])))
         except Exception as e:
             await inter.response.send_message(_nc_i18n.t(f"Fehler: {e}"), ephemeral=True)
-
     @tree.command(name="track", description=_nc_i18n.t("TikTok-User tracken"))
     @app_commands.describe(username="TikTok-Username (ohne @)")
     async def _c_track(inter, username: str):
@@ -674,7 +760,6 @@ async def _discord_run_once():
                         f"(MAX_TRACKINGS_PER_CHAT={MAX_TRACKINGS_PER_CHAT}).", ephemeral=True)
         except Exception as e:
             await inter.response.send_message(_nc_i18n.t(f"Fehler: {e}"), ephemeral=True)
-
     @tree.command(name="untrack", description=_nc_i18n.t("TikTok-User nicht mehr tracken"))
     @app_commands.describe(username="TikTok-Username (ohne @)")
     async def _c_untrack(inter, username: str):
@@ -685,7 +770,6 @@ async def _discord_run_once():
             await inter.response.send_message(_nc_i18n.t(f"🗑 @{u} wird nicht mehr getrackt"))
         except Exception as e:
             await inter.response.send_message(_nc_i18n.t(f"Fehler: {e}"), ephemeral=True)
-
     @tree.command(name="ai", description=_nc_i18n.t("AZRAEL / KI fragen (Text oder Sprachnachricht)"))
     @app_commands.describe(prompt="Deine Frage")
     async def _c_ai(inter, prompt: str):
@@ -700,12 +784,18 @@ async def _discord_run_once():
                 await inter.followup.send(_nc_i18n.t(content[:1900]))
         except Exception as e:
             await inter.followup.send(_nc_i18n.t(f"Fehler: {e}"))
-
     @tree.command(name="restream_status", description=_nc_i18n.t("Restream-Status"))
     async def _c_restream_status(inter):
         act = _restream_active()
         await inter.response.send_message(_nc_i18n.t("Restream: " + (("@" + str(act["user"])) if act.get("user") else "— inaktiv")))
 
+
+def _reg_server(tree):
+    """Server-Verwaltung: Kanaele, Rollen, Rechte (Admin).
+
+    v4.2-W72: aus _discord_run_once herausgeloest. Diese Befehle brauchen
+    von dort nichts ausser `tree` — gemessen, nicht angenommen.
+    """
     # ───────── SERVER-VERWALTUNG (Admin) ─────────
     @tree.command(name="create_channel", description=_nc_i18n.t("Text-Channel anlegen (optional in Kategorie)"))
     @app_commands.describe(name="Channel-Name", category="optional: Kategorie-Name (wird angelegt falls neu)")
@@ -722,7 +812,6 @@ async def _discord_run_once():
                                               + (f" in **{cat.name}**" if cat else ""))
         except Exception as e:
             await inter.response.send_message(_nc_i18n.t(f"Fehler: {e}"), ephemeral=True)
-
     @tree.command(name="create_voice", description=_nc_i18n.t("Voice-Channel anlegen"))
     @app_commands.describe(name="Name", category="optional: Kategorie")
     async def _c_create_voice(inter, name: str, category: str = None):
@@ -737,7 +826,6 @@ async def _discord_run_once():
             await inter.response.send_message(_nc_i18n.t(f"✅ Voice-Channel **{ch.name}** angelegt"))
         except Exception as e:
             await inter.response.send_message(_nc_i18n.t(f"Fehler: {e}"), ephemeral=True)
-
     @tree.command(name="create_category", description=_nc_i18n.t("Kategorie anlegen"))
     @app_commands.describe(name="Kategorie-Name")
     async def _c_create_category(inter, name: str):
@@ -748,7 +836,6 @@ async def _discord_run_once():
             await inter.response.send_message(_nc_i18n.t(f"✅ Kategorie **{cat.name}** angelegt"))
         except Exception as e:
             await inter.response.send_message(_nc_i18n.t(f"Fehler: {e}"), ephemeral=True)
-
     @tree.command(name="create_role", description=_nc_i18n.t("Rolle / Nutzergruppe anlegen"))
     @app_commands.describe(name="Rollenname", color="optional: Hex (z.B. 00ff9c)", mentionable="erwähnbar?")
     async def _c_create_role(inter, name: str, color: str = None, mentionable: bool = True):
@@ -766,6 +853,14 @@ async def _discord_run_once():
         except Exception as e:
             await inter.response.send_message(_nc_i18n.t(f"Fehler: {e}"), ephemeral=True)
 
+
+def _reg_rollen(tree):
+    """Rollen, Gruppen und Kanalrechte (Admin).
+
+    v4.2-W72: aus _reg_server herausgeteilt. Nicht aus Ordnungsliebe: die
+    Sammelfunktion war mit ueber 100 Zeilen selbst wieder ein Fall fuer
+    tools/monolith.py, und die Sperre hat das gemeldet.
+    """
     @tree.command(name="create_group", description=_nc_i18n.t("Nutzergruppe (= Rolle) anlegen"))
     @app_commands.describe(name="Gruppenname")
     async def _c_create_group(inter, name: str):
@@ -776,7 +871,6 @@ async def _discord_run_once():
             await inter.response.send_message(_nc_i18n.t(f"✅ Gruppe {role.mention} angelegt"))
         except Exception as e:
             await inter.response.send_message(_nc_i18n.t(f"Fehler: {e}"), ephemeral=True)
-
     @tree.command(name="assign_role", description=_nc_i18n.t("Rolle/Gruppe einem Mitglied geben"))
     @app_commands.describe(member="Mitglied", role="Rolle/Gruppe")
     async def _c_assign_role(inter, member: discord.Member, role: discord.Role):
@@ -787,7 +881,6 @@ async def _discord_run_once():
             await inter.response.send_message(_nc_i18n.t(f"✅ {member.mention} → {role.mention}"))
         except Exception as e:
             await inter.response.send_message(_nc_i18n.t(f"Fehler: {e}"), ephemeral=True)
-
     @tree.command(name="remove_role", description=_nc_i18n.t("Rolle/Gruppe entfernen"))
     @app_commands.describe(member="Mitglied", role="Rolle/Gruppe")
     async def _c_remove_role(inter, member: discord.Member, role: discord.Role):
@@ -798,7 +891,6 @@ async def _discord_run_once():
             await inter.response.send_message(_nc_i18n.t(f"✅ {role.mention} von {member.mention} entfernt"))
         except Exception as e:
             await inter.response.send_message(_nc_i18n.t(f"Fehler: {e}"), ephemeral=True)
-
     @tree.command(name="set_channel_perms", description=_nc_i18n.t("Rechte einer Rolle für einen Channel setzen"))
     @app_commands.describe(channel="Channel", role="Rolle", view="ansehen", send="schreiben")
     async def _c_set_perms(inter, channel: discord.TextChannel, role: discord.Role,
@@ -812,6 +904,13 @@ async def _discord_run_once():
         except Exception as e:
             await inter.response.send_message(_nc_i18n.t(f"Fehler: {e}"), ephemeral=True)
 
+
+def _reg_moderation(tree):
+    """Moderation am Discord-Server selbst.
+
+    v4.2-W72: aus _discord_run_once herausgeloest. Diese Befehle brauchen
+    von dort nichts ausser `tree` — gemessen, nicht angenommen.
+    """
     @tree.command(name="kick", description=_nc_i18n.t("Mitglied kicken"))
     @app_commands.describe(member="Mitglied", reason="Grund (optional)")
     async def _c_kick(inter, member: discord.Member, reason: str = None):
@@ -822,7 +921,6 @@ async def _discord_run_once():
             await inter.response.send_message(_nc_i18n.t(f"👢 {member} gekickt" + (f" — {reason}" if reason else "")))
         except Exception as e:
             await inter.response.send_message(_nc_i18n.t(f"Fehler: {e}"), ephemeral=True)
-
     @tree.command(name="ban", description=_nc_i18n.t("Mitglied bannen"))
     @app_commands.describe(member="Mitglied", reason="Grund (optional)")
     async def _c_ban(inter, member: discord.Member, reason: str = None):
@@ -833,7 +931,6 @@ async def _discord_run_once():
             await inter.response.send_message(_nc_i18n.t(f"🔨 {member} gebannt" + (f" — {reason}" if reason else "")))
         except Exception as e:
             await inter.response.send_message(_nc_i18n.t(f"Fehler: {e}"), ephemeral=True)
-
     @tree.command(name="timeout", description=_nc_i18n.t("Mitglied stummschalten (Minuten)"))
     @app_commands.describe(member="Mitglied", minutes="Minuten", reason="Grund (optional)")
     async def _c_timeout(inter, member: discord.Member, minutes: int, reason: str = None):
@@ -846,7 +943,6 @@ async def _discord_run_once():
             await inter.response.send_message(_nc_i18n.t(f"🔇 {member} für {minutes} min stummgeschaltet"))
         except Exception as e:
             await inter.response.send_message(_nc_i18n.t(f"Fehler: {e}"), ephemeral=True)
-
     @tree.command(name="purge", description=_nc_i18n.t("Letzte N Nachrichten im Channel löschen (max 100)"))
     @app_commands.describe(count="Anzahl")
     async def _c_purge(inter, count: int):
@@ -862,6 +958,13 @@ async def _discord_run_once():
             except Exception:
                 pass
 
+
+def _reg_community_setup(tree):
+    """Community-Einrichtung und Rangliste.
+
+    v4.2-W72: aus _discord_run_once herausgeloest. Diese Befehle brauchen
+    von dort nichts ausser `tree` — gemessen, nicht angenommen.
+    """
     # ───────── COMMUNITY-SETUP: Ranking, Channels, Rechte, Target-Channels ─────────
     # Rang-Tiers: (min_level, Rollenname, Farbe). Reihenfolge niedrig→hoch (Cyberpunk).
     # v4.2-W71: Rang-Stufen, XP-Kurve und der Kanal-Slug stehen jetzt in
@@ -871,35 +974,9 @@ async def _discord_run_once():
     # v4.2-W71: _ensure_rank_roles steht jetzt auf Modulebene (brauchte keine
     # einzige Closure-Variable).
 
-    # Funktionale Rollen mit Rechten + Farben (zusätzlich zu den Rang-Rollen).
-    # (Name, Farbe, hoist=getrennt anzeigen, {Permission: True})
-    TEAM_ROLES = [
-        ("👑 Owner",     0xff2e88, True,  {"administrator": True}),
-        ("🛡 Moderator", 0xffb000, True,  {"kick_members": True, "ban_members": True,
-                                           "manage_messages": True, "moderate_members": True,
-                                           "manage_nicknames": True, "mute_members": True,
-                                           "deafen_members": True, "move_members": True}),
-        ("🎬 Streamer",  0x00ff9c, True,  {"priority_speaker": True, "stream": True}),
-        ("⭐ VIP",        0x00e5ff, True,  {}),
-        ("🤖 Bot",        0x8892a0, False, {}),
-        ("👤 Member",     0x5a6472, False, {}),
-    ]
+    # v4.2-W72: TEAM_ROLLEN steht jetzt in nc/discordrang.py — reine Daten.
 
-    async def _ensure_team_roles(guild):
-        """Legt funktionale Rollen mit Rechten+Farbe an (idempotent). Gibt {name: role}."""
-        out = {}
-        for name, color, hoist, perms in TEAM_ROLES:
-            r = discord.utils.get(guild.roles, name=name)
-            if r is None:
-                try:
-                    p = discord.Permissions(**perms) if perms else discord.Permissions.none()
-                    r = await guild.create_role(name=name, colour=discord.Colour(color),
-                                                hoist=hoist, mentionable=False, permissions=p,
-                                                reason="Azrael Sentinel Community-Setup")
-                except Exception as e:
-                    log.warning("Discord: Team-Rolle %s nicht erstellt: %s", name, e); continue
-            out[name] = r
-        return out
+    # v4.2-W72: _ensure_team_roles steht jetzt auf Modulebene.
 
     # v4.2-W71: _provision_base_channels steht jetzt auf Modulebene (brauchte keine
     # einzige Closure-Variable).
@@ -927,7 +1004,6 @@ async def _discord_run_once():
                 ephemeral=True)
         except Exception as e:
             await inter.followup.send(_nc_i18n.t(f"Fehler: {e}"), ephemeral=True)
-
     @tree.command(name="setup_targets", description=_nc_i18n.t("Pro getracktem User: Clips-, Chat- und Voice-Channel anlegen"))
     async def _c_setup_targets(inter):
         if not await _guard(inter):
@@ -944,7 +1020,6 @@ async def _discord_run_once():
                 ephemeral=True)
         except Exception as e:
             await inter.followup.send(_nc_i18n.t(f"Fehler: {e}"), ephemeral=True)
-
     @tree.command(name="rank", description=_nc_i18n.t("Dein Level und Rang anzeigen"))
     async def _c_rank(inter):
         try:
@@ -958,7 +1033,6 @@ async def _discord_run_once():
                 f"XP: {xp} / {need} (nächstes Level)", ephemeral=True)
         except Exception as e:
             await inter.response.send_message(_nc_i18n.t(f"Fehler: {e}"), ephemeral=True)
-
     @tree.command(name="leaderboard", description=_nc_i18n.t("Top-10 der Community nach XP"))
     async def _c_leaderboard(inter):
         try:
@@ -976,6 +1050,13 @@ async def _discord_run_once():
         except Exception as e:
             await inter.response.send_message(_nc_i18n.t(f"Fehler: {e}"), ephemeral=True)
 
+
+def _reg_daily_profil(tree):
+    """Taegliche Streak und Profilkarte.
+
+    v4.2-W72: aus _discord_run_once herausgeloest. Diese Befehle brauchen
+    von dort nichts ausser `tree` — gemessen, nicht angenommen.
+    """
     # ───────── F102: COMMUNITY — Daily-Streak, Profil, AZRAEL-Q&A, Events ─────────
     @tree.command(name="daily", description=_nc_i18n.t("Tägliche XP-Belohnung abholen (Streak-Bonus!)"))
     async def _c_daily(inter):
@@ -1047,6 +1128,14 @@ async def _discord_run_once():
         except Exception as e:
             await inter.response.send_message(_nc_i18n.t(f"Fehler: {e}"), ephemeral=True)
 
+
+def _reg_profil(tree):
+    """Profilkarte.
+
+    v4.2-W72: aus _reg_daily_profil herausgeteilt. Nicht aus Ordnungsliebe: die
+    Sammelfunktion war mit ueber 100 Zeilen selbst wieder ein Fall fuer
+    tools/monolith.py, und die Sperre hat das gemeldet.
+    """
     @tree.command(name="profile", description=_nc_i18n.t("Dein Community-Profil: Level, Rang, Streak, Rang-Platz"))
     async def _c_profile(inter, member: discord.Member = None):
         try:
@@ -1079,6 +1168,13 @@ async def _discord_run_once():
         except Exception as e:
             await inter.response.send_message(_nc_i18n.t(f"Fehler: {e}"), ephemeral=True)
 
+
+def _reg_frage_events(tree):
+    """AZRAEL-Fragen und Termine.
+
+    v4.2-W72: aus _discord_run_once herausgeloest. Diese Befehle brauchen
+    von dort nichts ausser `tree` — gemessen, nicht angenommen.
+    """
     @tree.command(name="ask", description=_nc_i18n.t("AZRAEL etwas fragen — der KI-Community-Assistent"))
     async def _c_ask(inter, frage: str):
         await inter.response.defer()
@@ -1108,7 +1204,6 @@ async def _discord_run_once():
             await inter.followup.send(embed=emb)
         except Exception as e:
             await inter.followup.send(_nc_i18n.t(f"Fehler: {e}"))
-
     @tree.command(name="event", description=_nc_i18n.t("Community-Event ankündigen (Admin) — mit Countdown"))
     async def _c_event(inter, titel: str, wann: str, beschreibung: str = ""):
         if not await _guard(inter):
@@ -1151,7 +1246,6 @@ async def _discord_run_once():
                 await inter.response.send_message(embed=emb)
         except Exception as e:
             await inter.response.send_message(_nc_i18n.t(f"Fehler: {e}"), ephemeral=True)
-
     @tree.command(name="events", description=_nc_i18n.t("Kommende Community-Events anzeigen"))
     async def _c_events(inter):
         try:
@@ -1174,6 +1268,13 @@ async def _discord_run_once():
         except Exception as e:
             await inter.response.send_message(_nc_i18n.t(f"Fehler: {e}"), ephemeral=True)
 
+
+def _reg_betrieb(tree):
+    """Betriebsauskunft und Benachrichtigungen.
+
+    v4.2-W72: aus _discord_run_once herausgeloest. Diese Befehle brauchen
+    von dort nichts ausser `tree` — gemessen, nicht angenommen.
+    """
     # ───────── BOT-STEUERUNG: recstatus (track/untrack/tracklist/ai existieren bereits oben) ─────────
     @tree.command(name="recstatus", description=_nc_i18n.t("Aktuell laufende Aufnahmen"))
     async def _c_recstatus(inter):
@@ -1187,7 +1288,6 @@ async def _discord_run_once():
             await inter.response.send_message(_nc_i18n.t(f"**Aktive Aufnahmen ({len(rows)})**\n" + "\n".join(lines[:40])))
         except Exception as e:
             await inter.response.send_message(_nc_i18n.t(f"Fehler: {e}"), ephemeral=True)
-
     @tree.command(name="livenow", description=_nc_i18n.t("Welche getrackten User sind gerade live"))
     async def _c_livenow(inter):
         try:
@@ -1200,7 +1300,6 @@ async def _discord_run_once():
             await inter.response.send_message(_nc_i18n.t(f"**Live jetzt ({len(rows)})**\n" + "\n".join(lines[:40])))
         except Exception as e:
             await inter.response.send_message(_nc_i18n.t(f"Fehler: {e}"), ephemeral=True)
-
     @tree.command(name="clips", description=_nc_i18n.t("Letzte Highlight-Clips eines Users"))
     @app_commands.describe(username="TikTok-Username")
     async def _c_clips(inter, username: str):
@@ -1216,7 +1315,6 @@ async def _discord_run_once():
             await inter.response.send_message(_nc_i18n.t(f"**Clips @{username.lstrip('@')} ({len(files)})**\n" + "\n".join(lines)))
         except Exception as e:
             await inter.response.send_message(_nc_i18n.t(f"Fehler: {e}"), ephemeral=True)
-
     @tree.command(name="post_test", description=_nc_i18n.t("Test: Nachricht in den Channel eines getrackten Users posten"))
     @app_commands.describe(username="TikTok-Username")
     async def _c_post_test(inter, username: str):
@@ -1231,7 +1329,6 @@ async def _discord_run_once():
                 ephemeral=True)
         except Exception as e:
             await inter.followup.send(_nc_i18n.t(f"Fehler: {e}"), ephemeral=True)
-
     @tree.command(name="help", description=_nc_i18n.t("Alle Bot-Befehle anzeigen"))
     async def _c_help(inter):
         await inter.response.send_message(
@@ -1246,7 +1343,6 @@ async def _discord_run_once():
             "**Setup (Admin):** `/setup_community` `/setup_targets` `/post_test`\n"
             "**Server (Admin):** `/create_channel` `/create_voice` `/create_category` `/create_role`",
             ephemeral=True)
-
     @tree.command(name="follow", description=_nc_i18n.t("Bei Live-Gang eines Streamers gepingt werden"))
     @app_commands.describe(username="TikTok-Username")
     async def _c_follow(inter, username: str):
@@ -1261,7 +1357,6 @@ async def _discord_run_once():
             await inter.response.send_message(_nc_i18n.t(f"🔔 Du wirst gepingt wenn **@{u}** live geht."), ephemeral=True)
         except Exception as e:
             await inter.response.send_message(_nc_i18n.t(f"Fehler: {e}"), ephemeral=True)
-
     @tree.command(name="unfollow", description=_nc_i18n.t("Live-Pings für einen Streamer abbestellen"))
     @app_commands.describe(username="TikTok-Username")
     async def _c_unfollow(inter, username: str):
@@ -1273,6 +1368,13 @@ async def _discord_run_once():
         except Exception as e:
             await inter.response.send_message(_nc_i18n.t(f"Fehler: {e}"), ephemeral=True)
 
+
+def _reg_streamer(tree):
+    """Streamer-Zahlen und Verwarnungen.
+
+    v4.2-W72: aus _discord_run_once herausgeloest. Diese Befehle brauchen
+    von dort nichts ausser `tree` — gemessen, nicht angenommen.
+    """
     @tree.command(name="stats", description=_nc_i18n.t("Statistik zu einem getrackten Streamer"))
     @app_commands.describe(username="TikTok-Username")
     async def _c_stats(inter, username: str):
@@ -1294,7 +1396,6 @@ async def _discord_run_once():
             await inter.response.send_message(_nc_i18n.t("\n".join(lines)))
         except Exception as e:
             await inter.response.send_message(_nc_i18n.t(f"Fehler: {e}"), ephemeral=True)
-
     @tree.command(name="warn", description=_nc_i18n.t("Mitglied verwarnen (eskaliert ab 3 Verwarnungen zu Timeout)"))
     @app_commands.describe(member="Mitglied", reason="Grund")
     async def _c_warn(inter, member: discord.Member, reason: str = "kein Grund"):
@@ -1318,7 +1419,6 @@ async def _discord_run_once():
             await inter.response.send_message(_nc_i18n.t(msg))
         except Exception as e:
             await inter.response.send_message(_nc_i18n.t(f"Fehler: {e}"), ephemeral=True)
-
     @tree.command(name="warnings", description=_nc_i18n.t("Verwarnungen eines Mitglieds anzeigen"))
     @app_commands.describe(member="Mitglied")
     async def _c_warnings(inter, member: discord.Member):
@@ -1333,7 +1433,6 @@ async def _discord_run_once():
             await inter.response.send_message(_nc_i18n.t(f"⚠️ **{member.display_name}** ({len(rows)})\n" + "\n".join(lines)), ephemeral=True)
         except Exception as e:
             await inter.response.send_message(_nc_i18n.t(f"Fehler: {e}"), ephemeral=True)
-
     @tree.command(name="clearwarns", description=_nc_i18n.t("Alle Verwarnungen eines Mitglieds löschen"))
     @app_commands.describe(member="Mitglied")
     async def _c_clearwarns(inter, member: discord.Member):
@@ -1345,7 +1444,6 @@ async def _discord_run_once():
             await inter.response.send_message(_nc_i18n.t(f"🧹 Verwarnungen von {member.mention} gelöscht."))
         except Exception as e:
             await inter.response.send_message(_nc_i18n.t(f"Fehler: {e}"), ephemeral=True)
-
     @tree.command(name="topstreamers", description=_nc_i18n.t("Rangliste der Streamer nach Aufnahmen"))
     async def _c_topstreamers(inter):
         try:
@@ -1359,6 +1457,190 @@ async def _discord_run_once():
             await inter.response.send_message(_nc_i18n.t("🏆 **Top-Streamer**\n" + "\n".join(lines)))
         except Exception as e:
             await inter.response.send_message(_nc_i18n.t(f"Fehler: {e}"), ephemeral=True)
+
+
+def _reg_system(tree):
+    """Systembefehle und Streamer-Kompaktkarte.
+
+    v4.2-W72: aus _discord_run_once herausgeloest. Diese Befehle brauchen
+    von dort nichts ausser `tree` — gemessen, nicht angenommen.
+    """
+    @tree.command(name="sys_unpause", description=_nc_i18n.t("Auto-pausierte Quelle wieder aktivieren (Admin)"))
+    @app_commands.describe(username="TikTok-Username der pausierten Quelle")
+    async def _c_sys_unpause(inter, username: str):
+        if not _is_admin(inter):
+            await inter.response.send_message(_nc_i18n.t("Nur Admins."), ephemeral=True); return
+        await inter.response.defer(thinking=True)
+        u = username.strip().lstrip("@")
+        try:
+            with db_conn() as conn:
+                cur = conn.execute("UPDATE trackings SET paused=0 WHERE "
+                                   "username=? AND paused=1", (u,))
+                conn.commit(); n = cur.rowcount
+            try:
+                from brain import get_brain as _gb
+                _b = _gb()
+                with _b._db_lock, _b._conn() as _c:
+                    _c.execute("DELETE FROM paused_sources WHERE who=? OR who=?",
+                               (u, "@" + u))
+            except Exception:
+                pass
+            await inter.followup.send(f"✅ @{u} reaktiviert." if n else
+                                      f"@{u} war nicht pausiert.")
+        except Exception as e:
+            await inter.followup.send(_nc_i18n.t(f"❌ Fehler: {e}"))
+    @tree.command(name="sys_report", description=_nc_i18n.t("Azrael Sentinel Wochenreport (Brain, Markdown)"))
+    async def _c_sys_report(inter):
+        if not _is_admin(inter):
+            await inter.response.send_message(_nc_i18n.t("Nur Admins."), ephemeral=True); return
+        await inter.response.defer(thinking=True)
+        try:
+            from brain import get_brain
+            from brain import report as _brain_report
+            md = await asyncio.to_thread(_brain_report.weekly, get_brain())
+        except Exception as e:
+            await inter.followup.send(_nc_i18n.t(f"❌ Report fehlgeschlagen: {e}")); return
+        for i in range(0, len(md), 1900):
+            await inter.followup.send(_nc_i18n.t(md[i:i + 1900]))
+    # =================== ENDE V37-W-PAR ======================================
+
+    @tree.command(name="streaminfo", description=_nc_i18n.t("Kompakt-Karte eines Streamers: Aktivität, Aufnahmen, Follower-Trend"))
+    @app_commands.describe(username="TikTok-Username")
+    async def _c_streaminfo(inter, username: str):
+        u = username.strip().lstrip("@")
+        try:
+            with db_conn() as conn:
+                agg = conn.execute("SELECT COUNT(*) AS n, MAX(created_at) AS last, "
+                                   "AVG(duration_secs) AS avgd FROM recordings WHERE username=?",
+                                   (u,)).fetchone()
+                month_ago = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
+                snaps = conn.execute("SELECT follower_count, captured_at FROM profile_snapshots "
+                                     "WHERE username=? AND captured_at >= ? ORDER BY captured_at",
+                                     (u, month_ago)).fetchall()
+                is_live = conn.execute("SELECT COUNT(*) AS c FROM trackings WHERE username=? AND last_live=1",
+                                       (u,)).fetchone()["c"] > 0
+            emb = discord.Embed(title=f"📊 @{u}",
+                                url=f"https://www.tiktok.com/@{u}",
+                                colour=discord.Colour(0xFF2E88 if is_live else 0x00E5FF))
+            emb.add_field(name="Status", value=("🔴 LIVE" if is_live else "⚫ offline"), inline=True)
+            emb.add_field(name="Aufnahmen", value=str(agg["n"] if agg else 0), inline=True)
+            if agg and agg["avgd"]:
+                emb.add_field(name="Ø Dauer", value=f"{int(agg['avgd'] // 60)} min", inline=True)
+            if agg and agg["last"]:
+                emb.add_field(name="Zuletzt gesehen", value=str(agg["last"])[:16].replace("T", " "), inline=True)
+            if len(snaps) >= 2 and snaps[0]["follower_count"] and snaps[-1]["follower_count"]:
+                diff = int(snaps[-1]["follower_count"]) - int(snaps[0]["follower_count"])
+                emb.add_field(name="Follower 30d",
+                              value=f"{snaps[-1]['follower_count']:,} ({'+' if diff >= 0 else ''}{diff:,})".replace(",", "."),
+                              inline=True)
+            emb.set_footer(text="Azrael Sentinel")
+            emb.timestamp = datetime.now(timezone.utc)
+            await inter.response.send_message(embed=emb)
+        except Exception as e:
+            await inter.response.send_message(_nc_i18n.t(f"Fehler: {e}"), ephemeral=True)
+
+
+async def _discord_run_once():
+    """EINE Discord-Session. Rueckgabe True = nicht neu versuchen."""
+    if not DISCORD_BOT_TOKEN:
+        log.info("Discord deaktiviert (kein DISCORD_BOT_TOKEN gesetzt).")
+        return True
+    try:
+        import discord
+        from discord import app_commands
+    except Exception:
+        log.warning("Discord aktiviert, aber discord.py fehlt — 'pip install discord.py'. Discord übersprungen.")
+        return True
+
+    # B129: Selbstpruefung VOR dem Login. Die beiden folgenden Intents sind
+    # PRIVILEGIERT — sie muessen im Developer Portal ausdruecklich
+    # eingeschaltet sein (Applications -> Bot -> Privileged Gateway Intents).
+    # Sind sie es nicht, verweigert Discord den Login komplett und KEIN
+    # einziger Slash-Command funktioniert. Das ist mit Abstand die haeufigste
+    # Ursache fuer "der Bot reagiert auf gar nichts", und der Fehler war
+    # bisher nur als generische Exception sichtbar.
+    log.info("Discord: fordere privilegierte Intents an (message_content, "
+             "members). Falls der Login mit PrivilegedIntentsRequired "
+             "scheitert, sind sie im Developer Portal nicht aktiviert.")
+    intents = discord.Intents.default()
+    intents.message_content = True
+    intents.members = True
+    try:
+        intents.moderation = True
+    except Exception:
+        pass
+
+    client = discord.Client(intents=intents)
+    tree = app_commands.CommandTree(client)
+
+    # v4.2-W71: _disc_sprache_setzen steht jetzt auf Modulebene (brauchte keine
+    # einzige Closure-Variable).
+
+    tree.interaction_check = _disc_sprache_setzen
+
+    _nc_discordstate.CLIENT["obj"] = client
+    # F96: ERROR-Logs aller Logger (bot, TikTokBot, Flask) in die Discord-Queue.
+    # Am ROOT-Logger, damit auch Flask-Exceptions (log_exception) mitkommen.
+    if DISCORD_ERROR_PUSH and not getattr(logging.getLogger(), "_nc_errhandler", False):
+        _eh = _DiscordErrorHandler(level=logging.ERROR)
+        _eh.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s:%(lineno)d %(message)s",
+                                           "%d.%m %H:%M:%S"))
+        logging.getLogger().addHandler(_eh)
+        logging.getLogger()._nc_errhandler = True
+
+    # v4.2-W72: Die 42 Commands, die nur `tree` brauchen, stehen jetzt in
+    # eigenen Registrier-Funktionen auf Modulebene. Drei bleiben unten:
+    # sie haengen an Sitzungszustand (client, _disc_clip_last) oder an
+    # einer Funktion, die selbst client braucht.
+    _reg_info(tree)
+    _reg_server(tree)
+    _reg_rollen(tree)
+    _reg_moderation(tree)
+    _reg_community_setup(tree)
+    _reg_daily_profil(tree)
+    _reg_profil(tree)
+    _reg_frage_events(tree)
+    _reg_betrieb(tree)
+    _reg_streamer(tree)
+    _reg_system(tree)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
     @tree.command(name="clipoftheweek", description=_nc_i18n.t("Aktuell führender Clip-of-the-Week (⭐-Voting)"))
     async def _c_cotw(inter):
@@ -1442,103 +1724,16 @@ async def _discord_run_once():
         except Exception as e:
             await inter.response.send_message(_nc_i18n.t(f"Fehler: {e}"), ephemeral=True)
 
-    @tree.command(name="sys_unpause", description=_nc_i18n.t("Auto-pausierte Quelle wieder aktivieren (Admin)"))
-    @app_commands.describe(username="TikTok-Username der pausierten Quelle")
-    async def _c_sys_unpause(inter, username: str):
-        if not _is_admin(inter):
-            await inter.response.send_message(_nc_i18n.t("Nur Admins."), ephemeral=True); return
-        await inter.response.defer(thinking=True)
-        u = username.strip().lstrip("@")
-        try:
-            with db_conn() as conn:
-                cur = conn.execute("UPDATE trackings SET paused=0 WHERE "
-                                   "username=? AND paused=1", (u,))
-                conn.commit(); n = cur.rowcount
-            try:
-                from brain import get_brain as _gb
-                _b = _gb()
-                with _b._db_lock, _b._conn() as _c:
-                    _c.execute("DELETE FROM paused_sources WHERE who=? OR who=?",
-                               (u, "@" + u))
-            except Exception:
-                pass
-            await inter.followup.send(f"✅ @{u} reaktiviert." if n else
-                                      f"@{u} war nicht pausiert.")
-        except Exception as e:
-            await inter.followup.send(_nc_i18n.t(f"❌ Fehler: {e}"))
 
-    @tree.command(name="sys_report", description=_nc_i18n.t("Azrael Sentinel Wochenreport (Brain, Markdown)"))
-    async def _c_sys_report(inter):
-        if not _is_admin(inter):
-            await inter.response.send_message(_nc_i18n.t("Nur Admins."), ephemeral=True); return
-        await inter.response.defer(thinking=True)
-        try:
-            from brain import get_brain
-            from brain import report as _brain_report
-            md = await asyncio.to_thread(_brain_report.weekly, get_brain())
-        except Exception as e:
-            await inter.followup.send(_nc_i18n.t(f"❌ Report fehlgeschlagen: {e}")); return
-        for i in range(0, len(md), 1900):
-            await inter.followup.send(_nc_i18n.t(md[i:i + 1900]))
 
-    # ===================== V37-W-PAR: Telegram-Parität ======================
-    # Die restlichen TG-Kommandos laufen über einen Shim, der die ORIGINAL-
-    # Handler (pause_tracking, sysres, …) unverändert ausführt: ein Fake-
-    # Update/Context sammelt jede reply_text-Ausgabe ein und schickt sie als
-    # Interaction-Followup. Eine Logik, null Code-Duplikate — Fixes an den
-    # TG-Handlern wirken automatisch auch in Discord.
-    class _ParMsg:
-        def __init__(self, sink):
-            self._sink = sink
-            self.text = ""
-            self.message_id = 0
-            self.chat = types.SimpleNamespace(id=_par_chat_id())
-        async def reply_text(self, text, **kw):
-            await self._sink(str(text)); return self
-        reply_html = reply_markdown = reply_markdown_v2 = reply_text
-        async def reply_document(self, document=None, filename=None, caption=None, **kw):
-            await self._sink(f"[Datei: {filename or 'dokument'}] {caption or ''}".strip())
-            return self
-        async def edit_text(self, text, **kw):
-            await self._sink(str(text)); return self
+    # v4.2-W72: _ParMsg steht jetzt auf Modulebene.
 
     # v4.2-W71: _par_chat_id steht jetzt auf Modulebene (brauchte keine
     # einzige Closure-Variable).
 
-    class _ParBot:
-        def __init__(self, sink): self._sink = sink
-        async def send_message(self, chat_id=None, text="", **kw):
-            await self._sink(str(text))
-        async def send_document(self, chat_id=None, document=None, filename=None,
-                                caption=None, **kw):
-            await self._sink(f"[Datei: {filename or 'dokument'}] {caption or ''}".strip())
-        async def send_chat_action(self, *a, **kw): pass
+    # v4.2-W72: _ParBot steht jetzt auf Modulebene.
 
-    async def _run_tg_handler(inter, fn, args_str=""):
-        if not _is_admin(inter):
-            await inter.response.send_message(_nc_i18n.t("Nur Admins."), ephemeral=True); return
-        await inter.response.defer(thinking=True)
-        chunks = []
-        async def _sink(t):
-            chunks.append(t)
-        msg = _ParMsg(_sink)
-        uid = next(iter(ALLOWED_USER_IDS), 0)
-        upd = types.SimpleNamespace(
-            effective_user=types.SimpleNamespace(id=uid, first_name="discord",
-                                                 username="discord"),
-            effective_chat=types.SimpleNamespace(id=_par_chat_id()),
-            effective_message=msg, message=msg, callback_query=None)
-        ctx = types.SimpleNamespace(args=(args_str or "").split(),
-                                    bot=_ParBot(_sink),
-                                    user_data={}, chat_data={}, bot_data={})
-        try:
-            await fn(upd, ctx)
-        except Exception as e:
-            chunks.append(f"❌ Handler-Fehler: {type(e).__name__}: {e}")
-        out = "\n\n".join(c for c in chunks if c) or "✅ Ausgeführt (keine Ausgabe)."
-        out = re.sub(r"</?(?:b|i|code|pre|u|s)>", "**", out)     # grobes HTML→MD
-        for i in range(0, len(out), 1900):
-            await inter.followup.send(_nc_i18n.t(out[i:i + 1900]))
+    # v4.2-W72: _run_tg_handler steht jetzt auf Modulebene.
 
     _PAR_CMDS = (
         ("sys_pause",    "Tracking pausieren (TG: /pause @user)",        pause_tracking,  True),
@@ -1567,65 +1762,11 @@ async def _discord_run_once():
                     await _run_tg_handler(inter, fn)
             return _h
         tree.command(name=_pname, description=_pdesc[:100])(_mk())
-    # =================== ENDE V37-W-PAR ======================================
-
-    @tree.command(name="streaminfo", description=_nc_i18n.t("Kompakt-Karte eines Streamers: Aktivität, Aufnahmen, Follower-Trend"))
-    @app_commands.describe(username="TikTok-Username")
-    async def _c_streaminfo(inter, username: str):
-        u = username.strip().lstrip("@")
-        try:
-            with db_conn() as conn:
-                agg = conn.execute("SELECT COUNT(*) AS n, MAX(created_at) AS last, "
-                                   "AVG(duration_secs) AS avgd FROM recordings WHERE username=?",
-                                   (u,)).fetchone()
-                month_ago = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
-                snaps = conn.execute("SELECT follower_count, captured_at FROM profile_snapshots "
-                                     "WHERE username=? AND captured_at >= ? ORDER BY captured_at",
-                                     (u, month_ago)).fetchall()
-                is_live = conn.execute("SELECT COUNT(*) AS c FROM trackings WHERE username=? AND last_live=1",
-                                       (u,)).fetchone()["c"] > 0
-            emb = discord.Embed(title=f"📊 @{u}",
-                                url=f"https://www.tiktok.com/@{u}",
-                                colour=discord.Colour(0xFF2E88 if is_live else 0x00E5FF))
-            emb.add_field(name="Status", value=("🔴 LIVE" if is_live else "⚫ offline"), inline=True)
-            emb.add_field(name="Aufnahmen", value=str(agg["n"] if agg else 0), inline=True)
-            if agg and agg["avgd"]:
-                emb.add_field(name="Ø Dauer", value=f"{int(agg['avgd'] // 60)} min", inline=True)
-            if agg and agg["last"]:
-                emb.add_field(name="Zuletzt gesehen", value=str(agg["last"])[:16].replace("T", " "), inline=True)
-            if len(snaps) >= 2 and snaps[0]["follower_count"] and snaps[-1]["follower_count"]:
-                diff = int(snaps[-1]["follower_count"]) - int(snaps[0]["follower_count"])
-                emb.add_field(name="Follower 30d",
-                              value=f"{snaps[-1]['follower_count']:,} ({'+' if diff >= 0 else ''}{diff:,})".replace(",", "."),
-                              inline=True)
-            emb.set_footer(text="Azrael Sentinel")
-            emb.timestamp = datetime.now(timezone.utc)
-            await inter.response.send_message(embed=emb)
-        except Exception as e:
-            await inter.response.send_message(_nc_i18n.t(f"Fehler: {e}"), ephemeral=True)
 
     # ───────── XP/Leveling via on_message ─────────
     _xp_cool = {}   # user_id -> monotonic (Anti-Spam: max 1× XP / 60s)
 
-    async def _on_level_up(message, newlvl):
-        try:
-            rkname = _nc_rang.rang_fuer_level(newlvl)
-            if rkname:
-                roles = await _ensure_rank_roles(message.guild)
-                role = roles.get(rkname)
-                if role and role not in getattr(message.author, "roles", []):
-                    old = [discord.utils.get(message.guild.roles, name=n) for _, n, _c in _nc_rang.RANG_STUFEN]
-                    old = [r for r in old if r and r != role and r in message.author.roles]
-                    try:
-                        if old: await message.author.remove_roles(*old, reason="Rang-Upgrade")
-                        await message.author.add_roles(role, reason=f"Level {newlvl}")
-                    except Exception:
-                        pass
-            txt = f"🎉 {message.author.mention} ist jetzt **Level {newlvl}**" + (f" — Rang **{rkname}**!" if rkname else "!")
-            ch = discord.utils.get(message.guild.text_channels, name=DISCORD_LEVELUP_CHANNEL) if DISCORD_LEVELUP_CHANNEL else None
-            await (ch or message.channel).send(_nc_i18n.t(txt))
-        except Exception as e:
-            log.debug("Discord Level-Up: %s", e)
+    # v4.2-W72: _on_level_up steht jetzt auf Modulebene.
 
     # v4.2-W71: _handle_voice_ai steht jetzt auf Modulebene (brauchte keine
     # einzige Closure-Variable).
