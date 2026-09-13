@@ -378,7 +378,7 @@ Zahlen sind Zeilennummern für `ncpatch show` / `ncpatch sym`.
    382  GET              /metrics                                         api_prometheus_metrics   [nc/routes/beobachtung.py]
 ```
 
-## Discord-Slash-Commands in discordbot.py (45)
+## Discord-Slash-Commands in discordbot.py (60)
 
 ```
    775  /ai                     
@@ -416,7 +416,22 @@ Zahlen sind Zeilennummern für `ncpatch show` / `ncpatch sym`.
   1380  /stats                  
    705  /status                 
   1509  /streaminfo             
+  1749  /sys_aireset            KI-Kontext zurücksetzen (TG: /aireset)
+  1751  /sys_bulkadd            Mehrere User tracken (TG: /bulkadd a b c)
+  1742  /sys_cleanup            Alte Aufnahmen aufräumen (TG: /cleanup)
+  1753  /sys_cookies            Cookie-Status (TG: /cookies)
+  1748  /sys_diag               Vollständige Diagnose (TG: /diag)
+  1752  /sys_live               Live-Check erzwingen (TG: /live @user)
+  1747  /sys_logs               Letzte Fehler-Logs (TG: /logs)
+  1739  /sys_pause              Tracking pausieren (TG: /pause @user)
+  1743  /sys_quota              Speicher-Quota (TG: /quota)
   1493  /sys_report             
+  1744  /sys_res                System-Ressourcen (TG: /sysres)
+  1740  /sys_resume             Tracking fortsetzen (TG: /resume @user)
+  1741  /sys_stoprec            Aufnahme grazil stoppen (TG: /stoprec @user)
+  1746  /sys_summary            Tageszusammenfassung (TG: /summary)
+  1750  /sys_teststream         Recorder-Selbsttest (TG: /teststream)
+  1745  /sys_topusers           Top-Streamer-Statistik (TG: /topusers)
   1470  /sys_unpause            
    936  /timeout                
   1448  /topstreamers           
@@ -431,10 +446,10 @@ Zahlen sind Zeilennummern für `ncpatch show` / `ncpatch sym`.
 ## Discord-Events in discordbot.py (4)
 
 ```
-  2147  on_member_join
-  2109  on_message
-  1774  on_raw_reaction_add
-  2182  on_ready
+  2148  on_member_join
+  2110  on_message
+  1775  on_raw_reaction_add
+  2183  on_ready
 ```
 
 ## Top-Level-Symbole in telegramversand.py (2 Funktionen)
@@ -447,17 +462,17 @@ Zahlen sind Zeilennummern für `ncpatch show` / `ncpatch sym`.
 ## Top-Level-Symbole in discordbot.py (33 Funktionen)
 
 ```
-  2298-2360   _community_events_loop
-  2400-2435   _disc_automod_check
+  2299-2361   _community_events_loop
+  2401-2436   _disc_automod_check
    395-400    _disc_sprache_setzen
    528-567    _discord_automod
-  1543-2257   _discord_run_once
+  1543-2258   _discord_run_once
    258-316    _discord_start
    319-372    _ensure_discord_invite
-  2263-2295   _ensure_error_channel
+  2264-2296   _ensure_error_channel
    416-429    _ensure_rank_roles
    664-678    _ensure_team_roles
-  2363-2393   _error_channel_loop
+  2364-2394   _error_channel_loop
    577-581    _guard
    497-525    _handle_voice_ai
    403-413    _is_admin

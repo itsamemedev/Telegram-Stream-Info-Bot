@@ -11,6 +11,34 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Behoben — 15 Slash-Commands waren für Werkzeug und Doku unsichtbar (v4.2 W73)
+
+Der Nebenbefund aus W72, jetzt behoben. `tools/ncpatch.py` zählte nur
+**dekorierte** Registrierungen. Die 15 `sys_*`-Befehle in `discordbot.py`
+entstehen anders:
+
+    for _pname, _pdesc, _pfn, _pargs in _PAR_CMDS:
+        tree.command(name=_pname, description=_pdesc[:100])(_mk())
+
+Der Bot bot damit **60** Slash-Commands an, gemeldet wurden 45.
+
+Die Doku war doppelt daneben: sie nannte 45, listete die 15 nirgends — und
+erwähnte sie in einer Fußnote trotzdem („Die `/sys_*`-Kommandos führen die
+Original-Telegram-Handler aus"). Jemand wusste also von ihnen, und sie standen
+trotzdem in keiner Liste. Wäre die Schleife weggefallen, hätte das kein
+Werkzeug bemerkt: auch die Namensprüfung in `_befehle()` baut auf derselben
+Liste auf.
+
+**Die Spalten werden aufgelöst, nicht geraten.** `name=_pname` sagt, welche
+Stelle des Tupels der Name ist, `description=_pdesc[:100]` ebenso für die
+Beschreibung. Spalte 0 fest anzunehmen hätte hier zufällig gestimmt und beim
+nächsten Aufrufer mit anders gebauten Tupeln still danebengelegen — der
+Vertrag prüft das an einer Tabelle mit **vertauschten** Spalten.
+
+Neu im README: die 15 unter „Telegram-Parität", namentlich. Die Zahl steht
+jetzt an allen sechs Stellen auf 60.
+
+
 ### Geändert — die 45 Discord-Befehle haben eine Registrierung (v4.2 W72)
 
 Nach W71 blieben 1560 Zeilen in `_discord_run_once`. Gemessen brauchten **42

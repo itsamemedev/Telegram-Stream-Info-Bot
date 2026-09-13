@@ -189,7 +189,7 @@ flowchart TD
 ```mermaid
 flowchart TB
     TG["📨 Telegram<br/>29 Befehle"]:::ein
-    DC["🎮 Discord<br/>45 Slash-Commands"]:::ein
+    DC["🎮 Discord<br/>60 Slash-Commands"]:::ein
     TT["🎥 TikTok<br/>Live-Erkennung + Chat"]:::ein
 
     TG --> BOT
@@ -356,7 +356,7 @@ ADMIN_CHAT_ID=123456789              # deine Telegram-ID (Alarme, Admin-Befehle)
 | `/einnahmen` | Einnahmen-Journal (Buchen, Jahresübersicht) |
 
 <details>
-<summary><h3>Discord — 45 Slash-Commands</h3></summary>
+<summary><h3>Discord — 60 Slash-Commands</h3></summary>
 
 <br>
 
@@ -383,9 +383,20 @@ ADMIN_CHAT_ID=123456789              # deine Telegram-ID (Alarme, Admin-Befehle)
 `/create_category` · `/create_role` · `/create_group` · `/assign_role` ·
 `/remove_role` · `/set_channel_perms`
 
+**Telegram-Parität** *(15 Stück, teils Admin-Rolle nötig)*
+`/sys_pause` · `/sys_resume` · `/sys_stoprec` · `/sys_cleanup` · `/sys_quota` ·
+`/sys_res` · `/sys_topusers` · `/sys_summary` · `/sys_logs` · `/sys_diag` ·
+`/sys_aireset` · `/sys_teststream` · `/sys_bulkadd` · `/sys_live` ·
+`/sys_cookies`
+
 > Die `/sys_*`-Kommandos führen die **Original-Telegram-Handler** über einen
 > Update/Context-Shim aus — null Duplikate, Telegram-Fixes wirken automatisch
 > auch in Discord.
+>
+> Diese 15 entstehen in einer Schleife (`tree.command(name=…)(…)`) statt über
+> einen Dekorator. Bis v4.2-W73 hat `tools/ncpatch.py` deshalb nur die 45
+> dekorierten gezählt — sie standen in keiner Liste und wären beim Wegfallen
+> niemandem aufgefallen.
 
 </details>
 
@@ -801,7 +812,7 @@ python3 tools/ncpatch.py docs                          # Doku-Zahlen gegen den C
 ```
 
 `find` antwortet aus **[`.claude/INDEX.md`](.claude/INDEX.md)** — 364 Routen
-(34 in `bot.py`, 330 in `nc/routes/`), 45 Slash-Commands, 516 Funktionen,
+(34 in `bot.py`, 330 in `nc/routes/`), 60 Slash-Commands, 516 Funktionen,
 jeweils mit Zeilennummer.
 
 ---
@@ -914,7 +925,7 @@ nicht greifen, gekippte Verträge in `test_restream.py`.
 |---|---|
 | Aktuelle Version | **4.3.1** — „Freie Sicht" (2026.09) |
 | Flask-Routen | 364 (34 in `bot.py` · 330 in `nc/routes/`) |
-| Discord-Slash-Commands | 45 |
+| Discord-Slash-Commands | 60 |
 | Fachmodule | 138 in `nc/` (+36 in `nc/routes/`, +3 in `nc/intel/`), 10 in `brain/` |
 | Sentinel-Agenten | 13 |
 | Konfigurationsvariablen | ~525 |
