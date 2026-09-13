@@ -204,7 +204,13 @@ The `.env` has around 503 variables and contains cookies, OAuth tokens and
 stream keys — it is never in the archive and is never printed. When logging
 `streamlink`/`ffmpeg` commands, cookie headers are redacted (F4); that redaction
 path must not be bypassed when the command line changes. The dashboard binds to
-`127.0.0.1:8050` by default; access runs through an SSH tunnel, not by opening
+`127.0.0.1:8050` by default — since v4.2-W84 that is *enforced*, not merely
+recommended: without `DASHBOARD_TOKEN` and without `DASHBOARD_PIN`,
+`nc/webserver.bindung()` pulls the address back to loopback whatever `WEB_HOST`
+says (`DASHBOARD_OFFEN_ERLAUBEN=1` is the documented way out). The deck is
+served by **waitress**; the Werkzeug development server stays only where TLS
+hangs off the dashboard directly, and says why. Access runs through an SSH
+tunnel, not by opening
 the port.
 
 ## Language and tone

@@ -10,7 +10,7 @@ GitHub-Repo trägt Historie, CI und Issues — es ist nicht der Deploy-Weg.
 
 ## Die eine Regel
 
-`bot.py` hat **24.044 Zeilen / 1,2 MB ≈ 295.000 Token**. Diese Datei wird
+`bot.py` hat **24.148 Zeilen / 1,2 MB ≈ 295.000 Token**. Diese Datei wird
 **nie** ganz gelesen und **nie** blind durchsucht. Erst fragen wo etwas steht,
 dann den Ausschnitt holen:
 
@@ -55,7 +55,7 @@ Auf diesem Windows-Rechner heißt der Interpreter **`python`** (3.13.12);
     brain_bridge.py      Adapter Bot ↔ brain/ (M2)
     brain/               KI-Kern: state, rules, router, agents, memory,
                          semantic, knowledge, scheduler, llm, report
-    nc/                  140 Fachmodule: db, scraping, restream, oauth, ledger,
+    nc/                  141 Fachmodule: db, scraping, restream, oauth, ledger,
                          i18n, …
     nc/routes/           36 Flask-Blueprints mit 327 weiteren API-Routen
     locales/             de.json, en.json — der Übersetzungskatalog
@@ -317,12 +317,19 @@ Ledger-Einträge sind append-only mit Hash-Kette; Korrektur = Gegenbuchung.
 
 ## Sicherheit
 
-`.env` hat rund 525 Variablen und enthält Cookies, OAuth-Tokens und Stream-Keys — sie
+`.env` hat rund 528 Variablen und enthält Cookies, OAuth-Tokens und Stream-Keys — sie
 liegt nie im Archiv und wird nie ausgegeben. Beim Logging von
 `streamlink`/`ffmpeg`-Kommandos werden Cookie-Header redacted (F4); dieser
 Redact-Pfad darf bei Änderungen an der Kommandozeile nicht umgangen werden. Das
 Dashboard bindet standardmäßig auf `127.0.0.1:8050`; Zugriff läuft über
-SSH-Tunnel, nicht über Öffnen des Ports.
+SSH-Tunnel, nicht über Öffnen des Ports. Seit v4.2-W84 ist das **erzwungen**
+statt empfohlen: ohne `DASHBOARD_TOKEN` und ohne `DASHBOARD_PIN` zieht
+`nc/webserver.bindung()` die Adresse auf Loopback zurück, egal was in
+`WEB_HOST` steht — `DASHBOARD_OFFEN_ERLAUBEN=1` ist der dokumentierte Ausweg.
+Getragen wird das Deck von **waitress** (fester Thread-Pool); der
+Werkzeug-Entwicklungsserver bleibt nur, wo TLS direkt am Dashboard hängt, und
+sagt dann warum. Der Token in `?token=…` setzt das Cookie und verschwindet
+danach per Umleitung aus der Adresszeile.
 
 ## Sprache und Ton
 

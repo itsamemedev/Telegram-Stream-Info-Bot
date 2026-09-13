@@ -667,7 +667,9 @@ from nc.routes.health import api_system_resources  # noqa: F401
 from http.cookiejar import MozillaCookieJar
 from logging.handlers import RotatingFileHandler   # B4: war mid-file bei Z. 664
 from urllib.request import urlopen as _urlopen, Request as _UrlRequest
-from urllib.parse import quote   # v4.1-W32: urlparse nur noch in nc/systemprobe
+from urllib.parse import quote, urlencode   # v4.1-W32: urlparse nur noch in
+                                           # nc/systemprobe. urlencode seit
+                                           # v4.2-W84: Token aus der URL holen
 
 # B4: threading alias für DB/Proxy/AI-Locks (vermeidet Konflikt mit `threading` Modul-Name)
 _threading_for_db = threading
@@ -922,6 +924,7 @@ from nc import geoip as _nc_geoip         # v4.1-W25: ip-api-Stapelabfrage
 from nc import bandbreite as _nc_band      # v4.1-W26: Aufnahme-Durchsatz
 from nc import eventlog as _nc_eventlog   # v4.1-W29: Protokoll ohne Blockade
 from nc import dashauth as _nc_dashauth   # v4.1-W30: ist das Deck offen?
+from nc import webserver as _nc_webserver  # v4.2-W84: Server + Bindung
 from nc import fehlertext as _nc_fehlertext  # v4.1-W30: Fehlertext nach aussen
 from nc import outcomes as _nc_outcomes   # v4.1-W26: Ausgaenge der Aufnahmen
 from nc import suche as _nc_suche         # v4.1-W26: bestandsweite Suche
@@ -9257,14 +9260,53 @@ def _auth_guard():                                                    # C9 → F
 
 @dashboard_app.after_request
 def _auth_cookie(resp):
-    """Nach erfolgreichem ?token=... ein Cookie setzen, damit das Browser-UI
-       (das keinen Authorization-Header sendet) weiter funktioniert."""
+    """Nach erfolgreichem ?token=... ein Cookie setzen — und den Token aus der
+       Adresszeile holen.
+
+    v4.2-W84 (SEC): Der Token stand bisher im Query-String und blieb dort.
+    Ein Query-String ist der schlechteste Ort fuer ein Geheimnis, den es gibt:
+    er landet im Zugriffslog jedes Proxys davor, in der Browser-Historie, in
+    der Sitzungswiederherstellung und im Referer jeder Verlinkung nach
+    aussen. Und er ueberlebt das Teilen eines Links oder einen Screenshot der
+    Adresszeile — anders als der Cookie, der httponly ist.
+
+    Der Weg bleibt erhalten, weil Lesezeichen darauf zeigen: ?token=... setzt
+    weiter das Cookie. Nur wird danach auf denselben Pfad OHNE den Token
+    umgeleitet, sodass das Geheimnis nicht stehen bleibt. Nur GET/HEAD — bei
+    einem POST wuerde die Umleitung den Rumpf verlieren.
+
+    Keine Umleitungsschleife: das Ziel traegt kein `token` mehr, der Zweig
+    greift also genau einmal. Wird das Cookie verworfen (secure ueber http),
+    endet es im Login statt in einer Schleife.
+    """
     try:
-        if DASHBOARD_TOKEN and request.args.get("token") \
-                and request.cookies.get("nc_token") != DASHBOARD_TOKEN and _token_ok():
-            resp.set_cookie("nc_token", DASHBOARD_TOKEN, max_age=30 * 86400,
-                            httponly=True, samesite="Lax",
-                            secure=bool(os.getenv("DASHBOARD_TLS_CERT", "").strip()))
+        roh_token = request.args.get("token")
+        if DASHBOARD_TOKEN and roh_token and _token_ok():
+            if request.cookies.get("nc_token") != DASHBOARD_TOKEN:
+                resp.set_cookie("nc_token", DASHBOARD_TOKEN, max_age=30 * 86400,
+                                httponly=True, samesite="Lax",
+                                secure=bool(os.getenv("DASHBOARD_TLS_CERT", "").strip()))
+            if request.method in ("GET", "HEAD"):
+                rest = [(k, v) for k, v in request.args.items(multi=True)
+                        if k != "token"]
+                ziel = request.path + (("?" + urlencode(rest)) if rest else "")
+                um = redirect(ziel, code=302)
+                # Das Cookie muss AUF die Umleitung, sonst kommt der Browser
+                # ohne Berechtigung am Ziel an und landet im Login.
+                for wert in resp.headers.getlist("Set-Cookie"):
+                    um.headers.add("Set-Cookie", wert)
+                # Dieselben Schutz-Kopfzeilen wie ueberall sonst. _sec_headers
+                # setzt sie normalerweise — aber es ist SPAETER registriert
+                # und laeuft deshalb FRUEHER (Flask arbeitet after_request in
+                # umgekehrter Reihenfolge ab). Diese Antwort entsteht erst
+                # danach und kaeme sonst nackt heraus. Ausgerechnet bei der
+                # Umleitung waere no-referrer am wichtigsten: sie ist die
+                # einzige Antwort, deren Ausloeser den Token in der Adresse
+                # trug.
+                um.headers.setdefault("X-Content-Type-Options", "nosniff")
+                um.headers.setdefault("X-Frame-Options", "SAMEORIGIN")
+                um.headers.setdefault("Referrer-Policy", "no-referrer")
+                return um
     except Exception:
         pass
     return resp
@@ -11048,9 +11090,46 @@ def run_flask():
         else:
             log.warning("DASHBOARD_TLS_CERT/KEY gesetzt, aber Datei(en) fehlen — "
                         "Dashboard startet unverschluesselt (HTTP).")
-    dashboard_app.run(host=WEB_HOST, port=DASHBOARD_PORT,
-                      debug=False, use_reloader=False, threaded=True,
-                      ssl_context=_ssl_ctx)
+    # v4.2-W84 (SEC): Bindung fail-closed. Ohne Token UND ohne PIN faellt das
+    # Deck auf Loopback zurueck, statt offen im Netz zu stehen — die Meldung
+    # aus v4.1-W30 war der richtige erste Schritt und der falsche letzte: sie
+    # hilft nur dem, der das Log liest. Der Bot laeuft normal weiter; er ist
+    # nicht das Dashboard, und ihn wegen einer Dashboard-Einstellung sterben
+    # zu lassen traefe genau die Arbeit, die niemand angefasst hat.
+    _bind, _hinweis = _nc_webserver.bindung(
+        WEB_HOST, bool(DASHBOARD_TOKEN or DASHBOARD_PIN))
+    if _hinweis:
+        log.error("=" * 70)
+        log.error("%s (Port %s)", _hinweis, DASHBOARD_PORT)
+        log.error("=" * 70)
+
+    # v4.2-W84: welcher Server traegt das Deck. dashboard_app.run() ist der
+    # ENTWICKLUNGSSERVER von Werkzeug — threaded=True heisst ein Thread je
+    # Anfrage, unbegrenzt, ohne Backlog-Management und ohne sauberes
+    # Herunterfahren. Wer den Port erreicht, hat den Thread laengst, bevor
+    # das Rate-Limit ihn zaehlt. waitress hat einen festen Pool; es ist
+    # dieselbe WSGI-App, keine Route aendert sich.
+    _server, _warum = _nc_webserver.waehle(bool(_ssl_ctx))
+    if _warum:
+        log.warning("%s", _warum)
+
+    if _server == "waitress":
+        import waitress
+        _th = _nc_webserver.threads()
+        log.info("Dashboard: waitress auf %s:%s, %d Threads", _bind,
+                 DASHBOARD_PORT, _th)
+        # clear_untrusted_proxy_headers=False mit Absicht: waitress wuerde ab
+        # 2.0 die X-Forwarded-*-Kopfzeilen selbst entfernen, und dann bekaeme
+        # _client_ip() hinter einem Reverse-Proxy nur noch dessen Adresse.
+        # Wem zu trauen ist, entscheidet hier TRUSTED_PROXIES — eine Liste,
+        # die der Bestand fuehrt und die waitress nicht kennt.
+        waitress.serve(dashboard_app, host=_bind, port=DASHBOARD_PORT,
+                       threads=_th, ident="NIGHTCRAWLER",
+                       clear_untrusted_proxy_headers=False)
+    else:
+        dashboard_app.run(host=_bind, port=DASHBOARD_PORT,
+                          debug=False, use_reloader=False, threaded=True,
+                          ssl_context=_ssl_ctx)
 
 # =============================================================================
 # X-Series: Flask→Async-Bridge + 30 neue API-Endpoints
@@ -19593,6 +19672,24 @@ async def _sicherheits_erinnerung_loop():
             offen, text = _nc_dashauth.lage()
             if offen:
                 log.error("%s (Port %s)", text, DASHBOARD_PORT)
+            elif _nc_dashauth.zurueckgefallen():
+                # v4.2-W84: der andere Zustand, der eine Erinnerung braucht.
+                # Kein Sicherheitsproblem mehr — die Bindung ist ja auf
+                # Loopback gezogen —, aber eine Ueberraschung: der Betreiber
+                # hat WEB_HOST gesetzt und erreicht das Deck trotzdem nicht.
+                # Ohne diese Zeile steht die Erklaerung nur im Bootlog.
+                # log.error, nicht warning: ein log.warning erscheint in
+                # einem ERROR-Log NIE (CLAUDE.md), und genau darauf besteht
+                # der Vertrag aus v4.1-W30 fuer diese Schleife. Es ist auch
+                # inhaltlich kein Randfall — der Betreiber hat WEB_HOST
+                # gesetzt und bekommt es nicht zu sehen. Das ist eine
+                # Fehlkonfiguration, kein Hinweis.
+                log.error(
+                    "Dashboard: WEB_HOST=%s ist wirkungslos, solange weder "
+                    "DASHBOARD_TOKEN noch DASHBOARD_PIN gesetzt ist — das "
+                    "Deck bindet auf 127.0.0.1. Zugriff per SSH-Tunnel, oder "
+                    "ein Geheimnis in die .env (Port %s).",
+                    _nc_dashauth.host(), DASHBOARD_PORT)
         except Exception as e:
             _loop_fehler("_sicherheits_erinnerung_loop", e)
         await asyncio.sleep(6 * 3600)
@@ -23270,8 +23367,15 @@ async def main():
         pass
 
     threading.Thread(target=run_flask, daemon=True).start()
-    log.info(f"Dashboard: http://{WEB_HOST}:{DASHBOARD_PORT}"
-             + ("  (Auth aktiv)" if DASHBOARD_TOKEN else "  (KEIN Auth – nur lokal!)"))
+    # v4.2-W84: die WIRKLICHE Adresse nennen, nicht die gewuenschte. Faellt
+    # die Bindung mangels Geheimnis auf Loopback zurueck, stand hier vorher
+    # trotzdem die Adresse aus der .env — und der Betreiber suchte den Fehler
+    # beim Netz statt in der Konfiguration.
+    _bind_eff, _ = _nc_webserver.bindung(
+        WEB_HOST, bool(DASHBOARD_TOKEN or DASHBOARD_PIN))
+    log.info(f"Dashboard: http://{_bind_eff}:{DASHBOARD_PORT}"
+             + ("  (Auth aktiv)" if DASHBOARD_TOKEN or DASHBOARD_PIN
+                else "  (KEIN Auth – nur lokal!)"))
 
     # F93: AZRAEL SENTINEL — KI-Moderator automatisch hochfahren. Vorher lief er
     # NUR nach manuellem Dashboard-Klick → Kick-Chat war nach jedem Neustart
