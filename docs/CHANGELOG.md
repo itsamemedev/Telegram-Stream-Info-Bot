@@ -11,6 +11,54 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Behoben — die Sperren waren selbst blind, die Karte veraltet (v4.2 W83)
+
+Vier der Zählwerkzeuge — `monolith`, `stillecheck`, `blindstellen`,
+`importzeit` — hatten dieselbe Schleife, und jede endete gleich:
+
+```python
+try:
+    baum = ast.parse(...)
+except (OSError, SyntaxError):
+    continue          # blindstellen sogar: except Exception
+```
+
+Das ist der stille `except`-Block, gegen den diese Werkzeuge gebaut wurden —
+im Werkzeug selbst, und dort teurer als im Bot: `bot.py` ist rund die Hälfte
+des Produktionscodes. Fällt die Datei aus der Messung, meldet die Sperre nicht
+„ich konnte nicht nachsehen", sondern einen **Fortschritt**.
+
+Gemessen auf Python 3.11, wo `ast.parse(bot.py)` an PEP 701 stirbt:
+
+| Sperre | meldete | tatsächlich | Exit |
+|---|---|---|---|
+| `stillecheck --sperre` | „OK — 733 stille Blöcke, –352 seit der Grundlinie" | 1085 | 0 |
+| `monolith --sperre` | 100er-Stufe: 22 · 200er-Stufe: 6 | 63 · 16 | 0 |
+
+Die CI fährt 3.12/3.13 und misst dort richtig — gerettet war damit nur die CI.
+Jede lokale Prüfung auf einem älteren Interpreter log, und ein echter
+Syntaxfehler in `bot.py` hätte **jede** Zählsperre leichter gemacht statt rot.
+
+Neu ist `tools/quelle.py` als die eine Stelle, an der Produktionscode geparst
+wird. Eine unlesbare Datei bricht ab, mit Exitcode **2** — getrennt von der 1,
+die „der Bestand ist gewachsen" bedeutet, denn nur eines davon behebt man im
+Code. Dazu `pflicht_erfuellt()` gegen den Fall, den keine Ausnahme meldet: ein
+Glob, der ins Leere zeigt, nimmt `bot.py` genauso lautlos aus der Zählung.
+`vertragscheck` hatte den Fehler nie; es liest ungefangen.
+
+### Behoben — `.claude/INDEX.md` wurde von nichts geprüft (v4.2 W83)
+
+Die Navigationskarte trägt die „eine Regel" dieses Projekts: nie im Monolithen
+suchen, sondern erst fragen wo etwas steht. Geprüft hat sie nichts. Die
+eingecheckte Karte war in **483 Einträgen** veraltet — `/healthz` stand auf
+17805 und lag auf 17839. Ein Index, dessen Zeilennummern um 34 danebenliegen,
+ist schlimmer als keiner: er schickt jedes `ncpatch show` an die falsche
+Stelle, und der Leser merkt es erst, wenn der Ausschnitt nicht passt.
+
+`python tools/ncpatch.py map --check` meldet das jetzt, steht in der
+Pflicht-Prüfkette und läuft in der CI im Job *Doku*.
+
+
 ### Behoben — der Zweitversuch der Live-Auflösung war eine Attrappe (v4.2 W82)
 
 Nachtrag des Betreibers zum Bughunt: **„die Live-Abfragen geben 502 aus"**.

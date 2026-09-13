@@ -28,9 +28,13 @@ Aufrufkette sieht man statisch nicht, die Ausfuehrung schon.
 import argparse
 import ast
 import contextlib
-import io
 import os
 import sys
+
+# v4.2-W83: gemeinsamer Parser, der eine unlesbare Datei meldet statt sie zu
+# ueberspringen. Auch der schwache Blick (--statisch) soll nicht behaupten,
+# er habe nachgesehen, wenn er es nicht konnte.
+import quelle
 import tempfile
 import traceback
 
@@ -163,21 +167,25 @@ def _statisch():
         geh(baum, False)
         return treffer
 
-    aus = {}
+    liste = []
     for wurzel, ordner, dateien in os.walk(WURZEL):
         ordner[:] = [d for d in ordner
-                     if d not in (".git", "node_modules", "__pycache__", ".venv")]
+                     if d not in (".git", "node_modules", "__pycache__",
+                                  ".venv", "_vendor")]
         for fn in dateien:
             if not fn.endswith(".py") or fn.startswith("test_"):
                 continue
-            p = os.path.join(wurzel, fn)
-            try:
-                baum = ast.parse(io.open(p, encoding="utf-8").read())
-            except (OSError, SyntaxError):
-                continue
-            t = knoten(baum)
-            if t:
-                aus[_pfad(p)] = sorted(set(t))
+            liste.append(os.path.join(wurzel, fn))
+    fehlt = quelle.pflicht_erfuellt(liste)
+    if fehlt:
+        raise quelle.QuelleUnlesbar(
+            "Diese Dateien gehoeren in den Blick, stehen aber nicht in der "
+            "Liste: " + ", ".join(fehlt))
+    aus = {}
+    for pfad, baum in quelle.baeume(liste):
+        t = knoten(baum)
+        if t:
+            aus[pfad] = sorted(set(t))
     return aus
 
 
@@ -226,5 +234,7 @@ def main(argv=None):
 if __name__ == "__main__":
     try:
         sys.exit(main())
+    except quelle.QuelleUnlesbar as e:
+        sys.exit(quelle.abbruch(e))
     except BrokenPipeError:
         os._exit(0)

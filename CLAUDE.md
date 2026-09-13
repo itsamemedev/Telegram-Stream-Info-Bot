@@ -19,6 +19,7 @@ dann den Ausschnitt holen:
     python tools/ncpatch.py show bot.py 24750 24810    # nur diesen Ausschnitt
     python tools/ncpatch.py grep "tree.command" bot.py -C 3
     python tools/ncpatch.py map                            # Karte neu bauen
+    python tools/ncpatch.py map --check                    # ist die Karte aktuell?
     python tools/ncpatch.py verify patches/x.json          # Trockenlauf
     python tools/ncpatch.py apply  patches/x.json          # alles-oder-nichts, legt .bak an
     python tools/ncpatch.py check                          # Templates: doppelte IDs, CSS-Bilanz
@@ -84,6 +85,7 @@ stdlib-only (`urllib`, kein `aiohttp`).
     python -m ruff check --select F,E9,B --ignore B905 <geänderte .py>
     python tools/ncpatch.py check
     python tools/ncpatch.py docs
+    python tools/ncpatch.py map --check
     python tools/stillecheck.py --sperre
     python tools/vertragscheck.py --sperre
     python tools/importzeit.py    --sperre   # braucht requirements-smoke.txt
@@ -185,6 +187,29 @@ unterdrückten Fälle. Der Schlüssel ist der **Kanal**, nicht der Nutzer — be
 setzt die Drossel zurück, sonst bleibt ein wiederkehrender Ausfall bis zu 15
 Minuten unsichtbar. Die Klartexte stehen in `nc/resolvergrund.py`, jeder **mit
 Abhilfe**: „HTTP 403" allein hat schon einmal wochenlang niemandem geholfen.
+
+**Die Sperren waren selbst blind.** Vier der Zählwerkzeuge — `monolith`,
+`stillecheck`, `blindstellen`, `importzeit` — hatten dieselbe Schleife, und
+jede endete mit `except (OSError, SyntaxError): continue`. Das ist der stille
+`except`-Block, gegen den sie gebaut wurden, an der Stelle, an der er am
+teuersten ist: `bot.py` ist rund die Hälfte des Produktionscodes. Fällt die
+Datei aus der Messung, meldet die Sperre nicht „ich konnte nicht nachsehen",
+sondern einen **Fortschritt** — auf Python 3.11 gemessen `stillecheck: OK —
+733 stille Blöcke, –352 seit der Grundlinie` bei tatsächlich 1085, und
+`monolith:` meldete auf der 100er-Stufe 22 statt 63. Beides mit Exitcode 0.
+
+Seit v4.2-W83 parst alles über **`tools/quelle.py`**, und eine unlesbare Datei
+bricht ab: Exitcode **2**, getrennt von der 1, die „der Bestand ist gewachsen"
+bedeutet. Dazu `pflicht_erfuellt` gegen den Fall, den keine Ausnahme meldet —
+ein Glob, der ins Leere zeigt, nimmt `bot.py` genauso lautlos aus der Zählung.
+`vertragscheck` hatte den Fehler nie; es liest ungefangen.
+
+**Die Navigationskarte wurde von nichts geprüft.** `.claude/INDEX.md` trägt die
+„eine Regel" dieses Projekts und war am 13.09. in **483 Einträgen** veraltet —
+`/healthz` stand auf 17805 und lag auf 17839. Ein Index, dessen
+Zeilennummern um 34 danebenliegen, ist schlimmer als keiner: er schickt jedes
+`ncpatch show` an die falsche Stelle. `ncpatch map --check` steht seit v4.2-W83 in der Prüfkette und
+in der CI.
 
 **Modul-Konstanten frieren `.env` ein.** `.env` wird teils erst nach den ersten
 Imports geladen. Konfiguration als Funktion lesen (`_backend_conf()`), nie als

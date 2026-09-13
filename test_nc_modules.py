@@ -11933,6 +11933,162 @@ def _test_v42_w51_live_ohne_url():
     ok("W51: yt-dlp liefert weiterhin keine URL und bleibt aus dem Nachschlag")
 
 
+def _test_v42_w83_werkzeuge_messen_oder_brechen():
+    """v4.2-W83: die Sperren waren falsch-gruen, sobald bot.py nicht parste.
+
+    Fuenf Werkzeuge zaehlen den Bestand und sperren sein Wachstum. Vier davon
+    hatten dieselbe Schleife, und jede endete gleich:
+
+        try:
+            baum = ast.parse(...)
+        except (OSError, SyntaxError):
+            continue          # blindstellen sogar: except Exception
+
+    Das ist der stille except-Block, gegen den diese Werkzeuge gebaut wurden —
+    im Werkzeug selbst, und dort schlimmer als im Bot. bot.py ist rund die
+    Haelfte des Produktionscodes; faellt die Datei aus der Messung, meldet die
+    Sperre nicht "ich konnte nicht nachsehen", sondern einen FORTSCHRITT.
+
+    Gemessen am 13.09. auf Python 3.11 (dort stirbt ast.parse(bot.py) an
+    PEP 701, f-string mit Backslash, Zeile 16235):
+
+        stillecheck --sperre  ->  "OK — 733 stille Bloecke,
+                                   –352 seit der Grundlinie"       Exit 0
+        monolith   --sperre  ->  "OK — 100 Z: 22, 200 Z: 6 …"      Exit 0
+
+        tatsaechlich (3.13):      1085 stille Bloecke
+                                  100 Z: 63, 200 Z: 16
+
+    Die CI faehrt 3.12/3.13 und misst dort richtig — gerettet war damit nur
+    die CI. Jede lokale Pruefung auf einem aelteren Interpreter log, und ein
+    echter Syntaxfehler in bot.py haette JEDE Zaehlsperre leichter gemacht
+    statt rot.
+
+    Der Vertrag prueft das Verhalten, nicht den Wortlaut: eine Datei, die
+    nicht parst, muss die Messung ABBRECHEN.
+    """
+    import sys as _sys
+    hier = os.path.dirname(os.path.abspath(__file__))
+    if os.path.join(hier, "tools") not in _sys.path:
+        _sys.path.insert(0, os.path.join(hier, "tools"))
+    import quelle as Q
+
+    # --- 1) parse() gibt nie ein leeres Ergebnis zurueck -----------------
+    kaputt = os.path.join(hier, "_w83_kaputt.py")
+    with io.open(kaputt, "w", encoding="utf-8") as fh:
+        fh.write("def f(:\n    pass\n")
+    try:
+        gut = Q.parse("nc/dashauth.py")
+        assert gut.body, "parse() liefert einen leeren Baum fuer gesunde Quelle"
+
+        try:
+            Q.parse(kaputt)
+        except Q.QuelleUnlesbar as e:
+            assert "_w83_kaputt.py" in str(e), \
+                "die Meldung nennt die Datei nicht: %s" % e
+        else:
+            raise AssertionError(
+                "parse() hat eine unlesbare Datei klaglos geschluckt — genau "
+                "so entstand die Sperre, die einen Fortschritt meldet")
+
+        # --- 2) baeume() sammelt ALLE Fehler, nicht nur den ersten -------
+        try:
+            Q.baeume([kaputt, "nc/dashauth.py"])
+        except Q.QuelleUnlesbar as e:
+            text = str(e)
+            assert "NIEDRIG" in text, \
+                "die Meldung sagt nicht, in welche RICHTUNG die Messung " \
+                "falsch gewesen waere: %s" % text
+        else:
+            raise AssertionError("baeume() hat die kaputte Datei uebersprungen")
+
+        # --- 3) Exitcode 2, nicht 1 -------------------------------------
+        assert Q.abbruch("egal") == 2, \
+            "\"ich konnte nicht nachsehen\" muss von \"der Bestand ist " \
+            "gewachsen\" (1) unterscheidbar bleiben"
+
+        # --- 4) Die Pflichtdateien muessen in der Messung stecken --------
+        assert not Q.pflicht_erfuellt(
+            ["bot.py", "discordbot.py", "brain_bridge.py",
+             "telegramversand.py"]), \
+            "pflicht_erfuellt meldet etwas als fehlend, das dabei ist"
+        fehlend = Q.pflicht_erfuellt(["nc/dashauth.py"])
+        assert "bot.py" in fehlend, \
+            "eine Messung ohne bot.py faellt nicht auf — genau das war der " \
+            "Schaden, den keine Ausnahme gemeldet haette"
+
+        # --- 5) Jedes der vier Werkzeuge bricht ab statt zu ueberspringen -
+        import monolith as M
+        import stillecheck as S
+        import blindstellen as B
+        import importzeit as I
+
+        for modul in (M, S, B, I):
+            assert getattr(modul, "quelle", None) is Q \
+                or getattr(modul, "_quelle", None) is Q, \
+                "%s parst wieder an sich selbst vorbei" % modul.__name__
+
+        # monolith: _dateien() auf die kaputte Datei umbiegen
+        alt = M._dateien
+        M._dateien = lambda: ["bot.py", "discordbot.py", "brain_bridge.py",
+                              "telegramversand.py", "_w83_kaputt.py"]
+        try:
+            M.funktionen()
+        except Q.QuelleUnlesbar:
+            pass
+        else:
+            raise AssertionError(
+                "monolith.funktionen() zaehlt weiter, obwohl eine Datei nicht "
+                "lesbar war — die Zahl waere zu niedrig und die Sperre gruen")
+        finally:
+            M._dateien = alt
+
+        # stillecheck: pruefe_datei darf keine stille Null mehr liefern
+        try:
+            S.pruefe_datei("_w83_kaputt.py")
+        except Q.QuelleUnlesbar:
+            pass
+        else:
+            raise AssertionError(
+                "stillecheck.pruefe_datei() liefert wieder (0, 0, 0, []) fuer "
+                "eine unlesbare Datei — eine Null, die sich in der Summe wie "
+                "ein Erfolg liest")
+
+        # blindstellen: sammle() darf keine leere Liste mehr liefern
+        import pathlib as _pl
+        try:
+            B.sammle(_pl.Path(kaputt))
+        except Q.QuelleUnlesbar:
+            pass
+        else:
+            raise AssertionError(
+                "blindstellen.sammle() verbucht eine unlesbare Datei wieder "
+                "als null Blindstellen")
+    finally:
+        try:
+            os.remove(kaputt)
+        except OSError:
+            pass
+
+    # --- 6) Die Karte muss aktuell sein ---------------------------------
+    # Die "eine Regel" des Projekts steht auf .claude/INDEX.md: nie im
+    # Monolithen suchen, sondern erst fragen wo etwas steht. Am 13.09. war die
+    # eingecheckte Karte 483 Zeilen veraltet — /healthz stand auf 17805 und
+    # lag auf 17839. Ein Index, der um 34 Zeilen danebenliegt, schickt jeden
+    # `ncpatch show` an die falsche Stelle.
+    import subprocess as _sp
+    r = _sp.run([_sys.executable, os.path.join(hier, "tools", "ncpatch.py"),
+                 "map", "--check"],
+                cwd=hier, capture_output=True, text=True)
+    assert r.returncode == 0, \
+        ".claude/INDEX.md ist veraltet:\n" + (r.stdout or r.stderr)
+
+    ok("W83: parse() bricht ab statt zu ueberspringen, Exitcode 2 getrennt")
+    ok("W83: monolith, stillecheck, blindstellen, importzeit zaehlen nicht "
+        "weiter, wenn eine Datei fehlt")
+    ok("W83: die Navigationskarte ist aktuell")
+
+
 def main():
     tmp = tempfile.mkdtemp()
     configure_db(db_path=os.path.join(tmp, "t.db"), backend="sqlite")
@@ -12179,6 +12335,7 @@ def main():
     _test_v42_w80_notbremse_heraus()
     _test_v42_w81_fehlerpfade_sprechen()
     _test_v42_w82_zweitversuch_rotiert_wirklich()
+    _test_v42_w83_werkzeuge_messen_oder_brechen()
     _test_v42_w60_azrael_cooldown_je_plattform()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)

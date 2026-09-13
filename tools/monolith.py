@@ -49,6 +49,10 @@ import os
 import pathlib
 import sys
 
+# v4.2-W83: gemeinsamer Parser. tools/ ist sys.path[0], wenn dieses Werkzeug
+# als `python tools/monolith.py` laeuft — genau so steht es in der Pruefkette.
+import quelle
+
 WURZEL = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 GRUNDLINIE = os.path.join(WURZEL, ".claude", "monolith_grundlinie.json")
 STUFEN = (100, 200, 300, 500)
@@ -93,14 +97,24 @@ def _dateien():
 
 
 def funktionen():
-    """-> [(datei, name, zeile, laenge)] fuer den ganzen Produktionscode."""
+    """-> [(datei, name, zeile, laenge)] fuer den ganzen Produktionscode.
+
+    v4.2-W83: parst ueber tools/quelle.py und bricht ab, statt eine
+    unlesbare Datei zu ueberspringen. Vorher stand hier
+    `except (OSError, SyntaxError): continue` — und weil bot.py rund die
+    Haelfte des Produktionscodes ist, meldete dieses Werkzeug auf einem
+    Interpreter unter 3.12 "22 Funktionen ueber 100 Zeilen" statt 63 und
+    liess die Sperre gruen durchlaufen.
+    """
     aus = []
-    for d in _dateien():
-        try:
-            baum = ast.parse(io.open(os.path.join(WURZEL, d),
-                                     encoding="utf-8").read())
-        except (OSError, SyntaxError):
-            continue
+    dateien = _dateien()
+    fehlt = quelle.pflicht_erfuellt(dateien)
+    if fehlt:
+        raise quelle.QuelleUnlesbar(
+            "Diese Dateien gehoeren in die Messung, stehen aber nicht in der "
+            "Liste: " + ", ".join(fehlt) + "\n  Ohne sie ist die Zahl unten "
+            "wertlos — bot.py allein ist rund die Haelfte des Bestands.")
+    for d, baum in quelle.baeume(dateien):
 
         # datei als Vorgabewert gebunden, nicht aus der Schleife gelesen:
         # ruff B023. Hier harmlos, weil sofort aufgerufen — aber genau diese
@@ -204,5 +218,9 @@ def main(argv=None):
 if __name__ == "__main__":
     try:
         sys.exit(main())
+    except quelle.QuelleUnlesbar as e:
+        # Exit 2, nicht 1: "ich konnte nicht nachsehen" ist etwas anderes als
+        # "der Bestand ist gewachsen". Beides rot, nur eines im Code behebbar.
+        sys.exit(quelle.abbruch(e))
     except BrokenPipeError:
         os._exit(0)
