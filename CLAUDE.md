@@ -10,7 +10,7 @@ GitHub-Repo trägt Historie, CI und Issues — es ist nicht der Deploy-Weg.
 
 ## Die eine Regel
 
-`bot.py` hat **23.902 Zeilen / 1,2 MB ≈ 295.000 Token**. Diese Datei wird
+`bot.py` hat **23.924 Zeilen / 1,2 MB ≈ 295.000 Token**. Diese Datei wird
 **nie** ganz gelesen und **nie** blind durchsucht. Erst fragen wo etwas steht,
 dann den Ausschnitt holen:
 
@@ -25,7 +25,7 @@ dann den Ausschnitt holen:
     python tools/ncpatch.py docs                           # Doku-Zahlen gegen den Quelltext
 
 `find` antwortet aus `.claude/INDEX.md` — 364 Routen (34 in `bot.py`, 330 in
-`nc/routes/`), 60 Slash-Commands, 541 Funktionen mit Zeilennummern. Nach Änderungen an Routen, Commands oder
+`nc/routes/`), 60 Slash-Commands, 542 Funktionen mit Zeilennummern. Nach Änderungen an Routen, Commands oder
 Top-Level-Funktionen `map` neu laufen lassen. Details: Skill `nc-navigation`.
 
 Für „wer ruft das auf?" und „was ist der Typ?" ist der Sprachserver billiger als
@@ -205,14 +205,14 @@ unverändert in jeder Anweisung. Bitte nicht neu aufrollen.
 
 Die größte Funktion steht ohnehin nicht in `bot.py`:
 
-     718 Z  nc/schema.py   create_schema
-     616 Z  bot.py         handle_recording_finished
-     482 Z  discordbot.py  _discord_run_once   (1730 vor W71)
+     718 Z  nc/schema.py   create_schema      (bewusst ganz, s.o.)
+     482 Z  discordbot.py  _discord_run_once  (1730 vor W71)
+     455 Z  bot.py         handle_recording_finished  (616 vor W78)
 
 `discordbot.py` wurde in v4.2-W15 aus `bot.py` herausgelöst, genau gegen dieses
 Problem. Die Masse zog um, statt zu schrumpfen. `tools/monolith.py` misst deshalb den **ganzen**
 Produktionscode und zählt, wie viele Funktionen über einer Stufe liegen —
-seit v4.2-W77 sind das 63 über 100, 16 über 200, 8 über 300 und 2 über 500
+seit v4.2-W80 sind das 63 über 100, 16 über 200, 8 über 300 und 1 über 500
 Zeilen, dazu 22 über 50, 2 über 100 und keine über 150 Verzweigungen. Gezählt
 wird die Anzahl, nicht die Länge: eine Sperre, die jede zusätzliche
 Zeile meldet, fällt bei jeder Fehlerbehebung und ist in einer Woche

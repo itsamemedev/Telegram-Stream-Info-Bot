@@ -11,6 +11,40 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Geändert — die B54-Notbremse heraus, vierter und letzter Schnitt (v4.2 W80)
+
+```
+handle_recording_finished   616 Z / 141 Zweige   (vor W78)
+                            455 Z / 113 Zweige   (jetzt)
+```
+
+Dieser Block ist anders als die drei davor: er **wartet** (zwei `await`) und
+**schreibt in die Datenbank** — er schaltet ein Tracking ab, wenn der Stream
+`AUTO_DISABLE_STREAK`-mal in Folge tot war. Deshalb bekam er eine eigene
+Welle, statt in W78 oder W79 mitzufahren.
+
+**Die Gefahr bei genau diesem Umzug ist ein vergessenes `await`.** Der Aufruf
+liefert dann eine Koroutine, die nie läuft: das Tracking bleibt an, die
+Notbremse greift nie, und zu sehen ist höchstens eine `RuntimeWarning`, die
+zwischen allem anderen untergeht. Weder `py_compile` noch `pyflakes` melden
+das. Der Vertrag prüft es deshalb ausdrücklich — er sucht den Aufruf als
+`Await`-Knoten, nicht als `Call`.
+
+Der Vertrag hält außerdem drei Dinge fest, die still schiefgehen könnten: die
+`WHERE`-Bedingung gegen das doppelte Abschalten (v4.1-W29 — nicht der Loop
+schützt, sondern die Bedingung der Anweisung), dass die Register nach dem
+Abschalten geleert werden, und dass die Benachrichtigung an den Betreiber
+**nicht still** ist. Ein abgeschaltetes Tracking ist genau der Fall, den er
+mitbekommen muss.
+
+### Die Verträge aus W78 und W79 wurden bewusst nachgezogen
+
+Beide verlangten, dass dieser Block **drin** bleibt — damit ihn niemand
+nebenbei mitnimmt. Genau dafür standen sie da, und sie haben beim Umzug
+prompt gefeuert. Sie verlangen jetzt das Gegenstück: er steht in seiner
+eigenen Funktion, und die wird awaited.
+
+
 ### Geändert — dritter Schnitt am Aufnahmeschluss: der frühe Abriss (v4.2 W79)
 
 35 Zeilen heraus: Auto-Retry mit wachsender Pause nach einem frühen Abriss,

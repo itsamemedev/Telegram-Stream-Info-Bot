@@ -8346,6 +8346,76 @@ def _rec_frueh_getrennt(category, duration, tid, username, proc):
         _EARLY_DISCONNECT_RETRY.pop(tid, None)
 
 
+async def _rec_auto_abschalten(data_dead, tid, username, bot_app, chat_id):
+    """B54-Notbremse: Tracking abschalten, wenn der Stream dauerhaft tot ist.
+
+    v4.2-W80, vierter und letzter der geplanten Schnitte am
+    Aufnahmeschluss. Dieser hier ist anders als die drei davor: er
+    WARTET (zwei await) und er SCHREIBT IN DIE DATENBANK. Deshalb
+    bekam er eine eigene Welle statt mitzufahren.
+
+    Die Gefahr bei genau diesem Umzug ist ein vergessenes `await` an
+    der Aufrufstelle: der Aufruf liefert dann eine Koroutine, die nie
+    laeuft, das Tracking bleibt an, und niemand sieht einen Fehler —
+    hoechstens eine RuntimeWarning im Log, die zwischen allem anderen
+    untergeht. Der Vertrag zu dieser Welle prueft das eigens.
+
+    Das WHERE der UPDATE-Anweisung bleibt die Absicherung gegen das
+    Wettrennen (v4.1-W29) — nicht die Frage, auf welchem Loop der
+    Aufruf laeuft.
+    """
+    # B54: Hard-Cap Circuit-Breaker.
+    # Real-World Bug (Production 2026-05-25): @dramsell hatte 25× stall_killed
+    # über 13.5h — B45-Backoff stieg bis 30min-Cap und blieb DA für immer
+    # weil TikTok-Status durchgehend "live" meldete. Resultat:
+    # alle 30min wurde ein ffmpeg gestartet, das nach 60s vom Stall-Watchdog
+    # gekillt wurde — endlose Ressourcen-Verschwendung.
+    # Fix: nach AUTO_DISABLE_STREAK aufeinanderfolgenden stream-dead in
+    # Folge → Tracking auto-disablen + Operator-Notif. Operator kann
+    # manuell mit /resume reaktivieren nachdem er den Account checkt.
+    if data_dead and _STREAM_DEAD_STREAK.get(tid, 0) >= AUTO_DISABLE_STREAK:
+        try:
+            # v4.1-W29: NEBEN dem Loop. Die Absicherung gegen das
+            # Wettrennen steckt im WHERE der Anweisung, nicht darin,
+            # dass der Aufruf auf dem Loop laeuft.
+            def _abschalten(conn):
+                # Sicher gegen race: setze nur wenn nicht schon auto-disabled
+                conn.execute(
+                    "UPDATE trackings SET paused = 1, "
+                    "  auto_disabled_at = ?, auto_disabled_reason = ? "
+                    "WHERE id = ? AND COALESCE(auto_disabled_at, '') = ''",
+                    (datetime.now(timezone.utc).isoformat(),
+                     f"{AUTO_DISABLE_STREAK}× stall_killed in Folge — "
+                     f"Stream wahrscheinlich kaputt von TikTok-Seite",
+                     tid))
+                conn.commit()
+
+            await db_async(_abschalten)
+            # Cleanup unsere in-memory states
+            _STREAM_DEAD_STREAK.pop(tid, None)
+            _STREAM_DEAD_BACKOFF_UNTIL.pop(tid, None)
+            _PENDING_OFFLINE_COUNT.pop(tid, None)
+            _PENDING_OFFLINE_SINCE.pop(tid, None)
+            _NEXT_CHECK_AT.pop(tid, None)
+            log.warning(
+                f"B54 AUTO-DISABLED @{username} nach {AUTO_DISABLE_STREAK}× "
+                f"stall_killed in Folge. Operator muss manuell /resume aufrufen.")
+            # Telegram-Notif an den Operator
+            try:
+                await _safe_send(
+                    bot_app.bot, chat_id,
+                    f"🛑 <b>AUTO-DISABLED · @{safe(username)}</b>\n"
+                    f"<i>{AUTO_DISABLE_STREAK}× stall_killed in Folge.</i>\n"
+                    f"<i>Bot hat das Tracking automatisch pausiert um Ressourcen zu sparen.</i>\n"
+                    f"<i>Manuell prüfen + dann /resume @{safe(username)} um wieder anzustellen.</i>",
+                    parse_mode=ParseMode.HTML,
+                    disable_notification=False)   # nicht silent, das ist wichtig
+            except Exception as e:
+                log.warning(f"B54 notif send failed: {e}")
+        except Exception as e:
+            log.error(f"B54 auto-disable DB write failed: {e}")
+
+
 async def handle_recording_finished(proc, tid, chat_id, username, output_file,
                                     started_at, bot_app, attempt_id=None,
                                     recorder_name=None, stream_expiry=None):
@@ -8716,56 +8786,8 @@ async def handle_recording_finished(proc, tid, chat_id, username, output_file,
             _rec_totstreak_fortschreiben(
                 data_dead, tid, username, file_size, category)
 
-            # B54: Hard-Cap Circuit-Breaker.
-            # Real-World Bug (Production 2026-05-25): @dramsell hatte 25× stall_killed
-            # über 13.5h — B45-Backoff stieg bis 30min-Cap und blieb DA für immer
-            # weil TikTok-Status durchgehend "live" meldete. Resultat:
-            # alle 30min wurde ein ffmpeg gestartet, das nach 60s vom Stall-Watchdog
-            # gekillt wurde — endlose Ressourcen-Verschwendung.
-            # Fix: nach AUTO_DISABLE_STREAK aufeinanderfolgenden stream-dead in
-            # Folge → Tracking auto-disablen + Operator-Notif. Operator kann
-            # manuell mit /resume reaktivieren nachdem er den Account checkt.
-            if data_dead and _STREAM_DEAD_STREAK.get(tid, 0) >= AUTO_DISABLE_STREAK:
-                try:
-                    # v4.1-W29: NEBEN dem Loop. Die Absicherung gegen das
-                    # Wettrennen steckt im WHERE der Anweisung, nicht darin,
-                    # dass der Aufruf auf dem Loop laeuft.
-                    def _abschalten(conn):
-                        # Sicher gegen race: setze nur wenn nicht schon auto-disabled
-                        conn.execute(
-                            "UPDATE trackings SET paused = 1, "
-                            "  auto_disabled_at = ?, auto_disabled_reason = ? "
-                            "WHERE id = ? AND COALESCE(auto_disabled_at, '') = ''",
-                            (datetime.now(timezone.utc).isoformat(),
-                             f"{AUTO_DISABLE_STREAK}× stall_killed in Folge — "
-                             f"Stream wahrscheinlich kaputt von TikTok-Seite",
-                             tid))
-                        conn.commit()
-
-                    await db_async(_abschalten)
-                    # Cleanup unsere in-memory states
-                    _STREAM_DEAD_STREAK.pop(tid, None)
-                    _STREAM_DEAD_BACKOFF_UNTIL.pop(tid, None)
-                    _PENDING_OFFLINE_COUNT.pop(tid, None)
-                    _PENDING_OFFLINE_SINCE.pop(tid, None)
-                    _NEXT_CHECK_AT.pop(tid, None)
-                    log.warning(
-                        f"B54 AUTO-DISABLED @{username} nach {AUTO_DISABLE_STREAK}× "
-                        f"stall_killed in Folge. Operator muss manuell /resume aufrufen.")
-                    # Telegram-Notif an den Operator
-                    try:
-                        await _safe_send(
-                            bot_app.bot, chat_id,
-                            f"🛑 <b>AUTO-DISABLED · @{safe(username)}</b>\n"
-                            f"<i>{AUTO_DISABLE_STREAK}× stall_killed in Folge.</i>\n"
-                            f"<i>Bot hat das Tracking automatisch pausiert um Ressourcen zu sparen.</i>\n"
-                            f"<i>Manuell prüfen + dann /resume @{safe(username)} um wieder anzustellen.</i>",
-                            parse_mode=ParseMode.HTML,
-                            disable_notification=False)   # nicht silent, das ist wichtig
-                    except Exception as e:
-                        log.warning(f"B54 notif send failed: {e}")
-                except Exception as e:
-                    log.error(f"B54 auto-disable DB write failed: {e}")
+            await _rec_auto_abschalten(
+                data_dead, tid, username, bot_app, chat_id)
 
             # F45: Bei Aufnahme-Fehler die FULL stderr loggen (vorher [:3000]
             # truncated). Bei ffmpeg-Crashes ist der echte Fehler oft am Anfang,
