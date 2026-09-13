@@ -8180,6 +8180,119 @@ async def split_and_send_video(*a, **kw):
                      topic_forget=_topic_forget)
     return await _tv.split_and_send_video(*a, **kw)
 
+def _rec_kategorie_melden(category, username):
+    """Sagt im Log, WAS den Aufnahmeversuch beendet hat.
+
+    v4.2-W78: erster Schnitt an handle_recording_finished (616 Zeilen,
+    141 Verzweigungen). Bewusst dieser Block zuerst: er ist reine
+    Diagnose. Er gibt nichts zurueck, er wartet auf nichts, und was er
+    schreibt (`_f`), liest ausserhalb niemand — die spaeteren Bloecke
+    belegen denselben Kurznamen jeweils neu, bevor sie ihn lesen.
+    Nachgesehen, nicht angenommen.
+
+    Die 403-Zaehlung bleibt darin: sie rechnet ueber die Register aus
+    nc/aufnahmefolge.py, und das sind DIESELBEN Objekte wie vorher —
+    das Brain-Panel liest sie mit.
+    """
+    if category == "hevc_unsupported":
+        log.warning("Stream-Kategorie: hevc_unsupported — TikTok streamt "
+                    "HEVC/bytevc1 (FLV codec-id 12), ffmpeg kann das nicht "
+                    "demuxen. PREFER_H264 sollte das vermeiden; ggf. "
+                    "HEVC-only-Streamer oder ffmpeg-Upgrade ≥7.x nötig. "
+                    "user=@%s", username)
+    elif category == "stream_dead":
+        log.warning("Stream-Kategorie: stream_dead (HTTP 404 — Stream-URL "
+                    "abgelaufen oder Stream beendet) | user=@%s", username)
+    elif category == "codec_header_fail":
+        log.warning("Stream-Kategorie: codec_header_fail (ffmpeg konnte "
+                    "Codec-Params nicht ermitteln, Input-I/O-Fehler) | "
+                    "user=@%s", username)
+    elif category == "offline_or_protected":
+        log.warning("Stream-Kategorie: offline/protected | user=@%s", username)
+    elif category == "forbidden_403":
+        # V37-403: Streak hochzählen; ab RECORD_403_HITS auf yt-dlp umstellen
+        if RECORD_403_YTDLP:
+            # v4.2-W18: gerechnet wird in nc/aufnahmefolge.py. Die
+            # Register bleiben DIESELBEN Objekte — das Brain-Panel
+            # liest sie mit.
+            _f = _nc_folge.nach_403(
+                _REC_403_STREAK, _REC_403_UNTIL, _REC_BACKOFF_UNTIL,
+                username, _time_mod.time(),
+                hits=RECORD_403_HITS, cooldown_s=RECORD_403_COOLDOWN_S,
+                backoff_an=RECORD_FAIL_BACKOFF,
+                basis_s=RECORD_FAIL_BACKOFF_BASE_S,
+                max_s=RECORD_FAIL_BACKOFF_MAX_S)
+            if _f["erzwingt_ytdlp"]:
+                log.warning("V37-403: @%s %d× nativ-403 → erzwinge yt-dlp "
+                            "für %dmin (signiert Requests selbst, umgeht "
+                            "das CDN-403 meist).", username, _f["streak"],
+                            RECORD_403_COOLDOWN_S // 60)
+        if RECORD_PROXY:
+            log.warning("Stream-Kategorie: 403/forbidden TROTZ RECORD_PROXY | "
+                        "user=@%s — Proxy evtl. selbst geflaggt (Datacenter) "
+                        "oder Cookies/Region passen nicht zur Proxy-IP. "
+                        "Residential-/Mobile-Proxy testen.", username)
+        else:
+            log.warning("Stream-Kategorie: 403/forbidden | user=@%s — "
+                        "Cookies sind frisch? Dann ist es fast sicher die "
+                        "Server-IP (Datacenter) die TikTok blockt. RECORD_PROXY "
+                        "auf einen Residential-/Mobile-Proxy setzen.", username)
+    elif category == "timeout":
+        log.warning("Stream-Kategorie: timeout | user=@%s", username)
+
+
+def _rec_totstreak_fortschreiben(data_dead, tid, username, file_size,
+                                 category):
+    """Zaehlt tote Aufnahmeversuche — oder setzt zurueck, wenn Daten kamen.
+
+    v4.2-W78, zweiter Schnitt. Wie der erste ohne Wirkung nach aussen:
+    kein Rueckgabewert, kein await, und der einzige geschriebene Name
+    (`_f`) wird von jedem spaeteren Block neu belegt, bevor er ihn liest.
+
+    Die Register _STREAM_DEAD_STREAK, _STREAM_DEAD_BACKOFF_UNTIL und
+    _NEXT_CHECK_AT bleiben DIESELBEN Objekte auf Modulebene — sie werden
+    hier nur fortgeschrieben, nicht neu gebunden. Genau darauf beruht,
+    dass das Brain-Panel denselben Stand sieht wie der Worker.
+    """
+    if data_dead:
+        # v4.2-W18: Zaehlen, Stufe und Faellig-Stellen rechnet
+        # nc/aufnahmefolge.py — mit der MONOTONEN Uhr, weil
+        # _NEXT_CHECK_AT der monotone Takt des Workers ist. Die
+        # Wanduhr wuerde hier eine Sperre setzen, die entweder sofort
+        # abgelaufen oder Jahrzehnte gueltig ist.
+        try:
+            _f = _nc_folge.nach_totem_versuch(
+                _STREAM_DEAD_STREAK, _STREAM_DEAD_BACKOFF_UNTIL,
+                _NEXT_CHECK_AT, tid, _time_mod.monotonic(),
+                schwelle=_STREAM_DEAD_THRESHOLD,
+                kurz_s=_STREAM_DEAD_QUICK_COOLDOWN)
+        except Exception as e:
+            log.warning(f"Stream-dead backoff scheduling failed: {e}")
+            _f = None
+        if _f and _f["eskaliert"]:
+            log.warning(
+                "STREAM-DEAD STREAK @%s: %d× (file<%dKB) — wahrscheinlich "
+                "Live pausiert vom Streamer. Backoff %ds (%dmin). "
+                "Wir warten bis TikTok-Status auf 'offline' geht oder Stream "
+                "wieder Daten liefert.",
+                username, _f["streak"], _STREAM_DEAD_MIN_BYTES // 1024,
+                _f["sekunden"], _f["sekunden"] // 60)
+        elif _f:
+            # B62: vor der Schwelle nur ein KURZER Cooldown, damit der
+            # schnelle Sofort-Retry (~50s) entfaellt.
+            log.info(
+                "stream-dead @%s streak=%d/%d (file=%dKB, category=%s) — "
+                "kurzer Cooldown %ds (kein Sofort-Retry)",
+                username, _f["streak"], _STREAM_DEAD_THRESHOLD,
+                file_size // 1024, category, _STREAM_DEAD_QUICK_COOLDOWN)
+    elif file_size >= _STREAM_DEAD_MIN_BYTES:
+        # Echter Daten-Fluss → Streak resetten
+        if _STREAM_DEAD_STREAK.pop(tid, None):
+            log.info(f"stream-dead streak @{username} reset — Aufnahme lieferte "
+                     f"{file_size // 1024}KB Daten")
+        _STREAM_DEAD_BACKOFF_UNTIL.pop(tid, None)
+
+
 async def handle_recording_finished(proc, tid, chat_id, username, output_file,
                                     started_at, bot_app, attempt_id=None,
                                     recorder_name=None, stream_expiry=None):
@@ -8535,51 +8648,7 @@ async def handle_recording_finished(proc, tid, chat_id, username, output_file,
             # (haengt an geteiltem Zustand aus nc/aufnahmefolge.py, W18).
             category = _nc_kat.kategorisiere(
                 stderr_text, stall_killed[0], proc.returncode, file_exists, duration)
-            if category == "hevc_unsupported":
-                log.warning("Stream-Kategorie: hevc_unsupported — TikTok streamt "
-                            "HEVC/bytevc1 (FLV codec-id 12), ffmpeg kann das nicht "
-                            "demuxen. PREFER_H264 sollte das vermeiden; ggf. "
-                            "HEVC-only-Streamer oder ffmpeg-Upgrade ≥7.x nötig. "
-                            "user=@%s", username)
-            elif category == "stream_dead":
-                log.warning("Stream-Kategorie: stream_dead (HTTP 404 — Stream-URL "
-                            "abgelaufen oder Stream beendet) | user=@%s", username)
-            elif category == "codec_header_fail":
-                log.warning("Stream-Kategorie: codec_header_fail (ffmpeg konnte "
-                            "Codec-Params nicht ermitteln, Input-I/O-Fehler) | "
-                            "user=@%s", username)
-            elif category == "offline_or_protected":
-                log.warning("Stream-Kategorie: offline/protected | user=@%s", username)
-            elif category == "forbidden_403":
-                # V37-403: Streak hochzählen; ab RECORD_403_HITS auf yt-dlp umstellen
-                if RECORD_403_YTDLP:
-                    # v4.2-W18: gerechnet wird in nc/aufnahmefolge.py. Die
-                    # Register bleiben DIESELBEN Objekte — das Brain-Panel
-                    # liest sie mit.
-                    _f = _nc_folge.nach_403(
-                        _REC_403_STREAK, _REC_403_UNTIL, _REC_BACKOFF_UNTIL,
-                        username, _time_mod.time(),
-                        hits=RECORD_403_HITS, cooldown_s=RECORD_403_COOLDOWN_S,
-                        backoff_an=RECORD_FAIL_BACKOFF,
-                        basis_s=RECORD_FAIL_BACKOFF_BASE_S,
-                        max_s=RECORD_FAIL_BACKOFF_MAX_S)
-                    if _f["erzwingt_ytdlp"]:
-                        log.warning("V37-403: @%s %d× nativ-403 → erzwinge yt-dlp "
-                                    "für %dmin (signiert Requests selbst, umgeht "
-                                    "das CDN-403 meist).", username, _f["streak"],
-                                    RECORD_403_COOLDOWN_S // 60)
-                if RECORD_PROXY:
-                    log.warning("Stream-Kategorie: 403/forbidden TROTZ RECORD_PROXY | "
-                                "user=@%s — Proxy evtl. selbst geflaggt (Datacenter) "
-                                "oder Cookies/Region passen nicht zur Proxy-IP. "
-                                "Residential-/Mobile-Proxy testen.", username)
-                else:
-                    log.warning("Stream-Kategorie: 403/forbidden | user=@%s — "
-                                "Cookies sind frisch? Dann ist es fast sicher die "
-                                "Server-IP (Datacenter) die TikTok blockt. RECORD_PROXY "
-                                "auf einen Residential-/Mobile-Proxy setzen.", username)
-            elif category == "timeout":
-                log.warning("Stream-Kategorie: timeout | user=@%s", username)
+            _rec_kategorie_melden(category, username)
 
             if category == "early_disconnect":
                 # F50: Auto-Retry mit exponentieller Backoff. Wenn das schon
@@ -8625,43 +8694,8 @@ async def handle_recording_finished(proc, tid, chat_id, username, output_file,
             # nicht alle 70s ein neues ffmpeg starten das sofort wieder stirbt.
             data_dead = not _nc_folge.daten_geflossen(
                 category, file_size, _STREAM_DEAD_MIN_BYTES)
-            if data_dead:
-                # v4.2-W18: Zaehlen, Stufe und Faellig-Stellen rechnet
-                # nc/aufnahmefolge.py — mit der MONOTONEN Uhr, weil
-                # _NEXT_CHECK_AT der monotone Takt des Workers ist. Die
-                # Wanduhr wuerde hier eine Sperre setzen, die entweder sofort
-                # abgelaufen oder Jahrzehnte gueltig ist.
-                try:
-                    _f = _nc_folge.nach_totem_versuch(
-                        _STREAM_DEAD_STREAK, _STREAM_DEAD_BACKOFF_UNTIL,
-                        _NEXT_CHECK_AT, tid, _time_mod.monotonic(),
-                        schwelle=_STREAM_DEAD_THRESHOLD,
-                        kurz_s=_STREAM_DEAD_QUICK_COOLDOWN)
-                except Exception as e:
-                    log.warning(f"Stream-dead backoff scheduling failed: {e}")
-                    _f = None
-                if _f and _f["eskaliert"]:
-                    log.warning(
-                        "STREAM-DEAD STREAK @%s: %d× (file<%dKB) — wahrscheinlich "
-                        "Live pausiert vom Streamer. Backoff %ds (%dmin). "
-                        "Wir warten bis TikTok-Status auf 'offline' geht oder Stream "
-                        "wieder Daten liefert.",
-                        username, _f["streak"], _STREAM_DEAD_MIN_BYTES // 1024,
-                        _f["sekunden"], _f["sekunden"] // 60)
-                elif _f:
-                    # B62: vor der Schwelle nur ein KURZER Cooldown, damit der
-                    # schnelle Sofort-Retry (~50s) entfaellt.
-                    log.info(
-                        "stream-dead @%s streak=%d/%d (file=%dKB, category=%s) — "
-                        "kurzer Cooldown %ds (kein Sofort-Retry)",
-                        username, _f["streak"], _STREAM_DEAD_THRESHOLD,
-                        file_size // 1024, category, _STREAM_DEAD_QUICK_COOLDOWN)
-            elif file_size >= _STREAM_DEAD_MIN_BYTES:
-                # Echter Daten-Fluss → Streak resetten
-                if _STREAM_DEAD_STREAK.pop(tid, None):
-                    log.info(f"stream-dead streak @{username} reset — Aufnahme lieferte "
-                             f"{file_size // 1024}KB Daten")
-                _STREAM_DEAD_BACKOFF_UNTIL.pop(tid, None)
+            _rec_totstreak_fortschreiben(
+                data_dead, tid, username, file_size, category)
 
             # B54: Hard-Cap Circuit-Breaker.
             # Real-World Bug (Production 2026-05-25): @dramsell hatte 25× stall_killed
