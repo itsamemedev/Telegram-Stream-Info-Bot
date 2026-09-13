@@ -9288,6 +9288,114 @@ def _test_v42_w65_stille_wird_gemessen_und_gesperrt():
     ok("W65: der DDL-Helfer schluckt nur 'existiert schon', sonst nichts")
 
 
+def _test_v42_w82_zweitversuch_rotiert_wirklich():
+    """v4.2-W82: der Zweitversuch der Live-Aufloesung war eine Attrappe.
+
+    Der Betreiber meldete am 13.09. zusaetzlich: "die Live-Abfragen geben 502
+    aus". Beim Nachsehen stand ueber der Schleife in
+    `_resolve_via_webcast_api_v2` seit jeher
+
+        # ... Daher: bis zu 2 Versuche, jeweils mit FRISCHEM Proxy ...
+
+    geholt wurde der Proxy aber mit `get_random_proxy()`. Das liefert
+    (nc/proxyutil.py, Prioritaet 0) bei gesetztem RECORD_PROXY
+    BEDINGUNGSLOS denselben Proxy und bei einer PROXY_LIST ein
+    `random.choice`, das denselben erneut ziehen darf.
+
+    Gemessen gegen das echte nc.proxyutil:
+
+        RECORD_PROXY gesetzt   alt: 2x derselbe Proxy, immer
+        Pool aus zwei          alt: 196 von 400 Laeufen derselbe
+        ohne Proxy             alt: 2x dieselbe Server-IP
+
+    RECORD_PROXY ist ausgerechnet die Einstellung, die gegen 403/502
+    empfohlen wird. Dort war jede Live-Pruefung also ZWEI identische
+    Anfragen mit 0,5 s Pause — doppelte Last gegen einen Endpunkt, der
+    ohnehin schon ablehnt, und eine halbe Sekunde Verzoegerung pro
+    verfolgtem Nutzer und Durchlauf.
+
+    Was hier still kaputtgehen kann:
+      1. Jemand stellt wieder auf `get_random_proxy()` um — dann ist die
+         Rotation weg und niemand merkt es, weil der Code laeuft.
+      2. Der Platzhalter fuer die Direktverbindung faellt weg. `None`
+         bedeutet "ohne Proxy" und ist ein ECHTER Egress; ohne den
+         Platzhalter gilt zweimal direkt faelschlich als Rotation.
+      3. Der Zweitversuch laeuft trotzdem, wenn es nichts zu rotieren gibt.
+    """
+    import ast as _ast
+    hier = os.path.dirname(os.path.abspath(__file__))
+    quelle = io.open(os.path.join(hier, "bot.py"), encoding="utf-8").read()
+    baum = _ast.parse(quelle)
+    oben = {n.name: n for n in baum.body
+            if isinstance(n, (_ast.FunctionDef, _ast.AsyncFunctionDef))}
+    fn = oben.get("_resolve_via_webcast_api_v2")
+    assert fn is not None, "_resolve_via_webcast_api_v2 ist verschwunden"
+
+    # --- 1) Der Zweitversuch holt ueber _pick_pull_proxy MIT exclude ------
+    rufe = [n for n in _ast.walk(fn)
+            if isinstance(n, _ast.Call) and isinstance(n.func, _ast.Name)
+            and n.func.id == "_pick_pull_proxy"]
+    assert rufe, \
+        "_resolve_via_webcast_api_v2 ruft _pick_pull_proxy nicht mehr — mit " \
+        "get_random_proxy() kann der Zweitversuch nicht rotieren"
+    assert any(k.arg == "exclude" for r in rufe for k in r.keywords), \
+        "_pick_pull_proxy wird ohne exclude gerufen — dann darf es denselben " \
+        "Proxy erneut liefern und der Zweitversuch ist wieder eine Attrappe"
+
+    # --- 2) Die Direktverbindung hat einen Platzhalter --------------------
+    assert "_DIREKT" in {n.id for n in _ast.walk(fn)
+                         if isinstance(n, _ast.Name)}, \
+        "_DIREKT fehlt in der Schleife — ohne Platzhalter zaehlt zweimal " \
+        "'ohne Proxy' faelschlich als Rotation"
+
+    # --- 3) Ohne Rotationsmoeglichkeit wird abgebrochen, nicht wiederholt -
+    quelle_fn = _ast.get_source_segment(quelle, fn) or ""
+    assert "in _versucht" in quelle_fn, \
+        "die Pruefung auf einen schon versuchten Egress fehlt — dann laeuft " \
+        "der Zweitversuch auch dort, wo er garantiert dasselbe liefert"
+
+    # --- 4) 502 ist ein EIGENER Grund, keine 5xx-Sammelkategorie ----------
+    from nc import resolvergrund as _rg
+    assert _rg.http_grund(502) == "http_502", \
+        "502 faellt wieder in die 5xx-Sammelkategorie. Die sagt 'meist " \
+        "transient' — ein dauerhafter 502 ueber alle Nutzer hat aber " \
+        "dieselbe Ursache wie ein 403 und braucht dieselbe Abhilfe."
+    for code in (500, 503, 504):
+        assert _rg.http_grund(code) == "http_5xx", code
+    assert "403" in _rg.GRUND["http_502"], \
+        "der 502-Text nennt den Zusammenhang mit 403 nicht — genau der ist " \
+        "die Handlungsanweisung"
+
+    # --- 5) Die Rotation am ECHTEN nc.proxyutil ---------------------------
+    from nc import proxyutil as _P
+    _DIREKT_T = "\x00direkt"
+
+    def _stelle(rp, liste):
+        # "" statt None: configure_proxy_select liest None als "nicht aendern"
+        _P.configure_proxy_select(tunnel={}, record_proxy=rp,
+                                  proxy_list=liste, router_getter=lambda: None)
+
+    def _rotiert():
+        versucht = {_P.get_random_proxy() or _DIREKT_T}
+        zweit = _P._pick_pull_proxy(exclude=versucht)
+        return (zweit or _DIREKT_T) not in versucht
+
+    _merker = (_P._TUNNEL, _P._RECORD_PROXY, _P._PROXY_LIST, _P._ROUTER_GET)
+    try:
+        _stelle("http://fest:pw@proxy:8080", [])
+        assert not _rotiert(), \
+            "bei festem RECORD_PROXY gibt es nichts zu rotieren — wenn das " \
+            "hier True meldet, laeuft der Zweitversuch gegen denselben Egress"
+        _stelle("", ["http://p1:8080", "http://p2:8080"])
+        assert all(_rotiert() for _ in range(50)), \
+            "mit einem Pool aus zwei Proxys muss der Zweitversuch IMMER den " \
+            "anderen nehmen"
+        _stelle("", [])
+        assert not _rotiert(), "ohne Proxy gibt es nichts zu rotieren"
+    finally:
+        _P._TUNNEL, _P._RECORD_PROXY, _P._PROXY_LIST, _P._ROUTER_GET = _merker
+
+
 def _test_v42_w81_fehlerpfade_sprechen():
     """v4.2-W81: die stummen Misserfolgs-Rueckgaben der beiden Ketten, die
        der Betreiber am 13.09. als kaputt gemeldet hat.
@@ -12070,6 +12178,7 @@ def main():
     _test_v42_w79_frueher_abriss_heraus()
     _test_v42_w80_notbremse_heraus()
     _test_v42_w81_fehlerpfade_sprechen()
+    _test_v42_w82_zweitversuch_rotiert_wirklich()
     _test_v42_w60_azrael_cooldown_je_plattform()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)

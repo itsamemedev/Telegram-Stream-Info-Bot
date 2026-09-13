@@ -2608,6 +2608,11 @@ def _abo_probe_dump(username, payload, reason=""):
     except Exception as e:
         log.debug(f"ABO-PROBE @{username}: dump fehlgeschlagen: {e}")
 
+# v4.2-W82: Platzhalter fuer "ohne Proxy". Ein leerer Proxy ist ein echter
+# Egress (die Server-IP), kein fehlender Wert — und muss deshalb in der
+# Rotationsliste unterscheidbar sein.
+_DIREKT = "\x00direkt"
+
 async def _resolve_via_webcast_api_v2(username, session):
     """Returns (status, info_dict) — 'live'/'offline'/'unknown'.
        Erweiterte Version von _resolve_via_webcast_api die 'offline' explizit
@@ -2632,8 +2637,35 @@ async def _resolve_via_webcast_api_v2(username, session):
     # schlechte Pool-Proxys ans Routing zurückmelden (→ Eviction aus dem Pool).
     text = None
     _using_pool = not RECORD_PROXY        # nur Pool-Proxys bewerten/evicten
+    # v4.2-W82: Der Zweitversuch war eine Attrappe. Der Kommentar darueber
+    # verspricht "Retry mit FRISCHEM Proxy", geholt wurde er aber mit
+    # get_random_proxy() — und das liefert bei gesetztem RECORD_PROXY
+    # BEDINGUNGSLOS denselben Proxy (nc/proxyutil.py, Prioritaet 0) und bei
+    # einer PROXY_LIST ein random.choice, das denselben erneut ziehen darf.
+    # Ein 502 ueber einen bestimmten Egress wurde also 0,5 Sekunden spaeter
+    # ueber denselben Egress noch einmal geholt: gleiche Antwort, doppelte
+    # Last, halbe Sekunde Verzoegerung pro Live-Pruefung.
+    #
+    # _pick_pull_proxy(exclude=...) kann rotieren und ist hier schon
+    # importiert. Wo es nichts zu rotieren GIBT (fester RECORD_PROXY, leerer
+    # Pool), wird der Zweitversuch uebersprungen statt blind wiederholt —
+    # zweimal dieselbe Frage an dieselbe Adresse ist keine Wiederholung,
+    # sondern eine Verdopplung.
+    _versucht = set()
+    _letzter_grund = ""
     for _attempt in range(2):
-        _rp = get_random_proxy()
+        if _attempt == 0:
+            _rp = get_random_proxy()
+        else:
+            _rp = _pick_pull_proxy(exclude=_versucht)
+            # `None` heisst Direktverbindung und ist ein eigener Egress — er
+            # darf nicht mit "kein Proxy gefunden" verwechselt werden. Ohne
+            # den Platzhalter waere zweimal direkt als Rotation durchgegangen.
+            if (_rp or _DIREKT) in _versucht:
+                # Nichts zu rotieren — der Zweitversuch waere identisch.
+                _resolver_stumm(username, _letzter_grund or "netz")
+                return "unknown", None
+        _versucht.add(_rp or _DIREKT)
         try:
             async with session.get(url, params=params, headers=headers,
                                    cookies=cookies, allow_redirects=True, proxy=_rp,
@@ -2649,9 +2681,10 @@ async def _resolve_via_webcast_api_v2(username, session):
                     if _using_pool and _rp:
                         try: report_proxy_result(_rp, False)   # Pool-Proxy abstrafen
                         except Exception: pass
+                    _letzter_grund = _nc_rgrund.http_grund(resp.status)
                     if _attempt == 0:
                         await asyncio.sleep(0.5)
-                        continue               # Retry mit frischem Proxy
+                        continue               # Retry, jetzt mit ANDEREM Proxy
                     _resolver_stumm(username, _nc_rgrund.http_grund(resp.status))
                     return "unknown", None     # Server-Fehler — kein Backoff
                 if resp.status != 200:
@@ -2667,9 +2700,10 @@ async def _resolve_via_webcast_api_v2(username, session):
             if _using_pool and _rp:
                 try: report_proxy_result(_rp, False)
                 except Exception: pass
+            _letzter_grund = "netz"
             if _attempt == 0:
                 await asyncio.sleep(0.3)
-                continue                       # einmal mit frischem Proxy neu
+                continue                       # einmal mit ANDEREM Proxy neu
             _resolver_stumm(username, "netz")
             log.debug(f"webcast-api @{username}: fetch failed: {e}")
             return "unknown", None

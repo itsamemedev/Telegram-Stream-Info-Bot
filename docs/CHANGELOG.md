@@ -11,6 +11,54 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Behoben — der Zweitversuch der Live-Auflösung war eine Attrappe (v4.2 W82)
+
+Nachtrag des Betreibers zum Bughunt: **„die Live-Abfragen geben 502 aus"**.
+
+Über der Retry-Schleife in `_resolve_via_webcast_api_v2` stand seit jeher
+
+> Daher: bis zu 2 Versuche, jeweils mit **FRISCHEM** Proxy
+
+Geholt wurde der Proxy aber mit `get_random_proxy()`. Das liefert
+(`nc/proxyutil.py`, Priorität 0) bei gesetztem `RECORD_PROXY`
+**bedingungslos denselben** Proxy und bei einer `PROXY_LIST` ein
+`random.choice`, das denselben erneut ziehen darf. Gemessen gegen das echte
+`nc.proxyutil`:
+
+| Konfiguration | alter Zweitversuch |
+|---|---|
+| `RECORD_PROXY` gesetzt | 2× derselbe Proxy, **immer** |
+| Pool aus zwei | 196 von 400 Läufen derselbe |
+| ohne Proxy | 2× dieselbe Server-IP |
+
+`RECORD_PROXY` ist ausgerechnet die Einstellung, die gegen 403/502 empfohlen
+wird. Dort war jede Live-Prüfung **zwei identische Anfragen mit 0,5 s Pause** —
+doppelte Last gegen einen Endpunkt, der ohnehin ablehnt, plus eine halbe
+Sekunde Verzögerung pro verfolgtem Nutzer und Durchlauf.
+
+Jetzt holt der Zweitversuch über `_pick_pull_proxy(exclude=…)`, das rotieren
+kann und hier längst importiert war. Wo es **nichts** zu rotieren gibt (fester
+`RECORD_PROXY`, leerer Pool), entfällt er ganz statt blind zu wiederholen.
+Die Direktverbindung bekommt dabei einen Platzhalter: `None` heißt „ohne
+Proxy" und ist ein *echter* Egress — ohne Platzhalter wäre zweimal direkt
+fälschlich als Rotation durchgegangen.
+
+**502 bekommt einen eigenen Grund.** Die Sammelkategorie 5xx sagt „meist
+transient" — ein dauerhafter 502 über alle Nutzer hat aber dieselbe Ursache
+wie ein 403 und braucht dieselbe Abhilfe. Der Text nennt auch die
+Unterscheidung, die man nicht raten kann: ein Proxy, der selbst nicht
+durchkommt, lässt schon den CONNECT scheitern und erscheint als `netz`, nicht
+als 502. Ein 502 heißt also: die Verbindung stand, die Gegenseite hat
+abgelehnt. Die Verteilung über alle Statuscodes zeigt
+`/api/stats/tiktok-status`.
+
+Vertrag `_test_v42_w82_zweitversuch_rotiert_wirklich` — **6 von 6 Mutationen
+feuern**, darunter „zurück auf `get_random_proxy`", „`exclude` weggelassen"
+und „Direkt-Platzhalter entfernt". Die Rotation wird gegen das **echte**
+`nc.proxyutil` geprüft, nicht gegen eine Nachbildung.
+
+---
+
 ### Behoben — die stummen Fehlerpfade von Whisper und Stream-Auflösung (v4.2 W81)
 
 Zwei Meldungen des Betreibers vom 13.09.:
