@@ -11,6 +11,65 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Behoben — die stummen Fehlerpfade von Whisper und Stream-Auflösung (v4.2 W81)
+
+Zwei Meldungen des Betreibers vom 13.09.:
+
+> „whisper/transkript funktioniert immer noch nicht"
+> „Chats können von online tiktok Usern geladen werden aber keine gültigen streams"
+
+Beide Wege scheitern **ohne Absturz**. Sie kehren ordentlich zurück, nur mit
+leerem Ergebnis — `stillecheck` fällt dort nicht, weil es keinen stillen
+`except` gibt, sondern ein stilles `return`.
+
+Gemessen mit dem neuen `tools/blindstellen.py`:
+`_resolve_via_webcast_api_v2` hatte **elf** ergebnislose Ausgänge, acht davon
+auf `log.debug` und drei ganz ohne Zeile; `_whisper_transcribe` und
+`_whisper_segments` verschluckten jeden Fehler auf `debug`. Ein `log.debug`
+erscheint in einem INFO- oder ERROR-Log nie — für den Betreiber war das
+dasselbe wie `pass`. Deshalb war „keine gültigen streams" aus dem Log nicht
+erklärbar.
+
+**Warum es nicht reicht, die Zeilen auf `warning` zu heben:** der Resolver
+läuft pro Poll-Durchlauf und pro verfolgtem Nutzer. Ungedrosselt wäre das Log
+nach einer Stunde unlesbar, und eine unlesbare Warnung ist so gut wie keine.
+Genau deshalb standen die Zeilen überhaupt auf `debug`.
+
+Neu ist deshalb `nc/meldetakt.py` — dieselbe Regel wie `_loop_fehler` und
+`nc.audiotap.melden`, nur allgemein: erste Meldung sofort, **Wechsel des
+Grundes** sofort (dass aus einem Timeout ein 403 geworden ist, ist die
+eigentliche Nachricht), sonst höchstens alle 15 Minuten mit der Zahl der
+unterdrückten Fälle. Gedrosselt wird auf den **Kanal**, nicht den Nutzer: bei
+200 Trackings drosselt ein Schlüssel je Nutzer gar nichts. Der Erfolgspfad
+setzt die Drossel zurück, sonst bliebe ein wiederkehrender Ausfall bis zu 15
+Minuten unsichtbar.
+
+Die Klartexte stehen in `nc/resolvergrund.py`, jeder **mit Abhilfe** — „HTTP
+403" allein hat schon einmal wochenlang niemandem geholfen. Sechzehn Gründe,
+darunter der vom Betreiber gemeldete Fall `beide_wege_leer` und
+`kein_ytdlp`: dass der dritte Auflösungsweg auf der Maschine gar nicht
+existiert, stand bis hierher nirgends.
+
+**Was jetzt im Log steht**, wo vorher nichts stand:
+
+    Stream-Aufloesung @user ergebnislos [kein_stream_data]: Der Raum ist
+    live, die Antwort enthaelt aber keinen stream_data-Block. … RECORD_PROXY
+    setzen. (37 weitere unterdrueckt)
+
+    Whisper (transcribe) fehlgeschlagen: RuntimeError: … — ohne Transkript
+    reagiert AZRAEL nicht auf gesprochenes Wort.
+
+`tools/blindstellen.py` misst die Klasse dauerhaft (Bestand **478**) und
+sperrt in der CI ihr Wachstum, wie W65/W66. Der Vertrag
+`_test_v42_w81_fehlerpfade_sprechen` hält die drei Dinge fest, die hier still
+kaputtgehen könnten: Meldung wieder auf `debug`, Drossel entfernt, Drossel je
+Nutzer statt je Kanal. **8 von 8 Mutationen feuern.**
+
+Nebenbefund derselben Suche: ein Scan aller 344 eindeutig asynchronen Namen
+gegen ihre Aufrufstellen fand **kein einziges vergessenes `await`**.
+
+---
+
 ### Geändert — die B54-Notbremse heraus, vierter und letzter Schnitt (v4.2 W80)
 
 ```

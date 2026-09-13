@@ -10,7 +10,7 @@ GitHub-Repo trägt Historie, CI und Issues — es ist nicht der Deploy-Weg.
 
 ## Die eine Regel
 
-`bot.py` hat **23.924 Zeilen / 1,2 MB ≈ 295.000 Token**. Diese Datei wird
+`bot.py` hat **24.010 Zeilen / 1,2 MB ≈ 295.000 Token**. Diese Datei wird
 **nie** ganz gelesen und **nie** blind durchsucht. Erst fragen wo etwas steht,
 dann den Ausschnitt holen:
 
@@ -25,7 +25,7 @@ dann den Ausschnitt holen:
     python tools/ncpatch.py docs                           # Doku-Zahlen gegen den Quelltext
 
 `find` antwortet aus `.claude/INDEX.md` — 364 Routen (34 in `bot.py`, 330 in
-`nc/routes/`), 60 Slash-Commands, 542 Funktionen mit Zeilennummern. Nach Änderungen an Routen, Commands oder
+`nc/routes/`), 60 Slash-Commands, 544 Funktionen mit Zeilennummern. Nach Änderungen an Routen, Commands oder
 Top-Level-Funktionen `map` neu laufen lassen. Details: Skill `nc-navigation`.
 
 Für „wer ruft das auf?" und „was ist der Typ?" ist der Sprachserver billiger als
@@ -54,7 +54,7 @@ Auf diesem Windows-Rechner heißt der Interpreter **`python`** (3.13.12);
     brain_bridge.py      Adapter Bot ↔ brain/ (M2)
     brain/               KI-Kern: state, rules, router, agents, memory,
                          semantic, knowledge, scheduler, llm, report
-    nc/                  138 Fachmodule: db, scraping, restream, oauth, ledger,
+    nc/                  140 Fachmodule: db, scraping, restream, oauth, ledger,
                          i18n, …
     nc/routes/           36 Flask-Blueprints mit 327 weiteren API-Routen
     locales/             de.json, en.json — der Übersetzungskatalog
@@ -89,6 +89,7 @@ stdlib-only (`urllib`, kein `aiohttp`).
     python tools/importzeit.py    --sperre   # braucht requirements-smoke.txt
     python tools/abhaengigkeiten.py --sperre
     python tools/monolith.py      --sperre
+    python tools/blindstellen.py  --sperre
     python tools/i18n_extract.py --check en
     python test_smoke.py ; python test_nc_modules.py ; python test_restream.py
 
@@ -139,7 +140,7 @@ GET und POST ist kein Duplikat — ein naiver Regex meldet Fehlalarm).
 ## Fallstricke, die schon zugeschlagen haben
 
 **Stille `except`-Blöcke sind der Hauptfeind.** Seit v4.2-W65 ist das keine
-Behauptung mehr, sondern gemessen: **1746 `except`-Blöcke, davon 1086 ohne
+Behauptung mehr, sondern gemessen: **1746 `except`-Blöcke, davon 1085 ohne
 jede Meldung** (`python tools/stillecheck.py`). Jede Welle der Reihe W51–W64
 kam aus dieser Klasse. Der Bestand darf bleiben, er darf nur nicht *wachsen* —
 `stillecheck.py --sperre` fällt in der CI, sobald irgendwo ein stiller Block
@@ -158,6 +159,32 @@ dorthin, nie auf `log.debug` und nie auf `pass`. Legitim still bleiben nur
 Aufräumpfade, deren Fehlschlag bedeutungslos ist (`proc.terminate()` auf einen
 toten Prozess, `os.remove()` auf eine bereits gelöschte Datei) und der
 Fehlerkanal selbst — dort erzeugt Loggen eine Rekursion.
+
+**Stille `except`-Blöcke sind nur die halbe Blindheit.** Die andere Hälfte
+hat der Betreiber am 13.09. gemeldet: „whisper/transkript funktioniert immer
+noch nicht" und „Chats können von online tiktok Usern geladen werden aber
+keine gültigen streams". Beide Wege scheitern **ohne Absturz** — sie kehren
+ordentlich zurück, nur mit leerem Ergebnis. `stillecheck` fällt dort nicht:
+es gibt keinen stillen `except`, sondern ein **stilles `return`**.
+
+`_resolve_via_webcast_api_v2` hatte elf solche Ausgänge, acht auf `log.debug`
+und drei ganz ohne Zeile; `_whisper_transcribe` verschluckte jeden Fehler auf
+`debug`. Ein `log.debug` erscheint in einem INFO- oder ERROR-Log **nie** —
+für den Betreiber ist ein Fehlerpfad auf `debug` dasselbe wie `pass`.
+`tools/blindstellen.py` misst diese Klasse, Bestand **478**, und wie bei
+W65/W66 wird nur das Wachstum gesperrt.
+
+Auf `warning` heben allein genügt aber nicht: der Resolver läuft pro Poll und
+pro verfolgtem Nutzer, ungedrosselt wäre das Log nach einer Stunde unlesbar —
+und eine unlesbare Warnung ist so gut wie keine. Deshalb geht jede dieser
+Meldungen durch **`nc/meldetakt.py`**: erste Meldung sofort, ein *Wechsel des
+Grundes* sofort (dass aus einem Timeout ein 403 geworden ist, ist die
+eigentliche Nachricht), sonst höchstens alle 15 Minuten mit der Zahl der
+unterdrückten Fälle. Der Schlüssel ist der **Kanal**, nicht der Nutzer — bei
+200 Trackings drosselt ein Schlüssel je Nutzer gar nichts. Und der Erfolgspfad
+setzt die Drossel zurück, sonst bleibt ein wiederkehrender Ausfall bis zu 15
+Minuten unsichtbar. Die Klartexte stehen in `nc/resolvergrund.py`, jeder **mit
+Abhilfe**: „HTTP 403" allein hat schon einmal wochenlang niemandem geholfen.
 
 **Modul-Konstanten frieren `.env` ein.** `.env` wird teils erst nach den ersten
 Imports geladen. Konfiguration als Funktion lesen (`_backend_conf()`), nie als

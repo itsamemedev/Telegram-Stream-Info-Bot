@@ -600,6 +600,8 @@ from nc import reccmd as _nc_reccmd  # v4.2-W17: die Kommandozeilen des Recorder
 from nc import aufnahmefolge as _nc_folge  # v4.2-W18: die Eskalationsrechnung
 from nc import aufnahmekategorie as _nc_kat  # v4.2-W23: warum eine Aufnahme so endete
 from nc import audiotap as _nc_audiotap  # v4.2-W46: warum der Audio-Tap starb
+from nc import meldetakt as _nc_meldetakt  # v4.2-W81: Grund melden ohne Log-Flut
+from nc import resolvergrund as _nc_rgrund  # v4.2-W81: warum die Aufloesung leer blieb
 from nc import aufnahmesitzung as _nc_sitzung  # v4.2-W44: die Klammer um die Segmente EINES Streams
 from nc import chatfolge as _nc_chatfolge  # v4.2-W47: wie oft der TikTok-Chat neu darf
 from nc import memeklip as _nc_memeklip  # v4.2-W24: erkennt meme-wuerdige Chat-Momente
@@ -2226,6 +2228,27 @@ def _find_stream_urls(obj, _depth: int = 0):
 # veraltet und scheiterte für manche User wo V2 funktionierte.
 
 
+def _resolver_stumm(username, grund):
+    """v4.2-W81: einen ergebnislosen Ausgang der Stream-Aufloesung sichtbar
+       machen — gedrosselt.
+
+       Diese Meldungen standen bis W81 auf `log.debug` oder fehlten ganz.
+       Sie auf `warning` zu heben war nicht die ganze Arbeit: der Resolver
+       laeuft pro Poll und pro verfolgtem Nutzer, ungedrosselt waere das Log
+       nach einer Stunde unlesbar. Der Schluessel ist deshalb der KANAL
+       ("resolver"), nicht der Nutzer — bei 200 Trackings drosselte ein
+       Schluessel je Nutzer nichts.
+
+       Der Wechsel des Grundes meldet sofort: dass aus einem Timeout ein 403
+       geworden ist, ist die eigentliche Nachricht."""
+    laut, unterdrueckt = _nc_meldetakt.melden(
+        "resolver", grund, _time_mod.monotonic())
+    if laut:
+        log.warning("Stream-Aufloesung @%s ergebnislos [%s]: %s%s",
+                    username, grund, _nc_rgrund.text(grund),
+                    _nc_meldetakt.zusatz(unterdrueckt))
+
+
 async def _resolve_via_html(username: str,
                              session: "aiohttp.ClientSession") -> Optional[dict]:
     """F13 Original-Pfad: HTML-Scraping. Bleibt als Fallback weil manche
@@ -2248,11 +2271,12 @@ async def _resolve_via_html(username: str,
                                cookies=cookies, allow_redirects=True, proxy=_rp,
                                timeout=aiohttp.ClientTimeout(total=20)) as resp:
             if resp.status != 200:
-                log.debug(f"html-scrape @{username}: HTTP {resp.status}")
+                _resolver_stumm(username, "html_http")
                 return None
             text = await resp.text()
             _capture_set_cookies(resp); _persist_refreshed_cookies()
     except Exception as e:
+        _resolver_stumm(username, "html_netz")
         log.debug(f"html-scrape @{username}: fetch failed: {e}")
         return None
 
@@ -2315,7 +2339,7 @@ async def _resolve_via_html(username: str,
         except Exception as e:
             log.debug(f"html-scrape @{username}: initial_state parse: {e}")
 
-    log.debug(f"html-scrape @{username}: kein bekannter Script-Tag mit Live-Daten gefunden")
+    _resolver_stumm(username, "html_kein_tag")
     return None
 
 
@@ -2345,8 +2369,23 @@ async def resolve_tiktok_live_stream(username: str,
         if status == "live" and info:
             return info
         if mode == "api_only":
+            # v4.2-W81: im api_only-Modus gibt es keinen zweiten Weg. Der
+            # Aufrufer bekam bis hierher ein nacktes None und der Betreiber
+            # keine Zeile — dabei ist genau das der Modus, in dem eine
+            # ergebnislose Aufloesung KEINE weitere Erklaerung mehr bekommt.
+            _resolver_stumm(username, "beide_wege_leer")
             return None
-    return await _resolve_via_html(username, session)
+    treffer = await _resolve_via_html(username, session)
+    if not (treffer and (treffer.get("hls_url") or treffer.get("flv_url"))):
+        # v4.2-W81: das vom Betreiber am 13.09. gemeldete Bild — der Chat
+        # verbindet sich (der Raum lebt also), aber keine der beiden
+        # Aufloesungen gibt eine Adresse heraus. Vorher endete dieser Pfad
+        # wortlos, und "keine gueltigen streams" war aus dem Log nicht
+        # erklaerbar.
+        _resolver_stumm(username, "beide_wege_leer")
+    else:
+        _nc_meldetakt.zuruecksetzen("resolver")
+    return treffer
 _nc_rsstate.RESOLVE_LIVE["fn"] = resolve_tiktok_live_stream   # v4.1-W23: Haken fuer die Blueprints
 
 # F33: Unified detection — replaces TikTokLiveClient.is_live() with our own
@@ -2613,10 +2652,10 @@ async def _resolve_via_webcast_api_v2(username, session):
                     if _attempt == 0:
                         await asyncio.sleep(0.5)
                         continue               # Retry mit frischem Proxy
-                    log.debug(f"webcast-api @{username}: HTTP {resp.status} (auch nach Retry)")
+                    _resolver_stumm(username, _nc_rgrund.http_grund(resp.status))
                     return "unknown", None     # Server-Fehler — kein Backoff
                 if resp.status != 200:
-                    log.debug(f"webcast-api @{username}: HTTP {resp.status}")
+                    _resolver_stumm(username, _nc_rgrund.http_grund(resp.status))
                     return "unknown", None
                 text = await resp.text()
                 if _using_pool and _rp:
@@ -2631,14 +2670,17 @@ async def _resolve_via_webcast_api_v2(username, session):
             if _attempt == 0:
                 await asyncio.sleep(0.3)
                 continue                       # einmal mit frischem Proxy neu
+            _resolver_stumm(username, "netz")
             log.debug(f"webcast-api @{username}: fetch failed: {e}")
             return "unknown", None
     if text is None:
+        _resolver_stumm(username, "netz")
         return "unknown", None
 
     try:
         data = json.loads(text)
     except Exception as e:
+        _resolver_stumm(username, "kein_json")
         log.debug(f"webcast-api @{username}: not JSON: {e}")
         return "unknown", None
 
@@ -2648,6 +2690,7 @@ async def _resolve_via_webcast_api_v2(username, session):
         msg = (data.get("message") or "").lower()
         if "not found" in msg or "user not" in msg or sc in (10202, 10222):
             return "offline", None
+        _resolver_stumm(username, "status_code")
         log.debug(f"webcast-api @{username}: statusCode={sc} msg={msg[:80]}")
         return "unknown", None
 
@@ -2670,6 +2713,7 @@ async def _resolve_via_webcast_api_v2(username, session):
         # "Vorbereitung" oder andere nicht-finale Zustände. Als "offline" zu
         # klassifizieren ist falsch — besser "unknown" damit der nächste
         # Check es nochmal versucht statt eine falsche Offline-Transition zu triggern.
+        _resolver_stumm(username, "unbekannter_raumstatus")
         log.debug(f"webcast-api @{username}: unbekannter live_room.status={status} → unknown")
         return "unknown", None
 
@@ -2688,14 +2732,19 @@ async def _resolve_via_webcast_api_v2(username, session):
             log.info(f"webcast-api @{username}: status=live ohne Stream-URL → live (Recorder löst auf)")
             _abo_probe_dump(username, data, reason="live-ohne-stream (gated?)")
             return "live", None
+        _resolver_stumm(username, "kein_stream_data")
         return "unknown", None
 
     if isinstance(stream_data_str, str):
-        try: stream_obj = json.loads(stream_data_str)
-        except Exception: return "unknown", None
+        try:
+            stream_obj = json.loads(stream_data_str)
+        except Exception:
+            _resolver_stumm(username, "stream_data_kaputt")
+            return "unknown", None
     elif isinstance(stream_data_str, dict):
         stream_obj = stream_data_str
     else:
+        _resolver_stumm(username, "stream_data_kaputt")
         return "unknown", None
 
     data_section = stream_obj.get("data") or {}
@@ -2714,10 +2763,14 @@ async def _resolve_via_webcast_api_v2(username, session):
         #                 (statt False-Offline mit verpasster Aufnahme).
         if status == 2:
             return "live", None
+        _resolver_stumm(username, "keine_spielbare_url")
         return "unknown", None
 
     log.info(f"webcast-api resolved @{username} (hls={'yes' if hls else 'no'}, "
              f"flv={'yes' if flv else 'no'}, codec={vcodec or '?'}, q={quality or '?'})")
+    # v4.2-W81: Erfolg loescht die Drossel. Ohne das bliebe ein Ausfall, der
+    # zwischendurch einmal geklappt hat, bis zu 15 Minuten stumm.
+    _nc_meldetakt.zuruecksetzen("resolver")
     info = {"hls_url": hls, "flv_url": flv, "via": "webcast_api"}
     if vcodec:
         info["vcodec"] = vcodec
@@ -2795,6 +2848,11 @@ async def _resolve_via_ytdlp(username: str):
        selbst frisch auf (sein yt-dlp-Tier kommt durch denselben Proxy durch)."""
     ytdlp_bin = shutil.which("yt-dlp") or shutil.which("yt_dlp")
     if not ytdlp_bin:
+        # v4.2-W81: stand wortlos da. Damit fehlte dem Betreiber die
+        # Information, dass der dritte Weg gar nicht erst existiert — waehrend
+        # die beiden anderen an einem IP-Block scheitern, den ausgerechnet
+        # yt-dlp umgeht.
+        _resolver_stumm(username, "kein_ytdlp")
         return "unknown", None
     url = f"https://www.tiktok.com/@{username}/live"
     cmd = [ytdlp_bin, "--no-warnings", "--no-playlist", "--no-download",
@@ -16250,6 +16308,25 @@ async def _whisper_get_model():
             _nc_whisper.MODELL["obj"] = None
     return _nc_whisper.MODELL["obj"]
 
+def _whisper_stumm(wo, exc):
+    """v4.2-W81: einen verschluckten Whisper-Fehler sichtbar machen — gedrosselt.
+
+       Beide Transkriptions-Wege fingen jede Ausnahme auf `log.debug` ab. Ein
+       fehlendes Modell, eine kaputte WAV-Datei und ein CTranslate2-Absturz
+       sahen dadurch gleich aus: naemlich nach gar nichts. Genau deshalb war
+       "das Transkript ist leer" nicht zu diagnostizieren.
+
+       Gedrosselt, weil im Sekundentakt transkribiert wird; der Schluessel ist
+       der Kanal, nicht das einzelne Segment."""
+    laut, unterdrueckt = _nc_meldetakt.melden(
+        "whisper", f"{wo}:{type(exc).__name__}", _time_mod.monotonic())
+    if laut:
+        log.warning("Whisper (%s) fehlgeschlagen: %s: %s%s — ohne Transkript "
+                    "reagiert AZRAEL nicht auf gesprochenes Wort.",
+                    wo, type(exc).__name__, exc,
+                    _nc_meldetakt.zusatz(unterdrueckt))
+
+
 async def _whisper_transcribe(path):
     """Transkribiert eine WAV-Datei (Executor, semaphore-begrenzt). Text oder ''."""
     global _whisper_sem
@@ -16311,10 +16388,16 @@ async def _whisper_transcribe(path):
             await _st.enter_async_context(_whisper_live_gate)
         await _st.enter_async_context(_whisper_sem)
         try:
-            return await asyncio.get_running_loop().run_in_executor(_whisper_pool(), _run)
+            txt = await asyncio.get_running_loop().run_in_executor(_whisper_pool(), _run)
         except Exception as e:
-            log.debug("whisper transcribe Fehler: %s", e)
+            # v4.2-W81: stand auf `log.debug`. Der Betreiber meldete am 13.09.
+            # "whisper/transkript funktioniert immer noch nicht" — und im Log
+            # war nicht eine Zeile, die den Grund nennt. Gedrosselt, weil pro
+            # Audio-Segment (Sekundentakt) transkribiert wird.
+            _whisper_stumm("transcribe", e)
             return ""
+        _nc_meldetakt.zuruecksetzen("whisper")
+        return txt
 
 
 async def _whisper_segments(path):
@@ -16343,10 +16426,13 @@ async def _whisper_segments(path):
         return out
     async with _whisper_sem:
         try:
-            return await asyncio.get_running_loop().run_in_executor(_whisper_pool(), _run)
+            segmente = await asyncio.get_running_loop().run_in_executor(
+                _whisper_pool(), _run)
         except Exception as e:
-            log.debug("whisper segments Fehler: %s", e)
+            _whisper_stumm("segments", e)
             return []
+        _nc_meldetakt.zuruecksetzen("whisper")
+        return segmente
 
 def _audio_tap_cmd(stream_url, out_pattern, proxy=None):
     """ffmpeg: Stream-Audio → 16k-mono-WAV-Segmente, mit identischem Cookie/Referer/
