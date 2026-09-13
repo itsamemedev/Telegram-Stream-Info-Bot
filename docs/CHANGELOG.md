@@ -11,6 +11,41 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Behoben — das Diagnose-Kommando log über die Schlüssel (v4.2 W69)
+
+An acht Stellen — zwei Skills, sechs Doku-Dateien — stand:
+
+    python3 -c "import nc.freeai as f; print(f.diagnose())"
+
+`nc/freeai` ist bot-frei und lädt die `.env` **nie selbst**; im Bot macht das
+`bot.py`. Ein nacktes `python3 -c` zeigt deshalb immer `keyless`, auch wenn
+`POLLINATIONS_API_KEY` und `LLM7_TOKEN` sauber gesetzt sind.
+
+Aufgefallen ist es beim Nachmessen des W67-Deploys. Das Kommando meldete vier
+Basen — richtig, vorher war es eine — und viermal `keyless`. Damit ließ es
+offen, ob der eigentliche Fix gewirkt hat, und legte einen Fehler nahe, der
+nicht existierte. Gemessen: dieselbe `.env`, derselbe Code, einziger
+Unterschied ist der Vorspann.
+
+| Aufruf | Ergebnis |
+|---|---|
+| `python3 -c "import nc.freeai …"` | 4× keyless |
+| `python3 -c "from dotenv import load_dotenv; load_dotenv(); import nc.freeai …"` | Gateway **KEY**, LLM7 **KEY** |
+
+Alle acht Stellen tragen den Vorspann jetzt, und der Skill `nc-ki-backends`
+sagt dazu, warum: wer „keyless" sieht, prüft zuerst den Vorspann und erst dann
+die `.env`. Ein Vertrag hält beides fest — die Textregel und, mit einer echten
+Messung dahinter, die Aussage, dass Schlüssel aus der Umgebung genau an zwei
+Basen landen.
+
+### Behoben — die Aufrufzeile von `azrael_frames.py` war nicht kopierbar
+
+Sie lautete `python tools/azrael_frames.py <vorlage.png>`. In eine Shell
+kopiert ist `<vorlage.png>` eine **Eingabeumlenkung**; zsh bricht mit
+`parse error near '\n'` ab, bevor das Werkzeug überhaupt startet. Ohne
+Argument nimmt es ohnehin `azrael_vorlage.png` an — genau das steht jetzt da.
+
+
 ### Geändert — Untergrenzen für alle 17 Fremdpakete (v4.2 W68)
 
 Vierte Welle der Bestandsaufnahme. Keiner der 17 Einträge in

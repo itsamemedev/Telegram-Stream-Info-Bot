@@ -286,7 +286,7 @@ Nutze die Issue-Vorlage. Hilfreich ist immer:
 ```bash
 journalctl -u nightcrawler -n 200 --no-pager     # Logausschnitt
 curl -s localhost:8050/api/selftest | python3 -m json.tool
-python3 -c "import nc.freeai as f; print(f.diagnose())"   # bei KI-Problemen
+python3 -c "from dotenv import load_dotenv; load_dotenv(); import nc.freeai as f; print(f.diagnose())"   # bei KI-Problemen
 ```
 
 > **Vor dem Einfügen redigieren:** Logs können Cookies, Tokens und Stream-Keys

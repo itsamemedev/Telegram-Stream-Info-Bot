@@ -9288,6 +9288,103 @@ def _test_v42_w65_stille_wird_gemessen_und_gesperrt():
     ok("W65: der DDL-Helfer schluckt nur 'existiert schon', sonst nichts")
 
 
+def _test_v42_w69_diagnose_sieht_die_schluessel():
+    """v4.2-W69: das Diagnose-Kommando log ueber die Schluessel.
+
+    An acht Stellen — zwei Skills, sechs Doku-Dateien — stand:
+
+        python3 -c "import nc.freeai as f; print(f.diagnose())"
+
+    `nc/freeai` ist bot-frei und laedt die `.env` nie selbst; im Bot macht das
+    bot.py. Ein nacktes `python3 -c` zeigt deshalb IMMER `keyless`, auch wenn
+    POLLINATIONS_API_KEY und LLM7_TOKEN sauber gesetzt sind.
+
+    Das ist genau die Frage, fuer die man das Kommando aufruft, und genau die
+    Frage, die W67 beantwortet hat. Nach dem W67-Deploy meldete es vier Basen
+    (richtig, vorher war es eine) und viermal `keyless` (falsch) — und liess
+    damit offen, ob der eigentliche Fix ueberhaupt gewirkt hat.
+
+    Gemessen: dieselbe .env, derselbe Code, einziger Unterschied ist
+    load_dotenv() davor. Ohne 4x keyless, mit 2x KEY.
+    """
+    import glob as _glob
+    hier = os.path.dirname(os.path.abspath(__file__))
+
+    # --- 1) Nirgends mehr das Kommando OHNE Vorspann --------------------
+    # Der CHANGELOG bleibt aussen vor, und zwar mit Grund: er ZITIERT das
+    # kaputte Kommando als das, was frueher dastand. Ein Pruefer, der seine
+    # eigene Fehlerbeschreibung anmeckert, zwingt dazu, die Geschichte
+    # unleserlich zu schreiben — in W66 ist genau das passiert, dort musste
+    # ein Beispiel zerlegt werden (`"src[i:i + " + "2200]"`). Vorschreibend
+    # sind die Skills und die Anleitungen; der CHANGELOG ist Historie.
+    HISTORIE = ("docs/CHANGELOG.md",)
+    nackt, geprueft = [], set()
+    for muster in (".claude/skills/**/*.md", "docs/**/*.md", "*.md"):
+        for pfad in _glob.glob(os.path.join(hier, muster), recursive=True):
+            rel = os.path.relpath(pfad, hier).replace(os.sep, "/")
+            if rel in HISTORIE:
+                continue
+            geprueft.add(rel)
+            for nr, zeile in enumerate(
+                    io.open(pfad, encoding="utf-8").read().splitlines(), 1):
+                if "nc.freeai" in zeile and "diagnose()" in zeile \
+                        and "load_dotenv" not in zeile:
+                    nackt.append((rel, nr))
+    # Und die Ausnahme darf nicht heimlich alles verschlucken: die acht
+    # vorschreibenden Stellen muessen nachweislich IM Pruefbereich liegen.
+    for pflicht in (".claude/skills/nc-ki-backends/SKILL.md",
+                    ".claude/skills/nc-betrieb/SKILL.md",
+                    "docs/DEPLOY.md", "docs/TROUBLESHOOTING.md",
+                    "docs/CONTRIBUTING.md", "docs/en/DEPLOY.md",
+                    "docs/en/TROUBLESHOOTING.md", "docs/en/CONTRIBUTING.md"):
+        assert pflicht in geprueft, \
+            "%s liegt nicht mehr im Pruefbereich — dann kann dort ein " \
+            "Kommando ohne Vorspann stehen, ohne dass es auffaellt" % pflicht
+    assert not nackt, (
+        "Diagnose-Kommando ohne load_dotenv(): %r — es zeigt dann IMMER "
+        "keyless, egal was in der .env steht, und beantwortet genau die "
+        "Frage falsch, fuer die man es aufruft" % (nackt,))
+
+    # --- 2) Und die Aussage dahinter stimmt wirklich ---------------------
+    # Ohne diese Probe waere Punkt 1 eine Textregel, die jemand aus
+    # Ordnungsliebe befolgt. Hier steht der Grund: derselbe Code liefert
+    # ohne .env keinen Key und mit .env einen.
+    import nc.freeai as F
+    _alt = {k: os.environ.get(k)
+            for k in ("POLLINATIONS_API_KEY", "POLLINATIONS_TOKEN",
+                      "LLM7_TOKEN", "LLM7_API_KEY")}
+    try:
+        for k in _alt:
+            os.environ.pop(k, None)
+        ohne = [b for b in F._basen() if b.get("key")]
+        assert not ohne, \
+            "ohne Umgebung traegt eine Base einen Key — dann sagt die " \
+            "Diagnose etwas anderes als die Umgebung hergibt"
+        os.environ["POLLINATIONS_API_KEY"] = "PROBE-P"
+        os.environ["LLM7_TOKEN"] = "PROBE-L"
+        mit = [b for b in F._basen() if b.get("key")]
+        assert len(mit) == 2, \
+            "mit gesetzten Schluesseln tragen %d statt 2 Basen einen Key — " \
+            "die Diagnose zeigt dann nicht, was der Bot wirklich benutzt" % len(mit)
+    finally:
+        for k, v in _alt.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+    ok("W69: die Diagnose zeigt Schluessel nur mit load_dotenv() — und dann richtig")
+
+    # --- 3) Die Aufrufzeile ist kopiersicher -----------------------------
+    # `<vorlage.png>` in eine Shell kopiert ist eine Eingabeumlenkung. Der
+    # Betreiber hat genau das getan und bekam `zsh: parse error near \\n`.
+    kopf = io.open(os.path.join(hier, "tools", "azrael_frames.py"),
+                   encoding="utf-8").read()[:3000]
+    assert "azrael_frames.py <" not in kopf, \
+        "die Aufrufzeile traegt wieder spitze Klammern — kopiert man sie in " \
+        "eine Shell, ist das eine Eingabeumlenkung und stirbt mit parse error"
+    ok("W69: die Aufrufzeile von azrael_frames laesst sich gefahrlos kopieren")
+
+
 def _test_v42_w68_abhaengigkeiten_haben_untergrenzen():
     """v4.2-W68: 17 Fremdpakete, 0 Untergrenzen — und eine Luecke daneben.
 
@@ -10745,6 +10842,7 @@ def main():
     _test_v42_w66_fenster_wachsen_mit()
     _test_v42_w67_env_erreicht_die_cloud_kette()
     _test_v42_w68_abhaengigkeiten_haben_untergrenzen()
+    _test_v42_w69_diagnose_sieht_die_schluessel()
     _test_v42_w60_azrael_cooldown_je_plattform()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)

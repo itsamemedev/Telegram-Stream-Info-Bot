@@ -93,7 +93,15 @@ Weitere Eigenheiten, die man nicht raten kann:
 ## „Die KI antwortet nicht" — Diagnose in dieser Reihenfolge
 
     # 1 Cloud-Kette: pro Base frei/gesperrt, Latenz, keyless/KEY, letzter Fehler
-    python3 -c "import nc.freeai as f; print(f.diagnose())"
+    python3 -c "from dotenv import load_dotenv; load_dotenv(); import nc.freeai as f; print(f.diagnose())"
+
+**`load_dotenv()` gehört zwingend davor.** `nc/freeai` ist bot-frei und lädt die
+`.env` nie selbst — im Bot macht das `bot.py`. Ein nacktes
+`python3 -c "import nc.freeai …"` zeigt deshalb **immer `keyless`**, auch wenn
+`POLLINATIONS_API_KEY` und `LLM7_TOKEN` sauber gesetzt sind. Das Kommando stand
+bis v4.2-W69 an acht Stellen ohne den Vorspann und hat damit genau die Frage
+falsch beantwortet, für die man es aufruft. Wer „keyless" sieht, prüft zuerst,
+ob er den Vorspann vergessen hat, und erst dann die `.env`.
 
     # 2 lokales LLM
     systemctl status llama-server

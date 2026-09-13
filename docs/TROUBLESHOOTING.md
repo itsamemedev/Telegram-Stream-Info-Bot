@@ -58,7 +58,7 @@ eine 404 rennt.
 ## KI antwortet nicht / Antworten sind abgeschnitten
 
 ```bash
-python3 -c "import nc.freeai as f; print(f.diagnose())"
+python3 -c "from dotenv import load_dotenv; load_dotenv(); import nc.freeai as f; print(f.diagnose())"
 ```
 
 Zeigt pro Backend: frei/gesperrt, Latenz, keyless/KEY, letzter Fehler. Bei

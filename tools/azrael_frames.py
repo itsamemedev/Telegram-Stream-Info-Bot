@@ -29,7 +29,11 @@ Frames BITGLEICH (die Vignette haengt nicht von der Pose ab), also einmal als
 11-KB-Graustufenbild daneben. Der Filtergraph fuegt beides mit alphamerge
 wieder zusammen. Ergebnis 122 KB statt 11 MB.
 
-Aufruf:  python tools/azrael_frames.py <vorlage.png>
+Aufruf:  python tools/azrael_frames.py azrael_vorlage.png
+         (ohne Argument wird genau dieser Name angenommen)
+
+Der Name steht hier bewusst ohne spitze Klammern: `<vorlage.png>` in eine
+Shell kopiert ist eine Eingabeumlenkung und stirbt mit `parse error`.
 """
 
 import math
