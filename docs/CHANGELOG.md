@@ -11,6 +11,55 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Behoben — die Discord-Dauerläufer sprachen nach einem Reconnect einen toten Client an (v4.2 W77)
+
+Beim Weiterschneiden von `_discord_run_once` kam ein echter Fehler zum
+Vorschein. **Das ist die erste Welle dieser Reihe mit einer
+Verhaltensänderung** — sie steht hier ausdrücklich, damit niemand sie für eine
+Verschiebung hält.
+
+B120 startet die Hintergrund-Schleifen (Liveboard, Wochen-Digest, Clip der
+Woche) **einmalig über alle Sitzungen hinweg**; sonst liefen nach n Reconnects
+n parallele Schleifen. Der Guard dafür wurde damals von einem Objekt-Attribut
+auf ein Modul-Global gezogen — mit genau der Begründung, dass es nach einem
+Reconnect ein *neues* Client-Objekt gibt.
+
+Die Client-Referenz **in** den Schleifen blieb aber eine Closure-Variable und
+zeigte weiter auf den Client der ersten Sitzung. Nach einem Reconnect ist das
+ein totes Objekt: `discord.Client.close()` ruft `self.http.close()`, und jeder
+Aufruf darüber scheitert. Die Schleifen liefen weiter und griffen ins Leere.
+
+`nc.discordstate.CLIENT` ist genau dafür da und sagt es im eigenen Docstring:
+
+> Register statt Modul-Global, weil der Bot ihn NEU BINDET (bei Reconnect und
+> beim Aufräumen) — ein direkter Alias zeigte danach auf den alten Client.
+
+Die sieben Dauerläufer holen ihn jetzt von dort. Ein Parameter hätte den Fehler
+eingefroren; das war die naheliegende und falsche Lösung.
+
+Dazu `_dc_offen()` für die Schleifenbedingung: `_dc_client().is_closed()` allein
+wäre ein `AttributeError`, sobald der Supervisor beim Aufräumen
+`CLIENT["obj"] = None` setzt — in einer Endlosschleife, die niemand beobachtet.
+Der erste Entwurf hatte genau das.
+
+### Geändert — `_discord_run_once` von 716 auf 482 Zeilen, 204 auf 106 Verzweigungen
+
+Zehn weitere Rückrufe sind heraus. Möglich wurde das, indem die fünf
+Sitzungs-Zwischenspeicher auf Modulebene gingen — **mit unveränderter
+Lebensdauer**: `_discord_run_once` leert sie zu Beginn jeder Sitzung. Sie
+einfach stehen zu lassen wäre eine stille Verhaltensänderung gewesen,
+Cooldowns würden dann einen Reconnect überleben.
+
+Der Semaphor wird je Sitzung neu erzeugt statt geleert — er gehört an die
+laufende Ereignisschleife.
+
+**Ein bestehender Vertrag hat den ersten Entwurf gestoppt:** `_dc_ai_sema = None`
+wurde als Kontext-Platzhalter gelesen. In `discordbot.py` ist eine
+Modul-Zuweisung auf `None` seit v4.2-W15 die Marke für einen Namen, den
+`_uebernehmen(ctx)` belegen muss. Lebender Sitzungszustand ist nie `None` — er
+steht jetzt als Register-Dict da, dasselbe Idiom wie `CLIENT`.
+
+
 ### Geändert — `main()` von 504 auf 293 Zeilen, 135 auf 59 Verzweigungen (v4.2 W75)
 
 Nach der Rangliste aus W74 der dritte Platz. Ein **einziger** `try`-Block

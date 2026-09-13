@@ -381,75 +381,75 @@ Zahlen sind Zeilennummern für `ncpatch show` / `ncpatch sym`.
 ## Discord-Slash-Commands in discordbot.py (60)
 
 ```
-   775  /ai                     
-  1179  /ask                    
-   876  /assign_role            
-   926  /ban                    
-  1697  /botstats               
-  1438  /clearwarns             
-  1661  /clip                   
-  1646  /clipoftheweek          
-  1305  /clips                  
-   831  /create_category        
-   802  /create_channel         
-   866  /create_group           
-   841  /create_role            
-   817  /create_voice           
-  1062  /daily                  
-  1208  /event                  
-  1250  /events                 
-  1348  /follow                 
-  1333  /help                   
-   916  /kick                   
-  1037  /leaderboard            
-  1292  /livenow                
-  1320  /post_test              
-  1140  /profile                
-   948  /purge                  
-  1024  /rank                   
-  1280  /recstatus              
-   886  /remove_role            
-   788  /restream_status        
-   896  /set_channel_perms      
-   991  /setup_community        
-  1008  /setup_targets          
-  1380  /stats                  
-   705  /status                 
-  1509  /streaminfo             
-  1749  /sys_aireset            KI-Kontext zurücksetzen (TG: /aireset)
-  1751  /sys_bulkadd            Mehrere User tracken (TG: /bulkadd a b c)
-  1742  /sys_cleanup            Alte Aufnahmen aufräumen (TG: /cleanup)
-  1753  /sys_cookies            Cookie-Status (TG: /cookies)
-  1748  /sys_diag               Vollständige Diagnose (TG: /diag)
-  1752  /sys_live               Live-Check erzwingen (TG: /live @user)
-  1747  /sys_logs               Letzte Fehler-Logs (TG: /logs)
-  1739  /sys_pause              Tracking pausieren (TG: /pause @user)
-  1743  /sys_quota              Speicher-Quota (TG: /quota)
-  1493  /sys_report             
-  1744  /sys_res                System-Ressourcen (TG: /sysres)
-  1740  /sys_resume             Tracking fortsetzen (TG: /resume @user)
-  1741  /sys_stoprec            Aufnahme grazil stoppen (TG: /stoprec @user)
-  1746  /sys_summary            Tageszusammenfassung (TG: /summary)
-  1750  /sys_teststream         Recorder-Selbsttest (TG: /teststream)
-  1745  /sys_topusers           Top-Streamer-Statistik (TG: /topusers)
-  1470  /sys_unpause            
-   936  /timeout                
-  1448  /topstreamers           
-   733  /track                  
-   718  /tracklist              
-  1362  /unfollow               
-   765  /untrack                
-  1401  /warn                   
-  1424  /warnings               
+   803  /ai                     
+  1207  /ask                    
+   904  /assign_role            
+   954  /ban                    
+  2065  /botstats               
+  1466  /clearwarns             
+  2029  /clip                   
+  2014  /clipoftheweek          
+  1333  /clips                  
+   859  /create_category        
+   830  /create_channel         
+   894  /create_group           
+   869  /create_role            
+   845  /create_voice           
+  1090  /daily                  
+  1236  /event                  
+  1278  /events                 
+  1376  /follow                 
+  1361  /help                   
+   944  /kick                   
+  1065  /leaderboard            
+  1320  /livenow                
+  1348  /post_test              
+  1168  /profile                
+   976  /purge                  
+  1052  /rank                   
+  1308  /recstatus              
+   914  /remove_role            
+   816  /restream_status        
+   924  /set_channel_perms      
+  1019  /setup_community        
+  1036  /setup_targets          
+  1408  /stats                  
+   733  /status                 
+  1537  /streaminfo             
+  2117  /sys_aireset            KI-Kontext zurücksetzen (TG: /aireset)
+  2119  /sys_bulkadd            Mehrere User tracken (TG: /bulkadd a b c)
+  2110  /sys_cleanup            Alte Aufnahmen aufräumen (TG: /cleanup)
+  2121  /sys_cookies            Cookie-Status (TG: /cookies)
+  2116  /sys_diag               Vollständige Diagnose (TG: /diag)
+  2120  /sys_live               Live-Check erzwingen (TG: /live @user)
+  2115  /sys_logs               Letzte Fehler-Logs (TG: /logs)
+  2107  /sys_pause              Tracking pausieren (TG: /pause @user)
+  2111  /sys_quota              Speicher-Quota (TG: /quota)
+  1521  /sys_report             
+  2112  /sys_res                System-Ressourcen (TG: /sysres)
+  2108  /sys_resume             Tracking fortsetzen (TG: /resume @user)
+  2109  /sys_stoprec            Aufnahme grazil stoppen (TG: /stoprec @user)
+  2114  /sys_summary            Tageszusammenfassung (TG: /summary)
+  2118  /sys_teststream         Recorder-Selbsttest (TG: /teststream)
+  2113  /sys_topusers           Top-Streamer-Statistik (TG: /topusers)
+  1498  /sys_unpause            
+   964  /timeout                
+  1476  /topstreamers           
+   761  /track                  
+   746  /tracklist              
+  1390  /unfollow               
+   793  /untrack                
+  1429  /warn                   
+  1452  /warnings               
 ```
 
 ## Discord-Events in discordbot.py (4)
 
 ```
-  2148  on_member_join
-  2110  on_message
-  1775  on_raw_reaction_add
-  2183  on_ready
+  2274  on_member_join
+  2236  on_message
+  2143  on_raw_reaction_add
+  2309  on_ready
 ```
 
 ## Top-Level-Symbole in telegramversand.py (2 Funktionen)
@@ -459,41 +459,53 @@ Zahlen sind Zeilennummern für `ncpatch show` / `ncpatch sym`.
     76-456    split_and_send_video
 ```
 
-## Top-Level-Symbole in discordbot.py (33 Funktionen)
+## Top-Level-Symbole in discordbot.py (45 Funktionen)
 
 ```
-  2299-2361   _community_events_loop
-  2401-2436   _disc_automod_check
-   395-400    _disc_sprache_setzen
-   528-567    _discord_automod
-  1543-2258   _discord_run_once
+  1614-1665   _award_xp
+  1834-1863   _clip_week_leader
+  1887-1901   _clipoftheweek_loop
+  2425-2487   _community_events_loop
+  1571-1593   _dc_client
+  1596-1605   _dc_offen
+  2527-2562   _disc_automod_check
+   423-428    _disc_sprache_setzen
+  1668-1716   _discord_ai_automod
+   556-595    _discord_automod
+  1719-1739   _discord_azrael_reply
+  1904-2384   _discord_run_once
    258-316    _discord_start
-   319-372    _ensure_discord_invite
-  2264-2296   _ensure_error_channel
-   416-429    _ensure_rank_roles
-   664-678    _ensure_team_roles
-  2364-2394   _error_channel_loop
-   577-581    _guard
-   497-525    _handle_voice_ai
-   403-413    _is_admin
-   584-602    _on_level_up
-   493-494    _par_chat_id
-   432-458    _provision_base_channels
-   461-477    _provision_user_channels
-  1272-1369   _reg_betrieb
-   962-1051   _reg_community_setup
-  1054-1129   _reg_daily_profil
-  1172-1269   _reg_frage_events
-   692-790    _reg_info
-   908-959    _reg_moderation
-  1132-1169   _reg_profil
-   857-905    _reg_rollen
-   793-854    _reg_server
-  1372-1459   _reg_streamer
-  1462-1540   _reg_system
-   637-661    _run_tg_handler
-   480-490    _tracked_usernames
+   319-373    _ensure_discord_invite
+  2390-2422   _ensure_error_channel
+   444-457    _ensure_rank_roles
+   692-706    _ensure_team_roles
+  2490-2520   _error_channel_loop
+   605-609    _guard
+   525-553    _handle_voice_ai
+   431-441    _is_admin
+  1782-1793   _liveboard_loop
+   612-630    _on_level_up
+   521-522    _par_chat_id
+  1866-1884   _post_clip_of_week
+  1796-1814   _post_weekly_digest
+   460-486    _provision_base_channels
+   489-505    _provision_user_channels
+  1300-1397   _reg_betrieb
+   990-1079   _reg_community_setup
+  1082-1157   _reg_daily_profil
+  1200-1297   _reg_frage_events
+   720-818    _reg_info
+   936-987    _reg_moderation
+  1160-1197   _reg_profil
+   885-933    _reg_rollen
+   821-882    _reg_server
+  1400-1487   _reg_streamer
+  1490-1568   _reg_system
+   665-689    _run_tg_handler
+   508-518    _tracked_usernames
    163-237    _uebernehmen
+  1748-1779   _update_liveboard
+  1817-1831   _weekly_digest_loop
    240-243    starte
 ```
 
