@@ -11,6 +11,41 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Geändert — erste Schnitte am Aufnahmeschluss (v4.2 W78)
+
+`handle_recording_finished`: 616 Zeilen, 141 Verzweigungen — nach
+`_discord_run_once` die verzweigtste Funktion des Bestands, und die heikelste.
+Ein Fehler dort zeigt sich nicht beim Neustart, sondern **mitten in einer
+laufenden Aufnahme**.
+
+Deshalb wurde nicht der größte Block zuerst genommen, sondern der
+**folgenloseste**:
+
+| heraus | Zeilen | was es tut |
+|---|---:|---|
+| `_rec_kategorie_melden` | 45 | sagt im Log, was den Versuch beendet hat |
+| `_rec_totstreak_fortschreiben` | 37 | zählt tote Versuche, setzt bei Datenfluss zurück |
+
+**Ergebnis: 537 Zeilen, 124 Verzweigungen.**
+
+Beide haben nachgemessen keine Wirkung auf den Aufrufer: kein Rückgabewert,
+kein `await`, und der einzige Name, den sie schreiben (`_f`), wird von jedem
+späteren Block neu belegt, bevor er ihn liest. **Das war nicht
+selbstverständlich** — die erste Messung meldete `_f` als „später gelesen", und
+erst das Nachsehen zeigte, dass jeder Leser eine eigene Zuweisung davor hat.
+Beide Rümpfe sind strukturell identisch zu vorher (`ast.dump` ohne
+Zeilennummern).
+
+Die Register `_STREAM_DEAD_STREAK`, `_STREAM_DEAD_BACKOFF_UNTIL` und
+`_NEXT_CHECK_AT` bleiben **dieselben Objekte** — sie werden fortgeschrieben,
+nie neu gebunden. Nur deshalb sieht das Brain-Panel denselben Stand wie der
+Worker; der Vertrag prüft das ausdrücklich.
+
+**Was ausdrücklich nicht herausging:** der Auto-Abschalt-Block. Er hat ein
+`await` und schreibt in die Datenbank. Der gehört in eine eigene Welle mit
+eigener Beobachtung, nicht nebenbei in diese.
+
+
 ### Behoben — die Discord-Dauerläufer sprachen nach einem Reconnect einen toten Client an (v4.2 W77)
 
 Beim Weiterschneiden von `_discord_run_once` kam ein echter Fehler zum

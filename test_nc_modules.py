@@ -9288,6 +9288,107 @@ def _test_v42_w65_stille_wird_gemessen_und_gesperrt():
     ok("W65: der DDL-Helfer schluckt nur 'existiert schon', sonst nichts")
 
 
+def _test_v42_w78_aufnahmeschluss_erste_schnitte():
+    """v4.2-W78: erste Schnitte an handle_recording_finished.
+
+    616 Zeilen, 141 Verzweigungen — nach _discord_run_once die verzweigtste
+    Funktion des Bestands, und die heikelste: ein Fehler zeigt sich nicht beim
+    Neustart, sondern mitten in einer laufenden Aufnahme.
+
+    Deshalb wurde nicht der groesste Block zuerst genommen, sondern der
+    FOLGENLOSESTE. Beide herausgeloesten Stuecke haben nachgemessen keine
+    Wirkung auf den Aufrufer: kein Rueckgabewert, kein await, und der einzige
+    Name, den sie schreiben (`_f`), wird von jedem spaeteren Block neu belegt,
+    bevor er ihn liest. Das war nicht selbstverstaendlich — die erste Messung
+    meldete `_f` als „spaeter gelesen", und erst das Nachsehen zeigte, dass
+    jeder Leser eine eigene Zuweisung davor hat.
+
+    Was ausdruecklich NICHT herausging: der Auto-Abschalt-Block. Er hat ein
+    await und schreibt in die Datenbank — der gehoert in eine eigene Welle mit
+    eigener Beobachtung.
+    """
+    import ast as _ast
+    import sys as _sys
+    hier = os.path.dirname(os.path.abspath(__file__))
+    if os.path.join(hier, "tools") not in _sys.path:
+        _sys.path.insert(0, os.path.join(hier, "tools"))
+    import monolith as M
+
+    src = io.open(os.path.join(hier, "bot.py"), encoding="utf-8").read()
+    baum = _ast.parse(src)
+    oben = {n.name: n for n in baum.body
+            if isinstance(n, (_ast.FunctionDef, _ast.AsyncFunctionDef))}
+
+    # --- 1) Die beiden Stuecke stehen auf Modulebene und werden gerufen ---
+    # Der Aufruf wird ueber den AST im RUMPF von handle_recording_finished
+    # gesucht, nicht als Textstueck in der Datei. Der erste Entwurf pruefte
+    # `"_rec_kategorie_melden(category, username)" in src` — und das steht
+    # auch in der DEFINITION `def _rec_kategorie_melden(category, username):`.
+    # Die Zusicherung war damit erfuellt, sobald die Funktion existierte, und
+    # beide Mutationen „Aufruf geloescht" blieben still.
+    _lauf = oben.get("handle_recording_finished")
+    assert _lauf is not None, "handle_recording_finished ist verschwunden"
+    _gerufen = {_ast.unparse(x.func) for x in _ast.walk(_lauf)
+                if isinstance(x, _ast.Call)}
+    for name in ("_rec_kategorie_melden", "_rec_totstreak_fortschreiben"):
+        assert name in oben, "%s steht nicht mehr auf Modulebene" % name
+        assert name in _gerufen, \
+            "%s wird von handle_recording_finished nicht mehr aufgerufen — " \
+            "der Block ist damit still verschwunden, und weder py_compile " \
+            "noch pyflakes merken das" % name
+
+    # --- 2) Sie bleiben folgenlos ----------------------------------------
+    # Genau das war die Bedingung, unter der sie herausgehen durften. Kommt
+    # ein return oder ein await dazu, ist die Begruendung hinfaellig und der
+    # Schnitt gehoert neu geprueft.
+    for name in ("_rec_kategorie_melden", "_rec_totstreak_fortschreiben"):
+        k = oben[name]
+        assert not isinstance(k, _ast.AsyncFunctionDef), \
+            "%s ist async geworden — dann wartet der Aufnahmeschluss darauf" % name
+        assert not any(isinstance(x, _ast.Await) for x in _ast.walk(k)), \
+            "%s enthaelt ein await" % name
+        rueck = [x for x in _ast.walk(k)
+                 if isinstance(x, _ast.Return) and x.value is not None]
+        assert not rueck, \
+            "%s gibt etwas zurueck — der Aufrufer wertet nichts aus, also " \
+            "ginge das Ergebnis lautlos verloren" % name
+
+    # --- 3) Die Register bleiben DIESELBEN Objekte -----------------------
+    # Sie werden fortgeschrieben, nie neu gebunden. Nur deshalb sieht das
+    # Brain-Panel denselben Stand wie der Worker.
+    k = oben["_rec_totstreak_fortschreiben"]
+    neu_gebunden = {t.id for x in _ast.walk(k) if isinstance(x, _ast.Assign)
+                    for t in x.targets if isinstance(t, _ast.Name)}
+    for reg in ("_STREAM_DEAD_STREAK", "_STREAM_DEAD_BACKOFF_UNTIL", "_NEXT_CHECK_AT"):
+        assert reg not in neu_gebunden, \
+            "%s wird in _rec_totstreak_fortschreiben NEU GEBUNDEN — dann " \
+            "schreibt die Aufnahme in ein anderes Objekt als das, welches " \
+            "das Brain-Panel liest" % reg
+        assert reg in _ast.unparse(k), \
+            "%s wird gar nicht mehr fortgeschrieben" % reg
+
+    # --- 4) Der Auto-Abschalt-Block ist bewusst DRIN geblieben -----------
+    lauf = oben.get("handle_recording_finished")
+    assert lauf is not None, "handle_recording_finished ist verschwunden"
+    rumpf = _ast.unparse(lauf)
+    assert "_STREAM_DEAD_STREAK.get(tid" in rumpf, \
+        "der Auto-Abschalt-Block ist aus handle_recording_finished heraus — " \
+        "er hat ein await und schreibt in die Datenbank, das gehoert in eine " \
+        "eigene Welle mit eigener Beobachtung, nicht nebenbei"
+
+    # --- 5) Und die Funktion ist wirklich kleiner geworden ---------------
+    treffer = [f for f in M.funktionen()
+               if f[0] == "bot.py" and f[1] == "handle_recording_finished"]
+    assert treffer, "handle_recording_finished wird nicht mehr gemessen"
+    zeilen, zweige = treffer[0][3], treffer[0][4]
+    assert zeilen <= 560, \
+        "handle_recording_finished ist mit %d Zeilen wieder ueber 560" % zeilen
+    assert zweige <= 130, \
+        "handle_recording_finished hat wieder %d Verzweigungen (vor W78: 141)" % zweige
+    ok("W78: zwei folgenlose Bloecke heraus, %d Z / %d Zweige (vorher 616/141)"
+       % (zeilen, zweige))
+
+
 def _test_v42_w77_schleifen_folgen_dem_aktuellen_client():
     """v4.2-W77: die Dauerlaeufer hielten den Client der ERSTEN Sitzung fest.
 
@@ -11668,6 +11769,7 @@ def main():
     _test_v42_w74_verzweigung_statt_nur_laenge()
     _test_v42_w75_main_ohne_bridge_verdrahtung()
     _test_v42_w77_schleifen_folgen_dem_aktuellen_client()
+    _test_v42_w78_aufnahmeschluss_erste_schnitte()
     _test_v42_w60_azrael_cooldown_je_plattform()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)
