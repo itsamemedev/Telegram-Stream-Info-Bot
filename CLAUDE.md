@@ -212,9 +212,16 @@ Die größte Funktion steht ohnehin nicht in `bot.py`:
 `discordbot.py` wurde in v4.2-W15 aus `bot.py` herausgelöst, genau gegen dieses
 Problem. Die Masse zog um, statt zu schrumpfen. `tools/monolith.py` misst deshalb den **ganzen**
 Produktionscode und zählt, wie viele Funktionen über einer Stufe liegen —
-63 über 100, 16 über 200, 9 über 300, 4 über 500 —, nicht ihre Länge: eine Sperre, die jede zusätzliche
+seit v4.2-W75 sind das 63 über 100, 16 über 200, 8 über 300 und 3 über 500
+Zeilen, dazu 22 über 50, 2 über 100 und eine über 150 Verzweigungen. Gezählt
+wird die Anzahl, nicht die Länge: eine Sperre, die jede zusätzliche
 Zeile meldet, fällt bei jeder Fehlerbehebung und ist in einer Woche
-abgeschaltet. Eine Riesenfunktion bloß in eine andere Datei zu verschieben
+abgeschaltet.
+
+Die Zahlen stehen so auch in `.claude/monolith_grundlinie.json`, und ein
+Vertrag hält beide gegeneinander — hier stand nach W75 kurz die alte Grundlinie
+(9 und 4), weil das Senken der Datei den Fließtext nicht mitnimmt und
+`ncpatch docs` diese Zahlen nicht kennt. Eine Riesenfunktion bloß in eine andere Datei zu verschieben
 besteht die Sperre nicht.
 
 **Fremdpakete ohne Untergrenze.** Bis v4.2-W68 trug keiner der 17 Einträge in
