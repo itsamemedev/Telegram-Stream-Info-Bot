@@ -11,6 +11,36 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Geändert — dritter Schnitt am Aufnahmeschluss: der frühe Abriss (v4.2 W79)
+
+35 Zeilen heraus: Auto-Retry mit wachsender Pause nach einem frühen Abriss,
+oder Zähler zurück, wenn die Aufnahme 30 Sekunden oder länger lief.
+
+```
+handle_recording_finished   616 Z / 141 Zweige   (vor W78)
+                            537 Z / 124 Zweige   (nach W78)
+                            503 Z / 119 Zweige   (jetzt)
+```
+
+**Die Freigabe aus W78 galt hier nicht.** Vor W78 zählten die beiden Namen
+`_f` und `count` dieses Blocks noch als „später gelesen" — weil die damals
+noch vorhandenen Blöcke denselben Kurznamen benutzten. Erst seit die heraus
+sind, ist dieser Block wirklich in sich geschlossen. Deshalb wurde erneut
+gemessen statt die Begründung der Vorwelle zu übernehmen; bei einer Funktion,
+deren Fehler mitten in einer laufenden Aufnahme sichtbar werden, ist eine
+Freigabe von letzter Woche keine Freigabe.
+
+`_EARLY_DISCONNECT_RETRY` und `_NEXT_CHECK_AT` bleiben **dieselben Objekte**:
+das Fällig-Stellen ist der Takt des Workers, und ein zweites Wörterbuch hieße,
+dass der Worker eine andere Wartezeit sieht als die gesetzte. Der Vertrag prüft
+das — und ebenso, dass der Zähler nach einer Aufnahme ab 30 s wirklich
+zurückgesetzt wird, sonst wächst die Pause immer weiter (B12).
+
+**Der Auto-Abschalt-Block bleibt weiterhin drin.** Er hat ein `await` und
+schreibt in die Datenbank; er bekommt eine eigene Welle, damit jeder Schritt an
+dieser Funktion einzeln rückrollbar bleibt.
+
+
 ### Geändert — erste Schnitte am Aufnahmeschluss (v4.2 W78)
 
 `handle_recording_finished`: 616 Zeilen, 141 Verzweigungen — nach

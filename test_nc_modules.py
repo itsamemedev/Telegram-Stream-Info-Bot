@@ -9288,6 +9288,86 @@ def _test_v42_w65_stille_wird_gemessen_und_gesperrt():
     ok("W65: der DDL-Helfer schluckt nur 'existiert schon', sonst nichts")
 
 
+def _test_v42_w79_frueher_abriss_heraus():
+    """v4.2-W79: dritter Schnitt am Aufnahmeschluss — der fruehe Abriss.
+
+    35 Zeilen: Auto-Retry mit wachsender Pause nach einem fruehen Abriss,
+    oder Zaehler zurueck, wenn die Aufnahme 30 Sekunden oder laenger lief.
+
+    DASS DER BLOCK FOLGENLOS IST, WURDE ERNEUT GEMESSEN und nicht aus W78
+    uebernommen. Vor W78 galten seine beiden Namen `_f` und `count` als
+    „spaeter gelesen" — weil die damals noch vorhandenen Bloecke denselben
+    Kurznamen benutzten. Erst seit die heraus sind, ist dieser Block wirklich
+    in sich geschlossen. Eine Freigabe von letzter Woche gilt hier nicht.
+
+    _EARLY_DISCONNECT_RETRY und _NEXT_CHECK_AT bleiben DIESELBEN Objekte:
+    das Faellig-Stellen ist der Takt des Workers, und ein zweites Woerterbuch
+    hiesse, dass der Worker eine andere Wartezeit sieht als die gesetzte.
+    """
+    import ast as _ast
+    import sys as _sys
+    hier = os.path.dirname(os.path.abspath(__file__))
+    if os.path.join(hier, "tools") not in _sys.path:
+        _sys.path.insert(0, os.path.join(hier, "tools"))
+    import monolith as M
+
+    baum = _ast.parse(io.open(os.path.join(hier, "bot.py"), encoding="utf-8").read())
+    oben = {n.name: n for n in baum.body
+            if isinstance(n, (_ast.FunctionDef, _ast.AsyncFunctionDef))}
+    lauf = oben.get("handle_recording_finished")
+    assert lauf is not None, "handle_recording_finished ist verschwunden"
+
+    # --- 1) Heraus, auf Modulebene, und wirklich gerufen -----------------
+    assert "_rec_frueh_getrennt" in oben, \
+        "_rec_frueh_getrennt steht nicht mehr auf Modulebene"
+    gerufen = {_ast.unparse(x.func) for x in _ast.walk(lauf)
+               if isinstance(x, _ast.Call)}
+    assert "_rec_frueh_getrennt" in gerufen, \
+        "_rec_frueh_getrennt wird nicht mehr aufgerufen — nach einem fruehen " \
+        "Abriss gaebe es dann keinen Auto-Retry mehr, und zwar lautlos"
+
+    # --- 2) Folgenlos wie die beiden aus W78 -----------------------------
+    k = oben["_rec_frueh_getrennt"]
+    assert not isinstance(k, _ast.AsyncFunctionDef), \
+        "_rec_frueh_getrennt ist async geworden — dann wartet der " \
+        "Aufnahmeschluss darauf"
+    assert not any(isinstance(x, _ast.Await) for x in _ast.walk(k)), \
+        "_rec_frueh_getrennt enthaelt ein await"
+    assert not [x for x in _ast.walk(k)
+                if isinstance(x, _ast.Return) and x.value is not None], \
+        "_rec_frueh_getrennt gibt etwas zurueck — der Aufrufer wertet nichts " \
+        "aus, das Ergebnis ginge lautlos verloren"
+
+    # --- 3) Die Register werden fortgeschrieben, nicht neu gebunden ------
+    neu_gebunden = {t.id for x in _ast.walk(k) if isinstance(x, _ast.Assign)
+                    for t in x.targets if isinstance(t, _ast.Name)}
+    for reg in ("_EARLY_DISCONNECT_RETRY", "_NEXT_CHECK_AT"):
+        assert reg not in neu_gebunden, \
+            "%s wird NEU GEBUNDEN — dann setzt der Aufnahmeschluss eine " \
+            "Wartezeit, die der Worker nie sieht" % reg
+        assert reg in _ast.unparse(k), "%s wird gar nicht mehr benutzt" % reg
+    # Und der Zaehler wird beim langen Lauf wirklich zurueckgesetzt — sonst
+    # bekaeme der naechste fruehe Abriss unnoetig lange Pausen (B12).
+    assert "_EARLY_DISCONNECT_RETRY.pop(tid, None)" in _ast.unparse(k), \
+        "der Zaehler wird nach einer Aufnahme ab 30s nicht mehr " \
+        "zurueckgesetzt — dann waechst die Pause immer weiter (B12)"
+
+    # --- 4) Der Auto-Abschalt-Block ist WEITERHIN drin -------------------
+    assert "_STREAM_DEAD_STREAK.get(tid" in _ast.unparse(lauf), \
+        "der Auto-Abschalt-Block ist heraus — er hat ein await und schreibt " \
+        "in die Datenbank, das gehoert in eine eigene Welle"
+
+    # --- 5) Die Funktion schrumpft weiter --------------------------------
+    treffer = [f for f in M.funktionen()
+               if f[0] == "bot.py" and f[1] == "handle_recording_finished"]
+    zeilen, zweige = treffer[0][3], treffer[0][4]
+    assert zeilen <= 520 and zweige <= 122, \
+        "handle_recording_finished ist auf %d Z / %d Zweige zurueckgewachsen" % (
+            zeilen, zweige)
+    ok("W79: der fruehe Abriss ist heraus, %d Z / %d Zweige (vor W78: 616/141)"
+       % (zeilen, zweige))
+
+
 def _test_v42_w78_aufnahmeschluss_erste_schnitte():
     """v4.2-W78: erste Schnitte an handle_recording_finished.
 
@@ -11770,6 +11850,7 @@ def main():
     _test_v42_w75_main_ohne_bridge_verdrahtung()
     _test_v42_w77_schleifen_folgen_dem_aktuellen_client()
     _test_v42_w78_aufnahmeschluss_erste_schnitte()
+    _test_v42_w79_frueher_abriss_heraus()
     _test_v42_w60_azrael_cooldown_je_plattform()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)

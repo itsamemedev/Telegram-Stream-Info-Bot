@@ -8293,6 +8293,59 @@ def _rec_totstreak_fortschreiben(data_dead, tid, username, file_size,
         _STREAM_DEAD_BACKOFF_UNTIL.pop(tid, None)
 
 
+def _rec_frueh_getrennt(category, duration, tid, username, proc):
+    """Auto-Retry nach fruehem Abriss — oder Zaehler zurueck nach 30s+.
+
+    v4.2-W79, dritter Schnitt am Aufnahmeschluss. Wie die beiden aus W78
+    ohne Wirkung nach aussen: kein Rueckgabewert, kein await. Dass das
+    stimmt, wurde ERNEUT gemessen und nicht von W78 uebernommen — die
+    beiden Namen `_f` und `count` galten vor W78 noch als „spaeter
+    gelesen", weil die damals noch vorhandenen Bloecke denselben
+    Kurznamen benutzten. Erst seit die heraus sind, ist dieser Block
+    wirklich in sich geschlossen.
+
+    _EARLY_DISCONNECT_RETRY und _NEXT_CHECK_AT bleiben DIESELBEN
+    Objekte auf Modulebene: das Faellig-Stellen ist der Takt des
+    Workers, und ein zweites Woerterbuch hiesse, dass der Worker eine
+    andere Wartezeit sieht als die hier gesetzte.
+    """
+    if category == "early_disconnect":
+        # F50: Auto-Retry mit exponentieller Backoff. Wenn das schon
+        # mehrfach kurz hintereinander passiert, machen wir größere
+        # Pausen. Reset passiert im success-Pfad.
+        # v4.2-W18: Zaehlen und Stufe rechnet nc/aufnahmefolge.py;
+        # das Faellig-Stellen bleibt hier, weil _NEXT_CHECK_AT der
+        # Takt des Workers ist.
+        _f = _nc_folge.nach_frueher_trennung(
+            _EARLY_DISCONNECT_RETRY, tid,
+            max_versuche=_EARLY_DISCONNECT_MAX_RETRIES)
+        count = _f["anzahl"]
+        if _f["wartet"] is not None:
+            try:
+                _NEXT_CHECK_AT[tid] = _time_mod.monotonic() + _f["wartet"]
+                log.warning(
+                    "EARLY DISCONNECT @%s nach %.1fs (#%d/%d) — Auto-Retry in %ds. "
+                    "ffmpeg rc=%s.",
+                    username, duration, count, _EARLY_DISCONNECT_MAX_RETRIES,
+                    _f["wartet"], proc.returncode)
+            except Exception as e:
+                log.warning(f"Auto-Retry scheduling failed: {e}")
+        else:
+            # Max retries reached — fall back to reguläres Polling
+            log.warning(
+                "EARLY DISCONNECT @%s nach %.1fs — Max-Retries (%d) erreicht, "
+                "kein Auto-Retry mehr. Bot polled normal weiter (30-60s).",
+                username, duration, _EARLY_DISCONNECT_MAX_RETRIES)
+    elif duration >= 30:
+        # F50-Bug-Fix B12: Auch lange Aufnahmen (>=30s) die mit Fehler
+        # endeten setzen den Counter zurück. Wenn die Aufnahme 30s+
+        # gelaufen ist, war das Netz/CDN offensichtlich OK — egal ob
+        # sie dann scheiterte (Stream-Ende, manuelles Stop, etc.).
+        # Vorher: counter blieb hoch, nächster early_disconnect kriegte
+        # unnötig langen Backoff-Delay.
+        _EARLY_DISCONNECT_RETRY.pop(tid, None)
+
+
 async def handle_recording_finished(proc, tid, chat_id, username, output_file,
                                     started_at, bot_app, attempt_id=None,
                                     recorder_name=None, stream_expiry=None):
@@ -8650,41 +8703,7 @@ async def handle_recording_finished(proc, tid, chat_id, username, output_file,
                 stderr_text, stall_killed[0], proc.returncode, file_exists, duration)
             _rec_kategorie_melden(category, username)
 
-            if category == "early_disconnect":
-                # F50: Auto-Retry mit exponentieller Backoff. Wenn das schon
-                # mehrfach kurz hintereinander passiert, machen wir größere
-                # Pausen. Reset passiert im success-Pfad.
-                # v4.2-W18: Zaehlen und Stufe rechnet nc/aufnahmefolge.py;
-                # das Faellig-Stellen bleibt hier, weil _NEXT_CHECK_AT der
-                # Takt des Workers ist.
-                _f = _nc_folge.nach_frueher_trennung(
-                    _EARLY_DISCONNECT_RETRY, tid,
-                    max_versuche=_EARLY_DISCONNECT_MAX_RETRIES)
-                count = _f["anzahl"]
-                if _f["wartet"] is not None:
-                    try:
-                        _NEXT_CHECK_AT[tid] = _time_mod.monotonic() + _f["wartet"]
-                        log.warning(
-                            "EARLY DISCONNECT @%s nach %.1fs (#%d/%d) — Auto-Retry in %ds. "
-                            "ffmpeg rc=%s.",
-                            username, duration, count, _EARLY_DISCONNECT_MAX_RETRIES,
-                            _f["wartet"], proc.returncode)
-                    except Exception as e:
-                        log.warning(f"Auto-Retry scheduling failed: {e}")
-                else:
-                    # Max retries reached — fall back to reguläres Polling
-                    log.warning(
-                        "EARLY DISCONNECT @%s nach %.1fs — Max-Retries (%d) erreicht, "
-                        "kein Auto-Retry mehr. Bot polled normal weiter (30-60s).",
-                        username, duration, _EARLY_DISCONNECT_MAX_RETRIES)
-            elif duration >= 30:
-                # F50-Bug-Fix B12: Auch lange Aufnahmen (>=30s) die mit Fehler
-                # endeten setzen den Counter zurück. Wenn die Aufnahme 30s+
-                # gelaufen ist, war das Netz/CDN offensichtlich OK — egal ob
-                # sie dann scheiterte (Stream-Ende, manuelles Stop, etc.).
-                # Vorher: counter blieb hoch, nächster early_disconnect kriegte
-                # unnötig langen Backoff-Delay.
-                _EARLY_DISCONNECT_RETRY.pop(tid, None)
+            _rec_frueh_getrennt(category, duration, tid, username, proc)
 
             # B45: Stream-Pause-Detection — der Streamer hat "Live pausiert"
             # (TikTok-Feature) und der HLS-Stream gibt 404 zurück, obwohl
