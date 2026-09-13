@@ -9288,6 +9288,129 @@ def _test_v42_w65_stille_wird_gemessen_und_gesperrt():
     ok("W65: der DDL-Helfer schluckt nur 'existiert schon', sonst nichts")
 
 
+def _test_v42_w74_verzweigung_statt_nur_laenge():
+    """v4.2-W74: das Mass aus W70 zeigte aufs falsche Ziel.
+
+    tools/monolith.py rankte nach ZEILEN. Ganz oben stand damit
+    nc/schema.py:create_schema mit 718 Zeilen — und ausgerechnet das ist die
+    einfachste Funktion des Bestands:
+
+        718 Z   18 Zweige   40.0 Z/Zw   nc/schema.py:create_schema
+        716 Z  204 Zweige    3.5 Z/Zw   discordbot.py:_discord_run_once
+        616 Z  141 Zweige    4.4 Z/Zw   bot.py:handle_recording_finished
+
+    Eine Verzweigung je 40 Zeilen gegen eine je 3 bis 5. create_schema ist
+    eine LISTE aus 42 CREATE TABLE — 82 der 88 Anweisungen sind ein schlichtes
+    conn.execute(...). Sie zu zerlegen waere Kosmetik gewesen, und zwar an
+    Schema-Code, der gegen die Produktionsdatenbank laeuft. Ausserdem haette
+    es die Regel gebrochen, die sich der Bestand selbst gegeben hat: der
+    Modul-Docstring haelt fest, dass beim Umzug aus bot.py KEINE Schema-Zeile
+    geaendert wurde.
+
+    Das Werkzeug misst deshalb jetzt beide Achsen. Die Zeilen-Stufen bleiben —
+    Laenge ist ein echtes Signal —, aber die Rangliste fuehrt die
+    Verzweigungen an, weil das die Liste ist, an der man arbeiten sollte.
+    """
+    import sys as _sys
+    hier = os.path.dirname(os.path.abspath(__file__))
+    if os.path.join(hier, "tools") not in _sys.path:
+        _sys.path.insert(0, os.path.join(hier, "tools"))
+    import monolith as M
+
+    # --- 1) Beide Achsen werden gemessen ---------------------------------
+    alle = M.funktionen()
+    assert alle and len(alle[0]) == 5, \
+        "funktionen() liefert keine Verzweigungszahl mehr — dann rankt das " \
+        "Werkzeug wieder nur nach Laenge"
+    zahlen = M.bericht()
+    for s in M.STUFEN:
+        assert str(s) in zahlen, "die Zeilen-Stufe %s fehlt" % s
+    for s in M.ZWEIG_STUFEN:
+        assert ("zw%d" % s) in zahlen, "die Verzweigungs-Stufe %s fehlt" % s
+
+    # --- 2) Der Befund selbst: lang ist nicht gleich schwer --------------
+    def hole(datei, name):
+        t = [f for f in alle if f[0] == datei and f[1] == name]
+        assert t, "%s:%s nicht gefunden" % (datei, name)
+        return t[0]
+
+    schema = hole("nc/schema.py", "create_schema")
+    discord = hole("discordbot.py", "_discord_run_once")
+    assert schema[3] > 600, \
+        "create_schema ist nicht mehr lang — dann ist der Befund neu zu erheben"
+    assert schema[4] < 40, \
+        "create_schema hat jetzt %d Verzweigungen — es ist keine reine " \
+        "Deklarationsliste mehr, und die Entscheidung, sie NICHT zu " \
+        "zerlegen, gehoert neu geprueft statt geerbt" % schema[4]
+    assert discord[4] > schema[4] * 3, \
+        "der Abstand zwischen Deklarationsliste und Geflecht ist " \
+        "eingeebnet (%d gegen %d Zweige) — die Begruendung dieser Welle " \
+        "stimmt dann nicht mehr" % (discord[4], schema[4])
+
+    # --- 3) Die Zaehlung von Verzweigungen stimmt ------------------------
+    # Nicht am Bestand nachgerechnet, sondern an einem Fall mit bekannter
+    # Antwort: sonst prueft der Vertrag nur, dass zwei Aufrufe dasselbe
+    # liefern.
+    import ast as _ast
+    flach = _ast.parse("def f():\n" + "    x = 1\n" * 40).body[0]
+    assert M.zweige(flach) == 0, \
+        "eine Funktion ohne jede Verzweigung wird mit %d gezaehlt" % M.zweige(flach)
+    verzweigt = _ast.parse(
+        "def f(a):\n"
+        "    if a:\n"
+        "        pass\n"
+        "    for i in a:\n"
+        "        pass\n"
+        "    try:\n"
+        "        pass\n"
+        "    except ValueError:\n"
+        "        pass\n"
+        "    return [x for x in a if x]\n").body[0]
+    # if + for + try + except + comprehension + das if IN der Komprehension
+    assert M.zweige(verzweigt) >= 5, \
+        "if/for/try/except/Komprehension ergeben nur %d Verzweigungen" % M.zweige(verzweigt)
+    ok("W74: das Mass sieht Verzweigungen, nicht nur Zeilen")
+
+    # --- 4) Und die Sperre faellt auf BEIDEN Achsen ----------------------
+    import contextlib as _ctx
+    import json as _json
+    import tempfile as _tf
+    _echt_b, _echt_g = M.bericht, M.GRUNDLINIE
+
+    def _sperre():
+        with _ctx.redirect_stdout(io.StringIO()):
+            return M.main(["--sperre"])
+
+    _basis = {"100": 63, "200": 16, "300": 9, "500": 4,
+              "zw50": 22, "zw100": 3, "zw150": 1}
+    _tmp = _tf.NamedTemporaryFile("w", suffix=".json", delete=False, encoding="utf-8")
+    try:
+        _json.dump({"stufen": dict(_basis)}, _tmp)
+        _tmp.close()
+        M.GRUNDLINIE = _tmp.name
+        M.bericht = lambda: dict(_basis)
+        assert _sperre() == 0, "die Sperre faellt, obwohl nichts dazukam"
+        M.bericht = lambda: dict(_basis, **{"500": 5})
+        assert _sperre() == 1, "eine neue Funktion ueber 500 Zeilen kommt durch"
+        M.bericht = lambda: dict(_basis, **{"zw50": 23})
+        assert _sperre() == 1, \
+            "eine neue Funktion ueber 50 Verzweigungen kommt durch — die " \
+            "zweite Achse ist dann nur Zierde"
+        M.bericht = lambda: dict(_basis, **{"zw150": 0, "zw100": 2})
+        assert _sperre() == 0, \
+            "die Sperre faellt beim ABBAU von Verzweigungen"
+    finally:
+        M.bericht, M.GRUNDLINIE = _echt_b, _echt_g
+        os.unlink(_tmp.name)
+
+    # --- 5) Die eingecheckte Grundlinie kennt beide Achsen ---------------
+    basis = M._lade()
+    assert basis and all(("zw%d" % s) in basis["stufen"] for s in M.ZWEIG_STUFEN), \
+        "die eingecheckte Grundlinie hat keine Verzweigungs-Stufen — die " \
+        "zweite Achse ist in der CI dann wirkungslos"
+    ok("W74: die Sperre faellt auf beiden Achsen, die Grundlinie kennt beide")
+
+
 def _test_v42_w73_schleifen_befehle_werden_gezaehlt():
     """v4.2-W73: 15 Slash-Commands waren fuer Werkzeug und Doku unsichtbar.
 
@@ -9655,7 +9778,10 @@ def _test_v42_w70_keine_neue_riesenfunktion():
     # misst, belohnt das Verschieben einer Riesenfunktion in eine andere
     # Datei — und genau das ist hier schon einmal passiert.
     alle = M.funktionen()
-    dateien = {d for d, _n, _z, _l in alle}
+    # v4.2-W74: funktionen() liefert jetzt fuenf Werte je Eintrag — die
+    # Verzweigungszahl kam dazu. Ueber den Index statt ueber festes
+    # Entpacken, damit eine weitere Achse diesen Vertrag nicht kippt.
+    dateien = {f[0] for f in alle}
     assert "discordbot.py" in dateien, \
         "discordbot.py wird nicht mehr gemessen — dort steht die groesste " \
         "Funktion des Bestands, und sie kam aus bot.py"
@@ -11297,6 +11423,7 @@ def main():
     _test_v42_w71_discord_run_once_geschrumpft()
     _test_v42_w72_befehle_haben_eine_registrierung()
     _test_v42_w73_schleifen_befehle_werden_gezaehlt()
+    _test_v42_w74_verzweigung_statt_nur_laenge()
     _test_v42_w60_azrael_cooldown_je_plattform()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)

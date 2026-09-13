@@ -11,6 +11,39 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Geändert — `tools/monolith.py` misst Verzweigungen, nicht nur Zeilen (v4.2 W74)
+
+Das Maß aus W70 rankte nach **Zeilen**. Ganz oben stand damit
+`nc/schema.py:create_schema` mit 718 Zeilen — und ausgerechnet das ist die
+einfachste Funktion des Bestands:
+
+    Zeilen  Zweige  Z/Zw   Funktion
+       718      18  40.0   nc/schema.py:create_schema
+       716     204   3.5   discordbot.py:_discord_run_once
+       616     141   4.4   bot.py:handle_recording_finished
+       504     135   3.7   bot.py:main
+
+Eine Verzweigung je 40 Zeilen gegen eine je drei bis fünf. `create_schema` ist
+eine **Liste** aus 42 `CREATE TABLE` — 82 der 88 Anweisungen sind ein
+schlichtes `conn.execute(...)`, dazu ein `if`, vier `try` und eine Schleife.
+
+**Sie wird deshalb nicht zerlegt.** Das wäre Kosmetik gewesen, und zwar an
+Schema-Code, der gegen die Produktionsdatenbank läuft. Es hätte außerdem die
+Regel gebrochen, die sich das Modul selbst gegeben hat: beim Umzug aus
+`bot.py` (B164) wurde **keine Schema-Zeile** geändert, und die Platzhalter
+`{txt_idx}`, `{pk}`, `{tbl_opts}` stehen genau deshalb unverändert in jeder
+Anweisung. Ein Bündel-Objekt (`p.txt_idx`) hätte alle 42 angefasst.
+
+Das Werkzeug misst jetzt beide Achsen. Die Zeilen-Stufen bleiben — Länge ist
+ein echtes Signal —, aber die Rangliste führt die Verzweigungen an, weil das
+die Liste ist, an der man arbeiten sollte. Neue Stufen: 22 Funktionen über 50
+Verzweigungen, 3 über 100, eine über 150. Die Sperre fällt auf beiden Achsen.
+
+Die Grundlinie wurde um die neue Achse ergänzt — kein Aufweichen: die
+Zeilen-Stufen stehen unverändert bei 63/16/9/4, dazugekommen ist eine zweite
+Bedingung.
+
+
 ### Behoben — 15 Slash-Commands waren für Werkzeug und Doku unsichtbar (v4.2 W73)
 
 Der Nebenbefund aus W72, jetzt behoben. `tools/ncpatch.py` zählte nur

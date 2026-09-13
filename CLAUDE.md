@@ -187,6 +187,22 @@ zusammen kaum reine Logik (47 + 6 + 0). Ein Umzug hieße, bis zu 77 Namen per
 `configure()` hineinzureichen: kein Zerlegen, sondern ein Parameterobjekt, an
 der heikelsten Stelle des Bestands. **Bitte nicht neu aufrollen.**
 
+**Lang ist nicht gleich schwer.** Seit v4.2-W74 misst `tools/monolith.py`
+beide Achsen, und die Verzweigungen sind die Liste, an der man arbeitet:
+
+    Zeilen  Zweige  Z/Zw   Funktion
+       718      18  40.0   nc/schema.py:create_schema
+       716     204   3.5   discordbot.py:_discord_run_once
+       616     141   4.4   bot.py:handle_recording_finished
+
+`create_schema` ist die längste Funktion des Bestands und die mit Abstand
+einfachste: eine Liste aus 42 `CREATE TABLE`, 82 der 88 Anweisungen sind ein
+schlichtes `conn.execute(...)`. **Sie wird nicht zerlegt** — das wäre Kosmetik
+an Code, der gegen die Produktionsdatenbank läuft, und es bräche die Regel,
+die sich das Modul selbst gegeben hat: beim Umzug aus `bot.py` wurde keine
+Schema-Zeile geändert, und Platzhalter wie `{txt_idx}` stehen genau deshalb
+unverändert in jeder Anweisung. Bitte nicht neu aufrollen.
+
 Die größte Funktion steht ohnehin nicht in `bot.py`:
 
     1730 Z  discordbot.py  _discord_run_once
