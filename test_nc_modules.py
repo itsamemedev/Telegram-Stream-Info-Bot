@@ -9516,6 +9516,24 @@ def _test_v42_w74_verzweigung_statt_nur_laenge():
         "zweite Achse ist in der CI dann wirkungslos"
     ok("W74: die Sperre faellt auf beiden Achsen, die Grundlinie kennt beide")
 
+    # --- 6) CLAUDE.md nennt DIESELBEN Zahlen wie die Grundlinie ----------
+    # v4.2-W76: nach W75 stand dort noch die alte Grundlinie (9 ueber 300,
+    # 4 ueber 500), weil das Senken der JSON-Datei den Fliesstext nicht
+    # mitnimmt — und tools/ncpatch.py docs kennt diese Zahlen nicht, es
+    # prueft Routen, Funktionen, Module. Eine Anleitung, die eine andere
+    # Grenze nennt als die CI durchsetzt, schickt den naechsten Leser in die
+    # falsche Richtung.
+    claude = io.open(os.path.join(hier, "CLAUDE.md"), encoding="utf-8").read()
+    stand = basis["stufen"]
+    for stufe, wort in ((100, "über 100"), (200, "über 200"),
+                        (300, "über 300"), (500, "über 500")):
+        erwartet = "%d %s" % (stand[str(stufe)], wort)
+        assert erwartet in claude, \
+            "CLAUDE.md nennt nicht %r — die Grundlinie sagt %s Funktionen " \
+            "%s Zeilen, der Fliesstext etwas anderes" % (
+                erwartet, stand[str(stufe)], wort)
+    ok("W76: CLAUDE.md und die eingecheckte Grundlinie nennen dieselben Zahlen")
+
 
 def _test_v42_w73_schleifen_befehle_werden_gezaehlt():
     """v4.2-W73: 15 Slash-Commands waren fuer Werkzeug und Doku unsichtbar.
