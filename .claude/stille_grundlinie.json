@@ -18,7 +18,7 @@
     "nc/abo.py": 1,
     "nc/archive.py": 6,
     "nc/archivename.py": 1,
-    "nc/archiverules.py": 5,
+    "nc/archiverules.py": 4,
     "nc/audio_cue.py": 1,
     "nc/audiotap.py": 3,
     "nc/aufnahmesitzung.py": 1,
@@ -69,7 +69,7 @@
     "nc/overlaytext.py": 1,
     "nc/persona.py": 1,
     "nc/piper_voices.py": 1,
-    "nc/preflight.py": 2,
+    "nc/preflight.py": 1,
     "nc/procdiag.py": 5,
     "nc/proxyutil.py": 3,
     "nc/qrsvg.py": 2,
@@ -104,7 +104,7 @@
     "nc/routes/news.py": 5,
     "nc/routes/ops.py": 24,
     "nc/routes/overlay.py": 6,
-    "nc/routes/recordings.py": 45,
+    "nc/routes/recordings.py": 39,
     "nc/routes/restream.py": 25,
     "nc/routes/scheduler.py": 4,
     "nc/routes/selbsttest.py": 3,
@@ -142,5 +142,5 @@
     "nc/ytoauth.py": 4,
     "telegramversand.py": 13
   },
-  "summe": 1085
+  "summe": 1077
 }

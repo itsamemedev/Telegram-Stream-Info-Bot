@@ -99,6 +99,10 @@ def main():
     sys.path.insert(0, WURZEL)
     from nc import auslieferung as _ausl
     from nc import version as _ver
+    # v4.2-W91: lag vorher schon einer da? Dann ist das ein entpacktes
+    # Archiv und der Stempel gehoert dorthin — wir fassen ihn nicht an.
+    stempel_lag_schon_da = os.path.exists(
+        os.path.join(WURZEL, "AUSLIEFERUNG.json"))
     stempel = _ausl.schreibe(
         WURZEL, _ver.VERSION,
         datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"))
@@ -200,6 +204,22 @@ def main():
             print(f"ABBRUCH — {fehler} Datei(en) compilieren nicht")
             os.remove(ZIEL)
             return 1
+
+    # v4.2-W91: den Stempel aus dem ARBEITSBAUM wieder entfernen. Im Archiv
+    # gehoert er hin, hier ist er eine Luege: nc/auslieferung.py bevorzugt die
+    # Datei vor git, also meldeten /healthz und /api/version nach einem Build
+    # dauerhaft den eingefrorenen Stand statt des ausgecheckten. Der Vertrag
+    # _test_v42_w85_schemastand_und_herkunft faellt dann mit "aus einem
+    # git-Arbeitsbaum heraus darf die Herkunft nicht unbekannt sein" — eine
+    # rote Suite ohne Codefehler, deren Meldung auf die Herkunft zeigt statt
+    # auf den liegengebliebenen Stempel. Genau da bin ich selbst hineingelaufen.
+    if not stempel_lag_schon_da:
+        try:
+            os.remove(os.path.join(WURZEL, "AUSLIEFERUNG.json"))
+        except OSError as e:
+            print(f"  Hinweis: AUSLIEFERUNG.json blieb im Arbeitsbaum liegen "
+                  f"({e}) — bitte von Hand entfernen, sonst meldet /healthz "
+                  f"hier dauerhaft diesen Build.")
 
     gr = os.path.getsize(ZIEL)
     with open(ZIEL, "rb") as _fh:

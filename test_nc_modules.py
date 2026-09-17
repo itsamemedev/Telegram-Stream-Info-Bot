@@ -15602,6 +15602,425 @@ def _test_v42_w90_suiten_lassen_nichts_liegen():
     ok("W90: die Sperre schlaegt auf dem Stand von vor der Welle an")
 
 
+def _test_v42_w91_aufraeumer_loescht_nicht_alles():
+    """v4.2-W91: ein stiller except machte aus "raeum die Reste weg" ein
+    "loesche alle Aufnahmen".
+
+    _find_orphans() liest die Liste der bekannten Dateien aus der Datenbank
+    und meldet jede Datei im Aufnahmeverzeichnis, die nicht darin steht. Bis
+    zu dieser Welle stand um diese Abfrage:
+
+        except Exception:
+            known = set()
+
+    Mit leerem `known` ist `full not in known` fuer JEDE Datei wahr — jede
+    .mp4 bekommt den Grund "kein-db-eintrag", und /api/rec/orphans/clean
+    loescht alles, was die Funktion liefert. Ein gesperrtes SQLite (der
+    Recorder schreibt parallel, das ist Alltag) genuegte.
+
+    Der gefaehrliche Ablauf brauchte nicht einmal Pech: das Deck laedt erst
+    /api/rec/orphans (Datenbank in Ordnung, drei Reste) und schickt dann den
+    Knopf mit confirm=true. Faellt die Datenbank zwischen diesen beiden
+    Aufrufen, hat der Betreiber das Loeschen von drei Dateien bestaetigt und
+    alle verloren.
+    """
+    import os as _os
+    from flask import Flask
+    from nc import ctx as _ncctx
+    from nc.routes import recordings as rt
+    import pruefhilfen as P
+
+    heim = P.verzeichnis()
+    aufnahmen = _os.path.join(heim, "aufnahmen")
+    _os.makedirs(aufnahmen)
+    echte = [P.attrappe(_os.path.join(aufnahmen, n), 4096)
+             for n in ("stream_a.mp4", "stream_b.mp4", "stream_c.mp4")]
+    # 5 MiB und nicht 2 KiB: `freed_mb` rundet auf eine Nachkommastelle, und
+    # bei 2 KiB ist der Unterschied zwischen "vor dem Loeschen gezaehlt" und
+    # "nach dem Loeschen gezaehlt" beides 0.0. Genau daran ist die
+    # Mutationsprobe zunaechst entwischt. Dank truncate() kostet die Groesse
+    # nichts (siehe W90).
+    rest = P.attrappe(_os.path.join(aufnahmen, "stream_a_part2.mp4"),
+                      5 * 1024 * 1024)
+
+    class _Log:
+        def __init__(self): self.zeilen = []
+        def _sammle(self, *a, **k):
+            self.zeilen.append(a[0] % a[1:] if len(a) > 1 else str(a[0]))
+        warning = info = error = debug = _sammle
+    protokoll = _Log()
+
+    alt_ctx = _ncctx._CTX
+    _ncctx.configure(recordings_dir=aufnahmen, log=protokoll,
+                     log_event=lambda *a, **k: None,
+                     arg_int=lambda *a, **k: 0,
+                     ffmpeg_threads_bg=1, ffmpeg_nice_bg=10)
+    app = Flask(__name__)
+    app.register_blueprint(rt.bp)
+    klient = app.test_client()
+
+    class _DbKaputt(Exception):
+        pass
+
+    def _gesperrt(*a, **k):
+        raise _DbKaputt("database is locked")
+
+    echt_db = rt.db_conn
+    try:
+        # ── (1) DER KERNBEFUND. Faellt die Datenbank, wird nicht geraten.
+        rt.db_conn = _gesperrt
+        try:
+            rt._find_orphans()
+            raise AssertionError(
+                "_find_orphans() hat trotz unlesbarer Datenbank eine Liste "
+                "geliefert — mit leerem `known` steht darin JEDE Aufnahme, "
+                "und /orphans/clean loescht sie")
+        except rt.BestandUnbekannt as e:
+            assert "nichts" in str(e).lower() or "geloescht" in str(e).lower(), \
+                "die Meldung sagt nicht, dass nichts geloescht wird: %s" % e
+
+        # Die Gegenprobe zur Schwere: haette die Funktion mit leerem `known`
+        # weitergemacht, waeren es ALLE drei echten Aufnahmen plus der Rest
+        # gewesen — nicht der eine Rest.
+        bekannt_leer = set()
+        wuerde_treffen = [n for n in _os.listdir(aufnahmen)
+                          if n.endswith(".mp4")
+                          and _os.path.join(aufnahmen, n) not in bekannt_leer]
+        assert len(wuerde_treffen) == 4, wuerde_treffen
+
+        # ── (2) DIE LISTE sagt warum, statt "keine verwaisten Dateien".
+        antwort = klient.get("/api/rec/orphans")
+        assert antwort.status_code == 503, \
+            "unlesbare Datenbank meldet %d statt 503" % antwort.status_code
+        daten = antwort.get_json()
+        assert daten["ok"] is False and daten.get("unentscheidbar") is True
+        assert daten["orphans"] == [] and daten["count"] == 0, \
+            "eine unentscheidbare Lage darf keine Trefferliste vortaeuschen"
+
+        # ── (3) UND DER KNOPF LOESCHT NICHTS.
+        antwort = klient.post("/api/rec/orphans/clean", json={"confirm": True})
+        assert antwort.status_code == 503, antwort.status_code
+        daten = antwort.get_json()
+        assert daten["deleted"] == 0 and daten["freed_mb"] == 0.0
+        for pfad in echte + [rest]:
+            assert _os.path.isfile(pfad), \
+                "trotz unlesbarer Datenbank wurde %s geloescht" % pfad
+        assert any("nicht zu lesen" in z for z in protokoll.zeilen), \
+            "der Abbruch steht in keiner Logzeile: %r" % protokoll.zeilen
+    finally:
+        rt.db_conn = echt_db
+
+    ok("W91: unlesbare Datenbank -> _find_orphans bricht ab, statt alles "
+       "als verwaist zu melden")
+    ok("W91: /orphans meldet 503 und eine leere Liste, nicht 'nichts gefunden'")
+    ok("W91: /orphans/clean loescht bei unlesbarer Datenbank keine einzige Datei")
+
+    # ── (4) IM NORMALFALL trifft es genau den Rest — und `freed` zaehlt nur,
+    # was wirklich weg ist. Vor W91 wurde die Groesse VOR dem os.remove
+    # addiert: das Deck meldete dann Platz, der noch belegt war.
+    #
+    # Die Datenbank kennt hier die drei echten Aufnahmen: genau das ist der
+    # Unterschied zum Fall oben, und genau diesen Unterschied hat der stille
+    # except eingeebnet.
+    class _Zeilen(list):
+        def fetchall(self): return self
+
+    class _ConnKennt:
+        def execute(self, sql, args=()):
+            return _Zeilen({"filepath": p} for p in echte)
+        def commit(self): pass
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+
+    try:
+        rt.db_conn = lambda: _ConnKennt()
+        treffer = rt._find_orphans()
+        namen = {t["name"] for t in treffer}
+        assert namen == {"stream_a_part2.mp4"}, \
+            "erwartet nur den Split-Rest, bekommen: %r" % namen
+
+        echt_remove = rt.os.remove
+        rt.os.remove = lambda p: (_ for _ in ()).throw(
+            OSError(13, "Permission denied"))
+        try:
+            antwort = klient.post("/api/rec/orphans/clean",
+                                  json={"confirm": True})
+        finally:
+            rt.os.remove = echt_remove
+        daten = antwort.get_json()
+        assert daten["deleted"] == 0, daten
+        assert daten["freed_mb"] == 0.0, \
+            "es wurde Platz gemeldet, obwohl keine Datei geloescht wurde: %r" \
+            % daten
+        assert daten["failed"] == 1 and daten["failed_details"], \
+            "der Fehlschlag wird nicht gemeldet: %r" % daten
+        assert _os.path.isfile(rest), "die Datei ist trotz Fehler weg"
+    finally:
+        rt.db_conn = echt_db
+        _ncctx._CTX = alt_ctx
+
+    ok("W91: /orphans/clean meldet keinen Platz, den es nicht frei gemacht hat")
+
+
+def _test_v42_w91_retention_haelt_datei_und_eintrag_zusammen():
+    """v4.2-W91: die Retention loeschte den Datenbank-Eintrag auch dann, wenn
+    die Datei liegen blieb.
+
+    Das Ergebnis war eine Aufnahme ohne Eintrag: sie belegt weiter Platz,
+    taucht in keiner Liste auf, und das Deck meldete den Platz als frei.
+    Dieselbe Klasse wie der W89-Befund in nc/archiverules.py, nur
+    andersherum — dort blieb die Kopie ohne Zeile, hier die Datei.
+    """
+    import os as _os
+    from flask import Flask
+    from nc import ctx as _ncctx
+    from nc.routes import recordings as rt
+    import pruefhilfen as P
+
+    heim = P.verzeichnis()
+    datei = P.attrappe(_os.path.join(heim, "alt.mp4"), 8192)
+
+    gefallene_ids = []
+
+    class _Conn:
+        def execute(self, sql, args=()):
+            if sql.strip().upper().startswith("DELETE"):
+                gefallene_ids.append(args[0])
+            return self
+        def commit(self): pass
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+
+    class _Log:
+        def __init__(self): self.zeilen = []
+        def _s(self, *a, **k):
+            self.zeilen.append(a[0] % a[1:] if len(a) > 1 else str(a[0]))
+        warning = info = error = debug = _s
+    protokoll = _Log()
+
+    alt_ctx = _ncctx._CTX
+    _ncctx.configure(recordings_dir=heim, log=protokoll,
+                     log_event=lambda *a, **k: None,
+                     arg_int=lambda *a, **k: 0,
+                     ffmpeg_threads_bg=1, ffmpeg_nice_bg=10)
+    app = Flask(__name__)
+    app.register_blueprint(rt.bp)
+    klient = app.test_client()
+
+    echt_match, echt_db, echt_remove = rt._retention_match, rt.db_conn, rt.os.remove
+    try:
+        rt._retention_match = lambda regeln: [
+            {"id": 4711, "filepath": datei, "file_size": 8192}]
+        rt.db_conn = lambda: _Conn()
+        rt.os.remove = lambda p: (_ for _ in ()).throw(
+            OSError(16, "Device or resource busy"))
+
+        antwort = klient.post("/api/rec/retention/apply",
+                              json={"confirm": True, "rules": {}})
+        daten = antwort.get_json()
+        assert daten["ok"] is True, daten
+        assert daten["deleted"] == 0, \
+            "eine Aufnahme wurde als geloescht gezaehlt, deren Datei liegen " \
+            "blieb: %r" % daten
+        assert daten["freed_mb"] == 0.0, daten
+        assert daten["failed"] == 1, "der Fehlschlag fehlt in der Antwort: %r" % daten
+        assert 4711 not in gefallene_ids, \
+            "der Datenbank-Eintrag fiel, obwohl die Datei liegen blieb — " \
+            "die Aufnahme ist damit unauffindbar statt nur uebrig"
+        assert _os.path.isfile(datei)
+        assert any("liegen" in z for z in protokoll.zeilen), \
+            "kein Hinweis im Log: %r" % protokoll.zeilen
+
+        # Und der Normalfall: Datei weg -> Eintrag faellt mit.
+        del gefallene_ids[:]
+        rt.os.remove = echt_remove
+        antwort = klient.post("/api/rec/retention/apply",
+                              json={"confirm": True, "rules": {}})
+        daten = antwort.get_json()
+        assert daten["deleted"] == 1 and daten["failed"] == 0, daten
+        assert gefallene_ids == [4711], gefallene_ids
+        assert not _os.path.exists(datei)
+    finally:
+        rt._retention_match, rt.db_conn, rt.os.remove = echt_match, echt_db, echt_remove
+        _ncctx._CTX = alt_ctx
+
+    ok("W91: eine Datei, die nicht weichen will, behaelt ihren Eintrag")
+    ok("W91: die Retention meldet Fehlschlaege, statt sie als Erfolg zu zaehlen")
+
+
+def _test_v42_w91_blinde_helfer_melden():
+    """v4.2-W91: 14 stumme Rueckgaben in drei Helfern.
+
+    ffprobe_inspect (5), compute_waveform_peaks (7) und
+    build_recording_manifest (2) kehrten bei jedem Fehlschlag ordentlich mit
+    None zurueck — vier Ausgaenge ganz ohne Zeile, die uebrigen auf
+    log.debug. Fuer den Betreiber ist ein Fehlerpfad auf `debug` dasselbe
+    wie `pass`: im Deck bleibt die Wellenform leer, im Log steht nichts.
+    Genau dieses Bild hat er am 13.09. fuer den Resolver gemeldet, und
+    genau dafuer gibt es seit W81 nc/meldetakt.py.
+
+    Geprueft wird nicht nur DASS gemeldet wird, sondern der Rhythmus: eine
+    ungedrosselte Meldung pro Aufnahme waere nach einer Stunde unlesbar, und
+    eine unlesbare Warnung ist so gut wie keine.
+    """
+    import asyncio as _aio
+    import os as _os
+    from nc import ctx as _ncctx
+    from nc import meldetakt as _takt
+    from nc.routes import recordings as rt
+    import pruefhilfen as P
+
+    class _Log:
+        def __init__(self): self.zeilen = []
+        def _s(self, *a, **k):
+            self.zeilen.append(a[0] % a[1:] if len(a) > 1 else str(a[0]))
+        warning = info = error = debug = _s
+    protokoll = _Log()
+
+    heim = P.verzeichnis()
+    alt_ctx = _ncctx._CTX
+    _ncctx.configure(recordings_dir=heim, log=protokoll,
+                     log_event=lambda *a, **k: None,
+                     arg_int=lambda *a, **k: 0,
+                     ffmpeg_threads_bg=1, ffmpeg_nice_bg=10)
+    try:
+        # ── (1) EINE FEHLENDE DATEI IST EINE MELDUNG WERT.
+        _takt.zuruecksetzen()
+        del protokoll.zeilen[:]
+        assert _aio.run(rt.ffprobe_inspect(_os.path.join(heim, "gibtsnicht.mp4"))) is None
+        assert protokoll.zeilen, \
+            "ffprobe_inspect schweigt bei fehlender Datei — fuer den " \
+            "Betreiber ist das dasselbe wie `pass`"
+        assert "ffprobe" in protokoll.zeilen[0], protokoll.zeilen
+
+        # ── (2) ABER NICHT HUNDERT. Derselbe Grund wird gedrosselt.
+        vorher = len(protokoll.zeilen)
+        for _ in range(50):
+            _aio.run(rt.ffprobe_inspect(_os.path.join(heim, "gibtsnicht.mp4")))
+        assert len(protokoll.zeilen) == vorher, \
+            "50 gleiche Fehlschlaege erzeugten %d Zeilen — ungedrosselt ist " \
+            "das Log nach einer Stunde unlesbar" \
+            % (len(protokoll.zeilen) - vorher)
+
+        # ── (3) EIN WECHSEL DES GRUNDES IST DIE EIGENTLICHE NACHRICHT und
+        # kommt sofort durch, auch innerhalb des Drossel-Fensters.
+        echt_which = rt.shutil.which
+        rt.shutil.which = lambda name: None
+        try:
+            datei = P.attrappe(_os.path.join(heim, "da.mp4"), 1024)
+            _aio.run(rt.ffprobe_inspect(datei))
+        finally:
+            rt.shutil.which = echt_which
+        assert len(protokoll.zeilen) > vorher, \
+            "der Wechsel auf 'ffprobe fehlt' wurde weggedrosselt"
+        assert any("nicht installiert" in z for z in protokoll.zeilen), \
+            protokoll.zeilen
+
+        # ── (4) UND DIE MELDUNG TRAEGT EINE ABHILFE. "HTTP 403" allein hat
+        # laut CLAUDE.md schon einmal wochenlang niemandem geholfen.
+        fehlt = [z for z in protokoll.zeilen if "nicht installiert" in z][0]
+        assert "apt install" in fehlt, \
+            "die Meldung sagt nicht, was zu tun ist: %s" % fehlt
+
+        # ── (5) DIE WELLENFORM meldet auf einem EIGENEN Kanal. Bewusst OHNE
+        # zuruecksetzen(): beide Helfer melden fuer eine fehlende Datei
+        # denselben Wortlaut, und bei einem gemeinsamen Schluessel
+        # verschluckt die Drossel deshalb den zweiten — das Deck zeigt eine
+        # leere Wellenform, und im Log steht nur etwas ueber ffprobe.
+        # Mit zuruecksetzen() davor entwischte diese Mutationsprobe.
+        _takt.zuruecksetzen()
+        del protokoll.zeilen[:]
+        fehlt_datei = _os.path.join(heim, "auch_nicht.mp4")
+        assert _aio.run(rt.ffprobe_inspect(fehlt_datei)) is None
+        nach_ffprobe = len(protokoll.zeilen)
+        assert nach_ffprobe == 1, protokoll.zeilen
+        assert _aio.run(rt.compute_waveform_peaks(fehlt_datei)) is None
+        assert len(protokoll.zeilen) > nach_ffprobe, \
+            "die Wellenform wurde von der ffprobe-Drossel verschluckt — " \
+            "beide brauchen einen eigenen Schluessel"
+        assert any("wellenform" in z for z in protokoll.zeilen), protokoll.zeilen
+
+        # ── (6) UND EIN MANIFEST ZU EINER AUFNAHME, DIE ES NICHT GIBT, sagt
+        # das — ungedrosselt, weil es eine Anfrage pro Aufruf ist und nicht
+        # pro Poll.
+        del protokoll.zeilen[:]
+        echt_get = rt.recdb.get_recording_by_id
+        rt.recdb.get_recording_by_id = lambda rid: None
+        try:
+            assert rt.build_recording_manifest(999999) is None
+        finally:
+            rt.recdb.get_recording_by_id = echt_get
+        assert any("999999" in z for z in protokoll.zeilen), protokoll.zeilen
+
+        # ── (7) KEINE BLINDSTELLE MEHR IN DIESER DATEI. Gemessen mit dem
+        # Werkzeug selbst, nicht per Augenschein: 14 waren es vor W91.
+        import pathlib as _pl
+        import sys as _sys2
+        _sys2.path.insert(0, "tools")
+        import blindstellen as _bl
+        offen = _bl.sammle(_pl.Path("nc/routes/recordings.py").resolve())
+        assert not offen, \
+            "wieder stumme Rueckgaben in recordings.py: %r" \
+            % [(z, fn) for _d, z, fn in offen]
+    finally:
+        _takt.zuruecksetzen()
+        _ncctx._CTX = alt_ctx
+
+    ok("W91: die drei Helfer melden ihren Grund, mit Abhilfe")
+    ok("W91: gedrosselt auf einen Kanal je Helfer, Grundwechsel sofort")
+
+
+def _test_v42_w91_build_laesst_keinen_stempel_liegen():
+    """v4.2-W91: ein Release-Build machte die Suite rot.
+
+    build_release.py schreibt AUSLIEFERUNG.json in den Arbeitsbaum, damit
+    der Stempel ins Archiv wandert — und raeumte ihn dort nie weg. Die Datei
+    steht in .gitignore, faellt also bei `git status` nicht auf; nc/
+    auslieferung.py bevorzugt sie aber vor git. Nach einem einzigen Build
+    meldeten /healthz und /api/version auf dem Entwicklungsrechner dauerhaft
+    den eingefrorenen Stand, und
+    _test_v42_w85_schemastand_und_herkunft fiel mit "aus einem
+    git-Arbeitsbaum heraus darf die Herkunft nicht unbekannt sein" — eine
+    rote Suite ohne Codefehler, deren Meldung auf die Herkunft zeigt statt
+    auf den liegengebliebenen Stempel.
+
+    Statisch geprueft, weil build_release.py fest in die Projektwurzel
+    schreibt: ein echter Build im Vertrag wuerde 3,8 MB packen und dabei
+    genau die Datei anfassen, um die es geht.
+    """
+    quelle = io.open("tools/build_release.py", encoding="utf-8").read()
+
+    assert "stempel_lag_schon_da" in quelle, \
+        "build_release.py merkt sich nicht mehr, ob schon ein Stempel da " \
+        "war — dann loescht es in einem entpackten Archiv den echten"
+    rumpf = rumpf_ab(quelle, quelle.index("stempel_lag_schon_da"))
+    assert 'os.remove(os.path.join(WURZEL, "AUSLIEFERUNG.json"))' in rumpf, \
+        "der Stempel wird nach dem Packen nicht mehr aus dem Arbeitsbaum " \
+        "entfernt — nach einem Build ist die Suite rot"
+    assert "if not stempel_lag_schon_da:" in rumpf, \
+        "das Entfernen haengt nicht mehr an der Bedingung: in einem " \
+        "entpackten Archiv wuerde damit der gueltige Stempel geloescht"
+
+    # Und die Datei bleibt ignoriert — sonst landet ein lokaler Build-Stempel
+    # im Repo und behauptet dort eine Herkunft fuer alle.
+    assert "AUSLIEFERUNG.json" in io.open(".gitignore", encoding="utf-8").read()
+
+    # Der Schaden selbst: ein vorhandener Stempel verdeckt die git-Herkunft.
+    # Das ist die Eigenschaft, die das Aufraeumen ueberhaupt noetig macht.
+    import nc.auslieferung as _au
+    assert "AUSLIEFERUNG.json" in io.open(
+        "nc/auslieferung.py", encoding="utf-8").read()
+    assert hasattr(_au, "schreibe") and hasattr(_au, "stand"), \
+        "nc/auslieferung.py hat seine Schnittstelle geaendert"
+    # Und die Datei gewinnt wirklich gegen git — sonst waere der
+    # liegengebliebene Stempel harmlos und dieser Vertrag ueberfluessig.
+    quelle_au = io.open("nc/auslieferung.py", encoding="utf-8").read()
+    assert "archiv" in quelle_au, \
+        "nc/auslieferung.py kennt die Quelle 'archiv' nicht mehr"
+
+    ok("W91: ein Release-Build laesst keinen Stempel im Arbeitsbaum zurueck")
+
+
 def main():
     tmp, rid = richte_testdatenbank_ein()
     ok("db_conn aus nc.dbwrap: echtes Schema angelegt, Commit durchgelaufen")
@@ -15854,6 +16273,10 @@ def main():
     _test_v42_w89_kopie_wird_zurueckgenommen()
     _test_v42_w89_stats_json_meldet_laut()
     _test_v42_w90_suiten_lassen_nichts_liegen()
+    _test_v42_w91_aufraeumer_loescht_nicht_alles()
+    _test_v42_w91_retention_haelt_datei_und_eintrag_zusammen()
+    _test_v42_w91_blinde_helfer_melden()
+    _test_v42_w91_build_laesst_keinen_stempel_liegen()
     _test_v42_w60_azrael_cooldown_je_plattform()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)

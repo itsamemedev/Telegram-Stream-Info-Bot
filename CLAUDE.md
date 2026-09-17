@@ -136,8 +136,8 @@ ein `tiktok_bot.db` **im Arbeitsverzeichnis** an. Beim zweiten Lauf starb
 die Prüfkette fährt und was die Sperre ist; pytest kommt daneben, für die
 Arbeit am einzelnen Befund.
 
-**Die Überdeckung ist seit v4.2-W86 gemessen: 50,4 %** von `nc/` und `brain/`
-(19.544 Anweisungen, 9.695 davon ungeprüft). Das ist die Zahl, die den 446
+**Die Überdeckung ist seit v4.2-W86 gemessen: 50,8 %** von `nc/` und `brain/`
+(19.592 Anweisungen, 9.635 davon ungeprüft). Das ist die Zahl, die den 455
 Verträgen erst ihren Maßstab gibt — „alles grün" sagt sonst nichts darüber,
 wie viel Bestand dabei angefasst wurde. Gesperrt wird wie bei W65/W66 nur der
 Zuwachs, und zwar die **Anzahl** ungeprüfter Anweisungen, nicht der
@@ -258,7 +258,7 @@ es gibt keinen stillen `except`, sondern ein **stilles `return`**.
 und drei ganz ohne Zeile; `_whisper_transcribe` verschluckte jeden Fehler auf
 `debug`. Ein `log.debug` erscheint in einem INFO- oder ERROR-Log **nie** —
 für den Betreiber ist ein Fehlerpfad auf `debug` dasselbe wie `pass`.
-`tools/blindstellen.py` misst diese Klasse, Bestand **478**, und wie bei
+`tools/blindstellen.py` misst diese Klasse, Bestand **464**, und wie bei
 W65/W66 wird nur das Wachstum gesperrt.
 
 Auf `warning` heben allein genügt aber nicht: der Resolver läuft pro Poll und
@@ -272,6 +272,45 @@ unterdrückten Fälle. Der Schlüssel ist der **Kanal**, nicht der Nutzer — be
 setzt die Drossel zurück, sonst bleibt ein wiederkehrender Ausfall bis zu 15
 Minuten unsichtbar. Die Klartexte stehen in `nc/resolvergrund.py`, jeder **mit
 Abhilfe**: „HTTP 403" allein hat schon einmal wochenlang niemandem geholfen.
+
+**Ein stiller `except` machte aus „räum die Reste weg" ein „lösche alle
+Aufnahmen".** `_find_orphans()` in `nc/routes/recordings.py` liest die Liste
+der bekannten Dateien aus der Datenbank und meldet jede Datei im
+Aufnahmeverzeichnis, die nicht darin steht. Um die Abfrage stand bis v4.2-W91:
+
+    except Exception:
+        known = set()
+
+Mit leerem `known` ist `full not in known` für **jede** Datei wahr — jede
+`.mp4` bekommt den Grund „kein-db-eintrag", und `/api/rec/orphans/clean`
+löscht alles, was die Funktion liefert. Ein gesperrtes SQLite genügte, und
+das ist bei laufendem Recorder Alltag.
+
+Der gefährliche Ablauf brauchte nicht einmal Pech: das Deck lädt erst
+`/api/rec/orphans` (Datenbank in Ordnung, drei Reste) und schickt dann den
+Knopf mit `confirm=true`. Fällt die Datenbank zwischen diesen beiden
+Aufrufen, hat der Betreiber das Löschen von drei Dateien bestätigt und alle
+verloren. **Es gibt hier keine sichere Annahme:** „ich weiß nicht, was in der
+Datenbank steht" heißt „ich kann nicht entscheiden, was verwaist ist" — also
+abbrechen (`BestandUnbekannt`, HTTP 503), nicht raten.
+
+Dieselbe Welle: `/api/rec/retention/apply` löschte den Datenbank-Eintrag auch
+dann, wenn `os.remove` scheiterte. Die Aufnahme belegte weiter Platz, tauchte
+in keiner Liste mehr auf, und das Deck meldete den Platz als frei — die
+Umkehrung des W89-Befunds in `archiverules.py`. **Wer die Datei nicht löschen
+kann, darf auch ihre Spur nicht löschen.**
+
+**Ein Release-Build machte die Suite rot.** `tools/build_release.py` schreibt
+`AUSLIEFERUNG.json` in den Arbeitsbaum, damit der Stempel ins Archiv wandert —
+und räumte ihn dort nie weg. Die Datei steht in `.gitignore`, fällt bei `git
+status` also nicht auf; `nc/auslieferung.py` bevorzugt sie aber vor `git`.
+Nach einem einzigen Build meldeten `/healthz` und `/api/version` auf dem
+Entwicklungsrechner dauerhaft den eingefrorenen Stand, und der W85-Vertrag
+fiel mit „aus einem git-Arbeitsbaum heraus darf die Herkunft nicht unbekannt
+sein" — eine rote Suite ohne Codefehler, deren Meldung auf die Herkunft zeigt
+statt auf den liegengebliebenen Stempel. Seit v4.2-W91 entfernt der Bauer ihn
+wieder, aber nur, wenn er ihn selbst angelegt hat: in einem entpackten Archiv
+gehört er dorthin.
 
 **Die Sperren waren selbst blind.** Vier der Zählwerkzeuge — `monolith`,
 `stillecheck`, `blindstellen`, `importzeit` — hatten dieselbe Schleife, und

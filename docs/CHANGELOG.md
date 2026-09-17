@@ -11,6 +11,85 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Behoben — ein stiller `except` konnte alle Aufnahmen löschen (v4.2 W91)
+
+`_find_orphans()` in `nc/routes/recordings.py` liest die Liste der bekannten
+Dateien aus der Datenbank und meldet jede Datei im Aufnahmeverzeichnis, die
+nicht darin steht. Um die Abfrage stand:
+
+```python
+except Exception:
+    known = set()
+```
+
+Mit leerem `known` ist `full not in known` für **jede** Datei wahr. Jede
+`.mp4` bekommt damit den Grund `kein-db-eintrag` — und
+`/api/rec/orphans/clean` löscht alles, was die Funktion liefert. Ein
+gesperrtes SQLite genügte, und das ist bei laufendem Recorder Alltag.
+
+**Der gefährliche Ablauf brauchte nicht einmal Pech.** Das Deck lädt erst
+`/api/rec/orphans` (Datenbank in Ordnung, drei Reste), der Betreiber sieht
+eine harmlose Liste und drückt den Knopf, der `confirm=true` schickt. Fällt
+die Datenbank zwischen diesen beiden Aufrufen, hat er das Löschen von drei
+Dateien bestätigt und alle verloren.
+
+Es gibt hier keine sichere Annahme. „Ich weiß nicht, was in der Datenbank
+steht" heißt „ich kann nicht entscheiden, was verwaist ist" — also abbrechen
+statt raten: `_find_orphans()` wirft jetzt `BestandUnbekannt`, `/orphans`
+antwortet mit **503** und einer leeren Liste statt mit „nichts gefunden", und
+`/orphans/clean` löscht **keine einzige Datei**.
+
+### Behoben — die Retention löschte den Eintrag, wenn die Datei blieb
+
+`/api/rec/retention/apply` entfernte die Datenbankzeile auch dann, wenn
+`os.remove` scheiterte. Die Aufnahme belegte weiter Platz, tauchte in keiner
+Liste mehr auf, und das Deck meldete den Platz als frei — die Umkehrung des
+W89-Befunds in `archiverules.py`, wo die Kopie ohne Zeile zurückblieb. **Wer
+die Datei nicht löschen kann, darf auch ihre Spur nicht löschen.** Dazu
+zählte `/orphans/clean` die Größe **vor** dem Löschversuch und meldete so
+Platz, der noch belegt war; beide Routen weisen Fehlschläge jetzt in `failed`
+aus, mit gesäubertem Grund (ein `str(OSError)` trägt den vollen Pfad — das
+fing der Sicherheits-Vertrag aus W30 beim ersten Anlauf ab).
+
+### Behoben — 14 stumme Rückgaben in drei Helfern
+
+`ffprobe_inspect` (5), `compute_waveform_peaks` (7) und
+`build_recording_manifest` (2) kehrten bei jedem Fehlschlag mit `None`
+zurück: vier Ausgänge ganz ohne Zeile, der Rest auf `log.debug`. Für den
+Betreiber ist ein Fehlerpfad auf `debug` dasselbe wie `pass` — im Deck bleibt
+die Wellenform leer, im Log steht nichts. Jede Meldung geht jetzt über
+`nc/meldetakt.py` (erste sofort, Grundwechsel sofort, sonst alle 15 Minuten
+mit der Zahl der verschluckten Fälle) und **trägt eine Abhilfe**: „ffprobe ist
+nicht installiert — sudo apt install ffmpeg" statt Schweigen. Eigener
+Drossel-Kanal je Helfer, sonst verschluckt der erste Fehler den zweiten.
+
+### Behoben — ein Release-Build machte die Suite rot
+
+`tools/build_release.py` schreibt `AUSLIEFERUNG.json` in den Arbeitsbaum,
+damit der Stempel ins Archiv wandert, und räumte ihn nie weg. Die Datei steht
+in `.gitignore`, fällt bei `git status` also nicht auf; `nc/auslieferung.py`
+bevorzugt sie aber vor `git`. Nach einem einzigen Build meldeten `/healthz`
+und `/api/version` auf dem Entwicklungsrechner dauerhaft den eingefrorenen
+Stand, und der W85-Vertrag fiel mit „aus einem git-Arbeitsbaum heraus darf die
+Herkunft nicht unbekannt sein" — eine rote Suite ohne Codefehler, deren
+Meldung auf die Herkunft zeigt statt auf die Ursache. Der Bauer entfernt den
+Stempel jetzt wieder, aber nur, wenn er ihn selbst angelegt hat: in einem
+entpackten Archiv gehört er dorthin.
+
+---
+
+**Messbar:** `nc/routes/recordings.py` von **17 % auf 29 %** Überdeckung,
+Blindstellen dort **14 → 0** (Bestand 478 → 464), stille Blöcke dort **45 →
+39** (Bestand 1085 → 1077). Gesamt 9.695 → **9.635** ungeprüfte Anweisungen.
+Verträge 446 → **455**.
+
+10 Mutationsproben, zwei Lücken beim ersten Durchgang — beide in den
+Verträgen, nicht im Code: die Attrappe war mit 2 KiB zu klein, um den
+Zählfehler sichtbar zu machen (`round(2048/1048576, 1)` ist 0.0), und die
+Prüfung der Drossel-Kanäle setzte die Drossel vorher zurück und prüfte damit
+gar nichts.
+
+
 ### Behoben — die Vertragssuiten füllten die Platte (v4.2 W90)
 
 Die vier Suiten legten **35 temporäre Verzeichnisse** mit
