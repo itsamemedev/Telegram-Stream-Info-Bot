@@ -242,7 +242,12 @@ jobs:
       # "nicht installiert", der Vertrag wuerde gruen und die eigentliche
       # Aussage nie geprueft.
       - name: Minimale Abhängigkeiten
-        run: python -m pip install --upgrade pip orjson flask waitress
+        run: python -m pip install --upgrade pip orjson flask waitress aiohttp
+        # v4.2-W87: aiohttp kommt dazu. nc/scraper.py importiert es auf
+        # MODUL-Ebene; ohne das Paket ist das Modul nicht importierbar und
+        # sein Vertrag faellt am Import statt an einer Aussage. Es steht
+        # ohnehin in requirements.txt und requirements-smoke.txt — neu ist
+        # nur, dass ein Vertrag es jetzt braucht.
 
       - name: Statische Restream-Verträge
         run: python test_restream.py
@@ -282,7 +287,7 @@ jobs:
           python-version: "3.13"
 
       - name: Minimale Abhängigkeiten
-        run: python -m pip install --upgrade pip orjson flask waitress pytest coverage
+        run: python -m pip install --upgrade pip orjson flask waitress aiohttp pytest coverage
 
       # v4.2-W86. Die Suiten waren nur ueber ihren eigenen Runner fahrbar:
       # `python test_nc_modules.py`, alles oder nichts, rund eine Minute je
