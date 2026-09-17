@@ -10,6 +10,7 @@ import asyncio
 import os
 import re
 import sys
+import pruefhilfen as _ph
 from urllib.parse import urlparse
 
 
@@ -1193,8 +1194,7 @@ def test_twitch_oauth():
 
     _os.environ["TWITCH_CLIENT_ID"] = "1xfy1bv6jibywwriwsy4gqwsq1lvlh"
     _os.environ["TWITCH_CLIENT_SECRET"] = "s3cr3t"
-    import tempfile
-    tw.configure(_os.path.join(tempfile.mkdtemp(), "tw.json"), "http://localhost:3000")
+    tw.configure(_os.path.join(_ph.verzeichnis(), "tw.json"), "http://localhost:3000")
 
     # Authorize-URL trägt genau den Scope, den channel.follow v2 verlangt
     url = tw.authorize_url("csrf1")
@@ -9607,8 +9607,8 @@ def test_v41_w19_katalog_kennt_die_blueprints():
     # Eingesammelt wird NUR, was ausdruecklich in t(...) steht — deshalb kann
     # es hier keinen toten Eintrag geben. Ein f-String faellt raus: sein Wert
     # steht erst zur Laufzeit fest und waere als Schluessel wertlos.
-    import ast as _ast, tempfile as _tf, os as _os
-    pf = _os.path.join(_tf.mkdtemp(), "x.py")
+    import ast as _ast, os as _os
+    pf = _os.path.join(_ph.verzeichnis(), "x.py")
     open(pf, "w", encoding="utf-8").write(
         't("echter Text")\n'
         '_nc_i18n.t("auch echt")\n'

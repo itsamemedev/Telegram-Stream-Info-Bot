@@ -6,10 +6,10 @@
 import contextlib
 import os
 import sqlite3
-import tempfile
+import pruefhilfen as _ph
 import time
 
-TMP = tempfile.mkdtemp()
+TMP = _ph.verzeichnis()
 os.environ["BRAIN_DB"] = os.path.join(TMP, "brain.db")
 os.environ["BRAIN_TICK_S"] = "999"          # kein Auto-Tick im Test
 os.environ["BRAIN_COOKIE_MAX_AGE_D"] = "7"

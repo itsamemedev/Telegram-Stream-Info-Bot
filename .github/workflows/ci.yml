@@ -216,6 +216,19 @@ jobs:
       - name: Kein Zuwachs an stummen Fehlerpfaden
         run: python tools/blindstellen.py --sperre
 
+      # v4.2-W90. Die vier Vertragssuiten legten 35 temporäre Verzeichnisse
+      # an und räumten drei davon weg. Auf der Maschine, auf der W89 entstand,
+      # waren nach einem Tag Arbeit 5093 Verzeichnisse mit rund 30 GB
+      # aufgelaufen, und die Prüfkette brach mitten im Lauf mit ENOSPC ab —
+      # kein Vertrag rot, keine Sperre gefallen, es ging nur nichts mehr.
+      #
+      # Dieser Job ist der Grund, aus dem das wachsen konnte, und seine
+      # Behebung: in der CI fällt es nie auf (ein Lauf, frischer Container,
+      # danach ist die Maschine weg), also muss die CI es für die
+      # Entwicklungsrechner mitprüfen. Grenze null, wie bei importzeit.
+      - name: Die Suiten lassen nichts liegen
+        run: python tools/testmuell.py --sperre
+
   tests:
     name: Verträge & Module (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest
