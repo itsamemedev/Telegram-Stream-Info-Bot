@@ -11,6 +11,138 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Behoben — acht Fehler im Produktionscode, die W87 beim Messen gefunden hat (v4.2 W89)
+
+W87 hat sieben blinde Module unter Vertrag genommen und dabei 14
+Verdachtsstellen notiert — **bewusst nicht behoben**, weil sie Verhalten
+ändern und einzeln verifizierbar ausgeliefert werden müssen. Diese Welle
+arbeitet sie ab. Kein Umbau, keine neue Funktion: acht Korrekturen, jede mit
+einem Vertrag und einer Mutationsprobe.
+
+**Der teuerste: `nc/preflight.py` empfahl, lebende Accounts zu untracken.**
+In der Kandidatenschleife stand `except Exception: return u`. Ein Timeout auf
+der zweiten URL-Variante beendete damit die Suche und gab das Original
+zurück — obwohl genau dieses Original zwei Zeilen vorher schon mit 404
+geantwortet hatte. Die dritte Variante, die vielleicht gelebt hätte, wurde
+nie probiert; ffmpeg startete ins Leere, ohne Zähler und ohne Logzeile.
+
+Die andere Richtung war schlimmer. `None` heißt „tot", und „tot" füttert
+`_PREFLIGHT_DEAD_STREAK`; daran hängt die Brain-Regel
+`source_chronically_dead`, die ab acht Treffern in Folge „💀 Quelle chronisch
+tot — Untracken erwägen" meldet. Ein Netzhänger auf dem eigenen Server durfte
+also einen lebenden Account zum Entfernen vorschlagen.
+
+Seit W89 gibt es drei getrennte Ausgänge — eine andere URL (lebt), `u`
+(nichts gemessen, fail-open), `None` (alle Varianten sauber 404). Der
+Störfall zählt auf den neuen Zähler `_PREFLIGHT_STATS["gestoert"]`, lässt die
+Tot-Strähne unberührt und meldet gedrosselt über `nc.meldetakt`. Die Bridge
+spiegelt ihn als Zeitreihe: steigt `gestoert` und nicht `dead`, liegt es am
+Weg nach außen, nicht an den Quellen.
+
+**`nc/storage.py`: die Platten-Prognose war um den Faktor 3,5 zu knapp.**
+`daily_growth_mb` teilte die Bytes der letzten sieben Tage durch
+`len(rows)` — und das ist die Zahl der Tage **mit** Aufnahmen, denn
+`GROUP BY SUBSTR(created_at,1,10)` liefert nur solche. Im Vertrag gemessen:
+aus „Platte voll in 10,0 Tagen" wird 35,0. Auf diese Zahl hin räumt der
+Betreiber auf, also löschte er Aufnahmen, die er 25 Tage länger hätte
+behalten können.
+
+Stumpf durch sieben zu teilen wäre die gefährlichere Hälfte desselben
+Fehlers: ein Bestand, der erst seit zwei Tagen läuft, hat fünf strukturell
+leere Tage im Fenster, und die mitzuzählen macht die Prognose zu
+**optimistisch** — dann läuft die Platte voll, während das Deck Ruhe meldet.
+Entschieden wird jetzt an einer Ja/Nein-Frage: gibt es Aufnahmen vor dem
+Fenster? Ja → sieben echte Tage. Nein → weiter die Tage mit Daten, also die
+pessimistische Seite.
+
+Dazu zählte `db_recording_count` den Papierkorb mit, während `forecast()`
+zwei Funktionen weiter ausdrücklich `deleted_at IS NULL` filterte — zwei
+Zahlen im selben Widget, die dasselbe zu zählen behaupten. Der Papierkorb
+kommt jetzt als eigene Zahl (`db_trash_count`), statt aus der Summe zu
+verschwinden.
+
+Und der Probelauf zählte in `deleted`/`freed_bytes`. Wer nur `deleted` liest
+— und das tut jeder, der nicht an `dry_run` denkt —, konnte einen Probelauf
+nicht von einem Löschlauf unterscheiden. Er zählt jetzt in `would_delete`.
+Das Deck war für diese Form übrigens schon gebaut: `ops6Cleanup` liest
+`d.would_delete` als Rückfall, nur lieferte das Modul es nie. Dieselbe Stelle
+las `freed_mb`/`reclaim_mb`, geliefert wurden immer Bytes — die MB-Angabe
+erschien deshalb nie.
+
+**`nc/archiverules.py`: eine Aufnahme konnte sich dauerhaft selbst
+blockieren.** `shutil.copy2` läuft vor `add_archive_entry`. Schlug der INSERT
+fehl (UNIQUE, Platte voll, Datenbank weg), blieb die Kopie **ohne Zeile** im
+Archiv liegen; beim nächsten Lauf griff `os.path.exists(target)` →
+`skipped += 1`. Die Aufnahme war damit **nie wieder** archivierbar: eine
+Datei, die es gibt, die in keiner Ansicht auftaucht und die kein Lauf mehr
+einsammelt. Der Fehlerpfad nimmt die Kopie jetzt zurück; misslingt auch das,
+steht der Pfad auf `error`, denn dann muss sie von Hand weg.
+
+Der Pfad-Riegel war dort außerdem nur ein Namensfilter
+(`_safe_archive_filename` + `os.path.join`) — entschärft war der Name, nicht
+das Ergebnis, und ein Symlink im Archivverzeichnis besteht jede
+Namensprüfung. Jetzt `nc.sicherpfad.sicher_join`, der eine Riegel des
+Bestands.
+
+**`nc/scoring.py`: ein Videotitel mit `&` verhinderte den ganzen Report.**
+`short(safe(...), 50)` maskiert erst und schneidet dann — der Schnitt landet
+damit mitten in einer Entität: aus `&amp;` wird `&am`. Telegram lehnt die
+**ganze** Nachricht mit „can't parse entities" ab, nicht die eine Zeile. Zwei
+Zeilen weiter oben (SecUID) stand die Reihenfolge immer richtig; das war ein
+Versehen. Der Rückfall `desc or 'Video'` daneben war toter Code, weil
+`short("")` „Unbekannt" liefert — im Report stand deshalb „Unbekannt".
+
+**`nc/tiktokcheck.py`: der lauteste Fehler des Moduls war der
+unsichtbarste.** `_Conf.__missing__` wirft ausdrücklich laut („ein fehlender
+Startwert ist ein Verdrahtungsfehler im Bot, kein Datenfehler") — und genau
+dieser RuntimeError lief in ein `except Exception: proxy = None`. Eine
+fehlende `configure(...)`-Zeile sah damit aus wie „Proxy nicht verfügbar":
+die Prüfung lief ungeproxyt von der Server-IP weiter, die TikTok blockt, und
+weil das Modul bewusst konservativ ist, kam „kein eindeutiges Signal" heraus.
+Der Zugriff auf `_conf` steht jetzt außerhalb des Auffangs, der Aufruf darin.
+Dazu trug der Fehlerfall eine harte `0` als HTTP-Status, obwohl der schon
+gelesen sein kann — damit war „TikTok hat geantwortet" nicht von „keine
+Verbindung" zu unterscheiden, und daran hängt, ob die Oberfläche ein Löschen
+anbietet.
+
+**`bot.py`: ein fehlgeschlagenes `stats.json` stand auf `log.debug`.** Für
+den Betreiber ist ein Fehlerpfad auf `debug` dasselbe wie `pass`. Fällt das
+Schreiben dauerhaft aus, bleibt das öffentliche Lagebild leer und nichts im
+Log sagt warum. Zwei Zeilen darüber macht dieselbe Schleife es richtig.
+
+### Dabei zwei Sperren gefallen — und sie hatten recht
+
+`stillecheck` meldete einen neuen stillen `except`: mein erster Entwurf des
+Divisors parste `MIN(created_at)` und fing das Parsen auf. Ein COUNT
+beantwortet dieselbe Frage ohne diese Kette — der Auffang ist weg, und
+`stillecheck` steht jetzt bei **1083** statt 1085 (der Container-Block in
+`scoring` und die Regel-Buchführung in `archiverules` melden sich seither).
+
+`monolith` meldete zwei Funktionen über der 100-Zeilen-Stufe. Ursache waren
+meine eigenen Kommentare. Die Antwort war nicht, sie zu kürzen, sondern die
+Begründungen in die Modul-Docstrings zu heben und die Funktionen wirklich zu
+zerlegen: `_varianten`/`_ohne` stehen jetzt auf Modulebene (und sind damit
+ohne Netz prüfbar), `_archiviere_eine` trägt den Teil, der Dateien anfasst.
+Stufen unverändert bei 63/16/8/1.
+
+Und `vertragscheck` fing mein `bruecke[j:j + 600]` — ein festes Fenster im
+Vertragscode, genau die Klasse, die W66 abgebaut hat. Ersetzt durch einen
+Anker plus Zeilenende.
+
+### 17 Mutationsproben, 17 gefangen
+
+Jede Korrektur wurde gezielt zurückgebrochen und geprüft, ob der Vertrag
+fällt. Beim ersten Durchgang entwischten **zwei** — der Erfolgspfad, der die
+Meldedrossel zurücksetzt, war von keinem Vertrag gedeckt, und die
+Pfad-Riegel-Probe lief ins Leere, weil die Attrappen-Quelldatei unter dem
+bösen Namen gar nicht existierte und `copy2` schon vorher scheiterte. Beide
+Lücken sind geschlossen, dann 17/17.
+
+Gefahren mit geleertem `__pycache__` und `PYTHONDONTWRITEBYTECODE=1` — die
+Falle aus W87.
+
+Verträge 433 → **443**.
+
 ### Behoben — die Website rendete ohne ihre Schriften (v4.2 W88)
 
 Der Betreiber meldete, die Seite im `website/`-Ordner rende nicht richtig.

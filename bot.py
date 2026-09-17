@@ -10663,7 +10663,25 @@ async def _stats_loop():
                 _loop_fehler("_stats_loop/usage.flush", _e)
             ok, info = await asyncio.to_thread(_stats_write)
             if not ok:
-                log.debug("stats.json nicht geschrieben: %s", info)
+                # v4.2-W89: war log.debug. Fuer den Betreiber ist ein
+                # Fehlerpfad auf debug dasselbe wie `pass` — genau die Klasse,
+                # die tools/blindstellen.py misst. Faellt das Schreiben
+                # dauerhaft aus (Platte voll, Rechte am Verzeichnis, Pfad weg),
+                # bleibt das oeffentliche Lagebild auf lafap_index.html leer
+                # und NICHTS im Log sagt warum. Gedrosselt, weil die Schleife
+                # alle fuenf Minuten laeuft: ungedrosselt stuenden 288 gleiche
+                # Zeilen am Tag im Log, und die liest niemand.
+                laut, unterdrueckt = _nc_meldetakt.melden(
+                    "stats-json", str(info)[:80], _time_mod.monotonic())
+                if laut:
+                    log.error("stats.json nicht geschrieben: %s — die "
+                              "oeffentliche Seite zeigt damit keine aktuellen "
+                              "Metriken. Verzeichnis und Rechte pruefen.%s",
+                              info, _nc_meldetakt.zusatz(unterdrueckt))
+            else:
+                # Der Erfolgspfad setzt die Drossel zurueck, sonst bleibt ein
+                # wiederkehrender Ausfall bis zu 15 Minuten unsichtbar (W81).
+                _nc_meldetakt.zuruecksetzen("stats-json")
         except Exception as e:
             _loop_fehler("_stats_loop", e)
         await asyncio.sleep(max(60, interval))

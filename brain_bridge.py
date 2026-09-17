@@ -775,7 +775,11 @@ def _record_metrics(telemetry: dict) -> None:
         pcb = _ctx.get("preflight_stats")
         if callable(pcb):
             ps = pcb() or {}
-            for k in ("ok", "fallback", "dead"):
+            # v4.2-W89: "gestoert" mit — ohne diese Zeitreihe waere die
+            # neue Unterscheidung blind. Genau sie ist die interessante:
+            # steigt "gestoert" und nicht "dead", liegt es am Weg nach
+            # aussen, nicht an den Quellen.
+            for k in ("ok", "fallback", "dead", "gestoert"):
                 if k in ps:
                     vals[f"preflight_{k}"] = int(ps[k])
     except Exception:

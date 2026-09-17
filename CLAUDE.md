@@ -10,7 +10,7 @@ GitHub-Repo trägt Historie, CI und Issues — es ist nicht der Deploy-Weg.
 
 ## Die eine Regel
 
-`bot.py` hat **24.228 Zeilen / 1,2 MB ≈ 295.000 Token**. Diese Datei wird
+`bot.py` hat **24.246 Zeilen / 1,2 MB ≈ 295.000 Token**. Diese Datei wird
 **nie** ganz gelesen und **nie** blind durchsucht. Erst fragen wo etwas steht,
 dann den Ausschnitt holen:
 
@@ -135,8 +135,8 @@ ein `tiktok_bot.db` **im Arbeitsverzeichnis** an. Beim zweiten Lauf starb
 die Prüfkette fährt und was die Sperre ist; pytest kommt daneben, für die
 Arbeit am einzelnen Befund.
 
-**Die Überdeckung ist seit v4.2-W86 gemessen: 50,3 %** von `nc/` und `brain/`
-(19.495 Anweisungen, 9.695 davon ungeprüft). Das ist die Zahl, die den 433
+**Die Überdeckung ist seit v4.2-W86 gemessen: 50,4 %** von `nc/` und `brain/`
+(19.544 Anweisungen, 9.695 davon ungeprüft). Das ist die Zahl, die den 443
 Verträgen erst ihren Maßstab gibt — „alles grün" sagt sonst nichts darüber,
 wie viel Bestand dabei angefasst wurde. Gesperrt wird wie bei W65/W66 nur der
 Zuwachs, und zwar die **Anzahl** ungeprüfter Anweisungen, nicht der
@@ -151,10 +151,46 @@ Streamer**, nicht an eigene Kanäle; AZRAEL hat sich dafür einmal bedankt
 seither hielt ihn nichts. In `scraper.py` waren es die beiden
 `resp.release()`, ohne die jeder Wiederholungsversuch eine Verbindung leckt.
 
+**Die 14 Verdachtsstellen aus W87 sind seit v4.2-W89 behoben.** Acht
+Korrekturen, jede mit Vertrag und Mutationsprobe. Drei davon sind die Klasse
+Fehler, die dieses Dokument meint:
+
+`nc/preflight.py` hatte `except Exception: return u` **in** der
+Kandidatenschleife. Ein Timeout auf der zweiten URL-Variante beendete die
+Suche und gab das Original zurück, das zwei Zeilen vorher schon 404 war.
+Schlimmer war die Gegenrichtung: `None` heißt „tot", „tot" füttert
+`_PREFLIGHT_DEAD_STREAK`, und daran hängt die Brain-Regel
+`source_chronically_dead` mit „Untracken erwägen". Ein Netzhänger auf dem
+eigenen Server durfte damit einen **lebenden Account zum Entfernen
+vorschlagen**. Der Störfall zählt jetzt auf `_PREFLIGHT_STATS["gestoert"]` und
+lässt die Tot-Strähne unberührt.
+
+`nc/storage.py` teilte die Bytes der letzten sieben Tage durch die Zahl der
+Tage **mit** Aufnahmen — `GROUP BY` liefert nur solche. Im Vertrag gemessen:
+aus „Platte voll in 10 Tagen" wird 35. Stumpf durch sieben zu teilen wäre die
+gefährlichere Hälfte desselben Fehlers (ein junger Bestand hat strukturell
+leere Tage, und dann ist die Prognose zu optimistisch). Entschieden wird an
+einer Ja/Nein-Frage: gibt es Aufnahmen vor dem Fenster?
+
+`nc/archiverules.py` ließ eine Kopie ohne Datenbankzeile liegen, wenn der
+INSERT fiel — und `os.path.exists` sperrte die Aufnahme danach **für immer**
+vom Archiv aus. Es fiel nichts, es wurde nur nichts mehr.
+
 **Jede gesicherte Aussage ist per Mutationsprobe gegengeprüft** — die Stelle
 im Produktionscode gezielt brechen und nachsehen, ob der Vertrag fällt. Ein
 Vertrag, der auf gesundem Code grün ist, aber die Regression nicht fängt, ist
-wertlos.
+wertlos. In W89 entwischten beim ersten Durchgang zwei von 17: der
+Erfolgspfad, der die Meldedrossel zurücksetzt, war von keinem Vertrag gedeckt,
+und eine Pfad-Riegel-Probe lief ins Leere, weil die Attrappen-Quelldatei unter
+dem bösen Namen gar nicht existierte und `copy2` schon vorher scheiterte.
+**Eine Probe, die entwischt, ist ein Befund am Vertrag, nicht am Code.**
+
+Dasselbe gilt für die Überdeckungssperre. W89 hat 49 Anweisungen hinzugefügt
+und fünf davon zunächst ungeprüft gelassen — alle fünf waren die neuen
+Fehlerpfade. Die Sperre lässt sich mit `--neu-grundlinie` heben; richtig war,
+nachzusehen, welche fünf es sind, und sie zu decken. Die Grundlinie steht
+deshalb unverändert bei **9695**, obwohl der Bestand gewachsen ist. Eine
+Grundlinie, die bei jeder Welle mitwächst, ist keine.
 
 **Dabei die Falle, die diese Proben selbst wertlos macht:** Python prüft den
 Bytecode-Cache über **(mtime, Größe)**. Eine Mutation wie `404` → `410` ist
