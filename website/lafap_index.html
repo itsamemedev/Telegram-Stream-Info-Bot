@@ -1368,8 +1368,17 @@ nav a:hover::after,nav a:focus-visible::after{transform:scaleX(1)}
     var ts=document.getElementById('metric-ts');
     if(ts&&d.generated_at){ var t=new Date(d.generated_at*1000);
       ts.textContent='Stand: '+t.toLocaleString('de-DE')+' \u2014 keine Aufzeichnung, nur Live-Begleitung.'; }
-  }).catch(function(){ var c=document.getElementById('live-chart');
-    if(c) c.innerHTML='<span class="chart-legend">Metriken derzeit nicht verf\u00fcgbar.</span>'; });
+  }).catch(function(){
+    /* v4.2-W88: BEIDE Tafeln aufraeumen. Vorher stand hier nur live-chart —
+       mod-chart blieb dann fuer immer auf „laedt …". Ein Ladezustand, der nie
+       endet, ist die schlechteste Auskunft von allen: er sagt „gleich", und
+       das stimmt nie. Fehlt stats.json (oder antwortet der Server nicht),
+       sagen jetzt beide dasselbe. */
+    ['live-chart','mod-chart'].forEach(function(id){
+      var c=document.getElementById(id);
+      if(c) c.innerHTML='<span class="chart-legend">Metriken derzeit nicht verf\u00fcgbar.</span>';
+    });
+  });
 })();
 </script>
 <script>

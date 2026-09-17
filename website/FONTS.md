@@ -9,45 +9,75 @@ mit Impressum und Datenschutzhinweis ist das ein vermeidbares Risiko
 Das ist eine technische Massnahme, keine Rechtsberatung — die Einordnung
 in deinen Datenschutzhinweis machst du oder dein Anwalt.
 
-## Dateien holen (einmalig)
+## Die Dateien liegen bei — erledigt (v4.2-W88)
 
-Beide Schriften stehen unter der SIL Open Font License und duerfen
-selbst gehostet werden.
+`website/fonts/` traegt die sechs Schnitte, die `lafap_index.html` per
+`@font-face` anfordert. Vorher fehlte der Ordner ganz: alle sechs Anfragen
+liefen auf 404, `document.fonts` meldete sechsmal `status: error`, und die
+Seite rendete durchgehend in den System-Rueckfaellen (`sans-serif` statt
+Orbitron, generisches `monospace` statt JetBrains Mono). Kaputt war nichts —
+aber vom Terminal-Look blieb nichts uebrig.
 
-    cd website && mkdir -p fonts && cd fonts
+    fonts/orbitron-500.woff2          8,0 KB
+    fonts/orbitron-700.woff2          7,8 KB
+    fonts/orbitron-900.woff2          7,7 KB
+    fonts/jetbrainsmono-400.woff2    20,2 KB
+    fonts/jetbrainsmono-500.woff2    20,9 KB
+    fonts/jetbrainsmono-700.woff2    21,0 KB
+                                    ------
+                                    100 KB gesamt
 
-    # Orbitron (500, 700, 900)
-    curl -L -o orbitron-500.woff2 \
-      "https://github.com/google/fonts/raw/main/ofl/orbitron/Orbitron%5Bwght%5D.ttf"
-    # Variable Font -> mit fonttools in statische woff2 wandeln:
+Beide Schriften stehen unter der SIL Open Font License; die Lizenztexte
+liegen als `fonts/OFL-Orbitron.txt` und `fonts/OFL-JetBrainsMono.txt`
+daneben. **Die OFL verlangt, dass sie mitgeliefert werden** — wer die
+Schriften verschiebt, nimmt sie mit.
+
+## Neu bauen (wenn eine Fassung veraltet)
+
+Gebaut wurde aus den Variable Fonts des offiziellen `google/fonts`-Bestands,
+auf statische Schnitte festgestellt und auf den Zeichensatz beschraenkt, den
+die Seite braucht. Ohne diese Beschraenkung ist JetBrains Mono je Schnitt
+rund zehnmal so gross — bei einer Seite, die sechs Schnitte laedt, ist das
+der Unterschied zwischen 100 KB und einem Megabyte.
+
     pip install fonttools brotli
-    python3 - <<'PY'
+    curl -L -o "Orbitron.ttf" \
+      "https://raw.githubusercontent.com/google/fonts/main/ofl/orbitron/Orbitron%5Bwght%5D.ttf"
+    curl -L -o "JetBrainsMono.ttf" \
+      "https://raw.githubusercontent.com/google/fonts/main/ofl/jetbrainsmono/JetBrainsMono%5Bwght%5D.ttf"
+
+    python3 - <<'EOF'
     from fontTools.ttLib import TTFont
     from fontTools.varLib.instancer import instantiateVariableFont
-    for w in (500,700,900):
-        f = TTFont("Orbitron[wght].ttf")
-        instantiateVariableFont(f, {"wght": w}, inplace=True)
-        f.flavor = "woff2"
-        f.save(f"orbitron-{w}.woff2")
-    PY
+    from fontTools import subset
+    U = ("U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,"
+         "U+2000-206F,U+2074,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,"
+         "U+FEFF,U+FFFD")                       # wie Google Webfonts "latin"
+    for datei, praefix, gewichte in (("Orbitron.ttf", "orbitron", (500,700,900)),
+                                     ("JetBrainsMono.ttf", "jetbrainsmono", (400,500,700))):
+        for w in gewichte:
+            f = TTFont(datei)
+            instantiateVariableFont(f, {"wght": w}, inplace=True, updateFontNames=True)
+            o = subset.Options(); o.layout_features = ["*"]; o.name_IDs = ["*"]
+            s = subset.Subsetter(options=o)
+            s.populate(unicodes=subset.parse_unicodes(U)); s.subset(f)
+            f.flavor = "woff2"; f.save("fonts/%s-%d.woff2" % (praefix, w))
+    EOF
 
-Einfacher, wenn du nicht basteln willst: die fertigen woff2 von
-gwfh.mranftl.com (Google Webfonts Helper) herunterladen — dort Orbitron
-und JetBrains Mono waehlen, Zeichensatz "latin", und die Dateien so
-benennen:
+Wer eine Datei austauscht, faehrt danach die Gegenprobe — sie ist der
+eigentliche Punkt, denn ein 404 auf eine Schrift bricht nichts und faellt
+deshalb monatelang niemandem auf:
 
-    fonts/orbitron-500.woff2
-    fonts/orbitron-700.woff2
-    fonts/orbitron-900.woff2
-    fonts/jetbrainsmono-400.woff2
-    fonts/jetbrainsmono-500.woff2
-    fonts/jetbrainsmono-700.woff2
+    python3 -m http.server 8777 --directory website
+    # in der Browser-Konsole:
+    [...document.fonts].map(f => f.family + ' ' + f.status)
+    # erwartet: sechsmal "loaded", nie "error"
 
-## Bis dahin
-
-Die Seite funktioniert auch OHNE die Dateien: `font-display:swap` sorgt
-dafuer, dass der Browser sofort die Fallback-Schrift zeigt. Es sieht nur
-weniger nach Terminal aus. Kaputt ist nichts.
+**Nie von fonts.googleapis.com laden.** Dabei uebertraegt der Browser jedes
+Besuchers dessen IP-Adresse an Google, ohne Einwilligung. Fuer eine deutsche
+Seite mit Impressum und Datenschutzhinweis ist das ein vermeidbares Risiko
+(LG Muenchen I, 20.01.2022, Az. 3 O 17493/20). Das ist eine technische
+Massnahme, keine Rechtsberatung.
 
 ## og-card.png — erledigt
 
