@@ -667,7 +667,7 @@ from nc.routes.health import api_system_resources  # noqa: F401
 from http.cookiejar import MozillaCookieJar
 from logging.handlers import RotatingFileHandler   # B4: war mid-file bei Z. 664
 from urllib.request import urlopen as _urlopen, Request as _UrlRequest
-from urllib.parse import quote, urlencode   # v4.1-W32: urlparse nur noch in
+from urllib.parse import quote, urlencode, urlsplit   # v4.1-W32: urlparse nur
                                            # nc/systemprobe. urlencode seit
                                            # v4.2-W84: Token aus der URL holen
 
@@ -9289,7 +9289,26 @@ def _auth_cookie(resp):
             if request.method in ("GET", "HEAD"):
                 rest = [(k, v) for k, v in request.args.items(multi=True)
                         if k != "token"]
-                ziel = request.path + (("?" + urlencode(rest)) if rest else "")
+                # v4.2-W84 (SEC, nachgezogen nach dem CodeQL-Befund auf PR
+                # #130): `request.path` ist KEINE sichere Weiterleitungs-
+                # adresse. Eine Anfrage auf "//fremde.example/x" ergibt genau
+                # diesen request.path, und "Location: //fremde.example/x" ist
+                # eine PROTOKOLL-RELATIVE URL — der Browser landet auf einer
+                # fremden Domain. Dass after_request auch auf einer 404-Antwort
+                # laeuft, macht jeden Pfad erreichbar, nicht nur die 364
+                # registrierten Routen.
+                #
+                # Deshalb auf genau EINEN fuehrenden Schraegstrich
+                # normalisieren. Der Rueckstrich muss mit weg: einige Browser
+                # lesen "/\fremde.example" wie "//fremde.example".
+                pfad = "/" + (request.path or "").lstrip("/\\")
+                # Gegenprobe statt Vertrauen in die Normalisierung: bleibt ein
+                # Schema oder ein Host uebrig, wird auf "/" umgeleitet — ein
+                # Ziel, das nicht aus der Anfrage stammt.
+                _z = urlsplit(pfad)
+                if _z.scheme or _z.netloc:
+                    pfad = "/"
+                ziel = pfad + (("?" + urlencode(rest)) if rest else "")
                 um = redirect(ziel, code=302)
                 # Das Cookie muss AUF die Umleitung, sonst kommt der Browser
                 # ohne Berechtigung am Ziel an und landet im Login.

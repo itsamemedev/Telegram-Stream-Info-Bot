@@ -49,6 +49,27 @@ wirkungslos" — sonst sucht der Betreiber den Fehler im Netz statt in der
 
 ### Sicherheit — der Token verschwindet aus der Adresszeile (v4.2 W84)
 
+**Nachtrag aus dem CodeQL-Lauf auf PR #130.** Die Prüfung meldete das Ziel der
+Umleitung als offene Weiterleitung (`py/url-redirection`), weil es aus
+`request.path` stammt. **Nachgemessen ist der Befund unter Werkzeug nicht
+ausnutzbar:**
+
+| Anfrage | `request.path` | `Location` vor dem Nachzug |
+|---|---|---|
+| `//fremde.example/x` | `/x` | `/x` — schon vor der Route normalisiert |
+| `/\fremde.example/x` | `/\fremde.example/x` | `/%5Cfremde.example/x` — kodiert, kein Trennzeichen |
+
+Die Absicherung steht trotzdem: ohne sie hängt die Eigenschaft daran, dass
+Werkzeug das ewig so macht, und `after_request` läuft auch auf einer
+404-Antwort — erreichbar ist damit **jeder** Pfad, nicht nur die 364
+registrierten Routen. Der Pfad wird jetzt auf genau einen führenden
+Schrägstrich normalisiert (Rückstrich mit), und eine Gegenprobe mit `urlsplit`
+leitet auf `/` um, falls doch Schema oder Host übrig bleiben.
+
+Der Vertrag prüft beides — kein Host im Ziel und kein übrig gebliebener
+Rückstrich. Ohne den Nachzug fällt er (`/%5Cfremde.example/x`), mit ihm ist er
+grün.
+
 `?token=…` setzte das Cookie und blieb danach stehen. Ein Query-String ist der
 schlechteste Ort für ein Geheimnis, den es gibt: er landet im Zugriffslog jedes
 Proxys davor, in der Browser-Historie, in der Sitzungswiederherstellung und im

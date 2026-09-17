@@ -281,6 +281,32 @@ def main():
         assert r2.status_code != 302, \
             "Umleitungsschleife — das Ziel leitet erneut um"
 
+        # Das Ziel der Umleitung stammt aus `request.path` — CodeQL hat das
+        # auf PR #130 als offene Weiterleitung gemeldet (py/url-redirection).
+        # NACHGEMESSEN ist der Befund unter Werkzeug nicht ausnutzbar: ein
+        # Pfad "//fremde.example/x" wird schon vor `request.path` zu "/x"
+        # normalisiert, und der Rueckstrich-Weg "/\fremde.example/x" kommt als
+        # "/%5Cfremde.example/x" heraus — kodiert, also kein Trennzeichen.
+        # Gehalten wird die Absicherung trotzdem: sie haengt sonst daran, dass
+        # Werkzeug das ewig so macht, und after_request laeuft auch auf einer
+        # 404-Antwort, also ist JEDER Pfad erreichbar, nicht nur die
+        # registrierten Routen.
+        #
+        # Geprueft wird deshalb beides: kein Host im Ziel (die Eigenschaft,
+        # auf die es ankommt) UND kein uebrig gebliebener Rueckstrich (die
+        # Normalisierung selbst — ohne sie steht hier %5C).
+        from urllib.parse import urlsplit as _us
+        for boese in ("//fremde.example/x", "/\\fremde.example/x",
+                      "///fremde.example/x"):
+            rb = client.get(boese + "?token=w84-geheimnis")
+            zb = rb.headers.get("Location", "")
+            assert not _us(zb).netloc and not _us(zb).scheme, (
+                "offene Weiterleitung: %r -> %r" % (boese, zb))
+            assert "%5C" not in zb.upper() and "\\" not in zb, (
+                "der Rueckstrich steht noch im Ziel — die Normalisierung "
+                "greift nicht: %r -> %r" % (boese, zb))
+        ok("W84: die Umleitung traegt nie einen fremden Host (CodeQL #130)")
+
         # POST darf NICHT umgeleitet werden, sonst geht der Rumpf verloren.
         r3 = client.post("/api/automation/toggle?token=w84-geheimnis",
                          json={"enabled": False})
