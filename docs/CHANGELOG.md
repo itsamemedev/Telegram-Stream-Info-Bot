@@ -11,6 +11,105 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Sicherheit — das Deck bindet nicht mehr offen, wenn niemand die Tür hält (v4.2 W84)
+
+`_auth_guard` macht **gar nichts**, wenn weder `DASHBOARD_TOKEN` noch
+`DASHBOARD_PIN` gesetzt ist:
+
+```python
+if not DASHBOARD_TOKEN and not DASHBOARD_PIN:
+    return None          # jede Adresse, jeder Pfad, frei
+```
+
+Bei `WEB_HOST=127.0.0.1` ist das richtig — durch den SSH-Tunnel kommt ohnehin
+nur der Betreiber. Bei jeder anderen Adresse ist es ein offenes Bedienpult im
+Netz: Cookies lesen, Aufnahmen löschen, Konfiguration zurückspielen, Log
+mitlesen.
+
+Seit v4.1-W30 wurde dieser Zustand **gemeldet**, laut und auf ERROR. Das war
+der richtige erste Schritt und der falsche letzte: eine Meldung hilft nur dem,
+der das Log liest. Jetzt zieht `nc/webserver.bindung()` die Adresse auf
+`127.0.0.1` zurück — der gefährliche Zustand ist damit nicht mehr erreichbar,
+statt beschrieben zu werden.
+
+**Rückfall, nicht Abbruch.** Der Bot ist nicht das Dashboard. Er nimmt auf,
+sendet weiter und moderiert; ihn wegen einer Dashboard-Einstellung sterben zu
+lassen träfe genau die Arbeit, die niemand angefasst hat. Das Deck läuft
+weiter, nur eben über den Tunnel — und das Log sagt, wie man zurückkommt.
+
+**Mit Ausweg.** `DASHBOARD_OFFEN_ERLAUBEN=1` hält den alten Weg offen, samt
+Warnung. Eine Sperre ohne Ausweg wird umgangen, und ein Umgehungsweg, den der
+Bestand nicht kennt, ist schlimmer als ein dokumentierter.
+
+`nc/dashauth.py` kennt beide neuen Zustände getrennt: `offen_im_netz()` meldet
+nur noch das wirklich offene Deck (sonst wäre es ein Fehlalarm, vor dem der
+Modulkopf selbst warnt), `zurueckgefallen()` den Fall „WEB_HOST gesetzt und
+wirkungslos" — sonst sucht der Betreiber den Fehler im Netz statt in der
+`.env`.
+
+### Sicherheit — der Token verschwindet aus der Adresszeile (v4.2 W84)
+
+**Nachtrag aus dem CodeQL-Lauf auf PR #130.** Die Prüfung meldete das Ziel der
+Umleitung als offene Weiterleitung (`py/url-redirection`), weil es aus
+`request.path` stammt. **Nachgemessen ist der Befund unter Werkzeug nicht
+ausnutzbar:**
+
+| Anfrage | `request.path` | `Location` vor dem Nachzug |
+|---|---|---|
+| `//fremde.example/x` | `/x` | `/x` — schon vor der Route normalisiert |
+| `/\fremde.example/x` | `/\fremde.example/x` | `/%5Cfremde.example/x` — kodiert, kein Trennzeichen |
+
+Die Absicherung steht trotzdem: ohne sie hängt die Eigenschaft daran, dass
+Werkzeug das ewig so macht, und `after_request` läuft auch auf einer
+404-Antwort — erreichbar ist damit **jeder** Pfad, nicht nur die 364
+registrierten Routen. Der Pfad wird jetzt auf genau einen führenden
+Schrägstrich normalisiert (Rückstrich mit), und eine Gegenprobe mit `urlsplit`
+leitet auf `/` um, falls doch Schema oder Host übrig bleiben.
+
+Der Vertrag prüft beides — kein Host im Ziel und kein übrig gebliebener
+Rückstrich. Ohne den Nachzug fällt er (`/%5Cfremde.example/x`), mit ihm ist er
+grün.
+
+`?token=…` setzte das Cookie und blieb danach stehen. Ein Query-String ist der
+schlechteste Ort für ein Geheimnis, den es gibt: er landet im Zugriffslog jedes
+Proxys davor, in der Browser-Historie, in der Sitzungswiederherstellung und im
+Referer jeder Verlinkung nach aussen — und er überlebt einen geteilten Link
+oder einen Screenshot der Adresszeile, anders als das httponly-Cookie.
+
+Der Weg bleibt erhalten, weil Lesezeichen darauf zeigen. Nur wird nach dem
+Cookie-Setzen auf denselben Pfad **ohne** Token umgeleitet. Nur `GET`/`HEAD` —
+bei einem `POST` würde die Umleitung den Rumpf verlieren. Die Umleitung trägt
+die Schutz-Kopfzeilen selbst, weil `_sec_headers` später registriert ist und
+deshalb früher läuft (Flask arbeitet `after_request` in umgekehrter Reihenfolge
+ab) und diese Antwort nie zu sehen bekommt.
+
+### Geändert — waitress trägt das Dashboard (v4.2 W84)
+
+`dashboard_app.run(threaded=True)` ist der **Entwicklungsserver** von Werkzeug.
+Er trug 364 Routen, optional TLS und optional `0.0.0.0`. `threaded=True` heisst
+*ein Thread je Anfrage, unbegrenzt*: wer den Port erreicht, hat den Thread
+längst, bevor das Rate-Limit ihn zählt. Dazu kein Backlog-Management und kein
+sauberes Herunterfahren.
+
+`waitress` ist reines Python, ein Paket ohne C-Anteil, läuft auf Server und
+Windows und hat einen festen Thread-Pool (`DASHBOARD_THREADS`, Vorgabe 8). Es
+ist dieselbe WSGI-App — keine Route ändert sich.
+
+Zwei Ausnahmen, beide **laut**, nie still:
+
+| Fall | Server | Meldung |
+|---|---|---|
+| `DASHBOARD_TLS_CERT` gesetzt | Werkzeug | waitress kann kein TLS; Reverse-Proxy als sauberer Weg |
+| `DASHBOARD_WERKZEUG=1` | Werkzeug | Notausgang für den Störungsfall, keine Betriebsart |
+| waitress fehlt | Werkzeug | `pip install -r requirements.txt` |
+
+`clear_untrusted_proxy_headers=False` ist mit Absicht gesetzt: waitress würde
+ab 2.0 die `X-Forwarded-*`-Kopfzeilen selbst entfernen, und dann bekäme
+`_client_ip()` hinter einem Reverse-Proxy nur noch dessen Adresse. Wem zu
+trauen ist, entscheidet `TRUSTED_PROXIES` — eine Liste, die der Bestand führt
+und die waitress nicht kennt.
+
+
 ### Behoben — die Sperren waren selbst blind, die Karte veraltet (v4.2 W83)
 
 Vier der Zählwerkzeuge — `monolith`, `stillecheck`, `blindstellen`,
