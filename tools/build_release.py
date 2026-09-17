@@ -46,6 +46,10 @@ DATEIEN = [
     ".gitignore", ".gitattributes",
     "test_smoke.py", "test_nc_modules.py", "test_restream.py",
     "test_m2_bridge.py",
+    # v4.2-W86: ohne diese beiden sammelt pytest auf dem Server KEINEN
+    # Vertrag — die heissen `_test_*`, und die Vorgabe findet nur `test_*`.
+    # Es meldete dann "no tests ran" und saehe aus wie ein gruener Lauf.
+    "conftest.py", "pytest.ini",
     ".env.example",
     # Standbild-Rueckfall des gebrannten Avatars (v4.2-W31). Ohne die Datei
     # faellt die Kette Feeder -> Schleife -> Standbild ins Leere und die Ecke

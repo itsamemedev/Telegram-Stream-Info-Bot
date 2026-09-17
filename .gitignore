@@ -50,3 +50,11 @@ NIGHTCRAWLER_v37_*.zip
 # sinnlos und stuende bei jedem Build im Diff — die Frage "welchem Commit
 # entspricht dieser Bestand" stellt sich nur dort, wo es kein .git gibt.
 AUSLIEFERUNG.json
+
+# v4.2-W86: tools/ueberdeckung.py und ein Handlauf mit `coverage run` legen
+# diese Dateien an. Die Zahl gehoert ins Repo (.claude/ueberdeckung_grundlinie.json),
+# die Rohdaten nicht — sie sind maschinen- und laufabhaengig.
+.coverage
+.coverage.*
+htmlcov/
+coverage.json

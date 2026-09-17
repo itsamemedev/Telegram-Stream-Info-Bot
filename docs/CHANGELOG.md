@@ -11,6 +11,74 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Behoben — die Verträge waren nur über ihren eigenen Runner fahrbar (v4.2 W86)
+
+22.000 Zeilen, rund 100 Vertragsfunktionen, und genau **ein** Weg hinein:
+`python test_nc_modules.py`, alles oder nichts, rund eine Minute je Lauf. Wer
+einen Befund prüfen wollte, zahlte die volle Minute für eine Zeile.
+
+Der Grund war kein Vorsatz, sondern ein Nebeneffekt: der Aufbau der
+Testdatenbank stand mitten in `main()`. Wer einen einzelnen Vertrag aufrief,
+bekam keine konfigurierte Datenbank — `db_conn()` fiel auf den Vorgabepfad
+zurück und legte ein `tiktok_bot.db` **im Arbeitsverzeichnis** an. Beim zweiten
+Lauf starb `_test_dbexport` an „table dbx_t already exists", und im Repo lag
+eine Datenbankdatei, die niemand bestellt hatte. Genau so gefunden, beim ersten
+pytest-Lauf über diese Suite.
+
+Der Aufbau steht jetzt als `richte_testdatenbank_ein()` neben den Verträgen;
+`conftest.py` ruft ihn für pytest genauso auf wie `main()` für den alten Weg.
+
+| | vorher | jetzt |
+|---|---|---|
+| alle Verträge | `python test_nc_modules.py` (~60 s) | unverändert, plus `python -m pytest` (~47 s, 323 einzeln) |
+| eine Welle | — | `python -m pytest -k w83` (1,3 s) |
+| ein Vertrag | — | `python -m pytest "…::_test_dbexport"` (0,06 s) |
+
+**Beide Wege bleiben.** `python test_nc_modules.py` ist und bleibt das, was die
+Prüfkette fährt und was die Sperre ist. Keiner der bestehenden Verträge wurde
+auf pytest-Idiome umgeschrieben — eine Suite dieser Größe umzuschreiben wäre
+ein Quartal und ein unprüfbarer Diff.
+
+Zwei neue CI-Schritte halten das fest: `python -m pytest` (jeder Vertrag
+einzeln, kein gemeinsamer Zustand) und eine Gegenprobe mit `git status
+--porcelain`, dass der Testlauf den Arbeitsbaum nicht verändert — genau der
+Befund, der diese Welle ausgelöst hat.
+
+### Hinzugefügt — die Überdeckung ist gemessen (v4.2 W86)
+
+Dieses Projekt misst viel und sperrt viel: stille `except`-Blöcke (1085),
+stumme `return`-Ausgänge (478), Riesenfunktionen über vier Stufen,
+`.env`-Lesungen vor `load_dotenv`, feste Fenster in den Verträgen,
+Fremdpakete ohne Untergrenze. Eine Zahl fehlte — und es ist die, die den 323
+Verträgen erst ihren Maßstab gibt:
+
+> **47,4 %** von `nc/` und `brain/` werden beim Prüflauf ausgeführt
+> (19.495 Anweisungen, 10.248 davon ungeprüft).
+
+Das ist kein Vorwurf, sondern eine Arbeitsliste. Die größten blinden Flecken:
+
+| Deckung | ungeprüft | Datei |
+|---|---|---|
+| 0 % | 101 | `nc/scraper.py` |
+| 0 % | 118 | `nc/director.py` |
+| 5 % | 94 | `nc/scoring.py` |
+| 13 % | 595 | `nc/routes/ai.py` |
+| 17 % | 588 | `nc/routes/recordings.py` |
+
+Gesperrt wird wie bei W65/W66 nur der **Zuwachs**, und zwar die *Anzahl*
+ungeprüfter Anweisungen, nicht der Prozentsatz: ein Prozentsatz springt auch
+dann, wenn nichts schlechter wurde — wer 200 Zeilen gut geprüften Code
+entfernt, senkt ihn.
+
+**Warum das überhaupt stabil ist:** eine Überdeckungsmessung hängt sonst an der
+Umgebung. Hier nicht — `nc/` und `brain/` sind stdlib-only, und die Suiten
+stubben, was sie brauchen. Nachgemessen gegen CI-Minimal 3.13, CI-Minimal 3.12
+und eine volle Installation: dreimal byte-identisch 19.495/10.248.
+
+`bot.py` und `discordbot.py` sind bewusst nicht dabei — sie laufen nur im
+Rauchtest, und der misst etwas anderes.
+
+
 ### Behoben — der Rollback auf eine migrierte Datenbank war unsichtbar (v4.2 W85)
 
 Das Schema wird bei jedem Start idempotent nachgezogen: `CREATE TABLE IF NOT
