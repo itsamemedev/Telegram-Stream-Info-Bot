@@ -31,6 +31,7 @@ import shutil
 import signal as _signal_mod
 import subprocess
 import threading
+import time as _time
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
@@ -42,6 +43,7 @@ from nc import i18n as _nc_i18n
 from nc import inspectcache as _nc_inspectcache
 from nc import fehlertext as _nc_fehlertext
 from nc import ffbuild as _nc_ffbuild
+from nc import meldetakt as _takt            # v4.2-W91: laut werden, ohne zu fluten
 from nc import aufnahmesitzung as _sitzung   # v4.2-W44: die Sitzungs-Rechnung, bot-frei
 from nc.dbwrap import db_conn
 from nc import trackingdb as _nc_trackingdb   # v4.0-W117: Tags direkt statt ueber nc.ctx
@@ -95,11 +97,48 @@ def log_event(*a, **kw):
     return _c().log_event(*a, **kw)
 
 
+def _blind(kanal: str, grund: str, abhilfe: str = "", datei: str = ""):
+    """Einen leeren Rueckgabewert MELDEN, statt ihn zu verschweigen.
+
+    v4.2-W91. Drei Helfer dieses Moduls hatten zusammen 14 Ausgaenge mit
+    `return None` — vier davon ganz ohne Zeile, die uebrigen auf `log.debug`.
+    Fuer den Betreiber ist ein Fehlerpfad auf `debug` dasselbe wie `pass`:
+    die Wellenform bleibt leer, die Analyse fehlt, und im Log steht nichts.
+    Genau dieses Bild hat er am 13.09. fuer den Resolver gemeldet.
+
+    Auf `warning` heben allein genuegt nicht: `ffprobe_inspect` laeuft pro
+    Aufnahme und die Wellenform pro Aufruf im Deck. Deshalb dieselbe Drossel
+    wie dort (`nc.meldetakt`): erste Meldung sofort, ein WECHSEL des Grundes
+    sofort — dass aus "ffprobe fehlt" ein "Zeitueberschreitung" geworden
+    ist, ist die eigentliche Nachricht —, sonst hoechstens alle 15 Minuten
+    mit der Zahl der verschluckten Faelle.
+
+    Der Schluessel ist der Kanal, nicht die Datei: bei 200 Aufnahmen
+    drosselt ein Schluessel je Datei gar nichts.
+    """
+    laut, unterdrueckt = _takt.melden(kanal, grund, _time.time())
+    if not laut:
+        return
+    text = "%s: %s" % (kanal, grund)
+    if datei:
+        text += " (%s)" % os.path.basename(datei)
+    if abhilfe:
+        text += " — " + abhilfe
+    text += _takt.zusatz(unterdrueckt)
+    log.warning(text)
+
+
 async def ffprobe_inspect(filepath: str) -> Optional[dict]:
     """ffprobe -show_format -show_streams JSON-Output. None bei Fehler."""
     if not filepath or not os.path.isfile(filepath):
+        _blind("ffprobe", "die Datei liegt nicht (mehr) da",
+               "Wurde sie verschoben oder geloescht? Der Datenbank-Eintrag "
+               "zeigt dann ins Leere.", filepath or "(leer)")
         return None
     if not shutil.which("ffprobe"):
+        _blind("ffprobe", "ffprobe ist nicht installiert",
+               "sudo apt install ffmpeg — ohne ffprobe bleiben Analyse, "
+               "Wellenform und Qualitaetswert dauerhaft leer.")
         return None
     cmd = [
         "ffprobe", "-v", "error",
@@ -115,6 +154,9 @@ async def ffprobe_inspect(filepath: str) -> Optional[dict]:
             stderr=asyncio.subprocess.DEVNULL)
         out, _ = await asyncio.wait_for(proc.communicate(), timeout=20)
         if proc.returncode != 0:
+            _blind("ffprobe", "ffprobe brach mit Code %s ab" % proc.returncode,
+                   "Meist ein kaputter Container — /api/recordings/<id>/"
+                   "inspect an derselben Datei zeigt den Wortlaut.", filepath)
             return None
         return json.loads(out.decode("utf-8", errors="replace"))
     except asyncio.TimeoutError:
@@ -123,9 +165,13 @@ async def ffprobe_inspect(filepath: str) -> Optional[dict]:
             except Exception: pass
             try: await asyncio.wait_for(proc.wait(), timeout=2)
             except Exception: pass
+        _blind("ffprobe", "ffprobe antwortete 20 s lang nicht",
+               "Bei sehr grossen Dateien oder langsamer Platte normal; "
+               "haeuft es sich, ist die Platte der Engpass.", filepath)
         return None
     except Exception as e:
-        log.debug(f"ffprobe_inspect({filepath}): {e}")
+        _blind("ffprobe", "ffprobe liess sich nicht ausfuehren: %s" % e,
+               "", filepath)
         return None
 
 
@@ -153,12 +199,20 @@ def build_recording_manifest(recording_id: int) -> Optional[dict]:
        Inspect-Cache, Annotations, Notes, Bookmark-State, Hash, Tags
        der ursprünglichen Tracking-Quelle."""
     rec = recdb.get_recording_by_id(recording_id)
-    if not rec: return None
+    if not rec:
+        # Kein Drossel-Fall: das ist eine Anfrage nach einer Aufnahme, die es
+        # nicht gibt — einmal pro Aufruf, nicht pro Poll.
+        log.warning("build_recording_manifest: Aufnahme %s gibt es nicht "
+                    "(mehr)", recording_id)
+        return None
     rec_dict = dict(rec) if hasattr(rec, 'keys') else None
     if rec_dict is None:
         try:
             rec_dict = {k: rec[k] for k in rec.keys()}
-        except Exception:
+        except Exception as e:
+            log.error("build_recording_manifest: die Zeile zu Aufnahme %s "
+                      "liess sich nicht in ein Dict wandeln (%s) — das "
+                      "Manifest bleibt leer", recording_id, e)
             return None
     out = {
         "recording_id": rec_dict["id"],
@@ -203,20 +257,34 @@ async def compute_waveform_peaks(filepath: str, num_samples: int = 200) -> Optio
        das JSON nicht zu groß wird."""
     num_samples = max(1, int(num_samples))   # v4.0-W34: Schutz gegen Division durch 0
     if not filepath or not os.path.isfile(filepath):
+        _blind("wellenform", "die Datei liegt nicht (mehr) da", "",
+               filepath or "(leer)")
         return None
     if not shutil.which("ffmpeg"):
+        _blind("wellenform", "ffmpeg ist nicht installiert",
+               "sudo apt install ffmpeg — ohne ffmpeg bleibt die Wellenform "
+               "im Deck dauerhaft leer.")
         return None
     num_samples = max(20, min(int(num_samples), 500))
 
     # Hol Duration via ffprobe für die Sample-Window-Berechnung
     inspect = await ffprobe_inspect(filepath)
     if not inspect:
+        # ffprobe_inspect hat den Grund schon gemeldet; hier nur die Folge,
+        # damit im Log steht, WAS deshalb ausfaellt.
+        _blind("wellenform", "ohne ffprobe-Daten keine Laufzeit", "", filepath)
         return None
     try:
         duration = float((inspect.get("format") or {}).get("duration") or 0)
-    except Exception:
+    except (TypeError, ValueError) as e:
+        _blind("wellenform", "die Laufzeit war nicht zu lesen: %s" % e, "",
+               filepath)
         duration = 0
     if duration <= 0:
+        _blind("wellenform", "die Datei meldet keine Laufzeit",
+               "Meist ein abgerissener Container ohne moov-Atom — die "
+               "Reparatur in /api/recordings/<id>/inspect zeigt es.",
+               filepath)
         return None
 
     # Sample-Rate für die astats: damit wir num_samples Frames bekommen.
@@ -246,7 +314,11 @@ async def compute_waveform_peaks(filepath: str, num_samples: int = 200) -> Optio
                     linear = (val + 60) / 60.0
                     peaks.append(round(linear, 3))
                 except Exception: pass
-        if not peaks: return None
+        if not peaks:
+            _blind("wellenform", "ffmpeg lieferte keine RMS-Werte",
+                   "Hat die Aufnahme ueberhaupt eine Tonspur? Ohne Audio "
+                   "gibt es keine Wellenform.", filepath)
+            return None
         # Cap auf num_samples
         if len(peaks) > num_samples:
             step = len(peaks) / num_samples
@@ -261,15 +333,49 @@ async def compute_waveform_peaks(filepath: str, num_samples: int = 200) -> Optio
             except Exception: pass
             try: await asyncio.wait_for(proc.wait(), timeout=2)
             except Exception: pass
+        _blind("wellenform", "ffmpeg antwortete 60 s lang nicht",
+               "Die Analyse laeuft mit nice im Hintergrund; bei voller CPU "
+               "dauert sie laenger als das Zeitfenster.", filepath)
         return None
     except Exception as e:
-        log.debug(f"compute_waveform_peaks: {e}")
+        _blind("wellenform", "ffmpeg liess sich nicht ausfuehren: %s" % e,
+               "", filepath)
         return None
+
+
+class BestandUnbekannt(RuntimeError):
+    """Die Liste der bekannten Aufnahmen war nicht zu lesen.
+
+    Eigene Klasse, damit die Routen sie von einem gewoehnlichen Fehler
+    unterscheiden koennen: hier ist nichts kaputt, wir wissen nur nicht
+    genug, um zu entscheiden — und das ist der Unterschied zwischen "melde
+    einen Fehler" und "loesche nichts".
+    """
 
 
 def _find_orphans():
     """Sucht verwaiste Dateien im _c().recordings_dir: Split-Part-Reste, .repaired,
-       sowie Dateien ohne DB-Eintrag."""
+       sowie Dateien ohne DB-Eintrag.
+
+    Wirft BestandUnbekannt, wenn die Datenbank nicht zu lesen war. Bis
+    v4.2-W91 stand hier `except Exception: known = set()`, und das war der
+    teuerste stille Block des Bestands: mit leerem `known` ist
+    `full not in known` fuer JEDE Datei wahr, jede .mp4 im
+    Aufnahmeverzeichnis bekommt den Grund "kein-db-eintrag" — und
+    /api/rec/orphans/clean loescht alles, was diese Funktion liefert.
+
+    Ein gesperrtes SQLite (der Recorder schreibt parallel, das ist Alltag),
+    eine volle Platte oder eine kurz nicht erreichbare MariaDB verwandelten
+    damit "raeum die Reste weg" in "loesche alle Aufnahmen". Der gefaehrliche
+    Ablauf brauchte nicht einmal Pech: das Deck laedt erst die Liste (DB in
+    Ordnung, drei Reste) und schickt dann den Knopf mit confirm=true — faellt
+    die Datenbank zwischen diesen beiden Aufrufen, hat der Betreiber das
+    Loeschen von drei Dateien bestaetigt und alle verloren.
+
+    Es gibt hier keine sichere Annahme. "Ich weiss nicht, was in der
+    Datenbank steht" heisst "ich kann nicht entscheiden, was verwaist ist" —
+    also abbrechen, nicht raten.
+    """
     orphans = []
     if not os.path.isdir(_c().recordings_dir):
         return orphans
@@ -277,8 +383,11 @@ def _find_orphans():
         with db_conn() as conn:
             known = set(r["filepath"] for r in
                         conn.execute("SELECT filepath FROM recordings").fetchall())
-    except Exception:
-        known = set()
+    except Exception as e:
+        raise BestandUnbekannt(
+            "die Liste der bekannten Aufnahmen war nicht zu lesen (%s). "
+            "Ohne sie gilt jede Datei als verwaist — es wird nichts "
+            "geloescht." % e) from e
     for name in os.listdir(_c().recordings_dir):
         full = os.path.join(_c().recordings_dir, name)
         if not os.path.isfile(full):
@@ -891,24 +1000,51 @@ def api_rec_retention_apply():
     try:
         matched = _retention_match(rules)
         deleted, freed = 0, 0
+        gescheitert, wortlaut = [], []
         with db_conn() as conn:
             for m in matched:
                 fp = m.get("filepath")
-                try:
-                    if fp and os.path.exists(fp):
-                        freed += os.path.getsize(fp)
+                if fp and os.path.exists(fp):
+                    try:
+                        groesse = os.path.getsize(fp)
                         os.remove(fp)
-                except OSError:
-                    pass
+                    except OSError as e:
+                        # Bis W91 fiel die DB-Zeile auch dann, wenn die Datei
+                        # liegen blieb: das Ergebnis war eine Aufnahme ohne
+                        # Eintrag, die kein Werkzeug mehr kennt, waehrend das
+                        # Deck den Platz als frei meldete. Wer die Datei nicht
+                        # loeschen kann, darf auch ihre Spur nicht loeschen —
+                        # sonst ist sie unauffindbar statt nur uebrig.
+                        # Gesaeubert nach aussen (str(OSError) traegt den
+                        # vollen Pfad), im Klartext ins Log.
+                        gescheitert.append({"id": m["id"],
+                                            "name": os.path.basename(fp),
+                                            "grund": _fehler_text(
+                                                e, "retention_apply")})
+                        wortlaut.append("%s (%s)" % (os.path.basename(fp), e))
+                        continue
+                    freed += groesse
                 conn.execute("DELETE FROM recordings WHERE id=?", (m["id"],))
                 deleted += 1
             conn.commit()
         try:
             log_event("retention_apply", "warn",
                       f"Retention löschte {deleted} Aufnahmen ({round(freed/1048576.0)} MB)")
-        except Exception:
-            pass
-        return jsonify(ok=True, deleted=deleted, freed_mb=round(freed / 1048576.0, 1))
+        except Exception as e:
+            # Eine Loeschaktion ohne Spur im Ereignis-Log ist genau die, die
+            # hinterher niemand erklaeren kann. Das Loeschen selbst ist
+            # passiert und wird gemeldet; dass die Spur fehlt, gehoert
+            # ebenfalls gemeldet.
+            log.error("retention_apply: %d Aufnahmen geloescht, aber das "
+                      "Ereignis liess sich nicht protokollieren: %s",
+                      deleted, e)
+        if gescheitert:
+            log.warning("api_rec_retention_apply: %d Dateien blieben liegen "
+                        "und behalten ihren DB-Eintrag: %s", len(gescheitert),
+                        ", ".join(wortlaut[:5]))
+        return jsonify(ok=True, deleted=deleted,
+                       freed_mb=round(freed / 1048576.0, 1),
+                       failed=len(gescheitert), failed_details=gescheitert[:20])
     except Exception as e:
         return jsonify(ok=False, error=_fehler_text(e, "api_rec_retention_apply")), 500
 
@@ -948,6 +1084,15 @@ def api_rec_orphans():
         o = _find_orphans()
         return jsonify(ok=True, count=len(o),
                        total_mb=round(sum(x["mb"] for x in o), 1), orphans=o)
+    except BestandUnbekannt as e:
+        # 503, nicht 500: es ist nichts kaputt, die Datenbank war nur gerade
+        # nicht zu lesen. Das Deck soll eine leere Liste zeigen und sagen
+        # warum — nicht stillschweigend "keine verwaisten Dateien".
+        log.warning("api_rec_orphans: %s", e)
+        return jsonify(ok=False, unentscheidbar=True, orphans=[], count=0,
+                       error=_t("Die Datenbank war nicht zu lesen — welche "
+                                "Dateien verwaist sind, laesst sich gerade "
+                                "nicht sagen.")), 503
     except Exception as e:
         return jsonify(ok=False, error=_fehler_text(e, "api_rec_orphans")), 500
 
@@ -960,15 +1105,43 @@ def api_rec_orphans_clean():
         return jsonify(ok=False, error=_t("confirm=true erforderlich")), 400
     try:
         o = _find_orphans()
+    except BestandUnbekannt as e:
+        # Der Kern der Welle: lieber gar nichts loeschen als das Falsche.
+        log.error("api_rec_orphans_clean: %s", e)
+        return jsonify(ok=False, unentscheidbar=True, deleted=0, freed_mb=0.0,
+                       error=_t("Die Datenbank war nicht zu lesen — es wurde "
+                                "nichts geloescht. Bitte spaeter erneut "
+                                "versuchen.")), 503
+    try:
         freed, deleted = 0, 0
+        gescheitert, wortlaut = [], []
         for x in o:
             try:
-                freed += os.path.getsize(x["path"])
+                groesse = os.path.getsize(x["path"])
                 os.remove(x["path"])
-                deleted += 1
-            except OSError:
-                pass
-        return jsonify(ok=True, deleted=deleted, freed_mb=round(freed / 1048576.0, 1))
+            except OSError as e:
+                # Bis W91 stand hier `pass`, und `freed` wurde VOR dem
+                # Loeschen hochgezaehlt: das Deck meldete dann Platz, der
+                # noch belegt war. Wer nicht loeschen konnte, hat auch
+                # nichts frei gemacht.
+                #
+                # Nach aussen die gesaeuberte Fassung: str(OSError) traegt
+                # den vollen Dateipfad ("[Errno 13] Permission denied:
+                # '/srv/aufnahmen/...'"), und genau den soll eine
+                # API-Antwort nicht verteilen. Der Wortlaut geht ins Log.
+                gescheitert.append({"name": x["name"],
+                                    "grund": _fehler_text(e, "orphans_clean")})
+                wortlaut.append("%s (%s)" % (x["name"], e))
+                continue
+            freed += groesse
+            deleted += 1
+        if gescheitert:
+            log.warning("api_rec_orphans_clean: %d von %d Dateien blieben "
+                        "liegen: %s", len(gescheitert), len(o),
+                        ", ".join(wortlaut[:5]))
+        return jsonify(ok=True, deleted=deleted,
+                       freed_mb=round(freed / 1048576.0, 1),
+                       failed=len(gescheitert), failed_details=gescheitert[:20])
     except Exception as e:
         return jsonify(ok=False, error=_fehler_text(e, "api_rec_orphans_clean")), 500
 

@@ -255,6 +255,8 @@
     "Die Agenten-Flotte": "The agent fleet",
     "Die Bedingung braucht einen Wert.": "The condition needs a value.",
     "Die Datei": "The file",
+    "Die Datenbank war nicht zu lesen — es wurde nichts geloescht. Bitte spaeter erneut versuchen.": "The database could not be read — nothing was deleted. Please try again later.",
+    "Die Datenbank war nicht zu lesen — welche Dateien verwaist sind, laesst sich gerade nicht sagen.": "The database could not be read — there is currently no way to tell which files are orphaned.",
     "Die Europäische Kommission stellt eine Plattform zur Online-Streitbeilegung (OS) bereit: {0}. Wir sind nicht bereit oder verpflichtet, an Streitbeilegungsverfahren vor einer Verbraucherschlichtungsstelle teilzunehmen.": "The European Commission provides a platform for online dispute resolution (ODR): {0}. We are neither willing nor obliged to take part in dispute resolution proceedings before a consumer arbitration board.",
     "Die Live-Kennzahlen und News werden vom": "The live figures and news are",
     "Die Pipeline — vom Stream zur Reaktion": "The pipeline — from stream to reaction",
