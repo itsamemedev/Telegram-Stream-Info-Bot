@@ -11,6 +11,51 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Behoben — die Website rendete ohne ihre Schriften (v4.2 W88)
+
+Der Betreiber meldete, die Seite im `website/`-Ordner rende nicht richtig.
+Nachgemessen mit Chromium gegen einen lokalen HTTP-Server:
+
+```
+[...document.fonts].map(f => f.family + ' ' + f.status)
+→ Orbitron error | Orbitron error | Orbitron error
+  JetBrains Mono error | JetBrains Mono error | JetBrains Mono error
+```
+
+**Der Ordner `website/fonts/` existierte nicht.** `lafap_index.html` fordert
+sechs Schnitte per `@font-face` an; alle sechs liefen auf 404.
+`font-display: swap` tat genau das, was es soll — die Seite blieb benutzbar
+und zeigte sofort die Rückfallschrift. Damit rendete sie aber durchgehend in
+`sans-serif` statt Orbitron und in generischem `monospace` statt JetBrains
+Mono: Logo, Akronym und alle Zahlen verloren den Terminal-Look, auf dem das
+ganze Gestaltungssystem aufbaut.
+
+Genau deshalb fiel es so lange nicht auf: ein 404 auf eine Schrift bricht
+nichts. `FONTS.md` hielt den Zustand sogar fest („Kaputt ist nichts") — als
+Zwischenlösung gedacht, blieb er stehen.
+
+Die sechs Schnitte liegen jetzt bei, aus den Variable Fonts des offiziellen
+`google/fonts`-Bestands auf statische Schnitte festgestellt und auf den
+Zeichensatz beschränkt, den die Seite braucht (`latin`, wie bei Google
+Webfonts). **100 KB für alle sechs** — ohne die Beschränkung wäre JetBrains
+Mono je Schnitt rund zehnmal so groß.
+
+Beide Schriften stehen unter der SIL Open Font License; die Lizenztexte
+liegen daneben, weil die OFL das verlangt. Weiterhin gilt: **nie von
+fonts.googleapis.com laden** — dabei geht die IP jedes Besuchers an Google.
+
+### Behoben — eine Tafel stand für immer auf „lädt …" (v4.2 W88)
+
+Im Lagebild lädt die Seite `stats.json` (vom Bot per `_stats_loop`
+geschrieben). Fehlt die Datei oder antwortet der Server nicht, griff der
+Fehlerpfad — und er räumte **nur `live-chart`** auf. `mod-chart` behielt
+seinen Ausgangszustand, und der lautet „lädt …". Die Tafel wartete damit bis
+zum Seitenwechsel auf Daten, die nie kommen.
+
+Ein Ladezustand, der nie endet, ist die schlechteste Auskunft von allen: er
+sagt „gleich", und das stimmt nie. Beide Tafeln melden jetzt dasselbe.
+
+
 ### Hinzugefügt — sieben blinde Module unter Vertrag (v4.2 W87)
 
 `tools/ueberdeckung.py` hat in W86 zwei Module mit **0 %** ausgewiesen. Beide
