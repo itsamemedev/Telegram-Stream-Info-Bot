@@ -11168,6 +11168,687 @@ def _test_v42_w66_fenster_wachsen_mit():
     ok("W66: die Sperre faellt bei neuen Fenstern und ohne Grundlinie")
 
 
+def _test_v42_w89_variantenliste_bevorzugt_gezielt():
+    """v4.2-W89: der Suffix-Merker greift auch, wenn `_hd` zweimal in der URL
+    steht.
+
+    `_PREFLIGHT_CACHE[who]` merkt sich, welches CDN-Suffix beim letzten Mal
+    weggemusst hat, und sortiert die passende Variante nach vorn. Das ist eine
+    Abkuerzung mit messbarem Wert: ohne sie kostet jede Aufnahme dieser Quelle
+    eine zusaetzliche 404-Runde.
+
+    Gebaut war sie als `x.replace(pref, "")` — also global. Bei einer URL, die
+    das Suffix ein zweites Mal traegt (`cdn_hd.example/live_hd.flv`, oder ein
+    `?sess_hd=1` am Ende), entstand daraus eine Zeichenkette, die in KEINER
+    Kandidatenliste steht. Weil die Zuweisung an `pv in out` haengt, konnte
+    dadurch nie eine falsche URL abgefragt werden — der Schaden war kein
+    Fehlgriff, sondern eine ausgefallene Abkuerzung, und die faellt niemandem
+    auf: es funktioniert ja, nur eben jedes Mal eine Runde langsamer.
+
+    Geprueft wird die Sortierung direkt an `_varianten`, ohne Netz und ohne
+    Ereignisschleife — seit W89 steht sie auf Modulebene, genau dafuer.
+    """
+    import nc.preflight as _pf
+
+    alt_cache = dict(_pf._PREFLIGHT_CACHE)
+    try:
+        _pf._PREFLIGHT_CACHE.clear()
+
+        # --- 1) DIE LISTE SELBST -------------------------------------
+        u = "https://p.cdn/live_hd.flv?a=1"
+        v = _pf._varianten(u)
+        assert v[0] == u, \
+            "das Original steht nicht an erster Stelle: %r" % (v,)
+        assert "https://p.cdn/live.flv?a=1" in v, \
+            "die nackte Variante fehlt in der Liste: %r" % (v,)
+        assert len(v) == len(set(v)), \
+            "die Liste enthaelt Dubletten: %r" % (v,)
+
+        # Alle vier Suffixe, alle drei Endungen.
+        for sfx in _pf.SUFFIXE:
+            for endung, nackt in ((".flv", ".flv"),
+                                  ("/index.m3u8", "/index.m3u8"),
+                                  (".m3u8", ".m3u8")):
+                quelle = "https://p.cdn/li" + sfx + endung
+                assert ("https://p.cdn/li" + nackt) in _pf._varianten(quelle), \
+                    "aus %r wird keine nackte Variante gebildet — der " \
+                    "CDN-Quirk trifft alle vier Suffixe und beide " \
+                    "Containerformen" % (quelle,)
+
+        # --- 2) _ohne ERSETZT GEZIELT, NICHT GLOBAL ------------------
+        # Der Kern des Befunds. Beide Erwartungen stehen bewusst als
+        # Gegensatzpaar da: die gezielte Form laesst das zweite Vorkommen in
+        # Ruhe, die globale hat es mitgenommen.
+        doppelt = "https://cdn_hd.example/live_hd.flv"
+        assert _pf._ohne(doppelt, "_hd") == "https://cdn_hd.example/live.flv", \
+            "_ohne ersetzt global statt vor der Endung — der Hostname " \
+            "verliert sein _hd mit: %r" % (_pf._ohne(doppelt, "_hd"),)
+        query = "https://p.cdn/live_hd.flv?sess_hd=1"
+        assert _pf._ohne(query, "_hd") == "https://p.cdn/live.flv?sess_hd=1", \
+            "_ohne greift in den Abfrageteil: %r" % (_pf._ohne(query, "_hd"),)
+        # Steht das Suffix nirgends an einer Endung, bleibt die URL, wie sie
+        # ist — kein halb umgebauter Pfad.
+        assert _pf._ohne("https://cdn_hd.example/live.flv", "_hd") == \
+            "https://cdn_hd.example/live.flv", \
+            "_ohne veraendert eine URL, in der das Suffix gar nicht an einer " \
+            "Endung steht"
+
+        # --- 3) DIE BEVORZUGUNG GREIFT AUCH DOPPELT -----------------
+        for quelle, erwartet in (
+                ("https://cdn_hd.example/live_hd.flv",
+                 "https://cdn_hd.example/live.flv"),
+                ("https://p.cdn/live_hd.flv?sess_hd=1",
+                 "https://p.cdn/live.flv?sess_hd=1")):
+            _pf._PREFLIGHT_CACHE["w"] = "_hd"
+            v = _pf._varianten(quelle, "w")
+            assert v[0] == erwartet, \
+                "der gemerkte Suffix wird bei %r nicht bevorzugt — die " \
+                "Liste beginnt mit %r statt %r. Genau hier lief die globale " \
+                "Ersetzung ins Leere, und jede Aufnahme dieser Quelle " \
+                "kostete wieder eine 404-Runde." % (quelle, v[0], erwartet)
+            assert quelle in v, \
+                "das Original faellt beim Umsortieren aus der Liste: %r" % (v,)
+
+        # Ohne Merker bleibt das Original vorn — die Bevorzugung darf sich
+        # nicht von selbst einschalten.
+        _pf._PREFLIGHT_CACHE.clear()
+        assert _pf._varianten("https://p.cdn/live_hd.flv")[0] == \
+            "https://p.cdn/live_hd.flv", \
+            "ohne gemerkten Suffix wird umsortiert"
+        # Und ein Merker, der auf diese URL nicht passt, aendert nichts.
+        _pf._PREFLIGHT_CACHE["w"] = "_uhd"
+        assert _pf._varianten("https://p.cdn/live_hd.flv", "w")[0] == \
+            "https://p.cdn/live_hd.flv", \
+            "ein Merker fuer ein anderes Suffix sortiert trotzdem um"
+        ok("W89: Suffix-Merker greift gezielt, auch bei doppeltem Vorkommen")
+    finally:
+        _pf._PREFLIGHT_CACHE.clear()
+        _pf._PREFLIGHT_CACHE.update(alt_cache)
+
+
+def _test_v42_w89_report_schneidet_vor_dem_maskieren():
+    """v4.2-W89: der Videotitel im Profil-Report wird GESCHNITTEN und dann
+    maskiert, nicht umgekehrt.
+
+    Der Report geht als HTML an Telegram. `safe()` macht aus `&` ein `&amp;`,
+    aus `<` ein `&lt;`; `short()` schneidet nach 50 Zeichen. In der falschen
+    Reihenfolge — `short(safe(...), 50)`, so stand es da — kann der Schnitt
+    mitten in einer Entitaet landen: aus `&amp;` wird `&am`, aus `&#39;` ein
+    `&#3`. Telegram lehnt die GANZE Nachricht mit "can't parse entities" ab,
+    nicht die eine Zeile. Der Betreiber bekommt dann keinen Report, und im Log
+    steht ein Telegram-Fehler ohne Bezug zum Titel.
+
+    Ein Titel mit 48 harmlosen Zeichen und einem `&` an Position 49 genuegt.
+    Das ist kein konstruierter Randfall: TikTok-Titel tragen regelmaessig
+    `&`, `<` und Apostrophe, und 50 Zeichen sind fuer einen Titel nichts.
+
+    Zwei Zeilen weiter oben (SecUID) stand die Reihenfolge immer richtig —
+    `safe(short(...))`. Der Vertrag haelt beide, damit die richtige nicht
+    versehentlich der falschen angeglichen wird.
+    """
+    import nc.scoring as _sc
+
+    basis = {"unique_id": "u", "nickname": "n", "user_id": "1"}
+
+    # --- 1) DER SCHNITT DARF KEINE ENTITAET ZERTEILEN ---------------
+    # 49 Zeichen, dann das kaufmaennische Und: nach `safe()` beginnt an
+    # Position 49 die Entitaet `&amp;`, und ein Schnitt bei 50 zerlegt sie.
+    boese = "A" * 49 + "&" + "B" * 20
+    text = _sc.build_report(dict(basis, recent_videos=[
+        {"desc": boese, "url": "https://t/1"}]), {})
+    # Die Aussage: es gibt kein `&` ohne abschliessendes Semikolon. Genau das
+    # ist die Form, die Telegram zurueckweist.
+    import re as _r
+    for treffer in _r.finditer(r"&", text):
+        schwanz = text[treffer.start():treffer.start() + 10]
+        assert _r.match(r"&(amp|lt|gt|quot|#x?[0-9A-Fa-f]+);", schwanz), \
+            "im Report steht ein angeschnittenes &-Zeichen (%r) — Telegram " \
+            "lehnt damit die ganze Nachricht mit 'can't parse entities' ab. " \
+            "Genau das passiert, wenn erst maskiert und dann geschnitten " \
+            "wird." % (schwanz,)
+
+    # Und der Titel ist trotzdem gekuerzt worden — die Korrektur darf die
+    # Laengengrenze nicht mitnehmen, sonst sprengt ein langer Titel die Zeile.
+    assert "..." in text, \
+        "ein 70 Zeichen langer Titel wird nicht gekuerzt: %r" % (text[-200:],)
+    assert "B" * 20 not in text, \
+        "der Titel wurde gar nicht geschnitten — das Ende ist noch da"
+
+    # --- 2) UNMASKIERT BLEIBT NICHTS ------------------------------
+    text = _sc.build_report(dict(basis, recent_videos=[
+        {"desc": "<b>x</b> & y", "url": "https://t/2?a=1&b=2"}]), {})
+    assert "<b>x</b>" not in text and "&lt;b&gt;x&lt;/b&gt;" in text, \
+        "der Videotitel steht unmaskiert im Report: %r" % (text[-200:],)
+
+    # --- 3) DER LEERE TITEL FAELLT AUF "Video" ZURUECK -------------
+    # Bis W89 stand hier `short(safe(v.get("desc"), ""), 50) or 'Video'` —
+    # ein Rueckfall, der nie griff: `short("")` liefert "Unbekannt", und das
+    # ist wahr. Im Report stand deshalb "Unbekannt" statt "Video", und der
+    # `or`-Zweig war toter Code.
+    for leer in ("", None, "   "):
+        text = _sc.build_report(dict(basis, recent_videos=[
+            {"desc": leer, "url": "https://t/3"}]), {})
+        assert ">Video</a>" in text, \
+            "ein Video ohne Titel heisst nicht 'Video': %r — der Rueckfall " \
+            "lief bis W89 auf 'Unbekannt', weil short('') das liefert" % (
+                text[-120:],)
+        assert "Unbekannt</a>" not in text, \
+            "der Titel faellt auf 'Unbekannt' zurueck statt auf 'Video'"
+
+    # --- 4) DIE SECUID-ZEILE BLEIBT RICHTIG HERUM -----------------
+    text = _sc.build_report(dict(basis, sec_uid="&" * 40), {})
+    for treffer in _r.finditer(r"&", text):
+        schwanz = text[treffer.start():treffer.start() + 10]
+        assert _r.match(r"&(amp|lt|gt|quot|#x?[0-9A-Fa-f]+);", schwanz), \
+            "die SecUID-Zeile ist auf die falsche Reihenfolge umgestellt " \
+            "worden: %r" % (schwanz,)
+    ok("W89: Titel wird vor dem Maskieren geschnitten, Rueckfall ist 'Video'")
+
+
+def _test_v42_w89_container_meldet_seinen_parse_fehler():
+    """v4.2-W89: ein unlesbarer Container-Wert steht in `notes`.
+
+    `compute_quality_score` hat vier Bloecke, und drei melden ihren
+    Parse-Fehler (`video parse error`, `audio parse error`, `zero file size`).
+    Der Container-Block hatte ein `except Exception: pass`. Eine Aufnahme
+    verlor damit bis zu 10 von 100 Punkten, und in `notes` stand nichts,
+    woran der Betreiber das haette sehen koennen — die Aufschluesselung im
+    Deck erklaerte die Zahl daneben nicht mehr.
+
+    Dazu: die beiden Zeilen, die `format.bit_rate` lasen und im Treffer
+    `pass` machten, sind heraus. Sie vergaben keinen Punkt, konnten aber bei
+    einem unlesbaren Wert die ganze Container-Bewertung in den except-Zweig
+    reissen und die Dauer-Punkte mitnehmen. Ein Lesevorgang, der nur
+    schiefgehen kann, ist schlechter als keiner — und genau das wird hier
+    gemessen: ein kaputter `bit_rate` kostet KEINE Punkte mehr.
+    """
+    import nc.scoring as _sc
+
+    def _v():
+        return {"codec_type": "video", "height": 1080, "codec_name": "h264",
+                "r_frame_rate": "30/1"}
+
+    # --- 1) EIN KAPUTTER bit_rate KOSTET NICHTS MEHR --------------
+    gut = _sc.compute_quality_score(
+        {"streams": [_v()], "format": {"duration": "100"}}, 0, 100.0)
+    kaputt = _sc.compute_quality_score(
+        {"streams": [_v()], "format": {"duration": "100", "bit_rate": "x"}},
+        0, 100.0)
+    assert gut["components"]["container"] == 15, \
+        "der tadellose Container bekommt %r statt 15" % (
+            gut["components"]["container"],)
+    assert kaputt["components"]["container"] == 15, \
+        "ein unlesbarer bit_rate kostet %r statt 0 Punkte — die beiden " \
+        "folgenlosen Leszeilen sind wieder drin und reissen die " \
+        "Dauer-Bewertung mit" % (15 - kaputt["components"]["container"],)
+    assert "container parse error" not in kaputt["notes"], \
+        "ein bit_rate, der gar nicht mehr gelesen wird, erzeugt eine " \
+        "Notiz: %r" % (kaputt["notes"],)
+
+    # --- 2) EIN ECHTER PARSE-FEHLER MELDET SICH -------------------
+    class _Krumm:
+        """Wirft beim Lesen von `duration` — so wie ein ffprobe-Ergebnis,
+           das nicht das ist, was der Code erwartet."""
+
+        def get(self, name, vorgabe=None):
+            if name == "duration":
+                raise TypeError("Attrappe: kein Wert")
+            return vorgabe
+
+        def __bool__(self):
+            return True
+
+    r = _sc.compute_quality_score({"streams": [_v()], "format": _Krumm()},
+                                  0, 100.0)
+    assert "container parse error" in r["notes"], \
+        "ein unlesbarer Container meldet sich nicht in notes: %r — bis W89 " \
+        "war das ein `except: pass`, und die fehlenden 10 Punkte hatten " \
+        "keine Begruendung" % (r["notes"],)
+    assert r["components"]["container"] == 5, \
+        "der Container behaelt bei einem Parse-Fehler %r statt der 5 Punkte " \
+        "fuer 'vorhanden'" % (r["components"]["container"],)
+    assert r["score"] == sum(r["components"].values()), \
+        "der Score ist nicht mehr die Summe seiner Teile"
+    ok("W89: Container-Parse-Fehler steht in notes, bit_rate kostet nichts")
+
+
+def _test_v42_w89_verdrahtungsfehler_bleibt_laut():
+    """v4.2-W89: eine fehlende `configure(...)` bricht die Pruefung ab, statt
+    als "kein Proxy" durchzulaufen.
+
+    `nc.tiktokcheck._Conf.__missing__` wirft ausdruecklich laut, mit dem Text
+    "ist nicht konfiguriert — configure(...) fehlt im Startpfad von bot.py".
+    Der Docstring nennt den Grund: ein fehlender Startwert ist ein
+    Verdrahtungsfehler im Bot, kein Datenfehler.
+
+    Genau dieser RuntimeError lief bis W89 in ein `except Exception: proxy =
+    None`. Eine fehlende `configure`-Zeile sah damit aus wie "Proxy nicht
+    verfuegbar": die Pruefung lief ungeproxyt weiter, von der Server-IP, die
+    TikTok blockt — und weil das Modul bewusst konservativ ist, kam
+    "unknown / kein eindeutiges Signal" heraus. Der Betreiber sah ein
+    TikTok-Problem, wo ein Startproblem war. Der lauteste Fehler des Moduls
+    war der unsichtbarste.
+
+    Der zweite Teil: `st` traegt im Fehlerfall den wirklich gelesenen Status.
+    Dort stand eine harte 0, obwohl der Status zu diesem Zeitpunkt schon
+    gelesen sein KANN — bricht die Verbindung nach den Kopfzeilen und vor dem
+    Rumpf ab, wurde aus einem echten 200 eine gemeldete 0. Damit war nicht
+    mehr unterscheidbar, ob TikTok geantwortet hat oder ob nie eine
+    Verbindung zustande kam, und genau diese Unterscheidung entscheidet, ob
+    die Oberflaeche ein Loeschen anbieten darf.
+    """
+    import asyncio as _asyncio
+    import sys as _sys
+
+    import nc.tiktokcheck as _tc
+
+    class _Antwort:
+        def __init__(self, status, rumpf=None, wirft=None):
+            self.status = status
+            self._rumpf = rumpf or ""
+            self._wirft = wirft
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def text(self, errors=None):
+            if self._wirft:
+                raise self._wirft
+            return self._rumpf
+
+    class _Sitzung:
+        def __init__(self):
+            self.antwort = _Antwort(200, "")
+
+        def get(self, url, **k):
+            return self.antwort
+
+    class _FalscherAiohttp:
+        @staticmethod
+        def ClientTimeout(**k):
+            return None
+
+    sitzung = _Sitzung()
+
+    async def _hole():
+        return sitzung
+
+    async def _waehle(username=None):
+        return "http://proxy:1"
+
+    alt_aio = _sys.modules.get("aiohttp")
+    alt_conf = dict(_tc._conf)
+    alt_rand = _tc.get_random_proxy
+    try:
+        _sys.modules["aiohttp"] = _FalscherAiohttp
+        _tc.get_random_proxy = lambda: None
+
+        # --- 1) GAR NICHT VERDRAHTET: ES MUSS WEHTUN ----------------
+        _tc._conf.clear()
+        fehler = None
+        try:
+            _asyncio.run(_tc.account_exists("peter"))
+        except RuntimeError as e:
+            fehler = e
+        assert fehler is not None, \
+            "eine fehlende configure(...) laeuft durch, statt zu werfen — " \
+            "dann prueft der Bot ungeproxyt von der geblockten Server-IP " \
+            "und meldet das Ergebnis als TikTok-Problem"
+        assert "nicht konfiguriert" in str(fehler) \
+            and "configure" in str(fehler), \
+            "der Verdrahtungsfehler nennt seinen Grund nicht: %r" % (fehler,)
+
+        # Fehlt nur EINER der drei Startwerte, gilt dasselbe — sonst haengt es
+        # davon ab, in welcher Reihenfolge sie gebraucht werden.
+        for fehlt in ("pick_proxy", "get_ai_session", "live_resolver_headers"):
+            _tc.configure(get_ai_session=_hole, pick_proxy=_waehle,
+                          live_resolver_headers={})
+            _tc._conf.pop(fehlt)
+            # Kein `assert False` im try: `python -O` entfernt es (ruff B011),
+            # und ein Vertrag, der unter -O nichts mehr prueft, ist keiner.
+            gefangen = None
+            try:
+                _asyncio.run(_tc.account_exists("peter"))
+            except RuntimeError as e:
+                gefangen = e
+            assert gefangen is not None, \
+                "der fehlende Startwert %r wird verschluckt" % (fehlt,)
+            assert fehlt in str(gefangen), \
+                "der Fehler nennt den fehlenden Wert %r nicht: %r" % (
+                    fehlt, gefangen)
+
+        # --- 2) EINE GESCHEITERTE PROXY-WAHL IST KEIN STARTFEHLER ---
+        # Sie darf still auf den Zufallsproxy und dann auf "ohne" zurueck —
+        # das ist ein Betriebsfall, und die Pruefung soll trotzdem laufen.
+        async def _kaputt(username=None):
+            raise OSError("Attrappe: Proxy-Liste weg")
+
+        _tc.configure(get_ai_session=_hole, pick_proxy=_kaputt,
+                      live_resolver_headers={})
+        sitzung.antwort = _Antwort(404)
+        zustand, status, _ = _asyncio.run(_tc.account_exists("peter"))
+        assert (zustand, status) == ("gone", 404), \
+            "eine gescheiterte Proxy-Wahl reisst die ganze Pruefung mit: " \
+            "%r/%r" % (zustand, status)
+
+        # --- 3) DER STATUS UEBERLEBT EINEN ABBRUCH IM RUMPF ---------
+        _tc.configure(get_ai_session=_hole, pick_proxy=_waehle,
+                      live_resolver_headers={})
+        sitzung.antwort = _Antwort(200, wirft=OSError("Attrappe: Verbindung weg"))
+        zustand, status, grund = _asyncio.run(_tc.account_exists("peter"))
+        assert zustand == "unknown", \
+            "ein Abbruch beim Lesen macht aus der Pruefung ein Ergebnis: %r" \
+            % (zustand,)
+        assert status == 200, \
+            "der gelesene HTTP-Status geht verloren (%r statt 200) — dann " \
+            "ist 'TikTok hat geantwortet' nicht mehr von 'keine Verbindung' " \
+            "zu unterscheiden, und genau daran haengt, ob die Oberflaeche " \
+            "ein Loeschen anbietet" % (status,)
+        assert "fehlgeschlagen" in grund, \
+            "der Grund nennt den Abbruch nicht: %r" % (grund,)
+
+        # Und ohne jede Verbindung bleibt es bei 0 — die 0 heisst "nie
+        # angekommen", und das muss sie weiter heissen.
+        class _Tot:
+            def get(self, url, **k):
+                raise OSError("Attrappe: kein Netz")
+
+        async def _tot():
+            return _Tot()
+
+        _tc.configure(get_ai_session=_tot, pick_proxy=_waehle,
+                      live_resolver_headers={})
+        zustand, status, _ = _asyncio.run(_tc.account_exists("peter"))
+        assert (zustand, status) == ("unknown", 0), \
+            "ohne jede Antwort muss der Status 0 sein: %r/%r" % (
+                zustand, status)
+        ok("W89: fehlende Verdrahtung wirft, der HTTP-Status ueberlebt")
+    finally:
+        if alt_aio is None:
+            _sys.modules.pop("aiohttp", None)
+        else:
+            _sys.modules["aiohttp"] = alt_aio
+        _tc.get_random_proxy = alt_rand
+        _tc._conf.clear()
+        _tc._conf.update(alt_conf)
+
+
+def _test_v42_w89_kopie_wird_zurueckgenommen():
+    """v4.2-W89: scheitert der Archiv-Eintrag, ist die Kopie wieder weg.
+
+    `_archiviere_eine` kopiert erst und schreibt dann die Datenbankzeile —
+    notwendig in dieser Reihenfolge, weil die Zeile die Groesse der Kopie
+    traegt. Bis W89 hatte das einen DAUERSCHADEN im Fehlerfall:
+
+    Schlug der INSERT fehl (UNIQUE-Verletzung, Platte voll, Datenbank weg),
+    blieb die Kopie ohne Zeile im Archiv liegen. Beim naechsten Lauf griff
+    dann `os.path.exists(target)` und zaehlte `skipped += 1`. Die Aufnahme
+    war damit **nie wieder** archivierbar: eine Datei, die es gibt, die in
+    keiner Ansicht auftaucht und die kein Lauf mehr einsammelt. Der Betreiber
+    sieht nur eine Regel, die dauerhaft "uebersprungen" meldet, und keinen
+    Grund dafuer — es faellt nichts, es wird nur nichts mehr.
+
+    Der Vertrag prueft deshalb nicht bloss "der Fehler wird gemeldet",
+    sondern die Wiederholbarkeit: nach dem Fehlschlag muss derselbe Aufruf
+    beim naechsten Versuch GELINGEN.
+
+    Dazu der Fall, in dem auch die Ruecknahme misslingt. Dann liegt die Datei
+    wirklich im Weg, und das MUSS im Log stehen — mit Pfad, denn der
+    Betreiber muss sie von Hand wegnehmen. Ein `except OSError: pass` waere
+    hier zwar ein Aufraeumpfad, aber keiner, dessen Fehlschlag bedeutungslos
+    ist: die Regel aus CLAUDE.md endet genau an dieser Unterscheidung.
+    """
+    import shutil as _sh
+    import tempfile as _tf
+
+    import nc.archiverules as A
+    from nc import sicherpfad as _sp
+
+    class _Log:
+        def __init__(self):
+            self.zeilen = []
+
+        def _sammle(self, stufe):
+            def _f(fmt, *a):
+                self.zeilen.append((stufe, str(fmt) % a if a else str(fmt)))
+            return _f
+
+        def __getattr__(self, name):
+            return self._sammle(name)
+
+    heim = _tf.mkdtemp()
+    quelle = os.path.join(heim, "quelle")
+    archiv = os.path.join(heim, "archiv")
+    os.makedirs(quelle)
+    os.makedirs(archiv)
+    src_datei = os.path.join(quelle, "aufnahme.mp4")
+    with open(src_datei, "wb") as f:
+        f.write(b"0" * 4096)
+
+    alt_add, alt_log = A.add_archive_entry, A.log
+    schrift = _Log()
+    try:
+        A.log = schrift
+
+        # --- 1) DER GUTE FALL: KOPIE UND EINTRAG ---------------------
+        gesehen = []
+        A.add_archive_entry = lambda **kw: gesehen.append(kw) or 1
+        assert A._archiviere_eine(src_datei, archiv, "R", 7) is True, \
+            "der gute Fall meldet keinen Erfolg"
+        ziel = os.path.join(archiv, "aufnahme.mp4")
+        assert os.path.isfile(ziel), "die Kopie fehlt"
+        assert gesehen and gesehen[0]["size"] == 4096, \
+            "der Eintrag traegt nicht die Groesse der Kopie: %r" % (gesehen,)
+        assert gesehen[0]["source_url"] == "recording/7", \
+            "ohne Rueckverweis ist der Eintrag nicht zuzuordnen: %r" % (
+                gesehen,)
+
+        # Zweiter Lauf: schon da, also nicht ueberschreiben.
+        del gesehen[:]
+        assert A._archiviere_eine(src_datei, archiv, "R", 7) is False, \
+            "eine bereits archivierte Datei wird erneut eingetragen"
+        assert not gesehen, "der zweite Lauf schreibt einen zweiten Eintrag"
+        os.remove(ziel)
+
+        # --- 1b) SCHRITT 1 SCHEITERT: NICHTS LIEGT HERUM ------------
+        # Die Quelle ist weg (die Aufnahme wurde zwischen Regel-Lauf und
+        # Kopie geloescht) oder das Ziel laesst sich nicht bilden. Beides
+        # darf den Lauf nicht abbrechen — die naechste Aufnahme kann
+        # gelingen — und es darf keine halbe Kopie hinterlassen.
+        del gesehen[:]
+        del schrift.zeilen[:]
+        assert A._archiviere_eine(os.path.join(quelle, "gibt-es-nicht.mp4"),
+                                  archiv, "R", 3) is False, \
+            "eine verschwundene Quelle wird als archiviert gemeldet"
+        assert not gesehen, \
+            "zu einer nicht kopierten Datei wird ein Eintrag geschrieben: " \
+            "%r — der zeigt dann auf eine Datei, die es nicht gibt" % (gesehen,)
+        assert os.listdir(archiv) == [], \
+            "im Archiv liegt etwas, obwohl die Kopie scheiterte: %r" % (
+                os.listdir(archiv),)
+        assert any(stufe == "warning" for stufe, _ in schrift.zeilen), \
+            "eine gescheiterte Kopie meldet sich nicht: %r" % (
+                schrift.zeilen,)
+
+        # --- 2) DER EINTRAG SCHEITERT: KOPIE MUSS WEG ---------------
+        def _wirft(**kw):
+            raise RuntimeError("Attrappe: UNIQUE constraint failed")
+
+        A.add_archive_entry = _wirft
+        del schrift.zeilen[:]
+        assert A._archiviere_eine(src_datei, archiv, "R", 7) is False, \
+            "ein gescheiterter Eintrag wird als Erfolg gemeldet"
+        assert not os.path.exists(ziel), \
+            "die Kopie liegt nach dem gescheiterten Eintrag noch im Archiv " \
+            "— beim naechsten Lauf greift dann exists() und die Aufnahme " \
+            "wird NIE WIEDER archiviert"
+        assert any(stufe == "error" for stufe, _ in schrift.zeilen), \
+            "der gescheiterte Eintrag meldet sich nicht auf error: %r" % (
+                schrift.zeilen,)
+
+        # Und jetzt der Punkt: es ist wiederholbar.
+        A.add_archive_entry = lambda **kw: gesehen.append(kw) or 1
+        del gesehen[:]
+        assert A._archiviere_eine(src_datei, archiv, "R", 7) is True, \
+            "nach einem gescheiterten Eintrag laesst sich die Aufnahme nicht " \
+            "erneut archivieren — genau das war der Dauerschaden"
+        assert os.path.isfile(ziel) and gesehen, "der zweite Versuch trug nicht"
+        os.remove(ziel)
+
+        # --- 3) AUCH DIE RUECKNAHME SCHEITERT: LAUT, MIT PFAD -------
+        A.add_archive_entry = _wirft
+        alt_remove = A.os.remove
+
+        def _remove_kaputt(p):
+            raise OSError("Attrappe: Datei gesperrt")
+
+        del schrift.zeilen[:]
+        A.os.remove = _remove_kaputt
+        try:
+            assert A._archiviere_eine(src_datei, archiv, "R", 9) is False
+        finally:
+            A.os.remove = alt_remove
+        fehler = [t for stufe, t in schrift.zeilen if stufe == "error"]
+        assert len(fehler) == 2, \
+            "eine misslungene Ruecknahme meldet sich nicht zusaetzlich: %r" \
+            % (schrift.zeilen,)
+        assert any(ziel in t for t in fehler), \
+            "die Meldung nennt den Pfad nicht, den der Betreiber von Hand " \
+            "wegnehmen muss: %r" % (fehler,)
+        os.remove(ziel)
+
+        # --- 4) DER PFAD-RIEGEL: NICHTS LANDET AUSSERHALB ----------
+        # Der Zielname entsteht aus `recordings.filepath` — einem Wert, den
+        # der Recorder aus einem TikTok-Nutzernamen baut.
+        #
+        # Der Windows-Pfad ist der Fall, der zaehlt: auf Linux ist "\\" ein
+        # ganz normales Zeichen, `os.path.basename` nimmt davon NICHTS weg.
+        # Ein roher `os.path.join(archive_dir, os.path.basename(src))` legt
+        # damit eine Datei an, deren Name Trenner traegt — und auf einem
+        # Dateisystem, das sie als solche liest, liegt sie ausserhalb.
+        #
+        # Wichtig: die Quelldatei muss unter diesem Namen WIRKLICH existieren,
+        # sonst scheitert `copy2` vorher und der Riegel wird gar nicht
+        # belastet. Beim ersten Entwurf dieses Vertrags war genau das der
+        # Fall — die Mutationsprobe "Pfad-Riegel entfernt" entwischte.
+        A.add_archive_entry = lambda **kw: gesehen.append(kw) or 1
+        for boese in ("..\\..\\etc\\passwd.mp4", "  leer  .mp4",
+                      "...mp4"):
+            p = os.path.join(quelle, boese)
+            with open(p, "wb") as f:
+                f.write(b"0" * 512)
+            assert os.path.isfile(p), \
+                "die Attrappen-Quelle %r liess sich nicht anlegen — dann " \
+                "prueft der Abschnitt den Riegel nicht" % (boese,)
+            del gesehen[:]
+            A._archiviere_eine(p, archiv, "R", 1)
+            for name in os.listdir(archiv):
+                assert "/" not in name and "\\" not in name \
+                    and ".." not in name, \
+                    "der Zielname traegt einen Pfadanteil: %r — ohne " \
+                    "sicher_join schreibt der naechste Recorder-Name " \
+                    "dorthin, wohin er zeigt" % (name,)
+                ziel_p = os.path.join(archiv, name)
+                assert _sp.unter(archiv, ziel_p), \
+                    "%r liegt nicht unter dem Archivverzeichnis" % (ziel_p,)
+                os.remove(ziel_p)
+            for e in gesehen:
+                assert _sp.unter(archiv, e["filepath"]), \
+                    "der Eintrag zeigt aus dem Archiv heraus: %r" % (e,)
+        ok("W89: gescheiterter Eintrag nimmt die Kopie zurueck und bleibt "
+           "wiederholbar")
+    finally:
+        A.add_archive_entry = alt_add
+        A.log = alt_log
+        _sh.rmtree(heim, ignore_errors=True)
+
+
+def _test_v42_w89_stats_json_meldet_laut():
+    """v4.2-W89: ein fehlgeschlagenes `stats.json` steht auf error, nicht auf
+    debug — und der neue Preflight-Zaehler erreicht die Zeitreihen.
+
+    **stats.json.** `_stats_loop` schreibt alle fuenf Minuten die Datei, aus
+    der die oeffentliche Seite ihr Lagebild zieht. Der Fehlerfall stand auf
+    `log.debug`, und fuer den Betreiber ist ein Fehlerpfad auf debug dasselbe
+    wie `pass` — genau die Klasse, die tools/blindstellen.py misst. Faellt das
+    Schreiben dauerhaft aus (Platte voll, Rechte, Pfad weg), bleibt das
+    Lagebild leer und NICHTS im Log sagt warum. Zwei Zeilen darueber macht
+    dieselbe Schleife es richtig: `usage.flush` geht ueber `_loop_fehler`,
+    mit genau dieser Begruendung im Kommentar.
+
+    Gedrosselt muss es sein: 288 gleiche Zeilen am Tag liest niemand, und
+    eine unlesbare Warnung ist so gut wie keine. Und der Erfolgspfad muss die
+    Drossel zuruecksetzen, sonst bleibt ein wiederkehrender Ausfall bis zu 15
+    Minuten unsichtbar (die Lehre aus W81).
+
+    **Der gestoert-Zaehler.** `nc.preflight` unterscheidet seit W89 "alle
+    Varianten sauber 404" (tot) von "keine Variante geantwortet" (gestoert).
+    Ohne die Zeitreihe in brain_bridge waere die Unterscheidung blind —
+    und gerade sie ist die interessante: steigt `gestoert` und nicht `dead`,
+    liegt es am Weg nach aussen, nicht an den Quellen.
+
+    Geprueft wird ueber `rumpf_ab`, nicht ueber ein festes Fenster: CLAUDE.md
+    nennt `src[i:i + 3000]` namentlich als Bruchstelle, und in W62 hat sie
+    zugeschlagen.
+    """
+    src = open("bot.py", encoding="utf-8").read()
+
+    i = src.find("async def _stats_loop():")
+    assert i > 0, "_stats_loop ist nicht mehr zu finden"
+    rumpf = rumpf_ab(src, i)
+
+    assert 'log.debug("stats.json' not in rumpf, \
+        "das fehlgeschlagene Schreiben von stats.json steht wieder auf " \
+        "debug — in einem INFO- oder ERROR-Log erscheint das NIE, und die " \
+        "oeffentliche Seite bleibt ohne Begruendung leer"
+    assert '_nc_meldetakt.melden(' in rumpf and '"stats-json"' in rumpf, \
+        "die Meldung laeuft nicht ueber nc.meldetakt — ungedrosselt stehen " \
+        "288 gleiche Zeilen am Tag im Log, und die liest niemand"
+    assert 'log.error("stats.json' in rumpf, \
+        "die Meldung steht nicht auf error: %r" % (rumpf[:400],)
+    assert '_nc_meldetakt.zuruecksetzen("stats-json")' in rumpf, \
+        "der Erfolgspfad setzt die Drossel nicht zurueck — ein Ausfall, der " \
+        "sich behebt und wiederkehrt, bleibt dann bis zu 15 Minuten " \
+        "unsichtbar (W81)"
+    # Die Meldung muss dem Betreiber sagen, was zu tun ist. "HTTP 403" allein
+    # hat in diesem Projekt schon einmal wochenlang niemandem geholfen.
+    for wort in ("Verzeichnis", "Rechte"):
+        assert wort in rumpf, \
+            "die Meldung nennt keine Abhilfe (%r fehlt)" % (wort,)
+
+    # --- Der gestoert-Zaehler in der Bruecke ---------------------------
+    bruecke = open("brain_bridge.py", encoding="utf-8").read()
+    j = bruecke.find('_ctx.get("preflight_stats")')
+    assert j > 0, "die Preflight-Zeitreihen sind nicht mehr zu finden"
+    # Die Schluesselliste selbst ist der Anker, und gelesen wird bis zum
+    # Zeilenende — KEIN Fenster fester Laenge. Genau das zaehlt
+    # tools/vertragscheck.py, und beim ersten Entwurf dieses Vertrags stand
+    # hier `bruecke[j:j + 600]`: die Sperre hat es gefangen.
+    i2 = bruecke.find("for k in (", j)
+    assert i2 > j, \
+        "die Schluesselliste der Preflight-Zeitreihen ist nicht mehr zu " \
+        "finden — sie stand direkt nach _ctx.get(\"preflight_stats\")"
+    zeile = bruecke[i2:bruecke.find("\n", i2)]
+    assert '"gestoert"' in zeile, \
+        "der gestoert-Zaehler wird nicht als Zeitreihe gespiegelt — dann " \
+        "ist im Metrik-Panel nicht zu sehen, wie oft der Preflight gar " \
+        "nichts gemessen hat: %r" % (zeile,)
+    for k in ('"ok"', '"fallback"', '"dead"'):
+        assert k in zeile, \
+            "die bestehende Zeitreihe %s ist verschwunden: %r" % (k, zeile)
+
+    # Und der Zaehler muss im Modul auch existieren, sonst spiegelt die
+    # Bruecke einen Namen, den niemand fuellt.
+    import nc.preflight as _pf
+    assert "gestoert" in _pf._PREFLIGHT_STATS, \
+        "nc.preflight fuehrt den gestoert-Zaehler nicht"
+    ok("W89: stats.json meldet laut und gedrosselt, gestoert erreicht die "
+       "Zeitreihen")
+
+
 def _test_v42_w60_azrael_cooldown_je_plattform():
     """v4.2-W60: ein Cooldown fuer drei Chats verschluckte zwei davon.
 
@@ -13394,7 +14075,7 @@ def _test_v42_w88_preflight_prueft():
         _sys.modules["aiohttp"] = _FalscherAiohttp
         _pf._PREFLIGHT_CACHE.clear()
         _pf._PREFLIGHT_DEAD_STREAK.clear()
-        _pf._PREFLIGHT_STATS.update(ok=0, fallback=0, dead=0)
+        _pf._PREFLIGHT_STATS.update(ok=0, fallback=0, dead=0, gestoert=0)
 
         # --- 0) configure() ist der einzige Weg herein ------------------
         _pf.configure(logger=schrift, record_proxy="")
@@ -13411,7 +14092,8 @@ def _test_v42_w88_preflight_prueft():
                 "eine leere URL wird umgeschrieben statt durchgereicht"
             assert not protokoll, \
                 "fuer eine leere URL wird eine Abfrage abgesetzt: %r" % protokoll
-        assert _pf._PREFLIGHT_STATS == {"ok": 0, "fallback": 0, "dead": 0}, \
+        assert _pf._PREFLIGHT_STATS == {"ok": 0, "fallback": 0, "dead": 0,
+                                        "gestoert": 0}, \
             "eine leere URL bewegt die Telemetrie: %r" % (_pf._PREFLIGHT_STATS,)
         ok("W88: leere Pull-URL wird durchgereicht, ohne zu zaehlen")
 
@@ -13507,11 +14189,69 @@ def _test_v42_w88_preflight_prueft():
         assert _lauf(wackel, "wackler") == wackel, \
             "ein Verbindungsfehler wird als 'tot' gewertet — ein wackelnder " \
             "Proxy verhindert dann JEDE Aufnahme, obwohl der Stream laeuft"
-        assert _pf._PREFLIGHT_STATS == vorher, \
-            "ein Verbindungsfehler bewegt die Telemetrie: %r" % (
+        # v4.2-W89: der Stoerfall zaehlt auf `gestoert`, und NUR darauf. Vorher
+        # stand hier `== vorher`, also "bewegt nichts" — der Fall war damit
+        # ueberhaupt nicht in der Telemetrie, und genau deshalb konnte niemand
+        # sehen, wie oft der Preflight gar nichts gemessen hat. Steigt
+        # `gestoert` und nicht `dead`, liegt es am Weg nach aussen, nicht an
+        # den Quellen; das ist die Unterscheidung, um die es geht.
+        assert _pf._PREFLIGHT_STATS["gestoert"] == vorher["gestoert"] + 1, \
+            "der Stoerfall wird nicht gezaehlt — dann ist er in der " \
+            "Telemetrie nicht von einem gesunden Lauf zu unterscheiden: %r" % (
                 _pf._PREFLIGHT_STATS,)
+        for _k in ("ok", "fallback", "dead"):
+            assert _pf._PREFLIGHT_STATS[_k] == vorher[_k], \
+                "ein Verbindungsfehler bewegt %r — vor allem `dead` darf er " \
+                "NICHT bewegen: daran haengt der Untrack-Vorschlag: %r" % (
+                    _k, _pf._PREFLIGHT_STATS)
         assert "wackler" not in _pf._PREFLIGHT_DEAD_STREAK, \
             "ein Verbindungsfehler laesst die Quelle in die Tot-Serie laufen"
+
+        # --- 6b) W89: EIN NETZFEHLER BEENDET DIE SUCHE NICHT -----------
+        # Der eigentliche Fehler, den W89 behoben hat, und der teuerste des
+        # Moduls: in der Kandidatenschleife stand `except Exception: return u`.
+        # Ein Timeout auf dem Original gab damit genau dieses Original zurueck
+        # und probierte die naechste Variante NIE — obwohl sie lebt. ffmpeg
+        # startete gegen die gestoerte URL, ohne Zaehler und ohne Logzeile.
+        plan.clear()
+        plan[hd] = "netz"      # Original: Verbindung weg
+        plan[nackt] = 200      # die Variante daneben lebt
+        vorher = dict(_pf._PREFLIGHT_STATS)
+        assert _lauf(hd, "weiter") == nackt, \
+            "ein Netzfehler auf dem Original beendet die Variantensuche — " \
+            "die lebende Variante wird nie geprueft: %r" % (protokoll,)
+        assert protokoll == [hd, nackt], \
+            "nach dem Netzfehler wird nicht genau die naechste Variante " \
+            "geprueft: %r" % (protokoll,)
+        assert _pf._PREFLIGHT_STATS["gestoert"] == vorher["gestoert"], \
+            "ein Lauf, der am Ende eine lebende Variante findet, wird als " \
+            "Stoerung gezaehlt: %r" % (_pf._PREFLIGHT_STATS,)
+        assert "weiter" not in _pf._PREFLIGHT_DEAD_STREAK, \
+            "ein erfolgreicher Lauf hinterlaesst eine Tot-Serie"
+        ok("W89: ein Netzfehler beendet die Variantensuche nicht")
+
+        # --- 6c) W89: DER ERFOLG SETZT DIE DROSSEL ZURUECK -------------
+        # nc.meldetakt laesst nach der ersten Meldung 15 Minuten nichts mehr
+        # durch. Ohne Ruecksetzen im Erfolgspfad bleibt damit eine Stoerung,
+        # die sich behebt und zehn Minuten spaeter wiederkehrt, bis zu einer
+        # Viertelstunde unsichtbar — dieselbe Lehre wie beim Resolver (W81),
+        # und dort steht sie ausdruecklich in CLAUDE.md.
+        from nc import meldetakt as _mt
+        _mt.zuruecksetzen()
+        plan.clear()
+        plan[wackel] = "netz"
+        _lauf(wackel, "drossel")
+        assert "preflight" in _mt.ZUSTAND, \
+            "der Stoerfall legt keine Drossel an — dann meldet er " \
+            "ungedrosselt, und das Log ist nach einer Stunde unlesbar"
+        plan.clear()
+        plan[gut] = 200
+        _lauf(gut, "drossel")
+        assert "preflight" not in _mt.ZUSTAND, \
+            "der Erfolgspfad setzt die Drossel nicht zurueck — ein Ausfall, " \
+            "der sich behebt und wiederkehrt, bleibt dann bis zu 15 Minuten " \
+            "unsichtbar: %r" % (_mt.ZUSTAND,)
+        ok("W89: der Erfolg setzt die Meldedrossel des Preflights zurueck")
 
         # Fehlt aiohttp ganz, gilt dasselbe: durchreichen statt blockieren.
         _sys.modules["aiohttp"] = None
@@ -13987,7 +14727,17 @@ def _test_v42_w88_archivregeln():
         assert treffer["rule_id"] == regel and treffer["rule_name"] == "Grosse Aufnahmen"
 
         liegt = sorted(os.listdir(archiv))
-        assert liegt == ["etc_passwd.mp4", "genau.mp4", "gross.mp4"], \
+        # v4.2-W89: "passwd.mp4", nicht mehr "etc_passwd.mp4". Der Riegel ist
+        # von `_safe_archive_filename` auf `nc.sicherpfad.sicher_join`
+        # gewechselt, und die beiden entschaerfen "..\\..\\etc\\passwd.mp4"
+        # unterschiedlich: der alte ersetzte jeden Backslash durch einen
+        # Unterstrich und backte den Pfad damit IN den Dateinamen ein, der
+        # neue macht "\\" erst zu "/" und nimmt den Pfadanteil dann per
+        # basename wirklich heraus. Beide Ergebnisse sind sicher — sie liegen
+        # im Archiv —, aber nur das neue ist eine Antwort auf die Frage: ein
+        # Dateiname ist ein Name, keine Kodierung eines Pfades. Fuer den
+        # Normalfall (der Recorder liefert flache Namen) aendert sich nichts.
+        assert liegt == ["genau.mp4", "gross.mp4", "passwd.mp4"], \
             "im Archiv liegt etwas anderes als erwartet: %r — entweder hat " \
             "die Groessengrenze nicht gegriffen oder der Dateiname wurde " \
             "nicht entschaerft" % (liegt,)
@@ -13997,12 +14747,12 @@ def _test_v42_w88_archivregeln():
                 "%r liegt nicht unter dem Archivverzeichnis" % (ziel,)
             assert "/" not in name and "\\" not in name and ".." not in name, \
                 "der Zielname traegt noch einen Pfadanteil: %r — ohne " \
-                "_safe_archive_filename schreibt der naechste Recorder-Name " \
-                "dorthin, wohin er zeigt" % (name,)
+                "sicher_join schreibt der naechste Recorder-Name dorthin, " \
+                "wohin er zeigt" % (name,)
             assert _sp.sicherer_name(name) == name, \
                 "der Zielname ueberlebt den Riegel aus nc.sicherpfad nicht: " \
                 "%r wird zu %r" % (name, _sp.sicherer_name(name))
-        assert os.path.getsize(os.path.join(archiv, "etc_passwd.mp4")) == 2 * MIB
+        assert os.path.getsize(os.path.join(archiv, "passwd.mp4")) == 2 * MIB
         for p in (d_gross, d_genau, d_klein, d_boese):
             assert os.path.isfile(p), \
                 "die Quelle %r ist weg — der Regel-Lauf KOPIERT, er " \
@@ -14134,6 +14884,62 @@ def _test_v42_w88_archivregeln():
             "eine nicht vorhandene Regel-Id muss leer und erfolgreich " \
             "zurueckkommen, nicht alle Regeln fahren: %r" % (leer,)
         ok("W88: Loeschen meldet Treffer, unbekannte Regel-Id laeuft leer")
+
+        # ── 7b) W89: die Buchfuehrung der Regel scheitert ───────────────
+        # `last_run` ist die einzige Spur, dass eine Regel ueberhaupt laeuft.
+        # Bis W89 stand dort `except Exception: pass` — bleibt die Spalte
+        # stehen, sieht das Deck eine Regel, die nie gelaufen ist, obwohl sie
+        # gerade Dateien kopiert hat. Diese Verwechslung laesst sich ohne
+        # Logzeile nicht aufloesen, und der Lauf selbst soll trotzdem sein
+        # Ergebnis melden: die Dateien SIND ja kopiert.
+        _echt = A.db_conn
+        _zaehler = {"n": 0}
+
+        def _db_bricht_beim_schreiben():
+            # Zwei Aufrufe gehen durch (Regeln lesen, Aufnahmen lesen), der
+            # dritte — die Buchfuehrung — faellt. `add_archive_entry` liegt in
+            # nc.archive und holt sich sein db_conn dort, zaehlt hier also
+            # nicht mit. Ueber einen Zaehler und nicht ueber den SQL-Text,
+            # damit der Vertrag nicht an der Formulierung der Abfrage haengt.
+            _zaehler["n"] += 1
+            if _zaehler["n"] > 2:
+                raise RuntimeError("Attrappe: Datenbank beim Schreiben weg")
+            return _echt()
+
+        # Die Regel wurde in Abschnitt 6 abgeschaltet — ohne `enabled=1`
+        # kommt der Lauf gar nicht bis zur Buchfuehrung, und der Abschnitt
+        # wuerde gruen, ohne etwas geprueft zu haben. Genau das ist beim
+        # ersten Entwurf passiert; die Zaehler-Zusicherung unten faengt es.
+        #
+        # Der Marker in last_run wird beim Schreiben ueberschrieben. Ohne ihn
+        # liesse sich "nicht geschrieben" nicht von "denselben Wert wieder
+        # geschrieben" unterscheiden.
+        with db_conn() as c:
+            c.execute("UPDATE auto_archive_rules SET enabled=1, last_run=? "
+                      "WHERE id=?", ("MARKER-W89", regel))
+            c.commit()
+        del ereignisse[:]
+        A.db_conn = _db_bricht_beim_schreiben
+        try:
+            erg7 = A.run_archive_rules(archive_dir=archiv,
+                                       log_event=lambda *a: None)
+        finally:
+            A.db_conn = _echt
+        assert erg7["ok"] is True, \
+            "eine gescheiterte Buchfuehrung reisst den ganzen Regel-Lauf " \
+            "mit — die Dateien sind aber kopiert: %r" % (erg7,)
+        assert _zaehler["n"] > 2, \
+            "die Attrappe wurde nie bis zur Buchfuehrung gefragt (%r " \
+            "Aufrufe) — dann prueft dieser Abschnitt nichts" % (_zaehler,)
+        with db_conn() as c:
+            stand = c.execute(
+                "SELECT last_run FROM auto_archive_rules WHERE id=?",
+                (regel,)).fetchone()
+        assert stand["last_run"] == "MARKER-W89", \
+            "last_run wurde fortgeschrieben, obwohl das Schreiben fiel: %r" % (
+                dict(stand),)
+        ok("W89: eine gescheiterte Regel-Buchfuehrung meldet sich und "
+           "bricht den Lauf nicht ab")
 
         # ── 8) Die Datenbank ist weg ─────────────────────────────────────
         # Erst der Fall "Regeln da, recordings-Abfrage kaputt": er ist der
@@ -14316,9 +15122,19 @@ def _test_v42_w88_speicher():
                 "SELECT COUNT(*) AS n FROM recordings").fetchone()["n"]
 
         e = S.cleanup(aufnahmen, days=TAGE, dry_run=True)
-        assert e["deleted"] == 1 and e["freed_bytes"] == 1000, \
+        # v4.2-W89: der Probelauf zaehlt in `would_delete`/`would_free_bytes`,
+        # und `deleted`/`freed_bytes` bleiben 0. Vorher lief er in `deleted`
+        # mit — ein Aufrufer, der nur dieses Feld liest (und das tut jeder,
+        # der nicht an `dry_run` denkt), konnte einen Probelauf nicht von
+        # einem Loeschlauf unterscheiden. Ein Feld, das man zusaetzlich lesen
+        # MUSS, um das Hauptfeld richtig zu deuten, wird irgendwann nicht
+        # gelesen.
+        assert e["would_delete"] == 1 and e["would_free_bytes"] == 1000, \
             "die Probe zaehlt %r — genau an der Grenze wird BEHALTEN, " \
             "Symlink und Unterordner zaehlen gar nicht mit" % (e,)
+        assert e["deleted"] == 0 and e["freed_bytes"] == 0, \
+            "der Probelauf meldet Geloeschtes: %r — wer nur `deleted` liest, " \
+            "haelt ihn dann fuer einen echten Lauf" % (e,)
         assert e["skipped"] == 2 and e["errors"] == 0, \
             "uebersprungen werden genau die zwei jungen Dateien: %r" % (e,)
         assert e["dry_run"] is True
@@ -14332,6 +15148,9 @@ def _test_v42_w88_speicher():
         assert e["deleted"] == 1 and e["freed_bytes"] == 1000 \
             and e["skipped"] == 2 and e["errors"] == 0, \
             "der echte Lauf weicht von der Probe ab: %r" % (e,)
+        assert e["would_delete"] == 0 and e["would_free_bytes"] == 0, \
+            "der echte Lauf fuellt auch die Probe-Felder: %r — dann sagt " \
+            "die Zahl nicht mehr, ob geloescht wurde" % (e,)
         assert e["dry_run"] is False and e["retain_days"] == TAGE
         assert not os.path.exists(d_alt), "die alte Aufnahme liegt noch da"
         assert os.path.isfile(d_genau), \
@@ -14427,6 +15246,31 @@ def _test_v42_w88_speicher():
             "nicht dazu" % (e["recordings_dir"]["file_count"],)
         assert e["db_recording_count"] == zeilen_vorher, \
             "die Zahl der Datenbankeintraege stimmt nicht: %r" % (e,)
+
+        # v4.2-W89: der Papierkorb zaehlt NICHT mit. Bis W89 lief er hier mit,
+        # waehrend `forecast()` zwei Funktionen weiter ausdruecklich
+        # `deleted_at IS NULL` filterte — zwei Zahlen im selben Widget, die
+        # dasselbe zu zaehlen behaupten und auseinanderlaufen. Das Deck
+        # schreibt daneben "N files"; eine Aufnahme im Papierkorb ist keine.
+        # Damit sie dabei nicht unsichtbar wird, kommt sie als eigene Zahl.
+        with db_conn() as c:
+            c.execute("INSERT INTO recordings (username, filepath, file_size, "
+                      "created_at, deleted_at) VALUES (?,?,?,?,?)",
+                      ("weg", os.path.join(aufnahmen, "weg.mp4"), 7,
+                       "2026-09-16T12:00:00+00:00",
+                       "2026-09-16T13:00:00+00:00"))
+        e = S.stats(aufnahmen, retain_days=5)
+        assert e["db_recording_count"] == zeilen_vorher, \
+            "der Papierkorb zaehlt bei den Aufnahmen mit (%r statt %r) — " \
+            "dann zeigt das Deck mehr Dateien, als es gibt, und die Zahl " \
+            "widerspricht der Hochrechnung daneben" % (
+                e["db_recording_count"], zeilen_vorher)
+        assert e["db_trash_count"] == 1, \
+            "der Papierkorb wird gar nicht ausgewiesen (%r) — dann ist er " \
+            "aus der Summe verschwunden, ohne irgendwo aufzutauchen" % (
+                e.get("db_trash_count"),)
+        with db_conn() as c:
+            c.execute("DELETE FROM recordings WHERE username='weg'")
         S.shutil = _Platte
         e = S.stats(aufnahmen, archive_dir=aussen)
         assert e["archive_dir"]["exists"] is True \
@@ -14511,14 +15355,29 @@ def _test_v42_w88_speicher():
             "die Hochrechnung sieht %r Tage statt zwei — das Sieben-Tage-" \
             "Fenster oder der Papierkorb-Filter greift nicht: %r" \
             % (e["samples"], e)
-        assert e["daily_growth_mb"] == 1024.0, \
-            "das Tageswachstum ist %r statt 1024.0 MB — eine Zahl, auf der " \
-            "die Warnung 'Platte voll' sitzt" % (e["daily_growth_mb"],)
-        assert e["recordings_per_day"] == 1.5, \
-            "Aufnahmen je Tag: %r statt 1.5" % (e["recordings_per_day"],)
-        assert e["days_until_full"] == 10.0, \
-            "bei 10 GiB frei und 1 GiB am Tag sind es 10.0 Tage, nicht %r" \
-            % (e["days_until_full"],)
+        # v4.2-W89: 2 GiB im Fenster, geteilt durch SIEBEN, nicht durch die
+        # zwei Tage mit Daten. Der Bestand hat eine Aufnahme vor dem Fenster
+        # (Tag 8), die fuenf leeren Tage sind also echte Nulltage.
+        #
+        # Die alten Zahlen dieses Vertrags waren 1024,0 MB/Tag und 10,0 Tage
+        # Restlaufzeit; richtig sind 292,6 MB/Tag und 35,0 Tage. Das ist der
+        # ganze Befund in zwei Zahlen: wer an zwei von sieben Tagen aufnimmt,
+        # bekam eine Prognose, die um den Faktor 3,5 zu knapp war — und auf
+        # diese Zahl hin loescht der Betreiber Aufnahmen, die er 25 Tage
+        # laenger haette behalten koennen.
+        assert e["basis_tage"] == 7, \
+            "geteilt wird durch %r Tage statt durch sieben, obwohl es " \
+            "Aufnahmen VOR dem Fenster gibt: %r" % (e.get("basis_tage"), e)
+        assert e["daily_growth_mb"] == 292.6, \
+            "das Tageswachstum ist %r statt 292.6 MB — eine Zahl, auf der " \
+            "die Warnung 'Platte voll' sitzt, und sie darf nicht die " \
+            "aktiven Tage fuer alle Tage nehmen" % (e["daily_growth_mb"],)
+        assert e["recordings_per_day"] == 0.4, \
+            "Aufnahmen je Tag: %r statt 0.4 (drei Aufnahmen auf sieben " \
+            "Tage)" % (e["recordings_per_day"],)
+        assert e["days_until_full"] == 35.0, \
+            "bei 10 GiB frei und 2 GiB in sieben Tagen sind es 35.0 Tage, " \
+            "nicht %r" % (e["days_until_full"],)
         assert [t["day"] for t in e["trend"]] == ["2026-09-15", "2026-09-16"], \
             "der Verlauf kommt nicht aufsteigend nach Tag: %r" % (e["trend"],)
         assert e["trend"][0]["count"] == 1 and e["trend"][1]["count"] == 2
@@ -14526,20 +15385,43 @@ def _test_v42_w88_speicher():
         _Platte.fehler = OSError("Attrappe: Platte nicht lesbar")
         e = S.forecast(aufnahmen)
         assert e["days_until_full"] is None and e["free_gb"] is None \
-            and e["daily_growth_mb"] == 1024.0 and e["samples"] == 2, \
+            and e["daily_growth_mb"] == 292.6 and e["samples"] == 2, \
             "ohne Plattenzahlen bleibt das Wachstum trotzdem messbar — es " \
             "darf nur keine Restlaufzeit mehr behaupten: %r" % (e,)
         _Platte.fehler = None
         ok("W88: forecast rechnet ueber sieben Tage ohne Papierkorb und "
            "haelt still, wo ihr die Zahlen fehlen")
 
+        # ── 4b) W89: DIE ANDERE SEITE DES DIVISORS ──────────────────────
+        # Stumpf durch sieben zu teilen waere die gefaehrlichere Haelfte
+        # desselben Fehlers: ein Bestand, der erst seit zwei Tagen laeuft, hat
+        # fuenf STRUKTURELL leere Tage. Die mitzuzaehlen macht die Prognose zu
+        # optimistisch — und dann laeuft die Platte voll, waehrend das Deck
+        # Ruhe meldet. Eine zu optimistische Prognose kostet Aufnahmen, eine
+        # zu pessimistische nur Platz.
+        with db_conn() as c:
+            c.execute("DELETE FROM recordings")
+        _aufnahme(15, GIB)          # nur zwei Tage, und NICHTS davor
+        _aufnahme(16, GIB)
+        e = S.forecast(aufnahmen)
+        assert e["basis_tage"] == 2, \
+            "ein Bestand ohne Aufnahmen vor dem Fenster wird auf sieben Tage " \
+            "gestreckt (basis_tage=%r) — die Prognose ist dann zu " \
+            "optimistisch, und genau das kostet Aufnahmen: %r" % (
+                e.get("basis_tage"), e)
+        assert e["daily_growth_mb"] == 1024.0 and e["days_until_full"] == 10.0, \
+            "bei zwei beobachteten Tagen mit je 1 GiB sind es 1024 MB/Tag " \
+            "und 10 Tage, nicht %r / %r" % (
+                e["daily_growth_mb"], e["days_until_full"])
+        ok("W89: der Divisor sind die BEOBACHTETEN Tage, hoechstens sieben")
+
         # ── 5) Ohne Datenbank ────────────────────────────────────────────
         configure_db(db_path=os.path.join(heim, "gibt-es-nicht", "x.db"),
                      backend="sqlite")
         e = S.stats(aufnahmen)
-        assert e["db_recording_count"] is None, \
-            "ohne Datenbank muss der Zaehler None sein statt 0 — 0 sieht " \
-            "aus wie 'keine Aufnahmen': %r" % (e,)
+        assert e["db_recording_count"] is None and e["db_trash_count"] is None, \
+            "ohne Datenbank muessen BEIDE Zaehler None sein statt 0 — 0 " \
+            "sieht aus wie 'keine Aufnahmen': %r" % (e,)
         assert e["recordings_dir"]["exists"] is True, \
             "die Verzeichniszahlen haengen nicht an der Datenbank"
         e = S.forecast(aufnahmen)
@@ -14830,6 +15712,12 @@ def main():
     _test_v42_w88_tiktokcheck_erkennt()
     _test_v42_w88_archivregeln()
     _test_v42_w88_speicher()
+    _test_v42_w89_variantenliste_bevorzugt_gezielt()
+    _test_v42_w89_report_schneidet_vor_dem_maskieren()
+    _test_v42_w89_container_meldet_seinen_parse_fehler()
+    _test_v42_w89_verdrahtungsfehler_bleibt_laut()
+    _test_v42_w89_kopie_wird_zurueckgenommen()
+    _test_v42_w89_stats_json_meldet_laut()
     _test_v42_w60_azrael_cooldown_je_plattform()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)

@@ -15,6 +15,40 @@ Absicht: der Betreiber soll weiter sehen, dass es die Aufnahme gab — sie ist
 nur nicht mehr abrufbar. Wer hier ein DELETE ergaenzt, nimmt ihm die
 Historie. (Die andere Richtung — Eintrag UND Datei weg — macht bewusst
 nc/retention.py.)
+
+════════════════════════════════════════════════════════════════════════
+DER DIVISOR — v4.2-W89
+════════════════════════════════════════════════════════════════════════
+`forecast()` teilte die Bytes der letzten sieben Tage durch `len(rows)`, und
+das ist die Zahl der Tage **mit** Aufnahmen: `GROUP BY SUBSTR(created_at,1,10)`
+liefert nur solche. Wer an zwei von sieben Tagen aufnimmt, bekam damit den
+Durchschnitt seiner AKTIVEN Tage als Tagesdurchschnitt verkauft — die
+Wachstumsrate bis zu siebenfach zu hoch, `days_until_full` entsprechend zu
+pessimistisch. Auf diese Zahl hin raeumt der Betreiber auf, also loescht er
+Aufnahmen, die er haette behalten koennen.
+
+Stumpf durch sieben zu teilen waere aber die andere Haelfte desselben Fehlers,
+und die ist gefaehrlicher: ein Bestand, der erst seit zwei Tagen laeuft, hat
+fuenf strukturell leere Tage im Fenster. Die mitzuzaehlen macht die Prognose zu
+OPTIMISTISCH — und dann laeuft die Platte voll, waehrend das Deck Ruhe meldet.
+Eine zu optimistische Prognose kostet Aufnahmen, eine zu pessimistische nur
+Platz.
+
+Entschieden wird deshalb an einer Ja/Nein-Frage: **gibt es Aufnahmen vor dem
+Fenster?**
+
+    ja    Alle sieben Tage sind echt beobachtet. Die leeren darunter sind
+          echte Nulltage und gehoeren in den Durchschnitt. Divisor 7.
+
+    nein  Dieser Bestand ist juenger als das Fenster. Die fehlenden Tage sind
+          keine Ruhe, sondern Nichtwissen — geteilt wird durch die Tage mit
+          Daten, also weiter auf der pessimistischen Seite.
+
+Bewusst KEIN Zerlegen von `MIN(created_at)`: ein Zeitstempel aus der Datenbank
+muesste geparst werden, das Parsen muesste auffangen, und der Auffang waere
+genau der stille `except`, den tools/stillecheck.py zaehlt — an einer Stelle,
+an der er eine falsche Zahl erzeugt statt eines Fehlers. Ein COUNT beantwortet
+dieselbe Frage ohne diese Kette.
 """
 
 import logging
@@ -47,19 +81,35 @@ def stats(recordings_dir: str, archive_dir: str = "",
         log.warning(f"disk_usage failed: {e}")
         disk = {"total_bytes": None, "used_bytes": None,
                 "free_bytes": None, "used_percent": None}
-    # DB-Count der Recording-Einträge (Datei evt. gelöscht aber DB-Eintrag bleibt)
+    # DB-Count der Recording-Einträge (Datei evt. gelöscht aber DB-Eintrag
+    # bleibt — cleanup() raeumt die Platte auf, nicht die Historie).
+    #
+    # v4.2-W89: `deleted_at IS NULL` ergaenzt. Der Papierkorb lief hier mit,
+    # und `forecast()` zwei Funktionen weiter zaehlte ihn ausdruecklich nicht
+    # — zwei Zahlen im selben Widget, die dasselbe zu zaehlen behaupten und
+    # auseinanderlaufen. Das Deck schreibt daneben "N files"; eine Aufnahme im
+    # Papierkorb ist keine. Damit der Papierkorb dabei nicht unsichtbar wird,
+    # kommt er als eigene Zahl mit, statt aus der Summe zu verschwinden.
     try:
         with db_conn() as conn:
-            db_count = conn.execute("SELECT COUNT(*) AS c FROM recordings").fetchone()
-            db_count = db_count["c"] if db_count else 0
+            row = conn.execute(
+                "SELECT COUNT(*) AS c FROM recordings "
+                "WHERE deleted_at IS NULL").fetchone()
+            db_count = row["c"] if row else 0
+            row = conn.execute(
+                "SELECT COUNT(*) AS c FROM recordings "
+                "WHERE deleted_at IS NOT NULL").fetchone()
+            trash_count = row["c"] if row else 0
     except Exception as e:
         log.warning(f"recordings count failed: {e}")
         db_count = None
+        trash_count = None
     return {
         "recordings_dir": rec_stats,
         "archive_dir":    arch_stats,
         "disk":           disk,
         "db_recording_count": db_count,
+        "db_trash_count":     trash_count,
         "retention_days": retain_days,
     }
 
@@ -67,18 +117,34 @@ def cleanup(recordings_dir: str, days: int = 0,
             dry_run: bool = False) -> dict:
     """Löscht Recordings-Files älter als `days` Tage von Disk. DB-Einträge
        werden NICHT gelöscht (User kann immer noch sehen dass es Aufnahmen
-       gab — sie sind nur nicht mehr abrufbar). Wenn dry_run=True: zählt nur.
+       gab — sie sind nur nicht mehr abrufbar).
+
+       Bei dry_run=True wird NICHT geloescht: die Zahlen stehen dann in
+       `would_delete`/`would_free_bytes`, und `deleted`/`freed_bytes` bleiben
+       0. Wer nur `deleted` liest, kann den Probelauf damit nicht mehr fuer
+       einen Loeschlauf halten.
 
        Aufrufer: hourly background task (wenn retain_days > 0)
        oder manueller Dashboard-Button."""
     if days <= 0:
         return {"deleted": 0, "freed_bytes": 0, "skipped": 0, "errors": 0,
+                "would_delete": 0, "would_free_bytes": 0,
                 "reason": "RECORDINGS_RETAIN_DAYS=0 (cleanup disabled)"}
     if not os.path.isdir(recordings_dir):
         return {"deleted": 0, "freed_bytes": 0, "skipped": 0, "errors": 0,
+                "would_delete": 0, "would_free_bytes": 0,
                 "reason": f"{recordings_dir} does not exist"}
     cutoff = time.time() - (days * 86400)
+    # v4.2-W89: der Probelauf zaehlt in EIGENE Felder. Vorher lief er in
+    # `deleted`/`freed_bytes` mit, und ein Aufrufer, der nur `deleted` liest,
+    # konnte nicht unterscheiden, ob gerade 40 Aufnahmen geloescht wurden oder
+    # nur gezaehlt — `dry_run: True` stand daneben, aber ein Feld, das man
+    # zusaetzlich lesen MUSS, um das Hauptfeld richtig zu deuten, wird
+    # irgendwann nicht gelesen. Das Deck war fuer die richtige Form uebrigens
+    # schon gebaut: `ops6Cleanup` liest `d.would_delete` als Rueckfall, nur
+    # lieferte das Modul es nie.
     deleted = 0; freed = 0; skipped = 0; errors = 0
+    wuerde = 0; wuerde_frei = 0
     try:
         for entry in os.scandir(recordings_dir):
             if not entry.is_file(follow_symlinks=False):
@@ -90,7 +156,7 @@ def cleanup(recordings_dir: str, days: int = 0,
             if st.st_mtime >= cutoff:
                 skipped += 1; continue
             if dry_run:
-                deleted += 1; freed += st.st_size
+                wuerde += 1; wuerde_frei += st.st_size
                 continue
             try:
                 os.remove(entry.path)
@@ -101,12 +167,35 @@ def cleanup(recordings_dir: str, days: int = 0,
     except OSError as e:
         log.warning(f"cleanup_old_recordings scandir: {e}")
         return {"deleted": deleted, "freed_bytes": freed, "skipped": skipped,
+                "would_delete": wuerde, "would_free_bytes": wuerde_frei,
                 "errors": errors + 1, "error": str(e)}
     return {"deleted": deleted, "freed_bytes": freed, "skipped": skipped,
+            "would_delete": wuerde, "would_free_bytes": wuerde_frei,
             "errors": errors, "dry_run": dry_run, "retain_days": days}
 
 
 # ---- Wann ist die Platte voll? ----------------------------------------------
+
+# Breite des Beobachtungsfensters in Tagen. Steht als Konstante da, weil die
+# Zahl an drei Stellen gebraucht wird (Abfrage, Divisor, Meldetext) und drei
+# handgeschriebene Siebener irgendwann auseinanderlaufen.
+FENSTER_TAGE = 7
+
+
+def _basis_tage(aeltere_vorhanden: bool, tage_mit_daten: int) -> int:
+    """Durch wie viele Tage ist zu teilen? -> int >= 1
+
+    Siehe den Abschnitt DER DIVISOR im Modul-Docstring. Kurz: gibt es
+    Aufnahmen VOR dem Fenster, sind alle sieben Tage echt beobachtet und die
+    leeren darunter sind echte Nulltage. Gibt es keine, ist dieser Bestand
+    juenger als das Fenster, und dann waeren die fehlenden Tage keine Ruhe,
+    sondern Nichtwissen — dort bleibt es bei den Tagen mit Daten, also bei
+    der pessimistischen Seite.
+    """
+    if aeltere_vorhanden:
+        return FENSTER_TAGE
+    return max(1, tage_mit_daten)
+
 
 def forecast(recordings_dir: str) -> dict:
     """Linear regression über recordings der letzten 7d → wann ist die Disk voll?
@@ -114,7 +203,8 @@ def forecast(recordings_dir: str) -> dict:
     try:
         with db_conn() as conn:
             # Last 7d, daily aggregates
-            cutoff = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
+            cutoff = (datetime.now(timezone.utc)
+                      - timedelta(days=FENSTER_TAGE)).isoformat()
             rows = conn.execute(
                 "SELECT SUBSTR(created_at, 1, 10) AS day, "
                 "  COUNT(*) AS n, SUM(COALESCE(file_size, 0)) AS bytes "
@@ -123,6 +213,14 @@ def forecast(recordings_dir: str) -> dict:
                 "GROUP BY SUBSTR(created_at, 1, 10) "
                 "ORDER BY day ASC",
                 (cutoff,)).fetchall()
+            # Reicht dieser Bestand ueber das Fenster hinaus? Eine
+            # Ja/Nein-Frage statt eines Zeitstempels, den erst wieder jemand
+            # zerlegen muss — und sie laeuft ueber idx_recordings_created.
+            aelter = conn.execute(
+                "SELECT COUNT(*) AS c FROM recordings "
+                "WHERE created_at < ? AND deleted_at IS NULL",
+                (cutoff,)).fetchone()
+            aeltere_vorhanden = bool(aelter and aelter["c"])
     except Exception as e:
         log.warning(f"compute_storage_forecast: {e}")
         return {"days_until_full": None, "daily_growth_mb": 0, "error": str(e)}
@@ -134,8 +232,9 @@ def forecast(recordings_dir: str) -> dict:
 
     daily_bytes = [(r["bytes"] or 0) for r in rows]
     daily_count = [r["n"] for r in rows]
-    avg_bytes = sum(daily_bytes) / len(daily_bytes)
-    avg_count = sum(daily_count) / len(daily_count)
+    basis = _basis_tage(aeltere_vorhanden, len(rows))
+    avg_bytes = sum(daily_bytes) / basis
+    avg_count = sum(daily_count) / basis
 
     free_gb = None
     try:
@@ -149,6 +248,7 @@ def forecast(recordings_dir: str) -> dict:
                 "daily_growth_mb": round(avg_bytes / 1024 / 1024, 1),
                 "recordings_per_day": round(avg_count, 1),
                 "samples": len(rows),
+                "basis_tage": basis,
                 "free_gb": free_gb,
                 "trend": [{"day": r["day"], "mb": round((r["bytes"] or 0)/1024/1024, 1),
                            "count": r["n"]} for r in rows],
@@ -157,4 +257,4 @@ def forecast(recordings_dir: str) -> dict:
         log.warning(f"forecast disk_usage failed: {e}")
     return {"days_until_full": None, "daily_growth_mb": round(avg_bytes/1024/1024, 1),
             "recordings_per_day": round(avg_count, 1), "samples": len(rows),
-            "free_gb": free_gb}
+            "basis_tage": basis, "free_gb": free_gb}

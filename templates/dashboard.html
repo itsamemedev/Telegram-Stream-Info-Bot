@@ -6467,6 +6467,7 @@ async function loadSystem(){
       <div class="flexc mb"><span class="muted">${humanBytes(d.used_bytes)} used</span><span class="mono">${pct}%</span></div>
       <div class="bar ${pct>=85?'danger':(pct>=60?'amber':'cyan')}"><i style="width:${pct}%"></i></div>
       <table class="mt"><tr><th>Recordings</th><td class="mono">${st.db_recording_count??'—'} files</td></tr>
+      ${st.db_trash_count?`<tr><th>Papierkorb</th><td class="mono">${st.db_trash_count} files</td></tr>`:''}
       <tr><th>Retention</th><td class="mono">${st.retention_days??'—'} days</td></tr></table></div>`;
   }
   // cookie status
@@ -10528,8 +10529,17 @@ async function ops6Cleanup(dry){
   out.innerHTML='<div class="faint" style="font-size:11px">…</div>';
   const d=await apiPost('/api/storage/cleanup',{days, dry_run:!!dry});
   if(!d||!d.ok){ out.innerHTML='<div class="kc-row sev-high"><div class="kc-t">'+esc((d&&d.error)||'Fehler')+'</div></div>'; return; }
-  const n=d.deleted!=null?d.deleted:(d.would_delete!=null?d.would_delete:(d.count||0));
-  const freed=d.freed_mb!=null?d.freed_mb:d.reclaim_mb;
+  // v4.2-W89: im Probelauf zuerst would_delete lesen. Der Rueckfall stand hier
+  // schon, griff aber nie — nc.storage.cleanup zaehlte den Probelauf in
+  // `deleted`, und `d.deleted!=null` ist bei einer 0 wahr. Seit W89 trennt das
+  // Modul beides, also muss die Abfrage der Reihenfolge folgen.
+  const n=dry?(d.would_delete!=null?d.would_delete:(d.count||0))
+             :(d.deleted!=null?d.deleted:(d.count||0));
+  // Und die MB-Angabe: gelesen wurden `freed_mb`/`reclaim_mb`, geliefert hat
+  // das Modul immer nur Bytes — die Zeile zeigte deshalb nie eine Groesse.
+  const fb=dry?d.would_free_bytes:d.freed_bytes;
+  const freed=d.freed_mb!=null?d.freed_mb
+              :(fb!=null?Math.round(fb/1048576):d.reclaim_mb);
   out.innerHTML='<div class="kc-row'+(dry?' sev-medium':' sev-info')+'"><div><div class="kc-t">'+
     (dry?'Vorschau: ':'Gelöscht: ')+n+' Aufnahmen'+(freed!=null?' · '+ops6Mb(freed):'')+'</div>'+
     (dry?'<div class="kc-d">Prüfen, dann „Wirklich löschen".</div>':'')+'</div></div>';

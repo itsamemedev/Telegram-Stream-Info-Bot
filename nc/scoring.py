@@ -81,10 +81,20 @@ def compute_quality_score(inspect_data: dict, file_size: int,
                 components["container"] += 5
                 if duration_secs and abs(dur - duration_secs) / max(dur, 1) < 0.05:
                     components["container"] += 5  # well-matched duration
-            br = int(fmt.get("bit_rate") or 0)
-            if br >= 1_000_000:
-                pass    # bitrate already factored in video/audio
-        except Exception: pass
+            # v4.2-W89: hier standen zwei Zeilen, die `fmt["bit_rate"]` lasen
+            # und im Treffer `pass` machten — mit dem Kommentar "bitrate
+            # already factored in video/audio". Sie vergaben also keinen
+            # Punkt, konnten aber bei einem unlesbaren Wert die ganze
+            # Container-Bewertung in den except-Zweig reissen und die
+            # Dauer-Punkte mitnehmen. Ein Lesevorgang, der nur schiefgehen
+            # kann, ist schlechter als keiner.
+        except Exception:
+            # v4.2-W89: war `except Exception: pass` — der einzige der vier
+            # Bloecke ohne Notiz. Video und Audio melden ihren Parse-Fehler,
+            # der Container schwieg: eine Aufnahme verlor bis zu 10 Punkte,
+            # und in `notes` stand nichts, woran der Betreiber das haette
+            # sehen koennen.
+            notes.append("container parse error")
 
     # SIZE 0-35 (sanity check — recording shouldn't be tiny)
     mb = (file_size or 0) / 1024 / 1024
@@ -159,7 +169,18 @@ def build_report(data: dict, live: dict) -> str:
     if videos:
         parts += ["", "🎬 <b>Letzte Videos</b>"]
         for i, v in enumerate(videos, 1):
-            desc = short(safe(v.get("desc"), ""), 50)
-            parts.append(f"  {i}. <a href=\"{safe(v.get('url',''))}\">{desc or 'Video'}</a>")
+            # v4.2-W89: erst SCHNEIDEN, dann maskieren. Hier stand
+            # `short(safe(...), 50)`, also die umgekehrte Reihenfolge — und
+            # damit schneidet die 50-Zeichen-Grenze mitten in eine
+            # HTML-Entitaet: aus "&amp;" wird "&am", aus "&#39;" wird "&#3".
+            # Telegram parst den Report als HTML und lehnt dann die GANZE
+            # Nachricht mit "can't parse entities" ab — nicht die eine Zeile.
+            # Ein Titel mit "&" oder "<" an der richtigen Stelle genuegt, und
+            # der Betreiber bekommt statt des Reports gar nichts. Zwei Zeilen
+            # weiter oben (SecUID) stand die Reihenfolge immer richtig; das
+            # hier war ein Versehen, keine Absicht.
+            roh = str(v.get("desc") or "").strip()
+            desc = safe(short(roh, 50) if roh else "Video")
+            parts.append(f"  {i}. <a href=\"{safe(v.get('url',''))}\">{desc}</a>")
 
     return "\n".join(parts)
