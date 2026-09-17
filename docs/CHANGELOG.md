@@ -11,6 +11,54 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Behoben — der Rollback auf eine migrierte Datenbank war unsichtbar (v4.2 W85)
+
+Das Schema wird bei jedem Start idempotent nachgezogen: `CREATE TABLE IF NOT
+EXISTS`, `_migrate_columns`, `ddlsafe`. Das geht **vorwärts** und beantwortet
+die eine Frage nicht, die über den gefährlichen Fall dieses Deploy-Modells
+entscheidet: *ist die Datenbank schon von einer neueren Fassung angefasst
+worden?*
+
+Ausgeliefert wird per ZIP direkt gegen Produktion, und der Rollback ist „die
+vorige ZIP wieder drüberlegen". Die Datenbank rollt dabei **nicht** mit
+zurück. Neue Spalten und Tabellen stören alten Code nicht; gefährlich ist eine
+Spalte, deren **Bedeutung** sich geändert hat — und die sieht man erst an
+falschen Zahlen.
+
+`nc/schemastand.py` ist ein Zähler und ein Vergleich, kein Migrationsrahmen:
+
+| Stand | Bedeutung | Reaktion |
+|---|---|---|
+| `== ERWARTET` | Normalfall | **still** — eine Meldung bei jedem gesunden Start erzieht zum Überlesen |
+| `< ERWARTET` | frisch ausgeliefert | eine Zeile auf INFO, dann hochschreiben |
+| `> ERWARTET` | **Rollback auf migrierte DB** | ERROR mit beiden Zahlen und dem Weg heraus |
+
+Der zu neue Stand wird **nicht** heruntergeschrieben — das würde genau die
+Spur löschen, die den Fall beim nächsten Start wieder sichtbar macht. Der Bot
+läuft weiter (er ist mehr als das Dashboard); `SCHEMA_STAND_STRENG=1` macht
+daraus einen Startfehler.
+
+### Hinzugefügt — welcher Stand läuft hier eigentlich? (v4.2 W85)
+
+`tools/deploy.sh` liefert sauber aus, aber nichts sagte hinterher, ob der
+laufende Bestand einem Commit entspricht. Ein Handgriff direkt auf dem Server
+war unsichtbar und wurde beim nächsten Deploy wortlos überschrieben — samt der
+Störung, die er behoben hatte. Das ist die einzige echte Lücke des ZIP-Wegs,
+und sie kostet eine Datei.
+
+`tools/build_release.py` legt jetzt **vor** dem Packen eine
+`AUSLIEFERUNG.json` ins Archiv (Commit, Zweig, ob der Arbeitsbaum sauber war,
+Zeitpunkt, Version). `nc/auslieferung.py` liest sie; ohne Datei wird `git`
+gefragt, ohne beides lautet die Antwort ehrlich „unbekannt" — ein Fehlalarm
+auf der Entwicklungsmaschine erzöge dazu, die Meldung auch auf dem Server zu
+überlesen. Gemeldet wird beim Start, in `/healthz` und in `/api/version`.
+
+Was es **nicht** tut: Dateien nachprüfen. Ein Hash über den Bestand klänge
+gründlicher, wäre aber bei jeder `.pyc` und jedem lokalen Eingriff rot — und
+eine Meldung, die immer rot ist, liest niemand. Gefragt ist die Herkunft, nicht
+die Unversehrtheit.
+
+
 ### Sicherheit — das Deck bindet nicht mehr offen, wenn niemand die Tür hält (v4.2 W84)
 
 `_auth_guard` macht **gar nichts**, wenn weder `DASHBOARD_TOKEN` noch

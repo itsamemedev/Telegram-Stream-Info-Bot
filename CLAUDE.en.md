@@ -171,6 +171,20 @@ was listed at 17805 and sat at 17839. An index whose line numbers are off by
 `ncpatch map --check` has been in the verification chain and in CI since
 v4.2-W83.
 
+**Forward migration does not answer the rollback question.** The schema is
+brought up idempotently on every start — right, and it stays. It says nothing
+about the one genuinely dangerous case: delivery is a ZIP over the estate,
+straight against production, rollback is "put the previous ZIP back", and the
+**database does not roll back with it**. Since v4.2-W85 the database carries a
+counter (`nc/schemastand.py`, `ERWARTET`): equal is **silent**, lower is one
+INFO line, **higher** is an ERROR — and it is not written back down, or the
+trace would be gone after one start.
+
+**The running estate could not be tied to a commit.** Since v4.2-W85
+`build_release.py` writes an `AUSLIEFERUNG.json` into the archive and
+`nc/auslieferung.py` reports it at startup, in `/healthz` and `/api/version` —
+from the archive, else from `git`, else honestly "unknown".
+
 **Module constants freeze the `.env`.** The `.env` is partly loaded only after
 the first imports. Read configuration through a function (`_backend_conf()`),
 never as a module constant.

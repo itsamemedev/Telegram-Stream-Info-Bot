@@ -925,6 +925,8 @@ from nc import bandbreite as _nc_band      # v4.1-W26: Aufnahme-Durchsatz
 from nc import eventlog as _nc_eventlog   # v4.1-W29: Protokoll ohne Blockade
 from nc import dashauth as _nc_dashauth   # v4.1-W30: ist das Deck offen?
 from nc import webserver as _nc_webserver  # v4.2-W84: Server + Bindung
+from nc import schemastand as _nc_schemastand  # v4.2-W85: Schema-Zaehler
+from nc import auslieferung as _nc_auslieferung  # v4.2-W85: welcher Stand laeuft?
 from nc import fehlertext as _nc_fehlertext  # v4.1-W30: Fehlertext nach aussen
 from nc import outcomes as _nc_outcomes   # v4.1-W26: Ausgaenge der Aufnahmen
 from nc import suche as _nc_suche         # v4.1-W26: bestandsweite Suche
@@ -3748,6 +3750,11 @@ def _create_index_safe(conn, sql_sqlite, sql_mariadb=None):
         conn.execute(sql_sqlite)
 
 
+# v4.2-W85: der beim Start gelesene Schema-Stand, damit /healthz ihn nennen
+# kann, ohne bei jeder Monitoring-Abfrage erneut in die Datenbank zu greifen.
+_SCHEMA_STAND = 0
+
+
 def init_db():
     """F46: backend-aware Schema. TEXT-Spalten in MariaDB werden bei UNIQUE/Index
        zu VARCHAR(255) — sonst meckert MariaDB. Datums-Werte bleiben als ISO-
@@ -3774,6 +3781,41 @@ def init_db():
             conn, pk=pk, txt_idx=txt_idx, txt_long=txt_long, txt_big=txt_big,
             iv=iv, tbl_opts=tbl_opts, is_my=is_my, ts=ts,
             _create_index_safe=_create_index_safe, _migrate_columns=_migrate_columns, log=log)
+
+        # v4.2-W85: der Schema-Zaehler. Das Schema wird oben idempotent
+        # nachgezogen — das geht VORWAERTS und beantwortet die eine Frage
+        # nicht, die ueber den gefaehrlichen Fall entscheidet: ist diese
+        # Datenbank schon von einer NEUEREN Fassung angefasst worden?
+        #
+        # Ausgeliefert wird per ZIP direkt gegen Produktion, und der Rollback
+        # ist "die vorige ZIP wieder drueberlegen". Die Datenbank rollt dabei
+        # NICHT mit zurueck. Neue Spalten und Tabellen stoeren alten Code
+        # nicht; gefaehrlich ist eine Spalte, deren BEDEUTUNG sich geaendert
+        # hat — und die sieht man erst an falschen Zahlen.
+        #
+        # ALLES innerhalb des with-Blocks: nach dem Verlassen ist die
+        # Verbindung geschlossen bzw. zurueck im Pool (nc-datenbank).
+        global _SCHEMA_STAND
+        _nc_schemastand.lege_an(conn, pk=pk, txt_idx=txt_idx,
+                                txt_long=txt_long, tbl_opts=tbl_opts)
+        _SCHEMA_STAND = _nc_schemastand.lies(conn)
+        _stufe, _text = _nc_schemastand.pruefe(_SCHEMA_STAND)
+        if _stufe == "fehler":
+            log.error("=" * 70)
+            log.error("%s", _text)
+            log.error("=" * 70)
+            if _nc_schemastand.streng():
+                raise RuntimeError(_text)
+            # Bewusst NICHT festschreiben: den hoeheren Stand
+            # herunterzuschreiben wuerde genau die Spur loeschen, die diesen
+            # Fall beim naechsten Start wieder sichtbar macht.
+        else:
+            if _stufe == "info":
+                log.info("%s", _text)
+            _nc_schemastand.schreibe(
+                conn, _nc_schemastand.ERWARTET, BOT_VERSION,
+                datetime.now(timezone.utc).isoformat())
+            _SCHEMA_STAND = _nc_schemastand.ERWARTET
 # F21: Archive-Helpers
 
 
@@ -17955,8 +17997,19 @@ def healthz():
         pass
     ok = hb_fresh and db_ok
     _zomb = _zombie_child_count()                       # v4.0-W88
+    # v4.2-W85: Herkunft und Schema-Stand gehoeren hierher. /healthz ist die
+    # Stelle, an der der Betreiber (und jedes Monitoring) ohnehin nachsieht —
+    # und die Frage "welcher Stand laeuft da eigentlich" liess sich bis hierher
+    # gar nicht beantworten. Der Wert ist zwischengespeichert; kein git-Aufruf
+    # je Abfrage.
+    _ausl = _nc_auslieferung.stand()
     return jsonify(ok=ok, db=db_ok, loops=hb_fresh, brain=brain_ok,
                    version=BUILD_STAMP,                  # v4.0-W88
+                   commit=_ausl["kurz"],                 # v4.2-W85
+                   commit_quelle=_ausl["quelle"],        # archiv | git | unbekannt
+                   commit_sauber=_ausl["sauber"],        # beim Bauen sauber?
+                   schema=_SCHEMA_STAND,                 # v4.2-W85
+                   schema_erwartet=_nc_schemastand.ERWARTET,
                    uptime_s=_uptime_s(),                 # v4.0-W88
                    procs=len(active_processes),          # v4.0-W88: aktive Kindprozesse
                    zombies=_zomb,                        # v4.0-W88: defunkte Kinder (W75-Klasse)
@@ -22266,6 +22319,14 @@ async def report_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def run_bot():
     if not BOT_TOKEN:
         raise RuntimeError("BOT_TOKEN fehlt in .env")
+
+    # v4.2-W85: als ERSTE Zeile im Betriebslog, welcher Stand hier laeuft.
+    # Ausgeliefert wird per ZIP ueber den Bestand — bis hierher liess sich
+    # nicht beantworten, ob das Laufende ueberhaupt einem Commit entspricht.
+    # Ein Handgriff direkt auf dem Server war unsichtbar und wurde beim
+    # naechsten Deploy wortlos ueberschrieben, samt der Stoerung, die er
+    # behoben hatte.
+    log.info("%s", _nc_auslieferung.text())
     # init_db + _BOT_START_TIME passieren jetzt in main() vor Flask-Thread-Start
     # (F24-Hang-Fix). Falls run_bot direkt ohne main aufgerufen wird, hier nochmal:
     if _BOT_START_TIME is None:
