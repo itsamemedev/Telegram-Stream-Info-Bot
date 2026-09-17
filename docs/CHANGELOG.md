@@ -11,6 +11,93 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Hinzugefügt — sieben blinde Module unter Vertrag (v4.2 W87)
+
+`tools/ueberdeckung.py` hat in W86 zwei Module mit **0 %** ausgewiesen. Beide
+tragen eine Stelle, die der Quelltext selbst als teuer erkaufte Korrektur
+ausweist — und die nichts absicherte.
+
+**`nc/director.py` (0 % → 96 %) — die Geldregel.** CLAUDE.md führt sie als
+eigenen Abschnitt: TikTok-Gifts gehen an den **getrackten Streamer**, nicht an
+eigene Kanäle. AZRAEL hat sich dafür einmal bedankt, als wären es eigene
+Donations (V37-P4a: „peinlich und irreführend"). Der Vorgabewert von
+`AZRAEL_THANK_TRACKED_GIFTS` wurde daraufhin umgedreht — und seither hielt ihn
+**nichts**. Wer ihn beim Aufräumen auf `"1"` dreht oder die Verzweigung
+umkehrt, fiel in keinem Lauf auf.
+
+**`nc/scraper.py` (0 % → 92 %) — die beiden `resp.release()`.** Der Kommentar
+im Quelltext: *„Vorher leakte jeder Retry eine Connection; bei
+limit_per_host=8 blockiert der nächste GET genau im 429-Sturm
+(Pool-Starve)."* Reine Aufräum-Aufrufe — wer sie beim Umbau verliert, merkt es
+nicht am nächsten Tag, sondern beim nächsten 429-Sturm. Und dann sieht es aus,
+als hänge TikTok, nicht der Pool.
+
+Gefahren wird **ohne Netz und ohne Uhr**: die Sitzung ist eine Attrappe,
+`__init__` wird übersprungen (`object.__new__`), die Zeit kommt über ein
+ersetztes Modul-Attribut. Ein Vertrag, der Sekunden verbraucht, wird beim
+nächsten Aufräumen als „langsam" herausgeworfen.
+
+**19 Mutationsproben, 19 gefangen.** Ein Vertrag, der auf gesundem Code grün
+ist, aber die Regression nicht fängt, ist wertlos — deshalb wurde jede
+gesicherte Aussage gegengeprüft, indem die Stelle im Produktionscode gezielt
+gebrochen und der Vertrag gefahren wurde:
+
+| Mutation | gefangen |
+|---|---|
+| `AZRAEL_THANK_TRACKED_GIFTS`-Vorgabe auf `"1"` gedreht | ✓ |
+| Gift-Verzweigung umgekehrt | ✓ |
+| Chatter-Deckel entfernt · Highlight-Deckel entfernt | ✓ |
+| Momentum-Fenster 20 s → 200 s · Fenster invertiert | ✓ |
+| `greeted` wird nie gesetzt · Gift-Vorrang ignoriert | ✓ |
+| Frage-Schwelle aufgeweicht | ✓ |
+| `release()` im Wiederholungspfad entfernt | ✓ |
+| `release()` im Nicht-200-Pfad entfernt | ✓ |
+| 404 wird mitwiederholt · Ausnahme nach 3 Versuchen geschluckt | ✓ |
+| `html.unescape` weggelassen · Schreibung beim Nutzervergleich | ✓ |
+| `avatar`- und `heart`-Rückfall gekappt · Video-Deckel entfernt | ✓ |
+| `configure_scraper(None)` löscht die Kopfzeilen | ✓ |
+
+**Fünf weitere Module in derselben Welle**, nach demselben Verfahren und mit
+je eigener Mutationsprobe:
+
+| Modul | vorher | nachher |
+|---|---|---|
+| `nc/scoring.py` | 5 % | **100 %** |
+| `nc/preflight.py` | 13 % | **100 %** |
+| `nc/tiktokcheck.py` | 14 % | **100 %** |
+| `nc/archiverules.py` | 16 % | **99 %** |
+| `nc/storage.py` | 16 % | **100 %** |
+
+Insgesamt **47 Mutationsproben, 47 gefangen.** Darunter die teuren:
+`dry_run` ausgehebelt (der Probelauf löscht dann wirklich), der Pfad-Riegel
+`_safe_archive_filename` entfernt, `follow_symlinks=False` aufgegeben,
+`os.path.exists(target)` entfernt (die Archivfassung wird überschrieben),
+HTTP 404 → 410 in der Löschempfehlung.
+
+Die Überdeckung steigt damit von 47,4 % auf **50,3 %** (10.248 → 9.695
+ungeprüfte Anweisungen); die Grundlinie ist entsprechend gesenkt.
+
+### Gemerkt — der Bytecode-Cache macht Mutationsproben wertlos (v4.2 W87)
+
+Beim Gegenprüfen der Proben ist ein grüner Vertrag nachträglich „gefallen",
+obwohl `git status` sauber war und der AST `st == 404` zeigte. Python prüft
+seinen Bytecode-Cache über **(mtime, Größe)**. Die Mutation `404` → `410` ist
+größengleich; wird sie innerhalb derselben mtime-Sekunde zurückgeschrieben,
+hält Python die `.pyc` für gültig und führt **weiter den mutierten Code aus**.
+
+Das entwertet die Probe in beide Richtungen: ein „gefangen" kann von einer
+alten Mutation stammen, ein „nicht gefangen" von einer alten gesunden Fassung.
+Alle Proben dieser Welle wurden deshalb wiederholt — mit geleertem
+`__pycache__` und `PYTHONDONTWRITEBYTECODE=1`. Steht so jetzt auch in
+CLAUDE.md.
+
+`aiohttp` kommt in die Minimal-Abhängigkeiten der beiden CI-Jobs:
+`nc/scraper.py` importiert es auf Modul-Ebene, ohne das Paket fiele sein
+Vertrag am Import statt an einer Aussage. Es steht ohnehin in
+`requirements.txt` und `requirements-smoke.txt` — neu ist nur, dass ein
+Vertrag es braucht.
+
+
 ### Behoben — die Verträge waren nur über ihren eigenen Runner fahrbar (v4.2 W86)
 
 22.000 Zeilen, rund 100 Vertragsfunktionen, und genau **ein** Weg hinein:

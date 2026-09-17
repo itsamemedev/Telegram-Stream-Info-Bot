@@ -135,13 +135,35 @@ ein `tiktok_bot.db` **im Arbeitsverzeichnis** an. Beim zweiten Lauf starb
 die Prüfkette fährt und was die Sperre ist; pytest kommt daneben, für die
 Arbeit am einzelnen Befund.
 
-**Die Überdeckung ist seit v4.2-W86 gemessen: 47,4 %** von `nc/` und `brain/`
-(19.495 Anweisungen, 10.248 davon ungeprüft). Das ist die Zahl, die den 323
+**Die Überdeckung ist seit v4.2-W86 gemessen: 50,3 %** von `nc/` und `brain/`
+(19.495 Anweisungen, 9.695 davon ungeprüft). Das ist die Zahl, die den 433
 Verträgen erst ihren Maßstab gibt — „alles grün" sagt sonst nichts darüber,
-wie viel Bestand dabei angefasst wurde. `nc/scraper.py` und `nc/director.py`
-stehen auf null. Gesperrt wird wie bei W65/W66 nur der Zuwachs, und zwar die
-**Anzahl** ungeprüfter Anweisungen, nicht der Prozentsatz: ein Prozentsatz
-springt auch dann, wenn nichts schlechter wurde.
+wie viel Bestand dabei angefasst wurde. Gesperrt wird wie bei W65/W66 nur der
+Zuwachs, und zwar die **Anzahl** ungeprüfter Anweisungen, nicht der
+Prozentsatz: ein Prozentsatz springt auch dann, wenn nichts schlechter wurde.
+
+**Sieben Module standen auf null bis 16 %** und sind seit v4.2-W87 bei 92 bis
+100 %: `director`, `scraper`, `scoring`, `preflight`, `tiktokcheck`,
+`archiverules`, `storage`. In `director.py` lag dabei eine Geldregel aus
+diesem Dokument ungesichert — TikTok-Gifts gehen an den **getrackten
+Streamer**, nicht an eigene Kanäle; AZRAEL hat sich dafür einmal bedankt
+(V37-P4a, „peinlich und irreführend"), der Vorgabewert wurde umgedreht, und
+seither hielt ihn nichts. In `scraper.py` waren es die beiden
+`resp.release()`, ohne die jeder Wiederholungsversuch eine Verbindung leckt.
+
+**Jede gesicherte Aussage ist per Mutationsprobe gegengeprüft** — die Stelle
+im Produktionscode gezielt brechen und nachsehen, ob der Vertrag fällt. Ein
+Vertrag, der auf gesundem Code grün ist, aber die Regression nicht fängt, ist
+wertlos.
+
+**Dabei die Falle, die diese Proben selbst wertlos macht:** Python prüft den
+Bytecode-Cache über **(mtime, Größe)**. Eine Mutation wie `404` → `410` ist
+größengleich; wird sie innerhalb derselben mtime-Sekunde zurückgeschrieben,
+hält Python die `.pyc` für gültig und führt **weiter den mutierten Code aus**.
+Genau so ist hier ein grüner Vertrag nachträglich „gefallen", obwohl `git
+status` sauber war. Vor jeder Mutationsreihe deshalb
+`find . -name __pycache__ -exec rm -rf {} +` und mit
+`PYTHONDONTWRITEBYTECODE=1` fahren.
 
 Die statischen Verträge in `test_restream.py` verankern sich an **wörtlichem
 Quelltext** von `bot.py`. Ändert sich eine Signatur, kippt der Vertrag,

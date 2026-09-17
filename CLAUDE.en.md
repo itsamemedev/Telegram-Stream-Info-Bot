@@ -199,10 +199,19 @@ dbx_t already exists".
 `conftest.py` calls the same `richte_testdatenbank_ein()` as `main()`. **Both
 ways stay** — `python test_nc_modules.py` remains what the chain runs.
 
-**Coverage is measured since v4.2-W86: 47.4 %** of `nc/` and `brain/` (19,495
-statements, 10,248 of them unexercised). That is the number that gives the 323
+**Coverage is measured since v4.2-W86: 50.3 %** of `nc/` and `brain/` (19,495
+statements, 9,695 of them unexercised). That is the number that gives the 433
 contracts their scale. Only growth is gated, and by the **count** of
-unexercised statements, not by the percentage.
+unexercised statements, not by the percentage. Seven modules stood between
+zero and 16 % and are at 92–100 % since v4.2-W87 — among them an unguarded
+money rule (TikTok gifts belong to the *tracked* streamer) and the two
+`resp.release()` calls without which every retry leaks a connection.
+
+Every guarded claim is mutation-checked. Beware the trap that voids those
+checks: Python validates its bytecode cache on **(mtime, size)**. A
+same-length mutation (`404` → `410`) restored within the same mtime second
+leaves a `.pyc` Python considers valid, so it keeps running the mutated code.
+Clear `__pycache__` and run with `PYTHONDONTWRITEBYTECODE=1`.
 
 **Module constants freeze the `.env`.** The `.env` is partly loaded only after
 the first imports. Read configuration through a function (`_backend_conf()`),
