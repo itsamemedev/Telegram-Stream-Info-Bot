@@ -44,3 +44,9 @@ NIGHTCRAWLER_v37_*.zip
 
 # Test-Umgebung dieser Maschine, nie ins Repo
 .venv*/
+
+# v4.2-W85: der Auslieferungs-Stempel wird beim Packen erzeugt
+# (tools/build_release.py) und faehrt NUR im ZIP mit. Im Repo waere er
+# sinnlos und stuende bei jedem Build im Diff — die Frage "welchem Commit
+# entspricht dieser Bestand" stellt sich nur dort, wo es kein .git gibt.
+AUSLIEFERUNG.json

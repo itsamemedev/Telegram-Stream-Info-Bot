@@ -18,6 +18,7 @@ Am Ende laeuft eine Gegenprobe: kein Treffer auf .env/.sqlite/.pem/.key, und
 jede enthaltene .py-Datei wird aus dem ENTPACKTEN Archiv nachcompiliert. Ein
 Archiv, das nicht compiliert, verlaesst diese Maschine nicht.
 """
+import datetime
 import hashlib
 import os
 import py_compile
@@ -50,6 +51,11 @@ DATEIEN = [
     # faellt die Kette Feeder -> Schleife -> Standbild ins Leere und die Ecke
     # bleibt leer, ohne dass irgendwo ein Fehler steht.
     "azrael_avatar.png",
+    # v4.2-W85: der Stempel, der sagt, welchem Commit dieses Archiv
+    # entspricht. Wird unten kurz vor dem Packen erzeugt — ohne ihn kann
+    # /healthz die Frage "welcher Stand laeuft da eigentlich" nicht
+    # beantworten, und ein Handgriff direkt auf dem Server bleibt unsichtbar.
+    "AUSLIEFERUNG.json",
 ]
 # locales/ traegt den Uebersetzungskatalog (v4.1-W6): fehlt er, faellt jede
 # Ausgabe auf Deutsch zurueck — ohne Fehlermeldung, weil genau das der
@@ -77,6 +83,29 @@ def erlaubt(relpfad, name):
 
 
 def main():
+    # v4.2-W85: den Auslieferungs-Stempel erzeugen, BEVOR gepackt wird —
+    # sonst faehrt der Stand des vorigen Laufs mit. Schreiber und Leser
+    # teilen sich die Form in nc/auslieferung.py; zwei Stellen, die ein
+    # Format nebeneinander pflegen, laufen sonst auseinander.
+    sys.path.insert(0, WURZEL)
+    from nc import auslieferung as _ausl
+    from nc import version as _ver
+    stempel = _ausl.schreibe(
+        WURZEL, _ver.VERSION,
+        datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"))
+    print(f"Auslieferung: {(stempel['commit'] or '?')[:12]} "
+          f"Zweig {stempel['zweig'] or '?'} v{stempel['version']}")
+    if stempel.get("sauber") is False:
+        # Kein Abbruch: ein Notfall-Build aus einem unsauberen Baum ist ein
+        # legitimer Vorgang. Aber er muss im Protokoll stehen UND in der
+        # Datei, sonst behauptet /healthz spaeter eine Herkunft, die nicht
+        # stimmt.
+        print("  ACHTUNG: Arbeitsbaum NICHT sauber — dieses Archiv "
+              "entspricht keinem Commit.")
+    elif not stempel.get("commit"):
+        print("  Hinweis: kein git-Arbeitsbaum — der Stempel bleibt leer, "
+              "/healthz meldet die Herkunft als unbekannt.")
+
     drin = []
     with zipfile.ZipFile(ZIEL, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as z:
         for f in DATEIEN:

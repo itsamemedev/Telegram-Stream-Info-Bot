@@ -12261,6 +12261,175 @@ def _test_v42_w84_deck_bindet_dicht_und_laeuft_auf_waitress():
     ok("W84: ohne TLS traegt waitress das Deck, mit TLS sagt es warum nicht")
 
 
+def _test_v42_w85_schemastand_und_herkunft():
+    """v4.2-W85: der Rollback auf eine migrierte Datenbank war unsichtbar,
+    und der laufende Bestand liess sich keinem Commit zuordnen.
+
+    **Der Schema-Zaehler.** Das Schema wird bei jedem Start idempotent
+    nachgezogen — CREATE TABLE IF NOT EXISTS, _migrate_columns, ddlsafe. Das
+    geht VORWAERTS und beantwortet die eine Frage nicht, die ueber den
+    gefaehrlichen Fall dieses Deploy-Modells entscheidet: ist die Datenbank
+    schon von einer NEUEREN Fassung angefasst worden?
+
+    Ausgeliefert wird per ZIP direkt gegen Produktion, und der Rollback ist
+    "die vorige ZIP wieder drueberlegen". Die Datenbank rollt dabei nicht mit
+    zurueck. Neue Spalten und Tabellen stoeren alten Code nicht; gefaehrlich
+    ist eine Spalte, deren BEDEUTUNG sich geaendert hat — und die sieht man
+    erst an falschen Zahlen.
+
+    **Die Herkunft.** tools/deploy.sh liefert sauber aus (Staging, Pruefung,
+    Umschwenken), aber nichts sagte hinterher, ob der laufende Bestand einem
+    Commit entspricht. Ein Handgriff direkt auf dem Server war unsichtbar und
+    wurde beim naechsten Deploy wortlos ueberschrieben — samt der Stoerung,
+    die er behoben hatte.
+
+    Gefahren wird gegen eine ECHTE SQLite-Datenbank, nicht gegen den
+    Quelltext: die drei Faelle des Zaehlers sind Verhalten, kein Wortlaut.
+    """
+    import sqlite3 as _sq
+    import sys as _sys
+    import tempfile as _tf
+    hier = os.path.dirname(os.path.abspath(__file__))
+    if hier not in _sys.path:
+        _sys.path.insert(0, hier)
+    from nc import auslieferung as A
+    from nc import schemastand as S
+
+    # ── 1) Der Zaehler gegen eine echte Datenbank ───────────────────────
+    class _Zeile(dict):
+        pass
+
+    def _fabrik(cur, zeile):
+        return _Zeile(zip([b[0] for b in cur.description], zeile))
+
+    pfad = os.path.join(_tf.mkdtemp(), "w85.sqlite")
+    conn = _sq.connect(pfad)
+    conn.row_factory = _fabrik
+    try:
+        # Dieselben Platzhalter wie das uebrige Schema — die Tabelle muss auf
+        # BEIDEN Backends entstehen (Skill nc-datenbank).
+        S.lege_an(conn, pk="INTEGER PRIMARY KEY AUTOINCREMENT",
+                  txt_idx="TEXT", txt_long="TEXT", tbl_opts="")
+        S.lege_an(conn, pk="INTEGER PRIMARY KEY AUTOINCREMENT",
+                  txt_idx="TEXT", txt_long="TEXT", tbl_opts="")   # idempotent
+
+        assert S.lies(conn) == 0, \
+            "eine frische Datenbank muss 0 melden, nicht abstuerzen — eine " \
+            "gewachsene von vor W85 sieht genauso aus"
+
+        # Schreiben und wiederlesen
+        S.schreibe(conn, 1, "4.3.1", "2026-09-13T00:00:00+00:00")
+        assert S.lies(conn) == 1
+        # Zweimal schreiben darf keine zweite Zeile erzeugen: eine Tabelle,
+        # die bei jedem Start waechst, ist ein Zwischenspeicher, kein Zustand.
+        S.schreibe(conn, 1, "4.3.1", "2026-09-13T00:00:01+00:00")
+        anz = conn.execute("SELECT COUNT(*) AS n FROM %s" % S.TABELLE
+                           ).fetchone()["n"]
+        assert anz == 1, "der Zaehler hat %d Zeilen statt einer" % anz
+
+        # ── 2) Die drei Faelle ──────────────────────────────────────────
+        stufe, text = S.pruefe(S.ERWARTET)
+        assert stufe == "still" and text == "", \
+            "der gesunde Start muss STILL sein — eine Meldung bei jedem " \
+            "gesunden Start erzieht dazu, Meldungen zu ueberlesen"
+
+        stufe, text = S.pruefe(S.ERWARTET - 1)
+        assert stufe == "info" and str(S.ERWARTET) in text, \
+            "der frisch ausgelieferte Fall gehoert auf INFO, mit beiden Zahlen"
+
+        stufe, text = S.pruefe(S.ERWARTET + 3)
+        assert stufe == "fehler", \
+            "eine Datenbank, die NEUER ist als der Code, ist der einzige " \
+            "wirklich gefaehrliche Fall — der darf nicht auf info landen"
+        assert str(S.ERWARTET + 3) in text and str(S.ERWARTET) in text, \
+            "die Meldung nennt nicht beide Zahlen: %s" % text
+        assert "Rollback" in text and "Sicherung" in text, \
+            "die Meldung nennt den Grund oder den Weg heraus nicht: %s" % text
+    finally:
+        conn.close()
+
+    # ── 3) Der Schalter ────────────────────────────────────────────────
+    alt = os.environ.get("SCHEMA_STAND_STRENG")
+    try:
+        os.environ.pop("SCHEMA_STAND_STRENG", None)
+        assert S.streng() is False, "ohne Schalter laeuft der Bot weiter"
+        os.environ["SCHEMA_STAND_STRENG"] = "1"
+        assert S.streng() is True, \
+            "eine Regel ohne Ausweg wird umgangen — der Schalter muss greifen"
+    finally:
+        if alt is None:
+            os.environ.pop("SCHEMA_STAND_STRENG", None)
+        else:
+            os.environ["SCHEMA_STAND_STRENG"] = alt
+
+    # ── 4) init_db schreibt den Stand wirklich fest ─────────────────────
+    # Der Quelltext-Blick ist hier die schwaechere Pruefung, aber init_db
+    # gegen eine echte Datenbank zu fahren hiesse bot.py zu importieren —
+    # das tut test_smoke.py, und dort haengt der Rundlauf (siehe unten).
+    b = io.open("bot.py", encoding="utf-8").read()
+    # rumpf_ab statt eines festen Fensters: CLAUDE.md nennt `src[i:i + 3000]`
+    # namentlich als Bruchstelle, und in W62 hat genau das zugeschlagen.
+    rumpf = rumpf_ab(b, b.index("def init_db("))
+    assert "_nc_schemastand.lege_an(" in rumpf, "der Zaehler wird nie angelegt"
+    assert "_nc_schemastand.schreibe(" in rumpf, "der Stand wird nie festgeschrieben"
+    assert "raise RuntimeError" in rumpf, "SCHEMA_STAND_STRENG greift nicht"
+
+    # ── 5) Die Herkunft ────────────────────────────────────────────────
+    d = A.stand(frisch=True)
+    assert set(d) >= {"commit", "kurz", "zweig", "sauber", "quelle"}, d
+    assert d["quelle"] in ("archiv", "git", "unbekannt"), d["quelle"]
+    assert d["kurz"] == (d["commit"] or "")[:12]
+
+    # Hier laeuft es aus einem git-Arbeitsbaum — dann MUSS die Herkunft
+    # bekannt sein. Faellt das, liest das Modul den Baum nicht mehr.
+    if os.path.isdir(os.path.join(hier, ".git")):
+        assert d["quelle"] == "git" and d["commit"], \
+            "aus einem git-Arbeitsbaum heraus darf die Herkunft nicht " \
+            "unbekannt sein: %r" % d
+
+    # Die ausgelieferte Datei hat Vorrang: auf dem Server gibt es kein .git,
+    # dort ist sie die einzige Wahrheit.
+    import json as _json
+    import tempfile as _tf2
+    leer = _tf2.mkdtemp()
+    with io.open(os.path.join(leer, A.DATEI), "w", encoding="utf-8") as fh:
+        _json.dump({"commit": "a" * 40, "zweig": "main", "sauber": True,
+                    "gebaut_am": "2026-09-13T00:00:00+00:00",
+                    "version": "4.3.1"}, fh)
+    d2 = A.stand(leer, frisch=True)
+    assert d2["quelle"] == "archiv" and d2["kurz"] == "a" * 12, d2
+    assert "a" * 12 in A.text(leer)
+
+    # Ohne Datei UND ohne git: "unbekannt", aber kein Absturz und kein
+    # Fehlalarm — wer aus dem Repo startet, hat keine Auslieferungsdatei.
+    nichts = _tf2.mkdtemp()
+    d3 = A.stand(nichts, frisch=True)
+    assert d3["quelle"] == "unbekannt" and d3["kurz"] == "", d3
+    assert "unbekannt" in A.text(nichts)
+
+    # Ein unsauberer Arbeitsbaum MUSS im Text stehen — sonst behauptet
+    # /healthz eine Herkunft, die es nicht gibt.
+    schmutzig = _tf2.mkdtemp()
+    with io.open(os.path.join(schmutzig, A.DATEI), "w", encoding="utf-8") as fh:
+        _json.dump({"commit": "b" * 40, "zweig": "main", "sauber": False,
+                    "gebaut_am": "", "version": "4.3.1"}, fh)
+    assert "NICHT SAUBER" in A.text(schmutzig), A.text(schmutzig)
+
+    # ── 6) build_release erzeugt den Stempel VOR dem Packen ────────────
+    br = io.open("tools/build_release.py", encoding="utf-8").read()
+    assert "AUSLIEFERUNG.json" in br, \
+        "der Stempel faehrt nicht im Archiv mit — dann kann /healthz die " \
+        "Herkunft auf dem Server nicht kennen"
+    assert br.index("_ausl.schreibe(") < br.index("zipfile.ZipFile(ZIEL"), \
+        "der Stempel wird NACH dem Packen geschrieben — dann faehrt der " \
+        "Stand des vorigen Laufs mit"
+
+    ok("W85: der Schema-Zaehler kennt die drei Faelle, der gefaehrliche ist laut")
+    ok("W85: eine zu neue Datenbank wird nicht heruntergeschrieben")
+    ok("W85: die Herkunft kommt aus dem Archiv, sonst aus git, sonst ehrlich "
+       "\"unbekannt\"")
+
+
 def main():
     tmp = tempfile.mkdtemp()
     configure_db(db_path=os.path.join(tmp, "t.db"), backend="sqlite")
@@ -12509,6 +12678,7 @@ def main():
     _test_v42_w82_zweitversuch_rotiert_wirklich()
     _test_v42_w83_werkzeuge_messen_oder_brechen()
     _test_v42_w84_deck_bindet_dicht_und_laeuft_auf_waitress()
+    _test_v42_w85_schemastand_und_herkunft()
     _test_v42_w60_azrael_cooldown_je_plattform()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)

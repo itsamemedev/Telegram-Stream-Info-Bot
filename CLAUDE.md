@@ -10,7 +10,7 @@ GitHub-Repo trägt Historie, CI und Issues — es ist nicht der Deploy-Weg.
 
 ## Die eine Regel
 
-`bot.py` hat **24.167 Zeilen / 1,2 MB ≈ 295.000 Token**. Diese Datei wird
+`bot.py` hat **24.228 Zeilen / 1,2 MB ≈ 295.000 Token**. Diese Datei wird
 **nie** ganz gelesen und **nie** blind durchsucht. Erst fragen wo etwas steht,
 dann den Ausschnitt holen:
 
@@ -55,7 +55,7 @@ Auf diesem Windows-Rechner heißt der Interpreter **`python`** (3.13.12);
     brain_bridge.py      Adapter Bot ↔ brain/ (M2)
     brain/               KI-Kern: state, rules, router, agents, memory,
                          semantic, knowledge, scheduler, llm, report
-    nc/                  141 Fachmodule: db, scraping, restream, oauth, ledger,
+    nc/                  143 Fachmodule: db, scraping, restream, oauth, ledger,
                          i18n, …
     nc/routes/           36 Flask-Blueprints mit 327 weiteren API-Routen
     locales/             de.json, en.json — der Übersetzungskatalog
@@ -211,6 +211,30 @@ Zeilennummern um 34 danebenliegen, ist schlimmer als keiner: er schickt jedes
 `ncpatch show` an die falsche Stelle. `ncpatch map --check` steht seit v4.2-W83 in der Prüfkette und
 in der CI.
 
+**Vorwärts-Migration beantwortet die Rollback-Frage nicht.** Das Schema wird
+bei jedem Start idempotent nachgezogen — das ist richtig und bleibt. Es sagt
+nur nichts über den einzigen wirklich gefährlichen Fall: Ausgeliefert wird per
+ZIP direkt gegen Produktion, der Rollback ist „die vorige ZIP wieder
+drüberlegen", und die **Datenbank rollt nicht mit zurück**. Neue Spalten und
+Tabellen stören alten Code nicht; gefährlich ist eine Spalte, deren
+*Bedeutung* sich geändert hat, und die sieht man erst an falschen Zahlen.
+
+Seit v4.2-W85 trägt die Datenbank einen Zähler (`nc/schemastand.py`,
+`ERWARTET`). Gleichstand ist **still**, ein niedrigerer Stand eine INFO-Zeile,
+ein **höherer** ein ERROR mit beiden Zahlen — und er wird *nicht*
+heruntergeschrieben, sonst wäre die Spur nach einem Start weg. Hochzählen nur,
+wenn sich die Bedeutung bestehender Daten ändert; für eine neue Tabelle oder
+eine neue Spalte mit Vorgabewert **nicht** — ein Zähler, der bei jeder
+Kleinigkeit springt, meldet nur Rauschen.
+
+**Der laufende Bestand ließ sich keinem Commit zuordnen.** `tools/deploy.sh`
+liefert sauber aus, aber nichts prüfte hinterher die Herkunft: ein Handgriff
+direkt auf dem Server war unsichtbar und wurde beim nächsten Deploy wortlos
+überschrieben. Seit v4.2-W85 schreibt `build_release.py` eine
+`AUSLIEFERUNG.json` ins Archiv, und `nc/auslieferung.py` meldet sie beim Start,
+in `/healthz` und in `/api/version` — aus dem Archiv, ersatzweise aus `git`,
+sonst ehrlich „unbekannt".
+
 **Modul-Konstanten frieren `.env` ein.** `.env` wird teils erst nach den ersten
 Imports geladen. Konfiguration als Funktion lesen (`_backend_conf()`), nie als
 Modul-Konstante.
@@ -317,7 +341,7 @@ Ledger-Einträge sind append-only mit Hash-Kette; Korrektur = Gegenbuchung.
 
 ## Sicherheit
 
-`.env` hat rund 528 Variablen und enthält Cookies, OAuth-Tokens und Stream-Keys — sie
+`.env` hat rund 529 Variablen und enthält Cookies, OAuth-Tokens und Stream-Keys — sie
 liegt nie im Archiv und wird nie ausgegeben. Beim Logging von
 `streamlink`/`ffmpeg`-Kommandos werden Cookie-Header redacted (F4); dieser
 Redact-Pfad darf bei Änderungen an der Kommandozeile nicht umgangen werden. Das

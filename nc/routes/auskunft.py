@@ -310,8 +310,18 @@ def api_version():
     # BUILD_STAMP nie stand. Die Route lieferte deshalb still build="",
     # und niemand sah es, weil der Footer ohnehin fest verdrahtet war.
     # Der Bot reicht den Stempel seit W116 ueber ctx.cfg herein.
+    # v4.2-W85: die Herkunft dazu. Die Versionsnummer sagt, was gemeint war;
+    # der Commit sagt, was wirklich laeuft. Beides ist noetig, solange per ZIP
+    # ueber den Bestand ausgeliefert wird — ein Handgriff direkt auf dem Server
+    # war bis hierher unsichtbar.
+    from nc import auslieferung as _nc_auslieferung
+    _ausl = _nc_auslieferung.stand()
     return jsonify(ok=True, build=_c().cfg.get("BUILD_STAMP") or _nc_version.build_stamp(),
                    summary=_nc_version.summary_line(),
+                   commit=_ausl["kurz"], commit_quelle=_ausl["quelle"],
+                   commit_zweig=_ausl.get("zweig") or "",
+                   commit_sauber=_ausl["sauber"],
+                   gebaut_am=_ausl.get("gebaut_am") or "",
                    changelog=_nc_version.changelog(), **data)
 
 

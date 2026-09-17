@@ -247,6 +247,41 @@ def main():
                                                           "pct": 66.7}, _dist
     ok("W117: Status-Zaehler als Referenz geteilt (Scraper zaehlt, Auswertung sieht es)")
 
+    # ── v4.2-W85: der Schema-Zaehler im Rundlauf ─────────────────────────
+    # Der Vertrag in test_nc_modules prueft nc/schemastand.py fuer sich. Was
+    # nur HIER geht: init_db() gegen eine echte Datenbank fahren und nachsehen,
+    # ob der Stand danach wirklich drinsteht. Genau dieser Schritt fehlte bei
+    # W105 (Audit-Log) und liess den Fehler monatelang unsichtbar.
+    from nc import schemastand as _SS
+    with m.db_conn() as _c:
+        _stand = _SS.lies(_c)
+    assert _stand == _SS.ERWARTET, (
+        "init_db() hat den Schema-Stand nicht festgeschrieben: %d statt %d. "
+        "Dann ist der Rollback-Fall beim naechsten Start wieder unsichtbar."
+        % (_stand, _SS.ERWARTET))
+
+    # Eine zu NEUE Datenbank darf nicht heruntergeschrieben werden — das
+    # wuerde genau die Spur loeschen, die den Fall sichtbar macht.
+    with m.db_conn() as _c:
+        _SS.schreibe(_c, _SS.ERWARTET + 5, "zukunft", "2099-01-01T00:00:00+00:00")
+    m.init_db()
+    with m.db_conn() as _c:
+        assert _SS.lies(_c) == _SS.ERWARTET + 5, (
+            "init_db() hat einen hoeheren Schema-Stand ueberschrieben — damit "
+            "ist der Rollback-Fall nach einem einzigen Start verwischt")
+    with m.db_conn() as _c:            # wieder geradeziehen
+        _SS.schreibe(_c, _SS.ERWARTET, m.BOT_VERSION, "2026-09-13T00:00:00+00:00")
+    ok("W85: init_db schreibt den Schema-Stand fest und ueberschreibt keinen hoeheren")
+
+    # /healthz nennt Herkunft und Schema-Stand — dort sieht der Betreiber
+    # (und jedes Monitoring) ohnehin nach.
+    _h = client.get("/healthz").get_json()
+    for _feld in ("commit", "commit_quelle", "schema", "schema_erwartet"):
+        assert _feld in _h, "/healthz nennt %s nicht: %s" % (_feld, sorted(_h))
+    assert _h["schema_erwartet"] == _SS.ERWARTET
+    assert _h["commit_quelle"] in ("archiv", "git", "unbekannt"), _h["commit_quelle"]
+    ok("W85: /healthz nennt Herkunft und Schema-Stand")
+
     # ── v4.2-W84: der Token gehört nicht in die Adresszeile ──────────────
     # Ein Query-String ist der schlechteste Ort fuer ein Geheimnis, den es
     # gibt: er landet im Zugriffslog jedes Proxys davor, in der
