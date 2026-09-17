@@ -12430,7 +12430,128 @@ def _test_v42_w85_schemastand_und_herkunft():
        "\"unbekannt\"")
 
 
-def main():
+def _test_v42_w86_vertraege_einzeln_fahrbar():
+    """v4.2-W86: die Suiten waren nur ueber ihren eigenen Runner fahrbar.
+
+    22.000 Zeilen, rund 100 Vertragsfunktionen, und genau EIN Weg hinein:
+    `python test_nc_modules.py`, alles oder nichts, rund eine Minute je Lauf.
+    Wer einen Befund pruefen wollte, zahlte die volle Minute fuer eine Zeile.
+
+    Der Grund war kein Vorsatz, sondern ein Nebeneffekt: der Aufbau der
+    Testdatenbank stand mitten in `main()`. Wer einen einzelnen Vertrag
+    aufrief, bekam keine konfigurierte Datenbank — `db_conn()` fiel auf den
+    Vorgabepfad zurueck und legte ein `tiktok_bot.db` IM ARBEITSVERZEICHNIS
+    an. Beim zweiten Lauf starb `_test_dbexport` an "table dbx_t already
+    exists", und im Repo lag eine Datenbankdatei, die niemand bestellt hatte.
+    Genau so gefunden, beim ersten pytest-Lauf ueber diese Suite.
+
+    Jetzt steht der Aufbau als `richte_testdatenbank_ein()` neben den
+    Vertraegen, und `conftest.py` ruft ihn fuer pytest genauso auf wie
+    `main()` fuer den alten Weg. BEIDE Wege bleiben: `python
+    test_nc_modules.py` ist und bleibt das, was die Pruefkette faehrt.
+
+    Dieser Vertrag laeuft unter BEIDEN Wegen und prueft deshalb nur, was
+    ohne einen zweiten pytest-Prozess pruefbar ist. Dass wirklich jeder
+    Vertrag einzeln gruen ist, faehrt der CI-Job `Vertraege einzeln
+    (pytest)` — hier waere es ein Prozess, der sich selbst startet.
+    """
+    import json as _json
+    import sys as _sys
+    hier = os.path.dirname(os.path.abspath(__file__))
+    if hier not in _sys.path:
+        _sys.path.insert(0, hier)
+    if os.path.join(hier, "tools") not in _sys.path:
+        _sys.path.insert(0, os.path.join(hier, "tools"))
+
+    # --- 1) Der Aufbau steht NEBEN main(), nicht darin ------------------
+    import test_nc_modules as T
+    assert callable(getattr(T, "richte_testdatenbank_ein", None)), \
+        "der Aufbau der Testdatenbank ist zurueck in main() gewandert — " \
+        "dann ist die Suite wieder nur ueber ihren eigenen Runner fahrbar"
+
+    # Er muss wirklich eine EIGENE Datenbank aufmachen, nicht die des
+    # laufenden Prozesses weiterbenutzen: sonst haengt jeder Einzellauf am
+    # Vorgabepfad und schreibt ins Arbeitsverzeichnis.
+    tmp, rid = T.richte_testdatenbank_ein()
+    assert os.path.isfile(os.path.join(tmp, "t.db")), \
+        "richte_testdatenbank_ein() legt keine eigene Datei an: %s" % tmp
+    assert isinstance(rid, int) and rid > 0, \
+        "die Aufnahme-Zeile fehlt — Vertraege, die auf ihr aufbauen, " \
+        "faenden eine leere Tabelle: %r" % (rid,)
+
+    # --- 2) conftest.py und pytest.ini sind da und greifen --------------
+    for datei in ("conftest.py", "pytest.ini"):
+        assert os.path.isfile(os.path.join(hier, datei)), \
+            "%s fehlt — ohne sie sammelt pytest KEINEN Vertrag und meldet " \
+            "trotzdem einen gruenen Lauf ('no tests ran')" % datei
+
+    ini = io.open(os.path.join(hier, "pytest.ini"), encoding="utf-8").read()
+    assert "_test_*" in ini, \
+        "pytest.ini sammelt nicht `_test_*` — die Vertraege heissen so, " \
+        "weil sie aus main() gerufen werden. Ohne diese Zeile findet pytest " \
+        "keinen einzigen von ihnen und meldet das als Erfolg"
+    for verzeichnis in (".claude", "nc/_vendor"):
+        assert verzeichnis in ini, \
+            "%s steht nicht in norecursedirs — dort liegen Arbeitskopien " \
+            "und Fremdcode, die nie in einen Lauf gehoeren" % verzeichnis
+
+    conf = io.open(os.path.join(hier, "conftest.py"), encoding="utf-8").read()
+    assert "richte_testdatenbank_ein" in conf, \
+        "conftest.py baut die Datenbank nicht ueber denselben Aufruf auf — " \
+        "zwei Stellen, die einen Aufbau nebeneinander pflegen, laufen " \
+        "auseinander"
+    assert "autouse=True" in conf and 'scope="session"' in conf, \
+        "die Fixture ist nicht session-weit und selbsttaetig; die Vertraege " \
+        "nehmen keine Parameter und setzen die Umgebung voraus"
+
+    # --- 3) Die Ueberdeckung wird gemessen und gesperrt -----------------
+    import ueberdeckung as U
+    assert os.path.isfile(U.GRUNDLINIE), \
+        "keine Ueberdeckungs-Grundlinie — dann sperrt nichts, und die " \
+        "Zahl verfaellt beim ersten ungepruefter Zuwachs"
+    basis = _json.loads(io.open(U.GRUNDLINIE, encoding="utf-8").read())
+    assert basis.get("anweisungen", 0) > 10000 and basis.get("fehlend", 0) > 0, \
+        "die Grundlinie sieht nicht nach einer echten Messung aus: %r" % basis
+
+    # Die Sperre haengt an der ANZAHL, nicht am Prozentsatz. Ein Prozentsatz
+    # springt auch dann, wenn nichts schlechter wurde — wer gut gepruefte
+    # Zeilen entfernt, senkt ihn.
+    quelle = io.open(os.path.join(hier, "tools", "ueberdeckung.py"),
+                     encoding="utf-8").read()
+    rumpf = rumpf_ab(quelle, quelle.index("def main("))
+    assert 'basis.get("fehlend"' in rumpf, \
+        "die Sperre vergleicht nicht mehr die Anzahl ungepruefter " \
+        "Anweisungen — auf Prozent gesperrt faellt sie bei jedem Umbau"
+
+    # Die Testdateien gehoeren NICHT in die Messung: mitgezaehlt druecken sie
+    # die Zahl um rund vier Punkte und stehen als "0 % gedeckt" ganz oben in
+    # der Arbeitsliste, wo sie nichts zu suchen haben.
+    assert "test_*.py" in U.AUSGENOMMEN, \
+        "die Testdateien sind wieder in der Ueberdeckungsmessung"
+    assert "_vendor" in U.AUSGENOMMEN, \
+        "der vendorierte Fremdcode ist wieder in der Messung"
+
+    ok("W86: der Aufbau der Testdatenbank steht neben den Vertraegen, nicht "
+       "in main()")
+    ok("W86: conftest.py und pytest.ini machen den einzelnen Vertrag fahrbar")
+    ok("W86: die Ueberdeckung ist gemessen und gegen Zuwachs gesperrt")
+
+
+def richte_testdatenbank_ein():
+    """Temp-Datenbank, echtes Schema, eine Aufnahme-Zeile. -> (tmp, rid)
+
+    v4.2-W86: HERAUSGELOEST AUS main(). Der Aufbau stand mitten im Runner,
+    und damit war die Suite nur ueber ihren eigenen Runner lauffaehig. Wer
+    einen einzelnen Vertrag fahren wollte — pytest, ein Debugger, ein
+    Profiler —, bekam keine konfigurierte Datenbank: `db_conn()` fiel auf den
+    Vorgabepfad zurueck und legte ein `tiktok_bot.db` IM ARBEITSVERZEICHNIS
+    an. Beim zweiten Lauf stirbt `_test_dbexport` dann an "table dbx_t
+    already exists", und im Repo liegt eine Datenbankdatei, die niemand
+    bestellt hat.
+
+    Jetzt rufen BEIDE das hier: main() und conftest.py. Zwei Stellen, die
+    einen Aufbau nebeneinander pflegen, laufen sonst auseinander.
+    """
     tmp = tempfile.mkdtemp()
     configure_db(db_path=os.path.join(tmp, "t.db"), backend="sqlite")
 
@@ -12444,6 +12565,11 @@ def main():
                      "2026-07-17T02:00:00"))
         rid = cur.lastrowid
     open(os.path.join(tmp, "x.mp4"), "wb").write(b"0" * 5000)
+    return tmp, rid
+
+
+def main():
+    tmp, rid = richte_testdatenbank_ein()
     ok("db_conn aus nc.dbwrap: echtes Schema angelegt, Commit durchgelaufen")
 
     # --- Rollback-Vertrag: Exception im with-Block darf nichts schreiben ---
@@ -12679,6 +12805,7 @@ def main():
     _test_v42_w83_werkzeuge_messen_oder_brechen()
     _test_v42_w84_deck_bindet_dicht_und_laeuft_auf_waitress()
     _test_v42_w85_schemastand_und_herkunft()
+    _test_v42_w86_vertraege_einzeln_fahrbar()
     _test_v42_w60_azrael_cooldown_je_plattform()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)

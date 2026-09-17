@@ -92,6 +92,7 @@ stdlib-only (`urllib`, kein `aiohttp`).
     python tools/abhaengigkeiten.py --sperre
     python tools/monolith.py      --sperre
     python tools/blindstellen.py  --sperre
+    python tools/ueberdeckung.py  --sperre   # braucht coverage + die Suiten
     python tools/i18n_extract.py --check en
     python test_smoke.py ; python test_nc_modules.py ; python test_restream.py
 
@@ -116,6 +117,31 @@ Fremdpaket für den Rauchtest einzutragen ist. Der Vertrag
 Paket mit Datei und Namen — statt den CI-Job an einem nackten `ImportError`
 sterben zu lassen. Er meldet auch tote Einträge: eine Liste, die still
 wächst, macht den Job wieder teuer.
+
+**Die Suiten sind seit v4.2-W86 auch einzeln fahrbar.** Bis dahin gab es genau
+einen Weg hinein — `python test_nc_modules.py`, alles oder nichts, rund eine
+Minute je Lauf. Der Grund war kein Vorsatz: der Aufbau der Testdatenbank stand
+mitten in `main()`, also bekam ein einzeln aufgerufener Vertrag keine
+konfigurierte Datenbank, `db_conn()` fiel auf den Vorgabepfad zurück und legte
+ein `tiktok_bot.db` **im Arbeitsverzeichnis** an. Beim zweiten Lauf starb
+`_test_dbexport` an „table dbx_t already exists".
+
+    python -m pytest                                    alle 323 einzeln (~47 s)
+    python -m pytest -k w83                             nur eine Welle
+    python -m pytest "test_nc_modules.py::_test_dbexport"   genau einer (0,06 s)
+
+`conftest.py` ruft denselben `richte_testdatenbank_ein()` auf wie `main()`.
+**Beide Wege bleiben** — `python test_nc_modules.py` ist und bleibt das, was
+die Prüfkette fährt und was die Sperre ist; pytest kommt daneben, für die
+Arbeit am einzelnen Befund.
+
+**Die Überdeckung ist seit v4.2-W86 gemessen: 47,4 %** von `nc/` und `brain/`
+(19.495 Anweisungen, 10.248 davon ungeprüft). Das ist die Zahl, die den 323
+Verträgen erst ihren Maßstab gibt — „alles grün" sagt sonst nichts darüber,
+wie viel Bestand dabei angefasst wurde. `nc/scraper.py` und `nc/director.py`
+stehen auf null. Gesperrt wird wie bei W65/W66 nur der Zuwachs, und zwar die
+**Anzahl** ungeprüfter Anweisungen, nicht der Prozentsatz: ein Prozentsatz
+springt auch dann, wenn nichts schlechter wurde.
 
 Die statischen Verträge in `test_restream.py` verankern sich an **wörtlichem
 Quelltext** von `bot.py`. Ändert sich eine Signatur, kippt der Vertrag,

@@ -185,6 +185,25 @@ trace would be gone after one start.
 `nc/auslieferung.py` reports it at startup, in `/healthz` and `/api/version` —
 from the archive, else from `git`, else honestly "unknown".
 
+**The suites run one contract at a time since v4.2-W86.** Until then there was
+exactly one way in — `python test_nc_modules.py`, all or nothing, about a
+minute per run. The reason was not intent: the test-database setup sat inside
+`main()`, so a contract called on its own got no configured database,
+`db_conn()` fell back to the default path and created a `tiktok_bot.db` **in
+the working directory**. On the second run `_test_dbexport` died with "table
+dbx_t already exists".
+
+    python -m pytest                                    all 323, one by one
+    python -m pytest "test_nc_modules.py::_test_dbexport"   just one (0.06 s)
+
+`conftest.py` calls the same `richte_testdatenbank_ein()` as `main()`. **Both
+ways stay** — `python test_nc_modules.py` remains what the chain runs.
+
+**Coverage is measured since v4.2-W86: 47.4 %** of `nc/` and `brain/` (19,495
+statements, 10,248 of them unexercised). That is the number that gives the 323
+contracts their scale. Only growth is gated, and by the **count** of
+unexercised statements, not by the percentage.
+
 **Module constants freeze the `.env`.** The `.env` is partly loaded only after
 the first imports. Read configuration through a function (`_backend_conf()`),
 never as a module constant.

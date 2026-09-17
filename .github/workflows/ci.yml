@@ -271,6 +271,57 @@ jobs:
           PYTHONPATH: ${{ github.workspace }}
         run: python nc/intel/test_intel.py
 
+  einzeln:
+    name: Verträge einzeln (pytest) · Überdeckung
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Minimale Abhängigkeiten
+        run: python -m pip install --upgrade pip orjson flask waitress pytest coverage
+
+      # v4.2-W86. Die Suiten waren nur ueber ihren eigenen Runner fahrbar:
+      # `python test_nc_modules.py`, alles oder nichts, rund eine Minute je
+      # Lauf. Der Grund war kein Vorsatz, sondern der Aufbau der
+      # Testdatenbank mitten in main() — wer einen EINZELNEN Vertrag rief,
+      # bekam keine konfigurierte Datenbank, `db_conn()` fiel auf den
+      # Vorgabepfad zurueck und legte ein tiktok_bot.db IM
+      # ARBEITSVERZEICHNIS an. Beim zweiten Lauf starb _test_dbexport dann an
+      # "table dbx_t already exists".
+      #
+      # Dieser Job haelt fest, dass die Vertraege einzeln lauffaehig BLEIBEN.
+      # Er ersetzt den Job darueber nicht — der faehrt weiter die Suiten als
+      # Ganzes und ist die Sperre.
+      - name: Jeder Vertrag einzeln (kein gemeinsamer Zustand)
+        run: python -m pytest
+
+      - name: Keine Streudatei im Arbeitsverzeichnis
+        run: |
+          # Genau der Befund, der W86 ausgeloest hat. git status statt eines
+          # Namensvergleichs: es soll AUCH auffallen, wenn kuenftig etwas
+          # anderes liegen bleibt.
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "Der Testlauf hat den Arbeitsbaum veraendert:"
+            git status --porcelain
+            exit 1
+          fi
+          echo "Arbeitsbaum unveraendert."
+
+      # v4.2-W86. Dieses Projekt misst viel und sperrt viel — stille except,
+      # stumme return, Riesenfunktionen, .env-Reihenfolge, feste Fenster,
+      # Paketgrenzen. Eine Zahl fehlte, und es ist die, die den 322
+      # Vertraegen erst ihren Massstab gibt: welcher Teil von nc/ und brain/
+      # wird beim Pruflauf ueberhaupt ausgefuehrt? Die Antwort ist 47,4 %.
+      #
+      # Gesperrt wird die ANZAHL ungeprufter Anweisungen, nicht der Prozent-
+      # satz: ein Prozentsatz springt auch dann, wenn nichts schlechter wurde.
+      - name: Keine neue ungeprüfte Fläche
+        run: python tools/ueberdeckung.py --sperre
+
   smoke:
     name: Rauchtest (bot.py laeuft wirklich)
     runs-on: ubuntu-latest
