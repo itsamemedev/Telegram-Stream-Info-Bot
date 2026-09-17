@@ -50,6 +50,11 @@ DATEIEN = [
     # Vertrag — die heissen `_test_*`, und die Vorgabe findet nur `test_*`.
     # Es meldete dann "no tests ran" und saehe aus wie ein gruener Lauf.
     "conftest.py", "pytest.ini",
+    # v4.2-W90: und ohne die hier stirbt JEDE der vier Suiten auf dem Server
+    # schon beim Import — sie holen daher ihre temporaeren Verzeichnisse und
+    # ihre Attrappen-Dateien. Derselbe Fall wie bei conftest/pytest.ini eine
+    # Zeile hoeher, nur lauter: kein "no tests ran", sondern ImportError.
+    "pruefhilfen.py",
     ".env.example",
     # Standbild-Rueckfall des gebrannten Avatars (v4.2-W31). Ohne die Datei
     # faellt die Kette Feeder -> Schleife -> Standbild ins Leere und die Ecke

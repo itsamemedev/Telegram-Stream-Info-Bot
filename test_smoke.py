@@ -17,7 +17,7 @@ Verhalten und wird hier festgehalten.
 """
 import os
 import sys
-import tempfile
+import pruefhilfen as _ph
 import time
 import types
 
@@ -103,7 +103,7 @@ def _install_stubs():
 
 
 def main():
-    os.chdir(tempfile.mkdtemp())
+    os.chdir(_ph.verzeichnis())
     sys.path.insert(0, ROOT)
     os.environ.update(TELEGRAM_TOKEN="x", TELEGRAM_CHAT_ID="1",
                       DASHBOARD_PORT="0", LIVE_REACT_ENABLED="0",

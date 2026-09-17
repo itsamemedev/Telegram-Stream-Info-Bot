@@ -92,6 +92,7 @@ stdlib-only (`urllib`, kein `aiohttp`).
     python tools/abhaengigkeiten.py --sperre
     python tools/monolith.py      --sperre
     python tools/blindstellen.py  --sperre
+    python tools/testmuell.py     --sperre   # die Suiten lassen nichts liegen
     python tools/ueberdeckung.py  --sperre   # braucht coverage + die Suiten
     python tools/i18n_extract.py --check en
     python test_smoke.py ; python test_nc_modules.py ; python test_restream.py
@@ -136,7 +137,7 @@ die Prüfkette fährt und was die Sperre ist; pytest kommt daneben, für die
 Arbeit am einzelnen Befund.
 
 **Die Überdeckung ist seit v4.2-W86 gemessen: 50,4 %** von `nc/` und `brain/`
-(19.544 Anweisungen, 9.695 davon ungeprüft). Das ist die Zahl, die den 443
+(19.544 Anweisungen, 9.695 davon ungeprüft). Das ist die Zahl, die den 446
 Verträgen erst ihren Maßstab gibt — „alles grün" sagt sonst nichts darüber,
 wie viel Bestand dabei angefasst wurde. Gesperrt wird wie bei W65/W66 nur der
 Zuwachs, und zwar die **Anzahl** ungeprüfter Anweisungen, nicht der
@@ -287,6 +288,39 @@ bricht ab: Exitcode **2**, getrennt von der 1, die „der Bestand ist gewachsen"
 bedeutet. Dazu `pflicht_erfuellt` gegen den Fall, den keine Ausnahme meldet —
 ein Glob, der ins Leere zeigt, nimmt `bot.py` genauso lautlos aus der Zählung.
 `vertragscheck` hatte den Fehler nie; es liest ungefangen.
+
+**Die Suiten füllten die Platte des Entwicklers.** 35 `tempfile.mkdtemp()`,
+drei `shutil.rmtree` — der Rest blieb liegen, pro Lauf. Auf der Maschine, auf
+der W89 entstand, waren nach einem Tag Arbeit **5093 Verzeichnisse mit rund
+30 GB** aufgelaufen, und die Prüfkette brach mitten im Lauf ab: `df` meldete
+1,1 MB frei bei 38 GB belegt, `OSError: [Errno 28] No space left on device`.
+Kein Vertrag war rot, keine Sperre fiel — es ging nur nichts mehr. In der CI
+fällt das nie auf: ein Lauf, frischer Container, danach ist die Maschine weg.
+Genau deshalb konnte es wachsen, und genau deshalb prüft die CI es seit
+v4.2-W90 **für** die Entwicklungsrechner mit (`tools/testmuell.py`, Grenze
+null).
+
+Der Kostentreiber war dabei nicht die Zahl der Verzeichnisse, sondern **eine
+Zeile**:
+
+    f.write(b"\0" * (300 * 1024 * 1024))    # 300 MB (sparse)
+
+Der Kommentar sagt „sparse", der Code ist das Gegenteil — erst ein 300-MB-
+Objekt im RAM, dann 300 MB echte Nullen auf die Platte, je Lauf, für eine
+Zahl, die `os.path.getsize()` auch von einer Datei mit bloß gesetzter Größe
+liefert. `pruefhilfen.attrappe()` nutzt `truncate()`: gemessen 0,000 s statt
+0,31 s und 0 statt 614.400 belegten Blöcken. Das ist erlaubt, **solange** der
+geprüfte Code die Größe aus den Metadaten liest; ein Vertrag hält
+`nc/videoteil`, `nc/storage` und `nc/archiverules` darauf fest und fällt,
+sobald dort `st_blocks` auftaucht.
+
+**Dasselbe Muster zweimal an einem Tag:** auch die neue Sperre trug im ersten
+Entwurf einen Kommentar über die Falle („`300 * 1024 * 1024` steht als
+verschachtelter BinOp im Baum") und benutzte dann `ast.literal_eval`, das
+Multiplikation ablehnt — sie hätte genau die 300-MB-Zeile nicht gefunden, für
+die sie gebaut wurde. Gefangen hat das die Mutationsprobe, nicht das
+Nachdenken. **Ein Kommentar, der die Absicht beschreibt, ist kein Beweis, dass
+der Code sie erfüllt.**
 
 **Die Navigationskarte wurde von nichts geprüft.** `.claude/INDEX.md` trägt die
 „eine Regel" dieses Projekts und war am 13.09. in **483 Einträgen** veraltet —

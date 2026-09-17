@@ -11,6 +11,70 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Behoben — die Vertragssuiten füllten die Platte (v4.2 W90)
+
+Die vier Suiten legten **35 temporäre Verzeichnisse** mit
+`tempfile.mkdtemp()` an und räumten **drei** davon weg. Auf der Maschine, auf
+der W89 entstand, waren nach einem Tag Arbeit **5093 Verzeichnisse mit rund
+30 GB** aufgelaufen, und die Prüfkette brach mitten im Lauf ab:
+
+```
+/dev/vda  252G  38G  1.1M  100% /
+OSError: [Errno 28] No space left on device
+```
+
+Kein Vertrag war rot, keine Sperre fiel — es ging nur nichts mehr. In der CI
+fällt es nie auf: ein Lauf, frischer Container, danach ist die Maschine weg.
+Genau deshalb konnte es unbemerkt wachsen.
+
+**Der Kostentreiber war eine einzige Zeile.**
+`_test_v42_w11_videoteil` braucht eine Aufnahme von 300 MB, weil
+`nc/videoteil.kopier_teilen()` aus Größe und Laufzeit die Bitrate rechnet.
+Sie stand als `f.write(b"\0" * (300 * 1024 * 1024))` — mit dem Kommentar
+`# 300 MB (sparse)` daneben. Der Kommentar sagte die Absicht, der Code tat
+das Gegenteil: erst ein 300-MB-Objekt im RAM, dann 300 MB echte Nullen auf
+die Platte.
+
+| | vorher | nachher |
+|---|---|---|
+| Zeit für die Attrappe | 0,31 s | **0,000 s** |
+| belegte Blöcke | 614.400 | **0** |
+| RSS-Spitze | +300 MB | **keine** |
+| `os.path.getsize()` | 314.572.800 | **314.572.800** |
+
+- **`pruefhilfen.py`** (neu) trägt beides: `verzeichnis()` registriert und
+  löscht per `atexit` — auch nach einem gefallenen Vertrag, wo ein `finally`
+  je Vertrag 35-mal dieselbe Zeile wäre und 32-mal fehlte. `attrappe()` legt
+  die Datei per `truncate()` an, ist also groß in den Metadaten und leer auf
+  der Platte. Zwei Aufräumdurchgänge, weil `test_smoke.py` beim Import von
+  `bot.py` Wächter-Threads startet, die SQLite ihre `-wal`/`-shm` neben der
+  Datenbank neu anlegen lassen — entsteht das zwischen dem Listing von
+  `rmtree` und dem `rmdir`, scheitert `rmdir` still mit `ENOTEMPTY`. Bleibt
+  danach etwas übrig, **sagt** der Aufräumer das, statt es zu verschweigen.
+- **`tools/testmuell.py`** (neu) hält die Suiten darauf fest, mit Grenze
+  null wie `importzeit`: kein `mkdtemp()` und kein Schreibvorgang ab 1 MiB
+  aus einem konstanten Bytes-Muster. Läuft in der CI, weil dort der Schaden
+  *nicht* entsteht — die Prüfung gehört für die Entwicklungsrechner dorthin.
+- **34 Aufrufe** in den vier Suiten umgestellt, fünf Schreibvorgänge auf
+  `attrappe()` (300, 60, 10 MiB und die beiden `_datei`-Helfer aus W89).
+  Verhaltensneutral: `nc/videoteil` liest sechsmal `getsize`, `nc/storage`
+  zweimal `st_size`, `nc/archiverules` einmal `getsize` — kein `st_blocks`
+  im Spiel, und ein Vertrag fällt, sobald sich das ändert.
+
+**Dasselbe Muster zweimal an einem Tag:** die neue Sperre trug im ersten
+Entwurf einen Kommentar über genau die Falle („`300 * 1024 * 1024` steht als
+verschachtelter BinOp im Baum") und benutzte dann `ast.literal_eval`, das
+Multiplikation ablehnt — sie hätte die 300-MB-Zeile nicht gefunden, für die
+sie gebaut wurde. Gefangen hat das die Mutationsprobe, nicht das Nachdenken.
+Ersetzt durch eine eigene, kleine Auswertung (Zahlen und fünf Rechenarten,
+kein `eval`); variable Größen gelten ehrlich als unentscheidbar.
+
+15 Mutationsproben, zwei Lücken beim ersten Durchgang: die entwischte
+Sperren-Probe oben und der cwd-Rückwechsel im Aufräumer, der auf Linux nicht
+zu unterscheiden war — jetzt über `os.getcwd()` nach dem Aufräumen gedeckt.
+Verträge 443 → **446**.
+
+
 ### Behoben — acht Fehler im Produktionscode, die W87 beim Messen gefunden hat (v4.2 W89)
 
 W87 hat sieben blinde Module unter Vertrag genommen und dabei 14

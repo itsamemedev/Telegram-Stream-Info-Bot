@@ -15,7 +15,7 @@ import os
 import textwrap
 import re
 import sys
-import tempfile
+import pruefhilfen as _ph
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -198,12 +198,12 @@ def _test_dbexport():
 def _test_procdiag():
     """Phase-1-Zerlegung: die Prozess-/Thread-Diagnose (W83/W88) liegt jetzt in
        nc.procdiag; bot.py hält nur dünne Wrapper. Verhalten muss identisch sein."""
-    import tempfile, os as _os, glob as _glob
+    import os as _os, glob as _glob
     from nc import procdiag
     assert isinstance(procdiag.zombie_child_count(), int)
     ok("procdiag.zombie_child_count")
 
-    d = tempfile.mkdtemp()
+    d = _ph.verzeichnis()
     for i in range(12):
         open(_os.path.join(d, "loop_stall_%d.txt" % i), "w").close()
     procdiag.prune_stall_dumps(d, keep=10)
@@ -281,10 +281,10 @@ def _test_recdb():
        in nc.recdb, bot.py haelt nur noch Delegationen. Geprueft wird beides —
        dass das Modul arbeitet UND dass der Monolith wirklich delegiert, statt
        eine zweite Kopie der Logik zu behalten."""
-    import sqlite3, tempfile, os as _os
+    import sqlite3, os as _os
     from nc import recdb, dbwrap
 
-    db = _os.path.join(tempfile.mkdtemp(), "rec.sqlite")
+    db = _os.path.join(_ph.verzeichnis(), "rec.sqlite")
     con = sqlite3.connect(db)
     con.executescript("""
         CREATE TABLE recordings (id INTEGER PRIMARY KEY, username TEXT, filepath TEXT,
@@ -665,10 +665,10 @@ def _test_cfgstore_und_claude():
        app_config-Zugriff bzw. Anthropic-Belang sind, lagen im Monolithen und
        waeren dort zu fuenf Kontext-Eintraegen geworden. Sie liegen jetzt in
        den Modulen, die genau dafuer da sind."""
-    import sqlite3, tempfile, os as _os
+    import sqlite3, os as _os
     from nc import cfgstore, claude, dbwrap
 
-    db = _os.path.join(tempfile.mkdtemp(), "cfg.sqlite")
+    db = _os.path.join(_ph.verzeichnis(), "cfg.sqlite")
     con = sqlite3.connect(db)
     con.execute("CREATE TABLE app_config (k TEXT UNIQUE, v TEXT, updated_at TEXT)")
     con.commit(); con.close()
@@ -1318,13 +1318,12 @@ def _test_w18_toxizitaet_ohne_tiktok():
 
 def _test_w18_kickmod_blueprint():
     """v4.1-W18: neun Routen raus, null neue Kontext-Eintraege."""
-    import tempfile as _tf
 
     import nc.badwords as B
     import nc.channels as C
 
     # (1) Die Datenschicht traegt sich selbst — Dateien, kein Bot, kein Netz.
-    d = _tf.mkdtemp()
+    d = _ph.verzeichnis()
     B.configure(recordings_dir=d)
     assert B.load_banned() == [] and B.load_learned() == [], "leerer Start nicht leer"
     assert B.save_banned(["arsch", "x" * 99])
@@ -1426,8 +1425,7 @@ def _test_w19_azrael_blueprint():
     # (2) Piper: die Suchorte kommen per configure(), nicht als Modul-Konstante.
     # Ein Wechsel muss den Cache verwerfen, sonst zeigt /api/azrael/voices die
     # Stimmen des alten Verzeichnisses und der Betreiber sucht am falschen Ort.
-    import tempfile as _tf
-    d1, d2 = _tf.mkdtemp(), _tf.mkdtemp()
+    d1, d2 = _ph.verzeichnis(), _ph.verzeichnis()
     open(os.path.join(d1, "de_DE-thorsten-medium.onnx"), "w").close()
     os.makedirs(os.path.join(d2, "unter"), exist_ok=True)
     open(os.path.join(d2, "unter", "en_US-amy-low.onnx"), "w").close()
@@ -1470,7 +1468,7 @@ def _test_w19_azrael_blueprint():
     A.LIVE_PAUSED["v"] = False; A.OVERLAY.clear(); A.TRANSCRIPT.clear()
 
     # (4) Personas: atomar geschrieben, kaputtes JSON reisst nichts mit.
-    d3 = _tf.mkdtemp()
+    d3 = _ph.verzeichnis()
     A.configure(recordings_dir=d3)
     assert A.personas_load() == {}
     assert A.personas_save({"helge_72": "frech"})
@@ -3077,8 +3075,7 @@ def _test_w32_sondenschicht_und_systemlage():
     # Domain-Variante stammt. Spezifischere Domain gewinnt, bei Gleichstand
     # die laengere Expiry.
     import os as _os
-    import tempfile as _tf
-    d = _tf.mkdtemp()
+    d = _ph.verzeichnis()
     pfad = _os.path.join(d, "c.txt")
     with open(pfad, "w", encoding="utf-8") as f:
         f.write("# Netscape HTTP Cookie File\n")
@@ -3328,7 +3325,6 @@ def _test_v42_w2_ein_riegel_gegen_pfadausbruch():
     import ast as _ast
     import os as _os
     import re as _re
-    import tempfile as _tf
 
     def _nackt(pfad):
         """Quelltext OHNE Kommentare und ohne Docstrings.
@@ -3379,7 +3375,7 @@ def _test_v42_w2_ein_riegel_gegen_pfadausbruch():
     # sagt "drin", geschrieben wird nach /etc. Genau so pruefte nc/updater.py
     # bei der Update-Entpackung, mit "Ein Zip-Slip schreibt sonst nach /etc"
     # als Kommentar darueber.
-    basis = _tf.mkdtemp()
+    basis = _ph.verzeichnis()
     _os.symlink("/etc", _os.path.join(basis, "raus"))
     ausbruch = _os.path.join(basis, "raus", "passwd")
     assert _os.path.abspath(ausbruch).startswith(basis + _os.sep), \
@@ -3390,7 +3386,7 @@ def _test_v42_w2_ein_riegel_gegen_pfadausbruch():
 
     # Nachbarverzeichnis mit gleichem Praefix: /x/archiv2 beginnt mit
     # /x/archiv, liegt aber nicht darin. Ein startswith ohne Trenner irrt.
-    eltern = _tf.mkdtemp()
+    eltern = _ph.verzeichnis()
     a = _os.path.join(eltern, "archiv"); _os.makedirs(a)
     b = _os.path.join(eltern, "archiv2"); _os.makedirs(b)
     assert _os.path.join(b, "x").startswith(a), "Vorbedingung des Praefix-Falls"
@@ -3615,8 +3611,7 @@ def _test_v42_w4_preflight_und_resilienz():
     # Arbeitsverzeichnis. Sonst zeigt das Deck die Systemplatte und der
     # Plattenwaechter greift zu spaet.
     import os as _os
-    import tempfile as _tf
-    d = _tf.mkdtemp()
+    d = _ph.verzeichnis()
     sicher = P.recordings_dir()
     try:
         P.configure(recordings_dir=d)
@@ -3960,7 +3955,7 @@ def _test_v42_w7_motd_optik():
     # vorgetaeuschtem systemctl/curl, weil die echten Zustaende sich in einem
     # Testlauf nicht herstellen lassen — und ungeprueft waere ausgerechnet der
     # Pfad, den der Betreiber jeden Tag sieht, der einzige ohne Deckung.
-    stub = tempfile.mkdtemp()
+    stub = _ph.verzeichnis()
     with open(os.path.join(stub, "systemctl"), "w", encoding="utf-8") as f:
         f.write('#!/bin/bash\ncase "$*" in\n'
                 '  *"is-active --quiet"*) [ "$FAKE_BOT" = up ] && exit 0 || exit 1;;\n'
@@ -3972,7 +3967,7 @@ def _test_v42_w7_motd_optik():
                 'echo \'{"ok": true, "procs": 4, "zombies": 0}\'\n')
     for name in ("systemctl", "curl"):
         os.chmod(os.path.join(stub, name), 0o755)
-    botdir = tempfile.mkdtemp()
+    botdir = _ph.verzeichnis()
     open(os.path.join(botdir, "bot.py"), "w").close()
 
     pfad = stub + os.pathsep + os.environ.get("PATH", "")
@@ -4175,7 +4170,7 @@ def _test_v42_w9_oauth_ueberlebt_neustart_und_stoerung():
     try:
         os.environ.update(TWITCH_CLIENT_ID="x", TWITCH_CLIENT_SECRET="y",
                           YOUTUBE_CLIENT_ID="x", YOUTUBE_CLIENT_SECRET="y")
-        d = tempfile.mkdtemp()
+        d = _ph.verzeichnis()
         pt = os.path.join(d, "twitch_oauth.json")
         py = os.path.join(d, "youtube_oauth.json")
         _tw.configure(pt)
@@ -4289,7 +4284,6 @@ def _test_v42_w10_cookies_reparieren_und_selbst_holen():
        das im Kreis."""
     import http.server
     import os as _os
-    import tempfile as _tf
     import threading as _th
     import warnings as _warn
     from http.cookiejar import MozillaCookieJar
@@ -4306,7 +4300,7 @@ def _test_v42_w10_cookies_reparieren_und_selbst_holen():
     _warn.filterwarnings("ignore", message=r"http\.cookiejar bug!")
 
     def _laden(text):
-        d = _tf.mkdtemp()
+        d = _ph.verzeichnis()
         pfad = _os.path.join(d, "c.txt")
         with open(pfad, "w", encoding="utf-8") as f:
             f.write(text)
@@ -4371,7 +4365,7 @@ def _test_v42_w10_cookies_reparieren_und_selbst_holen():
 
     # (3) Der Leser gibt nicht mehr leer zurueck, nur weil das Format krumm ist.
     # Das ist der Pfad, an dem der Recorder ohne Cookies losfuhr.
-    d = _tf.mkdtemp()
+    d = _ph.verzeichnis()
     pfad = _os.path.join(d, "c.txt")
     with open(pfad, "w", encoding="utf-8") as f:
         f.write("# Netscape HTTP Cookie File\n"
@@ -4422,7 +4416,7 @@ def _test_v42_w10_cookies_reparieren_und_selbst_holen():
 
     # (6) Geschrieben wird erst, wenn das Ergebnis ladbar ist. Wer zuerst
     # tauscht und dann prueft, hat den funktionierenden Bestand schon weg.
-    ziel = _os.path.join(_tf.mkdtemp(), "c.txt")
+    ziel = _os.path.join(_ph.verzeichnis(), "c.txt")
     with open(ziel, "w", encoding="utf-8") as f:
         f.write("# Netscape HTTP Cookie File\n"
                 ".tiktok.com\tTRUE\t/\tTRUE\t9999999999\tsessionid_ss\tALT\n")
@@ -4666,10 +4660,13 @@ def _test_v42_w11_videoteil_aus_dem_monolithen():
     _falle.dauer = b"600\n"          # 600 s Laufzeit
 
     echt = _asyncio.create_subprocess_exec
-    tmp = tempfile.mkdtemp()
+    tmp = _ph.verzeichnis()
     quelle = os.path.join(tmp, "aufnahme.mp4")
-    with open(quelle, "wb") as f:
-        f.write(b"\0" * (300 * 1024 * 1024))    # 300 MB (sparse)
+    # 300 MB, aber nur in den Metadaten: kopier_teilen() liest die Groesse
+    # per os.path.getsize(), und die liefert truncate() genauso. Vor W90
+    # stand hier ein echtes `b"\0" * 300MB` — 0,31 s und 300 MB RSS je Lauf,
+    # obwohl der Kommentar daneben schon "sparse" behauptete.
+    _ph.attrappe(quelle, 300 * 1024 * 1024)
     try:
         _asyncio.create_subprocess_exec = _falle
         _vt.configure(threads_bg=1, nice_bg=12)
@@ -4762,10 +4759,8 @@ def _test_v42_w11_videoteil_aus_dem_monolithen():
     assert _vt.TELEGRAM_HARD_MB == 50 and _vt.ZIEL_TEIL_MB == 45
     klein = os.path.join(tmp, "klein.mp4")
     gross = os.path.join(tmp, "gross.mp4")
-    with open(klein, "wb") as f:
-        f.write(b"\0" * (10 * 1024 * 1024))
-    with open(gross, "wb") as f:
-        f.write(b"\0" * (60 * 1024 * 1024))
+    _ph.attrappe(klein, 10 * 1024 * 1024)
+    _ph.attrappe(gross, 60 * 1024 * 1024)
     assert _vt.zu_gross([klein, gross]) == [gross]
     _vt.wegwerfen([klein, gross])
     assert not os.path.exists(klein) and not os.path.exists(gross)
@@ -6225,12 +6220,11 @@ def _test_v42_w21_cookiegesundheit():
     falschen erwischen. Ohne diese Meldung sieht das Deck gruen aus.
     """
     import os as _os
-    import tempfile as _tf
     import time as _t
     from nc import cookies as _ck
 
     KRIT = ("sessionid", "sessionid_ss", "tt_csrf_token")
-    verzeichnis = _tf.mkdtemp()
+    verzeichnis = _ph.verzeichnis()
     pfad = _os.path.join(verzeichnis, "cookies.txt")
     PROT = {"repariert": 0}
 
@@ -6375,7 +6369,6 @@ def _test_v42_w22_overlaytext():
     ein Fehler, den man nur im Sendebild selbst sieht, nie im Log.
     """
     import os as _os
-    import tempfile as _tf
     from nc import overlaytext as _ot
 
     # --- 1) ov_oneline: eine Zeile, gekappt, ohne doppelte Leerzeichen ---
@@ -6409,7 +6402,7 @@ def _test_v42_w22_overlaytext():
     assert _schreib >= 0 and _tausch > _schreib, \
         "ov_atomic_write schreibt nicht mehr ueber eine Tmp-Datei + os.replace"
 
-    d = _tf.mkdtemp()
+    d = _ph.verzeichnis()
     ziel = _os.path.join(d, "unter", "ordner", "titel.txt")
     _ot.ov_atomic_write(ziel, "erster Text")
     assert open(ziel, encoding="utf-8").read() == "erster Text"
@@ -7118,7 +7111,7 @@ def _test_v42_w14_motd_spricht_englisch():
     # die beide einmal durchgerutscht sind: die nackte printf-Zeile und die
     # ZUWEISUNG mit Farbcode (`EQ="  ${FNT}Kerne  ${R}"` hat kein printf, und
     # der englische Lauf zeigte prompt "Kerne").
-    probe = tempfile.mkdtemp()
+    probe = _ph.verzeichnis()
     _alt_root = _it.ROOT
     try:
         _it.ROOT = probe
@@ -7355,7 +7348,7 @@ def _test_v42_w44_aufnahmesitzung():
                   encoding="utf-8").read()
     assert "sicher_join" in quelle, \
         "zieldatei muss nc.sicherpfad benutzen, keinen eigenen Riegel"
-    tmp = tempfile.mkdtemp()
+    tmp = _ph.verzeichnis()
     # ROHE Kennungen, nicht durch sitzung_id gewaschen: die Join-Route reicht
     # die sid aus dem URL-Pfad direkt an zieldatei weiter. Wuerde hier nur
     # sitzung_id("../../etc/passwd") geprueft, liefe der Test gegen einen
@@ -8381,7 +8374,7 @@ def _test_v42_w61_avatar_faellt_vor_dem_panel():
     schrift.write(b"x"); schrift.close()
     avatar = _tf.NamedTemporaryFile(suffix=".png", delete=False)
     avatar.write(b"x"); avatar.close()
-    OVDIR = _tf.mkdtemp()
+    OVDIR = _ph.verzeichnis()
     OV = {k: _os.path.join(OVDIR, k + ".txt") for k in
           ("alert", "brand", "caption", "chat", "follow", "goal",
            "react", "source", "title")}
@@ -11602,7 +11595,6 @@ def _test_v42_w89_kopie_wird_zurueckgenommen():
     ist: die Regel aus CLAUDE.md endet genau an dieser Unterscheidung.
     """
     import shutil as _sh
-    import tempfile as _tf
 
     import nc.archiverules as A
     from nc import sicherpfad as _sp
@@ -11619,7 +11611,7 @@ def _test_v42_w89_kopie_wird_zurueckgenommen():
         def __getattr__(self, name):
             return self._sammle(name)
 
-    heim = _tf.mkdtemp()
+    heim = _ph.verzeichnis()
     quelle = os.path.join(heim, "quelle")
     archiv = os.path.join(heim, "archiv")
     os.makedirs(quelle)
@@ -12969,7 +12961,6 @@ def _test_v42_w85_schemastand_und_herkunft():
     """
     import sqlite3 as _sq
     import sys as _sys
-    import tempfile as _tf
     hier = os.path.dirname(os.path.abspath(__file__))
     if hier not in _sys.path:
         _sys.path.insert(0, hier)
@@ -12983,7 +12974,7 @@ def _test_v42_w85_schemastand_und_herkunft():
     def _fabrik(cur, zeile):
         return _Zeile(zip([b[0] for b in cur.description], zeile))
 
-    pfad = os.path.join(_tf.mkdtemp(), "w85.sqlite")
+    pfad = os.path.join(_ph.verzeichnis(), "w85.sqlite")
     conn = _sq.connect(pfad)
     conn.row_factory = _fabrik
     try:
@@ -13071,8 +13062,7 @@ def _test_v42_w85_schemastand_und_herkunft():
     # Die ausgelieferte Datei hat Vorrang: auf dem Server gibt es kein .git,
     # dort ist sie die einzige Wahrheit.
     import json as _json
-    import tempfile as _tf2
-    leer = _tf2.mkdtemp()
+    leer = _ph.verzeichnis()
     with io.open(os.path.join(leer, A.DATEI), "w", encoding="utf-8") as fh:
         _json.dump({"commit": "a" * 40, "zweig": "main", "sauber": True,
                     "gebaut_am": "2026-09-13T00:00:00+00:00",
@@ -13083,14 +13073,14 @@ def _test_v42_w85_schemastand_und_herkunft():
 
     # Ohne Datei UND ohne git: "unbekannt", aber kein Absturz und kein
     # Fehlalarm — wer aus dem Repo startet, hat keine Auslieferungsdatei.
-    nichts = _tf2.mkdtemp()
+    nichts = _ph.verzeichnis()
     d3 = A.stand(nichts, frisch=True)
     assert d3["quelle"] == "unbekannt" and d3["kurz"] == "", d3
     assert "unbekannt" in A.text(nichts)
 
     # Ein unsauberer Arbeitsbaum MUSS im Text stehen — sonst behauptet
     # /healthz eine Herkunft, die es nicht gibt.
-    schmutzig = _tf2.mkdtemp()
+    schmutzig = _ph.verzeichnis()
     with io.open(os.path.join(schmutzig, A.DATEI), "w", encoding="utf-8") as fh:
         _json.dump({"commit": "b" * 40, "zweig": "main", "sauber": False,
                     "gebaut_am": "", "version": "4.3.1"}, fh)
@@ -14593,7 +14583,6 @@ def _test_v42_w88_archivregeln():
     """
     import shutil as _sh
     import sqlite3 as _sq
-    import tempfile as _tf
     from datetime import datetime as _datetime, timezone as _timezone
 
     from nc import archiverules as A
@@ -14612,7 +14601,7 @@ def _test_v42_w88_archivregeln():
         def now(tz=None):
             return _FEST
 
-    heim = _tf.mkdtemp()
+    heim = _ph.verzeichnis()
     dbpfad = os.path.join(heim, "w88_regeln.sqlite")
     con = _sq.connect(dbpfad)
     con.row_factory = _sq.Row
@@ -14684,10 +14673,9 @@ def _test_v42_w88_archivregeln():
         os.makedirs(archiv)
 
         def _datei(name, bytes_):
-            p = os.path.join(quelle, name)
-            with open(p, "wb") as f:
-                f.write(b"0" * bytes_)
-            return p
+            # add_archive_entry() bucht os.path.getsize(); die Groesse muss
+            # stimmen, die Bloecke nicht.
+            return _ph.attrappe(os.path.join(quelle, name), bytes_)
 
         MIB = 1024 * 1024
         d_gross = _datei("gross.mp4", 2 * MIB)
@@ -15012,7 +15000,6 @@ def _test_v42_w88_speicher():
     import logging as _logging
     import shutil as _sh
     import sqlite3 as _sq
-    import tempfile as _tf
     from datetime import datetime as _datetime, timezone as _timezone
 
     from nc import dbwrap as _dbw
@@ -15046,7 +15033,7 @@ def _test_v42_w88_speicher():
             return type("N", (), {"total": cls.werte[0], "used": cls.werte[1],
                                   "free": cls.werte[2]})()
 
-    heim = _tf.mkdtemp()
+    heim = _ph.verzeichnis()
     dbpfad = os.path.join(heim, "w88_speicher.sqlite")
     con = _sq.connect(dbpfad)
     con.row_factory = _sq.Row
@@ -15098,8 +15085,8 @@ def _test_v42_w88_speicher():
         grenze = JETZT - TAGE * 86400
 
         def _datei(pfad, bytes_, mtime):
-            with open(pfad, "wb") as f:
-                f.write(b"0" * bytes_)
+            # cleanup_recordings() summiert st_size — siehe _ph.attrappe.
+            _ph.attrappe(pfad, bytes_)
             os.utime(pfad, (mtime, mtime))
             return pfad
 
@@ -15451,7 +15438,7 @@ def richte_testdatenbank_ein():
     Jetzt rufen BEIDE das hier: main() und conftest.py. Zwei Stellen, die
     einen Aufbau nebeneinander pflegen, laufen sonst auseinander.
     """
-    tmp = tempfile.mkdtemp()
+    tmp = _ph.verzeichnis()
     configure_db(db_path=os.path.join(tmp, "t.db"), backend="sqlite")
 
     with db_conn() as c:
@@ -15465,6 +15452,154 @@ def richte_testdatenbank_ein():
         rid = cur.lastrowid
     open(os.path.join(tmp, "x.mp4"), "wb").write(b"0" * 5000)
     return tmp, rid
+
+
+def _test_v42_w90_suiten_lassen_nichts_liegen():
+    """v4.2-W90: die Suiten fuellten die Platte des Entwicklers.
+
+    35 `tempfile.mkdtemp()`, drei `shutil.rmtree`. Auf der Maschine, auf der
+    W89 entstand, waren nach einem Tag Arbeit 5093 Verzeichnisse mit rund
+    30 GB aufgelaufen, und die Pruefkette brach mitten im Lauf ab:
+
+        /dev/vda  252G  38G  1.1M  100% /
+        OSError: [Errno 28] No space left on device
+
+    Kein Vertrag war rot, keine Sperre fiel. In der CI faellt es nie auf:
+    ein Lauf, frischer Container, danach ist die Maschine weg.
+
+    Der Kostentreiber war dabei EINE Zeile — `b"\0" * (300 * 1024 * 1024)`
+    mit dem Kommentar `# 300 MB (sparse)` daneben. Der Kommentar sagte die
+    Absicht, der Code tat das Gegenteil.
+    """
+    import ast as _ast
+    import os as _os
+    import pruefhilfen as P
+
+    # ── (1) DIE VORAUSSETZUNG. attrappe() darf nur, solange der geprueete
+    # Produktionscode die Groesse aus den Metadaten liest. Wer dort auf
+    # st_blocks oder `du` umstellt, sieht eine 300-MB-Datei mit null
+    # belegten Bloecken — und dieser Vertrag faellt, bevor die Verzweigung
+    # still das Falsche rechnet.
+    for modul in ("nc/videoteil.py", "nc/storage.py", "nc/archiverules.py"):
+        src = io.open(modul, encoding="utf-8").read()
+        assert ("getsize" in src) or ("st_size" in src), \
+            "%s liest die Dateigroesse nicht mehr per getsize/st_size — " \
+            "dann ist pruefhilfen.attrappe() die falsche Attrappe" % modul
+        assert "st_blocks" not in src, \
+            "%s wertet st_blocks aus. Eine Attrappe per truncate() hat NULL " \
+            "belegte Bloecke; die Rechnung dort stimmt dann nicht mehr, " \
+            "ohne dass ein Vertrag faellt." % modul
+
+    # ── (2) DIE ATTRAPPE. Gross in den Metadaten, leer auf der Platte.
+    d = P.verzeichnis()
+    p300 = P.attrappe(_os.path.join(d, "a.mp4"), 300 * 1024 * 1024)
+    st = _os.stat(p300)
+    assert _os.path.getsize(p300) == 300 * 1024 * 1024 == st.st_size, \
+        "die Attrappe meldet die falsche Groesse: %d" % st.st_size
+    assert st.st_blocks == 0, \
+        "die Attrappe belegt %d Bloecke — dann ist truncate() nicht mehr " \
+        "sparse und der Lauf kostet die 300 MB wieder" % st.st_blocks
+
+    # ── (3) DAS AUFRAEUMEN. Auch nachdem das Arbeitsverzeichnis mitten im
+    # Verzeichnis stand — test_smoke.py macht genau das.
+    hier = _os.getcwd()
+    tief = P.verzeichnis()
+    _os.chdir(tief)
+    try:
+        P.aufraeumen()
+        # Das Arbeitsverzeichnis muss danach wieder BENUTZBAR sein. Unter
+        # Linux gelingt rmtree auch mit dem cwd darin — os.getcwd() wirft
+        # danach aber ENOENT, und jeder folgende relative Pfad ebenso.
+        # Unter Windows (dem Entwicklungsrechner) scheitert schon das
+        # Loeschen. Beides fangen wir mit derselben Zusicherung: nach dem
+        # Aufraeumen steht das cwd wieder an einer Stelle, die es gibt.
+        # Ohne diese Zeile entwischte die Mutation "cwd-Rueckwechsel
+        # entfernt" — auf Linux war sie nicht zu unterscheiden.
+        gelandet = _os.getcwd()
+    finally:
+        _os.chdir(hier)
+    assert _os.path.isdir(gelandet), \
+        "nach aufraeumen() zeigt das Arbeitsverzeichnis auf %r, und das " \
+        "gibt es nicht — jeder relative Pfad danach scheitert" % (gelandet,)
+    assert not (gelandet == tief or gelandet.startswith(tief + _os.sep)), \
+        "das Arbeitsverzeichnis liegt noch unter dem geraeumten Pfad %r" \
+        % (tief,)
+    assert not _os.path.exists(tief), \
+        "aufraeumen() hat das Verzeichnis stehen gelassen, in dem das " \
+        "Arbeitsverzeichnis lag"
+    assert not _os.path.exists(d), "aufraeumen() hat nicht alles geraeumt"
+
+    # ── (4) DIE SPERRE muss den Code anschlagen, den es vor dieser Welle
+    # wirklich gab — sonst ist sie eine Behauptung. Der Schnipsel steht hier
+    # woertlich und NICHT als `git show HEAD~1`: eine Bindung an die
+    # Historie faellt zwei Wellen spaeter, wenn der Vorgaenger-Stand sauber
+    # ist, und dann meldet ein gruener Code einen roten Vertrag. Genau diese
+    # Anker-Klasse hat in test_restream schon dreimal zugeschlagen.
+    import sys as _sys2
+    _sys2.path.insert(0, "tools")
+    import testmuell as T
+    WIE_ES_WAR = (
+        'import tempfile\n'
+        'def _alt():\n'
+        '    tmp = tempfile.mkdtemp()\n'
+        '    with open("a.mp4", "wb") as f:\n'
+        '        f.write(b"\\0" * (300 * 1024 * 1024))    # 300 MB (sparse)\n'
+    )
+    tmp_alt, gross_alt = T.finde(_ast.parse(WIE_ES_WAR))
+    assert len(tmp_alt) == 1, \
+        "die Sperre findet den nackten mkdtemp() nicht mehr"
+    assert gross_alt and gross_alt[0][1] == 300 * 1024 * 1024, \
+        "die Sperre findet den 300-MB-Schreibvorgang nicht mehr: %r" \
+        % (gross_alt,)
+
+    # Die Groessenrechnung selbst: literal_eval kann kein `*` und liess den
+    # 300-MB-Fall im ersten Entwurf durch. Gefangen hat das die
+    # Mutationsprobe, nicht das Nachdenken.
+    assert T._wert(_ast.parse("300 * 1024 * 1024", mode="eval").body) \
+        == 314572800, \
+        "die Groessenrechnung wertet verschachtelte Produkte nicht mehr " \
+        "aus — dann findet die Sperre genau die grossen Faelle nicht"
+    assert T._wert(_ast.parse("n * 1024", mode="eval").body) is None, \
+        "eine variable Groesse wird geraten statt als unentscheidbar " \
+        "behandelt"
+
+    # ── (5) UND DER HEUTIGE STAND ist frei davon.
+    tmp_jetzt, gross_jetzt = [], []
+    for name in T.SUITEN:
+        a, b = T.finde(_ast.parse(io.open(name, encoding="utf-8").read()))
+        tmp_jetzt += [(name, x) for x in a]
+        gross_jetzt += [(name, x) for x in b]
+    assert not tmp_jetzt, "nackte mkdtemp-Aufrufe zurueck: %r" % (tmp_jetzt,)
+    assert not gross_jetzt, \
+        "Schreibvorgaenge ab 1 MiB zurueck: %r" % (gross_jetzt,)
+
+    # ── (6) UND SIE HAENGT, WO SIE WIRKT. Eine Sperre, die nur in einem
+    # Werkzeugverzeichnis liegt, ist in einer Woche vergessen: sie muss in
+    # der CI laufen (fuer jeden Beitrag) und in der Pflicht-Pruefkette
+    # stehen (fuer den Entwicklungsrechner, wo der Schaden entsteht).
+    ci = io.open(".github/workflows/ci.yml", encoding="utf-8").read()
+    assert "tools/testmuell.py --sperre" in ci, \
+        "die Sperre laeuft nicht mehr in der CI — dann waechst der Muell " \
+        "auf jedem Entwicklungsrechner wieder, ohne dass etwas rot wird"
+    anleitung = io.open("CLAUDE.md", encoding="utf-8").read()
+    assert "tools/testmuell.py" in anleitung, \
+        "die Sperre steht nicht in der Pflicht-Pruefkette in CLAUDE.md"
+
+    # ── (7) UND SIE FAEHRT AUCH AUF DEM SERVER. Die vier Suiten liegen im
+    # Auslieferungs-Archiv; was sie importieren, muss mit. Fehlt es, stirbt
+    # nicht ein Vertrag, sondern der Import — alle vier Suiten auf einmal,
+    # mit einem nackten ImportError. W86 hatte denselben Fall fuer
+    # conftest.py/pytest.ini, dort nur leiser ("no tests ran" sieht aus wie
+    # ein gruener Lauf).
+    archiv = io.open("tools/build_release.py", encoding="utf-8").read()
+    for name in T.SUITEN + ["pruefhilfen.py", "conftest.py"]:
+        assert '"%s"' % name in archiv, \
+            "%s fehlt in der Dateiliste von build_release.py — auf dem " \
+            "Server laeuft danach keine der Suiten mehr" % name
+
+    ok("W90: attrappe() ist gross in den Metadaten und leer auf der Platte")
+    ok("W90: aufraeumen() raeumt auch unter dem Arbeitsverzeichnis")
+    ok("W90: die Sperre schlaegt auf dem Stand von vor der Welle an")
 
 
 def main():
@@ -15718,6 +15853,7 @@ def main():
     _test_v42_w89_verdrahtungsfehler_bleibt_laut()
     _test_v42_w89_kopie_wird_zurueckgenommen()
     _test_v42_w89_stats_json_meldet_laut()
+    _test_v42_w90_suiten_lassen_nichts_liegen()
     _test_v42_w60_azrael_cooldown_je_plattform()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)
