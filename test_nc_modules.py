@@ -16279,6 +16279,377 @@ def _test_v42_w92_unlesbare_datenbank_sagt_was_zu_tun_ist():
     ok("W92: der Start bricht ab, statt still eine leere Datenbank anzulegen")
 
 
+def _test_v42_w93_telegram_konflikt_wird_unterschieden():
+    """v4.2-W93: ein Telegram-Konflikt, der nicht aufhoert, ist ein Ausfall —
+    und sah bis hierher aus wie eine harmlose Neustart-Ueberlappung.
+
+    Im Log vom 18.09. steht sechsmal derselbe zwoelfzeilige Traceback aus
+    fremden Bibliotheksrahmen, und dann ist es vorbei (07:23:42 Konflikt,
+    07:24:39 wieder HTTP 200). Das war Fall (a): die alte Instanz hielt beim
+    Neustart ihren Long-Poll noch. Voellig harmlos.
+
+    Fall (b) sieht im Log WORTGLEICH aus und ist es nicht: laeuft wirklich
+    eine zweite Instanz mit demselben BOT_TOKEN, gehen die Updates dorthin
+    und dieser Bot bekommt keinen einzigen Telegram-Befehl mehr. Aufnahme,
+    Restream und Moderation laufen weiter, es stuerzt nichts ab — also faellt
+    es nirgends auf. Dieselbe Klasse wie die stillen `return`s aus W81.
+
+    Unterscheidbar sind die beiden nur an der DAUER.
+    """
+    from nc import telegramfehler as T
+
+    class Conflict(Exception):
+        pass
+
+    class InvalidToken(Exception):
+        pass
+
+    class TimedOut(Exception):
+        pass
+
+    class NetworkError(Exception):
+        pass
+
+    class Forbidden(Exception):
+        pass
+
+    class RetryAfter(Exception):
+        pass
+
+    class BadRequest(Exception):
+        pass
+
+    konflikt = Conflict("Conflict: terminated by other getUpdates request; "
+                        "make sure that only one bot instance is running")
+
+    # ── (1) DER FALL VOM 18.09. Erster Konflikt bei t=0, letzter bei t=39,
+    # danach Ruhe. Nichts davon darf als zweite Instanz gemeldet werden.
+    T.zuruecksetzen()
+    for t in (0.0, 6.0, 12.0, 18.0, 27.0, 39.0):
+        g, dauer = T.grund(konflikt, t)
+        assert g == "konflikt_anlauf", \
+            "bei t=%s meldet der echte Neustart-Fall '%s' — der Betreiber " \
+            "sucht dann nachts eine zweite Instanz, die es nicht gibt" % (t, g)
+
+    # ── (2) UND DER FALL, DER ES WIRKLICH IST. Derselbe Fehler, nur laenger
+    # als die Gnadenfrist. Hier MUSS die Meldung kippen.
+    T.zuruecksetzen()
+    T.grund(konflikt, 0.0)
+    g, dauer = T.grund(konflikt, T.GNADENFRIST_S + 1.0)
+    assert g == "konflikt_dauerhaft", \
+        "ein Konflikt jenseits der Gnadenfrist bleibt 'harmlos' — genau der " \
+        "stille Ausfall, gegen den dieses Modul gebaut ist (bekommen: %s)" % g
+    assert dauer >= T.GNADENFRIST_S, dauer
+
+    # ── (3) DIE FOLGE GEHOERT IN DEN TEXT. "Conflict" allein sagt nicht, dass
+    # Telegram-Befehle ausfallen — das ist die ganze Nachricht.
+    t_dauer = T.text("konflikt_dauerhaft")
+    assert "zweite Instanz" in t_dauer, t_dauer
+    assert "keine Telegram-Befehle" in t_dauer, \
+        "die FOLGE fehlt: %s" % t_dauer
+    assert "an die andere Instanz" in t_dauer, \
+        "der Text sagt nicht, WOHIN die Updates stattdessen gehen — ohne " \
+        "das liest sich der Ausfall wie ein Netzproblem: %s" % t_dauer
+    assert "laufen unbeeindruckt weiter" in t_dauer, \
+        "der Text sagt nicht, dass Aufnahme und Restream weiterlaufen. " \
+        "Genau deshalb faellt der Ausfall sonst nirgends auf: %s" % t_dauer
+    assert "pgrep" in t_dauer and "systemctl" in t_dauer, \
+        "keine Abhilfe im Text — 'HTTP 403' allein hat schon einmal " \
+        "wochenlang niemandem geholfen: %s" % t_dauer
+    assert T.ist_fehler("konflikt_dauerhaft"), \
+        "der Dauerkonflikt steht auf warning. In einem ERROR-Log erscheint " \
+        "ein log.warning NIE — so blieb der Discord-Gateway-Tod monatelang " \
+        "unsichtbar (CLAUDE.md)."
+    assert not T.ist_fehler("konflikt_anlauf"), \
+        "die Neustart-Ueberlappung auf error macht jeden Deploy zum Vorfall " \
+        "— Alarm-Muedigkeit ist genauso blind wie Stille"
+    # Die Frist selbst ist Teil des Vertrags. Eine Gnadenfrist, die gross
+    # genug ist, schaltet die Eskalation faktisch ab, ohne dass eine Zeile
+    # Logik dafuer geaendert werden muesste — und kein Vertrag oben faellt,
+    # weil sie alle gegen T.GNADENFRIST_S rechnen.
+    assert 30.0 <= T.GNADENFRIST_S <= 300.0, \
+        "die Gnadenfrist ist aus dem sinnvollen Bereich gelaufen (%s s). " \
+        "Zu kurz meldet jeden Neustart als Vorfall, zu lang schaltet die " \
+        "Eskalation ab." % T.GNADENFRIST_S
+    assert T.STRAEHNE_ENDE_S > T.GNADENFRIST_S, \
+        "das Straehnen-Ende liegt unter der Gnadenfrist — dann endet jede " \
+        "Straehne, bevor sie eskalieren kann, und der Dauerkonflikt wird nie " \
+        "gemeldet"
+
+    # ── (4) ZWEI KONFLIKTE, DIE NICHTS MITEINANDER ZU TUN HABEN. Ohne
+    # Straehnen-Ende wuerde ein einzelner neuer Konflikt eine Stunde spaeter
+    # sofort als "haelt seit einer Stunde an" gemeldet — und das waere falsch.
+    T.zuruecksetzen()
+    T.grund(konflikt, 0.0)
+    g, dauer = T.grund(konflikt, T.STRAEHNE_ENDE_S + 10.0)
+    assert g == "konflikt_anlauf" and dauer == 0.0, \
+        "nach langer Ruhe faengt eine NEUE Straehne an, sonst meldet der " \
+        "erste Konflikt einer neuen Stoerung eine erfundene Dauer (%s/%s)" \
+        % (g, dauer)
+
+    # ── (5) DER WEBHOOK-KONFLIKT hat eine voellig andere Abhilfe und braucht
+    # deshalb einen eigenen Schluessel — dieselbe Entscheidung wie bei 403
+    # gegen 5xx in nc/resolvergrund.py.
+    T.zuruecksetzen()
+    g, _ = T.grund(Conflict("can't use getUpdates method while webhook is "
+                            "active"), 0.0)
+    assert g == "konflikt_webhook", g
+    assert "deleteWebhook" in T.text(g), T.text(g)
+    assert T.STRAEHNE["seit"] is None, \
+        "der Webhook-Fall hat die Konflikt-Straehne angefasst — er ist aber " \
+        "keine Ueberlappung, und seine Dauer sagt nichts"
+
+    # ── (6) DIE UEBRIGEN KLASSEN. Klassiert wird ueber den Klassennamen, weil
+    # nc/ bot-frei bleibt und die Suite ohne python-telegram-bot laeuft.
+    T.zuruecksetzen()
+    for exc, erwartet in ((InvalidToken("Invalid token"), "token_ungueltig"),
+                          (TimedOut("Timed out"), "zeitueberschreitung"),
+                          (NetworkError("httpx.ConnectError"), "netz"),
+                          (Forbidden("Forbidden: bot was kicked"), "verboten"),
+                          (RetryAfter("Flood control exceeded"), "zu_schnell")):
+        g, _ = T.grund(exc, 0.0)
+        assert g == erwartet, "%s -> %s (erwartet %s)" % (exc, g, erwartet)
+    assert T.ist_fehler("token_ungueltig"), \
+        "ein falscher Token heilt nicht von selbst — das gehoert auf error"
+    assert not T.ist_fehler("netz"), \
+        "jeder Netzhaenger auf error deckt die echten Faelle zu"
+    for g_ in ("verboten", "zu_schnell", "zeitueberschreitung", "netz",
+               "token_ungueltig", "konflikt_webhook"):
+        assert T.text(g_) != g_ and len(T.text(g_)) > 40, \
+            "Grund '%s' hat keinen Klartext — dann steht im Log nur der " \
+            "Schluessel, und der hilft so wenig wie 'HTTP 403'" % g_
+
+    # ── (7) EIN UNBEKANNTER FEHLER DARF NICHT VERSCHWINDEN, und zwei
+    # verschiedene neue duerfen nicht zu einem verschmelzen: sonst schluckt
+    # die Drossel den zweiten, weil sich der Grund fuer sie nicht geaendert
+    # hat.
+    g, _ = T.grund(BadRequest("Bad Request: chat not found"), 0.0)
+    assert "BadRequest" in g, \
+        "der Klassenname fehlt im Schluessel — ein Sammeltopf 'unbekannt' " \
+        "macht zwei Fehlerbilder ununterscheidbar: %s" % g
+    assert T.text(g) == g, \
+        "ein unbekannter Grund muss sich selbst nennen statt zu verstummen"
+
+    # ── (8) DIE DAUER ALS KLARTEXT. Es geht um "seit zwei Minuten", nicht um
+    # 127,4 Sekunden.
+    assert T.dauer_text(0) == "0 s" and T.dauer_text(59) == "59 s"
+    assert T.dauer_text(130) == "2 min"
+    assert T.dauer_text(7300) == "2 h"
+
+    T.zuruecksetzen()
+    assert T.STRAEHNE["seit"] is None and T.STRAEHNE["zuletzt"] is None
+
+    # ── (9) UND DIE VERDRAHTUNG. Ohne error_callback greift PTBs eigener
+    # default_error_callback, und dann steht wieder der zwoelfzeilige
+    # Traceback im Log — das Modul oben waere gebaut und nie aufgerufen.
+    b = open("bot.py", encoding="utf-8").read()
+    stelle = b.find("await app.updater.start_polling(")
+    assert stelle > 0, "start_polling nicht gefunden"
+    ruf = rumpf_ab(b, stelle)
+    assert "error_callback=_telegram_polling_fehler" in ruf[:400], \
+        "start_polling ohne error_callback — PTB schreibt dann weiter seinen " \
+        "eigenen Traceback je Vorkommen"
+    anlauf = rumpf_ab(b, b.find("async def run_bot("))
+    assert "_nc_tgfehler.zuruecksetzen()" in anlauf, \
+        "die Konflikt-Straehne wird beim Start nicht geleert — ein alter " \
+        "Zaehlerstand meldet den ersten Konflikt sofort als 'seit Stunden'"
+    rumpf = rumpf_ab(b, b.find("def _telegram_polling_fehler("))
+    assert "_nc_meldetakt.melden(" in rumpf, \
+        "ungedrosselt: PTB wiederholt im Sekundentakt, und eine unlesbare " \
+        "Warnung ist so gut wie keine"
+    # Nicht "kommen log.error und log.warning vor" — der Auffang am Ende der
+    # Funktion enthaelt selbst ein log.error, und genau daran ist die
+    # Mutationsprobe "Fehlerzweig auf warning gedreht" zunaechst entwischt.
+    # Gemessen wird der ZWEIG.
+    zweig = rumpf[rumpf.find("ist_fehler(grund):"):]
+    zweig = zweig[:zweig.find("    except ")] if "    except " in zweig else zweig
+    ja, nein = zweig.split("else:", 1)
+    assert "log.error(" in ja and "log.warning(" not in ja, \
+        "der Ausfall-Zweig loggt nicht auf error. In einem ERROR-Log " \
+        "erscheint ein log.warning NIE: %s" % ja
+    assert "log.warning(" in nein and "log.error(" not in nein, \
+        "die Neustart-Ueberlappung auf error macht jeden Deploy zum " \
+        "Vorfall — Alarm-Muedigkeit ist genauso blind wie Stille: %s" % nein
+
+    ok("W93: die Neustart-Ueberlappung vom 18.09. bleibt eine Warnzeile")
+    ok("W93: ein Konflikt jenseits der Gnadenfrist wird zum ERROR")
+    ok("W93: der Text nennt Folge (keine Telegram-Befehle) und Abhilfe")
+    ok("W93: nach langer Ruhe faengt eine neue Straehne an")
+    ok("W93: Webhook-Konflikt und Token-Fehler haben eigene Gruende")
+    ok("W93: ein unbekannter Fehler nennt seinen Klassennamen")
+    ok("W93: start_polling haengt den eigenen Fehlerkanal ein, gedrosselt")
+
+
+def _test_v42_w93_deck_nennt_das_wirkliche_schema():
+    """v4.2-W93: das Log nannte die Adresse des Decks mit dem falschen Schema.
+
+    Im Log vom 18.09. stehen zwei Zeilen im Abstand von 19 Millisekunden:
+
+        Dashboard-TLS aktiv: https://<host>:8050 (Zertifikat: fullchain.pem)
+        Dashboard: http://0.0.0.0:8050  (Auth aktiv)
+
+    Die zweite ist die mit der vollstaendigen Adresse, also die, die man
+    kopiert — und sie ist falsch. Wer sie benutzt, spricht HTTP gegen einen
+    TLS-Socket und sucht den Fehler im Netz. Es ist derselbe Befund wie bei
+    der Bindung in W84 ("die WIRKLICHE Adresse nennen, nicht die
+    gewuenschte"), eine Zeile weiter: dort war es der Host, hier das Schema.
+    """
+    import os as _os
+    from nc import webserver as W
+    import pruefhilfen as P
+
+    heim = P.verzeichnis()
+    cert = _os.path.join(heim, "fullchain.pem")
+    key = _os.path.join(heim, "privkey.pem")
+    for pfad in (cert, key):
+        with open(pfad, "w", encoding="utf-8") as f:
+            f.write("-----BEGIN CERTIFICATE-----\n")
+
+    # ── (1) BEIDE DATEIEN DA -> https. Der Fall vom 18.09.
+    assert W.schema(cert, key) == "https", \
+        "bei aktivem TLS nennt das Log weiter http:// — genau die Adresse, " \
+        "die der Betreiber kopiert"
+    assert W.tls_lage(cert, key) == ("an", (cert, key), ""), W.tls_lage(cert, key)
+
+    # ── (2) NICHTS GESETZT -> http, und STILL. Der Normalfall hinter dem
+    # Tunnel darf keine Zeile erzeugen, sonst warnt das Log bei jedem Start.
+    assert W.schema("", "") == "http"
+    assert W.tls_lage("", "") == ("aus", None, ""), W.tls_lage("", "")
+    assert W.schema("   ", "  ") == "http", "Leerraum ist kein Pfad"
+    assert W.tls_lage("  ", " ")[0] == "aus"
+
+    # ── (3) DIE GEFAEHRLICHERE HAELFTE: gesetzt, aber die Datei fehlt.
+    # run_flask faellt dann auf HTTP zurueck. Meldete das Log hier https://,
+    # waere der Fehler nur umgedreht — und diesmal ohne die TLS-Zeile
+    # daneben, die widerspricht.
+    fehlt = _os.path.join(heim, "gibtsnicht.pem")
+    assert W.schema(cert, fehlt) == "http", \
+        "fehlender Schluessel und trotzdem https:// — die Meldung folgt dem " \
+        "Wunsch statt dem Weg"
+    assert W.schema(fehlt, key) == "http"
+    lage, paar, meldung = W.tls_lage(cert, fehlt)
+    assert lage == "datei_fehlt" and paar is None, (lage, paar)
+    assert fehlt in meldung, \
+        "die Meldung nennt die fehlende Datei nicht: %s" % meldung
+
+    # ── (3b) UND DER KONFIGURATIONSFEHLER, DER SONST STILL BLIEBE: nur eine
+    # der beiden Variablen gesetzt. Ohne eigene Lage sieht das fuer den
+    # Aufrufer aus wie "TLS gar nicht gewollt" — das Deck laeuft dann
+    # unverschluesselt, und niemand erfaehrt warum.
+    lage, paar, meldung = W.tls_lage(cert, "")
+    assert lage == "unvollstaendig" and paar is None, (lage, paar)
+    assert "DASHBOARD_TLS_KEY" in meldung, meldung
+    assert W.tls_lage("", key)[0] == "unvollstaendig"
+    assert "DASHBOARD_TLS_CERT" in W.tls_lage("", key)[2]
+
+    # ── (4) UND DIE VERDRAHTUNG. Nicht per Textsuche: der Vorlaeufer dieses
+    # Abschnitts pruefte, ob "_nc_webserver.schema(" im Rumpf vorkommt — und
+    # blieb gruen, als die Mutationsprobe das Ergebnis berechnete und dann
+    # verwarf ("http://" wieder fest im f-String). Gemessen wird deshalb, was
+    # die Funktion ZURUECKGIBT. Sie steht auf Modul-Ebene und haengt nur an
+    # vier Namen, also laesst sie sich mit Attrappen ausfuehren, ohne bot.py
+    # zu importieren (das braucht telegram und discord).
+    import ast as _ast
+    b = open("bot.py", encoding="utf-8").read()
+    baum = _ast.parse(b)
+    fn = [n for n in baum.body
+          if isinstance(n, _ast.FunctionDef) and n.name == "_dashboard_adresse"]
+    assert fn, \
+        "_dashboard_adresse ist weg — dann baut main() die Adresse wieder " \
+        "selbst, und genau dort stand das falsche Schema"
+
+    # Die Umgebung wird geliehen, nicht uebernommen: was dieser Vertrag
+    # setzt, steht am Ende wieder so da wie vorher. Eine Suite, die
+    # os.environ liegen laesst, faerbt jeden spaeteren Vertrag im selben
+    # Prozess ein — und pytest faehrt sie seit W86 einzeln UND am Stueck.
+    _gemerkt = {k: _os.environ.get(k) for k in
+                ("DASHBOARD_TLS_CERT", "DASHBOARD_TLS_KEY",
+                 "DASHBOARD_OFFEN_ERLAUBEN")}
+
+    def _zuruecksetzen():
+        for k, v in _gemerkt.items():
+            if v is None:
+                _os.environ.pop(k, None)
+            else:
+                _os.environ[k] = v
+
+    def _adresse(web_host, token, pin, cert_, key_):
+        raum = {"_nc_webserver": W, "os": _os, "WEB_HOST": web_host,
+                "DASHBOARD_TOKEN": token, "DASHBOARD_PIN": pin,
+                "DASHBOARD_PORT": 8050}
+        _os.environ["DASHBOARD_TLS_CERT"] = cert_
+        _os.environ["DASHBOARD_TLS_KEY"] = key_
+        exec(compile(_ast.Module(body=fn, type_ignores=[]), "bot.py",
+                     "exec"), raum)
+        return raum["_dashboard_adresse"]()
+
+    # Der Fall vom 18.09.: TLS an, Deck offen gebunden, Token gesetzt.
+    zeile = _adresse("0.0.0.0", "geheim", "", cert, key)
+    assert zeile.startswith("https://0.0.0.0:8050"), \
+        "die Adresszeile ist wieder falsch — genau der Befund vom 18.09.: " \
+        "%s" % zeile
+    assert "Auth aktiv" in zeile, zeile
+
+    # Ohne TLS bleibt es http.
+    zeile = _adresse("0.0.0.0", "geheim", "", "", "")
+    assert zeile.startswith("http://0.0.0.0:8050"), zeile
+
+    # Und der Host muss der WIRKLICHE sein (W84): ohne Token und ohne PIN
+    # faellt die Bindung auf Loopback zurueck — stuende hier der Wunsch aus
+    # der .env, suchte der Betreiber den Fehler im Netz.
+    _os.environ.pop("DASHBOARD_OFFEN_ERLAUBEN", None)
+    try:
+        zeile = _adresse("0.0.0.0", "", "", cert, key)
+    finally:
+        _zuruecksetzen()
+    assert zeile.startswith("https://127.0.0.1:8050"), \
+        "die Adresszeile nennt den Wunsch-Host statt der wirklichen " \
+        "Bindung (W84): %s" % zeile
+    assert "KEIN Auth" in zeile, zeile
+    assert _os.environ.get("DASHBOARD_TLS_CERT") == _gemerkt["DASHBOARD_TLS_CERT"], \
+        "der Vertrag laesst DASHBOARD_TLS_CERT in der Umgebung liegen"
+
+    # ── (4b) UND main() DARF DIE ZEILE NICHT EIN ZWEITES MAL SELBST BAUEN.
+    # rumpf_ab schneidet an "\ndef " — main() ist ein `async def` und wird
+    # davon nicht getroffen, also direkt am Namen ansetzen.
+    mstelle = b.find("async def main():")
+    assert mstelle > 0, "async def main() nicht gefunden"
+    m = b[mstelle:b.find("\nasync def ", mstelle + 1)]
+    assert "_dashboard_adresse()" in m, \
+        "main() nennt die Adresse an dem benannten Schritt vorbei"
+    assert 'f"Dashboard: ' not in m, \
+        "main() baut die Adresszeile wieder selbst zusammen"
+
+    # ── (5) run_flask darf die TLS-Frage weder selbst rechnen noch die
+    # Meldung verschlucken. Gemessen wird der ZWEIG, nicht das blosse
+    # Vorkommen von "log.warning" — run_flask loggt an mehreren Stellen, und
+    # daran ist die Mutationsprobe zunaechst entwischt.
+    rf = rumpf_ab(b, b.find("def run_flask("))
+    assert "_nc_webserver.tls_lage(" in rf, \
+        "run_flask rechnet die TLS-Frage wieder selbst — zwei Rechnungen " \
+        "fuer dieselbe Frage sind genau, wie die Meldungen auseinanderliefen"
+    assert "os.path.exists(_tls_cert)" not in rf, \
+        "die Dateipruefung steht wieder in bot.py"
+    zweig = rf[rf.find("elif _tls_meldung:"):]
+    assert zweig.startswith("elif _tls_meldung:"), \
+        "der Zweig fuer die TLS-Meldung fehlt: das Deck laeuft dann " \
+        "unverschluesselt, ohne dass es jemand erfaehrt"
+    rumpf_zweig = []
+    for zeile_ in zweig.split("\n")[1:]:
+        if zeile_.strip() and not zeile_.startswith("        "):
+            break                       # zurueck auf Funktionsebene
+        rumpf_zweig.append(zeile_)
+    rumpf_zweig = "\n".join(rumpf_zweig)
+    assert "log.warning" in rumpf_zweig, \
+        "run_flask verschluckt den Konfigurationsfehler — das Deck laeuft " \
+        "dann unverschluesselt, ohne dass es jemand erfaehrt: %s" % rumpf_zweig
+
+    ok("W93: bei aktivem TLS nennt das Log https://, nicht http://")
+    ok("W93: gesetzter, aber ins Leere zeigender Pfad bleibt http und meldet")
+    ok("W93: nur eine der beiden TLS-Variablen gesetzt wird nicht verschluckt")
+    ok("W93: _dashboard_adresse nennt wirkliches Schema, Host und Schranke")
+    ok("W93: run_flask rechnet die TLS-Frage nicht ein zweites Mal selbst")
+
 def main():
     tmp, rid = richte_testdatenbank_ein()
     ok("db_conn aus nc.dbwrap: echtes Schema angelegt, Commit durchgelaufen")
@@ -16536,6 +16907,8 @@ def main():
     _test_v42_w91_blinde_helfer_melden()
     _test_v42_w91_build_laesst_keinen_stempel_liegen()
     _test_v42_w92_unlesbare_datenbank_sagt_was_zu_tun_ist()
+    _test_v42_w93_telegram_konflikt_wird_unterschieden()
+    _test_v42_w93_deck_nennt_das_wirkliche_schema()
     _test_v42_w60_azrael_cooldown_je_plattform()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)

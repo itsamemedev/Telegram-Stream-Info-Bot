@@ -602,6 +602,7 @@ from nc import aufnahmekategorie as _nc_kat  # v4.2-W23: warum eine Aufnahme so 
 from nc import audiotap as _nc_audiotap  # v4.2-W46: warum der Audio-Tap starb
 from nc import meldetakt as _nc_meldetakt  # v4.2-W81: Grund melden ohne Log-Flut
 from nc import resolvergrund as _nc_rgrund  # v4.2-W81: warum die Aufloesung leer blieb
+from nc import telegramfehler as _nc_tgfehler  # v4.2-W93: warum das Telegram-Polling klemmt
 from nc import aufnahmesitzung as _nc_sitzung  # v4.2-W44: die Klammer um die Segmente EINES Streams
 from nc import chatfolge as _nc_chatfolge  # v4.2-W47: wie oft der TikTok-Chat neu darf
 from nc import memeklip as _nc_memeklip  # v4.2-W24: erkennt meme-wuerdige Chat-Momente
@@ -7393,6 +7394,55 @@ def _loop_fehler(name, exc):
         st[1] += 1
 
 
+def _telegram_polling_fehler(exc):
+    """v4.2-W93: ein Fehler im Telegram-Long-Poll — als EINE brauchbare Zeile.
+
+    Ohne diesen Rueckruf landet der Fehler bei PTBs eigenem
+    `Updater.default_error_callback`, und der schreibt je Vorkommen zwoelf
+    Zeilen Traceback durch fremde Bibliotheksrahmen. Am 18.09. standen so
+    sechs identische Bloecke im ERROR-Log, und kein einziger Rahmen davon
+    liegt in unserem Code — es gibt darin nichts nachzusehen. Das ist die
+    Umkehrung von W92: dort war die Meldung zu kurz, hier ist sie zu lang,
+    und beide sagen dem Betreiber nichts.
+
+    Der eigentliche Gewinn ist aber nicht die Kuerze, sondern die
+    UNTERSCHEIDUNG. Ein `Conflict` beim Neustart ist harmlos — die alte
+    Instanz haelt ihren Long-Poll noch. Ein `Conflict`, der nicht aufhoert,
+    heisst: es laeuft eine zweite Instanz, und dieser Bot bekommt keinen
+    einzigen Telegram-Befehl mehr. Aufnahme, Restream und Moderation laufen
+    dabei weiter, es stuerzt nichts ab — also faellt es sonst nirgends auf.
+    Im Log sehen beide Faelle wortgleich aus; sie unterscheiden sich nur in
+    der Dauer, und die misst nc/telegramfehler.py.
+
+    PTB ruft das hier SYNCHRON aus seiner Wiederholungsschleife auf (eine
+    Koroutine lehnt es ab), und es darf nicht werfen: eine Ausnahme im
+    Fehlerpfad reisst das Polling mit. Deshalb der Auffang ganz unten — der
+    einzige legitime stille Pfad ist der Fehlerkanal selbst, und auch der
+    versucht hier noch eine letzte Zeile.
+    """
+    try:
+        jetzt = _time_mod.monotonic()
+        grund, dauer = _nc_tgfehler.grund(exc, jetzt)
+        laut, unterdrueckt = _nc_meldetakt.melden("telegram-polling", grund, jetzt)
+        if not laut:
+            return
+        # Die Dauer gehoert NUR beim Konflikt in die Zeile, und nur dann,
+        # wenn sie etwas aussagt: "seit 0 s" waere Rauschen.
+        seit = f" (seit {_nc_tgfehler.dauer_text(dauer)})" if dauer >= 1.0 else ""
+        text = _nc_tgfehler.text(grund)
+        zusatz = _nc_meldetakt.zusatz(unterdrueckt)
+        if _nc_tgfehler.ist_fehler(grund):
+            log.error("Telegram-Polling [%s]%s: %s%s", grund, seit, text, zusatz)
+        else:
+            log.warning("Telegram-Polling [%s]%s: %s%s", grund, seit, text, zusatz)
+    except Exception as e:
+        # Bewusst nicht still: faellt die Klassierung aus, ist der
+        # urspruengliche Fehler sonst spurlos weg — und genau das soll die
+        # Funktion verhindern.
+        log.error("Telegram-Polling-Meldung selbst gestoert (%s); "
+                  "urspruenglicher Fehler: %s", e, exc)
+
+
 def _verbindung_verloren(kanal, exc, backoff_s, seit=0.0):
     """v4.0-W116: eine Dauerverbindung ist weggebrochen — richtig melden.
 
@@ -11120,6 +11170,31 @@ def download(recording_id):
     return send_from_directory(allowed, os.path.relpath(filepath, allowed),
                                as_attachment=True)
 
+
+def _dashboard_adresse():
+    """v4.2-W93: die Zeile, unter der das Deck WIRKLICH zu erreichen ist.
+
+    Drei Angaben, und zwei davon waren schon einmal falsch: der Host stand
+    bis W84 als Wunsch aus der .env im Log, obwohl die Bindung auf Loopback
+    zurueckfiel; das Schema stand bis W93 fest auf "http://", obwohl zwei
+    Zeilen vorher "Dashboard-TLS aktiv: https://..." gemeldet wurde (Log vom
+    18.09.). Wer die Zeile mit der vollstaendigen Adresse kopiert — und das
+    ist diese — sprach dann HTTP gegen einen TLS-Socket und suchte den
+    Fehler im Netz.
+
+    Als eigener, benannter Schritt auf Modul-Ebene, weil main() genau auf
+    der 300er-Stufe der Sperre aus W74 stand und "welche Adresse nennen
+    wir" keine Fussnote in der Startsequenz ist.
+    """
+    bind, _ = _nc_webserver.bindung(WEB_HOST,
+                                    bool(DASHBOARD_TOKEN or DASHBOARD_PIN))
+    schema = _nc_webserver.schema(os.getenv("DASHBOARD_TLS_CERT", ""),
+                                  os.getenv("DASHBOARD_TLS_KEY", ""))
+    schranke = ("Auth aktiv" if DASHBOARD_TOKEN or DASHBOARD_PIN
+                else "KEIN Auth – nur lokal!")
+    return f"{schema}://{bind}:{DASHBOARD_PORT}  ({schranke})"
+
+
 def run_flask():
     # F24-Hang-Fix: threaded=True — sonst blockiert eine slow sync Route
     # (Redis/Ollama-Probes) den ganzen Server. Multi-threaded reicht für
@@ -11161,15 +11236,20 @@ def run_flask():
     #   DASHBOARD_TLS_KEY=/etc/letsencrypt/live/trevlix.dev/privkey.pem
     _tls_cert = (os.getenv("DASHBOARD_TLS_CERT", "") or "").strip()
     _tls_key = (os.getenv("DASHBOARD_TLS_KEY", "") or "").strip()
-    _ssl_ctx = None
-    if _tls_cert and _tls_key:
-        if os.path.exists(_tls_cert) and os.path.exists(_tls_key):
-            _ssl_ctx = (_tls_cert, _tls_key)
-            log.info("Dashboard-TLS aktiv: https://<host>:%s (Zertifikat: %s)",
-                     DASHBOARD_PORT, os.path.basename(_tls_cert))
-        else:
-            log.warning("DASHBOARD_TLS_CERT/KEY gesetzt, aber Datei(en) fehlen — "
-                        "Dashboard startet unverschluesselt (HTTP).")
+    # v4.2-W93: die Entscheidung "TLS ja/nein" steht jetzt in nc/webserver.py,
+    # weil main() sie fuer die Adresszeile ebenfalls braucht. Sie hier ein
+    # zweites Mal auszurechnen ist genau der Weg, auf dem die beiden Meldungen
+    # auseinandergelaufen sind (Log vom 18.09.: "TLS aktiv: https://..." und
+    # zwei Zeilen spaeter "Dashboard: http://...").
+    _, _ssl_ctx, _tls_meldung = _nc_webserver.tls_lage(_tls_cert, _tls_key)
+    if _ssl_ctx:
+        log.info("Dashboard-TLS aktiv: https://<host>:%s (Zertifikat: %s)",
+                 DASHBOARD_PORT, os.path.basename(_tls_cert))
+    elif _tls_meldung:
+        # Nicht still: das Deck laeuft dann unverschluesselt, obwohl TLS
+        # gewollt war — und der haeufigste Grund ist ein Let's-Encrypt-Pfad,
+        # der nach einer Erneuerung ins Leere zeigt.
+        log.warning("%s", _tls_meldung)
     # v4.2-W84 (SEC): Bindung fail-closed. Ohne Token UND ohne PIN faellt das
     # Deck auf Loopback zurueck, statt offen im Netz zu stehen — die Meldung
     # aus v4.1-W30 war der richtige erste Schritt und der falsche letzte: sie
@@ -22510,7 +22590,18 @@ async def run_bot():
     try:
         await app.initialize()
         await app.start()
-        await app.updater.start_polling()
+        # v4.2-W93: die Straehne gehoert beim Start geleert. Ein Prozess, der
+        # sich einen alten Zaehlerstand aus einer frueheren Polling-Phase
+        # mitnimmt, meldete den ersten Konflikt sofort als "haelt seit Stunden
+        # an" — also genau die Eskalation, die dem Betreiber sagt, er solle
+        # eine zweite Instanz suchen, die es nicht gibt.
+        _nc_tgfehler.zuruecksetzen()
+        _nc_meldetakt.zuruecksetzen("telegram-polling")
+        # error_callback: sonst greift PTBs default_error_callback und schreibt
+        # je Vorkommen zwoelf Zeilen fremden Traceback (18.09., sechsmal
+        # hintereinander). add_error_handler taugt hier NICHT — der faengt
+        # Fehler beim VERARBEITEN eines Updates, nicht beim Abholen.
+        await app.updater.start_polling(error_callback=_telegram_polling_fehler)
         log.info("Bot läuft — Telegram-Polling AKTIV, Befehle empfangsbereit.")
     except Exception as e:
         log.error("Telegram-Polling FEHLGESCHLAGEN: %s — Telegram-Befehle sind AUS. "
@@ -23509,11 +23600,7 @@ async def main():
     # die Bindung mangels Geheimnis auf Loopback zurueck, stand hier vorher
     # trotzdem die Adresse aus der .env — und der Betreiber suchte den Fehler
     # beim Netz statt in der Konfiguration.
-    _bind_eff, _ = _nc_webserver.bindung(
-        WEB_HOST, bool(DASHBOARD_TOKEN or DASHBOARD_PIN))
-    log.info(f"Dashboard: http://{_bind_eff}:{DASHBOARD_PORT}"
-             + ("  (Auth aktiv)" if DASHBOARD_TOKEN or DASHBOARD_PIN
-                else "  (KEIN Auth – nur lokal!)"))
+    log.info("Dashboard: %s", _dashboard_adresse())
 
     # F93: AZRAEL SENTINEL — KI-Moderator automatisch hochfahren. Vorher lief er
     # NUR nach manuellem Dashboard-Klick → Kick-Chat war nach jedem Neustart

@@ -10,7 +10,7 @@ GitHub-Repo trägt Historie, CI und Issues — es ist nicht der Deploy-Weg.
 
 ## Die eine Regel
 
-`bot.py` hat **24.296 Zeilen / 1,2 MB ≈ 295.000 Token**. Diese Datei wird
+`bot.py` hat **24.383 Zeilen / 1,2 MB ≈ 295.000 Token**. Diese Datei wird
 **nie** ganz gelesen und **nie** blind durchsucht. Erst fragen wo etwas steht,
 dann den Ausschnitt holen:
 
@@ -26,7 +26,7 @@ dann den Ausschnitt holen:
     python tools/ncpatch.py docs                           # Doku-Zahlen gegen den Quelltext
 
 `find` antwortet aus `.claude/INDEX.md` — 364 Routen (34 in `bot.py`, 330 in
-`nc/routes/`), 60 Slash-Commands, 546 Funktionen mit Zeilennummern. Nach Änderungen an Routen, Commands oder
+`nc/routes/`), 60 Slash-Commands, 548 Funktionen mit Zeilennummern. Nach Änderungen an Routen, Commands oder
 Top-Level-Funktionen `map` neu laufen lassen. Details: Skill `nc-navigation`.
 
 Für „wer ruft das auf?" und „was ist der Typ?" ist der Sprachserver billiger als
@@ -55,7 +55,7 @@ Auf diesem Windows-Rechner heißt der Interpreter **`python`** (3.13.12);
     brain_bridge.py      Adapter Bot ↔ brain/ (M2)
     brain/               KI-Kern: state, rules, router, agents, memory,
                          semantic, knowledge, scheduler, llm, report
-    nc/                  143 Fachmodule: db, scraping, restream, oauth, ledger,
+    nc/                  144 Fachmodule: db, scraping, restream, oauth, ledger,
                          i18n, …
     nc/routes/           36 Flask-Blueprints mit 327 weiteren API-Routen
     locales/             de.json, en.json — der Übersetzungskatalog
@@ -127,7 +127,7 @@ konfigurierte Datenbank, `db_conn()` fiel auf den Vorgabepfad zurück und legte
 ein `tiktok_bot.db` **im Arbeitsverzeichnis** an. Beim zweiten Lauf starb
 `_test_dbexport` an „table dbx_t already exists".
 
-    python -m pytest                                    alle 323 einzeln (~47 s)
+    python -m pytest                                    alle 344 einzeln (~47 s)
     python -m pytest -k w83                             nur eine Welle
     python -m pytest "test_nc_modules.py::_test_dbexport"   genau einer (0,06 s)
 
@@ -136,8 +136,8 @@ ein `tiktok_bot.db` **im Arbeitsverzeichnis** an. Beim zweiten Lauf starb
 die Prüfkette fährt und was die Sperre ist; pytest kommt daneben, für die
 Arbeit am einzelnen Befund.
 
-**Die Überdeckung ist seit v4.2-W86 gemessen: 51,1 %** von `nc/` und `brain/`
-(19.697 Anweisungen, 9.633 davon ungeprüft). Das ist die Zahl, die den 461
+**Die Überdeckung ist seit v4.2-W86 gemessen: 51,3 %** von `nc/` und `brain/`
+(19.764 Anweisungen, 9.633 davon ungeprüft). Das ist die Zahl, die den 473
 Verträgen erst ihren Maßstab gibt — „alles grün" sagt sonst nichts darüber,
 wie viel Bestand dabei angefasst wurde. Gesperrt wird wie bei W65/W66 nur der
 Zuwachs, und zwar die **Anzahl** ungeprüfter Anweisungen, nicht der
@@ -299,6 +299,48 @@ dann, wenn `os.remove` scheiterte. Die Aufnahme belegte weiter Platz, tauchte
 in keiner Liste mehr auf, und das Deck meldete den Platz als frei — die
 Umkehrung des W89-Befunds in `archiverules.py`. **Wer die Datei nicht löschen
 kann, darf auch ihre Spur nicht löschen.**
+
+**Ein zwölfzeiliger Traceback sagte so wenig wie ein blankes „HTTP 403".**
+Das Log vom 18.09. trägt sechsmal denselben Block aus elf fremden
+Bibliotheksrahmen und endet jedes Mal auf `telegram.error.Conflict:
+terminated by other getUpdates request`. Kein Rahmen davon liegt in unserem
+Code — es gibt darin nichts nachzusehen. Das ist die **Umkehrung von W92**:
+dort war die Meldung zu kurz, hier ist sie zu lang, und beide sagen dem
+Betreiber nichts.
+
+Der Laut war aber nicht der eigentliche Befund. Ein `Conflict` hat zwei
+Bedeutungen, und im Log sehen sie **wortgleich** aus: beim Neustart hält die
+alte Instanz ihren Long-Poll noch (am 18.09. 57 Sekunden lang, dann wieder
+HTTP 200) — völlig harmlos. Läuft dagegen wirklich eine zweite Instanz mit
+demselben `BOT_TOKEN`, hört es nie auf, und dann gehen die Updates **dorthin**:
+dieser Bot nimmt weiter auf, sendet weiter und moderiert weiter, er bekommt
+nur keinen Telegram-Befehl mehr. Nichts stürzt ab, nichts meldet sich — es
+geht bloß nichts. Dieselbe Klasse wie die stillen `return`s aus W81, nur
+eine Schicht höher.
+
+Unterscheidbar sind die beiden allein an der **Dauer**. Die misst seit
+v4.2-W93 `nc/telegramfehler.py`, und `start_polling(error_callback=…)` hängt
+den eigenen Kanal ein — `add_error_handler` taugt dafür **nicht**, der fängt
+Fehler beim *Verarbeiten* eines Updates, nicht beim Abholen. Innerhalb der
+Gnadenfrist eine Warnzeile mit dem Hinweis, dass ein Neustart genau so
+aussieht; darüber hinaus ein ERROR mit Dauer, Folge und Abhilfe. Weil dabei
+der Grund-Schlüssel wechselt, lässt `nc/meldetakt.py` die Eskalation sofort
+durch statt sie in die 15-Minuten-Drossel zu stecken.
+
+**Das Log nannte die Adresse des Decks mit dem falschen Schema.** Zwei Zeilen
+im Abstand von 19 Millisekunden, dasselbe Log: `Dashboard-TLS aktiv:
+https://<host>:8050` und `Dashboard: http://0.0.0.0:8050`. Die zweite ist die
+mit der vollständigen Adresse, also die, die man kopiert — und sie war falsch.
+Es ist derselbe Befund wie bei der Bindung in W84 („die WIRKLICHE Adresse
+nennen, nicht die gewünschte"), eine Zeile weiter: dort war es der Host, hier
+das Schema. Die Ursache war beide Male dieselbe — die Antwort stand nur in
+`run_flask()`, und `main()` riet. Seit v4.2-W93 beantwortet
+`nc/webserver.tls_lage()` die Frage einmal für beide, und `_dashboard_adresse()`
+baut die Zeile als **ein** benannter Schritt.
+
+Dabei fiel die Sperre aus W74 zu Recht: `main()` stand genau auf der
+300er-Stufe, und fünf zusätzliche Zeilen hätten sie darüber gehoben. Die Zeile
+herauszulösen war deshalb nicht Kosmetik, sondern die Arbeit.
 
 **Ein Release-Build machte die Suite rot.** `tools/build_release.py` schreibt
 `AUSLIEFERUNG.json` in den Arbeitsbaum, damit der Stempel ins Archiv wandert —
