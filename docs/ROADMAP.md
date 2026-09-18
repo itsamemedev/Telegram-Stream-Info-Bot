@@ -24,7 +24,7 @@ Der vollständige, gemessene Plan steht in
 | **6** | Kern aufräumen, `bot.py` wird Kompositionswurzel | Rest |
 
 Welle 2 ist erledigt, Welle 3 läuft: `nc/routes/` trägt heute 36 Blueprints mit
-330 API-Routen, die nicht mehr im Monolithen stehen.
+333 API-Routen, die nicht mehr im Monolithen stehen.
 
 ---
 

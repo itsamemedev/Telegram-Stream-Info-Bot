@@ -17053,6 +17053,401 @@ def _test_v42_w95_systemdump_gehoert_nicht_ins_laufende_deck():
     ok("W95: dbwiederher ueberschreibt nichts und laesst nichts Halbes liegen")
 
 
+def _test_v42_w96_wiederherstellung_nimmt_das_wal_mit():
+    """v4.2-W96: ein Tausch ohne -wal haette die Wiederherstellung LAUTLOS
+    verschluckt.
+
+    Der Betreiber wollte den Weg ueber das Deck: "Ich starte mit einer
+    leeren Datenbank klar startet der bot... Also los jetzt". Dafuer muss
+    die geprüfte Datei an die Stelle der laufenden — und genau da liegt die
+    Falle.
+
+    SQLite laeuft hier im WAL-Modus (nc/dbwrap setzt journal_mode=WAL).
+    Wird nur die Hauptdatei ersetzt, spielt SQLite das ALTE -wal auf die
+    neue Datei. Gemessen, bevor dieses Modul existierte:
+
+        Hauptdatei getauscht, -wal liegengelassen
+          gelesen:   [('@leer_bestand',)]     <- die ALTEN Daten
+          integrity: ok
+
+    Kein Fehler, keine Warnung, eine gesunde Datenbank mit falschem Inhalt.
+    Der Betreiber haette neu gestartet und seine Sicherung waere weg — ohne
+    eine einzige Zeile im Log. Das ist die gefaehrlichste Form eines
+    Fehlers, die dieses Projekt kennt.
+    """
+    import os as _os
+    import sqlite3 as _sq3
+    import tarfile as _tf
+    from nc import dbrestore as R
+    import pruefhilfen as P
+
+    heim = P.verzeichnis()
+
+    def _mit_zeilen(pfad, werte, wal=False):
+        con = _sq3.connect(pfad)
+        if wal:
+            con.execute("PRAGMA journal_mode=WAL")
+        con.execute("CREATE TABLE trackings (id INTEGER PRIMARY KEY, u TEXT)")
+        for w in werte:
+            con.execute("INSERT INTO trackings (u) VALUES (?)", (w,))
+        con.commit()
+        return con
+
+    # ── (1) DIE WAL-FALLE. Laufende Datenbank im WAL-Modus, danebengelegte
+    # Sicherung, Tausch — und hinterher MUSS die Sicherung gelesen werden.
+    live = _os.path.join(heim, "tiktok_bot.db")
+    # Die Verbindung bleibt OFFEN. Das ist keine Schikane, sondern die echte
+    # Lage: die Deck-Route laeuft IM Bot, und der haelt die Datenbank offen —
+    # genau dann existiert das -wal. Ein sauberes close() raeumt es selbst
+    # weg, und dann prueft dieser Vertrag die Falle gar nicht. Daran ist die
+    # erste Fassung sofort gescheitert.
+    con = _mit_zeilen(live, ["@leer_bestand"], wal=True)
+    assert _os.path.exists(live + "-wal"), \
+        "ohne -wal prueft dieser Vertrag die Falle gar nicht"
+
+    neu_db = _os.path.join(heim, "wiederhergestellt.db")
+    _mit_zeilen(neu_db, ["@aus_sicherung_%d" % i for i in range(3)]).close()
+
+    ok_, meldung, weggeraeumt = R.einsetzen(live, neu_db)
+    assert ok_, meldung
+    con.close()                      # der Bot startet neu
+    con = _sq3.connect(live)
+    gelesen = [r[0] for r in con.execute("SELECT u FROM trackings")]
+    con.close()
+    assert gelesen == ["@aus_sicherung_0", "@aus_sicherung_1", "@aus_sicherung_2"], \
+        "nach dem Tausch stehen die ALTEN Daten da (%s) — das -wal wurde " \
+        "nicht mitgenommen, und SQLite hat es auf die neue Datei gespielt. " \
+        "Genau das passiert lautlos, mit integrity_check ok." % gelesen
+
+    # ── (2) UND DER VORIGE STAND IST NICHT WEG, SONDERN DANEBEN. Ein
+    # Tausch, der das Alte loescht, ist kein Tausch, sondern ein Sprung.
+    assert weggeraeumt, "nichts wurde zur Seite gelegt"
+    assert any(w.endswith(".db.vor_wiederherstellung_" + w.rsplit("_", 1)[-1])
+               or "vor_wiederherstellung" in w for w in weggeraeumt), weggeraeumt
+    assert any("-wal" in w for w in weggeraeumt), \
+        "das -wal wurde nicht zur Seite gelegt: %s" % weggeraeumt
+    for w in weggeraeumt:
+        assert _os.path.exists(w), "weggeraeumte Datei fehlt: %s" % w
+
+    # ── (3) DIE MELDUNG MUSS DEN NEUSTART VERLANGEN. Der laufende Prozess
+    # haelt die alte Datei am inode fest und schreibt weiter hinein —
+    # gemessen: eine danach eingefuegte Zeile ist nach dem Neustart weg.
+    # Das laesst sich nicht wegprogrammieren, nur sagen.
+    assert "NEU STARTEN" in meldung and "inode" in meldung, \
+        "die Meldung verschweigt, dass der Neustart sofort folgen muss: %s" % meldung
+
+    # ── (4) EIN FEHLSCHLAG DARF NICHTS HALB VERSCHOBEN ZURUECKLASSEN.
+    live2 = _os.path.join(heim, "zweite.db")
+    con2 = _mit_zeilen(live2, ["@bestand"], wal=True)
+    vorher = sorted(f for f in _os.listdir(heim) if f.startswith("zweite.db"))
+    ok2, meldung2, _w = R.einsetzen(live2, _os.path.join(heim, "gibtsnicht.db"))
+    assert not ok2 and "gibt es nicht" in meldung2, meldung2
+    # VOR dem close vergleichen: close() raeumt -wal/-shm selbst weg und
+    # wuerde einen Unterschied vortaeuschen, den nicht einsetzen() gemacht hat.
+    nachher = sorted(f for f in _os.listdir(heim) if f.startswith("zweite.db"))
+    con2.close()
+    assert vorher == nachher, \
+        "nach dem Fehlschlag liegt der Bestand anders da: %s -> %s" % (vorher, nachher)
+
+    # ── (4b) UND DER FALL, DER DAS ZURUECKDREHEN ERST NOETIG MACHT: der
+    # Fehlschlag MITTEN in der Reihe, wenn die Hauptdatei schon zur Seite
+    # liegt. (4) oben bricht vorher ab und erreicht die Rueckroll-Schleife
+    # gar nicht — genau daran ist die Mutationsprobe zuerst entwischt.
+    # Gestellt wird die Falle mit einem VERZEICHNIS am Zielnamen des -wal:
+    # os.rename auf ein vorhandenes Verzeichnis scheitert.
+    live3 = _os.path.join(heim, "dritte.db")
+    con3 = _mit_zeilen(live3, ["@dritter_bestand"], wal=True)
+    assert _os.path.exists(live3 + "-wal")
+    stempel = "FESTGENAGELT"
+    _os.makedirs(live3 + "-wal.vor_wiederherstellung_" + stempel)
+    quelle3 = _os.path.join(heim, "quelle3.db")
+    _mit_zeilen(quelle3, ["@egal"]).close()
+    vor3 = sorted(f for f in _os.listdir(heim) if f.startswith("dritte.db"))
+    ok5, meldung5, _w5 = R.einsetzen(live3, quelle3, stempel=stempel)
+    nach3 = sorted(f for f in _os.listdir(heim) if f.startswith("dritte.db"))
+    con3.close()
+    assert not ok5, "der Fehlschlag mitten in der Reihe wird als Erfolg gemeldet"
+    assert "nichts veraendert" in meldung5, \
+        "die Meldung sagt nicht, dass zurueckgedreht wurde: %s" % meldung5
+    assert vor3 == nach3, \
+        "die Hauptdatei blieb weggeraeumt — die laufende Datenbank ist weg, " \
+        "und die neue liegt nicht an ihrer Stelle: %s -> %s" % (vor3, nach3)
+    assert _os.path.exists(live3), \
+        "dritte.db ist verschwunden — genau der Zustand, in dem der Bot " \
+        "nicht mehr startet und nichts mehr da ist"
+
+    # ── (5) DIE ARCHIV-LISTE. Sie traegt nur echte Systemarchive, juengstes
+    # zuerst — sonst greift der Betreiber im Deck zum falschen Stand.
+    sverz = _os.path.join(heim, "system")
+    _os.makedirs(sverz)
+    dumpdatei = _os.path.join(heim, "tiktok_bot_20260918_0400.sql")
+    con = _sq3.connect(_os.path.join(heim, "quelle.db"))
+    con.execute("CREATE TABLE trackings (id INTEGER PRIMARY KEY, u TEXT)")
+    for i in range(7):
+        con.execute("INSERT INTO trackings (u) VALUES (?)", ("@q_%d" % i,))
+    con.commit()
+    with open(dumpdatei, "w", encoding="utf-8") as f:
+        for zeile in con.iterdump():
+            f.write(zeile + "\n")
+    con.close()
+    for stempel in ("20260916_0400", "20260918_0400"):
+        with _tf.open(_os.path.join(sverz, "nightcrawler_sys_%s.tar.gz" % stempel),
+                      "w:gz") as tar:
+            tar.add(dumpdatei, arcname="db/tiktok_bot_%s.sql" % stempel)
+    with open(_os.path.join(sverz, "egal.txt"), "w", encoding="utf-8") as f:
+        f.write("kein Archiv")
+    liste = R.archive(sverz)
+    assert [e["name"] for e in liste] == [
+        "nightcrawler_sys_20260918_0400.tar.gz",
+        "nightcrawler_sys_20260916_0400.tar.gz"], \
+        "die Liste stimmt nicht (juengstes zuerst, nur Archive): %s" % liste
+    assert R.archive(_os.path.join(heim, "gibtsnicht")) == [], \
+        "ein fehlendes Verzeichnis muss eine leere Liste geben, nicht werfen"
+
+    # ── (6) UND DER GANZE WEG AM STUECK: Archiv -> geprüfte Datei -> Zahlen.
+    ziel = _os.path.join(heim, "aus_deck.db")
+    ok3, befund3, tabellen3 = R.vorbereiten(
+        _os.path.join(sverz, "nightcrawler_sys_20260918_0400.tar.gz"), ziel)
+    assert ok3 and befund3 == "ok", befund3
+    assert dict(tabellen3)["trackings"] == 7, tabellen3
+    # Und ein zweites Mal auf dasselbe Ziel ueberschreibt NICHT.
+    ok4, befund4, _t4 = R.vorbereiten(
+        _os.path.join(sverz, "nightcrawler_sys_20260918_0400.tar.gz"), ziel)
+    assert not ok4 and "gibt es schon" in befund4, befund4
+
+    # ── (7) DIE ROUTEN, GEFAHREN STATT GELESEN. Eine Textsuche nach
+    # "sicher_join" haette gruen bleiben koennen, waehrend das Ergebnis
+    # verworfen wird — dieselbe Lehre wie in W93.
+    from flask import Flask as _Flask
+    from nc import ctx as _ncctx
+    from nc.routes import settings as _rt
+
+    app = _Flask(__name__)
+    app.register_blueprint(_rt.bp)
+    regeln = {str(r.rule) for r in app.url_map.iter_rules()}
+    for want in ("/api/db/restore/list", "/api/db/restore/prepare",
+                 "/api/db/restore/apply"):
+        assert want in regeln, "Route fehlt oder umbenannt: %s" % want
+
+    live4 = _os.path.join(heim, "deck.db")
+    _mit_zeilen(live4, ["@im_deck"]).close()
+    import logging as _logging
+    _ncctx.configure(cfg={"DB_PATH": live4, "DB_BACKEND": "sqlite"},
+                     log=_logging.getLogger("TikTokBot"))
+    alt_bd = _os.environ.get("LOCAL_BACKUP_DIR")
+    _os.environ["LOCAL_BACKUP_DIR"] = heim
+    kl = app.test_client()
+    try:
+        # (a) Die Liste zeigt die Archive.
+        r = kl.get("/api/db/restore/list")
+        assert r.status_code == 200 and r.get_json()["ok"], r.get_json()
+        namen = [e["name"] for e in r.get_json()["archive"]]
+        assert namen[0] == "nightcrawler_sys_20260918_0400.tar.gz", namen
+
+        # (b) EIN PFAD-AUSBRUCH DARF NICHT DURCHKOMMEN. Der Archivname steht
+        # in der Anfrage; ohne nc.sicherpfad waere das eine Senke (CodeQL).
+        #
+        # Gemessen wird der UNTERSCHIED, nicht bloss "kein Erfolg": ohne
+        # Riegel landet "../../../etc/passwd" auf einer Datei, die es GIBT,
+        # und die Antwort waere trotzdem 400 ("kein Dump"). Daran ist die
+        # Mutationsprobe zuerst entwischt. Mit Riegel wird der Name auf
+        # seinen Basisnamen gestutzt, und im Sicherungsverzeichnis gibt es
+        # kein "passwd" -> 404.
+        r = kl.post("/api/db/restore/prepare",
+                    json={"archiv": "../../../etc/passwd"})
+        assert r.status_code == 404, \
+            "der Name wurde nicht gestutzt — der Zugriff ging aus dem " \
+            "Sicherungsverzeichnis heraus (%s: %s)" % (r.status_code, r.get_json())
+        assert "passwd" not in str(r.get_json()), \
+            "der Ausbruchspfad wird zurueckgespiegelt: %s" % r.get_json()
+
+        # Und die schaerfere Fassung: ein GUELTIGES Archiv ausserhalb des
+        # Sicherungsverzeichnisses darf nicht erreichbar sein.
+        #
+        # Der Name muss dabei EINMALIG sein. Die erste Fassung nahm einen,
+        # den es drinnen auch gab — der gestutzte Name traf dann ein echtes
+        # Archiv, die Antwort war 200, und das sah aus wie ein Ausbruch.
+        # War keiner: der Riegel hatte sauber gestutzt, der Vertrag war
+        # schlecht gestellt.
+        aussen = _os.path.join(heim, "nightcrawler_sys_99999999_9999.tar.gz")
+        with _tf.open(aussen, "w:gz") as tar:
+            tar.add(dumpdatei, arcname="db/tiktok_bot_99999999_9999.sql")
+        assert not _os.path.exists(
+            _os.path.join(sverz, "nightcrawler_sys_99999999_9999.tar.gz")), \
+            "der Name gibt es drinnen auch — dann prueft dieser Fall nichts"
+        r = kl.post("/api/db/restore/prepare",
+                    json={"archiv": "../nightcrawler_sys_99999999_9999.tar.gz"})
+        assert r.status_code == 404, \
+            "ein Archiv ausserhalb des Sicherungsverzeichnisses war " \
+            "erreichbar: %s" % r.get_json()
+
+        # (c) Der Normalfall baut eine neue Datei, ohne die laufende zu
+        # beruehren.
+        vorher_live = open(live4, "rb").read()
+        r = kl.post("/api/db/restore/prepare",
+                    json={"archiv": "nightcrawler_sys_20260918_0400.tar.gz"})
+        d = r.get_json()
+        assert r.status_code == 200 and d["ok"], d
+        assert dict((x["name"], x["zeilen"]) for x in d["tabellen"])["trackings"] == 7, d
+        assert open(live4, "rb").read() == vorher_live, \
+            "die laufende Datenbank wurde beim Vorbereiten veraendert"
+
+        # (d) OHNE BESTAETIGUNG WIRD NICHTS EINGESETZT.
+        r = kl.post("/api/db/restore/apply", json={"datei": d["datei"]})
+        assert r.status_code == 400, r.get_json()
+        assert open(live4, "rb").read() == vorher_live, \
+            "ohne confirm wurde trotzdem getauscht"
+
+        # (e) Und die laufende Datenbank selbst laesst sich nicht einsetzen.
+        r = kl.post("/api/db/restore/apply",
+                    json={"confirm": True, "datei": _os.path.basename(live4)})
+        assert r.status_code == 400, r.get_json()
+
+        # (f) Mit Bestaetigung: getauscht, und die Meldung verlangt den
+        # Neustart.
+        r = kl.post("/api/db/restore/apply",
+                    json={"confirm": True, "datei": d["datei"]})
+        dd = r.get_json()
+        assert r.status_code == 200 and dd["ok"], dd
+        assert "NEU STARTEN" in dd["meldung"], dd
+        con = _sq3.connect(live4)
+        assert con.execute("SELECT count(*) FROM trackings").fetchone()[0] == 7, \
+            "nach dem Einsetzen steht nicht die Sicherung da"
+        con.close()
+
+        # (g) Ohne LOCAL_BACKUP_DIR sagt die Liste WARUM, statt leer zu sein.
+        _os.environ.pop("LOCAL_BACKUP_DIR", None)
+        r = kl.get("/api/db/restore/list")
+        assert r.status_code == 400 and "LOCAL_BACKUP_DIR" in r.get_json()["error"], \
+            r.get_json()
+
+        # (h) UND DER AUFFANG SELBST. Faellt in der Route etwas Unerwartetes,
+        # muss eine 500 mit gesaeuberter Meldung herauskommen — nicht ein
+        # Flask-Stacktrace mit Serverpfaden darin (nc/fehlertext.py).
+        _os.environ["LOCAL_BACKUP_DIR"] = heim
+        _ncctx.configure(cfg={}, log=_logging.getLogger("TikTokBot"))
+        for weg, last in (("/api/db/restore/prepare",
+                           {"archiv": "nightcrawler_sys_20260918_0400.tar.gz"}),
+                          ("/api/db/restore/apply",
+                           {"confirm": True, "datei": "egal.db"})):
+            r = kl.post(weg, json=last)
+            assert r.status_code == 500, (weg, r.status_code, r.get_json())
+            text = str(r.get_json())
+            assert heim not in text, \
+                "%s spiegelt einen Serverpfad zurueck: %s" % (weg, text)
+    finally:
+        if alt_bd is None:
+            _os.environ.pop("LOCAL_BACKUP_DIR", None)
+        else:
+            _os.environ["LOCAL_BACKUP_DIR"] = alt_bd
+
+    # ── (8) DIE FEHLERPFADE, EINZELN. Sie sind der Grund, warum dieses
+    # Modul ueberhaupt laut geworden ist — ungeprueft waeren es Zeilen, die
+    # nur behaupten zu helfen.
+    import tarfile as _tf2
+
+    # (a) Ein Archiv ohne den Dump nennt den Weg zum Nachsehen.
+    ohne = _os.path.join(heim, "nightcrawler_sys_ohne.tar.gz")
+    with _tf2.open(ohne, "w:gz") as tar:
+        tar.add(dumpdatei, arcname="db/brain_20260918_0400.sql")
+    pfad_, grund_ = R.dump_aus_archiv(ohne, heim)
+    assert pfad_ is None and "tar -tzf" in grund_, grund_
+
+    # (b) Ein Verzeichniseintrag unter db/ wird gar nicht erst Kandidat —
+    # isfile() filtert ihn, und der None-Zweig dahinter ist damit
+    # unerreichbar. Geprueft wird deshalb der FILTER, nicht der tote Zweig.
+    verz_arch = _os.path.join(heim, "nightcrawler_sys_verz.tar.gz")
+    with _tf2.open(verz_arch, "w:gz") as tar:
+        info = _tf2.TarInfo("db/tiktok_bot_20260918_0400.sql")
+        info.type = _tf2.DIRTYPE
+        tar.addfile(info)
+    pfad2_, grund2_ = R.dump_aus_archiv(verz_arch, heim)
+    assert pfad2_ is None and "tar -tzf" in grund2_, \
+        "ein Verzeichnis unter db/ wird als Dump genommen: %s" % grund2_
+
+    # (c) Kein Archiv, sondern Muell -> tarfile faellt, und das wird gesagt.
+    kmuell = _os.path.join(heim, "kaputt.tar.gz")
+    with open(kmuell, "wb") as f:
+        f.write(b"kein gzip")
+    okm, befundm, _tm = R.vorbereiten(kmuell, _os.path.join(heim, "m1.db"))
+    assert not okm and "nicht zu lesen" in befundm, befundm
+
+    # (d) Ein Archiv ohne Dump, ueber vorbereiten().
+    oko, befundo, _to = R.vorbereiten(ohne, _os.path.join(heim, "m2.db"))
+    assert not oko and "tar -tzf" in befundo, befundo
+    assert not _os.path.exists(_os.path.join(heim, "m2.db"))
+
+    # (e) Eine .sql ohne Dump-Vokabular.
+    keine = _os.path.join(heim, "keine.sql")
+    with open(keine, "w", encoding="utf-8") as f:
+        f.write("nur text\n")
+    okk, befundk, _tk = R.vorbereiten(keine, _os.path.join(heim, "m3.db"))
+    assert not okk and "nicht nach einem Systemarchiv-Dump" in befundk, befundk
+
+    # (f) Ein Dump, der die Marken traegt und trotzdem faellt.
+    kaputt_sql = _os.path.join(heim, "kaputt2.sql")
+    with open(kaputt_sql, "w", encoding="utf-8") as f:
+        f.write("BEGIN TRANSACTION;\nCREATE TABLE a (i INT);\n"
+                "INSERT INTO a VALUES (1);\nCREATE TABLE ;;; kaputt\n")
+    okb, _bb, _tb = R.vorbereiten(kaputt_sql, _os.path.join(heim, "m4.db"))
+    assert not okb and not _os.path.exists(_os.path.join(heim, "m4.db")), \
+        "die halb gebaute Datei blieb liegen"
+
+    # (g) archive(): ein Eintrag, den os.stat nicht lesen kann, darf die
+    # Liste nicht abbrechen — er wird uebersprungen UND gemeldet.
+    tot = _os.path.join(sverz, "nightcrawler_sys_20260901_0400.tar.gz")
+    _os.symlink(_os.path.join(heim, "gibtsnicht_ziel"), tot)
+    liste2 = R.archive(sverz)
+    assert all(e["name"] != _os.path.basename(tot) for e in liste2), \
+        "ein toter Verweis steht in der Auswahlliste"
+    assert len(liste2) == 2, liste2
+
+    # (h) _zurueck() meldet, wenn das Zurueckdrehen selbst misslingt — der
+    # schlimmste Zustand des Moduls.
+    R._zurueck([(_os.path.join(heim, "gibtsnicht_a"),
+                 _os.path.join(heim, "gibtsnicht_b"))])
+
+    # (i) PLATTE VOLL BEIM EINSETZEN. Die Hauptdatei liegt dann schon zur
+    # Seite, und wenn jetzt nichts zurueckgedreht wird, ist die laufende
+    # Datenbank weg und die neue nicht da. Nicht konstruierbar ohne Attrappe:
+    # als root laufen Rechte-Tricks ins Leere.
+    import shutil as _sh2
+    live5 = _os.path.join(heim, "fuenfte.db")
+    con5 = _mit_zeilen(live5, ["@fuenfter_bestand"], wal=True)
+    quelle5 = _os.path.join(heim, "quelle5.db")
+    _mit_zeilen(quelle5, ["@neu"]).close()
+    vor5 = sorted(f for f in _os.listdir(heim) if f.startswith("fuenfte.db"))
+    echt_copy2 = _sh2.copy2
+
+    def _platte_voll(*a, **k):
+        raise OSError(28, "No space left on device")
+
+    R.shutil.copy2 = _platte_voll
+    try:
+        ok6, meldung6, _w6 = R.einsetzen(live5, quelle5)
+    finally:
+        R.shutil.copy2 = echt_copy2
+    nach5 = sorted(f for f in _os.listdir(heim) if f.startswith("fuenfte.db"))
+    con5.close()
+    assert not ok6, "ein gescheitertes Einsetzen wird als Erfolg gemeldet"
+    assert "zurueckgelegt" in meldung6, meldung6
+    assert vor5 == nach5, \
+        "nach dem Fehlschlag ist die laufende Datenbank nicht zurueck: " \
+        "%s -> %s" % (vor5, nach5)
+    assert _os.path.exists(live5), "fuenfte.db ist weg"
+
+    ok("W96: der Tausch nimmt -wal und -shm mit (sonst kommt der ALTE Stand)")
+    ok("W96: der vorige Stand liegt daneben, nicht im Papierkorb")
+    ok("W96: die Meldung verlangt den sofortigen Neustart und sagt warum")
+    ok("W96: ein Fehlschlag laesst nichts halb verschoben zurueck")
+    ok("W96: die Archivliste traegt nur Archive, juengstes zuerst")
+    ok("W96: Archiv -> geprüfte Datei am Stueck, ohne Ueberschreiben")
+    ok("W96: jeder Fehlerpfad des Moduls nennt Grund und Weg")
+    ok("W96: die drei Deck-Routen gefahren — Liste, Vorbereiten, Einsetzen")
+    ok("W96: ein Pfad-Ausbruch im Archivnamen kommt nicht durch")
+    ok("W96: ohne confirm wird nicht getauscht, die laufende DB nie als Quelle")
+
+
 def main():
     tmp, rid = richte_testdatenbank_ein()
     ok("db_conn aus nc.dbwrap: echtes Schema angelegt, Commit durchgelaufen")
@@ -17314,6 +17709,7 @@ def main():
     _test_v42_w93_deck_nennt_das_wirkliche_schema()
     _test_v42_w94_kopfschaden_wird_erkannt_und_geheilt()
     _test_v42_w95_systemdump_gehoert_nicht_ins_laufende_deck()
+    _test_v42_w96_wiederherstellung_nimmt_das_wal_mit()
     _test_v42_w60_azrael_cooldown_je_plattform()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)

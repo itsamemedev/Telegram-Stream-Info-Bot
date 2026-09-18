@@ -25,7 +25,7 @@ dann den Ausschnitt holen:
     python tools/ncpatch.py check                          # Templates: doppelte IDs, CSS-Bilanz
     python tools/ncpatch.py docs                           # Doku-Zahlen gegen den Quelltext
 
-`find` antwortet aus `.claude/INDEX.md` — 364 Routen (34 in `bot.py`, 330 in
+`find` antwortet aus `.claude/INDEX.md` — 367 Routen (34 in `bot.py`, 333 in
 `nc/routes/`), 60 Slash-Commands, 548 Funktionen mit Zeilennummern. Nach Änderungen an Routen, Commands oder
 Top-Level-Funktionen `map` neu laufen lassen. Details: Skill `nc-navigation`.
 
@@ -55,7 +55,7 @@ Auf diesem Windows-Rechner heißt der Interpreter **`python`** (3.13.12);
     brain_bridge.py      Adapter Bot ↔ brain/ (M2)
     brain/               KI-Kern: state, rules, router, agents, memory,
                          semantic, knowledge, scheduler, llm, report
-    nc/                  144 Fachmodule: db, scraping, restream, oauth, ledger,
+    nc/                  145 Fachmodule: db, scraping, restream, oauth, ledger,
                          i18n, …
     nc/routes/           36 Flask-Blueprints mit 327 weiteren API-Routen
     locales/             de.json, en.json — der Übersetzungskatalog
@@ -137,7 +137,7 @@ die Prüfkette fährt und was die Sperre ist; pytest kommt daneben, für die
 Arbeit am einzelnen Befund.
 
 **Die Überdeckung ist seit v4.2-W86 gemessen: 51,3 %** von `nc/` und `brain/`
-(19.788 Anweisungen, 9.629 davon ungeprüft). Das ist die Zahl, die den 487
+(19.963 Anweisungen, 9.639 davon ungeprüft). Das ist die Zahl, die den 497
 Verträgen erst ihren Maßstab gibt — „alles grün" sagt sonst nichts darüber,
 wie viel Bestand dabei angefasst wurde. Gesperrt wird wie bei W65/W66 nur der
 Zuwachs, und zwar die **Anzahl** ungeprüfter Anweisungen, nicht der
@@ -299,6 +299,16 @@ dann, wenn `os.remove` scheiterte. Die Aufnahme belegte weiter Platz, tauchte
 in keiner Liste mehr auf, und das Deck meldete den Platz als frei — die
 Umkehrung des W89-Befunds in `archiverules.py`. **Wer die Datei nicht löschen
 kann, darf auch ihre Spur nicht löschen.**
+
+**Ein Datenbank-Tausch ohne das WAL ist lautlos wertlos.** SQLite laeuft hier
+im WAL-Modus. Wer nur `tiktok_bot.db` ersetzt und `-wal` liegen laesst,
+bekommt nach dem Neustart den **alten** Stand zurueck — mit sauberem
+`integrity_check`, also ohne einen einzigen Hinweis. Gemessen in v4.2-W96,
+bevor `nc/dbrestore.einsetzen()` existierte. Hauptdatei **und** `-wal`/`-shm`
+gehoeren zur Seite, sonst spielt SQLite das alte Journal auf die neue Datei.
+Und der laufende Prozess haelt die alte Datei am **inode** fest: was er bis
+zum Neustart schreibt, ist danach weg. Das laesst sich nicht wegprogrammieren,
+nur sagen.
 
 **Backup und Import passten nicht zueinander.** Der Betreiber am 18.09.:
 „Über die Backup Funktion im dashboard lassen sich keine SQL Dateien

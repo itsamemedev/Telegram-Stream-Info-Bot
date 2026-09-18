@@ -11,6 +11,65 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Neu — Wiederherstellung im Deck, und die WAL-Falle dabei (v4.2 W96)
+
+W95 hat den Deck-Import dichtgemacht — richtig, aber damit gab es im Deck
+gar keinen Weg zurück. Der Betreiber wollte genau den:
+
+> „Ich starte mit einer leeren Datenbank klar startet der bot... Also los jetzt"
+
+Drei Routen: `/api/db/restore/list` (welche Archive liegen da),
+`/api/db/restore/prepare` (Archiv → **neue**, geprüfte Datei samt Zeilen je
+Tabelle, die laufende Datenbank unberührt) und `/api/db/restore/apply`
+(`confirm=true`, tauscht und verlangt den Neustart).
+
+**Die Falle, die den ganzen Vorgang still wertlos gemacht hätte.** SQLite
+läuft hier im WAL-Modus. Wer nur `tiktok_bot.db` ersetzt und
+`tiktok_bot.db-wal` liegen lässt, bekommt das hier — gemessen, nicht vermutet:
+
+```
+Hauptdatei getauscht, -wal liegengelassen
+  gelesen:   [('@leer_bestand',)]        <- die ALTEN Daten
+  integrity: ok
+```
+
+SQLite spielt das alte WAL auf die neue Datei und liefert den alten Stand
+zurück, **mit sauberem `integrity_check`**. Kein Fehler, keine Warnung, eine
+gesunde Datenbank mit falschem Inhalt — die gefährlichste Form eines Fehlers,
+die dieses Projekt kennt. `einsetzen()` legt deshalb **Hauptdatei und
+`-wal`/`-shm`** zur Seite; mit weggeräumtem Beiwerk liest dieselbe Probe die
+Sicherung.
+
+**Und die zweite, die sich nicht wegprogrammieren lässt:** der laufende Bot
+hält die alte Datei am **inode** fest und schreibt weiter hinein — gemessen:
+eine danach eingefügte Zeile ist nach dem Neustart weg. Das Modul sagt es in
+der Antwort, statt es zu verschweigen.
+
+Dazu: der vorige Stand wandert nach `.vor_wiederherstellung_<stempel>` statt
+gelöscht zu werden; ein Fehlschlag **mitten** in der Reihe dreht zurück (auch
+der Platte-voll-Fall beim Kopieren); `tools/dbwiederher.py` läuft jetzt über
+denselben Kern statt über eine zweite Fassung.
+
+**14 Mutationsproben, 14 gefangen — sechs erst im zweiten Anlauf.** Zwei
+Lehren, die über diese Welle hinausgehen:
+
+Die Attrappe war zuerst **unrealistisch**: ein sauberes `con.close()` räumt
+das WAL selbst weg, und damit prüfte der Vertrag die Falle gar nicht. Die
+echte Lage ist die offene Verbindung — die Deck-Route läuft *im* Bot, und der
+hält die Datenbank offen.
+
+Und der Pfad-Riegel-Test war **schlecht gestellt**: die Datei außerhalb trug
+denselben Namen wie eine darin, der gestutzte Name traf ein echtes Archiv, und
+200 sah aus wie ein Ausbruch. Es war keiner — `nc/sicherpfad.sicher_join` hat
+sauber gestutzt. Ein Vertrag, der aus einem korrekten Riegel einen Befund
+macht, ist genauso teuer wie einer, der einen echten übersieht.
+
+**Die Überdeckungs-Grundlinie steigt von 9633 auf 9639.** 175 neue
+Anweisungen, 169 davon gedeckt (96,6 %). Die übrigen sechs sind belegt
+unerreichbar (`extractfile` → None hinter `isfile()`; `integrity_check != ok`
+auf einer gerade gebauten Datenbank) oder Aufräumpfade, deren Fehlschlag
+bedeutungslos ist. Das ist eine Entscheidung, keine Gewohnheit.
+
 ### Behoben — der Import im Deck spielte einen Backup-Dump HALB ein (v4.2 W95)
 
 Meldung des Betreibers am 18.09., während seine Datenbank unlesbar war:
