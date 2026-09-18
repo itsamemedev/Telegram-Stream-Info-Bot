@@ -43,7 +43,7 @@ Zahlen sind Zeilennummern für `ncpatch show` / `ncpatch sym`.
   9539  GET              /sw.js                                           pwa_service_worker
 ```
 
-## Flask-Routen in Blueprints, nc/routes/ (330)
+## Flask-Routen in Blueprints, nc/routes/ (333)
 
 ```
    182  GET              /api/active-recordings                           api_active_recordings   [nc/routes/auskunft.py]
@@ -129,16 +129,19 @@ Zahlen sind Zeilennummern für `ncpatch show` / `ncpatch sym`.
     87  POST/DELETE      /api/collections/<int:cid>                       api_collection_modify   [nc/routes/collections.py]
    122  GET              /api/collections/<int:cid>/trackings             api_collection_trackings   [nc/routes/collections.py]
    425  GET              /api/community/stats                             api_community_stats   [nc/routes/auskunft.py]
-   329  POST             /api/config/restore                              api_config_restore   [nc/routes/settings.py]
-   314  GET              /api/config/snapshot                             api_config_snapshot   [nc/routes/settings.py]
-   237  GET              /api/cookies/age                                 api_cookies_age   [nc/routes/settings.py]
-   193  POST             /api/cookies/fetch                               api_cookies_fetch   [nc/routes/settings.py]
-    71  GET              /api/cookies/health                              api_cookies_health   [nc/routes/settings.py]
-    78  POST             /api/cookies/update                              api_cookies_update   [nc/routes/settings.py]
+   434  POST             /api/config/restore                              api_config_restore   [nc/routes/settings.py]
+   419  GET              /api/config/snapshot                             api_config_snapshot   [nc/routes/settings.py]
+   239  GET              /api/cookies/age                                 api_cookies_age   [nc/routes/settings.py]
+   195  POST             /api/cookies/fetch                               api_cookies_fetch   [nc/routes/settings.py]
+    73  GET              /api/cookies/health                              api_cookies_health   [nc/routes/settings.py]
+    80  POST             /api/cookies/update                              api_cookies_update   [nc/routes/settings.py]
    479  GET              /api/data/export                                 api_data_export   [nc/routes/auskunft.py]
-   258  GET              /api/db/export                                   api_db_export   [nc/routes/settings.py]
-   285  POST             /api/db/import                                   api_db_import   [nc/routes/settings.py]
-   245  GET              /api/db/summary                                  api_db_summary   [nc/routes/settings.py]
+   260  GET              /api/db/export                                   api_db_export   [nc/routes/settings.py]
+   287  POST             /api/db/import                                   api_db_import   [nc/routes/settings.py]
+   380  POST             /api/db/restore/apply                            api_db_restore_apply   [nc/routes/settings.py]
+   324  GET              /api/db/restore/list                             api_db_restore_list   [nc/routes/settings.py]
+   342  POST             /api/db/restore/prepare                          api_db_restore_prepare   [nc/routes/settings.py]
+   247  GET              /api/db/summary                                  api_db_summary   [nc/routes/settings.py]
    164  GET              /api/defense/attacks                             api_defense_attacks   [nc/routes/abwehr.py]
    125  GET              /api/defense/crowdsec                            api_defense_crowdsec   [nc/routes/abwehr.py]
    146  GET              /api/defense/fail2ban                            api_defense_fail2ban   [nc/routes/abwehr.py]
@@ -291,9 +294,9 @@ Zahlen sind Zeilennummern für `ncpatch show` / `ncpatch sym`.
    388  GET              /api/restream/verify                             api_restream_verify   [nc/routes/restream.py]
    134  GET              /api/retention/preview                           api_retention_preview   [nc/routes/wartung.py]
    144  POST             /api/retention/run                               api_retention_run   [nc/routes/wartung.py]
-   370  POST             /api/schedule/add                                api_schedule_add   [nc/routes/settings.py]
-   360  GET              /api/schedule/list                               api_schedule_list   [nc/routes/settings.py]
-   395  POST             /api/schedule/remove                             api_schedule_remove   [nc/routes/settings.py]
+   475  POST             /api/schedule/add                                api_schedule_add   [nc/routes/settings.py]
+   465  GET              /api/schedule/list                               api_schedule_list   [nc/routes/settings.py]
+   500  POST             /api/schedule/remove                             api_schedule_remove   [nc/routes/settings.py]
     65  POST             /api/scheduler/add                               api_scheduler_add   [nc/routes/scheduler.py]
     86  POST             /api/scheduler/delete                            api_scheduler_delete   [nc/routes/scheduler.py]
     52  GET              /api/scheduler/list                              api_scheduler_list   [nc/routes/scheduler.py]
@@ -1060,6 +1063,7 @@ crypto.py              addresses, snapshot
 ctx.py                 class Ctx, configure, get, is_configured
 dashauth.py            erlaubt_offen, geschuetzt, host, lage, nur_lokal, offen_im_netz, zurueckgefallen
 dbexport.py            db_export_sql, db_import_sql, export_summary, parse_header
+dbrestore.py           archive, dump_aus_archiv, einsetzen, einspielen, vorbereiten
 dbwrap.py              class DatenbankUnlesbar, configure_db, datei_diagnose, db_async, db_conn, get_pool, set_pool
 ddlsafe.py             ddl, ist_schon_da
 defensecfg.py          bouncer_gesetzt, bouncer_key, geo_fehler, geo_fehler_setzen, lapi_host, lapi_port, lapi_url, server_lat, server_lon

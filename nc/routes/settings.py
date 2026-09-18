@@ -23,6 +23,8 @@ from nc.cfgstore import get as _cfg_get, set_ as _cfg_set
 from nc.cookies import _cookies_input_to_netscape, _dedupe_cookie_text
 from nc import cookieholen as _nc_cookieholen
 from nc.dbexport import db_export_sql as _dbx_export, db_import_sql as _dbx_import, export_summary as _dbx_summary
+from nc import dbrestore as _nc_dbrest   # v4.2-W96: Sicherung im Deck einsetzen
+from nc import sicherpfad as _nc_sicherpfad
 
 from nc import ctx as _ctx
 
@@ -308,6 +310,109 @@ def api_db_import():
     except Exception as e:
         log.error("DB-Import fehlgeschlagen: %s", e)
         return jsonify(ok=False, error=_fehler_text(e, "api_db_import")), 500
+
+
+def _sicherungsverzeichnis():
+    """Wo liegen die Systemarchive? Als Funktion gelesen, nie als
+       Modul-Konstante — .env wird teils erst nach den ersten Imports
+       geladen (CLAUDE.md, W67)."""
+    basis = (os.getenv("LOCAL_BACKUP_DIR", "") or "").strip()
+    return os.path.join(basis, "system") if basis else ""
+
+
+@bp.route("/api/db/restore/list")
+def api_db_restore_list():
+    """v4.2-W96: welche Systemarchive stehen zur Wiederherstellung bereit?"""
+    try:
+        verz = _sicherungsverzeichnis()
+        if not verz:
+            return jsonify(ok=False, error=_t(
+                "LOCAL_BACKUP_DIR ist nicht gesetzt — es gibt kein lokales "
+                "Sicherungsverzeichnis."), archive=[]), 400
+        return jsonify(ok=True, verzeichnis=verz,
+                       archive=_nc_dbrest.archive(verz))
+    except Exception as e:
+        # Ausdruecklich auf error: ein misslungener Eingriff an der
+        # Datenbank ist das, wonach der Betreiber im Log sucht.
+        log.error("api_db_restore_list: %s", e, exc_info=True)
+        return jsonify(ok=False, error=_fehler_text(e, "api_db_restore_list")), 500
+
+
+@bp.route("/api/db/restore/prepare", methods=["POST"])
+def api_db_restore_prepare():
+    """v4.2-W96: ein Archiv zu einer NEUEN, geprueften Datenbankdatei machen.
+
+    Ruehrt die laufende Datenbank nicht an. Das Ergebnis ist eine Datei
+    daneben, samt Zeilen je Tabelle — damit der Betreiber VOR dem Einsetzen
+    sieht, ob die Zahlen plausibel sind."""
+    data = request.get_json(silent=True) or {}
+    name = (data.get("archiv") or "").strip()
+    if not name:
+        return jsonify(ok=False, error=_t("archiv erforderlich")), 400
+    try:
+        verz = _sicherungsverzeichnis()
+        if not verz:
+            return jsonify(ok=False, error=_t("LOCAL_BACKUP_DIR nicht gesetzt")), 400
+        # Der Name kommt von aussen: ueber nc.sicherpfad, nicht von Hand.
+        archiv = _nc_sicherpfad.sicher_join(verz, name, "archiv.tar.gz")
+        if not os.path.isfile(archiv):
+            return jsonify(ok=False, error=_t("Archiv nicht gefunden")), 404
+        db_pfad = _c().cfg["DB_PATH"]
+        stempel = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+        ziel = os.path.join(os.path.dirname(os.path.abspath(db_pfad)),
+                            "wiederhergestellt_%s.db" % stempel)
+        ok_, befund, tabellen = _nc_dbrest.vorbereiten(archiv, ziel)
+        if not ok_:
+            return jsonify(ok=False, error=befund), 400
+        return jsonify(ok=True, datei=os.path.basename(ziel), befund=befund,
+                       zeilen=sum(n for _n, n in tabellen),
+                       tabellen=[{"name": n, "zeilen": c} for n, c in tabellen],
+                       hinweis=_t("Zahlen pruefen, dann einsetzen. Danach ist "
+                                  "ein Neustart noetig."))
+    except Exception as e:
+        # Ausdruecklich auf error: ein misslungener Eingriff an der
+        # Datenbank ist das, wonach der Betreiber im Log sucht.
+        log.error("api_db_restore_prepare: %s", e, exc_info=True)
+        return jsonify(ok=False, error=_fehler_text(e, "api_db_restore_prepare")), 500
+
+
+@bp.route("/api/db/restore/apply", methods=["POST"])
+def api_db_restore_apply():
+    """v4.2-W96: die vorbereitete Datei an die Stelle der laufenden setzen.
+
+    confirm=true noetig. Legt Hauptdatei UND -wal/-shm zur Seite: bleibt das
+    WAL liegen, spielt SQLite es auf die neue Datei und liefert den ALTEN
+    Stand zurueck, mit sauberem integrity_check — die Wiederherstellung
+    waere lautlos verschwunden."""
+    data = request.get_json(silent=True) or {}
+    if not data.get("confirm"):
+        return jsonify(ok=False, error=_t("confirm=true erforderlich")), 400
+    name = (data.get("datei") or "").strip()
+    if not name:
+        return jsonify(ok=False, error=_t("datei erforderlich")), 400
+    try:
+        db_pfad = _c().cfg["DB_PATH"]
+        verz = os.path.dirname(os.path.abspath(db_pfad))
+        neu = _nc_sicherpfad.sicher_join(verz, name, "wiederhergestellt.db")
+        if not os.path.isfile(neu):
+            return jsonify(ok=False, error=_t("Datei nicht gefunden")), 404
+        if os.path.abspath(neu) == os.path.abspath(db_pfad):
+            return jsonify(ok=False, error=_t(
+                "Das ist die laufende Datenbank selbst.")), 400
+        ok_, meldung, weggeraeumt = _nc_dbrest.einsetzen(db_pfad, neu)
+        if not ok_:
+            log.error("Wiederherstellung fehlgeschlagen: %s", meldung)
+            return jsonify(ok=False, error=meldung), 500
+        log.warning("Datenbank aus Sicherung eingesetzt (%s). Neustart noetig; "
+                    "der vorige Stand liegt unter %s", name,
+                    ", ".join(os.path.basename(w) for w in weggeraeumt))
+        return jsonify(ok=True, meldung=meldung,
+                       weggeraeumt=[os.path.basename(w) for w in weggeraeumt])
+    except Exception as e:
+        # Ausdruecklich auf error: ein misslungener Eingriff an der
+        # Datenbank ist das, wonach der Betreiber im Log sucht.
+        log.error("api_db_restore_apply: %s", e, exc_info=True)
+        return jsonify(ok=False, error=_fehler_text(e, "api_db_restore_apply")), 500
 
 
 @bp.route("/api/config/snapshot")

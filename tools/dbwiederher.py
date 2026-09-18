@@ -49,82 +49,18 @@ from __future__ import annotations
 
 import argparse
 import os
-import sqlite3
-import tarfile
-import tempfile
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+# v4.2-W96: EINE Implementierung, nicht zwei. Bis hierher stand der Kern
+# doppelt — hier und (neu) hinter den Deck-Routen. Zwei Fassungen derselben
+# Rettung sind genau die Lage, in der eine davon die WAL-Falle kennt und die
+# andere nicht. nc/ ist bot-frei, also laesst sich das Modul auch hier
+# benutzen, ohne den Bot zu ziehen.
+from nc import dbrestore as _rest        # noqa: E402
 
 OK, NICHT_BRAUCHBAR, NICHT_LESBAR = 0, 1, 2
-
-# Vokabular, das nur ein `.iterdump()`-Dump hat. `CREATE TABLE` allein taugt
-# NICHT als Erkennungsmerkmal — es steht auch in jeder SQLite-Datei, weil das
-# Schema woertlich in sqlite_master liegt (W94).
-DUMP_MARKEN = ("BEGIN TRANSACTION", "CREATE TABLE", "INSERT INTO")
-
-
-def dump_aus_archiv(pfad: str, ziel_verz: str):
-    """Holt db/tiktok_bot_*.sql aus einem nightcrawler_sys_*.tar.gz.
-       -> Pfad der ausgepackten .sql, oder None."""
-    with tarfile.open(pfad, "r:gz") as tar:
-        # Positiv auswaehlen, nicht negativ filtern. `_system_backup()` legt
-        # den Dump als `db/tiktok_bot_<stempel>.sql` ab, daneben liegt
-        # `db/brain_<stempel>.sql`. Ein Filter "alles ausser brain" sah
-        # richtig aus und war es nur durch Zufall: sortiert steht `brain` vor
-        # `tiktok_bot`, also haette der Zugriff auf das letzte Element ohnehin
-        # das Richtige erwischt — bis eine dritte Datei dazukommt, die
-        # alphabetisch dahinter liegt. Die Mutationsprobe hat genau das
-        # aufgedeckt: den Filter zu entfernen aenderte nichts.
-        kandidaten = [m for m in tar.getmembers()
-                      if m.isfile() and m.name.startswith("db/")
-                      and m.name.endswith(".sql")
-                      and os.path.basename(m.name).startswith("tiktok_bot_")]
-        if not kandidaten:
-            return None
-        # Bei mehreren: der juengste Stempel steht im Namen, also der groesste.
-        m = sorted(kandidaten, key=lambda x: x.name)[-1]
-        # Bewusst einzeln und mit flachem Namen: ein Archiv mit "../" im Pfad
-        # duerfte sonst ausserhalb des Zielverzeichnisses schreiben.
-        quelle = tar.extractfile(m)
-        if quelle is None:
-            return None
-        ziel = os.path.join(ziel_verz, os.path.basename(m.name))
-        with open(ziel, "wb") as f:
-            f.write(quelle.read())
-        return ziel
-
-
-def einspielen(sql_pfad: str, ziel_db: str):
-    """Baut aus dem Dump eine NEUE Datenbank. -> (ok, befund, tabellen)"""
-    with open(sql_pfad, encoding="utf-8", errors="replace") as f:
-        sql = f.read()
-    fehlend = [m for m in DUMP_MARKEN if m not in sql]
-    if fehlend:
-        return False, ("Das sieht nicht nach einem Systemarchiv-Dump aus "
-                       "(es fehlt: %s)." % ", ".join(fehlend)), []
-    con = sqlite3.connect(ziel_db)
-    try:
-        con.executescript(sql)
-        con.commit()
-        # Der Vollstaendigkeit halber, nicht als Sicherung: eine Datenbank,
-        # die SQLite gerade selbst aus SQL gebaut hat, ist strukturell heil —
-        # die Mutationsprobe hat bestaetigt, dass dieser Zweig mit einem
-        # gueltigen Dump nicht erreichbar ist. Was hier WIRKLICH traegt, ist
-        # executescript(): ein kaputter Dump faellt dort. Der Befund wandert
-        # trotzdem in die Ausgabe, damit der Betreiber ihn sieht, statt ihm
-        # vertrauen zu muessen.
-        befund = con.execute("PRAGMA integrity_check").fetchone()[0]
-        if befund != "ok":
-            return False, str(befund).splitlines()[0], []
-        tabellen = []
-        for (name,) in con.execute(
-                "SELECT name FROM sqlite_master WHERE type='table' "
-                "AND name NOT LIKE 'sqlite_%' ORDER BY name").fetchall():
-            n = con.execute('SELECT count(*) FROM "%s"' % name).fetchone()[0]
-            tabellen.append((name, n))
-        return True, "ok", tabellen
-    except sqlite3.DatabaseError as e:
-        return False, str(e), []
-    finally:
-        con.close()
 
 
 def main() -> int:
@@ -148,32 +84,11 @@ def main() -> int:
         print("Waehle einen anderen Namen mit -o.")
         return NICHT_LESBAR
 
-    with tempfile.TemporaryDirectory(prefix="dbwh-") as tmp:
-        sql = a.quelle
-        if a.quelle.endswith((".tar.gz", ".tgz")):
-            print("Archiv:  %s" % a.quelle)
-            try:
-                sql = dump_aus_archiv(a.quelle, tmp)
-            except (tarfile.TarError, OSError) as e:
-                print("Das Archiv ist nicht zu lesen: %s" % e)
-                return NICHT_LESBAR
-            if not sql:
-                print("Im Archiv liegt kein db/tiktok_bot_*.sql.")
-                print("Nachsehen, was drin ist:  tar -tzf %s | head" % a.quelle)
-                return NICHT_BRAUCHBAR
-        print("Dump:    %s (%d Bytes)" % (os.path.basename(sql),
-                                          os.path.getsize(sql)))
-
-        ok, befund, tabellen = einspielen(sql, a.ziel)
-
+    if a.quelle.endswith((".tar.gz", ".tgz")):
+        print("Archiv:  %s" % a.quelle)
+    ok, befund, tabellen = _rest.vorbereiten(a.quelle, a.ziel)
     if not ok:
         print("\nNICHT eingespielt: %s" % befund)
-        # Die halb gebaute Datei ist wertlos und wuerde beim naechsten Lauf
-        # als "gibt es schon" im Weg stehen.
-        try:
-            os.remove(a.ziel)
-        except OSError:
-            pass                       # Aufraeumpfad, Fehlschlag folgenlos
         return NICHT_BRAUCHBAR
 
     gesamt = sum(n for _n, n in tabellen)
