@@ -131,6 +131,64 @@ def bindung(host, geschuetzt: bool):
         % (host, RUECKFALL, host, "<PORT>", RUECKFALL))
 
 
+def tls_lage(cert, key):
+    """In welcher Lage ist das Dashboard-TLS? -> (lage, paar, meldung)
+
+    lage ist einer von vier definitiven Befunden:
+
+        "an"              Zertifikat und Schluessel da — `paar` ist (cert, key)
+        "aus"             nichts gesetzt, der Normalfall hinter dem Tunnel
+        "unvollstaendig"  nur eine der beiden Variablen gesetzt
+        "datei_fehlt"     beide gesetzt, mindestens eine zeigt ins Leere
+
+    v4.2-W93. DER ANLASS: die Pruefung stand nur in `run_flask()`, und
+    deshalb stand die ANTWORT auch nur dort. `main()` log unverdrossen
+    "Dashboard: http://0.0.0.0:8050" — obwohl 19 Millisekunden vorher
+    "Dashboard-TLS aktiv: https://<host>:8050" im selben Log stand (18.09.,
+    Zeilen 15 und 17). Die zweite ist die Zeile mit der vollstaendigen
+    Adresse, also die, die man kopiert, und sie war falsch: wer sie benutzt,
+    spricht HTTP gegen einen TLS-Socket und sucht den Fehler im Netz.
+    Derselbe Befund wie bei der Bindung in W84 ("die WIRKLICHE Adresse
+    nennen, nicht die gewuenschte"), eine Zeile weiter — dort war es der
+    Host, hier das Schema.
+
+    WARUM EIN STATUS UND KEIN `return None`: die drei Misserfolgsfaelle sind
+    voellig verschieden. "aus" ist der gewollte Normalzustand und darf
+    nichts sagen; "unvollstaendig" und "datei_fehlt" sind Konfigurations-
+    fehler, die der Betreiber sehen MUSS — sonst laeuft das Deck
+    unverschluesselt, weil ein Let's-Encrypt-Pfad nach einer Erneuerung ins
+    Leere zeigt, und niemand erfaehrt es. Ein blankes `return None` macht
+    alle drei ununterscheidbar; das ist die Blindstelle aus W81.
+    """
+    cert = (cert or "").strip()
+    key = (key or "").strip()
+    if not cert and not key:
+        return "aus", None, ""
+    if not cert or not key:
+        return "unvollstaendig", None, (
+            "Dashboard-TLS unvollstaendig: nur %s ist gesetzt. Es braucht "
+            "BEIDE — DASHBOARD_TLS_CERT und DASHBOARD_TLS_KEY. Das Deck "
+            "startet unverschluesselt (HTTP)."
+            % ("DASHBOARD_TLS_CERT" if cert else "DASHBOARD_TLS_KEY"))
+    fehlend = [pf for pf in (cert, key) if not os.path.exists(pf)]
+    if fehlend:
+        return "datei_fehlt", None, (
+            "DASHBOARD_TLS_CERT/KEY gesetzt, aber Datei(en) fehlen: %s — "
+            "Dashboard startet unverschluesselt (HTTP). Bei Let's Encrypt "
+            "laufen die Pfade ueber /etc/letsencrypt/live/<domain>/; nach "
+            "einer Erneuerung zeigt ein alter Pfad ins Leere."
+            % ", ".join(fehlend))
+    return "an", (cert, key), ""
+
+
+def schema(cert, key) -> str:
+    """"https" oder "http" — das Schema, unter dem das Deck WIRKLICH zu
+       erreichen ist. Eine Funktion und keine Variable, damit run_flask und
+       main nicht zwei Antworten geben koennen."""
+    lage, _, _ = tls_lage(cert, key)
+    return "https" if lage == "an" else "http"
+
+
 def waehle(tls: bool):
     """Welcher Server traegt das Dashboard? -> (name, meldung)
 

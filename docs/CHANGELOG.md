@@ -11,6 +11,100 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Behoben — ein zwölfzeiliger Traceback sagte so wenig wie „HTTP 403" (v4.2 W93)
+
+Im Log vom 18.09. steht sechsmal derselbe Block aus elf fremden
+Bibliotheksrahmen:
+
+```
+ERROR | telegram.ext.Updater | default_error_callback:371 |
+Exception happened while polling for updates.
+Traceback (most recent call last):
+  ... elf Rahmen aus networkloop.py, _updater.py, _extbot.py, _bot.py ...
+telegram.error.Conflict: Conflict: terminated by other getUpdates request;
+make sure that only one bot instance is running
+```
+
+Kein Rahmen davon liegt in unserem Code — es gibt darin nichts nachzusehen.
+Das ist die **Umkehrung von W92**: dort war die Meldung zu kurz, hier ist sie
+zu lang, und beide sagen dem Betreiber nichts.
+
+**Der Lärm war aber nicht der eigentliche Befund.** Ein `Conflict` hat zwei
+Bedeutungen, und im Log sehen sie **wortgleich** aus:
+
+| | Was ist los | Folge |
+|---|---|---|
+| Neustart-Überlappung | die alte Instanz hält ihren Long-Poll noch | nichts, nach ~1 min vorbei |
+| zweite Instanz | ein zweiter Prozess mit demselben `BOT_TOKEN` | **keine Telegram-Befehle mehr** |
+
+Am 18.09. war es der erste Fall: 07:23:42 Konflikt, 07:24:39 wieder HTTP 200
+— 57 Sekunden. Der zweite Fall hört nie auf, und dann gehen die Updates an
+die **andere** Instanz. Aufnahme, Restream und Moderation laufen unbeeindruckt
+weiter; nichts stürzt ab, nichts meldet sich. Dieselbe Klasse wie die stillen
+`return`s aus W81, nur eine Schicht höher.
+
+Unterscheidbar sind die beiden allein an der **Dauer**.
+
+- **`nc/telegramfehler.py`** misst sie — bot-frei und uhrfrei wie
+  `nc/meldetakt.py`, klassiert über den Klassennamen (damit `nc/` ohne
+  installiertes `python-telegram-bot` prüfbar bleibt). Innerhalb der
+  Gnadenfrist `konflikt_anlauf` als Warnzeile samt dem Hinweis, dass ein
+  Neustart genau so aussieht; darüber hinaus `konflikt_dauerhaft` als
+  **ERROR** mit Dauer, Folge und Abhilfe (`pgrep -af 'python3.*bot.py'`,
+  `systemctl stop tiktok-bot`).
+- **Eigene Gründe, wo die Abhilfe eine andere ist:** `konflikt_webhook`
+  (getUpdates und Webhook schließen sich aus → `deleteWebhook`),
+  `token_ungueltig`, `verboten`, `zu_schnell`, `zeitueberschreitung`, `netz`.
+  Unbekanntes bekommt den Klassennamen **in** den Schlüssel — ein Sammeltopf
+  „unbekannt" würde zwei neue Fehlerbilder verschmelzen, und dann schluckt die
+  Drossel das zweite.
+- **Eingehängt per `start_polling(error_callback=…)`.** `add_error_handler`
+  taugt dafür **nicht**: der fängt Fehler beim *Verarbeiten* eines Updates,
+  nicht beim Abholen.
+- **Gedrosselt über `nc/meldetakt.py`**, Schlüssel `telegram-polling`. Weil
+  der Grund beim Übergang wechselt, kommt die Eskalation sofort durch statt
+  erst nach 15 Minuten — der Wechsel ist die Nachricht.
+
+### Behoben — das Log nannte die Adresse des Decks mit dem falschen Schema
+
+Zwei Zeilen im Abstand von 19 Millisekunden, dasselbe Log:
+
+```
+Dashboard-TLS aktiv: https://<host>:8050 (Zertifikat: fullchain.pem)
+Dashboard: http://0.0.0.0:8050  (Auth aktiv)
+```
+
+Die zweite ist die mit der vollständigen Adresse, also die, die man kopiert —
+und sie ist falsch: HTTP gegen einen TLS-Socket, und der Fehler wird im Netz
+gesucht. Es ist derselbe Befund wie bei der Bindung in **W84** („die WIRKLICHE
+Adresse nennen, nicht die gewünschte"), eine Zeile weiter: dort war es der
+Host, hier das Schema. Die Ursache war beide Male dieselbe — die Antwort stand
+nur in `run_flask()`, und `main()` riet.
+
+- **`nc/webserver.tls_lage()`** beantwortet die Frage einmal für beide und
+  gibt einen von vier definitiven Befunden zurück: `an`, `aus`,
+  `unvollstaendig`, `datei_fehlt`.
+- **Dabei gefunden:** „nur `DASHBOARD_TLS_CERT` gesetzt, `DASHBOARD_TLS_KEY`
+  fehlt" war bisher **stumm** — das Deck lief dann unverschlüsselt, ohne dass
+  es jemand erfuhr. Ein blankes `return None` machte den gewollten Normalfall
+  und den Konfigurationsfehler ununterscheidbar.
+- **`_dashboard_adresse()`** baut die Zeile als **ein** benannter Schritt.
+  Die `monolith`-Sperre aus W74 fiel dabei zu Recht: `main()` stand genau auf
+  der 300er-Stufe, und fünf zusätzliche Zeilen hätten sie darüber gehoben.
+
+**21 Mutationsproben, 21 gefangen — drei erst im zweiten Anlauf.** Alle drei
+waren Befunde am Vertrag, nicht am Code: zweimal prüfte er nur, *dass*
+`log.error` im Rumpf vorkommt (der Auffang am Ende der Funktion enthält selbst
+eines, also blieb er grün, als der Fehlerzweig auf `warning` gedreht wurde),
+einmal nur, dass `_nc_webserver.schema(` aufgerufen wird — das Ergebnis durfte
+dabei berechnet und verworfen werden. Der Verdrahtungsteil misst seither
+**Verhalten**: er führt `_dashboard_adresse()` mit Attrappen aus und liest,
+was herauskommt.
+
+12 neue Verträge (461 → 473). Die Überdeckungs-Grundlinie steht unverändert
+bei **9633** — die zwei zunächst ungeprüften Anweisungen (`Forbidden`,
+`RetryAfter`) sind gedeckt, nicht weggehoben.
+
 ### Behoben — die teuerste Fehlermeldung des Bestands war die kürzeste (v4.2 W92)
 
 Am 17.09. lag statt der Datenbank ein 108-MB-Blob im Arbeitsverzeichnis. Der
