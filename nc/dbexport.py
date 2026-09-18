@@ -262,6 +262,18 @@ def parse_header(sql_text):
     return info
 
 
+def _ist_systemdump(sql_text) -> bool:
+    """Sieht das nach `sqlite3 .iterdump()` aus? -> bool
+
+    Gefragt ist Schema-DDL, denn genau die kollidiert mit dem bestehenden
+    Bestand. `INSERT INTO` allein taugt NICHT — das steht auch in jedem
+    regulaeren Export dieses Moduls, und dann waere jeder normale Import
+    abgelehnt.
+    """
+    kopf = sql_text[:200000]
+    return "CREATE TABLE" in kopf or "BEGIN TRANSACTION" in kopf
+
+
 def db_import_sql(sql_text, expect_dialect=None, dry_run=False):
     """Spielt einen Export ein. Gibt einen Bericht zurueck.
 
@@ -273,6 +285,31 @@ def db_import_sql(sql_text, expect_dialect=None, dry_run=False):
     info = parse_header(sql_text)
     rep = {"ok": False, "header": info, "statements": 0, "applied": 0,
            "errors": [], "dry_run": bool(dry_run)}
+
+    # v4.2-W95: der Dump aus dem taeglichen Systemarchiv gehoert NICHT hierher,
+    # und das muss vor dem ersten Schreibzugriff auffallen.
+    #
+    # Der Betreiber am 18.09.: "Über die Backup Funktion im dashboard lassen
+    # sich keine SQL Dateien importieren da sämtliche Tabellen schon
+    # existieren." Genau so ist es — `_system_backup()` schreibt
+    # `sqlite3 .iterdump()`, also Schema UND Daten, dieses Modul erwartet aber
+    # NUR Daten (siehe Modulkopf: das Schema baut das Ziel selbst).
+    #
+    # Ohne diesen Riegel lief es so: die CREATE TABLE fallen auf "already
+    # exists", **die INSERT laufen durch**, und db_conn committet beim sauberen
+    # Verlassen. Gemessen: "ok: False | Statements: 9 | angewandt: 7". Der
+    # Import bricht also nicht ab, er mischt alte Zeilen in den laufenden
+    # Bestand — auf einer gesunden Datenbank ein Datenschaden.
+    if not info and _ist_systemdump(sql_text):
+        rep["errors"].append(
+            "Das ist ein Dump aus dem Systemarchiv (sqlite3 .iterdump: Schema "
+            "UND Daten), kein NIGHTCRAWLER-DB-EXPORT. Er gehoert in eine LEERE "
+            "Datenbank, nicht in die laufende — hier wuerden die CREATE-TABLE "
+            "scheitern und die INSERT trotzdem durchlaufen. Richtiger Weg: "
+            "python3 tools/dbwiederher.py <archiv.tar.gz> -o wiederhergestellt.db "
+            "— das baut eine neue Datei, prueft sie und laesst die laufende "
+            "Datenbank unberuehrt.")
+        return rep
 
     if expect_dialect and info.get("dialect") and info["dialect"] != expect_dialect:
         rep["errors"].append(
@@ -301,9 +338,30 @@ def db_import_sql(sql_text, expect_dialect=None, dry_run=False):
                 if st.upper().startswith(("PRAGMA", "SET ")):
                     continue
                 rep["errors"].append("%s: %s" % (st[:70].replace("\n", " "), e))
+                # v4.2-W95: nicht still. Bis hierher stand am Ende dieses
+                # Blocks ein `raise`, und der Fehler landete wenigstens im
+                # Traceback; mit dem `break` (fuer den Rollback unten) waere
+                # er nur noch im Rueckgabewert — also unsichtbar fuer jeden,
+                # der das Log liest statt der Deck-Antwort. Gedeckelt ist es
+                # ohnehin bei 25, und ein Import ist ein Handgriff, kein
+                # Dauerlaeufer.
+                log.warning("DB-Import: Statement abgelehnt (%s): %s",
+                            st[:70].replace("\n", " "), e)
                 if len(rep["errors"]) > 25:
                     rep["errors"].append("… weitere Fehler unterdrueckt, Abbruch.")
-                    raise
+                    log.error("DB-Import abgebrochen: mehr als 25 Statements "
+                              "abgelehnt. Nichts wird uebernommen.")
+                    break
+        # v4.2-W95: alles oder nichts. db_conn committet beim SAUBEREN
+        # Verlassen — ein abgefangener Fehler ist fuer den Kontextmanager
+        # sauber, und genau so wurde bisher eine halbe Einspielung
+        # festgeschrieben. Ein Import, der zur Haelfte gelaufen ist, ist
+        # schlimmer als gar keiner: der Bestand ist danach weder alt noch neu.
+        if rep["errors"]:
+            conn.rollback()
+            rep["applied"] = 0
+            rep["errors"].append(
+                "Nichts uebernommen — die Datenbank steht unveraendert wie vorher.")
     rep["ok"] = not rep["errors"]
     log.info("DB-Import: %d/%d Statements, %d Fehler",
              rep["applied"], rep["statements"], len(rep["errors"]))
