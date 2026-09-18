@@ -73,6 +73,22 @@ _SIGNATUREN = (
 _DUMP_MARKEN = (b"CREATE TABLE", b"INSERT INTO", b"BEGIN TRANSACTION",
                 b"PRAGMA foreign_keys")
 
+# v4.2-W94: NUR diese drei beweisen einen Dump. `CREATE TABLE` tut es NICHT —
+# SQLite legt den Schema-Text woertlich in `sqlite_master` ab, also steht er
+# in JEDER Datenbankdatei. Nachgemessen an einer echten Datei mit 3000
+# Zeilen: `CREATE TABLE` 1 Treffer, `INSERT INTO` 0 Treffer; im Dump derselben
+# Daten: `INSERT INTO` 3000 Treffer. Die erste Fassung zaehlte `CREATE TABLE`
+# mit und hat deshalb jede beschaedigte Datenbank als Dump ausgegeben — samt
+# dem Rat `sqlite3 neu.db < datei`, der auf einer Binaerdatei nicht laufen
+# KANN. Ein falscher Rat ist in dieser Lage teurer als gar keiner.
+_DUMP_BEWEIS = (b"INSERT INTO", b"BEGIN TRANSACTION", b"PRAGMA foreign_keys")
+
+# Die acht von SQLite erlaubten Seitengroessen. Ist die Dateigroesse durch
+# eine davon teilbar, liegt der Verdacht nahe, dass die Seiten noch da sind
+# und nur der 100-Byte-Kopf ueberschrieben wurde — der Fall vom 18.09.:
+# 401408 = 4096 x 98.
+_SEITENGROESSEN = (512, 1024, 2048, 4096, 8192, 16384, 32768, 65536)
+
 
 def _proben(pfad: str, groesse: int, n: int = 65536):
     """Anfang, Mitte und Ende — nicht die ganze Datei.
@@ -119,6 +135,7 @@ def _inhalt_befund(pfad: str, groesse: int) -> list:
 
     kopf_gefunden = None
     dump_marken = set()
+    dump_beweis = set()
     roh = druck = 0
     for wo, stueck in proben:
         i = stueck.find(b"SQLite format 3\x00")
@@ -127,6 +144,9 @@ def _inhalt_befund(pfad: str, groesse: int) -> list:
         for marke in _DUMP_MARKEN:
             if marke in stueck:
                 dump_marken.add(marke.decode())
+        for marke in _DUMP_BEWEIS:
+            if marke in stueck:
+                dump_beweis.add(marke.decode())
         roh += len(stueck)
         druck += sum(1 for b in stueck if 32 <= b < 127 or b in (9, 10, 13))
 
@@ -135,7 +155,24 @@ def _inhalt_befund(pfad: str, groesse: int) -> list:
                       "steckt also DAHINTER." % kopf_gefunden)
         zeilen.append("  Rettung: dd if=%s bs=1 skip=%d of=gerettet.db"
                       % (os.path.basename(pfad), kopf_gefunden))
-    if dump_marken:
+    # v4.2-W94: der haeufigste echte Schaden zuerst — die Seiten sind noch da,
+    # nur der Kopf ist weg. Erkennbar am Seitenraster, und er schliesst den
+    # Dump-Verdacht aus: eine Datei, die exakt aus SQLite-Seiten besteht, ist
+    # keine Textdatei.
+    raster = [sg for sg in _SEITENGROESSEN
+              if groesse >= 512 and groesse % sg == 0]
+    if raster and not dump_beweis and kopf_gefunden is None:
+        zeilen.append("  Die Groesse ist ein genaues Vielfaches der "
+                      "SQLite-Seitengroesse (%s) — das spricht dafuer, dass "
+                      "nur der 100-Byte-KOPF ueberschrieben wurde und die "
+                      "Seiten dahinter noch stehen."
+                      % ", ".join(str(s_) for s_ in raster))
+        zeilen.append("  Rettung: den Kopf neu setzen, die Seitengroesse "
+                      "durchprobieren, integrity_check entscheiden lassen:")
+        zeilen.append("    python3 tools/dbkopf.py %s -o gerettet.db"
+                      % os.path.basename(pfad))
+        zeilen.append("  Das Werkzeug fasst die Eingabedatei nicht an.")
+    if dump_beweis:
         zeilen.append("  SQL-Dump-Vokabular gefunden (%s) — das sieht nach "
                       "einem Dump aus, nicht nach einer Datenbankdatei."
                       % ", ".join(sorted(dump_marken)))
@@ -155,11 +192,12 @@ def _inhalt_befund(pfad: str, groesse: int) -> list:
             klein = len(zlib.compress(b"".join(p for _w, p in proben), 6))
             rate = roh / max(1, klein)
             zeilen.append("  Komprimierbar auf 1:%.1f" % rate)
-            if rate < 1.1 and not dump_marken and kopf_gefunden is None:
+            if rate < 1.1 and not dump_beweis and kopf_gefunden is None \
+                    and not raster:
                 zeilen.append("  Das spricht fuer verschluesselte oder "
                               "zufaellige Daten — daraus ist nichts zu "
                               "gewinnen, hier hilft nur die Sicherung.")
-            elif rate >= 2.0 or dump_marken:
+            elif rate >= 2.0 or dump_beweis or raster:
                 zeilen.append("  Das spricht fuer STRUKTURIERTE Daten. Diese "
                               "Datei aufzugeben waere verfrueht.")
         except zlib.error as e:

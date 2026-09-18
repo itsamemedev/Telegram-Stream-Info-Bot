@@ -11,6 +11,76 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Behoben — die Diagnose riet bei einer beschädigten Datenbank falsch (v4.2 W94)
+
+Am 18.09. brach der Start ab, und W92 tat dabei alles richtig: Datei genannt,
+Größe genannt, erste Bytes als Hex, gewarnt, nichts zu löschen.
+
+```
+Groesse: 401408 Bytes (0.4 MB)
+Erste Bytes: 17 03 03 00 2d 0c fc ba 34 d6 d6 33 52 fb 55 0a
+Das ist am Anfang wie ein TLS-Record (Application Data).
+  Druckbarer Anteil: 57 %
+  Komprimierbar auf 1:5.9
+  Das spricht fuer STRUKTURIERTE Daten. Diese Datei aufzugeben waere verfrueht.
+```
+
+„Aufgeben wäre verfrüht" — **und dann kein Weg dahin.** Das ist dieselbe Art
+Meldung wie ein blankes „HTTP 403", eine Ebene tiefer: richtig und nutzlos.
+
+Die Antwort stand im Log und wurde von niemandem gelesen: **401408 = 4096 ×
+98**, also exakt 98 SQLite-Seiten. Der TLS-Record ist 5 Bytes Kopf plus
+0x2d = 45 Bytes Nutzlast, zusammen 50. Zerstört war der **100-Byte-Dateikopf**,
+nicht die Datenbank. Die Datei wurde nicht ersetzt, sondern angeschrieben.
+
+**Und die alte Fassung riet aktiv falsch.** Nachgestellt an einer echten
+beschädigten Datenbank meldete sie:
+
+```
+SQL-Dump-Vokabular gefunden (CREATE TABLE) — das sieht nach einem Dump aus.
+Rettung: sqlite3 neu.db < tiktok_bot.db
+```
+
+Das **kann** nicht laufen — es ist eine Binärdatei (`ValueError: embedded null
+character`). `CREATE TABLE` steht in **jeder** SQLite-Datei, weil das Schema
+wörtlich in `sqlite_master` liegt. Nachgemessen an einer Datei mit 3000
+Zeilen: `CREATE TABLE` 1 Treffer, `INSERT INTO` **0** Treffer; im Dump
+derselben Daten `INSERT INTO` 3000 Treffer. Der Dump-Verdacht hängt jetzt an
+`INSERT INTO`/`BEGIN TRANSACTION`, nicht mehr an `CREATE TABLE`.
+
+- **`tools/dbkopf.py`** setzt den Kopf neu, probiert die acht erlaubten
+  Seitengrößen durch und lässt **`PRAGMA integrity_check`** entscheiden. Es
+  öffnet die Eingabedatei ausschließlich mit `"rb"` und überschreibt kein
+  vorhandenes Ziel.
+- **Das Kriterium ist wörtlich `ok`, nicht „keine Ausnahme".** Gemessen: mit
+  8192 statt 4096 kamen 308 von 2000 Zeilen heraus, ohne dass etwas warf —
+  wäre das das Kriterium, gäbe das Werkzeug eine zu 85 % leere Datenbank als
+  Rettung aus.
+- **`nc/dbwrap.datei_diagnose()`** benennt den Kopfschaden am Seitenraster und
+  verweist auf das Werkzeug. Der echte Dump aus W92 wird weiter erkannt,
+  Zufallsdaten bleiben ehrlich verloren.
+
+Gegen den nachgestellten Fall: **3000 von 3000 Zeilen zurück, `integrity_check:
+ok`, Eingabedatei unverändert.**
+
+**Neun Mutationsproben, neun gefangen — vier erst im zweiten Anlauf**, und
+alle vier waren Befunde an der Prüfung, nicht am Code. Die lehrreichste: die
+Probe „integrity_check ist nicht mehr das Kriterium" zielte ins Leere, weil
+die Attrappe 53248 Bytes groß war und `53248 % 8192 != 0` — die falsche
+Seitengröße war also gar kein Kandidat. Eine zehnte Probe wurde **entfernt**:
+`aus[92:96] = bytes(4)` ist nachweislich redundant, weil die Seitenzahl schon
+richtig gesetzt wird; der Kommentar behauptete etwas anderes und ist
+berichtigt. Eine Probe, die nicht greifen *kann*, gehört nicht in die Liste —
+und ein Kommentar, der die Absicht beschreibt, ist kein Beweis, dass der Code
+sie erfüllt.
+
+**Was dieser Fall NICHT ist: ein Fehler im Bot.** Nachgesehen wurde, ob er
+sich selbst überschreibt — alle `DB_PATH`-Stellen, die Restore-Routen, der
+Backup-Pfad (liest nur), rohe Netz-nach-Datei-Schreibvorgänge, `close_fds`/
+`pass_fds` und jedes Öffnen ohne Truncate (`r+b`/`ab`). Außer `sqlite3.connect`
+fasst nichts den Datenbankpfad an. Der Schreiber sitzt außerhalb des
+Bot-Prozesses.
+
 ### Behoben — ein zwölfzeiliger Traceback sagte so wenig wie „HTTP 403" (v4.2 W93)
 
 Im Log vom 18.09. steht sechsmal derselbe Block aus elf fremden
