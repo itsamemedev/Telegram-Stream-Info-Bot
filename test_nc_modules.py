@@ -16650,6 +16650,213 @@ def _test_v42_w93_deck_nennt_das_wirkliche_schema():
     ok("W93: _dashboard_adresse nennt wirkliches Schema, Host und Schranke")
     ok("W93: run_flask rechnet die TLS-Frage nicht ein zweites Mal selbst")
 
+def _test_v42_w94_kopfschaden_wird_erkannt_und_geheilt():
+    """v4.2-W94: die Diagnose riet bei einer beschaedigten Datenbank falsch —
+    und nannte fuer den haeufigsten Schaden ueberhaupt keinen Weg.
+
+    Am 18.09. lag das im Arbeitsverzeichnis:
+
+        Groesse: 401408 Bytes (0.4 MB)
+        Erste Bytes: 17 03 03 00 2d 0c fc ba 34 d6 d6 33 52 fb 55 0a
+
+    W92 hat korrekt abgebrochen und korrekt gewarnt, nichts zu loeschen. Nur
+    half es dann nicht weiter: "STRUKTURIERTE Daten, aufgeben waere
+    verfrueht" — und kein Weg dahin. Dieselbe Klasse wie ein blankes
+    "HTTP 403", eine Ebene tiefer.
+
+    Die Zahl im Log war die Antwort: 401408 = 4096 x 98, also exakt 98
+    SQLite-Seiten. Der TLS-Record ist 5 Bytes Kopf + 0x2d Nutzlast = 50
+    Bytes. Zerstoert war der 100-Byte-Dateikopf, nicht die Datenbank.
+
+    UND DIE ERSTE FASSUNG RIET AKTIV FALSCH: sie fand `CREATE TABLE`, hielt
+    die Datei fuer einen SQL-Dump und empfahl `sqlite3 neu.db < datei`. Das
+    KANN nicht laufen — es ist eine Binaerdatei. `CREATE TABLE` steht in
+    JEDER SQLite-Datei, weil das Schema woertlich in `sqlite_master` liegt.
+    """
+    import os as _os
+    import sqlite3 as _sq3
+    import random as _rnd
+    import subprocess as _sp
+    import sys as _sys
+    from nc import dbwrap as D
+    import pruefhilfen as P
+
+    heim = P.verzeichnis()
+
+    def _datenbank(name, zeilen=3000):
+        pfad = _os.path.join(heim, name)
+        con = _sq3.connect(pfad)
+        con.execute("CREATE TABLE trackings (id INTEGER PRIMARY KEY, username TEXT)")
+        con.execute("CREATE TABLE recordings (id INTEGER PRIMARY KEY, pfad TEXT)")
+        for i in range(zeilen):
+            con.execute("INSERT INTO trackings (username) VALUES (?)", ("@s_%d" % i,))
+            con.execute("INSERT INTO recordings (pfad) VALUES (?)", ("/rec/%d.mp4" % i,))
+        con.commit()
+        con.close()
+        return pfad
+
+    def _kopf_zerstoeren(pfad, bytes_=50):
+        # Genau der Schaden aus dem Log: TLS-Record-Kopf plus Nutzlast, an
+        # Offset 0, OHNE die Datei zu kuerzen.
+        _rnd.seed(3)
+        roh = bytes.fromhex("170303002d") + bytes(
+            _rnd.randrange(256) for _ in range(bytes_ - 5))
+        with open(pfad, "r+b") as f:
+            f.write(roh)
+
+    # ── (1) DAS UNTERSCHEIDUNGSMERKMAL, an dem die erste Fassung scheiterte.
+    # Nachgemessen: eine echte SQLite-Datei enthaelt `CREATE TABLE` (aus
+    # sqlite_master), aber NULL `INSERT INTO`. Ein Dump enthaelt beides.
+    heil = _datenbank("heil.db")
+    roh_db = open(heil, "rb").read()
+    assert b"CREATE TABLE" in roh_db, \
+        "Annahme gebrochen: das Schema steht nicht mehr woertlich in der Datei"
+    assert b"INSERT INTO" not in roh_db, \
+        "eine Datenbankdatei enthaelt INSERT INTO — dann taugt das " \
+        "Unterscheidungsmerkmal nicht mehr und die Diagnose raet wieder falsch"
+
+    # ── (2) DIE DIAGNOSE DARF NICHT MEHR ZUM DUMP-WEG RATEN.
+    kaputt = _datenbank("kaputt.db")
+    _kopf_zerstoeren(kaputt)
+    text = D.datei_diagnose(kaputt)
+    assert "sqlite3 neu.db <" not in text, \
+        "die beschaedigte Datenbank wird weiter als SQL-Dump ausgegeben. " \
+        "Der Rat kann nicht laufen und kostet den Betreiber eine Stunde: %s" % text
+    assert "Vielfaches" in text and "KOPF" in text, \
+        "der Kopfschaden wird nicht benannt: %s" % text
+    assert "tools/dbkopf.py" in text, \
+        "kein Weg genannt — genau der Befund vom 18.09.: richtig und nutzlos"
+    assert "fasst die Eingabedatei nicht an" in text, \
+        "ohne diese Zusage traut sich niemand, das Werkzeug auf die einzige " \
+        "verbliebene Kopie loszulassen"
+
+    # ── (3) DER FALL VOM 17.09. MUSS WEITER GEHEN. Ein echter Dump hinter
+    # fremdem Vorlauf bleibt ein Dump — sonst waere W92 zurueckgedreht.
+    dump = _os.path.join(heim, "dump.db")
+    with open(dump, "wb") as f:
+        f.write(bytes.fromhex("170303002d0cfcba"))
+        f.write(b"\x00" * (200 * 1024))
+        f.write(b"BEGIN TRANSACTION;\nCREATE TABLE recordings (id INT);\n")
+        for i in range(30000):
+            f.write(b"INSERT INTO recordings VALUES(%d);\n" % i)
+    t_dump = D.datei_diagnose(dump)
+    assert "SQL-Dump" in t_dump and "sqlite3 neu.db <" in t_dump, \
+        "der echte Dump wird nicht mehr erkannt — W92 waere zurueckgedreht"
+    assert "dbkopf" not in t_dump, \
+        "ein Dump wird als Kopfschaden ausgegeben: %s" % t_dump
+
+    # ── (4) UND ZUFALLSDATEN BLEIBEN EHRLICH VERLOREN. Ein Werkzeug, das
+    # auch hier Rettung verspricht, waere wieder ein falscher Rat.
+    zufall = _os.path.join(heim, "rnd.db")
+    with open(zufall, "wb") as f:
+        f.write(_os.urandom(200000))
+    t_rnd = D.datei_diagnose(zufall)
+    assert "verschluesselte oder zufaellige" in t_rnd, t_rnd
+    assert "dbkopf" not in t_rnd and "verfrueht" not in t_rnd, \
+        "Zufallsdaten werden als rettbar dargestellt: %s" % t_rnd
+
+    # ── (5) DAS WERKZEUG RETTET WIRKLICH. Nicht "es laeuft durch", sondern:
+    # alle Zeilen sind wieder da.
+    ziel = _os.path.join(heim, "gerettet.db")
+    r = _sp.run([_sys.executable, "tools/dbkopf.py", kaputt, "-o", ziel],
+                capture_output=True, text=True)
+    assert r.returncode == 0, "dbkopf scheitert: %s%s" % (r.stdout, r.stderr)
+    con = _sq3.connect(ziel)
+    for tab in ("trackings", "recordings"):
+        n = con.execute("SELECT count(*) FROM %s" % tab).fetchone()[0]
+        assert n == 3000, "%s: nur %s von 3000 Zeilen gerettet" % (tab, n)
+    assert con.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+    con.close()
+
+    # ── (6) UND ES FASST DIE EINGABE NICHT AN. Das ist keine Kosmetik: es
+    # laeuft auf der einzigen verbliebenen Kopie der Produktionsdaten.
+    assert open(kaputt, "rb").read(5) == bytes.fromhex("170303002d"), \
+        "dbkopf hat die Eingabedatei veraendert"
+
+    # ── (7) DAS ENTSCHEIDENDE KRITERIUM IST integrity_check, NICHT "keine
+    # Ausnahme". Gemessen: mit 8192 statt 4096 kamen 308 von 2000 Zeilen
+    # heraus, ohne dass etwas warf. Waere das das Kriterium, gaebe das
+    # Werkzeug eine zu 85 % leere Datenbank als Rettung aus.
+    import importlib.util as _ilu
+    import tempfile as _tf
+    _spec = _ilu.spec_from_file_location("dbkopf", "tools/dbkopf.py")
+    _dbk = _ilu.module_from_spec(_spec)
+    _spec.loader.exec_module(_dbk)
+    # Die Groesse muss durch 8192 teilbar sein, sonst ist 8192 gar kein
+    # Kandidat und die Probe zielt ins Leere — genau daran ist die
+    # Mutationsprobe "integrity_check nicht mehr das Kriterium" zuerst
+    # entwischt: bei 3000 Zeilen sind es 53248 Bytes, und 53248 % 8192 != 0.
+    zwilling = _os.path.join(heim, "zwilling.db")
+    _con = _sq3.connect(zwilling)
+    _con.execute("CREATE TABLE t (id INTEGER PRIMARY KEY, u TEXT)")
+    _n = 0
+    # Solange fuellen, bis die Groesse auf der 8192-Grenze liegt. Eine feste
+    # Zeilenzahl zu raten geht schief: 3000 Zeilen ergaben 53248 Bytes, und
+    # 53248 % 8192 != 0.
+    while _n < 20000:
+        for _ in range(500):
+            _con.execute("INSERT INTO t (u) VALUES (?)", ("@s_%d" % _n,))
+            _n += 1
+        _con.commit()
+        if _os.path.getsize(zwilling) % 8192 == 0:
+            break
+    _con.close()
+    assert _os.path.getsize(zwilling) % 8192 == 0, \
+        "die Attrappe liegt nicht auf der 8192-Grenze — dann ist 8192 gar " \
+        "kein Kandidat und (7) prueft nichts"
+    _kopf_zerstoeren(zwilling)
+    with open(zwilling, "rb") as f:
+        _roh = f.read()
+    with _tf.TemporaryDirectory() as _tmp:
+        ok_falsch, befund_f, _t = _dbk._pruefe(_dbk.kopf_bauen(_roh, 8192), _tmp)
+        assert not ok_falsch, \
+            "eine falsche Seitengroesse wird als Rettung akzeptiert — genau " \
+            "so gehen Daten still verloren"
+        assert "database" in befund_f or "page" in befund_f.lower(), \
+            "abgelehnt wurde sie, aber nicht von integrity_check (%s) — dann " \
+            "haengt das Werkzeug am Ausbleiben einer Ausnahme" % befund_f
+        ok_richtig, befund, _t2 = _dbk._pruefe(_dbk.kopf_bauen(_roh, 4096), _tmp)
+        assert ok_richtig and befund == "ok", befund
+
+        # Und die Seitenzahl im Kopf darf NICHT tragen: Byte 92-95 steht auf
+        # Null, damit SQLite sie aus der Dateigroesse ableitet. Vorher stimmte
+        # das nur zufaellig, weil dort noch der alte Wert stand.
+        gefaelscht = bytearray(_dbk.kopf_bauen(_roh, 4096))
+        gefaelscht[28:32] = (1).to_bytes(4, "big")
+        ok_gef, _bg, _tg = _dbk._pruefe(bytes(gefaelscht), _tmp)
+        assert ok_gef, \
+            "die Rettung haengt an der Seitenzahl im Kopf. Die ist beim " \
+            "Schaden mit zerstoert worden — dann rettet das Werkzeug nur " \
+            "Dateien, deren Kopf noch da ist, also gar keine."
+
+    # ── (8) UND DIE BEIDEN ABLEHNUNGEN. Ein Werkzeug, das auf allem etwas
+    # tut, ist gefaehrlicher als keines.
+    r_heil = _sp.run([_sys.executable, "tools/dbkopf.py", heil],
+                     capture_output=True, text=True)
+    assert r_heil.returncode != 0 and "INTAKT" in r_heil.stdout, \
+        "dbkopf bastelt an einer gesunden Datei: %s" % r_heil.stdout
+    schief = _os.path.join(heim, "schief.db")
+    with open(schief, "wb") as f:
+        f.write(_os.urandom(4096 * 3 + 17))     # durch keine Seitengroesse teilbar
+    r_schief = _sp.run([_sys.executable, "tools/dbkopf.py", schief],
+                       capture_output=True, text=True)
+    assert r_schief.returncode != 0, "dbkopf meldet Erfolg auf Muell"
+    assert "ersetzt, nicht nur am Anfang" in r_schief.stdout, \
+        "die Ablehnung sagt nicht, WAS sie bedeutet. 'Geht nicht' allein " \
+        "laesst offen, ob die Datei ersetzt oder nur angeschnitten wurde — " \
+        "und davon haengt ab, wo der Betreiber als naechstes sucht: %s" \
+        % r_schief.stdout
+
+    ok("W94: eine Datenbankdatei hat CREATE TABLE, aber kein INSERT INTO")
+    ok("W94: der Kopfschaden wird benannt statt als SQL-Dump fehlgedeutet")
+    ok("W94: die Diagnose nennt einen Weg (tools/dbkopf.py), nicht nur Trost")
+    ok("W94: der echte Dump aus W92 wird weiter erkannt")
+    ok("W94: Zufallsdaten bleiben ehrlich verloren")
+    ok("W94: dbkopf rettet alle Zeilen und laesst die Eingabe unberuehrt")
+    ok("W94: integrity_check entscheidet, nicht das Ausbleiben einer Ausnahme")
+    ok("W94: dbkopf lehnt gesunde und nicht-seitenweise Dateien ab")
+
+
 def main():
     tmp, rid = richte_testdatenbank_ein()
     ok("db_conn aus nc.dbwrap: echtes Schema angelegt, Commit durchgelaufen")
@@ -16909,6 +17116,7 @@ def main():
     _test_v42_w92_unlesbare_datenbank_sagt_was_zu_tun_ist()
     _test_v42_w93_telegram_konflikt_wird_unterschieden()
     _test_v42_w93_deck_nennt_das_wirkliche_schema()
+    _test_v42_w94_kopfschaden_wird_erkannt_und_geheilt()
     _test_v42_w60_azrael_cooldown_je_plattform()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)

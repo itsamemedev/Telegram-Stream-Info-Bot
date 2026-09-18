@@ -137,7 +137,7 @@ die Prüfkette fährt und was die Sperre ist; pytest kommt daneben, für die
 Arbeit am einzelnen Befund.
 
 **Die Überdeckung ist seit v4.2-W86 gemessen: 51,3 %** von `nc/` und `brain/`
-(19.764 Anweisungen, 9.633 davon ungeprüft). Das ist die Zahl, die den 473
+(19.776 Anweisungen, 9.633 davon ungeprüft). Das ist die Zahl, die den 481
 Verträgen erst ihren Maßstab gibt — „alles grün" sagt sonst nichts darüber,
 wie viel Bestand dabei angefasst wurde. Gesperrt wird wie bei W65/W66 nur der
 Zuwachs, und zwar die **Anzahl** ungeprüfter Anweisungen, nicht der
@@ -299,6 +299,32 @@ dann, wenn `os.remove` scheiterte. Die Aufnahme belegte weiter Platz, tauchte
 in keiner Liste mehr auf, und das Deck meldete den Platz als frei — die
 Umkehrung des W89-Befunds in `archiverules.py`. **Wer die Datei nicht löschen
 kann, darf auch ihre Spur nicht löschen.**
+
+**Und die Diagnose aus W92 riet dann falsch.** Am 18.09. brach der Start
+korrekt ab, nannte Datei, Größe und Hex und warnte vor dem Löschen — und
+endete mit „STRUKTURIERTE Daten. Diese Datei aufzugeben wäre verfrüht",
+**ohne einen Weg zu nennen**. Dieselbe Art Meldung wie ein blankes „HTTP 403",
+eine Ebene tiefer.
+
+Die Antwort stand im Log: **401408 = 4096 × 98**, exakt 98 SQLite-Seiten. Der
+TLS-Record ist 5 + 0x2d = 50 Bytes. Zerstört war der 100-Byte-**Kopf**, nicht
+die Datenbank — die Datei wurde angeschrieben, nicht ersetzt.
+
+Schlimmer war der aktive Fehlrat: die Diagnose fand `CREATE TABLE`, hielt die
+Datei für einen SQL-Dump und empfahl `sqlite3 neu.db < datei`. Das **kann**
+nicht laufen. `CREATE TABLE` steht in **jeder** SQLite-Datei, weil das Schema
+wörtlich in `sqlite_master` liegt; gemessen an einer echten Datei: `CREATE
+TABLE` 1 Treffer, `INSERT INTO` **0**. Der Dump-Verdacht hängt seit v4.2-W94
+an `INSERT INTO`/`BEGIN TRANSACTION`, und `tools/dbkopf.py` setzt den Kopf neu
+— Seitengröße durchprobiert, **`PRAGMA integrity_check` entscheidet**, wörtlich
+`ok` und nichts sonst. „Keine Ausnahme" als Kriterium hätte eine zu 85 % leere
+Datenbank als Rettung ausgegeben (gemessen: 308 von 2000 Datensätzen bei falscher
+Seitengröße). Die Eingabedatei wird nur mit `"rb"` geöffnet.
+
+**Der Bot schreibt das nicht.** Nachgesehen wurde vor dem Bauen: alle
+`DB_PATH`-Stellen, Restore-Routen, der Backup-Pfad, rohe
+Netz-nach-Datei-Schreibvorgänge, `close_fds`/`pass_fds`, jedes Öffnen ohne
+Truncate. Außer `sqlite3.connect` fasst nichts den Pfad an.
 
 **Ein zwölfzeiliger Traceback sagte so wenig wie ein blankes „HTTP 403".**
 Das Log vom 18.09. trägt sechsmal denselben Block aus elf fremden
