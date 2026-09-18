@@ -11,12 +11,227 @@ Env-Zugriffe im Modul, damit es testbar bleibt)."""
 
 import asyncio
 import logging
+import os
 import sqlite3
 import threading
 
 from nc.sqlutil import _translate_sql
 
 log = logging.getLogger("TikTokBot")
+
+
+class DatenbankUnlesbar(sqlite3.DatabaseError):
+    """Die Datenbankdatei ist nicht zu oeffnen — mit Diagnose statt Traceback.
+
+    v4.2-W92. Erbt bewusst von sqlite3.DatabaseError: im Bestand faengt
+    Code an vielen Stellen `except sqlite3.DatabaseError` oder
+    `except Exception`, und diese Stellen sollen sich nicht aendern. Neu
+    ist allein, was der Betreiber zu lesen bekommt.
+
+    Der Anlass: am 17.09. lag statt der Datenbank ein 108-MB-Blob mit
+    TLS-Verkehr im Arbeitsverzeichnis. Der Bot starb beim Start mit
+
+        sqlite3.DatabaseError: file is not a database
+
+    und sonst nichts — kein Pfad, keine Groesse, kein Hinweis, was die
+    Datei stattdessen ist, und vor allem keine Abhilfe. In der
+    gefaehrlichsten Lage des Systems (die Daten sind weg oder ueberschrieben)
+    ist das dieselbe Art Meldung wie ein blankes "HTTP 403": richtig und
+    nutzlos. Die naheliegende Reaktion — Datei loeschen, damit es wieder
+    laeuft — kostet Trackings, Aufnahme-Eintraege und den Ledger.
+    """
+
+
+# Die Signaturen, die wir benennen koennen. Mehr Faelle zu raten hilft
+# niemandem; was hier nicht steht, wird als "unbekannt" gemeldet, samt Hex.
+_SIGNATUREN = (
+    (b"SQLite format 3\x00",
+     "ein SQLite-Header ist vorhanden, der Inhalt dahinter ist beschaedigt",
+     "Chancen auf Rettung: `sqlite3 <datei> \".recover\" | sqlite3 neu.db`"),
+    (b"\x17\x03\x03", "am Anfang wie ein TLS-Record (Application Data)",
+     "Die Datei wurde von einem anderen Programm ueberschrieben. Was weiter "
+     "hinten steht, sagt der Inhalts-Befund unten — ein TLS-Kopf allein "
+     "heisst NICHT, dass die ganze Datei verloren ist."),
+    (b"\x16\x03", "ein TLS-Handshake",
+     "Die Datei wurde von einem anderen Programm ueberschrieben."),
+    (b"<!DOCTYPE", "eine HTML-Seite",
+     "Vermutlich eine Fehlerseite, die in die Datei geschrieben wurde "
+     "(fehlgeleiteter Download)."),
+    (b"<html", "eine HTML-Seite", "Siehe oben."),
+    (b"PK\x03\x04", "ein ZIP-Archiv",
+     "Hier wurde ein Archiv ueber die Datenbank gelegt."),
+    (b"\x1f\x8b", "eine gzip-Datei",
+     "Vermutlich ein nicht ausgepacktes Backup. `gunzip -c <datei> > neu.db` "
+     "und pruefen, ob dabei eine Datenbank herauskommt."),
+    (b"{", "JSON oder Text", "Ein fehlgeleiteter Schreibvorgang."),
+)
+
+
+# Woran man einen SQL-Dump erkennt. Bewusst mehrere Marken: ein Dump aus
+# `.dump` beginnt anders als einer aus mysqldump oder aus unserem eigenen
+# Systemarchiv.
+_DUMP_MARKEN = (b"CREATE TABLE", b"INSERT INTO", b"BEGIN TRANSACTION",
+                b"PRAGMA foreign_keys")
+
+
+def _proben(pfad: str, groesse: int, n: int = 65536):
+    """Anfang, Mitte und Ende — nicht die ganze Datei.
+
+    Eine Datenbank kann 100 MB und mehr haben; sie im Fehlerfall komplett zu
+    lesen, kostet Zeit und Speicher an der Stelle, an der beides gerade knapp
+    sein kann.
+    """
+    aus = []
+    try:
+        with open(pfad, "rb") as f:
+            for wo in (0, max(0, groesse // 2 - n // 2), max(0, groesse - n)):
+                f.seek(wo)
+                stueck = f.read(n)
+                if stueck:
+                    aus.append((wo, stueck))
+                if groesse <= n:
+                    break
+    except OSError as e:
+        log.warning("datei_diagnose: Proben aus %s nicht lesbar: %s", pfad, e)
+    return aus
+
+
+def _inhalt_befund(pfad: str, groesse: int) -> list:
+    """Was steht WEITER HINTEN? -> Zeilen fuer die Diagnose.
+
+    v4.2-W92, nachgeschaerft am echten Fall: die erste Fassung sah nur die
+    ersten 16 Bytes, erkannte dort einen TLS-Record und riet "aus der Datei
+    ist nichts zu holen". Beim Betreiber steckten dahinter 33.444 Zeilen mit
+    CREATE-TABLE- und INSERT-Vokabular — ein SQL-Dump, also seine
+    vollstaendigen Daten. Der Rat war falsch, und ein falscher Rat in dieser
+    Lage kostet mehr als gar keiner: er haette die Datei als verloren
+    abgehakt.
+
+    Drei Messungen, dieselben, die man von Hand machen wuerde: steckt
+    irgendwo ein SQLite-Header, sieht es nach SQL-Dump aus, und laesst sich
+    der Inhalt komprimieren (verschluesselte Daten tun das nicht).
+    """
+    import zlib
+    zeilen = ["", "Inhalt (Proben aus Anfang, Mitte und Ende):"]
+    proben = _proben(pfad, max(0, groesse))
+    if not proben:
+        return zeilen + ["  nicht lesbar."]
+
+    kopf_gefunden = None
+    dump_marken = set()
+    roh = druck = 0
+    for wo, stueck in proben:
+        i = stueck.find(b"SQLite format 3\x00")
+        if i >= 0 and kopf_gefunden is None:
+            kopf_gefunden = wo + i
+        for marke in _DUMP_MARKEN:
+            if marke in stueck:
+                dump_marken.add(marke.decode())
+        roh += len(stueck)
+        druck += sum(1 for b in stueck if 32 <= b < 127 or b in (9, 10, 13))
+
+    if kopf_gefunden is not None:
+        zeilen.append("  Ein SQLite-Header liegt bei Byte %d — die Datenbank "
+                      "steckt also DAHINTER." % kopf_gefunden)
+        zeilen.append("  Rettung: dd if=%s bs=1 skip=%d of=gerettet.db"
+                      % (os.path.basename(pfad), kopf_gefunden))
+    if dump_marken:
+        zeilen.append("  SQL-Dump-Vokabular gefunden (%s) — das sieht nach "
+                      "einem Dump aus, nicht nach einer Datenbankdatei."
+                      % ", ".join(sorted(dump_marken)))
+        zeilen.append("  Rettung: die Datei als SQL einlesen, statt sie als "
+                      "Datenbank zu oeffnen:")
+        zeilen.append("    sqlite3 neu.db < %s" % os.path.basename(pfad))
+        zeilen.append("  Steht Muell davor, erst ab der ersten CREATE-Zeile "
+                      "abschneiden:")
+        zeilen.append("    tail -c +$(grep -abo -m1 'CREATE TABLE' %s | "
+                      "cut -d: -f1) %s > sauber.sql"
+                      % (os.path.basename(pfad), os.path.basename(pfad)))
+
+    if roh:
+        anteil = 100.0 * druck / roh
+        zeilen.append("  Druckbarer Anteil: %.0f %%" % anteil)
+        try:
+            klein = len(zlib.compress(b"".join(p for _w, p in proben), 6))
+            rate = roh / max(1, klein)
+            zeilen.append("  Komprimierbar auf 1:%.1f" % rate)
+            if rate < 1.1 and not dump_marken and kopf_gefunden is None:
+                zeilen.append("  Das spricht fuer verschluesselte oder "
+                              "zufaellige Daten — daraus ist nichts zu "
+                              "gewinnen, hier hilft nur die Sicherung.")
+            elif rate >= 2.0 or dump_marken:
+                zeilen.append("  Das spricht fuer STRUKTURIERTE Daten. Diese "
+                              "Datei aufzugeben waere verfrueht.")
+        except zlib.error as e:
+            log.warning("datei_diagnose: Kompressionsprobe fehlgeschlagen: %s", e)
+    return zeilen
+
+
+def datei_diagnose(pfad: str) -> str:
+    """Was ist diese Datei, wenn sie keine Datenbank ist? -> Klartext.
+
+    Bewusst ohne sqlite3: wir lesen 16 Bytes und sagen, was wir sehen. Die
+    Funktion laeuft nur im Fehlerfall, da ist die Lesung billig.
+    """
+    zeilen = []
+    zeilen.append("Datei: %s" % os.path.abspath(pfad))
+
+    if not os.path.exists(pfad):
+        zeilen.append("Sie existiert nicht. SQLite haette hier eine neue, "
+                      "leere Datenbank angelegt — dass es das nicht tat, "
+                      "heisst: der Pfad ist nicht beschreibbar.")
+        zeilen.append("Abhilfe: Rechte auf das Verzeichnis pruefen.")
+        return "\n".join(zeilen)
+
+    try:
+        groesse = os.path.getsize(pfad)
+        zeilen.append("Groesse: %d Bytes (%.1f MB)" % (groesse, groesse / 1048576.0))
+    except OSError as e:
+        log.warning("datei_diagnose: Groesse von %s nicht lesbar: %s", pfad, e)
+        zeilen.append("Groesse nicht lesbar: %s" % e)
+        groesse = -1
+
+    if groesse == 0:
+        zeilen.append("Die Datei ist LEER. Eine leere Datei ist keine "
+                      "Datenbank — SQLite legt nur bei FEHLENDER Datei neu an.")
+        zeilen.append("Abhilfe: die leere Datei zur Seite legen (nicht "
+                      "loeschen), dann startet der Bot mit einer frischen "
+                      "Datenbank. Vorher pruefen, ob eine Sicherung existiert.")
+        return "\n".join(zeilen)
+
+    kopf = b""
+    try:
+        with open(pfad, "rb") as f:
+            kopf = f.read(16)
+    except OSError as e:
+        log.warning("datei_diagnose: %s nicht lesbar: %s — meist ein "
+                    "Rechteproblem am Verzeichnis", pfad, e)
+        zeilen.append("Der Anfang war nicht zu lesen: %s" % e)
+        return "\n".join(zeilen)
+
+    zeilen.append("Erste Bytes: %s" % " ".join("%02x" % b for b in kopf))
+
+    for muster, was, abhilfe in _SIGNATUREN:
+        if kopf.startswith(muster):
+            zeilen.append("Das ist %s." % was)
+            zeilen.append("Abhilfe: %s" % abhilfe)
+            break
+    else:
+        zeilen.append("Der Inhalt passt zu keinem bekannten Format — es ist "
+                      "jedenfalls keine SQLite-Datenbank (die begaenne mit "
+                      "53 51 4c 69 74 65 20 66 6f 72 6d 61 74 20 33 00).")
+
+    zeilen.extend(_inhalt_befund(pfad, groesse))
+
+    zeilen.append("")
+    zeilen.append("WICHTIG: diese Datei NICHT loeschen und nicht "
+                  "ueberschreiben. Erst sichern:")
+    zeilen.append("    cp -av %s ~/db_forensik_$(date +%%F_%%H%%M)_%s"
+                  % (os.path.basename(pfad), os.path.basename(pfad)))
+    zeilen.append("Dann die Sicherungen pruefen: das taegliche Systemarchiv "
+                  "legt die Datenbank IMMER als SQL-Dump ab (LOCAL_BACKUP_DIR"
+                  "/system bzw. S3 unter system/).")
+    return "\n".join(zeilen)
 
 # --- Konfiguration (vom Bot injiziert; Defaults = SQLite-Standalone) --------
 DB_PATH = "tiktok_bot.db"
@@ -354,22 +569,45 @@ def db_conn():
     #      Jetzt nur EINMAL prozessweit (per Flag) statt ~208×/Tick.
     conn = sqlite3.connect(DB_PATH, timeout=30)
     conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA busy_timeout=30000")    # 30s aktiv auf Locks warten
-    if not _WAL_INIT["done"]:
-        try:
-            conn.execute("PRAGMA journal_mode=WAL")
-            _WAL_INIT["done"] = True
-        except Exception:
-            pass
-    conn.execute("PRAGMA foreign_keys=ON")
+    try:
+        conn.execute("PRAGMA busy_timeout=30000")    # 30s aktiv auf Locks warten
+        if not _WAL_INIT["done"]:
+            try:
+                conn.execute("PRAGMA journal_mode=WAL")
+                _WAL_INIT["done"] = True
+            except sqlite3.DatabaseError:
+                # journal_mode faellt bei einer kaputten Datei genauso — aber
+                # hier NICHT diagnostizieren, sonst haengt das Flag und jede
+                # weitere Connection wiederholt den WAL-Versuch. Das naechste
+                # PRAGMA unten faellt ohnehin und liefert die Diagnose.
+                pass
+        conn.execute("PRAGMA foreign_keys=ON")
     # F82: Performance-PRAGMAs (per-Connection, daher hier bei jedem Open).
     # synchronous=NORMAL ist DER empfohlene Modus unter WAL: FULL (Default)
     # fsynct bei jedem Commit — unter WAL unnötig, NORMAL bleibt crash-sicher
     # (schlimmstenfalls fehlt der allerletzte Commit nach Stromausfall).
     # Bei ~208 db_conn-Stellen + Polling-Workern der größte Einzelhebel.
-    conn.execute("PRAGMA synchronous=NORMAL")
-    conn.execute("PRAGMA temp_store=MEMORY")     # Sorts/Temp-B-Trees im RAM statt /tmp
-    conn.execute("PRAGMA cache_size=-8000")      # 8 MB Page-Cache (Default 2 MB) für Dashboard-Aggregationen
+        conn.execute("PRAGMA synchronous=NORMAL")
+        conn.execute("PRAGMA temp_store=MEMORY")     # Sorts/Temp-B-Trees im RAM statt /tmp
+        conn.execute("PRAGMA cache_size=-8000")      # 8 MB Page-Cache (Default 2 MB) für Dashboard-Aggregationen
+    except sqlite3.DatabaseError as e:
+        # v4.2-W92: HIER starb der Start am 17.09. — mit dem nackten Satz
+        # "file is not a database" und einem Traceback durch drei Dateien.
+        # sqlite3.connect() selbst wirft nicht: es oeffnet die Datei erst
+        # beim ersten PRAGMA, das den Header braucht. Deshalb faellt es an
+        # dieser Stelle und nicht oben.
+        #
+        # Die Verbindung wird geschlossen, bevor die Diagnose laeuft: sonst
+        # haelt jeder gescheiterte Versuch ein Datei-Handle auf eine Datei,
+        # die der Betreiber gleich sichern will.
+        try:
+            conn.close()
+        except sqlite3.Error:
+            pass        # Aufraeumpfad: ein close() auf eine kaputte Datei
+                        # darf fehlschlagen, das aendert an der Lage nichts
+        raise DatenbankUnlesbar(
+            "Die Datenbank ist nicht zu oeffnen: %s\n\n%s"
+            % (e, datei_diagnose(DB_PATH))) from e
     # FIX (Header "Was offen bleibt"): sqlite3.Connection ist als Context-
     # Manager NUR für die Transaktion (commit bei Erfolg, rollback bei
     # Exception) — die zugrunde liegende Connection selbst wird in

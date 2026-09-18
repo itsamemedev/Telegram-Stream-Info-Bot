@@ -906,7 +906,8 @@ _nc_freeai.chat_sync = _freeai_chat_sync_metered
 # Modularisierung — über 100 Bot-Funktionen hingen ausschließlich an diesem
 # einen Symbol; jetzt sind sie frei von Bot-Globals. Die Konfiguration wird
 # unten per configure_db() injiziert (das Modul liest selbst KEINE Env).
-from nc.dbwrap import db_conn, configure_db, db_async  # noqa: F401
+from nc.dbwrap import (db_conn, configure_db, db_async,   # noqa: F401
+                       DatenbankUnlesbar)                 # noqa: F401
 import concurrent.futures as _cf_thread   # v4.1-W29: Ein-Arbeiter-Executor
 import functools as _functools            # v4.1-W29: partial fuer den Executor
 
@@ -23226,6 +23227,45 @@ async def _kickmod_boot():
         log.warning("AZRAEL SENTINEL Autostart fehlgeschlagen: %s", e)
 
 
+def _init_db_oder_abbruch():
+    """init_db(), und bei unlesbarer Datenbank ein Abbruch mit Diagnose.
+
+    Eigene Funktion, weil main() genau an der 300-Zeilen-Stufe von
+    tools/monolith.py lag: vier Zeilen Fehlerbehandlung mitten im Start
+    haetten sie darueber geschoben. Zusammengehoerende Schritte zu benennen
+    ist ohnehin das, was die Sperre bezweckt.
+    """
+    try:
+        init_db()
+    except DatenbankUnlesbar as e:
+        _abbruch_datenbank_unlesbar(e)
+
+
+def _abbruch_datenbank_unlesbar(e):
+    """v4.2-W92: Start abbrechen, wenn die Datenbankdatei keine ist.
+
+    Hier starb der Start am 17.09. mit einem nackten "sqlite3.DatabaseError:
+    file is not a database" und einem Traceback durch drei Dateien. Der
+    Betreiber erfuhr nicht, welche Datei gemeint ist, was stattdessen darin
+    steht und was er tun soll — und die naheliegende Reaktion, die Datei zu
+    loeschen, damit es wieder laeuft, kostet Trackings, Aufnahme-Eintraege
+    und den Ledger.
+
+    Kein Weiterlaufen: SQLite legt bei FEHLENDER Datei eine neue an, und
+    genau das waere hier der stille Datenverlust, den dieses Projekt
+    ueberall sonst jagt. Exitcode 3 trennt den Fall von einem gewoehnlichen
+    Absturz — systemd Restart=always startet zwar trotzdem neu, aber im
+    Journal steht dann bei jedem Versuch die vollstaendige Diagnose statt
+    eines Tracebacks.
+    """
+    log.critical("START ABGEBROCHEN — die Datenbank ist unlesbar.")
+    for zeile in str(e).splitlines():
+        log.critical("  %s", zeile)
+    # `from None`: der SQLite-Traceback durch drei Dateien ist genau das, was
+    # hier NICHT mehr erscheinen soll — die Diagnose steht vollstaendig oben.
+    raise SystemExit(3) from None
+
+
 async def main():
     # V37-DRIFT: Einmal beim Start die verhaltensrelevanten .env-Abweichungen
     # loggen. Dreimal in einer Session hat eine .env-Zeile still die Absicht des
@@ -23266,7 +23306,7 @@ async def main():
     # Flask-Thread-Start passieren. Sonst sehen frühe Dashboard-Requests
     # eine DB ohne Tabellen → OperationalError → 500-Errors auf jeder
     # Route → Dashboard wirkt hängend.
-    init_db()
+    _init_db_oder_abbruch()
 
     # F29: Stale recording-Flags vom letzten Crash aufräumen.
     # Wenn der Bot mitten in einer Aufnahme gekillt wurde, bleibt recording=1
@@ -23566,6 +23606,16 @@ async def _selfcheck(verbose=True):
         with db_conn() as conn:
             n = conn.execute("SELECT COUNT(*) AS c FROM trackings").fetchone()["c"]
         add("ok", "Datenbank", f"{DB_BACKEND} · {n} Trackings · Migrationen ok")
+    except DatenbankUnlesbar as e:
+        # v4.2-W92: mehrzeilig. Die erste Zeile ist die Kurzfassung fuer die
+        # Statusliste, der Rest steht darunter — eine Diagnose, die in eine
+        # Tabellenspalte gequetscht wird, liest niemand zu Ende.
+        log.error("Selfcheck: die Datenbank ist unlesbar — %s",
+                  str(e).replace("\n", " | "))
+        zeilen = str(e).splitlines()
+        add("fail", "Datenbank", zeilen[0] if zeilen else "unlesbar")
+        for z in zeilen[1:]:
+            add("", "", z)
     except Exception as e:
         add("fail", "Datenbank", f"init/migration fehlgeschlagen: {e}")
 

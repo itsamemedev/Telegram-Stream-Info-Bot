@@ -11,6 +11,67 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Behoben — die teuerste Fehlermeldung des Bestands war die kürzeste (v4.2 W92)
+
+Am 17.09. lag statt der Datenbank ein 108-MB-Blob im Arbeitsverzeichnis. Der
+Start endete so:
+
+```
+File "nc/dbwrap.py", line 370, in db_conn
+  conn.execute("PRAGMA synchronous=NORMAL")
+sqlite3.DatabaseError: file is not a database
+```
+
+Drei Dateien Traceback, und keine Angabe, die weiterhilft: **welche** Datei,
+wie groß, was steht stattdessen drin, was ist zu tun. In der gefährlichsten
+Lage des Systems ist das dieselbe Art Meldung wie ein blankes „HTTP 403" —
+richtig und nutzlos. Die naheliegende Reaktion, die Datei zu löschen, damit es
+wieder läuft, kostet Trackings, Aufnahme-Einträge und den Ledger: SQLite legt
+bei **fehlender** Datei eine neue an, und der Verlust wäre still.
+
+- **`nc/dbwrap.datei_diagnose()`** nennt Pfad, Größe, die ersten Bytes als
+  Hex, eine Deutung und die Abhilfe. Erkannt werden SQLite-Header (echter
+  Schaden → `.recover`), TLS-Records, gzip, ZIP, HTML, JSON und die leere
+  Datei; was nicht erkannt wird, bekommt den Hex und den Vergleichsheader,
+  statt geraten zu werden.
+- **`DatenbankUnlesbar`** erbt von `sqlite3.DatabaseError` — die rund 208
+  Aufrufstellen von `db_conn()` fangen unverändert weiter, neu ist allein,
+  was der Betreiber liest.
+- **Der Start bricht ab** (Exitcode 3, `log.critical`), statt weiterzulaufen
+  und SQLite später eine leere Datenbank anlegen zu lassen. Der Selfcheck
+  zeigt die Diagnose mehrzeilig und schreibt sie zusätzlich ins Logfile —
+  wer `--selfcheck` per cron fährt, sah vorher nichts.
+
+**Die erste Fassung beriet falsch, und der echte Fall hat es aufgedeckt.**
+Sie sah nur die ersten 16 Bytes, erkannte einen TLS-Record und riet „aus ihr
+ist nichts zu holen". Dahinter steckten **33.444 Treffer** mit CREATE-TABLE-
+und INSERT-Vokabular, 10 MB komprimierten auf 2 MB — ein SQL-Dump, also die
+vollständigen Daten. `_inhalt_befund()` probt deshalb Anfang, **Mitte und
+Ende** (je 64 KB, nicht die ganze Datei — sie kann 100 MB haben) und prüft
+drei Dinge:
+
+| Befund | Rat |
+|---|---|
+| SQLite-Header irgendwo | `dd skip=<offset>` und `.recover` |
+| Dump-Vokabular | `sqlite3 neu.db < datei`, plus `tail -c +…` gegen Müll davor |
+| kaum komprimierbar, sonst nichts | verschlüsselt oder zufällig — hier hilft nur die Sicherung |
+
+14 Mutationsproben. Zwei Lücken beim ersten Durchgang: der Test-Dump begann
+nach 900 Bytes und wurde deshalb schon von der Anfangsprobe gefunden (jetzt
+ab 200 KB, damit die Drei-Proben-Strategie wirklich geprüft ist), und eine
+Probe entfernte die Erklärung statt des Befehls. Drei Sperren sind dabei
+gefallen und hatten recht: `stillecheck` fing drei eigene stille Blöcke,
+`monolith` sah `main()` über die 300-Zeilen-Stufe rutschen (Fehlerpfad jetzt
+als `_init_db_oder_abbruch()` benannt), `vertragscheck` fing ein festes
+Fenster im neuen Vertrag.
+
+Verträge 455 → **461**. Die Überdeckungssperre fiel dabei zunächst mit +15
+ungeprüften Anweisungen — alle fünfzehn waren die neuen Fehlerpfade der
+Diagnose, also genau die Zeilen, die in der Lage laufen müssen, für die das
+Ganze gebaut ist. Gedeckt statt Grundlinie gehoben: **9.635 → 9.633**, zwei
+weniger als vorher, obwohl 105 Anweisungen dazugekommen sind.
+
+
 ### Behoben — ein stiller `except` konnte alle Aufnahmen löschen (v4.2 W91)
 
 `_find_orphans()` in `nc/routes/recordings.py` liest die Liste der bekannten

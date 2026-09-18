@@ -16021,6 +16021,264 @@ def _test_v42_w91_build_laesst_keinen_stempel_liegen():
     ok("W91: ein Release-Build laesst keinen Stempel im Arbeitsbaum zurueck")
 
 
+def _test_v42_w92_unlesbare_datenbank_sagt_was_zu_tun_ist():
+    """v4.2-W92: der Bot starb an einer unlesbaren Datenbank ohne ein Wort
+    zur Abhilfe.
+
+    Am 17.09. lag statt der Datenbank ein 108-MB-Blob mit TLS-Verkehr im
+    Arbeitsverzeichnis. Der Start endete so:
+
+        File "nc/dbwrap.py", line 370, in db_conn
+          conn.execute("PRAGMA synchronous=NORMAL")
+        sqlite3.DatabaseError: file is not a database
+
+    Drei Dateien Traceback, und nicht eine Angabe, die weiterhilft: welche
+    Datei, wie gross, was steht stattdessen drin, was ist zu tun. In der
+    gefaehrlichsten Lage des Systems ist das dieselbe Art Meldung wie ein
+    blankes "HTTP 403" — richtig und nutzlos. Die naheliegende Reaktion,
+    die Datei zu loeschen, damit es wieder laeuft, kostet Trackings,
+    Aufnahme-Eintraege und den Ledger.
+    """
+    import os as _os
+    import sqlite3 as _sq3
+    from nc import dbwrap as D
+    import pruefhilfen as P
+
+    heim = P.verzeichnis()
+
+    def _mit_inhalt(name, roh):
+        pfad = _os.path.join(heim, name)
+        with open(pfad, "wb") as f:
+            f.write(roh)
+        return pfad
+
+    # ── (1) DER FALL VOM 17.09.: TLS-Verkehr statt Datenbank.
+    tls = _mit_inhalt("tls.db", bytes.fromhex("17030300 2d0cfcba") + b"\x00" * 512)
+    text = D.datei_diagnose(tls)
+    assert "TLS" in text, text
+    assert "17 03 03" in text, "die ersten Bytes fehlen: %s" % text
+    assert _os.path.abspath(tls) in text, "der Pfad fehlt — welche Datei denn?"
+    assert "NICHT loeschen" in text, \
+        "die Meldung warnt nicht vor dem Loeschen. Genau das ist die " \
+        "naheliegende Reaktion, und sie kostet den Ledger."
+    assert "Sicherung" in text or "SQL-Dump" in text, \
+        "kein Hinweis auf die Sicherungen: %s" % text
+
+    # ── (2) DIE UNTERSCHEIDUNG, auf die es ankommt: ein echter
+    # Datenbankschaden bekommt einen ANDEREN Rat als eine ueberschriebene
+    # Datei. Bei erhaltenem Header hilft .recover, bei TLS-Muell nicht.
+    kaputt = _mit_inhalt("kaputt.db", b"SQLite format 3\x00" + b"\xff" * 4096)
+    text_k = D.datei_diagnose(kaputt)
+    assert "recover" in text_k, \
+        "bei erhaltenem SQLite-Header fehlt der Rettungsweg: %s" % text_k
+    assert "recover" not in text, \
+        "bei einer ueberschriebenen Datei wird .recover empfohlen — das " \
+        "schickt den Betreiber auf eine Stunde vergebliche Arbeit"
+
+    # ── (3) DIE LEERE DATEI. Der Fall, in dem SQLite gerade NICHT neu
+    # anlegt — eine 0-Byte-Datei ist keine Datenbank.
+    leer = _mit_inhalt("leer.db", b"")
+    text_l = D.datei_diagnose(leer)
+    assert "LEER" in text_l and "FEHLENDER" in text_l, text_l
+
+    # ── (4) WEITERE FORMEN, die schon vorkamen.
+    for name, roh, erwartet in (
+            ("z.db", b"\x1f\x8b\x08\x00", "gzip"),
+            ("h.db", b"<!DOCTYPE html><html>", "HTML"),
+            ("p.db", b"PK\x03\x04\x14\x00", "ZIP")):
+        t = D.datei_diagnose(_mit_inhalt(name, roh))
+        assert erwartet.lower() in t.lower(), "%s nicht erkannt: %s" % (erwartet, t)
+
+    # ── (5) UND EIN UNBEKANNTES FORMAT raet nicht, sondern zeigt den Hex und
+    # nennt den Vergleich.
+    unbek = _mit_inhalt("u.db", b"\x99\x88\x77\x66rest")
+    t = D.datei_diagnose(unbek)
+    assert "53 51 4c 69 74 65" in t, \
+        "ohne den SQLite-Vergleichsheader kann der Betreiber nichts pruefen"
+
+    # ── (5b) DER FALL, DER DIE ERSTE FASSUNG FALSCH BERATEN HAETTE.
+    # Beim Betreiber lag ein TLS-Kopf VOR einem SQL-Dump: 33.444 Zeilen mit
+    # CREATE-TABLE- und INSERT-Vokabular, 10 MB komprimierten auf 2 MB. Die
+    # Diagnose sah damals nur die ersten 16 Bytes, erkannte "TLS" und riet
+    # "aus ihr ist nichts zu holen" — also seine vollstaendigen Daten als
+    # verloren abgehakt. Ein falscher Rat ist hier teurer als gar keiner.
+    # Der Dump beginnt ERST NACH 200 KB. Das ist kein Detail: die Probe liest
+    # 64 KB vom Anfang, und beim Betreiber ist die Datei 108 MB gross — waere
+    # nur der Anfang geprobt, saehe die Diagnose ausschliesslich den fremden
+    # Vorlauf und riete wieder zum Aufgeben. Genau daran ist die
+    # Mutationsprobe "nur noch der Anfang wird geprobt" zunaechst entwischt.
+    dump = _os.path.join(heim, "dump.db")
+    with open(dump, "wb") as f:
+        f.write(bytes.fromhex("170303002d0cfcba"))
+        f.write(b"\x00" * (200 * 1024))
+        f.write(b"BEGIN TRANSACTION;\nCREATE TABLE recordings (id INT);\n")
+        for i in range(30000):
+            f.write(b"INSERT INTO recordings VALUES(%d);\n" % i)
+    t = D.datei_diagnose(dump)
+    assert "SQL-Dump" in t, \
+        "ein Dump hinter dem TLS-Kopf wird nicht erkannt: %s" % t
+    assert "sqlite3 neu.db <" in t, "der Rettungsweg fuer einen Dump fehlt"
+    assert "CREATE TABLE" in t and "tail -c" in t, \
+        "kein Befehl, der den Muell vor der ersten CREATE-Zeile abschneidet"
+    assert "verfrueht" in t, \
+        "die Diagnose raet weiter zum Aufgeben, obwohl strukturierte Daten " \
+        "drinstehen — genau der Fehler, den der echte Fall aufgedeckt hat"
+    assert "nichts zu holen" not in t, t
+
+    # Und die Gegenrichtung bleibt ehrlich: ZUFALLSDATEN sind verloren, und
+    # das darf die Diagnose auch sagen.
+    zufall = _mit_inhalt("rnd.db", _os.urandom(200000))
+    tz = D.datei_diagnose(zufall)
+    assert "verschluesselte oder zufaellige" in tz, tz
+    assert "verfrueht" not in tz, \
+        "Zufallsdaten werden als rettbar dargestellt: %s" % tz
+
+    # ── (6) DIE FEHLENDE DATEI ist etwas anderes als eine kaputte: SQLite
+    # legt dann normalerweise neu an. Passiert das nicht, sind es die Rechte.
+    fehlt = D.datei_diagnose(_os.path.join(heim, "gibtsnicht.db"))
+    assert "existiert nicht" in fehlt and "Rechte" in fehlt, fehlt
+
+    # ── (7) db_conn() WIRFT DIE DIAGNOSE, und zwar so, dass bestehender Code
+    # sie weiter faengt: DatenbankUnlesbar IST ein sqlite3.DatabaseError.
+    assert issubclass(D.DatenbankUnlesbar, _sq3.DatabaseError), \
+        "DatenbankUnlesbar erbt nicht mehr von sqlite3.DatabaseError — " \
+        "jedes bestehende `except sqlite3.DatabaseError` im Bestand faellt " \
+        "damit durch"
+    alt_pfad, alt_backend = D.DB_PATH, D.DB_BACKEND
+    try:
+        D.DB_PATH, D.DB_BACKEND = tls, "sqlite"
+        try:
+            with D.db_conn() as c:
+                c.execute("SELECT 1")
+            raise AssertionError("db_conn() oeffnete einen TLS-Blob")
+        except D.DatenbankUnlesbar as e:
+            assert "TLS" in str(e) and "NICHT loeschen" in str(e), str(e)
+        # Und die Gegenprobe: eine GESUNDE Datei laeuft unveraendert durch.
+        gesund = _os.path.join(heim, "gut.db")
+        _sq3.connect(gesund).execute("CREATE TABLE t (a INT)")
+        D.DB_PATH = gesund
+        with D.db_conn() as c:
+            c.execute("INSERT INTO t VALUES (1)")
+            assert c.execute("SELECT COUNT(*) AS c FROM t").fetchone()["c"] == 1
+    finally:
+        D.DB_PATH, D.DB_BACKEND = alt_pfad, alt_backend
+
+    # ── (8) UND DER BOT BRICHT AB, statt eine leere Datenbank anzulegen.
+    # Statisch geprueft: main() zu fahren hiesse den ganzen Bot zu starten.
+    quelle = io.open("bot.py", encoding="utf-8").read()
+    rumpf = rumpf_ab(quelle, quelle.index("def _init_db_oder_abbruch("))
+    rumpf += rumpf_ab(quelle, quelle.index("def _abbruch_datenbank_unlesbar("))
+    assert "DatenbankUnlesbar" in rumpf, \
+        "der Start faengt die Diagnose nicht mehr — dann sieht der Betreiber " \
+        "wieder den nackten sqlite3-Traceback"
+    assert "SystemExit" in rumpf, \
+        "der Start laeuft nach einer unlesbaren Datenbank weiter. Dann legt " \
+        "SQLite spaeter eine neue, leere an, und der Datenverlust ist still."
+    assert "log.critical" in rumpf, \
+        "die Diagnose geht nicht auf critical — auf warning liest sie niemand"
+    # Der Selfcheck zeigt sie ebenfalls, und zwar mehrzeilig.
+    selfcheck = rumpf_ab(quelle, quelle.index("def _selfcheck("))
+    assert "splitlines()" in selfcheck, \
+        "der Selfcheck quetscht die Diagnose in eine Tabellenzeile"
+    assert "DatenbankUnlesbar" in selfcheck, \
+        "der Selfcheck unterscheidet die unlesbare Datenbank nicht mehr von " \
+        "einem gewoehnlichen Migrationsfehler"
+
+    # ── (9) DIE FEHLERPFADE DER DIAGNOSE SELBST. Eine Diagnose, die beim
+    # Diagnostizieren stirbt, ist in genau der Lage nutzlos, fuer die sie
+    # gebaut ist — und alle neun Zeilen waren zunaechst ungeprueft, genau wie
+    # die fuenf in W89. Die Ueberdeckungssperre hat sie gefunden.
+    import zlib as _zlib
+
+    # (a) Ein VERZEICHNIS statt einer Datei: existiert, hat eine Groesse, und
+    # open(..., "rb") wirft IsADirectoryError. Kein Patch noetig.
+    t = D.datei_diagnose(heim)
+    assert "nicht zu lesen" in t, \
+        "ein Verzeichnis als DB_PATH laesst die Diagnose durchfallen: %s" % t
+
+    # (b) Die Proben selbst: unlesbare Quelle -> leere Liste, keine Ausnahme.
+    assert D._proben(heim, 4096) == [], \
+        "_proben() wirft, statt leer zurueckzukommen"
+    befund = D._inhalt_befund(heim, 4096)
+    assert any("nicht lesbar" in z for z in befund), befund
+
+    # (c) Groesse nicht lesbar — der Pfad existiert, aber stat scheitert.
+    echt_getsize = _os.path.getsize
+    try:
+        _os.path.getsize = lambda p: (_ for _ in ()).throw(
+            OSError(5, "Input/output error"))
+        t = D.datei_diagnose(tls)
+        assert "Groesse nicht lesbar" in t, t
+    finally:
+        _os.path.getsize = echt_getsize
+
+    # (d) Und die Kompressionsprobe darf die Diagnose nicht mitnehmen.
+    echt_compress = _zlib.compress
+    try:
+        _zlib.compress = lambda *a, **k: (_ for _ in ()).throw(
+            _zlib.error("out of memory"))
+        t = D.datei_diagnose(dump)
+        assert "SQL-Dump" in t, \
+            "eine gescheiterte Kompressionsprobe reisst die ganze Diagnose " \
+            "mit: %s" % t
+        assert "Komprimierbar" not in t, t
+    finally:
+        _zlib.compress = echt_compress
+
+    # ── (10) DIE ZWEI AUFRAEUM-ZWEIGE in db_conn(). Beide sind `pass`, und
+    # beide haben einen Grund, der im Kommentar steht — dann sollen sie auch
+    # geprueft sein, statt die Ueberdeckungs-Grundlinie zu heben.
+    alt_pfad2, alt_wal = D.DB_PATH, dict(D._WAL_INIT)
+    try:
+        # (a) Der WAL-Versuch faellt bei einer kaputten Datei genauso. Mit
+        # zurueckgesetztem Flag laeuft er ueberhaupt erst wieder los.
+        D.DB_PATH = tls
+        D._WAL_INIT["done"] = False
+        try:
+            with D.db_conn():
+                pass
+            raise AssertionError("db_conn() lief auf dem TLS-Blob durch")
+        except D.DatenbankUnlesbar:
+            pass
+        assert D._WAL_INIT["done"] is False, \
+            "das WAL-Flag wurde auf einer kaputten Datei gesetzt — dann " \
+            "unterbleibt der Versuch spaeter auf der GESUNDEN Datenbank"
+
+        # (b) Und ein close(), das selbst scheitert, darf die Diagnose nicht
+        # verschlucken: der Betreiber braucht sie, nicht den close-Fehler.
+        import sqlite3 as _s3
+        echt_connect = D.sqlite3.connect
+
+        class _Zicke:
+            row_factory = None
+            def execute(self, *a, **k):
+                raise _s3.DatabaseError("file is not a database")
+            def close(self):
+                raise _s3.ProgrammingError("Cannot operate on a closed database")
+
+        try:
+            D.sqlite3.connect = lambda *a, **k: _Zicke()
+            try:
+                with D.db_conn():
+                    pass
+                raise AssertionError("db_conn() lief mit der Zicke durch")
+            except D.DatenbankUnlesbar as e:
+                assert "file is not a database" in str(e), str(e)
+        finally:
+            D.sqlite3.connect = echt_connect
+    finally:
+        D.DB_PATH = alt_pfad2
+        D._WAL_INIT.clear()
+        D._WAL_INIT.update(alt_wal)
+
+    ok("W92: die beiden Aufraeum-Zweige in db_conn sind geprueft")
+    ok("W92: die Diagnose haelt auch, wenn das Diagnostizieren scheitert")
+    ok("W92: eine unlesbare Datenbank nennt Datei, Inhalt und Abhilfe")
+    ok("W92: ueberschriebene Datei und echter Schaden bekommen andere Raete")
+    ok("W92: ein Dump hinter fremden Bytes wird erkannt, nicht aufgegeben")
+    ok("W92: der Start bricht ab, statt still eine leere Datenbank anzulegen")
+
+
 def main():
     tmp, rid = richte_testdatenbank_ein()
     ok("db_conn aus nc.dbwrap: echtes Schema angelegt, Commit durchgelaufen")
@@ -16277,6 +16535,7 @@ def main():
     _test_v42_w91_retention_haelt_datei_und_eintrag_zusammen()
     _test_v42_w91_blinde_helfer_melden()
     _test_v42_w91_build_laesst_keinen_stempel_liegen()
+    _test_v42_w92_unlesbare_datenbank_sagt_was_zu_tun_ist()
     _test_v42_w60_azrael_cooldown_je_plattform()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)
