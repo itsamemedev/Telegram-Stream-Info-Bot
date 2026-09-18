@@ -137,7 +137,7 @@ die Prüfkette fährt und was die Sperre ist; pytest kommt daneben, für die
 Arbeit am einzelnen Befund.
 
 **Die Überdeckung ist seit v4.2-W86 gemessen: 51,3 %** von `nc/` und `brain/`
-(19.776 Anweisungen, 9.633 davon ungeprüft). Das ist die Zahl, die den 481
+(19.788 Anweisungen, 9.629 davon ungeprüft). Das ist die Zahl, die den 487
 Verträgen erst ihren Maßstab gibt — „alles grün" sagt sonst nichts darüber,
 wie viel Bestand dabei angefasst wurde. Gesperrt wird wie bei W65/W66 nur der
 Zuwachs, und zwar die **Anzahl** ungeprüfter Anweisungen, nicht der
@@ -299,6 +299,23 @@ dann, wenn `os.remove` scheiterte. Die Aufnahme belegte weiter Platz, tauchte
 in keiner Liste mehr auf, und das Deck meldete den Platz als frei — die
 Umkehrung des W89-Befunds in `archiverules.py`. **Wer die Datei nicht löschen
 kann, darf auch ihre Spur nicht löschen.**
+
+**Backup und Import passten nicht zueinander.** Der Betreiber am 18.09.:
+„Über die Backup Funktion im dashboard lassen sich keine SQL Dateien
+importieren da sämtliche Tabellen schon existieren." Zwei Formate:
+`nc/dbexport.py` schreibt **nur Daten** (Kopf `-- NIGHTCRAWLER-DB-EXPORT`,
+gebaut für den Umzug SQLite ↔ MariaDB), `_system_backup()` schreibt
+`sqlite3 .iterdump()` — **Schema und Daten**. Die Sicherung erzeugt also
+genau das, was der Importer nicht lesen kann.
+
+Schlimmer: er lehnte nicht ab, sondern lief **halb** durch. Die `CREATE TABLE`
+fielen, die `INSERT` liefen, und `db_conn` committet beim *sauberen*
+Verlassen — ein abgefangener Fehler ist für den Kontextmanager sauber.
+Gemessen: `angewandt: 7` von 9. Seit v4.2-W95 greift der Riegel **vor** dem
+ersten Schreibzugriff, und ein Teilfehler rollt zurück. Wiederhergestellt wird
+mit `tools/dbwiederher.py`, und zwar **ohne Bot**: ist die Datenbank unlesbar,
+gibt es kein Dashboard (W92, Exitcode 3) — ein Rettungsweg, der den laufenden
+Bot voraussetzt, fehlt genau dann, wenn man ihn braucht.
 
 **Und die Diagnose aus W92 riet dann falsch.** Am 18.09. brach der Start
 korrekt ab, nannte Datei, Größe und Hex und warnte vor dem Löschen — und

@@ -16857,6 +16857,202 @@ def _test_v42_w94_kopfschaden_wird_erkannt_und_geheilt():
     ok("W94: dbkopf lehnt gesunde und nicht-seitenweise Dateien ab")
 
 
+def _test_v42_w95_systemdump_gehoert_nicht_ins_laufende_deck():
+    """v4.2-W95: der Import im Deck spielte einen Backup-Dump HALB ein.
+
+    Der Betreiber am 18.09., waehrend seine Datenbank unlesbar war:
+
+        "Über die Backup Funktion im dashboard lassen sich keine SQL Dateien
+         importieren da sämtliche Tabellen schon existieren."
+
+    Es sind zwei Formate, die nie gegeneinander gehalten wurden:
+
+        nc/dbexport.py    Kopf `-- NIGHTCRAWLER-DB-EXPORT`, NUR Daten.
+        _system_backup()  sqlite3 .iterdump(), Schema UND Daten.
+
+    Die Sicherung schreibt also genau das, was der Importer nicht lesen kann.
+    Und er lehnte nicht ab, sondern lief halb durch — gemessen vor der
+    Behebung: "ok: False | Statements: 9 | angewandt: 7". Die CREATE TABLE
+    fielen, die INSERT liefen, und db_conn committete beim sauberen
+    Verlassen. Auf einer gesunden Datenbank ist das ein Datenschaden: der
+    Bestand ist danach weder alt noch neu.
+    """
+    import os as _os
+    import sqlite3 as _sq3
+    import subprocess as _sp
+    import sys as _sys
+    import tarfile as _tf
+    from nc import dbwrap as D, dbexport as X
+    import pruefhilfen as P
+
+    heim = P.verzeichnis()
+    alt_pfad, alt_backend = D.DB_PATH, D.DB_BACKEND
+
+    def _db(name, zeilen, tabellen=("trackings", "recordings")):
+        pfad = _os.path.join(heim, name)
+        con = _sq3.connect(pfad)
+        for tab in tabellen:
+            con.execute("CREATE TABLE %s (id INTEGER PRIMARY KEY, t TEXT)" % tab)
+        for i in range(zeilen):
+            con.execute("INSERT INTO %s (t) VALUES (?)" % tabellen[0], ("z_%d" % i,))
+        con.commit()
+        return con, pfad
+
+    try:
+        # Der laufende Bestand: Schema steht, Daten drin.
+        lauf_con, lauf = _db("laufend.db", 3)
+        lauf_con.close()
+        # Die Sicherung: derselbe Aufbau, andere Daten.
+        src_con, _ = _db("alt.db", 5)
+        dump = "\n".join(src_con.iterdump())
+        src_con.close()
+
+        D.configure_db(db_path=lauf, backend="sqlite")
+
+        # ── (1) DER SYSTEMDUMP WIRD ABGELEHNT, BEVOR ETWAS GESCHRIEBEN WIRD.
+        rep = X.db_import_sql(dump, expect_dialect="sqlite")
+        assert not rep["ok"], "der Systemdump laeuft weiter durch"
+        assert rep["applied"] == 0, \
+            "es wurden %s Statements angewandt — der Import schreibt weiter " \
+            "teilweise in den laufenden Bestand" % rep["applied"]
+        fehler = " ".join(rep["errors"])
+        assert "Systemarchiv" in fehler, \
+            "die Meldung sagt nicht, WAS fuer eine Datei das ist: %s" % fehler
+        assert "tools/dbwiederher.py" in fehler, \
+            "kein Weg genannt. 'table already exists' 42-mal ist richtig und " \
+            "nutzlos — genau der Befund, der diese Welle ausgeloest hat"
+        assert "LEERE" in fehler, \
+            "es fehlt der Grund: ein Dump mit Schema gehoert in eine leere " \
+            "Datenbank"
+
+        # Und der Bestand ist unberuehrt.
+        con = _sq3.connect(lauf)
+        assert con.execute("SELECT count(*) FROM trackings").fetchone()[0] == 3, \
+            "der laufende Bestand wurde angefasst"
+        con.close()
+
+        # ── (2) EIN REGULAERER EXPORT MUSS WEITER DURCHGEHEN. Ein Riegel, der
+        # auch den Normalfall sperrt, waere die Funktion abgeschaltet.
+        gut = (X.HEADER_MARK + "\n-- Ziel-Dialekt: sqlite\n"
+               "INSERT INTO recordings (id, t) VALUES (1, 'a');\n")
+        rep2 = X.db_import_sql(gut, expect_dialect="sqlite")
+        assert rep2["ok"] and rep2["applied"] == 1, (rep2["ok"], rep2["errors"])
+
+        # ── (2b) UND EINE KOPFLOSE, REINE DATENDATEI IST KEIN SYSTEMDUMP.
+        # Der Riegel haengt an ZWEI Bedingungen (kein Header UND Schema-DDL).
+        # Nur die erste zu pruefen liesse offen, ob die zweite ueberhaupt
+        # etwas tut — genau daran ist die Mutationsprobe "_ist_systemdump
+        # liefert immer True" zuerst entwischt.
+        kopflos = "INSERT INTO recordings (id, t) VALUES (7, 'g');\n"
+        rep2b = X.db_import_sql(kopflos, expect_dialect="sqlite")
+        assert "Systemarchiv" not in " ".join(rep2b["errors"]), \
+            "eine kopflose Datendatei wird als Systemdump abgelehnt — dann " \
+            "sperrt der Riegel den Normalfall mit: %s" % rep2b["errors"]
+        assert rep2b["ok"] and rep2b["applied"] == 1, rep2b["errors"]
+
+        # ── (3) ALLES ODER NICHTS. Faellt ein Statement, darf KEINES bleiben —
+        # db_conn committet beim sauberen Verlassen, und genau daran wurde
+        # bisher die halbe Einspielung festgeschrieben.
+        con = _sq3.connect(lauf)
+        vorher = con.execute("SELECT count(*) FROM recordings").fetchone()[0]
+        con.close()
+        halb = (X.HEADER_MARK + "\n-- Ziel-Dialekt: sqlite\n"
+                "INSERT INTO recordings (id, t) VALUES (2, 'b');\n"
+                "INSERT INTO gibtsnicht (x) VALUES (1);\n")
+        rep3 = X.db_import_sql(halb, expect_dialect="sqlite")
+        con = _sq3.connect(lauf)
+        nachher = con.execute("SELECT count(*) FROM recordings").fetchone()[0]
+        con.close()
+        assert not rep3["ok"]
+        assert nachher == vorher, \
+            "nach einem Teilfehler stehen %d statt %d Zeilen — es wurde " \
+            "teilweise eingespielt" % (nachher, vorher)
+        assert rep3["applied"] == 0, rep3["applied"]
+        assert "unveraendert" in " ".join(rep3["errors"]), \
+            "der Bericht sagt nicht, dass nichts uebernommen wurde"
+    finally:
+        D.configure_db(db_path=alt_pfad, backend=alt_backend)
+
+    # ── (4) UND DER WEG, DEN DIE MELDUNG NENNT, MUSS AUCH FUNKTIONIEREN.
+    # Ein Verweis auf ein Werkzeug, das die Datei nicht frisst, waere
+    # derselbe Fehler eine Ebene weiter.
+    stempel = "20260918_0400"
+    sqldatei = _os.path.join(heim, "tiktok_bot_%s.sql" % stempel)
+    with open(sqldatei, "w", encoding="utf-8") as f:
+        f.write(dump)
+    # Das echte Archiv traegt AUCH brain_<stempel>.sql unter db/. Ohne die
+    # Datei hier waere der Filter, der sie aussortiert, nie geprueft — und
+    # `brain` steht alphabetisch VOR `tiktok_bot`, also entschiede sonst der
+    # Zufall der Sortierung, welche Datei eingespielt wird.
+    braindatei = _os.path.join(heim, "brain_%s.sql" % stempel)
+    with open(braindatei, "w", encoding="utf-8") as f:
+        f.write("BEGIN TRANSACTION;\nCREATE TABLE b (i INT);\n"
+                "INSERT INTO b VALUES (1);\nCOMMIT;\n")
+    archiv = _os.path.join(heim, "nightcrawler_sys_%s.tar.gz" % stempel)
+    with _tf.open(archiv, "w:gz") as tar:
+        tar.add(sqldatei, arcname="db/%s" % _os.path.basename(sqldatei))
+        tar.add(braindatei, arcname="db/%s" % _os.path.basename(braindatei))
+        # Und eine Datei, die alphabetisch HINTER tiktok_bot_ liegt. Ohne sie
+        # entschiede die Sortierung zufaellig richtig, und die gezielte
+        # Auswahl waere ungeprueft.
+        tar.add(braindatei, arcname="db/zusatz_%s.sql" % stempel)
+    ziel = _os.path.join(heim, "wiederher.db")
+    r = _sp.run([_sys.executable, "tools/dbwiederher.py", archiv, "-o", ziel],
+                capture_output=True, text=True)
+    assert r.returncode == 0, "dbwiederher scheitert am Archiv: %s%s" % (r.stdout, r.stderr)
+    con = _sq3.connect(ziel)
+    assert con.execute("SELECT count(*) FROM trackings").fetchone()[0] == 5, \
+        "die Zeilen aus der Sicherung sind nicht angekommen"
+    assert con.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+    con.close()
+
+    # ── (5) UND ES UEBERSCHREIBT NICHTS. Das Ziel koennte die laufende
+    # Datenbank sein — dieselbe Regel wie bei dbkopf (W94) und W91.
+    r2 = _sp.run([_sys.executable, "tools/dbwiederher.py", archiv, "-o", ziel],
+                 capture_output=True, text=True)
+    assert r2.returncode != 0 and "ueberschreibe nichts" in r2.stdout, \
+        "dbwiederher ueberschreibt ein vorhandenes Ziel: %s" % r2.stdout
+
+    # ── (6) MUELL WIRD ABGELEHNT, UND ES BLEIBT KEINE HALBE DATEI LIEGEN.
+    muell = _os.path.join(heim, "muell.sql")
+    with open(muell, "w", encoding="utf-8") as f:
+        f.write("hallo welt\n")
+    mziel = _os.path.join(heim, "muell.db")
+    r3 = _sp.run([_sys.executable, "tools/dbwiederher.py", muell, "-o", mziel],
+                 capture_output=True, text=True)
+    assert r3.returncode != 0, "Muell wird als Sicherung akzeptiert"
+    assert "nicht nach einem Systemarchiv-Dump" in r3.stdout, \
+        "die Ablehnung sagt nicht, WAS fehlt — dann sucht der Betreiber den " \
+        "Fehler in der Sicherung statt in der Datei, die er erwischt hat: %s" \
+        % r3.stdout
+    assert not _os.path.exists(mziel), \
+        "eine halb gebaute Datei bleibt liegen und steht beim naechsten " \
+        "Versuch als 'gibt es schon' im Weg"
+
+    # ── (6b) UND DER FALL, DER DIE AUFRAEUMZEILE ERST NOETIG MACHT: eine
+    # Datei, die alle Marken traegt und trotzdem beim Einspielen faellt.
+    # Bei blossem Muell kommt es nie zum Verbindungsaufbau, also entstuende
+    # auch keine Datei — daran ist die Probe "laesst halbe Datei liegen"
+    # zuerst entwischt.
+    kaputt_sql = _os.path.join(heim, "kaputt.sql")
+    with open(kaputt_sql, "w", encoding="utf-8") as f:
+        f.write("BEGIN TRANSACTION;\nCREATE TABLE a (i INT);\n"
+                "INSERT INTO a VALUES (1);\nCREATE TABLE ;;; kaputt\n")
+    kziel = _os.path.join(heim, "kaputt.db")
+    r4 = _sp.run([_sys.executable, "tools/dbwiederher.py", kaputt_sql, "-o", kziel],
+                 capture_output=True, text=True)
+    assert r4.returncode != 0, "ein kaputter Dump wird als Erfolg gemeldet"
+    assert not _os.path.exists(kziel), \
+        "die halb gebaute Datei bleibt liegen: %s" % r4.stdout
+
+    ok("W95: der Systemdump wird abgelehnt, bevor etwas geschrieben wird")
+    ok("W95: die Meldung nennt Format, Grund und den Weg (dbwiederher)")
+    ok("W95: ein regulaerer NIGHTCRAWLER-DB-EXPORT geht weiter durch")
+    ok("W95: nach einem Teilfehler bleibt der Bestand unveraendert")
+    ok("W95: dbwiederher baut aus dem tar.gz eine geprueft heile Datenbank")
+    ok("W95: dbwiederher ueberschreibt nichts und laesst nichts Halbes liegen")
+
+
 def main():
     tmp, rid = richte_testdatenbank_ein()
     ok("db_conn aus nc.dbwrap: echtes Schema angelegt, Commit durchgelaufen")
@@ -17117,6 +17313,7 @@ def main():
     _test_v42_w93_telegram_konflikt_wird_unterschieden()
     _test_v42_w93_deck_nennt_das_wirkliche_schema()
     _test_v42_w94_kopfschaden_wird_erkannt_und_geheilt()
+    _test_v42_w95_systemdump_gehoert_nicht_ins_laufende_deck()
     _test_v42_w60_azrael_cooldown_je_plattform()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)

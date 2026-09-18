@@ -11,6 +11,62 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Behoben — der Import im Deck spielte einen Backup-Dump HALB ein (v4.2 W95)
+
+Meldung des Betreibers am 18.09., während seine Datenbank unlesbar war:
+
+> „Über die Backup Funktion im dashboard lassen sich keine SQL Dateien
+> importieren da sämtliche Tabellen schon existieren."
+
+Das stimmt, und es sind **zwei Formate**, die nie gegeneinander gehalten wurden:
+
+| | Format | Inhalt |
+|---|---|---|
+| `nc/dbexport.py` (Deck) | Kopf `-- NIGHTCRAWLER-DB-EXPORT` | **nur Daten** |
+| `_system_backup()` (04:00) | `sqlite3 .iterdump()` | **Schema und Daten** |
+
+Der Importer ist bewusst datenlastig — im Modulkopf steht wörtlich „nur Daten
+exportieren, das Schema baut das Ziel selbst". Er ist für den Umzug
+SQLite ↔ MariaDB gebaut, **nicht für eine Wiederherstellung**. Die Sicherung
+schreibt also genau das Format, das er nicht lesen kann.
+
+**Und er lehnte nicht ab, sondern lief halb durch.** Nachgestellt:
+
+```
+ok: False | Statements: 9 | angewandt: 7
+  CREATE TABLE recordings ...: table recordings already exists
+```
+
+Die `CREATE TABLE` fallen, **die `INSERT` laufen durch**, und `db_conn`
+committet beim *sauberen* Verlassen — ein abgefangener Fehler ist für den
+Kontextmanager sauber. Auf einer gesunden Datenbank ist das ein Datenschaden:
+der Bestand ist danach weder alt noch neu.
+
+- **`tools/dbwiederher.py`** baut aus einem `nightcrawler_sys_*.tar.gz` (oder
+  einer `.sql`) eine **neue** Datenbankdatei, prüft sie und nennt die Zeilen je
+  Tabelle. Es überschreibt nichts und fasst die laufende Datenbank nicht an.
+  Wichtig: es läuft **ohne Bot** — ist die Datenbank unlesbar, bricht der Start
+  mit Exitcode 3 ab (W92), und ein Wiederherstellungsweg über das Dashboard
+  wäre genau dann weg, wenn man ihn braucht.
+- **Der Riegel greift vor dem ersten Schreibzugriff**: ein Dump ohne
+  `NIGHTCRAWLER-DB-EXPORT`-Kopf, der Schema-DDL trägt, wird abgelehnt — mit
+  Format, Grund und dem Weg zu `dbwiederher`.
+- **Alles oder nichts**: fällt ein Statement, wird zurückgerollt und der
+  Bericht sagt „Nichts übernommen — die Datenbank steht unverändert wie vorher."
+
+**Zehn Mutationsproben, zehn gefangen — fünf erst im zweiten Anlauf**, und vier
+davon waren Befunde an der Prüfung. Die fünfte war einer **am Code**: der
+Filter „alles außer `brain`" beim Auspacken sah richtig aus und war nur durch
+Zufall richtig — sortiert steht `brain` vor `tiktok_bot`, also hätte der Zugriff
+auf das letzte Element ohnehin das Richtige erwischt. Jetzt wird die Datei
+**positiv** an `tiktok_bot_` ausgewählt, und der Vertrag legt eine dritte Datei
+ins Archiv, die alphabetisch dahinter liegt.
+
+Dazu zwei berichtigte Kommentare: der `integrity_check`-Zweig in
+`dbwiederher.einspielen()` ist mit einem gültigen Dump nicht erreichbar —
+was dort wirklich trägt, ist `executescript()`. Das steht jetzt so da, statt
+als Sicherung ausgegeben zu werden.
+
 ### Behoben — die Diagnose riet bei einer beschädigten Datenbank falsch (v4.2 W94)
 
 Am 18.09. brach der Start ab, und W92 tat dabei alles richtig: Datei genannt,
