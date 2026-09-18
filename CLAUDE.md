@@ -10,7 +10,7 @@ GitHub-Repo trägt Historie, CI und Issues — es ist nicht der Deploy-Weg.
 
 ## Die eine Regel
 
-`bot.py` hat **24.246 Zeilen / 1,2 MB ≈ 295.000 Token**. Diese Datei wird
+`bot.py` hat **24.296 Zeilen / 1,2 MB ≈ 295.000 Token**. Diese Datei wird
 **nie** ganz gelesen und **nie** blind durchsucht. Erst fragen wo etwas steht,
 dann den Ausschnitt holen:
 
@@ -26,7 +26,7 @@ dann den Ausschnitt holen:
     python tools/ncpatch.py docs                           # Doku-Zahlen gegen den Quelltext
 
 `find` antwortet aus `.claude/INDEX.md` — 364 Routen (34 in `bot.py`, 330 in
-`nc/routes/`), 60 Slash-Commands, 544 Funktionen mit Zeilennummern. Nach Änderungen an Routen, Commands oder
+`nc/routes/`), 60 Slash-Commands, 546 Funktionen mit Zeilennummern. Nach Änderungen an Routen, Commands oder
 Top-Level-Funktionen `map` neu laufen lassen. Details: Skill `nc-navigation`.
 
 Für „wer ruft das auf?" und „was ist der Typ?" ist der Sprachserver billiger als
@@ -136,8 +136,8 @@ ein `tiktok_bot.db` **im Arbeitsverzeichnis** an. Beim zweiten Lauf starb
 die Prüfkette fährt und was die Sperre ist; pytest kommt daneben, für die
 Arbeit am einzelnen Befund.
 
-**Die Überdeckung ist seit v4.2-W86 gemessen: 50,8 %** von `nc/` und `brain/`
-(19.592 Anweisungen, 9.635 davon ungeprüft). Das ist die Zahl, die den 455
+**Die Überdeckung ist seit v4.2-W86 gemessen: 51,1 %** von `nc/` und `brain/`
+(19.697 Anweisungen, 9.633 davon ungeprüft). Das ist die Zahl, die den 461
 Verträgen erst ihren Maßstab gibt — „alles grün" sagt sonst nichts darüber,
 wie viel Bestand dabei angefasst wurde. Gesperrt wird wie bei W65/W66 nur der
 Zuwachs, und zwar die **Anzahl** ungeprüfter Anweisungen, nicht der
@@ -311,6 +311,38 @@ sein" — eine rote Suite ohne Codefehler, deren Meldung auf die Herkunft zeigt
 statt auf den liegengebliebenen Stempel. Seit v4.2-W91 entfernt der Bauer ihn
 wieder, aber nur, wenn er ihn selbst angelegt hat: in einem entpackten Archiv
 gehört er dorthin.
+
+**Die teuerste Fehlermeldung des Bestands war die kuerzeste.** Am 17.09. lag
+statt der Datenbank ein 108-MB-Blob im Arbeitsverzeichnis, und der Start endete
+so:
+
+    File "nc/dbwrap.py", line 370, in db_conn
+      conn.execute("PRAGMA synchronous=NORMAL")
+    sqlite3.DatabaseError: file is not a database
+
+Drei Dateien Traceback, und keine Angabe, die weiterhilft: welche Datei, wie
+gross, was steht stattdessen drin, was ist zu tun. In der gefaehrlichsten Lage
+des Systems ist das dieselbe Art Meldung wie ein blankes „HTTP 403" — richtig
+und nutzlos. Die naheliegende Reaktion, die Datei zu loeschen, damit es wieder
+laeuft, kostet Trackings, Aufnahme-Eintraege und den Ledger; SQLite legt bei
+**fehlender** Datei eine neue an, und der Verlust waere still.
+
+Seit v4.2-W92 nennt `nc/dbwrap.datei_diagnose()` Pfad, Groesse, die ersten
+Bytes als Hex, eine Deutung und die Abhilfe. `DatenbankUnlesbar` erbt von
+`sqlite3.DatabaseError`, damit die rund 208 Aufrufstellen von `db_conn()`
+unveraendert weiter fangen; der Start bricht mit Exitcode 3 ab, statt eine
+leere Datenbank anzulegen.
+
+**Und die erste Fassung dieser Diagnose beriet falsch.** Sie sah nur die
+ersten 16 Bytes, erkannte dort einen TLS-Record und riet „aus ihr ist nichts
+zu holen". Beim Betreiber steckten dahinter **33.444 Treffer** mit
+CREATE-TABLE- und INSERT-Vokabular, 10 MB komprimierten auf 2 MB — ein
+SQL-Dump, also seine vollstaendigen Daten. Der Kopf allein entscheidet nichts;
+`_inhalt_befund()` probt deshalb Anfang, **Mitte und Ende** und prueft drei
+Dinge: liegt irgendwo ein SQLite-Header (dann `dd skip=`), gibt es
+Dump-Vokabular (dann `sqlite3 neu.db < datei`), und laesst sich der Inhalt
+komprimieren — verschluesselte Daten tun das nicht. **Ein falscher Rat ist in
+dieser Lage teurer als gar keiner.**
 
 **Die Sperren waren selbst blind.** Vier der Zählwerkzeuge — `monolith`,
 `stillecheck`, `blindstellen`, `importzeit` — hatten dieselbe Schleife, und
