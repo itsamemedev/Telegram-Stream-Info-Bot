@@ -21,6 +21,7 @@ Sitzungslogik pruefen, ohne einen Stream aufzunehmen.
 from __future__ import annotations
 
 import datetime as _dt
+import os
 import re
 
 from nc import ffbuild as _ffbuild
@@ -105,17 +106,39 @@ def luecken(segmente):
 
 
 def concat_liste(pfade) -> str:
-    """Inhalt der concat-Demuxer-Liste fuer ffmpeg.
+    """Inhalt der concat-Demuxer-Liste fuer ffmpeg — mit ABSOLUTEN Pfaden.
 
     Der Demuxer erwartet Zeilen der Form  file 'pfad'  — und ein einfaches
     Anfuehrungszeichen IM Pfad beendet es sonst vorzeitig. ffmpeg will dafuer
     die Form '\\'' (schliessen, escaptes Zeichen, wieder oeffnen). Ohne das
     ist ein Dateiname mit Apostroph nicht nur kaputt, sondern hebelt die
     Argumentgrenze aus.
+
+    v4.2-W97 — warum hier `abspath` steht und nicht beim Aufrufer:
+    ein RELATIVER Eintrag in dieser Liste wird von ffmpeg nicht gegen das
+    Arbeitsverzeichnis aufgeloest, sondern gegen das VERZEICHNIS DER
+    LISTENDATEI. Die Listendatei liegt neben dem Ziel, also im
+    Aufnahmeverzeichnis; in der Datenbank steht `recordings/xyz.mp4`, weil
+    RECORDINGS_DIR ein relativer Name ist. Zusammen ergab das
+
+        Impossible to open 'recordings/recordings/tiktok_live_….mp4'
+
+    und damit scheiterte JEDES Zusammenfuegen einer Sitzung — gemessen am
+    19.09., drei Sitzungen, drei Fehlschlaege, alle mit derselben Zeile.
+
+    Der Fehler war nicht neu, nur ungeprueft: `concat_cmd` begruendet sein
+    `-safe 0` seit W44 damit, dass "die Liste absolute Pfade traegt". Der
+    Vertrag reichte dazu ausschliesslich Pfade ab `/rec/...` herein und war
+    deshalb gruen, waehrend die Produktion relative schickte. Ein Kommentar,
+    der die Absicht beschreibt, ist kein Beweis, dass der Code sie erfuellt.
+
+    `abspath` und nicht `realpath`: Symlinks im Aufnahmeverzeichnis sind
+    zulaessig (ausgelagerte Platte), und sie aufzuloesen wuerde den Pfad-
+    Riegel aus `zieldatei` hinter dem Ruecken umschreiben.
     """
     zeilen = []
     for p in pfade:
-        sicher = str(p).replace("'", "'\\''")
+        sicher = os.path.abspath(str(p)).replace("'", "'\\''")
         zeilen.append(f"file '{sicher}'")
     return "\n".join(zeilen) + ("\n" if zeilen else "")
 

@@ -17448,6 +17448,427 @@ def _test_v42_w96_wiederherstellung_nimmt_das_wal_mit():
     ok("W96: ohne confirm wird nicht getauscht, die laufende DB nie als Quelle")
 
 
+def _test_v42_w97_concat_liste_traegt_absolute_pfade():
+    """Jedes Zusammenfuegen einer Sitzung scheiterte — an einer Vorsilbe.
+
+    Aus dem ERROR-Log vom 19.09., dreimal, fuer drei verschiedene Sitzungen:
+
+        Impossible to open 'recordings/recordings/tiktok_live_….mp4'
+
+    Der concat-Demuxer loest einen relativen Eintrag NICHT gegen das
+    Arbeitsverzeichnis auf, sondern gegen das Verzeichnis der Listendatei.
+    Die liegt neben dem Ziel, also in `recordings/`; in der Datenbank steht
+    `recordings/xyz.mp4`, weil RECORDINGS_DIR ein relativer Name ist.
+
+    Warum der Bestand das nicht gemerkt hat, ist der eigentliche Befund:
+    `concat_cmd` begruendet sein `-safe 0` seit W44 damit, dass "die Liste
+    absolute Pfade traegt" — und der W44-Vertrag reichte ausschliesslich
+    Pfade ab `/rec/...` herein. Er war gruen, weil er die Eingabe der
+    Produktion nie gesehen hat.
+    """
+    import os as _os
+    import shlex as _shlex
+    import pruefhilfen as P
+    from nc import aufnahmesitzung as A
+
+    heim = P.verzeichnis()
+    unter = _os.path.join(heim, "recordings")
+    _os.makedirs(unter)
+    alt_cwd = _os.getcwd()
+    _os.chdir(heim)
+    try:
+        # ── (1) DER FALL AUS DEM LOG, GERECHNET STATT GELESEN.
+        # Nachgebaut wird, was ffmpeg tut: jeden Eintrag gegen das
+        # Verzeichnis der LISTENDATEI aufloesen. Genau diese Rechnung fehlte.
+        liste = A.concat_liste(["recordings/a.mp4", "recordings/b.mp4"])
+        listendatei = _os.path.join(unter, "sitzung_x.mp4.txt")
+        verz_der_liste = _os.path.dirname(listendatei)
+        for zeile in liste.rstrip("\n").split("\n"):
+            eintrag = _shlex.split(zeile)[1]
+            assert _os.path.isabs(eintrag), \
+                "relativer Eintrag in der concat-Liste: %r — ffmpeg loest ihn " \
+                "gegen %s auf und sucht dann recordings/recordings/…" % (
+                    eintrag, verz_der_liste)
+            # DAS ist die Eigenschaft, um die es geht: ein absoluter
+            # Eintrag laesst sich gegen das Verzeichnis der Listendatei
+            # NICHT mehr verschieben — os.path.join gibt ihn unveraendert
+            # zurueck, und genau das tut ffmpeg auch.
+            wohin = _os.path.join(verz_der_liste, eintrag)
+            assert wohin == eintrag, \
+                "der Eintrag wandert beim Aufloesen: %s -> %s" % (eintrag, wohin)
+            assert "recordings" + _os.sep + "recordings" not in wohin, \
+                "die doppelte Vorsilbe aus dem Log ist zurueck: %s" % wohin
+            assert wohin.startswith(_os.getcwd() + _os.sep), \
+                "der Eintrag zeigt aus dem Arbeitsverzeichnis heraus: %s" % wohin
+
+        # ── (2) DAS QUOTING AUS W44 UEBERLEBT DAS ABSOLUTMACHEN.
+        # Der Apostroph muss die Zeile weiterhin nicht aufbrechen koennen,
+        # egal wie lang der Pfad durch abspath geworden ist.
+        #
+        # Was hier BEWUSST NICHT steht, ist eine Aussage ueber die
+        # Reihenfolge von abspath und Escapen. Die Mutationsprobe dazu ist
+        # entwischt, und die Nachmessung gab ihr recht statt dem Vertrag:
+        # die Escape-Folge ist  '\''  — ein einzelner Backslash vor einem
+        # Apostroph, und den fasst weder posixpath.normpath noch
+        # ntpath.normpath an. Beide Reihenfolgen liefern dieselben Bytes,
+        # auf beiden Plattformen gemessen. Eine Probe fuer eine Aussage, die
+        # der Code gar nicht trifft, waere ein Vertrag ohne Gegenstand.
+        boese = ["recordings/it's here.mp4", "recordings/'; rm -rf / ;'.mp4",
+                 "/rec/schon absolut'.mp4"]
+        zeilen = A.concat_liste(boese).rstrip("\n").split("\n")
+        assert len(zeilen) == len(boese)
+        for zeile, roh in zip(zeilen, boese):
+            zerlegt = _shlex.split(zeile)
+            assert zerlegt[0] == "file" and len(zerlegt) == 2, \
+                "die Zeile zerfaellt in mehr als zwei Woerter: %r" % zeile
+            assert zerlegt[1] == _os.path.abspath(roh), (zerlegt, roh)
+
+        # ── (3) EIN BEREITS ABSOLUTER PFAD WIRD NICHT ANGEFASST.
+        # Sonst haenge das Arbeitsverzeichnis noch einmal davor, und der
+        # Fehler waere derselbe, nur mit anderem Praefix.
+        assert _shlex.split(A.concat_liste(["/rec/x.mp4"]).strip())[1] == "/rec/x.mp4"
+
+        # ── (4) UND KEIN SYMLINK WIRD AUFGELOEST. Das Aufnahmeverzeichnis
+        # darf auf eine ausgelagerte Platte zeigen; `realpath` schriebe den
+        # Pfad hinter dem Ruecken des Riegels aus `zieldatei` um.
+        if hasattr(_os, "symlink"):
+            echt = _os.path.join(heim, "echt.mp4")
+            with open(echt, "wb") as f:
+                f.write(b"x")
+            link = _os.path.join(unter, "link.mp4")
+            try:
+                _os.symlink(echt, link)
+            except (OSError, NotImplementedError):
+                link = None          # Windows ohne Entwicklermodus
+            if link:
+                assert _shlex.split(A.concat_liste([link]).strip())[1] == link, \
+                    "der Symlink wurde aufgeloest — realpath statt abspath"
+
+        assert A.concat_liste([]) == "", "leere Liste darf keine Leerzeile erzeugen"
+    finally:
+        _os.chdir(alt_cwd)
+
+    ok("W97: die concat-Liste traegt absolute Pfade — keine doppelte Vorsilbe mehr")
+    ok("W97: abspath vor dem Escapen, Apostroph und Symlink bleiben heil")
+
+
+def _test_v42_w97_drossel_haelt_bei_wechselnden_gruenden():
+    """13675 Warnungen in 22 Stunden — aus einer Drossel.
+
+    `nc.meldetakt` meldete bis W97 jeden Grund sofort, der sich vom VORIGEN
+    unterschied. Das setzt voraus, dass ein Kanal zu einer Zeit einen
+    vorherrschenden Grund hat. Der Resolver-Kanal hat das nicht: er laeuft
+    pro Poll ueber 40 verfolgte Nutzer, und jeder erzeugt der Reihe nach
+    `status_code`, dann `html_kein_tag`. Damit war jeder Aufruf ein Wechsel.
+
+    Gemessen im Log vom 19.09.: 13675 Zeilen aus `_resolver_stumm`, 5315
+    davon mit Unterdrueckt-Zaehler — der Beweis, dass der Wechsel-Pfad
+    dauernd feuerte.
+    """
+    from nc import meldetakt as M
+
+    M.zuruecksetzen()
+    try:
+        # ── (1) DER FALL AUS DEM LOG. Zwei Gruende im Wechsel, 200 Aufrufe
+        # innerhalb eines Fensters. Vorher: 200 laute Zeilen. Erlaubt sind
+        # zwei — je eine pro Grund.
+        laut = 0
+        t = 0.0
+        for _ in range(100):
+            for grund in ("status_code", "html_kein_tag"):
+                ja, _u = M.melden("resolver", grund, t)
+                laut += 1 if ja else 0
+                t += 1.0
+        assert laut == 2, \
+            "abwechselnde Gruende hebeln die Drossel aus: %d laute Zeilen " \
+            "bei 200 Aufrufen in %d s" % (laut, int(t))
+
+        # ── (2) WAS DIE DROSSEL NICHT KAPUTTMACHEN DARF: ein WIRKLICH neuer
+        # Grund ist die Nachricht und meldet sofort. Dass aus einem Timeout
+        # ein 403 geworden ist, darf nicht 15 Minuten warten.
+        ja, _u = M.melden("resolver", "http_403", t)
+        assert ja, "ein neuer Grund wurde verschluckt — die Drossel ist zu scharf"
+
+        # ── (3) UND DIE RUHEZEIT GILT WIRKLICH JE GRUND, nicht global:
+        # status_code ist noch still, http_403 hat gerade gemeldet.
+        assert not M.melden("resolver", "status_code", t + 1.0)[0]
+        assert not M.melden("resolver", "http_403", t + 2.0)[0]
+        # Nach ABSTAND_S ist er wieder dran.
+        ja, _u = M.melden("resolver", "status_code", t + M.ABSTAND_S)
+        assert ja, "nach %.0f s meldet der Grund nicht wieder" % M.ABSTAND_S
+
+        # ── (4) DER ZAEHLER ZAEHLT JE KANAL, NICHT JE GRUND. Der Betreiber
+        # will wissen, wieviel dieser Kanal verschluckt — nicht dieselbe Zahl
+        # auf sechzehn Gruende verteilt.
+        M.zuruecksetzen()
+        M.melden("k", "a", 0.0)                 # laut, setzt das Fenster
+        for i in range(1, 6):
+            M.melden("k", "a", float(i))        # 5 verschluckt
+        ja, unterdrueckt = M.melden("k", "b", 6.0)   # neuer Grund -> laut
+        assert ja and unterdrueckt == 5, \
+            "die Zahl der unterdrueckten Faelle geht beim Grundwechsel " \
+            "verloren: %s" % unterdrueckt
+        assert M.zusatz(5) == " (5 weitere unterdrueckt)"
+        assert M.zusatz(0) == ""
+
+        # ── (5) DIE TRENNUNG DER KANAELE BLEIBT. Zwei Kanaele drosseln sich
+        # nicht gegenseitig; das war seit W81 so und muss so bleiben.
+        M.zuruecksetzen()
+        assert M.melden("resolver", "netz", 0.0)[0]
+        assert M.melden("whisper", "netz", 0.0)[0], \
+            "ein zweiter Kanal erbt die Drossel des ersten"
+
+        # ── (6) UND DER DECKEL GEGEN DAS LANGSAME LECK. "stats-json" nimmt
+        # `str(info)[:80]` als Grund — ein offenes Vokabular. Ohne Deckel
+        # waechst das Register unbegrenzt.
+        M.zuruecksetzen()
+        for i in range(M.MAX_GRUENDE * 3):
+            M.melden("stats-json", "grund_%d" % i, float(i))
+        gesehen = M.ZUSTAND["stats-json"][1]
+        assert len(gesehen) <= M.MAX_GRUENDE, \
+            "das Register waechst unbegrenzt: %d Eintraege" % len(gesehen)
+
+        # ── (6b) UND DER DECKEL GREIFT AUCH, WENN NICHTS ALT GENUG IST.
+        # Hier ist die Falle, an der die erste Fassung dieses Deckels
+        # entwischt ist: sie warf nur Gruende weg, die laenger als zwei
+        # Fenster still waren. 192 Gruende im Sekundentakt sind aber alle
+        # jung — es fiel keiner heraus, und der Deckel war ein Kommentar
+        # ohne Wirkung. Gemessen: 192 Eintraege bei MAX_GRUENDE = 64.
+        M.zuruecksetzen()
+        for i in range(M.MAX_GRUENDE * 3):
+            M.melden("eng", "g_%d" % i, 1000.0 + i * 0.001)
+        eng = M.ZUSTAND["eng"][1]
+        assert len(eng) <= M.MAX_GRUENDE, \
+            "bei dicht aufeinanderfolgenden Gruenden greift der Deckel " \
+            "nicht: %d Eintraege" % len(eng)
+
+        # ── (6c) GEWORFEN WIRD DER AELTESTE, NICHT DER JUENGSTE. Der
+        # juengste ist der, der gerade drosselt; ihn zu werfen hiesse, die
+        # Drossel genau fuer den aktiven Grund zu oeffnen.
+        assert "g_%d" % (M.MAX_GRUENDE * 3 - 1) in eng, \
+            "der zuletzt gemeldete Grund wurde weggeworfen"
+        assert "g_0" not in eng, "der aelteste Grund ueberlebt den Deckel"
+        assert not M.melden("eng", "g_%d" % (M.MAX_GRUENDE * 3 - 1), 1000.5)[0], \
+            "der aktive Grund drosselt nach dem Aufraeumen nicht mehr"
+
+        # ── (7) ZURUECKSETZEN NACH ERFOLG. Ohne das bliebe ein behobener
+        # und erneut auftretender Fehler bis zu 15 Minuten unsichtbar.
+        M.zuruecksetzen()
+        assert M.melden("x", "a", 0.0)[0]
+        assert not M.melden("x", "a", 1.0)[0]
+        M.zuruecksetzen("x")
+        assert M.melden("x", "a", 2.0)[0], \
+            "nach zuruecksetzen() meldet der naechste Ausfall nicht sofort"
+    finally:
+        M.zuruecksetzen()
+
+    ok("W97: wechselnde Gruende hebeln die Meldedrossel nicht mehr aus")
+    ok("W97: ein wirklich neuer Grund meldet weiter sofort")
+    ok("W97: der Grund-Deckel raeumt nur auf, was nicht mehr drosselt")
+
+
+def _test_v42_w97_logging_blockiert_den_loop_nicht_mehr():
+    """Der Event-Loop stand in einer LOG-Sperre — bis zu 176 Sekunden.
+
+    Aus dem Voll-Stack-Dump vom 18.09. 22:15, Loop-Thread:
+
+        File "httpx/_client.py", line 1740, in _send_single_request
+            logger.info(
+        File "logging/__init__.py", line 1026, in handle
+            with self.lock:
+
+    Drei synchrone Handler am Wurzel-Logger (Konsole + zwei
+    RotatingFileHandler) teilen sich ihre Sperren mit 21 Threads. Auf einer
+    Platte unter Volllast dauert ein Schreibvorgang Sekunden, und jeder
+    `log.info` im Loop wartet mit. Folge im selben Log: Bridge-Tick 182 s
+    tot, Restream 225 s ohne Bild, Discord-Heartbeat blockiert,
+    `database is locked`.
+    """
+    import logging as _lg
+    import time as _t
+    from nc import logschleuse as S
+
+    class Langsam(_lg.Handler):
+        """Steht fuer die Platte unter Volllast — 20 ms je Zeile."""
+
+        def __init__(self, level=_lg.NOTSET):
+            super().__init__(level)
+            self.raus = []
+
+        def emit(self, satz):
+            _t.sleep(0.02)
+            self.raus.append(self.format(satz))
+
+    S.zuruecksetzen()
+    wurzel = _lg.getLogger("w97_probe")
+    wurzel.propagate = False
+    wurzel.setLevel(_lg.DEBUG)
+    for h in list(wurzel.handlers):
+        wurzel.removeHandler(h)
+    langsam = Langsam()
+    langsam.setFormatter(_lg.Formatter(
+        "%(levelname)s|%(name)s|%(funcName)s:%(lineno)d|%(message)s"))
+    nur_fehler = Langsam(level=_lg.ERROR)
+    wurzel.addHandler(langsam)
+    wurzel.addHandler(nur_fehler)
+
+    try:
+        # ── (1) DIE MESSUNG, DIE DEN BEFUND TRAEGT. Erst synchron, dann
+        # durch die Schleuse — dieselben Zeilen, derselbe Handler.
+        def dauer():
+            t0 = _t.perf_counter()
+            for i in range(20):
+                wurzel.info("zeile %d", i)
+            return _t.perf_counter() - t0
+
+        synchron = dauer()
+        assert synchron > 0.2, \
+            "der Attrappen-Handler blockiert gar nicht (%.3f s) — die " \
+            "Messung darunter beweist dann nichts" % synchron
+
+        horcher = S.entkoppeln(wurzel)
+        entkoppelt = dauer()
+        assert entkoppelt < synchron / 10.0, \
+            "die Schleuse bringt nichts: %.3f s synchron gegen %.3f s " \
+            "entkoppelt" % (synchron, entkoppelt)
+
+        # ── (2) UND SIE VERLIERT DABEI NICHTS. Eine schnelle Schleuse, die
+        # Zeilen schluckt, waere die Verschlimmbesserung.
+        horcher.stop()
+        assert len(langsam.raus) == 40, \
+            "es kamen nicht alle Zeilen an: %d von 40" % len(langsam.raus)
+
+        # ── (3) DIE FORMATIERUNG UEBERLEBT DIE SCHLANGE. `QueueHandler`
+        # ersetzt `record.msg` durch den formatierten Text; alle anderen
+        # Felder muessen stehenbleiben, sonst steht im Log kein
+        # `funcName:lineno` mehr und jede Fehlersuche faengt von vorn an.
+        letzte = langsam.raus[-1]
+        assert letzte.startswith("INFO|w97_probe|dauer:"), letzte
+        assert letzte.endswith("|zeile 19"), letzte
+
+        # ── (4) `respect_handler_level` ist nicht Beiwerk: ohne das bekaeme
+        # error.log die kompletten DEBUG-Zeilen, und die Trennung der beiden
+        # Dateien waere weg.
+        assert nur_fehler.raus == [], \
+            "der ERROR-Handler hat INFO-Zeilen bekommen: %s" % nur_fehler.raus[:2]
+
+        # ── (5) DIE SCHLANGE IST BEGRENZT UND WARTET NIE. Eine unbegrenzte
+        # Schlange tauscht den eingefrorenen Loop gegen einen OOM-Kill.
+        S.zuruecksetzen()
+        for h in list(wurzel.handlers):
+            wurzel.removeHandler(h)
+        blocker = Langsam()
+        blocker.setFormatter(_lg.Formatter("%(message)s"))
+        wurzel.addHandler(blocker)
+        horcher2 = S.entkoppeln(wurzel, max_wartend=5)
+        t0 = _t.perf_counter()
+        for i in range(500):
+            wurzel.info("flut %d", i)
+        gebraucht = _t.perf_counter() - t0
+        assert gebraucht < 1.0, \
+            "die volle Schlange hat den Aufrufer blockiert (%.3f s fuer 500 " \
+            "Zeilen) — genau das sollte sie verhindern" % gebraucht
+        assert S.verloren() > 0, \
+            "bei 5 Plaetzen und 500 Zeilen ging nichts verloren — dann " \
+            "wartet die Schlange doch irgendwo"
+
+        # ── (6) UND DER VERLUST IST NICHT STILL. Ein stiller Verlust waere
+        # genau der Fehler, gegen den dieses Projekt seine Sperren hat.
+        _t.sleep(0.4)
+        wurzel.info("noch eine")
+        horcher2.stop()
+        verlustzeilen = [z for z in blocker.raus if "Log-Schleuse" in z]
+        assert verlustzeilen, \
+            "verworfene Zeilen werden nicht gemeldet: %s" % blocker.raus[:3]
+        assert "verworfen" in verlustzeilen[0] and "Platte" in verlustzeilen[0], \
+            "die Verlustmeldung nennt keine Abhilfe: %s" % verlustzeilen[0]
+
+        # ── (7) ZWEIMAL ENTKOPPELN HAENGT NICHT ZWEIMAL UM. Sonst stuenden
+        # zwei Horcher auf denselben Handlern und jede Zeile stuende doppelt
+        # im Log.
+        S.zuruecksetzen()
+        for h in list(wurzel.handlers):
+            wurzel.removeHandler(h)
+        einfach = Langsam()
+        einfach.setFormatter(_lg.Formatter("%(message)s"))
+        wurzel.addHandler(einfach)
+        h1 = S.entkoppeln(wurzel)
+        h2 = S.entkoppeln(wurzel)
+        assert h1 is h2, "ein zweiter Aufruf baut einen zweiten Horcher auf"
+        assert len(wurzel.handlers) == 1, wurzel.handlers
+        wurzel.info("genau einmal")
+        S.stoppen()
+        assert einfach.raus.count("genau einmal") == 1, einfach.raus
+
+        # ── (8) OHNE HANDLER GIBT ES NICHTS ZU ENTKOPPELN, und das wird
+        # gesagt statt still eine leere Schleuse aufzubauen — sonst faende
+        # sich spaeter kein einziger Logeintrag mehr.
+        S.zuruecksetzen()
+        for h in list(wurzel.handlers):
+            wurzel.removeHandler(h)
+        try:
+            S.entkoppeln(wurzel)
+            raise AssertionError("entkoppeln() ohne Handler ist still durchgelaufen")
+        except ValueError:
+            pass
+        # ── (8b) DIE SCHLANGENTIEFE, DIE /healthz MELDET. Sie ist der
+        # Fruehwarnwert: dauerhaft hoch heisst, die Platte kommt nicht nach,
+        # und das gehoert sichtbar, BEVOR die erste Zeile faellt.
+        S.zuruecksetzen()
+        for h in list(wurzel.handlers):
+            wurzel.removeHandler(h)
+        zaeh = Langsam()
+        zaeh.setFormatter(_lg.Formatter("%(message)s"))
+        wurzel.addHandler(zaeh)
+        horcher3 = S.entkoppeln(wurzel, max_wartend=200)
+        for i in range(30):
+            wurzel.info("tief %d", i)
+        assert S.wartend() > 0, \
+            "die Schlangentiefe bleibt 0, obwohl 30 Zeilen auf einen " \
+            "Handler mit 20 ms je Zeile warten"
+        horcher3.stop()
+
+        # ── (8c) UND DER ABSCHIED, WENN DAS WACHTZEICHEN NICHT MEHR
+        # DURCHKOMMT. Das ist ein neuer Fehlerpfad dieser Welle, und ein
+        # ungeprueftes "hier koennte etwas fehlen" ist genau die Art Zeile,
+        # die nur behauptet zu helfen (W89). Gestellt wird die Falle mit
+        # einer Schlange der Groesse 1, deren Horcher schon steht.
+        import contextlib as _cl
+        import io as _sio
+        S.zuruecksetzen()
+        for h in list(wurzel.handlers):
+            wurzel.removeHandler(h)
+        eng2 = Langsam()
+        eng2.setFormatter(_lg.Formatter("%(message)s"))
+        wurzel.addHandler(eng2)
+        horcher4 = S.entkoppeln(wurzel, max_wartend=1)
+        horcher4.stop()                      # der Thread ist weg, niemand leert
+        horcher4.queue.put_nowait("belegt")  # der einzige Platz ist besetzt
+        fehlerkanal = _sio.StringIO()
+        with _cl.redirect_stderr(fehlerkanal):
+            assert S.stoppen() is True
+        gesagt = fehlerkanal.getvalue()
+        assert "Wachtzeichen" in gesagt and "fehlen" in gesagt, \
+            "der Abschied verschluckt den Fehlschlag still: %r" % gesagt
+
+        # ── (9) UND OHNE SCHLEUSE SAGT /healthz DAS AUCH. Eine 0 laese sich
+        # als "nichts wartet, alles gut" lesen — dabei ist "keine Schleuse"
+        # der Zustand, in dem der Event-Loop wieder selbst auf die Platte
+        # schreibt. Dieselbe Lehre wie bei nc.webserver.tls_lage (W93).
+        assert S.wartend() == S.KEINE_SCHLEUSE, S.wartend()
+        assert S.KEINE_SCHLEUSE != 0, \
+            "der Ersatzwert liest sich wie Normalbetrieb"
+        assert S.stoppen() is False, "stoppen() meldet einen Horcher, den es nicht gibt"
+    finally:
+        S.zuruecksetzen()
+        for h in list(wurzel.handlers):
+            wurzel.removeHandler(h)
+
+    ok("W97: die Log-Schleuse nimmt dem Event-Loop die Handler-Sperre ab")
+    ok("W97: sie verliert dabei nichts und haelt Format und Handler-Ebene")
+    ok("W97: die begrenzte Schlange wartet nie und meldet jeden Verlust")
+
+
 def main():
     tmp, rid = richte_testdatenbank_ein()
     ok("db_conn aus nc.dbwrap: echtes Schema angelegt, Commit durchgelaufen")
@@ -17710,6 +18131,9 @@ def main():
     _test_v42_w94_kopfschaden_wird_erkannt_und_geheilt()
     _test_v42_w95_systemdump_gehoert_nicht_ins_laufende_deck()
     _test_v42_w96_wiederherstellung_nimmt_das_wal_mit()
+    _test_v42_w97_concat_liste_traegt_absolute_pfade()
+    _test_v42_w97_drossel_haelt_bei_wechselnden_gruenden()
+    _test_v42_w97_logging_blockiert_den_loop_nicht_mehr()
     _test_v42_w60_azrael_cooldown_je_plattform()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)
