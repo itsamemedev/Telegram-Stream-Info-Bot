@@ -10,7 +10,7 @@ GitHub-Repo trägt Historie, CI und Issues — es ist nicht der Deploy-Weg.
 
 ## Die eine Regel
 
-`bot.py` hat **24.383 Zeilen / 1,2 MB ≈ 295.000 Token**. Diese Datei wird
+`bot.py` hat **24.414 Zeilen / 1,2 MB ≈ 295.000 Token**. Diese Datei wird
 **nie** ganz gelesen und **nie** blind durchsucht. Erst fragen wo etwas steht,
 dann den Ausschnitt holen:
 
@@ -55,7 +55,7 @@ Auf diesem Windows-Rechner heißt der Interpreter **`python`** (3.13.12);
     brain_bridge.py      Adapter Bot ↔ brain/ (M2)
     brain/               KI-Kern: state, rules, router, agents, memory,
                          semantic, knowledge, scheduler, llm, report
-    nc/                  145 Fachmodule: db, scraping, restream, oauth, ledger,
+    nc/                  146 Fachmodule: db, scraping, restream, oauth, ledger,
                          i18n, …
     nc/routes/           36 Flask-Blueprints mit 327 weiteren API-Routen
     locales/             de.json, en.json — der Übersetzungskatalog
@@ -136,8 +136,8 @@ ein `tiktok_bot.db` **im Arbeitsverzeichnis** an. Beim zweiten Lauf starb
 die Prüfkette fährt und was die Sperre ist; pytest kommt daneben, für die
 Arbeit am einzelnen Befund.
 
-**Die Überdeckung ist seit v4.2-W86 gemessen: 51,3 %** von `nc/` und `brain/`
-(19.963 Anweisungen, 9.639 davon ungeprüft). Das ist die Zahl, die den 497
+**Die Überdeckung ist seit v4.2-W86 gemessen: 51,9 %** von `nc/` und `brain/`
+(20.042 Anweisungen, 9.639 davon ungeprüft). Das ist die Zahl, die den 505
 Verträgen erst ihren Maßstab gibt — „alles grün" sagt sonst nichts darüber,
 wie viel Bestand dabei angefasst wurde. Gesperrt wird wie bei W65/W66 nur der
 Zuwachs, und zwar die **Anzahl** ungeprüfter Anweisungen, nicht der
@@ -299,6 +299,61 @@ dann, wenn `os.remove` scheiterte. Die Aufnahme belegte weiter Platz, tauchte
 in keiner Liste mehr auf, und das Deck meldete den Platz als frei — die
 Umkehrung des W89-Befunds in `archiverules.py`. **Wer die Datei nicht löschen
 kann, darf auch ihre Spur nicht löschen.**
+
+**Die Meldung selbst hielt den Event-Loop an.** Der Voll-Stack-Dump vom
+18.09. 22:15 endet nicht in einer Netzoperation, sondern hier:
+
+    File "httpx/_client.py", line 1740, in _send_single_request
+        logger.info(
+    File "logging/__init__.py", line 1026, in handle
+        with self.lock:                     <<< hier stand der Event-Loop
+
+Drei synchrone Handler am Wurzel-Logger — Konsole (unter systemd eine Pipe
+nach journald) und zwei `RotatingFileHandler` — teilen ihre Sperren mit 21
+Threads. Auf einer Platte unter Volllast dauert ein Schreibvorgang Sekunden,
+und **jeder** `log.info` im Loop wartet mit. Gemessen: bis 176,5 s
+eingefrorener Loop, Bridge-Tick 182 s tot, Restream 225 s ohne Bild,
+`disk-guard` 444 s ohne Lebenszeichen, Discord-Heartbeat blockiert, am Ende
+`database is locked`. Nichts stürzt ab, nichts meldet sich — dieselbe Klasse
+wie die stillen `return`s aus W81, nur ist die Ursache diesmal das Logging.
+
+Seit v4.2-W97 hängt am Wurzel-Logger nur noch ein `QueueHandler`
+(`nc/logschleuse.py`), die echten Handler bedient ein Thread. Gemessen an
+einem Handler mit 20 ms je Logzeile: 1,006 s → 0,001 s für zwanzig
+Ausgaben. Die
+Schlange ist **begrenzt** — eine unbegrenzte tauscht den eingefrorenen Loop
+gegen einen OOM-Kill —, sie wartet nie, und jeder Verlust wird gemeldet.
+`/healthz` trägt `log_wartend` und `log_verloren`; ohne Schleuse ist
+`log_wartend` **−1**, nicht 0: eine 0 liest sich wie Normalbetrieb.
+**Wer eine Logzeile schreibt, darf dafür nie auf die Platte warten.**
+
+**Eine Drossel, die jeden Grundwechsel sofort durchlässt, drosselt nichts.**
+`nc/meldetakt.py` meldete bis W97 jeden Grund sofort, der sich vom *vorigen*
+unterschied. Das setzt voraus, dass ein Kanal zu einer Zeit EINEN
+vorherrschenden Grund hat. Der Resolver-Kanal tut das nicht — er läuft pro
+Poll über 40 verfolgte Nutzer, und jeder erzeugt der Reihe nach
+`status_code`, dann `html_kein_tag`. Damit war jeder Aufruf ein Wechsel:
+**13675 Warnungen in 22 Stunden**, 5315 davon mit Unterdrückt-Zähler.
+
+Die Ruhezeit hängt seither am Paar (Kanal, Grund). Ein wirklich neuer Grund
+meldet weiter sofort, ein zurückkehrender erst nach 15 Minuten; aus 200
+abwechselnden Aufrufen werden zwei laute Zeilen. Es ist derselbe Fehler, vor
+dem der Docstring des Moduls seit W81 warnt (Schlüssel = Kanal, nicht
+Nutzer), nur eine Ebene tiefer.
+
+**Ein Kommentar über die Eingabe ist kein Beweis über die Eingabe.**
+`concat_cmd` begründet sein `-safe 0` seit W44 damit, dass „die Liste
+absolute Pfade trägt". Die Liste trug relative — `RECORDINGS_DIR` ist ein
+relativer Name, also steht `recordings/xyz.mp4` in der Datenbank. Der
+concat-Demuxer löst einen relativen Eintrag gegen das Verzeichnis der
+**Listendatei** auf, und die liegt in `recordings/`:
+
+    Impossible to open 'recordings/recordings/tiktok_live_….mp4'
+
+Damit scheiterte **jedes** Zusammenfügen einer Sitzung, dreimal am 19.09.
+gemessen. Grün geblieben ist der W44-Vertrag, weil er ausschliesslich Pfade
+ab `/rec/…` hereinreichte — die Eingabe der Produktion hat er nie gesehen.
+Ein Vertrag, der nur die bequeme Eingabe prüft, prüft nichts.
 
 **Ein Datenbank-Tausch ohne das WAL ist lautlos wertlos.** SQLite laeuft hier
 im WAL-Modus. Wer nur `tiktok_bot.db` ersetzt und `-wal` liegen laesst,

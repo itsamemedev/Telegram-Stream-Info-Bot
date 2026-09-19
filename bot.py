@@ -556,6 +556,7 @@ import os, re, sys, json, html, asyncio, logging, threading, shutil, glob, io, s
 import time as _time_mod                  # B4: war mid-file bei Z. 3554 — wird in get_cookie_health() benutzt
 _BOOT_TS = _time_mod.time()               # F82: Prozess-Start für /api/health-Uptime
 import collections as _collections        # B4: war mid-file bei Z. 1175
+import atexit                            # v4.2-W97: Log-Schleuse am Prozessende leeren
 import signal as _signal_mod              # B4: war function-local — zentral importiert
 from datetime import datetime, timezone, timedelta
 from typing import Optional, List, Tuple
@@ -601,6 +602,7 @@ from nc import aufnahmefolge as _nc_folge  # v4.2-W18: die Eskalationsrechnung
 from nc import aufnahmekategorie as _nc_kat  # v4.2-W23: warum eine Aufnahme so endete
 from nc import audiotap as _nc_audiotap  # v4.2-W46: warum der Audio-Tap starb
 from nc import meldetakt as _nc_meldetakt  # v4.2-W81: Grund melden ohne Log-Flut
+from nc import logschleuse as _nc_logschleuse  # v4.2-W97: Logging weg vom Event-Loop
 from nc import resolvergrund as _nc_rgrund  # v4.2-W81: warum die Aufloesung leer blieb
 from nc import telegramfehler as _nc_tgfehler  # v4.2-W93: warum das Telegram-Polling klemmt
 from nc import aufnahmesitzung as _nc_sitzung  # v4.2-W44: die Klammer um die Segmente EINES Streams
@@ -1628,6 +1630,28 @@ _file_log_ok = (
 if not _file_log_ok:
     print("[boot] File-Logging deaktiviert — Bot läuft mit Console-Logging weiter.",
           flush=True)
+
+# v4.2-W97: Ab hier schreibt KEIN Aufrufer mehr selbst auf die Platte.
+#
+# Der Loop-Stack-Dump vom 18.09. 22:15 endet auf logging/__init__.py:1026,
+# "with self.lock" — der Event-Loop wartete auf die Sperre eines Log-Handlers,
+# waehrend 21 Threads dieselbe Sperre fuer Plattenschreibvorgaenge hielten.
+# Gemessen: bis 176,5 s eingefrorener Loop, Bridge-Tick 182 s tot, Restream
+# 225 s ohne Bild, Discord-Heartbeat blockiert, am Ende "database is locked".
+# Begruendung und Abwaegung stehen in nc/logschleuse.py.
+#
+# Warum HIER und nicht in main(): die Zeilen zwischen Import und Start sind
+# genau die, die beim Fehlstart zaehlen, und ein Aufbau in main() liesse sie
+# auf dem alten, blockierenden Weg laufen.
+try:
+    _nc_logschleuse.entkoppeln(root_logger)
+    atexit.register(_nc_logschleuse.stoppen)
+except Exception as _e:
+    # Kein stiller Auffang: geht die Schleuse nicht auf, laeuft der Bot mit
+    # den synchronen Handlern weiter — funktionsfaehig, aber mit genau dem
+    # Stillstandsrisiko, das diese Welle behebt. Das gehoert gesagt.
+    print(f"[boot] WARNUNG: Log-Schleuse nicht aufgebaut ({_e}) — Logging "
+          f"bleibt synchron und kann den Event-Loop blockieren.", flush=True)
 
 log = logging.getLogger("TikTokBot")
 _nc_preflight.configure(logger=log)   # V37-MOD: Preflight-Logger nachreichen
@@ -18113,6 +18137,13 @@ def healthz():
                    procs=len(active_processes),          # v4.0-W88: aktive Kindprozesse
                    zombies=_zomb,                        # v4.0-W88: defunkte Kinder (W75-Klasse)
                    loop_stalls=_nc_brainstate.STALLS["n"],        # v4.0-W88
+                   # v4.2-W97: die Log-Schleuse. `log_wartend` dauerhaft hoch
+                   # heisst, die Platte kommt beim Schreiben nicht nach — das
+                   # ist die Vorstufe zum Verlust und gehoert sichtbar, BEVOR
+                   # die erste Zeile faellt. `log_verloren` > 0 heisst, es ist
+                   # schon passiert; die Zahl steht dann auch im Log selbst.
+                   log_wartend=_nc_logschleuse.wartend(),
+                   log_verloren=_nc_logschleuse.verloren(),
                    ts=datetime.now(timezone.utc).isoformat()), (200 if ok else 503)
 
 

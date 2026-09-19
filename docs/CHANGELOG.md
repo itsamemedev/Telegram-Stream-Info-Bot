@@ -11,6 +11,92 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Behoben — Drei Befunde aus den Logs vom 19.09. (v4.2 W97)
+
+Drei Fehlerbilder aus `debug.log`, `debug.log.1` und `error.log`. Keines
+davon stürzt ab; alle drei sind „es geht bloß nichts".
+
+**1. Jedes Zusammenfügen einer Sitzung scheiterte — an einer Vorsilbe.**
+Dreimal im Log, für drei verschiedene Sitzungen:
+
+```
+Impossible to open 'recordings/recordings/tiktok_live_….mp4'
+```
+
+Der concat-Demuxer löst einen relativen Eintrag **nicht** gegen das
+Arbeitsverzeichnis auf, sondern gegen das Verzeichnis der Listendatei. Die
+liegt neben dem Ziel, also in `recordings/`; in der Datenbank steht
+`recordings/xyz.mp4`, weil `RECORDINGS_DIR` ein relativer Name ist.
+`nc.aufnahmesitzung.concat_liste` schreibt jetzt absolute Pfade.
+
+Der eigentliche Befund ist, warum das niemandem auffiel: `concat_cmd`
+begründet sein `-safe 0` seit W44 damit, dass „die Liste absolute Pfade
+trägt" — und der W44-Vertrag reichte ausschließlich Pfade ab `/rec/…`
+herein. Er war grün, weil er die Eingabe der Produktion nie gesehen hat.
+
+**2. 13675 Warnungen in 22 Stunden, aus einer Drossel.** `nc.meldetakt`
+meldete jeden Grund sofort, der sich vom **vorigen** unterschied. Das setzt
+voraus, dass ein Kanal zu einer Zeit einen vorherrschenden Grund hat. Der
+Resolver-Kanal hat das nicht — er läuft pro Poll über 40 verfolgte Nutzer,
+und jeder erzeugt der Reihe nach `status_code`, dann `html_kein_tag`. Damit
+war **jeder** Aufruf ein Wechsel und die Drossel wirkungslos; 5315 der
+Zeilen trugen einen Unterdrückt-Zähler, der Beweis, dass der Wechsel-Pfad
+dauernd feuerte.
+
+Die Ruhezeit hängt jetzt am Paar (Kanal, Grund). Ein wirklich neuer Grund
+meldet weiter sofort — er hatte ja keine Ruhezeit —, ein zurückkehrender
+erst nach 15 Minuten. Gemessen: aus 200 abwechselnden Aufrufen werden zwei
+laute Zeilen statt 200. Das ist derselbe Fehler, vor dem der Docstring des
+Moduls seit W81 warnt, nur eine Ebene tiefer als der Nutzer-Schlüssel.
+
+**3. Der Event-Loop stand in einer Log-Sperre — bis zu 176 Sekunden.** Das
+ist der teuerste der drei. Der Voll-Stack-Dump vom 18.09. 22:15 nennt die
+Stelle, und es ist nicht die, die man vermutet:
+
+```
+File "httpx/_client.py", line 1740, in _send_single_request
+    logger.info(
+File "logging/__init__.py", line 1026, in handle
+    with self.lock:                     <<< hier stand der Event-Loop
+```
+
+Drei synchrone Handler am Wurzel-Logger (Konsole plus zwei
+`RotatingFileHandler`) teilen ihre Sperren mit 21 Threads. Auf einer Platte
+unter Volllast — eine 787-MB-Aufnahme wurde gerade in 11-MB-Teile zerlegt,
+Whisper transkribierte im Sekundentakt, der Resolver schrieb zehn Zeilen pro
+Minute (Befund 2) — dauert ein Schreibvorgang Sekunden, und **jeder**
+`log.info` im Event-Loop wartet mit. Im selben Log: Bridge-Tick 182 s tot,
+Restream 225 s ohne Bild, Discord-Heartbeat blockiert, `disk-guard` 444 s
+ohne Lebenszeichen, am Ende `database is locked`.
+
+Neu ist `nc/logschleuse.py`: am Wurzel-Logger hängt nur noch ein
+`QueueHandler`, die echten Handler bedient ein einziger Hintergrund-Thread.
+Gemessen an einem Handler mit 20 ms je Zeile: **1,006 s → 0,001 s** für 20
+Zeilen. Die Schlange ist **begrenzt** (20000 Plätze) — eine unbegrenzte
+tauschte den eingefrorenen Loop gegen einen OOM-Kill —, sie wartet nie, und
+jeder Verlust wird gemeldet, mit Abhilfe statt nur mit der Zahl.
+`/healthz` trägt dazu `log_wartend` und `log_verloren`; ohne Schleuse meldet
+`log_wartend` **−1** und nicht 0, weil sich eine 0 wie Normalbetrieb liest.
+
+Drei neue Verträge (505 statt 502), **14 Mutationsproben, alle gefallen**.
+Die Überdeckungs-Grundlinie bleibt bei 9639, obwohl 79 Anweisungen
+dazugekommen sind.
+
+Eine fünfzehnte Probe ist entwischt, und die Nachmessung gab ihr recht statt
+dem Vertrag: „erst escapen, dann abspath" ist bytegleich mit der
+Produktionsreihenfolge — die Escape-Folge `'\''` trägt einen einzelnen
+Backslash, und den fasst weder `posixpath.normpath` noch `ntpath.normpath`
+an. Die Probe wurde entfernt und der Vertragskommentar korrigiert, der das
+Gegenteil behauptet hatte. Eine Mutation, die nichts ändert, kann keinen
+Vertrag fallen lassen.
+
+**Nicht behoben, weil nicht am Bot:** die abgelaufenen TikTok-Cookies
+(`_ensure_cookie_file_netscape`, daraus die 403er beim Recorder), das
+aufgebrauchte Anthropic-Guthaben, der abgelehnte CrowdSec-Schlüssel und der
+Encode-Rückstand („Die Box schafft diesen Transcode nicht"). Alle vier
+melden sich korrekt und gedrosselt — das ist der Zustand, den W81/W83
+herstellen sollten.
+
 ### Neu — Wiederherstellung im Deck, und die WAL-Falle dabei (v4.2 W96)
 
 W95 hat den Deck-Import dichtgemacht — richtig, aber damit gab es im Deck
