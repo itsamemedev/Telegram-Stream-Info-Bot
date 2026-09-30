@@ -25,7 +25,7 @@ dann den Ausschnitt holen:
     python tools/ncpatch.py check                          # Templates: doppelte IDs, CSS-Bilanz
     python tools/ncpatch.py docs                           # Doku-Zahlen gegen den Quelltext
 
-`find` antwortet aus `.claude/INDEX.md` — 367 Routen (34 in `bot.py`, 333 in
+`find` antwortet aus `.claude/INDEX.md` — 369 Routen (34 in `bot.py`, 333 in
 `nc/routes/`), 60 Slash-Commands, 548 Funktionen mit Zeilennummern. Nach Änderungen an Routen, Commands oder
 Top-Level-Funktionen `map` neu laufen lassen. Details: Skill `nc-navigation`.
 
@@ -57,7 +57,7 @@ Auf diesem Windows-Rechner heißt der Interpreter **`python`** (3.13.12);
                          semantic, knowledge, scheduler, llm, report
     nc/                  146 Fachmodule: db, scraping, restream, oauth, ledger,
                          i18n, …
-    nc/routes/           36 Flask-Blueprints mit 327 weiteren API-Routen
+    nc/routes/           36 Flask-Blueprints mit 335 weiteren API-Routen
     locales/             de.json, en.json — der Übersetzungskatalog
     templates/           dashboard.html, brain.html, overlay.html, PWA
     website/             lafap_index.html (öffentliche Seite)
@@ -136,8 +136,8 @@ ein `tiktok_bot.db` **im Arbeitsverzeichnis** an. Beim zweiten Lauf starb
 die Prüfkette fährt und was die Sperre ist; pytest kommt daneben, für die
 Arbeit am einzelnen Befund.
 
-**Die Überdeckung ist seit v4.2-W86 gemessen: 51,9 %** von `nc/` und `brain/`
-(20.042 Anweisungen, 9.639 davon ungeprüft). Das ist die Zahl, die den 505
+**Die Überdeckung ist seit v4.2-W86 gemessen: 52,2 %** von `nc/` und `brain/`
+(20.162 Anweisungen, 9.630 davon ungeprüft). Das ist die Zahl, die den 514
 Verträgen erst ihren Maßstab gibt — „alles grün" sagt sonst nichts darüber,
 wie viel Bestand dabei angefasst wurde. Gesperrt wird wie bei W65/W66 nur der
 Zuwachs, und zwar die **Anzahl** ungeprüfter Anweisungen, nicht der
@@ -354,6 +354,53 @@ Damit scheiterte **jedes** Zusammenfügen einer Sitzung, dreimal am 19.09.
 gemessen. Grün geblieben ist der W44-Vertrag, weil er ausschliesslich Pfade
 ab `/rec/…` hereinreichte — die Eingabe der Produktion hat er nie gesehen.
 Ein Vertrag, der nur die bequeme Eingabe prüft, prüft nichts.
+
+**Ein Bestand hat zwei Richtungen, und das Archiv kannte nur eine.**
+`/api/archive/check` prüft die Datenbank gegen die Platte (Einträge ohne
+Datei). Die Gegenrichtung — Dateien ohne Eintrag — gab es bis v4.2-W98
+nicht, und damit war eine von Hand hineinkopierte Aufnahme im Deck schlicht
+nicht vorhanden. Nach einem Neuaufbau der Datenbank betrifft das den
+kompletten Bestand. Seither: `/api/archive/scan` (lesend) und
+`/api/archive/scan/adopt` (trägt ein, verschiebt und löscht nichts), im Deck
+der Knopf „Ordner prüfen". **Bei jedem Abgleich zwischen Datenbank und
+Dateisystem beide Richtungen prüfen — eine davon fehlt sonst jahrelang
+unbemerkt.**
+
+Dabei zweimal dieselben Lehren wie eine Welle vorher. Die Pfade werden auf
+**beiden** Seiten mit `abspath` verglichen: in der Datenbank kann ein
+relativer stehen (`ARCHIVE_DIR` darf relativ sein, die Vorgabe ist
+`"archive"`), im Scan entsteht ein absoluter — ohne Normalisierung sieht
+jeder bestehende Eintrag wie ein neuer aus und der Knopf bietet an, das
+Archiv doppelt aufzunehmen. Und fällt die Datenbankabfrage aus, bricht der
+Scan ab (`BestandUnbekannt`, HTTP 503) statt zu raten, genau wie
+`_find_orphans` seit W91 — hier mit umgekehrtem Vorzeichen: dort hätte
+Raten alles gelöscht, hier würde es alles doppelt eintragen.
+
+**Ein nachweislich dichter Riegel ist für CodeQL kein Riegel.** Der
+Ordner-Scan aus W98 nahm zuerst die Pfade aus der Anfrage und prüfte sie mit
+`nc.sicherpfad.unter()`. Dicht — der Vertrag fing den `../`-Ausbruch — und
+trotzdem zwei High-Severity-Befunde „Uncontrolled data used in path
+expression" auf `os.path.isfile` und `os.path.getsize`: die
+Datenflussanalyse sieht die Barriere nicht. Dasselbe war bei
+`api_recording_session_join` schon einmal der Fall.
+
+Die Antwort ist beide Male dieselbe und steht schon dort: die Abfrage blind
+zu entschärfen hieße, eine Prüfung abzuschalten, die sich nicht nachprüfen
+lässt — **den Pfad gar nicht erst aus Fremdeingabe bauen.** `uebernehmen`
+scannt deshalb selbst und nimmt nur Pfade aus `os.walk` über den
+serverseitigen Ordner; aus der Anfrage kommt eine Liste relativer Namen, die
+als Filter per Zeichenketten-Vergleich wirkt. Der `sicherpfad`-Import ist
+dabei entfallen: ein Riegel gegen Fremdeingabe, wo keine mehr ankommt, ist
+toter Code, der Sicherheit suggeriert. Der Vertrag prüft seither die
+stärkere Aussage — kein Name bringt eine Datei von außerhalb ins Archiv.
+
+**Eine Sperre, die fällt, will nicht immer eine neue Grundlinie.** In W98
+fiel der Vertrag, der die rohen Env-Lesepfade in `nc/routes/archive.py`
+zählt, weil die neue Scan-Route die Ordner-Auflösung aus
+`api_archive_duplicates` kopiert hatte. Richtig war nicht, von eins auf zwei
+zu gehen, sondern die Dublette aufzulösen: beide Ordner-Knöpfe rufen jetzt
+dieselbe Funktion und sehen damit nachweislich denselben Ordner — was der
+Kommentar ohnehin behauptete.
 
 **Ein Datenbank-Tausch ohne das WAL ist lautlos wertlos.** SQLite laeuft hier
 im WAL-Modus. Wer nur `tiktok_bot.db` ersetzt und `-wal` liegen laesst,

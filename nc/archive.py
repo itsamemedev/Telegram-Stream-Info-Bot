@@ -3,6 +3,7 @@
 Extrahiert aus bot.py. Reine Datei-/DB-Logik ohne Bot-Globals."""
 
 import logging
+import time as _time
 from datetime import datetime, timezone, timedelta  # noqa: F401
 import os
 
@@ -11,8 +12,22 @@ from typing import Optional
 
 from nc.dbwrap import db_conn
 from nc.sqlutil import _archive_where_clause, _archive_sort_clause, _ARCHIVE_KIND_MAP
+from nc import meldetakt as _meldetakt
 
 log = logging.getLogger("TikTokBot")
+
+# v4.2-W98: hier stand ein Import von nc.sicherpfad. Er ist entfallen, weil
+# `uebernehmen` keinen Pfad mehr aus der Anfrage baut — es waehlt aus seiner
+# eigenen Fundliste. Ein Riegel gegen Fremdeingabe, wo keine Fremdeingabe
+# mehr ankommt, waere toter Code, der Sicherheit suggeriert.
+#
+# Wonach der Ordner-Scan sucht (v4.2-W98). Bewusst nur Video: der Knopf im
+# Deck heisst "Ordner pruefen" und steht im Archiv, das der Betreiber mit
+# Aufnahmen fuellt. Wer Audio oder Bilder einsammeln will, schickt die
+# Endungen mit — die Vorgabe soll nicht ungefragt ein Verzeichnis voller
+# Vorschaubilder ins Archiv holen.
+VIDEO_ENDUNGEN = (".mp4", ".mkv", ".mov", ".webm", ".avi", ".m4v",
+                  ".ts", ".flv", ".mpg", ".mpeg")
 
 # v4.0-W110: vom Bot injiziert. Frueher lasen die vier unten verschobenen
 # Funktionen ARCHIVE_DIR als Bot-Global; sie lagen deshalb im Laufzeitkontext
@@ -63,6 +78,236 @@ def run_archive_file_check():
         "total_size_missing": total_size_missing,
         "missing":            missing,
     }
+
+
+class BestandUnbekannt(RuntimeError):
+    """Die Liste der bekannten Archiv-Eintraege war nicht zu lesen.
+
+    Eigene Klasse, damit die Route sie von einem gewoehnlichen Fehler
+    unterscheiden kann: hier ist nichts kaputt, wir wissen nur nicht genug,
+    um zu entscheiden. Dieselbe Klasse wie
+    nc.routes.recordings.BestandUnbekannt (v4.2-W91), aus demselben Grund —
+    dort verwandelte ein leeres `known` ein "raeum die Reste weg" in ein
+    "loesche alle Aufnahmen". Hier ist die Richtung umgekehrt und der Schaden
+    kleiner, aber die Regel ist dieselbe: "ich weiss nicht, was in der
+    Datenbank steht" heisst "ich kann nicht entscheiden, was fehlt".
+    """
+
+
+def _bekannte_pfade(conn):
+    """Alle filepath-Werte der Archivtabelle, vergleichbar gemacht.
+
+    Der Schluessel ist `os.path.abspath` auf BEIDEN Seiten — der DB-Wert hier
+    und der Fundort beim Scan. Ohne das entscheidet die Schreibweise ueber
+    das Ergebnis: steht in der Datenbank ein relativer Pfad (weil jemand
+    ARCHIVE_DIR relativ gesetzt hat) und der Scan liefert einen absoluten,
+    sieht JEDE bereits eingetragene Datei wie eine neue aus, und der Knopf
+    bietet an, das ganze Archiv ein zweites Mal aufzunehmen.
+
+    Das ist nicht ausgedacht: genau diese Klasse Fehler — dieselbe Datei
+    unter zwei Schreibweisen — hat in v4.2-W97 jedes Zusammenfuegen einer
+    Sitzung scheitern lassen (`recordings/recordings/…`).
+    """
+    return set(
+        os.path.abspath(r["filepath"])
+        for r in conn.execute("SELECT filepath FROM archive").fetchall()
+        if r["filepath"])
+
+
+def _scan_kandidaten(scan_root, endungen):
+    """Alle in Frage kommenden Dateien unter `scan_root`, absolut. -> Liste.
+
+    Eigener Schritt, weil hier die Auswahlregeln stehen und sonst nichts:
+    versteckte Ordner und `tmp/` bleiben aussen vor, Punktdateien auch, und
+    es zaehlen nur die Endungen. Dieselbe Regel wie beim Dubletten-Scan,
+    damit beide Ordner-Knoepfe denselben Bestand sehen.
+    """
+    kandidaten = []
+    for wurzel, verzeichnisse, dateien in os.walk(scan_root):
+        verzeichnisse[:] = [d for d in verzeichnisse
+                            if not d.startswith(".") and d != "tmp"]
+        for name in dateien:
+            if name.startswith(".") or not name.lower().endswith(endungen):
+                continue
+            kandidaten.append((name, os.path.abspath(os.path.join(wurzel, name))))
+    return kandidaten
+
+
+def _scan_eintrag(name, voll, basis):
+    """Ein Fund als Datensatz — oder None, wenn die Datei nicht lesbar ist.
+
+    Der None-Fall ist NICHT still: der harmlose Anlass ist "zwischen listdir
+    und stat verschwunden", derselbe Zweig faengt aber ein Rechteproblem, und
+    dann fehlt die Datei DAUERHAFT in der Liste, ohne dass jemand erfaehrt
+    warum — der Betreiber sucht die Aufnahme, die er auf der Platte sieht,
+    und der Knopf schweigt.
+
+    Gedrosselt ueber nc.meldetakt und nicht eine Zeile je Datei: ein
+    Verzeichnis mit falschen Rechten hat sie alle, und tausend gleiche Zeilen
+    sind so unlesbar wie keine. Der Schluessel ist der Kanal, nicht die
+    Datei — sonst drosselt jede Datei fuer sich und es drosselt nichts
+    (derselbe Fehler wie in W97, eine Ebene tiefer).
+    """
+    try:
+        st = os.stat(voll)
+    except OSError as e:
+        laut, unterdrueckt = _meldetakt.melden(
+            "archiv-scan", e.__class__.__name__, _time.monotonic())
+        if laut:
+            log.warning("Ordner-Scan: %s ist nicht lesbar (%s) und fehlt "
+                        "deshalb in der Liste — Rechte am Verzeichnis "
+                        "pruefen.%s", voll, e, _meldetakt.zusatz(unterdrueckt))
+        return None
+    return {
+        "name":     name,
+        # Der relative Name ist der SCHLUESSEL, mit dem das Deck auswaehlt —
+        # nicht der Pfad. Warum das der Unterschied zwischen sicher und
+        # unsicher ist, steht bei `uebernehmen`.
+        "rel":      os.path.relpath(voll, basis),
+        "pfad":     voll,
+        "mb":       round(st.st_size / 1048576.0, 2),
+        "bytes":    st.st_size,
+        "geaendert": datetime.fromtimestamp(
+            st.st_mtime, timezone.utc).isoformat(timespec="seconds"),
+        "art":      _kind_from_filename(name),
+    }
+
+
+def finde_ohne_eintrag(scan_root, endungen=None, max_treffer=2000):
+    """Dateien unter `scan_root`, zu denen KEINE Archivzeile existiert.
+
+    Die Gegenrichtung zu `run_archive_file_check`: dort Eintraege ohne Datei,
+    hier Dateien ohne Eintrag. Bis v4.2-W98 gab es diese Richtung gar nicht —
+    eine Datei, die im Archivordner liegt und keine Zeile hat, war im Deck
+    schlicht nicht vorhanden. Nach einem Neuaufbau der Datenbank betrifft das
+    den kompletten Bestand.
+
+    Read-only. Geliefert wird eine Liste, entschieden wird im Deck.
+
+    `max_treffer` deckelt die Antwort: ein Archivordner mit 50.000 fremden
+    Dateien wuerde das Deck sonst mit einer Liste erschlagen, die niemand
+    durchsieht. `None` heisst "kein Deckel" — `uebernehmen` braucht die VOLLE
+    Liste, sonst nimmt "alles aufnehmen" bei 2001 Dateien stillschweigend nur
+    2000 und meldet Erfolg. Die volle Zahl steht immer in `gesamt`: ein
+    gedeckeltes Ergebnis, das seine eigene Unvollstaendigkeit verschweigt,
+    waere schlimmer als keines.
+    """
+    endungen = tuple(e.lower() for e in (endungen or VIDEO_ENDUNGEN))
+    if not scan_root or not os.path.isdir(scan_root):
+        return {"ok": False, "grund": "verzeichnis_fehlt", "scan_root": scan_root or "",
+                "gefunden": [], "gesamt": 0, "geprueft": 0, "unlesbar": 0,
+                "gedeckelt": False}
+    try:
+        with db_conn() as conn:
+            bekannt = _bekannte_pfade(conn)
+    except Exception as e:
+        raise BestandUnbekannt(
+            "die Liste der bekannten Archiv-Eintraege war nicht zu lesen (%s). "
+            "Ohne sie gilt jede Datei als neu, und der Knopf boete an, das "
+            "ganze Archiv ein zweites Mal aufzunehmen." % e) from e
+
+    basis = os.path.abspath(scan_root)
+    kandidaten = _scan_kandidaten(scan_root, endungen)
+    gefunden, unlesbar, gesamt = [], 0, 0
+    for name, voll in kandidaten:
+        if voll in bekannt:
+            continue
+        if max_treffer is not None and len(gefunden) >= max_treffer:
+            gesamt += 1
+            continue
+        eintrag = _scan_eintrag(name, voll, basis)
+        if eintrag is None:
+            unlesbar += 1
+            continue
+        gesamt += 1
+        gefunden.append(eintrag)
+    gefunden.sort(key=lambda e: e["geaendert"], reverse=True)
+    # `unlesbar` steht auch in der Antwort und nicht nur im Log: das Deck
+    # zeigt die Zahl neben dem Ergebnis. Eine Fundliste, die still kuerzer
+    # ist als der Ordner, waere dieselbe halbe Wahrheit wie ein gedeckeltes
+    # Ergebnis ohne `gedeckelt`.
+    return {"ok": True, "grund": "", "scan_root": scan_root,
+            "gefunden": gefunden, "gesamt": gesamt,
+            "geprueft": len(kandidaten), "unlesbar": unlesbar,
+            "gedeckelt": gesamt > len(gefunden)}
+
+
+def uebernehmen(scan_root, auswahl=None, endungen=None):
+    """Gefundene Dateien in die Archivtabelle aufnehmen. -> Bericht.
+
+    `auswahl` ist eine Menge RELATIVER NAMEN aus einem vorherigen Scan, oder
+    None fuer alle. Sie ist ein **Filter**, nie eine Pfadquelle.
+
+    v4.2-W98 — warum das so gebaut ist und nicht "Pfade hereinreichen":
+    die erste Fassung nahm die Pfade aus der Anfrage und riegelte sie mit
+    `nc.sicherpfad.unter()` ab. Das war nachweislich dicht (der Vertrag faengt
+    den `../`-Ausbruch), aber CodeQL meldete zwei High-Severity-Befunde
+    "Uncontrolled data used in path expression" auf `os.path.isfile` und
+    `os.path.getsize` — die Datenflussanalyse sieht `unter()` nicht als
+    Barriere. Dasselbe war bei `api_recording_session_join` schon einmal der
+    Fall, und CLAUDE.md hat daraus die Regel gemacht: die Abfrage blind zu
+    entschaerfen hiesse, eine Pruefung abzuschalten, die sich hier nicht
+    nachpruefen laesst — **den Pfad gar nicht erst aus Fremdeingabe zu bauen
+    ist die kleinere und ehrlichere Aenderung.**
+
+    Deshalb scannt diese Funktion SELBST und nimmt nur Pfade, die aus
+    `os.walk` ueber den serverseitigen Ordner stammen. Aus der Anfrage kommt
+    danach nur noch ein Zeichenketten-Vergleich.
+
+    Das ist nicht bloss der Abfrage zuliebe richtig: zwischen Anzeige und
+    Knopfdruck koennen Minuten liegen. Eine Liste von vorhin ist eine
+    Behauptung ueber den Ordner, keine Beobachtung — dieselbe Lehre wie beim
+    Aufraeumer in W91, dort mit der Datenbank statt mit dem Ordner.
+
+    Jede Datei einzeln: eine, die scheitert, darf die anderen nicht
+    mitnehmen. Der haeufigste Fehlschlag ist erwartet — auf
+    `archive.filepath` liegt ein UNIQUE, ein zweiter Anlauf prallt dort ab.
+    """
+    wurzel = os.path.abspath(scan_root or "")
+    bericht = {"aufgenommen": 0, "uebersprungen": 0, "fehler": 0,
+               "ids": [], "meldungen": []}
+    if not wurzel or not os.path.isdir(wurzel):
+        bericht["meldungen"].append("Scan-Verzeichnis fehlt: %s" % (scan_root or "—"))
+        bericht["fehler"] = len(auswahl or [])
+        return bericht
+
+    # Wirft BestandUnbekannt weiter, wenn die Datenbank nicht zu lesen war —
+    # ohne Kenntnis des Bestands laesst sich keine Dublette ausschliessen.
+    ergebnis = finde_ohne_eintrag(wurzel, endungen, max_treffer=None)
+    offen = {e["rel"]: e["pfad"] for e in ergebnis["gefunden"]}
+
+    if auswahl is None:
+        dran = list(ergebnis["gefunden"])
+    else:
+        gewuenscht = {str(a) for a in auswahl}
+        dran = [e for e in ergebnis["gefunden"] if e["rel"] in gewuenscht]
+        # Was die Anfrage nannte und der Scan nicht kennt, gehoert benannt.
+        # Stillschweigend zu uebergehen hiesse: der Betreiber waehlt fuenf
+        # Dateien aus, drei werden aufgenommen, und nichts sagt warum.
+        for fehlt in sorted(gewuenscht - set(offen)):
+            bericht["fehler"] += 1
+            bericht["meldungen"].append(
+                "%s steht nicht in der Fundliste — schon eingetragen, "
+                "verschwunden oder ausserhalb des Ordners"
+                % os.path.basename(str(fehlt)))
+
+    for e in dran:
+        voll = e["pfad"]
+        try:
+            eid = add_archive_entry(
+                filename=os.path.basename(voll), filepath=voll,
+                title=None, notes="per Ordner-Scan aufgenommen (v4.2-W98)",
+                size=e["bytes"], mime=None, source_url=None)
+            bericht["aufgenommen"] += 1
+            bericht["ids"].append(eid)
+        except Exception as fehler:
+            # Nicht still: der Betreiber hat diesen Lauf angestossen und
+            # wartet auf ein Ergebnis. Der haeufigste Fall ist die UNIQUE-
+            # Kollision, und auch die gehoert benannt statt verschluckt.
+            bericht["fehler"] += 1
+            bericht["meldungen"].append("%s: %s" % (e["name"], fehler))
+            log.warning("Ordner-Scan: %s nicht aufgenommen: %s", voll, fehler)
+    return bericht
 
 
 def evaluate_archive_rule(condition: dict, recording_row) -> bool:
