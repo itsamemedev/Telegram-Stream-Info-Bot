@@ -62,8 +62,41 @@ denselben Ordner. `?root=` bleibt dem Dubletten-Scan; der Ordner-Scan ruft ohne
 Argument und lässt sich von einer Anfrage nicht auf ein fremdes Verzeichnis
 richten.
 
-Ein Vertrag mit 14 Abschnitten, **19 Mutationsproben, alle gefallen**. Die
-Überdeckung ist dabei um 10 Anweisungen **gestiegen** (9639 → 9629), obwohl
+**Und dann meldete CodeQL zwei High-Severity-Befunde — zu Recht.** Die erste
+Fassung reichte die Pfade aus der Anfrage herein und riegelte sie mit
+`nc.sicherpfad.unter()` ab. Das war nachweislich dicht, der Vertrag fing den
+`../`-Ausbruch. Die Datenflussanalyse sieht diesen Riegel aber nicht und
+meldete „Uncontrolled data used in path expression" auf `os.path.isfile` und
+`os.path.getsize`.
+
+Dieselbe Lage gab es bei `api_recording_session_join` schon einmal, und
+`CLAUDE.md` hat daraus die Regel gemacht: die Abfrage blind zu entschärfen
+hieße, eine Prüfung abzuschalten, die sich hier nicht nachprüfen lässt — **den
+Pfad gar nicht erst aus Fremdeingabe zu bauen ist die kleinere und ehrlichere
+Änderung.**
+
+`uebernehmen(scan_root, auswahl)` scannt deshalb **selbst** und nimmt nur
+Pfade, die aus `os.walk` über den serverseitigen Ordner stammen. Aus der
+Anfrage kommt nur noch eine Liste relativer Namen, und die wirkt als Filter
+per Zeichenketten-Vergleich. Der Import von `nc.sicherpfad` ist entfallen: ein
+Riegel gegen Fremdeingabe, wo keine Fremdeingabe mehr ankommt, wäre toter
+Code, der Sicherheit suggeriert.
+
+Das ist nicht bloß der Abfrage zuliebe richtig. Zwischen Anzeige und
+Knopfdruck können Minuten liegen; eine Liste von vorhin ist eine Behauptung
+über den Ordner, keine Beobachtung. Der Vertrag prüft jetzt die stärkere
+Aussage: **kein Name, wie böse auch immer** — `../fremd.mp4`, `/etc/passwd`,
+ein absoluter Pfad von außerhalb —, bringt eine Datei ins Archiv, und danach
+liegt kein Pfad außerhalb des Archivordners in der Tabelle.
+
+Dabei fiel die Monolith-Sperre: `finde_ohne_eintrag` war auf 102 Zeilen
+gerutscht. Herausgelöst sind zwei benannte Schritte — `_scan_kandidaten`
+(die Auswahlregeln: `tmp/`, versteckte Ordner, Punktdateien, Endungen) und
+`_scan_eintrag` (ein Fund als Datensatz, oder `None` samt gedrosselter
+Meldung). Das war nicht Kosmetik, sondern die Arbeit.
+
+Ein Vertrag mit 14 Abschnitten, **17 Mutationsproben, alle gefallen**. Die
+Überdeckung ist dabei um 9 Anweisungen **gestiegen** (9639 → 9630), obwohl
 123 dazugekommen sind: die sechs zunächst ungeprüften Zeilen waren alle neue
 Fehlerpfade und sind jetzt gedeckt statt weggeratscht.
 

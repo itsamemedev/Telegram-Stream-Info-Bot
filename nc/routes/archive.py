@@ -405,11 +405,17 @@ def api_archive_scan():
 def api_archive_scan_adopt():
     """v4.2-W98: gefundene Dateien in die Archivtabelle aufnehmen.
 
-    Body: {"pfade": [...]} oder {"alle": true}. `alle` scannt selbst neu,
-    statt der Anfrage zu glauben — zwischen Anzeige und Knopfdruck koennen
-    Minuten liegen, und die Liste von vorhin ist dann eine Behauptung ueber
-    den Ordner, keine Beobachtung. Dieselbe Lehre wie beim Aufraeumer in
-    W91, dort mit der Datenbank statt mit dem Ordner.
+    Body: {"alle": true} oder {"namen": [...]} mit den relativen Namen aus
+    einem vorherigen Scan.
+
+    **Aus der Anfrage kommt kein Pfad.** `nc.archive.uebernehmen` scannt
+    selbst und nimmt nur Dateien, die aus `os.walk` ueber den serverseitigen
+    Ordner stammen; die Namen sind ein Filter, der per Zeichenketten-
+    Vergleich wirkt. Die erste Fassung reichte Pfade herein und riegelte sie
+    mit `nc.sicherpfad` ab — dicht, aber CodeQL meldete zwei
+    High-Severity-Befunde "Uncontrolled data used in path expression", weil
+    die Datenflussanalyse den Riegel nicht sieht. Begruendung und Praezedenz
+    (api_recording_session_join) stehen bei `uebernehmen`.
 
     Aufnehmen legt nur Zeilen an; es verschiebt, kopiert und loescht nichts.
     """
@@ -417,20 +423,20 @@ def api_archive_scan_adopt():
     wurzel = _scan_wurzel()
     try:
         if last.get("alle"):
-            ergebnis = finde_ohne_eintrag(wurzel)
-            if not ergebnis["ok"]:
-                return jsonify(ok=False, error=_t(
-                    "Ordner nicht gefunden — ARCHIVE_DIR bzw. MANUAL_ARCHIVE_DIR prüfen")), 404
-            pfade = [e["pfad"] for e in ergebnis["gefunden"]]
+            auswahl = None
         else:
-            pfade = last.get("pfade") or []
-            if not isinstance(pfade, list):
-                return jsonify(ok=False, error=_t("pfade muss eine Liste sein")), 400
-            if not pfade:
+            namen = last.get("namen") or []
+            if not isinstance(namen, list):
+                return jsonify(ok=False, error=_t("namen muss eine Liste sein")), 400
+            if not namen:
                 return jsonify(ok=False, error=_t("Nichts ausgewählt")), 400
-            if len(pfade) > 2000:
-                return jsonify(ok=False, error=_t("max 2000 Pfade pro Aufruf")), 400
-        bericht = uebernehmen(pfade, wurzel)
+            if len(namen) > 2000:
+                return jsonify(ok=False, error=_t("max 2000 Namen pro Aufruf")), 400
+            auswahl = namen
+        if not os.path.isdir(wurzel):
+            return jsonify(ok=False, error=_t(
+                "Ordner nicht gefunden — ARCHIVE_DIR bzw. MANUAL_ARCHIVE_DIR prüfen")), 404
+        bericht = uebernehmen(wurzel, auswahl)
     except BestandUnbekannt as e:
         log.error("Archiv-Uebernahme abgebrochen: %s", e)
         return jsonify(ok=False, error=_fehler_text(e, "api_archive_scan_adopt")), 503

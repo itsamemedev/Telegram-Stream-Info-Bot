@@ -137,7 +137,7 @@ die Prüfkette fährt und was die Sperre ist; pytest kommt daneben, für die
 Arbeit am einzelnen Befund.
 
 **Die Überdeckung ist seit v4.2-W86 gemessen: 52,2 %** von `nc/` und `brain/`
-(20.165 Anweisungen, 9.629 davon ungeprüft). Das ist die Zahl, die den 514
+(20.162 Anweisungen, 9.630 davon ungeprüft). Das ist die Zahl, die den 514
 Verträgen erst ihren Maßstab gibt — „alles grün" sagt sonst nichts darüber,
 wie viel Bestand dabei angefasst wurde. Gesperrt wird wie bei W65/W66 nur der
 Zuwachs, und zwar die **Anzahl** ungeprüfter Anweisungen, nicht der
@@ -375,6 +375,24 @@ Archiv doppelt aufzunehmen. Und fällt die Datenbankabfrage aus, bricht der
 Scan ab (`BestandUnbekannt`, HTTP 503) statt zu raten, genau wie
 `_find_orphans` seit W91 — hier mit umgekehrtem Vorzeichen: dort hätte
 Raten alles gelöscht, hier würde es alles doppelt eintragen.
+
+**Ein nachweislich dichter Riegel ist für CodeQL kein Riegel.** Der
+Ordner-Scan aus W98 nahm zuerst die Pfade aus der Anfrage und prüfte sie mit
+`nc.sicherpfad.unter()`. Dicht — der Vertrag fing den `../`-Ausbruch — und
+trotzdem zwei High-Severity-Befunde „Uncontrolled data used in path
+expression" auf `os.path.isfile` und `os.path.getsize`: die
+Datenflussanalyse sieht die Barriere nicht. Dasselbe war bei
+`api_recording_session_join` schon einmal der Fall.
+
+Die Antwort ist beide Male dieselbe und steht schon dort: die Abfrage blind
+zu entschärfen hieße, eine Prüfung abzuschalten, die sich nicht nachprüfen
+lässt — **den Pfad gar nicht erst aus Fremdeingabe bauen.** `uebernehmen`
+scannt deshalb selbst und nimmt nur Pfade aus `os.walk` über den
+serverseitigen Ordner; aus der Anfrage kommt eine Liste relativer Namen, die
+als Filter per Zeichenketten-Vergleich wirkt. Der `sicherpfad`-Import ist
+dabei entfallen: ein Riegel gegen Fremdeingabe, wo keine mehr ankommt, ist
+toter Code, der Sicherheit suggeriert. Der Vertrag prüft seither die
+stärkere Aussage — kein Name bringt eine Datei von außerhalb ins Archiv.
 
 **Eine Sperre, die fällt, will nicht immer eine neue Grundlinie.** In W98
 fiel der Vertrag, der die rohen Env-Lesepfade in `nc/routes/archive.py`

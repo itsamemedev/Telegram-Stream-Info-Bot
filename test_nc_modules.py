@@ -17905,8 +17905,8 @@ def _test_v42_w98_ordnerscan_findet_dateien_ohne_eintrag():
         return _os.path.abspath(pfad)
 
     eingetragen = datei("schon_da.mp4")
-    neu1        = datei("neu_eins.mp4")
-    neu2        = datei("unterordner", "neu_zwei.mkv")
+    datei("neu_eins.mp4")
+    datei("unterordner", "neu_zwei.mkv")
     datei("kein_video.txt")
     datei("tmp", "im_tmp.mp4")
     datei(".versteckt", "versteckt.mp4")
@@ -17991,7 +17991,7 @@ def _test_v42_w98_ordnerscan_findet_dateien_ohne_eintrag():
         except A.BestandUnbekannt as e_:
             assert "nicht zu lesen" in str(e_), str(e_)
         try:
-            A.uebernehmen([neu1], ordner)
+            A.uebernehmen(ordner)
             raise AssertionError("uebernehmen() arbeitet ohne Kenntnis des Bestands")
         except A.BestandUnbekannt:
             pass
@@ -18000,7 +18000,8 @@ def _test_v42_w98_ordnerscan_findet_dateien_ohne_eintrag():
 
     # ── (4) DAS AUFNEHMEN. Es legt Zeilen an und fasst keine Datei an.
     vorher = sorted(_os.listdir(ordner))
-    b = A.uebernehmen([neu1, neu2], ordner)
+    b = A.uebernehmen(ordner, ["neu_eins.mp4",
+                               _os.path.join("unterordner", "neu_zwei.mkv")])
     assert b["aufgenommen"] == 2 and b["fehler"] == 0, b
     assert sorted(_os.listdir(ordner)) == vorher, \
         "das Aufnehmen hat den Ordner veraendert: %s" % _os.listdir(ordner)
@@ -18010,21 +18011,51 @@ def _test_v42_w98_ordnerscan_findet_dateien_ohne_eintrag():
     # ── (5) EIN ZWEITER LAUF LEGT KEINE DUBLETTEN AN. Auf archive.filepath
     # liegt ein UNIQUE; der Fall muss als "uebersprungen" gezaehlt werden,
     # nicht als Fehler und erst recht nicht als zweiter Eintrag.
-    b2 = A.uebernehmen([neu1, neu2], ordner)
-    assert b2["aufgenommen"] == 0 and b2["uebersprungen"] == 2 and b2["fehler"] == 0, b2
+    # Schon eingetragen heisst: sie stehen nicht mehr in der Fundliste. Das
+    # ist kein Fehler am Code, aber es muss BENANNT werden — sonst waehlt der
+    # Betreiber fuenf aus, drei landen im Archiv und nichts sagt warum.
+    b2 = A.uebernehmen(ordner, ["neu_eins.mp4",
+                                _os.path.join("unterordner", "neu_zwei.mkv")])
+    assert b2["aufgenommen"] == 0 and b2["fehler"] == 2, b2
+    assert all("steht nicht in der Fundliste" in m for m in b2["meldungen"]), b2
     with A.db_conn() as conn:
         n = conn.execute("SELECT count(*) AS n FROM archive").fetchone()["n"]
     assert n == 3, "die Archivtabelle hat %d Zeilen statt 3" % n
 
-    # ── (6) EINE DATEI AUSSERHALB DES ORDNERS KOMMT NICHT HINEIN. Die Pfade
-    # stehen in der Anfrage; ohne diesen Riegel liesse sich jede Datei des
-    # Servers ins Archiv eintragen — und delete_archive_entry loescht
-    # spaeter, was in der Tabelle steht.
+    # ── (6) EINE DATEI AUSSERHALB DES ORDNERS KOMMT NICHT HINEIN — und zwar
+    # nicht, weil ein Riegel sie abweist, sondern weil aus der Anfrage
+    # ueberhaupt kein Pfad mehr in eine Pfadoperation laeuft. `uebernehmen`
+    # scannt selbst; die Namen sind ein Filter per Zeichenketten-Vergleich.
+    #
+    # Die erste Fassung reichte Pfade herein und riegelte mit
+    # nc.sicherpfad.unter() ab. Das war dicht — dieser Vertrag fing den
+    # `../`-Ausbruch —, aber CodeQL meldete zwei High-Severity-Befunde
+    # "Uncontrolled data used in path expression" auf os.path.isfile und
+    # os.path.getsize, weil die Datenflussanalyse den Riegel nicht sieht.
+    # CLAUDE.md hat fuer genau diesen Fall eine Regel (W98 / recordings-join):
+    # den Pfad gar nicht erst aus Fremdeingabe bauen.
+    #
+    # Geprueft wird deshalb die staerkere Aussage: kein Name, wie boese auch
+    # immer, bringt eine Datei von aussen ins Archiv.
     aussen = _os.path.join(heim, "fremd.mp4")
     P.attrappe(aussen, 1024)
-    b3 = A.uebernehmen([aussen, _os.path.join(ordner, "..", "fremd.mp4")], ordner)
-    assert b3["aufgenommen"] == 0 and b3["fehler"] == 2, b3
-    assert any("liegt nicht unter" in m for m in b3["meldungen"]), b3["meldungen"]
+    boese_namen = [aussen,
+                   _os.path.join("..", "fremd.mp4"),
+                   "../fremd.mp4",
+                   "/etc/passwd",
+                   _os.path.join("..", "..", "etc", "passwd")]
+    b3 = A.uebernehmen(ordner, boese_namen)
+    assert b3["aufgenommen"] == 0, b3
+    # Gezaehlt wird je VERSCHIEDENER Name: die Auswahl ist eine Menge, und
+    # os.path.join("..", "fremd.mp4") ist auf POSIX woertlich "../fremd.mp4".
+    assert b3["fehler"] == len(set(boese_namen)), b3
+    assert all("Fundliste" in m for m in b3["meldungen"]), b3["meldungen"]
+    with A.db_conn() as conn:
+        pfade_in_db = [r["filepath"] for r in
+                       conn.execute("SELECT filepath FROM archive").fetchall()]
+    for pf in pfade_in_db:
+        assert _os.path.abspath(pf).startswith(_os.path.abspath(ordner) + _os.sep), \
+            "ein Pfad ausserhalb des Archivordners steht in der Tabelle: %s" % pf
 
     # ── (7) DER DECKEL MELDET SICH SELBST. Ein gekuerztes Ergebnis, das
     # seine Unvollstaendigkeit verschweigt, ist schlimmer als keines.
@@ -18066,24 +18097,27 @@ def _test_v42_w98_ordnerscan_findet_dateien_ohne_eintrag():
     # dieser Welle, und ein ungeprueftes "hier koennte etwas fehlen" ist
     # genau die Art Zeile, die nur behauptet zu helfen (W89).
 
-    # (a) Kein Scan-Verzeichnis -> jede Datei zaehlt als Fehler, mit Grund.
-    b4 = A.uebernehmen([neu1], _os.path.join(heim, "gibtsnicht"))
+    # (a) Kein Scan-Verzeichnis -> jeder gewuenschte Name zaehlt als Fehler,
+    # mit Grund. Stumm eine leere Bilanz zu melden hiesse "nichts zu tun".
+    b4 = A.uebernehmen(_os.path.join(heim, "gibtsnicht"), ["neu_eins.mp4"])
     assert b4["fehler"] == 1 and b4["aufgenommen"] == 0, b4
     assert any("Scan-Verzeichnis fehlt" in m for m in b4["meldungen"]), b4
 
-    # (b) Die Datei ist zwischen Anzeige und Knopfdruck verschwunden. Das
-    # ist der Normalfall bei einem Deck, das Minuten offen steht.
+    # (b) Die Datei ist zwischen Anzeige und Knopfdruck verschwunden. Das ist
+    # der Normalfall bei einem Deck, das Minuten offen steht — und der Grund,
+    # warum `uebernehmen` selbst neu scannt statt der Anfrage zu glauben.
     weg = datei("verschwindet.mp4")
+    assert A.finde_ohne_eintrag(ordner)["gesamt"] > 0
     _os.remove(weg)
-    b5 = A.uebernehmen([weg], ordner)
+    b5 = A.uebernehmen(ordner, ["verschwindet.mp4"])
     assert b5["fehler"] == 1 and b5["aufgenommen"] == 0, b5
-    assert any("keine Datei mehr" in m for m in b5["meldungen"]), b5
+    assert any("Fundliste" in m for m in b5["meldungen"]), b5
 
     # (c) Und der INSERT selbst faellt. Der haeufigste echte Fall ist die
     # UNIQUE-Kollision auf archive.filepath; entscheidend ist, dass EINE
     # gescheiterte Datei die anderen nicht mitnimmt.
-    heikel = datei("heikel.mp4")
-    harmlos = datei("harmlos.mp4")
+    datei("heikel.mp4")
+    datei("harmlos.mp4")
     echt_add = A.add_archive_entry
     def _add_faellt(**kw):
         if kw.get("filepath", "").endswith("heikel.mp4"):
@@ -18091,12 +18125,21 @@ def _test_v42_w98_ordnerscan_findet_dateien_ohne_eintrag():
         return echt_add(**kw)
     A.add_archive_entry = _add_faellt
     try:
-        b6 = A.uebernehmen([heikel, harmlos], ordner)
+        b6 = A.uebernehmen(ordner, ["heikel.mp4", "harmlos.mp4"])
     finally:
         A.add_archive_entry = echt_add
     assert b6["fehler"] == 1 and b6["aufgenommen"] == 1, \
         "eine gescheiterte Datei nimmt die anderen mit: %s" % b6
     assert any("heikel.mp4" in m and "UNIQUE" in m for m in b6["meldungen"]), b6
+
+    # (d) UND DER DECKEL GILT BEIM AUFNEHMEN NICHT. `finde_ohne_eintrag`
+    # deckelt die ANZEIGE bei 2000; wuerde `uebernehmen` denselben Deckel
+    # erben, nahme "alles aufnehmen" bei 2001 Dateien stillschweigend 2000
+    # und meldete Erfolg.
+    import inspect as _insp
+    quelle_u = _insp.getsource(A.uebernehmen)
+    assert "max_treffer=None" in quelle_u, \
+        "uebernehmen() erbt den Anzeige-Deckel — dann nimmt 'alles' nicht alles"
 
     # ── (9) UND DIE ROUTEN, GEFAHREN STATT GELESEN.
     app = _Flask(__name__)
@@ -18119,17 +18162,22 @@ def _test_v42_w98_ordnerscan_findet_dateien_ohne_eintrag():
     assert d["scan_root"] == _os.path.abspath(ordner), d
     assert d["unlesbar"] == 0, d
 
-    # (9b) Der Sammel-Knopf scannt SELBST neu, statt der Anfrage zu glauben.
+    # (9b) DIE ANTWORT ENTHAELT KEINEN SERVERPFAD. Das Deck waehlt ueber den
+    # relativen Namen aus; den vollen Pfad braucht es nicht, und was nicht
+    # hinausgeht, kann auch nicht zurueckgeschickt werden.
+    assert all("rel" in x for x in d["gefunden"]), d["gefunden"][:1]
+
+    # (9c) Der Sammel-Knopf scannt SELBST neu, statt der Anfrage zu glauben.
     r = kl.post("/api/archive/scan/adopt", json={"alle": True})
     d = r.get_json()
     assert r.status_code == 200 and d["ok"] and d["aufgenommen"] == offen, (offen, d)
     assert kl.get("/api/archive/scan").get_json()["gesamt"] == 0
 
-    # (9c) Leere Auswahl ist eine 400, kein stiller Erfolg.
-    assert kl.post("/api/archive/scan/adopt", json={"pfade": []}).status_code == 400
-    assert kl.post("/api/archive/scan/adopt", json={"pfade": "nein"}).status_code == 400
+    # (9d) Leere Auswahl ist eine 400, kein stiller Erfolg.
+    assert kl.post("/api/archive/scan/adopt", json={"namen": []}).status_code == 400
+    assert kl.post("/api/archive/scan/adopt", json={"namen": "nein"}).status_code == 400
 
-    # (9d) UND DER 503-FALL AM STUECK: die Route muss "ich weiss es nicht"
+    # (9e) UND DER 503-FALL AM STUECK: die Route muss "ich weiss es nicht"
     # von "kaputt" unterscheiden, sonst liest der Betreiber einen Defekt,
     # wo nur die Datenbank gerade belegt war.
     A.db_conn = lambda *a, **k: _Kaputt()
@@ -18143,7 +18191,7 @@ def _test_v42_w98_ordnerscan_findet_dateien_ohne_eintrag():
     finally:
         A.db_conn = echt_conn
 
-    # (9e) EIN FEHLENDER ORDNER IST EINE 404 MIT ABHILFE, keine leere Liste.
+    # (9f) EIN FEHLENDER ORDNER IST EINE 404 MIT ABHILFE, keine leere Liste.
     # Eine leere Liste hiesse "alles eingetragen" — die beruhigendste
     # moegliche Falschaussage.
     _ncctx.configure(cfg={"ARCHIVE_DIR": ordner,
@@ -18157,19 +18205,28 @@ def _test_v42_w98_ordnerscan_findet_dateien_ohne_eintrag():
     _ncctx.configure(cfg={"ARCHIVE_DIR": ordner, "_MANUAL_ARCHIVE_DIR": ordner},
                      log=_logging.getLogger("TikTokBot"))
 
-    # (9f) UND DER AUFFANG FUER DAS UNERWARTETE. 500 mit gesaeuberter
+    # (9g) UND DER AUFFANG FUER DAS UNERWARTETE. 500 mit gesaeuberter
     # Meldung, nicht ein Flask-Stacktrace mit Serverpfaden darin.
-    echt_finde = _rt.finde_ohne_eintrag
-    _rt.finde_ohne_eintrag = lambda *a, **k: (_ for _ in ()).throw(
-        RuntimeError("etwas ganz anderes in %s" % heim))
-    try:
-        for r in (kl.get("/api/archive/scan"),
-                  kl.post("/api/archive/scan/adopt", json={"alle": True})):
-            assert r.status_code == 500, (r.status_code, r.get_json())
+    #
+    # Jede Route bekommt ihre EIGENE Naht: die Scan-Route ruft
+    # finde_ohne_eintrag, die Adopt-Route ruft uebernehmen (und das scannt
+    # intern selbst). Beide ueber denselben Namen zu brechen liess die zweite
+    # Probe ins Leere laufen — sie antwortete 200, und der Vertrag hielt das
+    # fuer einen Erfolg des Auffangs.
+    def _wirft(*a, **k):
+        raise RuntimeError("etwas ganz anderes in %s" % heim)
+    for name, weg, last in (("finde_ohne_eintrag", "GET", None),
+                            ("uebernehmen", "POST", {"alle": True})):
+        echt = getattr(_rt, name)
+        setattr(_rt, name, _wirft)
+        try:
+            r = (kl.get("/api/archive/scan") if weg == "GET"
+                 else kl.post("/api/archive/scan/adopt", json=last))
+            assert r.status_code == 500, (name, r.status_code, r.get_json())
             assert heim not in str(r.get_json()), \
                 "die 500 spiegelt einen Serverpfad: %s" % r.get_json()
-    finally:
-        _rt.finde_ohne_eintrag = echt_finde
+        finally:
+            setattr(_rt, name, echt)
 
     ok("W98: der Ordnerscan findet Video-Dateien ohne Archiv-Eintrag")
     ok("W98: Pfade werden auf beiden Seiten normalisiert — keine Scheinfunde")

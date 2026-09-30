@@ -9594,7 +9594,10 @@ async function arcScan(){
   const mb=_arcScanTreffer.reduce((a,e)=>a+(e.mb||0),0);
   const rest=d.gedeckelt?(' '+T('(nur die ersten ')+_arcScanTreffer.length+T(' gezeigt)')):'';
   if(out) out.textContent=d.gesamt+T(' Datei(en) ohne Eintrag, ')+mb.toFixed(1)+' MB'+rest;
-  const namen=_arcScanTreffer.slice(0,12).map(e=>'• '+e.name+' ('+e.mb+' MB)').join('\n');
+  /* Angezeigt wird der relative Name — er ist auch der Schluessel, mit dem
+     das Aufnehmen auswaehlt. Der volle Pfad wird bewusst NICHT
+     zurueckgeschickt: der Server baut ihn aus seinem eigenen Scan. */
+  const namen=_arcScanTreffer.slice(0,12).map(e=>'• '+(e.rel||e.name)+' ('+e.mb+' MB)').join('\n');
   const frage=d.gesamt+T(' Datei(en) ohne Archiv-Eintrag gefunden in\n')+d.scan_root+':\n\n'+namen
     +(_arcScanTreffer.length>12?('\n… '+(_arcScanTreffer.length-12)+T(' weitere')):'')
     +T('\n\nIn das Archiv aufnehmen? Es wird nichts verschoben oder gelöscht — nur eingetragen.');
