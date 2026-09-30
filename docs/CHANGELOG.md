@@ -11,6 +11,62 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Neu — Das Archiv sieht endlich auch die Platte (v4.2 W98)
+
+Der Betreiber:
+
+> „Und mir fehlt am Archiv ein Button wo er den Ordner nach Video files Prüft"
+
+Der Knopf fehlte, und der Befund dahinter ist größer als der Knopf: **die
+Richtung Ordner → Datenbank gab es im Archiv gar nicht.** Vorhanden waren der
+Integritäts-Check (`/api/archive/check`, Einträge **ohne Datei**) und die
+Dubletten-Suche (identische Kopien). Eine Videodatei, die im Archivordner liegt
+und **keine** Datenbankzeile hat, fand nichts — sie war im Deck schlicht nicht
+vorhanden.
+
+Das trifft genau die Lage nach W95/W96: wer mit einer leeren Datenbank startet,
+hat jede Datei auf der Platte ohne Eintrag, und ohne diesen Knopf bleibt sie es.
+
+Neu: **🔍 Ordner prüfen** neben dem Integritäts-Check, `GET /api/archive/scan`
+(nur lesend: Name, Größe, Datum, Art) und `POST /api/archive/scan/adopt`
+(trägt ein). Aufnehmen legt **nur Zeilen an** — es verschiebt, kopiert und
+löscht nichts.
+
+**Die Falle, die das Ganze still wertlos gemacht hätte,** ist dieselbe wie in
+W97, eine Datei weiter: Pfad-Schreibweisen. In der Datenbank kann ein relativer
+Pfad stehen, der Scan liefert absolute. Ohne Normalisierung auf **beiden**
+Seiten sieht jede bereits eingetragene Datei wie eine neue aus, und der Knopf
+bietet an, das ganze Archiv ein zweites Mal aufzunehmen. Der Vertrag trägt
+deshalb einen relativ eingetragenen Bestand und einen relativen Scan-Ordner —
+die Vorgabe im Bestand ist `"archive"`, also relativ.
+
+**Und die Regel aus W91 gilt hier mit umgekehrtem Vorzeichen.** Fällt die
+Datenbankabfrage aus, bricht der Scan ab (`BestandUnbekannt`, HTTP **503**)
+statt jede Datei als neu zu melden. 503 und nicht 500: hier ist nichts kaputt,
+wir wissen nur nicht genug, um zu entscheiden.
+
+Zwei Dinge hat die eigene Prüfung gefangen, nicht das Nachdenken:
+
+Die Stille-Sperre fiel auf meinem `os.stat`-Auffang, und sie hatte recht. Der
+harmlose Fall ist „zwischen `listdir` und `stat` gelöscht"; derselbe Zweig
+fängt aber ein **Rechteproblem**, und dann sucht der Betreiber dauerhaft eine
+Aufnahme, die er auf der Platte sieht, während der Knopf schweigt. Gemeldet
+wird jetzt über `nc.meldetakt` (gedrosselt, Schlüssel ist der Kanal), und die
+Zahl steht als `unlesbar` in der Antwort.
+
+Der Vertrag `os.getenv("ARCHIVE…") == 1` fiel, weil mein `_scan_wurzel()` die
+Auflösung aus `api_archive_duplicates` kopiert hatte. Die richtige Antwort war
+nicht, den Zähler hochzusetzen, sondern die Dublette aufzulösen: beide
+Ordner-Knöpfe benutzen jetzt **eine** Funktion und sehen damit nachweislich
+denselben Ordner. `?root=` bleibt dem Dubletten-Scan; der Ordner-Scan ruft ohne
+Argument und lässt sich von einer Anfrage nicht auf ein fremdes Verzeichnis
+richten.
+
+Ein Vertrag mit 14 Abschnitten, **19 Mutationsproben, alle gefallen**. Die
+Überdeckung ist dabei um 10 Anweisungen **gestiegen** (9639 → 9629), obwohl
+123 dazugekommen sind: die sechs zunächst ungeprüften Zeilen waren alle neue
+Fehlerpfade und sind jetzt gedeckt statt weggeratscht.
+
 ### Behoben — Drei Befunde aus den Logs vom 19.09. (v4.2 W97)
 
 Drei Fehlerbilder aus `debug.log`, `debug.log.1` und `error.log`. Keines

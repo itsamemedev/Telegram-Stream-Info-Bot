@@ -9485,7 +9485,7 @@ VIEW_LOADERS.wall = async function(){
           <button class="btn sm" onclick="arcReset()">Reset</button>
           <button class="btn sm" onclick="loadArchive(true)" aria-label="Aktualisieren" title="Aktualisieren">↻</button>
         </div>
-        <div class="body"><div class="faint" id="arc_disk" style="font-size:10.5px;margin-bottom:8px">—</div><div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px"><label class="btn sm" style="cursor:pointer;margin:0">⬆ Upload<input type="file" id="arc_up_file" style="display:none" onchange="arcUpload()"></label><input class="field" id="arc_up_title" placeholder="Titel (optional)" style="width:150px"><button class="btn sm" onclick="arcCheck()">Integritäts-Check</button><button class="btn sm" onclick="arcDedup()">⊟ Dubletten</button><button class="btn sm" onclick="arcBulkDelete()">🗑 Auswahl löschen</button><span class="faint" id="arc_mgmt_out" style="font-size:10.5px"></span></div><div id="arc_list" class="skel" aria-busy="true"><i></i><i></i><i></i></div><div id="arc_more" style="text-align:center;margin-top:10px"></div></div>
+        <div class="body"><div class="faint" id="arc_disk" style="font-size:10.5px;margin-bottom:8px">—</div><div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px"><label class="btn sm" style="cursor:pointer;margin:0">⬆ Upload<input type="file" id="arc_up_file" style="display:none" onchange="arcUpload()"></label><input class="field" id="arc_up_title" placeholder="Titel (optional)" style="width:150px"><button class="btn sm" onclick="arcCheck()">Integritäts-Check</button><button class="btn sm" onclick="arcScan()">🔍 Ordner prüfen</button><button class="btn sm" onclick="arcDedup()">⊟ Dubletten</button><button class="btn sm" onclick="arcBulkDelete()">🗑 Auswahl löschen</button><span class="faint" id="arc_mgmt_out" style="font-size:10.5px"></span></div><div id="arc_list" class="skel" aria-busy="true"><i></i><i></i><i></i></div><div id="arc_more" style="text-align:center;margin-top:10px"></div></div>
       </div>`;
     root.dataset.built='1';
     if(!window._wallTimer) window._wallTimer=setInterval(()=>{ if(CURRENT_VIEW==='wall' && !document.hidden){ loadWall(); loadSurveil(); } }, 8000);
@@ -9568,6 +9568,48 @@ async function arcCheck(){
   if(out) out.textContent=T('Geprüft: ')+(d.checked!=null?d.checked:'?')+T(' · fehlend: ')+miss+
     (miss? ' (Einträge ohne Datei)':'');
   if(miss) loadArchive(true);
+}
+/* v4.2-W98: die Gegenrichtung zum Integritaets-Check. Der prueft die
+   Datenbank gegen die Platte; hier die Platte gegen die Datenbank. Eine von
+   Hand hineinkopierte Aufnahme — oder nach einem Neuaufbau der Datenbank der
+   komplette Bestand — war im Archiv sonst unsichtbar. */
+let _arcScanTreffer=[];
+async function arcScan(){
+  const out=$('#arc_mgmt_out');
+  if(out) out.textContent=T('… prüfe Ordner');
+  const d=await apiGet('/api/archive/scan');
+  if(!d||!d.ok){
+    /* Die Meldung sagt, was zu tun ist. Ein 503 heisst hier nicht, dass
+       etwas kaputt ist, sondern dass die Datenbank nicht zu lesen war und
+       deshalb nichts geraten wurde. */
+    if(out) out.textContent=(d&&d.error)||T('Ordner-Prüfung fehlgeschlagen');
+    if(typeof toast==='function') toast((d&&d.error)||T('Ordner-Prüfung fehlgeschlagen'),'err');
+    return;
+  }
+  _arcScanTreffer=d.gefunden||[];
+  if(!d.gesamt){
+    if(out) out.textContent=T('Geprüft: ')+(d.geprueft||0)+T(' Video-Dateien · alle haben einen Eintrag.');
+    return;
+  }
+  const mb=_arcScanTreffer.reduce((a,e)=>a+(e.mb||0),0);
+  const rest=d.gedeckelt?(' '+T('(nur die ersten ')+_arcScanTreffer.length+T(' gezeigt)')):'';
+  if(out) out.textContent=d.gesamt+T(' Datei(en) ohne Eintrag, ')+mb.toFixed(1)+' MB'+rest;
+  const namen=_arcScanTreffer.slice(0,12).map(e=>'• '+e.name+' ('+e.mb+' MB)').join('\n');
+  const frage=d.gesamt+T(' Datei(en) ohne Archiv-Eintrag gefunden in\n')+d.scan_root+':\n\n'+namen
+    +(_arcScanTreffer.length>12?('\n… '+(_arcScanTreffer.length-12)+T(' weitere')):'')
+    +T('\n\nIn das Archiv aufnehmen? Es wird nichts verschoben oder gelöscht — nur eingetragen.');
+  if(typeof confirm==='function' && !confirm(frage)) return;
+  if(out) out.textContent=T('… nehme auf');
+  const r=await apiPost('/api/archive/scan/adopt',{alle:true});
+  if(!r){ if(out) out.textContent=T('Aufnehmen fehlgeschlagen'); return; }
+  const teile=[T('Aufgenommen: ')+(r.aufgenommen||0)];
+  if(r.uebersprungen) teile.push(r.uebersprungen+T(' schon vorhanden'));
+  if(r.fehler) teile.push(r.fehler+T(' Fehler'));
+  if(out) out.textContent=teile.join(' · ');
+  if(typeof toast==='function') toast(teile.join(' · '), r.fehler?'err':'ok');
+  /* Die einzelnen Gruende gehoeren sichtbar, nicht nur gezaehlt. */
+  if(r.meldungen&&r.meldungen.length&&typeof console!=='undefined') console.warn('Ordner-Scan:',r.meldungen);
+  loadArchive(true);
 }
 async function arcBulkDelete(){
   const ids=Array.from(document.querySelectorAll('#arc_tb .arc-cb:checked'))

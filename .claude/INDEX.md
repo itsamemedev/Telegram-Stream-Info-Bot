@@ -43,7 +43,7 @@ Zahlen sind Zeilennummern für `ncpatch show` / `ncpatch sym`.
   9563  GET              /sw.js                                           pwa_service_worker
 ```
 
-## Flask-Routen in Blueprints, nc/routes/ (333)
+## Flask-Routen in Blueprints, nc/routes/ (335)
 
 ```
    182  GET              /api/active-recordings                           api_active_recordings   [nc/routes/auskunft.py]
@@ -74,17 +74,19 @@ Zahlen sind Zeilennummern für `ncpatch show` / `ncpatch sym`.
   1208  GET              /api/ai/retry-advice/<username>                  api_ai_retry_advice   [nc/routes/ai.py]
   1067  GET              /api/ai/segments                                 api_ai_segments   [nc/routes/ai.py]
    911  GET              /api/ai/skills                                   api_ai_skills   [nc/routes/ai.py]
-   389  GET              /api/archive                                     api_archive   [nc/routes/archive.py]
-   653  DELETE           /api/archive/<int:eid>                           api_archive_delete   [nc/routes/archive.py]
-   535  POST             /api/archive/<int:eid>/rename                    api_archive_rename   [nc/routes/archive.py]
-   518  POST             /api/archive/bulk-delete                         api_archive_bulk_delete   [nc/routes/archive.py]
-   510  GET              /api/archive/check                               api_archive_check   [nc/routes/archive.py]
-   346  GET              /api/archive/duplicates                          api_archive_duplicates   [nc/routes/archive.py]
-   362  POST             /api/archive/duplicates/delete                   api_archive_duplicates_delete   [nc/routes/archive.py]
-   697  POST             /api/archive/index/<int:rid>                     api_archive_index_one   [nc/routes/archive.py]
-   662  GET              /api/archive/search                              api_archive_search   [nc/routes/archive.py]
-   682  GET              /api/archive/status                              api_archive_status   [nc/routes/archive.py]
-   569  POST             /api/archive/upload                              api_archive_upload   [nc/routes/archive.py]
+   493  GET              /api/archive                                     api_archive   [nc/routes/archive.py]
+   757  DELETE           /api/archive/<int:eid>                           api_archive_delete   [nc/routes/archive.py]
+   639  POST             /api/archive/<int:eid>/rename                    api_archive_rename   [nc/routes/archive.py]
+   622  POST             /api/archive/bulk-delete                         api_archive_bulk_delete   [nc/routes/archive.py]
+   614  GET              /api/archive/check                               api_archive_check   [nc/routes/archive.py]
+   450  GET              /api/archive/duplicates                          api_archive_duplicates   [nc/routes/archive.py]
+   466  POST             /api/archive/duplicates/delete                   api_archive_duplicates_delete   [nc/routes/archive.py]
+   801  POST             /api/archive/index/<int:rid>                     api_archive_index_one   [nc/routes/archive.py]
+   374  GET              /api/archive/scan                                api_archive_scan   [nc/routes/archive.py]
+   405  POST             /api/archive/scan/adopt                          api_archive_scan_adopt   [nc/routes/archive.py]
+   766  GET              /api/archive/search                              api_archive_search   [nc/routes/archive.py]
+   786  GET              /api/archive/status                              api_archive_status   [nc/routes/archive.py]
+   673  POST             /api/archive/upload                              api_archive_upload   [nc/routes/archive.py]
     49  GET/POST         /api/audio/config                                api_audio_config   [nc/routes/audio.py]
     78  POST             /api/audio/testtone                              api_audio_testtone   [nc/routes/audio.py]
    216  GET/POST         /api/auto-archive-rules                          api_archive_rules   [nc/routes/wartung.py]
@@ -1027,7 +1029,7 @@ __init__.py            —
 abo.py                 room_is_abo
 admod.py               build_allowlist
 aidb.py                add_log_entry, conv_messages
-archive.py             add_archive_entry, compute_recording_fingerprint, configure, delete_archive_entry, evaluate_archive_rule, get_archive_entries_paged, get_archive_entry, run_archive_file_check
+archive.py             add_archive_entry, class BestandUnbekannt, compute_recording_fingerprint, configure, delete_archive_entry, evaluate_archive_rule, finde_ohne_eintrag, get_archive_entries_paged, get_archive_entry, run_archive_file_check, uebernehmen
 archivename.py         open_unique
 archiverules.py        add_archive_rule, delete_archive_rule, list_archive_rules, run_archive_rules
 audio_cue.py           cue_pcm, duck_ratio, mix_chain, silence_pcm, tone_pcm

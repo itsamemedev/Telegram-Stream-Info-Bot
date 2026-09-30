@@ -31,7 +31,8 @@ from nc.dbwrap import db_conn
 from nc.archive import (get_archive_entries_paged, run_archive_file_check,
                         _scan_for_duplicates, add_archive_entry,
                         get_archive_entry, delete_archive_entry,
-                        _kind_from_filename)
+                        _kind_from_filename, finde_ohne_eintrag, uebernehmen,
+                        BestandUnbekannt, VIDEO_ENDUNGEN)
 from nc.textmore import _safe_archive_filename
 from nc.intel import library as _intel_lib
 from nc import archivename as _nc_archivename
@@ -342,13 +343,116 @@ def rename_archive_entry(eid: int, new_name: str):
     }
 
 
+def _scan_wurzel(vorgabe=""):
+    """Welcher Ordner geprueft wird — die EINE Stelle fuer beide Knoepfe.
+
+    Zwei Knoepfe, die denselben Ordner meinen, aber verschiedene sehen, waeren
+    schlimmer als ein fehlender Knopf. Deshalb steht diese Aufloesung nicht
+    zweimal da: `api_archive_duplicates` hatte sie bis v4.2-W98 inline, und
+    der Ordner-Scan haette sie kopiert — dann waere der Vertrag gefallen, der
+    die rohen Env-Lesepfade in dieser Datei zaehlt. Er ist gefallen, und das
+    war die richtige Antwort: nicht den Zaehler hochsetzen, sondern die
+    Dublette aufloesen.
+
+    Der rohe Env-Zugriff bleibt genau einer und bleibt hier. Er ist eine
+    Altlast aus dem Monolithen (der Bot friert ARCHIVE_DIR oben bereits ein);
+    sie wurde beim Verschieben bewusst nicht "nebenbei repariert".
+
+    Als Funktion gelesen und nicht als Modul-Konstante: .env wird teils erst
+    nach den ersten Imports geladen (CLAUDE.md, W67).
+
+    `vorgabe` ist der `?root=`-Parameter des Dubletten-Scans und NUR der. Der
+    Ordner-Scan ruft ohne Argument — er laesst sich also von einer Anfrage
+    nicht auf ein fremdes Verzeichnis richten.
+    """
+    wurzel = ((vorgabe or "").strip() or _c().cfg["_MANUAL_ARCHIVE_DIR"] or
+              os.getenv("ARCHIVE_DIR", "").strip() or "archive")
+    return os.path.abspath(wurzel)
+
+
+@bp.route("/api/archive/scan")
+def api_archive_scan():
+    """v4.2-W98: Video-Dateien im Archivordner, die KEINEN Eintrag haben.
+
+    Die Gegenrichtung zu /api/archive/check. Bis hierher gab es sie nicht:
+    das Deck kannte nur Eintraege ohne Datei, nie Dateien ohne Eintrag. Eine
+    von Hand hineinkopierte Aufnahme — oder nach einem Neuaufbau der
+    Datenbank der komplette Bestand — war damit im Archiv unsichtbar.
+
+    Nur lesend. Das Aufnehmen ist ein zweiter, ausdruecklicher Schritt.
+    """
+    wurzel = _scan_wurzel()
+    try:
+        ergebnis = finde_ohne_eintrag(wurzel)
+    except BestandUnbekannt as e:
+        # 503 und nicht 500: hier ist nichts kaputt, wir wissen nur nicht
+        # genug, um zu entscheiden. Die Unterscheidung ist der Grund, warum
+        # es diese Ausnahme ueberhaupt gibt (W91).
+        log.error("Archiv-Ordnerscan abgebrochen: %s", e)
+        return jsonify(ok=False, error=_fehler_text(e, "api_archive_scan")), 503
+    except Exception as e:
+        log.error("Archiv-Ordnerscan fehlgeschlagen: %s", e)
+        return jsonify(ok=False, error=_fehler_text(e, "api_archive_scan")), 500
+    if not ergebnis["ok"]:
+        return jsonify(ok=False, scan_root=wurzel, error=_t(
+            "Ordner nicht gefunden — ARCHIVE_DIR bzw. MANUAL_ARCHIVE_DIR prüfen")), 404
+    # `ergebnis` traegt sein `ok` selbst — ein zweites daneben ist ein
+    # TypeError, kein ueberschriebener Wert. Vom Vertrag gefangen.
+    return jsonify(endungen=list(VIDEO_ENDUNGEN), **ergebnis)
+
+
+@bp.route("/api/archive/scan/adopt", methods=["POST"])
+def api_archive_scan_adopt():
+    """v4.2-W98: gefundene Dateien in die Archivtabelle aufnehmen.
+
+    Body: {"pfade": [...]} oder {"alle": true}. `alle` scannt selbst neu,
+    statt der Anfrage zu glauben — zwischen Anzeige und Knopfdruck koennen
+    Minuten liegen, und die Liste von vorhin ist dann eine Behauptung ueber
+    den Ordner, keine Beobachtung. Dieselbe Lehre wie beim Aufraeumer in
+    W91, dort mit der Datenbank statt mit dem Ordner.
+
+    Aufnehmen legt nur Zeilen an; es verschiebt, kopiert und loescht nichts.
+    """
+    last = request.get_json(silent=True) or {}
+    wurzel = _scan_wurzel()
+    try:
+        if last.get("alle"):
+            ergebnis = finde_ohne_eintrag(wurzel)
+            if not ergebnis["ok"]:
+                return jsonify(ok=False, error=_t(
+                    "Ordner nicht gefunden — ARCHIVE_DIR bzw. MANUAL_ARCHIVE_DIR prüfen")), 404
+            pfade = [e["pfad"] for e in ergebnis["gefunden"]]
+        else:
+            pfade = last.get("pfade") or []
+            if not isinstance(pfade, list):
+                return jsonify(ok=False, error=_t("pfade muss eine Liste sein")), 400
+            if not pfade:
+                return jsonify(ok=False, error=_t("Nichts ausgewählt")), 400
+            if len(pfade) > 2000:
+                return jsonify(ok=False, error=_t("max 2000 Pfade pro Aufruf")), 400
+        bericht = uebernehmen(pfade, wurzel)
+    except BestandUnbekannt as e:
+        log.error("Archiv-Uebernahme abgebrochen: %s", e)
+        return jsonify(ok=False, error=_fehler_text(e, "api_archive_scan_adopt")), 503
+    except Exception as e:
+        log.error("Archiv-Uebernahme fehlgeschlagen: %s", e)
+        return jsonify(ok=False, error=_fehler_text(e, "api_archive_scan_adopt")), 500
+    log.info("Archiv-Ordnerscan: %d aufgenommen, %d uebersprungen, %d Fehler (%s)",
+             bericht["aufgenommen"], bericht["uebersprungen"], bericht["fehler"], wurzel)
+    # 207, wenn etwas schiefging, aber nicht alles — dieselbe Stufe wie beim
+    # Sammel-Loeschen eine Funktion weiter unten.
+    code = 207 if (bericht["fehler"] and bericht["aufgenommen"]) else 200
+    return jsonify(ok=not bericht["fehler"], scan_root=wurzel,
+                   endungen=list(VIDEO_ENDUNGEN), **bericht), code
+
+
 @bp.route("/api/archive/duplicates")
 def api_archive_duplicates():
     """Scannt nach Duplikaten. Query-Param 'root' kann anderen Pfad geben
        (default: MANUAL_ARCHIVE_DIR env-var, fallback ARCHIVE_DIR, fallback ./archive)."""
-    scan_root = (request.args.get("root") or _c().cfg["_MANUAL_ARCHIVE_DIR"] or
-                 os.getenv("ARCHIVE_DIR", "").strip() or "archive")
-    scan_root = os.path.abspath(scan_root)
+    # v4.2-W98: dieselbe Aufloesung wie der Ordner-Scan, aus EINER Funktion.
+    # Verhalten unveraendert — `?root=` schlaegt weiter alles andere.
+    scan_root = _scan_wurzel(request.args.get("root"))
     dup_groups, stats = _scan_for_duplicates(scan_root)
     return jsonify({
         "ok": True,
