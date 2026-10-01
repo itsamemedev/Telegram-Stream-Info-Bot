@@ -56,6 +56,32 @@ export LC_ALL
 
 NC_MOTD_VERSION="2.1"
 
+# v4.2-W100: Momentaufnahme der WIRKLICH von aussen gesetzten Variablen —
+# noch VOR dem Vorgabenblock. Das ist der Kern: `WIDTH="${WIDTH:-54}"` setzt
+# WIDTH, und eine Pruefung auf "ist gesetzt" danach ist fuer jede Variable
+# wahr. Der erste Entwurf dieser Reparatur stand hinter den Vorgaben und
+# liess damit die motd.conf NIE mehr wirken — gefangen hat das der eigene
+# Vertrag (Datei 216 == Vorgabe 216), nicht das Nachdenken.
+#
+# Warum es das ueberhaupt gibt: der Kopf sagt seit je "per
+# /etc/nightcrawler/motd.conf ODER Umgebung ueberschreibbar", der Code lud die
+# Datei aber NACH den Vorgaben und gewann damit immer. Gemessen, nachdem
+# tools/installer.sh die Datei angelegt hatte (SERVICE=''):
+#
+#     SERVICE=ausdruecklich  ohne conf -> SERVICE=[ausdruecklich]
+#     SERVICE=ausdruecklich  mit  conf -> SERVICE=[]
+#
+# Reihenfolge jetzt: Umgebung > motd.conf > Vorgabe.
+_MOTD_ENV_GESETZT=""
+for _v in SERVICE BOT_DIR DASH_PORT DB DISK_TARGET WIDTH BARW SHOW_REC \
+          REC_CACHE_TTL CPU_SAMPLE COLOR_MODE DEST; do
+  # `+gesetzt` und nicht `-n`: ein ausdruecklich LEERES SERVICE= ist eine
+  # Aussage ("nicht automatisch suchen") und keine fehlende Angabe.
+  if [ -n "${!_v+gesetzt}" ]; then
+    _MOTD_ENV_GESETZT="$_MOTD_ENV_GESETZT $_v=$(printf '%q' "${!_v}")"
+  fi
+done
+
 # ── Vorgaben (jede per /etc/nightcrawler/motd.conf oder Umgebung ueberschreibbar)
 SERVICE="${SERVICE:-}"          # leer = automatisch suchen
 BOT_DIR="${BOT_DIR:-}"          # leer = automatisch suchen
@@ -90,6 +116,15 @@ fi
 
 # shellcheck source=/dev/null
 [ -r "$CONF" ] && . "$CONF"
+
+# Und die Momentaufnahme wieder darueber — damit gewinnt, was der Aufrufer
+# ausdruecklich gesagt hat. Siehe die Begruendung oben am Schnappschuss.
+[ -n "$_MOTD_ENV_GESETZT" ] && eval "$_MOTD_ENV_GESETZT"
+unset _MOTD_ENV_GESETZT _v
+
+# Die Momentaufnahme wieder darueber — damit gewinnt, was der Aufrufer sagte.
+[ -n "$_MOTD_ENV_GESETZT" ] && eval "$_MOTD_ENV_GESETZT"
+unset _MOTD_ENV_GESETZT _v
 
 # v4.1-W17: Mehrsprachigkeit. Der Katalog liegt neben dem Werkzeug; ist er nicht
 # erreichbar (die installierte Kopie unter /etc/update-motd.d/ hat kein

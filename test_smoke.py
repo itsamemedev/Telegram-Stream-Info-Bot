@@ -15,6 +15,7 @@ die brauchen einen laufenden Event-Loop, den es im Testharnisch nicht gibt.
 Der Code liefert dort planmaessig {"transient": true}; das IST das korrekte
 Verhalten und wird hier festgehalten.
 """
+import asyncio
 import os
 import sys
 import pruefhilfen as _ph
@@ -368,6 +369,105 @@ def main():
     assert m.RESTREAM_OVERLAY_MODE == "html", m.RESTREAM_OVERLAY_MODE
     assert m.RESTREAM_OVERLAY_HTML_SIZE == "auto", m.RESTREAM_OVERLAY_HTML_SIZE
     ok("Defaults aktiv: OVERLAY_MODE=html, HTML_SIZE=auto")
+
+    # ── v4.2-W100: ein toter Telegram-Teil muss den Prozess SCHEITERN lassen
+    #
+    # Gemessen an einer frischen Installation aus tools/installer.sh — der
+    # kann BOT_TOKEN nicht erfinden und laesst ihn leer:
+    #
+    #     ERROR  background task 'run_bot' crashed: BOT_TOKEN fehlt in .env
+    #     INFO   Stopping…
+    #     $ echo $?   ->  0
+    #
+    # Fuer systemd ist 0 ein sauberes Ende. Der Installer verdrahtet
+    # `OnFailure=nightcrawler-notify@%n.service`, und die Totmann-Meldung ist
+    # genau dafuer gebaut, dass ein ganz gestorbener Bot nicht stundenlang
+    # unbemerkt bleibt — bei 0 feuert sie nicht. Mit `Restart=always` lief der
+    # Dienst alle zehn Sekunden im Kreis, ohne dass jemand etwas erfuhr.
+    #
+    # Geprueft werden die zwei herausgeloesten Schritte, nicht ein voller
+    # Botstart: der braeuchte zwanzig Sekunden und das Netz.
+    class _Task:
+        """Attrappe eines asyncio-Tasks — nur was die Entscheidung liest."""
+
+        def __init__(self, exc=None, wirft=False):
+            self._exc, self._wirft = exc, wirft
+
+        def exception(self):
+            if self._wirft:
+                raise asyncio.CancelledError()
+            return self._exc
+
+    fehler = RuntimeError("BOT_TOKEN fehlt in .env")
+
+    # (a) Der Botteil ist gar nicht fertig -> die Wartezeit endete am Signal.
+    #
+    # Die Attrappe traegt dabei ABSICHTLICH eine Ausnahme: ein `_Task()` ohne
+    # eine wuerde auch ohne die Abfrage None liefern, und die Probe dazu waere
+    # entwischt. Genau das ist beim ersten Durchgang passiert — ein Vertrag,
+    # der die Verzweigung nicht beobachtbar macht, prueft sie nicht.
+    t = _Task(exc=fehler)
+    assert m._fatal_vom_botteil(set(), t) == ("signal", None), \
+        "ein Stop-Signal wird als Fehlschlag gewertet — dann endet JEDER " \
+        "geplante Halt mit Exitcode 4"
+
+    # (b) Botteil fertig, mit Ausnahme -> das ist der Fatalfall.
+    t = _Task(exc=fehler)
+    assert m._fatal_vom_botteil({t}, t) == ("fehler", fehler), \
+        "der gestorbene Telegram-Teil wird nicht erkannt"
+
+    # (c) Botteil fertig, OHNE Ausnahme -> run_bot ist regulaer zurueck.
+    t = _Task(exc=None)
+    assert m._fatal_vom_botteil({t}, t) == ("regulaer", None)
+
+    # (d) Abgebrochen -> nie ein Fehlschlag. Ein abgebrochener asyncio-Task
+    # WIRFT bei exception(), er liefert nichts; deshalb ist das der einzige
+    # Fall, der hier zaehlt. Eine Vorab-Abfrage auf cancelled() stand hier
+    # und ist entfallen: die Probe dafuer entwischte, weil beide Wege bei
+    # None enden — sie aenderte nichts.
+    t = _Task(wirft=True)
+    assert m._fatal_vom_botteil({t}, t) == ("abbruch", None), \
+        "ein CancelledError aus exception() wird als Fehler gewertet"
+
+    # (d2) Und jede Lage hat einen Klartext — eine Lage, die nur der Code
+    # kennt, steht am Ende als nackter Name in der Abschiedszeile.
+    for lage in ("signal", "abbruch", "regulaer", "fehler"):
+        assert m._ABSCHIED.get(lage), "kein Klartext fuer Lage %r" % lage
+
+    # (e) Und der Abschluss setzt den Exitcode — 4, weil 1 und 2 der
+    # Selbsttest belegt und 3 die unlesbare Datenbank (W92).
+    assert m._abschluss(None) is None, "ein sauberes Ende darf nicht scheitern"
+    try:
+        m._abschluss(fehler)
+        raise AssertionError("_abschluss() laeuft bei einem Fatalfehler durch "
+                             "— der Prozess endet dann wieder mit 0")
+    except SystemExit as e:
+        assert e.code == 4, "Exitcode %r statt 4" % (e.code,)
+    ok("W100: ein gestorbener Telegram-Teil endet mit Exitcode 4, nicht mit 0")
+    ok("W100: Signal und Abbruch bleiben ein sauberes Ende (Exitcode 0)")
+
+    # ── v4.2-W100: der Selbsttest kannte BOT_TOKEN nicht
+    #
+    # 21 Pruefungen auf 220 Zeilen, der DISCORD_BOT_TOKEN darunter — der
+    # Telegram-Token nicht. Gemessen an derselben frischen Installation:
+    # "STARTKLAR · 13 ok · 7 Warnungen · 0 Fehler", und eine Sekunde spaeter
+    # starb der Start. Der Installer nennt diesen Lauf "der Unterschied
+    # zwischen 'installiert' und 'laeuft'".
+    quelle = open(os.path.join(ROOT, "bot.py"), encoding="utf-8").read()
+    i = quelle.index("async def _selfcheck(")
+    rumpf = quelle[i:quelle.index("\ndef ", i + 10)]
+    assert "BOT_TOKEN" in rumpf, \
+        "_selfcheck prueft BOT_TOKEN nicht — er meldet STARTKLAR fuer eine " \
+        "Konfiguration, die nicht starten kann"
+    # Als FEHLER, nicht als Warnung: eine Warnung meldet weiter STARTKLAR,
+    # und genau diese Auskunft war falsch.
+    j = rumpf.index("_bt = ")
+    zweig = rumpf[j:rumpf.index("else:", j)]
+    assert zweig.count('add("fail", "BOT_TOKEN"') == 2, \
+        "leer und missgebildet muessen BEIDE harte Fehler sein: %s" % zweig
+    assert 'add("warn", "BOT_TOKEN"' not in rumpf, \
+        "BOT_TOKEN als Warnung gemeldet — dann steht weiter STARTKLAR da"
+    ok("W100: der Selbsttest prueft BOT_TOKEN, und zwar als harten Fehler")
 
     print("test_smoke OK \u2014 %d Vertraege gruen" % PASS)
 
