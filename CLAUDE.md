@@ -4,13 +4,29 @@
 
 TikTok-Live-Überwachung, Aufnahme, Multi-Ziel-Restream und KI-Moderation
 (AZRAEL). Ein Python-Monolith plus zwei bot-freie Bibliotheken, betrieben als
-systemd-Dienst auf einer 8-Kern-Ubuntu-Box. Auslieferung läuft per ZIP über den
-Bestand, nicht per `git pull`, siehe `.claude/skills/nc-betrieb`. Das
-GitHub-Repo trägt Historie, CI und Issues — es ist nicht der Deploy-Weg.
+systemd-Dienst auf einer 8-Kern-Ubuntu-Box.
+
+**Es gibt ZWEI Wege, wie Code auf den Server kommt** — dieser Absatz nannte bis
+v4.2-W104 nur einen und hat damit eine ganze Welle lang falsch beraten:
+
+1. **Die Update-Funktion** (`nc/updater.py`), bedient aus dem Deck oder per
+   Telegram. Sie holt den Stand aus dem GitHub-Repo und spielt ihn Datei für
+   Datei ein. **Das ist der Weg, den der Betreiber benutzt.** Sie schreibt die
+   Dateien und **startet nichts neu** — ein laufender Python-Prozess behält
+   seinen Bytecode, also wirkt ein Update erst nach `systemctl restart`. Seit
+   W104 meldet `nc/laufstand.py` das (in `/healthz` als `laufstand` und
+   gedrosselt auf `error`), statt es dem Zufall zu überlassen.
+2. **ZIP über den Bestand** (`tools/deploy.sh`, `tools/build_release.py`),
+   siehe `.claude/skills/nc-betrieb`. Nicht per `git pull`.
+
+Hier stand „Das GitHub-Repo trägt Historie, CI und Issues — es ist nicht der
+Deploy-Weg." Für Weg 2 stimmt das; die Update-Funktion macht das Repo aber
+genau dazu. **Wer eine ZIP anbietet, wo der Betreiber die Update-Funktion
+benutzt, berät an der Lage vorbei.**
 
 ## Die eine Regel
 
-`bot.py` hat **24.887 Zeilen / 1,2 MB ≈ 295.000 Token**. Diese Datei wird
+`bot.py` hat **24.979 Zeilen / 1,2 MB ≈ 295.000 Token**. Diese Datei wird
 **nie** ganz gelesen und **nie** blind durchsucht. Erst fragen wo etwas steht,
 dann den Ausschnitt holen:
 
@@ -26,7 +42,7 @@ dann den Ausschnitt holen:
     python tools/ncpatch.py docs                           # Doku-Zahlen gegen den Quelltext
 
 `find` antwortet aus `.claude/INDEX.md` — 369 Routen (34 in `bot.py`, 333 in
-`nc/routes/`), 60 Slash-Commands, 555 Funktionen mit Zeilennummern. Nach Änderungen an Routen, Commands oder
+`nc/routes/`), 60 Slash-Commands, 557 Funktionen mit Zeilennummern. Nach Änderungen an Routen, Commands oder
 Top-Level-Funktionen `map` neu laufen lassen. Details: Skill `nc-navigation`.
 
 Für „wer ruft das auf?" und „was ist der Typ?" ist der Sprachserver billiger als
@@ -55,7 +71,7 @@ Auf diesem Windows-Rechner heißt der Interpreter **`python`** (3.13.12);
     brain_bridge.py      Adapter Bot ↔ brain/ (M2)
     brain/               KI-Kern: state, rules, router, agents, memory,
                          semantic, knowledge, scheduler, llm, report
-    nc/                  148 Fachmodule: db, scraping, restream, oauth, ledger,
+    nc/                  149 Fachmodule: db, scraping, restream, oauth, ledger,
                          i18n, …
     nc/routes/           36 Flask-Blueprints mit 335 weiteren API-Routen
     locales/             de.json, en.json — der Übersetzungskatalog
@@ -136,8 +152,8 @@ ein `tiktok_bot.db` **im Arbeitsverzeichnis** an. Beim zweiten Lauf starb
 die Prüfkette fährt und was die Sperre ist; pytest kommt daneben, für die
 Arbeit am einzelnen Befund.
 
-**Die Überdeckung ist seit v4.2-W86 gemessen: 52,4 %** von `nc/` und `brain/`
-(20.253 Anweisungen, 9.631 davon ungeprüft). Das ist die Zahl, die den 553
+**Die Überdeckung ist seit v4.2-W86 gemessen: 52,5 %** von `nc/` und `brain/`
+(20.287 Anweisungen, 9.633 davon ungeprüft). Das ist die Zahl, die den 558
 Verträgen erst ihren Maßstab gibt — „alles grün" sagt sonst nichts darüber,
 wie viel Bestand dabei angefasst wurde. Gesperrt wird wie bei W65/W66 nur der
 Zuwachs, und zwar die **Anzahl** ungeprüfter Anweisungen, nicht der
@@ -706,6 +722,39 @@ Vorgabenblock, und `WIDTH="${WIDTH:-54}"` *setzt* WIDTH — eine Prüfung auf
 Vertrag, nicht das Nachdenken. **Wer in einer Shell die Umgebung von den
 Vorgaben unterscheiden will, muss das vor der ersten Zuweisung tun.**
 
+**Ein Update, das nicht neu startet, wirkt nicht — und sagt es nur einmal.**
+Die Update-Funktion schreibt die Dateien, und der laufende Prozess behält
+seinen Bytecode. Der Neustart selbst ist gut gebaut und bleibt: das Deck zeigt
+den Knopf „Dienst neu starten", `/api/update/restart` führt
+`UPDATE_RESTART_CMD` aus oder nennt den Befehl zum Selbst-Absetzen. Das Opt-in
+ist eine **Sicherheitsentscheidung** (ein Neustart-Kommando, das der Bot selbst
+kennt, ist ein Fernsteuer-Knopf auf das System) — v4.2-W104 hat dort kurz eine
+Vorgabe eingesetzt und sie wieder zurückgenommen. **Eine Vorgabe, die ein
+dokumentiertes Opt-in aushebelt, ist keine Verbesserung.**
+
+Die Lücke war die Zeit danach: der Hinweis erschien einmal als Toast, und
+`/healthz` wie `/api/version` kannten den Update-Weg gar nicht — sie lasen
+`AUSLIEFERUNG.json` beziehungsweise `git` und meldeten unverändert den Stand
+von vorher. Seit W104 liest `nc/auslieferung.py` auch `.nc_update.json` (und
+bevorzugt es, weil es das Jüngste auf der Platte ist), `nc/laufstand.py`
+vergleicht den beim Start gemerkten Stand gegen den jetzigen, und eine eigene
+Schleife meldet `veraltet` gedrosselt auf `error` mit dem Neustart-Befehl.
+
+Zwei Feinheiten, die dabei zählen: der Startstand wird auf **Modul-Ebene**
+gemerkt — in einer Funktion gemessen folgt er der Platte, und der Vergleich
+wäre immer „aktuell". Und „Stand auf der Platte unbekannt" ist **kein Alarm**:
+eine Meldung, die auf jeder Entwicklungsmaschine rot ist, erzieht dazu, sie
+auch auf dem Server zu übersehen (Begründung aus W85, gilt hier genauso).
+
+**Ein Vertrag darf seine eigene Begründung nicht als Befund lesen.** In W102
+bis W104 ist dieselbe Falle viermal zugeschlagen: eine Zusicherung suchte
+`return` und traf den eigenen Docstring, eine suchte die alten irreführenden
+Sätze und traf die Kommentare, die sie zitieren, eine suchte `DISK_AUTOCLEAN`
+und traf die Erklärung, warum die Schleife *nicht* daran hängt, und eine prüfte
+`_spawn(...) in src` und traf die auskommentierte Zeile. Gemessen wird deshalb
+im **Syntaxbaum** (`ast.Return`, `ast.Name`), in **Zeichenketten-Tokens** oder
+an einer Zeile, die mit dem Aufruf *beginnt* — nie im rohen Dateitext.
+
 **Ein Cache, der einmal geprueft wird, dedupliziert nichts.** Der Betreiber
 hat am 01.10. das Log mitgeschnitten, und der Befund stand in den
 Zeitstempeln: `live-ohne-URL @name` um 10:55:53,944 **und** um 10:55:53,961 —
@@ -939,7 +988,7 @@ Ledger-Einträge sind append-only mit Hash-Kette; Korrektur = Gegenbuchung.
 
 ## Sicherheit
 
-`.env` hat rund 539 Variablen und enthält Cookies, OAuth-Tokens und Stream-Keys — sie
+`.env` hat rund 540 Variablen und enthält Cookies, OAuth-Tokens und Stream-Keys — sie
 liegt nie im Archiv und wird nie ausgegeben. Beim Logging von
 `streamlink`/`ffmpeg`-Kommandos werden Cookie-Header redacted (F4); dieser
 Redact-Pfad darf bei Änderungen an der Kommandozeile nicht umgangen werden. Das

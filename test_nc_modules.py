@@ -12553,6 +12553,134 @@ def _test_v42_w103_ohne_url_meldung_ist_gedrosselt():
     ok("W103: der Erfolgspfad setzt die Drossel zurueck")
 
 
+def _test_v42_w104_laufender_code_gegen_platte():
+    """Ein Update ueber das Deck wirkt erst nach einem Neustart.
+
+    Der Betreiber hat am 01.10. korrigiert: „auf dem Server laeuft die repo
+    dank der update Funktion". Davor stand in CLAUDE.md und im Kopf von
+    `nc/auslieferung.py` als Tatsache, ausgeliefert werde per ZIP und das Repo
+    sei „nicht der Deploy-Weg" — dieser Satz hat eine Welle lang falsch
+    beraten.
+
+    Der Befund darunter: `nc.updater` schreibt die Dateien und startet nichts
+    neu. Ein laufender Python-Prozess behaelt seinen Bytecode, also liegt der
+    neue Stand auf der Platte und es laeuft weiter der alte. Der Neustart-Weg
+    selbst ist in Ordnung (Knopf im Deck, `/api/update/restart`, Opt-in ueber
+    UPDATE_RESTART_CMD); die Luecke ist die ZEIT DANACH — der Hinweis erscheint
+    einmal als Toast, und danach nannte nichts mehr den Zustand.
+    """
+    import io as _io
+    import json as _json
+    import os as _os
+    from nc import auslieferung as A
+    from nc import laufstand as L
+
+    # ── (1) DIE DREI LAGEN, und "unbekannt" ist KEIN Alarm. Eine Meldung, die
+    # auf jeder Entwicklungsmaschine rot ist, erzieht dazu, sie auch auf dem
+    # Server zu uebersehen — dieselbe Begruendung wie im Kopf von W85.
+    assert L.vergleich("abc123", "abc123")["lage"] == L.AKTUELL
+    assert L.vergleich("abc123", "zzz999")["lage"] == L.VERALTET
+    for a, b in (("", "abc"), ("abc", ""), ("", "")):
+        assert L.vergleich(a, b)["lage"] == L.UNBEKANNT, (a, b)
+        assert not L.veraltet(a, b), "ein unbekannter Stand loest Alarm aus"
+
+    # ── (2) NUR DER ALARM NENNT EINE ABHILFE, und die ist ein BEFEHL. „Neustart
+    # noetig" ohne Befehl ist dieselbe Art Auskunft wie ein blankes HTTP 403.
+    v = L.vergleich("abc123", "zzz999")
+    assert v["abhilfe"].startswith("sudo systemctl restart"), v["abhilfe"]
+    assert "Bytecode" in v["text"], \
+        "der Text sagt nicht, WARUM das Update nicht wirkt"
+    assert L.vergleich("abc", "abc")["abhilfe"] == "", \
+        "der Gutfall nennt eine Abhilfe, die er nicht braucht"
+    # Der Dienstname ist ueberschreibbar — nicht jeder Bestand heisst so.
+    assert "eigener-dienst" in L.befehl("eigener-dienst")
+
+    # ── (3) nc/auslieferung KENNT DEN UPDATE-WEG. Bis W104 las es nur
+    # AUSLIEFERUNG.json und git; nach einem Update meldete /healthz damit
+    # unveraendert den Stand von vorher.
+    assert A.UPDATE_DATEI == ".nc_update.json", A.UPDATE_DATEI
+    # _ph.verzeichnis() statt tempfile.mkdtemp(): die Suiten haben
+    # damit an einem Tag 5093 Verzeichnisse und 30 GB liegen gelassen, bis die
+    # Pruefkette mit ENOSPC abbrach (W90). tools/testmuell.py sperrt das, und
+    # es hat hier sofort gegriffen.
+    tmp = _ph.verzeichnis(praefix="nc-pruef-w104-")
+    if True:
+        # Ohne alles: ehrlich "unbekannt", kein Fehlalarm.
+        assert A.stand(wurzel=tmp, frisch=True)["quelle"] == "unbekannt"
+        # Nur das Archiv-Stempel: das ist die Antwort.
+        with _io.open(_os.path.join(tmp, A.DATEI), "w", encoding="utf-8") as fh:
+            _json.dump({"commit": "a" * 40, "zweig": "main"}, fh)
+        assert A.stand(wurzel=tmp, frisch=True)["quelle"] == "archiv"
+        # Kommt ein Update dazu, ist ES das Juengste auf der Platte. Den
+        # Archiv-Stempel zu bevorzugen hiesse, eine Fassung zu melden, die
+        # seit dem Update nicht mehr draufliegt.
+        with _io.open(_os.path.join(tmp, A.UPDATE_DATEI), "w", encoding="utf-8") as fh:
+            _json.dump({"sha": "b" * 40, "branch": "main", "date": "2026-10-01"}, fh)
+        d = A.stand(wurzel=tmp, frisch=True)
+        assert d["quelle"] == "update" and d["kurz"] == "b" * 12, d
+
+    # ── (4) DER BOT MERKT DEN STARTSTAND EINMAL — auf Modul-Ebene, nicht in
+    # einer Funktion. Genau das macht den Vergleich moeglich: `local_head()`
+    # folgt der Platte, dieser Wert nicht.
+    wurzel = _os.path.dirname(_os.path.abspath(__file__))
+    src = _io.open(_os.path.join(wurzel, "bot.py"), encoding="utf-8").read()
+    assert "\n_LAUFSTAND_START = _nc_updater.local_head()[0]" in src, \
+        "der Startstand wird nicht auf Modul-Ebene gemerkt — in einer Funktion " \
+        "gemessen folgt er der Platte und der Vergleich ist immer 'aktuell'"
+
+    # ── (5) UND ES WIRD GEMELDET, gedrosselt, mit eigener Schleife. Der
+    # Zustand muss auch in einem Bestand sichtbar werden, in dem die halben
+    # Zusatzfunktionen abgeschaltet sind.
+    i = src.index("async def _laufstand_loop(")
+    loop = rumpf_ab(src, i)
+    import re as _re
+    assert _re.search(r'melden\(\s*\n?\s*"laufstand"', loop), \
+        "die Meldung laeuft ungedrosselt"
+    assert "log.error(" in loop, \
+        "veralteter Code meldet nicht auf error — auf warning oder info " \
+        "erscheint er im ERROR-Log NIE (CLAUDE.md)"
+    assert "abhilfe" in loop, "die Meldung nennt den Befehl nicht"
+    assert '_nc_meldetakt.zuruecksetzen("laufstand")' in loop, \
+        "nach dem Neustart bleibt die Drossel stehen"
+    # Geprueft wird im SYNTAXBAUM, nicht im Text: der erste Anlauf suchte
+    # „DISK_AUTOCLEAN" im Quelltext und traf den eigenen Docstring, der
+    # erklaert, warum die Schleife NICHT daran haengt. Dritte Wiederholung
+    # dieser Falle in dieser Welle-Reihe (W102, W103) — ein Vertrag darf seine
+    # eigene Begruendung nicht als Befund lesen.
+    import ast as _ast
+    _namen = {n.id for n in _ast.walk(_ast.parse(loop))
+              if isinstance(n, _ast.Name)}
+    assert "DISK_AUTOCLEAN" not in _namen, \
+        "die Schleife haengt an einem fremden Schalter — in einem Bestand mit " \
+        "abgeschalteter Platten-Reinigung waere die Meldung dann weg"
+    # Nicht `in src`: die Probe, die den Start auskommentiert, liess genau
+    # diesen Text stehen und ist entwischt. Geprueft wird eine ZEILE, die mit
+    # dem Aufruf BEGINNT — ein Kommentar beginnt mit `#`.
+    assert any(z.lstrip().startswith('_spawn(_laufstand_loop(')
+               for z in src.splitlines()), \
+        "die Schleife wird nie gestartet (oder der Start ist auskommentiert)"
+
+    # ── (6) /healthz TRAEGT DIE LAGE. Dort sieht der Betreiber ohnehin nach.
+    assert "laufstand=_laufstand()[\"lage\"]" in src, \
+        "/healthz meldet den Laufstand nicht"
+
+    # ── (7) UND DAS OPT-IN DES NEUSTARTS BLEIBT. Ein Neustart-Kommando, das
+    # der Bot selbst kennt, ist ein Fernsteuer-Knopf auf das System; W104 hat
+    # hier kurz eine Vorgabe eingesetzt und sie zurueckgenommen.
+    zeile = next(z for z in src.splitlines()
+                 if z.startswith("UPDATE_RESTART_CMD ="))
+    assert zeile.strip() == 'UPDATE_RESTART_CMD = os.getenv("UPDATE_RESTART_CMD", "").strip()', \
+        ("die Vorgabe fuer UPDATE_RESTART_CMD ist nicht mehr leer — damit "
+         "wird aus einer bewussten Opt-in-Entscheidung ein immer scharfer "
+         "Fernstart: %s" % zeile.strip())
+
+    ok("W104: 'unbekannt' ist kein Alarm, 'veraltet' nennt den Befehl")
+    ok("W104: nc/auslieferung kennt den Update-Weg und bevorzugt ihn")
+    ok("W104: der Startstand wird auf Modul-Ebene gemerkt")
+    ok("W104: veralteter Code wird gedrosselt auf error gemeldet")
+    ok("W104: das Opt-in von UPDATE_RESTART_CMD bleibt unangetastet")
+
+
 def _test_v42_w60_azrael_cooldown_je_plattform():
     """v4.2-W60: ein Cooldown fuer drei Chats verschluckte zwei davon.
 
@@ -19650,6 +19778,7 @@ def main():
     _test_v42_w102_restream_trennt_offline_von_ohne_url()
     _test_v42_w103_cache_greift_bei_gleichzeitigen_aufrufern()
     _test_v42_w103_ohne_url_meldung_ist_gedrosselt()
+    _test_v42_w104_laufender_code_gegen_platte()
     _test_v42_w60_azrael_cooldown_je_plattform()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)

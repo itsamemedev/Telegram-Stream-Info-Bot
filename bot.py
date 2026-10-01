@@ -576,6 +576,7 @@ from nc import overlaytext as _nc_ovtext  # v4.2-W22: die kleinen Sendebild-Text
 from nc import cookieholen as _nc_cookieholen  # v4.2-W10: Cookies selbst beziehen
 from nc import ytdlpurl as _nc_ytdlpurl      # v4.2-W102: Stream-URL aus der yt-dlp-Auskunft
 from nc import livecache as _nc_livecache    # v4.2-W103: Kurzzeit-Cache der Live-Erkennung
+from nc import laufstand as _nc_laufstand    # v4.2-W104: laeuft der Code von der Platte?
 from nc import resolvergrund as _nc_resolvergrund  # v4.2-W81/W102: Grund + Abhilfe
 from nc import cfgnorm as _nc_cfgnorm        # v4.0-W33: reine Config-Normalisierer (gebündelt)
 from nc import restrend as _nc_restrend      # v4.0-W40: Langzeit-Ressourcen-Trend (Slow-Leak)
@@ -1668,6 +1669,12 @@ _nc_preflight.configure(logger=log)   # V37-MOD: Preflight-Logger nachreichen
 UPDATE_REPO    = os.getenv("UPDATE_REPO", _nc_updater.REPO_DEFAULT).strip()
 UPDATE_BRANCH  = os.getenv("UPDATE_BRANCH", _nc_updater.BRANCH_DEFAULT).strip()
 UPDATE_ENABLED = os.getenv("UPDATE_ENABLED", "1").strip().lower() in ("1", "true", "yes", "on", "y")
+# Bleibt ABSICHTLICH leer, wenn der Betreiber nichts setzt. `nc/routes/ops.py`
+# begruendet das: ein Neustart-Kommando, das der Bot selbst kennt, ist ein
+# Fernsteuer-Knopf auf das System. Ohne die Variable nennt `/api/update/restart`
+# nur den Befehl (HTTP 409 mit `hint`), und das Deck sagt „Bitte selbst neu
+# starten: …". v4.2-W104 hat hier kurz eine Vorgabe eingesetzt — das waere das
+# Abschalten einer bewussten Entscheidung gewesen und ist zurueckgenommen.
 UPDATE_RESTART_CMD = os.getenv("UPDATE_RESTART_CMD", "").strip()
 _nc_updater.configure(
     root=os.path.dirname(os.path.abspath(__file__)),
@@ -1676,6 +1683,32 @@ _nc_updater.configure(
     enabled=UPDATE_ENABLED, restart_cmd=UPDATE_RESTART_CMD,
     keep_backups=_nc_envnum.env_int("UPDATE_KEEP_BACKUPS", 10),
     logger=log)
+
+# ═══════════════════════════════════════════════════════════════════════
+# v4.2-W104: DER STAND, MIT DEM DIESER PROZESS GESTARTET IST
+# ═══════════════════════════════════════════════════════════════════════
+# Der Updater schreibt die Dateien und startet NICHTS neu. Ein laufender
+# Python-Prozess behaelt seinen Bytecode — nach einem Update liegt der neue
+# Stand auf der Platte und es laeuft weiter der alte. Nichts im Betrieb sagte
+# das: /healthz las `AUSLIEFERUNG.json` beziehungsweise git und kannte den
+# Update-Weg gar nicht.
+#
+# Hier wird der Stand EINMAL gemerkt, so frueh wie moeglich. Genau das macht
+# den Vergleich spaeter moeglich: `local_head()` liest die Platte und aendert
+# sich mit jedem Update, dieser Wert nicht.
+_LAUFSTAND_START = _nc_updater.local_head()[0]
+
+
+def _laufstand():
+    """Laeuft der Code, der auf der Platte liegt? (v4.2-W104)
+
+    Getrennt von der Startzeile, weil /healthz, /api/version und der
+    Update-Bericht dieselbe Antwort brauchen — drei Formulierungen derselben
+    Frage driften auseinander (Lehre aus W98 und W100).
+    """
+    return _nc_laufstand.vergleich(_LAUFSTAND_START,
+                                   _nc_updater.local_head()[0],
+                                   dienst=os.getenv("SERVICE_NAME", "").strip() or None)
 
 
 # B41: Werkzeug-Spam-Filter
@@ -18457,8 +18490,12 @@ def healthz():
     return jsonify(ok=ok, db=db_ok, loops=hb_fresh, brain=brain_ok,
                    version=BUILD_STAMP,                  # v4.0-W88
                    commit=_ausl["kurz"],                 # v4.2-W85
-                   commit_quelle=_ausl["quelle"],        # archiv | git | unbekannt
+                   commit_quelle=_ausl["quelle"],        # update | archiv | git | unbekannt
                    commit_sauber=_ausl["sauber"],        # beim Bauen sauber?
+                   # v4.2-W104: laeuft der Code, der auf der Platte liegt?
+                   # "veraltet" heisst: ein Update ist eingespielt und wirkt
+                   # NICHT, weil niemand neu gestartet hat.
+                   laufstand=_laufstand()["lage"],
                    schema=_SCHEMA_STAND,                 # v4.2-W85
                    schema_erwartet=_nc_schemastand.ERWARTET,
                    uptime_s=_uptime_s(),                 # v4.0-W88
@@ -22779,12 +22816,29 @@ async def run_bot():
         raise RuntimeError("BOT_TOKEN fehlt in .env")
 
     # v4.2-W85: als ERSTE Zeile im Betriebslog, welcher Stand hier laeuft.
-    # Ausgeliefert wird per ZIP ueber den Bestand — bis hierher liess sich
-    # nicht beantworten, ob das Laufende ueberhaupt einem Commit entspricht.
-    # Ein Handgriff direkt auf dem Server war unsichtbar und wurde beim
-    # naechsten Deploy wortlos ueberschrieben, samt der Stoerung, die er
+    # Code kommt auf ZWEI Wegen auf den Server: per ZIP ueber den Bestand
+    # (tools/deploy.sh) und per Update-Funktion (nc/updater.py, aus dem Deck
+    # oder per Telegram). Bis v4.2-W104 kannte diese Zeile nur den ersten —
+    # der Betreiber benutzt den zweiten, und damit nannte sie nach jedem
+    # Update weiter den Stand von vorher.
+    #
+    # Ein Handgriff direkt auf dem Server war ohnehin unsichtbar und wurde
+    # beim naechsten Deploy wortlos ueberschrieben, samt der Stoerung, die er
     # behoben hatte.
     log.info("%s", _nc_auslieferung.text())
+    # v4.2-W104: und gleich dazu, ob der Code von der Platte auch LAEUFT. Beim
+    # Start ist das per Definition so; die Zeile nennt den Stand, gegen den
+    # spaeter verglichen wird, damit im Log nachlesbar ist, wovon der
+    # Waechter ausgeht.
+    if _LAUFSTAND_START:
+        log.info("Laufstand: gestartet mit %s (Platte und Prozess stimmen "
+                 "ueberein). Ein Update ueber das Deck schreibt die Dateien, "
+                 "startet aber NICHT neu — der Waechter meldet das dann.",
+                 _LAUFSTAND_START[:12])
+    else:
+        log.info("Laufstand: der Stand auf der Platte ist nicht ermittelbar "
+                 "(kein Update-Weg benutzt, kein git). Dann kann der Waechter "
+                 "spaeter nicht sagen, ob ein Update schon wirkt.")
     # init_db + _BOT_START_TIME passieren jetzt in main() vor Flask-Thread-Start
     # (F24-Hang-Fix). Falls run_bot direkt ohne main aufgerufen wird, hier nochmal:
     if _BOT_START_TIME is None:
@@ -22938,6 +22992,7 @@ async def run_bot():
     _spawn(_watchdog_loop(), name="watchdog")             # F103: Kern-Loop-Überwachung + Self-Heal
     _spawn(_loop_lag_monitor(), name="loop-lag")          # v4.0-W48: Event-Loop-Blockade-Detektor
     _spawn(_disk_guard_loop(), name="disk-guard")         # F103: Auto-Cleanup vor Disk-Overflow
+    _spawn(_laufstand_loop(), name="laufstand")           # v4.2-W104: Update eingespielt, aber nicht wirksam?
     _spawn(_sign_health_loop(), name="sign-health")       # F103: EulerStream-Sign-Key-Health
     _spawn(_marketing_loop(), name="marketing")           # B162: Cross-Promo (self-gated, Default aus)
     _spawn(_news_loop(), name="news")                     # B163: oeffentliche Website-News (self-gated, Default aus)
@@ -23294,6 +23349,43 @@ def _disk_autoclean():
                 "pct_before": pct, "pct_after": _disk_pct()[0]}
     finally:
         _DISK_GUARD_STATE["active"] = False
+
+
+async def _laufstand_loop():
+    """Sagt gedrosselt, wenn der laufende Code nicht der von der Platte ist.
+
+    v4.2-W104. Der Neustart-Hinweis des Updaters erscheint EINMAL, als Toast
+    und Knopf direkt nach dem Lauf. Wer den Tab schliesst, per Telegram
+    aktualisiert oder abgelenkt wird, hat danach keine Stelle mehr, die den
+    Zustand nennt — und das Fehlerbild ist das teuerste, das dieses Projekt
+    kennt: es faellt nichts, es meldet sich nichts, es wird nur nichts.
+
+    Bewusst eine EIGENE Schleife und nicht an `DISK_AUTOCLEAN` oder einen
+    anderen Schalter gehaengt: in einem Bestand mit abgeschalteten
+    Zusatzfunktionen waere die Meldung sonst genau dort weg, wo sie zaehlt.
+    Die Kosten sind eine kleine JSON-Datei alle fuenf Minuten.
+
+    Gedrosselt ueber nc/meldetakt.py, Grund ist die LAGE — damit meldet der
+    Wechsel sofort und der Dauerzustand alle 15 Minuten, mit der Zahl der
+    unterdrueckten Faelle.
+    """
+    await asyncio.sleep(90)
+    while True:
+        _hb("laufstand")
+        try:
+            lage = _laufstand()
+            if lage["lage"] == _nc_laufstand.VERALTET:
+                laut, unterdrueckt = _nc_meldetakt.melden(
+                    "laufstand", lage["lage"], _time_mod.monotonic())
+                if laut:
+                    log.error("VERALTETER CODE LAEUFT: %s Abhilfe: %s%s",
+                              lage["text"], lage["abhilfe"],
+                              _nc_meldetakt.zusatz(unterdrueckt))
+            else:
+                _nc_meldetakt.zuruecksetzen("laufstand")
+        except Exception as e:
+            _loop_fehler("_laufstand_loop", e)
+        await asyncio.sleep(300)
 
 
 async def _disk_guard_loop():

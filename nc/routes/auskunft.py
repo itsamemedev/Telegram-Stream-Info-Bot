@@ -311,9 +311,15 @@ def api_version():
     # und niemand sah es, weil der Footer ohnehin fest verdrahtet war.
     # Der Bot reicht den Stempel seit W116 ueber ctx.cfg herein.
     # v4.2-W85: die Herkunft dazu. Die Versionsnummer sagt, was gemeint war;
-    # der Commit sagt, was wirklich laeuft. Beides ist noetig, solange per ZIP
-    # ueber den Bestand ausgeliefert wird — ein Handgriff direkt auf dem Server
-    # war bis hierher unsichtbar.
+    # der Commit sagt, welcher Stand auf der Platte liegt. Beides ist noetig,
+    # weil Code auf zwei Wegen hierherkommt — ZIP ueber den Bestand und die
+    # Update-Funktion — und ein Handgriff direkt auf dem Server sonst
+    # unsichtbar bleibt.
+    #
+    # v4.2-W104, WICHTIG: `commit` beschreibt die PLATTE, nicht zwingend den
+    # laufenden Prozess. Nach einem Update ueber das Deck liegt der neue Stand
+    # da, waehrend der Prozess noch den alten Bytecode faehrt. Welcher von
+    # beiden gilt, beantwortet `laufstand` in /healthz — nicht dieses Feld.
     from nc import auslieferung as _nc_auslieferung
     _ausl = _nc_auslieferung.stand()
     return jsonify(ok=True, build=_c().cfg.get("BUILD_STAMP") or _nc_version.build_stamp(),
