@@ -10,7 +10,7 @@ GitHub-Repo trägt Historie, CI und Issues — es ist nicht der Deploy-Weg.
 
 ## Die eine Regel
 
-`bot.py` hat **24.443 Zeilen / 1,2 MB ≈ 295.000 Token**. Diese Datei wird
+`bot.py` hat **24.588 Zeilen / 1,2 MB ≈ 295.000 Token**. Diese Datei wird
 **nie** ganz gelesen und **nie** blind durchsucht. Erst fragen wo etwas steht,
 dann den Ausschnitt holen:
 
@@ -26,7 +26,7 @@ dann den Ausschnitt holen:
     python tools/ncpatch.py docs                           # Doku-Zahlen gegen den Quelltext
 
 `find` antwortet aus `.claude/INDEX.md` — 369 Routen (34 in `bot.py`, 333 in
-`nc/routes/`), 60 Slash-Commands, 548 Funktionen mit Zeilennummern. Nach Änderungen an Routen, Commands oder
+`nc/routes/`), 60 Slash-Commands, 551 Funktionen mit Zeilennummern. Nach Änderungen an Routen, Commands oder
 Top-Level-Funktionen `map` neu laufen lassen. Details: Skill `nc-navigation`.
 
 Für „wer ruft das auf?" und „was ist der Typ?" ist der Sprachserver billiger als
@@ -137,7 +137,7 @@ die Prüfkette fährt und was die Sperre ist; pytest kommt daneben, für die
 Arbeit am einzelnen Befund.
 
 **Die Überdeckung ist seit v4.2-W86 gemessen: 52,2 %** von `nc/` und `brain/`
-(20.164 Anweisungen, 9.630 davon ungeprüft). Das ist die Zahl, die den 523
+(20.166 Anweisungen, 9.630 davon ungeprüft). Das ist die Zahl, die den 529
 Verträgen erst ihren Maßstab gibt — „alles grün" sagt sonst nichts darüber,
 wie viel Bestand dabei angefasst wurde. Gesperrt wird wie bei W65/W66 nur der
 Zuwachs, und zwar die **Anzahl** ungeprüfter Anweisungen, nicht der
@@ -653,6 +653,59 @@ Servers mit dem Stand des Entwicklungsrechners überschrieben — eingefrorene
 Zahlen, und `git status` fällt dabei nicht auf. Dieselbe Falle wie
 `AUSLIEFERUNG.json` in W91. `news.json` fährt weiter mit: Inhalt, keine Messung.
 
+**Exitcode 0 nach einem fatalen Fehler macht die Totmann-Meldung wertlos.**
+Stirbt `run_bot`, gilt der Task für `asyncio.wait(..., FIRST_COMPLETED)` als
+„completed"; `main()` fuhr ordentlich herunter und der Prozess endete mit
+**0**. Der Installer verdrahtet `OnFailure=nightcrawler-notify@%n.service`,
+und `tools/notify_failure.sh` ist genau dafür gebaut, dass ein ganz
+gestorbener Bot nicht stundenlang unbemerkt bleibt — bei 0 feuert sie nicht.
+Mit `Restart=always` lief der Dienst alle zehn Sekunden im Kreis, ohne dass
+jemand etwas erfuhr. Reproduziert mit dem Zustand, in dem **jede frische
+Installation steht**: `BOT_TOKEN` ist leer, weil der Installer ihn nicht
+erfinden kann.
+
+Seit v4.2-W100 bleiben Signal und Abbruch 0; ein gestorbener Telegram-Teil
+endet mit **4** (1 und 2 belegt der Selbsttest, 3 die unlesbare Datenbank).
+Die Abschiedszeile sagt dazu, warum. **Ein Prozess, der seine Arbeit nicht
+tun kann, muss das dem Dienstverwalter sagen — sonst ist jede Alarmierung
+daran wirkungslos.**
+
+**Ein Selbsttest, der die Startbedingung nicht kennt, sagt „STARTKLAR" und
+liegt falsch.** `_selfcheck` hatte 21 Prüfungen, den
+`DISCORD_BOT_TOKEN` darunter — `BOT_TOKEN` nicht. Gemessen an einer frischen
+Installation: „STARTKLAR · 13 ok · 7 Warnungen · 0 Fehler", und eine Sekunde
+später starb der Start. Seit v4.2-W100 geprüft, und als **Fehler**: eine
+Warnung meldet weiter STARTKLAR, und genau diese Auskunft war falsch.
+
+**Zwei Listen für denselben Zweck, zum dritten Mal.** Der Installer kopierte
+den Quelltext mit einer eigenen Ausschlussliste — zweimal hingeschrieben
+(rsync und tar) und abweichend von der des Auslieferungsarchivs. Mitgewandert
+sind `.coverage`, `.pytest_cache/`, `.ruff_cache/` und ein 4-MB-Release-ZIP
+(gemessen: 21 MB statt 14 MB). Jetzt eine Liste für beide Wege. Dazu lag eine
+Streudatei `-- No entries --` im Git, die der Installer in jede Installation
+kopierte.
+
+**Und der Bericht druckte einen Befehl, der nicht laufen kann:**
+`…/.venv/bin/python/bot.py --selfcheck` — ein Schrägstrich statt eines
+Leerzeichens, in genau der Zeile, die man kopiert. Dieselbe Klasse wie die
+Dashboard-Adresse in W93.
+
+**Eine Konfigurationsdatei, die die Umgebung überstimmt.** `tools/motd.sh`
+sagt im Kopf „per `/etc/nightcrawler/motd.conf` **oder** Umgebung
+überschreibbar" und lud die Datei **nach** den Vorgaben — sie gewann damit
+immer. Aufgefallen ist es daran, dass zwei MOTD-Verträge rot wurden, sobald
+auf derselben Maschine eine Installation gelaufen war: **eine Suite, die vom
+Systemzustand abhängt, prüft nicht mehr nur den Code.** In der CI fällt das
+nie auf — frischer Container, kein `/etc`-Zustand. Beide fahren jetzt mit
+`CONF=/dev/null`, und die Reihenfolge ist Umgebung > Datei > Vorgabe.
+
+Der erste Entwurf dieser Reparatur war wirkungslos und entwertete die Datei
+vollständig: die Momentaufnahme der gesetzten Variablen stand **hinter** dem
+Vorgabenblock, und `WIDTH="${WIDTH:-54}"` *setzt* WIDTH — eine Prüfung auf
+„ist gesetzt" ist danach für jede Variable wahr. Gefangen hat das der eigene
+Vertrag, nicht das Nachdenken. **Wer in einer Shell die Umgebung von den
+Vorgaben unterscheiden will, muss das vor der ersten Zuweisung tun.**
+
 **Modul-Konstanten frieren `.env` ein.** `.env` wird teils erst nach den ersten
 Imports geladen. Konfiguration als Funktion lesen (`_backend_conf()`), nie als
 Modul-Konstante.
@@ -707,7 +760,7 @@ Die größte Funktion steht ohnehin nicht in `bot.py`:
 Problem. Die Masse zog um, statt zu schrumpfen. `tools/monolith.py` misst deshalb den **ganzen**
 Produktionscode und zählt, wie viele Funktionen über einer Stufe liegen —
 seit v4.2-W80 sind das 63 über 100, 16 über 200, 8 über 300 und 1 über 500
-Zeilen, dazu 22 über 50, 2 über 100 und keine über 150 Verzweigungen. Gezählt
+Zeilen, dazu 21 über 50, 2 über 100 und keine über 150 Verzweigungen. Gezählt
 wird die Anzahl, nicht die Länge: eine Sperre, die jede zusätzliche
 Zeile meldet, fällt bei jeder Fehlerbehebung und ist in einer Woche
 abgeschaltet.

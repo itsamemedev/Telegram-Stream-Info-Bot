@@ -316,6 +316,23 @@ def schreibe(datei: str, netscape_text: str, auth_pflicht=False):
                 pass
 
 
+# Was zu tun ist, wenn der Bezug scheitert — je Weg. Ein Grund ohne Abhilfe
+# ist in diesem Projekt kein Grund (W81, nc/resolvergrund.py). Diese Texte
+# landen im Log UND im Bericht, den Deck und Telegram anzeigen.
+ABHILFE = {
+    "gast": ("Abhilfe: 1) kommt der Server ueberhaupt an tiktok.com? "
+             "`curl -sS -o /dev/null -w '%{http_code}' https://www.tiktok.com/` "
+             "— antwortet das nicht mit 200, blockt der Egress (Firewall, "
+             "Proxy-Policy) und RECORD_PROXY ist der Weg. 2) Sonst die "
+             "Cookies einmal von Hand aus dem Browser holen "
+             "(Netscape-Format nach tiktok_cookies.txt)."),
+    "browser": ("Abhilfe: auf einem Server gibt es kein Browser-Profil — "
+                "dieser Weg ist dort der falsche. Cookies auf dem Arbeitsplatz "
+                "exportieren und die Datei uebertragen, oder quelle='gast' "
+                "nehmen (holt die rotierenden Anti-Bot-Tokens ohne Login)."),
+}
+
+
 def aktualisiere(datei: str, quelle="gast", browser=None, timeout=15,
                  proxy=None, log=None, urls=None, domains=None) -> dict:
     """Der eine Aufruf, den Bot, Deck und Telegram-Befehl teilen.
@@ -389,6 +406,17 @@ def aktualisiere(datei: str, quelle="gast", browser=None, timeout=15,
         # kennt — saeubern() taete dasselbe, aber CodeQL sieht es nicht und
         # meldet py/stack-trace-exposure. Genau das ist hier passiert.
         bericht["error"] = _nc_fehlertext.nach_aussen(e, "cookieholen.aktualisiere")
+        bericht["abhilfe"] = ABHILFE.get(quelle, ABHILFE["gast"])
         if log:
-            log.warning("Cookie-Auto-Bezug (%s) fehlgeschlagen: %s", quelle, e)
+            # v4.2-W100: die Abhilfe gehoert IN die Zeile. Vorher stand da nur
+            # der Wortlaut von urllib — gemessen:
+            #
+            #   Cookie-Auto-Bezug (gast) fehlgeschlagen:
+            #   <urlopen error Tunnel connection failed: 403 Forbidden>
+            #
+            # Richtig und nutzlos, genau wie ein blankes "HTTP 403" (W81).
+            # Der Betreiber sieht daran nicht, dass sein Egress tiktok.com
+            # nicht durchlaesst und dass es dafuer RECORD_PROXY gibt.
+            log.warning("Cookie-Auto-Bezug (%s) fehlgeschlagen: %s — %s",
+                        quelle, e, bericht["abhilfe"])
     return bericht

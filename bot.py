@@ -23417,6 +23417,141 @@ def _abbruch_datenbank_unlesbar(e):
     raise SystemExit(3) from None
 
 
+async def _aufraeumen():
+    """Alles zumachen, was der Prozess offen haelt. v4.2-W100 herausgeloest.
+
+    Jeder Schritt einzeln gefangen: schlaegt einer fehl, muessen die anderen
+    trotzdem laufen — sonst bleiben ffmpeg-Kinder und Websockets zurueck.
+    Aufraeumpfade, deren Fehlschlag bedeutungslos ist, duerfen dabei still
+    sein (CLAUDE.md); der Prozess endet ohnehin gleich.
+    """
+    # FIX (Header "Was offen bleibt" — gepoolte Ollama-Session): explizit
+    # schließen statt dem GC zu überlassen, sonst loggt aiohttp eine
+    # "Unclosed client session" Warning beim Prozessende.
+    try:
+        await _close_ai_session()
+    except Exception:
+        pass
+    # Restream-Relays + KI-Moderator sauber beenden (ffmpeg-Kinder killen,
+    # Websocket schließen) — sonst verwaiste Prozesse/Sessions beim Stop.
+    try:
+        # B123-FIX: Soll-Zustand ueberlebt den Shutdown — sonst startet nach
+        # `systemctl restart` nichts wieder.
+        await _RESTREAM_MGR.stop_all(_keep_desired=True)
+    except Exception:
+        pass
+    try:
+        await _KICK_MOD.stop()
+    except Exception:
+        pass
+    try:
+        await _discord_stop()
+    except Exception:
+        pass
+    # Erneuerte Cookie-Tokens final sichern
+    try:
+        _persist_refreshed_cookies(force=True)
+    except Exception:
+        pass
+
+
+# Klartext fuer die Abschiedszeile. Als Tabelle, damit der Wortlaut an EINER
+# Stelle steht — ein Grund ohne Klartext ist ein Grund, den nur der Code kennt.
+_ABSCHIED = {
+    "signal":   "Stop-Signal erhalten",
+    "abbruch":  "Telegram-Teil abgebrochen",
+    "regulaer": "Telegram-Teil regulaer beendet",
+    "fehler":   "Telegram-Teil GESTORBEN — Exitcode folgt",
+}
+
+
+def _abschluss(fatal):
+    """Die letzten Zeilen und der Exitcode. v4.2-W100.
+
+    Wird AM ENDE von `main()` gerufen, nach dem Aufraeumen: andernfalls blieben
+    ffmpeg-Kinder, Websockets und die noch nicht gesicherten Cookie-Tokens
+    zurueck. Ein Exitcode ist nicht wichtiger als ein sauberes Ende.
+
+    Eigener Schritt, weil `main()` sonst ueber die 300-Zeilen-Stufe der
+    Monolith-Sperre rutscht — sie stand in W93 schon einmal genau darauf, und
+    sie fiel bei dieser Welle zu Recht ein zweites Mal.
+    """
+    if fatal is None:
+        return
+    log.critical("BEENDET MIT FEHLER — der Telegram-Teil ist gestorben: %s: %s",
+                 type(fatal).__name__, fatal)
+    log.critical("  Der Prozess endet mit Exitcode 4, damit systemd es als "
+                 "Fehlschlag sieht und die Totmann-Meldung ausloest "
+                 "(OnFailure=). Mit Exitcode 0 lief der Dienst still im Kreis.")
+    raise SystemExit(4)
+
+
+def _fatal_vom_botteil(fertig, botteil):
+    """Warum endete die Wartezeit? -> (lage, exc)
+
+    `lage` ist einer von "signal", "abbruch", "regulaer", "fehler" — und nicht
+    ein nacktes None. Dieselbe Entscheidung wie bei `nc.webserver.tls_lage`
+    (W93): ein Rueckgabewert, der "kein Fehler" und "ich weiss es nicht" nicht
+    unterscheidet, ist genau die Blindstelle, die tools/blindstellen.py zaehlt.
+    Hier kostet es nichts und bringt etwas: die Abschiedszeile kann SAGEN,
+    warum der Bot aufhoert, statt nur "Stopping…".
+
+    v4.2-W100. Als eigener Schritt auf Modulebene und nicht inline in `main()`,
+    aus zwei Gruenden: `main()` stand in W93 schon einmal genau auf der
+    300-Zeilen-Stufe der Monolith-Sperre, und — wichtiger — diese Entscheidung
+    ist die, an der der Exitcode haengt. Inline waere sie nur noch mit einem
+    vollen Botstart pruefbar; so faehrt der Vertrag sie mit zwei Attrappen.
+
+    DER BEFUND, GEGEN DEN ES DAS GIBT
+    Stirbt `run_bot` an einer Ausnahme, gilt der Task fuer
+    `asyncio.wait(..., FIRST_COMPLETED)` als "completed". `main()` fuhr
+    danach ordentlich herunter, und der Prozess endete mit **0**. Gemessen am
+    Zustand, in dem JEDE frische Installation steht — der Installer kann
+    BOT_TOKEN nicht erfinden und laesst ihn leer:
+
+        ERROR  background task 'run_bot' crashed: BOT_TOKEN fehlt in .env
+        INFO   Stopping…
+        $ echo $?   ->  0
+
+    Fuer systemd ist das ein *sauberes* Ende. Der Installer verdrahtet
+    `OnFailure=nightcrawler-notify@%n.service` per Drop-in, und genau diese
+    Meldung ist dafuer gebaut, dass ein ganz gestorbener Bot nicht stundenlang
+    unbemerkt bleibt — bei Exitcode 0 feuert sie NICHT. Mit `Restart=always`
+    lief der Dienst dann alle zehn Sekunden im Kreis, ohne dass jemand etwas
+    erfuhr. Dieselbe Klasse wie die stillen `return`s aus W81, eine Schicht
+    hoeher: nichts stuerzt ab, nichts meldet sich.
+
+    Exitcode 4, weil 1 und 2 der Selbsttest belegt und 3 die unlesbare
+    Datenbank (W92). Ein eigener Code haelt die Faelle im Journal auseinander.
+
+    Was hier NICHT hereinfaellt: ein unerreichbares Telegram. `run_bot` faengt
+    das selbst und laeuft weiter (gemessen: httpx.ProxyError 403, Bot lief
+    volle 110 s weiter). Der Exitcode 4 ist fuer den Fall, in dem der
+    Telegram-Teil WIRKLICH tot ist.
+
+    Erwartet wird `asyncio.wait(..., FIRST_COMPLETED)`: `fertig` ist die Menge
+    der abgeschlossenen Tasks. Ist `botteil` nicht darunter, endete die
+    Wartezeit am Stop-Signal — das ist ein geplantes Ende und keiner.
+    """
+    if botteil not in fertig:
+        return ("signal", None)          # Stop-Signal, kein Absturz
+    try:
+        exc = botteil.exception()
+    except asyncio.CancelledError:
+        # Ein abgebrochener Task wirft hier, statt eine Ausnahme zu liefern —
+        # und ein Abbruch ist nie ein Fehlschlag.
+        #
+        # Hier stand zusaetzlich ein `if botteil.cancelled(): return None`.
+        # Die Mutationsprobe dazu ist ENTWISCHT, und sie hatte recht: beide
+        # Wege enden gleich, die Vorab-Pruefung aenderte nichts. Eine Zeile,
+        # deren Entfernen nichts aendert, gehoert weg — und eine Probe dafuer
+        # hat keinen Gegenstand (dieselbe Entscheidung wie in W94).
+        return ("abbruch", None)
+    if exc is None:
+        return ("regulaer", None)        # run_bot ist von selbst zurueck
+    return ("fehler", exc)
+
+
 async def main():
     # V37-DRIFT: Einmal beim Start die verhaltensrelevanten .env-Abweichungen
     # loggen. Dreimal in einer Session hat eine .env-Zeile still die Absicht des
@@ -23676,7 +23811,13 @@ async def main():
     done, pending = await asyncio.wait(
         [bot_task, asyncio.create_task(stop_evt.wait())],
         return_when=asyncio.FIRST_COMPLETED)
-    log.info("Stopping…")
+
+    # v4.2-W100: WARUM die Wartezeit endet, entscheidet den Exitcode.
+    # Begruendung und Messung stehen bei `_fatal_vom_botteil`.
+    _lage, _fatal = _fatal_vom_botteil(done, bot_task)
+    # v4.2-W100: die Abschiedszeile sagt WARUM. "Stopping…" allein liess offen,
+    # ob der Betreiber gestoppt hat oder ob etwas gestorben ist.
+    log.info("Stopping… (%s)", _ABSCHIED.get(_lage, _lage))
     if not bot_task.done():
         bot_task.cancel()
         try:
@@ -23685,34 +23826,10 @@ async def main():
             pass
     for t in pending:
         t.cancel()
-    # FIX (Header "Was offen bleibt" — gepoolte Ollama-Session): explizit
-    # schließen statt dem GC zu überlassen, sonst loggt aiohttp eine
-    # "Unclosed client session" Warning beim Prozessende.
-    try:
-        await _close_ai_session()
-    except Exception:
-        pass
-    # Restream-Relays + KI-Moderator sauber beenden (ffmpeg-Kinder killen,
-    # Websocket schließen) — sonst verwaiste Prozesse/Sessions beim Stop.
-    try:
-        # B123-FIX: Soll-Zustand ueberlebt den Shutdown — sonst startet nach
-        # `systemctl restart` nichts wieder.
-        await _RESTREAM_MGR.stop_all(_keep_desired=True)
-    except Exception:
-        pass
-    try:
-        await _KICK_MOD.stop()
-    except Exception:
-        pass
-    try:
-        await _discord_stop()
-    except Exception:
-        pass
-    # Erneuerte Cookie-Tokens final sichern
-    try:
-        _persist_refreshed_cookies(force=True)
-    except Exception:
-        pass
+    await _aufraeumen()
+
+    # v4.2-W100: erst aufraeumen, DANN scheitern — siehe `_abschluss`.
+    _abschluss(_fatal)
 
 # ═══════════════════════════════════════════════════════════════════════════
 # F104: --selfcheck — Startup-Preflight, der ECHTE Fehler fängt (nicht Static)
@@ -23739,6 +23856,34 @@ async def _selfcheck(verbose=True):
             __import__(mod); add("ok", f"import {mod}", why)
         except Exception as e:
             add("fail", f"import {mod}", f"{why}: {e}")
+
+    # 1b) v4.2-W100: BOT_TOKEN. Die eine Variable, ohne die NICHTS laeuft —
+    # und bis W100 sah dieser Pruefer sie nicht an. Gemessen an einer frischen
+    # Installation: 21 Pruefungen, "STARTKLAR · 13 ok · 7 Warnungen · 0
+    # Fehler", und der Start starb eine Sekunde spaeter an "BOT_TOKEN fehlt in
+    # .env". Der DISCORD_BOT_TOKEN war geprueft, der Telegram-Token nicht.
+    #
+    # Der Installer nennt diesen Lauf "der Unterschied zwischen 'installiert'
+    # und 'laeuft'" — dann muss er die Bedingung kennen, an der das haengt.
+    # Und zwar als FEHLER, nicht als Warnung: eine Warnung meldet weiter
+    # "STARTKLAR", und genau diese Auskunft war falsch.
+    #
+    # Geprueft wird die FORM, nicht bloss die Anwesenheit: ein Token ohne
+    # Doppelpunkt ist ein kopierter Platzhalter, und Telegram antwortet darauf
+    # mit 401 — ein Fehlerbild, das sich ohne diesen Hinweis wie ein
+    # Netzproblem liest.
+    _bt = (BOT_TOKEN or "").strip()
+    if not _bt:
+        add("fail", "BOT_TOKEN",
+            "LEER — ohne ihn startet der Telegram-Teil nicht und der Prozess "
+            "endet sofort. In der .env eintragen (von @BotFather).")
+    elif ":" not in _bt or len(_bt) < 20:
+        add("fail", "BOT_TOKEN",
+            "sieht nicht wie ein Telegram-Token aus (Form: <zahl>:<geheimnis>) "
+            "— Telegram antwortet darauf mit 401, was sich wie ein Netzproblem "
+            "liest.")
+    else:
+        add("ok", "BOT_TOKEN", "gesetzt, Form plausibel")
 
     # 2) Binaries
     for binname, _why, hard in [("ffmpeg", "Aufnahme/Restream", True),

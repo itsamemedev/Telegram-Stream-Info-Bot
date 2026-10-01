@@ -11,6 +11,118 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Behoben — Ein Build aus dem Installer, und was er zeigte (v4.2 W100)
+
+Auftrag: „Bau mal einen lauffähigen build und nutze dafür den installer und
+Gast cookies. Behebe alle auftretenden Fehler."
+
+`tools/installer.sh --unattended` lief durch und meldete **„STARTKLAR · 13 ok ·
+7 Warnungen · 0 Fehler"**. Der erste Start starb eine Sekunde später:
+
+```
+ERROR  background task 'run_bot' crashed: BOT_TOKEN fehlt in .env
+INFO   Stopping…
+$ echo $?   ->  0
+```
+
+Daraus sechs Befunde, alle am laufenden Build gemessen.
+
+**1. Exitcode 0 nach einem fatalen Fehler — die Totmann-Meldung bleibt still.**
+Stirbt `run_bot`, gilt der Task für `asyncio.wait(..., FIRST_COMPLETED)` als
+„completed"; `main()` fuhr danach ordentlich herunter und der Prozess endete
+mit **0**. Für systemd ist das ein *sauberes* Ende. Der Installer verdrahtet
+`OnFailure=nightcrawler-notify@%n.service` per Drop-in, und
+`tools/notify_failure.sh` ist genau dafür gebaut, dass ein ganz gestorbener Bot
+nicht stundenlang unbemerkt bleibt — **bei Exitcode 0 feuert sie nicht.** Mit
+`Restart=always` lief der Dienst alle zehn Sekunden im Kreis, ohne dass jemand
+etwas erfuhr. Reproduziert mit dem Zustand, in dem **jede frische Installation
+steht**: der Installer kann `BOT_TOKEN` nicht erfinden und lässt ihn leer.
+
+Seither: Signal und Abbruch bleiben 0, ein gestorbener Telegram-Teil endet mit
+**4** (1 und 2 belegt der Selbsttest, 3 die unlesbare Datenbank aus W92). Die
+Abschiedszeile sagt jetzt auch, warum — `Stopping… (Stop-Signal erhalten)` oder
+`Stopping… (Telegram-Teil GESTORBEN — Exitcode folgt)` statt nur „Stopping…".
+Ein unerreichbares Telegram fällt da nicht hinein: `run_bot` fängt das selbst
+(gemessen: `httpx.ProxyError 403`, der Bot lief volle 110 s weiter).
+
+**2. Der Selbsttest kannte `BOT_TOKEN` nicht.** 21 Prüfungen auf 220 Zeilen, der
+`DISCORD_BOT_TOKEN` darunter — der Telegram-Token nicht. Er meldete „STARTKLAR"
+für eine Konfiguration, die nicht starten kann, und der Installer nennt diesen
+Lauf „der Unterschied zwischen 'installiert' und 'läuft'". Jetzt geprüft, und
+als **Fehler**, nicht als Warnung: eine Warnung meldet weiter STARTKLAR, und
+genau diese Auskunft war falsch. Geprüft wird die Form mit, nicht nur die
+Anwesenheit — ein Token ohne Doppelpunkt ist ein kopierter Platzhalter, und
+Telegram antwortet darauf mit 401, was sich wie ein Netzproblem liest.
+
+**3. Der Installationsbericht druckte einen Befehl, der nicht laufen kann.**
+
+```
+Selbsttest  /home/user/ncbuild/.venv/bin/python/bot.py --selfcheck
+```
+
+Ein Schrägstrich statt eines Leerzeichens — und genau diese Zeile kopiert der
+Betreiber aus `~/nightcrawler-installation.txt`. Dieselbe Klasse wie die
+Dashboard-Adresse in W93: die Zeile mit der vollständigen Angabe ist die, die
+man kopiert, und sie war falsch.
+
+**4. Die Kopier-Ausschlussliste wich von der des Archivs ab.** Sie stand
+zweimal da (rsync und tar) und ließ `.coverage`, `.pytest_cache/`,
+`.ruff_cache/` und ein 4-MB-Release-ZIP mitwandern. Jetzt **eine** Liste, von
+beiden Wegen gelesen — dieselbe Lehre wie bei den zwei Ordner-Auflösungen in
+W98. Gemessen: 21 MB → 14 MB im Zielverzeichnis.
+
+**5. Eine Streudatei lag im Git.** `-- No entries --` in der Wurzel, 2158
+Bytes, Inhalt ein `curl`-Aufruf der Totmann-Meldung von einem Fehllauf am
+27.08. — mitsamt Token-Platzhalter. Im Auslieferungsarchiv war sie nicht (der
+Bauer packt benannte Dateien), aber der Installer kopiert den ganzen Baum: sie
+landete in **jeder** Installation. Entfernt.
+
+**6. `/etc/nightcrawler/motd.conf` überstimmte die Umgebung.** Der Kopf von
+`tools/motd.sh` sagt seit je „per motd.conf **oder** Umgebung
+überschreibbar" — der Code lud die Datei **nach** den Vorgaben und gewann damit
+immer:
+
+```
+SERVICE=ausdruecklich  ohne conf -> SERVICE=[ausdruecklich]
+SERVICE=ausdruecklich  mit  conf -> SERVICE=[]
+```
+
+Aufgefallen ist es, weil zwei MOTD-Verträge rot wurden, sobald auf derselben
+Maschine eine Installation gelaufen war — eine Suite, die vom Systemzustand
+abhängt, prüft nicht mehr nur den Code. Beide fahren jetzt mit `CONF=/dev/null`;
+in der CI fällt das nie auf (frischer Container, kein `/etc`-Zustand).
+Reihenfolge ist jetzt Umgebung > Datei > Vorgabe.
+
+Der **erste Entwurf dieser Reparatur war wirkungslos** und hat die Datei
+komplett entwertet: die Momentaufnahme stand hinter dem Vorgabenblock, und
+`WIDTH="${WIDTH:-54}"` *setzt* WIDTH — eine Prüfung auf „ist gesetzt" ist danach
+für jede Variable wahr. Gefangen hat das der eigene Vertrag (Datei 216 ==
+Vorgabe 216), nicht das Nachdenken.
+
+**Zu den Gast-Cookies:** der Weg funktioniert — gegen einen lokalen Stub
+gemessen holt er fünf Anti-Bot-Tokens und schreibt eine gültige
+Netscape-Datei. Der Abruf gegen das echte TikTok ist in dieser Umgebung
+unmöglich: der Egress-Proxy beantwortet `CONNECT www.tiktok.com:443` mit 403.
+Das ist Infrastruktur, kein Codefehler — aber die Meldung dazu war einer. Sie
+lautete nur `<urlopen error Tunnel connection failed: 403 Forbidden>`, also
+richtig und nutzlos, genau wie ein blankes „HTTP 403" (W81). Jetzt steht die
+**Abhilfe** dabei, im Log und im Bericht: die Probe (`curl` gegen tiktok.com)
+und der Ausweg (`RECORD_PROXY`).
+
+**Der Build läuft.** Gemessen am Endstand, zweite Installation aus dem
+korrigierten Quelltext: `/healthz` antwortet **200** mit `ok=true, db=true,
+loops=true, log_wartend=0, log_verloren=0` — die Log-Schleuse aus W97 arbeitet
+also —, leerer Token endet mit 4, SIGTERM mit 0.
+
+Sechs neue Verträge (523 → 529), **15 Mutationsproben, alle gefallen**. Zwei
+entwischten, und beide Male war es ein Befund: eine Attrappe machte die
+Verzweigung nicht beobachtbar, und eine Vorab-Prüfung auf `cancelled()` war
+beweisbar redundant — sie ist entfernt, nicht die Probe verbogen (W94). Die
+Verzweigungs-Grundlinie sinkt von 22 auf 21: `main()` ist beim Herauslösen von
+`_aufraeumen`, `_abschluss` und `_fatal_vom_botteil` von 333 auf 276 Zeilen
+geschrumpft, und eine Grundlinie mit eingefrorener Luft fängt die nächste
+Riesenfunktion nicht.
+
 ### Behoben — Die Vorlage kannte die Wallet-Adressen selbst nicht (v4.2 W99)
 
 Der Betreiber am 30.09.:

@@ -3942,9 +3942,56 @@ def _test_v42_w7_motd_optik():
         # abhaengig, auf der er laeuft.
         umg = dict(os.environ)
         umg["COLOR_MODE"] = "off"
+        # v4.2-W100: und CONF=/dev/null, damit keine INSTALLIERTE
+        # /etc/nightcrawler/motd.conf mitredet. Genau daran ist dieser Vertrag
+        # rot geworden, nachdem tools/installer.sh auf derselben Maschine
+        # gelaufen war: die Datei trug SERVICE='' und BOT_DIR=<Installation>
+        # und ueberstimmte die hier gesetzten Werte. Eine Suite, die vom
+        # Systemzustand abhaengt, prueft nicht mehr nur den Code.
+        umg["CONF"] = os.devnull
         umg.update(umgebung)
         return _sp.run(["bash", motd] + list(teile), capture_output=True,
                        text=True, timeout=60, env=umg).stdout
+
+    # ── (4a) v4.2-W100: UND DIE REIHENFOLGE SELBST. Der Kopf von motd.sh sagt
+    # seit je "per /etc/nightcrawler/motd.conf ODER Umgebung ueberschreibbar" —
+    # der Code lud die Datei NACH den Vorgaben und gewann damit immer. Gemessen:
+    #
+    #     SERVICE=ausdruecklich  ohne conf -> SERVICE=[ausdruecklich]
+    #     SERVICE=ausdruecklich  mit  conf -> SERVICE=[]
+    #
+    # Fuer den Betreiber heisst das: `SERVICE=foo tools/motd.sh` tat nicht,
+    # was dort steht. Aufgefallen ist es, weil dieser Vertrag rot wurde,
+    # nachdem tools/installer.sh auf derselben Maschine gelaufen war.
+    #
+    # Geprueft wird am ECHTEN Skript und an einer SICHTBAREN Wirkung: WIDTH
+    # bestimmt die Breite der Trennlinie. Eine Quelltext-Lesung haette hier
+    # nur bestaetigt, dass die Zeilen dastehen — nicht, dass sie wirken.
+    conf = os.path.join(_ph.verzeichnis(), "motd.conf")
+    with open(conf, "w", encoding="utf-8") as f:
+        f.write("WIDTH='30'\n")
+
+    def _breite(**umg):
+        # Gezaehlt werden die Linienzeichen der Trennlinie — die ist genau
+        # WIDTH breit. Die laengste ZEILE taugt nicht: das ist eine
+        # Inhaltszeile, die von WIDTH nicht abhaengt (erster Anlauf: 123 == 123
+        # fuer beide Faelle, der Vertrag haette nichts gemessen).
+        return _lauf(**umg).count("\u2501")
+
+    nur_datei = _breite(CONF=conf)
+    datei_und_umgebung = _breite(CONF=conf, WIDTH="70")
+    assert nur_datei > 0, "die MOTD gibt nichts aus"
+    assert datei_und_umgebung > nur_datei, (
+        "die motd.conf ueberstimmt eine ausdrueckliche Umgebungsvariable: "
+        "WIDTH=70 ergibt %d Zeichen, die Datei allein %d"
+        % (datei_und_umgebung, nur_datei))
+    # Und die Datei wirkt weiterhin, wenn die Umgebung schweigt — sonst waere
+    # die Reparatur eine Abschaltung.
+    ohne_beides = _breite(CONF=os.devnull)
+    assert nur_datei < ohne_beides, (
+        "die motd.conf wirkt gar nicht mehr (Datei %d, Vorgabe %d) — dann "
+        "waere sie abgeschafft statt eingeordnet" % (nur_datei, ohne_beides))
+    ok("W100: die motd.conf ueberstimmt keine ausdrueckliche Umgebungsvariable")
 
     # Der Miniverlauf: sieben Zahlen, sieben Zeichen, das Maximum als Vollblock
     # und die Null als Grundlinie. Ohne diese Skalierung waere er bei kleinen
@@ -7155,6 +7202,13 @@ def _test_v42_w14_motd_spricht_englisch():
         umg = dict(os.environ)
         umg["COLOR_MODE"] = "off"
         umg.pop("NC_LANG", None)
+        # v4.2-W100: CONF=/dev/null — sonst redet eine INSTALLIERTE
+        # /etc/nightcrawler/motd.conf mit. Genau daran ist dieser Vertrag rot
+        # geworden, nachdem tools/installer.sh auf derselben Maschine gelaufen
+        # war: die Datei zeigte BOT_DIR auf die Installation, der Dienst war
+        # damit "gefunden", und die Zusicherung auf "nicht gefunden" fiel.
+        # In der CI faellt das nie auf — frischer Container, kein /etc-Zustand.
+        umg["CONF"] = os.devnull
         umg.update(umgebung)
         return _sp.run(["bash", "tools/motd.sh"], capture_output=True,
                        text=True, timeout=90, env=umg).stdout
@@ -18464,6 +18518,155 @@ def _test_v42_w99_leerer_spendenblock_sagt_warum():
     ok("W99: stats.json faehrt nicht im Archiv mit")
 
 
+def _test_v42_w100_installer_liefert_kopierbare_zeilen():
+    """Der Bericht druckte einen Befehl, der nicht laufen kann.
+
+    Aus einer echten Installation (tools/installer.sh --unattended):
+
+        Selbsttest  /home/user/ncbuild/.venv/bin/python/bot.py --selfcheck
+
+    Ein Schraegstrich statt eines Leerzeichens — und genau diese Zeile kopiert
+    der Betreiber aus ~/nightcrawler-installation.txt. Dieselbe Klasse wie die
+    Dashboard-Adresse in W93: die Zeile mit der vollstaendigen Angabe ist die,
+    die man kopiert, und sie war falsch.
+    """
+    import io as _io
+    import os as _os
+    import subprocess as _sp
+
+    wurzel = _os.path.dirname(_os.path.abspath(__file__))
+    inst = _io.open(_os.path.join(wurzel, "tools", "installer.sh"),
+                    encoding="utf-8").read()
+
+    # ── (1) DER BEFEHL IM BERICHT. Geprueft wird die printf-Vorlage: zwischen
+    # dem Interpreter und bot.py muss ein LEERZEICHEN stehen.
+    zeile = next(z for z in inst.splitlines()
+                 if "Selbsttest" in z and "printf" in z)
+    assert "%s bot.py --selfcheck" in zeile, \
+        "der Bericht druckt den Selbsttest-Befehl falsch: %s" % zeile.strip()
+    assert "%s/bot.py" not in zeile, \
+        "Schraegstrich statt Leerzeichen — die Zeile kann nicht laufen"
+
+    # ── (2) UND SIE IST SYNTAKTISCH GUELTIG. Ein Installer, der nicht parst,
+    # ist schlimmer als keiner: er bricht mitten im Eingriff ab.
+    r = _sp.run(["bash", "-n", _os.path.join(wurzel, "tools", "installer.sh")],
+                capture_output=True, text=True)
+    assert r.returncode == 0, "installer.sh parst nicht: %s" % r.stderr[:300]
+
+    # ── (3) EINE Ausschlussliste, von rsync UND tar benutzt. Vorher stand sie
+    # zweimal da und wich von der des Auslieferungsarchivs ab; gemessen an
+    # einer Installation aus einem Arbeitsbaum wanderten .coverage,
+    # .pytest_cache/, .ruff_cache/ und ein 4-MB-Release-ZIP mit. Dieselbe
+    # Lehre wie bei den zwei Ordner-Aufloesungen in W98.
+    assert "AUS_KOPIE=(" in inst, "die gemeinsame Ausschlussliste fehlt"
+    i = inst.index("AUS_KOPIE=(")
+    liste = inst[i:inst.index(")", i)]
+    for muster in ("'.git'", "'.venv'", "'.env'", "'*.db'", "'recordings'",
+                   "'logs'", "'__pycache__'", "'.pytest_cache'",
+                   "'.ruff_cache'", "'.coverage'", "'*.zip'",
+                   "'AUSLIEFERUNG.json'"):
+        assert muster in liste, "%s fehlt in der Ausschlussliste" % muster
+    # Beide Wege ziehen daraus — und keiner fuehrt noch eine eigene Liste.
+    kopierteil = inst[inst.index("AUS_KOPIE=("):inst.index("gut \"Quelltext liegt in")]
+    assert "${AUS_KOPIE[@]}" in kopierteil
+    assert kopierteil.count("${AUS_KOPIE[@]}") == 2, \
+        "rsync und tar muessen BEIDE aus derselben Liste lesen"
+    assert "--exclude '.git'" not in kopierteil and "--exclude='.git'" not in kopierteil, \
+        "eine zweite, handgeschriebene Liste ist zurueck"
+
+    # ── (4) UND DIE STREUDATEI IST WEG. "-- No entries --" lag in der Wurzel
+    # und IM GIT; der Installer kopiert den ganzen Baum, also landete sie in
+    # jeder Installation. Inhalt: ein curl-Aufruf der Totmann-Meldung von
+    # einem Fehllauf am 27.08. — Muell, aber Muell mit einem Token darin.
+    assert not _os.path.exists(_os.path.join(wurzel, "-- No entries --")), \
+        "die Streudatei '-- No entries --' ist zurueck"
+    verfolgt = _sp.run(["git", "-C", wurzel, "ls-files", "-z"],
+                       capture_output=True, text=True)
+    if verfolgt.returncode == 0:
+        namen = [n for n in verfolgt.stdout.split("\0") if n]
+        assert "-- No entries --" not in namen, \
+            "die Streudatei steht wieder im Git"
+
+    ok("W100: der Bericht druckt einen Selbsttest-Befehl, der laeuft")
+    ok("W100: eine Ausschlussliste fuer rsync und tar, Caches bleiben draussen")
+    ok("W100: die Streudatei '-- No entries --' ist aus dem Bestand")
+
+
+def _test_v42_w100_cookiebezug_nennt_die_abhilfe():
+    """„<urlopen error Tunnel connection failed: 403 Forbidden>" — und dann?
+
+    Der Gast-Abruf ist der Weg, mit dem sich der Bot seine rotierenden
+    Anti-Bot-Tokens selbst holt. Scheitert er, stand im Log nur der Wortlaut
+    von urllib: richtig und nutzlos, genau wie ein blankes „HTTP 403" (W81).
+    Der Betreiber sieht daran nicht, dass sein Egress tiktok.com nicht
+    durchlaesst und dass es dafuer RECORD_PROXY gibt.
+    """
+    import io as _io
+    import logging as _logging
+    import os as _os
+    import pruefhilfen as P
+    from nc import cookieholen as H
+
+    # ── (1) ES GIBT EINE ABHILFE JE WEG, UND SIE SAGT ETWAS.
+    assert set(H.ABHILFE) == {"gast", "browser"}, sorted(H.ABHILFE)
+    assert "tiktok.com" in H.ABHILFE["gast"] and "RECORD_PROXY" in H.ABHILFE["gast"], \
+        "die Gast-Abhilfe nennt weder die Probe noch den Ausweg"
+    assert "Browser-Profil" in H.ABHILFE["browser"], H.ABHILFE["browser"]
+    for weg, text in H.ABHILFE.items():
+        assert text.startswith("Abhilfe:") and len(text) > 80, (weg, text[:60])
+
+    # ── (2) UND SIE STEHT IM BERICHT UND IN DER ZEILE. Ein Text, den niemand
+    # ausgibt, ist dasselbe wie keiner.
+    heim = P.verzeichnis()
+    ziel = _os.path.join(heim, "cookies.txt")
+
+    class Sammler(_logging.Handler):
+        def __init__(self):
+            super().__init__()
+            self.zeilen = []
+
+        def emit(self, satz):
+            self.zeilen.append(self.format(satz))
+
+    prot = _logging.getLogger("w100_cookie")
+    prot.propagate = False
+    prot.setLevel(_logging.DEBUG)
+    sam = Sammler()
+    sam.setFormatter(_logging.Formatter("%(message)s"))
+    prot.addHandler(sam)
+    try:
+        # Eine Adresse, die es nicht gibt: der Abruf MUSS scheitern, und zwar
+        # ohne zu werfen — die Aufrufer sind eine Route, ein Telegram-Befehl
+        # und eine Dauerschleife.
+        b = H.aktualisiere(ziel, quelle="gast", timeout=2,
+                           urls=["http://127.0.0.1:1/"],
+                           domains=("127.0.0.1",), log=prot)
+    finally:
+        prot.removeHandler(sam)
+
+    assert b["ok"] is False and b["error"], b
+    assert b.get("abhilfe") == H.ABHILFE["gast"], \
+        "der Bericht traegt die Abhilfe nicht: %s" % b.get("abhilfe")
+    gemeldet = [z for z in sam.zeilen if "fehlgeschlagen" in z]
+    assert gemeldet, "der Fehlschlag wurde nicht gemeldet: %s" % sam.zeilen
+    assert "RECORD_PROXY" in gemeldet[-1], \
+        "die Logzeile nennt die Abhilfe nicht: %s" % gemeldet[-1]
+    assert not _os.path.exists(ziel), \
+        "ein gescheiterter Abruf hat die Cookie-Datei angelegt"
+
+    # ── (3) DER ERFOLGSFALL TRAEGT KEINE ABHILFE. Ein Hinweis, der immer da
+    # steht, wird nicht gelesen.
+    q = _io.open(_os.path.join(_os.path.dirname(_os.path.abspath(__file__)),
+                               "nc", "cookieholen.py"), encoding="utf-8").read()
+    i = q.index('bericht["abhilfe"]')
+    vorher = q[:i]
+    assert vorher.rstrip().endswith('_nc_fehlertext.nach_aussen(e, "cookieholen.aktualisiere")'), \
+        "die Abhilfe wird nicht nur im Fehlerzweig gesetzt"
+
+    ok("W100: ein gescheiterter Cookie-Bezug nennt Probe und Ausweg")
+    ok("W100: die Abhilfe steht im Bericht UND in der Logzeile")
+
+
 def main():
     tmp, rid = richte_testdatenbank_ein()
     ok("db_conn aus nc.dbwrap: echtes Schema angelegt, Commit durchgelaufen")
@@ -18732,6 +18935,8 @@ def main():
     _test_v42_w98_ordnerscan_findet_dateien_ohne_eintrag()
     _test_v42_w99_env_vorlage_kennt_auch_die_listen_namen()
     _test_v42_w99_leerer_spendenblock_sagt_warum()
+    _test_v42_w100_installer_liefert_kopierbare_zeilen()
+    _test_v42_w100_cookiebezug_nennt_die_abhilfe()
     _test_v42_w60_azrael_cooldown_je_plattform()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)

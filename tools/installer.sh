@@ -394,13 +394,28 @@ elif [ -n "$QUELLE" ]; then
   mkdir -p "$ZIEL"
   info "Kopiere Quelltext nach $ZIEL"
   erklaere ".env, Datenbanken, Aufnahmen und Logs werden dabei NIE angefasst — sie gehoeren dir, nicht dem Build."
+  # v4.2-W100: die Liste stand zweimal da (rsync und tar) und wich von der
+  # des Auslieferungsarchivs ab. Gemessen an einer Installation aus einem
+  # Arbeitsbaum: .coverage, .pytest_cache/, .ruff_cache/ und ein 4-MB-
+  # Release-ZIP wanderten mit. Nichts davon ist falsch, aber nichts davon
+  # gehoert in einen Bestand, der ausgeliefert laeuft — und ein zweiter
+  # Caches-Satz mit fremden mtimes ist der Stoff, aus dem die .pyc-Falle aus
+  # CLAUDE.md gemacht ist.
+  #
+  # EINE Liste, von beiden Wegen benutzt. Dieselbe Lehre wie bei den zwei
+  # Ordner-Aufloesungen in W98: zwei Listen fuer denselben Zweck laufen
+  # auseinander, und die Abweichung faellt erst im Bestand auf.
+  AUS_KOPIE=(
+    '.git' '.venv' 'recordings' 'logs' '*.db' '.env'
+    '__pycache__' '.pytest_cache' '.ruff_cache' '.mypy_cache' '.coverage'
+    '*.zip' '*.pyc' 'AUSLIEFERUNG.json'
+  )
   if have rsync; then
-    rsync -a --exclude '.git' --exclude '.venv' --exclude 'recordings' \
-          --exclude 'logs' --exclude '*.db' --exclude '.env' \
-          "$QUELLE"/ "$ZIEL"/
+    RS_ARGS=(); for m in "${AUS_KOPIE[@]}"; do RS_ARGS+=(--exclude "$m"); done
+    rsync -a "${RS_ARGS[@]}" "$QUELLE"/ "$ZIEL"/
   else
-    (cd "$QUELLE" && tar cf - --exclude='.git' --exclude='.venv' --exclude='recordings' \
-        --exclude='logs' --exclude='*.db' --exclude='.env' .) | (cd "$ZIEL" && tar xf -)
+    TAR_ARGS=(); for m in "${AUS_KOPIE[@]}"; do TAR_ARGS+=(--exclude="$m"); done
+    (cd "$QUELLE" && tar cf - "${TAR_ARGS[@]}" .) | (cd "$ZIEL" && tar xf -)
   fi
   gut "Quelltext liegt in $ZIEL"
 else
@@ -1086,7 +1101,11 @@ NOTIZ="$HOME/nightcrawler-installation.txt"
   printf 'BEDIENUNG\n'
   [ -n "${DIENST:-}" ] && printf '  Status      systemctl status %s\n  Log         journalctl -u %s -f\n  Neustart    sudo systemctl restart %s\n' "$DIENST" "$DIENST" "$DIENST"
   printf '  Handstart   bash %s/start.sh\n' "$ZIEL"
-  printf '  Selbsttest  %s/bot.py --selfcheck\n' "$VENV/bin/python"
+  # v4.2-W100: hier stand '%s/bot.py' — ein Schraegstrich statt eines
+  # Leerzeichens, also '.venv/bin/python/bot.py'. Genau DIESE Zeile kopiert
+  # der Betreiber aus dem Bericht, und sie kann nicht laufen. Dieselbe Klasse
+  # wie die Dashboard-Adresse in W93: die Zeile, die man kopiert, war falsch.
+  printf '  Selbsttest  %s bot.py --selfcheck\n' "$VENV/bin/python"
   printf '  Dashboard   ssh -L 3000:localhost:%s %s@<server-ip>   → http://localhost:3000\n\n' "$DASH_PORT" "$(id -un)"
   if [ -n "$MERKZETTEL" ]; then printf 'MERKZETTEL\n'; printf '%s' "$MERKZETTEL" | sed 's/^/  · /'; printf '\n'; fi
   printf 'WEITERLESEN\n'
