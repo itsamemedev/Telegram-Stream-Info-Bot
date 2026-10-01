@@ -11,6 +11,98 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Hinzugefügt — ein hörbarer Alarm, und ein Spendenblock, der stehen bleibt (v4.2 W101)
+
+Zwei Meldungen des Betreibers am 01.10.: „im control panel Tab immer noch
+keinen Button um den Ton zu aktivieren" und „falls in der env eine
+kryptowallet Adresse fehlen sollte, sollte diese nur ausgeblendet werden, der
+krypto donation Block soll trotzdem angezeigt werden".
+
+**Das Deck hatte drei Meldewege und keinen hörbaren.** Toast — nur sichtbar,
+wenn man hinsieht. Benachrichtigungs-Center — nur, wenn man es aufklappt.
+Browser-Push — nur bei verstecktem Tab und erteilter Berechtigung. Genau der
+Fall, für den ein Ton da ist, nämlich dass der Betreiber im Control-Tab sitzt
+und wegsieht, war der einzige ohne Meldung.
+
+**Es muss ein Knopf sein, und das ist kein Komfort.** Browser blockieren
+WebAudio ohne Nutzergeste (Autoplay-Policy). Ein automatisch bewaffneter Ton
+wäre das Schlimmste von beidem: das Deck hielte sich für alarmierend, und es
+käme nichts heraus — dieselbe Klasse wie die stillen `return`s aus W81, nur
+im Browser. `ncTonUmschalten()` prüft deshalb `ctx.state` **nach** dem
+`resume()` und meldet bei blockiertem Kontext die Abhilfe, statt das Rufen für
+das Ergebnis zu nehmen. Der Probe-Piep beim Einschalten *ist* die Bestätigung;
+eine Zusage ohne Ton wäre wieder nur eine Behauptung.
+
+Der Ton entsteht per Oszillator, nicht aus einer Datei: kein Asset im Archiv,
+kein Request, nichts, was eine CSP oder ein Offline-Deck bricht. Fehler tief
+und doppelt, Info ein kurzer hoher Piep — man weiß ohne hinzusehen, was los
+ist.
+
+**Die Drossel hängt am Paar (Schwere, Zeit), nicht am Kanal.** Eine Ruhezeit
+für alles hätte bei einem Ereignissturm den Fehler-Piep hinter einem Info-Piep
+verschluckt, und die Fehlerzeile ist die, die man hören muss. Es ist die Lehre
+aus W97 (`nc/meldetakt.py`) eine Schicht weiter. Und die Zustandsprüfung steht
+**vor** dem Stempeln: ein Piep, den niemand gehört hat, darf die Ruhezeit nicht
+setzen, sonst bleibt das nächste echte Ereignis stumm.
+
+Zwei Knöpfe — einer im On-Air-Deck des Control-Tabs, einer neben „Push
+aktivieren" —, aber **eine** Zustandsquelle über `data-ton-knopf`. Zwei eigene
+Beschriftungen driften auseinander; das haben die zwei Ausschlusslisten im
+Installer (W100) und die zwei Ordner-Auflösungen (W98) je einmal gezeigt.
+
+**Der Krypto-Block verschwand ganz, wenn keine Adresse gesetzt war.** Eine
+einzelne fehlende Adresse kostete schon vorher nur ihre Zeile —
+`nc.crypto.addresses()` nimmt genau die gesetzten. W99 hatte aber nur den
+*Ausfall* sichtbar gemacht und den leeren Fall weiter still versteckt: für den
+Betreiber sah eine zugeklappte Seite damit immer noch aus wie ein Fehler, und
+der Unterschied liegt in einer Zeile `.env`. Der Block steht jetzt in **jedem**
+Zustand und sagt in drei verschiedenen Sätzen, welcher es ist. Geprüft wird die
+stärkere Aussage: im ganzen Krypto-Abschnitt kommt kein `hidden=true` mehr vor.
+
+**`gesucht` war bei einem Treffer leer** — „bei Treffern braucht niemand die
+Namen". Das war falsch, sobald eine Teilkonfiguration im Spiel ist, und die ist
+der Normalfall: wer nur Bitcoin annimmt, hat fünf leere Namen, und eine
+Konfiguration mit einer von sechs Adressen sah damit genauso aus wie eine
+vollständige. `gesucht` trägt jetzt immer alle sechs, `fehlend` die leeren, und
+der Bot meldet die Teilkonfiguration einmal gedrosselt auf INFO mit den
+fehlenden Namen. Der eigene W99-Vertrag fiel dabei zu Recht und prüft seither
+die Aussage statt der Schreibweise.
+
+**Zwei Logzeilen behaupteten ein Verhalten, das es nicht mehr gibt** („der
+Spendenblock auf der öffentlichen Seite bleibt deshalb aus"). Ein Text, der
+eine überholte Wirkung nennt, schickt den Betreiber an die falsche Stelle —
+beide sagen jetzt, was wirklich passiert.
+
+**Und drei der neuen Texte wären nie übersetzt worden.** Das fiel nur auf, weil
+`tools/i18n_extract.py --check en` sie als fehlend meldete — beziehungsweise
+**nicht** meldete, was der eigentliche Befund war:
+
+* Eine über zwei Zeilen zusammengesetzte Toast-Meldung ergibt im Quelltext zwei
+  Bruchstücke und zur Laufzeit einen ganzen Satz: drei Schlüssel, von denen
+  keiner trägt. Jetzt ein Literal.
+* Ein vollständiger Satz, der auf „zu" endet, gilt dem Extraktor als Bruchstück
+  zusammengesetzten HTMLs (`_BRUCHSTUECK_ENDE`) — zu Recht, dafür ist die
+  Heuristik da, nur war dieser Satz komplett und wäre still deutsch geblieben.
+  Umformuliert statt die Heuristik aufgeweicht.
+* Der Extraktor sammelt nur JS-Literale **ohne** Backslash ein. Die Notiz der
+  Website stand mit `\u2014`/`\u00fc` darin und war damit außer Reichweite; die
+  Datei ist UTF-8 und trägt rohe Umlaute an Dutzenden Stellen. Dieselbe Falle
+  traf das Markup im selben Literal (`<p class="note">…`) — die Sätze stehen
+  jetzt getrennt vom Tag.
+
+Dass eine Beschriftung in der englischen Oberfläche deutsch bleibt, während ihr
+Gegenzustand übersetzt ist, meldet nichts von selbst. **Ein Schalter mit zwei
+Sprachen ist kein Schönheitsfehler, sondern eine Fehlanzeige.**
+
+Neun Verträge (529 → 538), **14 Mutationsproben, alle gefallen**. Eine entwischte
+zuerst: `'"crypto-teil"' in rumpf` blieb grün, nachdem die Drossel durch
+`laut = True` ersetzt war — der Kanalname steht auch in der
+`zuruecksetzen`-Zeile. Geprüft wird seither die Verdrahtung (`melden` **mit**
+diesem Kanal), nicht das Vorkommen des Namens. Eine Probe, die entwischt, ist
+ein Befund am Vertrag, nicht am Code.
+
+---
+
 ### Behoben — Ein Build aus dem Installer, und was er zeigte (v4.2 W100)
 
 Auftrag: „Bau mal einen lauffähigen build und nutze dafür den installer und

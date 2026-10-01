@@ -11901,6 +11901,227 @@ def _test_v42_w89_stats_json_meldet_laut():
        "Zeitreihen")
 
 
+def _test_v42_w101_deck_kann_hoerbar_alarmieren():
+    """Das Deck hatte drei Meldewege und keinen hoerbaren.
+
+    Toast (nur sichtbar, wenn man hinsieht), Benachrichtigungs-Center (nur
+    aufgeklappt) und Browser-Push (nur bei verstecktem Tab). Genau der Fall,
+    fuer den ein Ton da ist — der Betreiber sitzt im Control-Tab und schaut
+    weg —, war der einzige ohne Meldung. Gemeldet am 01.10.: „im control
+    panel Tab immer noch keinen Button um den Ton zu aktivieren".
+
+    Es MUSS ein Knopf sein: Browser blockieren WebAudio ohne Nutzergeste. Ein
+    automatisch bewaffneter Ton waere das Schlimmste von beidem — das Deck
+    haelte sich fuer alarmierend und es kaeme nichts heraus.
+    """
+    import io as _io
+    import os as _os
+
+    wurzel = _os.path.dirname(_os.path.abspath(__file__))
+    deck = _io.open(_os.path.join(wurzel, "templates", "dashboard.html"),
+                    encoding="utf-8").read()
+
+    # ── (1) ZWEI KNOEPFE, EIN ZUSTAND. Der im Control-Tab (danach wurde
+    # gefragt) und der neben "Push aktivieren" — derselbe Zweck gehoert
+    # nebeneinander. Beide tragen `data-ton-knopf`, damit GENAU EINE Funktion
+    # die Beschriftung schreibt; zwei eigene Texte driften auseinander, wie
+    # die zwei Ausschlusslisten im Installer (W100) und die zwei
+    # Ordner-Aufloesungen (W98) gezeigt haben.
+    assert deck.count("data-ton-knopf") >= 3, \
+        "es gibt nicht beide Knoepfe plus den gemeinsamen Auffrischer"
+    assert 'class="ton-bar"' in deck, "die Alarmzeile fehlt im On-Air-Deck"
+    # Der Knopf im Control-Tab sitzt im On-Air-Deck, nicht irgendwo: zwischen
+    # `id="ra_deck"` und dem naechsten Block dieser Ansicht.
+    i_deck = deck.index('id="ra_deck"')
+    i_tun = deck.index('id="tun_panel"', i_deck)
+    assert "data-ton-knopf" in deck[i_deck:i_tun], \
+        "der Ton-Knopf steht nicht im On-Air-Deck des Control-Tabs"
+
+    # ── (2) DIE DROSSEL HAENGT AM PAAR (Schwere, Zeit), nicht am Kanal. Ein
+    # Ereignissturm darf den Fehler-Piep nicht hinter einem Info-Piep
+    # verschlucken — das ist die Lehre aus W97 (nc/meldetakt.py), eine
+    # Schicht weiter.
+    assert "_TON_RUHE" in deck and "_tonZuletzt" in deck
+    i_ruhe = deck.index("const _TON_RUHE=")
+    ruhe = deck[i_ruhe:deck.index("\n", i_ruhe)]
+    assert "info:" in ruhe and "err:" in ruhe, \
+        "eine Ruhezeit fuer alles drosselt den Fehler-Piep mit weg: %s" % ruhe
+
+    # ── (3) EIN SUSPENDIERTER KONTEXT SPIELT NICHTS UND WIRFT NICHT. Die
+    # Pruefung muss VOR dem Stempeln der Drossel stehen, sonst setzt ein
+    # Piep, den niemand gehoert hat, die Ruhezeit — und das naechste echte
+    # Ereignis bleibt bis zu vier Sekunden stumm. Genau die Klasse Fehler,
+    # die dieses Projekt sammelt: es faellt nichts, es wird nur nichts.
+    i_p = deck.index("function ncPieps(")
+    rumpf = deck[i_p:deck.index("\nfunction ncTonKnopfAuffrischen(", i_p)]
+    assert "ctx.state!=='running'" in rumpf, \
+        "ncPieps piept in einen suspendierten Kontext und merkt es nicht"
+    assert rumpf.index("ctx.state!=='running'") < rumpf.index("_tonZuletzt[art]=jetzt"), \
+        "die Drossel wird gestempelt, bevor klar ist, dass ueberhaupt ein " \
+        "Ton herauskam — ein unhoerbarer Piep macht den naechsten stumm"
+    # ── (3b) KEIN ASSET, KEIN REQUEST: der Ton entsteht im Browser. Eine
+    # mitgelieferte Audiodatei muesste ins Archiv, durch jede CSP, und waere
+    # im Offline-Deck weg. Geprueft wird der RUMPF, nicht die Datei — ein
+    # `new Audio(...)` gibt es im Deck berechtigt (Piper-Probe).
+    assert "createOscillator" in rumpf, "der Ton wird nicht synthetisiert"
+    assert "new Audio" not in rumpf and "fetch(" not in rumpf, \
+        "der Signalton holt eine Datei — damit haengt er am Ausliefern"
+
+    # ── (4) DER SCHALTER MELDET DEN ZUSTAND, NICHT DIE ABSICHT. `resume()`
+    # darf nicht als Erfolg gelten: bleibt der Kontext suspendiert, ist der
+    # Ton AUS, und der Betreiber muss das erfahren statt sich auf einen
+    # Alarm zu verlassen, den es nicht gibt. Dieselbe Lehre wie bei der
+    # Bindung in W84 ("die WIRKLICHE Adresse nennen, nicht die gewuenschte").
+    i_u = deck.index("async function ncTonUmschalten(")
+    um = deck[i_u:deck.index("\nfunction sseStart(", i_u)]
+    assert "ctx.state!=='running'" in um, \
+        "ncTonUmschalten nimmt das Rufen von resume() fuer das Ergebnis"
+    assert um.index("ctx.state!=='running'") < um.index("_tonAn=true"), \
+        "der Ton gilt als an, bevor nachgesehen wurde, ob er laeuft"
+    assert "Autoplay" in um, \
+        "die Fehlzeile nennt keine Abhilfe — dasselbe wie ein blankes 'HTTP 403'"
+
+    # ── (5) DER TON HAENGT AN DEMSELBEN ZWEIG WIE TOAST UND NOTIFICATION.
+    # Haengt er davor, piept es fuer jedes Ereignis, das das Deck selbst als
+    # unwichtig einstuft — inklusive jeder Chat-Zeile.
+    i_s = deck.index("_sse.onmessage = ev=>{")
+    sse = deck[i_s:deck.index("\nsseStart();", i_s)]
+    assert "ncPieps(" in sse, "der Ton ist nicht an den Ereignisstrom gehaengt"
+    assert sse.index("const interesting") < sse.index("ncPieps("), \
+        "es piept vor der Interessant-Pruefung — also auch fuer Chat-Zeilen"
+
+    # ── (6) DER KNOPF IM CONTROL-TAB ENTSTEHT ERST BEIM BAUEN DER ANSICHT.
+    # Ohne Auffrischen danach traegt er nach einem Neuladen "Ton aktivieren",
+    # obwohl der Ton an ist — ein Schalter mit falschem Zustand ist
+    # schlimmer als keiner.
+    i_v = deck.index("VIEW_LOADERS.restream = async function(){")
+    i_e = deck.index("window._rsAutoRefresh=setInterval", i_v)
+    assert "ncTonKnopfAuffrischen()" in deck[i_v:i_e], \
+        "nach dem Bauen des Control-Tabs frischt niemand den Ton-Knopf auf"
+    # Und beim Start, fuer den Knopf im Benachrichtigungs-Center.
+    assert "sseStart(); _bellRender(); ncTonKnopfAuffrischen();" in deck, \
+        "beim Start steht der Knopf auf der Vorgabe statt auf dem Zustand"
+
+    ok("W101: der Control-Tab hat einen Knopf fuer den Signalton")
+    ok("W101: beide Knoepfe lesen EINEN Zustand (kein Textdrift)")
+    ok("W101: ein unhoerbarer Piep stempelt die Drossel nicht")
+    ok("W101: der Schalter meldet den Kontext-Zustand, nicht das resume()")
+    ok("W101: es piept nur fuer Ereignisse, die auch einen Toast wert sind")
+
+
+def _test_v42_w101_krypto_block_bleibt_stehen():
+    """Eine fehlende Adresse soll nur ihre Zeile kosten, nicht den Block.
+
+    W99 hat den AUSFALL sichtbar gemacht und den leeren Fall weiter still
+    versteckt. Fuer den Betreiber sah eine zugeklappte Seite damit immer noch
+    aus wie ein Fehler — und der Unterschied liegt in einer Zeile `.env`.
+    Gemeldet am 01.10.: „falls in der env eine kryptowallet Adresse fehlen
+    sollte, sollte diese nur ausgeblendet werden, der krypto donation Block
+    soll trotzdem angezeigt werden".
+    """
+    import io as _io
+    import os as _os
+    from nc import crypto as C
+
+    wurzel = _os.path.dirname(_os.path.abspath(__file__))
+    alt = {n: _os.environ.get(n) for n in C.erwartete_namen()}
+    try:
+        # ── (1) TEILKONFIGURATION: eine gesetzt, fuenf nicht. Die eine
+        # erscheint, die fuenf fallen als Zeile weg — und `fehlend` SAGT,
+        # welche. Bis W101 trug `gesucht` bei einem Treffer die leere Liste,
+        # womit "eine von sechs" genauso aussah wie "alle sechs".
+        for n in C.erwartete_namen():
+            _os.environ.pop(n, None)
+        _os.environ["DONATION_BTC_ADDRESS"] = "bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4"
+        teil = C.snapshot(fetch_live=False)
+        assert [a["coin"] for a in teil["addresses"]] == ["btc"], teil
+        assert teil["grund"] == "", "eine gesetzte Adresse ist kein Fehlerfall"
+        assert set(teil["fehlend"]) == set(C.erwartete_namen()) - {"DONATION_BTC_ADDRESS"}, \
+            "fehlend nennt die leeren Namen nicht: %r" % (teil["fehlend"],)
+        assert len(teil["gesucht"]) == len(C.erwartete_namen()), \
+            "gesucht ist bei einem Treffer wieder leer — eine " \
+            "Teilkonfiguration ist damit nicht von einer vollen zu trennen"
+
+        # ── (2) ALLE GESETZT: nichts fehlt. Eine `fehlend`-Liste, die nie
+        # leer wird, meldet nur Rauschen.
+        for n in C.erwartete_namen():
+            _os.environ[n] = "x" + n[-6:]
+        voll = C.snapshot(fetch_live=False)
+        assert voll["fehlend"] == [], voll["fehlend"]
+        assert len(voll["addresses"]) == len(C.erwartete_namen())
+
+        # ── (3) KEINE GESETZT: Grund UND beide Listen.
+        for n in C.erwartete_namen():
+            _os.environ.pop(n, None)
+        leer = C.snapshot(fetch_live=False)
+        assert leer["grund"] == "keine_adresse_konfiguriert", leer
+        assert set(leer["fehlend"]) == set(C.erwartete_namen()), leer
+
+        # ── (3b) LEERRAUM IST KEINE ADRESSE. Eine Variable, die in der .env
+        # steht und nichts enthaelt, darf keine leere Kachel erzeugen.
+        _os.environ["DONATION_ETH_ADDRESS"] = "   "
+        blank = C.snapshot(fetch_live=False)
+        assert blank["addresses"] == [], blank
+        assert "DONATION_ETH_ADDRESS" in blank["fehlend"], \
+            "eine Variable mit Leerraum gilt als gesetzt"
+    finally:
+        for n, v in alt.items():
+            if v is None:
+                _os.environ.pop(n, None)
+            else:
+                _os.environ[n] = v
+
+    # ── (4) DIE SEITE VERSTECKT DEN BLOCK IN KEINEM ZWEIG MEHR. Geprueft
+    # wird die staerkere Aussage: im ganzen Krypto-Abschnitt kommt kein
+    # `hidden=true` mehr vor. Eine Zusicherung auf einen einzelnen Zweig
+    # waere gruen, sobald die Regression einen anderen trifft.
+    seite = _io.open(_os.path.join(wurzel, "website", "lafap_index.html"),
+                     encoding="utf-8").read()
+    kb = seite.index("// v4.0-W94: Krypto-Spendenadressen")
+    ke = seite.index("// v4.0-W72: Plattform-Chips", kb)
+    krypto = seite[kb:ke]
+    assert "hidden=true" not in krypto.replace(" ", ""), \
+        "ein Zweig versteckt den Krypto-Block wieder"
+    assert krypto.count("cw.hidden=false") >= 1
+    # Und die drei Lagen sagen DREI verschiedene Saetze — sonst ist der Block
+    # zwar da und die Auskunft wieder dieselbe fuer alles.
+    assert "keine Krypto-Adresse hinterlegt" in krypto, \
+        "der leere Fall sagt nicht, dass nichts hinterlegt ist"
+    assert "nicht abrufbar" in krypto, "der Ausfall sagt nichts"
+    assert "konnten nicht angezeigt werden" in krypto, \
+        "ein Fehler beim Rendern sieht wieder wie 'nichts konfiguriert' aus"
+
+    # ── (5) DER BOT MELDET DIE TEILKONFIGURATION — gedrosselt und mit den
+    # fehlenden Namen. Sie hatte bis W101 gar keinen Zustand: zwei von sechs
+    # Wallets sahen im Log aus wie alle sechs.
+    src = _io.open(_os.path.join(wurzel, "bot.py"), encoding="utf-8").read()
+    i = src.index('stats["crypto"] = _nc_crypto.snapshot')
+    rumpf = rumpf_ab(src, i)
+    # Hier stand `'"crypto-teil"' in rumpf` — und die Mutationsprobe ist
+    # entwischt: der Name steht auch in der `zuruecksetzen`-Zeile, also blieb
+    # die Zusicherung gruen, nachdem die Drossel durch `laut = True` ersetzt
+    # war. Geprueft wird deshalb die VERDRAHTUNG (melden MIT diesem Kanal),
+    # nicht das Vorkommen des Namens. Eine Probe, die entwischt, ist ein
+    # Befund am Vertrag, nicht am Code.
+    import re as _re
+    assert _re.search(r'melden\(\s*\n?\s*"crypto-teil"', rumpf), \
+        "die Teilkonfiguration laeuft ungedrosselt — ein Kanalname allein " \
+        "ist keine Drossel"
+    assert '_nc_meldetakt.zuruecksetzen("crypto-teil")' in rumpf, \
+        "der Erfolgspfad setzt die Drossel nicht zurueck — eine Lage, die " \
+        "wiederkehrt, bliebe bis zu 15 Minuten unsichtbar (Lehre aus W81)"
+    assert "_fehlend" in rumpf, "die Meldung nennt die fehlenden Namen nicht"
+    # Und kein Logtext behauptet mehr, der Block bleibe aus — ein Text, der
+    # eine ueberholte Wirkung nennt, schickt an die falsche Stelle.
+    assert "bleibt deshalb aus" not in rumpf, \
+        "der Logtext behauptet weiter, der Spendenblock verschwinde"
+
+    ok("W101: eine fehlende Adresse kostet nur ihre Zeile, nicht den Block")
+    ok("W101: snapshot nennt die fehlenden env-Namen auch bei Treffern")
+    ok("W101: die Seite zeigt den Krypto-Block in jedem Zustand")
+    ok("W101: der Bot meldet eine Teilkonfiguration gedrosselt")
+
+
 def _test_v42_w60_azrael_cooldown_je_plattform():
     """v4.2-W60: ein Cooldown fuer drei Chats verschluckte zwei davon.
 
@@ -18439,7 +18660,16 @@ def _test_v42_w99_leerer_spendenblock_sagt_warum():
         _os.environ["DONATION_BTC_ADDRESS"] = "bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4"
         voll = C.snapshot(fetch_live=False)
         assert len(voll["addresses"]) == 1 and voll["grund"] == "", voll
-        assert voll["gesucht"] == [], "bei Treffern braucht niemand die Namen"
+        # v4.2-W101: hier stand `voll["gesucht"] == []` — „bei Treffern
+        # braucht niemand die Namen". Das war falsch, sobald eine
+        # TEILkonfiguration im Spiel ist, und das ist der Normalfall: wer nur
+        # Bitcoin annimmt, hat fuenf leere Namen, und eine Konfiguration mit
+        # einer von sechs Adressen sah damit genauso aus wie eine
+        # vollstaendige. `gesucht` traegt jetzt immer alle sechs, `fehlend`
+        # die leeren. Geprueft wird deshalb die Aussage statt der Schreibweise.
+        assert set(voll["gesucht"]) == set(C.erwartete_namen()), voll["gesucht"]
+        assert voll["fehlend"] == [n for n in C.erwartete_namen()
+                                   if n != "DONATION_BTC_ADDRESS"], voll["fehlend"]
         a = voll["addresses"][0]
         assert a["coin"] == "btc" and a["address"].startswith("bc1q")
         assert a["qr"].lstrip().startswith("<svg"), \
@@ -18937,6 +19167,8 @@ def main():
     _test_v42_w99_leerer_spendenblock_sagt_warum()
     _test_v42_w100_installer_liefert_kopierbare_zeilen()
     _test_v42_w100_cookiebezug_nennt_die_abhilfe()
+    _test_v42_w101_deck_kann_hoerbar_alarmieren()
+    _test_v42_w101_krypto_block_bleibt_stehen()
     _test_v42_w60_azrael_cooldown_je_plattform()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)

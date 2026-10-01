@@ -1302,13 +1302,39 @@ nav a:hover::after,nav a:focus-visible::after{transform:scaleX(1)}
            Adresse konfiguriert" von "Lagebild nicht erreichbar" nicht zu
            unterscheiden — der Block war in beiden Faellen einfach weg, und
            niemand konnte sagen warum. Der Betreiber meldete genau das: „es
-           fehlen saemtliche krypto wallet Adressen". */
+           fehlen saemtliche krypto wallet Adressen".
+
+           v4.2-W101: und jetzt bleibt er AUCH DANN stehen, wenn gar keine
+           Adresse gesetzt ist. W99 hat nur den Ausfall sichtbar gemacht und
+           den leeren Fall weiter versteckt — fuer den Betreiber sah eine
+           zugeklappte Seite damit immer noch aus wie ein Fehler, und der
+           Unterschied liegt in einer Zeile .env. Eine FEHLENDE EINZELNE
+           Adresse faellt ohnehin nur als Zeile weg: `nc.crypto.addresses()`
+           nimmt genau die gesetzten, nie alle oder keine. */
         var g=(d.crypto&&d.crypto.grund)||'';
-        if(g==='keine_adresse_konfiguriert'){ cw.hidden=true; }
-        else if(g==='fehler'){
-          cl.innerHTML='<p class="note">Spendenadressen derzeit nicht abrufbar.</p>';
-          cw.hidden=false;
-        } else { cw.hidden=true; }
+        /* Die Saetze stehen als EIGENE Literale, das Markup kommt getrennt
+           dazu: tools/i18n_extract.py erkennt eine Zeichenkette mit `<p
+           class="note">` als Markup-Bruchstueck und nimmt sie nicht in den
+           Katalog. Bis W101 stand der Satz aus W99 genau so drin und war
+           damit nicht uebersetzbar — ohne dass etwas das gemeldet haette. */
+        var hinweis=function(satz){ cl.innerHTML='<p class="note">'+satz+'</p>'; };
+        if(g==='fehler'){
+          hinweis('Spendenadressen derzeit nicht abrufbar.');
+        } else if(g==='keine_adresse_konfiguriert'){
+          /* Rohe Zeichen, keine \uXXXX-Escapes: tools/i18n_extract.py sammelt
+             nur JS-Literale OHNE Backslash ein, also waere dieser Satz nie im
+             Katalog gelandet — englisch waere die Seite deutsch geblieben, und
+             gemeldet haette das nichts. Die Datei ist UTF-8 (meta charset) und
+             traegt rohe Umlaute an Dutzenden Stellen. */
+          hinweis('Derzeit ist keine Krypto-Adresse hinterlegt — Spenden gehen bis dahin über PayPal.');
+        } else {
+          /* Weder Treffer noch Grund: das Lagebild kennt den Block nicht
+             (aeltere stats.json). Auch das ist eine Auskunft und kein
+             Nichts — bis W101 fuehrte dieser Zweig ins stumme Verstecken. */
+          hinweis('Spendenadressen derzeit nicht abrufbar.');
+        }
+        cw.hidden=false;
+        /* Einspaltig: der Block traegt nur einen Hinweis, keine Kacheln. */
         var pm2=document.getElementById('pay-methods'); if(pm2) pm2.classList.remove('has-crypto'); }
     }catch(e){
       /* Ein Fehler BEIM RENDERN darf nicht wie "nichts konfiguriert"

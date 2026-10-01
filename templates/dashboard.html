@@ -1405,6 +1405,13 @@ body{padding-top:46px}   /* Platz für die fixe Sendeleiste */
 .pf-rs.off,.pf-ch.off{color:var(--text-faint);border-color:var(--border)}
 .pf-ch.on{color:#a970ff;border-color:rgba(169,112,255,.3)}
 .chatsend{display:flex;gap:6px;margin-top:8px}
+/* v4.2-W101 · Alarmzeile im On-Air-Deck. grid-column:1/-1, weil .onair-deck
+   ein Dreispalter ist und die Zeile sonst in die Signalkette rutscht. */
+.ton-bar{grid-column:1/-1;display:flex;align-items:center;gap:10px;flex-wrap:wrap;
+  margin-top:10px;padding-top:10px;border-top:1px solid var(--border)}
+.ton-bar .faint{font-size:11px;line-height:1.5}
+.ton-bar .btn[aria-pressed="true"]{box-shadow:0 0 8px color-mix(in srgb,var(--cyan) 35%,transparent)}
+@media(pointer:coarse){ .ton-bar .btn{min-height:44px} }
 .chatsend select{flex:0 0 auto;background:var(--panel);border:1px solid var(--border);color:var(--text);border-radius:var(--r-sm);font-size:var(--fs-xs)}
 .chatsend input{flex:1;background:var(--panel);border:1px solid var(--border);color:var(--text);border-radius:var(--r-sm);padding:5px 8px;font-size:var(--fs-sm)}
 /* ============ F93: AZRAEL SENTINEL — Kanal-Chips ============ */
@@ -2472,6 +2479,10 @@ document.addEventListener("DOMContentLoaded",function(){
       <span>🔔 BENACHRICHTIGUNGEN</span>
       <div class="spacer"></div>
       <button onclick="notifTogglePush()" id="notifPushBtn">Push aktivieren</button>
+      <!-- v4.2-W101: der Ton gehoert neben den Push-Schalter, denn es ist
+           derselbe Zweck. Beide Knoepfe (hier und im Control-Tab) lesen EINEN
+           Zustand ueber data-ton-knopf — zwei eigene Texte driften. -->
+      <button type="button" data-ton-knopf onclick="ncTonUmschalten()">🔇 Ton aktivieren</button>
       <button onclick="notifClear()">leeren</button>
     </div>
     <div class="notif-list" id="notifList"><div class="notif-empty">Noch keine Ereignisse</div></div>
@@ -3649,6 +3660,116 @@ async function notifToggle(){
   _bellRender();
 }
 
+/* ═══ v4.2-W101 · HOERBARER ALARM — und warum es ein KNOPF sein muss ═══
+   Das Deck hatte drei Meldewege und keinen einzigen hoerbaren: Toast (nur
+   sichtbar, wenn man hinsieht), Benachrichtigungs-Center (nur, wenn man es
+   aufklappt) und Browser-Push (nur bei verstecktem Tab und erteilter
+   Berechtigung). Genau der Fall, fuer den ein Ton da ist — der Betreiber
+   sitzt im Control-Tab und schaut weg —, war der einzige, in dem nichts
+   passierte.
+
+   Der Ton laesst sich NICHT von selbst einschalten: Browser blockieren
+   WebAudio und `play()` ohne Nutzergeste (Autoplay-Policy). Ein automatisch
+   bewaffneter Ton waere das Schlimmste von beidem — das Deck haelte sich
+   fuer alarmierend, und es kaeme nichts heraus. Dieselbe Klasse wie die
+   stillen `return`s aus W81, nur im Browser. Deshalb ein ausdruecklicher
+   Knopf, und deshalb prueft `ncTonAn()` den ZUSTAND des Kontexts, statt das
+   Fragen fuer das Ergebnis zu nehmen.
+
+   Erzeugt wird der Ton per Oszillator, nicht aus einer Datei: kein Asset im
+   Archiv, kein Request, nichts, was eine CSP oder ein Offline-Deck bricht. */
+let _tonCtx=null;
+let _tonAn = localStorage.getItem('nc_ton')==='1';
+/* Drossel wie nc/meldetakt.py, und mit derselben Lehre aus W97: der
+   Schluessel ist das PAAR (Schwere, Zeit), nicht der Kanal. Ein Info-Piep
+   darf den Fehler-Piep nicht verschlucken — bei einem Ereignissturm ist die
+   Fehlerzeile die, die man hoeren muss. */
+const _TON_RUHE={info:4000, err:1500};
+const _tonZuletzt={info:0, err:0};
+
+function _tonKontext(){
+  const AC = window.AudioContext||window.webkitAudioContext;
+  if(!AC) return null;
+  if(!_tonCtx){ try{ _tonCtx=new AC(); }catch(e){ return null; } }
+  return _tonCtx;
+}
+
+/* Zwei Toene, damit man ohne hinzusehen weiss, was los ist: Fehler tiefer
+   und doppelt, Info ein kurzer hoher Piep. */
+function ncPieps(schwere){
+  if(!_tonAn) return false;
+  const art = schwere==='err' ? 'err' : 'info';
+  const jetzt = Date.now();
+  if(jetzt - _tonZuletzt[art] < _TON_RUHE[art]) return false;
+  const ctx=_tonKontext(); if(!ctx) return false;
+  /* Ein suspendierter Kontext spielt nichts und wirft nicht — ohne diese
+     Pruefung meldete die Drossel einen Piep, den niemand gehoert hat. */
+  if(ctx.state!=='running'){ try{ ctx.resume(); }catch(e){} return false; }
+  _tonZuletzt[art]=jetzt;
+  const folge = art==='err' ? [[440,0],[440,0.18]] : [[880,0]];
+  folge.forEach(([hz,ab])=>{
+    try{
+      const o=ctx.createOscillator(), g=ctx.createGain();
+      o.type='sine'; o.frequency.value=hz;
+      const t0=ctx.currentTime+ab;
+      /* Huellkurve: ein hart ein- und ausgeschalteter Oszillator knackt. */
+      g.gain.setValueAtTime(0.0001,t0);
+      g.gain.exponentialRampToValueAtTime(0.22,t0+0.012);
+      g.gain.exponentialRampToValueAtTime(0.0001,t0+0.13);
+      o.connect(g); g.connect(ctx.destination);
+      o.start(t0); o.stop(t0+0.15);
+    }catch(e){}
+  });
+  return true;
+}
+
+function ncTonKnopfAuffrischen(){
+  /* EINE Zustandsquelle fuer ALLE Knoepfe. Zwei Knoepfe mit je eigenem Text
+     driften auseinander — dieselbe Lehre wie die zwei Ausschlusslisten im
+     Installer (W100) und die zwei Ordner-Aufloesungen (W98). */
+  document.querySelectorAll('[data-ton-knopf]').forEach(b=>{
+    /* Die Beschriftung nennt den ZUSTAND, der Tooltip das Ergebnis des
+       Klicks — und beide Texte muessen fuer tools/i18n_extract.py findbar
+       sein. "Ton abschalten" ist es nicht (kein Umlaut, kein Merkwort), es
+       waere in der englischen Oberflaeche deutsch geblieben, waehrend der
+       Gegenzustand uebersetzt ist: ein Schalter mit zwei Sprachen. */
+    b.textContent = _tonAn ? '🔊 Ton ist an' : '🔇 Ton aktivieren';
+    b.classList.toggle('cyan', _tonAn);
+    b.setAttribute('aria-pressed', _tonAn ? 'true' : 'false');
+    b.title = _tonAn
+      ? 'Signalton bei Live-, Fehler- und Sende-Ereignissen (Klick: aus)'
+      : 'Signalton einschalten — der Browser erlaubt Ton nur nach einem Klick';
+  });
+}
+
+async function ncTonUmschalten(){
+  if(_tonAn){
+    _tonAn=false; localStorage.setItem('nc_ton','0');
+    ncTonKnopfAuffrischen(); toast('Signalton ist aus'); return;
+  }
+  const ctx=_tonKontext();
+  if(!ctx){ toast('Dieser Browser kann keinen Ton erzeugen (kein WebAudio)','err'); return; }
+  try{ await ctx.resume(); }catch(e){}
+  /* Nicht „wir haben resume gerufen" melden, sondern nachsehen. Bleibt der
+     Kontext suspendiert, ist der Ton AUS, und der Betreiber muss das
+     erfahren — sonst verlaesst er sich auf einen Alarm, den es nicht gibt. */
+  if(ctx.state!=='running'){
+    /* EIN Literal, nicht zwei: der Uebersetzungskatalog nimmt den deutschen
+       Satz als Schluessel, und zur Laufzeit steht hier EIN Textknoten. Ueber
+       zwei Zeilen zusammengesetzt fand tools/i18n_extract.py zwei Bruchstuecke
+       und der Browser suchte nach dem ganzen Satz — drei Schluessel, von denen
+       keiner traegt. */
+    toast('Browser blockiert den Ton — Seite einmal anklicken, oder Autoplay fuer diese Adresse erlauben','err');
+    ncTonKnopfAuffrischen(); return;
+  }
+  _tonAn=true; localStorage.setItem('nc_ton','1');
+  ncTonKnopfAuffrischen();
+  /* Der Probe-Piep IST die Bestaetigung: hoert man ihn, stimmt die ganze
+     Kette. Eine Zusage ohne Ton waere wieder nur eine Behauptung. */
+  _tonZuletzt.info=0; ncPieps('info');
+  toast('Signalton an — du hoerst Live-, Fehler- und Sende-Ereignisse');
+}
+
 function sseStart(){
   if(!('EventSource' in window)) return;
   try{ if(_sse) _sse.close(); }catch(e){}
@@ -3669,13 +3790,17 @@ function sseStart(){
     if(!interesting) return;
     const msg=(m.title||m.kind)+(m.body?(' — '+m.body):'');
     if(typeof toast==='function') toast(msg, sev==='error'?'err':'');
+    /* v4.2-W101: derselbe Zweig, der ueber Toast und Notification
+       entscheidet, entscheidet auch ueber den Ton — sonst piept es fuer
+       Ereignisse, die das Deck selbst als unwichtig einstuft. */
+    ncPieps(sev==='error'?'err':'info');
     if(_notifOn && 'Notification' in window && Notification.permission==='granted' && document.hidden){
       try{ new Notification('NIGHTCRAWLER · '+(m.kind||''), {body:msg, tag:'nc-'+(m.kind||'evt')}); }catch(e){}
     }
     if(sev==='error'){ const led=$('#ledBot'); if(led) led.className='dot err'; }
   };
 }
-sseStart(); _bellRender();
+sseStart(); _bellRender(); ncTonKnopfAuffrischen();
 
 /* ---- formatters ---- */
 function humanBytes(n){ if(n==null) return '—'; n=+n; if(!n) return '0 B';
@@ -7073,6 +7198,13 @@ VIEW_LOADERS.restream = async function(){
                  onkeydown="if(event.key==='Enter')csSend()">
           <button class="btn" onclick="csSend()">Senden</button>
         </div>
+        <!-- v4.2-W101: Alarmzeile im On-Air-Deck. Hier sitzt der Betreiber
+             waehrend der Sendung, also gehoert der Ton-Schalter hierher und
+             nicht nur in ein aufklappbares Center. -->
+        <div class="ton-bar">
+          <button class="btn sm" type="button" data-ton-knopf onclick="ncTonUmschalten()">🔇 Ton aktivieren</button>
+          <span class="faint">Signalton bei Live-, Fehler- und Sende-Ereignissen. Der Browser erlaubt Ton nur nach einem Klick — deshalb ein Knopf.</span>
+        </div>
       </div>
       <div class="panel mb" id="tun_panel">
         <div class="head"><h3>▚ Polen-VPS Tunnel</h3><span class="tag">aufnahme-egress</span>
@@ -7425,6 +7557,11 @@ VIEW_LOADERS.restream = async function(){
         </div>
       </div>`;
     root.dataset.built='1';
+    /* v4.2-W101: der Ton-Knopf dieser Ansicht entsteht erst JETZT. Ohne
+       diesen Aufruf traegt er nach einem Neuladen „Ton aktivieren", obwohl
+       der Ton laut localStorage an ist — ein Schalter, der den falschen
+       Zustand zeigt, ist schlimmer als keiner. */
+    ncTonKnopfAuffrischen();
     if(!window._rsAutoRefresh){
       // F99: SSE treibt Chat + Events live → Polling nur noch als Fallback für
       // Werte ohne Push (Systemlast, Timeline). 8s → 20s spart ~60% Requests.
