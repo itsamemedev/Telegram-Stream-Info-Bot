@@ -10,7 +10,7 @@ GitHub-Repo trägt Historie, CI und Issues — es ist nicht der Deploy-Weg.
 
 ## Die eine Regel
 
-`bot.py` hat **24.588 Zeilen / 1,2 MB ≈ 295.000 Token**. Diese Datei wird
+`bot.py` hat **24.608 Zeilen / 1,2 MB ≈ 295.000 Token**. Diese Datei wird
 **nie** ganz gelesen und **nie** blind durchsucht. Erst fragen wo etwas steht,
 dann den Ausschnitt holen:
 
@@ -137,7 +137,7 @@ die Prüfkette fährt und was die Sperre ist; pytest kommt daneben, für die
 Arbeit am einzelnen Befund.
 
 **Die Überdeckung ist seit v4.2-W86 gemessen: 52,2 %** von `nc/` und `brain/`
-(20.166 Anweisungen, 9.630 davon ungeprüft). Das ist die Zahl, die den 529
+(20.169 Anweisungen, 9.630 davon ungeprüft). Das ist die Zahl, die den 538
 Verträgen erst ihren Maßstab gibt — „alles grün" sagt sonst nichts darüber,
 wie viel Bestand dabei angefasst wurde. Gesperrt wird wie bei W65/W66 nur der
 Zuwachs, und zwar die **Anzahl** ungeprüfter Anweisungen, nicht der
@@ -705,6 +705,49 @@ Vorgabenblock, und `WIDTH="${WIDTH:-54}"` *setzt* WIDTH — eine Prüfung auf
 „ist gesetzt" ist danach für jede Variable wahr. Gefangen hat das der eigene
 Vertrag, nicht das Nachdenken. **Wer in einer Shell die Umgebung von den
 Vorgaben unterscheiden will, muss das vor der ersten Zuweisung tun.**
+
+**Ein Meldeweg, den man sehen muss, meldet nachts nichts.** Das Deck hatte
+drei — Toast (nur sichtbar, wenn man hinsieht), Benachrichtigungs-Center (nur
+aufgeklappt), Browser-Push (nur bei verstecktem Tab) — und keinen hörbaren.
+Seit v4.2-W101 gibt es den Signalton, und er **muss** per Knopf eingeschaltet
+werden: Browser blockieren WebAudio ohne Nutzergeste. Ein automatisch
+bewaffneter Ton wäre das Schlimmste von beidem — das Deck hielte sich für
+alarmierend, und es käme nichts heraus. Deshalb prüft `ncTonUmschalten()` den
+`ctx.state` **nach** dem `resume()`, und der Probe-Piep ist die Bestätigung.
+**Wer eine Wirkung zusagt, muss sie nachsehen, nicht nur auslösen.**
+
+Dabei zwei Lehren aus früheren Wellen, eine Schicht weiter: die Ruhezeit hängt
+am Paar (Schwere, Zeit), nicht am Kanal — eine Drossel für alles verschluckt
+bei einem Ereignissturm genau den Fehler-Piep, auf den es ankommt (W97). Und
+die Zustandsprüfung steht **vor** dem Stempeln der Drossel: ein Piep, den
+niemand gehört hat, darf die nächste echte Meldung nicht stumm machen.
+
+**Eine Anzeige, die ganz verschwindet, ist keine Auskunft.** W99 hat den
+*Ausfall* des Krypto-Spendenblocks sichtbar gemacht und den leeren Fall weiter
+still versteckt — für den Betreiber sah eine zugeklappte Seite damit immer noch
+aus wie ein Fehler, und der Unterschied liegt in einer Zeile `.env`. Seit
+v4.2-W101 steht der Block in jedem Zustand und sagt in drei verschiedenen
+Sätzen, welcher es ist; der Vertrag prüft die stärkere Aussage, dass im ganzen
+Abschnitt kein `hidden=true` mehr vorkommt. Eine einzelne fehlende Adresse
+kostete immer nur ihre Zeile — `nc.crypto.addresses()` nimmt die gesetzten.
+
+Dazu der dritte Zustand, der bis dahin gar keinen hatte: `gesucht` war bei
+einem Treffer leer („bei Treffern braucht niemand die Namen"). Eine
+**Teilkonfiguration** ist aber der Normalfall — wer nur Bitcoin annimmt, hat
+fünf leere Namen —, und eine von sechs Adressen sah damit genauso aus wie alle
+sechs. `fehlend` nennt sie jetzt, und der Bot meldet das einmal gedrosselt.
+
+**Benutzertext, der nie im Katalog landet, bleibt still deutsch.** Drei neue
+Texte aus W101 wären so durchgefallen, und keiner davon hätte sich gemeldet:
+eine über zwei Zeilen zusammengesetzte Toast-Meldung (zwei Bruchstücke im
+Quelltext, ein ganzer Satz zur Laufzeit), ein vollständiger Satz, der auf „zu"
+endet und deshalb `_BRUCHSTUECK_ENDE` traf, und ein JS-Literal mit
+`\uXXXX`-Escapes — `tools/i18n_extract.py` sammelt nur Literale **ohne**
+Backslash ein. Ebenso Markup im selben Literal (`'<p class="note">…'`). Nach
+Änderungen an Benutzertext deshalb nicht nur auf „fehlend: 0" sehen, sondern
+nachzählen, ob der neue Text überhaupt **gefunden** wurde. **Ein Schalter, der
+in der englischen Oberfläche halb deutsch ist, ist eine Fehlanzeige, kein
+Schönheitsfehler.**
 
 **Modul-Konstanten frieren `.env` ein.** `.env` wird teils erst nach den ersten
 Imports geladen. Konfiguration als Funktion lesen (`_backend_conf()`), nie als

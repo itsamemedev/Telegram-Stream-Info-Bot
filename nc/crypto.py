@@ -68,16 +68,38 @@ def erwartete_namen():
     return tuple(env for _coin, _label, env in _COINS)
 
 
+def fehlende_namen():
+    """Die env-Namen, unter denen KEINE Adresse steht.
+
+    v4.2-W101: `erwartete_namen()` sagt, wonach gesucht wird — nicht, was
+    fehlt. Der Betreiber wollte wissen, welche der sechs Wallets leer ist,
+    ohne die Liste von Hand gegen die `.env` zu halten; das ist genau die
+    Frage, die eine Teilkonfiguration stellt.
+    """
+    return tuple(env for _coin, _label, env in _COINS
+                 if not (os.getenv(env, "") or "").strip())
+
+
 def snapshot(fetch_live=False):
-    """Für stats.json: {addresses:[…], grund: str, btc_received_btc?: float}.
-       fetch_live=True holt den BTC-Empfang best-effort (gecacht).
+    """Für stats.json: {addresses:[…], grund, gesucht, fehlend,
+       btc_received_btc?}. fetch_live=True holt den BTC-Empfang best-effort.
 
        `grund` sagt bei leerer Liste WARUM — "keine_adresse_konfiguriert" ist
-       eine Aussage, eine leere Liste ohne Grund ist keine."""
+       eine Aussage, eine leere Liste ohne Grund ist keine.
+
+       v4.2-W101: `gesucht` trägt jetzt IMMER alle sechs Namen und `fehlend`
+       die nicht gesetzten. Bis dahin war `gesucht` bei einem Treffer leer
+       ("bei Treffern braucht niemand die Namen") — und damit sah eine
+       Konfiguration mit einer von sechs Adressen genauso aus wie eine
+       vollständige. Eine Teilkonfiguration ist der Normalfall, nicht die
+       Ausnahme: wer nur Bitcoin annimmt, hat fünf leere Namen, und die
+       sollen nachlesbar sein statt erraten."""
     addrs = addresses()
+    fehlend = list(fehlende_namen())
     out = {"addresses": addrs,
            "grund": "" if addrs else "keine_adresse_konfiguriert",
-           "gesucht": list(erwartete_namen()) if not addrs else []}
+           "gesucht": list(erwartete_namen()),
+           "fehlend": fehlend}
     btc = next((a for a in addrs if a["coin"] == "btc"), None)
     if btc and fetch_live:
         now = time.time()

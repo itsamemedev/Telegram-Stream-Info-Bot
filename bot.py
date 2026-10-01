@@ -10695,7 +10695,8 @@ def _public_stats() -> dict:
             "crypto-snapshot", type(e).__name__, _time_mod.monotonic())
         if laut:
             log.error("Krypto-Spendenadressen nicht ermittelbar: %s: %s — der "
-                      "Spendenblock auf der oeffentlichen Seite bleibt leer.%s",
+                      "Spendenblock auf der oeffentlichen Seite sagt bis dahin "
+                      "'derzeit nicht abrufbar'.%s",
                       type(e).__name__, e, _nc_meldetakt.zusatz(unterdrueckt))
     else:
         _nc_meldetakt.zuruecksetzen("crypto-snapshot")
@@ -10709,12 +10710,31 @@ def _public_stats() -> dict:
             if laut:
                 log.warning(
                     "Keine Krypto-Spendenadresse gesetzt — der Spendenblock auf "
-                    "der oeffentlichen Seite bleibt deshalb aus. Gesucht wird "
-                    "in der .env nach: %s%s",
+                    "der oeffentlichen Seite steht (v4.2-W101), nennt aber nur "
+                    "PayPal. Gesucht wird in der .env nach: %s%s",
                     ", ".join(_nc_crypto.erwartete_namen()),
                     _nc_meldetakt.zusatz(unterdrueckt))
         else:
             _nc_meldetakt.zuruecksetzen("crypto-leer")
+            # v4.2-W101: der dritte Zustand, der bis hierher gar keinen
+            # hatte. Zwei von sechs Wallets gesetzt sah im Log genauso aus
+            # wie alle sechs — und die oeffentliche Seite zeigt nur, was da
+            # ist, nie was fehlt. Einmal auf INFO mit den fehlenden Namen;
+            # das ist kein Fehler, sondern eine Lage, die man kennen will.
+            _fehlend = stats["crypto"].get("fehlend") or []
+            if _fehlend:
+                laut, unterdrueckt = _nc_meldetakt.melden(
+                    "crypto-teil", ",".join(_fehlend), _time_mod.monotonic())
+                if laut:
+                    log.info(
+                        "Krypto-Spenden: %d von %d Adressen gesetzt. Ohne "
+                        "Eintrag in der .env: %s%s",
+                        len(stats["crypto"].get("addresses") or []),
+                        len(_nc_crypto.erwartete_namen()),
+                        ", ".join(_fehlend),
+                        _nc_meldetakt.zusatz(unterdrueckt))
+            else:
+                _nc_meldetakt.zuruecksetzen("crypto-teil")
     return stats
 
 # v4.1-W26: Haken fuer nc/routes/auskunft.py.
