@@ -11,6 +11,94 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Behoben — der Cache gegen Doppel-Auflösungen hat nie gegriffen (v4.2 W103)
+
+Der Betreiber hat nach dem W102-Merge das Log mitgeschnitten. Darin steht
+nicht das, was wir gesucht haben, sondern ein zweiter Befund — und er steht
+in den **Zeitstempeln**:
+
+```
+10:55:53,944  live-ohne-URL @laurahasisfrau1601225: …
+10:55:53,961  live-ohne-URL @laurahasisfrau1601225: …     (17 ms später)
+10:56:18,477  live-ohne-URL @laurahasisfrau1601225: …
+10:56:18,555  live-ohne-URL @laurahasisfrau1601225: …     (78 ms)
+```
+
+**Zwei vollständige Auflösungen für denselben Nutzer, Millisekunden
+auseinander, rund siebzig Mal in achtzehn Minuten.** Genau dagegen gibt es
+`_LIVE_STATUS_CACHE` — der Kommentar daneben nennt als Zweck wörtlich
+„Multi-Chat-Dedup", und derselbe Nutzer in zwei Chats ist der Normalfall.
+
+**Warum er nicht griff.** Er wurde EINMAL geprüft, und zwar **vor** der
+Semaphore:
+
+```python
+cached = _LIVE_STATUS_CACHE.get(username)
+if cached and cached[0] > now and not force_fresh:
+    return cached[1], cached[2]
+...
+async with sem:                      # RESOLVE_CONCURRENCY = 2
+    …volle Auflösung…
+    _LIVE_STATUS_CACHE[username] = (now + TTL, status, info)
+```
+
+Treffen zwei Aufrufer ein, bevor einer von ihnen geschrieben hat, passieren
+**beide** die Prüfung. Und die Semaphore fängt das nicht: sie ist zwei groß,
+lässt also genau zwei gleichzeitig durch — sie serialisiert alles außer dem
+Fall, der hier auftritt. Ergebnis: doppelte Last auf einem Dienst, der uns
+ohnehin rate-limitet, doppelte Logzeile, und der Dedup aus dem Kommentar
+existierte nie. Die Prüfung steht jetzt **zweimal**: billig davor, verbindlich
+innerhalb.
+
+**Der zweite Fehler steckt im Zeitstempel.** `now` wird vor der Auflösung
+genommen und danach für `now + TTL` benutzt. Die TTL ist 15 s; Webcast-API
+plus HTML-Weg brauchen Sekunden, und seit W102 kommt im häufigsten Fall ein
+yt-dlp-Lauf mit bis zu 20 s Timeout dazu. Im Vertrag gemessen: bei 20 s
+Auflösung und 15 s TTL ist die Restgültigkeit **minus fünf Sekunden** — der
+Eintrag ist beim Schreiben schon abgelaufen. Der Cache war damit genau dann
+wirkungslos, wenn er am meisten gebraucht wird. W102 hat das verschärft, ohne
+es zu verursachen.
+
+**Und die Zeilen selbst waren ungedrosselt.** Siebzig gleiche Zeilen in
+achtzehn Minuten für EINEN Nutzer; bei 40 Trackings ist das Log nach einer
+Stunde unlesbar, und eine unlesbare Warnung ist so gut wie keine. Genau diese
+Lehre steht seit W81 in `CLAUDE.md`, für genau diesen Resolver — die
+`live-ohne-URL`-Zeilen aus W51 sind nur nie durch `nc/meldetakt.py` gegangen,
+und W102 hat eine dritte dazugelegt. Jetzt ein Kanal, der Grund ist der
+Ausgang (`html`, `ytdlp`, `keiner`), also meldet ein **Wechsel** sofort — dass
+aus „HTML liefert nach" ein „keiner findet etwas" geworden ist, ist die
+eigentliche Nachricht. Der Schlüssel ist bewusst der Kanal und nicht der
+Nutzer: bei 40 Trackings in derselben Lage drosselt ein Schlüssel je Nutzer
+gar nichts. Und der Erfolgspfad setzt zurück, sonst bliebe eine
+wiederkehrende Störung bis zu 15 Minuten unsichtbar.
+
+**Die Monolith-Sperre fiel dabei zu Recht.** Der Nachschlag-Block ist in W51
+entstanden, in W102 um den yt-dlp-Weg gewachsen und in W103 um die Drossel —
+`get_live_status` stand bei **210 Zeilen** und damit über der 200er-Stufe. Drei
+Wellen in derselben Verzweigung sind der Punkt, an dem sie einen Namen
+braucht: `_url_nachschlag` ist jetzt ein eigener Schritt (95 Zeilen),
+`get_live_status` steht bei 132.
+
+Die Blindstellen-Sperre fiel ebenfalls (+3) und wurde **nicht** mit einer neuen
+Grundlinie erledigt: `holen` und `aufraeumen` haben je einen einzigen Ausgang.
+„Kein Treffer" ist dort kein Misserfolg, sondern der Normalfall — und ein
+Modul, das nicht loggt, darf ihn nicht als Fehlerpfad ausgeben. Grundlinie
+unverändert bei 464.
+
+Zwei Verträge (546 → 553), **14 Mutationsproben, alle gefallen**. Eine
+entwischte zuerst, und das war ein Befund am Vertrag: die Probe `_jetzt = now`
+dreht nur die Quelle des Zeitstempels zurück und lässt `setzen()` stehen — die
+Zusicherung prüfte bloß, dass die alte Schreibweise weg ist. Jetzt wird
+**jede** Schreibstelle daraufhin geprüft, dass sie ein frisches `monotonic()`
+bekommt.
+
+**Was dieser Befund über W102 sagt.** Die Zeile, die der Betreiber geschickt
+hat, trägt den Text *vor* W102 („auch der HTML-Weg findet keine Stream-URL") —
+auf dem Server läuft noch der alte Build. Der yt-dlp-Nachschlag ist dort nicht
+drin; was die Zeile beweist, ist allein, dass der 71-%-Fall gerade läuft.
+
+---
+
 ### Behoben — yt-dlp hatte die Stream-Adresse, und wir haben sie als Ja/Nein gelesen (v4.2 W102)
 
 Meldung des Betreibers am 01.10.:

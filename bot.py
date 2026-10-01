@@ -575,6 +575,7 @@ from nc import cookies as _nc_cookies_datei  # v4.1-W32: cookies.txt lesen
 from nc import overlaytext as _nc_ovtext  # v4.2-W22: die kleinen Sendebild-Textbausteine
 from nc import cookieholen as _nc_cookieholen  # v4.2-W10: Cookies selbst beziehen
 from nc import ytdlpurl as _nc_ytdlpurl      # v4.2-W102: Stream-URL aus der yt-dlp-Auskunft
+from nc import livecache as _nc_livecache    # v4.2-W103: Kurzzeit-Cache der Live-Erkennung
 from nc import resolvergrund as _nc_resolvergrund  # v4.2-W81/W102: Grund + Abhilfe
 from nc import cfgnorm as _nc_cfgnorm        # v4.0-W33: reine Config-Normalisierer (gebündelt)
 from nc import restrend as _nc_restrend      # v4.0-W40: Langzeit-Ressourcen-Trend (Slow-Leak)
@@ -3081,6 +3082,126 @@ async def _nachschlag_ytdlp(username):
     return _info
 
 
+def _ohne_url_melden(username, grund, text, *args):
+    """Die drei Ausgaenge des URL-Nachschlags melden — GEDROSSELT (v4.2-W103).
+
+    Der Betreiber hat am 01.10. mitgeschnitten, was diese Zeilen ohne Drossel
+    anrichten: rund **siebzig Zeilen in achtzehn Minuten fuer EINEN Nutzer**,
+    jede davon identisch. Bei 40 Trackings ist das Log nach einer Stunde
+    unlesbar — und eine unlesbare Warnung ist so gut wie keine. Genau diese
+    Lehre steht seit W81 in CLAUDE.md, fuer genau diesen Resolver; die
+    `live-ohne-URL`-Zeilen aus W51/W102 sind nur nie durch den Kanal gegangen.
+
+    Der Schluessel ist der KANAL, der Grund der AUSGANG (`html`, `ytdlp`,
+    `keiner`). Damit meldet ein Wechsel sofort — dass aus „HTML liefert nach"
+    ein „keiner findet etwas" geworden ist, ist die eigentliche Nachricht —
+    und eine wiederkehrende Lage erst nach der Ruhezeit. Ein Schluessel je
+    NUTZER waere hier falsch: bei 40 Trackings in derselben Lage drosselt er
+    nichts (CLAUDE.md, W81).
+    """
+    laut, unterdrueckt = _nc_meldetakt.melden(
+        "live-ohne-url", grund, _time_mod.monotonic())
+    if laut:
+        log.info(text + "%s", *(args + (_nc_meldetakt.zusatz(unterdrueckt),)))
+
+
+async def _url_nachschlag(username, session, status, info):
+    """Nach der Stream-URL nachschlagen, wenn die Webcast-API keine lieferte.
+
+    Eigene Funktion seit v4.2-W103, und nicht aus Ordnungsliebe: der Block
+    ist in W51 entstanden, in W102 um den yt-dlp-Weg gewachsen und in W103 um
+    die Drossel — `get_live_status` stand danach bei 210 Zeilen und
+    `tools/monolith.py` hat die 200er-Stufe gemeldet. Zu Recht: drei Wellen in
+    derselben Verzweigung sind der Punkt, an dem sie einen Namen braucht.
+
+    Rueckgabe: `(status, info)` — unveraendert, wenn nichts nachzuschlagen war
+    oder nichts gefunden wurde.
+    """
+    # v4.2-W51: der HTML-Fallback lief NUR bei 'unknown'. Damit uebersprang
+    # ihn ausgerechnet der haeufigste Fall.
+    #
+    # Gemessen am 11.09., 84 Aufloesungen in zehn Minuten:
+    #     60x  webcast-api: status=live ohne Stream-URL -> live
+    #     24x  webcast-api resolved (hls=yes, flv=yes)
+    #
+    # 71 % melden also "live", liefern aber keine URL — TikTok gibt sie
+    # unserer Datacenter-IP nicht heraus. Der Bot gab das als
+    # ("live", None) zurueck und KEHRTE SOFORT ZURUECK; der HTML-Weg, der
+    # die URL haette liefern koennen, lief nie. Der Recorder startete
+    # blind, fand nichts, und quittierte mit "The channel is not currently
+    # live" (28x im selben Zeitraum).
+    #
+    # v4.2-W102: hier stand „yt-dlp hilft hier NICHT: _resolve_via_ytdlp
+    # gibt auch bei 'live' grundsaetzlich info=None zurueck. Nur der
+    # HTML-Weg traegt eine URL." Das war eine Aussage ueber unsere HUELLE,
+    # nicht ueber yt-dlp — und sie war selbsterfuellend: die Adresse stand
+    # im JSON und wurde als Ja/Nein-Frage gelesen. Seit W102 traegt der
+    # yt-dlp-Weg eine URL und laeuft unten als ZWEITER Nachschlag, wenn
+    # auch HTML leer ausging. Ausgerechnet dieser Weg kommt durch, wo die
+    # Datacenter-IP 403 bekommt — er signiert selbst.
+    if not _nc_live.braucht_url_nachschlag(status, info):
+        # v4.2-W103: die Adresse war von Anfang an da — die Lage ist
+        # vorbei. Ohne das Zuruecksetzen bliebe eine WIEDERKEHRENDE
+        # Stoerung bis zu 15 Minuten unsichtbar, weil die Ruhezeit noch
+        # von der vorigen laeuft (Lehre aus W81).
+        _nc_meldetakt.zuruecksetzen("live-ohne-url")
+    else:
+        _blind = status == "live"
+        try:
+            html_info = await _resolve_via_html(username, session)
+            # v4.2-W52: frueher `html_info.get("hls_url")` — ein
+            # HTML-Treffer mit NUR flv_url fiel durch, obwohl FLV die
+            # stabilere Quelle ist (eine Verbindung statt einer Kette
+            # signierter Segmente). Derselbe Test wie oben, damit
+            # Nachschlag-Bedingung und Annahme nicht auseinanderlaufen.
+            if _nc_live.hat_stream_url(html_info):
+                status, info = "live", html_info
+                if _blind:
+                    _ohne_url_melden(
+                        username, "html",
+                        "live-ohne-URL @%s: HTML-Weg liefert die "
+                        "Stream-URL nach — der Recorder startet nicht "
+                        "mehr blind.", username)
+                # HTML-Erfolg → backoff zurücksetzen
+                _RATE_LIMIT_PENALTY.pop(username, None)
+                _RATE_LIMIT_BACKOFF.pop(username, None)
+            elif _blind:
+                # v4.2-W102: und JETZT noch yt-dlp fragen. Bis hierher
+                # endete der haeufigste Fall (gemessen 71 %: live, keine
+                # URL) genau hier — mit einer Logzeile und ohne Adresse.
+                # Der eine Weg, der in dieser Lage noch durchkommt, lief
+                # NIE: die yt-dlp-Stufe unten haengt an `status ==
+                # "unknown"`, und der Status ist hier "live".
+                _yt = await _nachschlag_ytdlp(username)
+                if _nc_live.hat_stream_url(_yt):
+                    status, info = "live", _yt
+                    _ohne_url_melden(
+                        username, "ytdlp",
+                        "live-ohne-URL @%s: yt-dlp liefert die "
+                        "Stream-URL nach (%s) — Aufnahme UND Restream "
+                        "koennen starten.", username,
+                        "flv" if _yt.get("flv_url") else "hls")
+                    _RATE_LIMIT_PENALTY.pop(username, None)
+                    _RATE_LIMIT_BACKOFF.pop(username, None)
+                else:
+                    # Bleibt bei ("live", None). Jetzt steht im Log, dass
+                    # ALLE DREI Wege leer ausgingen — vorher sah es aus wie
+                    # eine normale Erkennung.
+                    _ohne_url_melden(
+                        username, "keiner",
+                        "live-ohne-URL @%s: weder HTML noch yt-dlp "
+                        "finden eine Stream-URL. Der Restream kann "
+                        "nicht starten (der Chat laeuft weiter, der "
+                        "braucht keine). TikTok gibt die Adresse einer "
+                        "Datacenter-IP oft nicht heraus — Abhilfe: "
+                        "RECORD_PROXY auf einen Residential-/Mobil-"
+                        "Proxy setzen, oder den Tunnel einschalten.",
+                        username)
+        except Exception as e:
+            log.debug(f"html-fallback @{username}: {e}")
+    return status, info
+
+
 async def get_live_status(username: str, session, force_fresh: bool = False) -> tuple:
     """F33: Liefert (status, info) — 'live'/'offline'/'unknown'.
        Cached _LIVE_STATUS_TTL (15s) pro Username damit Multi-Chat-Tracking
@@ -3098,9 +3219,12 @@ async def get_live_status(username: str, session, force_fresh: bool = False) -> 
        URL weitergelaufen waere, wurde so aufgegeben. NUR im Fehlerpfad
        benutzen, sonst faellt der Rate-Limit-Schutz weg."""
     now = _time_mod.monotonic()
-    cached = _LIVE_STATUS_CACHE.get(username)
-    if cached and cached[0] > now and not force_fresh:
-        return cached[1], cached[2]
+    # v4.2-W103: der BILLIGE Weg — spart den Platz in der Semaphore-Schlange.
+    # Die verbindliche Pruefung steht WEITER UNTEN, innerhalb der Semaphore.
+    _traf = _nc_livecache.holen(_LIVE_STATUS_CACHE, username, now,
+                                force_fresh=force_fresh)
+    if _traf is not None:
+        return _traf
 
     if session is None:
         return "unknown", None
@@ -3116,11 +3240,37 @@ async def get_live_status(username: str, session, force_fresh: bool = False) -> 
     # wenn mehrere Worker gleichzeitig live-User checken.
     sem = _get_resolve_semaphore()
     async with sem:
+        # v4.2-W103: NOCH EINMAL nachsehen — und das ist keine Vorsicht,
+        # sondern der Befund aus dem Log des Betreibers vom 01.10.:
+        #
+        #   10:55:53,944  live-ohne-URL @laurahasisfrau1601225: …
+        #   10:55:53,961  live-ohne-URL @laurahasisfrau1601225: …   (17 ms)
+        #
+        # Zwei vollstaendige Aufloesungen fuer denselben Nutzer,
+        # Millisekunden auseinander, rund siebzig Mal in achtzehn Minuten.
+        # Beide Aufrufer hatten die Pruefung oben passiert, bevor einer von
+        # ihnen geschrieben hatte. Die Semaphore faengt das NICHT: sie ist
+        # `RESOLVE_CONCURRENCY` (Vorgabe 2) gross, laesst also genau zwei
+        # gleichzeitig durch — sie serialisiert alles ausser diesem Fall.
+        # Der Kommentar am Cache nennt als Zweck woertlich „Multi-Chat-Dedup";
+        # derselbe Nutzer in zwei Chats ist der Normalfall, und der Dedup
+        # existierte nie.
+        _traf = _nc_livecache.holen(_LIVE_STATUS_CACHE, username,
+                                    _time_mod.monotonic(),
+                                    force_fresh=force_fresh)
+        if _traf is not None:
+            return _traf
         # DETECT_VIA_YTDLP=1 → yt-dlp primär, HTTP-Resolver komplett überspringen.
         if DETECT_VIA_YTDLP == "1" and _ytdlp_detect_available():
             yt_status, yt_info = await _resolve_via_ytdlp(username)
             if yt_status in ("live", "offline"):
-                _LIVE_STATUS_CACHE[username] = (now + _LIVE_STATUS_TTL, yt_status, yt_info)
+                # v4.2-W103: `_time_mod.monotonic()` statt `now`. Der alte
+                # Zeitstempel stammt von VOR der Aufloesung; ein yt-dlp-Lauf
+                # darf bis 20 s dauern, die TTL ist 15 s — der Eintrag waere
+                # beim Schreiben schon abgelaufen gewesen.
+                _nc_livecache.setzen(_LIVE_STATUS_CACHE, username, yt_status,
+                                     yt_info, _time_mod.monotonic(),
+                                     _LIVE_STATUS_TTL)
                 return yt_status, yt_info
             # yt-dlp 'unknown' → unten regulär HTTP versuchen
         # 1. API
@@ -3150,76 +3300,10 @@ async def get_live_status(username: str, session, force_fresh: bool = False) -> 
             _RATE_LIMIT_BACKOFF.pop(username, None)
         # status == "unknown" (Netzwerkfehler / 5xx / Parse) → kein Backoff ändern
 
-        # v4.2-W51: der HTML-Fallback lief NUR bei 'unknown'. Damit uebersprang
-        # ihn ausgerechnet der haeufigste Fall.
-        #
-        # Gemessen am 11.09., 84 Aufloesungen in zehn Minuten:
-        #     60x  webcast-api: status=live ohne Stream-URL -> live
-        #     24x  webcast-api resolved (hls=yes, flv=yes)
-        #
-        # 71 % melden also "live", liefern aber keine URL — TikTok gibt sie
-        # unserer Datacenter-IP nicht heraus. Der Bot gab das als
-        # ("live", None) zurueck und KEHRTE SOFORT ZURUECK; der HTML-Weg, der
-        # die URL haette liefern koennen, lief nie. Der Recorder startete
-        # blind, fand nichts, und quittierte mit "The channel is not currently
-        # live" (28x im selben Zeitraum).
-        #
-        # v4.2-W102: hier stand „yt-dlp hilft hier NICHT: _resolve_via_ytdlp
-        # gibt auch bei 'live' grundsaetzlich info=None zurueck. Nur der
-        # HTML-Weg traegt eine URL." Das war eine Aussage ueber unsere HUELLE,
-        # nicht ueber yt-dlp — und sie war selbsterfuellend: die Adresse stand
-        # im JSON und wurde als Ja/Nein-Frage gelesen. Seit W102 traegt der
-        # yt-dlp-Weg eine URL und laeuft unten als ZWEITER Nachschlag, wenn
-        # auch HTML leer ausging. Ausgerechnet dieser Weg kommt durch, wo die
-        # Datacenter-IP 403 bekommt — er signiert selbst.
-        if _nc_live.braucht_url_nachschlag(status, info):
-            _blind = status == "live"
-            try:
-                html_info = await _resolve_via_html(username, session)
-                # v4.2-W52: frueher `html_info.get("hls_url")` — ein
-                # HTML-Treffer mit NUR flv_url fiel durch, obwohl FLV die
-                # stabilere Quelle ist (eine Verbindung statt einer Kette
-                # signierter Segmente). Derselbe Test wie oben, damit
-                # Nachschlag-Bedingung und Annahme nicht auseinanderlaufen.
-                if _nc_live.hat_stream_url(html_info):
-                    status, info = "live", html_info
-                    if _blind:
-                        log.info("live-ohne-URL @%s: HTML-Weg liefert die "
-                                 "Stream-URL nach — der Recorder startet nicht "
-                                 "mehr blind.", username)
-                    # HTML-Erfolg → backoff zurücksetzen
-                    _RATE_LIMIT_PENALTY.pop(username, None)
-                    _RATE_LIMIT_BACKOFF.pop(username, None)
-                elif _blind:
-                    # v4.2-W102: und JETZT noch yt-dlp fragen. Bis hierher
-                    # endete der haeufigste Fall (gemessen 71 %: live, keine
-                    # URL) genau hier — mit einer Logzeile und ohne Adresse.
-                    # Der eine Weg, der in dieser Lage noch durchkommt, lief
-                    # NIE: die yt-dlp-Stufe unten haengt an `status ==
-                    # "unknown"`, und der Status ist hier "live".
-                    _yt = await _nachschlag_ytdlp(username)
-                    if _nc_live.hat_stream_url(_yt):
-                        status, info = "live", _yt
-                        log.info("live-ohne-URL @%s: yt-dlp liefert die "
-                                 "Stream-URL nach (%s) — Aufnahme UND Restream "
-                                 "koennen starten.", username,
-                                 "flv" if _yt.get("flv_url") else "hls")
-                        _RATE_LIMIT_PENALTY.pop(username, None)
-                        _RATE_LIMIT_BACKOFF.pop(username, None)
-                    else:
-                        # Bleibt bei ("live", None). Jetzt steht im Log, dass
-                        # ALLE DREI Wege leer ausgingen — vorher sah es aus wie
-                        # eine normale Erkennung.
-                        log.info("live-ohne-URL @%s: weder HTML noch yt-dlp "
-                                 "finden eine Stream-URL. Der Restream kann "
-                                 "nicht starten (der Chat laeuft weiter, der "
-                                 "braucht keine). TikTok gibt die Adresse einer "
-                                 "Datacenter-IP oft nicht heraus — Abhilfe: "
-                                 "RECORD_PROXY auf einen Residential-/Mobil-"
-                                 "Proxy setzen, oder den Tunnel einschalten.",
-                                 username)
-            except Exception as e:
-                log.debug(f"html-fallback @{username}: {e}")
+        # v4.2-W103: der Nachschlag ist ein benannter Schritt (siehe
+        # `_url_nachschlag`). Er entscheidet selbst, ob er ueberhaupt etwas zu
+        # tun hat, und meldet seine drei Ausgaenge gedrosselt.
+        status, info = await _url_nachschlag(username, session, status, info)
 
         # 3. yt-dlp-Fallback: HTTP-Resolver lieferte 'unknown' (typisch bei 403
         #    von Datacenter-IP). yt-dlp signiert die Requests selbst → kommt oft
@@ -3231,19 +3315,24 @@ async def get_live_status(username: str, session, force_fresh: bool = False) -> 
                 _RATE_LIMIT_PENALTY.pop(username, None)
                 _RATE_LIMIT_BACKOFF.pop(username, None)
 
-    # Cache nur definitive Antworten — 'unknown' nicht cachen damit wir bald wieder probieren
-    if status in ("live", "offline"):
-        _LIVE_STATUS_CACHE[username] = (now + _LIVE_STATUS_TTL, status, info)
+    # Cache nur definitive Antworten — 'unknown' nicht cachen damit wir bald
+    # wieder probieren. v4.2-W103: der Zeitstempel wird JETZT genommen, nicht
+    # der vom Funktionsanfang — sonst verschenkt der Eintrag die Dauer der
+    # Aufloesung, und bei einer Aufloesung ueber der TTL ist er beim
+    # Schreiben bereits abgelaufen (gemessen: 20 s Aufloesung, 15 s TTL ->
+    # Restgueltigkeit minus fuenf Sekunden).
+    _jetzt = _time_mod.monotonic()
+    if _nc_livecache.setzen(_LIVE_STATUS_CACHE, username, status, info,
+                            _jetzt, _LIVE_STATUS_TTL):
         # F41-Fix F1: Cleanup ist OPPORTUNISTISCH bei JEDEM live/offline-Write,
         # nicht erst bei 200+ Einträgen. Vorher: bei <200 trackings (typischer
         # Fall) wurde der Cache nie gereinigt — stale Einträge sammelten sich
         # bis zum Bot-Restart. Wir reinigen jetzt alle 100 Writes (low-cost,
         # konstant amortisiert).
-        if len(_LIVE_STATUS_CACHE) > 50 and (hash(username) & 63) == 0:
-            stale = [k for k, v in _LIVE_STATUS_CACHE.items() if v[0] < now]
-            for k in stale: _LIVE_STATUS_CACHE.pop(k, None)
-            if stale:
-                log.debug(f"_LIVE_STATUS_CACHE: {len(stale)} stale entries dropped")
+        if (hash(username) & 63) == 0:
+            _weg = _nc_livecache.aufraeumen(_LIVE_STATUS_CACHE, _jetzt)
+            if _weg:
+                log.debug("_LIVE_STATUS_CACHE: %d stale entries dropped", _weg)
     return status, info
 
 
