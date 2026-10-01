@@ -10,7 +10,7 @@ GitHub-Repo trägt Historie, CI und Issues — es ist nicht der Deploy-Weg.
 
 ## Die eine Regel
 
-`bot.py` hat **24.798 Zeilen / 1,2 MB ≈ 295.000 Token**. Diese Datei wird
+`bot.py` hat **24.887 Zeilen / 1,2 MB ≈ 295.000 Token**. Diese Datei wird
 **nie** ganz gelesen und **nie** blind durchsucht. Erst fragen wo etwas steht,
 dann den Ausschnitt holen:
 
@@ -26,7 +26,7 @@ dann den Ausschnitt holen:
     python tools/ncpatch.py docs                           # Doku-Zahlen gegen den Quelltext
 
 `find` antwortet aus `.claude/INDEX.md` — 369 Routen (34 in `bot.py`, 333 in
-`nc/routes/`), 60 Slash-Commands, 553 Funktionen mit Zeilennummern. Nach Änderungen an Routen, Commands oder
+`nc/routes/`), 60 Slash-Commands, 555 Funktionen mit Zeilennummern. Nach Änderungen an Routen, Commands oder
 Top-Level-Funktionen `map` neu laufen lassen. Details: Skill `nc-navigation`.
 
 Für „wer ruft das auf?" und „was ist der Typ?" ist der Sprachserver billiger als
@@ -55,7 +55,7 @@ Auf diesem Windows-Rechner heißt der Interpreter **`python`** (3.13.12);
     brain_bridge.py      Adapter Bot ↔ brain/ (M2)
     brain/               KI-Kern: state, rules, router, agents, memory,
                          semantic, knowledge, scheduler, llm, report
-    nc/                  147 Fachmodule: db, scraping, restream, oauth, ledger,
+    nc/                  148 Fachmodule: db, scraping, restream, oauth, ledger,
                          i18n, …
     nc/routes/           36 Flask-Blueprints mit 335 weiteren API-Routen
     locales/             de.json, en.json — der Übersetzungskatalog
@@ -137,7 +137,7 @@ die Prüfkette fährt und was die Sperre ist; pytest kommt daneben, für die
 Arbeit am einzelnen Befund.
 
 **Die Überdeckung ist seit v4.2-W86 gemessen: 52,4 %** von `nc/` und `brain/`
-(20.231 Anweisungen, 9.631 davon ungeprüft). Das ist die Zahl, die den 546
+(20.253 Anweisungen, 9.631 davon ungeprüft). Das ist die Zahl, die den 553
 Verträgen erst ihren Maßstab gibt — „alles grün" sagt sonst nichts darüber,
 wie viel Bestand dabei angefasst wurde. Gesperrt wird wie bei W65/W66 nur der
 Zuwachs, und zwar die **Anzahl** ungeprüfter Anweisungen, nicht der
@@ -705,6 +705,44 @@ Vorgabenblock, und `WIDTH="${WIDTH:-54}"` *setzt* WIDTH — eine Prüfung auf
 „ist gesetzt" ist danach für jede Variable wahr. Gefangen hat das der eigene
 Vertrag, nicht das Nachdenken. **Wer in einer Shell die Umgebung von den
 Vorgaben unterscheiden will, muss das vor der ersten Zuweisung tun.**
+
+**Ein Cache, der einmal geprueft wird, dedupliziert nichts.** Der Betreiber
+hat am 01.10. das Log mitgeschnitten, und der Befund stand in den
+Zeitstempeln: `live-ohne-URL @name` um 10:55:53,944 **und** um 10:55:53,961 —
+17 Millisekunden Abstand, rund siebzig Mal in achtzehn Minuten. Zwei
+vollständige Auflösungen für denselben Nutzer. `_LIVE_STATUS_CACHE` ist genau
+dagegen gebaut; sein Kommentar nennt als Zweck wörtlich „Multi-Chat-Dedup".
+
+Er wurde EINMAL geprüft, **vor** der Semaphore, und nach der Auflösung
+geschrieben. Zwei Aufrufer passieren damit beide die Prüfung, bevor einer
+schreibt. Die Semaphore fängt das nicht: sie ist `RESOLVE_CONCURRENCY` (2)
+groß, lässt also genau zwei gleichzeitig durch — **sie serialisiert alles
+außer dem Fall, der auftritt.** Seit v4.2-W103 steht die Prüfung zweimal:
+billig davor, verbindlich innerhalb (`nc/livecache.py`).
+
+Dazu der Zeitstempel: `now + TTL` rechnete mit dem `now` von **vor** der
+Auflösung. TTL 15 s, und seit W102 im häufigsten Fall ein yt-dlp-Lauf mit bis
+zu 20 s Timeout — im Vertrag gemessen eine Restgültigkeit von **minus fünf
+Sekunden**. Der Eintrag war beim Schreiben schon abgelaufen, der Cache also
+genau dann wirkungslos, wenn er gebraucht wird. **Wer eine Gültigkeitsdauer
+setzt, nimmt die Uhr beim Schreiben, nicht beim Beginn.**
+
+**Und dieselbe Messung zeigte die Log-Flut.** Siebzig gleiche Zeilen für EINEN
+Nutzer; bei 40 Trackings ist das Log nach einer Stunde unlesbar. Die
+`live-ohne-URL`-Zeilen aus W51 sind nie durch `nc/meldetakt.py` gegangen, und
+W102 hat eine dritte dazugelegt. Jetzt ein Kanal, Grund = Ausgang (`html`,
+`ytdlp`, `keiner`), Schlüssel bewusst der **Kanal** und nicht der Nutzer — bei
+40 Trackings in derselben Lage drosselt ein Schlüssel je Nutzer gar nichts.
+Erfolgspfad setzt zurück.
+
+Die Monolith-Sperre fiel dabei zu Recht: der Nachschlag-Block ist in W51
+entstanden, in W102 gewachsen und in W103 wieder — `get_live_status` stand
+damit über der 200er-Stufe. **Drei Wellen in derselben Verzweigung sind der
+Punkt, an dem sie einen Namen braucht:**
+
+    210 Z  get_live_status            vor W103 (über der Stufe)
+     95 Z  _url_nachschlag            herausgelöst
+    132 Z  get_live_status            danach
 
 **Der Chat braucht keine Stream-Adresse, der Restream schon.** Der Betreiber
 am 01.10.: „wird selten ein live restreamt, aber dennoch läuft der Chat von

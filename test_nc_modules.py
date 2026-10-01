@@ -12254,9 +12254,17 @@ def _test_v42_w102_nachschlag_laeuft_im_haeufigsten_fall():
     # ── (1) DER NACHSCHLAG HAENGT IM live-OHNE-URL-ZWEIG. Der Anker ist der
     # Zweig selbst (`elif _blind:`), nicht die Funktion irgendwo — ein Aufruf
     # an anderer Stelle wuerde die 71 % nicht treffen.
-    i = src.index("if _nc_live.braucht_url_nachschlag(status, info):")
-    j = src.index("    # Cache nur definitive Antworten", i)
-    zweig = src[i:j]
+    #
+    # v4.2-W103: der Anker war `src.index("if _nc_live.braucht_url_nachschlag(
+    # status, info):")` und ist gebrochen, als W103 die Bedingung umdrehte
+    # (`if not …: zuruecksetzen() else: …`) und den Block nach
+    # `_url_nachschlag` herauszog. Das war eine ANKER-Bruchstelle, keine
+    # Verhaltensaenderung — genau der Fall, vor dem CLAUDE.md warnt. Der neue
+    # Anker ist die Funktion mit `rumpf_ab`, also mitwachsend.
+    i = src.index("async def _url_nachschlag(")
+    zweig = rumpf_ab(src, i)
+    assert "_nc_live.braucht_url_nachschlag(status, info)" in zweig, \
+        "der Nachschlag entscheidet nicht mehr ueber braucht_url_nachschlag"
     assert "elif _blind:" in zweig
     blind = zweig[zweig.index("elif _blind:"):]
     assert "_nachschlag_ytdlp(" in blind, \
@@ -12382,6 +12390,167 @@ def _test_v42_w102_restream_trennt_offline_von_ohne_url():
     ok("W102: 'live ohne URL' ist von 'offline' unterschieden")
     ok("W102: der Restream sagt gedrosselt, warum er nicht startet")
     ok("W102: kein Text behauptet mehr eine Aussage ueber TikTok")
+
+
+def _test_v42_w103_cache_greift_bei_gleichzeitigen_aufrufern():
+    """Zwei Aufloesungen fuer denselben Nutzer, 17 ms auseinander.
+
+    Der Betreiber hat am 01.10. das Log mitgeschnitten, und die Zeilen stehen
+    PAARWEISE:
+
+        10:55:53,944  live-ohne-URL @laurahasisfrau1601225: …
+        10:55:53,961  live-ohne-URL @laurahasisfrau1601225: …   (17 ms)
+        10:56:18,477  live-ohne-URL @laurahasisfrau1601225: …
+        10:56:18,555  live-ohne-URL @laurahasisfrau1601225: …   (78 ms)
+
+    Rund siebzig Zeilen in achtzehn Minuten fuer EINEN Nutzer, immer zu
+    zweit. Der Cache ist genau dagegen gebaut — sein Kommentar nennt als
+    Zweck woertlich „Multi-Chat-Dedup", und derselbe Nutzer in zwei Chats ist
+    der Normalfall.
+
+    Er griff nicht, weil er EINMAL geprueft wurde, und zwar VOR der
+    Semaphore. Und die Semaphore faengt es nicht: `RESOLVE_CONCURRENCY` ist 2,
+    sie laesst also genau zwei gleichzeitig durch — sie serialisiert alles
+    ausser dem Fall, der hier auftritt.
+    """
+    import io as _io
+    import os as _os
+    from nc import livecache as C
+
+    # ── (1) EIN TREFFER IST EIN TUPEL, KEIN TREFFER IST None. `None` und
+    # `("offline", None)` sind verschieden: das zweite ist ein GUELTIGER
+    # Treffer mit leerer Nutzlast. Ein Aufrufer, der auf Wahrheitswert prueft,
+    # wuerde beides verwechseln und bei jedem Offline-Nutzer neu aufloesen.
+    cache = {}
+    assert C.holen(cache, "a", 100.0) is None, "leerer Cache liefert keinen None"
+    C.setzen(cache, "a", "offline", None, 100.0, 15.0)
+    assert C.holen(cache, "a", 101.0) == ("offline", None), \
+        "ein gueltiger Offline-Treffer wird nicht als Treffer erkannt"
+
+    # ── (2) NUR DEFINITIVE ANTWORTEN. "unknown" heisst „ich konnte es nicht
+    # ermitteln"; wer das speichert, verlaengert einen Aussetzer um die TTL.
+    assert C.setzen(cache, "b", "unknown", None, 100.0, 15.0) is False
+    assert C.holen(cache, "b", 100.1) is None, "unknown ist im Cache"
+
+    # ── (3) DER ZEITSTEMPEL IST DER DES SCHREIBENS. Hier lag der zweite
+    # Befund: `bot.py` rechnete `now + TTL` mit dem `now` von VOR der
+    # Aufloesung. Gemessen an der echten Lage — Webcast + HTML + ein
+    # yt-dlp-Lauf mit bis zu 20 s Timeout gegen eine TTL von 15 s:
+    beginn, dauer, ttl = 1000.0, 20.0, 15.0
+    C.setzen(cache, "alt", "live", {}, beginn, ttl)          # falsch: Beginn
+    assert C.holen(cache, "alt", beginn + dauer) is None, \
+        "ein Eintrag mit dem Zeitstempel vom Beginn ist beim Schreiben " \
+        "schon abgelaufen — Restgueltigkeit %.0f s" % (beginn + ttl - (beginn + dauer))
+    C.setzen(cache, "neu", "live", {}, beginn + dauer, ttl)  # richtig: jetzt
+    assert C.holen(cache, "neu", beginn + dauer + 1.0) == ("live", {}), \
+        "der frisch gestempelte Eintrag gilt nicht"
+
+    # ── (4) force_fresh UMGEHT, SCHREIBT ABER WEITER. Der Reconnect-Pfad
+    # braucht eine frische URL (B138) — der naechste normale Aufrufer soll
+    # trotzdem vom Ergebnis profitieren.
+    assert C.holen(cache, "neu", beginn + dauer + 1.0, force_fresh=True) is None
+    assert C.holen(cache, "neu", beginn + dauer + 1.0) is not None, \
+        "force_fresh hat den Eintrag geloescht statt ihn zu ueberspringen"
+
+    # ── (5) AUFRAEUMEN ERST AB EINER GROESSE, und nur Abgelaufenes.
+    gross = {str(i): (50.0, "live", None) for i in range(60)}
+    gross["frisch"] = (999.0, "live", None)
+    assert C.aufraeumen(gross, 100.0, ab_groesse=1000) == 0, "raeumt zu frueh"
+    weg = C.aufraeumen(gross, 100.0, ab_groesse=50)
+    assert weg == 60 and "frisch" in gross, (weg, len(gross))
+
+    # ── (6) UND bot.py PRUEFT ZWEIMAL — vor UND in der Semaphore. Das ist
+    # der eigentliche Befund; eine Pruefung allein nutzt nichts.
+    wurzel = _os.path.dirname(_os.path.abspath(__file__))
+    src = _io.open(_os.path.join(wurzel, "bot.py"), encoding="utf-8").read()
+    i = src.index("async def get_live_status(")
+    rumpf = rumpf_ab(src, i)
+    assert rumpf.count("_nc_livecache.holen(") == 2, \
+        "der Cache wird %d-mal geprueft; zwei gleichzeitige Aufrufer " \
+        "brauchen die Pruefung INNERHALB der Semaphore" \
+        % rumpf.count("_nc_livecache.holen(")
+    _sem = rumpf.index("async with sem:")
+    assert rumpf.index("_nc_livecache.holen(") < _sem, "die billige Pruefung fehlt"
+    assert rumpf.rindex("_nc_livecache.holen(") > _sem, \
+        "beide Pruefungen stehen VOR der Semaphore — genau der Zustand, der " \
+        "die Doppelaufloesung erzeugt hat"
+    # Und kein roher Schreibzugriff mehr, der den alten Zeitstempel benutzt.
+    assert "_LIVE_STATUS_CACHE[username] = (now" not in src, \
+        "eine Schreibstelle rechnet wieder mit dem Zeitstempel vom Beginn"
+    # Das allein genuegt NICHT: die erste Fassung dieses Vertrags hat genau
+    # hier aufgehoert, und die Mutationsprobe `_jetzt = now` ist entwischt —
+    # sie laesst `setzen()` stehen und dreht nur die Quelle des Zeitstempels
+    # zurueck. Geprueft wird deshalb JEDE Schreibstelle: der Zeitstempel muss
+    # ein frisches `monotonic()` sein, unmittelbar oder ueber `_jetzt`.
+    assert "_jetzt = _time_mod.monotonic()" in rumpf, \
+        "der Schreib-Zeitstempel wird nicht frisch genommen"
+    for _teil in src.split("_nc_livecache.setzen(")[1:]:
+        _args = _teil[:_teil.index(")") + 1] + _teil[_teil.index(")") + 1:][:80]
+        _args = " ".join(_args.split())
+        assert ("_time_mod.monotonic()" in _args or "_jetzt" in _args), \
+            "eine setzen()-Stelle bekommt keinen frischen Zeitstempel: %s" % _args[:90]
+        assert " now," not in _args and "(now," not in _args, \
+            "eine setzen()-Stelle rechnet mit dem Zeitstempel vom Beginn: %s" % _args[:90]
+
+    ok("W103: ein Cache-Treffer ist von 'kein Treffer' unterscheidbar")
+    ok("W103: die TTL zaehlt ab dem Schreiben, nicht ab dem Beginn")
+    ok("W103: bot.py prueft den Cache auch INNERHALB der Semaphore")
+
+
+def _test_v42_w103_ohne_url_meldung_ist_gedrosselt():
+    """Siebzig gleiche Zeilen in achtzehn Minuten, fuer EINEN Nutzer.
+
+    So steht es im Log des Betreibers vom 01.10. Bei 40 Trackings ist das Log
+    nach einer Stunde unlesbar — und eine unlesbare Warnung ist so gut wie
+    keine. Genau diese Lehre steht seit W81 in CLAUDE.md, fuer genau diesen
+    Resolver; die `live-ohne-URL`-Zeilen aus W51/W102 sind nur nie durch den
+    Kanal gegangen.
+    """
+    import io as _io
+    import os as _os
+    import re as _re
+
+    wurzel = _os.path.dirname(_os.path.abspath(__file__))
+    src = _io.open(_os.path.join(wurzel, "bot.py"), encoding="utf-8").read()
+
+    # ── (1) ALLE DREI AUSGAENGE GEHEN DURCH DEN MELDER, keiner mehr direkt
+    # auf log.info. Gezaehlt wird beides: ein vergessener Ausgang faellt auf.
+    assert src.count("_ohne_url_melden(") == 4, \
+        "nicht alle drei Ausgaenge (plus die Definition) laufen ueber den " \
+        "Melder: %d" % src.count("_ohne_url_melden(")
+    i = src.index("async def _url_nachschlag(")
+    nach = rumpf_ab(src, i)
+    assert 'log.info("live-ohne-URL' not in nach, \
+        "ein Ausgang schreibt wieder ungedrosselt auf log.info"
+
+    # ── (2) DER MELDER DROSSELT WIRKLICH — und der Schluessel ist der KANAL,
+    # nicht der Nutzer. Bei 40 Trackings in derselben Lage drosselt ein
+    # Schluessel je Nutzer gar nichts (CLAUDE.md, W81).
+    m = src.index("def _ohne_url_melden(")
+    melder = rumpf_ab(src, m)
+    assert _re.search(r'melden\(\s*\n?\s*"live-ohne-url"', melder), \
+        "der Melder laeuft ungedrosselt"
+    assert "username" not in melder.split("_nc_meldetakt.melden(")[1].split(")")[0], \
+        "der Nutzername steht im Drossel-Schluessel — damit drosselt er nichts"
+    assert "zusatz(unterdrueckt)" in melder, \
+        "die Zahl der unterdrueckten Faelle fehlt — ohne sie ist nicht zu " \
+        "sehen, wie oft die Lage wirklich auftrat"
+
+    # ── (3) DER GRUND IST DER AUSGANG. Ein Wechsel meldet damit sofort: dass
+    # aus „HTML liefert nach" ein „keiner findet etwas" geworden ist, ist die
+    # eigentliche Nachricht (meldetakt seit W97, Paar (Kanal, Grund)).
+    for grund in ('"html"', '"ytdlp"', '"keiner"'):
+        assert grund in nach, "der Ausgang %s hat keinen eigenen Grund" % grund
+
+    # ── (4) UND DER ERFOLGSPFAD SETZT ZURUECK. War die Adresse von Anfang an
+    # da, ist die Lage vorbei; ohne das Zuruecksetzen bliebe eine
+    # WIEDERKEHRENDE Stoerung bis zu 15 Minuten unsichtbar (Lehre aus W81).
+    assert '_nc_meldetakt.zuruecksetzen("live-ohne-url")' in nach, \
+        "der Erfolgspfad setzt die Drossel nicht zurueck"
+
+    ok("W103: die live-ohne-URL-Zeilen laufen gedrosselt ueber EINEN Kanal")
+    ok("W103: der Drossel-Schluessel ist der Kanal, der Grund der Ausgang")
+    ok("W103: der Erfolgspfad setzt die Drossel zurueck")
 
 
 def _test_v42_w60_azrael_cooldown_je_plattform():
@@ -13148,15 +13317,34 @@ def _test_v42_w51_live_ohne_url():
     # dazugekommen. Jeder einzelne muss im Log stehen, sonst ist nicht
     # messbar, WELCHER Weg die Adresse bringt; und genau diese Frage stellt
     # sich nach dieser Welle noch dringender als nach W51.
-    assert bot.count('log.info("live-ohne-URL @%s:') == 3, \
-        ("alle drei Ausgaenge des Nachschlags muessen im Log stehen — sonst "
-         "kann niemand sagen, welcher Weg wirklich eine URL bringt: %d gefunden"
-         % bot.count('log.info("live-ohne-URL @%s:'))
+    #
+    # v4.2-W103: der Anker war `bot.count('log.info("live-ohne-URL @%s:')`.
+    # Er ist auf 0 gefallen, und zwar zu Recht: die drei Zeilen laufen jetzt
+    # ueber `_ohne_url_melden` und damit durch nc/meldetakt.py. Der Grund
+    # steht im Log des Betreibers vom 01.10. — SIEBZIG gleiche Zeilen in
+    # achtzehn Minuten fuer EINEN Nutzer, bei 40 Trackings unlesbar. Geprueft
+    # wird deshalb die Aussage (drei unterscheidbare Ausgaenge, gedrosselt)
+    # statt der Schreibweise `log.info`.
+    assert bot.count("_ohne_url_melden(") == 4, \
+        ("alle drei Ausgaenge des Nachschlags muessen gemeldet werden (plus "
+         "die Definition) — sonst kann niemand sagen, welcher Weg wirklich "
+         "eine URL bringt: %d gefunden" % bot.count("_ohne_url_melden("))
     assert "HTML-Weg liefert die " in bot, "der HTML-Erfolg fehlt"
     assert "yt-dlp liefert die " in bot, "der yt-dlp-Erfolg fehlt"
     assert "weder HTML noch yt-dlp " in bot, "der Misserfolg fehlt"
     assert "RECORD_PROXY" in bot
-    ok("W51/W102: alle drei Ausgaenge des Nachschlags stehen im Log")
+    # Und alle drei tragen DASSELBE PRAEFIX. Das ist keine Kosmetik: der
+    # Betreiber sucht sie mit
+    #     journalctl -u tiktok-bot -f | grep -E "live-ohne-URL|Restream @"
+    # Verliert ein Ausgang das Praefix, fehlt er in genau dieser Ansicht, und
+    # zwar lautlos. Die Mutationsprobe dazu war nach W103 entwischt, weil die
+    # Zaehlung oben nur noch den Melder prueft — ein Befund am Vertrag.
+    assert bot.count("live-ohne-URL @%s:") == 3, \
+        ("die drei Ausgaenge tragen nicht dasselbe Praefix — der grep des "
+         "Betreibers findet dann nur einen Teil: %d von 3"
+         % bot.count("live-ohne-URL @%s:"))
+    ok("W51/W102/W103: alle drei Ausgaenge werden gemeldet, gedrosselt")
+    ok("W103: und sie tragen dasselbe Praefix, damit ein grep sie alle findet")
 
     # --- 5) yt-dlp IST jetzt drin — und die Warnung von W51 gilt weiter ---
     #
@@ -19460,6 +19648,8 @@ def main():
     _test_v42_w102_ytdlp_traegt_die_stream_url()
     _test_v42_w102_nachschlag_laeuft_im_haeufigsten_fall()
     _test_v42_w102_restream_trennt_offline_von_ohne_url()
+    _test_v42_w103_cache_greift_bei_gleichzeitigen_aufrufern()
+    _test_v42_w103_ohne_url_meldung_ist_gedrosselt()
     _test_v42_w60_azrael_cooldown_je_plattform()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)
