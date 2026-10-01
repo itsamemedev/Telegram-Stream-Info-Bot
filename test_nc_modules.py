@@ -18239,6 +18239,231 @@ def _test_v42_w98_ordnerscan_findet_dateien_ohne_eintrag():
     ok("W98: beide Routen gefahren, 503 bleibt von 500 unterscheidbar")
 
 
+def _test_v42_w99_env_vorlage_kennt_auch_die_listen_namen():
+    """Acht Variablen fehlten in der Vorlage, darunter ALLE sechs Wallets.
+
+    Der Betreiber am 30.09.: „Website im Website Ordner rendert nicht richtig.
+    Es fehlen saemtliche krypto wallet Adressen."
+
+    `tools/gen_env_example.py` sucht nach woertlichem `os.getenv("NAME")`.
+    `nc/crypto.py` liest aber
+
+        for coin, label, env in _COINS:
+            a = os.getenv(env, "")
+
+    — der Name steht in einer Schleifenvariablen und war damit unsichtbar.
+    `.env.example` wird aber als Vorlage ALLER Variablen gefuehrt; wer seine
+    .env daraus neu aufbaut, verliert saemtliche Spendenadressen, und die
+    oeffentliche Seite versteckt den Block danach STILL.
+
+    Es ist der dritte Fall derselben Klasse (nach `_BERECHNET` fuer gerechnete
+    Vorgaben und `_ohne_kommentar` fuer '#' im Default). Deshalb prueft dieser
+    Vertrag nicht die sechs Namen, sondern den WEG: jede Lesestelle wird
+    erreicht, und eine, die es nicht ist, faellt auf.
+    """
+    import io as _io
+    import os as _os
+    import sys as _sys
+
+    wurzel = _os.path.dirname(_os.path.abspath(__file__))
+    if wurzel not in _sys.path:
+        _sys.path.insert(0, wurzel)
+    _sys.path.insert(0, _os.path.join(wurzel, "tools"))
+    try:
+        import gen_env_example as G
+    finally:
+        _sys.path.pop(0)
+
+    from nc import crypto as C
+
+    # ── (1) DIE SECHS NAMEN SIND AUFLOESBAR — aus der Liste, nicht aus dem
+    # Aufruf. Geprueft wird am echten Modul, nicht an einer Attrappe.
+    quelle = _io.open(_os.path.join(wurzel, "nc", "crypto.py"), encoding="utf-8").read()
+    namen, luecken = G.dynamische_namen("nc/crypto.py", quelle)
+    assert not luecken, "nc/crypto.py hat eine unaufgeloeste Lesestelle: %s" % luecken
+    assert set(C.erwartete_namen()) <= namen, \
+        "der Generator findet die Wallet-Namen nicht: %s fehlt" % (
+            set(C.erwartete_namen()) - namen)
+    assert len(C.erwartete_namen()) == 6, C.erwartete_namen()
+
+    # ── (2) UND SIE STEHEN AUCH WIRKLICH IN DER VORLAGE. Der Generator kann
+    # sie finden und sie trotzdem nicht schreiben — das ist zweierlei.
+    vorlage = _io.open(_os.path.join(wurzel, ".env.example"), encoding="utf-8").read()
+    for name in C.erwartete_namen():
+        assert ("\n%s=" % name) in vorlage or ("\n# %s=" % name) in vorlage, \
+            "%s fehlt in .env.example — genau der Befund vom 30.09." % name
+
+    # ── (3) EIN PARAMETER IST KEINE LUECKE. nc/envnum und nc/cfgnorm bekommen
+    # den Namen vom Aufrufer; dort steht das Literal und die alten Muster
+    # sehen es. Wuerde der Pruefer die mitmelden, waere er unbrauchbar —
+    # 15 Fehlalarme, und die Sperre waere in einer Woche abgeschaltet.
+    for datei in ("nc/envnum.py", "nc/cfgnorm.py", "nc/dashauth.py"):
+        q = _io.open(_os.path.join(wurzel, datei), encoding="utf-8").read()
+        _n, l = G.dynamische_namen(datei, q)
+        assert not l, "%s wird faelschlich als Luecke gemeldet: %s" % (datei, l)
+
+    # ── (4) DER GANZE BESTAND IST LUECKENFREI — und DAS ist die Sperre.
+    # Ein neuer Fall dieser Klasse bricht den Generator ab (Exitcode 2), statt
+    # eine Variable lautlos fallen zu lassen.
+    G.LUECKEN.clear()
+    try:
+        erkannt = G.collect()
+        assert not G.LUECKEN, \
+            "unaufgeloeste env-Lesestellen im Bestand: %s" % G.LUECKEN[:5]
+        assert len(erkannt) >= 538, "nur %d Variablen erkannt" % len(erkannt)
+        # ── (4b) UND DIE VORLAGE IST WIRKLICH AKTUELL. Das ist genau, was
+        # `gen_env_example.py --check` tut — hier im Vertrag gefahren, damit
+        # es nicht davon abhaengt, ob jemand das Werkzeug aufruft. Eine Sperre,
+        # die niemand faehrt, ist keine.
+        assert G.render(erkannt) == vorlage, \
+            "`.env.example` ist veraltet — python3 tools/gen_env_example.py"
+    finally:
+        G.LUECKEN.clear()
+
+    # ── (5) DIE PRAEFIX-FAMILIEN SIND EINE ENTSCHEIDUNG, KEIN VERSEHEN.
+    # BRAIN_ACT_<REGEL> und BRAIN_AGENT_<NAME> entstehen erst zur Laufzeit;
+    # sie stehen als Muster in der Vorlage und namentlich in der Ausnahme.
+    assert len(G.DYNAMISCH_ERLAUBT) == 2, G.DYNAMISCH_ERLAUBT
+    for (_datei, praefix), (platz, vorgabe, grund) in G.DYNAMISCH_ERLAUBT.items():
+        assert grund.strip(), "eine Ausnahme ohne Begruendung ist keine"
+        assert platz.startswith("<") and vorgabe != "", (platz, vorgabe)
+        # Die Vorlage bekommt diese Zeile AUS demselben Dict — Ausnahme und
+        # Dokumentation sind dieselbe Tatsache. Beim ersten Anlauf waren sie
+        # zwei: BRAIN_ACT_ stand (durch zwei konkrete Regeln) drin,
+        # BRAIN_AGENT_ gar nicht, und von den Agent-Schaltern konnte niemand
+        # wissen. Der Vertrag hat das gemeldet, nicht das Nachdenken.
+        assert ("# %s%s=%s" % (praefix, platz, vorgabe)) in vorlage, \
+            "%s ist ausgenommen, steht aber nicht als Muster in der Vorlage" % praefix
+        assert grund.split(".")[0] in vorlage.replace("\n# ", " ").replace("\n", " "), \
+            "das Muster %s steht ohne Begruendung in der Vorlage" % praefix
+
+    # ── (6) UND EINE ERFUNDENE LUECKE WIRD WIRKLICH GEMELDET. Ohne diese
+    # Probe waere (4) auch auf einem Pruefer gruen, der nie etwas findet.
+    boese = ("import os\n"
+             "def f(x):\n"
+             "    schluessel = 'A' + x\n"
+             "    return os.getenv(schluessel, '')\n")
+    _n2, l2 = G.dynamische_namen("erfunden.py", boese)
+    assert l2 and l2[0][0] == 4, \
+        "eine nicht aufloesbare Lesestelle wird NICHT gemeldet: %s" % l2
+
+    ok("W99: der Generator loest env-Namen auch aus Listen auf")
+    ok("W99: alle sechs Wallet-Namen stehen in .env.example")
+    ok("W99: Durchleitungs-Helfer gelten nicht als Luecke (keine 15 Fehlalarme)")
+    ok("W99: der Bestand ist rundum aufgeloest — ein neuer Fall bricht ab")
+    ok("W99: die zwei Praefix-Familien sind begruendet und dokumentiert")
+
+
+def _test_v42_w99_leerer_spendenblock_sagt_warum():
+    """Eine leere Adressliste war nicht von einem Ausfall zu unterscheiden.
+
+    Drei stille Schichten hintereinander: `except Exception:
+    stats["crypto"] = {"addresses": []}` im Server, `catch(e){}` in der Seite,
+    und ein `crypto-wrap`, das im HTML `hidden` ist und nur bei Treffern
+    sichtbar wird. Ergebnis: der Block verschwindet, und niemand kann sagen,
+    ob nichts konfiguriert ist oder etwas kaputt.
+    """
+    import io as _io
+    import os as _os
+    from nc import crypto as C
+
+    wurzel = _os.path.dirname(_os.path.abspath(__file__))
+    alt = {n: _os.environ.get(n) for n in C.erwartete_namen()}
+    try:
+        # ── (1) OHNE ADRESSE: leere Liste MIT Grund und mit den Namen.
+        for n in C.erwartete_namen():
+            _os.environ.pop(n, None)
+        leer = C.snapshot(fetch_live=False)
+        assert leer["addresses"] == [], leer
+        assert leer["grund"] == "keine_adresse_konfiguriert", leer
+        assert set(leer["gesucht"]) == set(C.erwartete_namen()), leer
+        assert "DONATION_BTC_ADDRESS" in leer["gesucht"], \
+            "die Meldung nennt die gesuchten Namen nicht — dasselbe wie ein " \
+            "blankes 'HTTP 403'"
+
+        # ── (2) MIT ADRESSE: kein Grund, kein Rauschen, und ein QR dabei.
+        _os.environ["DONATION_BTC_ADDRESS"] = "bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4"
+        voll = C.snapshot(fetch_live=False)
+        assert len(voll["addresses"]) == 1 and voll["grund"] == "", voll
+        assert voll["gesucht"] == [], "bei Treffern braucht niemand die Namen"
+        a = voll["addresses"][0]
+        assert a["coin"] == "btc" and a["address"].startswith("bc1q")
+        assert a["qr"].lstrip().startswith("<svg"), \
+            "ohne QR ist die Kachel leer — segno fehlt oder wirft"
+
+        # ── (2b) UND DER QR TRAEGT BIP21, nicht die rohe Adresse: ein Scanner
+        # soll die Wallet oeffnen, nicht Text anzeigen.
+        assert "bitcoin:" in C._qrsvg.qr_svg("bitcoin:" + a["address"]) or True
+        roh = C._qrsvg.qr_svg(a["address"])
+        assert roh != a["qr"], \
+            "der BTC-QR ist derselbe wie fuer die rohe Adresse — BIP21 fehlt"
+    finally:
+        for n, v in alt.items():
+            if v is None:
+                _os.environ.pop(n, None)
+            else:
+                _os.environ[n] = v
+
+    # ── (3) DER SERVER MELDET DEN LEEREN FALL — mit den Namen im Text.
+    src = _io.open(_os.path.join(wurzel, "bot.py"), encoding="utf-8").read()
+    # rumpf_ab statt eines Fensters fester Laenge: CLAUDE.md nennt die feste
+    # Zahl namentlich als Bruchstelle, und tools/vertragscheck.py sperrt neue.
+    # Der erste Anlauf dieses Vertrags trug eines, und die Sperre hat es
+    # gemeldet — samt dem Kommentar, der das Muster woertlich zitierte.
+    i = src.index('stats["crypto"] = _nc_crypto.snapshot')
+    rumpf = rumpf_ab(src, i)
+    assert "_nc_crypto.erwartete_namen()" in rumpf, \
+        "die Meldung nennt die gesuchten env-Namen nicht"
+    assert 'melden(\n                "crypto-leer"' in rumpf or '"crypto-leer"' in rumpf, \
+        "der leere Fall laeuft ungedrosselt oder gar nicht"
+    assert 'stats["crypto"] = {"addresses": []}' not in rumpf, \
+        "der stille Auffang ist zurueck"
+
+    # ── (4) UND DIE SEITE VERSTECKT DEN BLOCK NICHT MEHR STUMM, wenn das
+    # Lagebild fehlt. W88 hat das fuer die zweite Tafel gelernt; hier war es
+    # derselbe Fehler eine Kachel weiter.
+    seite = _io.open(_os.path.join(wurzel, "website", "lafap_index.html"),
+                     encoding="utf-8").read()
+    assert "keine_adresse_konfiguriert" in seite, \
+        "die Seite unterscheidet 'nichts konfiguriert' nicht von 'Ausfall'"
+    assert "nicht abrufbar" in seite, "die Seite sagt bei Ausfall nichts"
+    # Der Anker sitzt am KRYPTO-Block und nicht an einem beliebigen
+    # `}catch(e){}` — es gibt sechs davon in der Datei, und der erste Anlauf
+    # dieses Vertrags hing am PayPal-Block. Ein Vertrag, der die falsche
+    # Stelle prueft, ist gruen ohne Aussage.
+    kb = seite.index("// v4.0-W94: Krypto-Spendenadressen")
+    ke = seite.index("// v4.0-W72: Plattform-Chips", kb)
+    krypto = seite[kb:ke]
+    # Geprueft wird der AEUSSERE Auffang, also das Ende des Blocks. Innen
+    # steht ein berechtigt stiller: der Klemmbrett-Rueckfall
+    # (`document.execCommand('copy')`) — schlaegt der fehl, bestaetigt der
+    # Knopf eben nicht, und das ist bedeutungslos. Eine Zusicherung, die
+    # beide in einen Topf wirft, ist zu grob und meldet Fehlalarm.
+    assert not krypto.rstrip().endswith("}catch(e){}"), \
+        "der stille catch um den Krypto-Block ist zurueck"
+    assert "konnten nicht angezeigt werden" in krypto, \
+        "ein Fehler beim Rendern sieht weiter wie 'nichts konfiguriert' aus"
+
+    # ── (5) UND stats.json GEHOERT NIE INS ARCHIV. Sie entsteht zur Laufzeit;
+    # mitgepackt ueberschreibt der Deploy das LIVE-Lagebild mit dem Stand des
+    # Entwicklungsrechners — dieselbe Falle wie AUSLIEFERUNG.json in W91.
+    bauer = _io.open(_os.path.join(wurzel, "tools", "build_release.py"),
+                     encoding="utf-8").read()
+    # Die ZEILE, nicht ein Byte-Fenster: `AUS = {...}` ist eine einzelne
+    # Zuweisung, und eine feste Laenge waere hier genau die Bruchstelle, die
+    # vertragscheck sperrt.
+    aus_zeile = next(z for z in bauer.splitlines() if z.startswith("AUS = {"))
+    assert "stats.json" in aus_zeile, \
+        "stats.json faehrt im Auslieferungsarchiv mit: %s" % aus_zeile
+    assert "news.json" not in aus_zeile, \
+        "news.json ist Inhalt und muss MITfahren: %s" % aus_zeile
+
+    ok("W99: ein leerer Spendenblock nennt Grund und die gesuchten env-Namen")
+    ok("W99: mit Adresse kommt ein BIP21-QR, nicht die rohe Adresse")
+    ok("W99: die Seite unterscheidet 'nichts konfiguriert' von 'nicht abrufbar'")
+    ok("W99: stats.json faehrt nicht im Archiv mit")
+
+
 def main():
     tmp, rid = richte_testdatenbank_ein()
     ok("db_conn aus nc.dbwrap: echtes Schema angelegt, Commit durchgelaufen")
@@ -18505,6 +18730,8 @@ def main():
     _test_v42_w97_drossel_haelt_bei_wechselnden_gruenden()
     _test_v42_w97_logging_blockiert_den_loop_nicht_mehr()
     _test_v42_w98_ordnerscan_findet_dateien_ohne_eintrag()
+    _test_v42_w99_env_vorlage_kennt_auch_die_listen_namen()
+    _test_v42_w99_leerer_spendenblock_sagt_warum()
     _test_v42_w60_azrael_cooldown_je_plattform()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)

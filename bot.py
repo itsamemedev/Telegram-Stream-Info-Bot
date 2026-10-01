@@ -10684,8 +10684,37 @@ def _public_stats() -> dict:
     # v4.0-W94: Krypto-Spenden — Adressen aus env, BTC-Empfang best-effort live.
     try:
         stats["crypto"] = _nc_crypto.snapshot(fetch_live=True)
-    except Exception:
-        stats["crypto"] = {"addresses": []}
+    except Exception as e:
+        # v4.2-W99: war ein stiller Auffang. Eine leere Adressliste ist auf
+        # der oeffentlichen Seite nicht von "nichts konfiguriert" zu
+        # unterscheiden — der Spendenblock verschwindet in beiden Faellen —,
+        # und im Log stand dazu keine Zeile. Gedrosselt, weil die Schleife
+        # alle fuenf Minuten laeuft.
+        stats["crypto"] = {"addresses": [], "grund": "fehler"}
+        laut, unterdrueckt = _nc_meldetakt.melden(
+            "crypto-snapshot", type(e).__name__, _time_mod.monotonic())
+        if laut:
+            log.error("Krypto-Spendenadressen nicht ermittelbar: %s: %s — der "
+                      "Spendenblock auf der oeffentlichen Seite bleibt leer.%s",
+                      type(e).__name__, e, _nc_meldetakt.zusatz(unterdrueckt))
+    else:
+        _nc_meldetakt.zuruecksetzen("crypto-snapshot")
+        # Der haeufigere Fall ist nicht der Fehler, sondern die leere .env.
+        # Auch das gehoert gesagt — einmal und gedrosselt, mit den NAMEN, die
+        # gesucht wurden. Ein "keine Adressen" ohne die Namen ist dieselbe Art
+        # Auskunft wie ein blankes "HTTP 403".
+        if not stats["crypto"].get("addresses"):
+            laut, unterdrueckt = _nc_meldetakt.melden(
+                "crypto-leer", "keine_adresse", _time_mod.monotonic())
+            if laut:
+                log.warning(
+                    "Keine Krypto-Spendenadresse gesetzt — der Spendenblock auf "
+                    "der oeffentlichen Seite bleibt deshalb aus. Gesucht wird "
+                    "in der .env nach: %s%s",
+                    ", ".join(_nc_crypto.erwartete_namen()),
+                    _nc_meldetakt.zusatz(unterdrueckt))
+        else:
+            _nc_meldetakt.zuruecksetzen("crypto-leer")
     return stats
 
 # v4.1-W26: Haken fuer nc/routes/auskunft.py.

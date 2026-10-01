@@ -7601,7 +7601,17 @@ def test_v40_w94_crypto_donations():
     # ohne env: leer
     for _co, _l, _env in c._COINS:
         _os.environ.pop(_env, None)
-    assert c.snapshot() == {"addresses": []}, "ohne env darf nichts erscheinen"
+    # v4.2-W99: die Form traegt jetzt einen GRUND. Vorher stand hier
+    # `== {"addresses": []}` — exakt, und damit gefallen, sobald die Antwort
+    # mehr sagt. Der Vertrag hat das gemeldet, und er hatte recht: die Form
+    # gehoert festgehalten. Nur ist die leere Liste ALLEIN keine Auskunft —
+    # auf der Seite ist sie nicht von einem Ausfall zu unterscheiden, und
+    # genau das hat den Betreiber am 30.09. saemtliche Wallet-Adressen
+    # suchen lassen.
+    _leer = c.snapshot()
+    assert _leer["addresses"] == [], "ohne env darf nichts erscheinen"
+    assert _leer["grund"] == "keine_adresse_konfiguriert", _leer
+    assert set(_leer["gesucht"]) == set(c.erwartete_namen()), _leer
     # mit env: nur gesetzte, Reihenfolge stabil
     _os.environ["DONATION_BTC_ADDRESS"] = "bc1qtestxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
     _os.environ["DONATION_ETH_ADDRESS"] = "0xTESTethaddressxxxxxxxxxxxxxxxxxxxxxxxxxx"
@@ -7622,7 +7632,13 @@ def test_v40_w94_crypto_donations():
     assert 'id="crypto-wrap"' in h and 'id="crypto-list"' in h, "Krypto-Panel fehlt"
     assert "d.crypto" in h and "crypto-copy" in h, "Krypto-Rendering/Copy fehlt"
     assert "btc_received_btc" in h, "BTC-Empfang wird nicht angezeigt"
-    ok("v4.0-w94: Krypto-Spenden (env-Adressen, BTC-Empfang server-seitig, Panel auto-versteckt)")
+    # v4.2-W99: "auto-versteckt" gilt nur noch fuer den EINEN Fall, in dem es
+    # richtig ist — keine Adresse konfiguriert. Bei einem Ausfall sagt die
+    # Seite es, statt den Block wegzunehmen.
+    assert "keine_adresse_konfiguriert" in h, \
+        "die Seite unterscheidet 'nichts konfiguriert' nicht von 'Ausfall'"
+    ok("v4.0-w94: Krypto-Spenden (env-Adressen, BTC-Empfang server-seitig, "
+       "Panel nur bei fehlender Konfiguration versteckt)")
 
 
 def test_v40_w95_rectimeline_limit_and_legal_pages():
@@ -7741,7 +7757,16 @@ def test_v40_w100_env_example():
     assert r.returncode == 0, ".env.example veraltet — neu generieren: " + (r.stdout or r.stderr)[:120]
     # Build-Regeln: .env.example erlaubt, echte .env verboten
     b = open("tools/build_release.py", encoding="utf-8").read()
-    assert '".env.example"' in b and "AUS = {\".env\"}" in b, "Build liefert .env.example nicht / .env nicht gesperrt"
+    # v4.2-W99: geprueft wird die EIGENSCHAFT, nicht die Schreibweise des
+    # Sets. Vorher stand hier `AUS = {".env"}` woertlich — und der Vertrag
+    # fiel, sobald ein zweiter Eintrag dazukam (stats.json, damit ein Build
+    # nicht das Live-Lagebild des Servers ueberschreibt). Ein Vertrag, der an
+    # der Formatierung haengt, kostet eine Runde und lehrt, Vertragsbrueche
+    # nicht ernst zu nehmen.
+    assert '".env.example"' in b, "Build liefert .env.example nicht mit"
+    _aus = next(z for z in b.splitlines() if z.startswith("AUS = {"))
+    assert '".env"' in _aus, "die echte .env ist nicht gesperrt: " + _aus
+    assert '".env.example"' not in _aus, ".env.example darf nicht gesperrt sein"
     ok("v4.0-w100: generierte .env.example (473 Variablen) faehrt im Build mit")
 
 
