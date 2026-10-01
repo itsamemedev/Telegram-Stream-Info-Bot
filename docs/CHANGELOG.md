@@ -11,6 +11,85 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Behoben — ein Update über das Deck wirkt erst nach einem Neustart, und nichts sagte es (v4.2 W104)
+
+Korrektur des Betreibers am 01.10.:
+
+> „Nein auf dem Server läuft die repo dank der update Funktion"
+
+Davor stand im Kopf von `CLAUDE.md` und in `nc/auslieferung.py` als Tatsache,
+ausgeliefert werde per ZIP und das Repo sei „nicht der Deploy-Weg". **Dieser
+Satz hat eine ganze Welle lang falsch beraten** — es wurde eine ZIP angeboten,
+wo der Betreiber längst die Update-Funktion benutzt.
+
+**Der Befund darunter ist der teurere.** `nc/updater.py` schreibt die Dateien
+und startet **nichts** neu. Ein laufender Python-Prozess behält seinen
+Bytecode: nach einem Update liegt der neue Stand auf der Platte, und es läuft
+weiter der alte. Genau das Fehlerbild, das dieses Projekt am häufigsten
+sammelt — es fällt nichts, es meldet sich nichts, es wird nur nichts. Im Log
+steht das alte Verhalten, und die naheliegende Deutung („das Update hat nicht
+funktioniert") ist falsch.
+
+**Was dabei NICHT kaputt war** — und hier mussten zwei eigene Behauptungen
+zurückgenommen werden. Der Neustart-Weg ist gut gebaut: das Deck zeigt den
+Knopf „Dienst neu starten", sobald `restart_needed` gesetzt ist, und
+`/api/update/restart` führt `UPDATE_RESTART_CMD` aus — oder nennt, wenn die
+Variable leer ist, mit HTTP 409 den Befehl zum Selbst-Absetzen, den das Deck
+als „Bitte selbst neu starten: …" zeigt. Die erste Fassung dieser Welle hat
+`UPDATE_RESTART_CMD` eine Vorgabe gegeben; das wäre das Aushebeln einer in
+`nc/routes/ops.py` ausdrücklich begründeten Sicherheitsentscheidung gewesen
+(ein Neustart-Kommando, das der Bot selbst kennt, ist ein Fernsteuer-Knopf auf
+das System) und ist **zurückgenommen**. Ein Vertrag hält die leere Vorgabe
+seither fest.
+
+**Die Lücke ist die Zeit danach.** Der Hinweis erscheint EINMAL, als Toast und
+Knopf direkt nach dem Lauf. Wer den Tab schließt, per Telegram aktualisiert
+oder abgelenkt wird, hatte danach keine Stelle mehr, die den Zustand nennt:
+`/healthz` und `/api/version` lasen `AUSLIEFERUNG.json` beziehungsweise `git`
+und kannten den Update-Weg gar nicht.
+
+Seit W104:
+
+* `nc/auslieferung.py` liest auch `.nc_update.json` und **bevorzugt** es — es
+  ist das Jüngste auf der Platte. Den Archiv-Stempel vorzuziehen hieße, eine
+  Fassung zu melden, die seit dem Update nicht mehr draufliegt.
+* `nc/laufstand.py` vergleicht den beim Start gemerkten Stand gegen den
+  jetzigen. Der Startstand wird auf **Modul-Ebene** gemerkt — in einer Funktion
+  gemessen folgt er der Platte, und der Vergleich wäre immer „aktuell".
+* `/healthz` trägt `laufstand` (`aktuell` · `veraltet` · `unbekannt`), und eine
+  **eigene** Schleife meldet `veraltet` gedrosselt auf `error` mit dem
+  Neustart-Befehl. Bewusst nicht an `DISK_AUTOCLEAN` oder einen anderen
+  Schalter gehängt: in einem Bestand mit abgeschalteten Zusatzfunktionen wäre
+  die Meldung sonst genau dort weg, wo sie zählt.
+
+**„Unbekannt" ist kein Alarm.** Ohne Update-Weg und ohne `git` lautet die
+Antwort „weiß ich nicht" — eine Meldung, die auf jeder Entwicklungsmaschine rot
+ist, erzieht dazu, sie auch auf dem Server zu übersehen. Dieselbe Begründung
+steht seit W85 im Kopf von `nc/auslieferung.py`.
+
+Dazu die Klarstellung an zwei Stellen, die jetzt auseinandergehalten werden:
+`commit` in `/healthz` und `/api/version` beschreibt die **Platte**, nicht
+zwingend den laufenden Prozess. Welcher von beiden gilt, beantwortet
+`laufstand`. Vorher war das ein Feld für zwei Fragen — und der
+Zwischenspeicher machte die Antwort davon abhängig, ob die erste Abfrage vor
+oder nach einem Update kam.
+
+Ein Vertrag (553 → 558), **16 Mutationsproben, alle gefallen.** Eine entwischte
+zuerst, und es war die **vierte** Wiederholung derselben Falle in dieser
+Wellenreihe: die Zusicherung prüfte `'_spawn(_laufstand_loop(…)' in src` und
+traf die Zeile, die die Probe gerade auskommentiert hatte. Geprüft wird jetzt
+eine Zeile, die mit dem Aufruf *beginnt*. Zusammen mit W102 und W103 sind das
+`ast.Return` statt Textzählung, Zeichenketten-Tokens statt Dateitext, `ast.Name`
+statt Wortsuche — **ein Vertrag darf seine eigene Begründung nicht als Befund
+lesen.**
+
+Und `tools/testmuell.py` hat sofort gegriffen: der neue Vertrag benutzte
+`tempfile.mkdtemp()` statt `pruefhilfen.verzeichnis()`. Genau dagegen gibt es
+die Sperre seit W90 (5093 Verzeichnisse und 30 GB an einem Tag, bis die
+Prüfkette mit ENOSPC abbrach).
+
+---
+
 ### Behoben — der Cache gegen Doppel-Auflösungen hat nie gegriffen (v4.2 W103)
 
 Der Betreiber hat nach dem W102-Merge das Log mitgeschnitten. Darin steht

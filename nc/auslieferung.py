@@ -3,9 +3,15 @@
 ════════════════════════════════════════════════════════════════════════
 WARUM DIESES MODUL
 ════════════════════════════════════════════════════════════════════════
-Ausgeliefert wird per ZIP über den Bestand; das Repo trägt Historie, CI und
-Issues, es ist nicht der Deploy-Weg. `tools/deploy.sh` macht das ordentlich —
-Staging, Prüfung, dann umschwenken. Was fehlt, ist die Gegenprobe hinterher:
+Es gibt **zwei** Wege, wie Code auf den Server kommt, und dieses Modul kannte
+bis v4.2-W104 nur einen. Der eine ist die ZIP über den Bestand
+(`tools/deploy.sh` — Staging, Prüfung, umschwenken). Der andere ist die
+**Update-Funktion** (`nc/updater.py`, bedient aus dem Deck und per Telegram),
+die den Repo-Stand holt und Datei für Datei einspielt; der Betreiber benutzt
+sie, und genau das hat hier gefehlt. Der Satz „das Repo ist nicht der
+Deploy-Weg" stand jahrelang im Kopf dieser Datei und war falsch.
+
+Was in beiden Fällen fehlt, ist die Gegenprobe hinterher:
 
     Entspricht das, was gerade läuft, überhaupt einem Commit?
 
@@ -14,6 +20,13 @@ eine Zeile in `bot.py` geändert, um eine Störung zu überbrücken — ist dana
 unsichtbar. Beim nächsten Deploy wird er wortlos überschrieben, und der
 Fehler, den er behoben hat, ist zurück. Das ist die einzige echte Lücke des
 ZIP-Wegs, und sie kostet eine Datei.
+
+Der Update-Weg hat eine zweite, teurere Lücke: er schreibt die Dateien und
+startet **nichts** neu. Ein laufender Python-Prozess behält seinen Bytecode,
+also liegt danach der neue Stand auf der Platte und es läuft weiter der alte —
+ohne dass irgendetwas das sagt. Deshalb liest dieses Modul seit v4.2-W104 auch
+`.nc_update.json`, und `nc/laufstand.py` vergleicht den Stand beim Start gegen
+den Stand jetzt.
 
 `tools/build_release.py` schreibt beim Packen eine `AUSLIEFERUNG.json` ins
 Archiv: Commit, Zweig, ob der Arbeitsbaum beim Bauen sauber war, Zeitpunkt,
@@ -40,6 +53,10 @@ import subprocess
 log = logging.getLogger("TikTokBot")
 
 DATEI = "AUSLIEFERUNG.json"
+# v4.2-W104: was die Update-Funktion hinterlaesst (nc.updater.STATE_FILE).
+# Bewusst als Literal und nicht per Import: dieses Modul laeuft in
+# /healthz und darf nicht an nc.updater haengen, das Netz anfasst.
+UPDATE_DATEI = ".nc_update.json"
 
 _ZWISCHENSPEICHER = {}
 
@@ -84,10 +101,20 @@ def _ermittle(wurzel) -> dict:
     """Die Herkunft bestimmen. -> immer ein vollstaendiges Woerterbuch.
 
     EIN Ausgang, kein `return None` in einem Zweig. Die Reihenfolge ist
-    Absicht: erst die ausgelieferte Datei, dann git. Auf dem Server gibt es
-    kein .git — dort ist die Datei die einzige Wahrheit. Auf der
-    Entwicklungsmaschine gibt es beides, und dann ist git das Aktuellere: die
-    Datei stammt vom letzten `build_release`, der Arbeitsbaum ist weiter.
+    Absicht: erst der Update-Stand, dann die ausgelieferte Datei, dann git.
+
+    **Warum der Update-Stand VORNE steht (v4.2-W104).** Wer die
+    Update-Funktion benutzt, hat danach einen neueren Stand auf der Platte als
+    den, den `AUSLIEFERUNG.json` vom letzten ZIP-Deploy nennt — der Stempel
+    des Archivs ist dann veraltet, und ihn zu bevorzugen hiesse, dem
+    Betreiber eine Fassung zu melden, die seit Wochen nicht mehr auf der
+    Platte liegt. Die Datei des Archivs faellt dabei nicht weg: sie bleibt die
+    Antwort, solange kein Update gelaufen ist.
+
+    Auf dem Server gibt es kein .git — dort sind die beiden Dateien die
+    einzige Wahrheit. Auf der Entwicklungsmaschine gibt es git, und dann ist
+    git das Aktuellere: die Datei stammt vom letzten `build_release`, der
+    Arbeitsbaum ist weiter.
 
     Dass die Datei FEHLT, ist der Normalfall (Start aus dem Repo) und bleibt
     still. Dass sie da, aber kaputt ist, nicht: sonst wuerde daraus "Herkunft
@@ -95,9 +122,31 @@ def _ermittle(wurzel) -> dict:
     waehrend in Wahrheit das Archiv beschaedigt ist.
     """
     aus = dict(UNBEKANNT)
+
+    # v4.2-W104: der Stand, den die Update-Funktion eingespielt hat. Er ist
+    # das Jüngste, was auf der Platte liegt, wenn er existiert.
+    upd = os.path.join(wurzel, UPDATE_DATEI)
+    if os.path.isfile(upd):
+        u = None
+        try:
+            with open(upd, encoding="utf-8") as fh:
+                u = json.load(fh)
+        except (OSError, ValueError) as e:
+            # Nicht still: ist diese Datei kaputt, meldet der Bot den Stand
+            # des ARCHIVS weiter, obwohl per Update längst etwas anderes
+            # draufliegt — eine falsche Auskunft statt keiner.
+            log.error("%s ist vorhanden, aber nicht lesbar (%s: %s) — der per "
+                      "Update eingespielte Stand laesst sich damit nicht "
+                      "belegen; gemeldet wird der Stand des Archivs.",
+                      UPDATE_DATEI, type(e).__name__, e)
+        if isinstance(u, dict) and u.get("sha"):
+            aus = {"commit": u.get("sha", ""), "zweig": u.get("branch", ""),
+                   "sauber": True, "gebaut_am": u.get("date", ""),
+                   "version": "", "quelle": "update"}
+
     pfad = os.path.join(wurzel, DATEI)
 
-    if os.path.isfile(pfad):
+    if aus["quelle"] == "unbekannt" and os.path.isfile(pfad):
         d = None
         try:
             with open(pfad, encoding="utf-8") as fh:
@@ -130,10 +179,21 @@ def _ermittle(wurzel) -> dict:
 def stand(wurzel=None, frisch=False) -> dict:
     """-> {commit, kurz, zweig, sauber, gebaut_am, version, quelle}
 
-    `quelle` ist "archiv", "git" oder "unbekannt". Wird zwischengespeichert:
-    der Wert aendert sich im Lauf eines Prozesses nicht, und /healthz wird von
-    Monitoring-Diensten im Minutentakt abgefragt — ein git-Aufruf je Abfrage
-    waere Unfug.
+    `quelle` ist "update", "archiv", "git" oder "unbekannt". Wird
+    zwischengespeichert, weil /healthz von Monitoring-Diensten im Minutentakt
+    abgefragt wird — ein git-Aufruf je Abfrage waere Unfug.
+
+    **v4.2-W104: was hier zwischengespeichert wird, ist die PLATTE.** Der
+    alte Kommentar sagte "der Wert aendert sich im Lauf eines Prozesses
+    nicht". Fuer den ZIP-Weg stimmt das; mit der Update-Funktion nicht — sie
+    schreibt `.nc_update.json` waehrend der Prozess laeuft. Je nachdem, ob die
+    erste Abfrage vor oder nach einem Update kam, beschreibt der Wert also den
+    laufenden Prozess ODER den Bestand auf der Platte.
+
+    Aufgeloest wird das nicht hier, sondern daneben: `nc/laufstand.py`
+    vergleicht den beim Start gemerkten Stand gegen den jetzigen und sagt, ob
+    beide noch zusammenpassen. Diese Funktion beantwortet "was liegt da", der
+    Laufstand "laeuft es auch".
     """
     wurzel = wurzel or _wurzel()
     if frisch or wurzel not in _ZWISCHENSPEICHER:
