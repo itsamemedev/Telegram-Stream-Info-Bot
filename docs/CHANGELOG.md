@@ -11,6 +11,80 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Behoben — Die Vorlage kannte die Wallet-Adressen selbst nicht (v4.2 W99)
+
+Der Betreiber am 30.09.:
+
+> „Website im Website Ordner rendert nicht richtig. Es fehlen sämtliche krypto
+> wallet Adressen."
+
+Gemessen, nicht vermutet: **`.env.example` kannte keine der sechs
+`DONATION_<COIN>_ADDRESS`-Variablen** — obwohl die Datei im Kopf, in
+`CLAUDE.md` und im Release-Bauer als Vorlage **aller** Variablen geführt wird.
+Insgesamt fehlten acht (dazu `KICK_CHANNEL` und `AZRAEL_SELF_NAMES`).
+
+Die Ursache ist bekannt. `tools/gen_env_example.py` sucht nach wörtlichem
+`os.getenv("NAME")`. `nc/crypto.py` liest aber
+
+```python
+for coin, label, env in _COINS:
+    a = os.getenv(env, "")
+```
+
+— der Name steht in einer Schleifenvariablen. Dieselbe Klasse wie der
+Import-Zeit-Befund aus W67: „ein AST-Lauf findet nur das wörtliche `os.getenv`
+auf Modul-Ebene und fand damit einen von fünf Fällen."
+
+**Es ist der dritte Fall in dieser Datei** — `_BERECHNET` kam, weil eine
+gerechnete Vorgabe die Variable fallen ließ, `_ohne_kommentar`, weil ein `#`
+im Default die Zeile zerschnitt. Deshalb ist diesmal nicht der Einzelfall
+behoben, sondern die **Klasse gesperrt**: `dynamische_namen()` löst den Namen
+aus der Liste auf, über die die Lesestelle läuft (inline oder auf Modul-Ebene),
+und jede Lesestelle, die kein Weg erreicht, bricht den Generator mit Exitcode 2
+ab — mit Datei, Zeile und Abhilfe.
+
+Gemessen beim Trennen: **21 dynamische Lesestellen, davon 15 Durchleitung** —
+`nc/envnum`, `nc/cfgnorm`, `nc/dashauth` und die Routen-Helfer bekommen den
+Namen als *Parameter*, dort steht das Literal beim Aufrufer und die alten Muster
+sehen es. Die als Lücke zu melden hätte 15 Fehlalarme ergeben, und eine Sperre
+mit Fehlalarmen ist in einer Woche abgeschaltet. Echte Blindstellen: **sechs**,
+davon vier auflösbar und zwei Präfix-Familien (`BRAIN_ACT_<REGEL>`,
+`BRAIN_AGENT_<AGENT>`), deren Namen erst zur Laufzeit entstehen.
+
+**Dabei fiel auf, dass `BRAIN_AGENT_` nirgends dokumentiert war.** Die Ausnahme
+und die Dokumentation waren zwei Tatsachen, und sie liefen auseinander. Jetzt
+schreibt `render()` den Muster-Abschnitt aus demselben Dict, das die Ausnahme
+trägt — sie können nicht mehr driften. Der eigene Vertrag hat das gemeldet.
+
+**Drei stille Schichten hintereinander** haben verhindert, dass man die Ursache
+sehen konnte: `except Exception: stats["crypto"] = {"addresses": []}` im Server,
+`catch(e){}` in der Seite, und ein `crypto-wrap`, das im HTML `hidden` ist und
+nur bei Treffern sichtbar wird. Ergebnis: der Block verschwindet, und niemand
+kann sagen, ob nichts konfiguriert ist oder etwas kaputt.
+
+Seither sagt `snapshot()` einen **Grund** (`keine_adresse_konfiguriert`) und
+nennt die **gesuchten Namen**; der Bot meldet den leeren Fall gedrosselt mit
+genau diesen Namen im Text; und die Seite unterscheidet „nichts konfiguriert"
+(Block aus, das ist richtig) von „nicht abrufbar" (Block an, mit Satz). Das ist
+die W88-Lehre eine Kachel weiter: ein Zustand, der eine falsche Auskunft
+**gibt**, ist schlimmer als einer, der sich meldet.
+
+**Und eine Falle geschlossen, die noch nicht zugeschlagen hat:** `stats.json`
+entsteht zur Laufzeit im selben Ordner wie die Seite und fuhr im
+Auslieferungsarchiv mit. Hätte der Entwicklungsrechner den Bot je länger laufen
+lassen, hätte der nächste Deploy das **Live**-Lagebild des Servers mit dessen
+Stand überschrieben — eingefrorene Zahlen, und `git status` fällt dabei nicht
+auf. Dieselbe Falle wie `AUSLIEFERUNG.json` in W91. `news.json` fährt weiter
+mit: die ist Inhalt, keine Messung.
+
+Zwei Verträge (514 → 523), **13 Mutationsproben, alle gefallen**. Zwei
+bestehende Verträge fielen dabei zu Recht und sind nachgezogen: der W94-Vertrag
+hielt die exakte Form von `snapshot()` fest, und der Build-Vertrag hing am
+wörtlichen `AUS = {".env"}` — er prüft jetzt die Eigenschaft statt der
+Schreibweise. Die Fenster-Sperre meldete außerdem drei neue Fenster fester
+Länge in meinen eigenen Zusicherungen, eines davon in einem Kommentar, der das
+Muster wörtlich zitierte.
+
 ### Neu — Das Archiv sieht endlich auch die Platte (v4.2 W98)
 
 Der Betreiber:

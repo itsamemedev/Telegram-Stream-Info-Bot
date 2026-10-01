@@ -1297,9 +1297,27 @@ nav a:hover::after,nav a:focus-visible::after{transform:scaleX(1)}
         cw.hidden=false;
         // v4.0-W99: zweispaltig nur, wenn Krypto sichtbar ist
         var pm=document.getElementById('pay-methods'); if(pm) pm.classList.add('has-crypto');
-      } else if(cw){ cw.hidden=true;
+      } else if(cw){
+        /* v4.2-W99: NICHT mehr stumm verstecken. Bis hierher war "keine
+           Adresse konfiguriert" von "Lagebild nicht erreichbar" nicht zu
+           unterscheiden — der Block war in beiden Faellen einfach weg, und
+           niemand konnte sagen warum. Der Betreiber meldete genau das: „es
+           fehlen saemtliche krypto wallet Adressen". */
+        var g=(d.crypto&&d.crypto.grund)||'';
+        if(g==='keine_adresse_konfiguriert'){ cw.hidden=true; }
+        else if(g==='fehler'){
+          cl.innerHTML='<p class="note">Spendenadressen derzeit nicht abrufbar.</p>';
+          cw.hidden=false;
+        } else { cw.hidden=true; }
         var pm2=document.getElementById('pay-methods'); if(pm2) pm2.classList.remove('has-crypto'); }
-    }catch(e){}
+    }catch(e){
+      /* Ein Fehler BEIM RENDERN darf nicht wie "nichts konfiguriert"
+         aussehen. Vorher stand hier catch(e){} — die dritte stille Schicht
+         hintereinander (Server, Seite, Block). */
+      var cw2=document.getElementById('crypto-wrap'), cl2=document.getElementById('crypto-list');
+      if(cw2&&cl2){ cl2.innerHTML='<p class="note">Spendenadressen konnten nicht angezeigt werden.</p>';
+        cw2.hidden=false; }
+    }
     // v4.0-W72: Plattform-Chips aus der echten platforms-Liste.
     try{
       var chips=document.getElementById('platform-chips');
@@ -1378,6 +1396,17 @@ nav a:hover::after,nav a:focus-visible::after{transform:scaleX(1)}
       var c=document.getElementById(id);
       if(c) c.innerHTML='<span class="chart-legend">Metriken derzeit nicht verf\u00fcgbar.</span>';
     });
+    /* v4.2-W99: und der Spendenblock. Er haengt an derselben stats.json;
+       ist die nicht da, blieb er stumm versteckt und sah aus wie „keine
+       Adressen konfiguriert". W88 hat diese Lehre fuer die zweite Tafel
+       gezogen — sie gilt hier genauso: ein Zustand, der eine falsche
+       Auskunft GIBT, ist schlimmer als einer, der sich meldet. */
+    var cwf=document.getElementById('crypto-wrap'), clf=document.getElementById('crypto-list');
+    if(cwf&&clf){
+      clf.innerHTML='<p class="note">Spendenadressen derzeit nicht abrufbar \u2014 '
+        +'das Lagebild ist nicht erreichbar.</p>';
+      cwf.hidden=false;
+    }
   });
 })();
 </script>

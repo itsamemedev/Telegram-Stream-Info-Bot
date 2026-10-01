@@ -10,7 +10,7 @@ GitHub-Repo trägt Historie, CI und Issues — es ist nicht der Deploy-Weg.
 
 ## Die eine Regel
 
-`bot.py` hat **24.414 Zeilen / 1,2 MB ≈ 295.000 Token**. Diese Datei wird
+`bot.py` hat **24.443 Zeilen / 1,2 MB ≈ 295.000 Token**. Diese Datei wird
 **nie** ganz gelesen und **nie** blind durchsucht. Erst fragen wo etwas steht,
 dann den Ausschnitt holen:
 
@@ -137,7 +137,7 @@ die Prüfkette fährt und was die Sperre ist; pytest kommt daneben, für die
 Arbeit am einzelnen Befund.
 
 **Die Überdeckung ist seit v4.2-W86 gemessen: 52,2 %** von `nc/` und `brain/`
-(20.162 Anweisungen, 9.630 davon ungeprüft). Das ist die Zahl, die den 514
+(20.164 Anweisungen, 9.630 davon ungeprüft). Das ist die Zahl, die den 523
 Verträgen erst ihren Maßstab gibt — „alles grün" sagt sonst nichts darüber,
 wie viel Bestand dabei angefasst wurde. Gesperrt wird wie bei W65/W66 nur der
 Zuwachs, und zwar die **Anzahl** ungeprüfter Anweisungen, nicht der
@@ -621,6 +621,38 @@ direkt auf dem Server war unsichtbar und wurde beim nächsten Deploy wortlos
 in `/healthz` und in `/api/version` — aus dem Archiv, ersatzweise aus `git`,
 sonst ehrlich „unbekannt".
 
+**Die Vorlage kannte sechs Variablen selbst nicht.** `.env.example` wird als
+Vorlage **aller** Variablen geführt — und enthielt keine der sechs
+`DONATION_<COIN>_ADDRESS`. `tools/gen_env_example.py` sucht wörtliches
+`os.getenv("NAME")`; `nc/crypto.py` liest `os.getenv(env)` mit `env` aus einer
+Schleife über `_COINS`. Wer seine `.env` aus der Vorlage neu aufbaute, verlor
+damit sämtliche Spendenadressen, und die öffentliche Seite versteckte den Block
+still. Gemeldet am 30.09.: „es fehlen sämtliche krypto wallet Adressen".
+
+Seit v4.2-W99 löst `dynamische_namen()` den Namen aus der Liste auf, und eine
+Lesestelle, die **kein** Weg erreicht, bricht den Generator ab (Exitcode 2).
+Gezählt beim Trennen: 21 dynamische Lesestellen, **15 davon Durchleitung** —
+dort steht das Literal beim Aufrufer, und sie als Lücke zu melden hätte 15
+Fehlalarme ergeben. Es ist der dritte Fall dieser Klasse in derselben Datei;
+die beiden Vorgänger (`_BERECHNET`, `_ohne_kommentar`) haben je den Einzelfall
+behoben. **Beim dritten Mal gehört die Klasse gesperrt, nicht der Fall
+behoben.**
+
+**Ein leerer Block ist keine Auskunft.** Dieselbe Welle, drei stille Schichten
+übereinander: `except Exception: stats["crypto"] = {"addresses": []}` im
+Server, `catch(e){}` in der Seite, und ein `hidden`-Block, der nur bei Treffern
+sichtbar wird. „Nichts konfiguriert" und „Ausfall" sahen identisch aus.
+`snapshot()` nennt jetzt einen Grund **und die gesuchten env-Namen**, der Bot
+meldet den leeren Fall gedrosselt mit diesen Namen, und die Seite sagt bei
+einem Ausfall einen Satz statt zu verschwinden. Bei jeder Anzeige, die etwas
+weglässt: **unterscheiden, ob nichts da ist oder nichts geladen wurde.**
+
+**`stats.json` darf nie ins Archiv.** Sie entsteht zur Laufzeit im Ordner der
+Seite und fuhr bis v4.2-W99 mit. Ein Deploy hätte damit das Live-Lagebild des
+Servers mit dem Stand des Entwicklungsrechners überschrieben — eingefrorene
+Zahlen, und `git status` fällt dabei nicht auf. Dieselbe Falle wie
+`AUSLIEFERUNG.json` in W91. `news.json` fährt weiter mit: Inhalt, keine Messung.
+
 **Modul-Konstanten frieren `.env` ein.** `.env` wird teils erst nach den ersten
 Imports geladen. Konfiguration als Funktion lesen (`_backend_conf()`), nie als
 Modul-Konstante.
@@ -727,7 +759,7 @@ Ledger-Einträge sind append-only mit Hash-Kette; Korrektur = Gegenbuchung.
 
 ## Sicherheit
 
-`.env` hat rund 529 Variablen und enthält Cookies, OAuth-Tokens und Stream-Keys — sie
+`.env` hat rund 538 Variablen und enthält Cookies, OAuth-Tokens und Stream-Keys — sie
 liegt nie im Archiv und wird nie ausgegeben. Beim Logging von
 `streamlink`/`ffmpeg`-Kommandos werden Cookie-Header redacted (F4); dieser
 Redact-Pfad darf bei Änderungen an der Kommandozeile nicht umgangen werden. Das

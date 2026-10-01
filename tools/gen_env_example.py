@@ -10,6 +10,7 @@ scannt bot.py, brain/, brain_bridge.py und nc/ nach env-Zugriffen, zieht Name
     python tools/gen_env_example.py        # schreibt .env.example
     python tools/gen_env_example.py --check # nur prüfen, ob aktuell (Exit 1 wenn nicht)
 """
+import ast
 import glob
 import os
 import re
@@ -61,6 +62,185 @@ def _ohne_kommentar(zeile: str) -> str:
     return zeile
 
 
+# ══════════════════════════════════════════════════════════════════════
+# v4.2-W99: env-Namen, die NICHT woertlich im Aufruf stehen
+# ══════════════════════════════════════════════════════════════════════
+# Die drei Muster oben verlangen einen String IM Aufruf. Wer die Namen aus
+# einer Liste liest, ist damit unsichtbar:
+#
+#     for coin, label, env in _COINS:          # nc/crypto.py
+#         a = os.getenv(env, "")
+#
+# Gemessen am 30.09.: acht Variablen fehlten so in der Vorlage, darunter
+# ALLE SECHS Krypto-Spendenadressen (DONATION_<COIN>_ADDRESS). Der Betreiber
+# baute seine .env aus dieser Vorlage neu und verlor damit saemtliche
+# Wallet-Adressen — die oeffentliche Seite versteckte den Block danach still.
+#
+# Es ist der dritte Fall derselben Klasse: `_BERECHNET` kam, weil eine
+# gerechnete Vorgabe die Variable fallen liess, `_ohne_kommentar`, weil ein
+# '#' im Default die Zeile zerschnitt. Diesmal wird deshalb nicht nur der
+# Fall behoben, sondern die KLASSE gesperrt — `dynamische_luecken()` findet
+# jede Lesestelle, die keiner der Wege erreicht, und `--check` faellt darauf.
+#
+# Eine Lesestelle, die den Namen als PARAMETER bekommt, ist keine Luecke:
+# dort steht das Literal beim Aufrufer und die Muster oben sehen es
+# (nc/envnum, nc/cfgnorm, nc/dashauth und die Routen-Helfer, 15 Stellen).
+
+# Praefix-Familien: der Name entsteht erst zur Laufzeit
+# (BRAIN_ACT_<REGEL>, BRAIN_AGENT_<NAME>). Die lassen sich nicht aufzaehlen,
+# nur dokumentieren — beide stehen als Muster in der Vorlage. Der Eintrag
+# hier ist die bewusste Ausnahme, nicht ein vergessener Fall.
+# (datei, praefix) -> (Platzhalter, Vorgabe, Begruendung). Aus DIESEM Dict
+# schreibt render() auch den Muster-Abschnitt der Vorlage: Ausnahme und
+# Dokumentation sind damit dieselbe Tatsache und koennen nicht auseinander
+# laufen. Beim ersten Anlauf von W99 taten sie genau das — BRAIN_ACT_ war
+# (durch zwei konkrete Regeln) sichtbar, BRAIN_AGENT_ gar nicht, und der
+# Betreiber konnte von den Agent-Schaltern nichts wissen.
+DYNAMISCH_ERLAUBT = {
+    ("brain_bridge.py", "BRAIN_ACT_"): (
+        "<REGEL>", "0",
+        "Aktions-Gate je Brain-Regel. Default AUS — Autonomie wird pro Regel "
+        "verdient, nachdem das Entscheidungslog sie bestaetigt hat."),
+    ("brain/agents.py", "BRAIN_AGENT_"): (
+        "<AGENT>", "1",
+        "Ein Sentinel-Agent einzeln abschalten. Der Wert in der Tabelle "
+        "agent_config schlaegt diese Variable."),
+}
+
+_ENVNAME = re.compile(r"^[A-Z][A-Z0-9_]{2,}$")
+
+# Gesammelt waehrend collect(); von main() geprueft.
+LUECKEN = []
+
+
+def _parameter_namen(fn):
+    a = fn.args
+    raus = {x.arg for gruppe in (a.posonlyargs, a.args, a.kwonlyargs)
+            for x in gruppe}
+    if a.vararg:
+        raus.add(a.vararg.arg)
+    if a.kwarg:
+        raus.add(a.kwarg.arg)
+    return raus
+
+
+def _texte_aus(knoten):
+    """Alle env-taugliche Zeichenketten in einem Literal-Baum. Auch aus
+       Tupeln in Listen — `_COINS` traegt (coin, label, ENV) je Zeile."""
+    raus = []
+    for n in ast.walk(knoten):
+        if isinstance(n, ast.Constant) and isinstance(n.value, str) \
+                and _ENVNAME.match(n.value):
+            raus.append(n.value)
+    return raus
+
+
+def _modulweite_literale(baum):
+    """name -> Literal-Knoten fuer Zuweisungen auf Modul-Ebene."""
+    raus = {}
+    for st in baum.body:
+        if isinstance(st, ast.Assign) and isinstance(st.value, (ast.Tuple, ast.List, ast.Set)):
+            for ziel in st.targets:
+                if isinstance(ziel, ast.Name):
+                    raus[ziel.id] = st.value
+    return raus
+
+
+def _schleifen_quelle(knoten, name, literale):
+    """Woraus laeuft `name` in dieser Schleife/Comprehension? -> Literal oder None."""
+    if isinstance(knoten, (ast.For, ast.AsyncFor)):
+        ziele = [knoten.target]
+        quelle = knoten.iter
+    elif isinstance(knoten, ast.comprehension):
+        ziele = [knoten.target]
+        quelle = knoten.iter
+    else:
+        return None
+    gebunden = set()
+    for z in ziele:
+        gebunden |= {n.id for n in ast.walk(z) if isinstance(n, ast.Name)}
+    if name not in gebunden:
+        return None
+    if isinstance(quelle, (ast.Tuple, ast.List, ast.Set)):
+        return quelle
+    if isinstance(quelle, ast.Name):
+        return literale.get(quelle.id)
+    return None
+
+
+def dynamische_namen(pfad, quelltext):
+    """(namen, luecken) fuer eine Datei.
+
+    `namen` sind env-Namen, die nur ueber eine Liste erreichbar sind —
+    aufgeloest aus der Schleife, ueber die die Lesestelle laeuft.
+    `luecken` sind Lesestellen, die weder Parameter noch aufloesbar sind:
+    sie muessen in DYNAMISCH_ERLAUBT stehen, sonst faellt die Sperre.
+    """
+    try:
+        baum = ast.parse(quelltext)
+    except SyntaxError:
+        return set(), []
+    for n in ast.walk(baum):
+        for k in ast.iter_child_nodes(n):
+            k._eltern = n
+    literale = _modulweite_literale(baum)
+    namen, luecken = set(), []
+    for n in ast.walk(baum):
+        if not isinstance(n, ast.Call) or not n.args:
+            continue
+        f = n.func
+        if not (isinstance(f, ast.Attribute) and f.attr == "getenv"):
+            continue
+        erst = n.args[0]
+        if isinstance(erst, ast.Constant):
+            continue                        # woertlich — die Muster oben sehen es
+
+        # (1) Praefix-Familie: f"BRAIN_ACT_{...}"
+        if isinstance(erst, ast.JoinedStr):
+            teile = [t.value for t in erst.values
+                     if isinstance(t, ast.Constant) and isinstance(t.value, str)]
+            praefix = teile[0] if teile else ""
+            if (pfad, praefix) in DYNAMISCH_ERLAUBT:
+                continue
+            luecken.append((n.lineno, "f-String %r" % praefix))
+            continue
+
+        if not isinstance(erst, ast.Name):
+            luecken.append((n.lineno, type(erst).__name__))
+            continue
+
+        # (2) Parameter: das Literal steht beim Aufrufer
+        o, fn = n, None
+        while hasattr(o, "_eltern"):
+            o = o._eltern
+            if isinstance(o, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                fn = o
+                break
+        if fn is not None and erst.id in _parameter_namen(fn):
+            continue
+
+        # (3) Schleifenvariable: die Liste aufloesen
+        o, gefunden = n, None
+        while hasattr(o, "_eltern"):
+            o = o._eltern
+            gefunden = _schleifen_quelle(o, erst.id, literale)
+            if gefunden is not None:
+                break
+            for kind in ast.iter_child_nodes(o):
+                if isinstance(kind, ast.comprehension):
+                    gefunden = _schleifen_quelle(kind, erst.id, literale)
+                    if gefunden is not None:
+                        break
+            if gefunden is not None:
+                break
+        if gefunden is not None:
+            namen |= set(_texte_aus(gefunden))
+            continue
+
+        luecken.append((n.lineno, "Name %r nicht aufloesbar" % erst.id))
+    return namen, luecken
+
+
 def collect():
     files = ["bot.py", "brain_bridge.py"] + \
         sorted(glob.glob(os.path.join(ROOT, "brain", "*.py"))) + \
@@ -101,7 +281,32 @@ def collect():
             seen.setdefault(m.group(1), "")
         for m in _STR.finditer(ohne):
             seen.setdefault(m.group(1), (m.group(2) or ""))
+        # v4.2-W99: die Namen, die nur ueber eine Liste erreichbar sind.
+        # Gegen den ROHEN Text geparst, nicht gegen `ohne` — das Entfernen
+        # der Kommentare erhaelt die Zeilennummern nicht zwingend, und die
+        # Sperre nennt eine Zeile.
+        rel = os.path.relpath(p, ROOT).replace(os.sep, "/")
+        namen, luecken = dynamische_namen(rel, txt)
+        for name in namen:
+            seen.setdefault(name, "")
+        for zeile, was in luecken:
+            LUECKEN.append((rel, zeile, was))
     return seen
+
+
+def _umbruch(text, breite):
+    """Kommentar auf `breite` Zeichen umbrechen — eine Vorlage, die man in
+       einem 80-Spalten-Terminal liest, soll dort auch lesbar sein."""
+    worte, zeilen, jetzt = text.split(), [], ""
+    for w in worte:
+        if jetzt and len(jetzt) + 1 + len(w) > breite:
+            zeilen.append(jetzt)
+            jetzt = "# " + w
+        else:
+            jetzt = (jetzt + " " + w) if jetzt else w
+    if jetzt:
+        zeilen.append(jetzt)
+    return zeilen
 
 
 def render(seen):
@@ -121,6 +326,17 @@ def render(seen):
     out.append("# Mit [PFLICHT] markierte Variablen musst du setzen.")
     out.append("# ==========================================================================")
     out.append("")
+    # v4.2-W99: die Praefix-Familien. Ihre Namen entstehen erst zur Laufzeit,
+    # aufzaehlen laesst sich das nicht — verschweigen aber auch nicht: der
+    # Betreiber wuesste sonst nicht, dass es diese Schalter gibt.
+    if DYNAMISCH_ERLAUBT:
+        out.append("# ── MUSTER (Name entsteht zur Laufzeit) ───────────")
+        for (_datei, praefix), (platz, vorgabe, grund) in sorted(
+                DYNAMISCH_ERLAUBT.items(), key=lambda kv: kv[0][1]):
+            for zeile in _umbruch("# " + grund, 74):
+                out.append(zeile)
+            out.append("# %s%s=%s" % (praefix, platz, vorgabe))
+            out.append("")
     for pre in sorted(groups):
         out.append("# ── %s ─────────────────────────────────────────────" % pre)
         for name in groups[pre]:
@@ -147,6 +363,22 @@ def render(seen):
 
 def main():
     seen = collect()
+    # v4.2-W99: eine Lesestelle, die kein Weg erreicht, bricht ab — statt
+    # eine Variable lautlos aus der Vorlage fallen zu lassen. Das ist der
+    # Unterschied zu den beiden Vorgaengern derselben Klasse: dort wurde je
+    # der Einzelfall behoben, hier wird gemeldet, wenn ein neuer entsteht.
+    if LUECKEN:
+        print("env-LUECKE — diese Lesestellen erreicht kein Muster, die "
+              "Variablen fehlen damit in der Vorlage:")
+        for pfad, zeile, was in LUECKEN:
+            print("  %s:%d  %s" % (pfad, zeile, was))
+        print()
+        print("  Abhilfe: entweder den Namen woertlich in den Aufruf schreiben,")
+        print("  oder die Liste so, dass dynamische_namen() sie aufloest (ein")
+        print("  Tupel/eine Liste auf Modul-Ebene), oder — wenn der Name erst")
+        print("  zur Laufzeit entsteht — als Praefix-Familie in")
+        print("  DYNAMISCH_ERLAUBT eintragen UND als Muster in die Vorlage.")
+        sys.exit(2)
     content = render(seen)
     if "--check" in sys.argv:
         if os.path.exists(OUT):

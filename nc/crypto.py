@@ -53,11 +53,31 @@ def _fetch_btc_sats(address, timeout=8):
     return int(cs.get("funded_txo_sum") or 0) + int(ms.get("funded_txo_sum") or 0)
 
 
+def erwartete_namen():
+    """Die env-Namen, unter denen Adressen gesucht werden.
+
+    v4.2-W99: gibt es, damit der Bot sie NENNEN kann. Steht keine Adresse in
+    der .env, ist der Spendenblock auf der oeffentlichen Seite leer — und bis
+    W99 sagte nichts, ob nichts konfiguriert ist oder etwas kaputt. Genau das
+    hat einen Nachmittag gekostet: die Vorlage `.env.example` kannte diese
+    sechs Namen naemlich selbst nicht (tools/gen_env_example.py sah nur
+    woertliche `os.getenv("NAME")`, hier steht der Name in einer
+    Schleifenvariablen). Wer seine .env aus der Vorlage neu aufbaute, verlor
+    damit saemtliche Wallet-Adressen, ohne es erfahren zu koennen.
+    """
+    return tuple(env for _coin, _label, env in _COINS)
+
+
 def snapshot(fetch_live=False):
-    """Für stats.json: {addresses:[…], btc_received_btc?: float}.
-       fetch_live=True holt den BTC-Empfang best-effort (gecacht)."""
+    """Für stats.json: {addresses:[…], grund: str, btc_received_btc?: float}.
+       fetch_live=True holt den BTC-Empfang best-effort (gecacht).
+
+       `grund` sagt bei leerer Liste WARUM — "keine_adresse_konfiguriert" ist
+       eine Aussage, eine leere Liste ohne Grund ist keine."""
     addrs = addresses()
-    out = {"addresses": addrs}
+    out = {"addresses": addrs,
+           "grund": "" if addrs else "keine_adresse_konfiguriert",
+           "gesucht": list(erwartete_namen()) if not addrs else []}
     btc = next((a for a in addrs if a["coin"] == "btc"), None)
     if btc and fetch_live:
         now = time.time()

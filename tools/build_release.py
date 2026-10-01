@@ -74,7 +74,15 @@ ORDNER = ["brain", "nc", "templates", "website", "tools", ".claude", "docs",
 
 # .env bleibt DRAUSSEN (echte Secrets). .env.example (nur Vorlage, überschreibt
 # nie eine bestehende .env) faehrt seit v4.0-W100 MIT — Doku aller Variablen.
-AUS = {".env"}
+# v4.2-W99: stats.json entsteht ZUR LAUFZEIT (bot.py:_stats_write, alle fuenf
+# Minuten) und liegt im selben Ordner wie die Seite. Sie mitzupacken hiesse,
+# beim Deploy das LIVE-Lagebild des Servers mit dem Stand des Entwicklungs-
+# rechners zu ueberschreiben — die oeffentliche Seite zeigte danach
+# eingefrorene Zahlen, und `git status` faellt dabei nicht auf. Genau dieselbe
+# Falle wie AUSLIEFERUNG.json in W91, nur eine Ebene weiter draussen.
+#
+# news.json faehrt bewusst MIT: die ist Inhalt, keine Messung.
+AUS = {".env", "stats.json"}
 AUS_ENDUNG = (".pyc", ".pyo", ".bak", ".tmp", ".log", ".sqlite", ".sqlite3",
               ".db", ".zip", ".tgz", ".pem", ".key")
 AUS_ORDNER = {"__pycache__", ".ruff_cache", ".git", "recordings", "build",
