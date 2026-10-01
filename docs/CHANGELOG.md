@@ -11,6 +11,148 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Behoben — yt-dlp hatte die Stream-Adresse, und wir haben sie als Ja/Nein gelesen (v4.2 W102)
+
+Meldung des Betreibers am 01.10.:
+
+> „Wenn Gast token / cookies geladen werden. Wird selten ein live restreamt,
+> aber dennoch läuft der Chat von getrackten usern durchs transkript. Wenn
+> sollte beides funktionieren"
+
+Das ist ein präzises Fehlerbild, und beide Hälften passen zusammen: **der Chat
+braucht keine Stream-Adresse, der Restream schon.** TikTokLive verbindet sich
+über den Webcast-Websocket und signiert seine Anfragen selbst — der Raum lebt,
+der Chat läuft, das Transkript füllt sich. Für den Restream muss aber eine
+pullbare URL vorliegen, und genau die kam nicht.
+
+**Die Zahl dazu steht seit W51 im eigenen Quelltext.** Gemessen am 11.09., 84
+Auflösungen in zehn Minuten:
+
+```
+60x  webcast-api: status=live ohne Stream-URL -> live
+24x  webcast-api resolved (hls=yes, flv=yes)
+```
+
+71 % melden „live" und liefern keine Adresse — TikTok gibt sie einer
+Datacenter-IP nicht heraus. Gast-Cookies ändern daran nichts: sie erneuern die
+rotierenden Anti-Bot-Tokens, sie ersetzen keinen Login.
+
+**Der Weg, der in genau dieser Lage noch durchkommt, lief nie.** `bot.py`
+kennt eine yt-dlp-Stufe, und ihr eigener Docstring sagt warum sie existiert:
+„yt-dlp erzeugt TikToks Anti-Bot-Signaturen (X-Bogus etc.) selbst — deshalb
+kommt es oft durch, wo der eigene HTTP-Resolver 403 bekommt". Sie hing aber an
+
+```python
+if status == "unknown" and DETECT_VIA_YTDLP == "auto" and _ytdlp_detect_available():
+```
+
+und der Status ist im 71-%-Fall **„live"**. Die Stufe lief also ausgerechnet
+dort nicht, wo sie gebraucht wurde.
+
+**Und als sie lief, warf sie die Adresse weg.** `_resolve_via_ytdlp` ruft
+yt-dlp mit `--dump-single-json` und las das Ergebnis so:
+
+```python
+if data.get("is_live") or data.get("formats") or data.get("manifest_url") \
+   or data.get("url"):
+    return "live", None
+```
+
+Genau die drei Schlüssel, die eine **Adresse tragen**, als Ja/Nein-Frage — und
+danach `info=None`. Für den Recorder ging das auf, er startet yt-dlp noch
+einmal; der Restream hat keinen yt-dlp-Rang und bekam „keine spielbare
+Quell-URL".
+
+**Schlimmer war der Satz, der daraus wurde.** In `bot.py` und in
+`nc/livefolge.braucht_url_nachschlag` stand als Tatsache:
+
+> yt-dlp hilft hier NICHT: `_resolve_via_ytdlp` gibt auch bei „live"
+> grundsätzlich info=None zurück — es beantwortet die Frage „sendet er?",
+> nicht „wohin greife ich?". Nur der HTML-Weg trägt eine URL.
+
+Das ist eine Aussage über die **eigene Hülle**, nicht über yt-dlp, und sie war
+selbsterfüllend: yt-dlp trug keine URL, weil wir sie verwarfen. Dieselbe Klasse
+wie `concat_cmd` in W97 — **ein Kommentar über die Eingabe ist kein Beweis über
+die Eingabe.**
+
+Seit W102 liest `nc/ytdlpurl.urls_aus_json` die Adresse aus demselben JSON,
+frischegeprüft (eine abgelaufene CDN-URL ist schlimmer als keine: ffmpeg stirbt
+sofort und der Versuch zählt trotzdem gegen `MAX_RECONNECTS`, B138), und der
+yt-dlp-Weg läuft als **zweiter Nachschlag**, wenn auch HTML leer ausgeht.
+
+**Die Zuordnung ist gegen den echten Erzeuger geprüft**, nicht gegen eine
+bequeme Eingabe. Nachgesehen in `yt_dlp/extractor/tiktok.py::TikTokLiveIE`:
+
+| Format | `ext` | `protocol` |
+|---|---|---|
+| HLS | `mp4` | `m3u8_native` |
+| `rtmp_pull_url` | `flv` | `https` |
+| `flv_pull_url` | `flv` | *fehlt ganz* |
+
+Eine Erkennung allein am `protocol` hätte **beide** FLV-Formen verworfen, eine
+allein an der Endung die HLS-Form. Und `.flv` steht bei TikTok vor dem
+Query-Teil (`…/stream.flv?expire=…`) — ein `endswith(".flv")` hätte jede
+signierte FLV-Adresse verworfen, und das sind alle.
+
+**Der Restream nannte den Fall „offline", und zwar stumm.** Die
+Entscheidungsstelle schrieb
+
+```python
+src_live = not _err
+```
+
+und machte damit aus fünf Lagen zwei. „offline" (der Streamer sendet nicht) und
+„keine spielbare Quell-URL" (er sendet, wir kommen nicht an den Stream) sind
+vollkommen verschiedene Nachrichten mit vollkommen verschiedener Abhilfe. Der
+Wächter antwortete „Quelle nicht live — kein Start", und das ist `ACT_NONE` —
+die Schleife loggt nur START, RESTART und STOP. **Ein Restream, der nie anlief,
+erzeugte keine einzige Zeile.** Dieselbe Klasse wie `audio=False` für drei
+Ursachen (W55) und `None` = „tot" in `nc/preflight` (W89).
+
+`nc/resolvergrund.quelle_lage` trennt die fünf Lagen jetzt, `quelle_laut`
+entscheidet, welche ins Log gehören (`offline` bleibt still — ein getrackter
+Nutzer sendet die meiste Zeit nicht, und eine Zeile pro Prüfung wäre genau das
+unlesbare Log, das eine Warnung wertlos macht), und `_quelle_melden` sagt es
+gedrosselt mit Abhilfe. Dazu drei Texte, die eine Aussage über TikTok
+behaupteten, wo die Wahrheit „ich habe keine Adresse bekommen" war:
+„aktuell keine weitere Live-Quelle verfügbar", „nicht live → nächstes Ziel
+probieren", „offline → still überspringen". Der letzte war wörtlich wahr und
+genau das Problem.
+
+**Der W51-Vertrag hat diese Welle wortwörtlich vorhergesehen** — und sie
+abgefangen. Er trug die Zusicherung `'return "live", None' in _yt` mit der
+Fehlermeldung: *„_resolve_via_ytdlp liefert jetzt doch eine URL? Dann gehoert
+es in den Nachschlag — und dieser Vertrag angepasst."* Genau so ist es gemacht.
+
+Die Warnung daneben war damit aber **nicht** erledigt: *„Wer das später
+,vergisst`, baut einen Subprozess-Aufruf in den häufigsten Pfad ein — 20 s
+Timeout, je Poll und Nutzer."* Der Zweig **ist** der häufigste, der Live-Poll
+läuft alle ~20 s je Nutzer, und `_get_resolve_semaphore()` lässt nur zwei
+Auflösungen gleichzeitig — eine Reihe hängender yt-dlp-Prozesse würde die
+gesamte Live-Erkennung hinter sich aufstauen. Deshalb eine Ruhezeit je Nutzer
+(`YTDLP_NACHSCHLAG_RUHE_S`, Vorgabe 60 s), und der Zeitstempel steht **vor**
+dem Aufruf: ein yt-dlp, das in den Timeout läuft, hätte die Ruhezeit sonst nie
+gesetzt und beim nächsten Poll sofort wieder 20 s gekostet. Die Taktung gilt
+für **Versuche**, nicht für Treffer.
+
+Drei Verträge (538 → 546), **22 Mutationsproben, alle gefallen**. Eine
+entwischte zuerst — und zwar wegen der Probe, nicht wegen des Codes: sie schob
+den Zeitstempel nur eine Zeile tiefer, was im Quelltext immer noch *vor* dem
+`await` war. Zwei weitere Zusicherungen mussten präzisiert werden, weil sie am
+eigenen Text fielen: eine zählte `return` im Fließtext des Docstrings mit
+(jetzt im Syntaxbaum), eine suchte die alten irreführenden Sätze im ganzen
+Quelltext und traf die Kommentare, die sie zitieren (jetzt nur in
+Zeichenketten-Tokens — ein Kommentar *darf* den alten Wortlaut nennen, eine
+Ausgabe nicht).
+
+**Was das nicht repariert.** Findet auch yt-dlp keine Adresse, kann der
+Restream nicht starten — das ist TikToks Entscheidung, nicht unsere, und keine
+Zeile Code hebt sie auf. Der Unterschied ist, dass es jetzt im Log steht,
+inklusive Abhilfe: `RECORD_PROXY` auf einen Residential-/Mobil-Proxy, oder den
+Tunnel einschalten.
+
+---
+
 ### Hinzugefügt — ein hörbarer Alarm, und ein Spendenblock, der stehen bleibt (v4.2 W101)
 
 Zwei Meldungen des Betreibers am 01.10.: „im control panel Tab immer noch

@@ -574,6 +574,8 @@ from nc import systemprobe as _nc_probe     # v4.1-W32: Redis-/Recorder-Sonden
 from nc import cookies as _nc_cookies_datei  # v4.1-W32: cookies.txt lesen
 from nc import overlaytext as _nc_ovtext  # v4.2-W22: die kleinen Sendebild-Textbausteine
 from nc import cookieholen as _nc_cookieholen  # v4.2-W10: Cookies selbst beziehen
+from nc import ytdlpurl as _nc_ytdlpurl      # v4.2-W102: Stream-URL aus der yt-dlp-Auskunft
+from nc import resolvergrund as _nc_resolvergrund  # v4.2-W81/W102: Grund + Abhilfe
 from nc import cfgnorm as _nc_cfgnorm        # v4.0-W33: reine Config-Normalisierer (gebündelt)
 from nc import restrend as _nc_restrend      # v4.0-W40: Langzeit-Ressourcen-Trend (Slow-Leak)
 from nc import ffbuild as _nc_ffbuild        # v4.0-W44: ffmpeg-Kommandobauer (extrahiert)
@@ -2909,8 +2911,15 @@ async def _resolve_via_ytdlp(username: str):
        (X-Bogus etc.) selbst — deshalb kommt es oft durch, wo der eigene
        HTTP-Resolver 403 bekommt. Nutzt denselben Proxy (RECORD_PROXY/Pool)
        und dieselben Cookies. Returns ('live'|'offline'|'unknown', info|None).
-       Bei 'live' wird info=None zurückgegeben → der Recorder löst die URL
-       selbst frisch auf (sein yt-dlp-Tier kommt durch denselben Proxy durch)."""
+       v4.2-W102: Bei 'live' wird die STREAM-URL MITGEGEBEN, wenn das JSON eine
+       traegt. Hier stand bis dahin ausdruecklich `info=None` mit der
+       Begruendung, der Recorder loese ohnehin selbst auf — das stimmt fuer den
+       Recorder (er startet yt-dlp noch einmal) und war fuer den RESTREAM
+       falsch: der braucht eine URL und hat keinen yt-dlp-Rang. Er bekam
+       "keine spielbare Quell-URL" und startete nicht, waehrend die Adresse
+       zwei Zeilen weiter unten als Ja/Nein-Frage gelesen und dann weggeworfen
+       wurde. Gemeldet am 01.10.: „wird selten ein live restreamt, aber dennoch
+       laeuft der Chat von getrackten usern durchs transkript"."""
     ytdlp_bin = shutil.which("yt-dlp") or shutil.which("yt_dlp")
     if not ytdlp_bin:
         # v4.2-W81: stand wortlos da. Damit fehlte dem Betreiber die
@@ -2955,7 +2964,20 @@ async def _resolve_via_ytdlp(username: str):
             _ytdlp_note_result(True)       # erfolgreiche Extraktion → Streak reset
             if data.get("is_live") or data.get("formats") or data.get("manifest_url") \
                or data.get("url"):
-                return "live", None
+                # v4.2-W102: dieselben drei Schluessel, jetzt als ADRESSE
+                # gelesen statt nur als Ja/Nein. Die Frische wird geprueft,
+                # bevor sie weitergeht: eine abgelaufene CDN-URL ist schlimmer
+                # als keine — der Restream startet, ffmpeg stirbt sofort, und
+                # der Versuch zaehlt trotzdem gegen MAX_RECONNECTS (B138).
+                _urls = _nc_ytdlpurl.urls_aus_json(data)
+                _beste = _urls.get("flv_url") or _urls.get("hls_url")
+                _ttl = _stream_url_ttl(_beste) if _beste else None
+                if _ttl is not None and _ttl < _STREAM_URL_MIN_TTL:
+                    log.info("yt-dlp @%s: Stream-URL laeuft in %ss ab (unter "
+                             "%ss) — nicht weitergegeben, der Aufrufer loest "
+                             "frisch auf.", username, _ttl, _STREAM_URL_MIN_TTL)
+                    _urls = {}
+                return "live", (_urls or None)
             return "offline", None
         # rc != 0 → anhand der Fehlermeldung offline vs. unknown unterscheiden
         if any(h in err_s for h in _YTDLP_OFFLINE_HINTS):
@@ -2972,6 +2994,91 @@ async def _resolve_via_ytdlp(username: str):
         log.debug(f"yt-dlp detect @{username}: {e}")
         _ytdlp_note_result(False)
         return "unknown", None
+
+
+# v4.2-W102: Ruhezeit JE NUTZER fuer den yt-dlp-Nachschlag.
+#
+# Der W51-Vertrag hat diese Welle wortwoertlich vorhergesehen und davor
+# gewarnt: „Wer das spaeter ,vergisst`, baut einen Subprozess-Aufruf in den
+# haeufigsten Pfad ein — 20 s Timeout, je Poll und Nutzer." Die Warnung ist
+# berechtigt. Der live-ohne-URL-Zweig ist gemessen der haeufigste (71 %), der
+# Live-Poll laeuft alle ~20 s je Nutzer, und `_get_resolve_semaphore()` laesst
+# nur zwei Aufloesungen gleichzeitig — eine Reihe haengender yt-dlp-Prozesse
+# wuerde die gesamte Live-Erkennung hinter sich aufstauen.
+#
+# Deshalb hoechstens einmal je Ruhezeit und Nutzer. Hat yt-dlp gerade keine
+# Adresse gefunden, bringt derselbe Versuch 20 s spaeter nichts; findet es
+# eine, liegt sie ohnehin im _LIVE_STATUS_CACHE. Der Erfolgsfall wird NICHT
+# ausgenommen: auch er kostet den Subprozess.
+_YTDLP_NACHSCHLAG_ZULETZT = {}          # username -> monotonic
+YTDLP_NACHSCHLAG_RUHE_S = _env_int("YTDLP_NACHSCHLAG_RUHE_S", 60)
+
+
+def _darf_ytdlp_nachschlagen(username) -> bool:
+    """Ist der yt-dlp-Nachschlag jetzt erlaubt? (v4.2-W102)
+
+    Eine echte Ja/Nein-Frage, getrennt vom Nachschlag selbst: `False` ist hier
+    ein Ergebnis und kein Fehlschlag, und die beiden Gruende dafuer sind
+    vollkommen verschieden.
+
+    `DETECT_VIA_YTDLP == "0"` heisst "yt-dlp gar nicht", `"1"` heisst "lief
+    oben schon primaer und hat dieses Ergebnis gerade geliefert" — beides
+    still und richtig. Der abgeschaltete Schutzschalter dagegen IST ein
+    Hindernis: in genau dieser Lage (live, keine Adresse) ist yt-dlp der
+    aussichtsreiche Weg, und ohne eine Zeile sieht sein Fehlen aus wie "auch
+    yt-dlp fand nichts".
+    """
+    if DETECT_VIA_YTDLP not in ("auto",):
+        return False
+    if not _ytdlp_detect_available():
+        _resolver_stumm(username, "ytdlp_abgeschaltet")
+        return False
+    # Die Ruhezeit ist KEIN Hindernis und wird nicht gemeldet — sie ist
+    # Taktung. Eine Zeile pro uebersprungenem Poll waere genau das Rauschen,
+    # gegen das es `nc/meldetakt.py` ueberhaupt gibt.
+    _zuletzt = _YTDLP_NACHSCHLAG_ZULETZT.get(username, 0.0)
+    if _zuletzt and (_time_mod.monotonic() - _zuletzt) < YTDLP_NACHSCHLAG_RUHE_S:
+        return False
+    return True
+
+
+async def _nachschlag_ytdlp(username):
+    """Zweiter Nachschlag nach der Stream-URL, wenn HTML leer ausging (v4.2-W102).
+
+    Eigene Funktion und nicht inline, aus zwei Gruenden. Erstens steckt der
+    Aufruf in `get_live_status`, und die stand mit 164 Zeilen schon dicht
+    unter der 100er-Stufe von `tools/monolith.py` — ein Nachschlag, der die
+    Sperre reisst, waere an der falschen Stelle gespart. Zweitens ist die
+    Verfuegbarkeits-Frage eine eigene Entscheidung (siehe
+    `_darf_ytdlp_nachschlagen`), die sonst zwischen zwei Rueckgabewerten
+    verschwindet.
+
+    Rueckgabe: das Info-Woerterbuch mit der URL, oder `{}`. Nie None — der
+    Aufrufer prueft mit `hat_stream_url`, und `{}` beantwortet das genauso.
+    EIN Ausgang: jeder vorzeitige `return {}` waere ein stummer
+    Misserfolgs-Rueckweg, und die Funktion hat nur ein Ergebnis.
+    """
+    _info = {}
+    if _darf_ytdlp_nachschlagen(username):
+        # Der Stempel steht VOR dem Aufruf, nicht danach: ein yt-dlp, das in
+        # den 20-s-Timeout laeuft, haette sonst die Ruhezeit nie gesetzt und
+        # beim naechsten Poll sofort wieder 20 s gekostet — genau der Aufstau,
+        # vor dem der W51-Vertrag warnt. Die Taktung gilt fuer VERSUCHE.
+        _YTDLP_NACHSCHLAG_ZULETZT[username] = _time_mod.monotonic()
+        _st, _roh = "unknown", None
+        try:
+            _st, _roh = await _resolve_via_ytdlp(username)
+        except Exception as e:
+            # War log.debug — in einem INFO- oder ERROR-Log erscheint das nie,
+            # und fuer den Betreiber ist ein Fehlerpfad auf debug dasselbe wie
+            # `pass` (CLAUDE.md). Gedrosselt ueber denselben Kanal wie die
+            # uebrigen ergebnislosen Ausgaenge des Resolvers.
+            _resolver_stumm(username, "ytdlp_nachschlag_fehler: %s" % e)
+        if _st == "live":
+            # Jeden anderen Ausgang hat `_resolve_via_ytdlp` selbst gemeldet —
+            # hier noch eine Zeile waere dieselbe Nachricht zweimal.
+            _info = _roh or {}
+    return _info
 
 
 async def get_live_status(username: str, session, force_fresh: bool = False) -> tuple:
@@ -3057,8 +3164,14 @@ async def get_live_status(username: str, session, force_fresh: bool = False) -> 
         # blind, fand nichts, und quittierte mit "The channel is not currently
         # live" (28x im selben Zeitraum).
         #
-        # yt-dlp hilft hier NICHT: _resolve_via_ytdlp gibt auch bei 'live'
-        # grundsaetzlich info=None zurueck. Nur der HTML-Weg traegt eine URL.
+        # v4.2-W102: hier stand „yt-dlp hilft hier NICHT: _resolve_via_ytdlp
+        # gibt auch bei 'live' grundsaetzlich info=None zurueck. Nur der
+        # HTML-Weg traegt eine URL." Das war eine Aussage ueber unsere HUELLE,
+        # nicht ueber yt-dlp — und sie war selbsterfuellend: die Adresse stand
+        # im JSON und wurde als Ja/Nein-Frage gelesen. Seit W102 traegt der
+        # yt-dlp-Weg eine URL und laeuft unten als ZWEITER Nachschlag, wenn
+        # auch HTML leer ausging. Ausgerechnet dieser Weg kommt durch, wo die
+        # Datacenter-IP 403 bekommt — er signiert selbst.
         if _nc_live.braucht_url_nachschlag(status, info):
             _blind = status == "live"
             try:
@@ -3078,14 +3191,33 @@ async def get_live_status(username: str, session, force_fresh: bool = False) -> 
                     _RATE_LIMIT_PENALTY.pop(username, None)
                     _RATE_LIMIT_BACKOFF.pop(username, None)
                 elif _blind:
-                    # Bleibt bei ("live", None) — das ist KEINE Verschlechterung
-                    # gegenueber vorher, aber jetzt steht im Log, dass beide
-                    # Wege leer ausgingen. Vorher sah es aus wie eine normale
-                    # Erkennung.
-                    log.info("live-ohne-URL @%s: auch der HTML-Weg findet "
-                             "keine Stream-URL — der Recorder muss selbst "
-                             "aufloesen (Proxy pruefen: RECORD_PROXY).",
-                             username)
+                    # v4.2-W102: und JETZT noch yt-dlp fragen. Bis hierher
+                    # endete der haeufigste Fall (gemessen 71 %: live, keine
+                    # URL) genau hier — mit einer Logzeile und ohne Adresse.
+                    # Der eine Weg, der in dieser Lage noch durchkommt, lief
+                    # NIE: die yt-dlp-Stufe unten haengt an `status ==
+                    # "unknown"`, und der Status ist hier "live".
+                    _yt = await _nachschlag_ytdlp(username)
+                    if _nc_live.hat_stream_url(_yt):
+                        status, info = "live", _yt
+                        log.info("live-ohne-URL @%s: yt-dlp liefert die "
+                                 "Stream-URL nach (%s) — Aufnahme UND Restream "
+                                 "koennen starten.", username,
+                                 "flv" if _yt.get("flv_url") else "hls")
+                        _RATE_LIMIT_PENALTY.pop(username, None)
+                        _RATE_LIMIT_BACKOFF.pop(username, None)
+                    else:
+                        # Bleibt bei ("live", None). Jetzt steht im Log, dass
+                        # ALLE DREI Wege leer ausgingen — vorher sah es aus wie
+                        # eine normale Erkennung.
+                        log.info("live-ohne-URL @%s: weder HTML noch yt-dlp "
+                                 "finden eine Stream-URL. Der Restream kann "
+                                 "nicht starten (der Chat laeuft weiter, der "
+                                 "braucht keine). TikTok gibt die Adresse einer "
+                                 "Datacenter-IP oft nicht heraus — Abhilfe: "
+                                 "RECORD_PROXY auf einen Residential-/Mobil-"
+                                 "Proxy setzen, oder den Tunnel einschalten.",
+                                 username)
             except Exception as e:
                 log.debug(f"html-fallback @{username}: {e}")
 
@@ -13546,6 +13678,42 @@ class RestreamManager:
             # hergestellt, die W43 aufmacht.
             _drossel_zuruecksetzen(rid)
 
+    def _quelle_melden(self, username, err):
+        """Sagt, WARUM dieses Ziel nicht startet — gedrosselt, mit Abhilfe.
+
+        v4.2-W102. Bis hierher war genau das die Luecke: der Aufrufer schrieb
+        `src_live = not _err`, der Waechter machte daraus "Quelle nicht live —
+        kein Start", und das ist `ACT_NONE` — die Schleife loggt nur START,
+        RESTART und STOP. Ein Restream, der nie anlief, erzeugte damit KEINE
+        EINZIGE ZEILE. Der Betreiber konnte nur beobachten, dass "selten ein
+        live restreamt wird", und musste den Grund raten.
+
+        "offline" bleibt still: ein getrackter Nutzer sendet die meiste Zeit
+        nicht, und eine Zeile pro Pruefung waere Rauschen — genau die Art
+        unlesbares Log, die eine Warnung wertlos macht (W81).
+
+        Der Drossel-Schluessel ist der KANAL, der Grund die LAGE. Ein Wechsel
+        der Lage meldet sofort (dass aus "offline" ein "live, aber keine
+        Adresse" geworden ist, ist die eigentliche Nachricht), eine
+        wiederkehrende Lage erst nach der Ruhezeit — Paar aus (Kanal, Grund),
+        wie seit W97.
+        """
+        lage = _nc_resolvergrund.quelle_lage(err)
+        if not _nc_resolvergrund.quelle_laut(lage):
+            return
+        laut, unterdrueckt = _nc_meldetakt.melden(
+            "restream-quelle", lage, _time_mod.monotonic())
+        if not laut:
+            return
+        schluessel = ("quelle_ohne_url"
+                      if lage == _nc_resolvergrund.LAGE_OHNE_URL else "")
+        log.warning("Restream @%s startet nicht — %s%s%s", username,
+                    (_nc_resolvergrund.text(schluessel) if schluessel
+                     else "Quell-Aufloesung: %s" % err),
+                    "" if schluessel else
+                    " (das ist NICHT 'offline' — es konnte nicht ermittelt werden)",
+                    _nc_meldetakt.zusatz(unterdrueckt))
+
     def _reflect_source_status(self, rid, err):
         """Hält den angezeigten Status eines NICHT gestarteten Ziels frisch, damit das
            Dashboard nicht auf altem 'error' kleben bleibt: offline→'offline',
@@ -14390,10 +14558,14 @@ class RestreamManager:
                     if clean_username(r["source_username"]) == _cur), -1)
         if idx >= 0:
             order = order[idx + 1:] + order[:idx + 1]
+        _gruende = []
         for r in order:
             _src, _err = await self._resolve_source(r["source_username"])
             if _err:
                 self._reflect_source_status(r["id"], _err)
+                _gruende.append("@%s: %s" % (r["source_username"],
+                                             _nc_resolvergrund.quelle_lage(_err)))
+                self._quelle_melden(r["source_username"], _err)
                 continue
             log.info("Restream-Failover: @%s live → starte #%d",
                      r["source_username"], r["id"])
@@ -14403,7 +14575,12 @@ class RestreamManager:
                 self._set_desired(rid, False)
             await self.start(r["id"], _src_watch=True)
             return
-        log.info("Restream-Failover: aktuell keine weitere Live-Quelle verfügbar.")
+        # v4.2-W102: hier stand "aktuell keine weitere Live-Quelle verfügbar" —
+        # eine Aussage ueber TikTok, obwohl die Wahrheit "ich habe von keinem
+        # eine Adresse bekommen" ist. Bei lauter `ohne_url` sendet moeglicherweise
+        # jeder Einzelne von ihnen.
+        log.info("Restream-Failover: kein Ziel startbereit (%s).",
+                 ", ".join(_gruende) if _gruende else "keine Ziele konfiguriert")
 
     async def _spawn_independent(self, rid, pname, purl, source_url, transcode,
                                  source_username=None):
@@ -14808,7 +14985,12 @@ class RestreamManager:
                 src, err = await self._resolve_source(r["source_username"])
                 if err:
                     self._reflect_source_status(r["id"], err)   # Panel frisch halten (offline/unknown)
-                    continue                   # nicht live → nächstes Ziel probieren
+                    # v4.2-W102: der Kommentar sagte "nicht live". Das stimmt
+                    # fuer err=="offline" und fuer nichts sonst — "keine
+                    # spielbare Quell-URL" heisst, der Nutzer sendet und wir
+                    # kommen nicht an den Stream.
+                    self._quelle_melden(r["source_username"], err)
+                    continue                   # keine Adresse → nächstes Ziel probieren
                 log.info(f"Auto-Restream (single): @{r['source_username']} live → starte #{r['id']}")
                 await self.start(r["id"], _src_watch=True)   # V37-SRCFAIL: Quellen-Watcher an
                 return                         # genau EINEN starten
@@ -14825,7 +15007,10 @@ class RestreamManager:
             src, err = await self._resolve_source(r["source_username"])
             if err:
                 self._reflect_source_status(r["id"], err)
-                continue                       # offline → still überspringen
+                # v4.2-W102: "still überspringen" war woertlich wahr und genau
+                # das Problem. Still bleibt nur noch das echte Offline.
+                self._quelle_melden(r["source_username"], err)
+                continue
             log.info(f"Auto-Restream: @{r['source_username']} live → starte #{r['id']} "
                      f"({len(self._procs) + 1}/{RESTREAM_MAX_CONCURRENT})")
             await self.start(r["id"], _src_watch=True)   # V37-SRCFAIL
@@ -17927,6 +18112,11 @@ async def _restream_verify_loop():
                     if _need_resolve:
                         _s, _err = await _RESTREAM_MGR._resolve_source(r["source_username"])
                         src_live = not _err
+                        # v4.2-W102: `not _err` macht aus fuenf Lagen zwei. Der
+                        # Waechter braucht den Boolean (ohne Adresse laesst sich
+                        # kein ffmpeg starten), der BETREIBER braucht die Lage.
+                        if _err and not is_running:
+                            _RESTREAM_MGR._quelle_melden(r["source_username"], _err)
                 d = _RESTREAM_GUARD.evaluate(
                     rid, running=is_running, desired=want, source_live=src_live,
                     platform_results=(plat if is_running else {}), now=now)

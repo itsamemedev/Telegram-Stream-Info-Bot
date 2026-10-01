@@ -12122,6 +12122,268 @@ def _test_v42_w101_krypto_block_bleibt_stehen():
     ok("W101: der Bot meldet eine Teilkonfiguration gedrosselt")
 
 
+def _test_v42_w102_ytdlp_traegt_die_stream_url():
+    """yt-dlp hatte die Adresse, und wir haben sie als Ja/Nein gelesen.
+
+    `_resolve_via_ytdlp` ruft yt-dlp mit `--dump-single-json` und pruefte das
+    Ergebnis so:
+
+        if data.get("is_live") or data.get("formats") or data.get("manifest_url") \
+           or data.get("url"):
+            return "live", None
+
+    Genau die drei Schluessel, die eine ADRESSE tragen, als Ja/Nein-Frage —
+    und danach weggeworfen. Fuer den Recorder ging das auf (er startet yt-dlp
+    noch einmal), fuer den Restream nicht: der braucht eine URL und hat keinen
+    yt-dlp-Rang. Er bekam "keine spielbare Quell-URL" und startete nicht.
+
+    Gemeldet am 01.10.: „wird selten ein live restreamt, aber dennoch laeuft
+    der Chat von getrackten usern durchs transkript". Beides passt zusammen:
+    der Chat braucht keine Adresse, der Restream schon.
+    """
+    import io as _io
+    import os as _os
+    from nc import ytdlpurl as Y
+
+    wurzel = _os.path.dirname(_os.path.abspath(__file__))
+
+    # ── (1) FLV UND HLS, UND FLV GEWINNT. Fuer den Restream ist FLV die
+    # stabile Quelle — EINE Verbindung statt einer Kette signierter Segmente;
+    # HLS reisst ab (rc=187). Dieselbe Regel wie nc/livefolge.hat_stream_url.
+    beides = Y.urls_aus_json({"is_live": True, "formats": [
+        {"url": "https://cdn/y.m3u8?e=1", "protocol": "m3u8_native", "ext": "mp4"},
+        {"url": "https://cdn/x.flv?expire=9", "protocol": "flv", "ext": "flv"}]})
+    assert beides["flv_url"].endswith("expire=9"), beides
+    assert beides["hls_url"].endswith("e=1"), beides
+    assert beides["via"] == "ytdlp", "ohne `via` ist im Log nicht zu sehen, " \
+        "WELCHER Weg die Adresse gebracht hat — und das ist hier die Nachricht"
+
+    # ── (1b) DIE ENDUNG STEHT VOR DEM QUERY-TEIL. `…/stream.flv?expire=…` —
+    # ein `endswith(".flv")` haette JEDE signierte FLV-Adresse verworfen, und
+    # das sind alle. Deshalb die Pruefung auf das Vorkommen.
+    nur_query = Y.urls_aus_json({"url": "https://cdn/live/stream.flv?expire=1&sig=a"})
+    assert nur_query.get("flv_url"), nur_query
+
+    # ── (1c) DIE FORMEN, DIE YT-DLP WIRKLICH BAUT. Oben stehen bequeme
+    # Eingaben; `yt_dlp/extractor/tiktok.py::TikTokLiveIE` baut andere, und
+    # genau daran waere die Zuordnung sonst vorbeigelaufen (W97: „ein Vertrag,
+    # der nur die bequeme Eingabe prueft, prueft nichts"). Nachgesehen im
+    # Extractor-Quelltext:
+    #
+    #   HLS      {"ext": "mp4",  "protocol": "m3u8_native"}   <- ext ist NICHT m3u8
+    #   rtmp     {"ext": "flv",  "protocol": "https"}         <- protocol ist https
+    #   flv_*    {"ext": "flv"}                               <- GAR KEIN protocol
+    #
+    # Eine Erkennung allein am `protocol` haette die beiden FLV-Formen
+    # verworfen, eine allein an der Endung die HLS-Form.
+    echt = Y.urls_aus_json({"is_live": True, "formats": [
+        {"url": "https://pull-hls/x/index.m3u8?e=1", "ext": "mp4",
+         "protocol": "m3u8_native", "format_id": "hls-ORIGION"},
+        {"url": "https://pull-rtmp/y?e=1", "ext": "flv",
+         "protocol": "https", "format_id": "rtmp-pull"},
+        {"url": "https://pull-flv/z?e=1", "ext": "flv",
+         "format_id": "flv-origion"}]})
+    assert echt.get("hls_url", "").startswith("https://pull-hls/"), echt
+    assert echt.get("flv_url", "").startswith("https://pull-rtmp/"), echt
+    # Und jede der drei Formen einzeln, damit nicht eine die andere traegt.
+    assert Y.urls_aus_json({"formats": [
+        {"url": "https://p/z?e=1", "ext": "flv", "format_id": "flv-sd"}]}
+        ).get("flv_url"), "FLV ohne protocol-Schluessel wird nicht erkannt"
+    assert Y.urls_aus_json({"formats": [
+        {"url": "https://p/i.m3u8", "ext": "mp4", "protocol": "m3u8_native"}]}
+        ).get("hls_url"), "HLS mit ext=mp4 wird nicht erkannt"
+
+    # ── (2) BEIDE QUELLEN IM JSON WERDEN GELESEN. `--dump-single-json` fuellt
+    # je nach Extractor-Fassung nur `formats` ODER die obersten Schluessel;
+    # wer sich auf eine verlaesst, bekommt bei der anderen wortlos nichts.
+    assert Y.urls_aus_json({"manifest_url": "https://cdn/a.m3u8"}).get("hls_url")
+    assert Y.urls_aus_json({"formats": [
+        {"manifest_url": "https://cdn/b.m3u8", "protocol": "m3u8"}]}).get("hls_url")
+
+    # ── (3) KEINE BRAUCHBARE FORM -> LEER, UND DAS IST EINE AUSSAGE. yt-dlp
+    # kann "live" sagen und nur Formate liefern, die wir nicht pullen koennen.
+    assert Y.urls_aus_json({"is_live": True, "formats": [
+        {"url": "https://cdn/a.mp4", "protocol": "https", "ext": "mp4"}]}) == {}
+    assert Y.urls_aus_json(None) == {} and Y.urls_aus_json({}) == {}
+    assert "via" not in Y.urls_aus_json({}), \
+        "`via` ohne Adresse behauptet einen Treffer, den es nicht gab"
+
+    # ── (4) DIE HUELLE GIBT DIE ADRESSE WEITER — und prueft vorher die
+    # Frische. Eine abgelaufene CDN-URL ist schlimmer als keine: der Restream
+    # startet, ffmpeg stirbt sofort, und der Versuch zaehlt trotzdem gegen
+    # MAX_RECONNECTS (B138).
+    src = _io.open(_os.path.join(wurzel, "bot.py"), encoding="utf-8").read()
+    i = src.index("async def _resolve_via_ytdlp(")
+    rumpf = rumpf_ab(src, i)
+    assert 'return "live", None' not in rumpf, \
+        "der yt-dlp-Weg wirft die Adresse wieder weg"
+    assert "urls_aus_json" in rumpf, "die Adresse wird nicht mehr ausgelesen"
+    assert "_stream_url_ttl" in rumpf and "_STREAM_URL_MIN_TTL" in rumpf, \
+        "eine abgelaufene URL wird ungeprueft weitergegeben"
+
+    # ── (5) UND DIE BEHAUPTUNG IST WEG. In bot.py UND in nc/livefolge.py
+    # stand als Tatsache „Nur der HTML-Weg traegt eine URL" — eine Aussage
+    # ueber unsere Huelle, nicht ueber yt-dlp, und selbsterfuellend.
+    folge = _io.open(_os.path.join(wurzel, "nc", "livefolge.py"),
+                     encoding="utf-8").read()
+    for name, text in (("bot.py", src), ("nc/livefolge.py", folge)):
+        assert "Nur der HTML-Weg traegt eine URL." not in text, \
+            "%s behauptet weiter, nur HTML trage eine URL" % name
+
+    ok("W102: yt-dlp liefert die Stream-URL, die es ohnehin schon hatte")
+    ok("W102: FLV gewinnt, und eine signierte .flv?-Adresse wird erkannt")
+    ok("W102: eine abgelaufene URL wird nicht weitergegeben")
+
+
+def _test_v42_w102_nachschlag_laeuft_im_haeufigsten_fall():
+    """Der eine Weg, der durchkommt, lief ausgerechnet dort nie.
+
+    Im Quelltext steht die Messung vom 11.09. seit W51: 60 von 84
+    Aufloesungen melden „live" OHNE Stream-URL — 71 %. TikTok gibt die
+    Adresse einer Datacenter-IP nicht heraus. Die yt-dlp-Stufe in
+    `get_live_status` haengt aber an `status == "unknown"`, und der Status ist
+    in diesem Fall „live". Also lief genau in den 71 % der Weg nicht, der
+    TikToks Signaturen selbst erzeugt und deshalb durchkommt.
+    """
+    import io as _io
+    import os as _os
+
+    wurzel = _os.path.dirname(_os.path.abspath(__file__))
+    src = _io.open(_os.path.join(wurzel, "bot.py"), encoding="utf-8").read()
+
+    # ── (1) DER NACHSCHLAG HAENGT IM live-OHNE-URL-ZWEIG. Der Anker ist der
+    # Zweig selbst (`elif _blind:`), nicht die Funktion irgendwo — ein Aufruf
+    # an anderer Stelle wuerde die 71 % nicht treffen.
+    i = src.index("if _nc_live.braucht_url_nachschlag(status, info):")
+    j = src.index("    # Cache nur definitive Antworten", i)
+    zweig = src[i:j]
+    assert "elif _blind:" in zweig
+    blind = zweig[zweig.index("elif _blind:"):]
+    assert "_nachschlag_ytdlp(" in blind, \
+        "im live-ohne-URL-Zweig fragt niemand yt-dlp — der haeufigste Fall " \
+        "bleibt ohne Adresse"
+    assert blind.index("_nachschlag_ytdlp(") < blind.index("RECORD_PROXY"), \
+        "erst die Abhilfe melden und dann noch einen Weg probieren ist die " \
+        "falsche Reihenfolge: die Meldung gehoert in den Fall, in dem ALLE " \
+        "Wege leer ausgingen"
+
+    # ── (2) EIN AUSGANG. Jeder vorzeitige `return {}` waere ein stummer
+    # Misserfolgs-Rueckweg (tools/blindstellen.py), und die Funktion hat nur
+    # ein Ergebnis.
+    #
+    # Gezaehlt wird im SYNTAXBAUM, nicht im Text: der erste Anlauf zaehlte
+    # `nach.count("return")` und fiel am eigenen Docstring, der das Wort
+    # erwaehnt. Eine Textzaehlung misst hier die Prosa mit.
+    import ast as _ast
+    k = src.index("async def _nachschlag_ytdlp(username):")
+    nach = rumpf_ab(src, k)
+    _fn = _ast.parse(nach).body[0]
+    _returns = [n for n in _ast.walk(_fn) if isinstance(n, _ast.Return)]
+    assert len(_returns) == 1, "mehrere Ausgaenge: %d" % len(_returns)
+
+    # ── (3) DER ABGESCHALTETE SCHUTZSCHALTER MELDET. Ohne diese Zeile sieht
+    # sein Fehlen aus wie „auch yt-dlp fand nichts" — dabei lief yt-dlp nie.
+    d = src.index("def _darf_ytdlp_nachschlagen(username) -> bool:")
+    darf = rumpf_ab(src, d)
+    assert "_resolver_stumm" in darf and "ytdlp_abgeschaltet" in darf, \
+        "der abgeschaltete yt-dlp-Weg verschwindet wortlos"
+    from nc import resolvergrund as R
+    assert "ytdlp_abgeschaltet" in R.GRUND, "der Grund hat keinen Klartext"
+    assert R.text("ytdlp_abgeschaltet") != "ytdlp_abgeschaltet", \
+        "der Klartext ist der Schluessel selbst — das hilft niemandem"
+
+    ok("W102: der yt-dlp-Nachschlag laeuft im live-ohne-URL-Fall")
+    ok("W102: der abgeschaltete Schutzschalter verschwindet nicht wortlos")
+
+
+def _test_v42_w102_restream_trennt_offline_von_ohne_url():
+    """`src_live = not _err` machte aus fuenf Lagen zwei.
+
+    „offline" (der Streamer sendet nicht) und „keine spielbare Quell-URL" (er
+    sendet, wir kommen nicht an den Stream) sind vollkommen verschiedene
+    Nachrichten mit vollkommen verschiedener Abhilfe. Der Waechter sah beide
+    als `source_live=False` und antwortete „Quelle nicht live — kein Start" —
+    und das ist `ACT_NONE`, das die Schleife NIE loggt. Ein Restream, der nie
+    anlief, erzeugte damit keine einzige Zeile.
+
+    Dieselbe Klasse wie `audio=False` fuer drei Ursachen (W55) und `None` =
+    „tot" in nc/preflight (W89).
+    """
+    import io as _io
+    import os as _os
+    from nc import resolvergrund as R
+
+    # ── (1) DIE FUENF LAGEN, EINZELN. Und LAGE_OK ist benannt, nicht "":
+    # eine leere Zeichenkette liest sich wie „nichts herausgefunden", und das
+    # ist das Gegenteil (Lehre aus W97, log_wartend = -1 statt 0).
+    assert R.quelle_lage("") == R.LAGE_OK and R.LAGE_OK, R.LAGE_OK
+    assert R.quelle_lage("offline") == R.LAGE_OFFLINE
+    assert R.quelle_lage("unknown") == R.LAGE_UNBEKANNT
+    assert R.quelle_lage("Abo-Stream \u2014 nur Aufnahme/VLC") == R.LAGE_ABO
+    assert R.quelle_lage("keine spielbare Quell-URL (weder FLV noch HLS)") \
+        == R.LAGE_OHNE_URL
+    assert R.quelle_lage("resolve error: boom") == R.LAGE_FEHLER, \
+        "ein unbekannter Text wird still verschluckt statt gemeldet"
+
+    # ── (2) WER LAUT IST UND WER NICHT. „offline" ist der Alltag — ein
+    # getrackter Nutzer sendet die meiste Zeit nicht, und eine Zeile pro
+    # Pruefung waere genau das unlesbare Log, das eine Warnung wertlos macht.
+    assert not R.quelle_laut(R.LAGE_OFFLINE), "offline wuerde das Log fluten"
+    assert not R.quelle_laut(R.LAGE_ABO), "Abo ist eine Entscheidung (B148)"
+    assert not R.quelle_laut(R.LAGE_OK)
+    for lage in (R.LAGE_OHNE_URL, R.LAGE_UNBEKANNT, R.LAGE_FEHLER):
+        assert R.quelle_laut(lage), lage
+
+    # ── (3) DER KLARTEXT SAGT AUSDRUECKLICH, DASS ES NICHT OFFLINE IST, und
+    # nennt die Abhilfe. „HTTP 403" allein hat schon einmal wochenlang
+    # niemandem geholfen.
+    t = R.text("quelle_ohne_url")
+    assert "NICHT" in t and "offline" in t, t
+    assert "RECORD_PROXY" in t, "die Abhilfe fehlt"
+    assert "yt-dlp" in t, "der Weg, der durchkommt, wird nicht genannt"
+
+    # ── (4) ALLE DREI ENTSCHEIDUNGSSTELLEN MELDEN, UND ZWAR GEDROSSELT.
+    wurzel = _os.path.dirname(_os.path.abspath(__file__))
+    src = _io.open(_os.path.join(wurzel, "bot.py"), encoding="utf-8").read()
+    m = src.index("    def _quelle_melden(self, username, err):")
+    melder = rumpf_ab(src, m)
+    import re as _re
+    assert _re.search(r'melden\(\s*\n?\s*"restream-quelle"', melder), \
+        "die Meldung laeuft ungedrosselt — der Resolver laeuft pro Poll und " \
+        "pro Nutzer, das waere nach einer Stunde unlesbar"
+    assert "quelle_laut" in melder, "auch 'offline' wuerde gemeldet"
+    # Drei Aufrufer: Verify-Schleife, Auto-Picker (single + multi) und der
+    # Failover. Vier Aufrufstellen plus die Definition.
+    assert src.count("_quelle_melden(") >= 5, src.count("_quelle_melden(")
+
+    # ── (5) UND DIE IRREFUEHRENDEN TEXTE SIND WEG. Jeder einzelne behauptete
+    # eine Aussage ueber TikTok, wo die Wahrheit „ich habe keine Adresse
+    # bekommen" war.
+    #
+    # Geprueft werden ZEICHENKETTEN und Kommentare GETRENNT: der erste Anlauf
+    # suchte im ganzen Quelltext und fiel an den eigenen Kommentaren, die den
+    # alten Wortlaut zitieren — damit man beim Lesen weiss, was dort stand.
+    # Ein Kommentar DARF den alten Text nennen, eine Ausgabe nicht. Dieselbe
+    # Falle wie in W99, wo ein Docstring die eigene Zusicherung zitierte.
+    import io as _io2
+    import tokenize as _tok
+    _strings = []
+    with _io2.open(_os.path.join(wurzel, "bot.py"), "rb") as _fh:
+        for _t in _tok.tokenize(_fh.readline):
+            if _t.type == _tok.STRING:
+                _strings.append(_t.string)
+    _alle = "\n".join(_strings)
+    for falsch in ("aktuell keine weitere Live-Quelle verf\u00fcgbar",
+                   "nicht live \u2192 n\u00e4chstes Ziel probieren",
+                   "offline \u2192 still \u00fcberspringen"):
+        assert falsch not in _alle, \
+            "irrefuehrender Text ist wieder eine Ausgabe: %s" % falsch
+
+    ok("W102: 'live ohne URL' ist von 'offline' unterschieden")
+    ok("W102: der Restream sagt gedrosselt, warum er nicht startet")
+    ok("W102: kein Text behauptet mehr eine Aussage ueber TikTok")
+
+
 def _test_v42_w60_azrael_cooldown_je_plattform():
     """v4.2-W60: ein Cooldown fuer drei Chats verschluckte zwei davon.
 
@@ -12882,25 +13144,51 @@ def _test_v42_w51_live_ohne_url():
     # sind ueber zwei Zeilen umbrochen, und ein zusammenhaengender Anker
     # faende sie nie — auch nicht in der geflachten Fassung, weil zwischen
     # zwei Literalen ein Leerzeichen steht. Das Praefix steht in EINEM Literal.
-    assert bot.count('log.info("live-ohne-URL @%s:') == 2, \
-        ("beide Ausgaenge des Nachschlags muessen im Log stehen — sonst kann "
-         "niemand sagen, wie oft er wirklich eine URL bringt")
-    assert "HTML-Weg liefert die " in bot, "der Erfolgsfall fehlt"
-    assert "auch der HTML-Weg findet " in bot, "der Misserfolg fehlt"
+    # v4.2-W102: DREI Ausgaenge, nicht mehr zwei — der yt-dlp-Weg ist
+    # dazugekommen. Jeder einzelne muss im Log stehen, sonst ist nicht
+    # messbar, WELCHER Weg die Adresse bringt; und genau diese Frage stellt
+    # sich nach dieser Welle noch dringender als nach W51.
+    assert bot.count('log.info("live-ohne-URL @%s:') == 3, \
+        ("alle drei Ausgaenge des Nachschlags muessen im Log stehen — sonst "
+         "kann niemand sagen, welcher Weg wirklich eine URL bringt: %d gefunden"
+         % bot.count('log.info("live-ohne-URL @%s:'))
+    assert "HTML-Weg liefert die " in bot, "der HTML-Erfolg fehlt"
+    assert "yt-dlp liefert die " in bot, "der yt-dlp-Erfolg fehlt"
+    assert "weder HTML noch yt-dlp " in bot, "der Misserfolg fehlt"
     assert "RECORD_PROXY" in bot
-    ok("W51: Treffer und Fehlschlag des Nachschlags stehen beide im Log")
+    ok("W51/W102: alle drei Ausgaenge des Nachschlags stehen im Log")
 
-    # --- 5) yt-dlp bleibt aussen vor, und zwar begruendet ----------------
-    # Wer das spaeter „vergisst", baut einen Subprozess-Aufruf in den
-    # haeufigsten Pfad ein — 20 s Timeout, je Poll und Nutzer.
-    yq = open(os.path.join(hier, "nc", "livefolge.py"), encoding="utf-8").read()
-    assert "info=None" in yq and "yt-dlp" in yq, \
-        "die Begruendung, warum yt-dlp hier nichts beitraegt, fehlt"
+    # --- 5) yt-dlp IST jetzt drin — und die Warnung von W51 gilt weiter ---
+    #
+    # Hier stand bis v4.2-W102 das Gegenteil: „yt-dlp bleibt aussen vor, und
+    # zwar begruendet", mit der Zusicherung `'return "live", None' in _yt` und
+    # der Fehlermeldung „liefert jetzt doch eine URL? Dann gehoert es in den
+    # Nachschlag — und dieser Vertrag angepasst". Genau das ist passiert, und
+    # genau so ist es gemacht: die Adresse stand die ganze Zeit im JSON und
+    # wurde als Ja/Nein-Frage gelesen.
+    #
+    # Die Warnung, die W51 daneben hinterlassen hat, ist damit NICHT erledigt:
+    # „Wer das spaeter ,vergisst`, baut einen Subprozess-Aufruf in den
+    # haeufigsten Pfad ein — 20 s Timeout, je Poll und Nutzer." Der Zweig IST
+    # der haeufigste (71 %), und `_get_resolve_semaphore()` laesst nur zwei
+    # Aufloesungen gleichzeitig. Deshalb wird hier die Taktung gesichert, nicht
+    # nur das Vorhandensein des Wegs.
     _yt = bot[bot.find("async def _resolve_via_ytdlp"):]
     _yt = _yt[:_yt.find("\nasync def ", 10)]
-    assert 'return "live", None' in " ".join(_yt.split()), \
-        "_resolve_via_ytdlp liefert jetzt doch eine URL? Dann gehoert es in " \
-        "den Nachschlag — und dieser Vertrag angepasst"
+    assert 'return "live", None' not in " ".join(_yt.split()), \
+        "der yt-dlp-Weg wirft die Adresse wieder weg"
+    _darf = bot[bot.find("def _darf_ytdlp_nachschlagen"):]
+    _darf = _darf[:_darf.find("\nasync def ", 10)]
+    assert "YTDLP_NACHSCHLAG_RUHE_S" in _darf, \
+        "der Nachschlag laeuft ungetaktet — ein yt-dlp-Subprozess je Poll und " \
+        "Nutzer staut die Live-Erkennung hinter der Semaphore auf (W51-Warnung)"
+    _nach = bot[bot.find("async def _nachschlag_ytdlp"):]
+    _nach = _nach[:_nach.find("\nasync def ", 10)]
+    assert _nach.index("_YTDLP_NACHSCHLAG_ZULETZT[username]") \
+        < _nach.index("_resolve_via_ytdlp(username)"), \
+        "der Zeitstempel steht NACH dem Aufruf — ein yt-dlp, das in den " \
+        "20-s-Timeout laeuft, setzt die Ruhezeit dann nie und kostet beim " \
+        "naechsten Poll sofort wieder 20 s"
     ok("W51: yt-dlp liefert weiterhin keine URL und bleibt aus dem Nachschlag")
 
 
@@ -19169,6 +19457,9 @@ def main():
     _test_v42_w100_cookiebezug_nennt_die_abhilfe()
     _test_v42_w101_deck_kann_hoerbar_alarmieren()
     _test_v42_w101_krypto_block_bleibt_stehen()
+    _test_v42_w102_ytdlp_traegt_die_stream_url()
+    _test_v42_w102_nachschlag_laeuft_im_haeufigsten_fall()
+    _test_v42_w102_restream_trennt_offline_von_ohne_url()
     _test_v42_w60_azrael_cooldown_je_plattform()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)

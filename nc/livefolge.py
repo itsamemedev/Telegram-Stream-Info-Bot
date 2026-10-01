@@ -141,9 +141,22 @@ def braucht_url_nachschlag(status, info) -> bool:
     glauben wir das. Ein zweiter Rundlauf pro Poll und Nutzer kostet nur
     Anfragen bei einem Dienst, der uns ohnehin schon rate-limitet.
 
-    Warum yt-dlp hier NICHT hilft: `_resolve_via_ytdlp` gibt auch bei „live"
-    grundsaetzlich info=None zurueck — es beantwortet die Frage „sendet er?",
-    nicht „wohin greife ich?". Nur der HTML-Weg traegt eine URL.
+    **v4.2-W102 — KORREKTUR.** Hier stand: „Warum yt-dlp hier NICHT hilft:
+    `_resolve_via_ytdlp` gibt auch bei ,live` grundsaetzlich info=None zurueck
+    — es beantwortet die Frage ,sendet er?`, nicht ,wohin greife ich?`. Nur
+    der HTML-Weg traegt eine URL."
+
+    Das war eine Aussage ueber die HUELLE, nicht ueber yt-dlp, und sie war
+    selbsterfuellend. `--dump-single-json` liefert `manifest_url`, `url` und
+    `formats` — die Adresse stand im JSON, und `_resolve_via_ytdlp` las genau
+    diese drei Schluessel als Ja/Nein-Frage und gab `info=None` zurueck. Seit
+    W102 traegt der yt-dlp-Weg die URL (`nc/ytdlpurl.urls_aus_json`), und er
+    laeuft als ZWEITER Nachschlag, wenn HTML leer ausgeht. Das ist gerade in
+    dieser Lage der aussichtsreiche Weg: yt-dlp signiert selbst und kommt
+    durch, wo die Datacenter-IP 403 bekommt.
+
+    Diese Funktion bleibt unveraendert — sie beantwortet nur, OB nachgeschlagen
+    werden muss. Wer nachschlaegt, entscheidet der Aufrufer.
     """
     if status == "unknown":
         return True
