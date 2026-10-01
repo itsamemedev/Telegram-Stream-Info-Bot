@@ -9,9 +9,31 @@ gefixt", damit der kritischste Pfad garantiert unverändert bleibt.
 
 Einzige externe Abhängigkeit: _stream_vcodec (bereits in nc.ffdiag). Das früher
 globale PREFER_H264 ist jetzt ein Parameter (der Bot reicht seinen env-Wert rein).
+
+v4.2-W105 — DER SATZ OBEN GILT NICHT MEHR UNEINGESCHRAENKT, und das steht hier,
+weil ein Modul, das "bitgenau wie vorher" behauptet und es nicht ist, bei der
+naechsten Fehlersuche in die falsche Richtung zeigt. Drei Quellen fehlten,
+gemessen gegen `yt_dlp/extractor/tiktok.py` (TikTokLiveIE, Z1278-1356) statt
+gegen eine bequeme Eingabe:
+
+  * `stream_url.rtmp_pull_url` — yt-dlp nimmt sie als FLV (ext=flv,
+    protocol=https). Wir haben sie nie gelesen.
+  * `stream_url.flv_pull_url` kann ein WOERTERBUCH {Qualitaet: URL} sein.
+    Wir haben es als Zeichenkette weitergereicht — und `hat_stream_url()` ist
+    eine reine Wahrheitspruefung, ein Woerterbuch ist wahr. Damit galt "URL
+    vorhanden", und was in den ffmpeg-Aufruf ging, war keine.
+  * Jede URL geht jetzt durch `_als_url()`. Was keine Zeichenkette mit `://`
+    ist, ist keine Adresse — lieber None und der dokumentierte Nachschlag als
+    ein Wert, den erst der Subprozess ablehnt.
+
+Die codec-bewusste Auswahl aus B64 bleibt massgeblich und gilt JETZT AUCH fuer
+das Woerterbuch: dort liegt der Codec in `flv_pull_url_params[Qualitaet]`, und
+HEVC-origin ist genau der Produktionsfehler vom 2026-05-29 (ffmpeg demuxt
+bytevc1 im FLV-Container nicht → 0-Byte-Datei).
 """
 
 import json
+import re
 from typing import Optional
 
 from nc.ffdiag import _stream_vcodec
@@ -24,6 +46,81 @@ def is_hevc(vcodec: str) -> bool:
        FLV-Demuxer als 'codec id 12 / unknown codec' ablehnt)."""
     vc = (vcodec or "").lower()
     return any(tok in vc for tok in _HEVC_TOKENS)
+
+
+# v4.2-W105: TikToks Qualitaetsnamen im flv_pull_url-Woerterbuch, beste zuerst.
+# Die Doppelnamen sind keine Nachlaessigkeit — TikTok liefert je nach Antwort
+# "ORIGION" (sic, mit dem Tippfehler) ODER "origin"; yt-dlp fuehrt beide.
+_FLV_WB_RANG = ("ORIGION", "origin", "FULL_HD1", "uhd",
+                "HD1", "hd", "SD2", "sd", "SD1", "ld")
+
+
+# Welche Adressen gelten. Die Liste ist NICHT erfunden, sondern die von
+# yt-dlps `url_or_none` (yt_dlp/utils/_utils.py) — das Werkzeug, das
+# nachweislich an TikToks Live-Adressen herankommt. Zwei Entscheidungen
+# stecken darin, und beide waeren beim Selberbauen falsch ausgefallen:
+#
+#   * `//host/pfad` OHNE Schema gilt. Ein eigener Riegel auf `"://" in u`
+#     haette so eine Adresse verworfen — und eine verworfene Adresse ist
+#     genau das Fehlerbild, gegen das diese Welle gebaut ist („live, aber
+#     keine Stream-URL"). Lieber eine Form zu viel annehmen als eine zu
+#     wenig.
+#   * Es ist eine ERLAUBNISLISTE, keine Prüfung auf „irgendein Schema".
+#     Was hier durchkommt, landet als Eingabe in ffmpeg/streamlink; ein
+#     `file://` aus einer fremden API hat dort nichts zu suchen.
+_URL_ERLAUBT = re.compile(
+    r"(?i)^(?:(?:https?|rtmps?|rtmpt[es]?|rtmpe|rtmfp|rtsps?|rtspu"
+    r"|mms|ftps?):)?//")
+
+
+def _als_url(wert) -> Optional[str]:
+    """Nur eine Zeichenkette mit erlaubtem Schema ist eine Adresse — sonst None.
+
+    v4.2-W105. Der Riegel ist kein Schoenheitsfehler: `flv_pull_url` kommt
+    manchmal als Woerterbuch {Qualitaet: URL}, und `nc.livefolge.hat_stream_url`
+    fragt nur `bool(...)`. Ein Woerterbuch ist wahr, also galt "URL vorhanden",
+    und der Fehler fiel erst im ffmpeg-Aufruf auf — oder gar nicht.
+    """
+    u = wert.strip() if isinstance(wert, str) else ""
+    # EIN Ausgang (wie nc/ytdlpurl.py seit W102): ein frueher `return None` in
+    # einem Abbild ohne Logger ist fuer tools/blindstellen.py ein stummer
+    # Fehlerpfad, und das zu Recht — die Form sagt dann nicht, ob nichts da
+    # war oder nichts gelesen wurde.
+    return u if _URL_ERLAUBT.match(u) else None
+
+
+def _flv_aus_woerterbuch(node: dict, prefer_h264: bool = True):
+    """`stream_url.flv_pull_url` als {Qualitaet: URL} lesen -> (url, vcodec).
+
+    v4.2-W105. Codec-bewusst wie select_stream_from_data_section(): der Codec
+    steht hier in `flv_pull_url_params[Qualitaet]` als JSON-Zeichenkette mit
+    'VCodec'. `_stream_vcodec` erwartet ein Objekt mit `sdk_params` — es wird
+    deshalb umgehuellt statt die JSON-Behandlung ein zweites Mal
+    hinzuschreiben; zwei Fassungen derselben Sache sind in diesem Bestand
+    schon dreimal auseinandergelaufen.
+    """
+    treffer = (None, None)        # EIN Ausgang, Begruendung wie in _als_url
+    wb = node.get("flv_pull_url") or node.get("flvPullUrl")
+    params = node.get("flv_pull_url_params") or node.get("flvPullUrlParams")
+    if not isinstance(params, dict):
+        params = {}
+    if isinstance(wb, dict):
+        kand = []     # (rang, is_hevc, url, vcodec)
+        for name, roh in wb.items():
+            u = _als_url(roh)
+            if not u:
+                continue
+            rang = (_FLV_WB_RANG.index(name) if name in _FLV_WB_RANG
+                    else len(_FLV_WB_RANG))
+            vc = _stream_vcodec({"sdk_params": params.get(name)})
+            kand.append((rang, is_hevc(vc), u, vc))
+        if kand:
+            if prefer_h264:
+                kand.sort(key=lambda c: (c[1], c[0]))
+            else:
+                kand.sort(key=lambda c: c[0])
+            treffer = (kand[0][2], (kand[0][3] or None))
+    return treffer
 
 
 def select_stream_from_data_section(data_section: dict,
@@ -61,8 +158,10 @@ def select_stream_from_data_section(data_section: dict,
             # wird eine kaputte Qualität übersprungen statt den ganzen Pull-URL-
             # Resolver zu reißen. Für dict/None/leer identisch zum alten Verhalten.
             continue
-        hls = main.get("hls") or None
-        flv = main.get("flv") or None
+        # v4.2-W105: durch _als_url statt `or None`. Ein Nicht-String waere
+        # vorher als Adresse durchgegangen.
+        hls = _als_url(main.get("hls"))
+        flv = _als_url(main.get("flv"))
         if not hls and not flv:
             continue
         vc = _stream_vcodec(main)
@@ -123,13 +222,27 @@ def extract_urls_from_streamurl_node(node: dict,
     if not isinstance(node, dict):
         return None
     # Top-Level Felder (gibt's bei vielen Streams direkt)
-    hls = node.get("hls_pull_url") or node.get("hlsPullUrl")
-    flv = node.get("flv_pull_url") or node.get("flvPullUrl")
+    hls = _als_url(node.get("hls_pull_url") or node.get("hlsPullUrl"))
+    vcodec = None
+    quality = None
+    # v4.2-W105: flv_pull_url ist ENTWEDER eine Adresse ODER ein Woerterbuch
+    # {Qualitaet: URL}. Die zweite Form stand hier jahrelang als Zeichenkette
+    # im Rueckgabewert, und `hat_stream_url()` liess sie als "URL vorhanden"
+    # durch — der Fehler fiel erst im ffmpeg-Aufruf auf.
+    flv = _als_url(node.get("flv_pull_url") or node.get("flvPullUrl"))
+    if not flv:
+        flv, _wb_vc = _flv_aus_woerterbuch(node, prefer_h264=prefer_h264)
+        if flv and _wb_vc:
+            vcodec = _wb_vc
+    if not flv:
+        # v4.2-W105: rtmp_pull_url, die dritte Form. yt-dlp fuehrt sie als
+        # ext=flv/protocol=https — derselbe Container, also derselbe Weg wie
+        # eine flv_pull_url. Als LETZTE der FLV-Formen, weil sie keine
+        # Qualitaets- und Codec-Angabe traegt.
+        flv = _als_url(node.get("rtmp_pull_url") or node.get("rtmpPullUrl"))
 
     # Bessere Qualität via liveCoreSDKData wenn vorhanden
     sdk = node.get("liveCoreSDKData") or node.get("live_core_sdk_data")
-    vcodec = None
-    quality = None
     if isinstance(sdk, dict):
         pull_data = sdk.get("pull_data")
         if isinstance(pull_data, dict):

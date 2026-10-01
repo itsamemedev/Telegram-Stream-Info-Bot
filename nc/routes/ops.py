@@ -14,7 +14,6 @@ import subprocess
 from flask import Blueprint, jsonify, request
 from nc.dbwrap import db_conn
 from flask import current_app
-import time as _time_mod
 from nc import i18n as _nc_i18n
 from nc import restrend as _nc_restrend
 from nc import fehlertext as _nc_fehlertext
@@ -22,6 +21,7 @@ from nc import ffver as _nc_ffver
 from nc import updater as _nc_updater
 from nc.proxyutil import _tunnel_mask
 from nc import proxyutil as _nc_proxyutil
+from nc import tunnelwacht as _nc_tunnelwacht
 
 from nc import ctx as _ctx
 
@@ -131,28 +131,18 @@ def api_tunnel_set():
 @bp.route("/api/tunnel/test", methods=["POST"])
 def api_tunnel_test():
     """Testet Erreichbarkeit von TikTok über den aktuell effektiven Proxy
-       (oder direkt, wenn keiner). Nutzt curl (auf dem Server vorhanden)."""
+       (oder direkt, wenn keiner). Nutzt curl (auf dem Server vorhanden).
+
+       v4.2-W105: der Koerper steht jetzt in nc/tunnelwacht.py, weil der
+       Waechter dieselbe Probe faehrt. Zwei Fassungen derselben Messung waren
+       in W98 schon einmal der Befund — beide Seiten behaupten dann, dasselbe
+       zu pruefen, und keine prueft nach. Die Form der Antwort ist unveraendert
+       ({ok, http_code, via, ms, err, at}); das Deck liest sie.
+       Die Fehlerausgabe von curl laeuft jetzt zusaetzlich durch die
+       Proxy-Maske: sie zitiert die Adresse, die sie nicht erreicht hat, und
+       die darf user:pass tragen."""
     eff = _nc_proxyutil.tunnel_effective()
-    import subprocess
-    cmd = ["curl", "--max-time", "10", "-sS", "-o", "/dev/null",
-           "-w", "%{http_code} %{time_total}", "-A", "Mozilla/5.0",
-           "https://www.tiktok.com/"]
-    if eff:
-        cmd = cmd[:1] + ["-x", eff] + cmd[1:]
-    t0 = _time_mod.time()
-    try:
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=14)
-        out = (r.stdout or "").strip()
-        code = out.split(" ")[0] if out else "0"
-        ok = code.startswith(("2", "3"))
-        res = {"ok": ok, "http_code": code, "via": _tunnel_mask(eff) or "direkt",
-               "ms": int((_time_mod.time() - t0) * 1000),
-               "err": (r.stderr or "").strip()[:200] if not ok else None,
-               "at": datetime.now(timezone.utc).strftime("%H:%M:%S")}
-    except Exception as e:
-        res = {"ok": False, "http_code": "0", "via": _tunnel_mask(eff) or "direkt",
-               "ms": int((_time_mod.time() - t0) * 1000), "err": _fehler_text(e, "ops-probe"),
-               "at": datetime.now(timezone.utc).strftime("%H:%M:%S")}
+    res = _nc_tunnelwacht.probe(eff)
     _nc_proxyutil.tunnel_state()["last_test"] = res
     return jsonify(res)
 
