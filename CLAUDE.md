@@ -26,7 +26,7 @@ benutzt, berät an der Lage vorbei.**
 
 ## Die eine Regel
 
-`bot.py` hat **24.979 Zeilen / 1,2 MB ≈ 295.000 Token**. Diese Datei wird
+`bot.py` hat **25.092 Zeilen / 1,2 MB ≈ 295.000 Token**. Diese Datei wird
 **nie** ganz gelesen und **nie** blind durchsucht. Erst fragen wo etwas steht,
 dann den Ausschnitt holen:
 
@@ -42,7 +42,7 @@ dann den Ausschnitt holen:
     python tools/ncpatch.py docs                           # Doku-Zahlen gegen den Quelltext
 
 `find` antwortet aus `.claude/INDEX.md` — 369 Routen (34 in `bot.py`, 333 in
-`nc/routes/`), 60 Slash-Commands, 557 Funktionen mit Zeilennummern. Nach Änderungen an Routen, Commands oder
+`nc/routes/`), 60 Slash-Commands, 559 Funktionen mit Zeilennummern. Nach Änderungen an Routen, Commands oder
 Top-Level-Funktionen `map` neu laufen lassen. Details: Skill `nc-navigation`.
 
 Für „wer ruft das auf?" und „was ist der Typ?" ist der Sprachserver billiger als
@@ -71,7 +71,7 @@ Auf diesem Windows-Rechner heißt der Interpreter **`python`** (3.13.12);
     brain_bridge.py      Adapter Bot ↔ brain/ (M2)
     brain/               KI-Kern: state, rules, router, agents, memory,
                          semantic, knowledge, scheduler, llm, report
-    nc/                  149 Fachmodule: db, scraping, restream, oauth, ledger,
+    nc/                  150 Fachmodule: db, scraping, restream, oauth, ledger,
                          i18n, …
     nc/routes/           36 Flask-Blueprints mit 335 weiteren API-Routen
     locales/             de.json, en.json — der Übersetzungskatalog
@@ -962,6 +962,121 @@ ausgenommen und müssen es bleiben: `segno` (mitgeliefert unter `nc/_vendor/`),
 `browser_cookie3` (optional mit `ImportError`-Auffang) und Pillow (nur
 `tools/`, siehe W53).
 
+**Die Pull-Adresse kam in drei Formen, wir lasen eine.** Der Betreiber am
+01.10.: „da sich die tiktok streams ja in hls Pullen lassen. Das selbe in mp4."
+Eine Einordnung zuerst, damit niemand am falschen Ende sucht: TikTok liefert
+keinen separaten MP4-Pull. HLS **ist** der MP4-Weg (yt-dlp führt die m3u8 als
+`ext=mp4, protocol=m3u8_native`), FLV ist die Alternative, und ein
+`cmaf`/`dash`-Feld liest weder `nc/streamsel.py` noch yt-dlp.
+
+Gefehlt haben dafür drei andere Quellen, gemessen gegen
+`yt_dlp/extractor/tiktok.py` (TikTokLiveIE, Z1278–1356):
+
+    stream_data.data.<q>.main.flv / .hls   hatten wir
+    stream_url.hls_pull_url                hatten wir
+    stream_url.rtmp_pull_url               NEIN  (yt-dlp nimmt sie als FLV)
+    stream_url.flv_pull_url als WOERTERBUCH {Qualitaet: URL}   NEIN
+    api/live/detail/ -> LiveRoomInfo.liveUrl                   NEIN, offen
+
+Die zweite fehlende Form war die gefährliche. `nc.livefolge.hat_stream_url()`
+ist eine reine Wahrheitsprüfung — **ein Wörterbuch ist wahr.** Damit galt „URL
+vorhanden", und was in den ffmpeg-Aufruf ging, war keine. Seit v4.2-W105 geht
+jede Adresse durch `_als_url()`, und das Wörterbuch wird codec-bewusst
+ausgewählt wie B64 es für `stream_data` verlangt: der Codec steht dort in
+`flv_pull_url_params[Qualitaet]`, und blind `origin` zu nehmen baut den
+HEVC-Produktionsfehler vom 2026-05-29 nach (ffmpeg demuxt `bytevc1` im
+FLV-Container nicht → 0-Byte-Datei).
+
+**Die Erlaubnisliste für Adressen ist nicht erfunden, sondern abgeschrieben.**
+`_als_url` benutzt die von yt-dlps `url_or_none`, und zwei Entscheidungen darin
+wären beim Selberbauen falsch ausgefallen. `//host/pfad` **ohne** Schema gilt —
+ein eigener Riegel auf `"://" in u` hätte so eine Adresse verworfen, und eine
+verworfene Adresse ist genau das Fehlerbild dieser Welle. Und es ist eine
+Erlaubnisliste, keine Prüfung auf „irgendein Schema": was durchkommt, landet
+als Eingabe in ffmpeg/streamlink, und ein `file://` aus einer fremden API hat
+dort nichts zu suchen.
+
+**Offen und ausdrücklich unbewiesen:** `bot.py:76` führt als Tatsache, die
+Endpunkte `/api/live/detail/` und `/api/live/stream/` seien „not real public
+TikTok endpoints and never returned anything useful". yt-dlp ruft
+`https://www.tiktok.com/api/live/detail/` heute auf, mit `roomID` und dem
+Schlüssel `LiveRoomInfo`, und zwar **genau dann**, wenn der Hauptendpunkt keine
+mp4-URL trägt — unser gemessener 71-%-Fall. Die `roomID` haben wir längst
+(`_fetch_tiktok_room_id`). Das ist dieselbe Klasse wie `concat_cmd` und wie
+„Nur der HTML-Weg trägt eine URL": eine Behauptung über fremdes Verhalten, als
+Tatsache im Quelltext, von niemandem nachgemessen. **Erst gegen den Server
+messen, dann einbauen** — nicht umgekehrt.
+
+**Ein Vertrag, der eine unmögliche Eingabe prüft, prüft auch nichts.** Die
+Umkehrung der `concat_cmd`-Lehre, und sie hat in W105 drei Verträge
+umgeworfen: `test_v40_w29_streamsel`, `_w30_fixes_and_sysload` und
+`_w31_find_stream_urls` speisten Marker wie `"F_SD"` und `"PLAIN"` als
+Stream-Adressen ein. Ihre Aussage ist die **Auswahlreihenfolge**, nicht die
+Adressform — als der Typriegel kam, fielen sie, obwohl der Code stimmte.
+Richtig war, die Attrappe auf echte URLs zu heben, nicht den Riegel
+aufzuweichen. Wer die Wahl hat zwischen „Vertrag anpassen" und „Prüfung
+abschwächen", hat die Wahl zwischen einer Attrappe und einem Loch.
+
+**Nichts hat den Polen-VPS beobachtet.** Der Betreiber am 01.10.: „anscheinend
+gibt's Probleme das der bot nicht mehr automatisch mit den Polen vps
+verbindet". Der Befund war nicht der Tunnel, sondern dass ihn nichts prüfte:
+`_TUNNEL["last_test"]` wurde **ausschließlich** von der Dashboard-Route
+`/api/tunnel/test` geschrieben, es gab keine Schleife. Ein toter VPS sah damit
+aus wie ein gesunder — es ging nur nichts. Seit v4.2-W105 prüft
+`_tunnel_wacht_loop()` alle `TUNNEL_WACHT_MIN` Minuten (Vorgabe 10) über
+`nc/tunnelwacht.py`, schreibt in dasselbe `last_test`, das das Deck liest, und
+`/healthz` trägt `tunnel`.
+
+Vier Lagen, und **drei davon sind kein Alarm** — das ist der Teil, der die
+Meldung brauchbar macht: `ok` still, `direkt` still (kein Proxy konfiguriert
+ist der Normalfall; eine Meldung, die auf jeder zweiten Installation rot ist,
+erzieht zum Wegsehen — Begründung aus W85), `aus` eine INFO (`forced_off` ist
+die Erklärung und kein Defekt, aber „ich habe das vor drei Wochen
+abgeschaltet" ist genau die Lage, die als Störung gemeldet wird), und nur
+`fehler` ein ERROR mit Abhilfe. `unbekannt` vor der ersten Probe ist ebenfalls
+kein Alarm: `lage()` liest ein leeres Ergebnis als Fehler, also steht der
+Riegel davor.
+
+Zwei Feinheiten, die dabei zählen. `/healthz` **messt nicht** — der Endpunkt
+hängt an UptimeRobot, und eine Probe mit 14 s Timeout macht aus der
+Gesundheitsauskunft einen Zeitfresser; es ist dieselbe Regel wie in W97 für
+die Platte, eine Schicht weiter. Und der Heartbeat läuft in **Scheiben** von
+120 s statt einmal je Runde: `WATCHDOG_STALL_S` ist 420 s, ein konfiguriertes
+Intervall darüber wäre ein Watchdog-Fehlalarm — der Wächter würde den Wächter
+melden. B81 löst das mit „Beat VOR dem Sleep", und das genügt nur, solange der
+Sleep kürzer als die Schwelle ist.
+
+**Der Chat konnte still direkt laufen, während alles andere tunnelt.**
+`_start_chat_listener` übergibt `web_proxy=`/`ws_proxy=` und fällt bei einem
+`TypeError` auf einen Client **ohne** Proxy zurück. Gesagt wurde das auf
+`log.warning` — und das erscheint in einem ERROR-Log nie. `requirements.txt`
+führt `TikTokLive >= 6.0` ohne obere Grenze, ein Update der Bibliothek genügt
+also, und dann gehen Aufnahme und Resolver durch den Tunnel und der Chat über
+die Server-IP. Seit W105 ist das ein `log.error` durch `nc/meldetakt.py`, mit
+Befehl.
+
+Eine obere Grenze `<7` wäre dagegen **ein falsches Versprechen** und steht
+deshalb nicht in `requirements.txt`: der Bruch, den dieser Bestand kennt (B78,
+die ws-Proxy-Konvertierung), lag **innerhalb** der 6er-Reihe, gegen 6.6.5
+reproduziert. Was hilft, steht seit W68 in der Datei selbst — `pip freeze` vom
+Server — und dass der Rückfall jetzt laut ist. Eingetragen ist der **zweite
+API-Zwang**: die beiden Parameter, nicht nur `TikTokLive.events`.
+
+**Eine Maske, die ein Schema verlangt, maskiert nicht.** `_tunnel_mask` ersetzte
+`://([^@/]+)@` — und `RECORD_PROXY` darf schemalos sein, curl nimmt bei `-x
+nutzer:pass@host:8118` http an. Das Passwort stand damit im Klartext im Log
+**und** in der Antwort von `/api/tunnel/status`. Behoben in `nc/proxyutil.py`,
+also an der Stelle, von der alle elf Aufrufer etwas haben.
+
+Gefunden hat das eine **Mutationsprobe, die entwischt ist**, nicht das
+Nachdenken: der erste Entwurf maskierte in `nc/tunnelwacht.py` zusätzlich die
+Proxy-Zeichenkette wörtlich im Text, die Probe entfernte diese Zeile, und der
+Vertrag blieb grün — weil `_tunnel_mask` denselben Fall schon abdeckte. Zwei
+Riegel, von denen einer wirkt, sind ein Riegel und eine falsche Gewissheit
+(W98). Die redundante Zeile ist weg, der Vertrag prüft beide Adressformen, und
+die Lehre aus W89 gilt unverändert: **eine Probe, die entwischt, ist ein Befund
+— manchmal am Vertrag, manchmal am Riegel darunter.**
+
 **Einmal-`await` ohne Supervisor.** Jeder Long-Running-Client braucht Reconnect
 mit Backoff **und** ein Abbruchkriterium für deterministische Fehler.
 
@@ -988,7 +1103,7 @@ Ledger-Einträge sind append-only mit Hash-Kette; Korrektur = Gegenbuchung.
 
 ## Sicherheit
 
-`.env` hat rund 540 Variablen und enthält Cookies, OAuth-Tokens und Stream-Keys — sie
+`.env` hat rund 541 Variablen und enthält Cookies, OAuth-Tokens und Stream-Keys — sie
 liegt nie im Archiv und wird nie ausgegeben. Beim Logging von
 `streamlink`/`ffmpeg`-Kommandos werden Cookie-Header redacted (F4); dieser
 Redact-Pfad darf bei Änderungen an der Kommandozeile nicht umgangen werden. Das

@@ -48,6 +48,16 @@ TikTokLive >= 6.0              # Live-Erkennung (undokumentierte API, s.o.)
 #   hat es. GENAU HIER ist die Untergrenze am wenigsten wert: die Grenze
 #   schuetzt vor zu ALT, das Risiko liegt aber bei zu NEU. Diese eine
 #   Fassung gehoert auf dem Server exakt festgenagelt.
+#   ZWEITER API-Zwang (v4.2-W105): die Parameter `web_proxy=` und `ws_proxy=`
+#   von TikTokLiveClient(...) — bot.py:17236. Ueber sie laeuft der Chat durch
+#   denselben Egress wie Aufnahme und Resolver. Fallen sie weg, faellt der
+#   Aufruf auf die Fassung OHNE Proxy zurueck: der Chat laeuft dann ueber die
+#   Server-IP, waehrend alles andere den Tunnel nimmt. Eine obere Grenze `<7`
+#   hilft dagegen NICHT und waere ein falsches Versprechen — der Bruch, den
+#   dieser Bestand kennt (B78, ws-Proxy-Konvertierung), lag INNERHALB der
+#   6er-Reihe, gegen 6.6.5 reproduziert. Was hilft, ist die Zeile oben
+#   (requirements.lock.txt vom Server) und dass der Rueckfall seit W105 auf
+#   `error` meldet statt auf `warning`.
 
 # ── Web / Dashboard ──────────────────────────────────────────────────────
 Flask >= 2.2                   # Dashboard, 283 Routen

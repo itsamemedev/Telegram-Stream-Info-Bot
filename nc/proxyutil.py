@@ -47,11 +47,21 @@ def _proxy_scheme(url: str) -> str:
     return "http"
 
 
+# v4.2-W105: Zugangsdaten mit UND ohne Schema. Die alte Fassung verlangte
+# `://` — und `RECORD_PROXY` darf schemalos sein, curl nimmt bei `-x
+# nutzer:pass@host:8118` http an. Gemessen in W105 an der Fehlerausgabe des
+# Egress-Waechters: das Passwort stand im Klartext im Log UND in der Antwort
+# von /api/tunnel/status. Gefunden hat das eine Mutationsprobe, die
+# „entwischt" ist — der Vertrag prueft seither beide Formen, nicht nur die
+# bequeme (dieselbe Lehre wie bei concat_cmd, W101).
+_ZUGANGSDATEN = re.compile(r"([A-Za-z0-9._%+~-]+):([^\s@/]+)@")
+
+
 def _tunnel_mask(u):
     if not u:
         return None
     try:
-        return re.sub(r"://([^@/]+)@", "://***@", str(u))
+        return _ZUGANGSDATEN.sub("***@", str(u))
     except Exception:
         return "***"
 

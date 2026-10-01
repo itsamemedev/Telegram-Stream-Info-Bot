@@ -5091,26 +5091,39 @@ def test_v40_w29_streamsel():
     # is_hevc erkennt die ByteDance/HEVC-Tokens.
     assert SS.is_hevc("bytevc1") and SS.is_hevc("H265") and not SS.is_hevc("h264")
     # Codec-bewusste Auswahl: HEVC-origin wird zugunsten H.264-sd vermieden.
+    #
+    # v4.2-W105: die Attrappe trug hier bis dahin reine Marker als Adressen —
+    # Eingaben, die die Produktion NIE liefert. Seit W105 geht jede Adresse
+    # durch nc.streamsel._als_url (Erlaubnisliste nach yt-dlps url_or_none),
+    # weil `flv_pull_url` auch ein Woerterbuch sein kann und ein Woerterbuch
+    # als "URL vorhanden" durchging. Die Aussage dieses Vertrags ist die
+    # AUSWAHLREIHENFOLGE, nicht die Adressform — deshalb echte URLs statt
+    # eines aufgeweichten Riegels. Ein Vertrag, der nur die bequeme Eingabe
+    # prueft, prueft nichts; einer, der eine unmoegliche prueft, auch nicht.
+    U_ORIG_FLV = "https://pull.example/orig.flv"
+    U_ORIG_HLS = "https://pull.example/orig.m3u8"
+    U_SD_FLV = "https://pull.example/sd.flv"
     ds = {
-        "origin": {"main": {"flv": "F_ORIG", "hls": "H_ORIG",
+        "origin": {"main": {"flv": U_ORIG_FLV, "hls": U_ORIG_HLS,
                             "sdk_params": {"VCodec": "bytevc1"}}},
-        "sd":     {"main": {"flv": "F_SD",
+        "sd":     {"main": {"flv": U_SD_FLV,
                             "sdk_params": {"VCodec": "h264"}}},
     }
     sel = SS.select_stream_from_data_section(ds, prefer_h264=True)
-    assert sel["quality"] == "sd" and sel["flv_url"] == "F_SD" and sel["hls_url"] is None, \
+    assert sel["quality"] == "sd" and sel["flv_url"] == U_SD_FLV and sel["hls_url"] is None, \
         "H.264-SD muss die HEVC-origin schlagen (und kein HEVC-HLS mitschleppen)"
     # prefer_h264=False → beste Quality (origin) trotz HEVC.
     sel2 = SS.select_stream_from_data_section(ds, prefer_h264=False)
     assert sel2["quality"] == "origin", "ohne prefer_h264 gewinnt origin"
     # extract: stream_data als JSON-STRING, codec-bewusst; Top-Level-HEVC wird NICHT gemerged.
-    node = {"hls_pull_url": "TOP_HEVC_HLS",
+    node = {"hls_pull_url": "https://pull.example/top-hevc.m3u8",
             "liveCoreSDKData": {"pull_data": {"stream_data": __import__("json").dumps({"data": ds})}}}
     r = SS.extract_urls_from_streamurl_node(node, prefer_h264=True)
-    assert r["flv_url"] == "F_SD" and r["hls_url"] is None, "Top-Level-HEVC-HLS fälschlich übernommen"
+    assert r["flv_url"] == U_SD_FLV and r["hls_url"] is None, "Top-Level-HEVC-HLS fälschlich übernommen"
     # Top-Level-Fallback ohne SDK-Daten.
-    r2 = SS.extract_urls_from_streamurl_node({"flv_pull_url": "PLAIN"}, prefer_h264=True)
-    assert r2 == {"hls_url": None, "flv_url": "PLAIN"}
+    r2 = SS.extract_urls_from_streamurl_node({"flv_pull_url": "https://pull.example/plain.flv"}, prefer_h264=True)
+    assert r2 == {"hls_url": None,
+                  "flv_url": "https://pull.example/plain.flv"}
     assert SS.extract_urls_from_streamurl_node("kein dict") is None
     ok("v4.0-w29: streamsel — H.264-vor-HEVC, SDK-Parsing, kein HEVC-Merge")
 
@@ -5131,8 +5144,10 @@ def test_v40_w30_fixes_and_sysload():
     from nc import sysload as SL
     # (A) FIX: main als String → kein Crash mehr, kaputte Qualität übersprungen,
     #         die gute (H.264-sd) gewinnt weiterhin.
+    # v4.2-W105: echte Adresse statt Marker — Begruendung in test_v40_w29_streamsel.
     ds = {"origin": {"main": "KAPUTT"},
-          "sd": {"main": {"flv": "F_SD", "sdk_params": {"VCodec": "h264"}}}}
+          "sd": {"main": {"flv": "https://pull.example/sd.flv",
+                          "sdk_params": {"VCodec": "h264"}}}}
     sel = SS.select_stream_from_data_section(ds, prefer_h264=True)
     assert sel and sel["quality"] == "sd", "kaputte origin muss übersprungen werden"
     # ganz kaputt → None statt Exception.
@@ -5178,19 +5193,25 @@ def test_v40_w31_find_stream_urls():
        (Bug-Hunt dieser Welle — regex .group()/.findall()[i]/.split(sep)[i] — kam
        sauber zurück, daher keine weiteren Fixes nötig.)"""
     from nc import streamsel as SS
+    # v4.2-W105: echte Adressen statt Marker — Begruendung in
+    # test_v40_w29_streamsel. Die Aussage hier ist die REKURSION, nicht die
+    # Adressform.
+    U_FLV = "https://pull.example/sd.flv"
+    U_HLS = "https://pull.example/top.m3u8"
     node = {"liveCoreSDKData": {"pull_data": {"stream_data": __import__("json").dumps(
-        {"data": {"sd": {"main": {"flv": "F", "sdk_params": {"VCodec": "h264"}}}}})}}}
+        {"data": {"sd": {"main": {"flv": U_FLV, "sdk_params": {"VCodec": "h264"}}}}})}}}
     # tief verschachtelt (dict > list > containing-node) → Treffer.
     tree = {"a": {"b": [{"noise": 1}, {"streamUrl": node}]}}
     r = SS.find_stream_urls(tree, prefer_h264=True)
-    assert r and r["flv_url"] == "F" and r["quality"] == "sd"
+    assert r and r["flv_url"] == U_FLV and r["quality"] == "sd"
     # Tiefen-Cap: jenseits von 8 wird abgebrochen (keine Endlos-Rekursion).
     deep = node
     for _ in range(12):
         deep = {"x": deep}
     assert SS.find_stream_urls(deep, prefer_h264=True) is None, "Tiefen-Cap greift nicht"
     # direkter Treffer am Wurzel-Dict.
-    assert SS.find_stream_urls({"hls_pull_url": "H"}, prefer_h264=True) == {"hls_url": "H", "flv_url": None}
+    assert SS.find_stream_urls({"hls_pull_url": U_HLS}, prefer_h264=True) == \
+        {"hls_url": U_HLS, "flv_url": None}
     # Nicht-JSON/Skalar → None.
     assert SS.find_stream_urls("x") is None and SS.find_stream_urls(None) is None
     ok("v4.0-w31: find_stream_urls — Rekursion, Tiefen-Cap, direkter Treffer")

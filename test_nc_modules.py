@@ -19501,6 +19501,295 @@ def _test_v42_w100_cookiebezug_nennt_die_abhilfe():
     ok("W100: die Abhilfe steht im Bericht UND in der Logzeile")
 
 
+def _test_v42_w105_stream_url_formen():
+    """TikTok liefert die Pull-Adresse in drei Formen — wir lasen eine.
+
+    Der Betreiber am 01.10.: „da sich die tiktok streams ja in hls Pullen
+    lassen. Das selbe in mp4". Nachgesehen gegen `yt_dlp/extractor/tiktok.py`
+    (TikTokLiveIE, Z1278-1356) statt gegen eine bequeme Eingabe — und zwar
+    GENAU DESHALB, weil dieser Bestand denselben Fehler schon zweimal gemacht
+    hat: `concat_cmd` begruendete sein `-safe 0` mit absoluten Pfaden, die die
+    Liste nie trug (W101), und zwei Kommentare behaupteten „Nur der HTML-Weg
+    traegt eine URL", was eine Aussage ueber die eigene Huelle war (W102).
+
+    Was fehlte:
+      * `stream_url.rtmp_pull_url` — bei yt-dlp ext=flv/protocol=https.
+      * `stream_url.flv_pull_url` als WOERTERBUCH {Qualitaet: URL}. Wir haben
+        es als Zeichenkette weitergereicht, und `nc.livefolge.hat_stream_url`
+        fragt nur `bool(...)` — ein Woerterbuch ist wahr. Damit galt „URL
+        vorhanden", und was in den ffmpeg-Aufruf ging, war keine.
+
+    Dazu die Lehre aus B64, eine Ebene tiefer: im Woerterbuch steht der Codec
+    in `flv_pull_url_params`, und HEVC-origin ist der Produktionsfehler vom
+    2026-05-29 (ffmpeg demuxt bytevc1 im FLV-Container nicht → 0-Byte-Datei).
+    Eine Auswahl, die im Woerterbuch blind origin nimmt, baut ihn nach.
+    """
+    import json as _json
+    from nc import streamsel as S
+    from nc.livefolge import hat_stream_url
+
+    # ── (1) DER TYPRIEGEL, und seine Grenze ist NICHT erfunden: es ist die
+    # Erlaubnisliste von yt-dlps `url_or_none` — des Werkzeugs, das
+    # nachweislich an TikToks Live-Adressen herankommt. Zwei Entscheidungen
+    # haengen daran, und ein selbstgebauter Riegel haette beide verfehlt.
+    for gut in ("https://a/b.flv", "rtmp://a/b", "  https://a/b.m3u8  ",
+                "RTMPS://A/B"):
+        assert S._als_url(gut) == gut.strip(), gut
+    # (a) OHNE Schema, protokollrelativ — gilt. Ein eigener Riegel auf
+    # `"://" in u` haette das verworfen, und eine verworfene Adresse ist genau
+    # das Fehlerbild dieser Welle: „live, aber keine Stream-URL".
+    assert S._als_url("//cdn.tiktok.com/x.flv") == "//cdn.tiktok.com/x.flv"
+    # (b) Es ist eine ERLAUBNISLISTE. Was hier durchkommt, geht als Eingabe in
+    # ffmpeg/streamlink — ein `file://` aus einer fremden API hat dort nichts
+    # zu suchen.
+    for boese in ("file:///etc/passwd", "javascript:alert(1)", "data:,x"):
+        assert S._als_url(boese) is None, boese
+    for schlecht in ({"ld": "https://a/b"}, None, 7, "", "nicht-eine-url", []):
+        assert S._als_url(schlecht) is None, repr(schlecht)
+
+    # ── (2) DAS WOERTERBUCH. Der Rueckgabewert MUSS eine Zeichenkette sein —
+    # das ist die Aussage, nicht bloss "irgendwas ist da".
+    wb = {"flv_pull_url": {"ORIGION": "https://cdn/o.flv",
+                           "HD1": "https://cdn/hd.flv"},
+          "flv_pull_url_params": {"ORIGION": _json.dumps({"VCodec": "bytevc1"}),
+                                  "HD1": _json.dumps({"VCodec": "h264"})}}
+    r = S.extract_urls_from_streamurl_node(wb)
+    assert isinstance(r["flv_url"], str), \
+        "aus dem Woerterbuch kommt keine Zeichenkette: %r" % (r["flv_url"],)
+    assert hat_stream_url(r), "das Woerterbuch liefert keine brauchbare URL"
+    # H.264 vor HEVC, auch hier (B64).
+    assert r["flv_url"] == "https://cdn/hd.flv", r
+    assert r.get("vcodec") == "h264", r
+    # Mit PREFER_H264=0 gilt die Qualitaet — ORIGION ist die beste.
+    assert S.extract_urls_from_streamurl_node(
+        wb, prefer_h264=False)["flv_url"] == "https://cdn/o.flv"
+
+    # ── (3) DIE UMKEHRUNG, und sie ist der eigentliche Befund: VOR W105 waere
+    # `flv_url` hier das Woerterbuch selbst gewesen und `hat_stream_url` wahr.
+    # Kein Weg darf etwas durchlassen, was keine Zeichenkette ist.
+    for form in ({"flv_pull_url": {"ld": "https://a/b.flv"}},
+                 {"hls_pull_url": {"ld": "https://a/b.m3u8"}},
+                 {"flv_pull_url": {}},
+                 {"liveCoreSDKData": {"pull_data": {"stream_data": _json.dumps(
+                     {"data": {"origin": {"main": {"hls": {"x": "y"},
+                                                   "flv": None}}}})}}}):
+        erg = S.extract_urls_from_streamurl_node(form)
+        if erg is None:
+            continue
+        for schluessel in ("hls_url", "flv_url"):
+            wert = erg.get(schluessel)
+            assert wert is None or isinstance(wert, str), (form, erg)
+
+    # ── (4) rtmp_pull_url, die dritte Form. Als FLV, weil es derselbe
+    # Container ist — und als LETZTE, weil sie keine Qualitaet mitbringt.
+    assert S.extract_urls_from_streamurl_node(
+        {"rtmp_pull_url": "rtmp://push/live"})["flv_url"] == "rtmp://push/live"
+    vorrang = S.extract_urls_from_streamurl_node(
+        {"flv_pull_url": "https://cdn/a.flv", "rtmp_pull_url": "rtmp://b"})
+    assert vorrang["flv_url"] == "https://cdn/a.flv", vorrang
+
+    # ── (5) REGRESSION. Die gewoehnliche Form muss bitgenau bleiben.
+    assert S.extract_urls_from_streamurl_node(
+        {"hls_pull_url": "https://cdn/a.m3u8",
+         "flv_pull_url": "https://cdn/a.flv"}) == {
+            "hls_url": "https://cdn/a.m3u8", "flv_url": "https://cdn/a.flv"}
+
+    # ── (6) Und der Kopf des Moduls darf nicht mehr „verbatim" behaupten.
+    # Ein Modul, das „bitgenau wie vorher" sagt und es nicht ist, zeigt bei
+    # der naechsten Fehlersuche in die falsche Richtung.
+    kopf = (S.__doc__ or "")
+    assert "W105" in kopf, "der Kopf nennt die Aenderung nicht"
+    assert "rtmp_pull_url" in kopf and "flv_pull_url" in kopf
+
+    ok("W105: Stream-URL in drei Formen — Typriegel, Woerterbuch (codec-"
+       "bewusst), rtmp_pull_url")
+
+
+def _test_v42_w105_egress_waechter():
+    """Nichts hat den Polen-VPS beobachtet — `last_test` schrieb nur das Deck.
+
+    Der Betreiber am 01.10.: „anscheinend gibt's Probleme das der bot nicht
+    mehr automatisch mit den Polen vps verbindet". Der Befund war nicht der
+    Tunnel, sondern dass ihn nichts prueft: `_TUNNEL["last_test"]` wurde
+    ausschliesslich von `/api/tunnel/test` gesetzt, es gab keine Schleife. Ein
+    toter VPS sah damit aus wie ein gesunder.
+    """
+    import ast as _ast
+    from nc import tunnelwacht as T
+
+    # ── (1) VIER LAGEN, und drei sind KEIN Alarm. Das ist der Teil, der die
+    # Meldung brauchbar macht — eine Warnung, die auf jeder Installation ohne
+    # Proxy rot ist, erzieht zum Wegsehen (Begruendung aus W85).
+    assert T.lage({"ok": True}, hat_proxy=True, forced_off=False) == T.LAGE_OK
+    assert T.lage({"ok": False}, hat_proxy=True, forced_off=False) == T.LAGE_FEHLER
+    assert T.lage({"ok": False}, hat_proxy=False, forced_off=False) == T.LAGE_DIREKT
+    assert T.lage({"ok": True}, hat_proxy=True, forced_off=True) == T.LAGE_AUS
+    # forced_off gewinnt vor dem Messwert: „abgeschaltet" IST die Erklaerung.
+    assert T.lage({"ok": False}, hat_proxy=True, forced_off=True) == T.LAGE_AUS
+
+    for still in (T.LAGE_OK, T.LAGE_DIREKT):
+        assert T.meldung(still, {"ok": True}) == (None, None), still
+    stufe, text = T.meldung(T.LAGE_FEHLER, {"via": "http://pl:8118",
+                                            "http_code": "000", "err": None})
+    assert stufe == "error", stufe
+    assert T.meldung(T.LAGE_AUS, {})[0] == "info"
+
+    # ── (2) JEDE MELDUNG NENNT EINE ABHILFE. „HTTP 403" allein hat hier schon
+    # einmal wochenlang niemandem geholfen (W81).
+    for lg in (T.LAGE_FEHLER, T.LAGE_AUS):
+        _, t = T.meldung(lg, {"via": "x", "http_code": "403", "err": None})
+        assert "Abhilfe:" in t, lg
+
+    # ── (3) „HTTP 000" ist kein Statuscode. curl liefert bei
+    # Verbindungsfehlern 000, nicht 0 — gemessen gegen curl 8.x.
+    for leer in ("000", "0", "", None):
+        assert T._code_text(leer) == "keine Antwort", repr(leer)
+    assert T._code_text("403") == "HTTP 403"
+
+    # ── (4) DIE MASKE IST PFLICHT, UND ZWAR FUER BEIDE FORMEN. Das Ergebnis
+    # geht in eine API-Antwort UND ins Log, und ein Proxy darf user:pass
+    # tragen. Die zweite Form ist der Befund aus W105: `RECORD_PROXY` darf
+    # SCHEMALOS sein (curl nimmt bei `-x nutzer:pass@host:8118` http an), und
+    # die alte Maske verlangte `://` — das Passwort stand damit im Klartext im
+    # Log und in /api/tunnel/status. Gefunden hat das eine Mutationsprobe, die
+    # entwischt ist, nicht das Nachdenken; der Vertrag prueft deshalb nicht
+    # mehr nur die bequeme Eingabe (dieselbe Lehre wie concat_cmd, W101).
+    from nc.proxyutil import _tunnel_mask as _maske
+    for eff in ("http://nutzer:Geheim123456@pl.example:8118",
+                "nutzer:Geheim123456@pl.example:8118",
+                "socks5://nutzer:Geheim123456@1.2.3.4:1080"):
+        roh = "curl: (7) Failed to connect to %s after 0 ms" % eff
+        gemeldet = T._fehlerausgabe(roh)
+        assert "Geheim123456" not in gemeldet, (eff, gemeldet)
+        assert "nutzer" not in gemeldet, (eff, gemeldet)
+        assert "Geheim123456" not in (_maske(eff) or ""), eff
+        assert "pl.example" in gemeldet or "1.2.3.4" in gemeldet, \
+            "die Maske frisst auch den Host — dann sagt die Meldung nichts mehr"
+    # Eine Adresse OHNE Zugangsdaten bleibt unveraendert; eine Maske, die
+    # jeden Doppelpunkt verschluckt, macht aus der Auskunft Rauschen.
+    assert _maske("http://pl.example:8118") == "http://pl.example:8118"
+    assert _maske("http://127.0.0.1:8118") == "http://127.0.0.1:8118"
+    assert T._fehlerausgabe("") is None
+    assert T._fehlerausgabe("   ") is None
+
+    # ── (5) EINE Probe fuer Deck-Knopf UND Waechter. Zwei Fassungen derselben
+    # Messung waren in W98 schon der Befund: beide Seiten behaupten dann,
+    # dasselbe zu pruefen, und keine prueft nach.
+    cmd = T.probe_cmd("http://pl.example:8118")
+    assert cmd[0] == "curl" and "-x" in cmd and T.ZIEL in cmd, cmd
+    assert "-x" not in T.probe_cmd(None), T.probe_cmd(None)
+    ops = io.open("nc/routes/ops.py", encoding="utf-8").read()
+    baum = _ast.parse(ops)
+    route = [n for n in _ast.walk(baum)
+             if isinstance(n, (_ast.FunctionDef, _ast.AsyncFunctionDef))
+             and n.name == "api_tunnel_test"]
+    assert len(route) == 1, "api_tunnel_test nicht gefunden"
+    rumpf = _ast.unparse(route[0])
+    assert "_nc_tunnelwacht.probe(" in rumpf, \
+        "die Route baut ihre Probe wieder selbst"
+    assert '"curl"' not in rumpf and "'curl'" not in rumpf, \
+        "in der Route steht wieder eine eigene curl-Zeile"
+    assert 'tunnel_state()[\'last_test\']' in rumpf or \
+           '"last_test"' in rumpf or "'last_test'" in rumpf, \
+        "die Route schreibt das Ergebnis nicht mehr ins Lagebild"
+
+    ok("W105: Egress-Waechter — vier Lagen, Abhilfe in jeder Meldung, "
+       "Zugangsdaten maskiert, EINE Probe fuer Knopf und Schleife")
+
+
+def _test_v42_w105_chat_laeuft_durch_den_tunnel():
+    """Der Chat konnte still direkt laufen, waehrend alles andere tunnelt.
+
+    `_start_chat_listener` uebergibt `web_proxy=`/`ws_proxy=`, und faellt bei
+    einem TypeError auf einen Client OHNE Proxy zurueck. Gesagt wurde das auf
+    `warning` — und ein `log.warning` erscheint in einem ERROR-Log NIE (W65).
+    `requirements.txt` fuehrt TikTokLive ohne obere Grenze, ein Update der
+    Bibliothek genuegt also.
+
+    GEMESSEN WIRD IM SYNTAXBAUM, nicht im Dateitext: die Begruendung dieser
+    Reparatur nennt `log.warning` woertlich, und ein Vertrag, der seine eigene
+    Begruendung als Befund liest, ist viermal in W102-W104 zugeschlagen.
+    """
+    import ast as _ast
+    src = io.open("bot.py", encoding="utf-8").read()
+    baum = _ast.parse(src)
+
+    def fn(name):
+        for n in _ast.walk(baum):
+            if isinstance(n, (_ast.FunctionDef, _ast.AsyncFunctionDef)) \
+                    and n.name == name:
+                return n
+        raise AssertionError("Funktion %s nicht gefunden" % name)
+
+    # ── (1) DER NOTAUSGANG MELDET AUF error, GEDROSSELT.
+    listener = fn("_start_chat_listener")
+    # Es gibt ZWEI `except TypeError` im Listener — der zweite faengt die
+    # alte connect()-Signatur. Gemeint ist der, der den Client baut.
+    handler = [h for h in _ast.walk(listener)
+               if isinstance(h, _ast.ExceptHandler)
+               and isinstance(h.type, _ast.Name) and h.type.id == "TypeError"
+               and "TikTokLiveClient(" in _ast.unparse(h)]
+    assert len(handler) == 1, "except TypeError um den Client-Bau nicht eindeutig"
+    rumpf = _ast.unparse(handler[0])
+    assert "log.error(" in rumpf, "der Rueckfall meldet nicht auf error"
+    assert "log.warning(" not in rumpf, \
+        "der Rueckfall meldet wieder auf warning — in einem ERROR-Log unsichtbar"
+    assert '_nc_meldetakt.melden(' in rumpf and "'chat-tunnel'" in rumpf, \
+        "die Meldung laeuft nicht durch die Drossel"
+    assert "Abhilfe" in rumpf, "die Meldung nennt keine Abhilfe"
+
+    # ── (2) DIE SCHLEIFE EXISTIERT UND WIRD GESTARTET.
+    assert any(z.lstrip().startswith("_spawn(_tunnel_wacht_loop(")
+               for z in src.splitlines()), \
+        "_tunnel_wacht_loop() wird nicht gestartet"
+
+    # ── (3) DER HEARTBEAT IN SCHEIBEN. WATCHDOG_STALL_S ist 420 s; ein
+    # konfiguriertes Intervall darueber waere ein Watchdog-Fehlalarm — der
+    # Waechter wuerde den Waechter melden. B81 loest das mit „Beat VOR dem
+    # Sleep", und das genuegt nur, solange der Sleep kuerzer als die Schwelle
+    # ist. Deshalb muss der Beat in einer INNEREN Schleife stehen.
+    loop = fn("_tunnel_wacht_loop")
+    aeussere = [w for w in loop.body if isinstance(w, _ast.While)]
+    assert len(aeussere) == 1, "die aeussere Dauerschleife ist nicht eindeutig"
+    innere = [w for w in _ast.walk(aeussere[0])
+              if isinstance(w, _ast.While) and w is not aeussere[0]]
+    assert innere, "kein verschachtelter Wartezyklus — der Beat haengt am Intervall"
+    rumpf_innen = _ast.unparse(innere[0])
+    assert '_hb(' in rumpf_innen and "tunnel-wacht" in rumpf_innen, rumpf_innen
+    assert "asyncio.sleep(" in rumpf_innen, rumpf_innen
+    scheiben = [n.value for n in _ast.walk(innere[0])
+                if isinstance(n, _ast.Constant) and isinstance(n.value, int)]
+    assert scheiben and max(scheiben) <= 300, \
+        "die Heartbeat-Scheibe ist zu gross fuer WATCHDOG_STALL_S=420: %r" % scheiben
+
+    # ── (4) /healthz TRAEGT DIE LAGE — und messe dafuer NICHT.
+    assert any(z.strip().startswith("tunnel=_tunnel_lage()")
+               for z in src.splitlines()), "/healthz nennt die Egress-Lage nicht"
+    lagefn = fn("_tunnel_lage")
+    quelle_lage = _ast.unparse(lagefn)
+    assert "probe(" not in quelle_lage, \
+        "/healthz loest eine Netzprobe aus — der Endpunkt haengt an UptimeRobot"
+    # „unbekannt" ist eine eigene Antwort und KEIN Alarm: vor der ersten Probe
+    # ist nichts gemessen, und lage() liest ein leeres Ergebnis als Fehler.
+    texte = [n.value for n in _ast.walk(lagefn)
+             if isinstance(n, _ast.Constant) and isinstance(n.value, str)]
+    assert "unbekannt" in texte, \
+        "vor der ersten Probe meldet /healthz einen Defekt, den niemand gemessen hat"
+    from nc import tunnelwacht as T
+    assert T.lage({}, hat_proxy=True, forced_off=False) == T.LAGE_FEHLER, \
+        "die Falle, gegen die der unbekannt-Riegel steht, existiert nicht mehr"
+
+    # ── (5) requirements.txt NENNT DEN ZWEITEN API-ZWANG. Eine obere Grenze
+    # waere hier ein falsches Versprechen — der Bruch, den dieser Bestand
+    # kennt (B78), lag INNERHALB der 6er-Reihe, gegen 6.6.5 reproduziert.
+    req = io.open("requirements.txt", encoding="utf-8").read()
+    assert "web_proxy" in req and "ws_proxy" in req, \
+        "requirements.txt nennt den Proxy-Zwang nicht"
+
+    ok("W105: Chat-Tunnel-Rueckfall meldet laut, Egress-Waechter laeuft, "
+       "/healthz nennt die Lage ohne zu messen")
+
+
 def main():
     tmp, rid = richte_testdatenbank_ein()
     ok("db_conn aus nc.dbwrap: echtes Schema angelegt, Commit durchgelaufen")
@@ -19779,6 +20068,9 @@ def main():
     _test_v42_w103_cache_greift_bei_gleichzeitigen_aufrufern()
     _test_v42_w103_ohne_url_meldung_ist_gedrosselt()
     _test_v42_w104_laufender_code_gegen_platte()
+    _test_v42_w105_stream_url_formen()
+    _test_v42_w105_egress_waechter()
+    _test_v42_w105_chat_laeuft_durch_den_tunnel()
     _test_v42_w60_azrael_cooldown_je_plattform()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)

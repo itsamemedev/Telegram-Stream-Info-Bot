@@ -577,6 +577,7 @@ from nc import cookieholen as _nc_cookieholen  # v4.2-W10: Cookies selbst bezieh
 from nc import ytdlpurl as _nc_ytdlpurl      # v4.2-W102: Stream-URL aus der yt-dlp-Auskunft
 from nc import livecache as _nc_livecache    # v4.2-W103: Kurzzeit-Cache der Live-Erkennung
 from nc import laufstand as _nc_laufstand    # v4.2-W104: laeuft der Code von der Platte?
+from nc import tunnelwacht as _nc_tunnelwacht  # v4.2-W105: steht der Egress wirklich?
 from nc import resolvergrund as _nc_resolvergrund  # v4.2-W81/W102: Grund + Abhilfe
 from nc import cfgnorm as _nc_cfgnorm        # v4.0-W33: reine Config-Normalisierer (gebündelt)
 from nc import restrend as _nc_restrend      # v4.0-W40: Langzeit-Ressourcen-Trend (Slow-Leak)
@@ -3046,6 +3047,9 @@ async def _resolve_via_ytdlp(username: str):
 # ausgenommen: auch er kostet den Subprozess.
 _YTDLP_NACHSCHLAG_ZULETZT = {}          # username -> monotonic
 YTDLP_NACHSCHLAG_RUHE_S = _env_int("YTDLP_NACHSCHLAG_RUHE_S", 60)
+# v4.2-W105: wie oft der Waechter prueft, ob der Egress (Polen-VPS) traegt.
+# 0 schaltet ihn ab — und sagt das beim Start, statt still zu verschwinden.
+TUNNEL_WACHT_MIN = _env_int("TUNNEL_WACHT_MIN", 10)
 
 
 def _darf_ytdlp_nachschlagen(username) -> bool:
@@ -17218,9 +17222,30 @@ async def _start_chat_listener(username, chat_buf, flags=None):
     except TypeError:
         client = TikTokLiveClient(unique_id=f"@{username}")   # ältere Signatur ohne proxy-kwargs
         if px is not None:
-            log.warning("TikTok-Chat-Listener @%s: installierte TikTokLive-Version kennt "
-                        "web_proxy/ws_proxy NICHT — Chat läuft DIREKT statt über den Tunnel. "
-                        "Fix: pip install -U TikTokLive", username)
+            # v4.2-W105: stand auf `warning` — und ein log.warning erscheint in
+            # einem ERROR-Log NIE (CLAUDE.md, W65). Damit war der Satz da und
+            # unsichtbar: `requirements.txt` fuehrt TikTokLive OHNE obere
+            # Grenze, ein Update der Bibliothek genuegt, und der Chat laeuft
+            # ueber die Server-IP weiter, waehrend Aufnahme und Resolver den
+            # Tunnel benutzen. Genau die Lage, die der Betreiber am 01.10. als
+            # „verbindet nicht mehr automatisch mit dem Polen-VPS" gemeldet hat.
+            # Gedrosselt, weil der Fall pro Tracking auftritt — Schluessel ist
+            # der Kanal, nicht der Nutzer (W81/W97).
+            _laut, _unt = _nc_meldetakt.melden("chat-tunnel", "kein_proxy_kwarg",
+                                               _time_mod.monotonic())
+            if _laut:
+                log.error("CHAT LAEUFT NICHT DURCH DEN TUNNEL: die installierte "
+                          "TikTokLive-Fassung kennt web_proxy/ws_proxy nicht. Folge: "
+                          "Aufnahme und Resolver gehen ueber %s, der Chat ueber die "
+                          "Server-IP — bei einer Datacenter-IP der haeufigste Grund "
+                          "fuer 403 im Chat. Abhilfe: TikTokLive auf eine Fassung mit "
+                          "diesen Parametern bringen (6.x hat sie, gegen 6.6.5 "
+                          "nachgesehen) — `pip install \'TikTokLive>=6.0,<7\'` im venv "
+                          "des Dienstes, dann neu starten.%s",
+                          _nc_proxyutil_sel._tunnel_mask(_pick_pull_proxy()) or "direkt",
+                          _nc_meldetakt.zusatz(_unt))
+        else:
+            _nc_meldetakt.zuruecksetzen("chat-tunnel")
 
     def _cap():
         if len(chat_buf) > 60:
@@ -18496,6 +18521,7 @@ def healthz():
                    # "veraltet" heisst: ein Update ist eingespielt und wirkt
                    # NICHT, weil niemand neu gestartet hat.
                    laufstand=_laufstand()["lage"],
+                   tunnel=_tunnel_lage(),
                    schema=_SCHEMA_STAND,                 # v4.2-W85
                    schema_erwartet=_nc_schemastand.ERWARTET,
                    uptime_s=_uptime_s(),                 # v4.0-W88
@@ -22839,6 +22865,14 @@ async def run_bot():
         log.info("Laufstand: der Stand auf der Platte ist nicht ermittelbar "
                  "(kein Update-Weg benutzt, kein git). Dann kann der Waechter "
                  "spaeter nicht sagen, ob ein Update schon wirkt.")
+    # v4.2-W105: und welchen Weg nach draussen dieser Prozess nimmt. Die Zeile
+    # steht hier und nicht erst in der Schleife, weil die erste Probe 120 s
+    # braucht — und weil „DIREKT" beim Start die Auskunft ist, mit der man eine
+    # fehlende RECORD_PROXY in der .env sofort sieht statt erst an 403-Fehlern.
+    _eg = _nc_proxyutil_sel._tunnel_mask(_nc_proxyutil_sel.tunnel_effective())
+    log.info("Egress: %s%s", _eg or "DIREKT (kein Tunnel/Proxy)",
+             "" if TUNNEL_WACHT_MIN <= 0
+             else " — Waechter prueft alle %d min gegen tiktok.com" % TUNNEL_WACHT_MIN)
     # init_db + _BOT_START_TIME passieren jetzt in main() vor Flask-Thread-Start
     # (F24-Hang-Fix). Falls run_bot direkt ohne main aufgerufen wird, hier nochmal:
     if _BOT_START_TIME is None:
@@ -22993,6 +23027,7 @@ async def run_bot():
     _spawn(_loop_lag_monitor(), name="loop-lag")          # v4.0-W48: Event-Loop-Blockade-Detektor
     _spawn(_disk_guard_loop(), name="disk-guard")         # F103: Auto-Cleanup vor Disk-Overflow
     _spawn(_laufstand_loop(), name="laufstand")           # v4.2-W104: Update eingespielt, aber nicht wirksam?
+    _spawn(_tunnel_wacht_loop(), name="tunnel-wacht")     # v4.2-W105: traegt der Egress (Polen-VPS)?
     _spawn(_sign_health_loop(), name="sign-health")       # F103: EulerStream-Sign-Key-Health
     _spawn(_marketing_loop(), name="marketing")           # B162: Cross-Promo (self-gated, Default aus)
     _spawn(_news_loop(), name="news")                     # B163: oeffentliche Website-News (self-gated, Default aus)
@@ -23349,6 +23384,84 @@ def _disk_autoclean():
                 "pct_before": pct, "pct_after": _disk_pct()[0]}
     finally:
         _DISK_GUARD_STATE["active"] = False
+
+
+def _tunnel_lage():
+    """Die letzte BEKANNTE Egress-Lage — ohne zu messen.
+
+    v4.2-W105. /healthz darf hier nie eine Netzoperation ausloesen: der
+    Endpunkt haengt an UptimeRobot/Gatus, und eine Probe mit 14 s Timeout
+    macht aus der Gesundheitsauskunft einen Zeitfresser. Es ist dieselbe
+    Regel wie in W97 fuer die Platte, eine Schicht weiter — wer Auskunft
+    gibt, darf dafuer nicht warten.
+
+    `unbekannt` ist bewusst eine eigene Antwort und KEIN Alarm: vor der ersten
+    Probe ist nichts gemessen, und `lage()` wuerde ein leeres Ergebnis als
+    Fehler lesen. Begruendung wie bei `laufstand` in W104 — eine Meldung, die
+    direkt nach dem Start rot ist, erzieht zum Wegsehen.
+    """
+    z = _nc_proxyutil_sel.tunnel_state()
+    hat_proxy = bool(_nc_proxyutil_sel.record_proxy() or z.get("override"))
+    letzte = z.get("last_test")
+    if letzte is None and hat_proxy:
+        return "unbekannt"
+    return _nc_tunnelwacht.lage(letzte or {}, hat_proxy,
+                                bool(z.get("forced_off")))
+
+
+async def _tunnel_wacht_loop():
+    """Prueft von selbst, ob der Egress traegt — gemeldet mit Abhilfe.
+
+    v4.2-W105. DER ANLASS: `_TUNNEL["last_test"]` wurde ausschliesslich vom
+    Dashboard-Knopf geschrieben. Es gab keine Schleife, also war ein toter
+    Polen-VPS von einem gesunden nicht zu unterscheiden — es ging nur nichts.
+    Der Betreiber hat das am 01.10. als „verbindet nicht mehr automatisch mit
+    dem Polen-VPS" gemeldet, und genau das war nicht nachsehbar.
+
+    Das Ergebnis landet in demselben `last_test`, das das Deck liest: der
+    Tunnel-Kasten zeigt damit einen frischen Stand, ohne dass jemand drueckt.
+
+    Gedrosselt ueber nc/meldetakt.py mit der LAGE als Grund — ein Wechsel
+    (ok -> fehler, oder fehler -> abgeschaltet) meldet sofort, der Dauerzustand
+    alle 15 Minuten mit der Zahl der unterdrueckten Faelle.
+    """
+    if TUNNEL_WACHT_MIN <= 0:
+        log.info("Tunnel-Waechter: AUS (TUNNEL_WACHT_MIN=0). Ein Ausfall des "
+                 "Egress faellt dann erst an 403-Fehlern auf.")
+        return
+    await asyncio.sleep(120)
+    wartezeit = max(60, TUNNEL_WACHT_MIN * 60)
+    while True:
+        try:
+            z = _nc_proxyutil_sel.tunnel_state()
+            hat_proxy = bool(_nc_proxyutil_sel.record_proxy() or z.get("override"))
+            res = await asyncio.to_thread(_nc_tunnelwacht.probe,
+                                          _nc_proxyutil_sel.tunnel_effective())
+            z["last_test"] = res
+            lage = _nc_tunnelwacht.lage(res, hat_proxy, bool(z.get("forced_off")))
+            stufe, text = _nc_tunnelwacht.meldung(lage, res)
+            if stufe is None:
+                _nc_meldetakt.zuruecksetzen("tunnel")
+            else:
+                laut, unterdrueckt = _nc_meldetakt.melden(
+                    "tunnel", lage, _time_mod.monotonic())
+                if laut and stufe == "error":
+                    log.error("%s%s", text, _nc_meldetakt.zusatz(unterdrueckt))
+                elif laut:
+                    log.info("%s%s", text, _nc_meldetakt.zusatz(unterdrueckt))
+        except Exception as e:
+            _loop_fehler("_tunnel_wacht_loop", e)
+        # Der Heartbeat in SCHEIBEN, nicht einmal je Runde: WATCHDOG_STALL_S
+        # ist 420 s, und ein konfiguriertes Intervall darueber waere ein
+        # Watchdog-Fehlalarm — der Waechter wuerde den Waechter melden. B81
+        # loest das mit „Beat VOR dem Sleep"; das genuegt nur, solange der
+        # Sleep kuerzer als die Schwelle ist.
+        rest = wartezeit
+        while rest > 0:
+            _hb("tunnel-wacht")
+            scheibe = min(120, rest)
+            await asyncio.sleep(scheibe)
+            rest -= scheibe
 
 
 async def _laufstand_loop():
