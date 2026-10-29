@@ -10,74 +10,21 @@
 <link rel="preload" href="fonts/orbitron-700.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="preload" href="fonts/jetbrainsmono-400.woff2" as="font" type="font/woff2" crossorigin>
 <style>
+/* v4.2-W113: Farben, Schrift und Bausteine kommen aus raum.css — dieselben
+   wie auf der Startseite. Hier stehen nur die Schriftdateien: sie werden in
+   jeder Seite selbst eingebunden, damit nachweisbar bleibt, dass sie LOKAL
+   kommen (kein Aufruf von Google Fonts). */
 @font-face{font-family:'Orbitron';src:url('fonts/orbitron-700.woff2')format('woff2');font-weight:700;font-display:swap}
 @font-face{font-family:'Orbitron';src:url('fonts/orbitron-900.woff2')format('woff2');font-weight:900;font-display:swap}
 @font-face{font-family:'JetBrains Mono';src:url('fonts/jetbrainsmono-400.woff2')format('woff2');font-weight:400;font-display:swap}
 @font-face{font-family:'JetBrains Mono';src:url('fonts/jetbrainsmono-700.woff2')format('woff2');font-weight:700;font-display:swap}
-:root{
-  --void:#05080a; --panel:#0a0f12; --panel2:#0d1418; --line:#12211c;
-  --phos:#00ff9c; --cyan:#00e5ff; --amber:#ffb000;
-  --ash:#9fb4ac; --dim:#5c6f68; --white:#e8fff4;
-  --disp:'Orbitron',sans-serif; --mono:'JetBrains Mono',monospace;
-}
-*{margin:0;padding:0;box-sizing:border-box}
-html{scroll-behavior:smooth}
-body{background:var(--void); color:var(--ash); font-family:var(--mono);
-  font-size:15px; line-height:1.75; overflow-x:hidden}
-body::before{content:""; position:fixed; inset:0; pointer-events:none; z-index:2;
-  background:repeating-linear-gradient(0deg,transparent 0 2px,rgba(0,255,156,.014) 2px 4px)}
-::selection{background:var(--phos); color:var(--void)}
-a{color:var(--phos); text-decoration:none} a:hover{text-decoration:underline}
-.skip{position:absolute;left:-999px;top:0;z-index:50;background:var(--phos);color:var(--void);
-  font-weight:700;font-size:.8rem;padding:10px 16px;border-radius:0 0 6px 0;letter-spacing:.06em}
-.skip:focus{left:0}
-header{position:sticky; top:0; z-index:20; background:rgba(5,8,10,.86);
-  backdrop-filter:blur(8px); border-bottom:1px solid var(--line)}
-.bar{max-width:960px; margin:0 auto; padding:16px 22px; display:flex;
-  align-items:center; justify-content:space-between; gap:16px}
-.logo{font-family:var(--disp); font-weight:900; letter-spacing:.22em; font-size:1.15rem;
-  color:var(--white)}
-.logo span{color:var(--phos)}
-header nav a{color:var(--ash); font-size:.72rem; letter-spacing:.14em; text-transform:uppercase}
-header nav a:hover{color:var(--phos)}
-.wrap{max-width:960px; margin:0 auto; padding:0 22px}
-main{padding:48px 0 40px}
-h1{font-family:var(--disp); font-weight:900; letter-spacing:.14em; color:var(--white);
-  font-size:1.9rem; margin-bottom:8px}
-.lead{color:var(--dim); font-size:.8rem; letter-spacing:.14em; text-transform:uppercase; margin-bottom:28px}
-h2{font-family:var(--disp); font-weight:700; letter-spacing:.06em; color:var(--white);
-  font-size:1.05rem; margin:30px 0 10px; padding-top:6px}
-h2::before{content:"▚ "; color:var(--phos)}
-p{margin:0 0 12px} .panel p:last-child{margin-bottom:0}
-.panel{background:linear-gradient(180deg,color-mix(in srgb,var(--panel) 92%,var(--phos) 3%),var(--panel));
-  border:1px solid var(--line); border-radius:10px; padding:20px 22px; margin:14px 0; position:relative; overflow:hidden}
-.panel::before{content:"";position:absolute;top:0;left:0;right:0;height:1px;
-  background:linear-gradient(90deg,transparent,var(--cyan),transparent);opacity:.5}
-.ph{color:var(--amber); font-weight:700}
-.muted{color:var(--dim)}
-.draft{border:1px solid var(--amber); border-radius:10px; padding:14px 18px; margin:0 0 26px;
-  background:color-mix(in srgb,var(--panel) 88%,var(--amber) 8%); color:var(--white); font-size:.86rem}
-.draft b{color:var(--amber); letter-spacing:.08em}
-footer{border-top:1px solid var(--line); margin-top:40px; padding:22px 0}
-.f{display:flex; flex-wrap:wrap; gap:12px 22px; align-items:center; justify-content:space-between;
-  font-size:.72rem; color:var(--dim)}
-.f nav a{color:var(--ash)} .f b{color:var(--white)}
 </style>
-<!-- v4.0-W114: derselbe Raum wie auf der Startseite. Die Rechtstexte
-     selbst bleiben plan — raum.js kippt nur main > section, und davon
-     gibt es hier keine. Der Raum liegt dahinter, der Schalter ist da,
-     die Lesbarkeit bleibt unangetastet. -->
-<link rel="stylesheet" href="raum.css?v=e2a704c905">
+<link rel="stylesheet" href="raum.css?v=1c60e7f70f">
 </head>
-<body>
+<body class="recht">
 
-<!-- v4.0-W114: der Raum. Rein dekorativ, faengt keine Klicks ab, bleibt
-     ohne JS unsichtbar (opacity 0, bis raum.js html.d3 setzt) — und wird
-     deshalb nie zur leeren schwarzen Flaeche. Der Schalter steht bewusst
-     NICHT in der Navigation: auf 390px fuellt die Kopfleiste bereits zwei
-     Zeilen aus, ein weiteres Element machte sie 37 % hoeher. -->
+<!-- Hintergrundfeld (raum.js). Rein dekorativ, faengt keine Klicks ab. -->
 <canvas id="raum" class="raum" aria-hidden="true"></canvas>
-<button type="button" id="d3-schalter" class="d3-schalter" hidden>Flach</button>
 <a class="skip" href="#inhalt">Zum Inhalt springen</a>
 <header>
   <div class="bar">
@@ -170,6 +117,6 @@ footer{border-top:1px solid var(--line); margin-top:40px; padding:22px 0}
     <span>Analysiert von Azrael Sentinel · lafap.de</span>
   </div>
 </footer>
-<script src="raum.js?v=a187673c0e"></script>
+<script src="raum.js?v=24c3bbb09a"></script>
 </body>
 </html>

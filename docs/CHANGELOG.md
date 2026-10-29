@@ -11,6 +11,47 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Geändert — die öffentliche Seite: ruhiger, lesbarer, ein System für drei Seiten (v4.2 W113)
+
+Die Seite sah aus wie ein Experiment: fünf Riesen-Glyphen als Überschrift,
+Sektionen, die beim Scrollen kippten (gekippter Fließtext wird unscharf
+gerastert), Inhalt, der erst beim Hineinscrollen erschien (gedruckt, als
+Vorschaubild oder ohne Scrollen: leere Flächen), Fließtext in Monospace und
+drei Seiten mit je eigenem Grundgerüst.
+
+- **Ein Designsystem** in `raum.css` für Startseite, Impressum und
+  Datenschutz: Farben, Schriftskala, Raster, Kopf- und Fußleiste, Karten,
+  Knöpfe, Druck- und Touch-Regeln. Fließtext in der Systemschrift,
+  JetBrains Mono nur für Zahlen und Labels, Orbitron für Marke und
+  Überschriften. Die Schriften bleiben lokal und werden in jeder Seite
+  selbst eingebunden.
+- **Hero** mit einer lesbaren Überschrift („Logik Absolut Fehl am Platz",
+  Anfangsbuchstaben farbig), zwei klaren Handlungen (Live auf Kick,
+  Discord), Eckdaten und einer ruhigen Plattformzeile.
+- **Neue Reihenfolge:** Über uns → Lagebild → Themen → Azrael → Quellcode →
+  News → Unterstützen → Grundsätze; jede Sektion mit demselben Kopf. Die
+  Navigation kennt jedes Ziel und wird auf dem Handy eine wischbare Zeile.
+- **3D-Raum zurückgebaut:** kein Kippen, kein Schalter „Flach". `raum.js`
+  ist ein leises, langsames Feld hinter dem Inhalt — Standbild bei
+  reduzierter Bewegung, Pause im versteckten Tab.
+- **Die drei 3D-Leinwände** (Sentinel-Kern, Verbrauch, Spendenmünze)
+  zeichnen nur noch, solange sie im Bild sind.
+- **Zwei Darstellungsfehler** dabei gefunden und behoben: die höchsten
+  Diagrammbalken schoben Zahl und Tag aus dem Diagramm, und „Datenschutz-
+  erklärung" schob auf 390 px die Seite seitlich auf. Ein dritter entstand
+  beim Umbau und ist durch den Vertrag gesperrt: `.bar` heißt auch jeder
+  Diagrammbalken, eine nackte `.bar`-Regel im gemeinsamen Stylesheet hatte
+  sie auf 0 px gedrückt.
+- Vertrag `_test_v42_w113_website_ruhig_und_lesbar`, 15 Mutationsproben,
+  alle gefangen (drei erst nach Nachschärfen: die Beobachter-Liste wurde zu
+  breit gelesen, `pointer-events` irgendwo in der Datei zählte, und eine
+  Google-Adresse in einer CSS-`url()` prüfte bis dahin niemand). Der
+  W114-Vertrag ist als abgelöst umgeschrieben, W17 und W95 lesen
+  `raum.css` mit.
+
+**Für den Betreiber:** nichts einzustellen. Alle Datenbindungen
+(`stats.json`, `news.json`, Spenden, Krypto, Wächter) sind unverändert.
+
 ### Neu — das Lagebild: die Übersicht zeigt, was gerade passiert (v4.2 W112)
 
 Die „3D-Kommandozentrale" auf der Übersicht drehte fünf Kennzahlen auf einem
