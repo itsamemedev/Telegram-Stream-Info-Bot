@@ -126,6 +126,52 @@ def nachruest_cmd(eingabe, ausgabe) -> List[str]:
                  "-shortest", "-movflags", "+faststart", ausgabe])
 
 
+def garantie_cmd() -> List[str]:
+    """0,2 s Stille ueber DENSELBEN Eingang und Encoder wie Aufnahme und
+    Restream — ins Leere geschrieben."""
+    return _bau(["ffmpeg", "-hide_banner", "-nostdin", "-loglevel", "error",
+                 *stille_eingabe(), "-t", "0.2", *AAC_ARGS, "-f", "null", "-"])
+
+
+def garantie(timeout=10):
+    """v4.2-W114: kann dieses ffmpeg die Stille-Spur ueberhaupt erzeugen?
+    -> (stufe, text) fuer den Preflight.
+
+    Die ganze Ton-Garantie aus W106 haengt an zwei Faehigkeiten — dem
+    lavfi-Eingang `anullsrc` und dem AAC-Encoder. Fehlt eine (abgespeckte
+    ffmpeg-Builds, statische Minimal-Pakete), stirbt jeder Rueckfall auf
+    Stille, und zwar genau in dem Moment, in dem eine Quelle keinen Ton hat.
+    „ffmpeg installiert" sagt darueber nichts; deshalb laeuft hier ein
+    echter Kurzlauf statt eines Blicks auf `-filters`.
+    """
+    import subprocess
+    try:
+        p = subprocess.run(garantie_cmd(), capture_output=True, text=True,
+                           timeout=timeout, stdin=subprocess.DEVNULL)
+    # Jeder Fehlerzweig meldet auch ins Log (gedrosselt): der Preflight wird
+    # nur angesehen, wenn jemand hinsieht, der Selbsttest nur beim Start.
+    except FileNotFoundError:
+        _melde("warning", "garantie", "Tonspur-Garantie: ffmpeg fehlt.")
+        return "fail", "ffmpeg fehlt — ohne ffmpeg keine Aufnahme und keine Stille-Spur"
+    except subprocess.TimeoutExpired:
+        _melde("warning", "garantie", "Tonspur-Garantie: Probelauf nach %d s "
+               "abgebrochen.", timeout)
+        return "warn", ("Probelauf nach %d s abgebrochen — Maschine ueberlastet? "
+                        "Die Stille-Spur ist damit ungeprueft." % timeout)
+    except OSError as e:
+        _melde("warning", "garantie", "Tonspur-Garantie: ffmpeg nicht startbar (%s).", e)
+        return "fail", "ffmpeg nicht startbar (%s)" % e
+    if p.returncode == 0:
+        return "ok", "Stille-Spur (anullsrc) und AAC verfuegbar"
+    zeile = ((p.stderr or "").strip().splitlines() or ["rc=%s" % p.returncode])[-1][:160]
+    _melde("error", "garantie", "Tonspur-Garantie: ffmpeg kann keine Stille-Spur "
+           "erzeugen (%s) — Abhilfe: sudo apt install ffmpeg.", zeile)
+    return "fail", ("ffmpeg kann keine Stille-Spur erzeugen (%s) — eine Quelle "
+                    "ohne Ton ergaebe Aufnahmen und Restreams ohne Tonspur. "
+                    "Abhilfe: ffmpeg mit lavfi und AAC installieren "
+                    "(sudo apt install ffmpeg)." % zeile)
+
+
 class Fehlschlag(Exception):
     """Ein Werkzeuglauf hat nichts Brauchbares geliefert; der Text sagt warum."""
 
