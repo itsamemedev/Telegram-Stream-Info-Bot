@@ -11,6 +11,272 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Geändert — das lokale llama.cpp wird bevorzugt, Ollama ist auch als Rat weg (v4.2 W110)
+
+Gemeldet: „Llama ist lokal installiert … lokales Llama soll der bevorzugte
+Weg werden, Ollama-Reste müssen weg." Nachgesehen, wann das installierte
+llama.cpp benutzt wurde: **per Vorgabe nie.**
+
+- Der zentrale Chat (`llm_chat`, `llm_chat_sync`) fragte das Brain **nur** bei
+  `AI_PROVIDER=brain`. Ohne die Zeile ging jede Anfrage in die keyless Cloud,
+  während `llama-server` lief.
+- AZRAELs Live-Reaktionen standen auf `REACTION_AI_PROVIDER=pollinations` —
+  lokal nie.
+- Die Modellliste rief `get_brain().llm.models()`. **Die Methode gab es
+  nicht**; der `AttributeError` wurde still gefangen, und das Deck zeigte nie
+  das lokale Modell.
+- Dieselbe Abfrage `AI_PROVIDER == "brain"` stand siebenmal verstreut (Bot,
+  vier Routen, Konfig-Drift), jede Anzeige rechnete selbst.
+
+Neu `nc/kiwahl.py`, die eine Entscheidung: `AI_PROVIDER` ist `auto`
+(Vorgabe), `lokal` oder `cloud` (alte Werte `brain`/`llamacpp` bzw.
+`freeai`/`pollinations` gelten weiter). `auto` heißt: lokal, sobald
+`llama-server` auf `/health` antwortet (15-s-Cache), sonst Cloud. Gemessen
+wird bewusst, statt blind über das Brain zu gehen: das Brain bediente bei
+totem Server die Anfrage über seine eigene Cloud-Reserve, verbrauchte dabei
+das lokale Stundenbudget und reihte alles hinter seinen **einen**
+Inferenz-Slot. Die Reaktions-Engine folgt derselben Regel, Vorgabe jetzt
+`auto`. Bilder (Vision) gehen weiter in die Cloud.
+
+`brain/llm.py` hat jetzt `models()` (`/v1/models`, 60 s gecacht) und
+`zuletzt_oben()` (liest nur den Probestand — Anzeigen und `/healthz` lösen
+keine Probe aus). Ein scheiterndes Backend steht jetzt **einmal je Grund**
+auf `warning` statt auf `debug`. Der Selbsttest kennt das lokale LLM
+(„Lokales LLM: llama-server antwortet (…) — bevorzugt"; gelb nur, wenn
+`llama-server` installiert ist und nicht antwortet).
+
+**Zwei Befunde nebenbei:**
+
+- **Das Brain-Panel brach immer.** `templates/brain.html` las `h.ollama.up` —
+  das Feld liefert `brain/llm.py` seit V37 nicht mehr. Mit node gegen den
+  echten Funktionstext gemessen: vorher in **beiden** Lagen (llama an/aus)
+  `TypeError`, die LLM-Tabelle blieb leer; jetzt `LLAMA.CPP` bzw.
+  `CLOUD (RESERVE)` und eine volle Tabelle.
+- **Die mitgelieferte `llama-server.service` startete mit `--embeddings`.**
+  Laut llama.cpp-Server-Doku beschränkt das den Server auf Embeddings:
+  `/health` grün, Chat verweigert — und der Bot hätte jede Anfrage still in
+  die Cloud geschickt. **Nicht gemessen** (kein llama-server im Prüfstand);
+  der Schalter wird aber nirgends gebraucht (Embeddings kommen von Port 8089),
+  also kann seine Entfernung nur helfen. Dazu `-c 8192` wie Installer und
+  Anleitung (4096 reicht nicht für Verlauf + Frage + 1024-Token-Antwort).
+  **Wer die Unit aus dem Repo kopiert hat: neu kopieren und
+  `systemctl daemon-reload && systemctl restart llama-server`.** Prüfen mit
+  dem `curl` aus `docs/SETUP_LLAMACPP.md` §4.
+
+**Ollama-Reste:** drei kopierte Fehlertabellen (`nc/util.py`, zweimal
+`nc/routes/ai.py`) rieten „Ollama nicht erreichbar (Service läuft nicht?)",
+die Reaktions-Warnung riet zu `ollama ps`, eine Route zu „Ollama erreichbar?"
+— jetzt eine Tabelle, die die echte Kette nennt (llama-server unter
+`BRAIN_LLAMACPP_URL`, dann Cloud). `/health` heißt das Feld `llm` statt
+`ollama`. Rund 45 Kommentare, die den heutigen Code als Ollama-Code
+beschrieben, sind korrigiert; Historienzeilen („V37: Ollama entfernt")
+bleiben. `docs/SETUP_LLAMACPP.md` (beide Sprachen) nennt die
+Server-Erwartungen (Endpunkte, Flags, Dienst) und empfiehlt nicht mehr die
+Ollama-Kette.
+
+### Geändert — ein Befehlsverzeichnis für Telegram und Discord, `sys_` ist weg (v4.2 W109)
+
+Gemeldet: „Telegram und Discord sind immer noch nicht vereinheitlicht." Der
+Bestand: zwei Listen (die Telegram-Tupel in `run_bot()` und die Discord-Tabelle
+`_PAR_CMDS`, dazu eine dritte in `nc/botctx.py`), 15 Discord-Befehle unter
+**anderem Namen** (`/sys_pause` für `/pause`, `/sys_res` für `/sysres` …), zwei
+Discord-Befehle als Kopie (`/sys_report` wörtlich wie `/report`,
+`/sys_unpause` ohne Telegram-Gegenstück), sieben Telegram-Befehle ohne
+Discord-Gegenstück, und eine handgeschriebene Discord-Hilfe mit 27 von 45
+Befehlen.
+
+Neu `nc/befehle.py`: jeder Befehl genau einmal — Name, Rubrik, Plattformen,
+Ausführungsweg auf Discord, Recht. Daraus registrieren Telegram (31 Befehle)
+und Discord (65), daraus wird `/help` auf beiden Plattformen gebaut, und
+daraus setzt der Bot beim Start das **Telegram-Befehlsmenü** (`/` tippen —
+das wurde bisher nie gesetzt).
+
+- **29 gemeinsame Befehle, gleicher Name auf beiden Plattformen.** Die 22
+  Betreiberbefehle darunter laufen auf Discord über den Original-Telegram-
+  Handler (eine Logik, kein Duplikat): `tiktok live track_exact pause resume
+  unpause bulkadd stoprec cleanup quota teststream topusers summary aireset
+  brain report cookies sysres logs diag einnahmen about`. Neu auf Discord:
+  `tiktok`, `track_exact`, `brain`, `einnahmen`, `about`; neu auf Telegram:
+  `/unpause`, `/help`.
+- **Nur Telegram, mit Absicht:** `/start` und `/update` — ein Update spielt
+  Code auf den Server und gehört an die Freischaltliste, nicht an eine
+  Discord-Rolle, die ein Moderator vergeben kann.
+- **Rechte:** jeder Telegram-Handler prüft die Freischaltung als erste
+  Anweisung (alle 31 nachgeprüft), jeder Shim-Befehl braucht auf Discord die
+  Admin-Rolle. **Sicherheitsbefund:** `/untrack` stand auf Discord jedem
+  Servermitglied offen und löschte das Tracking der ganzen Gruppe, gleich wer
+  es angelegt hatte. Jetzt: Admin oder der Anleger (`trackings.added_by`).
+  `/track` bleibt auf Discord offen (Quota je Mitglied, B63).
+- **Nebenbefund:** `discordbot.py` las den Telegram-Bot mit
+  `globals().get("bot_app")` — im **eigenen** Namensraum, wo es ihn nie gab.
+  Der Stern-Highlight-Push nach Telegram (F84) endete deshalb seit W15
+  **immer** still. Jetzt ein Getter über den Kontext (`bot_app_holen`), und
+  der Fall „Telegram nicht bereit" steht als Warnung im Log.
+
+`tools/ncpatch.py` liest die Befehle jetzt aus dem Verzeichnis (sonst sähe es
+0 Telegram-Befehle und 22 Discord-Befehle zu wenig), `tools/i18n_extract.py`
+sammelt dessen Texte ein. Vier ältere Verträge hingen am alten Aufbau
+(`_PAR_CMDS`, `("stats", stats)`, „45 dekoriert", die Hilfe-Überschrift) — nur
+die Anker sind gewandert, die Aussagen gelten unverändert.
+
+Vertrag `_test_v42_w109_ein_befehlsverzeichnis`, 13 von 13 Mutationsproben —
+eine erst im zweiten Durchgang (Befund am Vertrag: er prüfte nur „Betreiber
+hat einen Riegel", nicht „als offen verzeichnet, prüft aber doch"). Dabei ein
+Fehler in `pruefen()` gefunden: die Doppelnamen-Prüfung verglich mit dem beim
+Import gebauten `NACH_NAME` und hätte ein späteres Doppel nie gesehen.
+
+**Für die Bedienung:** Discord synchronisiert die Befehle beim nächsten Start;
+die alten `/sys_…`-Einträge verschwinden, die neuen Namen erscheinen. Wer sie
+gewohnt war: einfach den Telegram-Namen nehmen.
+
+### Behoben — Pixelsalat bei mehreren Live-Nutzern: die Drossel kam zu spät (v4.2 W108)
+
+Gemeldet: „Pixelsalat, wenn mehrere getrackte Nutzer live sind und
+aufgenommen und restreamt werden." Drei Ursachen wurden **gegen echtes
+ffmpeg 6.1 nachgemessen**, bevor etwas gebaut wurde:
+
+| Verdacht | Prüfstand | Ergebnis |
+|---|---|---|
+| Abriss mitten im FLV-Strom, Live-CDN schickt beim Wiederverbinden einen frischen Strom samt Kopf | CDN-Attrappe, Abriss mitten in einem Tag | „Packet mismatch", aber **0 Dekodierfehler** im Ziel (copy und transcode) — kein Befund |
+| B-Frames unter `-fflags +genpts+igndts` (Aufnahme und Restream bei HLS) | HLS mit/ohne B-Frames, Bild-für-Bild-Vergleich und Zeitstempel | bitgleich, Zeitstempel streng steigend in 40 ms — kein Befund |
+| Fehlende Video-Pakete mitten im GOP — was ein Live-CDN einem **zu langsam lesenden** Client antut | 18 P-Frames an drei Stellen entfernt, Transcode wie im Betrieb | **69 von 502 Bildern Salat** (20,8 dB statt > 59 dB) bis zum nächsten Keyframe |
+
+Beim dritten half **kein** Decoder-Schalter: `-fflags +discardcorrupt`,
+`-flags -output_corrupt` und beide zusammen ergaben jedes Mal dieselben 69
+Bilder; ffmpeg warnt dabei nicht einmal. Damit ist die Kette: mehr Nutzer
+live → mehr parallele Transcodes, Aufnahmen, Whisper → ein Transcode fällt
+unter Echtzeit → er liest die Quelle zu langsam → das CDN verwirft Pakete →
+Salat. Hinterher lässt er sich nicht wegfiltern, nur vorher vermeiden.
+
+Die vorhandene Drossel (W43–W61) regelt erst nach einem **gemessenen
+Rückstand** ab — dann ist der Salat schon gesendet. Neu `nc/lastvorsorge.py`:
+beim Start eines Transcodes wird die Drosselstufe nach freien Kernen gewählt
+(1-min-Load plus gerade gestartete Transcodes, die das Load-Mittel noch nicht
+zeigt; geplant wird bis 85 % der Kerne). Die Kosten je Stufe stammen aus der
+**W61-Messung** (Stufe 3 −19,9 %, Bildrate + Avatar aus −33,9 %); Preset und
+Bitrate (Stufe 1/2) sind nie gemessen worden und stehen deshalb mit 1,0 in der
+Tabelle — eine erfundene Ersparnis hätte genau den Fall durchgelassen.
+
+Im Log: `Restream #N: startet mit Drossel Stufe K … — frei X von Y Kernen …`
+(warning), und wenn selbst die höchste Stufe nicht passt, ein **error** mit
+Abhilfe (weniger gleichzeitige Restreams, weniger Ziele, mehr Kerne). Die
+Vorsorge greift nur beim Transcode, nie unter die schon erreichte Stufe, und
+läuft vor dem Avatar-Feeder (der sonst für eine Stufe startet, die ihn nicht
+mehr will).
+
+Bewusst **nicht** gemacht, obwohl im Auftrag genannt: vorgerenderte
+Overlay-Bilder statt `filter_complex`, `setsar`/`yuv420p`-Umbauten. Keiner der
+Prüfstände zeigte dort einen Fehler, und ein Umbau des Sendebild-Filters ohne
+Befund ist Risiko ohne Nutzen. Der Transcode setzt `-pix_fmt yuv420p` bereits.
+
+Vertrag `_test_v42_w108_drossel_greift_vor_dem_salat`, 9 von 9
+Mutationsproben gefangen. Eine entwischte im ersten Durchgang — und das war
+ein Befund **am Code**: ein Riegel gegen „unter die Ist-Stufe" war
+wirkungslos, weil die fallenden Kosten das schon garantieren. Er ist weg, der
+Vertrag hält jetzt die Monotonie der Kostentabelle fest.
+
+**Offen:** ob TikToks CDN einzelne Pakete oder ganze GOPs verwirft, ist nicht
+gemessen; der Server läuft laut Quelltext mit ffmpeg 4.x, die Prüfstände mit
+6.1. Erkennen lässt sich der Fall im Log an `Encode-Rueckstand` bzw.
+`speed < 1` des Restreams kurz vor dem Bildfehler.
+
+### Behoben — der automatische Cookie-Bezug lief ohne Telegram-Alarmchat nie (v4.2 W107)
+
+Gemeldet: „Cookies automatisch beziehen soll Standard sein." Im Code stand das
+seit W10 so (`COOKIE_AUTO_FETCH=1` per Vorgabe). Nachgesehen, **wann** der
+Bezug wirklich lief:
+
+- Er hing im Telegram-Cookie-Alarm, und der startet nur mit
+  `DISK_ALARM_CHAT_ID` oder `DAILY_SUMMARY_CHAT_ID`. **Ohne Alarm-Chat lief
+  der Standard nie.**
+- Auch mit Chat nur bei rotem Health-Check, im Takt des Platten-Alarms (eine
+  Stunde) — nie beim Start, nie nach einem 403.
+- Der Deck-Knopf ging am Buchhalter vorbei: nach einem erfolgreichen Klick
+  stand im Deck weiter „noch nie gelaufen".
+
+Neu `nc/cookiebezug.py` mit dem einen Zeitplan, und eine eigene Schleife
+`cookie-bezug`, die unabhängig von Telegram läuft. Bezogen wird:
+
+| Anlass | wann |
+|---|---|
+| `start` | sofort beim Start (frische Installation ohne Datei inklusive) |
+| `plan` | alle `COOKIE_AUTO_FETCH_INTERVAL_H` Stunden (Vorgabe 6) |
+| `neuer_versuch` | 30 min nach einem Fehlschlag statt erst nach 6 h |
+| `403-aufnahme`, `resolver-http_403/status_code/kein_json` | nach einem 403, frühestens alle 15 min |
+| `gesundheit` | roter Health-Check, **aber nur wenn ein Gast-Aufruf ihn heilen kann** |
+
+Die letzte Zeile ist die Bremse: ein fehlender Login (`sessionid`) lässt sich
+per Gast-Aufruf nie beheben — ohne `gast_hilft()` fragte eine Installation
+ohne Login alle 15 Minuten TikTok, ohne dass sich je etwas ändert. Scheitert
+der Bezug dauerhaft (länger als zwei Intervalle), steht das gedrosselt auf
+`error` mit Abhilfe, nicht nur auf `warning`.
+
+Deck: im Cookie-Status stehen jetzt letzter Erfolg, letzter Versuch mit
+Anlass, **nächster Lauf** (oder „bald" mit dem anstoßenden Ereignis) und ein
+Knopf „Jetzt holen". Deck-Knopf, Telegram `/cookies holen` und Schleife gehen
+alle durch `nc/cookiebezug.holen()`.
+
+So prüft man es nach: nach dem Neustart steht im Log
+`Cookie-Auto-Bezug: an — erster Lauf jetzt …`, kurz danach entweder
+`Cookies automatisch bezogen (gast): …` oder ein Fehlschlag mit Abhilfe; das
+Deck zeigt den nächsten Lauf. Was der Weg **nicht** kann, bleibt: einen Login
+erzeugen. Den liefert nur ein Browser (Deck: „Aus Browser" auf dem Rechner
+mit Browser, oder Export einfügen).
+
+`.env.example` erklärt die drei Schalter jetzt in der Vorlage selbst —
+`tools/gen_env_example.py` kennt dafür `ERKLAERUNG`, und ein Eintrag für eine
+Variable, die der Quelltext nicht mehr liest, bricht den Generator ab.
+
+Vertrag `_test_v42_w107_cookie_bezug_ist_standard`, 13 von 13
+Mutationsproben gefangen — drei erst im zweiten Durchgang (der Anstoß blieb
+nach dem Bezug unbemerkt stehen, die Umgehungsprüfung sah nur einen
+Aliasnamen, die Deck-Prüfung las die Variable statt der Zeile). Gegen einen
+lokalen Set-Cookie-Stub echt durchgefahren: Datei angelegt, Zustand und
+nächster Lauf stimmen, ein zweiter Lauf ohne Änderung schreibt nicht.
+
+### Behoben — Aufnahmen und Restreams ohne Tonspur (v4.2 W106)
+
+Gemeldet: „fehlende Tonspuren in Aufnahmen und Restreams, besonders bei
+mehreren Nutzern". Nachgesehen wurde, wo eine Ausgabe ohne Ton entstehen
+kann — es sind zwei Fehlerbilder, eines still, eines laut an der falschen
+Stelle.
+
+**Die Aufnahme** (`nc/reccmd._build_native_cmd`) lief mit `-c copy` und ohne
+`-map`. ffmpegs Vorgabeauswahl nimmt „ein Video, ein Audio, falls vorhanden";
+liefert die Quelle keinen Ton (oder erst nach dem Probe-Fenster), entsteht
+still eine reine Videodatei — rc 0, keine Logzeile. Jetzt: ausdrückliche
+Auswahl (`-map 0:v:0? -map 0:a:0?`, optional, damit reine Ton-Lives weiter
+aufgenommen werden) und **`nc/tonspur.sichern()` prüft die fertige Datei**.
+Fehlt die Spur, wird Stille (`anullsrc`, 44,1 kHz stereo, AAC) mit
+`-c:v copy` nachgerüstet — das Bild wird nicht angefasst. Scheitert das,
+bleibt das Original liegen, und es gibt einen ERROR mit Abhilfe.
+
+**Der Restream** (`nc/restreamcmd.build`) mappte im Transcode und im
+Stimm-Mix hart `0:a`. Bei tonloser Quelle starb ffmpeg sofort an „Stream map
+'0:a' matches no streams" — weder Netz noch Codec, also griff keiner der
+Fallbacks, und das Reconnect-Budget lief an einem Fehler leer, den kein
+Reconnect behebt. Im Copy-Pfad ohne Stimme gab es gar kein `-map`: dort ging
+still ein Strom ohne Ton an alle Ziele. Jetzt mappt jeder Pfad Ton
+ausdrücklich, und `RestreamManager._ton_folge()` erkennt den Abbruch, baut
+mit Stille neu (Versuchszähler unangetastet) und nimmt den Schalter bei jedem
+anderen Prozessende wieder weg — eine Quelle, die nur am Anfang stumm war,
+bleibt nicht die ganze Sitzung stumm. Das Tonformat ist in allen Pfaden
+dasselbe (AAC 160k, 44,1 kHz, **stereo** — vorher im Copy-Pfad ohne `-ac 2`).
+
+Bewusst **nicht** gemacht: vor jedem Start ein ffprobe gegen die Quelle. Das
+verzögert jeden gesunden Sendestart um Sekunden für einen Fall, den ffmpeg
+selbst in unter einer Sekunde meldet.
+
+Nachgeprüft mit echtem ffmpeg 6.1 gegen eine tonlose und eine betonte
+FLV-Quelle über HTTP: alle 16 Restream-Varianten (copy/transcode × Stimme ×
+Stille × Quelle) und beide Aufnahmen tragen am Ende eine Tonspur; die
+betonte Quelle bleibt unverändert. Vertrag
+`_test_v42_w106_jede_ausgabe_traegt_ton` (192 Restream-Kombinationen,
+Nachrüstung, Meldungen, Verdrahtung im Syntaxbaum), 12 von 12
+Mutationsproben gefangen — eine erst im zweiten Durchgang: der Vertrag
+prüfte nicht, dass der Fall „lässt sich nicht klären" überhaupt eine Zeile
+schreibt.
+
 ### Behoben — ein Update über das Deck wirkt erst nach einem Neustart, und nichts sagte es (v4.2 W104)
 
 Korrektur des Betreibers am 01.10.:

@@ -123,8 +123,9 @@ Für KI-Antworten ohne Cloud und ohne Kosten: siehe
 **[`SETUP_LLAMACPP.md`](SETUP_LLAMACPP.md)** und die mitgelieferte Unit
 **[`llama-server.service`](../llama-server.service)**.
 
-Ist kein llama.cpp erreichbar, fällt der Bot automatisch auf Ollama und danach
-auf die keylosen freien Backends zurück — er startet **nie** deswegen nicht.
+Läuft llama.cpp, wird es seit v4.2-W110 **von selbst bevorzugt** (kein
+`AI_PROVIDER` mehr nötig). Ist es nicht erreichbar, übernehmen die keylosen
+freien Backends — der Bot startet **nie** deswegen nicht.
 
 ---
 

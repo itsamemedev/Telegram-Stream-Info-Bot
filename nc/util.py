@@ -5,12 +5,23 @@ Telegram-callback_data-Kappung, Topic-Key-Bau. Alle stdlib-only.
 """
 
 
-def _ai_err_msg(kind, model):
+def _ai_err_msg(kind, model, timeout=None):
+    """Die Fehlermeldung, die der Betreiber im Deck sieht.
+
+    v4.2-W110: hier und zweimal kopiert in nc/routes/ai.py stand „Ollama
+    nicht erreichbar (Service läuft nicht?)". Ollama gibt es seit V37 nicht
+    mehr; der Rat schickte den Betreiber zu einem Dienst, den er nie
+    installiert hat. Die Kette ist Claude (falls Key) → lokales llama.cpp →
+    keyless Cloud, und die Meldung nennt, wo man nachsieht.
+    """
+    zeit = (" nach %ss" % timeout) if timeout else ""
     return {
-        "model_missing": f"Modell '{model}' nicht installiert",
-        "timeout":       "Ollama Timeout (keine Daten)",
-        "unreachable":   "Ollama nicht erreichbar (Service läuft nicht?)",
-        "http":          "Ollama HTTP-Fehler",
+        "model_missing": f"Modell '{model}' nicht vorhanden",
+        "timeout":       "KI-Zeitüberschreitung%s — lokales llama.cpp auf der "
+                         "CPU braucht für lange Antworten Zeit (AI_TIMEOUT)" % zeit,
+        "unreachable":   "Kein KI-Backend erreichbar — weder llama-server "
+                         "(BRAIN_LLAMACPP_URL) noch eine Cloud-Basis antwortet",
+        "http":          "KI-Backend antwortete mit einem HTTP-Fehler",
         "other":         "Unerwarteter Fehler",
     }.get(kind, "Keine Antwort vom LLM")
 

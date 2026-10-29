@@ -54,6 +54,12 @@ PY_DATEIEN = ["bot.py", "discordbot.py", "telegramversand.py"]
 # nie. Er trifft, weil im Blueprint schon uebersetzt wurde.
 BP_GLOB = "nc/routes/*.py"
 
+# v4.2-W109: Module ausserhalb der Blueprints, deren Benutzertext mit _t(...)
+# markiert ist. nc/befehle.py traegt die Beschreibungen aller Befehle — die
+# zeigen Telegram-Menue, Discord und /help. Ohne diesen Eintrag waeren sie in
+# der englischen Oberflaeche still deutsch geblieben.
+MARKIERT = ["nc/befehle.py"]
+
 # Ein Text ist uebersetzbar, wenn er ueberhaupt Sprache enthaelt. Reine Zahlen,
 # Symbole, CSS-Werte und Platzhalter fliegen raus.
 _WORT = re.compile(r"[A-Za-zÄÖÜäöüß]{3}")
@@ -607,7 +613,8 @@ def sammeln():
         if os.path.exists(os.path.join(ROOT, p)):
             for s in _py_strings(p):
                 gefunden.setdefault(s, set()).add(p)
-    for p in sorted(glob.glob(os.path.join(ROOT, BP_GLOB))):
+    for p in sorted(glob.glob(os.path.join(ROOT, BP_GLOB))) + \
+            [os.path.join(ROOT, m) for m in MARKIERT]:
         rel = os.path.relpath(p, ROOT).replace("\\", "/")
         for s in _bp_strings(p):
             gefunden.setdefault(s, set()).add(rel)

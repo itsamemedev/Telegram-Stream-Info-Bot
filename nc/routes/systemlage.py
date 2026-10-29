@@ -24,6 +24,7 @@ from flask import Blueprint, jsonify, request
 from nc import ctx as _ctx
 from nc import discordlimits as _nc_dclimits
 from nc import fehlertext as _nc_fehlertext
+from nc import kiwahl as _nc_kiwahl  # v4.2-W110
 from nc import i18n as _nc_i18n
 from nc import piper_voices as _nc_piper
 from nc import proxyutil as _nc_proxyutil
@@ -81,8 +82,7 @@ def api_system():
     return jsonify(
         recorder       = _nc_probe.active_recorder(),
         recorder_pref  = _nc_probe.recorder_pref(),
-        ai_backend     = ("brain" if os.getenv("AI_PROVIDER","").strip().lower()=="brain"
-                          else "freeai"),
+        ai_backend     = _nc_kiwahl.backend(),                    # v4.2-W110
         ai_model       = ai_model,
         ai_models      = models if models is not None else [],
         ai_alive       = models is not None,
@@ -158,8 +158,7 @@ def api_system_config_snapshot():
         "egress": {"tunnel_configured": c["HAT_RECORD_PROXY"],
                    "proxy_pool": c["PROXY_POOL_GROESSE"]},
         "ai": {"model": c["AI_MODEL"],
-               "backend": ("brain" if os.getenv("AI_PROVIDER","").strip().lower()=="brain"
-                           else "freeai"),
+               "backend": _nc_kiwahl.backend(),             # v4.2-W110
                "budget_per_min": c["AZRAEL_MAX_CALLS_MIN"]},
         "automation": {k: c["_AUTOMATION"].get(k) for k in c["_AUTOMATION"]},
         "discord": {"bot_token_set": c["HAT_DISCORD_BOT_TOKEN"],
@@ -417,4 +416,4 @@ def api_system_resilience():
              "encoder": {"preset": c["RESTREAM_X264_PRESET"],
                          "relay_preset": c["RESTREAM_RELAY_PRESET"],
                          "mode": c["RESTREAM_MULTI_MODE"]},
-             "brain_llm": os.getenv("AI_PROVIDER", "").strip().lower() == "brain"})
+             "brain_llm": _nc_kiwahl.backend() == "brain"})   # v4.2-W110

@@ -188,7 +188,7 @@ def api_azrael_memories():
 
 @bp.route("/api/azrael/react", methods=["POST"])
 def api_azrael_react():
-    """AZRAEL erzeugt eine Live-Reaktion (Ollama) auf eine Aussage/Behauptung.
+    """AZRAEL erzeugt eine Live-Reaktion (KI-Kette) auf eine Aussage/Behauptung.
        Optional direkt in den Chat posten. Die Reaktion erscheint im Overlay."""
     d = request.get_json(silent=True) or {}
     statement = (d.get("statement") or "").strip()
@@ -209,7 +209,7 @@ def api_azrael_react():
         return _fehler(e)
     if err or not text:
         return jsonify(ok=False,
-                       error=err or _t("keine Antwort (Ollama erreichbar?)")), 502
+                       error=err or _t("keine Antwort von der KI (llama-server oder Cloud-Basis)")), 502
     if d.get("push_chat"):
         try:
             _c().run_async(mod.send_message(_nc_i18n.t(f"AZRAEL: {text}")), timeout=15)

@@ -593,7 +593,7 @@ brauchen weiterhin `list()`, sonst kehrt die Race Condition aus 4.0 zurück.
 
 Zwei Dinge bleiben, wie sie sind:
 
-- **Der Shim bleibt.** Die 15 `/sys_*`-Kommandos führen die
+- **Der Shim bleibt.** Die (seit v4.2-W109 22) gemeinsamen Kommandos — früher als `/sys_*` — führen die
   Original-Telegram-Handler aus. Das ist kein Altlast-Kompromiss, sondern der
   Grund, warum es keine Duplikate gibt — er wird mitverschoben, nicht ersetzt.
 - **Der Supervisor bleibt.** `_discord_run_once` ist der Reconnect-Loop mit

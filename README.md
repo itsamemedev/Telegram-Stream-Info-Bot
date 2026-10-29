@@ -148,7 +148,7 @@ fürs Handy.
 | **Aufnahme** | Dreistufiger Recorder-Fallback · Preflight-GET vor Spawn · Suffix-Fallback für CDN-Quirks · Recording-Wächter gegen eingefrorene Mitschnitte · S3-Backup (optional) |
 | **Restream** | Kick / Twitch / YouTube parallel · `tee` mit `onfail=ignore` · erzwungener Transcode bei Multi-Ziel · Ziel-Verifikation über Plattform-APIs · Wiederanlauf nach Neustart · sicherer Test-Push ohne Broadcast-Risiko · Deckel für gleichzeitige Restreams |
 | **Chat & Moderation** | SENTINEL-SHIELD (Doxxing / Hate / Drohung) · geteilte Moderations-Heuristik über Kick, Twitch, YouTube · Fremdwerbungs-Erkennung mit Eigen-Allowlist · Banned-Words · Timeout-Eskalation |
-| **KI (AZRAEL)** | Chat-Antworten auf Ansprache · Live-Reaktionen aufs Sendebild · Sprachausgabe (Piper) · Persona-System · Multi-Backend: llama.cpp → Ollama → freie APIs → OpenAI/Anthropic · Budget- und Tier-Steuerung |
+| **KI (AZRAEL)** | Chat-Antworten auf Ansprache · Live-Reaktionen aufs Sendebild · Sprachausgabe (Piper) · Persona-System · Multi-Backend: Anthropic (mit Key) → lokales llama.cpp (bevorzugt, sobald es läuft) → freie APIs · Budget- und Tier-Steuerung |
 | **Gehirn (`brain/`)** | Zustandsmaschine · regelbasierte Tier-1-Entscheidungen mit Warum-Log · Langzeitgedächtnis · Wissensgraph (Triple-Store) · semantische Suche · Prognosen · Wochenreport |
 | **Sentinel-Flotte** | 13 Wächter-Agenten (health, recovery, scout, analytics, learning, sentinel, disk, swap, restream, toxicity, uptime, recording, proxy) mit Telegram-Alarm, einzeln abschaltbar |
 | **Community** | Wiedererkennung von Stammzuschauern · Loyalty-Punkte & Ränge · Discord-XP, Level, Daily-Streak · Live-Ping · Highlight-Share · Community-Events |
@@ -188,17 +188,17 @@ flowchart TD
 
 ```mermaid
 flowchart TB
-    TG["📨 Telegram<br/>29 Befehle"]:::ein
-    DC["🎮 Discord<br/>60 Slash-Commands"]:::ein
+    TG["📨 Telegram<br/>31 Befehle"]:::ein
+    DC["🎮 Discord<br/>65 Slash-Commands"]:::ein
     TT["🎥 TikTok<br/>Live-Erkennung + Chat"]:::ein
 
     TG --> BOT
     DC --> BOT
     TT --> BOT
 
-    BOT["bot.py<br/>Monolith · 25.092 Zeilen<br/>Scraper · Recorder · Restream<br/>Flask-Dashboard · 34 eigene Routen"]:::core
+    BOT["bot.py<br/>Monolith · 25.314 Zeilen<br/>Scraper · Recorder · Restream<br/>Flask-Dashboard · 34 eigene Routen"]:::core
 
-    BOT -->|configure| NC["nc/ — 150 Fachmodule<br/>Schema · OAuth · Restream<br/>Ledger · Moderation · Intel"]:::lib
+    BOT -->|configure| NC["nc/ — 155 Fachmodule<br/>Schema · OAuth · Restream<br/>Ledger · Moderation · Intel"]:::lib
     NC --> RT["nc/routes/ — 36 Blueprints<br/>327 weitere API-Routen"]:::lib
     BOT --> TPL["templates/<br/>Dashboard · Overlay · PWA"]:::lib
     BOT --> BR["brain_bridge.py"]:::lib
@@ -338,65 +338,89 @@ ADMIN_CHAT_ID=123456789              # deine Telegram-ID (Alarme, Admin-Befehle)
 
 ### Telegram
 
+Seit v4.2-W109 stehen alle Befehle in **einem** Verzeichnis
+([`nc/befehle.py`](nc/befehle.py)) — Telegram und Discord registrieren daraus,
+und `/help` baut auf beiden Plattformen die Liste daraus. Die 29 gemeinsamen
+Befehle heißen **auf beiden Plattformen gleich**; die früheren
+`sys_`-Namen auf Discord gibt es nicht mehr.
+
 | Befehl | Wirkung |
 |---|---|
-| `/start` · `/about` | Einstieg, Bot-Info |
-| `/track <user>` · `/track_exact <user>` | Streamer aufnehmen ins Tracking |
-| `/untrack <user>` · `/tracklist` | Entfernen / Übersicht |
-| `/live` · `/tiktok` | Wer ist gerade live |
-| `/bulkadd` | Viele Streamer auf einmal tracken |
-| `/recstatus` · `/stoprec` · `/cleanup` | Aufnahmen: Status, Stopp, Aufräumen |
-| `/stats` · `/topusers` · `/summary` | Auswertungen |
-| `/ai <frage>` · `/aireset` | AZRAEL fragen / Verlauf zurücksetzen |
-| `/brain` · `/brain teste` · `/report` | Gehirn-Status, Selbsttest, Wochenreport |
-| `/diag` · `/sysres` · `/quota` · `/logs` | Diagnose, Ressourcen, Kontingente, Logs |
-| `/pause` · `/resume` | Tracking anhalten / fortsetzen |
-| `/update` | Selbstaktualisierung aus dem Repo |
-| `/cookies` · `/cookies holen [browser]` · `/teststream` | Cookie-Zustand, Cookies automatisch beziehen, Teststream |
-| `/einnahmen` | Einnahmen-Journal (Buchen, Jahresübersicht) |
+| `/tiktok` `‹name›` | Profil-Analyse eines TikTok-Accounts |
+| `/live` `@user` | Live-Status sofort pruefen |
+| `/track_exact` `‹name›` | Exakten Usernamen tracken (ohne Korrektur) |
+| `/pause` `@user` | Tracking pausieren |
+| `/resume` `@user` | Tracking fortsetzen |
+| `/unpause` `@user` | Auto-pausierte Quelle wieder aktivieren |
+| `/bulkadd` `a b c` | Mehrere User auf einmal tracken |
+| `/stoprec` `@user` | Laufende Aufnahme sauber beenden |
+| `/cleanup` | Alte Aufnahmen aufraeumen |
+| `/quota` | Speicher-Quota |
+| `/teststream` `@user` | Recorder-Selbsttest |
+| `/topusers` | Top-Streamer nach Aufnahmen |
+| `/summary` | Tageszusammenfassung |
+| `/aireset` | KI-Kontext zuruecksetzen |
+| `/brain` | Brain-Lage: Regeln, Agenten, Empfehlungen |
+| `/report` | Azrael-Sentinel-Wochenreport |
+| `/cookies` `[holen]` | Cookie-Status — mit 'holen' selbst beziehen |
+| `/sysres` | System-Ressourcen |
+| `/logs` | Letzte Fehler aus dem Log |
+| `/diag` | Vollstaendige Diagnose |
+| `/einnahmen` | Einnahmen und Spenden |
+| `/about` | Ueber diesen Bot |
+| `/tracklist` | Getrackte Accounts anzeigen |
+| `/track` `‹name›` | TikTok-User tracken |
+| `/untrack` `‹name›` | TikTok-User nicht mehr tracken |
+| `/recstatus` | Laufende Aufnahmen |
+| `/stats` | Statistik |
+| `/ai` `‹frage›` | AZRAEL fragen |
+| `/help` | Alle Befehle anzeigen |
+| `/start` | Einstieg und Kurzuebersicht (nur Telegram) |
+| `/update` | Update vom Repo einspielen (nur Telegram) |
 
 <details>
-<summary><h3>Discord — 60 Slash-Commands</h3></summary>
+<summary><h3>Discord — 65 Slash-Commands</h3></summary>
 
 <br>
 
-**Stream & Bot**
-`/status` · `/track` · `/untrack` · `/tracklist` · `/livenow` · `/recstatus` ·
-`/restream_status` · `/stats` · `/streaminfo` · `/topstreamers` · `/botstats` ·
-`/post_test` · `/sys_report` · `/sys_unpause`
+**Gemeinsam mit Telegram** *(gleicher Name, gleiche Wirkung)*
+`/tiktok` · `/live` · `/track_exact` · `/pause` · `/resume` · `/unpause` · `/bulkadd` · `/stoprec` · `/cleanup` · `/quota` · `/teststream` · `/topusers` · `/summary` · `/aireset` · `/brain` · `/report` · `/cookies` · `/sysres` · `/logs` · `/diag` · `/einnahmen` · `/about` · `/tracklist` · `/track` · `/untrack` · `/recstatus` · `/stats` · `/ai` · `/help`
+
+**Analyse**
+`/status` · `/streaminfo`
+
+**Tracking**
+`/livenow` · `/restream_status` · `/follow` · `/unfollow`
+
+**Aufnahmen**
+`/topstreamers` · `/clips` · `/clip` · `/clipoftheweek`
 
 **KI**
-`/ai` · `/ask`
+`/ask`
 
-**Community & Gamification**
-`/rank` · `/profile` · `/leaderboard` · `/daily` · `/follow` · `/unfollow` ·
-`/event` · `/events` · `/help`
+**System** *(Admin-Rolle nötig)*
+`/botstats` · `/post_test`
 
-**Clips**
-`/clip` · `/clips` · `/clipoftheweek`
+**Community**
+`/rank` · `/leaderboard` · `/daily` · `/profile` · `/event` · `/events`
 
-**Moderation** *(Admin-Rolle nötig)*
-`/ban` · `/kick` · `/timeout` · `/warn` · `/warnings` · `/clearwarns` · `/purge`
+**Moderation**
+`/warn` · `/warnings` · `/clearwarns` · `/purge` · `/kick` · `/ban` · `/timeout`
 
-**Server-Aufbau** *(Admin-Rolle nötig)*
-`/setup_community` · `/setup_targets` · `/create_channel` · `/create_voice` ·
-`/create_category` · `/create_role` · `/create_group` · `/assign_role` ·
-`/remove_role` · `/set_channel_perms`
+**Server** *(Admin-Rolle nötig)*
+`/setup_community` · `/setup_targets` · `/create_channel` · `/create_voice` · `/create_category` · `/create_role` · `/create_group` · `/assign_role` · `/remove_role` · `/set_channel_perms`
 
-**Telegram-Parität** *(15 Stück, teils Admin-Rolle nötig)*
-`/sys_pause` · `/sys_resume` · `/sys_stoprec` · `/sys_cleanup` · `/sys_quota` ·
-`/sys_res` · `/sys_topusers` · `/sys_summary` · `/sys_logs` · `/sys_diag` ·
-`/sys_aireset` · `/sys_teststream` · `/sys_bulkadd` · `/sys_live` ·
-`/sys_cookies`
-
-> Die `/sys_*`-Kommandos führen die **Original-Telegram-Handler** über einen
-> Update/Context-Shim aus — null Duplikate, Telegram-Fixes wirken automatisch
-> auch in Discord.
+> Die Betreiberbefehle unter den gemeinsamen laufen auf Discord über den
+> **Original-Telegram-Handler** (ein Update/Context-Shim) — eine Logik, kein
+> Duplikat; ein Fix am Telegram-Handler wirkt auf Discord mit. Auf Discord
+> brauchen sie die Admin-Rolle, auf Telegram die Freischaltung.
+> `/track`, `/tracklist`, `/recstatus`, `/stats`, `/ai` und `/help` haben auf
+> Discord eine eigene, für die Community offene Umsetzung; `/untrack` dürfen
+> dort nur Admins oder wer das Tracking angelegt hat.
 >
-> Diese 15 entstehen in einer Schleife (`tree.command(name=…)(…)`) statt über
-> einen Dekorator. Bis v4.2-W73 hat `tools/ncpatch.py` deshalb nur die 45
-> dekorierten gezählt — sie standen in keiner Liste und wären beim Wegfallen
-> niemandem aufgefallen.
+> Nur auf Telegram: *start* (Einstieg) und *update* — ein Update spielt Code
+> auf den Server und gehört an die kleinste Tür, die Telegram-Freischaltliste,
+> nicht an eine Discord-Rolle.
 
 </details>
 
@@ -549,7 +573,7 @@ additiv, fail-open und einzeln abschaltbar.
 | `knowledge.py` | Wissensgraph (Triple-Store, erklärbar) |
 | `semantic.py` | Semantische Suche |
 | `scheduler.py` | Prognosen und Poll-Hints |
-| `llm.py` | LLM-Runtime: llama.cpp → Ollama → Fallback |
+| `llm.py` | LLM-Runtime: llama.cpp → keyless Cloud als Reserve |
 | `agents.py` | Sentinel-Flotte (13 Wächter, einzeln schaltbar) |
 | `report.py` | Wochenreport in Markdown |
 
@@ -797,7 +821,7 @@ gebrochen ist.**
 
 ### 🧭 Navigation im Monolithen
 
-`bot.py` hat 25.092 Zeilen. Es wird **nie** ganz gelesen und **nie**
+`bot.py` hat 25.314 Zeilen. Es wird **nie** ganz gelesen und **nie**
 blind durchsucht — erst fragen wo etwas steht, dann den Ausschnitt holen:
 
 ```bash
@@ -812,7 +836,7 @@ python3 tools/ncpatch.py docs                          # Doku-Zahlen gegen den C
 ```
 
 `find` antwortet aus **[`.claude/INDEX.md`](.claude/INDEX.md)** — 369 Routen
-(34 in `bot.py`, 335 in `nc/routes/`), 60 Slash-Commands, 559 Funktionen,
+(34 in `bot.py`, 335 in `nc/routes/`), 65 Slash-Commands, 565 Funktionen,
 jeweils mit Zeilennummer.
 
 ---
@@ -925,8 +949,8 @@ nicht greifen, gekippte Verträge in `test_restream.py`.
 |---|---|
 | Aktuelle Version | **4.3.1** — „Freie Sicht" (2026.09) |
 | Flask-Routen | 369 (34 in `bot.py` · 335 in `nc/routes/`) |
-| Discord-Slash-Commands | 60 |
-| Fachmodule | 150 in `nc/` (+36 in `nc/routes/`, +3 in `nc/intel/`), 10 in `brain/` |
+| Discord-Slash-Commands | 65 |
+| Fachmodule | 155 in `nc/` (+36 in `nc/routes/`, +3 in `nc/intel/`), 10 in `brain/` |
 | Sentinel-Agenten | 13 |
 | Konfigurationsvariablen | ~541 |
 | Sprachen | Deutsch (Quelle), Englisch |
@@ -939,7 +963,7 @@ Vollständige Historie: **[`docs/CHANGELOG.md`](docs/CHANGELOG.md)** ·
 ## 🧭 Roadmap
 
 Der nächste grosse Schritt ist kein Feature, sondern Aufräumen: **`bot.py` hat
-25.092 Zeilen**. Die Datei ist der Engpass des Projekts. Die Messlatte dafür ist
+25.314 Zeilen**. Die Datei ist der Engpass des Projekts. Die Messlatte dafür ist
 aber keine Zeilenzahl:
 
 > **Eine neue API-Route anlegen, ohne `bot.py` zu öffnen.**

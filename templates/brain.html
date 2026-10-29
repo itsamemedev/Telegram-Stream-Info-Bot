@@ -613,15 +613,22 @@ async function loadGrowth() {
 async function loadLLM() {
   const h = await api("/llm/health");
   const b = h.budget;
+  /* v4.2-W110: hier stand h.ollama — das Feld liefert brain/llm.py seit V37
+     nicht mehr. Die Zeile warf IMMER einen TypeError, und die LLM-Tabelle
+     blieb leer, ob llama.cpp lief oder nicht. Die Reserve heisst heute
+     freeai (keyless Cloud), und ein fehlendes Feld ist kein Absturz. Beide
+     stehen VOR der Verzweigung: die Tabelle unten braucht sie auch bei
+     backend_conf=off. */
+  const _lok = (h.llamacpp || {}), _cloud = (h.freeai || {});
   // BH-7: BACKEND=off ist eine bewusste Konfiguration, kein Ausfall.
   if (h.backend_conf === "off") {
     pill($("#p-llm"), "warn", "LLM AUS (KONFIG)");
   } else {
     const _ms = (h.budget && h.budget.avg_ms) || h.avg_ms || null;
     pill($("#p-llm"),
-         h.llamacpp.up ? "ok" : (h.ollama.up ? "warn" : "bad"),
-         (h.llamacpp.up ? "LLAMA.CPP" : (h.ollama.up ? "OLLAMA (FALLBACK)"
-                                                     : "LLM OFFLINE"))
+         _lok.up ? "ok" : (_cloud.up ? "warn" : "bad"),
+         (_lok.up ? "LLAMA.CPP" : (_cloud.up ? "CLOUD (RESERVE)"
+                                             : "LLM OFFLINE"))
          + (_ms ? " · " + Math.round(_ms) + "ms" : ""));
   }
   pill($("#p-budget"), b.remaining > 5 ? "ok"
@@ -630,11 +637,11 @@ async function loadLLM() {
   const s = await api("/llm/stats");
   $("#llm-tbl tbody").innerHTML = `
     <tr><td>Backend-Kette</td><td class="num">${esc(h.backend_conf)}</td></tr>
-    <tr><td>llama.cpp</td><td class="${h.llamacpp.up ? "okc" : "err"}">
-      ${h.llamacpp.up ? "UP · " + h.llamacpp.ms + " ms"
-                      : "DOWN (" + esc(h.llamacpp.error || "?") + ")"}</td></tr>
-    <tr><td>Ollama</td><td class="${h.ollama.up ? "okc" : "err"}">
-      ${h.ollama.up ? "UP · " + h.ollama.ms + " ms" : "DOWN"}</td></tr>
+    <tr><td>llama.cpp</td><td class="${_lok.up ? "okc" : "err"}">
+      ${_lok.up ? "UP · " + _lok.ms + " ms"
+                : "DOWN (" + esc(_lok.error || "?") + ")"}</td></tr>
+    <tr><td>${"Reserve in der Cloud"}</td><td class="${_cloud.up ? "okc" : "err"}">
+      ${_cloud.up ? "UP" : (h.freeai ? "DOWN" : "nicht in der Kette")}</td></tr>
     <tr><td>Antworten OK</td><td class="num">${s.ok}</td></tr>
     <tr><td>Budget-Ablehnungen</td><td>${s.budget_denied}</td></tr>
     <tr><td>Slot belegt</td><td>${s.busy_denied}</td></tr>`;

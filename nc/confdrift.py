@@ -41,7 +41,7 @@ WATCHLIST = {
     "RESTREAM_BITRATE_K": "hoeher = mehr CPU",
     "RESTREAM_RELAY_BITRATE_K": "hoeher = mehr CPU",
     "CHECK_INTERVAL": "Basis-Pollintervall",
-    "AI_PROVIDER": "brain = lokales llama.cpp (CPU!)",
+    "AI_PROVIDER": "auto = lokal wenn llama-server laeuft, lokal = immer zuerst, cloud = nie lokal",
 }
 
 # Diese Werte MUESSEN gesetzt werden — Drift ist dort normal und kein Hinweis.

@@ -10,10 +10,18 @@ After=network.target
 Type=simple
 # -t 4: 4 der 8 Kerne — ffmpeg/Whisper brauchen den Rest. Nice=10: Restreams
 # haben immer Vorrang vor der KI.
+# v4.2-W110: -c 8192 statt 4096 (wie Installer und SETUP_LLAMACPP.md — 4096
+# reicht nicht fuer Verlauf + Frage + eine 1024-Token-Antwort), und KEIN
+# --embeddings mehr. Laut llama.cpp-Server-Doku beschraenkt der Schalter den
+# Server auf Embeddings; /v1/chat/completions antwortet dann mit einem Fehler,
+# waehrend /health gruen ist — der Bot haette jede Anfrage still in die Cloud
+# geschickt. Embeddings holt brain/semantic.py von einem EIGENEN Server
+# (BRAIN_EMBED_URL, Vorgabe Port 8089), hier wurden sie nie gebraucht.
 ExecStart=/opt/llama.cpp/llama-server \
   -m /opt/models/qwen2.5-1.5b-instruct-q4_k_m.gguf \
-  --host 127.0.0.1 --port 8080 -t 4 -c 4096 --embeddings
+  --host 127.0.0.1 --port 8080 -t 4 -c 8192 --no-warmup
 Nice=10
+CPUWeight=50
 Restart=always
 RestartSec=5
 MemoryMax=3G

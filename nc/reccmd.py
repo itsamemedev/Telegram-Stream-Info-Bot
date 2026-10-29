@@ -259,6 +259,13 @@ def _build_native_cmd(stream_url: str, output_file: str, duration_secs: int,
     cmd += [
         "-i", stream_url,
         "-t", str(duration_secs),                    # Maximale Aufnahmedauer
+        # v4.2-W106: ausdrueckliche Auswahl statt ffmpegs Vorgabe. Die Vorgabe
+        # nimmt „ein Video, ein Audio, falls vorhanden" und schreibt bei
+        # tonloser Quelle still eine reine Videodatei. Beide optional, damit
+        # eine reine Ton-Live (ohne Bild) weiter aufgenommen wird wie bisher;
+        # dass am Ende Ton drin ist, sichert nc/tonspur.sichern() an der
+        # FERTIGEN Datei — vorab entscheidet erst das Probe-Fenster.
+        "-map", "0:v:0?", "-map", "0:a:0?",
         "-c", "copy",                                # Kein Re-Encoding
     ]
     if is_hls:

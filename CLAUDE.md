@@ -26,7 +26,7 @@ benutzt, berät an der Lage vorbei.**
 
 ## Die eine Regel
 
-`bot.py` hat **25.092 Zeilen / 1,2 MB ≈ 295.000 Token**. Diese Datei wird
+`bot.py` hat **25.314 Zeilen / 1,2 MB ≈ 295.000 Token**. Diese Datei wird
 **nie** ganz gelesen und **nie** blind durchsucht. Erst fragen wo etwas steht,
 dann den Ausschnitt holen:
 
@@ -42,7 +42,7 @@ dann den Ausschnitt holen:
     python tools/ncpatch.py docs                           # Doku-Zahlen gegen den Quelltext
 
 `find` antwortet aus `.claude/INDEX.md` — 369 Routen (34 in `bot.py`, 333 in
-`nc/routes/`), 60 Slash-Commands, 559 Funktionen mit Zeilennummern. Nach Änderungen an Routen, Commands oder
+`nc/routes/`), 65 Slash-Commands, 565 Funktionen mit Zeilennummern. Nach Änderungen an Routen, Commands oder
 Top-Level-Funktionen `map` neu laufen lassen. Details: Skill `nc-navigation`.
 
 Für „wer ruft das auf?" und „was ist der Typ?" ist der Sprachserver billiger als
@@ -57,8 +57,8 @@ Auf diesem Windows-Rechner heißt der Interpreter **`python`** (3.13.12);
                          Routen), Scraper, Recorder, Restream, Schema (init_db).
                          Hiess bis v4.0-W119 bot_v37.py — beim Suchen in
                          alten Notizen und Patch-Dateien daran denken.
-    discordbot.py        Der Discord-Teil (60 Slash-Commands, davon 15 in
-                         einer Schleife statt per Dekorator), seit v4.2-W15
+    discordbot.py        Der Discord-Teil (65 Slash-Commands, davon 22 aus
+                         dem Verzeichnis nc/befehle.py), seit v4.2-W15
                          heraus. Bot-seitig, weil er discord.py importiert und
                          ein Gateway aufmacht — nicht nach nc/, das bot-frei
                          bleibt. Bekommt alles per starte(ctx), importiert
@@ -71,7 +71,7 @@ Auf diesem Windows-Rechner heißt der Interpreter **`python`** (3.13.12);
     brain_bridge.py      Adapter Bot ↔ brain/ (M2)
     brain/               KI-Kern: state, rules, router, agents, memory,
                          semantic, knowledge, scheduler, llm, report
-    nc/                  150 Fachmodule: db, scraping, restream, oauth, ledger,
+    nc/                  155 Fachmodule: db, scraping, restream, oauth, ledger,
                          i18n, …
     nc/routes/           36 Flask-Blueprints mit 335 weiteren API-Routen
     locales/             de.json, en.json — der Übersetzungskatalog
@@ -1076,6 +1076,50 @@ Riegel, von denen einer wirkt, sind ein Riegel und eine falsche Gewissheit
 (W98). Die redundante Zeile ist weg, der Vertrag prüft beide Adressformen, und
 die Lehre aus W89 gilt unverändert: **eine Probe, die entwischt, ist ein Befund
 — manchmal am Vertrag, manchmal am Riegel darunter.**
+
+**Ohne `-map` entscheidet ffmpeg — und bei tonloser Quelle entscheidet es
+still für eine Datei ohne Ton.** Bis v4.2-W106 lief die Aufnahme mit `-c copy`
+ohne `-map`, der Restream mappte dafür hart `0:a` und starb an „Stream map
+'0:a' matches no streams" in einer Reconnect-Schleife, die nie etwas ändern
+konnte. Seither mappt jeder Bauer ausdrücklich, der Restream sendet nach dem
+ersten solchen Abbruch mit Stille (`nc/tonspur.py`), und die fertige Aufnahme
+wird geprüft und notfalls nachgerüstet. **Wer einen ffmpeg-Bauer anfasst,
+lässt `tonspur.hat_tonspur(cmd)` im Vertrag mitlaufen.**
+
+**Ein Automat, der in einer fremden Schleife hängt, läuft nur, wenn die
+fremde Schleife läuft.** Der Cookie-Auto-Bezug („Standard: an") stand bis
+v4.2-W107 im Telegram-Cookie-Alarm — und der startet nur mit Alarm-Chat. Ohne
+Chat lief der Standard nie, und nichts sagte es. Seither eigene Schleife,
+Zeitplan in `nc/cookiebezug.py`, und **jeder** Bezugsweg geht durch
+`holen()`. Wer einen Automaten baut: eigene Schleife, im Deck den nächsten
+Lauf zeigen, und prüfen, unter welcher Bedingung er überhaupt gestartet wird.
+
+**Pixelsalat lässt sich nicht wegfiltern, nur vermeiden.** Gemessen in
+v4.2-W108 (ffmpeg 6.1): fehlen einer Live-Quelle Pakete mitten im GOP — was
+ein CDN einem zu langsam lesenden Client antut —, zerfallen die Bilder bis
+zum nächsten Keyframe, und kein Decoder-Schalter (`discardcorrupt`,
+`-output_corrupt`) ändert daran ein Bild. Abriss-Resync und B-Frames unter
+`+igndts` waren dagegen sauber. Deshalb wählt `nc/lastvorsorge.py` die
+Drosselstufe schon beim Start. **Wer eine Ersparnis in die Kostentabelle
+schreibt, misst sie vorher** — ungemessen steht dort 1,0.
+
+**`globals()` in einem ausgelagerten Modul ist der Namensraum DIESES
+Moduls.** W4 hat das für `bot.py` gefunden — und `discordbot.py` las den
+Telegram-Bot seit W15 trotzdem so: der Stern-Highlight-Push nach Telegram
+endete immer still. Was ein ausgelagerter Teil vom Bot braucht, kommt über
+den Kontext, und ein Wert, der erst später entsteht, als **Getter**
+(v4.2-W109, `bot_app_holen`). Ebenso: **Befehle stehen in `nc/befehle.py`**,
+nirgends sonst — wer einen Befehl hinzufügt, trägt ihn dort ein, und Telegram,
+Discord, `/help` und das Telegram-Menü folgen von selbst.
+
+**Eine Bedingung, die per Vorgabe nie wahr ist, schaltet ein Feature ab —
+lautlos.** Das installierte llama.cpp lief bis v4.2-W110 nie: der Bot fragte es
+nur bei `AI_PROVIDER=brain`, und die Zeile stand in keiner `.env`. Dazu ein
+`get_brain().llm.models()`, das es gar nicht gab (AttributeError still
+gefangen), ein Brain-Panel, das `h.ollama.up` las und dadurch **immer**
+abbrach, und eine mitgelieferte Unit mit `--embeddings`. Seither entscheidet
+`nc/kiwahl.py` an einer Stelle. **Wer ein Feature hinter einen Schalter legt,
+prüft, welchen Wert der Schalter auf einer frischen Installation hat.**
 
 **Einmal-`await` ohne Supervisor.** Jeder Long-Running-Client braucht Reconnect
 mit Backoff **und** ein Abbruchkriterium für deterministische Fehler.

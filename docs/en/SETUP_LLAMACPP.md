@@ -64,25 +64,44 @@ systemctl daemon-reload && systemctl enable --now llamacpp
 curl -s localhost:8080/health
 ```
 
-## 4. Switch NIGHTCRAWLER over (.env)
+## 4. What the bot expects from the server
+
+| Expectation | Why |
+|---|---|
+| `--host 127.0.0.1 --port 8080` (or set `BRAIN_LLAMACPP_URL`) | local only — the server has no authentication |
+| `GET /health` returns 200 | this decides "local or cloud" (15 s cache, 3 s timeout) |
+| `POST /v1/chat/completions` (OpenAI-compatible) | the actual chat |
+| `GET /v1/models` | model list in the dashboard and the self-check |
+| `-t 4`, `Nice=10`, `CPUWeight=50` | broadcast and recordings come first |
+
+**Do not start it with `--embeddings`.** According to the llama.cpp server docs
+that switch restricts the server to embeddings — `/health` stays green, chat
+fails, and every request would go to the cloud. The bundled
+`llama-server.service` had it until v4.2-W110. Brain embeddings come from a
+separate server (`BRAIN_EMBED_URL`, default port 8089).
+
+## 5. NIGHTCRAWLER (.env) — nothing needed since v4.2-W110
+
+Since v4.2-W110 the local llama.cpp is **preferred automatically** as soon as
+`/health` answers. Before, the bot only asked it with `AI_PROVIDER=brain`.
 
 ```bash
-BRAIN_LLM_BACKEND=auto          # llamacpp first, Ollama fallback
+# all defaults — only set what you want to change
+AI_PROVIDER=auto                # auto = local if reachable | lokal = always first | cloud = never local
+REACTION_AI_PROVIDER=auto       # same rule for AZRAEL's live reactions
+BRAIN_LLM_BACKEND=auto          # in brain/: llama.cpp first, keyless cloud as reserve
 BRAIN_LLAMACPP_URL=http://127.0.0.1:8080
-BRAIN_LLM_MAX_CALLS_H=30        # hard hourly budget for tier 4
-BRAIN_LLM_TIMEOUT_S=60
+BRAIN_LLM_MAX_CALLS_H=30
+BRAIN_LLM_TIMEOUT_S=300
 ```
 
-Test: `curl -s -X POST localhost:PORT/api/brain/llm/ask -H 'Content-Type: application/json' -d '{"prompt":"Status?"}'`
-→ `"backend": "llamacpp"` in the response.
+Order of every request: **Claude** (only with an Anthropic key) → **local
+llama.cpp** → **keyless cloud**. Images (vision) still go to the cloud.
 
-## 5. Switch Ollama off (once stable)
+## 6. Ollama is gone
 
 ```bash
-BRAIN_LLM_BACKEND=llamacpp      # disable the fallback chain
-systemctl disable --now ollama  # Go daemon + registry gone, ~0.5-1 GB RAM freed
+systemctl disable --now ollama
 ```
 
-The existing Ollama path in bot_v36 (`ai_chat`) stays functional — moving
-`ai_chat` over to the brain runtime comes in the final `bot.py` as the env flag
-`AI_PROVIDER=brain` (default: unchanged).
+`OLLAMA_URL`, `OLLAMA_MODEL` and friends are no longer read.

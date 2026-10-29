@@ -36,6 +36,7 @@ from nc import ffmpeg_filters as _nc_ff
 from nc import restream_targets as _nc_rst
 from nc import restream_util as _nc_rutil
 from nc import restreamstate as _nc_rsstate
+from nc import tonspur as _nc_tonspur
 
 log = logging.getLogger("TikTokBot")
 
@@ -376,7 +377,7 @@ def drossel_zusatz(fps, w, h, stufe):
 DROSSEL_MAX = 5
 
 
-def build(source_url, ingest_url, stream_key, transcode=False, tts_fifo=None, rid=None, only_target=None, relay_profile=False, html_ov_fifo=None, targets=None, avatar_feed=None, drossel=0):
+def build(source_url, ingest_url, stream_key, transcode=False, tts_fifo=None, rid=None, only_target=None, relay_profile=False, html_ov_fifo=None, targets=None, avatar_feed=None, drossel=0, tonlos=False):
     """ffmpeg-Relay: zieht die TikTok-Quelle und pusht per RTMP(S)/FLV an Kick/AWS-IVS.
        Input-Flags spiegeln den BEWÄHRTEN Aufnahme-Pfad (_build_native_cmd): FLV =
        eine saubere Dauerverbindung (bevorzugt); HLS braucht +genpts+igndts, weil
@@ -560,6 +561,18 @@ def build(source_url, ingest_url, stream_key, transcode=False, tts_fifo=None, ri
         cmd += ["-thread_queue_size", "512", "-f", "image2pipe",
                 "-framerate", str(RESTREAM_OVERLAY_HTML_FPS), "-i", html_ov_fifo]
         htmlov_idx = _idx; _idx += 1
+    # v4.2-W106: Stille als LETZTER Eingang, damit sie keinen der Indizes
+    # oben verschiebt. Gesetzt nur, wenn der Manager die Quelle als tonlos
+    # erkannt hat (nc/tonspur.ist_tonlos_fehler) — sonst bliebe ffmpeg an
+    # „Stream map '0:a' matches no streams" haengen und der Manager verbrennt
+    # sein Reconnect-Budget an einem Fehler, der bei jedem Versuch gleich ist.
+    # Ohne den Schalter wird Ton HART gemappt: lieber ein lauter Abbruch, den
+    # der Manager in Stille uebersetzt, als ein stiller Strom ohne Ton.
+    _asrc = "0:a"
+    if tonlos:
+        cmd += _nc_tonspur.stille_eingabe()
+        _asrc = "%d:a" % _idx; _idx += 1
+    _amap = _asrc + ":0"
     if transcode:
         br = f"{RESTREAM_BITRATE_K}k"
         studio_on = bool(overlay_on and _restream_layout_mode() == "studio")
@@ -588,10 +601,11 @@ def build(source_url, ingest_url, stream_key, transcode=False, tts_fifo=None, ri
                 # t laeuft also live mit statt einmalig beim Filter-Init).
                 fc.append(f"[{vlabel}][av]overlay=W-w-W*0.06:H-h-40-8*sin(2*PI*t/6):eof_action=repeat:shortest=0[v]"); vlabel = "v"
             if use_tts:
-                fc.extend(_nc_audio.mix_chain(tts_idx, _TTS_VOICE_GAIN, _audio_cfg()["duck"]))
+                fc.extend(_nc_audio.mix_chain(tts_idx, _TTS_VOICE_GAIN, _audio_cfg()["duck"],
+                                             src=_asrc))
             cmd += ["-filter_complex", ";".join(fc)]
             cmd += ["-map", f"[{vlabel}]"]
-            cmd += ["-map", "[a]" if use_tts else "0:a"]
+            cmd += ["-map", "[a]" if use_tts else _amap]
         elif use_tts or avatar_on or studio_on:
             # filter_complex: Studio-Leinwand ODER drawtext-Kette → optional
             # Avatar-Overlay → amix Quelle+Stimme.
@@ -615,12 +629,18 @@ def build(source_url, ingest_url, stream_key, transcode=False, tts_fifo=None, ri
             if use_tts:
                 # normalize=0 → Quell-Ton bleibt VOLL (amix halbiert sonst beide Inputs);
                 # Stimme angehoben damit klar hörbar, alimiter fängt Clipping ab.
-                fc.extend(_nc_audio.mix_chain(tts_idx, _TTS_VOICE_GAIN, _audio_cfg()["duck"]))
+                fc.extend(_nc_audio.mix_chain(tts_idx, _TTS_VOICE_GAIN, _audio_cfg()["duck"],
+                                             src=_asrc))
             cmd += ["-filter_complex", ";".join(fc)]
             cmd += ["-map", (f"[{vlabel}]" if vlabel != "0:v" else "0:v")]
-            cmd += ["-map", "[a]" if use_tts else "0:a"]
-        elif overlay_on:
-            cmd += ["-vf", _drawtext_chain(rid)]
+            cmd += ["-map", "[a]" if use_tts else _amap]
+        else:
+            # v4.2-W106: auch ohne Filtergraph ausdruecklich mappen. Vorher
+            # stand hier kein -map, und ffmpegs Vorgabeauswahl schickte bei
+            # tonloser Quelle still nur das Bild raus.
+            if overlay_on:
+                cmd += ["-vf", _drawtext_chain(rid)]
+            cmd += ["-map", "0:v:0", "-map", _amap]
         _preset = RESTREAM_RELAY_PRESET if relay_profile else RESTREAM_X264_PRESET
         _preset = drossel_preset(_preset, drossel)
         if relay_profile:
@@ -648,17 +668,24 @@ def build(source_url, ingest_url, stream_key, transcode=False, tts_fifo=None, ri
                 # V37-STAB: großer Muxing-Queue gegen "Too many packets buffered"
                 # bei kurzem Encode-Rückstand → kein harter Abbruch.
                 "-max_muxing_queue_size", "1024",
-                "-c:a", "aac", "-b:a", "160k", "-ar", "44100", "-ac", "2"]
+                *_nc_tonspur.AAC_ARGS]
     else:
         # copy-Modus: Video bleibt Copy. Audio → AAC (FLV/RTMP mag kein HE-AAC/Opus).
         cmd += ["-c:v", "copy"]
         if use_tts:
             # Stimme reinmischen — dadurch wird NUR der Ton re-enkodiert, Video bleibt copy.
             cmd += ["-filter_complex",
-                    ";".join(_nc_audio.mix_chain(tts_idx, _TTS_VOICE_GAIN, _audio_cfg()["duck"]))]
+                    ";".join(_nc_audio.mix_chain(tts_idx, _TTS_VOICE_GAIN, _audio_cfg()["duck"],
+                                                 src=_asrc))]
             cmd += ["-map", "0:v", "-map", "[a]"]
-        cmd += ["-c:a", "aac", "-b:a", "160k", "-ar", "44100"]
-        if is_hls and not use_tts:
+        else:
+            # v4.2-W106: siehe Transcode-Zweig — ohne -map ging bei tonloser
+            # Quelle still ein Strom ohne Ton an alle Ziele.
+            cmd += ["-map", "0:v:0", "-map", _amap]
+        # Dasselbe Tonformat wie im Transcode (stereo erzwungen): ein Mono-Ton
+        # aus TikTok wird sonst als Mono an Ziele gereicht, die Stereo erwarten.
+        cmd += list(_nc_tonspur.AAC_ARGS)
+        if is_hls and not use_tts and not tonlos:
             cmd += ["-bsf:a", "aac_adtstoasc"]           # nur bei reinem Copy-Audio nötig (kein Re-Mix)
     # no_duration_filesize: unterdrückt 'Failed to update header with correct duration'.
     # F103: MULTISTREAM — sind Zusatzplattformen aktiv (YT/Twitch), über den

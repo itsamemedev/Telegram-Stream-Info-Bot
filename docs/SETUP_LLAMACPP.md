@@ -1,4 +1,4 @@
-# SETUP_LLAMACPP.md — M6: llama-server auf ns3068954 (Ollama-Ablösung)
+# SETUP_LLAMACPP.md — M6: llama-server auf ns3068954 (lokales LLM, bevorzugt)
 
 > 🌐 **Deutsch** · [English](en/SETUP_LLAMACPP.md)
 
@@ -64,25 +64,76 @@ systemctl daemon-reload && systemctl enable --now llamacpp
 curl -s localhost:8080/health
 ```
 
-## 4. NIGHTCRAWLER umstellen (.env)
+## 4. Was der Bot vom Server erwartet
+
+| Erwartung | Warum |
+|---|---|
+| `--host 127.0.0.1 --port 8080` (oder `BRAIN_LLAMACPP_URL` passend setzen) | nur lokal erreichbar — der Server hat keine Anmeldung |
+| `GET /health` antwortet 200 | daran entscheidet der Bot „lokal oder Cloud" (15-s-Cache, 3 s Timeout) |
+| `POST /v1/chat/completions` (OpenAI-kompatibel) | der eigentliche Chat; jeder andere OpenAI-kompatible Server geht genauso |
+| `GET /v1/models` | Modellliste im Deck und im Selbsttest |
+| `-t 4`, `Nice=10`, `CPUWeight=50` | Sendebild und Aufnahmen haben Vorrang. Seit v4.2-W108 zählt die Restream-Drossel die Load beim Start mit — ein lokales LLM unter Volllast senkt dort die Startstufe, statt Pixelsalat zu erzeugen |
+
+Der Dienst darf `llamacpp.service` oder `llama-server.service` heißen — der Bot
+spricht nur HTTP mit ihm.
+
+**Nicht mit `--embeddings` starten.** Laut llama.cpp-Server-Doku beschränkt der
+Schalter den Server auf Embeddings — `/health` ist dann grün, der Chat antwortet
+mit einem Fehler, und jede Anfrage ginge in die Cloud. Die mitgelieferte
+`llama-server.service` hatte ihn bis v4.2-W110. Embeddings für das Brain kommen
+von einem eigenen Server (`BRAIN_EMBED_URL`, Vorgabe Port 8089). Prüfen:
 
 ```bash
-BRAIN_LLM_BACKEND=auto          # llamacpp zuerst, Ollama-Fallback
+curl -s localhost:8080/v1/chat/completions -H 'Content-Type: application/json' \
+  -d '{"messages":[{"role":"user","content":"Sag nur: ok"}],"max_tokens":8}'
+```
+
+Antwortet das mit einem Fehler statt mit `choices`, steht seit W110 im Log
+`LLM-Backend llamacpp scheitert: …`.
+
+## 5. NIGHTCRAWLER (.env) — seit v4.2-W110 ist nichts mehr nötig
+
+Ab v4.2-W110 wird das lokale llama.cpp **von selbst bevorzugt**, sobald
+`/health` antwortet. Vorher fragte der Bot es nur bei `AI_PROVIDER=brain`,
+ohne die Zeile ging jede Anfrage in die Cloud.
+
+```bash
+# alles Vorgaben — nur setzen, wer abweichen will
+AI_PROVIDER=auto                # auto = lokal wenn erreichbar | lokal = immer zuerst | cloud = nie lokal
+REACTION_AI_PROVIDER=auto       # dieselbe Regel fuer AZRAELs Live-Reaktionen
+BRAIN_LLM_BACKEND=auto          # in brain/: llama.cpp zuerst, keyless Cloud als Reserve
 BRAIN_LLAMACPP_URL=http://127.0.0.1:8080
-BRAIN_LLM_MAX_CALLS_H=30        # hartes Stundenbudget Tier 4
-BRAIN_LLM_TIMEOUT_S=60
+BRAIN_LLM_MAX_CALLS_H=30        # hartes Stundenbudget (danach Cloud)
+BRAIN_LLM_TIMEOUT_S=300         # CPU-Inferenz braucht Zeit
 ```
 
-Test: `curl -s -X POST localhost:PORT/api/brain/llm/ask -H 'Content-Type: application/json' -d '{"prompt":"Status?"}'`
-→ `"backend": "llamacpp"` in der Antwort.
+Reihenfolge jeder Anfrage: **Claude** (nur wenn ein Anthropic-Key gesetzt ist)
+→ **lokales llama.cpp** → **keyless Cloud** (`nc/freeai`). Budget erschöpft
+oder Inferenz-Slot belegt (Concurrency 1) heißt: diese eine Anfrage geht in die
+Cloud, die nächste versucht wieder lokal.
 
-## 5. Ollama abschalten (wenn stabil)
+**Bilder (Vision) gehen weiter in die Cloud.** llama-server kann das nur mit
+einem multimodalen Modell plus `--mmproj`, und der Chat-Pfad reicht Bilder
+nicht im OpenAI-Format durch.
+
+Prüfen:
 
 ```bash
-BRAIN_LLM_BACKEND=llamacpp      # Fallback-Kette deaktivieren
-systemctl disable --now ollama  # Go-Daemon + Registry weg, ~0.5-1 GB RAM frei
+curl -s localhost:8080/health
+curl -s localhost:8080/v1/models
+python3 bot.py --selfcheck      # Zeile „Lokales LLM: llama-server antwortet (…) — bevorzugt"
 ```
 
-Der bestehende Ollama-Pfad in bot_v36 (`ai_chat`) bleibt funktional —
-die Umstellung von ai_chat auf die Brain-Runtime kommt im finalen
-bot.py als env-Schalter `AI_PROVIDER=brain` (Default: unverändert).
+Im Brain-Panel steht in der Pille `LLAMA.CPP` (lokal) bzw. `CLOUD (RESERVE)`.
+
+## 6. Ollama ist entfernt
+
+Seit V37 spricht der Bot kein Ollama mehr, seit v4.2-W110 nennt er es auch
+nirgends mehr als Ratschlag. Läuft der Dienst noch:
+
+```bash
+systemctl disable --now ollama   # ~0.5–1 GB RAM frei
+```
+
+`OLLAMA_URL`, `OLLAMA_MODEL` und Verwandte liest der Bot nicht mehr; sie
+können aus der `.env`.

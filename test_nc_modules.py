@@ -5324,8 +5324,14 @@ def _test_v42_w15_discord_aus_dem_monolithen():
              if k not in bot_top]
     assert not fehlt, "vom Kontext verlangt, in bot.py nicht definiert: %s" % fehlt
     # Und umgekehrt: die Platzhalter muessen die Schluesselmengen abdecken.
-    fehlt = [k for k in list(_botctx.BEFEHLE) + list(_botctx.SCHALTER) if k not in platz]
+    # ANKER GEWANDERT (v4.2-W109): die geteilten Telegram-Handler haben keine
+    # Einzel-Platzhalter mehr, sie landen im Woerterbuch _TG_HANDLER. Gefragt
+    # bleibt, ob jeder Schluessel drueben ankommt — fuer SCHALTER als
+    # Platzhalter, fuer BEFEHLE ueber die Uebernahme des ganzen Woerterbuchs.
+    fehlt = [k for k in _botctx.SCHALTER if k not in platz]
     assert not fehlt, "Schluessel ohne Platzhalter in discordbot.py: %s" % fehlt
+    assert "_TG_HANDLER.update(ctx.befehle)" in _ast.unparse(uebern), \
+        "die geteilten Telegram-Handler erreichen discordbot.py nicht mehr"
     ok("W15: alle %d Kontext-Schluessel existieren beidseitig"
        % (len(_botctx.BEFEHLE) + len(_botctx.SCHALTER)))
 
@@ -5337,7 +5343,7 @@ def _test_v42_w15_discord_aus_dem_monolithen():
             discord_post_user=print, disc_state_get=print, disc_state_set=print,
             whisper_transcribe=print, add_tracking=print, azrael_chat=print,
             clip_moment=print, einladung_merken=print, kick_mod=None,
-            fehler_schlange=None, boot_ts=0.0,
+            fehler_schlange=None, boot_ts=0.0, bot_app_holen=lambda: None,
             befehle={k: print for k in _botctx.BEFEHLE},
             schalter={k: "" for k in _botctx.SCHALTER})
 
@@ -10254,18 +10260,27 @@ def _test_v42_w73_schleifen_befehle_werden_gezaehlt():
         _sys.path.insert(0, os.path.join(hier, "tools"))
     import ncpatch as N
 
-    # --- 1) Alle 60 werden gesehen, keiner doppelt -----------------------
+    # --- 1) Alle werden gesehen, keiner doppelt -------------------------
+    # ANKER GEWANDERT (v4.2-W109, nicht der Vertrag): die Schleife laeuft
+    # seither ueber nc/befehle.discord_ueber_tg() statt ueber die Tabelle
+    # _PAR_CMDS, und die Namen tragen kein sys_ mehr. Die Aussage bleibt:
+    # das Werkzeug sieht JEDEN registrierten Befehl, auch die aus der
+    # Schleife. Die Sollzahl kommt aus dem Verzeichnis, nicht von Hand.
+    from nc import befehle as _B
     treffer = N._scan(os.path.join(hier, "discordbot.py"))["slash"]
     namen = [n for _z, n, _b in treffer]
-    assert len(namen) == 60, \
-        "es werden %d statt 60 Slash-Commands gezaehlt (45 dekoriert + 15 " \
-        "in der Schleife)" % len(namen)
-    assert len(set(namen)) == 60, \
+    soll = {b.name for b in _B.fuer(_B.DC)}
+    assert set(namen) == soll, \
+        "Werkzeug und Verzeichnis sind uneins — fehlt: %r, zuviel: %r" % (
+            sorted(soll - set(namen)), sorted(set(namen) - soll))
+    assert len(namen) == len(set(namen)), \
         "ein Befehl wird doppelt gezaehlt: %r" % [
             n for n in set(namen) if namen.count(n) > 1]
-    for pflicht in ("sys_pause", "sys_cookies", "sys_teststream", "sys_diag"):
+    for pflicht in ("pause", "cookies", "teststream", "diag"):
         assert pflicht in namen, \
             "%s wird nicht gefunden — die Schleifen-Erkennung greift nicht" % pflicht
+    assert not [n for n in namen if n.startswith("sys_")], \
+        "es gibt wieder sys_-Befehle — der Name ist auf beiden Plattformen derselbe"
 
     # --- 2) Die Spalten werden AUFGELOEST, nicht geraten -----------------
     # Der Beweis: eine Tabelle, in der Name und Beschreibung VERTAUSCHT sind.
@@ -10293,7 +10308,7 @@ def _test_v42_w73_schleifen_befehle_werden_gezaehlt():
         assert beschr["echt_eins"] == "Erste Beschreibung", beschr
     finally:
         os.unlink(_t.name)
-    ok("W73: die 15 Schleifen-Befehle werden gezaehlt, Spalten aufgeloest statt geraten")
+    ok("W73: die Schleifen-Befehle werden gezaehlt, Spalten aufgeloest statt geraten")
 
     # --- 3) Ohne Schleife faellt die Zahl — und das merkt jemand ---------
     baum = _ast.parse(io.open(os.path.join(hier, "discordbot.py"),
@@ -10309,9 +10324,10 @@ def _test_v42_w73_schleifen_befehle_werden_gezaehlt():
     # --- 4) Und die Doku nennt sie jetzt beim Namen ----------------------
     # Die Zahl allein genuegt nicht: vor W73 stand in einer Fussnote sogar,
     # dass es die sys_*-Befehle gibt — aufgelistet waren sie trotzdem nie.
+    # Seit W109: jeder Schleifen-Befehl (die gemeinsamen) namentlich.
     readme = io.open(os.path.join(hier, "README.md"), encoding="utf-8").read()
-    fehlen = [n for n in namen if n.startswith("sys_")
-              and ("/" + n) not in readme]
+    fehlen = [b.name for b in _B.discord_ueber_tg()
+              if ("`/" + b.name + "`") not in readme]
     assert not fehlen, \
         "diese Befehle sind registriert, stehen aber in keiner Liste im " \
         "README: %r" % fehlen
@@ -10319,13 +10335,13 @@ def _test_v42_w73_schleifen_befehle_werden_gezaehlt():
     # sechs Stellen stimmt. Die Mutationsprobe zu W73 hat genau das gezeigt:
     # eine zurueckgedrehte Ueberschrift blieb still. (Der Doku-Job faengt es
     # ueber tools/ncpatch.py docs; hier soll es die Suite ebenfalls sehen.)
-    assert "60 Slash-Commands" in readme, \
-        "das README nennt nirgends die gezaehlten 60 Slash-Commands"
+    assert "%d Slash-Commands" % len(namen) in readme, \
+        "das README nennt nirgends die gezaehlten %d Slash-Commands" % len(namen)
     veraltet = [z for z in readme.splitlines() if "45 Slash-Commands" in z]
     assert not veraltet, \
         "im README steht weiterhin die alte Zahl 45: %r — sie stammt aus " \
         "der Zeit, als die 15 Schleifen-Befehle nicht mitgezaehlt wurden" % veraltet
-    ok("W73: alle 60 stehen im README, die 15 sys_*-Befehle namentlich")
+    ok("W73: alle Slash-Commands stehen im README, die gemeinsamen namentlich")
 
 
 def _test_v42_w72_befehle_haben_eine_registrierung():
@@ -10420,16 +10436,27 @@ def _test_v42_w72_befehle_haben_eine_registrierung():
     dek = [d for x in _ast.walk(baum)
            if isinstance(x, (_ast.FunctionDef, _ast.AsyncFunctionDef))
            for d in x.decorator_list if "tree.command" in _ast.unparse(d)]
-    assert len(dek) == 45, \
-        "es sind %d statt 45 dekorierte Slash-Commands" % len(dek)
-    par = [n for n in _ast.walk(baum) if isinstance(n, _ast.Assign)
-           and any(isinstance(t, _ast.Name) and t.id == "_PAR_CMDS" for t in n.targets)]
-    assert par, "_PAR_CMDS ist weg — damit fehlen 15 sys_*-Befehle"
-    assert len(par[0].value.elts) == 15, \
-        "_PAR_CMDS hat %d statt 15 Eintraege" % len(par[0].value.elts)
-    assert "tree.command(name=_pname" in src, \
-        "die Schleife registriert die 15 sys_*-Befehle nicht mehr"
-    ok("W72: 45 dekorierte und 15 dynamische Befehle — zusammen 60, alle da")
+    # ANKER GEWANDERT (v4.2-W109): 43 dekorierte (sys_report und
+    # sys_unpause waren Kopien und laufen jetzt ueber den Shim) plus die
+    # Schleife ueber nc/befehle.discord_ueber_tg() statt ueber _PAR_CMDS.
+    from nc import befehle as _B
+    nativ = {b.name for b in _B.discord_nativ()}
+    dek_namen = {_ast.literal_eval(k.value) for x in _ast.walk(baum)
+                 if isinstance(x, (_ast.FunctionDef, _ast.AsyncFunctionDef))
+                 for d in x.decorator_list if "tree.command" in _ast.unparse(d)
+                 for k in d.keywords if k.arg == "name"}
+    assert len(dek) == len(nativ) and dek_namen == nativ, \
+        "dekoriert und als nativ verzeichnet sind uneins — fehlt: %r, zuviel: %r" % (
+            sorted(nativ - dek_namen), sorted(dek_namen - nativ))
+    schleife = [n for n in _ast.walk(baum) if isinstance(n, _ast.For)
+                and _ast.unparse(n.iter) == "_nc_befehle.discord_ueber_tg()"]
+    assert schleife, "die Schleife ueber das Verzeichnis ist weg — damit " \
+        "fehlen alle gemeinsamen Befehle"
+    assert "tree.command(name=_bf.name" in _ast.unparse(schleife[0]), \
+        "die Schleife registriert die gemeinsamen Befehle nicht mehr unter " \
+        "ihrem Verzeichnis-Namen"
+    ok("W72: %d dekorierte und %d aus dem Verzeichnis — alle da" % (
+        len(dek), len(_B.discord_ueber_tg())))
 
     # --- 6) _discord_run_once ist wirklich geschrumpft -------------------
     laenge = lauf.end_lineno - lauf.lineno + 1
@@ -10548,10 +10575,15 @@ def _test_v42_w71_discord_run_once_geschrumpft():
     befehle = [d for x in _ast.walk(baum)
                if isinstance(x, (_ast.FunctionDef, _ast.AsyncFunctionDef))
                for d in x.decorator_list if "tree.command" in _ast.unparse(d)]
-    assert len(befehle) == 45, \
-        "es sind %d statt 45 Slash-Commands registriert — beim Umbau ist " \
-        "einer verlorengegangen" % len(befehle)
-    ok("W71: neun Helfer auf Modulebene, 45 Slash-Commands unveraendert")
+    # ANKER GEWANDERT (v4.2-W109): die Sollzahl der DEKORIERTEN Befehle steht
+    # im Verzeichnis (nativ) — 43, seit /sys_report und /sys_unpause als
+    # Kopien entfallen sind und ueber den Shim laufen.
+    from nc import befehle as _B
+    soll = len(_B.discord_nativ())
+    assert len(befehle) == soll, \
+        "es sind %d statt %d dekorierte Slash-Commands registriert — beim " \
+        "Umbau ist einer verlorengegangen" % (len(befehle), soll)
+    ok("W71: neun Helfer auf Modulebene, %d dekorierte Slash-Commands" % soll)
 
 
 def _test_v42_w70_keine_neue_riesenfunktion():
@@ -19790,6 +19822,946 @@ def _test_v42_w105_chat_laeuft_durch_den_tunnel():
        "/healthz nennt die Lage ohne zu messen")
 
 
+def _test_v42_w106_jede_ausgabe_traegt_ton():
+    """Fehlende Tonspuren — zwei Fehlerbilder, eines still, eines laut.
+
+    Die Aufnahme lief mit `-c copy` ohne `-map`: ffmpegs Vorgabeauswahl
+    schrieb bei tonloser Quelle still eine reine Videodatei. Der Restream
+    mappte im Transcode hart `0:a` und starb bei tonloser Quelle an „Stream
+    map '0:a' matches no streams" — weder Netz noch Codec, also griff kein
+    Fallback, und das Reconnect-Budget lief an einem Fehler leer, den ein
+    Reconnect nie behebt. Im Copy-Pfad ohne Stimme gab es gar kein `-map`.
+    """
+    import ast as _ast
+    import asyncio as _aio
+    import os as _os
+    import tempfile as _tf
+    import threading as _th
+    from nc import reccmd as _rc
+    from nc import restreamcmd as R
+    from nc import restream_stability as _stab
+    from nc import tonspur as T
+
+    # ── (1) DIE ERKENNUNG. Beide Meldungsformen von ffmpeg, und NUR Ton: ein
+    # leeres '0:v' ist eine kaputte Quelle und braucht eine neue URL, keine
+    # Stille.
+    for laut in ("Stream map '0:a' matches no streams.",
+                 "Stream map '0:a:0' matches no streams.",
+                 "[fc#0 @ 0x1] Stream specifier ':a' in filtergraph description "
+                 "[2:a]volume=1.8[vtts];[0:a][vtts]amix matches no streams.",
+                 "x\nSTREAM MAP '0:A' MATCHES NO STREAMS.\n"):
+        assert T.ist_tonlos_fehler(laut), laut
+    for still in ("Stream map '0:v' matches no streams.",
+                  "Connection timed out", "Server returned 404 Not Found",
+                  "", None):
+        assert not T.ist_tonlos_fehler(still), still
+    # Und darum hat bisher nichts gegriffen: der Codec-Fallback sagt zu
+    # dieser Zeile korrekt Nein. Faellt diese Zeile, ist sie kein Grund zum
+    # Feiern — dann schaltet ein tonloser Copy-Restream auf transcode und
+    # stirbt dort am selben Map.
+    assert not _stab.is_codec_failure("Stream map '0:a' matches no streams.")
+
+    # ── (2) DIE LAGE EINER FERTIGEN DATEI. None, wenn ffprobe nichts
+    # hergibt — einer leeren/kaputten Datei Stille anzuhaengen versteckte
+    # den Defekt hinter einer gueltig aussehenden Datei.
+    assert T.hat_ton('{"streams":[{"codec_type":"video"},{"codec_type":"audio"}]}') is True
+    assert T.hat_ton({"streams": [{"codec_type": "audio"}]}) is True
+    assert T.hat_ton(b'{"streams":[{"codec_type":"video"}]}') is False
+    for nichts in ('{"streams":[]}', "{}", None, "[]", '{"streams":null}'):
+        assert T.hat_ton(nichts) is None, nichts
+    try:
+        T.hat_ton("kein json")
+        raise AssertionError("unlesbares JSON wird still zu None")
+    except ValueError:
+        pass
+
+    nach = T.nachruest_cmd("/rec/a.mp4", "/rec/a.tonspur.mp4")
+    i = nach.index("ffmpeg")
+    assert T.STILLE_QUELLE in nach and "-shortest" in nach, nach
+    assert nach[nach.index("-c:v") + 1] == "copy", "das Bild wird neu kodiert"
+    assert T.hat_tonspur(nach[i:]), nach
+
+    # ── (3) DER RESTREAM — jede Kombination traegt Ton, hart gemappt.
+    schrift = _tf.NamedTemporaryFile(suffix=".ttf", delete=False)
+    schrift.write(b"x"); schrift.close()
+    avatar = _tf.NamedTemporaryFile(suffix=".png", delete=False)
+    avatar.write(b"x"); avatar.close()
+    OVDIR = _ph.verzeichnis()
+    OV = {k: _os.path.join(OVDIR, k + ".txt") for k in
+          ("alert", "brand", "caption", "chat", "follow", "goal",
+           "react", "source", "title")}
+    for _pfad in OV.values():
+        open(_pfad, "w").write("x")
+
+    def _konf(overlay, av):
+        R.configure(
+            cookie_header=lambda: "", pick_pull_proxy=lambda: "",
+            restream_overlay_files=lambda rid=None: OV,
+            FFMPEG_THREADS_LIVE=3, FFMPEG_THREADS_RELAY=2,
+            RESTREAM_AVATAR=(avatar.name if av else ""), RESTREAM_BITRATE_K=4500,
+            RESTREAM_AVATAR_ALPHA="", RESTREAM_AVATAR_H=170,
+            RESTREAM_AVATAR_LOOP="",
+            RESTREAM_CANVAS_H=720, RESTREAM_CANVAS_W=1280,
+            RESTREAM_FONT=schrift.name, RESTREAM_FPS=24,
+            RESTREAM_LOW_LATENCY=True, RESTREAM_OVERLAY=overlay,
+            RESTREAM_OVERLAY_HTML_FPS=1, RESTREAM_RELAY_BITRATE_K=3500,
+            RESTREAM_RELAY_PRESET="ultrafast", RESTREAM_X264_PRESET="veryfast",
+            RESTREAM_UA="UA/1.0", TTS_CH=2, TTS_SR=44100, TTS_VOICE_GAIN="1.8")
+
+    ZIEL = ("kick", "rtmps://ingest.example/app/SCHLUESSEL")
+    faelle = 0
+    try:
+        for overlay in (False, True):
+            for av in (False, True):
+                _konf(overlay, av)
+                for quelle in ("https://pull.tiktok.com/stage/x.flv",
+                               "https://pull.tiktok.com/stage/x.m3u8"):
+                    for transcode in (False, True):
+                        for tts in (None, "/tmp/tts.fifo"):
+                            for html in (None, "/tmp/ov.fifo"):
+                                for tonlos in (False, True):
+                                    for art in ("tee", "einzel", "relay"):
+                                        kw = dict(transcode=transcode, tts_fifo=tts,
+                                                  html_ov_fifo=html, tonlos=tonlos)
+                                        if art == "tee":
+                                            kw["targets"] = [ZIEL]
+                                        else:
+                                            kw["only_target"] = ZIEL[1]
+                                            kw["relay_profile"] = art == "relay"
+                                        cmd = R.build(quelle, "", "", **kw)
+                                        fall = (overlay, av, quelle[-4:], kw)
+                                        faelle += 1
+                                        assert T.hat_tonspur(cmd), \
+                                            ("kein Ton gemappt", fall, cmd)
+                                        assert cmd[cmd.index("-ac") + 1] == "2", fall
+                                        assert (T.STILLE_QUELLE in cmd) is tonlos, fall
+                                        if tonlos:
+                                            # Kein Rest greift mehr auf den Ton
+                                            # der Quelle — sonst stirbt der
+                                            # Neubau am selben Map.
+                                            fc = (cmd[cmd.index("-filter_complex") + 1]
+                                                  if "-filter_complex" in cmd else "")
+                                            maps = [cmd[j + 1] for j, a in enumerate(cmd)
+                                                    if a == "-map"]
+                                            assert "[0:a]" not in fc, (fall, fc)
+                                            assert not any(m.startswith("0:a") for m in maps), \
+                                                (fall, maps)
+                                            # Stille ist der LETZTE Eingang:
+                                            # sie darf keinen Index verschieben.
+                                            n_in = cmd.count("-i")
+                                            assert ("%d:a" % (n_in - 1)) in " ".join(maps) + fc, \
+                                                (fall, maps, fc)
+    finally:
+        _konf(True, True)
+    assert faelle == 2 * 2 * 2 * 2 * 2 * 2 * 2 * 3, faelle
+
+    # ── (4) DIE AUFNAHME — ausdrueckliche Auswahl, optional fuer reine
+    # Ton-Lives; die Garantie gibt sichern() an der fertigen Datei.
+    _rc.configure(
+        cookie_header=lambda: "k=v", ensure_cookie_file_netscape=lambda: True,
+        pick_checked_pull_proxy=None, stream_url_ttl=lambda u: None,
+        log_event=lambda *a, **k: None, resolve_tiktok_live_stream=None,
+        REC_403_UNTIL={}, REC_PROXY={}, REC_PROXY_FAILED={},
+        REC_PROXY_LOCK=_th.Lock(), COOKIE_FILE="cookies.txt",
+        FFMPEG_NICE_RECORD=0, FFMPEG_THREADS_RECORD=1, RECORDER_PREF="auto",
+        RECORD_403_YTDLP=True, STREAM_URL_MIN_TTL=300)
+    for url in ("https://pull.tiktok.com/x.flv", "https://pull.tiktok.com/x.m3u8"):
+        cmd = _rc._build_native_cmd(url, "/rec/o.mp4", 60, pull_proxy="")
+        assert T.hat_tonspur(cmd, optional_ok=True), cmd
+        assert not T.hat_tonspur(cmd), "die Aufnahme mappt Ton jetzt hart — " \
+            "dann bricht eine reine Ton-Live ab, statt aufzunehmen"
+        assert cmd.index("-map") > cmd.index("-i"), "-map ist eine Ausgabe-Option"
+
+    # ── (5) DIE NACHRUESTUNG. Mit nachgebautem ffprobe/ffmpeg: geprueft
+    # wird, was mit der DATEI passiert, nicht dass ein Werkzeug laeuft.
+    verz = _ph.verzeichnis()
+    pfad = _os.path.join(verz, "a.mp4")
+
+    def _neu():
+        with open(pfad, "wb") as f:
+            f.write(b"V" * 100)
+
+    def _lauf(probe, remux_ok=True):
+        aufrufe = []
+
+        async def _f(cmd, timeout):
+            aufrufe.append(cmd)
+            if "ffprobe" in cmd:
+                if isinstance(probe, Exception):
+                    raise probe
+                return probe
+            # Auch der Fehlschlag schreibt an: echtes ffmpeg legt die
+            # Ausgabe an, bevor es scheitert. Ein Fehlschlag OHNE halbe Datei
+            # waere die bequeme Eingabe — und mit ihr entwischte die
+            # Mutationsprobe, die das Aufraeumen entfernt.
+            with open(cmd[-1], "wb") as f:
+                f.write(b"VA" * (100 if remux_ok else 7))
+            if remux_ok:
+                return 0, b"", b""
+            return 1, b"", b"Unknown input format: 'lavfi'"
+        return _f, aufrufe
+
+    # Jeder Ausgang ausser „hat Ton" MUSS eine Zeile hinterlassen — ein
+    # stilles „weiss nicht" ist dieselbe Blindheit wie ein stilles return
+    # (W81). Gelesen wird der echte Logger, die Drossel vorher geleert.
+    import logging as _lg
+    from nc import meldetakt as _takt
+    zeilen = []
+
+    class _Fang(_lg.Handler):
+        def emit(self, rec):
+            zeilen.append((rec.levelname, rec.getMessage()))
+
+    def _gemeldet():
+        z = list(zeilen)
+        del zeilen[:]
+        _takt.zuruecksetzen(T.KANAL)
+        return z
+
+    fang = _Fang()
+    _lg.getLogger("TikTokBot").addHandler(fang)
+    alt = T._lauf
+    try:
+        _takt.zuruecksetzen(T.KANAL)
+        _neu()
+        T._lauf, auf = _lauf((0, b'{"streams":[{"codec_type":"video"}]}', b""))
+        r = _aio.run(T.sichern(pfad, wer="@t"))
+        assert r == {"lage": "nachgeruestet", "groesse": 200}, r
+        z = _gemeldet()
+        assert [s for s, t in z] == ["WARNING"] and "nachgeruestet" in z[0][1], z
+        assert open(pfad, "rb").read() == b"VA" * 100
+        assert not _os.path.exists(_os.path.join(verz, "a.tonspur.mp4"))
+
+        _neu()
+        T._lauf, auf = _lauf((0, b'{"streams":[{"codec_type":"video"}]}', b""),
+                             remux_ok=False)
+        r = _aio.run(T.sichern(pfad, wer="@t"))
+        assert r == {"lage": "fehlgeschlagen", "groesse": 100}, r
+        assert open(pfad, "rb").read() == b"V" * 100, "das Original ist weg"
+        z = _gemeldet()
+        assert [s for s, t in z] == ["ERROR"] and "OHNE Ton" in z[0][1], z
+        assert not _os.path.exists(_os.path.join(verz, "a.tonspur.mp4")), \
+            "der halbe Remux bleibt liegen"
+
+        for probe, lage in (((0, b'{"streams":[{"codec_type":"audio"}]}', b""), "ton"),
+                            ((1, b"", b"moov atom not found"), "unbekannt"),
+                            (T.Fehlschlag("ffprobe antwortete 20 s lang nicht"), "unbekannt"),
+                            ((0, b"kaputt{", b""), "unbekannt"),
+                            ((0, b'{"streams":[]}', b""), "unbekannt")):
+            _neu()
+            T._lauf, auf = _lauf(probe)
+            r = _aio.run(T.sichern(pfad, wer="@t"))
+            assert r["lage"] == lage, (probe, r)
+            assert len(auf) == 1, ("bei %s darf nichts remuxt werden" % lage, auf)
+            assert open(pfad, "rb").read() == b"V" * 100
+            z = _gemeldet()
+            if lage == "ton":
+                assert z == [], ("der gesunde Fall meldet — das erzieht zum "
+                                 "Wegsehen", z)
+            else:
+                assert [s for s, t in z] == ["WARNING"], (probe, z)
+                assert "nicht klaeren" in z[0][1], z
+    finally:
+        T._lauf = alt
+        _lg.getLogger("TikTokBot").removeHandler(fang)
+        _takt.zuruecksetzen(T.KANAL)
+
+    # ── (5b) DER ECHTE PROZESSWEG und die beiden Fehlerpfade, die vorher
+    # ungeprueft waren: ein Werkzeug, das fehlt oder haengt, darf nicht still
+    # „kein Ergebnis" liefern — es wirft Fehlschlag, und der wird gemeldet.
+    import sys as _sys
+    rc_, out_, _e = _aio.run(T._lauf([_sys.executable, "-c", "print('ok')"], 20))
+    assert rc_ == 0 and out_.strip() == b"ok"
+    for cmd, wort in (([_os.path.join(verz, "gibt_es_nicht")], "nicht starten"),
+                      ([_sys.executable, "-c", "import time; time.sleep(30)"], "lang nicht")):
+        try:
+            _aio.run(T._lauf(cmd, 1))
+            raise AssertionError("kein Fehlschlag fuer %r" % cmd)
+        except T.Fehlschlag as e:
+            assert wort in str(e), e
+    # Kein Platz: die Datei bleibt, und es ist ein ERROR, kein Achselzucken.
+    import nc.tonspur as _tsmod
+    alt_platz = _tsmod.platz_reicht
+    try:
+        _takt.zuruecksetzen(T.KANAL)
+        _tsmod.platz_reicht = lambda p, faktor=1.0: (False, "3 MB frei")
+        _neu()
+        T._lauf, auf = _lauf((0, b'{"streams":[{"codec_type":"video"}]}', b""))
+        _lg.getLogger("TikTokBot").addHandler(fang)
+        r = _aio.run(T.sichern(pfad, wer="@t"))
+        assert r["lage"] == "fehlgeschlagen" and len(auf) == 1, (r, auf)
+        z = _gemeldet()
+        assert [s for s, t in z] == ["ERROR"] and "Platz" in z[0][1], z
+        # Groesse nicht lesbar: 0 und eine Zeile, keine Ausnahme.
+        _tsmod.platz_reicht = alt_platz
+        assert T._groesse(_os.path.join(verz, "weg.mp4")) == 0
+        assert [s for s, t in _gemeldet()] == ["WARNING"]
+    finally:
+        _tsmod.platz_reicht = alt_platz
+        T._lauf = alt
+        _lg.getLogger("TikTokBot").removeHandler(fang)
+        _takt.zuruecksetzen(T.KANAL)
+
+    # ── (6) DIE VERDRAHTUNG — im Syntaxbaum, nicht im Dateitext (W102–W104:
+    # ein Vertrag darf seine eigene Begruendung nicht als Befund lesen).
+    baum = _ast.parse(io.open("bot.py", encoding="utf-8").read())
+    bauer = [n for n in _ast.walk(baum) if isinstance(n, _ast.Call)
+             and getattr(n.func, "id", None) == "_build_restream_cmd"]
+    assert len(bauer) >= 3, len(bauer)
+    for n in bauer:
+        assert any(k.arg == "tonlos" for k in n.keywords), \
+            "Z.%d: _build_restream_cmd ohne tonlos=" % n.lineno
+    def _aufrufe(knoten):
+        return {_ast.unparse(c.func) for c in _ast.walk(knoten)
+                if isinstance(c, _ast.Call)}
+    hrf = [n for n in baum.body if isinstance(n, _ast.AsyncFunctionDef)
+           and n.name == "handle_recording_finished"]
+    assert len(hrf) == 1
+    assert "_nc_tonspur.sichern" in _aufrufe(hrf[0]), \
+        "die fertige Aufnahme wird nicht mehr auf Ton geprueft"
+    rm = [n for n in baum.body if isinstance(n, _ast.ClassDef)
+          and n.name == "RestreamManager"]
+    assert len(rm) == 1
+    meth = {n.name: n for n in rm[0].body
+            if isinstance(n, (_ast.FunctionDef, _ast.AsyncFunctionDef))}
+    erkenner = [m for m in meth.values()
+                if "_nc_tonspur.ist_tonlos_fehler" in _aufrufe(m)]
+    assert len(erkenner) == 1, \
+        "der Restream-Manager erkennt die tonlose Quelle nicht mehr"
+    # Der Schalter klebt nicht: dieselbe Ausgangsbehandlung, die ihn setzt,
+    # nimmt ihn bei jedem anderen Ende wieder weg. Sonst bliebe eine Quelle,
+    # die nur am Anfang stumm war, die ganze Sitzung stumm.
+    assert "self._tonlos.discard" in _aufrufe(erkenner[0]), \
+        "der Stille-Schalter klebt bis zum Stop"
+    assert "self._tonlos.discard" in _aufrufe(meth["stop"]), \
+        "der Stille-Schalter ueberlebt den Stop — die naechste Sitzung prueft nie neu"
+
+    ok("W106: jede Aufnahme und jeder Restream traegt eine Tonspur "
+       "(%d Restream-Kombinationen, Nachruestung, Verdrahtung)" % faelle)
+
+
+def _test_v42_w107_cookie_bezug_ist_standard():
+    """„Cookies automatisch beziehen soll Standard sein" — und lief fast nie.
+
+    Der Bezug hing im Telegram-Cookie-Alarm, und der startet nur mit
+    DISK_ALARM_CHAT_ID/DAILY_SUMMARY_CHAT_ID. Ohne Alarm-Chat lief der
+    Standard COOKIE_AUTO_FETCH=1 damit nie. Mit Chat nur bei rotem Health, im
+    Stundentakt; nie beim Start, nie nach einem 403. Und der Deck-Knopf ging
+    am Buchhalter vorbei: nach einem Klick stand weiter „noch nie gelaufen".
+    """
+    import ast as _ast
+    import glob
+    from nc import cookiebezug as B
+    from nc import cookieholen as H
+
+    alt_stand = dict(B.STAND)
+    alt_konf = dict(B._KONF)
+    alt_akt = H.aktualisiere
+    try:
+        # ── (1) WANN HILFT EIN GAST-AUFRUF? Nur bei dem, was er liefern kann.
+        assert B.gast_hilft({"exists": False})
+        assert B.gast_hilft({"status": "parse_error"})
+        assert B.gast_hilft({"critical_missing": ["ttwid"]})
+        assert B.gast_hilft({"expired": [{"name": "msToken", "days_ago": 1}]})
+        # Ein fehlender LOGIN ist kein Fall fuer den Gast-Aufruf — sonst
+        # fragt eine Installation ohne Login alle 15 min TikTok, ohne dass
+        # sich je etwas aendert.
+        assert not B.gast_hilft({"critical_missing": ["sessionid", "sessionid_ss",
+                                                      "sid_tt"]})
+        assert not B.gast_hilft({"status": "ok", "critical_missing": []})
+        assert B.GAST_NAMEN == frozenset(H.ANTIBOT), \
+            "zweite Liste der Anti-Bot-Namen — die laufen auseinander"
+
+        # ── (2) DER ZEITPLAN, Schritt fuer Schritt mit eigener Uhr.
+        aufrufe = []
+
+        def _fake(datei, **kw):
+            aufrufe.append(kw)
+            return dict(LAUF["bericht"])
+        H.aktualisiere = _fake
+        geleert = []
+        B.configure(datei="/x/cookies.txt", aktiv=True, intervall_h=6,
+                    timeout=7, nach_erfolg=lambda: geleert.append(1))
+        B.STAND.update(last_try=0.0, last_ok=None, last_error=None, count=0,
+                       last_report=None, last_anlass=None, anstoss=None)
+        gesund = {"status": "ok", "critical_missing": [], "expired": []}
+        T0 = 1_000_000.0
+
+        # Frischer Start: SOFORT, nicht erst beim ersten Alarm-Tick.
+        assert B.faellig(T0, gesund) == (True, "start")
+        assert B.info(T0)["next_run"] is not None
+
+        LAUF = {"bericht": {"ok": True, "added": ["ttwid"], "replaced": ["msToken"],
+                            "total": 9}}
+        _orig_time = B.time.time
+        B.time.time = lambda: T0
+        try:
+            b = B.holen(anlass="start")
+        finally:
+            B.time.time = _orig_time
+        assert b["anlass"] == "start" and B.STAND["last_ok"] == T0
+        assert B.STAND["count"] == 2 and geleert == [1], \
+            "nach dem Bezug liest der Recorder weiter den alten Cache"
+        assert aufrufe[-1]["timeout"] == 7 and aufrufe[-1]["quelle"] == "gast"
+
+        assert B.faellig(T0 + 60, gesund) == (False, "wartet")
+        assert B.faellig(T0 + 6 * 3600, gesund) == (True, "plan")
+        assert B.naechster_lauf(T0) == T0 + 6 * 3600
+
+        # 403: angestossen, aber nicht vor 15 Minuten — 40 Trackings im 403
+        # duerfen nicht 40 Aufrufe bei TikTok ausloesen.
+        B.anstossen("403-aufnahme")
+        assert B.faellig(T0 + 60, gesund) == (False, "wartet")
+        assert B.faellig(T0 + B.ANSTOSS_ABSTAND_S, gesund) == (True, "403-aufnahme")
+        assert B.info(T0 + 60)["pending"] == "403-aufnahme"
+        # Ein erledigter Anstoss ist erledigt. Bliebe er stehen, fragte die
+        # Schleife alle 15 Minuten nach — fuer einen 403 von vor Stunden.
+        LAUF["bericht"] = {"ok": True, "added": [], "replaced": []}
+        B.time.time = lambda: T0 + B.ANSTOSS_ABSTAND_S
+        try:
+            B.holen(anlass="403-aufnahme")
+        finally:
+            B.time.time = _orig_time
+        assert B.STAND["anstoss"] is None, "der Anstoss klebt nach dem Bezug"
+        assert B.faellig(T0 + 2 * B.ANSTOSS_ABSTAND_S + 1, gesund) == (False, "wartet")
+        T0 = T0 + B.ANSTOSS_ABSTAND_S          # ab hier gilt der neue Lauf
+
+        # Roter Health, den ein Gast heilen kann: ebenfalls im 15-min-Abstand.
+        B.STAND["anstoss"] = None
+        rot = {"status": "warning", "critical_missing": ["ttwid"]}
+        assert B.faellig(T0 + 60, rot) == (False, "wartet")
+        assert B.faellig(T0 + B.ANSTOSS_ABSTAND_S, rot) == (True, "gesundheit")
+        # ... den er NICHT heilen kann: nur der Plan.
+        login = {"status": "critical", "critical_missing": ["sessionid"]}
+        assert B.faellig(T0 + B.ANSTOSS_ABSTAND_S, login) == (False, "wartet")
+
+        # Fehlschlag: nach 30 min neu, nicht nach 6 Stunden.
+        LAUF["bericht"] = {"ok": False, "error": "Tunnel connection failed"}
+        B.time.time = lambda: T0
+        try:
+            B.holen(anlass="plan")
+        finally:
+            B.time.time = _orig_time
+        assert B.STAND["last_error"] == "Tunnel connection failed"
+        assert B.STAND["last_ok"] == T0, "ein Fehlschlag loescht den letzten Erfolg"
+        assert geleert == [1, 1], "der Cache wird auch nach einem Fehlschlag geleert"
+        assert B.faellig(T0 + B.NEU_VERSUCH_S - 1, gesund) == (False, "wartet")
+        assert B.faellig(T0 + B.NEU_VERSUCH_S, gesund) == (True, "neuer_versuch")
+        assert B.naechster_lauf(T0) == T0 + B.NEU_VERSUCH_S
+
+        # Abgeschaltet heisst abgeschaltet — auch nach 403.
+        B.configure(datei="/x/cookies.txt", aktiv=False)
+        B.anstossen("403-aufnahme")
+        assert B.faellig(T0 + 10 ** 6, rot) == (False, "aus")
+        assert B.info()["next_run"] is None and B.info()["enabled"] is False
+
+        # Das Deck liest die Schluessel aus W10 weiter.
+        for k in ("enabled", "interval_h", "last_ok", "fetched_total",
+                  "last_error", "next_run", "last_try", "last_anlass", "pending"):
+            assert k in B.info(), k
+    finally:
+        H.aktualisiere = alt_akt
+        B.STAND.clear(); B.STAND.update(alt_stand)
+        B._KONF.clear(); B._KONF.update(alt_konf)
+
+    # ── (3) DIE VERDRAHTUNG — im Syntaxbaum.
+    baum = _ast.parse(io.open("bot.py", encoding="utf-8").read())
+    eltern = {}
+    for n in _ast.walk(baum):
+        for k in _ast.iter_child_nodes(n):
+            eltern[k] = n
+    spawn = [n for n in _ast.walk(baum) if isinstance(n, _ast.Call)
+             and _ast.unparse(n.func) == "_spawn" and n.args
+             and _ast.unparse(n.args[0]) == "_cookie_bezug_loop()"]
+    assert len(spawn) == 1, "die Bezugs-Schleife wird nicht gestartet"
+    k = spawn[0]
+    while k in eltern:
+        k = eltern[k]
+        if isinstance(k, _ast.If):
+            bed = _ast.unparse(k.test)
+            assert "CHAT_ID" not in bed and "ALARM" not in bed, \
+                "der Bezug haengt wieder am Telegram-Alarm: " + bed
+    fn = {n.name: n for n in baum.body
+          if isinstance(n, (_ast.FunctionDef, _ast.AsyncFunctionDef))}
+
+    def _rufe(f):
+        return {_ast.unparse(c.func) for c in _ast.walk(fn[f])
+                if isinstance(c, _ast.Call)}
+    assert "_nc_cookiebezug.faellig" in _rufe("_cookie_bezug_runde")
+    assert "_nc_cookiebezug.holen" in str(
+        [_ast.unparse(a) for c in _ast.walk(fn["_cookie_bezug_runde"])
+         if isinstance(c, _ast.Call) for a in c.args])
+    assert "_nc_cookiebezug.anstossen" in _rufe("_resolver_stumm")
+    assert "_nc_cookiebezug.holen" in _rufe("_cookies_selbst_holen")
+    # Der 403-Zweig der Aufnahme stoesst an.
+    zweig = [n for n in _ast.walk(baum) if isinstance(n, _ast.If)
+             and _ast.unparse(n.test) == "category == 'forbidden_403'"]
+    assert zweig and any(
+        "_nc_cookiebezug.anstossen" in _ast.unparse(z) for z in zweig[0].body), \
+        "ein 403 der Aufnahme stoesst keinen Bezug mehr an"
+    # Kein zweiter Bezugsweg am Buchhalter vorbei — gleich unter welchem
+    # Alias: `aktualisiere` ruft im ganzen Bestand nur nc/cookiebezug.
+    for pfad in (["bot.py", "discordbot.py"] + sorted(glob.glob("nc/*.py"))
+                 + sorted(glob.glob("nc/routes/*.py"))):
+        if pfad.replace("\\", "/") in ("nc/cookiebezug.py", "nc/cookieholen.py"):
+            continue
+        b2 = _ast.parse(io.open(pfad, encoding="utf-8").read())
+        direkt = [c.lineno for c in _ast.walk(b2) if isinstance(c, _ast.Call)
+                  and _ast.unparse(c.func).split(".")[-1] == "aktualisiere"]
+        assert not direkt, "%s:%s geht am Zeitplan vorbei" % (pfad, direkt)
+    route = [n for n in _ast.walk(_ast.parse(io.open(
+        "nc/routes/settings.py", encoding="utf-8").read()))
+        if isinstance(n, _ast.FunctionDef) and n.name == "api_cookies_fetch"]
+    assert len(route) == 1 and "_nc_cookiebezug.holen" in {
+        _ast.unparse(c.func) for c in _ast.walk(route[0]) if isinstance(c, _ast.Call)}, \
+        "der Deck-Knopf geht nicht durch den Buchhalter"
+
+    # ── (4) DAS DECK nennt den naechsten Lauf und hat den Knopf im Status.
+    deck = io.open("templates/dashboard.html", encoding="utf-8").read()
+    i = deck.index("const af = cookHealth.autofetch;")
+    stueck = deck[i:deck.index("$('#sy_cookies')", i)]   # waechst mit
+    zeilen = [z for z in stueck.splitlines() if "ch+=" in z]
+    assert any("T('Naechster Lauf')" in z and "${nx}" in z for z in zeilen) \
+        and "af.next_run" in stueck, \
+        "das Deck zeigt nicht, wann der Bezug das naechste Mal laeuft"
+    assert any("T('Letzter Versuch')" in z and "af.last_try" in z for z in zeilen), \
+        "das Deck zeigt nicht, wann der Bezug zuletzt fragte"
+    assert "fetchCookies('gast')" in stueck, "kein Jetzt-holen-Knopf im Status"
+
+    ok("W107: Cookie-Auto-Bezug laeuft ohne Telegram-Chat — beim Start, nach "
+       "Plan, nach 403 (gedrosselt), und jeder Weg geht durch den Buchhalter")
+
+
+def _test_v42_w108_drossel_greift_vor_dem_salat():
+    """Pixelsalat bei mehreren Live-Nutzern: die Drossel kam zu spaet.
+
+    Gemessen (nc/lastvorsorge.py): fehlende Video-Pakete mitten im GOP — was
+    ein Live-CDN einem zu langsam lesenden Client antut — ergeben 69 von 502
+    Bildern Salat, und kein Decoder-Schalter rettet sie. Die Rueckstands-
+    Drossel aus W43 regelt erst nach dem Rueckstand ab, also nach dem Salat.
+    Die Vorsorge waehlt die Stufe beim Start.
+    """
+    import ast as _ast
+    from nc import lastvorsorge as L
+    from nc import restreamcmd as R
+
+    # ── (1) DIE KOSTEN SIND GEMESSEN, NICHT GESCHAETZT. Ungemessenes steht
+    # auf 1,0 — eine erfundene Ersparnis liesse genau den Fall durch, gegen
+    # den das Modul antritt.
+    assert L.KOSTEN[0] == L.KOSTEN[1] == L.KOSTEN[2] == 1.0
+    assert L.KOSTEN[3] == 0.80 and L.KOSTEN[4] == 0.66
+    assert set(L.KOSTEN) == set(range(R.DROSSEL_MAX + 1)), \
+        "die Kostentabelle kennt nicht jede Drossel-Stufe"
+    # Daran haengt „nie unter die erreichte Stufe": eine hoehere Stufe darf
+    # nie MEHR kosten als eine niedrigere, sonst waehlt die Vorsorge eine
+    # kleinere Stufe, als die Rueckstands-Drossel schon erreicht hat.
+    k = [L.KOSTEN[i] for i in range(R.DROSSEL_MAX + 1)]
+    assert all(a >= b for a, b in zip(k, k[1:])), k
+    rs = io.open("nc/restreamcmd.py", encoding="utf-8").read()
+    assert "-19.9 %" in rs and "-33.9 %" in rs, \
+        "die W61-Messung, aus der die Kosten stammen, steht nicht mehr da"
+
+    # ── (2) DIE STARTSTUFE. 8 Kerne, 3 Threads je Transcode.
+    assert L.startstufe(0.5, 8, 0, 3) == (0, None), "leere Maschine wird gedrosselt"
+    assert L.startstufe(3.0, 8, 0, 3)[0] == 0
+    assert L.startstufe(4.2, 8, 0, 3)[0] == 3          # frei 2,6 -> 87 %
+    assert L.startstufe(4.5, 8, 0, 3)[0] == 4          # frei 2,3 -> 77 %
+    stufe, grund = L.startstufe(8.0, 8, 0, 3)
+    assert stufe == R.DROSSEL_MAX and "Abhilfe" in grund, (stufe, grund)
+    # Jeder Grund nennt die Zahlen, aus denen er kommt.
+    st, gr = L.startstufe(4.5, 8, 0, 3)
+    assert "frei 2.3" in gr and "Stufe 4" in gr and "66 %" in gr, gr
+
+    # Gerade gestartete Transcodes zaehlen, obwohl das Load-Mittel sie noch
+    # nicht zeigt — sonst saehen zwei kurz nacheinander gestartete Restreams
+    # beide eine leere Maschine.
+    assert L.startstufe(1.0, 8, 0, 3)[0] == 0
+    assert L.startstufe(1.0, 8, 2, 3)[0] == R.DROSSEL_MAX
+    assert L.jung(100.0, 100.0 + L.JUNG_S - 1) and not L.jung(100.0, 100.0 + L.JUNG_S)
+    assert not L.jung(None, 5.0)
+
+    # Nie unter die schon erreichte Stufe: die Drossel regelt bewusst nie
+    # hoch, und die Vorsorge darf das nicht durch die Hintertuer tun.
+    assert L.startstufe(0.5, 8, 0, 3, stufe_jetzt=4) == (4, None)
+    # Wer schon gedrosselt laeuft und mit dieser Stufe passt, bleibt still.
+    assert L.startstufe(4.2, 8, 0, 3, stufe_jetzt=3) == (3, None)
+    for jetzt in range(R.DROSSEL_MAX + 1):
+        for last in (0.0, 3.0, 4.2, 4.5, 5.5, 9.0):
+            assert L.startstufe(last, 8, 0, 3, stufe_jetzt=jetzt)[0] >= jetzt, (jetzt, last)
+    # Ungueltige Eingaben brechen nicht: kein Kern bekannt -> 1 Kern.
+    assert L.startstufe(0.0, 0, 0, 0)[0] >= 0
+
+    # ── (3) DIE STUFE WIRKT IM KOMMANDO: bei Stufe 4 faellt der Avatar,
+    # bei Stufe 3 die Bildrate — gemessen am gebauten Befehl, nicht am
+    # Schalter.
+    assert R.drossel_fps(24, 3) == 18 and R.drossel_avatar_aus(4)
+
+    # ── (4) DIE VERDRAHTUNG: VOR Feeder und Bauer, und nur beim Transcode.
+    baum = _ast.parse(io.open("bot.py", encoding="utf-8").read())
+    rm = [n for n in baum.body if isinstance(n, _ast.ClassDef)
+          and n.name == "RestreamManager"][0]
+    start = [n for n in rm.body if isinstance(n, _ast.AsyncFunctionDef)
+             and n.name == "start"][0]
+    rufe = [(c.lineno, _ast.unparse(c.func)) for c in _ast.walk(start)
+            if isinstance(c, _ast.Call)]
+    vorsorge = [z for z, f in rufe if f == "self._drossel_vorsorge"]
+    feeder = [z for z, f in rufe if f == "asyncio.to_thread"]
+    bauer = [z for z, f in rufe if f == "_build_restream_cmd"]
+    assert len(vorsorge) == 1, "die Vorsorge laeuft nicht beim Start"
+    assert bauer and vorsorge[0] < min(bauer), "Vorsorge NACH dem Bauer"
+    assert feeder and vorsorge[0] < min(feeder), \
+        "Vorsorge nach dem Avatar-Feeder — der startet dann fuer eine Stufe, " \
+        "die ihn gar nicht mehr will, und haengt in open(fifo)"
+    eltern = {k: n for n in _ast.walk(start) for k in _ast.iter_child_nodes(n)}
+    k = [c for c in _ast.walk(start) if isinstance(c, _ast.Call)
+         and _ast.unparse(c.func) == "self._drossel_vorsorge"][0]
+    while k in eltern and not isinstance(k, _ast.If):
+        k = eltern[k]
+    assert isinstance(k, _ast.If) and _ast.unparse(k.test) == "transcode", \
+        "die Vorsorge drosselt auch den Copy-Modus, der gar nicht kodiert"
+    vs = [n for n in rm.body if isinstance(n, _ast.FunctionDef)
+          and n.name == "_drossel_vorsorge"][0]
+    vs_rufe = {_ast.unparse(c.func) for c in _ast.walk(vs) if isinstance(c, _ast.Call)}
+    assert "_nc_lastvorsorge.startstufe" in vs_rufe and "os.getloadavg" in vs_rufe
+
+    ok("W108: die Drossel waehlt ihre Stufe beim Start nach freien Kernen — "
+       "gemessene Kosten, junge Transcodes mitgezaehlt, nie unter der Ist-Stufe")
+
+
+def _test_v42_w109_ein_befehlsverzeichnis():
+    """Telegram und Discord aus EINEM Verzeichnis — gleiche Namen, gleiche Rechte.
+
+    Vorher: zwei Listen (Telegram-Tupel, Discord-_PAR_CMDS mit sys_-Praefix),
+    zwei kopierte Discord-Befehle, sieben Telegram-Befehle ohne Discord-
+    Gegenstueck, eine handgeschriebene Hilfe mit 27 von 45 Befehlen, und ein
+    /untrack, das auf Discord jedes Servermitglied fuer die ganze Gruppe
+    ausfuehren durfte.
+    """
+    import ast as _ast
+    from nc import befehle as B
+    from nc import botctx as K
+
+    # ── (1) DAS VERZEICHNIS IST IN SICH STIMMIG.
+    assert B.pruefen() == [], B.pruefen()
+    # Jeder Shim-Befehl ist Betreiberbefehl — der Shim meldet sich als
+    # freigeschalteter Telegram-Nutzer an. Ein offener Shim-Befehl gaebe
+    # jedem Discord-Mitglied die Telegram-Rechte des Betreibers. pruefen()
+    # muss das finden, nicht nur der Mensch beim Lesen:
+    alt = B.BEFEHLE
+    try:
+        B.BEFEHLE = alt + (B.Befehl("x_offen", "system", "x", B._BEIDE, "tg",
+                                    "jeder", None, "diag"),)
+        assert any("Shim-Befehl" in f for f in B.pruefen())
+        B.BEFEHLE = alt + (B.Befehl("sys_alt", "system", "x", B._BEIDE, "tg",
+                                    "betreiber", None, "diag"),)
+        assert any("sys_" in f for f in B.pruefen())
+        # Jeder Zweig von pruefen() hat seinen Fall — sonst ist er eine
+        # Behauptung ohne Beleg (W89: die ungeprueften waren die Fehlerpfade).
+        for eintrag, erwartet in (
+                (alt[0], "doppelter Name"),
+                (B.Befehl("x_rubrik", "gibtsnicht", "x", B._NUR_DC, "nativ",
+                          "jeder", None, None), "unbekannte Rubrik"),
+                (B.Befehl("x_recht", "system", "x", B._NUR_DC, "nativ",
+                          "admin", None, None), "unbekanntes Recht"),
+                (B.Befehl("x_ohne", "system", "x", B._NUR_TG, None,
+                          "betreiber", None, None), "Telegram ohne Handler"),
+                (B.Befehl("x_weg", "system", "x", B._NUR_DC, None,
+                          "jeder", None, None), "Discord ohne Ausfuehrungsweg"),
+                (B.Befehl("Gross-Name", "system", "x", B._NUR_DC, "nativ",
+                          "jeder", None, None), "kein gueltiger Befehlsname"),
+                (B.Befehl("x" * 33, "system", "x", B._NUR_DC, "nativ",
+                          "jeder", None, None), "kein gueltiger Befehlsname")):
+            B.BEFEHLE = alt + (eintrag,)
+            befunde = B.pruefen()
+            assert any(erwartet in f for f in befunde), (erwartet, befunde)
+            # Und NUR dieser Befund — ein Pruefer, der bei jeder Aenderung
+            # alles meldet, meldet nichts.
+            assert len(befunde) == 1, befunde
+    finally:
+        B.BEFEHLE = alt
+
+    # ── (2) PARITAET: jeder Telegram-Befehl hat auf Discord DENSELBEN Namen —
+    # ausser den beiden, die bewusst nur auf Telegram stehen.
+    tg = {b.name for b in B.fuer(B.TG)}
+    dc = {b.name for b in B.fuer(B.DC)}
+    assert tg - dc == {"start", "update"}, sorted(tg - dc)
+    assert B.NACH_NAME["update"].plattformen == frozenset({B.TG}), \
+        "ein Code-Update gehoert an die Telegram-Freischaltliste, nicht an " \
+        "eine Discord-Rolle, die ein Moderator vergeben kann"
+    for b in B.discord_ueber_tg():
+        assert b.recht == "betreiber" and b.tg_handler, b
+
+    # ── (3) TELEGRAM: registriert aus dem Verzeichnis, jeder Handler
+    # existiert und prueft die Freischaltung als ERSTES.
+    baum = _ast.parse(io.open("bot.py", encoding="utf-8").read())
+    oben = {n.name: n for n in baum.body
+            if isinstance(n, (_ast.FunctionDef, _ast.AsyncFunctionDef))}
+    schleife = [n for n in _ast.walk(baum) if isinstance(n, _ast.For)
+                and _ast.unparse(n.iter) == "_nc_befehle.telegram_handler()"]
+    assert len(schleife) == 1 and "CommandHandler" in _ast.unparse(schleife[0])
+    alte = [n for n in _ast.walk(baum) if isinstance(n, _ast.For)
+            and isinstance(n.iter, _ast.Tuple) and "CommandHandler" in _ast.unparse(n)]
+    assert not alte, "eine zweite, handgeschriebene Telegram-Liste ist zurueck"
+    for name, handler in B.telegram_handler():
+        fn = oben.get(handler)
+        assert isinstance(fn, _ast.AsyncFunctionDef), \
+            "/%s: Handler %s fehlt in bot.py" % (name, handler)
+        def _erste(f):
+            return f.body[1] if _ast.get_docstring(f) else f.body[0]
+        erste = _erste(fn)
+        # Eine reine Weiterleitung (`await _pause_resume_cmd(update, ...)`)
+        # zaehlt, wenn das Ziel als erstes prueft — eine Ebene, nicht mehr.
+        rufe = [c for c in _ast.walk(erste) if isinstance(c, _ast.Call)
+                and isinstance(c.func, _ast.Name) and c.func.id in oben]
+        if "_is_authorized(update)" not in _ast.unparse(erste) and rufe:
+            erste = _erste(oben[rufe[0].func.id])
+        assert "_is_authorized(update)" in _ast.unparse(erste), \
+            "/%s: %s prueft die Freischaltung nicht als erstes: %s" % (
+                name, handler, _ast.unparse(erste)[:80])
+    # Das Telegram-Menue kommt aus derselben Liste und wird beim Start gesetzt.
+    assert "_telegram_befehlsmenue" in oben
+    menue = {_ast.unparse(c.func) for c in _ast.walk(oben["_telegram_befehlsmenue"])
+             if isinstance(c, _ast.Call)}
+    assert "app.bot.set_my_commands" in menue and "_nc_befehle.fuer" in menue
+    assert "_telegram_befehlsmenue" in {_ast.unparse(c.func) for c in _ast.walk(oben["run_bot"])
+                                         if isinstance(c, _ast.Call)}
+    for b in B.fuer(B.TG):
+        assert 3 <= len(B.beschreibung(b)) <= 100, b.name   # Telegram: 3..256, Discord: <=100
+
+    # ── (4) DISCORD: die geteilten Handler kommen aus dem Verzeichnis, die
+    # Rechte stehen am Befehl.
+    assert set(K.BEFEHLE) == {b.tg_handler for b in B.discord_ueber_tg()}
+    assert "bot_app_holen" in K.BotKontext.__dataclass_fields__
+    db = _ast.parse(io.open("discordbot.py", encoding="utf-8").read())
+    bot_app_global = [c.lineno for c in _ast.walk(db) if isinstance(c, _ast.Call)
+                      and _ast.unparse(c.func) == "globals().get"
+                      and c.args and _ast.unparse(c.args[0]) == "'bot_app'"]
+    assert not bot_app_global, \
+        "discordbot.py liest bot_app wieder aus dem EIGENEN Namensraum " \
+        "(Z.%s) — dort gibt es ihn nie, der Highlight-Push endet still" % bot_app_global
+    shim = [n for n in db.body if isinstance(n, _ast.AsyncFunctionDef)
+            and n.name == "_run_tg_handler"][0]
+    assert "_is_admin(inter)" in _ast.unparse(shim.body[0]), \
+        "der Shim prueft die Admin-Rolle nicht mehr als erstes"
+    assert "application=" in _ast.unparse(shim), \
+        "der Shim reicht keine application — /tiktok stirbt am Scraper"
+    for fn in _ast.walk(db):
+        if not isinstance(fn, _ast.AsyncFunctionDef):
+            continue
+        for d in fn.decorator_list:
+            if "tree.command" not in _ast.unparse(d):
+                continue
+            name = [_ast.literal_eval(k.value) for k in d.keywords if k.arg == "name"][0]
+            b = B.NACH_NAME.get(name)
+            assert b is not None and b.discord == "nativ", \
+                "/%s ist auf Discord registriert, aber nicht als nativ verzeichnet" % name
+            # Ein Riegel ist ein `if not <pruefung>:` mit `return` darin, unter
+            # den ersten Anweisungen — nicht bloss irgendein Aufruf von
+            # _is_admin (die Hilfe ruft es auch, um die Liste zu filtern).
+            def _riegel(stmt):
+                return (isinstance(stmt, _ast.If)
+                        and _ast.unparse(stmt.test) in ("not await _guard(inter)",
+                                                         "not _is_admin(inter)")
+                        and any(isinstance(x, _ast.Return) for x in stmt.body))
+            if name == "untrack":
+                continue        # Sonderriegel (Admin ODER Anleger), Pruefung unten
+            geprueft = any(_riegel(x) for x in fn.body[:3])
+            assert geprueft == (b.recht == "betreiber"), \
+                "/%s: verzeichnet als %r, im Code %s" % (
+                    name, b.recht, "mit Riegel" if geprueft else "ohne Riegel")
+    unt = [fn for fn in _ast.walk(db) if isinstance(fn, _ast.AsyncFunctionDef)
+           and fn.name == "_c_untrack"][0]
+    ut = _ast.unparse(unt)
+    riegel = [x for x in _ast.walk(unt) if isinstance(x, _ast.If)
+              and _ast.unparse(x.test) == "not _is_admin(inter)"]
+    assert riegel and "added_by" in _ast.unparse(riegel[0]) \
+        and "inter.user.id" in _ast.unparse(riegel[0]) \
+        and any(isinstance(x, _ast.Return) for x in _ast.walk(riegel[0])), \
+        "/untrack auf Discord ist wieder fuer jeden offen"
+    assert "!= inter.user.id" in ut, "/untrack vergleicht den Anleger nicht mehr"
+    # Die Pruefung steht VOR dem Loeschen.
+    zeilen = {c.lineno: _ast.unparse(c.func) for c in _ast.walk(unt) if isinstance(c, _ast.Call)}
+    z_pruef = riegel[0].lineno
+    z_weg = min(z for z, f in zeilen.items() if f == "asyncio.to_thread")
+    assert z_pruef < z_weg, "/untrack loescht, bevor es prueft"
+
+    # ── (5) DIE HILFE: gebaut, vollstaendig, und ohne Admin nur, was man darf.
+    voll = B.hilfe_text(B.DC)
+    for b in B.fuer(B.DC):
+        assert ("/" + b.name + " ") in voll + " " or ("/" + b.name + "\n") in voll + "\n", b.name
+    offen = B.hilfe_text(B.DC, ist_betreiber=False)
+    for b in B.fuer(B.DC):
+        drin = any(t in offen.split() for t in ("/" + b.name,))
+        assert drin == (b.recht == "jeder"), (b.name, b.recht)
+    hilfe = [fn for fn in _ast.walk(db) if isinstance(fn, _ast.AsyncFunctionDef)
+             and fn.name == "_c_help"][0]
+    assert "_nc_befehle.hilfe_text" in _ast.unparse(hilfe), \
+        "die Discord-Hilfe ist wieder handgeschrieben"
+
+    ok("W109: ein Verzeichnis — %d Telegram, %d Discord, %d gemeinsam unter "
+       "gleichem Namen; Rechte geprueft, Hilfe gebaut, kein sys_ mehr" % (
+           len(tg), len(dc), len(tg & dc)))
+
+
+def _test_v42_w110_lokales_llm_zuerst():
+    """Das installierte llama.cpp wurde nicht benutzt — und das Panel brach.
+
+    Der Chat fragte das Brain nur bei AI_PROVIDER=brain, die Reaktions-Engine
+    stand auf pollinations, die Modellliste rief eine Methode, die es nicht
+    gab, siebenmal stand `== "brain"` verstreut, und brain.html las h.ollama
+    — ein Feld, das es seit V37 nicht mehr gibt.
+    """
+    import ast as _ast
+    import glob
+    import json as _json
+    import threading as _th
+    import tokenize as _tok
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+    from nc import kiwahl as K
+
+    # ── (1) DIE REGEL.
+    for wert, soll in (("", "auto"), ("auto", "auto"), ("brain", "lokal"),
+                       ("llamacpp", "lokal"), ("LOKAL", "lokal"),
+                       ("pollinations", "cloud"), ("freeai", "cloud"),
+                       ("cloud", "cloud"), ("groq", "auto"), (None, "auto")):
+        assert K.normal(wert) == soll, (wert, K.normal(wert))
+    # auto: lokal, wenn oben ODER unbekannt (die erste Anfrage IST die Probe)
+    assert K.lokal_zuerst("auto", True) and K.lokal_zuerst("auto", None)
+    assert not K.lokal_zuerst("auto", False)
+    assert K.lokal_zuerst("brain", False), "lokal heisst: auch bei toter Probe fragen"
+    assert not K.lokal_zuerst("pollinations", True), "cloud heisst: nie lokal"
+    assert K.backend("cloud", True) == "freeai"
+    assert K.backend("auto", True) == "brain" and K.backend("auto", False) == "freeai"
+    assert K.backend("auto", None) == "auto", "unbekannt darf nicht als freeai gemeldet werden"
+
+    # ── (2) brain/llm.py: models() gibt es, zuletzt_oben() misst nicht.
+    class _Llama(BaseHTTPRequestHandler):
+        def do_GET(self):
+            body = (b'{"status":"ok"}' if self.path == "/health" else
+                    _json.dumps({"data": [{"id": "qwen2.5-1.5b"}]}).encode())
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def do_POST(self):
+            # Wie ein mit --embeddings gestarteter Server: /health gruen,
+            # der Chat verweigert.
+            body = b'{"error":{"code":501,"message":"This server does not support completions."}}'
+            self.send_response(501)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *a):
+            pass
+    srv = HTTPServer(("127.0.0.1", 0), _Llama)
+    _th.Thread(target=srv.serve_forever, daemon=True).start()
+    alt_url = os.environ.get("BRAIN_LLAMACPP_URL")
+    alt_be = os.environ.get("BRAIN_LLM_BACKEND")
+    os.environ["BRAIN_LLAMACPP_URL"] = "http://127.0.0.1:%d" % srv.server_port
+    os.environ["BRAIN_LLM_BACKEND"] = "llamacpp"
+    try:
+        from brain.llm import LLMRuntime
+        rt = LLMRuntime()
+        assert rt.zuletzt_oben() is None, "vor der ersten Probe ist der Stand unbekannt"
+        assert rt.models() == ["qwen2.5-1.5b"], rt.models()
+        assert (rt.health().get("llamacpp") or {}).get("up") is True
+        assert rt.zuletzt_oben() is True
+        # Health gruen, Chat scheitert: das muss im Log stehen — vorher
+        # log.debug, und jede Anfrage ging still in die Cloud. Und nur
+        # EINMAL je Grund, nicht bei jeder Anfrage.
+        import logging as _lg
+        zeilen = []
+
+        class _F(_lg.Handler):
+            def emit(self, r):
+                zeilen.append((r.levelname, r.getMessage()))
+        _h = _F()
+        _lg.getLogger("brain.llm").addHandler(_h)
+        try:
+            for _ in range(3):
+                res = rt.chat([{"role": "user", "content": "x"}], timeout=5)
+                assert res["ok"] is False and "501" in res["error"], res
+        finally:
+            _lg.getLogger("brain.llm").removeHandler(_h)
+        warn = [m for lv, m in zeilen if lv == "WARNING" and "scheitert" in m]
+        assert len(warn) == 1 and "501" in warn[0], zeilen
+        srv.shutdown()
+        srv.server_close()
+        rt._models_cache = None
+        assert rt.models() == [], "toter Server liefert eine Liste, die es nicht gibt"
+    finally:
+        for k, v in (("BRAIN_LLAMACPP_URL", alt_url), ("BRAIN_LLM_BACKEND", alt_be)):
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+
+    # ── (3) DIE VERDRAHTUNG: drei Chat-Wege fragen kiwahl, keiner liest
+    # AI_PROVIDER mehr selbst.
+    baum = _ast.parse(io.open("bot.py", encoding="utf-8").read())
+    oben = {n.name: n for n in baum.body
+            if isinstance(n, (_ast.FunctionDef, _ast.AsyncFunctionDef))}
+    for f in ("llm_chat", "llm_chat_sync", "ai_chat"):
+        rufe = {_ast.unparse(c.func) for c in _ast.walk(oben[f]) if isinstance(c, _ast.Call)}
+        assert "_nc_kiwahl.lokal_zuerst" in rufe, "%s fragt nicht, ob lokal zuerst" % f
+    roh = []
+    for pfad in ["bot.py"] + sorted(glob.glob("nc/*.py")) + sorted(glob.glob("nc/routes/*.py")):
+        if pfad.replace("\\", "/") == "nc/kiwahl.py":
+            continue
+        for c in _ast.walk(_ast.parse(io.open(pfad, encoding="utf-8").read())):
+            if (isinstance(c, _ast.Call) and _ast.unparse(c.func) == "os.getenv"
+                    and c.args and _ast.unparse(c.args[0]) == "'AI_PROVIDER'"):
+                roh.append("%s:%d" % (pfad, c.lineno))
+    assert not roh, "AI_PROVIDER wird wieder selbst gelesen: %s" % roh
+    rp = [n for n in baum.body if isinstance(n, _ast.Assign)
+          and any(getattr(t, "id", "") == "REACTION_AI_PROVIDER" for t in n.targets)]
+    assert rp and "'auto'" in _ast.unparse(rp[0].value), \
+        "die Reaktions-Engine steht wieder per Vorgabe auf Cloud"
+
+    # ── (4) KEIN OLLAMA-RAT MEHR AN DEN BENUTZER. Gesucht in Zeichenketten-
+    # Tokens ohne Docstrings (W102–W104: nicht im rohen Text — die Kommentare,
+    # die die alten Saetze zitieren, sind kein Befund).
+    rat = []
+    for pfad in ["bot.py", "discordbot.py"] + sorted(glob.glob("nc/*.py")) \
+            + sorted(glob.glob("nc/routes/*.py")):
+        for t in _tok.generate_tokens(io.open(pfad, encoding="utf-8").readline):
+            if (t.type == _tok.STRING and "ollama" in t.string.lower()
+                    and t.string.lstrip("rbuRBU")[:3] not in ('"' * 3, "'" * 3)):
+                rat.append("%s:%d %s" % (pfad, t.start[0], t.string[:50]))
+    assert not rat, "Benutzertext nennt noch Ollama: %s" % rat
+    from nc.util import _ai_err_msg
+    for art in ("timeout", "unreachable", "http", "model_missing", "other"):
+        assert "Ollama" not in _ai_err_msg(art, "m"), art
+    assert "llama-server" in _ai_err_msg("unreachable", "m")
+    assert "120" in _ai_err_msg("timeout", "m", timeout=120)
+    hz = [n for n in _ast.walk(baum) if isinstance(n, _ast.FunctionDef) and n.name == "health"]
+    assert hz and "ollama=" not in _ast.unparse(hz[0]) and "llm=" in _ast.unparse(hz[0])
+
+    # ── (5) DAS BRAIN-PANEL: kein h.ollama, und die Werte stehen VOR der
+    # Verzweigung (bei backend_conf=off braucht die Tabelle sie auch).
+    bh = io.open("templates/brain.html", encoding="utf-8").read()
+    i = bh.index("async function loadLLM()")
+    fn = bh[i:bh.index("/* ---------------- Fragen", i)]
+    code = "\n".join(z for z in fn.splitlines()
+                     if not z.strip().startswith(("/*", "*", "//")))
+    assert "h.ollama" not in code, "brain.html liest wieder h.ollama — TypeError, Tabelle leer"
+    assert code.index("const _lok") < code.index('if (h.backend_conf === "off")')
+
+    # ── (6) DIE MITGELIEFERTE UNIT startet ohne --embeddings (nur Embeddings,
+    # kein Chat) und mit genug Kontext.
+    unit = io.open("llama-server.service", encoding="utf-8").read()
+    exec_ = " ".join(z.strip().rstrip("\\") for z in unit.splitlines()
+                     if z.strip() and not z.strip().startswith("#")
+                     and (z.startswith("ExecStart") or z.startswith("  ")))
+    assert "--embedding" not in exec_, exec_
+    assert "-c 8192" in exec_, exec_
+
+    ok("W110: lokales llama.cpp zuerst (auto), Modellliste lokal, ein Ort fuer "
+       "die Wahl, kein Ollama-Rat, Brain-Panel rendert, Unit ohne --embeddings")
+
+
 def main():
     tmp, rid = richte_testdatenbank_ein()
     ok("db_conn aus nc.dbwrap: echtes Schema angelegt, Commit durchgelaufen")
@@ -20071,6 +21043,11 @@ def main():
     _test_v42_w105_stream_url_formen()
     _test_v42_w105_egress_waechter()
     _test_v42_w105_chat_laeuft_durch_den_tunnel()
+    _test_v42_w106_jede_ausgabe_traegt_ton()
+    _test_v42_w107_cookie_bezug_ist_standard()
+    _test_v42_w108_drossel_greift_vor_dem_salat()
+    _test_v42_w109_ein_befehlsverzeichnis()
+    _test_v42_w110_lokales_llm_zuerst()
     _test_v42_w60_azrael_cooldown_je_plattform()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)

@@ -574,6 +574,7 @@ from nc import systemprobe as _nc_probe     # v4.1-W32: Redis-/Recorder-Sonden
 from nc import cookies as _nc_cookies_datei  # v4.1-W32: cookies.txt lesen
 from nc import overlaytext as _nc_ovtext  # v4.2-W22: die kleinen Sendebild-Textbausteine
 from nc import cookieholen as _nc_cookieholen  # v4.2-W10: Cookies selbst beziehen
+from nc import cookiebezug as _nc_cookiebezug  # v4.2-W107: Zeitplan des Auto-Bezugs
 from nc import ytdlpurl as _nc_ytdlpurl      # v4.2-W102: Stream-URL aus der yt-dlp-Auskunft
 from nc import livecache as _nc_livecache    # v4.2-W103: Kurzzeit-Cache der Live-Erkennung
 from nc import laufstand as _nc_laufstand    # v4.2-W104: laeuft der Code von der Platte?
@@ -603,6 +604,10 @@ from nc import restreamcfg as _nc_rscfg  # v4.1-W22: Sendeziele + Pruef-Paramete
 from nc import restreamstate as _nc_rsstate  # v4.1-W22: Restream-Laufzeitzustand
 from nc import restreamcmd as _nc_rscmd  # v4.2-W16: die ffmpeg-Zeile des Relays
 from nc import reccmd as _nc_reccmd  # v4.2-W17: die Kommandozeilen des Recorders
+from nc import tonspur as _nc_tonspur  # v4.2-W106: jede Ausgabe traegt eine Tonspur
+from nc import lastvorsorge as _nc_lastvorsorge  # v4.2-W108: Drossel vor dem Pixelsalat
+from nc import befehle as _nc_befehle  # v4.2-W109: ein Verzeichnis fuer Telegram und Discord
+from nc import kiwahl as _nc_kiwahl  # v4.2-W110: lokal (llama.cpp) oder Cloud
 from nc import aufnahmefolge as _nc_folge  # v4.2-W18: die Eskalationsrechnung
 from nc import aufnahmekategorie as _nc_kat  # v4.2-W23: warum eine Aufnahme so endete
 from nc import audiotap as _nc_audiotap  # v4.2-W46: warum der Audio-Tap starb
@@ -2064,16 +2069,11 @@ def _cookie_autorefresh_info() -> dict:
 # eine Woche Stillstand — half bisher nur Handarbeit im Deck. Hier holt der
 # Bot sie selbst: ein Gast-Aufruf auf tiktok.com, ohne Login, ohne Extension.
 # Was er NICHT kann, steht in nc/cookieholen.py: einen sessionid erzeugen.
-_COOKIE_AUTOFETCH: dict = {"last_try": 0.0, "last_ok": None, "count": 0,
-                           "last_error": None, "last_report": None}
-
-
+# v4.2-W107: Zustand und Zeitplan stehen in nc/cookiebezug.py. Hier stand ein
+# eigenes Dict, und der Deck-Knopf ging daran vorbei — nach einem
+# erfolgreichen Klick zeigte das Deck weiter „noch nie gelaufen".
 def _cookie_autofetch_info() -> dict:
-    return {"enabled": COOKIE_AUTO_FETCH,
-            "interval_h": COOKIE_AUTO_FETCH_INTERVAL_H,
-            "last_ok": _COOKIE_AUTOFETCH["last_ok"],
-            "fetched_total": _COOKIE_AUTOFETCH["count"],
-            "last_error": _COOKIE_AUTOFETCH["last_error"]}
+    return _nc_cookiebezug.info()
 
 
 def _pull_proxy_still():
@@ -2088,37 +2088,18 @@ def _pull_proxy_still():
 def _cookies_selbst_holen(quelle="gast", browser=None, erzwingen=False) -> dict:
     """Holt Cookies automatisch und legt sie in COOKIE_FILE ab. Gibt den
        Bericht aus nc/cookieholen.py zurueck (wirft nie — die Aufrufer sind
-       eine Flask-Route, ein Telegram-Befehl und eine Dauerschleife).
+       ein Telegram-Befehl und der Cookie-Alarm).
 
-       `erzwingen=False` haelt die Drossel ein: der Gast-Aufruf laeuft
-       hoechstens alle COOKIE_AUTO_FETCH_INTERVAL_H Stunden. Ohne die Drossel
-       hinge an jedem Health-Poll des Decks ein HTTPS-Aufruf zu TikTok — das
-       ist genau die Sorte Selbstbeschuss, die eine IP auf die Sperrliste
-       bringt."""
-    jetzt = _time_mod.monotonic()
+       `erzwingen=False` fragt den Zeitplan (nc/cookiebezug.faellig): ohne
+       Drossel hinge an jedem Alarm-Tick ein HTTPS-Aufruf zu TikTok — die
+       Sorte Selbstbeschuss, die eine IP auf die Sperrliste bringt."""
     if not erzwingen:
-        if not COOKIE_AUTO_FETCH:
-            return {"ok": False, "error": "COOKIE_AUTO_FETCH=0", "skipped": True}
-        wartezeit = COOKIE_AUTO_FETCH_INTERVAL_H * 3600
-        if _COOKIE_AUTOFETCH["last_try"] and (jetzt - _COOKIE_AUTOFETCH["last_try"]) < wartezeit:
-            return {"ok": False, "skipped": True,
-                    "error": "gedrosselt (%.1fh Intervall)" % COOKIE_AUTO_FETCH_INTERVAL_H}
-    _COOKIE_AUTOFETCH["last_try"] = jetzt
-
-    bericht = _nc_cookieholen.aktualisiere(
-        COOKIE_FILE, quelle=quelle, browser=browser,
-        timeout=_nc_envnum.env_int("COOKIE_FETCH_TIMEOUT", 15),
-        log=log)
-    if bericht.get("ok"):
-        _COOKIES_CACHE.pop("v", None)     # sonst liest der Recorder 5s lang alt
-        _COOKIE_AUTOFETCH["last_ok"] = datetime.now(timezone.utc).isoformat()
-        _COOKIE_AUTOFETCH["count"] += len(bericht.get("added") or []) + \
-            len(bericht.get("replaced") or [])
-        _COOKIE_AUTOFETCH["last_error"] = None
+        ja, anlass = _nc_cookiebezug.faellig(_time_mod.time(), get_cookie_health())
+        if not ja:
+            return {"ok": False, "skipped": True, "error": anlass}
     else:
-        _COOKIE_AUTOFETCH["last_error"] = bericht.get("error")
-    _COOKIE_AUTOFETCH["last_report"] = bericht
-    return bericht
+        anlass = "telegram"         # einziger Aufrufer mit erzwingen=True
+    return _nc_cookiebezug.holen(quelle, browser, anlass=anlass)
 
 
 # F52: Cookie-Health-Check
@@ -2309,6 +2290,8 @@ def _resolver_stumm(username, grund):
 
        Der Wechsel des Grundes meldet sofort: dass aus einem Timeout ein 403
        geworden ist, ist die eigentliche Nachricht."""
+    if grund in _nc_cookiebezug.RESOLVER_ANSTOSS:
+        _nc_cookiebezug.anstossen("resolver-" + grund)     # v4.2-W107
     laut, unterdrueckt = _nc_meldetakt.melden(
         "resolver", grund, _time_mod.monotonic())
     if laut:
@@ -3458,11 +3441,11 @@ async def build_recording_cmd(*a, **kw):
 
 
 # =============================================================================
-# F14: Redis + Ollama Integration
+# F14: Redis + lokales LLM
 # =============================================================================
 # Redis (Standard-Config): Cache + AI-History + Rate-Limit + persistente Dead-
-# Chat-Liste. Ollama: lokaler LLM-Endpoint für /ai. Beides optional — wenn
-# Redis oder Ollama nicht erreichbar sind, läuft der Rest weiter, nur die
+# Chat-Liste. das LLM: lokaler LLM-Endpoint für /ai. Beides optional — wenn
+# Redis oder das LLM nicht erreichbar sind, läuft der Rest weiter, nur die
 # entsprechenden Features fallen still aus.
 # =============================================================================
 REDIS_URL    = os.getenv("REDIS_URL", "redis://localhost:6379/0")
@@ -3513,7 +3496,9 @@ def _anthropic_model(override=None):
 # ---- Reaction-Engine-Backend (umschaltbar) ----
 # Default 'pollinations' = KOSTENLOS, KEIN API-Key nötig (text.pollinations.ai, OpenAI-kompatibel).
 # Primär ist Claude, sobald ein Anthropic-Key gesetzt ist (Dashboard/ENV).
-REACTION_AI_PROVIDER   = os.getenv("REACTION_AI_PROVIDER", "pollinations").strip().lower()
+# v4.2-W110: Vorgabe "auto" statt "pollinations" — lokal, sobald llama-server
+# antwortet, sonst die keyless Kette. "pollinations"/"cloud" laesst lokal aus.
+REACTION_AI_PROVIDER   = os.getenv("REACTION_AI_PROVIDER", "auto").strip().lower()
 # V37-B92: hartes Zeitbudget für JEDEN Reaction-KI-Call. Die Watchdog-Alarme
 # ("live-react seit 422s ohne Lebenszeichen") kamen von unbegrenzt hängenden
 # Backend-Calls, die die Worker-Loop minutenlang blockierten.
@@ -3663,7 +3648,7 @@ async def redis_set_json(key: str, value, ttl: int = None):
         log.debug(f"redis_set_json({key}) failed: {e}")
 _nc_rsstate.REDIS_SET["fn"] = redis_set_json   # v4.1-W23: Haken fuer die Blueprints
 
-# ---------- Ollama-Client ----------
+# ---------- KI-Client (Claude -> lokales llama.cpp -> keyless Cloud) ----------
 # FIX (Header "Was offen bleibt"): vorher erzeugte JEDER llm_chat()/
 # llm_list_models()-Aufruf eine neue aiohttp.ClientSession — TCP-Handshake
 # + TLS-Setup-Overhead bei jedem AI-Call statt einmaliger gepoolter Verbindung.
@@ -3699,8 +3684,9 @@ async def _close_ai_session():
 async def llm_chat(messages: List[dict],
                    model: Optional[str] = None,
                    timeout: Optional[float] = None) -> Tuple[Optional[str], Optional[str]]:
-    """Zentraler Text-Chat (V37, ollama-frei). Kette: Brain-Runtime (lokales
-       llama.cpp, wenn AI_PROVIDER=brain) → nc.freeai (keyless Cloud).
+    """Zentraler Text-Chat. Kette: Claude (wenn Key) → lokales llama.cpp
+       (nc/kiwahl.py: bei AI_PROVIDER=auto, sobald llama-server antwortet) →
+       nc.freeai (keyless Cloud).
        Vertrag unverändert: (text, error_kind). Vision-Anfragen (images) gehen
        direkt an freeai — die Brain-Runtime ist text-only."""
     timeout = AI_TIMEOUT if timeout is None else timeout
@@ -3717,8 +3703,12 @@ async def llm_chat(messages: List[dict],
         if _err == "auth":
             return (None, "auth")
         log.debug("Claude ohne Antwort (%s) — Fallback-Kette", _err)
-    if (os.getenv("AI_PROVIDER", "").strip().lower() == "brain"
-            and not any(m.get("images") for m in messages)):
+    # v4.2-W110: lokal zuerst, wenn der Server laeuft — vorher NUR bei
+    # AI_PROVIDER=brain, also per Vorgabe nie. Bilder gehen weiter in die
+    # Cloud (der lokale Pfad ist text-only, siehe nc/kiwahl.py).
+    if (not any(m.get("images") for m in messages)
+            and _nc_kiwahl.lokal_zuerst(_nc_kiwahl.provider(),
+                                        await asyncio.to_thread(_nc_kiwahl.lokal_stand, True))):
         try:
             from brain import get_brain
             _res = await asyncio.to_thread(
@@ -3754,7 +3744,7 @@ async def llm_list_models() -> Optional[List[str]]:
 
 
 def llm_chat_sync(messages, model=None, timeout=None):
-    """Blockierender Chat für Flask-Routen/Threads. Brain → freeai."""
+    """Blockierender Chat für Flask-Routen/Threads. Claude → lokal → freeai."""
     timeout = AI_TIMEOUT if timeout is None else timeout
     # v4.0-W64: Claude zuerst (Dashboard/ENV-Key), sonst Brain → keyless.
     _akey = _anthropic_key()
@@ -3765,7 +3755,9 @@ def llm_chat_sync(messages, model=None, timeout=None):
             return (_txt, None)
         if _err == "auth":
             return (None, "auth")
-    if os.getenv("AI_PROVIDER", "").strip().lower() == "brain":
+    if (not any(m.get("images") for m in messages)
+            and _nc_kiwahl.lokal_zuerst(_nc_kiwahl.provider(),
+                                        _nc_kiwahl.lokal_stand(True))):
         try:
             from brain import get_brain
             _res = get_brain().llm.chat(
@@ -3811,8 +3803,8 @@ def _check_ai_models_sync(timeout: float = 1.5):
 
 
 
-# ---------- Live-Streaming des Ollama-Chats (SSE) ----------------------------
-# WARUM: Der blockierende ollama_chat_sync hat ein Socket-Timeout → bei langsamem
+# ---------- Live-Streaming des KI-Chats (SSE) ----------------------------
+# WARUM: Der blockierende llm_chat_sync hat ein Socket-Timeout → bei langsamem
 # CPU-Modell (Laden/Denken) bricht die Anfrage ab. Streaming hält die Verbindung,
 # solange Tokens fließen; das Frontend zeigt Laden→Denken→Antwort live an.
 
@@ -3822,9 +3814,9 @@ async def ai_chat(messages, model=None, timeout=None):
        KEIN API-Key, nc.freeai mit Basen-Rotation)."""
     if not _ai_backend_logged["done"]:
         _ai_backend_logged["done"] = True
-        log.info("Reaction-AI Backend: provider=%s, model=%s (keyless via nc.freeai%s)",
-                 REACTION_AI_PROVIDER, REACTION_AI_MODEL,
-                 " + Brain-Runtime" if REACTION_AI_PROVIDER in ("brain","llamacpp") else "")
+        log.info("Reaction-AI Backend: provider=%s (%s), Cloud-Modell=%s",
+                 REACTION_AI_PROVIDER, _nc_kiwahl.normal(REACTION_AI_PROVIDER),
+                 REACTION_AI_MODEL)
     # V37-B92: Zeitbudget IMMER begrenzen — die Reaction-Engine läuft in der
     # live-react-Loop; ein hängendes Backend darf sie nie blockieren.
     timeout = timeout if (timeout and timeout > 0) else REACTION_AI_TIMEOUT
@@ -3874,9 +3866,12 @@ async def ai_chat(messages, model=None, timeout=None):
                         "Modell=%s, Antwort der API: %s"
                         % (_cerr, _cdetail.get("model") or "?",
                            _cdetail.get("detail") or "kein Text mitgeliefert"))
-    # V37-B92: provider=brain → llama.cpp-Runtime (Ollama ist auf den 8 Kernen
-    # messbar langsamer). Fail-open-Kette: brain → ollama.
-    if REACTION_AI_PROVIDER in ("brain", "llamacpp"):
+    # v4.2-W110: lokal zuerst, wenn llama-server antwortet (nc/kiwahl.py).
+    # Vorher nur bei REACTION_AI_PROVIDER=brain — die Vorgabe war pollinations,
+    # also lief AZRAELs Live-Reaktion nie lokal. Fail-open: lokal → freeai.
+    if (not any(m.get("images") for m in messages)
+            and _nc_kiwahl.lokal_zuerst(REACTION_AI_PROVIDER,
+                                        await asyncio.to_thread(_nc_kiwahl.lokal_stand, True))):
         try:
             from brain import get_brain
             _res = await asyncio.wait_for(
@@ -3887,7 +3882,12 @@ async def ai_chat(messages, model=None, timeout=None):
             _react_warn("brainfb", "Reaction-AI brain fehlgeschlagen (%s) → freeai."
                         % _res.get("error"))
         except Exception as _e:
-            _react_warn("brainfb", "Reaction-AI brain-Pfad: %s → freeai." % _e)
+            # Budget oder belegter Slot sind kein Defekt, sondern die Bremse
+            # aus brain/llm.py (Concurrency 1, Stundenbudget) — eigener
+            # Schluessel, damit sie echte Ausfaelle nicht ueberdeckt.
+            _react_warn("brainbudget" if type(_e).__name__ == "BudgetExhausted"
+                        else "brainfb",
+                        "Reaction-AI lokal nicht verfuegbar (%s) → Cloud." % _e)
     # V37: einziger Cloud-Pfad = nc.freeai (keyless, Basen-Rotation, 429-Backoff)
     return await _nc_freeai.chat(messages, model=model or REACTION_AI_MODEL,
                                  timeout=timeout)
@@ -5803,7 +5803,7 @@ async def teststream(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # F16: File-Support für /ai (Text + Bilder)
 # =============================================================================
 # - Text-Files: Inhalt wird in den Prompt eingebettet (mit Längen-Cap)
-# - Bilder: per Base64 als 'images' Feld an Ollama (Vision-Model nötig: llava,
+# - Bilder: per Base64 als 'images' Feld an das LLM (Vision-Model nötig: llava,
 #   llama3.2-vision, etc. — entweder als AI_MODEL oder AI_VISION_MODEL)
 # - PDFs werden NICHT geparst (würde extra Dependency brauchen) — wir geben
 #   eine freundliche Meldung
@@ -5896,7 +5896,7 @@ async def _run_ai_call(update, context, prompt_text: str,
             if AI_VISION_MODEL:
                 use_model = AI_VISION_MODEL
             elif not _looks_like_vision_model(AI_MODEL):
-                # Best-effort warnung — Ollama meldet sich selbst wenn Modell kein Bild kann
+                # Best-effort warnung — das LLM meldet sich selbst wenn Modell kein Bild kann
                 log.info(f"/ai mit Bild aber {AI_MODEL} sieht nicht nach Vision-Modell aus.")
         elif payload["kind"] == "text":
             # Text in Prompt einbetten
@@ -8680,6 +8680,10 @@ def _rec_kategorie_melden(category, username):
     elif category == "offline_or_protected":
         log.warning("Stream-Kategorie: offline/protected | user=@%s", username)
     elif category == "forbidden_403":
+        # v4.2-W107: abgelaufene Anti-Bot-Tokens sind eine der beiden
+        # Ursachen eines 403 — frische kosten einen Gast-Aufruf. Der Zeitplan
+        # entscheidet, ob wirklich gefragt wird (15-min-Abstand).
+        _nc_cookiebezug.anstossen("403-aufnahme")
         # V37-403: Streak hochzählen; ab RECORD_403_HITS auf yt-dlp umstellen
         if RECORD_403_YTDLP:
             # v4.2-W18: gerechnet wird in nc/aufnahmefolge.py. Die
@@ -9089,6 +9093,12 @@ async def handle_recording_finished(proc, tid, chat_id, username, output_file,
         file_size = os.path.getsize(output_file) if file_exists else 0
 
         if file_exists and file_size > 0:
+            # v4.2-W106: eine Datei ohne Tonspur ist kein Erfolg. Vorab laesst
+            # sich das nicht wissen (das Probe-Fenster entscheidet), also wird
+            # die FERTIGE Datei geprueft und Stille nachgeruestet — vor dem
+            # Verbuchen, weil sich die Groesse dabei aendert.
+            file_size = (await _nc_tonspur.sichern(
+                output_file, wer=f"@{username}"))["groesse"] or file_size
             # v4.2-W18: EIN Einstiegspunkt fuer alle Fehlerzaehler dieses
             # Users. Vorher standen die pop()-Zeilen dreimal im Monolithen
             # verteilt, und zweimal fehlte einer der Zaehler.
@@ -9940,11 +9950,11 @@ def dashboard():
 # ============================================================================
 # Wie bei ChatGPT/Claude: Conversations sind persistente Threads aus Messages.
 # Bei jeder neuen User-Message senden wir die N letzten Messages als context
-# an Ollama für echtes Multi-Turn-Chat (statt isolierter F49-Single-Shots).
+# an das LLM für echtes Multi-Turn-Chat (statt isolierter F49-Single-Shots).
 #
 # Storage: ai_conversations + ai_messages Tabellen (init_db).
 # Context-Budget: AI_CHAT_CONTEXT_MESSAGES letzte Messages, max AI_CHAT_CONTEXT_CHARS
-# Gesamt-Zeichen. Ältere werden weggelassen damit Ollama nicht überfüttert wird.
+# Gesamt-Zeichen. Ältere werden weggelassen damit das LLM nicht überfüttert wird.
 
 AI_CHAT_CONTEXT_MESSAGES = _env_int("AI_CHAT_CONTEXT_MESSAGES", 30)
 AI_CHAT_CONTEXT_CHARS    = _env_int("AI_CHAT_CONTEXT_CHARS", 16000)
@@ -9968,7 +9978,7 @@ def _conv_messages(conv_id):
 
 
 
-# F78: Ollama-Models-Listing mit Cache.
+# F78: LLM-Modellliste mit Cache.
 # V37: Modell-Cache lebt in _llm_list_models (60s, Brain→freeai).
 
 
@@ -10610,7 +10620,7 @@ def report_proxy_result(url: str, ok: bool, latency_ms=None):
     PROXY_ROUTER.report(url, ok, latency_ms)
 
 # F49: AI-Chat vom Dashboard
-# F49-Bug-Fix B5: Sync Rate-Limit (Ollama-Schutz vor Browser-Bug oder Spam)
+# F49-Bug-Fix B5: Sync Rate-Limit (KI-Schutz vor Browser-Bug oder Spam)
 _AI_DASHBOARD_RATE = _nc_brainstate.AI_RATE   # monotonic-Timestamps (W21: geteilt)
 _AI_DASHBOARD_MAX_PER_MIN = _env_int("AI_DASHBOARD_MAX_PER_MIN", 15)
 _AI_DASHBOARD_LOCK = _nc_brainstate.AI_LOCK
@@ -11426,7 +11436,7 @@ def health():
         native         = has_ffmpeg,                                  # F15
         ytdlp          = (shutil.which("yt-dlp") or shutil.which("yt_dlp")) is not None,
         redis          = _check_redis_alive_sync(),                   # F15
-        ollama         = _check_ai_alive_sync(),                  # F15
+        llm            = _check_ai_alive_sync(),                  # F15; v4.2-W110: hiess "ollama"
         recordings_dir = os.path.isdir(RECORDINGS_DIR),
     )
 
@@ -11528,7 +11538,7 @@ def _dashboard_adresse():
 
 def run_flask():
     # F24-Hang-Fix: threaded=True — sonst blockiert eine slow sync Route
-    # (Redis/Ollama-Probes) den ganzen Server. Multi-threaded reicht für
+    # (Redis/KI-Probes) den ganzen Server. Multi-threaded reicht für
     # unseren Last (Dashboard mit handful Polling-Requests/30s).
     # WEB_HOST wird respektiert (inkl. 0.0.0.0 für Remote-Zugriff). Wenn ohne
     # DASHBOARD_TOKEN öffentlich gebunden wird, ist _auth_guard() ein No-Op →
@@ -12332,7 +12342,7 @@ def _manual_donations_total():
 # Bot. Sie justiert nur risikofreies Wissen (Daten) automatisch und schreibt
 # Code-/Config-Vorschläge zum Review in den build-Ordner. Das ist bewusst so —
 # automatisches Selbst-Überschreiben von Produktiv-Code wäre gefährlich.
-# Optional nutzt sie das lokale Ollama-LLM für eine Klartext-Engineering-Notiz
+# Optional nutzt sie das lokale KI-LLM für eine Klartext-Engineering-Notiz
 # (graceful wenn offline). Steuerung via EVOLUTION_* env-Variablen.
 # =============================================================================
 
@@ -13719,6 +13729,10 @@ class RestreamManager:
     def __init__(self):
         self._procs = {}            # rid -> dict(proc, started, attempts, transcode, health, monitor)
         self._force_transcode = set()
+        # v4.2-W106: rids, deren Quelle nachweislich keinen Ton liefert. Sie
+        # senden mit Stille statt am harten Ton-Map zu sterben. Geleert bei
+        # jedem anderen Prozessende (siehe dort) und beim Stop.
+        self._tonlos = set()
         self._failover = set()      # v37 W3b: rids, die gerade aufs Backup-Ingest umgeschaltet sind
         self._chatguards = {}       # F92b: rid -> Chat-Guardian-Task (Studio-Panel-Feed)
         self._srcwatch = {}         # V37-SRCFAIL: rid -> Quellen-Online-Watcher-Task
@@ -14426,6 +14440,8 @@ class RestreamManager:
             log.warning("Restream #%d: Multi-Target im COPY-Modus "
                         "(RESTREAM_MULTI_ALLOW_COPY=1) — funktioniert nur bei "
                         "sauberen Quell-Keyframes, sonst ruckelt eine Plattform.", rid)
+        if transcode:
+            self._drossel_vorsorge(rid)       # v4.2-W108: VOR Feeder und Bauer
         tts_fifo = _restream_tts_start(rid)   # self-gated auf RESTREAM_TTS; Stimme auch im Copy-Modus
         # v4.2-W39: beide Starter liefen SYNCHRON in dieser Coroutine — der
         # Rest, den die Loop-Welle von v4.2 uebrig gelassen hat. Das Overlay
@@ -14469,12 +14485,14 @@ class RestreamManager:
                                           only_target=_base_target,
                                           html_ov_fifo=_html_ov,
                                           avatar_feed=_av_feed,
-                                          drossel=_drossel_stufe(rid))
+                                          drossel=_drossel_stufe(rid),
+                                          tonlos=rid in self._tonlos)
             else:
                 cmd = _build_restream_cmd(src, ingest, key, transcode, tts_fifo=tts_fifo, rid=rid,
                                           html_ov_fifo=_html_ov, targets=_targets,
                                           avatar_feed=_av_feed,
-                                          drossel=_drossel_stufe(rid))
+                                          drossel=_drossel_stufe(rid),
+                                          tonlos=rid in self._tonlos)
             if RESTREAM_OVERLAY:
                 _write_restream_overlay()      # Textdateien anlegen, BEVOR drawtext sie öffnet
             proc = await asyncio.create_subprocess_exec(
@@ -14724,7 +14742,8 @@ class RestreamManager:
                     cmd = _build_restream_cmd(cur_url, "", "", transcode,
                                               tts_fifo=None, rid=rid,
                                               only_target=purl,
-                                              relay_profile=True)
+                                              relay_profile=True,
+                                              tonlos=rid in self._tonlos)
                     # v4.0-W115: stdout ist jetzt eine PIPE statt DEVNULL.
                     # Der cmd traegt seit jeher -progress pipe:1 — es hat nur
                     # nie jemand zugehoert. Damit hatten die unabhaengigen
@@ -14832,6 +14851,71 @@ class RestreamManager:
         task = asyncio.create_task(_relay_loop())
         self._procs.setdefault(rid, {}).setdefault("indep_tasks", {})[pname] = task
 
+    def _drossel_vorsorge(self, rid):
+        """v4.2-W108: die Startstufe so waehlen, dass der Transcode in die
+        freie Rechenzeit passt. Begruendung und Messung: nc/lastvorsorge.py —
+        faellt ein Transcode unter Echtzeit, verwirft das CDN Pakete, und der
+        Pixelsalat ist gesendet, bevor die Rueckstands-Drossel ihn bemerkt.
+
+        Gerade gestartete Transcodes zaehlen extra: das 1-Minuten-Load-Mittel
+        zeigt sie noch nicht, und zwei kurz nacheinander gestartete Restreams
+        saehen sonst beide eine leere Maschine.
+        """
+        try:
+            load1 = os.getloadavg()[0]
+        except OSError as e:
+            log.warning("Restream #%s: Load nicht lesbar (%s) — Start ohne "
+                        "Last-Vorsorge.", rid, e)
+            return
+        jetzt = _time_mod.monotonic()
+        jung = sum(1 for r, i in self._procs.items() if r != rid
+                   and i.get("transcode")
+                   and _nc_lastvorsorge.jung(i.get("started"), jetzt))
+        stufe, grund = _nc_lastvorsorge.startstufe(
+            load1, os.cpu_count() or 1, jung, FFMPEG_THREADS_LIVE,
+            _drossel_stufe(rid), _nc_rscmd.DROSSEL_MAX)
+        if grund is None:
+            return
+        _RESTREAM_DROSSEL[int(rid)] = stufe
+        # Die hoechste Stufe erreicht die Vorsorge nur, wenn nichts mehr passt
+        # (Stufe 5 kostet gemessen nicht weniger als 4) — dann ist es kein
+        # Abregeln mehr, sondern eine Ueberlast, die ein Mensch loesen muss.
+        (log.error if stufe >= _nc_rscmd.DROSSEL_MAX else log.warning)(
+                    "Restream #%s: startet mit Drossel Stufe %d%s — %s. Lieber "
+                    "von Anfang an etwas kleiner als nach dem ersten Rueckstand "
+                    "Pixelsalat (das CDN verwirft Pakete, wenn der Transcode "
+                    "nicht mithaelt).", rid, stufe,
+                    _nc_rscmd.drossel_zusatz(RESTREAM_FPS, RESTREAM_CANVAS_W,
+                                             RESTREAM_CANVAS_H, stufe), grund)
+
+    async def _ton_folge(self, rid, ran, tail, attempts):
+        """v4.2-W106: Ende des Prozesses auf eine tonlose Quelle pruefen. -> bool
+
+        ffmpeg stirbt am Ton-Map in unter einer Sekunde, und JEDER weitere
+        Versuch stirbt identisch — weder Netz noch Codec, also griff keiner
+        der Fallbacks, und das Reconnect-Budget lief an einem Fehler leer,
+        den ein Reconnect nie behebt. True heisst: der Neustart mit Stille
+        laeuft schon, der Aufrufer ist fertig.
+
+        Jeder ANDERE Ausgang nimmt den Schalter wieder weg, damit der naechste
+        Start den echten Ton versucht. Sonst bliebe ein Restream, dessen
+        Quelle nur am Anfang stumm war, die ganze Sitzung stumm — ohne dass
+        irgendetwas das meldet. Kostet bei dauerhaft stummer Quelle einen
+        Fehlstart unter 1 s je Neuaufbau.
+        """
+        if (rid not in self._tonlos and ran < 25
+                and _nc_tonspur.ist_tonlos_fehler(tail)):
+            self._tonlos.add(rid)
+            log.warning("Restream #%d: Quelle liefert keinen Ton → sende mit "
+                        "Stille-Spur weiter (Ziele lehnen einen Strom ohne Ton "
+                        "teils ab). Gilt bis zum naechsten Neuaufbau.", rid)
+            self._set_status(rid, "starting", err="Quelle ohne Ton → Stille-Spur")
+            await asyncio.sleep(1)
+            await self.start(rid, _attempts=attempts)
+            return True
+        self._tonlos.discard(rid)
+        return False
+
     async def _monitor(self, rid):
         info = self._procs.get(rid)
         if not info:
@@ -14925,6 +15009,9 @@ class RestreamManager:
             return
         if rc == 0:
             self._set_status(rid, "stopped", pid=None, err="Quelle beendet (EOF)")
+            return
+        # v4.2-W106: tonlose Quelle → mit Stille neu (Begruendung dort).
+        if await self._ton_folge(rid, ran, tail, attempts):
             return
         # copy→transcode-Fallback: copy-Modus früh gestorben mit Codec-Fehler
         if (not transcode_used) and ran < 25 and _looks_like_codec_err(tail):
@@ -15031,6 +15118,7 @@ class RestreamManager:
             self._set_desired(rid, False)
         self._set_status(rid, "stopped", pid=None)
         self._force_transcode.discard(rid)
+        self._tonlos.discard(rid)     # v4.2-W106: naechste Sitzung prueft neu
         self._failover.discard(rid)   # v37 W3b: Failover zurücksetzen
         self._srcspin.pop(rid, None)      # v4.0-W113: Serien enden mit dem Stop
         if not _keep_desired:
@@ -15365,7 +15453,7 @@ _AZRAEL_REACTION = _nc_azrael.REACTION          # v4.1-W19: geteilt mit nc/route
 # Neustarts. Bei Netzfehler greift der eingebaute Fallback unten. Substring-Match
 # ist für Deutsch gewollt (fängt Komposita: „arsch" -> „Arschloch"). WICHTIG: Liste
 # über-filtert teils (Kontext!) — daher im Dashboard reviewbar; Kontext/Verschleierung
-# deckt zusätzlich die Ollama-Moderation ab.
+# deckt zusätzlich die KI-Moderation ab.
 # v4.1-W18: Bannwortliste, Lern-Warteschlange und die LDNOOBW-Basisliste liegen
 # in nc/badwords.py. Grund: die Haelfte der /api/kickmod-Routen ist reine
 # Dateiarbeit und haette als Blueprint fuenf ctx-Eintraege gekostet — bei 24 von
@@ -15466,7 +15554,7 @@ def _detect_foreign_ad(text):
 
 class KickModerator:
     """KI-Chat-Moderator für den EIGENEN Kick-Kanal. Liest den Chat (Websocket),
-       beantwortet optional Fragen (Ollama) und moderiert optional Spam/Toxizität.
+       beantwortet optional Fragen (das LLM) und moderiert optional Spam/Toxizität.
        Nutzt die offizielle Kick-API (OAuth 2.1 App-Token)."""
     def __init__(self):
         self._token = None
@@ -15494,10 +15582,10 @@ class KickModerator:
         self.stats = {"seen": 0, "replied": 0, "moderated": 0, "connected": False,
                       "dc_seen": 0, "dc_moderated": 0}   # F93: Discord-KI-Mod-Zähler
         self.last_spoken = {"text": "", "ts": 0.0}    # für das Overlay (AI "spricht")
-        # BUGHUNT: Begrenzung gleichzeitiger Ollama-Verarbeitungen, sonst staut sich
+        # BUGHUNT: Begrenzung gleichzeitiger KI-Verarbeitungen, sonst staut sich
         # bei aktivem Chat eine unbegrenzte Task-Flut (RAM/CPU-Explosion).
         self._sema = asyncio.Semaphore(3)
-        # AUSBAU: Spam-Heuristiken (ohne Ollama) + eskalierende Strafen pro User.
+        # AUSBAU: Spam-Heuristiken (ohne das LLM) + eskalierende Strafen pro User.
         self._infractions = {}     # user_id -> {"n", "ts"}  (eskalierende Timeouts, verjähren nach 1h)
         self._msg_hist = {}        # user_id -> [(ts, content_lower)]  (Flood/Repeat-Erkennung)
         self.cfg.setdefault("spam_filter", True)     # Caps/Flood/Link/Mention-Heuristik aktiv
@@ -15616,7 +15704,7 @@ class KickModerator:
         if not self.cfg.get("learn_badwords"):
             return 0
         now = _time_mod.monotonic()
-        if now - getattr(self, "_last_learn", 0.0) < 5:   # Rate-Limit gegen Ollama-Flut
+        if now - getattr(self, "_last_learn", 0.0) < 5:   # Rate-Limit gegen KI-Flut
             return 0
         self._last_learn = now
         cands = await self._extract_badwords(content)
@@ -15671,7 +15759,7 @@ class KickModerator:
         """AZRAEL reagiert LIVE (vor der Kamera) auf eine Aussage/Behauptung —
            menschlich, emotional und passend zum aktuellen Stream-Kontext, mit Logik
            + moralischem Kompass; stellt Zweifelhaftes in Frage, bleibt aber als KI
-           transparent (kein absolutes Urteil). Via Ollama. Returns (text, err)."""
+           transparent (kein absolutes Urteil). Via das LLM. Returns (text, err)."""
         statement = (statement or "").strip()
         if not statement:
             return None, "leere Aussage"
@@ -15697,10 +15785,14 @@ class KickModerator:
             except asyncio.TimeoutError:
                 text, err = None, "timeout (Reaction-Budget)"
         if err or not text:
+            # v4.2-W110: hier stand „Falls Ollama: läuft es (`ollama ps`)" —
+            # Ollama gibt es seit V37 nicht mehr. Ein Rat zu einem Dienst, den
+            # niemand installiert hat, schickt den Betreiber ins Leere.
             _react_warn("reactai", "⚠ AZRAEL reagiert NICHT — Reaction-AI (%s) Fehler: %s. "
-                        "Keyless-Default ist REACTION_AI_PROVIDER=pollinations. Falls Ollama: läuft "
-                        "es (`ollama ps`) + Modell gepullt? Schnelltest: AZRAEL → AI-Chat." %
-                        (REACTION_AI_PROVIDER, err or "leere Antwort"))
+                        "Kette: lokal (llama-server unter BRAIN_LLAMACPP_URL) → keyless "
+                        "Cloud. Pruefen: `systemctl status llama-server` und "
+                        "`curl -s $BRAIN_LLAMACPP_URL/health`; Schnelltest im Deck: "
+                        "AZRAEL → AI-Chat." % (REACTION_AI_PROVIDER, err or "leere Antwort"))
             return None, (err or "keine Antwort")
         text = text.strip()
         audio = ""
@@ -15739,7 +15831,7 @@ class KickModerator:
         return None
 
     def _spam_check(self, content, user_id):
-        """Schnelle Heuristik OHNE Ollama. Gibt Grund-String zurück wenn Spam, sonst None.
+        """Schnelle Heuristik OHNE das LLM. Gibt Grund-String zurück wenn Spam, sonst None.
            Erkennt CAPS-Spam, Link-/Mention-Spam, Flood und identische Wiederholungen."""
         if not self.cfg.get("spam_filter"):
             return None
@@ -15844,7 +15936,7 @@ class KickModerator:
                             {"user": sender, "cat": _hard[0], "what": _hard[1],
                              "platform": "kick"})
                 return
-        # BUGHUNT: Banned-Words zuerst (kein Ollama nötig) → sofortiger Timeout.
+        # BUGHUNT: Banned-Words zuerst (kein das LLM nötig) → sofortiger Timeout.
         if self.cfg.get("auto_moderate") and user_id and not _exempt:
             hit = self._banned_hit(content)
             if hit:
@@ -15853,7 +15945,7 @@ class KickModerator:
                     _modlog("timeout", "filter", content,
                             {"user": sender, "word": hit, "platform": "kick"})
                 return
-            # AUSBAU: schnelle Spam-Heuristik (ohne Ollama) → eskalierender Cool-off-Timeout.
+            # AUSBAU: schnelle Spam-Heuristik (ohne das LLM) → eskalierender Cool-off-Timeout.
             sp = self._spam_check(content, user_id)
             if sp:
                 # W19: beim ERSTEN Verstoss nur oeffentlich verwarnen — das
@@ -15886,7 +15978,7 @@ class KickModerator:
         except Exception as e:
             log.debug("oracle hook: %s", e)
         # BUGHUNT: nur klassifizieren wenn überhaupt eine KI-Aktion aktiv ist —
-        # sonst unnötige Ollama-Last bei jedem Chat-Event.
+        # sonst unnötige KI-Last bei jedem Chat-Event.
         if not (self.cfg.get("auto_reply") or self.cfg.get("auto_moderate")):
             return
         # F87: Kick-Chat-Velocity als zweites Hype-Signal (neben TikTok-Chat) —
@@ -15904,7 +15996,7 @@ class KickModerator:
                     _spawn(clip_moment(_src, "Kick-Hype", "KICK CHAT ESKALIERT"), name="clip-kick-velocity")
         except Exception as e:
             log.debug("kick velocity: %s", e)
-        # BUGHUNT: Semaphore begrenzt parallele Ollama-Calls (Task-Flut vermeiden).
+        # BUGHUNT: Semaphore begrenzt parallele KI-Calls (Task-Flut vermeiden).
         if self._sema.locked():
             return   # keine freien Slots → Nachricht überspringen statt aufstauen
         async with self._sema:
@@ -16140,7 +16232,7 @@ _react_fail_ts = {}
 
 def _react_warn(key, msg, every=300):
     """Sichtbare, gedrosselte Warnung (max alle `every`s) — damit Reaktions-Fehler
-       (Ollama down / Modell fehlt / Timeout) nicht still im Debug-Log verschwinden."""
+       (das LLM down / Modell fehlt / Timeout) nicht still im Debug-Log verschwinden."""
     now = _time_mod.monotonic()
     if now - _react_fail_ts.get(key, -1e9) >= every:
         _react_fail_ts[key] = now
@@ -16466,7 +16558,7 @@ def _azrael_system(purpose, extra=""):
 
 async def azrael_chat(purpose, user_content, extra_system="", timeout=25, model=None):
     """F90: DER zentrale KI-Aufruf aller Kanäle. Budget-Guard (V7) →
-       einheitlicher System-Prompt → ai_chat (Pollinations/Ollama-Fallback) →
+       einheitlicher System-Prompt → ai_chat (Pollinations/KI-Fallback) →
        Telemetrie (V8, fire-and-forget). Rückgabe (text, err) wie ai_chat."""
     now = _time_mod.monotonic()
     while _AI_CALL_TS and now - _AI_CALL_TS[0] > 60:
@@ -19605,7 +19697,7 @@ Hinweise: Zeitspalten sind ISO-8601-Strings. Erfolg = outcome IN ('ok','stall_ki
 
 # F15: Sync-Helper für Flask-Routen (Dashboard-Backend)
 # =============================================================================
-# /health & /api/system laufen im Flask-Thread (sync), aber prüfen Redis/Ollama.
+# /health & /api/system laufen im Flask-Thread (sync), aber prüfen Redis/das LLM.
 # Statt das Async-Setup hochzufahren benutzen wir stdlib socket + urllib —
 # klein, schnell, blockiert nicht den asyncio-Loop.
 # B4: socket / urllib / time-Imports wurden an den Anfang verschoben.
@@ -20015,7 +20107,7 @@ _nc_routes_abwehr.HAKEN["angriffe"]["fn"] = _parse_ssh_attacks
 # ===================== DISCORD-BOT (optional, env-gated) =====================
 # Komplett deaktiviert wenn DISCORD_BOT_TOKEN fehlt (wie alle optionalen Integrationen) —
 # kein Import von discord.py, kein Task, kein Crash. Wenn gesetzt: Slash-Commands mit
-# Telegram-Parität (rufen DIESELBE Business-Logik: add_tracking/remove_tracking/ollama_chat)
+# Telegram-Parität (rufen DIESELBE Business-Logik: add_tracking/remove_tracking/llm_chat)
 # + volle Server-Verwaltung (Channels, Kategorien, Rollen/Nutzergruppen, Rechte, Bans/Timeouts).
 DISCORD_BOT_TOKEN      = os.getenv("DISCORD_BOT_TOKEN", "").strip()
 DISCORD_GUILD_ID       = _env_int("DISCORD_GUILD_ID", 0)         # optional: 1 Guild → sofortiger Slash-Sync (sonst global, ~1h)
@@ -20074,7 +20166,7 @@ DISCORD_TRACK_GROUP_ID = _env_int("DISCORD_TRACK_GROUP_ID", 0)     # group_id f�
 DISCORD_VOICE_AI       = os.getenv("DISCORD_VOICE_AI", "1").strip().lower() in ("1","true","yes","on","y")  # /ai antwortet auch auf Sprachnachrichten (Whisper→KI)
 DISCORD_AUTOMOD        = os.getenv("DISCORD_AUTOMOD", "0").strip().lower() in ("1","true","yes","on","y")   # KI/Heuristik-Auto-Moderation
 DISCORD_AUTOMOD_ACTION = os.getenv("DISCORD_AUTOMOD_ACTION", "flag").strip().lower()   # delete | flag (nur intern melden)
-# F93: AZRAEL überwacht auch den Discord-Chat mit ECHTER KI (Ollama-Klassifikation)
+# F93: AZRAEL überwacht auch den Discord-Chat mit ECHTER KI (KI-Klassifikation)
 # — nicht nur die Heuristik. Budget-geschützt (AZRAEL_MAX_CALLS_MIN) + Semaphore.
 DISCORD_AI_MOD         = os.getenv("DISCORD_AI_MOD", "1").strip().lower() in ("1","true","yes","on","y")
 DISCORD_AZRAEL_REPLY   = os.getenv("DISCORD_AZRAEL_REPLY", "1").strip().lower() in ("1","true","yes","on","y")  # AZRAEL antwortet bei @Mention
@@ -20213,6 +20305,7 @@ def _discord_kontext():
         azrael_chat=azrael_chat, clip_moment=clip_moment,
         einladung_merken=_discord_einladung_merken,
         kick_mod=_KICK_MOD, fehler_schlange=_DC_ERR_QUEUE, boot_ts=_BOOT_TS,
+        bot_app_holen=lambda: globals().get("bot_app"),
         befehle=befehle, schalter=schalter)
 
 
@@ -22824,8 +22917,66 @@ async def einnahmen_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                         parse_mode=ParseMode.HTML)
 
 
+async def unpause_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """v4.2-W109: /unpause @user — eine vom Brain auto-pausierte Quelle wieder
+    aktivieren. Gab es bis hierher nur als Discord-Kopie (/sys_unpause); jetzt
+    ist das der eine Handler, Discord ruft ihn ueber den Shim."""
+    if not _is_authorized(update): return
+    u = clean_username(context.args[0]) if context.args else ""
+    if not u:
+        await update.message.reply_text(_nc_i18n.t("Bitte mit Namen: /unpause @user")); return
+
+    def _db():
+        with db_conn() as conn:
+            cur = conn.execute("UPDATE trackings SET paused=0 WHERE "
+                               "username=? AND paused=1", (u,))
+            conn.commit()
+            return cur.rowcount
+    n = await asyncio.to_thread(_db)
+    try:
+        from brain import get_brain as _gb
+        _b = _gb()
+        with _b._db_lock, _b._conn() as _c:
+            _c.execute("DELETE FROM paused_sources WHERE who=? OR who=?", (u, "@" + u))
+    except Exception as e:
+        # Die Discord-Kopie schluckte das still. Bleibt der Eintrag stehen,
+        # pausiert das Brain die Quelle beim naechsten Durchlauf erneut —
+        # „reaktiviert" waere dann gelogen.
+        log.warning("/unpause @%s: Brain-Pause nicht geloescht (%s) — die "
+                    "Quelle kann erneut pausiert werden.", u, e)
+    await update.message.reply_text(
+        _nc_i18n.t(f"✅ @{u} reaktiviert.") if n else _nc_i18n.t(f"@{u} war nicht pausiert."))
+
+
+async def hilfe_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """v4.2-W109: /help — die Befehlsliste, gebaut aus nc/befehle.py."""
+    if not _is_authorized(update): return
+    await update.message.reply_text(
+        _nc_i18n.t("Verfügbare Befehle") + "\n" +
+        _nc_befehle.hilfe_text(_nc_befehle.TG, _nc_i18n.t))
+
+
+async def _telegram_befehlsmenue(app):
+    """v4.2-W109: das Menue, das Telegram beim Tippen von „/" zeigt.
+
+    Bis hierher wurde es nie gesetzt — Telegram zeigte entweder nichts oder
+    eine Liste, die irgendwann von Hand in BotFather eingetragen wurde und
+    seither nicht mitwuchs. Jetzt aus nc/befehle.py, also dieselbe Liste,
+    die auch registriert ist.
+    """
+    try:
+        from telegram import BotCommand
+        await app.bot.set_my_commands([
+            BotCommand(b.name, _nc_befehle.beschreibung(b, _nc_i18n.t))
+            for b in _nc_befehle.fuer(_nc_befehle.TG)])
+    except Exception as e:
+        log.warning("Telegram-Befehlsmenue nicht gesetzt (%s) — die Befehle "
+                    "funktionieren trotzdem, Telegram schlaegt sie nur beim "
+                    "Tippen von „/“ nicht vor.", e)
+
+
 async def report_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """V37: /report — Wochenreport (identisch zu Discord /sys_report)."""
+    """V37: /report — Wochenreport. Auf Discord derselbe Handler (seit W109)."""
     if not _is_authorized(update): return
     try:
         from brain import get_brain
@@ -22965,29 +23116,13 @@ async def run_bot():
     global _GLOBAL_SCRAPER
     _GLOBAL_SCRAPER = scraper
 
-    for name, fn in (("start", start), ("tiktok", tiktok), ("live", live),
-                     ("track", track), ("untrack", untrack),
-                     ("tracklist", tracklist), ("about", about),
-                     ("diag", diag), ("teststream", teststream),       # F11
-                     ("ai", ai), ("aireset", aireset),                 # F14
-                     ("recstatus", recstatus), ("cleanup", cleanup),    # F19
-                     ("stats", stats),                                  # F19
-                     ("topusers", topusers),                            # F48
-                     ("cookies", cookies_cmd),                          # F52
-                     ("pause", pause_tracking),                         # F53
-                     ("resume", resume_tracking),                       # F53
-                     ("sysres", sysres),                                # F54
-                     ("summary", summary_cmd),                          # F55
-                     ("bulkadd", bulkadd),                              # F56
-                     ("stoprec", stoprec),                              # F59
-                     ("quota", quota),                                  # F66
-                     ("logs", logs_cmd),                                # F68
-                     ("brain", brain_cmd),                              # V37
-                     ("einnahmen", einnahmen_cmd),                      # B120
-                     ("track_exact", track_exact),                      # B125
-                     ("report", report_cmd),                            # V37
-                     ("update", update_cmd)):                           # v4.0-W115
-        app.add_handler(CommandHandler(name, fn))
+    # v4.2-W109: aus nc/befehle.py. Hier stand eine eigene Tupel-Liste, und
+    # Discord hatte eine zweite (mit sys_-Praefix) — zwei Listen, die schon
+    # auseinandergelaufen waren: sieben Telegram-Befehle fehlten auf Discord.
+    # globals()[...] statt einer Zuordnung von Hand: ein Handlername, den es
+    # nicht gibt, bricht hier beim Start ab, nicht beim ersten Aufruf.
+    for name, handler in _nc_befehle.telegram_handler():
+        app.add_handler(CommandHandler(name, globals()[handler]))
     # v4.1-W7: Sprache des Absenders setzen, BEVOR irgendein Handler laeuft.
     # Gruppe -1 laeuft vor Gruppe 0 (allen anderen); block=False laesst das
     # Update danach normal weiterlaufen. Ohne beides bekaeme entweder der
@@ -23027,6 +23162,7 @@ async def run_bot():
     _spawn(_loop_lag_monitor(), name="loop-lag")          # v4.0-W48: Event-Loop-Blockade-Detektor
     _spawn(_disk_guard_loop(), name="disk-guard")         # F103: Auto-Cleanup vor Disk-Overflow
     _spawn(_laufstand_loop(), name="laufstand")           # v4.2-W104: Update eingespielt, aber nicht wirksam?
+    _spawn(_cookie_bezug_loop(), name="cookie-bezug")    # v4.2-W107: Cookies holen, ohne Telegram-Chat
     _spawn(_tunnel_wacht_loop(), name="tunnel-wacht")     # v4.2-W105: traegt der Egress (Polen-VPS)?
     _spawn(_sign_health_loop(), name="sign-health")       # F103: EulerStream-Sign-Key-Health
     _spawn(_marketing_loop(), name="marketing")           # B162: Cross-Promo (self-gated, Default aus)
@@ -23052,6 +23188,7 @@ async def run_bot():
         # Fehler beim VERARBEITEN eines Updates, nicht beim Abholen.
         await app.updater.start_polling(error_callback=_telegram_polling_fehler)
         log.info("Bot läuft — Telegram-Polling AKTIV, Befehle empfangsbereit.")
+        await _telegram_befehlsmenue(app)
     except Exception as e:
         log.error("Telegram-Polling FEHLGESCHLAGEN: %s — Telegram-Befehle sind AUS. "
                   "Häufigste Ursachen: ungültiges/leeres BOT_TOKEN, Netz/Proxy, oder "
@@ -23407,6 +23544,59 @@ def _tunnel_lage():
         return "unbekannt"
     return _nc_tunnelwacht.lage(letzte or {}, hat_proxy,
                                 bool(z.get("forced_off")))
+
+
+async def _cookie_bezug_loop():
+    """Holt die Anti-Bot-Cookies selbst — beim Start, nach Plan, nach 403.
+
+    v4.2-W107. Bis hierher hing der Auto-Bezug im Telegram-Cookie-Alarm, und
+    der startet nur mit DISK_ALARM_CHAT_ID/DAILY_SUMMARY_CHAT_ID. Ohne
+    Alarm-Chat lief der „Standard" COOKIE_AUTO_FETCH=1 also nie. Wann gefragt
+    wird, entscheidet nc/cookiebezug.faellig; hier steht nur der Takt.
+    """
+    if not COOKIE_AUTO_FETCH:
+        log.info("Cookie-Auto-Bezug: AUS (COOKIE_AUTO_FETCH=0). Abgelaufene "
+                 "Anti-Bot-Tokens muessen dann von Hand erneuert werden.")
+        return
+    log.info("Cookie-Auto-Bezug: an — erster Lauf jetzt, danach alle %.1f h "
+             "und nach 403 (fruehestens alle %d min).",
+             COOKIE_AUTO_FETCH_INTERVAL_H, _nc_cookiebezug.ANSTOSS_ABSTAND_S // 60)
+    await asyncio.sleep(20)          # Proxy-Gate und Pool zuerst
+    while True:
+        try:
+            await _cookie_bezug_runde()
+        except Exception as e:
+            _loop_fehler("_cookie_bezug_loop", e)
+        _hb("cookie-bezug")
+        await asyncio.sleep(60)
+
+
+async def _cookie_bezug_runde():
+    """Eine Runde: fragen, ob faellig, und dann EIN Gast-Aufruf im Thread."""
+    h = await asyncio.to_thread(get_cookie_health)
+    ja, anlass = _nc_cookiebezug.faellig(_time_mod.time(), h)
+    if not ja:
+        return
+    b = await asyncio.to_thread(_nc_cookiebezug.holen, "gast", None, anlass)
+    if b.get("ok"):
+        # Die Erfolgszeile schreibt nc/cookieholen selbst (nur bei Aenderung);
+        # eine zweite hier waere dieselbe Nachricht doppelt.
+        _nc_meldetakt.zuruecksetzen("cookiebezug")
+        return
+    # Ein einzelner Fehlschlag steht schon als warning mit Abhilfe im Log
+    # (nc/cookieholen). Scheitert es dauerhaft, gehoert es auf error — sonst
+    # steht es in einem ERROR-Log nie, und die naechste 403-Welle kommt
+    # ohne Vorwarnung.
+    zuletzt = _nc_cookiebezug.STAND["last_ok"]
+    if zuletzt is None or _time_mod.time() - zuletzt > 2 * _nc_cookiebezug.intervall_s():
+        laut, weg = _nc_meldetakt.melden("cookiebezug", "dauerhaft",
+                                         _time_mod.monotonic())
+        if laut:
+            log.error("Cookie-Auto-Bezug scheitert %s: %s — %s%s",
+                      "seit dem Start" if zuletzt is None else
+                      "seit %.0f h" % ((_time_mod.time() - zuletzt) / 3600),
+                      b.get("error"), b.get("abhilfe") or "",
+                      _nc_meldetakt.zusatz(weg))
 
 
 async def _tunnel_wacht_loop():
@@ -23929,7 +24119,7 @@ async def _aufraeumen():
     Aufraeumpfade, deren Fehlschlag bedeutungslos ist, duerfen dabei still
     sein (CLAUDE.md); der Prozess endet ohnehin gleich.
     """
-    # FIX (Header "Was offen bleibt" — gepoolte Ollama-Session): explizit
+    # FIX (Header "Was offen bleibt" — gepoolte KI-Session): explizit
     # schließen statt dem GC zu überlassen, sonst loggt aiohttp eine
     # "Unclosed client session" Warning beim Prozessende.
     try:
@@ -24339,7 +24529,7 @@ async def main():
 # F104: --selfcheck — Startup-Preflight, der ECHTE Fehler fängt (nicht Static)
 # ═══════════════════════════════════════════════════════════════════════════
 # Prüft trocken alle kritischen Pfade, die Static-Analyse nie sieht: Binaries,
-# Modelle, DB-Migrationen, Sign-Key, Ollama/Reaction-AI, Discord-Token, Proxy,
+# Modelle, DB-Migrationen, Sign-Key, das LLM/Reaction-AI, Discord-Token, Proxy,
 # Disk. Gibt einen Ampel-Report + Exit-Code (0=alles ok/warn, 1=harte Fehler).
 # Aufruf:  python bot.py --selfcheck   (läuft NICHT den Bot, nur den Check)
 
@@ -24460,7 +24650,32 @@ async def _selfcheck(verbose=True):
         add("warn", "Sign-Key (EulerStream)",
             "KEIN TIKTOK_SIGN_API_KEY — TikTok-Chat läuft nach wenigen Connects ins Tageslimit")
 
-    # 8) Reaction-AI (keyless Pollinations) + Ollama-Fallback
+    # 8a) Lokales LLM (llama.cpp). v4.2-W110: der Selbsttest kannte es nicht —
+    # er pruefte nur die Cloud-Kette und meldete STARTKLAR, waehrend der
+    # installierte llama-server stand. Warnung nur, wenn er installiert IST
+    # oder ausdruecklich verlangt wird: eine Meldung, die auf jeder
+    # Installation ohne llama.cpp gelb ist, erzieht zum Wegsehen (W85).
+    try:
+        _oben = await asyncio.to_thread(_nc_kiwahl.lokal_stand, True)
+        _wahl = _nc_kiwahl.provider()
+        _url = os.getenv("BRAIN_LLAMACPP_URL", "http://127.0.0.1:8080")
+        if _oben:
+            from brain import get_brain as _gb
+            _mods = await asyncio.to_thread(_gb().llm.models)
+            add("ok", "Lokales LLM", "llama-server antwortet (%s) — %s" % (
+                ", ".join(_mods[:2]) or "Modell unbekannt",
+                "bevorzugt" if _wahl != _nc_kiwahl.CLOUD else "AI_PROVIDER=cloud: ungenutzt"))
+        elif _wahl == _nc_kiwahl.LOKAL or shutil.which("llama-server"):
+            add("warn", "Lokales LLM",
+                "llama-server antwortet nicht unter %s — die KI laeuft ueber die "
+                "Cloud. Pruefen: systemctl status llama-server; Einrichtung: "
+                "docs/SETUP_LLAMACPP.md" % _url)
+        else:
+            add("ok", "Lokales LLM", "nicht installiert — KI ueber die Cloud-Kette")
+    except Exception as e:
+        add("warn", "Lokales LLM", "Status nicht ermittelbar: %s" % e)
+
+    # 8) Reaction-AI (Kette: lokal, wenn erreichbar → keyless Cloud)
     try:
         # V37-B104: harter Deckel — ein Selfcheck darf den Start nicht
         # minutenlang aufhalten, erst recht nicht bis AI_TIMEOUT greift.
@@ -24470,7 +24685,7 @@ async def _selfcheck(verbose=True):
             f"{REACTION_AI_PROVIDER} antwortet" if (txt and not err) else f"{REACTION_AI_PROVIDER}: {err}")
     except Exception as e:
         add("warn", "Reaction-AI", str(e))
-    # V37: freeai-Basen-Status (Ersatz des Ollama-Fallback-Checks)
+    # V37: freeai-Basen-Status (die Cloud-Reserve)
     try:
         _fb = _nc_freeai.bases_status()
         _blocked = [b for b in _fb if b["blocked_s"] > 0]
@@ -24798,6 +25013,13 @@ _nc_cookies_datei.configure(
 # v4.2-W10: der Auto-Bezug nimmt denselben Weg nach draussen wie Resolve
 # und Pull — ueber die Server-IP antwortet TikTok auf denselben Aufruf 403.
 _nc_cookieholen.configure(proxy_waehler=_pull_proxy_still, log=log)
+# v4.2-W107: der Zeitplan. nach_erfolg leert den Cookie-Cache, sonst liest
+# der Recorder nach einem Bezug noch 5 s den alten Stand.
+_nc_cookiebezug.configure(
+    datei=COOKIE_FILE, aktiv=COOKIE_AUTO_FETCH,
+    intervall_h=COOKIE_AUTO_FETCH_INTERVAL_H,
+    timeout=_nc_envnum.env_int("COOKIE_FETCH_TIMEOUT", 15),
+    nach_erfolg=lambda: _COOKIES_CACHE.pop("v", None), log=log)
 
 _nc_ctx.configure(
     log=log,

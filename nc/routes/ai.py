@@ -18,6 +18,7 @@ import threading
 import time as _time_mod
 from nc import i18n as _nc_i18n
 from nc import claude as _nc_claude
+from nc import kiwahl as _nc_kiwahl  # v4.2-W110
 from nc import fehlertext as _nc_fehlertext
 import nc.freeai as _nc_freeai
 from nc import sqlguard as _nc_sqlguard
@@ -220,7 +221,7 @@ def _conv_rename(conv_id, title):
 
 
 def _build_context_for_llm(conv_id, new_user_message):
-    """Baut die Nachrichten-Liste für Ollama. Sliding window:
+    """Baut die Nachrichten-Liste für das LLM. Sliding window:
        letzte N Messages bis max M Zeichen Gesamt-Budget.
        Ältere Messages werden weggelassen (vom Anfang her, jüngste behalten)."""
     history = _conv_messages(conv_id)
@@ -238,7 +239,7 @@ def _build_context_for_llm(conv_id, new_user_message):
         keep_reversed.append(m)
         budget -= len(c)
     keep = list(reversed(keep_reversed))
-    # Format für Ollama: nur role + content
+    # Format für das LLM: nur role + content
     return [{"role": m["role"], "content": m["content"]} for m in keep]
 
 
@@ -311,7 +312,7 @@ def _safe_select(sql, limit=200):
 
 def _nl_to_sql(question):
     """Übersetzt eine natürlichsprachige Frage in eine SELECT-Abfrage.
-       Bevorzugt die LLM (Ollama), fällt sonst auf Regeln zurück."""
+       Bevorzugt die LLM (das LLM), fällt sonst auf Regeln zurück."""
     if _c().cfg["EVOLUTION_USE_LLM"]:
         try:
             sys_prompt = ("Du bist ein SQLite-Experte. Wandle die Frage in GENAU EINE "
@@ -347,8 +348,7 @@ def api_ai_models():
         "models": models,
         "default": _c().cfg["AI_MODEL"],
         "available": len(models),
-        "backend": ("brain" if os.getenv("AI_PROVIDER","").strip().lower()=="brain"
-                    else "freeai"),
+        "backend": _nc_kiwahl.backend(),       # v4.2-W110: eine Antwort, nicht sieben
     })
 
 
@@ -416,7 +416,7 @@ def api_ai_conversation_patch(conv_id):
 
 @bp.route("/api/ai/conversations/<int:conv_id>/messages", methods=["POST"])
 def api_ai_conversation_send(conv_id):
-    """Neue User-Message hinzufügen, Ollama mit voller History befragen,
+    """Neue User-Message hinzufügen, das LLM mit voller History befragen,
        Assistant-Response speichern und zurückgeben.
        Body: {"prompt": "..."}
        Returns: {"ok": True, "user_message": {...}, "assistant_message": {...}}"""
@@ -441,9 +441,9 @@ def api_ai_conversation_send(conv_id):
         return jsonify(ok=False, error=_t("Konversation nicht gefunden")), 404
 
     # F78: Per-Conversation Model-Wahl (mit Validierung gegen INSTALLIERTE
-    # Ollama-Modelle). Vorher: B9 hartcodiert auf AI_MODEL — sicher,
+    # LLM-Modelle). Vorher: B9 hartcodiert auf AI_MODEL — sicher,
     # aber unflexibel. Jetzt: Operator kann pro Konversation wählen,
-    # ABER nur aus der Liste die Ollama tatsächlich installed hat
+    # ABER nur aus der Liste die das LLM tatsächlich installed hat
     # (keine arbitrary downloads via Dashboard).
     requested = (payload.get("model") or "").strip()
     if requested:
@@ -477,7 +477,7 @@ def api_ai_conversation_send(conv_id):
     # User-Message speichern (für DB-Persistence + Title-Gen)
     user_msg_id = _conv_add_message(conv_id, "user", prompt)
 
-    # Context aufbauen + an Ollama
+    # Context aufbauen + an das LLM
     messages = _build_context_for_llm(conv_id, "")
     # _build_context appended uns die new-message — wir wollen den User-Prompt
     # aber NICHT zweimal, da er schon in messages drin ist via DB-Lese.
@@ -499,13 +499,8 @@ def api_ai_conversation_send(conv_id):
                     + f"\n\n…[gekürzt, originale Länge: {len(response):,} Zeichen]")
 
     if err_kind or not response:
-        err_msg = {
-            "model_missing": f"Modell '{model}' nicht installiert",
-            "timeout":       f"Ollama Timeout nach {_c().cfg["AI_TIMEOUT"]}s",
-            "unreachable":   "Ollama nicht erreichbar (Service läuft nicht?)",
-            "http":          "Ollama HTTP-Fehler",
-            "other":         "Unerwarteter Fehler",
-        }.get(err_kind, "Keine Antwort vom LLM")
+        # v4.2-W110: eine Tabelle (nc/util), nicht drei Kopien mit Ollama-Rat.
+        err_msg = _ai_err_msg(err_kind, model, timeout=_c().cfg["AI_TIMEOUT"])
         # Assistant-Error als message speichern (so dass es im UI sichtbar ist)
         asst_msg_id = _conv_add_message(conv_id, "assistant", "",
                                         model=model, duration_ms=duration_ms,
@@ -750,7 +745,7 @@ def api_ai_ask():
 
        F49-Bug-Fix B5: Rate-Limit (default 15/min, via AI_DASHBOARD_MAX_PER_MIN).
        F49-Bug-Fix B9: 'model' im Request wird IGNORIERT — sonst könnte ein
-       Caller beliebige Modellnamen schicken und Ollama zum Download triggern.
+       Caller beliebige Modellnamen schicken und das LLM zum Download triggern.
        Wir nutzen immer AI_MODEL (das was der Telegram-/ai auch nimmt)."""
     # B5: Rate-Limit zuerst
     if not _ai_dashboard_rate_check():
@@ -788,13 +783,8 @@ def api_ai_ask():
 
     if err_kind or not response:
         # Log auch bei Fehler — damit man im Stream sieht WAS schief lief
-        err_msg = {
-            "model_missing": f"Modell '{model}' nicht installiert",
-            "timeout":       f"Ollama Timeout nach {_c().cfg["AI_TIMEOUT"]}s",
-            "unreachable":   "Ollama nicht erreichbar (Service läuft nicht?)",
-            "http":          "Ollama HTTP-Fehler",
-            "other":         "Unerwarteter Fehler",
-        }.get(err_kind, "Keine Antwort vom LLM")
+        # v4.2-W110: eine Tabelle (nc/util), nicht drei Kopien mit Ollama-Rat.
+        err_msg = _ai_err_msg(err_kind, model, timeout=_c().cfg["AI_TIMEOUT"])
         try:
             add_ai_log_entry(DASHBOARD_CHAT_ID, DASHBOARD_USER_ID, prompt, None,
                              model, duration_ms, err_msg, None, None)
@@ -838,7 +828,7 @@ def api_ai_config():
                        timeout_s=_c().cfg["AI_TIMEOUT"],
                        model_upgraded=(_eff != _raw),    # v4.0-W88: W73-Auto-Heal sichtbar
                        configured_model=_raw)
-    _brain = os.getenv("AI_PROVIDER", "").strip().lower() == "brain"
+    _brain = _nc_kiwahl.backend() == "brain"         # v4.2-W110
     return jsonify(ok=True,
                    model=_c().cfg["AI_MODEL"],
                    url=(os.getenv("BRAIN_LLAMACPP_URL", "http://127.0.0.1:8080")

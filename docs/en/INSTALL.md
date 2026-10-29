@@ -127,9 +127,9 @@ For AI answers without cloud and without cost: see
 **[`SETUP_LLAMACPP.md`](../SETUP_LLAMACPP.md)** (German) and the bundled unit
 **[`llama-server.service`](../../llama-server.service)**.
 
-If no llama.cpp is reachable, the bot automatically falls back to Ollama and
-then to the keyless free backends — it **never** refuses to start because of
-this.
+If llama.cpp runs, it is **preferred automatically** since v4.2-W110 (no
+`AI_PROVIDER` needed any more). If it is unreachable, the keyless free backends
+take over — the bot **never** refuses to start because of this.
 
 ---
 

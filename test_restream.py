@@ -2536,7 +2536,13 @@ def test_v41_w5_streamer_blueprint():
     assert [n for n in baum.body
             if isinstance(n, (_ast.FunctionDef, _ast.AsyncFunctionDef)) and n.name == "stats"], \
         "der Telegram-Befehl stats ist aus bot.py verschwunden"
-    assert '("stats", stats)' in src, "stats ist nicht mehr als Slash-Befehl registriert"
+    # ANKER GEWANDERT (v4.2-W109, nicht der Vertrag): Telegram registriert aus
+    # nc/befehle.py statt aus einer Tupel-Liste — das Literal ("stats", stats)
+    # gibt es nicht mehr. Gefragt ist weiter: ist /stats als Befehl
+    # registriert, und zwar mit genau DIESEM Handler aus bot.py?
+    from nc import befehle as _befehle
+    assert ("stats", "stats") in _befehle.telegram_handler(), \
+        "stats ist nicht mehr als Telegram-Befehl registriert"
     bp = open("nc/routes/streamer.py", encoding="utf-8").read()
     assert "ContextTypes" not in bp and "ParseMode" not in bp, \
         "ein Telegram-Handler ist ins Flask-Blueprint gewandert"
@@ -2670,7 +2676,12 @@ def test_v41_w6_i18n_fundament():
             continue
         _n += 1
         _kw = {x.arg: x.value for x in _k.keywords}
-        _name = getattr(_kw.get("name"), "value", None)
+        # v4.2-W109: die Schleife registriert mit name=_bf.name — kein
+        # Literal, also hier nicht rekonstruierbar. Diese Befehle prueft der
+        # Block unter der Schleife aus dem Verzeichnis selbst.
+        _name = _kw["name"].value if isinstance(_kw.get("name"), _ast.Constant) else None
+        if _name is None:
+            continue
         _d = _kw.get("description")
         _de = None
         if isinstance(_d, _ast.Call) and _d.args and isinstance(_d.args[0], _ast.Constant):
@@ -2686,6 +2697,19 @@ def test_v41_w6_i18n_fundament():
         for _sp, _txt in (("de", _de), ("en", _en.get(_de, _de))):
             if len(_txt) > 100:
                 _befunde.append(("Beschreibung %s %d Zeichen" % (_sp, len(_txt)), _name))
+    # v4.2-W109: die gemeinsamen Befehle aus dem Verzeichnis, in BEIDEN
+    # Sprachen — beschreibung() ist genau das, was die Schleife ausliefert.
+    from nc import befehle as _befehle
+    for _b in _befehle.discord_ueber_tg():
+        if not _re2.fullmatch(r"[-_a-z0-9]{1,32}", _b.name):
+            _befunde.append(("Name", _b.name))
+        for _sp, _uebers in (("de", lambda t: t), ("en", lambda t: _en.get(t, t))):
+            _txt = _befehle.beschreibung(_b, _uebers)
+            if not 1 <= len(_txt) <= 100:
+                _befunde.append(("Beschreibung %s %d Zeichen" % (_sp, len(_txt)), _b.name))
+            if _sp == "en" and _b.text and _en.get(_b.text) in (None, ""):
+                _befunde.append(("Beschreibung nicht uebersetzt", _b.name))
+        _n += 1
     assert _n >= 45, "nur %d Slash-Befehle gefunden — Registrierung kaputt?" % _n
     assert not _befunde, "Discord-Befehle verletzen die Regeln: %s" % _befunde[:5]
     ok("v4.1-W6: %d Slash-Befehle gueltig, Beschreibungen <=100 in de UND en" % _n)
@@ -3340,7 +3364,10 @@ def test_v40_w7_public_brand_sweep():
     assert "NIGHTCRAWLER" not in src[j:j + 160], "Stream-Titel nennt NIGHTCRAWLER"
     # Discord-community-sichtbare Flaechen rebrandet (admin-only Fehler-Channel/CLI
     # duerfen 🦇 NIGHTCRAWLER intern behalten):
-    assert "🦇 Azrael Sentinel — Befehle" in src, "Discord-Befehlsliste nicht rebrandet"
+    # ANKER GEWANDERT (v4.2-W109): die Ueberschrift ist seither „🦇 Azrael
+    # Sentinel — " + t("Verfügbare Befehle"), weil die Liste darunter aus
+    # nc/befehle.py gebaut und uebersetzt wird. Gefragt bleibt die Marke.
+    assert '"**🦇 Azrael Sentinel — "' in src, "Discord-Befehlsliste nicht rebrandet"
     assert "🦇 Azrael Sentinel Botstats" in src, "Discord-Botstats nicht rebrandet"
     assert 'set_footer(text="NIGHTCRAWLER' not in src, "Discord-Footer nennt NIGHTCRAWLER"
     assert 'description="NIGHTCRAWLER' not in src, "Discord-Command-Beschreibung nennt NIGHTCRAWLER"
@@ -3548,7 +3575,10 @@ def test_v40_w12_audio_panel():
     # fragt, ob zur LAUFZEIT gelesen wird — nicht, in welcher Datei.
     _rcs = open("nc/restreamcmd.py", encoding="utf-8").read()
     assert '_audio_cfg()["duck"]' in _rcs, "Ducking nutzt weiter die feste Env-Konstante"
-    assert _rcs.count('_nc_audio.mix_chain(tts_idx, _TTS_VOICE_GAIN, _audio_cfg()["duck"])') == 3
+    # ANKER GEWANDERT (v4.2-W106, nicht der Vertrag): die drei Aufrufe reichen
+    # jetzt die Tonquelle mit (src=_asrc — Stille bei tonloser Quelle), die
+    # Klammer schliesst deshalb erst dahinter.
+    assert _rcs.count('_nc_audio.mix_chain(tts_idx, _TTS_VOICE_GAIN, _audio_cfg()["duck"],') == 3
     assert '_acfg["tone"]' in src, "Signalton nutzt die Laufzeit-Konfig nicht"
     # Routen inkl. Grenzwerte.
     assert '"/api/audio/config"' in arts and "def api_audio_config(" in arts
@@ -9269,7 +9299,9 @@ def test_v41_w13_claude_grund_im_log():
     # Bis zum brain-Zweig — und zwar zum ZWEIG, nicht zur gleichnamigen
     # Log-Zeile ein paar Zeilen darueber. Ein zu kurzer Schnitt haette hier
     # einen gruenen Vertrag ueber Code ergeben, der gar nicht geprueft wird.
-    _ac = _ac[:_ac.index("if REACTION_AI_PROVIDER in (\"brain\", \"llamacpp\"):")]
+    # ANKER GEWANDERT (v4.2-W110, nicht der Vertrag): der lokale Zweig fragt
+    # seither nc/kiwahl.lokal_zuerst statt REACTION_AI_PROVIDER in (...).
+    _ac = _ac[:_ac.index("and _nc_kiwahl.lokal_zuerst(REACTION_AI_PROVIDER,")]
     assert "on_error=_claude_grund" in _ac, "der Grund wird nicht eingesammelt"
     assert "Antwort der API: %s" in _ac, "der Grund landet nicht in der Warnung"
     assert "Modell=%s" in _ac, "das Modell fehlt — bei einem Modellfehler die halbe Antwort"

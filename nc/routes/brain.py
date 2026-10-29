@@ -274,7 +274,7 @@ def api_brain():
     except Exception:
         nodes["telegram"] = {"status": "idle", "activity": 0, "label": "TELEGRAM"}
 
-    # AI/OLLAMA: aus letzter Rate
+    # AI/LLM: aus letzter Rate
     try:
         with _nc_brainstate.AI_LOCK:
             ai_count = len(_nc_brainstate.AI_RATE)

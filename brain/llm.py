@@ -81,6 +81,7 @@ class LLMRuntime:
         # B-M6-2: RLock, nicht Lock — stats() ruft unter gehaltenem Lock
         # budget() auf, das denselben Lock nimmt. Nicht-reentrant = Deadlock.
         self._stats_lock = threading.RLock()
+        self._letzter_fehler: dict = {}   # backend -> letzter Grund (Meldedrossel)
 
     # ------------------------------------------------------------- API
 
@@ -115,12 +116,21 @@ class LLMRuntime:
                         self._durs.append(ms)
                         if len(self._durs) > 50:
                             del self._durs[:25]
+                    self._letzter_fehler.pop(backend, None)   # wieder gesund
                     return {"ok": True, "text": text,
                             "backend": backend, "ms": ms}
                 except Exception as e:
                     last_err = f"{backend}: {type(e).__name__}: {e}"
-                    log.debug("LLM-Backend %s fehlgeschlagen: %s",
-                              backend, e)
+                    # v4.2-W110: war log.debug. Antwortet llama-server auf
+                    # /health, aber nicht auf den Chat (z. B. mit
+                    # --embeddings gestartet: nur Embeddings), ging JEDE
+                    # Anfrage still in die Cloud. Gemeldet wird ein WECHSEL
+                    # des Grundes — ein Dauerfehler steht so einmal im Log.
+                    if last_err != self._letzter_fehler.get(backend):
+                        log.warning("LLM-Backend %s scheitert: %s — die Anfrage "
+                                    "geht an das naechste Backend der Kette.",
+                                    backend, e)
+                    self._letzter_fehler[backend] = last_err
             with self._stats_lock:
                 self._stats["errors"] += 1
             return {"ok": False, "error": last_err, "backend": None,
@@ -158,6 +168,52 @@ class LLMRuntime:
             out["avg_ms"] = (round(sum(self._durs) / len(self._durs), 1)
                              if self._durs else None)
         return out
+
+    def zuletzt_oben(self):
+        """llama-server laut LETZTER Probe: True/False, None = nie gemessen.
+
+        v4.2-W110. Misst NICHT — Anzeigen und /healthz duerfen fragen, ohne
+        eine 3-s-Probe auszuloesen. Die Probe selbst laeuft in health()."""
+        cache = getattr(self, "_health_cache", None)
+        return bool((cache[1].get("llamacpp") or {}).get("up")) if cache else None
+
+    _MODELS_TTL = 60.0
+
+    def models(self) -> list:
+        """Modelle des lokalen Servers (OpenAI-kompatibel: /v1/models).
+
+        v4.2-W110: bot.py rief diese Methode seit V37 — es gab sie nicht. Der
+        AttributeError wurde dort still gefangen, und die Modellliste im Deck
+        zeigte nie das lokale Modell. 60 s gecacht: das Deck fragt im
+        10-s-Takt, und ein toter Server kostete sonst jedes Mal 3 s.
+        Leer heisst: kein lokaler Server (oder Backend aus) — der Aufrufer
+        nimmt dann die Cloud-Liste."""
+        now = time.time()
+        cache = getattr(self, "_models_cache", None)
+        if cache and now - cache[0] < self._MODELS_TTL:
+            return list(cache[1])
+        ids = []
+        if "llamacpp" in self._chain():
+            try:
+                req = urllib.request.Request(f"{_llamacpp_url()}/v1/models",
+                                             method="GET")
+                with urllib.request.urlopen(req, timeout=3) as r:
+                    j = json.loads(r.read().decode("utf-8", "replace"))
+                ids = [m.get("id") for m in (j.get("data") or [])
+                       if isinstance(m, dict) and m.get("id")]
+            except Exception as e:
+                fehler = f"{type(e).__name__}: {e}"
+                if fehler != getattr(self, "_models_fehler", None):
+                    # Nur ein WECHSEL meldet: das Deck fragt alle 60 s, ein
+                    # dauerhaft abwesender Server waere sonst Rauschen.
+                    log.warning("llama-server: Modellliste nicht lesbar (%s) "
+                                "unter %s — laeuft `llama-server`?",
+                                fehler, _llamacpp_url())
+                self._models_fehler = fehler
+            else:
+                self._models_fehler = None
+        self._models_cache = (now, list(ids))
+        return ids
 
     def budget(self) -> dict:
         cutoff = time.time() - 3600
