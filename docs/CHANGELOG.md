@@ -11,6 +11,57 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Behoben — Pixelsalat bei mehreren Live-Nutzern: die Drossel kam zu spät (v4.2 W108)
+
+Gemeldet: „Pixelsalat, wenn mehrere getrackte Nutzer live sind und
+aufgenommen und restreamt werden." Drei Ursachen wurden **gegen echtes
+ffmpeg 6.1 nachgemessen**, bevor etwas gebaut wurde:
+
+| Verdacht | Prüfstand | Ergebnis |
+|---|---|---|
+| Abriss mitten im FLV-Strom, Live-CDN schickt beim Wiederverbinden einen frischen Strom samt Kopf | CDN-Attrappe, Abriss mitten in einem Tag | „Packet mismatch", aber **0 Dekodierfehler** im Ziel (copy und transcode) — kein Befund |
+| B-Frames unter `-fflags +genpts+igndts` (Aufnahme und Restream bei HLS) | HLS mit/ohne B-Frames, Bild-für-Bild-Vergleich und Zeitstempel | bitgleich, Zeitstempel streng steigend in 40 ms — kein Befund |
+| Fehlende Video-Pakete mitten im GOP — was ein Live-CDN einem **zu langsam lesenden** Client antut | 18 P-Frames an drei Stellen entfernt, Transcode wie im Betrieb | **69 von 502 Bildern Salat** (20,8 dB statt > 59 dB) bis zum nächsten Keyframe |
+
+Beim dritten half **kein** Decoder-Schalter: `-fflags +discardcorrupt`,
+`-flags -output_corrupt` und beide zusammen ergaben jedes Mal dieselben 69
+Bilder; ffmpeg warnt dabei nicht einmal. Damit ist die Kette: mehr Nutzer
+live → mehr parallele Transcodes, Aufnahmen, Whisper → ein Transcode fällt
+unter Echtzeit → er liest die Quelle zu langsam → das CDN verwirft Pakete →
+Salat. Hinterher lässt er sich nicht wegfiltern, nur vorher vermeiden.
+
+Die vorhandene Drossel (W43–W61) regelt erst nach einem **gemessenen
+Rückstand** ab — dann ist der Salat schon gesendet. Neu `nc/lastvorsorge.py`:
+beim Start eines Transcodes wird die Drosselstufe nach freien Kernen gewählt
+(1-min-Load plus gerade gestartete Transcodes, die das Load-Mittel noch nicht
+zeigt; geplant wird bis 85 % der Kerne). Die Kosten je Stufe stammen aus der
+**W61-Messung** (Stufe 3 −19,9 %, Bildrate + Avatar aus −33,9 %); Preset und
+Bitrate (Stufe 1/2) sind nie gemessen worden und stehen deshalb mit 1,0 in der
+Tabelle — eine erfundene Ersparnis hätte genau den Fall durchgelassen.
+
+Im Log: `Restream #N: startet mit Drossel Stufe K … — frei X von Y Kernen …`
+(warning), und wenn selbst die höchste Stufe nicht passt, ein **error** mit
+Abhilfe (weniger gleichzeitige Restreams, weniger Ziele, mehr Kerne). Die
+Vorsorge greift nur beim Transcode, nie unter die schon erreichte Stufe, und
+läuft vor dem Avatar-Feeder (der sonst für eine Stufe startet, die ihn nicht
+mehr will).
+
+Bewusst **nicht** gemacht, obwohl im Auftrag genannt: vorgerenderte
+Overlay-Bilder statt `filter_complex`, `setsar`/`yuv420p`-Umbauten. Keiner der
+Prüfstände zeigte dort einen Fehler, und ein Umbau des Sendebild-Filters ohne
+Befund ist Risiko ohne Nutzen. Der Transcode setzt `-pix_fmt yuv420p` bereits.
+
+Vertrag `_test_v42_w108_drossel_greift_vor_dem_salat`, 9 von 9
+Mutationsproben gefangen. Eine entwischte im ersten Durchgang — und das war
+ein Befund **am Code**: ein Riegel gegen „unter die Ist-Stufe" war
+wirkungslos, weil die fallenden Kosten das schon garantieren. Er ist weg, der
+Vertrag hält jetzt die Monotonie der Kostentabelle fest.
+
+**Offen:** ob TikToks CDN einzelne Pakete oder ganze GOPs verwirft, ist nicht
+gemessen; der Server läuft laut Quelltext mit ffmpeg 4.x, die Prüfstände mit
+6.1. Erkennen lässt sich der Fall im Log an `Encode-Rueckstand` bzw.
+`speed < 1` des Restreams kurz vor dem Bildfehler.
+
 ### Behoben — der automatische Cookie-Bezug lief ohne Telegram-Alarmchat nie (v4.2 W107)
 
 Gemeldet: „Cookies automatisch beziehen soll Standard sein." Im Code stand das

@@ -20264,6 +20264,102 @@ def _test_v42_w107_cookie_bezug_ist_standard():
        "Plan, nach 403 (gedrosselt), und jeder Weg geht durch den Buchhalter")
 
 
+def _test_v42_w108_drossel_greift_vor_dem_salat():
+    """Pixelsalat bei mehreren Live-Nutzern: die Drossel kam zu spaet.
+
+    Gemessen (nc/lastvorsorge.py): fehlende Video-Pakete mitten im GOP — was
+    ein Live-CDN einem zu langsam lesenden Client antut — ergeben 69 von 502
+    Bildern Salat, und kein Decoder-Schalter rettet sie. Die Rueckstands-
+    Drossel aus W43 regelt erst nach dem Rueckstand ab, also nach dem Salat.
+    Die Vorsorge waehlt die Stufe beim Start.
+    """
+    import ast as _ast
+    from nc import lastvorsorge as L
+    from nc import restreamcmd as R
+
+    # ── (1) DIE KOSTEN SIND GEMESSEN, NICHT GESCHAETZT. Ungemessenes steht
+    # auf 1,0 — eine erfundene Ersparnis liesse genau den Fall durch, gegen
+    # den das Modul antritt.
+    assert L.KOSTEN[0] == L.KOSTEN[1] == L.KOSTEN[2] == 1.0
+    assert L.KOSTEN[3] == 0.80 and L.KOSTEN[4] == 0.66
+    assert set(L.KOSTEN) == set(range(R.DROSSEL_MAX + 1)), \
+        "die Kostentabelle kennt nicht jede Drossel-Stufe"
+    # Daran haengt „nie unter die erreichte Stufe": eine hoehere Stufe darf
+    # nie MEHR kosten als eine niedrigere, sonst waehlt die Vorsorge eine
+    # kleinere Stufe, als die Rueckstands-Drossel schon erreicht hat.
+    k = [L.KOSTEN[i] for i in range(R.DROSSEL_MAX + 1)]
+    assert all(a >= b for a, b in zip(k, k[1:])), k
+    rs = io.open("nc/restreamcmd.py", encoding="utf-8").read()
+    assert "-19.9 %" in rs and "-33.9 %" in rs, \
+        "die W61-Messung, aus der die Kosten stammen, steht nicht mehr da"
+
+    # ── (2) DIE STARTSTUFE. 8 Kerne, 3 Threads je Transcode.
+    assert L.startstufe(0.5, 8, 0, 3) == (0, None), "leere Maschine wird gedrosselt"
+    assert L.startstufe(3.0, 8, 0, 3)[0] == 0
+    assert L.startstufe(4.2, 8, 0, 3)[0] == 3          # frei 2,6 -> 87 %
+    assert L.startstufe(4.5, 8, 0, 3)[0] == 4          # frei 2,3 -> 77 %
+    stufe, grund = L.startstufe(8.0, 8, 0, 3)
+    assert stufe == R.DROSSEL_MAX and "Abhilfe" in grund, (stufe, grund)
+    # Jeder Grund nennt die Zahlen, aus denen er kommt.
+    st, gr = L.startstufe(4.5, 8, 0, 3)
+    assert "frei 2.3" in gr and "Stufe 4" in gr and "66 %" in gr, gr
+
+    # Gerade gestartete Transcodes zaehlen, obwohl das Load-Mittel sie noch
+    # nicht zeigt — sonst saehen zwei kurz nacheinander gestartete Restreams
+    # beide eine leere Maschine.
+    assert L.startstufe(1.0, 8, 0, 3)[0] == 0
+    assert L.startstufe(1.0, 8, 2, 3)[0] == R.DROSSEL_MAX
+    assert L.jung(100.0, 100.0 + L.JUNG_S - 1) and not L.jung(100.0, 100.0 + L.JUNG_S)
+    assert not L.jung(None, 5.0)
+
+    # Nie unter die schon erreichte Stufe: die Drossel regelt bewusst nie
+    # hoch, und die Vorsorge darf das nicht durch die Hintertuer tun.
+    assert L.startstufe(0.5, 8, 0, 3, stufe_jetzt=4) == (4, None)
+    # Wer schon gedrosselt laeuft und mit dieser Stufe passt, bleibt still.
+    assert L.startstufe(4.2, 8, 0, 3, stufe_jetzt=3) == (3, None)
+    for jetzt in range(R.DROSSEL_MAX + 1):
+        for last in (0.0, 3.0, 4.2, 4.5, 5.5, 9.0):
+            assert L.startstufe(last, 8, 0, 3, stufe_jetzt=jetzt)[0] >= jetzt, (jetzt, last)
+    # Ungueltige Eingaben brechen nicht: kein Kern bekannt -> 1 Kern.
+    assert L.startstufe(0.0, 0, 0, 0)[0] >= 0
+
+    # ── (3) DIE STUFE WIRKT IM KOMMANDO: bei Stufe 4 faellt der Avatar,
+    # bei Stufe 3 die Bildrate — gemessen am gebauten Befehl, nicht am
+    # Schalter.
+    assert R.drossel_fps(24, 3) == 18 and R.drossel_avatar_aus(4)
+
+    # ── (4) DIE VERDRAHTUNG: VOR Feeder und Bauer, und nur beim Transcode.
+    baum = _ast.parse(io.open("bot.py", encoding="utf-8").read())
+    rm = [n for n in baum.body if isinstance(n, _ast.ClassDef)
+          and n.name == "RestreamManager"][0]
+    start = [n for n in rm.body if isinstance(n, _ast.AsyncFunctionDef)
+             and n.name == "start"][0]
+    rufe = [(c.lineno, _ast.unparse(c.func)) for c in _ast.walk(start)
+            if isinstance(c, _ast.Call)]
+    vorsorge = [z for z, f in rufe if f == "self._drossel_vorsorge"]
+    feeder = [z for z, f in rufe if f == "asyncio.to_thread"]
+    bauer = [z for z, f in rufe if f == "_build_restream_cmd"]
+    assert len(vorsorge) == 1, "die Vorsorge laeuft nicht beim Start"
+    assert bauer and vorsorge[0] < min(bauer), "Vorsorge NACH dem Bauer"
+    assert feeder and vorsorge[0] < min(feeder), \
+        "Vorsorge nach dem Avatar-Feeder — der startet dann fuer eine Stufe, " \
+        "die ihn gar nicht mehr will, und haengt in open(fifo)"
+    eltern = {k: n for n in _ast.walk(start) for k in _ast.iter_child_nodes(n)}
+    k = [c for c in _ast.walk(start) if isinstance(c, _ast.Call)
+         and _ast.unparse(c.func) == "self._drossel_vorsorge"][0]
+    while k in eltern and not isinstance(k, _ast.If):
+        k = eltern[k]
+    assert isinstance(k, _ast.If) and _ast.unparse(k.test) == "transcode", \
+        "die Vorsorge drosselt auch den Copy-Modus, der gar nicht kodiert"
+    vs = [n for n in rm.body if isinstance(n, _ast.FunctionDef)
+          and n.name == "_drossel_vorsorge"][0]
+    vs_rufe = {_ast.unparse(c.func) for c in _ast.walk(vs) if isinstance(c, _ast.Call)}
+    assert "_nc_lastvorsorge.startstufe" in vs_rufe and "os.getloadavg" in vs_rufe
+
+    ok("W108: die Drossel waehlt ihre Stufe beim Start nach freien Kernen — "
+       "gemessene Kosten, junge Transcodes mitgezaehlt, nie unter der Ist-Stufe")
+
+
 def main():
     tmp, rid = richte_testdatenbank_ein()
     ok("db_conn aus nc.dbwrap: echtes Schema angelegt, Commit durchgelaufen")
@@ -20547,6 +20643,7 @@ def main():
     _test_v42_w105_chat_laeuft_durch_den_tunnel()
     _test_v42_w106_jede_ausgabe_traegt_ton()
     _test_v42_w107_cookie_bezug_ist_standard()
+    _test_v42_w108_drossel_greift_vor_dem_salat()
     _test_v42_w60_azrael_cooldown_je_plattform()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)

@@ -26,7 +26,7 @@ benutzt, berät an der Lage vorbei.**
 
 ## Die eine Regel
 
-`bot.py` hat **25.182 Zeilen / 1,2 MB ≈ 295.000 Token**. Diese Datei wird
+`bot.py` hat **25.222 Zeilen / 1,2 MB ≈ 295.000 Token**. Diese Datei wird
 **nie** ganz gelesen und **nie** blind durchsucht. Erst fragen wo etwas steht,
 dann den Ausschnitt holen:
 
@@ -71,7 +71,7 @@ Auf diesem Windows-Rechner heißt der Interpreter **`python`** (3.13.12);
     brain_bridge.py      Adapter Bot ↔ brain/ (M2)
     brain/               KI-Kern: state, rules, router, agents, memory,
                          semantic, knowledge, scheduler, llm, report
-    nc/                  152 Fachmodule: db, scraping, restream, oauth, ledger,
+    nc/                  153 Fachmodule: db, scraping, restream, oauth, ledger,
                          i18n, …
     nc/routes/           36 Flask-Blueprints mit 335 weiteren API-Routen
     locales/             de.json, en.json — der Übersetzungskatalog
@@ -1093,6 +1093,15 @@ Chat lief der Standard nie, und nichts sagte es. Seither eigene Schleife,
 Zeitplan in `nc/cookiebezug.py`, und **jeder** Bezugsweg geht durch
 `holen()`. Wer einen Automaten baut: eigene Schleife, im Deck den nächsten
 Lauf zeigen, und prüfen, unter welcher Bedingung er überhaupt gestartet wird.
+
+**Pixelsalat lässt sich nicht wegfiltern, nur vermeiden.** Gemessen in
+v4.2-W108 (ffmpeg 6.1): fehlen einer Live-Quelle Pakete mitten im GOP — was
+ein CDN einem zu langsam lesenden Client antut —, zerfallen die Bilder bis
+zum nächsten Keyframe, und kein Decoder-Schalter (`discardcorrupt`,
+`-output_corrupt`) ändert daran ein Bild. Abriss-Resync und B-Frames unter
+`+igndts` waren dagegen sauber. Deshalb wählt `nc/lastvorsorge.py` die
+Drosselstufe schon beim Start. **Wer eine Ersparnis in die Kostentabelle
+schreibt, misst sie vorher** — ungemessen steht dort 1,0.
 
 **Einmal-`await` ohne Supervisor.** Jeder Long-Running-Client braucht Reconnect
 mit Backoff **und** ein Abbruchkriterium für deterministische Fehler.

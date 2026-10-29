@@ -605,6 +605,7 @@ from nc import restreamstate as _nc_rsstate  # v4.1-W22: Restream-Laufzeitzustan
 from nc import restreamcmd as _nc_rscmd  # v4.2-W16: die ffmpeg-Zeile des Relays
 from nc import reccmd as _nc_reccmd  # v4.2-W17: die Kommandozeilen des Recorders
 from nc import tonspur as _nc_tonspur  # v4.2-W106: jede Ausgabe traegt eine Tonspur
+from nc import lastvorsorge as _nc_lastvorsorge  # v4.2-W108: Drossel vor dem Pixelsalat
 from nc import aufnahmefolge as _nc_folge  # v4.2-W18: die Eskalationsrechnung
 from nc import aufnahmekategorie as _nc_kat  # v4.2-W23: warum eine Aufnahme so endete
 from nc import audiotap as _nc_audiotap  # v4.2-W46: warum der Audio-Tap starb
@@ -14420,6 +14421,8 @@ class RestreamManager:
             log.warning("Restream #%d: Multi-Target im COPY-Modus "
                         "(RESTREAM_MULTI_ALLOW_COPY=1) — funktioniert nur bei "
                         "sauberen Quell-Keyframes, sonst ruckelt eine Plattform.", rid)
+        if transcode:
+            self._drossel_vorsorge(rid)       # v4.2-W108: VOR Feeder und Bauer
         tts_fifo = _restream_tts_start(rid)   # self-gated auf RESTREAM_TTS; Stimme auch im Copy-Modus
         # v4.2-W39: beide Starter liefen SYNCHRON in dieser Coroutine — der
         # Rest, den die Loop-Welle von v4.2 uebrig gelassen hat. Das Overlay
@@ -14828,6 +14831,43 @@ class RestreamManager:
                 await _reap_proc(_e["proc"])
         task = asyncio.create_task(_relay_loop())
         self._procs.setdefault(rid, {}).setdefault("indep_tasks", {})[pname] = task
+
+    def _drossel_vorsorge(self, rid):
+        """v4.2-W108: die Startstufe so waehlen, dass der Transcode in die
+        freie Rechenzeit passt. Begruendung und Messung: nc/lastvorsorge.py —
+        faellt ein Transcode unter Echtzeit, verwirft das CDN Pakete, und der
+        Pixelsalat ist gesendet, bevor die Rueckstands-Drossel ihn bemerkt.
+
+        Gerade gestartete Transcodes zaehlen extra: das 1-Minuten-Load-Mittel
+        zeigt sie noch nicht, und zwei kurz nacheinander gestartete Restreams
+        saehen sonst beide eine leere Maschine.
+        """
+        try:
+            load1 = os.getloadavg()[0]
+        except OSError as e:
+            log.warning("Restream #%s: Load nicht lesbar (%s) — Start ohne "
+                        "Last-Vorsorge.", rid, e)
+            return
+        jetzt = _time_mod.monotonic()
+        jung = sum(1 for r, i in self._procs.items() if r != rid
+                   and i.get("transcode")
+                   and _nc_lastvorsorge.jung(i.get("started"), jetzt))
+        stufe, grund = _nc_lastvorsorge.startstufe(
+            load1, os.cpu_count() or 1, jung, FFMPEG_THREADS_LIVE,
+            _drossel_stufe(rid), _nc_rscmd.DROSSEL_MAX)
+        if grund is None:
+            return
+        _RESTREAM_DROSSEL[int(rid)] = stufe
+        # Die hoechste Stufe erreicht die Vorsorge nur, wenn nichts mehr passt
+        # (Stufe 5 kostet gemessen nicht weniger als 4) — dann ist es kein
+        # Abregeln mehr, sondern eine Ueberlast, die ein Mensch loesen muss.
+        (log.error if stufe >= _nc_rscmd.DROSSEL_MAX else log.warning)(
+                    "Restream #%s: startet mit Drossel Stufe %d%s — %s. Lieber "
+                    "von Anfang an etwas kleiner als nach dem ersten Rueckstand "
+                    "Pixelsalat (das CDN verwirft Pakete, wenn der Transcode "
+                    "nicht mithaelt).", rid, stufe,
+                    _nc_rscmd.drossel_zusatz(RESTREAM_FPS, RESTREAM_CANVAS_W,
+                                             RESTREAM_CANVAS_H, stufe), grund)
 
     async def _ton_folge(self, rid, ran, tail, attempts):
         """v4.2-W106: Ende des Prozesses auf eine tonlose Quelle pruefen. -> bool
