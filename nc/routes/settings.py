@@ -21,7 +21,7 @@ from typing import Optional
 import time as _time_mod
 from nc.cfgstore import get as _cfg_get, set_ as _cfg_set
 from nc.cookies import _cookies_input_to_netscape, _dedupe_cookie_text
-from nc import cookieholen as _nc_cookieholen
+from nc import cookiebezug as _nc_cookiebezug
 from nc.dbexport import db_export_sql as _dbx_export, db_import_sql as _dbx_import, export_summary as _dbx_summary
 from nc import dbrestore as _nc_dbrest   # v4.2-W96: Sicherung im Deck einsetzen
 from nc import sicherpfad as _nc_sicherpfad
@@ -216,13 +216,12 @@ def api_cookies_fetch():
     if quelle == "guest":
         quelle = "gast"
 
-    bericht = _nc_cookieholen.aktualisiere(
-        _c().cfg["COOKIE_FILE"], quelle=quelle, browser=browser, log=log)
+    # v4.2-W107: durch den Buchhalter, nicht an ihm vorbei. Vorher rief
+    # die Route nc/cookieholen direkt — nach einem erfolgreichen Klick stand
+    # im Deck weiter „Auto-Bezug: noch nie gelaufen". holen() leert auch den
+    # Cookie-Cache des Recorders.
+    bericht = _nc_cookiebezug.holen(quelle, browser, anlass="deck")
     if bericht.get("ok"):
-        try:                       # Cache leeren, sonst liest der Recorder 5s alt
-            _c().cfg["_COOKIES_CACHE"].pop("v", None)
-        except Exception:
-            pass
         bericht["health"] = _c().get_cookie_health()
         log.info("Cookies via Deck bezogen (%s): %d neu, %d erneuert",
                  quelle, len(bericht.get("added") or []),

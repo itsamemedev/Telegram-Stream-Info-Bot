@@ -26,7 +26,7 @@ benutzt, berät an der Lage vorbei.**
 
 ## Die eine Regel
 
-`bot.py` hat **25.138 Zeilen / 1,2 MB ≈ 295.000 Token**. Diese Datei wird
+`bot.py` hat **25.182 Zeilen / 1,2 MB ≈ 295.000 Token**. Diese Datei wird
 **nie** ganz gelesen und **nie** blind durchsucht. Erst fragen wo etwas steht,
 dann den Ausschnitt holen:
 
@@ -42,7 +42,7 @@ dann den Ausschnitt holen:
     python tools/ncpatch.py docs                           # Doku-Zahlen gegen den Quelltext
 
 `find` antwortet aus `.claude/INDEX.md` — 369 Routen (34 in `bot.py`, 333 in
-`nc/routes/`), 60 Slash-Commands, 559 Funktionen mit Zeilennummern. Nach Änderungen an Routen, Commands oder
+`nc/routes/`), 60 Slash-Commands, 561 Funktionen mit Zeilennummern. Nach Änderungen an Routen, Commands oder
 Top-Level-Funktionen `map` neu laufen lassen. Details: Skill `nc-navigation`.
 
 Für „wer ruft das auf?" und „was ist der Typ?" ist der Sprachserver billiger als
@@ -71,7 +71,7 @@ Auf diesem Windows-Rechner heißt der Interpreter **`python`** (3.13.12);
     brain_bridge.py      Adapter Bot ↔ brain/ (M2)
     brain/               KI-Kern: state, rules, router, agents, memory,
                          semantic, knowledge, scheduler, llm, report
-    nc/                  151 Fachmodule: db, scraping, restream, oauth, ledger,
+    nc/                  152 Fachmodule: db, scraping, restream, oauth, ledger,
                          i18n, …
     nc/routes/           36 Flask-Blueprints mit 335 weiteren API-Routen
     locales/             de.json, en.json — der Übersetzungskatalog
@@ -1085,6 +1085,14 @@ konnte. Seither mappt jeder Bauer ausdrücklich, der Restream sendet nach dem
 ersten solchen Abbruch mit Stille (`nc/tonspur.py`), und die fertige Aufnahme
 wird geprüft und notfalls nachgerüstet. **Wer einen ffmpeg-Bauer anfasst,
 lässt `tonspur.hat_tonspur(cmd)` im Vertrag mitlaufen.**
+
+**Ein Automat, der in einer fremden Schleife hängt, läuft nur, wenn die
+fremde Schleife läuft.** Der Cookie-Auto-Bezug („Standard: an") stand bis
+v4.2-W107 im Telegram-Cookie-Alarm — und der startet nur mit Alarm-Chat. Ohne
+Chat lief der Standard nie, und nichts sagte es. Seither eigene Schleife,
+Zeitplan in `nc/cookiebezug.py`, und **jeder** Bezugsweg geht durch
+`holen()`. Wer einen Automaten baut: eigene Schleife, im Deck den nächsten
+Lauf zeigen, und prüfen, unter welcher Bedingung er überhaupt gestartet wird.
 
 **Einmal-`await` ohne Supervisor.** Jeder Long-Running-Client braucht Reconnect
 mit Backoff **und** ein Abbruchkriterium für deterministische Fehler.

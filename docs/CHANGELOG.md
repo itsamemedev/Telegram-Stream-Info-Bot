@@ -11,6 +11,60 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Behoben — der automatische Cookie-Bezug lief ohne Telegram-Alarmchat nie (v4.2 W107)
+
+Gemeldet: „Cookies automatisch beziehen soll Standard sein." Im Code stand das
+seit W10 so (`COOKIE_AUTO_FETCH=1` per Vorgabe). Nachgesehen, **wann** der
+Bezug wirklich lief:
+
+- Er hing im Telegram-Cookie-Alarm, und der startet nur mit
+  `DISK_ALARM_CHAT_ID` oder `DAILY_SUMMARY_CHAT_ID`. **Ohne Alarm-Chat lief
+  der Standard nie.**
+- Auch mit Chat nur bei rotem Health-Check, im Takt des Platten-Alarms (eine
+  Stunde) — nie beim Start, nie nach einem 403.
+- Der Deck-Knopf ging am Buchhalter vorbei: nach einem erfolgreichen Klick
+  stand im Deck weiter „noch nie gelaufen".
+
+Neu `nc/cookiebezug.py` mit dem einen Zeitplan, und eine eigene Schleife
+`cookie-bezug`, die unabhängig von Telegram läuft. Bezogen wird:
+
+| Anlass | wann |
+|---|---|
+| `start` | sofort beim Start (frische Installation ohne Datei inklusive) |
+| `plan` | alle `COOKIE_AUTO_FETCH_INTERVAL_H` Stunden (Vorgabe 6) |
+| `neuer_versuch` | 30 min nach einem Fehlschlag statt erst nach 6 h |
+| `403-aufnahme`, `resolver-http_403/status_code/kein_json` | nach einem 403, frühestens alle 15 min |
+| `gesundheit` | roter Health-Check, **aber nur wenn ein Gast-Aufruf ihn heilen kann** |
+
+Die letzte Zeile ist die Bremse: ein fehlender Login (`sessionid`) lässt sich
+per Gast-Aufruf nie beheben — ohne `gast_hilft()` fragte eine Installation
+ohne Login alle 15 Minuten TikTok, ohne dass sich je etwas ändert. Scheitert
+der Bezug dauerhaft (länger als zwei Intervalle), steht das gedrosselt auf
+`error` mit Abhilfe, nicht nur auf `warning`.
+
+Deck: im Cookie-Status stehen jetzt letzter Erfolg, letzter Versuch mit
+Anlass, **nächster Lauf** (oder „bald" mit dem anstoßenden Ereignis) und ein
+Knopf „Jetzt holen". Deck-Knopf, Telegram `/cookies holen` und Schleife gehen
+alle durch `nc/cookiebezug.holen()`.
+
+So prüft man es nach: nach dem Neustart steht im Log
+`Cookie-Auto-Bezug: an — erster Lauf jetzt …`, kurz danach entweder
+`Cookies automatisch bezogen (gast): …` oder ein Fehlschlag mit Abhilfe; das
+Deck zeigt den nächsten Lauf. Was der Weg **nicht** kann, bleibt: einen Login
+erzeugen. Den liefert nur ein Browser (Deck: „Aus Browser" auf dem Rechner
+mit Browser, oder Export einfügen).
+
+`.env.example` erklärt die drei Schalter jetzt in der Vorlage selbst —
+`tools/gen_env_example.py` kennt dafür `ERKLAERUNG`, und ein Eintrag für eine
+Variable, die der Quelltext nicht mehr liest, bricht den Generator ab.
+
+Vertrag `_test_v42_w107_cookie_bezug_ist_standard`, 13 von 13
+Mutationsproben gefangen — drei erst im zweiten Durchgang (der Anstoß blieb
+nach dem Bezug unbemerkt stehen, die Umgehungsprüfung sah nur einen
+Aliasnamen, die Deck-Prüfung las die Variable statt der Zeile). Gegen einen
+lokalen Set-Cookie-Stub echt durchgefahren: Datei angelegt, Zustand und
+nächster Lauf stimmen, ein zweiter Lauf ohne Änderung schreibt nicht.
+
 ### Behoben — Aufnahmen und Restreams ohne Tonspur (v4.2 W106)
 
 Gemeldet: „fehlende Tonspuren in Aufnahmen und Restreams, besonders bei

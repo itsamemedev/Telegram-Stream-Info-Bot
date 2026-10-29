@@ -6634,9 +6634,20 @@ async function loadSystem(){
     // gar keiner.
     const af = cookHealth.autofetch;
     if(af){
-      const t = af.enabled ? (af.last_ok ? new Date(af.last_ok).toLocaleString('de-DE') : T('noch nie gelaufen')) : T('aus');
-      ch+=`<tr><th>Auto-Bezug</th><td class="mono faint">${esc(t)}${af.fetched_total?` · ${af.fetched_total} Token`:''}</td></tr>`;
-      if(af.last_error) ch+=`<tr><th>&#9888; Auto-Bezug</th><td class="mono" style="color:var(--amber)">${esc(af.last_error)}</td></tr>`;
+      // v4.2-W107: nicht nur „zuletzt erfolgreich", sondern auch wann er
+      // zuletzt FRAGTE, warum, und wann er das naechste Mal fragt. Ein
+      // Automat, bei dem man den naechsten Lauf nicht sieht, ist von einem
+      // stehengebliebenen nicht zu unterscheiden.
+      const zeit = v => v ? new Date(v).toLocaleString(document.documentElement.lang||'de-DE') : null;
+      const t = af.enabled ? (zeit(af.last_ok) || T('noch nie erfolgreich')) : T('aus');
+      ch+=`<tr><th>${T('Auto-Bezug')}</th><td class="mono faint">${esc(t)}${af.fetched_total?` · ${af.fetched_total} Token`:''}</td></tr>`;
+      if(af.enabled){
+        if(af.last_try) ch+=`<tr><th>${T('Letzter Versuch')}</th><td class="mono faint">${esc(zeit(af.last_try))}${af.last_anlass?` · ${esc(af.last_anlass)}`:''}</td></tr>`;
+        const nx = af.pending ? T('bald')+' ('+esc(af.pending)+')' : esc(zeit(af.next_run)||'–');
+        ch+=`<tr><th>${T('Naechster Lauf')}</th><td class="mono faint">${nx}</td></tr>`;
+      }
+      if(af.last_error) ch+=`<tr><th>&#9888; ${T('Auto-Bezug')}</th><td class="mono" style="color:var(--amber)">${esc(af.last_error)}</td></tr>`;
+      ch+=`<tr><th></th><td><span class="btn" onclick="fetchCookies('gast')">⤓ ${T('JETZT HOLEN')}</span></td></tr>`;
     }
     ch+='</table></div>';
   }

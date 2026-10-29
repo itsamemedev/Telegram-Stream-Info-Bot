@@ -20072,6 +20072,198 @@ def _test_v42_w106_jede_ausgabe_traegt_ton():
        "(%d Restream-Kombinationen, Nachruestung, Verdrahtung)" % faelle)
 
 
+def _test_v42_w107_cookie_bezug_ist_standard():
+    """„Cookies automatisch beziehen soll Standard sein" — und lief fast nie.
+
+    Der Bezug hing im Telegram-Cookie-Alarm, und der startet nur mit
+    DISK_ALARM_CHAT_ID/DAILY_SUMMARY_CHAT_ID. Ohne Alarm-Chat lief der
+    Standard COOKIE_AUTO_FETCH=1 damit nie. Mit Chat nur bei rotem Health, im
+    Stundentakt; nie beim Start, nie nach einem 403. Und der Deck-Knopf ging
+    am Buchhalter vorbei: nach einem Klick stand weiter „noch nie gelaufen".
+    """
+    import ast as _ast
+    import glob
+    from nc import cookiebezug as B
+    from nc import cookieholen as H
+
+    alt_stand = dict(B.STAND)
+    alt_konf = dict(B._KONF)
+    alt_akt = H.aktualisiere
+    try:
+        # ── (1) WANN HILFT EIN GAST-AUFRUF? Nur bei dem, was er liefern kann.
+        assert B.gast_hilft({"exists": False})
+        assert B.gast_hilft({"status": "parse_error"})
+        assert B.gast_hilft({"critical_missing": ["ttwid"]})
+        assert B.gast_hilft({"expired": [{"name": "msToken", "days_ago": 1}]})
+        # Ein fehlender LOGIN ist kein Fall fuer den Gast-Aufruf — sonst
+        # fragt eine Installation ohne Login alle 15 min TikTok, ohne dass
+        # sich je etwas aendert.
+        assert not B.gast_hilft({"critical_missing": ["sessionid", "sessionid_ss",
+                                                      "sid_tt"]})
+        assert not B.gast_hilft({"status": "ok", "critical_missing": []})
+        assert B.GAST_NAMEN == frozenset(H.ANTIBOT), \
+            "zweite Liste der Anti-Bot-Namen — die laufen auseinander"
+
+        # ── (2) DER ZEITPLAN, Schritt fuer Schritt mit eigener Uhr.
+        aufrufe = []
+
+        def _fake(datei, **kw):
+            aufrufe.append(kw)
+            return dict(LAUF["bericht"])
+        H.aktualisiere = _fake
+        geleert = []
+        B.configure(datei="/x/cookies.txt", aktiv=True, intervall_h=6,
+                    timeout=7, nach_erfolg=lambda: geleert.append(1))
+        B.STAND.update(last_try=0.0, last_ok=None, last_error=None, count=0,
+                       last_report=None, last_anlass=None, anstoss=None)
+        gesund = {"status": "ok", "critical_missing": [], "expired": []}
+        T0 = 1_000_000.0
+
+        # Frischer Start: SOFORT, nicht erst beim ersten Alarm-Tick.
+        assert B.faellig(T0, gesund) == (True, "start")
+        assert B.info(T0)["next_run"] is not None
+
+        LAUF = {"bericht": {"ok": True, "added": ["ttwid"], "replaced": ["msToken"],
+                            "total": 9}}
+        _orig_time = B.time.time
+        B.time.time = lambda: T0
+        try:
+            b = B.holen(anlass="start")
+        finally:
+            B.time.time = _orig_time
+        assert b["anlass"] == "start" and B.STAND["last_ok"] == T0
+        assert B.STAND["count"] == 2 and geleert == [1], \
+            "nach dem Bezug liest der Recorder weiter den alten Cache"
+        assert aufrufe[-1]["timeout"] == 7 and aufrufe[-1]["quelle"] == "gast"
+
+        assert B.faellig(T0 + 60, gesund) == (False, "wartet")
+        assert B.faellig(T0 + 6 * 3600, gesund) == (True, "plan")
+        assert B.naechster_lauf(T0) == T0 + 6 * 3600
+
+        # 403: angestossen, aber nicht vor 15 Minuten — 40 Trackings im 403
+        # duerfen nicht 40 Aufrufe bei TikTok ausloesen.
+        B.anstossen("403-aufnahme")
+        assert B.faellig(T0 + 60, gesund) == (False, "wartet")
+        assert B.faellig(T0 + B.ANSTOSS_ABSTAND_S, gesund) == (True, "403-aufnahme")
+        assert B.info(T0 + 60)["pending"] == "403-aufnahme"
+        # Ein erledigter Anstoss ist erledigt. Bliebe er stehen, fragte die
+        # Schleife alle 15 Minuten nach — fuer einen 403 von vor Stunden.
+        LAUF["bericht"] = {"ok": True, "added": [], "replaced": []}
+        B.time.time = lambda: T0 + B.ANSTOSS_ABSTAND_S
+        try:
+            B.holen(anlass="403-aufnahme")
+        finally:
+            B.time.time = _orig_time
+        assert B.STAND["anstoss"] is None, "der Anstoss klebt nach dem Bezug"
+        assert B.faellig(T0 + 2 * B.ANSTOSS_ABSTAND_S + 1, gesund) == (False, "wartet")
+        T0 = T0 + B.ANSTOSS_ABSTAND_S          # ab hier gilt der neue Lauf
+
+        # Roter Health, den ein Gast heilen kann: ebenfalls im 15-min-Abstand.
+        B.STAND["anstoss"] = None
+        rot = {"status": "warning", "critical_missing": ["ttwid"]}
+        assert B.faellig(T0 + 60, rot) == (False, "wartet")
+        assert B.faellig(T0 + B.ANSTOSS_ABSTAND_S, rot) == (True, "gesundheit")
+        # ... den er NICHT heilen kann: nur der Plan.
+        login = {"status": "critical", "critical_missing": ["sessionid"]}
+        assert B.faellig(T0 + B.ANSTOSS_ABSTAND_S, login) == (False, "wartet")
+
+        # Fehlschlag: nach 30 min neu, nicht nach 6 Stunden.
+        LAUF["bericht"] = {"ok": False, "error": "Tunnel connection failed"}
+        B.time.time = lambda: T0
+        try:
+            B.holen(anlass="plan")
+        finally:
+            B.time.time = _orig_time
+        assert B.STAND["last_error"] == "Tunnel connection failed"
+        assert B.STAND["last_ok"] == T0, "ein Fehlschlag loescht den letzten Erfolg"
+        assert geleert == [1, 1], "der Cache wird auch nach einem Fehlschlag geleert"
+        assert B.faellig(T0 + B.NEU_VERSUCH_S - 1, gesund) == (False, "wartet")
+        assert B.faellig(T0 + B.NEU_VERSUCH_S, gesund) == (True, "neuer_versuch")
+        assert B.naechster_lauf(T0) == T0 + B.NEU_VERSUCH_S
+
+        # Abgeschaltet heisst abgeschaltet — auch nach 403.
+        B.configure(datei="/x/cookies.txt", aktiv=False)
+        B.anstossen("403-aufnahme")
+        assert B.faellig(T0 + 10 ** 6, rot) == (False, "aus")
+        assert B.info()["next_run"] is None and B.info()["enabled"] is False
+
+        # Das Deck liest die Schluessel aus W10 weiter.
+        for k in ("enabled", "interval_h", "last_ok", "fetched_total",
+                  "last_error", "next_run", "last_try", "last_anlass", "pending"):
+            assert k in B.info(), k
+    finally:
+        H.aktualisiere = alt_akt
+        B.STAND.clear(); B.STAND.update(alt_stand)
+        B._KONF.clear(); B._KONF.update(alt_konf)
+
+    # ── (3) DIE VERDRAHTUNG — im Syntaxbaum.
+    baum = _ast.parse(io.open("bot.py", encoding="utf-8").read())
+    eltern = {}
+    for n in _ast.walk(baum):
+        for k in _ast.iter_child_nodes(n):
+            eltern[k] = n
+    spawn = [n for n in _ast.walk(baum) if isinstance(n, _ast.Call)
+             and _ast.unparse(n.func) == "_spawn" and n.args
+             and _ast.unparse(n.args[0]) == "_cookie_bezug_loop()"]
+    assert len(spawn) == 1, "die Bezugs-Schleife wird nicht gestartet"
+    k = spawn[0]
+    while k in eltern:
+        k = eltern[k]
+        if isinstance(k, _ast.If):
+            bed = _ast.unparse(k.test)
+            assert "CHAT_ID" not in bed and "ALARM" not in bed, \
+                "der Bezug haengt wieder am Telegram-Alarm: " + bed
+    fn = {n.name: n for n in baum.body
+          if isinstance(n, (_ast.FunctionDef, _ast.AsyncFunctionDef))}
+
+    def _rufe(f):
+        return {_ast.unparse(c.func) for c in _ast.walk(fn[f])
+                if isinstance(c, _ast.Call)}
+    assert "_nc_cookiebezug.faellig" in _rufe("_cookie_bezug_runde")
+    assert "_nc_cookiebezug.holen" in str(
+        [_ast.unparse(a) for c in _ast.walk(fn["_cookie_bezug_runde"])
+         if isinstance(c, _ast.Call) for a in c.args])
+    assert "_nc_cookiebezug.anstossen" in _rufe("_resolver_stumm")
+    assert "_nc_cookiebezug.holen" in _rufe("_cookies_selbst_holen")
+    # Der 403-Zweig der Aufnahme stoesst an.
+    zweig = [n for n in _ast.walk(baum) if isinstance(n, _ast.If)
+             and _ast.unparse(n.test) == "category == 'forbidden_403'"]
+    assert zweig and any(
+        "_nc_cookiebezug.anstossen" in _ast.unparse(z) for z in zweig[0].body), \
+        "ein 403 der Aufnahme stoesst keinen Bezug mehr an"
+    # Kein zweiter Bezugsweg am Buchhalter vorbei — gleich unter welchem
+    # Alias: `aktualisiere` ruft im ganzen Bestand nur nc/cookiebezug.
+    for pfad in (["bot.py", "discordbot.py"] + sorted(glob.glob("nc/*.py"))
+                 + sorted(glob.glob("nc/routes/*.py"))):
+        if pfad.replace("\\", "/") in ("nc/cookiebezug.py", "nc/cookieholen.py"):
+            continue
+        b2 = _ast.parse(io.open(pfad, encoding="utf-8").read())
+        direkt = [c.lineno for c in _ast.walk(b2) if isinstance(c, _ast.Call)
+                  and _ast.unparse(c.func).split(".")[-1] == "aktualisiere"]
+        assert not direkt, "%s:%s geht am Zeitplan vorbei" % (pfad, direkt)
+    route = [n for n in _ast.walk(_ast.parse(io.open(
+        "nc/routes/settings.py", encoding="utf-8").read()))
+        if isinstance(n, _ast.FunctionDef) and n.name == "api_cookies_fetch"]
+    assert len(route) == 1 and "_nc_cookiebezug.holen" in {
+        _ast.unparse(c.func) for c in _ast.walk(route[0]) if isinstance(c, _ast.Call)}, \
+        "der Deck-Knopf geht nicht durch den Buchhalter"
+
+    # ── (4) DAS DECK nennt den naechsten Lauf und hat den Knopf im Status.
+    deck = io.open("templates/dashboard.html", encoding="utf-8").read()
+    i = deck.index("const af = cookHealth.autofetch;")
+    stueck = deck[i:deck.index("$('#sy_cookies')", i)]   # waechst mit
+    zeilen = [z for z in stueck.splitlines() if "ch+=" in z]
+    assert any("T('Naechster Lauf')" in z and "${nx}" in z for z in zeilen) \
+        and "af.next_run" in stueck, \
+        "das Deck zeigt nicht, wann der Bezug das naechste Mal laeuft"
+    assert any("T('Letzter Versuch')" in z and "af.last_try" in z for z in zeilen), \
+        "das Deck zeigt nicht, wann der Bezug zuletzt fragte"
+    assert "fetchCookies('gast')" in stueck, "kein Jetzt-holen-Knopf im Status"
+
+    ok("W107: Cookie-Auto-Bezug laeuft ohne Telegram-Chat — beim Start, nach "
+       "Plan, nach 403 (gedrosselt), und jeder Weg geht durch den Buchhalter")
+
+
 def main():
     tmp, rid = richte_testdatenbank_ein()
     ok("db_conn aus nc.dbwrap: echtes Schema angelegt, Commit durchgelaufen")
@@ -20354,6 +20546,7 @@ def main():
     _test_v42_w105_egress_waechter()
     _test_v42_w105_chat_laeuft_durch_den_tunnel()
     _test_v42_w106_jede_ausgabe_traegt_ton()
+    _test_v42_w107_cookie_bezug_ist_standard()
     _test_v42_w60_azrael_cooldown_je_plattform()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)

@@ -309,6 +309,26 @@ def _umbruch(text, breite):
     return zeilen
 
 
+# v4.2-W107: Erklaerung je Variable, eine Zeile ueber dem Namen. Nur dort,
+# wo der Name allein in die Irre fuehrt — eine Vorlage, in der jede Zeile
+# einen Absatz traegt, liest niemand. Ein Eintrag fuer einen Namen, den der
+# Quelltext nicht mehr liest, bricht den Generator ab (siehe main): sonst
+# erklaert die Vorlage still einen Schalter, den es nicht gibt.
+ERKLAERUNG = {
+    "COOKIE_AUTO_FETCH":
+        "Holt die rotierenden Anti-Bot-Cookies (ttwid, msToken, "
+        "tt_chain_token) selbst per Gast-Aufruf bei TikTok: beim Start, alle "
+        "COOKIE_AUTO_FETCH_INTERVAL_H Stunden und nach einem 403 (fruehestens "
+        "alle 15 min). Laeuft seit W107 unabhaengig vom Telegram-Alarm. "
+        "Einen Login (sessionid) erzeugt er NIE — den liefert nur ein Browser.",
+    "COOKIE_AUTO_FETCH_INTERVAL_H":
+        "Stunden zwischen zwei planmaessigen Bezuegen (mind. 0.25). Nach "
+        "einem Fehlschlag wird nach 30 min neu versucht.",
+    "COOKIE_FETCH_TIMEOUT":
+        "Sekunden je Gast-Aufruf; es sind zwei Aufrufe je Bezug.",
+}
+
+
 def render(seen):
     from collections import defaultdict
     groups = defaultdict(list)
@@ -341,6 +361,8 @@ def render(seen):
         out.append("# ── %s ─────────────────────────────────────────────" % pre)
         for name in groups[pre]:
             val = seen[name]
+            if name in ERKLAERUNG:
+                out.extend(_umbruch("# " + ERKLAERUNG[name], 74))
             secret = bool(_SECRET.search(name))
             req = name in _REQUIRED
             if secret or req:
@@ -378,6 +400,11 @@ def main():
         print("  Tupel/eine Liste auf Modul-Ebene), oder — wenn der Name erst")
         print("  zur Laufzeit entsteht — als Praefix-Familie in")
         print("  DYNAMISCH_ERLAUBT eintragen UND als Muster in die Vorlage.")
+        sys.exit(2)
+    tot = sorted(set(ERKLAERUNG) - set(seen))
+    if tot:
+        print("ERKLAERUNG fuer Variablen, die der Quelltext nicht liest: %s"
+              % ", ".join(tot))
         sys.exit(2)
     content = render(seen)
     if "--check" in sys.argv:

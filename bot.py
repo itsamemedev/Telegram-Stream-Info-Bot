@@ -574,6 +574,7 @@ from nc import systemprobe as _nc_probe     # v4.1-W32: Redis-/Recorder-Sonden
 from nc import cookies as _nc_cookies_datei  # v4.1-W32: cookies.txt lesen
 from nc import overlaytext as _nc_ovtext  # v4.2-W22: die kleinen Sendebild-Textbausteine
 from nc import cookieholen as _nc_cookieholen  # v4.2-W10: Cookies selbst beziehen
+from nc import cookiebezug as _nc_cookiebezug  # v4.2-W107: Zeitplan des Auto-Bezugs
 from nc import ytdlpurl as _nc_ytdlpurl      # v4.2-W102: Stream-URL aus der yt-dlp-Auskunft
 from nc import livecache as _nc_livecache    # v4.2-W103: Kurzzeit-Cache der Live-Erkennung
 from nc import laufstand as _nc_laufstand    # v4.2-W104: laeuft der Code von der Platte?
@@ -2065,16 +2066,11 @@ def _cookie_autorefresh_info() -> dict:
 # eine Woche Stillstand — half bisher nur Handarbeit im Deck. Hier holt der
 # Bot sie selbst: ein Gast-Aufruf auf tiktok.com, ohne Login, ohne Extension.
 # Was er NICHT kann, steht in nc/cookieholen.py: einen sessionid erzeugen.
-_COOKIE_AUTOFETCH: dict = {"last_try": 0.0, "last_ok": None, "count": 0,
-                           "last_error": None, "last_report": None}
-
-
+# v4.2-W107: Zustand und Zeitplan stehen in nc/cookiebezug.py. Hier stand ein
+# eigenes Dict, und der Deck-Knopf ging daran vorbei — nach einem
+# erfolgreichen Klick zeigte das Deck weiter „noch nie gelaufen".
 def _cookie_autofetch_info() -> dict:
-    return {"enabled": COOKIE_AUTO_FETCH,
-            "interval_h": COOKIE_AUTO_FETCH_INTERVAL_H,
-            "last_ok": _COOKIE_AUTOFETCH["last_ok"],
-            "fetched_total": _COOKIE_AUTOFETCH["count"],
-            "last_error": _COOKIE_AUTOFETCH["last_error"]}
+    return _nc_cookiebezug.info()
 
 
 def _pull_proxy_still():
@@ -2089,37 +2085,18 @@ def _pull_proxy_still():
 def _cookies_selbst_holen(quelle="gast", browser=None, erzwingen=False) -> dict:
     """Holt Cookies automatisch und legt sie in COOKIE_FILE ab. Gibt den
        Bericht aus nc/cookieholen.py zurueck (wirft nie — die Aufrufer sind
-       eine Flask-Route, ein Telegram-Befehl und eine Dauerschleife).
+       ein Telegram-Befehl und der Cookie-Alarm).
 
-       `erzwingen=False` haelt die Drossel ein: der Gast-Aufruf laeuft
-       hoechstens alle COOKIE_AUTO_FETCH_INTERVAL_H Stunden. Ohne die Drossel
-       hinge an jedem Health-Poll des Decks ein HTTPS-Aufruf zu TikTok — das
-       ist genau die Sorte Selbstbeschuss, die eine IP auf die Sperrliste
-       bringt."""
-    jetzt = _time_mod.monotonic()
+       `erzwingen=False` fragt den Zeitplan (nc/cookiebezug.faellig): ohne
+       Drossel hinge an jedem Alarm-Tick ein HTTPS-Aufruf zu TikTok — die
+       Sorte Selbstbeschuss, die eine IP auf die Sperrliste bringt."""
     if not erzwingen:
-        if not COOKIE_AUTO_FETCH:
-            return {"ok": False, "error": "COOKIE_AUTO_FETCH=0", "skipped": True}
-        wartezeit = COOKIE_AUTO_FETCH_INTERVAL_H * 3600
-        if _COOKIE_AUTOFETCH["last_try"] and (jetzt - _COOKIE_AUTOFETCH["last_try"]) < wartezeit:
-            return {"ok": False, "skipped": True,
-                    "error": "gedrosselt (%.1fh Intervall)" % COOKIE_AUTO_FETCH_INTERVAL_H}
-    _COOKIE_AUTOFETCH["last_try"] = jetzt
-
-    bericht = _nc_cookieholen.aktualisiere(
-        COOKIE_FILE, quelle=quelle, browser=browser,
-        timeout=_nc_envnum.env_int("COOKIE_FETCH_TIMEOUT", 15),
-        log=log)
-    if bericht.get("ok"):
-        _COOKIES_CACHE.pop("v", None)     # sonst liest der Recorder 5s lang alt
-        _COOKIE_AUTOFETCH["last_ok"] = datetime.now(timezone.utc).isoformat()
-        _COOKIE_AUTOFETCH["count"] += len(bericht.get("added") or []) + \
-            len(bericht.get("replaced") or [])
-        _COOKIE_AUTOFETCH["last_error"] = None
+        ja, anlass = _nc_cookiebezug.faellig(_time_mod.time(), get_cookie_health())
+        if not ja:
+            return {"ok": False, "skipped": True, "error": anlass}
     else:
-        _COOKIE_AUTOFETCH["last_error"] = bericht.get("error")
-    _COOKIE_AUTOFETCH["last_report"] = bericht
-    return bericht
+        anlass = "telegram"         # einziger Aufrufer mit erzwingen=True
+    return _nc_cookiebezug.holen(quelle, browser, anlass=anlass)
 
 
 # F52: Cookie-Health-Check
@@ -2310,6 +2287,8 @@ def _resolver_stumm(username, grund):
 
        Der Wechsel des Grundes meldet sofort: dass aus einem Timeout ein 403
        geworden ist, ist die eigentliche Nachricht."""
+    if grund in _nc_cookiebezug.RESOLVER_ANSTOSS:
+        _nc_cookiebezug.anstossen("resolver-" + grund)     # v4.2-W107
     laut, unterdrueckt = _nc_meldetakt.melden(
         "resolver", grund, _time_mod.monotonic())
     if laut:
@@ -8681,6 +8660,10 @@ def _rec_kategorie_melden(category, username):
     elif category == "offline_or_protected":
         log.warning("Stream-Kategorie: offline/protected | user=@%s", username)
     elif category == "forbidden_403":
+        # v4.2-W107: abgelaufene Anti-Bot-Tokens sind eine der beiden
+        # Ursachen eines 403 — frische kosten einen Gast-Aufruf. Der Zeitplan
+        # entscheidet, ob wirklich gefragt wird (15-min-Abstand).
+        _nc_cookiebezug.anstossen("403-aufnahme")
         # V37-403: Streak hochzählen; ab RECORD_403_HITS auf yt-dlp umstellen
         if RECORD_403_YTDLP:
             # v4.2-W18: gerechnet wird in nc/aufnahmefolge.py. Die
@@ -23073,6 +23056,7 @@ async def run_bot():
     _spawn(_loop_lag_monitor(), name="loop-lag")          # v4.0-W48: Event-Loop-Blockade-Detektor
     _spawn(_disk_guard_loop(), name="disk-guard")         # F103: Auto-Cleanup vor Disk-Overflow
     _spawn(_laufstand_loop(), name="laufstand")           # v4.2-W104: Update eingespielt, aber nicht wirksam?
+    _spawn(_cookie_bezug_loop(), name="cookie-bezug")    # v4.2-W107: Cookies holen, ohne Telegram-Chat
     _spawn(_tunnel_wacht_loop(), name="tunnel-wacht")     # v4.2-W105: traegt der Egress (Polen-VPS)?
     _spawn(_sign_health_loop(), name="sign-health")       # F103: EulerStream-Sign-Key-Health
     _spawn(_marketing_loop(), name="marketing")           # B162: Cross-Promo (self-gated, Default aus)
@@ -23453,6 +23437,59 @@ def _tunnel_lage():
         return "unbekannt"
     return _nc_tunnelwacht.lage(letzte or {}, hat_proxy,
                                 bool(z.get("forced_off")))
+
+
+async def _cookie_bezug_loop():
+    """Holt die Anti-Bot-Cookies selbst — beim Start, nach Plan, nach 403.
+
+    v4.2-W107. Bis hierher hing der Auto-Bezug im Telegram-Cookie-Alarm, und
+    der startet nur mit DISK_ALARM_CHAT_ID/DAILY_SUMMARY_CHAT_ID. Ohne
+    Alarm-Chat lief der „Standard" COOKIE_AUTO_FETCH=1 also nie. Wann gefragt
+    wird, entscheidet nc/cookiebezug.faellig; hier steht nur der Takt.
+    """
+    if not COOKIE_AUTO_FETCH:
+        log.info("Cookie-Auto-Bezug: AUS (COOKIE_AUTO_FETCH=0). Abgelaufene "
+                 "Anti-Bot-Tokens muessen dann von Hand erneuert werden.")
+        return
+    log.info("Cookie-Auto-Bezug: an — erster Lauf jetzt, danach alle %.1f h "
+             "und nach 403 (fruehestens alle %d min).",
+             COOKIE_AUTO_FETCH_INTERVAL_H, _nc_cookiebezug.ANSTOSS_ABSTAND_S // 60)
+    await asyncio.sleep(20)          # Proxy-Gate und Pool zuerst
+    while True:
+        try:
+            await _cookie_bezug_runde()
+        except Exception as e:
+            _loop_fehler("_cookie_bezug_loop", e)
+        _hb("cookie-bezug")
+        await asyncio.sleep(60)
+
+
+async def _cookie_bezug_runde():
+    """Eine Runde: fragen, ob faellig, und dann EIN Gast-Aufruf im Thread."""
+    h = await asyncio.to_thread(get_cookie_health)
+    ja, anlass = _nc_cookiebezug.faellig(_time_mod.time(), h)
+    if not ja:
+        return
+    b = await asyncio.to_thread(_nc_cookiebezug.holen, "gast", None, anlass)
+    if b.get("ok"):
+        # Die Erfolgszeile schreibt nc/cookieholen selbst (nur bei Aenderung);
+        # eine zweite hier waere dieselbe Nachricht doppelt.
+        _nc_meldetakt.zuruecksetzen("cookiebezug")
+        return
+    # Ein einzelner Fehlschlag steht schon als warning mit Abhilfe im Log
+    # (nc/cookieholen). Scheitert es dauerhaft, gehoert es auf error — sonst
+    # steht es in einem ERROR-Log nie, und die naechste 403-Welle kommt
+    # ohne Vorwarnung.
+    zuletzt = _nc_cookiebezug.STAND["last_ok"]
+    if zuletzt is None or _time_mod.time() - zuletzt > 2 * _nc_cookiebezug.intervall_s():
+        laut, weg = _nc_meldetakt.melden("cookiebezug", "dauerhaft",
+                                         _time_mod.monotonic())
+        if laut:
+            log.error("Cookie-Auto-Bezug scheitert %s: %s — %s%s",
+                      "seit dem Start" if zuletzt is None else
+                      "seit %.0f h" % ((_time_mod.time() - zuletzt) / 3600),
+                      b.get("error"), b.get("abhilfe") or "",
+                      _nc_meldetakt.zusatz(weg))
 
 
 async def _tunnel_wacht_loop():
@@ -24844,6 +24881,13 @@ _nc_cookies_datei.configure(
 # v4.2-W10: der Auto-Bezug nimmt denselben Weg nach draussen wie Resolve
 # und Pull — ueber die Server-IP antwortet TikTok auf denselben Aufruf 403.
 _nc_cookieholen.configure(proxy_waehler=_pull_proxy_still, log=log)
+# v4.2-W107: der Zeitplan. nach_erfolg leert den Cookie-Cache, sonst liest
+# der Recorder nach einem Bezug noch 5 s den alten Stand.
+_nc_cookiebezug.configure(
+    datei=COOKIE_FILE, aktiv=COOKIE_AUTO_FETCH,
+    intervall_h=COOKIE_AUTO_FETCH_INTERVAL_H,
+    timeout=_nc_envnum.env_int("COOKIE_FETCH_TIMEOUT", 15),
+    nach_erfolg=lambda: _COOKIES_CACHE.pop("v", None), log=log)
 
 _nc_ctx.configure(
     log=log,
