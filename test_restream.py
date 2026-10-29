@@ -6740,19 +6740,18 @@ def test_v40_w66_command_center():
        (ncCommandCenter) oben im Insights-View: pulsierender Kern + umkreisende
        KPI-Knoten (Live/Getrackt/Aufnahmen/Checks/Creator) aus /api/stats, drehbar/
        zoombar, Auto-Spin. Vanilla-Canvas-3D."""
+    # ABGELOEST (v4.2-W112): die Kommandozentrale drehte die fuenf Kennzahlen
+    # der Kacheln darueber ein zweites Mal. An ihrer Stelle steht das Lagebild
+    # (ncLagebild, /api/lagebild); seine Aussagen haelt
+    # _test_v42_w112_lagebild in test_nc_modules.py. Hier bleibt: auf der
+    # Uebersicht steht genau EINE Zeichnung, und sie doppelt die Kacheln nicht.
     h = open("templates/dashboard.html").read()
-    assert "var ncCommandCenter=(function(){" in h, "3D-Kommandozentrale fehlt"
+    assert "var ncCommandCenter=" not in h, "alte Kommandozentrale wieder da"
     assert 'id="pnl_ov_cc"' in h and 'id="ov_cc"' in h, "Panel/Canvas fehlt (Übersicht)"
-    assert "ncCommandCenter.start('ov_cc','overview')" in h, "nicht auf der Übersicht gemountet"
-    assert "'/api/stats'" in h and "ncCommandCenter" in h, "liest die Kennzahlen nicht"
-    # 3D-Interaktion + Projektion.
-    for tok in ("yaw", "pitch", "zoom", "panx", "wheel", "pointerdown", "requestAnimationFrame"):
-        assert tok in h, f"3D-Interaktion unvollständig: {tok}"
-    assert "Math.cos(yaw)" in h and "persp" in h, "keine 3D-Projektion"
-    # KPI-Labels vorhanden.
-    for lab in ("LIVE JETZT", "GETRACKT", "AUFNAHMEN", "CHECKS", "CREATOR"):
-        assert lab in h, f"KPI-Label {lab} fehlt"
-    ok("v4.0-w66: 3D-Kommandozentrale (Kern + KPI-Knoten, drehbar/zoombar) verdrahtet")
+    assert "ncLagebild.start('ov_cc','overview')" in h, "nicht auf der Übersicht gemountet"
+    for lab in ("LIVE JETZT", "GETRACKT", "CHECKS"):
+        assert "label:'" + lab + "'" not in h, f"KPI-Ring-Label {lab} wieder da (Doppelung)"
+    ok("v4.0-w66 → v4.2-w112: Kommandozentrale durch das Lagebild abgeloest")
 
 
 def test_v40_w67_pro_polish():
@@ -6793,8 +6792,9 @@ def test_v40_w68_overview_landing():
         assert 'id="' + kid + '"' in h, f"KPI {kid} fehlt"
     # Kommandozentrale auf eigenem Canvas + generalisiertes start().
     assert 'id="ov_cc"' in h, "Übersichts-Canvas fehlt"
-    assert "function start(canvasId, viewName)" in h, "start() nicht parametrisiert"
-    assert "ncCommandCenter.start('ov_cc','overview')" in h, "Zentrale nicht auf Übersicht gemountet"
+    # ANKER GEWANDERT (v4.2-W112): ncCommandCenter -> ncLagebild.
+    assert "function start(canvasId,viewName)" in h, "start() nicht parametrisiert"
+    assert "ncLagebild.start('ov_cc','overview')" in h, "Zentrale nicht auf Übersicht gemountet"
     assert "CURRENT_VIEW===OWNVIEW" in h, "Draw-Gate nicht auf OWNVIEW umgestellt"
     # Übersicht ist Default-Landing.
     assert "dataset.view==='overview'" in h, "Übersicht nicht als Default-Landing"
@@ -6868,7 +6868,8 @@ def test_v40_w71_declutter():
     # (A) Kommandozentrale nur noch auf der Übersicht.
     assert 'id="pnl_cmdcenter"' not in h and 'id="cc_canvas"' not in h, "Insights-Zentrale nicht entfernt"
     assert h.count("loadCommandCenter(") == 0, "loadCommandCenter noch referenziert"
-    assert 'id="ov_cc"' in h and "ncCommandCenter.start('ov_cc','overview')" in h, "Übersichts-Zentrale beschädigt"
+    # ANKER GEWANDERT (v4.2-W112): ncCommandCenter -> ncLagebild.
+    assert 'id="ov_cc"' in h and "ncLagebild.start('ov_cc','overview')" in h, "Übersichts-Zentrale beschädigt"
     assert "loadCommandCenter();" not in h, "Insights-Loader ruft die Zentrale noch"
     # (B) Tote 2D-Karte entfernt, 3D-Globus intakt.
     assert "function ncDefenseMap(" not in h, "tote ncDefenseMap noch da"

@@ -20858,6 +20858,162 @@ def _test_v42_w111_schriften_lokal_ein_panel_je_messung():
        "Liste, ohne Token; Ressourcen und Einzelpruefungen je einmal")
 
 
+def _test_v42_w112_lagebild():
+    """Die Uebersicht zeigt, was passiert — und die Zuordnung ist geprueft.
+
+    Die 3D-Kommandozentrale drehte die fuenf Zahlen der Kacheln darueber ein
+    zweites Mal. Das Lagebild zeigt aktive Nutzer, Aufnahmen, den Zustand
+    jedes Restreams und was die dreizehn Waechter tun. WAS es zeigt,
+    entscheidet nc/lagebild.py; das JS bewegt nur.
+    """
+    import ast as _ast
+    import logging as _logging
+    import re as _re
+    from flask import Flask
+    from nc import lagebild as L
+
+    # ── (1) RESTREAM-LAGE: „live" ist nur der Prozess (B123).
+    gut = {"live": True, "targets": {"kick": {}}, "targets_dead": [],
+           "ohne_fortschritt_s": 1, "backoff_s": 0, "health": {}}
+    assert L.restream_lage(gut) == "gesund"
+    for kaputt in ({"live": False}, {"backoff_s": 30},
+                   {"ohne_fortschritt_s": L.GESTOERT_AB_S},
+                   {"targets_dead": ["kick"]}):
+        assert L.restream_lage(dict(gut, **kaputt)) == "gestoert", kaputt
+    zwei = dict(gut, targets={"kick": {}, "yt": {}})
+    for lahm in ({"ohne_fortschritt_s": L.LANGSAM_AB_S}, {"targets_dead": ["yt"]},
+                 {"health": {"slow_ticks": 5}}, {"health": {"slow_warned": True}}):
+        assert L.restream_lage(dict(zwei, **lahm)) == "langsam", lahm
+
+    # ── (2) ZIELE: nur wer etwas tut; der schlechteste Restream zaehlt;
+    # Stoerungen vorn, feste Reihenfolge.
+    tr = [{"username": "@Anna", "last_live": 1, "recording": 1},
+          {"username": "bert", "last_live": 1, "recording": 0},
+          {"username": "carl", "last_live": 0, "recording": 0}]
+    # Der gestoerte ZUERST: sonst gewaenne er auch mit „der letzte zaehlt".
+    rs = [dict(gut, user="bert", live=False), dict(gut, user="bert"),
+          dict(gut, user="dora")]
+    d = L.bauen(tr, rs, [], {}, 1000.0, quellen={"brain": False})
+    namen = [z["name"] for z in d["ziele"]]
+    assert namen == ["bert", "dora", "anna"], namen
+    assert d["ziele"][0]["restream"] == "gestoert", "ein gesunder zweiter faerbt den gestoerten gruen"
+    assert "carl" not in namen and d["getrackt"] == 3
+    assert d["quellen"] == {"brain": False}, "Ausfall einer Quelle geht verloren"
+    viele = [{"username": "u%02d" % i, "last_live": 1} for i in range(L.MAX_ZIELE + 5)]
+    dv = L.bauen(viele, [], [], {}, 0.0)
+    assert len(dv["ziele"]) == L.MAX_ZIELE and dv["weitere"] == 5
+
+    # ── (3) WAECHTER: aus / fehler / taetig / ruht, und nie ein erfundenes Ziel.
+    def ag(name, **kw):
+        a = {"name": name, "enabled": True, "last_run": 1000.0 - 500, "runs": 1, "errors": 0}
+        a.update(kw)
+        return a
+    jetzt = 1000.0
+    w = {a["name"]: a for a in L.bauen(tr, rs, [
+        ag("disk", last_run=jetzt - 3), ag("swap", enabled=False, last_run=jetzt - 1),
+        ag("proxy", last_run=jetzt - 1), ag("health"),
+        ag("recording", last_run=jetzt - 2), ag("restream_sentinel", last_run=jetzt - 2),
+        ag("unbekannt"), ag("scout", last_run=jetzt - L.TAETIG_S)],
+        {"proxy": {"state": "error"}}, jetzt)["agenten"]}
+    assert w["disk"]["lage"] == "taetig" and w["disk"]["ort"] == "platte"
+    assert w["swap"]["lage"] == "aus", "abgeschalteter Waechter patrouilliert"
+    assert w["proxy"]["lage"] == "fehler", "Fehler wird von taetig ueberdeckt"
+    assert w["health"]["lage"] == "ruht"
+    assert w["scout"]["lage"] == "ruht", "Nachlauf ist nicht bei TAETIG_S zu Ende"
+    assert w["recording"]["ziel"] == "anna" and w["recording"]["ort"] == "ziel"
+    assert w["restream_sentinel"]["ziel"] == "bert", "Restream-Waechter nicht dort, wo es brennt"
+    assert w["unbekannt"]["ort"] == "kern", "unbekannter Waechter verschwindet"
+    ohne = {a["name"]: a for a in L.bauen(
+        [{"username": "x", "last_live": 1}], [], [ag("recording"), ag("restream_sentinel")],
+        {}, jetzt)["agenten"]}
+    assert ohne["recording"]["ziel"] is None and ohne["recording"]["ort"] == "kern", \
+        "Aufnahme-Waechter an einem Nutzer, der nicht aufnimmt"
+    assert ohne["restream_sentinel"]["ziel"] is None
+    # Die Wahl unter mehreren Live-Zielen ist fest (springt nicht je Poll) und
+    # nicht immer die erste — sonst klebten alle Waechter am selben Nutzer.
+    vier = [{"username": n, "last_live": 1} for n in ("a1", "b2", "c3", "d4")]
+    wahl = {L.bauen(vier, [], [ag("scout", last_run=jetzt - 1)], {}, jetzt)["agenten"][0]["ziel"]
+            for _ in range(3)}
+    assert wahl == {("a1", "b2", "c3", "d4")[sum(map(ord, "scout")) % 4]}, wahl
+    assert wahl != {"a1"}
+
+    # ── (4) ORT kennt GENAU die registrierten Waechter — gemessen am Baum von
+    # brain_bridge.py (register-Aufrufe) und brain/agents.py (name-Attribute).
+    klassen = set()
+    for k in _ast.walk(_ast.parse(io.open("brain_bridge.py", encoding="utf-8").read())):
+        if isinstance(k, _ast.Call) and getattr(k.func, "attr", "") == "register" \
+                and k.args and isinstance(k.args[0], _ast.Call):
+            klassen.add(getattr(k.args[0].func, "id", ""))
+    registriert = set()
+    for k in _ast.parse(io.open("brain/agents.py", encoding="utf-8").read()).body:
+        if isinstance(k, _ast.ClassDef) and k.name in klassen:
+            for z in k.body:
+                if isinstance(z, _ast.Assign) and getattr(z.targets[0], "id", "") == "name":
+                    registriert.add(z.value.value)
+    assert len(registriert) == 13, registriert
+    assert registriert == set(L.ORT), (registriert ^ set(L.ORT))
+    for ort in L.ORT.values():
+        assert ort.startswith("ziel:") or ort in L.STATIONEN, ort
+
+    # ── (5) DIE ROUTE: eine Quelle faellt, die anderen bleiben, und der
+    # Ausfall steht in `quellen` UND im Log.
+    from nc.routes import lagebild as R
+    alt = (R._trackings, R._restreams, R._agenten)
+    gelesen = []
+
+    class _Fang(_logging.Handler):
+        def emit(self, rec):
+            gelesen.append(rec.getMessage())
+    fang = _Fang()
+    _logging.getLogger("TikTokBot").addHandler(fang)
+    try:
+        R._trackings = lambda: [{"username": "anna", "last_live": 1, "recording": 1}]
+        R._restreams = lambda: []
+
+        def _kaputt():
+            raise RuntimeError("brain weg")
+        R._agenten = _kaputt
+        app = Flask("w112")
+        app.register_blueprint(R.bp)
+        r = app.test_client().get("/api/lagebild")
+        assert r.status_code == 200
+        j = r.get_json()
+        assert j["quellen"] == {"trackings": True, "restream": True, "brain": False}, j["quellen"]
+        assert [z["name"] for z in j["ziele"]] == ["anna"]
+        assert any("Quelle brain" in m for m in gelesen), gelesen
+    finally:
+        R._trackings, R._restreams, R._agenten = alt
+        _logging.getLogger("TikTokBot").removeHandler(fang)
+    src = io.open("bot.py", encoding="utf-8").read()
+    assert "dashboard_app.register_blueprint(_nc_routes_lagebild.bp)" in src
+
+    # ── (6) DIE ZEICHNUNG: im Deck-Code ohne Kommentare.
+    h = io.open("templates/dashboard.html", encoding="utf-8").read()
+    i = h.index("var ncLagebild=(function(){")
+    js = h[i:h.index("\n})();", i)]
+    js = _re.sub(r"/\*.*?\*/", "", js, flags=_re.S)
+    assert "'/api/lagebild'" in js
+    assert "innerHTML" not in js, "Nutzernamen duerfen nie in innerHTML"
+    assert "prefers-reduced-motion: reduce" in js
+    # Der Takt bricht bei reduzierter Bewegung, verdeckter Uebersicht oder
+    # verstecktem Tab ab — gemessen an der Zeile, die mit dem Abbruch BEGINNT.
+    takt = js[js.index("function takt("):js.index("function kick(")]
+    zeile = [z.strip() for z in takt.splitlines() if z.strip().startswith("if(CURRENT_VIEW!==OWNVIEW")]
+    assert zeile and all(t in zeile[0] for t in ("document.hidden", "reduce", "raf=null;return;")), zeile
+    # Bei reduzierter Bewegung stehen die Waechter sofort am Ziel, ohne Spur.
+    setze = js[js.index("function setze("):js.index("function zielVon(")]
+    assert any(z.strip().startswith("if(reduce){") and "s.x=z.x" in z and "s.spur=[]" in z
+               for z in setze.splitlines()), "Standbild setzt die Waechter nicht ans Ziel"
+    assert "ncLagebild.start('ov_cc','overview')" in h
+    assert 'id="ov_lage_text"' in h and "textContent" in js, "keine Textfassung fuer Screenreader"
+    # Jede Station, die nc/lagebild.py kennt, hat einen Platz auf der Leinwand.
+    for st in L.STATIONEN:
+        assert _re.search(r"\b%s:\{a:" % st, js), "Station %s fehlt im Lagebild" % st
+
+    ok("W112: Lagebild — Restream-Lage ehrlich, Waechter je Arbeitsort, kein "
+       "erfundenes Ziel, Quellen-Ausfall sichtbar, Standbild bei reduzierter Bewegung")
+
+
 def main():
     tmp, rid = richte_testdatenbank_ein()
     ok("db_conn aus nc.dbwrap: echtes Schema angelegt, Commit durchgelaufen")
@@ -21145,6 +21301,7 @@ def main():
     _test_v42_w109_ein_befehlsverzeichnis()
     _test_v42_w110_lokales_llm_zuerst()
     _test_v42_w111_schriften_lokal_ein_panel_je_messung()
+    _test_v42_w112_lagebild()
     _test_v42_w60_azrael_cooldown_je_plattform()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)

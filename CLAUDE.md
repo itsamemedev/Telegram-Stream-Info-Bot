@@ -26,7 +26,7 @@ benutzt, berät an der Lage vorbei.**
 
 ## Die eine Regel
 
-`bot.py` hat **25.319 Zeilen / 1,2 MB ≈ 295.000 Token**. Diese Datei wird
+`bot.py` hat **25.321 Zeilen / 1,2 MB ≈ 295.000 Token**. Diese Datei wird
 **nie** ganz gelesen und **nie** blind durchsucht. Erst fragen wo etwas steht,
 dann den Ausschnitt holen:
 
@@ -41,7 +41,7 @@ dann den Ausschnitt holen:
     python tools/ncpatch.py check                          # Templates: doppelte IDs, CSS-Bilanz
     python tools/ncpatch.py docs                           # Doku-Zahlen gegen den Quelltext
 
-`find` antwortet aus `.claude/INDEX.md` — 371 Routen (34 in `bot.py`, 337 in
+`find` antwortet aus `.claude/INDEX.md` — 372 Routen (34 in `bot.py`, 338 in
 `nc/routes/`), 65 Slash-Commands, 565 Funktionen mit Zeilennummern. Nach Änderungen an Routen, Commands oder
 Top-Level-Funktionen `map` neu laufen lassen. Details: Skill `nc-navigation`.
 
@@ -71,9 +71,9 @@ Auf diesem Windows-Rechner heißt der Interpreter **`python`** (3.13.12);
     brain_bridge.py      Adapter Bot ↔ brain/ (M2)
     brain/               KI-Kern: state, rules, router, agents, memory,
                          semantic, knowledge, scheduler, llm, report
-    nc/                  155 Fachmodule: db, scraping, restream, oauth, ledger,
+    nc/                  156 Fachmodule: db, scraping, restream, oauth, ledger,
                          i18n, …
-    nc/routes/           37 Flask-Blueprints mit 337 weiteren API-Routen
+    nc/routes/           38 Flask-Blueprints mit 338 weiteren API-Routen
     locales/             de.json, en.json — der Übersetzungskatalog
     templates/           dashboard.html, brain.html, overlay.html, PWA
     website/             lafap_index.html (öffentliche Seite)
@@ -1130,6 +1130,13 @@ Token (OBS). Dazu zwei Kästen für **eine** Messung zusammengelegt („Host
 Resources" neben „Ressourcen", die ✓-Reihe im Ops-Tab neben dem Preflight —
 die ✗ bleiben dort, `event_loop` prüft nur dieser Endpunkt).
 **Eine Regel, die an einer Oberfläche gilt, gegen alle Oberflächen prüfen.**
+
+**Eine Animation ist eine Aussage, also gehört ihre Logik geprüft.** Das
+Lagebild der Übersicht (v4.2-W112) bewegt Wächter und färbt Restreams — WAS
+es zeigt, entscheidet `nc/lagebild.py`, nicht das JavaScript. Dabei zweimal
+nachgesehen statt geraten: `sentinel` heißt nach Wache, ist aber der
+CrowdSec-Wächter, und `uptime` prüft Chat-Verbindungen. Die Zuordnung steht
+an den Docstrings, nicht an den Namen.
 
 **Einmal-`await` ohne Supervisor.** Jeder Long-Running-Client braucht Reconnect
 mit Backoff **und** ein Abbruchkriterium für deterministische Fehler.
