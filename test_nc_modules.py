@@ -20884,6 +20884,14 @@ def _test_v42_w112_lagebild():
     for lahm in ({"ohne_fortschritt_s": L.LANGSAM_AB_S}, {"targets_dead": ["yt"]},
                  {"health": {"slow_ticks": 5}}, {"health": {"slow_warned": True}}):
         assert L.restream_lage(dict(zwei, **lahm)) == "langsam", lahm
+    # Unabhaengige Relays (independent-Modus): eins steht oder fehlt, der
+    # Hauptstrom laeuft — das ist eine ausgefallene Plattform, nicht gesund.
+    relay_gut = {"pid": 4711, "ohne_fortschritt_s": 1, "health": {}}
+    assert L.restream_lage(dict(gut, relays={"twitch": relay_gut})) == "gesund"
+    for kaputt_relay in ({"ohne_fortschritt_s": L.LANGSAM_AB_S}, {"pid": None},
+                         {"health": {"slow_warned": True}}):
+        r = dict(gut, relays={"twitch": relay_gut, "youtube": dict(relay_gut, **kaputt_relay)})
+        assert L.restream_lage(r) == "langsam", kaputt_relay
 
     # ── (2) ZIELE: nur wer etwas tut; der schlechteste Restream zaehlt;
     # Stoerungen vorn, feste Reihenfolge.
@@ -20898,6 +20906,13 @@ def _test_v42_w112_lagebild():
     assert namen == ["bert", "dora", "anna"], namen
     assert d["ziele"][0]["restream"] == "gestoert", "ein gesunder zweiter faerbt den gestoerten gruen"
     assert "carl" not in namen and d["getrackt"] == 3
+    # Pausiert: das gespeicherte last_live ist eingefroren und zaehlt nicht;
+    # eine laufende Aufnahme oder ein Restream zaehlt weiter.
+    pz = L.bauen([{"username": "paul", "last_live": 1, "paused": 1},
+                  {"username": "pia", "last_live": 1, "paused": 1, "recording": 1}],
+                 [], [], {}, 0.0)
+    assert [z["name"] for z in pz["ziele"]] == ["pia"], pz["ziele"]
+    assert pz["ziele"][0]["pausiert"] is True
     assert d["quellen"] == {"brain": False}, "Ausfall einer Quelle geht verloren"
     viele = [{"username": "u%02d" % i, "last_live": 1} for i in range(L.MAX_ZIELE + 5)]
     dv = L.bauen(viele, [], [], {}, 0.0)

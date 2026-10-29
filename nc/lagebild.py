@@ -80,11 +80,24 @@ def restream_lage(st: dict) -> str:
     if not st.get("live") or (st.get("backoff_s") or 0) > 0 \
             or ohne >= GESTOERT_AB_S or (ziele and len(tot) >= len(ziele)):
         return "gestoert"
-    gesundheit = st.get("health") or {}
-    if tot or ohne >= LANGSAM_AB_S or gesundheit.get("slow_ticks", 0) >= 5 \
-            or gesundheit.get("slow_warned"):
+    if tot or _lahm(st) or any(_lahm(r, relay=True)
+                               for r in (st.get("relays") or {}).values()):
         return "langsam"
     return "gesund"
+
+
+def _lahm(st, relay=False):
+    """Unter Echtzeit, haengend — oder, bei einem unabhaengigen Relay
+    (RESTREAM_MULTI_MODE=independent), gar nicht mehr da. Ein Relay, das
+    steht, ist eine ausgefallene Plattform, waehrend der Hauptstrom weiter
+    sendet: kein Totalausfall, aber auch nicht gesund (Codex-Befund auf
+    PR #154 — vorher las diese Funktion nur den Hauptprozess)."""
+    st = st or {}
+    gesundheit = st.get("health") or {}
+    return bool((relay and not st.get("pid"))
+                or (st.get("ohne_fortschritt_s") or 0) >= LANGSAM_AB_S
+                or gesundheit.get("slow_ticks", 0) >= 5
+                or gesundheit.get("slow_warned"))
 
 
 _RANG = {"gestoert": 0, "langsam": 1, "gesund": 2}
@@ -108,11 +121,17 @@ def _ziele(trackings, restreams):
         u = (t.get("username") or "").lstrip("@").lower()
         if not u:
             continue
-        live, rec = bool(t.get("last_live")), bool(t.get("recording"))
+        pausiert = bool(t.get("paused"))
+        # Ein pausiertes Tracking fasst der Worker nicht mehr an — sein
+        # last_live ist der Stand vom Moment der Pause und bliebe ewig „live"
+        # (Codex-Befund auf PR #154). Dort zaehlt nur, was unabhaengig
+        # bestaetigt ist: eine laufende Aufnahme oder ein Restream.
+        live = bool(t.get("last_live")) and not pausiert
+        rec = bool(t.get("recording"))
         if live or rec or u in rs:
             out[u] = {"name": u, "live": live or rec or u in rs,
                       "aufnahme": rec, "restream": rs.get(u),
-                      "pausiert": bool(t.get("paused"))}
+                      "pausiert": pausiert}
     # Ein Restream ohne Tracking (manuell gestartet) ist trotzdem ein Ziel.
     for u, lage in rs.items():
         out.setdefault(u, {"name": u, "live": True, "aufnahme": False,
