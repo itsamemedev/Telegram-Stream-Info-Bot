@@ -26,7 +26,7 @@ benutzt, berät an der Lage vorbei.**
 
 ## Die eine Regel
 
-`bot.py` hat **25.092 Zeilen / 1,2 MB ≈ 295.000 Token**. Diese Datei wird
+`bot.py` hat **25.138 Zeilen / 1,2 MB ≈ 295.000 Token**. Diese Datei wird
 **nie** ganz gelesen und **nie** blind durchsucht. Erst fragen wo etwas steht,
 dann den Ausschnitt holen:
 
@@ -71,7 +71,7 @@ Auf diesem Windows-Rechner heißt der Interpreter **`python`** (3.13.12);
     brain_bridge.py      Adapter Bot ↔ brain/ (M2)
     brain/               KI-Kern: state, rules, router, agents, memory,
                          semantic, knowledge, scheduler, llm, report
-    nc/                  150 Fachmodule: db, scraping, restream, oauth, ledger,
+    nc/                  151 Fachmodule: db, scraping, restream, oauth, ledger,
                          i18n, …
     nc/routes/           36 Flask-Blueprints mit 335 weiteren API-Routen
     locales/             de.json, en.json — der Übersetzungskatalog
@@ -1076,6 +1076,15 @@ Riegel, von denen einer wirkt, sind ein Riegel und eine falsche Gewissheit
 (W98). Die redundante Zeile ist weg, der Vertrag prüft beide Adressformen, und
 die Lehre aus W89 gilt unverändert: **eine Probe, die entwischt, ist ein Befund
 — manchmal am Vertrag, manchmal am Riegel darunter.**
+
+**Ohne `-map` entscheidet ffmpeg — und bei tonloser Quelle entscheidet es
+still für eine Datei ohne Ton.** Bis v4.2-W106 lief die Aufnahme mit `-c copy`
+ohne `-map`, der Restream mappte dafür hart `0:a` und starb an „Stream map
+'0:a' matches no streams" in einer Reconnect-Schleife, die nie etwas ändern
+konnte. Seither mappt jeder Bauer ausdrücklich, der Restream sendet nach dem
+ersten solchen Abbruch mit Stille (`nc/tonspur.py`), und die fertige Aufnahme
+wird geprüft und notfalls nachgerüstet. **Wer einen ffmpeg-Bauer anfasst,
+lässt `tonspur.hat_tonspur(cmd)` im Vertrag mitlaufen.**
 
 **Einmal-`await` ohne Supervisor.** Jeder Long-Running-Client braucht Reconnect
 mit Backoff **und** ein Abbruchkriterium für deterministische Fehler.

@@ -3548,7 +3548,10 @@ def test_v40_w12_audio_panel():
     # fragt, ob zur LAUFZEIT gelesen wird — nicht, in welcher Datei.
     _rcs = open("nc/restreamcmd.py", encoding="utf-8").read()
     assert '_audio_cfg()["duck"]' in _rcs, "Ducking nutzt weiter die feste Env-Konstante"
-    assert _rcs.count('_nc_audio.mix_chain(tts_idx, _TTS_VOICE_GAIN, _audio_cfg()["duck"])') == 3
+    # ANKER GEWANDERT (v4.2-W106, nicht der Vertrag): die drei Aufrufe reichen
+    # jetzt die Tonquelle mit (src=_asrc — Stille bei tonloser Quelle), die
+    # Klammer schliesst deshalb erst dahinter.
+    assert _rcs.count('_nc_audio.mix_chain(tts_idx, _TTS_VOICE_GAIN, _audio_cfg()["duck"],') == 3
     assert '_acfg["tone"]' in src, "Signalton nutzt die Laufzeit-Konfig nicht"
     # Routen inkl. Grenzwerte.
     assert '"/api/audio/config"' in arts and "def api_audio_config(" in arts

@@ -19790,6 +19790,288 @@ def _test_v42_w105_chat_laeuft_durch_den_tunnel():
        "/healthz nennt die Lage ohne zu messen")
 
 
+def _test_v42_w106_jede_ausgabe_traegt_ton():
+    """Fehlende Tonspuren — zwei Fehlerbilder, eines still, eines laut.
+
+    Die Aufnahme lief mit `-c copy` ohne `-map`: ffmpegs Vorgabeauswahl
+    schrieb bei tonloser Quelle still eine reine Videodatei. Der Restream
+    mappte im Transcode hart `0:a` und starb bei tonloser Quelle an „Stream
+    map '0:a' matches no streams" — weder Netz noch Codec, also griff kein
+    Fallback, und das Reconnect-Budget lief an einem Fehler leer, den ein
+    Reconnect nie behebt. Im Copy-Pfad ohne Stimme gab es gar kein `-map`.
+    """
+    import ast as _ast
+    import asyncio as _aio
+    import os as _os
+    import tempfile as _tf
+    import threading as _th
+    from nc import reccmd as _rc
+    from nc import restreamcmd as R
+    from nc import restream_stability as _stab
+    from nc import tonspur as T
+
+    # ── (1) DIE ERKENNUNG. Beide Meldungsformen von ffmpeg, und NUR Ton: ein
+    # leeres '0:v' ist eine kaputte Quelle und braucht eine neue URL, keine
+    # Stille.
+    for laut in ("Stream map '0:a' matches no streams.",
+                 "Stream map '0:a:0' matches no streams.",
+                 "[fc#0 @ 0x1] Stream specifier ':a' in filtergraph description "
+                 "[2:a]volume=1.8[vtts];[0:a][vtts]amix matches no streams.",
+                 "x\nSTREAM MAP '0:A' MATCHES NO STREAMS.\n"):
+        assert T.ist_tonlos_fehler(laut), laut
+    for still in ("Stream map '0:v' matches no streams.",
+                  "Connection timed out", "Server returned 404 Not Found",
+                  "", None):
+        assert not T.ist_tonlos_fehler(still), still
+    # Und darum hat bisher nichts gegriffen: der Codec-Fallback sagt zu
+    # dieser Zeile korrekt Nein. Faellt diese Zeile, ist sie kein Grund zum
+    # Feiern — dann schaltet ein tonloser Copy-Restream auf transcode und
+    # stirbt dort am selben Map.
+    assert not _stab.is_codec_failure("Stream map '0:a' matches no streams.")
+
+    # ── (2) DIE LAGE EINER FERTIGEN DATEI. None, wenn ffprobe nichts
+    # hergibt — einer leeren/kaputten Datei Stille anzuhaengen versteckte
+    # den Defekt hinter einer gueltig aussehenden Datei.
+    assert T.hat_ton('{"streams":[{"codec_type":"video"},{"codec_type":"audio"}]}') is True
+    assert T.hat_ton({"streams": [{"codec_type": "audio"}]}) is True
+    assert T.hat_ton(b'{"streams":[{"codec_type":"video"}]}') is False
+    for nichts in ('{"streams":[]}', "{}", None, "[]", '{"streams":null}'):
+        assert T.hat_ton(nichts) is None, nichts
+    try:
+        T.hat_ton("kein json")
+        raise AssertionError("unlesbares JSON wird still zu None")
+    except ValueError:
+        pass
+
+    nach = T.nachruest_cmd("/rec/a.mp4", "/rec/a.tonspur.mp4")
+    i = nach.index("ffmpeg")
+    assert T.STILLE_QUELLE in nach and "-shortest" in nach, nach
+    assert nach[nach.index("-c:v") + 1] == "copy", "das Bild wird neu kodiert"
+    assert T.hat_tonspur(nach[i:]), nach
+
+    # ── (3) DER RESTREAM — jede Kombination traegt Ton, hart gemappt.
+    schrift = _tf.NamedTemporaryFile(suffix=".ttf", delete=False)
+    schrift.write(b"x"); schrift.close()
+    avatar = _tf.NamedTemporaryFile(suffix=".png", delete=False)
+    avatar.write(b"x"); avatar.close()
+    OVDIR = _ph.verzeichnis()
+    OV = {k: _os.path.join(OVDIR, k + ".txt") for k in
+          ("alert", "brand", "caption", "chat", "follow", "goal",
+           "react", "source", "title")}
+    for _pfad in OV.values():
+        open(_pfad, "w").write("x")
+
+    def _konf(overlay, av):
+        R.configure(
+            cookie_header=lambda: "", pick_pull_proxy=lambda: "",
+            restream_overlay_files=lambda rid=None: OV,
+            FFMPEG_THREADS_LIVE=3, FFMPEG_THREADS_RELAY=2,
+            RESTREAM_AVATAR=(avatar.name if av else ""), RESTREAM_BITRATE_K=4500,
+            RESTREAM_AVATAR_ALPHA="", RESTREAM_AVATAR_H=170,
+            RESTREAM_AVATAR_LOOP="",
+            RESTREAM_CANVAS_H=720, RESTREAM_CANVAS_W=1280,
+            RESTREAM_FONT=schrift.name, RESTREAM_FPS=24,
+            RESTREAM_LOW_LATENCY=True, RESTREAM_OVERLAY=overlay,
+            RESTREAM_OVERLAY_HTML_FPS=1, RESTREAM_RELAY_BITRATE_K=3500,
+            RESTREAM_RELAY_PRESET="ultrafast", RESTREAM_X264_PRESET="veryfast",
+            RESTREAM_UA="UA/1.0", TTS_CH=2, TTS_SR=44100, TTS_VOICE_GAIN="1.8")
+
+    ZIEL = ("kick", "rtmps://ingest.example/app/SCHLUESSEL")
+    faelle = 0
+    try:
+        for overlay in (False, True):
+            for av in (False, True):
+                _konf(overlay, av)
+                for quelle in ("https://pull.tiktok.com/stage/x.flv",
+                               "https://pull.tiktok.com/stage/x.m3u8"):
+                    for transcode in (False, True):
+                        for tts in (None, "/tmp/tts.fifo"):
+                            for html in (None, "/tmp/ov.fifo"):
+                                for tonlos in (False, True):
+                                    for art in ("tee", "einzel", "relay"):
+                                        kw = dict(transcode=transcode, tts_fifo=tts,
+                                                  html_ov_fifo=html, tonlos=tonlos)
+                                        if art == "tee":
+                                            kw["targets"] = [ZIEL]
+                                        else:
+                                            kw["only_target"] = ZIEL[1]
+                                            kw["relay_profile"] = art == "relay"
+                                        cmd = R.build(quelle, "", "", **kw)
+                                        fall = (overlay, av, quelle[-4:], kw)
+                                        faelle += 1
+                                        assert T.hat_tonspur(cmd), \
+                                            ("kein Ton gemappt", fall, cmd)
+                                        assert cmd[cmd.index("-ac") + 1] == "2", fall
+                                        assert (T.STILLE_QUELLE in cmd) is tonlos, fall
+                                        if tonlos:
+                                            # Kein Rest greift mehr auf den Ton
+                                            # der Quelle — sonst stirbt der
+                                            # Neubau am selben Map.
+                                            fc = (cmd[cmd.index("-filter_complex") + 1]
+                                                  if "-filter_complex" in cmd else "")
+                                            maps = [cmd[j + 1] for j, a in enumerate(cmd)
+                                                    if a == "-map"]
+                                            assert "[0:a]" not in fc, (fall, fc)
+                                            assert not any(m.startswith("0:a") for m in maps), \
+                                                (fall, maps)
+                                            # Stille ist der LETZTE Eingang:
+                                            # sie darf keinen Index verschieben.
+                                            n_in = cmd.count("-i")
+                                            assert ("%d:a" % (n_in - 1)) in " ".join(maps) + fc, \
+                                                (fall, maps, fc)
+    finally:
+        _konf(True, True)
+    assert faelle == 2 * 2 * 2 * 2 * 2 * 2 * 2 * 3, faelle
+
+    # ── (4) DIE AUFNAHME — ausdrueckliche Auswahl, optional fuer reine
+    # Ton-Lives; die Garantie gibt sichern() an der fertigen Datei.
+    _rc.configure(
+        cookie_header=lambda: "k=v", ensure_cookie_file_netscape=lambda: True,
+        pick_checked_pull_proxy=None, stream_url_ttl=lambda u: None,
+        log_event=lambda *a, **k: None, resolve_tiktok_live_stream=None,
+        REC_403_UNTIL={}, REC_PROXY={}, REC_PROXY_FAILED={},
+        REC_PROXY_LOCK=_th.Lock(), COOKIE_FILE="cookies.txt",
+        FFMPEG_NICE_RECORD=0, FFMPEG_THREADS_RECORD=1, RECORDER_PREF="auto",
+        RECORD_403_YTDLP=True, STREAM_URL_MIN_TTL=300)
+    for url in ("https://pull.tiktok.com/x.flv", "https://pull.tiktok.com/x.m3u8"):
+        cmd = _rc._build_native_cmd(url, "/rec/o.mp4", 60, pull_proxy="")
+        assert T.hat_tonspur(cmd, optional_ok=True), cmd
+        assert not T.hat_tonspur(cmd), "die Aufnahme mappt Ton jetzt hart — " \
+            "dann bricht eine reine Ton-Live ab, statt aufzunehmen"
+        assert cmd.index("-map") > cmd.index("-i"), "-map ist eine Ausgabe-Option"
+
+    # ── (5) DIE NACHRUESTUNG. Mit nachgebautem ffprobe/ffmpeg: geprueft
+    # wird, was mit der DATEI passiert, nicht dass ein Werkzeug laeuft.
+    verz = _ph.verzeichnis()
+    pfad = _os.path.join(verz, "a.mp4")
+
+    def _neu():
+        with open(pfad, "wb") as f:
+            f.write(b"V" * 100)
+
+    def _lauf(probe, remux_ok=True):
+        aufrufe = []
+
+        async def _f(cmd, timeout):
+            aufrufe.append(cmd)
+            if "ffprobe" in cmd:
+                if isinstance(probe, Exception):
+                    raise probe
+                return probe
+            # Auch der Fehlschlag schreibt an: echtes ffmpeg legt die
+            # Ausgabe an, bevor es scheitert. Ein Fehlschlag OHNE halbe Datei
+            # waere die bequeme Eingabe — und mit ihr entwischte die
+            # Mutationsprobe, die das Aufraeumen entfernt.
+            with open(cmd[-1], "wb") as f:
+                f.write(b"VA" * (100 if remux_ok else 7))
+            if remux_ok:
+                return 0, b"", b""
+            return 1, b"", b"Unknown input format: 'lavfi'"
+        return _f, aufrufe
+
+    # Jeder Ausgang ausser „hat Ton" MUSS eine Zeile hinterlassen — ein
+    # stilles „weiss nicht" ist dieselbe Blindheit wie ein stilles return
+    # (W81). Gelesen wird der echte Logger, die Drossel vorher geleert.
+    import logging as _lg
+    from nc import meldetakt as _takt
+    zeilen = []
+
+    class _Fang(_lg.Handler):
+        def emit(self, rec):
+            zeilen.append((rec.levelname, rec.getMessage()))
+
+    def _gemeldet():
+        z = list(zeilen)
+        del zeilen[:]
+        _takt.zuruecksetzen(T.KANAL)
+        return z
+
+    fang = _Fang()
+    _lg.getLogger("TikTokBot").addHandler(fang)
+    alt = T._lauf
+    try:
+        _takt.zuruecksetzen(T.KANAL)
+        _neu()
+        T._lauf, auf = _lauf((0, b'{"streams":[{"codec_type":"video"}]}', b""))
+        r = _aio.run(T.sichern(pfad, wer="@t"))
+        assert r == {"lage": "nachgeruestet", "groesse": 200}, r
+        z = _gemeldet()
+        assert [s for s, t in z] == ["WARNING"] and "nachgeruestet" in z[0][1], z
+        assert open(pfad, "rb").read() == b"VA" * 100
+        assert not _os.path.exists(_os.path.join(verz, "a.tonspur.mp4"))
+
+        _neu()
+        T._lauf, auf = _lauf((0, b'{"streams":[{"codec_type":"video"}]}', b""),
+                             remux_ok=False)
+        r = _aio.run(T.sichern(pfad, wer="@t"))
+        assert r == {"lage": "fehlgeschlagen", "groesse": 100}, r
+        assert open(pfad, "rb").read() == b"V" * 100, "das Original ist weg"
+        z = _gemeldet()
+        assert [s for s, t in z] == ["ERROR"] and "OHNE Ton" in z[0][1], z
+        assert not _os.path.exists(_os.path.join(verz, "a.tonspur.mp4")), \
+            "der halbe Remux bleibt liegen"
+
+        for probe, lage in (((0, b'{"streams":[{"codec_type":"audio"}]}', b""), "ton"),
+                            ((1, b"", b"moov atom not found"), "unbekannt"),
+                            (T.Fehlschlag("ffprobe antwortete 20 s lang nicht"), "unbekannt"),
+                            ((0, b"kaputt{", b""), "unbekannt"),
+                            ((0, b'{"streams":[]}', b""), "unbekannt")):
+            _neu()
+            T._lauf, auf = _lauf(probe)
+            r = _aio.run(T.sichern(pfad, wer="@t"))
+            assert r["lage"] == lage, (probe, r)
+            assert len(auf) == 1, ("bei %s darf nichts remuxt werden" % lage, auf)
+            assert open(pfad, "rb").read() == b"V" * 100
+            z = _gemeldet()
+            if lage == "ton":
+                assert z == [], ("der gesunde Fall meldet — das erzieht zum "
+                                 "Wegsehen", z)
+            else:
+                assert [s for s, t in z] == ["WARNING"], (probe, z)
+                assert "nicht klaeren" in z[0][1], z
+    finally:
+        T._lauf = alt
+        _lg.getLogger("TikTokBot").removeHandler(fang)
+        _takt.zuruecksetzen(T.KANAL)
+
+    # ── (6) DIE VERDRAHTUNG — im Syntaxbaum, nicht im Dateitext (W102–W104:
+    # ein Vertrag darf seine eigene Begruendung nicht als Befund lesen).
+    baum = _ast.parse(io.open("bot.py", encoding="utf-8").read())
+    bauer = [n for n in _ast.walk(baum) if isinstance(n, _ast.Call)
+             and getattr(n.func, "id", None) == "_build_restream_cmd"]
+    assert len(bauer) >= 3, len(bauer)
+    for n in bauer:
+        assert any(k.arg == "tonlos" for k in n.keywords), \
+            "Z.%d: _build_restream_cmd ohne tonlos=" % n.lineno
+    def _aufrufe(knoten):
+        return {_ast.unparse(c.func) for c in _ast.walk(knoten)
+                if isinstance(c, _ast.Call)}
+    hrf = [n for n in baum.body if isinstance(n, _ast.AsyncFunctionDef)
+           and n.name == "handle_recording_finished"]
+    assert len(hrf) == 1
+    assert "_nc_tonspur.sichern" in _aufrufe(hrf[0]), \
+        "die fertige Aufnahme wird nicht mehr auf Ton geprueft"
+    rm = [n for n in baum.body if isinstance(n, _ast.ClassDef)
+          and n.name == "RestreamManager"]
+    assert len(rm) == 1
+    meth = {n.name: n for n in rm[0].body
+            if isinstance(n, (_ast.FunctionDef, _ast.AsyncFunctionDef))}
+    erkenner = [m for m in meth.values()
+                if "_nc_tonspur.ist_tonlos_fehler" in _aufrufe(m)]
+    assert len(erkenner) == 1, \
+        "der Restream-Manager erkennt die tonlose Quelle nicht mehr"
+    # Der Schalter klebt nicht: dieselbe Ausgangsbehandlung, die ihn setzt,
+    # nimmt ihn bei jedem anderen Ende wieder weg. Sonst bliebe eine Quelle,
+    # die nur am Anfang stumm war, die ganze Sitzung stumm.
+    assert "self._tonlos.discard" in _aufrufe(erkenner[0]), \
+        "der Stille-Schalter klebt bis zum Stop"
+    assert "self._tonlos.discard" in _aufrufe(meth["stop"]), \
+        "der Stille-Schalter ueberlebt den Stop — die naechste Sitzung prueft nie neu"
+
+    ok("W106: jede Aufnahme und jeder Restream traegt eine Tonspur "
+       "(%d Restream-Kombinationen, Nachruestung, Verdrahtung)" % faelle)
+
+
 def main():
     tmp, rid = richte_testdatenbank_ein()
     ok("db_conn aus nc.dbwrap: echtes Schema angelegt, Commit durchgelaufen")
@@ -20071,6 +20353,7 @@ def main():
     _test_v42_w105_stream_url_formen()
     _test_v42_w105_egress_waechter()
     _test_v42_w105_chat_laeuft_durch_den_tunnel()
+    _test_v42_w106_jede_ausgabe_traegt_ton()
     _test_v42_w60_azrael_cooldown_je_plattform()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)

@@ -11,6 +11,49 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Behoben — Aufnahmen und Restreams ohne Tonspur (v4.2 W106)
+
+Gemeldet: „fehlende Tonspuren in Aufnahmen und Restreams, besonders bei
+mehreren Nutzern". Nachgesehen wurde, wo eine Ausgabe ohne Ton entstehen
+kann — es sind zwei Fehlerbilder, eines still, eines laut an der falschen
+Stelle.
+
+**Die Aufnahme** (`nc/reccmd._build_native_cmd`) lief mit `-c copy` und ohne
+`-map`. ffmpegs Vorgabeauswahl nimmt „ein Video, ein Audio, falls vorhanden";
+liefert die Quelle keinen Ton (oder erst nach dem Probe-Fenster), entsteht
+still eine reine Videodatei — rc 0, keine Logzeile. Jetzt: ausdrückliche
+Auswahl (`-map 0:v:0? -map 0:a:0?`, optional, damit reine Ton-Lives weiter
+aufgenommen werden) und **`nc/tonspur.sichern()` prüft die fertige Datei**.
+Fehlt die Spur, wird Stille (`anullsrc`, 44,1 kHz stereo, AAC) mit
+`-c:v copy` nachgerüstet — das Bild wird nicht angefasst. Scheitert das,
+bleibt das Original liegen, und es gibt einen ERROR mit Abhilfe.
+
+**Der Restream** (`nc/restreamcmd.build`) mappte im Transcode und im
+Stimm-Mix hart `0:a`. Bei tonloser Quelle starb ffmpeg sofort an „Stream map
+'0:a' matches no streams" — weder Netz noch Codec, also griff keiner der
+Fallbacks, und das Reconnect-Budget lief an einem Fehler leer, den kein
+Reconnect behebt. Im Copy-Pfad ohne Stimme gab es gar kein `-map`: dort ging
+still ein Strom ohne Ton an alle Ziele. Jetzt mappt jeder Pfad Ton
+ausdrücklich, und `RestreamManager._ton_folge()` erkennt den Abbruch, baut
+mit Stille neu (Versuchszähler unangetastet) und nimmt den Schalter bei jedem
+anderen Prozessende wieder weg — eine Quelle, die nur am Anfang stumm war,
+bleibt nicht die ganze Sitzung stumm. Das Tonformat ist in allen Pfaden
+dasselbe (AAC 160k, 44,1 kHz, **stereo** — vorher im Copy-Pfad ohne `-ac 2`).
+
+Bewusst **nicht** gemacht: vor jedem Start ein ffprobe gegen die Quelle. Das
+verzögert jeden gesunden Sendestart um Sekunden für einen Fall, den ffmpeg
+selbst in unter einer Sekunde meldet.
+
+Nachgeprüft mit echtem ffmpeg 6.1 gegen eine tonlose und eine betonte
+FLV-Quelle über HTTP: alle 16 Restream-Varianten (copy/transcode × Stimme ×
+Stille × Quelle) und beide Aufnahmen tragen am Ende eine Tonspur; die
+betonte Quelle bleibt unverändert. Vertrag
+`_test_v42_w106_jede_ausgabe_traegt_ton` (192 Restream-Kombinationen,
+Nachrüstung, Meldungen, Verdrahtung im Syntaxbaum), 12 von 12
+Mutationsproben gefangen — eine erst im zweiten Durchgang: der Vertrag
+prüfte nicht, dass der Fall „lässt sich nicht klären" überhaupt eine Zeile
+schreibt.
+
 ### Behoben — ein Update über das Deck wirkt erst nach einem Neustart, und nichts sagte es (v4.2 W104)
 
 Korrektur des Betreibers am 01.10.:

@@ -603,6 +603,7 @@ from nc import restreamcfg as _nc_rscfg  # v4.1-W22: Sendeziele + Pruef-Paramete
 from nc import restreamstate as _nc_rsstate  # v4.1-W22: Restream-Laufzeitzustand
 from nc import restreamcmd as _nc_rscmd  # v4.2-W16: die ffmpeg-Zeile des Relays
 from nc import reccmd as _nc_reccmd  # v4.2-W17: die Kommandozeilen des Recorders
+from nc import tonspur as _nc_tonspur  # v4.2-W106: jede Ausgabe traegt eine Tonspur
 from nc import aufnahmefolge as _nc_folge  # v4.2-W18: die Eskalationsrechnung
 from nc import aufnahmekategorie as _nc_kat  # v4.2-W23: warum eine Aufnahme so endete
 from nc import audiotap as _nc_audiotap  # v4.2-W46: warum der Audio-Tap starb
@@ -9089,6 +9090,12 @@ async def handle_recording_finished(proc, tid, chat_id, username, output_file,
         file_size = os.path.getsize(output_file) if file_exists else 0
 
         if file_exists and file_size > 0:
+            # v4.2-W106: eine Datei ohne Tonspur ist kein Erfolg. Vorab laesst
+            # sich das nicht wissen (das Probe-Fenster entscheidet), also wird
+            # die FERTIGE Datei geprueft und Stille nachgeruestet — vor dem
+            # Verbuchen, weil sich die Groesse dabei aendert.
+            file_size = (await _nc_tonspur.sichern(
+                output_file, wer=f"@{username}"))["groesse"] or file_size
             # v4.2-W18: EIN Einstiegspunkt fuer alle Fehlerzaehler dieses
             # Users. Vorher standen die pop()-Zeilen dreimal im Monolithen
             # verteilt, und zweimal fehlte einer der Zaehler.
@@ -13719,6 +13726,10 @@ class RestreamManager:
     def __init__(self):
         self._procs = {}            # rid -> dict(proc, started, attempts, transcode, health, monitor)
         self._force_transcode = set()
+        # v4.2-W106: rids, deren Quelle nachweislich keinen Ton liefert. Sie
+        # senden mit Stille statt am harten Ton-Map zu sterben. Geleert bei
+        # jedem anderen Prozessende (siehe dort) und beim Stop.
+        self._tonlos = set()
         self._failover = set()      # v37 W3b: rids, die gerade aufs Backup-Ingest umgeschaltet sind
         self._chatguards = {}       # F92b: rid -> Chat-Guardian-Task (Studio-Panel-Feed)
         self._srcwatch = {}         # V37-SRCFAIL: rid -> Quellen-Online-Watcher-Task
@@ -14469,12 +14480,14 @@ class RestreamManager:
                                           only_target=_base_target,
                                           html_ov_fifo=_html_ov,
                                           avatar_feed=_av_feed,
-                                          drossel=_drossel_stufe(rid))
+                                          drossel=_drossel_stufe(rid),
+                                          tonlos=rid in self._tonlos)
             else:
                 cmd = _build_restream_cmd(src, ingest, key, transcode, tts_fifo=tts_fifo, rid=rid,
                                           html_ov_fifo=_html_ov, targets=_targets,
                                           avatar_feed=_av_feed,
-                                          drossel=_drossel_stufe(rid))
+                                          drossel=_drossel_stufe(rid),
+                                          tonlos=rid in self._tonlos)
             if RESTREAM_OVERLAY:
                 _write_restream_overlay()      # Textdateien anlegen, BEVOR drawtext sie öffnet
             proc = await asyncio.create_subprocess_exec(
@@ -14724,7 +14737,8 @@ class RestreamManager:
                     cmd = _build_restream_cmd(cur_url, "", "", transcode,
                                               tts_fifo=None, rid=rid,
                                               only_target=purl,
-                                              relay_profile=True)
+                                              relay_profile=True,
+                                              tonlos=rid in self._tonlos)
                     # v4.0-W115: stdout ist jetzt eine PIPE statt DEVNULL.
                     # Der cmd traegt seit jeher -progress pipe:1 — es hat nur
                     # nie jemand zugehoert. Damit hatten die unabhaengigen
@@ -14832,6 +14846,34 @@ class RestreamManager:
         task = asyncio.create_task(_relay_loop())
         self._procs.setdefault(rid, {}).setdefault("indep_tasks", {})[pname] = task
 
+    async def _ton_folge(self, rid, ran, tail, attempts):
+        """v4.2-W106: Ende des Prozesses auf eine tonlose Quelle pruefen. -> bool
+
+        ffmpeg stirbt am Ton-Map in unter einer Sekunde, und JEDER weitere
+        Versuch stirbt identisch — weder Netz noch Codec, also griff keiner
+        der Fallbacks, und das Reconnect-Budget lief an einem Fehler leer,
+        den ein Reconnect nie behebt. True heisst: der Neustart mit Stille
+        laeuft schon, der Aufrufer ist fertig.
+
+        Jeder ANDERE Ausgang nimmt den Schalter wieder weg, damit der naechste
+        Start den echten Ton versucht. Sonst bliebe ein Restream, dessen
+        Quelle nur am Anfang stumm war, die ganze Sitzung stumm — ohne dass
+        irgendetwas das meldet. Kostet bei dauerhaft stummer Quelle einen
+        Fehlstart unter 1 s je Neuaufbau.
+        """
+        if (rid not in self._tonlos and ran < 25
+                and _nc_tonspur.ist_tonlos_fehler(tail)):
+            self._tonlos.add(rid)
+            log.warning("Restream #%d: Quelle liefert keinen Ton → sende mit "
+                        "Stille-Spur weiter (Ziele lehnen einen Strom ohne Ton "
+                        "teils ab). Gilt bis zum naechsten Neuaufbau.", rid)
+            self._set_status(rid, "starting", err="Quelle ohne Ton → Stille-Spur")
+            await asyncio.sleep(1)
+            await self.start(rid, _attempts=attempts)
+            return True
+        self._tonlos.discard(rid)
+        return False
+
     async def _monitor(self, rid):
         info = self._procs.get(rid)
         if not info:
@@ -14925,6 +14967,9 @@ class RestreamManager:
             return
         if rc == 0:
             self._set_status(rid, "stopped", pid=None, err="Quelle beendet (EOF)")
+            return
+        # v4.2-W106: tonlose Quelle → mit Stille neu (Begruendung dort).
+        if await self._ton_folge(rid, ran, tail, attempts):
             return
         # copy→transcode-Fallback: copy-Modus früh gestorben mit Codec-Fehler
         if (not transcode_used) and ran < 25 and _looks_like_codec_err(tail):
@@ -15031,6 +15076,7 @@ class RestreamManager:
             self._set_desired(rid, False)
         self._set_status(rid, "stopped", pid=None)
         self._force_transcode.discard(rid)
+        self._tonlos.discard(rid)     # v4.2-W106: naechste Sitzung prueft neu
         self._failover.discard(rid)   # v37 W3b: Failover zurücksetzen
         self._srcspin.pop(rid, None)      # v4.0-W113: Serien enden mit dem Stop
         if not _keep_desired:
