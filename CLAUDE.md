@@ -1127,7 +1127,8 @@ bis v4.2-W111 weiter bei Google — das Overlay bei **jedem** Restream-Screensho
 also vom Server aus im Sekundentakt. Seither liefert `nc/routes/schriften.py`
 dieselben Dateien aus `website/fonts/`, Name gegen eine feste Liste, ohne
 Token (OBS). Dazu zwei Kästen für **eine** Messung zusammengelegt („Host
-Resources" neben „Ressourcen", die ✓/✗-Reihe im Ops-Tab neben dem Preflight).
+Resources" neben „Ressourcen", die ✓-Reihe im Ops-Tab neben dem Preflight —
+die ✗ bleiben dort, `event_loop` prüft nur dieser Endpunkt).
 **Eine Regel, die an einer Oberfläche gilt, gegen alle Oberflächen prüfen.**
 
 **Einmal-`await` ohne Supervisor.** Jeder Long-Running-Client braucht Reconnect

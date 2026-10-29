@@ -2986,6 +2986,7 @@ document.addEventListener("DOMContentLoaded",function(){
              Gesamtstatus bleibt oben im Kopf; die Einzelpruefungen stehen an
              EINER Stelle. -->
         <div class="faint" id="ops6_health" style="font-size:11px;margin-bottom:16px">
+          <span id="ops6_health_rot"></span>
           <a href="#" onclick="gotoView('system');return false">Einzelprüfungen im System-Tab (Preflight)</a></div>
         <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:16px;margin-bottom:16px">
           <div><div class="kc-sub">BACKOFF-WATCH <span class="faint" style="font-size:10px;letter-spacing:0">Trackings in Wartezeit</span></div>
@@ -10549,15 +10550,18 @@ async function loadMaint6(){ loadOps6Tags(); loadOps6Bookmarks(); }
 function ops6Mb(mb){ return mb==null?'—':(mb>=1024?(mb/1024).toFixed(1)+' GB':mb+' MB'); }
 
 async function loadOps6Health(){
-  /* v4.2-W111: nur noch der Gesamtstatus im Kopf. Die Einzelpruefungen
-     zeigt der Preflight im System-Tab — zweimal dieselbe Pruefung unter zwei
-     Namen ist keine zusaetzliche Auskunft, sondern eine Suchaufgabe. */
-  const tag=$('#ops6_health_tag');
+  /* v4.2-W111: keine ✓-Reihe mehr — die gruenen Pruefungen stehen im
+     Preflight des System-Tabs ein zweites Mal. Die FEHLGESCHLAGENEN bleiben
+     aber hier: event_loop prueft nur dieser Endpunkt, und ein „DEGRADED" im
+     Kopf ohne den Grund schickt den Betreiber suchen. */
+  const tag=$('#ops6_health_tag'), box=$('#ops6_health_rot');
   if(!tag) return;
   const d=await apiGet('/api/ops/healthcheck');
-  if(!d){ tag.textContent='—'; return; }
+  if(!d){ tag.textContent='—'; if(box) box.innerHTML=''; return; }
   const st=d.status||'?'; tag.textContent=st.toUpperCase();
   tag.style.color=st==='ok'?'var(--ok)':st==='degraded'?'var(--amber)':'var(--red)';
+  const rot=Object.keys(d.checks||{}).filter(k=>!d.checks[k]);
+  if(box) box.innerHTML=rot.map(k=>'<span class="pill off">✗ '+esc(k)+'</span>').join(' ');
 }
 async function loadOps6Backoff(){
   const box=$('#ops6_backoff');

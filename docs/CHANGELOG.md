@@ -28,7 +28,8 @@ nach draußen lief das Sendebild in der Ersatzschrift.
   „psutil not available".
 - Ops-Tab: die ✓/✗-Reihe aus `/api/ops/healthcheck` war eine Teilmenge des
   Preflights im System-Tab, mit Rohschlüsseln. Der Gesamtstatus bleibt im
-  Kopf, darunter der Verweis auf den Preflight.
+  Kopf, darunter die **fehlgeschlagenen** Prüfungen (`event_loop` prüft nur
+  dieser Endpunkt) und der Verweis auf den Preflight.
 - Vertrag `_test_v42_w111_schriften_lokal_ein_panel_je_messung`, neun
   Mutationsproben, alle gefangen.
 

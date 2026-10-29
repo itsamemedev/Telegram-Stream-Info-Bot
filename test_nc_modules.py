@@ -20844,7 +20844,15 @@ def _test_v42_w111_schriften_lokal_ein_panel_je_messung():
     assert "Host Resources" not in d
     i = d.index("async function loadOps6Health(")
     fn = d[i:d.index("\nasync function ", i + 10)]
-    assert "/api/ops/healthcheck" in fn and "checks" not in fn and "innerHTML" not in fn, fn
+    assert "/api/ops/healthcheck" in fn and "✓" not in fn, fn
+    # … aber die FEHLGESCHLAGENEN bleiben sichtbar: event_loop prueft nur
+    # /api/ops/healthcheck, nicht der Preflight (Codex-Befund auf PR #153).
+    assert "!d.checks[k]" in fn and "esc(k)" in fn and "ops6_health_rot" in fn, fn
+    assert 'id="ops6_health_rot"' in d
+    # Gemessen an der Zeile, die mit der Zuweisung BEGINNT — ein Text-Treffer
+    # irgendwo im Rumpf faende auch eine abgeschaltete Zeile.
+    assert any(z.strip().startswith("if(box) box.innerHTML=rot.map(")
+               for z in fn.splitlines()), "fehlgeschlagene Pruefungen werden nicht gezeichnet"
 
     ok("W111: Schriften lokal (Deck, Overlay, Brain), Route nur fuer die "
        "Liste, ohne Token; Ressourcen und Einzelpruefungen je einmal")
