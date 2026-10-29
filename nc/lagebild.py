@@ -36,6 +36,9 @@ TAETIG_S = 20.0
 LANGSAM_AB_S = 15.0
 GESTOERT_AB_S = 60.0
 
+# Ab so vielen verpassten Takten gilt ein Waechter als ueberfaellig.
+UEBERFAELLIG_TAKTE = 3
+
 # So viele Ziele zeichnet die Übersicht hoechstens. Mehr passt nicht lesbar
 # auf einen Ring; die Zahl dahinter steht als „+N".
 MAX_ZIELE = 24
@@ -178,9 +181,26 @@ def _agent(a, zustand, ziele, jetzt):
         # Ziel erfinden — ein Aufnahme-Waechter an einem Nutzer, der nicht
         # aufnimmt, waere genau die Falschanzeige, die das Bild entwertet.
         ort = "ziel" if ziel else "kern"
+    # v4.2-W116: der Takt jedes Waechters, damit die Uebersicht in Echtzeit
+    # zeigen kann, woran er gerade ist — nicht nur die 20 s nach einem Lauf.
+    # Bis hierher bewegten sich bei Takten von 120 bis 600 s im Schnitt drei
+    # von dreizehn; die anderen sahen aus, als taeten sie nichts.
+    takt = float(a.get("interval_s") or 0) or None
+    faellig = None
+    if lage != "aus" and takt:
+        faellig = 0.0 if vor is None else max(0.0, takt - vor)
+    # Ueberfaellig: ein aktiver Waechter, der dreimal seinen Takt verpasst
+    # hat. Dann laeuft der Bridge-Tick nicht, der ihn ausloest — die eine
+    # Stoerung, die man an keinem einzelnen Waechter sonst sieht.
+    ueber = bool(lage in ("ruht", "taetig") and takt and vor is not None
+                 and vor > UEBERFAELLIG_TAKTE * takt)
     return {"name": name, "lage": lage, "ort": ort, "ziel": ziel,
             "vor_s": None if vor is None else round(max(0.0, vor), 1),
+            "takt_s": takt, "faellig_in_s": None if faellig is None else round(faellig, 1),
+            "ueberfaellig": ueber,
             "laeufe": int(a.get("runs") or 0),
+            "befunde": int(a.get("findings") or 0),
+            "dauer_ms": a.get("last_ms"),
             "fehler": int(a.get("errors") or 0)}
 
 
@@ -206,4 +226,7 @@ def bauen(trackings, restreams, agenten, agentenzustand, jetzt,
         "agenten": ags,
         "stationen": list(STATIONEN),
         "quellen": dict(quellen or {}),
+        # Serverzeit: die Uebersicht zaehlt die Countdowns zwischen zwei
+        # Abrufen selbst herunter und braucht dafuer den Bezugspunkt.
+        "jetzt": round(jetzt, 1),
     }
