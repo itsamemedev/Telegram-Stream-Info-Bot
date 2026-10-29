@@ -21029,6 +21029,91 @@ def _test_v42_w112_lagebild():
        "erfundenes Ziel, Quellen-Ausfall sichtbar, Standbild bei reduzierter Bewegung")
 
 
+def _test_v42_w113_website_ruhig_und_lesbar():
+    """Die oeffentliche Seite: ein Designsystem, kein Kippen, nichts versteckt.
+
+    Bis W112 trug jede der drei Seiten ihr eigenes Grundgeruest, die Startseite
+    kippte Sektionen beim Scrollen (unscharfer Fliesstext), blendete Inhalt
+    erst beim Hineinscrollen ein (gedruckt und als Vorschau: leere Flaechen),
+    und drei 3D-Leinwaende liefen ununterbrochen, auch weit unterhalb des
+    sichtbaren Bereichs.
+    """
+    import re as _re
+    seiten = {n: io.open("website/%s.html" % n, encoding="utf-8").read()
+              for n in ("lafap_index", "impressum", "datenschutz")}
+    css = io.open("website/raum.css", encoding="utf-8").read()
+
+    # ── (1) EIN System fuer drei Seiten, Schriften je Seite lokal.
+    for n, w in seiten.items():
+        assert _re.search(r'<link rel="stylesheet" href="raum\.css\?v=[0-9a-f]+">', w), n
+        assert "d3-schalter" not in w, n
+        assert not _re.search(r"(?:href|src)\s*=\s*[\"'][^\"']*fonts\.(?:googleapis|gstatic)", w), n
+        assert "@font-face" in w and "fonts/orbitron" in w, n
+    for n in ("impressum", "datenschutz"):
+        stil = seiten[n][seiten[n].index("<style>"):seiten[n].index("</style>")]
+        stil = _re.sub(r"/\*.*?\*/", "", stil, flags=_re.S)
+        assert _re.sub(r"@font-face\{[^}]*\}", "", stil).strip() == "<style>", \
+            "%s traegt wieder ein eigenes Grundgeruest neben raum.css" % n
+        assert '<body class="recht">' in seiten[n], n
+
+    # Auch eine url() in CSS holt von aussen — nicht nur ein href/src.
+    for n, quelle in list(seiten.items()) + [("raum.css", css)]:
+        ohne = _re.sub(r"/\*.*?\*/|<!--.*?-->", "", quelle, flags=_re.S)
+        assert not _re.search(r"url\(\s*['\"]?\s*(?:https?:)?//", ohne), \
+            "%s laedt per url() von aussen" % n
+
+    # ── (2) .bar heisst auch jeder Diagrammbalken: in raum.css darf die
+    # Kopfleisten-Regel nur ueber `header .bar` greifen (sonst 0-px-Balken).
+    code = _re.sub(r"/\*.*?\*/", "", css, flags=_re.S)
+    assert not _re.search(r"(?:^|[},])\s*\.bar\s*\{", code), "nackte .bar-Regel in raum.css"
+    assert "header .bar{" in code
+
+    # ── (3) STARTSEITE.
+    w = seiten["lafap_index"]
+    # Die Inline-Skripte per Zeichenkettensuche, nicht per Regex: ein Muster
+    # wie <script>(.*?)</script> meldet CodeQL als HTML-Filter, der
+    # Grossschreibung nicht kennt — hier wird nichts gefiltert, nur die
+    # eigene Datei gelesen, aber eine rote Pruefung bleibt rot.
+    teile, pos = [], 0
+    while w.find("<script>", pos) >= 0:
+        a = w.find("<script>", pos) + len("<script>")
+        pos = w.index("</script>", a)
+        teile.append(w[a:pos])
+    js = "\n".join(teile)
+    jsc = _re.sub(r"/\*.*?\*/", "", js, flags=_re.S)
+    # Kein Scroll-Einblenden mehr: nichts ist versteckt, bis man hinscrollt.
+    assert not _re.search(r'class="[^"]*\brv\b', w), "Einblend-Klasse .rv wieder im Markup"
+    assert "classList.add('in')" not in jsc
+    # Die drei Leinwaende zeichnen nur, solange sie im Bild sind.
+    zeilen = [z.strip() for z in jsc.splitlines()]
+    assert sum(z.startswith("function loop(){ if(document.hidden||!window.__imBild(cv))")
+               for z in zeilen) == 3, "eine Leinwand zeichnet auch ausserhalb des Bildes"
+    assert sum(z == "cv.__weiter=kick;" for z in zeilen) == 3, "eine Leinwand wacht nicht wieder auf"
+    beob = jsc[jsc.index("new IntersectionObserver"):]
+    beob = beob[:beob.index("})();")]
+    for leinwand in ("sentinel-core", "usage-3d", "don-3d"):
+        assert "'%s'" % leinwand in beob, "nicht beobachtet: " + leinwand
+    # Die Hauptueberschrift ist EIN Satz aus ganzen Woertern.
+    h1 = _re.search(r"<h1[^>]*>(.*?)</h1>", w, flags=_re.S).group(1)
+    assert "glyph" not in h1, "Anfangsbuchstaben wieder als eigene Textknoten"
+    assert " ".join(_re.sub(r"<[^>]+>", " ", h1).split()) == "Logik Absolut Fehl am Platz", h1
+    # Diagrammbalken: Zahl und Balken im eigenen Schacht.
+    assert jsc.count('<div class="slot"><span class="v" style="bottom:calc(') == 2
+    # Navigation: jedes Sprungziel existiert, Quellcode steht direkt hinter Azrael.
+    nav = w[w.index('<nav aria-label="Seitennavigation">'):w.index("</nav>")]
+    ids = _re.findall(r'<section id="([^"]+)"', w)
+    for ziel in _re.findall(r'href="#([^"]+)"', nav):
+        assert ('id="%s"' % ziel) in w, "Navigation zeigt ins Leere: #" + ziel
+    assert ids.index("quellcode") == ids.index("azrael") + 1, ids
+    for pflicht in ("ueber", "lagebild", "monitor", "azrael", "quellcode",
+                    "news", "ressourcen", "grundsaetze"):
+        assert pflicht in ids, pflicht
+    assert w.count("<section") == w.count("</section>")
+
+    ok("W113: Website — ein Designsystem fuer drei Seiten, kein Kippen, nichts "
+       "versteckt, Leinwaende nur im Bild, Balken im eigenen Schacht")
+
+
 def main():
     tmp, rid = richte_testdatenbank_ein()
     ok("db_conn aus nc.dbwrap: echtes Schema angelegt, Commit durchgelaufen")
@@ -21317,6 +21402,7 @@ def main():
     _test_v42_w110_lokales_llm_zuerst()
     _test_v42_w111_schriften_lokal_ein_panel_je_messung()
     _test_v42_w112_lagebild()
+    _test_v42_w113_website_ruhig_und_lesbar()
     _test_v42_w60_azrael_cooldown_je_plattform()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)

@@ -1,134 +1,179 @@
-/* raum.css — v4.0-W114. Gemeinsam von lafap_index.html, impressum.html
-   und datenschutz.html geladen: der Raum gehoert zur SEITE, nicht zu
-   einem einzelnen Dokument. Regeln, die auf den Rechtsseiten keine
-   Entsprechung haben (.acronym, .hero-core, .res-card), greifen dort
-   schlicht nicht — das ist billiger als drei Ableger zu pflegen. */
-/* ═══════════════════════════════════════════════════════════════════════
-   v4.0-W114 · DER RAUM — die ganze Seite steht in 3D
-   ═══════════════════════════════════════════════════════════════════════
-   Bisher war 3D auf drei Widgets beschraenkt (Sentinel-Kern, Verbrauchs-
-   balken, Spendenmuenze): jedes fuer sich raeumlich, die Seite drumherum
-   flach. Jetzt traegt die SEITE die Tiefe — ein perspektivischer Korridor
-   hinter dem Inhalt, jede Sektion auf einer eigenen Z-Ebene, jede Kachel
-   als Koerper, der sich unter dem Zeiger neigt.
+/* raum.css — v4.2-W113: das gemeinsame Designsystem der oeffentlichen Seite.
 
-   DREI REGELN, DIE DAS LESBAR HALTEN
-   1. Tiefe beim ANNAEHERN, flach beim LESEN. Eine Sektion kippt und liegt
-      hinten, waehrend sie in den Blick kommt, und steht exakt plan, sobald
-      sie mittig ist. Dauerhaft gekippter Fliesstext wird vom Browser
-      unscharf gerastert — auf einem Textblock ist das schlicht unlesbar.
-   2. ALLES haengt an html.d3. Ohne JS, bei prefers-reduced-motion oder
-      wenn der Betrachter auf "Flach" schaltet, faellt die Klasse weg und
-      die Seite ist exakt die alte — kein Rest, keine halbe Tiefe.
-   3. perspective sitzt auf dem main-Element, NICHT auf dem body-Element. Die Kopfleiste ist
-      position:sticky; in einem perspektivischen Elternteil verliert sticky
-      seinen Halt und die Leiste wandert beim Scrollen mit.
-   ═══════════════════════════════════════════════════════════════════════ */
+   Geladen von lafap_index.html, impressum.html und datenschutz.html. Bis
+   W112 stand hier der „Raum": ein perspektivischer Korridor, jede Sektion auf
+   eigener Z-Ebene, Kacheln, die sich unter dem Zeiger neigen, dazu ein
+   Schalter „Flach". Gemessen hat er vor allem eines: dass der Fliesstext
+   waehrend des Scrollens gekippt und unscharf war, und dass drei Seiten je
+   ihr eigenes Grundgeruest mit eigenen Farben trugen.
 
-/* Hintergrundraum. Liegt hinter allem, faengt keine Klicks ab und blendet
-   beim Umschalten weich auf statt zu springen. */
-.raum{position:fixed;inset:0;width:100%;height:100%;display:block;
-  z-index:0;pointer-events:none;opacity:0;transition:opacity .7s ease}
-html.d3 .raum{opacity:1}
-html.d3 main,html.d3 footer{position:relative;z-index:1}
-/* Eine um X gekippte Sektion wird durch die Perspektive an ihrer nahen
-   Kante BREITER — bei einer hohen Sektion reicht das fuer 18px seitlichen
-   Ueberlauf (gemessen auf 390px: scrollWidth 408 statt 390).
-   Geklippt wird auf main, NICHT auf der Wurzel: overflow-x:clip an html
-   nimmt der Kopfleiste in Chromium ihr position:sticky — gemessen, die
-   Leiste scrollte mit statt oben zu bleiben. clip statt hidden, weil clip
-   keinen Scrollbehaelter erzeugt; die Perspektive liegt ohnehin je Sektion
-   und wird davon nicht eingeebnet. */
-html.d3 main{overflow-x:clip}
+   Jetzt steht hier, was alle drei Seiten teilen — Farben, Schrift, Raster,
+   Kopf- und Fussleiste, Karten, Knoepfe —, und die Seiten selbst tragen nur
+   noch, was es nur bei ihnen gibt. Die Schriftdateien werden in JEDER Seite
+   per @font-face eingebunden (dort weist der Vertrag nach, dass sie lokal
+   kommen); hier stehen nur ihre Namen.
 
-/* perspective sitzt AUF DER SEKTION (fuer ihre Kinder) und noch einmal
-   als transform-Funktion im Skript (fuer die Sektion selbst). Nicht auf
-   dem main-Element: das ist ist ueber zehntausend Pixel hoch, und eine
-   perspective darauf legt den Fluchtpunkt EINMALIG in dessen Mitte —
-   alles weit darueber oder darunter kippt dann grotesk weg. Je Sektion
-   sitzt der Fluchtpunkt dagegen dort, wo gerade gelesen wird. */
-html.d3 main>section{perspective:1300px;perspective-origin:50% 45%;
-  backface-visibility:hidden;will-change:transform}
-/* Der Versatz aus dem Scroll-Reveal wird abgeschaltet: eine Sektion darf
-   nur EIN transform tragen, sonst ueberschreibt der Reveal-Versatz die
-   Tiefe (oder umgekehrt). Das Einblenden bleibt, es laeuft ueber opacity.
-   Die Tiefe selbst setzt das Skript inline — das schlaegt jeden Selektor
-   und macht die Kaskade an dieser Stelle unnoetig. */
-html.d3 body.js .rv{transform:none;transition:opacity .5s ease}
-html.d3 body.js .rv.in{transform:none}
+   Lesbarkeit vor Effekt:
+   * Fliesstext in der Systemschrift. JetBrains Mono traegt Zahlen, Labels
+     und Code, Orbitron nur Marke und Ueberschriften. Mehrere Absaetze in
+     Monospace lesen sich wie ein Log, nicht wie eine Seite.
+   * Kein Scanline-Overlay, kein Kippen, kein Dauerleuchten. Der Hintergrund
+     (raum.js) ist ein langsames, sehr leises Feld — bei
+     prefers-reduced-motion steht er still.
+   * Systemschriften laden nichts nach: keine Anfrage, kein Fremdserver. */
 
-/* Zwischenebenen brauchen preserve-3d, sonst flacht der Browser die
-   Kacheln ein und translateZ bleibt wirkungslos. .stats fehlt hier
-   bewusst: sie traegt overflow:hidden fuer ihre runden Ecken, und
-   overflow != visible flacht 3D-Kinder IMMER ein — dort wird deshalb der
-   ganze Block geneigt statt jeder Kachel einzeln. */
-html.d3 .streams,html.d3 .principles,html.d3 .res-grid,html.d3 .metrics,
-html.d3 .agents,html.d3 .news-list,html.d3 .prose,html.d3 .hero-copy{
-  transform-style:preserve-3d}
-
-/* Kacheln als Koerper: leicht nach vorn, mit Kante und Schlagschatten
-   gegen den Raum dahinter. Glas statt Blech — der Korridor soll durch die
-   Zwischenraeume durchscheinen, ohne dass Text an Kontrast verliert. */
-html.d3 .stats,html.d3 .streams .btn,html.d3 .res-card,html.d3 .principle,
-html.d3 .news-item,html.d3 .metric,html.d3 .agent,html.d3 .log,
-html.d3 .chart-card{
-  transition:transform .3s cubic-bezier(.2,.7,.2,1), box-shadow .25s ease;
-  box-shadow:0 18px 42px rgba(0,0,0,.55), 0 0 0 1px rgba(0,255,156,.05)}
-/* Waehrend der Zeiger auf der Kachel steht, KEIN transform-Uebergang: das
-   Skript setzt die Neigung bei jeder Zeigerbewegung, ein Uebergang liesse
-   die Kachel dem Zeiger sichtbar hinterherlaufen. Beim Verlassen faellt
-   die Klasse weg, der Uebergang oben greift und die Kachel legt sich
-   weich zurueck. */
-html.d3 .d3-hover{transition:box-shadow .25s ease}
-html.d3 .res-card,html.d3 .principle,html.d3 .news-item,html.d3 .metric,
-html.d3 .agent,html.d3 .log,html.d3 .chart-card{
-  background:color-mix(in srgb,var(--panel) 84%,transparent)}
-html.d3 .streams .btn{
-  background:color-mix(in srgb,var(--panel) 80%,transparent)}
-/* backdrop-filter erst ab Zeigergeraeten mit Platz: in einem
-   3D-transformierten Elternteil ist der Filter teuer, und auf dem Handy
-   kostet er genau die Bildrate, die die Tiefe braucht. */
-@media (min-width:860px) and (hover:hover){
-  html.d3 .res-card,html.d3 .principle,html.d3 .news-item,html.d3 .metric,
-  html.d3 .agent,html.d3 .log,html.d3 .chart-card,html.d3 .streams .btn{
-    backdrop-filter:blur(5px);-webkit-backdrop-filter:blur(5px)}
+:root{
+  color-scheme:dark;
+  /* Grund und Flaechen — drei Ebenen statt Glow */
+  --void:#05080a; --panel:#0a1013; --panel2:#0e161a; --line:#16242a; --line2:#1f343b;
+  /* Identitaet: Phosphor und Cyan, sparsam. Magenta und Amber nur als Signal. */
+  --phos:#00ff9c; --cyan:#22d3ee; --mag:#ff2e88; --amber:#ffb000;
+  --white:#eef8f4; --ash:#b7c6c1; --dim:#7b8f89;
+  --disp:'Orbitron',ui-sans-serif,system-ui,sans-serif;
+  --mono:'JetBrains Mono',ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  --sans:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+  /* Fliessende Groessen — eine Skala fuer alle Seiten */
+  --t-xs:clamp(.72rem,.70rem + .10vw,.78rem);
+  --t-s:clamp(.84rem,.82rem + .12vw,.92rem);
+  --t-m:clamp(1rem,.96rem + .20vw,1.08rem);
+  --t-l:clamp(1.3rem,1.1rem + .9vw,1.75rem);
+  --t-xl:clamp(2.1rem,1.4rem + 3.2vw,3.9rem);
+  /* Material: Erhebung, Kante, Tiefe */
+  --e1:0 1px 0 rgba(255,255,255,.03) inset,0 1px 2px rgba(0,0,0,.4);
+  --e2:0 1px 0 rgba(255,255,255,.04) inset,0 8px 24px -12px rgba(0,0,0,.7);
+  --e3:0 1px 0 rgba(255,255,255,.05) inset,0 24px 60px -24px rgba(0,0,0,.85);
+  --kante:linear-gradient(90deg,transparent,rgba(34,211,238,.45),transparent);
+  --bezel:linear-gradient(180deg,rgba(255,255,255,.035),rgba(255,255,255,0) 40%);
+  --tiefe:linear-gradient(180deg,var(--panel2),var(--panel));
+  --r:14px; --r-s:10px;
+  --breite:1120px; --luft:clamp(64px,8vw,120px);
 }
-/* Der Hover-Versatz der Stream-Knoepfe wird vom Neigungs-Transform des
-   Skripts gesetzt — ohne diese Zeile ueberschreibt die alte Regel ihn. */
-html.d3 .streams .btn:hover,html.d3 .streams .btn:focus-visible{transform:none}
-html.d3 .d3-hover{box-shadow:0 26px 60px rgba(0,0,0,.62),
-  0 0 22px color-mix(in srgb,var(--phos) 18%,transparent)}
 
-/* Der Sentinel-Kern schwebt am weitesten vorn — er ist das Objekt, um das
-   der Raum gebaut ist. */
-html.d3 .hero-core{transform:translateZ(70px)}
+*,*::before,*::after{box-sizing:border-box}
+*{margin:0;padding:0}
+html{scroll-behavior:smooth;-webkit-text-size-adjust:100%}
+body{background:var(--void);color:var(--ash);font-family:var(--sans);
+  font-size:var(--t-m);line-height:1.7;overflow-x:hidden;
+  -webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
+::selection{background:var(--phos);color:var(--void)}
+a{color:var(--phos);text-decoration:none;text-underline-offset:3px}
+a:hover{text-decoration:underline}
+img,svg,canvas{display:block;max-width:100%}
+:focus-visible{outline:2px solid var(--cyan);outline-offset:3px;border-radius:4px}
+b,strong{color:var(--white);font-weight:600}
+.mono{font-family:var(--mono)}
 
-/* Das Akronym als ausgestellter Koerper: gestapelte Schatten in
-   Blickrichtung ergeben eine Extrusion, ohne ein einziges zusaetzliches
-   Element und ohne dass der Buchstabe seine Kante verliert. */
-html.d3 .acronym{transform-style:preserve-3d}
-html.d3 .acronym .glyph{
-  text-shadow:1px 1px 0 #017a4b, 2px 2px 0 #016a41, 3px 3px 0 #015936,
-    4px 4px 0 #01482c, 5px 5px 0 #013721, 6px 7px 14px rgba(0,0,0,.6),
-    0 0 26px rgba(0,255,156,.35)}
-html.d3 .acronym .row:nth-child(3) .glyph{
-  text-shadow:1px 1px 0 #8a1449, 2px 2px 0 #78123f, 3px 3px 0 #660f36,
-    4px 4px 0 #540c2c, 5px 5px 0 #420922, 6px 7px 14px rgba(0,0,0,.6),
-    0 0 26px rgba(255,46,136,.3)}
+/* Hintergrundfeld (raum.js). Dekorativ, faengt keine Klicks ab. Ohne JS
+   bleibt es leer und damit unsichtbar — nie eine schwarze Wand. */
+.raum{position:fixed;inset:0;width:100%;height:100%;z-index:0;pointer-events:none;
+  opacity:.9}
+header,main,footer{position:relative;z-index:1}
 
-/* Der Schalter in der Kopfleiste. Er heisst nach seinem ERGEBNIS: steht
-   "Flach" darauf, fuehrt ein Klick dorthin. */
-.d3-schalter{position:fixed;right:16px;bottom:16px;z-index:11;
-  display:inline-flex;align-items:center;justify-content:center;
-  font-family:var(--mono);font-size:.66rem;letter-spacing:.14em;
-  text-transform:uppercase;color:var(--ash);cursor:pointer;
-  border:1px solid var(--line);border-radius:99px;
-  min-height:44px;min-width:62px;padding:0 16px;
-  background:color-mix(in srgb,var(--panel) 88%,transparent);
-  backdrop-filter:blur(5px);-webkit-backdrop-filter:blur(5px);
-  box-shadow:0 6px 18px rgba(0,0,0,.5)}
-.d3-schalter:hover,.d3-schalter:focus-visible{color:var(--phos);
-  border-color:var(--phos)}
-/* Auf schmalen Schirmen ist die Tiefe flacher: dort steht der Text naeher
-   am Rand, und ein starkes Kippen schiebt ihn sichtbar aus der Spur. */
-@media (max-width:640px){ html.d3 main>section{perspective:2200px} }
+/* Sprungmarke */
+.skip{position:absolute;left:-999px;top:0;z-index:60;background:var(--phos);color:var(--void);
+  font:700 var(--t-xs)/1 var(--mono);padding:12px 16px;border-radius:0 0 8px 0;letter-spacing:.06em}
+.skip:focus{left:0}
+
+/* Raster */
+.wrap{max-width:var(--breite);margin:0 auto;padding:0 clamp(18px,4vw,32px)}
+
+/* Kopfleiste */
+header{position:sticky;top:0;z-index:30;background:rgba(5,8,10,.78);
+  backdrop-filter:saturate(140%) blur(12px);-webkit-backdrop-filter:saturate(140%) blur(12px);
+  border-bottom:1px solid var(--line)}
+/* Nur die Kopfleiste: .bar heisst auf der Startseite auch jeder
+   Diagrammbalken, und dort fraesse dieser Innenabstand den Balken auf 0 px. */
+header .bar{max-width:var(--breite);margin:0 auto;padding:12px clamp(18px,4vw,32px);
+  display:flex;align-items:center;justify-content:space-between;gap:12px 24px;flex-wrap:wrap}
+.logo{font-family:var(--disp);font-weight:900;letter-spacing:.2em;font-size:1.05rem;color:var(--white)}
+.logo span{color:var(--mag)}
+.logo:hover{text-decoration:none}
+header nav{display:flex;flex-wrap:wrap;align-items:center;gap:4px 2px}
+header nav a{color:var(--ash);font:500 var(--t-xs)/1 var(--mono);letter-spacing:.08em;
+  text-transform:uppercase;padding:10px 10px;border-radius:8px}
+header nav a:hover{color:var(--white);background:rgba(255,255,255,.04);text-decoration:none}
+header nav a.cta{color:var(--void);background:var(--phos);font-weight:700;margin-left:6px}
+header nav a.cta:hover{background:#5dffc0;color:var(--void)}
+
+/* Ueberschriften */
+/* Lange deutsche Woerter („Datenschutzerklaerung") passen in Orbitron auf
+   390 px nicht und schoben die Seite seitlich auf — trennen statt ueberlaufen. */
+h1,h2,h3{color:var(--white);line-height:1.2;overflow-wrap:break-word;hyphens:auto}
+h1{font-family:var(--disp);font-weight:900;letter-spacing:.04em}
+h2{font-family:var(--disp);font-weight:700;font-size:var(--t-l);letter-spacing:.03em}
+h3{font-family:var(--sans);font-weight:650;font-size:1.08rem;letter-spacing:0}
+.eyebrow{font:600 var(--t-xs)/1.4 var(--mono);letter-spacing:.14em;text-transform:uppercase;
+  color:var(--phos);margin-bottom:10px}
+.eyebrow.c{color:var(--cyan)} .eyebrow.m{color:var(--mag)} .eyebrow.g{color:var(--phos)}
+.lead{color:var(--white);font-size:clamp(1.05rem,1rem + .3vw,1.2rem);line-height:1.6}
+.muted{color:var(--dim)}
+.note{color:var(--dim);font-size:var(--t-s);line-height:1.6}
+
+/* Karten — eine Form fuer alles, was ein Kasten ist */
+.panel,.card{position:relative;background:var(--tiefe);border:1px solid var(--line);
+  border-radius:var(--r);box-shadow:var(--e2);padding:clamp(18px,2.4vw,26px)}
+.panel::before,.card::before{content:"";position:absolute;inset:0;border-radius:inherit;
+  background:var(--bezel);pointer-events:none}
+.panel::after,.card::after{content:"";position:absolute;left:18px;right:18px;top:-1px;height:1px;
+  background:var(--kante);opacity:.6;pointer-events:none}
+
+/* Knoepfe */
+.knopf{display:inline-flex;align-items:center;justify-content:center;gap:10px;min-height:46px;
+  padding:0 20px;border-radius:12px;font:700 var(--t-s)/1 var(--mono);letter-spacing:.04em;
+  border:1px solid var(--line2);color:var(--white);background:rgba(255,255,255,.03);
+  transition:background .2s,border-color .2s,transform .2s}
+.knopf:hover{text-decoration:none;border-color:var(--cyan);background:rgba(34,211,238,.07)}
+.knopf.voll{background:var(--phos);border-color:var(--phos);color:var(--void)}
+.knopf.voll:hover{background:#5dffc0;border-color:#5dffc0}
+
+/* Fussleiste */
+footer{border-top:1px solid var(--line);margin-top:var(--luft);padding:28px 0 36px}
+.f{display:flex;flex-wrap:wrap;gap:14px 28px;align-items:center;justify-content:space-between;
+  font:var(--t-xs)/1.6 var(--mono);color:var(--dim)}
+.f nav{display:flex;gap:18px}
+.f nav a{color:var(--ash)}
+.f b{color:var(--white)}
+
+/* Rechtsseiten: Entwurf-Banner und Platzhalter */
+.draft{border:1px solid rgba(255,176,0,.55);border-radius:var(--r);padding:16px 20px;margin:0 0 28px;
+  background:rgba(255,176,0,.06);color:var(--white);font-size:var(--t-s)}
+.draft b{color:var(--amber);letter-spacing:.04em}
+.ph{color:var(--amber);font-weight:600}
+.ok{color:var(--phos)}
+.recht main{padding:clamp(40px,6vw,72px) 0 0}
+.recht h1{font-size:clamp(1.8rem,1.4rem + 1.6vw,2.6rem);margin-bottom:6px}
+.recht .lead{color:var(--dim);font:500 var(--t-xs)/1.4 var(--mono);letter-spacing:.14em;
+  text-transform:uppercase;margin-bottom:28px}
+.recht .wrap{max-width:820px}
+.recht .panel{margin:14px 0}
+.recht h2{font-size:1.02rem;margin:0 0 10px}
+.recht p{margin:0 0 12px} .recht .panel p:last-child{margin-bottom:0}
+.recht ul{margin:6px 0 12px 20px} .recht li{margin:4px 0}
+
+/* Schmaler Schirm: die Navigation wird eine wischbare Zeile unter dem Logo,
+   statt Eintraege zu verstecken oder die Kopfleiste dreizeilig zu machen. */
+@media (max-width:760px){
+  header nav{width:100%;flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none;
+    padding-bottom:2px;-webkit-overflow-scrolling:touch}
+  header nav::-webkit-scrollbar{display:none}
+  header nav a{white-space:nowrap;flex:none}
+}
+
+/* Bewegung ist abschaltbar */
+@media (prefers-reduced-motion:reduce){
+  html{scroll-behavior:auto}
+  *,*::before,*::after{transition:none!important;animation:none!important}
+}
+/* Finger statt Zeiger: grosse Ziele */
+@media (pointer:coarse){
+  header nav a{padding:12px 10px}
+  .knopf{min-height:56px}
+}
+/* Druck: hell und ohne Dekor */
+@media print{
+  :root{--void:#fff;--panel:#fff;--panel2:#fff;--white:#000;--ash:#111;--dim:#444;--line:#ccc}
+  .raum,header nav,.skip{display:none!important}
+  header{position:static;background:#fff;backdrop-filter:none}
+  .panel,.card{box-shadow:none;break-inside:avoid}
+  a{color:#000;text-decoration:underline}
+}

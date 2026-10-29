@@ -1138,6 +1138,15 @@ nachgesehen statt geraten: `sentinel` heißt nach Wache, ist aber der
 CrowdSec-Wächter, und `uptime` prüft Chat-Verbindungen. Die Zuordnung steht
 an den Docstrings, nicht an den Namen.
 
+**Ein gemeinsames Stylesheet teilt auch die Klassennamen.** Beim Umzug der
+Website auf ein Designsystem (`website/raum.css`, v4.2-W113) griff die
+Kopfleisten-Regel `.bar` plötzlich auf jeden Diagrammbalken der Startseite —
+gleicher Name, anderer Zweck — und drückte ihn auf 0 px. Kein Fehler, keine
+Konsolenzeile, nur leere Diagramme. Gefunden hat es das Messen im Browser
+(`getBoundingClientRect`), nicht das Lesen. Gemeinsame Regeln deshalb immer
+mit Kontext (`header .bar`), und nach einem Umbau die Seite **mit echten
+Daten** rendern — ohne `stats.json` war der Fehler unsichtbar.
+
 **Einmal-`await` ohne Supervisor.** Jeder Long-Running-Client braucht Reconnect
 mit Backoff **und** ein Abbruchkriterium für deterministische Fehler.
 
