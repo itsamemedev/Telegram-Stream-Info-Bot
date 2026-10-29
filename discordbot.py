@@ -2172,7 +2172,7 @@ async def _discord_run_once():
 
     # ───────── F93: AZRAEL SENTINEL — KI-Moderation im Discord ─────────
     # Dieselbe eine KI-Identität, die den Kick-Chat bewacht, klassifiziert jetzt
-    # auch Discord-Nachrichten (Toxizität via Ollama). CPU-Schutz: Semaphore(2)
+    # auch Discord-Nachrichten (Toxizität via das LLM). CPU-Schutz: Semaphore(2)
     # ohne Warteschlange, min. 3s Abstand, globales KI-Budget wird respektiert.
     # v4.2-W77: _dc_ai_sema und _dc_ai_last stehen jetzt auf Modulebene.
 
@@ -2211,7 +2211,7 @@ async def _discord_run_once():
             # Auto-Moderation (Heuristik/Banned-Words) — bei Löschung Rest überspringen
             if DISCORD_AUTOMOD and await _discord_automod(message):
                 return
-            # F93: AZRAEL KI-Moderation (Ollama-Toxizität, budget-geschützt)
+            # F93: AZRAEL KI-Moderation (KI-Toxizität, budget-geschützt)
             if DISCORD_AI_MOD and await _discord_ai_automod(message):
                 return
         # F93: AZRAEL antwortet bei direkter @Mention (eine KI, alle Kanäle).

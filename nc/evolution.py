@@ -427,8 +427,8 @@ def next_version():
 
 
 def engineering_note(insights, proposals):
-    """Optional: lokales LLM (Ollama) für eine Klartext-Engineering-Notiz.
-       Gibt Text oder None (graceful wenn Ollama offline / deaktiviert)."""
+    """Optional: lokales LLM (das LLM) für eine Klartext-Engineering-Notiz.
+       Gibt Text oder None (graceful wenn das LLM offline / deaktiviert)."""
     if not _conf["use_llm"]:
         return None
     try:

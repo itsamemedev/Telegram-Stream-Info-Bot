@@ -148,7 +148,7 @@ fürs Handy.
 | **Aufnahme** | Dreistufiger Recorder-Fallback · Preflight-GET vor Spawn · Suffix-Fallback für CDN-Quirks · Recording-Wächter gegen eingefrorene Mitschnitte · S3-Backup (optional) |
 | **Restream** | Kick / Twitch / YouTube parallel · `tee` mit `onfail=ignore` · erzwungener Transcode bei Multi-Ziel · Ziel-Verifikation über Plattform-APIs · Wiederanlauf nach Neustart · sicherer Test-Push ohne Broadcast-Risiko · Deckel für gleichzeitige Restreams |
 | **Chat & Moderation** | SENTINEL-SHIELD (Doxxing / Hate / Drohung) · geteilte Moderations-Heuristik über Kick, Twitch, YouTube · Fremdwerbungs-Erkennung mit Eigen-Allowlist · Banned-Words · Timeout-Eskalation |
-| **KI (AZRAEL)** | Chat-Antworten auf Ansprache · Live-Reaktionen aufs Sendebild · Sprachausgabe (Piper) · Persona-System · Multi-Backend: llama.cpp → Ollama → freie APIs → OpenAI/Anthropic · Budget- und Tier-Steuerung |
+| **KI (AZRAEL)** | Chat-Antworten auf Ansprache · Live-Reaktionen aufs Sendebild · Sprachausgabe (Piper) · Persona-System · Multi-Backend: Anthropic (mit Key) → lokales llama.cpp (bevorzugt, sobald es läuft) → freie APIs · Budget- und Tier-Steuerung |
 | **Gehirn (`brain/`)** | Zustandsmaschine · regelbasierte Tier-1-Entscheidungen mit Warum-Log · Langzeitgedächtnis · Wissensgraph (Triple-Store) · semantische Suche · Prognosen · Wochenreport |
 | **Sentinel-Flotte** | 13 Wächter-Agenten (health, recovery, scout, analytics, learning, sentinel, disk, swap, restream, toxicity, uptime, recording, proxy) mit Telegram-Alarm, einzeln abschaltbar |
 | **Community** | Wiedererkennung von Stammzuschauern · Loyalty-Punkte & Ränge · Discord-XP, Level, Daily-Streak · Live-Ping · Highlight-Share · Community-Events |
@@ -196,9 +196,9 @@ flowchart TB
     DC --> BOT
     TT --> BOT
 
-    BOT["bot.py<br/>Monolith · 25.267 Zeilen<br/>Scraper · Recorder · Restream<br/>Flask-Dashboard · 34 eigene Routen"]:::core
+    BOT["bot.py<br/>Monolith · 25.314 Zeilen<br/>Scraper · Recorder · Restream<br/>Flask-Dashboard · 34 eigene Routen"]:::core
 
-    BOT -->|configure| NC["nc/ — 154 Fachmodule<br/>Schema · OAuth · Restream<br/>Ledger · Moderation · Intel"]:::lib
+    BOT -->|configure| NC["nc/ — 155 Fachmodule<br/>Schema · OAuth · Restream<br/>Ledger · Moderation · Intel"]:::lib
     NC --> RT["nc/routes/ — 36 Blueprints<br/>327 weitere API-Routen"]:::lib
     BOT --> TPL["templates/<br/>Dashboard · Overlay · PWA"]:::lib
     BOT --> BR["brain_bridge.py"]:::lib
@@ -573,7 +573,7 @@ additiv, fail-open und einzeln abschaltbar.
 | `knowledge.py` | Wissensgraph (Triple-Store, erklärbar) |
 | `semantic.py` | Semantische Suche |
 | `scheduler.py` | Prognosen und Poll-Hints |
-| `llm.py` | LLM-Runtime: llama.cpp → Ollama → Fallback |
+| `llm.py` | LLM-Runtime: llama.cpp → keyless Cloud als Reserve |
 | `agents.py` | Sentinel-Flotte (13 Wächter, einzeln schaltbar) |
 | `report.py` | Wochenreport in Markdown |
 
@@ -821,7 +821,7 @@ gebrochen ist.**
 
 ### 🧭 Navigation im Monolithen
 
-`bot.py` hat 25.267 Zeilen. Es wird **nie** ganz gelesen und **nie**
+`bot.py` hat 25.314 Zeilen. Es wird **nie** ganz gelesen und **nie**
 blind durchsucht — erst fragen wo etwas steht, dann den Ausschnitt holen:
 
 ```bash
@@ -950,7 +950,7 @@ nicht greifen, gekippte Verträge in `test_restream.py`.
 | Aktuelle Version | **4.3.1** — „Freie Sicht" (2026.09) |
 | Flask-Routen | 369 (34 in `bot.py` · 335 in `nc/routes/`) |
 | Discord-Slash-Commands | 65 |
-| Fachmodule | 154 in `nc/` (+36 in `nc/routes/`, +3 in `nc/intel/`), 10 in `brain/` |
+| Fachmodule | 155 in `nc/` (+36 in `nc/routes/`, +3 in `nc/intel/`), 10 in `brain/` |
 | Sentinel-Agenten | 13 |
 | Konfigurationsvariablen | ~541 |
 | Sprachen | Deutsch (Quelle), Englisch |
@@ -963,7 +963,7 @@ Vollständige Historie: **[`docs/CHANGELOG.md`](docs/CHANGELOG.md)** ·
 ## 🧭 Roadmap
 
 Der nächste grosse Schritt ist kein Feature, sondern Aufräumen: **`bot.py` hat
-25.267 Zeilen**. Die Datei ist der Engpass des Projekts. Die Messlatte dafür ist
+25.314 Zeilen**. Die Datei ist der Engpass des Projekts. Die Messlatte dafür ist
 aber keine Zeilenzahl:
 
 > **Eine neue API-Route anlegen, ohne `bot.py` zu öffnen.**

@@ -148,7 +148,7 @@ your phone.
 | **Recording** | Three-stage recorder fallback · preflight GET before spawn · suffix fallback for CDN quirks · recording watchdog against frozen captures · S3 backup (optional) |
 | **Restream** | Kick / Twitch / YouTube in parallel · `tee` with `onfail=ignore` · forced transcode with multiple targets · target verification through the platform APIs · resume after restart · safe test push without broadcast risk · cap on concurrent restreams |
 | **Chat & moderation** | SENTINEL-SHIELD (doxxing / hate / threats) · shared moderation heuristic across Kick, Twitch, YouTube · foreign-advertising detection with an own-channel allowlist · banned words · timeout escalation |
-| **AI (AZRAEL)** | Chat answers when addressed · live reactions to the broadcast · speech output (Piper) · persona system · multi-backend: llama.cpp → Ollama → free APIs → OpenAI/Anthropic · budget and tier control |
+| **AI (AZRAEL)** | Chat answers when addressed · live reactions to the broadcast · speech output (Piper) · persona system · multi-backend: Anthropic (with key) → local llama.cpp (preferred as soon as it runs) → free APIs · budget and tier control |
 | **Brain (`brain/`)** | State machine · rule-based tier-1 decisions with a why-log · long-term memory · knowledge graph (triple store) · semantic search · forecasts · weekly report |
 | **Sentinel fleet** | 13 watchdog agents (health, recovery, scout, analytics, learning, sentinel, disk, swap, restream, toxicity, uptime, recording, proxy) with Telegram alarms, individually switchable |
 | **Community** | Recognition of regular viewers · loyalty points & ranks · Discord XP, levels, daily streak · live ping · highlight share · community events |
@@ -575,7 +575,7 @@ building block is additive, fail-open and individually switchable.
 | `knowledge.py` | Knowledge graph (triple store, explainable) |
 | `semantic.py` | Semantic search |
 | `scheduler.py` | Forecasts and poll hints |
-| `llm.py` | LLM runtime: llama.cpp → Ollama → fallback |
+| `llm.py` | LLM runtime: llama.cpp → keyless cloud as reserve |
 | `agents.py` | Sentinel fleet (13 watchdogs, individually switchable) |
 | `report.py` | Weekly report in Markdown |
 

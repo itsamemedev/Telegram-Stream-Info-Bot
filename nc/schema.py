@@ -71,7 +71,7 @@ def create_schema(conn, *, pk, txt_idx, txt_long, txt_big, iv, tbl_opts, is_my,
     # F73: Persistent AI-Chat-Conversations für das Dashboard.
     # Wie ChatGPT/Claude: jede Conversation hat eine Historie aus Messages
     # (user + assistant + optional system). Bei jedem neuen User-Message
-    # senden wir die letzten N Messages als context an Ollama → echtes
+    # senden wir die letzten N Messages als context an das LLM → echtes
     # Multi-Turn-Chat statt Single-Shot wie F49.
     conn.execute(f"""
     CREATE TABLE IF NOT EXISTS ai_conversations (

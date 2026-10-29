@@ -30,6 +30,7 @@ from flask import Blueprint, jsonify, request
 
 from nc import bandbreite as _nc_band
 from nc import fehlertext as _nc_fehlertext
+from nc import kiwahl as _nc_kiwahl  # v4.2-W110
 from nc import cfgnorm as _nc_cfgnorm
 from nc import community as _community
 from nc import freeai as _nc_freeai
@@ -286,8 +287,7 @@ def api_freeai_status():
     try:
         return jsonify(ok=True, bases=_nc_freeai.bases_status(),
                        model=_ki_modell(),
-                       provider=("brain" if os.getenv("AI_PROVIDER","").strip().lower()=="brain"
-                                 else "freeai"))
+                       provider=_nc_kiwahl.backend())     # v4.2-W110
     except Exception as e:
         return jsonify(ok=False, error=_fehler_text(e, "api_freeai_status"))
 

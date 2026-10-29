@@ -20603,6 +20603,165 @@ def _test_v42_w109_ein_befehlsverzeichnis():
            len(tg), len(dc), len(tg & dc)))
 
 
+def _test_v42_w110_lokales_llm_zuerst():
+    """Das installierte llama.cpp wurde nicht benutzt — und das Panel brach.
+
+    Der Chat fragte das Brain nur bei AI_PROVIDER=brain, die Reaktions-Engine
+    stand auf pollinations, die Modellliste rief eine Methode, die es nicht
+    gab, siebenmal stand `== "brain"` verstreut, und brain.html las h.ollama
+    — ein Feld, das es seit V37 nicht mehr gibt.
+    """
+    import ast as _ast
+    import glob
+    import json as _json
+    import threading as _th
+    import tokenize as _tok
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+    from nc import kiwahl as K
+
+    # ── (1) DIE REGEL.
+    for wert, soll in (("", "auto"), ("auto", "auto"), ("brain", "lokal"),
+                       ("llamacpp", "lokal"), ("LOKAL", "lokal"),
+                       ("pollinations", "cloud"), ("freeai", "cloud"),
+                       ("cloud", "cloud"), ("groq", "auto"), (None, "auto")):
+        assert K.normal(wert) == soll, (wert, K.normal(wert))
+    # auto: lokal, wenn oben ODER unbekannt (die erste Anfrage IST die Probe)
+    assert K.lokal_zuerst("auto", True) and K.lokal_zuerst("auto", None)
+    assert not K.lokal_zuerst("auto", False)
+    assert K.lokal_zuerst("brain", False), "lokal heisst: auch bei toter Probe fragen"
+    assert not K.lokal_zuerst("pollinations", True), "cloud heisst: nie lokal"
+    assert K.backend("cloud", True) == "freeai"
+    assert K.backend("auto", True) == "brain" and K.backend("auto", False) == "freeai"
+    assert K.backend("auto", None) == "auto", "unbekannt darf nicht als freeai gemeldet werden"
+
+    # ── (2) brain/llm.py: models() gibt es, zuletzt_oben() misst nicht.
+    class _Llama(BaseHTTPRequestHandler):
+        def do_GET(self):
+            body = (b'{"status":"ok"}' if self.path == "/health" else
+                    _json.dumps({"data": [{"id": "qwen2.5-1.5b"}]}).encode())
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def do_POST(self):
+            # Wie ein mit --embeddings gestarteter Server: /health gruen,
+            # der Chat verweigert.
+            body = b'{"error":{"code":501,"message":"This server does not support completions."}}'
+            self.send_response(501)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *a):
+            pass
+    srv = HTTPServer(("127.0.0.1", 0), _Llama)
+    _th.Thread(target=srv.serve_forever, daemon=True).start()
+    alt_url = os.environ.get("BRAIN_LLAMACPP_URL")
+    alt_be = os.environ.get("BRAIN_LLM_BACKEND")
+    os.environ["BRAIN_LLAMACPP_URL"] = "http://127.0.0.1:%d" % srv.server_port
+    os.environ["BRAIN_LLM_BACKEND"] = "llamacpp"
+    try:
+        from brain.llm import LLMRuntime
+        rt = LLMRuntime()
+        assert rt.zuletzt_oben() is None, "vor der ersten Probe ist der Stand unbekannt"
+        assert rt.models() == ["qwen2.5-1.5b"], rt.models()
+        assert (rt.health().get("llamacpp") or {}).get("up") is True
+        assert rt.zuletzt_oben() is True
+        # Health gruen, Chat scheitert: das muss im Log stehen — vorher
+        # log.debug, und jede Anfrage ging still in die Cloud. Und nur
+        # EINMAL je Grund, nicht bei jeder Anfrage.
+        import logging as _lg
+        zeilen = []
+
+        class _F(_lg.Handler):
+            def emit(self, r):
+                zeilen.append((r.levelname, r.getMessage()))
+        _h = _F()
+        _lg.getLogger("brain.llm").addHandler(_h)
+        try:
+            for _ in range(3):
+                res = rt.chat([{"role": "user", "content": "x"}], timeout=5)
+                assert res["ok"] is False and "501" in res["error"], res
+        finally:
+            _lg.getLogger("brain.llm").removeHandler(_h)
+        warn = [m for lv, m in zeilen if lv == "WARNING" and "scheitert" in m]
+        assert len(warn) == 1 and "501" in warn[0], zeilen
+        srv.shutdown()
+        srv.server_close()
+        rt._models_cache = None
+        assert rt.models() == [], "toter Server liefert eine Liste, die es nicht gibt"
+    finally:
+        for k, v in (("BRAIN_LLAMACPP_URL", alt_url), ("BRAIN_LLM_BACKEND", alt_be)):
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+
+    # ── (3) DIE VERDRAHTUNG: drei Chat-Wege fragen kiwahl, keiner liest
+    # AI_PROVIDER mehr selbst.
+    baum = _ast.parse(io.open("bot.py", encoding="utf-8").read())
+    oben = {n.name: n for n in baum.body
+            if isinstance(n, (_ast.FunctionDef, _ast.AsyncFunctionDef))}
+    for f in ("llm_chat", "llm_chat_sync", "ai_chat"):
+        rufe = {_ast.unparse(c.func) for c in _ast.walk(oben[f]) if isinstance(c, _ast.Call)}
+        assert "_nc_kiwahl.lokal_zuerst" in rufe, "%s fragt nicht, ob lokal zuerst" % f
+    roh = []
+    for pfad in ["bot.py"] + sorted(glob.glob("nc/*.py")) + sorted(glob.glob("nc/routes/*.py")):
+        if pfad.replace("\\", "/") == "nc/kiwahl.py":
+            continue
+        for c in _ast.walk(_ast.parse(io.open(pfad, encoding="utf-8").read())):
+            if (isinstance(c, _ast.Call) and _ast.unparse(c.func) == "os.getenv"
+                    and c.args and _ast.unparse(c.args[0]) == "'AI_PROVIDER'"):
+                roh.append("%s:%d" % (pfad, c.lineno))
+    assert not roh, "AI_PROVIDER wird wieder selbst gelesen: %s" % roh
+    rp = [n for n in baum.body if isinstance(n, _ast.Assign)
+          and any(getattr(t, "id", "") == "REACTION_AI_PROVIDER" for t in n.targets)]
+    assert rp and "'auto'" in _ast.unparse(rp[0].value), \
+        "die Reaktions-Engine steht wieder per Vorgabe auf Cloud"
+
+    # ── (4) KEIN OLLAMA-RAT MEHR AN DEN BENUTZER. Gesucht in Zeichenketten-
+    # Tokens ohne Docstrings (W102–W104: nicht im rohen Text — die Kommentare,
+    # die die alten Saetze zitieren, sind kein Befund).
+    rat = []
+    for pfad in ["bot.py", "discordbot.py"] + sorted(glob.glob("nc/*.py")) \
+            + sorted(glob.glob("nc/routes/*.py")):
+        for t in _tok.generate_tokens(io.open(pfad, encoding="utf-8").readline):
+            if (t.type == _tok.STRING and "ollama" in t.string.lower()
+                    and t.string.lstrip("rbuRBU")[:3] not in ('"' * 3, "'" * 3)):
+                rat.append("%s:%d %s" % (pfad, t.start[0], t.string[:50]))
+    assert not rat, "Benutzertext nennt noch Ollama: %s" % rat
+    from nc.util import _ai_err_msg
+    for art in ("timeout", "unreachable", "http", "model_missing", "other"):
+        assert "Ollama" not in _ai_err_msg(art, "m"), art
+    assert "llama-server" in _ai_err_msg("unreachable", "m")
+    assert "120" in _ai_err_msg("timeout", "m", timeout=120)
+    hz = [n for n in _ast.walk(baum) if isinstance(n, _ast.FunctionDef) and n.name == "health"]
+    assert hz and "ollama=" not in _ast.unparse(hz[0]) and "llm=" in _ast.unparse(hz[0])
+
+    # ── (5) DAS BRAIN-PANEL: kein h.ollama, und die Werte stehen VOR der
+    # Verzweigung (bei backend_conf=off braucht die Tabelle sie auch).
+    bh = io.open("templates/brain.html", encoding="utf-8").read()
+    i = bh.index("async function loadLLM()")
+    fn = bh[i:bh.index("/* ---------------- Fragen", i)]
+    code = "\n".join(z for z in fn.splitlines()
+                     if not z.strip().startswith(("/*", "*", "//")))
+    assert "h.ollama" not in code, "brain.html liest wieder h.ollama — TypeError, Tabelle leer"
+    assert code.index("const _lok") < code.index('if (h.backend_conf === "off")')
+
+    # ── (6) DIE MITGELIEFERTE UNIT startet ohne --embeddings (nur Embeddings,
+    # kein Chat) und mit genug Kontext.
+    unit = io.open("llama-server.service", encoding="utf-8").read()
+    exec_ = " ".join(z.strip().rstrip("\\") for z in unit.splitlines()
+                     if z.strip() and not z.strip().startswith("#")
+                     and (z.startswith("ExecStart") or z.startswith("  ")))
+    assert "--embedding" not in exec_, exec_
+    assert "-c 8192" in exec_, exec_
+
+    ok("W110: lokales llama.cpp zuerst (auto), Modellliste lokal, ein Ort fuer "
+       "die Wahl, kein Ollama-Rat, Brain-Panel rendert, Unit ohne --embeddings")
+
+
 def main():
     tmp, rid = richte_testdatenbank_ein()
     ok("db_conn aus nc.dbwrap: echtes Schema angelegt, Commit durchgelaufen")
@@ -20888,6 +21047,7 @@ def main():
     _test_v42_w107_cookie_bezug_ist_standard()
     _test_v42_w108_drossel_greift_vor_dem_salat()
     _test_v42_w109_ein_befehlsverzeichnis()
+    _test_v42_w110_lokales_llm_zuerst()
     _test_v42_w60_azrael_cooldown_je_plattform()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)

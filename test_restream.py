@@ -9299,7 +9299,9 @@ def test_v41_w13_claude_grund_im_log():
     # Bis zum brain-Zweig — und zwar zum ZWEIG, nicht zur gleichnamigen
     # Log-Zeile ein paar Zeilen darueber. Ein zu kurzer Schnitt haette hier
     # einen gruenen Vertrag ueber Code ergeben, der gar nicht geprueft wird.
-    _ac = _ac[:_ac.index("if REACTION_AI_PROVIDER in (\"brain\", \"llamacpp\"):")]
+    # ANKER GEWANDERT (v4.2-W110, nicht der Vertrag): der lokale Zweig fragt
+    # seither nc/kiwahl.lokal_zuerst statt REACTION_AI_PROVIDER in (...).
+    _ac = _ac[:_ac.index("and _nc_kiwahl.lokal_zuerst(REACTION_AI_PROVIDER,")]
     assert "on_error=_claude_grund" in _ac, "der Grund wird nicht eingesammelt"
     assert "Antwort der API: %s" in _ac, "der Grund landet nicht in der Warnung"
     assert "Modell=%s" in _ac, "das Modell fehlt — bei einem Modellfehler die halbe Antwort"

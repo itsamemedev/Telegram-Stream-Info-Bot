@@ -315,6 +315,13 @@ def _umbruch(text, breite):
 # Quelltext nicht mehr liest, bricht den Generator ab (siehe main): sonst
 # erklaert die Vorlage still einen Schalter, den es nicht gibt.
 ERKLAERUNG = {
+    "AI_PROVIDER":
+        "Wer antwortet: auto (Vorgabe) = lokales llama.cpp, sobald es auf "
+        "BRAIN_LLAMACPP_URL antwortet, sonst die keyless Cloud; lokal = immer "
+        "zuerst lokal; cloud = nie lokal. Ein Anthropic-Key geht immer vor.",
+    "REACTION_AI_PROVIDER":
+        "Dieselbe Regel fuer AZRAELs Live-Reaktionen. Vorgabe seit W110 auto "
+        "(vorher pollinations = lokal nie). pollinations/cloud = nur Cloud.",
     "COOKIE_AUTO_FETCH":
         "Holt die rotierenden Anti-Bot-Cookies (ttwid, msToken, "
         "tt_chain_token) selbst per Gast-Aufruf bei TikTok: beim Start, alle "

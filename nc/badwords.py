@@ -32,7 +32,7 @@ import os
 
 # LDNOOBW ist eine freie Basisliste. Substring-Treffer sind fuer Deutsch
 # gewollt (faengt Komposita: "arsch" -> "Arschloch"). Sie ueber-filtert
-# teils — deshalb ist sie im Dashboard reviewbar und die Ollama-Moderation
+# teils — deshalb ist sie im Dashboard reviewbar und die KI-Moderation
 # deckt Kontext und Verschleierung zusaetzlich ab.
 LDNOOBW_DE_URL = ("https://raw.githubusercontent.com/LDNOOBW/"
                   "List-of-Dirty-Naughty-Obscene-and-Otherwise-Bad-Words/master/de")

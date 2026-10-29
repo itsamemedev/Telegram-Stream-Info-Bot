@@ -11,6 +11,69 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Geändert — das lokale llama.cpp wird bevorzugt, Ollama ist auch als Rat weg (v4.2 W110)
+
+Gemeldet: „Llama ist lokal installiert … lokales Llama soll der bevorzugte
+Weg werden, Ollama-Reste müssen weg." Nachgesehen, wann das installierte
+llama.cpp benutzt wurde: **per Vorgabe nie.**
+
+- Der zentrale Chat (`llm_chat`, `llm_chat_sync`) fragte das Brain **nur** bei
+  `AI_PROVIDER=brain`. Ohne die Zeile ging jede Anfrage in die keyless Cloud,
+  während `llama-server` lief.
+- AZRAELs Live-Reaktionen standen auf `REACTION_AI_PROVIDER=pollinations` —
+  lokal nie.
+- Die Modellliste rief `get_brain().llm.models()`. **Die Methode gab es
+  nicht**; der `AttributeError` wurde still gefangen, und das Deck zeigte nie
+  das lokale Modell.
+- Dieselbe Abfrage `AI_PROVIDER == "brain"` stand siebenmal verstreut (Bot,
+  vier Routen, Konfig-Drift), jede Anzeige rechnete selbst.
+
+Neu `nc/kiwahl.py`, die eine Entscheidung: `AI_PROVIDER` ist `auto`
+(Vorgabe), `lokal` oder `cloud` (alte Werte `brain`/`llamacpp` bzw.
+`freeai`/`pollinations` gelten weiter). `auto` heißt: lokal, sobald
+`llama-server` auf `/health` antwortet (15-s-Cache), sonst Cloud. Gemessen
+wird bewusst, statt blind über das Brain zu gehen: das Brain bediente bei
+totem Server die Anfrage über seine eigene Cloud-Reserve, verbrauchte dabei
+das lokale Stundenbudget und reihte alles hinter seinen **einen**
+Inferenz-Slot. Die Reaktions-Engine folgt derselben Regel, Vorgabe jetzt
+`auto`. Bilder (Vision) gehen weiter in die Cloud.
+
+`brain/llm.py` hat jetzt `models()` (`/v1/models`, 60 s gecacht) und
+`zuletzt_oben()` (liest nur den Probestand — Anzeigen und `/healthz` lösen
+keine Probe aus). Ein scheiterndes Backend steht jetzt **einmal je Grund**
+auf `warning` statt auf `debug`. Der Selbsttest kennt das lokale LLM
+(„Lokales LLM: llama-server antwortet (…) — bevorzugt"; gelb nur, wenn
+`llama-server` installiert ist und nicht antwortet).
+
+**Zwei Befunde nebenbei:**
+
+- **Das Brain-Panel brach immer.** `templates/brain.html` las `h.ollama.up` —
+  das Feld liefert `brain/llm.py` seit V37 nicht mehr. Mit node gegen den
+  echten Funktionstext gemessen: vorher in **beiden** Lagen (llama an/aus)
+  `TypeError`, die LLM-Tabelle blieb leer; jetzt `LLAMA.CPP` bzw.
+  `CLOUD (RESERVE)` und eine volle Tabelle.
+- **Die mitgelieferte `llama-server.service` startete mit `--embeddings`.**
+  Laut llama.cpp-Server-Doku beschränkt das den Server auf Embeddings:
+  `/health` grün, Chat verweigert — und der Bot hätte jede Anfrage still in
+  die Cloud geschickt. **Nicht gemessen** (kein llama-server im Prüfstand);
+  der Schalter wird aber nirgends gebraucht (Embeddings kommen von Port 8089),
+  also kann seine Entfernung nur helfen. Dazu `-c 8192` wie Installer und
+  Anleitung (4096 reicht nicht für Verlauf + Frage + 1024-Token-Antwort).
+  **Wer die Unit aus dem Repo kopiert hat: neu kopieren und
+  `systemctl daemon-reload && systemctl restart llama-server`.** Prüfen mit
+  dem `curl` aus `docs/SETUP_LLAMACPP.md` §4.
+
+**Ollama-Reste:** drei kopierte Fehlertabellen (`nc/util.py`, zweimal
+`nc/routes/ai.py`) rieten „Ollama nicht erreichbar (Service läuft nicht?)",
+die Reaktions-Warnung riet zu `ollama ps`, eine Route zu „Ollama erreichbar?"
+— jetzt eine Tabelle, die die echte Kette nennt (llama-server unter
+`BRAIN_LLAMACPP_URL`, dann Cloud). `/health` heißt das Feld `llm` statt
+`ollama`. Rund 45 Kommentare, die den heutigen Code als Ollama-Code
+beschrieben, sind korrigiert; Historienzeilen („V37: Ollama entfernt")
+bleiben. `docs/SETUP_LLAMACPP.md` (beide Sprachen) nennt die
+Server-Erwartungen (Endpunkte, Flags, Dienst) und empfiehlt nicht mehr die
+Ollama-Kette.
+
 ### Geändert — ein Befehlsverzeichnis für Telegram und Discord, `sys_` ist weg (v4.2 W109)
 
 Gemeldet: „Telegram und Discord sind immer noch nicht vereinheitlicht." Der

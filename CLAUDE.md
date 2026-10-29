@@ -26,7 +26,7 @@ benutzt, berät an der Lage vorbei.**
 
 ## Die eine Regel
 
-`bot.py` hat **25.267 Zeilen / 1,2 MB ≈ 295.000 Token**. Diese Datei wird
+`bot.py` hat **25.314 Zeilen / 1,2 MB ≈ 295.000 Token**. Diese Datei wird
 **nie** ganz gelesen und **nie** blind durchsucht. Erst fragen wo etwas steht,
 dann den Ausschnitt holen:
 
@@ -71,7 +71,7 @@ Auf diesem Windows-Rechner heißt der Interpreter **`python`** (3.13.12);
     brain_bridge.py      Adapter Bot ↔ brain/ (M2)
     brain/               KI-Kern: state, rules, router, agents, memory,
                          semantic, knowledge, scheduler, llm, report
-    nc/                  154 Fachmodule: db, scraping, restream, oauth, ledger,
+    nc/                  155 Fachmodule: db, scraping, restream, oauth, ledger,
                          i18n, …
     nc/routes/           36 Flask-Blueprints mit 335 weiteren API-Routen
     locales/             de.json, en.json — der Übersetzungskatalog
@@ -1111,6 +1111,15 @@ den Kontext, und ein Wert, der erst später entsteht, als **Getter**
 (v4.2-W109, `bot_app_holen`). Ebenso: **Befehle stehen in `nc/befehle.py`**,
 nirgends sonst — wer einen Befehl hinzufügt, trägt ihn dort ein, und Telegram,
 Discord, `/help` und das Telegram-Menü folgen von selbst.
+
+**Eine Bedingung, die per Vorgabe nie wahr ist, schaltet ein Feature ab —
+lautlos.** Das installierte llama.cpp lief bis v4.2-W110 nie: der Bot fragte es
+nur bei `AI_PROVIDER=brain`, und die Zeile stand in keiner `.env`. Dazu ein
+`get_brain().llm.models()`, das es gar nicht gab (AttributeError still
+gefangen), ein Brain-Panel, das `h.ollama.up` las und dadurch **immer**
+abbrach, und eine mitgelieferte Unit mit `--embeddings`. Seither entscheidet
+`nc/kiwahl.py` an einer Stelle. **Wer ein Feature hinter einen Schalter legt,
+prüft, welchen Wert der Schalter auf einer frischen Installation hat.**
 
 **Einmal-`await` ohne Supervisor.** Jeder Long-Running-Client braucht Reconnect
 mit Backoff **und** ein Abbruchkriterium für deterministische Fehler.

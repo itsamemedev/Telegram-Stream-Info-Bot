@@ -607,6 +607,7 @@ from nc import reccmd as _nc_reccmd  # v4.2-W17: die Kommandozeilen des Recorder
 from nc import tonspur as _nc_tonspur  # v4.2-W106: jede Ausgabe traegt eine Tonspur
 from nc import lastvorsorge as _nc_lastvorsorge  # v4.2-W108: Drossel vor dem Pixelsalat
 from nc import befehle as _nc_befehle  # v4.2-W109: ein Verzeichnis fuer Telegram und Discord
+from nc import kiwahl as _nc_kiwahl  # v4.2-W110: lokal (llama.cpp) oder Cloud
 from nc import aufnahmefolge as _nc_folge  # v4.2-W18: die Eskalationsrechnung
 from nc import aufnahmekategorie as _nc_kat  # v4.2-W23: warum eine Aufnahme so endete
 from nc import audiotap as _nc_audiotap  # v4.2-W46: warum der Audio-Tap starb
@@ -3440,11 +3441,11 @@ async def build_recording_cmd(*a, **kw):
 
 
 # =============================================================================
-# F14: Redis + Ollama Integration
+# F14: Redis + lokales LLM
 # =============================================================================
 # Redis (Standard-Config): Cache + AI-History + Rate-Limit + persistente Dead-
-# Chat-Liste. Ollama: lokaler LLM-Endpoint für /ai. Beides optional — wenn
-# Redis oder Ollama nicht erreichbar sind, läuft der Rest weiter, nur die
+# Chat-Liste. das LLM: lokaler LLM-Endpoint für /ai. Beides optional — wenn
+# Redis oder das LLM nicht erreichbar sind, läuft der Rest weiter, nur die
 # entsprechenden Features fallen still aus.
 # =============================================================================
 REDIS_URL    = os.getenv("REDIS_URL", "redis://localhost:6379/0")
@@ -3495,7 +3496,9 @@ def _anthropic_model(override=None):
 # ---- Reaction-Engine-Backend (umschaltbar) ----
 # Default 'pollinations' = KOSTENLOS, KEIN API-Key nötig (text.pollinations.ai, OpenAI-kompatibel).
 # Primär ist Claude, sobald ein Anthropic-Key gesetzt ist (Dashboard/ENV).
-REACTION_AI_PROVIDER   = os.getenv("REACTION_AI_PROVIDER", "pollinations").strip().lower()
+# v4.2-W110: Vorgabe "auto" statt "pollinations" — lokal, sobald llama-server
+# antwortet, sonst die keyless Kette. "pollinations"/"cloud" laesst lokal aus.
+REACTION_AI_PROVIDER   = os.getenv("REACTION_AI_PROVIDER", "auto").strip().lower()
 # V37-B92: hartes Zeitbudget für JEDEN Reaction-KI-Call. Die Watchdog-Alarme
 # ("live-react seit 422s ohne Lebenszeichen") kamen von unbegrenzt hängenden
 # Backend-Calls, die die Worker-Loop minutenlang blockierten.
@@ -3645,7 +3648,7 @@ async def redis_set_json(key: str, value, ttl: int = None):
         log.debug(f"redis_set_json({key}) failed: {e}")
 _nc_rsstate.REDIS_SET["fn"] = redis_set_json   # v4.1-W23: Haken fuer die Blueprints
 
-# ---------- Ollama-Client ----------
+# ---------- KI-Client (Claude -> lokales llama.cpp -> keyless Cloud) ----------
 # FIX (Header "Was offen bleibt"): vorher erzeugte JEDER llm_chat()/
 # llm_list_models()-Aufruf eine neue aiohttp.ClientSession — TCP-Handshake
 # + TLS-Setup-Overhead bei jedem AI-Call statt einmaliger gepoolter Verbindung.
@@ -3681,8 +3684,9 @@ async def _close_ai_session():
 async def llm_chat(messages: List[dict],
                    model: Optional[str] = None,
                    timeout: Optional[float] = None) -> Tuple[Optional[str], Optional[str]]:
-    """Zentraler Text-Chat (V37, ollama-frei). Kette: Brain-Runtime (lokales
-       llama.cpp, wenn AI_PROVIDER=brain) → nc.freeai (keyless Cloud).
+    """Zentraler Text-Chat. Kette: Claude (wenn Key) → lokales llama.cpp
+       (nc/kiwahl.py: bei AI_PROVIDER=auto, sobald llama-server antwortet) →
+       nc.freeai (keyless Cloud).
        Vertrag unverändert: (text, error_kind). Vision-Anfragen (images) gehen
        direkt an freeai — die Brain-Runtime ist text-only."""
     timeout = AI_TIMEOUT if timeout is None else timeout
@@ -3699,8 +3703,12 @@ async def llm_chat(messages: List[dict],
         if _err == "auth":
             return (None, "auth")
         log.debug("Claude ohne Antwort (%s) — Fallback-Kette", _err)
-    if (os.getenv("AI_PROVIDER", "").strip().lower() == "brain"
-            and not any(m.get("images") for m in messages)):
+    # v4.2-W110: lokal zuerst, wenn der Server laeuft — vorher NUR bei
+    # AI_PROVIDER=brain, also per Vorgabe nie. Bilder gehen weiter in die
+    # Cloud (der lokale Pfad ist text-only, siehe nc/kiwahl.py).
+    if (not any(m.get("images") for m in messages)
+            and _nc_kiwahl.lokal_zuerst(_nc_kiwahl.provider(),
+                                        await asyncio.to_thread(_nc_kiwahl.lokal_stand, True))):
         try:
             from brain import get_brain
             _res = await asyncio.to_thread(
@@ -3736,7 +3744,7 @@ async def llm_list_models() -> Optional[List[str]]:
 
 
 def llm_chat_sync(messages, model=None, timeout=None):
-    """Blockierender Chat für Flask-Routen/Threads. Brain → freeai."""
+    """Blockierender Chat für Flask-Routen/Threads. Claude → lokal → freeai."""
     timeout = AI_TIMEOUT if timeout is None else timeout
     # v4.0-W64: Claude zuerst (Dashboard/ENV-Key), sonst Brain → keyless.
     _akey = _anthropic_key()
@@ -3747,7 +3755,9 @@ def llm_chat_sync(messages, model=None, timeout=None):
             return (_txt, None)
         if _err == "auth":
             return (None, "auth")
-    if os.getenv("AI_PROVIDER", "").strip().lower() == "brain":
+    if (not any(m.get("images") for m in messages)
+            and _nc_kiwahl.lokal_zuerst(_nc_kiwahl.provider(),
+                                        _nc_kiwahl.lokal_stand(True))):
         try:
             from brain import get_brain
             _res = get_brain().llm.chat(
@@ -3793,8 +3803,8 @@ def _check_ai_models_sync(timeout: float = 1.5):
 
 
 
-# ---------- Live-Streaming des Ollama-Chats (SSE) ----------------------------
-# WARUM: Der blockierende ollama_chat_sync hat ein Socket-Timeout → bei langsamem
+# ---------- Live-Streaming des KI-Chats (SSE) ----------------------------
+# WARUM: Der blockierende llm_chat_sync hat ein Socket-Timeout → bei langsamem
 # CPU-Modell (Laden/Denken) bricht die Anfrage ab. Streaming hält die Verbindung,
 # solange Tokens fließen; das Frontend zeigt Laden→Denken→Antwort live an.
 
@@ -3804,9 +3814,9 @@ async def ai_chat(messages, model=None, timeout=None):
        KEIN API-Key, nc.freeai mit Basen-Rotation)."""
     if not _ai_backend_logged["done"]:
         _ai_backend_logged["done"] = True
-        log.info("Reaction-AI Backend: provider=%s, model=%s (keyless via nc.freeai%s)",
-                 REACTION_AI_PROVIDER, REACTION_AI_MODEL,
-                 " + Brain-Runtime" if REACTION_AI_PROVIDER in ("brain","llamacpp") else "")
+        log.info("Reaction-AI Backend: provider=%s (%s), Cloud-Modell=%s",
+                 REACTION_AI_PROVIDER, _nc_kiwahl.normal(REACTION_AI_PROVIDER),
+                 REACTION_AI_MODEL)
     # V37-B92: Zeitbudget IMMER begrenzen — die Reaction-Engine läuft in der
     # live-react-Loop; ein hängendes Backend darf sie nie blockieren.
     timeout = timeout if (timeout and timeout > 0) else REACTION_AI_TIMEOUT
@@ -3856,9 +3866,12 @@ async def ai_chat(messages, model=None, timeout=None):
                         "Modell=%s, Antwort der API: %s"
                         % (_cerr, _cdetail.get("model") or "?",
                            _cdetail.get("detail") or "kein Text mitgeliefert"))
-    # V37-B92: provider=brain → llama.cpp-Runtime (Ollama ist auf den 8 Kernen
-    # messbar langsamer). Fail-open-Kette: brain → ollama.
-    if REACTION_AI_PROVIDER in ("brain", "llamacpp"):
+    # v4.2-W110: lokal zuerst, wenn llama-server antwortet (nc/kiwahl.py).
+    # Vorher nur bei REACTION_AI_PROVIDER=brain — die Vorgabe war pollinations,
+    # also lief AZRAELs Live-Reaktion nie lokal. Fail-open: lokal → freeai.
+    if (not any(m.get("images") for m in messages)
+            and _nc_kiwahl.lokal_zuerst(REACTION_AI_PROVIDER,
+                                        await asyncio.to_thread(_nc_kiwahl.lokal_stand, True))):
         try:
             from brain import get_brain
             _res = await asyncio.wait_for(
@@ -3869,7 +3882,12 @@ async def ai_chat(messages, model=None, timeout=None):
             _react_warn("brainfb", "Reaction-AI brain fehlgeschlagen (%s) → freeai."
                         % _res.get("error"))
         except Exception as _e:
-            _react_warn("brainfb", "Reaction-AI brain-Pfad: %s → freeai." % _e)
+            # Budget oder belegter Slot sind kein Defekt, sondern die Bremse
+            # aus brain/llm.py (Concurrency 1, Stundenbudget) — eigener
+            # Schluessel, damit sie echte Ausfaelle nicht ueberdeckt.
+            _react_warn("brainbudget" if type(_e).__name__ == "BudgetExhausted"
+                        else "brainfb",
+                        "Reaction-AI lokal nicht verfuegbar (%s) → Cloud." % _e)
     # V37: einziger Cloud-Pfad = nc.freeai (keyless, Basen-Rotation, 429-Backoff)
     return await _nc_freeai.chat(messages, model=model or REACTION_AI_MODEL,
                                  timeout=timeout)
@@ -5785,7 +5803,7 @@ async def teststream(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # F16: File-Support für /ai (Text + Bilder)
 # =============================================================================
 # - Text-Files: Inhalt wird in den Prompt eingebettet (mit Längen-Cap)
-# - Bilder: per Base64 als 'images' Feld an Ollama (Vision-Model nötig: llava,
+# - Bilder: per Base64 als 'images' Feld an das LLM (Vision-Model nötig: llava,
 #   llama3.2-vision, etc. — entweder als AI_MODEL oder AI_VISION_MODEL)
 # - PDFs werden NICHT geparst (würde extra Dependency brauchen) — wir geben
 #   eine freundliche Meldung
@@ -5878,7 +5896,7 @@ async def _run_ai_call(update, context, prompt_text: str,
             if AI_VISION_MODEL:
                 use_model = AI_VISION_MODEL
             elif not _looks_like_vision_model(AI_MODEL):
-                # Best-effort warnung — Ollama meldet sich selbst wenn Modell kein Bild kann
+                # Best-effort warnung — das LLM meldet sich selbst wenn Modell kein Bild kann
                 log.info(f"/ai mit Bild aber {AI_MODEL} sieht nicht nach Vision-Modell aus.")
         elif payload["kind"] == "text":
             # Text in Prompt einbetten
@@ -9932,11 +9950,11 @@ def dashboard():
 # ============================================================================
 # Wie bei ChatGPT/Claude: Conversations sind persistente Threads aus Messages.
 # Bei jeder neuen User-Message senden wir die N letzten Messages als context
-# an Ollama für echtes Multi-Turn-Chat (statt isolierter F49-Single-Shots).
+# an das LLM für echtes Multi-Turn-Chat (statt isolierter F49-Single-Shots).
 #
 # Storage: ai_conversations + ai_messages Tabellen (init_db).
 # Context-Budget: AI_CHAT_CONTEXT_MESSAGES letzte Messages, max AI_CHAT_CONTEXT_CHARS
-# Gesamt-Zeichen. Ältere werden weggelassen damit Ollama nicht überfüttert wird.
+# Gesamt-Zeichen. Ältere werden weggelassen damit das LLM nicht überfüttert wird.
 
 AI_CHAT_CONTEXT_MESSAGES = _env_int("AI_CHAT_CONTEXT_MESSAGES", 30)
 AI_CHAT_CONTEXT_CHARS    = _env_int("AI_CHAT_CONTEXT_CHARS", 16000)
@@ -9960,7 +9978,7 @@ def _conv_messages(conv_id):
 
 
 
-# F78: Ollama-Models-Listing mit Cache.
+# F78: LLM-Modellliste mit Cache.
 # V37: Modell-Cache lebt in _llm_list_models (60s, Brain→freeai).
 
 
@@ -10602,7 +10620,7 @@ def report_proxy_result(url: str, ok: bool, latency_ms=None):
     PROXY_ROUTER.report(url, ok, latency_ms)
 
 # F49: AI-Chat vom Dashboard
-# F49-Bug-Fix B5: Sync Rate-Limit (Ollama-Schutz vor Browser-Bug oder Spam)
+# F49-Bug-Fix B5: Sync Rate-Limit (KI-Schutz vor Browser-Bug oder Spam)
 _AI_DASHBOARD_RATE = _nc_brainstate.AI_RATE   # monotonic-Timestamps (W21: geteilt)
 _AI_DASHBOARD_MAX_PER_MIN = _env_int("AI_DASHBOARD_MAX_PER_MIN", 15)
 _AI_DASHBOARD_LOCK = _nc_brainstate.AI_LOCK
@@ -11418,7 +11436,7 @@ def health():
         native         = has_ffmpeg,                                  # F15
         ytdlp          = (shutil.which("yt-dlp") or shutil.which("yt_dlp")) is not None,
         redis          = _check_redis_alive_sync(),                   # F15
-        ollama         = _check_ai_alive_sync(),                  # F15
+        llm            = _check_ai_alive_sync(),                  # F15; v4.2-W110: hiess "ollama"
         recordings_dir = os.path.isdir(RECORDINGS_DIR),
     )
 
@@ -11520,7 +11538,7 @@ def _dashboard_adresse():
 
 def run_flask():
     # F24-Hang-Fix: threaded=True — sonst blockiert eine slow sync Route
-    # (Redis/Ollama-Probes) den ganzen Server. Multi-threaded reicht für
+    # (Redis/KI-Probes) den ganzen Server. Multi-threaded reicht für
     # unseren Last (Dashboard mit handful Polling-Requests/30s).
     # WEB_HOST wird respektiert (inkl. 0.0.0.0 für Remote-Zugriff). Wenn ohne
     # DASHBOARD_TOKEN öffentlich gebunden wird, ist _auth_guard() ein No-Op →
@@ -12324,7 +12342,7 @@ def _manual_donations_total():
 # Bot. Sie justiert nur risikofreies Wissen (Daten) automatisch und schreibt
 # Code-/Config-Vorschläge zum Review in den build-Ordner. Das ist bewusst so —
 # automatisches Selbst-Überschreiben von Produktiv-Code wäre gefährlich.
-# Optional nutzt sie das lokale Ollama-LLM für eine Klartext-Engineering-Notiz
+# Optional nutzt sie das lokale KI-LLM für eine Klartext-Engineering-Notiz
 # (graceful wenn offline). Steuerung via EVOLUTION_* env-Variablen.
 # =============================================================================
 
@@ -15435,7 +15453,7 @@ _AZRAEL_REACTION = _nc_azrael.REACTION          # v4.1-W19: geteilt mit nc/route
 # Neustarts. Bei Netzfehler greift der eingebaute Fallback unten. Substring-Match
 # ist für Deutsch gewollt (fängt Komposita: „arsch" -> „Arschloch"). WICHTIG: Liste
 # über-filtert teils (Kontext!) — daher im Dashboard reviewbar; Kontext/Verschleierung
-# deckt zusätzlich die Ollama-Moderation ab.
+# deckt zusätzlich die KI-Moderation ab.
 # v4.1-W18: Bannwortliste, Lern-Warteschlange und die LDNOOBW-Basisliste liegen
 # in nc/badwords.py. Grund: die Haelfte der /api/kickmod-Routen ist reine
 # Dateiarbeit und haette als Blueprint fuenf ctx-Eintraege gekostet — bei 24 von
@@ -15536,7 +15554,7 @@ def _detect_foreign_ad(text):
 
 class KickModerator:
     """KI-Chat-Moderator für den EIGENEN Kick-Kanal. Liest den Chat (Websocket),
-       beantwortet optional Fragen (Ollama) und moderiert optional Spam/Toxizität.
+       beantwortet optional Fragen (das LLM) und moderiert optional Spam/Toxizität.
        Nutzt die offizielle Kick-API (OAuth 2.1 App-Token)."""
     def __init__(self):
         self._token = None
@@ -15564,10 +15582,10 @@ class KickModerator:
         self.stats = {"seen": 0, "replied": 0, "moderated": 0, "connected": False,
                       "dc_seen": 0, "dc_moderated": 0}   # F93: Discord-KI-Mod-Zähler
         self.last_spoken = {"text": "", "ts": 0.0}    # für das Overlay (AI "spricht")
-        # BUGHUNT: Begrenzung gleichzeitiger Ollama-Verarbeitungen, sonst staut sich
+        # BUGHUNT: Begrenzung gleichzeitiger KI-Verarbeitungen, sonst staut sich
         # bei aktivem Chat eine unbegrenzte Task-Flut (RAM/CPU-Explosion).
         self._sema = asyncio.Semaphore(3)
-        # AUSBAU: Spam-Heuristiken (ohne Ollama) + eskalierende Strafen pro User.
+        # AUSBAU: Spam-Heuristiken (ohne das LLM) + eskalierende Strafen pro User.
         self._infractions = {}     # user_id -> {"n", "ts"}  (eskalierende Timeouts, verjähren nach 1h)
         self._msg_hist = {}        # user_id -> [(ts, content_lower)]  (Flood/Repeat-Erkennung)
         self.cfg.setdefault("spam_filter", True)     # Caps/Flood/Link/Mention-Heuristik aktiv
@@ -15686,7 +15704,7 @@ class KickModerator:
         if not self.cfg.get("learn_badwords"):
             return 0
         now = _time_mod.monotonic()
-        if now - getattr(self, "_last_learn", 0.0) < 5:   # Rate-Limit gegen Ollama-Flut
+        if now - getattr(self, "_last_learn", 0.0) < 5:   # Rate-Limit gegen KI-Flut
             return 0
         self._last_learn = now
         cands = await self._extract_badwords(content)
@@ -15741,7 +15759,7 @@ class KickModerator:
         """AZRAEL reagiert LIVE (vor der Kamera) auf eine Aussage/Behauptung —
            menschlich, emotional und passend zum aktuellen Stream-Kontext, mit Logik
            + moralischem Kompass; stellt Zweifelhaftes in Frage, bleibt aber als KI
-           transparent (kein absolutes Urteil). Via Ollama. Returns (text, err)."""
+           transparent (kein absolutes Urteil). Via das LLM. Returns (text, err)."""
         statement = (statement or "").strip()
         if not statement:
             return None, "leere Aussage"
@@ -15767,10 +15785,14 @@ class KickModerator:
             except asyncio.TimeoutError:
                 text, err = None, "timeout (Reaction-Budget)"
         if err or not text:
+            # v4.2-W110: hier stand „Falls Ollama: läuft es (`ollama ps`)" —
+            # Ollama gibt es seit V37 nicht mehr. Ein Rat zu einem Dienst, den
+            # niemand installiert hat, schickt den Betreiber ins Leere.
             _react_warn("reactai", "⚠ AZRAEL reagiert NICHT — Reaction-AI (%s) Fehler: %s. "
-                        "Keyless-Default ist REACTION_AI_PROVIDER=pollinations. Falls Ollama: läuft "
-                        "es (`ollama ps`) + Modell gepullt? Schnelltest: AZRAEL → AI-Chat." %
-                        (REACTION_AI_PROVIDER, err or "leere Antwort"))
+                        "Kette: lokal (llama-server unter BRAIN_LLAMACPP_URL) → keyless "
+                        "Cloud. Pruefen: `systemctl status llama-server` und "
+                        "`curl -s $BRAIN_LLAMACPP_URL/health`; Schnelltest im Deck: "
+                        "AZRAEL → AI-Chat." % (REACTION_AI_PROVIDER, err or "leere Antwort"))
             return None, (err or "keine Antwort")
         text = text.strip()
         audio = ""
@@ -15809,7 +15831,7 @@ class KickModerator:
         return None
 
     def _spam_check(self, content, user_id):
-        """Schnelle Heuristik OHNE Ollama. Gibt Grund-String zurück wenn Spam, sonst None.
+        """Schnelle Heuristik OHNE das LLM. Gibt Grund-String zurück wenn Spam, sonst None.
            Erkennt CAPS-Spam, Link-/Mention-Spam, Flood und identische Wiederholungen."""
         if not self.cfg.get("spam_filter"):
             return None
@@ -15914,7 +15936,7 @@ class KickModerator:
                             {"user": sender, "cat": _hard[0], "what": _hard[1],
                              "platform": "kick"})
                 return
-        # BUGHUNT: Banned-Words zuerst (kein Ollama nötig) → sofortiger Timeout.
+        # BUGHUNT: Banned-Words zuerst (kein das LLM nötig) → sofortiger Timeout.
         if self.cfg.get("auto_moderate") and user_id and not _exempt:
             hit = self._banned_hit(content)
             if hit:
@@ -15923,7 +15945,7 @@ class KickModerator:
                     _modlog("timeout", "filter", content,
                             {"user": sender, "word": hit, "platform": "kick"})
                 return
-            # AUSBAU: schnelle Spam-Heuristik (ohne Ollama) → eskalierender Cool-off-Timeout.
+            # AUSBAU: schnelle Spam-Heuristik (ohne das LLM) → eskalierender Cool-off-Timeout.
             sp = self._spam_check(content, user_id)
             if sp:
                 # W19: beim ERSTEN Verstoss nur oeffentlich verwarnen — das
@@ -15956,7 +15978,7 @@ class KickModerator:
         except Exception as e:
             log.debug("oracle hook: %s", e)
         # BUGHUNT: nur klassifizieren wenn überhaupt eine KI-Aktion aktiv ist —
-        # sonst unnötige Ollama-Last bei jedem Chat-Event.
+        # sonst unnötige KI-Last bei jedem Chat-Event.
         if not (self.cfg.get("auto_reply") or self.cfg.get("auto_moderate")):
             return
         # F87: Kick-Chat-Velocity als zweites Hype-Signal (neben TikTok-Chat) —
@@ -15974,7 +15996,7 @@ class KickModerator:
                     _spawn(clip_moment(_src, "Kick-Hype", "KICK CHAT ESKALIERT"), name="clip-kick-velocity")
         except Exception as e:
             log.debug("kick velocity: %s", e)
-        # BUGHUNT: Semaphore begrenzt parallele Ollama-Calls (Task-Flut vermeiden).
+        # BUGHUNT: Semaphore begrenzt parallele KI-Calls (Task-Flut vermeiden).
         if self._sema.locked():
             return   # keine freien Slots → Nachricht überspringen statt aufstauen
         async with self._sema:
@@ -16210,7 +16232,7 @@ _react_fail_ts = {}
 
 def _react_warn(key, msg, every=300):
     """Sichtbare, gedrosselte Warnung (max alle `every`s) — damit Reaktions-Fehler
-       (Ollama down / Modell fehlt / Timeout) nicht still im Debug-Log verschwinden."""
+       (das LLM down / Modell fehlt / Timeout) nicht still im Debug-Log verschwinden."""
     now = _time_mod.monotonic()
     if now - _react_fail_ts.get(key, -1e9) >= every:
         _react_fail_ts[key] = now
@@ -16536,7 +16558,7 @@ def _azrael_system(purpose, extra=""):
 
 async def azrael_chat(purpose, user_content, extra_system="", timeout=25, model=None):
     """F90: DER zentrale KI-Aufruf aller Kanäle. Budget-Guard (V7) →
-       einheitlicher System-Prompt → ai_chat (Pollinations/Ollama-Fallback) →
+       einheitlicher System-Prompt → ai_chat (Pollinations/KI-Fallback) →
        Telemetrie (V8, fire-and-forget). Rückgabe (text, err) wie ai_chat."""
     now = _time_mod.monotonic()
     while _AI_CALL_TS and now - _AI_CALL_TS[0] > 60:
@@ -19675,7 +19697,7 @@ Hinweise: Zeitspalten sind ISO-8601-Strings. Erfolg = outcome IN ('ok','stall_ki
 
 # F15: Sync-Helper für Flask-Routen (Dashboard-Backend)
 # =============================================================================
-# /health & /api/system laufen im Flask-Thread (sync), aber prüfen Redis/Ollama.
+# /health & /api/system laufen im Flask-Thread (sync), aber prüfen Redis/das LLM.
 # Statt das Async-Setup hochzufahren benutzen wir stdlib socket + urllib —
 # klein, schnell, blockiert nicht den asyncio-Loop.
 # B4: socket / urllib / time-Imports wurden an den Anfang verschoben.
@@ -20085,7 +20107,7 @@ _nc_routes_abwehr.HAKEN["angriffe"]["fn"] = _parse_ssh_attacks
 # ===================== DISCORD-BOT (optional, env-gated) =====================
 # Komplett deaktiviert wenn DISCORD_BOT_TOKEN fehlt (wie alle optionalen Integrationen) —
 # kein Import von discord.py, kein Task, kein Crash. Wenn gesetzt: Slash-Commands mit
-# Telegram-Parität (rufen DIESELBE Business-Logik: add_tracking/remove_tracking/ollama_chat)
+# Telegram-Parität (rufen DIESELBE Business-Logik: add_tracking/remove_tracking/llm_chat)
 # + volle Server-Verwaltung (Channels, Kategorien, Rollen/Nutzergruppen, Rechte, Bans/Timeouts).
 DISCORD_BOT_TOKEN      = os.getenv("DISCORD_BOT_TOKEN", "").strip()
 DISCORD_GUILD_ID       = _env_int("DISCORD_GUILD_ID", 0)         # optional: 1 Guild → sofortiger Slash-Sync (sonst global, ~1h)
@@ -20144,7 +20166,7 @@ DISCORD_TRACK_GROUP_ID = _env_int("DISCORD_TRACK_GROUP_ID", 0)     # group_id f�
 DISCORD_VOICE_AI       = os.getenv("DISCORD_VOICE_AI", "1").strip().lower() in ("1","true","yes","on","y")  # /ai antwortet auch auf Sprachnachrichten (Whisper→KI)
 DISCORD_AUTOMOD        = os.getenv("DISCORD_AUTOMOD", "0").strip().lower() in ("1","true","yes","on","y")   # KI/Heuristik-Auto-Moderation
 DISCORD_AUTOMOD_ACTION = os.getenv("DISCORD_AUTOMOD_ACTION", "flag").strip().lower()   # delete | flag (nur intern melden)
-# F93: AZRAEL überwacht auch den Discord-Chat mit ECHTER KI (Ollama-Klassifikation)
+# F93: AZRAEL überwacht auch den Discord-Chat mit ECHTER KI (KI-Klassifikation)
 # — nicht nur die Heuristik. Budget-geschützt (AZRAEL_MAX_CALLS_MIN) + Semaphore.
 DISCORD_AI_MOD         = os.getenv("DISCORD_AI_MOD", "1").strip().lower() in ("1","true","yes","on","y")
 DISCORD_AZRAEL_REPLY   = os.getenv("DISCORD_AZRAEL_REPLY", "1").strip().lower() in ("1","true","yes","on","y")  # AZRAEL antwortet bei @Mention
@@ -24097,7 +24119,7 @@ async def _aufraeumen():
     Aufraeumpfade, deren Fehlschlag bedeutungslos ist, duerfen dabei still
     sein (CLAUDE.md); der Prozess endet ohnehin gleich.
     """
-    # FIX (Header "Was offen bleibt" — gepoolte Ollama-Session): explizit
+    # FIX (Header "Was offen bleibt" — gepoolte KI-Session): explizit
     # schließen statt dem GC zu überlassen, sonst loggt aiohttp eine
     # "Unclosed client session" Warning beim Prozessende.
     try:
@@ -24507,7 +24529,7 @@ async def main():
 # F104: --selfcheck — Startup-Preflight, der ECHTE Fehler fängt (nicht Static)
 # ═══════════════════════════════════════════════════════════════════════════
 # Prüft trocken alle kritischen Pfade, die Static-Analyse nie sieht: Binaries,
-# Modelle, DB-Migrationen, Sign-Key, Ollama/Reaction-AI, Discord-Token, Proxy,
+# Modelle, DB-Migrationen, Sign-Key, das LLM/Reaction-AI, Discord-Token, Proxy,
 # Disk. Gibt einen Ampel-Report + Exit-Code (0=alles ok/warn, 1=harte Fehler).
 # Aufruf:  python bot.py --selfcheck   (läuft NICHT den Bot, nur den Check)
 
@@ -24628,7 +24650,32 @@ async def _selfcheck(verbose=True):
         add("warn", "Sign-Key (EulerStream)",
             "KEIN TIKTOK_SIGN_API_KEY — TikTok-Chat läuft nach wenigen Connects ins Tageslimit")
 
-    # 8) Reaction-AI (keyless Pollinations) + Ollama-Fallback
+    # 8a) Lokales LLM (llama.cpp). v4.2-W110: der Selbsttest kannte es nicht —
+    # er pruefte nur die Cloud-Kette und meldete STARTKLAR, waehrend der
+    # installierte llama-server stand. Warnung nur, wenn er installiert IST
+    # oder ausdruecklich verlangt wird: eine Meldung, die auf jeder
+    # Installation ohne llama.cpp gelb ist, erzieht zum Wegsehen (W85).
+    try:
+        _oben = await asyncio.to_thread(_nc_kiwahl.lokal_stand, True)
+        _wahl = _nc_kiwahl.provider()
+        _url = os.getenv("BRAIN_LLAMACPP_URL", "http://127.0.0.1:8080")
+        if _oben:
+            from brain import get_brain as _gb
+            _mods = await asyncio.to_thread(_gb().llm.models)
+            add("ok", "Lokales LLM", "llama-server antwortet (%s) — %s" % (
+                ", ".join(_mods[:2]) or "Modell unbekannt",
+                "bevorzugt" if _wahl != _nc_kiwahl.CLOUD else "AI_PROVIDER=cloud: ungenutzt"))
+        elif _wahl == _nc_kiwahl.LOKAL or shutil.which("llama-server"):
+            add("warn", "Lokales LLM",
+                "llama-server antwortet nicht unter %s — die KI laeuft ueber die "
+                "Cloud. Pruefen: systemctl status llama-server; Einrichtung: "
+                "docs/SETUP_LLAMACPP.md" % _url)
+        else:
+            add("ok", "Lokales LLM", "nicht installiert — KI ueber die Cloud-Kette")
+    except Exception as e:
+        add("warn", "Lokales LLM", "Status nicht ermittelbar: %s" % e)
+
+    # 8) Reaction-AI (Kette: lokal, wenn erreichbar → keyless Cloud)
     try:
         # V37-B104: harter Deckel — ein Selfcheck darf den Start nicht
         # minutenlang aufhalten, erst recht nicht bis AI_TIMEOUT greift.
@@ -24638,7 +24685,7 @@ async def _selfcheck(verbose=True):
             f"{REACTION_AI_PROVIDER} antwortet" if (txt and not err) else f"{REACTION_AI_PROVIDER}: {err}")
     except Exception as e:
         add("warn", "Reaction-AI", str(e))
-    # V37: freeai-Basen-Status (Ersatz des Ollama-Fallback-Checks)
+    # V37: freeai-Basen-Status (die Cloud-Reserve)
     try:
         _fb = _nc_freeai.bases_status()
         _blocked = [b for b in _fb if b["blocked_s"] > 0]

@@ -12,8 +12,13 @@ description: KI-Pfade in NIGHTCRAWLER ändern oder debuggen — die Tier-Kaskade
 Thread-basiert, stdlib-`urllib`, kein `aiohttp`. Kein Cloud-Zugriff.
 
 **`nc/freeai.py`** ist der **einzige** Cloud-Pfad des Bots — OpenAI-kompatible
-Endpunkte, bevorzugt keyless. Alles, was mit dem Betreiber oder dem Chat
-spricht (`/ai`, AZRAEL, Reaction-Engine), läuft hierüber.
+Endpunkte, bevorzugt keyless.
+
+**`nc/kiwahl.py`** entscheidet seit v4.2-W110, ob lokal oder Cloud: Chat
+(`/ai`), AZRAEL und Reaction-Engine fragen `lokal_zuerst()`. Vorgabe `auto` =
+lokales llama.cpp, sobald `/health` antwortet. **Nie wieder
+`os.getenv("AI_PROVIDER")` selbst lesen** — das stand siebenmal verstreut, und
+jede Anzeige rechnete anders. Reihenfolge: Claude (mit Key) → lokal → Cloud.
 
 Ollama existiert nicht mehr. Neue Cloud-Aufrufe gehören nach `nc.freeai`, nicht
 direkt in Aufrufercode — sonst gibt es Rotation und Fehlerklassifikation nicht.
