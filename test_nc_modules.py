@@ -5324,8 +5324,14 @@ def _test_v42_w15_discord_aus_dem_monolithen():
              if k not in bot_top]
     assert not fehlt, "vom Kontext verlangt, in bot.py nicht definiert: %s" % fehlt
     # Und umgekehrt: die Platzhalter muessen die Schluesselmengen abdecken.
-    fehlt = [k for k in list(_botctx.BEFEHLE) + list(_botctx.SCHALTER) if k not in platz]
+    # ANKER GEWANDERT (v4.2-W109): die geteilten Telegram-Handler haben keine
+    # Einzel-Platzhalter mehr, sie landen im Woerterbuch _TG_HANDLER. Gefragt
+    # bleibt, ob jeder Schluessel drueben ankommt — fuer SCHALTER als
+    # Platzhalter, fuer BEFEHLE ueber die Uebernahme des ganzen Woerterbuchs.
+    fehlt = [k for k in _botctx.SCHALTER if k not in platz]
     assert not fehlt, "Schluessel ohne Platzhalter in discordbot.py: %s" % fehlt
+    assert "_TG_HANDLER.update(ctx.befehle)" in _ast.unparse(uebern), \
+        "die geteilten Telegram-Handler erreichen discordbot.py nicht mehr"
     ok("W15: alle %d Kontext-Schluessel existieren beidseitig"
        % (len(_botctx.BEFEHLE) + len(_botctx.SCHALTER)))
 
@@ -5337,7 +5343,7 @@ def _test_v42_w15_discord_aus_dem_monolithen():
             discord_post_user=print, disc_state_get=print, disc_state_set=print,
             whisper_transcribe=print, add_tracking=print, azrael_chat=print,
             clip_moment=print, einladung_merken=print, kick_mod=None,
-            fehler_schlange=None, boot_ts=0.0,
+            fehler_schlange=None, boot_ts=0.0, bot_app_holen=lambda: None,
             befehle={k: print for k in _botctx.BEFEHLE},
             schalter={k: "" for k in _botctx.SCHALTER})
 
@@ -10254,18 +10260,27 @@ def _test_v42_w73_schleifen_befehle_werden_gezaehlt():
         _sys.path.insert(0, os.path.join(hier, "tools"))
     import ncpatch as N
 
-    # --- 1) Alle 60 werden gesehen, keiner doppelt -----------------------
+    # --- 1) Alle werden gesehen, keiner doppelt -------------------------
+    # ANKER GEWANDERT (v4.2-W109, nicht der Vertrag): die Schleife laeuft
+    # seither ueber nc/befehle.discord_ueber_tg() statt ueber die Tabelle
+    # _PAR_CMDS, und die Namen tragen kein sys_ mehr. Die Aussage bleibt:
+    # das Werkzeug sieht JEDEN registrierten Befehl, auch die aus der
+    # Schleife. Die Sollzahl kommt aus dem Verzeichnis, nicht von Hand.
+    from nc import befehle as _B
     treffer = N._scan(os.path.join(hier, "discordbot.py"))["slash"]
     namen = [n for _z, n, _b in treffer]
-    assert len(namen) == 60, \
-        "es werden %d statt 60 Slash-Commands gezaehlt (45 dekoriert + 15 " \
-        "in der Schleife)" % len(namen)
-    assert len(set(namen)) == 60, \
+    soll = {b.name for b in _B.fuer(_B.DC)}
+    assert set(namen) == soll, \
+        "Werkzeug und Verzeichnis sind uneins — fehlt: %r, zuviel: %r" % (
+            sorted(soll - set(namen)), sorted(set(namen) - soll))
+    assert len(namen) == len(set(namen)), \
         "ein Befehl wird doppelt gezaehlt: %r" % [
             n for n in set(namen) if namen.count(n) > 1]
-    for pflicht in ("sys_pause", "sys_cookies", "sys_teststream", "sys_diag"):
+    for pflicht in ("pause", "cookies", "teststream", "diag"):
         assert pflicht in namen, \
             "%s wird nicht gefunden — die Schleifen-Erkennung greift nicht" % pflicht
+    assert not [n for n in namen if n.startswith("sys_")], \
+        "es gibt wieder sys_-Befehle — der Name ist auf beiden Plattformen derselbe"
 
     # --- 2) Die Spalten werden AUFGELOEST, nicht geraten -----------------
     # Der Beweis: eine Tabelle, in der Name und Beschreibung VERTAUSCHT sind.
@@ -10293,7 +10308,7 @@ def _test_v42_w73_schleifen_befehle_werden_gezaehlt():
         assert beschr["echt_eins"] == "Erste Beschreibung", beschr
     finally:
         os.unlink(_t.name)
-    ok("W73: die 15 Schleifen-Befehle werden gezaehlt, Spalten aufgeloest statt geraten")
+    ok("W73: die Schleifen-Befehle werden gezaehlt, Spalten aufgeloest statt geraten")
 
     # --- 3) Ohne Schleife faellt die Zahl — und das merkt jemand ---------
     baum = _ast.parse(io.open(os.path.join(hier, "discordbot.py"),
@@ -10309,9 +10324,10 @@ def _test_v42_w73_schleifen_befehle_werden_gezaehlt():
     # --- 4) Und die Doku nennt sie jetzt beim Namen ----------------------
     # Die Zahl allein genuegt nicht: vor W73 stand in einer Fussnote sogar,
     # dass es die sys_*-Befehle gibt — aufgelistet waren sie trotzdem nie.
+    # Seit W109: jeder Schleifen-Befehl (die gemeinsamen) namentlich.
     readme = io.open(os.path.join(hier, "README.md"), encoding="utf-8").read()
-    fehlen = [n for n in namen if n.startswith("sys_")
-              and ("/" + n) not in readme]
+    fehlen = [b.name for b in _B.discord_ueber_tg()
+              if ("`/" + b.name + "`") not in readme]
     assert not fehlen, \
         "diese Befehle sind registriert, stehen aber in keiner Liste im " \
         "README: %r" % fehlen
@@ -10319,13 +10335,13 @@ def _test_v42_w73_schleifen_befehle_werden_gezaehlt():
     # sechs Stellen stimmt. Die Mutationsprobe zu W73 hat genau das gezeigt:
     # eine zurueckgedrehte Ueberschrift blieb still. (Der Doku-Job faengt es
     # ueber tools/ncpatch.py docs; hier soll es die Suite ebenfalls sehen.)
-    assert "60 Slash-Commands" in readme, \
-        "das README nennt nirgends die gezaehlten 60 Slash-Commands"
+    assert "%d Slash-Commands" % len(namen) in readme, \
+        "das README nennt nirgends die gezaehlten %d Slash-Commands" % len(namen)
     veraltet = [z for z in readme.splitlines() if "45 Slash-Commands" in z]
     assert not veraltet, \
         "im README steht weiterhin die alte Zahl 45: %r — sie stammt aus " \
         "der Zeit, als die 15 Schleifen-Befehle nicht mitgezaehlt wurden" % veraltet
-    ok("W73: alle 60 stehen im README, die 15 sys_*-Befehle namentlich")
+    ok("W73: alle Slash-Commands stehen im README, die gemeinsamen namentlich")
 
 
 def _test_v42_w72_befehle_haben_eine_registrierung():
@@ -10420,16 +10436,27 @@ def _test_v42_w72_befehle_haben_eine_registrierung():
     dek = [d for x in _ast.walk(baum)
            if isinstance(x, (_ast.FunctionDef, _ast.AsyncFunctionDef))
            for d in x.decorator_list if "tree.command" in _ast.unparse(d)]
-    assert len(dek) == 45, \
-        "es sind %d statt 45 dekorierte Slash-Commands" % len(dek)
-    par = [n for n in _ast.walk(baum) if isinstance(n, _ast.Assign)
-           and any(isinstance(t, _ast.Name) and t.id == "_PAR_CMDS" for t in n.targets)]
-    assert par, "_PAR_CMDS ist weg — damit fehlen 15 sys_*-Befehle"
-    assert len(par[0].value.elts) == 15, \
-        "_PAR_CMDS hat %d statt 15 Eintraege" % len(par[0].value.elts)
-    assert "tree.command(name=_pname" in src, \
-        "die Schleife registriert die 15 sys_*-Befehle nicht mehr"
-    ok("W72: 45 dekorierte und 15 dynamische Befehle — zusammen 60, alle da")
+    # ANKER GEWANDERT (v4.2-W109): 43 dekorierte (sys_report und
+    # sys_unpause waren Kopien und laufen jetzt ueber den Shim) plus die
+    # Schleife ueber nc/befehle.discord_ueber_tg() statt ueber _PAR_CMDS.
+    from nc import befehle as _B
+    nativ = {b.name for b in _B.discord_nativ()}
+    dek_namen = {_ast.literal_eval(k.value) for x in _ast.walk(baum)
+                 if isinstance(x, (_ast.FunctionDef, _ast.AsyncFunctionDef))
+                 for d in x.decorator_list if "tree.command" in _ast.unparse(d)
+                 for k in d.keywords if k.arg == "name"}
+    assert len(dek) == len(nativ) and dek_namen == nativ, \
+        "dekoriert und als nativ verzeichnet sind uneins — fehlt: %r, zuviel: %r" % (
+            sorted(nativ - dek_namen), sorted(dek_namen - nativ))
+    schleife = [n for n in _ast.walk(baum) if isinstance(n, _ast.For)
+                and _ast.unparse(n.iter) == "_nc_befehle.discord_ueber_tg()"]
+    assert schleife, "die Schleife ueber das Verzeichnis ist weg — damit " \
+        "fehlen alle gemeinsamen Befehle"
+    assert "tree.command(name=_bf.name" in _ast.unparse(schleife[0]), \
+        "die Schleife registriert die gemeinsamen Befehle nicht mehr unter " \
+        "ihrem Verzeichnis-Namen"
+    ok("W72: %d dekorierte und %d aus dem Verzeichnis — alle da" % (
+        len(dek), len(_B.discord_ueber_tg())))
 
     # --- 6) _discord_run_once ist wirklich geschrumpft -------------------
     laenge = lauf.end_lineno - lauf.lineno + 1
@@ -10548,10 +10575,15 @@ def _test_v42_w71_discord_run_once_geschrumpft():
     befehle = [d for x in _ast.walk(baum)
                if isinstance(x, (_ast.FunctionDef, _ast.AsyncFunctionDef))
                for d in x.decorator_list if "tree.command" in _ast.unparse(d)]
-    assert len(befehle) == 45, \
-        "es sind %d statt 45 Slash-Commands registriert — beim Umbau ist " \
-        "einer verlorengegangen" % len(befehle)
-    ok("W71: neun Helfer auf Modulebene, 45 Slash-Commands unveraendert")
+    # ANKER GEWANDERT (v4.2-W109): die Sollzahl der DEKORIERTEN Befehle steht
+    # im Verzeichnis (nativ) — 43, seit /sys_report und /sys_unpause als
+    # Kopien entfallen sind und ueber den Shim laufen.
+    from nc import befehle as _B
+    soll = len(_B.discord_nativ())
+    assert len(befehle) == soll, \
+        "es sind %d statt %d dekorierte Slash-Commands registriert — beim " \
+        "Umbau ist einer verlorengegangen" % (len(befehle), soll)
+    ok("W71: neun Helfer auf Modulebene, %d dekorierte Slash-Commands" % soll)
 
 
 def _test_v42_w70_keine_neue_riesenfunktion():
@@ -20034,6 +20066,42 @@ def _test_v42_w106_jede_ausgabe_traegt_ton():
         _lg.getLogger("TikTokBot").removeHandler(fang)
         _takt.zuruecksetzen(T.KANAL)
 
+    # ── (5b) DER ECHTE PROZESSWEG und die beiden Fehlerpfade, die vorher
+    # ungeprueft waren: ein Werkzeug, das fehlt oder haengt, darf nicht still
+    # „kein Ergebnis" liefern — es wirft Fehlschlag, und der wird gemeldet.
+    import sys as _sys
+    rc_, out_, _e = _aio.run(T._lauf([_sys.executable, "-c", "print('ok')"], 20))
+    assert rc_ == 0 and out_.strip() == b"ok"
+    for cmd, wort in (([_os.path.join(verz, "gibt_es_nicht")], "nicht starten"),
+                      ([_sys.executable, "-c", "import time; time.sleep(30)"], "lang nicht")):
+        try:
+            _aio.run(T._lauf(cmd, 1))
+            raise AssertionError("kein Fehlschlag fuer %r" % cmd)
+        except T.Fehlschlag as e:
+            assert wort in str(e), e
+    # Kein Platz: die Datei bleibt, und es ist ein ERROR, kein Achselzucken.
+    import nc.tonspur as _tsmod
+    alt_platz = _tsmod.platz_reicht
+    try:
+        _takt.zuruecksetzen(T.KANAL)
+        _tsmod.platz_reicht = lambda p, faktor=1.0: (False, "3 MB frei")
+        _neu()
+        T._lauf, auf = _lauf((0, b'{"streams":[{"codec_type":"video"}]}', b""))
+        _lg.getLogger("TikTokBot").addHandler(fang)
+        r = _aio.run(T.sichern(pfad, wer="@t"))
+        assert r["lage"] == "fehlgeschlagen" and len(auf) == 1, (r, auf)
+        z = _gemeldet()
+        assert [s for s, t in z] == ["ERROR"] and "Platz" in z[0][1], z
+        # Groesse nicht lesbar: 0 und eine Zeile, keine Ausnahme.
+        _tsmod.platz_reicht = alt_platz
+        assert T._groesse(_os.path.join(verz, "weg.mp4")) == 0
+        assert [s for s, t in _gemeldet()] == ["WARNING"]
+    finally:
+        _tsmod.platz_reicht = alt_platz
+        T._lauf = alt
+        _lg.getLogger("TikTokBot").removeHandler(fang)
+        _takt.zuruecksetzen(T.KANAL)
+
     # ── (6) DIE VERDRAHTUNG — im Syntaxbaum, nicht im Dateitext (W102–W104:
     # ein Vertrag darf seine eigene Begruendung nicht als Befund lesen).
     baum = _ast.parse(io.open("bot.py", encoding="utf-8").read())
@@ -20360,6 +20428,181 @@ def _test_v42_w108_drossel_greift_vor_dem_salat():
        "gemessene Kosten, junge Transcodes mitgezaehlt, nie unter der Ist-Stufe")
 
 
+def _test_v42_w109_ein_befehlsverzeichnis():
+    """Telegram und Discord aus EINEM Verzeichnis — gleiche Namen, gleiche Rechte.
+
+    Vorher: zwei Listen (Telegram-Tupel, Discord-_PAR_CMDS mit sys_-Praefix),
+    zwei kopierte Discord-Befehle, sieben Telegram-Befehle ohne Discord-
+    Gegenstueck, eine handgeschriebene Hilfe mit 27 von 45 Befehlen, und ein
+    /untrack, das auf Discord jedes Servermitglied fuer die ganze Gruppe
+    ausfuehren durfte.
+    """
+    import ast as _ast
+    from nc import befehle as B
+    from nc import botctx as K
+
+    # ── (1) DAS VERZEICHNIS IST IN SICH STIMMIG.
+    assert B.pruefen() == [], B.pruefen()
+    # Jeder Shim-Befehl ist Betreiberbefehl — der Shim meldet sich als
+    # freigeschalteter Telegram-Nutzer an. Ein offener Shim-Befehl gaebe
+    # jedem Discord-Mitglied die Telegram-Rechte des Betreibers. pruefen()
+    # muss das finden, nicht nur der Mensch beim Lesen:
+    alt = B.BEFEHLE
+    try:
+        B.BEFEHLE = alt + (B.Befehl("x_offen", "system", "x", B._BEIDE, "tg",
+                                    "jeder", None, "diag"),)
+        assert any("Shim-Befehl" in f for f in B.pruefen())
+        B.BEFEHLE = alt + (B.Befehl("sys_alt", "system", "x", B._BEIDE, "tg",
+                                    "betreiber", None, "diag"),)
+        assert any("sys_" in f for f in B.pruefen())
+        # Jeder Zweig von pruefen() hat seinen Fall — sonst ist er eine
+        # Behauptung ohne Beleg (W89: die ungeprueften waren die Fehlerpfade).
+        for eintrag, erwartet in (
+                (alt[0], "doppelter Name"),
+                (B.Befehl("x_rubrik", "gibtsnicht", "x", B._NUR_DC, "nativ",
+                          "jeder", None, None), "unbekannte Rubrik"),
+                (B.Befehl("x_recht", "system", "x", B._NUR_DC, "nativ",
+                          "admin", None, None), "unbekanntes Recht"),
+                (B.Befehl("x_ohne", "system", "x", B._NUR_TG, None,
+                          "betreiber", None, None), "Telegram ohne Handler"),
+                (B.Befehl("x_weg", "system", "x", B._NUR_DC, None,
+                          "jeder", None, None), "Discord ohne Ausfuehrungsweg"),
+                (B.Befehl("Gross-Name", "system", "x", B._NUR_DC, "nativ",
+                          "jeder", None, None), "kein gueltiger Befehlsname"),
+                (B.Befehl("x" * 33, "system", "x", B._NUR_DC, "nativ",
+                          "jeder", None, None), "kein gueltiger Befehlsname")):
+            B.BEFEHLE = alt + (eintrag,)
+            befunde = B.pruefen()
+            assert any(erwartet in f for f in befunde), (erwartet, befunde)
+            # Und NUR dieser Befund — ein Pruefer, der bei jeder Aenderung
+            # alles meldet, meldet nichts.
+            assert len(befunde) == 1, befunde
+    finally:
+        B.BEFEHLE = alt
+
+    # ── (2) PARITAET: jeder Telegram-Befehl hat auf Discord DENSELBEN Namen —
+    # ausser den beiden, die bewusst nur auf Telegram stehen.
+    tg = {b.name for b in B.fuer(B.TG)}
+    dc = {b.name for b in B.fuer(B.DC)}
+    assert tg - dc == {"start", "update"}, sorted(tg - dc)
+    assert B.NACH_NAME["update"].plattformen == frozenset({B.TG}), \
+        "ein Code-Update gehoert an die Telegram-Freischaltliste, nicht an " \
+        "eine Discord-Rolle, die ein Moderator vergeben kann"
+    for b in B.discord_ueber_tg():
+        assert b.recht == "betreiber" and b.tg_handler, b
+
+    # ── (3) TELEGRAM: registriert aus dem Verzeichnis, jeder Handler
+    # existiert und prueft die Freischaltung als ERSTES.
+    baum = _ast.parse(io.open("bot.py", encoding="utf-8").read())
+    oben = {n.name: n for n in baum.body
+            if isinstance(n, (_ast.FunctionDef, _ast.AsyncFunctionDef))}
+    schleife = [n for n in _ast.walk(baum) if isinstance(n, _ast.For)
+                and _ast.unparse(n.iter) == "_nc_befehle.telegram_handler()"]
+    assert len(schleife) == 1 and "CommandHandler" in _ast.unparse(schleife[0])
+    alte = [n for n in _ast.walk(baum) if isinstance(n, _ast.For)
+            and isinstance(n.iter, _ast.Tuple) and "CommandHandler" in _ast.unparse(n)]
+    assert not alte, "eine zweite, handgeschriebene Telegram-Liste ist zurueck"
+    for name, handler in B.telegram_handler():
+        fn = oben.get(handler)
+        assert isinstance(fn, _ast.AsyncFunctionDef), \
+            "/%s: Handler %s fehlt in bot.py" % (name, handler)
+        def _erste(f):
+            return f.body[1] if _ast.get_docstring(f) else f.body[0]
+        erste = _erste(fn)
+        # Eine reine Weiterleitung (`await _pause_resume_cmd(update, ...)`)
+        # zaehlt, wenn das Ziel als erstes prueft — eine Ebene, nicht mehr.
+        rufe = [c for c in _ast.walk(erste) if isinstance(c, _ast.Call)
+                and isinstance(c.func, _ast.Name) and c.func.id in oben]
+        if "_is_authorized(update)" not in _ast.unparse(erste) and rufe:
+            erste = _erste(oben[rufe[0].func.id])
+        assert "_is_authorized(update)" in _ast.unparse(erste), \
+            "/%s: %s prueft die Freischaltung nicht als erstes: %s" % (
+                name, handler, _ast.unparse(erste)[:80])
+    # Das Telegram-Menue kommt aus derselben Liste und wird beim Start gesetzt.
+    assert "_telegram_befehlsmenue" in oben
+    menue = {_ast.unparse(c.func) for c in _ast.walk(oben["_telegram_befehlsmenue"])
+             if isinstance(c, _ast.Call)}
+    assert "app.bot.set_my_commands" in menue and "_nc_befehle.fuer" in menue
+    assert "_telegram_befehlsmenue" in {_ast.unparse(c.func) for c in _ast.walk(oben["run_bot"])
+                                         if isinstance(c, _ast.Call)}
+    for b in B.fuer(B.TG):
+        assert 3 <= len(B.beschreibung(b)) <= 100, b.name   # Telegram: 3..256, Discord: <=100
+
+    # ── (4) DISCORD: die geteilten Handler kommen aus dem Verzeichnis, die
+    # Rechte stehen am Befehl.
+    assert set(K.BEFEHLE) == {b.tg_handler for b in B.discord_ueber_tg()}
+    assert "bot_app_holen" in K.BotKontext.__dataclass_fields__
+    db = _ast.parse(io.open("discordbot.py", encoding="utf-8").read())
+    bot_app_global = [c.lineno for c in _ast.walk(db) if isinstance(c, _ast.Call)
+                      and _ast.unparse(c.func) == "globals().get"
+                      and c.args and _ast.unparse(c.args[0]) == "'bot_app'"]
+    assert not bot_app_global, \
+        "discordbot.py liest bot_app wieder aus dem EIGENEN Namensraum " \
+        "(Z.%s) — dort gibt es ihn nie, der Highlight-Push endet still" % bot_app_global
+    shim = [n for n in db.body if isinstance(n, _ast.AsyncFunctionDef)
+            and n.name == "_run_tg_handler"][0]
+    assert "_is_admin(inter)" in _ast.unparse(shim.body[0]), \
+        "der Shim prueft die Admin-Rolle nicht mehr als erstes"
+    assert "application=" in _ast.unparse(shim), \
+        "der Shim reicht keine application — /tiktok stirbt am Scraper"
+    for fn in _ast.walk(db):
+        if not isinstance(fn, _ast.AsyncFunctionDef):
+            continue
+        for d in fn.decorator_list:
+            if "tree.command" not in _ast.unparse(d):
+                continue
+            name = [_ast.literal_eval(k.value) for k in d.keywords if k.arg == "name"][0]
+            b = B.NACH_NAME.get(name)
+            assert b is not None and b.discord == "nativ", \
+                "/%s ist auf Discord registriert, aber nicht als nativ verzeichnet" % name
+            # Ein Riegel ist ein `if not <pruefung>:` mit `return` darin, unter
+            # den ersten Anweisungen — nicht bloss irgendein Aufruf von
+            # _is_admin (die Hilfe ruft es auch, um die Liste zu filtern).
+            def _riegel(stmt):
+                return (isinstance(stmt, _ast.If)
+                        and _ast.unparse(stmt.test) in ("not await _guard(inter)",
+                                                         "not _is_admin(inter)")
+                        and any(isinstance(x, _ast.Return) for x in stmt.body))
+            if name == "untrack":
+                continue        # Sonderriegel (Admin ODER Anleger), Pruefung unten
+            geprueft = any(_riegel(x) for x in fn.body[:3])
+            assert geprueft == (b.recht == "betreiber"), \
+                "/%s: verzeichnet als %r, im Code %s" % (
+                    name, b.recht, "mit Riegel" if geprueft else "ohne Riegel")
+    unt = [fn for fn in _ast.walk(db) if isinstance(fn, _ast.AsyncFunctionDef)
+           and fn.name == "_c_untrack"][0]
+    ut = _ast.unparse(unt)
+    riegel = [x for x in _ast.walk(unt) if isinstance(x, _ast.If)
+              and _ast.unparse(x.test) == "not _is_admin(inter)"]
+    assert riegel and "added_by" in _ast.unparse(riegel[0]) \
+        and "inter.user.id" in _ast.unparse(riegel[0]) \
+        and any(isinstance(x, _ast.Return) for x in _ast.walk(riegel[0])), \
+        "/untrack auf Discord ist wieder fuer jeden offen"
+    assert "!= inter.user.id" in ut, "/untrack vergleicht den Anleger nicht mehr"
+    # Die Pruefung steht VOR dem Loeschen.
+    zeilen = {c.lineno: _ast.unparse(c.func) for c in _ast.walk(unt) if isinstance(c, _ast.Call)}
+    z_pruef = riegel[0].lineno
+    z_weg = min(z for z, f in zeilen.items() if f == "asyncio.to_thread")
+    assert z_pruef < z_weg, "/untrack loescht, bevor es prueft"
+
+    # ── (5) DIE HILFE: gebaut, vollstaendig, und ohne Admin nur, was man darf.
+    voll = B.hilfe_text(B.DC)
+    for b in B.fuer(B.DC):
+        assert ("/" + b.name + " ") in voll + " " or ("/" + b.name + "\n") in voll + "\n", b.name
+    offen = B.hilfe_text(B.DC, ist_betreiber=False)
+    for b in B.fuer(B.DC):
+        drin = any(t in offen.split() for t in ("/" + b.name,))
+        assert drin == (b.recht == "jeder"), (b.name, b.recht)
+    hilfe = [fn for fn in _ast.walk(db) if isinstance(fn, _ast.AsyncFunctionDef)
+             and fn.name == "_c_help"][0]
+    assert "_nc_befehle.hilfe_text" in _ast.unparse(hilfe), \
+        "die Discord-Hilfe ist wieder handgeschrieben"
+
+    ok("W109: ein Verzeichnis — %d Telegram, %d Discord, %d gemeinsam unter "
+       "gleichem Namen; Rechte geprueft, Hilfe gebaut, kein sys_ mehr" % (
+           len(tg), len(dc), len(tg & dc)))
+
+
 def main():
     tmp, rid = richte_testdatenbank_ein()
     ok("db_conn aus nc.dbwrap: echtes Schema angelegt, Commit durchgelaufen")
@@ -20644,6 +20887,7 @@ def main():
     _test_v42_w106_jede_ausgabe_traegt_ton()
     _test_v42_w107_cookie_bezug_ist_standard()
     _test_v42_w108_drossel_greift_vor_dem_salat()
+    _test_v42_w109_ein_befehlsverzeichnis()
     _test_v42_w60_azrael_cooldown_je_plattform()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)

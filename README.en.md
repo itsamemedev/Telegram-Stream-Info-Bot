@@ -190,7 +190,7 @@ flowchart TD
 ```mermaid
 flowchart TB
     TG["📨 Telegram<br/>29 commands"]:::ein
-    DC["🎮 Discord<br/>45 slash commands"]:::ein
+    DC["🎮 Discord<br/>65 slash commands"]:::ein
     TT["🎥 TikTok<br/>live detection + chat"]:::ein
 
     TG --> BOT
@@ -343,54 +343,86 @@ ADMIN_CHAT_ID=123456789              # your Telegram ID (alarms, admin commands)
 
 ### Telegram
 
+Since v4.2-W109 every command lives in **one** registry
+([`nc/befehle.py`](nc/befehle.py)) — Telegram and Discord register from it, and
+`/help` builds its list from it on both platforms. The 29 shared commands have
+**the same name on both platforms**; the former `sys_` names on Discord are gone.
+
 | Command | Effect |
 |---|---|
-| `/start` · `/about` | Getting started, bot info |
-| `/track <user>` · `/track_exact <user>` | Add a streamer to tracking |
-| `/untrack <user>` · `/tracklist` | Remove / overview |
-| `/live` · `/tiktok` | Who is live right now |
-| `/bulkadd` | Track many streamers at once |
-| `/recstatus` · `/stoprec` · `/cleanup` | Recordings: status, stop, clean up |
-| `/stats` · `/topusers` · `/summary` | Analyses |
-| `/ai <question>` · `/aireset` | Ask AZRAEL / reset the history |
-| `/brain` · `/brain teste` · `/report` | Brain status, self-test, weekly report |
-| `/diag` · `/sysres` · `/quota` · `/logs` | Diagnostics, resources, quotas, logs |
-| `/pause` · `/resume` | Pause / resume tracking |
-| `/update` | Self-update from the repository |
-| `/cookies` · `/cookies holen [browser]` · `/teststream` | Cookie state, fetch cookies automatically, test stream |
-| `/einnahmen` | Revenue journal (booking, yearly overview) |
+| `/tiktok` `‹name›` | Profile analysis of a TikTok account |
+| `/live` `@user` | Check live status now |
+| `/track_exact` `‹name›` | Track the exact username (no correction) |
+| `/pause` `@user` | Pause tracking |
+| `/resume` `@user` | Resume tracking |
+| `/unpause` `@user` | Re-enable an auto-paused source |
+| `/bulkadd` `a b c` | Track several users at once |
+| `/stoprec` `@user` | Stop a running recording cleanly |
+| `/cleanup` | Clean up old recordings |
+| `/quota` | Storage quota |
+| `/teststream` `@user` | Recorder self-test |
+| `/topusers` | Top streamers by recordings |
+| `/summary` | Daily summary |
+| `/aireset` | Reset AI context |
+| `/brain` | Brain status: rules, agents, recommendations |
+| `/report` | Azrael Sentinel weekly report |
+| `/cookies` `[holen]` | Cookie status — use 'holen' to fetch them yourself |
+| `/sysres` | System resources |
+| `/logs` | Latest errors from the log |
+| `/diag` | Full diagnostics |
+| `/einnahmen` | Revenue and donations |
+| `/about` | About this bot |
+| `/tracklist` | Show tracked accounts |
+| `/track` `‹name›` | Track a TikTok user |
+| `/untrack` `‹name›` | Stop tracking a TikTok user |
+| `/recstatus` | Running recordings |
+| `/stats` | Statistics |
+| `/ai` `‹frage›` | Ask AZRAEL |
+| `/help` | Show all commands |
+| `/start` | Start and quick overview (Telegram only) |
+| `/update` | Install update from the repo (Telegram only) |
 
 <details>
-<summary><h3>Discord — 45 slash commands</h3></summary>
+<summary><h3>Discord — 65 slash commands</h3></summary>
 
 <br>
 
-**Stream & bot**
-`/status` · `/track` · `/untrack` · `/tracklist` · `/livenow` · `/recstatus` ·
-`/restream_status` · `/stats` · `/streaminfo` · `/topstreamers` · `/botstats` ·
-`/post_test` · `/sys_report` · `/sys_unpause`
+**Shared with Telegram** *(same name, same effect)*
+`/tiktok` · `/live` · `/track_exact` · `/pause` · `/resume` · `/unpause` · `/bulkadd` · `/stoprec` · `/cleanup` · `/quota` · `/teststream` · `/topusers` · `/summary` · `/aireset` · `/brain` · `/report` · `/cookies` · `/sysres` · `/logs` · `/diag` · `/einnahmen` · `/about` · `/tracklist` · `/track` · `/untrack` · `/recstatus` · `/stats` · `/ai` · `/help`
 
-**AI**
-`/ai` · `/ask`
+**Analysis**
+`/status` · `/streaminfo`
 
-**Community & gamification**
-`/rank` · `/profile` · `/leaderboard` · `/daily` · `/follow` · `/unfollow` ·
-`/event` · `/events` · `/help`
+**Tracking**
+`/livenow` · `/restream_status` · `/follow` · `/unfollow`
 
-**Clips**
-`/clip` · `/clips` · `/clipoftheweek`
+**Recordings**
+`/topstreamers` · `/clips` · `/clip` · `/clipoftheweek`
 
-**Moderation** *(admin role required)*
-`/ban` · `/kick` · `/timeout` · `/warn` · `/warnings` · `/clearwarns` · `/purge`
+**AI and brain**
+`/ask`
 
-**Server setup** *(admin role required)*
-`/setup_community` · `/setup_targets` · `/create_channel` · `/create_voice` ·
-`/create_category` · `/create_role` · `/create_group` · `/assign_role` ·
-`/remove_role` · `/set_channel_perms`
+**System** *(admin role required)*
+`/botstats` · `/post_test`
 
-> The `/sys_*` commands execute the **original Telegram handlers** through an
-> update/context shim — zero duplicates, so Telegram fixes automatically apply
-> in Discord too.
+**Community**
+`/rank` · `/leaderboard` · `/daily` · `/profile` · `/event` · `/events`
+
+**Moderation**
+`/warn` · `/warnings` · `/clearwarns` · `/purge` · `/kick` · `/ban` · `/timeout`
+
+**Server** *(admin role required)*
+`/setup_community` · `/setup_targets` · `/create_channel` · `/create_voice` · `/create_category` · `/create_role` · `/create_group` · `/assign_role` · `/remove_role` · `/set_channel_perms`
+
+> The operator commands among the shared ones run on Discord through the
+> **original Telegram handler** (an update/context shim) — one logic, no
+> duplicate. On Discord they need the admin role, on Telegram the allowlist.
+> `/track`, `/tracklist`, `/recstatus`, `/stats`, `/ai` and `/help` have their own
+> community-open implementation on Discord; `/untrack` there is limited to
+> admins and whoever created the tracking.
+>
+> Telegram only: *start* and *update* — an update deploys code to the server
+> and belongs behind the smallest door, the Telegram allowlist.
 
 </details>
 
@@ -792,7 +824,7 @@ python3 tools/ncpatch.py docs                      # documentation numbers vs. t
 ```
 
 `find` answers from **[`.claude/INDEX.md`](.claude/INDEX.md)** — 361 routes
-(34 in `bot.py`, 327 in `nc/routes/`), 45 slash commands, 479 functions, each
+(34 in `bot.py`, 327 in `nc/routes/`), 65 slash commands, 479 functions, each
 with a line number.
 
 ---

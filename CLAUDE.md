@@ -26,7 +26,7 @@ benutzt, berät an der Lage vorbei.**
 
 ## Die eine Regel
 
-`bot.py` hat **25.222 Zeilen / 1,2 MB ≈ 295.000 Token**. Diese Datei wird
+`bot.py` hat **25.267 Zeilen / 1,2 MB ≈ 295.000 Token**. Diese Datei wird
 **nie** ganz gelesen und **nie** blind durchsucht. Erst fragen wo etwas steht,
 dann den Ausschnitt holen:
 
@@ -42,7 +42,7 @@ dann den Ausschnitt holen:
     python tools/ncpatch.py docs                           # Doku-Zahlen gegen den Quelltext
 
 `find` antwortet aus `.claude/INDEX.md` — 369 Routen (34 in `bot.py`, 333 in
-`nc/routes/`), 60 Slash-Commands, 561 Funktionen mit Zeilennummern. Nach Änderungen an Routen, Commands oder
+`nc/routes/`), 65 Slash-Commands, 565 Funktionen mit Zeilennummern. Nach Änderungen an Routen, Commands oder
 Top-Level-Funktionen `map` neu laufen lassen. Details: Skill `nc-navigation`.
 
 Für „wer ruft das auf?" und „was ist der Typ?" ist der Sprachserver billiger als
@@ -57,8 +57,8 @@ Auf diesem Windows-Rechner heißt der Interpreter **`python`** (3.13.12);
                          Routen), Scraper, Recorder, Restream, Schema (init_db).
                          Hiess bis v4.0-W119 bot_v37.py — beim Suchen in
                          alten Notizen und Patch-Dateien daran denken.
-    discordbot.py        Der Discord-Teil (60 Slash-Commands, davon 15 in
-                         einer Schleife statt per Dekorator), seit v4.2-W15
+    discordbot.py        Der Discord-Teil (65 Slash-Commands, davon 22 aus
+                         dem Verzeichnis nc/befehle.py), seit v4.2-W15
                          heraus. Bot-seitig, weil er discord.py importiert und
                          ein Gateway aufmacht — nicht nach nc/, das bot-frei
                          bleibt. Bekommt alles per starte(ctx), importiert
@@ -71,7 +71,7 @@ Auf diesem Windows-Rechner heißt der Interpreter **`python`** (3.13.12);
     brain_bridge.py      Adapter Bot ↔ brain/ (M2)
     brain/               KI-Kern: state, rules, router, agents, memory,
                          semantic, knowledge, scheduler, llm, report
-    nc/                  153 Fachmodule: db, scraping, restream, oauth, ledger,
+    nc/                  154 Fachmodule: db, scraping, restream, oauth, ledger,
                          i18n, …
     nc/routes/           36 Flask-Blueprints mit 335 weiteren API-Routen
     locales/             de.json, en.json — der Übersetzungskatalog
@@ -1102,6 +1102,15 @@ zum nächsten Keyframe, und kein Decoder-Schalter (`discardcorrupt`,
 `+igndts` waren dagegen sauber. Deshalb wählt `nc/lastvorsorge.py` die
 Drosselstufe schon beim Start. **Wer eine Ersparnis in die Kostentabelle
 schreibt, misst sie vorher** — ungemessen steht dort 1,0.
+
+**`globals()` in einem ausgelagerten Modul ist der Namensraum DIESES
+Moduls.** W4 hat das für `bot.py` gefunden — und `discordbot.py` las den
+Telegram-Bot seit W15 trotzdem so: der Stern-Highlight-Push nach Telegram
+endete immer still. Was ein ausgelagerter Teil vom Bot braucht, kommt über
+den Kontext, und ein Wert, der erst später entsteht, als **Getter**
+(v4.2-W109, `bot_app_holen`). Ebenso: **Befehle stehen in `nc/befehle.py`**,
+nirgends sonst — wer einen Befehl hinzufügt, trägt ihn dort ein, und Telegram,
+Discord, `/help` und das Telegram-Menü folgen von selbst.
 
 **Einmal-`await` ohne Supervisor.** Jeder Long-Running-Client braucht Reconnect
 mit Backoff **und** ein Abbruchkriterium für deterministische Fehler.

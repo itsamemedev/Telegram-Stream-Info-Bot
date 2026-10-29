@@ -32,7 +32,7 @@ fetch the excerpt:
     python tools/ncpatch.py docs                       # documentation numbers vs. the source
 
 `find` answers from `.claude/INDEX.md` — 361 routes (34 in `bot.py`, 327 in
-`nc/routes/`), 45 slash commands, 475 functions with line numbers. After changes
+`nc/routes/`), 65 slash commands, 475 functions with line numbers. After changes
 to routes, commands or top-level functions, run `map` again. Details: skill
 `nc-navigation`.
 
@@ -48,7 +48,7 @@ On the author's Windows machine the interpreter is called **`python`**
                          routes), scraper, recorder, restream, schema (init_db).
                          Was called bot_v37.py until v4.0-W119 — keep that in
                          mind when searching old notes and patch files.
-    discordbot.py        the Discord part (45 slash commands), lifted out in
+    discordbot.py        the Discord part (65 slash commands), lifted out in
                          v4.2-W15. It lives bot-side because it imports
                          discord.py and opens a gateway — not under nc/, which
                          stays bot-free. Everything reaches it via starte(ctx);

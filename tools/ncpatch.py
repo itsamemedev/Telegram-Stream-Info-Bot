@@ -415,6 +415,32 @@ def _schleifen_befehle(schleife, ruf, baum) -> list:
     return aus
 
 
+def _verzeichnis(root: str):
+    """nc/befehle.py als Modul laden — ohne nc/__init__ und ohne den Bot.
+
+    v4.2-W109: Telegram und Discord registrieren seither aus diesem
+    Verzeichnis, nicht mehr aus Tupel-Listen im Quelltext. Die Namen stehen
+    also nicht mehr woertlich an der Registrierstelle, und ein reiner
+    AST-Leser saehe 0 Telegram-Befehle und 22 Discord-Befehle weniger. Das
+    Modul ist stdlib-only und ohne Seiteneffekt — es zu laden ist billiger
+    und genauer, als seine Tabelle im AST nachzubauen.
+    """
+    import importlib.util
+    pfad = os.path.join(root, "nc", "befehle.py")
+    if not os.path.exists(pfad):
+        return None
+    spec = importlib.util.spec_from_file_location("_ncpatch_befehle", pfad)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def _iter_ruf(schleife) -> str:
+    """Name der Funktion, ueber deren Ergebnis die Schleife laeuft ('' sonst)."""
+    it = schleife.iter
+    return _dec_name(it) if isinstance(it, ast.Call) else ""
+
+
 def _scan(path: str) -> dict:
     """Ein AST-Durchlauf, alle Fakten. Kein Regex auf Quelltext."""
     tree = ast.parse(_read(path))
@@ -469,8 +495,34 @@ def _scan(path: str) -> dict:
                 and _dec_name(c.func).endswith("tree.command")]
         if not rufe:
             continue
+        if _iter_ruf(schleife).endswith("discord_ueber_tg"):
+            # v4.2-W109: die Schleife laeuft ueber das Verzeichnis.
+            vz = _verzeichnis(os.path.dirname(os.path.abspath(path)))
+            if vz is not None:
+                out["slash"].extend((schleife.lineno, b.name,
+                                     vz.beschreibung(b)[:60])
+                                    for b in vz.discord_ueber_tg())
+            continue
         out["slash"].extend(_schleifen_befehle(schleife, rufe[0].func, tree))
     return out
+
+
+def _telegram_namen(root: str) -> set:
+    """Die registrierten Telegram-Befehle — aus der Registrierschleife in
+    bot.py. Laeuft sie ueber das Verzeichnis (seit W109), kommen die Namen
+    von dort; eine woertliche Tupel-Liste wird weiter gelesen."""
+    namen: set = set()
+    for node in ast.walk(ast.parse(_read(os.path.join(root, "bot.py")))):
+        if not isinstance(node, ast.For) or "CommandHandler" not in ast.dump(node):
+            continue
+        if _iter_ruf(node).endswith("telegram_handler"):
+            vz = _verzeichnis(root)
+            if vz is not None:
+                namen |= {n for n, _h in vz.telegram_handler()}
+        elif isinstance(node.iter, ast.Tuple):
+            namen |= {e.elts[0].value for e in node.iter.elts
+                      if isinstance(e, ast.Tuple) and isinstance(e.elts[0], ast.Constant)}
+    return namen
 
 
 # v4.2-W15: der Discord-Teil ist aus dem Monolithen heraus. Er steht bewusst
@@ -700,13 +752,7 @@ def _kennzahlen(root: str) -> tuple[dict, dict]:
 
     # Telegram-Befehle stehen als Tupel-Liste in der Registrierung, nicht als
     # Dekorator — deshalb ueber den AST statt ueber _scan.
-    tg = 0
-    for node in ast.walk(ast.parse(_read(os.path.join(root, "bot.py")))):
-        if not isinstance(node, ast.For) or not isinstance(node.iter, ast.Tuple):
-            continue
-        if "CommandHandler" not in ast.dump(node):
-            continue
-        tg = max(tg, len(node.iter.elts))
+    tg = len(_telegram_namen(root))
 
     env = os.path.join(root, ".env.example")
     variablen = len({m.group(1) for m in re.finditer(
@@ -754,16 +800,9 @@ def _befehle(root: str) -> dict[str, set[str]]:
     discord = {name for _, name, _
                in _scan(os.path.join(root, DISCORD_DATEI))["slash"]}
 
-    # Telegram registriert ueber eine Tupel-Liste, nicht ueber Dekoratoren.
-    telegram: set[str] = set()
-    for node in ast.walk(ast.parse(_read(pfad))):
-        if (isinstance(node, ast.For) and isinstance(node.iter, ast.Tuple)
-                and "CommandHandler" in ast.dump(node)):
-            namen = {e.elts[0].value for e in node.iter.elts
-                     if isinstance(e, ast.Tuple) and isinstance(e.elts[0], ast.Constant)}
-            if len(namen) > len(telegram):
-                telegram = namen
-    return {"Discord": discord, "Telegram": telegram}
+    # Telegram registriert ueber das Verzeichnis (W109), nicht ueber Dekoratoren.
+    del pfad
+    return {"Discord": discord, "Telegram": _telegram_namen(root)}
 
 
 def _slug(titel: str) -> str:

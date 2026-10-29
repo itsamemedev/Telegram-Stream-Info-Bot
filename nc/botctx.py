@@ -22,8 +22,9 @@ ohne dass eine einzige Route etwas davon hätte. Zwei Kontexte, zwei Grenzen.
   Tippfehler fällt damit BEIM START auf, nicht nachts um drei in einem
   Slash-Command als `KeyError`.
 * Die Telegram-Befehle, die Discord mitbenutzt, sind ebenfalls ein Wörterbuch
-  (`befehle`). Sie sind KEINE Discord-Funktionen: `/sys_diag` in Discord ruft
-  denselben `diag`-Handler wie `/diag` in Telegram. Genau deshalb dürfen sie
+  (`befehle`). Sie sind KEINE Discord-Funktionen: `/diag` in Discord ruft
+  denselben `diag`-Handler wie `/diag` in Telegram (bis v4.2-W109 hiess er
+  dort `/sys_diag`). Genau deshalb dürfen sie
   nicht mitwandern — sie sind die geteilte Befehlsschicht.
 
 `.env` wird an genau EINER Stelle gelesen, nämlich in `bot.py`. Zwei Dateien
@@ -33,13 +34,13 @@ auseinanderlaufen kann — und `tools/gen_env_example.py` müsste beide kennen.
 
 from dataclasses import dataclass
 
-# Telegram-Handler, die die Discord-Slash-Commands (sys_*) mitbenutzen.
-# Sie leben weiter in bot.py; hier steht nur, welche der Discord-Teil erwartet.
-BEFEHLE = (
-    "pause_tracking", "resume_tracking", "stoprec", "cleanup", "quota",
-    "sysres", "topusers", "summary_cmd", "logs_cmd", "diag", "aireset",
-    "teststream", "bulkadd", "live", "cookies_cmd",
-)
+from nc import befehle as _nc_befehle
+
+# Telegram-Handler, die Discord ueber den Shim mitbenutzt. Sie leben weiter in
+# bot.py. v4.2-W109: die Liste ist ABGELEITET aus nc/befehle.py — vorher stand
+# sie hier ein zweites Mal von Hand, neben der Telegram-Liste in run_bot() und
+# der _PAR_CMDS-Tabelle in discordbot.py. Drei Listen fuer denselben Zweck.
+BEFEHLE = tuple(sorted({b.tg_handler for b in _nc_befehle.discord_ueber_tg()}))
 
 # Konfigurationswerte aus .env, die der Discord-Teil liest. Nur-lesend.
 SCHALTER = (
@@ -103,6 +104,11 @@ class BotKontext:
     kick_mod: object            # _KICK_MOD, der Moderator (Statistik + Lernen)
     fehler_schlange: object     # _DC_ERR_QUEUE, vom Logging-Handler gefüllt
     boot_ts: float              # _BOOT_TS
+    # v4.2-W109: ein GETTER, kein Wert — die Telegram-Application entsteht
+    # erst in run_bot(). Vorher las discordbot.py `globals().get("bot_app")`
+    # im EIGENEN Namensraum, wo es sie nie gab: der Stern-Highlight-Push nach
+    # Telegram endete immer still bei `if not app: return`.
+    bot_app_holen: object
 
     befehle: dict               # siehe BEFEHLE
     schalter: dict              # siehe SCHALTER

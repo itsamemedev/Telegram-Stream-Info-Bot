@@ -11,6 +11,61 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Geändert — ein Befehlsverzeichnis für Telegram und Discord, `sys_` ist weg (v4.2 W109)
+
+Gemeldet: „Telegram und Discord sind immer noch nicht vereinheitlicht." Der
+Bestand: zwei Listen (die Telegram-Tupel in `run_bot()` und die Discord-Tabelle
+`_PAR_CMDS`, dazu eine dritte in `nc/botctx.py`), 15 Discord-Befehle unter
+**anderem Namen** (`/sys_pause` für `/pause`, `/sys_res` für `/sysres` …), zwei
+Discord-Befehle als Kopie (`/sys_report` wörtlich wie `/report`,
+`/sys_unpause` ohne Telegram-Gegenstück), sieben Telegram-Befehle ohne
+Discord-Gegenstück, und eine handgeschriebene Discord-Hilfe mit 27 von 45
+Befehlen.
+
+Neu `nc/befehle.py`: jeder Befehl genau einmal — Name, Rubrik, Plattformen,
+Ausführungsweg auf Discord, Recht. Daraus registrieren Telegram (31 Befehle)
+und Discord (65), daraus wird `/help` auf beiden Plattformen gebaut, und
+daraus setzt der Bot beim Start das **Telegram-Befehlsmenü** (`/` tippen —
+das wurde bisher nie gesetzt).
+
+- **29 gemeinsame Befehle, gleicher Name auf beiden Plattformen.** Die 22
+  Betreiberbefehle darunter laufen auf Discord über den Original-Telegram-
+  Handler (eine Logik, kein Duplikat): `tiktok live track_exact pause resume
+  unpause bulkadd stoprec cleanup quota teststream topusers summary aireset
+  brain report cookies sysres logs diag einnahmen about`. Neu auf Discord:
+  `tiktok`, `track_exact`, `brain`, `einnahmen`, `about`; neu auf Telegram:
+  `/unpause`, `/help`.
+- **Nur Telegram, mit Absicht:** `/start` und `/update` — ein Update spielt
+  Code auf den Server und gehört an die Freischaltliste, nicht an eine
+  Discord-Rolle, die ein Moderator vergeben kann.
+- **Rechte:** jeder Telegram-Handler prüft die Freischaltung als erste
+  Anweisung (alle 31 nachgeprüft), jeder Shim-Befehl braucht auf Discord die
+  Admin-Rolle. **Sicherheitsbefund:** `/untrack` stand auf Discord jedem
+  Servermitglied offen und löschte das Tracking der ganzen Gruppe, gleich wer
+  es angelegt hatte. Jetzt: Admin oder der Anleger (`trackings.added_by`).
+  `/track` bleibt auf Discord offen (Quota je Mitglied, B63).
+- **Nebenbefund:** `discordbot.py` las den Telegram-Bot mit
+  `globals().get("bot_app")` — im **eigenen** Namensraum, wo es ihn nie gab.
+  Der Stern-Highlight-Push nach Telegram (F84) endete deshalb seit W15
+  **immer** still. Jetzt ein Getter über den Kontext (`bot_app_holen`), und
+  der Fall „Telegram nicht bereit" steht als Warnung im Log.
+
+`tools/ncpatch.py` liest die Befehle jetzt aus dem Verzeichnis (sonst sähe es
+0 Telegram-Befehle und 22 Discord-Befehle zu wenig), `tools/i18n_extract.py`
+sammelt dessen Texte ein. Vier ältere Verträge hingen am alten Aufbau
+(`_PAR_CMDS`, `("stats", stats)`, „45 dekoriert", die Hilfe-Überschrift) — nur
+die Anker sind gewandert, die Aussagen gelten unverändert.
+
+Vertrag `_test_v42_w109_ein_befehlsverzeichnis`, 13 von 13 Mutationsproben —
+eine erst im zweiten Durchgang (Befund am Vertrag: er prüfte nur „Betreiber
+hat einen Riegel", nicht „als offen verzeichnet, prüft aber doch"). Dabei ein
+Fehler in `pruefen()` gefunden: die Doppelnamen-Prüfung verglich mit dem beim
+Import gebauten `NACH_NAME` und hätte ein späteres Doppel nie gesehen.
+
+**Für die Bedienung:** Discord synchronisiert die Befehle beim nächsten Start;
+die alten `/sys_…`-Einträge verschwinden, die neuen Namen erscheinen. Wer sie
+gewohnt war: einfach den Telegram-Namen nehmen.
+
 ### Behoben — Pixelsalat bei mehreren Live-Nutzern: die Drossel kam zu spät (v4.2 W108)
 
 Gemeldet: „Pixelsalat, wenn mehrere getrackte Nutzer live sind und

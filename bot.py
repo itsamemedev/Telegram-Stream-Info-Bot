@@ -606,6 +606,7 @@ from nc import restreamcmd as _nc_rscmd  # v4.2-W16: die ffmpeg-Zeile des Relays
 from nc import reccmd as _nc_reccmd  # v4.2-W17: die Kommandozeilen des Recorders
 from nc import tonspur as _nc_tonspur  # v4.2-W106: jede Ausgabe traegt eine Tonspur
 from nc import lastvorsorge as _nc_lastvorsorge  # v4.2-W108: Drossel vor dem Pixelsalat
+from nc import befehle as _nc_befehle  # v4.2-W109: ein Verzeichnis fuer Telegram und Discord
 from nc import aufnahmefolge as _nc_folge  # v4.2-W18: die Eskalationsrechnung
 from nc import aufnahmekategorie as _nc_kat  # v4.2-W23: warum eine Aufnahme so endete
 from nc import audiotap as _nc_audiotap  # v4.2-W46: warum der Audio-Tap starb
@@ -20282,6 +20283,7 @@ def _discord_kontext():
         azrael_chat=azrael_chat, clip_moment=clip_moment,
         einladung_merken=_discord_einladung_merken,
         kick_mod=_KICK_MOD, fehler_schlange=_DC_ERR_QUEUE, boot_ts=_BOOT_TS,
+        bot_app_holen=lambda: globals().get("bot_app"),
         befehle=befehle, schalter=schalter)
 
 
@@ -22893,8 +22895,66 @@ async def einnahmen_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                         parse_mode=ParseMode.HTML)
 
 
+async def unpause_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """v4.2-W109: /unpause @user — eine vom Brain auto-pausierte Quelle wieder
+    aktivieren. Gab es bis hierher nur als Discord-Kopie (/sys_unpause); jetzt
+    ist das der eine Handler, Discord ruft ihn ueber den Shim."""
+    if not _is_authorized(update): return
+    u = clean_username(context.args[0]) if context.args else ""
+    if not u:
+        await update.message.reply_text(_nc_i18n.t("Bitte mit Namen: /unpause @user")); return
+
+    def _db():
+        with db_conn() as conn:
+            cur = conn.execute("UPDATE trackings SET paused=0 WHERE "
+                               "username=? AND paused=1", (u,))
+            conn.commit()
+            return cur.rowcount
+    n = await asyncio.to_thread(_db)
+    try:
+        from brain import get_brain as _gb
+        _b = _gb()
+        with _b._db_lock, _b._conn() as _c:
+            _c.execute("DELETE FROM paused_sources WHERE who=? OR who=?", (u, "@" + u))
+    except Exception as e:
+        # Die Discord-Kopie schluckte das still. Bleibt der Eintrag stehen,
+        # pausiert das Brain die Quelle beim naechsten Durchlauf erneut —
+        # „reaktiviert" waere dann gelogen.
+        log.warning("/unpause @%s: Brain-Pause nicht geloescht (%s) — die "
+                    "Quelle kann erneut pausiert werden.", u, e)
+    await update.message.reply_text(
+        _nc_i18n.t(f"✅ @{u} reaktiviert.") if n else _nc_i18n.t(f"@{u} war nicht pausiert."))
+
+
+async def hilfe_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """v4.2-W109: /help — die Befehlsliste, gebaut aus nc/befehle.py."""
+    if not _is_authorized(update): return
+    await update.message.reply_text(
+        _nc_i18n.t("Verfügbare Befehle") + "\n" +
+        _nc_befehle.hilfe_text(_nc_befehle.TG, _nc_i18n.t))
+
+
+async def _telegram_befehlsmenue(app):
+    """v4.2-W109: das Menue, das Telegram beim Tippen von „/" zeigt.
+
+    Bis hierher wurde es nie gesetzt — Telegram zeigte entweder nichts oder
+    eine Liste, die irgendwann von Hand in BotFather eingetragen wurde und
+    seither nicht mitwuchs. Jetzt aus nc/befehle.py, also dieselbe Liste,
+    die auch registriert ist.
+    """
+    try:
+        from telegram import BotCommand
+        await app.bot.set_my_commands([
+            BotCommand(b.name, _nc_befehle.beschreibung(b, _nc_i18n.t))
+            for b in _nc_befehle.fuer(_nc_befehle.TG)])
+    except Exception as e:
+        log.warning("Telegram-Befehlsmenue nicht gesetzt (%s) — die Befehle "
+                    "funktionieren trotzdem, Telegram schlaegt sie nur beim "
+                    "Tippen von „/“ nicht vor.", e)
+
+
 async def report_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """V37: /report — Wochenreport (identisch zu Discord /sys_report)."""
+    """V37: /report — Wochenreport. Auf Discord derselbe Handler (seit W109)."""
     if not _is_authorized(update): return
     try:
         from brain import get_brain
@@ -23034,29 +23094,13 @@ async def run_bot():
     global _GLOBAL_SCRAPER
     _GLOBAL_SCRAPER = scraper
 
-    for name, fn in (("start", start), ("tiktok", tiktok), ("live", live),
-                     ("track", track), ("untrack", untrack),
-                     ("tracklist", tracklist), ("about", about),
-                     ("diag", diag), ("teststream", teststream),       # F11
-                     ("ai", ai), ("aireset", aireset),                 # F14
-                     ("recstatus", recstatus), ("cleanup", cleanup),    # F19
-                     ("stats", stats),                                  # F19
-                     ("topusers", topusers),                            # F48
-                     ("cookies", cookies_cmd),                          # F52
-                     ("pause", pause_tracking),                         # F53
-                     ("resume", resume_tracking),                       # F53
-                     ("sysres", sysres),                                # F54
-                     ("summary", summary_cmd),                          # F55
-                     ("bulkadd", bulkadd),                              # F56
-                     ("stoprec", stoprec),                              # F59
-                     ("quota", quota),                                  # F66
-                     ("logs", logs_cmd),                                # F68
-                     ("brain", brain_cmd),                              # V37
-                     ("einnahmen", einnahmen_cmd),                      # B120
-                     ("track_exact", track_exact),                      # B125
-                     ("report", report_cmd),                            # V37
-                     ("update", update_cmd)):                           # v4.0-W115
-        app.add_handler(CommandHandler(name, fn))
+    # v4.2-W109: aus nc/befehle.py. Hier stand eine eigene Tupel-Liste, und
+    # Discord hatte eine zweite (mit sys_-Praefix) — zwei Listen, die schon
+    # auseinandergelaufen waren: sieben Telegram-Befehle fehlten auf Discord.
+    # globals()[...] statt einer Zuordnung von Hand: ein Handlername, den es
+    # nicht gibt, bricht hier beim Start ab, nicht beim ersten Aufruf.
+    for name, handler in _nc_befehle.telegram_handler():
+        app.add_handler(CommandHandler(name, globals()[handler]))
     # v4.1-W7: Sprache des Absenders setzen, BEVOR irgendein Handler laeuft.
     # Gruppe -1 laeuft vor Gruppe 0 (allen anderen); block=False laesst das
     # Update danach normal weiterlaufen. Ohne beides bekaeme entweder der
@@ -23122,6 +23166,7 @@ async def run_bot():
         # Fehler beim VERARBEITEN eines Updates, nicht beim Abholen.
         await app.updater.start_polling(error_callback=_telegram_polling_fehler)
         log.info("Bot läuft — Telegram-Polling AKTIV, Befehle empfangsbereit.")
+        await _telegram_befehlsmenue(app)
     except Exception as e:
         log.error("Telegram-Polling FEHLGESCHLAGEN: %s — Telegram-Befehle sind AUS. "
                   "Häufigste Ursachen: ungültiges/leeres BOT_TOKEN, Netz/Proxy, oder "

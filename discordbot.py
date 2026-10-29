@@ -41,6 +41,7 @@ from nc import badwords as _nc_badwords
 from nc import brainstate as _nc_brainstate
 from nc import channels as _nc_channels
 from nc import discordrang as _nc_rang
+from nc import befehle as _nc_befehle
 from nc import discordstate as _nc_discordstate
 from nc import i18n as _nc_i18n
 from nc import modheuristics as _nc_mod
@@ -104,22 +105,11 @@ _KICK_MOD = None
 _DC_ERR_QUEUE = None
 _BOOT_TS = None
 
-# Telegram-Handler, die die sys_*-Slash-Commands mitbenutzen.
-pause_tracking = None
-resume_tracking = None
-stoprec = None
-cleanup = None
-quota = None
-sysres = None
-topusers = None
-summary_cmd = None
-logs_cmd = None
-diag = None
-aireset = None
-teststream = None
-bulkadd = None
-live = None
-cookies_cmd = None
+# Telegram-Handler, die Discord ueber den Shim mitbenutzt — Name -> Funktion.
+# v4.2-W109: ein Woerterbuch statt 15 einzelner Platzhalter; welche es sind,
+# steht in nc/befehle.py.
+_TG_HANDLER = {}
+_bot_app_holen = None
 
 # Konfiguration aus .env — gelesen wird sie ausschliesslich in bot.py.
 ALLOWED_CHAT_IDS = None
@@ -163,7 +153,7 @@ DISCORD_XP_LIVE_BOOST = None
 def _uebernehmen(ctx):
     """Belegt die Platzhalter oben aus dem Kontext. Genau einmal, beim Start."""
     global log, _spawn, _loop_fehler, _modlog, _auto_on, _cfg_get, _cfg_set, _discord_notify, _discord_post_user, _disc_state_get, _disc_state_set, _whisper_transcribe, add_tracking, azrael_chat, clip_moment, _einladung_merken, _KICK_MOD, _DC_ERR_QUEUE, _BOOT_TS
-    global pause_tracking, resume_tracking, stoprec, cleanup, quota, sysres, topusers, summary_cmd, logs_cmd, diag, aireset, teststream, bulkadd, live, cookies_cmd
+    global _bot_app_holen
     global ALLOWED_CHAT_IDS, ALLOWED_USER_IDS, AZRAEL_MAX_CALLS_MIN, CLIP_DIR, CLIP_HIGHLIGHT_STARS, CLIP_HIGHLIGHT_TO_TG, DB_BACKEND, DB_PATH, DISCORD_BOT_TOKEN, DISCORD_GUILD_ID, DISCORD_MODLOG_CHANNEL, DISCORD_TRACK_GROUP_ID, DISCORD_WEBHOOK_URL, KICK_CHANNEL_URL, MAX_TRACKINGS_PER_CHAT, CLIP_CMD_COOLDOWN_S, COMMUNITY_HIGHLIGHT_SHARE_ENABLED, DISCORD_ADMIN_ROLE, DISCORD_AI_MOD, DISCORD_AUTOMOD, DISCORD_AUTOMOD_ACTION, DISCORD_AZRAEL_REPLY, DISCORD_CLIP_OF_WEEK, DISCORD_DAILY_STREAK_XP, DISCORD_DAILY_XP, DISCORD_ERROR_CHANNEL, DISCORD_ERROR_PUSH, DISCORD_EVENTS_CHANNEL, DISCORD_LEVELING, DISCORD_LEVELUP_CHANNEL, DISCORD_LIVEBOARD, DISCORD_TARGET_CAP, DISCORD_VOICE_AI, DISCORD_WARN_TIMEOUT_MIN, DISCORD_WEEKLY_DIGEST, DISCORD_XP_LIVE_BOOST
     log = ctx.log
     _spawn = ctx.spawn
@@ -184,21 +174,9 @@ def _uebernehmen(ctx):
     _KICK_MOD = ctx.kick_mod
     _DC_ERR_QUEUE = ctx.fehler_schlange
     _BOOT_TS = ctx.boot_ts
-    pause_tracking = ctx.befehle["pause_tracking"]
-    resume_tracking = ctx.befehle["resume_tracking"]
-    stoprec = ctx.befehle["stoprec"]
-    cleanup = ctx.befehle["cleanup"]
-    quota = ctx.befehle["quota"]
-    sysres = ctx.befehle["sysres"]
-    topusers = ctx.befehle["topusers"]
-    summary_cmd = ctx.befehle["summary_cmd"]
-    logs_cmd = ctx.befehle["logs_cmd"]
-    diag = ctx.befehle["diag"]
-    aireset = ctx.befehle["aireset"]
-    teststream = ctx.befehle["teststream"]
-    bulkadd = ctx.befehle["bulkadd"]
-    live = ctx.befehle["live"]
-    cookies_cmd = ctx.befehle["cookies_cmd"]
+    _TG_HANDLER.clear()
+    _TG_HANDLER.update(ctx.befehle)
+    _bot_app_holen = ctx.bot_app_holen
     ALLOWED_CHAT_IDS = ctx.schalter["ALLOWED_CHAT_IDS"]
     ALLOWED_USER_IDS = ctx.schalter["ALLOWED_USER_IDS"]
     AZRAEL_MAX_CALLS_MIN = ctx.schalter["AZRAEL_MAX_CALLS_MIN"]
@@ -676,8 +654,12 @@ async def _run_tg_handler(inter, fn, args_str=""):
                                              username="discord"),
         effective_chat=types.SimpleNamespace(id=_par_chat_id()),
         effective_message=msg, message=msg, callback_query=None)
+    # application: der echte Telegram-Bot. /tiktok liest daraus den Scraper
+    # (context.application.bot_data["scraper"]); ohne ihn starb der Handler
+    # mit AttributeError, und der Shim meldete nur „Handler-Fehler".
     ctx = types.SimpleNamespace(args=(args_str or "").split(),
                                 bot=_ParBot(_sink),
+                                application=_bot_app_holen() if _bot_app_holen else None,
                                 user_data={}, chat_data={}, bot_data={})
     try:
         await fn(upd, ctx)
@@ -717,45 +699,13 @@ async def _ensure_team_roles(guild):
 # liegen sie ebenso tief. Das macht den Umzug pruefbar.
 # ---------------------------------------------------------------------------
 
-def _reg_info(tree):
-    """Info und Telegram-Paritaet.
+def _reg_tracking(tree):
+    """/track und /untrack.
 
-    v4.2-W72: aus _discord_run_once herausgeloest. Diese Befehle brauchen
-    von dort nichts ausser `tree` — gemessen, nicht angenommen.
+    v4.2-W109: aus _reg_info herausgeloest. Die Rechtepruefung an /untrack
+    (Admin oder Anleger) hob _reg_info ueber 100 Zeilen — die Sperre aus W72
+    meldet das zu Recht; zwei kleine statt einer, die wieder waechst.
     """
-    # v4.2-W71: _is_admin steht jetzt auf Modulebene (brauchte keine
-    # einzige Closure-Variable).
-
-    # v4.2-W72: _guard steht jetzt auf Modulebene.
-
-    # ───────── INFO / Telegram-Parität ─────────
-    @tree.command(name="status", description=_nc_i18n.t("Azrael Sentinel Status: Trackings, Live, Restream"))
-    async def _c_status(inter):
-        try:
-            with db_conn() as conn:
-                at = conn.execute("SELECT COUNT(*) FROM trackings").fetchone()[0]
-                ln = conn.execute("SELECT COUNT(*) FROM trackings WHERE last_live=1").fetchone()[0]
-                rc = conn.execute("SELECT COUNT(*) FROM recordings WHERE deleted_at IS NULL").fetchone()[0]
-            act = _restream_active()
-            rs = ("@" + str(act["user"])) if act.get("user") else "— inaktiv"
-            await inter.response.send_message(
-                _nc_i18n.t(f"**Azrael Sentinel**\n• Trackings: `{at}`   • Live: `{ln}`   • Recordings: `{rc}`\n• Restream: `{rs}`"))
-        except Exception as e:
-            await inter.response.send_message(_nc_i18n.t(f"Fehler: {e}"), ephemeral=True)
-    @tree.command(name="tracklist", description=_nc_i18n.t("Getrackte TikTok-User dieses Servers"))
-    async def _c_tracklist(inter):
-        gid = DISCORD_TRACK_GROUP_ID or (inter.guild_id or 0)   # B63: Schalter wurde ignoriert
-        try:
-            with db_conn() as conn:
-                rows = conn.execute("SELECT username, last_live FROM trackings WHERE group_id=? "
-                                    "ORDER BY username", (gid,)).fetchall()
-            if not rows:
-                await inter.response.send_message(_nc_i18n.t("Keine Trackings auf diesem Server. `/track <user>`"), ephemeral=True)
-                return
-            lines = [("🔴 " if r["last_live"] else "⚪ ") + "@" + r["username"] for r in rows]
-            await inter.response.send_message(_nc_i18n.t("**Trackings**\n" + "\n".join(lines[:50])))
-        except Exception as e:
-            await inter.response.send_message(_nc_i18n.t(f"Fehler: {e}"), ephemeral=True)
     @tree.command(name="track", description=_nc_i18n.t("TikTok-User tracken"))
     @app_commands.describe(username="TikTok-Username (ohne @)")
     async def _c_track(inter, username: str):
@@ -794,8 +744,64 @@ def _reg_info(tree):
         gid = DISCORD_TRACK_GROUP_ID or (inter.guild_id or 0)   # B63: Schalter wurde ignoriert
         u = username.strip().lstrip("@")
         try:
+            # v4.2-W109: stand jedem Servermitglied offen und loeschte das
+            # Tracking der ganzen Gruppe, gleich wer es angelegt hatte. Auf
+            # Telegram darf das nur ein freigeschalteter Nutzer. Jetzt:
+            # Admin, oder wer es angelegt hat (trackings.added_by) — /track
+            # ist auf Discord fuer jeden offen, also gehoert dem Anleger auch
+            # das Zuruecknehmen.
+            if not _is_admin(inter):
+                row = await db_async(lambda c: c.execute(
+                    "SELECT added_by FROM trackings WHERE group_id=? AND username=?",
+                    (gid, u)).fetchone())
+                if row is None or row["added_by"] != inter.user.id:
+                    await inter.response.send_message(_nc_i18n.t(
+                        "⛔ Nur Admins oder wer das Tracking angelegt hat."),
+                        ephemeral=True)
+                    return
             await asyncio.to_thread(_nc_trackingdb.remove_tracking, gid, u)
             await inter.response.send_message(_nc_i18n.t(f"🗑 @{u} wird nicht mehr getrackt"))
+        except Exception as e:
+            await inter.response.send_message(_nc_i18n.t(f"Fehler: {e}"), ephemeral=True)
+
+
+def _reg_info(tree):
+    """Info und Telegram-Paritaet.
+
+    v4.2-W72: aus _discord_run_once herausgeloest. Diese Befehle brauchen
+    von dort nichts ausser `tree` — gemessen, nicht angenommen.
+    """
+    # v4.2-W71: _is_admin steht jetzt auf Modulebene (brauchte keine
+    # einzige Closure-Variable).
+
+    # v4.2-W72: _guard steht jetzt auf Modulebene.
+
+    # ───────── INFO / Telegram-Parität ─────────
+    @tree.command(name="status", description=_nc_i18n.t("Azrael Sentinel Status: Trackings, Live, Restream"))
+    async def _c_status(inter):
+        try:
+            with db_conn() as conn:
+                at = conn.execute("SELECT COUNT(*) FROM trackings").fetchone()[0]
+                ln = conn.execute("SELECT COUNT(*) FROM trackings WHERE last_live=1").fetchone()[0]
+                rc = conn.execute("SELECT COUNT(*) FROM recordings WHERE deleted_at IS NULL").fetchone()[0]
+            act = _restream_active()
+            rs = ("@" + str(act["user"])) if act.get("user") else "— inaktiv"
+            await inter.response.send_message(
+                _nc_i18n.t(f"**Azrael Sentinel**\n• Trackings: `{at}`   • Live: `{ln}`   • Recordings: `{rc}`\n• Restream: `{rs}`"))
+        except Exception as e:
+            await inter.response.send_message(_nc_i18n.t(f"Fehler: {e}"), ephemeral=True)
+    @tree.command(name="tracklist", description=_nc_i18n.t("Getrackte TikTok-User dieses Servers"))
+    async def _c_tracklist(inter):
+        gid = DISCORD_TRACK_GROUP_ID or (inter.guild_id or 0)   # B63: Schalter wurde ignoriert
+        try:
+            with db_conn() as conn:
+                rows = conn.execute("SELECT username, last_live FROM trackings WHERE group_id=? "
+                                    "ORDER BY username", (gid,)).fetchall()
+            if not rows:
+                await inter.response.send_message(_nc_i18n.t("Keine Trackings auf diesem Server. `/track <user>`"), ephemeral=True)
+                return
+            lines = [("🔴 " if r["last_live"] else "⚪ ") + "@" + r["username"] for r in rows]
+            await inter.response.send_message(_nc_i18n.t("**Trackings**\n" + "\n".join(lines[:50])))
         except Exception as e:
             await inter.response.send_message(_nc_i18n.t(f"Fehler: {e}"), ephemeral=True)
     @tree.command(name="ai", description=_nc_i18n.t("AZRAEL / KI fragen (Text oder Sprachnachricht)"))
@@ -1359,17 +1365,13 @@ def _reg_betrieb(tree):
             await inter.followup.send(_nc_i18n.t(f"Fehler: {e}"), ephemeral=True)
     @tree.command(name="help", description=_nc_i18n.t("Alle Bot-Befehle anzeigen"))
     async def _c_help(inter):
+        # v4.2-W109: gebaut aus nc/befehle.py. Der handgeschriebene Absatz,
+        # der hier stand, nannte 27 von 45 Befehlen — die sys_*-Befehle kein
+        # einziges Mal. Wer kein Admin ist, sieht nur, was er benutzen darf.
         await inter.response.send_message(
-            "**🦇 Azrael Sentinel — Befehle**\n"
-            "**Tracking:** `/track` `/untrack` `/tracklist` `/livenow` `/recstatus` `/clips` `/stats` `/topstreamers` `/streaminfo`\n"
-            "**Clips:** `/clip` — Highlight vom laufenden Stream schneiden · ⭐ voten fürs Clip-of-the-Week\n"
-            "**Streamer folgen:** `/follow` `/unfollow` — Live-Ping nur für deine Streamer\n"
-            "**KI:** `/ai <frage>` · `/ask <frage>` — AZRAEL, der KI-Community-Assistent\n"
-            "**Community:** `/rank` `/profile` `/leaderboard` `/daily` (Streak-XP!) `/clipoftheweek`\n"
-            "**Events:** `/event` (Admin) · `/events` — Ankündigungen mit Countdown\n"
-            "**Moderation (Admin):** `/warn` `/warnings` `/clearwarns` `/purge`\n"
-            "**Setup (Admin):** `/setup_community` `/setup_targets` `/post_test`\n"
-            "**Server (Admin):** `/create_channel` `/create_voice` `/create_category` `/create_role`",
+            "**🦇 Azrael Sentinel — " + _nc_i18n.t("Verfügbare Befehle") + "**\n" +
+            _nc_befehle.hilfe_text(_nc_befehle.DC, _nc_i18n.t,
+                                   ist_betreiber=_is_admin(inter)),
             ephemeral=True)
     @tree.command(name="follow", description=_nc_i18n.t("Bei Live-Gang eines Streamers gepingt werden"))
     @app_commands.describe(username="TikTok-Username")
@@ -1493,43 +1495,10 @@ def _reg_system(tree):
     v4.2-W72: aus _discord_run_once herausgeloest. Diese Befehle brauchen
     von dort nichts ausser `tree` — gemessen, nicht angenommen.
     """
-    @tree.command(name="sys_unpause", description=_nc_i18n.t("Auto-pausierte Quelle wieder aktivieren (Admin)"))
-    @app_commands.describe(username="TikTok-Username der pausierten Quelle")
-    async def _c_sys_unpause(inter, username: str):
-        if not _is_admin(inter):
-            await inter.response.send_message(_nc_i18n.t("Nur Admins."), ephemeral=True); return
-        await inter.response.defer(thinking=True)
-        u = username.strip().lstrip("@")
-        try:
-            with db_conn() as conn:
-                cur = conn.execute("UPDATE trackings SET paused=0 WHERE "
-                                   "username=? AND paused=1", (u,))
-                conn.commit(); n = cur.rowcount
-            try:
-                from brain import get_brain as _gb
-                _b = _gb()
-                with _b._db_lock, _b._conn() as _c:
-                    _c.execute("DELETE FROM paused_sources WHERE who=? OR who=?",
-                               (u, "@" + u))
-            except Exception:
-                pass
-            await inter.followup.send(f"✅ @{u} reaktiviert." if n else
-                                      f"@{u} war nicht pausiert.")
-        except Exception as e:
-            await inter.followup.send(_nc_i18n.t(f"❌ Fehler: {e}"))
-    @tree.command(name="sys_report", description=_nc_i18n.t("Azrael Sentinel Wochenreport (Brain, Markdown)"))
-    async def _c_sys_report(inter):
-        if not _is_admin(inter):
-            await inter.response.send_message(_nc_i18n.t("Nur Admins."), ephemeral=True); return
-        await inter.response.defer(thinking=True)
-        try:
-            from brain import get_brain
-            from brain import report as _brain_report
-            md = await asyncio.to_thread(_brain_report.weekly, get_brain())
-        except Exception as e:
-            await inter.followup.send(_nc_i18n.t(f"❌ Report fehlgeschlagen: {e}")); return
-        for i in range(0, len(md), 1900):
-            await inter.followup.send(_nc_i18n.t(md[i:i + 1900]))
+    # v4.2-W109: /sys_unpause und /sys_report standen hier als eigene Kopien.
+    # /report war woertlich der Rumpf des Telegram-Handlers (laut Docstring
+    # „identisch"), /unpause gab es nur hier. Beide laufen jetzt als /report
+    # und /unpause ueber den Telegram-Handler — eine Logik, siehe nc/befehle.py.
     # =================== ENDE V37-W-PAR ======================================
 
     @tree.command(name="streaminfo", description=_nc_i18n.t("Kompakt-Karte eines Streamers: Aktivität, Aufnahmen, Follower-Trend"))
@@ -1961,6 +1930,7 @@ async def _discord_run_once():
     # sie haengen an Sitzungszustand (client, _disc_clip_last) oder an
     # einer Funktion, die selbst client braucht.
     _reg_info(tree)
+    _reg_tracking(tree)
     _reg_server(tree)
     _reg_rollen(tree)
     _reg_moderation(tree)
@@ -2103,33 +2073,21 @@ async def _discord_run_once():
 
     # v4.2-W72: _run_tg_handler steht jetzt auf Modulebene.
 
-    _PAR_CMDS = (
-        ("sys_pause",    "Tracking pausieren (TG: /pause @user)",        pause_tracking,  True),
-        ("sys_resume",   "Tracking fortsetzen (TG: /resume @user)",      resume_tracking, True),
-        ("sys_stoprec",  "Aufnahme grazil stoppen (TG: /stoprec @user)", stoprec,         True),
-        ("sys_cleanup",  "Alte Aufnahmen aufräumen (TG: /cleanup)",      cleanup,         True),
-        ("sys_quota",    "Speicher-Quota (TG: /quota)",                  quota,           False),
-        ("sys_res",      "System-Ressourcen (TG: /sysres)",              sysres,          False),
-        ("sys_topusers", "Top-Streamer-Statistik (TG: /topusers)",       topusers,        False),
-        ("sys_summary",  "Tageszusammenfassung (TG: /summary)",          summary_cmd,     False),
-        ("sys_logs",     "Letzte Fehler-Logs (TG: /logs)",               logs_cmd,        True),
-        ("sys_diag",     "Vollständige Diagnose (TG: /diag)",            diag,            False),
-        ("sys_aireset",  "KI-Kontext zurücksetzen (TG: /aireset)",       aireset,         True),
-        ("sys_teststream", "Recorder-Selbsttest (TG: /teststream)",      teststream,      True),
-        ("sys_bulkadd",  "Mehrere User tracken (TG: /bulkadd a b c)",    bulkadd,         True),
-        ("sys_live",     "Live-Check erzwingen (TG: /live @user)",       live,            True),
-        ("sys_cookies",  "Cookie-Status (TG: /cookies)",                 cookies_cmd,     True),
-    )
-    for _pname, _pdesc, _pfn, _pargs in _PAR_CMDS:
-        def _mk(fn=_pfn, wants_args=_pargs):
+    # v4.2-W109: aus nc/befehle.py, unter DEMSELBEN Namen wie auf Telegram.
+    # Vorher stand hier eine eigene Tabelle mit `sys_`-Praefix (/sys_pause
+    # fuer /pause, /sys_res fuer /sysres) — wer beide Plattformen bediente,
+    # musste zwei Namen fuer denselben Befehl kennen.
+    for _bf in _nc_befehle.discord_ueber_tg():
+        def _mk(handler=_bf.tg_handler, wants_args=bool(_bf.args)):
             if wants_args:
                 async def _h(inter, args: str = ""):
-                    await _run_tg_handler(inter, fn, args)
+                    await _run_tg_handler(inter, _TG_HANDLER[handler], args)
             else:
                 async def _h(inter):
-                    await _run_tg_handler(inter, fn)
+                    await _run_tg_handler(inter, _TG_HANDLER[handler])
             return _h
-        tree.command(name=_pname, description=_pdesc[:100])(_mk())
+        tree.command(name=_bf.name,
+                     description=_nc_befehle.beschreibung(_bf, _nc_i18n.t))(_mk())
 
     # ───────── XP/Leveling via on_message ─────────
     # v4.2-W77: _xp_cool steht jetzt auf Modulebene.
@@ -2171,8 +2129,14 @@ async def _discord_run_once():
                 return
             await db_async(lambda c: c.execute(
                 "UPDATE discord_clips SET stars_pushed=1 WHERE id=?", (row["id"],)))
-            app = globals().get("bot_app")
+            # v4.2-W109: war globals().get("bot_app") — im Namensraum DIESES
+            # Moduls, wo es bot_app nie gab. Der Push endete deshalb immer
+            # hier, still, seit der Discord-Teil in W15 ausgelagert wurde.
+            app = _bot_app_holen() if _bot_app_holen else None
             if not app:
+                log.warning("⭐ Highlight @%s (%d Votes): Telegram-Bot nicht "
+                            "bereit — kein Push nach Telegram.",
+                            row["username"], votes)
                 return
             gids = await db_async(lambda c: [r["group_id"] for r in c.execute(
                 "SELECT DISTINCT group_id FROM trackings WHERE username=?",
