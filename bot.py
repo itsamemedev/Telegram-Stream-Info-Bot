@@ -613,6 +613,7 @@ from nc import aufnahmekategorie as _nc_kat  # v4.2-W23: warum eine Aufnahme so 
 from nc import audiotap as _nc_audiotap  # v4.2-W46: warum der Audio-Tap starb
 from nc import meldetakt as _nc_meldetakt  # v4.2-W81: Grund melden ohne Log-Flut
 from nc import logschleuse as _nc_logschleuse  # v4.2-W97: Logging weg vom Event-Loop
+from nc import looplag as _nc_looplag  # v4.2-W117: Loop-Lag in ms, und wer ihn haelt
 from nc import resolvergrund as _nc_rgrund  # v4.2-W81: warum die Aufloesung leer blieb
 from nc import telegramfehler as _nc_tgfehler  # v4.2-W93: warum das Telegram-Polling klemmt
 from nc import aufnahmesitzung as _nc_sitzung  # v4.2-W44: die Klammer um die Segmente EINES Streams
@@ -14288,8 +14289,10 @@ class RestreamManager:
             self._set_status(rid, "idle", err=_msg)
             log.warning("Restream #%d nicht gestartet — %s", rid, _msg)
             return {"ok": False, "error": _msg}
-        with db_conn() as conn:
-            row = conn.execute("SELECT * FROM restreams WHERE id=?", (rid,)).fetchone()
+        # v4.2-W117: neben dem Loop. Unter Plattenlast blockiert SQLite, und
+        # ein Start, der den Loop haelt, haelt auch die laufenden Restreams an.
+        row = await db_async(lambda c: c.execute(
+            "SELECT * FROM restreams WHERE id=?", (rid,)).fetchone())
         if not row:
             return {"ok": False, "error": "Ziel nicht gefunden"}
         # B138: Herkunft von Ingest/Key festhalten. Die DB-Spalten des Ziels
@@ -14679,10 +14682,10 @@ class RestreamManager:
         """V37-SRCFAIL: aktuellen Restream stoppen und den NÄCHSTEN live Ziel
            aus der auto_restream-Liste starten (Round-Robin ab dem aktuellen)."""
         try:
-            with db_conn() as conn:
-                rows = conn.execute(
-                    "SELECT id, source_username FROM restreams "
-                    "WHERE enabled=1 AND auto_restream=1 ORDER BY id").fetchall()
+            # v4.2-W117: neben dem Loop (Begruendung bei start()).
+            rows = await db_async(lambda c: c.execute(
+                "SELECT id, source_username FROM restreams "
+                "WHERE enabled=1 AND auto_restream=1 ORDER BY id").fetchall())
         except Exception:
             rows = []
         # V37-SRCFAIL: diesen Watcher-Task aus der Registry lösen BEVOR stop()
@@ -15005,8 +15008,11 @@ class RestreamManager:
         self._procs.pop(rid, None)
         _restream_tts_stop(rid)                # Feeder/FIFO dieses Procs beenden
         try:
-            with db_conn() as conn:
-                row = conn.execute("SELECT enabled, status, source_username FROM restreams WHERE id=?", (rid,)).fetchone()
+            # v4.2-W117: neben dem Loop — dieser Pfad laeuft bei JEDEM
+            # Prozessende, also genau dann, wenn die Platte unter Last steht.
+            row = await db_async(lambda c: c.execute(
+                "SELECT enabled, status, source_username FROM restreams WHERE id=?",
+                (rid,)).fetchone())
         except Exception:
             row = None
         if (not row) or row["status"] == "stopped" or not row["enabled"]:
@@ -15191,10 +15197,10 @@ class RestreamManager:
         if not _restream_enabled()[0]:
             return
         try:
-            with db_conn() as conn:
-                rows = conn.execute(
-                    "SELECT id, source_username FROM restreams "
-                    "WHERE enabled=1 AND auto_restream=1 ORDER BY id").fetchall()
+            # v4.2-W117: neben dem Loop — der Scheduler laeuft periodisch.
+            rows = await db_async(lambda c: c.execute(
+                "SELECT id, source_username FROM restreams "
+                "WHERE enabled=1 AND auto_restream=1 ORDER BY id").fetchall())
         except Exception:
             return
         if RESTREAM_SINGLE:
@@ -16649,10 +16655,11 @@ async def oracle_handle(sender, content):
     if cmd == "chapters":
         try:
             since = (datetime.now(timezone.utc) - timedelta(hours=12)).isoformat()
-            with db_conn() as conn:
-                rows = conn.execute("SELECT offset_secs, reason, title FROM stream_chapters "
-                                    "WHERE username=? AND created_at >= ? ORDER BY id DESC LIMIT 4",
-                                    (str(user).lstrip("@").lower(), since)).fetchall()
+            # v4.2-W117: neben dem Loop — kommt aus dem Live-Chat.
+            rows = await db_async(lambda c: c.execute(
+                "SELECT offset_secs, reason, title FROM stream_chapters "
+                "WHERE username=? AND created_at >= ? ORDER BY id DESC LIMIT 4",
+                (str(user).lstrip("@").lower(), since)).fetchall())
             if not rows:
                 return f"@{sender} Noch keine Hype-Momente in dieser Session — mach welche! 🔥"
             parts = [f"+{_fmt_offset(r['offset_secs'])} {r['title'] or r['reason'] or 'Hype'}" for r in reversed(rows)]
@@ -16804,10 +16811,11 @@ async def _director_finalize(username):
     u = str(username or "").lstrip("@").lower()
     try:
         since = (datetime.now(timezone.utc) - timedelta(hours=12)).isoformat()
-        with db_conn() as conn:
-            rows = conn.execute("SELECT id, offset_secs, reason FROM stream_chapters "
-                                "WHERE username=? AND created_at >= ? AND (title IS NULL OR title='') "
-                                "ORDER BY id ASC LIMIT 12", (u, since)).fetchall()
+        # v4.2-W117: neben dem Loop, wie das UPDATE weiter unten schon.
+        rows = await db_async(lambda c: c.execute(
+            "SELECT id, offset_secs, reason FROM stream_chapters "
+            "WHERE username=? AND created_at >= ? AND (title IS NULL OR title='') "
+            "ORDER BY id ASC LIMIT 12", (u, since)).fetchall())
         if not rows:
             return
         lines = "\n".join(f"{r['id']} | +{_fmt_offset(r['offset_secs'])} | {r['reason'] or 'Hype'}" for r in rows)
@@ -18515,12 +18523,17 @@ async def _intel_index_one(rid, path, username="", created_at=None):
     """Eine Aufnahme transkribieren + (falls Backend da) semantisch indizieren."""
     _intel_ensure_schema()
     segs = await _whisper_segments(path)
-    with db_conn() as c:
+
+    # v4.2-W117: Speichern UND Einbetten neben dem Loop. index_recording
+    # rechnet fuer jedes Segment einen Vektor — bei einer Stunde Aufnahme
+    # sind das Hunderte, und sie liefen bis hierher auf dem Event-Loop.
+    def _speichern(c):
         _intel_tx.save_segments(c, rid, segs, lang=WHISPER_LANG, paramstyle=_INTEL_PS)
         be = _intel_semantic()
         if be is not None:
             _intel_lib.index_recording(c, be, rid, username=username,
                                        created_at=created_at, paramstyle=_INTEL_PS)
+    await db_async(_speichern)
     return len(segs)
 
 # ═══ v4.0-W106/W107: Zerlegung — Routen als Blueprints registrieren ═══
@@ -18632,6 +18645,13 @@ def healthz():
                    # schon passiert; die Zahl steht dann auch im Log selbst.
                    log_wartend=_nc_logschleuse.wartend(),
                    log_verloren=_nc_logschleuse.verloren(),
+                   # v4.2-W117: schreibende Handler an der Schleuse vorbei.
+                   # > 0 heisst, der Loop kann wieder an der Plattensperre
+                   # stehen — der Befund vom 18.09., nur still zurueck.
+                   log_synchron=len(_nc_logschleuse.synchrone_handler()),
+                   # v4.2-W117: Loop-Lag in ms (p50/p99/max ueber 5 min).
+                   # `aktiv: false` heisst "keine Messung", nicht "kein Lag".
+                   loop_lag=_nc_looplag.lage(),
                    ts=datetime.now(timezone.utc).isoformat()), (200 if ok else 503)
 
 
@@ -18651,6 +18671,13 @@ def api_debug_threads():
                    groups=dict(sorted(groups.items(), key=lambda kv: -kv[1])),
                    names=sorted(t.name for t in _th.enumerate()),
                    loop_stalls=_nc_brainstate.STALLS["n"],
+                   # v4.2-W117: WO der Loop gestanden hat, nach Gesamtdauer.
+                   # Hier und nicht in /healthz: Funktionsnamen und Zeilen
+                   # gehoeren hinter die Anmeldung.
+                   loop_lag=_nc_looplag.lage(),
+                   loop_bremser=_nc_looplag.bremser(8),
+                   log_synchron=[{"logger": lg, "handler": kl} for lg, kl
+                                 in _nc_logschleuse.synchrone_handler()],
                    procs=len(active_processes),
                    zombies=_zombie_child_count(),
                    uptime_s=_uptime_s())
@@ -21111,11 +21138,11 @@ async def _clip_to_discord(username, path, caption=""):
         except Exception:
             pass
         try:
-            with db_conn() as conn:
-                conn.execute("INSERT INTO discord_clips (guild_id, channel_id, message_id, username, filepath, created_at) "
-                             "VALUES (?,?,?,?,?,?)",
-                             (ch.guild.id, ch.id, msg.id, (username or "").lstrip("@"), path,
-                              datetime.now(timezone.utc).isoformat()))
+            _clip_zeile = (ch.guild.id, ch.id, msg.id, (username or "").lstrip("@"), path,
+                           datetime.now(timezone.utc).isoformat())
+            await db_async(lambda c: c.execute(          # v4.2-W117: neben dem Loop
+                "INSERT INTO discord_clips (guild_id, channel_id, message_id, username, filepath, created_at) "
+                "VALUES (?,?,?,?,?,?)", _clip_zeile))
         except Exception:
             pass
         if _tmp:
@@ -23165,6 +23192,7 @@ async def run_bot():
     _spawn(_system_backup_loop(), name="sys-backup")      # F94: tägliches 04:00-Systembackup (Bot-Dateien + SQL-Dump)
     _spawn(_watchdog_loop(), name="watchdog")             # F103: Kern-Loop-Überwachung + Self-Heal
     _spawn(_loop_lag_monitor(), name="loop-lag")          # v4.0-W48: Event-Loop-Blockade-Detektor
+    _loop_takt_starten()                                  # v4.2-W117: Feinmessung + Spaeher
     _spawn(_disk_guard_loop(), name="disk-guard")         # F103: Auto-Cleanup vor Disk-Overflow
     _spawn(_laufstand_loop(), name="laufstand")           # v4.2-W104: Update eingespielt, aber nicht wirksam?
     _spawn(_cookie_bezug_loop(), name="cookie-bezug")    # v4.2-W107: Cookies holen, ohne Telegram-Chat
@@ -23273,6 +23301,7 @@ async def _loop_lag_monitor():
     warn = max(1, LOOP_LAG_WARN_S)
     last_warn = 0.0
     peak = 0.0
+    runde = 0
     while True:
         t0 = _time_mod.monotonic()
         try:
@@ -23281,6 +23310,9 @@ async def _loop_lag_monitor():
             return
         lag = (_time_mod.monotonic() - t0) - interval
         _hb("loop-lag")
+        runde += 1
+        if runde % 30 == 0:                 # rund einmal je Minute
+            _log_schleuse_pruefen()
         if lag > peak:
             peak = lag
         if lag >= warn:
@@ -23296,6 +23328,80 @@ async def _loop_lag_monitor():
                               {"lag_s": round(lag, 1), "threads": _threading.active_count()})
                 except Exception:
                     pass
+
+
+# v4.2-W117: Zwischen den beiden Waechtern oben lagen zwei Groessenordnungen.
+# `_loop_lag_monitor` meldet ab 3 s, der Stall-Watchdog dumpt ab 30 s — ein
+# Loop, der alle paar Sekunden 800 ms steht, erreicht keine der beiden
+# Schwellen und ist trotzdem genau der "zaehe" Bot: Discord-Heartbeat knapp,
+# Telegram-Befehle verzoegert. nc/looplag.py misst in 100-ms-Schritten und
+# nennt beim Stocken die Zeile, an der der Loop-Thread steht.
+LOOP_TAKT_MS = _env_int("LOOP_TAKT_MS", 100)       # Schrittweite der Feinmessung
+LOOP_BUDGET_MS = _env_int("LOOP_BUDGET_MS", 100)   # ab hier zaehlt ein Schritt als "ueber Budget"
+LOOP_SPAEHER_MS = _env_int("LOOP_SPAEHER_MS", 250)  # ab hier wird die Stelle erfasst; 0 = aus
+
+
+def _loop_stockung_melden(stelle, dauer_s):
+    """Eine beendete Stockung melden — aus dem Spaeher-Thread heraus.
+
+    Gedrosselt am Paar (Kanal, Stelle) ueber nc/meldetakt.py: dieselbe
+    Stelle, die jede Minute stockt, ist EINE Nachricht und keine sechzig.
+    Eine neue Stelle meldet sofort — sie ist die Nachricht.
+
+    Ab einer Sekunde ERROR, darunter WARNING. Eine Sekunde Stillstand
+    verpasst Discord-Heartbeats; das gehoert in error.log, wo es der
+    Betreiber findet (eine Warnung erscheint dort nie).
+    """
+    laut, unterdrueckt = _nc_meldetakt.melden("loop-stockung", stelle,
+                                              _time_mod.monotonic())
+    if not laut:
+        return
+    stufe = logging.ERROR if dauer_s >= 1.0 else logging.WARNING
+    log.log(stufe, "Event-Loop %.0f ms gestanden an %s%s. Diese Zeile laeuft "
+            "synchron auf dem Loop — Abhilfe: in einen Thread verlegen "
+            "(asyncio.to_thread / db_async). Uebersicht: /api/debug/threads "
+            "→ loop_bremser.", dauer_s * 1000.0, stelle,
+            _nc_meldetakt.zusatz(unterdrueckt))
+
+
+def _loop_takt_starten():
+    """Feinmessung als Task, Spaeher als Thread. Aus run_bot() — der Takt
+       muss auf DEM Loop laufen, den er misst."""
+    _spawn(_nc_looplag.takt(max(10, LOOP_TAKT_MS) / 1000.0,
+                            max(1, LOOP_BUDGET_MS) / 1000.0), name="loop-takt")
+    if LOOP_SPAEHER_MS <= 0:
+        log.info("Loop-Spaeher per LOOP_SPAEHER_MS=0 aus — Stockungen werden "
+                 "gezaehlt, aber ohne Stelle.")
+        return
+    _nc_looplag.spaeher_starten(LOOP_SPAEHER_MS / 1000.0,
+                                melden=_loop_stockung_melden)
+
+
+def _log_schleuse_pruefen():
+    """v4.2-W117: Laeuft noch alles durch die Log-Schleuse (W97)?
+
+    Ein Handler, der nach dem Umhaengen dazukommt, schreibt wieder synchron
+    — und der Loop steht wieder an der Handler-Sperre wie am 18.09. Am
+    Wurzel-Logger wird er umgezogen, an einem Unter-Logger nur gemeldet
+    (Begruendung in nc/logschleuse.nachziehen).
+    """
+    n = _nc_logschleuse.nachziehen()
+    if n:
+        log.warning("Log-Schleuse: %d schreibende(r) Handler kam nachtraeglich "
+                    "an den Wurzel-Logger und ist jetzt hinter die Schleuse "
+                    "umgezogen.", n)
+    rest = _nc_logschleuse.synchrone_handler()
+    if not rest:
+        return
+    namen = ", ".join(sorted({"%s (%s)" % (lg, kl) for lg, kl in rest}))
+    laut, unterdrueckt = _nc_meldetakt.melden("log-synchron", namen,
+                                              _time_mod.monotonic())
+    if laut:
+        log.error("Log-Schleuse umgangen: %s schreibt synchron auf die Platte "
+                  "— unter Plattenlast haelt das den Event-Loop an (W97). "
+                  "Abhilfe: den Handler entfernen oder propagate=True setzen, "
+                  "dann laeuft der Logger ueber die Schleuse.%s", namen,
+                  _nc_meldetakt.zusatz(unterdrueckt))
 
 
 def _hb(name):

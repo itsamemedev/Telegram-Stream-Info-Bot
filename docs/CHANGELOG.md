@@ -11,6 +11,45 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Performance & Stabilität — Paket A: der Event-Loop wird gemessen, und die Stelle steht dabei (v4.2 W117)
+
+Erster Teil des Härtungs-Sprints (Plan und Betreiber-Notiz:
+[`PERFORMANCE.md`](PERFORMANCE.md)). Zwischen den beiden Loop-Wächtern lagen
+zwei Größenordnungen: `_loop_lag_monitor` meldet ab 3 s, der Stall-Watchdog
+dumpt ab 30 s. Ein Loop, der alle paar Sekunden 800 ms steht, erreichte keine
+der beiden Schwellen — genau der „zähe" Bot mit knappem Discord-Heartbeat und
+verzögerten Befehlen. Es gab dafür keine Zahl und erst recht keine Stelle.
+
+- **`nc/looplag.py`**: Feinmessung in 100-ms-Schritten, Ring mit festem Deckel
+  (5 min). `/healthz` trägt `loop_lag` mit `p50_ms`, `p99_ms`, `max_ms`,
+  `ueber_budget` und `stockungen`; `aktiv: false` heißt „keine Messung", nicht
+  „kein Lag".
+- **Der Späher**: ein eigener Thread liest bei einer Stockung ab 250 ms per
+  `sys._current_frames()` die Zeile, an der der Loop-Thread steht — die eigene
+  (`bot.py:_monitor:15008 > nc/dbwrap.py:db_conn`, wo man es behebt) **und** die innere
+  (`logging/__init__.py:handle`, woran es hängt). Funktioniert auch unter
+  uvloop, weil nichts an asyncio gepatcht wird. Gemeldet gedrosselt über
+  `nc/meldetakt.py`, ab 1 s auf ERROR; Liste unter `/api/debug/threads` →
+  `loop_bremser` (hinter der Anmeldung, nicht in `/healthz`).
+- **Log-Schleuse gegen Nachzügler**: ein schreibender Handler, der *nach* dem
+  Umhängen aus W97 an den Wurzel-Logger kommt, wird hinter die Schleuse
+  umgezogen; einer an einem Unter-Logger wird gemeldet. `/healthz` trägt
+  `log_synchron` — bis hierher hätte ein solcher Handler den Befund vom 18.09.
+  still zurückgebracht.
+- **Datenbank neben dem Loop** in den heißen Pfaden: Restream-Start,
+  -Prozessende, -Umschalten und Auto-Scheduler, Live-Chat-`!chapters`,
+  Director, Discord-Clip und Discord-Liveboard. `_intel_index_one` rechnete die
+  Einbettungen einer ganzen Aufnahme **auf dem Loop** — jetzt im Thread.
+- **`tools/loopblocker.py --sperre`** (CI und Prüfkette): blockierende Aufrufe
+  (`db_conn`, `open`, `time.sleep`, `subprocess.run`, …) direkt in einer
+  `async def`. Bestand 48 (Telegram-/Discord-Befehle, selten), gesperrt wird
+  das Wachstum.
+- Gemessen: Log-Flut mit drei loggenden Threads und 20 ms je Plattenzeile —
+  Loop-Stillstand ohne Schleuse **560 ms**, mit **1,8 ms**. Kosten der Messung:
+  rund 4 ms CPU je Sekunde (0,4 % eines Kerns).
+- Drei Verträge (`_test_v42_w117_*`), zehn Mutationsproben gefangen. Neue
+  Schalter: `LOOP_TAKT_MS`, `LOOP_BUDGET_MS`, `LOOP_SPAEHER_MS`.
+
 ### Geändert — das Lagebild in Echtzeit: alle dreizehn Wächter zeigen, woran sie sind (v4.2 W116)
 
 Gemeldet mit Bildschirmfoto: „macht keinen Sinn, wenn 13 Agenten arbeiten nur
