@@ -11,6 +11,35 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Geändert — das Lagebild in Echtzeit: alle dreizehn Wächter zeigen, woran sie sind (v4.2 W116)
+
+Gemeldet mit Bildschirmfoto: „macht keinen Sinn, wenn 13 Agenten arbeiten nur
+3 sich visuell bewegen". Ein Wächter galt nur die 20 s nach seinem Lauf als
+tätig — bei Takten von 120 bis 600 s. Der Rest trieb ziellos am Kern. Dazu
+lagen Statuszeile und Stationsnamen im Bild über den Nutzernamen, Namen am
+Rand wurden abgeschnitten, und abgerufen wurde alle 8 s.
+
+- `/api/lagebild` liefert je Wächter **Takt, Sekunden bis zum nächsten Lauf,
+  Befunde, Dauer des letzten Laufs** und **überfällig** (drei Takte verpasst —
+  dann läuft der Bridge-Tick nicht, die eine Störung, die man an keinem
+  einzelnen Wächter sonst sieht), dazu die Serverzeit.
+- **Jeder Wächter hat einen festen Arbeitsplatz** (Station oder Nutzer) und
+  kreist dort. Ein Ring um die Drohne läuft in Echtzeit bis zum nächsten Lauf
+  voll; ein echter Lauf ist ein sichtbarer Einsatz (Impuls, Meldung zum Kern).
+- **Wächter-Tafel** neben der Bühne (schmal: darunter): je Wächter Zustand,
+  sekundengenauer Countdown, Arbeitsplatz, letzter Lauf, Läufe, Befunde,
+  Fehler — sortiert nach Dringlichkeit. Fehler und Überfällig stehen vor dem
+  Countdown.
+- **Statusleiste im DOM** statt im Bild; Beschriftungen werden an den Rand
+  geklemmt und hinterlegt, Stationsnamen stehen außen, nicht auf der Bahn.
+- Abruf alle 2 s, Countdown jede Sekunde — nur, solange die Übersicht vorn
+  und der Tab sichtbar ist. 60 fps gemessen; bei reduzierter Bewegung keine
+  Kreisbahnen, die Ringe füllen sich trotzdem.
+- Vertrag `_test_v42_w116_lagebild_in_echtzeit`, 13 Mutationsproben gefangen
+  (eine erst nach Nachschärfen: ein abgeschalteter Wächter mit altem Lauf
+  durfte als überfällig gelten); die 25 W112-Proben laufen gegen die neue
+  Zeichnung weiter.
+
 ### Behoben — der Restream liefert quadratische Pixel, auch aus einer schiefen Quelle (v4.2 W115)
 
 WP-B verlangte konsistentes Pixelformat und Seitenverhältnis im Sendebild.

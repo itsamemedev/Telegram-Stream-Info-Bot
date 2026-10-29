@@ -21352,6 +21352,81 @@ def _test_v42_w115_quadratische_pixel():
        "in Anzeigepixeln, echte 4:3-Pixel-Quelle kommt als 1280x720/1:1 an" % faelle)
 
 
+def _test_v42_w116_lagebild_in_echtzeit():
+    """Alle dreizehn Waechter zeigen in Echtzeit, woran sie sind.
+
+    Gemeldet mit Bildschirmfoto: „macht keinen Sinn, wenn 13 Agenten arbeiten
+    nur 3 sich visuell bewegen". Ein Waechter galt nur die 20 s nach seinem
+    Lauf als taetig, bei Takten von 120 bis 600 s; der Rest trieb ziellos am
+    Kern. Dazu lagen Statuszeile und Stationsnamen IM Bild ueber den Namen
+    der Nutzer, und abgerufen wurde alle 8 s.
+    """
+    import re as _re
+    from nc import lagebild as L
+
+    # ── (1) TAKT-SEMANTIK
+    def ag(name, **kw):
+        a = {"name": name, "enabled": True, "interval_s": 300, "last_run": 900.0,
+             "runs": 4, "findings": 2, "errors": 0, "last_ms": 3.0}
+        a.update(kw)
+        return a
+    jetzt = 1000.0
+    w = {a["name"]: a for a in L.bauen([], [], [
+        ag("disk"), ag("swap", last_run=0), ag("scout", interval_s=60, last_run=1000 - 181),
+        ag("health", interval_s=60, last_run=1000 - 180),
+        # abgeschaltet UND lange nicht gelaufen: trotzdem nicht ueberfaellig —
+        # wer ihn bewusst abgeschaltet hat, braucht keinen Alarm dafuer.
+        ag("proxy", enabled=False, last_run=1000 - 5000),
+        ag("uptime", interval_s=None)], {}, jetzt)["agenten"]}
+    assert w["disk"]["takt_s"] == 300 and w["disk"]["faellig_in_s"] == 200, w["disk"]
+    assert w["disk"]["befunde"] == 2 and w["disk"]["laeufe"] == 4
+    assert w["swap"]["faellig_in_s"] == 0, "nie gelaufen heisst faellig"
+    assert w["scout"]["ueberfaellig"] and not w["health"]["ueberfaellig"], \
+        "ueberfaellig erst NACH drei verpassten Takten"
+    assert w["proxy"]["faellig_in_s"] is None and not w["proxy"]["ueberfaellig"], \
+        "ein abgeschalteter Waechter ist weder faellig noch ueberfaellig"
+    assert w["uptime"]["faellig_in_s"] is None, "ohne Takt kein erfundener Countdown"
+    assert L.bauen([], [], [], {}, jetzt)["jetzt"] == jetzt, "ohne Serverzeit kein Countdown"
+
+    # ── (2) DIE ZEICHNUNG
+    h = io.open("templates/dashboard.html", encoding="utf-8").read()
+    i = h.index("var ncLagebild=(function(){")
+    js = _re.sub(r"/\*.*?\*/", "", h[i:h.index("\n})();", i)], flags=_re.S)
+    zeilen = [z.strip() for z in js.splitlines()]
+    # Echtzeit: alle 2 s neue Lage, jede Sekunde Countdown — beides nur,
+    # solange die Uebersicht vorn und der Tab sichtbar ist.
+    for ms, ruf in (("2000", "laden();"), ("1000", "tafel(false);")):
+        treffer = [z for z in zeilen if ("},%s);" % ms) in z and ruf in z]
+        assert treffer and all("CURRENT_VIEW===OWNVIEW" in z and "!document.hidden" in z
+                               for z in treffer), (ms, treffer)
+    # Jeder Waechter hat einen Arbeitsplatz: die Bahn haengt an ortXY, nicht
+    # an einer Kreisbahn um den Kern.
+    zv = js[js.index("function zielVon("):js.index("function fortschritt(")]
+    assert "p=ortXY(s)" in zv, "Waechter treiben wieder ohne Arbeitsplatz"
+    # Ein echter Lauf (laeufe steigt) wird als Einsatz gezeigt.
+    assert any(z.startswith("if(s.a&&a.laeufe>s.a.laeufe) einsaetze.push(") for z in zeilen)
+    # Kein Status mehr im Bild: Statusleiste und Tafel stehen im DOM.
+    assert "function hud(" not in js and 'getElementById(\'ov_lage_kopf\')' in js \
+        and 'getElementById(\'ov_lage_tafel\')' in js
+    assert 'id="ov_lage_kopf"' in h and 'id="ov_lage_tafel"' in h
+    assert "innerHTML" not in js
+    # Fehler und Ueberfaellig gehen in der Tafel vor dem Countdown.
+    tf = js[js.index("function tafel("):js.index("function text(")]
+    zst = next(z for z in tf.splitlines() if ".lt-zustand').textContent=" in z)
+    zst += tf.split(zst, 1)[1].split(";", 1)[0]
+    assert zst.index("LAGE.ueber") < zst.index("lauf||"), zst
+    assert "a.lage==='fehler'?LAGE.fehler" in zst, zst
+    # Die Textfassung haengt am INHALT, nicht an der Zahl: tauscht ein Nutzer
+    # mit einem anderen, muss der neue Name vorgelesen werden.
+    tx = js[js.index("function text("):js.index("function laden(")]
+    sl = next(z.strip() for z in tx.splitlines() if z.strip().startswith("var schluessel="))
+    assert "posten.join(" in sl, sl
+    assert "getAttribute('data-stand')!==schluessel" in tx
+
+    ok("W116: Lagebild in Echtzeit — Takt, Countdown und Ueberfaellig je Waechter, "
+       "fester Arbeitsplatz, Einsatz bei echtem Lauf, Status im DOM")
+
+
 def main():
     tmp, rid = richte_testdatenbank_ein()
     ok("db_conn aus nc.dbwrap: echtes Schema angelegt, Commit durchgelaufen")
@@ -21643,6 +21718,7 @@ def main():
     _test_v42_w113_website_ruhig_und_lesbar()
     _test_v42_w114_tonspur_garantie_im_preflight()
     _test_v42_w115_quadratische_pixel()
+    _test_v42_w116_lagebild_in_echtzeit()
     _test_v42_w60_azrael_cooldown_je_plattform()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)
