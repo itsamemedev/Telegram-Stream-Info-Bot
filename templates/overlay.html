@@ -11,9 +11,11 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <title>NIGHTCRAWLER · Stream Overlay</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Orbitron:wght@500;700;900&display=swap" rel="stylesheet">
+<!-- v4.2-W111: lokal statt fonts.googleapis.com. Das Overlay wird fuer den
+     Restream im Sekundentakt per Chromium fotografiert — jedes Mal eine
+     Anfrage an Google vom Server aus, und ohne freien Weg nach draussen lief
+     das Sendebild in der Ersatzschrift. -->
+<link rel="stylesheet" href="/fonts/schriften.css">
 <style>
   :root{
     --neon:#00ff9c; --cyan:#00e5ff; --magenta:#ff2e88; --amber:#ffb000; --red:#ff3b5c;

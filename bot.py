@@ -651,6 +651,7 @@ from nc.routes import news as _nc_routes_news                # v4.1-W4: Website-
 from nc.routes import marketing as _nc_routes_marketing      # v4.1-W4: Cross-Promo
 from nc.routes import streamer as _nc_routes_streamer        # v4.1-W5: Streamer-Ansicht
 from nc.routes import i18n as _nc_routes_i18n                # v4.1-W6: Sprachwahl
+from nc.routes import schriften as _nc_routes_schriften      # v4.2-W111: Schriften lokal statt Google
 from nc.routes import twitch as _nc_routes_twitch            # v4.1-W8: Twitch-OAuth
 from nc.routes import youtube as _nc_routes_youtube          # v4.1-W8: YouTube-OAuth
 from nc.routes import kick as _nc_routes_kick                # v4.1-W9: Kick-OAuth, Kanal, Sendecheck
@@ -9498,7 +9499,10 @@ _LOOPBACK = ("127.0.0.1", "localhost", "::1")
 # /api/public/ ist ein echtes Praefix (mehrere Routen darunter), /healthz ist
 # genau EINE Route — als Praefix haette auch /healthzirgendwas den Login
 # uebersprungen. Deshalb steht es bei den exakten Pfaden.
-_AUTH_EXEMPT_PREFIXES = ("/api/public/",)
+# v4.2-W111: /fonts/ aus demselben Grund wie /overlay — die OBS-Quelle laedt
+# ihre Schriften von hier und hat keinen Token. Es sind sechs OFL-Dateien und
+# ein CSS, nichts davon verraet etwas.
+_AUTH_EXEMPT_PREFIXES = ("/api/public/", "/fonts/")
 _AUTH_EXEMPT_READ = ("/overlay", "/api/overlay/state")
 _AUTH_EXEMPT_EXACT = ("/healthz",
                       "/api/kick/oauth/callback", "/api/twitch/oauth/callback",
@@ -25289,6 +25293,7 @@ dashboard_app.register_blueprint(_nc_routes_news.bp)       # v4.1-W4
 dashboard_app.register_blueprint(_nc_routes_marketing.bp)  # v4.1-W4
 dashboard_app.register_blueprint(_nc_routes_streamer.bp)   # v4.1-W5
 dashboard_app.register_blueprint(_nc_routes_i18n.bp)       # v4.1-W6
+dashboard_app.register_blueprint(_nc_routes_schriften.bp)  # v4.2-W111
 dashboard_app.register_blueprint(_nc_routes_twitch.bp)     # v4.1-W8
 dashboard_app.register_blueprint(_nc_routes_youtube.bp)    # v4.1-W8
 dashboard_app.register_blueprint(_nc_routes_kick.bp)       # v4.1-W9

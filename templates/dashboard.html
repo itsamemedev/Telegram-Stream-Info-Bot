@@ -15,10 +15,10 @@
 <link rel="manifest" href="/manifest.webmanifest">
 <link rel="apple-touch-icon" href="/pwa-icon-192.png">
 <title>NIGHTCRAWLER ▚ TIKTOK SURVEILLANCE GRID</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700;800&family=Orbitron:wght@500;700;900&display=swap" rel="stylesheet">
-<link rel="preconnect" href="https://fonts.googleapis.com">
+<!-- v4.2-W111: Schriften vom Deck selbst (nc/routes/schriften.py), nicht mehr
+     von fonts.googleapis.com — jede Anfrage dorthin trug die IP des Betreibers
+     zu Google, und ohne Weg nach draussen lief das Deck in der Ersatzschrift. -->
+<link rel="stylesheet" href="/fonts/schriften.css">
 <style>
 /* ============================================================
    NIGHTCRAWLER — TikTok Surveillance Grid
@@ -2980,7 +2980,14 @@ document.addEventListener("DOMContentLoaded",function(){
         <span class="tag" id="ops6_health_tag">…</span><div class="spacer"></div>
         <button class="btn sm" onclick="loadOps6()" aria-label="Aktualisieren" title="Aktualisieren">↻</button></div>
       <div class="body">
-        <div class="grid g4" id="ops6_health" style="margin-bottom:16px"></div>
+        <!-- v4.2-W111: hier stand eine ✓/✗-Reihe aus /api/ops/healthcheck
+             (database, disk, cookies, ffmpeg, event_loop) — eine Teilmenge des
+             Preflights im System-Tab, mit Rohschluesseln statt Klartext. Der
+             Gesamtstatus bleibt oben im Kopf; die Einzelpruefungen stehen an
+             EINER Stelle. -->
+        <div class="faint" id="ops6_health" style="font-size:11px;margin-bottom:16px">
+          <span id="ops6_health_rot"></span>
+          <a href="#" onclick="gotoView('system');return false">Einzelprüfungen im System-Tab (Preflight)</a></div>
         <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:16px;margin-bottom:16px">
           <div><div class="kc-sub">BACKOFF-WATCH <span class="faint" style="font-size:10px;letter-spacing:0">Trackings in Wartezeit</span></div>
             <div id="ops6_backoff" class="skel" aria-busy="true"><i></i></div></div>
@@ -5821,6 +5828,11 @@ VIEW_LOADERS.system = async function(){
           <div class="spacer"></div><button class="btn sm" onclick="loadResources()" aria-label="Aktualisieren" title="Aktualisieren">↻</button></div>
         <div class="body"><div id="res_body" class="skel" aria-busy="true"><i></i><i></i><i></i></div></div>
       </div>
+      <!-- v4.2-W111: hier stand zusaetzlich „▚ Host Resources" — dieselbe Route
+           (/api/system-resources) wie „▚ Ressourcen" direkt darueber, nur mit
+           weniger Angaben und dem Leertext „psutil not available" (psutil wird
+           nicht benutzt). Zwei Kaesten fuer eine Messung lassen den Betreiber
+           suchen, welcher stimmt. -->
       <div class="grid g2 mb">
         <div class="panel">
           <div class="head"><h3>▚ System Health</h3><span class="tag">composite score</span></div>
@@ -5830,19 +5842,13 @@ VIEW_LOADERS.system = async function(){
           </div>
         </div>
         <div class="panel">
-          <div class="head"><h3>▚ Host Resources</h3><span class="tag">live</span></div>
-          <div class="body"><div id="sy_res"><div class="skel" aria-busy="true"><i></i><i></i><i></i></div></div></div>
-        </div>
-      </div>
-      <div class="grid g2">
-        <div class="panel">
           <div class="head"><h3>▚ Storage</h3><span class="tag">disk · forecast</span></div>
           <div class="body"><div id="sy_storage"><div class="skel" aria-busy="true"><i></i><i></i><i></i></div></div></div>
         </div>
-        <div class="panel">
-          <div class="head"><h3>▚ Cookie / Auth Status</h3><span class="tag">X22 · session-health</span></div>
-          <div class="body"><div id="sy_cookies"><div class="skel" aria-busy="true"><i></i><i></i><i></i></div></div></div>
-        </div>
+      </div>
+      <div class="panel">
+        <div class="head"><h3>▚ Cookie / Auth Status</h3><span class="tag">X22 · session-health</span></div>
+        <div class="body"><div id="sy_cookies"><div class="skel" aria-busy="true"><i></i><i></i><i></i></div></div></div>
       </div>
       <div class="grid g2 mt">
         <div class="panel">
@@ -6556,8 +6562,8 @@ async function loadLlmLatency(){
 }
 
 async function loadSystem(){
-  const [hs, res, st, cookAge, cookHealth] = await Promise.all([
-    apiGet('/api/health-score'), apiGet('/api/system-resources'),
+  const [hs, st, cookAge, cookHealth] = await Promise.all([
+    apiGet('/api/health-score'),
     apiGet('/api/storage'), apiGet('/api/cookies/age'), apiGet('/api/cookies/health')
   ]);
   if(hs && hs.score!=null){
@@ -6572,18 +6578,9 @@ async function loadSystem(){
         <div class="bar ${val>=70?'':(val>=40?'amber':'danger')}"><i style="width:${Math.min(100,val)}%"></i></div></div>`;
     }).join('');
   }
-  if(res && !res.__neterr){
-    const rows=[];
-    // v4.0-W109: hing an res.cpu_percent — ein psutil-Ueberbleibsel, das die
-    // Route nie geliefert hat; die CPU-Zeile fehlte deshalb immer. Der Bot
-    // rechnet die Last selbst aus /proc/loadavg als load_percent
-    // (100 * load1 / cores) — genau das ist hier gemeint.
-    if(res.load_percent!=null) rows.push(['CPU-LAST', res.load_percent+'%', res.load_percent]);
-    if(res.mem_percent!=null) rows.push(['MEM', res.mem_percent+'%', res.mem_percent]);
-    if(res.disk_percent!=null) rows.push(['DISK', res.disk_percent+'%', res.disk_percent]);
-    $('#sy_res').innerHTML=rows.length?rows.map(([l,t,v])=>`<div class="mb"><div class="flexc"><span class="muted">${l}</span><span class="mono cyan">${t}</span></div><div class="bar ${v>=85?'danger':(v>=60?'amber':'')}"><i style="width:${Math.min(100,v)}%"></i></div></div>`).join('')
-      :'<div class="empty">psutil not available</div>';
-  }
+  // v4.2-W111: die CPU/RAM/Disk-Zeilen standen hier ein zweites Mal (Panel
+  // „Host Resources"). Sie rendert jetzt allein loadResources() in
+  // „▚ Ressourcen" — mit Load-Werten und freien GB statt nur Prozent.
   if(st && st.disk){
     const d=st.disk;
     const pct=d.used_percent!=null?d.used_percent:(d.total_bytes?Math.round(d.used_bytes/d.total_bytes*100):0);
@@ -10553,18 +10550,18 @@ async function loadMaint6(){ loadOps6Tags(); loadOps6Bookmarks(); }
 function ops6Mb(mb){ return mb==null?'—':(mb>=1024?(mb/1024).toFixed(1)+' GB':mb+' MB'); }
 
 async function loadOps6Health(){
-  const box=$('#ops6_health'), tag=$('#ops6_health_tag');
-  if(!box) return;
+  /* v4.2-W111: keine ✓-Reihe mehr — die gruenen Pruefungen stehen im
+     Preflight des System-Tabs ein zweites Mal. Die FEHLGESCHLAGENEN bleiben
+     aber hier: event_loop prueft nur dieser Endpunkt, und ein „DEGRADED" im
+     Kopf ohne den Grund schickt den Betreiber suchen. */
+  const tag=$('#ops6_health_tag'), box=$('#ops6_health_rot');
+  if(!tag) return;
   const d=await apiGet('/api/ops/healthcheck');
-  if(!d){ box.innerHTML=''; if(tag)tag.textContent='—'; return; }
-  if(tag){ const st=d.status||'?'; tag.textContent=st.toUpperCase();
-    tag.style.color=st==='ok'?'var(--ok)':st==='degraded'?'var(--amber)':'var(--red)'; }
-  const c=d.checks||{};
-  let cells=Object.keys(c).map(k=>
-    '<div class="metric"><span class="v" style="color:'+(c[k]?'var(--ok)':'var(--red)')+'">'+(c[k]?'✓':'✗')+
-    '</span><span class="l">'+esc(k)+'</span></div>').join('');
-  if(d.disk_used_pct!=null) cells+='<div class="metric"><span class="v">'+d.disk_used_pct+'%</span><span class="l">Disk belegt</span></div>';
-  box.innerHTML=cells;
+  if(!d){ tag.textContent='—'; if(box) box.innerHTML=''; return; }
+  const st=d.status||'?'; tag.textContent=st.toUpperCase();
+  tag.style.color=st==='ok'?'var(--ok)':st==='degraded'?'var(--amber)':'var(--red)';
+  const rot=Object.keys(d.checks||{}).filter(k=>!d.checks[k]);
+  if(box) box.innerHTML=rot.map(k=>'<span class="pill off">✗ '+esc(k)+'</span>').join(' ');
 }
 async function loadOps6Backoff(){
   const box=$('#ops6_backoff');
