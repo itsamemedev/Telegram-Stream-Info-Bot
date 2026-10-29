@@ -24590,6 +24590,11 @@ async def _selfcheck(verbose=True):
         p = _sh.which(binname)
         add("ok" if p else ("fail" if hard else "warn"),
             binname, p or "NICHT gefunden — `apt install ffmpeg`")
+    # v4.2-W114: Warnung, kein Fehler — der Bot laeuft, nur eine Quelle ohne
+    # Ton ergaebe dann Dateien ohne Tonspur (nc/tonspur.garantie).
+    if _sh.which("ffmpeg"):
+        _st, _txt = _nc_tonspur.garantie()
+        add("ok" if _st == "ok" else "warn", "Tonspur-Garantie", _txt)
 
     # 3) Datenbank + Migrationen (echter Lauf, kein Trockendummy)
     try:

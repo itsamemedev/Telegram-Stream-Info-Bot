@@ -21114,6 +21114,104 @@ def _test_v42_w113_website_ruhig_und_lesbar():
        "versteckt, Leinwaende nur im Bild, Balken im eigenen Schacht")
 
 
+def _test_v42_w114_tonspur_garantie_im_preflight():
+    """Der Preflight meldet, ob die Ton-Garantie ueberhaupt greifen kann.
+
+    W106 sichert jede Ausgabe mit einer Stille-Spur ab — ueber den
+    lavfi-Eingang anullsrc und den AAC-Encoder. Fehlt eins davon (abgespeckte
+    ffmpeg-Builds), stirbt der Rueckfall genau dann, wenn eine Quelle keinen
+    Ton hat. „ffmpeg installiert" sagte darueber nichts.
+    """
+    import ast as _ast
+    import os as _os
+    import stat as _stat
+    import pruefhilfen as P
+    from nc import tonspur as Tn
+
+    # ── (1) Der Probelauf benutzt DENSELBEN Eingang und Encoder wie die
+    # Produktion — sonst prueft er etwas anderes, als dann gebraucht wird.
+    cmd = Tn.garantie_cmd()
+    # _bau setzt je nach Konfiguration nice/-threads davor; dass es benutzt
+    # wird, haelt der Thread-Deckel-Vertrag in test_restream fest.
+    # Ausgabe in den Muxer der Produktion (FLV), nicht in `null` — den
+    # braucht die Produktion nie, ein Build ohne ihn waere sonst „fail".
+    assert "ffmpeg" in cmd and cmd[-3:] == ["-f", "flv", "pipe:1"], cmd
+    assert "null" not in cmd
+    s_ein = Tn.stille_eingabe()
+    i = cmd.index(s_ein[0])
+    assert cmd[i:i + len(s_ein)] == s_ein, "anderer Stille-Eingang als in der Produktion"
+    j = cmd.index(Tn.AAC_ARGS[0])
+    assert tuple(cmd[j:j + len(Tn.AAC_ARGS)]) == Tn.AAC_ARGS, "anderer Encoder als in der Produktion"
+
+    # ── (2) Attrappen-ffmpeg im PATH: Erfolg, fehlender Filter, Haenger.
+    heim = P.verzeichnis()
+
+    def ffmpeg_attrappe(rumpf):
+        pfad = _os.path.join(heim, "ffmpeg")
+        with open(pfad, "w") as f:
+            f.write("#!/bin/sh\n" + rumpf + "\n")
+        _os.chmod(pfad, _os.stat(pfad).st_mode | _stat.S_IEXEC)
+
+    import shutil as _sh
+    alt = _os.environ.get("PATH", "")
+    try:
+        _os.environ["PATH"] = heim
+        assert Tn.garantie()[0] == "fail", "ohne ffmpeg darf die Garantie nicht ok sein"
+        ffmpeg_attrappe("exit 0")
+        assert Tn.garantie() == ("ok", "Stille-Spur (anullsrc) und AAC verfuegbar")
+        ffmpeg_attrappe("echo \"[AVFilterGraph] No such filter: 'anullsrc'\" >&2; exit 1")
+        st, txt = Tn.garantie()
+        assert st == "fail" and "No such filter: 'anullsrc'" in txt and "Abhilfe" in txt, txt
+        ffmpeg_attrappe("exec %s 5" % (_sh.which("sleep", path=alt) or "/bin/sleep"))
+        st, txt = Tn.garantie(timeout=1)
+        assert st == "warn" and "ungeprueft" in txt, (st, txt)
+    finally:
+        _os.environ["PATH"] = alt
+    # Ein OSError-Text (Pfade, Rechte) gehoert ins Log, nie in die Antwort,
+    # die der Browser liest (CodeQL auf PR #156).
+    import subprocess as _subp
+    _echt = _subp.run
+
+    def _kaputt(*a, **k):
+        raise PermissionError("/geheim/pfad/ffmpeg: Zugriff verweigert")
+    try:
+        _subp.run = _kaputt
+        st, txt = Tn.garantie()
+    finally:
+        _subp.run = _echt
+    assert st == "fail" and "/geheim" not in txt and "Log" in txt, txt
+
+    # ── (3) Das echte ffmpeg dieser Maschine (wenn vorhanden) kann es.
+    if _sh.which("ffmpeg"):
+        assert Tn.garantie()[0] == "ok", Tn.garantie()
+
+    # ── (4) Beide Anzeigen fragen es ab: Preflight (rot moeglich) und
+    # Selbsttest (hoechstens Warnung — der Bot laeuft ja).
+    def aufrufe(baum, fn=None):
+        wurzel = baum
+        if fn:
+            wurzel = next(k for k in _ast.walk(baum)
+                          if isinstance(k, (_ast.FunctionDef, _ast.AsyncFunctionDef)) and k.name == fn)
+        g = any(isinstance(k, _ast.Call) and _ast.unparse(k.func) == "_nc_tonspur.garantie"
+                for k in _ast.walk(wurzel))
+        adds = [k for k in _ast.walk(wurzel) if isinstance(k, _ast.Call)
+                and getattr(k.func, "id", "") == "add"
+                and any(isinstance(a, _ast.Constant) and a.value == "Tonspur-Garantie" for a in k.args)]
+        return g, adds
+    g, adds = aufrufe(_ast.parse(io.open("nc/routes/systemlage.py", encoding="utf-8").read()))
+    assert g and adds and _ast.unparse(adds[0].args[0]) == "'Aufnahme'", "Preflight prueft die Garantie nicht"
+    g, adds = aufrufe(_ast.parse(io.open("bot.py", encoding="utf-8").read()), "_selfcheck")
+    assert g and adds, "Selbsttest prueft die Garantie nicht"
+    stufe = _ast.unparse(adds[0].args[0])
+    # Genau „ok oder Warnung" — ein durchgereichtes _st machte aus einem
+    # fehlenden anullsrc einen Startfehler (W100: Fehler = nicht STARTKLAR).
+    assert stufe == "'ok' if _st == 'ok' else 'warn'", \
+        "Selbsttest macht daraus womoeglich einen Startfehler: " + stufe
+
+    ok("W114: Tonspur-Garantie (anullsrc + AAC) im Preflight und Selbsttest, "
+       "mit derselben Kommandozeile wie die Produktion")
+
+
 def main():
     tmp, rid = richte_testdatenbank_ein()
     ok("db_conn aus nc.dbwrap: echtes Schema angelegt, Commit durchgelaufen")
@@ -21403,6 +21501,7 @@ def main():
     _test_v42_w111_schriften_lokal_ein_panel_je_messung()
     _test_v42_w112_lagebild()
     _test_v42_w113_website_ruhig_und_lesbar()
+    _test_v42_w114_tonspur_garantie_im_preflight()
     _test_v42_w60_azrael_cooldown_je_plattform()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)

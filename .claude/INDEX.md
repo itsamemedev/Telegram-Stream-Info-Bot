@@ -327,14 +327,14 @@ Zahlen sind Zeilennummern für `ncpatch show` / `ncpatch sym`.
    210  GET              /api/streamer/watchlist                          api_streamer_watchlist   [nc/routes/streamer.py]
     56  GET              /api/streamers/wall                              api_streamers_wall   [nc/routes/streamer.py]
    207  GET              /api/summary/preview                             api_summary_preview   [nc/routes/auskunft.py]
-    73  GET              /api/system                                      api_system   [nc/routes/systemlage.py]
+    74  GET              /api/system                                      api_system   [nc/routes/systemlage.py]
    116  GET              /api/system-resources                            api_system_resources   [nc/routes/health.py]
-   177  GET              /api/system/check_timing                         api_check_timing   [nc/routes/systemlage.py]
-   117  GET              /api/system/config_drift                         api_config_drift   [nc/routes/systemlage.py]
-   140  GET              /api/system/config_snapshot                      api_system_config_snapshot   [nc/routes/systemlage.py]
-   237  GET              /api/system/preflight                            api_system_preflight   [nc/routes/systemlage.py]
-   104  GET              /api/system/preflight_history                    api_system_preflight_history   [nc/routes/systemlage.py]
-   369  GET              /api/system/resilience                           api_system_resilience   [nc/routes/systemlage.py]
+   178  GET              /api/system/check_timing                         api_check_timing   [nc/routes/systemlage.py]
+   118  GET              /api/system/config_drift                         api_config_drift   [nc/routes/systemlage.py]
+   141  GET              /api/system/config_snapshot                      api_system_config_snapshot   [nc/routes/systemlage.py]
+   238  GET              /api/system/preflight                            api_system_preflight   [nc/routes/systemlage.py]
+   105  GET              /api/system/preflight_history                    api_system_preflight_history   [nc/routes/systemlage.py]
+   375  GET              /api/system/resilience                           api_system_resilience   [nc/routes/systemlage.py]
    377  GET              /api/tags                                        api_tags_list   [nc/routes/auskunft.py]
    177  GET              /api/top                                         api_top   [nc/routes/auskunft.py]
    238  GET              /api/trackings                                   api_trackings   [nc/routes/trackings.py]
@@ -682,7 +682,7 @@ Zahlen sind Zeilennummern für `ncpatch show` / `ncpatch sym`.
  17253-17263  _httpx_proxy
  12103-12115  _in_quiet_hours
  24080-24091  _init_db_oder_abbruch
- 24828-24859  _install_fast_eventloop
+ 24833-24864  _install_fast_eventloop
   9376-9430   _install_fast_json
  11702-11718  _install_faulthandler
  18493-18502  _intel_ensure_schema
@@ -820,7 +820,7 @@ Zahlen sind Zeilennummern für `ncpatch show` / `ncpatch sym`.
   5852-5969   _run_ai_call
  11825-11838  _run_async_from_flask
  19820-19823  _run_priv
- 24816-24824  _run_selfcheck_and_exit
+ 24821-24829  _run_selfcheck_and_exit
  20535-20546  _s3_client
   7816-7867   _safe_send
   4791-4807   _sample_net_throughput
@@ -831,7 +831,7 @@ Zahlen sind Zeilennummern für `ncpatch show` / `ncpatch sym`.
  22151-22190  _screen_full
  11203-11240  _sec_headers
   2261-2263   _select_stream_from_data_section
- 24541-24813  _selfcheck
+ 24541-24818  _selfcheck
   8603-8637   _send_live_notice
   1371-1375   _should_defer_upload
  21006-21041  _shrink_for_discord
@@ -841,7 +841,7 @@ Zahlen sind Zeilennummern für `ncpatch show` / `ncpatch sym`.
  23739-23758  _sign_health_loop
   4541-4566   _sitzung_bestimmen
   7627-7638   _spawn
- 25241-25271  _spawn_from_flask
+ 25246-25276  _spawn_from_flask
  17265-17544  _start_chat_listener
  11805-11822  _start_loop_watchdog
  11038-11084  _stats_loop
@@ -1193,7 +1193,7 @@ textmore.py            configure_banned_cap, split_for_telegram
 textutil.py            clean_username, fmt_number, is_valid_tiktok_username, safe, short
 tiktokcheck.py         account_exists, configure
 tiktokheaders.py       configure
-tonspur.py             class Fehlschlag, hat_ton, hat_tonspur, ist_tonlos_fehler, nachruest_cmd, pruef_cmd, pruefen, sichern, stille_eingabe
+tonspur.py             class Fehlschlag, garantie, garantie_cmd, hat_ton, hat_tonspur, ist_tonlos_fehler, nachruest_cmd, pruef_cmd, pruefen, sichern, stille_eingabe
 trackingdb.py          add_tracking_tag, bulk_add_trackings, ci_key, claim_transition, configure, get_all_active_trackings, get_all_tags_with_counts, get_priority_poll_interval, get_state, get_tags_for_tracking, get_tracking_priority, get_trackings_for_group, remove_tracking, remove_tracking_tag, resolve_tracked_user, set_tracking_paused, set_tracking_priority
 tunnelwacht.py         lage, meldung, probe, probe_cmd
 twitchoauth.py         access_token, authorize_url, configure, create_clip, exchange_code, forget, login_name, search_category, status, timeout_user, update_channel

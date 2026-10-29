@@ -11,6 +11,28 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Neu — Preflight und Selbsttest prüfen die Ton-Garantie (v4.2 W114)
+
+Die Ton-Garantie aus W106 hängt an zwei Fähigkeiten von ffmpeg: dem
+lavfi-Eingang `anullsrc` und dem AAC-Encoder. Fehlt eine davon (abgespeckte
+oder statische Minimal-Builds), stirbt der Rückfall auf Stille genau dann,
+wenn eine Quelle keinen Ton hat — und „ffmpeg installiert" sagte darüber
+nichts.
+
+- `nc/tonspur.garantie()` lässt ffmpeg 0,2 s Stille über **denselben**
+  Eingang und Encoder erzeugen, die Aufnahme und Restream benutzen, und meldet
+  das Ergebnis mit Abhilfe.
+- System-Tab → Preflight: neue Zeile „Tonspur-Garantie" (rot, wenn ffmpeg es
+  nicht kann). `--selfcheck`: dieselbe Prüfung als Warnung — der Bot läuft
+  auch ohne, nur Quellen ohne Ton ergäben dann Dateien ohne Tonspur.
+- Bewusst **nicht** gebaut: ein Probe-Lauf gegen die Quelle vor jedem
+  Restream-Start. W106 erkennt eine tonlose Quelle am ersten Abbruch (unter
+  1 s) und sendet dann mit Stille; ein ffprobe vorab kostete bei jedem Start
+  mehrere Sekunden für denselben Ausgang.
+- Vertrag `_test_v42_w114_tonspur_garantie_im_preflight` mit Attrappen-ffmpeg
+  (Erfolg, fehlender Filter, Hänger, nicht vorhanden), 9 Mutationsproben
+  gefangen.
+
 ### Geändert — die öffentliche Seite: ruhiger, lesbarer, ein System für drei Seiten (v4.2 W113)
 
 Die Seite sah aus wie ein Experiment: fünf Riesen-Glyphen als Überschrift,

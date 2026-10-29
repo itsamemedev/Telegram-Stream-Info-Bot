@@ -28,6 +28,7 @@ from nc import kiwahl as _nc_kiwahl  # v4.2-W110
 from nc import i18n as _nc_i18n
 from nc import piper_voices as _nc_piper
 from nc import proxyutil as _nc_proxyutil
+from nc import tonspur as _nc_tonspur  # v4.2-W114
 from nc import discordstate as _nc_discordstate
 from nc import restream_targets as _nc_rst
 from nc import restreamstate as _nc_rsstate
@@ -280,6 +281,11 @@ def api_system_preflight():
         else:
             add("Aufnahme", b, "fail" if crit else "warn",
                 "FEHLT (kritisch)" if crit else "fehlt (Fallback-Tier)")
+    # v4.2-W114: die Ton-Garantie haengt an anullsrc + AAC, nicht nur daran,
+    # dass ffmpeg im PATH liegt (nc/tonspur.garantie).
+    if _sh.which("ffmpeg"):
+        _st, _txt = _nc_tonspur.garantie()
+        add("Aufnahme", "Tonspur-Garantie", _st, _txt)
     eff = _nc_proxyutil.tunnel_effective()
     lt = _nc_proxyutil.tunnel_state().get("last_test")
     if eff:
