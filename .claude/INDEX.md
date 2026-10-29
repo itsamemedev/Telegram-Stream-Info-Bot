@@ -1109,7 +1109,7 @@ evolution.py           analyze, build_dir, conf, configure, cycle, engineering_n
 fehlertext.py          nach_aussen, saeubern
 ffbuild.py             ff_cmd
 ffdiag.py              clip_caption_escape, ffprobe_duration, redact_cmd_for_log
-ffmpeg_filters.py      avatar_kette, chat_umbruch_w, chat_zeilen, drawtext_chain, studio_chain, studio_masse
+ffmpeg_filters.py      anzeige_groesse, avatar_kette, chat_umbruch_w, chat_zeilen, drawtext_chain, studio_chain, studio_masse
 ffver.py               parse_version
 filepayload.py         classify_downloaded, size_reject
 flapguard.py           class FlapConfig, class FlapUrteil, class FlapWatch

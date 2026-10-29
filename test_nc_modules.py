@@ -21212,6 +21212,146 @@ def _test_v42_w114_tonspur_garantie_im_preflight():
        "mit derselben Kommandozeile wie die Produktion")
 
 
+def _test_v42_w115_quadratische_pixel():
+    """Der Restream liefert quadratische Pixel — auch aus einer schiefen Quelle.
+
+    Gemessen (ffmpeg 6.1): eine Quelle 960x720 mit SAR 4:3 (Anzeige 16:9) kam
+    in drei der vier Transcode-Wege als 960x720/4:3 heraus. Das Verhaeltnis
+    reiste nur als Metadatum mit; eine Plattform, die es ignoriert, zeigt
+    gestaucht, und das HTML-Overlay (scale2ref in Speicherpixeln) sass
+    verzerrt. Im Studio-Modus war die Leinwand quadratisch, das Video darin
+    aber in Speicherpixeln skaliert.
+    """
+    import ast as _ast
+    import json as _json
+    import os as _os
+    import shutil as _sh
+    import subprocess as _sp
+    import threading as _th
+    from http.server import HTTPServer, SimpleHTTPRequestHandler
+    import functools as _ft
+    import pruefhilfen as P
+    from nc import ffmpeg_filters as F
+    from nc import restreamcmd as R
+    from nc import tonspur as T
+
+    # ── (1) DIE RECHNUNG — dieselbe Rundung wie QUADRAT.
+    for ein, aus in (("960x720x4:3", (1280, 720)), ("1280x720x1:1", (1280, 720)),
+                     ("1280x720", (1280, 720)), ("1280x720x0:1", (1280, 720)),
+                     ("1280x720xN/A", (1280, 720)), ("721x480x3:2", (1080, 480)),
+                     ("", None), ("x", None)):
+        assert F.anzeige_groesse(ein) == aus, (ein, F.anzeige_groesse(ein))
+    assert F.QUADRAT == "scale=trunc(iw*sar/2)*2:ih,setsar=1"
+    pr = next(k for k in _ast.walk(_ast.parse(io.open("bot.py", encoding="utf-8").read()))
+              if isinstance(k, _ast.FunctionDef) and k.name == "_probe_video_size")
+    prq = _ast.unparse(pr)
+    assert "sample_aspect_ratio" in prq and "_nc_ff.anzeige_groesse(" in prq, \
+        "Overlay-Groesse wieder in Speicherpixeln"
+
+    # ── (2) JEDE TRANSCODE-VARIANTE beginnt mit der Quadrat-Stufe, und
+    # nichts greift an ihr vorbei auf [0:v].
+    heim = P.verzeichnis()
+    OV = {}
+    for k in ("alert", "brand", "caption", "chat", "follow", "goal", "react", "source", "title"):
+        OV[k] = _os.path.join(heim, k + ".txt")
+        open(OV[k], "w").write(k)
+    schrift = _os.path.join(heim, "s.ttf")
+    open(schrift, "wb").write(b"x")
+    avatar = _os.path.join(heim, "a.png")
+    open(avatar, "wb").write(b"x")
+    alt_layout = R._restream_layout_mode
+
+    def konf(overlay, av, layout, font=schrift):
+        R.configure(cookie_header=lambda: "", pick_pull_proxy=lambda: "",
+                    restream_overlay_files=lambda rid=None: OV,
+                    FFMPEG_THREADS_LIVE=2, FFMPEG_THREADS_RELAY=2,
+                    RESTREAM_AVATAR=(avatar if av else ""), RESTREAM_BITRATE_K=2500,
+                    RESTREAM_AVATAR_ALPHA="", RESTREAM_AVATAR_H=170, RESTREAM_AVATAR_LOOP="",
+                    RESTREAM_CANVAS_H=720, RESTREAM_CANVAS_W=1280, RESTREAM_FONT=font,
+                    RESTREAM_FPS=24, RESTREAM_LOW_LATENCY=True, RESTREAM_OVERLAY=overlay,
+                    RESTREAM_OVERLAY_HTML_FPS=1, RESTREAM_RELAY_BITRATE_K=2000,
+                    RESTREAM_RELAY_PRESET="ultrafast", RESTREAM_X264_PRESET="ultrafast",
+                    RESTREAM_UA="UA/1.0", TTS_CH=2, TTS_SR=44100, TTS_VOICE_GAIN="1.8")
+        R._restream_layout_mode = lambda: layout
+
+    faelle = 0
+    try:
+        for overlay in (False, True):
+            for av in (False, True):
+                for layout in ("burnin", "studio"):
+                    konf(overlay, av, layout)
+                    for html in (None, "/tmp/ov.fifo"):
+                        for tts in (None, "/tmp/tts.fifo"):
+                            for dr in (0, 3, 5):
+                                cmd = R.build("https://x/s.flv", "", "", transcode=True,
+                                              drossel=dr, html_ov_fifo=html, tts_fifo=tts,
+                                              only_target="rtmp://x/app/K")
+                                fall = (overlay, av, layout, html, tts, dr)
+                                faelle += 1
+                                assert cmd[cmd.index("-pix_fmt") + 1] == "yuv420p", fall
+                                assert T.hat_tonspur(cmd), fall
+                                if "-filter_complex" in cmd:
+                                    fc = cmd[cmd.index("-filter_complex") + 1]
+                                    # GENAU ein Zugriff auf das Rohbild, irgendwo im
+                                    # Graphen — und der ist die Quadrat-Stufe.
+                                    assert fc.count("[0:v]") == 1 and \
+                                        ("[0:v]" + F.QUADRAT) in fc, (fall, fc[:300])
+                                    assert "-vf" not in cmd, fall
+                                    for teil in fc.split(";"):
+                                        if "overlay=" in teil and "[cnv]" not in teil:
+                                            assert "eof_action=repeat" in teil, (fall, teil)
+                                    maps = [cmd[j + 1] for j, a in enumerate(cmd) if a == "-map"]
+                                    assert not any(m.startswith("0:v") for m in maps), (fall, maps)
+                                else:
+                                    vf = cmd[cmd.index("-vf") + 1]
+                                    assert vf.startswith(F.QUADRAT), (fall, vf)
+        # Ohne Transcode gibt es keinen Filter — und darf auch keinen geben.
+        konf(True, True, "burnin")
+        kopie = R.build("https://x/s.flv", "", "", transcode=False, only_target="rtmp://x/app/K")
+        assert "-vf" not in kopie and "-filter_complex" not in kopie
+    finally:
+        R._restream_layout_mode = alt_layout
+    assert faelle == 2 * 2 * 2 * 2 * 2 * 3, faelle
+
+    # ── (3) ECHTES FFMPEG gegen eine schiefe Quelle ueber HTTP (wie in der
+    # Produktion: -user_agent ist eine HTTP-Option).
+    if _sh.which("ffmpeg") and _sh.which("ffprobe"):
+        quelle = _os.path.join(heim, "q.flv")
+        _sp.run(["ffmpeg", "-nostdin", "-loglevel", "error", "-f", "lavfi", "-i",
+                 "testsrc2=s=960x720:r=24", "-f", "lavfi", "-i", "sine=sample_rate=44100",
+                 "-t", "2", "-vf", "setsar=4/3", "-c:v", "libx264", "-preset", "ultrafast",
+                 "-pix_fmt", "yuv420p", "-c:a", "aac", "-f", "flv", quelle],
+                check=True, stdin=_sp.DEVNULL)
+        class _Leise(SimpleHTTPRequestHandler):
+            def log_message(self, *a):
+                pass       # Zugriffslog des Testservers gehoert nicht in die Suite
+        srv = HTTPServer(("127.0.0.1", 0), _ft.partial(_Leise, directory=heim))
+        _th.Thread(target=srv.serve_forever, daemon=True).start()
+        url = "http://127.0.0.1:%d/q.flv" % srv.server_address[1]
+        schriftart = next((p for p in ("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",)
+                           if _os.path.exists(p)), None)
+        try:
+            for overlay in ((False, True) if schriftart else (False,)):
+                konf(overlay, False, "burnin", font=schriftart or schrift)
+                cmd = R.build(url, "", "", transcode=True, only_target="rtmp://x/app/K")
+                aus = _os.path.join(heim, "aus%d.flv" % overlay)
+                cmd = cmd[:-1] + ["-t", "1", "-y", aus]
+                p = _sp.run(cmd, capture_output=True, text=True, timeout=120, stdin=_sp.DEVNULL)
+                assert p.returncode == 0, p.stderr[-500:]
+                v = _json.loads(_sp.run(
+                    ["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries",
+                     "stream=width,height,sample_aspect_ratio", "-of", "json", aus],
+                    capture_output=True, text=True).stdout)["streams"][0]
+                assert (v["width"], v["height"], v.get("sample_aspect_ratio", "1:1")) == \
+                    (1280, 720, "1:1"), (overlay, v)
+        finally:
+            srv.shutdown()
+            R._restream_layout_mode = alt_layout
+
+    ok("W115: quadratische Pixel in allen %d Transcode-Varianten, Overlay-Groesse "
+       "in Anzeigepixeln, echte 4:3-Pixel-Quelle kommt als 1280x720/1:1 an" % faelle)
+
+
 def main():
     tmp, rid = richte_testdatenbank_ein()
     ok("db_conn aus nc.dbwrap: echtes Schema angelegt, Commit durchgelaufen")
@@ -21502,6 +21642,7 @@ def main():
     _test_v42_w112_lagebild()
     _test_v42_w113_website_ruhig_und_lesbar()
     _test_v42_w114_tonspur_garantie_im_preflight()
+    _test_v42_w115_quadratische_pixel()
     _test_v42_w60_azrael_cooldown_je_plattform()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)
