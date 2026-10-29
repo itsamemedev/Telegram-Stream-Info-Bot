@@ -21133,7 +21133,10 @@ def _test_v42_w114_tonspur_garantie_im_preflight():
     cmd = Tn.garantie_cmd()
     # _bau setzt je nach Konfiguration nice/-threads davor; dass es benutzt
     # wird, haelt der Thread-Deckel-Vertrag in test_restream fest.
-    assert "ffmpeg" in cmd and cmd[-3:] == ["-f", "null", "-"], cmd
+    # Ausgabe in den Muxer der Produktion (FLV), nicht in `null` — den
+    # braucht die Produktion nie, ein Build ohne ihn waere sonst „fail".
+    assert "ffmpeg" in cmd and cmd[-3:] == ["-f", "flv", "pipe:1"], cmd
+    assert "null" not in cmd
     s_ein = Tn.stille_eingabe()
     i = cmd.index(s_ein[0])
     assert cmd[i:i + len(s_ein)] == s_ein, "anderer Stille-Eingang als in der Produktion"
@@ -21164,6 +21167,19 @@ def _test_v42_w114_tonspur_garantie_im_preflight():
         assert st == "warn" and "ungeprueft" in txt, (st, txt)
     finally:
         _os.environ["PATH"] = alt
+    # Ein OSError-Text (Pfade, Rechte) gehoert ins Log, nie in die Antwort,
+    # die der Browser liest (CodeQL auf PR #156).
+    import subprocess as _subp
+    _echt = _subp.run
+
+    def _kaputt(*a, **k):
+        raise PermissionError("/geheim/pfad/ffmpeg: Zugriff verweigert")
+    try:
+        _subp.run = _kaputt
+        st, txt = Tn.garantie()
+    finally:
+        _subp.run = _echt
+    assert st == "fail" and "/geheim" not in txt and "Log" in txt, txt
 
     # ── (3) Das echte ffmpeg dieser Maschine (wenn vorhanden) kann es.
     if _sh.which("ffmpeg"):

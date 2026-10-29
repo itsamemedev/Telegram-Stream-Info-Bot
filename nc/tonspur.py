@@ -128,9 +128,14 @@ def nachruest_cmd(eingabe, ausgabe) -> List[str]:
 
 def garantie_cmd() -> List[str]:
     """0,2 s Stille ueber DENSELBEN Eingang und Encoder wie Aufnahme und
-    Restream — ins Leere geschrieben."""
+    Restream, in den FLV-Muxer des Restreams, auf stdout.
+
+    Nicht `-f null`: der null-Muxer laesst sich beim Bauen von ffmpeg
+    getrennt abschalten, die Produktion braucht ihn nie, und ein Build ohne
+    ihn haette hier „fail" gemeldet, obwohl der Rueckfall funktioniert
+    (Codex-Befund auf PR #156)."""
     return _bau(["ffmpeg", "-hide_banner", "-nostdin", "-loglevel", "error",
-                 *stille_eingabe(), "-t", "0.2", *AAC_ARGS, "-f", "null", "-"])
+                 *stille_eingabe(), "-t", "0.2", *AAC_ARGS, "-f", "flv", "pipe:1"])
 
 
 def garantie(timeout=10):
@@ -146,7 +151,7 @@ def garantie(timeout=10):
     """
     import subprocess
     try:
-        p = subprocess.run(garantie_cmd(), capture_output=True, text=True,
+        p = subprocess.run(garantie_cmd(), capture_output=True,
                            timeout=timeout, stdin=subprocess.DEVNULL)
     # Jeder Fehlerzweig meldet auch ins Log (gedrosselt): der Preflight wird
     # nur angesehen, wenn jemand hinsieht, der Selbsttest nur beim Start.
@@ -159,11 +164,14 @@ def garantie(timeout=10):
         return "warn", ("Probelauf nach %d s abgebrochen — Maschine ueberlastet? "
                         "Die Stille-Spur ist damit ungeprueft." % timeout)
     except OSError as e:
+        # Der Ausnahmetext (Pfade, Rechte) geht ins Log, nicht in die
+        # Preflight-Antwort — die liest der Browser (CodeQL, PR #156).
         _melde("warning", "garantie", "Tonspur-Garantie: ffmpeg nicht startbar (%s).", e)
-        return "fail", "ffmpeg nicht startbar (%s)" % e
+        return "fail", "ffmpeg nicht startbar — Grund im Log (Tonspur-Garantie)"
     if p.returncode == 0:
         return "ok", "Stille-Spur (anullsrc) und AAC verfuegbar"
-    zeile = ((p.stderr or "").strip().splitlines() or ["rc=%s" % p.returncode])[-1][:160]
+    err = (p.stderr or b"").decode("utf-8", "replace")
+    zeile = (err.strip().splitlines() or ["rc=%s" % p.returncode])[-1][:160]
     _melde("error", "garantie", "Tonspur-Garantie: ffmpeg kann keine Stille-Spur "
            "erzeugen (%s) — Abhilfe: sudo apt install ffmpeg.", zeile)
     return "fail", ("ffmpeg kann keine Stille-Spur erzeugen (%s) — eine Quelle "
