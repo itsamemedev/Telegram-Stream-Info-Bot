@@ -13081,15 +13081,15 @@ def _probe_video_size(url, timeout=12):
     _rp = _pick_pull_proxy()
     if _rp:
         cmd += ["-http_proxy", _rp]
-    cmd += ["-select_streams", "v:0", "-show_entries", "stream=width,height",
-            "-of", "csv=p=0:s=x", url]
+    cmd += ["-select_streams", "v:0", "-show_entries",
+            "stream=width,height,sample_aspect_ratio", "-of", "csv=p=0:s=x", url]
     try:
         p = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
-        m = re.search(r"(\d{2,5})x(\d{2,5})", (p.stdout or "").strip())
-        if not m:
-            return None
-        w, h = int(m.group(1)), int(m.group(2))
-        return (w, h) if (w > 0 and h > 0) else None
+        # v4.2-W114: die ANZEIGE-Groesse, nicht die Speichergroesse. Der
+        # Restream rechnet seither auf quadratische Pixel um
+        # (nc/ffmpeg_filters.QUADRAT); ein Overlay in Speichergroesse sasse
+        # bei einer 960x720-Quelle mit SAR 4:3 als 4:3-Kasten im 16:9-Bild.
+        return _nc_ff.anzeige_groesse((p.stdout or "").strip())
     except Exception as e:
         log.debug("Overlay-Probe: %s", e)
         return None

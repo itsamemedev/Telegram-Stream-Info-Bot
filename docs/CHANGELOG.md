@@ -11,6 +11,29 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Behoben — der Restream liefert quadratische Pixel, auch aus einer schiefen Quelle (v4.2 W115)
+
+WP-B verlangte konsistentes Pixelformat und Seitenverhältnis im Sendebild.
+Nachgemessen mit ffmpeg 6.1: `yuv420p` stand schon in jedem Transcode, das
+**Pixelverhältnis nicht**. Eine Quelle 960×720 mit SAR 4:3 (Anzeige 16:9)
+kam ohne Overlay, mit Text und mit Avatar als 960×720/4:3 heraus — das
+Verhältnis reiste nur als Metadatum mit. Eine Plattform, die es ignoriert,
+zeigt das Bild gestaucht; das HTML-Overlay (`scale2ref` rechnet in
+Speicherpixeln) saß verzerrt; im Studio-Modus war die Leinwand quadratisch,
+das Video darin aber in Speicherpixeln skaliert.
+
+- `nc/ffmpeg_filters.QUADRAT` rechnet vor allem anderen auf quadratische
+  Pixel um (gerade Breite für libx264/yuv420p) — in allen vier
+  Transcode-Wegen, als einziger Zugriff auf das Rohbild.
+- Die Größenprobe fürs HTML-Overlay liefert die **Anzeige**größe
+  (`anzeige_groesse`), damit das Overlay zum umgerechneten Bild passt.
+- Kosten bei normaler Quelle: gemessen keine (2,64 gegen 2,63 CPU-s, Median
+  aus fünf Läufen). Ohne Transcode (Copy) gibt es keinen Filter, wie bisher.
+- Vertrag `_test_v42_w115_quadratische_pixel`: 96 Bau-Varianten statisch
+  (Overlay, Avatar, Studio, HTML, TTS, Drosselstufe 0/3/5) plus ein echter
+  ffmpeg-Lauf gegen eine 4:3-Pixel-Quelle über HTTP. 10 Mutationsproben
+  gefangen (eine erst nach Nachschärfen: ein Bypass mitten im Kettenglied).
+
 ### Neu — Preflight und Selbsttest prüfen die Ton-Garantie (v4.2 W114)
 
 Die Ton-Garantie aus W106 hängt an zwei Fähigkeiten von ffmpeg: dem

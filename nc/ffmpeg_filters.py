@@ -10,6 +10,35 @@ bitgenau geprüft. Keine Bot-Kopplung: alles, was vorher aus Modul-Globals kam
                 avatar_idx=None)
 """
 
+import re
+
+
+# v4.2-W114/WP-B: quadratische Pixel, bevor irgendetwas darueber gelegt wird.
+# Eine Quelle mit nicht-quadratischen Pixeln (gemessen: 960x720 bei SAR 4:3 =
+# Anzeige 16:9) trug das Verhaeltnis bis W114 nur als Metadatum durch den
+# Transcode. Zwei Folgen: eine Plattform, die das Metadatum ignoriert, zeigt
+# das Bild gestaucht; und alles, was in Speicherpixeln platziert wird
+# (scale2ref des HTML-Overlays, die Studio-Leinwand), sitzt verzerrt.
+# Bei quadratischer Quelle ist die Stufe ein Durchreichen — gemessen ohne
+# Mehrkosten (2,64 gegen 2,63 CPU-s, Median aus fuenf Laeufen, ffmpeg 6.1).
+# Die Breite gerade: libx264 mit yuv420p lehnt ungerade Masse ab.
+QUADRAT = "scale=trunc(iw*sar/2)*2:ih,setsar=1"
+
+
+def anzeige_groesse(ffprobe_csv):
+    """'960x720x4:3' (ffprobe width,height,sample_aspect_ratio als csv) ->
+    (1280, 720): die Groesse mit quadratischen Pixeln, wie QUADRAT sie
+    erzeugt — dieselbe Rundung auf gerade Breite. Ohne oder mit unbrauchbarem
+    SAR (fehlt, 0:1, N/A) die Speichergroesse; nichts Lesbares -> None.
+    """
+    m = re.search(r"(\d{2,5})x(\d{2,5})(?:x(\d+):(\d+))?", ffprobe_csv or "")
+    if not m:
+        return None
+    w, h = int(m.group(1)), int(m.group(2))
+    if m.group(3) and int(m.group(3)) > 0 and int(m.group(4)) > 0:
+        w = int(w * int(m.group(3)) / int(m.group(4)) / 2) * 2
+    return (w, h) if (w > 0 and h > 0) else None
+
 
 def avatar_kette(avatar_idx, alpha_idx, hoehe, label):
     """v4.2-W32: der Avatar als Filter-Teilkette. -> (teile, label)
@@ -168,7 +197,7 @@ def studio_chain(files, font, canvas_w, canvas_h, fps, avatar_idx=None,
     parts = [
         f"color=c={INK}:s={W}x{H}:r={fps}[cnv]",
         # Video aspect-fit in die linke Region — Hochkant bleibt Hochkant.
-        (f"[0:v]scale={VREG - 56}:{H}:force_original_aspect_ratio=decrease:"
+        (f"[0:v]{QUADRAT},scale={VREG - 56}:{H}:force_original_aspect_ratio=decrease:"
          f"force_divisible_by=2,setsar=1[vsrc]"),
         # shortest=1: Leinwand ist endlos — Ausgabe endet mit dem Quell-Video.
         f"[cnv][vsrc]overlay=x='({VREG}-w)/2':y='(H-h)/2':shortest=1[sb]",

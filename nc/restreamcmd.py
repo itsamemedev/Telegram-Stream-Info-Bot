@@ -586,7 +586,10 @@ def build(source_url, ingest_url, stream_key, transcode=False, tts_fifo=None, ri
             # nacktes w=iw:h=ih ein 9:16-Overlay auf eine 16:9-Quelle breit.
             # eof_action=repeat hält das letzte Bild, shortest=0 → das Overlay
             # beendet den Stream nie.
-            fc = [f"[{htmlov_idx}:v][0:v]scale2ref=w=iw:h=ih:"
+            # v4.2-W114: erst quadratische Pixel, dann das Overlay — scale2ref
+            # rechnet in Speicherpixeln (nc/ffmpeg_filters.QUADRAT).
+            fc = [f"[0:v]{_nc_ff.QUADRAT}[src]",
+                  f"[{htmlov_idx}:v][src]scale2ref=w=iw:h=ih:"
                   f"force_original_aspect_ratio=decrease[ovs][base]",
                   "[base][ovs]overlay=(W-w)/2:(H-h)/2:eof_action=repeat:shortest=0[vh]"]
             vlabel = "vh"
@@ -617,8 +620,10 @@ def build(source_url, ingest_url, stream_key, transcode=False, tts_fifo=None, ri
                                                avatar_alpha_idx=avatar_alpha_idx)
                 fc.extend(sparts)
             else:
+                # v4.2-W114: quadratische Pixel vor Text und Avatar.
+                fc.append(f"[0:v]{_nc_ff.QUADRAT}[src]"); vlabel = "src"
                 if overlay_on:
-                    fc.append(f"[0:v]{_drawtext_chain(rid)}[vt]"); vlabel = "vt"
+                    fc.append(f"[src]{_drawtext_chain(rid)}[vt]"); vlabel = "vt"
                 if avatar_on:
                     _t, _l = _nc_ff.avatar_kette(avatar_idx, avatar_alpha_idx,
                                                  RESTREAM_AVATAR_H, "av")
@@ -638,8 +643,9 @@ def build(source_url, ingest_url, stream_key, transcode=False, tts_fifo=None, ri
             # v4.2-W106: auch ohne Filtergraph ausdruecklich mappen. Vorher
             # stand hier kein -map, und ffmpegs Vorgabeauswahl schickte bei
             # tonloser Quelle still nur das Bild raus.
-            if overlay_on:
-                cmd += ["-vf", _drawtext_chain(rid)]
+            # v4.2-W114: auch ohne Overlay quadratische Pixel (QUADRAT).
+            cmd += ["-vf", ",".join([_nc_ff.QUADRAT]
+                                    + ([_drawtext_chain(rid)] if overlay_on else []))]
             cmd += ["-map", "0:v:0", "-map", _amap]
         _preset = RESTREAM_RELAY_PRESET if relay_profile else RESTREAM_X264_PRESET
         _preset = drossel_preset(_preset, drossel)
