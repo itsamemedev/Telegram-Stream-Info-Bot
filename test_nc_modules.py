@@ -21416,6 +21416,12 @@ def _test_v42_w116_lagebild_in_echtzeit():
     zst += tf.split(zst, 1)[1].split(";", 1)[0]
     assert zst.index("LAGE.ueber") < zst.index("lauf||"), zst
     assert "a.lage==='fehler'?LAGE.fehler" in zst, zst
+    # Die Textfassung haengt am INHALT, nicht an der Zahl: tauscht ein Nutzer
+    # mit einem anderen, muss der neue Name vorgelesen werden.
+    tx = js[js.index("function text("):js.index("function laden(")]
+    sl = next(z.strip() for z in tx.splitlines() if z.strip().startswith("var schluessel="))
+    assert "posten.join(" in sl, sl
+    assert "getAttribute('data-stand')!==schluessel" in tx
 
     ok("W116: Lagebild in Echtzeit — Takt, Countdown und Ueberfaellig je Waechter, "
        "fester Arbeitsplatz, Einsatz bei echtem Lauf, Status im DOM")

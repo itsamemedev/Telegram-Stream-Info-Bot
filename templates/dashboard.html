@@ -12217,8 +12217,14 @@ var ncLagebild=(function(){
     var box=document.getElementById('ov_lage_text');if(!box)return;
     var d=daten||{},z=d.ziele||[],ag=d.agenten||[];
     var satz=fehlt?T('Lagebild nicht erreichbar'):(z.length+T(' aktive Nutzer, ')+ag.filter(function(a){return a.lage!=='aus';}).length+T(' Wächter aktiv.'));
-    if(box.getAttribute('data-satz')!==satz){box.setAttribute('data-satz',satz);box.textContent='';box.appendChild(el('p',null,satz));
-      var ul=el('ul');z.forEach(function(x){ul.appendChild(el('li',null,'@'+x.name+(x.aufnahme?T(' · Aufnahme'):'')+(x.restream?' · '+RSL[x.restream]:'')));});
+    /* Neu gebaut, sobald sich der INHALT ändert — nicht nur die Zahl: ersetzt
+       ein Nutzer einen anderen, bliebe sonst der alte Name vorgelesen
+       (Codex-Befund auf PR #158). Nur bei Änderung, damit aria-live nicht
+       jede Sekunde dasselbe ansagt. */
+    var posten=z.map(function(x){return '@'+x.name+(x.aufnahme?T(' · Aufnahme'):'')+(x.restream?' · '+RSL[x.restream]:'');});
+    var schluessel=satz+'|'+posten.join('|');
+    if(box.getAttribute('data-stand')!==schluessel){box.setAttribute('data-stand',schluessel);box.textContent='';box.appendChild(el('p',null,satz));
+      var ul=el('ul');posten.forEach(function(p){ul.appendChild(el('li',null,p));});
       box.appendChild(ul);if(cv)cv.setAttribute('aria-label',satz);}
   }
   function laden(){
