@@ -325,6 +325,13 @@ body{
 .metric{display:flex;flex-direction:column;gap:3px}
 /* v4.0-W89: kompakter System-Diagnose-Streifen (Uptime/Procs/Stalls/Zombies). */
 .sysdiag{display:flex;flex-wrap:wrap;gap:8px 10px;margin:2px 0 14px}
+/* v4.2-W112: Legende und Textfassung des Lagebilds */
+.lage-legende{display:flex;flex-wrap:wrap;gap:6px 14px;padding:8px 12px 10px;font-size:10px;color:var(--text-faint);font-family:var(--mono)}
+.lage-legende span{display:inline-flex;align-items:center;gap:6px}
+.lage-legende i{display:inline-block;width:8px;height:8px;border-radius:50%}
+.lage-legende i.ring{background:none;border:2px solid;width:10px;height:10px}
+.lage-legende i.drohne{border-radius:0;clip-path:polygon(100% 50%,0 0,20% 50%,0 100%)}
+.sr-only{position:absolute!important;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}
 .sysdiag .sd{display:flex;align-items:baseline;gap:7px;padding:6px 11px;
   border:1px solid var(--border);border-radius:var(--r-sm);
   background:color-mix(in srgb,var(--sunken) 88%,var(--neon) 3%);
@@ -2573,15 +2580,27 @@ document.addEventListener("DOMContentLoaded",function(){
       </div>
     </div>
 
+    <!-- v4.2-W112: das Lagebild statt der 3D-Kommandozentrale. Die zeigte die
+         Kennzahlen der Kacheln oben ein zweites Mal; hier steht, was gerade
+         passiert. Die Zuordnung der Waechter entscheidet nc/lagebild.py. -->
     <div class="panel mb" id="pnl_ov_cc">
-      <div class="head"><h3>◆ NIGHTCRAWLER · KOMMANDOZENTRALE</h3>
+      <div class="head"><h3>◆ NIGHTCRAWLER · LAGEBILD</h3>
         <span class="tag" id="ov_cc_tag">…</span>
         <div class="spacer"></div>
         <button class="btn sm" onclick="loadOverview()" aria-label="Aktualisieren" title="Aktualisieren">↻</button></div>
       <div class="body" style="padding:0">
         <div class="nc-cc-wrap" style="position:relative;overflow:hidden;border-radius:var(--r-sm)">
-          <canvas id="ov_cc" style="display:block;width:100%" aria-label="3D-Kommandozentrale: Live-Kennzahlen"></canvas>
+          <canvas id="ov_cc" role="img" style="display:block;width:100%" aria-label="Lagebild"></canvas>
         </div>
+        <div class="lage-legende" aria-hidden="true">
+          <span><i style="background:var(--red)"></i>live</span>
+          <span><i class="ring" style="border-color:var(--neon)"></i>Aufnahme</span>
+          <span><i class="ring" style="border-color:var(--cyan)"></i>Restream gesund</span>
+          <span><i class="ring" style="border-color:var(--amber)"></i>langsam</span>
+          <span><i class="ring" style="border-color:var(--red)"></i>gestört</span>
+          <span><i class="drohne" style="background:var(--cyan)"></i>Wächter bei der Arbeit</span>
+        </div>
+        <div id="ov_lage_text" class="sr-only" aria-live="polite"></div>
       </div>
     </div>
 
@@ -11887,159 +11906,261 @@ async function loadRecTimeline(){
   }).join('');
   box.innerHTML='<div class="rtl-axis">'+axis+'</div>'+rows+(users.length>8?'<div class="faint" style="font-size:10px;margin-top:6px">+'+(users.length-8)+' weitere Creator</div>':'');
 }
-/* v4.0-W66: ncCommandCenter — cinematische 3D-Kommandozentrale. Ein pulsierender
-   Kern (das System) mit umkreisenden KPI-Knoten (Live, Getrackt, Aufnahmen,
-   Checks, User), Verbindungslinien, dekorativen Orbit-Ringen, tiefensortiert,
-   Glow, Cyberpunk. Ziehen=drehen, Rad/Pinch=zoom, Auto-Spin. Vanilla-Canvas-3D. */
-var ncCommandCenter=(function(){
-  var cv,ctx,W=0,H=0,dpr=1,raf=null,poll=null,t0=Date.now(),OWNVIEW='insights',
-      reduce=!!(window.matchMedia&&window.matchMedia('(prefers-reduced-motion: reduce)').matches);
-  var kpis=[],yaw=0.5,pitch=-0.5,zoom=1,panx=0,pany=0,spin=reduce?0:0.0022,
-      drag=null,ptrs={},pinch=0,pinchZoom=1,idle=0;
-  function C(v,f){return ncCssVar(v)||f||'#8ff';}
+/* v4.2-W112: ncLagebild — die lebende Übersicht. Ersetzt die „3D-Kommando-
+   zentrale" (W66), die fünf Kennzahlen auf einem Ring drehte — dieselben fünf,
+   die in den Kacheln direkt darüber stehen.
+
+   Hier ist der Crawler selbst zu sehen: in der Mitte der Körper, aussen auf
+   dem Ring jeder Nutzer, der gerade etwas tut (live, Aufnahme, Restream), und
+   dazwischen die dreizehn Wächter. Was ein Wächter tut, entscheidet NICHT
+   dieses Skript, sondern nc/lagebild.py (/api/lagebild) — dort ist es geprüft.
+   Hier wird nur bewegt:
+     ruht    langsame Patrouille auf der eigenen Bahn
+     taetig  fliegt zu seinem Arbeitsort (Platte, Tunnel, Abwehr, Chat, Archiv, Kern)
+             oder zu dem Nutzer, an dem er arbeitet, und kreist dort
+     fehler  rot, zittert am Kern
+     aus     grau, geparkt
+
+   Regeln, die hier gelten:
+   * Namen gehen nur durch fillText/textContent — nie in innerHTML.
+   * prefers-reduced-motion: kein Animationsloop, ein ruhiges Standbild je
+     Datenstand; die Wächter stehen sofort an ihrem Ort.
+   * Gezeichnet wird nur, solange die Übersicht vorn liegt und der Tab
+     sichtbar ist; der Hintergrund liegt vorgerendert auf einer eigenen
+     Leinwand, im Takt bleibt nur, was sich bewegt. */
+var ncLagebild=(function(){
+  var cv,ctx,bg=null,W=0,H=0,dpr=1,raf=null,poll=null,last=0,OWNVIEW='overview',
+      mq=window.matchMedia?window.matchMedia('(prefers-reduced-motion: reduce)'):null,
+      reduce=!!(mq&&mq.matches), daten=null, fehlt=false, maus=null, gebunden=false;
+  var AG={}, ZI={};   /* name -> Animationszustand (Position bleibt über Polls erhalten) */
+  var STAT={kern:{a:0,r:0},platte:{a:-2.36,r:0.5},tunnel:{a:-0.79,r:0.5},
+    chat:{a:0.79,r:0.5},archiv:{a:2.36,r:0.5},abwehr:{a:-1.5708,r:0.5}};
+  /* Texte als WÖRTLICHE T('…')-Aufrufe: ein T(NAMEN[x]) findet der
+     Extraktor nicht, und der Text bliebe in der englischen Oberfläche still
+     deutsch (CLAUDE.md, W101). Neu gebaut je Datenstand, weil der Katalog
+     erst nach diesem Skript geladen wird. */
+  var NAMEN={},LAGE={},STL={},RSL={};
+  function texte(){
+    NAMEN={health:T('Gesundheit'),recovery:T('Bergung'),uptime:T('Chat-Verbindung'),
+      swap:T('Auslagerung'),disk:T('Plattenplatz'),proxy:T('Tunnelwache'),
+      toxicity:T('Toxizität'),analytics:T('Auswertung'),learning:T('Lernende'),
+      scout:T('Späher'),sentinel:T('Abwehrwache'),recording:T('Aufnahmewache'),
+      restream_sentinel:T('Restream-Wache')};
+    LAGE={ruht:T('ruht'),taetig:T('arbeitet'),fehler:T('Fehler'),aus:T('abgeschaltet'),
+      gesund:T('gesund'),langsam:T('langsam'),gestoert:T('gestört')};
+    RSL={gesund:T('Restream gesund'),langsam:T('Restream langsam'),gestoert:T('Restream gestört')};
+    STL={platte:T('PLATTE'),tunnel:'TUNNEL',chat:'CHAT',archiv:T('ARCHIV'),abwehr:T('ABWEHR')};
+  }
+  function C(v,f){return ncCssVar(v)||f;}
+  var FARBE={};
+  function farben(){FARBE={neon:C('--neon','#00ff9c'),cyan:C('--cyan','#22d3ee'),
+    red:C('--red','#ff5d73'),amber:C('--amber','#e8c86a'),mag:C('--magenta','#c678ff'),
+    text:C('--text','#e8f6ff'),faint:C('--text-faint','#7a9aa6'),
+    mono:(C('--mono','')||'monospace'),disp:(C('--display','')||C('--mono','')||'monospace')};}
+  function geo(){var R=Math.min(W*0.46,H*0.44);return {cx:W/2,cy:H/2,R:R};}
+  function stationXY(k){var s=STAT[k]||STAT.kern,g=geo();
+    return {x:g.cx+Math.cos(s.a)*s.r*g.R*1.25,y:g.cy+Math.sin(s.a)*s.r*g.R};}
+  function zielXY(i,n){var g=geo(),a=-Math.PI/2+i/Math.max(1,n)*Math.PI*2;
+    return {x:g.cx+Math.cos(a)*g.R*1.25*0.92,y:g.cy+Math.sin(a)*g.R*0.92,a:a};}
   function fit(){
     if(!cv||!cv.parentElement)return;
     var w=cv.parentElement.getBoundingClientRect().width;
-    W=Math.max(280,w||360);H=Math.min(500,Math.max(360,W*0.52));
+    W=Math.max(300,w||360);H=Math.min(520,Math.max(340,W*0.5));
     dpr=Math.min(2,window.devicePixelRatio||1);
     cv.width=W*dpr;cv.height=H*dpr;cv.style.width=W+'px';cv.style.height=H+'px';
+    farben();texte();hintergrund();
   }
-  function setData(s){
-    s=s||{};
-    kpis=[
-      {k:'live',   label:'LIVE JETZT', val:(s.live_now||0),         col:C('--red','#ff5d73'),   hot:(s.live_now||0)>0},
-      {k:'track',  label:'GETRACKT',   val:(s.active_trackings||0), col:C('--cyan','#22d3ee')},
-      {k:'rec',    label:'AUFNAHMEN',  val:(s.recordings_count||0), col:C('--neon','#00ff9c')},
-      {k:'chk',    label:'CHECKS',     val:(s.total_checks||0),     col:C('--amber','#e8c86a')},
-      /* CREATOR = getrackte Handles, nicht die Telegram-Konten aus tiktok_checks. */
-      {k:'usr',    label:'CREATOR',    val:(s.creators!=null?s.creators:(s.unique_users||0)), col:C('--magenta','#c678ff')}
-    ];
-    // Knoten gleichmäßig auf einem gekippten Ring verteilen
-    var n=kpis.length;
-    kpis.forEach(function(p,i){
-      var a=i/n*6.2832;
-      p.bx=Math.cos(a); p.by=Math.sin(a)*0.28; p.bz=Math.sin(a);
-    });
+  /* Was sich nie bewegt, wird einmal je Grösse gezeichnet: Vignette, Raster,
+     Bahnen, Stationen. Spart im Takt die Gradienten. */
+  function hintergrund(){
+    bg=document.createElement('canvas');bg.width=W*dpr;bg.height=H*dpr;
+    var b=bg.getContext('2d'),g=geo();b.setTransform(dpr,0,0,dpr,0,0);
+    var v=b.createRadialGradient(g.cx,g.cy,10,g.cx,g.cy,Math.max(W,H)*0.7);
+    v.addColorStop(0,'rgba(10,22,28,0.6)');v.addColorStop(1,'rgba(2,5,8,0)');
+    b.fillStyle=v;b.fillRect(0,0,W,H);
+    b.strokeStyle='rgba(34,211,238,0.05)';b.lineWidth=1;
+    for(var x=0;x<W;x+=28){b.beginPath();b.moveTo(x+0.5,0);b.lineTo(x+0.5,H);b.stroke();}
+    for(var y=0;y<H;y+=28){b.beginPath();b.moveTo(0,y+0.5);b.lineTo(W,y+0.5);b.stroke();}
+    [[0.92,'rgba(34,211,238,0.16)'],[0.5,'rgba(0,255,156,0.10)'],[0.3,'rgba(0,255,156,0.07)']].forEach(function(r){
+      b.beginPath();b.ellipse(g.cx,g.cy,g.R*1.25*r[0],g.R*r[0],0,0,Math.PI*2);
+      b.strokeStyle=r[1];b.setLineDash(r[0]===0.92?[]:[3,6]);b.stroke();});
+    b.setLineDash([]);
+    Object.keys(STAT).forEach(function(k){if(k==='kern')return;var p=stationXY(k);
+      b.beginPath();b.rect(p.x-9,p.y-9,18,18);b.fillStyle='rgba(4,10,14,0.92)';b.fill();
+      b.strokeStyle='rgba(34,211,238,0.45)';b.stroke();
+      b.fillStyle=FARBE.faint;b.font='600 9px '+FARBE.mono;b.textAlign='center';b.textBaseline='top';
+      b.fillText(STL[k]||k,p.x,p.y+13);});
   }
-  function fmt(v){ v=+v||0;
-    if(v>=1e6)return (v/1e6).toFixed(1)+'M';
-    if(v>=1e4)return (v/1e3).toFixed(0)+'k';
-    if(v>=1e3)return (v/1e3).toFixed(1)+'k';
-    return ''+v;
+  /* ── Datenstand übernehmen ─────────────────────────────────────────── */
+  function setze(d){
+    daten=d;fehlt=!d;texte();
+    var ziele=(d&&d.ziele)||[],n=ziele.length,neu={};
+    ziele.forEach(function(z,i){var p=zielXY(i,n),alt=ZI[z.name];
+      neu[z.name]={z:z,x:alt?alt.x:p.x,y:alt?alt.y:p.y,tx:p.x,ty:p.y,a:p.a,seit:alt?alt.seit:performance.now()};});
+    ZI=neu;
+    var ags=(d&&d.agenten)||[],g=geo();
+    ags.forEach(function(a,i){var s=AG[a.name];
+      if(!s){var w=i/Math.max(1,ags.length)*Math.PI*2;
+        s=AG[a.name]={w:w,x:g.cx+Math.cos(w)*g.R*0.38*1.25,y:g.cy+Math.sin(w)*g.R*0.38,vx:0,vy:0,spur:[],i:i};}
+      s.a=a;});
+    Object.keys(AG).forEach(function(k){if(!ags.some(function(a){return a.name===k;}))delete AG[k];});
+    text();
+    if(reduce){Object.keys(AG).forEach(function(k){var s=AG[k],z=zielVon(s);s.x=z.x;s.y=z.y;s.spur=[];});
+      Object.keys(ZI).forEach(function(k){ZI[k].x=ZI[k].tx;ZI[k].y=ZI[k].ty;});
+      bild(performance.now());}
+    else kick();
   }
-  function proj(p,R){
-    var cy=Math.cos(yaw),sy=Math.sin(yaw),cp=Math.cos(pitch),sp=Math.sin(pitch);
-    var x=p.bx*cy - p.bz*sy, z=p.bx*sy + p.bz*cy, y=p.by;
-    var y2=y*cp - z*sp, z2=y*sp + z*cp, persp=2.0/(2.0+z2);
-    return {x:W/2+panx+x*R*persp, y:H/2+pany+y2*R*persp, z:z2, s:persp};
+  /* Wohin will ein Wächter gerade? */
+  function zielVon(s){
+    var a=s.a||{},g=geo(),t=performance.now()/1000;
+    if(a.lage==='taetig'){
+      var p=(a.ort==='ziel'&&a.ziel&&ZI[a.ziel])?{x:ZI[a.ziel].x,y:ZI[a.ziel].y}:stationXY(a.ort);
+      var w=(reduce?0:t*1.6)+s.i*1.3;   /* mehrere am selben Ort: verteilt umkreisen */
+      return {x:p.x+Math.cos(w)*16,y:p.y+Math.sin(w)*12};
+    }
+    if(a.lage==='fehler'){var j=reduce?0:(Math.sin(t*23+s.i)*2);
+      return {x:g.cx+Math.cos(s.w)*g.R*0.2*1.25+j,y:g.cy+Math.sin(s.w)*g.R*0.2};}
+    var w2=s.w+(a.lage==='aus'||reduce?0:t*0.05);
+    return {x:g.cx+Math.cos(w2)*g.R*0.38*1.25,y:g.cy+Math.sin(w2)*g.R*0.38};
   }
-  function ring(x,R,tilt,col,al){
-    var i,started=false,p;x.beginPath();
-    for(i=0;i<=64;i++){var a=i/64*6.2832;
-      p=proj({bx:Math.cos(a),by:Math.sin(a)*tilt,bz:Math.sin(a)},R);
-      if(!started){x.moveTo(p.x,p.y);started=true;}else x.lineTo(p.x,p.y);}
-    x.strokeStyle=col;x.globalAlpha=al;x.stroke();x.globalAlpha=1;
+  /* ── Takt ──────────────────────────────────────────────────────────── */
+  function schritt(dt){
+    Object.keys(ZI).forEach(function(k){var z=ZI[k];z.x+=(z.tx-z.x)*Math.min(1,dt*3);z.y+=(z.ty-z.y)*Math.min(1,dt*3);});
+    Object.keys(AG).forEach(function(k){var s=AG[k],z=zielVon(s);
+      /* gedämpfte Feder: zielstrebig, ohne über das Ziel hinauszuschiessen */
+      var ax=(z.x-s.x)*9-s.vx*5.5, ay=(z.y-s.y)*9-s.vy*5.5;
+      s.vx+=ax*dt;s.vy+=ay*dt;s.x+=s.vx*dt;s.y+=s.vy*dt;
+      s.spur.push(s.x,s.y);if(s.spur.length>24)s.spur.splice(0,2);});
   }
-  function draw(){
-    if(CURRENT_VIEW!==OWNVIEW||document.hidden||!cv){raf=null;return;}
-    var tt=(Date.now()-t0)/1000, pulse=0.5+0.5*Math.sin(tt*2.2);
-    ctx.setTransform(dpr,0,0,dpr,0,0);ctx.clearRect(0,0,W,H);
-    // Hintergrund-Vignette
-    var g=ctx.createRadialGradient(W/2,H/2,10,W/2,H/2,Math.max(W,H)*0.7);
-    g.addColorStop(0,'rgba(10,20,26,0.55)');g.addColorStop(1,'rgba(2,5,8,0)');
-    ctx.fillStyle=g;ctx.fillRect(0,0,W,H);
-    if(!drag&&Object.keys(ptrs).length===0){idle++;if(spin&&idle>30)yaw+=spin;}
-    var R=Math.min(W,H)*0.34*zoom;
-    // dekorative Orbit-Ringe (Tiefe/Technik)
-    ring(ctx,R*1.18,0.28,'rgba(34,211,238,0.10)',1);
-    ring(ctx,R*0.82,0.28,'rgba(0,255,156,0.08)',1);
-    // Knoten projizieren
-    var pts=kpis.map(function(p){var q=proj(p,R);q.p=p;return q;});
-    // Verbindungslinien Kern -> Knoten (hinter den Knoten)
-    var cx=W/2+panx, cy=H/2+pany;
-    pts.forEach(function(q){var dep=(q.z+1)/2;
-      ctx.strokeStyle='rgba(120,200,220,'+(0.06+0.14*(1-dep)).toFixed(3)+')';
-      ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(cx,cy);ctx.lineTo(q.x,q.y);ctx.stroke();});
-    // Kern (pulsierend, mehrschichtiger Glow)
-    var cr=(10+6*pulse)*zoom;
-    [3.2,2.1,1.0].forEach(function(m,i){
-      ctx.beginPath();ctx.arc(cx,cy,cr*m,0,6.2832);
-      ctx.fillStyle=['rgba(0,255,156,0.05)','rgba(34,211,238,0.09)','rgba(0,255,156,0.9)'][i];ctx.fill();});
-    ctx.strokeStyle=C('--cyan','#22d3ee');ctx.lineWidth=1.4;
-    ctx.beginPath();ctx.arc(cx,cy,cr*2.1,0,6.2832);ctx.globalAlpha=0.5+0.5*pulse;ctx.stroke();ctx.globalAlpha=1;
-    // Knoten von hinten nach vorne
-    pts.sort(function(a,b){return a.z-b.z;});
-    pts.forEach(function(q){
-      var p=q.p, depth=(q.z+1)/2, r=(11+ (p.hot?4*pulse:0))*q.s*zoom;
-      ctx.globalAlpha=0.55+0.45*(1-depth);
-      // Glow-Hof
-      ctx.beginPath();ctx.arc(q.x,q.y,r+7,0,6.2832);
-      ctx.fillStyle=p.hot?'rgba(255,93,115,0.16)':'rgba(34,211,238,0.10)';ctx.fill();
-      // Scheibe
-      ctx.beginPath();ctx.arc(q.x,q.y,r,0,6.2832);
-      ctx.fillStyle='rgba(4,8,12,0.92)';ctx.fill();
-      ctx.strokeStyle=p.col;ctx.lineWidth=p.hot?2.2:1.6;ctx.stroke();
-      // Zahl + Label
-      ctx.globalAlpha=0.65+0.35*(1-depth);
-      ctx.fillStyle=C('--text','#e8f6ff');ctx.textAlign='center';
-      ctx.font='700 '+Math.max(11,15*q.s)+'px '+(ncCssVar('--display')||ncCssVar('--mono')||'monospace');
-      ctx.textBaseline='alphabetic';ctx.fillText(fmt(p.val),q.x,q.y+4*q.s);
-      ctx.fillStyle=p.col;ctx.font='600 '+Math.max(8,9*q.s)+'px '+(ncCssVar('--mono')||'monospace');
-      ctx.textBaseline='top';ctx.fillText(p.label,q.x,q.y+r+4);
-      ctx.globalAlpha=1;
-    });
-    // HUD
-    ctx.textAlign='left';ctx.textBaseline='alphabetic';
-    ctx.fillStyle=C('--text-faint','#7aa');ctx.font='10px '+(ncCssVar('--mono')||'monospace');
-    ctx.fillText('◆ SYSTEM AKTIV · ziehen = drehen · Rad = Zoom',12,H-12);
-    var liveOn=kpis[0]&&kpis[0].val>0;
-    ctx.textAlign='right';ctx.fillStyle=liveOn?C('--red','#ff5d73'):C('--text-faint','#7aa');
-    ctx.fillText(liveOn?('● '+kpis[0].val+' LIVE'):'○ standby',W-12,H-12);
-    raf=requestAnimationFrame(draw);
+  function kreis(x,y,r){ctx.beginPath();ctx.arc(x,y,r,0,Math.PI*2);}
+  function koerper(t){
+    var g=geo(),atem=reduce?0:Math.sin(t*1.4)*0.06,ziele=Object.keys(ZI).map(function(k){return ZI[k];});
+    /* Fäden zu jedem aktiven Ziel — das Netz, an dem der Crawler hängt */
+    ziele.forEach(function(z){var rs=z.z.restream;
+      ctx.strokeStyle=rs==='gestoert'?'rgba(255,93,115,0.45)':rs==='langsam'?'rgba(232,200,106,0.4)':'rgba(34,211,238,0.22)';
+      ctx.setLineDash(rs==='gestoert'?[4,5]:[]);ctx.lineWidth=1;
+      ctx.beginPath();ctx.moveTo(g.cx,g.cy);
+      ctx.quadraticCurveTo((g.cx+z.x)/2+(z.y-g.cy)*0.08,(g.cy+z.y)/2-(z.x-g.cx)*0.08,z.x,z.y);ctx.stroke();});
+    ctx.setLineDash([]);
+    /* acht Beine, je zwei Glieder; die Spitzen tasten nach aussen */
+    for(var i=0;i<8;i++){
+      var seite=i<4?-1:1,k=i%4,ba=(seite<0?Math.PI:0)+seite*(-0.9+k*0.6),
+          sw=reduce?0:Math.sin(t*2.1+i*0.8)*0.12,len=g.R*(0.26+0.03*(k===1||k===2));
+      var kx=g.cx+Math.cos(ba+sw)*len*0.55*1.25,ky=g.cy+Math.sin(ba+sw)*len*0.55-len*0.18,
+          fx=g.cx+Math.cos(ba+sw*1.6)*len*1.25,fy=g.cy+Math.sin(ba+sw*1.6)*len+len*0.1;
+      ctx.strokeStyle='rgba(0,255,156,0.55)';ctx.lineWidth=1.6;
+      ctx.beginPath();ctx.moveTo(g.cx,g.cy);ctx.lineTo(kx,ky);ctx.lineTo(fx,fy);ctx.stroke();
+      kreis(fx,fy,1.6);ctx.fillStyle=FARBE.neon;ctx.fill();}
+    var r=g.R*0.09*(1+atem),live=ziele.length>0;
+    kreis(g.cx,g.cy,r*2.4);ctx.fillStyle=live?'rgba(255,93,115,0.07)':'rgba(0,255,156,0.05)';ctx.fill();
+    ctx.beginPath();ctx.ellipse(g.cx,g.cy,r*1.25,r,0,0,Math.PI*2);ctx.fillStyle='rgba(4,10,14,0.95)';ctx.fill();
+    ctx.strokeStyle=FARBE.neon;ctx.lineWidth=1.8;ctx.stroke();
+    /* zwei Augen: rot, solange jemand live ist */
+    [-1,1].forEach(function(s){kreis(g.cx+s*r*0.38,g.cy-r*0.15,r*0.16);
+      ctx.fillStyle=live?FARBE.red:FARBE.neon;ctx.fill();});
   }
-  function kick(){if(!raf&&cv&&CURRENT_VIEW===OWNVIEW)raf=requestAnimationFrame(draw);}
-  function pv(){var a=[];for(var k in ptrs)a.push(ptrs[k]);return a;}
-  function down(e){idle=0;cv.setPointerCapture&&cv.setPointerCapture(e.pointerId);
-    ptrs[e.pointerId]={x:e.clientX,y:e.clientY};var v=pv();
-    if(v.length===1)drag={x:e.clientX,y:e.clientY,pan:(e.button===2||e.shiftKey)};
-    else if(v.length===2){pinch=Math.hypot(v[0].x-v[1].x,v[0].y-v[1].y);pinchZoom=zoom;drag=null;}}
-  function move(e){var p=ptrs[e.pointerId];if(!p)return;idle=0;var v=pv();
-    if(v.length>=2){p.x=e.clientX;p.y=e.clientY;v=pv();var d=Math.hypot(v[0].x-v[1].x,v[0].y-v[1].y);
-      if(pinch>0)zoom=Math.max(0.5,Math.min(4,pinchZoom*d/pinch));return;}
-    if(!drag)return;var dx=e.clientX-drag.x,dy=e.clientY-drag.y;drag.x=e.clientX;drag.y=e.clientY;
-    if(drag.pan){panx+=dx;pany+=dy;}else{yaw+=dx*0.008;pitch=Math.max(-1.45,Math.min(1.45,pitch+dy*0.008));}kick();}
-  function up(e){delete ptrs[e.pointerId];if(pv().length<2)pinch=0;if(pv().length===0)drag=null;}
-  function wheel(e){e.preventDefault();idle=0;zoom=Math.max(0.5,Math.min(4,zoom*(e.deltaY<0?1.12:1/1.12)));kick();}
-  function bind(){
-    cv.style.cursor='grab';cv.style.touchAction='none';
-    cv.addEventListener('pointerdown',down);cv.addEventListener('pointermove',move);
-    cv.addEventListener('pointerup',up);cv.addEventListener('pointercancel',up);
-    cv.addEventListener('wheel',wheel,{passive:false});
-    cv.addEventListener('contextmenu',function(e){e.preventDefault();});
-    cv.addEventListener('dblclick',function(){yaw=0.5;pitch=-0.5;zoom=1;panx=0;pany=0;kick();});
-    window.addEventListener('resize',function(){if(cv&&CURRENT_VIEW===OWNVIEW){fit();kick();}});
+  function ziele(t){
+    Object.keys(ZI).forEach(function(k){var z=ZI[k],d=z.z,
+      puls=reduce?0.5:0.5+0.5*Math.sin(t*3+z.a*2);
+      if(d.restream){var col=d.restream==='gestoert'?FARBE.red:d.restream==='langsam'?FARBE.amber:FARBE.cyan,
+          an=d.restream!=='gestoert'||reduce||Math.sin(t*6)>-0.3;
+        if(an){kreis(z.x,z.y,15+(d.restream==='gesund'?puls*2:0));ctx.strokeStyle=col;ctx.lineWidth=1.4;ctx.stroke();}}
+      if(d.aufnahme){ctx.save();ctx.translate(z.x,z.y);ctx.rotate(reduce?0:t*0.9);
+        ctx.setLineDash([3,4]);kreis(0,0,10.5);ctx.strokeStyle=FARBE.neon;ctx.lineWidth=2;ctx.stroke();ctx.restore();ctx.setLineDash([]);}
+      kreis(z.x,z.y,6);ctx.fillStyle=d.pausiert?FARBE.faint:FARBE.red;ctx.globalAlpha=d.pausiert?0.6:0.7+0.3*puls;ctx.fill();ctx.globalAlpha=1;
+      var nm='@'+(d.name.length>13?d.name.slice(0,12)+'…':d.name);
+      ctx.fillStyle=FARBE.text;ctx.font='600 10px '+FARBE.mono;ctx.textAlign='center';
+      var unten=Math.sin(z.a)>-0.2;ctx.textBaseline=unten?'top':'bottom';
+      ctx.fillText(nm,z.x,z.y+(unten?20:-20));});
   }
-  function start(canvasId, viewName){
-    OWNVIEW=viewName||'insights';
-    cv=document.getElementById(canvasId||'cc_canvas');if(!cv)return;
-    ctx=cv.getContext('2d');fit();bind();setData({});
+  function waechter(){
+    Object.keys(AG).forEach(function(k){var s=AG[k],a=s.a||{},
+      col=a.lage==='fehler'?FARBE.red:a.lage==='taetig'?FARBE.cyan:a.lage==='aus'?FARBE.faint:FARBE.neon;
+      if(s.spur.length>3){ctx.beginPath();ctx.moveTo(s.spur[0],s.spur[1]);
+        for(var i=2;i<s.spur.length;i+=2)ctx.lineTo(s.spur[i],s.spur[i+1]);
+        ctx.strokeStyle=col;ctx.globalAlpha=0.25;ctx.lineWidth=1.2;ctx.stroke();ctx.globalAlpha=1;}
+      /* Drohne: Dreieck in Flugrichtung */
+      var w=Math.atan2(s.vy||0.01,s.vx||0.01);ctx.save();ctx.translate(s.x,s.y);ctx.rotate(w);
+      ctx.beginPath();ctx.moveTo(6,0);ctx.lineTo(-4,4);ctx.lineTo(-2,0);ctx.lineTo(-4,-4);ctx.closePath();
+      ctx.fillStyle=col;ctx.globalAlpha=a.lage==='aus'?0.45:1;ctx.fill();ctx.restore();ctx.globalAlpha=1;
+      if(a.lage==='taetig'||a.lage==='fehler'){ctx.fillStyle=col;ctx.font='9px '+FARBE.mono;
+        ctx.textAlign='left';ctx.textBaseline='middle';ctx.fillText(NAMEN[a.name]||a.name,s.x+8,s.y-8);}});
+  }
+  function hud(){
+    var d=daten||{},z=d.ziele||[],ag=d.agenten||[],q=d.quellen||{};
+    var rec=z.filter(function(x){return x.aufnahme;}).length,
+        rs=z.filter(function(x){return x.restream;}),
+        stoer=rs.filter(function(x){return x.restream!=='gesund';}).length,
+        an=ag.filter(function(a){return a.lage!=='aus';}).length;
+    ctx.font='10px '+FARBE.mono;ctx.textBaseline='alphabetic';ctx.textAlign='left';
+    ctx.fillStyle=z.length?FARBE.red:FARBE.faint;
+    var zeile=fehlt?T('Lagebild nicht erreichbar'):
+      (z.length?('● '+(z.length+(d.weitere||0))+T(' live')):T('○ niemand live'))+' · '+rec+T(' Aufnahme(n)')+' · '+rs.length+T(' Restream(s)')+(stoer?' ('+stoer+T(' gestört/langsam')+')':'');
+    ctx.fillText(zeile,12,H-12);
+    ctx.textAlign='right';ctx.fillStyle=q.brain===false?FARBE.amber:FARBE.faint;
+    ctx.fillText(q.brain===false?T('Wächter nicht geladen (Brain antwortet nicht)'):(T('Wächter ')+an+'/'+ag.length+T(' aktiv')),W-12,H-12);
+    if(maus){var tr=treffer(maus.x,maus.y);if(tr){ctx.font='11px '+FARBE.mono;
+      var bw=ctx.measureText(tr).width+14,bx=Math.min(W-bw-4,maus.x+12),by=Math.max(4,maus.y-26);
+      ctx.fillStyle='rgba(4,10,14,0.94)';ctx.fillRect(bx,by,bw,20);ctx.strokeStyle=FARBE.cyan;ctx.strokeRect(bx+0.5,by+0.5,bw-1,19);
+      ctx.fillStyle=FARBE.text;ctx.textAlign='left';ctx.textBaseline='middle';ctx.fillText(tr,bx+7,by+10);}}
+  }
+  function treffer(x,y){
+    var best=null,bd=144;
+    Object.keys(AG).forEach(function(k){var s=AG[k],dd=(s.x-x)*(s.x-x)+(s.y-y)*(s.y-y);
+      if(dd<bd){bd=dd;var a=s.a;best=(NAMEN[a.name]||a.name)+' · '+(LAGE[a.lage]||a.lage)+(a.ziel?' → @'+a.ziel:'')+(a.fehler?' · '+a.fehler+T(' Fehler'):'');}});
+    Object.keys(ZI).forEach(function(k){var z=ZI[k],dd=(z.x-x)*(z.x-x)+(z.y-y)*(z.y-y);
+      if(dd<bd*1.6){bd=dd;var d=z.z;best='@'+d.name+(d.aufnahme?T(' · Aufnahme'):'')+(d.restream?' · '+RSL[d.restream]:'')+(d.pausiert?T(' · pausiert'):'');}});
+    return best;
+  }
+  function bild(now){
+    var t=now/1000;ctx.setTransform(dpr,0,0,dpr,0,0);ctx.clearRect(0,0,W,H);
+    if(bg)ctx.drawImage(bg,0,0,W,H);
+    koerper(t);ziele(t);waechter();hud();
+  }
+  function takt(now){
+    if(CURRENT_VIEW!==OWNVIEW||document.hidden||!cv||reduce){raf=null;return;}
+    var dt=last?Math.min(0.05,(now-last)/1000):0.016;last=now;
+    schritt(dt);bild(now);raf=requestAnimationFrame(takt);
+  }
+  function kick(){if(reduce){if(cv)bild(performance.now());return;}
+    if(!raf&&cv&&CURRENT_VIEW===OWNVIEW&&!document.hidden){last=0;raf=requestAnimationFrame(takt);}}
+  /* Für Screenreader: dasselbe Bild als Text. textContent, nie innerHTML. */
+  function text(){
+    var box=document.getElementById('ov_lage_text');if(!box)return;
+    var d=daten||{},z=d.ziele||[],ag=d.agenten||[];
+    box.textContent='';
+    var kopf=document.createElement('p');
+    kopf.textContent=fehlt?T('Lagebild nicht erreichbar'):(z.length+T(' aktive Nutzer, ')+ag.filter(function(a){return a.lage==='taetig';}).length+T(' Wächter arbeiten gerade.'));
+    box.appendChild(kopf);
+    var ul=document.createElement('ul');
+    z.forEach(function(x){var li=document.createElement('li');
+      li.textContent='@'+x.name+(x.aufnahme?T(' · Aufnahme'):'')+(x.restream?' · '+RSL[x.restream]:'');ul.appendChild(li);});
+    ag.forEach(function(a){var li=document.createElement('li');
+      li.textContent=(NAMEN[a.name]||a.name)+': '+(LAGE[a.lage]||a.lage)+(a.ziel?' → @'+a.ziel:'');ul.appendChild(li);});
+    box.appendChild(ul);
+    if(cv)cv.setAttribute('aria-label',kopf.textContent);
+  }
+  function laden(){
+    return apiGet('/api/lagebild').then(function(d){setze(d&&d.ok?d:null);}).catch(function(){setze(null);});
+  }
+  function binden(){
+    if(gebunden)return;gebunden=true;
+    cv.addEventListener('pointermove',function(e){var r=cv.getBoundingClientRect();maus={x:e.clientX-r.left,y:e.clientY-r.top};if(reduce)bild(performance.now());});
+    cv.addEventListener('pointerleave',function(){maus=null;if(reduce)bild(performance.now());});
+    window.addEventListener('resize',function(){if(cv&&CURRENT_VIEW===OWNVIEW){fit();setze(daten);}});
+    document.addEventListener('visibilitychange',function(){if(!document.hidden)kick();});
+    if(mq&&mq.addEventListener)mq.addEventListener('change',function(e){reduce=e.matches;setze(daten);});
+  }
+  function start(canvasId,viewName){
+    OWNVIEW=viewName||'overview';
+    cv=document.getElementById(canvasId);if(!cv)return;
+    ctx=cv.getContext('2d');fit();binden();
     if(poll){clearInterval(poll);poll=null;}
-    load();poll=setInterval(function(){if(CURRENT_VIEW===OWNVIEW&&!document.hidden)load();},8000);
+    laden();poll=setInterval(function(){if(CURRENT_VIEW===OWNVIEW&&!document.hidden)laden();},8000);
     kick();
   }
-  function load(){
-    return apiGet('/api/stats').then(function(s){
-      /* v4.0-W126: frueher stand hier zusaetzlich cc_tag — der zweite
-         Einbau der Kommandozentrale, den W71 entfernt hat. Die Zeile
-         schreibt ov_cc_tag (siehe unten), das es wirklich gibt. */
-      if(s) setData(s);
-      kick();
-    }).catch(function(){});
-  }
-  return {start:start,reload:load};
+  return {start:start,reload:laden,_setze:setze,_zielVon:zielVon,_AG:AG};
 })();
-/* v4.0-W71: loadCommandCenter (Insights-Mount) entfernt — die Kommandozentrale
-   lebt jetzt nur noch auf der Übersicht (ncCommandCenter.start('ov_cc','overview')). */
 
 /* ═══ v4.0-W115: Software-Stand · Selbst-Update aus dem GitHub-Repo ═══
    Vier Endpunkte, ein Zustand:
@@ -12361,7 +12482,7 @@ var ncCatchGauge=(function(){
 
 async function loadOverview(){
   try{ updCheck(false); }catch(e){}
-  try{ ncCommandCenter.start('ov_cc','overview'); }catch(e){}
+  try{ ncLagebild.start('ov_cc','overview'); }catch(e){}
   try{ ncRecBars3D.start('rb_canvas','overview'); }catch(e){}
   try{ ncCatchGauge.start('cg_canvas','overview'); }catch(e){}
   var set=function(id,v){var e=document.getElementById(id); if(e) e.textContent=(v==null?'—':v);};

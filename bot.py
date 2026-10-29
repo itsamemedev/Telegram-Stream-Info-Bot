@@ -652,6 +652,7 @@ from nc.routes import marketing as _nc_routes_marketing      # v4.1-W4: Cross-Pr
 from nc.routes import streamer as _nc_routes_streamer        # v4.1-W5: Streamer-Ansicht
 from nc.routes import i18n as _nc_routes_i18n                # v4.1-W6: Sprachwahl
 from nc.routes import schriften as _nc_routes_schriften      # v4.2-W111: Schriften lokal statt Google
+from nc.routes import lagebild as _nc_routes_lagebild        # v4.2-W112: lebende Übersicht
 from nc.routes import twitch as _nc_routes_twitch            # v4.1-W8: Twitch-OAuth
 from nc.routes import youtube as _nc_routes_youtube          # v4.1-W8: YouTube-OAuth
 from nc.routes import kick as _nc_routes_kick                # v4.1-W9: Kick-OAuth, Kanal, Sendecheck
@@ -25294,6 +25295,7 @@ dashboard_app.register_blueprint(_nc_routes_marketing.bp)  # v4.1-W4
 dashboard_app.register_blueprint(_nc_routes_streamer.bp)   # v4.1-W5
 dashboard_app.register_blueprint(_nc_routes_i18n.bp)       # v4.1-W6
 dashboard_app.register_blueprint(_nc_routes_schriften.bp)  # v4.2-W111
+dashboard_app.register_blueprint(_nc_routes_lagebild.bp)  # v4.2-W112
 dashboard_app.register_blueprint(_nc_routes_twitch.bp)     # v4.1-W8
 dashboard_app.register_blueprint(_nc_routes_youtube.bp)    # v4.1-W8
 dashboard_app.register_blueprint(_nc_routes_kick.bp)       # v4.1-W9

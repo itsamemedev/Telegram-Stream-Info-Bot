@@ -11,6 +11,38 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Neu — das Lagebild: die Übersicht zeigt, was gerade passiert (v4.2 W112)
+
+Die „3D-Kommandozentrale" auf der Übersicht drehte fünf Kennzahlen auf einem
+Ring — dieselben fünf, die in den Kacheln direkt darüber stehen. An ihrer
+Stelle steht jetzt das **Lagebild**:
+
+- In der Mitte der Crawler. Auf dem äußeren Ring jeder Nutzer, der gerade
+  etwas tut: rot = live, gestrichelter grüner Ring = Aufnahme läuft, ein
+  äußerer Ring für den Restream — cyan gesund, gelb langsam, rot blinkend
+  gestört. Ruhende Trackings sind eine Zahl, kein Punkt.
+- Dazwischen die dreizehn Wächter aus dem Brain als Drohnen. Ein Wächter, der
+  gerade gelaufen ist, fliegt zu seinem Arbeitsort (Platte, Tunnel, Abwehr,
+  Chat, Archiv) oder zu dem Nutzer, an dem er arbeitet — der
+  Restream-Wächter bevorzugt dorthin, wo es brennt. Rot = Fehler, grau =
+  abgeschaltet. Mauszeiger über einen Punkt zeigt Namen und Zustand.
+- Neue Route `/api/lagebild` (ein Aufruf statt vier je Takt). **Was**
+  gezeichnet wird, entscheidet `nc/lagebild.py` — geprüft: ein gestörter
+  Restream wird nicht grün, ein zweiter gesunder Restream desselben Nutzers
+  färbt den gestörten nicht um, ein Aufnahme-Wächter steht nie an einem
+  Nutzer, der nicht aufnimmt. Fällt eine Quelle aus (z. B. das Brain), steht
+  das im Bild und gedrosselt im Log, statt dass die Wächter still fehlen.
+- `prefers-reduced-motion`: kein Animationsloop, ein ruhiges Standbild je
+  Datenstand. Gezeichnet wird nur, solange die Übersicht vorn und der Tab
+  sichtbar ist; gemessen 60 fps in Chromium. Nutzernamen gehen nur durch
+  `fillText`/`textContent`. Für Screenreader steht dasselbe Bild als Text
+  daneben.
+- Vertrag `_test_v42_w112_lagebild`, 25 Mutationsproben, alle gefangen. Die
+  W66/W68/W71-Verträge auf die Kommandozentrale sind umgestellt.
+
+**Für den Betreiber:** nichts einzustellen. Wer die Bewegung nicht will,
+schaltet im Betriebssystem „Bewegung reduzieren" ein.
+
 ### Geändert — Schriften vom Deck statt von Google, eine Messung je Kasten (v4.2 W111)
 
 Die öffentliche Seite lädt ihre Schriften seit W88 lokal. **Deck, Brain-Seite
