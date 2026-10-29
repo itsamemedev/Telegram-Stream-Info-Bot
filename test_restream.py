@@ -7951,9 +7951,15 @@ def test_v40_w109_dashboard_feldnamen():
     # Nur CODE-Zeilen pruefen: der Fix erklaert sich im Kommentar und nennt das
     # alte Feld dabei beim Namen. Ein reiner Textvergleich schlaege daran an.
     _code = [ln for ln in h.splitlines() if not ln.lstrip().startswith("//")]
-    assert not any("res.cpu_percent" in ln for ln in _code), \
+    # ANKER GEWANDERT (v4.2-W111): die Zeile in loadSystem (`res.…`) ist mit
+    # dem doppelten Panel „Host Resources" weg; die eine Ressourcen-Anzeige
+    # ist loadResources() und liest `d.…`. Die Aussage bleibt dieselbe.
+    assert not any(("res.cpu_percent" in ln or "d.cpu_percent" in ln) for ln in _code), \
         "CPU-Zeile haengt wieder an cpu_percent (das Feld liefert die Route nicht)"
-    assert any("res.load_percent" in ln for ln in _code), "CPU-Zeile liest nicht load_percent"
+    _lr = h.index("async function loadResources(")
+    _lr_code = [ln for ln in h[_lr:h.index("\nasync function ", _lr + 10)].splitlines()
+                if not ln.lstrip().startswith("//")]
+    assert any("d.load_percent" in ln for ln in _lr_code), "CPU-Zeile liest nicht load_percent"
     assert "cpu_percent" not in src + _h, \
         "Backend liefert cpu_percent — dann darf das Frontend es lesen"
     assert 'out["load_percent"]' in _h, "load_percent wird nicht mehr berechnet"
@@ -8910,7 +8916,13 @@ def test_v41_w2_dauerlaeufer_melden_sich():
         "Zuschauer-Stichprobe faellt wieder stumm aus"
 
     # ── /healthz ist EINE Route, kein Praefix ───────────────────────────
-    assert '_AUTH_EXEMPT_PREFIXES = ("/api/public/",)' in src, \
+    # ANKER GEWANDERT (v4.2-W111): "/fonts/" ist als zweites Praefix dazu
+    # (Schriften fuer die OBS-Quelle). Die Aussage bleibt: jedes Praefix endet
+    # auf "/", und /healthz ist keins.
+    _praef = re.search(r"^_AUTH_EXEMPT_PREFIXES = (\(.*\))$", src, re.M)
+    _praef = ast.literal_eval(_praef.group(1)) if _praef else ()
+    assert "/api/public/" in _praef and all(p.endswith("/") for p in _praef) \
+        and not any(p.startswith("/healthz") for p in _praef), \
         "/healthz wieder als Praefix — /healthzirgendwas umginge den Login"
     assert '_AUTH_EXEMPT_EXACT = ("/healthz",' in src, \
         "/healthz nicht mehr ausgenommen (Health-Check braucht ihn ohne Login)"

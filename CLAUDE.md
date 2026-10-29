@@ -26,7 +26,7 @@ benutzt, berät an der Lage vorbei.**
 
 ## Die eine Regel
 
-`bot.py` hat **25.314 Zeilen / 1,2 MB ≈ 295.000 Token**. Diese Datei wird
+`bot.py` hat **25.319 Zeilen / 1,2 MB ≈ 295.000 Token**. Diese Datei wird
 **nie** ganz gelesen und **nie** blind durchsucht. Erst fragen wo etwas steht,
 dann den Ausschnitt holen:
 
@@ -41,7 +41,7 @@ dann den Ausschnitt holen:
     python tools/ncpatch.py check                          # Templates: doppelte IDs, CSS-Bilanz
     python tools/ncpatch.py docs                           # Doku-Zahlen gegen den Quelltext
 
-`find` antwortet aus `.claude/INDEX.md` — 369 Routen (34 in `bot.py`, 333 in
+`find` antwortet aus `.claude/INDEX.md` — 371 Routen (34 in `bot.py`, 337 in
 `nc/routes/`), 65 Slash-Commands, 565 Funktionen mit Zeilennummern. Nach Änderungen an Routen, Commands oder
 Top-Level-Funktionen `map` neu laufen lassen. Details: Skill `nc-navigation`.
 
@@ -73,7 +73,7 @@ Auf diesem Windows-Rechner heißt der Interpreter **`python`** (3.13.12);
                          semantic, knowledge, scheduler, llm, report
     nc/                  155 Fachmodule: db, scraping, restream, oauth, ledger,
                          i18n, …
-    nc/routes/           36 Flask-Blueprints mit 335 weiteren API-Routen
+    nc/routes/           37 Flask-Blueprints mit 337 weiteren API-Routen
     locales/             de.json, en.json — der Übersetzungskatalog
     templates/           dashboard.html, brain.html, overlay.html, PWA
     website/             lafap_index.html (öffentliche Seite)
@@ -1120,6 +1120,15 @@ gefangen), ein Brain-Panel, das `h.ollama.up` las und dadurch **immer**
 abbrach, und eine mitgelieferte Unit mit `--embeddings`. Seither entscheidet
 `nc/kiwahl.py` an einer Stelle. **Wer ein Feature hinter einen Schalter legt,
 prüft, welchen Wert der Schalter auf einer frischen Installation hat.**
+
+**Was die öffentliche Seite gelernt hat, galt nicht für das Deck.** Die Seite
+lädt ihre Schriften seit W88 lokal; Deck, Brain-Seite und Overlay holten sie
+bis v4.2-W111 weiter bei Google — das Overlay bei **jedem** Restream-Screenshot,
+also vom Server aus im Sekundentakt. Seither liefert `nc/routes/schriften.py`
+dieselben Dateien aus `website/fonts/`, Name gegen eine feste Liste, ohne
+Token (OBS). Dazu zwei Kästen für **eine** Messung zusammengelegt („Host
+Resources" neben „Ressourcen", die ✓/✗-Reihe im Ops-Tab neben dem Preflight).
+**Eine Regel, die an einer Oberfläche gilt, gegen alle Oberflächen prüfen.**
 
 **Einmal-`await` ohne Supervisor.** Jeder Long-Running-Client braucht Reconnect
 mit Backoff **und** ein Abbruchkriterium für deterministische Fehler.

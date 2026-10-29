@@ -513,7 +513,9 @@ def _test_routes_alle_blueprints():
         # liegen — /metrics ist der Prometheus-Endpunkt, und ein Scraper sucht
         # ihn genau dort (v4.1-W23). Die Liste steht hier ausdruecklich, damit
         # ein versehentlich gesetzter url_prefix trotzdem auffliegt.
-        AUSSERHALB = {"/metrics"}
+        # /fonts/… (v4.2-W111): die Schriften stehen dort, wo die
+        # @font-face-Regeln und die oeffentliche Seite sie erwarten.
+        AUSSERHALB = {"/metrics", "/fonts/schriften.css", "/fonts/<name>"}
         for r in regeln:
             assert str(r.rule).startswith("/api/") or str(r.rule) in AUSSERHALB, \
                 "%s: Pfad nicht mehr unter /api/ — url_prefix gesetzt? %s" % (name, r.rule)
@@ -20762,6 +20764,92 @@ def _test_v42_w110_lokales_llm_zuerst():
        "die Wahl, kein Ollama-Rat, Brain-Panel rendert, Unit ohne --embeddings")
 
 
+def _test_v42_w111_schriften_lokal_ein_panel_je_messung():
+    """Das Deck lud seine Schriften von Google, und zwei Kaesten zeigten
+    dieselbe Messung.
+
+    Die oeffentliche Seite holt ihre Schriften seit W88 lokal — Deck, Overlay
+    und Brain-Seite nicht: jede Anfrage trug die IP zu fonts.googleapis.com,
+    das Overlay sogar bei jedem Restream-Screenshot. Und „Host Resources"
+    zeigte /api/system-resources ein zweites Mal neben „Ressourcen", die
+    ✓/✗-Reihe im Ops-Tab eine Teilmenge des Preflights.
+    """
+    import ast as _ast
+    import glob
+    import re as _re
+    from flask import Flask
+    from nc.routes import schriften as S
+
+    # ── (1) KEIN TEMPLATE LAEDT VON GOOGLE. Gemessen ohne Kommentare — die
+    # Begruendung darf den Namen nennen, ein <link> nicht.
+    for pfad in sorted(glob.glob("templates/*.html")):
+        t = io.open(pfad, encoding="utf-8").read()
+        t = _re.sub(r"<!--.*?-->", "", t, flags=_re.S)
+        t = _re.sub(r"/\*.*?\*/", "", t, flags=_re.S)
+        for fremd in ("fonts.googleapis.com", "fonts.gstatic.com"):
+            assert fremd not in t, (pfad, fremd)
+        if "Orbitron" in t or "JetBrains Mono" in t:
+            assert 'href="/fonts/schriften.css"' in t, \
+                "%s nutzt die Schriften, laedt sie aber nicht" % pfad
+
+    # ── (2) DIE ROUTE: genau die Liste, sonst 404 — auch fuer Ausbrueche.
+    app = Flask("w111")
+    app.register_blueprint(S.bp)
+    c = app.test_client()
+    r = c.get("/fonts/schriften.css")
+    assert r.status_code == 200 and r.mimetype == "text/css"
+    css = r.get_data(as_text=True)
+    assert css.count("@font-face") == len(S.SCHNITTE) == 6
+    assert css.count("font-display:swap") == 6
+    for datei in S.SCHNITTE:
+        assert "/fonts/%s" % datei in css
+        r = c.get("/fonts/" + datei)
+        assert r.status_code == 200 and r.get_data()[:4] == b"wOF2", datei
+        assert "max-age" in r.headers.get("Cache-Control", "")
+        r.close()
+    for boese in ("bot.py", "..%2Fbot.py", "%2e%2e%2f.env", "orbitron-500.woff",
+                  "ORBITRON-500.woff2", "schriften.css.bak", ".env"):
+        assert c.get("/fonts/" + boese).status_code == 404, boese
+    # Der Dateiname an send_from_directory stammt aus SCHNITTE, nie aus der
+    # Anfrage (CodeQL, W98): im Baum darf `name` dort nicht auftauchen.
+    baum = _ast.parse(io.open(S.__file__, encoding="utf-8").read())
+    for k in _ast.walk(baum):
+        if isinstance(k, _ast.Call) and getattr(k.func, "id", "") == "send_from_directory":
+            namen = {n.id for a in k.args for n in _ast.walk(a) if isinstance(n, _ast.Name)}
+            assert "name" not in namen, "Pfad aus der Anfrage gebaut"
+
+    # ── (3) DER BOT haengt die Route ein und laesst sie ohne Token durch
+    # (OBS-Browserquelle auf einem anderen Rechner).
+    bb = _ast.parse(io.open("bot.py", encoding="utf-8").read())
+    frei = None
+    eingehaengt = False
+    for k in _ast.walk(bb):
+        if isinstance(k, _ast.Assign) and any(getattr(z, "id", "") == "_AUTH_EXEMPT_PREFIXES" for z in k.targets):
+            frei = _ast.literal_eval(k.value)
+        if isinstance(k, _ast.Call) and getattr(k.func, "attr", "") == "register_blueprint" \
+                and k.args and _ast.unparse(k.args[0]) == "_nc_routes_schriften.bp":
+            eingehaengt = True
+    assert eingehaengt, "Blueprint schriften nicht registriert"
+    assert frei and "/fonts/" in frei, frei
+
+    # ── (4) EINE MESSUNG, EIN KASTEN. Im Deck-Code (ohne Kommentare) wird
+    # /api/system-resources genau einmal gefragt, #sy_res gibt es nicht mehr,
+    # und loadOps6Health zeichnet keine Einzelpruefungen.
+    d = io.open("templates/dashboard.html", encoding="utf-8").read()
+    d = _re.sub(r"<!--.*?-->", "", d, flags=_re.S)
+    d = _re.sub(r"/\*.*?\*/", "", d, flags=_re.S)
+    d = "\n".join(z for z in d.splitlines() if not z.strip().startswith("//"))
+    assert d.count("'/api/system-resources'") == 1, d.count("'/api/system-resources'")
+    assert "sy_res" not in d
+    assert "Host Resources" not in d
+    i = d.index("async function loadOps6Health(")
+    fn = d[i:d.index("\nasync function ", i + 10)]
+    assert "/api/ops/healthcheck" in fn and "checks" not in fn and "innerHTML" not in fn, fn
+
+    ok("W111: Schriften lokal (Deck, Overlay, Brain), Route nur fuer die "
+       "Liste, ohne Token; Ressourcen und Einzelpruefungen je einmal")
+
+
 def main():
     tmp, rid = richte_testdatenbank_ein()
     ok("db_conn aus nc.dbwrap: echtes Schema angelegt, Commit durchgelaufen")
@@ -21048,6 +21136,7 @@ def main():
     _test_v42_w108_drossel_greift_vor_dem_salat()
     _test_v42_w109_ein_befehlsverzeichnis()
     _test_v42_w110_lokales_llm_zuerst()
+    _test_v42_w111_schriften_lokal_ein_panel_je_messung()
     _test_v42_w60_azrael_cooldown_je_plattform()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)

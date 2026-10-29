@@ -11,6 +11,30 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Geändert — Schriften vom Deck statt von Google, eine Messung je Kasten (v4.2 W111)
+
+Die öffentliche Seite lädt ihre Schriften seit W88 lokal. **Deck, Brain-Seite
+und Overlay nicht**: jede Anfrage trug die IP zu `fonts.googleapis.com`, das
+Overlay sogar bei jedem Chromium-Screenshot des Restreams. Ohne freien Weg
+nach draußen lief das Sendebild in der Ersatzschrift.
+
+- Neu `nc/routes/schriften.py`: `/fonts/schriften.css` und die sechs
+  `woff2`-Schnitte aus `website/fonts/` (dieselben Dateien, keine zweite
+  Kopie). Der Name wird gegen eine feste Liste nachgeschlagen — kein Pfad aus
+  der Anfrage, also auch nichts für CodeQL. `/fonts/` ist ohne Token
+  erreichbar wie `/overlay`: die OBS-Browserquelle kann keinen mitschicken.
+- System-Tab: „▚ Host Resources" ist weg. Es zeigte `/api/system-resources`
+  ein zweites Mal neben „▚ Ressourcen", mit weniger Angaben und dem Leertext
+  „psutil not available".
+- Ops-Tab: die ✓/✗-Reihe aus `/api/ops/healthcheck` war eine Teilmenge des
+  Preflights im System-Tab, mit Rohschlüsseln. Der Gesamtstatus bleibt im
+  Kopf, darunter der Verweis auf den Preflight.
+- Vertrag `_test_v42_w111_schriften_lokal_ein_panel_je_messung`, neun
+  Mutationsproben, alle gefangen.
+
+**Für den Betreiber:** nichts einzustellen. Nach dem Neustart lädt das Deck
+keine fremde Adresse mehr; im Browser unter *Netzwerk* prüfbar.
+
 ### Geändert — das lokale llama.cpp wird bevorzugt, Ollama ist auch als Rat weg (v4.2 W110)
 
 Gemeldet: „Llama ist lokal installiert … lokales Llama soll der bevorzugte
