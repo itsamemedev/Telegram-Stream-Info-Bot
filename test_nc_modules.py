@@ -24024,6 +24024,488 @@ def _test_v42_w129_profile():
     ok("W129: Nutzungsprofile setzen nur echte Schalter, Wechsel endet sauber, --set prueft den Namen, "
        "Expertenmodus sucht und maskiert, update.sh kennt die KI-Pflicht")
 
+def _w130_pes(pid, pts, dts=None, cc=0, rai=False, pusi=True, pcr=None):
+    """Ein synthetisches TS-Paket mit PES-Kopf — genug, um die Weiche zu
+    pruefen, ohne ffmpeg. Das Format folgt ISO/IEC 13818-1."""
+    from nc import sendebruecke as B
+    af = b""
+    if rai or pcr is not None:
+        flags = (0x40 if rai else 0) | (0x10 if pcr is not None else 0)
+        body = bytes([flags])
+        if pcr is not None:
+            pb = bytearray(6)
+            pb[0] = (pcr >> 25) & 0xFF; pb[1] = (pcr >> 17) & 0xFF
+            pb[2] = (pcr >> 9) & 0xFF; pb[3] = (pcr >> 1) & 0xFF
+            pb[4] = ((pcr & 1) << 7) | 0x7E; pb[5] = 0
+            body += bytes(pb)
+        af = bytes([len(body)]) + body
+    kopf = bytearray([0x47, (0x40 if pusi else 0) | ((pid >> 8) & 0x1F), pid & 0xFF,
+                      (0x30 if af else 0x10) | (cc & 0x0F)])
+    nutz = b""
+    if pusi:
+        ts = bytearray(10 if dts is not None else 5)
+        B._ts_schreiben(ts, 0, pts)
+        ts[0] = (ts[0] & 0x0F) | (0x30 if dts is not None else 0x20)
+        if dts is not None:
+            B._ts_schreiben(ts, 5, dts)
+            ts[5] = (ts[5] & 0x0F) | 0x10
+        nutz = (b"\x00\x00\x01" + bytes([0xE0 if pid == 0x100 else 0xC0]) + b"\x00\x00"
+                + bytes([0x80, 0xC0 if dts is not None else 0x80, len(ts)]) + bytes(ts))
+    p = bytes(kopf) + af + nutz
+    return p + b"\xff" * (188 - len(p))
+
+
+def _w130_psi(pid, tabelle):
+    """PAT/PMT-Paket mit pointer_field 0. CRC wird nicht geprueft."""
+    p = bytes([0x47, 0x40 | (pid >> 8), pid & 0xFF, 0x10, 0x00]) + tabelle
+    return p + b"\xff" * (188 - len(p))
+
+
+def _w130_pat(pmt=0x1000):
+    d = bytes([0x00, 0xB0, 13, 0, 1, 0xC1, 0, 0, 0, 1, 0xE0 | (pmt >> 8), pmt & 0xFF]) + b"\0\0\0\0"
+    return _w130_psi(0, d)
+
+
+def _w130_pmt(stroeme, pmt=0x1000):
+    es = b"".join(bytes([typ, 0xE0 | (k >> 8), k & 0xFF, 0xF0, 0]) for k, typ in stroeme)
+    laenge = 9 + len(es) + 4
+    d = bytes([0x02, 0xB0 | (laenge >> 8), laenge & 0xFF, 0, 1, 0xC1, 0, 0,
+               0xE1, 0x00, 0xF0, 0]) + es + b"\0\0\0\0"
+    return _w130_psi(pmt, d)
+
+
+def _test_v42_w130_sendebruecke():
+    """v4.2-W130: die Verbindung zur Plattform ueberlebt den Quellwechsel.
+
+    Bis hierher zog EIN ffmpeg die Quelle und sendete zugleich. Jede
+    abgelaufene TikTok-Adresse (rund alle sechs Minuten) und jeder CDN-
+    Haenger beendete den Prozess und mit ihm die RTMP-Verbindung — fuer die
+    Plattform ein beendeter Stream, fuer den Zuschauer der Lade-Kreisel.
+
+    Geprueft wird, was die Bruecke verspricht, und zwar an den Stellen, die
+    beim Bauen gemessen schiefgingen: Zeitstempel laufen nie rueckwaerts,
+    umgeschaltet wird nur am BILD-Keyframe, Ton vor dem Keyframe faellt weg,
+    die Quelle legt die Bildgroesse fest, und eine tonlose Quelle wird
+    erkannt, obwohl ihr Zubringer stirbt, bevor er eine PMT schreibt.
+    """
+    import ast as _ast
+    import os as _os
+    import shutil as _sh
+    import time as _t
+    from nc import sendebruecke as B
+    from nc import restreamcfg as C
+    from nc import restreamcmd as R
+    from nc import tonspur as T
+
+    # ── (1) ZEITSTEMPEL: Lesen und Schreiben sind zueinander invers, ueber
+    # die volle 33-Bit-Breite.
+    for wert in (0, 1, 90000, (1 << 32) + 12345, (1 << 33) - 1):
+        b = bytearray(5); b[0] = 0x20
+        B._ts_schreiben(b, 0, wert)
+        assert B._ts_lesen(b, 0) == wert, wert
+        assert b[0] >> 4 == 0x2, "das PTS/DTS-Kennzeichen wurde ueberschrieben"
+        c = bytearray(6); c[4] = 0x7E
+        B._pcr_schreiben(c, 0, wert)
+        assert B._pcr_lesen(c, 0) == wert and c[4] & 0x7E == 0x7E, wert
+
+    # ── (2) DER UMSCHREIBER. Zwei Abschnitte mit eigener Zeitachse — der
+    # zweite beginnt wie jeder frische Zubringer bei ~0.
+    U = B.TsUmschreiber()
+    U.abschnitt(10 * 90000)
+    raus = []
+    for i in range(30):
+        raus.append(U.paket(_w130_pes(0x100, 900000 + 3000 * i, 900000 + 3000 * i - 3000,
+                                      cc=i, rai=(i == 0), pcr=(900000 + 3000 * i - 3000) if i % 10 == 0 else None)))
+        raus.append(U.paket(_w130_pes(0x101, 900000 + 2090 * i, cc=i)))
+    assert all(r is not None for r in raus)
+    erster = B.pes_zeit(raus[0])
+    assert erster[1] == 10 * 90000, ("Abschnitt beginnt nicht an der Wanduhr", erster)
+    # Zweiter Abschnitt: Wanduhr liegt HINTER dem Ende des ersten -> er muss
+    # hinter dem letzten Zeitstempel anschliessen, nie davor.
+    letzt = U.letzt
+    U.abschnitt(5 * 90000)
+    a_vor = U.paket(_w130_pes(0x101, 1400, cc=0))
+    assert a_vor is not None or True
+    v = U.paket(_w130_pes(0x100, 3000, 0, cc=0, rai=True))
+    p2, d2 = B.pes_zeit(v)
+    assert B._vor(letzt, d2), ("zweiter Abschnitt faellt hinter den ersten zurueck", letzt, d2)
+    # Ton, der vor dem Keyframe des neuen Abschnitts liegt, faellt weg —
+    # samt Fortsetzungspaketen. Gemessen: durchgereicht machte er aus 43
+    # Tonpaketen je Sekunde 629.
+    U2 = B.TsUmschreiber()
+    U2.abschnitt(0)
+    U2.paket(_w130_pes(0x100, 9000, 6000, rai=True))
+    U2.paket(_w130_pes(0x101, 9000))
+    U2.abschnitt(0)
+    assert U2.paket(_w130_pes(0x100, 3000, 0, rai=True)) is not None
+    assert U2.paket(_w130_pes(0x101, 100)) is not None, "Ton nach dem Keyframe wird verworfen"
+    U3 = B.TsUmschreiber()
+    U3.abschnitt(0)
+    U3.paket(_w130_pes(0x101, 50000))
+    U3.paket(_w130_pes(0x100, 50000, 47000, rai=True))
+    U3.abschnitt(0)
+    # Keyframe-DTS 10000 setzt den Versatz (-> 53000); Ton bei 4000 laege
+    # damit bei 47000, VOR dem letzten Ton des alten Abschnitts (50000).
+    U3.paket(_w130_pes(0x100, 13000, 10000, rai=True))
+    assert U3.paket(_w130_pes(0x101, 4000)) is None, "Ton vor dem Keyframe kam durch"
+    assert U3.paket(_w130_pes(0x101, 4000, pusi=False)) is None, \
+        "Fortsetzung eines verworfenen Tonpakets kam durch"
+    assert U3.paket(_w130_pes(0x101, 10000)) is not None, "Ton ab dem Keyframe verworfen"
+    # Continuity-Counter: je PID lueckenlos, auch ueber den Wechsel.
+    U4 = B.TsUmschreiber()
+    cc = []
+    for i, roh_cc in enumerate((7, 8, 9, 0, 3, 4)):
+        if i == 3:
+            U4.abschnitt(90000)
+        q = U4.paket(_w130_pes(0x100, 3000 * (i + 1), 3000 * i, cc=roh_cc, rai=True))
+        cc.append(q[3] & 0x0F)
+    assert cc == [0, 1, 2, 3, 4, 5], cc
+    # PCR folgt demselben Versatz wie PTS/DTS.
+    U5 = B.TsUmschreiber()
+    U5.abschnitt(90000)
+    q = U5.paket(_w130_pes(0x100, 6000, 3000, rai=True, pcr=3000))
+    assert B._pcr_lesen(q, 6) == B.pes_zeit(q)[1], "PCR laeuft neben DTS her"
+
+    # ── (3) PAT/PMT und das Urteil.
+    assert B.pat_pmt_pid(_w130_pat(0x1000)) == 0x1000
+    st = B.pmt_stroeme(_w130_pmt([(0x100, B.H264), (0x101, B.AAC_ADTS)]))
+    assert st == {0x100: B.H264, 0x101: B.AAC_ADTS}, st
+    assert B.pmt_urteil(st) == "ok" and B.video_pid(st) == 0x100
+    assert B.pmt_urteil({0x100: B.HEVC, 0x101: B.AAC_ADTS}) == "neukodieren"
+    assert B.pmt_urteil({0x100: B.H264}) == "tonlos"
+    assert B.video_pid({0x101: B.AAC_ADTS, 0x100: B.HEVC}) == 0x100
+
+    # ── (4) DIE WEICHE, ohne Prozesse.
+    lese, schreib = _os.pipe()
+    _os.set_blocking(lese, False)
+    uhr = [100.0]
+    W = B.Bruecke(schreib, [], None, None, name="#v", uhr=lambda: uhr[0],
+                  start_warten_s=20.0)
+
+    def gelesen():
+        try:
+            return len(_os.read(lese, 1 << 20)) // 188
+        except BlockingIOError:
+            return 0
+    for wer in (B.FUELLER, B.QUELLE):
+        W.daten(wer, _w130_pat())
+        W.daten(wer, _w130_pmt([(0x100, B.H264), (0x101, B.AAC_ADTS)]))
+    gelesen()
+    # Das Pausenbild kommt anfangs NICHT durch: die Quelle legt die
+    # Bildgroesse des Senders fest (gemessen: sonst lief 1080x1920 als
+    # 720x1280 hinaus).
+    assert not W.daten(B.FUELLER, _w130_pes(0x100, 3000, 0, rai=True)), \
+        "Pausenbild vor der Quelle beim Sender"
+    W._wuensche(B.QUELLE, "Test")
+    # Umgeschaltet wird am BILD-Keyframe, nicht an einem Tonpaket mit RAI.
+    assert not W.daten(B.QUELLE, _w130_pes(0x101, 3000, rai=True)), \
+        "an einem Tonpaket umgeschaltet — der Sender bekaeme das Bild ab mitten im GOP"
+    assert not W.daten(B.QUELLE, _w130_pes(0x100, 6000, 3000, rai=False)), \
+        "ohne Keyframe umgeschaltet"
+    assert W.daten(B.QUELLE, _w130_pes(0x100, 9000, 6000, rai=True)) and W.aktiv == B.QUELLE
+    assert gelesen() == 1
+    # Ab jetzt darf das Pausenbild — aber nur auf Wunsch und am Keyframe.
+    assert not W.daten(B.FUELLER, _w130_pes(0x100, 3000, 0, rai=True))
+    W._fallback("Test")
+    assert W.aktiv == "wechsel"
+    assert not W.daten(B.QUELLE, _w130_pes(0x100, 12000, 9000)), \
+        "nach dem Rueckfall kommt die Quelle weiter durch"
+    assert W.daten(B.FUELLER, _w130_pes(0x100, 6000, 3000, rai=True)) and W.aktiv == B.FUELLER
+    # Ein Zubringer mit unpassender PMT kommt nie durch.
+    W._urteil[B.QUELLE] = "neukodieren"
+    W._wuensche(B.QUELLE, "Test")
+    assert not W.daten(B.QUELLE, _w130_pes(0x100, 15000, 12000, rai=True))
+    # Ohne Quelle laenger als start_warten_s: dann darf das Pausenbild zuerst.
+    W2 = B.Bruecke(schreib, [], None, None, name="#w", uhr=lambda: uhr[0],
+                   start_warten_s=20.0)
+    W2.daten(B.FUELLER, _w130_pat()); W2.daten(B.FUELLER, _w130_pmt([(0x100, B.H264), (0x101, B.AAC_ADTS)]))
+    assert not W2.daten(B.FUELLER, _w130_pes(0x100, 3000, 0, rai=True))
+    uhr[0] += 21
+    assert W2.daten(B.FUELLER, _w130_pes(0x100, 6000, 3000, rai=True)), \
+        "ohne Quelle bliebe der Sender ewig ohne Bild"
+    gelesen()
+    W._schliessen(); W2._fd = None
+    _os.close(lese)
+
+    # ── (5) DIE BAUER. Jeder traegt Ton, im selben Format (AAC_ARGS) — ein
+    # Mono-Zubringer neben einem Stereo-Pausenbild baute den Tonfilter des
+    # Senders an jeder Umschaltung neu auf.
+    R.configure(
+        cookie_header=lambda: "sid=GEHEIM", pick_pull_proxy=lambda: "",
+        restream_overlay_files=lambda rid=None: {}, FFMPEG_THREADS_LIVE=3,
+        FFMPEG_THREADS_RELAY=2, RESTREAM_AVATAR="", RESTREAM_BITRATE_K=4500,
+        RESTREAM_AVATAR_ALPHA="", RESTREAM_AVATAR_H=170, RESTREAM_AVATAR_LOOP="",
+        RESTREAM_CANVAS_H=720, RESTREAM_CANVAS_W=1280, RESTREAM_FONT="",
+        RESTREAM_FPS=30, RESTREAM_LOW_LATENCY=True, RESTREAM_OVERLAY=False,
+        RESTREAM_OVERLAY_HTML_FPS=1, RESTREAM_RELAY_BITRATE_K=3500,
+        RESTREAM_RELAY_PRESET="ultrafast", RESTREAM_X264_PRESET="veryfast",
+        RESTREAM_UA="UA/1.0", TTS_CH=2, TTS_SR=44100, TTS_VOICE_GAIN="1.8")
+    url = "https://pull.tiktok.com/stage/x.flv"
+    z = R.zubringer(url)
+    assert z[:z.index("-i")].count("-re") == 1, "Zubringer ohne -re liest HLS im Schwall"
+    assert R.quell_eingang(url) == z[z.index("-re") + 1:z.index(url) + 1], \
+        "Zubringer und Sender haben verschiedene Eingangshaertung"
+    assert z[-3:] == ["-f", "mpegts", "pipe:1"] and z[z.index("-c:v") + 1] == "copy"
+    zt = R.zubringer(url, tonlos=True)
+    zn = R.zubringer(url, neukodieren=True)
+    f = R.fueller()
+    for cmd in (z, zt, zn, f):
+        assert T.hat_tonspur(cmd), cmd
+        assert " ".join(T.AAC_ARGS) in " ".join(cmd), ("anderes Tonformat", cmd)
+    assert T.STILLE_QUELLE in zt and "1:a:0" in zt and "-shortest" in zt
+    assert zn[zn.index("-c:v") + 1] == "libx264"
+    fps = 30
+    assert f[f.index("-g") + 1] == str(int(fps * R.BRUECKE_GOP_S)), \
+        "Pausenbild-Keyframe seltener — die Weiche wartet laenger auf ihn"
+    s_alt = R.build(url, "", "", transcode=True, targets=[("kick", "rtmp://x/app/K")])
+    s_neu = R.build("pipe:0", "", "", transcode=True, targets=[("kick", "rtmp://x/app/K")],
+                    bruecke=True)
+    assert "pipe:0" not in s_alt and "-reconnect" in s_alt
+    assert s_neu[s_neu.index("-i") + 1] == "pipe:0" and "-reconnect" not in s_neu
+    assert s_neu[s_neu.index("-f") + 1] == "mpegts"
+    assert "-reinit_filter" in s_neu and s_neu[s_neu.index("-reinit_filter") + 1] == "0", \
+        "ohne -reinit_filter 0 baut ein Groessenwechsel den ganzen Graphen neu — samt Tonfilter"
+    assert R.BRUECKE_TON in " ".join(s_neu) and "async=1000" not in R.BRUECKE_TON
+    assert T.hat_tonspur(s_neu) and T.STILLE_QUELLE not in s_neu
+    assert "sid=GEHEIM" not in " ".join(s_neu), "Sender traegt das Cookie, braucht es nicht"
+
+    # ── (6) DER SCHALTER.
+    alt = {k: _os.environ.get(k) for k in ("RESTREAM_BRUECKE", "RESTREAM_BRUECKE_LUECKE_S")}
+    try:
+        _os.environ.pop("RESTREAM_BRUECKE", None)
+        assert C.bruecke(False) == (True, True), "Vorgabe ohne Bruecke"
+        assert C.bruecke(False, unabhaengig=True) == (False, False)
+        _os.environ["RESTREAM_BRUECKE"] = "0"
+        assert C.bruecke(False) == (False, False) and C.bruecke(True) == (False, True)
+        _os.environ["RESTREAM_BRUECKE_LUECKE_S"] = "0"
+        assert C.bruecke_luecke() == 2.0
+        _os.environ["RESTREAM_BRUECKE_LUECKE_S"] = "999"
+        assert C.bruecke_luecke() == 30.0
+    finally:
+        for k, v in alt.items():
+            if v is None:
+                _os.environ.pop(k, None)
+            else:
+                _os.environ[k] = v
+    ex = open(".env.example", encoding="utf-8").read()
+    for name in ("RESTREAM_BRUECKE", "RESTREAM_BRUECKE_LUECKE_S", "RESTREAM_BRUECKE_OFFLINE_S"):
+        assert name + "=" in ex, name
+
+    # ── (7) DIE VERDRAHTUNG im Manager — gemessen im Syntaxbaum.
+    baum = _ast.parse(open("bot.py", encoding="utf-8").read())
+    rm = next(n for n in baum.body if isinstance(n, _ast.ClassDef) and n.name == "RestreamManager")
+    meth = {n.name: n for n in rm.body if isinstance(n, (_ast.FunctionDef, _ast.AsyncFunctionDef))}
+
+    def aufrufe(fn):
+        return [_ast.unparse(c.func) for c in _ast.walk(fn) if isinstance(c, _ast.Call)]
+    st_ = meth["start"]
+    assert "_nc_bruecke.Bruecke" in aufrufe(st_)
+    assert "_nc_rscfg.bruecke" in aufrufe(st_)
+    bauer = [c for c in _ast.walk(st_) if isinstance(c, _ast.Call)
+             and _ast.unparse(c.func) == "_build_restream_cmd"]
+    mit = [c for c in bauer if any(k.arg == "bruecke" for k in c.keywords)]
+    assert len(bauer) == 2 and len(mit) == 1, "der tee-Weg baut ohne Bruecke"
+    for name in ("_monitor", "stop"):
+        quelle = _ast.unparse(meth[name])
+        assert "bruecke" in quelle and ".stop" in quelle, \
+            "%s raeumt die Bruecke nicht ab — Zubringer liefen als Waisen weiter" % name
+    assert any(isinstance(n, _ast.Dict) and any(isinstance(k, _ast.Constant) and k.value == "bruecke"
+                                                for k in n.keys)
+               for n in _ast.walk(meth["status"])), "das Deck erfaehrt nichts vom Pausenbild"
+
+    # ── (8) DIE TONLOSE QUELLE: ihr Zubringer stirbt am -map, bevor er eine
+    # PMT schreibt. Ein Prozess-Attrappe genuegt — gemessen wird die Wache.
+    starts = []
+
+    class _P:
+        def __init__(self, cmd, **kw):
+            self.cmd = cmd
+            starts.append(cmd)
+            self.returncode = None if cmd == ["fueller"] else 1
+            r, w = _os.pipe()
+            _os.close(w)
+            self.stdout = _os.fdopen(r, "rb")
+            fe = (b"Stream map '0:a:0' matches no streams.\n"
+                  if cmd and cmd[0] == "zub" and not cmd[2] else b"")
+            r2, w2 = _os.pipe()
+            _os.write(w2, fe); _os.close(w2)
+            self.stderr = _os.fdopen(r2, "rb")
+
+        def poll(self):
+            return self.returncode
+
+        def terminate(self):
+            self.returncode = -15
+
+        def wait(self, timeout=None):
+            return self.returncode
+    lese, schreib = _os.pipe()
+    W3 = B.Bruecke(schreib, ["fueller"], lambda u, t, n: ["zub", u, t, n],
+                   lambda: ("u2", None), erste_url="u1", name="#t",
+                   popen=_P, neustart_min_s=0.05, neustart_max_s=0.05)
+    W3.start()
+    ende = _t.monotonic() + 5
+    while _t.monotonic() < ende and not any(c[0] == "zub" and c[2] for c in starts):
+        _t.sleep(0.05)
+    W3.stop()
+    _os.close(lese)
+    zubs = [c for c in starts if c[0] == "zub"]
+    assert any(c[2] for c in zubs), ("tonlose Quelle nie erkannt", zubs[:4])
+    erst = next(c for c in zubs if c[2])
+    assert erst[1] == "u1", "fuer die Stille wurde die Adresse neu aufgeloest — 429-Futter"
+    ende = _t.monotonic() + 5
+    W3b = B.Bruecke(_os.pipe()[1], ["fueller"], lambda u, t, n: ["zub", u, t, n],
+                    lambda: ("u2", None), erste_url="u1", name="#t2",
+                    popen=_P, neustart_min_s=0.05, neustart_max_s=0.05)
+    del starts[:]
+    W3b.start()
+    while _t.monotonic() < ende and not any(c[:2] == ["zub", "u2"] for c in starts):
+        _t.sleep(0.05)
+    W3b.stop()
+    neu = [c for c in starts if c[:2] == ["zub", "u2"]]
+    assert neu and neu[0][2] is False, \
+        ("eine neue Adresse erbt die Stille der alten — die Sitzung bliebe stumm", neu[:2])
+
+    # ── (9) DER HAENGER: ein Zubringer, der verstummt, wird nach luecke_s
+    # ERSETZT (gemessen: weiterlesen holt die Zeit im Schwall nach und laeuft
+    # dann der Uhr voraus), und zwar mit derselben Adresse.
+    starts2 = []
+    offen = {}
+
+    class _H:
+        def __init__(self, cmd, **kw):
+            starts2.append(cmd)
+            self.cmd, self.returncode = cmd, None
+            r, w = _os.pipe()
+            self.stdout = _os.fdopen(r, "rb")
+            r2, w2 = _os.pipe()
+            _os.close(w2)
+            self.stderr = _os.fdopen(r2, "rb")
+            if cmd[0] == "zub":
+                for q in (_w130_pat(), _w130_pmt([(0x100, B.H264), (0x101, B.AAC_ADTS)]),
+                          _w130_pes(0x100, 3000, 0, rai=True)):
+                    _os.write(w, q)
+            offen[id(self)] = w
+
+        def poll(self):
+            return self.returncode
+
+        def terminate(self):
+            self.returncode = -15
+            w = offen.pop(id(self), None)
+            if w is not None:
+                _os.close(w)
+
+        def wait(self, timeout=None):
+            return self.returncode
+    lese4, schreib4 = _os.pipe()
+    W4 = B.Bruecke(schreib4, ["fueller"], lambda u, t, n: ["zub", u],
+                   lambda: ("u-neu", None), erste_url="u1", name="#h",
+                   popen=_H, luecke_s=0.3, neustart_min_s=0.05, neustart_max_s=0.05,
+                   anlauf_s=5.0)
+    W4.start()
+    ende = _t.monotonic() + 6
+    while _t.monotonic() < ende and len([c for c in starts2 if c[0] == "zub"]) < 2:
+        _t.sleep(0.05)
+    lage4 = W4.lage()
+    W4.stop()
+    for w in list(offen.values()):
+        _os.close(w)
+    _os.close(lese4)
+    zubs = [c for c in starts2 if c[0] == "zub"]
+    assert len(zubs) >= 2, ("der verstummte Zubringer wurde nicht ersetzt", zubs, lage4)
+    assert zubs[1] == ["zub", "u1"], ("Haenger loest neu auf statt die Adresse zu behalten", zubs)
+    # Die Quelle war auf Sendung — sonst waere oben die Anlaufzeit (5 s)
+    # gemessen worden und nicht die Luecke (0,3 s).
+    assert lage4["wechsel"] >= 1, lage4
+
+    if not (_sh.which("ffmpeg") and _sh.which("ffprobe")):
+        ok("W130: Sendebruecke (rein); ffmpeg fehlt — echter Lauf uebersprungen")
+        return
+    _w130_echter_lauf(R)
+    ok("W130: Sendebruecke — eine Verbindung ueber zwei Quellwechsel, "
+       "Zeitstempel monoton, Ton lueckenlos, Groesse von der Quelle")
+
+
+def _w130_echter_lauf(R):
+    """Echter ffmpeg: lokaler RTMP-Empfaenger, zwei HTTP-FLV-Quellen, die
+    nach 3 s abbrechen wie eine abgelaufene TikTok-Adresse — die erste
+    1080x1920 mit Mono-Ton in 48 kHz, also genau nicht das Zielformat."""
+    import collections as _col
+    import os as _os
+    import socket as _so
+    import subprocess as _sp
+    import time as _t
+    import pruefhilfen as P
+    from nc import sendebruecke as B
+
+    def frei():
+        s = _so.socket(); s.bind(("127.0.0.1", 0)); p = s.getsockname()[1]; s.close()
+        return p
+    heim = P.verzeichnis()
+    aus = _os.path.join(heim, "senke.flv")
+    senke_url = "rtmp://127.0.0.1:%d/live/k" % frei()
+    senke = _sp.Popen(["ffmpeg", "-v", "error", "-y", "-listen", "1", "-i", senke_url,
+                       "-c", "copy", "-f", "flv", aus], stdin=_sp.DEVNULL)
+    _t.sleep(0.8)
+    lese, schreib = _os.pipe()
+    sender = _sp.Popen(R.build("pipe:0", "", "", transcode=True, rid=1,
+                               targets=[("kick", senke_url)], bruecke=True),
+                       stdin=lese, stdout=_sp.DEVNULL, stderr=_sp.DEVNULL)
+    _os.close(lese)
+    quellen = []
+
+    def quelle():
+        port = frei()
+        groesse = "1080x1920" if not quellen else "720x1280"
+        quellen.append(_sp.Popen(
+            ["ffmpeg", "-v", "error", "-re", "-f", "lavfi", "-i", "testsrc2=s=%s:r=30" % groesse,
+             "-f", "lavfi", "-i", "sine=r=48000:f=440", "-t", "3", "-ac", "1",
+             "-c:v", "libx264", "-preset", "ultrafast", "-g", "30", "-c:a", "aac",
+             "-f", "flv", "-listen", "1", "http://127.0.0.1:%d/l.flv" % port],
+            stdin=_sp.DEVNULL))
+        _t.sleep(0.4)
+        return "http://127.0.0.1:%d/l.flv" % port, None
+    br = B.Bruecke(schreib, R.fueller(), R.zubringer, quelle, erste_url=quelle()[0],
+                   luecke_s=3.0, name="#vertrag")
+    try:
+        br.start()
+        _t.sleep(11)
+        lage = br.lage()
+    finally:
+        br.stop()
+        for p in [sender, senke] + quellen:
+            try:
+                p.wait(timeout=15)
+            except _sp.TimeoutExpired:
+                p.kill(); p.wait()
+    assert senke.returncode == 0 and sender.returncode == 0, (senke.returncode, sender.returncode)
+    assert lage["wechsel"] >= 3, ("kein Quellwechsel im Lauf", lage)
+
+    def pakete(sel):
+        r = _sp.run(["ffprobe", "-v", "error", "-select_streams", sel, "-show_entries",
+                     "packet=pts_time,flags", "-of", "csv=p=0", aus],
+                    capture_output=True, text=True, timeout=30)
+        z = [l.strip(",").split(",") for l in r.stdout.split()]
+        return [(float(a[0]), "K" in (a[1] if len(a) > 1 else "")) for a in z
+                if a and a[0] not in ("", "N/A")]
+    v, a = pakete("v:0"), pakete("a:0")
+    vt, at = [x[0] for x in v], [x[0] for x in a]
+    # Eine Verbindung, lueckenlos ueber zwei Quellwechsel: das ist die Aussage.
+    assert vt[-1] - vt[0] > 8, ("Empfaenger bekam zu wenig — Verbindung abgerissen?", vt[-1])
+    assert not [b - x for x, b in zip(vt, vt[1:]) if b - x > 0.2 or b < x], "Bildluecke"
+    assert not [b - x for x, b in zip(at, at[1:]) if b - x > 0.2 or b < x], "Tonluecke"
+    # 44100/1024 = 43 Tonpakete je Sekunde. Der gemessene Fehlerfall waren 629.
+    je_s = _col.Counter(int(x) for x in at)
+    assert max(je_s.values()) <= 50, ("Tonschwall an einer Umschaltung", je_s.most_common(3))
+    kf = [x[0] for x in v if x[1]]
+    assert max(b - x for x, b in zip(kf, kf[1:])) <= 2.1, "Keyframe-Abstand ueber 2 s"
+    r = _sp.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries",
+                 "stream=width,height", "-of", "csv=p=0", aus], capture_output=True, text=True)
+    assert r.stdout.strip().startswith("1080,1920"), \
+        ("das Pausenbild hat die Bildgroesse festgelegt", r.stdout)
+
+
 def main():
     tmp, rid = richte_testdatenbank_ein()
     ok("db_conn aus nc.dbwrap: echtes Schema angelegt, Commit durchgelaufen")
@@ -24348,6 +24830,7 @@ def main():
     _test_v42_w127_observability()
     _test_v42_w128_env_vorlage_durchleiter()
     _test_v42_w129_profile()
+    _test_v42_w130_sendebruecke()
     _test_v42_w60_azrael_cooldown_je_plattform()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)

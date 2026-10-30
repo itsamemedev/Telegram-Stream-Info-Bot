@@ -156,6 +156,47 @@ def overlay() -> bool:
     return _flag(os.getenv("RESTREAM_OVERLAY", "0"))
 
 
+# ---- v4.2-W130: Sendebrücke (nc/sendebruecke.py) ----------------------------
+
+def bruecke(transcode, unabhaengig=False):
+    """Läuft dieser Restream über die Sendebrücke? -> (an, transcode).
+
+    'auto' (Vorgabe): immer — die Brücke ist der Weg, auf dem die Verbindung
+    zur Plattform einen Quellwechsel übersteht. Sie verlangt Neukodieren im
+    Sender: ein kopierter Strom trägt die Bildparameter des ERSTEN Abschnitts
+    im FLV-Kopf, und das Pausenbild hat andere. Wer bisher kopiert hat, zahlt
+    deshalb einen x264-Lauf — dafür reisst die Sendung nicht mehr alle sechs
+    Minuten ab. '0' ist der Weg zurück zum alten Aufbau, ohne Neustart-Schutz.
+
+    Der unabhängige Modus (RESTREAM_MULTI_MODE=independent) bleibt vorerst
+    beim alten Aufbau: dort zieht jedes Ziel seine Quelle selbst, und eine
+    Brücke je Ziel hiesse je Ziel ein Pausenbild-Prozess.
+    """
+    v = (os.getenv("RESTREAM_BRUECKE", "auto") or "auto").strip().lower()
+    if unabhaengig or v in ("0", "false", "no", "off"):
+        return False, bool(transcode)
+    return True, True
+
+
+def bruecke_luecke() -> float:
+    """So viele Sekunden darf die Quelle schweigen, bevor das Pausenbild kommt.
+
+    Nicht kleiner als 2: ein HLS-Segment kommt im Schwall, und dazwischen liegt
+    normales Warten. Nicht viel grösser als 8: so lange sieht die Plattform
+    ein stehendes Bild, und ab rund 10 s ohne Daten beginnt bei Kick/IVS das
+    Nachladen beim Zuschauer."""
+    return max(2.0, min(30.0, float(_zahl(os.getenv("RESTREAM_BRUECKE_LUECKE_S", "4"), 4))))
+
+
+def bruecke_offline() -> float:
+    """So lange hält das Pausenbild eine Quelle, die nachweislich offline ist.
+
+    Danach endet der Restream wie bisher bei „Quelle offline", und im
+    Einzel-Modus übernimmt die nächste live Quelle. Zwei Minuten decken einen
+    Streamer, der sein Live neu startet."""
+    return float(max(0, _zahl(os.getenv("RESTREAM_BRUECKE_OFFLINE_S", "120"), 120)))
+
+
 # ---- Öffentliche Links (kein Geheimnis) -------------------------------------
 
 def kick_channel_url() -> str:

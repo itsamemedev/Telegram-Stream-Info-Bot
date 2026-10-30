@@ -603,6 +603,7 @@ from nc import tiktokheaders as _nc_tthdr  # v4.1-W23: Kopfzeilen fuer TikTok-Ab
 from nc import restreamcfg as _nc_rscfg  # v4.1-W22: Sendeziele + Pruef-Parameter
 from nc import restreamstate as _nc_rsstate  # v4.1-W22: Restream-Laufzeitzustand
 from nc import restreamcmd as _nc_rscmd  # v4.2-W16: die ffmpeg-Zeile des Relays
+from nc import sendebruecke as _nc_bruecke  # v4.2-W130: Verbindung ueberlebt den Quellwechsel
 from nc import reccmd as _nc_reccmd  # v4.2-W17: die Kommandozeilen des Recorders
 from nc import tonspur as _nc_tonspur  # v4.2-W106: jede Ausgabe traegt eine Tonspur
 from nc import lastvorsorge as _nc_lastvorsorge  # v4.2-W108: Drossel vor dem Pixelsalat
@@ -14580,6 +14581,11 @@ class RestreamManager:
         _multi_forces_tc = _multi and not RESTREAM_MULTI_ALLOW_COPY
         transcode = (bool(row["transcode"]) or rid in self._force_transcode
                      or RESTREAM_OVERLAY or _multi_forces_tc)
+        # v4.2-W130: die Sendebruecke haelt die Verbindung zur Plattform ueber
+        # jeden Quellwechsel (Begruendung und Messung in nc/sendebruecke.py).
+        # Sie verlangt Neukodieren im Sender — deshalb VOR Drossel und Feeder.
+        _bruecke_an, transcode = _nc_rscfg.bruecke(
+            transcode, unabhaengig=(RESTREAM_MULTI_MODE == "independent" and _multi))
         if _multi_forces_tc and not (bool(row["transcode"]) or RESTREAM_OVERLAY):
             log.info("Restream #%d: Multi-Target aktiv → transcode erzwungen "
                      "(plattformkonformes GOP für %s). "
@@ -14641,12 +14647,29 @@ class RestreamManager:
                                           html_ov_fifo=_html_ov, targets=_targets,
                                           avatar_feed=_av_feed,
                                           drossel=_drossel_stufe(rid),
-                                          tonlos=rid in self._tonlos)
+                                          tonlos=rid in self._tonlos,
+                                          bruecke=_bruecke_an)
             if RESTREAM_OVERLAY:
                 _write_restream_overlay()      # Textdateien anlegen, BEVOR drawtext sie öffnet
+            _kw = {}
+            if _bruecke_an:
+                # Leseende als stdin des Senders, Schreibende fuer die Bruecke.
+                # Eine os.pipe statt stdin=PIPE: die Bruecke schreibt aus
+                # Threads, und ein asyncio-StreamWriter gehoert dem Loop.
+                _br_fds = os.pipe()
+                _kw["stdin"] = _br_fds[0]
             proc = await asyncio.create_subprocess_exec(
-                *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+                *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+                **_kw)
+            if _bruecke_an:
+                os.close(_br_fds[0])
         except Exception as e:
+            if _kw:
+                for _fd in _br_fds:
+                    try:
+                        os.close(_fd)
+                    except OSError:
+                        pass           # das Leseende ist nach dem Spawn schon zu
             _restream_tts_stop(rid)            # B73: Feeder/FIFO bei Fehlstart nicht leaken
             self._set_status(rid, "error", err=f"ffmpeg-Start: {e}")
             return {"ok": False, "error": str(e)}
@@ -14664,6 +14687,24 @@ class RestreamManager:
                             "tee_targets": _tee_targets,
                             "health": {"bitrate": None, "fps": None, "frame": 0, "drop": 0,
                                        "speed": None, "out_time": "00:00:00", "size_mb": 0}}
+        if _bruecke_an:
+            _br = _nc_bruecke.Bruecke(
+                _br_fds[1], _nc_rscmd.fueller(), _nc_rscmd.zubringer,
+                self._bruecke_quelle(row["source_username"], rid),
+                erste_url=src, luecke_s=_nc_rscfg.bruecke_luecke(),
+                offline_s=_nc_rscfg.bruecke_offline(),
+                redigieren=_redact_stream_urls, name="#%d" % rid)
+            self._procs[rid]["bruecke"] = _br
+            try:
+                await asyncio.to_thread(_br.start)     # Popen — neben dem Loop
+            except Exception as e:
+                # Ohne Pausenbild bekommt der Sender nie ein Byte und haengt
+                # am Probe. Schliessen heisst EOF, der Sender endet, und der
+                # Manager behandelt das wie jedes andere Ende — laut.
+                log.error("Restream #%d: Sendebruecke startet nicht (%s: %s) — "
+                          "ffmpeg im PATH? Der Sender wird beendet.",
+                          rid, type(e).__name__, e)
+                await asyncio.to_thread(_br.stop)
         self._set_status(rid, "live", pid=proc.pid)
         # B141: Kollisions-Warnung. Teilen sich zwei aktive Restreams denselben
         # Kick-Key, kann nur EINER senden (ein RTMP-Key = ein Slot) — die anderen
@@ -14751,6 +14792,26 @@ class RestreamManager:
         self._set_desired(rid, True)
         _RESTREAM_GUARD.note_started(rid, _time_mod.monotonic())
         return {"ok": True, "pid": proc.pid, "transcode": transcode}
+
+    def _bruecke_quelle(self, username, rid):
+        """v4.2-W130: die Adresse fuer den naechsten Zubringer der Bruecke.
+
+        Laeuft im Thread der Bruecke und fragt den Loop: Aufloesung und
+        Preflight sind dieselben wie beim Start, damit eine tote _hd-Variante
+        (B91b) nicht erst im Zubringer auffaellt. force_fresh, weil die
+        Bruecke nur fragt, wenn die letzte Adresse versagt hat."""
+        loop = asyncio.get_running_loop()
+
+        async def _hol():
+            src, err = await self._resolve_source(username, force_fresh=True)
+            if err:
+                return None, err
+            src2 = await _preflight_url(src, who=f"restream:{rid}")
+            return (src2, None) if src2 else (None, "source_url_404")
+
+        def holen():
+            return asyncio.run_coroutine_threadsafe(_hol(), loop).result(timeout=90)
+        return holen
 
     async def _source_watch(self, rid, username):
         """V37-SRCFAIL: pollt NUR den Online-Status der gerade gerestreamten
@@ -15079,6 +15140,14 @@ class RestreamManager:
         rc = await proc.wait()
         for t in (prog_task, err_task):
             t.cancel()
+        _br = info.get("bruecke")
+        if _br is not None:
+            # Der Sender ist weg — seine Zubringer und das Pausenbild auch.
+            # Ein Neustart baut eine neue Bruecke; die alte liefe sonst als
+            # Waise weiter und loeste im Hintergrund TikTok-Adressen auf.
+            await asyncio.to_thread(_br.stop)
+            if _br.ende:
+                log.info("Restream #%d: Sendebruecke beendet — %s", rid, _br.ende)
         tail = "".join(sink)[-800:]
         ran = _time_mod.monotonic() - info["started"]
         transcode_used = info.get("transcode")
@@ -15306,6 +15375,8 @@ class RestreamManager:
             _p = _e.get("proc")
             if _p:
                 await _reap_proc(_p)   # v4.0-W75: terminate+wait → kein Zombie
+        if info.get("bruecke") is not None:
+            await asyncio.to_thread(info["bruecke"].stop)   # v4.2-W130
         proc = info["proc"]
         await _reap_proc(proc)         # v4.0-W75: SIGTERM→(SIGKILL)→wait, immer geerntet
         log_event("restream.stop", "info", f"Restream #{rid} gestoppt", {"id": rid})
@@ -15434,6 +15505,10 @@ class RestreamManager:
             out[rid] = {"live": True, "uptime_s": round(now - info["started"]),
                         "pid": info["proc"].pid, "attempts": info.get("attempts", 0),
                         "transcode": info.get("transcode"), "health": info.get("health", {}),
+                        # v4.2-W130: laeuft gerade die Quelle oder das
+                        # Pausenbild, und wie oft wurde umgeschaltet.
+                        "bruecke": (info["bruecke"].lage()
+                                    if info.get("bruecke") is not None else None),
                         # Ehrliche Zielangabe:
                         "targets": tg,
                         "targets_live": confirmed,
