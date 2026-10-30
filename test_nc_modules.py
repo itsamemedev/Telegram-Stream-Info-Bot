@@ -24776,6 +24776,9 @@ def _test_v42_w131_aufnahme_haenger():
     assert F.stall_grenze(10 * 1024 ** 3) == F.STALL_MAX_S == 40, "Deckel fehlt"
     assert F.stall_grenze(0, "3") == 10, "eine Grenze unter einem HLS-Segment schiesst gesunde Aufnahmen ab"
     assert F.stall_grenze(0, "60") == 60, "REC_STALL_S wird nicht beachtet"
+    for kaputt in ("", "  ", "abc", "2.5"):
+        assert F.stall_grenze(0, kaputt) == F.STALL_BASIS_S, \
+            ("REC_STALL_S=%r laesst den Waechter sterben (Review #170)" % kaputt)
     # Schlimmster Fall bis zum Abschuss: Grenze + ein Takt. Vorher 90 + 15.
     assert F.stall_grenze(10 * 1024 ** 3) + F.STALL_TAKT_S <= 45
 

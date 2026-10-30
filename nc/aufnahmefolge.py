@@ -70,7 +70,11 @@ def stall_grenze(groesse_bytes, basis_s=None):
 
     basis_s: aus REC_STALL_S (der Bot liest die .env bei jedem Aufruf). Nie
     unter 10 — das laege im Bereich eines gesunden HLS-Segments."""
-    basis = STALL_BASIS_S if basis_s is None else max(10, int(basis_s))
+    # Leer (`REC_STALL_S=` aus einer Vorlage) oder keine ganze Zahl: Vorgabe.
+    # Ein int() mit Ausnahme stuende VOR dem try des Waechters — er stuerbe,
+    # und eine haengende Aufnahme wuerde nie mehr erkannt (Review #170).
+    roh = "" if basis_s is None else str(basis_s).strip()
+    basis = max(10, int(roh)) if roh.isdigit() else STALL_BASIS_S
     mb = max(0, int(groesse_bytes or 0)) // (1024 * 1024)
     return min(max(basis, STALL_MAX_S), basis + mb // STALL_JE_MB)
 
