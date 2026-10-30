@@ -54,7 +54,10 @@ def _proxy_scheme(url: str) -> str:
 # von /api/tunnel/status. Gefunden hat das eine Mutationsprobe, die
 # „entwischt" ist — der Vertrag prueft seither beide Formen, nicht nur die
 # bequeme (dieselbe Lehre wie bei concat_cmd, W101).
-_ZUGANGSDATEN = re.compile(r"([A-Za-z0-9._%+~-]+):([^\s@/]+)@")
+# v4.2-W132: der Benutzername darf LEER sein. `redis://:passwort@host` ist die
+# uebliche Redis-Form (nur requirepass, kein ACL-Nutzer) — mit `+` stand das
+# Passwort im Klartext in der Zeile "Redis verbunden: …".
+_ZUGANGSDATEN = re.compile(r"([A-Za-z0-9._%+~-]*):([^\s@/]+)@")
 
 
 def _tunnel_mask(u):

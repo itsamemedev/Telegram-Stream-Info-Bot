@@ -3662,10 +3662,16 @@ async def get_redis():
             socket_timeout=2, socket_connect_timeout=2)
         await client.ping()
         _redis_client_inst = client
-        log.info(f"Redis verbunden: {REDIS_URL}")
+        log.info(f"Redis verbunden: {_nc_proxyutil_sel._tunnel_mask(REDIS_URL)}")
         return client
     except Exception as e:
-        log.warning(f"Redis nicht erreichbar ({REDIS_URL}): {e}")
+        # v4.2-W132: maskiert — die Abhilfe fuer den haeufigsten Fehler hier
+        # ("HELLO must be called with the client already authenticated") ist
+        # genau, das Passwort in REDIS_URL einzutragen.
+        _hinweis = (" — der Server verlangt ein Passwort: REDIS_URL=redis://:"
+                    "<passwort>@host:6379/0" if "authenticat" in str(e).lower()
+                    or "noauth" in str(e).lower() else "")
+        log.warning(f"Redis nicht erreichbar ({_nc_proxyutil_sel._tunnel_mask(REDIS_URL)}): {e}{_hinweis}")
         _redis_failed_until = datetime.now(timezone.utc).timestamp() + 60
         return None
 
@@ -7818,6 +7824,21 @@ _dead_chats: dict = {}   # chat_id -> timestamp_until
 _DEAD_CHAT_TTL = 3600
 
 def _is_dead(chat_id: int) -> bool:
+    # v4.2-W132: eine Discord-Guild als "Chat" (Tracking per /track ohne
+    # DISCORD_TRACK_GROUP_ID) lief bisher erst gegen Telegram — und der
+    # Upload zerlegte vorher die komplette Aufnahme. Begruendung der Grenze
+    # in nc/telegramfehler.ist_telegram_chat.
+    if not _nc_tgfehler.ist_telegram_chat(chat_id):
+        laut, weg = _nc_meldetakt.melden("tg-kein-chat", str(chat_id),
+                                         _time_mod.monotonic())
+        if laut:
+            log.warning("Telegram: Ziel %s ist keine Telegram-Chat-ID (mehr als "
+                        "52 Bit — vermutlich eine Discord-Guild aus /track). "
+                        "Versand dorthin uebersprungen. Abhilfe: "
+                        "DISCORD_TRACK_GROUP_ID auf die Telegram-Gruppe setzen "
+                        "und das Tracking dort neu anlegen.%s", chat_id,
+                        _nc_meldetakt.zusatz(weg))
+        return True
     until = _dead_chats.get(chat_id)
     if until is None: return False
     if datetime.now(timezone.utc).timestamp() >= until:
@@ -12544,15 +12565,47 @@ async def _evolution_loop():
 _RESTREAM_UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
                 "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
 
-def _modlog(kind, actor, content, meta=None):
+def _modlog_schreiben(zeile):
     try:
         with db_conn() as conn:
             conn.execute("INSERT INTO kick_mod_log (ts, kind, actor, content, meta) VALUES (?,?,?,?,?)",
-                         (datetime.now(timezone.utc).isoformat(), kind, actor,
-                          (content or "")[:2000], json.dumps(meta or {})))
+                         zeile)
             conn.commit()
-    except Exception:
-        pass
+    except Exception as e:
+        # Bis v4.2-W132 ein nacktes `pass`: ein gesperrtes SQLite liess das
+        # Moderations-Protokoll still Luecken bekommen.
+        laut, weg = _nc_meldetakt.melden("modlog", type(e).__name__,
+                                         _time_mod.monotonic())
+        if laut:
+            log.warning("Moderations-Protokoll: Eintrag nicht gespeichert "
+                        "(%s: %s).%s", type(e).__name__, e,
+                        _nc_meldetakt.zusatz(weg))
+
+
+def _modlog(kind, actor, content, meta=None):
+    """Eine Zeile ins Moderations-Protokoll.
+
+    v4.2-W132: auf dem Event-Loop nicht mehr synchron. Das error.log vom
+    30.10. zeigt den Loop wiederholt 1,2 bis 2,3 s an `_modlog` stehen —
+    gerufen aus `send_message` und `react`, also mitten im Chat-Betrieb, bei
+    einer Platte unter Aufnahmelast. Die Zeile wird hier fertig gebaut (der
+    Zeitstempel ist der des Ereignisses, nicht der des Schreibens) und in
+    einen eigenen Thread gegeben. Ein einzelner Arbeiter haelt die
+    Reihenfolge; gelesen wird das Protokoll nur vom Deck und von Berichten,
+    nie unmittelbar danach im selben Ablauf.
+    """
+    zeile = (datetime.now(timezone.utc).isoformat(), kind, actor,
+             (content or "")[:2000], json.dumps(meta or {}))
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        _modlog_schreiben(zeile)          # Thread/Flask: wie bisher direkt
+    else:
+        _MODLOG_ARBEITER.submit(_modlog_schreiben, zeile)
+
+
+_MODLOG_ARBEITER = _cf_thread.ThreadPoolExecutor(
+    max_workers=1, thread_name_prefix="modlog")
 
 
 # v4.1-W22: nach nc/restreamcfg.py geloest (siehe dort).
@@ -14426,6 +14479,7 @@ class RestreamManager:
         except Exception as e:
             _loop_fehler(f"restream-stall-watch{_wer}", e)
 
+    @_nc_rutil.ein_start_je_ziel       # v4.2-W132: kein Doppelstart desselben Ziels
     async def start(self, rid, _attempts=0, _src_watch=False):
         ok_en, why = _restream_enabled()
         if not ok_en:
@@ -14452,7 +14506,10 @@ class RestreamManager:
         #
         # Die Pruefung gehoert an den START, nicht an die Planung: zwischen
         # "reconnect in 20s" und dem Start aendert sich die Lage.
-        _belegt = _nc_rutil.slot_belegt(RESTREAM_SINGLE, list(self._procs.keys()), rid)
+        # v4.2-W132: auch Starts, die noch laufen — zwei verschiedene Ziele,
+        # gleichzeitig angestossen, saehen sonst beide einen freien Slot.
+        _laufend = list(self._procs.keys()) + list(_nc_rutil.startend(self).keys())
+        _belegt = _nc_rutil.slot_belegt(RESTREAM_SINGLE, _laufend, rid)
         if _belegt is not None:
             _msg = (f"Einzel-Modus: Restream #{_belegt} laeuft bereits. "
                     f"Zwei Restreams auf einem Kick-Key werfen sich gegenseitig "
@@ -14717,6 +14774,7 @@ class RestreamManager:
                             "tee_targets": _tee_targets,
                             "health": {"bitrate": None, "fps": None, "frame": 0, "drop": 0,
                                        "speed": None, "out_time": "00:00:00", "size_mb": 0}}
+        _nc_rutil.freigeben(self, rid)   # ab hier greift `rid in self._procs`
         if _bruecke_an:
             _br = _nc_bruecke.Bruecke(
                 _br_fds[1], _nc_rscmd.fueller(), _nc_rscmd.zubringer,
@@ -15140,7 +15198,8 @@ class RestreamManager:
                     "Pixelsalat (das CDN verwirft Pakete, wenn der Transcode "
                     "nicht mithaelt).", rid, stufe,
                     _nc_rscmd.drossel_zusatz(RESTREAM_FPS, RESTREAM_CANVAS_W,
-                                             RESTREAM_CANVAS_H, stufe), grund)
+                                             RESTREAM_CANVAS_H, stufe),
+                    grund.rstrip("."))   # der Grund endet selbst auf Punkt
 
     async def _ton_folge(self, rid, ran, tail, attempts):
         """v4.2-W106: Ende des Prozesses auf eine tonlose Quelle pruefen. -> bool
@@ -15531,7 +15590,11 @@ class RestreamManager:
         out = {}
         now = _time_mod.monotonic()
         snap = _RESTREAM_GUARD.snapshot()
-        for rid, info in self._procs.items():
+        # v4.2-W132: Kopien. status() laeuft im Flask-Thread (/api/lagebild,
+        # Deck), _procs und die indep-Slots aendert der Event-Loop — am 30.10.
+        # starb das Lagebild daran mit "dictionary changed size during
+        # iteration" und zeigte die Restreams als nicht geladen.
+        for rid, info in list(self._procs.items()):
             g = snap.get(rid) or {}
             tg = g.get("targets") or {}
             confirmed = [p for p, t in tg.items() if t.get("result") == _nc_guard.LIVE]
@@ -15575,7 +15638,7 @@ class RestreamManager:
                                              or _e.get("started", now))),
                                   "stillstaende": self._stallkills.get(
                                       f"{rid}:{_pn}", 0)}
-                            for _pn, _e in (info.get("indep") or {}).items()},
+                            for _pn, _e in list((info.get("indep") or {}).items())},
                         # B129: was ffmpeg selbst ueber die Zusatzziele sagt
                         "tee_fehler": self.tee_fehler()}   # v4.0-W116
         return out
@@ -18344,8 +18407,18 @@ async def _live_react_worker(username, stop_evt):
                 try:
                     rtext, rerr = await _KICK_MOD.react(statement, context=ctx, source=username)
                     if rerr or not rtext:
-                        log.warning("live-react: Reaktion @%s OHNE Ausgabe (%s)", username, rerr or "leer")
+                        # v4.2-W132: gedrosselt. 385 Zeilen in 75 Minuten am
+                        # 30.10., alle "(auth)" — den Grund samt Abhilfe sagt
+                        # react() selbst schon (_react_warn); hier zaehlt nur,
+                        # dass es weiter passiert. Kanal, nicht Nutzer (W81).
+                        _laut, _weg = _nc_meldetakt.melden(
+                            "live-react-leer", rerr or "leer", _time_mod.monotonic())
+                        if _laut:
+                            log.warning("live-react: Reaktion @%s OHNE Ausgabe (%s)%s",
+                                        username, rerr or "leer",
+                                        _nc_meldetakt.zusatz(_weg))
                     else:
+                        _nc_meldetakt.zuruecksetzen("live-react-leer")
                         if director is not None:
                             director.record(rtext)   # F100: ins Gedächtnis (Anti-Wiederholung + Recap)
                         if story is not None:        # F103: markante Momente merken
@@ -23808,6 +23881,14 @@ def _log_schleuse_pruefen():
         log.warning("Log-Schleuse: %d schreibende(r) Handler kam nachtraeglich "
                     "an den Wurzel-Logger und ist jetzt hinter die Schleuse "
                     "umgezogen.", n)
+    # v4.2-W132: TikTokLive und huggingface_hub schreiben mit eigenem
+    # Konsolen-Handler an der Schleuse vorbei (Begruendung in
+    # nc/logschleuse.einreihen). Einmal umgehaengt, bleibt es dabei.
+    n = _nc_logschleuse.einreihen()
+    if n:
+        log.info("Log-Schleuse: %d Konsolen-Handler von %s entfernt — diese "
+                 "Logger laufen jetzt ueber die Schleuse.", n,
+                 "/".join(_nc_logschleuse.EINREIHEN))
     rest = _nc_logschleuse.synchrone_handler()
     if not rest:
         return

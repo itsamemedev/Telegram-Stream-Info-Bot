@@ -223,3 +223,46 @@ def dauer_text(dauer_s: float) -> str:
     if s < 7200:
         return "%d min" % (s // 60)
     return "%d h" % (s // 3600)
+
+
+# ═════════════════════════════════════════════════════════════════════════
+# v4.2-W132: Ist das ueberhaupt eine Telegram-Chat-ID?
+# ═════════════════════════════════════════════════════════════════════════
+#
+# Im Log vom 30.10. gingen ueber eine Stunde lang Aufnahmen an den "Chat"
+# 1521964594653036677 — jedesmal 'chat not found', jedesmal nach einem
+# vollstaendigen ffmpeg-Zerlegen von bis zu 1,5 GB auf einer Box, die
+# ohnehin bei Load 7,9 stand. Die Zahl ist keine Telegram-ID, sondern eine
+# Discord-Guild: `/track` in Discord legt das Tracking unter
+# `DISCORD_TRACK_GROUP_ID or inter.guild_id` an, und ohne den Schalter ist
+# das die Guild. Der Upload faechert danach ueber ALLE Trackings des Nutzers
+# auf, also auch an diese "Gruppe".
+#
+# Telegram sagt dazu selbst: eine Chat-ID hat "at most 52 significant bits"
+# (Bot-API, Feld `Chat.id`). Discord-Snowflakes liegen seit Mitte 2015 jenseits
+# von 2**56. Die Grenze trennt also sauber, ohne eine Liste zu pflegen.
+TELEGRAM_ID_BITS = 52
+
+
+def ist_telegram_chat(chat_id) -> bool:
+    """Kann `chat_id` eine Telegram-Chat-ID sein?
+
+    0 und Nicht-Zahlen sind keine — `added_by=0` und `group_id=0` (Discord
+    ohne Guild) landen sonst als Ziel im Versand. Ein `@kanalname` ist fuer
+    die Bot-API zulaessig und bleibt durchgelassen.
+    """
+    # Ohne try/except: "keine Zahl" ist hier die Antwort, kein Fehler.
+    if isinstance(chat_id, bool):
+        return False                    # bool ist ein int — aber kein Chat
+    if isinstance(chat_id, str):
+        s = chat_id.strip()
+        if s.startswith("@"):
+            return len(s) > 1
+        ziffern = s[1:] if s.startswith("-") else s
+        if not (ziffern.isascii() and ziffern.isdigit()):
+            return False
+        chat_id = int(s)
+    if not isinstance(chat_id, int):
+        return False
+    n = chat_id
+    return n != 0 and abs(n) < (1 << TELEGRAM_ID_BITS)

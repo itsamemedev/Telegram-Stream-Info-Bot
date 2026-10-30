@@ -24967,6 +24967,258 @@ def _test_v42_w131_aufnahme_luecken():
        "Aufraeumen schont laufende und frische Aufnahmen")
 
 
+def _test_v42_w132_versandziel_und_doppelstart():
+    """v4.2-W132: Befunde aus dem Log vom 30.10. — Versand an eine Discord-Guild,
+    Doppelstart eines Restreams, Wettlauf im Lagebild.
+
+    Die Discord-Guild 1521964594653036677 stand als Tracking-"Gruppe" in der
+    Datenbank, und jede Aufnahme wurde erst vollstaendig zerlegt, bevor
+    Telegram 'chat not found' sagte. Restream #5 startete zweimal binnen zwei
+    Sekunden und sendete zweimal auf denselben Kick-Key.
+    """
+    import ast as _ast
+    import asyncio as _aio
+    import tempfile as _tf
+    import types as _ty
+    from nc import telegramfehler as TF
+    from nc import restream_util as RU
+
+    # ── (1) Telegram-ID oder nicht — die Grenze aus der Bot-API (52 Bit).
+    for gut in (6999266953, -1002058519599, "-100123", "@kanal", (1 << 52) - 1):
+        assert TF.ist_telegram_chat(gut), gut
+    for schlecht in (1521964594653036677, 1 << 52, 0, None, True, "", "@",
+                     "abc", "12a", 1.5, "١٢٣"):
+        assert not TF.ist_telegram_chat(schlecht), schlecht
+
+    baum = _ast.parse(open("bot.py", encoding="utf-8").read())
+    tot = next(n for n in baum.body if isinstance(n, _ast.FunctionDef)
+               and n.name == "_is_dead")
+    erste = tot.body[0]
+    assert isinstance(erste, _ast.If) and "ist_telegram_chat" in _ast.unparse(erste.test), \
+        "_is_dead fragt nicht zuerst, ob das ueberhaupt ein Telegram-Chat ist"
+
+    # ── (2) Ein gesperrter Chat kostet kein Zerlegen. Die Attrappe fuer
+    # videoteil wirft bei JEDEM Zugriff — auch dem auf die Groessengrenze.
+    # telegram gestubbt wie in _test_v42_w19_versandweg (Begruendung dort).
+    import sys as _sys
+    if "telegram" not in _sys.modules:
+        _tg = _ty.ModuleType("telegram")
+        _err = _ty.ModuleType("telegram.error")
+        _con = _ty.ModuleType("telegram.constants")
+        for _n in ("TelegramError",):
+            setattr(_err, _n, type(_n, (Exception,), {}))
+        for _n in ("BadRequest", "Forbidden", "NetworkError", "RetryAfter"):
+            setattr(_err, _n, type(_n, (_err.TelegramError,), {}))
+        _con.ParseMode = _ty.SimpleNamespace(HTML="HTML")
+        _sys.modules.update({"telegram": _tg, "telegram.error": _err,
+                             "telegram.constants": _con})
+    import telegramversand as _tv
+
+    class _Verboten:
+        def __getattr__(self, name):
+            raise AssertionError("videoteil.%s vor der Sperrpruefung benutzt" % name)
+
+    texte = []
+
+    async def _safe_send(bot, chat_id, text, **kw):
+        texte.append(text)
+        return False
+
+    async def _ensure_topic(*a):
+        raise AssertionError("Forum-Thema fuer einen gesperrten Chat angelegt")
+
+    alt_vt = _tv._nc_videoteil
+    _tv.konfiguriere(ensure_topic=_ensure_topic, is_dead=lambda c: True,
+                     mark_dead=lambda c: None, safe_send=_safe_send,
+                     topic_forget=lambda c, u: None)
+    _tv._nc_videoteil = _Verboten()
+    try:
+        with _tf.TemporaryDirectory() as d:
+            gross = os.path.join(d, "gross.mp4")
+            _ph.attrappe(gross, 1500 * 1024 * 1024)
+            _aio.run(_tv.split_and_send_video(1521964594653036677, gross,
+                                              _ty.SimpleNamespace(bot=None), "x"))
+            assert os.path.exists(gross), "die Aufnahme ist weg"
+    finally:
+        _tv._nc_videoteil = alt_vt
+    assert texte and "gesperrt" in texte[0] and "TELEGRAM_CHAT_ID" in texte[0], texte
+
+    # ── (3) Ein Start je Ziel. Der zweite Aufruf kommt, waehrend der erste
+    # noch auf die Quelle wartet — genau die Luecke vom 30.10.
+    class _Mgr:
+        def __init__(self):
+            self._procs = {}
+            self.laeufe = 0
+
+        @RU.ein_start_je_ziel
+        async def start(self, rid, _attempts=0):
+            self.laeufe += 1
+            await self.tor.wait()
+            self._procs[rid] = {"proc": 1}
+            RU.freigeben(self, rid)
+            await self.nach.wait()          # Aufraeumen nach dem Spawn
+            return {"ok": True}
+
+    async def _ablauf():
+        m = _Mgr()
+        m.tor, m.nach = _aio.Event(), _aio.Event()
+        erst = _aio.ensure_future(m.start(5))
+        await _aio.sleep(0)
+        assert 5 in RU.startend(m), "laufender Start nicht vermerkt"
+        zweit = await m.start(5)
+        assert zweit.get("already") and m.laeufe == 1, (zweit, m.laeufe)
+        anderes = _aio.ensure_future(m.start(7))   # anderes Ziel: frei
+        await _aio.sleep(0)
+        assert m.laeufe == 2, "die Sperre gilt fuer alle Ziele statt je Ziel"
+        m.tor.set()
+        await _aio.sleep(0)
+        await _aio.sleep(0)
+        # Prozess steht, erster Start raeumt noch auf: ein Wiederanlauf
+        # darf jetzt nicht an der Startsperre haengen.
+        assert 5 not in RU.startend(m), "Sperre haelt ueber den Spawn hinaus"
+        m._procs.pop(5)
+        m.tor = _aio.Event()
+        dritt = _aio.ensure_future(m.start(5))
+        await _aio.sleep(0)
+        assert m.laeufe == 3, "Wiederanlauf blockiert"
+        m.tor.set()
+        m.nach.set()
+        await _aio.gather(erst, anderes, dritt)
+        assert RU.startend(m) == {}, RU.startend(m)
+        # Eine Ausnahme im Start gibt die Sperre ebenfalls frei.
+        class _Kaputt(_Mgr):
+            @RU.ein_start_je_ziel
+            async def start(self, rid):
+                raise RuntimeError("boom")
+        k = _Kaputt()
+        try:
+            await k.start(1)
+        except RuntimeError:
+            pass
+        else:
+            raise AssertionError("Ausnahme verschluckt")
+        assert RU.startend(k) == {}, "Sperre bleibt nach Ausnahme stehen"
+    _aio.run(_ablauf())
+
+    rm = next(n for n in baum.body if isinstance(n, _ast.ClassDef)
+              and n.name == "RestreamManager")
+    st = next(n for n in rm.body if isinstance(n, _ast.AsyncFunctionDef)
+              and n.name == "start")
+    assert any("ein_start_je_ziel" in _ast.unparse(d) for d in st.decorator_list), \
+        "RestreamManager.start ist nicht gegen den Doppelstart gesperrt"
+    rufe = [_ast.unparse(c) for c in _ast.walk(st) if isinstance(c, _ast.Call)]
+    assert any(r.startswith("_nc_rutil.freigeben(self, rid)") for r in rufe), \
+        "die Sperre wird nach dem Spawn nicht geloest"
+    status = next(n for n in rm.body if isinstance(n, _ast.FunctionDef)
+                  and n.name == "status")
+    schleifen = [_ast.unparse(f.iter) for f in _ast.walk(status)
+                 if isinstance(f, (_ast.For, _ast.comprehension))]
+    assert "list(self._procs.items())" in schleifen, \
+        "status() iteriert _procs ohne Kopie (Flask-Thread gegen Event-Loop)"
+    ok("W132: keine Uploads an Nicht-Telegram-IDs, kein Zerlegen fuer gesperrte "
+       "Chats, ein Start je Restream-Ziel")
+
+
+def _test_v42_w132_log_und_geheimnisse():
+    """v4.2-W132: Bot-Token aus dem Log, zwei Logger hinter die Schleuse,
+    Cookie-Leser haelt den letzten Stand, Redis-Passwort maskiert."""
+    import logging as _lg
+    import queue as _q
+    import sys as _sys
+    import tempfile as _tf
+    from nc import logschleuse as L
+    from nc import cookies as C
+    from nc.proxyutil import _tunnel_mask
+
+    # ── (1) Token geschwaerzt — in der Nachricht UND im Traceback.
+    tok = "1234567890:AAFalschFalschFalschFalschFalsch_00"
+    zeile = "POST https://api.telegram.org/bot%s/getUpdates" % tok
+    assert tok not in L.schwaerzen(zeile) and "bot1234567890:" in L.schwaerzen(zeile)
+    for harmlos in ("22:17:23,069 | INFO", "Room-ID 7702564757634681633", ""):
+        assert L.schwaerzen(harmlos) == harmlos
+    try:
+        raise ValueError("Fehler bei " + zeile)
+    except ValueError:
+        info = _sys.exc_info()
+    rec = _lg.LogRecord("httpx", _lg.ERROR, __file__, 1, "Anfrage %s",
+                        (zeile,), info)
+    fertig = L.Schleuse(_q.Queue()).prepare(rec)
+    assert tok not in fertig.getMessage(), "Token steht noch in der Zeile"
+    assert "ValueError" in fertig.getMessage(), "Traceback verloren"
+    from nc import logfilters as LF
+    import collections as _co
+    LF.configure_logfilters(_co.deque(maxlen=5))
+    LF._DiscordErrorHandler().emit(_lg.LogRecord(
+        "x", _lg.ERROR, __file__, 1, zeile, None, None))
+    assert tok not in LF._DC_ERR_QUEUE[-1]["msg"], "Token geht nach Discord"
+
+    # ── (2) Konsolen-Handler der genannten Logger wandern hinter die
+    # Schleuse; eine Datei bleibt, ein fremder Logger bleibt unberuehrt.
+    name, fremd = "w132_probe", "w132_fremd"
+    lg, lf = _lg.getLogger(name), _lg.getLogger(fremd)
+    konsole = _lg.StreamHandler(_sys.stderr)
+    with _tf.TemporaryDirectory() as d:
+        datei = _lg.FileHandler(os.path.join(d, "x.log"), delay=True)
+        lg.addHandler(konsole)
+        lg.addHandler(datei)
+        lg.propagate = False
+        fh = _lg.StreamHandler(_sys.stderr)
+        lf.addHandler(fh)
+        lf.propagate = False
+        alt = L._HORCHER[0]
+        try:
+            L._HORCHER[0] = None
+            assert L.einreihen((name,)) == 0 and konsole in lg.handlers, \
+                "ohne Schleuse umgehaengt — der Gewinn waere null"
+            L._HORCHER[0] = object()
+            assert L.einreihen((name, "w132_gibtsnicht")) == 1
+            assert konsole not in lg.handlers and datei in lg.handlers
+            assert lg.propagate is True
+            assert fh in lf.handlers and lf.propagate is False
+            assert L.einreihen((name,)) == 0, "zweiter Lauf haengt erneut um"
+        finally:
+            L._HORCHER[0] = alt
+            for h in (konsole, datei):
+                lg.removeHandler(h)
+            lf.removeHandler(fh)
+            datei.close()
+    assert set(L.EINREIHEN) == {"TikTokLive", "huggingface_hub"}
+
+    # ── (3) Der Cookie-Leser verliert seinen Stand nicht, wenn yt-dlp die
+    # Datei gerade neu schreibt.
+    alt_konf = dict(C._KONF)
+    alt_cache = dict(C._COOKIES_CACHE)
+    with _tf.TemporaryDirectory() as d:
+        pfad = os.path.join(d, "c.txt")
+        with open(pfad, "w", encoding="utf-8") as f:
+            f.write("# Netscape HTTP Cookie File\n"
+                    ".tiktok.com\tTRUE\t/\tTRUE\t0\tsessionid\tabc\n")
+        try:
+            C.configure(datei=pfad, log=_lg.getLogger("w132_cookies"))
+            C._COOKIES_CACHE.clear()
+            assert C.load_dict() == {"sessionid": "abc"}
+            with open(pfad, "w", encoding="utf-8") as f:
+                f.write("")                     # yt-dlp hat gerade gekuerzt
+            st = os.stat(pfad)
+            os.utime(pfad, (st.st_atime, st.st_mtime + 5))
+            assert C.load_dict() == {"sessionid": "abc"}, \
+                "eine halb geschriebene Datei loescht die Cookies"
+            C._COOKIES_CACHE.clear()
+            assert C.load_dict() == {}, "ohne Vorstand darf nichts erfunden werden"
+        finally:
+            C._KONF.clear()
+            C._KONF.update(alt_konf)
+            C._COOKIES_CACHE.clear()
+            C._COOKIES_CACHE.update(alt_cache)
+
+    # ── (4) Redis-Form ohne Benutzer: das Passwort verschwindet.
+    assert "geheim" not in _tunnel_mask("redis://:geheim@localhost:6379/0")
+    assert _tunnel_mask("redis://localhost:6379/0") == "redis://localhost:6379/0"
+    assert "pw" not in _tunnel_mask("http://nutzer:pw@h:8118")
+    ok("W132: Bot-Token geschwaerzt, TikTokLive/huggingface_hub hinter der "
+       "Schleuse, Cookie-Stand ueberlebt den yt-dlp-Rueckschrieb, Redis maskiert")
+
+
 def main():
     tmp, rid = richte_testdatenbank_ein()
     ok("db_conn aus nc.dbwrap: echtes Schema angelegt, Commit durchgelaufen")
@@ -25294,6 +25546,8 @@ def main():
     _test_v42_w130_sendebruecke()
     _test_v42_w131_aufnahme_haenger()
     _test_v42_w131_aufnahme_luecken()
+    _test_v42_w132_versandziel_und_doppelstart()
+    _test_v42_w132_log_und_geheimnisse()
     _test_v42_w60_azrael_cooldown_je_plattform()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)
