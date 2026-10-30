@@ -315,6 +315,11 @@ def _umbruch(text, breite):
 # Quelltext nicht mehr liest, bricht den Generator ab (siehe main): sonst
 # erklaert die Vorlage still einen Schalter, den es nicht gibt.
 ERKLAERUNG = {
+    "KENNZAHLEN_LOG_MIN":
+        "Alle so viele Minuten eine Lagezeile im Log (W122): Loop-p99, "
+        "Aufnahmen gegen Deckel, Restreams, Chats, fds, RSS, Cache-Quote, "
+        "Hilfsprozesse. Der billigste Verlauf ohne Monitoring-Stack — "
+        "journalctl -u <dienst> | grep 'Lage:'. 0 = aus.",
     "MAX_PARALLEL_AUFNAHMEN":
         "Hoechstens so viele Aufnahmen gleichzeitig (W118). 0 = automatisch: "
         "vier je CPU-Kern, mindestens acht — ein Riegel gegen den Ausreisser, "

@@ -28,6 +28,7 @@ from flask import Blueprint, jsonify, request
 
 from nc import azraelstate as _nc_azrael
 from nc import fehlertext as _nc_fehlertext
+from nc import kennzahlen as _nc_kz  # v4.2-W122
 from nc import brainstate as _nc_brainstate
 from nc import channels as _nc_channels
 from nc import i18n as _nc_i18n
@@ -406,8 +407,13 @@ def api_prometheus_metrics():
         tracked = len(get_all_active_trackings(include_paused=True))
     except Exception:
         tracked = 0
+    # v4.2-W122: `"RECORDINGS_DIR" in globals()` war hier IMMER falsch —
+    # globals() ist der Namensraum DIESES Blueprints, nicht der von bot.py
+    # (dieselbe Falle wie W4/W109). Gemessen wurde damit stets "/", und
+    # liegen die Aufnahmen auf einer eigenen Platte, meldete die Kennzahl
+    # Platz, den es dort nicht gibt. Der Pfad kommt jetzt aus dem Kontext.
     try:
-        disk_free = _sh.disk_usage((os.getenv("RECORDINGS_DIR", "recordings") or "recordings").strip() if "RECORDINGS_DIR" in globals() else "/").free
+        disk_free = _sh.disk_usage(_c().recordings_dir or "recordings").free
     except Exception:
         disk_free = 0
     ai_budget = len(_nc_azrael.CALL_TS)
@@ -428,6 +434,11 @@ def api_prometheus_metrics():
         metric("nightcrawler_tracked_streamers", tracked, "Getrackte Streamer gesamt"),
         metric("nightcrawler_disk_free_bytes", disk_free, "Freier Speicher am Aufnahme-Pfad"),
     ])
+    # v4.2-W122: die Leistungssignale aus A–E (Loop-Lag, Gegendruck, Cache,
+    # Kindprozesse, Speicher, Log-Schleuse, RSS) — aus dem Schnappschuss,
+    # den der Bot alle 10 s ablegt. Keine Datenbank, keine Sperre.
+    _alter, _daten = _nc_kz.stand()
+    body += _nc_kz.prometheus(_daten, alter_s=_alter)
     return (body, 200, {"Content-Type": "text/plain; version=0.0.4; charset=utf-8"})
 
 
