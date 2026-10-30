@@ -83,7 +83,7 @@ kopf(){ SCHRITT=$((SCHRITT+1))
 . "$(cd "$(dirname "$0")" && pwd)/lib/i18n.sh" 2>/dev/null || {
   t(){ printf '%s' "$*"; }
   # shellcheck disable=SC2059
-  tf(){ if [ $# -le 1 ]; then printf '%s' "${1:-}"; else _f="$1"; shift; printf "$_f" "$@"; fi; }
+  tf(){ if [ $# -le 1 ]; then printf '%s' "${1:-}"; else _f="$1"; shift; printf -- "$_f" "$@"; fi; }
   tz(){ cat; }
 }
 # v4.2-W124: die Erkennung (Paketmanager, Init, MOTD-Weg, Paketnamen) teilt
@@ -400,7 +400,10 @@ fi
 # Arbeitsspeicher und Platte: der haeufigste Pi-Ausgang ist ein OOM-Kill
 # mitten in der ersten Aufnahme. Lieber jetzt sagen als spaeter suchen.
 RAM_MB=0
-if [ -r /proc/meminfo ]; then RAM_MB=$(awk '/^MemTotal:/{printf "%d", $2/1024}' /proc/meminfo)
+# NC_RAM_MB: fuer die Vertraege — die kleine Maschine ist der Fall, in dem
+# der Installer faster-whisper von sich aus weglaesst (W129b).
+if [ -n "${NC_RAM_MB:-}" ]; then RAM_MB="$NC_RAM_MB"
+elif [ -r /proc/meminfo ]; then RAM_MB=$(awk '/^MemTotal:/{printf "%d", $2/1024}' /proc/meminfo)
 elif [ "$OS" = "Darwin" ]; then RAM_MB=$(( $(sysctl -n hw.memsize 2>/dev/null || echo 0) / 1048576 )); fi
 KERNE=$( (nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 1) )
 FREI_GB=$(df -Pk "$HOME" 2>/dev/null | awk 'NR==2{printf "%d", $4/1048576}')
@@ -651,6 +654,22 @@ f_pypakete(){
   # uvloop gibt es auf exotischen Plattformen nicht als fertiges Rad; es ist
   # reine Beschleunigung und darf fehlen.
   case "$ARCH" in x86_64|amd64|aarch64|arm64) ;; *) OPT_AUS="$OPT_AUS uvloop";; esac
+  pakete_nach_plan
+  return 0
+}
+# v4.2-W129b (Codex, PR #168): ein Paket, das eine EINSTELLUNG verlangt, darf
+# nicht an der Reihenfolge der Fragen haengen. f_pypakete laeuft vor dem
+# Nutzungsprofil; mit --profile ki stand LIVE_REACT_ENABLED=1 im Plan, und
+# faster-whisper war schon ausgelassen. Dieselbe Regel wie in tools/update.sh
+# (konfig_grund), aufgerufen am Ende JEDES Punkts, der sie aendern kann:
+# Paketfrage, Nutzungsprofil, Einzelwerte. Fragt die Aenderungsschleife
+# Punkt 3 neu, nachdem das Profil schon stand, korrigiert f_pypakete sich
+# damit selbst — ein zweiter Aufruf vor der Installation waere ein Riegel
+# ohne eigene Wirkung (W98).
+pakete_nach_plan(){
+  case "$(env_get LIVE_REACT_ENABLED | tr 'A-Z' 'a-z')" in 1|true|yes|ja|on)
+    case "$(env_get LIVE_REACT_SPEECH | tr 'A-Z' 'a-z')" in 0|false|no|nein|off) ;;
+      *) OPT_AUS="$(printf '%s' "$OPT_AUS" | sed 's/[[:space:]]*faster-whisper//')";; esac;; esac
   return 0
 }
 z_pypakete(){ if [ -n "$OPT_AUS" ]; then tf 'Pflicht + optionale, ausgelassen:%s' "$OPT_AUS"; else t 'Pflicht + alle optionalen'; fi; }
@@ -1000,7 +1019,16 @@ profil_schalter(){ # profil_schalter NAME -> "KEY=WERT" je Zeile, ohne Kommentar
 P_NUTZUNG="keins"
 f_nutzung(){
   P_NUTZUNG="keins"
-  [ -n "$PROFILE_DIR" ] || return 0
+  if [ -z "$PROFILE_DIR" ]; then
+    # Ohne Checkout neben dem Installer gibt es die Profile in DIESER Phase
+    # noch nicht — der Klon kommt spaeter. Still uebergehen hiesse: der
+    # Betreiber haelt das Profil fuer gesetzt (Codex, PR #168).
+    if [ -n "$OPT_PROFIL" ]; then
+      fehler "--profile braucht deploy/profile/ — den Installer aus einem Checkout starten: git clone …, dann bash tools/installer.sh --profile %s" "$OPT_PROFIL"
+      exit 1
+    fi
+    return 0
+  fi
   if [ -n "$OPT_PROFIL" ]; then
     P_NUTZUNG="$OPT_PROFIL"
   elif [ "$MODUS" = "gefuehrt" ]; then
@@ -1028,6 +1056,7 @@ f_nutzung(){
   while IFS='=' read -r k v; do
     [ -n "$k" ] && env_set "$k" "$v"
   done < <(profil_schalter "$P_NUTZUNG")
+  pakete_nach_plan
   return 0
 }
 z_nutzung(){
@@ -1053,6 +1082,12 @@ experte_zeigen(){ # experte_zeigen NAME -> "NAME  jetzt  (Vorgabe)" maskiert
 f_experte(){
   P_EXPERTE=0
   local a k v
+  if [ -z "$VORLAGE" ] && { [ -n "$OPT_SETZEN" ] || [ "$OPT_EXPERTE" = 1 ]; }; then
+    # Ohne .env.example laesst sich kein Name pruefen — und jeder --set
+    # scheiterte sonst mit "Tippfehler?", obwohl der Name stimmt.
+    fehler "--set und --expert brauchen .env.example — den Installer aus einem Checkout starten (git clone …, dann bash tools/installer.sh)."
+    exit 1
+  fi
   while IFS= read -r a; do
     [ -n "$a" ] || continue
     k="${a%%=*}"; v="${a#*=}"
@@ -1064,7 +1099,8 @@ f_experte(){
     fi
     env_set "$k" "$v"; P_EXPERTE=$((P_EXPERTE+1))
   done <<< "$OPT_SETZEN"
-  [ "$OPT_EXPERTE" = 1 ] && [ "$MODUS" = "gefuehrt" ] && [ -n "$VORLAGE" ] || return 0
+  # Auch ohne --expert: ein --set LIVE_REACT_ENABLED=1 verlangt sein Paket.
+  [ "$OPT_EXPERTE" = 1 ] && [ "$MODUS" = "gefuehrt" ] && [ -n "$VORLAGE" ] || { pakete_nach_plan; return 0; }
   # Eigene Namen fuer die Antworten (_ex_*): frage_text schreibt per
   # printf -v in die genannte Variable, hat aber selbst ein lokales "a" — ein
   # Aufruf "frage_text a" traf DESSEN a, und jede Eingabe ging verloren
@@ -1091,6 +1127,7 @@ f_experte(){
       *)  env_set "$k" "$_ex_wert"; P_EXPERTE=$((P_EXPERTE+1));;
     esac
   done
+  pakete_nach_plan
   return 0
 }
 z_experte(){

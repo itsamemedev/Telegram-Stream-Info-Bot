@@ -36,6 +36,14 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 - **`update.sh`** behandelt `faster-whisper` als Pflicht, sobald
   `LIVE_REACT_ENABLED=1` (Profil `ki`) und die Sprachreaktion nicht
   ausdrücklich aus ist — gesagt vor dem Start, nicht erst vom Selbsttest.
+- **Nachtrag W129b (Review #168):** mit `--profile ki` (oder `--set
+  LIVE_REACT_ENABLED=1`) fehlte `faster-whisper` — die Paketfrage kommt vor dem
+  Profil. `pakete_nach_plan()` gilt jetzt am Ende jedes Punkts, der es ändern
+  kann; geprüft auch in der Änderungsschleife auf einer kleinen Maschine.
+  Ohne Checkout brechen `--profile`/`--set`/`--expert` laut ab, statt still
+  nichts zu tun. Dabei ein Altfehler: `tf` mit einem Text, der mit `--`
+  beginnt, war für `printf` eine Option — die Meldung zu einem falschen
+  Schalter fehlte. `printf --` in `lib/i18n.sh` und beiden Ersatz-`tf`.
 - Vertrag `_test_v42_w129_profile`, 9 Mutationsproben gefangen; eine entwischte
   zuerst (die Prüfung auf `=` in `--set` lief nie, weil der Testfall schon am
   Namen scheiterte). Englisch 100 %.

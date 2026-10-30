@@ -23883,6 +23883,57 @@ def _test_v42_w129_profile():
         rc, aus = _w124_installer(q, ziel, heim, "--dry-run", "-y", *falsch)
         assert rc == 1 and not os.path.exists(ziel), (falsch, aus[-800:])
 
+    # KI-Profil bzw. --set: faster-whisper wird NICHT ausgelassen, obwohl die
+    # Paketfrage vor dem Profil kommt (Codex, PR #168). Beide Wege, weil sie
+    # verschiedene Ausgaenge von f_experte nehmen.
+    for wege in (["--profile", "ki"], ["--set", "LIVE_REACT_ENABLED=1"]):
+        rc, aus = _w124_installer(q, ziel, heim, "--dry-run", "-y", *wege)
+        zeile = next(z for z in aus.splitlines() if "Python-Pakete" in z and ("ausgelassen" in z or "alle" in z))
+        assert rc == 0 and "faster-whisper" not in zeile, (wege, zeile)
+    rc, aus = _w124_installer(q, ziel, heim, "--dry-run", "-y")
+    zeile = next(z for z in aus.splitlines() if "Python-Pakete" in z and "ausgelassen" in z)
+    assert "faster-whisper" in zeile, "ohne Sprachreaktion bleibt faster-whisper aus: " + zeile
+    # Aenderungsschleife auf einer kleinen Maschine: faster-whisper ist dort
+    # von sich aus aus; wer in der Zusammenfassung NUR Punkt 16 auf "ki"
+    # stellt, bekommt es trotzdem — f_experte laeuft dabei nicht erneut.
+    zst = {"summ": 0, "wahl": 0}
+
+    def schleife(text):
+        n = text.count("Nummer zum Aendern")
+        if n > zst["summ"]:
+            zst["summ"] = n
+            return ("16" if n == 1 else "") + "\n"
+        if zst["summ"] == 1 and zst["wahl"] == 0 and text.rstrip().endswith("]:"):
+            zst["wahl"] = 1
+            return "4\n"                     # 4) viel KI
+        return "\n"
+    rc, aus = _w124_pty(["bash", os.path.join(q, "tools", "installer.sh"), "--dry-run",
+                         "--no-color", "--skip-system", "--dir", ziel],
+                        _w124_umgebung(heim, NC_RAM_MB="2000"), schleife)
+    assert rc == 0, aus[-2500:]
+    teile = aus.split("Nummer zum Aendern")
+    assert len(teile) == 3, "zwei Zusammenfassungen erwartet: %d" % (len(teile) - 1)
+    vorher = next(z for z in teile[0].splitlines() if "Python-Pakete" in z)
+    nachher = next(z for z in teile[1].splitlines() if "Python-Pakete" in z)
+    assert "faster-whisper" in vorher, vorher
+    assert "faster-whisper" not in nachher and "viel KI" in teile[1], nachher
+    # tf mit einem Text, der mit "--" beginnt: printf haette ihn als Option
+    # gelesen, und die Meldung zu einem falschen Schalter fehlte (W129b).
+    import subprocess as _sp
+    for sh in ("bash", "dash"):
+        if _sh.which(sh):
+            r = _sp.run([sh, "-c", '. tools/lib/i18n.sh; tf "--set erwartet NAME=WERT: %s" X'],
+                        capture_output=True, text=True, env=dict(os.environ, NC_LANG="de"))
+            assert r.stdout == "--set erwartet NAME=WERT: X" and not r.stderr, (sh, r.stdout, r.stderr)
+    # Ohne Checkout (keine Profile, keine Vorlage): laut abbrechen statt still
+    # uebergehen (Codex, PR #168).
+    q2 = _w124_quelle()
+    os.remove(os.path.join(q2, ".env.example"))
+    for falsch, text in ((["--profile", "minimal"], "--profile braucht deploy/profile/"),
+                         (["--set", "WHISPER_MODEL=small"], "--set und --expert brauchen .env.example")):
+        rc, aus = _w124_installer(q2, ziel, heim, "--dry-run", "-y", *falsch)
+        assert rc == 1 and text in aus and not os.path.exists(ziel), (falsch, aus[-600:])
+
     os.makedirs(ziel)
     _w124_venv(ziel, proto)
     envf = os.path.join(ziel, ".env")

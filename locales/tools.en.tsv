@@ -848,3 +848,5 @@ viel KI	lots of AI
 viel KI — AZRAEL hoert mit, antwortet und moderiert	lots of AI — AZRAEL listens, replies and moderates
 voller Restream	full restream
 voller Restream — Kick, Twitch, YouTube, mit Overlay	full restream — Kick, Twitch, YouTube, with overlay
+--profile braucht deploy/profile/ — den Installer aus einem Checkout starten: git clone …, dann bash tools/installer.sh --profile %s	--profile needs deploy/profile/ — start the installer from a checkout: git clone …, then bash tools/installer.sh --profile %s
+--set und --expert brauchen .env.example — den Installer aus einem Checkout starten (git clone …, dann bash tools/installer.sh).	--set and --expert need .env.example — start the installer from a checkout (git clone …, then bash tools/installer.sh).

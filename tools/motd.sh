@@ -140,7 +140,7 @@ else
   # v4.2-W123: tf muss es auch ohne Katalog geben, sonst stirbt --install
   # an "command not found" statt deutsch weiterzulaufen.
   # shellcheck disable=SC2059
-  tf(){ if [ $# -le 1 ]; then printf '%s' "${1:-}"; else _f="$1"; shift; printf "$_f" "$@"; fi; }
+  tf(){ if [ $# -le 1 ]; then printf '%s' "${1:-}"; else _f="$1"; shift; printf -- "$_f" "$@"; fi; }
 fi
 
 # ── Farben ───────────────────────────────────────────────────
