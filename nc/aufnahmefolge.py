@@ -47,6 +47,34 @@ FRUEH_MAX_S = 160
 MELDE_ABSTAND_S = 300
 
 
+# v4.2-W131: Haenger-Erkennung der Aufnahme. Bis hierher 45 s Grundwert, je
+# 10 MB Datei eine Sekunde mehr, Deckel 90 s, geprueft alle 15 s — also bis
+# 105 s Verlust je Haenger. Begruendet war der Aufschlag mit „I/O-Pausen beim
+# Flushen des MP4-Containers". Die Aufnahme schreibt aber FRAGMENTIERTES MP4
+# (+empty_moov, -frag_duration 2 s): es gibt keinen wachsenden moov, der am
+# Stueck geschrieben wird. Gemessen mit echtem ffmpeg und dem echten Bauer:
+# eine gesunde Aufnahme waechst bei FLV spaetestens alle 2,2 s, bei HLS
+# spaetestens nach einer Segmentlaenge (2 s -> 2,2 s, 6 s -> 6,0 s,
+# 10 s -> 10,0 s). 25 s sind damit das Zweieinhalbfache des laengsten
+# gemessenen gesunden Schweigens.
+STALL_TAKT_S = 5
+STALL_BASIS_S = 25
+# Ein kleiner Aufschlag bleibt — fuer eine Platte unter Volllast (W97: ein
+# Schreibvorgang dauerte dort Sekunden), nicht fuer den Container.
+STALL_MAX_S = 40
+STALL_JE_MB = 50          # +1 s je 50 MB
+
+
+def stall_grenze(groesse_bytes, basis_s=None):
+    """Ab so vielen Sekunden ohne Dateiwachstum gilt die Aufnahme als haengend.
+
+    basis_s: aus REC_STALL_S (der Bot liest die .env bei jedem Aufruf). Nie
+    unter 10 — das laege im Bereich eines gesunden HLS-Segments."""
+    basis = STALL_BASIS_S if basis_s is None else max(10, int(basis_s))
+    mb = max(0, int(groesse_bytes or 0)) // (1024 * 1024)
+    return min(max(basis, STALL_MAX_S), basis + mb // STALL_JE_MB)
+
+
 def daten_geflossen(kategorie, groesse, min_bytes):
     """False = die Aufnahme hat nichts Echtes geliefert.
 
