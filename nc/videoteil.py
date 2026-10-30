@@ -27,6 +27,7 @@ import logging
 import os
 import shutil
 
+from nc import kindprozess as _kind  # v4.2-W120
 from nc.ffbuild import ff_cmd
 from nc.ffdiag import _ffmpeg_stderr_tail
 
@@ -61,22 +62,6 @@ def _bau(cmd):
     return ff_cmd(cmd, threads=_cfg["threads_bg"], nice=_cfg["nice_bg"])
 
 
-async def _toete(p):
-    """Prozess abraeumen. kill() ALLEIN reicht nicht — ohne wait() bleibt ein
-    Zombie stehen, und nach ein paar hundert Aufnahmen ist die Prozesstabelle
-    voll (F42-B4)."""
-    if p is None:
-        return
-    try:
-        p.kill()
-    except Exception:
-        pass
-    try:
-        await asyncio.wait_for(p.wait(), timeout=2)
-    except Exception:
-        pass
-
-
 async def dauer(pfad):
     """Exakte Laufzeit in Sekunden via ffprobe. None bei Fehler.
 
@@ -84,24 +69,16 @@ async def dauer(pfad):
     unterscheiden koennen — an dieser Unterscheidung haengt, ob er die
     Bitrate rechnet oder auf den konservativen Rueckfall geht.
     """
-    p = None
+    # v4.2-W120: ueber nc.kindprozess — der Prozess endet auch, wenn der
+    # aufrufende Task abgebrochen wird (vorher lief ffprobe dann weiter).
     try:
-        p = await asyncio.create_subprocess_exec(
-            "ffprobe", "-v", "error", "-show_entries", "format=duration",
-            "-of", "csv=p=0", pfad,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.DEVNULL)
-        try:
-            out, _ = await asyncio.wait_for(p.communicate(), timeout=15)
-        except asyncio.TimeoutError:
-            await _toete(p)
-            return None
-        if p.returncode != 0:
+        rc, out, _ = await _kind.ausfuehren(
+            ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+             "-of", "csv=p=0", pfad], 15, art="ffprobe", stderr=_kind.DEVNULL)
+        if rc != 0:
             return None
         return float((out or b"").strip() or 0) or None
     except Exception:
-        if p and p.returncode is None:
-            await _toete(p)
         return None
 
 
@@ -187,20 +164,18 @@ async def kopier_teilen(pfad, praefix, ziel_mb):
                 "-segment_format", "mp4", "-reset_timestamps", "1",
                 "-movflags", "+faststart",
                 f"{praefix}_%03d.mp4"])
-    p = await asyncio.create_subprocess_exec(
-        *cmd, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE)
     # Ohne Zeitdeckel blockiert ein haengendes ffmpeg (korrupter Input mit
     # read-hang) den Event-Loop unbegrenzt und friert JEDE andere Aufnahme ein.
     deckel = max(300, int(seg * 4) + 120)
     try:
-        _, stderr = await asyncio.wait_for(p.communicate(), timeout=deckel)
+        rc, _, stderr = await _kind.ausfuehren(cmd, deckel, art="ffmpeg-split",
+                                               stdout=_kind.DEVNULL)
     except asyncio.TimeoutError:
-        await _toete(p)
         return None, f"ffmpeg split timeout nach {deckel}s (segment_time={seg})"
-    if p.returncode != 0:
+    if rc != 0:
         # Der echte Fehler steht am ENDE von stderr; der Anfang ist Banner.
         schwanz = _ffmpeg_stderr_tail(stderr.decode(errors="ignore"), max_len=800)
-        return None, (f"[rc={p.returncode}] ffmpeg -segment_time {seg} → "
+        return None, (f"[rc={rc}] ffmpeg -segment_time {seg} → "
                       f"{praefix}_%03d.mp4\n{schwanz}")
 
     kandidaten, gut = await _pruefe_teile(f"{praefix}_*.mp4")
@@ -247,19 +222,16 @@ async def neu_kodieren(pfad, praefix, ziel_mb):
                 "-movflags", "+faststart", f"{praefix}_re_%03d.mp4"])
     log.info("re-encode split: dur=%.0fs, vbr=%s, seg=%ds (orig~%.1fMbps)",
              laenge, vbr, seg, orig_mbps)
-    p = None
     try:
-        p = await asyncio.create_subprocess_exec(
-            *cmd, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE)
         # Grosszuegig: Neukodieren ist deutlich langsamer als Kopieren.
-        _, stderr = await asyncio.wait_for(p.communicate(),
-                                           timeout=max(600, int(laenge * 3)))
+        rc, _, stderr = await _kind.ausfuehren(cmd, max(600, int(laenge * 3)),
+                                               art="ffmpeg-reencode",
+                                               stdout=_kind.DEVNULL)
     except asyncio.TimeoutError:
-        await _toete(p)
         return None, "re-encode timeout"
     except Exception as e:
         return None, f"re-encode exception: {e}"
-    if p.returncode != 0:
+    if rc != 0:
         return None, _ffmpeg_stderr_tail(stderr.decode(errors="ignore"), 600)
 
     _, gut = await _pruefe_teile(f"{praefix}_re_*.mp4")
@@ -270,19 +242,18 @@ async def neu_kodieren(pfad, praefix, ziel_mb):
 
 async def _mux(pfad, ziel, flags, deckel=300):
     """Neu muxen ohne neu zu kodieren. -> (ok, fehlertext)"""
-    p = None
     try:
-        p = await asyncio.create_subprocess_exec(
-            "ffmpeg", "-y", *flags, "-i", pfad,
-            "-c", "copy", "-movflags", "+faststart", ziel,
-            stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE)
-        _, stderr = await asyncio.wait_for(p.communicate(), timeout=deckel)
+        # v4.2-W120: jetzt mit Thread-Deckel (_bau). Vorher stand der Befehl
+        # als Einzelargumente da, und der Deckel-Vertrag sah ihn nicht.
+        rc, _, stderr = await _kind.ausfuehren(
+            _bau(["ffmpeg", "-y", *flags, "-i", pfad,
+                  "-c", "copy", "-movflags", "+faststart", ziel]),
+            deckel, art="ffmpeg-mux", stdout=_kind.DEVNULL)
     except asyncio.TimeoutError:
-        await _toete(p)
         return False, "timeout"
     except Exception as e:
         return False, str(e)
-    if p.returncode == 0 and os.path.exists(ziel) and os.path.getsize(ziel) > 0:
+    if rc == 0 and os.path.exists(ziel) and os.path.getsize(ziel) > 0:
         return True, None
     if os.path.exists(ziel):
         try:
@@ -290,7 +261,7 @@ async def _mux(pfad, ziel, flags, deckel=300):
         except OSError:
             pass
     return False, (_ffmpeg_stderr_tail(stderr.decode(errors="ignore"), 400)
-                   if stderr else f"rc={p.returncode}")
+                   if stderr else f"rc={rc}")
 
 
 def ist_kaputter_container(fehler):

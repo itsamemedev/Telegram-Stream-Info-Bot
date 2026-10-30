@@ -614,6 +614,10 @@ from nc import audiotap as _nc_audiotap  # v4.2-W46: warum der Audio-Tap starb
 from nc import meldetakt as _nc_meldetakt  # v4.2-W81: Grund melden ohne Log-Flut
 from nc import logschleuse as _nc_logschleuse  # v4.2-W97: Logging weg vom Event-Loop
 from nc import looplag as _nc_looplag  # v4.2-W117: Loop-Lag in ms, und wer ihn haelt
+from nc import gegendruck as _nc_gegendruck  # v4.2-W118: abregeln mit Ansage
+from nc import kindprozess as _nc_kind  # v4.2-W120: Kindprozess endet auf jedem Weg
+from nc import speicherpflege as _nc_pflege  # v4.2-W120: Maps, die nur wachsen
+from nc import betriebslage as _nc_lage  # v4.2-W121: Start-/Stoppzeit, degradiert vs. tot
 from nc import resolvergrund as _nc_rgrund  # v4.2-W81: warum die Aufloesung leer blieb
 from nc import telegramfehler as _nc_tgfehler  # v4.2-W93: warum das Telegram-Polling klemmt
 from nc import aufnahmesitzung as _nc_sitzung  # v4.2-W44: die Klammer um die Segmente EINES Streams
@@ -2586,6 +2590,12 @@ def _schedule_next_check(tracking_id: int, last_status: str, was_live_before: bo
     # darf ihn nur VERKUERZEN (X3, M5) — ein Hinweis, der verlaengern darf,
     # kann ein Tracking still einschlafen lassen.
     delay = _nc_live.poll_abstand(last_status, was_live_before, ADAPTIVE_INTERVALS)
+    # v4.2-W119: unter Last offline/unknown dehnen, VOR X3/M5 — eine
+    # VIP-Verkuerzung bleibt damit wirksam, Live-Nutzer werden nie gedehnt.
+    if live_check_queue is not None:
+        delay *= _nc_live.last_dehnung(last_status, was_live_before,
+                                       live_check_queue.qsize(),
+                                       live_check_queue.maxsize)
     # X3: Priority kann das Intervall nur VERKÜRZEN (min), nie verlängern.
     try:
         delay = get_priority_poll_interval(tracking_id, int(delay))
@@ -2963,21 +2973,17 @@ async def _resolve_via_ytdlp(username: str):
         cmd += ["--cookies", COOKIE_FILE]
     cmd.append(url)
     try:
-        proc = await asyncio.create_subprocess_exec(
-            *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+        # v4.2-W120: ueber nc.kindprozess. Dieser Lauf ist der haeufigste
+        # Abbruchkandidat im Bestand (Single-Flight-Fuehrer aus W119,
+        # Herunterfahren) — vorher lief yt-dlp dann seine 20 s ungesehen weiter.
         try:
-            out, err = await asyncio.wait_for(proc.communicate(), timeout=20)
+            _rc, out, err = await _nc_kind.ausfuehren(cmd, 20, art="yt-dlp")
         except asyncio.TimeoutError:
-            try:
-                proc.kill()
-                await proc.wait()          # reapen, sonst Zombie-Prozess
-            except Exception:
-                pass
             _ytdlp_note_result(False)
             return "unknown", None
         out_s = (out or b"").decode("utf-8", "ignore").strip()
         err_s = (err or b"").decode("utf-8", "ignore").lower()
-        if proc.returncode == 0 and out_s.startswith("{"):
+        if _rc == 0 and out_s.startswith("{"):
             try:
                 data = json.loads(out_s)
             except Exception:
@@ -3008,7 +3014,7 @@ async def _resolve_via_ytdlp(username: str):
             log.debug(f"yt-dlp detect @{username}: 403 auch über Proxy")
             _ytdlp_note_result(False)
             return "unknown", None
-        log.debug(f"yt-dlp detect @{username}: rc={proc.returncode} {err_s[:160]}")
+        log.debug(f"yt-dlp detect @{username}: rc={_rc} {err_s[:160]}")
         _ytdlp_note_result(False)
         return "unknown", None
     except Exception as e:
@@ -3241,17 +3247,44 @@ async def get_live_status(username: str, session, force_fresh: bool = False) -> 
        zaehlte trotzdem gegen MAX_RECONNECTS. Ein Stream, der mit frischer
        URL weitergelaufen waere, wurde so aufgegeben. NUR im Fehlerpfad
        benutzen, sonst faellt der Rate-Limit-Schutz weg."""
-    now = _time_mod.monotonic()
     # v4.2-W103: der BILLIGE Weg — spart den Platz in der Semaphore-Schlange.
-    # Die verbindliche Pruefung steht WEITER UNTEN, innerhalb der Semaphore.
-    _traf = _nc_livecache.holen(_LIVE_STATUS_CACHE, username, now,
-                                force_fresh=force_fresh)
+    # Die verbindliche Pruefung steht im Kern, innerhalb der Semaphore.
+    _traf = _nc_livecache.holen(_LIVE_STATUS_CACHE, username,
+                                _time_mod.monotonic(), force_fresh=force_fresh)
     if _traf is not None:
+        _nc_livecache.zaehle("treffer")
         return _traf
-
     if session is None:
         return "unknown", None
+    _nc_livecache.zaehle("fehlschlag")
 
+    async def _gemessen():
+        t0 = _time_mod.monotonic()
+        try:
+            return await _live_status_aufloesen(username, session, force_fresh)
+        finally:
+            _nc_livecache.dauer(_time_mod.monotonic() - t0)
+
+    # v4.2-W119: force_fresh will eine NEUE Adresse (die alte ist am
+    # Restream-Prozess gerade gestorben) und laeuft deshalb nie mit. Alle
+    # anderen teilen sich je Nutzer EINEN Lauf — die zweite Pruefung aus W103
+    # faengt nur den, der nach dem Schreiben kommt, nicht den, der waehrend
+    # einer 20-s-Aufloesung ankommt.
+    if force_fresh:
+        return await _gemessen()
+    return await _nc_livecache.einflug(_LIVE_EINFLUG, username, _gemessen,
+                                       ("unknown", None))
+
+
+# v4.2-W119: username -> Future des laufenden Aufloesungslaufs (nc/livecache.einflug)
+_LIVE_EINFLUG = {}
+
+
+async def _live_status_aufloesen(username: str, session, force_fresh: bool) -> tuple:
+    """Die eigentliche Aufloesung hinter get_live_status — Rate-Limit-Backoff,
+       Semaphore, zweite Cache-Pruefung, Webcast-API, Nachschlag, yt-dlp und
+       das Schreiben in den Cache. Aufrufer ist nur get_live_status."""
+    now = _time_mod.monotonic()
     # F37: Backoff respektieren
     backoff_until = _RATE_LIMIT_BACKOFF.get(username, 0)
     if now < backoff_until:
@@ -3352,7 +3385,10 @@ async def get_live_status(username: str, session, force_fresh: bool = False) -> 
         # Fall) wurde der Cache nie gereinigt — stale Einträge sammelten sich
         # bis zum Bot-Restart. Wir reinigen jetzt alle 100 Writes (low-cost,
         # konstant amortisiert).
-        if (hash(username) & 63) == 0:
+        # v4.2-W119: ein Schreibzaehler. `hash(username) & 63` war je
+        # NUTZER fest — bei 40 Nutzern traf es oft keinen, und dann wurde
+        # nie aufgeraeumt.
+        if _nc_livecache.aufraeumen_faellig():
             _weg = _nc_livecache.aufraeumen(_LIVE_STATUS_CACHE, _jetzt)
             if _weg:
                 log.debug("_LIVE_STATUS_CACHE: %d stale entries dropped", _weg)
@@ -8127,6 +8163,20 @@ async def _handle_single_tracking(t, bot_app):
         # darin, dass der Aufruf auf dem Loop laeuft. Zwei nebenlaeufige
         # Worker koennen die Anweisung jetzt gleichzeitig absetzen — genau
         # einer gewinnt, wie vorher.
+        # v4.2-W118: VOR dem Lock — eine abgewiesene Aufnahme haelt nichts
+        # fest, und der naechste Poll fragt von selbst wieder.
+        #
+        # v4.2-W121b: und mit RESERVIERUNG. Zwischen hier und dem Eintrag in
+        # active_processes liegen Lock, Aufloesung und Prozessstart — ohne
+        # Reservierung kamen bis zu WORKER_COUNT Worker gleichzeitig durch.
+        # Pruefen und reservieren stehen ohne await dazwischen: atomar im
+        # Loop. Freigegeben wird an jedem Ausgang bis zum Eintrag unten.
+        _jetzt_r = _time_mod.monotonic()
+        if _start_gesperrt("aufnahme", "@" + username,
+                           len(active_processes) + _nc_gegendruck.reserviert(_jetzt_r),
+                           _aufnahme_deckel()):
+            return
+        _nc_gegendruck.reservieren(_jetzt_r)
         if not await asyncio.to_thread(try_acquire_recording_lock,
                                        tid, username=username):    # C4 + R1
             # Anderer Worker hält den Lock (für diesen Tracking ODER
@@ -8136,6 +8186,7 @@ async def _handle_single_tracking(t, bot_app):
             # User aus zwei Chats getrackt wird — nur ein Recording).
             log.info(f"@{username}: Lock nicht bekommen — anderer Tracking-"
                      f"Eintrag für selben User nimmt bereits auf. Skip.")
+            _nc_gegendruck.freigeben()
             return
 
         ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
@@ -8184,6 +8235,7 @@ async def _handle_single_tracking(t, bot_app):
             finish_recording_attempt(attempt_id, outcome="resolve_failed",
                                      error=f"alle Kandidaten gescheitert (preferred={preferred})")
             clear_recording(tid)
+            _nc_gegendruck.freigeben()
             return
 
         log.info(f"Starte {recorder_name} für @{username}: "
@@ -8200,6 +8252,7 @@ async def _handle_single_tracking(t, bot_app):
             log.error(f"{recorder_name} Start fehlgeschlagen: {e}")
             finish_recording_attempt(attempt_id, outcome="start_failed", error=str(e))
             clear_recording(tid)
+            _nc_gegendruck.freigeben()
             return
 
         # F40-Fix R4: Post-Spawn-Setup defensiv. Wenn eine DB-Op zwischen
@@ -8208,6 +8261,7 @@ async def _handle_single_tracking(t, bot_app):
         # killen proc und geben den Lock frei.
         try:
             active_processes.append(proc)
+            _nc_gegendruck.freigeben()      # v4.2-W121b: Reservierung -> Prozess
             set_recording_file(tid, output_file, proc.pid)
             # F27 + B7-Fix: last_live wurde schon via claim_live_transition gesetzt,
             # recording=1 wurde von try_acquire_recording_lock gesetzt. Der vorherige
@@ -8422,10 +8476,11 @@ async def check_all_trackings(bot_app):
                  f"{UPLOAD_WINDOW_END:02d}:00 Uhr (Uploads außerhalb werden aufgeschoben"
                  + (f", {_pend} in Warteschlange" if _pend else "") + ").")
     # F35: Initial-Burst — beim Start einmal alle Trackings prüfen
-    for t in get_all_active_trackings():
+    for t in await asyncio.to_thread(get_all_active_trackings):   # v4.2-W118
         _NEXT_CHECK_AT[t["id"]] = 0   # 0 = "sofort fällig"
 
     LOOP_TICK = 5  # Sekunden
+    _pflege_runde = 0
     while True:
         # B83-Fix: Nur die DB-Abfrage kapseln — sie warf im Log 'database is
         # locked' (s. B80) und tötete damit den GESAMTEN Polling-Loop → keine
@@ -8433,7 +8488,9 @@ async def check_all_trackings(bot_app):
         # kurz warten, nächster Tick. Rest der Loop-Struktur unverändert.
         now = _time_mod.monotonic()
         try:
-            trackings = get_all_active_trackings()
+            # v4.2-W118: neben dem Loop — diese Abfrage laeuft alle 5 s und
+            # stand damit haeufiger auf dem Loop als jede andere.
+            trackings = await asyncio.to_thread(get_all_active_trackings)
         except Exception as _e:
             log.error("check-loop: Trackings-Abruf fehlgeschlagen (%s) — retry in 5s", _e)
             await asyncio.sleep(5)
@@ -8452,10 +8509,14 @@ async def check_all_trackings(bot_app):
                 # ist (echter next_check kommt nach _handle via _schedule_next_check).
                 _NEXT_CHECK_AT[tid] = now + _INFLIGHT_GUARD_SECS
             except asyncio.QueueFull:
-                # Worker zu langsam — ältesten Eintrag verwerfen, neuen rein
+                # Worker zu langsam — ältesten Eintrag verwerfen, neuen rein.
+                # v4.2-W118: nicht mehr still. Der verworfene Nutzer wird
+                # erst nach dem In-Flight-Riegel wieder geprueft — ein
+                # Live-Start kommt dann Minuten zu spaet an.
                 try:
-                    live_check_queue.get_nowait()
+                    _weg = live_check_queue.get_nowait()
                     live_check_queue.task_done()
+                    _pruefung_verworfen(_weg["username"])
                 except Exception: pass
                 try:
                     live_check_queue.put_nowait(t)
@@ -8464,6 +8525,11 @@ async def check_all_trackings(bot_app):
                     log.warning("Queue voll – Tracking übersprungen.")
         if queued > 0:
             log.debug(f"check-loop: {queued}/{len(trackings)} trackings queued")
+        # v4.2-W121: einmalig — ab hier erkennt der Bot Live-Starts wieder.
+        _bereit = _nc_lage.bereit()
+        if _bereit is not None:
+            log.info("Betriebsbereit nach %.1f s — erste Pruefrunde eingereiht "
+                     "(%d Trackings).", _bereit, len(trackings))
 
         # F35: Cleanup verschwundener Trackings aus next-check-Map
         # F41-Fix F2: rate-limit-Maps gleich mit aufräumen. Diese sind
@@ -8487,6 +8553,11 @@ async def check_all_trackings(bot_app):
             for m in (_RATE_LIMIT_BACKOFF, _RATE_LIMIT_PENALTY, _LIVE_STATUS_CACHE, _ABO_LIVE):
                 stale = [u for u in list(m.keys()) if u not in valid_users]
                 for u in stale: m.pop(u, None)
+        # v4.2-W120: unbedingt, alle 10 Minuten — der Riegel oben greift nur
+        # nach vielen Untracks, nie fuer /check- oder Restream-Namen.
+        _pflege_runde += 1
+        if _pflege_runde % 120 == 0:
+            _speicher_pflegen()
 
         await asyncio.sleep(LOOP_TICK)
 
@@ -8891,6 +8962,42 @@ async def _rec_auto_abschalten(data_dead, tid, username, bot_app, chat_id):
                 log.warning(f"B54 notif send failed: {e}")
         except Exception as e:
             log.error(f"B54 auto-disable DB write failed: {e}")
+
+
+async def _aufnahme_beim_stopp_sichern(proc, tid, username, output_file,
+                                       started_at, attempt_id):
+    """v4.2-W121: eine beim Stopp abgebrochene Aufnahme abschliessen.
+
+    SIGTERM und Warten: ffmpeg schreibt das letzte Fragment. Erst danach
+    SIGKILL. Dann eintragen, wenn die Datei mehr als einen Kopf traegt
+    (nc.betriebslage.sichern_beim_stopp) — ohne Upload, der Prozess endet
+    gleich. Jeder Schritt einzeln gefangen: scheitert einer, sollen die
+    anderen trotzdem laufen.
+    """
+    beendet = await _nc_kind.beenden(proc, term_s=_env_int("STALL_KILL_GRACE_SECS", 8))
+    ende = datetime.now(timezone.utc)
+    groesse = None
+    if _nc_lage.sichern_beim_stopp(output_file):
+        try:
+            groesse = os.path.getsize(output_file)
+            dauer = int((ende - started_at).total_seconds()) if started_at else None
+            await asyncio.to_thread(
+                add_recording, username, output_file, file_size=groesse,
+                duration_secs=dauer, tracking_id=tid,
+                started_at=started_at, ended_at=ende)
+            log.info("Aufnahme @%s beim Stopp gesichert (%s, %.1f MB, ffmpeg %s) — "
+                     "steht im Deck, kein Upload.", username,
+                     os.path.basename(output_file), groesse / 1048576.0, beendet)
+        except Exception as e:
+            log.error("Aufnahme @%s beim Stopp NICHT eingetragen (%s): %s liegt "
+                      "ohne Datenbankzeile und erscheint deshalb unter den "
+                      "Waisen (/api/rec/orphans) — dort NICHT loeschen, die "
+                      "Datei ist eine echte Aufnahme.", username, e, output_file)
+    try:
+        finish_recording_attempt(attempt_id, outcome="cancelled", error="shutdown",
+                                 file_path=output_file, file_size=groesse)
+    except Exception as e:
+        log.warning("Aufnahme-Versuch @%s nicht abgeschlossen: %s", username, e)
 
 
 async def handle_recording_finished(proc, tid, chat_id, username, output_file,
@@ -9327,16 +9434,13 @@ async def handle_recording_finished(proc, tid, chat_id, username, output_file,
         # F25: Bei Shutdown (SIGTERM) wird der Task gecancelt. Der Subprocess
         # läuft sonst orphan weiter — proc.kill() vor propagieren.
         cancelled = True
-        log.info(f"handle_recording_finished @{username} cancelled – kill proc.")
-        try: proc.kill()
-        except Exception: pass
-        try:
-            await asyncio.wait_for(proc.wait(), timeout=5)
-        except Exception: pass
-        try:
-            finish_recording_attempt(attempt_id, outcome="cancelled",
-                                     error="shutdown")
-        except Exception: pass
+        # v4.2-W121: SIGTERM statt SIGKILL, und die Datei wird EINGETRAGEN.
+        # Vorher blieb sie ohne Datenbankzeile liegen — eine "Waise", die
+        # /api/rec/orphans/clean zum Loeschen anbietet. Jedes Update (also
+        # jeder Neustart) machte so aus jeder laufenden Aufnahme einen
+        # Loeschkandidaten.
+        await _aufnahme_beim_stopp_sichern(proc, tid, username, output_file,
+                                           started_at, attempt_id)
         raise
     except Exception as e:
         log.error(f"handle_recording_finished crashed: {e}")
@@ -13616,11 +13720,17 @@ async def _restream_tts_enqueue_wav(wav_path, source_user=None):
     if not (RESTREAM_TTS and _restream_tts):
         return
     try:
-        proc = await asyncio.create_subprocess_exec(
-            "ffmpeg", "-hide_banner", "-loglevel", "error", "-i", wav_path,
-            "-f", "s16le", "-ar", str(_TTS_SR), "-ac", str(_TTS_CH), "pipe:1",
-            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
-        pcm, _ = await proc.communicate()
+        # v4.2-W120: mit Zeitlimit (nc.kindprozess); eine TTS-Datei ist
+        # Sekunden lang, 30 s Umwandlung sind reichlich.
+        # Thread-Deckel ja, nice nein: die Stimme geht live ins Sendebild,
+        # eine verzoegerte Umwandlung hoert man. Vorher ganz ohne Deckel —
+        # der Befehl stand als Einzelargumente da, und der Deckel-Vertrag
+        # (test_restream) sah ihn nicht.
+        _rc, pcm, _ = await _nc_kind.ausfuehren(
+            _ff_cmd(["ffmpeg", "-hide_banner", "-loglevel", "error", "-i", wav_path,
+                     "-f", "s16le", "-ar", str(_TTS_SR), "-ac", str(_TTS_CH), "pipe:1"],
+                    threads=FFMPEG_THREADS_BG),
+            30, art="ffmpeg-tts", stderr=_nc_kind.DEVNULL)
         if pcm:
             # V37-BH4: Ziel-Queue = Feeder des Root-Owners (die EINE
             # AZRAEL-Stimme spricht im primären Stream — README-Grenze).
@@ -14267,6 +14377,12 @@ class RestreamManager:
             return {"ok": False, "error": f"Restream deaktiviert ({why})"}
         if rid in self._procs:
             return {"ok": True, "already": True}
+        # v4.2-W118: nur die fd-Sperre — den Deckel fuer Restreams haelt
+        # RESTREAM_MAX_CONCURRENT im Scheduler.
+        _gd = _start_gesperrt("restream", "#%s" % rid, len(self._procs), 0)
+        if _gd:
+            self._set_status(rid, "idle", err=_gd)
+            return {"ok": False, "error": _gd}
         # v4.1-W12: Haelt jemand anders den Einzel-Slot? Diese Frage wurde
         # bisher NUR im Scheduler gestellt (auto_start_due), nicht hier — und
         # damit nicht auf dem Reconnect-Pfad. _monitor nimmt den Restream beim
@@ -18622,7 +18738,7 @@ def healthz():
     # gar nicht beantworten. Der Wert ist zwischengespeichert; kein git-Aufruf
     # je Abfrage.
     _ausl = _nc_auslieferung.stand()
-    return jsonify(ok=ok, db=db_ok, loops=hb_fresh, brain=brain_ok,
+    daten = dict(ok=ok, db=db_ok, loops=hb_fresh, brain=brain_ok,
                    version=BUILD_STAMP,                  # v4.0-W88
                    commit=_ausl["kurz"],                 # v4.2-W85
                    commit_quelle=_ausl["quelle"],        # update | archiv | git | unbekannt
@@ -18652,7 +18768,29 @@ def healthz():
                    # v4.2-W117: Loop-Lag in ms (p50/p99/max ueber 5 min).
                    # `aktiv: false` heisst "keine Messung", nicht "kein Lag".
                    loop_lag=_nc_looplag.lage(),
-                   ts=datetime.now(timezone.utc).isoformat()), (200 if ok else 503)
+                   # v4.2-W118: Aufnahmen gegen Deckel, fds gegen Limit,
+                   # Abweisungen und verworfene Live-Checks.
+                   gegendruck=_nc_gegendruck.lage(
+                       len(active_processes), _aufnahme_deckel(),
+                       live_check_queue.qsize() if live_check_queue else -1,
+                       live_check_queue.maxsize if live_check_queue else -1),
+                   # v4.2-W119: Trefferquote und Aufloesungsdauer der
+                   # Live-Erkennung; `geteilt` = gesparte Doppel-Aufloesungen.
+                   livecache=_nc_livecache.statistik(len(_LIVE_STATUS_CACHE),
+                                                     len(_LIVE_EINFLUG)),
+                   # v4.2-W120: laufende Kindprozesse je Art und Groessen der
+                   # langlebigen Maps — steigt etwas ueber Tage, ist es ein Leck.
+                   kinder=_nc_kind.lage(),
+                   speicher=_nc_pflege.groessen(_speicher_maps()),
+                   # v4.2-W121: wie lange bis zur ersten Pruefrunde (None =
+                   # noch nicht bereit) und wie lange der letzte Stopp dauerte.
+                   start_s=_nc_lage.ZUSTAND["bereit_s"],
+                   ts=datetime.now(timezone.utc).isoformat())
+    # v4.2-W121: "degradiert, aber lebendig" — weiche Gruende mit Klartext.
+    # Der HTTP-Code haengt weiter NUR an `ok`: UptimeRobot alarmiert auf
+    # 503, und ein langsamer Bot ist kein toter.
+    daten["lage"], daten["gruende"] = _nc_lage.bewerten(daten)
+    return jsonify(daten), (200 if ok else 503)
 
 
 @dashboard_app.route("/api/debug/threads")
@@ -21036,11 +21174,12 @@ async def _shrink_for_discord(path, limit_mb):
        Limit, skaliert auf max 720p (libx264 veryfast, +faststart). Gibt den
        neuen Pfad zurück oder None."""
     try:
-        pr = await asyncio.create_subprocess_exec(
-            "ffprobe", "-v", "error", "-show_entries", "format=duration",
-            "-of", "default=nk=1:nw=1", path,
-            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
-        so, _ = await pr.communicate()
+        # v4.2-W120: beide Laeufe mit Zeitlimit (nc.kindprozess) — vorher
+        # nacktes communicate(): ein haengender ffmpeg hing fuer immer.
+        _rc, so, _ = await _nc_kind.ausfuehren(
+            ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+             "-of", "default=nk=1:nw=1", path], 30, art="ffprobe",
+            stderr=_nc_kind.DEVNULL)
         dur = float((so or b"0").decode().strip() or 0) or 20.0
         budget_bits = limit_mb * 8 * 1024 * 1024 * 0.90     # 10% Reserve für Container-Overhead
         total_kbps = max(350, int(budget_bits / dur / 1000))
@@ -21055,10 +21194,10 @@ async def _shrink_for_discord(path, limit_mb):
                "-maxrate", f"{int(v_kbps * 1.3)}k", "-bufsize", f"{v_kbps * 2}k",
                "-c:a", "aac", "-b:a", f"{a_kbps}k", "-movflags", "+faststart", out],
                threads=FFMPEG_THREADS_BG, nice=FFMPEG_NICE_BG)
-        proc = await asyncio.create_subprocess_exec(
-            *cmd, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE)
-        await proc.communicate()
-        if proc.returncode == 0 and os.path.exists(out) and os.path.getsize(out) < limit_mb * 1024 * 1024:
+        _rc, _, _ = await _nc_kind.ausfuehren(cmd, max(300, int(dur * 6)),
+                                              art="ffmpeg-discord",
+                                              stdout=_nc_kind.DEVNULL)
+        if _rc == 0 and os.path.exists(out) and os.path.getsize(out) < limit_mb * 1024 * 1024:
             return out
         if os.path.exists(out):
             try: os.remove(out)
@@ -21408,10 +21547,12 @@ async def clip_moment(username, reason="", caption=""):
     # V37-CPU: Clip-Erstellung ist Hintergrundarbeit — Deckel + nice.
     cmd = _ff_cmd(cmd, threads=FFMPEG_THREADS_BG, nice=FFMPEG_NICE_BG)
     try:
-        proc = await asyncio.create_subprocess_exec(
-            *cmd, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE)
-        _, err = await proc.communicate()
-        if proc.returncode == 0 and os.path.exists(out) and os.path.getsize(out) > 1024:
+        # v4.2-W120: mit Zeitlimit (nc.kindprozess) — Clips sind Sekunden
+        # lang, zehnfache Laenge plus zwei Minuten ist grosszuegig.
+        _rc, _, err = await _nc_kind.ausfuehren(cmd, 120 + 10 * float(real),
+                                                art="ffmpeg-clip",
+                                                stdout=_nc_kind.DEVNULL)
+        if _rc == 0 and os.path.exists(out) and os.path.getsize(out) > 1024:
             log.info("✂ Clip erstellt @%s (%s): %s", username, reason, os.path.basename(out))
             try:
                 if DISCORD_WEBHOOK_URL:
@@ -21430,7 +21571,7 @@ async def clip_moment(username, reason="", caption=""):
             if YOUTUBE_CLIP_ENABLED and _ytoauth.status().get("ready"):
                 _spawn(_youtube_clip_versuchen(username, out, reason), name="clip-youtube")
             return out
-        log.warning("Clip @%s ffmpeg rc=%s: %s", username, proc.returncode,
+        log.warning("Clip @%s ffmpeg rc=%s: %s", username, _rc,
                     (err or b"")[-200:].decode("utf-8", "ignore"))
     except Exception as e:
         log.warning("Clip @%s fehlgeschlagen: %s", username, e)
@@ -23108,6 +23249,7 @@ async def run_bot():
 
     global live_check_queue
     live_check_queue = asyncio.Queue(maxsize=200)
+    _fd_grenze_anheben()                 # v4.2-W118: vor dem ersten Kindprozess
 
     # X-Series: Main-Loop-Referenz für den Flask→Async-Bridge speichern.
     # Flask läuft im eigenen Thread; async-Helper (ffprobe, manual recording,
@@ -23375,6 +23517,93 @@ def _loop_takt_starten():
         return
     _nc_looplag.spaeher_starten(LOOP_SPAEHER_MS / 1000.0,
                                 melden=_loop_stockung_melden)
+
+
+# v4.2-W118: Abregeln mit Ansage (nc/gegendruck.py). Restreams sind seit
+# V37-MAXLIVE gedeckelt, Aufnahmen waren es nicht; 0 = automatisch (vier je
+# Kern, mindestens acht) — ein Riegel gegen den Ausreisser, keine Drossel.
+MAX_PARALLEL_AUFNAHMEN = _env_int("MAX_PARALLEL_AUFNAHMEN", 0)
+
+
+def _aufnahme_deckel():
+    return MAX_PARALLEL_AUFNAHMEN if MAX_PARALLEL_AUFNAHMEN > 0 \
+        else _nc_gegendruck.deckel_auto()
+
+
+def _fd_grenze_anheben():
+    """Soft-Limit der Dateideskriptoren anheben (Begruendung in
+       nc/gegendruck.fd_grenze_anheben). Die Unit aus dem Installer setzte
+       kein LimitNOFILE, der Dienst lief mit 1024."""
+    try:
+        vorher, nachher = _nc_gegendruck.fd_grenze_anheben()
+    except (OSError, ValueError) as e:
+        log.warning("fd-Grenze nicht anhebbar (%s) — es gilt, was die Unit "
+                    "setzt. Abhilfe: LimitNOFILE=65536 in der systemd-Unit.", e)
+        return
+    if nachher > vorher:
+        log.info("fd-Grenze angehoben: %d -> %d", vorher, nachher)
+    elif 0 < nachher < 4096:
+        log.warning("fd-Grenze bleibt bei %d (Hard-Limit erlaubt nicht mehr) — "
+                    "bei vielen Aufnahmen und Restreams wird das knapp. Abhilfe: "
+                    "LimitNOFILE=65536 in der systemd-Unit.", nachher)
+
+
+def _start_gesperrt(art, wer, aktiv, deckel):
+    """-> "" (falsch), wenn der Kindprozess starten darf, sonst der Grund.
+
+    Laut ueber nc/meldetakt (Kanal je Art, Grund fd|deckel): dieselbe Lage
+    meldet sich einmal je 15 Minuten mit Zaehler, ein Wechsel sofort."""
+    erlaubt, grund, text = _nc_gegendruck.start_entscheiden(
+        aktiv, deckel, _nc_gegendruck.fd_lage())
+    if not erlaubt:
+        _nc_gegendruck.abgewiesen(art, grund)
+        laut, unterdrueckt = _nc_meldetakt.melden("gegendruck-" + art, grund,
+                                                  _time_mod.monotonic())
+        if laut:
+            log.error("Gegendruck: %s %s nicht gestartet — %s%s", art, wer, text,
+                      _nc_meldetakt.zusatz(unterdrueckt))
+    return text
+
+
+def _pruefung_verworfen(wer):
+    """Ein Live-Check fiel aus der vollen Schlange. Zaehlen und gedrosselt
+       melden — mit der Abhilfe, nicht nur mit der Zahl."""
+    n = _nc_gegendruck.verworfen()
+    laut, unterdrueckt = _nc_meldetakt.melden("pruef-schlange", "voll",
+                                              _time_mod.monotonic())
+    if laut:
+        log.error("Live-Check-Schlange voll: Pruefung fuer @%s verworfen (%d bisher)"
+                  "%s. Die %d Worker kommen nicht nach — Live-Starts werden "
+                  "spaeter erkannt. Abhilfe: WORKER_COUNT erhoehen, oder im "
+                  "Log nach 'Event-Loop … gestanden' suchen.", wer, n,
+                  _nc_meldetakt.zusatz(unterdrueckt), WORKER_COUNT)
+
+
+def _speicher_maps():
+    """Die Maps, deren Groesse /healthz zeigt und die gepflegt werden."""
+    return {"live_status_cache": _LIVE_STATUS_CACHE, "rate_backoff": _RATE_LIMIT_BACKOFF,
+            "rate_penalty": _RATE_LIMIT_PENALTY, "ytdlp_ruhe": _YTDLP_NACHSCHLAG_ZULETZT,
+            "clip_cooldown": _CLIP_LAST, "hype_cooldown": _HYPE_CLIP_LAST,
+            "abo_probe": _ABO_PROBE_DONE, "abo_live": _ABO_LIVE,
+            "next_check": _NEXT_CHECK_AT, "chat_stats": _CHAT_STATS}
+
+
+def _speicher_pflegen():
+    """v4.2-W120: Maps nach ihrer eigenen Bedeutung beschneiden (Begruendung
+       in nc/speicherpflege.py). Eine Stunde ist ein Vielfaches jeder
+       Ruhezeit darunter; die Abo-Sonde drosselt auf 6 h, also 7 h."""
+    jetzt = _time_mod.monotonic()
+    weg = 0
+    for m in (_YTDLP_NACHSCHLAG_ZULETZT, _CLIP_LAST, _HYPE_CLIP_LAST):
+        weg += _nc_pflege.alte_stempel_weg(m, jetzt, 3600)
+    weg += _nc_pflege.alte_stempel_weg(_ABO_PROBE_DONE, jetzt, 7 * 3600)
+    # Abgelaufener Backoff seit 10 min: die Strafe dazu ist erledigt. Solange
+    # er laeuft, bleibt BEIDES — sonst eskaliert der naechste 429 nicht.
+    for u in _nc_pflege.abgelaufene_weg(_RATE_LIMIT_BACKOFF, jetzt, 600):
+        _RATE_LIMIT_PENALTY.pop(u, None)
+        weg += 1
+    if weg:
+        log.debug("Speicherpflege: %d veraltete Eintraege entfernt", weg)
 
 
 def _log_schleuse_pruefen():
@@ -24229,7 +24458,16 @@ async def _aufraeumen():
     trotzdem laufen — sonst bleiben ffmpeg-Kinder und Websockets zurueck.
     Aufraeumpfade, deren Fehlschlag bedeutungslos ist, duerfen dabei still
     sein (CLAUDE.md); der Prozess endet ohnehin gleich.
+
+    v4.2-W121: ZUERST die Aufnahmen. Sie sind das Einzige, dessen Verlust
+    der Betreiber spaeter bemerkt; alles andere baut sich beim Start neu auf.
     """
+    t0 = _time_mod.monotonic()
+    try:
+        n_auf = await _aufnahmen_abschliessen()
+    except Exception as e:
+        n_auf = 0
+        log.warning("Herunterfahren: Aufnahmen nicht abgeschlossen: %s", e)
     # FIX (Header "Was offen bleibt" — gepoolte KI-Session): explizit
     # schließen statt dem GC zu überlassen, sonst loggt aiohttp eine
     # "Unclosed client session" Warning beim Prozessende.
@@ -24258,6 +24496,39 @@ async def _aufraeumen():
         _persist_refreshed_cookies(force=True)
     except Exception:
         pass
+    # v4.2-W121: Hilfsprozesse (yt-dlp, Clips, Zerlegen …), deren Task der
+    # Abbruch noch nicht erreicht hat — nc.kindprozess kennt sie alle.
+    try:
+        n_kind = await _nc_kind.alle_beenden(term_s=3.0)
+    except Exception as e:
+        n_kind = 0
+        log.warning("Herunterfahren: Hilfsprozesse nicht beendet: %s", e)
+    _nc_lage.ZUSTAND["stopp_s"] = round(_time_mod.monotonic() - t0, 1)
+    log.info("Herunterfahren in %.1f s: %d Aufnahme(n) abgeschlossen, %d "
+             "Hilfsprozess(e) beendet.", _nc_lage.ZUSTAND["stopp_s"], n_auf, n_kind)
+
+
+async def _aufnahmen_abschliessen(frist_s: float = 30.0) -> int:
+    """v4.2-W121: laufende Aufnahmen beim Stopp in fester Reihenfolge beenden.
+
+    Bisher erreichte sie der Abbruch irgendwann in asyncio.run()s
+    Abschlussrunde — nach Discord, nach dem Kick-Moderator, und ohne dass
+    jemand wartete. Jetzt zuerst und mit Frist: der Abbruchzweig in
+    handle_recording_finished beendet ffmpeg per SIGTERM und traegt die
+    Datei ein (_aufnahme_beim_stopp_sichern). 30 s reichen fuer SIGTERM-
+    Frist (8 s) plus Eintrag; systemd wartet mit TimeoutStopSec laenger.
+    """
+    laufend = [t for t in list(_background_tasks)
+               if (t.get_name() or "").startswith("finish-") and not t.done()]
+    for t in laufend:
+        t.cancel()
+    if laufend:
+        _fertig, offen = await asyncio.wait(laufend, timeout=frist_s)
+        if offen:
+            log.error("Herunterfahren: %d Aufnahme(n) nach %.0f s nicht "
+                      "abgeschlossen — die Dateien liegen ggf. ohne "
+                      "Datenbankzeile im Aufnahmeordner.", len(offen), frist_s)
+    return len(laufend)
 
 
 # Klartext fuer die Abschiedszeile. Als Tabelle, damit der Wortlaut an EINER

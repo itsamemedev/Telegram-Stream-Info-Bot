@@ -982,6 +982,16 @@ Environment=PYTHONUNBUFFERED=1
 ExecStart=${VENV}/bin/python ${ZIEL}/bot.py
 Restart=always
 RestartSec=10
+# v4.2-W118: ohne diese Zeile laeuft der Dienst mit 1024 Dateideskriptoren —
+# jede Aufnahme belegt zwei Pipes, jeder Chat einen Socket. Der Bot hebt das
+# Soft-Limit zwar selbst an, aber nur bis zum Hard-Limit, das hier steht.
+LimitNOFILE=65536
+# v4.2-W121: SIGTERM nur an den Bot; er beendet seine Aufnahmen selbst
+# (SIGTERM an ffmpeg, Datei eintragen) und raeumt die Hilfsprozesse ab.
+# Mit der Vorgabe control-group bekaeme jedes ffmpeg das Signal gleichzeitig
+# und unabhaengig davon. Was nach 60 s noch lebt, toetet systemd.
+KillMode=mixed
+TimeoutStopSec=60
 
 [Install]
 WantedBy=multi-user.target

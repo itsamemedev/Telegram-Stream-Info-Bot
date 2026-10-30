@@ -8,10 +8,10 @@ auslieferbar und rückrollbar. Diese Datei wächst mit jedem Paket.
 | Paket | Inhalt | Erwartete Wirkung |
 |---|---|---|
 | **A — Event-Loop-Schutz** | Loop-Lag in ms messen, blockierende Stelle benennen, Log-Schleuse gegen Nachzügler, DB-Zugriffe der heißen Pfade neben den Loop, Sperre gegen neue | Stockungen unter 3 s werden sichtbar **und** lokalisierbar; die bekannten Plattenlast-Stockungen in Restream/Intel fallen weg |
-| B — Nebenläufigkeit & Gegendruck | Semaphoren und Grenzen prüfen (Auflösung, Aufnahmen, Restreams, TikTokLive-Clients), Prozessstarts drosseln, harte Deckel mit Meldung statt stiller Überlast | Kein Einbruch unter Last, sondern sichtbares Abregeln |
-| C — Caches, Polling, heiße Pfade | Live-Status-Cache und Nachschläge, adaptives Polling ohne Rückkopplung, Status-Aggregation für Deck/Befehle ohne Vollscan | Kürzere Zeit live → Aufnahme, weniger Last je Abfrage |
-| D — Prozess- & Ressourcen-Lebenszyklus | Kindprozesse lückenlos verfolgen und abräumen, fd-/Zombie-Schutz, Deckel auf langlebige Dicts | Kein Wachstum über Tage |
-| E — Start, Stopp, Neustart | Unabhängige Initialisierung parallel, sauberes Herunterfahren ohne Waisen-ffmpeg, „degradiert aber lebendig" vs. „tot" | Schnellerer, deterministischer `systemctl restart` |
+| **B — Nebenläufigkeit & Gegendruck** | Semaphoren und Grenzen prüfen (Auflösung, Aufnahmen, Restreams, TikTokLive-Clients), Prozessstarts drosseln, harte Deckel mit Meldung statt stiller Überlast | Kein Einbruch unter Last, sondern sichtbares Abregeln |
+| **C — Caches, Polling, heiße Pfade** | Live-Status-Cache und Nachschläge, adaptives Polling ohne Rückkopplung, Status-Aggregation für Deck/Befehle ohne Vollscan | Kürzere Zeit live → Aufnahme, weniger Last je Abfrage |
+| **D — Prozess- & Ressourcen-Lebenszyklus** | Kindprozesse lückenlos verfolgen und abräumen, fd-/Zombie-Schutz, Deckel auf langlebige Dicts | Kein Wachstum über Tage |
+| **E — Start, Stopp, Neustart** | Unabhängige Initialisierung parallel, sauberes Herunterfahren ohne Waisen-ffmpeg, „degradiert aber lebendig" vs. „tot" | Schnellerer, deterministischer `systemctl restart` |
 | F — Leichte Beobachtbarkeit | Aktive Aufnahmen/Restreams/Clients, Cache-Trefferquote, Resolver-Latenz, fds, Kindprozesse, RSS — billig, ohne Log-Flut | Ein Blick auf `/healthz` statt SSH |
 
 ## Paket A — Event-Loop-Schutz (W117)
@@ -80,3 +80,169 @@ eigenen Thread, nicht mehr den ganzen Bot.
 überwiegend in Telegram- und Discord-Befehlen, die selten laufen. Sie einzeln
 umzubauen wäre Risiko ohne Nutzen. `tools/loopblocker.py --sperre` verhindert,
 dass es mehr werden; was davon wirklich stört, zeigt der Späher im Betrieb.
+
+## Paket B — Nebenläufigkeit & Gegendruck (W118)
+
+### Was sich geändert hat
+
+- **Dateideskriptoren:** Der Dienst lief bisher mit 1024 — die Unit setzte kein
+  `LimitNOFILE`. Der Bot hebt das Soft-Limit beim Start selbst an (bis zum
+  Hard-Limit, höchstens 65536). Im Log beim Start:
+
+      fd-Grenze angehoben: 1024 -> 65536
+
+  Steht stattdessen „fd-Grenze bleibt bei …", erlaubt das Hard-Limit nicht
+  mehr — dann `LimitNOFILE=65536` unter `[Service]` in die Unit eintragen,
+  `systemctl daemon-reload`, Neustart. Neue Installationen haben die Zeile.
+- **Deckel für parallele Aufnahmen** (`MAX_PARALLEL_AUFNAHMEN`). Vorgabe 0 =
+  automatisch: vier je Kern, mindestens acht, auf der 8-Kern-Box also 32.
+- **fd-Sperre:** Ab 85 % belegter Dateideskriptoren startet kein neuer
+  ffmpeg mehr, weder für Aufnahmen noch für Restreams — sonst verliert der Bot
+  gleich danach Datenbank und Netz.
+- **Live-Check-Schlange:** Läuft sie über, steht das jetzt im Log, statt dass
+  ein Nutzer still später geprüft wird.
+
+### Neue Schalter
+
+| Variable | Vorgabe | Wirkung |
+|---|---|---|
+| `MAX_PARALLEL_AUFNAHMEN` | 0 (= 4 je Kern, mind. 8) | Höchstzahl gleichzeitiger Aufnahmen |
+
+`RESTREAM_MAX_CONCURRENT` (Vorgabe 2) und `WORKER_COUNT` (Vorgabe 4) bleiben,
+wie sie sind.
+
+### Wo man hinsieht
+
+`/healthz` → `gegendruck`:
+
+    "gegendruck": {"aufnahmen": 3, "aufnahmen_deckel": 32,
+                   "fd": {"offen": 212, "grenze": 65536, "anteil": 0.003},
+                   "abgewiesen": {}, "pruef_schlange": 0,
+                   "pruef_schlange_max": 200, "pruef_verworfen": 0}
+
+- `fd.grenze` 1024: die Anhebung hat nicht gegriffen (siehe oben).
+- `fd.anteil` steigt über Tage ohne mehr Aufnahmen: ein Leck — Paket D.
+- `abgewiesen` nicht leer: `aufnahme:deckel` heißt, der Deckel hat gegriffen;
+  `aufnahme:fd` oder `restream:fd` heißt, die Deskriptoren werden knapp.
+  Das error.log nennt dazu Nutzer und Abhilfe (einmal je 15 Minuten je Grund).
+- `pruef_verworfen` > 0: die Worker kommen nicht nach — `WORKER_COUNT`
+  erhöhen oder nach „Event-Loop … gestanden" suchen (Paket A).
+
+### Verhalten unter Last
+
+Gehen mehr Nutzer gleichzeitig live, als der Deckel erlaubt, starten die
+ersten bis zum Deckel; die übrigen werden beim nächsten Live-Check (alle 30 s
+für einen Live-Nutzer) erneut gefragt und starten, sobald eine Aufnahme endet.
+Kein Lock bleibt hängen, kein Nutzer wird gesperrt. Was abgewiesen wurde, steht
+im Log — nichts verschwindet still.
+
+## Paket C — Caches, Polling, heiße Pfade (W119)
+
+### Was sich geändert hat
+
+- **Live-Erkennung:** Fragen mehrere Stellen gleichzeitig nach demselben Nutzer
+  (zwei Chats, Restream-Scheduler, Deck), löst der Bot ihn nur noch **einmal**
+  auf; alle anderen bekommen dasselbe Ergebnis. Weniger Anfragen bei TikTok,
+  weniger 429, weniger doppelte Logzeilen.
+- **Cache-Aufräumen** läuft jetzt verlässlich alle 64 Schreibvorgänge.
+- **Polling unter Last:** Ist die Live-Check-Schlange mehr als halb voll,
+  werden Nutzer, die offline sind oder nicht ermittelt werden konnten, seltener
+  geprüft — bei voller Schlange halb so oft. Live-Nutzer und gerade offline
+  gegangene werden **nie** gedehnt; VIP-Prioritäten gelten weiter.
+- **Deck-Puls:** Egal wie viele Tabs offen sind, `/api/pulse` rechnet höchstens
+  einmal je 2 Sekunden.
+
+Keine neuen Schalter.
+
+### Wo man hinsieht
+
+`/healthz` → `livecache`:
+
+    "livecache": {"treffer": 812, "fehlschlag": 1430, "trefferquote": 0.362,
+                  "geteilt": 57, "laeufe": 1430, "dauer_mittel_ms": 1840,
+                  "dauer_max_ms": 20112, "eintraege": 41, "laufend": 1}
+
+- `geteilt`: so viele doppelte Auflösungen wurden eingespart.
+- `dauer_mittel_ms` über ein paar Sekunden: die Auflösung geht oft über den
+  langsamen Weg (yt-dlp); dann lohnt ein Blick auf die Resolver-Meldungen im
+  Log (Cookies, Tunnel).
+- `dauer_max_ms` um 20 000: yt-dlp läuft in seinen Timeout.
+- `laufend` dauerhaft hoch: Auflösungen hängen — Tunnel/Proxy prüfen.
+
+Liefert der Puls `"veraltet": true`, hing beim Bauen etwas (meist SQLite unter
+Plattenlast); das Deck zeigt dann die Zahlen von vor wenigen Sekunden statt gar
+keine.
+
+## Paket D — Prozess- & Ressourcen-Lebenszyklus (W120)
+
+### Was sich geändert hat
+
+- **Hilfsprozesse** (yt-dlp-Erkennung, Clips, Discord-Verkleinern, TTS,
+  Zerlegen und Reparieren von Aufnahmen, Tonspur-Prüfung) haben jetzt alle ein
+  Zeitlimit und werden beendet, wenn die Aufgabe abgebrochen wird. Vorher
+  konnte ein yt-dlp oder ein Neukodieren nach einem Abbruch unbemerkt
+  weiterlaufen, und drei ffmpeg-Aufrufe konnten für immer hängen.
+- **Speicher:** Einige interne Tabellen wuchsen mit jedem `/check` und jedem
+  Clip für Nutzer, die nicht getrackt sind, und wurden nie geleert. Sie werden
+  jetzt alle 10 Minuten beschnitten.
+
+Keine neuen Schalter. Aufnahme- und Restream-Prozesse selbst hatten ihre
+Abräumwege schon (W75/W83); die bleiben, wie sie sind.
+
+### Wo man hinsieht
+
+`/healthz`:
+
+    "kinder": {"laufend": 1, "je_art": {"yt-dlp": 1}, "aeltester_s": 4,
+               "gestartet": 3120, "zeitlimit": 17, "abgebrochen": 2,
+               "getoetet": 0},
+    "speicher": {"live_status_cache": 38, "rate_backoff": 2, ...}
+
+- `kinder.aeltester_s` weit über den Zeitlimits (yt-dlp 20 s, Clip wenige
+  Minuten): etwas hängt im Kernel (meist die Platte); ein Neustart räumt auf.
+- `kinder.getoetet` steigt: Prozesse ignorieren SIGTERM — bei ffmpeg ein
+  Hinweis auf eine hängende Ein-/Ausgabe.
+- `kinder.zeitlimit` steigt schnell, vor allem bei `yt-dlp`: TikTok oder der
+  Tunnel antworten langsam (siehe auch `livecache.dauer_max_ms`).
+- `speicher`: bleibt über Tage ungefähr bei der Zahl der getrackten Nutzer.
+  Steigt ein Wert stetig, ist es ein Leck — Wert und Name ins Ticket.
+
+## Paket E — Start, Stopp, Neustart (W121)
+
+### Was sich geändert hat
+
+- **Aufnahmen überleben einen Neustart.** Bisher wurde eine laufende Aufnahme
+  beim Stopp hart beendet und nicht eingetragen — sie lag danach unsichtbar im
+  Aufnahmeordner und tauchte unter „Waisen" zum Löschen auf. Jetzt wird ffmpeg
+  sauber beendet und die Datei eingetragen; sie steht nach dem Neustart im Deck
+  (ohne Telegram-Upload). Im Log:
+
+      Aufnahme @name beim Stopp gesichert (tiktok_live_….mp4, 412.3 MB, ffmpeg term) — steht im Deck, kein Upload.
+      Herunterfahren in 6.2 s: 2 Aufnahme(n) abgeschlossen, 0 Hilfsprozess(e) beendet.
+
+- **Startzeit:** nach jedem Start steht `Betriebsbereit nach X s` im Log.
+- **Lagebewertung in `/healthz`:** `lage` ist `ok`, `degradiert` oder
+  `gestoert`; `gruende` nennt in Klartext, was gerade Leistung kostet.
+
+### Bestehende Installationen
+
+Die Unit-Zeilen `KillMode=mixed` und `TimeoutStopSec=60` (und aus Paket B
+`LimitNOFILE=65536`) setzt nur der Installer. Für eine bestehende Installation
+von Hand unter `[Service]` eintragen, dann:
+
+    sudo systemctl daemon-reload && sudo systemctl restart <dienst>
+
+Ohne `KillMode=mixed` funktioniert das Sichern trotzdem: systemd schickt dann
+jedem ffmpeg selbst SIGTERM, die Aufnahme endet sauber und wird eingetragen.
+
+### Wo man hinsieht
+
+    "lage": "degradiert",
+    "gruende": ["Event-Loop p99 640 ms — Stelle in /api/debug/threads (loop_bremser)"],
+    "start_s": 23.4
+
+- `lage: gestoert` entspricht dem bisherigen HTTP 503.
+- `lage: degradiert` bleibt HTTP 200 — UptimeRobot alarmiert dafür nicht, das
+  Deck und `curl` zeigen es.
+- `start_s` deutlich über einer Minute: meist wartet der Start auf den
+  Proxy-Pool (`_ensure_proxy_ready`); dann die Proxy-Quelle prüfen.

@@ -4684,15 +4684,30 @@ def _test_v42_w11_videoteil_aus_dem_monolithen():
     # 50 MINUTEN je Segment und damit 300-700 MB je Teil, also immer ein 413.
     # Gerechnet wird jetzt aus der ECHTEN Bitrate. Geprueft wird die
     # Kommandozeile, weil genau dort der Rechenfehler landete.
+    # v4.2-W120: die Attrappe hat die Form eines echten asyncio-Prozesses —
+    # pid, terminate(), communicate(input=None). Vorher fehlten alle drei;
+    # nc.kindprozess braucht sie, und ein echter Prozess hat sie immer.
+    # Die Aussage unten bleibt: "der haengende Prozess wurde per Signal
+    # beendet UND abgeholt" — ob per SIGTERM oder SIGKILL, ist dafuer gleich.
+    _naechste_pid = [40000]
+
     class _Proc:
         def __init__(self, out=b"", rc=0, haenge=False):
-            self._out, self.returncode, self._haenge = out, rc, haenge
+            self._out, self._haenge = out, haenge
+            # Ein laufender Prozess hat returncode None — ein haengender also
+            # auch. Mit 0 sah er fuer jedes Abraeumen schon beendet aus.
+            self.returncode = None if haenge else rc
             self.getoetet = False
+            _naechste_pid[0] += 1
+            self.pid = _naechste_pid[0]
 
-        async def communicate(self):
+        async def communicate(self, input=None):
             if self._haenge:
                 await _asyncio.sleep(3600)
             return self._out, b""
+
+        def terminate(self):
+            self.getoetet = True
 
         def kill(self):
             self.getoetet = True
@@ -12497,8 +12512,12 @@ def _test_v42_w103_cache_greift_bei_gleichzeitigen_aufrufern():
     # der eigentliche Befund; eine Pruefung allein nutzt nichts.
     wurzel = _os.path.dirname(_os.path.abspath(__file__))
     src = _io.open(_os.path.join(wurzel, "bot.py"), encoding="utf-8").read()
-    i = src.index("async def get_live_status(")
-    rumpf = rumpf_ab(src, i)
+    # v4.2-W119: get_live_status ist seither Huelle (billige Pruefung,
+    # Single-Flight) um den Kern _live_status_aufloesen (Semaphore,
+    # verbindliche Pruefung). Die Aussage gilt fuer beide zusammen, in
+    # dieser Reihenfolge — der Anker folgt der Teilung, nicht umgekehrt.
+    rumpf = (rumpf_ab(src, src.index("async def get_live_status("))
+             + rumpf_ab(src, src.index("async def _live_status_aufloesen(")))
     assert rumpf.count("_nc_livecache.holen(") == 2, \
         "der Cache wird %d-mal geprueft; zwei gleichzeitige Aufrufer " \
         "brauchen die Pruefung INNERHALB der Semaphore" \
@@ -21681,6 +21700,658 @@ def _test_v42_w117_loop_verdrahtung_und_sperre():
        "Schleusen-Pruefung verdrahtet, Bremser nur hinter der Anmeldung")
 
 
+def _test_v42_w118_gegendruck_entscheidet():
+    """Abregeln mit Ansage statt still ueberlaufen.
+
+    Aufnahmen hatten keinen Deckel, der Dienst lief mit 1024 fds (keine
+    LimitNOFILE-Zeile in der Unit, nichts im Bot), und eine volle
+    Pruef-Schlange verwarf ohne Zeile.
+    """
+    import subprocess as _sp
+    from nc import gegendruck as G
+
+    G.zuruecksetzen()
+    voll = {"offen": 900, "grenze": 1024}
+    frei = {"offen": 100, "grenze": 1024}
+    # ── (1) DIE RANGFOLGE: ein voller fd-Tisch ist die eigentliche
+    # Nachricht — er kostet gleich auch Datenbank und Netz.
+    ok_, grund, text = G.start_entscheiden(50, 32, voll)
+    assert (ok_, grund) == (False, "fd"), (ok_, grund)
+    assert "LimitNOFILE" in text, "eine Abweisung ohne Abhilfe: %s" % text
+    ok_, grund, text = G.start_entscheiden(32, 32, frei)
+    assert (ok_, grund) == (False, "deckel") and "MAX_PARALLEL_AUFNAHMEN" in text, text
+    assert G.start_entscheiden(31, 32, frei)[0], "unter dem Deckel muss es starten"
+    assert G.start_entscheiden(500, 0, frei)[0], "Deckel 0 heisst: kein Deckel"
+    # Eine unbekannte Lage (kein /proc, Windows) darf keine Aufnahme kosten.
+    assert G.start_entscheiden(0, 0, {"offen": -1, "grenze": -1})[0]
+    assert G.start_entscheiden(0, 0, {"offen": 5000, "grenze": -1})[0]
+    # Die Schwelle selbst: knapp darunter frei, auf ihr gesperrt.
+    grenze = 1000
+    schwelle = int(G.FD_SPERRE_ANTEIL * grenze)
+    assert G.start_entscheiden(0, 0, {"offen": schwelle - 1, "grenze": grenze})[0]
+    assert not G.start_entscheiden(0, 0, {"offen": schwelle, "grenze": grenze})[0]
+
+    # ── (2) DER AUTOMATISCHE DECKEL ist ein Riegel, keine Drossel.
+    assert G.deckel_auto(8) == 32 and G.deckel_auto(1) == 8, (G.deckel_auto(8), G.deckel_auto(1))
+
+    # ── (3) DIE ECHTE LAGE und das ANHEBEN — im eigenen Prozess, damit das
+    # Limit dieser Suite unberuehrt bleibt. Erst auf 256 druecken, dann
+    # muss die Anhebung greifen, aber nie ueber das Hard-Limit hinaus.
+    if os.path.isdir("/proc/self/fd"):
+        lg = G.fd_lage()
+        assert lg["offen"] > 0 and lg["grenze"] > 0, lg
+        code = ("import resource as r, sys; sys.path.insert(0, '.');"
+                "w, h = r.getrlimit(r.RLIMIT_NOFILE);"
+                "r.setrlimit(r.RLIMIT_NOFILE, (256, h));"
+                "from nc import gegendruck as G;"
+                "v, n = G.fd_grenze_anheben();"
+                "w2, h2 = r.getrlimit(r.RLIMIT_NOFILE);"
+                "print(v, n, w2, h2)")
+        aus = _sp.run([sys.executable, "-c", code], capture_output=True, text=True,
+                      cwd=os.path.dirname(os.path.abspath(__file__)), timeout=60)
+        v, n, w2, h2 = (int(x) for x in aus.stdout.split())
+        assert v == 256, aus.stdout
+        assert n == w2 and n > 256, "die Anhebung hat nicht gegriffen: %s" % aus.stdout
+        assert n <= G.FD_ZIEL and (h2 < 0 or n <= h2), aus.stdout
+
+    # ── (4) DIE ZAEHLER fuer /healthz — und keine Namen darin.
+    G.abgewiesen("aufnahme", "deckel")
+    G.abgewiesen("aufnahme", "deckel")
+    G.verworfen()
+    lage = G.lage(3, 32, 7, 200)
+    assert lage["abgewiesen"] == {"aufnahme:deckel": 2}, lage
+    assert lage["pruef_verworfen"] == 1 and lage["aufnahmen"] == 3, lage
+    assert lage["pruef_schlange"] == 7 and lage["pruef_schlange_max"] == 200
+    G.zuruecksetzen()
+
+    ok("W118: fd-Sperre vor Deckel, Deckel 0 = keiner, unbekannte Lage sperrt nie, "
+       "Soft-Limit wird bis zum Hard-Limit angehoben")
+
+
+def _test_v42_w118_gegendruck_verdrahtet():
+    """Gefragt wird VOR dem Lock, die Schlange meldet, der Abruf laeuft
+    neben dem Loop, und die Unit bringt LimitNOFILE mit."""
+    import ast as _ast
+    src = io.open("bot.py", encoding="utf-8").read()
+    baum = _ast.parse(src)
+    fn = {}
+    for n in _ast.walk(baum):
+        if isinstance(n, (_ast.FunctionDef, _ast.AsyncFunctionDef)):
+            fn.setdefault(n.name, n)
+
+    def rufe(f, name):
+        return [c for c in _ast.walk(fn[f]) if isinstance(c, _ast.Call)
+                and (getattr(c.func, "id", None) == name
+                     or getattr(c.func, "attr", None) == name)]
+
+    # ── (1) AUFNAHME: erst fragen, dann den Lock nehmen. Andersherum hielte
+    # eine abgewiesene Aufnahme ihren Lock, und der Nutzer waere gesperrt.
+    gs = rufe("_handle_single_tracking", "_start_gesperrt")
+    lock = [c for c in _ast.walk(fn["_handle_single_tracking"])
+            if isinstance(c, _ast.Name) and c.id == "try_acquire_recording_lock"]
+    assert gs and lock and gs[0].lineno < min(n.lineno for n in lock), \
+        "die Aufnahme fragt nicht VOR dem Lock"
+    assert "_aufnahme_deckel" in _ast.unparse(gs[0]), _ast.unparse(gs[0])
+    # ── (2) RESTREAM: die fd-Sperre gilt auch dort.
+    rm = next(n for n in baum.body if isinstance(n, _ast.ClassDef) and n.name == "RestreamManager")
+    fn["start"] = next(n for n in rm.body if isinstance(n, _ast.AsyncFunctionDef) and n.name == "start")
+    assert rufe("start", "_start_gesperrt"), "RestreamManager.start fragt nicht"
+    # ── (3) DIE SCHLANGE: verworfen wird gezaehlt und gemeldet, und der
+    # Tracking-Abruf alle 5 s laeuft im Thread.
+    assert rufe("check_all_trackings", "_pruefung_verworfen")
+    direkt = [c for c in rufe("check_all_trackings", "get_all_active_trackings")]
+    assert not direkt, "get_all_active_trackings wieder direkt auf dem Loop"
+    assert any("to_thread(get_all_active_trackings)" in _ast.unparse(c)
+               for c in rufe("check_all_trackings", "to_thread"))
+    assert "_nc_meldetakt.melden(" in _ast.unparse(fn["_pruefung_verworfen"])
+    assert "_nc_meldetakt.melden(" in _ast.unparse(fn["_start_gesperrt"])
+    # ── (4) START und /healthz.
+    assert rufe("run_bot", "_fd_grenze_anheben")
+    assert "gegendruck=_nc_gegendruck.lage(" in _ast.unparse(fn["healthz"])
+    # ── (5) DIE UNIT: ohne die Zeile ist das Hard-Limit, bis zu dem der Bot
+    # anheben darf, auf manchen Systemen selbst nur 4096.
+    inst = io.open("tools/installer.sh", encoding="utf-8").read()
+    unit = inst[inst.index("ExecStart=${VENV}/bin/python ${ZIEL}/bot.py"):]
+    unit = unit[:unit.index("[Install]")]
+    assert any(z.strip() == "LimitNOFILE=65536" for z in unit.splitlines()), unit
+
+    ok("W118: Aufnahme fragt vor dem Lock, Restream fragt, Schlange meldet, "
+       "Abruf im Thread, Unit mit LimitNOFILE")
+
+
+def _test_v42_w119_ein_lauf_je_nutzer():
+    """Gleichzeitige Aufrufer teilen sich EINE Aufloesung.
+
+    Die zweite Cache-Pruefung aus W103 faengt den, der nach dem Schreiben
+    kommt — nicht den, der WAEHREND einer 20-s-Aufloesung ankommt. Die
+    Semaphore ist 2 gross, beide stehen gleichzeitig darin.
+    """
+    import asyncio as _aio
+    from nc import livecache as C
+
+    C.zaehler_zuruecksetzen()
+    laeufe = []
+
+    def bauer(name, wirft=None, dauer=0.05):
+        async def _lauf():
+            laeufe.append(name)
+            await _aio.sleep(dauer)
+            if wirft:
+                raise wirft
+            return ("live", {"wer": name})
+        return _lauf
+
+    async def szenario():
+        reg = {}
+        # ── (1) FUENF GLEICHZEITIG, EIN SCHLUESSEL -> EIN LAUF.
+        erg = await _aio.gather(*[C.einflug(reg, "anna", bauer("anna"), ("unknown", None))
+                                  for _ in range(5)])
+        assert laeufe == ["anna"], laeufe
+        assert all(e == ("live", {"wer": "anna"}) for e in erg), erg
+        assert C.ZAEHLER["geteilt"] == 4 and reg == {}, (C.ZAEHLER, reg)
+        # ── (2) VERSCHIEDENE SCHLUESSEL laufen getrennt.
+        laeufe.clear()
+        await _aio.gather(C.einflug(reg, "a", bauer("a"), None),
+                          C.einflug(reg, "b", bauer("b"), None))
+        assert sorted(laeufe) == ["a", "b"], laeufe
+        # ── (3) DER FUEHRENDE SCHEITERT: er bekommt seine Ausnahme, die
+        # Mitlaeufer den Ersatz — nie die fremde Ausnahme.
+        fuehrer = _aio.ensure_future(C.einflug(reg, "x", bauer("x", RuntimeError("tiktok")), "ERSATZ"))
+        await _aio.sleep(0.01)
+        mit = await C.einflug(reg, "x", bauer("x2"), "ERSATZ")
+        assert mit == "ERSATZ", mit
+        try:
+            await fuehrer
+        except RuntimeError:
+            pass
+        else:
+            raise AssertionError("der fuehrende Lauf muss seine Ausnahme sehen")
+        # ── (4) DER FUEHRENDE WIRD ABGEBROCHEN: kein fremder CancelledError
+        # in den Mitlaeufer — ein Worker, dem das passiert, endet still.
+        fuehrer = _aio.ensure_future(C.einflug(reg, "y", bauer("y", dauer=1.0), "ERSATZ"))
+        await _aio.sleep(0.01)
+        mit = _aio.ensure_future(C.einflug(reg, "y", bauer("y2"), "ERSATZ"))
+        await _aio.sleep(0.01)
+        fuehrer.cancel()
+        assert await mit == "ERSATZ"
+        assert fuehrer.cancelled()
+        # ── (5) EIN MITLAEUFER WIRD ABGEBROCHEN: der Lauf der anderen lebt.
+        fuehrer = _aio.ensure_future(C.einflug(reg, "z", bauer("z", dauer=0.1), None))
+        await _aio.sleep(0.01)
+        mit = _aio.ensure_future(C.einflug(reg, "z", bauer("z2"), None))
+        await _aio.sleep(0.01)
+        mit.cancel()
+        assert await fuehrer == ("live", {"wer": "z"})
+        assert reg == {}, reg
+        # ── (5b) SCHEITERT ER OHNE MITLAEUFER, liest niemand die Ausnahme
+        # vom Future — sie darf trotzdem nicht als "Future exception was
+        # never retrieved" ins Log fallen (der Aufrufer hat sie ja bekommen).
+        try:
+            await C.einflug(reg, "allein", bauer("allein", RuntimeError("allein")), None)
+        except RuntimeError:
+            pass
+        import gc as _gc
+        _gc.collect()
+        await _aio.sleep(0)
+
+    fehler = []
+    loop = _aio.new_event_loop()
+    loop.set_exception_handler(lambda l, ctx: fehler.append(ctx.get("message")))
+    try:
+        loop.run_until_complete(szenario())
+    finally:
+        loop.close()
+    import gc as _gc
+    _gc.collect()
+    assert not fehler, "unabgeholte Ausnahmen im Log: %r" % fehler
+
+    # ── (6) AUFRAEUMEN JE SCHREIBVORGANG, NICHT JE NUTZER. Bis W119 hing es
+    # an hash(username) & 63 — je Nutzer fest, oft fuer keinen wahr.
+    C.zaehler_zuruecksetzen()
+    assert sum(C.aufraeumen_faellig() for _ in range(C.AUFRAEUM_TAKT * 3)) == 3
+    # ── (7) DIE ZAHLEN fuer /healthz.
+    C.zaehler_zuruecksetzen()
+    C.zaehle("treffer", 3)
+    C.zaehle("fehlschlag")
+    C.dauer(0.2)
+    C.dauer(0.4)
+    st = C.statistik(7, 1)
+    assert st["trefferquote"] == 0.75 and st["dauer_mittel_ms"] == 300 and st["dauer_max_ms"] == 400, st
+    assert st["eintraege"] == 7 and st["laufend"] == 1
+    C.zaehler_zuruecksetzen()
+    assert C.statistik()["trefferquote"] is None, "ohne Abfragen keine erfundene Quote"
+
+    ok("W119: ein Lauf je Nutzer, Mitlaeufer bekommen Ergebnis oder Ersatz, nie "
+       "fremde Ausnahmen; Aufraeumen je Schreibvorgang; Trefferquote/Dauer")
+
+
+def _test_v42_w119_polling_dehnt_nur_was_nichts_kostet():
+    """Unter Last offline/unknown dehnen, live und just-offline nie."""
+    from nc import livefolge as F
+    d = F.last_dehnung
+    for st, war in (("live", False), ("live", True), ("offline", True)):
+        assert d(st, war, 200, 200) == 1.0, (st, war)
+    assert d("offline", False, 0, 200) == 1.0
+    assert d("offline", False, 100, 200) == 1.0, "bis zur halben Schlange keine Dehnung"
+    assert d("offline", False, 150, 200) == 1.5
+    assert d("offline", False, 200, 200) == 2.0 and d("unknown", False, 999, 200) == 2.0
+    assert d("offline", False, 200, 0) == 1.0, "unbekannte Groesse dehnt nie"
+    # Stetig — ein Sprung waere selbst eine Schwingungsquelle.
+    werte = [d("offline", False, n, 200) for n in range(0, 201)]
+    assert all(b >= a for a, b in zip(werte, werte[1:]))
+    assert max(b - a for a, b in zip(werte, werte[1:])) < 0.02
+
+    import ast as _ast
+    baum = _ast.parse(io.open("bot.py", encoding="utf-8").read())
+    fn = {n.name: n for n in baum.body if isinstance(n, (_ast.FunctionDef, _ast.AsyncFunctionDef))}
+    sn = fn["_schedule_next_check"]
+    dehn = [c for c in _ast.walk(sn) if isinstance(c, _ast.Attribute) and c.attr == "last_dehnung"]
+    prio = [c for c in _ast.walk(sn) if isinstance(c, _ast.Name) and c.id == "get_priority_poll_interval"]
+    assert dehn and prio and dehn[0].lineno < prio[0].lineno, \
+        "die Dehnung muss VOR der VIP-Verkuerzung stehen, sonst hebt sie sie auf"
+
+    ok("W119: Lastdehnung nur fuer offline/unknown, stetig 1,0..2,0, vor der VIP-Verkuerzung")
+
+
+def _test_v42_w119_puls_ist_ein_schnappschuss():
+    """/api/pulse baut fuer alle Tabs EINEN Wert je 2 s — und haengt nicht mit,
+    wenn das Bauen haengt."""
+    import threading as _th
+    import time as _t
+    from nc.schnappschuss import Schnappschuss
+
+    jetzt = [100.0]
+    ss = Schnappschuss(gueltig_s=2.0, warte_s=0.2, uhr=lambda: jetzt[0])
+    gebaut = []
+
+    def bauen():
+        gebaut.append(1)
+        return {"n": len(gebaut)}
+    for _ in range(5):
+        assert ss.holen(bauen) == ({"n": 1}, False)
+    jetzt[0] += 1.9
+    assert ss.holen(bauen)[0] == {"n": 1}
+    jetzt[0] += 0.2
+    assert ss.holen(bauen)[0] == {"n": 2}, "nach der Gueltigkeit muss neu gebaut werden"
+
+    # ── GLEICHZEITIG: acht Threads, ein langsamer Bau -> ein Bau.
+    ss2 = Schnappschuss(gueltig_s=2.0, warte_s=5.0)
+    zahl = [0]
+
+    def langsam():
+        zahl[0] += 1
+        _t.sleep(0.1)
+        return zahl[0]
+    erg = []
+    ths = [_th.Thread(target=lambda: erg.append(ss2.holen(langsam))) for _ in range(8)]
+    for th in ths:
+        th.start()
+    for th in ths:
+        th.join()
+    assert zahl[0] == 1 and all(e == (1, False) for e in erg), (zahl, erg)
+
+    # ── HAENGT DER BAU, antwortet der Puls trotzdem: mit dem letzten Wert und
+    # `veraltet`. Sonst stehen alle waitress-Threads in der Schlange.
+    ss3 = Schnappschuss(gueltig_s=0.0, warte_s=0.1)
+    ss3.holen(lambda: "alt")
+    tor = _th.Event()
+    t = _th.Thread(target=lambda: ss3.holen(lambda: tor.wait(2) and "neu"))
+    t.start()
+    _t.sleep(0.05)
+    t0 = _t.monotonic()
+    assert ss3.holen(lambda: "nie") == ("alt", True)
+    assert _t.monotonic() - t0 < 1.0
+    tor.set()
+    t.join()
+
+    import ast as _ast
+    src = io.open("nc/routes/auskunft.py", encoding="utf-8").read()
+    fn = next(n for n in _ast.walk(_ast.parse(src))
+              if isinstance(n, _ast.FunctionDef) and n.name == "api_pulse")
+    assert "_PULS.holen(" in _ast.unparse(fn), "api_pulse baut wieder je Anfrage"
+
+    hz = io.open("bot.py", encoding="utf-8").read()
+    baum = _ast.parse(hz)
+    f = {n.name: n for n in baum.body if isinstance(n, (_ast.FunctionDef, _ast.AsyncFunctionDef))}
+    assert "livecache=_nc_livecache.statistik(" in _ast.unparse(f["healthz"])
+    g = _ast.unparse(f["get_live_status"])
+    assert "_nc_livecache.einflug(_LIVE_EINFLUG" in g and "if force_fresh:" in g, g
+    assert "hash(username)" not in _ast.unparse(f["_live_status_aufloesen"])
+    assert "_nc_livecache.aufraeumen_faellig()" in _ast.unparse(f["_live_status_aufloesen"])
+
+    ok("W119: /api/pulse als geteilter 2-s-Schnappschuss, ein Bau fuer acht "
+       "gleichzeitige Anfragen, haengender Bau liefert den letzten Wert")
+
+
+def _test_v42_w120_kindprozess_endet_auf_jedem_weg():
+    """Ein Kindprozess endet bei Erfolg, Zeitablauf, Ausnahme UND Abbruch.
+
+    Drei Stellen warteten mit nacktem communicate() (kein Zeitlimit), und
+    keine einzige raeumte ab, wenn der aufrufende Task abgebrochen wurde: ein
+    CancelledError ist kein Exception und rauscht an `except Exception`
+    vorbei — der Prozess lief ungesehen weiter.
+    """
+    import asyncio as _aio
+    import signal as _sig
+    from nc import kindprozess as K
+
+    def lebt(pid):
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return False
+        # Zombie zaehlt als tot-und-abgeholt NICHT: nachsehen.
+        try:
+            with io.open("/proc/%d/stat" % pid) as f:
+                return f.read().split(")")[-1].split()[0] != "Z"
+        except OSError:
+            return False
+
+    schlafen = [sys.executable, "-c", "import time; time.sleep(30)"]
+
+    async def szenario():
+        K.zuruecksetzen()
+        # ── (1) ERFOLG
+        rc, out, _ = await K.ausfuehren([sys.executable, "-c", "print('hallo')"], 10, art="probe")
+        assert rc == 0 and out.strip() == b"hallo", (rc, out)
+        # ── (2) ZEITLIMIT: der Prozess ist weg, BEVOR die Ausnahme fliegt.
+        t0 = _aio.get_running_loop().time()
+        try:
+            await K.ausfuehren(schlafen, 0.3, art="probe")
+        except _aio.TimeoutError:
+            pass
+        else:
+            raise AssertionError("Zeitlimit ohne TimeoutError")
+        assert _aio.get_running_loop().time() - t0 < 6
+        assert K.LAUFEND == {} and K.ZAEHLER["zeitlimit"] == 1, (K.LAUFEND, K.ZAEHLER)
+        # ── (3) ABBRUCH DES AUFRUFERS: der Fall, den kein Bestandscode abdeckte.
+        task = _aio.ensure_future(K.ausfuehren(schlafen, 60, art="probe"))
+        await _aio.sleep(0.3)
+        pids = list(K.LAUFEND)
+        assert len(pids) == 1 and K.lage()["je_art"] == {"probe": 1}, K.lage()
+        task.cancel()
+        try:
+            await task
+        except _aio.CancelledError:
+            pass
+        else:
+            raise AssertionError("der Abbruch wurde verschluckt")
+        assert not lebt(pids[0]), "nach dem Abbruch laeuft der Prozess weiter"
+        assert K.LAUFEND == {} and K.ZAEHLER["abgebrochen"] == 1
+        # ── (4) SIGTERM IGNORIERT -> SIGKILL, mit wait().
+        trotz = await _aio.create_subprocess_exec(
+            sys.executable, "-c",
+            "import signal, time; signal.signal(signal.SIGTERM, signal.SIG_IGN); "
+            "print('bereit', flush=True); time.sleep(30)",
+            stdout=K.PIPE)
+        await trotz.stdout.readline()
+        assert await K.beenden(trotz, term_s=0.3, kill_s=3) == "kill"
+        assert trotz.returncode == -_sig.SIGKILL and not lebt(trotz.pid)
+        assert await K.beenden(trotz) == "lief_nicht"
+        # ── (5) ALLE BEENDEN (fuers Herunterfahren, Paket E).
+        t1 = _aio.ensure_future(K.ausfuehren(schlafen, 60, art="a"))
+        t2 = _aio.ensure_future(K.ausfuehren(schlafen, 60, art="b"))
+        await _aio.sleep(0.3)
+        assert K.lage()["laufend"] == 2
+        assert await K.alle_beenden(term_s=2) == 2
+        for t in (t1, t2):
+            rc, _, _ = await t
+            assert rc == -_sig.SIGTERM, rc
+        assert K.LAUFEND == {}
+        # ── (6) OHNE ZEITLIMIT GEHT ES NICHT.
+        for z in (0, None, -1):
+            try:
+                await K.ausfuehren(schlafen, z)
+            except ValueError:
+                pass
+            else:
+                raise AssertionError("Zeitlimit %r wurde angenommen" % (z,))
+
+    if os.name == "posix":
+        _aio.run(szenario())
+    K.zuruecksetzen()
+    ok("W120: Kindprozess endet bei Erfolg, Zeitlimit, Abbruch des Aufrufers; "
+       "SIGTERM-Verweigerer bekommt SIGKILL mit wait; alle_beenden; Zeitlimit Pflicht")
+
+
+def _test_v42_w120_kein_warten_ohne_ende():
+    """Im Produktionscode wartet kein communicate() ohne Zeitlimit — ausser
+    unmittelbar nach einem kill(), dort endet der Prozess sofort. Und die
+    umgestellten Stellen starten nicht mehr selbst."""
+    import ast as _ast
+    import glob as _glob
+    dateien = (["bot.py", "discordbot.py", "telegramversand.py", "brain_bridge.py"]
+               + sorted(_glob.glob("nc/**/*.py", recursive=True)) + sorted(_glob.glob("brain/*.py")))
+    nackt = []
+    for d in dateien:
+        baum = _ast.parse(io.open(d, encoding="utf-8").read())
+        nach_kill = set()
+        for h in _ast.walk(baum):
+            if isinstance(h, _ast.ExceptHandler):
+                kill_zeilen = [c.lineno for c in _ast.walk(h) if isinstance(c, _ast.Call)
+                               and getattr(c.func, "attr", None) == "kill"]
+                for c in _ast.walk(h):
+                    if isinstance(c, _ast.Await) and kill_zeilen and c.lineno > min(kill_zeilen):
+                        nach_kill.add(id(c))
+        for n in _ast.walk(baum):
+            if isinstance(n, _ast.Await) and isinstance(n.value, _ast.Call) \
+                    and getattr(n.value.func, "attr", None) == "communicate" \
+                    and id(n) not in nach_kill:
+                nackt.append("%s:%d" % (d, n.lineno))
+    assert not nackt, "communicate() ohne Zeitlimit: %s — nc.kindprozess.ausfuehren benutzen" % nackt
+
+    for d in ("nc/videoteil.py", "nc/tonspur.py"):
+        src = io.open(d, encoding="utf-8").read()
+        assert "create_subprocess_exec" not in src and "_kind.ausfuehren(" in src, d
+    baum = _ast.parse(io.open("bot.py", encoding="utf-8").read())
+    fn = {n.name: n for n in _ast.walk(baum) if isinstance(n, (_ast.FunctionDef, _ast.AsyncFunctionDef))}
+    for f in ("_resolve_via_ytdlp", "_shrink_for_discord", "clip_moment", "_restream_tts_enqueue_wav"):
+        u = _ast.unparse(fn[f])
+        assert "create_subprocess_exec" not in u and "_nc_kind.ausfuehren(" in u, f
+    ok("W120: kein communicate() ohne Zeitlimit; videoteil, tonspur, yt-dlp, Clip, "
+       "Discord-Verkleinern und TTS starten ueber nc.kindprozess")
+
+
+def _test_v42_w120_speicher_waechst_nicht():
+    """Maps mit Namen, die nicht getrackt sind (/check, Restream-Quelle, Clip),
+    wurden nie geleert. Beschnitten wird nach ihrer eigenen Bedeutung."""
+    import ast as _ast
+    from nc import speicherpflege as P
+
+    stempel = {"alt": 100.0, "frisch": 5000.0, "fremd": "kein Zeitstempel"}
+    assert P.alte_stempel_weg(stempel, 5100.0, 3600) == 1
+    assert set(stempel) == {"frisch", "fremd"}, stempel
+    bis = {"vorbei": 1000.0, "kuerzlich": 4800.0, "laeuft": 9000.0}
+    weg = P.abgelaufene_weg(bis, 5000.0, nachlauf=600)
+    assert weg == ["vorbei"] and set(bis) == {"kuerzlich", "laeuft"}, (weg, bis)
+    assert P.groessen({"a": {1: 1}, "b": []}) == {"a": 1, "b": 0}
+
+    baum = _ast.parse(io.open("bot.py", encoding="utf-8").read())
+    fn = {n.name: n for n in baum.body if isinstance(n, (_ast.FunctionDef, _ast.AsyncFunctionDef))}
+    assert any(isinstance(c, _ast.Call) and getattr(c.func, "id", None) == "_speicher_pflegen"
+               for c in _ast.walk(fn["check_all_trackings"])), "niemand pflegt"
+    # Namen im Syntaxbaum, nicht im Text: "_CLIP_LAST" steckt auch in
+    # "_HYPE_CLIP_LAST" — die Mutationsprobe ist genau daran entwischt.
+    namen = {c.id for c in _ast.walk(fn["_speicher_pflegen"]) if isinstance(c, _ast.Name)}
+    for m in ("_YTDLP_NACHSCHLAG_ZULETZT", "_CLIP_LAST", "_HYPE_CLIP_LAST", "_ABO_PROBE_DONE",
+              "_RATE_LIMIT_BACKOFF", "_RATE_LIMIT_PENALTY"):
+        assert m in namen, "%s wird nicht gepflegt" % m
+    hz = _ast.unparse(fn["healthz"])
+    assert "kinder=_nc_kind.lage()" in hz and "speicher=_nc_pflege.groessen(" in hz
+    ok("W120: Zeitstempel- und Ablauf-Maps werden nach Bedeutung beschnitten, "
+       "alle 10 min aus der Hauptschleife; Groessen und Kinder in /healthz")
+
+
+def _test_v42_w121_stopp_sichert_aufnahmen():
+    """Eine beim Stopp laufende Aufnahme wurde per SIGKILL beendet und NICHT
+    eingetragen — eine Waise, die /api/rec/orphans/clean zum Loeschen anbietet.
+    Jeder Neustart (also jedes Update) machte so aus jeder laufenden Aufnahme
+    einen Loeschkandidaten."""
+    import ast as _ast
+    from nc import betriebslage as L
+
+    # ── (1) WAS EINGETRAGEN WIRD: alles mit mehr als einem Kopf.
+    tmp = _ph.verzeichnis()
+    gross = _ph.attrappe(os.path.join(tmp, "a.mp4"), 5 * 1024 * 1024)
+    kopf = _ph.attrappe(os.path.join(tmp, "b.mp4"), 512)
+    assert L.sichern_beim_stopp(gross)
+    assert not L.sichern_beim_stopp(kopf), "ein Kopf ohne Inhalt ist keine Aufnahme"
+    assert not L.sichern_beim_stopp(os.path.join(tmp, "fehlt.mp4"))
+    assert not L.sichern_beim_stopp("") and not L.sichern_beim_stopp(tmp)
+
+    baum = _ast.parse(io.open("bot.py", encoding="utf-8").read())
+    fn = {n.name: n for n in baum.body if isinstance(n, (_ast.FunctionDef, _ast.AsyncFunctionDef))}
+    # ── (2) DER ABBRUCHZWEIG sichert, statt zu toeten.
+    hrf = fn["handle_recording_finished"]
+    zweig = next(h for h in _ast.walk(hrf) if isinstance(h, _ast.ExceptHandler)
+                 and _ast.unparse(h.type or _ast.Name("x")) == "asyncio.CancelledError")
+    zt = _ast.unparse(zweig)
+    assert "_aufnahme_beim_stopp_sichern(" in zt, zt
+    assert "proc.kill()" not in zt, "der Abbruchzweig schickt wieder SIGKILL"
+    assert any(isinstance(n, _ast.Raise) for n in _ast.walk(zweig)), \
+        "der Abbruch wird verschluckt — dann endet der Task nie"
+    hs = _ast.unparse(fn["_aufnahme_beim_stopp_sichern"])
+    for k in ("_nc_kind.beenden(proc", "_nc_lage.sichern_beim_stopp(output_file)",
+              "asyncio.to_thread(add_recording", "outcome='cancelled'"):
+        assert k in hs, "_aufnahme_beim_stopp_sichern: %s fehlt" % k
+    # Erst beenden, dann eintragen — sonst steht die Groesse von VOR dem
+    # letzten Fragment in der Datenbank.
+    assert hs.index("_nc_kind.beenden(") < hs.index("add_recording")
+
+    # ── (3) DIE REIHENFOLGE BEIM STOPP: Aufnahmen zuerst, Hilfsprozesse am Ende.
+    auf = fn["_aufraeumen"]
+    aufrufe = [(c.lineno, _ast.unparse(c.func)) for c in _ast.walk(auf) if isinstance(c, _ast.Call)]
+    zuerst = min(aufrufe)[1]
+    assert zuerst in ("_time_mod.monotonic", "_aufnahmen_abschliessen"), aufrufe[:3]
+    namen = [n for _, n in sorted(aufrufe)]
+    assert namen.index("_aufnahmen_abschliessen") < namen.index("_close_ai_session")
+    assert "_nc_kind.alle_beenden" in namen
+    ab = _ast.unparse(fn["_aufnahmen_abschliessen"])
+    assert "startswith('finish-')" in ab and "asyncio.wait(" in ab and "timeout=" in ab
+    ok("W121: Stopp traegt laufende Aufnahmen ein (SIGTERM, dann Eintrag), Aufnahmen "
+       "zuerst, Hilfsprozesse zuletzt")
+
+
+def _test_v42_w121_degradiert_ist_nicht_tot():
+    """/healthz unterscheidet "degradiert, aber lebendig" von "gestoert" —
+    ohne den HTTP-Code zu aendern, an dem UptimeRobot haengt."""
+    import ast as _ast
+    from nc import betriebslage as L
+
+    gesund = {"ok": True, "loop_lag": {"aktiv": True, "p99_ms": 12},
+              "gegendruck": {"fd": {"offen": 100, "grenze": 65536}},
+              "log_synchron": 0, "log_wartend": 0, "laufstand": "aktuell",
+              "tunnel": "ok", "kinder": {"aeltester_s": 3}}
+    assert L.bewerten(gesund) == ("ok", [])
+    for feld, wert, wort in (("loop_lag", {"aktiv": True, "p99_ms": 900}, "Event-Loop"),
+                             ("gegendruck", {"fd": {"offen": 800, "grenze": 1024}}, "Dateideskriptoren"),
+                             ("log_synchron", 1, "Log-Handler"),
+                             ("log_wartend", -1, "Log-Schleuse"),
+                             ("laufstand", "veraltet", "neu gestartet"),
+                             ("tunnel", "fehler", "Tunnel"),
+                             ("kinder", {"aeltester_s": 4000}, "Hilfsprozess")):
+        d = dict(gesund)
+        d[feld] = wert
+        lage, gruende = L.bewerten(d)
+        assert lage == "degradiert" and len(gruende) == 1 and wort in gruende[0], (feld, lage, gruende)
+    # Ein nicht laufender Takt ist "keine Messung", kein Lag-Befund.
+    d = dict(gesund, loop_lag={"aktiv": False, "p99_ms": 9999})
+    assert L.bewerten(d)[0] == "ok"
+    d = dict(gesund, ok=False, laufstand="veraltet")
+    assert L.bewerten(d) == ("gestoert", ["Update eingespielt, aber nicht neu gestartet"])
+
+    # ── bereit() nur einmal.
+    alt = L.ZUSTAND["bereit_s"]
+    L.ZUSTAND["bereit_s"] = None
+    try:
+        assert L.bereit(L._START + 12.34) == 12.3
+        assert L.bereit(L._START + 99) is None and L.ZUSTAND["bereit_s"] == 12.3
+    finally:
+        L.ZUSTAND["bereit_s"] = alt
+
+    baum = _ast.parse(io.open("bot.py", encoding="utf-8").read())
+    fn = {n.name: n for n in baum.body if isinstance(n, (_ast.FunctionDef, _ast.AsyncFunctionDef))}
+    hz = fn["healthz"]
+    rueck = [r for r in _ast.walk(hz) if isinstance(r, _ast.Return)]
+    assert len(rueck) == 1 and _ast.unparse(rueck[0].value) == "(jsonify(daten), 200 if ok else 503)", \
+        "der HTTP-Code haengt nicht mehr allein an ok: %s" % [_ast.unparse(r) for r in rueck]
+    assert "daten['lage'], daten['gruende'] = _nc_lage.bewerten(daten)" in _ast.unparse(hz)
+    assert "_nc_lage.bereit()" in _ast.unparse(fn["check_all_trackings"])
+
+    inst = io.open("tools/installer.sh", encoding="utf-8").read()
+    unit = inst[inst.index("ExecStart=${VENV}/bin/python ${ZIEL}/bot.py"):]
+    unit = [z.strip() for z in unit[:unit.index("[Install]")].splitlines()]
+    assert "KillMode=mixed" in unit and "TimeoutStopSec=60" in unit, unit
+    ok("W121: /healthz trennt ok/degradiert/gestoert mit Klartext-Gruenden, HTTP-Code "
+       "nur an ok; Startdauer einmal gemessen; Unit KillMode=mixed")
+
+
+def _test_v42_w121b_deckel_haelt_unter_gleichzeitigkeit():
+    """Review #160 (Codex): der Deckel las nur len(active_processes). Zwischen
+    Pruefung und Eintrag liegen Lock, Aufloesung und Prozessstart — bei einem
+    freien Platz kamen bis zu WORKER_COUNT Worker gleichzeitig durch."""
+    import ast as _ast
+    import asyncio as _aio
+    from nc import gegendruck as G
+
+    G.zuruecksetzen()
+    frei = {"offen": 10, "grenze": 1024}
+    # ── (1) VIER WORKER, EIN FREIER PLATZ — so, wie der Bot es tut: pruefen
+    # und reservieren ohne await dazwischen, dann lange "aufloesen".
+    aktiv, deckel, gestartet = [1], 2, []
+
+    async def worker(n):
+        jetzt = 100.0
+        if not G.start_entscheiden(aktiv[0] + G.reserviert(jetzt), deckel, frei)[0]:
+            return
+        G.reservieren(jetzt)
+        await _aio.sleep(0.05)              # Lock, Aufloesung, Prozessstart
+        aktiv[0] += 1
+        G.freigeben()
+        gestartet.append(n)
+
+    async def alle():
+        await _aio.gather(*[worker(i) for i in range(4)])
+    _aio.run(alle())
+    assert len(gestartet) == 1 and aktiv[0] == deckel, \
+        "Deckel %d ueberschritten: %d gestartet, %d aktiv" % (deckel, len(gestartet), aktiv[0])
+    assert G.reserviert(100.0) == 0, "eine Reservierung blieb haengen"
+    # ── (2) VERFALL: eine nie freigegebene Reservierung belegt nicht ewig.
+    G.reservieren(0.0)
+    assert G.reserviert(1.0) == 1
+    assert G.reserviert(G.RESERVIERUNG_MAX_S + 1) == 0
+    G.freigeben()                           # ohne Reservierung: nichts zu tun
+    assert G.lage(0, 2)["aufnahmen_reserviert"] == 0
+    G.zuruecksetzen()
+
+    # ── (3) IM BOT: die Pruefung zaehlt die Reservierungen mit, und JEDER
+    # Ausgang zwischen Reservierung und Eintrag gibt frei.
+    baum = _ast.parse(io.open("bot.py", encoding="utf-8").read())
+    hst = next(n for n in baum.body if isinstance(n, _ast.AsyncFunctionDef)
+               and n.name == "_handle_single_tracking")
+    gs = next(c for c in _ast.walk(hst) if isinstance(c, _ast.Call)
+              and getattr(c.func, "id", None) == "_start_gesperrt")
+    assert "_nc_gegendruck.reserviert(" in _ast.unparse(gs), _ast.unparse(gs)
+
+    def ruf(n, attr):
+        return isinstance(n, _ast.Expr) and isinstance(n.value, _ast.Call) \
+            and getattr(n.value.func, "attr", None) == attr
+    von = next(n.lineno for n in _ast.walk(hst) if ruf(n, "reservieren"))
+    bis = next(n.lineno for n in _ast.walk(hst) if ruf(n, "freigeben")
+               and "Reservierung" in io.open("bot.py", encoding="utf-8").read().splitlines()[n.lineno - 1])
+    for block in _ast.walk(hst):
+        for feld in ("body", "orelse", "handlers", "finalbody"):
+            koerper = getattr(block, feld, None)
+            if not isinstance(koerper, list):
+                continue
+            for i, st in enumerate(koerper):
+                if isinstance(st, _ast.Return) and von < st.lineno < bis:
+                    assert i > 0 and ruf(koerper[i - 1], "freigeben"), \
+                        "Ausgang in Zeile %d gibt die Reservierung nicht frei" % st.lineno
+    ok("W121b: Deckel haelt unter Gleichzeitigkeit (Reservierung atomar zur Pruefung), "
+       "jeder Ausgang gibt frei, Verfall nach %.0f s" % G.RESERVIERUNG_MAX_S)
+
+
 def main():
     tmp, rid = richte_testdatenbank_ein()
     ok("db_conn aus nc.dbwrap: echtes Schema angelegt, Commit durchgelaufen")
@@ -21976,6 +22647,17 @@ def main():
     _test_v42_w117_loop_lag_und_spaeher()
     _test_v42_w117_log_flut_haelt_den_loop_nicht()
     _test_v42_w117_loop_verdrahtung_und_sperre()
+    _test_v42_w118_gegendruck_entscheidet()
+    _test_v42_w118_gegendruck_verdrahtet()
+    _test_v42_w119_ein_lauf_je_nutzer()
+    _test_v42_w119_polling_dehnt_nur_was_nichts_kostet()
+    _test_v42_w119_puls_ist_ein_schnappschuss()
+    _test_v42_w120_kindprozess_endet_auf_jedem_weg()
+    _test_v42_w120_kein_warten_ohne_ende()
+    _test_v42_w120_speicher_waechst_nicht()
+    _test_v42_w121_stopp_sichert_aufnahmen()
+    _test_v42_w121_degradiert_ist_nicht_tot()
+    _test_v42_w121b_deckel_haelt_unter_gleichzeitigkeit()
     _test_v42_w60_azrael_cooldown_je_plattform()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)

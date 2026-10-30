@@ -11,6 +11,136 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Performance & Stabilität — Paket E: Start, Stopp, Neustart (v4.2 W121)
+
+- **Jeder Neustart machte laufende Aufnahmen zu Löschkandidaten.** Beim Stopp
+  schickte der Abbruchzweig von `handle_recording_finished` ffmpeg SIGKILL und
+  trug die Datei **nicht** in die Datenbank ein. Sie blieb ohne Zeile im
+  Aufnahmeordner — genau die „Waise", die `/api/rec/orphans/clean` zum Löschen
+  anbietet (W91). Da jedes Update erst nach `systemctl restart` wirkt, traf das
+  jede Aufnahme, die während eines Updates lief. Jetzt: SIGTERM (ffmpeg
+  schreibt das letzte Fragment), dann Eintrag mit Größe und Dauer, ohne Upload.
+- **Geordneter Stopp:** `_aufraeumen` schließt zuerst die Aufnahmen ab (Frist
+  30 s), zuletzt die Hilfsprozesse (`nc/kindprozess.alle_beenden`); die
+  Abschiedszeile nennt Dauer und Anzahl. Vorher erreichte der Abbruch die
+  Aufnahmen irgendwann in `asyncio.run()`s Abschlussrunde, und niemand wartete.
+- **Startdauer gemessen:** „Betriebsbereit nach X s" im Log, sobald die erste
+  Prüfrunde eingereiht ist; `/healthz` trägt `start_s`.
+- **„Degradiert, aber lebendig":** `/healthz` trägt `lage`
+  (`ok`/`degradiert`/`gestoert`) und `gruende` als Klartext mit Abhilfe —
+  Loop-p99 ≥ 500 ms, fd ≥ 70 %, umgangene oder fehlende Log-Schleuse, Update
+  ohne Neustart, Tunnel-Fehler, hängender Hilfsprozess. Der HTTP-Code hängt
+  unverändert nur an `ok`: UptimeRobot alarmiert auf 503, und ein langsamer Bot
+  ist kein toter.
+- Unit aus dem Installer: `KillMode=mixed`, `TimeoutStopSec=60` — SIGTERM nur
+  an den Bot, der seine Aufnahmen selbst abschließt.
+- Neues Modul `nc/betriebslage.py`, zwei Verträge (`_test_v42_w121_*`), 11
+  Mutationsproben gefangen.
+- **Nachtrag W121b (Review #160):** Der Aufnahme-Deckel aus W118 las nur
+  `len(active_processes)`; zwischen Prüfung und Eintrag liegen Lock,
+  Auflösung und Prozessstart, also kamen bis zu `WORKER_COUNT` Worker
+  gleichzeitig durch — der Deckel hielt genau unter Last nicht. Jetzt eine
+  Reservierung, synchron zur Prüfung genommen und an jedem Ausgang
+  freigegeben (Verfall nach 300 s als Rückfall). Vertrag mit vier
+  gleichzeitigen Workern auf einen freien Platz, 6 Mutationsproben gefangen.
+
+### Performance & Stabilität — Paket D: Kindprozesse enden auf jedem Weg, Maps wachsen nicht (v4.2 W120)
+
+- **Kindprozesse.** 22 Stellen starten Prozesse; die Abräum-Hilfe aus W75
+  benutzten drei. Drei Stellen warteten **ohne Zeitlimit**
+  (`_shrink_for_discord`, `clip_moment`, `_restream_tts_enqueue_wav`) — ein
+  hängender ffmpeg hing dort für immer. Und keine einzige räumte ab, wenn der
+  **aufrufende Task abgebrochen** wurde: `CancelledError` ist kein
+  `Exception`, der Prozess lief ungesehen weiter (Herunterfahren,
+  Restream-Wechsel, Single-Flight-Führer aus W119).
+  Neu `nc/kindprozess.ausfuehren(cmd, zeitlimit, art)`: Zeitlimit Pflicht,
+  Abräumen im `finally` (SIGTERM → wait → SIGKILL → wait) auf jedem Ausgang,
+  Register der laufenden Kinder. Umgestellt: yt-dlp-Resolver, Clip, Discord-
+  Verkleinern, TTS, `nc/videoteil` (4 Läufe) und `nc/tonspur`; das
+  dadurch tote `_toete` ist entfernt.
+- **Langlebige Maps.** Fünf Maps wurden mit Namen gefüllt, die nicht getrackt
+  sind (`/check`, Restream-Quelle, Clip), und nie geleert; das bestehende
+  Aufräumen griff nur nach vielen Untracks. Jetzt alle 10 Minuten nach ihrer
+  eigenen Bedeutung beschnitten (`nc/speicherpflege.py`): Zeitstempel nach
+  Alter, abgelaufener Rate-Limit-Backoff samt Strafe.
+- `/healthz` trägt `kinder` (laufend je Art, ältester, Zeitlimit/Abbruch/
+  SIGKILL-Zähler — ohne Kommandozeilen, darin stehen Stream-Tokens) und
+  `speicher` (Größen der langlebigen Maps).
+- **Zwei Altbefunde, sichtbar geworden durch die Umstellung:** `_mux`
+  (Aufnahme-Reparatur) und die TTS-Umwandlung liefen ohne Thread-Deckel. Der
+  Deckel-Vertrag sucht Befehlslisten, und beide standen als Einzelargumente
+  im Aufruf — er sah sie nie. Jetzt gedeckelt (TTS ohne nice: die Stimme geht
+  live ins Sendebild).
+- Die Prozess-Attrappe im Split-Vertrag hatte nicht die Form eines echten
+  Prozesses (kein `pid`, kein `terminate()`, `returncode=0` während sie
+  „hing"). Gehoben auf die echte Form, die Aussage unverändert.
+- Blindstellen-Grundlinie 464 → 463 (ein stummer Rückweg ist mit der
+  Umstellung weggefallen).
+- Drei Verträge (`_test_v42_w120_*`), darunter: kein `communicate()` ohne
+  Zeitlimit im ganzen Produktionscode außer direkt nach `kill()`. 11
+  Mutationsproben gefangen — eine erst, nachdem der Vertrag Namen im
+  Syntaxbaum statt im Text suchte (`_CLIP_LAST` steckt in `_HYPE_CLIP_LAST`).
+
+### Performance & Stabilität — Paket C: Cache, Polling, heiße Pfade (v4.2 W119)
+
+- **Ein Lauf je Nutzer.** Die zweite Cache-Prüfung aus W103 fängt den
+  Aufrufer, der *nach* dem Schreiben kommt — nicht den, der *während* einer
+  Auflösung (bis 20 s mit yt-dlp) ankommt: die Semaphore ist zwei groß, beide
+  stehen gleichzeitig darin und lösen beide voll auf. `get_live_status` teilt
+  jetzt je Nutzer einen Lauf (`nc/livecache.einflug`); Mitläufer bekommen das
+  Ergebnis — oder `("unknown", None)`, wenn der Lauf scheitert, nie die fremde
+  Ausnahme (ein Worker, dem ein fremder `CancelledError` in die Schleife fällt,
+  endet still). `force_fresh` (Restream-Reconnect) läuft weiter allein.
+- **Der Cache räumte womöglich nie auf.** Das Aufräumen hing an
+  `hash(username) & 63 == 0` — das ist je *Nutzer* fest, nicht „alle 100
+  Writes", wie der Kommentar daneben sagte. Bei 40 Nutzern traf es mit rund
+  50 % keinen einzigen. Jetzt ein Schreibzähler.
+- **Polling unter Last.** Lief die Prüf-Schlange voll, kamen die nächsten
+  Prüfungen im selben Takt nach — Rückkopplung ohne Dämpfung. Ab halber
+  Schlange werden `offline`/`unknown` linear bis aufs Doppelte gedehnt; `live`
+  und „gerade offline" nie, und die VIP-Verkürzung (X3) bleibt wirksam, weil
+  die Dehnung vor ihr steht.
+- **`/api/pulse` als geteilter Schnappschuss.** Jeder offene Tab baute alle
+  5 s vier Auswertungen neu; jetzt einer je 2 s für alle Tabs
+  (`nc/schnappschuss.py`). Hängt das Bauen, antwortet der Puls nach 5 s mit
+  dem letzten Wert und `veraltet: true`, statt alle waitress-Threads zu binden.
+- `/healthz` trägt `livecache`: Trefferquote, geteilte Läufe, mittlere und
+  höchste Auflösungsdauer.
+- Geprüft und unverändert gelassen: Cache-Zeitstempel (monoton, Uhr beim
+  Schreiben), Cookie-Auto-Bezug (6 h, Anstoß frühestens alle 15 min).
+- Drei Verträge (`_test_v42_w119_*`), 13 Mutationsproben gefangen — eine erst
+  nach Ergänzung des Falls „Lauf scheitert ohne Mitläufer".
+
+### Performance & Stabilität — Paket B: abregeln mit Ansage statt still überlaufen (v4.2 W118)
+
+Drei Lücken, alle drei ohne eine einzige Logzeile:
+
+- **Der Dienst lief mit 1024 Dateideskriptoren.** Die Unit aus
+  `tools/installer.sh` setzte kein `LimitNOFILE`, der Bot hob nichts an. Jede
+  Aufnahme belegt zwei Pipes, jeder Chat einen Socket — ein voller fd-Tisch
+  meldet sich als `unable to open database file`, aiohttp ohne Verbindung und
+  ffmpeg mit `EMFILE`, nirgends verständlich. Der Bot hebt das Soft-Limit jetzt
+  beim Start bis zum Hard-Limit an (höchstens 65536) — das erreicht auch
+  bestehende Installationen, auf denen der Installer nie wieder läuft; die
+  Unit bringt `LimitNOFILE=65536` mit.
+- **Aufnahmen hatten keinen Deckel.** Restreams schon (`RESTREAM_MAX_CONCURRENT`).
+  Neu `MAX_PARALLEL_AUFNAHMEN`, Vorgabe automatisch (vier je Kern, mindestens
+  acht) — ein Riegel gegen den Ausreißer, keine Drossel. Vor jedem
+  Prozessstart (Aufnahme **und** Restream) zusätzlich die fd-Sperre ab 85 %.
+  Gefragt wird **vor** dem Aufnahme-Lock: eine abgewiesene Aufnahme hält
+  nichts fest und startet beim nächsten Live-Check (30 s). Gemeldet über
+  `nc/meldetakt.py` auf ERROR, mit Abhilfe.
+- **Eine volle Live-Check-Schlange verwarf still.** Jetzt gezählt und
+  gedrosselt gemeldet („die Worker kommen nicht nach", Abhilfe
+  `WORKER_COUNT`). Der Tracking-Abruf, der alle 5 s lief, und der
+  Initial-Burst beim Start laufen neben dem Loop — der Vertrag hat den zweiten
+  Aufruf gefunden.
+- `/healthz` trägt `gegendruck`: Aufnahmen gegen Deckel, fds gegen Limit,
+  Abweisungen je Grund, Füllstand und Verluste der Prüf-Schlange.
+- Neues Modul `nc/gegendruck.py`, zwei Verträge (`_test_v42_w118_*`), elf
+  Mutationsproben gefangen — eine erst nach dem Entfernen eines Riegels, der
+  nie gewirkt hat (`offen >= 0`: −1 erreicht keine positive Schwelle).
+
 ### Performance & Stabilität — Paket A: der Event-Loop wird gemessen, und die Stelle steht dabei (v4.2 W117)
 
 Erster Teil des Härtungs-Sprints (Plan und Betreiber-Notiz:
