@@ -11,6 +11,35 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Nutzungsprofile, `--set` und Expertenmodus im Installer (v4.2 W129)
+
+- **Drei Nutzungsprofile** unter `deploy/profile/`: `minimal` (überwachen
+  und aufnehmen), `restream` (alle Ziele, Overlay, Sendeprüfung), `ki`
+  (AZRAEL hört mit, antwortet, Co-Host). Jeder Schalter ist im Code
+  nachgelesen, nicht geraten; der Vertrag hält jeden Namen gegen
+  `.env.example`. Im Installer als Punkt 16 oder `--profile NAME`.
+- **Wechsel endet sauber:** was ein anderes Profil setzt, kommt auf die
+  Vorgabe zurück. Gleiches Profil zweimal ändert nichts.
+- **Keine Überschneidung mit anderen Punkten:** der erste Entwurf setzte im
+  Restream-Profil `KICK_/TWITCH_/YOUTUBE_ENABLED` — die setzt der Punkt
+  „Restream-Ziele“ je nach Key, und ein Lauf ohne Profil veränderte danach die
+  `.env`. Gefunden vom Vertrag; der prüft jetzt jedes Profil gegen ALLE
+  `env_set` des Installers.
+- **`--set NAME=WERT`** (mehrfach, auch unbeaufsichtigt) und **`--expert`**
+  (gefragt: Stichwort suchen, Nummer wählen, Wert setzen; Geheimnisse
+  maskiert). Nur Namen aus `.env.example` — ein Tippfehler bricht ab, statt
+  als Zeile zu landen, die der Bot nie liest.
+- **Ein Fehler, den nur die Terminalprobe fand:** `frage_text a …` schrieb
+  in die LOKALE Variable `a` von `frage_text` — jede Eingabe im
+  Expertenmodus ging verloren. Umbenannt, und als Klasse gesperrt: kein
+  Aufruf von `frage_text`/`frage_wahl` darf deren eigene lokale Namen nutzen.
+- **`update.sh`** behandelt `faster-whisper` als Pflicht, sobald
+  `LIVE_REACT_ENABLED=1` (Profil `ki`) und die Sprachreaktion nicht
+  ausdrücklich aus ist — gesagt vor dem Start, nicht erst vom Selbsttest.
+- Vertrag `_test_v42_w129_profile`, 9 Mutationsproben gefangen; eine entwischte
+  zuerst (die Prüfung auf `=` in `--set` lief nie, weil der Testfall schon am
+  Namen scheiterte). Englisch 100 %.
+
 ### `.env.example` vollständig: 16 Variablen nachgetragen (v4.2 W128)
 
 - **Gemessen:** jede env-Lesestelle im ganzen Produktionscode gegen die

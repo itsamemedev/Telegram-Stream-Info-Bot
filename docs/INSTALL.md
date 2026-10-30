@@ -77,6 +77,28 @@ aktiv. Neu erzeugen nach Code-Änderungen:
 python3 tools/gen_env_example.py
 ```
 
+### Nutzungsprofile und Einzelwerte
+
+Statt jeden Schalter einzeln zu suchen, setzt ein **Nutzungsprofil** eine
+Handvoll auf einmal (`deploy/profile/`):
+
+| Profil | Was der Bot tut |
+|---|---|
+| `minimal` | überwachen und aufnehmen — kein Restream, keine KI, keine Auto-Clips |
+| `restream` | an alle Ziele mit Key senden, Overlay ins Bild, Sendeprüfung |
+| `ki` | AZRAEL hört mit (Whisper), antwortet im Chat, Co-Host — braucht `faster-whisper` |
+
+```bash
+bash tools/installer.sh --profile minimal                   # oder im Lauf gefragt
+bash tools/installer.sh --set WHISPER_MODEL=small --set RESTREAM_BITRATE_K=4500
+bash tools/installer.sh --expert                             # jede Variable suchen und ändern
+```
+
+Ein Profil setzt nur seine Schalter; was ein **anderes** Profil setzt, kommt
+auf die Vorgabe zurück — wer von `minimal` auf `ki` wechselt, behält keine
+abgeschalteten Clips. `--set` nimmt nur Namen aus `.env.example`, ein
+Tippfehler bricht ab. Vor dem Schreiben steht jede Änderung im Diff.
+
 > **`.env` gehört niemals ins Repository.** Sie enthält Cookies, OAuth-Tokens
 > und Stream-Keys. Die `.gitignore` sperrt sie bereits — ein einmal committetes
 > Geheimnis steht auch nach dem Löschen noch in der Historie.

@@ -272,6 +272,9 @@ schreibe_systemdatei(){
 }
 
 # ── Schalter ─────────────────────────────────────────────────
+# Vorgaben VOR der Auswertung: das Skript laeuft mit set -u, und --set haengt
+# an OPT_SETZEN an — ohne Vorbelegung starb schon der erste --set daran.
+OPT_PROFIL=""; OPT_SETZEN=""; OPT_EXPERTE=0; OPT_BEOBACHTUNG="${OPT_BEOBACHTUNG:-}"
 while [ $# -gt 0 ]; do
   case "$1" in
     --express)     MODUS="express";;
@@ -283,6 +286,11 @@ while [ $# -gt 0 ]; do
     --branch=*)    BRANCH="${1#*=}";;
     --skip-system) SKIP_SYSTEM=1;;
     --observability) OPT_BEOBACHTUNG="prometheus";;
+    --profile)     OPT_PROFIL="${2:-}"; shift;;
+    --profile=*)   OPT_PROFIL="${1#*=}";;
+    --set)         OPT_SETZEN="${OPT_SETZEN}${2:-}"$'\n'; shift;;
+    --set=*)       OPT_SETZEN="${OPT_SETZEN}${1#*=}"$'\n';;
+    --expert)      OPT_EXPERTE=1;;
     --observability=grafana) OPT_BEOBACHTUNG="grafana";;
     --pkg)         NC_PKG="${2:-}"; shift;;
     --pkg=*)       NC_PKG="${1#*=}";;
@@ -303,6 +311,9 @@ NIGHTCRAWLER v37 — Installation
   --dir <Pfad>     Zielverzeichnis (Vorgabe: ~/nightcrawler)
   --branch <Name>  Git-Zweig beim Klonen (Vorgabe: main)
   --skip-system    Systempakete nicht anfassen (wenn schon vorhanden)
+  --profile <Name> Nutzungsprofil: minimal | restream | ki (deploy/profile/)
+  --set NAME=WERT  einen .env-Wert setzen (mehrfach; nur Namen aus .env.example)
+  --expert         zusaetzlich jede Variable aus .env.example aenderbar (gefuehrt)
   --observability  Prometheus mit einrichten (Verlauf und Alarme, nur lokal);
                    =grafana zusaetzlich Grafana. Ohne den Schalter: nur gefuehrt gefragt
   --pkg <Name>     Paketmanager erzwingen: apt dnf pacman zypper apk brew
@@ -969,8 +980,129 @@ z_beobachtung(){
   elif [ "$P_BEOBACHTUNG" = "J" ]; then printf 'Prometheus'; else t 'aus'; fi
 }
 
+# ── v4.2-W129: Nutzungsprofil und Expertenmodus ──────────────
+# Ein Nutzungsprofil ist eine Datei unter deploy/profile/ mit Schaltern, die
+# es im Bot gibt (der Vertrag haelt jeden Namen gegen .env.example). Es steht
+# NEBEN dem Leistungsprofil oben: das regelt, wie viel die Maschine traegt,
+# dieses, was der Bot tun soll — ihre Schalter ueberschneiden sich nicht.
+#
+# Beim Wechsel zaehlt nur das gewaehlte Profil: was ein ANDERES Profil setzt,
+# kommt auf die Vorgabe des Bots zurueck. Sonst behielte, wer von "minimal" auf
+# "ki" wechselt, CLIP_ENABLED=0 aus dem alten Profil — und fragte sich, warum
+# keine Clips kommen.
+PROFILE_DIR=""
+for _p in "$ZIEL/deploy/profile" "${QUELLE:+$QUELLE/deploy/profile}"; do
+  [ -n "$_p" ] && [ -d "$_p" ] && { PROFILE_DIR="$_p"; break; }
+done
+profil_schalter(){ # profil_schalter NAME -> "KEY=WERT" je Zeile, ohne Kommentare
+  grep -E '^[A-Z][A-Z0-9_]*=' "$PROFILE_DIR/$1.env" | sed -E 's/[[:space:]]+#.*$//'
+}
+P_NUTZUNG="keins"
+f_nutzung(){
+  P_NUTZUNG="keins"
+  [ -n "$PROFILE_DIR" ] || return 0
+  if [ -n "$OPT_PROFIL" ]; then
+    P_NUTZUNG="$OPT_PROFIL"
+  elif [ "$MODUS" = "gefuehrt" ]; then
+    erklaere "Ein Nutzungsprofil setzt eine Handvoll Schalter auf einmal — was der Bot von sich aus tut. Es laesst alles andere stehen, und im naechsten Schritt bleibt jeder Wert einzeln aenderbar."
+    frage_wahl P_NUTZUNG "Nutzungsprofil?" keins \
+      keins    "keins — die Schalter bleiben, wie sie sind" \
+      minimal  "minimal — nur ueberwachen und aufnehmen, kein Restream, keine KI" \
+      restream "voller Restream — Kick, Twitch, YouTube, mit Overlay" \
+      ki       "viel KI — AZRAEL hoert mit, antwortet und moderiert"
+  fi
+  [ "$P_NUTZUNG" = "keins" ] && return 0
+  if [ ! -f "$PROFILE_DIR/$P_NUTZUNG.env" ]; then
+    fehler "Unbekanntes Nutzungsprofil: %s (minimal, restream, ki)" "$P_NUTZUNG"
+    exit 1
+  fi
+  local f k v alle=""
+  for f in "$PROFILE_DIR"/*.env; do
+    [ "$f" = "$PROFILE_DIR/$P_NUTZUNG.env" ] && continue
+    alle="$alle $(profil_schalter "$(basename "$f" .env)" | cut -d= -f1)"
+  done
+  # Erst die fremden auf die Vorgabe, dann die eigenen setzen — ein Schalter,
+  # der in beiden steht, endet so auf dem Wert des gewaehlten Profils.
+  # shellcheck disable=SC2086  # Namen ohne Leerzeichen
+  env_zuruecksetzen $alle
+  while IFS='=' read -r k v; do
+    [ -n "$k" ] && env_set "$k" "$v"
+  done < <(profil_schalter "$P_NUTZUNG")
+  return 0
+}
+z_nutzung(){
+  case "$P_NUTZUNG" in
+    minimal) t 'minimal';; restream) t 'voller Restream';; ki) t 'viel KI';;
+    *) t 'keins (Schalter unveraendert)';;
+  esac
+}
+
+# Expertenmodus: jede Variable aus .env.example, nicht nur die abgefragten.
+# --set NAME=WERT geht immer (auch unbeaufsichtigt); --expert oeffnet dazu
+# eine Suche im gefuehrten Lauf. Nur Namen aus der Vorlage — ein Tippfehler
+# im Namen landete sonst als Zeile in der .env, die der Bot nie liest, und
+# der Betreiber hielte die Einstellung fuer gesetzt.
+P_EXPERTE=0
+experte_bekannt(){ [ -n "$VORLAGE" ] && grep -qE "^#? ?$1=" "$VORLAGE"; }
+experte_zeigen(){ # experte_zeigen NAME -> "NAME  jetzt  (Vorgabe)" maskiert
+  local k="$1" w vor
+  w="$(env_get "$k")"; vor="$(sed -n "s/^[#[:space:]]*${k}=//p" "$VORLAGE" | head -1)"
+  if [ -n "$w" ] && printf '%s' "$k" | grep -qE "$GEHEIM_MUSTER"; then w="***"; fi
+  printf '%-34s %s%s%s  %s(%s: %s)%s' "$k" "$TXT" "${w:-—}" "$R" "$FNT" "$(t 'Vorgabe')" "${vor:-—}" "$R"
+}
+f_experte(){
+  P_EXPERTE=0
+  local a k v
+  while IFS= read -r a; do
+    [ -n "$a" ] || continue
+    k="${a%%=*}"; v="${a#*=}"
+    if [ "$k" = "$a" ] || ! printf '%s' "$k" | grep -qE '^[A-Z][A-Z0-9_]*$'; then
+      fehler "--set erwartet NAME=WERT: %s" "$a"; exit 1
+    fi
+    if ! experte_bekannt "$k"; then
+      fehler "%s steht nicht in .env.example — Tippfehler? Der Bot liest diesen Namen nicht." "$k"; exit 1
+    fi
+    env_set "$k" "$v"; P_EXPERTE=$((P_EXPERTE+1))
+  done <<< "$OPT_SETZEN"
+  [ "$OPT_EXPERTE" = 1 ] && [ "$MODUS" = "gefuehrt" ] && [ -n "$VORLAGE" ] || return 0
+  # Eigene Namen fuer die Antworten (_ex_*): frage_text schreibt per
+  # printf -v in die genannte Variable, hat aber selbst ein lokales "a" — ein
+  # Aufruf "frage_text a" traf DESSEN a, und jede Eingabe ging verloren
+  # (gefunden im Terminaltest W129).
+  local _ex_such _ex_nr _ex_wert
+  erklaere "Expertenmodus: jede Variable aus .env.example. Einen Namen oder ein Stichwort eingeben (z. B. WHISPER oder BITRATE), dann die Nummer. Leere Eingabe beendet."
+  local -a treffer=()
+  while :; do
+    frage_text _ex_such "Variable oder Stichwort" ""
+    [ -n "$_ex_such" ] || break
+    mapfile -t treffer < <(grep -oE "^#? ?[A-Z][A-Z0-9_]*=" "$VORLAGE" | sed -E 's/^#? ?//; s/=$//' \
+                           | grep -i -- "$_ex_such" | head -15)
+    if [ "${#treffer[@]}" -eq 0 ]; then warn "Kein Treffer fuer %s." "$_ex_such"; continue; fi
+    local i=0
+    for k in "${treffer[@]}"; do i=$((i+1)); printf '   %s%2d%s  %s\n' "$TXT" "$i" "$R" "$(experte_zeigen "$k")"; done
+    frage_text _ex_nr "Nummer (Enter = neue Suche)" ""
+    [[ "$_ex_nr" =~ ^[0-9]+$ ]] && [ "$_ex_nr" -ge 1 ] && [ "$_ex_nr" -le "${#treffer[@]}" ] || continue
+    k="${treffer[$((_ex_nr-1))]}"
+    info "%s" "$(experte_zeigen "$k")"
+    frage_text _ex_wert "Neuer Wert (- = Vorgabe, Enter = behalten)" ""
+    case "$_ex_wert" in
+      "") ;;
+      -)  env_zuruecksetzen "$k"; P_EXPERTE=$((P_EXPERTE+1));;
+      *)  env_set "$k" "$_ex_wert"; P_EXPERTE=$((P_EXPERTE+1));;
+    esac
+  done
+  return 0
+}
+z_experte(){
+  if [ "$P_EXPERTE" -gt 0 ]; then tf '%s Wert(e) von Hand' "$P_EXPERTE"
+  else t 'keine'; fi
+}
+
 # Die Reihenfolge ist die der Zusammenfassung. Abschnitte mit Ueberschrift.
-PUNKTE=(python system pypakete telegram dashboard discord restream profil datenbank crowdsec llm autostart motd totmann beobachtung)
+# Neue Punkte kommen ans ENDE: die Nummern der bestehenden sind die Eingabe
+# der Aenderungsschleife, und wer "8" fuer das Leistungsprofil kennt, soll
+# nach einem Update nicht ploetzlich die Datenbank aendern.
+PUNKTE=(python system pypakete telegram dashboard discord restream profil datenbank crowdsec llm autostart motd totmann beobachtung nutzung experte)
 punkt_titel(){
   case "$1" in
     python) t 'Python';; system) t 'Systempakete';; pypakete) t 'Python-Pakete';;
@@ -978,7 +1110,7 @@ punkt_titel(){
     restream) t 'Restream-Ziele';; profil) t 'Leistungsprofil';; datenbank) t 'Datenbank';;
     crowdsec) printf 'CrowdSec';; llm) t 'Lokales LLM';; autostart) printf 'Autostart';;
     motd) printf 'MOTD';; totmann) t 'Totmann-Meldung';;
-    beobachtung) t 'Beobachtung';;
+    beobachtung) t 'Beobachtung';; nutzung) t 'Nutzungsprofil';; experte) t 'Einzelwerte';;
   esac
 }
 punkt_fragen(){
