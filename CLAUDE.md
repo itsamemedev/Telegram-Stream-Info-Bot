@@ -275,8 +275,12 @@ es gibt keinen stillen `except`, sondern ein **stilles `return`**.
 und drei ganz ohne Zeile; `_whisper_transcribe` verschluckte jeden Fehler auf
 `debug`. Ein `log.debug` erscheint in einem INFO- oder ERROR-Log **nie** —
 für den Betreiber ist ein Fehlerpfad auf `debug` dasselbe wie `pass`.
-`tools/blindstellen.py` misst diese Klasse, Bestand **463**, und wie bei
-W65/W66 wird nur das Wachstum gesperrt.
+`tools/blindstellen.py` misst diese Klasse, Bestand **473**, und wie bei
+W65/W66 wird nur das Wachstum gesperrt. Die zehn aus v4.2-W130 sind keine
+Fehlerpfade, sondern der TS-Paketleser der Sendebrücke: `None` heißt dort
+„dieses Paket trägt keinen Zeitstempel", rund 4000-mal je Sekunde. Eine
+Meldung je Paket wäre die Log-Flut aus W97; die Grundlinie ist deshalb
+begründet gehoben, nicht mitgewachsen.
 
 Auf `warning` heben allein genügt aber nicht: der Resolver läuft pro Poll und
 pro verfolgtem Nutzer, ungedrosselt wäre das Log nach einer Stunde unlesbar —

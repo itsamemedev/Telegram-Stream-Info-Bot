@@ -45,9 +45,20 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
   (`RESTREAM_MULTI_MODE=independent`) bleibt vorerst beim alten Aufbau.
   `RESTREAM_BRUECKE_OFFLINE_S` (120 s) hält eine Quelle, die nachweislich
   offline ist; danach endet der Restream wie bisher.
-- **Im Deck:** `/api/restream/status` trägt je Restream `bruecke` mit
-  `aktiv` (`quelle`, `fueller` oder `wechsel`), Zahl der Wechsel und
-  Pausenbild-Sekunden.
+- **Im Deck:** die Restream-Liste zeigt „⏸ Pausenbild“, solange die
+  Plattform das Pausenbild sieht; `/api/restream/list` und
+  `/api/restream/verify` tragen je Restream `bruecke` (`aktiv`: `quelle`,
+  `fueller` oder `wechsel`, Zahl der Wechsel, Pausenbild-Sekunden).
+- **Gefunden vom Vertrag, nicht vom Nachdenken:** zwei Wettläufe. Der
+  Zubringer konnte beendet sein, bevor seine letzte Fehlerzeile gelesen war,
+  und dann galt eine tonlose Quelle als tote Edge. Außerdem konnte der erste
+  Keyframe ankommen, bevor die Weiche umschalten wollte. Dazu schrieb die
+  Weiche entgegen ihrem eigenen Kommentar außerhalb der Sperre. 21
+  Mutationsproben, alle gefangen; zwei entwischten im ersten Durchgang und
+  haben den Vertrag geschärft.
+- **Blindstellen-Grundlinie 463 → 473:** die zehn neuen sind der
+  TS-Paketleser (`None` = „kein Zeitstempel in diesem Paket“, rund 4000-mal
+  je Sekunde), keine Fehlerpfade. Begründung in CLAUDE.md.
 
 ### Nutzungsprofile, `--set` und Expertenmodus im Installer (v4.2 W129)
 

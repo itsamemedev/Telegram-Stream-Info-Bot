@@ -14793,6 +14793,20 @@ class RestreamManager:
         _RESTREAM_GUARD.note_started(rid, _time_mod.monotonic())
         return {"ok": True, "pid": proc.pid, "transcode": transcode}
 
+    async def _bruecke_abraeumen(self, rid, info):
+        """v4.2-W130: Sender weg -> seine Zubringer und das Pausenbild auch.
+
+        Ein Neustart baut eine neue Bruecke; die alte liefe sonst als Waise
+        weiter und loeste im Hintergrund TikTok-Adressen auf. Aufgerufen vom
+        Prozessende (_monitor) UND vom Stopp — stop() cancelt _monitor, also
+        reicht keiner der beiden allein."""
+        _br = (info or {}).get("bruecke")
+        if _br is None:
+            return
+        await asyncio.to_thread(_br.stop)
+        if _br.ende:
+            log.info("Restream #%d: Sendebruecke beendet — %s", rid, _br.ende)
+
     def _bruecke_quelle(self, username, rid):
         """v4.2-W130: die Adresse fuer den naechsten Zubringer der Bruecke.
 
@@ -15140,14 +15154,7 @@ class RestreamManager:
         rc = await proc.wait()
         for t in (prog_task, err_task):
             t.cancel()
-        _br = info.get("bruecke")
-        if _br is not None:
-            # Der Sender ist weg — seine Zubringer und das Pausenbild auch.
-            # Ein Neustart baut eine neue Bruecke; die alte liefe sonst als
-            # Waise weiter und loeste im Hintergrund TikTok-Adressen auf.
-            await asyncio.to_thread(_br.stop)
-            if _br.ende:
-                log.info("Restream #%d: Sendebruecke beendet — %s", rid, _br.ende)
+        await self._bruecke_abraeumen(rid, info)
         tail = "".join(sink)[-800:]
         ran = _time_mod.monotonic() - info["started"]
         transcode_used = info.get("transcode")
@@ -15375,8 +15382,7 @@ class RestreamManager:
             _p = _e.get("proc")
             if _p:
                 await _reap_proc(_p)   # v4.0-W75: terminate+wait → kein Zombie
-        if info.get("bruecke") is not None:
-            await asyncio.to_thread(info["bruecke"].stop)   # v4.2-W130
+        await self._bruecke_abraeumen(rid, info)        # v4.2-W130
         proc = info["proc"]
         await _reap_proc(proc)         # v4.0-W75: SIGTERM→(SIGKILL)→wait, immer geerntet
         log_event("restream.stop", "info", f"Restream #{rid} gestoppt", {"id": rid})

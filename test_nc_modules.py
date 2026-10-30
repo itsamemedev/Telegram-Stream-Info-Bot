@@ -24306,9 +24306,9 @@ def _test_v42_w130_sendebruecke():
     mit = [c for c in bauer if any(k.arg == "bruecke" for k in c.keywords)]
     assert len(bauer) == 2 and len(mit) == 1, "der tee-Weg baut ohne Bruecke"
     for name in ("_monitor", "stop"):
-        quelle = _ast.unparse(meth[name])
-        assert "bruecke" in quelle and ".stop" in quelle, \
+        assert "self._bruecke_abraeumen" in aufrufe(meth[name]), \
             "%s raeumt die Bruecke nicht ab — Zubringer liefen als Waisen weiter" % name
+    assert "asyncio.to_thread" in aufrufe(meth["_bruecke_abraeumen"])
     assert any(isinstance(n, _ast.Dict) and any(isinstance(k, _ast.Constant) and k.value == "bruecke"
                                                 for k in n.keys)
                for n in _ast.walk(meth["status"])), "das Deck erfaehrt nichts vom Pausenbild"

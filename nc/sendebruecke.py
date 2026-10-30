@@ -407,7 +407,7 @@ class Bruecke:
         log.info("Sendebrücke %s: %s (%s)", self.name,
                  "Pausenbild" if wer == FUELLER else "Quelle", grund)
 
-    def daten(self, wer, paket):
+    def daten(self, wer, paket) -> bool:
         """Ein TS-Paket von `wer`. Gibt zurück, ob es durchging."""
         with self._sperre:
             self._zuletzt[wer] = self._uhr()
@@ -448,14 +448,20 @@ class Bruecke:
             raus = self._um.paket(paket)
             if raus is None:
                 return False
-        # Schreiben AUSSERHALB der Sperre wäre ein Wettlauf zweier Leser auf
-        # dieselbe Pipe; innerhalb blockiert ein langsamer Sender nur die
-        # Zubringer, und die sind mit -re ohnehin im Takt.
-        try:
-            os.write(self._fd, raus)
-        except (BrokenPipeError, OSError) as e:
-            self._abbruch("Sender nimmt nichts mehr an (%s)" % e)
-            return False
+            # In der Sperre schreiben. Ausserhalb koennten zwei Leser um eine
+            # Umschaltung herum ihre Pakete vertauschen — die Continuity-
+            # Counter stimmten dann nicht mehr, und der Demuxer des Senders
+            # verwirft ein Paket. Ein langsamer Sender blockiert so nur die
+            # Zubringer, und die laufen mit -re ohnehin im Takt.
+            try:
+                os.write(self._fd, raus)
+            except OSError as e:
+                # Laut genug: das Ende des Senders meldet der Manager mit
+                # seinem stderr. Hier nur der Zusammenhang, auf info.
+                log.info("Sendebrücke %s: Sender nimmt nichts mehr an (%s)",
+                         self.name, e)
+                self._abbruch("Sender nimmt nichts mehr an (%s)" % e)
+                return False
         return True
 
     def _wuensche(self, wer, grund):
@@ -496,8 +502,12 @@ class Bruecke:
             for z in iter(proc.stderr.readline, b""):
                 senke.append(self._redigieren(z.decode("utf-8", "ignore")).rstrip())
                 del senke[:-20]
-        except (OSError, ValueError):
-            return     # Prozess weg, Pipe zu: nichts mehr zu lesen
+        except (OSError, ValueError) as e:
+            # Normal endet die Schleife an b"" (EOF). Eine Ausnahme heisst,
+            # die Pipe ist unter dem Leser weggebrochen — dann fehlen die
+            # letzten Zeilen, nach denen _nach_ende urteilt.
+            log.info("Sendebrücke %s: stderr von %s nicht zu Ende gelesen: %s",
+                     self.name, wer, e)
 
     def _starte(self, wer, cmd):
         p = self._popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
@@ -547,7 +557,9 @@ class Bruecke:
     def _abbruch(self, grund, laut=False):
         """laut=False: die Ursache meldet ein anderer — der Manager das Ende
         des Senders, die Offline-Lage ist Alltag. Zweimal dieselbe Störung
-        im ERROR-Log ist eine zu viel."""
+        im ERROR-Log ist eine zu viel. Gemeldet wird in jedem Fall, einmal.
+        Gibt None zurück, damit _adresse mit `return self._abbruch(...)`
+        enden kann."""
         if self.ende is None:
             self.ende = grund
             (log.error if laut else log.info)("Sendebrücke %s endet: %s",
@@ -556,130 +568,32 @@ class Bruecke:
 
     # ---- Wache: Zubringer starten, Lücken erkennen -------------------------
     def _wache(self):
-        url = self._erste_url
-        pause = self._neustart_min
-        offline_seit = None
-        gestartet = None
+        """Der Takt der Bruecke: Zubringer ueberwachen, ersetzen, starten.
+
+        Drei Schritte mit eigenem Namen, weil jeder seine eigene Frage
+        beantwortet: was lehrt das Ende eines Zubringers (_nach_ende), lebt
+        der laufende noch wirklich (_pruefe_laufenden), und woher kommt die
+        naechste Adresse (_adresse)."""
+        self._naechste = self._erste_url
+        self._pause = self._neustart_min
+        self._offline_seit = None
+        self._gestartet = None
         while not self._halt.is_set():
-            jetzt = self._uhr()
             zub = self._zub
             if zub is not None and zub.poll() is not None:
-                lief = jetzt - (gestartet or jetzt)
-                # Erst fertig lesen, dann urteilen: der Prozess kann beendet
-                # sein, bevor sein letzter stderr-Satz hier angekommen ist.
-                # Der Vertrag hat genau diesen Wettlauf gefangen — die
-                # tonlose Quelle wurde dann als tote Edge behandelt.
-                _t = self._stderr_leser.pop(id(zub), None)
-                if _t is not None:
-                    _t.join(timeout=2.0)
-                urteil = self._urteil.get(QUELLE)
-                if urteil is None and _tonspur.ist_tonlos_fehler(
-                        "\n".join(self.stderr[QUELLE])):
-                    # Ohne Ton stirbt der Zubringer am -map, BEVOR er eine PMT
-                    # schreibt — die Weiche sieht dann nie „tonlos". Gemessen:
-                    # ohne diese Zeile drehte eine tonlose Quelle endlos
-                    # Neustarts, und das Pausenbild blieb stehen.
-                    urteil = "tonlos"
-                ersetzt, self._ersetzt = self._ersetzt, False
-                self._zub = None
-                self._fallback("Zubringer beendet (rc=%s)" % zub.returncode)
-                with self._sperre:
-                    self._urteil.pop(QUELLE, None)
-                    self._pmt_pid.pop(QUELLE, None)
-                    self._vpid.pop(QUELLE, None)
-                if urteil == "neukodieren" and not self._neukodieren:
-                    self._neukodieren = True
-                    log.warning("Sendebrücke %s: Quelle ist kein H.264 — "
-                                "Zubringer kodiert ab jetzt neu.", self.name)
-                    url, pause = self._url, self._neustart_min
-                elif urteil == "tonlos" and not self._tonlos:
-                    self._tonlos = True
-                    log.warning("Sendebrücke %s: Quelle ohne Ton — Zubringer "
-                                "legt ab jetzt Stille an.", self.name)
-                    url, pause = self._url, self._neustart_min
-                elif ersetzt and self._zuletzt.get(QUELLE) is not None:
-                    # Ein Hänger, nachdem die Quelle geliefert hatte: dieselbe
-                    # Adresse ist sehr wahrscheinlich noch gültig, und eine
-                    # Auflösung je Hänger fordert TikToks 429 heraus. Hat sie
-                    # nie geliefert (Anlaufzeit verstrichen), taugt die
-                    # Adresse nichts — dann der Zweig unten.
-                    url = self._url
-                    pause = self._neustart_min
-                else:
-                    # Kurze Läufe in Folge: eine tote Edge, kein Ablauf. Dann
-                    # nicht im Sekundentakt nachlegen.
-                    pause = (self._neustart_min if lief > 60
-                             else min(self._neustart_max, pause * 2))
-                    url = None
-                self._halt.wait(pause)
+                self._nach_ende(zub)
+                self._halt.wait(self._pause)
                 continue
             if zub is not None:
-                urteil = self._urteil.get(QUELLE)
-                if urteil in ("neukodieren", "tonlos") and (
-                        (urteil == "neukodieren" and not self._neukodieren)
-                        or (urteil == "tonlos" and not self._tonlos)):
-                    # Unpassend: beenden, der Zweig oben stellt um.
-                    self._beende(zub)
-                    continue
-                zl = self._zuletzt.get(QUELLE)
-                # Vor dem ersten Byte gilt die Anlaufzeit, nicht die Luecke:
-                # ffmpeg probt die Quelle (-analyzeduration bis 10 s), und
-                # ein Zubringer, der nach luecke_s abgeschossen wird, kaeme
-                # bei einer zaehen HLS-Quelle nie ueber das Proben hinaus.
-                grenze = self.luecke_s if zl is not None else self.anlauf_s
-                if jetzt - (zl or gestartet) > grenze:
-                    zl = zl or gestartet
-                    # Schweigt sie, kommt der Füller — und der Zubringer wird
-                    # ERSETZT, nicht abgewartet. Gemessen: ein Zubringer, der
-                    # nach einem Hänger weiterliest, holt mit -re die
-                    # verpasste Zeit im Schwall nach, und der Strom läuft
-                    # danach um die Länge des Hängers vor der Uhr (26,1 s
-                    # Wanduhr, 30,5 s Ausgabe). Ein frischer Zubringer setzt
-                    # an der Live-Kante an.
-                    if self.aktiv == QUELLE:
-                        self._fallback("Quelle schweigt seit %.0f s" % (jetzt - zl))
-                    self._ersetzt = True
-                    self._beende(zub)
-                    continue
-                self._halt.wait(0.25)
+                if not self._pruefe_laufenden(zub):
+                    self._halt.wait(0.25)
                 continue
-            # Kein Zubringer: Adresse holen und starten.
+            url = self._adresse()
             if url is None:
-                try:
-                    url, fehler = self._quelle()
-                except Exception as e:     # Auflösung selbst gestorben
-                    url, fehler = None, "%s: %s" % (type(e).__name__, e)
-                if not url:
-                    ohne = jetzt - self._quelle_zuletzt
-                    if fehler != "offline" and ohne >= self.unklar_s:
-                        # Ohne Grenze stuende das Pausenbild ewig, waehrend
-                        # TikTok uns blockt — fuer den Zuschauer dasselbe wie
-                        # ein toter Stream, nur ohne dass jemand es erfaehrt.
-                        self._abbruch("seit %.0f s keine abspielbare Quelle "
-                                      "(zuletzt: %s)" % (ohne, fehler), laut=True)
-                        break
-                    if fehler == "offline":
-                        offline_seit = offline_seit or jetzt
-                        if jetzt - offline_seit >= self.offline_s:
-                            self._abbruch("Quelle seit %.0f s offline"
-                                          % (jetzt - offline_seit))
-                            break
-                    else:
-                        offline_seit = None
-                        log.warning("Sendebrücke %s: Quelle nicht auflösbar (%s) "
-                                    "— Pausenbild bleibt, neuer Versuch in %.0f s.",
-                                    self.name, fehler, pause)
-                    self._halt.wait(pause)
-                    pause = min(self._neustart_max, pause * 2)
-                    continue
-                offline_seit = None
-                # Eine NEUE Adresse kann ein anderer Strom sein: der Streamer
-                # hat neu gestartet, TikTok liefert eine andere Stufe. Die
-                # Erfahrungen der alten Adresse gelten dafuer nicht — sonst
-                # bliebe eine Sitzung nach einem einzigen tonlosen Anlauf fuer
-                # immer stumm, auch wenn die Quelle laengst wieder Ton hat.
-                self._tonlos = self._neukodieren = False
-            gestartet = self._uhr()
+                if self.ende is not None:
+                    break
+                continue
+            self._gestartet = self._uhr()
             self._url = url
             del self.stderr[QUELLE][:]
             # Wunsch und Zeitmarke VOR dem Start: der Leser-Thread kann den
@@ -690,8 +604,130 @@ class Bruecke:
             self._wuensche(QUELLE, "Zubringer gestartet")
             self._zub = self._starte(QUELLE, self._zubringer_cmd(
                 url, self._tonlos, self._neukodieren))
-            url = None
         self._schliessen()
+
+    def _nach_ende(self, zub):
+        """Ein Zubringer ist beendet. Setzt self._naechste und self._pause."""
+        lief = self._uhr() - (self._gestartet or self._uhr())
+        # Erst fertig lesen, dann urteilen: der Prozess kann beendet
+        # sein, bevor sein letzter stderr-Satz hier angekommen ist.
+        # Der Vertrag hat genau diesen Wettlauf gefangen — die
+        # tonlose Quelle wurde dann als tote Edge behandelt.
+        _t = self._stderr_leser.pop(id(zub), None)
+        if _t is not None:
+            _t.join(timeout=2.0)
+        urteil = self._urteil.get(QUELLE)
+        if urteil is None and _tonspur.ist_tonlos_fehler(
+                "\n".join(self.stderr[QUELLE])):
+            # Ohne Ton stirbt der Zubringer am -map, BEVOR er eine PMT
+            # schreibt — die Weiche sieht dann nie „tonlos". Gemessen:
+            # ohne diese Zeile drehte eine tonlose Quelle endlos
+            # Neustarts, und das Pausenbild blieb stehen.
+            urteil = "tonlos"
+        ersetzt, self._ersetzt = self._ersetzt, False
+        self._zub = None
+        self._fallback("Zubringer beendet (rc=%s)" % zub.returncode)
+        with self._sperre:
+            self._urteil.pop(QUELLE, None)
+            self._pmt_pid.pop(QUELLE, None)
+            self._vpid.pop(QUELLE, None)
+        if urteil == "neukodieren" and not self._neukodieren:
+            self._neukodieren = True
+            log.warning("Sendebrücke %s: Quelle ist kein H.264 — "
+                        "Zubringer kodiert ab jetzt neu.", self.name)
+            self._naechste, self._pause = self._url, self._neustart_min
+        elif urteil == "tonlos" and not self._tonlos:
+            self._tonlos = True
+            log.warning("Sendebrücke %s: Quelle ohne Ton — Zubringer "
+                        "legt ab jetzt Stille an.", self.name)
+            self._naechste, self._pause = self._url, self._neustart_min
+        elif ersetzt and self._zuletzt.get(QUELLE) is not None:
+            # Ein Hänger, nachdem die Quelle geliefert hatte: dieselbe
+            # Adresse ist sehr wahrscheinlich noch gültig, und eine
+            # Auflösung je Hänger fordert TikToks 429 heraus. Hat sie
+            # nie geliefert (Anlaufzeit verstrichen), taugt die
+            # Adresse nichts — dann der Zweig unten.
+            self._naechste, self._pause = self._url, self._neustart_min
+        else:
+            # Kurze Läufe in Folge: eine tote Edge, kein Ablauf. Dann
+            # nicht im Sekundentakt nachlegen.
+            self._pause = (self._neustart_min if lief > 60
+                           else min(self._neustart_max, self._pause * 2))
+            self._naechste = None
+
+    def _pruefe_laufenden(self, zub) -> bool:
+        """False: alles in Ordnung, weiter warten. True: er wurde beendet."""
+        urteil = self._urteil.get(QUELLE)
+        if (urteil == "neukodieren" and not self._neukodieren) or (
+                urteil == "tonlos" and not self._tonlos):
+            # Unpassend: beenden, _nach_ende stellt um.
+            self._beende(zub)
+            return True
+        jetzt = self._uhr()
+        zl = self._zuletzt.get(QUELLE)
+        # Vor dem ersten Byte gilt die Anlaufzeit, nicht die Luecke:
+        # ffmpeg probt die Quelle (-analyzeduration bis 10 s), und
+        # ein Zubringer, der nach luecke_s abgeschossen wird, kaeme
+        # bei einer zaehen HLS-Quelle nie ueber das Proben hinaus.
+        grenze = self.luecke_s if zl is not None else self.anlauf_s
+        seit = zl or self._gestartet or jetzt
+        if jetzt - seit <= grenze:
+            return False
+        # Schweigt sie, kommt der Füller — und der Zubringer wird
+        # ERSETZT, nicht abgewartet. Gemessen: ein Zubringer, der
+        # nach einem Hänger weiterliest, holt mit -re die
+        # verpasste Zeit im Schwall nach, und der Strom läuft
+        # danach um die Länge des Hängers vor der Uhr (26,1 s
+        # Wanduhr, 30,5 s Ausgabe). Ein frischer Zubringer setzt
+        # an der Live-Kante an.
+        if self.aktiv == QUELLE:
+            self._fallback("Quelle schweigt seit %.0f s" % (jetzt - seit))
+        self._ersetzt = True
+        self._beende(zub)
+        return True
+
+    def _adresse(self):
+        """Die Adresse fuer den naechsten Zubringer, oder None (dann ist
+        gewartet worden, oder die Bruecke hat aufgegeben: self.ende)."""
+        if self._naechste is not None:
+            url, self._naechste = self._naechste, None
+            return url
+        jetzt = self._uhr()
+        try:
+            url, fehler = self._quelle()
+        except Exception as e:     # Auflösung selbst gestorben
+            log.warning("Sendebrücke %s: Auflösung der Quelle ist abgestürzt "
+                        "(%s: %s).", self.name, type(e).__name__, e)
+            url, fehler = None, "%s: %s" % (type(e).__name__, e)
+        if url:
+            self._offline_seit = None
+            # Eine NEUE Adresse kann ein anderer Strom sein: der Streamer
+            # hat neu gestartet, TikTok liefert eine andere Stufe. Die
+            # Erfahrungen der alten Adresse gelten dafuer nicht — sonst
+            # bliebe eine Sitzung nach einem einzigen tonlosen Anlauf fuer
+            # immer stumm, auch wenn die Quelle laengst wieder Ton hat.
+            self._tonlos = self._neukodieren = False
+            return url
+        ohne = jetzt - self._quelle_zuletzt
+        if fehler != "offline" and ohne >= self.unklar_s:
+            # Ohne Grenze stuende das Pausenbild ewig, waehrend
+            # TikTok uns blockt — fuer den Zuschauer dasselbe wie
+            # ein toter Stream, nur ohne dass jemand es erfaehrt.
+            return self._abbruch("seit %.0f s keine abspielbare Quelle "
+                                 "(zuletzt: %s)" % (ohne, fehler), laut=True)
+        if fehler == "offline":
+            self._offline_seit = self._offline_seit or jetzt
+            if jetzt - self._offline_seit >= self.offline_s:
+                return self._abbruch("Quelle seit %.0f s offline"
+                                     % (jetzt - self._offline_seit))
+        else:
+            self._offline_seit = None
+            log.warning("Sendebrücke %s: Quelle nicht auflösbar (%s) "
+                        "— Pausenbild bleibt, neuer Versuch in %.0f s.",
+                        self.name, fehler, self._pause)
+        self._halt.wait(self._pause)
+        self._pause = min(self._neustart_max, self._pause * 2)
+        return None
 
     def _fallback(self, grund):
         with self._sperre:
