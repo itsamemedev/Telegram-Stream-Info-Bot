@@ -315,6 +315,12 @@ def _umbruch(text, breite):
 # Quelltext nicht mehr liest, bricht den Generator ab (siehe main): sonst
 # erklaert die Vorlage still einen Schalter, den es nicht gibt.
 ERKLAERUNG = {
+    "MAX_PARALLEL_AUFNAHMEN":
+        "Hoechstens so viele Aufnahmen gleichzeitig (W118). 0 = automatisch: "
+        "vier je CPU-Kern, mindestens acht — ein Riegel gegen den Ausreisser, "
+        "keine Drossel. Eine abgewiesene Aufnahme startet beim naechsten "
+        "Live-Check (30 s), sobald ein Platz frei ist; gemeldet wird das "
+        "gedrosselt auf ERROR, Zahlen in /healthz unter gegendruck.",
     "LOOP_TAKT_MS":
         "Schrittweite der Loop-Feinmessung (W117). Jede Verspaetung gegen "
         "diesen Schlaf ist Zeit, in der der Event-Loop stand. Zu sehen in "

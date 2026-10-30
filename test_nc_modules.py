@@ -21681,6 +21681,125 @@ def _test_v42_w117_loop_verdrahtung_und_sperre():
        "Schleusen-Pruefung verdrahtet, Bremser nur hinter der Anmeldung")
 
 
+def _test_v42_w118_gegendruck_entscheidet():
+    """Abregeln mit Ansage statt still ueberlaufen.
+
+    Aufnahmen hatten keinen Deckel, der Dienst lief mit 1024 fds (keine
+    LimitNOFILE-Zeile in der Unit, nichts im Bot), und eine volle
+    Pruef-Schlange verwarf ohne Zeile.
+    """
+    import subprocess as _sp
+    from nc import gegendruck as G
+
+    G.zuruecksetzen()
+    voll = {"offen": 900, "grenze": 1024}
+    frei = {"offen": 100, "grenze": 1024}
+    # ── (1) DIE RANGFOLGE: ein voller fd-Tisch ist die eigentliche
+    # Nachricht — er kostet gleich auch Datenbank und Netz.
+    ok_, grund, text = G.start_entscheiden(50, 32, voll)
+    assert (ok_, grund) == (False, "fd"), (ok_, grund)
+    assert "LimitNOFILE" in text, "eine Abweisung ohne Abhilfe: %s" % text
+    ok_, grund, text = G.start_entscheiden(32, 32, frei)
+    assert (ok_, grund) == (False, "deckel") and "MAX_PARALLEL_AUFNAHMEN" in text, text
+    assert G.start_entscheiden(31, 32, frei)[0], "unter dem Deckel muss es starten"
+    assert G.start_entscheiden(500, 0, frei)[0], "Deckel 0 heisst: kein Deckel"
+    # Eine unbekannte Lage (kein /proc, Windows) darf keine Aufnahme kosten.
+    assert G.start_entscheiden(0, 0, {"offen": -1, "grenze": -1})[0]
+    assert G.start_entscheiden(0, 0, {"offen": 5000, "grenze": -1})[0]
+    # Die Schwelle selbst: knapp darunter frei, auf ihr gesperrt.
+    grenze = 1000
+    schwelle = int(G.FD_SPERRE_ANTEIL * grenze)
+    assert G.start_entscheiden(0, 0, {"offen": schwelle - 1, "grenze": grenze})[0]
+    assert not G.start_entscheiden(0, 0, {"offen": schwelle, "grenze": grenze})[0]
+
+    # ── (2) DER AUTOMATISCHE DECKEL ist ein Riegel, keine Drossel.
+    assert G.deckel_auto(8) == 32 and G.deckel_auto(1) == 8, (G.deckel_auto(8), G.deckel_auto(1))
+
+    # ── (3) DIE ECHTE LAGE und das ANHEBEN — im eigenen Prozess, damit das
+    # Limit dieser Suite unberuehrt bleibt. Erst auf 256 druecken, dann
+    # muss die Anhebung greifen, aber nie ueber das Hard-Limit hinaus.
+    if os.path.isdir("/proc/self/fd"):
+        lg = G.fd_lage()
+        assert lg["offen"] > 0 and lg["grenze"] > 0, lg
+        code = ("import resource as r, sys; sys.path.insert(0, '.');"
+                "w, h = r.getrlimit(r.RLIMIT_NOFILE);"
+                "r.setrlimit(r.RLIMIT_NOFILE, (256, h));"
+                "from nc import gegendruck as G;"
+                "v, n = G.fd_grenze_anheben();"
+                "w2, h2 = r.getrlimit(r.RLIMIT_NOFILE);"
+                "print(v, n, w2, h2)")
+        aus = _sp.run([sys.executable, "-c", code], capture_output=True, text=True,
+                      cwd=os.path.dirname(os.path.abspath(__file__)), timeout=60)
+        v, n, w2, h2 = (int(x) for x in aus.stdout.split())
+        assert v == 256, aus.stdout
+        assert n == w2 and n > 256, "die Anhebung hat nicht gegriffen: %s" % aus.stdout
+        assert n <= G.FD_ZIEL and (h2 < 0 or n <= h2), aus.stdout
+
+    # ── (4) DIE ZAEHLER fuer /healthz — und keine Namen darin.
+    G.abgewiesen("aufnahme", "deckel")
+    G.abgewiesen("aufnahme", "deckel")
+    G.verworfen()
+    lage = G.lage(3, 32, 7, 200)
+    assert lage["abgewiesen"] == {"aufnahme:deckel": 2}, lage
+    assert lage["pruef_verworfen"] == 1 and lage["aufnahmen"] == 3, lage
+    assert lage["pruef_schlange"] == 7 and lage["pruef_schlange_max"] == 200
+    G.zuruecksetzen()
+
+    ok("W118: fd-Sperre vor Deckel, Deckel 0 = keiner, unbekannte Lage sperrt nie, "
+       "Soft-Limit wird bis zum Hard-Limit angehoben")
+
+
+def _test_v42_w118_gegendruck_verdrahtet():
+    """Gefragt wird VOR dem Lock, die Schlange meldet, der Abruf laeuft
+    neben dem Loop, und die Unit bringt LimitNOFILE mit."""
+    import ast as _ast
+    src = io.open("bot.py", encoding="utf-8").read()
+    baum = _ast.parse(src)
+    fn = {}
+    for n in _ast.walk(baum):
+        if isinstance(n, (_ast.FunctionDef, _ast.AsyncFunctionDef)):
+            fn.setdefault(n.name, n)
+
+    def rufe(f, name):
+        return [c for c in _ast.walk(fn[f]) if isinstance(c, _ast.Call)
+                and (getattr(c.func, "id", None) == name
+                     or getattr(c.func, "attr", None) == name)]
+
+    # ── (1) AUFNAHME: erst fragen, dann den Lock nehmen. Andersherum hielte
+    # eine abgewiesene Aufnahme ihren Lock, und der Nutzer waere gesperrt.
+    gs = rufe("_handle_single_tracking", "_start_gesperrt")
+    lock = [c for c in _ast.walk(fn["_handle_single_tracking"])
+            if isinstance(c, _ast.Name) and c.id == "try_acquire_recording_lock"]
+    assert gs and lock and gs[0].lineno < min(n.lineno for n in lock), \
+        "die Aufnahme fragt nicht VOR dem Lock"
+    assert "_aufnahme_deckel" in _ast.unparse(gs[0]), _ast.unparse(gs[0])
+    # ── (2) RESTREAM: die fd-Sperre gilt auch dort.
+    rm = next(n for n in baum.body if isinstance(n, _ast.ClassDef) and n.name == "RestreamManager")
+    fn["start"] = next(n for n in rm.body if isinstance(n, _ast.AsyncFunctionDef) and n.name == "start")
+    assert rufe("start", "_start_gesperrt"), "RestreamManager.start fragt nicht"
+    # ── (3) DIE SCHLANGE: verworfen wird gezaehlt und gemeldet, und der
+    # Tracking-Abruf alle 5 s laeuft im Thread.
+    assert rufe("check_all_trackings", "_pruefung_verworfen")
+    direkt = [c for c in rufe("check_all_trackings", "get_all_active_trackings")]
+    assert not direkt, "get_all_active_trackings wieder direkt auf dem Loop"
+    assert any("to_thread(get_all_active_trackings)" in _ast.unparse(c)
+               for c in rufe("check_all_trackings", "to_thread"))
+    assert "_nc_meldetakt.melden(" in _ast.unparse(fn["_pruefung_verworfen"])
+    assert "_nc_meldetakt.melden(" in _ast.unparse(fn["_start_gesperrt"])
+    # ── (4) START und /healthz.
+    assert rufe("run_bot", "_fd_grenze_anheben")
+    assert "gegendruck=_nc_gegendruck.lage(" in _ast.unparse(fn["healthz"])
+    # ── (5) DIE UNIT: ohne die Zeile ist das Hard-Limit, bis zu dem der Bot
+    # anheben darf, auf manchen Systemen selbst nur 4096.
+    inst = io.open("tools/installer.sh", encoding="utf-8").read()
+    unit = inst[inst.index("ExecStart=${VENV}/bin/python ${ZIEL}/bot.py"):]
+    unit = unit[:unit.index("[Install]")]
+    assert any(z.strip() == "LimitNOFILE=65536" for z in unit.splitlines()), unit
+
+    ok("W118: Aufnahme fragt vor dem Lock, Restream fragt, Schlange meldet, "
+       "Abruf im Thread, Unit mit LimitNOFILE")
+
+
 def main():
     tmp, rid = richte_testdatenbank_ein()
     ok("db_conn aus nc.dbwrap: echtes Schema angelegt, Commit durchgelaufen")
@@ -21976,6 +22095,8 @@ def main():
     _test_v42_w117_loop_lag_und_spaeher()
     _test_v42_w117_log_flut_haelt_den_loop_nicht()
     _test_v42_w117_loop_verdrahtung_und_sperre()
+    _test_v42_w118_gegendruck_entscheidet()
+    _test_v42_w118_gegendruck_verdrahtet()
     _test_v42_w60_azrael_cooldown_je_plattform()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)

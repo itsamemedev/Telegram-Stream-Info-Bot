@@ -8,7 +8,7 @@ auslieferbar und rückrollbar. Diese Datei wächst mit jedem Paket.
 | Paket | Inhalt | Erwartete Wirkung |
 |---|---|---|
 | **A — Event-Loop-Schutz** | Loop-Lag in ms messen, blockierende Stelle benennen, Log-Schleuse gegen Nachzügler, DB-Zugriffe der heißen Pfade neben den Loop, Sperre gegen neue | Stockungen unter 3 s werden sichtbar **und** lokalisierbar; die bekannten Plattenlast-Stockungen in Restream/Intel fallen weg |
-| B — Nebenläufigkeit & Gegendruck | Semaphoren und Grenzen prüfen (Auflösung, Aufnahmen, Restreams, TikTokLive-Clients), Prozessstarts drosseln, harte Deckel mit Meldung statt stiller Überlast | Kein Einbruch unter Last, sondern sichtbares Abregeln |
+| **B — Nebenläufigkeit & Gegendruck** | Semaphoren und Grenzen prüfen (Auflösung, Aufnahmen, Restreams, TikTokLive-Clients), Prozessstarts drosseln, harte Deckel mit Meldung statt stiller Überlast | Kein Einbruch unter Last, sondern sichtbares Abregeln |
 | C — Caches, Polling, heiße Pfade | Live-Status-Cache und Nachschläge, adaptives Polling ohne Rückkopplung, Status-Aggregation für Deck/Befehle ohne Vollscan | Kürzere Zeit live → Aufnahme, weniger Last je Abfrage |
 | D — Prozess- & Ressourcen-Lebenszyklus | Kindprozesse lückenlos verfolgen und abräumen, fd-/Zombie-Schutz, Deckel auf langlebige Dicts | Kein Wachstum über Tage |
 | E — Start, Stopp, Neustart | Unabhängige Initialisierung parallel, sauberes Herunterfahren ohne Waisen-ffmpeg, „degradiert aber lebendig" vs. „tot" | Schnellerer, deterministischer `systemctl restart` |
@@ -80,3 +80,58 @@ eigenen Thread, nicht mehr den ganzen Bot.
 überwiegend in Telegram- und Discord-Befehlen, die selten laufen. Sie einzeln
 umzubauen wäre Risiko ohne Nutzen. `tools/loopblocker.py --sperre` verhindert,
 dass es mehr werden; was davon wirklich stört, zeigt der Späher im Betrieb.
+
+## Paket B — Nebenläufigkeit & Gegendruck (W118)
+
+### Was sich geändert hat
+
+- **Dateideskriptoren:** Der Dienst lief bisher mit 1024 — die Unit setzte kein
+  `LimitNOFILE`. Der Bot hebt das Soft-Limit beim Start selbst an (bis zum
+  Hard-Limit, höchstens 65536). Im Log beim Start:
+
+      fd-Grenze angehoben: 1024 -> 65536
+
+  Steht stattdessen „fd-Grenze bleibt bei …", erlaubt das Hard-Limit nicht
+  mehr — dann `LimitNOFILE=65536` unter `[Service]` in die Unit eintragen,
+  `systemctl daemon-reload`, Neustart. Neue Installationen haben die Zeile.
+- **Deckel für parallele Aufnahmen** (`MAX_PARALLEL_AUFNAHMEN`). Vorgabe 0 =
+  automatisch: vier je Kern, mindestens acht, auf der 8-Kern-Box also 32.
+- **fd-Sperre:** Ab 85 % belegter Dateideskriptoren startet kein neuer
+  ffmpeg mehr, weder für Aufnahmen noch für Restreams — sonst verliert der Bot
+  gleich danach Datenbank und Netz.
+- **Live-Check-Schlange:** Läuft sie über, steht das jetzt im Log, statt dass
+  ein Nutzer still später geprüft wird.
+
+### Neue Schalter
+
+| Variable | Vorgabe | Wirkung |
+|---|---|---|
+| `MAX_PARALLEL_AUFNAHMEN` | 0 (= 4 je Kern, mind. 8) | Höchstzahl gleichzeitiger Aufnahmen |
+
+`RESTREAM_MAX_CONCURRENT` (Vorgabe 2) und `WORKER_COUNT` (Vorgabe 4) bleiben,
+wie sie sind.
+
+### Wo man hinsieht
+
+`/healthz` → `gegendruck`:
+
+    "gegendruck": {"aufnahmen": 3, "aufnahmen_deckel": 32,
+                   "fd": {"offen": 212, "grenze": 65536, "anteil": 0.003},
+                   "abgewiesen": {}, "pruef_schlange": 0,
+                   "pruef_schlange_max": 200, "pruef_verworfen": 0}
+
+- `fd.grenze` 1024: die Anhebung hat nicht gegriffen (siehe oben).
+- `fd.anteil` steigt über Tage ohne mehr Aufnahmen: ein Leck — Paket D.
+- `abgewiesen` nicht leer: `aufnahme:deckel` heißt, der Deckel hat gegriffen;
+  `aufnahme:fd` oder `restream:fd` heißt, die Deskriptoren werden knapp.
+  Das error.log nennt dazu Nutzer und Abhilfe (einmal je 15 Minuten je Grund).
+- `pruef_verworfen` > 0: die Worker kommen nicht nach — `WORKER_COUNT`
+  erhöhen oder nach „Event-Loop … gestanden" suchen (Paket A).
+
+### Verhalten unter Last
+
+Gehen mehr Nutzer gleichzeitig live, als der Deckel erlaubt, starten die
+ersten bis zum Deckel; die übrigen werden beim nächsten Live-Check (alle 30 s
+für einen Live-Nutzer) erneut gefragt und starten, sobald eine Aufnahme endet.
+Kein Lock bleibt hängen, kein Nutzer wird gesperrt. Was abgewiesen wurde, steht
+im Log — nichts verschwindet still.

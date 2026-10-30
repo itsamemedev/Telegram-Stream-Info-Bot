@@ -11,6 +11,36 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Performance & Stabilität — Paket B: abregeln mit Ansage statt still überlaufen (v4.2 W118)
+
+Drei Lücken, alle drei ohne eine einzige Logzeile:
+
+- **Der Dienst lief mit 1024 Dateideskriptoren.** Die Unit aus
+  `tools/installer.sh` setzte kein `LimitNOFILE`, der Bot hob nichts an. Jede
+  Aufnahme belegt zwei Pipes, jeder Chat einen Socket — ein voller fd-Tisch
+  meldet sich als `unable to open database file`, aiohttp ohne Verbindung und
+  ffmpeg mit `EMFILE`, nirgends verständlich. Der Bot hebt das Soft-Limit jetzt
+  beim Start bis zum Hard-Limit an (höchstens 65536) — das erreicht auch
+  bestehende Installationen, auf denen der Installer nie wieder läuft; die
+  Unit bringt `LimitNOFILE=65536` mit.
+- **Aufnahmen hatten keinen Deckel.** Restreams schon (`RESTREAM_MAX_CONCURRENT`).
+  Neu `MAX_PARALLEL_AUFNAHMEN`, Vorgabe automatisch (vier je Kern, mindestens
+  acht) — ein Riegel gegen den Ausreißer, keine Drossel. Vor jedem
+  Prozessstart (Aufnahme **und** Restream) zusätzlich die fd-Sperre ab 85 %.
+  Gefragt wird **vor** dem Aufnahme-Lock: eine abgewiesene Aufnahme hält
+  nichts fest und startet beim nächsten Live-Check (30 s). Gemeldet über
+  `nc/meldetakt.py` auf ERROR, mit Abhilfe.
+- **Eine volle Live-Check-Schlange verwarf still.** Jetzt gezählt und
+  gedrosselt gemeldet („die Worker kommen nicht nach", Abhilfe
+  `WORKER_COUNT`). Der Tracking-Abruf, der alle 5 s lief, und der
+  Initial-Burst beim Start laufen neben dem Loop — der Vertrag hat den zweiten
+  Aufruf gefunden.
+- `/healthz` trägt `gegendruck`: Aufnahmen gegen Deckel, fds gegen Limit,
+  Abweisungen je Grund, Füllstand und Verluste der Prüf-Schlange.
+- Neues Modul `nc/gegendruck.py`, zwei Verträge (`_test_v42_w118_*`), elf
+  Mutationsproben gefangen — eine erst nach dem Entfernen eines Riegels, der
+  nie gewirkt hat (`offen >= 0`: −1 erreicht keine positive Schwelle).
+
 ### Performance & Stabilität — Paket A: der Event-Loop wird gemessen, und die Stelle steht dabei (v4.2 W117)
 
 Erster Teil des Härtungs-Sprints (Plan und Betreiber-Notiz:

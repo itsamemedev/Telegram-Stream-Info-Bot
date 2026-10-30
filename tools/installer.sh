@@ -982,6 +982,10 @@ Environment=PYTHONUNBUFFERED=1
 ExecStart=${VENV}/bin/python ${ZIEL}/bot.py
 Restart=always
 RestartSec=10
+# v4.2-W118: ohne diese Zeile laeuft der Dienst mit 1024 Dateideskriptoren —
+# jede Aufnahme belegt zwei Pipes, jeder Chat einen Socket. Der Bot hebt das
+# Soft-Limit zwar selbst an, aber nur bis zum Hard-Limit, das hier steht.
+LimitNOFILE=65536
 
 [Install]
 WantedBy=multi-user.target

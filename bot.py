@@ -614,6 +614,7 @@ from nc import audiotap as _nc_audiotap  # v4.2-W46: warum der Audio-Tap starb
 from nc import meldetakt as _nc_meldetakt  # v4.2-W81: Grund melden ohne Log-Flut
 from nc import logschleuse as _nc_logschleuse  # v4.2-W97: Logging weg vom Event-Loop
 from nc import looplag as _nc_looplag  # v4.2-W117: Loop-Lag in ms, und wer ihn haelt
+from nc import gegendruck as _nc_gegendruck  # v4.2-W118: abregeln mit Ansage
 from nc import resolvergrund as _nc_rgrund  # v4.2-W81: warum die Aufloesung leer blieb
 from nc import telegramfehler as _nc_tgfehler  # v4.2-W93: warum das Telegram-Polling klemmt
 from nc import aufnahmesitzung as _nc_sitzung  # v4.2-W44: die Klammer um die Segmente EINES Streams
@@ -8127,6 +8128,11 @@ async def _handle_single_tracking(t, bot_app):
         # darin, dass der Aufruf auf dem Loop laeuft. Zwei nebenlaeufige
         # Worker koennen die Anweisung jetzt gleichzeitig absetzen — genau
         # einer gewinnt, wie vorher.
+        # v4.2-W118: VOR dem Lock — eine abgewiesene Aufnahme haelt nichts
+        # fest, und der naechste Poll fragt von selbst wieder.
+        if _start_gesperrt("aufnahme", "@" + username, len(active_processes),
+                           _aufnahme_deckel()):
+            return
         if not await asyncio.to_thread(try_acquire_recording_lock,
                                        tid, username=username):    # C4 + R1
             # Anderer Worker hält den Lock (für diesen Tracking ODER
@@ -8422,7 +8428,7 @@ async def check_all_trackings(bot_app):
                  f"{UPLOAD_WINDOW_END:02d}:00 Uhr (Uploads außerhalb werden aufgeschoben"
                  + (f", {_pend} in Warteschlange" if _pend else "") + ").")
     # F35: Initial-Burst — beim Start einmal alle Trackings prüfen
-    for t in get_all_active_trackings():
+    for t in await asyncio.to_thread(get_all_active_trackings):   # v4.2-W118
         _NEXT_CHECK_AT[t["id"]] = 0   # 0 = "sofort fällig"
 
     LOOP_TICK = 5  # Sekunden
@@ -8433,7 +8439,9 @@ async def check_all_trackings(bot_app):
         # kurz warten, nächster Tick. Rest der Loop-Struktur unverändert.
         now = _time_mod.monotonic()
         try:
-            trackings = get_all_active_trackings()
+            # v4.2-W118: neben dem Loop — diese Abfrage laeuft alle 5 s und
+            # stand damit haeufiger auf dem Loop als jede andere.
+            trackings = await asyncio.to_thread(get_all_active_trackings)
         except Exception as _e:
             log.error("check-loop: Trackings-Abruf fehlgeschlagen (%s) — retry in 5s", _e)
             await asyncio.sleep(5)
@@ -8452,10 +8460,14 @@ async def check_all_trackings(bot_app):
                 # ist (echter next_check kommt nach _handle via _schedule_next_check).
                 _NEXT_CHECK_AT[tid] = now + _INFLIGHT_GUARD_SECS
             except asyncio.QueueFull:
-                # Worker zu langsam — ältesten Eintrag verwerfen, neuen rein
+                # Worker zu langsam — ältesten Eintrag verwerfen, neuen rein.
+                # v4.2-W118: nicht mehr still. Der verworfene Nutzer wird
+                # erst nach dem In-Flight-Riegel wieder geprueft — ein
+                # Live-Start kommt dann Minuten zu spaet an.
                 try:
-                    live_check_queue.get_nowait()
+                    _weg = live_check_queue.get_nowait()
                     live_check_queue.task_done()
+                    _pruefung_verworfen(_weg["username"])
                 except Exception: pass
                 try:
                     live_check_queue.put_nowait(t)
@@ -14267,6 +14279,12 @@ class RestreamManager:
             return {"ok": False, "error": f"Restream deaktiviert ({why})"}
         if rid in self._procs:
             return {"ok": True, "already": True}
+        # v4.2-W118: nur die fd-Sperre — den Deckel fuer Restreams haelt
+        # RESTREAM_MAX_CONCURRENT im Scheduler.
+        _gd = _start_gesperrt("restream", "#%s" % rid, len(self._procs), 0)
+        if _gd:
+            self._set_status(rid, "idle", err=_gd)
+            return {"ok": False, "error": _gd}
         # v4.1-W12: Haelt jemand anders den Einzel-Slot? Diese Frage wurde
         # bisher NUR im Scheduler gestellt (auto_start_due), nicht hier — und
         # damit nicht auf dem Reconnect-Pfad. _monitor nimmt den Restream beim
@@ -18652,6 +18670,12 @@ def healthz():
                    # v4.2-W117: Loop-Lag in ms (p50/p99/max ueber 5 min).
                    # `aktiv: false` heisst "keine Messung", nicht "kein Lag".
                    loop_lag=_nc_looplag.lage(),
+                   # v4.2-W118: Aufnahmen gegen Deckel, fds gegen Limit,
+                   # Abweisungen und verworfene Live-Checks.
+                   gegendruck=_nc_gegendruck.lage(
+                       len(active_processes), _aufnahme_deckel(),
+                       live_check_queue.qsize() if live_check_queue else -1,
+                       live_check_queue.maxsize if live_check_queue else -1),
                    ts=datetime.now(timezone.utc).isoformat()), (200 if ok else 503)
 
 
@@ -23108,6 +23132,7 @@ async def run_bot():
 
     global live_check_queue
     live_check_queue = asyncio.Queue(maxsize=200)
+    _fd_grenze_anheben()                 # v4.2-W118: vor dem ersten Kindprozess
 
     # X-Series: Main-Loop-Referenz für den Flask→Async-Bridge speichern.
     # Flask läuft im eigenen Thread; async-Helper (ffprobe, manual recording,
@@ -23375,6 +23400,66 @@ def _loop_takt_starten():
         return
     _nc_looplag.spaeher_starten(LOOP_SPAEHER_MS / 1000.0,
                                 melden=_loop_stockung_melden)
+
+
+# v4.2-W118: Abregeln mit Ansage (nc/gegendruck.py). Restreams sind seit
+# V37-MAXLIVE gedeckelt, Aufnahmen waren es nicht; 0 = automatisch (vier je
+# Kern, mindestens acht) — ein Riegel gegen den Ausreisser, keine Drossel.
+MAX_PARALLEL_AUFNAHMEN = _env_int("MAX_PARALLEL_AUFNAHMEN", 0)
+
+
+def _aufnahme_deckel():
+    return MAX_PARALLEL_AUFNAHMEN if MAX_PARALLEL_AUFNAHMEN > 0 \
+        else _nc_gegendruck.deckel_auto()
+
+
+def _fd_grenze_anheben():
+    """Soft-Limit der Dateideskriptoren anheben (Begruendung in
+       nc/gegendruck.fd_grenze_anheben). Die Unit aus dem Installer setzte
+       kein LimitNOFILE, der Dienst lief mit 1024."""
+    try:
+        vorher, nachher = _nc_gegendruck.fd_grenze_anheben()
+    except (OSError, ValueError) as e:
+        log.warning("fd-Grenze nicht anhebbar (%s) — es gilt, was die Unit "
+                    "setzt. Abhilfe: LimitNOFILE=65536 in der systemd-Unit.", e)
+        return
+    if nachher > vorher:
+        log.info("fd-Grenze angehoben: %d -> %d", vorher, nachher)
+    elif 0 < nachher < 4096:
+        log.warning("fd-Grenze bleibt bei %d (Hard-Limit erlaubt nicht mehr) — "
+                    "bei vielen Aufnahmen und Restreams wird das knapp. Abhilfe: "
+                    "LimitNOFILE=65536 in der systemd-Unit.", nachher)
+
+
+def _start_gesperrt(art, wer, aktiv, deckel):
+    """-> "" (falsch), wenn der Kindprozess starten darf, sonst der Grund.
+
+    Laut ueber nc/meldetakt (Kanal je Art, Grund fd|deckel): dieselbe Lage
+    meldet sich einmal je 15 Minuten mit Zaehler, ein Wechsel sofort."""
+    erlaubt, grund, text = _nc_gegendruck.start_entscheiden(
+        aktiv, deckel, _nc_gegendruck.fd_lage())
+    if not erlaubt:
+        _nc_gegendruck.abgewiesen(art, grund)
+        laut, unterdrueckt = _nc_meldetakt.melden("gegendruck-" + art, grund,
+                                                  _time_mod.monotonic())
+        if laut:
+            log.error("Gegendruck: %s %s nicht gestartet — %s%s", art, wer, text,
+                      _nc_meldetakt.zusatz(unterdrueckt))
+    return text
+
+
+def _pruefung_verworfen(wer):
+    """Ein Live-Check fiel aus der vollen Schlange. Zaehlen und gedrosselt
+       melden — mit der Abhilfe, nicht nur mit der Zahl."""
+    n = _nc_gegendruck.verworfen()
+    laut, unterdrueckt = _nc_meldetakt.melden("pruef-schlange", "voll",
+                                              _time_mod.monotonic())
+    if laut:
+        log.error("Live-Check-Schlange voll: Pruefung fuer @%s verworfen (%d bisher)"
+                  "%s. Die %d Worker kommen nicht nach — Live-Starts werden "
+                  "spaeter erkannt. Abhilfe: WORKER_COUNT erhoehen, oder im "
+                  "Log nach 'Event-Loop … gestanden' suchen.", wer, n,
+                  _nc_meldetakt.zusatz(unterdrueckt), WORKER_COUNT)
 
 
 def _log_schleuse_pruefen():
