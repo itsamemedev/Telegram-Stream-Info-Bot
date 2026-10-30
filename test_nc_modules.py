@@ -23457,7 +23457,8 @@ def _test_v42_w126_motd_konfigurieren():
     # auch wenn der Wert davor gueltig war: keine halbe Konfiguration.
     for falsch in (["WIDTH=abc"], ["WIDTH=999"], ["BARW=7"], ["COLOR_MODE=farbig"],
                    ["SHOW_REC=2"], ["CPU_SAMPLE=5"], ["DASH_PORT=0"], ["FOO=1"], ["WIDTH"],
-                   ["BOT_DIR=" + heim], ["SERVICE=a b"], ["WIDTH=50", "BARW=x"]):
+                   ["BOT_DIR=" + heim], ["SERVICE=a b"], ["WIDTH=50", "BARW=x"],
+                   ["DB=" + _os.path.join(heim, "fehlt.db")], [""]):
         args = []
         for f in falsch:
             args += ["--set", f]
@@ -23466,6 +23467,12 @@ def _test_v42_w126_motd_konfigurieren():
         assert "WIDTH='60'" in werte(), (falsch, werte())
     assert lauf("--configure", "--set", "WIDTH=080").returncode == 0, "fuehrende Null gilt als Oktal"
     assert "WIDTH='080'" in werte()
+    # Ein --set ganz ohne Operand ebenso (Codex-Befund, PR #165).
+    assert lauf("--configure", "--set").returncode == 2
+    # DB ist einstellbar — die falsch erkannte Datenbank ist der Grund dafuer.
+    db = _os.path.join(heim, "echt.db")
+    open(db, "w").close()
+    assert lauf("--configure", "--set", "DB=" + db).returncode == 0 and "DB='%s'" % db in werte()
     lauf("--configure", "--set", "WIDTH=60")
     # (4) --dry-run zeigt, schreibt nicht.
     r = lauf("--configure", "--set", "WIDTH=70", "--dry-run")

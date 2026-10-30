@@ -735,3 +735,6 @@ kein bot.py in %s	no bot.py in %s
 keine ganze Zahl: %s	not a whole number: %s
 neuer Wert, Enter = behalten	new value, Enter = keep
 unbekannte Einstellung: %s	unknown setting: %s
+SQLite-Datei fuer die Zahlen (leer = selbst suchen)	SQLite file for the numbers (empty = detect)
+keine Datei: %s	not a file: %s
+--set ohne NAME=WERT	--set without NAME=VALUE

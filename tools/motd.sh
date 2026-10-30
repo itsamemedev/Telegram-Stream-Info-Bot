@@ -426,7 +426,7 @@ uninstall_darwin(){
 # COLOR_MODE=farbig) faellt dabei nicht auf — die MOTD rechnet still mit
 # Unsinn oder der Vorgabe weiter. Jetzt: jeder Wert wird geprueft, bevor er
 # irgendwo landet, und die Vorschau laeuft sofort mit dem neuen Wert.
-KONF_FELDER="SHOW_REC COLOR_MODE WIDTH BARW DISK_TARGET CPU_SAMPLE SERVICE BOT_DIR DASH_PORT"
+KONF_FELDER="SHOW_REC COLOR_MODE WIDTH BARW DISK_TARGET CPU_SAMPLE SERVICE BOT_DIR DASH_PORT DB"
 
 konf_hilfe(){ # $1 = Name -> eine Zeile Erklaerung
   case "$1" in
@@ -439,6 +439,7 @@ konf_hilfe(){ # $1 = Name -> eine Zeile Erklaerung
     SERVICE)     t "Name des systemd-Dienstes (leer = selbst suchen)";;
     BOT_DIR)     t "Verzeichnis des Bots (dort liegt bot.py)";;
     DASH_PORT)   t "Port des Dashboards";;
+    DB)          t "SQLite-Datei fuer die Zahlen (leer = selbst suchen)";;
   esac
 }
 
@@ -465,6 +466,12 @@ konf_pruefen(){ # $1 = Name, $2 = Wert
         return 0
       fi
       tf "kein Verzeichnis: %s" "$v";;
+    DB)
+      # Leer heisst "selbst suchen" — dieselbe Regel wie in der Erkennung oben.
+      # Eine falsch erkannte Datenbank (brain.db, eine alte Kopie) ist genau der
+      # Fall, fuer den man hier etwas eintraegt.
+      [ -z "$v" ] || [ -f "$v" ] && return 0
+      tf "keine Datei: %s" "$v";;
     SERVICE)
       # Leer ist erlaubt (= selbst suchen). Leerzeichen und Anfuehrungszeichen
       # nicht: der Wert geht als Name an systemctl.
@@ -524,10 +531,14 @@ konfigurieren(){
   local setzen="" probe=0 a n v grund
   while [ $# -gt 0 ]; do
     case "$1" in
-      --set) shift; setzen="$setzen
-${1:-}";;
-      --set=*) setzen="$setzen
-${1#--set=}";;
+      --set|--set=*)
+        if [ "$1" = --set ]; then shift; a="${1:-}"; else a="${1#--set=}"; fi
+        # Ein leeres --set ist ein Bedienfehler, kein "nichts setzen": sonst
+        # schriebe der Lauf die erkannten Vorgaben und meldete Erfolg
+        # (Codex-Befund, PR #165).
+        [ -n "$a" ] || { printf "${ERR}✘ %s${R}\n" "$(t "--set ohne NAME=WERT")"; return 2; }
+        setzen="$setzen
+$a";;
       --dry-run) probe=1;;
       *) printf "${ERR}%s${R}\n" "$(tf "Unbekannte Option: %s" "$1")"; return 2;;
     esac
