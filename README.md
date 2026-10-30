@@ -298,7 +298,7 @@ OAuth-Flows — Schritt für Schritt in
 
 ## ⚙️ Konfiguration
 
-Alle Einstellungen leben in `.env`. Die Vorlage `.env.example` kennt **rund 546 Variablen** — das Minimum ist klein:
+Alle Einstellungen leben in `.env`. Die Vorlage `.env.example` kennt **rund 562 Variablen** — das Minimum ist klein:
 
 ### 🔑 Pflicht
 
@@ -845,7 +845,7 @@ jeweils mit Zeilennummer.
 
 | Regel | Warum |
 |---|---|
-| **`.env` liegt nie im Repo und nie im Archiv** | ~546 Variablen inkl. Cookies, OAuth-Tokens und Stream-Keys |
+| **`.env` liegt nie im Repo und nie im Archiv** | ~562 Variablen inkl. Cookies, OAuth-Tokens und Stream-Keys |
 | **Dashboard bindet auf `127.0.0.1`** | Zugriff läuft über SSH-Tunnel, nicht über einen offenen Port |
 | **Cookie- und Key-Redaction beim Logging** | `streamlink`/`ffmpeg`-Kommandozeilen werden vor dem Loggen bereinigt |
 | **Ledger ist append-only mit Hash-Kette** | Eine Korrektur ist eine Gegenbuchung, kein Überschreiben |
@@ -952,7 +952,7 @@ nicht greifen, gekippte Verträge in `test_restream.py`.
 | Discord-Slash-Commands | 65 |
 | Fachmodule | 163 in `nc/` (+38 in `nc/routes/`, +3 in `nc/intel/`), 10 in `brain/` |
 | Sentinel-Agenten | 13 |
-| Konfigurationsvariablen | ~546 |
+| Konfigurationsvariablen | ~562 |
 | Sprachen | Deutsch (Quelle), Englisch |
 
 Vollständige Historie: **[`docs/CHANGELOG.md`](docs/CHANGELOG.md)** ·

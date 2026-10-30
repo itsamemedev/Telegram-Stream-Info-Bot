@@ -11,6 +11,30 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### `.env.example` vollständig: 16 Variablen nachgetragen (v4.2 W128)
+
+- **Gemessen:** jede env-Lesestelle im ganzen Produktionscode gegen die
+  Vorlage. Sechzehn Variablen, die der Bot liest, standen nicht darin —
+  darunter AZRAELs Antwortbremsen (`AZRAEL_REPLY_*`, `AZRAEL_COHOST_*`), die
+  Highlight-Schwellen (`HIGHLIGHT_MIN_SCORE`, …), die Wahl des
+  Embedding-Backends (`BRAIN_EMBED_*`), `NEWS_AUTO` und die YouTube-Senderate.
+  Wer seine `.env` aus der Vorlage baute, erfuhr von ihnen nichts.
+- **Ursache, vierter Fall derselben Klasse:** Helfer, die ihren Parameter an
+  `os.getenv` reichen („Durchleiter“), galten als erledigt, weil „das Literal
+  beim Aufrufer steht und die Muster es sehen“. Das stimmte nur, wenn der
+  Helfer zufällig `env_int` oder `getenv` hieß — bei `_env`, `_f`/`_i` und `_b`
+  traf keins.
+- **Gesperrt wird die Klasse:** `durchleiter_namen()` findet jeden Durchleiter
+  und folgt dem Sichtbarkeitsbereich (gleichnamige verschachtelte Helfer mit
+  anderer Signatur, Modul-Import, umbenannter Import, Kette über zwei Helfer).
+  Ein Aufruf ohne wörtlichen Namen bricht `--check` ab. Die Vorgabe wird auch
+  aus dem Helfer selbst gelesen (`NEWS_AUTO=0`).
+- Gesucht wird jetzt auch in `discordbot.py`, `telegramversand.py` und
+  `nc/intel/` (heute ohne Fund, aber Produktionscode).
+- Vertrag `_test_v42_w128_env_vorlage_durchleiter`, 8 Mutationsproben
+  gefangen. Vier entwischten zuerst — eine davon zeigte einen echten Fehler:
+  ein umbenannter Import wurde nie erkannt.
+
 ### Beobachtung: Prometheus und Grafana (v4.2 W127)
 
 - **`tools/observability.sh`** richtet Prometheus als eigenen Dienst

@@ -241,11 +241,170 @@ def dynamische_namen(pfad, quelltext):
     return namen, luecken
 
 
+# ══════════════════════════════════════════════════════════════════════
+# v4.2-W128: Durchleiter — Helfer, die ihren Parameter an os.getenv reichen
+# ══════════════════════════════════════════════════════════════════════
+# Fall (2) in dynamische_namen() nahm an, das Literal stehe beim Aufrufer und
+# "die Muster oben sehen es". Das stimmt nur, wenn der Helfer zufaellig so
+# heisst, dass ein Muster ihn trifft (env_int, getenv). Gemessen am 30.10.:
+# elf Durchleiter, und bei drei davon traf keins — `_env` (brain/semantic.py),
+# `_f`/`_i` (nc/cfgnorm.py), `_b` (nc/news.py). SECHZEHN Variablen fehlten so
+# in der Vorlage, darunter AZRAELs Antwortbremsen, die Highlight-Schwellen und
+# die Wahl des Embedding-Backends.
+#
+# Aufgeloest wird nach Sichtbarkeit, nicht nach Namen: in nc/cfgnorm.py heissen
+# vier verschachtelte Helfer `_f` bzw. `_i`, zwei reichen einen env-Namen
+# durch, zwei bekommen nur einen Zahlwert. Ein Abgleich am Namen allein haette
+# deren Aufrufe als Luecken gemeldet — und der Vorgaenger hat genau so am
+# Namen geraten.
+
+def _gilt_fuer(baum):
+    """Elternzeiger setzen (einmal je Baum)."""
+    for n in ast.walk(baum):
+        for k in ast.iter_child_nodes(n):
+            k._eltern = n
+
+
+def _umschliessend(n):
+    """Die naechste umschliessende Funktion oder das Modul."""
+    o = n
+    while hasattr(o, "_eltern"):
+        o = o._eltern
+        if isinstance(o, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Module)):
+            return o
+    return None
+
+
+def _positionen(fn):
+    return [x.arg for x in fn.args.posonlyargs + fn.args.args]
+
+
+def _modul_von(rel):
+    """'nc/envnum.py' -> 'nc.envnum'."""
+    return rel[:-3].replace("/", ".")
+
+
+def _importe(baum):
+    """(alias -> modul, name -> (modul, original)) fuer die Datei."""
+    module, namen = {}, {}
+    for n in ast.walk(baum):
+        if isinstance(n, ast.Import):
+            for a in n.names:
+                module[a.asname or a.name] = a.name
+        elif isinstance(n, ast.ImportFrom) and n.module:
+            for a in n.names:
+                module[a.asname or a.name] = n.module + "." + a.name
+                namen[a.asname or a.name] = (n.module, a.name)
+    return module, namen
+
+
+def durchleiter_namen(quellen):
+    """(namen, luecken) ueber ALLE Dateien. quellen: {rel: quelltext}.
+
+    namen: {ENV_NAME: vorgabe} von den Aufrufern der Durchleiter.
+    luecken: [(rel, zeile, was)] — Aufrufe, die keinen woertlichen Namen
+    hereinreichen und selbst kein Durchleiter sind.
+    """
+    baeume = {}
+    for rel, txt in quellen.items():
+        try:
+            baeume[rel] = ast.parse(txt)
+        except SyntaxError:
+            continue
+        _gilt_fuer(baeume[rel])
+    # Durchleiter: (rel, funktion) -> Index des Parameters, der an getenv geht.
+    durch = {}
+    for rel, baum in baeume.items():
+        for n in ast.walk(baum):
+            if not (isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
+                    and n.func.attr == "getenv" and n.args and isinstance(n.args[0], ast.Name)):
+                continue
+            fn = _umschliessend(n)
+            if isinstance(fn, ast.Module) or fn is None:
+                continue
+            pos = _positionen(fn)
+            if n.args[0].id in pos:
+                durch[(rel, id(fn))] = (fn, pos.index(n.args[0].id))
+                # Steht die Vorgabe im Helfer selbst (os.getenv(name, "0")),
+                # gilt sie fuer jeden Aufrufer, der keine eigene mitgibt.
+                if len(n.args) > 1 and isinstance(n.args[1], ast.Constant) \
+                        and isinstance(n.args[1].value, (str, int, float)):
+                    fn._nc_vorgabe = str(n.args[1].value)
+    namen, luecken = {}, []
+    erledigt = set()
+    while True:
+        neu = {k: v for k, v in durch.items() if k not in erledigt}
+        if not neu:
+            break
+        for (rel_d, _fid), (fn_d, idx) in neu.items():
+            erledigt.add((rel_d, _fid))
+            modul_d = _modul_von(rel_d)
+            definiert_in = getattr(fn_d, "_eltern", None)
+            versatz = 1 if _positionen(fn_d)[:1] in (["self"], ["cls"]) else 0
+            for rel, baum in baeume.items():
+                mod_alias, imp_namen = _importe(baum)
+                for c in ast.walk(baum):
+                    if not isinstance(c, ast.Call):
+                        continue
+                    f = c.func
+                    trifft = False
+                    if isinstance(f, ast.Name) and rel != rel_d:
+                        # Importiert, auch umbenannt (from nc.a import _flag as
+                        # schalter): entschieden am Import, nicht am Namen.
+                        trifft = isinstance(definiert_in, ast.Module) and \
+                            imp_namen.get(f.id) == (modul_d, fn_d.name)
+                    elif isinstance(f, ast.Name) and f.id == fn_d.name:
+                        if rel == rel_d:
+                            # Gleiche Datei: nur, wenn DIESE Definition dort gilt —
+                            # der Aufruf liegt im Rumpf, in dem sie steht.
+                            o = c
+                            while hasattr(o, "_eltern"):
+                                o = o._eltern
+                                if o is definiert_in:
+                                    trifft = True
+                                    break
+                                if isinstance(o, (ast.FunctionDef, ast.AsyncFunctionDef)) and any(
+                                        isinstance(x, (ast.FunctionDef, ast.AsyncFunctionDef))
+                                        and x.name == fn_d.name and x is not fn_d for x in o.body):
+                                    break        # dort gilt eine gleichnamige andere
+                    elif (isinstance(f, ast.Attribute) and f.attr == fn_d.name
+                          and isinstance(f.value, ast.Name) and isinstance(definiert_in, ast.Module)):
+                        trifft = mod_alias.get(f.value.id) == modul_d
+                    if not trifft:
+                        continue
+                    i = idx - versatz
+                    arg = c.args[i] if len(c.args) > i else None
+                    if arg is None:
+                        pname = _positionen(fn_d)[idx]
+                        arg = next((k.value for k in c.keywords if k.arg == pname), None)
+                    if isinstance(arg, ast.Constant) and isinstance(arg.value, str) \
+                            and _ENVNAME.match(arg.value):
+                        vor = c.args[i + 1] if len(c.args) > i + 1 else None
+                        vorgabe = str(vor.value) if isinstance(vor, ast.Constant) \
+                            and isinstance(vor.value, (str, int, float)) \
+                            else getattr(fn_d, "_nc_vorgabe", "")
+                        namen.setdefault(arg.value, vorgabe)
+                        continue
+                    # Ein Parameter des Aufrufers: der ist dann selbst Durchleiter.
+                    um = _umschliessend(c)
+                    if isinstance(arg, ast.Name) and um is not None and not isinstance(um, ast.Module) \
+                            and arg.id in _positionen(um):
+                        durch.setdefault((rel, id(um)), (um, _positionen(um).index(arg.id)))
+                        continue
+                    luecken.append((rel, c.lineno, "Aufruf von %s ohne woertlichen env-Namen" % fn_d.name))
+    return namen, luecken
+
+
 def collect():
-    files = ["bot.py", "brain_bridge.py"] + \
+    # v4.2-W128: discordbot.py, telegramversand.py und nc/intel/ gehoeren
+    # dazu — sie liegen im Produktionscode, und eine Lesestelle, die nur dort
+    # steht, fehlte sonst lautlos in der Vorlage.
+    files = ["bot.py", "brain_bridge.py", "discordbot.py", "telegramversand.py"] + \
         sorted(glob.glob(os.path.join(ROOT, "brain", "*.py"))) + \
         sorted(glob.glob(os.path.join(ROOT, "nc", "*.py"))) + \
-        sorted(glob.glob(os.path.join(ROOT, "nc", "routes", "*.py")))
+        sorted(glob.glob(os.path.join(ROOT, "nc", "routes", "*.py"))) + \
+        sorted(glob.glob(os.path.join(ROOT, "nc", "intel", "*.py")))
+    quellen = {}
     # v4.0-W117: nc/routes/ gehoert dazu. Ohne das verschwindet jede Variable
     # aus der Beispieldatei, sobald ihre einzige Lesestelle in ein Blueprint
     # wandert (zuerst passiert bei DASHBOARD_TRACK_GROUP_ID) — der Betreiber
@@ -286,11 +445,16 @@ def collect():
         # der Kommentare erhaelt die Zeilennummern nicht zwingend, und die
         # Sperre nennt eine Zeile.
         rel = os.path.relpath(p, ROOT).replace(os.sep, "/")
+        quellen[rel] = txt
         namen, luecken = dynamische_namen(rel, txt)
         for name in namen:
             seen.setdefault(name, "")
         for zeile, was in luecken:
             LUECKEN.append((rel, zeile, was))
+    namen, luecken = durchleiter_namen(quellen)
+    for name, vorgabe in namen.items():
+        seen.setdefault(name, vorgabe)
+    LUECKEN.extend(luecken)
     return seen
 
 

@@ -23727,6 +23727,94 @@ def _test_v42_w127_observability():
     ok("W127: Prometheus/Grafana — jede Abfrage trifft einen gemessenen Namen, "
        "das Werkzeug schreibt nur Abweichungen, die Alarme feuern im Regeltest")
 
+
+def _test_v42_w128_env_vorlage_durchleiter():
+    """v4.2-W128: Helfer, die ihren Parameter an os.getenv reichen.
+
+    Gemessen am 30.10.: elf solche Durchleiter, bei dreien traf kein Muster
+    des Generators (`_env`, `_f`/`_i`, `_b`) — sechzehn Variablen fehlten in
+    .env.example, darunter AZRAELs Antwortbremsen und die Wahl des
+    Embedding-Backends. Der Generator folgt jetzt dem Sichtbarkeitsbereich.
+    """
+    import sys as _sys
+    _sys.path.insert(0, "tools")
+    import gen_env_example as G
+    quellen = {
+        "nc/a.py": (
+            "import os\n"
+            "def _env(k, d):\n"
+            "    return os.getenv(k, d)\n"
+            "def _flag(name):\n"
+            "    return os.getenv(name, '0')\n"
+            "def lesen():\n"
+            "    return _env('EINS_X', 'eins'), _flag('ZWEI_X')\n"
+            # Gleichnamige verschachtelte Helfer: der eine reicht einen
+            # env-Namen durch, der andere nur einen Wert (nc/cfgnorm.py).
+            "def mit_env(saved):\n"
+            "    def _i(key, env, default):\n"
+            "        return os.getenv(env, default)\n"
+            "    return _i('k', 'DREI_X', '3')\n"
+            # ... mit einer LOKALEN Variable: wuerde der Aufruf dem falschen _i
+            # zugeordnet, waere das eine Luecke (Mutationsprobe W128).
+            "def ohne_env(saved):\n"
+            "    def _i(key, default):\n"
+            "        return int(default)\n"
+            "    wert = len(saved)\n"
+            "    return _i('k', wert)\n"
+            # Ein Modul-Helfer, in einer Funktion von einem gleichnamigen
+            # inneren Helfer verdeckt: dessen Aufruf gehoert NICHT zum aeusseren.
+            "def verdeckt(saved):\n"
+            "    def _env(x):\n"
+            "        return x\n"
+            "    lokal = saved\n"
+            "    return _env(lokal)\n"
+            # Kette: ein Durchleiter ruft einen Durchleiter.
+            "def huelle(n):\n"
+            "    return _env(n, '')\n"
+            "def kette():\n"
+            "    return huelle('VIER_X')\n"),
+        # Aufruf ueber einen Modul-Import aus einer anderen Datei.
+        "nc/b.py": (
+            "from nc import a as _a\n"
+            "from nc.a import _flag as schalter\n"
+            "def b():\n"
+            "    return _a._env('FUENF_X', '5'), schalter('SIEBEN_X')\n"),
+    }
+    namen, luecken = G.durchleiter_namen(quellen)
+    assert namen == {"EINS_X": "eins", "ZWEI_X": "0", "DREI_X": "3", "VIER_X": "",
+                     "FUENF_X": "5", "SIEBEN_X": "0"}, namen
+    assert luecken == [], "falsche Luecke (Namensgleichheit statt Sichtbarkeit?): %r" % luecken
+    # Ein Aufruf ohne woertlichen Namen ist eine Luecke — die Sperre.
+    quellen["nc/c.py"] = ("from nc import a as _a\n"
+                          "NAME = 'SECHS_X'\n"
+                          "def c():\n"
+                          "    return _a._env(NAME, '')\n")
+    _, luecken = G.durchleiter_namen(quellen)
+    assert [(r, z) for r, z, _w in luecken] == [("nc/c.py", 4)], luecken
+    # ... und sie kommt beim Generator an, nicht nur bei der Hilfsfunktion:
+    # collect() traegt sie in LUECKEN, und main() bricht darauf ab.
+    import os as _os
+    import pruefhilfen as P
+    wurzel = P.verzeichnis()
+    for rel, txt in quellen.items():
+        _os.makedirs(_os.path.join(wurzel, _os.path.dirname(rel)), exist_ok=True)
+        open(_os.path.join(wurzel, rel), "w").write(txt)
+    alt_root, alt_l = G.ROOT, list(G.LUECKEN)
+    G.ROOT, G.LUECKEN[:] = wurzel, []
+    try:
+        G.collect()
+        assert any(r == "nc/c.py" for r, _z, _w in G.LUECKEN), G.LUECKEN
+    finally:
+        G.ROOT = alt_root
+        G.LUECKEN[:] = alt_l
+    # Und am echten Bestand: die sechzehn stehen in der Vorlage.
+    vorlage = open(".env.example", encoding="utf-8").read()
+    for name in ("AZRAEL_REPLY_MIN_GAP_S", "AZRAEL_COHOST_PER_15MIN", "BRAIN_EMBED_BACKEND",
+                 "BRAIN_EMBED_URL", "HIGHLIGHT_MIN_SCORE", "NEWS_AUTO", "YT_SEND_PER_MIN"):
+        assert ("# %s=" % name) in vorlage, name
+    assert "# NEWS_AUTO=0" in vorlage, "Vorgabe aus dem Helfer fehlt"
+    ok("W128: .env.example — Durchleiter-Helfer nach Sichtbarkeit aufgeloest, 16 Variablen nachgetragen")
+
 def main():
     tmp, rid = richte_testdatenbank_ein()
     ok("db_conn aus nc.dbwrap: echtes Schema angelegt, Commit durchgelaufen")
@@ -24049,6 +24137,7 @@ def main():
     _test_v42_w125_azrael_stimme_laut()
     _test_v42_w126_motd_konfigurieren()
     _test_v42_w127_observability()
+    _test_v42_w128_env_vorlage_durchleiter()
     _test_v42_w60_azrael_cooldown_je_plattform()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)
