@@ -205,7 +205,9 @@ def _build_native_cmd(stream_url: str, output_file: str, duration_secs: int,
         # Watchdog liegt, killen wir ffmpeg BEVOR es einen Error meldet =
         # "empty stderr". Jetzt: rw_timeout 30s < watchdog 45s → ffmpeg
         # liefert "Connection timed out" stderr-Output, wir sehen die Ursache.
-        "-rw_timeout", "30000000",
+        # v4.2-W131: der Waechter greift jetzt nach 25 s (nc/aufnahmefolge.
+        # stall_grenze). Dieselbe Regel, eine Stufe tiefer: 15 s < 25 s.
+        "-rw_timeout", "15000000",
     ]
     # B59 (Production-Bug 2026-05-29): @thomasschwarz180 — ffmpeg loopte mit
     # "Will reconnect at <byte>... Input/output error" und beendete dann mit

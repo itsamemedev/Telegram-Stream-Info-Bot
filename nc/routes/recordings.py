@@ -353,6 +353,24 @@ class BestandUnbekannt(RuntimeError):
     """
 
 
+# v4.2-W131: so lange gilt eine Datei ohne Datenbank-Zeile noch nicht als
+# verwaist. Zwischen dem Ende von ffmpeg und dem Eintrag liegen Tonpruefung
+# und Nachruesten (nc/tonspur.sichern) — in dieser Zeit steht die Datei weder
+# in `recordings` noch als laufende Aufnahme in `trackings`.
+FRISCH_S = 900
+
+
+def _frisch(pfad):
+    try:
+        return (_time.time() - os.path.getmtime(pfad)) < FRISCH_S
+    except OSError as e:
+        # Nicht lesbar: im Zweifel NICHT loeschen — und sagen warum, sonst
+        # steht eine Datei ewig in keiner Liste, ohne dass jemand es merkt.
+        log.info("orphans: %s nicht lesbar (%s) — gilt als frisch, bleibt liegen",
+                 os.path.basename(pfad), e)
+        return True
+
+
 def _find_orphans():
     """Sucht verwaiste Dateien im _c().recordings_dir: Split-Part-Reste, .repaired,
        sowie Dateien ohne DB-Eintrag.
@@ -381,8 +399,17 @@ def _find_orphans():
         return orphans
     try:
         with db_conn() as conn:
-            known = set(r["filepath"] for r in
-                        conn.execute("SELECT filepath FROM recordings").fetchall())
+            known = set(os.path.abspath(r["filepath"]) for r in
+                        conn.execute("SELECT filepath FROM recordings").fetchall()
+                        if r["filepath"])
+            # v4.2-W131: eine LAUFENDE Aufnahme hat noch keine Zeile in
+            # `recordings` — die entsteht erst nach dem Ende. Bis hierher galt
+            # sie deshalb als "kein-db-eintrag", und "Reste aufraeumen" loeschte
+            # sie mitten im Schreiben: ffmpeg schrieb in eine geloeschte Datei
+            # weiter, und am Ende war nichts da.
+            known |= set(os.path.abspath(r["output_file"]) for r in conn.execute(
+                "SELECT output_file FROM trackings WHERE recording=1").fetchall()
+                if r["output_file"])
     except Exception as e:
         raise BestandUnbekannt(
             "die Liste der bekannten Aufnahmen war nicht zu lesen (%s). "
@@ -395,7 +422,9 @@ def _find_orphans():
         reason = None
         if "_part" in name or name.endswith(".repaired.mp4") or "_re_" in name:
             reason = "split-rest"
-        elif full not in known and name.endswith((".mp4", ".flv", ".ts", ".part")):
+        elif (os.path.abspath(full) not in known
+              and name.endswith((".mp4", ".flv", ".ts", ".part"))
+              and not _frisch(full)):
             reason = "kein-db-eintrag"
         if reason:
             try:

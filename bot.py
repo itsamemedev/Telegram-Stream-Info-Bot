@@ -9002,11 +9002,33 @@ async def _aufnahme_beim_stopp_sichern(proc, tid, username, output_file,
         log.warning("Aufnahme-Versuch @%s nicht abgeschlossen: %s", username, e)
 
 
+async def _aufnahme_platz_frei(tid, proc):
+    """v4.2-W131: Prozess aus der Zaehlung, Sperre des Trackings frei.
+
+    Aufgerufen, sobald ffmpeg weg ist — nicht erst nach Tonpruefung,
+    Datenbank und Telegram-Upload. Bis dahin hielt das finally von
+    handle_recording_finished die Sperre, und jeder Neustart endete mit
+    "Lock nicht bekommen … Skip.": bei jedem geplanten URL-Schnitt (~28 min)
+    und nach jedem Haenger fehlte mindestens die Upload-Dauer. Das finally
+    raeumt danach NICHT noch einmal: inzwischen kann dieselbe Tracking-ID die
+    naechste Aufnahme halten, und ein zweites clear_recording naehme ihr
+    Sperre, Datei und PID weg.
+
+    Neben dem Loop: clear_recording schreibt in die Datenbank, und die
+    steht unter Plattenlast (W117)."""
+    try:
+        active_processes.remove(proc)
+    except ValueError:
+        pass                     # schon draussen — das war das Ziel
+    await asyncio.to_thread(clear_recording, tid)
+
+
 async def handle_recording_finished(proc, tid, chat_id, username, output_file,
                                     started_at, bot_app, attempt_id=None,
                                     recorder_name=None, stream_expiry=None):
     cancelled = False
     stall_killed = [False]   # F36: Flag wenn Stall-Watchdog gekillt hat
+    platz_frei = [False]     # v4.2-W131: Sperre schon nach Prozessende frei
     url_refreshed = [False]  # B58: Flag wenn URL-Refresh-Watchdog graceful beendet hat
 
     # B58: URL-Refresh-Watchdog. TikTok-Stream-URLs laufen nach ~30min ab
@@ -9060,7 +9082,7 @@ async def handle_recording_finished(proc, tid, chat_id, username, output_file,
     async def _stall_watchdog():
         last_size = -1
         unchanged_seconds = 0
-        CHECK_EVERY = 15
+        CHECK_EVERY = _nc_folge.STALL_TAKT_S
         # v4.0-W116: zweite Spur neben dem Nullwachstums-Test. Der misst nur
         # "waechst die Datei" und faengt damit den toten Stream — aber nicht
         # den HALBTOTEN: faellt die Videospur weg und der Ton laeuft weiter,
@@ -9072,15 +9094,11 @@ async def handle_recording_finished(proc, tid, chat_id, username, output_file,
         # eine deswegen abgebrochene Aufnahme ist unwiederbringlich weg.
         _rate = _nc_recdiag.RateSpur()
         _rate_last = 0
-        # VERBESSERUNG: Adaptiver STALL_THRESHOLD. Basiswert 45s bleibt.
-        # Bei großen Dateien (> 100 MB) hat ffmpeg kurze I/O-Pausen beim
-        # Flushen des MP4-Containers. Diese dauern bis zu 20s bei sehr großen
-        # Files — ein starrer 45s-Threshold würde dann fälschlicherweise killen.
-        # Formel: threshold = 45 + min(45, file_size_MB / 10)
-        # → 100 MB: 55s; 200 MB: 65s; 450+ MB: 90s (cap).
-        BASE_STALL = 45
-        MAX_STALL  = 90
-        STALL_THRESHOLD = BASE_STALL
+        # v4.2-W131: Grenze und Takt aus nc/aufnahmefolge.stall_grenze —
+        # dort steht die Messung. Bis hierher 45-90 s plus 15-s-Takt, also
+        # bis 105 s verlorene Aufnahme je Haenger.
+        _stall_basis = os.getenv("REC_STALL_S")
+        STALL_THRESHOLD = _nc_folge.stall_grenze(0, _stall_basis)
         STALL_KILL_GRACE = _env_int("STALL_KILL_GRACE_SECS", 8)
         try:
             while True:
@@ -9114,8 +9132,7 @@ async def handle_recording_finished(proc, tid, chat_id, username, output_file,
                         log.debug("rate-spur @%s: %s", username, _re)
                 # Threshold adaptiv an Dateigröße anpassen
                 if cur_size > 0:
-                    STALL_THRESHOLD = min(MAX_STALL,
-                                         BASE_STALL + int(cur_size / (1024 * 1024 * 10)))
+                    STALL_THRESHOLD = _nc_folge.stall_grenze(cur_size, _stall_basis)
                 if cur_size == last_size:
                     unchanged_seconds += CHECK_EVERY
                     if unchanged_seconds >= STALL_THRESHOLD:
@@ -9173,6 +9190,11 @@ async def handle_recording_finished(proc, tid, chat_id, username, output_file,
             refresh_task.cancel()   # B58
             try: await refresh_task
             except (asyncio.CancelledError, Exception): pass
+
+        # v4.2-W131: Platz frei, sobald ffmpeg weg ist (Begruendung dort).
+        if proc.returncode is not None:
+            await _aufnahme_platz_frei(tid, proc)
+            platz_frei[0] = True
 
         stdout_text = stdout_bytes.decode(errors='ignore') if stdout_bytes else ""
         stderr_text = stderr_bytes.decode(errors='ignore') if stderr_bytes else ""
@@ -9244,12 +9266,19 @@ async def handle_recording_finished(proc, tid, chat_id, username, output_file,
             # Das sind 20 Sekunden fehlende Aufnahme bei JEDEM Refresh, also alle
             # ~28 Minuten, ohne jeden Grund. Hier: sofort faellig stellen, damit
             # die Monitor-Loop im naechsten Tick mit frischer URL neu startet.
-            if url_refreshed[0]:
+            if url_refreshed[0] or stall_killed[0]:
+                # v4.2-W131: auch nach einem Haenger, der Daten geliefert hat
+                # (stall_killed_partial). Der Nutzer war eben noch live; das
+                # regulaere Intervall (20 s) haengte an jeden Haenger zwanzig
+                # Sekunden fehlende Aufnahme. Ist er wirklich weg, sagt das
+                # der Live-Check im naechsten Takt, und eine leere Aufnahme
+                # zaehlt in den Tot-Strang (nc/aufnahmefolge) wie bisher.
                 try:
                     _NEXT_CHECK_AT[tid] = 0        # 0 = sofort fällig
-                    log.info("recording @%s: URL-Refresh-Schnitt nach %.0fs — "
-                             "sofortiger Neustart (kein 20s-Warten)",
-                             username, duration)
+                    log.info("recording @%s: %s nach %.0fs — "
+                             "sofortiger Neustart (kein 20s-Warten)", username,
+                             ("URL-Refresh-Schnitt" if url_refreshed[0]
+                              else "Haenger-Schnitt"), duration)
                 except Exception as e:
                     log.debug("url-refresh reschedule: %s", e)
             # Pull-Proxy hat funktioniert (Datei da) → belohnen + Block-Liste leeren
@@ -9459,7 +9488,8 @@ async def handle_recording_finished(proc, tid, chat_id, username, output_file,
             except Exception: pass
         try: active_processes.remove(proc)
         except ValueError: pass
-        clear_recording(tid)
+        if not platz_frei[0]:      # sonst naehme es der Folgeaufnahme die Sperre
+            clear_recording(tid)
 
 # -----------------------------
 # Flask Dashboard

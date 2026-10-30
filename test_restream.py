@@ -958,8 +958,19 @@ def test_url_refresh_no_wait():
     """
     src = open("bot.py").read()
     tree = ast.parse(src)
-    i = src.find("if url_refreshed[0]:\n                try:\n                    _NEXT_CHECK_AT[tid] = 0")
-    assert i > 0, "url_refresh stellt den naechsten Check nicht sofort faellig"
+    # v4.2-W131: im Syntaxbaum statt am woertlichen Text — die Bedingung
+    # heisst seither `url_refreshed[0] or stall_killed[0]`, und der Text-Anker
+    # fiel, obwohl die Aussage stimmte (CLAUDE.md: erst pruefen, ob der
+    # Vertrag oder nur sein Anker gebrochen ist).
+    _hit = None
+    for _n in ast.walk(tree):
+        if (isinstance(_n, ast.If) and "url_refreshed[0]" in ast.unparse(_n.test)
+                and any(isinstance(z, ast.Assign)
+                        and ast.unparse(z.targets[0]) == "_NEXT_CHECK_AT[tid]"
+                        and ast.unparse(z.value) == "0" for z in ast.walk(_n))):
+            _hit = _n
+    assert _hit is not None, "url_refresh stellt den naechsten Check nicht sofort faellig"
+    i = sum(len(z) + 1 for z in src.splitlines()[:_hit.lineno - 1])
     ok("URL-Refresh: _NEXT_CHECK_AT auf 0 (sofort fällig)")
 
     # Der Fix darf nicht von einem spaeteren _schedule_next_check ueberschrieben

@@ -16682,6 +16682,10 @@ def _test_v42_w91_aufraeumer_loescht_nicht_alles():
 
     class _ConnKennt:
         def execute(self, sql, args=()):
+            # v4.2-W131: _find_orphans fragt zusaetzlich die laufenden
+            # Aufnahmen ab — hier laeuft keine.
+            if "trackings" in sql:
+                return _Zeilen()
             return _Zeilen({"filepath": p} for p in echte)
         def commit(self): pass
         def __enter__(self): return self
@@ -24753,6 +24757,216 @@ def _w130_echter_lauf(R):
         ("das Pausenbild hat die Bildgroesse festgelegt", r.stdout)
 
 
+def _test_v42_w131_aufnahme_haenger():
+    """v4.2-W131: eine haengende Aufnahme wird nach 25 s erkannt, nicht nach 45-105 s.
+
+    Gemessen, nicht geschaetzt: eine GESUNDE Aufnahme (fragmentiertes MP4,
+    2-s-Fragmente) waechst bei FLV spaetestens alle ~2 s, bei HLS spaetestens
+    nach einer Segmentlaenge. Der alte Aufschlag „I/O-Pausen beim Flushen des
+    MP4-Containers" passt zu einem wachsenden moov, nicht zu diesem Format.
+    """
+    import ast as _ast
+    import shutil as _sh
+    from nc import aufnahmefolge as F
+    from nc import reccmd as RC
+
+    # ── (1) Die Grenze.
+    assert F.stall_grenze(0) == 25 and F.STALL_TAKT_S <= 5
+    assert F.stall_grenze(500 * 1024 * 1024) == 35
+    assert F.stall_grenze(10 * 1024 ** 3) == F.STALL_MAX_S == 40, "Deckel fehlt"
+    assert F.stall_grenze(0, "3") == 10, "eine Grenze unter einem HLS-Segment schiesst gesunde Aufnahmen ab"
+    assert F.stall_grenze(0, "60") == 60, "REC_STALL_S wird nicht beachtet"
+    for kaputt in ("", "  ", "abc", "2.5"):
+        assert F.stall_grenze(0, kaputt) == F.STALL_BASIS_S, \
+            ("REC_STALL_S=%r laesst den Waechter sterben (Review #170)" % kaputt)
+    # Schlimmster Fall bis zum Abschuss: Grenze + ein Takt. Vorher 90 + 15.
+    assert F.stall_grenze(10 * 1024 ** 3) + F.STALL_TAKT_S <= 45
+
+    # ── (2) ffmpeg meldet sich VOR dem Waechter (B56): sonst stirbt die
+    # Aufnahme mit leerem stderr, und niemand sieht die Ursache.
+    alt = (RC._cookie_header, RC._pick_pull_proxy)
+    RC._cookie_header, RC._pick_pull_proxy = (lambda: ""), (lambda: None)
+    try:
+        for url in ("https://pull.tiktok.com/x.m3u8", "https://pull.tiktok.com/x.flv"):
+            c = RC._build_native_cmd(url, "/rec/a.mp4", 60)
+            rw = int(c[c.index("-rw_timeout") + 1]) / 1e6
+            assert rw < F.stall_grenze(0), ("rw_timeout nicht unter der Waechtergrenze", rw)
+    finally:
+        RC._cookie_header, RC._pick_pull_proxy = alt
+
+    # ── (3) Die Verdrahtung im Waechter und im Neustart — im Syntaxbaum.
+    baum = _ast.parse(open("bot.py", encoding="utf-8").read())
+    hrf = next(n for n in baum.body if isinstance(n, _ast.AsyncFunctionDef)
+               and n.name == "handle_recording_finished")
+    wd = next(n for n in _ast.walk(hrf) if isinstance(n, _ast.AsyncFunctionDef)
+              and n.name == "_stall_watchdog")
+    rufe = [_ast.unparse(c.func) for c in _ast.walk(wd) if isinstance(c, _ast.Call)]
+    assert rufe.count("_nc_folge.stall_grenze") >= 2, "Grenze nicht aus aufnahmefolge"
+    zuw = {_ast.unparse(z.targets[0]): _ast.unparse(z.value) for z in _ast.walk(wd)
+           if isinstance(z, _ast.Assign) and len(z.targets) == 1}
+    assert zuw.get("CHECK_EVERY") == "_nc_folge.STALL_TAKT_S", zuw.get("CHECK_EVERY")
+    assert "BASE_STALL" not in zuw and "MAX_STALL" not in zuw, "alte Grenze steht noch"
+    sofort = [i for i in _ast.walk(hrf) if isinstance(i, _ast.If)
+              and any(_ast.unparse(z.targets[0]) == "_NEXT_CHECK_AT[tid]"
+                      and _ast.unparse(z.value) == "0"
+                      for z in _ast.walk(i) if isinstance(z, _ast.Assign))]
+    assert any("stall_killed[0]" in _ast.unparse(i.test) for i in sofort), \
+        "nach einem Haenger mit Daten wartet der Neustart wieder das regulaere Intervall ab"
+    assert "REC_STALL_S=" in open(".env.example", encoding="utf-8").read()
+
+    if not (_sh.which("ffmpeg")):
+        ok("W131: Haenger-Grenze (rein); ffmpeg fehlt — Messung uebersprungen")
+        return
+    _w131_gesund_misst(RC, F)
+    ok("W131: Aufnahme-Haenger nach %d s statt bis 105 s; gesunde Aufnahme "
+       "schweigt gemessen weit kuerzer" % F.stall_grenze(0))
+
+
+def _w131_gesund_misst(RC, F):
+    """Die Messung hinter der Grenze, als Vertrag: eine gesunde HLS-Aufnahme
+    mit 4-s-Segmenten (der echte Bauer) schweigt nie laenger als die halbe
+    Grenze. Faellt das, ist die Grenze zu knapp — nicht der Vertrag."""
+    import os as _os
+    import socket as _so
+    import subprocess as _sp
+    import sys as _sys
+    import time as _t
+    import pruefhilfen as P
+    heim = P.verzeichnis()
+    s = _so.socket(); s.bind(("127.0.0.1", 0)); port = s.getsockname()[1]; s.close()
+    q = _sp.Popen(["ffmpeg", "-v", "error", "-re", "-f", "lavfi", "-i", "testsrc2=s=320x568:r=30",
+                   "-f", "lavfi", "-i", "sine=r=44100", "-t", "30", "-c:v", "libx264",
+                   "-preset", "ultrafast", "-g", "120", "-c:a", "aac", "-f", "hls",
+                   "-hls_time", "4", "-hls_list_size", "6", _os.path.join(heim, "l.m3u8")],
+                  stdin=_sp.DEVNULL)
+    srv = _sp.Popen([_sys.executable, "-m", "http.server", str(port), "--bind", "127.0.0.1"],
+                    cwd=heim, stdout=_sp.DEVNULL, stderr=_sp.DEVNULL)
+    alt = (RC._cookie_header, RC._pick_pull_proxy)
+    RC._cookie_header, RC._pick_pull_proxy = (lambda: ""), (lambda: None)
+    aus = _os.path.join(heim, "a.mp4")
+    try:
+        _t.sleep(9)
+        p = _sp.Popen(RC._build_native_cmd("http://127.0.0.1:%d/l.m3u8" % port, aus, 14),
+                      stdin=_sp.DEVNULL, stdout=_sp.DEVNULL, stderr=_sp.DEVNULL)
+        t0 = _t.monotonic(); last = -1; seit = t0; laengste = 0.0
+        while p.poll() is None and _t.monotonic() - t0 < 25:
+            g = _os.path.getsize(aus) if _os.path.exists(aus) else 0
+            jetzt = _t.monotonic()
+            if g != last:
+                if last > 0:
+                    laengste = max(laengste, jetzt - seit)
+                last, seit = g, jetzt
+            _t.sleep(0.2)
+        p.kill(); p.wait()
+    finally:
+        RC._cookie_header, RC._pick_pull_proxy = alt
+        for x in (q, srv):
+            x.kill(); x.wait()
+    assert last > 0, "die Messaufnahme hat nichts geschrieben"
+    assert laengste < F.stall_grenze(0) / 2, \
+        ("gesunde Aufnahme schwieg %.1f s — die Grenze ist zu knapp" % laengste)
+
+
+def _test_v42_w131_aufnahme_luecken():
+    """v4.2-W131: zwei Wege, auf denen Aufnahme verloren ging, ohne dass etwas
+    abstuerzte.
+
+    (1) Die Sperre „eine Aufnahme je Tracking" gab erst das finally von
+    handle_recording_finished frei — NACH Tonpruefung, Datenbank und dem
+    Telegram-Upload an alle Chats. Bis dahin endete jeder Neustart mit „Lock
+    nicht bekommen … Skip.", bei jedem geplanten URL-Schnitt und nach jedem
+    Haenger. (2) „Reste aufraeumen" hielt die LAUFENDE Aufnahme fuer verwaist:
+    sie hat erst nach dem Ende eine Zeile in `recordings`.
+    """
+    import ast as _ast
+    import os as _os
+    import time as _t
+    from nc import ctx as _ncctx
+    from nc.routes import recordings as rt
+    import pruefhilfen as P
+
+    # ── (1) Die Reihenfolge in handle_recording_finished — im Syntaxbaum.
+    baum = _ast.parse(open("bot.py", encoding="utf-8").read())
+    hrf = next(n for n in baum.body if isinstance(n, _ast.AsyncFunctionDef)
+               and n.name == "handle_recording_finished")
+
+    def zeilen(name):
+        return sorted(c.lineno for c in _ast.walk(hrf) if isinstance(c, _ast.Call)
+                      and _ast.unparse(c.func).split(".")[-1] == name)
+    frei = zeilen("_aufnahme_platz_frei")
+    assert frei, "die Sperre wird erst im finally frei — nach dem Upload"
+    for spaeter in ("sichern", "add_recording", "split_and_send_video"):
+        assert zeilen(spaeter) and frei[0] < zeilen(spaeter)[0], \
+            "Sperre wird erst nach %s frei" % spaeter
+    kommunikation = zeilen("communicate")
+    assert kommunikation and max(kommunikation) < frei[0], \
+        "Sperre frei, bevor ffmpeg beendet ist — zwei Aufnahmen desselben Streams"
+    # Das finally darf die Sperre nicht ein zweites Mal raeumen: inzwischen
+    # kann dieselbe Tracking-ID die NAECHSTE Aufnahme halten.
+    fin = [t for t in _ast.walk(hrf) if isinstance(t, _ast.Try) and t.finalbody]
+    rufe_fin = [(c, i) for t in fin for i in t.finalbody for c in _ast.walk(i)
+                if isinstance(c, _ast.Call) and _ast.unparse(c.func) == "clear_recording"]
+    assert rufe_fin, "clear_recording fehlt im finally — Fehlerpfade gaeben die Sperre nie frei"
+    for _c, stmt in rufe_fin:
+        assert isinstance(stmt, _ast.If) and "platz_frei" in _ast.unparse(stmt.test), \
+            "clear_recording im finally ungeschuetzt — nimmt der Folgeaufnahme die Sperre"
+    pf = next(n for n in baum.body if isinstance(n, _ast.AsyncFunctionDef)
+              and n.name == "_aufnahme_platz_frei")
+    assert "asyncio.to_thread(clear_recording, tid)" in _ast.unparse(pf), \
+        "Datenbankzugriff auf dem Loop (W117)"
+    assert "active_processes.remove" in _ast.unparse(pf), \
+        "der beendete Prozess zaehlt weiter gegen den Aufnahme-Deckel"
+
+    # ── (2) Aufraeumen trifft keine laufende und keine frische Aufnahme.
+    heim = P.verzeichnis()
+    auf = _os.path.join(heim, "aufnahmen")
+    _os.makedirs(auf)
+    laeuft = P.attrappe(_os.path.join(auf, "laeuft.mp4"), 4096)
+    P.attrappe(_os.path.join(auf, "frisch.mp4"), 4096)
+    alt = P.attrappe(_os.path.join(auf, "alt.mp4"), 4096)
+    bekannt = P.attrappe(_os.path.join(auf, "bekannt.mp4"), 4096)
+    vorher = _t.time() - rt.FRISCH_S - 60
+    for pfad in (laeuft, alt, bekannt):
+        _os.utime(pfad, (vorher, vorher))
+
+    class _Zeilen(list):
+        def fetchall(self): return self
+
+    # Relativ in der Datenbank, absolut im Scan — dieselbe Falle wie W98.
+    _rel = _os.path.relpath(laeuft)
+
+    class _Conn:
+        def execute(self, sql, args=()):
+            if "trackings" in sql:
+                assert "recording=1" in sql.replace(" ", "")
+                return _Zeilen([{"output_file": _rel}, {"output_file": None}])
+            return _Zeilen([{"filepath": _os.path.relpath(bekannt)}, {"filepath": None}])
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+
+    alt_ctx = _ncctx._CTX
+    echt_db = rt.db_conn
+    _ncctx.configure(recordings_dir=auf, log=type("L", (), {"warning": print, "info": print,
+                                                           "error": print, "debug": print})(),
+                     log_event=lambda *a, **k: None, arg_int=lambda *a, **k: 0,
+                     ffmpeg_threads_bg=1, ffmpeg_nice_bg=10)
+    try:
+        rt.db_conn = lambda: _Conn()
+        namen = {o["name"] for o in rt._find_orphans()}
+        assert rt._frisch(_os.path.join(auf, "gibt_es_nicht.mp4")), \
+            "eine nicht lesbare Datei gilt als loeschbar"
+    finally:
+        rt.db_conn = echt_db
+        _ncctx._CTX = alt_ctx
+    assert "laeuft.mp4" not in namen, "die laufende Aufnahme gilt als verwaist und wuerde geloescht"
+    assert "frisch.mp4" not in namen, \
+        "eine eben beendete, noch nicht eingetragene Aufnahme gilt als verwaist"
+    assert "bekannt.mp4" not in namen, "relativer Datenbankpfad gegen absoluten Scan verglichen"
+    assert namen == {"alt.mp4"}, ("die echte Waise wird nicht mehr gefunden", namen)
+    ok("W131: Aufnahme-Sperre frei nach Prozessende, nicht nach dem Upload; "
+       "Aufraeumen schont laufende und frische Aufnahmen")
+
+
 def main():
     tmp, rid = richte_testdatenbank_ein()
     ok("db_conn aus nc.dbwrap: echtes Schema angelegt, Commit durchgelaufen")
@@ -25078,6 +25292,8 @@ def main():
     _test_v42_w128_env_vorlage_durchleiter()
     _test_v42_w129_profile()
     _test_v42_w130_sendebruecke()
+    _test_v42_w131_aufnahme_haenger()
+    _test_v42_w131_aufnahme_luecken()
     _test_v42_w60_azrael_cooldown_je_plattform()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)
