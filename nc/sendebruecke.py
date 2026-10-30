@@ -525,6 +525,8 @@ class Bruecke:
         if halt_pruefen:
             with self._startsperre:
                 if self._halt.is_set():
+                    log.info("Sendebrücke %s: gestoppt, während die Quelle "
+                             "aufgelöst wurde — kein Zubringer mehr.", self.name)
                     return None
                 p = self._popen(cmd, stdin=subprocess.DEVNULL,
                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE)
