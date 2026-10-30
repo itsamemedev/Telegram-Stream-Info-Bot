@@ -11,6 +11,36 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Ton — drei stille Ausfälle (v4.2 W125)
+
+- **Sitzung zusammenfügen: falsche Geschwindigkeit ab der Naht.** Der
+  concat-Demuxer nimmt das Tonformat des ERSTEN Segments für die ganze Datei.
+  Gemessen (ffmpeg 6.1): 48 kHz mono + 44,1 kHz stereo ergab eine Datei, deren
+  zweite Hälfte zu schnell und zu hoch spielte (880 Hz → 958 Hz), rc 0, keine
+  Zeile. Seit W106 ist das der Regelfall: die Stille-Nachrüstung schreibt AAC
+  44,1 kHz stereo, TikTok sendet oft 48 kHz. Jetzt prüft der Join jedes
+  Segment per ffprobe und gleicht bei Abweichung den Ton aller Segmente an
+  (`-c:v copy`, Bild unangetastet); ein unprüfbares Segment bricht ab statt zu
+  raten. `nc/aufnahmesitzung.tonformat`/`braucht_angleich`/`angleich_cmd`.
+- **Deck-Signalton: „Ton ist an“, aber kein Piep.** `_tonAn` überlebt das
+  Neuladen, die Browser-Erlaubnis nicht — der neue AudioContext ist ohne Geste
+  angehalten. Im Browser gemessen: Knopf „an“, `ncPieps` → false; ein Klick auf
+  den Knopf schaltete dann AUS. Jetzt drei Zustände (an / wartet auf Klick /
+  aus), die erste Geste irgendwo auf der Seite gibt frei, und ein Klick im
+  Wartezustand schaltet ein statt aus.
+- **AZRAELs Stimme fehlte im Restream ohne Zeile.** `_restream_tts_enqueue_wav`
+  sah den ffmpeg-Rückgabewert nie an und endete in `except Exception: pass`.
+  Jetzt `log.error` gedrosselt über `nc/meldetakt` (Kanal `azrael-stimme`),
+  Erfolgspfad setzt zurück.
+- **W98-Vertrag hing am Arbeitsverzeichnis.** Er schrieb den Eintrag relativ
+  zum Startverzeichnis und wechselte dann nach `heim` — grün nur, weil `..` an
+  der Wurzel stehen bleibt; aus einem tieferen Verzeichnis fiel er ohne
+  Codefehler. Jetzt ein relativer Scan-Ordner ohne `chdir`; die Probe
+  (`abspath` auf der Fundseite entfernt) fällt weiter.
+- Verträge `_test_v42_w125_*` (drei), 15 Mutationsproben; zwei entwischten
+  zuerst und waren Befunde am Vertrag (ganz tonlose Sitzung ungeprüft, die
+  Log-Attrappe zählte `debug` mit).
+
 ### Installer — erst fragen, dann handeln; sechs Paketmanager; Windows-Dienst (v4.2 W124)
 
 - **Vier Phasen statt verzahnter Fragen und Eingriffe:** Erkennung (liest

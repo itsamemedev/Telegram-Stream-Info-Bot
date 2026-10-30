@@ -21,10 +21,12 @@ Sitzungslogik pruefen, ohne einen Stream aufzunehmen.
 from __future__ import annotations
 
 import datetime as _dt
+import json as _json
 import os
 import re
 
 from nc import ffbuild as _ffbuild
+from nc import tonspur as _tonspur
 
 # Ab dieser Pause zwischen Segment-Ende und naechstem Segment-Start gilt der
 # Stream als beendet und es beginnt eine neue Sitzung. Grosszuegig gewaehlt:
@@ -164,6 +166,94 @@ def concat_cmd(listendatei: str, ziel: str, *, threads=None, nice=None):
          "-f", "concat", "-safe", "0", "-i", listendatei,
          "-c", "copy", "-movflags", "+faststart", ziel],
         threads=threads, nice=nice)
+
+
+# ── v4.2-W125: gleiches Tonformat vor dem Zusammenfuegen ─────────────────
+#
+# concat_cmd begruendet sein `-c copy` damit, dass "alle Segmente aus
+# derselben Quelle mit demselben Recorder-Kommando" stammen und damit
+# identische Codec-Parameter haben. Fuer das BILD stimmt das meist; fuer den
+# TON stimmt es seit W106 systematisch nicht mehr: ein Segment, dessen Quelle
+# keinen Ton lieferte, bekommt Stille als AAC 44,1 kHz stereo nachgeruestet
+# (nc/tonspur), die anderen tragen den Ton, den TikTok gerade sendet — und
+# nach einem Reconnect kann auch der wechseln.
+#
+# Der concat-Demuxer nimmt das Tonformat des ERSTEN Segments fuer die ganze
+# Datei. Gemessen mit ffmpeg 6.1: 48 kHz mono + 44,1 kHz stereo ergibt eine
+# Datei, die durchgehend "48 kHz mono" behauptet; die zweite Haelfte spielt
+# um 48/44,1 zu schnell (880 Hz kommen als 958 Hz heraus), der Ton ist 0,6 s
+# je 8 s kuerzer als das Bild, und ffmpeg meldet DABEI KEINEN EINZIGEN FEHLER.
+# Neu kodieren im selben Lauf hilft nicht — der Demuxer liefert die falschen
+# Parameter schon an den Decoder. Also vorher angleichen, je Segment, und nur
+# den Ton: das Bild bleibt `-c:v copy`.
+
+# Ein Segment ohne Tonspur. Ein eigener Wert statt None: "kein Ton" ist eine
+# Antwort, kein Misserfolg — und so steht er auch lesbar in der Logzeile.
+OHNE_TON = ("ohne Ton", "", 0, 0)
+
+
+def tonformat(ffprobe_json):
+    """(codec, profil, sample_rate, channels) der ersten Tonspur, OHNE_TON ohne Ton.
+
+    Das Profil gehoert in den Schluessel (Codex-Befund, PR #164): der
+    concat-Demuxer uebernimmt die Codec-Konfiguration (extradata) des ersten
+    Segments. HE-AAC traegt dort die halbe Kernrate plus SBR — folgt ein
+    LC-Segment mit gleicher Rate und Kanalzahl, wird es mit der falschen
+    Konfiguration dekodiert. Gemessen ist nur LC + Main (sauber, ffmpeg 6.1;
+    HE-AAC laesst sich ohne libfdk nicht erzeugen) — ein Fehlalarm kostet
+    einen unnoetigen Ton-Neukodierlauf, ein uebersehener eine kaputte Sitzung.
+
+    Wirft ValueError bei unlesbarem JSON und wenn die Antwort weder Bild noch
+    Ton nennt — eine solche Datei ist kaputt oder leer, und zu raten waere hier
+    genau der stille Pfad, den diese Funktion verhindern soll.
+    """
+    daten = _json.loads(ffprobe_json) if isinstance(ffprobe_json, (str, bytes)) \
+        else ffprobe_json
+    streams = [s for s in (daten or {}).get("streams") or [] if isinstance(s, dict)]
+    if not streams:
+        raise ValueError("ffprobe nennt keine Streams — Segment leer oder kaputt")
+    for st in streams:
+        if st.get("codec_type") == "audio":
+            return (str(st.get("codec_name") or "?"),
+                    str(st.get("profile") or ""),
+                    int(st.get("sample_rate") or 0),
+                    int(st.get("channels") or 0))
+    return OHNE_TON
+
+
+def braucht_angleich(formate) -> bool:
+    """Muessen die Segmente vor dem Zusammenfuegen angeglichen werden?
+
+    `formate`: tonformat()-Ergebnisse, eines je Segment. Nein heisst: alle
+    tragen Ton im selben Format, `-c copy` ist korrekt.
+
+    Bei Ja werden ALLE angeglichen, nicht nur die Abweichler: das gemeinsame
+    Ziel ist das feste Format aus nc/tonspur (AAC 44,1 kHz stereo), und
+    welches der vorhandenen Formate "das richtige" waere, laesst sich nicht
+    entscheiden.
+    """
+    return bool(formate) and (OHNE_TON in formate or len(set(formate)) != 1)
+
+
+def probe_cmd(pfad):
+    return ["ffprobe", "-v", "error",
+            "-show_entries", "stream=codec_type,codec_name,profile,sample_rate,channels",
+            "-of", "json", pfad]
+
+
+def angleich_cmd(eingabe: str, ausgabe: str, hat_ton: bool, *, threads=None, nice=None):
+    """Ton eines Segments ins gemeinsame Format bringen, Bild unangetastet.
+
+    Ohne Ton (die Nachruestung aus W106 scheiterte damals) kommt dieselbe
+    Stille-Quelle wie in nc/tonspur dazu; `-shortest`, weil sie endlos ist.
+    """
+    cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-i", eingabe]
+    if hat_ton:
+        cmd += ["-map", "0:v:0?", "-map", "0:a:0"]
+    else:
+        cmd += [*_tonspur.stille_eingabe(), "-map", "0:v:0", "-map", "1:a:0", "-shortest"]
+    cmd += ["-c:v", "copy", *_tonspur.AAC_ARGS, "-movflags", "+faststart", ausgabe]
+    return _ffbuild.ff_cmd(cmd, threads=threads, nice=nice)
 
 
 def zieldatei(verzeichnis: str, sid: str) -> str:

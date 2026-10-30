@@ -1283,7 +1283,9 @@ def _join_lauf(sid, pfade, ziel, threads, nice):
     saehe einen Fehler, waehrend ffmpeg fleissig weiterarbeitet.
     """
     listendatei = ziel + ".txt"
+    angleich_dir = ziel + ".angleich"
     try:
+        pfade = _tonformat_angleichen(sid, pfade, angleich_dir, threads, nice)
         with open(listendatei, "w", encoding="utf-8") as fh:
             fh.write(_sitzung.concat_liste(pfade))
         cmd = _sitzung.concat_cmd(listendatei, ziel, threads=threads, nice=nice)
@@ -1313,6 +1315,50 @@ def _join_lauf(sid, pfade, ziel, threads, nice):
         # Aufraeumpfad: schlaegt das Loeschen fehl, ist das bedeutungslos.
         try: os.remove(listendatei)
         except OSError: pass
+        shutil.rmtree(angleich_dir, ignore_errors=True)
+
+
+def _tonformat_angleichen(sid, pfade, angleich_dir, threads, nice):
+    """v4.2-W125: Segmente mit abweichendem Tonformat vor dem concat angleichen.
+
+    -> die Pfade, die zusammengefuegt werden (die Originale, wenn alles gleich
+    ist, sonst die angeglichenen Kopien in `angleich_dir`).
+
+    Ohne das spielte eine Sitzung ab der Naht mit falscher Geschwindigkeit
+    und Tonhoehe, sobald zwei Segmente verschiedene Tonformate trugen — still,
+    rc 0, keine Zeile (Begruendung in nc/aufnahmesitzung). Laesst sich ein
+    Segment nicht pruefen, bricht der Lauf ab: eine Sitzung, deren Ton
+    vielleicht kaputt ist, ist kein Ergebnis.
+    """
+    formate = []
+    for p in pfade:
+        r = subprocess.run(_sitzung.probe_cmd(p), capture_output=True, text=True, timeout=60)
+        if r.returncode != 0:
+            raise RuntimeError("ffprobe %s: %s" % (os.path.basename(p),
+                               (r.stderr or "").strip()[-200:] or "rc=%s" % r.returncode))
+        try:
+            formate.append(_sitzung.tonformat(r.stdout))
+        except ValueError as e:
+            raise RuntimeError("%s: %s" % (os.path.basename(p), e)) from e
+    if not _sitzung.braucht_angleich(formate):
+        return pfade
+    unterschiedlich = sorted({"ohne Ton" if f == _sitzung.OHNE_TON else "%s %s %d Hz %dch" % f
+                              for f in formate})
+    log.info("Sitzung %s: Tonformate unterschiedlich (%s) — %d Segmente werden vor dem "
+             "Zusammenfuegen auf AAC 44,1 kHz stereo gebracht, das Bild bleibt unangetastet.",
+             sid, ", ".join(unterschiedlich), len(pfade))
+    os.makedirs(angleich_dir, exist_ok=True)
+    neu = list(pfade)
+    for i in range(len(pfade)):
+        aus = os.path.join(angleich_dir, "%03d.mp4" % i)
+        cmd = _sitzung.angleich_cmd(pfade[i], aus, formate[i] != _sitzung.OHNE_TON,
+                                    threads=threads, nice=nice)
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=3600)
+        if r.returncode != 0 or not os.path.isfile(aus) or os.path.getsize(aus) == 0:
+            raise RuntimeError("Tonformat angleichen %s: %s" % (
+                os.path.basename(pfade[i]), (r.stderr or "").strip()[-300:] or "rc=%s" % r.returncode))
+        neu[i] = aus
+    return neu
 
 
 @bp.route("/api/recordings/session/<sid>/join", methods=["POST"])

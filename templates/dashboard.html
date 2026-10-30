@@ -423,6 +423,8 @@ tr:hover td{background:rgba(0,255,156,0.03)}
 .btn.cyan:hover{color:var(--cyan);border-color:var(--cyan);box-shadow:var(--glow-cyan)}
 .btn.sm{padding:3px 8px;font-size:var(--fs-2xs)}
 .btn.on{color:var(--neon);border-color:var(--border-bright);box-shadow:var(--glow)}
+/* v4.2-W125: Signalton gewuenscht, vom Browser aber angehalten — sichtbar anders als an und aus. */
+[data-ton-knopf].warn{color:var(--amber);border-color:var(--amber)}
 .btn:disabled{opacity:0.4;cursor:not-allowed}
 .btnrow{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
 
@@ -3739,7 +3741,14 @@ async function notifToggle(){
    Erzeugt wird der Ton per Oszillator, nicht aus einer Datei: kein Asset im
    Archiv, kein Request, nichts, was eine CSP oder ein Offline-Deck bricht. */
 let _tonCtx=null;
+/* v4.2-W125: _tonAn ist der WUNSCH, nicht der Zustand. Er ueberlebt ein
+   Neuladen (localStorage), die Erlaubnis des Browsers nicht: nach jedem
+   Neuladen ist der AudioContext neu und ohne Nutzergeste "suspended". Bis
+   hierher stand dann "🔊 Ton ist an" am Knopf, und kein Alarm machte ein
+   Geraeusch — genau die Fehlanzeige, gegen die W101 gebaut war, nur einen
+   Neuladevorgang spaeter. Ob es WIRKLICH piept, sagt allein _tonBereit(). */
 let _tonAn = localStorage.getItem('nc_ton')==='1';
+function _tonBereit(){ return !!(_tonCtx && _tonCtx.state==='running'); }
 /* Drossel wie nc/meldetakt.py, und mit derselben Lehre aus W97: der
    Schluessel ist das PAAR (Schwere, Zeit), nicht der Kanal. Ein Info-Piep
    darf den Fehler-Piep nicht verschlucken — bei einem Ereignissturm ist die
@@ -3750,8 +3759,33 @@ const _tonZuletzt={info:0, err:0};
 function _tonKontext(){
   const AC = window.AudioContext||window.webkitAudioContext;
   if(!AC) return null;
-  if(!_tonCtx){ try{ _tonCtx=new AC(); }catch(e){ return null; } }
+  if(!_tonCtx){
+    try{ _tonCtx=new AC(); }catch(e){ return null; }
+    /* Der Browser kann den Kontext jederzeit anhalten (Tab im Hintergrund,
+       Geraetewechsel) — der Knopf folgt dem echten Zustand. */
+    try{ _tonCtx.onstatechange=ncTonKnopfAuffrischen; }catch(e){}
+  }
   return _tonCtx;
+}
+
+/* Nach dem Neuladen: die ERSTE Geste irgendwo auf der Seite gibt den Ton
+   wieder frei. Mehr erlaubt der Browser nicht, aber das genuegt — der
+   Betreiber klickt ohnehin, und ab da ist der Alarm wieder hoerbar. */
+function _tonBeiGesteFreigeben(){
+  const frei = ev=>{
+    if(!_tonAn || _tonBereit()) return;
+    /* Der Ton-Knopf erledigt die Freigabe selbst. Liefe sie hier schon beim
+       pointerdown, saehe der folgende click einen freien Kontext und schaltete
+       den Ton AUS — genau dann, wenn der Betreiber ihn wiederhaben will. */
+    const t=ev && ev.target;
+    if(t && t.closest && t.closest('[data-ton-knopf]')) return;
+    const ctx=_tonKontext(); if(!ctx) return;
+    try{ ctx.resume().then(ncTonKnopfAuffrischen, ncTonKnopfAuffrischen); }catch(e){}
+  };
+  /* Dauerhaft, nicht einmalig: der Browser kann den Kontext auch spaeter
+     anhalten (Tab im Hintergrund, Kopfhoerer ab), und dann soll die naechste
+     Geste ihn wieder freigeben. Ist der Ton frei, kehrt der Horcher sofort um. */
+  ['pointerdown','keydown'].forEach(art=>document.addEventListener(art, frei, true));
 }
 
 /* Zwei Toene, damit man ohne hinzusehen weiss, was los ist: Fehler tiefer
@@ -3764,7 +3798,11 @@ function ncPieps(schwere){
   const ctx=_tonKontext(); if(!ctx) return false;
   /* Ein suspendierter Kontext spielt nichts und wirft nicht — ohne diese
      Pruefung meldete die Drossel einen Piep, den niemand gehoert hat. */
-  if(ctx.state!=='running'){ try{ ctx.resume(); }catch(e){} return false; }
+  if(ctx.state!=='running'){
+    try{ ctx.resume(); }catch(e){}
+    /* Der Knopf zeigt jetzt den Wartezustand statt AN. */
+    ncTonKnopfAuffrischen(); return false;
+  }
   _tonZuletzt[art]=jetzt;
   const folge = art==='err' ? [[440,0],[440,0.18]] : [[880,0]];
   folge.forEach(([hz,ab])=>{
@@ -3793,17 +3831,27 @@ function ncTonKnopfAuffrischen(){
        sein. "Ton abschalten" ist es nicht (kein Umlaut, kein Merkwort), es
        waere in der englischen Oberflaeche deutsch geblieben, waehrend der
        Gegenzustand uebersetzt ist: ein Schalter mit zwei Sprachen. */
-    b.textContent = _tonAn ? '🔊 Ton ist an' : '🔇 Ton aktivieren';
-    b.classList.toggle('cyan', _tonAn);
-    b.setAttribute('aria-pressed', _tonAn ? 'true' : 'false');
-    b.title = _tonAn
+    /* Drei Zustaende, nicht zwei: gewuenscht UND frei, gewuenscht aber vom
+       Browser angehalten, aus. "An" steht nur da, wenn es wirklich piept. */
+    const bereit = _tonAn && _tonBereit();
+    const wartet = _tonAn && !bereit;
+    b.textContent = bereit ? '🔊 Ton ist an' : (wartet ? '🔈 Ton wartet auf einen Klick' : '🔇 Ton aktivieren');
+    b.classList.toggle('cyan', bereit);
+    b.classList.toggle('warn', wartet);
+    b.setAttribute('aria-pressed', bereit ? 'true' : 'false');
+    b.title = bereit
       ? 'Signalton bei Live-, Fehler- und Sende-Ereignissen (Klick: aus)'
-      : 'Signalton einschalten — der Browser erlaubt Ton nur nach einem Klick';
+      : (wartet
+        ? 'Der Browser haelt den Ton nach dem Neuladen an — ein Klick hier oder irgendwo auf die Seite gibt ihn frei'
+        : 'Signalton einschalten — der Browser erlaubt Ton nur nach einem Klick');
   });
 }
 
 async function ncTonUmschalten(){
-  if(_tonAn){
+  /* Gewuenscht, aber vom Browser angehalten: dieser Klick IST die Geste, die
+     ihn freigibt — ihn als "aus" zu deuten, schaltete den Alarm genau dann
+     ab, wenn der Betreiber ihn wiederhaben will. */
+  if(_tonAn && _tonBereit()){
     _tonAn=false; localStorage.setItem('nc_ton','0');
     ncTonKnopfAuffrischen(); toast('Signalton ist aus'); return;
   }
@@ -3860,7 +3908,7 @@ function sseStart(){
     if(sev==='error'){ const led=$('#ledBot'); if(led) led.className='dot err'; }
   };
 }
-sseStart(); _bellRender(); ncTonKnopfAuffrischen();
+sseStart(); _bellRender(); ncTonKnopfAuffrischen(); _tonBeiGesteFreigeben();
 
 /* ---- formatters ---- */
 function humanBytes(n){ if(n==null) return '—'; n=+n; if(!n) return '0 B';
