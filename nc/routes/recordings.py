@@ -1342,7 +1342,7 @@ def _tonformat_angleichen(sid, pfade, angleich_dir, threads, nice):
             raise RuntimeError("%s: %s" % (os.path.basename(p), e)) from e
     if not _sitzung.braucht_angleich(formate):
         return pfade
-    unterschiedlich = sorted({"ohne Ton" if f == _sitzung.OHNE_TON else "%s %d Hz %dch" % f
+    unterschiedlich = sorted({"ohne Ton" if f == _sitzung.OHNE_TON else "%s %s %d Hz %dch" % f
                               for f in formate})
     log.info("Sitzung %s: Tonformate unterschiedlich (%s) — %d Segmente werden vor dem "
              "Zusammenfuegen auf AAC 44,1 kHz stereo gebracht, das Bild bleibt unangetastet.",

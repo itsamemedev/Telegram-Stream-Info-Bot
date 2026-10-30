@@ -23248,9 +23248,10 @@ def _test_v42_w125_sitzung_tonformat():
         return _json.dumps({"streams": streams})
 
     v = {"codec_type": "video", "codec_name": "h264"}
-    a48 = {"codec_type": "audio", "codec_name": "aac", "sample_rate": "48000", "channels": 1}
-    a44 = {"codec_type": "audio", "codec_name": "aac", "sample_rate": "44100", "channels": 2}
-    assert S.tonformat(probe([v, a48])) == ("aac", 48000, 1)
+    a48 = {"codec_type": "audio", "codec_name": "aac", "profile": "LC", "sample_rate": "48000", "channels": 1}
+    a44 = {"codec_type": "audio", "codec_name": "aac", "profile": "LC", "sample_rate": "44100", "channels": 2}
+    he44 = dict(a44, profile="HE-AAC")
+    assert S.tonformat(probe([v, a48])) == ("aac", "LC", 48000, 1)
     assert S.tonformat(probe([v])) == S.OHNE_TON
     for kaputt in (probe([]), "{}"):
         try:
@@ -23263,6 +23264,11 @@ def _test_v42_w125_sitzung_tonformat():
     assert not S.braucht_angleich([f48, f48, f48]), "gleiches Format wird umsonst neu kodiert"
     assert not S.braucht_angleich([])
     assert S.braucht_angleich([f48, f44]), "verschiedene Tonformate gehen ungeprueft in -c copy"
+    # Gleiche Rate und Kanalzahl, anderes Profil: der Demuxer nimmt die
+    # Konfiguration des ersten Segments (Codex-Befund, PR #164).
+    assert S.braucht_angleich([S.tonformat(probe([v, he44])), f44]), \
+        "HE-AAC und LC gelten als gleich — das Profil fehlt im Schluessel"
+    assert "profile" in " ".join(S.probe_cmd("/rec/a.mp4")), "ffprobe fragt das Profil nicht ab"
     assert S.braucht_angleich([f44, S.OHNE_TON]), "ein tonloses Segment geht ungeprueft in -c copy"
     # Auch wenn ALLE tonlos sind: sonst wird eine Sitzung ohne Ton "gleich"
     # befunden und per -c copy zu einer stummen Datei — der Fall, den W106

@@ -189,11 +189,19 @@ def concat_cmd(listendatei: str, ziel: str, *, threads=None, nice=None):
 
 # Ein Segment ohne Tonspur. Ein eigener Wert statt None: "kein Ton" ist eine
 # Antwort, kein Misserfolg — und so steht er auch lesbar in der Logzeile.
-OHNE_TON = ("ohne Ton", 0, 0)
+OHNE_TON = ("ohne Ton", "", 0, 0)
 
 
 def tonformat(ffprobe_json):
-    """(codec, sample_rate, channels) der ersten Tonspur, OHNE_TON ohne Ton.
+    """(codec, profil, sample_rate, channels) der ersten Tonspur, OHNE_TON ohne Ton.
+
+    Das Profil gehoert in den Schluessel (Codex-Befund, PR #164): der
+    concat-Demuxer uebernimmt die Codec-Konfiguration (extradata) des ersten
+    Segments. HE-AAC traegt dort die halbe Kernrate plus SBR — folgt ein
+    LC-Segment mit gleicher Rate und Kanalzahl, wird es mit der falschen
+    Konfiguration dekodiert. Gemessen ist nur LC + Main (sauber, ffmpeg 6.1;
+    HE-AAC laesst sich ohne libfdk nicht erzeugen) — ein Fehlalarm kostet
+    einen unnoetigen Ton-Neukodierlauf, ein uebersehener eine kaputte Sitzung.
 
     Wirft ValueError bei unlesbarem JSON und wenn die Antwort weder Bild noch
     Ton nennt — eine solche Datei ist kaputt oder leer, und zu raten waere hier
@@ -207,6 +215,7 @@ def tonformat(ffprobe_json):
     for st in streams:
         if st.get("codec_type") == "audio":
             return (str(st.get("codec_name") or "?"),
+                    str(st.get("profile") or ""),
                     int(st.get("sample_rate") or 0),
                     int(st.get("channels") or 0))
     return OHNE_TON
@@ -228,7 +237,7 @@ def braucht_angleich(formate) -> bool:
 
 def probe_cmd(pfad):
     return ["ffprobe", "-v", "error",
-            "-show_entries", "stream=codec_type,codec_name,sample_rate,channels",
+            "-show_entries", "stream=codec_type,codec_name,profile,sample_rate,channels",
             "-of", "json", pfad]
 
 
