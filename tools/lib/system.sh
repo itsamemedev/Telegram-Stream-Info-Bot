@@ -110,6 +110,28 @@ nc_paketname(){
     apt:yt-dlp|dnf:yt-dlp|pacman:yt-dlp|zypper:yt-dlp|apk:yt-dlp|brew:yt-dlp)
                            printf 'yt-dlp';;
     *:yt-dlp)              printf '';;
+    # v4.2-W124: was der Installer ueber die Werkzeuge hinaus braucht.
+    *:unzip|*:nginx|*:ca-certificates) printf '%s' "$_w";;
+    apt:mariadb|dnf:mariadb) printf 'mariadb-server';;
+    *:mariadb)             printf 'mariadb';;
+    apt:certbot-nginx|dnf:certbot-nginx|zypper:certbot-nginx)
+                           printf 'certbot python3-certbot-nginx';;
+    pacman:certbot-nginx|apk:certbot-nginx) printf 'certbot certbot-nginx';;
+    *:certbot-nginx)       printf '';;
+    # CrowdSec liegt nur bei Debian/Ubuntu in den Quellen des Projekts, die
+    # der Installer kennt. Ueberall sonst: docs/CROWDSEC.md, nicht raten.
+    apt:crowdsec)          printf 'crowdsec';;
+    *:crowdsec)            printf '';;
+    # Python >= 3.12 — Kandidaten in Vorzugsreihenfolge. Auf Arch, Alpine
+    # und Fedora ist "das" Python aktuell genug; Debian/openSUSE fuehren
+    # Fassungen nebeneinander. Das venv-Paket ist ein apt-Sonderfall (siehe
+    # nc_venvpaket).
+    apt:python)            printf 'python3.13 python3.12';;
+    dnf:python)            printf 'python3.13 python3.12 python3';;
+    pacman:python)         printf 'python';;
+    zypper:python)         printf 'python313 python312';;
+    apk:python)            printf 'python3';;
+    brew:python)           printf 'python@3.13';;
     *)                     printf '';;
   esac
 }
@@ -179,3 +201,70 @@ nc_quellen_leer(){
 
 # Braucht dieser Paketmanager root? brew verweigert sich unter root sogar.
 nc_braucht_root(){ [ "$NC_PKG" != "brew" ]; }
+
+# ── v4.2-W124: was der Installer ueber den Paketmanager hinaus wissen muss ──
+
+# nc_venvpaket PYTHON-FASSUNG -> Paket, das "python -m venv" moeglich macht.
+# Nur Debian trennt ensurepip ab; ohne das passende Paket scheitert venv mit
+# "ensurepip is not available" — die haeufigste Sackgasse auf Debian.
+nc_venvpaket(){
+  case "$NC_PKG" in
+    apt) printf 'python%s-venv' "$1";;
+    *)   printf '';;
+  esac
+}
+
+# nc_init_erkennen -> NC_INIT: systemd | launchd | openrc | keiner
+#
+# Entschieden wird am LAUFENDEN Init, nicht am installierten Werkzeug:
+# systemctl liegt in vielen Containern herum, ohne dass systemd PID 1 ist —
+# ein Dienst, den dort niemand startet, ist schlimmer als keiner.
+# NC_INIT von aussen ueberstimmt alles (Vertraege, --no-service).
+nc_init_erkennen(){
+  if [ -n "${NC_INIT:-}" ]; then return 0; fi
+  NC_INIT="keiner"
+  case "${NC_OS:-$(uname -s 2>/dev/null)}" in
+    Darwin) command -v launchctl >/dev/null 2>&1 && NC_INIT="launchd";;
+    Linux)
+      if [ -d /run/systemd/system ] && command -v systemctl >/dev/null 2>&1; then
+        NC_INIT="systemd"
+      elif command -v openrc-run >/dev/null 2>&1 || [ -x /sbin/openrc-run ]; then
+        NC_INIT="openrc"
+      fi;;
+  esac
+  return 0
+}
+
+# nc_motd_weg -> NC_MOTD_WEG: update-motd | shellrc | keiner
+# update-motd: Debian/Ubuntu (pam_motd + /etc/update-motd.d); shellrc: macOS.
+# Ueberall sonst gibt es keinen Mechanismus, den motd.sh --install kennt — dort
+# wird nichts eingerichtet und es auch so gesagt.
+nc_motd_weg(){
+  if [ -n "${NC_MOTD_WEG:-}" ]; then return 0; fi
+  NC_MOTD_WEG="keiner"
+  case "${NC_OS:-$(uname -s 2>/dev/null)}" in
+    Darwin) NC_MOTD_WEG="shellrc";;
+    Linux)  [ -d /etc/update-motd.d ] && NC_MOTD_WEG="update-motd";;
+  esac
+  return 0
+}
+
+# nc_nginx_ziel -> Pfad der Server-Datei fuer nginx. Debian aktiviert ueber
+# sites-enabled (Verweis), Alpine liest http.d/, der Rest conf.d/.
+nc_nginx_ziel(){
+  case "$NC_PKG" in
+    apt) printf '/etc/nginx/sites-available/nightcrawler';;
+    apk) printf '/etc/nginx/http.d/nightcrawler.conf';;
+    *)   printf '/etc/nginx/conf.d/nightcrawler.conf';;
+  esac
+}
+
+# nc_firewall_hinweis PORT -> der Befehl, der den Port fuer EINE Adresse
+# oeffnet. ufw auf Debian/Ubuntu, firewalld auf Fedora/RHEL/openSUSE. Ein
+# ufw-Befehl auf Fedora ist eine Anleitung, die nicht laeuft.
+nc_firewall_hinweis(){
+  case "$NC_PKG" in
+    dnf|zypper) printf "firewall-cmd --permanent --add-rich-rule='rule family=ipv4 source address=<DEINE-IP> port port=%s protocol=tcp accept' && firewall-cmd --reload" "$1";;
+    *)          printf 'ufw allow from <DEINE-IP> to any port %s' "$1";;
+  esac
+}

@@ -10,23 +10,19 @@
 .env, Datenbanken, Aufnahmen und Logs werden dabei NIE angefasst — sie gehoeren dir, nicht dem Build.	.env, databases, recordings and logs are NEVER touched — they belong to you, not to the build.
 Alle Einstellungen leben in einer einzigen Datei: .env. Sie enthaelt Bot-Token, Stream-Keys und Cookies — deshalb bekommt sie Rechte 600 (nur du darfst lesen) und gehoert NIE in ein Archiv oder ein Repository.	Every setting lives in a single file: .env. It holds bot tokens, stream keys and cookies — which is why it gets mode 600 (only you may read it) and NEVER belongs in an archive or a repository.
 Alles Weitere lebt in einer virtuellen Umgebung unter .venv/ — ein eigener Ordner mit eigenem Python und eigenen Bibliotheken. Damit kann keine Installation hier das System-Python beschaedigen und umgekehrt.	Everything else lives in a virtual environment under .venv/ — its own folder with its own Python and its own libraries. That way no install here can damage the system Python, or the other way round.
-Alles hier ist Zubehoer. Der Bot laeuft ohne jedes davon; er kann mit ihnen mehr. Was du jetzt auslaesst, laesst sich spaeter jederzeit nachruesten.	Everything here is optional. The bot runs without any of it; it can do more with it. Whatever you skip now can be added later at any time.
 Auf allen anderen Maschinen bleibt es bei den keylosen Backends. Ein Schluessel von enter.pollinations.ai (POLLINATIONS_API_KEY) macht sie spuerbar zuverlaessiger — eintragen laesst er sich jederzeit in der .env.	On every other machine the keyless backends remain. A key from enter.pollinations.ai (POLLINATIONS_API_KEY) makes them noticeably more reliable — you can add it to .env at any time.
 Bestehende Installation gefunden.	Existing installation found.
 Bestehende Werte bleiben; nur was du jetzt beantwortest, wird ueberschrieben.	Existing values are kept; only what you answer now gets overwritten.
 Bitte selbst bereitstellen: ffmpeg streamlink yt-dlp git curl sqlite3	Please provide these yourself: ffmpeg streamlink yt-dlp git curl sqlite3
 CrowdSec ist die Abwehr: es liest Logs mit, erkennt Angriffsmuster und sperrt IPs. Das Dashboard zeigt Sperren und Angriffswellen an; der sentinel-Agent meldet Spitzen. Sinnvoll, sobald die Maschine aus dem Netz erreichbar ist.	CrowdSec is the defence layer: it reads along in the logs, recognises attack patterns and blocks IPs. The dashboard shows bans and attack waves; the sentinel agent reports spikes. Worth having as soon as the machine is reachable from the network.
 CrowdSec: installiert — Feinheiten in docs/CROWDSEC.md	CrowdSec: installed — details in docs/en/CROWDSEC.md
-Datenbank liess sich nicht anlegen — bleibe bei SQLite.	Could not create the database — staying with SQLite.
 Der Bot laeuft trotzdem — du musst ffmpeg, streamlink und yt-dlp dann selbst installieren. Schritt 5 wird uebersprungen.	The bot still runs — you will have to install ffmpeg, streamlink and yt-dlp yourself. Step 5 is skipped.
 Der Port wird oeffentlich. Token ist damit Pflicht (kommt gleich).	The port becomes public. A token is therefore mandatory (coming up next).
 Die Eingaben waren nicht gleich — noch einmal.	The entries did not match — once more.
 Discord konfiguriert.	Discord configured.
 Ersatzpruefung: Modul-Import	Fallback check: module import
-Es ist bereits ein BOT_TOKEN eingetragen.	A BOT_TOKEN is already configured.
 Homebrew fehlt. Es ist auf macOS der einzige vernuenftige Weg zu ffmpeg.	Homebrew is missing. On macOS it is the only sensible route to ffmpeg.
 Installation direkt im vorhandenen Verzeichnis — nichts zu kopieren.	Installing directly in the existing directory — nothing to copy.
-Kein MariaDB-Client gefunden — bleibe bei SQLite.	No MariaDB client found — staying with SQLite.
 Kein Quelltext neben dem Skript — er wird von GitHub geholt.	No source next to the script — fetching it from GitHub.
 Kein passendes Release gefunden — Handanleitung: docs/SETUP_LLAMACPP.md	No matching release found — manual instructions: docs/en/SETUP_LLAMACPP.md
 Lade das Modell (Qwen2.5-1.5B-Instruct, Q4_K_M, ca. 1 GB) …	Downloading the model (Qwen2.5-1.5B-Instruct, Q4_K_M, approx. 1 GB) …
@@ -38,72 +34,47 @@ MariaDB: Nutzer nightcrawler, Passwort in .env (MARIADB_PASSWORD)	MariaDB: user 
 Mindestens ein Paket liess sich nicht installieren.	At least one package could not be installed.
 NIGHTCRAWLER ist eingerichtet.	NIGHTCRAWLER is set up.
 Notieren oder im Passwortmanager ablegen. Es steht ausserdem in der .env (chmod 600) und laesst sich dort jederzeit nachlesen.	Write it down or store it in a password manager. It is also in .env (chmod 600) and can be read there at any time.
-Paketmanager nicht erkannt (weder apt noch brew).	Package manager not recognised (neither apt nor brew).
 Python-Pakete stehen.	Python packages are in place.
 Quelltext geholt.	Source fetched.
-Sparsames Profil gesetzt (jederzeit in der .env aenderbar).	Frugal profile applied (changeable in .env at any time).
 Suche das aktuelle Release-Paket …	Looking for the current release package …
-Systempakete installiert.	System packages installed.
 Totmann-Meldung verdrahtet.	Dead-man alert wired up.
 Uebersprungen (--skip-system oder kein Paketmanager).	Skipped (--skip-system or no package manager).
-Uebersprungen. Ohne ffmpeg gibt es weder Aufnahme noch Restream.	Skipped. Without ffmpeg there is neither recording nor restreaming.
 Umgebung angelegt.	Environment created.
 Weder root noch sudo — Systempakete koennen nicht installiert werden.	Neither root nor sudo — system packages cannot be installed.
-brew install ffmpeg streamlink yt-dlp git sqlite	brew install ffmpeg streamlink yt-dlp git sqlite
 llama.cpp laeuft auf 127.0.0.1:8080.	llama.cpp is running on 127.0.0.1:8080.
 pip install laeuft — das dauert je nach Verbindung 1 bis 15 Minuten.	pip install is running — depending on your connection this takes 1 to 15 minutes.
 venv liess sich nicht anlegen.	Could not create the venv.
-Auf MariaDB umstellen?	Switch to MariaDB?
 Auf den neuesten Stand bringen (git pull)?	Bring it up to date (git pull)?
 CrowdSec installieren?	Install CrowdSec?
-Dashboard im Netz erreichbar machen (0.0.0.0)?	Make the dashboard reachable on the network (0.0.0.0)?
 Dienst aktivieren und starten?	Enable and start the service?
-Diese Pakete jetzt installieren?	Install these packages now?
-Diese Pakete jetzt per Homebrew installieren?	Install these packages via Homebrew now?
 Discord jetzt einrichten?	Set up Discord now?
-Ersetzen?	Replace?
-Homebrew jetzt installieren?	Install Homebrew now?
 Loslegen?	Get started?
-MariaDB-Server lokal installieren?	Install a MariaDB server locally?
 PIN-Login einrichten?	Set up PIN login?
-Sparsames Profil setzen?	Apply the frugal profile?
 Status-MOTD beim Login einrichten?	Set up the status MOTD on login?
 Totmann-Meldung einrichten?	Set up the dead-man alert?
-deadsnakes-PPA hinzufuegen und python3.12 installieren?	Add the deadsnakes PPA and install python3.12?
-launchd-Eintrag anlegen?	Create a launchd entry?
 llama.cpp lokal einrichten (Download ca. 1 GB)?	Set up llama.cpp locally (download approx. 1 GB)?
-python3.12/3.13 aus den Paketquellen installieren?	Install python3.12/3.13 from the package sources?
-python@3.13 per Homebrew installieren?	Install python@3.13 via Homebrew?
-uv installieren und darueber Python 3.13 holen?	Install uv and get Python 3.13 through it?
 Reverse-Proxy: nginx nimmt Port 443 mit einem echten Zertifikat entgegen und reicht nach 127.0.0.1 durch. Damit bleibt der Dashboard-Port zu, die Verbindung ist verschluesselt, und die OAuth-Rueckrufe von Kick, Twitch und YouTube funktionieren ohne SSH-Tunnel — die brauchen eine oeffentlich erreichbare HTTPS-Adresse. Das Zertifikat holt certbot von Let's Encrypt und erneuert es selbst.	Reverse proxy: nginx takes port 443 with a real certificate and forwards to 127.0.0.1. The dashboard port stays closed, the connection is encrypted, and the OAuth callbacks from Kick, Twitch and YouTube work without an SSH tunnel — they need a publicly reachable HTTPS address. certbot fetches the certificate from Let's Encrypt and renews it by itself.
-nginx als Reverse-Proxy mit HTTPS einrichten?	Set up nginx as a reverse proxy with HTTPS?
 Domain, die auf diese Maschine zeigt (z.B. bot.example.dev)	Domain pointing at this machine (e.g. bot.example.dev)
 Ohne Domain kein Zertifikat — uebersprungen.	No domain, no certificate — skipped.
 nginx/certbot liessen sich nicht installieren.	nginx/certbot could not be installed.
 nginx eingerichtet.	nginx configured.
 nginx-Konfiguration fehlerhaft — bitte 'sudo nginx -t' pruefen.	nginx configuration is faulty — please check with 'sudo nginx -t'.
 certbot holt jetzt das Zertifikat. Dafuer muss Port 80 dieser Maschine aus dem Internet erreichbar sein und die Domain hierher zeigen — sonst schlaegt die Pruefung fehl. Die Erneuerung laeuft danach von selbst per systemd-Timer.	certbot will now fetch the certificate. For that, port 80 of this machine must be reachable from the internet and the domain must point here — otherwise the challenge fails. Renewal then runs by itself via a systemd timer.
-Zertifikat jetzt holen (Let's Encrypt)?	Fetch the certificate now (Let's Encrypt)?
 Zertifikat aktiv, HTTP leitet auf HTTPS um.	Certificate active, HTTP redirects to HTTPS.
 Die MOTD zeigt bei jedem SSH-Login den Zustand in einem Bild: Last, RAM, Platte, Dienst, Dashboard, Fehler heute, wie viele Streamer live sind und ob wirklich aufgenommen wird. Kostet einen Sekundenbruchteil pro Login. Sie ersetzt dabei die Standard-MOTD der Distribution — die kommt bei 'tools/motd.sh --uninstall' vollstaendig zurueck.	The MOTD shows the state at every SSH login in one picture: load, RAM, disk, service, dashboard, errors today, how many streamers are live and whether recording is actually happening. Costs a fraction of a second per login. It replaces the distribution's default MOTD — which comes back in full with 'tools/motd.sh --uninstall'.
 Abgebrochen — nichts veraendert.	Aborted — nothing changed.
 Auf einem Raspberry Pi gilt: Aufnahme und EIN Restream-Ziel ohne Transcode sind realistisch. Transcode (mehrere Ziele gleichzeitig) rechnet die CPU in Software und ueberfordert jeden Pi. Aufnahmen gehoeren auf eine USB-SSD, nicht auf die SD-Karte — Dauerschreiben killt SD-Karten binnen Wochen.	On a Raspberry Pi: recording plus ONE restream target without transcoding is realistic. Transcoding (several targets at once) is done in software by the CPU and overwhelms any Pi. Recordings belong on a USB SSD, not on the SD card — continuous writing kills SD cards within weeks.
 BOT_TOKEN gesetzt.	BOT_TOKEN set.
 CrowdSec fehlt in den Quellen — siehe docs/CROWDSEC.md.	CrowdSec is not in the package sources — see docs/en/CROWDSEC.md.
-DASHBOARD_PIN gesetzt.	DASHBOARD_PIN set.
-DASHBOARD_TOKEN gesetzt.	DASHBOARD_TOKEN set.
-Das Dashboard ist die Weboberflaeche mit 359 Routen: Sendeleiste, Aufnahmen, Statistiken, Abwehr. Es bindet standardmaessig NUR auf 127.0.0.1 — also nicht im Netz erreichbar. Der sichere Zugang ist ein SSH-Tunnel; alles andere sperrt man ueber Token oder Firewall auf.	The dashboard is the web interface with 359 routes: broadcast bar, recordings, statistics, defence. By default it binds ONLY to 127.0.0.1 — so it is not reachable on the network. The safe way in is an SSH tunnel; anything else you unlock with a token or a firewall rule.
 Dashboard-Token: steht in .env (DASHBOARD_TOKEN)	Dashboard token: stored in .env (DASHBOARD_TOKEN)
 Datenbank: standardmaessig SQLite — eine Datei, kein Dienst, kein Passwort, und bis in den sechsstelligen Zeilenbereich schnell genug. MariaDB lohnt erst, wenn mehrere Rechner auf dieselben Daten sollen.	Database: SQLite by default — one file, no service, no password, and fast enough into the hundreds of thousands of rows. MariaDB only pays off once several machines need the same data.
 Deine Telegram-Nutzer-ID (mehrere per Komma, leer = keine Sperre)	Your Telegram user ID (several separated by commas, empty = no restriction)
 Der Dashboard-Token schuetzt den Zugriff von aussen (Aufruf einmal mit ?token=..., danach haelt ein Cookie). Loopback und SSH-Tunnel bleiben immer frei. Das ist ein frei waehlbares Geheimnis — hier ist Erzeugen die bessere Wahl als Ausdenken.	The dashboard token protects access from outside (call it once with ?token=..., after that a cookie holds). Loopback and SSH tunnels always stay open. This is a freely chosen secret — generating one is the better choice than inventing one.
 Dienst liess sich nicht aktivieren.	The service could not be enabled.
 Diese Maschine ist klein. Die Vorgaben des Bots sind auf einen 8-Kern-Server gemuenzt; unveraendert fuehrt das hier zu abgebrochenen Aufnahmen und stotternden Restreams. Das sparsame Profil setzt: nur ein Restream-Ziel, 3500 kbit statt 6000, je ein ffmpeg-Thread fuer Aufnahme und Hintergrund, hoechstens eine Transkription gleichzeitig.	This machine is small. The bot's defaults are aimed at an 8-core server; left unchanged they lead to aborted recordings and stuttering restreams here. The frugal profile sets: one restream target only, 3500 kbit instead of 6000, one ffmpeg thread each for recording and background work, at most one transcription at a time.
-Diese Ubuntu-Fassung hat kein 3.12 in den Quellen. Das Zusatz-Repository deadsnakes ist der uebliche Weg dorthin.	This Ubuntu release has no 3.12 in its sources. The additional deadsnakes repository is the usual way to get there.
 Discord-Server-ID (Guild-ID, Rechtsklick auf den Server → ID kopieren)	Discord server ID (guild ID, right-click the server → Copy ID)
 Ein systemd-Dienst startet den Bot beim Booten, startet ihn nach einem Absturz neu und schreibt alles ins Journal (journalctl). Ohne ihn laeuft der Bot nur, solange deine SSH-Sitzung offen ist.	A systemd service starts the bot at boot, restarts it after a crash and writes everything to the journal (journalctl). Without it the bot only runs as long as your SSH session is open.
 Erkannt:   Raspberry Pi	Detected:  Raspberry Pi
-Freigabeliste gesetzt.	Allow-list set.
 Haeufigste Ursachen: kein Compiler fuer ein Paket ohne fertiges Rad (dann: sudo apt install build-essential python3-dev), oder eine abgerissene Verbindung. Wiederholen ist gefahrlos: .venv/bin/pip install -r requirements.txt	Most common causes: no compiler for a package without a prebuilt wheel (then: sudo apt install build-essential python3-dev), or a dropped connection. Retrying is harmless: .venv/bin/pip install -r requirements.txt
 In welches Verzeichnis soll NIGHTCRAWLER?	Which directory should NIGHTCRAWLER go into?
 Jetzt wird geprueft, ob das Zusammengestellte wirklich laeuft: bot.py --selfcheck laedt den kompletten Bot, prueft Werkzeuge, Konfiguration und Erreichbarkeiten und beendet sich wieder. Das ist der Unterschied zwischen 'installiert' und 'laeuft'.	Now it checks whether what was assembled actually runs: bot.py --selfcheck loads the complete bot, checks tools, configuration and reachability, and exits again. That is the difference between 'installed' and 'running'.
@@ -132,7 +103,6 @@ Unter 5 GB frei — Aufnahmen fuellen die Platte sehr schnell.	Less than 5 GB fr
 Vier Dinge kommen NICHT ueber pip, weil es Programme sind und keine Bibliotheken: ffmpeg schneidet, kodiert und sendet; streamlink loest die TikTok-Quelle auf; yt-dlp ist der Rueckfall, wenn TikTok mit 403 blockt; sqlite3 ist die Kommandozeile zur Datenbank (fuer Diagnose, nicht fuer den Betrieb).	Four things do NOT come via pip, because they are programs and not libraries: ffmpeg cuts, encodes and sends; streamlink resolves the TikTok source; yt-dlp is the fallback when TikTok blocks with 403; sqlite3 is the command line to the database (for diagnosis, not for operation).
 Vorhandenes .venv passt nicht (zu altes Python) — wird neu angelegt.	The existing .venv does not fit (Python too old) — it is being recreated.
 Wichtig zur Last: sobald ein zweites Ziel dazukommt, muss ffmpeg umkodieren (Transcode) — das kostet ein Vielfaches an CPU. Ein Ziel ohne Transcode laeuft selbst auf schwacher Hardware.	Important about load: as soon as a second target is added, ffmpeg has to transcode — that costs a multiple of the CPU. One target without transcoding runs even on weak hardware.
-Willst du das Dashboard direkt aus dem Netz erreichen (statt per SSH-Tunnel), muss es auf 0.0.0.0 lauschen. Das ist eine bewusste Oeffnung: wer den Port erreicht, kann Aufnahmen loeschen, Cookies sehen und Logs lesen. Nur mit Token UND Firewall machen.	If you want to reach the dashboard directly from the network (instead of through an SSH tunnel), it has to listen on 0.0.0.0. That is a deliberate opening: whoever reaches the port can delete recordings, see cookies and read logs. Only do it with a token AND a firewall.
 Zusaetzlich gibt es einen PIN-Login fuer die Weboberflaeche und die PWA auf dem Handy — bequemer als ein 40-Zeichen-Token im Browser. Token und PIN duerfen parallel gelten.	There is also a PIN login for the web interface and the PWA on your phone — more convenient than a 40-character token in the browser. Token and PIN may both be active.
 bot.py laesst sich nicht einmal einlesen — Python-Fassung pruefen.	bot.py cannot even be parsed — check the Python version.
 git fehlt und wird zum Holen des Quelltexts gebraucht.	git is missing and is needed to fetch the source.
@@ -165,7 +135,6 @@ Abgebrochen - es wurde nichts veraendert.	Cancelled - nothing was changed.
 Alle Einstellungen leben in einer einzigen Datei: .env. Sie enthaelt Bot-Token, Stream-Keys und Cookies - sie gehoert nie in ein Archiv und nie in ein Repository.	Every setting lives in a single file: .env. It holds bot tokens, stream keys and cookies - it never belongs in an archive and never in a repository.
 Alles Weitere lebt in einer virtuellen Umgebung unter .venv - ein eigener Ordner mit eigenem Python und eigenen Bibliotheken. Damit kann keine Installation hier dein System-Python beschaedigen und umgekehrt.	Everything else lives in a virtual environment under .venv - its own folder with its own Python and its own libraries. That way nothing installed here can damage your system Python, or the other way round.
 Alles davon steht auch in	All of this is also written to
-Aufgabe 'NIGHTCRAWLER' anlegen, die bei der Anmeldung startet?	Create a task 'NIGHTCRAWLER' that starts at logon?
 Aufgabe angelegt (entfernen: schtasks /delete /tn NIGHTCRAWLER /f).	Task created (to remove: schtasks /delete /tn NIGHTCRAWLER /f).
 Aufgabe liess sich nicht anlegen (fehlende Rechte?). Von Hand: Aufgabenplanung, Aufgabe erstellen, Ausloeser 'Bei Anmeldung'.	The task could not be created (missing rights?). By hand: Task Scheduler, create task, trigger 'At log on'.
 Aufnahmen brauchen Platz: eine Stunde Stream sind grob 1 bis 3 GB.	Recordings need space: one hour of stream is roughly 1 to 3 GB.
@@ -226,7 +195,6 @@ Pakete	Packages
 Platzhalter-Werte geleert (sie waeren als echte Werte gelesen worden).	placeholder values cleared (they would have been read as real values).
 PyMySQL installieren?  (nur noetig, wenn die Daten in MariaDB statt SQLite liegen sollen)	Install PyMySQL?  (only needed if the data should live in MariaDB instead of SQLite)
 Python	Python
-Python 3.13 jetzt per winget installieren?	Install Python 3.13 now via winget?
 Python-Paket ausgelassen, spaeter nachruestbar mit	Python package left out, can be added later with
 Python:	Python:
 Quelltext liegt bereits hier:	Source is already here:
@@ -249,7 +217,6 @@ Vorhandenes .venv passt nicht (zu altes Python) - wird neu angelegt.	The existin
 Was bereits geschrieben wurde, bleibt liegen - ein erneuter Lauf	What has already been written stays - another run
 Was unter Windows anders ist	What differs on Windows
 Willkommen	Welcome
-Windows kennt kein systemd. Der uebliche Ersatz ist die Aufgabenplanung: eine Aufgabe, die den Bot bei der Anmeldung startet. Sie startet ihn nicht nach einem Absturz neu - fuer einen echten Dienst mit Neustart gibt es NSSM (nssm.cc).	Windows has no systemd. The usual substitute is the Task Scheduler: a task that starts the bot at logon. It does not restart it after a crash - for a real service with restart there is NSSM (nssm.cc).
 Windows:	Windows:
 Zielverzeichnis	Target directory
 Zur Last: sobald ein zweites Ziel dazukommt, muss ffmpeg umkodieren - das kostet ein Vielfaches an CPU. Ein Ziel ohne Transcode laeuft auch auf schwacher Hardware.	On load: as soon as a second target is added, ffmpeg has to transcode - that costs several times the CPU. A single target without transcoding runs on weak hardware too.
@@ -269,7 +236,6 @@ erzeugt:	generated:
 erzeugte PIN:	generated PIN:
 faster-whisper installieren?  (Transkription des Streams, Grundlage fuer Clips und Highlights; rund 300 MB und viel CPU)	Install faster-whisper?  (transcription of the stream, the basis for clips and highlights; around 300 MB and a lot of CPU)
 ffmpeg fehlt.	ffmpeg is missing.
-ffmpeg jetzt per winget installieren?	Install ffmpeg now via winget?
 ffmpeg schneidet, kodiert und sendet - es ist das Herz von Aufnahme und Restream. Der Bot startet auch ohne, kann dann aber nichts aufzeichnen und nichts weitersenden.	ffmpeg cuts, encodes and sends - it is the heart of recording and restreaming. The bot starts without it, but then cannot record and cannot forward anything.
 ffmpeg:	ffmpeg:
 in den Energieoptionen den Standbymodus abschalten.	turn standby off in the power options.
@@ -286,10 +252,7 @@ tools\install.bat /?         diese Hilfe	tools\install.bat /?         this help
 tools\install.bat /auto      gar keine Fragen, Passwoerter werden erzeugt	tools\install.bat /auto      no questions at all, passwords are generated
 tools\install.bat /express   nur Pflichtfragen (Token, Pfade, Keys);	tools\install.bat /express   only mandatory questions (tokens, paths, keys);
 und warum. Es fragt vor jedem Eingriff. Strg+C bricht gefahrlos ab.	and why. It asks before every change. Ctrl+C cancels safely.
-winget fehlt - Python und ffmpeg muessten von Hand kommen.	winget is missing - Python and ffmpeg would have to be installed by hand.
 winget ist der Paketmanager von Windows, er steckt in der App 'App Installer' aus dem Microsoft Store.	winget is the Windows package manager; it comes with the 'App Installer' app from the Microsoft Store.
-winget setzt den PATH erst fuer NEUE Fenster. Steht ffmpeg gleich noch als fehlend da: Fenster schliessen, neu oeffnen, Skript erneut starten.	winget only updates the PATH for NEW windows. If ffmpeg still shows as missing in a moment: close the window, open a new one, run the script again.
-winget vorhanden - fehlende Programme koennen installiert werden.	winget is available - missing programs can be installed.
 
 # --- tools/motd.sh (v4.2-W14) -----------------------------------------
 # Die MOTD band lib/i18n.sh seit v4.1-W17 ein und rief t() KEIN EINZIGES
@@ -412,11 +375,9 @@ keine Schnittstelle erkannt	no interface detected
   → %s installieren?	  → install %s?
 %s Pakete werden installiert	%s packages will be installed
 %s Pakete werden installiert, ausgelassen:%s	%s packages will be installed, skipped:%s
-%s Platzhalter-Werte geleert (sie waeren als echte Werte gelesen worden).	%s placeholder values cleared (they would have been read as real values).
 %s Stream-Key	%s stream key
 %s als Restream-Ziel einrichten?	Set up %s as a restream target?
 %s eingeben	Enter %s
-%s eingerichtet.	%s set up.
 %s fehlt — ohne ihn laeuft KEINE Aufnahme und kein Restream.	%s is missing — without it there is NO recording and no restream.
 %s fehlt — wird spaeter im venv ergaenzt.	%s is missing — it will be added to the venv later.
 %s ohne Key — ausgeschaltet gelassen.	%s without a key — left disabled.
@@ -431,15 +392,8 @@ keine Schnittstelle erkannt	no interface detected
 --no-color       ohne Farben	--no-color       without colours
 --skip-system    Systempakete nicht anfassen (wenn schon vorhanden)	--skip-system    leave system packages alone (if already present)
 --unattended,-y  keine Fragen; Passwoerter werden erzeugt, optionale	--unattended,-y  no questions; passwords are generated, optional
-1  Willkommen              7  Konfiguration (.env)	1  Welcome                 7  Configuration (.env)
-2  System pruefen          8  Optionale Bausteine	2  Check system            8  Optional components
-3  Python sicherstellen    9  Selbsttest	3  Ensure Python           9  Self-test
-4  Zielverzeichnis        10  Autostart, MOTD, Totmann-Meldung	4  Target directory       10  Autostart, MOTD, dead-man alert
-5  Systempakete           11  Zusammenfassung	5  System packages        11  Summary
-6  Python-Pakete	6  Python packages
 Abbruch in Schritt %s (Rueckgabewert %s).	Aborted in step %s (exit code %s).
 Alles davon steht auch in %s	All of this is also in %s
-Autostart, MOTD, Totmann-Meldung	Autostart, MOTD, dead-man alert
 BEDIENUNG	OPERATION
 Bausteine bleiben aus. Fuer Provisionierung/CI.	components stay off. For provisioning/CI.
 Beispiel:	Example:
@@ -448,9 +402,7 @@ Dashboard per Tunnel oeffnen:  %s	Open the dashboard through a tunnel:  %s
 Dashboard-PIN (Ziffern)	Dashboard PIN (digits)
 Dateien	files
 Der Bot wurde beendet. Fenster schliessen mit einer beliebigen Taste.	The bot has stopped. Press any key to close this window.
-Der Weg in elf Schritten:	The way there, in eleven steps:
 Dienst        %s	Service       %s
-Dienst %s jetzt einrichten?	Set up service %s now?
 Dienst %s laeuft.	Service %s is running.
 Dienst startete nicht. Grund ansehen:  journalctl -u %s -n 60 --no-pager	Service did not start. See why:  journalctl -u %s -n 60 --no-pager
 Dienst: %s  (Status: systemctl status %s · Log: journalctl -u %s -f)	Service: %s  (status: systemctl status %s · log: journalctl -u %s -f)
@@ -486,20 +438,15 @@ NIGHTCRAWLER v37 — Installation	NIGHTCRAWLER v37 — installation
 NIGHTCRAWLER v37 — Installation vom %s	NIGHTCRAWLER v37 — installation of %s
 OFFEN: BOT_TOKEN in %s eintragen (von @BotFather)	OPEN: put BOT_TOKEN into %s (from @BotFather)
 Ohne Python >= %s.%s geht es nicht weiter.	Cannot continue without Python >= %s.%s.
-Optionale Bausteine	Optional components
 Passwort fuer den Datenbank-Nutzer 'nightcrawler'	Password for the database user 'nightcrawler'
 Python bereit: %s (%s)	Python ready: %s (%s)
 Python gefunden: %s (%s)	Python found: %s (%s)
-Python sicherstellen	Ensure Python
-Python-Paket %s: ausgelassen (spaeter: .venv/bin/pip install %s)	Python package %s: skipped (later: .venv/bin/pip install %s)
-Python-Paket %s: installiert	Python package %s: installed
 Python-Pakete	Python packages
 Quelltext liegt bereits hier: %s	Source is already here: %s
 Quelltext liegt in %s	Source is in %s
 Redis-Cache: entlastet bei sehr vielen gleichzeitigen Dashboard-Zugriffen. Fuer eine Ein-Personen-Installation ohne Nutzen.	Redis cache: helps with very many simultaneous dashboard requests. Of no use for a single-person installation.
 Reverse-Proxy: https://%s → 127.0.0.1:%s (nginx + certbot)	Reverse proxy: https://%s → 127.0.0.1:%s (nginx + certbot)
 S3-Backup: schiebt Aufnahmen automatisch in einen S3-Speicher.	S3 backup: pushes recordings to S3 storage automatically.
-SICHERHEIT: Dashboard lauscht auf 0.0.0.0 — Firewall setzen: ufw allow from <DEINE-IP> to any port %s	SECURITY: dashboard listens on 0.0.0.0 — set a firewall: ufw allow from <YOUR-IP> to any port %s
 Spaeter:  sudo systemctl enable --now %s	Later:  sudo systemctl enable --now %s
 Sprache: %s	Language: %s
 Standard-MOTD gedaempft:	Default MOTD silenced:
@@ -508,14 +455,12 @@ Starten und zuschauen:  %s	Start and watch:  %s
 Startskript: %s/start.sh	Start script: %s/start.sh
 System:    %s (%s)	System:    %s (%s)
 Systempakete	System packages
-Telegram Bot-Token	Telegram bot token
 Telegram — der Pflichtteil	Telegram — the mandatory part
 Testen (MUSS eine Nachricht ausloesen):  sudo systemctl start nightcrawler-notify@%s.service	Test (MUST trigger a message):  sudo systemctl start nightcrawler-notify@%s.service
 Totmann-Meldung: aktiv — Test: sudo systemctl start nightcrawler-notify@%s.service	Dead-man alert: active — test: sudo systemctl start nightcrawler-notify@%s.service
 Transkription: schreibt mit, was im Stream gesagt wird (Grundlage fuer Clips, Highlights und die KI-Auswertung). Braucht rund 300 MB und deutlich CPU.	Transcription: writes down what is said in the stream (the basis for clips, highlights and the AI analysis). Needs about 300 MB and considerable CPU.
 Twitch begrenzt die Bitrate haerter als Kick — bei Problemen RESTREAM_BITRATE_K senken.	Twitch caps the bitrate harder than Kick — if there are problems, lower RESTREAM_BITRATE_K.
 Unbekannte Option: %s	Unknown option: %s
-Unterstuetzt: Ubuntu, Debian, Raspberry Pi OS, macOS.	Supported: Ubuntu, Debian, Raspberry Pi OS, macOS.
 Verzeichnis   %s	Directory     %s
 Verzeichnis:	Directory:
 Von Hand aenderbar; --install ueberschreibt die Datei.	Editable by hand; --install overwrites the file.
@@ -529,11 +474,9 @@ Was bereits geschrieben wurde, bleibt liegen — ein erneuter Lauf setzt dort au
 Wege: %s	Ways: %s
 Windows: install.bat im selben Ordner	Windows: install.bat in the same folder
 YouTube braucht am laengsten, bis es 'live' meldet (bis zu einer Minute). Das ist normal und kein Fehler.	YouTube takes longest to report 'live' (up to a minute). That is normal and not an error.
-Zielverzeichnis und Quelltext	Target directory and source
 Zielverzeichnis: %s	Target directory: %s
 [J/n]	[Y/n]
 [j/N]	[y/N]
-apt-get install %s	apt-get install %s
 bash tools/installer.sh [Schalter]	bash tools/installer.sh [options]
 bereits eingetragen in %s	already registered in %s
 bot.py braucht mindestens Python %s.%s. Das ist keine Empfehlung: die Datei benutzt f-strings mit Backslash (PEP 701), unter 3.11 scheitert bereits das Einlesen mit einem SyntaxError. Debian 12 und Raspberry Pi OS bookworm liefern 3.11 — dort muss ein neuerer Interpreter dazu.	bot.py needs at least Python %s.%s. That is not a recommendation: the file uses f-strings with backslashes (PEP 701), and under 3.11 even reading it fails with a SyntaxError. Debian 12 and Raspberry Pi OS bookworm ship 3.11 — a newer interpreter has to be added there.
@@ -634,3 +577,132 @@ Wird angelegt mit %s	Will be created with %s
 bash tools/update.sh [Schalter]	bash tools/update.sh [options]
 ffmpeg-free ist die Fedora-Fassung ohne x264: Aufnahme geht, Restream mit Umkodierung nicht. Die volle Fassung kommt aus RPM Fusion (rpmfusion.org).	ffmpeg-free is the Fedora build without x264: recording works, restreaming with transcoding does not. The full build comes from RPM Fusion (rpmfusion.org).
 requirements.txt fehlt in %s	requirements.txt is missing in %s
+#
+# ── v4.2-W124: Installer in vier Phasen, Auswahlfragen, Zusammenfassung ─────
+  Nachinstallieren  bash %s/tools/update.sh	  Post-install  bash %s/tools/update.sh
+ · Freigabeliste: %s	 · allow-list: %s
+ · ohne Freigabeliste	 · no allow-list
+%s ist gesetzt — behalten?	%s is set — keep it?
+%s · Port %s · Token %s	%s · port %s · token %s
+%s-Dienst %s	%s service %s
+--dry-run        Plan und Aenderungen an der .env zeigen, nichts schreiben	--dry-run        show the plan and the changes to .env, write nothing
+.env wird neu angelegt — gegenueber der Vorlage gesetzt (Geheimnisse maskiert):	.env will be created — set relative to the template (secrets masked):
+.env-Aenderungen gegenueber dem Bestand (Geheimnisse maskiert):	.env changes compared to the existing file (secrets masked):
+.env: keine Aenderung.	.env: no change.
+0.0.0.0 (offen)	0.0.0.0 (open)
+1  Willkommen              5  Ausfuehrung: System und Python	1  Welcome                 5  Execution: system and Python
+2  Erkennung               6  Ausfuehrung: Konfiguration und Bausteine	2  Detection               6  Execution: configuration and components
+3  Fragen                  7  Selbsttest und Autostart	3  Questions               7  Self-test and autostart
+4  Zusammenfassung         8  Bericht	4  Summary                 8  Report
+Alpine startet Dienste mit OpenRC. Ein Dienst mit supervise-daemon startet den Bot beim Booten und nach einem Absturz neu.	Alpine starts services with OpenRC. A service under supervise-daemon starts the bot at boot and restarts it after a crash.
+Ausfuehrung: Konfiguration und Bausteine	Execution: configuration and components
+Ausfuehrung: System und Python	Execution: system and Python
+Auswahl	Choice
+Autostart-Weg: %s	Autostart method: %s
+Autostart?	Autostart?
+Bericht	Report
+Bitte eine Zahl von 1 bis %s.	Please enter a number from 1 to %s.
+Das Dashboard ist die Weboberflaeche: Sendeleiste, Aufnahmen, Statistiken, Abwehr. Es bindet standardmaessig NUR auf 127.0.0.1 — also nicht im Netz erreichbar. Der sichere Zugang ist ein SSH-Tunnel; alles andere sperrt man ueber Token oder Firewall auf.	The dashboard is the web interface: broadcast bar, recordings, statistics, defence. By default it binds ONLY to 127.0.0.1 — so it is not reachable on the network. The safe way in is an SSH tunnel; anything else you unlock with a token or a firewall rule.
+Datenbank liess sich nicht anlegen — DB_BACKEND steht auf mariadb; vor dem Start pruefen oder auf sqlite zuruecksetzen.	The database could not be created — DB_BACKEND is set to mariadb; check before starting or set it back to sqlite.
+Der Weg in acht Schritten:	The way there, in eight steps:
+Dienst %s laeuft — Neustart noetig, damit Aenderungen wirken. Nicht automatisch: %s	Service %s is running — a restart is needed for changes to take effect. Not done automatically: %s
+Dienst %s laeuft — jetzt neu starten (laufende Aufnahmen werden sauber beendet)?	Service %s is running — restart now (running recordings are finished cleanly)?
+Dienst: %s  (Status: rc-service %s status · Log: %s/logs/openrc.err.log)	Service: %s  (status: rc-service %s status · log: %s/logs/openrc.err.log)
+Ein zweiter Lauf zeigt den Unterschied zur bestehenden Installation und aendert nur diesen.	A second run shows the difference to the existing installation and changes only that.
+Erst wird gefragt, dann zusammengefasst — jeder Punkt laesst sich dort noch aendern —, und erst danach wird etwas installiert oder geschrieben.	First come the questions, then a summary — every item can still be changed there — and only after that is anything installed or written.
+Fehlende Systempakete installieren?	Install missing system packages?
+Fragen	Questions
+Kein MariaDB-Client gefunden — DB_BACKEND steht auf mariadb; vor dem Start pruefen oder auf sqlite zuruecksetzen.	No MariaDB client found — DB_BACKEND is set to mariadb; check before starting or set it back to sqlite.
+Leistungsprofil?	Performance profile?
+Lokales LLM	Local LLM
+MariaDB (lokal)	MariaDB (local)
+MariaDB (lokaler Server, wird eingerichtet)	MariaDB (local server, will be set up)
+MariaDB-Server liess sich nicht installieren.	The MariaDB server could not be installed.
+Nummer zum Aendern, Enter = ausfuehren, a = abbrechen:	Number to change, Enter = run, a = abort:
+Paketmanager nicht erkannt (apt, dnf, pacman, zypper, apk, brew).	Package manager not recognised (apt, dnf, pacman, zypper, apk, brew).
+Pflicht + alle optionalen	required + all optional
+Pflicht + optionale, ausgelassen:%s	required + optional, skipped:%s
+Python-Pakete vollstaendig — nichts zu installieren.	Python packages complete — nothing to install.
+Reverse-Proxy	Reverse proxy
+SICHERHEIT: Dashboard lauscht auf 0.0.0.0 — Firewall setzen: %s	SECURITY: dashboard listens on 0.0.0.0 — set a firewall: %s
+SQLite (eine Datei, empfohlen)	SQLite (a single file, recommended)
+Selbsttest und Autostart	Self-test and autostart
+So ausfuehren?	Run it like this?
+Totmann-Meldung	Dead-man alert
+Ubuntu: Zusatzquelle deadsnakes (PPA)	Ubuntu: extra source deadsnakes (PPA)
+Unterstuetzt: Debian, Ubuntu, Raspberry Pi OS, Fedora, RHEL, Arch, openSUSE, Alpine, macOS.	Supported: Debian, Ubuntu, Raspberry Pi OS, Fedora, RHEL, Arch, openSUSE, Alpine, macOS.
+Vorgaben	defaults
+Vorgaben des Bots (Server mit 4+ Kernen)	the bot's defaults (server with 4+ cores)
+Welche Datenbank?	Which database?
+Wie soll Python dazukommen?	How should Python be provided?
+Wie soll das Dashboard erreichbar sein?	How should the dashboard be reachable?
+Zertifikat von Let's Encrypt holen (certbot)?	Get a certificate from Let's Encrypt (certbot)?
+als Dienst (%s)	as a service (%s)
+auf diesem System nicht moeglich	not possible on this system
+aus	off
+aus den Paketquellen des Systems	from the system's package sources
+direkt im Netz (0.0.0.0) — nur mit Token UND Firewall	directly on the network (0.0.0.0) — only with a token AND a firewall
+eingerichtet	set up
+einrichten	set up
+einrichten (%s)	set up (%s)
+fehlende ergaenzen ueber %s	add missing ones via %s
+gar nicht — Abbruch	not at all — abort
+geaendert: %s	changed: %s
+https://%s (nginx)	https://%s (nginx)
+installieren	install
+installieren ueber %s	install via %s
+installieren: %s	install: %s
+keine	none
+keiner (start.sh)	none (start.sh)
+keiner — Start von Hand mit start.sh	none — start manually with start.sh
+keylose Backends	keyless backends
+llama.cpp einrichten	set up llama.cpp
+neu: %s	new: %s
+nginx-Datei traegt bereits das Zertifikat — bleibt unveraendert: %s	the nginx file already carries the certificate — left unchanged: %s
+nicht anfassen	leave alone
+nicht ueber diesen Paketmanager — docs/CROWDSEC.md	not via this package manager — docs/CROWDSEC.md
+nur lokal	local only
+nur lokal (127.0.0.1) — Zugang per SSH-Tunnel, empfohlen	local only (127.0.0.1) — access via SSH tunnel, recommended
+nur mit systemd-Dienst	only with a systemd service
+sparsam	economy
+sparsam (Pi, kleine VPS: ein Ziel, 3500 kbit, je ein Thread)	economy (Pi, small VPS: one target, 3500 kbit, one thread each)
+ueber nginx mit HTTPS (Reverse-Proxy, Domain noetig)	through nginx with HTTPS (reverse proxy, domain required)
+uebersprungen (--skip-system oder kein Paketmanager)	skipped (--skip-system or no package manager)
+unveraendert	unchanged
+unveraendert lassen (was in der .env steht, bleibt)	leave unchanged (whatever is in .env stays)
+unveraendert: %s	unchanged: %s
+uv: eigenstaendiges Python im Home, ohne root	uv: standalone Python in your home directory, without root
+tools/lib/system.sh fehlt — Quelltext unvollstaendig.	tools/lib/system.sh is missing — the source is incomplete.
+#
+# ── v4.2-W124: install.bat — Paketweg (winget/Chocolatey), Autostart-Auswahl, NSSM ──
+Als Administrator gestartet - Dienst und Aufgabe beim Systemstart sind moeglich.	Started as administrator - a service and a task at system start are possible.
+Aufgabe bei der Anmeldung (Fenster sichtbar)	Task at logon (window visible)
+Aufgabe beim Systemstart (ohne Anmeldung, Administrator)	Task at system start (no logon needed, administrator)
+Autostart: Aufgabe beim Systemstart (Konto SYSTEM) - kein Neustart nach Absturz; dafuer NSSM	Autostart: task at system start (SYSTEM account) - no restart after a crash; use NSSM for that
+Autostart: Windows-Dienst NIGHTCRAWLER (nssm edit NIGHTCRAWLER, Log: logs\nssm.err.log)	Autostart: Windows service NIGHTCRAWLER (nssm edit NIGHTCRAWLER, log: logs\nssm.err.log)
+Bitte eine der angezeigten Nummern.	Please enter one of the numbers shown.
+Chocolatey	Chocolatey
+Chocolatey jetzt installieren (Skript von chocolatey.org, laeuft als Administrator)?	Install Chocolatey now (script from chocolatey.org, runs as administrator)?
+Dafuer braucht es Administratorrechte - Fenster per Rechtsklick 'Als Administrator ausfuehren' oeffnen und install.bat erneut starten.	This needs administrator rights - open the window via right-click 'Run as administrator' and start install.bat again.
+Dashboard-Token bleibt unveraendert.	Dashboard token stays unchanged.
+Dashboard-Token ist gesetzt - behalten?	Dashboard token is set - keep it?
+Der PATH gilt erst fuer NEUE Fenster. Steht ffmpeg gleich noch als fehlend da: Fenster schliessen, neu oeffnen, Skript erneut starten.	The PATH only applies to NEW windows. If ffmpeg still shows as missing in a moment: close the window, open a new one, start the script again.
+Dienst NIGHTCRAWLER laeuft.	Service NIGHTCRAWLER is running.
+Dienst startete nicht - Log: logs\nssm.err.log	Service did not start - log: logs\nssm.err.log
+Download: https://nssm.cc/download - nssm.exe in den PATH legen, dann dieses Skript erneut starten.	Download: https://nssm.cc/download - put nssm.exe on the PATH, then start this script again.
+Fehlende Programme installieren ueber	Install missing programs via
+NSSM fehlt.	NSSM is missing.
+OFFEN: Autostart - install.bat als Administrator erneut ausfuehren	OPEN: autostart - run install.bat again as administrator
+OFFEN: NSSM installieren, dann install.bat erneut - Autostart als Dienst	OPEN: install NSSM, then run install.bat again - autostart as a service
+Paketweg:	Package route:
+Python 3.13 jetzt installieren?	Install Python 3.13 now?
+Weder winget noch Chocolatey - Python und ffmpeg muessten von Hand kommen.	Neither winget nor Chocolatey - Python and ffmpeg would have to be installed by hand.
+Windows kennt kein systemd. Es gibt drei Wege: eine Aufgabe bei der Anmeldung (mit Fenster), eine Aufgabe beim Systemstart (ohne Anmeldung, braucht Administrator) oder ein echter Windows-Dienst ueber NSSM, der den Bot nach einem Absturz neu startet (braucht Administrator).	Windows has no systemd. There are three ways: a task at logon (with a window), a task at system start (no logon, needs administrator) or a real Windows service via NSSM that restarts the bot after a crash (needs administrator).
+Windows-Dienst ueber NSSM (Neustart nach Absturz, Administrator)	Windows service via NSSM (restart after a crash, administrator)
+ffmpeg jetzt installieren?	Install ffmpeg now?
+keiner - Start von Hand mit start.bat	none - start manually with start.bat
+winget (in Windows enthalten)	winget (included in Windows)
+Kein Python >= %s.%s aus den Paketquellen — weiter mit uv.	No Python >= %s.%s from the package sources — continuing with uv.
+Kein Zertifikat aktiv — PUBLIC_BASE_URL steht auf http://%s, bis certbot gelaufen ist.	No certificate active — PUBLIC_BASE_URL stays on http://%s until certbot has run.
+OFFEN: Zertifikat holen (sudo certbot --nginx -d %s), dann PUBLIC_BASE_URL auf https://%s setzen	OPEN: get a certificate (sudo certbot --nginx -d %s), then set PUBLIC_BASE_URL to https://%s
+Ohne Zertifikat nur http — OAuth-Anbieter (Google, Twitch, Kick) verlangen HTTPS fuer ihre Rueckrufe.	Without a certificate only http — OAuth providers (Google, Twitch, Kick) require HTTPS for their callbacks.
