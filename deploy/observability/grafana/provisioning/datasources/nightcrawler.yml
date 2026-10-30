@@ -1,0 +1,13 @@
+# NIGHTCRAWLER — Grafana-Datenquelle (v4.2-W127), geschrieben von tools/observability.sh.
+# Die uid ist fest: das Dashboard verweist darauf. Ein Name allein waere
+# zerbrechlich — wer die Quelle in der Oberflaeche umbenennt, haette sonst ein
+# Dashboard voller "Datenquelle nicht gefunden".
+apiVersion: 1
+datasources:
+  - name: NIGHTCRAWLER Prometheus
+    uid: nightcrawler-prometheus
+    type: prometheus
+    access: proxy
+    url: http://127.0.0.1:@@PROM_PORT@@
+    isDefault: false
+    editable: false

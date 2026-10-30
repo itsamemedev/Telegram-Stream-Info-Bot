@@ -1,0 +1,12 @@
+# NIGHTCRAWLER — Grafana-Dashboard-Quelle (v4.2-W127), geschrieben von tools/observability.sh.
+# allowUiUpdates: false — eine Aenderung in der Oberflaeche ueberschriebe der
+# naechste Lauf ohnehin still. Wer anpassen will, speichert eine Kopie.
+apiVersion: 1
+providers:
+  - name: nightcrawler
+    folder: NIGHTCRAWLER
+    type: file
+    disableDeletion: true
+    allowUiUpdates: false
+    options:
+      path: @@DASHBOARDS@@

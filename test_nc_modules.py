@@ -23503,6 +23503,230 @@ def _test_v42_w126_motd_konfigurieren():
         "--install schreibt nicht ueber konf_inhalt"
     ok("W126: motd.sh --configure prueft jeden Wert, zeigt ihn sofort und schreibt nur Aenderungen")
 
+
+def _test_v42_w127_observability():
+    """v4.2-W127: Prometheus und Grafana — jede Abfrage trifft einen echten Namen.
+
+    Ein Diagramm oder eine Alarmregel mit einem Namen, den /metrics nicht
+    liefert, meldet keinen Fehler — es zeigt "No data" bzw. feuert nie. Die
+    erlaubten Namen werden deshalb GEMESSEN: aus den metric()-Aufrufen in
+    nc/routes/beobachtung.py und aus dem, was nc.kennzahlen.prometheus() mit
+    den echten lage()-Funktionen ausgibt — nicht aus einer Liste hier.
+    """
+    import ast as _ast
+    import json as _json
+    import os as _os
+    import re as _re
+    import shutil as _shutil
+    import subprocess as _sp
+    import yaml as _yaml
+    import pruefhilfen as P
+    from nc import (looplag, gegendruck, livecache, kindprozess, speicherpflege,
+                    kennzahlen as kz)
+
+    # ── (1) Die Namen, die es wirklich gibt.
+    baum = _ast.parse(open("nc/routes/beobachtung.py", encoding="utf-8").read())
+    namen = {n.args[0].value for n in _ast.walk(baum)
+             if isinstance(n, _ast.Call) and getattr(n.func, "id", "") == "metric"
+             and n.args and isinstance(n.args[0], _ast.Constant)}
+    assert "nightcrawler_disk_total_bytes" in namen, "Plattengroesse fehlt in /metrics"
+    daten = {"loop_lag": looplag.lage(), "gegendruck": gegendruck.lage(1, 4, 0, 10),
+             "livecache": livecache.statistik(0, 0), "kinder": kindprozess.lage(),
+             "speicher": speicherpflege.groessen({}), "log": {"wartend": 0, "verloren": 0},
+             "prozess": kz.prozess(), "betrieb": {"restreams": 0, "chat_clients": 0, "aufnahmen": 0},
+             "start_s": 1.0}
+    namen |= set(_re.findall(r"^(nightcrawler_\w+) ", kz.prometheus(daten, alter_s=1), _re.M))
+    namen.add("up")
+
+    def benutzt(expr):
+        return set(_re.findall(r"\b(nightcrawler_\w+|up)\b(?=\s*[{\[)\s*/<>=!+*-]|\s*$)", expr))
+
+    regeln = _yaml.safe_load(open("deploy/observability/rules/nightcrawler.yml", encoding="utf-8"))
+    ausdruecke = [r["expr"] for g in regeln["groups"] for r in g["rules"]]
+    assert len(ausdruecke) == 10, len(ausdruecke)
+    dash = _json.load(open("deploy/observability/grafana/dashboards/nightcrawler.json", encoding="utf-8"))
+    ausdruecke += [t["expr"] for p in dash["panels"] for t in p.get("targets", [])]
+    for e in ausdruecke:
+        fremd = benutzt(e) - namen
+        assert not fremd, "Abfrage auf einen Namen, den /metrics nicht liefert: %s in %r" % (fremd, e)
+        assert benutzt(e), "kein Messwert erkannt in %r" % e
+
+    # ── (2) Dashboard und Datenquelle passen zusammen.
+    ids = [p["id"] for p in dash["panels"]]
+    assert len(ids) == len(set(ids)), "doppelte Panel-IDs"
+    quelle = _yaml.safe_load(open("deploy/observability/grafana/provisioning/datasources/nightcrawler.yml",
+                                  encoding="utf-8"))["datasources"][0]
+    for p in dash["panels"]:
+        if p["type"] != "row":
+            assert p["datasource"]["uid"] == quelle["uid"], p["title"]
+
+    # ── (3) Das Werkzeug: rendert, prueft, schreibt nur Abweichungen.
+    heim = P.verzeichnis()
+    ziel = _os.path.join(heim, "bot")
+    _os.makedirs(ziel)
+    _os.symlink(_os.path.abspath("deploy"), _os.path.join(ziel, "deploy"))
+    wurzel = _os.path.join(heim, "w")
+    fake = _os.path.join(heim, "bin")
+    _os.makedirs(fake)
+    protokoll = _os.path.join(heim, "systemctl.log")
+    with open(_os.path.join(fake, "systemctl"), "w") as f:
+        # Mit Zustand: nach "enable --now" ist der Dienst aktiv — sonst saehe
+        # der zweite Lauf einen gestoppten Dienst und startete ihn erneut.
+        f.write(
+            '#!/bin/sh\n'
+            'echo "$*" >> "%(log)s"\n'
+            '# Zustand JE DIENST: das letzte Argument ist die Unit.\n'
+            'eval "u=\\${$#}"\n'
+            'case "$1" in\n'
+            '  list-unit-files) case "$*" in *grafana-server*)\n'
+            '    [ -n "$FAKE_GRAFANA" ] && echo "grafana-server.service enabled";; esac; exit 0;;\n'
+            '  enable) touch "%(heim)s/aktiv.$u"; exit 0;;\n'
+            '  disable) rm -f "%(heim)s/aktiv.$u"; exit 0;;\n'
+            '  is-active) [ -f "%(heim)s/aktiv.$u" ]; exit $?;;\n'
+            '  is-enabled) exit 1;;\n'
+            'esac\nexit 0\n' % {"log": protokoll, "heim": heim})
+    _os.chmod(_os.path.join(fake, "systemctl"), 0o755)
+    # Ein Platzhalter-prometheus VOR dem echten im PATH: die Laeufe unten
+    # sollen ueberall stattfinden, auch in der CI ohne das Paket — und dort
+    # wuerde das Werkzeug sonst versuchen, es per apt zu installieren.
+    with open(_os.path.join(fake, "prometheus"), "w") as f:
+        f.write("#!/bin/sh\nexit 0\n")
+    _os.chmod(_os.path.join(fake, "prometheus"), 0o755)
+    umg = dict(_os.environ, PATH=fake + ":" + _os.environ["PATH"], NC_OBS_WURZEL=wurzel,
+               NC_INIT="systemd", NC_PKG="apt", NC_OBS_WARTEN="0", NC_LANG="de",
+               # Kein sudo: die CI laeuft nicht als root, und sudo setzt den
+               # PATH zurueck — dann traefe jeder Aufruf das echte systemctl.
+               NC_OBS_SUDO="")
+
+    def lauf(*args, env_datei=None):
+        if env_datei is not None:
+            open(_os.path.join(ziel, ".env"), "w").write(env_datei)
+        return _sp.run(["bash", "tools/observability.sh", "--dir", ziel, "--no-color", *args],
+                       capture_output=True, text=True, env=umg, timeout=120)
+
+    def systemctl():
+        return open(protokoll).read() if _os.path.exists(protokoll) else ""
+
+    # Ungueltiges bricht ab, bevor irgendetwas geschrieben wird.
+    for args, env in ((["--port", "80"], ""), (["--port", "x"], ""), (["--retention", "lang"], ""),
+                      ([], "WEB_HOST=10.0.0.5\n"), ([], "DASHBOARD_PORT=abc\n")):
+        r = lauf("--unattended", "--no-grafana", *args, env_datei=env)
+        assert r.returncode == 2 and not _os.path.exists(wurzel), (args, env, r.stdout + r.stderr)
+    # Ohne systemd: nichts einrichten, ehrlich sagen. Mit SAUBERER .env — vom
+    # Fall davor lag DASHBOARD_PORT=abc darin, und der Abbruch kam aus DIESEM
+    # Grund; die Mutationsprobe auf die systemd-Pruefung entwischte so.
+    open(_os.path.join(ziel, ".env"), "w").write("")
+    r = _sp.run(["bash", "tools/observability.sh", "--dir", ziel, "--unattended"],
+                capture_output=True, text=True, env=dict(umg, NC_INIT="keiner"), timeout=60)
+    assert r.returncode == 2 and not _os.path.exists(wurzel), r.stdout + r.stderr
+    assert "Ohne systemd" in r.stderr, r.stderr
+
+    # Trockenlauf: zeigt, schreibt nichts, startet nichts.
+    r = lauf("--unattended", "--no-grafana", "--dry-run",
+             env_datei="DASHBOARD_PORT=8123\nDASHBOARD_TLS_CERT=/x.pem\n")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "neu: /etc/nightcrawler/observability/prometheus.yml" in r.stdout
+    assert not _os.path.exists(wurzel) and "enable" not in systemctl(), "Trockenlauf hat geschrieben"
+    # Erster echter Lauf: drei Dateien, gerendert, gestartet.
+    r = lauf("--unattended", "--no-grafana")
+    conf = _os.path.join(wurzel, "etc/nightcrawler/observability/prometheus.yml")
+    unit = _os.path.join(wurzel, "etc/systemd/system/nightcrawler-prometheus.service")
+    text = open(conf).read() + open(unit).read()
+    # Dasselbe Muster wie das Werkzeug — nicht "@@" roh: der Kopf der
+    # Vorlage ERKLAERT die @@…@@-Stellen (Lehre W102-W104).
+    assert not _re.search(r"@@[A-Z_]+@@", text), "ungerenderter Platzhalter"
+    assert '"127.0.0.1:8123"' in text and "scheme: https" in text, "Port/Schema nicht aus der .env"
+    # Nur IPv6 (WEB_HOST=::1): Ziel [::1], sonst erreicht Prometheus den
+    # Bot nie (Codex, PR #166). Trockenlauf genuegt — es geht ums Rendern.
+    r6 = lauf("--unattended", "--no-grafana", "--dry-run", env_datei="WEB_HOST=::1\nDASHBOARD_PORT=8123\n")
+    assert r6.returncode == 0 and "://[::1]:8123/metrics" in r6.stdout, r6.stdout
+    open(_os.path.join(ziel, ".env"), "w").write("DASHBOARD_PORT=8123\nDASHBOARD_TLS_CERT=/x.pem\n")
+    assert "--web.listen-address=127.0.0.1:9099" in text, "Prometheus lauscht nicht nur lokal"
+    assert "enable --now nightcrawler-prometheus.service" in systemctl(), systemctl()
+    # Zweiter Lauf: nichts schreiben, nichts neu starten.
+    vorher = {p: _os.stat(p).st_mtime_ns for p in (conf, unit)}
+    _os.remove(protokoll)
+    r = lauf("--unattended", "--no-grafana")
+    assert {p: _os.stat(p).st_mtime_ns for p in (conf, unit)} == vorher, "zweiter Lauf schreibt"
+    nach = systemctl()
+    assert not any(w in nach for w in ("enable", "restart", "reload", "daemon-reload")), nach
+    # Eine geaenderte Einstellung: nur neu laden, nicht neu starten — die
+    # Unit ist unveraendert, also gibt es keine Luecke in den Daten.
+    _os.remove(protokoll)
+    r = lauf("--unattended", "--no-grafana", env_datei="DASHBOARD_PORT=8124\nDASHBOARD_TLS_CERT=/x.pem\n")
+    assert "reload nightcrawler-prometheus.service" in systemctl() and "restart" not in systemctl(), systemctl()
+    # Grafana, wenn es da ist: Datenquelle, Dashboard und "nur lokal".
+    umg["FAKE_GRAFANA"] = "1"
+    r = lauf("--unattended", "--grafana")
+    gf = lambda *t: _os.path.join(wurzel, *t)
+    q = open(gf("etc/grafana/provisioning/datasources/nightcrawler.yml")).read()
+    assert "url: http://127.0.0.1:9099" in q, q
+    d = open(gf("etc/grafana/provisioning/dashboards/nightcrawler.yml")).read()
+    assert "path: /var/lib/grafana/dashboards/nightcrawler" in d, d
+    assert _json.load(open(gf("var/lib/grafana/dashboards/nightcrawler/nightcrawler.json")))["uid"] == "nightcrawler"
+    assert "GF_SERVER_HTTP_ADDR=127.0.0.1" in open(
+        gf("etc/systemd/system/grafana-server.service.d/nightcrawler.conf")).read()
+    del umg["FAKE_GRAFANA"]
+    # --check auf dem fertigen Bestand: vollstaendig.
+    assert lauf("--check", "--no-grafana").returncode == 0
+    # --remove raeumt die eigenen Dateien weg.
+    r = lauf("--remove", "--unattended")
+    assert r.returncode == 0 and not _os.path.exists(conf) and not _os.path.exists(unit)
+    assert "disable --now nightcrawler-prometheus.service" in systemctl()
+    assert "restart grafana-server.service" in systemctl(), "Grafana sieht die entfernte Quelle nie"
+    assert not _os.path.exists(gf("var/lib/grafana/dashboards/nightcrawler/nightcrawler.json"))
+    # Ein zweites --remove: nichts mehr von uns da — dann bleibt ein
+    # fremdes Grafana unangetastet.
+    _os.remove(protokoll)
+    assert lauf("--remove", "--unattended").returncode == 0
+    assert "restart" not in systemctl() and "disable" not in systemctl(), systemctl()
+
+    # ── (4) promtool: Konfiguration, Regeln und die Regeltests.
+    if _shutil.which("promtool"):
+        r = _sp.run(["promtool", "test", "rules", "deploy/observability/rules/nightcrawler.test.yml"],
+                    capture_output=True, text=True, timeout=120)
+        assert r.returncode == 0 and "SUCCESS" in r.stdout, r.stdout + r.stderr
+    else:
+        ok("W127: promtool fehlt — Regeltests uebersprungen")
+
+    # ── (5) Der Paket-Dienst wird NUR abgeschaltet, wenn dieser Lauf ihn
+    # gebracht hat — und SOFORT nach der Installation, nicht erst am Ende:
+    # jeder Abbruch dazwischen liesse *:9090 offen (Codex, PR #166).
+    # Gemessen an Zeilen, die mit dem Aufruf beginnen.
+    zeilen = [z.strip() for z in open("tools/observability.sh", encoding="utf-8").read().splitlines()]
+    i = next(n for n, z in enumerate(zeilen) if z.startswith("dienst disable --now prometheus.service"))
+    i_inst = next(n for n, z in enumerate(zeilen)
+                  if z.startswith("lauf env DEBIAN_FRONTEND=noninteractive $(nc_installbefehl $PROM_PAKET)"))
+    i_erst = next(n for n, z in enumerate(zeilen) if z.startswith('schreibe "$ETC/prometheus.yml"'))
+    assert i_inst < i < i_erst, "Paket-Dienst nicht direkt nach der Installation abgeschaltet"
+    bedingung = next(z for z in reversed(zeilen[:i]) if z.startswith(("if ", "elif ")))
+    assert bedingung.startswith('if [ "$PAKET_DIENST_VORHER" = 0 ]'), bedingung
+    # Grafana zaehlt bei --check nur, wenn es LAEUFT.
+    umg["FAKE_GRAFANA"] = "1"
+    aktiv = _os.path.join(heim, "aktiv.grafana-server.service")
+    if _os.path.exists(aktiv):
+        _os.remove(aktiv)        # installiert, aber gestoppt
+    r = lauf("--check", "--grafana")
+    assert r.returncode == 1 and "grafana-server.service laeuft nicht" in r.stdout, r.stdout
+    del umg["FAKE_GRAFANA"]
+
+    # ── (6) Ein Werkzeug, drei Wege: update.sh und der Installer rufen es auf.
+    up = open("tools/update.sh", encoding="utf-8").read()
+    assert 'exec bash "$SKRIPT/observability.sh" "${_w[@]}"' in up
+    # Zusammen mit anderen Schaltern: VOR dem ersten vorzeitigen Ausgang, und
+    # ihr Ergebnis zaehlt beim Exitcode (EXIT-Falle) — sonst fiel sie bei
+    # "nichts zu tun" oder --check still aus (Codex, PR #166).
+    uz = [z.strip() for z in up.splitlines()]
+    i_obs = uz.index('bash "$SKRIPT/observability.sh" "${_w[@]}" || OBS_RC=$?')
+    i_exit = next(n for n, z in enumerate(uz) if z.startswith('exit "$BEFUND"') or z == "exit 1")
+    assert i_obs < i_exit, "Beobachtung laeuft erst nach einem vorzeitigen Ausgang"
+    assert any(z.startswith("trap '_rc=$?;") and "OBS_RC" in z and z.endswith("' EXIT") for z in uz)
+    ins = [z.strip() for z in open("tools/installer.sh", encoding="utf-8").read().splitlines()]
+    assert any(z.startswith("PUNKTE=(") and z.endswith(" beobachtung)") for z in ins)
+    assert any(z.startswith('if ${SUDO:+$SUDO} bash "$ZIEL/tools/observability.sh"') for z in ins)
+    ok("W127: Prometheus/Grafana — jede Abfrage trifft einen gemessenen Namen, "
+       "das Werkzeug schreibt nur Abweichungen, die Alarme feuern im Regeltest")
+
 def main():
     tmp, rid = richte_testdatenbank_ein()
     ok("db_conn aus nc.dbwrap: echtes Schema angelegt, Commit durchgelaufen")
@@ -23824,6 +24048,7 @@ def main():
     _test_v42_w125_deck_ton_zeigt_wahrheit()
     _test_v42_w125_azrael_stimme_laut()
     _test_v42_w126_motd_konfigurieren()
+    _test_v42_w127_observability()
     _test_v42_w60_azrael_cooldown_je_plattform()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)

@@ -33,9 +33,9 @@
 #      geschafft hat
 #   2  Aufruf- oder Umgebungsfehler (unbekannter Schalter, kein Python)
 #
-# Prometheus/Grafana (--observability) folgen in einer eigenen Welle, sobald
-# deploy/observability/ im Bestand liegt. Bis dahin gibt es den Schalter NICHT:
-# ein Schalter, der nichts tut, waere eine falsche Auskunft.
+# Prometheus/Grafana: --observability reicht an tools/observability.sh weiter
+# (v4.2-W127) — dasselbe Werkzeug, das der Installer aufruft, mit denselben
+# Wie-Schaltern. Eine zweite Einrichtung hier liefe auseinander (W100).
 
 set -euo pipefail
 
@@ -57,7 +57,7 @@ NC_MODUS="gefuehrt"
 NUR_PRUEFEN=0
 TROCKEN=0
 UPGRADE=0
-W_SYSTEM=0; W_PYTHON=0; W_OPTIONAL=0
+W_SYSTEM=0; W_PYTHON=0; W_OPTIONAL=0; W_BEOBACHTUNG=""
 ZIEL="$(cd "$SKRIPT/.." && pwd)"
 
 while [ $# -gt 0 ]; do
@@ -71,6 +71,8 @@ while [ $# -gt 0 ]; do
     --python-deps)    W_PYTHON=1;;
     --optional)       W_PYTHON=1; W_OPTIONAL=1;;
     --all)            W_SYSTEM=1; W_PYTHON=1; W_OPTIONAL=1;;
+    --observability)  W_BEOBACHTUNG="--no-grafana";;
+    --observability=grafana) W_BEOBACHTUNG="--grafana";;
     --dir)            ZIEL="${2:-}"; shift;;
     --dir=*)          ZIEL="${1#*=}";;
     --pkg)            NC_PKG="${2:-}"; shift;;
@@ -90,6 +92,7 @@ Was (ohne Auswahl: --system und --python-deps):
   --python-deps    Pflichtpakete aus requirements.txt in .venv
   --optional       zusaetzlich die als [optional] markierten Pakete
   --all            alles oben
+  --observability  Prometheus einrichten bzw. abgleichen (=grafana: mit Grafana)
 
 Wie:
   --check          nur pruefen und berichten; Exitcode 1, wenn etwas fehlt
@@ -109,6 +112,25 @@ HILFE
   esac
   shift
 done
+if [ -n "$W_BEOBACHTUNG" ]; then
+  # Weiterreichen, nicht nachbauen: --check, --dry-run und der Modus gelten
+  # dort genauso. Ohne weitere Was-Schalter ist das der ganze Lauf.
+  _w=("$W_BEOBACHTUNG" --dir "$ZIEL")
+  [ "$NUR_PRUEFEN" = 1 ] && _w+=(--check)
+  [ "$TROCKEN" = 1 ] && _w+=(--dry-run)
+  case "$NC_MODUS" in express) _w+=(--express);; unattended) _w+=(--unattended);; esac
+  [ "${NC_FARBE:-1}" = 0 ] && _w+=(--no-color)
+  if [ "$W_SYSTEM$W_PYTHON" = "00" ]; then exec bash "$SKRIPT/observability.sh" "${_w[@]}"; fi
+  # Zusammen mit anderen Schaltern ZUERST: der Rest dieses Skripts endet an
+  # mehreren Stellen vorzeitig (nichts zu tun, --check, --dry-run), und dort
+  # waere die Beobachtung still ausgefallen (Codex, PR #166). Ihr Ergebnis
+  # zaehlt beim Exitcode mit — ueber die EXIT-Falle, damit jeder Ausgang es
+  # sieht und keiner es vergisst.
+  OBS_RC=0
+  bash "$SKRIPT/observability.sh" "${_w[@]}" || OBS_RC=$?
+  # shellcheck disable=SC2154  # _rc entsteht in der Falle selbst
+  trap '_rc=$?; if [ "$_rc" = 0 ] && [ "$OBS_RC" != 0 ]; then exit "$OBS_RC"; fi' EXIT
+fi
 [ "$W_SYSTEM$W_PYTHON" = "00" ] && { W_SYSTEM=1; W_PYTHON=1; }
 # Ohne Tastatur gibt es keine Rueckfragen — dann ehrlich unbeaufsichtigt.
 [ -z "$NC_TTY" ] && [ "$NC_MODUS" != "unattended" ] && NC_MODUS="unattended"

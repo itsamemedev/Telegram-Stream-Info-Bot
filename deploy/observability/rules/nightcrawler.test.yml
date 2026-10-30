@@ -1,0 +1,213 @@
+# NIGHTCRAWLER — Tests der Alarmregeln (v4.2-W127)
+#
+#     promtool test rules deploy/observability/rules/nightcrawler.test.yml
+#
+# Jede Regel einmal feuernd und — wo die Bedingung eine Falle hat — einmal
+# still. Eine Regel, die auf gesundem Betrieb nie feuert, ist leicht zu bauen;
+# ob sie im Fehlerfall feuert, sieht man erst hier. Der Vertrag
+# _test_v42_w127_observability faehrt diese Datei, wenn promtool da ist.
+rule_files:
+  - nightcrawler.yml
+evaluation_interval: 30s
+
+tests:
+  # ── Der gesunde Bot: keine einzige Regel darf feuern.
+  - interval: 30s
+    input_series:
+      - series: 'up{job="nightcrawler", instance="127.0.0.1:8050"}'
+        values: '1x40'
+      - series: 'nightcrawler_uptime_seconds{job="nightcrawler"}'
+        values: '0+30x40'
+      - series: 'nightcrawler_kennzahlen_alter_sekunden{job="nightcrawler"}'
+        values: '5x40'
+      - series: 'nightcrawler_db_ok{job="nightcrawler"}'
+        values: '1x40'
+      - series: 'nightcrawler_disk_free_bytes{job="nightcrawler"}'
+        values: '50000000000x40'
+      - series: 'nightcrawler_disk_total_bytes{job="nightcrawler"}'
+        values: '100000000000x40'
+      - series: 'nightcrawler_loop_lag_p99_ms{job="nightcrawler"}'
+        values: '20x40'
+      - series: 'nightcrawler_loop_lag_budget_ms{job="nightcrawler"}'
+        values: '100x40'
+      - series: 'nightcrawler_loop_lag_aktiv{job="nightcrawler"}'
+        values: '1x40'
+      - series: 'nightcrawler_gegendruck_fd_anteil{job="nightcrawler"}'
+        values: '0.1x40'
+      - series: 'nightcrawler_gegendruck_aufnahmen{job="nightcrawler"}'
+        values: '3x40'
+      - series: 'nightcrawler_gegendruck_aufnahmen_deckel{job="nightcrawler"}'
+        values: '32x40'
+      - series: 'nightcrawler_log_verloren{job="nightcrawler"}'
+        values: '0x40'
+      - series: 'nightcrawler_kinder_getoetet{job="nightcrawler"}'
+        values: '0x40'
+    alert_rule_test:
+      - {eval_time: 20m, alertname: NightcrawlerNichtErreichbar, exp_alerts: []}
+      - {eval_time: 20m, alertname: NightcrawlerNeustartSchleife, exp_alerts: []}
+      - {eval_time: 20m, alertname: NightcrawlerKennzahlenStehen, exp_alerts: []}
+      - {eval_time: 20m, alertname: NightcrawlerDatenbank, exp_alerts: []}
+      - {eval_time: 20m, alertname: NightcrawlerPlatteVoll, exp_alerts: []}
+      - {eval_time: 20m, alertname: NightcrawlerLoopStockt, exp_alerts: []}
+      - {eval_time: 20m, alertname: NightcrawlerDateiDeskriptoren, exp_alerts: []}
+      - {eval_time: 20m, alertname: NightcrawlerAufnahmeDeckel, exp_alerts: []}
+      - {eval_time: 20m, alertname: NightcrawlerLogVerluste, exp_alerts: []}
+      - {eval_time: 20m, alertname: NightcrawlerKindprozesseGetoetet, exp_alerts: []}
+
+  # ── Bot weg: feuert erst nach 2 Minuten, nicht beim ersten Aussetzer.
+  - interval: 30s
+    input_series:
+      - series: 'up{job="nightcrawler", instance="127.0.0.1:8050"}'
+        values: '1 1 0 0 0 0 0 0'
+    alert_rule_test:
+      - {eval_time: 1m30s, alertname: NightcrawlerNichtErreichbar, exp_alerts: []}
+      - eval_time: 3m30s
+        alertname: NightcrawlerNichtErreichbar
+        exp_alerts:
+          - exp_labels: {severity: critical, job: nightcrawler, instance: "127.0.0.1:8050"}
+            exp_annotations:
+              summary: "NIGHTCRAWLER antwortet nicht auf /metrics"
+              description: "Seit 2 Minuten keine Antwort von 127.0.0.1. Dienst gestoppt, abgestuerzt oder der Event-Loop steht. Pruefen: systemctl status tiktok-bot; journalctl -u tiktok-bot -n 80"
+
+  # ── Neustart im Kreis: drei Ruecksetzer der Laufzeit in 30 Minuten.
+  - interval: 1m
+    input_series:
+      - series: 'nightcrawler_uptime_seconds{job="nightcrawler"}'
+        values: '0 60 120 0 60 0 60 0 60 120'
+    alert_rule_test:
+      - eval_time: 9m
+        alertname: NightcrawlerNeustartSchleife
+        exp_alerts:
+          - exp_labels: {severity: critical, job: nightcrawler}
+            exp_annotations:
+              summary: "NIGHTCRAWLER startet immer wieder neu"
+              description: "3 Neustarts in 30 Minuten. Grund: journalctl -u tiktok-bot -b | grep -i abschied"
+
+  # ── Kennzahlen: -1 (nie erhoben) zaehlt genauso wie zu alt.
+  - interval: 30s
+    input_series:
+      - series: 'nightcrawler_kennzahlen_alter_sekunden{job="nightcrawler"}'
+        values: '-1x20'
+    alert_rule_test:
+      - eval_time: 6m
+        alertname: NightcrawlerKennzahlenStehen
+        exp_alerts:
+          - exp_labels: {severity: warning, job: nightcrawler}
+            exp_annotations:
+              summary: "Der Kennzahlen-Schnappschuss wird nicht mehr erneuert"
+              description: "Alter -1 s (-1 = nie). Der Event-Loop haengt oder der Erheber stirbt: journalctl -u tiktok-bot | grep leistung-erheben"
+
+  # ── Platte: 95 % belegt; und eine Gesamtgroesse 0 (unbekannt) feuert nicht.
+  - interval: 1m
+    input_series:
+      - series: 'nightcrawler_disk_free_bytes{job="nightcrawler", n="voll"}'
+        values: '5000000000x20'
+      - series: 'nightcrawler_disk_total_bytes{job="nightcrawler", n="voll"}'
+        values: '100000000000x20'
+      - series: 'nightcrawler_disk_free_bytes{job="nightcrawler", n="unbekannt"}'
+        values: '0x20'
+      - series: 'nightcrawler_disk_total_bytes{job="nightcrawler", n="unbekannt"}'
+        values: '0x20'
+    alert_rule_test:
+      - eval_time: 12m
+        alertname: NightcrawlerPlatteVoll
+        exp_alerts:
+          - exp_labels: {severity: warning, job: nightcrawler, n: voll}
+            exp_annotations:
+              summary: "Aufnahme-Platte zu 95 % belegt"
+              description: "Ab 88 % raeumt DISK_AUTOCLEAN auf, sofern eingeschaltet. Bleibt es darueber, nimmt der Bot bald nichts mehr auf."
+
+  # ── Loop: ueber Budget feuert; dieselben Zahlen bei aktiv=0 nicht.
+  - interval: 30s
+    input_series:
+      - series: 'nightcrawler_loop_lag_p99_ms{job="nightcrawler", n="an"}'
+        values: '250x20'
+      - series: 'nightcrawler_loop_lag_budget_ms{job="nightcrawler", n="an"}'
+        values: '100x20'
+      - series: 'nightcrawler_loop_lag_aktiv{job="nightcrawler", n="an"}'
+        values: '1x20'
+      - series: 'nightcrawler_loop_lag_p99_ms{job="nightcrawler", n="aus"}'
+        values: '250x20'
+      - series: 'nightcrawler_loop_lag_budget_ms{job="nightcrawler", n="aus"}'
+        values: '100x20'
+      - series: 'nightcrawler_loop_lag_aktiv{job="nightcrawler", n="aus"}'
+        values: '0x20'
+    alert_rule_test:
+      - eval_time: 6m
+        alertname: NightcrawlerLoopStockt
+        exp_alerts:
+          - exp_labels: {severity: warning, job: nightcrawler, n: an}
+            exp_annotations:
+              summary: "Event-Loop haengt (p99 250 ms)"
+              description: "Restream, Chat und Aufnahme-Start warten mit. Ursache meist synchrone Arbeit im Loop — tools/loopblocker.py, journalctl | grep Stockung"
+
+  # ── Deskriptoren an der Sperrschwelle des Bots (FD_SPERRE_ANTEIL = 0.85).
+  - interval: 30s
+    input_series:
+      - series: 'nightcrawler_gegendruck_fd_anteil{job="nightcrawler"}'
+        values: '0.86x20'
+    alert_rule_test:
+      - eval_time: 6m
+        alertname: NightcrawlerDateiDeskriptoren
+        exp_alerts:
+          - exp_labels: {severity: critical, job: nightcrawler}
+            exp_annotations:
+              summary: "Dateideskriptoren zu 86% belegt — neue Aufnahmen werden abgelehnt"
+              description: "LimitNOFILE im Dienst erhoehen oder nach einem Leck suchen (ls /proc/<pid>/fd | wc -l)."
+
+  # ── Aufnahme-Deckel erreicht; Deckel 0 (unbekannt) feuert nicht.
+  - interval: 1m
+    input_series:
+      - series: 'nightcrawler_gegendruck_aufnahmen{job="nightcrawler", n="voll"}'
+        values: '32x20'
+      - series: 'nightcrawler_gegendruck_aufnahmen_deckel{job="nightcrawler", n="voll"}'
+        values: '32x20'
+      - series: 'nightcrawler_gegendruck_aufnahmen{job="nightcrawler", n="null"}'
+        values: '0x20'
+      - series: 'nightcrawler_gegendruck_aufnahmen_deckel{job="nightcrawler", n="null"}'
+        values: '0x20'
+    alert_rule_test:
+      - eval_time: 17m
+        alertname: NightcrawlerAufnahmeDeckel
+        exp_alerts:
+          - exp_labels: {severity: warning, job: nightcrawler, n: voll}
+            exp_annotations:
+              summary: "Aufnahme-Deckel erreicht"
+              description: "Weitere Live-Streams werden nicht aufgenommen, bis ein Platz frei wird."
+
+  # ── Log-Verluste und getoetete Kindprozesse: Zuwachs, nicht Stand.
+  - interval: 1m
+    input_series:
+      - series: 'nightcrawler_log_verloren{job="nightcrawler"}'
+        values: '7 7 7 7 9 9 9'
+      - series: 'nightcrawler_kinder_getoetet{job="nightcrawler"}'
+        values: '0 1 2 3 4 4 4'
+    alert_rule_test:
+      - eval_time: 6m
+        alertname: NightcrawlerLogVerluste
+        exp_alerts:
+          - exp_labels: {severity: warning, job: nightcrawler}
+            exp_annotations:
+              summary: "Logzeilen verworfen"
+              description: "Die Platte schreibt zu langsam fuer das Log. Platte pruefen (iostat), Log-Ebene senken."
+      - eval_time: 6m
+        alertname: NightcrawlerKindprozesseGetoetet
+        exp_alerts:
+          - exp_labels: {severity: warning, job: nightcrawler}
+            exp_annotations:
+              summary: "4 Kindprozesse in einer Stunde getoetet"
+              description: "journalctl -u tiktok-bot | grep -i getoetet — welcher Befehl haengt?"
+
+  # ── Datenbank weg.
+  - interval: 30s
+    input_series:
+      - series: 'nightcrawler_db_ok{job="nightcrawler"}'
+        values: '0x20'
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: NightcrawlerDatenbank
+        exp_alerts:
+          - exp_labels: {severity: critical, job: nightcrawler}
+            exp_annotations:
+              summary: "Datenbank nicht erreichbar"
+              description: "Seit 3 Minuten keine erfolgreiche Zaehlung. Gesperrt, voll oder kaputt — /healthz zeigt die frische Probe."
