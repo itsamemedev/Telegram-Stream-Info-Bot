@@ -702,3 +702,7 @@ Windows-Dienst ueber NSSM (Neustart nach Absturz, Administrator)	Windows service
 ffmpeg jetzt installieren?	Install ffmpeg now?
 keiner - Start von Hand mit start.bat	none - start manually with start.bat
 winget (in Windows enthalten)	winget (included in Windows)
+Kein Python >= %s.%s aus den Paketquellen — weiter mit uv.	No Python >= %s.%s from the package sources — continuing with uv.
+Kein Zertifikat aktiv — PUBLIC_BASE_URL steht auf http://%s, bis certbot gelaufen ist.	No certificate active — PUBLIC_BASE_URL stays on http://%s until certbot has run.
+OFFEN: Zertifikat holen (sudo certbot --nginx -d %s), dann PUBLIC_BASE_URL auf https://%s setzen	OPEN: get a certificate (sudo certbot --nginx -d %s), then set PUBLIC_BASE_URL to https://%s
+Ohne Zertifikat nur http — OAuth-Anbieter (Google, Twitch, Kick) verlangen HTTPS fuer ihre Rueckrufe.	Without a certificate only http — OAuth providers (Google, Twitch, Kick) require HTTPS for their callbacks.

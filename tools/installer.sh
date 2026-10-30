@@ -560,8 +560,20 @@ P_PYWEG="vorhanden"
 f_python(){
   [ -n "$PY" ] && { P_PYWEG="vorhanden"; return 0; }
   erklaere "bot.py braucht mindestens Python %s.%s. Das ist keine Empfehlung: die Datei benutzt f-strings mit Backslash (PEP 701), unter 3.11 scheitert bereits das Einlesen mit einem SyntaxError. Debian 12 und Raspberry Pi OS bookworm liefern 3.11 — dort muss ein neuerer Interpreter dazu." "$PY_MIN_MAJOR" "$PY_MIN_MINOR"
-  local vor="uv"
-  [ "$SKIP_SYSTEM" = 0 ] && [ -n "$(nc_paketname python)" ] && vor="paket"
+  # Vorgabe "paket" nur, wenn die Quellen ein passendes Python TRAGEN.
+  # Debian 12 und Raspberry Pi OS bookworm haben nur 3.11 — dort war "paket"
+  # die Vorgabe, die Installation von python3.13 scheiterte, und der
+  # Installer brach ab, statt uv zu nehmen (Codex-Befund, PR #163). Leere
+  # Paketlisten heissen "unbekannt": dann wird nach dem Auffrischen gewaehlt,
+  # und der Rueckfall auf uv steht in der Ausfuehrung.
+  local vor="uv" _k
+  if [ "$SKIP_SYSTEM" = 0 ] && [ -n "$(nc_paketname python)" ]; then
+    if nc_quellen_leer; then vor="paket"
+    else
+      for _k in $(nc_paketname python); do nc_paket_verfuegbar "$_k" && { vor="paket"; break; }; done
+    fi
+    [ "$vor" = "uv" ] && [ "$PKG" = "apt" ] && [ "$NC_DISTRO" = "ubuntu" ] && vor="deadsnakes"
+  fi
   frage_wahl P_PYWEG "Wie soll Python dazukommen?" "$vor" \
     paket "aus den Paketquellen des Systems" \
     deadsnakes "Ubuntu: Zusatzquelle deadsnakes (PPA)" \
@@ -675,11 +687,19 @@ f_dashboard(){
         warn "Ohne Domain kein Zertifikat — uebersprungen."
         P_ZUGANG="lokal"
       else
+        if frage_ja "Zertifikat von Let's Encrypt holen (certbot)?" J; then P_CERT=J; else P_CERT=N; fi
         # Der Bot muss seine oeffentliche Adresse kennen: sonst baut er die
         # OAuth-Rueckrufe auf localhost, und kein Anbieter erreicht die.
-        env_set PUBLIC_BASE_URL "https://${P_DOMAIN}"
+        # https NUR mit Zertifikat: die Vorlage lauscht allein auf Port 80,
+        # eine https-Adresse ohne TLS waere eine Rueckruf-Adresse, die es nicht
+        # gibt (Codex-Befund, PR #163). Scheitert certbot spaeter, setzt die
+        # Ausfuehrung die Adresse zurueck auf http.
+        if [ "$P_CERT" = "J" ]; then env_set PUBLIC_BASE_URL "https://${P_DOMAIN}"
+        else
+          env_set PUBLIC_BASE_URL "http://${P_DOMAIN}"
+          warn "Ohne Zertifikat nur http — OAuth-Anbieter (Google, Twitch, Kick) verlangen HTTPS fuer ihre Rueckrufe."
+        fi
         env_set TRUSTED_PROXIES "127.0.0.1"
-        if frage_ja "Zertifikat von Let's Encrypt holen (certbot)?" J; then P_CERT=J; else P_CERT=N; fi
       fi;;
     *)
       env_set WEB_HOST 127.0.0.1;;
@@ -999,31 +1019,41 @@ done
 # ═══════════════════════════════════════════════════════════════════════════
 # PHASE D — AUSFUEHRUNG
 # ═══════════════════════════════════════════════════════════════════════════
+python_ueber_uv(){
+  erklaere "Rueckfallweg ohne Paketquellen: uv (astral.sh) laedt eine fertige, eigenstaendige CPython-Fassung in dein Home — ohne root, ohne das System-Python anzufassen. Genau der Weg fuer Debian 12 und Raspberry Pi OS."
+  curl -LsSf https://astral.sh/uv/install.sh | sh
+  export PATH="$HOME/.local/bin:$PATH"
+  lauf uv python install 3.13
+}
 kopf "Ausfuehrung: System und Python"
 
 # ── Python ───────────────────────────────────────────────────
 if [ "$P_PYWEG" != "vorhanden" ]; then
   case "$P_PYWEG" in
     paket)
-      _pp=""
-      for _k in $(nc_paketname python); do nc_paket_verfuegbar "$_k" && { _pp="$_k"; break; }; done
-      [ -z "$_pp" ] && _pp="$(nc_paketname python | cut -d' ' -f1)"
+      # Erst auffrischen, DANN waehlen: auf einem frischen Image kennt apt
+      # ohne update kein einziges Paket, und die Wahl davor waere geraten.
       if _af="$(nc_auffrischbefehl)"; then
         # shellcheck disable=SC2086  # fester Befehl aus lib/system.sh
         als_root $_af || true
       fi
-      _venvp=""; [ "$PKG" = "apt" ] && _venvp="$(nc_venvpaket "${_pp#python}")"
-      # shellcheck disable=SC2046,SC2086
-      als_root $(nc_installbefehl $_pp $_venvp) || warn "Mindestens ein Paket liess sich nicht installieren.";;
+      _pp=""
+      for _k in $(nc_paketname python); do nc_paket_verfuegbar "$_k" && { _pp="$_k"; break; }; done
+      if [ -n "$_pp" ]; then
+        _venvp=""; [ "$PKG" = "apt" ] && _venvp="$(nc_venvpaket "${_pp#python}")"
+        # shellcheck disable=SC2046,SC2086
+        als_root $(nc_installbefehl $_pp $_venvp) || warn "Mindestens ein Paket liess sich nicht installieren."
+      fi
+      if [ -z "$_pp" ] || [ -z "$(finde_python || true)" ]; then
+        warn "Kein Python >= %s.%s aus den Paketquellen — weiter mit uv." "$PY_MIN_MAJOR" "$PY_MIN_MINOR"
+        python_ueber_uv
+      fi;;
     deadsnakes)
       als_root apt-get update -qq && als_root apt-get install -y software-properties-common
       als_root add-apt-repository -y ppa:deadsnakes/ppa
       als_root apt-get update -qq && als_root apt-get install -y python3.12 python3.12-venv;;
     uv)
-      erklaere "Rueckfallweg ohne Paketquellen: uv (astral.sh) laedt eine fertige, eigenstaendige CPython-Fassung in dein Home — ohne root, ohne das System-Python anzufassen. Genau der Weg fuer Debian 12 und Raspberry Pi OS."
-      curl -LsSf https://astral.sh/uv/install.sh | sh
-      export PATH="$HOME/.local/bin:$PATH"
-      lauf uv python install 3.13;;
+      python_ueber_uv;;
   esac
   PY="$(finde_python || true)"
   if [ -z "$PY" ]; then
@@ -1311,8 +1341,20 @@ NGXEOF
         && gut "Zertifikat aktiv, HTTP leitet auf HTTPS um." \
         || warn "certbot fehlgeschlagen — Port 80 offen? Domain zeigt hierher? Erneut: sudo certbot --nginx -d %s" "$P_DOMAIN"
     fi
-    merke "Reverse-Proxy: https://%s → 127.0.0.1:%s (nginx + certbot)" "$P_DOMAIN" "$DASH_PORT"
-    merke "PUBLIC_BASE_URL und TRUSTED_PROXIES sind gesetzt — die OAuth-Rueckrufe stimmen damit ohne weitere Pflege."
+    # Steht danach KEIN Zertifikat in der nginx-Datei, darf die Adresse nicht
+    # https behaupten — sonst zeigen alle OAuth-Rueckrufe ins Leere.
+    if [ "$P_CERT" = "J" ] && ! grep -q 'managed by Certbot' "$NGX" 2>/dev/null; then
+      : > "$PLAN_ENV"
+      env_set PUBLIC_BASE_URL "http://${P_DOMAIN}"
+      ENV_BASIS="$ENVF"; env_bauen "$ENV_BASIS" "$ARBEIT/env.neu"
+      cat "$ARBEIT/env.neu" > "$ENVF"; chmod 600 "$ENVF"
+      warn "Kein Zertifikat aktiv — PUBLIC_BASE_URL steht auf http://%s, bis certbot gelaufen ist." "$P_DOMAIN"
+      merke "OFFEN: Zertifikat holen (sudo certbot --nginx -d %s), dann PUBLIC_BASE_URL auf https://%s setzen" "$P_DOMAIN" "$P_DOMAIN"
+    fi
+    if grep -q 'managed by Certbot' "$NGX" 2>/dev/null; then
+      merke "Reverse-Proxy: https://%s → 127.0.0.1:%s (nginx + certbot)" "$P_DOMAIN" "$DASH_PORT"
+      merke "PUBLIC_BASE_URL und TRUSTED_PROXIES sind gesetzt — die OAuth-Rueckrufe stimmen damit ohne weitere Pflege."
+    fi
   fi
 fi
 

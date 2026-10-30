@@ -23162,6 +23162,21 @@ def _test_v42_w124_installer_verdrahtung():
     # Ein Zertifikat, das certbot eingetragen hat, wird nicht wieder
     # herausgeschrieben.
     assert "managed by Certbot" in "".join(z for z in zeilen if z.startswith(("if ", "elif ")))
+    # https NUR mit Zertifikat (Codex-Befund PR #163): die nginx-Vorlage
+    # lauscht allein auf Port 80, eine https-Adresse ohne certbot macht jeden
+    # OAuth-Rueckruf zur Adresse, die es nicht gibt.
+    https = [z for z in zeilen if z.startswith("env_set PUBLIC_BASE_URL") and "https://" in z]
+    if_https = [z for z in zeilen if z.startswith("if ") and 'env_set PUBLIC_BASE_URL "https://' in z]
+    assert not https and len(if_https) == 1 and '"$P_CERT" = "J"' in if_https[0], \
+        "https-Adresse ohne Zertifikats-Bedingung: %r" % (https or if_https)
+    # ... und scheitert certbot, faellt sie auf http zurueck.
+    i_rueck = next((n for n, z in enumerate(zeilen) if z.startswith('if [ "$P_CERT" = "J" ] && ! grep -q')), None)
+    assert i_rueck is not None and 'env_set PUBLIC_BASE_URL "http://${P_DOMAIN}"' in zeilen[i_rueck:i_rueck + 4], \
+        "kein http-Rueckfall nach gescheitertem certbot"
+    # Paketquellen ohne passendes Python (Debian 12) enden nicht im Abbruch,
+    # sondern im uv-Weg — derselbe, den die Auswahl "uv" nimmt.
+    assert sum(1 for z in zeilen if z in ("python_ueber_uv", "python_ueber_uv;;")) >= 2, \
+        "uv-Rueckfall fehlt im Paketzweig"
     # Kein automatischer Neustart im unbeaufsichtigten Lauf.
     # Gemessen an Zeilen, die mit dem AUFRUF beginnen — im Zweig steht
     # "restart" auch in der Meldung, die den Befehl zum Selbst-Absetzen nennt
