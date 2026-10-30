@@ -11,6 +11,41 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Performance & Stabilität — Paket F: leichte Beobachtbarkeit (v4.2 W122)
+
+Letztes Paket des Sprints. Die Signale aus A–E standen in `/healthz` — für
+Prometheus und für einen Verlauf gab es keinen Weg.
+
+- **Schnappschuss statt Abfrage:** der Bot erhebt alle 10 s aus dem, was er
+  ohnehin im Speicher hat — keine Datenbank —, und legt das Ergebnis in
+  `nc/kennzahlen.py` ab. Leser nehmen den fertigen Wert (eine Zuweisung, keine
+  Sperre); das Alter geht mit (`nightcrawler_kennzahlen_alter_sekunden`, −1 =
+  nie erhoben), damit ein stehengebliebener Erheber nicht wie ein gesunder Bot
+  aussieht.
+- **`/metrics`** trägt jetzt alle Zahlen daraus als Gauges: Loop-Lag,
+  Gegendruck, Cache, Kindprozesse, Speichergrößen, Log-Schleuse, RSS,
+  Threads, Restreams, Chat-Clients. Nur Zahlen — Text und Listen fallen weg,
+  darin können Namen und Pfade stehen.
+- **Lagezeile im Journal** alle `KENNZAHLEN_LOG_MIN` Minuten (Vorgabe 15, 0 =
+  aus): `Lage: Loop p99 … · Aufnahmen 3/32 · … · RSS 410 MB · …`. Der billigste
+  Verlauf, den es gibt, auch ohne Monitoring-Stack. Fehlende Werte stehen als
+  `?`, nie als 0.
+- **Altbefund in `/metrics`:** `nightcrawler_disk_free_bytes` maß immer `/`
+  statt des Aufnahmepfads. Die Bedingung `"RECORDINGS_DIR" in globals()` war
+  im Blueprint nie wahr — `globals()` ist dort der Namensraum des Blueprints
+  (dieselbe Falle wie W4/W109). Der Pfad kommt jetzt aus dem Kontext.
+- `/healthz` trägt `betrieb` (Restreams, Chat-Clients, Aufnahmen, RSS,
+  Threads).
+- **Nachtrag W122b (Review #161):** Die älteren Zähler in `/metrics`
+  (Aufnahmen gesamt/24 h, Trackings, `db_ok`) liefen weiter bei jedem Abruf
+  gegen die Datenbank. Jetzt höchstens eine Zählung je Minute über
+  `nc/schnappschuss` (W119); `db_ok` ist damit bis zu 60 s alt — die
+  Lebendauskunft mit frischer Probe bleibt `/healthz`.
+- Neues Modul `nc/kennzahlen.py`, zwei Verträge (`_test_v42_w122_*`) samt
+  Kostenmessung (Ausgabe < 5 ms, Lesen < 0,1 ms), 10 Mutationsproben gefangen —
+  eine erst, nachdem der Vertrag den Wert statt des Hilfetexts las („-1 = nie
+  erhoben" stand im Text).
+
 ### Performance & Stabilität — Paket E: Start, Stopp, Neustart (v4.2 W121)
 
 - **Jeder Neustart machte laufende Aufnahmen zu Löschkandidaten.** Beim Stopp

@@ -1833,8 +1833,13 @@ def _test_w23_beobachtung_und_toasts():
     genutzt = {n.attr for n in _ast.walk(baum)
                if isinstance(n, _ast.Attribute) and isinstance(n.value, _ast.Call)
                and getattr(n.value.func, "id", "") == "_c"}
+    # v4.2-W122: recordings_dir ist KEIN neuer Slot (die Aufnahme-Blueprints
+    # lesen ihn seit W107). /metrics braucht ihn fuer den freien Platz am
+    # Aufnahmepfad — vorher stand dort `"RECORDINGS_DIR" in globals()`, im
+    # Blueprint nie wahr, gemessen wurde also immer "/".
     assert genutzt <= {"run_async", "log", "log_event", "arg_int",
-                       "scraper_session", "get_bot_start_time"}, \
+                       "scraper_session", "get_bot_start_time",
+                       "recordings_dir"}, \
         "der Blueprint braucht neue Kontext-Eintraege: %r" % genutzt
     for zeile in quelle.split("\n"):
         z = zeile.strip()
@@ -22352,6 +22357,122 @@ def _test_v42_w121b_deckel_haelt_unter_gleichzeitigkeit():
        "jeder Ausgang gibt frei, Verfall nach %.0f s" % G.RESERVIERUNG_MAX_S)
 
 
+def _test_v42_w122_kennzahlen_billig_und_ohne_namen():
+    """Ein Schnappschuss, den /metrics nur liest, und eine Lagezeile fuer den
+    Verlauf — ohne Datenbank, ohne Namen, mit sichtbarem Alter."""
+    import time as _t
+    from nc import kennzahlen as K
+
+    # ── (1) NIE ERHOBEN ist None, nicht Alter 0.
+    K._STAND[0] = (0.0, {})
+    assert K.stand() == (None, {})
+    K.veroeffentlichen({"a": 1}, jetzt=100.0)
+    assert K.stand(jetzt=112.34) == (12.3, {"a": 1})
+
+    # ── (2) PROMETHEUS: nur Zahlen, Namen bereinigt, Text faellt weg.
+    daten = {"loop_lag": {"aktiv": True, "p99_ms": 4.2, "max_ms": 38.0},
+             "gegendruck": {"fd": {"offen": 212, "grenze": 65536},
+                            "abgewiesen": {"aufnahme:deckel": 2}},
+             "kinder": {"je_art": {"yt-dlp": 1}},
+             "geheim": "/home/nutzer/.env", "liste": [1, 2], "leer": None}
+    txt = K.prometheus(daten, alter_s=3.5)
+    zeilen = [z for z in txt.splitlines() if z and not z.startswith("#")]
+    werte = dict(z.rsplit(" ", 1) for z in zeilen)
+    assert werte["nightcrawler_loop_lag_aktiv"] == "1"
+    assert werte["nightcrawler_loop_lag_p99_ms"] == "4.2"
+    assert werte["nightcrawler_gegendruck_fd_offen"] == "212"
+    assert werte["nightcrawler_gegendruck_abgewiesen_aufnahme_deckel"] == "2"
+    assert werte["nightcrawler_kinder_je_art_yt_dlp"] == "1"
+    assert werte["nightcrawler_kennzahlen_alter_sekunden"] == "3.5"
+    import re as _re
+    assert all(_re.fullmatch(r"[a-zA-Z_][a-zA-Z0-9_]*", n) for n in werte), list(werte)
+    assert "/home" not in txt and "geheim" not in txt and "liste" not in txt, \
+        "Text oder Listen landen in /metrics — dort koennen Namen und Pfade stehen"
+    # Den WERT lesen, nicht den Text: "-1" steht auch im Hilfetext ("-1 = nie
+    # erhoben"), und genau daran ist die Mutationsprobe zuerst entwischt.
+    nie = [z for z in K.prometheus({}, alter_s=None).splitlines()
+           if z.startswith("nightcrawler_kennzahlen_alter_sekunden ")]
+    assert nie == ["nightcrawler_kennzahlen_alter_sekunden -1"], nie
+
+    # ── (3) DIE LAGEZEILE: fehlende Werte als '?', nie als 0 (eine 0 liest
+    # sich wie Normalbetrieb — dieselbe Lehre wie log_wartend = -1).
+    z = K.zeile({"loop_lag": {"p99_ms": 4.2, "max_ms": 38.0},
+                 "livecache": {"trefferquote": 0.362}})
+    assert "Loop p99 4.2 ms" in z and "Cache 36 %" in z, z
+    assert "Aufnahmen ?/?" in z and "RSS ? MB" in z, z
+
+    # ── (4) DER PROZESS: ein /proc-Lesezugriff.
+    pz = K.prozess()
+    assert pz["threads"] >= 1
+    if os.path.isfile("/proc/self/statm"):
+        assert pz["rss_mb"] > 1, pz
+
+    # ── (5) BILLIG: Ausgabe eines realistischen Schnappschusses in
+    # Millisekunden, Lesen in Mikrosekunden — sonst gehoert er nicht in einen
+    # Pfad, den ein Scraper alle 15 s abruft.
+    gross = {"b%d" % i: {"x": i, "y": float(i), "z": {"w": True}} for i in range(60)}
+    t0 = _t.perf_counter()
+    for _ in range(20):
+        K.prometheus(gross, alter_s=1.0)
+        K.zeile(gross)
+    assert (_t.perf_counter() - t0) / 20 < 0.005, "Ausgabe kostet mehr als 5 ms"
+    K.veroeffentlichen(gross)
+    t0 = _t.perf_counter()
+    for _ in range(1000):
+        K.stand()
+    assert (_t.perf_counter() - t0) / 1000 < 0.0001
+    K._STAND[0] = (0.0, {})
+    ok("W122: Schnappschuss mit Alter (nie = None/-1), Prometheus nur Zahlen ohne "
+       "Text/Pfade, Lagezeile mit '?', Ausgabe < 5 ms")
+
+
+def _test_v42_w122_kennzahlen_verdrahtet():
+    """Erhoben wird auf dem Loop ohne Datenbank, /metrics liest nur, und der
+    Platz-Pfad kommt nicht mehr aus dem falschen globals()."""
+    import ast as _ast
+    baum = _ast.parse(io.open("bot.py", encoding="utf-8").read())
+    fn = {n.name: n for n in baum.body if isinstance(n, (_ast.FunctionDef, _ast.AsyncFunctionDef))}
+    assert any(isinstance(c, _ast.Call) and getattr(c.func, "id", None) == "_leistung_erheben"
+               for c in _ast.walk(fn["_loop_lag_monitor"]))
+    le = fn["_leistung_erheben"]
+    namen = {c.id for c in _ast.walk(le) if isinstance(c, _ast.Name)}
+    assert not namen & {"db_conn", "db_async", "get_all_active_trackings"}, \
+        "die Erhebung laeuft auf dem Loop und darf nicht in die Datenbank"
+    u = _ast.unparse(le)
+    assert "_nc_kz.veroeffentlichen(daten)" in u and "_KZ_ZEILE_ZULETZT" in u
+    assert "_loop_fehler(" in u, "ein Fehler in der Erhebung muss gemeldet werden"
+    assert "betrieb=dict(_betrieb()" in _ast.unparse(fn["healthz"])
+
+    src = io.open("nc/routes/beobachtung.py", encoding="utf-8").read()
+    m = next(n for n in _ast.walk(_ast.parse(src))
+             if isinstance(n, _ast.FunctionDef) and n.name == "api_prometheus_metrics")
+    mu = _ast.unparse(m)
+    assert "_nc_kz.stand()" in mu and "_nc_kz.prometheus(" in mu
+    assert not any(isinstance(c, _ast.Call) and getattr(c.func, "id", None) == "globals"
+                   for c in _ast.walk(m)), \
+        "globals() in einem Blueprint ist der Namensraum des Blueprints (W4/W109)"
+    assert "_c().recordings_dir" in mu
+    # W122b (Review #161): auch die alten Zaehler fragen die Datenbank nicht
+    # je Abruf, sondern hoechstens einmal je Minute ueber den Schnappschuss.
+    direkt = {c.id for c in _ast.walk(m) if isinstance(c, _ast.Name)} \
+        & {"db_conn", "get_all_active_trackings"}
+    assert not direkt, "/metrics zaehlt wieder bei jedem Abruf in der Datenbank: %r" % direkt
+    assert "_DB_ZAEHLER.holen(_db_zaehler)" in mu
+    import nc.routes.beobachtung as _B
+    assert _B._DB_ZAEHLER.gueltig_s >= 30, _B._DB_ZAEHLER.gueltig_s
+    gerufen = []
+    alt = _B._DB_ZAEHLER
+    try:
+        _B._DB_ZAEHLER = type(alt)(gueltig_s=60.0, warte_s=1.0)
+        for _ in range(5):
+            _B._DB_ZAEHLER.holen(lambda: gerufen.append(1) or {"x": 1})
+    finally:
+        _B._DB_ZAEHLER = alt
+    assert len(gerufen) == 1, gerufen
+    ok("W122: Erhebung alle 10 s ohne Datenbank, Fehler ueber _loop_fehler, /metrics "
+       "liest den Schnappschuss, Platz am echten Aufnahmepfad")
+
+
 def main():
     tmp, rid = richte_testdatenbank_ein()
     ok("db_conn aus nc.dbwrap: echtes Schema angelegt, Commit durchgelaufen")
@@ -22658,6 +22779,8 @@ def main():
     _test_v42_w121_stopp_sichert_aufnahmen()
     _test_v42_w121_degradiert_ist_nicht_tot()
     _test_v42_w121b_deckel_haelt_unter_gleichzeitigkeit()
+    _test_v42_w122_kennzahlen_billig_und_ohne_namen()
+    _test_v42_w122_kennzahlen_verdrahtet()
     _test_v42_w60_azrael_cooldown_je_plattform()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)

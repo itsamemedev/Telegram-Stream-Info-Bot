@@ -618,6 +618,7 @@ from nc import gegendruck as _nc_gegendruck  # v4.2-W118: abregeln mit Ansage
 from nc import kindprozess as _nc_kind  # v4.2-W120: Kindprozess endet auf jedem Weg
 from nc import speicherpflege as _nc_pflege  # v4.2-W120: Maps, die nur wachsen
 from nc import betriebslage as _nc_lage  # v4.2-W121: Start-/Stoppzeit, degradiert vs. tot
+from nc import kennzahlen as _nc_kz  # v4.2-W122: Leistungs-Schnappschuss fuer /metrics und Log
 from nc import resolvergrund as _nc_rgrund  # v4.2-W81: warum die Aufloesung leer blieb
 from nc import telegramfehler as _nc_tgfehler  # v4.2-W93: warum das Telegram-Polling klemmt
 from nc import aufnahmesitzung as _nc_sitzung  # v4.2-W44: die Klammer um die Segmente EINES Streams
@@ -18785,6 +18786,8 @@ def healthz():
                    # v4.2-W121: wie lange bis zur ersten Pruefrunde (None =
                    # noch nicht bereit) und wie lange der letzte Stopp dauerte.
                    start_s=_nc_lage.ZUSTAND["bereit_s"],
+                   # v4.2-W122: was laeuft, und was der Prozess belegt.
+                   betrieb=dict(_betrieb(), **_nc_kz.prozess()),
                    ts=datetime.now(timezone.utc).isoformat())
     # v4.2-W121: "degradiert, aber lebendig" — weiche Gruende mit Klartext.
     # Der HTTP-Code haengt weiter NUR an `ok`: UptimeRobot alarmiert auf
@@ -23455,6 +23458,8 @@ async def _loop_lag_monitor():
         runde += 1
         if runde % 30 == 0:                 # rund einmal je Minute
             _log_schleuse_pruefen()
+        if runde % 5 == 0:                  # v4.2-W122: alle 10 s
+            _leistung_erheben()
         if lag > peak:
             peak = lag
         if lag >= warn:
@@ -23604,6 +23609,55 @@ def _speicher_pflegen():
         weg += 1
     if weg:
         log.debug("Speicherpflege: %d veraltete Eintraege entfernt", weg)
+
+
+# v4.2-W122: Leistungs-Schnappschuss (nc/kennzahlen.py) — alle 10 s aus dem,
+# was im Speicher liegt, ohne Datenbank. /metrics liest ihn, und alle
+# KENNZAHLEN_LOG_MIN Minuten steht eine Lagezeile im Journal: der billigste
+# Verlauf, den es gibt, auch ohne Prometheus. 0 = keine Lagezeile.
+KENNZAHLEN_LOG_MIN = _env_int("KENNZAHLEN_LOG_MIN", 15)
+_KZ_ZEILE_ZULETZT = [0.0]     # monotonic der letzten Lagezeile; 0 = noch keine
+
+
+def _betrieb():
+    """Was gerade laeuft — Zahlen, keine Namen (/healthz ist ohne Anmeldung)."""
+    return {"restreams": len(_RESTREAM_MGR._procs),
+            "chat_clients": len(_CHAT_FEED_USERS),
+            "aufnahmen": len(active_processes)}
+
+
+def _leistung_erheben():
+    """Den Schnappschuss bauen und ablegen. Laeuft auf dem Loop, alle 10 s —
+       deshalb nur Speicherlesungen und ein /proc-Zugriff, nie die Datenbank."""
+    try:
+        daten = {
+            "loop_lag": _nc_looplag.lage(),
+            "gegendruck": _nc_gegendruck.lage(
+                len(active_processes), _aufnahme_deckel(),
+                live_check_queue.qsize() if live_check_queue else -1,
+                live_check_queue.maxsize if live_check_queue else -1),
+            "livecache": _nc_livecache.statistik(len(_LIVE_STATUS_CACHE),
+                                                 len(_LIVE_EINFLUG)),
+            "kinder": _nc_kind.lage(),
+            "speicher": _nc_pflege.groessen(_speicher_maps()),
+            "log": {"wartend": _nc_logschleuse.wartend(),
+                    "verloren": _nc_logschleuse.verloren()},
+            "prozess": _nc_kz.prozess(),
+            "betrieb": _betrieb(),
+            "start_s": _nc_lage.ZUSTAND["bereit_s"],
+        }
+        _nc_kz.veroeffentlichen(daten)
+    except Exception as e:
+        _loop_fehler("leistung-erheben", e)
+        return
+    # Nach der Uhr, nicht nach Runden: ein anderes LOOP_LAG_INTERVAL_S
+    # haette eine Rundenrechnung still nie treffen lassen. Die erste Zeile
+    # kommt sofort — sie ist der Ausgangswert fuer den Vergleich.
+    jetzt = _time_mod.monotonic()
+    if KENNZAHLEN_LOG_MIN > 0 and (not _KZ_ZEILE_ZULETZT[0] or
+                                   jetzt - _KZ_ZEILE_ZULETZT[0] >= KENNZAHLEN_LOG_MIN * 60):
+        _KZ_ZEILE_ZULETZT[0] = jetzt
+        log.info("%s", _nc_kz.zeile(daten))
 
 
 def _log_schleuse_pruefen():

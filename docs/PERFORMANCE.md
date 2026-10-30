@@ -12,7 +12,7 @@ auslieferbar und rückrollbar. Diese Datei wächst mit jedem Paket.
 | **C — Caches, Polling, heiße Pfade** | Live-Status-Cache und Nachschläge, adaptives Polling ohne Rückkopplung, Status-Aggregation für Deck/Befehle ohne Vollscan | Kürzere Zeit live → Aufnahme, weniger Last je Abfrage |
 | **D — Prozess- & Ressourcen-Lebenszyklus** | Kindprozesse lückenlos verfolgen und abräumen, fd-/Zombie-Schutz, Deckel auf langlebige Dicts | Kein Wachstum über Tage |
 | **E — Start, Stopp, Neustart** | Unabhängige Initialisierung parallel, sauberes Herunterfahren ohne Waisen-ffmpeg, „degradiert aber lebendig" vs. „tot" | Schnellerer, deterministischer `systemctl restart` |
-| F — Leichte Beobachtbarkeit | Aktive Aufnahmen/Restreams/Clients, Cache-Trefferquote, Resolver-Latenz, fds, Kindprozesse, RSS — billig, ohne Log-Flut | Ein Blick auf `/healthz` statt SSH |
+| **F — Leichte Beobachtbarkeit** | Aktive Aufnahmen/Restreams/Clients, Cache-Trefferquote, Resolver-Latenz, fds, Kindprozesse, RSS — billig, ohne Log-Flut | Ein Blick auf `/healthz` statt SSH |
 
 ## Paket A — Event-Loop-Schutz (W117)
 
@@ -246,3 +246,51 @@ jedem ffmpeg selbst SIGTERM, die Aufnahme endet sauber und wird eingetragen.
   Deck und `curl` zeigen es.
 - `start_s` deutlich über einer Minute: meist wartet der Start auf den
   Proxy-Pool (`_ensure_proxy_ready`); dann die Proxy-Quelle prüfen.
+
+## Paket F — Leichte Beobachtbarkeit (W122)
+
+### Was sich geändert hat
+
+- **Lagezeile im Log**, alle 15 Minuten:
+
+      Lage: Loop p99 4.1 ms (max 38.0) · Aufnahmen 3/32 · Restreams 1 · Chats 4 · fd 212/65536 · RSS 410.5 MB · Threads 31 · Cache 36 % · Kinder 1 · Log wartend 0
+
+  Verlauf über Tage: `journalctl -u <dienst> | grep 'Lage:'`. Steigen RSS oder
+  fd stetig ohne mehr Aufnahmen, ist es ein Leck; steigt Loop p99, nennt
+  `/api/debug/threads` → `loop_bremser` die Stelle.
+- **`/metrics`** (Prometheus) trägt alle Leistungssignale. Abruf mit Token:
+  `scrape_config: authorization: {type: Bearer, credentials: <DASHBOARD_TOKEN>}`.
+  Die Leistungswerte liest der Endpunkt aus einem Schnappschuss, den der Bot
+  alle 10 s anlegt; die älteren Datenbank-Zähler (Aufnahmen, Trackings) zählt
+  er höchstens einmal je Minute, egal wie oft gescrapet wird.
+- **`/healthz` → `betrieb`**: laufende Restreams, Chat-Verbindungen,
+  Aufnahmen, RSS, Threads.
+
+### Neue Schalter
+
+| Variable | Vorgabe | Wirkung |
+|---|---|---|
+| `KENNZAHLEN_LOG_MIN` | 15 | Abstand der Lagezeile in Minuten; 0 = aus |
+
+### Wo man hinsieht
+
+- `nightcrawler_kennzahlen_alter_sekunden` über 30: die Erhebung steht — im
+  error.log nach `leistung-erheben` suchen.
+- `nightcrawler_disk_free_bytes` misst jetzt den Aufnahmepfad (vorher immer
+  `/`). Liegen die Aufnahmen auf einer eigenen Platte, ändert sich der Wert —
+  das ist die Korrektur, kein Fehler.
+
+## Zusammenfassung des Sprints
+
+| Paket | Befund (ohne Logzeile) | Messung / Wirkung |
+|---|---|---|
+| A | Stockungen unter 3 s unsichtbar und ohne Stelle | Loop-Lag p50/p99/max in ms; Späher nennt die Zeile ab 250 ms; Log-Flut: 560 ms → 1,8 ms Stillstand |
+| B | Dienst mit 1024 fds; kein Aufnahme-Deckel; Prüf-Schlange verwarf still | fd-Limit beim Start auf bis zu 65536; Deckel mit Reservierung (hält auch bei 4 gleichzeitigen Workern); Verluste gezählt |
+| C | Doppelte Auflösungen trotz Semaphore; Cache räumte womöglich nie auf; Puls je Tab | Ein Lauf je Nutzer; Aufräumen je 64 Schreibvorgänge; `/api/pulse` 1× je 2 s für alle Tabs |
+| D | 3 Prozessstarts ohne Zeitlimit, keiner räumte beim Abbruch ab; wachsende Maps | Zeitlimit Pflicht, Abräumen auf jedem Weg; Maps alle 10 min beschnitten |
+| E | Jeder Neustart machte laufende Aufnahmen zu Löschkandidaten | SIGTERM + Eintrag beim Stopp; Startdauer gemessen; `lage` ok/degradiert/gestoert |
+| F | Kein Verlauf, `/metrics` ohne Leistungssignale und mit falschem Platz-Pfad | Schnappschuss alle 10 s; Lagezeile alle 15 min; Ausgabe < 5 ms |
+
+Gemessen und offen: Startdauer, Stoppdauer und RSS über mehrere Tage gibt es
+erst nach dem Einspielen auf dem Server — die Werte stehen dann in `/healthz`
+(`start_s`), in der Abschiedszeile beim Stopp und in den Lagezeilen.
