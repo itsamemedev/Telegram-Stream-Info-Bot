@@ -11,6 +11,44 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Sendebrücke: Restreams brechen bei Quellwechsel nicht mehr ab (v4.2 W130)
+
+- **Der Befund:** ein Restream war EIN ffmpeg — TikTok rein, Plattform raus.
+  Jede abgelaufene TikTok-Adresse (rund alle sechs Minuten), jeder CDN-Hänger
+  und jeder Neustart beendete damit die Verbindung zu Kick, Twitch und
+  YouTube. Für die Plattform ist das ein beendeter Stream, für die Zuschauer
+  der Lade-Kreisel. Gemessen mit echtem ffmpeg gegen einen lokalen
+  RTMP-Empfänger: zwei Quellabschnitte ergaben zwei Verbindungen.
+- **Jetzt hält ein Sender die Verbindung** (`nc/sendebruecke.py`). Dahinter
+  laufen Zubringer (TikTok → MPEG-TS) und ein Pausenbild; eine Weiche
+  schaltet an Bild-Keyframes um. Schweigt die Quelle länger als
+  `RESTREAM_BRUECKE_LUECKE_S` (4 s), kommt das Pausenbild, und im
+  Hintergrund startet ein frischer Zubringer. Gemessen: eine Verbindung über
+  alle Wechsel, Keyframes höchstens 2 s auseinander, keine Bild- oder
+  Tonlücke.
+- **Fortlaufende Zeit:** zwei Zubringer haben eigene Zeitstempel. Ohne
+  Umschreiben lieferte der Sender für 16 s Inhalt 26 s Ausgabe. Die Weiche
+  schreibt PTS, DTS und PCR auf die Wanduhr um und zählt die
+  Continuity-Counter durch.
+- **Gefundene Fallen, alle mit Vertrag:** Umschalten an einem Tonpaket (der
+  TS-Muxer markiert auch Ton als Keyframe) gab Pixelsalat. Ein Größenwechsel
+  baute den ganzen Filtergraphen samt Tonfilter neu auf, sodass an jeder
+  Umschaltung hunderte Tonpakete in einer Sekunde kamen (629 statt 43);
+  dagegen hilft `-reinit_filter 0`. Kam das Pausenbild zuerst an, legte es
+  die Bildgröße fest, und 1080×1920 ging als 720×1280 hinaus — die Quelle
+  hat jetzt Vortritt. Eine tonlose Quelle starb, bevor sie erkannt wurde.
+  Und weiterlesen nach einem Hänger lief der Uhr voraus; deshalb wird der
+  Zubringer ersetzt.
+- **Schalter:** `RESTREAM_BRUECKE=auto` (Vorgabe, an) oder `0` (alter
+  Aufbau). Die Brücke verlangt Neukodieren im Sender; wer bisher im
+  Copy-Modus lief, bezahlt einen x264-Lauf. Der unabhängige Modus
+  (`RESTREAM_MULTI_MODE=independent`) bleibt vorerst beim alten Aufbau.
+  `RESTREAM_BRUECKE_OFFLINE_S` (120 s) hält eine Quelle, die nachweislich
+  offline ist; danach endet der Restream wie bisher.
+- **Im Deck:** `/api/restream/status` trägt je Restream `bruecke` mit
+  `aktiv` (`quelle`, `fueller` oder `wechsel`), Zahl der Wechsel und
+  Pausenbild-Sekunden.
+
 ### Nutzungsprofile, `--set` und Expertenmodus im Installer (v4.2 W129)
 
 - **Drei Nutzungsprofile** unter `deploy/profile/`: `minimal` (überwachen

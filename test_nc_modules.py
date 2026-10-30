@@ -24317,6 +24317,16 @@ def _test_v42_w130_sendebruecke():
     # PMT schreibt. Ein Prozess-Attrappe genuegt — gemessen wird die Wache.
     starts = []
 
+    class _LangsamLeser:
+        def __init__(self, text):
+            self._z = [text] if text else []
+
+        def readline(self):
+            if self._z:
+                _t.sleep(0.4)
+                return self._z.pop(0)
+            return b""
+
     class _P:
         def __init__(self, cmd, **kw):
             self.cmd = cmd
@@ -24327,9 +24337,11 @@ def _test_v42_w130_sendebruecke():
             self.stdout = _os.fdopen(r, "rb")
             fe = (b"Stream map '0:a:0' matches no streams.\n"
                   if cmd and cmd[0] == "zub" and not cmd[2] else b"")
-            r2, w2 = _os.pipe()
-            _os.write(w2, fe); _os.close(w2)
-            self.stderr = _os.fdopen(r2, "rb")
+            # Die Meldung kommt LANGSAM: der Prozess ist schon beendet, wenn
+            # der Leser sie abliefert. Genau dieser Wettlauf liess die Wache
+            # die tonlose Quelle als tote Edge behandeln; mit einer schnellen
+            # Attrappe entwischte die Mutationsprobe dazu.
+            self.stderr = _LangsamLeser(fe)
 
         def poll(self):
             return self.returncode
@@ -24418,6 +24430,46 @@ def _test_v42_w130_sendebruecke():
     # Die Quelle war auf Sendung — sonst waere oben die Anlaufzeit (5 s)
     # gemessen worden und nicht die Luecke (0,3 s).
     assert lage4["wechsel"] >= 1, lage4
+
+    # ── (10) HEVC: die PMT sagt „kein H.264" — der Zubringer wird beendet und
+    # mit Neukodieren neu gestartet, und zwar mit DERSELBEN Adresse.
+    starts5 = []
+    offen5 = {}
+
+    class _HEVC(_H):
+        def __init__(self, cmd, **kw):
+            starts5.append(cmd)
+            self.cmd, self.returncode = cmd, None
+            r, w = _os.pipe()
+            self.stdout = _os.fdopen(r, "rb")
+            r2, w2 = _os.pipe()
+            _os.close(w2)
+            self.stderr = _os.fdopen(r2, "rb")
+            if cmd[0] == "zub" and not cmd[2]:
+                for q in (_w130_pat(), _w130_pmt([(0x100, B.HEVC), (0x101, B.AAC_ADTS)])):
+                    _os.write(w, q)
+            offen5[id(self)] = w
+
+        def terminate(self):
+            self.returncode = -15
+            w = offen5.pop(id(self), None)
+            if w is not None:
+                _os.close(w)
+    lese5, schreib5 = _os.pipe()
+    W5 = B.Bruecke(schreib5, ["fueller"], lambda u, t, n: ["zub", u, n],
+                   lambda: ("u-neu", None), erste_url="u1", name="#hevc",
+                   popen=_HEVC, neustart_min_s=0.05, neustart_max_s=0.05)
+    W5.start()
+    ende = _t.monotonic() + 5
+    while _t.monotonic() < ende and not any(c[0] == "zub" and c[2] for c in starts5):
+        _t.sleep(0.05)
+    W5.stop()
+    for w in list(offen5.values()):
+        _os.close(w)
+    _os.close(lese5)
+    nk = [c for c in starts5 if c[0] == "zub" and c[2]]
+    assert nk, ("HEVC-Quelle nie auf Neukodieren umgestellt", starts5[:4])
+    assert nk[0][1] == "u1", ("fuers Neukodieren wurde neu aufgeloest", starts5[:4])
 
     if not (_sh.which("ffmpeg") and _sh.which("ffprobe")):
         ok("W130: Sendebruecke (rein); ffmpeg fehlt — echter Lauf uebersprungen")

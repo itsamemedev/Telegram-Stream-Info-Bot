@@ -7885,6 +7885,11 @@ async function rsLoad(){
         + `<span class="mono" style="font-size:9px${h.blind?';opacity:.55':''}">${h.bitrate||'—'} · ${h.fps?h.fps.toFixed(0)+'fps':'—'}`
         + (h.drop?` · <span style="color:var(--red)">drop ${h.drop}</span>`:'')
         + (t.active_transcode?' · <span style="color:var(--amber)">x264</span>':'')+'</span>'
+        /* v4.2-W130: die Sendebruecke haelt die Verbindung, auch wenn die
+           Quelle weg ist. Dann sieht die Plattform das Pausenbild, und "live"
+           allein waere eine Fehlanzeige. */
+        + (t.bruecke && t.bruecke.aktiv!=='quelle'
+           ? ` <span style="color:var(--amber)" title="${esc(t.bruecke.grund||'')}">⏸ Pausenbild</span>` : '')
       ) : (t.attempts?`<span class="faint" style="font-size:9px">reconnect ${t.attempts}/5</span>`:'<span class="faint">—</span>');
       const autoBtn = `<span class="dot" style="cursor:pointer;background:${t.auto_restream?'var(--neon)':'var(--text-faint)'};box-shadow:${t.auto_restream?'0 0 0 1px var(--neon)':'none'}" title="Auto bei Go-Live" onclick="rsAuto(${t.id},${t.auto_restream?0:1})"></span>`;
       const startBtn = !en ? '<span class="faint" style="font-size:9px">🔒 deaktiviert</span>'
