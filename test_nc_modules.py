@@ -22779,6 +22779,27 @@ def _test_v42_w123_update_idempotent():
     rc, aus = _w123_update(ziel3, umg3, "--check")
     assert "apt-get install -y ffmpeg" in aus and "Selbst bereitstellen" not in aus, aus
 
+    # ── (9) OPTIONAL, ABER PER .env EINGESCHALTET. Mit DB_BACKEND=mariadb ist
+    # PyMySQL Pflicht; fehlte es, meldete --python-deps "vollstaendig", und der
+    # Bot starb am Import (Befund Codex-Review, PR #162). Eine auskommentierte
+    # Zeile schaltet nichts ein.
+    with open(os.path.join(ziel, "requirements.txt"), "a") as f:
+        f.write("PyMySQL >= 999   # [optional] Treiber\n")
+    envd = os.path.join(ziel, ".env")
+    with open(envd, "w") as f:
+        # Die auskommentierte Zeile steht HINTER der echten: "letzter Wert
+        # gewinnt" darf sie nicht mitzaehlen. Davor stehend war die Probe, die
+        # Kommentare mitlas, entwischt.
+        f.write("DB_BACKEND=sqlite\n# DB_BACKEND=mariadb\n")
+    rc, aus = _w123_update(ziel, umg, "--check", "--python-deps")
+    assert rc == 0 and "PyMySQL" not in aus, (rc, aus)
+    with open(envd, "w") as f:
+        f.write('DB_BACKEND="mariadb"   # umgestellt\n')
+    rc, aus = _w123_update(ziel, umg, "--check", "--python-deps")
+    assert rc == 1, (rc, aus)
+    assert "PyMySQL ist optional, wird hier aber gebraucht: DB_BACKEND=mariadb" in aus, aus
+    assert "PyMySQL>=999" in aus, aus
+
     # ── (8) Aufruffehler sind 2, nicht 1 — "es fehlt etwas" und "falsch
     # aufgerufen" muessen fuer einen Zeitplan unterscheidbar bleiben.
     rc, _ = _w123_update(ziel, umg, "--gibt-es-nicht")

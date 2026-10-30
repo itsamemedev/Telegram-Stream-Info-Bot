@@ -603,7 +603,8 @@ Nichts automatisch zu tun — offene Punkte siehe oben.	Nothing to do automatica
 Nichts zu tun — alles vorhanden.	Nothing to do — everything is present.
 Nur Pruefung — es wird nichts installiert.	Check only — nothing will be installed.
 Ohne .venv kein pip-Weg fuer:%s	Without .venv there is no pip route for:%s
-Optionale Pakete nicht geprueft (dafuer: --optional).	Optional packages not checked (for that: --optional).
+Optionale Pakete nicht geprueft, ausser per .env eingeschaltete (alle: --optional).	Optional packages not checked, except those switched on in .env (all: --optional).
+%s ist optional, wird hier aber gebraucht: %s	%s is optional, but needed here: %s
 Paketmanager: %s	Package manager: %s
 Paketquellen liessen sich nicht auffrischen — versuche es trotzdem.	Package sources could not be refreshed — trying anyway.
 Paketquellen noch nicht aufgefrischt — %s wird beim Installieren geklaert.	Package sources not refreshed yet — %s will be resolved during installation.

@@ -226,12 +226,46 @@ finde_python(){
   return 1
 }
 
+# ── Optional, aber per .env eingeschaltet ───────────────────
+# "[optional]" heisst: der Bot startet ohne. Das stimmt nur, solange der
+# zugehoerige Schalter aus ist. Mit DB_BACKEND=mariadb ist PyMySQL Pflicht —
+# fehlte es, meldete --python-deps "vollstaendig", und der Bot starb beim
+# ersten db_conn() am Import (Befund Codex-Review, PR #162). Dieselbe Klasse
+# wie W110: eine Bedingung, deren Abhaengigkeit niemand prueft.
+#
+# Nur Pakete mit einem AUSDRUECKLICHEN Einschalter stehen hier. redis und
+# faster-whisper haben keinen: redis wird mit Rueckfall versucht, Whisper
+# laeuft nur, wenn es installiert ist. Sie bleiben optional.
+#
+# Die .env wird GELESEN, nicht gesourct — sie enthaelt Geheimnisse und
+# beliebige Werte, ein `.` darauf fuehrt sie als Code aus.
+env_wert(){ # env_wert SCHLUESSEL -> letzter unkommentierter Wert, ohne Quotes
+  [ -r "$ZIEL/.env" ] || return 0
+  sed -n "s/^[[:space:]]*$1[[:space:]]*=[[:space:]]*//p" "$ZIEL/.env" \
+    | tail -1 | sed 's/[[:space:]]*#.*$//' | tr -d '"'"'"'\r' | sed 's/[[:space:]]*$//'
+}
+normiert(){ printf '%s' "$1" | tr 'A-Z' 'a-z' | tr '_.' '--'; }
+KONFIG_PFLICHT=""     # "normname=Grund" je Zeile
+[ "$(env_wert DB_BACKEND | tr 'A-Z' 'a-z')" = "mariadb" ] && \
+  KONFIG_PFLICHT="${KONFIG_PFLICHT}pymysql=DB_BACKEND=mariadb"$'\n'
+case "$(env_wert S3_BACKUP | tr 'A-Z' 'a-z')" in 1|true|yes|ja|on)
+  KONFIG_PFLICHT="${KONFIG_PFLICHT}boto3=S3_BACKUP=1"$'\n';; esac
+[ -n "$(env_wert DISCORD_BOT_TOKEN)" ] && \
+  KONFIG_PFLICHT="${KONFIG_PFLICHT}discord-py=DISCORD_BOT_TOKEN"$'\n'
+konfig_grund(){ # konfig_grund NAME -> Grund, falls per .env Pflicht
+  printf '%s' "$KONFIG_PFLICHT" | sed -n "s/^$(normiert "$1")=//p" | head -1
+}
+
 abgleich_lesen(){ # -> setzt PY_FEHLT, gibt die Tabelle aus
-  local status name ist spec art
+  local status name ist spec art grund
   PY_FEHLT=""
   while IFS="$(printf '\t')" read -r status name ist spec art; do
     [ -n "$status" ] || continue
-    [ "$art" = "optional" ] && [ "$W_OPTIONAL" = 0 ] && continue
+    if [ "$art" = "optional" ] && [ "$W_OPTIONAL" = 0 ]; then
+      grund="$(konfig_grund "$name")"
+      [ -n "$grund" ] || continue
+      info "%s ist optional, wird hier aber gebraucht: %s" "$name" "$grund"
+    fi
     case "$status" in
       ok)        gut "%s %s" "$name" "$ist";;
       entfaellt) info "%s: entfaellt auf dieser Plattform" "$name";;
@@ -263,7 +297,7 @@ if [ "$W_PYTHON" = 1 ]; then
       fehler "Abgleich gegen requirements.txt fehlgeschlagen (siehe Meldung oben)."; exit 2; }
     abgleich_lesen <<< "$_tab"
   fi
-  [ "$W_OPTIONAL" = 0 ] && info "Optionale Pakete nicht geprueft (dafuer: --optional)."
+  [ "$W_OPTIONAL" = 0 ] && info "Optionale Pakete nicht geprueft, ausser per .env eingeschaltete (alle: --optional)."
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════
