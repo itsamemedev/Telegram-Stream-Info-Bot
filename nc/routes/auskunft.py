@@ -28,6 +28,7 @@ from datetime import datetime, timedelta, timezone
 
 from flask import Blueprint, jsonify, request
 
+from nc import schnappschuss as _nc_schnappschuss  # v4.2-W119
 from nc import bandbreite as _nc_band
 from nc import fehlertext as _nc_fehlertext
 from nc import kiwahl as _nc_kiwahl  # v4.2-W110
@@ -151,11 +152,22 @@ def api_pulse():
             return r.get_json(silent=True) if hasattr(r, "get_json") else None
         except Exception:
             return None
-    return jsonify(ok=True,
-                   stats=_j(lambda: _nc_routes_stats.api_stats(lean=True)),
-                   bandwidth=_j(api_bandwidth_live),
-                   health=_j(_nc_routes_health.api_health_score),
-                   deck=_j(_nc_routes_restream.api_restream_deck))
+
+    def _bauen():
+        return dict(stats=_j(lambda: _nc_routes_stats.api_stats(lean=True)),
+                    bandwidth=_j(api_bandwidth_live),
+                    health=_j(_nc_routes_health.api_health_score),
+                    deck=_j(_nc_routes_restream.api_restream_deck))
+    # v4.2-W119: EIN Bau je 2 s fuer alle offenen Tabs (nc/schnappschuss.py).
+    # Der Takt der Seite ist 5 s — 2 s Gueltigkeit machen keine Zahl im Deck
+    # sichtbar aelter, nur die zweite und dritte Anfrage billig.
+    teile, veraltet = _PULS.holen(_bauen)
+    return jsonify(ok=True, veraltet=veraltet, **teile)
+
+
+# v4.2-W119: der geteilte Puls. Modul-global, nicht je Anfrage: genau das ist
+# der Punkt. Abgefragt fuer /healthz ueber `_PULS.zaehler`.
+_PULS = _nc_schnappschuss.Schnappschuss(gueltig_s=2.0, warte_s=5.0)
 
 
 @bp.route("/api/checks")

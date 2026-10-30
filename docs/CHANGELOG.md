@@ -11,6 +11,36 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Performance & Stabilität — Paket C: Cache, Polling, heiße Pfade (v4.2 W119)
+
+- **Ein Lauf je Nutzer.** Die zweite Cache-Prüfung aus W103 fängt den
+  Aufrufer, der *nach* dem Schreiben kommt — nicht den, der *während* einer
+  Auflösung (bis 20 s mit yt-dlp) ankommt: die Semaphore ist zwei groß, beide
+  stehen gleichzeitig darin und lösen beide voll auf. `get_live_status` teilt
+  jetzt je Nutzer einen Lauf (`nc/livecache.einflug`); Mitläufer bekommen das
+  Ergebnis — oder `("unknown", None)`, wenn der Lauf scheitert, nie die fremde
+  Ausnahme (ein Worker, dem ein fremder `CancelledError` in die Schleife fällt,
+  endet still). `force_fresh` (Restream-Reconnect) läuft weiter allein.
+- **Der Cache räumte womöglich nie auf.** Das Aufräumen hing an
+  `hash(username) & 63 == 0` — das ist je *Nutzer* fest, nicht „alle 100
+  Writes", wie der Kommentar daneben sagte. Bei 40 Nutzern traf es mit rund
+  50 % keinen einzigen. Jetzt ein Schreibzähler.
+- **Polling unter Last.** Lief die Prüf-Schlange voll, kamen die nächsten
+  Prüfungen im selben Takt nach — Rückkopplung ohne Dämpfung. Ab halber
+  Schlange werden `offline`/`unknown` linear bis aufs Doppelte gedehnt; `live`
+  und „gerade offline" nie, und die VIP-Verkürzung (X3) bleibt wirksam, weil
+  die Dehnung vor ihr steht.
+- **`/api/pulse` als geteilter Schnappschuss.** Jeder offene Tab baute alle
+  5 s vier Auswertungen neu; jetzt einer je 2 s für alle Tabs
+  (`nc/schnappschuss.py`). Hängt das Bauen, antwortet der Puls nach 5 s mit
+  dem letzten Wert und `veraltet: true`, statt alle waitress-Threads zu binden.
+- `/healthz` trägt `livecache`: Trefferquote, geteilte Läufe, mittlere und
+  höchste Auflösungsdauer.
+- Geprüft und unverändert gelassen: Cache-Zeitstempel (monoton, Uhr beim
+  Schreiben), Cookie-Auto-Bezug (6 h, Anstoß frühestens alle 15 min).
+- Drei Verträge (`_test_v42_w119_*`), 13 Mutationsproben gefangen — eine erst
+  nach Ergänzung des Falls „Lauf scheitert ohne Mitläufer".
+
 ### Performance & Stabilität — Paket B: abregeln mit Ansage statt still überlaufen (v4.2 W118)
 
 Drei Lücken, alle drei ohne eine einzige Logzeile:

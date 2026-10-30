@@ -189,3 +189,37 @@ def hat_stream_url(info) -> bool:
     """
     d = info or {}
     return bool(d.get("hls_url") or d.get("flv_url"))
+
+
+# v4.2-W119: Unter Last den Abstand dehnen — aber nur, wo es nichts kostet.
+#
+# Bis hierher pollte der Bot unter Last genauso wie ohne: lief die
+# Pruef-Schlange voll (W118 meldet das jetzt), kamen die naechsten faelligen
+# Pruefungen trotzdem im selben Takt nach, und die Schlange blieb voll. Das
+# ist eine Rueckkopplung ohne Daempfung.
+#
+# Gedehnt werden nur `offline` und `unknown`: ein Nutzer, der seit Minuten
+# offline ist, wird 90 s statt 180 s spaeter bemerkt — ein Live-Nutzer oder
+# einer, der gerade offline ging, verliert dagegen Aufnahme oder die
+# Unterscheidung Pause/Ende. Die beiden bleiben IMMER beim Grundabstand.
+#
+# Linear von 1,0 bei halber Schlange bis 2,0 bei voller: ein P-Regler ohne
+# Sprung, damit die Dehnung nicht selbst zu schwingen anfaengt (volle
+# Schlange -> alles doppelt so lang -> leere Schlange -> alles wieder
+# normal -> volle Schlange).
+LAST_AB = 0.5
+LAST_HOECHSTENS = 2.0
+GEDEHNT = ("offline", "unknown")
+
+
+def last_dehnung(status, war_live, fuellung, maximum) -> float:
+    """Faktor >= 1 fuer den Grundabstand aus `poll_abstand`.
+
+    `fuellung`/`maximum` sind Fuellstand und Groesse der Pruef-Schlange;
+    eine unbekannte Groesse (<= 0) dehnt nie."""
+    if status not in GEDEHNT or (status == "offline" and war_live) or maximum <= 0:
+        return 1.0
+    anteil = max(0.0, min(1.0, float(fuellung) / float(maximum)))
+    if anteil <= LAST_AB:
+        return 1.0
+    return 1.0 + (LAST_HOECHSTENS - 1.0) * (anteil - LAST_AB) / (1.0 - LAST_AB)

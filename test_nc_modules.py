@@ -12497,8 +12497,12 @@ def _test_v42_w103_cache_greift_bei_gleichzeitigen_aufrufern():
     # der eigentliche Befund; eine Pruefung allein nutzt nichts.
     wurzel = _os.path.dirname(_os.path.abspath(__file__))
     src = _io.open(_os.path.join(wurzel, "bot.py"), encoding="utf-8").read()
-    i = src.index("async def get_live_status(")
-    rumpf = rumpf_ab(src, i)
+    # v4.2-W119: get_live_status ist seither Huelle (billige Pruefung,
+    # Single-Flight) um den Kern _live_status_aufloesen (Semaphore,
+    # verbindliche Pruefung). Die Aussage gilt fuer beide zusammen, in
+    # dieser Reihenfolge — der Anker folgt der Teilung, nicht umgekehrt.
+    rumpf = (rumpf_ab(src, src.index("async def get_live_status("))
+             + rumpf_ab(src, src.index("async def _live_status_aufloesen(")))
     assert rumpf.count("_nc_livecache.holen(") == 2, \
         "der Cache wird %d-mal geprueft; zwei gleichzeitige Aufrufer " \
         "brauchen die Pruefung INNERHALB der Semaphore" \
@@ -21800,6 +21804,210 @@ def _test_v42_w118_gegendruck_verdrahtet():
        "Abruf im Thread, Unit mit LimitNOFILE")
 
 
+def _test_v42_w119_ein_lauf_je_nutzer():
+    """Gleichzeitige Aufrufer teilen sich EINE Aufloesung.
+
+    Die zweite Cache-Pruefung aus W103 faengt den, der nach dem Schreiben
+    kommt — nicht den, der WAEHREND einer 20-s-Aufloesung ankommt. Die
+    Semaphore ist 2 gross, beide stehen gleichzeitig darin.
+    """
+    import asyncio as _aio
+    from nc import livecache as C
+
+    C.zaehler_zuruecksetzen()
+    laeufe = []
+
+    def bauer(name, wirft=None, dauer=0.05):
+        async def _lauf():
+            laeufe.append(name)
+            await _aio.sleep(dauer)
+            if wirft:
+                raise wirft
+            return ("live", {"wer": name})
+        return _lauf
+
+    async def szenario():
+        reg = {}
+        # ── (1) FUENF GLEICHZEITIG, EIN SCHLUESSEL -> EIN LAUF.
+        erg = await _aio.gather(*[C.einflug(reg, "anna", bauer("anna"), ("unknown", None))
+                                  for _ in range(5)])
+        assert laeufe == ["anna"], laeufe
+        assert all(e == ("live", {"wer": "anna"}) for e in erg), erg
+        assert C.ZAEHLER["geteilt"] == 4 and reg == {}, (C.ZAEHLER, reg)
+        # ── (2) VERSCHIEDENE SCHLUESSEL laufen getrennt.
+        laeufe.clear()
+        await _aio.gather(C.einflug(reg, "a", bauer("a"), None),
+                          C.einflug(reg, "b", bauer("b"), None))
+        assert sorted(laeufe) == ["a", "b"], laeufe
+        # ── (3) DER FUEHRENDE SCHEITERT: er bekommt seine Ausnahme, die
+        # Mitlaeufer den Ersatz — nie die fremde Ausnahme.
+        fuehrer = _aio.ensure_future(C.einflug(reg, "x", bauer("x", RuntimeError("tiktok")), "ERSATZ"))
+        await _aio.sleep(0.01)
+        mit = await C.einflug(reg, "x", bauer("x2"), "ERSATZ")
+        assert mit == "ERSATZ", mit
+        try:
+            await fuehrer
+        except RuntimeError:
+            pass
+        else:
+            raise AssertionError("der fuehrende Lauf muss seine Ausnahme sehen")
+        # ── (4) DER FUEHRENDE WIRD ABGEBROCHEN: kein fremder CancelledError
+        # in den Mitlaeufer — ein Worker, dem das passiert, endet still.
+        fuehrer = _aio.ensure_future(C.einflug(reg, "y", bauer("y", dauer=1.0), "ERSATZ"))
+        await _aio.sleep(0.01)
+        mit = _aio.ensure_future(C.einflug(reg, "y", bauer("y2"), "ERSATZ"))
+        await _aio.sleep(0.01)
+        fuehrer.cancel()
+        assert await mit == "ERSATZ"
+        assert fuehrer.cancelled()
+        # ── (5) EIN MITLAEUFER WIRD ABGEBROCHEN: der Lauf der anderen lebt.
+        fuehrer = _aio.ensure_future(C.einflug(reg, "z", bauer("z", dauer=0.1), None))
+        await _aio.sleep(0.01)
+        mit = _aio.ensure_future(C.einflug(reg, "z", bauer("z2"), None))
+        await _aio.sleep(0.01)
+        mit.cancel()
+        assert await fuehrer == ("live", {"wer": "z"})
+        assert reg == {}, reg
+        # ── (5b) SCHEITERT ER OHNE MITLAEUFER, liest niemand die Ausnahme
+        # vom Future — sie darf trotzdem nicht als "Future exception was
+        # never retrieved" ins Log fallen (der Aufrufer hat sie ja bekommen).
+        try:
+            await C.einflug(reg, "allein", bauer("allein", RuntimeError("allein")), None)
+        except RuntimeError:
+            pass
+        import gc as _gc
+        _gc.collect()
+        await _aio.sleep(0)
+
+    fehler = []
+    loop = _aio.new_event_loop()
+    loop.set_exception_handler(lambda l, ctx: fehler.append(ctx.get("message")))
+    try:
+        loop.run_until_complete(szenario())
+    finally:
+        loop.close()
+    import gc as _gc
+    _gc.collect()
+    assert not fehler, "unabgeholte Ausnahmen im Log: %r" % fehler
+
+    # ── (6) AUFRAEUMEN JE SCHREIBVORGANG, NICHT JE NUTZER. Bis W119 hing es
+    # an hash(username) & 63 — je Nutzer fest, oft fuer keinen wahr.
+    C.zaehler_zuruecksetzen()
+    assert sum(C.aufraeumen_faellig() for _ in range(C.AUFRAEUM_TAKT * 3)) == 3
+    # ── (7) DIE ZAHLEN fuer /healthz.
+    C.zaehler_zuruecksetzen()
+    C.zaehle("treffer", 3)
+    C.zaehle("fehlschlag")
+    C.dauer(0.2)
+    C.dauer(0.4)
+    st = C.statistik(7, 1)
+    assert st["trefferquote"] == 0.75 and st["dauer_mittel_ms"] == 300 and st["dauer_max_ms"] == 400, st
+    assert st["eintraege"] == 7 and st["laufend"] == 1
+    C.zaehler_zuruecksetzen()
+    assert C.statistik()["trefferquote"] is None, "ohne Abfragen keine erfundene Quote"
+
+    ok("W119: ein Lauf je Nutzer, Mitlaeufer bekommen Ergebnis oder Ersatz, nie "
+       "fremde Ausnahmen; Aufraeumen je Schreibvorgang; Trefferquote/Dauer")
+
+
+def _test_v42_w119_polling_dehnt_nur_was_nichts_kostet():
+    """Unter Last offline/unknown dehnen, live und just-offline nie."""
+    from nc import livefolge as F
+    d = F.last_dehnung
+    for st, war in (("live", False), ("live", True), ("offline", True)):
+        assert d(st, war, 200, 200) == 1.0, (st, war)
+    assert d("offline", False, 0, 200) == 1.0
+    assert d("offline", False, 100, 200) == 1.0, "bis zur halben Schlange keine Dehnung"
+    assert d("offline", False, 150, 200) == 1.5
+    assert d("offline", False, 200, 200) == 2.0 and d("unknown", False, 999, 200) == 2.0
+    assert d("offline", False, 200, 0) == 1.0, "unbekannte Groesse dehnt nie"
+    # Stetig — ein Sprung waere selbst eine Schwingungsquelle.
+    werte = [d("offline", False, n, 200) for n in range(0, 201)]
+    assert all(b >= a for a, b in zip(werte, werte[1:]))
+    assert max(b - a for a, b in zip(werte, werte[1:])) < 0.02
+
+    import ast as _ast
+    baum = _ast.parse(io.open("bot.py", encoding="utf-8").read())
+    fn = {n.name: n for n in baum.body if isinstance(n, (_ast.FunctionDef, _ast.AsyncFunctionDef))}
+    sn = fn["_schedule_next_check"]
+    dehn = [c for c in _ast.walk(sn) if isinstance(c, _ast.Attribute) and c.attr == "last_dehnung"]
+    prio = [c for c in _ast.walk(sn) if isinstance(c, _ast.Name) and c.id == "get_priority_poll_interval"]
+    assert dehn and prio and dehn[0].lineno < prio[0].lineno, \
+        "die Dehnung muss VOR der VIP-Verkuerzung stehen, sonst hebt sie sie auf"
+
+    ok("W119: Lastdehnung nur fuer offline/unknown, stetig 1,0..2,0, vor der VIP-Verkuerzung")
+
+
+def _test_v42_w119_puls_ist_ein_schnappschuss():
+    """/api/pulse baut fuer alle Tabs EINEN Wert je 2 s — und haengt nicht mit,
+    wenn das Bauen haengt."""
+    import threading as _th
+    import time as _t
+    from nc.schnappschuss import Schnappschuss
+
+    jetzt = [100.0]
+    ss = Schnappschuss(gueltig_s=2.0, warte_s=0.2, uhr=lambda: jetzt[0])
+    gebaut = []
+
+    def bauen():
+        gebaut.append(1)
+        return {"n": len(gebaut)}
+    for _ in range(5):
+        assert ss.holen(bauen) == ({"n": 1}, False)
+    jetzt[0] += 1.9
+    assert ss.holen(bauen)[0] == {"n": 1}
+    jetzt[0] += 0.2
+    assert ss.holen(bauen)[0] == {"n": 2}, "nach der Gueltigkeit muss neu gebaut werden"
+
+    # ── GLEICHZEITIG: acht Threads, ein langsamer Bau -> ein Bau.
+    ss2 = Schnappschuss(gueltig_s=2.0, warte_s=5.0)
+    zahl = [0]
+
+    def langsam():
+        zahl[0] += 1
+        _t.sleep(0.1)
+        return zahl[0]
+    erg = []
+    ths = [_th.Thread(target=lambda: erg.append(ss2.holen(langsam))) for _ in range(8)]
+    for th in ths:
+        th.start()
+    for th in ths:
+        th.join()
+    assert zahl[0] == 1 and all(e == (1, False) for e in erg), (zahl, erg)
+
+    # ── HAENGT DER BAU, antwortet der Puls trotzdem: mit dem letzten Wert und
+    # `veraltet`. Sonst stehen alle waitress-Threads in der Schlange.
+    ss3 = Schnappschuss(gueltig_s=0.0, warte_s=0.1)
+    ss3.holen(lambda: "alt")
+    tor = _th.Event()
+    t = _th.Thread(target=lambda: ss3.holen(lambda: tor.wait(2) and "neu"))
+    t.start()
+    _t.sleep(0.05)
+    t0 = _t.monotonic()
+    assert ss3.holen(lambda: "nie") == ("alt", True)
+    assert _t.monotonic() - t0 < 1.0
+    tor.set()
+    t.join()
+
+    import ast as _ast
+    src = io.open("nc/routes/auskunft.py", encoding="utf-8").read()
+    fn = next(n for n in _ast.walk(_ast.parse(src))
+              if isinstance(n, _ast.FunctionDef) and n.name == "api_pulse")
+    assert "_PULS.holen(" in _ast.unparse(fn), "api_pulse baut wieder je Anfrage"
+
+    hz = io.open("bot.py", encoding="utf-8").read()
+    baum = _ast.parse(hz)
+    f = {n.name: n for n in baum.body if isinstance(n, (_ast.FunctionDef, _ast.AsyncFunctionDef))}
+    assert "livecache=_nc_livecache.statistik(" in _ast.unparse(f["healthz"])
+    g = _ast.unparse(f["get_live_status"])
+    assert "_nc_livecache.einflug(_LIVE_EINFLUG" in g and "if force_fresh:" in g, g
+    assert "hash(username)" not in _ast.unparse(f["_live_status_aufloesen"])
+    assert "_nc_livecache.aufraeumen_faellig()" in _ast.unparse(f["_live_status_aufloesen"])
+
+    ok("W119: /api/pulse als geteilter 2-s-Schnappschuss, ein Bau fuer acht "
+       "gleichzeitige Anfragen, haengender Bau liefert den letzten Wert")
+
+
 def main():
     tmp, rid = richte_testdatenbank_ein()
     ok("db_conn aus nc.dbwrap: echtes Schema angelegt, Commit durchgelaufen")
@@ -22097,6 +22305,9 @@ def main():
     _test_v42_w117_loop_verdrahtung_und_sperre()
     _test_v42_w118_gegendruck_entscheidet()
     _test_v42_w118_gegendruck_verdrahtet()
+    _test_v42_w119_ein_lauf_je_nutzer()
+    _test_v42_w119_polling_dehnt_nur_was_nichts_kostet()
+    _test_v42_w119_puls_ist_ein_schnappschuss()
     _test_v42_w60_azrael_cooldown_je_plattform()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)

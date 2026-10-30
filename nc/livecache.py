@@ -108,3 +108,118 @@ def aufraeumen(cache, jetzt, ab_groesse=50):
         for k in alt:
             cache.pop(k, None)
     return len(alt)
+
+
+# ═════════════════════════════════════════════════════════════════════════
+# v4.2-W119: EIN Lauf je Nutzer, und Zahlen dazu
+# ═════════════════════════════════════════════════════════════════════════
+#
+# Die zweite Pruefung aus W103 faengt den Aufrufer, der NACH dem Schreiben
+# des ersten ankommt. Den, der WAEHREND der Aufloesung ankommt, faengt sie
+# nicht: die Semaphore ist `RESOLVE_CONCURRENCY` (2) gross, beide stehen
+# gleichzeitig darin, beide sehen einen leeren Cache. Bei 20 s yt-dlp ist
+# "waehrend" kein Zufall, sondern das breite Fenster.
+#
+# `einflug` laesst je Schluessel genau EINEN Lauf zu; wer waehrenddessen
+# kommt, wartet auf dessen Ergebnis statt einen eigenen zu starten. Scheitert
+# der Lauf (Ausnahme oder Abbruch), bekommen die Wartenden `ersatz` — nie die
+# Ausnahme des anderen: ein Worker, dem ein fremder `CancelledError` in die
+# Schleife faellt, beendet sich, und dann prueft niemand mehr.
+
+import asyncio as _asyncio
+import threading as _threading
+
+# Zaehler fuer /healthz. Unter der Sperre, weil /healthz im Flask-Thread liest.
+_SPERRE = _threading.Lock()
+ZAEHLER = {"treffer": 0, "fehlschlag": 0, "geteilt": 0, "laeufe": 0,
+           "dauer_summe": 0.0, "dauer_max": 0.0, "schreibvorgaenge": 0}
+
+# Alle so viele Schreibvorgaenge wird aufgeraeumt. Bis W119 hing das an
+# `hash(username) & 63 == 0` — das ist je NUTZER fest, nicht je Schreiben:
+# bei 40 Nutzern traf es mit rund 50 % keinen einzigen, und dann wurde nie
+# aufgeraeumt. Der Kommentar daneben sagte "alle 100 Writes".
+AUFRAEUM_TAKT = 64
+
+
+def zaehle(art: str, n: int = 1) -> None:
+    with _SPERRE:
+        ZAEHLER[art] += n
+
+
+def aufraeumen_faellig() -> bool:
+    """Einen Schreibvorgang zaehlen. -> True bei jedem AUFRAEUM_TAKT-ten."""
+    with _SPERRE:
+        ZAEHLER["schreibvorgaenge"] += 1
+        return ZAEHLER["schreibvorgaenge"] % AUFRAEUM_TAKT == 0
+
+
+def dauer(sekunden: float) -> None:
+    with _SPERRE:
+        ZAEHLER["laeufe"] += 1
+        ZAEHLER["dauer_summe"] += sekunden
+        if sekunden > ZAEHLER["dauer_max"]:
+            ZAEHLER["dauer_max"] = sekunden
+
+
+async def einflug(laufend: dict, schluessel, erzeuger, ersatz):
+    """`erzeuger()` hoechstens einmal gleichzeitig je `schluessel` ausfuehren.
+
+    `laufend` ist das Register der laufenden Futures (vom Aufrufer gehalten,
+    damit es inspizierbar bleibt). Der fuehrende Aufrufer bekommt Ergebnis
+    oder Ausnahme wie gewohnt; Mitlaeufer bekommen das Ergebnis — oder
+    `ersatz`, wenn der fuehrende Lauf scheiterte.
+    """
+    fut = laufend.get(schluessel)
+    if fut is not None:
+        zaehle("geteilt")
+        # asyncio.wait statt await fut: es wirft nie die Ausnahme des Laufs
+        # und bricht ihn nicht ab, wenn DIESER Aufrufer abgebrochen wird —
+        # dann fliegt hier nur unser eigener CancelledError, wie es sein soll.
+        # Ohne try/except: der Fehlschlag des fuehrenden Laufs ist dort
+        # gemeldet, hier ist er die Antwort `ersatz`.
+        await _asyncio.wait({fut})
+        if fut.cancelled() or fut.exception() is not None:
+            return ersatz
+        return fut.result()
+    fut = _asyncio.get_running_loop().create_future()
+    # Liest niemand mehr mit, darf eine gesetzte Ausnahme nicht als
+    # "Future exception was never retrieved" ins Log fallen.
+    fut.add_done_callback(lambda f: f.cancelled() or f.exception())
+    laufend[schluessel] = fut
+    try:
+        erg = await erzeuger()
+    except _asyncio.CancelledError:
+        fut.cancel()
+        raise
+    except BaseException as e:
+        fut.set_exception(e)
+        raise
+    else:
+        fut.set_result(erg)
+        return erg
+    finally:
+        if laufend.get(schluessel) is fut:
+            del laufend[schluessel]
+
+
+def statistik(groesse: int = -1, laufend: int = -1) -> dict:
+    """Fuer /healthz: Trefferquote und Aufloesungsdauer. Keine Namen."""
+    with _SPERRE:
+        z = dict(ZAEHLER)
+    abfragen = z["treffer"] + z["fehlschlag"]
+    return {
+        "treffer": z["treffer"], "fehlschlag": z["fehlschlag"],
+        "trefferquote": round(z["treffer"] / abfragen, 3) if abfragen else None,
+        "geteilt": z["geteilt"], "laeufe": z["laeufe"],
+        "dauer_mittel_ms": (round(1000.0 * z["dauer_summe"] / z["laeufe"], 0)
+                            if z["laeufe"] else None),
+        "dauer_max_ms": round(1000.0 * z["dauer_max"], 0),
+        "eintraege": int(groesse), "laufend": int(laufend),
+    }
+
+
+def zaehler_zuruecksetzen() -> None:
+    """Nur fuer die Vertraege."""
+    with _SPERRE:
+        for k in ZAEHLER:
+            ZAEHLER[k] = 0.0 if isinstance(ZAEHLER[k], float) else 0

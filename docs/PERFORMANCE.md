@@ -9,7 +9,7 @@ auslieferbar und rückrollbar. Diese Datei wächst mit jedem Paket.
 |---|---|---|
 | **A — Event-Loop-Schutz** | Loop-Lag in ms messen, blockierende Stelle benennen, Log-Schleuse gegen Nachzügler, DB-Zugriffe der heißen Pfade neben den Loop, Sperre gegen neue | Stockungen unter 3 s werden sichtbar **und** lokalisierbar; die bekannten Plattenlast-Stockungen in Restream/Intel fallen weg |
 | **B — Nebenläufigkeit & Gegendruck** | Semaphoren und Grenzen prüfen (Auflösung, Aufnahmen, Restreams, TikTokLive-Clients), Prozessstarts drosseln, harte Deckel mit Meldung statt stiller Überlast | Kein Einbruch unter Last, sondern sichtbares Abregeln |
-| C — Caches, Polling, heiße Pfade | Live-Status-Cache und Nachschläge, adaptives Polling ohne Rückkopplung, Status-Aggregation für Deck/Befehle ohne Vollscan | Kürzere Zeit live → Aufnahme, weniger Last je Abfrage |
+| **C — Caches, Polling, heiße Pfade** | Live-Status-Cache und Nachschläge, adaptives Polling ohne Rückkopplung, Status-Aggregation für Deck/Befehle ohne Vollscan | Kürzere Zeit live → Aufnahme, weniger Last je Abfrage |
 | D — Prozess- & Ressourcen-Lebenszyklus | Kindprozesse lückenlos verfolgen und abräumen, fd-/Zombie-Schutz, Deckel auf langlebige Dicts | Kein Wachstum über Tage |
 | E — Start, Stopp, Neustart | Unabhängige Initialisierung parallel, sauberes Herunterfahren ohne Waisen-ffmpeg, „degradiert aber lebendig" vs. „tot" | Schnellerer, deterministischer `systemctl restart` |
 | F — Leichte Beobachtbarkeit | Aktive Aufnahmen/Restreams/Clients, Cache-Trefferquote, Resolver-Latenz, fds, Kindprozesse, RSS — billig, ohne Log-Flut | Ein Blick auf `/healthz` statt SSH |
@@ -135,3 +135,40 @@ ersten bis zum Deckel; die übrigen werden beim nächsten Live-Check (alle 30 s
 für einen Live-Nutzer) erneut gefragt und starten, sobald eine Aufnahme endet.
 Kein Lock bleibt hängen, kein Nutzer wird gesperrt. Was abgewiesen wurde, steht
 im Log — nichts verschwindet still.
+
+## Paket C — Caches, Polling, heiße Pfade (W119)
+
+### Was sich geändert hat
+
+- **Live-Erkennung:** Fragen mehrere Stellen gleichzeitig nach demselben Nutzer
+  (zwei Chats, Restream-Scheduler, Deck), löst der Bot ihn nur noch **einmal**
+  auf; alle anderen bekommen dasselbe Ergebnis. Weniger Anfragen bei TikTok,
+  weniger 429, weniger doppelte Logzeilen.
+- **Cache-Aufräumen** läuft jetzt verlässlich alle 64 Schreibvorgänge.
+- **Polling unter Last:** Ist die Live-Check-Schlange mehr als halb voll,
+  werden Nutzer, die offline sind oder nicht ermittelt werden konnten, seltener
+  geprüft — bei voller Schlange halb so oft. Live-Nutzer und gerade offline
+  gegangene werden **nie** gedehnt; VIP-Prioritäten gelten weiter.
+- **Deck-Puls:** Egal wie viele Tabs offen sind, `/api/pulse` rechnet höchstens
+  einmal je 2 Sekunden.
+
+Keine neuen Schalter.
+
+### Wo man hinsieht
+
+`/healthz` → `livecache`:
+
+    "livecache": {"treffer": 812, "fehlschlag": 1430, "trefferquote": 0.362,
+                  "geteilt": 57, "laeufe": 1430, "dauer_mittel_ms": 1840,
+                  "dauer_max_ms": 20112, "eintraege": 41, "laufend": 1}
+
+- `geteilt`: so viele doppelte Auflösungen wurden eingespart.
+- `dauer_mittel_ms` über ein paar Sekunden: die Auflösung geht oft über den
+  langsamen Weg (yt-dlp); dann lohnt ein Blick auf die Resolver-Meldungen im
+  Log (Cookies, Tunnel).
+- `dauer_max_ms` um 20 000: yt-dlp läuft in seinen Timeout.
+- `laufend` dauerhaft hoch: Auflösungen hängen — Tunnel/Proxy prüfen.
+
+Liefert der Puls `"veraltet": true`, hing beim Bauen etwas (meist SQLite unter
+Plattenlast); das Deck zeigt dann die Zahlen von vor wenigen Sekunden statt gar
+keine.

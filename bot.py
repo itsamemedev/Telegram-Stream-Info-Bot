@@ -2587,6 +2587,12 @@ def _schedule_next_check(tracking_id: int, last_status: str, was_live_before: bo
     # darf ihn nur VERKUERZEN (X3, M5) — ein Hinweis, der verlaengern darf,
     # kann ein Tracking still einschlafen lassen.
     delay = _nc_live.poll_abstand(last_status, was_live_before, ADAPTIVE_INTERVALS)
+    # v4.2-W119: unter Last offline/unknown dehnen, VOR X3/M5 — eine
+    # VIP-Verkuerzung bleibt damit wirksam, Live-Nutzer werden nie gedehnt.
+    if live_check_queue is not None:
+        delay *= _nc_live.last_dehnung(last_status, was_live_before,
+                                       live_check_queue.qsize(),
+                                       live_check_queue.maxsize)
     # X3: Priority kann das Intervall nur VERKÜRZEN (min), nie verlängern.
     try:
         delay = get_priority_poll_interval(tracking_id, int(delay))
@@ -3242,17 +3248,44 @@ async def get_live_status(username: str, session, force_fresh: bool = False) -> 
        zaehlte trotzdem gegen MAX_RECONNECTS. Ein Stream, der mit frischer
        URL weitergelaufen waere, wurde so aufgegeben. NUR im Fehlerpfad
        benutzen, sonst faellt der Rate-Limit-Schutz weg."""
-    now = _time_mod.monotonic()
     # v4.2-W103: der BILLIGE Weg — spart den Platz in der Semaphore-Schlange.
-    # Die verbindliche Pruefung steht WEITER UNTEN, innerhalb der Semaphore.
-    _traf = _nc_livecache.holen(_LIVE_STATUS_CACHE, username, now,
-                                force_fresh=force_fresh)
+    # Die verbindliche Pruefung steht im Kern, innerhalb der Semaphore.
+    _traf = _nc_livecache.holen(_LIVE_STATUS_CACHE, username,
+                                _time_mod.monotonic(), force_fresh=force_fresh)
     if _traf is not None:
+        _nc_livecache.zaehle("treffer")
         return _traf
-
     if session is None:
         return "unknown", None
+    _nc_livecache.zaehle("fehlschlag")
 
+    async def _gemessen():
+        t0 = _time_mod.monotonic()
+        try:
+            return await _live_status_aufloesen(username, session, force_fresh)
+        finally:
+            _nc_livecache.dauer(_time_mod.monotonic() - t0)
+
+    # v4.2-W119: force_fresh will eine NEUE Adresse (die alte ist am
+    # Restream-Prozess gerade gestorben) und laeuft deshalb nie mit. Alle
+    # anderen teilen sich je Nutzer EINEN Lauf — die zweite Pruefung aus W103
+    # faengt nur den, der nach dem Schreiben kommt, nicht den, der waehrend
+    # einer 20-s-Aufloesung ankommt.
+    if force_fresh:
+        return await _gemessen()
+    return await _nc_livecache.einflug(_LIVE_EINFLUG, username, _gemessen,
+                                       ("unknown", None))
+
+
+# v4.2-W119: username -> Future des laufenden Aufloesungslaufs (nc/livecache.einflug)
+_LIVE_EINFLUG = {}
+
+
+async def _live_status_aufloesen(username: str, session, force_fresh: bool) -> tuple:
+    """Die eigentliche Aufloesung hinter get_live_status — Rate-Limit-Backoff,
+       Semaphore, zweite Cache-Pruefung, Webcast-API, Nachschlag, yt-dlp und
+       das Schreiben in den Cache. Aufrufer ist nur get_live_status."""
+    now = _time_mod.monotonic()
     # F37: Backoff respektieren
     backoff_until = _RATE_LIMIT_BACKOFF.get(username, 0)
     if now < backoff_until:
@@ -3353,7 +3386,10 @@ async def get_live_status(username: str, session, force_fresh: bool = False) -> 
         # Fall) wurde der Cache nie gereinigt — stale Einträge sammelten sich
         # bis zum Bot-Restart. Wir reinigen jetzt alle 100 Writes (low-cost,
         # konstant amortisiert).
-        if (hash(username) & 63) == 0:
+        # v4.2-W119: ein Schreibzaehler. `hash(username) & 63` war je
+        # NUTZER fest — bei 40 Nutzern traf es oft keinen, und dann wurde
+        # nie aufgeraeumt.
+        if _nc_livecache.aufraeumen_faellig():
             _weg = _nc_livecache.aufraeumen(_LIVE_STATUS_CACHE, _jetzt)
             if _weg:
                 log.debug("_LIVE_STATUS_CACHE: %d stale entries dropped", _weg)
@@ -18676,6 +18712,10 @@ def healthz():
                        len(active_processes), _aufnahme_deckel(),
                        live_check_queue.qsize() if live_check_queue else -1,
                        live_check_queue.maxsize if live_check_queue else -1),
+                   # v4.2-W119: Trefferquote und Aufloesungsdauer der
+                   # Live-Erkennung; `geteilt` = gesparte Doppel-Aufloesungen.
+                   livecache=_nc_livecache.statistik(len(_LIVE_STATUS_CACHE),
+                                                     len(_LIVE_EINFLUG)),
                    ts=datetime.now(timezone.utc).isoformat()), (200 if ok else 503)
 
 
