@@ -9002,11 +9002,24 @@ async def _aufnahme_beim_stopp_sichern(proc, tid, username, output_file,
         log.warning("Aufnahme-Versuch @%s nicht abgeschlossen: %s", username, e)
 
 
+async def _aufnahme_platz_frei(tid, proc):
+    """v4.2-W131: Prozess aus der Zaehlung, Sperre des Trackings frei.
+
+    Neben dem Loop: clear_recording schreibt in die Datenbank, und die
+    steht unter Plattenlast (W117)."""
+    try:
+        active_processes.remove(proc)
+    except ValueError:
+        pass                     # schon draussen — das war das Ziel
+    await asyncio.to_thread(clear_recording, tid)
+
+
 async def handle_recording_finished(proc, tid, chat_id, username, output_file,
                                     started_at, bot_app, attempt_id=None,
                                     recorder_name=None, stream_expiry=None):
     cancelled = False
     stall_killed = [False]   # F36: Flag wenn Stall-Watchdog gekillt hat
+    platz_frei = [False]     # v4.2-W131: Sperre schon nach Prozessende frei
     url_refreshed = [False]  # B58: Flag wenn URL-Refresh-Watchdog graceful beendet hat
 
     # B58: URL-Refresh-Watchdog. TikTok-Stream-URLs laufen nach ~30min ab
@@ -9168,6 +9181,16 @@ async def handle_recording_finished(proc, tid, chat_id, username, output_file,
             refresh_task.cancel()   # B58
             try: await refresh_task
             except (asyncio.CancelledError, Exception): pass
+
+        # v4.2-W131: der Platz wird frei, sobald ffmpeg weg ist — nicht erst
+        # nach Tonpruefung, Datenbank und Telegram-Upload. Bis hierher hielt
+        # erst das finally ganz unten die Sperre auf, und jeder Neustart
+        # dazwischen endete mit "Lock nicht bekommen … Skip." Bei jedem
+        # geplanten URL-Schnitt (~28 min) und nach jedem Haenger fehlte damit
+        # mindestens die Dauer des Uploads in der Aufnahme.
+        if proc.returncode is not None:
+            await _aufnahme_platz_frei(tid, proc)
+            platz_frei[0] = True
 
         stdout_text = stdout_bytes.decode(errors='ignore') if stdout_bytes else ""
         stderr_text = stderr_bytes.decode(errors='ignore') if stderr_bytes else ""
@@ -9461,7 +9484,11 @@ async def handle_recording_finished(proc, tid, chat_id, username, output_file,
             except Exception: pass
         try: active_processes.remove(proc)
         except ValueError: pass
-        clear_recording(tid)
+        if not platz_frei[0]:
+            # Nur wenn oben noch nicht geschehen: inzwischen kann dieselbe
+            # Tracking-ID schon die NAECHSTE Aufnahme halten, und ein zweites
+            # clear_recording nähme ihr Sperre, Datei und PID weg.
+            clear_recording(tid)
 
 # -----------------------------
 # Flask Dashboard

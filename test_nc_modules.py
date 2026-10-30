@@ -16682,6 +16682,10 @@ def _test_v42_w91_aufraeumer_loescht_nicht_alles():
 
     class _ConnKennt:
         def execute(self, sql, args=()):
+            # v4.2-W131: _find_orphans fragt zusaetzlich die laufenden
+            # Aufnahmen ab — hier laeuft keine.
+            if "trackings" in sql:
+                return _Zeilen()
             return _Zeilen({"filepath": p} for p in echte)
         def commit(self): pass
         def __enter__(self): return self
@@ -24860,6 +24864,106 @@ def _w131_gesund_misst(RC, F):
         ("gesunde Aufnahme schwieg %.1f s — die Grenze ist zu knapp" % laengste)
 
 
+def _test_v42_w131_aufnahme_luecken():
+    """v4.2-W131: zwei Wege, auf denen Aufnahme verloren ging, ohne dass etwas
+    abstuerzte.
+
+    (1) Die Sperre „eine Aufnahme je Tracking" gab erst das finally von
+    handle_recording_finished frei — NACH Tonpruefung, Datenbank und dem
+    Telegram-Upload an alle Chats. Bis dahin endete jeder Neustart mit „Lock
+    nicht bekommen … Skip.", bei jedem geplanten URL-Schnitt und nach jedem
+    Haenger. (2) „Reste aufraeumen" hielt die LAUFENDE Aufnahme fuer verwaist:
+    sie hat erst nach dem Ende eine Zeile in `recordings`.
+    """
+    import ast as _ast
+    import os as _os
+    import time as _t
+    from nc import ctx as _ncctx
+    from nc.routes import recordings as rt
+    import pruefhilfen as P
+
+    # ── (1) Die Reihenfolge in handle_recording_finished — im Syntaxbaum.
+    baum = _ast.parse(open("bot.py", encoding="utf-8").read())
+    hrf = next(n for n in baum.body if isinstance(n, _ast.AsyncFunctionDef)
+               and n.name == "handle_recording_finished")
+
+    def zeilen(name):
+        return sorted(c.lineno for c in _ast.walk(hrf) if isinstance(c, _ast.Call)
+                      and _ast.unparse(c.func).split(".")[-1] == name)
+    frei = zeilen("_aufnahme_platz_frei")
+    assert frei, "die Sperre wird erst im finally frei — nach dem Upload"
+    for spaeter in ("sichern", "add_recording", "split_and_send_video"):
+        assert zeilen(spaeter) and frei[0] < zeilen(spaeter)[0], \
+            "Sperre wird erst nach %s frei" % spaeter
+    kommunikation = zeilen("communicate")
+    assert kommunikation and max(kommunikation) < frei[0], \
+        "Sperre frei, bevor ffmpeg beendet ist — zwei Aufnahmen desselben Streams"
+    # Das finally darf die Sperre nicht ein zweites Mal raeumen: inzwischen
+    # kann dieselbe Tracking-ID die NAECHSTE Aufnahme halten.
+    fin = [t for t in _ast.walk(hrf) if isinstance(t, _ast.Try) and t.finalbody]
+    rufe_fin = [(c, i) for t in fin for i in t.finalbody for c in _ast.walk(i)
+                if isinstance(c, _ast.Call) and _ast.unparse(c.func) == "clear_recording"]
+    assert rufe_fin, "clear_recording fehlt im finally — Fehlerpfade gaeben die Sperre nie frei"
+    for c, stmt in rufe_fin:
+        assert isinstance(stmt, _ast.If) and "platz_frei" in _ast.unparse(stmt.test), \
+            "clear_recording im finally ungeschuetzt — nimmt der Folgeaufnahme die Sperre"
+    pf = next(n for n in baum.body if isinstance(n, _ast.AsyncFunctionDef)
+              and n.name == "_aufnahme_platz_frei")
+    assert "asyncio.to_thread(clear_recording, tid)" in _ast.unparse(pf), \
+        "Datenbankzugriff auf dem Loop (W117)"
+    assert "active_processes.remove" in _ast.unparse(pf), \
+        "der beendete Prozess zaehlt weiter gegen den Aufnahme-Deckel"
+
+    # ── (2) Aufraeumen trifft keine laufende und keine frische Aufnahme.
+    heim = P.verzeichnis()
+    auf = _os.path.join(heim, "aufnahmen")
+    _os.makedirs(auf)
+    laeuft = P.attrappe(_os.path.join(auf, "laeuft.mp4"), 4096)
+    P.attrappe(_os.path.join(auf, "frisch.mp4"), 4096)
+    alt = P.attrappe(_os.path.join(auf, "alt.mp4"), 4096)
+    bekannt = P.attrappe(_os.path.join(auf, "bekannt.mp4"), 4096)
+    vorher = _t.time() - rt.FRISCH_S - 60
+    for pfad in (laeuft, alt, bekannt):
+        _os.utime(pfad, (vorher, vorher))
+
+    class _Zeilen(list):
+        def fetchall(self): return self
+
+    # Relativ in der Datenbank, absolut im Scan — dieselbe Falle wie W98.
+    _rel = _os.path.relpath(laeuft)
+
+    class _Conn:
+        def execute(self, sql, args=()):
+            if "trackings" in sql:
+                assert "recording=1" in sql.replace(" ", "")
+                return _Zeilen([{"output_file": _rel}, {"output_file": None}])
+            return _Zeilen([{"filepath": _os.path.relpath(bekannt)}, {"filepath": None}])
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+
+    alt_ctx = _ncctx._CTX
+    echt_db = rt.db_conn
+    _ncctx.configure(recordings_dir=auf, log=type("L", (), {"warning": print, "info": print,
+                                                           "error": print, "debug": print})(),
+                     log_event=lambda *a, **k: None, arg_int=lambda *a, **k: 0,
+                     ffmpeg_threads_bg=1, ffmpeg_nice_bg=10)
+    try:
+        rt.db_conn = lambda: _Conn()
+        namen = {o["name"] for o in rt._find_orphans()}
+    finally:
+        rt.db_conn = echt_db
+        _ncctx._CTX = alt_ctx
+    assert "laeuft.mp4" not in namen, "die laufende Aufnahme gilt als verwaist und wuerde geloescht"
+    assert "frisch.mp4" not in namen, \
+        "eine eben beendete, noch nicht eingetragene Aufnahme gilt als verwaist"
+    assert "bekannt.mp4" not in namen, "relativer Datenbankpfad gegen absoluten Scan verglichen"
+    assert namen == {"alt.mp4"}, ("die echte Waise wird nicht mehr gefunden", namen)
+    assert rt._frisch(_os.path.join(auf, "gibt_es_nicht.mp4")), \
+        "eine nicht lesbare Datei gilt als loeschbar"
+    ok("W131: Aufnahme-Sperre frei nach Prozessende, nicht nach dem Upload; "
+       "Aufraeumen schont laufende und frische Aufnahmen")
+
+
 def main():
     tmp, rid = richte_testdatenbank_ein()
     ok("db_conn aus nc.dbwrap: echtes Schema angelegt, Commit durchgelaufen")
@@ -25186,6 +25290,7 @@ def main():
     _test_v42_w129_profile()
     _test_v42_w130_sendebruecke()
     _test_v42_w131_aufnahme_haenger()
+    _test_v42_w131_aufnahme_luecken()
     _test_v42_w60_azrael_cooldown_je_plattform()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)
