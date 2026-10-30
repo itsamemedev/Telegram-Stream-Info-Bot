@@ -4169,7 +4169,17 @@ def _test_v42_w8_windows_installer_spricht_englisch():
     # ── (7) KEIN SCHLUESSEL MIT WERT. Ein Text mit %ZIEL% darin steht erst zur
     # Laufzeit fest und traefe nie. Dafuer gibt es die *_wert-Senken — der
     # feste Teil ist der Schluessel, der Wert wird angehaengt.
-    mit_wert = [k for k in gefunden if "%" in k]
+    # v4.2-W123: getrennt nach Herkunft. Die Shell-Werkzeuge tragen seit W123
+    # gewollt printf-FORMATE als Schluessel (tf "Gefunden: %s" "$x") — der
+    # Wert kommt erst NACH dem Nachschlag hinein, der Schluessel trifft also.
+    # Fuer Batch gilt die Regel unveraendert und ohne Ausnahme; fuer die Shell
+    # gilt sie fuer alles, was KEINE printf-Konversion ist: ein %NAME% bleibt
+    # auch dort ein Laufzeitwert, der nie trifft.
+    bat_schluessel = (set(_it._BAT_SENKEN.findall(bat)) | set(_it._BAT_WERT_GUT.findall(bat))
+                      | set(_it._BAT_FRAGEN.findall(bat)))
+    mit_wert = [k for k in bat_schluessel if "%" in k]
+    assert not mit_wert, "Batch-Schluessel mit Laufzeitwert: %r" % mit_wert[:3]
+    mit_wert = [k for k in gefunden if "%" in _it._PLATZHALTER.sub("", k)]
     assert not mit_wert, "Schluessel mit Laufzeitwert: %r" % mit_wert[:3]
 
     ok("v4.2-W8: install.bat spricht Englisch \u2014 ein Katalog fuer beide Installer")
@@ -19432,12 +19442,20 @@ def _test_v42_w100_installer_liefert_kopierbare_zeilen():
 
     # ── (1) DER BEFEHL IM BERICHT. Geprueft wird die printf-Vorlage: zwischen
     # dem Interpreter und bot.py muss ein LEERZEICHEN stehen.
+    # v4.2-W123: die Notiz laeuft ueber nz (uebersetzt) statt printf — der
+    # Anker sucht beide Formen. Und weil die Vorlage jetzt ein Schluessel ist,
+    # gilt dieselbe Zusicherung fuer JEDE Uebersetzung: der Fehler aus W100
+    # koennte sonst in der englischen Notiz still wiederkommen.
     zeile = next(z for z in inst.splitlines()
-                 if "Selbsttest" in z and "printf" in z)
+                 if "Selbsttest" in z and ("printf" in z or z.lstrip().startswith("nz ")))
     assert "%s bot.py --selfcheck" in zeile, \
         "der Bericht druckt den Selbsttest-Befehl falsch: %s" % zeile.strip()
     assert "%s/bot.py" not in zeile, \
         "Schraegstrich statt Leerzeichen — die Zeile kann nicht laufen"
+    for _z in _io.open(_os.path.join(wurzel, "locales", "tools.en.tsv"), encoding="utf-8"):
+        if _z.startswith("  Selbsttest  %s"):
+            assert "%s bot.py --selfcheck" in _z.split("\t", 1)[1], \
+                "die Uebersetzung druckt den Selbsttest-Befehl falsch: %r" % _z
 
     # ── (2) UND SIE IST SYNTAKTISCH GUELTIG. Ein Installer, der nicht parst,
     # ist schlimmer als keiner: er bricht mitten im Eingriff ab.
@@ -22473,6 +22491,382 @@ def _test_v42_w122_kennzahlen_verdrahtet():
        "liest den Schnappschuss, Platz am echten Aufnahmepfad")
 
 
+def _w123_tools():
+    import sys as _sys
+    _sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "tools"))
+    import i18n_tools as _it
+    return _it
+
+
+def _test_v42_w123_shell_i18n_ehrlich():
+    """v4.2-W123: der Shell-Pruefer meldete 100 %, waehrend ~150 Zeilen deutsch blieben."""
+    _it = _w123_tools()
+
+    # ── (1) DER ECHTE BESTAND IST VOLLSTAENDIG — und zwar am geschaerften
+    # Massstab. Vor W123 lieferte dieser Lauf 373/373; derselbe Lauf mit dem
+    # neuen Sammler fand 67 unumschlossene Ausgaben, 45 zusammengesetzte
+    # Senken-Texte und 24 fehlende Eintraege.
+    import contextlib as _cl
+    _puffer = io.StringIO()
+    _alt_argv = sys.argv
+    try:
+        sys.argv = ["i18n_tools.py", "--check", "en"]
+        with _cl.redirect_stdout(_puffer):
+            rc = _it.main()
+    finally:
+        sys.argv = _alt_argv
+    assert rc == 0, _puffer.getvalue()[-2000:]
+    assert "tools/update.sh" in _it.QUELLEN, "update.sh faellt aus der Pruefung"
+    assert any(q.startswith("tools/lib/") for q in _it.shell_quellen()), \
+        "tools/lib/ wird nicht geprueft — dort stehen die gemeinsamen Senken"
+
+    # ── (2) JEDER BLINDE FLECK EINZELN. Eine Probe je Form, die den alten
+    # Pruefer passiert hat. Ein Melder, der eine dieser Zeilen durchlaesst,
+    # meldet wieder 100 % fuer etwas, das deutsch bleibt.
+    probe = _ph.verzeichnis()
+    os.makedirs(os.path.join(probe, "tools", "lib"))
+    os.makedirs(os.path.join(probe, "locales"))
+    _alt_root = _it.ROOT
+
+    def _datei(inhalt, name="x.sh"):
+        with open(os.path.join(probe, name), "w", encoding="utf-8") as f:
+            f.write(inhalt)
+        return name
+
+    try:
+        _it.ROOT = probe
+        # einfach gequotetes printf-Format
+        assert _it.unumschlossen(_datei("printf '  %sZielverzeichnis: %s%s\\n' \"$FNT\" \"$Z\" \"$R\"\n")), \
+            "einfach gequotetes printf faellt durch"
+        # Heredoc auf den Bildschirm
+        assert _it.unumschlossen(_datei("cat <<'H'\n  --dir <Pfad>  Zielverzeichnis\nH\n")), \
+            "cat-Heredoc faellt durch"
+        # ... aber NICHT ein Heredoc in eine Datei (Unit, nginx): sonst
+        # Fehlalarm auf jedem systemd-Kommentar.
+        assert not _it.unumschlossen(_datei("cat > f <<U\n# Von Hand aenderbar\nU\n")), \
+            "Fehlalarm auf einem Heredoc in eine Datei"
+        # Verschiebung ist kein Heredoc — sonst verschluckt der Melder den Rest.
+        assert _it.unumschlossen(_datei("x=$((1<<2))\nprintf 'Dienst nicht gefunden\\n'\n")), \
+            "$((1<<2)) wurde als Heredoc gelesen und hat die naechste Zeile verschluckt"
+        # Vorgabewert in ${X:-…}
+        assert _it.unumschlossen(_datei('printf "%s\\n" "${D:-— nicht gefunden}"\n')), \
+            "Text im Vorgabewert faellt durch"
+        # Laufzeitwert im Senken-Text
+        assert _it.zusammengesetzt(_datei('info "Python gefunden: $PY"\n')), \
+            "zusammengesetzter Senken-Text faellt durch"
+        assert _it.zusammengesetzt(_datei('  x) warn "Zweig $B fehlt";;\n')), \
+            "zusammengesetzter Text im case-Zweig faellt durch"
+        # Erlaubt: tf-Form, blanke Variable, ganze $(tf …)-Umschliessung.
+        for gut_ in ('info "Python gefunden: %s" "$PY"\n', 'erklaere "$text"\n',
+                     'frage_ja "$(tf \'%s: erzeugen?\' "$(t "$was")")" J\n'):
+            assert not _it.zusammengesetzt(_datei(gut_)), "Fehlalarm: %r" % gut_
+        # Sammeln: case-Zweig, Durchreicher, tz-Heredoc, einfache Quotes.
+        text = ('  express) info "Betriebsart: %s — nur Pflichtfragen." "$B";;\n'
+                'opt_frage "redis" N "Redis-Cache: entlastet."\n'
+                "tz <<'H'\n  --dir <Pfad>  Zielverzeichnis\nH\n"
+                "x=\"$(t 'ausgelassen:')\"\n"
+                '# info "Kommentar ist keine Ausgabe"\n'
+                'frage_ja(){ # frage_ja "Frage" [J|N]\n')
+        ges = _it.sammeln_shell(text)
+        for soll in ("Betriebsart: %s — nur Pflichtfragen.", "Redis-Cache: entlastet.",
+                     "--dir <Pfad>  Zielverzeichnis", "ausgelassen:"):
+            assert soll in ges, "nicht eingesammelt: %r" % soll
+        for nicht in ("Kommentar ist keine Ausgabe", "Frage"):
+            assert nicht not in ges, "Kommentar als Schluessel eingesammelt: %r" % nicht
+        # Batch: Notiz-Zeilen sind Ausgabe, auch umgeleitet.
+        assert _it.unumschlossen(_datei('>>"%NOTIZ%" echo   Starten     %ZIEL%\\start.bat\n',
+                                        "x.bat")), "Notiz-Zeile in install.bat faellt durch"
+
+        # ── (3) PLATZHALTER. Ein %s weniger in der Uebersetzung schiebt jeden
+        # Wert eine Stelle nach vorn — ohne Fehlermeldung.
+        assert _it.platzhalter_bruch({"A %s B %s": "A %s B"}) == ["A %s B %s"]
+        assert _it.platzhalter_bruch({"A %s": "B %s"}) == []
+
+        # ── (4) FEHLEND MACHT ROT. Bis W123 meldete --check eine Luecke nur als
+        # Zahl; zur Laufzeit faellt sie weiter auf Deutsch zurueck (lib/i18n.sh),
+        # aber die CI muss sie sehen.
+        with open(os.path.join(probe, "tools", "installer.sh"), "w", encoding="utf-8") as f:
+            f.write('info "Ein neuer Satz ohne Uebersetzung."\n')
+        with open(os.path.join(probe, "locales", "tools.en.tsv"), "w", encoding="utf-8") as f:
+            f.write("# leer\n")
+        sys.argv = ["i18n_tools.py", "--check", "en"]
+        with _cl.redirect_stdout(io.StringIO()):
+            assert _it.main() == 1, "ein fehlender Eintrag macht die Pruefung nicht rot"
+        with open(os.path.join(probe, "locales", "tools.en.tsv"), "w", encoding="utf-8") as f:
+            f.write("Ein neuer Satz ohne Uebersetzung.\tA new sentence.\n")
+        with _cl.redirect_stdout(io.StringIO()):
+            assert _it.main() == 0, "vollstaendiger Katalog wird abgelehnt"
+    finally:
+        _it.ROOT = _alt_root
+        sys.argv = _alt_argv
+    ok("W123: Shell-i18n — sechs blinde Flecken geschlossen, fehlend = rot, Platzhalter geprueft")
+
+
+def _test_v42_w123_werkzeuge_sprechen_englisch():
+    """v4.2-W123: am Lauf gemessen, nicht an der Quote."""
+    import subprocess as _sp
+    _it = _w123_tools()
+
+    def _lauf(befehl, sprache, **umg):
+        e = dict(os.environ)
+        e.update({"NC_LANG": sprache, "COLOR_MODE": "off", "CONF": os.devnull})
+        e.update(umg)
+        r = _sp.run(befehl, capture_output=True, text=True, env=e, timeout=120)
+        return r.returncode, r.stdout + r.stderr
+
+    laeufe = [
+        ["bash", "tools/installer.sh", "--help"],
+        ["bash", "tools/update.sh", "--help"],
+        ["bash", "tools/motd.sh", "--help"],
+        ["bash", "tools/motd.sh", "--doctor"],
+    ]
+    for befehl in laeufe:
+        rc_en, en = _lauf(befehl, "en")
+        rc_de, de = _lauf(befehl, "de")
+        assert rc_en == rc_de, "%s: Exitcode haengt an der Sprache" % befehl
+        assert en != de, "%s: die englische Ausgabe ist die deutsche" % befehl
+        # Jede Zeile mit deutschem Marker ist ein Befund. "mein-bot" im
+        # Beispielpfad ist ein Pfad, kein Satz.
+        rest = [z for z in en.splitlines()
+                if _it._DEUTSCH.search(z.replace("mein-bot", ""))]
+        assert not rest, "%s bleibt deutsch: %r" % (" ".join(befehl[1:]), rest[:3])
+
+    # tf: ein Argument heisst t OHNE printf — "90 % voll" darf nicht als
+    # Format gelesen werden. Mehrere: Format mit Werten.
+    r = _sp.run(["sh", "-c", ". tools/lib/i18n.sh; tf '90 % voll'; echo; "
+                 "tf 'Python gefunden: %s (%s)' /x 3.13"],
+                capture_output=True, text=True, env=dict(os.environ, NC_LANG="en"))
+    assert r.stdout.split("\n")[:2] == ["90 % voll", "Python found: /x (3.13)"], r.stdout
+    # tz: Einrueckung bleibt, gehoert aber nicht zum Schluessel.
+    r = _sp.run(["sh", "-c", ". tools/lib/i18n.sh; printf '    --help           diese Hilfe\\n' | tz"],
+                capture_output=True, text=True, env=dict(os.environ, NC_LANG="en"))
+    assert r.stdout == "    --help           this help\n", repr(r.stdout)
+    # Ohne Katalog bleibt es deutsch — nie ein leerer Text.
+    r = _sp.run(["sh", "-c", ". tools/lib/i18n.sh; tf 'Python gefunden: %s' /x"],
+                capture_output=True, text=True,
+                env=dict(os.environ, NC_LANG="en", NC_I18N_KATALOG="/gibt/es/nicht"))
+    assert r.stdout == "Python gefunden: /x", repr(r.stdout)
+    ok("W123: installer/update/motd laufen auf Englisch ohne deutschen Rest; tf/tz wirken")
+
+
+def _w123_sandbox(fehlt=("ffmpeg",), mit_listen=True):
+    """Eine Maschine im Kleinen: Debian, apt als Attrappe, eigener PATH.
+
+    Kein Test-Haken im Skript: gemessen wird update.sh, wie es ausgeliefert
+    wird. Der PATH enthaelt die Grundwerkzeuge (Verweise) und Attrappen fuer
+    alles, was installiert — sie protokollieren nur.
+    """
+    import shutil as _sh
+    import stat as _st
+    d = _ph.verzeichnis()
+    binv = os.path.join(d, "bin")
+    os.makedirs(binv)
+    for w in ("sh", "bash", "sed", "awk", "tr", "grep", "cut", "head", "tail", "cat",
+              "mkdir", "rm", "cp", "id", "uname", "sort", "wc", "env", "date", "tee",
+              "mktemp", "dirname", "basename", "fold", "printf", "ls", "chmod", "mv"):
+        q = _sh.which(w)
+        if q:
+            os.symlink(q, os.path.join(binv, w))
+    proto = os.path.join(d, "protokoll.txt")
+    open(proto, "w").close()
+
+    def _attrappe(name, rumpf):
+        p = os.path.join(binv, name)
+        with open(p, "w") as f:
+            f.write("#!/bin/sh\n" + rumpf + "\n")
+        os.chmod(p, os.stat(p).st_mode | _st.S_IEXEC)
+
+    for w in ("ffmpeg", "streamlink", "yt-dlp", "git", "curl", "sqlite3"):
+        if w not in fehlt:
+            _attrappe(w, "exit 0")
+    # apt-get legt das Werkzeug WIRKLICH an, sobald es "installiert" wird —
+    # nur so laesst sich die Nachpruefung und der zweite Lauf pruefen.
+    _attrappe("apt-get", 'echo "apt-get $*" >> "%s"\n'
+              'if [ "$1" = install ]; then shift; shift\n'
+              '  for p in "$@"; do printf "#!/bin/sh\\nexit 0\\n" > "%s/$p"; chmod +x "%s/$p"; done\nfi'
+              % (proto, binv, binv))
+    _attrappe("apt-cache", "exit 0")
+    _attrappe("sudo", 'exec "$@"')
+    osr = os.path.join(d, "os-release")
+    with open(osr, "w") as f:
+        f.write('ID=debian\nPRETTY_NAME="Debian GNU/Linux 13"\n')
+    listen = os.path.join(d, "apt-listen")
+    os.makedirs(listen)
+    if mit_listen:
+        open(os.path.join(listen, "deb_main_binary-amd64_Packages"), "w").close()
+    ziel = os.path.join(d, "ziel")
+    os.makedirs(os.path.join(ziel, ".venv", "bin"))
+    with open(os.path.join(ziel, "requirements.txt"), "w") as f:
+        f.write("pip >= 1\nnc-gibt-es-nicht >= 1   # [optional] nur fuer den Vertrag\n")
+    # Das venv-Python ist ein Umschlag um den echten Interpreter: pip-Aufrufe
+    # werden protokolliert statt ausgefuehrt, alles andere laeuft echt.
+    _attrappe(os.path.join("..", "ziel", ".venv", "bin", "python"),
+              'if [ "$1" = "-m" ] && [ "$2" = "pip" ]; then echo "pip $*" >> "%s"; exit 0; fi\n'
+              'exec "%s" "$@"' % (proto, sys.executable))
+    umg = {"PATH": binv, "NC_OS_RELEASE": osr, "NC_APT_LISTEN": listen,
+           "NC_UNAME": "Linux", "NC_LANG": "de", "HOME": d}
+    return d, ziel, proto, umg
+
+
+def _w123_update(ziel, umg, *schalter):
+    import subprocess as _sp
+    e = {k: v for k, v in os.environ.items() if not k.startswith("NC_")}
+    e.update(umg)
+    r = _sp.run(["/bin/bash", os.path.abspath("tools/update.sh"), "--no-color",
+                 "--dir", ziel] + list(schalter),
+                capture_output=True, text=True, env=e, timeout=120, stdin=_sp.DEVNULL)
+    return r.returncode, r.stdout + r.stderr
+
+
+def _test_v42_w123_update_idempotent():
+    """v4.2-W123: tools/update.sh — pruefen, zeigen, installieren, nachmessen, nichts doppelt."""
+    d, ziel, proto, umg = _w123_sandbox()
+
+    def _protokoll():
+        return open(proto).read().splitlines()
+
+    # ── (1) --check: Exit 1, und es wird NICHTS ausgefuehrt.
+    rc, aus = _w123_update(ziel, umg, "--check")
+    assert rc == 1, (rc, aus)
+    assert "ffmpeg fehlt" in aus and "apt-get install -y ffmpeg" in aus, aus
+    assert _protokoll() == [], "--check hat etwas ausgefuehrt: %r" % _protokoll()
+
+    # ── (2) --dry-run: zeigt woertlich, was liefe, und fuehrt nichts aus.
+    rc, aus = _w123_update(ziel, umg, "--dry-run")
+    assert rc == 0, (rc, aus)
+    assert "$ apt-get update -qq" in aus and "$ apt-get install -y ffmpeg" in aus, aus
+    assert _protokoll() == [], "--dry-run hat etwas ausgefuehrt: %r" % _protokoll()
+
+    # ── (3) Optionale Pakete nur auf Wunsch. Ohne --optional sind sie nicht
+    # einmal im Plan — sonst holte ein Abgleich auf einem Pi still
+    # 300 MB faster-whisper.
+    assert "nc-gibt-es-nicht" not in aus, "optionales Paket ohne --optional im Plan"
+    rc, aus = _w123_update(ziel, umg, "--dry-run", "--python-deps", "--optional")
+    assert "pip install nc-gibt-es-nicht>=1" in aus, aus
+    assert _protokoll() == []
+
+    # ── (4) Der echte Lauf: auffrischen, installieren, NACHMESSEN.
+    rc, aus = _w123_update(ziel, umg, "-y")
+    assert rc == 0, (rc, aus)
+    assert _protokoll() == ["apt-get update -qq", "apt-get install -y ffmpeg"], _protokoll()
+    assert "ffmpeg: jetzt vorhanden" in aus, aus
+    assert "pip" not in " ".join(_protokoll()), "pip lief, obwohl nichts fehlte"
+
+    # ── (5) IDEMPOTENT. Der zweite Lauf fuehrt keinen einzigen Befehl aus.
+    rc, aus = _w123_update(ziel, umg, "-y")
+    assert rc == 0 and "Nichts zu tun" in aus, (rc, aus)
+    assert len(_protokoll()) == 2, "zweiter Lauf hat installiert: %r" % _protokoll()
+
+    # ── (6) NACHGEMESSEN, NICHT ANGENOMMEN. Ein Paketmanager, der mit 0
+    # endet, ohne das Werkzeug zu liefern, darf nicht "vollstaendig" heissen.
+    d2, ziel2, proto2, umg2 = _w123_sandbox(fehlt=("sqlite3",))
+    with open(os.path.join(umg2["PATH"], "apt-get"), "w") as f:
+        f.write("#!/bin/sh\necho \"apt-get $*\" >> \"%s\"\nexit 0\n" % proto2)
+    rc, aus = _w123_update(ziel2, umg2, "-y")
+    assert rc == 1 and "sqlite3 fehlt weiterhin" in aus, (rc, aus)
+
+    # ── (7) LEERE PAKETLISTEN sind kein "gibt es nicht". Frisches Image ohne
+    # apt-get update: apt-cache findet nichts — vorher hiess das "selbst
+    # bereitstellen", obwohl das Paket in jeder Debian-Quelle liegt.
+    d3, ziel3, proto3, umg3 = _w123_sandbox(mit_listen=False)
+    with open(os.path.join(umg3["PATH"], "apt-cache"), "w") as f:
+        f.write("#!/bin/sh\nexit 100\n")
+    rc, aus = _w123_update(ziel3, umg3, "--check")
+    assert "apt-get install -y ffmpeg" in aus and "Selbst bereitstellen" not in aus, aus
+
+    # ── (8) Aufruffehler sind 2, nicht 1 — "es fehlt etwas" und "falsch
+    # aufgerufen" muessen fuer einen Zeitplan unterscheidbar bleiben.
+    rc, _ = _w123_update(ziel, umg, "--gibt-es-nicht")
+    assert rc == 2
+    rc, _ = _w123_update(ziel, umg, "--pkg", "yum")
+    assert rc == 2
+    ok("W123: update.sh prueft, zeigt, installiert nur Fehlendes, misst nach — zweiter Lauf tut nichts")
+
+
+def _test_v42_w123_paketwahl_je_distribution():
+    """v4.2-W123: eine Erkennung fuer alle Werkzeuge, sieben Distributionen."""
+    import subprocess as _sp
+    d = _ph.verzeichnis()
+    faelle = [
+        ('ID=ubuntu\nID_LIKE=debian', "apt", "sqlite3", "apt-get install -y x"),
+        ('ID=fedora', "dnf", "sqlite", "dnf install -y x"),
+        ('ID=rocky\nID_LIKE="rhel centos fedora"', "dnf", "sqlite", "dnf install -y x"),
+        # Eine ID, die die Liste NICHT kennt — nur ID_LIKE kann sie zuordnen.
+        # (Rocky allein prueft das nicht: "rocky" steht selbst in der Liste;
+        # die Mutationsprobe, die ID_LIKE entfernte, ist daran entwischt.)
+        ('ID=nobara\nID_LIKE="fedora"', "dnf", "sqlite", "dnf install -y x"),
+        ('ID=cachyos\nID_LIKE=arch', "pacman", "sqlite", "pacman -S --needed --noconfirm x"),
+        ('ID=arch', "pacman", "sqlite", "pacman -S --needed --noconfirm x"),
+        ('ID="opensuse-tumbleweed"\nID_LIKE="opensuse suse"', "zypper", "sqlite3",
+         "zypper --non-interactive install x"),
+        ('ID=alpine', "apk", "sqlite", "apk add x"),
+    ]
+    for osr, pkg, sqlite, befehl in faelle:
+        p = os.path.join(d, "os-release")
+        with open(p, "w") as f:
+            f.write(osr + "\n")
+        r = _sp.run(["sh", "-c", ". tools/lib/system.sh; nc_system_erkennen; "
+                     "printf '%s|%s|%s' \"$NC_PKG\" \"$(nc_paketname sqlite3)\" "
+                     "\"$(nc_installbefehl x)\""],
+                    capture_output=True, text=True,
+                    env={"PATH": "/usr/bin:/bin", "NC_OS_RELEASE": p, "NC_UNAME": "Linux"})
+        assert r.stdout == "%s|%s|%s" % (pkg, sqlite, befehl), (osr, r.stdout, r.stderr)
+    # macOS: brew, ohne root.
+    r = _sp.run(["sh", "-c", ". tools/lib/system.sh; nc_system_erkennen; "
+                 "nc_braucht_root && echo root || echo ohne"],
+                capture_output=True, text=True,
+                env={"PATH": "/usr/bin:/bin", "NC_UNAME": "Darwin", "NC_PKG": "brew"})
+    assert r.stdout.strip() == "ohne", r.stdout
+    # ffmpeg auf Fedora: zwei Kandidaten in Vorzugsreihenfolge (RPM Fusion
+    # zuerst, sonst ffmpeg-free aus den Fedora-Quellen).
+    r = _sp.run(["sh", "-c", ". tools/lib/system.sh; nc_paketname ffmpeg dnf"],
+                capture_output=True, text=True)
+    assert r.stdout == "ffmpeg ffmpeg-free", r.stdout
+    # pacman NIE mit -Sy: das ist ein Teil-Upgrade, das Arch nicht unterstuetzt.
+    # Gemessen an dem, was die Bibliothek AUSGIBT — nicht am Dateitext, denn
+    # dort steht -Sy in der Begruendung, warum es fehlt (Lehre W102-W104).
+    r = _sp.run(["sh", "-c", ". tools/lib/system.sh; NC_PKG=pacman; nc_installbefehl x; "
+                 "echo; nc_auffrischbefehl || echo KEINER"], capture_output=True, text=True)
+    assert "-Sy" not in r.stdout and r.stdout.endswith("KEINER\n"), r.stdout
+    lib = open("tools/lib/system.sh", encoding="utf-8").read()
+    # os-release wird GELESEN, nicht gesourct — ein `.` darauf fuehrt eine
+    # Systemdatei als Code aus.
+    import re as _re
+    assert not _re.search(r'^\s*\.\s+"?\$_rel', lib, _re.M), "os-release wird gesourct"
+    ok("W123: lib/system.sh — apt/dnf/pacman/zypper/apk/brew, ID_LIKE, ffmpeg-free, kein -Sy")
+
+
+def _test_v42_w123_anforderungen():
+    """v4.2-W123: requirements.txt gegen eine Umgebung — offline und ohne zweite Liste."""
+    import sys as _sys
+    _sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "tools"))
+    import anforderungen as A
+    d = _ph.verzeichnis()
+    p = os.path.join(d, "req.txt")
+    with open(p, "w") as f:
+        f.write("# Kopf\nPyMySQL >= 1.1  # [optional] Treiber\nFlask>=2.2\nalt >= 2.0\n"
+                "fern >= 1\nnurwin >= 1; sys_platform == 'nie'\n-r anderes.txt\n")
+    tab = A.abgleich(p, vorhanden={"pymysql": "1.1.1", "flask": "3.0", "alt": "1.9"})
+    st = {z[1]: (z[0], z[4]) for z in tab}
+    assert st == {"PyMySQL": ("ok", "optional"), "Flask": ("ok", "pflicht"),
+                  "alt": ("alt", "pflicht"), "fern": ("fehlt", "pflicht"),
+                  "nurwin": ("entfaellt", "pflicht")}, st
+    # Eine kaputte Zeile ist ein Befund, kein Ueberspringen.
+    with open(p, "w") as f:
+        f.write("das ist == keine == anforderung\n")
+    try:
+        A.abgleich(p, vorhanden={})
+        raise AssertionError("ungueltige Zeile wurde still uebergangen")
+    except RuntimeError:
+        pass
+    # Die Marke steht in requirements.txt — und genau die sechs Pakete, die
+    # der Installer als abwaehlbar fuehrt, tragen sie.
+    opt = sorted(t.split()[0] for t, o in A.zeilen("requirements.txt") if o)
+    assert opt == sorted(["discord.py", "PyMySQL", "redis", "faster-whisper", "boto3",
+                          "uvloop"]), opt
+    ok("W123: anforderungen.py — ok/fehlt/alt/entfaellt, Marke [optional], kaputte Zeile = Fehler")
+
+
 def main():
     tmp, rid = richte_testdatenbank_ein()
     ok("db_conn aus nc.dbwrap: echtes Schema angelegt, Commit durchgelaufen")
@@ -22781,6 +23175,11 @@ def main():
     _test_v42_w121b_deckel_haelt_unter_gleichzeitigkeit()
     _test_v42_w122_kennzahlen_billig_und_ohne_namen()
     _test_v42_w122_kennzahlen_verdrahtet()
+    _test_v42_w123_shell_i18n_ehrlich()
+    _test_v42_w123_werkzeuge_sprechen_englisch()
+    _test_v42_w123_update_idempotent()
+    _test_v42_w123_paketwahl_je_distribution()
+    _test_v42_w123_anforderungen()
     _test_v42_w60_azrael_cooldown_je_plattform()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)

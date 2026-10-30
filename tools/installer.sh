@@ -56,33 +56,47 @@ setze_farben
 SCHRITT=0
 SCHRITTE_GESAMT=11
 kopf(){ SCHRITT=$((SCHRITT+1))
-  printf '\n%s%s[%d/%d] %s%s\n' "$BR" "$B" "$SCHRITT" "$SCHRITTE_GESAMT" "$1" "$R"
+  printf '\n%s%s[%d/%d] %s%s\n' "$BR" "$B" "$SCHRITT" "$SCHRITTE_GESAMT" "$(t "$1")" "$R"
   printf '%s%s%s\n' "$DIM" "$(printf '─%.0s' $(seq 1 66))" "$R"; }
 # v4.1-W17: Mehrsprachigkeit AN DER SENKE. Jede dieser vier Funktionen (und
 # erklaere/frage_ja weiter unten) schickt ihren Text durch t(); damit sind alle
 # 112 Ausgabestellen erfasst, ohne eine einzige davon anzufassen. Fehlt eine
 # Uebersetzung, bleibt Deutsch stehen — dieselbe Regel wie in nc/i18n.py.
 # shellcheck source=lib/i18n.sh
-. "$(cd "$(dirname "$0")" && pwd)/lib/i18n.sh" 2>/dev/null || t(){ printf '%s' "$*"; }
+# v4.2-W123: tf (Format mit Laufzeitwerten) und tz (Heredoc zeilenweise) kommen
+# aus derselben Datei. Fehlt sie, muessen alle drei weiter funktionieren —
+# deutsch, aber vollstaendig; ein fehlendes tf waere "command not found" mitten
+# in der Installation.
+. "$(cd "$(dirname "$0")" && pwd)/lib/i18n.sh" 2>/dev/null || {
+  t(){ printf '%s' "$*"; }
+  # shellcheck disable=SC2059
+  tf(){ if [ $# -le 1 ]; then printf '%s' "${1:-}"; else _f="$1"; shift; printf "$_f" "$@"; fi; }
+  tz(){ cat; }
+}
 
-info(){ printf '  %s▸%s %s\n' "$DIM" "$R" "$(t "$*")"; }
-gut(){  printf '  %s✔%s %s\n' "$OK" "$R" "$(t "$*")"; }
-warn(){ printf '  %s▲%s %s\n' "$WRN" "$R" "$(t "$*")"; }
-fehler(){ printf '  %s✘%s %s\n' "$ERR" "$R" "$(t "$*")" >&2; }
+info(){ printf '  %s▸%s %s\n' "$DIM" "$R" "$(tf "$@")"; }
+gut(){  printf '  %s✔%s %s\n' "$OK" "$R" "$(tf "$@")"; }
+warn(){ printf '  %s▲%s %s\n' "$WRN" "$R" "$(tf "$@")"; }
+fehler(){ printf '  %s✘%s %s\n' "$ERR" "$R" "$(tf "$@")" >&2; }
 # Erklaerungen sind der halbe Zweck dieses Skripts — deshalb bekommen sie ein
 # eigenes, ruhiges Format und werden auf 72 Zeichen umbrochen.
-erklaere(){ printf '%s' "$FNT"; printf '%s\n' "$(t "$*")" | fold -s -w 72 | sed 's/^/    /'; printf '%s' "$R"; }
+erklaere(){ printf '%s' "$FNT"; printf '%s\n' "$(tf "$@")" | fold -s -w 72 | sed 's/^/    /'; printf '%s' "$R"; }
+
+# Zwischenueberschrift innerhalb eines Schritts. v4.2-W123: vorher fuenfmal als
+# rohes printf mit deutschem Text — keine davon lief durch t().
+abschnitt(){ printf '\n  %s%s%s%s\n' "$B" "$TXT" "$(t "$1")" "$R"; }
 
 MERKZETTEL=""
-merke(){ MERKZETTEL="${MERKZETTEL}${1}"$'\n'; }
+# v4.2-W123: auch der Merkzettel geht durch tf — er stand bis hierher roh im
+# englischen Lauf und in der Installationsnotiz.
+merke(){ MERKZETTEL="${MERKZETTEL}$(tf "$@")"$'\n'; }
 
 abbruch(){
   local rc=$?
   printf '\n'
-  fehler "Abbruch in Schritt ${SCHRITT} (Rueckgabewert ${rc})."
-  printf '  %sWas bereits geschrieben wurde, bleibt liegen — ein erneuter Lauf%s\n' "$FNT" "$R"
-  printf '  %ssetzt dort auf, ohne Schaden anzurichten.%s\n' "$FNT" "$R"
-  [ -n "${ZIEL:-}" ] && printf '  %sZielverzeichnis: %s%s\n' "$FNT" "$ZIEL" "$R"
+  fehler "Abbruch in Schritt %s (Rueckgabewert %s)." "$SCHRITT" "$rc"
+  erklaere "Was bereits geschrieben wurde, bleibt liegen — ein erneuter Lauf setzt dort auf, ohne Schaden anzurichten."
+  [ -n "${ZIEL:-}" ] && info "Zielverzeichnis: %s" "$ZIEL"
   exit "$rc"
 }
 trap abbruch ERR
@@ -110,8 +124,8 @@ frage_ja(){ # frage_ja "Frage" [J|N]   -> 0 = ja
   local f="$1" vor="${2:-J}" a
   if [ "$MODUS" = "unattended" ]; then [ "$vor" = "J" ]; return; fi
   while :; do
-    if [ "$vor" = "J" ]; then printf '  %s?%s %s %s[J/n]%s ' "$BR" "$R" "$(t "$f")" "$FNT" "$R"
-    else                      printf '  %s?%s %s %s[j/N]%s ' "$BR" "$R" "$(t "$f")" "$FNT" "$R"; fi
+    if [ "$vor" = "J" ]; then printf '  %s?%s %s %s%s%s ' "$BR" "$R" "$(t "$f")" "$FNT" "$(t '[J/n]')" "$R"
+    else                      printf '  %s?%s %s %s%s%s ' "$BR" "$R" "$(t "$f")" "$FNT" "$(t '[j/N]')" "$R"; fi
     lies a
     a=$(printf '%s' "$a" | tr 'A-Z' 'a-z')
     case "$a" in
@@ -155,18 +169,18 @@ frage_geheimnis(){ # frage_geheimnis VARIABLE "Beschreibung" erzeugbar laenge [n
     else printf -v "$__v" '%s' ""; fi
     return 0
   fi
-  if [ "$erzeugbar" = 1 ] && frage_ja "${was}: sicheres Passwort erzeugen lassen?" J; then
+  if [ "$erzeugbar" = 1 ] && frage_ja "$(tf '%s: sicheres Passwort erzeugen lassen?' "$(t "$was")")" J; then
     a="$(erzeuge_passwort "$laenge" "$ziffern")"
-    printf '    %serzeugt:%s %s%s%s\n' "$FNT" "$R" "$B" "$a" "$R"
+    printf '    %s%s%s %s%s%s\n' "$FNT" "$(t 'erzeugt:')" "$R" "$B" "$a" "$R"
     erklaere "Notieren oder im Passwortmanager ablegen. Es steht ausserdem in der .env (chmod 600) und laesst sich dort jederzeit nachlesen."
     printf -v "$__v" '%s' "$a"
     return 0
   fi
   while :; do
-    printf '  %s?%s %s eingeben %s(leer = spaeter selbst eintragen)%s: ' "$BR" "$R" "$was" "$FNT" "$R"
+    printf '  %s?%s %s %s%s%s: ' "$BR" "$R" "$(tf '%s eingeben' "$(t "$was")")" "$FNT" "$(t '(leer = spaeter selbst eintragen)')" "$R"
     lies a -s
     [ -z "$a" ] && { printf -v "$__v" '%s' ""; return 0; }
-    printf '  %s?%s Zur Sicherheit wiederholen: ' "$BR" "$R"
+    printf '  %s?%s %s ' "$BR" "$R" "$(t 'Zur Sicherheit wiederholen:')"
     lies b -s
     [ "$a" = "$b" ] && { printf -v "$__v" '%s' "$a"; return 0; }
     warn "Die Eingaben waren nicht gleich — noch einmal."
@@ -188,7 +202,9 @@ while [ $# -gt 0 ]; do
     --no-color)    FARBE=0; setze_farben;;
     --version)     printf 'NIGHTCRAWLER installer %s\n' "$NC_INSTALLER_VERSION"; exit 0;;
     --help|-h)
-      cat <<'HILFE'
+      # v4.2-W123: tz statt cat — die Hilfe war das Erste, was ein englischer
+      # Nutzer sah, und sie war komplett deutsch.
+      tz <<'HILFE'
 NIGHTCRAWLER v37 — Installation
 
   bash tools/installer.sh [Schalter]
@@ -203,10 +219,10 @@ NIGHTCRAWLER v37 — Installation
   --help           diese Hilfe
 
 Unterstuetzt: Ubuntu, Debian, Raspberry Pi OS, macOS.
-Windows: tools\install.bat
+Windows: install.bat im selben Ordner
 HILFE
       exit 0;;
-    *) fehler "Unbekannter Schalter: $1  (--help)"; exit 1;;
+    *) fehler "Unbekannter Schalter: %s  (--help)" "$1"; exit 1;;
   esac
   shift
 done
@@ -214,15 +230,11 @@ done
 
 # ═══════════════════════════════════════════════════════════════════════════
 kopf "Willkommen"
-cat <<WILLKOMMEN
-  ${BR}${B}NIGHTCRAWLER v37${R} ${FNT}— TikTok-Live-Ueberwachung, Aufnahme,
-  Multi-Ziel-Restream und KI-Moderation (AZRAEL).${R}
-
-  Dieses Skript richtet den Bot vollstaendig ein und erklaert dabei, was
-  es tut und warum. Es fragt vor jedem Eingriff. Abbrechen mit Strg+C ist
-  jederzeit gefahrlos.
-
-  ${DIM}Der Weg in elf Schritten:${R}
+printf '  %s%sNIGHTCRAWLER v37%s %s%s%s\n\n' "$BR" "$B" "$R" "$FNT" \
+  "$(t '— TikTok-Live-Ueberwachung, Aufnahme, Multi-Ziel-Restream und KI-Moderation (AZRAEL).')" "$R"
+erklaere "Dieses Skript richtet den Bot vollstaendig ein und erklaert dabei, was es tut und warum. Es fragt vor jedem Eingriff. Abbrechen mit Strg+C ist jederzeit gefahrlos."
+printf '\n  %s%s%s\n' "$DIM" "$(t 'Der Weg in elf Schritten:')" "$R"
+tz <<'WILLKOMMEN'
     1  Willkommen              7  Konfiguration (.env)
     2  System pruefen          8  Optionale Bausteine
     3  Python sicherstellen    9  Selbsttest
@@ -231,9 +243,9 @@ cat <<WILLKOMMEN
     6  Python-Pakete
 WILLKOMMEN
 case "$MODUS" in
-  express)    info "Betriebsart: ${B}express${R} — nur Pflichtfragen.";;
-  unattended) info "Betriebsart: ${B}unattended${R} — keine Fragen, Vorgaben und erzeugte Passwoerter.";;
-  *)          info "Betriebsart: ${B}gefuehrt${R} — mit Erklaerungen. Fuer weniger Text: --express";;
+  express)    info "Betriebsart: %s — nur Pflichtfragen." "${B}express${R}";;
+  unattended) info "Betriebsart: %s — keine Fragen, Vorgaben und erzeugte Passwoerter." "${B}unattended${R}";;
+  *)          info "Betriebsart: %s — mit Erklaerungen. Fuer weniger Text: --express" "${B}$(t 'gefuehrt')${R}";;
 esac
 if [ "$MODUS" = "gefuehrt" ]; then
   frage_ja "Loslegen?" J || { info "Abgebrochen — nichts veraendert."; exit 0; }
@@ -263,7 +275,7 @@ case "$OS" in
   *) DISTRO="$OS"; DISTRO_NAME="$OS";;
 esac
 
-info "System:    ${DISTRO_NAME:-unbekannt} (${ARCH})"
+info "System:    %s (%s)" "${DISTRO_NAME:-$(t 'unbekannt')}" "$ARCH"
 [ "$IST_PI" = 1 ] && info "Erkannt:   Raspberry Pi"
 
 # Rechte
@@ -279,7 +291,8 @@ fi
 if [ -z "$PKG" ] && [ "$SKIP_SYSTEM" = 0 ]; then
   if [ "$OS" = "Darwin" ]; then
     warn "Homebrew fehlt. Es ist auf macOS der einzige vernuenftige Weg zu ffmpeg."
-    erklaere "Installation (dauert ein paar Minuten): /bin/bash -c \"\$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)\""
+    # shellcheck disable=SC2016  # der Befehl wird angezeigt, nicht ausgefuehrt
+    erklaere "Installation (dauert ein paar Minuten): %s" '/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"'
     if frage_ja "Homebrew jetzt installieren?" J; then
       /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
       for p in /opt/homebrew/bin/brew /usr/local/bin/brew; do
@@ -300,7 +313,7 @@ if [ -r /proc/meminfo ]; then RAM_MB=$(awk '/^MemTotal:/{printf "%d", $2/1024}' 
 elif [ "$OS" = "Darwin" ]; then RAM_MB=$(( $(sysctl -n hw.memsize 2>/dev/null || echo 0) / 1048576 )); fi
 KERNE=$( (nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 1) )
 FREI_GB=$(df -Pk "$HOME" 2>/dev/null | awk 'NR==2{printf "%d", $4/1048576}')
-info "Kerne:     ${KERNE}   RAM: ${RAM_MB} MB   frei in \$HOME: ${FREI_GB:-?} GB"
+info 'Kerne:     %s   RAM: %s MB   frei in $HOME: %s GB' "$KERNE" "$RAM_MB" "${FREI_GB:-?}"
 [ "${RAM_MB:-0}" -lt 2000 ] && warn "Unter 2 GB RAM: Transkription (Whisper) und lokales LLM bitte auslassen."
 [ "${RAM_MB:-0}" -ge 2000 ] && [ "${RAM_MB:-0}" -lt 4000 ] && warn "Unter 4 GB RAM: Aufnahme und ein Restream-Ziel gehen, mehreres wird eng."
 [ "${FREI_GB:-99}" -lt 5 ] && warn "Unter 5 GB frei — Aufnahmen fuellen die Platte sehr schnell."
@@ -310,7 +323,7 @@ fi
 
 # ═══════════════════════════════════════════════════════════════════════════
 kopf "Python sicherstellen"
-erklaere "bot.py braucht mindestens Python ${PY_MIN_MAJOR}.${PY_MIN_MINOR}. Das ist keine Empfehlung: die Datei benutzt f-strings mit Backslash (PEP 701), unter 3.11 scheitert bereits das Einlesen mit einem SyntaxError. Debian 12 und Raspberry Pi OS bookworm liefern 3.11 — dort muss ein neuerer Interpreter dazu."
+erklaere "bot.py braucht mindestens Python %s.%s. Das ist keine Empfehlung: die Datei benutzt f-strings mit Backslash (PEP 701), unter 3.11 scheitert bereits das Einlesen mit einem SyntaxError. Debian 12 und Raspberry Pi OS bookworm liefern 3.11 — dort muss ein neuerer Interpreter dazu." "$PY_MIN_MAJOR" "$PY_MIN_MINOR"
 
 py_ok(){ "$1" -c "import sys;raise SystemExit(0 if sys.version_info>=($PY_MIN_MAJOR,$PY_MIN_MINOR) else 1)" >/dev/null 2>&1; }
 finde_python(){
@@ -326,10 +339,10 @@ finde_python(){
 
 PY="$(finde_python || true)"
 if [ -n "$PY" ]; then
-  gut "Python gefunden: $PY ($("$PY" -V 2>&1))"
+  gut "Python gefunden: %s (%s)" "$PY" "$("$PY" -V 2>&1)"
 else
-  AKT="$( (python3 -V 2>&1) || echo 'keins')"
-  warn "Kein Python >= ${PY_MIN_MAJOR}.${PY_MIN_MINOR} gefunden (vorhanden: ${AKT})."
+  AKT="$( (python3 -V 2>&1) || t 'keins')"
+  warn "Kein Python >= %s.%s gefunden (vorhanden: %s)." "$PY_MIN_MAJOR" "$PY_MIN_MINOR" "$AKT"
   INSTALLIERT=0
   if [ "$PKG" = "apt" ] && [ "$SKIP_SYSTEM" = 0 ]; then
     if $SUDO apt-cache show python3.13 >/dev/null 2>&1 || $SUDO apt-cache show python3.12 >/dev/null 2>&1; then
@@ -361,11 +374,11 @@ else
   fi
   PY="$(finde_python || true)"
   if [ -z "$PY" ]; then
-    fehler "Ohne Python >= ${PY_MIN_MAJOR}.${PY_MIN_MINOR} geht es nicht weiter."
-    printf '  %sWege: apt install python3.13  |  brew install python@3.13  |  https://astral.sh/uv%s\n' "$FNT" "$R"
+    fehler "Ohne Python >= %s.%s geht es nicht weiter." "$PY_MIN_MAJOR" "$PY_MIN_MINOR"
+    info "Wege: %s" "apt install python3.13  |  brew install python@3.13  |  https://astral.sh/uv"
     exit 1
   fi
-  gut "Python bereit: $PY ($("$PY" -V 2>&1))"
+  gut "Python bereit: %s (%s)" "$PY" "$("$PY" -V 2>&1)"
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -376,7 +389,7 @@ QUELLE=""
 [ -f "$SKRIPT/../bot.py" ] && QUELLE="$(cd "$SKRIPT/.." && pwd)"
 
 if [ -n "$QUELLE" ]; then
-  info "Quelltext liegt bereits hier: $QUELLE"
+  info "Quelltext liegt bereits hier: %s" "$QUELLE"
   VORGABE="$QUELLE"
 else
   info "Kein Quelltext neben dem Skript — er wird von GitHub geholt."
@@ -392,7 +405,7 @@ if [ "$ZIEL" = "$QUELLE" ]; then
   gut "Installation direkt im vorhandenen Verzeichnis — nichts zu kopieren."
 elif [ -n "$QUELLE" ]; then
   mkdir -p "$ZIEL"
-  info "Kopiere Quelltext nach $ZIEL"
+  info "Kopiere Quelltext nach %s" "$ZIEL"
   erklaere ".env, Datenbanken, Aufnahmen und Logs werden dabei NIE angefasst — sie gehoeren dir, nicht dem Build."
   # v4.2-W100: die Liste stand zweimal da (rsync und tar) und wich von der
   # des Auslieferungsarchivs ab. Gemessen an einer Installation aus einem
@@ -417,7 +430,7 @@ elif [ -n "$QUELLE" ]; then
     TAR_ARGS=(); for m in "${AUS_KOPIE[@]}"; do TAR_ARGS+=(--exclude="$m"); done
     (cd "$QUELLE" && tar cf - "${TAR_ARGS[@]}" .) | (cd "$ZIEL" && tar xf -)
   fi
-  gut "Quelltext liegt in $ZIEL"
+  gut "Quelltext liegt in %s" "$ZIEL"
 else
   if [ "$BESTAND" = 1 ]; then
     info "Bestehende Installation gefunden."
@@ -426,7 +439,7 @@ else
     fi
   else
     have git || { fehler "git fehlt und wird zum Holen des Quelltexts gebraucht."; exit 1; }
-    info "Klone $REPO_URL (Zweig $BRANCH)"
+    info "Klone %s (Zweig %s)" "$REPO_URL" "$BRANCH"
     git clone --depth 1 --branch "$BRANCH" "$REPO_URL" "$ZIEL"
     gut "Quelltext geholt."
   fi
@@ -454,7 +467,7 @@ else
       else
         PAKETE="$PAKETE python3-venv"
       fi
-      info "apt-get install $PAKETE"
+      info "apt-get install %s" "$PAKETE"
       if frage_ja "Diese Pakete jetzt installieren?" J; then
         $SUDO apt-get update -qq
         # yt-dlp aus alten Debian-Quellen ist oft steinalt; wenn das Paket
@@ -474,14 +487,14 @@ else
   esac
 fi
 for prog in ffmpeg streamlink yt-dlp; do
-  if have "$prog"; then gut "$prog: $(command -v "$prog")"
+  if have "$prog"; then gut "%s: %s" "$prog" "$(command -v "$prog")"
   else
     # v4.2-W14: die Begruendung EINZELN uebersetzen. Vorher stand sie in einem
     # printf innerhalb der Ersetzung — der aeussere Text laeuft durch t(),
     # traegt aber einen Laufzeitwert und trifft deshalb nie einen Schluessel.
-    if [ "$prog" = ffmpeg ]; then _grund="$(t 'ohne ihn laeuft KEINE Aufnahme und kein Restream')"
-    else _grund="$(t 'wird spaeter im venv ergaenzt')"; fi
-    warn "$prog $(t 'fehlt') — ${_grund}."
+    # v4.2-W123: dasselbe fuer den Rahmen — "fehlt" allein war ein Bruchstueck.
+    if [ "$prog" = ffmpeg ]; then warn "%s fehlt — ohne ihn laeuft KEINE Aufnahme und kein Restream." "$prog"
+    else warn "%s fehlt — wird spaeter im venv ergaenzt." "$prog"; fi
   fi
 done
 
@@ -491,13 +504,13 @@ erklaere "Alles Weitere lebt in einer virtuellen Umgebung unter .venv/ — ein e
 
 VENV="$ZIEL/.venv"
 if [ -x "$VENV/bin/python" ] && "$VENV/bin/python" -c 'import sys;raise SystemExit(0 if sys.version_info>=(3,12) else 1)' 2>/dev/null; then
-  gut "Vorhandene Umgebung wird weiterbenutzt: $VENV"
+  gut "Vorhandene Umgebung wird weiterbenutzt: %s" "$VENV"
 else
   [ -d "$VENV" ] && { warn "Vorhandenes .venv passt nicht (zu altes Python) — wird neu angelegt."; rm -rf "$VENV"; }
-  info "Lege virtuelle Umgebung an ($PY)"
+  info "Lege virtuelle Umgebung an (%s)" "$PY"
   "$PY" -m venv "$VENV" || {
     fehler "venv liess sich nicht anlegen."
-    printf '  %sMeist fehlt das Paket python3-venv:  sudo apt install python3-venv%s\n' "$FNT" "$R"; exit 1; }
+    info "Meist fehlt das Paket python3-venv:  %s" "sudo apt install python3-venv"; exit 1; }
   gut "Umgebung angelegt."
 fi
 VPY="$VENV/bin/python"
@@ -508,11 +521,11 @@ OPT_AUS=""
 opt_frage(){ # opt_frage <Paket> <Vorgabe J|N> <Erklaerung>
   local paket="$1" vorgabe="$2" text="$3"
   erklaere "$text"
-  if frage_ja "  → ${paket} installieren?" "$vorgabe"; then
-    merke "Python-Paket ${paket}: installiert"
+  if frage_ja "$(tf '  → %s installieren?' "$paket")" "$vorgabe"; then
+    merke "Python-Paket %s: installiert" "$paket"
   else
     OPT_AUS="$OPT_AUS $paket"
-    merke "Python-Paket ${paket}: ausgelassen (spaeter: .venv/bin/pip install ${paket})"
+    merke "Python-Paket %s: ausgelassen (spaeter: .venv/bin/pip install %s)" "$paket" "$paket"
   fi
 }
 WHISPER_VOR=J; [ "$IST_PI" = 1 ] && WHISPER_VOR=N
@@ -543,9 +556,9 @@ NC_AUS="$OPT_AUS" awk '
   BEGIN{ n=split(tolower(ENVIRON["NC_AUS"]), a, /[[:space:]]+/)
          for(i=1;i<=n;i++){ k=a[i]; gsub(/_/,"-",k); if(k!="") aus[k]=1 } }
 ' requirements.txt > "$REQ_TMP"
-_ausgelassen=""
-[ -n "$OPT_AUS" ] && _ausgelassen=", $(t 'ausgelassen:')$OPT_AUS"
-info "$(wc -l < "$REQ_TMP" | tr -d ' ') $(t 'Pakete werden installiert')${_ausgelassen}"
+_anzahl="$(wc -l < "$REQ_TMP" | tr -d ' ')"
+if [ -n "$OPT_AUS" ]; then info "%s Pakete werden installiert, ausgelassen:%s" "$_anzahl" "$OPT_AUS"
+else info "%s Pakete werden installiert" "$_anzahl"; fi
 
 "$VPY" -m pip install --upgrade pip wheel >/dev/null 2>&1 || warn "pip liess sich nicht aktualisieren — weiter mit der vorhandenen Fassung."
 info "pip install laeuft — das dauert je nach Verbindung 1 bis 15 Minuten."
@@ -568,7 +581,7 @@ erklaere "Alle Einstellungen leben in einer einzigen Datei: .env. Sie enthaelt B
 if [ -f "$ENVF" ]; then
   SICHERUNG="$ENVF.bak.$(date +%Y%m%d-%H%M%S)"
   cp "$ENVF" "$SICHERUNG"
-  gut "Vorhandene .env gesichert: $(basename "$SICHERUNG")"
+  gut "Vorhandene .env gesichert: %s" "$(basename "$SICHERUNG")"
   info "Bestehende Werte bleiben; nur was du jetzt beantwortest, wird ueberschrieben."
 else
   if [ -f "$ZIEL/.env.example" ]; then
@@ -595,7 +608,7 @@ if [ "${MUELL:-0}" -gt 0 ]; then
   tmp="$(mktemp)"
   sed -E 's/^([A-Za-z_][A-Za-z0-9_]*)=[[:space:]]*#.*$/\1=/' "$ENVF" > "$tmp" && mv "$tmp" "$ENVF"
   chmod 600 "$ENVF"
-  gut "${MUELL} Platzhalter-Werte geleert (sie waeren als echte Werte gelesen worden)."
+  gut "%s Platzhalter-Werte geleert (sie waeren als echte Werte gelesen worden)." "$MUELL"
 fi
 
 env_set(){ # env_set SCHLUESSEL WERT — ersetzt die Zeile, auch die auskommentierte
@@ -617,7 +630,7 @@ env_get(){ awk -F= -v k="$1" '/^[[:space:]]*#/{next} {key=$1;gsub(/[[:space:]]/,
            key==k{v=$2;for(i=3;i<=NF;i++)v=v"="$i;gsub(/^[[:space:]"]+|[[:space:]"]+$/,"",v);print v;exit}' "$ENVF" 2>/dev/null; }
 
 # ── Telegram (Pflicht) ───────────────────────────────────────
-printf '\n  %s%sTelegram — der Pflichtteil%s\n' "$B" "$TXT" "$R"
+abschnitt "Telegram — der Pflichtteil"
 erklaere "NIGHTCRAWLER wird ueber Telegram bedient. Ohne Bot-Token startet dieser Teil nicht. Den Token gibt dir @BotFather in Telegram: /newbot, Namen vergeben, fertig — er sieht aus wie 123456789:AAF... Er ist ein Geheimnis und laesst sich nicht erzeugen, nur holen."
 ALT_TOKEN="$(env_get BOT_TOKEN)"
 if [ -n "$ALT_TOKEN" ] && [ "$MODUS" != "unattended" ]; then
@@ -627,7 +640,7 @@ else
   frage_geheimnis TG_TOKEN "Telegram Bot-Token (von @BotFather)" 0
   if [ -n "${TG_TOKEN:-}" ]; then env_set BOT_TOKEN "$TG_TOKEN"; gut "BOT_TOKEN gesetzt."
   else warn "Kein Token — der Telegram-Teil bleibt still, bis du BOT_TOKEN in der .env eintraegst."
-       merke "OFFEN: BOT_TOKEN in $ENVF eintragen (von @BotFather)"; fi
+       merke "OFFEN: BOT_TOKEN in %s eintragen (von @BotFather)" "$ENVF"; fi
 fi
 
 erklaere "Ohne Freigabeliste darf JEDER, der deinen Bot findet, ihn bedienen. ALLOWED_USER_IDS ist diese Liste (Zahlen, per Komma getrennt). Deine eigene ID sagt dir @userinfobot in Telegram."
@@ -636,7 +649,7 @@ if [ -n "${TG_IDS:-}" ]; then env_set ALLOWED_USER_IDS "$TG_IDS"; gut "Freigabel
 else warn "Keine Freigabeliste — jeder Telegram-Nutzer kann den Bot bedienen."; fi
 
 # ── Dashboard ────────────────────────────────────────────────
-printf '\n  %s%sDashboard%s\n' "$B" "$TXT" "$R"
+abschnitt "Dashboard"
 erklaere "Das Dashboard ist die Weboberflaeche mit 359 Routen: Sendeleiste, Aufnahmen, Statistiken, Abwehr. Es bindet standardmaessig NUR auf 127.0.0.1 — also nicht im Netz erreichbar. Der sichere Zugang ist ein SSH-Tunnel; alles andere sperrt man ueber Token oder Firewall auf."
 frage_text DASH_PORT "Port fuers Dashboard" "$(env_get DASHBOARD_PORT || true)"
 [ -z "${DASH_PORT:-}" ] && DASH_PORT=8050
@@ -648,7 +661,7 @@ if [ "$MODUS" = "gefuehrt" ]; then
   if frage_ja "Dashboard im Netz erreichbar machen (0.0.0.0)?" N; then
     WEBHOST="0.0.0.0"
     warn "Der Port wird oeffentlich. Token ist damit Pflicht (kommt gleich)."
-    merke "SICHERHEIT: Dashboard lauscht auf 0.0.0.0 — Firewall setzen: ufw allow from <DEINE-IP> to any port ${DASH_PORT}"
+    merke "SICHERHEIT: Dashboard lauscht auf 0.0.0.0 — Firewall setzen: ufw allow from <DEINE-IP> to any port %s" "$DASH_PORT"
   fi
 fi
 env_set WEB_HOST "$WEBHOST"
@@ -669,7 +682,7 @@ fi
 
 # ── Discord ──────────────────────────────────────────────────
 if ! printf '%s' "$OPT_AUS" | grep -qi 'discord'; then
-  printf '\n  %s%sDiscord%s\n' "$B" "$TXT" "$R"
+  abschnitt "Discord"
   erklaere "Optional: dieselben Funktionen als Slash-Commands in deinem Discord-Server, dazu Moderation und Community-Features. Token aus dem Discord Developer Portal (Bot → Reset Token). Ohne Token bleibt der Discord-Teil einfach still — der Bot startet trotzdem."
   if frage_ja "Discord jetzt einrichten?" N; then
     frage_geheimnis DC_TOKEN "Discord Bot-Token" 0
@@ -683,20 +696,20 @@ if ! printf '%s' "$OPT_AUS" | grep -qi 'discord'; then
 fi
 
 # ── Restream ─────────────────────────────────────────────────
-printf '\n  %s%sRestream-Ziele%s\n' "$B" "$TXT" "$R"
+abschnitt "Restream-Ziele"
 erklaere "Restream heisst: der TikTok-Stream wird gleichzeitig auf deine eigenen Kanaele gesendet. Der Stream-Key kommt von der jeweiligen Plattform (Kick: Creator-Dashboard → Stream Key; Twitch: Creator Dashboard → Einstellungen → Stream; YouTube: Studio → Livestream). Er ist ein Geheimnis und laesst sich nicht erzeugen. Ohne Key bleibt das Ziel aus."
 erklaere "Wichtig zur Last: sobald ein zweites Ziel dazukommt, muss ffmpeg umkodieren (Transcode) — das kostet ein Vielfaches an CPU. Ein Ziel ohne Transcode laeuft selbst auf schwacher Hardware."
 restream_ziel(){ # restream_ziel <PRAEFIX> <Klarname> <Hinweis>
   local p="$1" name="$2" hinweis="$3" key
-  if frage_ja "${name} als Restream-Ziel einrichten?" N; then
+  if frage_ja "$(tf '%s als Restream-Ziel einrichten?' "$name")" N; then
     erklaere "$hinweis"
-    frage_geheimnis key "${name} Stream-Key" 0
+    frage_geheimnis key "$(tf '%s Stream-Key' "$name")" 0
     if [ -n "$key" ]; then
       env_set "${p}_STREAM_KEY" "$key"; env_set "${p}_ENABLED" 1
-      gut "${name} eingerichtet."
+      gut "%s eingerichtet." "$name"
     else
       env_set "${p}_ENABLED" 0
-      warn "${name} ohne Key — ausgeschaltet gelassen."
+      warn "%s ohne Key — ausgeschaltet gelassen." "$name"
     fi
   else
     env_set "${p}_ENABLED" 0
@@ -712,7 +725,7 @@ fi
 
 # ── Leistungsprofil ──────────────────────────────────────────
 if [ "$IST_PI" = 1 ] || [ "${RAM_MB:-0}" -lt 4000 ] || [ "${KERNE:-8}" -lt 4 ]; then
-  printf '\n  %s%sLeistungsprofil%s\n' "$B" "$TXT" "$R"
+  abschnitt "Leistungsprofil"
   erklaere "Diese Maschine ist klein. Die Vorgaben des Bots sind auf einen 8-Kern-Server gemuenzt; unveraendert fuehrt das hier zu abgebrochenen Aufnahmen und stotternden Restreams. Das sparsame Profil setzt: nur ein Restream-Ziel, 3500 kbit statt 6000, je ein ffmpeg-Thread fuer Aufnahme und Hintergrund, hoechstens eine Transkription gleichzeitig."
   if frage_ja "Sparsames Profil setzen?" J; then
     env_set RESTREAM_SINGLE 1
@@ -726,7 +739,7 @@ if [ "$IST_PI" = 1 ] || [ "${RAM_MB:-0}" -lt 4000 ] || [ "${KERNE:-8}" -lt 4 ]; 
     merke "Leistungsprofil: sparsam (RESTREAM_SINGLE=1, Bitrate 3500)"
   fi
 fi
-gut "Konfiguration geschrieben: $ENVF (Rechte 600)"
+gut "Konfiguration geschrieben: %s (Rechte 600)" "$ENVF"
 
 # ═══════════════════════════════════════════════════════════════════════════
 kopf "Optionale Bausteine"
@@ -771,7 +784,7 @@ if [ "$MODUS" = "gefuehrt" ] && [ "$PKG" = "apt" ] && [ "$SKIP_SYSTEM" = 0 ]; th
   erklaere "CrowdSec ist die Abwehr: es liest Logs mit, erkennt Angriffsmuster und sperrt IPs. Das Dashboard zeigt Sperren und Angriffswellen an; der sentinel-Agent meldet Spitzen. Sinnvoll, sobald die Maschine aus dem Netz erreichbar ist."
   if frage_ja "CrowdSec installieren?" N; then
     $SUDO apt-get install -y crowdsec || warn "CrowdSec fehlt in den Quellen — siehe docs/CROWDSEC.md."
-    have cscli && gut "CrowdSec installiert: $(cscli version 2>/dev/null | head -1)"
+    have cscli && gut "CrowdSec installiert: %s" "$(cscli version 2>/dev/null | head -1)"
     merke "CrowdSec: installiert — Feinheiten in docs/CROWDSEC.md"
   fi
 fi
@@ -834,14 +847,14 @@ NGXEOF
             $SUDO certbot --nginx -d "$PROXY_DOMAIN" --agree-tos --redirect -n \
                   --register-unsafely-without-email \
               && gut "Zertifikat aktiv, HTTP leitet auf HTTPS um." \
-              || warn "certbot fehlgeschlagen — Port 80 offen? Domain zeigt hierher? Erneut: sudo certbot --nginx -d $PROXY_DOMAIN"
+              || warn "certbot fehlgeschlagen — Port 80 offen? Domain zeigt hierher? Erneut: sudo certbot --nginx -d %s" "$PROXY_DOMAIN"
           fi
         fi
         # Der Bot muss seine oeffentliche Adresse kennen: sonst baut er die
         # OAuth-Rueckrufe auf localhost, und kein Anbieter erreicht die.
         env_set PUBLIC_BASE_URL "https://${PROXY_DOMAIN}"
         env_set TRUSTED_PROXIES "127.0.0.1"
-        merke "Reverse-Proxy: https://${PROXY_DOMAIN} → 127.0.0.1:${DASH_PORT} (nginx + certbot)"
+        merke "Reverse-Proxy: https://%s → 127.0.0.1:%s (nginx + certbot)" "$PROXY_DOMAIN" "$DASH_PORT"
         merke "PUBLIC_BASE_URL und TRUSTED_PROXIES sind gesetzt — die OAuth-Rueckrufe stimmen damit ohne weitere Pflege."
       fi
     fi
@@ -902,7 +915,7 @@ UNIT
           env_set BRAIN_LLM_BACKEND auto
           env_set BRAIN_LLAMACPP_URL "http://127.0.0.1:8080"
           gut "llama.cpp laeuft auf 127.0.0.1:8080."
-          merke "Lokales LLM: llamacpp-Dienst, Modell ${LLDIR}/model.gguf"
+          merke "Lokales LLM: llamacpp-Dienst, Modell %s/model.gguf" "$LLDIR"
         fi
       else
         warn "Kein passendes Release gefunden — Handanleitung: docs/SETUP_LLAMACPP.md"
@@ -932,7 +945,7 @@ if [ -f "$ZIEL/bot.py" ]; then
     0) gut "Selbsttest ohne Befund.";;
     1) warn "Der Selbsttest meldet offene Punkte (oben rot). Meist fehlt ein Token oder ein Schluessel — der Bot startet trotzdem."
        merke "Selbsttest hatte Befunde: erneut pruefen mit  .venv/bin/python bot.py --selfcheck";;
-    *) warn "Der Selbsttest liess sich nicht ausfuehren (Code ${SELFCHECK_RC})."
+    *) warn "Der Selbsttest liess sich nicht ausfuehren (Code %s)." "$SELFCHECK_RC"
        info "Ersatzpruefung: Modul-Import"
        ( cd "$ZIEL" && "$VPY" -c 'import ast,sys; ast.parse(open("bot.py",encoding="utf-8").read()); print("bot.py ist syntaktisch in Ordnung")' ) \
          || { fehler "bot.py laesst sich nicht einmal einlesen — Python-Fassung pruefen."; exit 1; };;
@@ -951,7 +964,7 @@ cd "\$(dirname "\$0")" || exit 1
 exec .venv/bin/python bot.py "\$@"
 START
 chmod +x "$ZIEL/start.sh"
-gut "Startskript: $ZIEL/start.sh"
+gut "Startskript: %s/start.sh" "$ZIEL"
 
 DIENST=""
 SYSTEMD=0
@@ -962,9 +975,9 @@ if [ "$SYSTEMD" = 1 ] && { [ -n "$SUDO" ] || [ "$(id -u)" -eq 0 ]; }; then
   for u in nightcrawler tiktok-bot; do
     systemctl list-unit-files --no-legend "${u}.service" 2>/dev/null | grep -q . && VORHANDEN="$u" && break
   done
-  [ -n "$VORHANDEN" ] && info "Vorhandener Dienst gefunden: ${VORHANDEN}"
+  [ -n "$VORHANDEN" ] && info "Vorhandener Dienst gefunden: %s" "$VORHANDEN"
   frage_text DIENST "Name des Dienstes" "${VORHANDEN:-nightcrawler}"
-  if [ -n "${DIENST:-}" ] && frage_ja "Dienst ${DIENST} jetzt einrichten?" J; then
+  if [ -n "${DIENST:-}" ] && frage_ja "$(tf 'Dienst %s jetzt einrichten?' "$DIENST")" J; then
     $SUDO tee "/etc/systemd/system/${DIENST}.service" >/dev/null <<UNIT
 [Unit]
 Description=NIGHTCRAWLER v37 — TikTok-Ueberwachung, Aufnahme, Restream
@@ -1001,14 +1014,14 @@ UNIT
       $SUDO systemctl enable --now "$DIENST" || warn "Dienst liess sich nicht aktivieren."
       sleep 2
       if systemctl is-active --quiet "$DIENST"; then
-        gut "Dienst ${DIENST} laeuft."
+        gut "Dienst %s laeuft." "$DIENST"
       else
-        warn "Dienst startete nicht. Grund ansehen:  journalctl -u ${DIENST} -n 60 --no-pager"
+        warn "Dienst startete nicht. Grund ansehen:  journalctl -u %s -n 60 --no-pager" "$DIENST"
       fi
     else
-      info "Spaeter:  sudo systemctl enable --now ${DIENST}"
+      info "Spaeter:  sudo systemctl enable --now %s" "$DIENST"
     fi
-    merke "Dienst: ${DIENST}  (Status: systemctl status ${DIENST} · Log: journalctl -u ${DIENST} -f)"
+    merke "Dienst: %s  (Status: systemctl status %s · Log: journalctl -u %s -f)" "$DIENST" "$DIENST" "$DIENST"
   fi
 elif [ "$OS" = "Darwin" ]; then
   erklaere "macOS hat kein systemd. Das Gegenstueck heisst launchd: eine Datei in ~/Library/LaunchAgents, die den Bot beim Anmelden startet und neu startet, wenn er stirbt."
@@ -1032,12 +1045,12 @@ PLISTEOF
     mkdir -p "$ZIEL/logs"
     launchctl unload "$PLIST" 2>/dev/null || true
     launchctl load "$PLIST" && gut "launchd-Eintrag geladen." || warn "launchctl load fehlgeschlagen."
-    merke "launchd: ${PLIST}  (stoppen: launchctl unload ${PLIST})"
+    merke "launchd: %s  (stoppen: launchctl unload %s)" "$PLIST" "$PLIST"
   fi
 else
   # Container, WSL ohne systemd, oder keine Rechte: dann ist der Handstart der
   # ehrliche Weg — ein Dienst, den niemand startet, ist schlimmer als keiner.
-  info "Kein systemd/launchd verfuegbar — Start von Hand:  bash ${ZIEL}/start.sh"
+  info "Kein systemd/launchd verfuegbar — Start von Hand:  bash %s/start.sh" "$ZIEL"
   erklaere "Soll der Bot dauerhaft laufen, braucht er einen Aufpasser: unter WSL 'wsl --shutdown'-fest per Aufgabenplanung, im Container per Restart-Regel, sonst tmux/screen."
 fi
 
@@ -1091,8 +1104,8 @@ OnFailure=nightcrawler-notify@%n.service
 UNIT
     $SUDO systemctl daemon-reload || warn "systemctl daemon-reload fehlgeschlagen."
     gut "Totmann-Meldung verdrahtet."
-    info "Testen (MUSS eine Nachricht ausloesen):  sudo systemctl start nightcrawler-notify@${DIENST}.service"
-    merke "Totmann-Meldung: aktiv — Test: sudo systemctl start nightcrawler-notify@${DIENST}.service"
+    info "Testen (MUSS eine Nachricht ausloesen):  sudo systemctl start nightcrawler-notify@%s.service" "$DIENST"
+    merke "Totmann-Meldung: aktiv — Test: sudo systemctl start nightcrawler-notify@%s.service" "$DIENST"
   fi
 fi
 
@@ -1100,53 +1113,59 @@ fi
 kopf "Zusammenfassung"
 
 NOTIZ="$HOME/nightcrawler-installation.txt"
+# v4.2-W123: die Notiz ist eine Datei, die der Betreiber LIEST — sie war bis
+# hierher in jeder Sprache deutsch. Jede Zeile geht deshalb durch tf.
+nz(){ printf '%s\n' "$(tf "$@")"; }
 {
-  printf 'NIGHTCRAWLER v37 — Installation vom %s\n' "$(date '+%F %H:%M')"
+  nz "NIGHTCRAWLER v37 — Installation vom %s" "$(date '+%F %H:%M')"
   printf '%s\n\n' "$(printf '=%.0s' $(seq 1 60))"
-  printf 'Verzeichnis   %s\n' "$ZIEL"
+  nz "Verzeichnis   %s" "$ZIEL"
   printf 'Python        %s\n' "$("$VPY" -V 2>&1)"
-  printf 'Konfiguration %s   (Rechte 600 — enthaelt Geheimnisse)\n' "$ENVF"
-  [ -n "${DIENST:-}" ] && printf 'Dienst        %s\n' "$DIENST"
+  nz "Konfiguration %s   (Rechte 600 — enthaelt Geheimnisse)" "$ENVF"
+  [ -n "${DIENST:-}" ] && nz "Dienst        %s" "$DIENST"
   printf 'Dashboard     http://127.0.0.1:%s\n\n' "$DASH_PORT"
-  printf 'BEDIENUNG\n'
-  [ -n "${DIENST:-}" ] && printf '  Status      systemctl status %s\n  Log         journalctl -u %s -f\n  Neustart    sudo systemctl restart %s\n' "$DIENST" "$DIENST" "$DIENST"
-  printf '  Handstart   bash %s/start.sh\n' "$ZIEL"
+  nz "BEDIENUNG"
+  if [ -n "${DIENST:-}" ]; then
+    printf '  Status      systemctl status %s\n  Log         journalctl -u %s -f\n' "$DIENST" "$DIENST"
+    nz "  Neustart    sudo systemctl restart %s" "$DIENST"
+  fi
+  nz "  Handstart   bash %s/start.sh" "$ZIEL"
   # v4.2-W100: hier stand '%s/bot.py' — ein Schraegstrich statt eines
   # Leerzeichens, also '.venv/bin/python/bot.py'. Genau DIESE Zeile kopiert
   # der Betreiber aus dem Bericht, und sie kann nicht laufen. Dieselbe Klasse
   # wie die Dashboard-Adresse in W93: die Zeile, die man kopiert, war falsch.
-  printf '  Selbsttest  %s bot.py --selfcheck\n' "$VENV/bin/python"
+  nz "  Selbsttest  %s bot.py --selfcheck" "$VENV/bin/python"
   printf '  Dashboard   ssh -L 3000:localhost:%s %s@<server-ip>   → http://localhost:3000\n\n' "$DASH_PORT" "$(id -un)"
-  if [ -n "$MERKZETTEL" ]; then printf 'MERKZETTEL\n'; printf '%s' "$MERKZETTEL" | sed 's/^/  · /'; printf '\n'; fi
-  printf 'WEITERLESEN\n'
-  printf '  docs/START_HIER.txt   Einstieg und Alltag\n'
-  printf '  docs/DEPLOY.md        Ausliefern, Rollback, Pruefschritte\n'
-  printf '  docs/CROWDSEC.md      Abwehr\n'
-  printf '  docs/SETUP_*.md       OAuth fuer Twitch und YouTube, llama.cpp\n'
+  if [ -n "$MERKZETTEL" ]; then nz "MERKZETTEL"; printf '%s' "$MERKZETTEL" | sed 's/^/  · /'; printf '\n'; fi
+  nz "WEITERLESEN"
+  nz "  docs/START_HIER.txt   Einstieg und Alltag"
+  nz "  docs/DEPLOY.md        Ausliefern, Rollback, Pruefschritte"
+  nz "  docs/CROWDSEC.md      Abwehr"
+  nz "  docs/SETUP_*.md       OAuth fuer Twitch und YouTube, llama.cpp"
 } > "$NOTIZ"
 
 printf '\n'
 gut "NIGHTCRAWLER ist eingerichtet."
 printf '\n'
-printf '  %sVerzeichnis%s   %s\n' "$DIM" "$R" "$ZIEL"
-printf '  %sPython%s        %s\n' "$DIM" "$R" "$("$VPY" -V 2>&1)"
-[ -n "${DIENST:-}" ] && printf '  %sDienst%s        %s\n' "$DIM" "$R" "$DIENST"
+printf '  %s%-13s%s %s\n' "$DIM" "$(t 'Verzeichnis')" "$R" "$ZIEL"
+printf '  %s%-13s%s %s\n' "$DIM" "Python" "$R" "$("$VPY" -V 2>&1)"
+[ -n "${DIENST:-}" ] && printf '  %s%-13s%s %s\n' "$DIM" "$(t 'Dienst')" "$R" "$DIENST"
 printf '  %sDashboard%s     http://127.0.0.1:%s\n' "$DIM" "$R" "$DASH_PORT"
 printf '\n'
 if [ -n "$MERKZETTEL" ]; then
-  printf '  %s%sMerkzettel%s\n' "$B" "$TXT" "$R"
+  printf '  %s%s%s%s\n' "$B" "$TXT" "$(t 'Merkzettel')" "$R"
   printf '%s' "$MERKZETTEL" | sed "s/^/    ${DIM}·${R} /"
   printf '\n'
 fi
-printf '  %s%sNaechste Schritte%s\n' "$B" "$TXT" "$R"
+printf '  %s%s%s%s\n' "$B" "$TXT" "$(t 'Naechste Schritte')" "$R"
 if [ -n "${DIENST:-}" ]; then
-  printf '    1  Mitlesen, ob er sauber hochkommt:  %sjournalctl -u %s -f%s\n' "$TXT" "$DIENST" "$R"
+  printf '    1  %s\n' "$(tf 'Mitlesen, ob er sauber hochkommt:  %s' "${TXT}journalctl -u ${DIENST} -f${R}")"
 else
-  printf '    1  Starten und zuschauen:  %sbash %s/start.sh%s\n' "$TXT" "$ZIEL" "$R"
+  printf '    1  %s\n' "$(tf 'Starten und zuschauen:  %s' "${TXT}bash ${ZIEL}/start.sh${R}")"
 fi
-printf '    2  In Telegram deinen Bot anschreiben:  %s/start%s, dann %s/track <tiktok-name>%s\n' "$TXT" "$R" "$TXT" "$R"
-printf '    3  Dashboard per Tunnel oeffnen:  %sssh -L 3000:localhost:%s %s@<server-ip>%s\n' "$TXT" "$DASH_PORT" "$(id -un)" "$R"
+printf '    2  %s\n' "$(tf 'In Telegram deinen Bot anschreiben:  %s, dann %s' "${TXT}/start${R}" "${TXT}/track <tiktok-name>${R}")"
+printf '    3  %s\n' "$(tf 'Dashboard per Tunnel oeffnen:  %s' "${TXT}ssh -L 3000:localhost:${DASH_PORT} $(id -un)@<server-ip>${R}")"
 printf '\n'
-printf '  %sAlles davon steht auch in %s%s\n' "$FNT" "$NOTIZ" "$R"
+printf '  %s%s%s\n' "$FNT" "$(tf 'Alles davon steht auch in %s' "$NOTIZ")" "$R"
 printf '\n'
 exit 0

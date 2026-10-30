@@ -11,6 +11,44 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Werkzeuge — ehrliche Übersetzung und `tools/update.sh` (v4.2 W123)
+
+- **Die 100 % der Shell-Werkzeuge waren geschönt.** `tools/i18n_tools.py`
+  meldete 373 von 373 Zeichenketten, während im englischen Lauf rund 150
+  Zeilen deutsch blieben. Fünf blinde Flecken: einfach gequotete
+  `printf`-Formate, Senken-Texte mit Laufzeitwert (`info "Python gefunden:
+  $PY"` — 45 Stellen, `t()` trifft den fertigen Text nie), Heredocs (`--help`,
+  Willkommen), `merke`/`kopf`/Durchreich-Helfer und Dateien, die der Betreiber
+  liest (Installationsnotiz, `start.bat`). Ein sechster kam erst beim echten
+  Lauf mit `NC_LANG=en` heraus: Senken direkt im `case`-Zweig.
+- **`tf FORMAT ARG…` und `tz`** in `tools/lib/i18n.sh`: der Schlüssel ist das
+  Format mit `%s`, der Wert kommt nach der Übersetzung hinein; `tz` übersetzt
+  Hilfetexte zeilenweise. Die Senken nehmen dieselbe Form an
+  (`info "Gefunden: %s" "$x"`).
+- **`--check` ist jetzt ein Tor:** rot bei fehlenden, verwaisten,
+  unumschlossenen und zusammengesetzten Texten sowie bei Übersetzungen mit
+  anderen printf-Platzhaltern. Zur Laufzeit fällt eine fehlende Zeile weiter
+  auf Deutsch zurück.
+- **`tools/update.sh`** (neu): Nachinstallation und Abgleich — prüft
+  Systemwerkzeuge (ffmpeg, streamlink, yt-dlp, git, curl, sqlite3) und
+  `requirements.txt` gegen `.venv`, zeigt den Plan wörtlich, installiert nur
+  Fehlendes und misst danach nach. `--check` (Exit 1, wenn etwas fehlt),
+  `--dry-run`, `--system`, `--python-deps`, `--optional`, `--upgrade`,
+  geführt/`--express`/`--unattended`. Ein zweiter Lauf führt keinen Befehl
+  aus. Systempakete werden nur ergänzt, nie aktualisiert.
+- **`tools/lib/system.sh`** (neu): eine Erkennung für apt, dnf, pacman,
+  zypper, apk und brew — über `ID`/`ID_LIKE` aus os-release (gelesen, nicht
+  gesourct), Paketnamen je Manager (`sqlite` vs. `sqlite3`, `ffmpeg-free` auf
+  Fedora), kein `pacman -Sy`. Leere apt-Listen gelten nicht mehr als „Paket
+  gibt es nicht".
+- **`tools/anforderungen.py`** (neu): `requirements.txt` gegen eine Umgebung,
+  offline (ok/fehlt/alt/entfällt). Optionale Pakete tragen die Marke
+  `[optional]` in `requirements.txt` — keine zweite Liste.
+- Verträge: `_test_v42_w123_*` (fünf), jede Zusicherung per Mutationsprobe
+  gegengeprüft. Zwei Proben entwischten zuerst und waren Befunde am Vertrag:
+  `ID_LIKE` war ungeprüft (Rocky steht selbst in der Liste), und das
+  220-Zeichen-Fenster des W17-Vertrags reichte von `info()` bis in `gut()`.
+
 ### Performance & Stabilität — Paket F: leichte Beobachtbarkeit (v4.2 W122)
 
 Letztes Paket des Sprints. Die Signale aus A–E standen in `/healthz` — für

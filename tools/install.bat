@@ -351,12 +351,17 @@ if not "%RC%"=="0" goto :ende_fehler
 rem ---------------------------------------------------------------- 8 -------
 call :kopf "Startskript und Autostart"
 > "%ZIEL%\start.bat" echo @echo off
->>"%ZIEL%\start.bat" echo rem Von tools\install.bat erzeugt - startet NIGHTCRAWLER.
+rem  v4.2-W123: auch start.bat liest der Betreiber - beim Beenden des Bots
+rem  steht ihr Satz im Fenster. Uebersetzt wird beim Schreiben, nicht beim Lauf:
+rem  start.bat kennt den Katalog nicht.
+call :t "Von install.bat erzeugt - startet NIGHTCRAWLER."
+>>"%ZIEL%\start.bat" echo rem %UEBERSETZT%
 >>"%ZIEL%\start.bat" echo title NIGHTCRAWLER
 >>"%ZIEL%\start.bat" echo cd /d "%%~dp0"
 >>"%ZIEL%\start.bat" echo .venv\Scripts\python.exe bot.py %%*
 >>"%ZIEL%\start.bat" echo echo.
->>"%ZIEL%\start.bat" echo echo Der Bot wurde beendet. Fenster schliessen mit einer beliebigen Taste.
+call :t "Der Bot wurde beendet. Fenster schliessen mit einer beliebigen Taste."
+>>"%ZIEL%\start.bat" echo echo %UEBERSETZT%
 >>"%ZIEL%\start.bat" echo pause ^>nul
 call :gut_wert "Startskript:" "%ZIEL%\start.bat"
 call :erklaere "Windows kennt kein systemd. Der uebliche Ersatz ist die Aufgabenplanung: eine Aufgabe, die den Bot bei der Anmeldung startet. Sie startet ihn nicht nach einem Absturz neu - fuer einen echten Dienst mit Neustart gibt es NSSM (nssm.cc)."
@@ -392,22 +397,25 @@ call :kopf "Zusammenfassung"
 set "NOTIZ=%USERPROFILE%\nightcrawler-installation.txt"
 > "%NOTIZ%" echo NIGHTCRAWLER v37 - Installation
 >>"%NOTIZ%" echo ==================================================
->>"%NOTIZ%" echo Verzeichnis   %ZIEL%
->>"%NOTIZ%" echo Konfiguration %ENVF%
->>"%NOTIZ%" echo Dashboard     http://127.0.0.1:%DASHPORT%
+rem  v4.2-W123: die Notiz ist eine Datei, die der Betreiber LIEST - sie war bis
+rem  hierher in jeder Sprache deutsch. Jede Zeile laeuft jetzt durch :notiz.
+call :notiz_wert "Verzeichnis:" "%ZIEL%"
+call :notiz_wert "Konfiguration:" "%ENVF%"
+>>"%NOTIZ%" echo Dashboard: http://127.0.0.1:%DASHPORT%
 >>"%NOTIZ%" echo.
->>"%NOTIZ%" echo BEDIENUNG
->>"%NOTIZ%" echo   Starten     %ZIEL%\start.bat
->>"%NOTIZ%" echo   Selbsttest  .venv\Scripts\python.exe bot.py --selfcheck
->>"%NOTIZ%" echo   Aktualisieren  git pull ^&^& .venv\Scripts\pip install -r requirements.txt
+call :notiz "BEDIENUNG"
+call :notiz_wert "  Starten:" "%ZIEL%\start.bat"
+call :notiz_wert "  Selbsttest:" ".venv\Scripts\python.exe bot.py --selfcheck"
+call :t "  Aktualisieren:"
+>>"%NOTIZ%" echo %UEBERSETZT% git pull ^&^& .venv\Scripts\pip install -r requirements.txt
 >>"%NOTIZ%" echo.
-if exist "%MERK%" >>"%NOTIZ%" echo MERKZETTEL
+if exist "%MERK%" call :notiz "MERKZETTEL"
 if exist "%MERK%" type "%MERK%" >> "%NOTIZ%"
 >>"%NOTIZ%" echo.
->>"%NOTIZ%" echo WEITERLESEN
->>"%NOTIZ%" echo   docs\START_HIER.txt   Einstieg und Alltag
->>"%NOTIZ%" echo   docs\DEPLOY.md        Ausliefern, Rollback, Pruefschritte
->>"%NOTIZ%" echo   README.md             Uebersicht ueber alle Funktionen
+call :notiz "WEITERLESEN"
+call :notiz_wert "  Einstieg und Alltag:" "docs\START_HIER.txt"
+call :notiz_wert "  Ausliefern, Rollback, Pruefschritte:" "docs\DEPLOY.md"
+call :notiz_wert "  Uebersicht ueber alle Funktionen:" "README.md"
 echo.
 call :gut "NIGHTCRAWLER ist eingerichtet."
 echo.
@@ -455,6 +463,19 @@ rem  Leerzeichen macht, wuerde den Nachschlag still wirkungslos machen.
 set "UEBERSETZT=%~1"
 if not defined NC_KATALOG goto :eof
 for /f "usebackq tokens=1,* delims=	" %%a in (`findstr /b /l /c:"%~1	" "%NC_KATALOG%" 2^>nul`) do if not "%%b"=="" set "UEBERSETZT=%%b"
+goto :eof
+
+:notiz
+rem  notiz "Text" - eine uebersetzte Zeile an die Installationsnotiz haengen.
+call :t "%~1"
+>>"%NOTIZ%" echo %UEBERSETZT%
+goto :eof
+
+:notiz_wert
+rem  notiz_wert "Text" "Wert" - wie :notiz, der Wert steht hinten und ist kein
+rem  Schluessel (er steht erst zur Laufzeit fest).
+call :t "%~1"
+>>"%NOTIZ%" echo %UEBERSETZT% %~2
 goto :eof
 
 :kopf
