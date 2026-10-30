@@ -18905,18 +18905,22 @@ def _test_v42_w98_ordnerscan_findet_dateien_ohne_eintrag():
     # Vertrag nur absolute Wurzeln hereinreichte. Genau der Fehler, den W97
     # eine Datei weiter behoben hat: ein Vertrag, der nur die bequeme
     # Eingabe prueft, prueft nichts.
-    alt_cwd = _os.getcwd()
-    _os.chdir(heim)
-    try:
-        rel = A.finde_ohne_eintrag("archiv")
-        rel_namen = sorted(x["name"] for x in rel["gefunden"])
-        assert rel_namen == ["neu_eins.mp4", "neu_zwei.mkv"], \
-            "mit relativem Scan-Ordner stimmt die Fundliste nicht: %s" % rel_namen
-        assert all(_os.path.isabs(x["pfad"]) for x in rel["gefunden"]), \
-            "die Fundpfade sind relativ — gegen die Datenbank verglichen " \
-            "gilt damit jede Datei als neu"
-    finally:
-        _os.chdir(alt_cwd)
+    #
+    # Relativ zum JETZIGEN Arbeitsverzeichnis, ohne chdir (v4.2-W125): bis
+    # dahin wechselte der Vertrag nach `heim`, waehrend der Eintrag oben
+    # relativ zum ALTEN Verzeichnis geschrieben ist. Gruen war das nur, weil
+    # `..` an der Wurzel stehen bleibt — aus einem tieferen Verzeichnis
+    # gestartet fiel er, ohne dass am Code etwas falsch war. Der Bot wechselt
+    # sein Arbeitsverzeichnis nie; der Vertrag tut es jetzt auch nicht.
+    rel_ordner = _os.path.relpath(ordner, _os.getcwd())
+    assert not _os.path.isabs(rel_ordner)
+    rel = A.finde_ohne_eintrag(rel_ordner)
+    rel_namen = sorted(x["name"] for x in rel["gefunden"])
+    assert rel_namen == ["neu_eins.mp4", "neu_zwei.mkv"], \
+        "mit relativem Scan-Ordner stimmt die Fundliste nicht: %s" % rel_namen
+    assert all(_os.path.isabs(x["pfad"]) for x in rel["gefunden"]), \
+        "die Fundpfade sind relativ — gegen die Datenbank verglichen " \
+        "gilt damit jede Datei als neu"
 
     # ── (2) tmp/, versteckte Ordner und Punktdateien bleiben aussen vor —
     # dieselbe Regel wie beim Dubletten-Scan, damit beide Knoepfe denselben

@@ -32,6 +32,11 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
   sah den ffmpeg-Rückgabewert nie an und endete in `except Exception: pass`.
   Jetzt `log.error` gedrosselt über `nc/meldetakt` (Kanal `azrael-stimme`),
   Erfolgspfad setzt zurück.
+- **W98-Vertrag hing am Arbeitsverzeichnis.** Er schrieb den Eintrag relativ
+  zum Startverzeichnis und wechselte dann nach `heim` — grün nur, weil `..` an
+  der Wurzel stehen bleibt; aus einem tieferen Verzeichnis fiel er ohne
+  Codefehler. Jetzt ein relativer Scan-Ordner ohne `chdir`; die Probe
+  (`abspath` auf der Fundseite entfernt) fällt weiter.
 - Verträge `_test_v42_w125_*` (drei), 15 Mutationsproben; zwei entwischten
   zuerst und waren Befunde am Vertrag (ganz tonlose Sitzung ungeprüft, die
   Log-Attrappe zählte `debug` mit).
