@@ -147,7 +147,12 @@ GF_DASH="$W/var/lib/grafana/dashboards/nightcrawler"
 GF_DROPIN="$W/etc/systemd/system/grafana-server.service.d/nightcrawler.conf"
 
 SUDO=""
-if [ "$(id -u)" -ne 0 ]; then
+if [ -n "${NC_OBS_SUDO+gesetzt}" ]; then
+  # Fuer die Vertraege, wie NC_OBS_WURZEL: sudo setzt den PATH zurueck
+  # (secure_path) und landete beim ECHTEN systemctl statt bei der Attrappe —
+  # so geschehen in der CI, die nicht als root laeuft.
+  SUDO="$NC_OBS_SUDO"
+elif [ "$(id -u)" -ne 0 ]; then
   if have sudo; then SUDO="sudo"; else SUDO="-"; fi
 fi
 

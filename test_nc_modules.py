@@ -23586,7 +23586,10 @@ def _test_v42_w127_observability():
         f.write("#!/bin/sh\nexit 0\n")
     _os.chmod(_os.path.join(fake, "prometheus"), 0o755)
     umg = dict(_os.environ, PATH=fake + ":" + _os.environ["PATH"], NC_OBS_WURZEL=wurzel,
-               NC_INIT="systemd", NC_PKG="apt", NC_OBS_WARTEN="0", NC_LANG="de")
+               NC_INIT="systemd", NC_PKG="apt", NC_OBS_WARTEN="0", NC_LANG="de",
+               # Kein sudo: die CI laeuft nicht als root, und sudo setzt den
+               # PATH zurueck — dann traefe jeder Aufruf das echte systemctl.
+               NC_OBS_SUDO="")
 
     def lauf(*args, env_datei=None):
         if env_datei is not None:
