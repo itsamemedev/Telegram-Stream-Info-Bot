@@ -1722,8 +1722,10 @@ async def _update_liveboard():
     ch = discord.utils.get(guild.text_channels, name="live-feed")
     if not ch:
         return
-    with db_conn() as conn:
-        rows = conn.execute("SELECT username, recording FROM trackings WHERE last_live=1 ORDER BY username").fetchall()
+    # v4.2-W117: neben dem Loop — das Board laeuft periodisch, und ein
+    # blockierter Loop verpasst hier den Discord-Heartbeat.
+    rows = await db_async(lambda c: c.execute(
+        "SELECT username, recording FROM trackings WHERE last_live=1 ORDER BY username").fetchall())
     desc = "\n".join((("🔴 " if r["recording"] else "🟢 ") + f"@{r['username']}") for r in rows) if rows else "Gerade niemand live."
     # F84: Restream-Status direkt im Board — Community sieht sofort ob Kick läuft
     _ra = _restream_active()

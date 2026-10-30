@@ -21427,6 +21427,260 @@ def _test_v42_w116_lagebild_in_echtzeit():
        "fester Arbeitsplatz, Einsatz bei echtem Lauf, Status im DOM")
 
 
+def _test_v42_w117_loop_lag_und_spaeher():
+    """Zwischen den beiden Loop-Waechtern lagen zwei Groessenordnungen.
+
+    `_loop_lag_monitor` (W48) meldet ab 3 s, der Stall-Watchdog (W83) dumpt
+    ab 30 s. Ein Loop, der alle paar Sekunden 800 ms steht, erreichte keine
+    der beiden Schwellen — und es gab weder eine Zahl dafuer noch eine
+    Stelle. nc/looplag.py misst in kurzen Schritten und nennt beim Stocken
+    die Zeile, an der der Loop-Thread steht.
+    """
+    import asyncio as _aio
+    import queue as _q
+    import time as _t
+    from nc import looplag as L
+
+    # ── (1) DER RING HAT EINEN DECKEL. Ein Messpfad, der ueber Tage
+    # waechst, ist genau das Leck, das dieser Sprint sucht.
+    L.zuruecksetzen()
+    for _ in range(L.RING + 500):
+        L.erfassen(0.001)
+    assert len(L.ZUSTAND["ring"]) == L.RING, len(L.ZUSTAND["ring"])
+    L.zuruecksetzen()
+    for v in [0.001] * 98 + [0.5, 2.0]:
+        L.erfassen(v)
+    lg = L.lage()
+    assert lg["p50_ms"] == 1.0 and lg["max_ms"] == 2000.0, lg
+    assert lg["p99_ms"] >= 500.0, "ein p99, das zwei Ausreisser von 100 wegmittelt: %r" % lg
+    assert lg["ueber_budget"] == 2, lg
+    # Ohne Takt keine Messung — und das muss dabei stehen, sonst liest sich
+    # "alles 0" wie ein gesunder Loop.
+    assert lg["aktiv"] is False, lg
+
+    # ── (2) DER SPAEHER NENNT DIE STELLE — die eigene UND die innere.
+    L.zuruecksetzen()
+    gemeldet = []
+
+    def _absichtlich_blockiert():
+        _t.sleep(0.45)
+
+    def _wartet_auf_schlange():
+        try:
+            _q.Queue().get(timeout=0.45)    # steht in queue.py/threading.py
+        except _q.Empty:
+            pass
+
+    async def lauf():
+        takt = _aio.ensure_future(L.takt(0.02, 0.05))
+        await _aio.sleep(0.1)
+        L.spaeher_starten(0.1, 0.02, melden=lambda st, d: gemeldet.append((st, d)))
+        await _aio.sleep(0.1)
+        _absichtlich_blockiert()
+        await _aio.sleep(0.2)
+        _wartet_auf_schlange()
+        await _aio.sleep(0.2)
+        lage = L.lage()
+        takt.cancel()
+        await _aio.sleep(0)
+        return lage
+
+    lage = _aio.run(lauf())
+    L.ZUSTAND["spaeher"][1].set()
+    stellen = [b["stelle"] for b in L.bremser(5)]
+    assert any("_absichtlich_blockiert" in st for st in stellen), stellen
+    # Zwei eigene Rahmen, nicht einer: haengt der Loop in nc/dbwrap, ist der
+    # innerste eigene Rahmen db_conn — und den hat jeder. Die Abhilfe steht
+    # beim Aufrufer.
+    assert any(st.startswith("test_nc_modules.py:lauf:") and
+               " > test_nc_modules.py:_absichtlich_blockiert:" in st for st in stellen), stellen
+    innen = [st for st in stellen if "_wartet_auf_schlange" in st]
+    assert innen and " <- " in innen[0] and "threading.py" in innen[0], \
+        "die innere Haelfte fehlt — woran es haengt, ist die halbe Antwort: %r" % stellen
+    # Nur Dateinamen, nie Pfade: /healthz haengt ohne Anmeldung an UptimeRobot.
+    assert not any(os.path.dirname(os.path.abspath("bot.py")) in st for st in stellen), stellen
+    assert len(gemeldet) == 2 and all(d >= 0.3 for _, d in gemeldet), gemeldet
+    assert lage["max_ms"] >= 300 and lage["aktiv"], lage
+    assert lage["stockungen"] == 2, lage
+
+    # ── (3) DAS REGISTER HAT EINEN DECKEL — die Stellen sind offenes
+    # Vokabular, jede Zeile des Bestands kann eine sein.
+    for i in range(L.MAX_STELLEN * 3):
+        L._verbuchen("bot.py:f:%d" % i, 0.3, float(i))
+    assert len(L.ZUSTAND["stellen"]) == L.MAX_STELLEN
+    L.zuruecksetzen()
+
+    ok("W117: Loop-Lag in ms mit p50/p99/max, Ring und Register gedeckelt, "
+       "Spaeher nennt eigene und innere Stelle, ohne Pfad")
+
+
+def _test_v42_w117_log_flut_haelt_den_loop_nicht():
+    """Unter einer Log-Flut bleibt der Loop im Budget — gemessen, nicht
+    behauptet. Und ein Handler, der nach dem Umhaengen dazukommt, laeuft
+    nicht still an der Schleuse vorbei.
+
+    Die Gegenprobe steht im Vertrag selbst: dieselbe Flut OHNE Schleuse
+    muss den Loop deutlich ueber das Budget treiben, sonst beweist die
+    Messung mit Schleuse nichts.
+    """
+    import asyncio as _aio
+    import logging as _lg
+    import threading as _th
+    import time as _t
+    from nc import logschleuse as S
+    from nc import looplag as L
+
+    class Langsam(_lg.StreamHandler):
+        """Platte unter Volllast: 20 ms je Zeile, und schreibend (Stream)."""
+
+        def __init__(self):
+            super().__init__(io.StringIO())
+            self.n = 0
+
+        def emit(self, satz):
+            _t.sleep(0.02)
+            self.n += 1
+
+    def flut_messen(lg_):
+        L.zuruecksetzen()
+
+        async def lauf():
+            takt = _aio.ensure_future(L.takt(0.01, 0.05))
+            await _aio.sleep(0.05)
+            # Gleichzeitig Threads, die auch loggen — so wie die 21 vom 18.09.
+            stopp = _th.Event()
+
+            def fremd():
+                while not stopp.is_set():
+                    lg_.info("thread")
+                    _t.sleep(0.005)
+            ths = [_th.Thread(target=fremd, daemon=True) for _ in range(3)]
+            for th in ths:
+                th.start()
+            for i in range(10):
+                for j in range(10):
+                    lg_.info("loop %d/%d", i, j)
+                await _aio.sleep(0.01)
+            stopp.set()
+            for th in ths:
+                th.join()
+            lage = L.lage()
+            takt.cancel()
+            await _aio.sleep(0)
+            return lage
+        return _aio.run(lauf())
+
+    S.zuruecksetzen()
+    lg = _lg.getLogger("w117_flut")
+    lg.propagate = False
+    lg.setLevel(_lg.INFO)
+    for h in list(lg.handlers):
+        lg.removeHandler(h)
+    lg.addHandler(Langsam())
+    try:
+        ohne = flut_messen(lg)
+        assert ohne["max_ms"] > 180, \
+            "die Gegenprobe blockiert nicht (%r) — dann beweist die Messung " \
+            "mit Schleuse nichts" % ohne
+        S.entkoppeln(lg, max_wartend=200)
+        mit = flut_messen(lg)
+        assert mit["max_ms"] < 100, \
+            "unter Log-Flut stand der Loop %.0f ms trotz Schleuse (ohne: %.0f ms)" \
+            % (mit["max_ms"], ohne["max_ms"])
+
+        # ── NACHZUEGLER: ein schreibender Handler, der nach dem Umhaengen
+        # an den Logger kommt, schriebe wieder synchron.
+        spaet = _lg.StreamHandler(io.StringIO())
+        lg.addHandler(spaet)
+        assert ("w117_flut", "StreamHandler") in S.synchrone_handler()
+        assert S.nachziehen(lg) == 1
+        assert ("w117_flut", "StreamHandler") not in S.synchrone_handler()
+        assert spaet in S._HORCHER[0].handlers, "umgezogen heisst: der Horcher bedient ihn"
+        # Ein reiner Speicher-Handler blockiert nicht und zaehlt nicht.
+        class Speicher(_lg.Handler):
+            def emit(self, satz):
+                pass
+        lg.addHandler(Speicher())
+        assert not [x for x in S.synchrone_handler() if x[0] == "w117_flut"]
+        # Ein Unter-Logger wird gemeldet, aber NICHT umgezogen: der Horcher
+        # wuerde ihm sonst alle Datensaetze geben, nicht nur seine.
+        unter = _lg.getLogger("w117_flut.unter")
+        uh = _lg.StreamHandler(io.StringIO())
+        unter.addHandler(uh)
+        assert ("w117_flut.unter", "StreamHandler") in S.synchrone_handler()
+        unter.removeHandler(uh)
+    finally:
+        S.zuruecksetzen()
+        L.zuruecksetzen()
+        for h in list(lg.handlers):
+            lg.removeHandler(h)
+
+    ok("W117: Log-Flut mit drei loggenden Threads haelt den Loop unter 100 ms "
+       "(Gegenprobe ohne Schleuse > 180 ms); Nachzuegler-Handler werden gefunden")
+
+
+def _test_v42_w117_loop_verdrahtung_und_sperre():
+    """Die Messung haengt im Bot, und die heissen Pfade blockieren nicht mehr.
+
+    Gemessen im Syntaxbaum, nicht im rohen Text — ein Vertrag darf seine
+    eigene Begruendung nicht als Befund lesen (W102 bis W104).
+    """
+    import ast as _ast
+    sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "tools"))
+    import loopblocker as LB
+
+    # ── (1) DIE SPERRE ZAEHLT RICHTIG. Direkt in async: ja. In einer
+    # verschachtelten def oder einem Lambda (der Weg in den Thread): nein.
+    probe = _ast.parse(
+        "async def a():\n"
+        "    with db_conn() as c: pass\n"
+        "    _time_mod.sleep(1)\n"
+        "    def _lauf():\n"
+        "        with db_conn() as c: pass\n"
+        "    await db_async(lambda c: open('x'))\n"
+        "def b():\n"
+        "    with db_conn() as c: pass\n")
+    treffer = LB.sammle("probe.py", probe)
+    assert [(t[1], t[3]) for t in treffer] == [(2, "db_conn"), (3, "_time_mod.sleep")], treffer
+
+    # ── (2) DIE HEISSEN PFADE SIND FREI. Restream-Steuerung, Intel-Index
+    # (Einbettungen einer ganzen Aufnahme!), Director, Liveboard.
+    befunde = []
+    for datei in ("bot.py", "discordbot.py"):
+        baum = _ast.parse(io.open(datei, encoding="utf-8").read())
+        befunde += LB.sammle(datei, baum)
+    frei = {"_intel_index_one", "auto_start_due", "_monitor", "_switch_to_next_live",
+            "_director_finalize", "_clip_to_discord", "oracle_handle",
+            "_update_liveboard", "start"}
+    rest = [b for b in befunde if b[2] in frei and b[3] == "db_conn"]
+    assert not rest, "blockierender Datenbankzugriff wieder direkt im Loop: %r" % rest
+
+    # ── (3) DIE VERDRAHTUNG.
+    src = io.open("bot.py", encoding="utf-8").read()
+    baum = _ast.parse(src)
+    fn = {n.name: n for n in baum.body if isinstance(n, (_ast.FunctionDef, _ast.AsyncFunctionDef))}
+
+    def ruft(f, name):
+        return any(isinstance(c, _ast.Call) and getattr(c.func, "id", None) == name
+                   for c in _ast.walk(fn[f]))
+    assert ruft("run_bot", "_loop_takt_starten"), "der Takt startet nicht"
+    assert ruft("_loop_lag_monitor", "_log_schleuse_pruefen"), \
+        "niemand sieht nach, ob die Log-Schleuse umgangen wird"
+    hz = _ast.unparse(fn["healthz"])
+    for k in ("loop_lag=_nc_looplag.lage()", "log_synchron="):
+        assert k in hz, "/healthz traegt %s nicht" % k
+    # Funktionsnamen und Zeilen gehoeren hinter die Anmeldung, nicht in /healthz.
+    assert "bremser" not in hz
+    assert "bremser(" in _ast.unparse(fn["api_debug_threads"])
+    # Die Stockungsmeldung geht durch die Drossel — der Spaeher kann sonst
+    # bei einer Stelle, die jede Minute stockt, das Log fluten.
+    sm = _ast.unparse(fn["_loop_stockung_melden"])
+    assert "_nc_meldetakt.melden(" in sm and "_nc_meldetakt.zusatz(" in sm, sm
+
+    ok("W117: Sperre zaehlt nur direkte Aufrufe, heisse Pfade frei, Takt und "
+       "Schleusen-Pruefung verdrahtet, Bremser nur hinter der Anmeldung")
+
+
 def main():
     tmp, rid = richte_testdatenbank_ein()
     ok("db_conn aus nc.dbwrap: echtes Schema angelegt, Commit durchgelaufen")
@@ -21719,6 +21973,9 @@ def main():
     _test_v42_w114_tonspur_garantie_im_preflight()
     _test_v42_w115_quadratische_pixel()
     _test_v42_w116_lagebild_in_echtzeit()
+    _test_v42_w117_loop_lag_und_spaeher()
+    _test_v42_w117_log_flut_haelt_den_loop_nicht()
+    _test_v42_w117_loop_verdrahtung_und_sperre()
     _test_v42_w60_azrael_cooldown_je_plattform()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)

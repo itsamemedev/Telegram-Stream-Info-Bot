@@ -315,6 +315,17 @@ def _umbruch(text, breite):
 # Quelltext nicht mehr liest, bricht den Generator ab (siehe main): sonst
 # erklaert die Vorlage still einen Schalter, den es nicht gibt.
 ERKLAERUNG = {
+    "LOOP_TAKT_MS":
+        "Schrittweite der Loop-Feinmessung (W117). Jede Verspaetung gegen "
+        "diesen Schlaf ist Zeit, in der der Event-Loop stand. Zu sehen in "
+        "/healthz unter loop_lag (p50/p99/max ueber 5 Minuten).",
+    "LOOP_BUDGET_MS":
+        "Ab hier zaehlt ein Messschritt als 'ueber Budget' (loop_lag."
+        "ueber_budget). Reine Zaehlung, kein Alarm.",
+    "LOOP_SPAEHER_MS":
+        "Steht der Loop laenger als das, liest ein eigener Thread die Zeile, "
+        "an der er steht, und meldet sie gedrosselt (ab 1 s auf ERROR). "
+        "Liste: /api/debug/threads -> loop_bremser. 0 = aus.",
     "AI_PROVIDER":
         "Wer antwortet: auto (Vorgabe) = lokales llama.cpp, sobald es auf "
         "BRAIN_LLAMACPP_URL antwortet, sonst die keyless Cloud; lokal = immer "

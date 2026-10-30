@@ -216,6 +216,14 @@ jobs:
       - name: Kein Zuwachs an stummen Fehlerpfaden
         run: python tools/blindstellen.py --sperre
 
+      # v4.2-W117. Jede grosse Stockung dieses Bestands hatte dieselbe Form:
+      # ein synchroner Aufruf direkt in einer `async def` (W26/W29: db_conn
+      # unter Plattenlast, 30 bis 68 s; W97: Log-Handler-Sperre, 176 s). Er
+      # haelt nicht die eine Abfrage an, sondern den ganzen Bot. Wie bei
+      # stillecheck und blindstellen bleibt der Bestand, nur Wachstum faellt.
+      - name: Kein Zuwachs an blockierenden Aufrufen im Event-Loop
+        run: python tools/loopblocker.py --sperre
+
       # v4.2-W90. Die vier Vertragssuiten legten 35 temporäre Verzeichnisse
       # an und räumten drei davon weg. Auf der Maschine, auf der W89 entstand,
       # waren nach einem Tag Arbeit 5093 Verzeichnisse mit rund 30 GB

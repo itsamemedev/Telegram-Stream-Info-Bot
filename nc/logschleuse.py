@@ -241,3 +241,75 @@ def zuruecksetzen() -> None:
     stoppen(zeitlimit=2.0)
     with _SPERRE:
         _VERLOREN[0] = 0
+
+
+# ═════════════════════════════════════════════════════════════════════════
+# v4.2-W117: Handler, die NACH dem Umhaengen dazukommen
+# ═════════════════════════════════════════════════════════════════════════
+#
+# `entkoppeln` haengt einmal um, beim Import von bot.py. Alles, was danach
+# einen Handler setzt, schreibt wieder synchron — und davon gibt es mehr
+# Kandidaten als man denkt: `discord.utils.setup_logging` (ruft discord.py
+# selbst, sobald jemand `client.run()` statt `client.start()` benutzt),
+# `logging.basicConfig(force=True)` in einer Bibliothek, ein Werkzeug, das
+# sich seinen eigenen `StreamHandler` an den eigenen Logger haengt. Keiner
+# davon meldet sich. Der Loop steht dann wieder an der Handler-Sperre, und
+# /healthz zeigte bis hierher `log_wartend` wie im Normalbetrieb.
+#
+# Gezaehlt werden nur Handler, die SCHREIBEN (`StreamHandler` und damit auch
+# jeder `FileHandler`). Ein Handler, der nur in den Speicher legt — der
+# Discord-Fehlerspiegel aus nc.logfilters haengt eine Zeile an eine deque —
+# blockiert nicht und gehoert nicht in diese Zahl.
+
+def _schreibend(h) -> bool:
+    return isinstance(h, logging.StreamHandler) and not isinstance(h, QueueHandler)
+
+
+def synchrone_handler() -> list:
+    """Alle schreibenden Handler, die an der Schleuse vorbei laufen.
+       -> [(logger_name, handler_klasse), …], fuer /healthz.
+
+       Nur Namen, keine Pfade: /healthz ist ohne Anmeldung erreichbar, und
+       der Pfad einer Logdatei verraet das Installationsverzeichnis."""
+    aus = []
+    wurzel = logging.getLogger()
+    for h in list(wurzel.handlers):
+        if _schreibend(h):
+            aus.append(("root", type(h).__name__))
+    # loggerDict kann waehrend des Durchlaufs wachsen (ein Thread legt einen
+    # Logger an) — deshalb die Kopie.
+    for name, lg in list(logging.Logger.manager.loggerDict.items()):
+        if not isinstance(lg, logging.Logger):
+            continue        # PlaceHolder fuer noch nicht angelegte Eltern
+        for h in list(lg.handlers):
+            if _schreibend(h):
+                aus.append((name, type(h).__name__))
+    return aus
+
+
+def nachziehen(wurzel: logging.Logger = None) -> int:
+    """Schreibende Handler, die nachtraeglich am Wurzel-Logger haengen, in
+       den laufenden Horcher umziehen. -> wieviele umgezogen sind.
+
+       Nur am Wurzel-Logger: dort ist die Zuordnung eindeutig, der Horcher
+       bedient genau diese Handler. Ein Handler an einem Unter-Logger
+       bekommt nur DESSEN Datensaetze — ihn an den Horcher zu haengen,
+       wuerde ihm alle geben. Die bleiben gemeldet (`synchrone_handler`),
+       aber unangetastet.
+
+       Das Tupel wird als Ganzes ersetzt, nicht veraendert: der Horcher
+       iteriert `self.handlers` in seinem eigenen Thread, und eine einzelne
+       Zuweisung ist unter dem GIL atomar.
+    """
+    horcher = _HORCHER[0]
+    wurzel = wurzel or logging.getLogger()
+    # Ohne laufenden Horcher gibt es kein Ziel — dann bleibt alles, wo es
+    # ist, und `synchrone_handler()` meldet es. `wartend()` sagt in dem
+    # Fall ohnehin KEINE_SCHLEUSE.
+    neu = [] if horcher is None else [
+        h for h in list(wurzel.handlers) if _schreibend(h)]
+    if neu:
+        for h in neu:
+            wurzel.removeHandler(h)
+        horcher.handlers = tuple(horcher.handlers) + tuple(neu)
+    return len(neu)
