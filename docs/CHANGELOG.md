@@ -11,6 +11,36 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Aufnahmen: weniger verlorene Minuten bei Schnitt und Hänger (v4.2 W131)
+
+- **Die größte Lücke war die Sperre, nicht der Stream.** Die Sperre „eine
+  Aufnahme je Tracking“ gab erst das `finally` von
+  `handle_recording_finished` frei — nach Tonprüfung, Datenbank und dem
+  Telegram-Upload an alle Chats. Bis dahin endete jeder Neustart mit „Lock
+  nicht bekommen … Skip.“. Bei jedem geplanten URL-Schnitt (etwa alle 28
+  Minuten) und nach jedem Hänger fehlte so mindestens die Dauer des Uploads.
+  Jetzt wird die Sperre frei, sobald ffmpeg beendet ist. Das `finally`
+  räumt nur noch, wenn das oben nicht geschehen ist; sonst nähme es der
+  Folgeaufnahme ihre Sperre.
+- **Hänger nach 25 s statt bis 105 s.** Gemessen mit echtem ffmpeg und dem
+  echten Bauer: Eine gesunde Aufnahme (fragmentiertes MP4) wächst bei FLV
+  spätestens alle ~2 s, bei HLS spätestens nach einer Segmentlänge. Die alte
+  Grenze (45–90 s, Takt 15 s) war mit Flush-Pausen eines wachsenden `moov`
+  begründet, das dieses Format nicht hat. Neu sind Grenze 25 s (`REC_STALL_S`),
+  Takt 5 s, Deckel 40 s für eine Platte unter Last und `-rw_timeout` 15 s,
+  damit ffmpeg sich vor dem Wächter meldet (B56). Nach einem Hänger mit Daten
+  startet die nächste Aufnahme sofort statt nach 20 s.
+- **„Reste aufräumen“ löschte die laufende Aufnahme.** Sie hat erst nach
+  dem Ende eine Zeile in `recordings` und galt deshalb als „kein-db-eintrag“.
+  ffmpeg schrieb danach in eine gelöschte Datei, und am Ende war nichts da.
+  Jetzt zählen laufende Aufnahmen (`trackings.recording=1`) und Dateien
+  jünger als 15 Minuten nicht als verwaist; die Pfade werden auf beiden
+  Seiten mit `abspath` verglichen (Lehre aus W98).
+- Offen und bewusst nicht in dieser Welle: Übergabe mit Überlappung beim
+  geplanten Schnitt. Dafür müsste die Sperre zwei Aufnahmen desselben
+  Trackings kurz nebeneinander erlauben; das ist die heikelste Stelle des
+  Bestands.
+
 ### Sendebrücke: Restreams brechen bei Quellwechsel nicht mehr ab (v4.2 W130)
 
 - **Der Befund:** ein Restream war EIN ffmpeg — TikTok rein, Plattform raus.
