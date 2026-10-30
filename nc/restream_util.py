@@ -169,3 +169,69 @@ def slot_belegt(single, laufende, rid):
         if r != rid:
             return r
     return None
+
+
+# ═════════════════════════════════════════════════════════════════════════
+# v4.2-W132: ein Start je Ziel zur selben Zeit
+# ═════════════════════════════════════════════════════════════════════════
+#
+# Der Riegel `if rid in self._procs` am Anfang von RestreamManager.start greift
+# erst, wenn der Prozess laeuft — und dazwischen liegen Datenbank, YouTube-Key
+# (bis 10 s), Quell-Aufloesung und Overlay-Start. Am 30.10. kamen zwei Starts
+# fuer #5 im Abstand von zwei Sekunden (22:50:21 und 22:50:23, der zweite aus
+# auto_start_due), beide passierten den Riegel, und zwei ffmpeg sendeten auf
+# denselben Kick- und Twitch-Key. 20 s spaeter lehnten beide Plattformen das
+# zweite tee-Ziel mit "Input/output error" ab — dasselbe Bild wie beim
+# Einzel-Slot-Befund vom 30.08., nur fuer DASSELBE Ziel.
+#
+# Als Dekorator statt im Rumpf: der Rumpf hat ueber zwanzig Rueckgabestellen,
+# und jede einzelne muesste die Sperre wieder freigeben. Eine vergessene haette
+# das Ziel bis zum Neustart gesperrt.
+
+import functools as _functools                                  # noqa: E402
+import logging as _logging                                      # noqa: E402
+
+_log = _logging.getLogger("TikTokBot")
+
+STARTEND_ATTR = "_starting"
+
+
+def startend(obj) -> dict:
+    """Die Ziele, deren Start gerade laeuft: {rid: marke}."""
+    d = obj.__dict__.get(STARTEND_ATTR)
+    if d is None:
+        d = obj.__dict__[STARTEND_ATTR] = {}
+    return d
+
+
+def ein_start_je_ziel(fn):
+    """Laesst je `rid` nur einen Start gleichzeitig durch.
+
+    Der zweite Aufruf bekommt dieselbe Antwort wie ein Start auf ein schon
+    laufendes Ziel (`already`). Freigegeben wird im `finally` — und vorher
+    schon durch `freigeben()`, sobald der Prozess in `_procs` steht: ab dort
+    deckt der alte Riegel den Fall, und ein Wiederanlauf aus dem Monitor darf
+    nicht an einem Start haengenbleiben, der nur noch aufraeumt.
+    """
+    @_functools.wraps(fn)
+    async def huelle(self, rid, *args, **kwargs):
+        laufend = startend(self)
+        if rid in laufend:
+            # Kein Fehler, aber sagen: sonst steht im Log "starte #5", und
+            # es startet nichts.
+            _log.info("Restream #%s: Start laeuft bereits — zweiter Aufruf "
+                      "verworfen (sonst zwei Sender auf einem Key).", rid)
+            return {"ok": True, "already": True, "starting": True}
+        marke = object()
+        laufend[rid] = marke
+        try:
+            return await fn(self, rid, *args, **kwargs)
+        finally:
+            if laufend.get(rid) is marke:
+                del laufend[rid]
+    return huelle
+
+
+def freigeben(obj, rid) -> None:
+    """Der Prozess steht in `_procs` — die Startsperre fuer `rid` loesen."""
+    startend(obj).pop(rid, None)

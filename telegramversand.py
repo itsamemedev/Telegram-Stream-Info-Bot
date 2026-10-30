@@ -80,6 +80,26 @@ async def split_and_send_video(chat_id, filepath, bot_app, username,
        normalen DSL-Uplinks (würde TimedOut werfen). Wir setzen ausreichend
        Reserve und melden Probleme zurück damit der User nicht stillschweigend
        auf Uploads wartet die nie kommen."""
+    # v4.2-W132: die Sperre VOR dem Zerlegen fragen. Bisher las erst
+    # _send_one() sie — nach einem vollstaendigen ffmpeg-Durchgang ueber die
+    # Aufnahme. Am 30.10. zerlegte die Box so Aufnahmen bis 1,5 GB, nur um
+    # beim ersten Teil "abgebrochen" zu melden, und das bei Load 7,9 neben
+    # einem laufenden Restream. Die Datei bleibt liegen; nichts geht verloren.
+    if _is_dead(chat_id):
+        _grund = ("Chat-ID gesperrt (zuvor 'chat not found' oder keine "
+                  "Telegram-ID) — Upload übersprungen. TELEGRAM_CHAT_ID bzw. "
+                  "das Tracking prüfen.")
+        log.error("Upload @%s fehlgeschlagen: %s Die Aufnahme bleibt auf dem "
+                  "Server: %s", username, _grund, filepath)
+        # Derselbe Meldeweg wie bisher nach dem Zerlegen: _safe_send kennt
+        # die Sperre selbst und verwirft die Zeile, wenn der Chat tot ist —
+        # und wirft nie (Vertrag von bot._safe_send).
+        await _safe_send(
+            bot_app.bot, chat_id,
+            f"⚠ <b>UPLOAD FEHLGESCHLAGEN · @{safe(username)}</b>\n"
+            f"<code>{safe(_grund)}</code>",
+            parse_mode=ParseMode.HTML, disable_notification=True)
+        return
     # Timeouts: writes können bei 50 MB auf 8 Mbit/s = ~50s dauern. Mit Reserve.
     UPLOAD_TIMEOUTS = dict(
         read_timeout=120,       # Antwort von Telegram

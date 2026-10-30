@@ -416,6 +416,22 @@ def load_dict() -> dict:
         # verstopft ein einziges Rechteproblem das komplette Log und versteckt
         # echte Fehler. Der Fehler selbst wird NICHT verschluckt — nur die
         # Wiederholung entschärft.
+        #
+        # v4.2-W132: einen gueltigen Vorstand NICHT wegwerfen. yt-dlp schreibt
+        # seine Cookie-Datei (`--cookies`) beim Beenden zurueck, und zwar
+        # nicht atomar: oeffnen mit Kuerzen, dann schreiben. Wer in dieser
+        # Spanne liest, sieht eine leere oder halbe Datei — am 30.10. dreimal
+        # als "does not look like a Netscape format cookies file", jedesmal
+        # mitten im Betrieb und nach einem sauberen Start. Mit `{}` gingen
+        # die naechsten Anfragen ohne Cookies raus (TikTok antwortet darauf
+        # mit 403). Der letzte gelesene Stand ist dagegen Sekunden alt.
+        vorher = _COOKIES_CACHE.get("v")
+        if vorher and vorher[2]:
+            _warnen(f"Cookies konnten nicht geladen werden: {e} — der zuletzt "
+                    f"gelesene Stand ({len(vorher[2])} Cookies) bleibt in "
+                    f"Gebrauch. Haeufigste Ursache: yt-dlp schreibt die Datei "
+                    f"gerade zurueck.")
+            return vorher[2]
         _warnen(f"Cookies konnten nicht geladen werden: {e}")
         return {}
 

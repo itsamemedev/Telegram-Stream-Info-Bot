@@ -71,6 +71,7 @@ from __future__ import annotations
 
 import logging
 import queue
+import re as _re
 import sys as _sys
 import threading
 from logging.handlers import QueueHandler, QueueListener
@@ -93,6 +94,25 @@ _VERLOREN = [0]
 _HORCHER: list = [None]
 
 
+# v4.2-W132: Telegram-Bot-Token im Log. httpx loggt jede Anfrage auf INFO mit
+# voller Adresse, und die Bot-API traegt den Token IM PFAD:
+#     POST https://api.telegram.org/bot<id>:<geheimnis>/getUpdates
+# Im debug.log vom 30.10. stand er 773-mal im Klartext — in einer Datei, die
+# der Betreiber zur Fehlersuche weitergibt. Geschwaerzt wird der geheime Teil;
+# die Bot-ID davor ist oeffentlich (sie steht in jedem t.me-Link) und hilft
+# beim Zuordnen. Hier und nicht an einem Logger: jede Zeile jeder Bibliothek
+# laeuft durch die Schleuse, und erst `prepare` hat den Traceback zum Text
+# gemacht — ein Token in einer Ausnahme-Meldung wird so mit erfasst.
+_TOKEN_MUSTER = _re.compile(r"(?<!\d)(\d{6,12}):[A-Za-z0-9_-]{30,}")
+
+
+def schwaerzen(text: str) -> str:
+    """Telegram-Bot-Tokens in `text` unkenntlich machen."""
+    if not text or ":" not in text:
+        return text
+    return _TOKEN_MUSTER.sub(r"\1:<geschwaerzt>", text)
+
+
 class Schleuse(QueueHandler):
     """Legt den Datensatz in die Schlange — und wartet dabei nie.
 
@@ -100,6 +120,12 @@ class Schleuse(QueueHandler):
     Schlange flogen `queue.Full` bis in den Aufrufer, also mitten in den
     Event-Loop. Genau dort darf aus einer Logzeile kein Fehler werden.
     """
+
+    def prepare(self, record):
+        record = super().prepare(record)
+        if isinstance(record.msg, str):
+            record.msg = schwaerzen(record.msg)
+        return record
 
     def enqueue(self, record):
         try:
@@ -313,3 +339,55 @@ def nachziehen(wurzel: logging.Logger = None) -> int:
             wurzel.removeHandler(h)
         horcher.handlers = tuple(horcher.handlers) + tuple(neu)
     return len(neu)
+
+
+# ═════════════════════════════════════════════════════════════════════════
+# v4.2-W132: zwei bekannte Unter-Logger hinter die Schleuse holen
+# ═════════════════════════════════════════════════════════════════════════
+#
+# `nachziehen` laesst Handler an Unter-Loggern bewusst in Ruhe (Begruendung
+# dort), und `synchrone_handler` meldet sie. Das error.log vom 30.10. traegt
+# diese Meldung alle 15 Minuten, immer mit denselben zwei Namen — eine
+# Meldung, die sich nie aendert und an der niemand etwas tun kann, erzieht
+# zum Wegsehen (W85).
+#
+# Beide Bibliotheken legen ihren Handler genau EINMAL an und schalten dabei
+# `propagate` ab, nachgesehen im Quelltext:
+#   TikTokLive 7.0  client/logger.py   get_logger(): nur `if not cls.LOGGER`
+#   huggingface_hub utils/logging.py   _configure_library_root_logger()
+# Beide schreiben auf stderr — unter systemd eine Pipe nach journald, also
+# genau der synchrone Weg, den W97 vom Loop genommen hat. Umgehaengt wird nur
+# ein KONSOLEN-Handler (Strom stderr/stdout); eine Datei, die jemand bewusst
+# an diesen Logger gehaengt hat, bleibt, wo sie ist, und weiter gemeldet.
+EINREIHEN = ("TikTokLive", "huggingface_hub")
+
+
+def _konsole(h) -> bool:
+    # Allein am Strom entschieden: ein FileHandler schreibt in seine Datei,
+    # nie auf stderr/stdout — ein eigener isinstance-Riegel daneben war
+    # nachweislich wirkungslos (Mutationsprobe W132).
+    return (_schreibend(h)
+            and getattr(h, "stream", None) in (_sys.stderr, _sys.stdout,
+                                               _sys.__stderr__, _sys.__stdout__))
+
+
+def einreihen(namen=EINREIHEN) -> int:
+    """Konsolen-Handler der genannten Logger entfernen und `propagate`
+       einschalten — ihre Zeilen laufen danach ueber den Wurzel-Logger und
+       damit ueber die Schleuse. -> wieviele Handler entfernt wurden.
+
+       Ohne laufenden Horcher wird nichts angefasst: dann haengen am
+       Wurzel-Logger die synchronen Handler, und der Gewinn waere null."""
+    n = 0
+    vorhanden = logging.Logger.manager.loggerDict
+    for name in (namen if _HORCHER[0] is not None else ()):
+        lg = vorhanden.get(name)
+        if not isinstance(lg, logging.Logger):
+            continue        # noch nicht angelegt — die naechste Runde sieht ihn
+        weg = [h for h in list(lg.handlers) if _konsole(h)]
+        for h in weg:
+            lg.removeHandler(h)
+        if weg:
+            lg.propagate = True
+            n += len(weg)
+    return n

@@ -6,6 +6,8 @@ _DiscordErrorHandler: throttled Fehler-Spiegelung (Callback-injiziert)."""
 import logging
 import time as _time_mod
 
+from nc.logschleuse import schwaerzen   # v4.2-W132: Bot-Token nie nach aussen
+
 _DC_ERR_QUEUE = None     # vom Bot via configure_logfilters gesetzt (deque)
 
 
@@ -82,10 +84,12 @@ class _DiscordErrorHandler(logging.Handler):
                 return
             if record.name.startswith(("discord", "websockets")):
                 return          # keine Rekursion über Fehler des Discord-Stacks selbst
-            _msg = self.format(record)[:900]
+            # v4.2-W132: geschwaerzt wie in der Schleuse — dieser Spiegel
+            # haengt neben ihr und geht nach Discord, also nach aussen.
+            _msg = schwaerzen(self.format(record))[:900]
             _DC_ERR_QUEUE.append({"ts": _time_mod.time(), "msg": _msg})
             _bp = globals().get("_browser_push")
             if _bp:
-                _bp("log.error", "error", record.getMessage()[:120], "")   # F98
+                _bp("log.error", "error", schwaerzen(record.getMessage())[:120], "")   # F98
         except Exception:
             pass
