@@ -377,18 +377,78 @@ def drossel_zusatz(fps, w, h, stufe):
 DROSSEL_MAX = 5
 
 
-def build(source_url, ingest_url, stream_key, transcode=False, tts_fifo=None, rid=None, only_target=None, relay_profile=False, html_ov_fifo=None, targets=None, avatar_feed=None, drossel=0, tonlos=False):
-    """ffmpeg-Relay: zieht die TikTok-Quelle und pusht per RTMP(S)/FLV an Kick/AWS-IVS.
-       Input-Flags spiegeln den BEWÄHRTEN Aufnahme-Pfad (_build_native_cmd): FLV =
-       eine saubere Dauerverbindung (bevorzugt); HLS braucht +genpts+igndts, weil
-       TikTok HLS-Pakete OHNE PTS / mit non-monotonic DTS liefert — sonst bricht
-       der FLV-Muxer mit 'Error submitting a packet to the muxer: End of file'
-       ab (rc=187). copy = kein Re-Encoding; transcode = IVS-konformes H.264/AAC
-       (CFR, 2s-Keyframes) + optionales gebranntes Overlay.
-       -progress pipe:1 → maschinenlesbare Health-Daten auf stdout."""
-    # V37-INDEP: only_target erzwingt EIN konkretes Ausgabeziel (unabhängiger
-    # Modus, ein Prozess pro Plattform). Sonst Standard: Kick-Ingest + tee.
-    target = only_target or (_normalize_ingest(ingest_url) + "/" + stream_key)
+# v4.2-W130: der Ton-Vorfilter des Senders hinter der Sendebruecke.
+BRUECKE_TON = "aresample=async=1:first_pts=0"
+
+# Der Fueller muss dasselbe Format liefern wie ein Zubringer. Gemessen: ein
+# Mono-Zubringer neben einem Stereo-Fueller liess den Sender an JEDER
+# Umschaltung seinen Tonfilter neu aufbauen — aresample begann wieder bei 0,
+# und der Encoder meldete „Queue input is backward in time".
+BRUECKE_GOP_S = 0.5      # Fueller-Keyframe: so lange wartet die Weiche hoechstens
+
+
+def zubringer(source_url, tonlos=False, neukodieren=False):
+    """v4.2-W130: TikTok → MPEG-TS auf stdout, fuer die Sendebruecke.
+
+    -re haelt die Ausgabe im Takt der Quelle. Ohne das liest ffmpeg den
+    HLS-Vorlauf im Schwall, und die Bruecke schriebe Sekunden an Material in
+    Bruchteilen einer Sekunde in den Sender.
+
+    Das Bild bleibt in der Regel eine Kopie — der Sender kodiert ohnehin neu.
+    Neu kodiert wird nur, wenn die Quelle kein H.264 ist (TikTok liefert teils
+    HEVC); der Ton immer, damit jeder Zubringer und der Fueller dasselbe
+    Format tragen (BRUECKE_TON)."""
+    cmd = ["ffmpeg", "-hide_banner", "-loglevel", "warning", "-nostats", "-re"]
+    cmd += quell_eingang(source_url)
+    if tonlos:
+        cmd += _nc_tonspur.stille_eingabe()
+        cmd += ["-map", "0:v:0", "-map", "1:a:0", "-shortest"]
+    else:
+        cmd += ["-map", "0:v:0", "-map", "0:a:0"]
+    if neukodieren:
+        fps = max(15, min(60, RESTREAM_FPS))
+        cmd += ["-c:v", "libx264", "-preset", "veryfast", "-tune", "zerolatency",
+                "-pix_fmt", "yuv420p", "-g", str(fps * 2), "-bf", "0"]
+    else:
+        cmd += ["-c:v", "copy"]
+    cmd += list(_nc_tonspur.AAC_ARGS)
+    cmd += ["-muxdelay", "0", "-muxpreload", "0", "-f", "mpegts", "pipe:1"]
+    return _ff_cmd(cmd, threads=FFMPEG_THREADS_RELAY)
+
+
+def fueller(breite=720, hoehe=1280):
+    """v4.2-W130: das Pausenbild der Sendebruecke — laeuft durchgehend.
+
+    Hochformat 720x1280 wie eine TikTok-Quelle: der Sender skaliert ohnehin
+    auf seine Leinwand, und eine gleiche Groesse erspart ihm beim Umschalten
+    meist den Neuaufbau des Filtergraphen. Eine Flaeche ohne Text, weil
+    jeder Text im Sendebild Benutzertext ist und durch die Uebersetzung
+    muesste; was die Pause bedeutet, steht im Deck. Kostet gemessen kaum
+    Rechenzeit: eine einfarbige Flaeche kodiert x264 zu fast nichts."""
+    fps = max(15, min(60, RESTREAM_FPS))
+    cmd = ["ffmpeg", "-hide_banner", "-loglevel", "warning", "-nostats", "-re",
+           "-f", "lavfi", "-i", "color=c=0x0b0f17:s=%dx%d:r=%d" % (breite, hoehe, fps),
+           *_nc_tonspur.stille_eingabe(),
+           "-map", "0:v:0", "-map", "1:a:0",
+           "-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency",
+           "-pix_fmt", "yuv420p", "-g", str(max(1, int(fps * BRUECKE_GOP_S))),
+           "-b:v", "300k"]
+    cmd += list(_nc_tonspur.AAC_ARGS)
+    cmd += ["-muxdelay", "0", "-muxpreload", "0", "-f", "mpegts", "pipe:1"]
+    return _ff_cmd(cmd, threads=1)
+
+
+def _ist_hls(source_url):
+    return ".m3u8" in (source_url or "").lower()      # FLV/sonstiges → else-Zweig
+
+
+def quell_eingang(source_url):
+    """Die Eingangs-Argumente fuer eine TikTok-Quelle, bis einschliesslich -i.
+
+    v4.2-W130: herausgeloest, weil sie jetzt ZWEI Abnehmer haben — den
+    Sender alter Bauart und den Zubringer der Sendebruecke. Zwei Kopien der
+    Eingangshaertung liefen ueber die Monate auseinander (die 404/403-Lehre
+    aus B124 stand schon einmal nur an einer von zwei Stellen)."""
     cookie_hdr = _cookie_header()
     headers_list = []
     if cookie_hdr:
@@ -396,17 +456,8 @@ def build(source_url, ingest_url, stream_key, transcode=False, tts_fifo=None, ri
     headers_list.append("Referer: https://www.tiktok.com/")
     headers_blob = "\r\n".join(headers_list) + "\r\n"
 
-    url_lc = source_url.lower()
-    is_hls = ".m3u8" in url_lc                      # FLV/sonstiges → else-Zweig
-
-    # v4.2-W60: ab Stufe 3 senkt die Drossel die Bildrate, ab Stufe 4 die
-    # Leinwand. Beides kostet Last, ohne dass etwas aus dem Bild faellt.
-    fps = max(15, min(60, drossel_fps(RESTREAM_FPS, drossel)))
-    gop = fps * 2                                   # IVS/Kick: Keyframe-Intervall ≤ 2s
     # --- Input-Härtung: identisch zum stabilen Recorder (F45/B56/B60) ---
-    cmd = ["ffmpeg", "-hide_banner", "-loglevel", "warning", "-nostats",
-           "-progress", "pipe:1",
-           "-reconnect", "1", "-reconnect_streamed", "1",
+    cmd = ["-reconnect", "1", "-reconnect_streamed", "1",
            "-reconnect_delay_max", "30",                 # 30s reconnect-window (wie Recorder)
            # B124-Analog (bisher fehlte der Fix HIER): NICHT "4xx,5xx". Das schloss
            # 404 und 403 ein — beide sind bei TikTok TERMINAL, nicht vorübergehend
@@ -420,7 +471,7 @@ def build(source_url, ingest_url, stream_key, transcode=False, tts_fifo=None, ri
            "-reconnect_on_network_error", "1",
            "-rw_timeout", "30000000",                    # 30s I/O-timeout (gilt für HTTP Connect+Read, versionsübergreifend)
            "-analyzeduration", "10000000", "-probesize", "15000000"]
-    if is_hls:
+    if _ist_hls(source_url):
         # B60-Analog: HLS ohne PTS + non-monotonic DTS → +genpts erzeugt PTS,
         # +igndts ignoriert kaputte DTS, +flush_packets schreibt sofort raus.
         # -timeout komplett entfernt: älteres ffmpeg kennt die Option für HTTP/HLS
@@ -433,6 +484,43 @@ def build(source_url, ingest_url, stream_key, transcode=False, tts_fifo=None, ri
     if _rp:
         cmd += ["-http_proxy", _rp]
     cmd += ["-i", source_url]
+    return cmd
+
+
+def build(source_url, ingest_url, stream_key, transcode=False, tts_fifo=None, rid=None, only_target=None, relay_profile=False, html_ov_fifo=None, targets=None, avatar_feed=None, drossel=0, tonlos=False, bruecke=False):
+    """ffmpeg-Relay: zieht die TikTok-Quelle und pusht per RTMP(S)/FLV an Kick/AWS-IVS.
+       Input-Flags spiegeln den BEWÄHRTEN Aufnahme-Pfad (_build_native_cmd): FLV =
+       eine saubere Dauerverbindung (bevorzugt); HLS braucht +genpts+igndts, weil
+       TikTok HLS-Pakete OHNE PTS / mit non-monotonic DTS liefert — sonst bricht
+       der FLV-Muxer mit 'Error submitting a packet to the muxer: End of file'
+       ab (rc=187). copy = kein Re-Encoding; transcode = IVS-konformes H.264/AAC
+       (CFR, 2s-Keyframes) + optionales gebranntes Overlay.
+       -progress pipe:1 → maschinenlesbare Health-Daten auf stdout."""
+    # V37-INDEP: only_target erzwingt EIN konkretes Ausgabeziel (unabhängiger
+    # Modus, ein Prozess pro Plattform). Sonst Standard: Kick-Ingest + tee.
+    target = only_target or (_normalize_ingest(ingest_url) + "/" + stream_key)
+    is_hls = (not bruecke) and _ist_hls(source_url)
+    if bruecke:
+        # Die Bruecke kodiert den Ton im Zubringer immer (AAC_ARGS) und legt
+        # bei tonloser Quelle selbst Stille an — der Sender sieht nie eine
+        # Quelle ohne Ton, und eine zweite Stille hier verschoebe die Indizes.
+        tonlos = False
+    # v4.2-W60: ab Stufe 3 senkt die Drossel die Bildrate, ab Stufe 4 die
+    # Leinwand. Beides kostet Last, ohne dass etwas aus dem Bild faellt.
+    fps = max(15, min(60, drossel_fps(RESTREAM_FPS, drossel)))
+    gop = fps * 2                                   # IVS/Kick: Keyframe-Intervall ≤ 2s
+    cmd = ["ffmpeg", "-hide_banner", "-loglevel", "warning", "-nostats",
+           "-progress", "pipe:1"]
+    if bruecke:
+        # v4.2-W130: der Sender liest die Sendebruecke (nc/sendebruecke.py)
+        # von stdin. Keine Netz-Optionen: die Zubringer tragen die
+        # Eingangshaertung, der Sender sieht nur einen lokalen TS-Strom mit
+        # fortlaufenden Zeitstempeln. Der grosse Puffer faengt das kurze
+        # Stocken beim Umschalten ab, ohne dass der Demuxer Pakete verwirft.
+        cmd += ["-reinit_filter", "0", "-thread_queue_size", "4096", "-f", "mpegts",
+                "-fflags", "+genpts+igndts+discardcorrupt", "-i", "pipe:0"]
+    else:
+        cmd += quell_eingang(source_url)
     # Optionale Zusatz-Inputs — Reihenfolge bestimmt den Index! 1) AZRAEL-Stimme (FIFO),
     # 2) Avatar-PNG. Beides nur im Transcode-Modus (Overlay/amix brauchen Re-Encoding).
     use_tts = bool(tts_fifo)            # Stimme auch im Copy-Modus mischen (Audio wird eh re-enkodiert)
@@ -573,6 +661,15 @@ def build(source_url, ingest_url, stream_key, transcode=False, tts_fifo=None, ri
         cmd += _nc_tonspur.stille_eingabe()
         _asrc = "%d:a" % _idx; _idx += 1
     _amap = _asrc + ":0"
+    # v4.2-W130: hinter der Bruecke hat der Ton Luecken, wo die Quelle
+    # gehangen hat (bis luecke_s). aresample fuellt sie mit Stille, sonst
+    # fehlen der Plattform dort die Tonpakete (gemessen: 2,3 s Loch je Haenger).
+    # async=1 und NICHT async=1000: die weiche Angleichung erzeugte an jeder
+    # Umschaltung hunderte Tonpakete in einer Sekunde (629 statt 43 je s).
+    _a_vor = None
+    if bruecke:
+        _a_vor = "[%s]%s[aq]" % (_asrc, BRUECKE_TON)
+        _asrc, _amap = "aq", "[aq]"
     if transcode:
         br = f"{RESTREAM_BITRATE_K}k"
         studio_on = bool(overlay_on and _restream_layout_mode() == "studio")
@@ -588,7 +685,8 @@ def build(source_url, ingest_url, stream_key, transcode=False, tts_fifo=None, ri
             # beendet den Stream nie.
             # v4.2-W114: erst quadratische Pixel, dann das Overlay — scale2ref
             # rechnet in Speicherpixeln (nc/ffmpeg_filters.QUADRAT).
-            fc = [f"[0:v]{_nc_ff.QUADRAT}[src]",
+            fc = ([_a_vor] if _a_vor else []) + [
+                  f"[0:v]{_nc_ff.QUADRAT}[src]",
                   f"[{htmlov_idx}:v][src]scale2ref=w=iw:h=ih:"
                   f"force_original_aspect_ratio=decrease[ovs][base]",
                   "[base][ovs]overlay=(W-w)/2:(H-h)/2:eof_action=repeat:shortest=0[vh]"]
@@ -612,7 +710,7 @@ def build(source_url, ingest_url, stream_key, transcode=False, tts_fifo=None, ri
         elif use_tts or avatar_on or studio_on:
             # filter_complex: Studio-Leinwand ODER drawtext-Kette → optional
             # Avatar-Overlay → amix Quelle+Stimme.
-            fc = []
+            fc = [_a_vor] if _a_vor else []
             vlabel = "0:v"
             if studio_on:
                 sparts, vlabel = _studio_chain(avatar_idx if avatar_on else None, rid=rid,
@@ -646,7 +744,11 @@ def build(source_url, ingest_url, stream_key, transcode=False, tts_fifo=None, ri
             # v4.2-W114: auch ohne Overlay quadratische Pixel (QUADRAT).
             cmd += ["-vf", ",".join([_nc_ff.QUADRAT]
                                     + ([_drawtext_chain(rid)] if overlay_on else []))]
-            cmd += ["-map", "0:v:0", "-map", _amap]
+            if _a_vor:
+                # Ohne Filtergraph: -af auf den Ton, gemappt wird der Eingang.
+                cmd += ["-af", BRUECKE_TON, "-map", "0:v:0", "-map", "0:a:0"]
+            else:
+                cmd += ["-map", "0:v:0", "-map", _amap]
         _preset = RESTREAM_RELAY_PRESET if relay_profile else RESTREAM_X264_PRESET
         _preset = drossel_preset(_preset, drossel)
         if relay_profile:

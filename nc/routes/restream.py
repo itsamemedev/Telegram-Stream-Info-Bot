@@ -431,7 +431,11 @@ def api_restream_list():
                            "uptime_s": live.get(r["id"], {}).get("uptime_s"),
                            "attempts": live.get(r["id"], {}).get("attempts"),
                            "active_transcode": live.get(r["id"], {}).get("transcode"),
-                           "health": live.get(r["id"], {}).get("health")} for r in rows])
+                           "health": live.get(r["id"], {}).get("health"),
+                           # v4.2-W130: Quelle oder Pausenbild — die Zeile
+                           # sagt sonst "live", waehrend die Plattform das
+                           # Pausenbild zeigt.
+                           "bruecke": live.get(r["id"], {}).get("bruecke")} for r in rows])
     except Exception as e:
         return jsonify(ok=False, error=_fehler_text(e, "api_restream_list")), 500
 

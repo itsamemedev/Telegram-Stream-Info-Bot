@@ -26,7 +26,7 @@ benutzt, berät an der Lage vorbei.**
 
 ## Die eine Regel
 
-`bot.py` hat **25.781 Zeilen / 1,2 MB ≈ 295.000 Token**. Diese Datei wird
+`bot.py` hat **25.862 Zeilen / 1,2 MB ≈ 295.000 Token**. Diese Datei wird
 **nie** ganz gelesen und **nie** blind durchsucht. Erst fragen wo etwas steht,
 dann den Ausschnitt holen:
 
@@ -71,7 +71,7 @@ Auf diesem Windows-Rechner heißt der Interpreter **`python`** (3.13.12);
     brain_bridge.py      Adapter Bot ↔ brain/ (M2)
     brain/               KI-Kern: state, rules, router, agents, memory,
                          semantic, knowledge, scheduler, llm, report
-    nc/                  163 Fachmodule: db, scraping, restream, oauth, ledger,
+    nc/                  164 Fachmodule: db, scraping, restream, oauth, ledger,
                          i18n, …
     nc/routes/           38 Flask-Blueprints mit 338 weiteren API-Routen
     locales/             de.json, en.json — der Übersetzungskatalog
@@ -275,8 +275,12 @@ es gibt keinen stillen `except`, sondern ein **stilles `return`**.
 und drei ganz ohne Zeile; `_whisper_transcribe` verschluckte jeden Fehler auf
 `debug`. Ein `log.debug` erscheint in einem INFO- oder ERROR-Log **nie** —
 für den Betreiber ist ein Fehlerpfad auf `debug` dasselbe wie `pass`.
-`tools/blindstellen.py` misst diese Klasse, Bestand **463**, und wie bei
-W65/W66 wird nur das Wachstum gesperrt.
+`tools/blindstellen.py` misst diese Klasse, Bestand **473**, und wie bei
+W65/W66 wird nur das Wachstum gesperrt. Die zehn aus v4.2-W130 sind keine
+Fehlerpfade, sondern der TS-Paketleser der Sendebrücke: `None` heißt dort
+„dieses Paket trägt keinen Zeitstempel", rund 4000-mal je Sekunde. Eine
+Meldung je Paket wäre die Log-Flut aus W97; die Grundlinie ist deshalb
+begründet gehoben, nicht mitgewachsen.
 
 Auf `warning` heben allein genügt aber nicht: der Resolver läuft pro Poll und
 pro verfolgtem Nutzer, ungedrosselt wäre das Log nach einer Stunde unlesbar —
@@ -1174,7 +1178,7 @@ Ledger-Einträge sind append-only mit Hash-Kette; Korrektur = Gegenbuchung.
 
 ## Sicherheit
 
-`.env` hat rund 562 Variablen und enthält Cookies, OAuth-Tokens und Stream-Keys — sie
+`.env` hat rund 565 Variablen und enthält Cookies, OAuth-Tokens und Stream-Keys — sie
 liegt nie im Archiv und wird nie ausgegeben. Beim Logging von
 `streamlink`/`ffmpeg`-Kommandos werden Cookie-Header redacted (F4); dieser
 Redact-Pfad darf bei Änderungen an der Kommandozeile nicht umgangen werden. Das
