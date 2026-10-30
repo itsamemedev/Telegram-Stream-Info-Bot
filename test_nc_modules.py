@@ -23409,6 +23409,93 @@ def _test_v42_w125_azrael_stimme_laut():
     ok("W125: AZRAELs Stimme fehlt nie mehr still im Restream")
 
 
+
+def _test_v42_w126_motd_konfigurieren():
+    """v4.2-W126: motd.sh --configure — pruefen, vorschauen, nur bei Aenderung schreiben.
+
+    Bis dahin hiess "anpassen": /etc/nightcrawler/motd.conf von Hand bearbeiten
+    und beim naechsten Login nachsehen. Ein falscher Wert fiel dabei nicht auf
+    (WIDTH=abc rechnet still mit Unsinn), und ob 60 Zeichen aufs Handy passen,
+    sah man erst nach dem Abmelden.
+    """
+    import os as _os
+    import subprocess as _sp
+    import pruefhilfen as P
+    heim = P.verzeichnis()
+    bot = _os.path.join(heim, "bot")
+    _os.makedirs(bot)
+    open(_os.path.join(bot, "bot.py"), "w").close()
+    conf = _os.path.join(heim, "motd.conf")
+    umg = {k: v for k, v in _os.environ.items()
+           if k not in ("SERVICE", "BOT_DIR", "DASH_PORT", "DB", "DISK_TARGET", "WIDTH", "BARW",
+                        "SHOW_REC", "REC_CACHE_TTL", "CPU_SAMPLE", "COLOR_MODE", "DEST")}
+    umg.update(CONF=conf, BOT_DIR=bot, SERVICE="nc-pruef", COLOR_MODE="off", CPU_SAMPLE="0",
+               NC_LANG="de")
+
+    def lauf(*args, eingabe=None, **mehr):
+        e = dict(umg, **mehr)
+        return _sp.run(["bash", "tools/motd.sh", *args], input=eingabe, capture_output=True,
+                       text=True, env=e, timeout=120)
+
+    def werte():
+        return [z for z in open(conf, encoding="utf-8").read().splitlines() if not z.startswith("#")]
+
+    def rahmen(text):
+        # Die erste Rahmenzeile der MOTD: ihre Laenge IST die Breite.
+        return next(len(z) for z in text.splitlines() if z and set(z) == {"━"})
+
+    # (1) Ohne Rueckfrage: schreibt, und zwar die gepruefte Eingabe.
+    r = lauf("--configure", "--set", "WIDTH=60", "--set", "BARW=12")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "WIDTH='60'" in werte() and "BARW='12'" in werte(), werte()
+    # (2) Idempotent: derselbe Aufruf schreibt nicht noch einmal.
+    vorher = _os.stat(conf).st_mtime_ns
+    r = lauf("--configure", "--set", "WIDTH=60", "--set", "BARW=12")
+    assert r.returncode == 0 and _os.stat(conf).st_mtime_ns == vorher, \
+        "unveraenderte Werte werden neu geschrieben"
+    # (3) Ungueltiges bricht ab (Exit 2) und laesst die Datei unberuehrt —
+    # auch wenn der Wert davor gueltig war: keine halbe Konfiguration.
+    for falsch in (["WIDTH=abc"], ["WIDTH=999"], ["BARW=7"], ["COLOR_MODE=farbig"],
+                   ["SHOW_REC=2"], ["CPU_SAMPLE=5"], ["DASH_PORT=0"], ["FOO=1"], ["WIDTH"],
+                   ["BOT_DIR=" + heim], ["SERVICE=a b"], ["WIDTH=50", "BARW=x"]):
+        args = []
+        for f in falsch:
+            args += ["--set", f]
+        r = lauf("--configure", *args)
+        assert r.returncode == 2, (falsch, r.returncode, r.stdout)
+        assert "WIDTH='60'" in werte(), (falsch, werte())
+    assert lauf("--configure", "--set", "WIDTH=080").returncode == 0, "fuehrende Null gilt als Oktal"
+    assert "WIDTH='080'" in werte()
+    lauf("--configure", "--set", "WIDTH=60")
+    # (4) --dry-run zeigt, schreibt nicht.
+    r = lauf("--configure", "--set", "WIDTH=70", "--dry-run")
+    assert r.returncode == 0 and "+ WIDTH='70'" in r.stdout and "- WIDTH='60'" in r.stdout, r.stdout
+    assert "WIDTH='60'" in werte()
+    # (5) Die gespeicherte Datei WIRKT, und die Umgebung schlaegt sie weiter (W100).
+    assert rahmen(lauf().stdout) == 60, "die motd.conf wirkt nicht"
+    assert rahmen(lauf(WIDTH="45").stdout) == 45, "die Umgebung schlaegt die Datei nicht mehr"
+    # (6) Gefuehrt: ungueltig wird abgewiesen, gueltig sofort in der Vorschau
+    # gezeigt — VOR dem Speichern —, dann geschrieben.
+    r = lauf("--configure", eingabe="3\n999\n3\n44\ns\n")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "ausserhalb von 40 bis 120" in r.stdout, "999 wurde nicht abgewiesen"
+    vor_speichern = r.stdout[:r.stdout.index("Aenderungen an")]
+    assert "Vorschau" in vor_speichern and rahmen(vor_speichern.split("Vorschau", 1)[1]) == 44, \
+        "die Vorschau zeigt nicht den neuen Wert"
+    assert "WIDTH='44'" in werte(), werte()
+    # (7) q verwirft.
+    vorher = _os.stat(conf).st_mtime_ns
+    r = lauf("--configure", eingabe="3\n50\nq\n")
+    assert r.returncode == 0 and _os.stat(conf).st_mtime_ns == vorher and "WIDTH='44'" in werte()
+    # (8) --install schreibt dieselben Felder wie --configure: sonst loescht
+    # der naechste --install still, was --configure gesetzt hat.
+    src = open("tools/motd.sh", encoding="utf-8").read()
+    zeilen = [z.strip() for z in src.splitlines()]
+    i = zeilen.index("write_conf(){ # [$1 = wer schreibt, Vorgabe --install]")
+    assert any(z.startswith('konf_inhalt "${1:---install}" >') for z in zeilen[i:i + 8]), \
+        "--install schreibt nicht ueber konf_inhalt"
+    ok("W126: motd.sh --configure prueft jeden Wert, zeigt ihn sofort und schreibt nur Aenderungen")
+
 def main():
     tmp, rid = richte_testdatenbank_ein()
     ok("db_conn aus nc.dbwrap: echtes Schema angelegt, Commit durchgelaufen")
@@ -23729,6 +23816,7 @@ def main():
     _test_v42_w125_sitzung_tonformat()
     _test_v42_w125_deck_ton_zeigt_wahrheit()
     _test_v42_w125_azrael_stimme_laut()
+    _test_v42_w126_motd_konfigurieren()
     _test_v42_w60_azrael_cooldown_je_plattform()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)

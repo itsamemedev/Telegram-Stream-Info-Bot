@@ -11,6 +11,25 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Login-Statusbild einstellen: `motd.sh --configure` (v4.2 W126)
+
+- **Einstellen mit Vorschau statt Datei bearbeiten und neu einloggen.**
+  `sudo tools/motd.sh --configure` zeigt alle Einstellungen mit Erklärung;
+  nach jeder Änderung läuft sofort die Vorschau mit dem neuen Wert. Vor dem
+  Speichern steht, was sich ändert; ohne Änderung wird nichts geschrieben.
+- **Für Skripte:** `--configure --set WIDTH=60 --set COLOR_MODE=16`, dazu
+  `--dry-run`. Ein ungültiger Wert bricht mit Exit 2 ab und lässt die Datei
+  unberührt — auch die gültigen Werte davor (keine halbe Konfiguration).
+- **Jeder Wert wird geprüft:** Zahlen mit Bereich, Farbmodus aus der Liste,
+  Verzeichnisse müssen existieren, `BOT_DIR` braucht ein `bot.py`. Bisher
+  rechnete die MOTD mit einem falschen Wert still weiter.
+- `WIDTH` und `BARW` stehen jetzt in der `motd.conf`; `--install` schreibt
+  dieselben Felder wie `--configure`, sonst hätte der nächste `--install` sie
+  still gelöscht. Die Datei wird daneben geschrieben und umbenannt — ein Login
+  mitten im Schreiben sieht nie eine halbe Datei.
+- Vertrag `_test_v42_w126_motd_konfigurieren`, 9 Mutationsproben gefangen;
+  Englisch 100 %.
+
 ### Ton — drei stille Ausfälle (v4.2 W125)
 
 - **Sitzung zusammenfügen: falsche Geschwindigkeit ab der Naht.** Der

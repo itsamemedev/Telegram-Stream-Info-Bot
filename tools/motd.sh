@@ -6,6 +6,8 @@
 #   sudo ./motd.sh --install   als /etc/update-motd.d/99-nightcrawler einhaengen
 #   sudo ./motd.sh --uninstall wieder entfernen
 #   ./motd.sh --doctor         zeigt, WAS erkannt wurde und woher
+#   ./motd.sh --configure      Einstellungen aendern, mit Live-Vorschau
+#   ./motd.sh --configure --set WIDTH=60 [--dry-run]   dasselbe ohne Rueckfrage
 #
 # WARUM DIESE FASSUNG
 # Die erste Version hatte alle Pfade fest verdrahtet (/home/ubuntu/tiktok-bot,
@@ -119,10 +121,6 @@ fi
 
 # Und die Momentaufnahme wieder darueber — damit gewinnt, was der Aufrufer
 # ausdruecklich gesagt hat. Siehe die Begruendung oben am Schnappschuss.
-[ -n "$_MOTD_ENV_GESETZT" ] && eval "$_MOTD_ENV_GESETZT"
-unset _MOTD_ENV_GESETZT _v
-
-# Die Momentaufnahme wieder darueber — damit gewinnt, was der Aufrufer sagte.
 [ -n "$_MOTD_ENV_GESETZT" ] && eval "$_MOTD_ENV_GESETZT"
 unset _MOTD_ENV_GESETZT _v
 
@@ -347,22 +345,32 @@ restore_defaults(){
   return 0
 }
 
-write_conf(){
+# v4.2-W126: der Inhalt steht getrennt vom Schreiben, weil --configure ihn
+# vorher mit der vorhandenen Datei vergleicht. WIDTH und BARW stehen jetzt mit
+# drin: --configure bietet sie an, und ein Wert, den --install beim naechsten
+# Lauf nicht wieder hineinschreibt, waere danach still weg.
+konf_inhalt(){ # $1 = wer schreibt (--install | --configure)
+  printf '# %s\n' "$(tf 'NIGHTCRAWLER MOTD — erzeugt von motd.sh %s am %s' "$1" "$(date '+%F %T')")"
+  printf '# %s\n' "$(t 'Von Hand aenderbar; --install und --configure ueberschreiben die Datei.')"
+  printf 'SERVICE=%s\n'     "$(qq "$SERVICE")"
+  printf 'BOT_DIR=%s\n'     "$(qq "$BOT_DIR")"
+  printf 'DASH_PORT=%s\n'   "$(qq "$DASH_PORT")"
+  printf 'DB=%s\n'          "$(qq "$DB")"
+  printf 'DISK_TARGET=%s\n' "$(qq "$DISK_TARGET")"
+  printf 'SHOW_REC=%s\n'    "$(qq "$SHOW_REC")"
+  printf 'CPU_SAMPLE=%s\n'  "$(qq "$CPU_SAMPLE")"
+  printf 'COLOR_MODE=%s\n'  "$(qq "$COLOR_MODE")"
+  printf 'WIDTH=%s\n'       "$(qq "$WIDTH")"
+  printf 'BARW=%s\n'        "$(qq "$BARW")"
+}
+
+write_conf(){ # [$1 = wer schreibt, Vorgabe --install]
   # Die erkannten Pfade festschreiben. Ohne das raet die installierte Kopie bei
   # jedem Login neu — und raet als root anders als du beim Testen.
   mkdir -p "$(dirname "$CONF")" 2>/dev/null || return 1
-  {
-    printf '# %s\n' "$(tf 'NIGHTCRAWLER MOTD — erzeugt von motd.sh --install am %s' "$(date '+%F %T')")"
-    printf '# %s\n' "$(t 'Von Hand aenderbar; --install ueberschreibt die Datei.')"
-    printf 'SERVICE=%s\n'     "$(qq "$SERVICE")"
-    printf 'BOT_DIR=%s\n'     "$(qq "$BOT_DIR")"
-    printf 'DASH_PORT=%s\n'   "$(qq "$DASH_PORT")"
-    printf 'DB=%s\n'          "$(qq "$DB")"
-    printf 'DISK_TARGET=%s\n' "$(qq "$DISK_TARGET")"
-    printf 'SHOW_REC=%s\n'    "$(qq "$SHOW_REC")"
-    printf 'CPU_SAMPLE=%s\n'  "$(qq "$CPU_SAMPLE")"
-    printf 'COLOR_MODE=%s\n'  "$(qq "$COLOR_MODE")"
-  } > "$CONF"
+  # Erst daneben, dann umbenennen: ein Login, der mitten im Schreiben die
+  # halbe Datei sourct, saehe sonst Vorgaben statt der Konfiguration.
+  konf_inhalt "${1:---install}" > "$CONF.neu" && mv -f "$CONF.neu" "$CONF" || return 1
   chmod 644 "$CONF" 2>/dev/null
   printf "${OK}✔ %s${R} → %s\n" "$(t "Konfiguration")" "$CONF"
 }
@@ -412,6 +420,172 @@ uninstall_darwin(){
   done
 }
 
+# ── --configure (v4.2-W126) ──────────────────────────────────
+# Bis hierher hiess "anpassen": die Datei von Hand bearbeiten und danach per
+# Login nachsehen, ob es so aussieht wie gedacht. Ein falscher Wert (WIDTH=abc,
+# COLOR_MODE=farbig) faellt dabei nicht auf — die MOTD rechnet still mit
+# Unsinn oder der Vorgabe weiter. Jetzt: jeder Wert wird geprueft, bevor er
+# irgendwo landet, und die Vorschau laeuft sofort mit dem neuen Wert.
+KONF_FELDER="SHOW_REC COLOR_MODE WIDTH BARW DISK_TARGET CPU_SAMPLE SERVICE BOT_DIR DASH_PORT"
+
+konf_hilfe(){ # $1 = Name -> eine Zeile Erklaerung
+  case "$1" in
+    SHOW_REC)    t "Aufnahmen-Block zeigen (1) oder weglassen (0)";;
+    COLOR_MODE)  t "Farben: always | auto | truecolor | 256 | 16 | off";;
+    WIDTH)       t "Breite des Rahmens in Zeichen (40-120)";;
+    BARW)        t "Breite der Balken in Zeichen (8-60)";;
+    DISK_TARGET) t "Welche Platte gezeigt wird (ein Verzeichnis darauf)";;
+    CPU_SAMPLE)  t "Messfenster fuer CPU und Netz in Sekunden (0 = aus, hoechstens 2)";;
+    SERVICE)     t "Name des systemd-Dienstes (leer = selbst suchen)";;
+    BOT_DIR)     t "Verzeichnis des Bots (dort liegt bot.py)";;
+    DASH_PORT)   t "Port des Dashboards";;
+  esac
+}
+
+# 0 = gueltig. Sonst steht der Grund auf stdout — der Aufrufer zeigt ihn.
+konf_pruefen(){ # $1 = Name, $2 = Wert
+  local n="$1" v="$2"
+  case "$n" in
+    SHOW_REC)   case "$v" in 0|1) return 0;; esac; t "erlaubt sind 0 und 1";;
+    COLOR_MODE) case "$v" in always|auto|truecolor|256|16|off) return 0;; esac
+                t "erlaubt sind always, auto, truecolor, 256, 16, off";;
+    WIDTH|BARW|DASH_PORT)
+      local lo hi
+      case "$n" in WIDTH) lo=40; hi=120;; BARW) lo=8; hi=60;; *) lo=1; hi=65535;; esac
+      case "$v" in ''|*[!0-9]*) tf "keine ganze Zahl: %s" "$v"; return 1;; esac
+      # 10# gegen fuehrende Nullen: "08" waere fuer bash sonst Oktal und ungueltig.
+      if [ "$((10#$v))" -ge "$lo" ] && [ "$((10#$v))" -le "$hi" ]; then return 0; fi
+      tf "ausserhalb von %s bis %s" "$lo" "$hi";;
+    CPU_SAMPLE)
+      if printf '%s' "$v" | grep -Eq '^([0-1](\.[0-9]+)?|2(\.0+)?)$'; then return 0; fi
+      t "eine Zahl von 0 bis 2, z. B. 0.20";;
+    DISK_TARGET|BOT_DIR)
+      if [ -d "$v" ]; then
+        [ "$n" = BOT_DIR ] && ! is_botdir "$v" && { tf "kein bot.py in %s" "$v"; return 1; }
+        return 0
+      fi
+      tf "kein Verzeichnis: %s" "$v";;
+    SERVICE)
+      # Leer ist erlaubt (= selbst suchen). Leerzeichen und Anfuehrungszeichen
+      # nicht: der Wert geht als Name an systemctl.
+      case "$v" in *[[:space:]\'\"\;\$\`]*) t "Name ohne Leer- und Sonderzeichen";; *) return 0;; esac;;
+    *) tf "unbekannte Einstellung: %s" "$n";;
+  esac
+  return 1
+}
+
+konf_wert(){ eval "printf '%s' \"\${$1}\""; }
+
+konf_vorschau(){
+  # Die Vorschau ist DIESELBE Datei, als eigener Prozess und mit den neuen
+  # Werten aus der Umgebung — die gewinnt seit W100 vor der motd.conf. Ein
+  # nachgebauter Ausschnitt waere eine zweite Wahrheit.
+  printf "\n  ${FNT}── %s ──${R}\n" "$(t "Vorschau")"
+  env SERVICE="$SERVICE" BOT_DIR="$BOT_DIR" DASH_PORT="$DASH_PORT" DB="$DB" \
+      DISK_TARGET="$DISK_TARGET" SHOW_REC="$SHOW_REC" CPU_SAMPLE="$CPU_SAMPLE" \
+      COLOR_MODE="$COLOR_MODE" WIDTH="$WIDTH" BARW="$BARW" \
+      "${BASH:-bash}" "$0" 2>&1
+}
+
+# Nur die Wertzeilen vergleichen: der Kopf traegt Datum und Urheber und waere
+# bei jedem Lauf "geaendert".
+konf_werte(){ grep -v '^#' "$1" 2>/dev/null; }
+
+konf_speichern(){ # $1 = 1: nur zeigen (--dry-run)
+  local neu; neu="$(mktemp 2>/dev/null || echo "/tmp/nc-motd-konf.$$")"
+  konf_inhalt --configure > "$neu"
+  if [ -r "$CONF" ] && [ "$(konf_werte "$CONF")" = "$(konf_werte "$neu")" ]; then
+    printf "  ${FNT}%s${R} %s\n" "$(t "Unveraendert — nichts geschrieben:")" "$CONF"
+    rm -f "$neu"; return 0
+  fi
+  printf "\n  ${B}%s${R} %s\n" "$(t "Aenderungen an")" "$CONF"
+  if [ -r "$CONF" ]; then
+    diff <(konf_werte "$CONF") <(konf_werte "$neu") | sed -n 's/^</  -/p; s/^>/  +/p'
+  else
+    konf_werte "$neu" | sed 's/^/  + /'
+  fi
+  if [ "${1:-0}" = 1 ]; then
+    printf "  ${FNT}%s${R}\n" "$(t "Probelauf — nichts geschrieben.")"
+    rm -f "$neu"; return 0
+  fi
+  # Schreibrecht VORHER pruefen: ein "Permission denied" nach der Fragerei
+  # waere die ganze Arbeit fuer nichts.
+  local ziel_dir; ziel_dir="$(dirname "$CONF")"
+  if { [ -e "$CONF" ] && [ ! -w "$CONF" ]; } || { [ ! -e "$CONF" ] && [ -d "$ziel_dir" ] && [ ! -w "$ziel_dir" ]; } \
+     || { [ ! -d "$ziel_dir" ] && [ "$(id -u)" -ne 0 ]; }; then
+    printf "  ${WRN}%s${R} sudo %s --configure\n" "$(tf "Keine Schreibrechte fuer %s — bitte mit:" "$CONF")" "$0"
+    rm -f "$neu"; return 1
+  fi
+  rm -f "$neu"
+  write_conf --configure
+}
+
+konfigurieren(){
+  local setzen="" probe=0 a n v grund
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --set) shift; setzen="$setzen
+${1:-}";;
+      --set=*) setzen="$setzen
+${1#--set=}";;
+      --dry-run) probe=1;;
+      *) printf "${ERR}%s${R}\n" "$(tf "Unbekannte Option: %s" "$1")"; return 2;;
+    esac
+    shift
+  done
+
+  # ── Ohne Rueckfrage: --set NAME=WERT ... (fuer Skripte und den Installer)
+  if [ -n "$setzen" ]; then
+    while IFS= read -r a; do
+      [ -n "$a" ] || continue
+      n="${a%%=*}"; v="${a#*=}"
+      case " $KONF_FELDER " in *" $n "*) ;; *)
+        printf "${ERR}✘ %s${R}\n" "$(tf "unbekannte Einstellung: %s" "$n")"; return 2;; esac
+      [ "$a" = "$n" ] && { printf "${ERR}✘ %s${R}\n" "$(tf "Wert fehlt: %s=..." "$n")"; return 2; }
+      if ! grund="$(konf_pruefen "$n" "$v")"; then
+        # Abbrechen statt ueberspringen: ein Skript, das drei Werte setzt und
+        # zwei davon wirken, meldet sonst Erfolg fuer eine halbe Konfiguration.
+        printf "${ERR}✘ %s=%s${R} — %s\n" "$n" "$v" "$grund"; return 2
+      fi
+      printf -v "$n" '%s' "$v"
+    done <<< "$setzen"
+    konf_speichern "$probe"; return $?
+  fi
+
+  # ── Gefuehrt
+  local i nr w
+  while :; do
+    printf "\n${BR}${B}NIGHTCRAWLER MOTD — %s${R}  ${FNT}%s${R}\n\n" "$(t "Einstellungen")" "$CONF"
+    i=0
+    for n in $KONF_FELDER; do
+      i=$((i+1)); w="$(konf_wert "$n")"
+      printf "  ${B}%2d${R}  %-12s ${TXT}%-18s${R} ${FNT}%s${R}\n" "$i" "$n" "${w:-—}" "$(konf_hilfe "$n")"
+    done
+    printf "\n  ${FNT}%s${R}\n" "$(t "Nummer = aendern · v = Vorschau · s = speichern · q = verwerfen")"
+    printf "  > "
+    IFS= read -r a || { printf '\n'; return 1; }
+    case "$a" in
+      q|Q) printf "  ${FNT}%s${R}\n" "$(t "Verworfen — nichts geschrieben.")"; return 0;;
+      v|V) konf_vorschau; continue;;
+      s|S) konf_speichern "$probe"; return $?;;
+      ''|*[!0-9]*) continue;;
+    esac
+    nr=0; n=""
+    for w in $KONF_FELDER; do nr=$((nr+1)); [ "$nr" = "$a" ] && n="$w"; done
+    [ -n "$n" ] || continue
+    printf "  %s %s [%s]: " "$n" "$(t "neuer Wert, Enter = behalten")" "$(konf_wert "$n")"
+    IFS= read -r v || { printf '\n'; return 1; }
+    [ -z "$v" ] && continue
+    if ! grund="$(konf_pruefen "$n" "$v")"; then
+      printf "  ${ERR}✘ %s${R}\n" "$grund"; continue
+    fi
+    printf -v "$n" '%s' "$v"
+    # Die Live-Vorschau: gleich nach jeder Aenderung, nicht erst auf Zuruf —
+    # ob 60 Zeichen auf das Handy passen, sieht man, nicht liest man.
+    konf_vorschau
+  done
+}
+
 doctor(){
   printf "\n${BR}${B}NIGHTCRAWLER MOTD — %s${R}  ${FNT}v%s${R}\n\n" "$(t "Erkennung")" "$NC_MOTD_VERSION"
   printf "  %-12s %s\n" "$(t "System")"    "$OS $(uname -r 2>/dev/null)"
@@ -445,6 +619,7 @@ case "${1:-}" in
     printf "  ${FNT}%s %s${R}\n" "$CONF" "$(t "bleibt liegen (harmlos, enthaelt nur Pfade)")"
     exit 0;;
   --doctor)  doctor;;
+  --configure) shift; konfigurieren "$@"; exit $?;;
   --version) printf 'NIGHTCRAWLER MOTD %s\n' "$NC_MOTD_VERSION"; exit 0;;
   --help|-h)
     printf "NIGHTCRAWLER MOTD %s\n\n" "$NC_MOTD_VERSION"
@@ -452,6 +627,7 @@ case "${1:-}" in
     printf "  --install        %s\n" "$(t "einhaengen + Standard-MOTD daempfen (sudo; macOS: Shell-rc)")"
     printf "  --uninstall      %s\n" "$(t "entfernen + Standard-MOTD wiederherstellen")"
     printf "  --doctor         %s\n" "$(t "zeigt, was erkannt wurde und woher")"
+    printf "  --configure      %s\n" "$(t "Einstellungen aendern, mit Vorschau (--set NAME=WERT, --dry-run)")"
     printf "  --version        %s\n\n" "$(t "Fassung")"
     printf "%s %s %s\n" "$(t "Anpassen ueber")" "$CONF" "$(t "oder Umgebung:")"
     printf "  SERVICE BOT_DIR DASH_PORT DB DISK_TARGET SHOW_REC CPU_SAMPLE COLOR_MODE\n"
