@@ -1,0 +1,36 @@
+# NIGHTCRAWLER — eigener Prometheus (v4.2-W127), geschrieben von tools/observability.sh.
+#
+# Ein EIGENER Dienst statt des Pakets "prometheus.service": der lauscht nach
+# der Installation auf *:9090 — an allen Schnittstellen, ohne Anmeldung — und
+# traegt eine fremde Konfiguration. Diese Instanz lauscht nur auf 127.0.0.1,
+# Grafana und ein SSH-Tunnel erreichen sie trotzdem.
+[Unit]
+Description=NIGHTCRAWLER Prometheus (nur lokal)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+# Kein eigener Benutzer zum Anlegen und Vergessen: systemd vergibt einen
+# fluechtigen, und nur das Datenverzeichnis gehoert ihm.
+DynamicUser=yes
+StateDirectory=nightcrawler-prometheus
+ExecStart=@@PROMETHEUS@@ \
+  --config.file=@@ETC@@/prometheus.yml \
+  --storage.tsdb.path=/var/lib/nightcrawler-prometheus \
+  --storage.tsdb.retention.time=@@AUFBEWAHRUNG@@ \
+  --web.listen-address=127.0.0.1:@@PROM_PORT@@
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=10
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+
+[Install]
+WantedBy=multi-user.target

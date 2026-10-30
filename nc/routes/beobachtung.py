@@ -431,10 +431,14 @@ def api_prometheus_metrics():
     # (dieselbe Falle wie W4/W109). Gemessen wurde damit stets "/", und
     # liegen die Aufnahmen auf einer eigenen Platte, meldete die Kennzahl
     # Platz, den es dort nicht gibt. Der Pfad kommt jetzt aus dem Kontext.
+    # v4.2-W127: auch die Gesamtgroesse — die Alarme im Bot rechnen in
+    # Prozent (ALERT_DISK_PCT, DISK_AUTOCLEAN_PCT), und mit freien Bytes allein
+    # liesse sich dieselbe Schwelle in Prometheus nicht nachbilden.
     try:
-        disk_free = _sh.disk_usage(_c().recordings_dir or "recordings").free
+        _du = _sh.disk_usage(_c().recordings_dir or "recordings")
+        disk_free, disk_total = _du.free, _du.total
     except Exception:
-        disk_free = 0
+        disk_free = disk_total = 0
     ai_budget = len(_nc_azrael.CALL_TS)
 
     def metric(name, val, help_txt, typ="gauge"):
@@ -452,6 +456,7 @@ def api_prometheus_metrics():
         metric("nightcrawler_restream_active", restream, "Kick-Restream aktiv (1/0)"),
         metric("nightcrawler_tracked_streamers", tracked, "Getrackte Streamer gesamt"),
         metric("nightcrawler_disk_free_bytes", disk_free, "Freier Speicher am Aufnahme-Pfad"),
+        metric("nightcrawler_disk_total_bytes", disk_total, "Groesse der Platte am Aufnahme-Pfad"),
     ])
     # v4.2-W122: die Leistungssignale aus A–E (Loop-Lag, Gegendruck, Cache,
     # Kindprozesse, Speicher, Log-Schleuse, RSS) — aus dem Schnappschuss,

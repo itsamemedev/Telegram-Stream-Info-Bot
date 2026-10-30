@@ -1,0 +1,112 @@
+# NIGHTCRAWLER — Alarmregeln (v4.2-W127)
+#
+# Jede Schwelle stammt aus dem Bot, nicht aus dem Gefuehl: zwei Grenzen fuer
+# dieselbe Sache — eine im Bot, eine hier — laufen auseinander, und dann
+# meldet der Alarm etwas anderes als das Deck.
+#
+# Nur Regeln fuer Zustaende, in denen etwas NICHT geht. Ein Alarm, der auf
+# jeder gesunden Installation feuert, erzieht dazu, ihn zu uebersehen (W85).
+
+groups:
+  - name: nightcrawler
+    rules:
+      - alert: NightcrawlerNichtErreichbar
+        expr: up{job="nightcrawler"} == 0
+        for: 2m
+        labels: {severity: critical}
+        annotations:
+          summary: "NIGHTCRAWLER antwortet nicht auf /metrics"
+          description: >-
+            Seit 2 Minuten keine Antwort von 127.0.0.1. Dienst gestoppt,
+            abgestuerzt oder der Event-Loop steht. Pruefen:
+            systemctl status tiktok-bot; journalctl -u tiktok-bot -n 80
+
+      - alert: NightcrawlerNeustartSchleife
+        # uptime_seconds faellt bei jedem Start auf 0 zurueck. Drei Neustarts
+        # in 30 Minuten sind kein Update mehr, sondern Restart=always im Kreis
+        # — genau das, was W100 mit Exitcode 4 sichtbar machen wollte.
+        expr: resets(nightcrawler_uptime_seconds[30m]) >= 3
+        labels: {severity: critical}
+        annotations:
+          summary: "NIGHTCRAWLER startet immer wieder neu"
+          description: "{{ $value }} Neustarts in 30 Minuten. Grund: journalctl -u tiktok-bot -b | grep -i abschied"
+
+      - alert: NightcrawlerKennzahlenStehen
+        # -1 = nie erhoben, sonst Sekunden seit dem letzten Schnappschuss
+        # (alle 10 s). Steht er, sieht /metrics wie ein gesunder Bot aus,
+        # waehrend der Erheber haengt (W122).
+        expr: nightcrawler_kennzahlen_alter_sekunden > 60 or nightcrawler_kennzahlen_alter_sekunden == -1
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: "Der Kennzahlen-Schnappschuss wird nicht mehr erneuert"
+          description: "Alter {{ $value }} s (-1 = nie). Der Event-Loop haengt oder der Erheber stirbt: journalctl -u tiktok-bot | grep leistung-erheben"
+
+      - alert: NightcrawlerDatenbank
+        expr: nightcrawler_db_ok == 0
+        for: 3m
+        labels: {severity: critical}
+        annotations:
+          summary: "Datenbank nicht erreichbar"
+          description: "Seit 3 Minuten keine erfolgreiche Zaehlung. Gesperrt, voll oder kaputt — /healthz zeigt die frische Probe."
+
+      - alert: NightcrawlerPlatteVoll
+        # 90 % = ALERT_DISK_PCT im Bot (Vorgabe). Gemessen am Aufnahmepfad,
+        # nicht an / (W122). Kein "and total > 0": ist die Groesse unbekannt
+        # (0), ergibt die Division NaN bzw. -Inf, und beides ist nie > 90 —
+        # die Zusatzbedingung waere ein zweiter Riegel ohne Wirkung (W98). Der
+        # Regeltest prueft genau diesen Fall.
+        expr: (1 - nightcrawler_disk_free_bytes / nightcrawler_disk_total_bytes) * 100 > 90
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: "Aufnahme-Platte zu {{ $value | printf \"%.0f\" }} % belegt"
+          description: "Ab 88 % raeumt DISK_AUTOCLEAN auf, sofern eingeschaltet. Bleibt es darueber, nimmt der Bot bald nichts mehr auf."
+
+      - alert: NightcrawlerLoopStockt
+        # Ueber dem Budget des Taktgebers (nc/looplag.py, 100 ms). Nur, wenn
+        # die Messung laeuft — sonst steht p99 auf 0 und wuerde nie feuern,
+        # was richtig ist, aber eine Regel ohne aktiv-Bedingung waere bei
+        # einer Aenderung dort still falsch.
+        expr: nightcrawler_loop_lag_p99_ms > nightcrawler_loop_lag_budget_ms and nightcrawler_loop_lag_aktiv == 1
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: "Event-Loop haengt (p99 {{ $value }} ms)"
+          description: "Restream, Chat und Aufnahme-Start warten mit. Ursache meist synchrone Arbeit im Loop — tools/loopblocker.py, journalctl | grep Stockung"
+
+      - alert: NightcrawlerDateiDeskriptoren
+        # 0.85 = FD_SPERRE_ANTEIL (nc/gegendruck.py): ab hier lehnt der Bot
+        # neue Aufnahmen ab. Der Alarm sagt also: es wird gerade abgelehnt.
+        expr: nightcrawler_gegendruck_fd_anteil >= 0.85
+        for: 5m
+        labels: {severity: critical}
+        annotations:
+          summary: "Dateideskriptoren zu {{ $value | humanizePercentage }} belegt — neue Aufnahmen werden abgelehnt"
+          description: "LimitNOFILE im Dienst erhoehen oder nach einem Leck suchen (ls /proc/<pid>/fd | wc -l)."
+
+      - alert: NightcrawlerAufnahmeDeckel
+        expr: nightcrawler_gegendruck_aufnahmen >= nightcrawler_gegendruck_aufnahmen_deckel and nightcrawler_gegendruck_aufnahmen_deckel > 0
+        for: 15m
+        labels: {severity: warning}
+        annotations:
+          summary: "Aufnahme-Deckel erreicht"
+          description: "Weitere Live-Streams werden nicht aufgenommen, bis ein Platz frei wird."
+
+      - alert: NightcrawlerLogVerluste
+        # Die Log-Schleuse (W97) wartet nie und zaehlt jeden Verlust. Ein
+        # Verlust heisst: es gab Meldungen, die niemand mehr lesen kann.
+        expr: increase(nightcrawler_log_verloren[15m]) > 0
+        labels: {severity: warning}
+        annotations:
+          summary: "Logzeilen verworfen"
+          description: "Die Platte schreibt zu langsam fuer das Log. Platte pruefen (iostat), Log-Ebene senken."
+
+      - alert: NightcrawlerKindprozesseGetoetet
+        # Ein Kindprozess (ffmpeg, yt-dlp), der auf SIGTERM nicht endet und
+        # getoetet werden muss — einmal ist Pech, wiederholt ein Muster.
+        expr: increase(nightcrawler_kinder_getoetet[1h]) >= 3
+        labels: {severity: warning}
+        annotations:
+          summary: "{{ $value }} Kindprozesse in einer Stunde getoetet"
+          description: "journalctl -u tiktok-bot | grep -i getoetet — welcher Befehl haengt?"

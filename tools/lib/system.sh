@@ -122,6 +122,14 @@ nc_paketname(){
     # der Installer kennt. Ueberall sonst: docs/CROWDSEC.md, nicht raten.
     apt:crowdsec)          printf 'crowdsec';;
     *:crowdsec)            printf '';;
+    # v4.2-W127: nur, was nachgesehen ist (apt-cache policy auf Ubuntu 24.04:
+    # prometheus 2.45). Grafana liegt bei Debian/Ubuntu NICHT in den Quellen —
+    # dafuer traegt observability.sh auf Wunsch apt.grafana.com ein. Fuer die
+    # anderen Manager stehen hier keine Namen, bis jemand sie nachgesehen hat:
+    # ein geratener Name scheitert erst beim Installieren.
+    apt:prometheus)        printf 'prometheus';;
+    *:prometheus)          printf '';;
+    *:grafana)             printf '';;
     # Python >= 3.12 — Kandidaten in Vorzugsreihenfolge. Auf Arch, Alpine
     # und Fedora ist "das" Python aktuell genug; Debian/openSUSE fuehren
     # Fassungen nebeneinander. Das venv-Paket ist ein apt-Sonderfall (siehe

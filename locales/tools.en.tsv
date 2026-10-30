@@ -738,3 +738,88 @@ unbekannte Einstellung: %s	unknown setting: %s
 SQLite-Datei fuer die Zahlen (leer = selbst suchen)	SQLite file for the numbers (empty = detect)
 keine Datei: %s	not a file: %s
 --set ohne NAME=WERT	--set without NAME=VALUE
+(ohne)           Prometheus einrichten; nach Grafana wird gefragt	(none)           set up Prometheus; asks about Grafana
+--dir <Pfad>     Installation des Bots (Vorgabe: der Ordner ueber tools/)	--dir <path>     bot installation (default: the folder above tools/)
+--dry-run        die Schritte zeigen, die liefen — nichts ausfuehren	--dry-run        show the steps that would run — execute nothing
+--express        eine Rueckfrage fuer den ganzen Plan	--express        one confirmation for the whole plan
+--grafana        Grafana mit einrichten (Datenquelle, Dashboard, nur lokal)	--grafana        also set up Grafana (data source, dashboard, local only)
+--grafana-repo   wie --grafana, und die offizielle Grafana-Paketquelle eintragen	--grafana-repo   like --grafana, and add the official Grafana package source
+--no-grafana     Grafana nicht anfassen	--no-grafana     leave Grafana alone
+--observability  Prometheus einrichten bzw. abgleichen (=grafana: mit Grafana)	--observability  set up or reconcile Prometheus (=grafana: with Grafana)
+--observability  Prometheus mit einrichten (Verlauf und Alarme, nur lokal);	--observability  also set up Prometheus (history and alerts, local only);
+--port <N>       Port von Prometheus auf 127.0.0.1 (Vorgabe 9099)	--port <N>       Prometheus port on 127.0.0.1 (default 9099)
+--remove         eigene Dienste und Dateien entfernen (Pakete bleiben)	--remove         remove own services and files (packages stay)
+--retention <D>  wie lange Prometheus Daten haelt (Vorgabe 30d)	--retention <D>  how long Prometheus keeps data (default 30d)
+--unattended,-y  keine Rueckfragen	--unattended,-y  no questions
+=grafana zusaetzlich Grafana. Ohne den Schalter: nur gefuehrt gefragt	=grafana adds Grafana. Without the switch: asked only in guided mode
+Aufbewahrung ungueltig: %s (z. B. 30d)	Invalid retention: %s (e.g. 30d)
+Beobachtung	Monitoring
+Beobachtung unvollstaendig — Grund oben; erneut: sudo bash %s/tools/observability.sh	Monitoring incomplete — reason above; again: sudo bash %s/tools/observability.sh
+Beobachtung: Prometheus auf 127.0.0.1:9099 — pruefen: bash tools/observability.sh --check	Monitoring: Prometheus on 127.0.0.1:9099 — check: bash tools/observability.sh --check
+Bestand	Current state
+Bot-Dashboard: %s://127.0.0.1:%s/metrics	Bot dashboard: %s://127.0.0.1:%s/metrics
+DASHBOARD_PORT in der .env ist keine Zahl: %s	DASHBOARD_PORT in .env is not a number: %s
+Der Bot wird abgefragt (up=1).	The bot is being scraped (up=1).
+Der Dienst des Pakets lauscht auf *:9090 ohne Anmeldung — er wird abgeschaltet.	The package's service listens on *:9090 without login — it is being switched off.
+Entfernen	Remove
+Entfernt werden nur die Dateien und Dienste dieses Werkzeugs. Die Pakete prometheus und grafana bleiben installiert, die gesammelten Daten unter /var/lib/nightcrawler-prometheus ebenfalls (systemd raeumt sie mit dem Dienst nicht weg).	Only this tool's files and services are removed. The prometheus and grafana packages stay installed, as does the collected data under /var/lib/nightcrawler-prometheus (systemd does not clean it up with the service).
+Entfernt.	Removed.
+Erste Anmeldung admin/admin; Grafana verlangt dabei ein neues Passwort. Das Dashboard liegt im Ordner NIGHTCRAWLER.	First login admin/admin; Grafana then asks for a new password. The dashboard is in the NIGHTCRAWLER folder.
+Exitcodes: 0 eingerichtet · 1 es fehlt etwas · 2 Aufruffehler	Exit codes: 0 set up · 1 something is missing · 2 usage error
+Fertig.	Done.
+Fuer %s ist kein Grafana-Paket bekannt — bitte selbst installieren und erneut aufrufen.	No Grafana package known for %s — please install it yourself and run again.
+Grafana	Grafana
+Grafana antwortet (noch) nicht auf 127.0.0.1:3000 — journalctl -u %s -n 40	Grafana does not answer on 127.0.0.1:3000 (yet) — journalctl -u %s -n 40
+Grafana bereit — Zugang per Tunnel: ssh -L 3001:127.0.0.1:3000 <server>, dann http://localhost:3001	Grafana ready — access via tunnel: ssh -L 3001:127.0.0.1:3000 <server>, then http://localhost:3001
+Grafana dazu (Diagramme im Browser)?	Add Grafana too (charts in the browser)?
+Grafana liegt nicht in den Paketquellen. Offizielle Quelle apt.grafana.com eintragen?	Grafana is not in the package sources. Add the official source apt.grafana.com?
+Grafana mit einrichten (Diagramme im Browser)?	Also set up Grafana (charts in the browser)?
+Grafana nicht eingerichtet: es fehlt die Paketquelle.	Grafana not set up: the package source is missing.
+Installation gescheitert.	Installation failed.
+Mit --grafana-repo traegt dieses Werkzeug https://apt.grafana.com ein (signiert, Schluessel unter /etc/apt/keyrings/grafana.gpg) und installiert das Paket grafana.	With --grafana-repo this tool adds https://apt.grafana.com (signed, key in /etc/apt/keyrings/grafana.gpg) and installs the grafana package.
+NIGHTCRAWLER — Prometheus und Grafana einrichten	NIGHTCRAWLER — set up Prometheus and Grafana
+Noch kein Abruf erfolgt — in 30 s erneut: bash tools/observability.sh --check	No scrape yet — check again in 30 s: bash tools/observability.sh --check
+Ohne systemd richtet dieses Werkzeug nichts ein (gefunden: %s).	Without systemd this tool sets nothing up (found: %s).
+Paket jetzt installieren?	Install the package now?
+Port ausserhalb von 1024 bis 65535: %s	Port outside 1024 to 65535: %s
+Port ist keine Zahl: %s	Port is not a number: %s
+Prometheus	Prometheus
+Prometheus antwortet nicht auf 127.0.0.1:%s.	Prometheus does not answer on 127.0.0.1:%s.
+Prometheus bereit: http://127.0.0.1:%s	Prometheus ready: http://127.0.0.1:%s
+Prometheus bitte selbst installieren (https://prometheus.io/download/), dann erneut aufrufen.	Please install Prometheus yourself (https://prometheus.io/download/), then run again.
+Prometheus einrichten (Verlauf und Alarme)?	Set up Prometheus (history and alerts)?
+Prometheus erreicht den Bot nicht (up=0): laeuft der Dienst, stimmt DASHBOARD_PORT=%s?	Prometheus cannot reach the bot (up=0): is the service running, is DASHBOARD_PORT=%s right?
+Prometheus fragt 127.0.0.1 ohne Anmeldung ab. Mit WEB_HOST=0.0.0.0 (alle Adressen, inklusive 127.0.0.1) oder 127.0.0.1 in der .env geht es — danach den Bot neu starten.	Prometheus scrapes 127.0.0.1 without login. With WEB_HOST=0.0.0.0 (all addresses, including 127.0.0.1) or 127.0.0.1 in .env it works — then restart the bot.
+Prometheus laesst sich trotzdem betreiben: die Vorlagen in deploy/observability/ sind gewoehnliche Dateien, die @@…@@-Stellen von Hand einsetzen.	Prometheus can still be run: the templates in deploy/observability/ are ordinary files — fill in the @@…@@ placeholders by hand.
+Prometheus sammelt die Kennzahlen des Bots (/metrics) und haelt sie 30 Tage — Verlauf statt Momentaufnahme — und prueft zehn Alarmregeln: Bot weg, Neustart im Kreis, Platte voll, Event-Loop haengt. Laeuft nur auf 127.0.0.1. Grafana zeigt das als Diagramme im Browser; auf Debian/Ubuntu wird dafuer die offizielle Paketquelle apt.grafana.com eingetragen.	Prometheus collects the bot's metrics (/metrics) and keeps them for 30 days — history instead of a snapshot — and checks ten alert rules: bot gone, restart loop, disk full, event loop stuck. Runs on 127.0.0.1 only. Grafana shows it as charts in the browser; on Debian/Ubuntu the official package source apt.grafana.com is added for that.
+Prometheus und Grafana	Prometheus and Grafana
+Schluessel von apt.grafana.com nicht erhalten.	Did not receive the key from apt.grafana.com.
+Unbekannter Platzhalter in %s: %s	Unknown placeholder in %s: %s
+Unvollstaendig — offene Punkte siehe oben.	Incomplete — open points above.
+Unvollstaendig — ohne --check wird es eingerichtet.	Incomplete — without --check it will be set up.
+Vollstaendig.	Complete.
+Vorlagen fehlen: %s	Templates missing: %s
+WEB_HOST=%s — das Deck ist auf 127.0.0.1 nicht erreichbar.	WEB_HOST=%s — the dashboard is not reachable on 127.0.0.1.
+Was:	What:
+Weder root noch sudo — Dienste lassen sich so nicht einrichten.	Neither root nor sudo — services cannot be set up like this.
+Zugang: ssh -L 3001:127.0.0.1:3000 -L 9099:127.0.0.1:9099 server	Access: ssh -L 3001:127.0.0.1:3000 -L 9099:127.0.0.1:9099 server
+fehlt: %s	missing: %s
+grafana ist nicht installiert.	grafana is not installed.
+grafana: %s	grafana: %s
+grafana: nicht installiert	grafana: not installed
+grafana: unveraendert, laeuft.	grafana: unchanged, running.
+journalctl -u nightcrawler-prometheus -n 40	journalctl -u nightcrawler-prometheus -n 40
+nightcrawler-prometheus laeuft nicht.	nightcrawler-prometheus is not running.
+nightcrawler-prometheus laeuft.	nightcrawler-prometheus is running.
+nightcrawler-prometheus: unveraendert, laeuft.	nightcrawler-prometheus: unchanged, running.
+prometheus fehlt — Paket: %s	prometheus missing — package: %s
+prometheus fehlt, und fuer %s ist kein Paket bekannt.	prometheus missing, and no package is known for %s.
+prometheus ist nicht installiert.	prometheus is not installed.
+prometheus nach der Installation nicht gefunden.	prometheus not found after installation.
+prometheus.service lief schon vorher und bleibt unangetastet.	prometheus.service was already running and is left untouched.
+prometheus.service liess sich nicht abschalten — Port 9090 pruefen.	prometheus.service could not be switched off — check port 9090.
+prometheus: %s	prometheus: %s
+promtool fehlt — Konfiguration ungeprueft.	promtool missing — configuration unchecked.
+promtool lehnt die Konfiguration ab — Dienst wird nicht (neu) gestartet:	promtool rejects the configuration — service is not (re)started:
+promtool: Konfiguration und Regeln gueltig.	promtool: configuration and rules valid.
+sudo bash tools/observability.sh [Schalter]	sudo bash tools/observability.sh [switches]

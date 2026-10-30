@@ -263,7 +263,10 @@ jobs:
       # "nicht installiert", der Vertrag wuerde gruen und die eigentliche
       # Aussage nie geprueft.
       - name: Minimale Abhängigkeiten
-        run: python -m pip install --upgrade pip orjson flask waitress aiohttp
+        run: python -m pip install --upgrade pip orjson flask waitress aiohttp pyyaml
+        # v4.2-W127: pyyaml liest der Vertrag ueber deploy/observability/ —
+        # Regeln und Datenquelle sind YAML, und ein Vertrag, der YAML per
+        # Regex liest, prueft seine eigene Regex.
         # v4.2-W87: aiohttp kommt dazu. nc/scraper.py importiert es auf
         # MODUL-Ebene; ohne das Paket ist das Modul nicht importierbar und
         # sein Vertrag faellt am Import statt an einer Aussage. Es steht
@@ -297,6 +300,24 @@ jobs:
           PYTHONPATH: ${{ github.workspace }}
         run: python nc/intel/test_intel.py
 
+  # v4.2-W127: die Alarmregeln mit dem echten promtool. Der Vertrag faehrt
+  # den Regeltest nur, wenn promtool da ist — und auf den anderen Runnern ist
+  # es das nicht. Ohne diesen Job fiele eine Regel, die nie feuert, in der CI
+  # nie auf; genau dafuer gibt es nightcrawler.test.yml.
+  beobachtung:
+    name: Alarmregeln (promtool)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: promtool installieren
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends prometheus
+      - name: Regeln gueltig und Regeltests gruen
+        run: |
+          promtool check rules deploy/observability/rules/nightcrawler.yml
+          promtool test rules deploy/observability/rules/nightcrawler.test.yml
+
   einzeln:
     name: Verträge einzeln (pytest) · Überdeckung
     runs-on: ubuntu-latest
@@ -308,7 +329,7 @@ jobs:
           python-version: "3.13"
 
       - name: Minimale Abhängigkeiten
-        run: python -m pip install --upgrade pip orjson flask waitress aiohttp pytest coverage
+        run: python -m pip install --upgrade pip orjson flask waitress aiohttp pyyaml pytest coverage
 
       # v4.2-W86. Die Suiten waren nur ueber ihren eigenen Runner fahrbar:
       # `python test_nc_modules.py`, alles oder nichts, rund eine Minute je

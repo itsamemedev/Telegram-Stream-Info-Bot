@@ -11,6 +11,35 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Beobachtung: Prometheus und Grafana (v4.2 W127)
+
+- **`tools/observability.sh`** richtet Prometheus als eigenen Dienst
+  (`nightcrawler-prometheus`, nur `127.0.0.1:9099`, 30 Tage) und auf Wunsch
+  Grafana ein (Datenquelle, Dashboard mit 24 Diagrammen, nur lokal).
+  `--check`, `--dry-run`, `--remove`; ein zweiter Lauf schreibt nur
+  Abweichungen und lädt bei geänderter Konfiguration neu statt neu zu starten.
+  Auch über `update.sh --observability` und den Installer.
+- **Zehn Alarmregeln**, jede Schwelle aus dem Bot (`ALERT_DISK_PCT`,
+  `FD_SPERRE_ANTEIL`, Loop-Budget), jede mit Regeltest — feuernd und, wo die
+  Bedingung eine Falle hat, still. Eigener CI-Job mit echtem `promtool`.
+- **Gemessen statt geraten:** Prometheus und promtool auf Ubuntu 24.04
+  installiert, die echte `/metrics`-Ausgabe abgefragt (`up=1`, alle Regeln
+  `ok`, kein Fehlalarm bei gesundem Bot). Der Vertrag leitet die erlaubten
+  Namen aus dem Quelltext und der echten Ausgabe ab — ein Diagramm auf einen
+  Namen, den `/metrics` nicht liefert, zeigt sonst still „No data“.
+- **Sicher ab Werk:** das Paket startet `prometheus.service` auf `*:9090`
+  ohne Anmeldung; hat erst dieser Lauf es gebracht, wird er abgeschaltet.
+  Grafana lauscht per Drop-in nur auf `127.0.0.1`. Kein Token nötig —
+  Loopback ist am Deck frei.
+- **`/metrics`** trägt jetzt `nightcrawler_disk_total_bytes`; die Alarme des
+  Bots rechnen in Prozent.
+- Vertrag `_test_v42_w127_observability`, 17 Mutationsproben gefangen. Drei
+  entwischten zuerst: zwei zeigten auf wirkungslosen Code (eine
+  Zusatzbedingung, die PromQL über NaN ohnehin erfüllt, und ein doppelter
+  Trockenlauf-Riegel) — beide entfernt; eine auf den Vertrag, dessen
+  systemd-Fall aus einem ANDEREN Grund (liegengebliebene `.env`) abbrach.
+- Doku: `docs/OBSERVABILITY.md`.
+
 ### Login-Statusbild einstellen: `motd.sh --configure` (v4.2 W126)
 
 - **Einstellen mit Vorschau statt Datei bearbeiten und neu einloggen.**

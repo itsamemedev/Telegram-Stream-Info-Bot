@@ -282,6 +282,8 @@ while [ $# -gt 0 ]; do
     --branch)      BRANCH="${2:-main}"; shift;;
     --branch=*)    BRANCH="${1#*=}";;
     --skip-system) SKIP_SYSTEM=1;;
+    --observability) OPT_BEOBACHTUNG="prometheus";;
+    --observability=grafana) OPT_BEOBACHTUNG="grafana";;
     --pkg)         NC_PKG="${2:-}"; shift;;
     --pkg=*)       NC_PKG="${1#*=}";;
     --no-color)    FARBE=0; setze_farben;;
@@ -301,6 +303,8 @@ NIGHTCRAWLER v37 — Installation
   --dir <Pfad>     Zielverzeichnis (Vorgabe: ~/nightcrawler)
   --branch <Name>  Git-Zweig beim Klonen (Vorgabe: main)
   --skip-system    Systempakete nicht anfassen (wenn schon vorhanden)
+  --observability  Prometheus mit einrichten (Verlauf und Alarme, nur lokal);
+                   =grafana zusaetzlich Grafana. Ohne den Schalter: nur gefuehrt gefragt
   --pkg <Name>     Paketmanager erzwingen: apt dnf pacman zypper apk brew
   --no-color       ohne Farben
   --help           diese Hilfe
@@ -940,8 +944,33 @@ z_totmann(){
   elif [ "$P_TOTMANN" = "J" ]; then t 'einrichten'; else t 'aus'; fi
 }
 
+# v4.2-W127: Prometheus/Grafana. Nur auf Nachfrage oder per Schalter: es
+# bringt Pakete und einen weiteren Dienst mit, und das ist keine
+# Nebenwirkung, die eine Installation ungefragt haben darf.
+OPT_BEOBACHTUNG="${OPT_BEOBACHTUNG:-}"
+P_BEOBACHTUNG="N"; P_GRAFANA="N"
+f_beobachtung(){
+  P_BEOBACHTUNG="N"; P_GRAFANA="N"
+  [ "$P_AUTOSTART" = "systemd" ] || return 0
+  [ -f "${QUELLE:-$ZIEL}/tools/observability.sh" ] || [ -f "$ZIEL/tools/observability.sh" ] || return 0
+  if [ -n "$OPT_BEOBACHTUNG" ]; then
+    P_BEOBACHTUNG="J"; [ "$OPT_BEOBACHTUNG" = "grafana" ] && P_GRAFANA="J"
+    return 0
+  fi
+  [ "$MODUS" = "gefuehrt" ] || return 0
+  erklaere "Prometheus sammelt die Kennzahlen des Bots (/metrics) und haelt sie 30 Tage — Verlauf statt Momentaufnahme — und prueft zehn Alarmregeln: Bot weg, Neustart im Kreis, Platte voll, Event-Loop haengt. Laeuft nur auf 127.0.0.1. Grafana zeigt das als Diagramme im Browser; auf Debian/Ubuntu wird dafuer die offizielle Paketquelle apt.grafana.com eingetragen."
+  frage_ja "Prometheus einrichten (Verlauf und Alarme)?" N && P_BEOBACHTUNG="J"
+  [ "$P_BEOBACHTUNG" = "J" ] && frage_ja "Grafana dazu (Diagramme im Browser)?" N && P_GRAFANA="J"
+  return 0
+}
+z_beobachtung(){
+  if [ "$P_AUTOSTART" != "systemd" ]; then t 'nur mit systemd-Dienst'
+  elif [ "$P_GRAFANA" = "J" ]; then t 'Prometheus und Grafana'
+  elif [ "$P_BEOBACHTUNG" = "J" ]; then printf 'Prometheus'; else t 'aus'; fi
+}
+
 # Die Reihenfolge ist die der Zusammenfassung. Abschnitte mit Ueberschrift.
-PUNKTE=(python system pypakete telegram dashboard discord restream profil datenbank crowdsec llm autostart motd totmann)
+PUNKTE=(python system pypakete telegram dashboard discord restream profil datenbank crowdsec llm autostart motd totmann beobachtung)
 punkt_titel(){
   case "$1" in
     python) t 'Python';; system) t 'Systempakete';; pypakete) t 'Python-Pakete';;
@@ -949,6 +978,7 @@ punkt_titel(){
     restream) t 'Restream-Ziele';; profil) t 'Leistungsprofil';; datenbank) t 'Datenbank';;
     crowdsec) printf 'CrowdSec';; llm) t 'Lokales LLM';; autostart) printf 'Autostart';;
     motd) printf 'MOTD';; totmann) t 'Totmann-Meldung';;
+    beobachtung) t 'Beobachtung';;
   esac
 }
 punkt_fragen(){
@@ -1645,6 +1675,20 @@ UNIT
   gut "Totmann-Meldung verdrahtet."
   info "Testen (MUSS eine Nachricht ausloesen):  sudo systemctl start nightcrawler-notify@%s.service" "$DIENST"
   merke "Totmann-Meldung: aktiv — Test: sudo systemctl start nightcrawler-notify@%s.service" "$DIENST"
+fi
+
+# ── Beobachtung (v4.2-W127) ──────────────────────────────────
+# Dasselbe Werkzeug wie spaeter von Hand: eine Einrichtung, zwei Wege dorthin
+# — zwei Kopien liefen auseinander (W100).
+if [ "$P_BEOBACHTUNG" = "J" ] && [ -f "$ZIEL/tools/observability.sh" ]; then
+  _obs=(--unattended --dir "$ZIEL" --no-grafana)
+  [ "$P_GRAFANA" = "J" ] && _obs=(--unattended --dir "$ZIEL" --grafana-repo)
+  [ "$TROCKEN" = 1 ] && _obs+=(--dry-run)
+  if ${SUDO:+$SUDO} bash "$ZIEL/tools/observability.sh" "${_obs[@]}"; then
+    merke "Beobachtung: Prometheus auf 127.0.0.1:9099 — pruefen: bash tools/observability.sh --check"
+  else
+    warn "Beobachtung unvollstaendig — Grund oben; erneut: sudo bash %s/tools/observability.sh" "$ZIEL"
+  fi
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════
