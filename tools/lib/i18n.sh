@@ -70,14 +70,44 @@ t(){
   [ -n "$_tr" ] && printf '%s' "$_tr" || printf '%s' "$_s"
 }
 
+# ── tf: uebersetzen MIT Laufzeitwerten (v4.2-W123) ──────────
+# tf FORMAT [ARG…] — der Schluessel ist das FORMAT mit %s, die Werte kommen
+# erst nach der Uebersetzung hinein. Bis W123 standen 45 Senken-Aufrufe der
+# Form info "Python gefunden: $PY" in installer.sh: t() schlug den FERTIGEN
+# Text nach, traf nie einen Schluessel, und die Zeile blieb deutsch, waehrend
+# die Abdeckung 100 % meldete.
+#
+# Mit nur einem Argument ist tf genau t — OHNE printf. Sonst wuerde ein
+# woertliches % in einem gewoehnlichen Satz ("90 % voll") als Format gelesen.
+# Dass die Uebersetzung dieselben Platzhalter in derselben Reihenfolge traegt,
+# prueft tools/i18n_tools.py --check (platzhalter_bruch).
+tf(){
+  if [ $# -le 1 ]; then t "${1:-}"; return; fi
+  _fmt="$(t "$1")"; shift
+  # shellcheck disable=SC2059  # das Format ist hier der Zweck, nicht der Unfall
+  printf "$_fmt" "$@"
+}
+
+# ── tz: Heredoc zeilenweise uebersetzen (v4.2-W123) ──────────
+# tz <<'MARKE' … MARKE — fuer Hilfetexte. Jede Zeile ist ein Schluessel, die
+# Einrueckung bleibt stehen und gehoert NICHT zum Schluessel; sonst haengt die
+# Uebersetzung an der Anzahl Leerzeichen, und eine umformatierte Hilfe faellt
+# still auf Deutsch zurueck.
+tz(){
+  while IFS= read -r _z || [ -n "$_z" ]; do
+    _ein="${_z%%[! ]*}"; _rest="${_z#"$_ein"}"
+    if [ -z "$_rest" ]; then printf '\n'; else printf '%s%s\n' "$_ein" "$(t "$_rest")"; fi
+  done
+}
+
 # Wie viel ist abgedeckt? Fuer tools/i18n_tools.py --check und den --doctor.
 nc_i18n_status(){
-  printf 'i18n:    Fassung %s\n' "$NC_TOOLS_I18N_VERSION"
-  printf 'Sprache: %s\n' "$NC_LANG_EFF"
+  printf '%s\n' "$(tf 'i18n:    Fassung %s' "$NC_TOOLS_I18N_VERSION")"
+  printf '%s\n' "$(tf 'Sprache: %s' "$NC_LANG_EFF")"
   if [ -n "${NC_I18N_KATALOG:-}" ] && [ -r "$NC_I18N_KATALOG" ]; then
-    printf 'Katalog: %s (%s Eintraege)\n' "$NC_I18N_KATALOG" \
-      "$(grep -cv '^[[:space:]]*\(#\|$\)' "$NC_I18N_KATALOG" 2>/dev/null || echo 0)"
+    printf '%s\n' "$(tf 'Katalog: %s (%s Eintraege)' "$NC_I18N_KATALOG" \
+      "$(grep -cv '^[[:space:]]*\(#\|$\)' "$NC_I18N_KATALOG" 2>/dev/null || echo 0)")"
   else
-    printf 'Katalog: keiner geladen — Ausgabe bleibt deutsch\n'
+    printf '%s\n' "$(t 'Katalog: keiner geladen — Ausgabe bleibt deutsch')"
   fi
 }

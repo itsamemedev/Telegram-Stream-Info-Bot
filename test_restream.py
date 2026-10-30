@@ -9439,8 +9439,14 @@ def test_v41_w17_werkzeuge():
     # gewesen, und die vergessene faellt niemandem auf.
     assert "lib/i18n.sh" in inst and "lib/i18n.sh" in motd, "i18n nicht eingebunden"
     for _f in ("info(){", "gut(){", "warn(){", "fehler(){", "erklaere(){"):
-        _i = inst.index(_f)
-        assert '$(t "' in inst[_i:_i + 220], "%s uebersetzt nicht" % _f
+        # v4.2-W123: tf statt t — dieselbe Senke, jetzt mit Laufzeitwerten als
+        # eigene Argumente (info "Gefunden: %s" "$x"). Geprueft wird die
+        # STAERKERE Form: die Senke reicht alle Argumente an tf weiter.
+        # Und zwar an IHRER Zeile: das Fenster inst[_i:_i + 220] reichte bis in
+        # die naechste Senke, und die Mutationsprobe, die info() das tf nahm,
+        # ist daran entwischt — gut() darunter trug es noch.
+        _zeile = next(z for z in inst.split("\n") if z.startswith(_f))
+        assert '$(tf "$@")' in _zeile, "%s uebersetzt nicht" % _f
     # Faellt der Katalog aus, bleibt Deutsch — nie eine leere Zeile.
     lib = open("tools/lib/i18n.sh", encoding="utf-8").read()
     assert "printf '%s' \"$_s\"" in lib, "kein Rueckfall auf den deutschen Text"

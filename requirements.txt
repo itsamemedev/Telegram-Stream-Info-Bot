@@ -39,7 +39,7 @@ python-telegram-bot >= 20.0    # import telegram — Telegram-Bot
 #   API-Zwang: Application.builder() (bot.py:22032) und telegram.constants.
 #   ParseMode. Nachgesehen: 13.15 hat kein telegram/ext/_application.py,
 #   20.0 hat es. Die 13er-Reihe kannte nur Updater — anderer Bauplan.
-discord.py >= 2.0              # import discord  — Discord-Gateway + Slash-Commands
+discord.py >= 2.0              # [optional] import discord  — Discord-Gateway + Slash-Commands
 #   API-Zwang: app_commands (die 45 Slash-Commands). Nachgesehen: 1.7.3
 #   hat kein discord/app_commands/, 2.0.0 hat es.
 TikTokLive >= 6.0              # Live-Erkennung (undokumentierte API, s.o.)
@@ -89,23 +89,27 @@ websockets_proxy >= 0.1.3      # WebSocket ueber Proxy (Kick-Chat)
 # ── Konfiguration / Daten ────────────────────────────────────────────────
 python-dotenv >= 1.0           # import dotenv — .env laden
 orjson >= 3.9                  # schnelles JSON
-PyMySQL >= 1.1                 # import pymysql — nur bei DB_BACKEND=mariadb
-redis >= 4.2                   # optionaler Cache
+PyMySQL >= 1.1                 # [optional] import pymysql — nur bei DB_BACKEND=mariadb
+redis >= 4.2                   # [optional] Cache
 #   API-Zwang: `import redis.asyncio` (bot.py:3233). Nachgesehen: 4.1.0 hat
 #   kein redis/asyncio/, 4.2.0 hat es (dort ging aioredis darin auf).
 
 # ── KI / Medien ──────────────────────────────────────────────────────────
-faster-whisper >= 1.0          # import faster_whisper — Transkription
+faster-whisper >= 1.0          # [optional] import faster_whisper — Transkription
 
 # ── Ablage ───────────────────────────────────────────────────────────────
-boto3 >= 1.34                  # S3-Backup (optional, nur bei S3_BACKUP=1)
+boto3 >= 1.34                  # [optional] S3-Backup, nur bei S3_BACKUP=1
 
 # ── Optional, spuerbarer Gewinn ──────────────────────────────────────────
-uvloop >= 0.19; sys_platform != "win32"   # schnellere asyncio-Schleife
+uvloop >= 0.19; sys_platform != "win32"   # [optional] schnellere asyncio-Schleife
 #   Der Marker ist kein Schmuck: uvloop hat KEINE Windows-Fassung, und
 #   ohne ihn bricht  pip install -r requirements.txt  dort komplett ab —
 #   mitten in der Installation, mit einem Compiler-Fehler als Begruendung.
 #   Mit Marker ueberspringt pip die Zeile auf Windows von selbst.
+
+# [optional] markiert, was der Bot nicht zum Starten braucht. tools/installer.sh
+# fragt danach, tools/update.sh installiert es nur mit --optional, und
+# tools/anforderungen.py liest die Marke von hier — es gibt keine zweite Liste.
 
 # ── NICHT per pip: Systempakete ──────────────────────────────────────────
 # Diese werden ueber den Paketmanager installiert, nicht hierueber:

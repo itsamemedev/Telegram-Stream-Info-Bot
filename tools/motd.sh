@@ -139,6 +139,10 @@ elif [ -n "${BOT_DIR:-}" ] && [ -r "${BOT_DIR}/tools/lib/i18n.sh" ]; then
   . "${BOT_DIR}/tools/lib/i18n.sh"
 else
   t(){ printf '%s' "$*"; }
+  # v4.2-W123: tf muss es auch ohne Katalog geben, sonst stirbt --install
+  # an "command not found" statt deutsch weiterzulaufen.
+  # shellcheck disable=SC2059
+  tf(){ if [ $# -le 1 ]; then printf '%s' "${1:-}"; else _f="$1"; shift; printf "$_f" "$@"; fi; }
 fi
 
 # ── Farben ───────────────────────────────────────────────────
@@ -302,7 +306,7 @@ silence_defaults(){
   done
   if [ -n "$s" ]; then
     printf '%s\n' $s > "$NC_STATE"
-    printf "  ${FNT}Standard-MOTD gedaempft:${R}%s\n" "$s"
+    printf "  ${FNT}%s${R}%s\n" "$(t "Standard-MOTD gedaempft:")" "$s"
   else
     printf "  ${FNT}%s${R}\n" "$(t "Standard-MOTD war bereits still")"
   fi
@@ -314,7 +318,7 @@ silence_defaults(){
     mkdir -p "$(dirname "$NC_MOTD_SAVED")" 2>/dev/null
     if mv /etc/motd "$NC_MOTD_SAVED" 2>/dev/null; then
       : > /etc/motd 2>/dev/null || true
-      printf "  ${FNT}statische /etc/motd beiseitegelegt${R} → %s\n" "$NC_MOTD_SAVED"
+      printf "  ${FNT}%s${R} → %s\n" "$(t "statische /etc/motd beiseitegelegt")" "$NC_MOTD_SAVED"
     fi
   fi
 }
@@ -339,7 +343,7 @@ restore_defaults(){
            "$(t "Sicherung bleibt unter")" "$NC_MOTD_SAVED"
     fi
   fi
-  [ "$wieder" = 1 ] && printf "  ${FNT}Standard-MOTD wiederhergestellt${R}\n"
+  [ "$wieder" = 1 ] && printf "  ${FNT}%s${R}\n" "$(t "Standard-MOTD wiederhergestellt")"
   return 0
 }
 
@@ -348,8 +352,8 @@ write_conf(){
   # jedem Login neu — und raet als root anders als du beim Testen.
   mkdir -p "$(dirname "$CONF")" 2>/dev/null || return 1
   {
-    printf '# NIGHTCRAWLER MOTD — erzeugt von motd.sh --install am %s\n' "$(date '+%F %T')"
-    printf '# Von Hand aenderbar; --install ueberschreibt die Datei.\n'
+    printf '# %s\n' "$(tf 'NIGHTCRAWLER MOTD — erzeugt von motd.sh --install am %s' "$(date '+%F %T')")"
+    printf '# %s\n' "$(t 'Von Hand aenderbar; --install ueberschreibt die Datei.')"
     printf 'SERVICE=%s\n'     "$(qq "$SERVICE")"
     printf 'BOT_DIR=%s\n'     "$(qq "$BOT_DIR")"
     printf 'DASH_PORT=%s\n'   "$(qq "$DASH_PORT")"
@@ -360,7 +364,7 @@ write_conf(){
     printf 'COLOR_MODE=%s\n'  "$(qq "$COLOR_MODE")"
   } > "$CONF"
   chmod 644 "$CONF" 2>/dev/null
-  printf "${OK}✔ Konfiguration${R} → %s\n" "$CONF"
+  printf "${OK}✔ %s${R} → %s\n" "$(t "Konfiguration")" "$CONF"
 }
 qq(){ printf "'%s'" "$(printf '%s' "${1:-}" | sed "s/'/'\\\\''/g")"; }
 
@@ -369,12 +373,12 @@ need_root(){ [ "$(id -u)" -eq 0 ] || { printf "${WRN}%s${R} sudo %s %s\n" "$(t "
 install_linux(){
   local src; src="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
   [ -d /etc/update-motd.d ] || mkdir -p /etc/update-motd.d
-  cp "$src" "$DEST" && chmod +x "$DEST" || { printf "${ERR}✘ Installation fehlgeschlagen${R}\n"; exit 1; }
-  printf "${OK}✔ installiert${R} → %s\n" "$DEST"
+  cp "$src" "$DEST" && chmod +x "$DEST" || { printf "${ERR}✘ %s${R}\n" "$(t "Installation fehlgeschlagen")"; exit 1; }
+  printf "${OK}✔ %s${R} → %s\n" "$(t "installiert")" "$DEST"
   write_conf
   silence_defaults
   printf "  ${FNT}%s  sudo run-parts /etc/update-motd.d/${R}\n" "$(t "Vorschau:")"
-  printf "  ${FNT}'Last login' kommt von SSH — optional 'PrintLastLog no' in sshd_config${R}\n"
+  printf "  ${FNT}%s${R}\n" "$(t "'Last login' kommt von SSH — optional 'PrintLastLog no' in sshd_config")"
   if ! grep -rqs 'pam_motd' /etc/pam.d/sshd 2>/dev/null; then
     printf "  ${WRN}%s${R} ${FNT}%s${R}\n" "$(t "Hinweis:")" \
            "$(t "/etc/pam.d/sshd laedt pam_motd nicht — dann bleibt der Login still.")"
@@ -387,12 +391,12 @@ install_darwin(){
   local src rc; src="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
   rc="${SHELLRC:-$HOME/.zshrc}"; [ -n "${BASH_VERSION:-}" ] && [ ! -f "$rc" ] && rc="$HOME/.bash_profile"
   if grep -qs "$RC_MARK_A" "$rc"; then
-    printf "${FNT}bereits eingetragen in %s${R}\n" "$rc"
+    printf "${FNT}%s${R}\n" "$(tf "bereits eingetragen in %s" "$rc")"
   else
     { printf '\n%s\n' "$RC_MARK_A"
       printf '[ -t 1 ] && [ -z "$NC_MOTD_SHOWN" ] && export NC_MOTD_SHOWN=1 && "%s"\n' "$src"
       printf '%s\n' "$RC_MARK_E"; } >> "$rc"
-    printf "${OK}✔ eingetragen${R} → %s\n" "$rc"
+    printf "${OK}✔ %s${R} → %s\n" "$(t "eingetragen")" "$rc"
   fi
   write_conf
   printf "  ${FNT}%s  exec \$SHELL -l${R}\n" "$(t "Wirksam nach:")"
@@ -413,9 +417,9 @@ doctor(){
   printf "  %-12s %s\n" "$(t "System")"    "$OS $(uname -r 2>/dev/null)"
   printf "  %-12s %s\n" "$(t "Konfig")"    "$([ -r "$CONF" ] && echo "$CONF" || echo "— $(t "keine, alles erkannt")")"
   printf "  %-12s %s\n" "$(t "Dienst")"    "${SERVICE:-— $(t "nicht gefunden")}"
-  printf "  %-12s %s\n" "BOT_DIR"   "${BOT_DIR:-— nicht gefunden}"
-  printf "  %-12s %s\n" ".env"      "$([ -f "$ENVF" ] && echo "$ENVF" || echo "— fehlt")"
-  printf "  %-12s %s\n" "Datenbank" "${DB:-— keine gefunden}${DB_BACKEND:+  (DB_BACKEND=$DB_BACKEND)}"
+  printf "  %-12s %s\n" "BOT_DIR"   "${BOT_DIR:-— $(t "nicht gefunden")}"
+  printf "  %-12s %s\n" ".env"      "$([ -f "$ENVF" ] && echo "$ENVF" || echo "— $(t "fehlt")")"
+  printf "  %-12s %s\n" "$(t "Datenbank")" "${DB:-— $(t "keine gefunden")}${DB_BACKEND:+  (DB_BACKEND=$DB_BACKEND)}"
   printf "  %-12s %s\n" "$(t "Log")"       "$([ -f "$LOGF" ] && echo "$LOGF" || echo "— $(t "fehlt")")"
   printf "  %-12s %s\n" "$(t "Aufnahmen")" "$([ -d "$RECDIR" ] && echo "$RECDIR" || echo "— $(t "fehlt")")"
   printf "  %-12s %s\n" "Dashboard" ":$DASH_PORT"
@@ -435,7 +439,7 @@ case "${1:-}" in
   --uninstall)
     if [ "$OS" = "Darwin" ]; then uninstall_darwin; exit 0; fi
     need_root --uninstall
-    if [ -f "$DEST" ]; then rm -f "$DEST" && printf "${OK}✔ entfernt${R} → %s\n" "$DEST"
+    if [ -f "$DEST" ]; then rm -f "$DEST" && printf "${OK}✔ %s${R} → %s\n" "$(t "entfernt")" "$DEST"
     else printf "${FNT}%s${R}\n" "$(t "nicht installiert")"; fi
     restore_defaults
     printf "  ${FNT}%s %s${R}\n" "$CONF" "$(t "bleibt liegen (harmlos, enthaelt nur Pfade)")"
@@ -445,17 +449,17 @@ case "${1:-}" in
   --help|-h)
     printf "NIGHTCRAWLER MOTD %s\n\n" "$NC_MOTD_VERSION"
     printf "  %s\n" "$(t "(ohne Argument)  Vorschau — aendert nichts")"
-    printf "  --install        einhaengen + Standard-MOTD daempfen (sudo; macOS: Shell-rc)\n"
-    printf "  --uninstall      entfernen + Standard-MOTD wiederherstellen\n"
+    printf "  --install        %s\n" "$(t "einhaengen + Standard-MOTD daempfen (sudo; macOS: Shell-rc)")"
+    printf "  --uninstall      %s\n" "$(t "entfernen + Standard-MOTD wiederherstellen")"
     printf "  --doctor         %s\n" "$(t "zeigt, was erkannt wurde und woher")"
-    printf "  --version        Fassung\n\n"
+    printf "  --version        %s\n\n" "$(t "Fassung")"
     printf "%s %s %s\n" "$(t "Anpassen ueber")" "$CONF" "$(t "oder Umgebung:")"
     printf "  SERVICE BOT_DIR DASH_PORT DB DISK_TARGET SHOW_REC CPU_SAMPLE COLOR_MODE\n"
-    printf "  COLOR_MODE: always (Vorgabe) | auto | truecolor | 256 | 16 | off\n"
-    printf "Beispiel:  BOT_DIR=~/mein-bot COLOR_MODE=16 ./motd.sh\n"
+    printf "  COLOR_MODE: always (%s) | auto | truecolor | 256 | 16 | off\n" "$(t "Vorgabe")"
+    printf "%s  BOT_DIR=~/mein-bot COLOR_MODE=16 ./motd.sh\n" "$(t "Beispiel:")"
     exit 0;;
   "") ;;
-  *) printf "${WRN}Unbekannte Option: %s${R}  (--help)\n" "$1"; exit 1;;
+  *) printf "${WRN}%s${R}  (--help)\n" "$(tf "Unbekannte Option: %s" "$1")"; exit 1;;
 esac
 
 # ── Zeichen-Helfer ───────────────────────────────────────────
@@ -1002,11 +1006,11 @@ if [ "$SHOW_REC" = 1 ] && [ -d "$RECDIR" ]; then
     printf '%s|%s|%s\n' "${RC:-0}" "${RKB:-0}" "${RNEW:-}" > "$CACHE" 2>/dev/null
   fi
   sect "AUFNAHMEN"
-  printf "  ${TXT}%s${R} ${FNT}Dateien${R}   ${TXT}%s${R} ${FNT}gesamt${R}%b   ${FNT}%s${R}\n" \
-    "${RC:-0}" \
-    "$([ -n "${RKB:-}" ] && human $(( ${RKB:-0} * 1024 )) || echo '—')" \
-    "$([ -n "${RNEW:-}" ] && printf "   ${FNT}neuste vor${R} ${TXT}%s${R}" "$(ago "$RNEW")")" \
-    "$([ -n "${_age:-}" ] && [ "${_age:-0}" -lt "$REC_CACHE_TTL" ] 2>/dev/null && printf '%s %ss)' "$(t "(Stand: vor")" "$_age")"
+  printf "  ${TXT}%s${R} ${FNT}%s${R}   ${TXT}%s${R} ${FNT}%s${R}%b   ${FNT}%s${R}\n" \
+    "${RC:-0}" "$(t "Dateien")" \
+    "$([ -n "${RKB:-}" ] && human $(( ${RKB:-0} * 1024 )) || echo '—')" "$(t "gesamt")" \
+    "$([ -n "${RNEW:-}" ] && printf "   ${FNT}%s${R}" "$(tf "neuste vor %s" "$(ago "$RNEW")")")" \
+    "$([ -n "${_age:-}" ] && [ "${_age:-0}" -lt "$REC_CACHE_TTL" ] 2>/dev/null && tf "(Stand: vor %ss)" "$_age")"
   rule
 fi
 

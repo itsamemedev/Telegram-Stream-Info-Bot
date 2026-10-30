@@ -103,7 +103,6 @@ Diese Ubuntu-Fassung hat kein 3.12 in den Quellen. Das Zusatz-Repository deadsna
 Discord-Server-ID (Guild-ID, Rechtsklick auf den Server → ID kopieren)	Discord server ID (guild ID, right-click the server → Copy ID)
 Ein systemd-Dienst startet den Bot beim Booten, startet ihn nach einem Absturz neu und schreibt alles ins Journal (journalctl). Ohne ihn laeuft der Bot nur, solange deine SSH-Sitzung offen ist.	A systemd service starts the bot at boot, restarts it after a crash and writes everything to the journal (journalctl). Without it the bot only runs as long as your SSH session is open.
 Erkannt:   Raspberry Pi	Detected:  Raspberry Pi
-Frage	Question
 Freigabeliste gesetzt.	Allow-list set.
 Haeufigste Ursachen: kein Compiler fuer ein Paket ohne fertiges Rad (dann: sudo apt install build-essential python3-dev), oder eine abgerissene Verbindung. Wiederholen ist gefahrlos: .venv/bin/pip install -r requirements.txt	Most common causes: no compiler for a package without a prebuilt wheel (then: sudo apt install build-essential python3-dev), or a dropped connection. Retrying is harmless: .venv/bin/pip install -r requirements.txt
 In welches Verzeichnis soll NIGHTCRAWLER?	Which directory should NIGHTCRAWLER go into?
@@ -299,8 +298,8 @@ winget vorhanden - fehlende Programme koennen installiert werden.	winget is avai
 # Kurze Beschriftungen stehen bewusst mit drin, auch wo Deutsch und
 # Englisch gleich lauten (CPU, RAM, Bot): sie sind Senken-Argumente und
 # muessen einen Eintrag haben, sonst meldet --check sie als fehlend.
-(Stand: vor	(as of
-(ohne Argument)  Vorschau — aendert nichts	(no argument)     preview — changes nothing
+(Stand: vor %ss)	(as of %ss ago)
+(ohne Argument)  Vorschau — aendert nichts	(no argument)    preview — changes nothing
 .env	.env
 /etc/motd wurde seither neu beschrieben	/etc/motd has been rewritten since then
 /etc/pam.d/sshd laedt pam_motd nicht — dann bleibt der Login still.	/etc/pam.d/sshd does not load pam_motd — then the login stays silent.
@@ -392,3 +391,246 @@ Vorschau:	Preview:
 Werkzeuge	Tools
 entfernt aus	removed from
 keine Schnittstelle erkannt	no interface detected
+#
+# ── v4.2-W123: was der geschaerfte Pruefer zusaetzlich gefunden hat ─────────
+# Schluessel mit %s sind printf-FORMATE (tf). Die Uebersetzung MUSS dieselben
+# Platzhalter in derselben Reihenfolge tragen — i18n_tools.py --check prueft es.
+# Zeilen fuer install.bat bleiben reines ASCII (cmd.exe-Codepage).
+  Aktualisieren:	  Update:
+  Ausliefern, Rollback, Pruefschritte:	  Deploying, rollback, check steps:
+  Einstieg und Alltag:	  Getting started and day-to-day use:
+  Handstart   bash %s/start.sh	  Manual start  bash %s/start.sh
+  Neustart    sudo systemctl restart %s	  Restart     sudo systemctl restart %s
+  Selbsttest  %s bot.py --selfcheck	  Self-test   %s bot.py --selfcheck
+  Selbsttest:	  Self-test:
+  Starten:	  Start:
+  Uebersicht ueber alle Funktionen:	  Overview of all features:
+  docs/CROWDSEC.md      Abwehr	  docs/CROWDSEC.md      Defence
+  docs/DEPLOY.md        Ausliefern, Rollback, Pruefschritte	  docs/DEPLOY.md        Deploying, rollback, check steps
+  docs/SETUP_*.md       OAuth fuer Twitch und YouTube, llama.cpp	  docs/SETUP_*.md       OAuth for Twitch and YouTube, llama.cpp
+  docs/START_HIER.txt   Einstieg und Alltag	  docs/START_HIER.txt   Getting started and day-to-day use
+  → %s installieren?	  → install %s?
+%s Pakete werden installiert	%s packages will be installed
+%s Pakete werden installiert, ausgelassen:%s	%s packages will be installed, skipped:%s
+%s Platzhalter-Werte geleert (sie waeren als echte Werte gelesen worden).	%s placeholder values cleared (they would have been read as real values).
+%s Stream-Key	%s stream key
+%s als Restream-Ziel einrichten?	Set up %s as a restream target?
+%s eingeben	Enter %s
+%s eingerichtet.	%s set up.
+%s fehlt — ohne ihn laeuft KEINE Aufnahme und kein Restream.	%s is missing — without it there is NO recording and no restream.
+%s fehlt — wird spaeter im venv ergaenzt.	%s is missing — it will be added to the venv later.
+%s ohne Key — ausgeschaltet gelassen.	%s without a key — left disabled.
+%s: %s	%s: %s
+%s: sicheres Passwort erzeugen lassen?	%s: generate a secure password?
+'Last login' kommt von SSH — optional 'PrintLastLog no' in sshd_config	'Last login' comes from SSH — optionally set 'PrintLastLog no' in sshd_config
+(leer = spaeter selbst eintragen)	(empty = fill in yourself later)
+--branch <Name>  Git-Zweig beim Klonen (Vorgabe: main)	--branch <name>  Git branch to clone (default: main)
+--dir <Pfad>     Zielverzeichnis (Vorgabe: ~/nightcrawler)	--dir <path>     target directory (default: ~/nightcrawler)
+--express        nur die Pflichtfragen, alles andere per Vorgabe	--express        only the mandatory questions, everything else by default
+--help           diese Hilfe	--help           this help
+--no-color       ohne Farben	--no-color       without colours
+--skip-system    Systempakete nicht anfassen (wenn schon vorhanden)	--skip-system    leave system packages alone (if already present)
+--unattended,-y  keine Fragen; Passwoerter werden erzeugt, optionale	--unattended,-y  no questions; passwords are generated, optional
+1  Willkommen              7  Konfiguration (.env)	1  Welcome                 7  Configuration (.env)
+2  System pruefen          8  Optionale Bausteine	2  Check system            8  Optional components
+3  Python sicherstellen    9  Selbsttest	3  Ensure Python           9  Self-test
+4  Zielverzeichnis        10  Autostart, MOTD, Totmann-Meldung	4  Target directory       10  Autostart, MOTD, dead-man alert
+5  Systempakete           11  Zusammenfassung	5  System packages        11  Summary
+6  Python-Pakete	6  Python packages
+Abbruch in Schritt %s (Rueckgabewert %s).	Aborted in step %s (exit code %s).
+Alles davon steht auch in %s	All of this is also in %s
+Autostart, MOTD, Totmann-Meldung	Autostart, MOTD, dead-man alert
+BEDIENUNG	OPERATION
+Bausteine bleiben aus. Fuer Provisionierung/CI.	components stay off. For provisioning/CI.
+Beispiel:	Example:
+CrowdSec installiert: %s	CrowdSec installed: %s
+Dashboard per Tunnel oeffnen:  %s	Open the dashboard through a tunnel:  %s
+Dashboard-PIN (Ziffern)	Dashboard PIN (digits)
+Dateien	files
+Der Bot wurde beendet. Fenster schliessen mit einer beliebigen Taste.	The bot has stopped. Press any key to close this window.
+Der Weg in elf Schritten:	The way there, in eleven steps:
+Dienst        %s	Service       %s
+Dienst %s jetzt einrichten?	Set up service %s now?
+Dienst %s laeuft.	Service %s is running.
+Dienst startete nicht. Grund ansehen:  journalctl -u %s -n 60 --no-pager	Service did not start. See why:  journalctl -u %s -n 60 --no-pager
+Dienst: %s  (Status: systemctl status %s · Log: journalctl -u %s -f)	Service: %s  (status: systemctl status %s · log: journalctl -u %s -f)
+Dieses Skript richtet den Bot vollstaendig ein und erklaert dabei, was es tut und warum. Es fragt vor jedem Eingriff. Abbrechen mit Strg+C ist jederzeit gefahrlos.	This script sets up the bot completely and explains what it does and why along the way. It asks before every change. Aborting with Ctrl+C is safe at any time.
+Discord: zweite Bedienoberflaeche mit 45 Slash-Commands, Moderation und Community-Funktionen. Ohne Discord-Server unnoetig.	Discord: a second control surface with 45 slash commands, moderation and community features. Unnecessary without a Discord server.
+Fassung	version
+In Telegram deinen Bot anschreiben:  %s, dann %s	Message your bot in Telegram:  %s, then %s
+Installation (dauert ein paar Minuten): %s	Installation (takes a few minutes): %s
+Installation fehlgeschlagen	Installation failed
+Katalog: %s (%s Eintraege)	Catalogue: %s (%s entries)
+Katalog: keiner geladen — Ausgabe bleibt deutsch	Catalogue: none loaded — output stays German
+Kein Python >= %s.%s gefunden (vorhanden: %s).	No Python >= %s.%s found (present: %s).
+Kein Token — der Telegram-Teil bleibt still, bis du BOT_TOKEN in der .env eintraegst.	No token — the Telegram part stays silent until you put BOT_TOKEN into .env.
+Kein systemd/launchd verfuegbar — Start von Hand:  bash %s/start.sh	No systemd/launchd available — start manually:  bash %s/start.sh
+Keine Freigabeliste — jeder Telegram-Nutzer kann den Bot bedienen.	No allow-list — every Telegram user can operate the bot.
+Kerne:     %s   RAM: %s MB   frei in $HOME: %s GB	Cores:     %s   RAM: %s MB   free in $HOME: %s GB
+Kick ist das primaere Ziel: kein Transcode noetig, wenn es allein laeuft.	Kick is the primary target: no transcode needed when it runs alone.
+Klone %s (Zweig %s)	Cloning %s (branch %s)
+Konfiguration	Configuration
+Konfiguration %s   (Rechte 600 — enthaelt Geheimnisse)	Configuration %s   (mode 600 — contains secrets)
+Konfiguration geschrieben: %s (Rechte 600)	Configuration written: %s (mode 600)
+Konfiguration:	Configuration:
+Kopiere Quelltext nach %s	Copying source to %s
+Lege virtuelle Umgebung an (%s)	Creating virtual environment (%s)
+Leistungsprofil	Performance profile
+Lokales LLM: llamacpp-Dienst, Modell %s/model.gguf	Local LLM: llamacpp service, model %s/model.gguf
+MERKZETTEL	NOTES
+MariaDB-Treiber: nur noetig, wenn du die Daten in MariaDB statt in SQLite haelst. SQLite reicht bis weit in den sechsstelligen Zeilenbereich.	MariaDB driver: only needed if you keep the data in MariaDB instead of SQLite. SQLite is enough well into six-figure row counts.
+Meist fehlt das Paket python3-venv:  %s	Usually the python3-venv package is missing:  %s
+Mitlesen, ob er sauber hochkommt:  %s	Watch whether it comes up cleanly:  %s
+NIGHTCRAWLER MOTD — erzeugt von motd.sh --install am %s	NIGHTCRAWLER MOTD — generated by motd.sh --install on %s
+NIGHTCRAWLER v37 — Installation	NIGHTCRAWLER v37 — installation
+NIGHTCRAWLER v37 — Installation vom %s	NIGHTCRAWLER v37 — installation of %s
+OFFEN: BOT_TOKEN in %s eintragen (von @BotFather)	OPEN: put BOT_TOKEN into %s (from @BotFather)
+Ohne Python >= %s.%s geht es nicht weiter.	Cannot continue without Python >= %s.%s.
+Optionale Bausteine	Optional components
+Passwort fuer den Datenbank-Nutzer 'nightcrawler'	Password for the database user 'nightcrawler'
+Python bereit: %s (%s)	Python ready: %s (%s)
+Python gefunden: %s (%s)	Python found: %s (%s)
+Python sicherstellen	Ensure Python
+Python-Paket %s: ausgelassen (spaeter: .venv/bin/pip install %s)	Python package %s: skipped (later: .venv/bin/pip install %s)
+Python-Paket %s: installiert	Python package %s: installed
+Python-Pakete	Python packages
+Quelltext liegt bereits hier: %s	Source is already here: %s
+Quelltext liegt in %s	Source is in %s
+Redis-Cache: entlastet bei sehr vielen gleichzeitigen Dashboard-Zugriffen. Fuer eine Ein-Personen-Installation ohne Nutzen.	Redis cache: helps with very many simultaneous dashboard requests. Of no use for a single-person installation.
+Reverse-Proxy: https://%s → 127.0.0.1:%s (nginx + certbot)	Reverse proxy: https://%s → 127.0.0.1:%s (nginx + certbot)
+S3-Backup: schiebt Aufnahmen automatisch in einen S3-Speicher.	S3 backup: pushes recordings to S3 storage automatically.
+SICHERHEIT: Dashboard lauscht auf 0.0.0.0 — Firewall setzen: ufw allow from <DEINE-IP> to any port %s	SECURITY: dashboard listens on 0.0.0.0 — set a firewall: ufw allow from <YOUR-IP> to any port %s
+Spaeter:  sudo systemctl enable --now %s	Later:  sudo systemctl enable --now %s
+Sprache: %s	Language: %s
+Standard-MOTD gedaempft:	Default MOTD silenced:
+Standard-MOTD wiederhergestellt	Default MOTD restored
+Starten und zuschauen:  %s	Start and watch:  %s
+Startskript: %s/start.sh	Start script: %s/start.sh
+System:    %s (%s)	System:    %s (%s)
+Systempakete	System packages
+Telegram Bot-Token	Telegram bot token
+Telegram — der Pflichtteil	Telegram — the mandatory part
+Testen (MUSS eine Nachricht ausloesen):  sudo systemctl start nightcrawler-notify@%s.service	Test (MUST trigger a message):  sudo systemctl start nightcrawler-notify@%s.service
+Totmann-Meldung: aktiv — Test: sudo systemctl start nightcrawler-notify@%s.service	Dead-man alert: active — test: sudo systemctl start nightcrawler-notify@%s.service
+Transkription: schreibt mit, was im Stream gesagt wird (Grundlage fuer Clips, Highlights und die KI-Auswertung). Braucht rund 300 MB und deutlich CPU.	Transcription: writes down what is said in the stream (the basis for clips, highlights and the AI analysis). Needs about 300 MB and considerable CPU.
+Twitch begrenzt die Bitrate haerter als Kick — bei Problemen RESTREAM_BITRATE_K senken.	Twitch caps the bitrate harder than Kick — if there are problems, lower RESTREAM_BITRATE_K.
+Unbekannte Option: %s	Unknown option: %s
+Unterstuetzt: Ubuntu, Debian, Raspberry Pi OS, macOS.	Supported: Ubuntu, Debian, Raspberry Pi OS, macOS.
+Verzeichnis   %s	Directory     %s
+Verzeichnis:	Directory:
+Von Hand aenderbar; --install ueberschreibt die Datei.	Editable by hand; --install overwrites the file.
+Von install.bat erzeugt - startet NIGHTCRAWLER.	Generated by install.bat - starts NIGHTCRAWLER.
+Vorgabe	default
+Vorhandene .env gesichert: %s	Existing .env backed up: %s
+Vorhandene Umgebung wird weiterbenutzt: %s	Existing environment is reused: %s
+Vorhandener Dienst gefunden: %s	Existing service found: %s
+WEITERLESEN	FURTHER READING
+Was bereits geschrieben wurde, bleibt liegen — ein erneuter Lauf setzt dort auf, ohne Schaden anzurichten.	Whatever was already written stays in place — running again picks up from there without doing harm.
+Wege: %s	Ways: %s
+Windows: install.bat im selben Ordner	Windows: install.bat in the same folder
+YouTube braucht am laengsten, bis es 'live' meldet (bis zu einer Minute). Das ist normal und kein Fehler.	YouTube takes longest to report 'live' (up to a minute). That is normal and not an error.
+Zielverzeichnis und Quelltext	Target directory and source
+Zielverzeichnis: %s	Target directory: %s
+[J/n]	[Y/n]
+[j/N]	[y/N]
+apt-get install %s	apt-get install %s
+bash tools/installer.sh [Schalter]	bash tools/installer.sh [options]
+bereits eingetragen in %s	already registered in %s
+bot.py braucht mindestens Python %s.%s. Das ist keine Empfehlung: die Datei benutzt f-strings mit Backslash (PEP 701), unter 3.11 scheitert bereits das Einlesen mit einem SyntaxError. Debian 12 und Raspberry Pi OS bookworm liefern 3.11 — dort muss ein neuerer Interpreter dazu.	bot.py needs at least Python %s.%s. That is not a recommendation: the file uses f-strings with backslashes (PEP 701), and under 3.11 even reading it fails with a SyntaxError. Debian 12 and Raspberry Pi OS bookworm ship 3.11 — a newer interpreter has to be added there.
+certbot fehlgeschlagen — Port 80 offen? Domain zeigt hierher? Erneut: sudo certbot --nginx -d %s	certbot failed — is port 80 open? Does the domain point here? Again: sudo certbot --nginx -d %s
+eingetragen	registered
+einhaengen + Standard-MOTD daempfen (sudo; macOS: Shell-rc)	hook in + silence the default MOTD (sudo; macOS: shell rc)
+entfernen + Standard-MOTD wiederherstellen	remove + restore the default MOTD
+entfernt	removed
+gefuehrt	guided
+gesamt	total
+i18n:    Fassung %s	i18n:    version %s
+installiert	installed
+keine gefunden	none found
+keins	none
+launchd: %s  (stoppen: launchctl unload %s)	launchd: %s  (stop: launchctl unload %s)
+neuste vor %s	newest %s ago
+statische /etc/motd beiseitegelegt	static /etc/motd moved aside
+unbekannt	unknown
+— TikTok-Live-Ueberwachung, Aufnahme, Multi-Ziel-Restream und KI-Moderation (AZRAEL).	— TikTok live monitoring, recording, multi-target restream and AI moderation (AZRAEL).
+Betriebsart: %s — keine Fragen, Vorgaben und erzeugte Passwoerter.	Mode: %s — no questions, defaults and generated passwords.
+Betriebsart: %s — mit Erklaerungen. Fuer weniger Text: --express	Mode: %s — with explanations. For less text: --express
+Betriebsart: %s — nur Pflichtfragen.	Mode: %s — mandatory questions only.
+Bitte j oder n.	Please answer y or n.
+Der Selbsttest liess sich nicht ausfuehren (Code %s).	The self-test could not be run (code %s).
+Der Selbsttest meldet offene Punkte (oben rot). Meist fehlt ein Token oder ein Schluessel — der Bot startet trotzdem.	The self-test reports open items (red above). Usually a token or key is missing — the bot starts anyway.
+Unbekannter Schalter: %s  (--help)	Unknown option: %s  (--help)
+#
+# ── v4.2-W123: tools/update.sh, tools/lib/ausgabe.sh, tools/lib/system.sh ───
+%s %s	%s %s
+%s %s ist zu alt (%s)	%s %s is too old (%s)
+%s fehlt (%s)	%s is missing (%s)
+%s fehlt weiterhin.	%s is still missing.
+%s fehlt — Paket: %s	%s is missing — package: %s
+%s fehlt — kein Paket fuer %s gefunden. Bitte selbst bereitstellen.	%s is missing — no package found for %s. Please provide it yourself.
+%s fehlt — kein Systempaket, wird per pip in .venv ergaenzt.	%s is missing — no system package, will be added to .venv via pip.
+%s: entfaellt auf dieser Plattform	%s: not applicable on this platform
+%s: jetzt vorhanden	%s: now present
+--all            alles oben	--all            everything above
+--check          nur pruefen und berichten; Exitcode 1, wenn etwas fehlt	--check          only check and report; exit code 1 if something is missing
+--dir <Pfad>     Installation (Vorgabe: der Ordner ueber tools/)	--dir <path>     installation (default: the folder above tools/)
+--dry-run        die Befehle zeigen, die liefen — nichts ausfuehren	--dry-run        show the commands that would run — execute nothing
+--express        eine Rueckfrage fuer den ganzen Plan statt einer je Schritt	--express        one confirmation for the whole plan instead of one per step
+--optional       zusaetzlich die als [optional] markierten Pakete	--optional       also the packages marked [optional]
+--pkg <Name>     Paketmanager erzwingen: apt dnf pacman zypper apk brew	--pkg <name>     force a package manager: apt dnf pacman zypper apk brew
+--python-deps    Pflichtpakete aus requirements.txt in .venv	--python-deps    required packages from requirements.txt into .venv
+--system         Systemwerkzeuge: ffmpeg streamlink yt-dlp git curl sqlite3	--system         system tools: ffmpeg streamlink yt-dlp git curl sqlite3
+--unattended,-y  keine Rueckfragen (fuer Skripte und Zeitplaene)	--unattended,-y  no questions (for scripts and schedules)
+--upgrade        Python-Pakete auf die neueste zulaessige Fassung heben	--upgrade        raise Python packages to the newest allowed version
+Abgleich gegen requirements.txt fehlgeschlagen (siehe Meldung oben).	Comparison against requirements.txt failed (see message above).
+Abgleich unvollstaendig — offene Punkte siehe oben.	Reconciliation incomplete — open items see above.
+Abgleich vollstaendig.	Reconciliation complete.
+Ausfuehrung	Execution
+Betriebsart: %s — Rueckfrage je Schritt. Fuer weniger: --express	Mode: %s — one question per step. For fewer: --express
+Betriebsart: %s — eine Rueckfrage fuer den ganzen Plan.	Mode: %s — one question for the whole plan.
+Betriebsart: %s — keine Rueckfragen.	Mode: %s — no questions.
+Danach: alle Pflichtpakete aus requirements.txt	Then: all required packages from requirements.txt
+Ein laufender Bot sieht neue Pakete erst nach einem Neustart des Dienstes.	A running bot only sees new packages after the service is restarted.
+Es fehlt etwas (siehe Plan). Ohne --check wird es installiert.	Something is missing (see plan). Without --check it gets installed.
+Exitcodes: 0 vollstaendig · 1 es fehlt etwas · 2 Aufruffehler	Exit codes: 0 complete · 1 something is missing · 2 usage error
+Installation: %s	Installation: %s
+Kein Python >= 3.12 gefunden — erst tools/installer.sh laufen lassen.	No Python >= 3.12 found — run tools/installer.sh first.
+Keine virtuelle Umgebung unter %s/.venv.	No virtual environment at %s/.venv.
+Mindestens ein Systempaket liess sich nicht installieren.	At least one system package could not be installed.
+NIGHTCRAWLER — Nachinstallation und Abgleich	NIGHTCRAWLER — post-install and reconciliation
+Nachpruefung	Verification
+Nichts automatisch zu tun — offene Punkte siehe oben.	Nothing to do automatically — open items see above.
+Nichts zu tun — alles vorhanden.	Nothing to do — everything is present.
+Nur Pruefung — es wird nichts installiert.	Check only — nothing will be installed.
+Ohne .venv kein pip-Weg fuer:%s	Without .venv there is no pip route for:%s
+Optionale Pakete nicht geprueft, ausser per .env eingeschaltete (alle: --optional).	Optional packages not checked, except those switched on in .env (all: --optional).
+%s ist optional, wird hier aber gebraucht: %s	%s is optional, but needed here: %s
+Paketmanager: %s	Package manager: %s
+Paketquellen liessen sich nicht auffrischen — versuche es trotzdem.	Package sources could not be refreshed — trying anyway.
+Paketquellen noch nicht aufgefrischt — %s wird beim Installieren geklaert.	Package sources not refreshed yet — %s will be resolved during installation.
+Per pip in .venv:%s	Via pip into .venv:%s
+Plan	Plan
+Plan ausfuehren?	Carry out the plan?
+Programme, keine Bibliotheken: ffmpeg nimmt auf und sendet, streamlink und yt-dlp loesen die TikTok-Quelle auf, sqlite3 ist die Kommandozeile zur Datenbank. Vorhandene werden nicht angefasst.	Programs, not libraries: ffmpeg records and sends, streamlink and yt-dlp resolve the TikTok source, sqlite3 is the command line to the database. Existing ones are left alone.
+Python-Pakete auf neueste zulaessige Fassung heben (--upgrade)	Raise Python packages to the newest allowed version (--upgrade)
+Python-Pakete fehlen weiterhin:%s	Python packages are still missing:%s
+Python-Pakete jetzt installieren?	Install Python packages now?
+Python-Pakete:%s	Python packages:%s
+Selbst bereitstellen:%s	Provide yourself:%s
+Systempakete jetzt installieren?	Install system packages now?
+Systempakete uebersprungen.	System packages skipped.
+Systempakete werden nur ergaenzt, nie aktualisiert.	System packages are only added, never upgraded.
+Systempakete: %s	System packages: %s
+Systemwerkzeuge	System tools
+Trockenlauf beendet — nichts wurde veraendert.	Dry run finished — nothing was changed.
+Trockenlauf — Befehle werden gezeigt, nicht ausgefuehrt.	Dry run — commands are shown, not executed.
+Unbekannter Paketmanager: %s (apt dnf pacman zypper apk brew)	Unknown package manager: %s (apt dnf pacman zypper apk brew)
+Verzeichnis gibt es nicht: %s	Directory does not exist: %s
+Virtuelle Umgebung anlegen und Pakete installieren?	Create the virtual environment and install packages?
+Virtuelle Umgebung anlegen: %s/.venv	Create virtual environment: %s/.venv
+Was (ohne Auswahl: --system und --python-deps):	What (without a selection: --system and --python-deps):
+Wie:	How:
+Wird angelegt mit %s	Will be created with %s
+bash tools/update.sh [Schalter]	bash tools/update.sh [options]
+ffmpeg-free ist die Fedora-Fassung ohne x264: Aufnahme geht, Restream mit Umkodierung nicht. Die volle Fassung kommt aus RPM Fusion (rpmfusion.org).	ffmpeg-free is the Fedora build without x264: recording works, restreaming with transcoding does not. The full build comes from RPM Fusion (rpmfusion.org).
+requirements.txt fehlt in %s	requirements.txt is missing in %s
