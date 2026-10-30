@@ -9005,6 +9005,15 @@ async def _aufnahme_beim_stopp_sichern(proc, tid, username, output_file,
 async def _aufnahme_platz_frei(tid, proc):
     """v4.2-W131: Prozess aus der Zaehlung, Sperre des Trackings frei.
 
+    Aufgerufen, sobald ffmpeg weg ist — nicht erst nach Tonpruefung,
+    Datenbank und Telegram-Upload. Bis dahin hielt das finally von
+    handle_recording_finished die Sperre, und jeder Neustart endete mit
+    "Lock nicht bekommen … Skip.": bei jedem geplanten URL-Schnitt (~28 min)
+    und nach jedem Haenger fehlte mindestens die Upload-Dauer. Das finally
+    raeumt danach NICHT noch einmal: inzwischen kann dieselbe Tracking-ID die
+    naechste Aufnahme halten, und ein zweites clear_recording naehme ihr
+    Sperre, Datei und PID weg.
+
     Neben dem Loop: clear_recording schreibt in die Datenbank, und die
     steht unter Plattenlast (W117)."""
     try:
@@ -9182,12 +9191,7 @@ async def handle_recording_finished(proc, tid, chat_id, username, output_file,
             try: await refresh_task
             except (asyncio.CancelledError, Exception): pass
 
-        # v4.2-W131: der Platz wird frei, sobald ffmpeg weg ist — nicht erst
-        # nach Tonpruefung, Datenbank und Telegram-Upload. Bis hierher hielt
-        # erst das finally ganz unten die Sperre auf, und jeder Neustart
-        # dazwischen endete mit "Lock nicht bekommen … Skip." Bei jedem
-        # geplanten URL-Schnitt (~28 min) und nach jedem Haenger fehlte damit
-        # mindestens die Dauer des Uploads in der Aufnahme.
+        # v4.2-W131: Platz frei, sobald ffmpeg weg ist (Begruendung dort).
         if proc.returncode is not None:
             await _aufnahme_platz_frei(tid, proc)
             platz_frei[0] = True
@@ -9484,10 +9488,7 @@ async def handle_recording_finished(proc, tid, chat_id, username, output_file,
             except Exception: pass
         try: active_processes.remove(proc)
         except ValueError: pass
-        if not platz_frei[0]:
-            # Nur wenn oben noch nicht geschehen: inzwischen kann dieselbe
-            # Tracking-ID schon die NAECHSTE Aufnahme halten, und ein zweites
-            # clear_recording nähme ihr Sperre, Datei und PID weg.
+        if not platz_frei[0]:      # sonst naehme es der Folgeaufnahme die Sperre
             clear_recording(tid)
 
 # -----------------------------
