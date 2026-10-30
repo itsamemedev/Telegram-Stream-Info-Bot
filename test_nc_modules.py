@@ -24092,6 +24092,7 @@ def _test_v42_w130_sendebruecke():
     import os as _os
     import shutil as _sh
     import time as _t
+    import subprocess as _sp
     from nc import sendebruecke as B
     from nc import restreamcfg as C
     from nc import restreamcmd as R
@@ -24281,6 +24282,7 @@ def _test_v42_w130_sendebruecke():
         assert C.bruecke_luecke() == 2.0
         _os.environ["RESTREAM_BRUECKE_LUECKE_S"] = "999"
         assert C.bruecke_luecke() == 30.0
+        assert C.bruecke_offline() >= 0
     finally:
         for k, v in alt.items():
             if v is None:
@@ -24530,6 +24532,139 @@ def _test_v42_w130_sendebruecke():
     _os.close(lese7)
     assert not [c for c in starts7 if c[0] == "zub"], \
         "nach stop() startete noch ein Zubringer — eine Waise"
+
+    # ── (13) Die Grenzen der Aufloesung, ohne Threads (uhr von aussen).
+    uhr8 = [1000.0]
+    antworten = []
+
+    def quelle8():
+        a = antworten.pop(0)
+        if isinstance(a, Exception):
+            raise a
+        return a
+    W8 = B.Bruecke(None, [], None, quelle8, name="#a", uhr=lambda: uhr8[0],
+                   neustart_min_s=0.0, neustart_max_s=0.0, offline_s=60, unklar_s=600)
+    antworten[:] = [RuntimeError("Aufloesung kaputt")]
+    assert W8._adresse() is None and W8.ende is None, "ein Absturz der Aufloesung beendet die Bruecke"
+    W8._tonlos = W8._neukodieren = True
+    antworten[:] = [("u-neu", None)]
+    assert W8._adresse() == "u-neu"
+    assert not W8._tonlos and not W8._neukodieren, "eine neue Adresse erbt die Lehren der alten"
+    antworten[:] = [(None, "offline"), (None, "offline")]
+    assert W8._adresse() is None and W8.ende is None, "erstes offline beendet sofort"
+    uhr8[0] += 61
+    assert W8._adresse() is None and W8.ende and "offline" in W8.ende, W8.ende
+    W9 = B.Bruecke(None, [], None, lambda: (None, "unknown"), name="#u",
+                   uhr=lambda: uhr8[0], neustart_min_s=0.0, neustart_max_s=0.0,
+                   unklar_s=600)
+    assert W9._adresse() is None and W9.ende is None
+    uhr8[0] += 601
+    assert W9._adresse() is None and W9.ende and "keine abspielbare Quelle" in W9.ende, \
+        "ohne Grenze stuende das Pausenbild ewig, waehrend TikTok blockt"
+
+    # ── (14) Der Sender ist weg: die Weiche merkt es am Schreiben.
+    lese10, schreib10 = _os.pipe()
+    W10 = B.Bruecke(schreib10, [], None, None, name="#tot")
+    W10.daten(B.FUELLER, _w130_pat())
+    W10.daten(B.FUELLER, _w130_pmt([(0x100, B.H264), (0x101, B.AAC_ADTS)]))
+    W10._fueller_frei = True
+    _os.close(lese10)
+    assert not W10.daten(B.FUELLER, _w130_pes(0x100, 3000, 0, rai=True))
+    assert W10.ende and "Sender" in W10.ende and W10._halt.is_set()
+    W10._schliessen()
+
+    # ── (15) Der Leser richtet sich am Sync-Byte aus — die Pipe zerteilt
+    # Pakete beliebig, und ein Rest wird beim naechsten Lesen angesetzt.
+    pakete = [_w130_pat(), _w130_pmt([(0x100, B.H264), (0x101, B.AAC_ADTS)])] + \
+        [_w130_pes(0x100, 3000 * (i + 1), 3000 * i, rai=(i == 0)) for i in range(4)]
+    strom = b"\x00\x13" + b"".join(pakete)
+    stuecke = [strom[:100], strom[100:500], strom[500:777], strom[777:]]
+
+    class _Strom:
+        def read1(self, n):
+            return stuecke.pop(0) if stuecke else b""
+        read = read1
+    gesehen = []
+    W11 = B.Bruecke(None, [], None, None, name="#lies")
+    W11.daten = lambda wer, p: gesehen.append(bytes(p))
+    W11._lies(B.QUELLE, type("P", (), {"stdout": _Strom()})())
+    assert gesehen == pakete, ("Pakete beim Lesen zerteilt oder verschoben", len(gesehen))
+
+    # ── (16) Was KEIN Treffer ist, muss als solcher erkannt werden — sonst
+    # liest der Parser Zeitstempel oder Stroeme aus beliebigen Nutzdaten.
+    ohne_start = _w130_pes(0x100, 3000, pusi=False)
+    assert B.pes_zeit(ohne_start) == (None, None)
+    kein_pes = bytes([0x47, 0x41, 0x00, 0x10]) + b"\xab" * 184
+    assert B.pes_zeit(kein_pes) == (None, None), "Nutzdaten ohne PES-Kopf als Zeitstempel gelesen"
+    assert B._abschnitt_daten(ohne_start) is None
+    assert B.pat_pmt_pid(_w130_pmt([(0x100, B.H264)])) is None, "PMT als PAT gelesen"
+    assert B.pmt_stroeme(_w130_pat()) is None, "PAT als PMT gelesen"
+    assert B.pat_pmt_pid(_w130_psi(0, bytes([0x00, 0xB0, 13, 0, 1, 0xC1, 0, 0, 0, 0, 0xE0, 0x10]) + b"\0" * 4)) is None, \
+        "Programm 0 (Netzwerk-PID) als PMT genommen"
+    assert B.video_pid({0x101: B.AAC_ADTS}) is None
+    W12 = B.Bruecke(None, [], None, None, name="#zu")
+    W12._fueller_frei = True
+    assert W12.daten(B.FUELLER, _w130_pes(0x100, 3000, 0, rai=True)) is False, \
+        "nach dem Schliessen wird noch geschrieben"
+    voll = bytes([0x47, 0x40, 0x00, 0x30, 183]) + b"\x00" * 183   # Anpassungsfeld fuellt alles
+    assert B._abschnitt_daten(voll) is None and B.pes_zeit(voll) == (None, None)
+    # Die Weiche reicht ein verworfenes Paket nicht an den Sender weiter.
+    lese15, schreib15 = _os.pipe()
+    _os.set_blocking(lese15, False)
+    W15 = B.Bruecke(schreib15, [], None, None, name="#verwurf")
+    W15._fueller_frei = True
+    assert W15.daten(B.FUELLER, _w130_pes(0x101, 90000))
+    assert W15.daten(B.FUELLER, _w130_pes(0x101, 1000)) is False, \
+        "ein rueckwaerts laufendes Tonpaket ging an den Sender"
+    assert len(_os.read(lese15, 4096)) == 188
+    W15._schliessen(); _os.close(lese15)
+
+    # ── (17) Aufraeumen und Lesefehler: still im Ergebnis, laut im Log.
+    class _Stur:
+        returncode = None
+        getoetet = False
+
+        def poll(self):
+            return None
+
+        def terminate(self):
+            pass
+
+        def wait(self, timeout=None):
+            raise _sp.TimeoutExpired("ffmpeg", timeout)
+
+        def kill(self):
+            self.getoetet = True
+    stur = _Stur()
+    B.Bruecke._beende(stur)
+    assert stur.getoetet, "ein Prozess, der SIGTERM ignoriert, bleibt stehen"
+
+    class _Weg(_Stur):
+        def terminate(self):
+            raise ProcessLookupError(3, "No such process")
+    B.Bruecke._beende(_Weg())                      # darf nicht werfen
+    W13 = B.Bruecke(None, [], None, None, name="#fehler")
+
+    class _Kaputt:
+        def readline(self, *_):
+            raise OSError(9, "Bad file descriptor")
+        read1 = read = readline
+    W13._stderr(B.QUELLE, type("P", (), {"stderr": _Kaputt()})())
+    W13._lies(B.QUELLE, type("P", (), {"stdout": _Kaputt()})())
+    r13, w13 = _os.pipe()
+    _os.close(w13)
+    W13._fd = w13                                  # schon zu
+    W13._schliessen()                              # darf nicht werfen
+    _os.close(r13)
+    # Die Wache endet, wenn die Bruecke aufgibt, und schliesst den Sender-Eingang.
+    lese14, schreib14 = _os.pipe()
+    folge14 = [(None, "unknown"), (None, "offline")]
+    W14 = B.Bruecke(schreib14, [], None, lambda: folge14.pop(0) if folge14 else (None, "offline"),
+                    name="#ende", offline_s=0, neustart_min_s=0.0, neustart_max_s=0.0)
+    W14._wache()
+    assert W14.ende and W14._fd is None, "die Wache laeuft nach dem Aufgeben weiter"
+    assert _os.read(lese14, 10) == b"", "der Sender bekommt kein EOF"
+    _os.close(lese14)
 
     if not (_sh.which("ffmpeg") and _sh.which("ffprobe")):
         ok("W130: Sendebruecke (rein); ffmpeg fehlt — echter Lauf uebersprungen")

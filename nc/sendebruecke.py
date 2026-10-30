@@ -370,6 +370,12 @@ class Bruecke:
         self._neukodieren = False
         self._url = erste_url
         self._ersetzt = False
+        # Zustand der Wache — hier gesetzt, nicht erst in _wache, damit jeder
+        # Schritt auch einzeln (im Vertrag) einen definierten Anfang hat.
+        self._naechste = erste_url
+        self._pause = self._neustart_min
+        self._offline_seit = None
+        self._gestartet = None
         self._threads = []
         self._stderr_leser = {}
         self.wechsel = 0
@@ -595,10 +601,6 @@ class Bruecke:
         beantwortet: was lehrt das Ende eines Zubringers (_nach_ende), lebt
         der laufende noch wirklich (_pruefe_laufenden), und woher kommt die
         naechste Adresse (_adresse)."""
-        self._naechste = self._erste_url
-        self._pause = self._neustart_min
-        self._offline_seit = None
-        self._gestartet = None
         while not self._halt.is_set():
             zub = self._zub
             if zub is not None and zub.poll() is not None:
