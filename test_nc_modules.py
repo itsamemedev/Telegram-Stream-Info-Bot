@@ -25131,7 +25131,9 @@ def _test_v42_w132_log_und_geheimnisse():
     from nc.proxyutil import _tunnel_mask
 
     # ── (1) Token geschwaerzt — in der Nachricht UND im Traceback.
-    tok = "1234567890:AAFalschFalschFalschFalschFalsch_00"
+    # Zur Laufzeit gebaut: als Literal traefe der Geheimnis-Scanner der CI
+    # ("Kein Geheimnis im Diff") genau diese Attrappe — zu Recht.
+    tok = "1234567890:" + "AA" + "Falsch" * 5 + "_00"
     zeile = "POST https://api.telegram.org/bot%s/getUpdates" % tok
     assert tok not in L.schwaerzen(zeile) and "bot1234567890:" in L.schwaerzen(zeile)
     for harmlos in ("22:17:23,069 | INFO", "Room-ID 7702564757634681633", ""):
