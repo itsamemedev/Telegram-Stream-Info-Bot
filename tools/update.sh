@@ -274,6 +274,13 @@ case "$(env_wert S3_BACKUP | tr 'A-Z' 'a-z')" in 1|true|yes|ja|on)
   KONFIG_PFLICHT="${KONFIG_PFLICHT}boto3=S3_BACKUP=1"$'\n';; esac
 [ -n "$(env_wert DISCORD_BOT_TOKEN)" ] && \
   KONFIG_PFLICHT="${KONFIG_PFLICHT}discord-py=DISCORD_BOT_TOKEN"$'\n'
+# v4.2-W129: die Sprachreaktion (Nutzungsprofil "ki") zapft das Stream-Audio
+# und laesst faster-whisper mitschreiben. Ohne das Paket meldet der Selbsttest
+# "LIVE_REACT_SPEECH=1, aber faster-whisper fehlt" — erst NACH dem Start.
+# LIVE_REACT_SPEECH ist ab Werk an; nur ein ausdrueckliches Aus nimmt es weg.
+case "$(env_wert LIVE_REACT_ENABLED | tr 'A-Z' 'a-z')" in 1|true|yes|ja|on)
+  case "$(env_wert LIVE_REACT_SPEECH | tr 'A-Z' 'a-z')" in 0|false|no|nein|off) ;;
+    *) KONFIG_PFLICHT="${KONFIG_PFLICHT}faster-whisper=LIVE_REACT_ENABLED=1"$'\n';; esac;; esac
 konfig_grund(){ # konfig_grund NAME -> Grund, falls per .env Pflicht
   printf '%s' "$KONFIG_PFLICHT" | sed -n "s/^$(normiert "$1")=//p" | head -1
 }

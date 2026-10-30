@@ -85,7 +85,10 @@ tf(){
   if [ $# -le 1 ]; then t "${1:-}"; return; fi
   _fmt="$(t "$1")"; shift
   # shellcheck disable=SC2059  # das Format ist hier der Zweck, nicht der Unfall
-  printf "$_fmt" "$@"
+  # "--" (v4.2-W129b): ein Text, der mit "--" beginnt ("--set erwartet …"),
+  # waere sonst eine Option fuer printf — "invalid option", und die Meldung
+  # fehlte genau dann, wenn sie einen falschen Schalter erklaeren soll.
+  printf -- "$_fmt" "$@"
 }
 
 # ── tz: Heredoc zeilenweise uebersetzen (v4.2-W123) ──────────

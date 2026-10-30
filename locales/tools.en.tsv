@@ -824,3 +824,29 @@ promtool: Konfiguration und Regeln gueltig.	promtool: configuration and rules va
 sudo bash tools/observability.sh [Schalter]	sudo bash tools/observability.sh [switches]
 Bot-Dashboard: %s://%s:%s/metrics	Bot dashboard: %s://%s:%s/metrics
 %s laeuft nicht.	%s is not running.
+%s Wert(e) von Hand	%s value(s) set by hand
+%s steht nicht in .env.example — Tippfehler? Der Bot liest diesen Namen nicht.	%s is not in .env.example — typo? The bot does not read this name.
+--expert         zusaetzlich jede Variable aus .env.example aenderbar (gefuehrt)	--expert         additionally make every variable from .env.example editable (guided)
+--profile <Name> Nutzungsprofil: minimal | restream | ki (deploy/profile/)	--profile <name> usage profile: minimal | restream | ki (deploy/profile/)
+--set NAME=WERT  einen .env-Wert setzen (mehrfach; nur Namen aus .env.example)	--set NAME=VALUE set one .env value (repeatable; only names from .env.example)
+--set erwartet NAME=WERT: %s	--set expects NAME=VALUE: %s
+Ein Nutzungsprofil setzt eine Handvoll Schalter auf einmal — was der Bot von sich aus tut. Es laesst alles andere stehen, und im naechsten Schritt bleibt jeder Wert einzeln aenderbar.	A usage profile sets a handful of switches at once — what the bot does on its own. It leaves everything else in place, and in the next step every value stays editable individually.
+Einzelwerte	Single values
+Expertenmodus: jede Variable aus .env.example. Einen Namen oder ein Stichwort eingeben (z. B. WHISPER oder BITRATE), dann die Nummer. Leere Eingabe beendet.	Expert mode: every variable from .env.example. Enter a name or a keyword (e.g. WHISPER or BITRATE), then the number. An empty entry ends it.
+Kein Treffer fuer %s.	No match for %s.
+Neuer Wert (- = Vorgabe, Enter = behalten)	New value (- = default, Enter = keep)
+Nummer (Enter = neue Suche)	Number (Enter = new search)
+Nutzungsprofil	Usage profile
+Nutzungsprofil?	Usage profile?
+Unbekanntes Nutzungsprofil: %s (minimal, restream, ki)	Unknown usage profile: %s (minimal, restream, ki)
+Variable oder Stichwort	Variable or keyword
+keins (Schalter unveraendert)	none (switches unchanged)
+keins — die Schalter bleiben, wie sie sind	none — the switches stay as they are
+minimal	minimal
+minimal — nur ueberwachen und aufnehmen, kein Restream, keine KI	minimal — only monitor and record, no restream, no AI
+viel KI	lots of AI
+viel KI — AZRAEL hoert mit, antwortet und moderiert	lots of AI — AZRAEL listens, replies and moderates
+voller Restream	full restream
+voller Restream — Kick, Twitch, YouTube, mit Overlay	full restream — Kick, Twitch, YouTube, with overlay
+--profile braucht deploy/profile/ — den Installer aus einem Checkout starten: git clone …, dann bash tools/installer.sh --profile %s	--profile needs deploy/profile/ — start the installer from a checkout: git clone …, then bash tools/installer.sh --profile %s
+--set und --expert brauchen .env.example — den Installer aus einem Checkout starten (git clone …, dann bash tools/installer.sh).	--set and --expert need .env.example — start the installer from a checkout (git clone …, then bash tools/installer.sh).

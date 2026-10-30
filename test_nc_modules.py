@@ -23722,7 +23722,10 @@ def _test_v42_w127_observability():
     assert i_obs < i_exit, "Beobachtung laeuft erst nach einem vorzeitigen Ausgang"
     assert any(z.startswith("trap '_rc=$?;") and "OBS_RC" in z and z.endswith("' EXIT") for z in uz)
     ins = [z.strip() for z in open("tools/installer.sh", encoding="utf-8").read().splitlines()]
-    assert any(z.startswith("PUNKTE=(") and z.endswith(" beobachtung)") for z in ins)
+    # "beobachtung" ist ein Punkt — an welcher Stelle, entscheidet W129ff.
+    # (Bis W129 stand hier endswith(" beobachtung)"): der Anker brach, als
+    # zwei Punkte dahinter kamen, obwohl die Aussage weiter stimmte.)
+    assert any(z.startswith("PUNKTE=(") and "beobachtung" in z[len("PUNKTE=("):-1].split() for z in ins)
     assert any(z.startswith('if ${SUDO:+$SUDO} bash "$ZIEL/tools/observability.sh"') for z in ins)
     ok("W127: Prometheus/Grafana — jede Abfrage trifft einen gemessenen Namen, "
        "das Werkzeug schreibt nur Abweichungen, die Alarme feuern im Regeltest")
@@ -23814,6 +23817,212 @@ def _test_v42_w128_env_vorlage_durchleiter():
         assert ("# %s=" % name) in vorlage, name
     assert "# NEWS_AUTO=0" in vorlage, "Vorgabe aus dem Helfer fehlt"
     ok("W128: .env.example — Durchleiter-Helfer nach Sichtbarkeit aufgeloest, 16 Variablen nachgetragen")
+
+
+def _test_v42_w129_profile():
+    """v4.2-W129: Nutzungsprofile, --set und Expertenmodus im Installer.
+
+    Ein Profil darf nur Schalter setzen, die der Bot liest — gemessen gegen
+    .env.example, nicht gegen eine Liste hier. Ein Wechsel zwischen Profilen
+    endet auf dem gewaehlten Profil, nicht auf einer Mischung aus beiden.
+    """
+    import glob as _glob
+    import re as _re
+    import shutil as _sh
+    vorlage = open(".env.example", encoding="utf-8").read()
+    bekannt = set(_re.findall(r"^#? ?([A-Z][A-Z0-9_]+)=", vorlage, _re.M))
+    profile = {}
+    for f in sorted(_glob.glob("deploy/profile/*.env")):
+        text = open(f, encoding="utf-8").read()
+        assert _re.search(r"^# titel: \S", text, _re.M) and _re.search(r"^# beschreibung: \S", text, _re.M), f
+        werte = dict(_re.findall(r"^([A-Z][A-Z0-9_]+)=(\S*)", text, _re.M))
+        fremd = set(werte) - bekannt
+        assert not fremd, "%s setzt Schalter, die der Bot nicht liest: %s" % (f, fremd)
+        profile[os.path.basename(f)[:-4]] = werte
+    assert set(profile) == {"minimal", "restream", "ki"}, set(profile)
+    # Ein Profil teilt sich keinen Schalter mit einem anderen Punkt des
+    # Installers — sonst haengt das Ergebnis an der Reihenfolge der Fragen.
+    # Gemessen: das Restream-Profil setzte KICK_ENABLED, der Punkt
+    # "Restream-Ziele" setzt es je nach Key, und ein Lauf ohne Profil
+    # veraenderte danach die .env. ${p}_ENABLED wird fuer die drei Ziele
+    # ausgeschrieben, wie die Schleife im Installer es tut.
+    inst = open("tools/installer.sh", encoding="utf-8").read()
+    rumpf = inst[:inst.index("f_nutzung(){")] + inst[inst.index("z_experte(){"):]
+    andere = set(_re.findall(r'env_set "?([A-Z][A-Z0-9_]+)"? ', rumpf))
+    for muster in set(_re.findall(r'env_set "\$\{p\}(_[A-Z_]+)"', rumpf)):
+        andere |= {z + muster for z in ("KICK", "TWITCH", "YOUTUBE")}
+    assert "KICK_ENABLED" in andere and "RESTREAM_SINGLE" in andere, sorted(andere)[:20]
+    for name, werte in profile.items():
+        assert not (set(werte) & andere), "%s ueberschneidet sich mit dem Installer: %s" % (
+            name, set(werte) & andere)
+    # Die Auswahl im Installer kennt genau die Dateien — zwei Listen fuer
+    # denselben Zweck liefen sonst auseinander (W100).
+    wahl = inst[inst.index('frage_wahl P_NUTZUNG "Nutzungsprofil?"'):inst.index("[ \"$P_NUTZUNG\" = \"keins\" ] && return 0")]
+    assert set(_re.findall(r"^\s+(\w+)\s+\"", wahl, _re.M)) == set(profile) | {"keins"}, wahl
+
+    # ── Der echte Installer, im Trockenlauf und echt.
+    q = _w124_quelle()
+    _sh.copytree("deploy/profile", os.path.join(q, "deploy", "profile"))
+    _sh.copy(".env.example", os.path.join(q, ".env.example"))
+    heim = _ph.verzeichnis()
+    ziel = os.path.join(_ph.verzeichnis(), "nc")
+    proto = os.path.join(heim, "pip.log")
+    open(proto, "w").close()
+    rc, aus = _w124_installer(q, ziel, heim, "--dry-run", "-y", "--profile", "minimal",
+                              "--set", "WHISPER_MODEL=small")
+    assert rc == 0, aus[-2000:]
+    assert _re.search(r"^\s+16\s+Nutzungsprofil\s+minimal", aus, _re.M), aus[-1500:]
+    assert _re.search(r"^\s+17\s+Einzelwerte\s+1 Wert", aus, _re.M)
+    for zeile in ("+RESTREAM_ENABLED=0", "+CLIP_ENABLED=0", "+WHISPER_MODEL=small"):
+        assert zeile in aus, zeile
+    # Unbekannter Name, kaputtes --set, unbekanntes Profil: Abbruch, nichts geschrieben.
+    # "--set WHISPER_MODEL" ohne "=": ein BEKANNTER Name — sonst scheiterte
+    # der Fall schon am Namen, und die Pruefung auf "=" bliebe ungeprueft
+    # (Mutationsprobe W129). Ohne sie stuende WHISPER_MODEL=WHISPER_MODEL da.
+    for falsch in (["--set", "TIPPFEHLER_X=1"], ["--set", "WHISPER_MODEL"], ["--profile", "turbo"]):
+        rc, aus = _w124_installer(q, ziel, heim, "--dry-run", "-y", *falsch)
+        assert rc == 1 and not os.path.exists(ziel), (falsch, aus[-800:])
+
+    # KI-Profil bzw. --set: faster-whisper wird NICHT ausgelassen, obwohl die
+    # Paketfrage vor dem Profil kommt (Codex, PR #168). Beide Wege, weil sie
+    # verschiedene Ausgaenge von f_experte nehmen.
+    for wege in (["--profile", "ki"], ["--set", "LIVE_REACT_ENABLED=1"]):
+        rc, aus = _w124_installer(q, ziel, heim, "--dry-run", "-y", *wege)
+        zeile = next(z for z in aus.splitlines() if "Python-Pakete" in z and ("ausgelassen" in z or "alle" in z))
+        assert rc == 0 and "faster-whisper" not in zeile, (wege, zeile)
+    rc, aus = _w124_installer(q, ziel, heim, "--dry-run", "-y")
+    zeile = next(z for z in aus.splitlines() if "Python-Pakete" in z and "ausgelassen" in z)
+    assert "faster-whisper" in zeile, "ohne Sprachreaktion bleibt faster-whisper aus: " + zeile
+    # Aenderungsschleife auf einer kleinen Maschine: faster-whisper ist dort
+    # von sich aus aus; wer in der Zusammenfassung NUR Punkt 16 auf "ki"
+    # stellt, bekommt es trotzdem — f_experte laeuft dabei nicht erneut.
+    zst = {"summ": 0, "wahl": 0}
+
+    def schleife(text):
+        n = text.count("Nummer zum Aendern")
+        if n > zst["summ"]:
+            zst["summ"] = n
+            return ("16" if n == 1 else "") + "\n"
+        if zst["summ"] == 1 and zst["wahl"] == 0 and text.rstrip().endswith("]:"):
+            zst["wahl"] = 1
+            return "4\n"                     # 4) viel KI
+        return "\n"
+    rc, aus = _w124_pty(["bash", os.path.join(q, "tools", "installer.sh"), "--dry-run",
+                         "--no-color", "--skip-system", "--dir", ziel],
+                        _w124_umgebung(heim, NC_RAM_MB="2000"), schleife)
+    assert rc == 0, aus[-2500:]
+    teile = aus.split("Nummer zum Aendern")
+    assert len(teile) == 3, "zwei Zusammenfassungen erwartet: %d" % (len(teile) - 1)
+    vorher = next(z for z in teile[0].splitlines() if "Python-Pakete" in z)
+    nachher = next(z for z in teile[1].splitlines() if "Python-Pakete" in z)
+    assert "faster-whisper" in vorher, vorher
+    assert "faster-whisper" not in nachher and "viel KI" in teile[1], nachher
+    # tf mit einem Text, der mit "--" beginnt: printf haette ihn als Option
+    # gelesen, und die Meldung zu einem falschen Schalter fehlte (W129b).
+    import subprocess as _sp
+    for sh in ("bash", "dash"):
+        if _sh.which(sh):
+            r = _sp.run([sh, "-c", '. tools/lib/i18n.sh; tf "--set erwartet NAME=WERT: %s" X'],
+                        capture_output=True, text=True, env=dict(os.environ, NC_LANG="de"))
+            assert r.stdout == "--set erwartet NAME=WERT: X" and not r.stderr, (sh, r.stdout, r.stderr)
+    # Ohne Checkout (keine Profile, keine Vorlage): laut abbrechen statt still
+    # uebergehen (Codex, PR #168).
+    q2 = _w124_quelle()
+    os.remove(os.path.join(q2, ".env.example"))
+    for falsch, text in ((["--profile", "minimal"], "--profile braucht deploy/profile/"),
+                         (["--set", "WHISPER_MODEL=small"], "--set und --expert brauchen .env.example")):
+        rc, aus = _w124_installer(q2, ziel, heim, "--dry-run", "-y", *falsch)
+        assert rc == 1 and text in aus and not os.path.exists(ziel), (falsch, aus[-600:])
+
+    os.makedirs(ziel)
+    _w124_venv(ziel, proto)
+    envf = os.path.join(ziel, ".env")
+
+    def werte():
+        return dict(_re.findall(r"^([A-Z][A-Z0-9_]+)=(.*)$", open(envf).read(), _re.M))
+    rc, aus = _w124_installer(q, ziel, heim, "-y", "--profile", "minimal")
+    assert rc == 0, aus[-2000:]
+    w = werte()
+    for k, v in profile["minimal"].items():
+        assert w.get(k) == v, (k, w.get(k), v)
+    # Wechsel auf "ki": was nur "minimal" setzte, kommt auf die Vorgabe zurueck.
+    rc, aus = _w124_installer(q, ziel, heim, "-y", "--profile", "ki")
+    assert rc == 0, aus[-2000:]
+    w = werte()
+    for k, v in profile["ki"].items():
+        assert w.get(k) == v, (k, w.get(k), v)
+    vorgabe = lambda k: _re.search(r"^#? ?%s=(.*)$" % k, vorlage, _re.M).group(1)
+    for k in set(profile["minimal"]) - set(profile["ki"]):
+        assert w.get(k) == vorgabe(k), "%s blieb auf dem alten Profil: %r" % (k, w.get(k))
+    # Derselbe Lauf noch einmal: nichts aendert sich.
+    vorher = open(envf).read()
+    rc, aus = _w124_installer(q, ziel, heim, "-y", "--profile", "ki")
+    assert rc == 0 and open(envf).read() == vorher, "zweiter Lauf mit gleichem Profil aendert die .env"
+    # Ohne --profile bleibt alles, wie es ist.
+    rc, aus = _w124_installer(q, ziel, heim, "-y")
+    assert rc == 0 and open(envf).read() == vorher
+
+    # ── update.sh: das KI-Profil braucht faster-whisper — gesagt VOR dem Start.
+    d, uziel, uproto, uumg = _w123_sandbox(fehlt=())
+    with open(os.path.join(uziel, "requirements.txt"), "a") as f:
+        f.write("faster-whisper >= 999   # [optional] Transkription\n")
+    envd = os.path.join(uziel, ".env")
+    with open(envd, "w") as f:
+        f.write("LIVE_REACT_ENABLED=1\n")
+    rc, aus = _w123_update(uziel, uumg, "--check", "--python-deps")
+    assert rc == 1 and "faster-whisper ist optional, wird hier aber gebraucht: LIVE_REACT_ENABLED=1" in aus, aus
+    with open(envd, "w") as f:
+        f.write("LIVE_REACT_ENABLED=1\nLIVE_REACT_SPEECH=0\n")
+    rc, aus = _w123_update(uziel, uumg, "--check", "--python-deps")
+    assert "faster-whisper" not in aus, "ohne Sprachreaktion wird faster-whisper nicht gebraucht"
+    # ── Expertenmodus, in einer echten Terminalsitzung: suchen, waehlen,
+    # setzen — und ein Geheimnis erscheint in der Trefferliste maskiert.
+    ziel2 = os.path.join(_ph.verzeichnis(), "nc")
+    schritte = [("Variable oder Stichwort", "BITRATE"), ("Nummer (Enter", "1"),
+                ("Neuer Wert", "4321"), ("Variable oder Stichwort", "DASHBOARD_TOKEN"),
+                ("Nummer (Enter", ""), ("Variable oder Stichwort", "")]
+    stand = {"i": 0, "n": {}}
+
+    def antworten(text):
+        if stand["i"] < len(schritte):
+            frage, antwort = schritte[stand["i"]]
+            # Nur auf eine NEUE Frage antworten: gezaehlt wird, wie oft sie
+            # schon im Puffer steht.
+            if text.count(frage) > stand["n"].get(frage, 0) and text.rstrip().endswith(
+                    ("Stichwort", "neue Suche)", "behalten)")):
+                stand["n"][frage] = text.count(frage)
+                stand["i"] += 1
+                return antwort + "\n"
+        return "\n"
+    rc, aus = _w124_pty(["bash", os.path.join(q, "tools", "installer.sh"), "--dry-run", "--expert",
+                         "--no-color", "--skip-system", "--dir", ziel2],
+                        _w124_umgebung(heim), antworten)
+    assert rc == 0, aus[-3000:]
+    assert stand["i"] == len(schritte), "Expertenmodus nicht durchlaufen: %d/%d\n%s" % (
+        stand["i"], len(schritte), aus[-2500:])
+    assert _re.search(r"^\s*\+[A-Z_]*BITRATE[A-Z_]*=4321", aus, _re.M), aus[-2000:]
+    assert _re.search(r"^\s+17\s+Einzelwerte\s+1 Wert", aus, _re.M)
+    zeile = next(z for z in aus.splitlines() if "DASHBOARD_TOKEN" in z and "Vorgabe" in z)
+    assert "***" in zeile and not _re.search(r"[A-Za-z0-9]{40}", zeile), zeile
+    assert not os.path.exists(ziel2)
+    # Die Falle als Klasse: frage_text/frage_wahl schreiben per printf -v in
+    # die GENANNTE Variable. Heisst die wie eine ihrer eigenen lokalen, landet
+    # die Antwort dort und ist weg. Die lokalen Namen kommen aus den
+    # local-Zeilen der beiden Funktionen selbst.
+    zeilen = inst.splitlines()
+    for fn in ("frage_text", "frage_wahl"):
+        i = next(n for n, z in enumerate(zeilen) if z.startswith(fn + "(){"))
+        lokale = set()
+        for z in zeilen[i:i + 8]:
+            if z.strip().startswith("local "):
+                lokale |= {w.split("=")[0] for w in z.strip()[6:].split() if not w.startswith("-")}
+        assert "a" in lokale, (fn, lokale)
+        for z in zeilen:
+            w = z.strip().split()
+            if len(w) > 1 and w[0] == fn:
+                assert w[1] not in lokale, "%s schreibt in ihre eigene lokale Variable: %s" % (fn, z.strip())
+    ok("W129: Nutzungsprofile setzen nur echte Schalter, Wechsel endet sauber, --set prueft den Namen, "
+       "Expertenmodus sucht und maskiert, update.sh kennt die KI-Pflicht")
 
 def main():
     tmp, rid = richte_testdatenbank_ein()
@@ -24138,6 +24347,7 @@ def main():
     _test_v42_w126_motd_konfigurieren()
     _test_v42_w127_observability()
     _test_v42_w128_env_vorlage_durchleiter()
+    _test_v42_w129_profile()
     _test_v42_w60_azrael_cooldown_je_plattform()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)
