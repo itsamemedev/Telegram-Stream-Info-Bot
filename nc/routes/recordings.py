@@ -363,8 +363,12 @@ FRISCH_S = 900
 def _frisch(pfad):
     try:
         return (_time.time() - os.path.getmtime(pfad)) < FRISCH_S
-    except OSError:
-        return True              # nicht lesbar: im Zweifel NICHT loeschen
+    except OSError as e:
+        # Nicht lesbar: im Zweifel NICHT loeschen — und sagen warum, sonst
+        # steht eine Datei ewig in keiner Liste, ohne dass jemand es merkt.
+        log.info("orphans: %s nicht lesbar (%s) — gilt als frisch, bleibt liegen",
+                 os.path.basename(pfad), e)
+        return True
 
 
 def _find_orphans():

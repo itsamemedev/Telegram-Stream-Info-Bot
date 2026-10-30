@@ -24904,7 +24904,7 @@ def _test_v42_w131_aufnahme_luecken():
     rufe_fin = [(c, i) for t in fin for i in t.finalbody for c in _ast.walk(i)
                 if isinstance(c, _ast.Call) and _ast.unparse(c.func) == "clear_recording"]
     assert rufe_fin, "clear_recording fehlt im finally — Fehlerpfade gaeben die Sperre nie frei"
-    for c, stmt in rufe_fin:
+    for _c, stmt in rufe_fin:
         assert isinstance(stmt, _ast.If) and "platz_frei" in _ast.unparse(stmt.test), \
             "clear_recording im finally ungeschuetzt — nimmt der Folgeaufnahme die Sperre"
     pf = next(n for n in baum.body if isinstance(n, _ast.AsyncFunctionDef)
@@ -24950,6 +24950,8 @@ def _test_v42_w131_aufnahme_luecken():
     try:
         rt.db_conn = lambda: _Conn()
         namen = {o["name"] for o in rt._find_orphans()}
+        assert rt._frisch(_os.path.join(auf, "gibt_es_nicht.mp4")), \
+            "eine nicht lesbare Datei gilt als loeschbar"
     finally:
         rt.db_conn = echt_db
         _ncctx._CTX = alt_ctx
@@ -24958,8 +24960,6 @@ def _test_v42_w131_aufnahme_luecken():
         "eine eben beendete, noch nicht eingetragene Aufnahme gilt als verwaist"
     assert "bekannt.mp4" not in namen, "relativer Datenbankpfad gegen absoluten Scan verglichen"
     assert namen == {"alt.mp4"}, ("die echte Waise wird nicht mehr gefunden", namen)
-    assert rt._frisch(_os.path.join(auf, "gibt_es_nicht.mp4")), \
-        "eine nicht lesbare Datei gilt als loeschbar"
     ok("W131: Aufnahme-Sperre frei nach Prozessende, nicht nach dem Upload; "
        "Aufraeumen schont laufende und frische Aufnahmen")
 
