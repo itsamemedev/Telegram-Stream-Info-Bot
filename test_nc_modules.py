@@ -23221,6 +23221,184 @@ def _test_v42_w124_installer_verdrahtung():
        "Neustart unbeaufsichtigt; install.bat: Token bleibt, Auswahl, NSSM idempotent")
 
 
+
+def _test_v42_w125_sitzung_tonformat():
+    """v4.2-W125: eine Sitzung aus Segmenten mit verschiedenem Tonformat.
+
+    Gemeldet: "irgendwas stimmt wieder mit dem Ton nicht". Gemessen: der
+    concat-Demuxer nimmt das Tonformat des ERSTEN Segments fuer die ganze
+    Datei. 48 kHz mono + 44,1 kHz stereo ergab eine Datei, deren zweite
+    Haelfte zu schnell und zu hoch spielte (880 Hz kamen als 958 Hz heraus),
+    rc 0, keine Zeile. Seit W106 ist das der Regelfall, nicht die Ausnahme:
+    die Stille-Nachruestung schreibt AAC 44,1 kHz stereo, TikTok sendet oft
+    48 kHz.
+    """
+    import json as _json
+    import os as _os
+    import shutil as _shutil
+    import subprocess as _sp
+    from nc import aufnahmesitzung as S
+    from nc import tonspur as T
+
+    def probe(streams):
+        return _json.dumps({"streams": streams})
+
+    v = {"codec_type": "video", "codec_name": "h264"}
+    a48 = {"codec_type": "audio", "codec_name": "aac", "sample_rate": "48000", "channels": 1}
+    a44 = {"codec_type": "audio", "codec_name": "aac", "sample_rate": "44100", "channels": 2}
+    assert S.tonformat(probe([v, a48])) == ("aac", 48000, 1)
+    assert S.tonformat(probe([v])) == S.OHNE_TON
+    for kaputt in (probe([]), "{}"):
+        try:
+            S.tonformat(kaputt)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("ein leeres Segment gilt als 'ohne Ton' statt als Befund")
+    f48, f44 = S.tonformat(probe([v, a48])), S.tonformat(probe([v, a44]))
+    assert not S.braucht_angleich([f48, f48, f48]), "gleiches Format wird umsonst neu kodiert"
+    assert not S.braucht_angleich([])
+    assert S.braucht_angleich([f48, f44]), "verschiedene Tonformate gehen ungeprueft in -c copy"
+    assert S.braucht_angleich([f44, S.OHNE_TON]), "ein tonloses Segment geht ungeprueft in -c copy"
+    # Auch wenn ALLE tonlos sind: sonst wird eine Sitzung ohne Ton "gleich"
+    # befunden und per -c copy zu einer stummen Datei — der Fall, den W106
+    # fuer jede einzelne Aufnahme schon ausschliesst.
+    assert S.braucht_angleich([S.OHNE_TON, S.OHNE_TON]), "eine ganz tonlose Sitzung bleibt stumm"
+    # Der Angleich fasst das Bild nicht an und traegt in BEIDEN Faellen Ton
+    # (die Lehre aus W106: jeder ffmpeg-Bauer laeuft durch hat_tonspur).
+    for hat in (True, False):
+        cmd = S.angleich_cmd("/rec/a.mp4", "/rec/b.mp4", hat)
+        assert T.hat_tonspur(cmd), cmd
+        i = cmd.index("-c:v")
+        assert cmd[i + 1] == "copy", "der Angleich kodiert das Bild neu"
+        assert " ".join(T.AAC_ARGS) in " ".join(cmd), "nicht das gemeinsame Zielformat"
+    assert "-shortest" in S.angleich_cmd("/rec/a.mp4", "/rec/b.mp4", False), \
+        "endlose Stille ohne -shortest — die Datei hoert nie auf"
+
+    if not (_shutil.which("ffmpeg") and _shutil.which("ffprobe")):
+        ok("W125: Tonformat-Angleich (rein); ffmpeg fehlt — echter Lauf uebersprungen")
+        return
+
+    # ── Der echte Lauf, mit der Eingabe der Produktion: zwei Formate.
+    import pruefhilfen as P
+    from nc.routes import recordings as rt
+    heim = P.verzeichnis()
+    segs = []
+    for n, (hz, sr, ch) in enumerate(((440, 48000, 1), (880, 44100, 2))):
+        p = _os.path.join(heim, "seg%d.mp4" % n)
+        _sp.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc=size=160x120:rate=25:d=4",
+                 "-f", "lavfi", "-i", "sine=frequency=%d:sample_rate=%d:duration=4" % (hz, sr),
+                 "-ac", str(ch), "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac",
+                 "-shortest", p], check=True, capture_output=True)
+        segs.append(p)
+    ziel = _os.path.join(heim, "sitzung.mp4")
+    from nc import ctx as _ncctx
+    zeilen = []
+    class _Log:
+        def _sammle(self, *a, **k):
+            zeilen.append(a[0] % a[1:] if len(a) > 1 else str(a[0]))
+        warning = info = error = _sammle
+        # debug zaehlt nicht: im INFO-Log des Betreibers erscheint es nie.
+        def debug(self, *a, **k): pass
+    alt_ctx = _ncctx._CTX
+    _ncctx.configure(log=_Log(), log_event=lambda *a, **k: None)
+    try:
+        rt._join_lauf("w125", segs, ziel, None, None)
+    finally:
+        _ncctx._CTX = alt_ctx
+    lage = rt._JOIN_LAGE.pop("w125")
+    assert lage["status"] == "fertig", (lage, zeilen)
+    assert any("Tonformate unterschiedlich" in z for z in zeilen), \
+        "der Angleich laeuft, ohne dass das Log es sagt: %r" % zeilen
+    assert not _os.path.exists(ziel + ".angleich"), "die Angleich-Kopien bleiben liegen"
+
+    def dauer(sel):
+        r = _sp.run(["ffprobe", "-v", "error", "-select_streams", sel, "-show_entries",
+                     "stream=duration", "-of", "csv=p=0", ziel], capture_output=True, text=True)
+        return float(r.stdout.strip())
+    assert abs(dauer("a:0") - dauer("v:0")) < 0.15, \
+        "Ton %.2f s, Bild %.2f s — die Naht verschiebt die Geschwindigkeit" % (dauer("a:0"), dauer("v:0"))
+    # Tonhoehe der zweiten Haelfte: Nulldurchgaenge des dekodierten Tons.
+    import array as _array
+    pcm = _sp.run(["ffmpeg", "-v", "error", "-ss", "5", "-t", "2", "-i", ziel, "-vn", "-ac", "1",
+                   "-ar", "44100", "-f", "s16le", "-"], capture_output=True, check=True).stdout
+    w = _array.array("h", pcm)
+    wechsel = sum(1 for i in range(1, len(w)) if (w[i - 1] < 0) != (w[i] < 0))
+    hz = wechsel / 2.0 / (len(w) / 44100.0)
+    assert 860 < hz < 900, "zweite Haelfte klingt mit %.0f Hz statt 880 Hz" % hz
+    ok("W125: Sitzung aus 48 kHz mono + 44,1 kHz stereo — Tonhoehe und Laenge stimmen")
+
+
+def _test_v42_w125_deck_ton_zeigt_wahrheit():
+    """v4.2-W125: nach dem Neuladen stand "Ton ist an", und nichts piepte.
+
+    `_tonAn` ueberlebt das Neuladen (localStorage), die Erlaubnis des
+    Browsers nicht: der neue AudioContext ist ohne Nutzergeste "suspended".
+    Im Browser gemessen (Playwright, Autoplay-Sperre): Knopf "🔊 Ton ist an",
+    ncPieps('err') -> false. Und ein Klick auf den Knopf schaltete den Ton
+    dann AUS — genau als der Betreiber ihn wiederhaben wollte.
+    """
+    import io as _io
+    import json as _json
+    deck = _io.open("templates/dashboard.html", encoding="utf-8").read()
+    i = deck.index("function _tonBereit(")
+    assert "state==='running'" in deck[i:deck.index("\n", i)], "_tonBereit liest nicht den echten Zustand"
+    i = deck.index("function ncTonKnopfAuffrischen(")
+    auf = deck[i:deck.index("\nasync function ncTonUmschalten(", i)]
+    assert "_tonBereit()" in auf, "der Knopf zeigt den Wunsch statt den Zustand"
+    for text in ("'🔊 Ton ist an'", "'🔈 Ton wartet auf einen Klick'", "'🔇 Ton aktivieren'"):
+        assert text in auf, text
+    i = deck.index("async function ncTonUmschalten(")
+    um = deck[i:deck.index("\nfunction sseStart(", i)]
+    erste = next(z.strip() for z in um.splitlines()[1:] if z.strip() and not z.strip().startswith(("/*", "*", "ihn", "ab,")))
+    assert erste.startswith("if(_tonAn && _tonBereit()){"), \
+        "ein Klick im Wartezustand schaltet den Ton aus: %s" % erste
+    i = deck.index("function _tonBeiGesteFreigeben(")
+    geste = deck[i:deck.index("\n}\n", i)]
+    assert "closest('[data-ton-knopf]')" in geste, \
+        "die Seitengeste gibt vor dem Knopf frei — der Klick schaltet danach aus"
+    assert "'pointerdown','keydown'" in geste and "{once" not in geste
+    assert "ncTonKnopfAuffrischen(); _tonBeiGesteFreigeben();" in deck, "die Freigabe wird nie eingehaengt"
+    i = deck.index("function ncPieps(")
+    pieps = deck[i:deck.index("\nfunction ncTonKnopfAuffrischen(", i)]
+    zweig = pieps[pieps.index("if(ctx.state!=='running'){"):]
+    assert zweig.index("ncTonKnopfAuffrischen()") < zweig.index("return false"), \
+        "ein verschluckter Piep laesst den Knopf auf 'an'"
+    en = _json.load(_io.open("locales/en.json", encoding="utf-8"))
+    flach = en.get("strings", en) if isinstance(en, dict) else {}
+    assert "🔈 Ton wartet auf einen Klick" in _json.dumps(flach, ensure_ascii=False)
+    ok("W125: der Ton-Knopf zeigt, ob es wirklich piept, und ein Klick gibt frei statt aus")
+
+
+def _test_v42_w125_azrael_stimme_laut():
+    """v4.2-W125: AZRAELs Stimme fehlte im Restream ohne eine Zeile.
+
+    `_restream_tts_enqueue_wav` sah den Rueckgabewert von ffmpeg nie an, und
+    alles endete in `except Exception: pass`. Gemessen im Syntaxbaum, nicht
+    im Text — der Kommentar zitiert das alte `pass` (Lehre W102-W104).
+    """
+    import ast as _ast
+    import io as _io
+    baum = _ast.parse(_io.open("bot.py", encoding="utf-8").read())
+    fn = {n.name: n for n in baum.body if isinstance(n, (_ast.FunctionDef, _ast.AsyncFunctionDef))}
+    tts = fn["_restream_tts_enqueue_wav"]
+    for h in (n for n in _ast.walk(tts) if isinstance(n, _ast.ExceptHandler)):
+        if h.type is not None and _ast.unparse(h.type) == "Exception" and \
+                h.lineno == max(x.lineno for x in _ast.walk(tts) if isinstance(x, _ast.ExceptHandler)):
+            assert not all(isinstance(s, _ast.Pass) for s in h.body), "aeusserer except ist wieder stumm"
+            assert "_azrael_stimme_stumm" in _ast.unparse(h), _ast.unparse(h)
+    pruef = [n for n in _ast.walk(tts) if isinstance(n, _ast.If) and "_rc" in _ast.unparse(n.test)]
+    assert pruef and any("_azrael_stimme_stumm" in _ast.unparse(n) and
+                         any(isinstance(s, _ast.Return) for s in n.body) for n in pruef), \
+        "ein gescheitertes ffmpeg wird nicht gemeldet"
+    stumm = _ast.unparse(fn["_azrael_stimme_stumm"])
+    assert "_nc_meldetakt.melden('azrael-stimme'" in stumm and "log.error(" in stumm, \
+        "die Meldung ist nicht gedrosselt oder nicht auf error"
+    assert "_nc_meldetakt.zuruecksetzen('azrael-stimme')" in _ast.unparse(tts), \
+        "der Erfolgspfad setzt die Drossel nicht zurueck"
+    ok("W125: AZRAELs Stimme fehlt nie mehr still im Restream")
+
+
 def main():
     tmp, rid = richte_testdatenbank_ein()
     ok("db_conn aus nc.dbwrap: echtes Schema angelegt, Commit durchgelaufen")
@@ -23538,6 +23716,9 @@ def main():
     _test_v42_w124_aenderungsschleife()
     _test_v42_w124_systemerkennung()
     _test_v42_w124_installer_verdrahtung()
+    _test_v42_w125_sitzung_tonformat()
+    _test_v42_w125_deck_ton_zeigt_wahrheit()
+    _test_v42_w125_azrael_stimme_laut()
     _test_v42_w60_azrael_cooldown_je_plattform()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)

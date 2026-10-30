@@ -13732,6 +13732,13 @@ async def _restream_tts_enqueue_wav(wav_path, source_user=None):
                      "-f", "s16le", "-ar", str(_TTS_SR), "-ac", str(_TTS_CH), "pipe:1"],
                     threads=FFMPEG_THREADS_BG),
             30, art="ffmpeg-tts", stderr=_nc_kind.DEVNULL)
+        # v4.2-W125: der Rueckgabewert wurde nie angesehen, und alles darunter
+        # endete in `except Exception: pass`. Scheiterte die Umwandlung, fehlte
+        # AZRAELs Aeusserung im Restream — ohne eine einzige Zeile im Log.
+        if _rc != 0 or not pcm:
+            _azrael_stimme_stumm("wandlung", "ffmpeg rc=%s, %d Byte PCM" % (_rc, len(pcm or b"")),
+                                 wav_path)
+            return
         if pcm:
             # V37-BH4: Ziel-Queue = Feeder des Root-Owners (die EINE
             # AZRAEL-Stimme spricht im primären Stream — README-Grenze).
@@ -13776,8 +13783,25 @@ async def _restream_tts_enqueue_wav(wav_path, source_user=None):
                 except Exception as _e:
                     log.debug("azrael-cue-ton: %s", _e)
             _target_q.append(pcm)
-    except Exception:
-        pass
+            _nc_meldetakt.zuruecksetzen("azrael-stimme")
+    except Exception as e:
+        _azrael_stimme_stumm("ausnahme", "%s: %s" % (type(e).__name__, e), wav_path)
+
+
+def _azrael_stimme_stumm(grund, was, wav_path):
+    """v4.2-W125: AZRAEL hat gesprochen, im Restream kommt es nicht an — laut.
+
+    Gedrosselt ueber nc/meldetakt: AZRAEL spricht bei aktiver Reaktion im
+    Minutentakt, und derselbe Defekt (ffmpeg fehlt, Datei kaputt) traefe jede
+    Aeusserung. Error, nicht warning: der Betreiber hoert im Sendestrom nichts
+    und sucht sonst an der falschen Stelle (Piper, Lautstaerke, Ducking).
+    """
+    laut, unterdrueckt = _nc_meldetakt.melden("azrael-stimme", grund, _time_mod.monotonic())
+    if laut:
+        log.error("AZRAEL-Stimme fehlt im Restream [%s]: %s (%s) — die Aeusserung "
+                  "wurde nicht eingemischt. Abhilfe: ffmpeg -i <wav> -f s16le - "
+                  "von Hand pruefen.%s", grund, was, os.path.basename(str(wav_path)),
+                  _nc_meldetakt.zusatz(unterdrueckt))
 
 
 # v4.2-W16: der Kommandobauer steht in nc/restreamcmd.py. Der Aufruf hier
