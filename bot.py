@@ -617,6 +617,7 @@ from nc import looplag as _nc_looplag  # v4.2-W117: Loop-Lag in ms, und wer ihn 
 from nc import gegendruck as _nc_gegendruck  # v4.2-W118: abregeln mit Ansage
 from nc import kindprozess as _nc_kind  # v4.2-W120: Kindprozess endet auf jedem Weg
 from nc import speicherpflege as _nc_pflege  # v4.2-W120: Maps, die nur wachsen
+from nc import betriebslage as _nc_lage  # v4.2-W121: Start-/Stoppzeit, degradiert vs. tot
 from nc import resolvergrund as _nc_rgrund  # v4.2-W81: warum die Aufloesung leer blieb
 from nc import telegramfehler as _nc_tgfehler  # v4.2-W93: warum das Telegram-Polling klemmt
 from nc import aufnahmesitzung as _nc_sitzung  # v4.2-W44: die Klammer um die Segmente EINES Streams
@@ -8511,6 +8512,11 @@ async def check_all_trackings(bot_app):
                     log.warning("Queue voll – Tracking übersprungen.")
         if queued > 0:
             log.debug(f"check-loop: {queued}/{len(trackings)} trackings queued")
+        # v4.2-W121: einmalig — ab hier erkennt der Bot Live-Starts wieder.
+        _bereit = _nc_lage.bereit()
+        if _bereit is not None:
+            log.info("Betriebsbereit nach %.1f s — erste Pruefrunde eingereiht "
+                     "(%d Trackings).", _bereit, len(trackings))
 
         # F35: Cleanup verschwundener Trackings aus next-check-Map
         # F41-Fix F2: rate-limit-Maps gleich mit aufräumen. Diese sind
@@ -8943,6 +8949,42 @@ async def _rec_auto_abschalten(data_dead, tid, username, bot_app, chat_id):
                 log.warning(f"B54 notif send failed: {e}")
         except Exception as e:
             log.error(f"B54 auto-disable DB write failed: {e}")
+
+
+async def _aufnahme_beim_stopp_sichern(proc, tid, username, output_file,
+                                       started_at, attempt_id):
+    """v4.2-W121: eine beim Stopp abgebrochene Aufnahme abschliessen.
+
+    SIGTERM und Warten: ffmpeg schreibt das letzte Fragment. Erst danach
+    SIGKILL. Dann eintragen, wenn die Datei mehr als einen Kopf traegt
+    (nc.betriebslage.sichern_beim_stopp) — ohne Upload, der Prozess endet
+    gleich. Jeder Schritt einzeln gefangen: scheitert einer, sollen die
+    anderen trotzdem laufen.
+    """
+    beendet = await _nc_kind.beenden(proc, term_s=_env_int("STALL_KILL_GRACE_SECS", 8))
+    ende = datetime.now(timezone.utc)
+    groesse = None
+    if _nc_lage.sichern_beim_stopp(output_file):
+        try:
+            groesse = os.path.getsize(output_file)
+            dauer = int((ende - started_at).total_seconds()) if started_at else None
+            await asyncio.to_thread(
+                add_recording, username, output_file, file_size=groesse,
+                duration_secs=dauer, tracking_id=tid,
+                started_at=started_at, ended_at=ende)
+            log.info("Aufnahme @%s beim Stopp gesichert (%s, %.1f MB, ffmpeg %s) — "
+                     "steht im Deck, kein Upload.", username,
+                     os.path.basename(output_file), groesse / 1048576.0, beendet)
+        except Exception as e:
+            log.error("Aufnahme @%s beim Stopp NICHT eingetragen (%s): %s liegt "
+                      "ohne Datenbankzeile und erscheint deshalb unter den "
+                      "Waisen (/api/rec/orphans) — dort NICHT loeschen, die "
+                      "Datei ist eine echte Aufnahme.", username, e, output_file)
+    try:
+        finish_recording_attempt(attempt_id, outcome="cancelled", error="shutdown",
+                                 file_path=output_file, file_size=groesse)
+    except Exception as e:
+        log.warning("Aufnahme-Versuch @%s nicht abgeschlossen: %s", username, e)
 
 
 async def handle_recording_finished(proc, tid, chat_id, username, output_file,
@@ -9379,16 +9421,13 @@ async def handle_recording_finished(proc, tid, chat_id, username, output_file,
         # F25: Bei Shutdown (SIGTERM) wird der Task gecancelt. Der Subprocess
         # läuft sonst orphan weiter — proc.kill() vor propagieren.
         cancelled = True
-        log.info(f"handle_recording_finished @{username} cancelled – kill proc.")
-        try: proc.kill()
-        except Exception: pass
-        try:
-            await asyncio.wait_for(proc.wait(), timeout=5)
-        except Exception: pass
-        try:
-            finish_recording_attempt(attempt_id, outcome="cancelled",
-                                     error="shutdown")
-        except Exception: pass
+        # v4.2-W121: SIGTERM statt SIGKILL, und die Datei wird EINGETRAGEN.
+        # Vorher blieb sie ohne Datenbankzeile liegen — eine "Waise", die
+        # /api/rec/orphans/clean zum Loeschen anbietet. Jedes Update (also
+        # jeder Neustart) machte so aus jeder laufenden Aufnahme einen
+        # Loeschkandidaten.
+        await _aufnahme_beim_stopp_sichern(proc, tid, username, output_file,
+                                           started_at, attempt_id)
         raise
     except Exception as e:
         log.error(f"handle_recording_finished crashed: {e}")
@@ -18686,7 +18725,7 @@ def healthz():
     # gar nicht beantworten. Der Wert ist zwischengespeichert; kein git-Aufruf
     # je Abfrage.
     _ausl = _nc_auslieferung.stand()
-    return jsonify(ok=ok, db=db_ok, loops=hb_fresh, brain=brain_ok,
+    daten = dict(ok=ok, db=db_ok, loops=hb_fresh, brain=brain_ok,
                    version=BUILD_STAMP,                  # v4.0-W88
                    commit=_ausl["kurz"],                 # v4.2-W85
                    commit_quelle=_ausl["quelle"],        # update | archiv | git | unbekannt
@@ -18730,7 +18769,15 @@ def healthz():
                    # langlebigen Maps — steigt etwas ueber Tage, ist es ein Leck.
                    kinder=_nc_kind.lage(),
                    speicher=_nc_pflege.groessen(_speicher_maps()),
-                   ts=datetime.now(timezone.utc).isoformat()), (200 if ok else 503)
+                   # v4.2-W121: wie lange bis zur ersten Pruefrunde (None =
+                   # noch nicht bereit) und wie lange der letzte Stopp dauerte.
+                   start_s=_nc_lage.ZUSTAND["bereit_s"],
+                   ts=datetime.now(timezone.utc).isoformat())
+    # v4.2-W121: "degradiert, aber lebendig" — weiche Gruende mit Klartext.
+    # Der HTTP-Code haengt weiter NUR an `ok`: UptimeRobot alarmiert auf
+    # 503, und ein langsamer Bot ist kein toter.
+    daten["lage"], daten["gruende"] = _nc_lage.bewerten(daten)
+    return jsonify(daten), (200 if ok else 503)
 
 
 @dashboard_app.route("/api/debug/threads")
@@ -24398,7 +24445,16 @@ async def _aufraeumen():
     trotzdem laufen — sonst bleiben ffmpeg-Kinder und Websockets zurueck.
     Aufraeumpfade, deren Fehlschlag bedeutungslos ist, duerfen dabei still
     sein (CLAUDE.md); der Prozess endet ohnehin gleich.
+
+    v4.2-W121: ZUERST die Aufnahmen. Sie sind das Einzige, dessen Verlust
+    der Betreiber spaeter bemerkt; alles andere baut sich beim Start neu auf.
     """
+    t0 = _time_mod.monotonic()
+    try:
+        n_auf = await _aufnahmen_abschliessen()
+    except Exception as e:
+        n_auf = 0
+        log.warning("Herunterfahren: Aufnahmen nicht abgeschlossen: %s", e)
     # FIX (Header "Was offen bleibt" — gepoolte KI-Session): explizit
     # schließen statt dem GC zu überlassen, sonst loggt aiohttp eine
     # "Unclosed client session" Warning beim Prozessende.
@@ -24427,6 +24483,39 @@ async def _aufraeumen():
         _persist_refreshed_cookies(force=True)
     except Exception:
         pass
+    # v4.2-W121: Hilfsprozesse (yt-dlp, Clips, Zerlegen …), deren Task der
+    # Abbruch noch nicht erreicht hat — nc.kindprozess kennt sie alle.
+    try:
+        n_kind = await _nc_kind.alle_beenden(term_s=3.0)
+    except Exception as e:
+        n_kind = 0
+        log.warning("Herunterfahren: Hilfsprozesse nicht beendet: %s", e)
+    _nc_lage.ZUSTAND["stopp_s"] = round(_time_mod.monotonic() - t0, 1)
+    log.info("Herunterfahren in %.1f s: %d Aufnahme(n) abgeschlossen, %d "
+             "Hilfsprozess(e) beendet.", _nc_lage.ZUSTAND["stopp_s"], n_auf, n_kind)
+
+
+async def _aufnahmen_abschliessen(frist_s: float = 30.0) -> int:
+    """v4.2-W121: laufende Aufnahmen beim Stopp in fester Reihenfolge beenden.
+
+    Bisher erreichte sie der Abbruch irgendwann in asyncio.run()s
+    Abschlussrunde — nach Discord, nach dem Kick-Moderator, und ohne dass
+    jemand wartete. Jetzt zuerst und mit Frist: der Abbruchzweig in
+    handle_recording_finished beendet ffmpeg per SIGTERM und traegt die
+    Datei ein (_aufnahme_beim_stopp_sichern). 30 s reichen fuer SIGTERM-
+    Frist (8 s) plus Eintrag; systemd wartet mit TimeoutStopSec laenger.
+    """
+    laufend = [t for t in list(_background_tasks)
+               if (t.get_name() or "").startswith("finish-") and not t.done()]
+    for t in laufend:
+        t.cancel()
+    if laufend:
+        _fertig, offen = await asyncio.wait(laufend, timeout=frist_s)
+        if offen:
+            log.error("Herunterfahren: %d Aufnahme(n) nach %.0f s nicht "
+                      "abgeschlossen — die Dateien liegen ggf. ohne "
+                      "Datenbankzeile im Aufnahmeordner.", len(offen), frist_s)
+    return len(laufend)
 
 
 # Klartext fuer die Abschiedszeile. Als Tabelle, damit der Wortlaut an EINER

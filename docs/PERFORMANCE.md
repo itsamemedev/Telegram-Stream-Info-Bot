@@ -11,7 +11,7 @@ auslieferbar und rückrollbar. Diese Datei wächst mit jedem Paket.
 | **B — Nebenläufigkeit & Gegendruck** | Semaphoren und Grenzen prüfen (Auflösung, Aufnahmen, Restreams, TikTokLive-Clients), Prozessstarts drosseln, harte Deckel mit Meldung statt stiller Überlast | Kein Einbruch unter Last, sondern sichtbares Abregeln |
 | **C — Caches, Polling, heiße Pfade** | Live-Status-Cache und Nachschläge, adaptives Polling ohne Rückkopplung, Status-Aggregation für Deck/Befehle ohne Vollscan | Kürzere Zeit live → Aufnahme, weniger Last je Abfrage |
 | **D — Prozess- & Ressourcen-Lebenszyklus** | Kindprozesse lückenlos verfolgen und abräumen, fd-/Zombie-Schutz, Deckel auf langlebige Dicts | Kein Wachstum über Tage |
-| E — Start, Stopp, Neustart | Unabhängige Initialisierung parallel, sauberes Herunterfahren ohne Waisen-ffmpeg, „degradiert aber lebendig" vs. „tot" | Schnellerer, deterministischer `systemctl restart` |
+| **E — Start, Stopp, Neustart** | Unabhängige Initialisierung parallel, sauberes Herunterfahren ohne Waisen-ffmpeg, „degradiert aber lebendig" vs. „tot" | Schnellerer, deterministischer `systemctl restart` |
 | F — Leichte Beobachtbarkeit | Aktive Aufnahmen/Restreams/Clients, Cache-Trefferquote, Resolver-Latenz, fds, Kindprozesse, RSS — billig, ohne Log-Flut | Ein Blick auf `/healthz` statt SSH |
 
 ## Paket A — Event-Loop-Schutz (W117)
@@ -206,3 +206,43 @@ Abräumwege schon (W75/W83); die bleiben, wie sie sind.
   Tunnel antworten langsam (siehe auch `livecache.dauer_max_ms`).
 - `speicher`: bleibt über Tage ungefähr bei der Zahl der getrackten Nutzer.
   Steigt ein Wert stetig, ist es ein Leck — Wert und Name ins Ticket.
+
+## Paket E — Start, Stopp, Neustart (W121)
+
+### Was sich geändert hat
+
+- **Aufnahmen überleben einen Neustart.** Bisher wurde eine laufende Aufnahme
+  beim Stopp hart beendet und nicht eingetragen — sie lag danach unsichtbar im
+  Aufnahmeordner und tauchte unter „Waisen" zum Löschen auf. Jetzt wird ffmpeg
+  sauber beendet und die Datei eingetragen; sie steht nach dem Neustart im Deck
+  (ohne Telegram-Upload). Im Log:
+
+      Aufnahme @name beim Stopp gesichert (tiktok_live_….mp4, 412.3 MB, ffmpeg term) — steht im Deck, kein Upload.
+      Herunterfahren in 6.2 s: 2 Aufnahme(n) abgeschlossen, 0 Hilfsprozess(e) beendet.
+
+- **Startzeit:** nach jedem Start steht `Betriebsbereit nach X s` im Log.
+- **Lagebewertung in `/healthz`:** `lage` ist `ok`, `degradiert` oder
+  `gestoert`; `gruende` nennt in Klartext, was gerade Leistung kostet.
+
+### Bestehende Installationen
+
+Die Unit-Zeilen `KillMode=mixed` und `TimeoutStopSec=60` (und aus Paket B
+`LimitNOFILE=65536`) setzt nur der Installer. Für eine bestehende Installation
+von Hand unter `[Service]` eintragen, dann:
+
+    sudo systemctl daemon-reload && sudo systemctl restart <dienst>
+
+Ohne `KillMode=mixed` funktioniert das Sichern trotzdem: systemd schickt dann
+jedem ffmpeg selbst SIGTERM, die Aufnahme endet sauber und wird eingetragen.
+
+### Wo man hinsieht
+
+    "lage": "degradiert",
+    "gruende": ["Event-Loop p99 640 ms — Stelle in /api/debug/threads (loop_bremser)"],
+    "start_s": 23.4
+
+- `lage: gestoert` entspricht dem bisherigen HTTP 503.
+- `lage: degradiert` bleibt HTTP 200 — UptimeRobot alarmiert dafür nicht, das
+  Deck und `curl` zeigen es.
+- `start_s` deutlich über einer Minute: meist wartet der Start auf den
+  Proxy-Pool (`_ensure_proxy_ready`); dann die Proxy-Quelle prüfen.

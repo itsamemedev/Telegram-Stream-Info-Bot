@@ -11,6 +11,32 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Performance & Stabilität — Paket E: Start, Stopp, Neustart (v4.2 W121)
+
+- **Jeder Neustart machte laufende Aufnahmen zu Löschkandidaten.** Beim Stopp
+  schickte der Abbruchzweig von `handle_recording_finished` ffmpeg SIGKILL und
+  trug die Datei **nicht** in die Datenbank ein. Sie blieb ohne Zeile im
+  Aufnahmeordner — genau die „Waise", die `/api/rec/orphans/clean` zum Löschen
+  anbietet (W91). Da jedes Update erst nach `systemctl restart` wirkt, traf das
+  jede Aufnahme, die während eines Updates lief. Jetzt: SIGTERM (ffmpeg
+  schreibt das letzte Fragment), dann Eintrag mit Größe und Dauer, ohne Upload.
+- **Geordneter Stopp:** `_aufraeumen` schließt zuerst die Aufnahmen ab (Frist
+  30 s), zuletzt die Hilfsprozesse (`nc/kindprozess.alle_beenden`); die
+  Abschiedszeile nennt Dauer und Anzahl. Vorher erreichte der Abbruch die
+  Aufnahmen irgendwann in `asyncio.run()`s Abschlussrunde, und niemand wartete.
+- **Startdauer gemessen:** „Betriebsbereit nach X s" im Log, sobald die erste
+  Prüfrunde eingereiht ist; `/healthz` trägt `start_s`.
+- **„Degradiert, aber lebendig":** `/healthz` trägt `lage`
+  (`ok`/`degradiert`/`gestoert`) und `gruende` als Klartext mit Abhilfe —
+  Loop-p99 ≥ 500 ms, fd ≥ 70 %, umgangene oder fehlende Log-Schleuse, Update
+  ohne Neustart, Tunnel-Fehler, hängender Hilfsprozess. Der HTTP-Code hängt
+  unverändert nur an `ok`: UptimeRobot alarmiert auf 503, und ein langsamer Bot
+  ist kein toter.
+- Unit aus dem Installer: `KillMode=mixed`, `TimeoutStopSec=60` — SIGTERM nur
+  an den Bot, der seine Aufnahmen selbst abschließt.
+- Neues Modul `nc/betriebslage.py`, zwei Verträge (`_test_v42_w121_*`), 11
+  Mutationsproben gefangen.
+
 ### Performance & Stabilität — Paket D: Kindprozesse enden auf jedem Weg, Maps wachsen nicht (v4.2 W120)
 
 - **Kindprozesse.** 22 Stellen starten Prozesse; die Abräum-Hilfe aus W75

@@ -22182,6 +22182,110 @@ def _test_v42_w120_speicher_waechst_nicht():
        "alle 10 min aus der Hauptschleife; Groessen und Kinder in /healthz")
 
 
+def _test_v42_w121_stopp_sichert_aufnahmen():
+    """Eine beim Stopp laufende Aufnahme wurde per SIGKILL beendet und NICHT
+    eingetragen — eine Waise, die /api/rec/orphans/clean zum Loeschen anbietet.
+    Jeder Neustart (also jedes Update) machte so aus jeder laufenden Aufnahme
+    einen Loeschkandidaten."""
+    import ast as _ast
+    from nc import betriebslage as L
+
+    # ── (1) WAS EINGETRAGEN WIRD: alles mit mehr als einem Kopf.
+    tmp = _ph.verzeichnis()
+    gross = _ph.attrappe(os.path.join(tmp, "a.mp4"), 5 * 1024 * 1024)
+    kopf = _ph.attrappe(os.path.join(tmp, "b.mp4"), 512)
+    assert L.sichern_beim_stopp(gross)
+    assert not L.sichern_beim_stopp(kopf), "ein Kopf ohne Inhalt ist keine Aufnahme"
+    assert not L.sichern_beim_stopp(os.path.join(tmp, "fehlt.mp4"))
+    assert not L.sichern_beim_stopp("") and not L.sichern_beim_stopp(tmp)
+
+    baum = _ast.parse(io.open("bot.py", encoding="utf-8").read())
+    fn = {n.name: n for n in baum.body if isinstance(n, (_ast.FunctionDef, _ast.AsyncFunctionDef))}
+    # ── (2) DER ABBRUCHZWEIG sichert, statt zu toeten.
+    hrf = fn["handle_recording_finished"]
+    zweig = next(h for h in _ast.walk(hrf) if isinstance(h, _ast.ExceptHandler)
+                 and _ast.unparse(h.type or _ast.Name("x")) == "asyncio.CancelledError")
+    zt = _ast.unparse(zweig)
+    assert "_aufnahme_beim_stopp_sichern(" in zt, zt
+    assert "proc.kill()" not in zt, "der Abbruchzweig schickt wieder SIGKILL"
+    assert any(isinstance(n, _ast.Raise) for n in _ast.walk(zweig)), \
+        "der Abbruch wird verschluckt — dann endet der Task nie"
+    hs = _ast.unparse(fn["_aufnahme_beim_stopp_sichern"])
+    for k in ("_nc_kind.beenden(proc", "_nc_lage.sichern_beim_stopp(output_file)",
+              "asyncio.to_thread(add_recording", "outcome='cancelled'"):
+        assert k in hs, "_aufnahme_beim_stopp_sichern: %s fehlt" % k
+    # Erst beenden, dann eintragen — sonst steht die Groesse von VOR dem
+    # letzten Fragment in der Datenbank.
+    assert hs.index("_nc_kind.beenden(") < hs.index("add_recording")
+
+    # ── (3) DIE REIHENFOLGE BEIM STOPP: Aufnahmen zuerst, Hilfsprozesse am Ende.
+    auf = fn["_aufraeumen"]
+    aufrufe = [(c.lineno, _ast.unparse(c.func)) for c in _ast.walk(auf) if isinstance(c, _ast.Call)]
+    zuerst = min(aufrufe)[1]
+    assert zuerst in ("_time_mod.monotonic", "_aufnahmen_abschliessen"), aufrufe[:3]
+    namen = [n for _, n in sorted(aufrufe)]
+    assert namen.index("_aufnahmen_abschliessen") < namen.index("_close_ai_session")
+    assert "_nc_kind.alle_beenden" in namen
+    ab = _ast.unparse(fn["_aufnahmen_abschliessen"])
+    assert "startswith('finish-')" in ab and "asyncio.wait(" in ab and "timeout=" in ab
+    ok("W121: Stopp traegt laufende Aufnahmen ein (SIGTERM, dann Eintrag), Aufnahmen "
+       "zuerst, Hilfsprozesse zuletzt")
+
+
+def _test_v42_w121_degradiert_ist_nicht_tot():
+    """/healthz unterscheidet "degradiert, aber lebendig" von "gestoert" —
+    ohne den HTTP-Code zu aendern, an dem UptimeRobot haengt."""
+    import ast as _ast
+    from nc import betriebslage as L
+
+    gesund = {"ok": True, "loop_lag": {"aktiv": True, "p99_ms": 12},
+              "gegendruck": {"fd": {"offen": 100, "grenze": 65536}},
+              "log_synchron": 0, "log_wartend": 0, "laufstand": "aktuell",
+              "tunnel": "ok", "kinder": {"aeltester_s": 3}}
+    assert L.bewerten(gesund) == ("ok", [])
+    for feld, wert, wort in (("loop_lag", {"aktiv": True, "p99_ms": 900}, "Event-Loop"),
+                             ("gegendruck", {"fd": {"offen": 800, "grenze": 1024}}, "Dateideskriptoren"),
+                             ("log_synchron", 1, "Log-Handler"),
+                             ("log_wartend", -1, "Log-Schleuse"),
+                             ("laufstand", "veraltet", "neu gestartet"),
+                             ("tunnel", "fehler", "Tunnel"),
+                             ("kinder", {"aeltester_s": 4000}, "Hilfsprozess")):
+        d = dict(gesund)
+        d[feld] = wert
+        lage, gruende = L.bewerten(d)
+        assert lage == "degradiert" and len(gruende) == 1 and wort in gruende[0], (feld, lage, gruende)
+    # Ein nicht laufender Takt ist "keine Messung", kein Lag-Befund.
+    d = dict(gesund, loop_lag={"aktiv": False, "p99_ms": 9999})
+    assert L.bewerten(d)[0] == "ok"
+    d = dict(gesund, ok=False, laufstand="veraltet")
+    assert L.bewerten(d) == ("gestoert", ["Update eingespielt, aber nicht neu gestartet"])
+
+    # ── bereit() nur einmal.
+    alt = L.ZUSTAND["bereit_s"]
+    L.ZUSTAND["bereit_s"] = None
+    try:
+        assert L.bereit(L._START + 12.34) == 12.3
+        assert L.bereit(L._START + 99) is None and L.ZUSTAND["bereit_s"] == 12.3
+    finally:
+        L.ZUSTAND["bereit_s"] = alt
+
+    baum = _ast.parse(io.open("bot.py", encoding="utf-8").read())
+    fn = {n.name: n for n in baum.body if isinstance(n, (_ast.FunctionDef, _ast.AsyncFunctionDef))}
+    hz = fn["healthz"]
+    rueck = [r for r in _ast.walk(hz) if isinstance(r, _ast.Return)]
+    assert len(rueck) == 1 and _ast.unparse(rueck[0].value) == "(jsonify(daten), 200 if ok else 503)", \
+        "der HTTP-Code haengt nicht mehr allein an ok: %s" % [_ast.unparse(r) for r in rueck]
+    assert "daten['lage'], daten['gruende'] = _nc_lage.bewerten(daten)" in _ast.unparse(hz)
+    assert "_nc_lage.bereit()" in _ast.unparse(fn["check_all_trackings"])
+
+    inst = io.open("tools/installer.sh", encoding="utf-8").read()
+    unit = inst[inst.index("ExecStart=${VENV}/bin/python ${ZIEL}/bot.py"):]
+    unit = [z.strip() for z in unit[:unit.index("[Install]")].splitlines()]
+    assert "KillMode=mixed" in unit and "TimeoutStopSec=60" in unit, unit
+    ok("W121: /healthz trennt ok/degradiert/gestoert mit Klartext-Gruenden, HTTP-Code "
+       "nur an ok; Startdauer einmal gemessen; Unit KillMode=mixed")
+
+
 def main():
     tmp, rid = richte_testdatenbank_ein()
     ok("db_conn aus nc.dbwrap: echtes Schema angelegt, Commit durchgelaufen")
@@ -22485,6 +22589,8 @@ def main():
     _test_v42_w120_kindprozess_endet_auf_jedem_weg()
     _test_v42_w120_kein_warten_ohne_ende()
     _test_v42_w120_speicher_waechst_nicht()
+    _test_v42_w121_stopp_sichert_aufnahmen()
+    _test_v42_w121_degradiert_ist_nicht_tot()
     _test_v42_w60_azrael_cooldown_je_plattform()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)
