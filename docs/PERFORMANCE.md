@@ -10,7 +10,7 @@ auslieferbar und rückrollbar. Diese Datei wächst mit jedem Paket.
 | **A — Event-Loop-Schutz** | Loop-Lag in ms messen, blockierende Stelle benennen, Log-Schleuse gegen Nachzügler, DB-Zugriffe der heißen Pfade neben den Loop, Sperre gegen neue | Stockungen unter 3 s werden sichtbar **und** lokalisierbar; die bekannten Plattenlast-Stockungen in Restream/Intel fallen weg |
 | **B — Nebenläufigkeit & Gegendruck** | Semaphoren und Grenzen prüfen (Auflösung, Aufnahmen, Restreams, TikTokLive-Clients), Prozessstarts drosseln, harte Deckel mit Meldung statt stiller Überlast | Kein Einbruch unter Last, sondern sichtbares Abregeln |
 | **C — Caches, Polling, heiße Pfade** | Live-Status-Cache und Nachschläge, adaptives Polling ohne Rückkopplung, Status-Aggregation für Deck/Befehle ohne Vollscan | Kürzere Zeit live → Aufnahme, weniger Last je Abfrage |
-| D — Prozess- & Ressourcen-Lebenszyklus | Kindprozesse lückenlos verfolgen und abräumen, fd-/Zombie-Schutz, Deckel auf langlebige Dicts | Kein Wachstum über Tage |
+| **D — Prozess- & Ressourcen-Lebenszyklus** | Kindprozesse lückenlos verfolgen und abräumen, fd-/Zombie-Schutz, Deckel auf langlebige Dicts | Kein Wachstum über Tage |
 | E — Start, Stopp, Neustart | Unabhängige Initialisierung parallel, sauberes Herunterfahren ohne Waisen-ffmpeg, „degradiert aber lebendig" vs. „tot" | Schnellerer, deterministischer `systemctl restart` |
 | F — Leichte Beobachtbarkeit | Aktive Aufnahmen/Restreams/Clients, Cache-Trefferquote, Resolver-Latenz, fds, Kindprozesse, RSS — billig, ohne Log-Flut | Ein Blick auf `/healthz` statt SSH |
 
@@ -172,3 +172,37 @@ Keine neuen Schalter.
 Liefert der Puls `"veraltet": true`, hing beim Bauen etwas (meist SQLite unter
 Plattenlast); das Deck zeigt dann die Zahlen von vor wenigen Sekunden statt gar
 keine.
+
+## Paket D — Prozess- & Ressourcen-Lebenszyklus (W120)
+
+### Was sich geändert hat
+
+- **Hilfsprozesse** (yt-dlp-Erkennung, Clips, Discord-Verkleinern, TTS,
+  Zerlegen und Reparieren von Aufnahmen, Tonspur-Prüfung) haben jetzt alle ein
+  Zeitlimit und werden beendet, wenn die Aufgabe abgebrochen wird. Vorher
+  konnte ein yt-dlp oder ein Neukodieren nach einem Abbruch unbemerkt
+  weiterlaufen, und drei ffmpeg-Aufrufe konnten für immer hängen.
+- **Speicher:** Einige interne Tabellen wuchsen mit jedem `/check` und jedem
+  Clip für Nutzer, die nicht getrackt sind, und wurden nie geleert. Sie werden
+  jetzt alle 10 Minuten beschnitten.
+
+Keine neuen Schalter. Aufnahme- und Restream-Prozesse selbst hatten ihre
+Abräumwege schon (W75/W83); die bleiben, wie sie sind.
+
+### Wo man hinsieht
+
+`/healthz`:
+
+    "kinder": {"laufend": 1, "je_art": {"yt-dlp": 1}, "aeltester_s": 4,
+               "gestartet": 3120, "zeitlimit": 17, "abgebrochen": 2,
+               "getoetet": 0},
+    "speicher": {"live_status_cache": 38, "rate_backoff": 2, ...}
+
+- `kinder.aeltester_s` weit über den Zeitlimits (yt-dlp 20 s, Clip wenige
+  Minuten): etwas hängt im Kernel (meist die Platte); ein Neustart räumt auf.
+- `kinder.getoetet` steigt: Prozesse ignorieren SIGTERM — bei ffmpeg ein
+  Hinweis auf eine hängende Ein-/Ausgabe.
+- `kinder.zeitlimit` steigt schnell, vor allem bei `yt-dlp`: TikTok oder der
+  Tunnel antworten langsam (siehe auch `livecache.dauer_max_ms`).
+- `speicher`: bleibt über Tage ungefähr bei der Zahl der getrackten Nutzer.
+  Steigt ein Wert stetig, ist es ein Leck — Wert und Name ins Ticket.

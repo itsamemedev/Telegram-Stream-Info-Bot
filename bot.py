@@ -615,6 +615,8 @@ from nc import meldetakt as _nc_meldetakt  # v4.2-W81: Grund melden ohne Log-Flu
 from nc import logschleuse as _nc_logschleuse  # v4.2-W97: Logging weg vom Event-Loop
 from nc import looplag as _nc_looplag  # v4.2-W117: Loop-Lag in ms, und wer ihn haelt
 from nc import gegendruck as _nc_gegendruck  # v4.2-W118: abregeln mit Ansage
+from nc import kindprozess as _nc_kind  # v4.2-W120: Kindprozess endet auf jedem Weg
+from nc import speicherpflege as _nc_pflege  # v4.2-W120: Maps, die nur wachsen
 from nc import resolvergrund as _nc_rgrund  # v4.2-W81: warum die Aufloesung leer blieb
 from nc import telegramfehler as _nc_tgfehler  # v4.2-W93: warum das Telegram-Polling klemmt
 from nc import aufnahmesitzung as _nc_sitzung  # v4.2-W44: die Klammer um die Segmente EINES Streams
@@ -2970,21 +2972,17 @@ async def _resolve_via_ytdlp(username: str):
         cmd += ["--cookies", COOKIE_FILE]
     cmd.append(url)
     try:
-        proc = await asyncio.create_subprocess_exec(
-            *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+        # v4.2-W120: ueber nc.kindprozess. Dieser Lauf ist der haeufigste
+        # Abbruchkandidat im Bestand (Single-Flight-Fuehrer aus W119,
+        # Herunterfahren) — vorher lief yt-dlp dann seine 20 s ungesehen weiter.
         try:
-            out, err = await asyncio.wait_for(proc.communicate(), timeout=20)
+            _rc, out, err = await _nc_kind.ausfuehren(cmd, 20, art="yt-dlp")
         except asyncio.TimeoutError:
-            try:
-                proc.kill()
-                await proc.wait()          # reapen, sonst Zombie-Prozess
-            except Exception:
-                pass
             _ytdlp_note_result(False)
             return "unknown", None
         out_s = (out or b"").decode("utf-8", "ignore").strip()
         err_s = (err or b"").decode("utf-8", "ignore").lower()
-        if proc.returncode == 0 and out_s.startswith("{"):
+        if _rc == 0 and out_s.startswith("{"):
             try:
                 data = json.loads(out_s)
             except Exception:
@@ -3015,7 +3013,7 @@ async def _resolve_via_ytdlp(username: str):
             log.debug(f"yt-dlp detect @{username}: 403 auch über Proxy")
             _ytdlp_note_result(False)
             return "unknown", None
-        log.debug(f"yt-dlp detect @{username}: rc={proc.returncode} {err_s[:160]}")
+        log.debug(f"yt-dlp detect @{username}: rc={_rc} {err_s[:160]}")
         _ytdlp_note_result(False)
         return "unknown", None
     except Exception as e:
@@ -8468,6 +8466,7 @@ async def check_all_trackings(bot_app):
         _NEXT_CHECK_AT[t["id"]] = 0   # 0 = "sofort fällig"
 
     LOOP_TICK = 5  # Sekunden
+    _pflege_runde = 0
     while True:
         # B83-Fix: Nur die DB-Abfrage kapseln — sie warf im Log 'database is
         # locked' (s. B80) und tötete damit den GESAMTEN Polling-Loop → keine
@@ -8535,6 +8534,11 @@ async def check_all_trackings(bot_app):
             for m in (_RATE_LIMIT_BACKOFF, _RATE_LIMIT_PENALTY, _LIVE_STATUS_CACHE, _ABO_LIVE):
                 stale = [u for u in list(m.keys()) if u not in valid_users]
                 for u in stale: m.pop(u, None)
+        # v4.2-W120: unbedingt, alle 10 Minuten — der Riegel oben greift nur
+        # nach vielen Untracks, nie fuer /check- oder Restream-Namen.
+        _pflege_runde += 1
+        if _pflege_runde % 120 == 0:
+            _speicher_pflegen()
 
         await asyncio.sleep(LOOP_TICK)
 
@@ -13664,11 +13668,17 @@ async def _restream_tts_enqueue_wav(wav_path, source_user=None):
     if not (RESTREAM_TTS and _restream_tts):
         return
     try:
-        proc = await asyncio.create_subprocess_exec(
-            "ffmpeg", "-hide_banner", "-loglevel", "error", "-i", wav_path,
-            "-f", "s16le", "-ar", str(_TTS_SR), "-ac", str(_TTS_CH), "pipe:1",
-            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
-        pcm, _ = await proc.communicate()
+        # v4.2-W120: mit Zeitlimit (nc.kindprozess); eine TTS-Datei ist
+        # Sekunden lang, 30 s Umwandlung sind reichlich.
+        # Thread-Deckel ja, nice nein: die Stimme geht live ins Sendebild,
+        # eine verzoegerte Umwandlung hoert man. Vorher ganz ohne Deckel —
+        # der Befehl stand als Einzelargumente da, und der Deckel-Vertrag
+        # (test_restream) sah ihn nicht.
+        _rc, pcm, _ = await _nc_kind.ausfuehren(
+            _ff_cmd(["ffmpeg", "-hide_banner", "-loglevel", "error", "-i", wav_path,
+                     "-f", "s16le", "-ar", str(_TTS_SR), "-ac", str(_TTS_CH), "pipe:1"],
+                    threads=FFMPEG_THREADS_BG),
+            30, art="ffmpeg-tts", stderr=_nc_kind.DEVNULL)
         if pcm:
             # V37-BH4: Ziel-Queue = Feeder des Root-Owners (die EINE
             # AZRAEL-Stimme spricht im primären Stream — README-Grenze).
@@ -18716,6 +18726,10 @@ def healthz():
                    # Live-Erkennung; `geteilt` = gesparte Doppel-Aufloesungen.
                    livecache=_nc_livecache.statistik(len(_LIVE_STATUS_CACHE),
                                                      len(_LIVE_EINFLUG)),
+                   # v4.2-W120: laufende Kindprozesse je Art und Groessen der
+                   # langlebigen Maps — steigt etwas ueber Tage, ist es ein Leck.
+                   kinder=_nc_kind.lage(),
+                   speicher=_nc_pflege.groessen(_speicher_maps()),
                    ts=datetime.now(timezone.utc).isoformat()), (200 if ok else 503)
 
 
@@ -21100,11 +21114,12 @@ async def _shrink_for_discord(path, limit_mb):
        Limit, skaliert auf max 720p (libx264 veryfast, +faststart). Gibt den
        neuen Pfad zurück oder None."""
     try:
-        pr = await asyncio.create_subprocess_exec(
-            "ffprobe", "-v", "error", "-show_entries", "format=duration",
-            "-of", "default=nk=1:nw=1", path,
-            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
-        so, _ = await pr.communicate()
+        # v4.2-W120: beide Laeufe mit Zeitlimit (nc.kindprozess) — vorher
+        # nacktes communicate(): ein haengender ffmpeg hing fuer immer.
+        _rc, so, _ = await _nc_kind.ausfuehren(
+            ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+             "-of", "default=nk=1:nw=1", path], 30, art="ffprobe",
+            stderr=_nc_kind.DEVNULL)
         dur = float((so or b"0").decode().strip() or 0) or 20.0
         budget_bits = limit_mb * 8 * 1024 * 1024 * 0.90     # 10% Reserve für Container-Overhead
         total_kbps = max(350, int(budget_bits / dur / 1000))
@@ -21119,10 +21134,10 @@ async def _shrink_for_discord(path, limit_mb):
                "-maxrate", f"{int(v_kbps * 1.3)}k", "-bufsize", f"{v_kbps * 2}k",
                "-c:a", "aac", "-b:a", f"{a_kbps}k", "-movflags", "+faststart", out],
                threads=FFMPEG_THREADS_BG, nice=FFMPEG_NICE_BG)
-        proc = await asyncio.create_subprocess_exec(
-            *cmd, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE)
-        await proc.communicate()
-        if proc.returncode == 0 and os.path.exists(out) and os.path.getsize(out) < limit_mb * 1024 * 1024:
+        _rc, _, _ = await _nc_kind.ausfuehren(cmd, max(300, int(dur * 6)),
+                                              art="ffmpeg-discord",
+                                              stdout=_nc_kind.DEVNULL)
+        if _rc == 0 and os.path.exists(out) and os.path.getsize(out) < limit_mb * 1024 * 1024:
             return out
         if os.path.exists(out):
             try: os.remove(out)
@@ -21472,10 +21487,12 @@ async def clip_moment(username, reason="", caption=""):
     # V37-CPU: Clip-Erstellung ist Hintergrundarbeit — Deckel + nice.
     cmd = _ff_cmd(cmd, threads=FFMPEG_THREADS_BG, nice=FFMPEG_NICE_BG)
     try:
-        proc = await asyncio.create_subprocess_exec(
-            *cmd, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE)
-        _, err = await proc.communicate()
-        if proc.returncode == 0 and os.path.exists(out) and os.path.getsize(out) > 1024:
+        # v4.2-W120: mit Zeitlimit (nc.kindprozess) — Clips sind Sekunden
+        # lang, zehnfache Laenge plus zwei Minuten ist grosszuegig.
+        _rc, _, err = await _nc_kind.ausfuehren(cmd, 120 + 10 * float(real),
+                                                art="ffmpeg-clip",
+                                                stdout=_nc_kind.DEVNULL)
+        if _rc == 0 and os.path.exists(out) and os.path.getsize(out) > 1024:
             log.info("✂ Clip erstellt @%s (%s): %s", username, reason, os.path.basename(out))
             try:
                 if DISCORD_WEBHOOK_URL:
@@ -21494,7 +21511,7 @@ async def clip_moment(username, reason="", caption=""):
             if YOUTUBE_CLIP_ENABLED and _ytoauth.status().get("ready"):
                 _spawn(_youtube_clip_versuchen(username, out, reason), name="clip-youtube")
             return out
-        log.warning("Clip @%s ffmpeg rc=%s: %s", username, proc.returncode,
+        log.warning("Clip @%s ffmpeg rc=%s: %s", username, _rc,
                     (err or b"")[-200:].decode("utf-8", "ignore"))
     except Exception as e:
         log.warning("Clip @%s fehlgeschlagen: %s", username, e)
@@ -23500,6 +23517,33 @@ def _pruefung_verworfen(wer):
                   "spaeter erkannt. Abhilfe: WORKER_COUNT erhoehen, oder im "
                   "Log nach 'Event-Loop … gestanden' suchen.", wer, n,
                   _nc_meldetakt.zusatz(unterdrueckt), WORKER_COUNT)
+
+
+def _speicher_maps():
+    """Die Maps, deren Groesse /healthz zeigt und die gepflegt werden."""
+    return {"live_status_cache": _LIVE_STATUS_CACHE, "rate_backoff": _RATE_LIMIT_BACKOFF,
+            "rate_penalty": _RATE_LIMIT_PENALTY, "ytdlp_ruhe": _YTDLP_NACHSCHLAG_ZULETZT,
+            "clip_cooldown": _CLIP_LAST, "hype_cooldown": _HYPE_CLIP_LAST,
+            "abo_probe": _ABO_PROBE_DONE, "abo_live": _ABO_LIVE,
+            "next_check": _NEXT_CHECK_AT, "chat_stats": _CHAT_STATS}
+
+
+def _speicher_pflegen():
+    """v4.2-W120: Maps nach ihrer eigenen Bedeutung beschneiden (Begruendung
+       in nc/speicherpflege.py). Eine Stunde ist ein Vielfaches jeder
+       Ruhezeit darunter; die Abo-Sonde drosselt auf 6 h, also 7 h."""
+    jetzt = _time_mod.monotonic()
+    weg = 0
+    for m in (_YTDLP_NACHSCHLAG_ZULETZT, _CLIP_LAST, _HYPE_CLIP_LAST):
+        weg += _nc_pflege.alte_stempel_weg(m, jetzt, 3600)
+    weg += _nc_pflege.alte_stempel_weg(_ABO_PROBE_DONE, jetzt, 7 * 3600)
+    # Abgelaufener Backoff seit 10 min: die Strafe dazu ist erledigt. Solange
+    # er laeuft, bleibt BEIDES — sonst eskaliert der naechste 429 nicht.
+    for u in _nc_pflege.abgelaufene_weg(_RATE_LIMIT_BACKOFF, jetzt, 600):
+        _RATE_LIMIT_PENALTY.pop(u, None)
+        weg += 1
+    if weg:
+        log.debug("Speicherpflege: %d veraltete Eintraege entfernt", weg)
 
 
 def _log_schleuse_pruefen():

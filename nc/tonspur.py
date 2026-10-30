@@ -46,7 +46,8 @@ import time
 from typing import List, Optional
 
 from nc import meldetakt as _takt
-from nc.videoteil import _bau, _toete, platz_reicht
+from nc import kindprozess as _kind  # v4.2-W120
+from nc.videoteil import _bau, platz_reicht
 
 log = logging.getLogger("TikTokBot")
 
@@ -206,17 +207,13 @@ async def _lauf(cmd, timeout):
     """-> (rc, stdout, stderr). Wirft Fehlschlag, wenn der Lauf nicht zustande
     kam — ein Rueckgabewert „kein Ergebnis" waere der stille Pfad, gegen den
     dieses Modul antritt."""
-    p = None
+    # v4.2-W120: ueber nc.kindprozess — abgeraeumt wird dort, auf jedem Weg,
+    # auch beim Abbruch des Aufrufers.
     try:
-        p = await asyncio.create_subprocess_exec(
-            *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
-        out, err = await asyncio.wait_for(p.communicate(), timeout=timeout)
-        return p.returncode, out or b"", err or b""
+        return await _kind.ausfuehren(cmd, timeout, art=cmd[0])
     except asyncio.TimeoutError:
-        await _toete(p)
         raise Fehlschlag("%s antwortete %d s lang nicht" % (cmd[0], timeout)) from None
     except (OSError, ValueError) as e:
-        await _toete(p)
         raise Fehlschlag("%s liess sich nicht starten: %s" % (cmd[0], e)) from e
 
 

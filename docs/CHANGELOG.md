@@ -11,6 +11,43 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Performance & Stabilität — Paket D: Kindprozesse enden auf jedem Weg, Maps wachsen nicht (v4.2 W120)
+
+- **Kindprozesse.** 22 Stellen starten Prozesse; die Abräum-Hilfe aus W75
+  benutzten drei. Drei Stellen warteten **ohne Zeitlimit**
+  (`_shrink_for_discord`, `clip_moment`, `_restream_tts_enqueue_wav`) — ein
+  hängender ffmpeg hing dort für immer. Und keine einzige räumte ab, wenn der
+  **aufrufende Task abgebrochen** wurde: `CancelledError` ist kein
+  `Exception`, der Prozess lief ungesehen weiter (Herunterfahren,
+  Restream-Wechsel, Single-Flight-Führer aus W119).
+  Neu `nc/kindprozess.ausfuehren(cmd, zeitlimit, art)`: Zeitlimit Pflicht,
+  Abräumen im `finally` (SIGTERM → wait → SIGKILL → wait) auf jedem Ausgang,
+  Register der laufenden Kinder. Umgestellt: yt-dlp-Resolver, Clip, Discord-
+  Verkleinern, TTS, `nc/videoteil` (4 Läufe) und `nc/tonspur`; das
+  dadurch tote `_toete` ist entfernt.
+- **Langlebige Maps.** Fünf Maps wurden mit Namen gefüllt, die nicht getrackt
+  sind (`/check`, Restream-Quelle, Clip), und nie geleert; das bestehende
+  Aufräumen griff nur nach vielen Untracks. Jetzt alle 10 Minuten nach ihrer
+  eigenen Bedeutung beschnitten (`nc/speicherpflege.py`): Zeitstempel nach
+  Alter, abgelaufener Rate-Limit-Backoff samt Strafe.
+- `/healthz` trägt `kinder` (laufend je Art, ältester, Zeitlimit/Abbruch/
+  SIGKILL-Zähler — ohne Kommandozeilen, darin stehen Stream-Tokens) und
+  `speicher` (Größen der langlebigen Maps).
+- **Zwei Altbefunde, sichtbar geworden durch die Umstellung:** `_mux`
+  (Aufnahme-Reparatur) und die TTS-Umwandlung liefen ohne Thread-Deckel. Der
+  Deckel-Vertrag sucht Befehlslisten, und beide standen als Einzelargumente
+  im Aufruf — er sah sie nie. Jetzt gedeckelt (TTS ohne nice: die Stimme geht
+  live ins Sendebild).
+- Die Prozess-Attrappe im Split-Vertrag hatte nicht die Form eines echten
+  Prozesses (kein `pid`, kein `terminate()`, `returncode=0` während sie
+  „hing"). Gehoben auf die echte Form, die Aussage unverändert.
+- Blindstellen-Grundlinie 464 → 463 (ein stummer Rückweg ist mit der
+  Umstellung weggefallen).
+- Drei Verträge (`_test_v42_w120_*`), darunter: kein `communicate()` ohne
+  Zeitlimit im ganzen Produktionscode außer direkt nach `kill()`. 11
+  Mutationsproben gefangen — eine erst, nachdem der Vertrag Namen im
+  Syntaxbaum statt im Text suchte (`_CLIP_LAST` steckt in `_HYPE_CLIP_LAST`).
+
 ### Performance & Stabilität — Paket C: Cache, Polling, heiße Pfade (v4.2 W119)
 
 - **Ein Lauf je Nutzer.** Die zweite Cache-Prüfung aus W103 fängt den

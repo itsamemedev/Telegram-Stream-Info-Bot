@@ -4684,15 +4684,30 @@ def _test_v42_w11_videoteil_aus_dem_monolithen():
     # 50 MINUTEN je Segment und damit 300-700 MB je Teil, also immer ein 413.
     # Gerechnet wird jetzt aus der ECHTEN Bitrate. Geprueft wird die
     # Kommandozeile, weil genau dort der Rechenfehler landete.
+    # v4.2-W120: die Attrappe hat die Form eines echten asyncio-Prozesses —
+    # pid, terminate(), communicate(input=None). Vorher fehlten alle drei;
+    # nc.kindprozess braucht sie, und ein echter Prozess hat sie immer.
+    # Die Aussage unten bleibt: "der haengende Prozess wurde per Signal
+    # beendet UND abgeholt" — ob per SIGTERM oder SIGKILL, ist dafuer gleich.
+    _naechste_pid = [40000]
+
     class _Proc:
         def __init__(self, out=b"", rc=0, haenge=False):
-            self._out, self.returncode, self._haenge = out, rc, haenge
+            self._out, self._haenge = out, haenge
+            # Ein laufender Prozess hat returncode None — ein haengender also
+            # auch. Mit 0 sah er fuer jedes Abraeumen schon beendet aus.
+            self.returncode = None if haenge else rc
             self.getoetet = False
+            _naechste_pid[0] += 1
+            self.pid = _naechste_pid[0]
 
-        async def communicate(self):
+        async def communicate(self, input=None):
             if self._haenge:
                 await _asyncio.sleep(3600)
             return self._out, b""
+
+        def terminate(self):
+            self.getoetet = True
 
         def kill(self):
             self.getoetet = True
@@ -22008,6 +22023,165 @@ def _test_v42_w119_puls_ist_ein_schnappschuss():
        "gleichzeitige Anfragen, haengender Bau liefert den letzten Wert")
 
 
+def _test_v42_w120_kindprozess_endet_auf_jedem_weg():
+    """Ein Kindprozess endet bei Erfolg, Zeitablauf, Ausnahme UND Abbruch.
+
+    Drei Stellen warteten mit nacktem communicate() (kein Zeitlimit), und
+    keine einzige raeumte ab, wenn der aufrufende Task abgebrochen wurde: ein
+    CancelledError ist kein Exception und rauscht an `except Exception`
+    vorbei — der Prozess lief ungesehen weiter.
+    """
+    import asyncio as _aio
+    import signal as _sig
+    from nc import kindprozess as K
+
+    def lebt(pid):
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return False
+        # Zombie zaehlt als tot-und-abgeholt NICHT: nachsehen.
+        try:
+            with io.open("/proc/%d/stat" % pid) as f:
+                return f.read().split(")")[-1].split()[0] != "Z"
+        except OSError:
+            return False
+
+    schlafen = [sys.executable, "-c", "import time; time.sleep(30)"]
+
+    async def szenario():
+        K.zuruecksetzen()
+        # ── (1) ERFOLG
+        rc, out, _ = await K.ausfuehren([sys.executable, "-c", "print('hallo')"], 10, art="probe")
+        assert rc == 0 and out.strip() == b"hallo", (rc, out)
+        # ── (2) ZEITLIMIT: der Prozess ist weg, BEVOR die Ausnahme fliegt.
+        t0 = _aio.get_running_loop().time()
+        try:
+            await K.ausfuehren(schlafen, 0.3, art="probe")
+        except _aio.TimeoutError:
+            pass
+        else:
+            raise AssertionError("Zeitlimit ohne TimeoutError")
+        assert _aio.get_running_loop().time() - t0 < 6
+        assert K.LAUFEND == {} and K.ZAEHLER["zeitlimit"] == 1, (K.LAUFEND, K.ZAEHLER)
+        # ── (3) ABBRUCH DES AUFRUFERS: der Fall, den kein Bestandscode abdeckte.
+        task = _aio.ensure_future(K.ausfuehren(schlafen, 60, art="probe"))
+        await _aio.sleep(0.3)
+        pids = list(K.LAUFEND)
+        assert len(pids) == 1 and K.lage()["je_art"] == {"probe": 1}, K.lage()
+        task.cancel()
+        try:
+            await task
+        except _aio.CancelledError:
+            pass
+        else:
+            raise AssertionError("der Abbruch wurde verschluckt")
+        assert not lebt(pids[0]), "nach dem Abbruch laeuft der Prozess weiter"
+        assert K.LAUFEND == {} and K.ZAEHLER["abgebrochen"] == 1
+        # ── (4) SIGTERM IGNORIERT -> SIGKILL, mit wait().
+        trotz = await _aio.create_subprocess_exec(
+            sys.executable, "-c",
+            "import signal, time; signal.signal(signal.SIGTERM, signal.SIG_IGN); "
+            "print('bereit', flush=True); time.sleep(30)",
+            stdout=K.PIPE)
+        await trotz.stdout.readline()
+        assert await K.beenden(trotz, term_s=0.3, kill_s=3) == "kill"
+        assert trotz.returncode == -_sig.SIGKILL and not lebt(trotz.pid)
+        assert await K.beenden(trotz) == "lief_nicht"
+        # ── (5) ALLE BEENDEN (fuers Herunterfahren, Paket E).
+        t1 = _aio.ensure_future(K.ausfuehren(schlafen, 60, art="a"))
+        t2 = _aio.ensure_future(K.ausfuehren(schlafen, 60, art="b"))
+        await _aio.sleep(0.3)
+        assert K.lage()["laufend"] == 2
+        assert await K.alle_beenden(term_s=2) == 2
+        for t in (t1, t2):
+            rc, _, _ = await t
+            assert rc == -_sig.SIGTERM, rc
+        assert K.LAUFEND == {}
+        # ── (6) OHNE ZEITLIMIT GEHT ES NICHT.
+        for z in (0, None, -1):
+            try:
+                await K.ausfuehren(schlafen, z)
+            except ValueError:
+                pass
+            else:
+                raise AssertionError("Zeitlimit %r wurde angenommen" % (z,))
+
+    if os.name == "posix":
+        _aio.run(szenario())
+    K.zuruecksetzen()
+    ok("W120: Kindprozess endet bei Erfolg, Zeitlimit, Abbruch des Aufrufers; "
+       "SIGTERM-Verweigerer bekommt SIGKILL mit wait; alle_beenden; Zeitlimit Pflicht")
+
+
+def _test_v42_w120_kein_warten_ohne_ende():
+    """Im Produktionscode wartet kein communicate() ohne Zeitlimit — ausser
+    unmittelbar nach einem kill(), dort endet der Prozess sofort. Und die
+    umgestellten Stellen starten nicht mehr selbst."""
+    import ast as _ast
+    import glob as _glob
+    dateien = (["bot.py", "discordbot.py", "telegramversand.py", "brain_bridge.py"]
+               + sorted(_glob.glob("nc/**/*.py", recursive=True)) + sorted(_glob.glob("brain/*.py")))
+    nackt = []
+    for d in dateien:
+        baum = _ast.parse(io.open(d, encoding="utf-8").read())
+        nach_kill = set()
+        for h in _ast.walk(baum):
+            if isinstance(h, _ast.ExceptHandler):
+                kill_zeilen = [c.lineno for c in _ast.walk(h) if isinstance(c, _ast.Call)
+                               and getattr(c.func, "attr", None) == "kill"]
+                for c in _ast.walk(h):
+                    if isinstance(c, _ast.Await) and kill_zeilen and c.lineno > min(kill_zeilen):
+                        nach_kill.add(id(c))
+        for n in _ast.walk(baum):
+            if isinstance(n, _ast.Await) and isinstance(n.value, _ast.Call) \
+                    and getattr(n.value.func, "attr", None) == "communicate" \
+                    and id(n) not in nach_kill:
+                nackt.append("%s:%d" % (d, n.lineno))
+    assert not nackt, "communicate() ohne Zeitlimit: %s — nc.kindprozess.ausfuehren benutzen" % nackt
+
+    for d in ("nc/videoteil.py", "nc/tonspur.py"):
+        src = io.open(d, encoding="utf-8").read()
+        assert "create_subprocess_exec" not in src and "_kind.ausfuehren(" in src, d
+    baum = _ast.parse(io.open("bot.py", encoding="utf-8").read())
+    fn = {n.name: n for n in _ast.walk(baum) if isinstance(n, (_ast.FunctionDef, _ast.AsyncFunctionDef))}
+    for f in ("_resolve_via_ytdlp", "_shrink_for_discord", "clip_moment", "_restream_tts_enqueue_wav"):
+        u = _ast.unparse(fn[f])
+        assert "create_subprocess_exec" not in u and "_nc_kind.ausfuehren(" in u, f
+    ok("W120: kein communicate() ohne Zeitlimit; videoteil, tonspur, yt-dlp, Clip, "
+       "Discord-Verkleinern und TTS starten ueber nc.kindprozess")
+
+
+def _test_v42_w120_speicher_waechst_nicht():
+    """Maps mit Namen, die nicht getrackt sind (/check, Restream-Quelle, Clip),
+    wurden nie geleert. Beschnitten wird nach ihrer eigenen Bedeutung."""
+    import ast as _ast
+    from nc import speicherpflege as P
+
+    stempel = {"alt": 100.0, "frisch": 5000.0, "fremd": "kein Zeitstempel"}
+    assert P.alte_stempel_weg(stempel, 5100.0, 3600) == 1
+    assert set(stempel) == {"frisch", "fremd"}, stempel
+    bis = {"vorbei": 1000.0, "kuerzlich": 4800.0, "laeuft": 9000.0}
+    weg = P.abgelaufene_weg(bis, 5000.0, nachlauf=600)
+    assert weg == ["vorbei"] and set(bis) == {"kuerzlich", "laeuft"}, (weg, bis)
+    assert P.groessen({"a": {1: 1}, "b": []}) == {"a": 1, "b": 0}
+
+    baum = _ast.parse(io.open("bot.py", encoding="utf-8").read())
+    fn = {n.name: n for n in baum.body if isinstance(n, (_ast.FunctionDef, _ast.AsyncFunctionDef))}
+    assert any(isinstance(c, _ast.Call) and getattr(c.func, "id", None) == "_speicher_pflegen"
+               for c in _ast.walk(fn["check_all_trackings"])), "niemand pflegt"
+    # Namen im Syntaxbaum, nicht im Text: "_CLIP_LAST" steckt auch in
+    # "_HYPE_CLIP_LAST" — die Mutationsprobe ist genau daran entwischt.
+    namen = {c.id for c in _ast.walk(fn["_speicher_pflegen"]) if isinstance(c, _ast.Name)}
+    for m in ("_YTDLP_NACHSCHLAG_ZULETZT", "_CLIP_LAST", "_HYPE_CLIP_LAST", "_ABO_PROBE_DONE",
+              "_RATE_LIMIT_BACKOFF", "_RATE_LIMIT_PENALTY"):
+        assert m in namen, "%s wird nicht gepflegt" % m
+    hz = _ast.unparse(fn["healthz"])
+    assert "kinder=_nc_kind.lage()" in hz and "speicher=_nc_pflege.groessen(" in hz
+    ok("W120: Zeitstempel- und Ablauf-Maps werden nach Bedeutung beschnitten, "
+       "alle 10 min aus der Hauptschleife; Groessen und Kinder in /healthz")
+
+
 def main():
     tmp, rid = richte_testdatenbank_ein()
     ok("db_conn aus nc.dbwrap: echtes Schema angelegt, Commit durchgelaufen")
@@ -22308,6 +22482,9 @@ def main():
     _test_v42_w119_ein_lauf_je_nutzer()
     _test_v42_w119_polling_dehnt_nur_was_nichts_kostet()
     _test_v42_w119_puls_ist_ein_schnappschuss()
+    _test_v42_w120_kindprozess_endet_auf_jedem_weg()
+    _test_v42_w120_kein_warten_ohne_ende()
+    _test_v42_w120_speicher_waechst_nicht()
     _test_v42_w60_azrael_cooldown_je_plattform()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)
