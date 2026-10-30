@@ -22734,7 +22734,12 @@ def _test_v42_w123_update_idempotent():
     # ── (2) --dry-run: zeigt woertlich, was liefe, und fuehrt nichts aus.
     rc, aus = _w123_update(ziel, umg, "--dry-run")
     assert rc == 0, (rc, aus)
-    assert "$ apt-get update -qq" in aus and "$ apt-get install -y ffmpeg" in aus, aus
+    # Ohne root setzt das Skript sudo davor, als root nicht — der Vertrag
+    # erwartet GENAU die Form fuer den laufenden Nutzer. In der CI (kein root)
+    # fiel die erste Fassung, die nur die root-Form kannte (W123, PR #162).
+    _sudo = "" if os.geteuid() == 0 else "sudo "
+    assert ("$ %sapt-get update -qq" % _sudo) in aus, aus
+    assert ("$ %sapt-get install -y ffmpeg" % _sudo) in aus, aus
     assert _protokoll() == [], "--dry-run hat etwas ausgefuehrt: %r" % _protokoll()
 
     # ── (3) Optionale Pakete nur auf Wunsch. Ohne --optional sind sie nicht
