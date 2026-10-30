@@ -757,7 +757,6 @@ Beobachtung	Monitoring
 Beobachtung unvollstaendig — Grund oben; erneut: sudo bash %s/tools/observability.sh	Monitoring incomplete — reason above; again: sudo bash %s/tools/observability.sh
 Beobachtung: Prometheus auf 127.0.0.1:9099 — pruefen: bash tools/observability.sh --check	Monitoring: Prometheus on 127.0.0.1:9099 — check: bash tools/observability.sh --check
 Bestand	Current state
-Bot-Dashboard: %s://127.0.0.1:%s/metrics	Bot dashboard: %s://127.0.0.1:%s/metrics
 DASHBOARD_PORT in der .env ist keine Zahl: %s	DASHBOARD_PORT in .env is not a number: %s
 Der Bot wird abgefragt (up=1).	The bot is being scraped (up=1).
 Der Dienst des Pakets lauscht auf *:9090 ohne Anmeldung — er wird abgeschaltet.	The package's service listens on *:9090 without login — it is being switched off.
@@ -823,3 +822,5 @@ promtool fehlt — Konfiguration ungeprueft.	promtool missing — configuration 
 promtool lehnt die Konfiguration ab — Dienst wird nicht (neu) gestartet:	promtool rejects the configuration — service is not (re)started:
 promtool: Konfiguration und Regeln gueltig.	promtool: configuration and rules valid.
 sudo bash tools/observability.sh [Schalter]	sudo bash tools/observability.sh [switches]
+Bot-Dashboard: %s://%s:%s/metrics	Bot dashboard: %s://%s:%s/metrics
+%s laeuft nicht.	%s is not running.

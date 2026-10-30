@@ -168,8 +168,12 @@ DASH_PORT="$(env_wert DASHBOARD_PORT)"; DASH_PORT="${DASH_PORT:-8050}"
 case "$DASH_PORT" in ''|*[!0-9]*) fehler "DASHBOARD_PORT in der .env ist keine Zahl: %s" "$DASH_PORT"; exit 2;; esac
 SCHEMA="http"; [ -n "$(env_wert DASHBOARD_TLS_CERT)" ] && SCHEMA="https"
 WEB_HOST="$(env_wert WEB_HOST)"
+BOT_HOST="127.0.0.1"
 case "${WEB_HOST:-127.0.0.1}" in
-  127.*|localhost|0.0.0.0|::|"[::]"|::1) ;;
+  127.*|localhost|0.0.0.0) ;;
+  # Nur IPv6: dort ist 127.0.0.1 nicht erreichbar. ::1 zaehlt am Deck wie
+  # 127.0.0.1 als Loopback (bot.py, _LOOPBACK) — weiterhin ohne Token.
+  ::|"[::]"|::1|"[::1]") BOT_HOST="[::1]";;
   *)
     # Bindet das Deck an EINE fremde Adresse, ist 127.0.0.1 nicht erreichbar
     # — und von dort kaeme die Abfrage ohne Anmeldung. Statt den Token in eine
@@ -192,7 +196,7 @@ dienst(){ # systemctl, gezeigt und — ausser im Trockenlauf — ausgefuehrt
 # rendern VORLAGE -> stdout. Unbekannte Platzhalter brechen ab: ein @@X@@, das
 # in eine Unit wandert, macht daraus einen Befehl, den es nicht gibt.
 rendern(){
-  sed -e "s#@@DASH_PORT@@#$DASH_PORT#g" -e "s#@@SCHEMA@@#$SCHEMA#g" \
+  sed -e "s#@@DASH_PORT@@#$DASH_PORT#g" -e "s#@@SCHEMA@@#$SCHEMA#g" -e "s#@@BOT_HOST@@#$BOT_HOST#g" \
       -e "s#@@PROM_PORT@@#$PROM_PORT#g" -e "s#@@AUFBEWAHRUNG@@#$AUFBEWAHRUNG#g" \
       -e "s#@@PROMETHEUS@@#$PROM_BIN#g" -e "s#@@ETC@@#${ETC#"$W"}#g" \
       -e "s#@@REGELN@@#${REGELN#"$W"}#g" -e "s#@@DASHBOARDS@@#${GF_DASH#"$W"}#g" "$1"
@@ -265,7 +269,7 @@ PAKET_DIENST_VORHER=0; unit_da prometheus.service && PAKET_DIENST_VORHER=1
 if [ -n "$PROM_BIN" ]; then gut "prometheus: %s" "$PROM_BIN"
 elif [ -n "$PROM_PAKET" ]; then info "prometheus fehlt — Paket: %s" "$PROM_PAKET"
 else warn "prometheus fehlt, und fuer %s ist kein Paket bekannt." "${NC_PKG:-?}"; fi
-info "Bot-Dashboard: %s://127.0.0.1:%s/metrics" "$SCHEMA" "$DASH_PORT"
+info "Bot-Dashboard: %s://%s:%s/metrics" "$SCHEMA" "$BOT_HOST" "$DASH_PORT"
 
 GF_DA=0; GF_DIENST=""
 for u in grafana-server.service grafana.service; do
@@ -293,6 +297,12 @@ if [ "$NUR_PRUEFEN" = 1 ]; then
   else warn "nightcrawler-prometheus laeuft nicht."; BEFUND=1; fi
   if [ "$GRAFANA" = "ja" ]; then
     [ "$GF_DA" = 1 ] || { warn "grafana ist nicht installiert."; BEFUND=1; }
+    # Installiert heisst nicht erreichbar: ein gestoppter Dienst mit allen
+    # Dateien an ihrem Platz ist genau der Fall, der sonst "vollstaendig"
+    # meldete (Codex, PR #166).
+    if [ "$GF_DA" = 1 ] && ! unit_aktiv "$GF_DIENST"; then
+      warn "%s laeuft nicht." "$GF_DIENST"; BEFUND=1
+    fi
     for f in "$GF_PROV/datasources/nightcrawler.yml" "$GF_DASH/nightcrawler.json"; do
       [ -f "$f" ] || { warn "fehlt: %s" "${f#"$W"}"; BEFUND=1; }
     done
@@ -313,7 +323,6 @@ fi
 # ═══════════════════════════════════════════════════════════════════════════
 kopf "Prometheus"
 BEFUND=0
-PROM_NEU=0               # 1 = DIESER Lauf hat das Paket installiert
 if [ -z "$PROM_BIN" ]; then
   if [ -z "$PROM_PAKET" ]; then
     fehler "Prometheus bitte selbst installieren (https://prometheus.io/download/), dann erneut aufrufen."
@@ -328,7 +337,14 @@ if [ -z "$PROM_BIN" ]; then
   fi
   # shellcheck disable=SC2046,SC2086
   lauf env DEBIAN_FRONTEND=noninteractive $(nc_installbefehl $PROM_PAKET) || { fehler "Installation gescheitert."; exit 1; }
-  PROM_NEU=1
+  # SOFORT abschalten, nicht erst am Ende: das Paket startet seinen Dienst
+  # auf *:9090 ohne Anmeldung, und jeder spaetere Abbruch (promtool, Platte,
+  # Netz) liesse ihn offen stehen (Codex, PR #166). Nur, wenn ERST dieser
+  # Lauf ihn gebracht hat — lief er vorher, gehoert er jemandem.
+  if [ "$PAKET_DIENST_VORHER" = 0 ] && { unit_da prometheus.service || [ "$TROCKEN" = 1 ]; }; then
+    info "Der Dienst des Pakets lauscht auf *:9090 ohne Anmeldung — er wird abgeschaltet."
+    dienst disable --now prometheus.service || warn "prometheus.service liess sich nicht abschalten — Port 9090 pruefen."
+  fi
   PROM_BIN="$(command -v prometheus || true)"
   PROMTOOL="$(command -v promtool || true)"
   # Im Trockenlauf gibt es das Programm noch nicht — der Pfad des Pakets.
@@ -370,12 +386,7 @@ else
   gut "nightcrawler-prometheus: unveraendert, laeuft."
 fi
 
-# Den Paket-Dienst nur abschalten, wenn ERST dieser Lauf ihn gebracht hat.
-# Lief er schon vorher, gehoert er jemandem — dann bleibt er, wie er ist.
-if [ "$PROM_NEU" = 1 ] && [ "$PAKET_DIENST_VORHER" = 0 ] && { unit_da prometheus.service || [ "$TROCKEN" = 1 ]; }; then
-  info "Der Dienst des Pakets lauscht auf *:9090 ohne Anmeldung — er wird abgeschaltet."
-  dienst disable --now prometheus.service || warn "prometheus.service liess sich nicht abschalten — Port 9090 pruefen."
-elif [ "$PAKET_DIENST_VORHER" = 1 ] && unit_aktiv prometheus.service; then
+if [ "$PAKET_DIENST_VORHER" = 1 ] && unit_aktiv prometheus.service; then
   info "prometheus.service lief schon vorher und bleibt unangetastet."
 fi
 

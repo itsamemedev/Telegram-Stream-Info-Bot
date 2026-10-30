@@ -23572,12 +23572,19 @@ def _test_v42_w127_observability():
     with open(_os.path.join(fake, "systemctl"), "w") as f:
         # Mit Zustand: nach "enable --now" ist der Dienst aktiv — sonst saehe
         # der zweite Lauf einen gestoppten Dienst und startete ihn erneut.
-        f.write('#!/bin/sh\necho "$*" >> "%s"\n'
-                'case "$1" in list-unit-files) case "$*" in *grafana-server*) '
-                '[ -n "$FAKE_GRAFANA" ] && echo "grafana-server.service enabled";; esac; exit 0;;\n'
-                '  enable) touch "%s/aktiv"; exit 0;;\n'
-                '  is-active) [ -f "%s/aktiv" ]; exit $?;;\n'
-                '  is-enabled) exit 1;; esac\nexit 0\n' % (protokoll, heim, heim))
+        f.write(
+            '#!/bin/sh\n'
+            'echo "$*" >> "%(log)s"\n'
+            '# Zustand JE DIENST: das letzte Argument ist die Unit.\n'
+            'eval "u=\\${$#}"\n'
+            'case "$1" in\n'
+            '  list-unit-files) case "$*" in *grafana-server*)\n'
+            '    [ -n "$FAKE_GRAFANA" ] && echo "grafana-server.service enabled";; esac; exit 0;;\n'
+            '  enable) touch "%(heim)s/aktiv.$u"; exit 0;;\n'
+            '  disable) rm -f "%(heim)s/aktiv.$u"; exit 0;;\n'
+            '  is-active) [ -f "%(heim)s/aktiv.$u" ]; exit $?;;\n'
+            '  is-enabled) exit 1;;\n'
+            'esac\nexit 0\n' % {"log": protokoll, "heim": heim})
     _os.chmod(_os.path.join(fake, "systemctl"), 0o755)
     # Ein Platzhalter-prometheus VOR dem echten im PATH: die Laeufe unten
     # sollen ueberall stattfinden, auch in der CI ohne das Paket — und dort
@@ -23629,6 +23636,11 @@ def _test_v42_w127_observability():
     # Vorlage ERKLAERT die @@…@@-Stellen (Lehre W102-W104).
     assert not _re.search(r"@@[A-Z_]+@@", text), "ungerenderter Platzhalter"
     assert '"127.0.0.1:8123"' in text and "scheme: https" in text, "Port/Schema nicht aus der .env"
+    # Nur IPv6 (WEB_HOST=::1): Ziel [::1], sonst erreicht Prometheus den
+    # Bot nie (Codex, PR #166). Trockenlauf genuegt — es geht ums Rendern.
+    r6 = lauf("--unattended", "--no-grafana", "--dry-run", env_datei="WEB_HOST=::1\nDASHBOARD_PORT=8123\n")
+    assert r6.returncode == 0 and "://[::1]:8123/metrics" in r6.stdout, r6.stdout
+    open(_os.path.join(ziel, ".env"), "w").write("DASHBOARD_PORT=8123\nDASHBOARD_TLS_CERT=/x.pem\n")
     assert "--web.listen-address=127.0.0.1:9099" in text, "Prometheus lauscht nicht nur lokal"
     assert "enable --now nightcrawler-prometheus.service" in systemctl(), systemctl()
     # Zweiter Lauf: nichts schreiben, nichts neu starten.
@@ -23678,15 +23690,37 @@ def _test_v42_w127_observability():
         ok("W127: promtool fehlt — Regeltests uebersprungen")
 
     # ── (5) Der Paket-Dienst wird NUR abgeschaltet, wenn dieser Lauf ihn
-    # gebracht hat. Gemessen an der Zeile, die mit der Bedingung beginnt.
+    # gebracht hat — und SOFORT nach der Installation, nicht erst am Ende:
+    # jeder Abbruch dazwischen liesse *:9090 offen (Codex, PR #166).
+    # Gemessen an Zeilen, die mit dem Aufruf beginnen.
     zeilen = [z.strip() for z in open("tools/observability.sh", encoding="utf-8").read().splitlines()]
     i = next(n for n, z in enumerate(zeilen) if z.startswith("dienst disable --now prometheus.service"))
+    i_inst = next(n for n, z in enumerate(zeilen)
+                  if z.startswith("lauf env DEBIAN_FRONTEND=noninteractive $(nc_installbefehl $PROM_PAKET)"))
+    i_erst = next(n for n, z in enumerate(zeilen) if z.startswith('schreibe "$ETC/prometheus.yml"'))
+    assert i_inst < i < i_erst, "Paket-Dienst nicht direkt nach der Installation abgeschaltet"
     bedingung = next(z for z in reversed(zeilen[:i]) if z.startswith(("if ", "elif ")))
-    assert bedingung.startswith('if [ "$PROM_NEU" = 1 ] && [ "$PAKET_DIENST_VORHER" = 0 ]'), bedingung
+    assert bedingung.startswith('if [ "$PAKET_DIENST_VORHER" = 0 ]'), bedingung
+    # Grafana zaehlt bei --check nur, wenn es LAEUFT.
+    umg["FAKE_GRAFANA"] = "1"
+    aktiv = _os.path.join(heim, "aktiv.grafana-server.service")
+    if _os.path.exists(aktiv):
+        _os.remove(aktiv)        # installiert, aber gestoppt
+    r = lauf("--check", "--grafana")
+    assert r.returncode == 1 and "grafana-server.service laeuft nicht" in r.stdout, r.stdout
+    del umg["FAKE_GRAFANA"]
 
     # ── (6) Ein Werkzeug, drei Wege: update.sh und der Installer rufen es auf.
     up = open("tools/update.sh", encoding="utf-8").read()
     assert 'exec bash "$SKRIPT/observability.sh" "${_w[@]}"' in up
+    # Zusammen mit anderen Schaltern: VOR dem ersten vorzeitigen Ausgang, und
+    # ihr Ergebnis zaehlt beim Exitcode (EXIT-Falle) — sonst fiel sie bei
+    # "nichts zu tun" oder --check still aus (Codex, PR #166).
+    uz = [z.strip() for z in up.splitlines()]
+    i_obs = uz.index('bash "$SKRIPT/observability.sh" "${_w[@]}" || OBS_RC=$?')
+    i_exit = next(n for n, z in enumerate(uz) if z.startswith('exit "$BEFUND"') or z == "exit 1")
+    assert i_obs < i_exit, "Beobachtung laeuft erst nach einem vorzeitigen Ausgang"
+    assert any(z.startswith("trap '_rc=$?;") and "OBS_RC" in z and z.endswith("' EXIT") for z in uz)
     ins = [z.strip() for z in open("tools/installer.sh", encoding="utf-8").read().splitlines()]
     assert any(z.startswith("PUNKTE=(") and z.endswith(" beobachtung)") for z in ins)
     assert any(z.startswith('if ${SUDO:+$SUDO} bash "$ZIEL/tools/observability.sh"') for z in ins)

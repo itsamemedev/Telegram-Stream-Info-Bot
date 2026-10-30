@@ -121,6 +121,15 @@ if [ -n "$W_BEOBACHTUNG" ]; then
   case "$NC_MODUS" in express) _w+=(--express);; unattended) _w+=(--unattended);; esac
   [ "${NC_FARBE:-1}" = 0 ] && _w+=(--no-color)
   if [ "$W_SYSTEM$W_PYTHON" = "00" ]; then exec bash "$SKRIPT/observability.sh" "${_w[@]}"; fi
+  # Zusammen mit anderen Schaltern ZUERST: der Rest dieses Skripts endet an
+  # mehreren Stellen vorzeitig (nichts zu tun, --check, --dry-run), und dort
+  # waere die Beobachtung still ausgefallen (Codex, PR #166). Ihr Ergebnis
+  # zaehlt beim Exitcode mit — ueber die EXIT-Falle, damit jeder Ausgang es
+  # sieht und keiner es vergisst.
+  OBS_RC=0
+  bash "$SKRIPT/observability.sh" "${_w[@]}" || OBS_RC=$?
+  # shellcheck disable=SC2154  # _rc entsteht in der Falle selbst
+  trap '_rc=$?; if [ "$_rc" = 0 ] && [ "$OBS_RC" != 0 ]; then exit "$OBS_RC"; fi' EXIT
 fi
 [ "$W_SYSTEM$W_PYTHON" = "00" ] && { W_SYSTEM=1; W_PYTHON=1; }
 # Ohne Tastatur gibt es keine Rueckfragen — dann ehrlich unbeaufsichtigt.
@@ -422,9 +431,6 @@ if [ "$W_PYTHON" = 1 ] && [ -x "$VPY" ]; then
   _tab="$("$VPY" "$SKRIPT/anforderungen.py" --datei "$REQ")" || BEFUND=1
   abgleich_lesen <<< "$_tab"
   [ -n "$PY_FEHLT" ] && { warn "Python-Pakete fehlen weiterhin:%s" "$PY_FEHLT"; BEFUND=1; }
-fi
-if [ -n "$W_BEOBACHTUNG" ]; then
-  bash "$SKRIPT/observability.sh" "${_w[@]}" || BEFUND=1
 fi
 if [ "$BEFUND" = 0 ]; then
   gut "Abgleich vollstaendig."
