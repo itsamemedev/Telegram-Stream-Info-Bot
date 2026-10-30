@@ -24471,6 +24471,66 @@ def _test_v42_w130_sendebruecke():
     assert nk, ("HEVC-Quelle nie auf Neukodieren umgestellt", starts5[:4])
     assert nk[0][1] == "u1", ("fuers Neukodieren wurde neu aufgeloest", starts5[:4])
 
+    # ── (11) Review #169: Popen scheitert beim Zubringer (fd-/Prozessgrenze).
+    # Die Wache darf daran nicht sterben — sonst laeuft das Pausenbild ewig
+    # weiter, und niemand versucht die Quelle wieder.
+    versuche = []
+
+    class _Zickig(_H):
+        def __init__(self, cmd, **kw):
+            if cmd[0] == "zub":
+                versuche.append(cmd)
+                if len(versuche) == 1:
+                    raise OSError(24, "Too many open files")
+            super().__init__(cmd, **kw)
+    del starts2[:]
+    lese6, schreib6 = _os.pipe()
+    W6 = B.Bruecke(schreib6, ["fueller"], lambda u, t, n: ["zub", u],
+                   lambda: ("u-neu", None), erste_url="u1", name="#zickig",
+                   popen=_Zickig, neustart_min_s=0.05, neustart_max_s=0.05)
+    W6.start()
+    ende = _t.monotonic() + 5
+    while _t.monotonic() < ende and len(versuche) < 2:
+        _t.sleep(0.05)
+    W6.stop()
+    for w in list(offen.values()):
+        _os.close(w)
+    offen.clear()
+    _os.close(lese6)
+    assert len(versuche) >= 2, "nach einem Popen-Fehler versucht die Bruecke es nie wieder"
+
+    # ── (12) Review #169: stop() waehrend die Aufloesung laeuft. Liefert sie
+    # danach noch eine Adresse, darf KEIN Zubringer mehr starten — er bliebe
+    # als Waise stehen, weil das Aufraeumen schon durch ist.
+    import threading as _th
+    frei = _th.Event()
+    gestoppt = _th.Event()
+    starts7 = []
+
+    class _Zaehl(_H):
+        def __init__(self, cmd, **kw):
+            starts7.append(cmd)
+            super().__init__(cmd, **kw)
+
+    def langsam():
+        frei.set()
+        gestoppt.wait(5)
+        return "u-spaet", None
+    lese7, schreib7 = _os.pipe()
+    W7 = B.Bruecke(schreib7, ["fueller"], lambda u, t, n: ["zub", u], langsam,
+                   name="#spaet", popen=_Zaehl)
+    W7.start()
+    assert frei.wait(5), "die Aufloesung wurde nie gefragt"
+    W7.stop()
+    gestoppt.set()
+    _t.sleep(0.5)
+    for w in list(offen.values()):
+        _os.close(w)
+    offen.clear()
+    _os.close(lese7)
+    assert not [c for c in starts7 if c[0] == "zub"], \
+        "nach stop() startete noch ein Zubringer — eine Waise"
+
     if not (_sh.which("ffmpeg") and _sh.which("ffprobe")):
         ok("W130: Sendebruecke (rein); ffmpeg fehlt — echter Lauf uebersprungen")
         return

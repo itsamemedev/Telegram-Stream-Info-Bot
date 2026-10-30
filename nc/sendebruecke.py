@@ -353,6 +353,7 @@ class Bruecke:
         self._fueller_frei = False
 
         self._sperre = threading.Lock()
+        self._startsperre = threading.Lock()
         self._halt = threading.Event()
         self._um = TsUmschreiber()
         self._t0 = uhr()
@@ -509,9 +510,22 @@ class Bruecke:
             log.info("Sendebrücke %s: stderr von %s nicht zu Ende gelesen: %s",
                      self.name, wer, e)
 
-    def _starte(self, wer, cmd):
-        p = self._popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                        stderr=subprocess.PIPE)
+    def _starte(self, wer, cmd, halt_pruefen=False):
+        """halt_pruefen: Prüfen und Starten unter der Sperre, die auch stop()
+        nimmt (die Startsperre, nicht die Datensperre). Review #169: stop() während einer laufenden Auflösung räumte
+        auf, die Auflösung lieferte danach noch eine Adresse, und der so
+        gestartete Zubringer blieb als Waise stehen. Unter der Sperre sieht
+        entweder stop() den neuen Prozess, oder _starte sieht den Halt."""
+        if halt_pruefen:
+            with self._startsperre:
+                if self._halt.is_set():
+                    return None
+                p = self._popen(cmd, stdin=subprocess.DEVNULL,
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                self._zub = p
+        else:
+            p = self._popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE)
         for ziel in (self._lies, self._stderr):
             t = threading.Thread(target=ziel, args=(wer, p), daemon=True,
                                  name="bruecke-%s-%s" % (self.name, wer))
@@ -540,8 +554,15 @@ class Bruecke:
         self._threads.append(t)
 
     def stop(self):
-        self._halt.set()
-        self._beende(self._zub)
+        with self._startsperre:
+            # Unter der Startsperre: ein _starte(halt_pruefen=True) laeuft
+            # entweder davor (dann steht sein Prozess hier in _zub) oder danach
+            # (dann sieht es den Halt). Bewusst NICHT self._sperre: die haelt
+            # daten() waehrend os.write, und ein Sender, der nicht liest,
+            # liesse stop() dann ewig warten.
+            self._halt.set()
+            zub = self._zub
+        self._beende(zub)
         self._beende(self._fue)
         self._schliessen()
 
@@ -602,8 +623,19 @@ class Bruecke:
             # kaeme erst mit dem naechsten GOP (Vertrag W130 hat es gefangen).
             self._zuletzt[QUELLE] = None
             self._wuensche(QUELLE, "Zubringer gestartet")
-            self._zub = self._starte(QUELLE, self._zubringer_cmd(
-                url, self._tonlos, self._neukodieren))
+            try:
+                self._zub = self._starte(QUELLE, self._zubringer_cmd(
+                    url, self._tonlos, self._neukodieren), halt_pruefen=True)
+            except OSError as e:
+                # Review #169: ein Popen-Fehler (Prozess-/fd-Grenze) beendete
+                # bisher die Wache. Das Pausenbild lief weiter, der Sender sah
+                # gesund aus, und nichts versuchte die Quelle je wieder. Jetzt
+                # wie ein gescheiterter Lauf: laut, mit Pause, neuer Versuch;
+                # die Grenze unklar_s beendet die Brücke, wenn es so bleibt.
+                log.warning("Sendebrücke %s: Zubringer startet nicht (%s) — "
+                            "neuer Versuch in %.0f s.", self.name, e, self._pause)
+                self._halt.wait(self._pause)
+                self._pause = min(self._neustart_max, self._pause * 2)
         self._schliessen()
 
     def _nach_ende(self, zub):
