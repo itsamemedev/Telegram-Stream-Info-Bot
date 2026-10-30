@@ -11,6 +11,42 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Installer — erst fragen, dann handeln; sechs Paketmanager; Windows-Dienst (v4.2 W124)
+
+- **Vier Phasen statt verzahnter Fragen und Eingriffe:** Erkennung (liest
+  nur) → Fragen (füllen einen Plan) → Zusammenfassung → Ausführung. In der
+  Zusammenfassung ist jeder der 14 Punkte per Nummer erneut einstellbar,
+  dazu steht der Diff der `.env` gegen den Bestand — Geheimnisse maskiert.
+  Eine Rücknahme wirkt in beide Richtungen (sparsam → Vorgaben setzt die
+  Werte aus der Vorlage zurück).
+- **`--dry-run`:** Plan und `.env`-Diff, nichts geschrieben — das Ziel
+  entsteht nicht einmal.
+- **Ein zweiter Lauf ändert nichts.** `--unattended` erzeugte bisher bei
+  jedem Lauf einen neuen `DASHBOARD_TOKEN` (jeder `?token=`-Link war danach
+  tot) — bestehende Geheimnisse bleiben jetzt. `.env`, `start.sh`, Unit,
+  OpenRC-Skript und nginx-Datei werden nur bei Abweichung geschrieben, mit
+  Diff; pip läuft nur, wenn `tools/anforderungen.py` etwas Fehlendes meldet.
+  Handgestellte Werte, nach denen nicht gefragt wurde, bleiben (Profil
+  „unverändert" ist die Vorgabe bei bestehender `.env`). Ein von certbot
+  ergänztes nginx wird nicht überschrieben.
+- **Auswahlfragen** (`frage_wahl`): Dashboard-Zugang (lokal / nginx+HTTPS /
+  offen) als eine Entscheidung statt zweier Ja/Nein-Fragen, dazu Python-Weg,
+  Datenbank, Leistungsprofil, Autostart.
+- **Distributionen über `tools/lib/system.sh`:** apt, dnf, pacman, zypper,
+  apk, brew — Paketnamen für Python, MariaDB, nginx/certbot je Manager,
+  nginx-Ort (sites-available / conf.d / http.d), Firewall-Hinweis (ufw /
+  firewalld), Autostart über systemd, OpenRC (Alpine) oder launchd.
+- **Kein Neustart im unbeaufsichtigten Lauf:** ein laufender Dienst wird
+  nur im geführten Lauf nach Rückfrage neu gestartet; sonst nennt der
+  Installer den Befehl.
+- **Windows (`install.bat`):** Paketweg winget oder Chocolatey (Chocolatey
+  wird nur als Administrator im geführten Lauf angeboten); Autostart als
+  Auswahl — Aufgabe bei Anmeldung, Aufgabe beim Systemstart, Windows-Dienst
+  über NSSM (idempotent nachgestellt, Neustart nach Absturz) oder keiner;
+  derselbe Token-Befund behoben.
+- Verträge `_test_v42_w124_*` (vier), darunter ein echter Terminal-Lauf durch
+  die Änderungsschleife; 14 Mutationsproben, keine entwischt.
+
 ### Werkzeuge — ehrliche Übersetzung und `tools/update.sh` (v4.2 W123)
 
 - **Die 100 % der Shell-Werkzeuge waren geschönt.** `tools/i18n_tools.py`

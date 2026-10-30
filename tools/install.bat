@@ -92,11 +92,23 @@ rem ---------------------------------------------------------------- 2 -------
 call :kopf "System pruefen"
 for /f "tokens=*" %%i in ('ver') do call :info_wert "Windows:" "%%i"
 call :info_wert "Benutzer / Rechner:" "%USERNAME% / %COMPUTERNAME%"
+rem v4.2-W124: zwei Paketwege statt einem. winget steckt in Windows 10/11,
+rem fehlt aber auf Servern und in vielen Firmenabbildern - dort ist
+rem Chocolatey oft schon da. Ohne beide blieb bisher nur "von Hand".
 set "WINGET=0"
+set "CHOCO=0"
+set "ADMIN=0"
 where winget >nul 2>&1 && set "WINGET=1"
-if "%WINGET%"=="1" call :info "winget vorhanden - fehlende Programme koennen installiert werden."
-if "%WINGET%"=="0" call :warn "winget fehlt - Python und ffmpeg muessten von Hand kommen."
-if "%WINGET%"=="0" call :erklaere "winget ist der Paketmanager von Windows, er steckt in der App 'App Installer' aus dem Microsoft Store."
+where choco >nul 2>&1 && set "CHOCO=1"
+net session >nul 2>&1 && set "ADMIN=1"
+set "PAKETWEG=keiner"
+if "%CHOCO%"=="1" set "PAKETWEG=choco"
+if "%WINGET%"=="1" set "PAKETWEG=winget"
+if "%ADMIN%"=="1" call :info "Als Administrator gestartet - Dienst und Aufgabe beim Systemstart sind moeglich."
+if "%WINGET%%CHOCO%"=="11" call :frage_wahl 1 "Fehlende Programme installieren ueber" "winget (in Windows enthalten)" "Chocolatey"
+if "%WINGET%%CHOCO%"=="11" if "%ANTWORT%"=="2" set "PAKETWEG=choco"
+if "%WINGET%%CHOCO%"=="00" call :kein_paketweg
+call :info_wert "Paketweg:" "%PAKETWEG%"
 
 rem ---------------------------------------------------------------- 3 -------
 call :kopf "Python"
@@ -104,10 +116,10 @@ call :erklaere "bot.py braucht mindestens Python 3.12. Das ist keine Empfehlung:
 call :finde_python
 if defined PY goto :python_da
 call :warn "Kein Python 3.12 oder neuer gefunden."
-if "%WINGET%"=="0" goto :python_fehlt
-call :frage_ja J "Python 3.13 jetzt per winget installieren?"
+if "%PAKETWEG%"=="keiner" goto :python_fehlt
+call :frage_ja J "Python 3.13 jetzt installieren?"
 if /i "%ANTWORT%"=="N" goto :python_fehlt
-winget install --id Python.Python.3.13 -e --source winget --accept-package-agreements --accept-source-agreements
+call :paket Python.Python.3.13 python313
 call :finde_python
 if defined PY goto :python_da
 :python_fehlt
@@ -123,11 +135,11 @@ rem ffmpeg ist ein Programm, keine Bibliothek - es kommt nicht ueber pip.
 where ffmpeg >nul 2>&1 && goto :ffmpeg_da
 call :warn "ffmpeg fehlt."
 call :erklaere "ffmpeg schneidet, kodiert und sendet - es ist das Herz von Aufnahme und Restream. Der Bot startet auch ohne, kann dann aber nichts aufzeichnen und nichts weitersenden."
-if "%WINGET%"=="0" goto :ffmpeg_hand
-call :frage_ja J "ffmpeg jetzt per winget installieren?"
+if "%PAKETWEG%"=="keiner" goto :ffmpeg_hand
+call :frage_ja J "ffmpeg jetzt installieren?"
 if /i "%ANTWORT%"=="N" goto :ffmpeg_hand
-winget install --id Gyan.FFmpeg -e --source winget --accept-package-agreements --accept-source-agreements
-call :warn "winget setzt den PATH erst fuer NEUE Fenster. Steht ffmpeg gleich noch als fehlend da: Fenster schliessen, neu oeffnen, Skript erneut starten."
+call :paket Gyan.FFmpeg ffmpeg
+call :warn "Der PATH gilt erst fuer NEUE Fenster. Steht ffmpeg gleich noch als fehlend da: Fenster schliessen, neu oeffnen, Skript erneut starten."
 goto :ffmpeg_fertig
 :ffmpeg_hand
 call :zeile2 "Download: https://www.gyan.dev/ffmpeg/builds/   (den Ordner bin in den PATH legen)"
@@ -159,7 +171,8 @@ call :gut "Quelltext geholt."
 goto :quelle_fertig
 :kein_git
 call :fehler "git fehlt und wird zum Holen des Quelltexts gebraucht."
-if "%WINGET%"=="1" echo      winget install --id Git.Git -e
+if "%PAKETWEG%"=="winget" echo      winget install --id Git.Git -e
+if "%PAKETWEG%"=="choco" echo      choco install git -y
 goto :ende_fehler
 :kopieren
 if not exist "%ZIEL%" mkdir "%ZIEL%"
@@ -289,8 +302,14 @@ set "DASHPORT=%ANTWORT%"
 call :env_set DASHBOARD_PORT "%DASHPORT%"
 call :env_set WEB_HOST "127.0.0.1"
 call :erklaere "Der Dashboard-Token schuetzt den Zugriff von aussen. Er ist frei waehlbar - hier ist Erzeugen die bessere Wahl als Ausdenken."
+rem v4.2-W124: ein bestehender Token bleibt. /auto erzeugte bisher bei JEDEM
+rem Lauf einen neuen - jeder gespeicherte ?token=-Link war danach tot.
+call :env_get DASHBOARD_TOKEN
+if defined ENVWERT call :token_behalten
+if defined ENVWERT goto :token_fertig
 call :frage_geheimnis "Dashboard-Token" 1 40
 if defined ANTWORT call :env_set DASHBOARD_TOKEN "%ANTWORT%"
+:token_fertig
 if defined ANTWORT call :merken "Dashboard-Token: steht in .env (DASHBOARD_TOKEN)"
 
 if /i not "%MODUS%"=="gefuehrt" goto :pin_fertig
@@ -364,15 +383,69 @@ call :t "Der Bot wurde beendet. Fenster schliessen mit einer beliebigen Taste."
 >>"%ZIEL%\start.bat" echo echo %UEBERSETZT%
 >>"%ZIEL%\start.bat" echo pause ^>nul
 call :gut_wert "Startskript:" "%ZIEL%\start.bat"
-call :erklaere "Windows kennt kein systemd. Der uebliche Ersatz ist die Aufgabenplanung: eine Aufgabe, die den Bot bei der Anmeldung startet. Sie startet ihn nicht nach einem Absturz neu - fuer einen echten Dienst mit Neustart gibt es NSSM (nssm.cc)."
-if /i not "%MODUS%"=="gefuehrt" goto :autostart_fertig
-call :frage_ja N "Aufgabe 'NIGHTCRAWLER' anlegen, die bei der Anmeldung startet?"
-if /i "%ANTWORT%"=="N" goto :autostart_fertig
+rem v4.2-W124: Hintergrund-Start ohne "pause". Eine Aufgabe beim Systemstart
+rem und ein Dienst haben kein Fenster - ein pause am Ende haelt den Prozess
+rem nach dem Bot-Ende fuer immer am Leben, und die Aufgabe gilt als "laeuft".
+> "%ZIEL%\start-hintergrund.bat" echo @echo off
+>>"%ZIEL%\start-hintergrund.bat" echo cd /d "%%~dp0"
+>>"%ZIEL%\start-hintergrund.bat" echo .venv\Scripts\python.exe bot.py %%*
+call :erklaere "Windows kennt kein systemd. Es gibt drei Wege: eine Aufgabe bei der Anmeldung (mit Fenster), eine Aufgabe beim Systemstart (ohne Anmeldung, braucht Administrator) oder ein echter Windows-Dienst ueber NSSM, der den Bot nach einem Absturz neu startet (braucht Administrator)."
+set "AUTOSTART_VOR=4"
+if /i "%MODUS%"=="gefuehrt" set "AUTOSTART_VOR=1"
+call :frage_wahl %AUTOSTART_VOR% "Autostart?" "Aufgabe bei der Anmeldung (Fenster sichtbar)" "Aufgabe beim Systemstart (ohne Anmeldung, Administrator)" "Windows-Dienst ueber NSSM (Neustart nach Absturz, Administrator)" "keiner - Start von Hand mit start.bat"
+if "%ANTWORT%"=="1" goto :auto_anmeldung
+if "%ANTWORT%"=="2" goto :auto_systemstart
+if "%ANTWORT%"=="3" goto :auto_nssm
+goto :autostart_fertig
+:auto_anmeldung
 schtasks /create /tn "NIGHTCRAWLER" /tr "\"%ZIEL%\start.bat\"" /sc onlogon /f >nul 2>&1
 set "RC=%ERRORLEVEL%"
 if not "%RC%"=="0" call :warn "Aufgabe liess sich nicht anlegen (fehlende Rechte?). Von Hand: Aufgabenplanung, Aufgabe erstellen, Ausloeser 'Bei Anmeldung'."
 if "%RC%"=="0" call :gut "Aufgabe angelegt (entfernen: schtasks /delete /tn NIGHTCRAWLER /f)."
 if "%RC%"=="0" call :merken "Autostart: Aufgabenplanung, Aufgabe 'NIGHTCRAWLER'"
+goto :autostart_fertig
+:auto_systemstart
+if not "%ADMIN%"=="1" goto :auto_kein_admin
+rem /f ueberschreibt eine bestehende Aufgabe gleichen Namens - ein zweiter
+rem Lauf legt also keine zweite an.
+schtasks /create /tn "NIGHTCRAWLER" /tr "\"%ZIEL%\start-hintergrund.bat\"" /sc onstart /ru SYSTEM /rl HIGHEST /f >nul 2>&1
+set "RC=%ERRORLEVEL%"
+if not "%RC%"=="0" call :warn "Aufgabe liess sich nicht anlegen (fehlende Rechte?). Von Hand: Aufgabenplanung, Aufgabe erstellen, Ausloeser 'Bei Anmeldung'."
+if "%RC%"=="0" call :gut "Aufgabe angelegt (entfernen: schtasks /delete /tn NIGHTCRAWLER /f)."
+if "%RC%"=="0" call :merken "Autostart: Aufgabe beim Systemstart (Konto SYSTEM) - kein Neustart nach Absturz; dafuer NSSM"
+goto :autostart_fertig
+:auto_nssm
+if not "%ADMIN%"=="1" goto :auto_kein_admin
+where nssm >nul 2>&1 && goto :nssm_da
+call :warn "NSSM fehlt."
+if "%PAKETWEG%"=="keiner" goto :nssm_hand
+call :paket NSSM.NSSM nssm
+where nssm >nul 2>&1 && goto :nssm_da
+:nssm_hand
+call :zeile2 "Download: https://nssm.cc/download - nssm.exe in den PATH legen, dann dieses Skript erneut starten."
+call :merken "OFFEN: NSSM installieren, dann install.bat erneut - Autostart als Dienst"
+goto :autostart_fertig
+:nssm_da
+if not exist "%ZIEL%\logs" mkdir "%ZIEL%\logs"
+rem Ein bestehender Dienst wird nur nachgestellt, nicht neu angelegt - so
+rem bleibt ein zweiter Lauf folgenlos und ueberschreibt keine Handgriffe am
+rem Dienstkonto.
+sc query NIGHTCRAWLER >nul 2>&1 || nssm install NIGHTCRAWLER "%VPY%" "%ZIEL%\bot.py" >nul
+nssm set NIGHTCRAWLER Application "%VPY%" >nul
+nssm set NIGHTCRAWLER AppParameters "%ZIEL%\bot.py" >nul
+nssm set NIGHTCRAWLER AppDirectory "%ZIEL%" >nul
+nssm set NIGHTCRAWLER AppStdout "%ZIEL%\logs\nssm.out.log" >nul
+nssm set NIGHTCRAWLER AppStderr "%ZIEL%\logs\nssm.err.log" >nul
+nssm set NIGHTCRAWLER AppRestartDelay 10000 >nul
+nssm set NIGHTCRAWLER Start SERVICE_AUTO_START >nul
+nssm start NIGHTCRAWLER >nul 2>&1
+sc query NIGHTCRAWLER | findstr /i "RUNNING" >nul && call :gut "Dienst NIGHTCRAWLER laeuft."
+sc query NIGHTCRAWLER | findstr /i "RUNNING" >nul || call :warn "Dienst startete nicht - Log: logs\nssm.err.log"
+call :merken "Autostart: Windows-Dienst NIGHTCRAWLER (nssm edit NIGHTCRAWLER, Log: logs\nssm.err.log)"
+goto :autostart_fertig
+:auto_kein_admin
+call :warn "Dafuer braucht es Administratorrechte - Fenster per Rechtsklick 'Als Administrator ausfuehren' oeffnen und install.bat erneut starten."
+call :merken "OFFEN: Autostart - install.bat als Administrator erneut ausfuehren"
 :autostart_fertig
 
 rem ---------------------------------------------------------------- 9 -------
@@ -624,6 +697,78 @@ rem  Der Wert geht ueber die Umgebung, NICHT ueber die Kommandozeile: eine
 rem  Kommandozeile steht in der Prozessliste, und dort haben Bot-Token und
 rem  Stream-Keys nichts verloren. Den Rest macht tools/envset.py - in Batch
 rem  laesst sich eine Datei nicht sicher zeilenweise umschreiben.
+:env_get
+rem  env_get NAME  ->  ENVWERT (leer, wenn nicht gesetzt)
+set "ENVWERT="
+for /f "usebackq delims=" %%i in (`"%VPY%" "%ZIEL%\tools\envset.py" --file "%ENVF%" --get %~1 2^>nul`) do set "ENVWERT=%%i"
+goto :eof
+
+:token_behalten
+rem  Bestehender Dashboard-Token: im gefuehrten Lauf fragen, sonst behalten.
+if /i not "%MODUS%"=="gefuehrt" goto :token_bleibt
+call :frage_ja J "Dashboard-Token ist gesetzt - behalten?"
+if /i "%ANTWORT%"=="J" goto :token_bleibt
+set "ENVWERT="
+goto :eof
+:token_bleibt
+call :gut "Dashboard-Token bleibt unveraendert."
+goto :eof
+
+:paket
+rem  paket WINGET-ID CHOCO-ID - ueber den gewaehlten Paketweg installieren.
+if "%PAKETWEG%"=="winget" winget install --id %~1 -e --source winget --accept-package-agreements --accept-source-agreements
+if "%PAKETWEG%"=="choco" choco install %~2 -y
+goto :eof
+
+:kein_paketweg
+rem  Weder winget noch Chocolatey. Chocolatey wird nur ANGEBOTEN, und nur als
+rem  Administrator: das Installationsskript kommt aus dem Netz und laeuft mit
+rem  vollen Rechten - das entscheidet der Betreiber, nicht ein Vorgabewert.
+call :warn "Weder winget noch Chocolatey - Python und ffmpeg muessten von Hand kommen."
+call :erklaere "winget ist der Paketmanager von Windows, er steckt in der App 'App Installer' aus dem Microsoft Store."
+if not "%ADMIN%"=="1" goto :eof
+if /i not "%MODUS%"=="gefuehrt" goto :eof
+call :frage_ja N "Chocolatey jetzt installieren (Skript von chocolatey.org, laeuft als Administrator)?"
+if /i "%ANTWORT%"=="N" goto :eof
+powershell -NoProfile -ExecutionPolicy Bypass -Command "[System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072; iex ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))"
+set "PATH=%PATH%;%ALLUSERSPROFILE%\chocolatey\bin"
+where choco >nul 2>&1 && set "PAKETWEG=choco"
+where choco >nul 2>&1 && set "CHOCO=1"
+goto :eof
+
+rem  frage_wahl VORGABE "Frage" "Option 1" "Option 2" ...  ->  ANTWORT = Nummer
+rem  v4.2-W124: Auswahl statt Ja/Nein. Gefragt wird nur im gefuehrten Lauf;
+rem  /express und /auto nehmen die Vorgabe - eine Auswahl ist nie Pflicht.
+rem  Die Optionen werden per shift durchlaufen; die Antwort muss eine der
+rem  angezeigten Nummern sein, sonst wird erneut gefragt.
+:frage_wahl
+set "ANTWORT=%~1"
+if /i "%MODUS%"=="auto" goto :eof
+if /i "%MODUS%"=="express" goto :eof
+call :t "%~2"
+echo   ? %UEBERSETZT%
+set "WAHL_N=0"
+shift
+shift
+:frage_wahl_opt
+if "%~1"=="" goto :frage_wahl_eingabe
+set /a WAHL_N+=1
+call :t "%~1"
+echo       %WAHL_N%) %UEBERSETZT%
+shift
+goto :frage_wahl_opt
+:frage_wahl_eingabe
+set "EINGABE="
+call :t "Auswahl"
+set /p "EINGABE=    %UEBERSETZT% [%ANTWORT%]: "
+if not defined EINGABE goto :eof
+set "WAHL_OK="
+for /l %%i in (1,1,%WAHL_N%) do if "%EINGABE%"=="%%i" set "WAHL_OK=%%i"
+if defined WAHL_OK set "ANTWORT=%WAHL_OK%"
+if defined WAHL_OK goto :eof
+call :warn "Bitte eine der angezeigten Nummern."
+goto :frage_wahl_eingabe
+
 :env_set
 set "NC_V=%~2"
 "%VPY%" "%ZIEL%\tools\envset.py" --file "%ENVF%" %~1

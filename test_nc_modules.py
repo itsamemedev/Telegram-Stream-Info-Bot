@@ -4130,7 +4130,9 @@ def _test_v42_w8_windows_installer_spricht_englisch():
         # HTML-Extraktor: "winget install --id Git.Git -e" uebersetzt man
         # nicht — wer es taete, gaebe dem Anwender ein Kommando, das nicht
         # laeuft.
-        if re.match(r"(winget|git|pip|python|curl|schtasks|robocopy|"
+        # v4.2-W124: choco und nssm sind dieselbe Klasse wie winget — der
+        # Paketweg Chocolatey und der NSSM-Dienst nennen Befehle zum Abtippen.
+        if re.match(r"(winget|choco|nssm|git|pip|python|curl|schtasks|robocopy|"
                     r"powershell|cd|del|mkdir|rmdir)\b", rest):
             continue
         uebrig.append(rest[:60])
@@ -22893,6 +22895,317 @@ def _test_v42_w123_anforderungen():
     ok("W123: anforderungen.py — ok/fehlt/alt/entfaellt, Marke [optional], kaputte Zeile = Fehler")
 
 
+def _w124_quelle():
+    """Ein Quellbaum im Kleinen — der Installer kopiert ihn wie den echten.
+
+    Nicht der echte Baum: der waere 30 MB je Lauf, und es geht um den
+    Installer, nicht um bot.py. Echt sind installer.sh, lib/, die
+    Uebersetzung und anforderungen.py; bot.py ist eine Attrappe, deren
+    Selbsttest ohne Befund endet.
+    """
+    import shutil as _sh
+    q = _ph.verzeichnis()
+    os.makedirs(os.path.join(q, "tools"))
+    _sh.copy("tools/installer.sh", os.path.join(q, "tools"))
+    _sh.copy("tools/anforderungen.py", os.path.join(q, "tools"))
+    _sh.copytree("tools/lib", os.path.join(q, "tools", "lib"))
+    _sh.copytree("locales", os.path.join(q, "locales"))
+    with open(os.path.join(q, "bot.py"), "w") as f:
+        f.write("import sys\nsys.exit(0)\n")
+    with open(os.path.join(q, "requirements.txt"), "w") as f:
+        f.write("pip >= 1\n")
+    with open(os.path.join(q, ".env.example"), "w") as f:
+        f.write("# Vorlage\n# DASHBOARD_PORT=8050\n# WEB_HOST=127.0.0.1\n"
+                "DASHBOARD_TOKEN=\n# RESTREAM_BITRATE_K=6000\n# RESTREAM_SINGLE=1\n"
+                "# WORKER_COUNT=4\n# DB_BACKEND=sqlite\n")
+    return q
+
+
+def _w124_umgebung(heim, **mehr):
+    e = {k: v for k, v in os.environ.items() if not k.startswith("NC_")}
+    # Kein Dienst, keine MOTD: die Suite laeuft auch auf CI-Rechnern mit
+    # systemd und sudo — dort darf sie nichts unter /etc anlegen.
+    e.update({"HOME": heim, "NC_INIT": "keiner", "NC_MOTD_WEG": "keiner", "NC_LANG": "de"})
+    e.update(mehr)
+    return e
+
+
+def _w124_installer(quelle, ziel, heim, *schalter, **umg):
+    import subprocess as _sp
+    r = _sp.run(["bash", os.path.join(quelle, "tools", "installer.sh"), "--no-color",
+                 "--skip-system", "--dir", ziel] + list(schalter),
+                capture_output=True, text=True, env=_w124_umgebung(heim, **umg),
+                timeout=300, stdin=_sp.DEVNULL)
+    return r.returncode, r.stdout + r.stderr
+
+
+def _w124_venv(ziel, proto):
+    """Ein venv, dessen pip nur protokolliert — alles andere laeuft echt."""
+    import stat as _st
+    b = os.path.join(ziel, ".venv", "bin")
+    os.makedirs(b)
+    p = os.path.join(b, "python")
+    with open(p, "w") as f:
+        # Wie echtes pip: ein installiertes Programm liegt danach in .venv/bin.
+        # Ohne das installierte jeder Lauf streamlink/yt-dlp erneut, und der
+        # Vertrag hielte den Installer fuer nicht idempotent.
+        f.write('#!/bin/sh\nif [ "$1" = "-m" ] && [ "$2" = "pip" ]; then echo "pip $*" >> "%s"\n'
+                '  for p in "$@"; do case "$p" in streamlink|yt-dlp) printf "#!/bin/sh\\n" > "%s/$p";'
+                ' chmod +x "%s/$p";; esac; done; exit 0; fi\n'
+                'exec "%s" "$@"\n' % (proto, b, b, sys.executable))
+    os.chmod(p, os.stat(p).st_mode | _st.S_IEXEC)
+
+
+def _test_v42_w124_installer_idempotent():
+    """v4.2-W124: zweiter Lauf aendert nichts — auch keine Geheimnisse."""
+    import re as _re
+    q = _w124_quelle()
+    heim = _ph.verzeichnis()
+    ziel = os.path.join(_ph.verzeichnis(), "nc")
+    proto = os.path.join(heim, "pip.log")
+    open(proto, "w").close()
+
+    # ── (1) TROCKENLAUF schreibt nichts — das Ziel entsteht nicht einmal.
+    rc, aus = _w124_installer(q, ziel, heim, "--dry-run", "-y")
+    assert rc == 0, aus[-2000:]
+    assert not os.path.exists(ziel), "der Trockenlauf hat das Ziel angelegt"
+    assert "Trockenlauf beendet" in aus
+    # Alle Punkte der Zusammenfassung, nummeriert.
+    for n, titel in ((1, "Python"), (5, "Dashboard"), (8, "Leistungsprofil"), (14, "Totmann-Meldung")):
+        assert _re.search(r"^\s+%d\s+%s\s" % (n, titel), aus, _re.M), "Punkt %d fehlt" % n
+    # Geheimnisse im Diff maskiert: der erzeugte Token steht NICHT im Klartext da.
+    assert "DASHBOARD_TOKEN=***" in aus, aus[-1500:]
+    assert not _re.search(r"[A-Za-z0-9]{40}", aus), "ein 40-Zeichen-Token steht im Klartext"
+
+    # ── (2) ERSTER ECHTER LAUF.
+    os.makedirs(os.path.dirname(ziel), exist_ok=True)
+    os.makedirs(ziel)
+    _w124_venv(ziel, proto)
+    rc, aus = _w124_installer(q, ziel, heim, "-y")
+    assert rc == 0, aus[-3000:]
+    envf = os.path.join(ziel, ".env")
+    env1 = open(envf).read()
+    tok = _re.search(r"^DASHBOARD_TOKEN=(\S+)$", env1, _re.M)
+    assert tok and len(tok.group(1)) == 40, env1
+    assert oct(os.stat(envf).st_mode & 0o777) == "0o600", oct(os.stat(envf).st_mode)
+    assert "Python-Pakete vollstaendig" in aus, "pip wurde trotz vollstaendigem venv gerufen"
+    # Nur die beiden Werkzeuge, die im PATH fehlen — nicht requirements.txt.
+    assert open(proto).read().splitlines() == ["pip -m pip install streamlink",
+                                               "pip -m pip install yt-dlp"], open(proto).read()
+    open(proto, "w").close()
+
+    # ── (3) ZWEITER LAUF: kein neuer Token, keine Sicherung, kein pip.
+    # Bis W123 erzeugte --unattended hier einen NEUEN Token — jeder
+    # gespeicherte ?token=-Link waere tot gewesen.
+    rc, aus = _w124_installer(q, ziel, heim, "-y")
+    assert rc == 0, aus[-2000:]
+    assert open(envf).read() == env1, "der zweite Lauf hat die .env veraendert"
+    assert ".env: keine Aenderung." in aus
+    assert not [n for n in os.listdir(ziel) if n.startswith(".env.bak")], \
+        "eine Sicherung ohne Aenderung angelegt"
+    assert "unveraendert: %s/start.sh" % ziel in aus, aus[-1500:]
+    assert open(proto).read() == ""
+
+    # ── (4) HANDGESTELLTES BLEIBT. Ein unbeaufsichtigter Lauf darf einen
+    # Wert, den niemand abgefragt hat, nicht auf "Vorgaben" zuruecksetzen.
+    with open(envf, "a") as f:
+        f.write("RESTREAM_BITRATE_K=4500\n")
+    env2 = open(envf).read()
+    rc, aus = _w124_installer(q, ziel, heim, "-y")
+    assert rc == 0 and open(envf).read() == env2, "handgestellter Wert ueberschrieben"
+
+    # ── (5) MIT ABWEICHUNG: Diff gegen den Bestand, Sicherung, dann schreiben.
+    rc, aus = _w124_installer(q, ziel, heim, "-y", DASHBOARD_PORT_GIBT_ES_NICHT="1")
+    with open(envf) as f:
+        alt = f.read()
+    with open(envf, "w") as f:
+        f.write(alt.replace("WEB_HOST=127.0.0.1", "WEB_HOST=127.0.0.2"))
+    os.chmod(envf, 0o600)
+    rc, aus = _w124_installer(q, ziel, heim, "-y")
+    assert rc == 0, aus[-1500:]
+    assert "-WEB_HOST=127.0.0.2" in aus and "+WEB_HOST=127.0.0.1" in aus, aus[-2000:]
+    assert [n for n in os.listdir(ziel) if n.startswith(".env.bak")], "keine Sicherung vor dem Schreiben"
+    ok("W124: Installer — Trockenlauf schreibt nichts, zweiter Lauf aendert nichts (Token bleibt), "
+       "handgestellte Werte bleiben, Abweichung mit Diff und Sicherung")
+
+
+def _w124_pty(argv, env, antworten, zeit=180):
+    """Eine echte Terminalsitzung: der Installer liest von /dev/tty."""
+    import pty as _pty
+    import select as _sel
+    import time as _time
+    pid, fd = _pty.fork()
+    if pid == 0:
+        os.execvpe(argv[0], argv, env)
+    puffer, ende, still = b"", _time.time() + zeit, 0.0
+    while _time.time() < ende:
+        r, _, _ = _sel.select([fd], [], [], 0.25)
+        if r:
+            try:
+                daten = os.read(fd, 4096)
+            except OSError:
+                break
+            if not daten:
+                break
+            puffer += daten
+            still = 0.0
+            continue
+        still += 0.25
+        if still >= 0.5:
+            os.write(fd, antworten(puffer.decode("utf-8", "replace")).encode())
+            still = 0.0
+    else:
+        os.kill(pid, 9)
+    _, status = os.waitpid(pid, 0)
+    return os.waitstatus_to_exitcode(status), puffer.decode("utf-8", "replace")
+
+
+def _test_v42_w124_aenderungsschleife():
+    """v4.2-W124: jeder Punkt der Zusammenfassung ist aenderbar — in BEIDE Richtungen."""
+    q = _w124_quelle()
+    heim = _ph.verzeichnis()
+    ziel = os.path.join(_ph.verzeichnis(), "nc")
+    # Erst sparsam (3), dann zurueck auf Vorgaben (2), dann Enter = Ende.
+    plan = [("8", "3"), ("8", "2")]
+    zustand = {"summ": 0, "wahl": 0}
+
+    def antworten(text):
+        n = text.count("Nummer zum Aendern")
+        if n > zustand["summ"]:
+            zustand["summ"] = n
+            return (plan[n - 1][0] if n <= len(plan) else "") + "\n"
+        if 1 <= zustand["summ"] <= len(plan) and zustand["wahl"] < zustand["summ"] \
+                and text.rstrip().endswith("]:"):
+            zustand["wahl"] = zustand["summ"]
+            return plan[zustand["summ"] - 1][1] + "\n"
+        return "\n"
+
+    rc, aus = _w124_pty(["bash", os.path.join(q, "tools", "installer.sh"), "--dry-run",
+                         "--no-color", "--skip-system", "--dir", ziel],
+                        _w124_umgebung(heim), antworten)
+    assert rc == 0, aus[-3000:]
+    teile = aus.split("Nummer zum Aendern")
+    assert len(teile) == 4, "drei Zusammenfassungen erwartet, %d gesehen" % (len(teile) - 1)
+    erste, zweite, dritte = teile[0], teile[1], teile[2]
+    assert "RESTREAM_BITRATE_K" not in erste
+    assert "sparsam" in zweite and "+RESTREAM_BITRATE_K=3500" in zweite, zweite[-1500:]
+    # Zurueck: der Plan verliert die sparsamen Werte wieder. Ohne
+    # env_zuruecksetzen blieben sie stehen — die Aenderung wirkte nur in
+    # eine Richtung.
+    assert "RESTREAM_BITRATE_K" not in dritte and "Vorgaben" in dritte, dritte[-1500:]
+    assert "Trockenlauf beendet" in teile[3]
+    assert not os.path.exists(ziel)
+    ok("W124: Zusammenfassung — Punkt 8 hin und zurueck, Diff folgt beiden Richtungen")
+
+
+def _test_v42_w124_systemerkennung():
+    """v4.2-W124: Init, MOTD-Weg, nginx-Ort, Firewall und Python je Distribution."""
+    import subprocess as _sp
+
+    def _sh(befehl, **umg):
+        e = {"PATH": "/usr/bin:/bin"}
+        e.update(umg)
+        r = _sp.run(["sh", "-c", ". tools/lib/system.sh; " + befehl],
+                    capture_output=True, text=True, env=e)
+        return r.stdout
+
+    for pkg, nginx, fw, py, cert in (
+            ("apt", "/etc/nginx/sites-available/nightcrawler", "ufw", "python3.13 python3.12",
+             "certbot python3-certbot-nginx"),
+            ("dnf", "/etc/nginx/conf.d/nightcrawler.conf", "firewall-cmd", "python3.13 python3.12 python3",
+             "certbot python3-certbot-nginx"),
+            ("pacman", "/etc/nginx/conf.d/nightcrawler.conf", "ufw", "python", "certbot certbot-nginx"),
+            ("zypper", "/etc/nginx/conf.d/nightcrawler.conf", "firewall-cmd", "python313 python312",
+             "certbot python3-certbot-nginx"),
+            ("apk", "/etc/nginx/http.d/nightcrawler.conf", "ufw", "python3", "certbot certbot-nginx")):
+        aus = _sh("NC_PKG=%s; nc_nginx_ziel; echo; nc_firewall_hinweis 8050; echo; "
+                  "nc_paketname python; echo; nc_paketname certbot-nginx" % pkg).split("\n")
+        assert aus[0] == nginx, (pkg, aus)
+        assert aus[1].startswith(fw) and "8050" in aus[1], (pkg, aus)
+        assert aus[2] == py and aus[3] == cert, (pkg, aus)
+    # CrowdSec nur dort, wo der Installer die Quelle kennt — sonst leer, und
+    # der Installer verweist auf die Doku statt zu raten.
+    assert _sh("NC_PKG=dnf; nc_paketname crowdsec") == ""
+    assert _sh("NC_PKG=apt; nc_paketname crowdsec") == "crowdsec"
+    # Init: ausdruecklich vorgegeben gewinnt; sonst am LAUFENDEN Init.
+    assert _sh("NC_INIT=openrc; nc_init_erkennen; printf %s \"$NC_INIT\"") == "openrc"
+    assert _sh("NC_OS=Plan9; nc_init_erkennen; printf %s \"$NC_INIT\"") == "keiner"
+    assert _sh("NC_OS=Darwin; nc_motd_weg; printf %s \"$NC_MOTD_WEG\"") == "shellrc"
+    assert _sh("NC_OS=Plan9; nc_motd_weg; printf %s \"$NC_MOTD_WEG\"") == "keiner"
+    # Das venv-Paket ist ein Debian-Sonderfall.
+    assert _sh("NC_PKG=apt; nc_venvpaket 3.13") == "python3.13-venv"
+    assert _sh("NC_PKG=dnf; nc_venvpaket 3.13") == ""
+    ok("W124: lib/system.sh — nginx-Ort, Firewall, Python, certbot je Distribution; Init und MOTD-Weg")
+
+
+def _test_v42_w124_installer_verdrahtung():
+    """v4.2-W124: die Vertraege ueber den Bauplan, die kein Lauf zeigen kann."""
+    import ast as _ast
+    import subprocess as _sp
+    inst = io.open("tools/installer.sh", encoding="utf-8").read()
+    r = _sp.run(["bash", "-n", "tools/installer.sh"], capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr
+    # Die Erkennung kommt aus EINER Bibliothek — zwei Kopien liefen auseinander.
+    zeilen = [z.strip() for z in inst.splitlines() if not z.strip().startswith("#")]
+    assert any(z.startswith(". ") and "lib/system.sh" in z for z in zeilen), "lib/system.sh nicht gesourct"
+    for fn in ("nc_system_erkennen", "nc_init_erkennen", "nc_motd_weg"):
+        assert fn in zeilen, "%s wird nicht aufgerufen" % fn
+    # Kein Paketname mehr fest im Installer: apt-get install steht nur noch
+    # im deadsnakes-Zweig (der IST apt-spezifisch).
+    fest = [z for z in zeilen if "apt-get install" in z and "deadsnakes" not in z
+            and "python3.12 python3.12-venv" not in z and "software-properties-common" not in z]
+    assert not fest, "fester apt-Aufruf ausserhalb des deadsnakes-Zweigs: %r" % fest
+    # Systemdateien nur bei Abweichung — alle drei Arten gehen durch dieselbe Funktion.
+    for ziel in ('"/etc/systemd/system/${DIENST}.service"', '"/etc/init.d/${DIENST}"', '"$NGX"'):
+        assert any(z.startswith(("if schreibe_systemdatei " + ziel, "elif schreibe_systemdatei " + ziel))
+                   for z in zeilen), "%s wird nicht ueber schreibe_systemdatei geschrieben" % ziel
+    # Ein Zertifikat, das certbot eingetragen hat, wird nicht wieder
+    # herausgeschrieben.
+    assert "managed by Certbot" in "".join(z for z in zeilen if z.startswith(("if ", "elif ")))
+    # Kein automatischer Neustart im unbeaufsichtigten Lauf.
+    # Gemessen an Zeilen, die mit dem AUFRUF beginnen — im Zweig steht
+    # "restart" auch in der Meldung, die den Befehl zum Selbst-Absetzen nennt
+    # (Lehre W102-W104: ein Vertrag darf seinen Text nicht als Befund lesen).
+    roh = inst.splitlines()
+    i = next(n for n, z in enumerate(roh) if z.strip() == 'if [ "$MODUS" = "unattended" ]; then'
+             and 'Dienst %s laeuft' in roh[n + 1])
+    zweig = []
+    for z in roh[i + 1:]:
+        if z.strip().startswith("elif "):
+            break
+        zweig.append(z.strip())
+    assert zweig and not any(z.startswith("dienst_start") for z in zweig), \
+        "unbeaufsichtigter Lauf startet einen laufenden Dienst neu: %r" % zweig
+    # Windows: dieselbe Token-Regel, frage_wahl, NSSM idempotent.
+    bat = open("tools/install.bat", encoding="utf-8").read().replace("\r\n", "\n")
+    bz = [z.strip() for z in bat.split("\n") if not z.strip().lower().startswith("rem")]
+    i_get = bz.index("call :env_get DASHBOARD_TOKEN")
+    i_frage = bz.index('call :frage_geheimnis "Dashboard-Token" 1 40')
+    assert i_get < i_frage and bz[i_get + 2] == "if defined ENVWERT goto :token_fertig", bz[i_get:i_frage]
+    fw = bz[bz.index(":frage_wahl"):]
+    assert fw[1] == 'set "ANTWORT=%~1"' and fw[2] == 'if /i "%MODUS%"=="auto" goto :eof' \
+        and fw[3] == 'if /i "%MODUS%"=="express" goto :eof', fw[:4]
+    assert 'sc query NIGHTCRAWLER >nul 2>&1 || nssm install NIGHTCRAWLER "%VPY%" "%ZIEL%\\bot.py" >nul' in bz
+    assert any(z.startswith("schtasks /create") and "/sc onstart" in z and z.endswith("/f >nul 2>&1")
+               for z in bz)
+    hinter = [z for z in bz if z.startswith('>>"%ZIEL%\\start-hintergrund.bat"')]
+    assert hinter and not any("pause" in z for z in hinter), "Hintergrundstart mit pause"
+    # Chocolatey wird nur angeboten — als Administrator und gefuehrt.
+    kp = bz[bz.index(":kein_paketweg"):]
+    i_ps = next(n for n, z in enumerate(kp) if z.startswith("powershell -NoProfile -ExecutionPolicy"))
+    vorher = kp[:i_ps]
+    assert 'if not "%ADMIN%"=="1" goto :eof' in vorher and \
+        'if /i not "%MODUS%"=="gefuehrt" goto :eof' in vorher and \
+        'if /i "%ANTWORT%"=="N" goto :eof' in vorher, vorher
+    # Jeder :paket-Aufruf nennt beide Namen.
+    for z in bz:
+        if z.startswith("call :paket "):
+            assert len(z.split()) == 4, z
+    del _ast
+    ok("W124: Installer-Bauplan — eine Erkennung, Systemdateien nur bei Abweichung, kein "
+       "Neustart unbeaufsichtigt; install.bat: Token bleibt, Auswahl, NSSM idempotent")
+
+
 def main():
     tmp, rid = richte_testdatenbank_ein()
     ok("db_conn aus nc.dbwrap: echtes Schema angelegt, Commit durchgelaufen")
@@ -23206,6 +23519,10 @@ def main():
     _test_v42_w123_update_idempotent()
     _test_v42_w123_paketwahl_je_distribution()
     _test_v42_w123_anforderungen()
+    _test_v42_w124_installer_idempotent()
+    _test_v42_w124_aenderungsschleife()
+    _test_v42_w124_systemerkennung()
+    _test_v42_w124_installer_verdrahtung()
     _test_v42_w60_azrael_cooldown_je_plattform()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)

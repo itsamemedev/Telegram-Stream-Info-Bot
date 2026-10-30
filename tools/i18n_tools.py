@@ -147,6 +147,30 @@ def _durchreicher_texte(text):
     return raus
 
 
+def _wahl_texte(text):
+    """Die Beschriftungen von frage_wahl — jedes zweite Argument ab dem fuenften.
+
+    v4.2-W124: frage_wahl VAR "Frage" VORGABE schl1 "Text 1" schl2 "Text 2" …
+    Die Frage faengt _FRAGEN; die Beschriftungen stehen hinter Schluesseln und
+    oft ueber Fortsetzungszeilen verteilt. Ohne diesen Sammler blieben genau
+    die Zeilen deutsch, zwischen denen ein englischer Nutzer waehlen soll.
+    """
+    raus = set()
+    logisch = re.sub(r"\\\n\s*", " ", text)
+    for zeile in logisch.split("\n"):
+        st = zeile.strip()
+        if not st.startswith("frage_wahl ") or st.startswith("frage_wahl(){"):
+            continue
+        try:
+            teile = shlex.split(st, comments=True)
+        except ValueError:
+            continue
+        for wert in teile[5::2]:
+            if wert and "$" not in wert and "`" not in wert:
+                raus.add(wert)
+    return raus
+
+
 def _zwei(treffer):
     return {a or b for a, b in treffer if (a or b)}
 
@@ -170,6 +194,7 @@ def sammeln_shell(text):
         if not wert.startswith("$"):
             raus.add(wert)
     raus |= _durchreicher_texte(text)
+    raus |= _wahl_texte(text)
     for _marke, rumpf in _TZ_HEREDOC.findall(text):
         for z in rumpf.split("\n"):
             if z.strip():
@@ -189,6 +214,13 @@ def sammeln():
         raus |= set(_BAT_SENKEN.findall(text))
         raus |= set(_BAT_WERT_GUT.findall(text))
         raus |= set(_BAT_FRAGEN.findall(text))
+        # v4.2-W124: die Optionen von :frage_wahl — alle Literale der Zeile.
+        for zeile in text.split("\n"):
+            m = re.search(r"\bcall :frage_wahl\s", zeile)
+            if m:
+                # Erst AB dem Aufruf: davor steht oft ein if "%A%"=="11", und
+                # zwischen dessen Anfuehrungszeichen laege sonst " call … 1 ".
+                raus |= set(re.findall(r'"([^"%]{3,})"', zeile[m.end():]))
     return raus
 
 
