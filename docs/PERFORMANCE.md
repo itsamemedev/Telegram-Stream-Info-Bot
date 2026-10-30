@@ -260,8 +260,9 @@ jedem ffmpeg selbst SIGTERM, die Aufnahme endet sauber und wird eingetragen.
   `/api/debug/threads` → `loop_bremser` die Stelle.
 - **`/metrics`** (Prometheus) trägt alle Leistungssignale. Abruf mit Token:
   `scrape_config: authorization: {type: Bearer, credentials: <DASHBOARD_TOKEN>}`.
-  Der Endpunkt fragt dafür nicht die Datenbank, sondern liest einen
-  Schnappschuss, den der Bot alle 10 s anlegt.
+  Die Leistungswerte liest der Endpunkt aus einem Schnappschuss, den der Bot
+  alle 10 s anlegt; die älteren Datenbank-Zähler (Aufnahmen, Trackings) zählt
+  er höchstens einmal je Minute, egal wie oft gescrapet wird.
 - **`/healthz` → `betrieb`**: laufende Restreams, Chat-Verbindungen,
   Aufnahmen, RSS, Threads.
 

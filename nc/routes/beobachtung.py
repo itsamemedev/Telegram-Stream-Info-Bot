@@ -29,6 +29,7 @@ from flask import Blueprint, jsonify, request
 from nc import azraelstate as _nc_azrael
 from nc import fehlertext as _nc_fehlertext
 from nc import kennzahlen as _nc_kz  # v4.2-W122
+from nc import schnappschuss as _nc_schnappschuss  # v4.2-W122b
 from nc import brainstate as _nc_brainstate
 from nc import channels as _nc_channels
 from nc import i18n as _nc_i18n
@@ -379,15 +380,11 @@ def api_stream_transcript():
     return jsonify(ok=True, user=user, lines=lines)
 
 
-@bp.route("/metrics")
-def api_prometheus_metrics():
-    """v37 Observability: Prometheus-kompatibler Endpoint. An Grafana/Prometheus/
-       Uptime-Kuma hängbar. Rein lesend, ohne Auth (nur Betriebs-Kennzahlen)."""
-    import shutil as _sh
-    now = datetime.now(timezone.utc)
-    since_24 = (now - timedelta(hours=24)).isoformat()
-    _start = _c().get_bot_start_time()
-    up = int((datetime.now(timezone.utc) - _start).total_seconds()) if _start else 0
+def _db_zaehler():
+    """Die Zaehler aus der Datenbank fuer /metrics — gebaut hoechstens einmal
+       je Gueltigkeit von _DB_ZAEHLER. `db_ok` ist damit bis zu 60 s alt; die
+       Lebendauskunft mit frischer Datenbankprobe ist /healthz, nicht das."""
+    since_24 = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
     db_ok = 1
     rec_24 = rec_total = ai_24 = 0
     try:
@@ -401,12 +398,34 @@ def api_prometheus_metrics():
                 ai_24 = 0
     except Exception:
         db_ok = 0
-    live = len(_nc_rsstate.SESSION_START or {})
-    restream = 1 if _nc_channels.restream_active().get("user") else 0
     try:
         tracked = len(get_all_active_trackings(include_paused=True))
     except Exception:
         tracked = 0
+    return {"db_ok": db_ok, "rec_24": rec_24, "rec_total": rec_total,
+            "ai_24": ai_24, "tracked": tracked}
+
+
+# v4.2-W122b: modul-global, damit alle Scrapes denselben Wert teilen.
+_DB_ZAEHLER = _nc_schnappschuss.Schnappschuss(gueltig_s=60.0, warte_s=5.0)
+
+
+@bp.route("/metrics")
+def api_prometheus_metrics():
+    """v37 Observability: Prometheus-kompatibler Endpoint. An Grafana/Prometheus/
+       Uptime-Kuma hängbar. Rein lesend, ohne Auth (nur Betriebs-Kennzahlen)."""
+    import shutil as _sh
+    _start = _c().get_bot_start_time()
+    up = int((datetime.now(timezone.utc) - _start).total_seconds()) if _start else 0
+    # v4.2-W122b (Review #161): die Datenbank-Zaehler aus einem geteilten
+    # Schnappschuss (nc/schnappschuss.py, W119) — hoechstens EINE Zaehlung je
+    # Minute, egal wie oft gescrapet wird. Vorher zaehlte jeder Abruf die
+    # Aufnahmen und Trackings neu.
+    _z, _ = _DB_ZAEHLER.holen(_db_zaehler)
+    db_ok, rec_24, rec_total, ai_24, tracked = (
+        _z["db_ok"], _z["rec_24"], _z["rec_total"], _z["ai_24"], _z["tracked"])
+    live = len(_nc_rsstate.SESSION_START or {})
+    restream = 1 if _nc_channels.restream_active().get("user") else 0
     # v4.2-W122: `"RECORDINGS_DIR" in globals()` war hier IMMER falsch —
     # globals() ist der Namensraum DIESES Blueprints, nicht der von bot.py
     # (dieselbe Falle wie W4/W109). Gemessen wurde damit stets "/", und

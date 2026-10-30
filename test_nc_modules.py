@@ -22452,6 +22452,23 @@ def _test_v42_w122_kennzahlen_verdrahtet():
                    for c in _ast.walk(m)), \
         "globals() in einem Blueprint ist der Namensraum des Blueprints (W4/W109)"
     assert "_c().recordings_dir" in mu
+    # W122b (Review #161): auch die alten Zaehler fragen die Datenbank nicht
+    # je Abruf, sondern hoechstens einmal je Minute ueber den Schnappschuss.
+    direkt = {c.id for c in _ast.walk(m) if isinstance(c, _ast.Name)} \
+        & {"db_conn", "get_all_active_trackings"}
+    assert not direkt, "/metrics zaehlt wieder bei jedem Abruf in der Datenbank: %r" % direkt
+    assert "_DB_ZAEHLER.holen(_db_zaehler)" in mu
+    import nc.routes.beobachtung as _B
+    assert _B._DB_ZAEHLER.gueltig_s >= 30, _B._DB_ZAEHLER.gueltig_s
+    gerufen = []
+    alt = _B._DB_ZAEHLER
+    try:
+        _B._DB_ZAEHLER = type(alt)(gueltig_s=60.0, warte_s=1.0)
+        for _ in range(5):
+            _B._DB_ZAEHLER.holen(lambda: gerufen.append(1) or {"x": 1})
+    finally:
+        _B._DB_ZAEHLER = alt
+    assert len(gerufen) == 1, gerufen
     ok("W122: Erhebung alle 10 s ohne Datenbank, Fehler ueber _loop_fehler, /metrics "
        "liest den Schnappschuss, Platz am echten Aufnahmepfad")
 

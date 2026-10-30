@@ -36,6 +36,11 @@ Prometheus und für einen Verlauf gab es keinen Weg.
   (dieselbe Falle wie W4/W109). Der Pfad kommt jetzt aus dem Kontext.
 - `/healthz` trägt `betrieb` (Restreams, Chat-Clients, Aufnahmen, RSS,
   Threads).
+- **Nachtrag W122b (Review #161):** Die älteren Zähler in `/metrics`
+  (Aufnahmen gesamt/24 h, Trackings, `db_ok`) liefen weiter bei jedem Abruf
+  gegen die Datenbank. Jetzt höchstens eine Zählung je Minute über
+  `nc/schnappschuss` (W119); `db_ok` ist damit bis zu 60 s alt — die
+  Lebendauskunft mit frischer Probe bleibt `/healthz`.
 - Neues Modul `nc/kennzahlen.py`, zwei Verträge (`_test_v42_w122_*`) samt
   Kostenmessung (Ausgabe < 5 ms, Lesen < 0,1 ms), 10 Mutationsproben gefangen —
   eine erst, nachdem der Vertrag den Wert statt des Hilfetexts las („-1 = nie
