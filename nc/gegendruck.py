@@ -159,6 +159,7 @@ def lage(aktiv: int, deckel: int, schlange: int = -1,
         abw = dict(ZAEHLER["abgewiesen"])
         verw = ZAEHLER["verworfen"]
     return {"aufnahmen": int(aktiv), "aufnahmen_deckel": int(deckel),
+            "aufnahmen_reserviert": len(_RESERVIERT),
             "fd": fd_lage(), "abgewiesen": abw,
             "pruef_schlange": int(schlange), "pruef_schlange_max": int(schlange_max),
             "pruef_verworfen": verw}
@@ -169,3 +170,44 @@ def zuruecksetzen() -> None:
     with _SPERRE:
         ZAEHLER["abgewiesen"] = {}
         ZAEHLER["verworfen"] = 0
+        _RESERVIERT.clear()
+
+
+# ═════════════════════════════════════════════════════════════════════════
+# v4.2-W121b: Reservieren, bevor gewartet wird
+# ═════════════════════════════════════════════════════════════════════════
+#
+# Gefunden im Review von #160: der Deckel las nur `len(active_processes)`.
+# Zwischen dieser Pruefung und dem Eintrag des Prozesses liegen der Lock
+# (Thread), die Aufloesung der Stream-Adresse (Sekunden, mit yt-dlp bis 20)
+# und der Prozessstart. Bei einem freien Platz kamen so bis zu WORKER_COUNT
+# Worker gleichzeitig durch — der Deckel wurde genau unter Last
+# ueberschritten, also genau dann, wenn er gebraucht wird.
+#
+# Eine Reservierung wird SYNCHRON zur Pruefung genommen (kein await
+# dazwischen, also atomar im Loop) und beim Eintrag des Prozesses oder bei
+# jedem Abbruch wieder frei. Jede hat einen Zeitstempel: eine Reservierung,
+# die ein unerwarteter Fehler nicht mehr freigibt, verfaellt nach
+# RESERVIERUNG_MAX_S, statt den Platz fuer immer zu belegen.
+RESERVIERUNG_MAX_S = 300.0
+_RESERVIERT: list = []
+
+
+def reserviert(jetzt: float) -> int:
+    """Gueltige Reservierungen; verfallene werden dabei verworfen."""
+    with _SPERRE:
+        _RESERVIERT[:] = [t for t in _RESERVIERT if jetzt - t < RESERVIERUNG_MAX_S]
+        return len(_RESERVIERT)
+
+
+def reservieren(jetzt: float) -> None:
+    with _SPERRE:
+        _RESERVIERT.append(jetzt)
+
+
+def freigeben() -> None:
+    """Die aelteste Reservierung freigeben (welche, ist gleich — es zaehlt
+       nur die Zahl). Ohne Reservierung: nichts zu tun."""
+    with _SPERRE:
+        if _RESERVIERT:
+            _RESERVIERT.pop(0)

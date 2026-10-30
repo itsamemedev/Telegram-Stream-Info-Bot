@@ -22286,6 +22286,72 @@ def _test_v42_w121_degradiert_ist_nicht_tot():
        "nur an ok; Startdauer einmal gemessen; Unit KillMode=mixed")
 
 
+def _test_v42_w121b_deckel_haelt_unter_gleichzeitigkeit():
+    """Review #160 (Codex): der Deckel las nur len(active_processes). Zwischen
+    Pruefung und Eintrag liegen Lock, Aufloesung und Prozessstart — bei einem
+    freien Platz kamen bis zu WORKER_COUNT Worker gleichzeitig durch."""
+    import ast as _ast
+    import asyncio as _aio
+    from nc import gegendruck as G
+
+    G.zuruecksetzen()
+    frei = {"offen": 10, "grenze": 1024}
+    # ── (1) VIER WORKER, EIN FREIER PLATZ — so, wie der Bot es tut: pruefen
+    # und reservieren ohne await dazwischen, dann lange "aufloesen".
+    aktiv, deckel, gestartet = [1], 2, []
+
+    async def worker(n):
+        jetzt = 100.0
+        if not G.start_entscheiden(aktiv[0] + G.reserviert(jetzt), deckel, frei)[0]:
+            return
+        G.reservieren(jetzt)
+        await _aio.sleep(0.05)              # Lock, Aufloesung, Prozessstart
+        aktiv[0] += 1
+        G.freigeben()
+        gestartet.append(n)
+
+    async def alle():
+        await _aio.gather(*[worker(i) for i in range(4)])
+    _aio.run(alle())
+    assert len(gestartet) == 1 and aktiv[0] == deckel, \
+        "Deckel %d ueberschritten: %d gestartet, %d aktiv" % (deckel, len(gestartet), aktiv[0])
+    assert G.reserviert(100.0) == 0, "eine Reservierung blieb haengen"
+    # ── (2) VERFALL: eine nie freigegebene Reservierung belegt nicht ewig.
+    G.reservieren(0.0)
+    assert G.reserviert(1.0) == 1
+    assert G.reserviert(G.RESERVIERUNG_MAX_S + 1) == 0
+    G.freigeben()                           # ohne Reservierung: nichts zu tun
+    assert G.lage(0, 2)["aufnahmen_reserviert"] == 0
+    G.zuruecksetzen()
+
+    # ── (3) IM BOT: die Pruefung zaehlt die Reservierungen mit, und JEDER
+    # Ausgang zwischen Reservierung und Eintrag gibt frei.
+    baum = _ast.parse(io.open("bot.py", encoding="utf-8").read())
+    hst = next(n for n in baum.body if isinstance(n, _ast.AsyncFunctionDef)
+               and n.name == "_handle_single_tracking")
+    gs = next(c for c in _ast.walk(hst) if isinstance(c, _ast.Call)
+              and getattr(c.func, "id", None) == "_start_gesperrt")
+    assert "_nc_gegendruck.reserviert(" in _ast.unparse(gs), _ast.unparse(gs)
+
+    def ruf(n, attr):
+        return isinstance(n, _ast.Expr) and isinstance(n.value, _ast.Call) \
+            and getattr(n.value.func, "attr", None) == attr
+    von = next(n.lineno for n in _ast.walk(hst) if ruf(n, "reservieren"))
+    bis = next(n.lineno for n in _ast.walk(hst) if ruf(n, "freigeben")
+               and "Reservierung" in io.open("bot.py", encoding="utf-8").read().splitlines()[n.lineno - 1])
+    for block in _ast.walk(hst):
+        for feld in ("body", "orelse", "handlers", "finalbody"):
+            koerper = getattr(block, feld, None)
+            if not isinstance(koerper, list):
+                continue
+            for i, st in enumerate(koerper):
+                if isinstance(st, _ast.Return) and von < st.lineno < bis:
+                    assert i > 0 and ruf(koerper[i - 1], "freigeben"), \
+                        "Ausgang in Zeile %d gibt die Reservierung nicht frei" % st.lineno
+    ok("W121b: Deckel haelt unter Gleichzeitigkeit (Reservierung atomar zur Pruefung), "
+       "jeder Ausgang gibt frei, Verfall nach %.0f s" % G.RESERVIERUNG_MAX_S)
+
+
 def main():
     tmp, rid = richte_testdatenbank_ein()
     ok("db_conn aus nc.dbwrap: echtes Schema angelegt, Commit durchgelaufen")
@@ -22591,6 +22657,7 @@ def main():
     _test_v42_w120_speicher_waechst_nicht()
     _test_v42_w121_stopp_sichert_aufnahmen()
     _test_v42_w121_degradiert_ist_nicht_tot()
+    _test_v42_w121b_deckel_haelt_unter_gleichzeitigkeit()
     _test_v42_w60_azrael_cooldown_je_plattform()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)

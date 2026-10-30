@@ -36,6 +36,13 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
   an den Bot, der seine Aufnahmen selbst abschließt.
 - Neues Modul `nc/betriebslage.py`, zwei Verträge (`_test_v42_w121_*`), 11
   Mutationsproben gefangen.
+- **Nachtrag W121b (Review #160):** Der Aufnahme-Deckel aus W118 las nur
+  `len(active_processes)`; zwischen Prüfung und Eintrag liegen Lock,
+  Auflösung und Prozessstart, also kamen bis zu `WORKER_COUNT` Worker
+  gleichzeitig durch — der Deckel hielt genau unter Last nicht. Jetzt eine
+  Reservierung, synchron zur Prüfung genommen und an jedem Ausgang
+  freigegeben (Verfall nach 300 s als Rückfall). Vertrag mit vier
+  gleichzeitigen Workern auf einen freien Platz, 6 Mutationsproben gefangen.
 
 ### Performance & Stabilität — Paket D: Kindprozesse enden auf jedem Weg, Maps wachsen nicht (v4.2 W120)
 

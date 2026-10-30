@@ -8165,9 +8165,18 @@ async def _handle_single_tracking(t, bot_app):
         # einer gewinnt, wie vorher.
         # v4.2-W118: VOR dem Lock — eine abgewiesene Aufnahme haelt nichts
         # fest, und der naechste Poll fragt von selbst wieder.
-        if _start_gesperrt("aufnahme", "@" + username, len(active_processes),
+        #
+        # v4.2-W121b: und mit RESERVIERUNG. Zwischen hier und dem Eintrag in
+        # active_processes liegen Lock, Aufloesung und Prozessstart — ohne
+        # Reservierung kamen bis zu WORKER_COUNT Worker gleichzeitig durch.
+        # Pruefen und reservieren stehen ohne await dazwischen: atomar im
+        # Loop. Freigegeben wird an jedem Ausgang bis zum Eintrag unten.
+        _jetzt_r = _time_mod.monotonic()
+        if _start_gesperrt("aufnahme", "@" + username,
+                           len(active_processes) + _nc_gegendruck.reserviert(_jetzt_r),
                            _aufnahme_deckel()):
             return
+        _nc_gegendruck.reservieren(_jetzt_r)
         if not await asyncio.to_thread(try_acquire_recording_lock,
                                        tid, username=username):    # C4 + R1
             # Anderer Worker hält den Lock (für diesen Tracking ODER
@@ -8177,6 +8186,7 @@ async def _handle_single_tracking(t, bot_app):
             # User aus zwei Chats getrackt wird — nur ein Recording).
             log.info(f"@{username}: Lock nicht bekommen — anderer Tracking-"
                      f"Eintrag für selben User nimmt bereits auf. Skip.")
+            _nc_gegendruck.freigeben()
             return
 
         ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
@@ -8225,6 +8235,7 @@ async def _handle_single_tracking(t, bot_app):
             finish_recording_attempt(attempt_id, outcome="resolve_failed",
                                      error=f"alle Kandidaten gescheitert (preferred={preferred})")
             clear_recording(tid)
+            _nc_gegendruck.freigeben()
             return
 
         log.info(f"Starte {recorder_name} für @{username}: "
@@ -8241,6 +8252,7 @@ async def _handle_single_tracking(t, bot_app):
             log.error(f"{recorder_name} Start fehlgeschlagen: {e}")
             finish_recording_attempt(attempt_id, outcome="start_failed", error=str(e))
             clear_recording(tid)
+            _nc_gegendruck.freigeben()
             return
 
         # F40-Fix R4: Post-Spawn-Setup defensiv. Wenn eine DB-Op zwischen
@@ -8249,6 +8261,7 @@ async def _handle_single_tracking(t, bot_app):
         # killen proc und geben den Lock frei.
         try:
             active_processes.append(proc)
+            _nc_gegendruck.freigeben()      # v4.2-W121b: Reservierung -> Prozess
             set_recording_file(tid, output_file, proc.pid)
             # F27 + B7-Fix: last_live wurde schon via claim_live_transition gesetzt,
             # recording=1 wurde von try_acquire_recording_lock gesetzt. Der vorherige
