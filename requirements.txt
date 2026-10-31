@@ -105,7 +105,7 @@ python-dotenv >= 1.2.2         # import dotenv — .env laden
 #   Sicherheitsgrenze (W134, pip-audit): 1 Kennung, behoben in 1.2.2.
 orjson >= 3.11.6               # schnelles JSON
 #   Sicherheitsgrenze (W134, pip-audit): 2 Kennungen, behoben in 3.11.6.
-PyMySQL >= 1.1.1               # [optional] import pymysql — nur bei DB_BACKEND=mariadb
+PyMySQL >= 1.2.3               # [optional] import pymysql — nur bei DB_BACKEND=mariadb
 #   Sicherheitsgrenze (W134, pip-audit): 1 Kennung, behoben in 1.1.1.
 redis >= 4.4.4                 # [optional] Cache
 #   Sicherheitsgrenze (W134, pip-audit): 2 Kennungen, behoben in 4.4.4.
