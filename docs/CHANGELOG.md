@@ -11,7 +11,27 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
-_Noch nichts._
+### Sicherheit und Lieferkette — Technologie-Audit, erste Welle (v4.2 W134)
+
+- **Die Untergrenzen erlaubten bekannte Schwachstellen.** `pip-audit` gegen
+  genau die Mindestfassungen aus `requirements.txt`: 126 Einträge, 69
+  eindeutige Kennungen in acht Paketen. Flask, Werkzeug, aiohttp, requests,
+  python-dotenv, orjson, PyMySQL und redis stehen jetzt auf der kleinsten
+  befundfreien Fassung; die Gegenprobe gegen alle neuen Grenzen meldet nichts.
+  Die CI fuhr schon immer die neuesten Fassungen — der Code läuft damit.
+- **Python 3.14 in der CI.** Der Server läuft darauf (Log vom 31.10.), die CI
+  kannte nur 3.12 und 3.13. Vorher lokal auf 3.14.6 gefahren: alle drei
+  Suiten grün.
+- **Dependabot lief nie.** `.github/dependabot.yml` war die Vorlage mit leerem
+  `package-ecosystem`. Jetzt pip und GitHub-Actions wöchentlich; eine neue
+  Hauptversion von TikTokLive kommt nicht automatisch.
+- **TikTokLive-Lizenz richtiggestellt:** MIT bis 6.6.5, ab 7.0 AGPL-3.0 mit
+  Zusatzbedingungen. Abschnitt 18 erlaubt Stream-Bots ausdrücklich.
+- `asyncio.iscoroutinefunction` (veraltet seit 3.14, entfällt in 3.16) durch
+  `inspect` ersetzt; SHA-1 der Dopplungssperre als Nicht-Sicherheitszweck
+  ausgewiesen.
+- Neue Berichte: `docs/TECHNOLOGY_AUDIT.md` (priorisierte Befunde,
+  Wellenplan), `docs/DEPENDENCY_AUDIT.md`, `docs/SECURITY_AUDIT.md`.
 
 ---
 

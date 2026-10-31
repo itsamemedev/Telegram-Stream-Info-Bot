@@ -4645,6 +4645,7 @@ def _test_v42_w10_cookies_reparieren_und_selbst_holen():
 def _test_v42_w11_videoteil_aus_dem_monolithen():
     """v4.2-W11: das ffmpeg-Handwerk der Upload-Zerlegung liegt in nc/."""
     import asyncio as _asyncio
+    import inspect as _inspect
     import ast as _ast
 
     import nc.ffdiag as _ffdiag
@@ -4691,9 +4692,9 @@ def _test_v42_w11_videoteil_aus_dem_monolithen():
     # zusammenzulegen ist keine Aufraeumarbeit: ein subprocess.run mit 15 s
     # Timeout auf dem Loop friert jede andere Aufnahme, den Restream und das
     # Dashboard fuer 15 Sekunden ein.
-    assert not _asyncio.iscoroutinefunction(_ffdiag.ffprobe_duration), \
+    assert not _inspect.iscoroutinefunction(_ffdiag.ffprobe_duration), \
         "nc.ffdiag.ffprobe_duration ist asynchron geworden"
-    assert _asyncio.iscoroutinefunction(_vt.dauer), \
+    assert _inspect.iscoroutinefunction(_vt.dauer), \
         "nc.videoteil.dauer ist synchron geworden — das blockiert den Loop"
 
     # ── (3) DIE BITRATEN-RECHNUNG. Der Fehler, der das alles ausgeloest hat:

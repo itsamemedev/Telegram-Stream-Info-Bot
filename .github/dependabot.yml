@@ -1,11 +1,27 @@
-# To get started with Dependabot version updates, you'll need to specify which
-# package ecosystems to update and where the package manifests are located.
-# Please see the documentation for all configuration options:
-# https://docs.github.com/code-security/dependabot/dependabot-version-updates/configuration-options-for-the-dependabot.yml-file
-
+# v4.2-W134: bis hier stand die unveraenderte Vorlage mit leerem
+# package-ecosystem — Dependabot lief damit nie, und keine Sicherheitsmeldung
+# zu einer der 18 Abhaengigkeiten kam je als Pull-Request an. Der Audit vom
+# 31.10. fand 69 bekannte Schwachstellen in den erlaubten Untergrenzen
+# (docs/SECURITY_AUDIT.md).
+#
+# Dependabot oeffnet nur Pull-Requests. Zusammengefuehrt wird nach der
+# Pruefkette aus CLAUDE.md, wie bei jeder anderen Aenderung.
 version: 2
 updates:
-  - package-ecosystem: "" # See documentation for possible values
-    directory: "/" # Location of package manifests
+  - package-ecosystem: "pip"
+    directory: "/"
     schedule:
       interval: "weekly"
+    open-pull-requests-limit: 5
+    ignore:
+      # TikTokLive haengt an einer undokumentierten TikTok-API und hat mit 7.0
+      # die Lizenz gewechselt (docs/DEPENDENCY_AUDIT.md). Ein Sprung der
+      # Hauptversion kommt nur ueber einen gepruefen Prototypen, nicht ueber
+      # einen automatischen Pull-Request.
+      - dependency-name: "TikTokLive"
+        update-types: ["version-update:semver-major"]
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5

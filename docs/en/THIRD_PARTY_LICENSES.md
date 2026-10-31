@@ -35,7 +35,7 @@ These packages are **not** shipped; they are installed through
 |---|---|---|
 | `python-telegram-bot` | Telegram bot | LGPL-3.0 |
 | `discord.py` | Discord gateway and slash commands | MIT |
-| `TikTokLive` | Live detection | MIT |
+| `TikTokLive` | Live detection | MIT up to 6.6.5; from 7.0 AGPL-3.0 with additional terms (section 18 permits stream bots without AGPL obligations, see [`DEPENDENCY_AUDIT.md`](../DEPENDENCY_AUDIT.md)) |
 | `Flask` | Dashboard | BSD-3-Clause |
 | `Werkzeug` | WSGI substrate | BSD-3-Clause |
 | `aiohttp` | async HTTP | Apache-2.0 |
