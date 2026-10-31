@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="docs/assets/banner.svg" alt="NIGHTCRAWLER — v4.3.1 Freie Sicht" width="100%">
+<img src="docs/assets/banner.svg" alt="NIGHTCRAWLER — v4.4 Wachsam" width="100%">
 
 ### Der Kontrollraum für Live-Streaming
 #### Überwachung · Aufnahme · Multi-Ziel-Restream · KI-Moderation
@@ -15,13 +15,23 @@
 [![Status: produktiv](https://img.shields.io/badge/Status-produktiv-success.svg?style=for-the-badge)](#-projektstatus)
 [![CI](https://img.shields.io/github/actions/workflow/status/itsamemedev/Telegram-Stream-Info-Bot/ci.yml?branch=main&style=for-the-badge&label=CI&logo=githubactions&logoColor=white)](../../actions/workflows/ci.yml)
 
+[![Release](https://img.shields.io/github/v/release/itsamemedev/Telegram-Stream-Info-Bot?style=for-the-badge&label=Release&logo=github&color=E8C86A&labelColor=0C0B09)](https://github.com/itsamemedev/Telegram-Stream-Info-Bot/releases/latest)
+[![Version 4.4 Wachsam](https://img.shields.io/badge/Version-4.4%20%C2%B7%20Wachsam-C9A227?style=for-the-badge&labelColor=0C0B09)](docs/CHANGELOG.md)
+[![CodeQL](https://img.shields.io/github/actions/workflow/status/itsamemedev/Telegram-Stream-Info-Bot/codeql.yml?branch=main&style=for-the-badge&label=CodeQL&logo=github&logoColor=white)](../../actions/workflows/codeql.yml)
+[![Verträge](https://img.shields.io/badge/Vertr%C3%A4ge-1018%20gr%C3%BCn-success?style=for-the-badge&logo=pytest&logoColor=white)](#-tests--prüfkette)
+[![Überdeckung](https://img.shields.io/badge/%C3%9Cberdeckung-56%20%25%20nc%2F%20%2B%20brain%2F-yellowgreen?style=for-the-badge&logo=codecov&logoColor=white)](#-tests--prüfkette)
+
 [![Telegram](https://img.shields.io/badge/Telegram-Bot-26A5E4?style=flat-square&logo=telegram&logoColor=white)](#️-bedienung)
-[![Discord](https://img.shields.io/badge/Discord-45%20Slash--Commands-5865F2?style=flat-square&logo=discord&logoColor=white)](#️-bedienung)
+[![Discord](https://img.shields.io/badge/Discord-65%20Slash--Commands-5865F2?style=flat-square&logo=discord&logoColor=white)](#️-bedienung)
 [![TikTok](https://img.shields.io/badge/TikTok-Live--Erkennung-000000?style=flat-square&logo=tiktok&logoColor=white)](#-was-nightcrawler-macht)
 [![Kick](https://img.shields.io/badge/Kick-Restream%20%2B%20Chat-53FC18?style=flat-square&logo=kick&logoColor=black)](#-restream)
 [![Twitch](https://img.shields.io/badge/Twitch-Restream%20%2B%20Chat-9146FF?style=flat-square&logo=twitch&logoColor=white)](#-restream)
 [![YouTube](https://img.shields.io/badge/YouTube-Restream%20%2B%20Chat-FF0000?style=flat-square&logo=youtube&logoColor=white)](#-restream)
 [![Changelog](https://img.shields.io/badge/Changelog-alle%20%C3%84nderungen-C9A227?style=flat-square&logo=markdown&logoColor=white)](docs/CHANGELOG.md)
+[![Prometheus](https://img.shields.io/badge/Prometheus-%2Fmetrics-E6522C?style=flat-square&logo=prometheus&logoColor=white)](#-projektstatus)
+[![Grafana](https://img.shields.io/badge/Grafana-Dashboard-F46800?style=flat-square&logo=grafana&logoColor=white)](#-projektstatus)
+[![Sprachen](https://img.shields.io/badge/Sprachen-Deutsch%20%C2%B7%20English-4B8BBE?style=flat-square&logo=googletranslate&logoColor=white)](README.en.md)
+[![Letzter Commit](https://img.shields.io/github/last-commit/itsamemedev/Telegram-Stream-Info-Bot?style=flat-square&logo=git&logoColor=white&label=Letzter%20Commit)](https://github.com/itsamemedev/Telegram-Stream-Info-Bot/commits/main)
 
 [![Website: lafap.de](https://img.shields.io/badge/Website-lafap.de-E8C86A?style=for-the-badge&logo=firefoxbrowser&logoColor=0C0B09&labelColor=0C0B09)](https://lafap.de)
 [![Discord beitreten](https://img.shields.io/badge/Discord-Community%20beitreten-5865F2?style=for-the-badge&logo=discord&logoColor=white&labelColor=0C0B09)](https://discord.gg/psvnxm7tSV)
@@ -71,6 +81,7 @@ flowchart LR
 
 - [🗺️ Projektstruktur](#️-projektstruktur)
 - [🩺 Fehlersuche](#-fehlersuche)
+- [🆕 Neu in v4.4](#-neu-in-v44)
 - [📈 Projektstatus](#-projektstatus)
 - [🧭 Roadmap](#-roadmap)
 - [🤝 Mitwirken](#-mitwirken)
@@ -941,13 +952,41 @@ nicht greifen, gekippte Verträge in `test_restream.py`.
 
 ---
 
+## 🆕 Neu in v4.4
+
+**„Wachsam"** — was schiefgeht, sagt es. Die Wellen W60 bis W132 im Überblick,
+jede Welle einzeln im [Changelog](docs/CHANGELOG.md):
+
+- **Der Event-Loop hängt nicht mehr an der Logdatei.** Bis zu 176 s eingefrorener
+  Bot kamen aus den Log-Handlern unter Plattenlast; ein eigener Thread schreibt
+  jetzt, und wo der Loop sonst noch steht, nennt der Bot mit Datei und Zeile.
+- **Restreams überleben den Quellwechsel** (Sendebrücke), und **ein Ziel startet
+  nur einmal** — kein Doppelsender mehr auf demselben Kick-/Twitch-Key.
+- **Aufnahmen verlieren weniger Minuten:** Hänger nach 25 s statt bis 105 s, die
+  Sperre ist frei, sobald ffmpeg endet; tonlose Quellen brechen nicht mehr ab.
+- **Daten sind sicherer:** „Reste aufräumen" löscht nie mehr die laufende oder
+  alle Aufnahmen, eine beschädigte Datenbank wird erklärt statt ersetzt, und die
+  Wiederherstellung geht im Deck und ohne Bot.
+- **Das Deck ist dicht:** Loopback ohne Token/PIN, waitress statt
+  Entwicklungsserver, Token weg aus der Adresszeile; Bot-Token und
+  Redis-Passwort werden im Log geschwärzt.
+- **Beobachtbar:** Lagebild in Echtzeit, Prometheus/Grafana, Tunnel-Wächter,
+  Update-ohne-Neustart-Meldung in `/healthz`.
+- **Der Installer fragt erst, dann handelt er** — sechs Paketmanager,
+  Nutzungsprofile, Windows-Dienst.
+- **Die Prüfwerkzeuge sind selbst gesichert:** stille Fehlerpfade,
+  Riesenfunktionen und Event-Loop-Blocker dürfen nicht wachsen, die Überdeckung
+  ist gemessen, jede neue Aussage per Mutationsprobe gegengeprüft.
+
+---
+
 ## 📈 Projektstatus
 
 **Produktiv im Dauerbetrieb** auf einem 8-Kern-Ubuntu-Server als systemd-Dienst.
 
 | | |
 |---|---|
-| Aktuelle Version | **4.3.1** — „Freie Sicht" (2026.09) |
+| Aktuelle Version | **4.4** — „Wachsam" (2026.10) |
 | Flask-Routen | 372 (34 in `bot.py` · 338 in `nc/routes/`) |
 | Discord-Slash-Commands | 65 |
 | Fachmodule | 164 in `nc/` (+38 in `nc/routes/`, +3 in `nc/intel/`), 10 in `brain/` |
@@ -1043,7 +1082,7 @@ Fremdcode und dessen Lizenzen: **[`docs/THIRD_PARTY_LICENSES.md`](docs/THIRD_PAR
 
 <div align="center">
 
-**NIGHTCRAWLER v4.3.1 · „Freie Sicht"**
+**NIGHTCRAWLER v4.4 · „Wachsam"**
 
 **[🌐 lafap.de](https://lafap.de)** · **[💬 Discord](https://discord.gg/psvnxm7tSV)** · **[📓 Changelog](docs/CHANGELOG.md)**
 

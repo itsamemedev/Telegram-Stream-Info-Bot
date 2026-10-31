@@ -11,6 +11,52 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+_Noch nichts._
+
+---
+
+## [4.4] — 2026-10-31 · „Wachsam"
+
+Trägt die Wellen W60 bis W132. Das gemeinsame Thema ist keine einzelne
+Funktion, sondern eine Eigenschaft: **was schiefgeht, sagt es.** Stille
+Rückgaben und stille `except`-Blöcke sind gezählt und gesperrt, das Logging
+hält den Event-Loop nicht mehr an, und Update, Tunnel, Datenbank und
+Telegram-Polling melden selbst, woran sie sind. Die Highlights stehen in
+[`nc/version.py`](../nc/version.py); hier folgt jede Welle im Einzelnen.
+
+### Behoben — Befunde aus dem Log vom 30.10. (v4.2 W132)
+
+- **Aufnahmen an eine Discord-Guild.** `/track` in Discord legt das Tracking
+  ohne `DISCORD_TRACK_GROUP_ID` unter der Guild-ID an, und der Upload fächert
+  über alle Trackings eines Nutzers auf. Jede Aufnahme (bis 1,5 GB) wurde
+  vorher vollständig zerlegt, um dann an `chat not found` zu scheitern — bei
+  Load 7,9 neben einem laufenden Restream. Eine ID über 52 Bit ist nach der
+  Bot-API keine Telegram-Chat-ID (`nc.telegramfehler.ist_telegram_chat`), und
+  die Sperre wird **vor** dem Zerlegen gefragt.
+- **Restream-Doppelstart.** Zwei Starts für dasselbe Ziel im Abstand von zwei
+  Sekunden passierten beide den Riegel `rid in self._procs`, der erst nach
+  dem Spawn greift; zwei ffmpeg sendeten auf denselben Kick- und Twitch-Key,
+  und beide Plattformen lehnten das zweite tee-Ziel mit `Input/output error`
+  ab. `nc.restream_util.ein_start_je_ziel` lässt je Ziel einen Start durch,
+  der Einzel-Slot sieht laufende Starts mit.
+- **Lagebild:** `RestreamManager.status()` iterierte `_procs` aus dem
+  Flask-Thread — `dictionary changed size during iteration`.
+- **Bot-Token im Log.** httpx schreibt jede Bot-API-Anfrage auf INFO mit dem
+  Token im Pfad, 773-mal im weitergegebenen debug.log. Die Log-Schleuse und
+  der Discord-Fehlerspiegel schwärzen ihn jetzt. **Den Token rotieren.**
+- **`_modlog` auf dem Event-Loop** (1,2–2,3 s je Aufruf aus `send_message` und
+  `react`) schreibt in einem eigenen Thread.
+- **Cookie-Leser:** yt-dlp schreibt `--cookies` beim Beenden nicht atomar
+  zurück; ein Leser in dieser Spanne bekam `{}`. Der zuletzt gelesene Stand
+  bleibt in Gebrauch.
+- **Log-Schleuse:** TikTokLive und huggingface_hub laufen hinter der Schleuse
+  statt mit eigenem stderr-Handler; „live-react OHNE Ausgabe" gedrosselt.
+- **Redis:** `redis://:pw@host` wurde nicht maskiert; bei Auth-Fehler nennt die
+  Meldung die Abhilfe.
+- 15 Mutationsproben, 14 gefangen; die entwischte deckte einen redundanten
+  `FileHandler`-Riegel auf, der entfernt ist.
+
+
 ### Aufnahmen: weniger verlorene Minuten bei Schnitt und Hänger (v4.2 W131)
 
 - **Die größte Lücke war die Sperre, nicht der Stream.** Die Sperre „eine
@@ -3819,8 +3865,6 @@ Der Cooldown zählt jetzt je Plattform; die vier Aufrufstellen (Kick, Twitch,
 YouTube ×2) geben ihre Plattform mit. Ein Vertrag hält fest, dass keine
 Aufrufstelle sie vergisst — ohne Plattform landeten alle wieder im selben
 Vorgabe-Eimer, nur unauffälliger.
-
-_Noch nichts._
 
 ---
 
