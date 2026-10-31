@@ -25419,8 +25419,14 @@ def _test_v42_w136_pusher_protokoll():
     assert K.pusher_pause(None, 9) == K.PUSHER_GEWOEHNLICH_S == 10
     e = K.PusherGeschlossen(4001, "x")
     assert isinstance(e, ConnectionError) and e.code == 4001 and str(e) == "x"
-    assert K.pusher_url("abc", " EU ").startswith("wss://ws-eu.pusher.com/app/abc?")
-    assert K.pusher_url("abc", "").startswith("wss://ws-us2.pusher.com/"), "leerer Cluster"
+    # Nach Bestandteilen statt per Textvergleich: ein startswith() auf eine
+    # URL prueft nicht, wohin sie zeigt (CodeQL "incomplete URL substring
+    # sanitization", zu Recht auch in einem Vertrag).
+    from urllib.parse import urlsplit as _us, parse_qs as _pq
+    u = _us(K.pusher_url("abc", " EU "))
+    assert (u.scheme, u.netloc, u.path) == ("wss", "ws-eu.pusher.com", "/app/abc"), u
+    assert _pq(u.query).get("protocol") == ["7"], u.query
+    assert _us(K.pusher_url("abc", "")).netloc == "ws-us2.pusher.com", "leerer Cluster"
 
     # ── (2) Verdrahtung: Adresse aus Key UND Cluster, Schliesscode wird
     # mitgegeben, die Pause kommt aus _kick_ws_pause und nicht mehr fest 10.
