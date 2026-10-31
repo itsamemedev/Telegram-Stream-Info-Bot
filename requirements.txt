@@ -116,7 +116,7 @@ redis >= 4.4.4                 # [optional] Cache
 faster-whisper >= 1.0          # [optional] import faster_whisper — Transkription
 
 # ── Ablage ───────────────────────────────────────────────────────────────
-boto3 >= 1.34                  # [optional] S3-Backup, nur bei S3_BACKUP=1
+boto3 >= 1.43.120                  # [optional] S3-Backup, nur bei S3_BACKUP=1
 
 # ── Optional, spuerbarer Gewinn ──────────────────────────────────────────
 uvloop >= 0.19; sys_platform != "win32"   # [optional] schnellere asyncio-Schleife
