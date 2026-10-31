@@ -2035,6 +2035,56 @@ html[data-theme="blaupause"]{
                      rgba(30,94,255,.34) 82%, transparent);
 }
 
+/* KONTRAST (v4.2-W137) — fuer helle Umgebung, schwache Displays und
+   eingeschraenktes Sehen. Jede Farbe erreicht auf dem Panel WCAG AAA
+   (mindestens 7:1, nachgerechnet: Text 19,8:1, Rot als schwaechste 7,1:1).
+   Keine Glows, keine Verlaeufe, keine halbtransparenten Flaechen: was
+   leuchtet oder durchscheint, kostet genau den Kontrast, um den es hier
+   geht. Bedeutung hängt nie allein an der Farbe — Rahmen werden breiter. */
+html[data-theme="kontrast"]{
+  color-scheme: dark;
+
+  --bg:            #000000;
+  --bg2:           #000000;
+  --panel:         #0A0A0A;
+  --panel-solid:   #0A0A0A;
+  --sunken:        #141414;
+  --sunken-2:      #1A1A1A;
+  --sunken-3:      #222222;
+  --grid-line:     transparent;
+
+  --neon:          #FFD400;
+  --neon-dim:      #E6B800;
+  --brass-deep:    #FFD400;
+  --cyan:          #00E5FF;
+  --magenta:       #FF7AFF;
+  --amber:         #FFB020;
+  --red:           #FF6B6B;
+  --ok:            #3DFF9A;
+
+  --text:          #FFFFFF;
+  --text-dim:      #E0E0E0;
+  --text-faint:    #BDBDBD;
+
+  --border:        #BDBDBD;
+  --border-bright: #FFD400;
+
+  --glow:          none;
+  --glow-cyan:     none;
+  --glow-mag:      none;
+  --shadow-card:   none;
+  --bezel:         linear-gradient(90deg, #FFD400, #FFD400);
+}
+html[data-theme="kontrast"] body{background:#000}
+html[data-theme="kontrast"] body::before,
+html[data-theme="kontrast"] body::after{display:none}
+html[data-theme="kontrast"] .panel{background:var(--panel);border:2px solid var(--border)}
+html[data-theme="kontrast"] .panel::before{display:none}
+html[data-theme="kontrast"] a{text-decoration:underline}
+html[data-theme="kontrast"] :focus-visible{outline:3px solid #FFD400;outline-offset:2px}
+/* Bewegung lenkt ab und kostet Lesbarkeit — in diesem Thema immer aus. */
+html[data-theme="kontrast"] *{animation:none!important;transition:none!important}
+
 /* ── Flaeche ───────────────────────────────────────────────────────── */
 body{
   background:
@@ -2389,20 +2439,31 @@ tbody tr:hover td{ background: color-mix(in srgb, var(--neon) 4%, transparent); 
 /* B130: Thema VOR dem ersten Frame setzen, sonst blitzt beim Laden das
    falsche auf ("flash of wrong theme"). Deshalb inline und ganz oben,
    nicht im grossen Script-Block weiter unten. */
-(function(){try{var t=localStorage.getItem("nc-theme");if(t!=="messing"&&t!=="blaupause"){t=matchMedia("(prefers-color-scheme: light)").matches?"blaupause":"messing";}document.documentElement.setAttribute("data-theme",t);}catch(e){}})();
+/* v4.2-W137: drei Themen im Kreis — Messing, Blaupause, Kontrast. Ohne
+   gespeicherte Wahl entscheidet das System: erhoehter Kontrast schlaegt
+   hell/dunkel, weil er eine Beduerfnis-Angabe ist und keine Geschmacksfrage. */
+var NC_THEMEN=["messing","blaupause","kontrast"];
+var NC_THEMA_NAME={"messing":"Messing","blaupause":"Blaupause","kontrast":"Kontrast"};
+var NC_THEMA_ZEICHEN={"messing":"◐","blaupause":"◑","kontrast":"◒"};
+(function(){try{var t=localStorage.getItem("nc-theme");if(NC_THEMEN.indexOf(t)<0){t=matchMedia("(prefers-contrast: more)").matches?"kontrast":(matchMedia("(prefers-color-scheme: light)").matches?"blaupause":"messing");}document.documentElement.setAttribute("data-theme",t);}catch(e){}})();
+function ncNaechstesThema(cur){
+  var i=NC_THEMEN.indexOf(cur); return NC_THEMEN[(i+1)%NC_THEMEN.length];
+}
+function ncThemaKnopf(cur){
+  var b=document.getElementById("themeToggle"); if(!b)return;
+  var n=ncNaechstesThema(cur);
+  b.textContent=NC_THEMA_ZEICHEN[n]+" "+NC_THEMA_NAME[n];
+  b.setAttribute("aria-label","Zu Thema "+NC_THEMA_NAME[n]+" wechseln");
+}
 function ncToggleTheme(){
   var el=document.documentElement;
-  var next=el.getAttribute("data-theme")==="messing"?"blaupause":"messing";
+  var next=ncNaechstesThema(el.getAttribute("data-theme"));
   el.setAttribute("data-theme",next);
   try{localStorage.setItem("nc-theme",next);}catch(e){}
-  var b=document.getElementById("themeToggle");
-  if(b){b.textContent=next==="messing"?"◑ Blaupause":"◐ Messing";
-        b.setAttribute("aria-label","Zu Thema "+(next==="messing"?"Blaupause":"Messing")+" wechseln");}
+  ncThemaKnopf(next);
 }
 document.addEventListener("DOMContentLoaded",function(){
-  var b=document.getElementById("themeToggle");
-  if(!b)return; var cur=document.documentElement.getAttribute("data-theme");
-  b.textContent=cur==="messing"?"◑ Blaupause":"◐ Messing";
+  ncThemaKnopf(document.documentElement.getAttribute("data-theme"));
 });
 </script>
 <!-- ============ BOOT SEQUENCE (signature on-load) ============ -->

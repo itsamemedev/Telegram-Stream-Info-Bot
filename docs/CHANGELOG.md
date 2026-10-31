@@ -11,6 +11,22 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Neu — drittes Deck-Thema „Kontrast" (v4.2 W137)
+
+- **Kontrast** neben Messing und Blaupause: Schwarz, reines Weiß, Gelb als
+  Akzent. Jede Text- und Signalfarbe erreicht gegen die Panelfläche
+  **WCAG AAA (≥ 7:1)** — ein Vertrag rechnet das aus den Tokens nach und
+  fällt bei der ersten Farbe darunter (Mutationsprobe: Rot `#C04040` → 3,8:1,
+  gefangen).
+- Keine Glows, keine Animationen, 2-px-Rahmen, unterstrichene Links und ein
+  3-px-Fokusring. Ohne gespeicherte Wahl wählt das Deck das Thema selbst,
+  wenn das System `prefers-contrast: more` meldet.
+- Der Knopf wechselt jetzt im Kreis durch alle drei und nennt das **nächste**
+  Thema; ein gespeichertes Altthema (`ember`, `ice` …) fällt auf die Vorgabe
+  zurück statt auf ein halb gestyltes Deck.
+- README de/en: Kurzüberblick „Auf einen Blick", Themen-Tabelle,
+  Routenzahl im Englischen korrigiert (361 → 372), CI-Fassungen ergänzt.
+
 ### Behoben — der Kick-Chat lief nie, und Pusher hatte es gesagt (v4.2 W136)
 
 - **Pusher lehnte den Kick-App-Key ab:** `4001 App key … not in this cluster`.
