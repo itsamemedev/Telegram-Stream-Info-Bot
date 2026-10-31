@@ -31,9 +31,9 @@ jobs:
     name: Lint (py_compile · pyflakes · ruff)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.13"
 
@@ -97,9 +97,9 @@ jobs:
     name: Templates (doppelte IDs · CSS-Bilanz)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.13"
 
@@ -113,9 +113,9 @@ jobs:
     name: Doku (Zahlen · interne Anker)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.13"
 
@@ -142,9 +142,9 @@ jobs:
     name: Stille except-Blöcke (kein Zuwachs)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.13"
 
@@ -246,9 +246,9 @@ jobs:
     name: Produktionsstand (requirements.lock.txt, Python 3.14)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.14"
 
@@ -288,9 +288,9 @@ jobs:
         # alle drei Suiten gruen auf 3.14.6.
         python-version: ["3.12", "3.13", "3.14"]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python-version }}
 
@@ -351,7 +351,7 @@ jobs:
     name: Alarmregeln (promtool)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: promtool installieren
         run: |
           sudo apt-get update -qq
@@ -365,9 +365,9 @@ jobs:
     name: Verträge einzeln (pytest) · Überdeckung
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.13"
 
@@ -416,9 +416,9 @@ jobs:
     name: Rauchtest (bot.py laeuft wirklich)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.13"
 
@@ -461,7 +461,7 @@ jobs:
     name: Kein Geheimnis im Diff
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # Ein einmal committetes Geheimnis steht auch nach dem Löschen noch in
       # der Historie. Dieser Job ist die letzte billige Chance, das zu merken.
