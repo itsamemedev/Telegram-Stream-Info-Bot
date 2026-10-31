@@ -44,6 +44,17 @@
 
 </div>
 
+### At a glance
+
+| | |
+|---|---|
+| **What** | Live monitoring, recording and multi-destination restreaming of TikTok streams, with AI moderation in Kick, Twitch and YouTube |
+| **For whom** | Operators who want this on **their own** hardware — one Linux server, no SaaS, no third-party platform between the stream and its destinations |
+| **Runs on** | Ubuntu/Debian with systemd, **Python 3.12–3.14** (production: 3.14), ffmpeg, streamlink, yt-dlp |
+| **Operated via** | Telegram, Discord (65 slash commands) and a web deck with three themes, including a **high-contrast theme meeting WCAG AAA** |
+| **Quality** | over a thousand contracts in three suites, CI on three Python versions **and** against the frozen production state, `pip-audit`, CodeQL, Dependabot |
+| **Licence** | GPL-3.0-or-later |
+
 ```mermaid
 flowchart LR
     A["🎥 TikTok goes live"] --> B["🔍 detected<br/>anti-flap"]
@@ -629,7 +640,7 @@ Deterministic detection **before** banned words and **before** any AI:
 
 ## 🖥️ Dashboard
 
-A Flask dashboard with **361 routes** on `127.0.0.1:8050`.
+A Flask dashboard with **372 routes** on `127.0.0.1:8050`.
 
 ```bash
 # From your laptop — never open the port:
@@ -643,6 +654,14 @@ ssh -L 3000:localhost:8050 ubuntu@<server-ip>
 | `/brain` | Brain: knowledge graph, learning curve, sentinel fleet, agent log |
 | `/overlay` | OBS overlay: AZRAEL speech bubble, donation box, title |
 | `/api/selftest` | **“What is broken right now?”** — every finding with the command that fixes it |
+
+**Themes** — the button at the top right cycles through them:
+
+| Theme | Purpose |
+|---|---|
+| **Messing** (dark) | default; warm brass instead of neon, for long evenings at the deck |
+| **Blaupause** (light) | daylight and office |
+| **Kontrast** | bright surroundings, weak displays, low vision — every colour WCAG AAA (≥ 7:1), no glows, no motion, wide borders and a clear focus ring. Picked automatically without a stored choice when the system asks for more contrast |
 
 The language switcher sits in the top bar next to the theme toggle. The choice
 is stored in a cookie and survives a browser restart; without a choice the
@@ -793,8 +812,8 @@ PYTHONPATH=. python3 nc/intel/test_intel.py
 
 Whatever can be checked without the full runtime stack runs automatically on
 every push: **[`.github/workflows/ci.yml`](.github/workflows/ci.yml)** — lint,
-templates, documentation numbers, contracts and a secret scan on Python 3.12 and
-3.13.
+templates, documentation numbers, contracts and a secret scan on Python 3.12, 3.13
+and 3.14, plus `pip-audit` against the frozen production state.
 
 > [!NOTE]
 > `ncpatch docs` compares the figures in the README and `CLAUDE.md` — routes,

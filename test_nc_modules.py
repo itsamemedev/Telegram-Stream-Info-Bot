@@ -25484,6 +25484,40 @@ def _test_v42_w136_pusher_protokoll():
        "Pruefwerkzeug ohne falschen Verdacht")
 
 
+def _test_v42_w137_kontrast_thema():
+    """v4.2-W137: das Kontrast-Thema haelt, was es zusagt — WCAG AAA (7:1)
+    fuer jede Text- und Akzentfarbe auf dem Panel, nachgerechnet aus dem CSS
+    selbst. Ein Kommentar ueber die Farben ist kein Beweis ueber die Farben."""
+    import re as _re
+    h = open("templates/dashboard.html", encoding="utf-8").read()
+    blk = _re.search(r'html\[data-theme="kontrast"\]\{(.*?)\n\}', h, _re.S)
+    assert blk, "Kontrast-Thema fehlt"
+    tok = dict(_re.findall(r"--([a-z0-9-]+):\s*(#[0-9A-Fa-f]{6})\s*;", blk.group(1)))
+
+    def _lum(x):
+        c = [int(x[i:i + 2], 16) / 255 for i in (1, 3, 5)]
+        c = [v / 12.92 if v <= 0.03928 else ((v + 0.055) / 1.055) ** 2.4 for v in c]
+        return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]
+
+    def _ratio(a, b):
+        la, lb = sorted((_lum(a), _lum(b)), reverse=True)
+        return (la + 0.05) / (lb + 0.05)
+
+    for name in ("text", "text-dim", "text-faint", "neon", "neon-dim", "cyan",
+                 "magenta", "amber", "red", "ok"):
+        assert name in tok, "Token --%s fehlt im Kontrast-Thema" % name
+        r = _ratio(tok[name], tok["panel"])
+        assert r >= 7.0, "--%s %s auf dem Panel nur %.1f:1 (AAA verlangt 7:1)" % (
+            name, tok[name], r)
+    assert "--glow:          none" in blk.group(1), "Glow kostet Kontrast"
+    # Erreichbar ueber den Knopf, und das System darf es anfordern.
+    assert 'var NC_THEMEN=["messing","blaupause","kontrast"];' in h
+    assert 'matchMedia("(prefers-contrast: more)")' in h
+    assert 'html[data-theme="kontrast"] :focus-visible' in h, "Fokus nicht sichtbar"
+    ok("W137: Kontrast-Thema — alle Farben WCAG AAA aus dem CSS nachgerechnet, "
+       "per Knopf und prefers-contrast erreichbar")
+
+
 def main():
     tmp, rid = richte_testdatenbank_ein()
     ok("db_conn aus nc.dbwrap: echtes Schema angelegt, Commit durchgelaufen")
@@ -25817,6 +25851,7 @@ def main():
     _test_v42_w133_drossel_und_loop()
     _test_v42_w135_lockfile_gegen_untergrenzen()
     _test_v42_w136_pusher_protokoll()
+    _test_v42_w137_kontrast_thema()
     _test_v42_w60_azrael_cooldown_je_plattform()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)
