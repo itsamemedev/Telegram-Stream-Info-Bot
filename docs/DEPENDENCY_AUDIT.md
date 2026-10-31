@@ -127,9 +127,11 @@ es beschreibt den Server, nicht `requirements.txt`.
    Installation auf frischem 3.14, Suiten grün.
 2. `tools/abhaengigkeiten.py` vergleicht Lockfile und Untergrenzen und meldet
    als **Hinweis** (keine Sperre), was fehlt oder zu alt ist. Heute: waitress.
-3. Dependabot liest `requirements*.txt` — damit sieht es erstmals auch die
-   mitgezogenen Pakete. Genau die neun aus dem Server-Befund waren bisher
-   unsichtbar.
+3. Dependabot liest `requirements*.txt` und meldet Sicherheitsfälle jetzt
+   auch für die mitgezogenen Pakete — genau die neun aus dem Server-Befund
+   waren bisher unsichtbar. Versions-Pull-Requests für pip sind bewusst aus:
+   sie hoben Untergrenzen über den Serverstand und hätten das Lockfile vom
+   Server gelöst.
 4. `tools/build_release.py` packt die Datei ins Archiv.
 
 **Pflege.** Nur auf dem Server erneuern, nie von Hand:

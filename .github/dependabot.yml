@@ -12,7 +12,16 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
-    open-pull-requests-limit: 5
+    # v4.2-W135: 0 schaltet die VERSIONS-Pull-Requests ab, die
+    # Sicherheits-Pull-Requests nicht. Die ersten Laeufe nach W134 hoben die
+    # Untergrenzen in requirements.txt auf die jeweils neueste Fassung
+    # (uvloop >= 0.23, orjson >= 3.13, boto3 >= 1.43.120 ...). Eine Untergrenze
+    # heisst hier aber "ab wann der Code laeuft" — vier davon laegen damit
+    # ueber dem, was auf dem Server laeuft, ohne jeden Sicherheitsgewinn. Und
+    # requirements.lock.txt ist das Abbild des Servers, kein PyPI-Stand: es
+    # wird dort eingefroren, nicht hier hochgezaehlt. Neue Schwachstellen in
+    # genau diesem Stand meldet der CI-Job "Produktionsstand" per pip-audit.
+    open-pull-requests-limit: 0
     ignore:
       # TikTokLive haengt an einer undokumentierten TikTok-API und hat mit 7.0
       # die Lizenz gewechselt (docs/DEPENDENCY_AUDIT.md). Ein Sprung der

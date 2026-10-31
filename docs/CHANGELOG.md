@@ -23,8 +23,12 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 - **`tools/abhaengigkeiten.py` vergleicht Lockfile und Untergrenzen** und
   meldet als Hinweis, was auf dem Server fehlt oder zu alt ist — heute
   waitress, das dort ganz fehlt.
-- Das Lockfile fährt im Auslieferungsarchiv mit; Dependabot sieht damit
-  erstmals auch die mitgezogenen Pakete.
+- Das Lockfile fährt im Auslieferungsarchiv mit.
+- **Dependabot für pip nur noch für Sicherheitsmeldungen.** Die ersten Läufe
+  hoben die Untergrenzen auf die jeweils neueste Fassung — vier davon über
+  den Serverstand, ohne Sicherheitsgewinn. Versions-Pull-Requests für pip
+  sind abgeschaltet (`open-pull-requests-limit: 0`), Sicherheits-Pull-Requests
+  und die für GitHub-Actions bleiben.
 
 ### Sicherheit und Lieferkette — Technologie-Audit, erste Welle (v4.2 W134)
 
