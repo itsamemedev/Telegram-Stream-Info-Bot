@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="docs/assets/banner.svg" alt="NIGHTCRAWLER — v4.4 Watchful" width="100%">
+<img src="docs/assets/banner.svg" alt="NIGHTCRAWLER — v4.4.1 Watchful" width="100%">
 
 ### The control room for live streaming
 #### Monitoring · Recording · Multi-target restream · AI moderation
@@ -16,9 +16,9 @@
 [![CI](https://img.shields.io/github/actions/workflow/status/itsamemedev/Telegram-Stream-Info-Bot/ci.yml?branch=main&style=for-the-badge&label=CI&logo=githubactions&logoColor=white)](../../actions/workflows/ci.yml)
 
 [![Release](https://img.shields.io/github/v/release/itsamemedev/Telegram-Stream-Info-Bot?style=for-the-badge&label=Release&logo=github&color=E8C86A&labelColor=0C0B09)](https://github.com/itsamemedev/Telegram-Stream-Info-Bot/releases/latest)
-[![Version 4.4 Watchful](https://img.shields.io/badge/Version-4.4%20%C2%B7%20Watchful-C9A227?style=for-the-badge&labelColor=0C0B09)](docs/CHANGELOG.md)
+[![Version 4.4.1 Watchful](https://img.shields.io/badge/Version-4.4.1%20%C2%B7%20Watchful-C9A227?style=for-the-badge&labelColor=0C0B09)](docs/CHANGELOG.md)
 [![CodeQL](https://img.shields.io/github/actions/workflow/status/itsamemedev/Telegram-Stream-Info-Bot/codeql.yml?branch=main&style=for-the-badge&label=CodeQL&logo=github&logoColor=white)](../../actions/workflows/codeql.yml)
-[![Contracts](https://img.shields.io/badge/Contracts-1018%20passing-success?style=for-the-badge&logo=pytest&logoColor=white)](#-tests--verification-chain)
+[![Contracts](https://img.shields.io/badge/Contracts-1020%20passing-success?style=for-the-badge&logo=pytest&logoColor=white)](#-tests--verification-chain)
 [![Coverage](https://img.shields.io/badge/Coverage-56%20%25%20nc%2F%20%2B%20brain%2F-yellowgreen?style=for-the-badge&logo=codecov&logoColor=white)](#-tests--verification-chain)
 
 [![Telegram](https://img.shields.io/badge/Telegram-Bot-26A5E4?style=flat-square&logo=telegram&logoColor=white)](#️-operating-it)
@@ -971,6 +971,10 @@ every wave in detail in the [changelog](docs/CHANGELOG.md) (German):
   functions and event-loop blockers may not grow, coverage is measured, and
   every new claim is cross-checked by a mutation probe.
 
+**Patch 4.4.1** — findings from the first run on 4.4: the Kick chat
+reconnected almost every second, a restart hung for nine minutes on an AI
+call, and a damaged `brain.db` was silently missing from the backup.
+
 ---
 
 ## 📈 Project status
@@ -980,7 +984,7 @@ service.
 
 | | |
 |---|---|
-| Current version | **4.4** — “Watchful” (2026.10) |
+| Current version | **4.4.1** — “Watchful” (2026.10) |
 | Flask routes | 361 (34 in `bot.py` · 327 in `nc/routes/`) |
 | Discord slash commands | 45 |
 | Domain modules | 92 in `nc/` (+18 in `nc/routes/`, +3 in `nc/intel/`), 10 in `brain/` |
@@ -1080,7 +1084,7 @@ Third-party code and its licences:
 
 <div align="center">
 
-**NIGHTCRAWLER v4.4 · “Watchful”**
+**NIGHTCRAWLER v4.4.1 · “Watchful”**
 
 **[🌐 lafap.de](https://lafap.de)** · **[💬 Discord](https://discord.gg/psvnxm7tSV)** · **[📓 Changelog](docs/CHANGELOG.md)**
 

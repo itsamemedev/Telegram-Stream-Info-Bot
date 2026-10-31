@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="docs/assets/banner.svg" alt="NIGHTCRAWLER — v4.4 Wachsam" width="100%">
+<img src="docs/assets/banner.svg" alt="NIGHTCRAWLER — v4.4.1 Wachsam" width="100%">
 
 ### Der Kontrollraum für Live-Streaming
 #### Überwachung · Aufnahme · Multi-Ziel-Restream · KI-Moderation
@@ -16,9 +16,9 @@
 [![CI](https://img.shields.io/github/actions/workflow/status/itsamemedev/Telegram-Stream-Info-Bot/ci.yml?branch=main&style=for-the-badge&label=CI&logo=githubactions&logoColor=white)](../../actions/workflows/ci.yml)
 
 [![Release](https://img.shields.io/github/v/release/itsamemedev/Telegram-Stream-Info-Bot?style=for-the-badge&label=Release&logo=github&color=E8C86A&labelColor=0C0B09)](https://github.com/itsamemedev/Telegram-Stream-Info-Bot/releases/latest)
-[![Version 4.4 Wachsam](https://img.shields.io/badge/Version-4.4%20%C2%B7%20Wachsam-C9A227?style=for-the-badge&labelColor=0C0B09)](docs/CHANGELOG.md)
+[![Version 4.4.1 Wachsam](https://img.shields.io/badge/Version-4.4.1%20%C2%B7%20Wachsam-C9A227?style=for-the-badge&labelColor=0C0B09)](docs/CHANGELOG.md)
 [![CodeQL](https://img.shields.io/github/actions/workflow/status/itsamemedev/Telegram-Stream-Info-Bot/codeql.yml?branch=main&style=for-the-badge&label=CodeQL&logo=github&logoColor=white)](../../actions/workflows/codeql.yml)
-[![Verträge](https://img.shields.io/badge/Vertr%C3%A4ge-1018%20gr%C3%BCn-success?style=for-the-badge&logo=pytest&logoColor=white)](#-tests--prüfkette)
+[![Verträge](https://img.shields.io/badge/Vertr%C3%A4ge-1020%20gr%C3%BCn-success?style=for-the-badge&logo=pytest&logoColor=white)](#-tests--prüfkette)
 [![Überdeckung](https://img.shields.io/badge/%C3%9Cberdeckung-56%20%25%20nc%2F%20%2B%20brain%2F-yellowgreen?style=for-the-badge&logo=codecov&logoColor=white)](#-tests--prüfkette)
 
 [![Telegram](https://img.shields.io/badge/Telegram-Bot-26A5E4?style=flat-square&logo=telegram&logoColor=white)](#️-bedienung)
@@ -207,7 +207,7 @@ flowchart TB
     DC --> BOT
     TT --> BOT
 
-    BOT["bot.py<br/>Monolith · 25.973 Zeilen<br/>Scraper · Recorder · Restream<br/>Flask-Dashboard · 34 eigene Routen"]:::core
+    BOT["bot.py<br/>Monolith · 26.038 Zeilen<br/>Scraper · Recorder · Restream<br/>Flask-Dashboard · 34 eigene Routen"]:::core
 
     BOT -->|configure| NC["nc/ — 164 Fachmodule<br/>Schema · OAuth · Restream<br/>Ledger · Moderation · Intel"]:::lib
     NC --> RT["nc/routes/ — 38 Blueprints<br/>327 weitere API-Routen"]:::lib
@@ -309,7 +309,7 @@ OAuth-Flows — Schritt für Schritt in
 
 ## ⚙️ Konfiguration
 
-Alle Einstellungen leben in `.env`. Die Vorlage `.env.example` kennt **rund 566 Variablen** — das Minimum ist klein:
+Alle Einstellungen leben in `.env`. Die Vorlage `.env.example` kennt **rund 567 Variablen** — das Minimum ist klein:
 
 ### 🔑 Pflicht
 
@@ -832,7 +832,7 @@ gebrochen ist.**
 
 ### 🧭 Navigation im Monolithen
 
-`bot.py` hat 25.973 Zeilen. Es wird **nie** ganz gelesen und **nie**
+`bot.py` hat 26.038 Zeilen. Es wird **nie** ganz gelesen und **nie**
 blind durchsucht — erst fragen wo etwas steht, dann den Ausschnitt holen:
 
 ```bash
@@ -847,7 +847,7 @@ python3 tools/ncpatch.py docs                          # Doku-Zahlen gegen den C
 ```
 
 `find` antwortet aus **[`.claude/INDEX.md`](.claude/INDEX.md)** — 372 Routen
-(34 in `bot.py`, 335 in `nc/routes/`), 65 Slash-Commands, 582 Funktionen,
+(34 in `bot.py`, 335 in `nc/routes/`), 65 Slash-Commands, 583 Funktionen,
 jeweils mit Zeilennummer.
 
 ---
@@ -856,7 +856,7 @@ jeweils mit Zeilennummer.
 
 | Regel | Warum |
 |---|---|
-| **`.env` liegt nie im Repo und nie im Archiv** | ~566 Variablen inkl. Cookies, OAuth-Tokens und Stream-Keys |
+| **`.env` liegt nie im Repo und nie im Archiv** | ~567 Variablen inkl. Cookies, OAuth-Tokens und Stream-Keys |
 | **Dashboard bindet auf `127.0.0.1`** | Zugriff läuft über SSH-Tunnel, nicht über einen offenen Port |
 | **Cookie- und Key-Redaction beim Logging** | `streamlink`/`ffmpeg`-Kommandozeilen werden vor dem Loggen bereinigt |
 | **Ledger ist append-only mit Hash-Kette** | Eine Korrektur ist eine Gegenbuchung, kein Überschreiben |
@@ -978,6 +978,10 @@ jede Welle einzeln im [Changelog](docs/CHANGELOG.md):
   Riesenfunktionen und Event-Loop-Blocker dürfen nicht wachsen, die Überdeckung
   ist gemessen, jede neue Aussage per Mutationsprobe gegengeprüft.
 
+**Patch 4.4.1** — Befunde aus dem ersten Lauf auf 4.4: der Kick-Chat verband
+sich knapp jede Sekunde neu, ein Neustart hing neun Minuten an einem
+KI-Aufruf, eine beschädigte `brain.db` fehlte still in der Sicherung.
+
 ---
 
 ## 📈 Projektstatus
@@ -986,12 +990,12 @@ jede Welle einzeln im [Changelog](docs/CHANGELOG.md):
 
 | | |
 |---|---|
-| Aktuelle Version | **4.4** — „Wachsam" (2026.10) |
+| Aktuelle Version | **4.4.1** — „Wachsam" (2026.10) |
 | Flask-Routen | 372 (34 in `bot.py` · 338 in `nc/routes/`) |
 | Discord-Slash-Commands | 65 |
 | Fachmodule | 164 in `nc/` (+38 in `nc/routes/`, +3 in `nc/intel/`), 10 in `brain/` |
 | Sentinel-Agenten | 13 |
-| Konfigurationsvariablen | ~566 |
+| Konfigurationsvariablen | ~567 |
 | Sprachen | Deutsch (Quelle), Englisch |
 
 Vollständige Historie: **[`docs/CHANGELOG.md`](docs/CHANGELOG.md)** ·
@@ -1002,7 +1006,7 @@ Vollständige Historie: **[`docs/CHANGELOG.md`](docs/CHANGELOG.md)** ·
 ## 🧭 Roadmap
 
 Der nächste grosse Schritt ist kein Feature, sondern Aufräumen: **`bot.py` hat
-25.973 Zeilen**. Die Datei ist der Engpass des Projekts. Die Messlatte dafür ist
+26.038 Zeilen**. Die Datei ist der Engpass des Projekts. Die Messlatte dafür ist
 aber keine Zeilenzahl:
 
 > **Eine neue API-Route anlegen, ohne `bot.py` zu öffnen.**
@@ -1082,7 +1086,7 @@ Fremdcode und dessen Lizenzen: **[`docs/THIRD_PARTY_LICENSES.md`](docs/THIRD_PAR
 
 <div align="center">
 
-**NIGHTCRAWLER v4.4 · „Wachsam"**
+**NIGHTCRAWLER v4.4.1 · „Wachsam"**
 
 **[🌐 lafap.de](https://lafap.de)** · **[💬 Discord](https://discord.gg/psvnxm7tSV)** · **[📓 Changelog](docs/CHANGELOG.md)**
 

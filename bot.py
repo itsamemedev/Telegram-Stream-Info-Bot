@@ -9384,7 +9384,9 @@ async def handle_recording_finished(proc, tid, chat_id, username, output_file,
             # der _upload_window_loop sendet sie wenn das Fenster offen ist.
             for idx, fchat in enumerate(target_chats):
                 if _defer:
-                    _upload_queue_add(fchat, output_file, username, started_at, ended_at)
+                    # v4.2-W133: Datei-Schreiben neben dem Loop (stand dort).
+                    await asyncio.to_thread(_upload_queue_add, fchat, output_file,
+                                            username, started_at, ended_at)
                     continue
                 if idx > 0: await asyncio.sleep(3)
                 await split_and_send_video(fchat, output_file, bot_app, username,
@@ -11203,7 +11205,10 @@ async def _stats_loop():
     # Neustarts). Einmalig hier — lädt den bisherigen Stand.
     try:
         _upath = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "usage.json")
-        _nc_usage.configure(path=_upath, usd_eur=_nc_envnum.env_float("USD_EUR", 0.92))
+        # v4.2-W133: Laden und Sichern im Thread — beides stand auf dem Loop
+        # (json.load beim Start, 1,7 s fuer das Schreiben unter Plattenlast).
+        await asyncio.to_thread(_nc_usage.configure, path=_upath,
+                                usd_eur=_nc_envnum.env_float("USD_EUR", 0.92))
     except Exception as _e:
         log.debug("usage.configure: %s", _e)
     await asyncio.sleep(10)                     # kurz warten bis DB/Brain bereit
@@ -11211,7 +11216,7 @@ async def _stats_loop():
     while True:
         try:
             try:
-                _nc_usage.flush()               # in-memory Zähler auf Disk sichern
+                await asyncio.to_thread(_nc_usage.flush)   # in-memory Zähler auf Disk sichern
             except Exception as _e:
                 # Nicht still: schlaegt das Sichern dauerhaft fehl (Platte voll,
                 # Rechte), zaehlt der Bot ins Nichts und niemand erfaehrt es.
@@ -11923,6 +11928,11 @@ def _loop_watchdog_thread():
         hb = _LOOP_HEARTBEAT_TS
         if hb <= 0:
             continue                       # Heartbeat läuft noch nicht
+        if _IM_ABBAU[0]:
+            # v4.2-W133: main() ist fertig, asyncio.run schliesst den Loop —
+            # ein "eingefrorener Loop" ist dann kein Befund, sondern das Ende.
+            # Der Dump vom 31.10. 00:35 war genau dieser Fehlalarm.
+            continue
         age = _time_mod.monotonic() - hb
         if age <= stall_s:
             _LOOP_STALL_DUMPED = False      # erholt → für die nächste Episode scharf
@@ -16377,6 +16387,7 @@ class KickModerator:
                         # und genau daran haengt, ob eine Trennung Alltag ist.
                         self.stats["since"] = _time_mod.time()
                         log.info("Kick-Moderator: Chat-Websocket verbunden")
+                        _pfehler = ""
                         async for msg in ws:
                             if not self.running:
                                 break
@@ -16422,8 +16433,17 @@ class KickModerator:
                                                    name="kick-thank")
                                     except Exception as e:
                                         _loop_fehler("_ws_loop", e)
+                                elif ev == "pusher:error":
+                                    _pfehler = _nc_kickapi.pusher_fehler(frame)
                             except Exception:
                                 continue
+                        # v4.2-W133: ein ordentliches Ende ist auch eine
+                        # Trennung. Ohne diese Zeile baute die Schleife sofort
+                        # neu auf — 11975-mal in 3,5 Stunden, am Flatter-
+                        # Waechter vorbei (Begruendung in nc/kickapi.py).
+                        if self.running:
+                            raise ConnectionError(
+                                _nc_kickapi.schliessgrund(ws.close_code, _pfehler))
                 except Exception as e:
                     self.stats["connected"] = False
                     if self.running:
@@ -19774,7 +19794,9 @@ async def _piper_say(text, rate=None, source_user=None):
                         "+ Stimm-Modell laden. Voice-Engine 'piper' bleibt inaktiv.", _nc_piper.bin_pfad())
             _piper_warned["done"] = True
         return None
-    mp = _piper_pick_model()                # konfiguriertes ODER auto-erkanntes .onnx
+    # v4.2-W133: in einen Thread — die Stimmensuche ist ein os.walk ueber
+    # mehrere Baeume und stand am 31.10. 4,3 s auf dem Event-Loop.
+    mp = await asyncio.to_thread(_piper_pick_model)   # konfiguriertes ODER auto-erkanntes .onnx
     if not mp:
         return None
     try:
@@ -20277,6 +20299,7 @@ def _crowdsec_status():
     # kein Root noetig. Nur wenn das fehlschlaegt/fehlt, der alte cscli-Weg.
     _lapi = _crowdsec_via_lapi()
     if _lapi is not None and _lapi.get("ok"):
+        _nc_meldetakt.zuruecksetzen("crowdsec")
         return _lapi
     import json as _json
     cscli = _cscli_path()
@@ -20325,7 +20348,13 @@ def _crowdsec_status():
             fix = f"sudo -n {cscli} decisions list -o json"
         # log.warning statt stillem Verschlucken: ein leeres Abwehr-Panel war
         # bisher im journalctl nicht wiederzufinden.
-        log.warning("Abwehr: cscli rc=%s status=%s: %s", rc, status, e[:200])
+        # v4.2-W133: gedrosselt — das Deck fragt im Minutentakt, und ein
+        # Dauerzustand schrieb 106 gleiche Zeilen in dreieinhalb Stunden.
+        # Ein neuer Status meldet sich sofort (nc/meldetakt.py).
+        laut, weg = _nc_meldetakt.melden("crowdsec", status, _time_mod.monotonic())
+        if laut:
+            log.warning("Abwehr: cscli rc=%s status=%s: %s — Abhilfe: %s%s", rc,
+                        status, e[:200], fix, _nc_meldetakt.zusatz(weg))
         return {"ok": False, "status": status,
                 "error": (e or "cscli nicht erreichbar")[:300],
                 "hint": hint, "fix": fix, "jails": [], "total_banned": 0,
@@ -20341,6 +20370,7 @@ def _crowdsec_status():
                 "jails": [], "total_banned": 0, "engine": "crowdsec"}
     # Ohne Entscheidungen gibt cscli 'null' aus, nicht '[]'. Das ist ein
     # Erfolg, kein Fehler — dann ist schlicht niemand gesperrt.
+    _nc_meldetakt.zuruecksetzen("crowdsec")   # naechster Ausfall meldet sofort
     rows = data or []
     by_origin, total = {}, 0
     for d in rows:
@@ -21082,7 +21112,19 @@ def _system_backup():
                 finally:
                     _bs.close()
         except Exception as _e:
-            log.warning("Backup: brain.db-Dump fehlgeschlagen: %s", _e)
+            # v4.2-W133: "database disk image is malformed" ist kein Problem
+            # des Backups, sondern eine beschaedigte brain.db — und die stand
+            # bisher nur als Warnung im Log. Das Gedaechtnis des Brains geht
+            # damit Stueck fuer Stueck verloren, ohne dass jemand es erfaehrt.
+            if "malformed" in str(_e).lower() or "not a database" in str(_e).lower():
+                log.error("Backup: brain.db ist beschaedigt (%s) — die Sicherung "
+                          "enthaelt sie NICHT. Der Bot laeuft weiter (brain.db ist "
+                          "isoliert). Rettung bei gestopptem Dienst: sqlite3 %s "
+                          "'.recover' | sqlite3 brain_neu.db, dann PRAGMA "
+                          "integrity_check auf brain_neu.db pruefen und sie samt "
+                          "-wal/-shm der alten an deren Stelle setzen.", _e, _bpath)
+            else:
+                log.warning("Backup: brain.db-Dump fehlgeschlagen: %s", _e)
         # 2) tar.gz bauen
         nfiles, skipped_big = 0, 0
         backup_root = os.path.abspath(LOCAL_BACKUP_DIR) if LOCAL_BACKUP_DIR else None
@@ -24811,6 +24853,28 @@ _ABSCHIED = {
 }
 
 
+_IM_ABBAU = [False]   # v4.2-W133: main() ist fertig — der Loop-Waechter schweigt
+
+
+def _abschied_wachen(fatal):
+    """v4.2-W133: nach dem Aufraeumen die Abschiedswache stellen.
+
+    Begruendung und Messung in nc/betriebslage.abschiedswache. Derselbe
+    Exitcode wie bei `_abschluss`, sonst wuerde die Wache aus einem
+    gestorbenen Telegram-Teil ein sauberes Ende machen (W100).
+    """
+    _IM_ABBAU[0] = True
+    code = 4 if fatal is not None else 0
+
+    def _melden(text):
+        log.error("%s", text)
+        _nc_logschleuse.stoppen(zeitlimit=3.0)   # die Zeile muss noch raus
+
+    _nc_lage.abschiedswache(
+        code, _nc_envnum.env_float("ABSCHIED_FRIST_S", _nc_lage.ABSCHIED_FRIST_S),
+        os._exit, melden=_melden)
+
+
 def _abschluss(fatal):
     """Die letzten Zeilen und der Exitcode. v4.2-W100.
 
@@ -25173,6 +25237,7 @@ async def main():
     for t in pending:
         t.cancel()
     await _aufraeumen()
+    _abschied_wachen(_fatal)   # v4.2-W133: ein haengender Arbeiter haelt den Prozess nicht
 
     # v4.2-W100: erst aufraeumen, DANN scheitern — siehe `_abschluss`.
     _abschluss(_fatal)

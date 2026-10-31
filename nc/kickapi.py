@@ -15,6 +15,7 @@ Fehlanzeige, gegen die die Route ueberhaupt gebaut wurde (v4.0-W10).
 """
 
 import os
+import re
 
 
 class _Conf(dict):
@@ -458,3 +459,55 @@ async def search_category(query, session=None):
     finally:
         if own:
             await session.close()
+
+
+# ═════════════════════════════════════════════════════════════════════════
+# v4.2-W133: die Trennung, die keine Ausnahme wirft
+# ═════════════════════════════════════════════════════════════════════════
+#
+# Alles oben setzt voraus, dass eine Trennung GEMELDET wird. Der Kick-Chat
+# tat das nur, wenn aiohttp eine Ausnahme warf. Schliesst Pusher die
+# Verbindung dagegen ordentlich — nach einem `pusher:error`, nach dem
+# Ablauf der Sitzung, beim Wartungsbetrieb —, endet `async for msg in ws`
+# still, und die Schleife baute sofort neu auf: ohne Pause, ohne Meldung,
+# am Flatter-Waechter vorbei. Im Log vom 31.10. stehen 11975 Zeilen
+# "Chat-Websocket verbunden" in dreieinhalb Stunden, knapp eine je Sekunde.
+#
+# Die beiden Helfer machen aus dem stillen Ende eine benannte Trennung, die
+# denselben Weg nimmt wie jede andere: Backoff und Verlaufsurteil
+# (nc/flapguard.py). Sie stehen hier und nicht dort, weil sie Pusher lesen —
+# flapguard bleibt reine Verlaufslogik ohne fremdes Protokoll.
+
+def pusher_fehler(frame) -> str:
+    """Text eines `pusher:error`-Rahmens, sonst ''.
+
+    Pusher legt Code und Meldung in `data` — mal als Objekt, mal als
+    JSON-Text. Gelesen wird beides ohne json.loads: ein kaputter Text soll
+    als Rohtext im Log landen, nicht in einem Ausnahmezweig verschwinden.
+    """
+    text = ""
+    if isinstance(frame, dict) and frame.get("event") == "pusher:error":
+        data = frame.get("data")
+        if isinstance(data, str):
+            mc = re.search(r'"code"\s*:\s*(\d+)', data)
+            mm = re.search(r'"message"\s*:\s*"((?:[^"\\]|\\.)*)"', data)
+            if mc or mm:
+                data = {"code": mc.group(1) if mc else None,
+                        "message": mm.group(1) if mm else ""}
+        if isinstance(data, dict):
+            teile = [str(t) for t in (data.get("code"), data.get("message"))
+                     if t not in (None, "")]
+            text = " ".join(teile)
+        elif data is not None:
+            text = str(data)
+        text = text[:200] or "pusher:error ohne Text"
+    return text
+
+
+def schliessgrund(close_code, pusher_text="") -> str:
+    """Klartext fuer eine Verbindung, die der Server ordentlich beendet hat."""
+    satz = "Server schloss die Verbindung (Code %s)" % (
+        close_code if close_code is not None else "unbekannt")
+    if pusher_text:
+        satz += " — Pusher meldete vorher: " + pusher_text
+    return satz
