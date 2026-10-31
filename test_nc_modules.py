@@ -25394,6 +25394,90 @@ def _test_v42_w135_lockfile_gegen_untergrenzen():
        "optional und Umgebungsmarke ausgenommen")
 
 
+def _test_v42_w136_pusher_protokoll():
+    """v4.2-W136: der Kick-Chat behandelt Pusher-Schliesscodes nach Protokoll.
+
+    Am 31.10. antwortete Pusher mit 4001 ("App key not in this cluster"), und
+    die Schleife versuchte es alle zehn Sekunden erneut — 250 Warnungen in
+    46 Minuten, der Kick-Chat lief nie.
+    """
+    import ast as _ast
+    import sys as _sys
+    from nc import kickapi as K
+
+    # ── (1) Lage und Pause nach Pusher-Protokoll.
+    for code, lage in ((4001, "konfig"), (4000, "konfig"), (4099, "konfig"),
+                       (4100, "backoff"), (4199, "backoff"), (4200, "sofort"),
+                       (4299, "sofort"), (1000, "gewoehnlich"), (1006, "gewoehnlich"),
+                       (None, "gewoehnlich"), (4300, "gewoehnlich"), ("4001", "gewoehnlich")):
+        assert K.pusher_lage(code) == lage, (code, K.pusher_lage(code), lage)
+    assert K.pusher_pause(4001, 1) == K.PUSHER_KONFIG_PAUSE_S >= 600, \
+        "eine falsche Konfiguration wird weiter im Sekundentakt probiert"
+    assert [K.pusher_pause(4100, n) for n in (1, 2, 3, 4)] == [1, 2, 4, 8]
+    assert K.pusher_pause(4100, 30) == K.PUSHER_BACKOFF_MAX_S, "Backoff ohne Deckel"
+    assert K.pusher_pause(4200, 5) == 1
+    assert K.pusher_pause(None, 9) == K.PUSHER_GEWOEHNLICH_S == 10
+    e = K.PusherGeschlossen(4001, "x")
+    assert isinstance(e, ConnectionError) and e.code == 4001 and str(e) == "x"
+    assert K.pusher_url("abc", " EU ").startswith("wss://ws-eu.pusher.com/app/abc?")
+    assert K.pusher_url("abc", "").startswith("wss://ws-us2.pusher.com/"), "leerer Cluster"
+
+    # ── (2) Verdrahtung: Adresse aus Key UND Cluster, Schliesscode wird
+    # mitgegeben, die Pause kommt aus _kick_ws_pause und nicht mehr fest 10.
+    baum = _ast.parse(open("bot.py", encoding="utf-8").read())
+    km = next(n for n in baum.body if isinstance(n, _ast.ClassDef)
+              and n.name == "KickModerator")
+    ws = next(n for n in km.body if isinstance(n, _ast.AsyncFunctionDef)
+              and n.name == "_ws_loop")
+    rufe = {_ast.unparse(c.func): c for c in _ast.walk(ws) if isinstance(c, _ast.Call)}
+    assert "_nc_kickapi.pusher_url" in rufe and \
+        "KICK_PUSHER_CLUSTER" in _ast.unparse(rufe["_nc_kickapi.pusher_url"]), \
+        "der Cluster ist wieder fest verdrahtet"
+    assert any(isinstance(r, _ast.Raise) and "PusherGeschlossen" in _ast.unparse(r)
+               for r in _ast.walk(ws)), "der Schliesscode geht verloren"
+    schlaf = [c for c in _ast.walk(ws) if isinstance(c, _ast.Call)
+              and _ast.unparse(c.func) == "asyncio.sleep"]
+    assert schlaf and all(_ast.unparse(c.args[0]) == "_pause" for c in schlaf), \
+        [_ast.unparse(c) for c in schlaf]
+    assert "_kick_ws_pause" in rufe
+    erfolg = [n for n in _ast.walk(ws) if isinstance(n, _ast.If)
+              and "pusher_internal:subscription_succeeded" in _ast.unparse(n.test)]
+    assert erfolg and any(
+        isinstance(z, _ast.Assign) and "_folge" in _ast.unparse(z.targets[0])
+        for z in erfolg[0].body), \
+        "nach einer gesunden Verbindung beginnt der Backoff nicht wieder klein"
+    kp = next(n for n in baum.body if isinstance(n, _ast.FunctionDef)
+              and n.name == "_kick_ws_pause")
+    kq = _ast.unparse(kp)
+    assert "folge[1] += 1" in kq and "_nc_kickapi.pusher_pause(code, folge[1])" in kq, \
+        "die Folge zaehlt nicht mit — der Backoff waechst nie"
+    assert "_nc_meldetakt.melden('kick-pusher'" in kq and "log.error" in kq, \
+        "ein 4000er-Code steht nicht laut und gedrosselt im Fehlerlog"
+
+    # ── (3) Das Pruefwerkzeug verdaechtigt den Key nur, wenn Pusher geantwortet hat.
+    hier = os.path.dirname(os.path.abspath(__file__))
+    if os.path.join(hier, "tools") not in _sys.path:
+        _sys.path.insert(0, os.path.join(hier, "tools"))
+    import kickpusher as KP
+    alt = KP._alle
+    try:
+        async def _netz(key):
+            return [(c, "netz", "DNS") for c in KP.CLUSTER]
+
+        async def _abgelehnt(key):
+            return [(c, "abgelehnt", "4001") for c in KP.CLUSTER]
+
+        async def _einer(key):
+            return [(c, "ok" if c == "eu" else "abgelehnt", "") for c in KP.CLUSTER]
+        for fake, rc in ((_netz, 2), (_abgelehnt, 1), (_einer, 0)):
+            KP._alle = fake
+            assert KP.main(["--key", "abcd1234"]) == rc, fake.__name__
+    finally:
+        KP._alle = alt
+    ok("W136: Pusher-Schliesscodes nach Protokoll, Cluster einstellbar, "
+       "Pruefwerkzeug ohne falschen Verdacht")
+
+
 def main():
     tmp, rid = richte_testdatenbank_ein()
     ok("db_conn aus nc.dbwrap: echtes Schema angelegt, Commit durchgelaufen")
@@ -25726,6 +25810,7 @@ def main():
     _test_v42_w133_kickchat_und_abbau()
     _test_v42_w133_drossel_und_loop()
     _test_v42_w135_lockfile_gegen_untergrenzen()
+    _test_v42_w136_pusher_protokoll()
     _test_v42_w60_azrael_cooldown_je_plattform()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)

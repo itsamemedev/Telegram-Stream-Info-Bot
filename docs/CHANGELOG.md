@@ -11,6 +11,26 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Behoben — der Kick-Chat lief nie, und Pusher hatte es gesagt (v4.2 W136)
+
+- **Pusher lehnte den Kick-App-Key ab:** `4001 App key … not in this cluster`.
+  Sichtbar wurde das erst durch W133; vorher endete die Verbindung still.
+  Der Kick-Chat hat damit nie Nachrichten geliefert — AZRAEL sah auf Kick
+  nichts.
+- **Schließcodes nach Pusher-Protokoll:** 4000–4099 heißt „nicht unverändert
+  neu verbinden" — jetzt eine Pause von 15 Minuten und **eine** gedrosselte
+  Fehlermeldung mit Abhilfe statt 250 Warnungen in 46 Minuten; 4100–4199 mit
+  wachsendem Backoff (1, 2, 4 … höchstens 300 s), 4200–4299 sofort.
+  Bestätigt Pusher das Abo, beginnt der Backoff wieder klein.
+- **`KICK_PUSHER_CLUSTER`** (Vorgabe `us2`) neben `KICK_PUSHER_KEY` — der
+  Cluster war fest im Code.
+- **`tools/kickpusher.py`** probiert auf dem Server die Pusher-Cluster mit dem
+  Key durch und sagt, welcher ihn annimmt. Antwortet Pusher gar nicht,
+  verdächtigt es den Key nicht.
+- Lockfile mit waitress; der Zusatzschritt im CI-Job „Produktionsstand"
+  entfällt. Erster `docs/PERFORMANCE_AUDIT.md` mit Vorher-Nachher aus den
+  Produktions-Logs.
+
 ### Lieferkette — das Lockfile vom Server (v4.2 W135)
 
 - **Auf dem Server liefen 79 bekannte Schwachstellen in 11 Paketen**, neun
