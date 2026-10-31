@@ -11,6 +11,21 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Lieferkette — das Lockfile vom Server (v4.2 W135)
+
+- **Auf dem Server liefen 79 bekannte Schwachstellen in 11 Paketen**, neun
+  davon mitgezogen und in keiner Requirements-Datei sichtbar. Der Betreiber
+  hat gezielt aktualisiert (`pip check` ohne Konflikt, `pip-audit` ohne
+  Befund) und eingefroren: `requirements.lock.txt` ist jetzt im Repo.
+- **CI-Job „Produktionsstand"**: installiert genau dieses Lockfile auf Python
+  3.14, prüft es mit `pip-audit` und fährt alle drei Suiten. Lokal vorher
+  gefahren: grün.
+- **`tools/abhaengigkeiten.py` vergleicht Lockfile und Untergrenzen** und
+  meldet als Hinweis, was auf dem Server fehlt oder zu alt ist — heute
+  waitress, das dort ganz fehlt.
+- Das Lockfile fährt im Auslieferungsarchiv mit; Dependabot sieht damit
+  erstmals auch die mitgezogenen Pakete.
+
 ### Sicherheit und Lieferkette — Technologie-Audit, erste Welle (v4.2 W134)
 
 - **Die Untergrenzen erlaubten bekannte Schwachstellen.** `pip-audit` gegen

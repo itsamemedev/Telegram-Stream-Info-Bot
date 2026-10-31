@@ -43,6 +43,8 @@ DATEIEN = [
     "CLAUDE.md", "CLAUDE.en.md", "AGENTS.md", "README.md", "README.en.md",
     "LICENSE",
     "llama-server.service", "requirements.txt", "requirements-smoke.txt",
+    # v4.2-W135: die Fassungen, die nachweislich auf dem Server laufen.
+    "requirements.lock.txt",
     ".gitignore", ".gitattributes",
     "test_smoke.py", "test_nc_modules.py", "test_restream.py",
     "test_m2_bridge.py",

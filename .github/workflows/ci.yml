@@ -237,6 +237,50 @@ jobs:
       - name: Die Suiten lassen nichts liegen
         run: python tools/testmuell.py --sperre
 
+  # v4.2-W135: genau der Stand, der auf dem Server laeuft. Die Matrix oben
+  # installiert die NEUESTEN Fassungen — ein gruener Lauf dort ist eine Aussage
+  # ueber PyPI, nicht ueber Produktion. requirements.lock.txt ist am 31.10. auf
+  # dem Server eingefroren (pip freeze), nach dem Sicherheitsabgleich mit
+  # pip-audit ohne Befund. Lokal vorher gefahren: alle drei Suiten gruen.
+  produktion:
+    name: Produktionsstand (requirements.lock.txt, Python 3.14)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      # waitress fehlt im Lockfile, weil es auf dem Server fehlt — dort traegt
+      # TLS am Dashboard das Deck auf dem Werkzeug-Server. Der W84-Vertrag
+      # prueft aber den Weg OHNE TLS und braucht das Paket. Die Luecke selbst
+      # meldet tools/abhaengigkeiten.py als Hinweis; sobald der Server es hat
+      # und das Lockfile neu eingefroren ist, entfaellt diese Zeile.
+      - name: Lockfile installieren
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.lock.txt
+          python -m pip install "waitress>=3.0.1"
+
+      - name: Sicherheitsabgleich des Lockfiles
+        run: |
+          python -m pip_audit -r requirements.lock.txt --no-deps --disable-pip --progress-spinner off
+
+      # Wie im Rauchtest-Job unten: die Suiten oeffnen bot.py ohne encoding=,
+      # ausserhalb einer UTF-8-Umgebung stirbt das mit UnicodeDecodeError.
+      - name: Rauchtest gegen den Produktionsstand
+        env:
+          PYTHONUTF8: "1"
+        run: python test_smoke.py
+
+      - name: Verträge gegen den Produktionsstand
+        env:
+          PYTHONUTF8: "1"
+        run: |
+          python test_restream.py
+          python test_nc_modules.py
+
   tests:
     name: Verträge & Module (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest

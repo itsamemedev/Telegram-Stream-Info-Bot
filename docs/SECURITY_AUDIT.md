@@ -22,9 +22,12 @@ Betroffen waren Flask, Werkzeug (12 Kennungen), aiohttp (46), requests,
 python-dotenv, orjson, PyMySQL und redis. Einzelheiten und die neuen Grenzen:
 [`DEPENDENCY_AUDIT.md`](DEPENDENCY_AUDIT.md).
 
-**Offen:** die Fassungen auf dem Server sind unbekannt (kein
-`requirements.lock.txt`). Ob dort eine der befallenen Fassungen läuft, sagt
-erst `pip-audit -r requirements.lock.txt` auf dem Server.
+**Server (W135, vom Betreiber gefahren):** 79 Einträge in 11 Paketen —
+aiohttp 3.14.1, Werkzeug 3.1.8 und neun mitgezogene Pakete (multidict,
+anyio, h2, urllib3, brotli, certifi, filelock, Pillow, setuptools). Nach dem
+Upgrade: `pip check` ohne Konflikt, `pip-audit` ohne Befund. Der Stand ist
+`requirements.lock.txt`; ein CI-Job fährt `pip-audit` seither bei jedem
+Lauf darauf.
 
 ## 2. Statische Analyse (Bandit)
 
@@ -60,7 +63,8 @@ Sie bleiben, wie sie sind; jeder hat Verträge.
 
 | Punkt | Risiko | Vorschlag |
 |---|---|---|
-| Serverfassungen unbekannt | mittel | Lockfile vom Server, dann `pip-audit` dort |
+| Serverfassungen unbekannt | — | **behoben in W135**: Lockfile vom Server, 79 → 0 Befunde |
+| waitress fehlt auf dem Server | niedrig | `venv/bin/python -m pip install "waitress>=3.0.1"`, dann neu einfrieren |
 | PySocks ohne Pflege seit 2019 | niedrig | in einer späteren Welle durch `python-socks` ersetzen, falls der eine Aufruf es trägt |
 | TikTokLive 7.x signiert über einen Drittanbieter | niedrig bis mittel | vor einem Wechsel den Datenfluss nachmessen |
 | Dependabot | — | **behoben in W134**: die Datei war die leere Vorlage, Dependabot lief nie; jetzt pip und GitHub-Actions wöchentlich |

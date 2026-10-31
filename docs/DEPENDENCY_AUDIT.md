@@ -11,11 +11,15 @@
    zuließ: 126 Einträge, 69 eindeutige Kennungen, in acht Paketen. Seit W134
    stehen die acht Grenzen auf der jeweils kleinsten befundfreien Fassung;
    die Gegenprobe gegen alle neuen Grenzen meldet nichts mehr.
-2. **Die Produktionsfassungen sind unbekannt.** `requirements.lock.txt`
-   existiert nicht, im Repo nicht und nach allem, was die Logs zeigen, auch
-   nicht auf dem Server. Bekannt ist aus den Server-Logs nur: Python **3.14**
-   in `/home/ubuntu/tiktok-bot/venv`. Welche TikTokLive-Fassung dort läuft,
-   lässt sich aus den Logs nicht ablesen.
+2. **Die Produktionsfassungen waren unbekannt — seit W135 nicht mehr.**
+   Der Betreiber hat am 31.10. auf dem Server eingefroren. `pip-audit` dort:
+   **79 bekannte Schwachstellen in 11 Paketen** — zwei direkte (aiohttp
+   3.14.1, Werkzeug 3.1.8) und neun mitgezogene, die in keiner
+   Requirements-Datei stehen (multidict, anyio, h2, urllib3, brotli, certifi,
+   filelock, Pillow, setuptools). Nach dem gezielten Upgrade: `pip check`
+   ohne Konflikt, `pip-audit` ohne Befund. Dieser Stand ist jetzt
+   `requirements.lock.txt`. Auf dem Server läuft **TikTokLive 6.6.5** (MIT)
+   und **Python 3.14**; **waitress fehlt** dort, obwohl es Pflicht ist.
 3. **TikTokLive hat mit 7.0 die Lizenz gewechselt** — von MIT (bis 6.6.5) zu
    „Modified AGPL-3.0". `docs/THIRD_PARTY_LICENSES.md` führte bis W134 „MIT".
    Bewertung unten; kurz: für NIGHTCRAWLER kein Hindernis, aber eine
@@ -107,30 +111,36 @@ gegen einen zweiten Laufzeitprozess oder einen Drittanbieter mit Konto. Die
 offizielle TikTok-API ist laut Auftrag ausgeschlossen. **Ergebnis: BEHALTEN,
 die laufende Fassung festnageln.**
 
-## Die Lockfile-Frage
+## Das Lockfile
 
-**Befund.** `requirements.txt` und `tools/abhaengigkeiten.py` verweisen auf
-`requirements.lock.txt` als Quelle der getesteten Fassungen. Die Datei gibt
-es nicht. Erfunden wird sie hier nicht: eine Lock-Datei aus ungeprüften
-neuesten Fassungen wäre eine Behauptung über eine Umgebung, die niemand
-gefahren hat.
+**Herkunft.** `requirements.lock.txt` ist `pip freeze --exclude-editable`
+aus dem Server-venv vom 31.10., **nach** dem Sicherheits-Upgrade. Es ist von
+Hand nicht verändert. Es enthält auch die Werkzeuge, die zum Prüfen
+installiert wurden (pip-audit samt Abhängigkeiten) und solche, die der
+Betreiber selbst nachinstalliert hat (ollama, piper-tts, py-spy, psutil) —
+es beschreibt den Server, nicht `requirements.txt`.
 
-**Vorschlag, in dieser Reihenfolge:**
+**Was jetzt daran hängt:**
 
-1. Auf dem Server, im laufenden venv:
+1. CI-Job **„Produktionsstand"**: installiert genau dieses Lockfile auf
+   Python 3.14, fährt `pip-audit` darauf und alle drei Suiten. Lokal vorher:
+   Installation auf frischem 3.14, Suiten grün.
+2. `tools/abhaengigkeiten.py` vergleicht Lockfile und Untergrenzen und meldet
+   als **Hinweis** (keine Sperre), was fehlt oder zu alt ist. Heute: waitress.
+3. Dependabot liest `requirements*.txt` — damit sieht es erstmals auch die
+   mitgezogenen Pakete. Genau die neun aus dem Server-Befund waren bisher
+   unsichtbar.
+4. `tools/build_release.py` packt die Datei ins Archiv.
 
-       cd ~/tiktok-bot
-       venv/bin/python -m pip freeze --exclude-editable > requirements.lock.txt
-       venv/bin/python -m pip install pip-audit
-       venv/bin/python -m pip_audit -r requirements.lock.txt
+**Pflege.** Nur auf dem Server erneuern, nie von Hand:
 
-2. Die Datei ins Repo. Ab dann ist sie die Wahrheit über Produktion, und die
-   Untergrenzen in `requirements.txt` bleiben, was sie sind: das Minimum.
-3. Ein CI-Job installiert genau diese Datei auf Python 3.14 und fährt den
-   Rauchtest. Erst damit ist „getestet" eine Aussage über den Server und
-   nicht über die neuesten PyPI-Fassungen.
-4. Aktualisiert wird das Lockfile nur mit einem Lauf auf dem Server, nie von
-   Hand.
+    cd ~/tiktok-bot
+    venv/bin/python -m pip freeze --exclude-editable > requirements.lock.txt
+    venv/bin/python -m pip_audit -r requirements.lock.txt
+
+Danach die Datei ins Repo. Die Update-Funktion schreibt sie beim nächsten
+Update aus dem Repo zurück auf den Server — wer dort neu einfriert und nicht
+eincheckt, verliert den neuen Stand beim nächsten Update.
 
 ## Methode und Rohdaten
 
