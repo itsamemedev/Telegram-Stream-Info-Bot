@@ -119,7 +119,7 @@ faster-whisper >= 1.0          # [optional] import faster_whisper — Transkript
 boto3 >= 1.34                  # [optional] S3-Backup, nur bei S3_BACKUP=1
 
 # ── Optional, spuerbarer Gewinn ──────────────────────────────────────────
-uvloop >= 0.19; sys_platform != "win32"   # [optional] schnellere asyncio-Schleife
+uvloop >= 0.23.0; sys_platform != "win32"   # [optional] schnellere asyncio-Schleife
 #   Der Marker ist kein Schmuck: uvloop hat KEINE Windows-Fassung, und
 #   ohne ihn bricht  pip install -r requirements.txt  dort komplett ab —
 #   mitten in der Installation, mit einem Compiler-Fehler als Begruendung.
