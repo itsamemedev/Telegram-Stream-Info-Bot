@@ -4,9 +4,9 @@ Eine einzige Wahrheit für die Versionsanzeige (Dashboard-Footer, /api/version,
 „Was ist neu"-Panel). Reine Daten + kleine Helfer, voll testbar.
 """
 
-VERSION = "4.3.1"
-CODENAME = "Freie Sicht"
-RELEASE = "2026.09"
+VERSION = "4.4"
+CODENAME = "Wachsam"
+RELEASE = "2026.10"
 
 
 def build_stamp():
@@ -23,6 +23,33 @@ def build_stamp():
 # Meilenstein-Changelog, neueste Version zuerst. highlights = kurze, ehrliche
 # Stichpunkte dessen, was die Version bringt.
 CHANGELOG = [
+    {
+        "version": "4.4",
+        "date": "2026-10",
+        "title": "Wachsam",
+        # v4.4 traegt die Wellen W81 bis W132. Das gemeinsame Thema ist nicht
+        # eine Funktion, sondern eine Eigenschaft: was schiefgeht, sagt es.
+        # Stille Rueckgaben, stille except-Bloecke, ein Log, das den Loop
+        # anhielt, Sperren, die selbst blind waren — und am Ende ein Bot, der
+        # beim Neustart, beim Update und beim Tunnel meldet, woran er ist.
+        "highlights": [
+            "Der Event-Loop steht nicht mehr an der Logdatei: bis zu 176 Sekunden eingefrorener Bot kamen nicht aus dem Netz, sondern aus den Log-Handlern unter Plattenlast. Seit W97 schreibt ein eigener Thread, die Schlange ist begrenzt, und jeder Verlust wird gemeldet. Die Stellen, an denen der Loop sonst noch steht, nennt der Bot jetzt selbst mit Datei und Zeile",
+            "Der Restream reißt beim Quellwechsel nicht mehr ab: die Sendebrücke hält die Verbindung zu Kick, Twitch und YouTube über jeden Wechsel der TikTok-Adresse und füllt die Lücke mit einem Pausenbild, statt die Plattform-Sitzung neu aufzubauen",
+            "Aufnahmen verlieren beim Schnitt und beim Hänger weniger Minuten: die Sperre wird frei, sobald ffmpeg endet, nicht erst nach dem Telegram-Upload, und ein Hänger fällt nach 25 statt bis zu 105 Sekunden auf",
+            "„Reste aufräumen“ konnte alle Aufnahmen löschen — ein gesperrtes SQLite genügte, und jede Datei galt als verwaist. Jetzt bricht die Funktion ab, wenn sie den Bestand nicht kennt, und die laufende Aufnahme zählt nie als Rest",
+            "Ein Stream ohne Tonspur stirbt nicht mehr in einer Reconnect-Schleife: jeder ffmpeg-Bauer mappt ausdrücklich, der Restream sendet bei tonloser Quelle mit Stille, und Preflight wie Selbsttest prüfen die Ton-Garantie",
+            "yt-dlp hatte die Stream-Adresse und wir lasen sie als Ja/Nein: 71 % der Auflösungen meldeten „live“ ohne Adresse. Die Adresse wird jetzt gelesen, in allen drei Formen, in denen TikTok sie liefert, und ein Wörterbuch gilt nicht mehr als URL",
+            "Eine beschädigte Datenbank wird erklärt statt mit einem Einzeiler quittiert: Pfad, Größe, Kopf als Hex, Deutung und Abhilfe — und der Start legt keine leere Datenbank an. Wiederherstellung geht im Deck und ohne Bot, das WAL wird dabei mitgetauscht",
+            "Das Deck bindet nicht mehr offen, wenn weder Token noch PIN gesetzt sind, läuft auf waitress statt auf dem Entwicklungsserver, und der Token verschwindet nach dem Login aus der Adresszeile",
+            "Ein Update über das Deck meldet, dass es erst nach dem Neustart wirkt — in /healthz und gedrosselt im Fehlerlog, bis der Prozess wirklich neu gestartet ist",
+            "Das Lagebild der Übersicht zeigt in Echtzeit, was die dreizehn Wächter gerade tun; Prometheus und Grafana sind angebunden, und der Polen-Tunnel wird alle zehn Minuten geprüft statt nur auf Knopfdruck",
+            "Telegram und Discord teilen ein Befehlsverzeichnis, das lokale llama.cpp wird bevorzugt, und der Installer fragt erst, bevor er handelt — mit sechs Paketmanagern, Nutzungsprofilen und Windows-Dienst",
+            "Die Prüfwerkzeuge sind selbst gegen Blindheit gesichert: stille except-Blöcke, stille Rückgaben, Riesenfunktionen, Event-Loop-Blocker, Importzeit-Lesungen der .env und Testmüll werden gezählt und dürfen nicht wachsen; die Überdeckung ist gemessen und jede neue Aussage per Mutationsprobe gegengeprüft",
+            "Der Telegram-Bot-Token steht nicht mehr im Log: httpx schrieb ihn auf INFO mit jeder Anfrage in debug.log. Er wird jetzt in jeder Zeile und im Discord-Fehlerspiegel geschwärzt, ebenso ein Redis-Passwort in der Form redis://:pw@",
+            "Aufnahmen gingen an eine Discord-Guild statt an Telegram, und jede wurde vorher bis 1,5 GB zerlegt, um dann an „chat not found“ zu scheitern. Nicht-Telegram-IDs werden jetzt erkannt, und ein gesperrter Chat kostet kein Zerlegen mehr",
+            "Ein Restream startete zweimal gleichzeitig auf denselben Key und warf sich selbst von Kick und Twitch: jetzt läuft je Ziel nur ein Start, und der Einzel-Slot sieht auch Starts, die gerade laufen",
+        ],
+    },
     {
         "version": "4.3.1",
         "date": "2026-09",

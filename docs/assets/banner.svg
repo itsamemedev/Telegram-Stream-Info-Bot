@@ -70,7 +70,7 @@
   <text x="300" y="130" font-family="'DejaVu Sans Mono',ui-monospace,SFMono-Regular,Menlo,Consolas,monospace"
         font-size="66" font-weight="bold" letter-spacing="7" fill="url(#amber)">NIGHTCRAWLER</text>
   <text x="304" y="168" font-family="'DejaVu Sans Mono',ui-monospace,SFMono-Regular,Menlo,Consolas,monospace"
-        font-size="20" letter-spacing="4.2" fill="#7fe7d4" fill-opacity="0.92">v4.0  ·  RESTREAM CONTROL ROOM</text>
+        font-size="20" letter-spacing="4.2" fill="#7fe7d4" fill-opacity="0.92">v4.4  ·  RESTREAM CONTROL ROOM</text>
 
   <line x1="304" y1="192" x2="1120" y2="192" stroke="url(#fade)" stroke-width="1.5"/>
 
