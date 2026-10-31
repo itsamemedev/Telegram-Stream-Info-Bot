@@ -64,7 +64,12 @@ def main(argv=None):
     p.add_argument("--key", help="anderer Pusher-Key als in der .env")
     a = p.parse_args(argv)
     key = (a.key or _key_aus_env()).strip()
-    print("Pusher-Key %s…%s — probiere %d Cluster" % (key[:4], key[-4:], len(CLUSTER)))
+    # Der Key selbst steht in keiner Ausgabe, auch nicht gekuerzt. Der von Kick
+    # ist zwar oeffentlich (er steht im Web-Client), aber das Werkzeug kann
+    # nicht wissen, was jemand per --key hineinreicht — und CodeQL wertet
+    # jede Ausgabe aus einer *_KEY-Variable zu Recht als Geheimnis im Klartext.
+    herkunft = "--key" if a.key else "KICK_PUSHER_KEY aus der .env"
+    print("Pusher-Key: %s — probiere %d Cluster" % (herkunft, len(CLUSTER)))
     treffer, abgelehnt = [], 0
     for cluster, lage, text in asyncio.run(_alle(key)):
         print("  %-4s %-9s %s" % (cluster, lage, text))
