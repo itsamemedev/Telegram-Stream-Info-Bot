@@ -103,7 +103,7 @@ websockets_proxy >= 0.1.3      # WebSocket ueber Proxy (Kick-Chat)
 # ── Konfiguration / Daten ────────────────────────────────────────────────
 python-dotenv >= 1.2.2         # import dotenv — .env laden
 #   Sicherheitsgrenze (W134, pip-audit): 1 Kennung, behoben in 1.2.2.
-orjson >= 3.11.6               # schnelles JSON
+orjson >= 3.13.0               # schnelles JSON
 #   Sicherheitsgrenze (W134, pip-audit): 2 Kennungen, behoben in 3.11.6.
 PyMySQL >= 1.1.1               # [optional] import pymysql — nur bei DB_BACKEND=mariadb
 #   Sicherheitsgrenze (W134, pip-audit): 1 Kennung, behoben in 1.1.1.
