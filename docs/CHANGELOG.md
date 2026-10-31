@@ -15,6 +15,47 @@ _Noch nichts._
 
 ---
 
+## [4.4.1] — 2026-10-31 · „Wachsam"
+
+Erste Patch-Fassung von 4.4: die Befunde aus dem Log vom 31.10., dem ersten
+Lauf auf 4.4. Eigener Tag statt Überschreiben — der Release-Workflow
+verschiebt beim zweiten Lauf den Tag nicht.
+
+### Behoben — Befunde aus dem Log vom 31.10. (v4.2 W133)
+
+- **Der Kick-Chat verband sich knapp jede Sekunde neu.** 11975 Zeilen
+  „Chat-Websocket verbunden" in dreieinhalb Stunden. Schließt Pusher die
+  Verbindung ordentlich, endet `async for msg in ws` ohne Ausnahme — der
+  Ausnahmezweig mit Backoff und Flatter-Wächter lief nie, die Schleife baute
+  sofort neu auf. Jetzt ist das ordentliche Ende eine benannte Trennung
+  (`nc.kickapi.schliessgrund`) mit Close-Code und der letzten
+  `pusher:error`-Meldung (`nc.kickapi.pusher_fehler`), und es gelten
+  10 s Backoff und das Verlaufsurteil wie für jede andere Trennung.
+- **Ein Neustart hing neun Minuten.** Der Stall-Dump von 00:35 zeigt den
+  Hauptthread in `asyncio/runners.py:close`: `main()` war fertig, das Beenden
+  wartete auf einen Arbeiter des Default-Executors in `urlopen`
+  (`nc.freeai.chat_sync` aus `nc.evolution.cycle`). Die Arbeiter eines
+  ThreadPoolExecutor sind keine Daemon-Threads. Nach dem Aufräumen stellt
+  `main()` jetzt eine Abschiedswache (`nc.betriebslage.abschiedswache`), die
+  nach `ABSCHIED_FRIST_S` (20 s) mit dem vorgesehenen Exitcode beendet — 4
+  bleibt 4 (W100) — und die hängenden Threads nennt. Der Loop-Wächter meldet
+  in dieser Phase keinen „eingefrorenen Loop" mehr; der Dump von 00:35 war
+  genau dieser Fehlalarm.
+- **Beschädigte `brain.db`.** Das Backup meldete `database disk image is
+  malformed` als Warnung, und die Sicherung enthielt die Datei stillschweigend
+  nicht. Jetzt ein Fehler mit dem Rettungsweg (`sqlite3 brain.db '.recover'`,
+  `integrity_check`, Tausch samt `-wal`/`-shm`).
+- **CrowdSec** gedrosselt über `nc/meldetakt.py` (106 gleiche Zeilen in 3,5 h),
+  mit Abhilfe in der Zeile; Erfolg über LAPI oder cscli setzt zurück.
+- **Scanner:** `code 505, message Invalid HTTP version (2.0)` steht nicht mehr
+  im Fehlerlog.
+- **Neben dem Loop statt darauf:** Piper-Stimmensuche (`os.walk`, 4,3 s
+  gemessen), Laden und Sichern des Token-Zählers, Upload-Warteschlange.
+- 19 Mutationsproben, 17 beim ersten Durchgang gefangen. Die zwei entwischten
+  waren Befunde am Vertrag und am Riegel: der Daemon-Filter war ungeprüft, und
+  ein eigener Ausschluss der Wache war wirkungslos, weil sie selbst ein Daemon
+  ist — er ist entfernt.
+
 ## [4.4] — 2026-10-31 · „Wachsam"
 
 Trägt die Wellen W60 bis W132. Das gemeinsame Thema ist keine einzelne

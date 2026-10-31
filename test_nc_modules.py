@@ -25221,6 +25221,135 @@ def _test_v42_w132_log_und_geheimnisse():
        "Schleuse, Cookie-Stand ueberlebt den yt-dlp-Rueckschrieb, Redis maskiert")
 
 
+def _test_v42_w133_kickchat_und_abbau():
+    """v4.2-W133: Befunde aus dem Log vom 31.10.
+
+    Der Kick-Chat baute knapp jede Sekunde neu auf (11975-mal in 3,5 h), weil
+    ein ordentlich geschlossener Websocket keine Ausnahme warf. Und der Abbau
+    hing neun Minuten an einem Arbeiter-Thread in urlopen, waehrend der
+    Loop-Waechter einen eingefrorenen Loop meldete.
+    """
+    import ast as _ast
+    import threading as _th
+    from nc import kickapi as FG
+    from nc import betriebslage as BL
+
+    # ── (1) Das stille Ende hat einen Namen.
+    assert FG.pusher_fehler({"event": "pusher:error",
+                             "data": {"code": 4200, "message": "reconnect"}}) == "4200 reconnect"
+    assert FG.pusher_fehler({"event": "pusher:error",
+                             "data": '{"code":4001,"message":"App key x"}'}) == "4001 App key x"
+    assert FG.pusher_fehler({"event": "pusher:error", "data": "roh"}) == "roh"
+    assert FG.pusher_fehler({"event": "pusher:error"}) == "pusher:error ohne Text"
+    for kein in ({"event": "App\\Events\\ChatMessageEvent"}, None, "x", {}):
+        assert FG.pusher_fehler(kein) == "", kein
+    assert "1000" in FG.schliessgrund(1000) and "unbekannt" in FG.schliessgrund(None)
+    assert "4200 x" in FG.schliessgrund(1000, "4200 x")
+
+    baum = _ast.parse(open("bot.py", encoding="utf-8").read())
+    km = next(n for n in baum.body if isinstance(n, _ast.ClassDef)
+              and n.name == "KickModerator")
+    ws = next(n for n in km.body if isinstance(n, _ast.AsyncFunctionDef)
+              and n.name == "_ws_loop")
+    mit = next(n for n in _ast.walk(ws) if isinstance(n, _ast.AsyncWith))
+    folge = [type(n).__name__ for n in mit.body]
+    i_for = folge.index("AsyncFor")
+    nach = mit.body[i_for + 1:]
+    assert any(isinstance(n, _ast.If) and "self.running" in _ast.unparse(n.test)
+               and any(isinstance(r, _ast.Raise) and "schliessgrund" in _ast.unparse(r)
+                       for r in _ast.walk(n)) for n in nach), \
+        "ein ordentlich geschlossener Kick-Websocket baut wieder ohne Pause neu auf"
+    assert "pusher_fehler" in _ast.unparse(mit), "pusher:error wird nicht gelesen"
+
+    # ── (2) Die Abschiedswache: beendet mit dem vorgesehenen Code, nennt die
+    # haengenden Threads und tut nichts, wenn sie abgeschaltet ist.
+    tor = _th.Event()
+    haenger = _th.Thread(target=tor.wait, name="w133_haenger")   # nicht-Daemon
+    geist = _th.Thread(target=tor.wait, name="w133_daemon", daemon=True)
+    haenger.start()
+    geist.start()
+    try:
+        assert "w133_haenger" in BL.haengende_threads()
+        assert "w133_daemon" not in BL.haengende_threads(), \
+            "ein Daemon haelt das Beenden nicht auf und gehoert nicht in die Meldung"
+        ende, texte, schlaf = [], [], []
+        t = BL.abschiedswache(4, 7.0, ende.append, melden=texte.append,
+                              schlafen=schlaf.append)
+        t.join(5)
+        assert schlaf == [7.0] and ende == [4], (schlaf, ende)
+        assert texte and "w133_haenger" in texte[0] and "Exitcode 4" in texte[0], texte
+        assert "abschiedswache" not in texte[0], "die Wache nennt sich selbst"
+        ende.clear()
+        assert BL.abschiedswache(0, 0, ende.append) is None and ende == []
+    finally:
+        tor.set()
+        haenger.join(5)
+        geist.join(5)
+    assert "w133_haenger" not in BL.haengende_threads()
+
+    hauptf = next(n for n in baum.body if isinstance(n, _ast.AsyncFunctionDef)
+                  and n.name == "main")
+    # Zeilennummern, nicht ast.walk: das liefert Breitensuche, nicht die
+    # Reihenfolge im Quelltext.
+    zeile = {}
+    for c in _ast.walk(hauptf):
+        if isinstance(c, _ast.Call):
+            zeile.setdefault(_ast.unparse(c.func), c.lineno)
+    assert "_abschied_wachen" in zeile and zeile["_aufraeumen"] < \
+        zeile["_abschied_wachen"] < zeile["_abschluss"], \
+        "die Wache steht nicht zwischen Aufraeumen und Abschluss"
+    aw = next(n for n in baum.body if isinstance(n, _ast.FunctionDef)
+              and n.name == "_abschied_wachen")
+    assert "4 if fatal is not None else 0" in _ast.unparse(aw), \
+        "die Wache macht aus einem gestorbenen Telegram-Teil ein sauberes Ende (W100)"
+    wd = next(n for n in baum.body if isinstance(n, _ast.FunctionDef)
+              and n.name == "_loop_watchdog_thread")
+    assert any(isinstance(n, _ast.If) and "_IM_ABBAU" in _ast.unparse(n.test)
+               for n in _ast.walk(wd)), "Loop-Waechter meldet das Ende als Stillstand"
+    ok("W133: Kick-Chat baut nach ordentlichem Ende mit Backoff neu auf; ein "
+       "haengender Arbeiter haelt den Abbau nicht mehr fest")
+
+
+def _test_v42_w133_drossel_und_loop():
+    """v4.2-W133: CrowdSec gedrosselt, Scanner-505 kein ERROR, drei
+    Plattenzugriffe neben dem Loop, eine beschaedigte brain.db laut."""
+    import ast as _ast
+    import logging as _lg
+    from nc import logfilters as LF
+
+    baum = _ast.parse(open("bot.py", encoding="utf-8").read())
+
+    def _fn(name):
+        return next(n for n in baum.body if isinstance(n, (_ast.FunctionDef,
+                    _ast.AsyncFunctionDef)) and n.name == name)
+
+    cs = _ast.unparse(_fn("_crowdsec_status"))
+    assert "_nc_meldetakt.melden('crowdsec'" in cs, "CrowdSec-Warnung ungedrosselt"
+    assert cs.count("_nc_meldetakt.zuruecksetzen('crowdsec')") == 2, \
+        "der Erfolgspfad (LAPI und cscli) setzt die Drossel nicht zurueck"
+
+    rec = _lg.LogRecord("werkzeug", _lg.ERROR, __file__, 1,
+                        "code 505, message Invalid HTTP version (2.0)", None, None)
+    LF._WerkzeugScannerFilter().filter(rec)
+    assert rec.levelno == _lg.DEBUG, "ein HTTP/2-Scanner steht weiter im Fehlerlog"
+
+    for fn, ziel in (("_piper_say", "_piper_pick_model"),
+                     ("_stats_loop", "_nc_usage.flush"),
+                     ("_stats_loop", "_nc_usage.configure"),
+                     ("handle_recording_finished", "_upload_queue_add")):
+        rufe = [c for c in _ast.walk(_fn(fn)) if isinstance(c, _ast.Call)]
+        im_thread = [c for c in rufe if _ast.unparse(c.func) == "asyncio.to_thread"
+                     and c.args and _ast.unparse(c.args[0]) == ziel]
+        direkt = [c for c in rufe if _ast.unparse(c.func) == ziel]
+        assert im_thread and not direkt, "%s ruft %s auf dem Loop" % (fn, ziel)
+
+    sb = _ast.unparse(_fn("_system_backup"))
+    assert "brain.db ist beschaedigt" in sb and "'.recover'" in sb, \
+        "eine beschaedigte brain.db steht weiter nur als Warnung im Log"
+    ok("W133: CrowdSec gedrosselt, Scanner-505 auf DEBUG, Piper/Usage/"
+       "Upload-Warteschlange neben dem Loop, brain.db-Schaden laut")
+
+
 def main():
     tmp, rid = richte_testdatenbank_ein()
     ok("db_conn aus nc.dbwrap: echtes Schema angelegt, Commit durchgelaufen")
@@ -25550,6 +25679,8 @@ def main():
     _test_v42_w131_aufnahme_luecken()
     _test_v42_w132_versandziel_und_doppelstart()
     _test_v42_w132_log_und_geheimnisse()
+    _test_v42_w133_kickchat_und_abbau()
+    _test_v42_w133_drossel_und_loop()
     _test_v42_w60_azrael_cooldown_je_plattform()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)

@@ -96,3 +96,68 @@ def bewerten(d: dict) -> tuple:
     if not d.get("ok", True):
         return "gestoert", gruende
     return ("degradiert" if gruende else "ok"), gruende
+
+
+# ═════════════════════════════════════════════════════════════════════════
+# v4.2-W133: der Abbau, der nicht endet
+# ═════════════════════════════════════════════════════════════════════════
+#
+# Der Stall-Dump vom 31.10. 00:35 zeigt den Hauptthread in
+# `asyncio/runners.py:close` — `main()` war fertig, aufgeraeumt war auch.
+# `asyncio.run` wartete beim Schliessen auf den Default-Executor, und ein
+# Arbeiter darin hing in `urlopen` (nc/freeai.chat_sync aus
+# nc/evolution.cycle). Mit `AI_TIMEOUT=0` darf so ein Aufruf 3600 s dauern.
+# Der neue Prozess kam erst neun Minuten spaeter hoch; dazwischen stand
+# kein einziger Grund im Log, nur der Fehlalarm "Event-Loop eingefroren".
+#
+# Die Arbeiter eines ThreadPoolExecutor sind keine Daemon-Threads, und die
+# Standardbibliothek wartet beim Beenden auf jeden. Ein haengender
+# Netzaufruf haelt damit den ganzen Prozess — bei systemd bis zum SIGKILL
+# nach TimeoutStopSec, und ein SIGKILL ist fuer OnFailure= ein Fehlschlag.
+#
+# Die Wache wird erst gestellt, wenn `main()` fertig aufgeraeumt hat. Was
+# danach noch laeuft, hat keine Arbeit mehr, nur einen Aufruf, auf dessen
+# Antwort niemand wartet.
+
+ABSCHIED_FRIST_S = 20.0
+
+
+def haengende_threads() -> list:
+    """Namen der Threads, auf die das Beenden warten wuerde: nicht-Daemon,
+       ohne den Hauptthread. Die Wache selbst ist ein Daemon und faellt
+       damit von allein heraus — ein eigener Ausschluss fuer sie war
+       nachweislich wirkungslos (Mutationsprobe W133)."""
+    import threading
+    haupt = threading.main_thread()
+    return sorted(t.name for t in threading.enumerate()
+                  if t.is_alive() and not t.daemon and t is not haupt)
+
+
+def abschiedswache(code: int, frist_s: float, beenden, melden=None,
+                   schlafen=time.sleep):
+    """Den Prozess nach `frist_s` beenden, falls er dann noch lebt.
+
+    `beenden(code)` ist im Betrieb `os._exit`; `melden(text)` bekommt die
+    Begruendung VOR dem Ende, damit sie im Log steht. Endet der Prozess
+    vorher von selbst, stirbt die Wache als Daemon mit ihm — sie kostet im
+    Normalfall nichts. `frist_s <= 0` schaltet sie ab. -> der Thread oder None.
+    """
+    import threading
+    t = None
+
+    def _lauf():
+        schlafen(frist_s)
+        namen = haengende_threads()
+        if melden is not None:
+            melden("Abbau haengt seit %.0f s an %s — der Prozess endet jetzt "
+                   "hart mit Exitcode %d. Aufgeraeumt ist schon; was noch "
+                   "laeuft, wartet auf einen Netzaufruf ohne kurzes Timeout "
+                   "(AI_TIMEOUT=0 heisst 3600 s). Frist: ABSCHIED_FRIST_S."
+                   % (frist_s, ", ".join(namen) or "keinem benannten Thread",
+                      code))
+        beenden(code)
+
+    if frist_s and frist_s > 0:
+        t = threading.Thread(target=_lauf, name="abschiedswache", daemon=True)
+        t.start()
+    return t

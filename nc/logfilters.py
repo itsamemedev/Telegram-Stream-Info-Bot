@@ -25,6 +25,9 @@ class _WerkzeugScannerFilter(logging.Filter):
     # Patterns die typisch für Port-Scanner sind (in lowercase verglichen)
     _SCANNER_HINTS = (
         "bad request version",        # TLS ClientHello bytes
+        # v4.2-W133: ein Scanner, der HTTP/2 im Klartext probiert — werkzeug
+        # antwortet 505 und loggt das auf ERROR (Log vom 31.10., 167.94.x).
+        "invalid http version",
         "bad http/0.9 request type",  # malformed HTTP-Versions
         "bad request syntax",         # binary payloads
         "jdwp-handshake",             # Java Debug Wire Protocol scanner

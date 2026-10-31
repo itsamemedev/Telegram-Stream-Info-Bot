@@ -4,7 +4,7 @@ Eine einzige Wahrheit für die Versionsanzeige (Dashboard-Footer, /api/version,
 „Was ist neu"-Panel). Reine Daten + kleine Helfer, voll testbar.
 """
 
-VERSION = "4.4"
+VERSION = "4.4.1"
 CODENAME = "Wachsam"
 RELEASE = "2026.10"
 
@@ -23,6 +23,21 @@ def build_stamp():
 # Meilenstein-Changelog, neueste Version zuerst. highlights = kurze, ehrliche
 # Stichpunkte dessen, was die Version bringt.
 CHANGELOG = [
+    {
+        "version": "4.4.1",
+        "date": "2026-10",
+        "title": "Wachsam",
+        # Erste Patch-Fassung von 4.4: die Befunde aus dem Log vom 31.10.,
+        # dem ersten Lauf auf 4.4. Eigener Tag statt Ueberschreiben — der
+        # Release-Workflow verschiebt beim zweiten Lauf den Tag nicht.
+        "highlights": [
+            "Der Kick-Chat baute knapp jede Sekunde neu auf — 11975-mal in dreieinhalb Stunden: schloss Pusher die Verbindung ordentlich, endete die Leseschleife ohne Ausnahme, und der Bot verband sofort wieder, am Flatter-Wächter vorbei. Jetzt ist auch das ordentliche Ende eine Trennung mit Backoff, und eine pusher:error-Meldung steht im Log",
+            "Ein Neustart hing neun Minuten: nach dem Aufräumen wartete das Beenden auf einen Arbeiter-Thread in einem KI-Aufruf, der mit AI_TIMEOUT=0 bis zu einer Stunde dauern darf. Eine Abschiedswache beendet den Prozess jetzt nach 20 Sekunden (ABSCHIED_FRIST_S) mit dem vorgesehenen Exitcode und nennt die hängenden Threads; der Loop-Wächter meldet das Ende nicht mehr als eingefrorenen Loop",
+            "Eine beschädigte brain.db stand nur als Warnung im Log, und die Sicherung enthielt sie stillschweigend nicht — jetzt ein Fehler mit dem Rettungsweg über sqlite3 .recover",
+            "Die CrowdSec-Meldung ist gedrosselt (106 gleiche Zeilen in 3,5 Stunden) und nennt die Abhilfe; ein HTTP/2-Scanner steht nicht mehr im Fehlerlog",
+            "Drei Plattenzugriffe laufen neben dem Event-Loop statt darauf: die Piper-Stimmensuche (4,3 s gemessen), der Token-Zähler und die Upload-Warteschlange",
+        ],
+    },
     {
         "version": "4.4",
         "date": "2026-10",
