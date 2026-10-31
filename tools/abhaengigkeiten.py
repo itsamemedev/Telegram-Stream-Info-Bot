@@ -183,6 +183,68 @@ def bericht():
     return sorted(set(unerklaert)), ohne, tot, uneins
 
 
+def _norm(name):
+    """PEP 503: `PyMySQL`, `pymysql` und `py_mysql` sind dasselbe Paket."""
+    import re as _re
+    return _re.sub(r"[-_.]+", "-", name).lower()
+
+
+def _fassung(text):
+    """'3.14.5' -> (3, 14, 5); Vor- und Nachsilben ('0.post0', '0b7') zaehlen
+       nur mit ihrem Zahlenanfang. Bewusst ohne `packaging`: der CI-Job dieses
+       Werkzeugs installiert nur pyflakes und ruff."""
+    teile = []
+    for t in text.split("."):
+        ziffern = ""
+        for z in t:
+            if not z.isdigit():
+                break
+            ziffern += z
+        if not ziffern:
+            break
+        teile.append(int(ziffern))
+    return tuple(teile)
+
+
+def lock_abgleich(req_pfad, lock_pfad):
+    """v4.2-W135: passt das Lockfile vom Server zu den Untergrenzen?
+
+    -> [(name, lage, grenze, im_lock)], lage ist "fehlt" (Pflichtpaket nicht
+    im Lockfile) oder "unter_grenze". Optionale Pakete ([optional]) und
+    Zeilen mit Umgebungsmarke fehlen legitim und werden nicht gemeldet.
+
+    Warum es das braucht: `requirements.lock.txt` ist die Wahrheit ueber den
+    Server, `requirements.txt` das Minimum. Hebt jemand eine Untergrenze an
+    (W134 hat acht aus Sicherheitsgruenden gehoben), steht der Server danach
+    unter ihr — und nichts sagt es, solange beide Dateien nicht verglichen
+    werden. Am 31.10. fehlte `waitress` auf dem Server ganz, obwohl es ein
+    Pflichtpaket ist.
+    """
+    im_lock = {}
+    for zeile in io.open(lock_pfad, encoding="utf-8").read().splitlines():
+        roh = zeile.split("#")[0].strip()
+        if "==" in roh:
+            n, v = roh.split("==", 1)
+            im_lock[_norm(n.strip())] = v.strip()
+    aus = []
+    for zeile in io.open(req_pfad, encoding="utf-8").read().splitlines():
+        roh = zeile.split("#")[0].strip()
+        if not roh:
+            continue
+        optional = "[optional]" in zeile or ";" in roh
+        name = roh.split(";")[0]
+        for trenn in (">=", "==", "<=", "~=", "!=", ">", "<"):
+            name = name.split(trenn)[0]
+        name, g = _norm(name.strip()), grenze(roh)
+        ist = im_lock.get(name)
+        if ist is None:
+            if not optional:
+                aus.append((name, "fehlt", g, ""))
+        elif g and _fassung(ist) < _fassung(g):
+            aus.append((name, "unter_grenze", g, ist))
+    return aus
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     p.add_argument("--sperre", action="store_true")
@@ -227,6 +289,20 @@ def main(argv=None):
             print("  Hinweis: requirements.lock.txt fehlt weiterhin. Die "
                   "exakten Fassungen kennt nur der Server:")
             print("    python3 -m pip freeze > requirements.lock.txt")
+        else:
+            # v4.2-W135: ein Hinweis, keine Sperre. Der Abstand zwischen
+            # Lockfile und Untergrenze schliesst sich nur auf dem Server —
+            # eine rote CI dafuer saehe aus wie ein Codefehler und hielte
+            # jede andere Aenderung auf.
+            for n, lage, g, ist in lock_abgleich(
+                    os.path.join(WURZEL, "requirements.txt"), lock):
+                if lage == "fehlt":
+                    print(f"  Hinweis: {n} (>= {g}) ist Pflicht, fehlt aber "
+                          f"im Lockfile — auf dem Server nicht installiert.")
+                else:
+                    print(f"  Hinweis: {n} {ist} im Lockfile liegt unter der "
+                          f"Untergrenze {g} — auf dem Server anheben und das "
+                          f"Lockfile neu einfrieren.")
         return 0
     return 1 if a.sperre else 0
 

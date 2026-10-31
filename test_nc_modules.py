@@ -25351,6 +25351,49 @@ def _test_v42_w133_drossel_und_loop():
        "Upload-Warteschlange neben dem Loop, brain.db-Schaden laut")
 
 
+def _test_v42_w135_lockfile_gegen_untergrenzen():
+    """v4.2-W135: das Lockfile vom Server und die Untergrenzen werden
+    verglichen. Am 31.10. fehlte waitress auf dem Server ganz, und W134 hatte
+    acht Grenzen angehoben — ohne Abgleich faellt beides niemandem auf."""
+    import sys as _sys
+    import tempfile as _tf
+    hier = os.path.dirname(os.path.abspath(__file__))
+    if os.path.join(hier, "tools") not in _sys.path:
+        _sys.path.insert(0, os.path.join(hier, "tools"))
+    import abhaengigkeiten as A
+
+    assert A._fassung("3.14.5") > A._fassung("3.14.4")
+    assert A._fassung("3.14.10") > A._fassung("3.14.9"), "Text- statt Zahlenvergleich"
+    assert A._fassung("2.9.0.post0") == (2, 9, 0)
+    assert A._fassung("2.0.0b7") == (2, 0, 0)
+    assert A._norm("PyMySQL") == A._norm("pymysql") == "pymysql"
+    assert A._norm("websockets_proxy") == A._norm("websockets-proxy")
+    assert A._norm("python_dotenv") == A._norm("Python.Dotenv")
+
+    with _tf.TemporaryDirectory() as d:
+        req, lock = os.path.join(d, "r.txt"), os.path.join(d, "l.txt")
+        with open(req, "w", encoding="utf-8") as f:
+            f.write("# Kopf\n"
+                    "Flask >= 3.1.3   # Dashboard\n"
+                    "aiohttp >= 3.14.4\n"
+                    "waitress >= 3.0.1\n"
+                    "PyMySQL >= 1.1.1  # [optional] nur bei MariaDB\n"
+                    "uvloop >= 0.19; sys_platform != \"win32\"\n"
+                    "python_dotenv >= 1.2.2\n")
+        with open(lock, "w", encoding="utf-8") as f:
+            f.write("Flask==3.1.3\naiohttp==3.14.1\npython-dotenv==1.2.10\n")
+        befund = {n: (lage, g, ist) for n, lage, g, ist in A.lock_abgleich(req, lock)}
+    assert befund.get("aiohttp") == ("unter_grenze", "3.14.4", "3.14.1"), befund
+    assert befund.get("waitress") == ("fehlt", "3.0.1", ""), befund
+    assert "flask" not in befund, "gleiche Fassung gilt als zu alt"
+    assert "python-dotenv" not in befund, "1.2.10 wurde textuell unter 1.2.2 einsortiert"
+    assert "pymysql" not in befund and "uvloop" not in befund, \
+        "optionale Pakete und solche mit Umgebungsmarke sind kein Befund"
+    assert set(befund) == {"aiohttp", "waitress"}, befund
+    ok("W135: Lockfile gegen Untergrenzen — zu alt und fehlend erkannt, "
+       "optional und Umgebungsmarke ausgenommen")
+
+
 def main():
     tmp, rid = richte_testdatenbank_ein()
     ok("db_conn aus nc.dbwrap: echtes Schema angelegt, Commit durchgelaufen")
@@ -25682,6 +25725,7 @@ def main():
     _test_v42_w132_log_und_geheimnisse()
     _test_v42_w133_kickchat_und_abbau()
     _test_v42_w133_drossel_und_loop()
+    _test_v42_w135_lockfile_gegen_untergrenzen()
     _test_v42_w60_azrael_cooldown_je_plattform()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)
