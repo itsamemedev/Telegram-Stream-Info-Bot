@@ -30,7 +30,9 @@ def _fingerprint(text):
        gilt „Text  A" als andere Antwort als „Text A" und die Dopplungssperre
        liefe ins Leere."""
     norm = _WS.sub(" ", (text or "").strip().lower())
-    return hashlib.sha1(norm.encode("utf-8")).hexdigest()[:16]
+    # Kein Sicherheitszweck, nur ein Fingerabdruck — so ausgewiesen, damit
+    # Bandit und FIPS-Umgebungen es nicht als schwachen Hash behandeln (W134).
+    return hashlib.sha1(norm.encode("utf-8"), usedforsecurity=False).hexdigest()[:16]
 
 
 def allow(state, user, text, now, cfg=None):

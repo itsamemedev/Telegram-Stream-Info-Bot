@@ -19,7 +19,7 @@ Cursor, Jules und andere — den Weg dorthin finden.
 
 Vier Dinge, an denen hier schon reale Arbeit gescheitert ist:
 
-1. **`bot.py` hat über 23.000 Zeilen / 1,2 MB ≈ 294.000 Token.** Diese Datei
+1. **`bot.py` hat über 26.000 Zeilen / 1,2 MB ≈ 295.000 Token.** Diese Datei
    wird **nie** ganz gelesen und **nie** blind durchsucht. Erst fragen, wo
    etwas steht, dann den Ausschnitt holen:
 

@@ -31,7 +31,7 @@ hiesse hier: falscher Recorder, fehlende Cookies, kein Thread-Deckel — und
 nichts wird rot.
 """
 
-import asyncio
+import inspect
 import logging
 import shutil
 import time as _time_mod
@@ -531,7 +531,10 @@ async def build_recording_cmd(username: str, output_file: str, duration_secs: in
     # F43: auto-Kette = native → yt-dlp (kein streamlink mehr)
     for fn in (_try_native, _try_ytdlp):
         try:
-            r = await fn() if asyncio.iscoroutinefunction(fn) else fn()
+            # v4.2-W134: inspect statt asyncio — asyncio.iscoroutinefunction ist
+            # seit Python 3.14 veraltet (der Server laeuft auf 3.14) und faellt
+            # in 3.16 weg. Fuer die zwei lokalen Funktionen hier identisch.
+            r = await fn() if inspect.iscoroutinefunction(fn) else fn()
         except Exception as e:
             failure_reasons.append(f"{fn.__name__}: exception {e}")
             r = None
