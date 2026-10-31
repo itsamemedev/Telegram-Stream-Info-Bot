@@ -28,7 +28,11 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
   Key durch und sagt, welcher ihn annimmt. Antwortet Pusher gar nicht,
   verdächtigt es den Key nicht.
 - Lockfile mit waitress; der Zusatzschritt im CI-Job „Produktionsstand"
-  entfällt. Erster `docs/PERFORMANCE_AUDIT.md` mit Vorher-Nachher aus den
+  entfällt.
+- **GitHub-Actions aktualisiert** (ersetzt die Dependabot-PRs #180–#182 in
+  einem Lauf, einschließlich des neuen Produktions-Jobs): `actions/checkout`
+  v4 → v7, `actions/setup-python` v5 → v7, `github/codeql-action` v3 → v4.
+  `checkout@v4` lief noch auf der abgekündigten Node-20-Laufzeit. Erster `docs/PERFORMANCE_AUDIT.md` mit Vorher-Nachher aus den
   Produktions-Logs.
 
 ### Lieferkette — das Lockfile vom Server (v4.2 W135)
