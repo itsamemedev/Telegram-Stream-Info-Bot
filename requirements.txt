@@ -113,7 +113,7 @@ redis >= 4.4.4                 # [optional] Cache
 #   kein redis/asyncio/, 4.2.0 hat es (dort ging aioredis darin auf).
 
 # ── KI / Medien ──────────────────────────────────────────────────────────
-faster-whisper >= 1.0          # [optional] import faster_whisper — Transkription
+faster-whisper >= 1.2.1          # [optional] import faster_whisper — Transkription
 
 # ── Ablage ───────────────────────────────────────────────────────────────
 boto3 >= 1.34                  # [optional] S3-Backup, nur bei S3_BACKUP=1
