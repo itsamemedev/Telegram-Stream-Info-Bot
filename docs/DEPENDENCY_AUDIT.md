@@ -19,7 +19,7 @@
    filelock, Pillow, setuptools). Nach dem gezielten Upgrade: `pip check`
    ohne Konflikt, `pip-audit` ohne Befund. Dieser Stand ist jetzt
    `requirements.lock.txt`. Auf dem Server läuft **TikTokLive 6.6.5** (MIT)
-   und **Python 3.14**; **waitress fehlt** dort, obwohl es Pflicht ist.
+   und **Python 3.14**; waitress fehlte dort trotz Pflicht (seit W136 installiert).
 3. **TikTokLive hat mit 7.0 die Lizenz gewechselt** — von MIT (bis 6.6.5) zu
    „Modified AGPL-3.0". `docs/THIRD_PARTY_LICENSES.md` führte bis W134 „MIT".
    Bewertung unten; kurz: für NIGHTCRAWLER kein Hindernis, aber eine
@@ -126,10 +126,12 @@ es beschreibt den Server, nicht `requirements.txt`.
    Python 3.14, fährt `pip-audit` darauf und alle drei Suiten. Lokal vorher:
    Installation auf frischem 3.14, Suiten grün.
 2. `tools/abhaengigkeiten.py` vergleicht Lockfile und Untergrenzen und meldet
-   als **Hinweis** (keine Sperre), was fehlt oder zu alt ist. Heute: waitress.
-3. Dependabot liest `requirements*.txt` — damit sieht es erstmals auch die
-   mitgezogenen Pakete. Genau die neun aus dem Server-Befund waren bisher
-   unsichtbar.
+   als **Hinweis** (keine Sperre), was fehlt oder zu alt ist. Bis W136: waitress.
+3. Dependabot liest `requirements*.txt` und meldet Sicherheitsfälle jetzt
+   auch für die mitgezogenen Pakete — genau die neun aus dem Server-Befund
+   waren bisher unsichtbar. Versions-Pull-Requests für pip sind bewusst aus:
+   sie hoben Untergrenzen über den Serverstand und hätten das Lockfile vom
+   Server gelöst.
 4. `tools/build_release.py` packt die Datei ins Archiv.
 
 **Pflege.** Nur auf dem Server erneuern, nie von Hand:

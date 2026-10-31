@@ -511,3 +511,69 @@ def schliessgrund(close_code, pusher_text="") -> str:
     if pusher_text:
         satz += " — Pusher meldete vorher: " + pusher_text
     return satz
+
+
+# ═════════════════════════════════════════════════════════════════════════
+# v4.2-W136: was ein Pusher-Schliesscode verlangt
+# ═════════════════════════════════════════════════════════════════════════
+#
+# W133 hat das stille Ende benannt — und damit den Grund sichtbar gemacht,
+# der vorher nie im Log stand: "4001 App key ... not in this cluster". Der
+# Kick-Chat hat damit nie funktioniert. Die Schleife versuchte es trotzdem
+# alle zehn Sekunden neu: 250 Warnungen in 46 Minuten, und jede Verbindung
+# endete nach einer Sekunde mit demselben Code.
+#
+# Das Pusher-Protokoll sagt dazu selbst, was zu tun ist:
+#   4000-4099  NICHT unveraendert neu verbinden (Konfiguration falsch)
+#   4100-4199  nach einem Backoff neu verbinden, gern wachsend
+#   4200-4299  sofort neu verbinden
+# Alles andere (kein Code, 1000, 1006 ...) ist eine gewoehnliche Trennung.
+
+PUSHER_KONFIG_PAUSE_S = 900      # 4000er: ohne Aenderung hilft kein Versuch
+PUSHER_BACKOFF_MAX_S = 300
+PUSHER_GEWOEHNLICH_S = 10        # der bisherige Wert fuer alles
+
+
+class PusherGeschlossen(ConnectionError):
+    """Der Server hat die Verbindung ordentlich beendet — mit Code."""
+
+    def __init__(self, code, text):
+        super().__init__(text)
+        self.code = code
+
+
+def pusher_lage(code) -> str:
+    """'konfig' | 'backoff' | 'sofort' | 'gewoehnlich'."""
+    lage = "gewoehnlich"
+    if isinstance(code, int) and 4000 <= code <= 4099:
+        lage = "konfig"
+    elif isinstance(code, int) and 4100 <= code <= 4199:
+        lage = "backoff"
+    elif isinstance(code, int) and 4200 <= code <= 4299:
+        lage = "sofort"
+    return lage
+
+
+def pusher_pause(code, folge: int) -> int:
+    """Wie lange vor dem naechsten Versuch? `folge` zaehlt die Trennungen
+       derselben Lage hintereinander (1 = die erste)."""
+    lage = pusher_lage(code)
+    pause = PUSHER_GEWOEHNLICH_S
+    if lage == "konfig":
+        pause = PUSHER_KONFIG_PAUSE_S
+    elif lage == "backoff":
+        pause = min(PUSHER_BACKOFF_MAX_S, 2 ** max(0, folge - 1))
+    elif lage == "sofort":
+        pause = 1
+    return pause
+
+
+def pusher_url(app_key: str, cluster: str) -> str:
+    """Die Websocket-Adresse des Kick-Chats. Cluster und Key kommen aus der
+       .env (KICK_PUSHER_CLUSTER, KICK_PUSHER_KEY) — beide stammen aus dem
+       oeffentlichen Web-Client von kick.com und koennen sich ohne Ankuendigung
+       aendern; ein fest verdrahteter Cluster liess sich bis W136 nicht
+       korrigieren, ohne Code zu aendern."""
+    cl = (cluster or "us2").strip().lower()
+    return ("wss://ws-%s.pusher.com/app/%s"
+            "?protocol=7&client=js&version=8.4.0&flash=false" % (cl, app_key))

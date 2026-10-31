@@ -1344,6 +1344,10 @@ PROACTIVE_COOLDOWN_S   = _env_int("PROACTIVE_COOLDOWN_S", 600)   # Mindestabstan
 # Pusher-App-Key für den öffentlichen Chat-Websocket (reverse-engineered, kann
 # sich ändern). Bei Problemen aktuellen Wert recherchieren/anpassen.
 KICK_PUSHER_KEY    = os.getenv("KICK_PUSHER_KEY", "32cbd69e4b950bf97679").strip()
+# v4.2-W136: bis hier fest "us2" in der Adresse. Pusher antwortete am 31.10.
+# mit "4001 App key ... not in this cluster" — ohne diese Variable liess sich
+# das nur im Code korrigieren. tools/kickpusher.py probiert die Cluster durch.
+KICK_PUSHER_CLUSTER = os.getenv("KICK_PUSHER_CLUSTER", "us2").strip()
 WORKER_COUNT       = _env_int("WORKER_COUNT", 4)
 CHECK_INTERVAL     = _env_int("CHECK_INTERVAL", 300)
 
@@ -7770,6 +7774,34 @@ def _telegram_polling_fehler(exc):
         # Funktion verhindern.
         log.error("Telegram-Polling-Meldung selbst gestoert (%s); "
                   "urspruenglicher Fehler: %s", e, exc)
+
+
+def _kick_ws_pause(exc, folge):
+    """v4.2-W136: die Pause vor dem naechsten Kick-Verbindungsversuch.
+
+    Regeln und Begruendung in nc/kickapi.pusher_pause. Ein 4000er-Code ist
+    eine falsche Konfiguration, kein Netzproblem — der gehoert EINMAL laut
+    ins Fehlerlog, mit der Stellschraube, und nicht 250-mal als Warnung.
+    """
+    code = getattr(exc, "code", None)
+    lage = _nc_kickapi.pusher_lage(code)
+    if folge[0] == lage:
+        folge[1] += 1
+    else:
+        folge[0], folge[1] = lage, 1
+    pause = _nc_kickapi.pusher_pause(code, folge[1])
+    if lage == "konfig":
+        laut, weg = _nc_meldetakt.melden("kick-pusher", str(code),
+                                         _time_mod.monotonic())
+        if laut:
+            log.error("Kick-Chat: Pusher lehnt die Verbindung ab (%s). Nach dem "
+                      "Pusher-Protokoll hilft ein unveraenderter Versuch nicht — "
+                      "naechster in %d min. Abhilfe: KICK_PUSHER_KEY und "
+                      "KICK_PUSHER_CLUSTER (jetzt %s) pruefen; "
+                      "`venv/bin/python tools/kickpusher.py` probiert die Cluster "
+                      "durch.%s", exc, pause // 60, KICK_PUSHER_CLUSTER,
+                      _nc_meldetakt.zusatz(weg))
+    return pause
 
 
 def _verbindung_verloren(kanal, exc, backoff_s, seit=0.0):
@@ -16370,8 +16402,8 @@ class KickModerator:
         if not KICK_CHATROOM_ID:
             log.warning("Kick-Moderator: KICK_CHATROOM_ID fehlt — Chat-Lesen deaktiviert")
             return
-        url = (f"wss://ws-us2.pusher.com/app/{KICK_PUSHER_KEY}"
-               f"?protocol=7&client=js&version=8.4.0&flash=false")
+        url = _nc_kickapi.pusher_url(KICK_PUSHER_KEY, KICK_PUSHER_CLUSTER)
+        _folge = [None, 0]          # v4.2-W136: (Lage, wie oft hintereinander)
         session = aiohttp.ClientSession()
         try:
             while self.running:
@@ -16435,6 +16467,10 @@ class KickModerator:
                                         _loop_fehler("_ws_loop", e)
                                 elif ev == "pusher:error":
                                     _pfehler = _nc_kickapi.pusher_fehler(frame)
+                                elif ev == "pusher_internal:subscription_succeeded":
+                                    # v4.2-W136: das Abo steht — erst das ist
+                                    # Erfolg; der naechste Backoff beginnt klein.
+                                    _folge[0], _folge[1] = None, 0
                             except Exception:
                                 continue
                         # v4.2-W133: ein ordentliches Ende ist auch eine
@@ -16442,7 +16478,8 @@ class KickModerator:
                         # neu auf — 11975-mal in 3,5 Stunden, am Flatter-
                         # Waechter vorbei (Begruendung in nc/kickapi.py).
                         if self.running:
-                            raise ConnectionError(
+                            raise _nc_kickapi.PusherGeschlossen(
+                                ws.close_code,
                                 _nc_kickapi.schliessgrund(ws.close_code, _pfehler))
                 except Exception as e:
                     self.stats["connected"] = False
@@ -16450,9 +16487,10 @@ class KickModerator:
                         # v4.0-W116: war log.warning — im ERROR-Log stand nie
                         # etwas, auch wenn die Verbindung die ganze Nacht
                         # flatterte. Jetzt entscheidet der Verlauf.
-                        _verbindung_verloren("Kick-WebSocket", e, 10,
+                        _pause = _kick_ws_pause(e, _folge)   # v4.2-W136
+                        _verbindung_verloren("Kick-WebSocket", e, _pause,
                                              seit=self.stats.get("since", 0.0))
-                        await asyncio.sleep(10)
+                        await asyncio.sleep(_pause)
         finally:
             self.stats["connected"] = False
             await session.close()
