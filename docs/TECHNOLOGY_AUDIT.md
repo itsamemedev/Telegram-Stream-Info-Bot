@@ -9,7 +9,7 @@
 |---|---|
 | [`DEPENDENCY_AUDIT.md`](DEPENDENCY_AUDIT.md) | **W134** — vollständig |
 | [`SECURITY_AUDIT.md`](SECURITY_AUDIT.md) | **W134** — statisch vollständig, Server offen |
-| `PERFORMANCE_AUDIT.md` | geplant W136 — Messung mit py-spy/tracemalloc, Vorher-Nachher |
+| [`PERFORMANCE_AUDIT.md`](PERFORMANCE_AUDIT.md) | **W136** — erste Vorher-Nachher-Messung, Langlauf offen |
 | `ARCHITECTURE_REVIEW.md` | geplant W137 |
 | `TESTING_REPORT.md` | geplant W137 |
 | `INNOVATION_ROADMAP.md` | geplant W138 — Prototypen isoliert, mit Messung |
@@ -38,7 +38,8 @@ Bewertung: Nutzen / Risiko der Änderung / Aufwand, jeweils hoch–mittel–nied
 | 4 | TikTokLive-Lizenz falsch angegeben (MIT statt AGPL-3.0 mit Zusatz ab 7.0) | Rad-Metadaten | mittel | — | niedrig | **behoben W134** |
 | 5 | `asyncio.iscoroutinefunction` veraltet seit 3.14, weg in 3.16 | DeprecationWarning auf 3.14 | niedrig | niedrig | niedrig | **behoben W134** |
 | 6 | Kein Lockfile — Produktionsfassungen unbekannt; dort 79 bekannte Schwachstellen | `pip-audit` auf dem Server | hoch | niedrig | niedrig | **behoben W135** (Upgrade, Lockfile, CI-Job) |
-| 6a | waitress fehlt auf dem Server | Lockfile | niedrig | niedrig | niedrig | offen, Betreiber |
+| 6a | waitress fehlte auf dem Server | Lockfile | niedrig | niedrig | niedrig | **behoben W136** (Betreiber) |
+| 6b | Kick-Chat lief nie: Pusher `4001 App key not in this cluster`, Neuversuch alle 10 s | error.log vom 31.10. | hoch | niedrig | niedrig | **Code W136**; Key/Cluster am Server mit `tools/kickpusher.py` klären |
 | 7 | RSS stieg in 3,5 h von 230 MB auf 1,46 GB | Kennzahlen-Zeilen vom 31.10. | hoch | mittel | mittel | offen, W136 — erst nach W133 neu messen |
 | 8 | Restliche synchrone DB-Zugriffe auf dem Event-Loop (`get_tracking_priority`, `_live_users`, `cfgstore.get`, `_set_status`) | `_loop_stockung_melden` | mittel | **mittel** — Reihenfolge der Schreibvorgänge | mittel | offen, W136 |
 | 9 | Resolver meldet `status_code` für die Mehrheit der Nutzer | 386 Warnungen in 3,5 h | hoch | mittel | hoch | offen — eigene Welle mit Messung gegen TikTok |

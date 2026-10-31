@@ -64,7 +64,7 @@ Sie bleiben, wie sie sind; jeder hat Verträge.
 | Punkt | Risiko | Vorschlag |
 |---|---|---|
 | Serverfassungen unbekannt | — | **behoben in W135**: Lockfile vom Server, 79 → 0 Befunde |
-| waitress fehlt auf dem Server | niedrig | `venv/bin/python -m pip install "waitress>=3.0.1"`, dann neu einfrieren |
+| waitress fehlte auf dem Server | — | **behoben W136** (installiert, Lockfile neu eingefroren) |
 | PySocks ohne Pflege seit 2019 | niedrig | in einer späteren Welle durch `python-socks` ersetzen, falls der eine Aufruf es trägt |
 | TikTokLive 7.x signiert über einen Drittanbieter | niedrig bis mittel | vor einem Wechsel den Datenfluss nachmessen |
 | Dependabot | — | **behoben in W134**: die Datei war die leere Vorlage, Dependabot lief nie; jetzt pip und GitHub-Actions wöchentlich |

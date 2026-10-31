@@ -252,16 +252,12 @@ jobs:
         with:
           python-version: "3.14"
 
-      # waitress fehlt im Lockfile, weil es auf dem Server fehlt — dort traegt
-      # TLS am Dashboard das Deck auf dem Werkzeug-Server. Der W84-Vertrag
-      # prueft aber den Weg OHNE TLS und braucht das Paket. Die Luecke selbst
-      # meldet tools/abhaengigkeiten.py als Hinweis; sobald der Server es hat
-      # und das Lockfile neu eingefroren ist, entfaellt diese Zeile.
+      # Genau das Lockfile, nichts dazu: seit W136 traegt es auch waitress
+      # (der Server hatte es bis dahin nicht, die Zusatzzeile hier ist weg).
       - name: Lockfile installieren
         run: |
           python -m pip install --upgrade pip
           python -m pip install -r requirements.lock.txt
-          python -m pip install "waitress>=3.0.1"
 
       - name: Sicherheitsabgleich des Lockfiles
         run: |
