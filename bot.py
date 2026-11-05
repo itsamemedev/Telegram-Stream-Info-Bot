@@ -845,6 +845,7 @@ from nc.textmore import (  # noqa: F401
 # _video_caption ist mit split_and_send_video nach telegramversand.py gewandert
 # (v4.2-W19) — es hatte hier nur diesen einen Nutzer.
 from nc.scoring import build_report  # noqa: F401
+from nc import prueflage as _nc_prueflage    # v4.2-W138: Pruefstand je Tracking
 from nc.persona import (  # noqa: F401
     _persona_intensity_hint, _azrael_emotion)
 from nc.util import _webhook_event_match, _loop_not_ready  # noqa: F401
@@ -2616,6 +2617,9 @@ def _schedule_next_check(tracking_id: int, last_status: str, was_live_before: bo
             pass
     _NEXT_CHECK_AT[tracking_id] = _time_mod.monotonic() + delay
     _LAST_CHECK_RESULT[tracking_id] = last_status
+    # v4.2-W138: Pruefzeit und letzte SICHERE Antwort fuers Deck — sonst
+    # bleibt ein Nutzer, der nur noch "unknown" liefert, still auf LIVE.
+    _nc_prueflage.merken(tracking_id, last_status)
 
 # ============ B148: Abo-/Subscriber-only Live-Erkennung ============
 # TikTok "Subscriber LIVE" (Abo-Stream). Anforderung: für ALLE getrackten
@@ -8603,6 +8607,7 @@ async def check_all_trackings(bot_app):
             for k in stale_keys:
                 _NEXT_CHECK_AT.pop(k, None)
                 _LAST_CHECK_RESULT.pop(k, None)
+                _nc_prueflage.vergessen(k)
             # Rate-limit-Maps sind per-username — schon mit list() geschützt
             valid_users = {t["username"] for t in trackings}
             for m in (_RATE_LIMIT_BACKOFF, _RATE_LIMIT_PENALTY, _LIVE_STATUS_CACHE, _ABO_LIVE):
@@ -12045,6 +12050,14 @@ def _scraper_session():
         return _GLOBAL_SCRAPER.session if _GLOBAL_SCRAPER else None
     except Exception:
         return None
+
+
+def _scraper_holen():
+    """v4.2-W138: der Scraper selbst. Das Profil-Popup rief `fetch_profile`
+    auf `_scraper_session()` auf — einer aiohttp-Session, die diese Methode
+    nicht hat. Jeder Klick endete in einem AttributeError, gefangen als
+    „TikTok-Profil nicht geladen", und zwar seit B60."""
+    return _GLOBAL_SCRAPER
 
 
 
@@ -25791,6 +25804,7 @@ _nc_ctx.configure(
     ffmpeg_nice_bg=FFMPEG_NICE_BG,
     proc_is_recorder=_proc_is_recorder,
     scraper_session=_scraper_session,
+    get_scraper=_scraper_holen,
     trigger_manual_recording=trigger_manual_recording,
     stop_manual_recording=stop_manual_recording,
     # --- Archiv-Domaene (v4.0-W107) ---

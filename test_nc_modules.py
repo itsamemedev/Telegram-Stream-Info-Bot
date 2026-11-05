@@ -1839,7 +1839,10 @@ def _test_w23_beobachtung_und_toasts():
     # Blueprint nie wahr, gemessen wurde also immer "/".
     assert genutzt <= {"run_async", "log", "log_event", "arg_int",
                        "scraper_session", "get_bot_start_time",
-                       "recordings_dir"}, \
+                       "recordings_dir",
+                       # v4.2-W138: der Scraper selbst — fetch_profile auf der
+                       # Session war der Fehler, der das Popup nie laden liess.
+                       "get_scraper"}, \
         "der Blueprint braucht neue Kontext-Eintraege: %r" % genutzt
     for zeile in quelle.split("\n"):
         z = zeile.strip()
@@ -25518,6 +25521,139 @@ def _test_v42_w137_kontrast_thema():
        "per Knopf und prefers-contrast erreichbar")
 
 
+def _test_v42_w138_profil_und_prueflage():
+    """v4.2-W138: das Profil-Popup laedt, das Profil sagt mehr, Discord zeigt
+    es lesbar, und das Deck unterscheidet „unbekannt" von „offline"."""
+    import ast as _ast
+    import asyncio as _aio
+    import json as _json
+    import html as _html
+
+    # (1) Der eigentliche Bug: fetch_profile auf der SESSION. Gemessen im
+    # Syntaxbaum — kein Aufruf von .fetch_profile darf auf scraper_session()
+    # haengen, und er muss auf get_scraper() haengen.
+    baum = _ast.parse(open("nc/routes/beobachtung.py", encoding="utf-8").read())
+    for n in _ast.walk(baum):
+        if isinstance(n, _ast.Attribute) and n.attr == "fetch_profile":
+            assert "scraper_session" not in _ast.unparse(n.value), \
+                "fetch_profile auf der aiohttp-Session — die hat die Methode nicht"
+    assert any(isinstance(n, _ast.Attribute) and n.attr == "get_scraper"
+               for n in _ast.walk(baum)), "Popup holt den Scraper nicht"
+    import nc.ctx as _ctx
+    assert "get_scraper" in _ctx.Ctx.__slots__
+
+    # (2) Scraper: Ablehnung mit Grund statt leerem „ok"-Profil.
+    from nc.scraper import TikTokScraper
+
+    def _seite(scope):
+        roh = _json.dumps({"__DEFAULT_SCOPE__": scope})
+        return ('<html><script id="__UNIVERSAL_DATA_FOR_REHYDRATION__" '
+                'type="application/json">%s</script></html>' % _html.escape(roh))
+
+    class _Resp:
+        def __init__(self, text):
+            self.status, self._t = 200, text
+        async def text(self):
+            return self._t
+        def release(self):
+            pass
+
+    def _hole(text):
+        sc = TikTokScraper.__new__(TikTokScraper)
+        async def _req(url, **kw):
+            return _Resp(text)
+        sc._request = _req
+        return _aio.run(sc.fetch_profile("probe"))
+
+    r = _hole(_seite({"webapp.user-detail": {
+        "statusCode": 10221, "statusMsg": "user banned",
+        "userInfo": {"user": {}, "stats": {}}}}))
+    assert not r["ok"], "leeres user-Objekt galt als Treffer"
+    assert "statusCode 10221" in r["error"] and "user banned" in r["error"], r["error"]
+
+    r = _hole('<html><div id="tiktok-verify-page">captcha</div></html>')
+    assert not r["ok"] and "Captcha" in r["error"], r["error"]
+
+    r = _hole(_seite({"webapp.user-detail": {"statusCode": 0, "userInfo": {
+        "user": {"id": "7", "uniqueId": "probe", "nickname": "P",
+                 "language": "de", "bioLink": {"link": "example.org"},
+                 "commerceUserInfo": {"commerceUser": True, "category": "Gaming"},
+                 "roomId": "7300", "createTime": 1600000000},
+        "stats": {"followerCount": 1000, "followingCount": 10,
+                  "heartCount": 2147483647, "videoCount": 100},
+        "statsV2": {"heartCount": "5000000000"}}}}))
+    assert r["ok"], r
+    assert r["heart_count"] == 5000000000, "statsV2 nicht bevorzugt"
+    assert (r["language"], r["bio_link"], r["commerce"], r["category"], r["room_id"]) \
+        == ("de", "example.org", True, "Gaming", "7300"), r
+
+    # (3) Kennzahlen und Verlauf.
+    from nc import profildetail as P
+    kz = P.kennzahlen(r)
+    assert kz["likes_pro_video"] == 50000000 and kz["follower_pro_folgt"] == 100.0
+    assert P.kennzahlen({"follower_count": 5, "video_count": 0})["likes_pro_video"] is None
+    assert P.kontotyp(r) == "Business · Gaming"
+    jetzt = 1_800_000_000
+    iso = lambda s: __import__("datetime").datetime.fromtimestamp(
+        jetzt - s, __import__("datetime").timezone.utc).isoformat()
+    # Ein Schnappschuss von vor zehn Minuten ist KEIN Tageswert.
+    v = P.verlauf([{"follower_count": 990, "captured_at": iso(600)}],
+                  {"follower_count": 1000}, jetzt)
+    assert v["tag"] is None and v["woche"] is None, v
+    v = P.verlauf([{"follower_count": 900, "captured_at": iso(2 * 86400)},
+                   {"follower_count": 500, "captured_at": iso(8 * 86400)}],
+                  {"follower_count": 1000}, jetzt)
+    assert (v["tag"], v["woche"]) == (100, 500), v
+
+    # (4) Pruefstand: unbekannt ist nicht offline, und nicht live.
+    from nc import prueflage as L
+    L._STAND.clear()
+    t0 = 1_000_000.0
+    assert L.lage(1, True, jetzt=t0)["zustand"] == "ausstehend"
+    L.merken(1, "live", jetzt=t0)
+    L.merken(1, "unknown", jetzt=t0 + 60)
+    assert L.lage(1, True, jetzt=t0 + 120)["zustand"] == "live", \
+        "ein einzelnes unknown darf den Punkt nicht flackern lassen"
+    L.merken(1, "unknown", jetzt=t0 + L.UNSICHER_AB_S + 30)
+    la = L.lage(1, True, jetzt=t0 + L.UNSICHER_AB_S + 40)
+    assert la["zustand"] == "unbekannt", "seit >10 min nur unknown, steht aber als LIVE da"
+    assert la["sicher_vor_s"] == L.UNSICHER_AB_S + 40
+    L.merken(1, "offline", jetzt=t0 + 2000)
+    assert L.lage(1, False, jetzt=t0 + 2010)["zustand"] == "offline"
+    assert L.lage(1, False, jetzt=t0 + 2000 + L.UEBERFAELLIG_AB_S + 1)["ueberfaellig"]
+    assert not L.lage(1, False, paused=True,
+                      jetzt=t0 + 2000 + L.UEBERFAELLIG_AB_S + 1)["ueberfaellig"]
+    assert L.lage(1, False, recording=True, jetzt=t0 + 2010)["zustand"] == "rec"
+    L._STAND.clear()
+    src = open("bot.py", encoding="utf-8").read()
+    assert "_nc_prueflage.merken(tracking_id, last_status)" in src
+    assert '"pruefung": _nc_prueflage.lage(' in open(
+        "nc/routes/trackings.py", encoding="utf-8").read()
+
+    # (5) Discord: <pre> wird Codeblock, nicht Fettdruck; Entitaeten weg.
+    from nc import tgmarkdown as M
+    md = M.html_zu_md('<b>PROFIL · @a&amp;b</b>\n<pre>Follower   1.2K\nLikes *  9</pre>'
+                      '\n<a href="https://x.y/">Link &lt;1&gt;</a>'
+                      '\n<blockquote expandable>Bio\nZeile</blockquote>')
+    assert "**PROFIL · @a&b**" in md, md
+    assert "```\nFollower   1.2K\nLikes *  9\n```" in md, md
+    assert "[Link <1>](https://x.y/)" in md and "> Bio\n> Zeile" in md, md
+    assert "<" not in md.replace("<1>", ""), md
+    tabelle = "```\n" + "\n".join("Zeile %02d   %s" % (i, "x" * 40) for i in range(20)) + "\n```"
+    stuecke = M.teilen(("Kopf\n\n" + tabelle + "\n\n") * 4, 1900)
+    assert all(len(x) <= 1900 for x in stuecke)
+    assert all(x.count("```") % 2 == 0 for x in stuecke), "Codeblock zerschnitten"
+    assert "_nc_tgmd.html_zu_md(out)" in open("discordbot.py", encoding="utf-8").read()
+
+    # (6) Telegram-Report: Verhaeltnisse da, Bio-Link nur mit http(s).
+    from nc.scoring import build_report
+    rep = build_report(dict(r, bio_link="javascript:alert(1)"), {"is_live": False})
+    assert "Verhältnisse" in rep and "Business · Gaming" in rep
+    assert 'href="https://javascript:alert(1)"' in rep, "fremdes Schema im Link"
+    ok("W138: Popup holt den Scraper, Profil mit Grund/Details/Verlauf, Discord "
+       "als Markdown, unbekannt ≠ offline im Deck")
+
+
 def main():
     tmp, rid = richte_testdatenbank_ein()
     ok("db_conn aus nc.dbwrap: echtes Schema angelegt, Commit durchgelaufen")
@@ -25852,6 +25988,7 @@ def main():
     _test_v42_w135_lockfile_gegen_untergrenzen()
     _test_v42_w136_pusher_protokoll()
     _test_v42_w137_kontrast_thema()
+    _test_v42_w138_profil_und_prueflage()
     _test_v42_w60_azrael_cooldown_je_plattform()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)

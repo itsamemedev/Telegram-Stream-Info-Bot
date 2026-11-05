@@ -34,6 +34,7 @@ from nc import brainstate as _nc_brainstate
 from nc import channels as _nc_channels
 from nc import i18n as _nc_i18n
 from nc import restreamstate as _nc_rsstate
+from nc import profildetail as _nc_profil  # v4.2-W138
 from nc import tiktokheaders as _nc_tthdr
 from nc import trackingdb as _nc_trackingdb
 from nc.dbwrap import db_conn
@@ -100,6 +101,27 @@ def get_profile_snapshots(username: str, limit: int = 50) -> list:
                 (username, limit)).fetchall()
     except Exception:
         return []
+
+
+def _schnappschuesse_fuer_verlauf(username: str) -> list:
+    """v4.2-W138: je Stufe (1 Tag, 7 Tage) den juengsten Schnappschuss, der
+    mindestens so alt ist. Nicht „die letzten N": jeder Popup-Klick legt einen
+    an, und nach einem Abend Klicken waeren die letzten 200 alle juenger als
+    ein Tag — der Wochenwert verschwaende, obwohl die Daten da sind."""
+    jetzt = datetime.now(timezone.utc)
+    aus = []
+    with db_conn() as conn:
+        for tage in (1, 7):
+            grenze = (jetzt - timedelta(days=tage)).isoformat()
+            r = conn.execute(
+                "SELECT follower_count, captured_at FROM profile_snapshots "
+                "WHERE username=? AND captured_at<=? AND follower_count IS NOT NULL "
+                "ORDER BY captured_at DESC LIMIT 1",
+                (username, grenze)).fetchone()
+            if r:
+                aus.append({"follower_count": r["follower_count"],
+                            "captured_at": r["captured_at"]})
+    return aus
 
 
 async def inspect_stream_url(username: str, session=None) -> dict:
@@ -175,6 +197,49 @@ def _viewer_stats(since_ts=None):
             "points": [{"t": int(t), "v": c} for t, c in pts[-120:]]}
 
 
+def _tiktok_profil(username: str) -> dict:
+    """B60/W138: das LIVE-Profil von TikTok fuers Popup, mit Kennzahlen und
+    Verlauf. Eigener Schritt, damit api_profile unter der 100er-Stufe bleibt.
+    Graceful: schlaegt der Abruf fehl, kommt {"error": …} zurueck."""
+    tiktok_profile = None
+    try:
+        async def _fetch_tk():
+            cache_key = f"profile:{username}"
+            data = await _nc_rsstate.haken("redis_get")(cache_key)
+            # v4.2-W138: hier stand scraper_session().fetch_profile — die
+            # aiohttp-Session hat diese Methode nicht. Seit B60 endete
+            # JEDER Popup-Aufruf im AttributeError unten.
+            scraper = _c().get_scraper()
+            if data is None and scraper is not None:
+                data = await scraper.fetch_profile(username)
+                if data and data.get("ok"):
+                    await _nc_rsstate.haken("redis_set")(cache_key, data, ttl=_env_int("PROFILE_CACHE_TTL", 60))
+            return data
+        tk = _c().run_async(_fetch_tk(), timeout=20)
+        if tk and tk.get("ok"):
+            tiktok_profile = _nc_profil.felder(tk)
+            tiktok_profile["kennzahlen"] = _nc_profil.kennzahlen(tk)
+            tiktok_profile["kontotyp"] = _nc_profil.kontotyp(tk)
+            tiktok_profile["erstellt"] = _nc_profil.datum(tk.get("create_time"))
+            # Verlauf VOR dem neuen Schnappschuss lesen — sonst vergleicht
+            # er die Zahl mit sich selbst.
+            try:
+                tiktok_profile["verlauf"] = _nc_profil.verlauf(
+                    _schnappschuesse_fuer_verlauf(username), tk)
+            except Exception as e:
+                tiktok_profile["verlauf"] = None
+                _c().log.warning("Profil-Verlauf @%s: %s", username, e)
+            try: save_profile_snapshot(username, tk)
+            except Exception: pass
+        elif tk:
+            tiktok_profile = {"error": tk.get("error") or "fetch failed"}
+        else:
+            tiktok_profile = {"error": _t("Scraper nicht bereit")}
+    except Exception as e:
+        tiktok_profile = {"error": _fehler_text(e, "profil")}
+    return tiktok_profile
+
+
 @bp.route("/api/profile/<username>")
 def api_profile(username):
     """Operator-Hover-Popup: alle Tracking-Stats + Recording-History pro Username.
@@ -219,41 +284,7 @@ def api_profile(username):
             (username,)).fetchall()
     # B60: Optional das LIVE TikTok-Profil dazuladen (Avatar, Follower, Bio,
     # verified) wenn ?tiktok=1. Wird vom Dashboard-Profil-Popup genutzt.
-    # Graceful: schlägt der Fetch fehl (Netz/Rate-Limit/Scraper nicht bereit),
-    # liefern wir trotzdem die lokalen Stats + tiktok:{error}. Cache via Redis
-    # (PROFILE_CACHE_TTL, wie der /tiktok Telegram-Command) entlastet TikTok.
-    tiktok_profile = None
-    if request.args.get("tiktok") == "1":
-        try:
-            async def _fetch_tk():
-                cache_key = f"profile:{username}"
-                data = await _nc_rsstate.haken("redis_get")(cache_key)
-                if data is None and _c().scraper_session() is not None:
-                    data = await _c().scraper_session().fetch_profile(username)
-                    if data and data.get("ok"):
-                        await _nc_rsstate.haken("redis_set")(cache_key, data, ttl=_env_int("PROFILE_CACHE_TTL", 60))
-                return data
-            tk = _c().run_async(_fetch_tk(), timeout=20)
-            if tk and tk.get("ok"):
-                tiktok_profile = {
-                    "nickname":        tk.get("nickname"),
-                    "signature":       tk.get("signature"),
-                    "avatar":          tk.get("avatar"),
-                    "verified":        bool(tk.get("verified")),
-                    "private":         bool(tk.get("private")),
-                    "follower_count":  tk.get("follower_count"),
-                    "following_count": tk.get("following_count"),
-                    "heart_count":     tk.get("heart_count"),
-                    "video_count":     tk.get("video_count"),
-                }
-                try: save_profile_snapshot(username, tk)
-                except Exception: pass
-            elif tk:
-                tiktok_profile = {"error": tk.get("error") or "fetch failed"}
-            else:
-                tiktok_profile = {"error": _t("Scraper nicht bereit")}
-        except Exception as e:
-            tiktok_profile = {"error": _fehler_text(e, "profil")}
+    tiktok_profile = _tiktok_profil(username) if request.args.get("tiktok") == "1" else None
 
     return jsonify({
         "ok": True,
