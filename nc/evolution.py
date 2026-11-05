@@ -757,7 +757,7 @@ def cycle(trigger="auto"):
         with db_conn() as conn:
             conn.execute(
                 "INSERT INTO evolution_log (version, ts, summary, insights, proposals, files, "
-                "trigger) VALUES (?,?,?,?,?,?,?)",
+                "`trigger`) VALUES (?,?,?,?,?,?,?)",
                 (version, datetime.now(timezone.utc).isoformat(), summary,
                  len(insights), saved_props, files, trigger))
             conn.commit()

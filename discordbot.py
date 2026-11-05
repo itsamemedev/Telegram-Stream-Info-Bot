@@ -45,6 +45,7 @@ from nc import befehle as _nc_befehle
 from nc import discordstate as _nc_discordstate
 from nc import i18n as _nc_i18n
 from nc import tgmarkdown as _nc_tgmd   # v4.2-W138: HTML -> Discord-Markdown
+from nc import sqldialekt as _nc_sqldialekt   # v4.2-W143: Upsert in beiden Dialekten
 from nc import modheuristics as _nc_mod
 from nc import trackingdb as _nc_trackingdb
 from nc.dbwrap import db_async, db_conn
@@ -1132,9 +1133,14 @@ def _reg_daily_profil(tree):
                 gain = DISCORD_DAILY_XP + bonus
                 conn.execute(
                     "INSERT INTO discord_daily (guild_id,user_id,last_claim,streak,best_streak,total_claims) "
-                    "VALUES (?,?,?,?,?,?) ON CONFLICT(guild_id,user_id) DO UPDATE SET "
-                    "last_claim=excluded.last_claim, streak=excluded.streak, "
-                    "best_streak=excluded.best_streak, total_claims=excluded.total_claims",
+                    "VALUES (?,?,?,?,?,?) "
+                    # v4.2-W143: ON CONFLICT ist SQLite — auf MariaDB fiel der
+                    # Tagesbonus sonst still aus (nc/sqldialekt.py).
+                    + _nc_sqldialekt.bei_konflikt(
+                        DB_BACKEND, "guild_id,user_id",
+                        ["last_claim=excluded.last_claim", "streak=excluded.streak",
+                         "best_streak=excluded.best_streak",
+                         "total_claims=excluded.total_claims"]),
                     (inter.guild_id, inter.user.id, today.isoformat(), streak, best, total))
                 xprow = conn.execute("SELECT xp, level FROM discord_xp WHERE guild_id=? AND user_id=?",
                                      (inter.guild_id, inter.user.id)).fetchone()

@@ -32,6 +32,9 @@ Alles andere muss der Aufrufer backend-neutral schreiben oder selbst verzweigen.
 | `CREATE INDEX IF NOT EXISTS` | `_create_index_safe(conn, sql)` |
 | `PRAGMA table_info(t)` | `_migrate_columns(conn, t, expected)` |
 | `datetime('now','-7 days')` | Grenzwert in Python berechnen, als Parameter binden |
+| `ON CONFLICT(k) DO UPDATE SET …` | `_nc_sqldialekt.bei_konflikt(DB_BACKEND, "k", [...])` |
+| Spalte `lines`, `trigger`, `key`, `order` … | in Backticks: `` `lines` `` — auch in jeder Abfrage |
+| Zeitstempel als Index-Spalte (`{txt_long}`) | `{ts}` (→ `VARCHAR(64)` auf MariaDB) |
 
 Der letzte Punkt ist der unauffälligste: `datetime('now', ?)` sieht wie
 Parametrisierung aus und wird auch korrekt zu `%s` übersetzt — aber die
@@ -75,11 +78,31 @@ Jede neue Tabelle nutzt **alle** davon und endet auf `){tbl_opts}` — also
 der häufigste Fehler hier: der Text enthält dann wörtlich `{pk}` und die
 Tabelle entsteht nie.
 
-Im Bestand gibt es einen Block, der das nicht einhält: die F102-Community-Tabellen
-(`discord_daily`, `community_events`, ~Z. 3963–3979) sind rohes SQLite-DDL ohne
-`pk`/`tbl_opts`. Sie sind auf MariaDB nicht angelegt. Wer dort arbeitet, zieht sie
-auf das Platzhalter-Muster nach, statt das Muster daneben ein zweites Mal zu
-brechen.
+Das Schema steht seit dem Umzug in `nc/schema.py` (`create_schema`), die
+Platzhalter liefert `nc.schema.parameter(backend)` — dieselbe Tabelle für
+`init_db()` und für `tools/zu_mariadb.py`.
+
+**Bis v4.2-W143 war es auf MariaDB nie lauffähig**, und niemand hatte es gegen
+einen Server gefahren: `lines` und `trigger` sind reservierte Wörter (1064),
+und neun indizierte Spalten waren `{txt_long}` (1071, Schlüssel über 3072
+Bytes). Dazu zwei Upserts mit `ON CONFLICT`, die auf MariaDB still nie
+buchten. Der Vertrag `_test_v42_w143_mariadb_schema_und_dialekt` schneidet das
+MariaDB-Schema ohne Server mit und prüft beides statisch. **Wer am Schema
+arbeitet, fährt es einmal gegen einen echten MariaDB** — ein Schema, das nur
+SQLite gesehen hat, ist für MariaDB ungeprüft.
+
+## SQLite → MariaDB umziehen
+
+    bash tools/update.sh --mariadb          (oder geführt: bash tools/update.sh)
+    venv/bin/python tools/zu_mariadb.py --dry-run
+
+`nc/mariadbumzug.py`: Quelle nur lesend (`mode=ro`, `integrity_check`), Ziel
+muss leer sein, Export im Dialekt des Ziels, Schema anlegen, Import, **jede
+Tabelle nachzählen** — erst dann schreibt `zu_mariadb.py` `DB_BACKEND=mariadb`
+in die `.env` (vorher `.env.vor-mariadb-<zeit>`). Ob der Bot noch läuft,
+entscheidet ein offenes Handle in `/proc`, nicht die mtime: beim sauberen
+Stopp schreibt SQLite die Datei noch einmal (Checkpoint). Rückweg:
+`DB_BACKEND=sqlite`, die Datei bleibt liegen.
 
 ## Spalten nachrüsten, nicht Tabellen neu bauen
 

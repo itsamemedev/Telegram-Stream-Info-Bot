@@ -26248,6 +26248,492 @@ def _test_v42_w142_quellprobe_wege():
        "maskiert, Prozess immer beendet; Kommandozeile und Sicherungs-Randfaelle")
 
 
+# MariaDB-Schluesselwoerter, die als Spaltenname vorkommen koennten. Zwei davon
+# (`lines`, `trigger`) standen im Schema und brachen JEDEN MariaDB-Start (1064).
+_W143_RESERVIERT = {
+    "lines", "trigger", "key", "keys", "order", "group", "range", "read", "write",
+    "interval", "condition", "usage", "signal", "index", "desc", "option",
+    "release", "references", "match", "limit", "load", "lock", "change", "column",
+    "check", "default", "delete", "select", "table", "to", "update", "values",
+    "where", "with", "primary", "schema", "div", "mod", "sql", "starting",
+    "separator", "leading", "trailing", "both", "rlike", "regexp", "return",
+    "row_number", "over", "window", "recursive", "except", "intersect",
+}
+
+
+def _w143_schema_mariadb():
+    """Das Schema, wie es gegen MariaDB ginge — mitgeschnitten, ohne Server."""
+    import logging as _lg
+    from nc import schema as S
+
+    class _R:
+        def fetchall(self):
+            return []
+
+        def fetchone(self):
+            return None
+
+        def __iter__(self):
+            return iter([])
+
+    class _C:
+        def __init__(self):
+            self.sql = []
+
+        def execute(self, q, p=()):
+            self.sql.append(q)
+            return _R()
+
+        def commit(self):
+            pass
+
+        def cursor(self):
+            return self
+
+    c = _C()
+    S.anlegen(c, backend="mariadb", mariadb_db="x", log=_lg.getLogger("w143"))
+    return c.sql
+
+
+def _w143_tabellen(sqls):
+    """{tabelle: {spalte: (typ, gequotet)}} und [(tabelle, [schluesselspalten])]."""
+    import re as _re
+    spalten, schluessel = {}, []
+    for q in sqls:
+        m = _re.match(r"\s*CREATE TABLE IF NOT EXISTS\s+(\w+)\s*\((.*)\)[^)]*$", q, _re.S)
+        if m:
+            t, rumpf = m.group(1), m.group(2)
+            teile, tiefe, akt = [], 0, ""
+            for ch in rumpf:
+                tiefe += (ch == "(") - (ch == ")")
+                if ch == "," and tiefe == 0:
+                    teile.append(akt)
+                    akt = ""
+                else:
+                    akt += ch
+            teile.append(akt)
+            sp = spalten.setdefault(t, {})
+            for teil in (x.strip() for x in teile if x.strip()):
+                k = _re.match(r"(?:PRIMARY KEY|UNIQUE(?: KEY)?|KEY|INDEX)\s*\w*\s*\(([^)]*)\)",
+                              teil, _re.I)
+                if k:
+                    schluessel.append((t, [x.strip(" `").split("(")[0]
+                                           for x in k.group(1).split(",")]))
+                    continue
+                if _re.match(r"(FOREIGN|CONSTRAINT|CHECK)\b", teil, _re.I):
+                    continue
+                n = _re.match(r"(`?)(\w+)\1\s+(.*)", teil, _re.S)
+                name, typ = n.group(2), n.group(3)
+                sp[name] = (typ.split()[0].upper(), bool(n.group(1)))
+                if _re.search(r"\b(PRIMARY KEY|UNIQUE)\b", typ, _re.I):
+                    schluessel.append((t, [name]))
+            continue
+        m = _re.match(r"\s*CREATE (?:UNIQUE )?INDEX\s+\w+\s+ON\s+(\w+)\s*\(([^)]*)\)", q, _re.I)
+        if m:
+            schluessel.append((m.group(1), [x.strip(" `").split("(")[0].split()[0]
+                                            for x in m.group(2).split(",")]))
+    return spalten, schluessel
+
+
+def _test_v42_w143_mariadb_schema_und_dialekt():
+    """v4.2-W143: das MariaDB-Schema war nie lauffaehig.
+
+    Gemessen beim ersten Umzug gegen einen echten MariaDB 10.11: zwei Spalten
+    hiessen wie reservierte Woerter (`lines`, `trigger` — 1064), und neun
+    indizierte Spalten waren TEXT (1071, Schluessel zu lang). Der Bot haette
+    auf MariaDB keinen einzigen Start ueberstanden; die Verlagerung ins
+    Schema-Modul hatte das nur nie gegen einen Server gefahren. Dazu zwei
+    Upserts in reinem SQLite (`ON CONFLICT`), die auf MariaDB still nie
+    buchten. Gesichert wird hier ohne Server — die Aussagen sind statisch."""
+    import ast as _ast
+    import glob as _glob
+    import sqlite3 as _sq
+    from nc import sqldialekt as D
+
+    sqls = _w143_schema_mariadb()
+    spalten, schluessel = _w143_tabellen(sqls)
+    assert len(spalten) >= 40, "Schema-Mitschnitt zu klein: %d Tabellen" % len(spalten)
+
+    # (1) Kein Schluessel auf einer TEXT-Spalte (1071).
+    text = {"TEXT", "MEDIUMTEXT", "LONGTEXT", "BLOB"}
+    falsch = sorted({"%s.%s=%s" % (t, c, spalten[t][c][0]) for t, cols in schluessel
+                     for c in cols if t in spalten and c in spalten[t]
+                     and spalten[t][c][0] in text})
+    assert not falsch, "indizierte TEXT-Spalten (MariaDB 1071): %s" % falsch
+    assert sum(len(c) for _, c in schluessel) >= 40, "Schluessel-Erkennung erfasst zu wenig"
+
+    # (2) Kein reserviertes Wort als ungequoteter Spaltenname (1064).
+    roh = sorted("%s.%s" % (t, c) for t, sp in spalten.items() for c, (_, q) in sp.items()
+                 if c.lower() in _W143_RESERVIERT and not q)
+    assert not roh, "reservierte Spaltennamen ohne Backticks (MariaDB 1064): %s" % roh
+    assert spalten["stream_memories"]["lines"][1] and spalten["evolution_log"]["trigger"][1]
+
+    # (3) Die Platzhalter: auf SQLite bleibt alles TEXT — keine Bedeutungsaenderung.
+    from nc import schema as S
+    ps, pm = S.parameter("sqlite"), S.parameter("mariadb")
+    assert ps["ts"] == ps["txt_idx"] == ps["txt_long"] == "TEXT"
+    assert pm["ts"].startswith("VARCHAR") and pm["txt_idx"].startswith("VARCHAR")
+
+    # (4) Der Upsert-Baustein in beiden Dialekten — und die SQLite-Form laeuft.
+    assert D.bei_konflikt("sqlite", "k", ["a=excluded.a"]) == \
+        "ON CONFLICT(k) DO UPDATE SET a=excluded.a"
+    assert D.bei_konflikt("mariadb", "g,u", ["a=excluded.a", "b=b+?"]) == \
+        "ON DUPLICATE KEY UPDATE a=VALUES(a), b=b+?"
+    con = _sq.connect(":memory:")
+    con.execute("CREATE TABLE lp (k TEXT PRIMARY KEY, name TEXT, points INT)")
+    q = ("INSERT INTO lp (k, name, points) VALUES (?,?,?) "
+         + D.bei_konflikt("sqlite", "k", ["points=points+?", "name=?"]))
+    for _ in range(2):
+        con.execute(q, ("a", "n", 5, 5, "n2"))
+    assert con.execute("SELECT name, points FROM lp").fetchall() == [("n2", 10)]
+
+    # (5) Keine Schreibstelle spricht mehr ON CONFLICT am Baustein vorbei —
+    # gemessen in Zeichenketten-Tokens, nicht im Rohtext (die Kommentare
+    # nennen das Wort, W102-Lehre).
+    roh_upsert = []
+    for p in ["bot.py", "discordbot.py", "brain_bridge.py"] + _glob.glob("nc/**/*.py", recursive=True):
+        if p.replace("\\", "/") == "nc/sqldialekt.py":
+            continue
+        for n in _ast.walk(_ast.parse(open(p, encoding="utf-8").read())):
+            if isinstance(n, _ast.Constant) and isinstance(n.value, str) \
+                    and "ON CONFLICT" in n.value.upper() and "INSERT" in n.value.upper():
+                roh_upsert.append("%s:%d" % (p, n.lineno))
+    assert not roh_upsert, "ON CONFLICT am Dialekt-Baustein vorbei: %s" % roh_upsert
+    for p, tab in (("bot.py", "loyalty_points"), ("discordbot.py", "discord_daily")):
+        src = open(p, encoding="utf-8").read()
+        i = src.index("INSERT INTO %s" % tab)
+        assert "_nc_sqldialekt.bei_konflikt(" in rumpf_ab(src, i), "%s: %s ohne Baustein" % (p, tab)
+
+    # (6) Die Abfragen auf die umbenannt-gequoteten Spalten quoten ebenfalls.
+    for p in ("nc/evolution.py", "nc/routes/evolution.py", "bot.py"):
+        for n in _ast.walk(_ast.parse(open(p, encoding="utf-8").read())):
+            if isinstance(n, _ast.Constant) and isinstance(n.value, str):
+                v = n.value
+                for tab, sp in (("evolution_log", "trigger"), ("stream_memories", "lines")):
+                    if tab in v and ("SELECT" in v or "INSERT" in v) and " %s" % sp in v.replace(",", " "):
+                        raise AssertionError("%s:%d: %s.%s ungequotet" % (p, n.lineno, tab, sp))
+    ok("W143: MariaDB-Schema ohne 1064/1071, Upserts in beiden Dialekten")
+
+
+def _w143_quelle(pfad, extra=False):
+    """Eine SQLite-Quelle mit echtem Schema und ein paar Zeilen."""
+    import logging as _lg
+    from nc import dbwrap as W
+    from nc import schema as S
+    W.configure_db(db_path=pfad, backend="sqlite")
+    with W.db_conn() as c:
+        S.anlegen(c, backend="sqlite", mariadb_db="", log=_lg.getLogger("w143"))
+        for i in range(3):
+            c.execute("INSERT INTO trackings (group_id, username, created_at) VALUES (?,?,?)",
+                      (100 + i, "nutzer_%d" % i, "2026-11-05T10:00:0%d" % i))
+        c.execute("INSERT INTO evolution_log (`trigger`, ts) VALUES (?,?)", ("probe", "2026-11-05"))
+        c.execute("INSERT INTO loyalty_points (k, name, points, updated) VALUES (?,?,?,?)",
+                  ("tt:a", "A 'mit' Quote", 7, "2026-11-05"))
+        if extra:
+            c.execute("CREATE TABLE altlast (x TEXT)")
+            c.execute("INSERT INTO altlast VALUES ('weg')")
+
+
+def _test_v42_w143_umzug_kette():
+    """v4.2-W143: der Umzug als Kette — dieselbe wie gegen MariaDB, mit einer
+    zweiten SQLite-Datei als Ziel. Jede Abbruchstelle ist eine, an der vorher
+    still etwas verloren ging oder doppelt kam."""
+    import io as _io
+    import contextlib as _cl
+    import importlib.util as _iu
+    import logging as _lg
+    import os as _os
+    import stat as _st
+    import time as _t
+    from nc import dbwrap as W
+    from nc import mariadbumzug as U
+
+    alt = (W.DB_PATH, W.DB_BACKEND)
+    log = _lg.getLogger("w143")
+    d = _ph.verzeichnis()
+    try:
+        src, dst = _os.path.join(d, "quelle.db"), _os.path.join(d, "ziel.db")
+        _w143_quelle(src)
+        vorher = open(src, "rb").read()
+        aus = []
+        b = U.umziehen(sqlite_pfad=src, ziel_backend="sqlite", mariadb={"db_path": dst},
+                       log=log, ausgabe=aus.append, trotzdem_aktiv=True)
+        assert b["trocken"] is False and b["zeilen"] >= 5, b
+        q, z = U.quelle_zaehlen(src), None
+        W.configure_db(db_path=dst, backend="sqlite")
+        z = U.ziel_zaehlen(q)
+        assert U.vergleichen(q, z) == [] and z["trackings"] == 3, (q, z)
+        assert U.vergleichen({"a": 2, "b": 1}, {"a": 1, "b": 1}) == [("a", 2, 1)]
+        assert U.vergleichen({"a": 0}, {}) == [("a", 0, None)], "fehlende Tabelle gilt als gleich"
+        with W.db_conn() as c:
+            r = c.execute("SELECT name, points FROM loyalty_points").fetchone()
+        assert (r["name"], r["points"]) == ("A 'mit' Quote", 7), dict(r)
+        assert open(src, "rb").read() == vorher, "die Quelle wurde veraendert"
+
+        # (0) Haelt jemand die Quelle offen, wird nicht umgezogen — vor jedem
+        # Schreibzugriff, und ohne dass das Ziel entsteht.
+        alt_ib = U.in_benutzung
+        try:
+            U.in_benutzung = lambda pfad: True
+            try:
+                U.umziehen(sqlite_pfad=src, ziel_backend="sqlite",
+                           mariadb={"db_path": _os.path.join(d, "offen.db")}, log=log,
+                           ausgabe=aus.append)
+                raise AssertionError("Umzug lief, waehrend die Quelle offen war")
+            except U.UmzugAbgebrochen as e:
+                assert "Dienst stoppen" in str(e), e
+            assert not _os.path.exists(_os.path.join(d, "offen.db")), "Ziel trotz Abbruch angelegt"
+        finally:
+            U.in_benutzung = alt_ib
+
+        # (a) Ein nicht leeres Ziel wird nicht ueberschrieben — der zweite Lauf
+        # bricht ab, statt jede Zeile doppelt einzutragen.
+        try:
+            U.umziehen(sqlite_pfad=src, ziel_backend="sqlite", mariadb={"db_path": dst},
+                       log=log, ausgabe=aus.append, trotzdem_aktiv=True)
+            raise AssertionError("zweiter Umzug ins volle Ziel lief durch")
+        except U.UmzugAbgebrochen as e:
+            assert "nicht leer" in str(e) and "trackings=3" in str(e), e
+
+        # (b) Trockenlauf: Ziel geprueft, nichts geschrieben.
+        dst2 = _os.path.join(d, "trocken.db")
+        b = U.umziehen(sqlite_pfad=src, ziel_backend="sqlite", mariadb={"db_path": dst2},
+                       log=log, ausgabe=aus.append, trotzdem_aktiv=True, trocken=True)
+        assert b["trocken"] is True
+        W.configure_db(db_path=dst2, backend="sqlite")
+        assert all(n is None for n in U.ziel_zaehlen(q).values()), "Trockenlauf hat geschrieben"
+
+        # (c) Tabellen, die das Schema nicht kennt: Abbruch mit Abhilfe, dann
+        # bewusst ausgelassen — derselbe Zielordner ist danach weiter nutzbar.
+        src3, dst3 = _os.path.join(d, "alt.db"), _os.path.join(d, "ziel3.db")
+        _w143_quelle(src3, extra=True)
+        try:
+            U.umziehen(sqlite_pfad=src3, ziel_backend="sqlite", mariadb={"db_path": dst3},
+                       log=log, ausgabe=aus.append, trotzdem_aktiv=True)
+            raise AssertionError("unbekannte Tabelle zog still nicht mit")
+        except U.UmzugAbgebrochen as e:
+            assert "altlast" in str(e) and "--auslassen altlast" in str(e), e
+        b = U.umziehen(sqlite_pfad=src3, ziel_backend="sqlite", mariadb={"db_path": dst3},
+                       log=log, ausgabe=aus.append, trotzdem_aktiv=True, auslassen=["altlast"])
+        assert b["trocken"] is False
+
+        # (d) Kaputte und fehlende Quelle: ein Satz mit Abhilfe, kein Traceback.
+        kaputt = _os.path.join(d, "kaputt.db")
+        with open(kaputt, "wb") as f:
+            f.write(b"\x16\x03\x01\x00\x2d" + b"x" * 4096)
+        for pfad, text in ((kaputt, "nicht lesbar"), (_os.path.join(d, "nix.db"), "nicht gefunden")):
+            try:
+                U.quelle_zaehlen(pfad)
+                raise AssertionError("%s ohne Abbruch" % pfad)
+            except U.UmzugAbgebrochen as e:
+                assert text in str(e), e
+
+        # (e) „Laeuft der Bot noch?" — ein offenes Handle, nicht die mtime.
+        proc = _os.path.join(d, "proc")
+        _os.makedirs(_os.path.join(proc, "4711", "fd"))
+        _os.makedirs(_os.path.join(proc, "4712", "fd"))
+        _os.symlink(_os.path.realpath(src) + "-wal", _os.path.join(proc, "4711", "fd", "3"))
+        _os.symlink("/dev/null", _os.path.join(proc, "4712", "fd", "0"))
+        _os.makedirs(_os.path.join(proc, "self"))
+        assert U.geoeffnet_von(src, proc=proc) == [4711]
+        assert U.in_benutzung(src, proc=proc) is True
+        _os.remove(_os.path.join(proc, "4711", "fd", "3"))
+        # Frisch gestoppt heisst: Datei gerade geschrieben, aber niemand haelt
+        # sie. Die mtime-Regel verweigerte genau diesen sicheren Fall.
+        _os.utime(src, None)
+        assert U.in_benutzung(src, proc=proc) is False
+        # Ein Prozess, dessen Handles wir nicht lesen duerfen: „keiner
+        # gefunden" waere gelogen — unbekannt, also gilt die Zeitregel.
+        _os.makedirs(_os.path.join(proc, "4713", "fd"))
+        alt_fd = U._fd_ziele
+
+        def _gesperrt(fd_dir):
+            if fd_dir.endswith(_os.path.join("4713", "fd")):
+                raise PermissionError(13, "Permission denied", fd_dir)
+            return alt_fd(fd_dir)
+        try:
+            U._fd_ziele = _gesperrt
+            assert U.geoeffnet_von(src, proc=proc) is None
+            _os.symlink(_os.path.realpath(src), _os.path.join(proc, "4712", "fd", "4"))
+            assert U.geoeffnet_von(src, proc=proc) == [4712], "Fund trotz Unlesbarem verworfen"
+            _os.remove(_os.path.join(proc, "4712", "fd", "4"))
+        finally:
+            U._fd_ziele = alt_fd
+        _os.rmdir(_os.path.join(proc, "4713", "fd"))
+        _os.rmdir(_os.path.join(proc, "4713"))
+        ohne = _os.path.join(d, "kein-proc")
+        assert U.geoeffnet_von(src, proc=ohne) is None
+        m = _os.path.getmtime(src)
+        assert U.in_benutzung(src, jetzt=m + 5, proc=ohne) is True
+        assert U.in_benutzung(src, jetzt=m + U.RUHE_S + 5, proc=ohne) is False
+
+        # (f) Verbindungsrat: jede bekannte Lage mit Abhilfe.
+        mdb = {"host": "h", "port": 1, "db": "ncdb"}
+        for fehler, erwartet in (
+                (ImportError("No module named 'pymysql'"), "PyMySQL fehlt"),
+                (Exception("(1045, 'Access denied')"), "MARIADB_PASSWORD"),
+                (Exception("(1049, \"Unknown database\")"), "'ncdb'"),
+                (Exception("(2003, \"Can't connect\")"), "systemctl status mariadb"),
+                (Exception("sonstwas"), "MariaDB nicht nutzbar")):
+            assert erwartet in U._verbindungsrat(fehler, mdb), (fehler, U._verbindungsrat(fehler, mdb))
+
+        # (g) env_setzen: letzter Schluessel gewinnt, Rest unveraendert,
+        # Sicherung mit denselben Rechten, atomar (kein Rest).
+        env = _os.path.join(d, ".env")
+        with open(env, "w") as f:
+            f.write("DB_BACKEND=sqlite\nBOT_TOKEN=geheim\n# DB_BACKEND=kommentar\n"
+                    "DB_BACKEND = sqlite2\n")
+        _os.chmod(env, 0o600)
+        sich = U.env_setzen(env, {"DB_BACKEND": "mariadb", "MARIADB_HOST": "127.0.0.1",
+                                  "NICHT_IM_SATZ": "x"}, jetzt=_t.time())
+        neu = open(env).read().splitlines()
+        assert neu == ["DB_BACKEND=sqlite", "BOT_TOKEN=geheim", "# DB_BACKEND=kommentar",
+                       "DB_BACKEND=mariadb", "MARIADB_HOST=127.0.0.1"], neu
+        assert open(sich).read().startswith("DB_BACKEND=sqlite\nBOT_TOKEN=geheim")
+        assert ".vor-mariadb-" in sich
+        assert _st.S_IMODE(_os.stat(env).st_mode) == 0o600
+        assert _st.S_IMODE(_os.stat(sich).st_mode) == 0o600
+        assert not _os.path.exists(env + ".tmp-umzug")
+
+        # (h) tools/zu_mariadb.py: die .env wird NUR nach gelungenem Umzug
+        # umgestellt, das Passwort steht nie in der Ausgabe.
+        spec = _iu.spec_from_file_location("w143_zu_mariadb", "tools/zu_mariadb.py")
+        Z = _iu.module_from_spec(spec)
+        spec.loader.exec_module(Z)
+        inst = _os.path.join(d, "inst")
+        _os.makedirs(inst)
+        ienv = _os.path.join(inst, ".env")
+
+        def _env(text):
+            with open(ienv, "w") as f:
+                f.write(text)
+
+        gerufen = []
+        alt_um = Z.U.umziehen
+        try:
+            Z.U.umziehen = lambda **kw: gerufen.append(kw) or {"trocken": kw.get("trocken")}
+            _env("DB_BACKEND=sqlite\nMARIADB_PASSWORD='PW_GEHEIM_43'\nDB_PATH=bot.db\n")
+            puffer = _io.StringIO()
+            with _cl.redirect_stdout(puffer), _cl.redirect_stderr(puffer):
+                assert Z.main(["--dir", inst, "--dry-run"]) == 0
+                assert "DB_BACKEND=sqlite" in open(ienv).read(), "Trockenlauf stellte um"
+                assert Z.main(["--dir", inst, "--auslassen", "a,b"]) == 0
+            assert "PW_GEHEIM_43" not in puffer.getvalue(), "Passwort in der Ausgabe"
+            assert gerufen[-1]["sqlite_pfad"] == _os.path.join(inst, "bot.db")
+            assert gerufen[-1]["mariadb"]["password"] == "PW_GEHEIM_43"
+            assert gerufen[-1]["auslassen"] == ["a", "b"]
+            e = Z._env_lesen(ienv)
+            assert e["DB_BACKEND"] == "mariadb" and e["MARIADB_PASSWORD"] == "PW_GEHEIM_43", e
+            with _cl.redirect_stdout(puffer):
+                assert Z.main(["--dir", inst]) == 0          # schon auf MariaDB
+            _env("DB_BACKEND=sqlite\n")
+            with _cl.redirect_stderr(puffer):
+                assert Z.main(["--dir", inst]) == 2          # kein Passwort
+
+            def _bricht(**kw):
+                raise U.UmzugAbgebrochen("Grund mit Abhilfe")
+            Z.U.umziehen = _bricht
+            _env("DB_BACKEND=sqlite\nMARIADB_PASSWORD=x\n")
+            with _cl.redirect_stderr(puffer):
+                assert Z.main(["--dir", inst]) == 1
+            assert "DB_BACKEND=sqlite" in open(ienv).read(), "Abbruch stellte trotzdem um"
+            with _cl.redirect_stderr(puffer):
+                assert Z.main(["--dir", _os.path.join(d, "leer")]) == 2   # keine .env
+        finally:
+            Z.U.umziehen = alt_um
+    finally:
+        W.configure_db(db_path=alt[0], backend=alt[1])
+    ok("W143: Umzug zaehlt nach, ueberschreibt nichts, stellt die .env erst danach um")
+
+
+def _test_v42_w143_update_mariadb():
+    """v4.2-W143: update.sh fragt nach Zusatzfunktionen und zieht auf Wunsch um.
+
+    Zwei Zusagen, an denen der Rest haengt: ein Zeitplan (kein Terminal, kein
+    Schalter) loest NIE einen Umzug aus, und das Datenbank-Passwort steht nie
+    in einer Befehlszeile — auch nicht im Trockenlauf."""
+    import subprocess as _sp
+    d, ziel, proto, umg = _w123_sandbox(fehlt=())
+    with open(os.path.join(ziel, ".env"), "w") as f:
+        f.write("DB_BACKEND=sqlite\nMARIADB_PASSWORD=PW_GEHEIM_W143\n")
+    with open(os.path.join(ziel, "tiktok_bot.db"), "wb") as f:
+        f.write(b"SQLite format 3\0" + b"\0" * 100)
+
+    rc, aus = _w123_update(ziel, umg, "--dry-run")
+    assert rc == 0, (rc, aus)
+    assert "Zusatzfunktionen" in aus and "Datenbank: SQLite" in aus, aus
+    assert "zu_mariadb.py" not in aus, "ohne Schalter und ohne Terminal im Plan: Umzug"
+
+    rc, aus = _w123_update(ziel, umg, "--dry-run", "--mariadb")
+    assert rc == 0, (rc, aus)
+    assert "nc_mariadb_sql nightcrawler nightcrawler *** |" in aus, aus
+    assert "NC_MARIADB_PASSWORD=***" in aus and "zu_mariadb.py --dir %s" % ziel in aus, aus
+    assert "PW_GEHEIM_W143" not in aus, "Passwort in der Ausgabe des Trockenlaufs"
+    assert open(proto).read() == "", "Trockenlauf hat etwas ausgefuehrt: %r" % open(proto).read()
+    # PyMySQL kommt im Umzug selbst, VOR dem Stopp — nicht ueber PY_FEHLT, das
+    # nur mit --python-deps laeuft (Codex, PR #191).
+    # Das venv der Attrappe kennt pymysql bewusst NICHT — sonst hinge die
+    # Aussage davon ab, ob die pruefende Maschine es zufaellig hat.
+    vpy = os.path.join(ziel, ".venv", "bin", "python")
+    roh = open(vpy).read()
+    with open(vpy, "w") as f:
+        f.write(roh.replace('exec "', 'case "$*" in *"import pymysql"*) exit 1;; esac\nexec "', 1))
+    for schalter in (("--mariadb",), ("--mariadb", "--system")):
+        rc2, aus2 = _w123_update(ziel, umg, "--dry-run", *schalter)
+        assert rc2 == 0, (schalter, aus2)
+        i = aus2.find("-m pip install PyMySQL>=1.1.1")
+        assert 0 <= i < aus2.index("zu_mariadb.py --dir"), \
+            "%s: PyMySQL fehlt im Plan oder kommt erst nach dem Umzug" % (schalter,)
+    # Und echt, nicht nur im Plan: pip laeuft VOR dem Umzug. Die Attrappe
+    # protokolliert pip und kennt pymysql danach immer noch nicht — also
+    # muss der Umzug mit Grund abbrechen und die .env auf sqlite lassen.
+    with open(proto, "w"):
+        pass
+    cli = os.path.join(umg["PATH"], "mariadb")
+    with open(cli, "w") as f:
+        f.write("#!/bin/sh\ncat >/dev/null\nexit 0\n")
+    os.chmod(cli, 0o755)
+    rc3, aus3 = _w123_update(ziel, umg, "-y", "--mariadb")
+    p3 = open(proto).read()
+    assert "pip -m pip install PyMySQL>=1.1.1" in p3, (p3, aus3)
+    # Welcher Riegel greift, haengt an der Maschine (ohne lesbares /proc
+    # zuerst die Zeitregel, sonst das fehlende PyMySQL) — abgebrochen wird so
+    # oder so, und zwar mit Grund.
+    assert rc3 == 1 and "Umzug abgebrochen" in aus3 and "ABGEBROCHEN:" in aus3, (rc3, aus3)
+    assert "DB_BACKEND=sqlite" in open(os.path.join(ziel, ".env")).read(), "Abbruch stellte trotzdem um"
+    with open(vpy, "w") as f:
+        f.write(roh)
+
+    with open(os.path.join(ziel, ".env"), "w") as f:
+        f.write("DB_BACKEND=mariadb\n")
+    rc, aus = _w123_update(ziel, umg, "--dry-run", "--mariadb")
+    assert rc == 0 and "schon auf mariadb" in aus and "zu_mariadb.py" not in aus, aus
+
+    # Das SQL fuer Datenbank und Nutzer: Anfuehrungszeichen verdoppelt, ein
+    # zweiter Lauf gleicht nur an.
+    r = _sp.run(["bash", "-c", '. tools/lib/system.sh; nc_mariadb_sql ncdb ncnu "a\'b\\\\c"'],
+                capture_output=True, text=True, timeout=30)
+    assert r.returncode == 0, r.stderr
+    # Anfuehrungszeichen verdoppelt, Backslash verdoppelt (sonst ein Escape).
+    assert "IDENTIFIED BY 'a''b\\\\c'" in r.stdout, r.stdout
+    assert "CREATE DATABASE IF NOT EXISTS `ncdb`" in r.stdout
+    # Drei Hosts (Codex, PR #191): mit skip-name-resolve passt eine
+    # TCP-Verbindung von 127.0.0.1 nicht auf @'localhost' (1130).
+    for h in ("localhost", "127.0.0.1", "::1"):
+        assert "ALTER USER 'ncnu'@'%s'" % h in r.stdout and "TO 'ncnu'@'%s'" % h in r.stdout, h
+
+    # Der Installer schaltet nicht auf eine leere MariaDB um, wenn in SQLite
+    # schon Daten liegen — er verweist auf den Umzug.
+    inst = open("tools/installer.sh", encoding="utf-8").read()
+    i = inst.index("f_datenbank(){")
+    rumpf = inst[i:inst.index("\n}\n", i)]
+    assert '[ "$vor" != "mariadb" ] && [ -s "$_sq" ]' in rumpf, "Installer-Riegel fehlt"
+    assert "update.sh --mariadb" in rumpf
+    assert "nc_mariadb_sql" in inst and "IDENTIFIED BY" not in inst, \
+        "Installer baut das Nutzer-SQL wieder selbst"
+    ok("W143: update.sh zieht nur auf Wunsch um, nie mit Passwort in der Zeile")
+
+
 def main():
     tmp, rid = richte_testdatenbank_ein()
     ok("db_conn aus nc.dbwrap: echtes Schema angelegt, Commit durchgelaufen")
@@ -26590,6 +27076,9 @@ def main():
     _test_v42_w141_quellprobe()
     _test_v42_w142_zehn_punkte()
     _test_v42_w142_quellprobe_wege()
+    _test_v42_w143_mariadb_schema_und_dialekt()
+    _test_v42_w143_umzug_kette()
+    _test_v42_w143_update_mariadb()
     _test_v42_w60_azrael_cooldown_je_plattform()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)

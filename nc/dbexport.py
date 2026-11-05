@@ -193,7 +193,12 @@ def db_export_sql(dialect="mariadb", skip_tables=DEFAULT_SKIP,
             if not counts.get(t):
                 yield "\n"
                 continue
-            collist = ", ".join(cols)
+            # v4.2-W143: Spaltennamen in Backticks. Zwei Spalten des Schemas
+            # heissen wie MariaDB-Schluesselwoerter (`lines`, `trigger`); ohne
+            # Anfuehrung brach der Import dort mit 1064 ab — gemessen beim
+            # ersten Umzug gegen einen echten Server. SQLite liest Backticks
+            # genauso (MySQL-Kompatibilitaet), die Ausgabe bleibt fuer beide gueltig.
+            collist = ", ".join("`%s`" % c for c in cols)
             cur = conn.cursor()
             cur.execute("SELECT %s FROM %s" % (collist, t))
             rows, buf = 0, []

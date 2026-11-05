@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="docs/assets/banner.svg" alt="NIGHTCRAWLER — v4.5.2 Many-Voiced" width="100%">
+<img src="docs/assets/banner.svg" alt="NIGHTCRAWLER — v4.5.3 Many-Voiced" width="100%">
 
 ### The control room for live streaming
 #### Monitoring · Recording · Multi-target restream · AI moderation
@@ -16,7 +16,7 @@
 [![CI](https://img.shields.io/github/actions/workflow/status/itsamemedev/Telegram-Stream-Info-Bot/ci.yml?branch=main&style=for-the-badge&label=CI&logo=githubactions&logoColor=white)](../../actions/workflows/ci.yml)
 
 [![Release](https://img.shields.io/github/v/release/itsamemedev/Telegram-Stream-Info-Bot?style=for-the-badge&label=Release&logo=github&color=E8C86A&labelColor=0C0B09)](https://github.com/itsamemedev/Telegram-Stream-Info-Bot/releases/latest)
-[![Version 4.5.2 Many-Voiced](https://img.shields.io/badge/Version-4.5.2%20%C2%B7%20Many--Voiced-C9A227?style=for-the-badge&labelColor=0C0B09)](docs/CHANGELOG.md)
+[![Version 4.5.3 Many-Voiced](https://img.shields.io/badge/Version-4.5.3%20%C2%B7%20Many--Voiced-C9A227?style=for-the-badge&labelColor=0C0B09)](docs/CHANGELOG.md)
 [![CodeQL](https://img.shields.io/github/actions/workflow/status/itsamemedev/Telegram-Stream-Info-Bot/codeql.yml?branch=main&style=for-the-badge&label=CodeQL&logo=github&logoColor=white)](../../actions/workflows/codeql.yml)
 [![Contracts](https://img.shields.io/badge/Contracts-1031%20passing-success?style=for-the-badge&logo=pytest&logoColor=white)](#-tests--verification-chain)
 [![Coverage](https://img.shields.io/badge/Coverage-58%20%25%20nc%2F%20%2B%20brain%2F-yellowgreen?style=for-the-badge&logo=codecov&logoColor=white)](#-tests--verification-chain)
@@ -994,6 +994,10 @@ every route on the server, and the reason shows up in the deck and in
 **Patch 4.5.2** — ten improvements across the project: `/quelle` from your
 phone, honest check status in `/tracklist` and `/healthz`, a self-report when
 trackings fall overdue, a verified system backup, and `SHA256SUMS` on releases.
+**Patch 4.5.3** — `bash tools/update.sh` asks about what is missing
+(Prometheus, Grafana, optional packages) and on request moves the database from
+SQLite to MariaDB: counted again, only then is `.env` switched, and SQLite stays
+as the way back. Along the way the MariaDB schema was made to work — it never had.
 
 ## 🆕 New in v4.4
 
@@ -1035,7 +1039,7 @@ service.
 
 | | |
 |---|---|
-| Current version | **4.5.2** — “Many-Voiced” (2026.11) |
+| Current version | **4.5.3** — “Many-Voiced” (2026.11) |
 | Flask routes | 361 (34 in `bot.py` · 327 in `nc/routes/`) |
 | Discord slash commands | 45 |
 | Domain modules | 92 in `nc/` (+18 in `nc/routes/`, +3 in `nc/intel/`), 10 in `brain/` |
@@ -1135,7 +1139,7 @@ Third-party code and its licences:
 
 <div align="center">
 
-**NIGHTCRAWLER v4.5.2 · “Many-Voiced”**
+**NIGHTCRAWLER v4.5.3 · “Many-Voiced”**
 
 **[🌐 lafap.de](https://lafap.de)** · **[💬 Discord](https://discord.gg/psvnxm7tSV)** · **[📓 Changelog](docs/CHANGELOG.md)**
 

@@ -46,7 +46,7 @@ def api_evolution_status():
        Zähler, 'Wissens-Level' (für die Gehirn-Anzeige)."""
     try:
         with db_conn() as conn:
-            last = conn.execute("SELECT version, ts, summary, insights, proposals, files, trigger "
+            last = conn.execute("SELECT version, ts, summary, insights, proposals, files, `trigger` "
                                "FROM evolution_log ORDER BY id DESC LIMIT 1").fetchone()
             cycles = conn.execute("SELECT COUNT(*) AS n FROM evolution_log").fetchone()["n"]
             nlearned = conn.execute("SELECT COUNT(*) AS n, AVG(confidence) AS c, "
@@ -180,7 +180,7 @@ def api_evolution_history():
     """Liste der Lern-Zyklen (neueste zuerst)."""
     try:
         with db_conn() as conn:
-            rows = conn.execute("SELECT version, ts, summary, insights, proposals, files, trigger "
+            rows = conn.execute("SELECT version, ts, summary, insights, proposals, files, `trigger` "
                                "FROM evolution_log ORDER BY id DESC LIMIT 40").fetchall()
         return jsonify(ok=True, history=[
             {"version": r["version"], "ts": (r["ts"] or "")[:19], "summary": r["summary"],
