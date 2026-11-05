@@ -442,6 +442,18 @@ def _ist_hls(source_url):
     return ".m3u8" in (source_url or "").lower()      # FLV/sonstiges → else-Zweig
 
 
+def _ist_segmentiert(source_url):
+    """HLS, DASH oder fragmentiertes MP4 — Quellen aus Segmenten.
+
+    v4.2-W141: die dritte Form (nc.streamsel.ANDERE_FORMEN) traegt dieselben
+    Zeitstempel-Luecken wie TikToks HLS; ohne +genpts+igndts bricht der
+    FLV-Muxer mit 'End of file' ab (rc=187, B60) — nur eben bei einer Quelle,
+    die bis hierher gar nicht ankam. `_ist_hls` bleibt fuer die Stellen, an
+    denen es wirklich um HLS geht (aac_adtstoasc)."""
+    u = (source_url or "").lower()
+    return _ist_hls(u) or ".mpd" in u or ".mp4" in u or "cmaf" in u
+
+
 def quell_eingang(source_url):
     """Die Eingangs-Argumente fuer eine TikTok-Quelle, bis einschliesslich -i.
 
@@ -471,7 +483,7 @@ def quell_eingang(source_url):
            "-reconnect_on_network_error", "1",
            "-rw_timeout", "30000000",                    # 30s I/O-timeout (gilt für HTTP Connect+Read, versionsübergreifend)
            "-analyzeduration", "10000000", "-probesize", "15000000"]
-    if _ist_hls(source_url):
+    if _ist_segmentiert(source_url):
         # B60-Analog: HLS ohne PTS + non-monotonic DTS → +genpts erzeugt PTS,
         # +igndts ignoriert kaputte DTS, +flush_packets schreibt sofort raus.
         # -timeout komplett entfernt: älteres ffmpeg kennt die Option für HTTP/HLS

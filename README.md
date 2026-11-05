@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="docs/assets/banner.svg" alt="NIGHTCRAWLER — v4.5 Vielstimmig" width="100%">
+<img src="docs/assets/banner.svg" alt="NIGHTCRAWLER — v4.5.1 Vielstimmig" width="100%">
 
 ### Der Kontrollraum für Live-Streaming
 #### Überwachung · Aufnahme · Multi-Ziel-Restream · KI-Moderation
@@ -16,9 +16,9 @@
 [![CI](https://img.shields.io/github/actions/workflow/status/itsamemedev/Telegram-Stream-Info-Bot/ci.yml?branch=main&style=for-the-badge&label=CI&logo=githubactions&logoColor=white)](../../actions/workflows/ci.yml)
 
 [![Release](https://img.shields.io/github/v/release/itsamemedev/Telegram-Stream-Info-Bot?style=for-the-badge&label=Release&logo=github&color=E8C86A&labelColor=0C0B09)](https://github.com/itsamemedev/Telegram-Stream-Info-Bot/releases/latest)
-[![Version 4.5 Vielstimmig](https://img.shields.io/badge/Version-4.5%20%C2%B7%20Vielstimmig-C9A227?style=for-the-badge&labelColor=0C0B09)](docs/CHANGELOG.md)
+[![Version 4.5.1 Vielstimmig](https://img.shields.io/badge/Version-4.5.1%20%C2%B7%20Vielstimmig-C9A227?style=for-the-badge&labelColor=0C0B09)](docs/CHANGELOG.md)
 [![CodeQL](https://img.shields.io/github/actions/workflow/status/itsamemedev/Telegram-Stream-Info-Bot/codeql.yml?branch=main&style=for-the-badge&label=CodeQL&logo=github&logoColor=white)](../../actions/workflows/codeql.yml)
-[![Verträge](https://img.shields.io/badge/Vertr%C3%A4ge-1027%20gr%C3%BCn-success?style=for-the-badge&logo=pytest&logoColor=white)](#-tests--prüfkette)
+[![Verträge](https://img.shields.io/badge/Vertr%C3%A4ge-1029%20gr%C3%BCn-success?style=for-the-badge&logo=pytest&logoColor=white)](#-tests--prüfkette)
 [![Überdeckung](https://img.shields.io/badge/%C3%9Cberdeckung-57%20%25%20nc%2F%20%2B%20brain%2F-yellowgreen?style=for-the-badge&logo=codecov&logoColor=white)](#-tests--prüfkette)
 
 [![Telegram](https://img.shields.io/badge/Telegram-Bot-26A5E4?style=flat-square&logo=telegram&logoColor=white)](#️-bedienung)
@@ -219,9 +219,9 @@ flowchart TB
     DC --> BOT
     TT --> BOT
 
-    BOT["bot.py<br/>Monolith · 26.081 Zeilen<br/>Scraper · Recorder · Restream<br/>Flask-Dashboard · 34 eigene Routen"]:::core
+    BOT["bot.py<br/>Monolith · 26.138 Zeilen<br/>Scraper · Recorder · Restream<br/>Flask-Dashboard · 34 eigene Routen"]:::core
 
-    BOT -->|configure| NC["nc/ — 167 Fachmodule<br/>Schema · OAuth · Restream<br/>Ledger · Moderation · Intel"]:::lib
+    BOT -->|configure| NC["nc/ — 168 Fachmodule<br/>Schema · OAuth · Restream<br/>Ledger · Moderation · Intel"]:::lib
     NC --> RT["nc/routes/ — 38 Blueprints<br/>327 weitere API-Routen"]:::lib
     BOT --> TPL["templates/<br/>Dashboard · Overlay · PWA"]:::lib
     BOT --> BR["brain_bridge.py"]:::lib
@@ -854,7 +854,7 @@ gebrochen ist.**
 
 ### 🧭 Navigation im Monolithen
 
-`bot.py` hat 26.081 Zeilen. Es wird **nie** ganz gelesen und **nie**
+`bot.py` hat 26.138 Zeilen. Es wird **nie** ganz gelesen und **nie**
 blind durchsucht — erst fragen wo etwas steht, dann den Ausschnitt holen:
 
 ```bash
@@ -994,6 +994,9 @@ Die Wellen W134 bis W140, jede einzeln im [Changelog](docs/CHANGELOG.md):
   `requirements.lock.txt` mit `pip-audit` in jedem CI-Lauf, Python 3.14 in
   der CI, Dependabot; der Kick-Chat wartet bei Pusher-Ablehnung 15 Minuten statt
   zehn Sekunden.
+**Patch 4.5.1** — sieben Nutzer live und kein Restream, „weder FLV noch HLS":
+die Kette liest jetzt auch CMAF, DASH und MP4, `tools/quellprobe.py` misst auf
+dem Server jeden Weg, und der Grund steht im Deck und in `/healthz`.
 
 ## 🆕 Neu in v4.4
 
@@ -1033,10 +1036,10 @@ KI-Aufruf, eine beschädigte `brain.db` fehlte still in der Sicherung.
 
 | | |
 |---|---|
-| Aktuelle Version | **4.5** — „Vielstimmig" (2026.11) |
+| Aktuelle Version | **4.5.1** — „Vielstimmig" (2026.11) |
 | Flask-Routen | 372 (34 in `bot.py` · 338 in `nc/routes/`) |
 | Discord-Slash-Commands | 65 |
-| Fachmodule | 167 in `nc/` (+38 in `nc/routes/`, +3 in `nc/intel/`), 10 in `brain/` |
+| Fachmodule | 168 in `nc/` (+38 in `nc/routes/`, +3 in `nc/intel/`), 10 in `brain/` |
 | Sentinel-Agenten | 13 |
 | Konfigurationsvariablen | ~568 |
 | Sprachen | Deutsch (Quelle), Englisch, Spanisch |
@@ -1049,7 +1052,7 @@ Vollständige Historie: **[`docs/CHANGELOG.md`](docs/CHANGELOG.md)** ·
 ## 🧭 Roadmap
 
 Der nächste grosse Schritt ist kein Feature, sondern Aufräumen: **`bot.py` hat
-26.081 Zeilen**. Die Datei ist der Engpass des Projekts. Die Messlatte dafür ist
+26.138 Zeilen**. Die Datei ist der Engpass des Projekts. Die Messlatte dafür ist
 aber keine Zeilenzahl:
 
 > **Eine neue API-Route anlegen, ohne `bot.py` zu öffnen.**
@@ -1129,7 +1132,7 @@ Fremdcode und dessen Lizenzen: **[`docs/THIRD_PARTY_LICENSES.md`](docs/THIRD_PAR
 
 <div align="center">
 
-**NIGHTCRAWLER v4.5 · „Vielstimmig"**
+**NIGHTCRAWLER v4.5.1 · „Vielstimmig"**
 
 **[🌐 lafap.de](https://lafap.de)** · **[💬 Discord](https://discord.gg/psvnxm7tSV)** · **[📓 Changelog](docs/CHANGELOG.md)**
 

@@ -4,7 +4,7 @@ Eine einzige Wahrheit für die Versionsanzeige (Dashboard-Footer, /api/version,
 „Was ist neu"-Panel). Reine Daten + kleine Helfer, voll testbar.
 """
 
-VERSION = "4.5"
+VERSION = "4.5.1"
 CODENAME = "Vielstimmig"
 RELEASE = "2026.11"
 
@@ -23,6 +23,20 @@ def build_stamp():
 # Meilenstein-Changelog, neueste Version zuerst. highlights = kurze, ehrliche
 # Stichpunkte dessen, was die Version bringt.
 CHANGELOG = [
+    {
+        "version": "4.5.1",
+        "date": "2026-11",
+        "title": "Vielstimmig",
+        # Erste Patch-Fassung von 4.5: der Befund vom 05.11. — sieben Nutzer
+        # live, kein Restream, „weder FLV noch HLS" (W141).
+        "highlights": [
+            "Sieben Nutzer live und kein Restream, weil „weder FLV noch HLS“: die Kette kannte genau diese zwei Formen und verwarf alles andere. TikToks stream_data wird jetzt auch auf CMAF und DASH gelesen, und yt-dlp-Formate als DASH-Manifest oder MP4 werden nicht mehr weggeworfen — als letzte Quelle für Restream und Aufnahme",
+            "tools/quellprobe.py misst auf dem Server für einen Live-Nutzer jeden Weg: alle yt-dlp-Formate, die Adressen der Live-Seite, ffprobe auf jede Adresse und yt-dlp als Durchreicher — und nennt die Abhilfe",
+            "Lief nur die FLV-Adresse bald ab, verwarf der yt-dlp-Weg auch eine HLS-Adresse mit einer Stunde Laufzeit; jetzt wird einzeln gestrichen",
+            "Warum ein Restream nicht startet, steht jetzt im Deck unter dem Ziel, und /healthz zählt je Weg, woher die Adressen der letzten Stunde kamen und wie oft keine kam",
+            "Zwei verschluckte Fehler im Restream-Pfad werden gemeldet, und das Schreiben des Panel-Status läuft neben dem Event-Loop",
+        ],
+    },
     {
         "version": "4.5",
         "date": "2026-11",

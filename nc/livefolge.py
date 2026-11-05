@@ -188,7 +188,19 @@ def hat_stream_url(info) -> bool:
     sondern ein Resolver, der nichts gefunden hat.
     """
     d = info or {}
-    return bool(d.get("hls_url") or d.get("flv_url"))
+    # v4.2-W141: auch die dritte Form (cmaf/dash/mp4, siehe nc.streamsel).
+    # Ohne sie hielte der Nachschlag eine gefundene Adresse fuer "keine" und
+    # suchte weiter — und der Restream meldete "weder FLV noch HLS".
+    return bool(d.get("hls_url") or d.get("flv_url") or d.get("other_url"))
+
+
+def beste_url(info):
+    """FLV vor HLS vor der dritten Form — die eine Reihenfolge fuer den Restream.
+
+    FLV ist eine fortlaufende Verbindung, HLS eine Kette signierter Segmente
+    (W52); die dritte Form ist ungemessen und deshalb zuletzt."""
+    d = info or {}
+    return d.get("flv_url") or d.get("hls_url") or d.get("other_url") or None
 
 
 # v4.2-W119: Unter Last den Abstand dehnen — aber nur, wo es nichts kostet.

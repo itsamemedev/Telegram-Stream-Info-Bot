@@ -11,6 +11,48 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+## [4.5.1] — 2026-11-05 · „Vielstimmig"
+
+### Behoben — „keiner wird restreamt, angeblich weder FLV noch HLS" (v4.2 W141)
+
+Der Betreiber am 05.11.: 7 Nutzer live, kein Restream. Die Kette kannte genau
+zwei Formen und verwarf alles andere — auch dort, wo TikTok oder yt-dlp eine
+Adresse geliefert hatten. Zehn Punkte:
+
+1. **`stream_data` liest `cmaf` und `dash`** als letzte Quelle
+   (`nc/streamsel.ANDERE_FORMEN`). Eine Qualität nur mit der dritten Form
+   steht hinter jeder mit FLV/HLS.
+2. **yt-dlp-Formate, die weder FLV noch HLS sind** (DASH-Manifest, MP4/CMAF),
+   werden nicht mehr verworfen; nur http(s) — ein `file://` aus fremder
+   Auskunft kommt nicht in ffmpeg.
+3. **Restream, Recorder und Nachschlag** nehmen die dritte Form an
+   (`livefolge.hat_stream_url`, `beste_url`: FLV → HLS → dritte Form);
+   segmentierte Eingänge bekommen `+genpts+igndts` wie HLS (B60).
+4. **`tools/quellprobe.py @nutzer`** misst auf dem Server alle Wege: jedes
+   yt-dlp-Format, die Adressen im HTML, ffprobe auf jede Adresse und yt-dlp
+   als Durchreicher — und leitet daraus die Abhilfe ab. Zugangsdaten werden
+   maskiert, Signaturen gekürzt.
+5. **Kurzlebige Adressen einzeln streichen:** lief nur die FLV-Adresse bald
+   ab, warf der yt-dlp-Weg bisher auch eine HLS-Adresse mit einer Stunde
+   Laufzeit weg (`ytdlpurl.nur_frische`).
+6. **Der Grund steht im Deck:** ein Ziel im Zustand `error` zeigt jetzt
+   `last_error` („live, aber keine Adresse …") — die Spalte gab es, nur schrieb
+   niemand hinein.
+7. **`/healthz` → `quellen`:** je Ausgang (`api`, `html`, `ytdlp`, `keiner`)
+   die Zahl der letzten Stunde und der Anteil ohne Adresse (`nc/quellstat.py`).
+   Vorher stand das nur in gedrosselten Logzeilen — eine Drossel zeigt nicht,
+   wie oft.
+8. **Der frische Resolve im Restream** verschluckte seinen Fehler; er sah aus
+   wie „TikTok hat kein FLV". Jetzt gedrosselt gemeldet.
+9. **Der Panel-Status** fiel bei gesperrtem SQLite still aus — jetzt gemeldet.
+10. **Dieser Schreibzugriff läuft neben dem Event-Loop** (`asyncio.to_thread`),
+    an allen drei Aufrufstellen.
+
+Ob TikTok CMAF/DASH einer Datacenter-IP herausgibt, ist **nicht gemessen** —
+genau dafür ist Punkt 4 da. Zeigt die Probe, dass nur yt-dlp als Durchreicher
+Bytes liefert, ist ein yt-dlp-Zubringer für den Restream die nächste Welle.
+Mutationsproben: 12 von 12 gefangen.
+
 ## [4.5] — 2026-11-05 · „Vielstimmig"
 
 Drei Sprachen, vier Themen, Profile, die etwas sagen — und das Technologie-Audit
