@@ -26,7 +26,7 @@ benutzt, berät an der Lage vorbei.**
 
 ## Die eine Regel
 
-`bot.py` hat **26.313 Zeilen / 1,2 MB ≈ 295.000 Token**. Diese Datei wird
+`bot.py` hat **26.353 Zeilen / 1,2 MB ≈ 295.000 Token**. Diese Datei wird
 **nie** ganz gelesen und **nie** blind durchsucht. Erst fragen wo etwas steht,
 dann den Ausschnitt holen:
 
@@ -41,8 +41,8 @@ dann den Ausschnitt holen:
     python tools/ncpatch.py check                          # Templates: doppelte IDs, CSS-Bilanz
     python tools/ncpatch.py docs                           # Doku-Zahlen gegen den Quelltext
 
-`find` antwortet aus `.claude/INDEX.md` — 377 Routen (34 in `bot.py`, 338 in
-`nc/routes/`), 66 Slash-Commands, 589 Funktionen mit Zeilennummern. Nach Änderungen an Routen, Commands oder
+`find` antwortet aus `.claude/INDEX.md` — 379 Routen (34 in `bot.py`, 345 in
+`nc/routes/`), 66 Slash-Commands, 590 Funktionen mit Zeilennummern. Nach Änderungen an Routen, Commands oder
 Top-Level-Funktionen `map` neu laufen lassen. Details: Skill `nc-navigation`.
 
 Für „wer ruft das auf?" und „was ist der Typ?" ist der Sprachserver billiger als
@@ -71,9 +71,9 @@ Auf diesem Windows-Rechner heißt der Interpreter **`python`** (3.13.12);
     brain_bridge.py      Adapter Bot ↔ brain/ (M2)
     brain/               KI-Kern: state, rules, router, agents, memory,
                          semantic, knowledge, scheduler, llm, report
-    nc/                  176 Fachmodule: db, scraping, restream, oauth, ledger,
+    nc/                  178 Fachmodule: db, scraping, restream, oauth, ledger,
                          i18n, …
-    nc/routes/           39 Flask-Blueprints mit 343 weiteren API-Routen
+    nc/routes/           39 Flask-Blueprints mit 345 weiteren API-Routen
     locales/             de.json, en.json, es.json — der Übersetzungskatalog
     templates/           dashboard.html, brain.html, overlay.html, PWA
     website/             lafap_index.html (öffentliche Seite)
@@ -276,7 +276,7 @@ es gibt keinen stillen `except`, sondern ein **stilles `return`**.
 und drei ganz ohne Zeile; `_whisper_transcribe` verschluckte jeden Fehler auf
 `debug`. Ein `log.debug` erscheint in einem INFO- oder ERROR-Log **nie** —
 für den Betreiber ist ein Fehlerpfad auf `debug` dasselbe wie `pass`.
-`tools/blindstellen.py` misst diese Klasse, Bestand **478**, und wie bei
+`tools/blindstellen.py` misst diese Klasse, Bestand **479**, und wie bei
 W65/W66 wird nur das Wachstum gesperrt. Die zehn aus v4.2-W130 sind keine
 Fehlerpfade, sondern der TS-Paketleser der Sendebrücke: `None` heißt dort
 „dieses Paket trägt keinen Zeitstempel", rund 4000-mal je Sekunde. Eine
@@ -284,7 +284,10 @@ Meldung je Paket wäre die Log-Flut aus W97; die Grundlinie ist deshalb
 begründet gehoben, nicht mitgewachsen. Dasselbe gilt für die fünf aus
 v4.2-W138 in `nc/profildetail.py`: `None` heißt dort „TikTok hat dieses Feld
 nicht geliefert", und die Oberfläche lässt die Zeile weg — eine Meldung je
-fehlendem Feld je Popup-Klick wäre Rauschen, kein Befund.
+fehlendem Feld je Popup-Klick wäre Rauschen, kein Befund. Ebenso die eine
+aus v4.2-W148: `nc.durchreicher.werkzeug()` → `None` heißt „weder yt-dlp noch
+streamlink installiert", und **beide** Aufrufer sagen das laut — der Bot
+gedrosselt mit Abhilfe, das Programm auf stderr mit Exitcode 3.
 
 Auf `warning` heben allein genügt aber nicht: der Resolver läuft pro Poll und
 pro verfolgtem Nutzer, ungedrosselt wäre das Log nach einer Stunde unlesbar —
@@ -1218,7 +1221,7 @@ Ledger-Einträge sind append-only mit Hash-Kette; Korrektur = Gegenbuchung.
 
 ## Sicherheit
 
-`.env` hat rund 571 Variablen und enthält Cookies, OAuth-Tokens und Stream-Keys — sie
+`.env` hat rund 576 Variablen und enthält Cookies, OAuth-Tokens und Stream-Keys — sie
 liegt nie im Archiv und wird nie ausgegeben. Beim Logging von
 `streamlink`/`ffmpeg`-Kommandos werden Cookie-Header redacted (F4); dieser
 Redact-Pfad darf bei Änderungen an der Kommandozeile nicht umgangen werden. Das

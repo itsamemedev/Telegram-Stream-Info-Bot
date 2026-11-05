@@ -1827,8 +1827,9 @@ def _test_w23_beobachtung_und_toasts():
     app.register_blueprint(R.bp)
     regeln = [r for r in app.url_map.iter_rules() if r.endpoint != "static"]
     # ANKER GEWANDERT (v4.2-W144, nicht der Vertrag): /api/beobachtung/lage
-    # kam dazu — neun Routen.
-    assert len(regeln) == 9, sorted(str(r.rule) for r in regeln)
+    # kam dazu — neun Routen; (v4.2-W148) /api/beobachtung/dienste und
+    # /api/beobachtung/steuern — elf.
+    assert len(regeln) == 11, sorted(str(r.rule) for r in regeln)
     assert any(str(r.rule) == "/metrics" for r in regeln)
     quelle = open("nc/routes/beobachtung.py", encoding="utf-8").read()
     baum = _ast.parse(quelle)
@@ -21035,8 +21036,9 @@ def _test_v42_w112_lagebild():
             for z in k.body:
                 if isinstance(z, _ast.Assign) and getattr(z.targets[0], "id", "") == "name":
                     registriert.add(z.value.value)
-    # ANKER GEWANDERT (v4.2-W146): der Datenbank-Waechter, vierzehn.
-    assert len(registriert) == 14, registriert
+    # ANKER GEWANDERT (v4.2-W146): der Datenbank-Waechter, vierzehn;
+    # (v4.2-W148): Prometheus und Grafana, sechzehn.
+    assert len(registriert) == 16, registriert
     assert registriert == set(L.ORT), (registriert ^ set(L.ORT))
     for ort in L.ORT.values():
         assert ort.startswith("ziel:") or ort in L.STATIONEN, ort
@@ -27400,6 +27402,481 @@ def _test_v42_w146_lagebild_profi():
     ok("W146: Lagebild ohne Figur, Themenfarben, T() vor dem ersten Gebrauch")
 
 
+
+def _test_v42_w148_ausfuehrungsrecht():
+    """v4.2-W148: „sudo ./update.sh — Permission denied (os error 13)".
+
+    Zwei Ursachen, beide gesichert: im Git-Baum standen tools/update.sh,
+    deploy.sh und notify_failure.sh auf 644, und die Update-Funktion schrieb
+    JEDE Datei mit den Vorgaberechten — und fasste eine Datei mit gleichem
+    Inhalt gar nicht erst an."""
+    import os as _os
+    import stat as _stat
+    import subprocess as _sp
+    import zipfile as _zf
+    from nc import updater as U
+
+    # (1) Jedes ausfuehrbare Skript unter tools/ steht im Git-Baum auf 755.
+    # tools/lib/*.sh werden nur per `.` eingelesen und bleiben 644.
+    try:
+        zeilen = _sp.run(["git", "ls-files", "-s", "tools"], capture_output=True,
+                         text=True, timeout=30).stdout.splitlines()
+    except OSError:
+        zeilen = []
+    if zeilen:
+        falsch = []
+        for z in zeilen:
+            modus, _h, _n, pfad = z.split(None, 3)
+            if pfad.endswith(".sh") and "/lib/" not in pfad:
+                with open(pfad, "rb") as f:
+                    if f.read(2) == b"#!" and modus != "100755":
+                        falsch.append(pfad)
+        assert not falsch, "im Git-Baum nicht ausfuehrbar: %s" % falsch
+
+    # (2) Das Archiv-Recht wird gelesen, wie GitHub es ablegt (obere 16 Bit).
+    zi = _zf.ZipInfo("x/tools/a.sh")
+    zi.external_attr = (0o100755 << 16)
+    assert U.ausfuehrbar_im_archiv(zi)
+    zi.external_attr = (0o100644 << 16)
+    assert not U.ausfuehrbar_im_archiv(zi)
+    assert not U.ausfuehrbar_im_archiv(object())
+
+    if _os.name != "posix":
+        ok("W148: Ausfuehrungsrecht im Git-Baum (Dateirechte nur unter POSIX pruefbar)")
+        return
+    d = _ph.verzeichnis()
+    alt = U._CFG.root
+    try:
+        U.configure(root=d)
+        # (3) Neu und ausfuehrbar laut Archiv -> 755-artig; laut Archiv nicht
+        # -> kein x; None -> wie die bisherige Datei.
+        U._write_file("tools/a.sh", b"#!/bin/sh\n", True)
+        assert _os.stat(_os.path.join(d, "tools/a.sh")).st_mode & 0o100, "neu, aber nicht ausfuehrbar"
+        U._write_file("tools/a.sh", b"#!/bin/sh\necho\n", None)
+        assert _os.stat(_os.path.join(d, "tools/a.sh")).st_mode & 0o100, "Recht beim Ueberschreiben verloren"
+        U._write_file("tools/a.sh", b"x\n", False)
+        assert not _os.stat(_os.path.join(d, "tools/a.sh")).st_mode & 0o111
+        # (4) Gleicher Inhalt, aber 644 auf der Platte und 755 im Archiv: das
+        # ist genau der Bestand nach einem Update vor W148.
+        p = _os.path.join(d, "tools/update.sh")
+        with open(p, "wb") as f:
+            f.write(b"#!/bin/sh\n")
+        _os.chmod(p, 0o644)
+        zi = _zf.ZipInfo("repo-main/tools/update.sh")
+        zi.external_attr = (0o100755 << 16)
+        zn = _zf.ZipInfo("repo-main/nc/x.py")
+        zn.external_attr = (0o100644 << 16)
+        aus = U.rechte_angleichen([("tools/update.sh", 10, "h", zi), ("nc/x.py", 0, "h", zn)])
+        assert aus == ["tools/update.sh"], aus
+        assert _stat.S_IMODE(_os.stat(p).st_mode) == 0o755, oct(_os.stat(p).st_mode)
+        assert U.rechte_angleichen([("tools/update.sh", 10, "h", zi)]) == [], "zweimal angeglichen"
+        # Geschuetztes bleibt unberuehrt, auch wenn das Archiv x traegt.
+        e = _os.path.join(d, ".env")
+        with open(e, "w") as f:
+            f.write("A=1\n")
+        _os.chmod(e, 0o600)
+        ze = _zf.ZipInfo("repo-main/.env")
+        ze.external_attr = (0o100755 << 16)
+        assert U.rechte_angleichen([(".env", 4, "h", ze)]) == []
+        assert _stat.S_IMODE(_os.stat(e).st_mode) == 0o600
+    finally:
+        U.configure(root=alt)
+    # (5) Verdrahtet: run_update gleicht an, BEVOR „Alles aktuell" zurueckkehrt
+    # — sonst bliebe genau der gemeldete Fall liegen.
+    import ast as _ast
+    baum = _ast.parse(open("nc/updater.py", encoding="utf-8").read())
+    fn = next(n for n in baum.body if isinstance(n, _ast.FunctionDef) and n.name == "run_update")
+    aufrufe = [n.lineno for n in _ast.walk(fn) if isinstance(n, _ast.Call)
+               and getattr(n.func, "id", "") == "rechte_angleichen"]
+    frueh = [n.lineno for n in _ast.walk(fn) if isinstance(n, _ast.Constant)
+             and n.value == "Alles aktuell — keine Datei zu ersetzen."]
+    assert aufrufe and frueh and aufrufe[0] < frueh[0], (aufrufe, frueh)
+    schreib = [n for n in _ast.walk(baum) if isinstance(n, _ast.Call)
+               and getattr(n.func, "id", "") == "_write_file"]
+    assert schreib and all(len(n.args) == 3 for n in schreib), "ein _write_file ohne Archiv-Recht"
+    ok("W148: Ausfuehrungsrecht im Git-Baum, beim Schreiben und fuer unveraenderte Dateien")
+
+
+def _test_v42_w148_durchreicher():
+    """v4.2-W148: „Für die restreams werden angeblich keine links gepullt die
+    Gültigkeit haben". Gibt TikTok keine ziehbare Adresse heraus, zieht
+    yt-dlp (ersatzweise streamlink) den Stream selbst und reicht ihn an den
+    ueblichen Zubringer-ffmpeg durch."""
+    import os as _os
+    import signal as _signal
+    import subprocess as _sp
+    import sys as _sys
+    from nc import durchreicher as D
+    from nc import restreamcmd as RC
+
+    # (1) Adresse: nur gueltige TikTok-Namen, sonst kaeme ein Befehlsteil durch.
+    a = D.adresse("anna.b_1")
+    assert D.ist(a) and D.nutzer_aus(a) == "anna.b_1"
+    for boese in ("", "a b", "--exec=x", "a/../b", "x" * 65, "a;rm"):
+        try:
+            D.adresse(boese)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("angenommen: %r" % boese)
+    assert not D.ist("https://x/y.flv") and not D.ist(None)
+    try:
+        D.nutzer_aus(D.SCHEMA + "a;b")
+        raise AssertionError("nutzer_aus nahm einen ungueltigen Namen")
+    except ValueError:
+        pass
+
+    # (2) Werkzeug: yt-dlp vor streamlink, None ohne beide.
+    assert D.werkzeug(lambda n: "/x/" + n if n == "streamlink" else None) == ("streamlink", "/x/streamlink")
+    assert D.werkzeug(lambda n: "/x/yt-dlp" if n in ("yt-dlp", "streamlink") else None)[0] == "yt-dlp"
+    assert D.werkzeug(lambda n: None) is None
+
+    # (3) Befehle: nach stdout, mit Seite des Nutzers — der Proxy NIE in argv.
+    y = D.zieher_cmd("yt-dlp", "/x/yt-dlp", "anna", cookies=None)
+    assert y[0] == "/x/yt-dlp" and y[y.index("-o") + 1] == "-" and y[-1] == "https://www.tiktok.com/@anna/live"
+    assert "--cookies" not in y, "Cookie-Datei, die es nicht gibt"
+    s = D.zieher_cmd("streamlink", "/x/sl", "anna")
+    assert "--stdout" in s and s[-2:] == ["https://www.tiktok.com/@anna/live", "best"]
+    env = D.zieher_umgebung({"RECORD_PROXY": "nutzer:geheim@h:8118", "PATH": "/bin"})
+    assert env["HTTPS_PROXY"] == env["http_proxy"] == "http://nutzer:geheim@h:8118"
+    assert D.zieher_umgebung({"PATH": "/bin"}).get("HTTPS_PROXY") is None
+    assert not any("geheim" in t for t in y + s)
+
+    # (4) Der Zubringer der Bruecke: liest pipe:0, ohne -re, ohne Netz-Optionen,
+    # eingewickelt in den Durchreicher — und eine echte URL bleibt wie sie war.
+    RC.configure(
+        cookie_header=lambda: "sid=GEHEIM", pick_pull_proxy=lambda: "",
+        restream_overlay_files=lambda rid=None: {}, FFMPEG_THREADS_LIVE=3,
+        FFMPEG_THREADS_RELAY=2, RESTREAM_AVATAR="", RESTREAM_BITRATE_K=4500,
+        RESTREAM_AVATAR_ALPHA="", RESTREAM_AVATAR_H=170, RESTREAM_AVATAR_LOOP="",
+        RESTREAM_CANVAS_H=720, RESTREAM_CANVAS_W=1280, RESTREAM_FONT="",
+        RESTREAM_FPS=30, RESTREAM_LOW_LATENCY=True, RESTREAM_OVERLAY=False,
+        RESTREAM_OVERLAY_HTML_FPS=1, RESTREAM_RELAY_BITRATE_K=3500,
+        RESTREAM_RELAY_PRESET="ultrafast", RESTREAM_X264_PRESET="veryfast",
+        RESTREAM_UA="UA/1.0", TTS_CH=2, TTS_SR=44100, TTS_VOICE_GAIN="1.8")
+    z = RC.zubringer(a)
+    assert "GEHEIM" not in " ".join(z), "Cookie-Kopf in der Befehlszeile des Durchreichers"
+    assert z[0] == _sys.executable and z[1].endswith("durchreicher.py") and z[2] == "anna.b_1"
+    ff = z[z.index("--") + 1:]
+    assert ff[0] == "ffmpeg" and ff[ff.index("-i") + 1] == "pipe:0" and "-re" not in ff
+    assert ff[-1] == "pipe:1" and not any(t.startswith("-reconnect") for t in ff)
+    u = RC.zubringer("https://pull.example/live.flv")
+    assert u[0] == "ffmpeg" and "-re" in u and "durchreicher.py" not in " ".join(u)
+
+    # (5) Preflight probt keine Pseudo-Adresse per HTTP.
+    import asyncio as _aio
+    from nc import preflight as P
+    # Ohne den Riegel scheitert aiohttp an der Pseudo-Adresse, und der
+    # Preflight meldet „Weg nach aussen gestoert" — ein falscher Alarm je Start.
+    vorher = dict(P._PREFLIGHT_STATS)
+    assert _aio.run(P._preflight_url(a, "anna")) == a
+    assert dict(P._PREFLIGHT_STATS) == vorher, "Pseudo-Adresse per HTTP geprobt"
+
+    # (6) main() mit Attrappen: Aufrufpruefung, fehlendes Werkzeug, Verkettung.
+    assert D.main(["anna", "-"]) == 2
+    assert D.main(["a;b", "-", "--", "ffmpeg"]) == 2
+    assert D.main(["anna", "-", "--", "ffmpeg"], which=lambda n: None) == 3
+    gestartet = []
+
+    class _P:
+        def __init__(self, cmd, **kw):
+            self.cmd, self.kw, self.beendet = cmd, kw, False
+            self.stdout = _sp.PIPE if kw.get("stdout") is _sp.PIPE else None
+            gestartet.append(self)
+            if self.stdout is _sp.PIPE:
+                class _R:
+                    zu = False
+
+                    def close(s):
+                        s.zu = True
+                self.stdout = _R()
+
+        def poll(self):
+            return 0 if self.beendet else None
+
+        def wait(self, timeout=None):
+            self.beendet = True
+            return 7
+
+        def terminate(self):
+            self.beendet = True
+
+    alt = (_signal.getsignal(_signal.SIGTERM), _signal.getsignal(_signal.SIGINT))
+    try:
+        rc = D.main(["anna", "-", "--", "ffmpeg", "-i", "pipe:0"], popen=_P,
+                    which=lambda n: "/x/yt-dlp" if n == "yt-dlp" else None)
+    finally:
+        _signal.signal(_signal.SIGTERM, alt[0])
+        _signal.signal(_signal.SIGINT, alt[1])
+    assert rc == 7, "Exitcode nicht der des ffmpeg"
+    zieher, wandler = gestartet
+    assert zieher.cmd[0] == "/x/yt-dlp" and wandler.cmd[:2] == ["ffmpeg", "-i"]
+    assert wandler.kw["stdin"] is zieher.stdout and zieher.stdout.zu, "Leitung nicht verkettet/geschlossen"
+    assert zieher.beendet, "Zieher laeuft nach dem Ende des ffmpeg weiter"
+
+    # (7) Echt, als Programm: ein Ersatz-yt-dlp im PATH liefert Bytes, ein
+    # Ersatz-ffmpeg zaehlt sie. Der Proxy steht in der Umgebung, nicht in argv.
+    if _os.name == "posix":
+        d = _ph.verzeichnis()
+        zeuge = _os.path.join(d, "zeuge.txt")
+        yt = _os.path.join(d, "yt-dlp")
+        with open(yt, "w") as f:
+            f.write("#!%s\nimport os, sys\nopen(%r, 'w').write(repr(sys.argv) + '|' + "
+                    "os.environ.get('HTTPS_PROXY', ''))\nsys.stdout.buffer.write(b'X' * 4096)\n"
+                    % (_sys.executable, zeuge))
+        _os.chmod(yt, 0o755)
+        zaehler = [_sys.executable, "-c", "import sys; print(len(sys.stdin.buffer.read()))"]
+        r = _sp.run([_sys.executable, D.__file__, "anna", "-", "--"] + zaehler,
+                    capture_output=True, text=True, timeout=60,
+                    env=dict(_os.environ, PATH=d + _os.pathsep + _os.environ.get("PATH", ""),
+                             RECORD_PROXY="nutzer:geheim@h:8118"))
+        assert r.returncode == 0 and r.stdout.strip() == "4096", (r.returncode, r.stdout, r.stderr)
+        argv, proxy = open(zeuge).read().split("|")
+        assert "geheim" not in argv and proxy == "http://nutzer:geheim@h:8118", (argv, proxy)
+
+    # (8) Im Bot: kein beste_url -> der Durchreicher, jeder Grund laut.
+    import ast as _ast
+    src = open("bot.py", encoding="utf-8").read()
+    baum = _ast.parse(src)
+    fn = next(n for n in baum.body if isinstance(n, _ast.FunctionDef) and n.name == "_restream_durchreicher")
+    texte = [n.value for n in _ast.walk(fn) if isinstance(n, _ast.Constant) and isinstance(n.value, str)]
+    for teil in ("RESTREAM_DURCHREICHER=0", "RESTREAM_BRUECKE=0", "yt-dlp noch streamlink"):
+        assert any(teil in t for t in texte), teil
+    assert sum(1 for n in _ast.walk(fn) if isinstance(n, _ast.Attribute) and n.attr == "melden") == 2
+    rs = next(n for n in _ast.walk(baum) if isinstance(n, _ast.AsyncFunctionDef) and n.name == "_resolve_source") \
+        if any(isinstance(n, _ast.AsyncFunctionDef) and n.name == "_resolve_source" for n in _ast.walk(baum)) \
+        else next(n for n in _ast.walk(baum) if isinstance(n, _ast.FunctionDef) and n.name == "_resolve_source")
+    assert any(isinstance(n, _ast.Call) and getattr(n.func, "id", "") == "_restream_durchreicher"
+               for n in _ast.walk(rs)), "_resolve_source nutzt den Durchreicher nicht"
+    ok("W148: Durchreicher — Adresse, Befehle ohne Proxy in argv, Verkettung, Bruecke, Bot")
+
+
+def _test_v42_w148_beobachtungs_waechter():
+    """v4.2-W148: „wenn grafana und Prometheus installiert sind auch diese 2
+    extra agenten/Wächter bekommen und grafana / Prometheus vollständig
+    verwalten / steuern"."""
+    import json as _json
+    from brain.agents import GrafanaAgent, PrometheusAgent
+    from nc import beobachtungsdienst as B
+
+    # (1) Installiert heisst: URL in der .env.
+    assert B.installiert({}) == {"prometheus": False, "grafana": False}
+    assert B.installiert({"PROMETHEUS_URL": "http://x", "GRAFANA_URL": " "}) == {"prometheus": True, "grafana": False}
+
+    # (2) Prometheus-Lage gegen eine Attrappe der HTTP-API.
+    def _prom(antworten):
+        def holen(url, kopf=None):
+            for teil, (st, d) in antworten.items():
+                if teil in url:
+                    if isinstance(d, Exception):
+                        raise d
+                    return st, d if isinstance(d, str) else _json.dumps(d)
+            return 404, ""
+        return holen
+    gesund = {
+        "/-/ready": (200, "ready"),
+        "/api/v1/query": (200, {"data": {"result": [{"value": [1, "1"]}]}}),
+        "/api/v1/targets": (200, {"data": {"activeTargets": [
+            {"health": "up", "labels": {"job": "nightcrawler"}},
+            {"health": "down", "labels": {"job": "node"}, "lastError": "connection refused"}]}}),
+        "/api/v1/rules": (200, {"data": {"groups": [{"rules": [
+            {"name": "A", "health": "ok"}, {"name": "B", "health": "err", "lastError": "bad"}]}]}}),
+        "/api/v1/status/runtimeinfo": (200, {"data": {"reloadConfigSuccess": False}}),
+        "/api/v1/alerts": (200, {"data": {"alerts": [
+            {"state": "firing", "labels": {"alertname": "BotTot", "severity": "critical"},
+             "annotations": {"summary": "weg"}},
+            {"state": "pending", "labels": {"alertname": "Bald"}}]}}),
+        "/api/v1/status/tsdb": (200, {"data": {"headStats": {"numSeries": 1234}}}),
+    }
+    m = B.prometheus_lage("http://p/", holen=_prom(gesund))
+    assert m["erreichbar"] and m["liest_bot"] is True and m["config_ok"] is False and m["serien"] == 1234, m
+    assert m["ziele_aus"] == [{"job": "node", "fehler": "connection refused"}], m
+    assert [r["regel"] for r in m["regeln_aus"]] == ["B"]
+    assert [a["name"] for a in m["alarme"]] == ["BotTot"], "ein wartender Alarm zaehlt als feuernd"
+    tot = B.prometheus_lage("http://p", holen=_prom({"/-/ready": (0, ConnectionRefusedError("x"))}))
+    assert not tot["erreichbar"] and "ConnectionRefusedError" in tot["fehler"]
+    assert B.prometheus_lage("", holen=_prom({}))["fehler"] == "PROMETHEUS_URL fehlt"
+    unbekannt = dict(gesund, **{"/api/v1/query": (200, {"data": {"result": []}})})
+    assert B.prometheus_lage("http://p", holen=_prom(unbekannt))["liest_bot"] is None, "kein Abruf ist kein up=0"
+
+    # (3) Grafana-Lage: das Passwort geht nur als Basic-Kopf hinaus, nie in
+    # die Antwort.
+    gesehen = []
+
+    def _gf(url, kopf=None):
+        gesehen.append((url, kopf))
+        if url.endswith("/api/health"):
+            return 200, '{"database":"ok"}'
+        if kopf is None:
+            return 401, ""
+        if url.endswith("/api/user"):
+            return 200, "{}"
+        if "/datasources/uid/" in url:
+            return 200, '{"status":"OK"}'
+        return 404, ""
+    g = B.grafana_lage("http://g", "admin", "s3cret", holen=_gf)
+    assert g["erreichbar"] and g["db_ok"] and g["anmeldung_ok"] and g["quelle_ok"] and g["dashboard_da"] is False, g
+    assert "s3cret" not in _json.dumps(g)
+    assert all("s3cret" not in u for u, _k in gesehen)
+    ohne = B.grafana_lage("http://g", "admin", "", holen=_gf)
+    assert ohne["anmeldung_ok"] is None, "ohne Passwort eine Anmeldung behauptet"
+
+    # (4) Steuern: nur feste Befehle, immer `sudo -n`, kein Fremdteil.
+    laeufe = []
+
+    class _R:
+        def __init__(self, rc, err=""):
+            self.returncode, self.stderr, self.stdout = rc, err, ""
+
+    def _run(cmd, **kw):
+        laeufe.append(cmd)
+        return _R(0)
+    r = B.steuern("prometheus", "neu_laden", run=_run)
+    assert r["ok"] and laeufe[-1] == ["sudo", "-n", "systemctl", "reload", "nightcrawler-prometheus.service"]
+    assert not B.steuern("prometheus", "; rm -rf /", run=_run)["ok"] and len(laeufe) == 1
+    assert not B.steuern("tiktok-bot", "neu_starten", run=_run)["ok"] and len(laeufe) == 1
+    r = B.steuern("grafana", "neu_starten", run=lambda c, **k: _R(1, "sudo: a password is required"))
+    assert not r["ok"] and "observability.sh" in r["text"], r
+    for befehl in B.STEUERUNG.values():
+        assert befehl[0] == "systemctl" and befehl[1] in ("reload", "restart"), befehl
+    # Arch: der Dienst heisst grafana.service — erkannt am Drop-in von observability.sh.
+    import os as _os
+    d = _ph.verzeichnis()
+    assert B.grafana_unit(d) == "grafana-server.service"
+    _os.makedirs(_os.path.join(d, "etc/systemd/system/grafana.service.d"))
+    open(_os.path.join(d, "etc/systemd/system/grafana.service.d/nightcrawler.conf"), "w").close()
+    assert B.grafana_unit(d) == "grafana.service"
+    B.steuern("grafana", "neu_starten", run=_run, wurzel=d)
+    assert laeufe[-1][-1] == "grafana.service"
+
+    # (5) Selbstheilung: Vorgabe AN, abschaltbar.
+    alt = {k: _os.environ.get(k) for k in ("BRAIN_ACT_PROMETHEUS", "BRAIN_ACT_GRAFANA")}
+    try:
+        for k in alt:
+            _os.environ.pop(k, None)
+        assert B.selbstheilung_erlaubt("prometheus") and B.selbstheilung_erlaubt("grafana")
+        _os.environ["BRAIN_ACT_GRAFANA"] = "0"
+        assert not B.selbstheilung_erlaubt("grafana")
+        assert not B.selbstheilung_erlaubt("tiktok")
+    finally:
+        for k, v in alt.items():
+            if v is None:
+                _os.environ.pop(k, None)
+            else:
+                _os.environ[k] = v
+
+    # (6) Die Waechter: Befunde je Lage, Neustart erst in der zweiten Runde,
+    # hoechstens einmal je Ruhezeit, nie ohne Gate.
+    class _Mem:
+        def __init__(self):
+            self.m = {}
+
+        def record_metric(self, k, v):
+            self.m[k] = v
+
+    class _Hirn:
+        memory = _Mem()
+    p = PrometheusAgent(_Hirn(), lage=lambda: m)
+    f = p.run({})
+    texte = " ".join(x["text"] for x in f)
+    assert "abgelehnt" in texte and "node" in texte and "B " in texte + " " and "BotTot" in texte, texte
+    assert next(x for x in f if x.get("alarm") == "BotTot")["level"] == "crit"
+    assert _Hirn.memory.m["prometheus_series"] == 1234
+    gestartet = []
+
+    def _st(dienst, aktion):
+        gestartet.append((dienst, aktion))
+        return {"ok": True, "befehl": "systemctl restart x"}
+    weg = PrometheusAgent(_Hirn(), lage=lambda: {"erreichbar": False, "fehler": "refused"},
+                          steuern=_st, act_check=lambda n: n == "prometheus")
+    eins = weg.run({})
+    assert eins[0]["level"] == "crit" and "kein Alarm" in eins[0]["text"] and not gestartet
+    zwei = weg.run({})
+    assert gestartet == [("prometheus", "neu_starten")] and "neu gestartet" in zwei[-1]["text"], zwei
+    weg.run({})
+    assert len(gestartet) == 1, "Neustart innerhalb der Ruhezeit wiederholt"
+    gesperrt = PrometheusAgent(_Hirn(), lage=lambda: {"erreichbar": False}, steuern=_st)
+    gesperrt.run({}), gesperrt.run({})
+    assert len(gestartet) == 1, "Neustart ohne Gate"
+    gs = GrafanaAgent(_Hirn(), lage=lambda: {"erreichbar": True, "db_ok": True, "anmeldung_ok": False,
+                                             "quelle_ok": False, "dashboard_da": False})
+    gt = " ".join(x["text"] for x in gs.run({}))
+    assert "GRAFANA_ADMIN_PASSWORD" in gt and "Datenquelle" in gt and "Dashboard" in gt, gt
+    assert GrafanaAgent(_Hirn(), lage=lambda: {"erreichbar": True, "db_ok": True}).run({}) == []
+    assert PrometheusAgent(_Hirn()).run({}) == []
+    k = PrometheusAgent(_Hirn(), lage=lambda: 1 / 0).run({})
+    assert k[0]["level"] == "warn" and "ZeroDivisionError" in k[0]["text"]
+
+    # (7) Registriert nur, wenn eingerichtet.
+    import brain_bridge as BB
+    reg = []
+
+    class _Ag:
+        def register(self, a):
+            reg.append(a.name)
+
+    class _Hb:
+        agents = _Ag()
+    alt = {k: _os.environ.get(k) for k in ("PROMETHEUS_URL", "GRAFANA_URL")}
+    try:
+        for k in alt:
+            _os.environ.pop(k, None)
+        BB._register_beobachtung(_Hb())
+        assert reg == [], reg
+        _os.environ["PROMETHEUS_URL"] = "http://127.0.0.1:9099"
+        BB._register_beobachtung(_Hb())
+        assert reg == ["prometheus"], reg
+        _os.environ["GRAFANA_URL"] = "http://127.0.0.1:3000"
+        BB._register_beobachtung(_Hb())
+        assert reg == ["prometheus", "prometheus", "grafana"], reg
+    finally:
+        for k, v in alt.items():
+            if v is None:
+                _os.environ.pop(k, None)
+            else:
+                _os.environ[k] = v
+
+    # (8) Die Routen: nur Schluessel aus STEUERUNG, sonst 400; nicht
+    # eingerichtet 409 — und nie ein Befehl aus der Anfrage.
+    from flask import Flask
+    from nc.routes import beobachtung as R
+    app = Flask(__name__)
+    app.register_blueprint(R.bp)
+    alt_st = B.steuern
+    aufgerufen = []
+    try:
+        B.steuern = lambda d, a: (aufgerufen.append((d, a)) or {"ok": True, "befehl": "x"})
+        _os.environ.pop("PROMETHEUS_URL", None)
+        with app.test_client() as cl:
+            assert cl.post("/api/beobachtung/steuern", json={"dienst": "prometheus", "aktion": "rm -rf"}).status_code == 400
+            assert cl.post("/api/beobachtung/steuern", json={"dienst": "prometheus", "aktion": "neu_laden"}).status_code == 409
+            _os.environ["PROMETHEUS_URL"] = "http://127.0.0.1:1"
+            assert cl.post("/api/beobachtung/steuern", json={"dienst": "prometheus", "aktion": "neu_laden"}).status_code == 200
+            j = cl.get("/api/beobachtung/dienste").get_json()
+        assert aufgerufen == [("prometheus", "neu_laden")], aufgerufen
+        assert j["ok"] and j["installiert"]["prometheus"] and j["grafana"] is None
+        assert not j["prometheus"]["erreichbar"] and "prometheus/neu_laden" in j["steuerung"]
+    finally:
+        B.steuern = alt_st
+        if alt["PROMETHEUS_URL"] is None:
+            _os.environ.pop("PROMETHEUS_URL", None)
+        else:
+            _os.environ["PROMETHEUS_URL"] = alt["PROMETHEUS_URL"]
+
+    # (9) observability.sh legt die Steuerregel an — genau die drei Befehle,
+    # mit visudo geprueft, mit 440, und --remove nimmt sie wieder weg.
+    sh = open("tools/observability.sh", encoding="utf-8").read()
+    assert 'SUDOERS="$W/etc/sudoers.d/nightcrawler-beobachtung"' in sh
+    assert "visudo -cqf" in sh and 'install -m 440 "$_regel" "$SUDOERS"' in sh
+    assert 'reload nightcrawler-prometheus.service, %s restart nightcrawler-prometheus.service' in sh
+    assert '"$GF_PWDATEI" "$SUDOERS"; do' in sh
+    # Deck: Knoepfe schicken nur Dienst und Aktion.
+    h = open("templates/dashboard.html", encoding="utf-8").read()
+    i = h.index("async function beobSteuern(")
+    assert "apiPost('/api/beobachtung/steuern',{dienst:dienst,aktion:aktion})" in h[i:h.index("\n}", i)]
+    ok("W148: Prometheus- und Grafana-Waechter messen, heilen hinter dem Gate, Deck steuert nur feste Befehle")
+
+
 def main():
     tmp, rid = richte_testdatenbank_ein()
     ok("db_conn aus nc.dbwrap: echtes Schema angelegt, Commit durchgelaufen")
@@ -27752,6 +28229,9 @@ def main():
     _test_v42_w145_einstellungen_deck()
     _test_v42_w146_datenbank_waechter()
     _test_v42_w146_lagebild_profi()
+    _test_v42_w148_ausfuehrungsrecht()
+    _test_v42_w148_durchreicher()
+    _test_v42_w148_beobachtungs_waechter()
     _test_v42_w60_azrael_cooldown_je_plattform()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)

@@ -64,9 +64,14 @@ ORT = {
     "recovery": "ziel:aufnahme",
     "restream_sentinel": "ziel:restream",
     "datenbank": "datenbank",        # v4.2-W146: der vierzehnte
+    # v4.2-W148: der fuenfzehnte und sechzehnte — nur registriert, wenn der
+    # Dienst eingerichtet ist; die Station steht trotzdem immer.
+    "prometheus": "beobachtung",
+    "grafana": "beobachtung",
 }
 
-STATIONEN = ("kern", "datenbank", "platte", "tunnel", "abwehr", "chat", "archiv")
+STATIONEN = ("kern", "datenbank", "platte", "tunnel", "abwehr", "chat", "archiv",
+             "beobachtung")
 
 
 def restream_lage(st: dict) -> str:

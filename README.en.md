@@ -39,7 +39,7 @@
 | **For whom** | Operators who want this on **their own** hardware — one Linux server, no SaaS, no third-party platform between stream and targets |
 | **Runs on** | Ubuntu/Debian with systemd, Python 3.12–3.14, ffmpeg, streamlink, yt-dlp — database SQLite or MariaDB |
 | **Operated through** | Telegram, Discord (66 slash commands) and a web deck with four themes in German, English and Spanish — settings right in the deck |
-| **Monitoring** | 14 watchdog agents, real-time situation map, Prometheus and Grafana with alert rules |
+| **Monitoring** | 16 watchdog agents, real-time situation map, Prometheus and Grafana with alert rules |
 | **Quality** | over a thousand contracts, CI on three Python versions and against the frozen production state, `pip-audit`, CodeQL |
 | **License** | GPL-3.0-or-later |
 
@@ -62,7 +62,7 @@
 | | | |
 |---|---|---|
 | **🔍 Detect** — adaptive polling with anti-flap hysteresis; every row in the deck says when it was last checked | **⏺️ Record** — three-stage recorder (ffmpeg → streamlink → yt-dlp) with preflight, audio-track check and stall detection | **📡 Restream** — Kick, Twitch and YouTube at once, target verification against the platform APIs |
-| **🛡️ Moderate** — SENTINEL-SHIELD against doxxing and hate, deterministic and **before** any AI | **🤖 Talk along** — AZRAEL answers in three chats, reacts to the broadcast and appears in the picture | **📊 Evaluate** — deck with 377 API routes, knowledge graph, revenue journal with a hash chain, PWA |
+| **🛡️ Moderate** — SENTINEL-SHIELD against doxxing and hate, deterministic and **before** any AI | **🤖 Talk along** — AZRAEL answers in three chats, reacts to the broadcast and appears in the picture | **📊 Evaluate** — deck with 379 API routes, knowledge graph, revenue journal with a hash chain, PWA |
 
 <details>
 <summary><b>🔎 Full feature list</b></summary>
@@ -77,14 +77,14 @@
 | **Chat & moderation** | SENTINEL-SHIELD (doxxing / hate / threats) · shared moderation heuristic across Kick, Twitch, YouTube · foreign-advertising detection with an own-channel allowlist · banned words · timeout escalation |
 | **AI (AZRAEL)** | Chat answers when addressed · live reactions to the broadcast · speech output (Piper) · persona system · multi-backend: Anthropic (with key) → local llama.cpp (preferred as soon as it runs) → free APIs · budget and tier control |
 | **Brain (`brain/`)** | State machine · rule-based tier-1 decisions with a why-log · long-term memory · knowledge graph (triple store) · semantic search · forecasts · weekly report |
-| **Sentinel fleet** | 14 watchdog agents (health, recovery, scout, analytics, learning, sentinel, disk, swap, restream, toxicity, uptime, recording, proxy, datenbank) with Telegram alarms, individually switchable |
+| **Sentinel fleet** | 16 watchdog agents (health, recovery, scout, analytics, learning, sentinel, disk, swap, restream, toxicity, uptime, recording, proxy, datenbank, prometheus, grafana) with Telegram alarms, individually switchable |
 | **Community** | Recognition of regular viewers · loyalty points & ranks · Discord XP, levels, daily streak · live ping · highlight share · community events |
 | **Money** | Donation telemetry (estimates) · separate revenue journal (`nc/ledger.py`) with a hash chain and CSV export for the tax office |
-| **Dashboard** | 377 Flask routes · live panels · brain visualisation with a learning curve · overlay for OBS · installable PWA (Android) · QR login |
+| **Dashboard** | 379 Flask routes · live panels · brain visualisation with a learning curve · overlay for OBS · installable PWA (Android) · QR login |
 | **Operations** | systemd service · deploy script with pre-check and auto-rollback · self-test route · dead-man's report on process death · CrowdSec integration · log redaction for cookies and stream keys |
 | **Multilingual** | German, English and Spanish, switchable in the dashboard · `UI_LANG` for the bot · browser language detection · translation catalogue in `locales/` |
 | **Database** | SQLite **or** MariaDB · move with `update.sh --mariadb`, counted again · central schema module · export tool · database watchdog |
-| **Settings** | “Settings” tab in the deck: all ~571 variables searchable, stored in the database, protected keys only from `.env` |
+| **Settings** | “Settings” tab in the deck: all ~576 variables searchable, stored in the database, protected keys only from `.env` |
 | **Monitoring** | `/metrics` for Prometheus · Grafana dashboard with every metric · 16 alert rules with tests · set up with `tools/observability.sh` |
 
 </details>
@@ -121,10 +121,10 @@ flowchart TB
     TG["📨 Telegram"]:::ein --> BOT
     DC["🎮 Discord<br/>66 slash commands"]:::ein --> BOT
     TT["🎥 TikTok<br/>live detection + chat"]:::ein --> BOT
-    BOT["bot.py<br/>monolith · 26,313 lines<br/>scraper · recorder · restream<br/>Flask deck · 34 own routes"]:::core
-    BOT -->|configure| NC["nc/ — 176 domain modules<br/>39 blueprints"]:::lib
+    BOT["bot.py<br/>monolith · 26,353 lines<br/>scraper · recorder · restream<br/>Flask deck · 34 own routes"]:::core
+    BOT -->|configure| NC["nc/ — 178 domain modules<br/>39 blueprints"]:::lib
     BOT --> BR["brain_bridge.py"]:::lib
-    BR --> BRAIN["brain/ — own brain.db<br/>rules · memory · knowledge graph<br/>14 watchdog agents"]:::brain
+    BR --> BRAIN["brain/ — own brain.db<br/>rules · memory · knowledge graph<br/>16 watchdog agents"]:::brain
     BOT --> DB[("SQLite or MariaDB<br/>+ settings")]:::db
     BOT --> PROM["/metrics → Prometheus → Grafana"]:::lib
     BOT --> OUT["🟢 Kick · 🟣 Twitch · 🔴 YouTube"]:::out
@@ -206,7 +206,7 @@ nothing and triggers nothing; a schedule never silently moves a database.
 
 ## ⚙️ Settings
 
-**In the deck, tab “Settings”.** All of the roughly 571 variables from
+**In the deck, tab “Settings”.** All of the roughly 576 variables from
 `.env.example` with group, default and description, searchable. Every row says
 where the value comes from — *set in the deck*, *from .env* or *default*. Values
 are stored in the database (SQLite or MariaDB) and take precedence over `.env`
@@ -407,7 +407,7 @@ switched off individually. AZRAEL answers through Anthropic (with a key),
 locally through llama.cpp as soon as it runs, otherwise through free APIs —
 with budget and tier control.
 
-### 🛰️ The 14 watchdogs
+### 🛰️ The 16 watchdogs
 
 | Agent | Watches | Agent | Watches |
 |---|---|---|---|
@@ -418,6 +418,7 @@ with budget and tier control.
 | `learning` | learning progress of the knowledge graph | `proxy` | TikTok fetch success, 403 blocks |
 | `sentinel` | CrowdSec, blind defence | `swap` | swap usage, with OOM protection |
 | `disk` | disk space, hours until full | `datenbank` | response time, growth, journal, schema |
+| `prometheus` | the alert hub itself: reachable, scrapes the bot, rules, firing alerts — restarts it | `grafana` | login, data source, dashboard — restarts it |
 
 Every agent runs isolated — a dead one can never stop the tick. Switch off:
 `BRAIN_AGENT_<NAME>=0`.
@@ -546,8 +547,8 @@ python3 -m pytest -k w145          # one wave on its own
 python3 tools/ncpatch.py find "donations"      # where is something in bot.py?
 ```
 
-`bot.py` has 26,313 lines and is never read in full — the navigation map
-`.claude/INDEX.md` knows 377 routes and 589 functions with line numbers. Before
+`bot.py` has 26,353 lines and is never read in full — the navigation map
+`.claude/INDEX.md` knows 379 routes and 590 functions with line numbers. Before
 every pull request the full verification chain from
 **[`docs/en/CONTRIBUTING.md`](docs/en/CONTRIBUTING.md)** runs: lint, templates,
 documentation figures, locks against silent failure paths and giant functions,
@@ -575,7 +576,10 @@ deploy/      Prometheus, Grafana, alert rules      docs/      guides, changelog
   schema never worked before and does now.
 - **Prometheus and Grafana complete:** every metric a panel, 16 alert rules,
   a generated password instead of admin/admin, entries in `.env`.
-- **The 14th watchdog** watches the database.
+- **Three new watchdogs:** one for the database, one each for Prometheus and
+  Grafana — restarting them when they hang.
+- **Restream without a pullable address:** the pass-through lets yt-dlp fetch the stream itself.
+- **`update.sh` stays executable** — even after an update from the deck.
 - **The situation map redrawn** — a control room instead of a figure, readable
   in every theme.
 - **`update.sh` asks** about what is missing.
@@ -591,11 +595,11 @@ Every wave on its own: **[`docs/CHANGELOG.md`](docs/CHANGELOG.md)**.
 | | |
 |---|---|
 | Current version | **4.6** — “Control Room” (2026.11) |
-| Flask routes | 377 (34 in `bot.py` · 343 in `nc/routes/`) |
+| Flask routes | 379 (34 in `bot.py` · 345 in `nc/routes/`) |
 | Discord slash commands | 66 |
-| Domain modules | 176 in `nc/` (+39 in `nc/routes/`, +3 in `nc/intel/`), 10 in `brain/` |
+| Domain modules | 178 in `nc/` (+39 in `nc/routes/`, +3 in `nc/intel/`), 10 in `brain/` |
 | Sentinel agents | 14 |
-| Configuration variables | ~571 |
+| Configuration variables | ~576 |
 | Languages | German (source), English, Spanish |
 
 Next big step: keep taking `bot.py` apart — **[`docs/en/ROADMAP.md`](docs/en/ROADMAP.md)**.

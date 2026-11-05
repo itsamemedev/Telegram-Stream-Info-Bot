@@ -6246,7 +6246,8 @@ VIEW_LOADERS.system = async function(){
       <div class="panel mt">
         <div class="head"><h3>▚ Prometheus &amp; Grafana</h3><span class="tag">/metrics · alerts</span>
           <div class="spacer"></div><span class="btn" id="bo_pruefen" onclick="loadBeobachtung()">↻ Prüfen</span></div>
-        <div class="body"><div id="bo_body" class="faint" style="font-size:12px;line-height:1.9">…</div></div>
+        <div class="body"><div id="bo_body" class="faint" style="font-size:12px;line-height:1.9">…</div>
+          <div id="bo_dienst" class="faint" style="font-size:12px;line-height:1.9;margin-top:10px"></div></div>
       </div>
       <div class="panel mt">
         <div class="head"><h3>▚ Live-Log</h3><span class="tag" id="lg_file">debug.log</span>
@@ -6968,6 +6969,46 @@ async function loadBeobachtung(){
   }
   if(g.grund) teile.push('<span class="muted">'+esc(g.grund)+'</span>');
   el.innerHTML=teile.join('<br>');
+  loadBeobDienste();
+}
+/* v4.2-W148: was die beiden Waechter sehen, und die drei Steuerknoepfe.
+   Die Befehle stehen fest im Server (nc/beobachtungsdienst.STEUERUNG) —
+   der Knopf schickt nur Dienst und Aktion. */
+async function loadBeobDienste(){
+  const el=$('#bo_dienst'); if(!el) return;
+  const d=await apiGet('/api/beobachtung/dienste');
+  if(!d||d.__neterr||!d.ok){ el.textContent=T('Wächterlage nicht abrufbar'); return; }
+  const ja=(v)=>v===true?'<b style="color:var(--neon)">'+esc(T('ja'))+'</b>'
+    :(v===false?'<b style="color:var(--magenta)">'+esc(T('nein'))+'</b>':'<span class="muted">—</span>');
+  const knopf=(di,ak,txt)=>'<span class="btn" onclick="beobSteuern(\''+di+'\',\''+ak+'\')">'+esc(txt)+'</span>';
+  const t=[];
+  const p=d.prometheus;
+  if(p){
+    t.push('<b>'+esc(T('Prometheus-Wache'))+'</b> · '+esc(T('erreichbar'))+' '+ja(p.erreichbar)
+      +' · '+esc(T('liest den Bot'))+' '+ja(p.liest_bot)+' · '+esc(T('Konfiguration angenommen'))+' '+ja(p.config_ok)
+      +(p.serien!=null?' · '+esc(T('Serien'))+' <span style="font-family:var(--mono)">'+esc(String(p.serien))+'</span>':''));
+    (p.alarme||[]).forEach(a=>t.push('<span style="color:'+(a.schwere==='critical'?'var(--magenta)':'var(--amber)')+'">⚑ '
+      +esc(a.name)+'</span> <span class="muted">'+esc(a.text||'')+'</span>'));
+    (p.ziele_aus||[]).forEach(z=>t.push('<span style="color:var(--amber)">'+esc(T('Abrufziel aus'))+': '+esc(z.job)+'</span> <span class="muted">'+esc(z.fehler||'')+'</span>'));
+    (p.regeln_aus||[]).forEach(r=>t.push('<span style="color:var(--amber)">'+esc(T('Regel scheitert'))+': '+esc(r.regel)+'</span> <span class="muted">'+esc(r.fehler||'')+'</span>'));
+    if(p.erreichbar && !(p.alarme||[]).length) t.push('<span class="muted">'+esc(T('Kein Alarm feuert.'))+'</span>');
+    t.push(knopf('prometheus','neu_laden',T('Konfiguration neu laden'))+' '+knopf('prometheus','neu_starten',T('Prometheus neu starten')));
+  }
+  const g=d.grafana;
+  if(g){
+    t.push('<b>'+esc(T('Grafana-Wache'))+'</b> · '+esc(T('erreichbar'))+' '+ja(g.erreichbar)
+      +' · '+esc(T('Datenbank'))+' '+ja(g.db_ok)+' · '+esc(T('Anmeldung'))+' '+ja(g.anmeldung_ok)
+      +' · '+esc(T('Datenquelle'))+' '+ja(g.quelle_ok)+' · '+esc(T('Dashboard'))+' '+ja(g.dashboard_da));
+    t.push(knopf('grafana','neu_starten',T('Grafana neu starten')));
+  }
+  if(!p && !g) t.push('<span class="muted">'+esc(T('Keiner der beiden ist eingerichtet — die Wächter bleiben aus. Einrichten: sudo bash tools/observability.sh'))+'</span>');
+  el.innerHTML=t.join('<br>');
+}
+async function beobSteuern(dienst,aktion){
+  if(!confirm(T('Diesen Befehl auf dem Server ausführen?')+'\n\n'+dienst+' · '+aktion)) return;
+  const d=await apiPost('/api/beobachtung/steuern',{dienst:dienst,aktion:aktion});
+  toast(d&&d.ok?(T('Ausgeführt')+': '+d.befehl):((d&&d.error)||T('Steuerung fehlgeschlagen')), d&&d.ok?'ok':'err');
+  setTimeout(loadBeobachtung, 3000);
 }
 async function loadLogtail(){
   const lv=($('#lg_level')&&$('#lg_level').value)||'debug';
@@ -12407,11 +12448,12 @@ var ncLagebild=(function(){
       reduce=!!(mq&&mq.matches), daten=null, fehlt=false, maus=null, gebunden=false,
       versatz=0, einsaetze=[], zeilen={};
   var AG={}, ZI={};
-  /* v4.2-W146: sieben Stationen im gleichmaessigen Sechseck um den Kern —
-     die Datenbank (vierzehnter Waechter) unten, gegenueber der Abwehr. */
-  var STAT={kern:{a:0,r:0},abwehr:{a:-1.5708,r:0.56},tunnel:{a:-0.5236,r:0.56},
-    chat:{a:0.5236,r:0.56},datenbank:{a:1.5708,r:0.56},archiv:{a:2.618,r:0.56},
-    platte:{a:-2.618,r:0.56}};
+  /* v4.2-W148: sieben Aussenstationen im gleichmaessigen Siebeneck um den
+     Kern (Schritt 2π/7), die Abwehr oben; die Beobachtung (Prometheus und
+     Grafana, fuenfzehnter und sechzehnter Waechter) neben der Datenbank. */
+  var STAT={kern:{a:0,r:0},abwehr:{a:-1.5708,r:0.56},tunnel:{a:-0.6732,r:0.56},
+    chat:{a:0.2244,r:0.56},datenbank:{a:1.1220,r:0.56},beobachtung:{a:2.0196,r:0.56},
+    archiv:{a:2.9172,r:0.56},platte:{a:-2.4684,r:0.56}};
   /* Texte als wörtliche T('…')-Aufrufe (CLAUDE.md, W101); je Datenstand neu
      gebaut, weil der Katalog erst nach diesem Skript lädt. */
   var NAMEN={},LAGE={},STL={},RSL={};
@@ -12420,12 +12462,13 @@ var ncLagebild=(function(){
       swap:T('Auslagerung'),disk:T('Plattenplatz'),proxy:T('Tunnelwache'),
       toxicity:T('Toxizität'),analytics:T('Auswertung'),learning:T('Lernende'),
       scout:T('Späher'),sentinel:T('Abwehrwache'),recording:T('Aufnahmewache'),
-      restream_sentinel:T('Restream-Wache'),datenbank:T('Datenbankwache')};
+      restream_sentinel:T('Restream-Wache'),datenbank:T('Datenbankwache'),
+      prometheus:T('Prometheus-Wache'),grafana:T('Grafana-Wache')};
     LAGE={ruht:T('bereit'),taetig:T('im Einsatz'),fehler:T('Fehler'),aus:T('abgeschaltet'),
       ueber:T('überfällig')};
     RSL={gesund:T('Restream gesund'),langsam:T('Restream langsam'),gestoert:T('Restream gestört')};
     STL={kern:T('KERN'),platte:T('PLATTE'),tunnel:'TUNNEL',chat:'CHAT',archiv:T('ARCHIV'),abwehr:T('ABWEHR'),
-      datenbank:T('DATENBANK')};
+      datenbank:T('DATENBANK'),beobachtung:T('BEOBACHTUNG')};
   }
   function C(v,f){return ncCssVar(v)||f;}
   /* Hilfslinie in der Textfarbe des Themas mit Deckkraft a — auf Dunkel wie

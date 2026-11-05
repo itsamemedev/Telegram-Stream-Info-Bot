@@ -859,6 +859,7 @@ from nc.scoring import build_report  # noqa: F401
 from nc import prueflage as _nc_prueflage    # v4.2-W138: Pruefstand je Tracking
 from nc import quellstat as _nc_quellstat    # v4.2-W141: Herkunft der Stream-Adressen
 from nc import dbgesundheit as _nc_dbgesund  # v4.2-W146: Datenbank-Waechter
+from nc import durchreicher as _nc_durch     # v4.2-W148: Restream ohne eigene Adresse
 from nc import quellprobe as _nc_quellprobe  # v4.2-W142: /quelle ‹name›
 from nc import sicherungspruefung as _nc_sicherung  # v4.2-W142: Backup brauchbar?
 from nc import sqldialekt as _nc_sqldialekt   # v4.2-W143: Upsert in beiden Dialekten
@@ -14325,6 +14326,13 @@ class RestreamManager:
                 andere = andere or fresh.get("other_url")
         url = _nc_live.beste_url({"flv_url": flv, "hls_url": hls, "other_url": andere})
         if not url:
+            # v4.2-W148: der Durchreicher — yt-dlp (ersatzweise streamlink)
+            # zieht den Stream selbst, auch wenn TikTok keine Adresse
+            # herausgibt, die ein fremdes ffmpeg ziehen darf. Nur ueber die
+            # Sendebruecke: dort ist der Zubringer ein eigener Prozess.
+            durch = _restream_durchreicher(username)
+            if durch:
+                return durch, None
             return None, "keine spielbare Quell-URL (weder FLV noch HLS noch CMAF/DASH)"
         if not flv and hls:
             log.info("Restream @%s: kein FLV verfügbar → HLS+Transcode. Für FLV ggf. "
@@ -24936,6 +24944,38 @@ def _brain_moderation_snap():
     return _nc_modstats.verdichte(
         list(_tripel(rows1)), list(_tripel(rows0)),
         erlaubt=_nc_modstats.quellen(os.getenv("MOD_TREND_PLATTFORMEN") or None))
+
+
+def _restream_durchreicher(username):
+    """v4.2-W148: die Durchreicher-Adresse fuer @username — oder None, wenn
+    der Weg hier nicht geht (abgeschaltet, keine Bruecke, kein Zieher).
+    Jeder Grund steht gedrosselt im Log: ein Restream, der ohne Adresse
+    nicht anlaeuft, soll sagen, warum auch dieser Weg ausfiel."""
+    if (os.getenv("RESTREAM_DURCHREICHER", "1") or "1").strip().lower() in ("0", "false", "no", "off"):
+        grund = "abgeschaltet (RESTREAM_DURCHREICHER=0)"
+    elif not _nc_rscfg.bruecke(False)[0]:
+        grund = "die Sendebruecke ist aus (RESTREAM_BRUECKE=0) — der Durchreicher braucht sie"
+    elif not _nc_durch.werkzeug():
+        grund = "weder yt-dlp noch streamlink installiert — sudo bash tools/update.sh"
+    else:
+        try:
+            adr = _nc_durch.adresse(username)
+        except ValueError as e:
+            grund = str(e)
+        else:
+            laut, unterdr = _nc_meldetakt.melden("restream-durchreicher", "benutzt",
+                                                 _time_mod.monotonic())
+            if laut:
+                log.warning("Restream @%s: keine ziehbare Adresse (FLV/HLS/CMAF/DASH) — "
+                            "%s reicht den Stream durch (Durchreicher). Bricht er ab, "
+                            "misst /quelle %s, welcher Weg traegt.%s", username,
+                            _nc_durch.werkzeug()[0], username, _nc_meldetakt.zusatz(unterdr))
+            return adr
+    laut, unterdr = _nc_meldetakt.melden("restream-durchreicher", grund, _time_mod.monotonic())
+    if laut:
+        log.warning("Restream @%s: auch der Durchreicher geht nicht — %s.%s",
+                    username, grund, _nc_meldetakt.zusatz(unterdr))
+    return None
 
 
 def _brain_db_health():

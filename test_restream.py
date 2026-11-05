@@ -3273,12 +3273,13 @@ def test_v40_w4_website():
 
     web = open("website/lafap_index.html", encoding="utf-8").read()
     # ALLE Sentinel-Agenten gelistet + für Live-Status attribuiert (W86: +swap;
-    # ANKER GEWANDERT v4.2-W146: +datenbank, vierzehn).
+    # ANKER GEWANDERT v4.2-W146: +datenbank, vierzehn; v4.2-W148:
+    # +prometheus, +grafana, sechzehn).
     for name in ("health", "recovery", "scout", "analytics", "learning", "sentinel",
                  "toxicity", "uptime", "restream_sentinel", "disk", "recording", "proxy",
-                 "swap", "datenbank"):
+                 "swap", "datenbank", "prometheus", "grafana"):
         assert 'data-agent="' + name + '"' in web, "Agent fehlt auf der Website: " + name
-    assert web.count('class="agent" data-agent') == 14, "Flotte nicht vollständig (14)"
+    assert web.count('class="agent" data-agent') == 16, "Flotte nicht vollständig (16)"
     assert 'id="agents-status"' in web and "von " in web, "kein Live-Zähler der Flotte"
     assert ".inactive" in web, "kein Inaktiv-Zustand für Agenten"
     # zweiter Chart + Verdrahtung.

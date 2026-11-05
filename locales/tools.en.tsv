@@ -892,3 +892,8 @@ Grafana-Passwort liess sich nicht setzen — es bleibt beim bisherigen. Von Hand
 PROMETHEUS_URL fehlt in der .env.	PROMETHEUS_URL is missing from .env.
 PROMETHEUS_URL liess sich nicht in die .env schreiben.	Could not write PROMETHEUS_URL to .env.
 Passwortdatei %s nicht schreibbar.	Password file %s is not writable.
+Der Bot laeuft als root (oder der Besitzer ist unbekannt) — keine Steuerregel noetig.	The bot runs as root (or its owner is unknown) — no control rule needed.
+Steuerregel	Control rule
+Steuerregel fuer %s: %s	Control rule for %s: %s
+Steuerregel unveraendert: %s	Control rule unchanged: %s
+visudo lehnt die Steuerregel ab — nicht eingetragen (sudo bleibt unberuehrt).	visudo rejects the control rule — not installed (sudo stays untouched).

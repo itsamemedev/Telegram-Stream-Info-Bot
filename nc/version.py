@@ -27,15 +27,19 @@ CHANGELOG = [
         "version": "4.6",
         "date": "2026-11",
         "title": "Leitstand",
-        # v4.6 traegt W144 bis W146: alles im Deck einstellbar, alles
+        # v4.6 traegt W144 bis W148: alles im Deck einstellbar, alles
         # beobachtet — Einstellungen in der Datenbank, Prometheus/Grafana
-        # vollstaendig, der Datenbank-Waechter und das neue Lagebild.
+        # vollstaendig und bewacht, der Datenbank-Waechter, das neue
+        # Lagebild, der Durchreicher und das Ausfuehrungsrecht beim Update.
         "highlights": [
             "Einstellungen im Deck: alle rund 571 Variablen durchsuchbar, gespeichert in der Datenbank und vor der .env geladen — Zugang, Befehle, Pfade und die Datenbank-Verbindung bleiben geschützt in der .env",
             "Prometheus und Grafana vollständig: jeder Messwert hat ein Panel, 16 Alarmregeln mit Tests, die .env trägt PROMETHEUS_URL und GRAFANA_*, und Grafana bekommt ein erzeugtes Passwort statt admin/admin",
             "Der vierzehnte Wächter beobachtet die Datenbank — Antwortzeit, Zuwachs, Journal, Schema und ob die Einstellungen geladen wurden",
             "Das Lagebild der Übersicht neu gezeichnet: Kern, sieben Stationen mit Status-LED, Wächter an festen Plätzen — in jedem Thema lesbar und ab dem ersten Laden sichtbar",
             "Log-Verluste sind für /healthz und Prometheus sichtbar; vorher stand der Zähler Millisekunden nach dem Verlust wieder auf 0",
+            "Zwei neue Wächter für Prometheus und Grafana: sie melden feuernde Alarme, gescheiterte Regeln und eine leere Datenquelle, starten einen hängenden Dienst neu, und das Deck steuert beide über drei feste Befehle",
+            "Restream ohne ziehbare Adresse: gibt TikTok weder FLV noch HLS heraus, holt yt-dlp den Stream selbst und reicht ihn an die Sendebrücke durch",
+            "sudo ./update.sh scheiterte mit „Permission denied“: die Update-Funktion übernimmt jetzt das Ausführungsrecht aus dem Archiv und setzt es auch für unveränderte Dateien",
         ],
     },
     {

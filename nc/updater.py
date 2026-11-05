@@ -553,13 +553,64 @@ def list_backups() -> list:
     return out
 
 
-def _write_file(rel: str, data: bytes):
+def ausfuehrbar_im_archiv(info) -> bool:
+    """Traegt der ZIP-Eintrag ein Ausfuehrungsrecht? GitHub legt den
+    Unix-Modus aus dem Git-Baum in die oberen 16 Bit von external_attr."""
+    return bool(((getattr(info, "external_attr", 0) or 0) >> 16) & 0o111)
+
+
+def _write_file(rel: str, data: bytes, ausfuehrbar=None):
+    """Atomar schreiben — und das Ausfuehrungsrecht NICHT verlieren.
+
+    v4.2-W148. Bis hierher entstand jede Datei mit den Vorgaberechten (644):
+    nach dem ersten Update ueber das Deck waren installer.sh und
+    observability.sh nicht mehr ausfuehrbar, und `sudo ./update.sh` endete in
+    „Permission denied (os error 13)" — gemeldet auf Ubuntu 26.04.
+    `ausfuehrbar`: True/False aus dem Archiv; None = wie die bisherige Datei."""
     p = _abs(rel)
     os.makedirs(os.path.dirname(p) or ".", exist_ok=True)
+    alt = os.stat(p).st_mode if os.path.exists(p) else None
     tmp = p + ".ncnew"
     with open(tmp, "wb") as f:
         f.write(data)
+    if ausfuehrbar is None:
+        ausfuehrbar = bool(alt is not None and alt & 0o111)
+    modus = (alt & 0o777) if alt is not None else (0o666 & ~_umask())
+    modus = (modus | ((modus & 0o444) >> 2)) if ausfuehrbar else (modus & ~0o111)
+    os.chmod(tmp, modus)
     os.replace(tmp, p)                  # atomar: nie eine halbe .py auf Platte
+
+
+def _umask() -> int:
+    m = os.umask(0)
+    os.umask(m)
+    return m
+
+
+def rechte_angleichen(raw) -> list:
+    """Ausfuehrungsrechte nach dem Archiv setzen — auch fuer Dateien, deren
+    INHALT gleich ist. Der Plan vergleicht nur SHA-256: eine Datei, an der
+    sich nur das Recht geaendert hat (tools/update.sh in W148), waere nie
+    geschrieben worden und bliebe fuer immer 644. -> [rel, …] angeglichen"""
+    aus = []
+    for rel, _size, _sha, info in raw:
+        n = normalize(rel)
+        if not n or is_protected(n) or not ausfuehrbar_im_archiv(info):
+            continue
+        try:
+            p = _abs(n)
+        except ValueError as e:
+            # Ein Archivname, der aus der Wurzel fuehrt — der Plan verwirft ihn
+            # genauso; hier nur sagen, dass er auch kein Recht bekommt.
+            _log("warning", "Update: %s liegt ausserhalb der Wurzel, Recht nicht gesetzt (%s)", n, e)
+            continue
+        if os.path.isfile(p) and not os.stat(p).st_mode & 0o100:
+            m = os.stat(p).st_mode & 0o777
+            os.chmod(p, m | ((m & 0o444) >> 2))
+            aus.append(n)
+    if aus:
+        _log("info", "Update: Ausfuehrungsrecht gesetzt fuer %s", ", ".join(aus[:10]))
+    return aus
 
 
 def run_update(dry_run: bool = False, progress=None) -> dict:
@@ -604,8 +655,16 @@ def run_update(dry_run: bool = False, progress=None) -> dict:
               "restart_needed": False, "restart_cmd": _CFG.restart_cmd,
               "duration_s": 0.0}
 
+    if not dry_run:
+        try:
+            result["rechte"] = rechte_angleichen(raw)
+        except OSError as e:
+            _log("warning", "Update: Ausfuehrungsrechte nicht angeglichen: %s", e)
+
     if not plan.touched():
         result["summary"] = "Alles aktuell — keine Datei zu ersetzen."
+        if result.get("rechte"):
+            result["summary"] += " Ausfuehrungsrecht gesetzt: %s." % ", ".join(result["rechte"])
         result["duration_s"] = round(time.time() - started, 1)
         if not dry_run:
             _remember(rem, [], None)
@@ -641,7 +700,7 @@ def run_update(dry_run: bool = False, progress=None) -> dict:
             failed.append((rel, "im Archiv nicht gefunden"))
             continue
         try:
-            _write_file(rel, zf.read(info))
+            _write_file(rel, zf.read(info), ausfuehrbar_im_archiv(info))
             written.append(rel)
         except Exception as e:
             # Laut werden: ein stiller Fehlschlag hier hinterlaesst einen
@@ -706,7 +765,7 @@ def rollback(name: str) -> dict:
                 if not rel or is_protected(rel):
                     continue
                 try:
-                    _write_file(rel, z.read(info))
+                    _write_file(rel, z.read(info), ausfuehrbar_im_archiv(info))
                     restored.append(rel)
                 except Exception as e:
                     _log("error", "Rollback: %s nicht geschrieben: %s", rel, e)

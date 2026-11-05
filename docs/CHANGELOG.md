@@ -13,6 +13,51 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [4.6] — 2026-11-05 · „Leitstand"
 
+### Behoben — `sudo ./update.sh`: „Permission denied (os error 13)" (v4.2 W148)
+
+- **Zwei Ursachen, beide behoben.** Im Git-Baum standen `tools/update.sh`,
+  `tools/deploy.sh` und `tools/notify_failure.sh` auf 644 — und die
+  Update-Funktion schrieb **jede** Datei mit den Vorgaberechten und fasste eine
+  Datei mit gleichem Inhalt gar nicht erst an. Nach dem ersten Update über das
+  Deck war damit auch ein vorher ausführbares Skript nicht mehr ausführbar.
+- `nc/updater.py` übernimmt das Recht aus dem Archiv (GitHub legt es in
+  `external_attr`), behält beim Überschreiben das bisherige, und gleicht vor
+  „Alles aktuell" die Rechte unveränderter Dateien an — ein Update genügt.
+  Bis dahin: `sudo bash tools/update.sh`.
+
+### Neu — Restream ohne ziehbare Adresse: der Durchreicher (v4.2 W148)
+
+- **Gibt TikTok weder FLV noch HLS noch CMAF/DASH heraus, die ein fremdes
+  ffmpeg ziehen darf, holt yt-dlp (ersatzweise streamlink) den Stream selbst**
+  und reicht ihn über die Sendebrücke an den üblichen Zubringer durch
+  (`nc/durchreicher.py`). Für die Brücke bleibt es ein Prozess; Stopp und
+  Umschalten beenden beide. Die Quellprobe hatte genau diesen Weg schon als
+  tragend gemessen — jetzt nimmt der Restream ihn von selbst.
+- Der Proxy steht nie in der Befehlszeile (Prozessliste), sondern als
+  `HTTPS_PROXY` in der Umgebung des Ziehers. Abschaltbar mit
+  `RESTREAM_DURCHREICHER=0`; jeder Grund, warum der Weg nicht geht, steht
+  gedrosselt im Log.
+
+### Neu — Wächter für Prometheus und Grafana (v4.2 W148)
+
+- **Der 15. und 16. Wächter**, registriert nur, wenn der Dienst eingerichtet
+  ist (`PROMETHEUS_URL` / `GRAFANA_URL`). Prometheus: erreichbar, liest den
+  Bot (`up`), Abrufziele, Regeln, angenommene Konfiguration, **feuernde
+  Alarme als Befunde**, Seriengröße. Grafana: Datenbank, Passwort aus der
+  `.env`, Datenquelle, NIGHTCRAWLER-Dashboard.
+- **Steuern:** ist ein Dienst zwei Runden in Folge weg, starten die Wächter
+  ihn neu — höchstens einmal je 30 Minuten, abschaltbar mit
+  `BRAIN_ACT_PROMETHEUS=0` / `BRAIN_ACT_GRAFANA=0`. Im Deck (System →
+  „Prometheus & Grafana") die ausführliche Lage und drei Knöpfe:
+  Konfiguration neu laden, Prometheus neu starten, Grafana neu starten.
+- **Nur feste Befehle.** `tools/observability.sh` legt
+  `/etc/sudoers.d/nightcrawler-beobachtung` an — genau diese drei
+  `systemctl`-Aufrufe, mit visudo geprüft, `--remove` nimmt sie wieder weg.
+  Aus Deck oder Wächter kommt nur ein Schlüssel, kein Befehlsteil. Fehlt die
+  Regel, sagt die Antwort, wie man sie bekommt.
+- Lagebild: eigene Station „BEOBACHTUNG"; die Außenstationen stehen jetzt im
+  Siebeneck.
+
 ### Dokumentation (v4.2 W147)
 
 - **README neu gegliedert, auf Deutsch, Englisch und — neu — Spanisch.** Halb

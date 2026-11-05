@@ -39,7 +39,7 @@
 | **Für wen** | Betreiber, die das auf **eigener** Hardware wollen — ein Linux-Server, kein SaaS, keine Fremdplattform zwischen Stream und Zielen |
 | **Läuft auf** | Ubuntu/Debian mit systemd, Python 3.12–3.14, ffmpeg, streamlink, yt-dlp — Datenbank SQLite oder MariaDB |
 | **Bedienung** | Telegram, Discord (66 Slash-Commands) und ein Web-Deck mit vier Themen auf Deutsch, Englisch und Spanisch — Einstellungen direkt im Deck |
-| **Beobachtung** | 14 Wächter-Agenten, Lagebild in Echtzeit, Prometheus und Grafana mit Alarmregeln |
+| **Beobachtung** | 16 Wächter-Agenten, Lagebild in Echtzeit, Prometheus und Grafana mit Alarmregeln |
 | **Qualität** | über tausend Verträge, CI auf drei Python-Fassungen und gegen den eingefrorenen Produktionsstand, `pip-audit`, CodeQL |
 | **Lizenz** | GPL-3.0-or-later |
 
@@ -62,7 +62,7 @@
 | | | |
 |---|---|---|
 | **🔍 Erkennen** — adaptives Polling mit Anti-Flap-Hysterese; jede Zeile im Deck sagt, wann sie zuletzt geprüft wurde | **⏺️ Aufnehmen** — dreistufiger Recorder (ffmpeg → streamlink → yt-dlp) mit Preflight, Tonspur-Prüfung und Hänger-Erkennung | **📡 Weitersenden** — Kick, Twitch und YouTube gleichzeitig, Ziel-Verifikation gegen die Plattform-APIs |
-| **🛡️ Moderieren** — SENTINEL-SHIELD gegen Doxxing und Hass, deterministisch und **vor** jeder KI | **🤖 Mitreden** — AZRAEL antwortet in drei Chats, reagiert aufs Sendebild und steht als Figur im Bild | **📊 Auswerten** — Deck mit 377 API-Routen, Wissensgraph, Einnahmen-Journal mit Hash-Kette, PWA |
+| **🛡️ Moderieren** — SENTINEL-SHIELD gegen Doxxing und Hass, deterministisch und **vor** jeder KI | **🤖 Mitreden** — AZRAEL antwortet in drei Chats, reagiert aufs Sendebild und steht als Figur im Bild | **📊 Auswerten** — Deck mit 379 API-Routen, Wissensgraph, Einnahmen-Journal mit Hash-Kette, PWA |
 
 <details>
 <summary><b>🔎 Vollständige Funktionsliste</b></summary>
@@ -77,13 +77,13 @@
 | **Chat & Moderation** | SENTINEL-SHIELD (Doxxing / Hate / Drohung) · geteilte Moderations-Heuristik über Kick, Twitch, YouTube · Fremdwerbungs-Erkennung mit Eigen-Allowlist · Banned-Words · Timeout-Eskalation |
 | **KI (AZRAEL)** | Chat-Antworten auf Ansprache · Live-Reaktionen aufs Sendebild · Sprachausgabe (Piper) · Persona-System · Multi-Backend: Anthropic (mit Key) → lokales llama.cpp (bevorzugt, sobald es läuft) → freie APIs · Budget- und Tier-Steuerung |
 | **Gehirn (`brain/`)** | Zustandsmaschine · regelbasierte Tier-1-Entscheidungen mit Warum-Log · Langzeitgedächtnis · Wissensgraph (Triple-Store) · semantische Suche · Prognosen · Wochenreport |
-| **Sentinel-Flotte** | 14 Wächter-Agenten (health, recovery, scout, analytics, learning, sentinel, disk, swap, restream, toxicity, uptime, recording, proxy, datenbank) mit Telegram-Alarm, einzeln abschaltbar |
+| **Sentinel-Flotte** | 16 Wächter-Agenten (health, recovery, scout, analytics, learning, sentinel, disk, swap, restream, toxicity, uptime, recording, proxy, datenbank, prometheus, grafana) mit Telegram-Alarm, einzeln abschaltbar |
 | **Community** | Wiedererkennung von Stammzuschauern · Loyalty-Punkte & Ränge · Discord-XP, Level, Daily-Streak · Live-Ping · Highlight-Share · Community-Events |
 | **Geld** | Spenden-Telemetrie (Schätzwerte) · getrenntes Einnahmen-Journal (`nc/ledger.py`) mit Hash-Kette und CSV-Export fürs Finanzamt |
-| **Dashboard** | 377 Flask-Routen · Live-Panels · Gehirn-Visualisierung mit Lernkurve · Overlay für OBS · installierbare PWA (Android) · QR-Login |
+| **Dashboard** | 379 Flask-Routen · Live-Panels · Gehirn-Visualisierung mit Lernkurve · Overlay für OBS · installierbare PWA (Android) · QR-Login |
 | **Betrieb** | systemd-Dienst · Deploy-Skript mit Vorabprüfung und Auto-Rollback · Selbsttest-Route · Totmann-Meldung bei Prozesstod · CrowdSec-Anbindung · Log-Redaction für Cookies und Stream-Keys |
 | **Datenbank** | SQLite **oder** MariaDB · Umzug per `update.sh --mariadb` mit Nachzählen · zentrales Schema-Modul · Export-Werkzeug · Datenbank-Wächter |
-| **Einstellungen** | Reiter „Einstellungen“ im Deck: alle ~571 Variablen durchsuchbar, gespeichert in der Datenbank, geschützte Schlüssel nur aus der `.env` |
+| **Einstellungen** | Reiter „Einstellungen“ im Deck: alle ~576 Variablen durchsuchbar, gespeichert in der Datenbank, geschützte Schlüssel nur aus der `.env` |
 | **Beobachtung** | `/metrics` für Prometheus · Grafana-Dashboard mit jedem Messwert · 16 Alarmregeln mit Tests · Einrichtung per `tools/observability.sh` |
 
 </details>
@@ -120,10 +120,10 @@ flowchart TB
     TG["📨 Telegram"]:::ein --> BOT
     DC["🎮 Discord<br/>66 Slash-Commands"]:::ein --> BOT
     TT["🎥 TikTok<br/>Live-Erkennung + Chat"]:::ein --> BOT
-    BOT["bot.py<br/>Monolith · 26.313 Zeilen<br/>Scraper · Recorder · Restream<br/>Flask-Deck · 34 eigene Routen"]:::core
-    BOT -->|configure| NC["nc/ — 176 Fachmodule<br/>39 Blueprints"]:::lib
+    BOT["bot.py<br/>Monolith · 26.353 Zeilen<br/>Scraper · Recorder · Restream<br/>Flask-Deck · 34 eigene Routen"]:::core
+    BOT -->|configure| NC["nc/ — 178 Fachmodule<br/>39 Blueprints"]:::lib
     BOT --> BR["brain_bridge.py"]:::lib
-    BR --> BRAIN["brain/ — eigene brain.db<br/>Regeln · Gedächtnis · Wissensgraph<br/>14 Wächter-Agenten"]:::brain
+    BR --> BRAIN["brain/ — eigene brain.db<br/>Regeln · Gedächtnis · Wissensgraph<br/>16 Wächter-Agenten"]:::brain
     BOT --> DB[("SQLite oder MariaDB<br/>+ Einstellungen")]:::db
     BOT --> PROM["/metrics → Prometheus → Grafana"]:::lib
     BOT --> OUT["🟢 Kick · 🟣 Twitch · 🔴 YouTube"]:::out
@@ -204,7 +204,7 @@ löst nichts aus; ein Zeitplan zieht nie still eine Datenbank um.
 
 ## ⚙️ Einstellungen
 
-**Im Deck, Reiter „Einstellungen“.** Alle rund 571 Variablen aus `.env.example`
+**Im Deck, Reiter „Einstellungen“.** Alle rund 576 Variablen aus `.env.example`
 mit Gruppe, Vorgabe und Beschreibung, durchsuchbar. Je Zeile steht, woher der
 Wert kommt — *vom Deck gesetzt*, *aus der .env* oder *Vorgabe*. Gespeichert wird
 in der Datenbank (SQLite oder MariaDB); die Werte gelten beim nächsten Start
@@ -407,7 +407,7 @@ der Bot wie ohne — jeder Baustein ist additiv und einzeln abschaltbar.
 AZRAEL antwortet mit Anthropic (mit Key), lokal mit llama.cpp, sobald es läuft,
 sonst über freie APIs — mit Budget und Tier-Steuerung.
 
-### 🛰️ Die 14 Wächter
+### 🛰️ Die 16 Wächter
 
 | Agent | Wacht über | Agent | Wacht über |
 |---|---|---|---|
@@ -418,6 +418,13 @@ sonst über freie APIs — mit Budget und Tier-Steuerung.
 | `learning` | Lernfortschritt des Wissensgraphen | `proxy` | TikTok-Fetch-Erfolg, 403-Blocks |
 | `sentinel` | CrowdSec, blinde Abwehr | `swap` | Swap-Belegung, mit OOM-Schutz |
 | `disk` | Plattenplatz, Stunden bis voll | `datenbank` | Antwortzeit, Zuwachs, Journal, Schema |
+| `prometheus` | Alarmzentrale selbst: erreichbar, liest den Bot, Regeln, feuernde Alarme — startet neu | `grafana` | Anmeldung, Datenquelle, Dashboard — startet neu |
+
+Die beiden letzten laufen nur, wenn Prometheus bzw. Grafana eingerichtet ist
+(`PROMETHEUS_URL` / `GRAFANA_URL`). Neu starten dürfen sie über die
+sudo-Regel, die `sudo bash tools/observability.sh` anlegt — genau drei feste
+Befehle, sonst nichts. Abschalten der Selbstheilung: `BRAIN_ACT_PROMETHEUS=0`
+bzw. `BRAIN_ACT_GRAFANA=0`.
 
 Jeder Agent läuft isoliert — ein toter kann den Takt nie anhalten. Abschalten:
 `BRAIN_AGENT_<NAME>=0`.
@@ -543,8 +550,8 @@ python3 -m pytest -k w145          # eine Welle einzeln
 python3 tools/ncpatch.py find "donations"      # wo steht etwas in bot.py?
 ```
 
-`bot.py` hat 26.313 Zeilen und wird nie ganz gelesen — die Navigationskarte
-`.claude/INDEX.md` kennt 377 Routen und 589 Funktionen mit Zeilennummer. Vor
+`bot.py` hat 26.353 Zeilen und wird nie ganz gelesen — die Navigationskarte
+`.claude/INDEX.md` kennt 379 Routen und 590 Funktionen mit Zeilennummer. Vor
 jedem Pull Request läuft die vollständige Prüfkette aus
 **[`docs/CONTRIBUTING.md`](docs/CONTRIBUTING.md)**: Lint, Templates, Doku-Zahlen,
 Sperren gegen stille Fehlerpfade und Riesenfunktionen, Übersetzungskatalog,
@@ -571,7 +578,10 @@ deploy/      Prometheus, Grafana, Alarmregeln      docs/      Anleitungen, Chang
   MariaDB-Schema war vorher nie lauffähig und ist es jetzt.
 - **Prometheus und Grafana vollständig:** jeder Messwert ein Panel, 16
   Alarmregeln, Passwort erzeugt statt admin/admin, Einträge in der `.env`.
-- **Der 14. Wächter** beobachtet die Datenbank.
+- **Drei neue Wächter:** einer für die Datenbank, je einer für Prometheus und
+  Grafana — mit Neustart, wenn sie hängen.
+- **Restream ohne ziehbare Adresse:** der Durchreicher lässt yt-dlp den Stream selbst holen.
+- **`update.sh` bleibt ausführbar** — auch nach einem Update über das Deck.
 - **Das Lagebild neu gezeichnet** — Leitstand statt Figur, in jedem Thema lesbar.
 - **`update.sh` fragt nach**, was fehlt.
 
@@ -586,11 +596,11 @@ Alle Wellen einzeln: **[`docs/CHANGELOG.md`](docs/CHANGELOG.md)**.
 | | |
 |---|---|
 | Aktuelle Version | **4.6** — „Leitstand“ (2026.11) |
-| Flask-Routen | 377 (34 in `bot.py` · 343 in `nc/routes/`) |
+| Flask-Routen | 379 (34 in `bot.py` · 345 in `nc/routes/`) |
 | Discord-Slash-Commands | 66 |
-| Fachmodule | 176 in `nc/` (+39 in `nc/routes/`, +3 in `nc/intel/`), 10 in `brain/` |
-| Sentinel-Agenten | 14 |
-| Konfigurationsvariablen | ~571 |
+| Fachmodule | 178 in `nc/` (+39 in `nc/routes/`, +3 in `nc/intel/`), 10 in `brain/` |
+| Sentinel-Agenten | 16 |
+| Konfigurationsvariablen | ~576 |
 | Sprachen | Deutsch (Quelle), Englisch, Spanisch |
 
 Nächster großer Schritt: `bot.py` weiter zerlegen — **[`docs/ROADMAP.md`](docs/ROADMAP.md)**.

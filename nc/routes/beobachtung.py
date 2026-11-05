@@ -28,6 +28,7 @@ from flask import Blueprint, jsonify, request
 
 from nc import azraelstate as _nc_azrael
 from nc import beobachtungslage as _nc_beoblage  # v4.2-W144
+from nc import beobachtungsdienst as _nc_beobdienst  # v4.2-W148
 from nc import fehlertext as _nc_fehlertext
 from nc import kennzahlen as _nc_kz  # v4.2-W122
 from nc import schnappschuss as _nc_schnappschuss  # v4.2-W122b
@@ -525,6 +526,35 @@ def api_beobachtung_lage():
     """v4.2-W144: liest Prometheus den Bot, ist Grafana da? Misst auf Abruf —
        der Knopf im Deck, nie /healthz. Ohne Passwort in der Antwort."""
     return jsonify(ok=True, **_nc_beoblage.lage(_t=_t))
+
+
+@bp.route("/api/beobachtung/dienste")
+def api_beobachtung_dienste():
+    """v4.2-W148: was die Waechter ueber Prometheus und Grafana wissen —
+       ausfuehrlich (Abrufziele, Regeln, feuernde Alarme, Datenquelle,
+       Dashboard) und welche Steuerbefehle es gibt. Misst auf Abruf."""
+    da = _nc_beobdienst.installiert()
+    return jsonify(
+        ok=True, installiert=da,
+        prometheus=_nc_beobdienst.prometheus_jetzt() if da["prometheus"] else None,
+        grafana=_nc_beobdienst.grafana_jetzt() if da["grafana"] else None,
+        steuerung=["%s/%s" % k for k in _nc_beobdienst.STEUERUNG])
+
+
+@bp.route("/api/beobachtung/steuern", methods=["POST"])
+def api_beobachtung_steuern():
+    """v4.2-W148: einen der festen Befehle ausfuehren. Aus der Anfrage
+       kommen nur zwei Schluessel, die in STEUERUNG nachgeschlagen werden —
+       kein Teil des Befehls stammt aus der Eingabe."""
+    body = request.get_json(silent=True) or {}
+    dienst, aktion = str(body.get("dienst") or ""), str(body.get("aktion") or "")
+    if (dienst, aktion) not in _nc_beobdienst.STEUERUNG:
+        return jsonify(ok=False, error=_t("Unbekannte Steuerung")), 400
+    if not _nc_beobdienst.installiert().get(dienst):
+        return jsonify(ok=False, error=_t("Dienst ist nicht eingerichtet")), 409
+    r = _nc_beobdienst.steuern(dienst, aktion)
+    return jsonify(ok=bool(r.get("ok")), befehl=r.get("befehl"),
+                   error=None if r.get("ok") else r.get("text")), (200 if r.get("ok") else 502)
 
 
 @bp.route("/api/profile/snapshots/<username>")

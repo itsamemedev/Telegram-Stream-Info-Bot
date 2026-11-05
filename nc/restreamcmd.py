@@ -30,6 +30,7 @@ import logging
 import os
 
 from nc import audio_cue as _nc_audio
+from nc import durchreicher as _nc_durch  # v4.2-W148: Zubringer ohne eigene Adresse
 from nc import audiocue as _nc_audiocue
 from nc import ffbuild as _nc_ffbuild
 from nc import ffmpeg_filters as _nc_ff
@@ -398,8 +399,17 @@ def zubringer(source_url, tonlos=False, neukodieren=False):
     Neu kodiert wird nur, wenn die Quelle kein H.264 ist (TikTok liefert teils
     HEVC); der Ton immer, damit jeder Zubringer und der Fueller dasselbe
     Format tragen (BRUECKE_TON)."""
-    cmd = ["ffmpeg", "-hide_banner", "-loglevel", "warning", "-nostats", "-re"]
-    cmd += quell_eingang(source_url)
+    durch = _nc_durch.ist(source_url)
+    cmd = ["ffmpeg", "-hide_banner", "-loglevel", "warning", "-nostats"]
+    if durch:
+        # v4.2-W148: der Durchreicher (nc/durchreicher.py) — yt-dlp zieht den
+        # Stream selbst und reicht ihn ueber stdin herein. Kein -re: der
+        # Zieher liefert ohnehin im Takt der Quelle, und -re auf einer Pipe
+        # bremst nur den Anlauf. Keine Netz-Optionen: es gibt kein Netz hier.
+        cmd += ["-fflags", "+genpts+igndts", "-analyzeduration", "10000000",
+                "-probesize", "15000000", "-i", "pipe:0"]
+    else:
+        cmd += ["-re"] + quell_eingang(source_url)
     if tonlos:
         cmd += _nc_tonspur.stille_eingabe()
         cmd += ["-map", "0:v:0", "-map", "1:a:0", "-shortest"]
@@ -413,7 +423,18 @@ def zubringer(source_url, tonlos=False, neukodieren=False):
         cmd += ["-c:v", "copy"]
     cmd += list(_nc_tonspur.AAC_ARGS)
     cmd += ["-muxdelay", "0", "-muxpreload", "0", "-f", "mpegts", "pipe:1"]
-    return _ff_cmd(cmd, threads=FFMPEG_THREADS_RELAY)
+    cmd = _ff_cmd(cmd, threads=FFMPEG_THREADS_RELAY)
+    if durch:
+        return _nc_durch.zubringer_cmd(_nc_durch.nutzer_aus(source_url), cmd,
+                                       cookies=_cookie_datei())
+    return cmd
+
+
+def _cookie_datei():
+    """Die Netscape-Cookie-Datei fuer yt-dlp, wenn es sie gibt — als Funktion
+    gelesen, nicht als Modul-Konstante (CLAUDE.md: .env wird spaet geladen)."""
+    p = os.path.abspath(os.getenv("COOKIE_FILE", "tiktok_cookies.txt") or "tiktok_cookies.txt")
+    return p if os.path.isfile(p) else None
 
 
 def fueller(breite=720, hoehe=1280):

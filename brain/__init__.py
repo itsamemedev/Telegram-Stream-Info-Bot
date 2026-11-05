@@ -36,7 +36,7 @@ from nc.envnum import env_int  # v4.0-W81: leer-gesetzte .env-Ints robust (float
 
 from .semantic import SemanticMemory
 from .agents import (Agent, AgentManager, AnalyticsAgent, DatabaseAgent, DiskAgent,
-                     HealthAgent, LearningAgent, ProxyHealthAgent, RecoveryAgent,
+                     GrafanaAgent, HealthAgent, LearningAgent, PrometheusAgent, ProxyHealthAgent, RecoveryAgent,
                      RecordingAgent, RestreamSentinelAgent, ScoutAgent,
                      SentinelAgent, SwapAgent, ToxicityAgent, UptimeAgent)
 from .knowledge import KnowledgeGraph
@@ -52,7 +52,7 @@ from .state import StateMachine
 # BudgetExhausted bewusst von hier statt aus den Submodulen (ein Import-
 # punkt, siehe M1-Vertrag).
 __all__ = ["Agent", "AgentManager", "AnalyticsAgent", "Brain", "DatabaseAgent",
-           "DiskAgent",
+           "DiskAgent", "GrafanaAgent", "PrometheusAgent",
            "BudgetExhausted",
            "HealthAgent", "KnowledgeGraph", "LearningAgent", "ProxyHealthAgent",
            "RecordingAgent", "RecoveryAgent", "RestreamSentinelAgent", "ScoutAgent",
