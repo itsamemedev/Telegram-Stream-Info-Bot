@@ -25847,6 +25847,110 @@ def _test_v42_w140_phosphor_thema():
        "bleibt rot, alle Themen mit Name, Zeichen und Token-Block")
 
 
+def _test_v42_w141_dritte_form():
+    """v4.2-W141: „keiner wird restreamt, angeblich keine flv oder hls" — die
+    Kette liest jetzt auch CMAF/DASH/MP4, streicht kurzlebige Adressen
+    einzeln statt alle, und sagt im Deck und in /healthz, was los ist."""
+    import ast as _ast
+    from nc import streamsel as S, ytdlpurl as Y, livefolge as L
+    from nc import restreamcmd as R, quellstat as Q
+    C = "https://pull-cmaf-f1.tiktokcdn.com/stage/stream-1/index.mp4?expire=9999999999"
+    D = "https://pull-dash.tiktokcdn.com/stage/stream-1/index.mpd?expire=9999999999"
+    F = "https://pull-flv-l1.tiktokcdn.com/stage/stream-1.flv?expire=9999999999"
+    # (1) stream_data: eine Qualitaet NUR mit cmaf wird gelesen …
+    nur = S.select_stream_from_data_section({"hd": {"main": {"cmaf": C, "sdk_params": "{}"}}})
+    assert nur and nur["other_url"] == C and nur["other_kind"] == "cmaf", nur
+    # … steht aber hinter jeder Qualitaet mit FLV/HLS, auch einer schlechteren.
+    gemischt = S.select_stream_from_data_section({
+        "origin": {"main": {"cmaf": C}}, "sd": {"main": {"flv": F}}})
+    assert gemischt["flv_url"] == F and gemischt["quality"] == "sd", gemischt
+    knoten = {"liveCoreSDKData": {"pull_data": {"stream_data": __import__("json").dumps(
+        {"data": {"hd": {"main": {"dash": D}}}})}}}
+    k = S.extract_urls_from_streamurl_node(knoten)
+    assert k and k["other_url"] == D and k["other_kind"] == "dash", k
+    # (2) yt-dlp: DASH wird nicht mehr verworfen, aber nur ohne FLV/HLS genommen.
+    y = Y.urls_aus_json({"formats": [{"url": D, "protocol": "http_dash_segments", "ext": "mp4"}]})
+    assert y.get("other_url") == D and y.get("other_kind") == "dash", y
+    y2 = Y.urls_aus_json({"formats": [{"url": D, "protocol": "http_dash_segments"},
+                                       {"url": F, "ext": "flv"}]})
+    assert y2.get("flv_url") == F and "other_url" not in y2, y2
+    assert Y._andere_art("file:///etc/passwd.mp4") == "", "fremdes Schema als Quelle"
+    # (3) kurzlebig wird EINZELN gestrichen.
+    ttl = {"F": 30, "H": 3000}
+    fr = Y.nur_frische({"flv_url": "F", "hls_url": "H", "via": "ytdlp"},
+                       lambda u: ttl.get(u), 120)
+    assert fr.get("hls_url") == "H" and "flv_url" not in fr and fr["verworfen"] == ["flv 30s"], fr
+    assert "verworfen" not in Y.nur_frische({"hls_url": "X"}, lambda u: None, 120)
+    # (4) Annahme und Reihenfolge.
+    assert L.hat_stream_url({"other_url": C}) and not L.hat_stream_url({"other_url": ""})
+    assert L.beste_url({"hls_url": "h", "other_url": "o"}) == "h"
+    assert L.beste_url({"flv_url": "f", "hls_url": "h"}) == "f"
+    assert L.beste_url({"other_url": "o"}) == "o" and L.beste_url({}) is None
+    # (5) segmentierte Eingaenge bekommen die B60-Zeitstempel-Flags.
+    assert R._ist_segmentiert(D) and R._ist_segmentiert(C) and not R._ist_segmentiert(F)
+    assert not R._ist_hls(D), "_ist_hls muss eng bleiben (aac_adtstoasc)"
+    # (6) Quellen-Statistik: gleitend, und „nichts gezaehlt" ist nicht 0 %.
+    Q.zuruecksetzen()
+    assert Q.lage(jetzt=10.0)["ohne_url_anteil"] is None
+    for a, t in (("api", 0.0), ("keiner", 1.0), ("keiner", 2.0), ("ytdlp", 3.0)):
+        Q.zaehlen(a, jetzt=t)
+    la = Q.lage(jetzt=10.0)
+    assert (la["api"], la["keiner"], la["gesamt"], la["ohne_url_anteil"]) == (1, 2, 4, 0.5), la
+    assert Q.lage(jetzt=Q.FENSTER_S + 2.5)["gesamt"] == 1, "Fenster gleitet nicht"
+    Q.zuruecksetzen()
+    try:
+        Q.zaehlen("erfunden")
+        raise AssertionError("unbekannter Ausgang still gezaehlt")
+    except ValueError:
+        pass
+    # (7) bot.py: Grund ins Panel, kein stilles pass, Schreiben neben dem Loop,
+    # Statistik in /healthz und an allen vier Ausgaengen gezaehlt.
+    src = open("bot.py", encoding="utf-8").read()
+    baum = _ast.parse(src)
+    fn = next(n for n in _ast.walk(baum) if isinstance(n, _ast.FunctionDef)
+              and n.name == "_reflect_source_status")
+    assert "last_error=?" in _ast.unparse(fn), "Grund wird nicht ins Panel geschrieben"
+    assert not any(isinstance(h, _ast.ExceptHandler) and all(
+        isinstance(b, _ast.Pass) for b in h.body) for h in _ast.walk(fn)), "stilles pass"
+    aufrufe = [n for n in _ast.walk(baum) if isinstance(n, _ast.Call)
+               and _ast.unparse(n.func).endswith("_reflect_source_status")]
+    assert not aufrufe, "_reflect_source_status direkt auf dem Loop gerufen"
+    assert src.count("asyncio.to_thread(self._reflect_source_status") == 3
+    zaehl = {n.args[0].value for n in _ast.walk(baum) if isinstance(n, _ast.Call)
+             and _ast.unparse(n.func) == "_nc_quellstat.zaehlen"
+             and n.args and isinstance(n.args[0], _ast.Constant)}
+    assert zaehl == set(Q.AUSGAENGE), zaehl
+    assert "quellen=_nc_quellstat.lage()" in src
+    ok("W141: CMAF/DASH/MP4 als dritte Form (stream_data, yt-dlp, Restream), "
+       "Kurzlebiges einzeln gestrichen, Grund im Panel, Quellen-Statistik")
+
+
+def _test_v42_w141_quellprobe():
+    """v4.2-W141: das Messwerkzeug fuer den Server — es darf nichts Geheimes
+    ausgeben und muss aus den Befunden die richtige Abhilfe ableiten."""
+    import importlib.util as _iu
+    spec = _iu.spec_from_file_location("quellprobe", "tools/quellprobe.py")
+    QP = _iu.module_from_spec(spec)
+    spec.loader.exec_module(QP)
+    assert QP.maske("http://nutzer:geheim@1.2.3.4:8118") == "http://***@1.2.3.4:8118"
+    assert QP.maske("nutzer:geheim@1.2.3.4:8118") == "***@1.2.3.4:8118", "schemalos unmaskiert"
+    assert QP.maske("socks5://1.2.3.4:1080") == "socks5://1.2.3.4:1080"
+    assert QP.ttl("https://x/y.flv?expire=1100", jetzt=1000) == 100
+    assert QP.ttl("https://x/y.flv") is None
+    k = QP.kurz("https://pull.tiktokcdn.com/a/b.flv?expire=9999999999&sign=GEHEIM")
+    assert "GEHEIM" not in k and k.startswith("pull.tiktokcdn.com …flv"), k
+    assert QP.form("https://h/x.m3u8") == "hls" and QP.form("https://h/x.mpd") == "dash"
+    E = QP.empfehlung
+    assert "FLV/HLS-Adresse ist ziehbar" in E({"kandidaten": [{"form": "hls", "ffprobe_ok": True}]})
+    assert "dritte Form (dash)" in E({"kandidaten": [{"form": "dash", "ffprobe_ok": True}]})
+    assert "Zubringer" in E({"kandidaten": [{"form": "flv", "ffprobe_ok": False}],
+                             "durchreicher_bytes": 5})
+    assert "RECORD_PROXY" in E({"kandidaten": [{"form": "flv", "ffprobe_ok": False}]})
+    assert "Kein Weg" in E({})
+    ok("W141: tools/quellprobe.py — Zugangsdaten maskiert, Signaturen gekuerzt, "
+       "Abhilfe aus den Befunden")
+
+
 def main():
     tmp, rid = richte_testdatenbank_ein()
     ok("db_conn aus nc.dbwrap: echtes Schema angelegt, Commit durchgelaufen")
@@ -26185,6 +26289,8 @@ def main():
     _test_v42_w138_profil_route()
     _test_v42_w139_spanisch()
     _test_v42_w140_phosphor_thema()
+    _test_v42_w141_dritte_form()
+    _test_v42_w141_quellprobe()
     _test_v42_w60_azrael_cooldown_je_plattform()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)

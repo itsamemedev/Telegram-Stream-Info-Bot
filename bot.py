@@ -846,6 +846,7 @@ from nc.textmore import (  # noqa: F401
 # (v4.2-W19) — es hatte hier nur diesen einen Nutzer.
 from nc.scoring import build_report  # noqa: F401
 from nc import prueflage as _nc_prueflage    # v4.2-W138: Pruefstand je Tracking
+from nc import quellstat as _nc_quellstat    # v4.2-W141: Herkunft der Stream-Adressen
 from nc.persona import (  # noqa: F401
     _persona_intensity_hint, _azrael_emotion)
 from nc.util import _webhook_event_match, _loop_not_ready  # noqa: F401
@@ -3006,14 +3007,16 @@ async def _resolve_via_ytdlp(username: str):
                 # bevor sie weitergeht: eine abgelaufene CDN-URL ist schlimmer
                 # als keine — der Restream startet, ffmpeg stirbt sofort, und
                 # der Versuch zaehlt trotzdem gegen MAX_RECONNECTS (B138).
-                _urls = _nc_ytdlpurl.urls_aus_json(data)
-                _beste = _urls.get("flv_url") or _urls.get("hls_url")
-                _ttl = _stream_url_ttl(_beste) if _beste else None
-                if _ttl is not None and _ttl < _STREAM_URL_MIN_TTL:
-                    log.info("yt-dlp @%s: Stream-URL laeuft in %ss ab (unter "
-                             "%ss) — nicht weitergegeben, der Aufrufer loest "
-                             "frisch auf.", username, _ttl, _STREAM_URL_MIN_TTL)
+                _urls = _nc_ytdlpurl.nur_frische(
+                    _nc_ytdlpurl.urls_aus_json(data), _stream_url_ttl,
+                    _STREAM_URL_MIN_TTL)
+                if _urls.get("verworfen") and not _nc_live.hat_stream_url(_urls):
+                    log.info("yt-dlp @%s: alle Stream-URLs laufen in unter %ss "
+                             "ab (%s) — nicht weitergegeben, der Aufrufer loest "
+                             "frisch auf.", username, _STREAM_URL_MIN_TTL,
+                             ", ".join(_urls["verworfen"]))
                     _urls = {}
+                _urls.pop("verworfen", None)
                 return "live", (_urls or None)
             return "offline", None
         # rc != 0 → anhand der Fehlermeldung offline vs. unknown unterscheiden
@@ -3184,6 +3187,8 @@ async def _url_nachschlag(username, session, status, info):
         # Stoerung bis zu 15 Minuten unsichtbar, weil die Ruhezeit noch
         # von der vorigen laeuft (Lehre aus W81).
         _nc_meldetakt.zuruecksetzen("live-ohne-url")
+        if status == "live":
+            _nc_quellstat.zaehlen("api")        # v4.2-W141
     else:
         _blind = status == "live"
         try:
@@ -3195,6 +3200,7 @@ async def _url_nachschlag(username, session, status, info):
             # Nachschlag-Bedingung und Annahme nicht auseinanderlaufen.
             if _nc_live.hat_stream_url(html_info):
                 status, info = "live", html_info
+                _nc_quellstat.zaehlen("html")           # v4.2-W141
                 if _blind:
                     _ohne_url_melden(
                         username, "html",
@@ -3214,6 +3220,7 @@ async def _url_nachschlag(username, session, status, info):
                 _yt = await _nachschlag_ytdlp(username)
                 if _nc_live.hat_stream_url(_yt):
                     status, info = "live", _yt
+                    _nc_quellstat.zaehlen("ytdlp")      # v4.2-W141
                     _ohne_url_melden(
                         username, "ytdlp",
                         "live-ohne-URL @%s: yt-dlp liefert die "
@@ -3226,6 +3233,7 @@ async def _url_nachschlag(username, session, status, info):
                     # Bleibt bei ("live", None). Jetzt steht im Log, dass
                     # ALLE DREI Wege leer ausgingen — vorher sah es aus wie
                     # eine normale Erkennung.
+                    _nc_quellstat.zaehlen("keiner")     # v4.2-W141
                     _ohne_url_melden(
                         username, "keiner",
                         "live-ohne-URL @%s: weder HTML noch yt-dlp "
@@ -14132,15 +14140,35 @@ class RestreamManager:
            unknown→'unknown'. Überschreibt NIE einen laufenden Restream (live/starting)
            und schreibt nur bei echter Änderung (spart DB-Writes)."""
         new = "offline" if err == "offline" else ("unknown" if err == "unknown" else "error")
+        # v4.2-W141: bei "error" auch den GRUND schreiben. Das Deck zeigt
+        # `last_error` unter einem Ziel im Zustand error (dashboard.html) —
+        # nur schrieb hier niemand einen hinein. Der Betreiber sah ein rotes
+        # Ziel und musste im Log suchen, dass es "live, aber keine Adresse"
+        # war. Bei offline/unknown bleibt last_error stehen: das ist der
+        # letzte echte Fehler, kein Zustand.
+        grund = str(err)[:300] if new == "error" else None
         try:
             with db_conn() as conn:
-                cur = conn.execute("SELECT status FROM restreams WHERE id=?", (rid,)).fetchone()
+                cur = conn.execute("SELECT status, last_error FROM restreams WHERE id=?",
+                                   (rid,)).fetchone()
                 old = cur["status"] if cur else None
-                if old not in ("live", "starting") and old != new:
-                    conn.execute("UPDATE restreams SET status=? WHERE id=?", (new, rid))
+                alt_grund = cur["last_error"] if cur else None
+                if old not in ("live", "starting") and (
+                        old != new or (grund and grund != alt_grund)):
+                    if grund:
+                        conn.execute("UPDATE restreams SET status=?, last_error=? WHERE id=?",
+                                     (new, grund, rid))
+                    else:
+                        conn.execute("UPDATE restreams SET status=? WHERE id=?", (new, rid))
                     conn.commit()
-        except Exception:
-            pass
+        except Exception as e:
+            # v4.2-W141: war `pass`. Ein gesperrtes SQLite liess das Panel
+            # dann auf dem alten Zustand stehen, ohne dass es jemand erfuhr.
+            laut, _unterdr = _nc_meldetakt.melden(
+                "restream-panelstatus", type(e).__name__, _time_mod.monotonic())
+            if laut:
+                log.warning("Restream #%s: Panel-Status nicht geschrieben (%s: %s)%s",
+                            rid, type(e).__name__, e, _nc_meldetakt.zusatz(_unterdr))
 
     async def _resolve_source(self, username, force_fresh=False):
         """force_fresh=True nur im Reconnect-/Fehlerpfad: dort ist die zuletzt
@@ -14176,20 +14204,43 @@ class RestreamManager:
         # HLS — oder aus dem 15s-Status-Cache), einen FRISCHEN vollen Resolve fahren:
         # webcast→HTML extrahieren flv_pull_url. So bekommen AUCH bereits getrackte/
         # „bestehende" User ihren FLV-Stream, statt am fehlenden FLV zu scheitern.
+        andere = info.get("other_url")
         if not flv:
             try:
                 fresh = await resolve_tiktok_live_stream(username, session, mode="auto")
-            except Exception:
+            except Exception as e:
+                # v4.2-W141: stand als `except Exception: fresh = None` da. Ein
+                # Fehler im frischen Resolve sah damit genauso aus wie "TikTok
+                # hat keine FLV-Adresse" — und genau diese Frage stellt der
+                # Betreiber, wenn kein Restream anlaeuft.
                 fresh = None
+                laut, _unterdr = _nc_meldetakt.melden(
+                    "restream-frisch", type(e).__name__, _time_mod.monotonic())
+                if laut:
+                    log.warning("Restream @%s: frischer Resolve fiel aus (%s: %s)%s",
+                                username, type(e).__name__, e,
+                                _nc_meldetakt.zusatz(_unterdr))
             if fresh:
                 flv = fresh.get("flv_url") or flv
                 hls = hls or fresh.get("hls_url")
-        url = flv or hls
+                andere = andere or fresh.get("other_url")
+        url = _nc_live.beste_url({"flv_url": flv, "hls_url": hls, "other_url": andere})
         if not url:
-            return None, "keine spielbare Quell-URL (weder FLV noch HLS)"
-        if not flv:
+            return None, "keine spielbare Quell-URL (weder FLV noch HLS noch CMAF/DASH)"
+        if not flv and hls:
             log.info("Restream @%s: kein FLV verfügbar → HLS+Transcode. Für FLV ggf. "
                      "RECORD_PROXY setzen (Datacenter-IP wird von TikTok oft geblockt).", username)
+        elif not flv:
+            # v4.2-W141: die dritte Form ist ungemessen — einmal sagen, dass
+            # sie benutzt wird, damit ein Abbruch danach zuzuordnen ist.
+            laut, _unterdr = _nc_meldetakt.melden(
+                "restream-andere-form", "benutzt", _time_mod.monotonic())
+            if laut:
+                log.warning("Restream @%s: weder FLV noch HLS — versuche die dritte "
+                            "Form (%s). Bricht der Restream danach ab, misst "
+                            "tools/quellprobe.py @%s, welcher Weg wirklich traegt.%s",
+                            username, info.get("other_kind") or "cmaf/dash",
+                            username, _nc_meldetakt.zusatz(_unterdr))
         return url, None
 
     def _eintrag(self, rid, pname=None):
@@ -15065,7 +15116,7 @@ class RestreamManager:
         for r in order:
             _src, _err = await self._resolve_source(r["source_username"])
             if _err:
-                self._reflect_source_status(r["id"], _err)
+                await asyncio.to_thread(self._reflect_source_status, r["id"], _err)
                 _gruende.append("@%s: %s" % (r["source_username"],
                                              _nc_resolvergrund.quelle_lage(_err)))
                 self._quelle_melden(r["source_username"], _err)
@@ -15563,7 +15614,10 @@ class RestreamManager:
             for r in rows:
                 src, err = await self._resolve_source(r["source_username"])
                 if err:
-                    self._reflect_source_status(r["id"], err)   # Panel frisch halten (offline/unknown)
+                    # Panel frisch halten (offline/unknown). v4.2-W141: neben dem
+                    # Loop — ein SELECT+UPDATE je Ziel und Runde stand sonst auf
+                    # dem Event-Loop, und unter Plattenlast heisst das Sekunden.
+                    await asyncio.to_thread(self._reflect_source_status, r["id"], err)
                     # v4.2-W102: der Kommentar sagte "nicht live". Das stimmt
                     # fuer err=="offline" und fuer nichts sonst — "keine
                     # spielbare Quell-URL" heisst, der Nutzer sendet und wir
@@ -15585,7 +15639,7 @@ class RestreamManager:
                 continue
             src, err = await self._resolve_source(r["source_username"])
             if err:
-                self._reflect_source_status(r["id"], err)
+                await asyncio.to_thread(self._reflect_source_status, r["id"], err)
                 # v4.2-W102: "still überspringen" war woertlich wahr und genau
                 # das Problem. Still bleibt nur noch das echte Offline.
                 self._quelle_melden(r["source_username"], err)
@@ -19020,6 +19074,9 @@ def healthz():
                    # NICHT, weil niemand neu gestartet hat.
                    laufstand=_laufstand()["lage"],
                    tunnel=_tunnel_lage(),
+                   # v4.2-W141: woher die Stream-Adressen der letzten Stunde
+                   # kamen, und wie oft „live" ohne Adresse blieb.
+                   quellen=_nc_quellstat.lage(),
                    schema=_SCHEMA_STAND,                 # v4.2-W85
                    schema_erwartet=_nc_schemastand.ERWARTET,
                    uptime_s=_uptime_s(),                 # v4.0-W88

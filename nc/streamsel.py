@@ -162,20 +162,45 @@ def select_stream_from_data_section(data_section: dict,
         # vorher als Adresse durchgegangen.
         hls = _als_url(main.get("hls"))
         flv = _als_url(main.get("flv"))
-        if not hls and not flv:
+        andere, art = _andere_form(main)
+        if not hls and not flv and not andere:
             continue
         vc = _stream_vcodec(main)
-        cands.append((rank, is_hevc(vc), quality, hls, flv, vc))
+        cands.append((rank, is_hevc(vc), quality, hls, flv, vc, andere, art))
     if not cands:
         return None
+    # v4.2-W141: eine Qualitaet, die NUR cmaf/dash traegt, steht hinter jeder
+    # mit FLV oder HLS — sie ist der letzte Ausweg, nicht die bessere Wahl.
     if prefer_h264:
         # H.264 (is_hevc False) zuerst, dann nach Quality-Rang (origin=0=beste)
-        cands.sort(key=lambda c: (c[1], c[0]))
+        cands.sort(key=lambda c: (not (c[3] or c[4]), c[1], c[0]))
     else:
-        cands.sort(key=lambda c: c[0])
-    rank, hev, quality, hls, flv, vc = cands[0]
-    return {"hls_url": hls, "flv_url": flv,
-            "vcodec": vc or None, "quality": quality}
+        cands.sort(key=lambda c: (not (c[3] or c[4]), c[0]))
+    rank, hev, quality, hls, flv, vc, andere, art = cands[0]
+    aus = {"hls_url": hls, "flv_url": flv,
+           "vcodec": vc or None, "quality": quality}
+    if andere:
+        aus["other_url"], aus["other_kind"] = andere, art
+    return aus
+
+
+# v4.2-W141: Der Betreiber am 05.11.: „7 User live, keiner wird restreamt weil
+# angeblich keine flv oder hls streams empfangen werden können. Wenn das nicht
+# möglich ist sollte er vllt andere Formate prüfen?" — Ja. `stream_data.main`
+# traegt neben `flv` und `hls` weitere Felder; gelesen wurden bis hierher nur
+# die zwei. `cmaf` und `dash` sind beide per HTTP pullbar und fuer ffmpeg
+# lesbar (DASH-Manifest bzw. fragmentiertes MP4). Ob TikTok sie einer
+# Datacenter-IP herausgibt, ist NICHT gemessen — dafuer gibt es
+# tools/quellprobe.py. Gelesen werden sie trotzdem: ein Feld, das da ist und
+# nicht gelesen wird, ist genau der Fehler aus W102 und W105.
+ANDERE_FORMEN = ("cmaf", "dash")
+
+
+def _andere_form(main):
+    """(url, art) fuer die erste weitere Form in `main`, sonst (None, None)."""
+    treffer = [(u, art) for art in ANDERE_FORMEN
+               for u in (_als_url(main.get(art)),) if u]
+    return treffer[0] if treffer else (None, None)
 
 
 def find_stream_urls(obj, prefer_h264: bool = True, _depth: int = 0) -> Optional[dict]:
@@ -225,6 +250,7 @@ def extract_urls_from_streamurl_node(node: dict,
     hls = _als_url(node.get("hls_pull_url") or node.get("hlsPullUrl"))
     vcodec = None
     quality = None
+    andere = andere_art = None
     # v4.2-W105: flv_pull_url ist ENTWEDER eine Adresse ODER ein Woerterbuch
     # {Qualitaet: URL}. Die zweite Form stand hier jahrelang als Zeichenkette
     # im Rueckgabewert, und `hat_stream_url()` liess sie als "URL vorhanden"
@@ -259,6 +285,9 @@ def extract_urls_from_streamurl_node(node: dict,
                 sel = select_stream_from_data_section(data_section,
                                                       prefer_h264=prefer_h264)
                 if sel:
+                    if sel.get("other_url"):
+                        andere = sel["other_url"]
+                        andere_art = sel.get("other_kind")
                     # B64-Fix: sel ist codec-bewusst und damit MASSGEBLICH —
                     # nicht mit dem Top-Level mergen. Das Top-Level hls_pull_url
                     # ist oft die HEVC-origin-Variante; ein `or hls` würde bei
@@ -270,9 +299,11 @@ def extract_urls_from_streamurl_node(node: dict,
                     vcodec = sel.get("vcodec")
                     quality = sel.get("quality")
 
-    if not hls and not flv:
+    if not hls and not flv and not andere:
         return None
     out = {"hls_url": hls, "flv_url": flv}
+    if andere:
+        out["other_url"], out["other_kind"] = andere, andere_art
     if vcodec:
         out["vcodec"] = vcodec
     if quality:

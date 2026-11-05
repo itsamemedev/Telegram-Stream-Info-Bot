@@ -61,6 +61,26 @@ def _ist_flv(url, protokoll="", ext=""):
             or (ext or "").lower() == "flv")
 
 
+def _andere_art(url, protokoll="", ext=""):
+    """v4.2-W141: die dritte Form — eine pullbare HTTP-Adresse, die weder FLV
+    noch HLS ist (DASH-Manifest, fragmentiertes MP4/CMAF). Bis hierher wurde
+    sie verworfen, und „keine spielbare Quell-URL (weder FLV noch HLS)" war
+    damit auch dann die Antwort, wenn yt-dlp eine Adresse geliefert hatte.
+
+    Nur http(s): was durchkommt, ist Eingabe fuer ffmpeg, und ein file:// oder
+    rtmp:// aus einer fremden Auskunft hat dort nichts zu suchen (dieselbe
+    Erlaubnisliste-Haltung wie nc.streamsel._als_url)."""
+    u = (url or "").lower()
+    p = (protokoll or "").lower()
+    art = ""                      # "" = keine dritte Form; ein Ausgang, keine Blindstelle
+    if u.startswith("https://") or u.startswith("http://"):
+        if ".mpd" in u or "dash" in p:
+            art = "dash"
+        elif (ext or "").lower() in ("mp4", "m4s", "cmfv") or ".mp4" in u or "cmaf" in u:
+            art = "cmaf" if "cmaf" in u else "mp4"
+    return art
+
+
 def _kandidaten(data):
     """Alle (url, protokoll, ext) aus der yt-dlp-Auskunft — Formate zuerst.
 
@@ -101,12 +121,16 @@ def urls_aus_json(data):
     # dieses Modul loggt nicht (siehe Modultext).
     if not isinstance(data, dict):
         data = {}
-    hls = flv = None
+    hls = flv = andere = art = None
     for url, protokoll, ext in _kandidaten(data):
         if flv is None and _ist_flv(url, protokoll, ext):
             flv = url
         elif hls is None and _ist_hls(url, protokoll, ext):
             hls = url
+        elif andere is None:
+            art = _andere_art(url, protokoll, ext)
+            if art:
+                andere = url
         if flv and hls:
             break
     aus = {}
@@ -114,9 +138,44 @@ def urls_aus_json(data):
         aus["hls_url"] = hls
     if flv:
         aus["flv_url"] = flv
+    if andere and not (hls or flv):
+        # Nur wenn es nichts Besseres gibt: FLV und HLS sind gemessen
+        # brauchbar, die dritte Form ist es nicht (siehe tools/quellprobe.py).
+        aus["other_url"], aus["other_kind"] = andere, art
     if aus:
         # `via` landet im Dashboard-Suffix und in stream.resolve.ok — ohne ihn
         # waere im Log nicht zu sehen, WELCHER Weg die Adresse gebracht hat,
         # und genau das ist hier die Nachricht.
         aus["via"] = "ytdlp"
+    return aus
+
+
+def nur_frische(urls, ttl_von, min_ttl):
+    """v4.2-W141: abgelaufene Formen einzeln streichen statt alle.
+
+    Bis hierher pruefte `_resolve_via_ytdlp` nur die BESTE Adresse (FLV vor
+    HLS) und warf bei zu kurzer Restgueltigkeit das ganze Ergebnis weg — auch
+    eine HLS-Adresse mit einer Stunde Laufzeit, nur weil die FLV-Adresse in
+    zwei Minuten ablief. Der Restream meldete danach „keine spielbare
+    Quell-URL", obwohl eine dalag.
+
+    `ttl_von(url)` liefert die Restsekunden oder None (unbekannt = behalten:
+    eine Adresse ohne expire-Angabe ist keine abgelaufene). Rueckgabe ist eine
+    Kopie; gestrichene Schluessel stehen unter "verworfen", damit der Aufrufer
+    sagen kann, WAS er weggeworfen hat.
+    """
+    aus = dict(urls or {})
+    weg = []
+    for schluessel in ("flv_url", "hls_url", "other_url"):
+        u = aus.get(schluessel)
+        if not u:
+            continue
+        ttl = ttl_von(u)
+        if ttl is not None and ttl < min_ttl:
+            aus.pop(schluessel)
+            weg.append("%s %ss" % (schluessel.split("_")[0], ttl))
+    if "other_url" not in aus:
+        aus.pop("other_kind", None)
+    if weg:
+        aus["verworfen"] = weg
     return aus

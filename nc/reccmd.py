@@ -418,13 +418,15 @@ async def build_recording_cmd(username: str, output_file: str, duration_secs: in
         # ffmpeg FLV genauso gut aufnimmt. Jetzt: hls_url BEVORZUGT, flv_url
         # als Fallback akzeptiert.
         def _has_stream_url(d):
-            return bool(d and (d.get("hls_url") or d.get("flv_url")))
+            # v4.2-W141: die dritte Form zaehlt mit (nc.livefolge.hat_stream_url).
+            return bool(d and (d.get("hls_url") or d.get("flv_url")
+                               or d.get("other_url")))
         info = prefetched_info if _has_stream_url(prefetched_info) else None
         # B58: prefetched URL aus der Detection könnte schon (fast) abgelaufen
         # sein. Vor Gebrauch das expire-Token prüfen — wenn < min TTL → verwerfen
         # und frisch auflösen. Das verhindert die "sofort-404"-Aufnahmen.
         if info is not None:
-            purl = info.get("hls_url") or info.get("flv_url")
+            purl = info.get("hls_url") or info.get("flv_url") or info.get("other_url")
             if not _stream_url_is_fresh(purl):
                 ttl = _stream_url_ttl(purl)
                 log.info(f"@{username}: prefetched Stream-URL stale "
@@ -443,7 +445,7 @@ async def build_recording_cmd(username: str, output_file: str, duration_secs: in
             return None
         # F44: HLS bevorzugen (besser segmentiert, robuster bei Reconnects),
         # FLV als Fallback nehmen.
-        stream_url = info.get("hls_url") or info.get("flv_url")
+        stream_url = info.get("hls_url") or info.get("flv_url") or info.get("other_url")
         stream_url = await _preflight_url(stream_url, who=f"@{username}")   # V37-B91
         if not stream_url:
             failure_reasons.append("native: Preflight — Stream-URL(s) "
@@ -473,7 +475,9 @@ async def build_recording_cmd(username: str, output_file: str, duration_secs: in
             pass
         # F44: Wenn nur FLV verfügbar war, Suffix erweitern damit Dashboard das sieht
         if not info.get("hls_url"):
-            suffix += "-flv"
+            # v4.2-W141: ohne HLS war es bisher immer FLV — jetzt kann es auch
+            # die dritte Form sein, und die soll im Deck erkennbar bleiben.
+            suffix += "-flv" if info.get("flv_url") else "-" + (info.get("other_kind") or "andere")
         return _build_native_cmd(stream_url, output_file, duration_secs, pull_proxy=_pull_proxy), f"native{suffix}"
 
     def _try_ytdlp():
