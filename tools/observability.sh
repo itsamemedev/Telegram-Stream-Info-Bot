@@ -29,7 +29,14 @@
 #     fertigen Bestand fasst nichts an und startet nichts neu.
 #   * Prometheus braucht keinen DASHBOARD_TOKEN: er fragt 127.0.0.1, und das
 #     Deck laesst Loopback ohne Anmeldung durch. Kein Geheimnis wird kopiert.
-#   * Die .env, die Datenbank und der Bot-Dienst werden nie angefasst.
+#   * In die .env kommen nur die eigenen Schluessel (v4.2-W144):
+#     PROMETHEUS_URL, und mit Grafana GRAFANA_URL, GRAFANA_ADMIN_USER und
+#     GRAFANA_ADMIN_PASSWORD. Vorher stand nirgends, wo Grafana lauscht und
+#     mit welchem Passwort — und Grafana blieb auf admin/admin, bis jemand
+#     sich anmeldete. Jetzt erzeugt dieses Werkzeug ein Passwort, setzt es
+#     und traegt es ein; ein vorhandenes wird nie ueberschrieben. Geschrieben
+#     wird ueber nc/envdatei.py (Sicherung, Rechte, atomar).
+#   * Die Datenbank und der Bot-Dienst werden nie angefasst.
 #
 # EXITCODES — dieselbe Trennung wie update.sh:
 #   0  eingerichtet bzw. vollstaendig
@@ -145,6 +152,11 @@ UNIT="$W/etc/systemd/system/nightcrawler-prometheus.service"
 GF_PROV="$W/etc/grafana/provisioning"
 GF_DASH="$W/var/lib/grafana/dashboards/nightcrawler"
 GF_DROPIN="$W/etc/systemd/system/grafana-server.service.d/nightcrawler.conf"
+# Das Admin-Passwort fuer den ERSTEN Start einer frischen Grafana: nur root
+# lesbar, eingebunden per EnvironmentFile im Drop-in. Grafana liest es nur,
+# wenn es seine Datenbank neu anlegt — fuer eine bestehende setzt
+# `grafana cli admin reset-admin-password` es.
+GF_PWDATEI="$W/etc/nightcrawler/grafana.env"
 
 SUDO=""
 if [ -n "${NC_OBS_SUDO+gesetzt}" ]; then
@@ -191,6 +203,24 @@ lauf(){
 }
 dienst(){ # systemctl, gezeigt und — ausser im Trockenlauf — ausgefuehrt
   lauf systemctl "$@"
+}
+
+# env_eintragen KENNUNG  — KEY=WERT-Zeilen auf stdin in die .env (nc/envdatei.py).
+# Die Werte gehen ueber die Standardeingabe, nie in argv: hier geht das
+# Grafana-Passwort durch. Gezeigt werden nur die Namen.
+env_eintragen(){
+  local _z; _z="$(cat)"
+  if [ ! -f "$ENVF" ]; then
+    info ".env fehlt unter %s — Eintraege uebersprungen: %s" "$ZIEL" "$(printf '%s\n' "$_z" | cut -d= -f1 | tr '\n' ' ')"
+    return 0
+  fi
+  if [ "$TROCKEN" = 1 ]; then
+    printf '    %s$%s .env: %s\n' "$FNT" "$R" "$(printf '%s\n' "$_z" | cut -d= -f1 | tr '\n' ' ')"
+    return 0
+  fi
+  local _py="$ZIEL/.venv/bin/python"; [ -x "$_py" ] || _py="python3"
+  printf '%s\n' "$_z" | PYTHONPATH="$SKRIPT/.." "$_py" -m nc.envdatei "$ENVF" "$1" \
+    | sed 's/^/    .env: /'
 }
 
 # rendern VORLAGE -> stdout. Unbekannte Platzhalter brechen ab: ein @@X@@, das
@@ -245,7 +275,7 @@ if [ "$ENTFERNEN" = 1 ]; then
            "$GF_PROV/dashboards/nightcrawler.yml" "$GF_DASH/nightcrawler.json"; do
     [ -e "$f" ] && { lauf rm -f "$f"; _gf=1; }
   done
-  for f in "$UNIT" "$REGELN/nightcrawler.yml" "$ETC/prometheus.yml"; do
+  for f in "$UNIT" "$REGELN/nightcrawler.yml" "$ETC/prometheus.yml" "$GF_PWDATEI"; do
     [ -e "$f" ] && lauf rm -f "$f"
   done
   dienst daemon-reload
@@ -276,6 +306,7 @@ for u in grafana-server.service grafana.service; do
   if unit_da "$u"; then GF_DA=1; GF_DIENST="$u"; break; fi
 done
 [ "$GF_DA" = 1 ] && gut "grafana: %s" "$GF_DIENST" || info "grafana: nicht installiert"
+GF_VORHER="$GF_DA"     # lief Grafana schon vor diesem Lauf? (Passwortweg)
 
 if [ "$GRAFANA" = "frage" ]; then
   if [ "$NC_MODUS" = "unattended" ]; then
@@ -306,7 +337,13 @@ if [ "$NUR_PRUEFEN" = 1 ]; then
     for f in "$GF_PROV/datasources/nightcrawler.yml" "$GF_DASH/nightcrawler.json"; do
       [ -f "$f" ] || { warn "fehlt: %s" "${f#"$W"}"; BEFUND=1; }
     done
+    for k in GRAFANA_URL GRAFANA_ADMIN_PASSWORD; do
+      [ -n "$(env_wert "$k")" ] || { warn "%s fehlt in der .env." "$k"; BEFUND=1; }
+    done
   fi
+  # v4.2-W144: eingerichtet heisst auch eingetragen — sonst weiss der Bot
+  # (und wer die .env liest) nicht, wo Prometheus lauscht.
+  [ -n "$(env_wert PROMETHEUS_URL)" ] || { warn "PROMETHEUS_URL fehlt in der .env."; BEFUND=1; }
   [ "$BEFUND" = 0 ] && gut "Vollstaendig." || warn "Unvollstaendig — ohne --check wird es eingerichtet."
   exit "$BEFUND"
 fi
@@ -389,6 +426,8 @@ fi
 if [ "$PAKET_DIENST_VORHER" = 1 ] && unit_aktiv prometheus.service; then
   info "prometheus.service lief schon vorher und bleibt unangetastet."
 fi
+printf 'PROMETHEUS_URL=http://127.0.0.1:%s\n' "$PROM_PORT" | env_eintragen observability \
+  || { warn "PROMETHEUS_URL liess sich nicht in die .env schreiben."; BEFUND=1; }
 
 # ═══════════════════════════════════════════════════════════════════════════
 if [ "$GRAFANA" = "ja" ]; then
@@ -441,6 +480,21 @@ if [ "$GRAFANA" = "ja" ]; then
   schreibe "$GF_PROV/dashboards/nightcrawler.yml" "$VORLAGEN/grafana/provisioning/dashboards/nightcrawler.yml" || exit 1
   schreibe "$GF_DASH/nightcrawler.json" "$VORLAGEN/grafana/dashboards/nightcrawler.json" || exit 1
   schreibe "$GF_DROPIN" "$VORLAGEN/systemd/grafana-server.service.d/nightcrawler.conf" || exit 1
+  # v4.2-W144: kein admin/admin. Ein Passwort aus der .env gilt; fehlt es,
+  # wird eins erzeugt. Fuer eine frische Grafana per EnvironmentFile vor dem
+  # ersten Start, fuer eine bestehende nach dem Start per grafana cli.
+  GF_PW="$(env_wert GRAFANA_ADMIN_PASSWORD)"; GF_PW_NEU=0
+  if [ -z "$GF_PW" ]; then
+    GF_PW="$(python3 -c 'import secrets;print(secrets.token_urlsafe(18))')"; GF_PW_NEU=1
+  fi
+  if [ "$TROCKEN" = 1 ]; then
+    printf '    %s$%s %s (0600, GF_SECURITY_ADMIN_PASSWORD=***)\n' "$FNT" "$R" "${GF_PWDATEI#"$W"}"
+  elif [ "$GF_PW_NEU" = 1 ] || [ ! -f "$GF_PWDATEI" ]; then
+    ( umask 077; mkdir -p "$(dirname "$GF_PWDATEI")" \
+      && printf 'GF_SECURITY_ADMIN_USER=admin\nGF_SECURITY_ADMIN_PASSWORD=%s\n' "$GF_PW" > "$GF_PWDATEI" ) \
+      || { warn "Passwortdatei %s nicht schreibbar." "${GF_PWDATEI#"$W"}"; BEFUND=1; }
+    GEAENDERT="$GEAENDERT ${GF_PWDATEI#"$W"}"
+  fi
   geaendert "$GF_DROPIN" && dienst daemon-reload
   if ! unit_aktiv "${GF_DIENST:-grafana-server.service}"; then
     dienst enable --now "${GF_DIENST:-grafana-server.service}" || BEFUND=1
@@ -450,6 +504,26 @@ if [ "$GRAFANA" = "ja" ]; then
     dienst restart "${GF_DIENST:-grafana-server.service}" || BEFUND=1
   else
     gut "grafana: unveraendert, laeuft."
+  fi
+  if [ "$GF_PW_NEU" = 1 ] && [ "$GF_VORHER" = 1 ]; then
+    # Bestehende Grafana: das EnvironmentFile greift nicht mehr (die
+    # Datenbank gibt es schon), also das Passwort direkt setzen.
+    _gcli="$(command -v grafana || true)"; _gargs=(cli)
+    [ -z "$_gcli" ] && { _gcli="$(command -v grafana-cli || true)"; _gargs=(); }
+    if [ "$TROCKEN" = 1 ]; then
+      printf '    %s$%s grafana cli admin reset-admin-password --password-from-stdin  (***)\n' "$FNT" "$R"
+    elif [ -n "$_gcli" ] && printf '%s\n' "$GF_PW" | ${SUDO:+$SUDO} "$_gcli" ${_gargs[@]+"${_gargs[@]}"} \
+           --homepath /usr/share/grafana --config /etc/grafana/grafana.ini \
+           admin reset-admin-password --password-from-stdin >/dev/null 2>&1; then
+      gut "Grafana-Admin-Passwort gesetzt (steht in der .env unter GRAFANA_ADMIN_PASSWORD)."
+    else
+      warn "Grafana-Passwort liess sich nicht setzen — es bleibt beim bisherigen. Von Hand: grafana cli admin reset-admin-password"
+      GF_PW_NEU=0; GF_PW=""
+    fi
+  fi
+  if [ -n "$GF_PW" ]; then
+    printf 'GRAFANA_URL=http://127.0.0.1:3000\nGRAFANA_ADMIN_USER=admin\nGRAFANA_ADMIN_PASSWORD=%s\n' "$GF_PW" \
+      | env_eintragen observability || { warn "Grafana-Eintraege liessen sich nicht in die .env schreiben."; BEFUND=1; }
   fi
 fi
 
@@ -490,7 +564,18 @@ fi
 if [ "$GRAFANA" = "ja" ]; then
   if curl -fsS -m 5 "http://127.0.0.1:3000/api/health" >/dev/null 2>&1; then
     gut "Grafana bereit — Zugang per Tunnel: ssh -L 3001:127.0.0.1:3000 <server>, dann http://localhost:3001"
-    erklaere "Erste Anmeldung admin/admin; Grafana verlangt dabei ein neues Passwort. Das Dashboard liegt im Ordner NIGHTCRAWLER."
+    erklaere "Anmeldung: admin, Passwort in der .env unter GRAFANA_ADMIN_PASSWORD. Das Dashboard liegt im Ordner NIGHTCRAWLER."
+    # Nachgesehen, nicht angenommen: nimmt Grafana das Passwort an? Ueber
+    # curl --config von der Standardeingabe — nie in argv.
+    _gpw="$(env_wert GRAFANA_ADMIN_PASSWORD)"
+    if [ -n "$_gpw" ]; then
+      if printf 'user = "admin:%s"\n' "$_gpw" | curl -fsS -m 5 --config - "http://127.0.0.1:3000/api/user" >/dev/null 2>&1; then
+        gut "Grafana nimmt das Passwort aus der .env an."
+      else
+        warn "Grafana lehnt das Passwort aus der .env ab — von Hand setzen: grafana cli admin reset-admin-password"
+        BEFUND=1
+      fi
+    fi
   else
     warn "Grafana antwortet (noch) nicht auf 127.0.0.1:3000 — journalctl -u %s -n 40" "${GF_DIENST:-grafana-server}"
     BEFUND=1

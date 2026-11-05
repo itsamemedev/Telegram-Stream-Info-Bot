@@ -6,7 +6,7 @@
   ],
   "timezone": "browser",
   "schemaVersion": 39,
-  "version": 1,
+  "version": 2,
   "editable": false,
   "refresh": "30s",
   "time": {
@@ -1308,6 +1308,2234 @@
         },
         "overrides": []
       }
+    },
+    {
+      "id": 25,
+      "type": "row",
+      "title": "Bot und Abläufe",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 43,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "id": 26,
+      "type": "stat",
+      "title": "Prozess meldet sich",
+      "description": "Der Bot beantwortet /metrics selbst. Fehlt der Wert, ist der Prozess weg — das sagt „Bot erreichbar\" (up) aus Sicht von Prometheus.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "nightcrawler-prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 44,
+        "w": 4,
+        "h": 4
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "nightcrawler-prometheus"
+          },
+          "expr": "max(nightcrawler_up)",
+          "instant": true
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "1": {
+                  "text": "ja",
+                  "color": "green",
+                  "index": 0
+                },
+                "0": {
+                  "text": "nein",
+                  "color": "red",
+                  "index": 1
+                }
+              }
+            }
+          ]
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 27,
+      "type": "stat",
+      "title": "Live in Aufnahme",
+      "description": "Sitzungen, die gerade aufgenommen werden.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "nightcrawler-prometheus"
+      },
+      "gridPos": {
+        "x": 4,
+        "y": 44,
+        "w": 4,
+        "h": 4
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "nightcrawler-prometheus"
+          },
+          "expr": "max(nightcrawler_live_streams)",
+          "instant": true
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "mappings": []
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 28,
+      "type": "stat",
+      "title": "Kick-Restream",
+      "description": "Läuft der Restream nach Kick (1) oder nicht (0).",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "nightcrawler-prometheus"
+      },
+      "gridPos": {
+        "x": 8,
+        "y": 44,
+        "w": 4,
+        "h": 4
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "nightcrawler-prometheus"
+          },
+          "expr": "max(nightcrawler_restream_active)",
+          "instant": true
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "1": {
+                  "text": "läuft",
+                  "color": "green",
+                  "index": 0
+                },
+                "0": {
+                  "text": "aus",
+                  "color": "text",
+                  "index": 1
+                }
+              }
+            }
+          ]
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 29,
+      "type": "stat",
+      "title": "Aufnahmen gesamt",
+      "description": "Alle Aufnahmen in der Datenbank.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "nightcrawler-prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 44,
+        "w": 4,
+        "h": 4
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "nightcrawler-prometheus"
+          },
+          "expr": "max(nightcrawler_recordings_total)",
+          "instant": true
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "mappings": []
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 30,
+      "type": "stat",
+      "title": "KI-Aufrufe / Minute",
+      "description": "AZRAEL-Aufrufe in der laufenden Minute — das Budget, gegen das der Bot drosselt.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "nightcrawler-prometheus"
+      },
+      "gridPos": {
+        "x": 16,
+        "y": 44,
+        "w": 4,
+        "h": 4
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "nightcrawler-prometheus"
+          },
+          "expr": "max(nightcrawler_ai_budget_used)",
+          "instant": true
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "mappings": []
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 31,
+      "type": "stat",
+      "title": "Startdauer",
+      "description": "Vom Prozessstart bis zur ersten Prüfrunde.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "nightcrawler-prometheus"
+      },
+      "gridPos": {
+        "x": 20,
+        "y": 44,
+        "w": 4,
+        "h": 4
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "nightcrawler-prometheus"
+          },
+          "expr": "max(nightcrawler_start_s)",
+          "instant": true
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 60
+              },
+              {
+                "color": "red",
+                "value": 180
+              }
+            ]
+          },
+          "mappings": []
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 32,
+      "type": "timeseries",
+      "title": "Neue Aufnahmen je Stunde",
+      "description": "Zuwachs des Gesamtzählers. Fällt er bei laufenden Lives auf null, nimmt der Bot nichts mehr auf.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "nightcrawler-prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 48,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "nightcrawler-prometheus"
+          },
+          "expr": "increase(nightcrawler_recordings_total[1h])",
+          "legendFormat": "Aufnahmen/h"
+        }
+      ],
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max",
+            "mean"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "never"
+          },
+          "min": 0
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 33,
+      "type": "timeseries",
+      "title": "KI-Last",
+      "description": "Kurzfristige Last gegen das Minutenbudget und die Tagessumme.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "nightcrawler-prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 48,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "nightcrawler-prometheus"
+          },
+          "expr": "nightcrawler_ai_budget_used",
+          "legendFormat": "Aufrufe/min"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "nightcrawler-prometheus"
+          },
+          "expr": "nightcrawler_ai_calls_24h",
+          "legendFormat": "Aufrufe 24 h"
+        }
+      ],
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max",
+            "mean"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "never"
+          },
+          "min": 0
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 34,
+      "type": "row",
+      "title": "Quellen der Stream-Adressen",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 56,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "id": 35,
+      "type": "timeseries",
+      "title": "Woher die Adressen kamen (letzte Stunde)",
+      "description": "Jede Auflösung der letzten Stunde nach dem Weg, der die Adresse lieferte. „keine Adresse\" heißt: der Nutzer ist live, aber kein Weg kam an den Stream — dann startet kein Restream.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "nightcrawler-prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 57,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "nightcrawler-prometheus"
+          },
+          "expr": "nightcrawler_quellen_api",
+          "legendFormat": "Webcast-API"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "nightcrawler-prometheus"
+          },
+          "expr": "nightcrawler_quellen_html",
+          "legendFormat": "Live-Seite (HTML)"
+        },
+        {
+          "refId": "C",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "nightcrawler-prometheus"
+          },
+          "expr": "nightcrawler_quellen_ytdlp",
+          "legendFormat": "yt-dlp"
+        },
+        {
+          "refId": "D",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "nightcrawler-prometheus"
+          },
+          "expr": "nightcrawler_quellen_keiner",
+          "legendFormat": "live, aber keine Adresse"
+        }
+      ],
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max",
+            "mean"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 40,
+            "showPoints": "never",
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            }
+          },
+          "min": 0
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 36,
+      "type": "stat",
+      "title": "Live ohne Adresse",
+      "description": "Anteil der Auflösungen ohne pullbare Adresse. Ab 20 % gelb, ab 50 % rot — wie im Deck. Abhilfe: /quelle ‹name› in Telegram oder tools/quellprobe.py.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "nightcrawler-prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 57,
+        "w": 6,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "nightcrawler-prometheus"
+          },
+          "expr": "max(100 * nightcrawler_quellen_keiner / clamp_min(nightcrawler_quellen_gesamt, 1))",
+          "instant": true
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 20
+              },
+              {
+                "color": "red",
+                "value": 50
+              }
+            ]
+          },
+          "mappings": []
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 37,
+      "type": "stat",
+      "title": "Auflösungen (letzte Stunde)",
+      "description": "Wie oft der Bot in der letzten Stunde einen Live-Stream aufgelöst hat.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "nightcrawler-prometheus"
+      },
+      "gridPos": {
+        "x": 18,
+        "y": 57,
+        "w": 6,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "nightcrawler-prometheus"
+          },
+          "expr": "max(nightcrawler_quellen_gesamt)",
+          "instant": true
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "mappings": []
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 38,
+      "type": "row",
+      "title": "Prüfstand der Trackings",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 65,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "id": 39,
+      "type": "timeseries",
+      "title": "Trackings nach Prüfstand",
+      "description": "Wird ein Nutzer nicht mehr abgefragt, steigt „überfällig\" — dann stimmt seine Online/Offline-Anzeige nicht mehr. Der Bot meldet das selbst als ERROR mit Namen.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "nightcrawler-prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 66,
+        "w": 16,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "nightcrawler-prometheus"
+          },
+          "expr": "nightcrawler_pruefung_aktiv",
+          "legendFormat": "rechtzeitig geprüft"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "nightcrawler-prometheus"
+          },
+          "expr": "nightcrawler_pruefung_ausstehend",
+          "legendFormat": "ausstehend"
+        },
+        {
+          "refId": "C",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "nightcrawler-prometheus"
+          },
+          "expr": "nightcrawler_pruefung_ueberfaellig",
+          "legendFormat": "überfällig"
+        },
+        {
+          "refId": "D",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "nightcrawler-prometheus"
+          },
+          "expr": "nightcrawler_pruefung_unbekannt",
+          "legendFormat": "nie geprüft"
+        }
+      ],
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max",
+            "mean"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 40,
+            "showPoints": "never",
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            }
+          },
+          "min": 0
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 40,
+      "type": "stat",
+      "title": "Überfällig",
+      "description": "Trackings, deren letzte Prüfung länger zurückliegt als erlaubt.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "nightcrawler-prometheus"
+      },
+      "gridPos": {
+        "x": 16,
+        "y": 66,
+        "w": 4,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "nightcrawler-prometheus"
+          },
+          "expr": "max(nightcrawler_pruefung_ueberfaellig)",
+          "instant": true
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          },
+          "mappings": []
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 41,
+      "type": "stat",
+      "title": "Nie geprüft",
+      "description": "Trackings ohne eine einzige Prüfung — kurz nach dem Start normal, danach ein Befund.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "nightcrawler-prometheus"
+      },
+      "gridPos": {
+        "x": 20,
+        "y": 66,
+        "w": 4,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "nightcrawler-prometheus"
+          },
+          "expr": "max(nightcrawler_pruefung_unbekannt)",
+          "instant": true
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 1
+              }
+            ]
+          },
+          "mappings": []
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 42,
+      "type": "row",
+      "title": "Zustand",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 74,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "id": 43,
+      "type": "stat",
+      "title": "Tunnel (Egress)",
+      "description": "Letzte Probe des Proxy-Tunnels (Polen-VPS). Nur FEHLER ist ein Alarm; „direkt\" heißt: kein Proxy konfiguriert.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "nightcrawler-prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 75,
+        "w": 4,
+        "h": 4
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "nightcrawler-prometheus"
+          },
+          "expr": "max(nightcrawler_zustand_tunnel_ok * 1 + nightcrawler_zustand_tunnel_direkt * 2 + nightcrawler_zustand_tunnel_aus * 3 + nightcrawler_zustand_tunnel_fehler * 4 + nightcrawler_zustand_tunnel_unbekannt * 5 + nightcrawler_zustand_tunnel_sonstig * 6)",
+          "instant": true
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "1": {
+                  "text": "ok",
+                  "color": "green",
+                  "index": 0
+                },
+                "2": {
+                  "text": "direkt (kein Proxy)",
+                  "color": "blue",
+                  "index": 1
+                },
+                "3": {
+                  "text": "abgeschaltet",
+                  "color": "yellow",
+                  "index": 2
+                },
+                "4": {
+                  "text": "FEHLER",
+                  "color": "red",
+                  "index": 3
+                },
+                "5": {
+                  "text": "noch nicht geprüft",
+                  "color": "text",
+                  "index": 4
+                },
+                "6": {
+                  "text": "unbekannte Lage",
+                  "color": "purple",
+                  "index": 5
+                }
+              }
+            }
+          ]
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 44,
+      "type": "stat",
+      "title": "Update wirksam?",
+      "description": "VERALTET heißt: ein Update liegt auf der Platte, der Prozess läuft aber noch mit dem alten Code — Dienst neu starten.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "nightcrawler-prometheus"
+      },
+      "gridPos": {
+        "x": 4,
+        "y": 75,
+        "w": 4,
+        "h": 4
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "nightcrawler-prometheus"
+          },
+          "expr": "max(nightcrawler_zustand_laufstand_aktuell * 1 + nightcrawler_zustand_laufstand_veraltet * 2 + nightcrawler_zustand_laufstand_unbekannt * 3 + nightcrawler_zustand_laufstand_sonstig * 4)",
+          "instant": true
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "1": {
+                  "text": "aktuell",
+                  "color": "green",
+                  "index": 0
+                },
+                "2": {
+                  "text": "VERALTET — Neustart fehlt",
+                  "color": "red",
+                  "index": 1
+                },
+                "3": {
+                  "text": "unbekannt",
+                  "color": "text",
+                  "index": 2
+                },
+                "4": {
+                  "text": "unbekannte Lage",
+                  "color": "purple",
+                  "index": 3
+                }
+              }
+            }
+          ]
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 45,
+      "type": "stat",
+      "title": "Schema",
+      "description": "0 = Datenbank und Code passen. Über 0: die Datenbank ist NEUER als der Code (Rollback?) — Zahlen können falsch sein.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "nightcrawler-prometheus"
+      },
+      "gridPos": {
+        "x": 8,
+        "y": 75,
+        "w": 4,
+        "h": 4
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "nightcrawler-prometheus"
+          },
+          "expr": "max(nightcrawler_zustand_schema_stand - nightcrawler_zustand_schema_erwartet)",
+          "instant": true
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "yellow",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          },
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "passt",
+                  "color": "green",
+                  "index": 0
+                }
+              }
+            }
+          ]
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 46,
+      "type": "stat",
+      "title": "Datenbank-Backend",
+      "description": "SQLite oder MariaDB — umziehen mit bash tools/update.sh --mariadb.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "nightcrawler-prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 75,
+        "w": 4,
+        "h": 4
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "nightcrawler-prometheus"
+          },
+          "expr": "max(nightcrawler_zustand_db_mariadb)",
+          "instant": true
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "SQLite",
+                  "color": "blue",
+                  "index": 0
+                },
+                "1": {
+                  "text": "MariaDB",
+                  "color": "green",
+                  "index": 1
+                }
+              }
+            }
+          ]
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 47,
+      "type": "stat",
+      "title": "Synchrone Log-Handler",
+      "description": "Handler am Wurzel-Logger an der Log-Schleuse vorbei. Über 0 kann der Event-Loop wieder an der Platte hängen (Befund 18.09.).",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "nightcrawler-prometheus"
+      },
+      "gridPos": {
+        "x": 16,
+        "y": 75,
+        "w": 4,
+        "h": 4
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "nightcrawler-prometheus"
+          },
+          "expr": "max(nightcrawler_zustand_log_synchron)",
+          "instant": true
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          },
+          "mappings": []
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 48,
+      "type": "stat",
+      "title": "Loop-Stockungen (1 h)",
+      "description": "Wie oft der Watchdog in der letzten Stunde einen stehenden Event-Loop gesehen hat.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "nightcrawler-prometheus"
+      },
+      "gridPos": {
+        "x": 20,
+        "y": 75,
+        "w": 4,
+        "h": 4
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "nightcrawler-prometheus"
+          },
+          "expr": "max(increase(nightcrawler_zustand_loop_stalls[1h]))",
+          "instant": true
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          },
+          "mappings": []
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 49,
+      "type": "state-timeline",
+      "title": "Verlauf: Tunnel und Update-Lage",
+      "description": "Wann der Tunnel ausfiel und wann ein Update ohne Neustart lag.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "nightcrawler-prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 79,
+        "w": 24,
+        "h": 5
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "nightcrawler-prometheus"
+          },
+          "expr": "max(nightcrawler_zustand_tunnel_ok * 1 + nightcrawler_zustand_tunnel_direkt * 2 + nightcrawler_zustand_tunnel_aus * 3 + nightcrawler_zustand_tunnel_fehler * 4 + nightcrawler_zustand_tunnel_unbekannt * 5 + nightcrawler_zustand_tunnel_sonstig * 6)",
+          "legendFormat": "Tunnel"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "nightcrawler-prometheus"
+          },
+          "expr": "max(nightcrawler_zustand_laufstand_aktuell * 1 + nightcrawler_zustand_laufstand_veraltet * 2 + nightcrawler_zustand_laufstand_unbekannt * 3 + nightcrawler_zustand_laufstand_sonstig * 4)",
+          "legendFormat": "Update"
+        }
+      ],
+      "options": {
+        "showValue": "auto",
+        "mergeValues": true,
+        "rowHeight": 0.8,
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "1": {
+                  "text": "ok",
+                  "color": "green",
+                  "index": 0
+                },
+                "2": {
+                  "text": "direkt (kein Proxy)",
+                  "color": "blue",
+                  "index": 1
+                },
+                "3": {
+                  "text": "abgeschaltet",
+                  "color": "yellow",
+                  "index": 2
+                },
+                "4": {
+                  "text": "FEHLER",
+                  "color": "red",
+                  "index": 3
+                },
+                "5": {
+                  "text": "noch nicht geprüft",
+                  "color": "text",
+                  "index": 4
+                },
+                "6": {
+                  "text": "unbekannte Lage",
+                  "color": "purple",
+                  "index": 5
+                }
+              }
+            },
+            {
+              "type": "value",
+              "options": {
+                "1": {
+                  "text": "aktuell",
+                  "color": "green",
+                  "index": 0
+                },
+                "2": {
+                  "text": "VERALTET — Neustart fehlt",
+                  "color": "red",
+                  "index": 1
+                },
+                "3": {
+                  "text": "unbekannt",
+                  "color": "text",
+                  "index": 2
+                },
+                "4": {
+                  "text": "unbekannte Lage",
+                  "color": "purple",
+                  "index": 3
+                }
+              }
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 50,
+      "type": "row",
+      "title": "Event-Loop im Detail",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 84,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "id": 51,
+      "type": "timeseries",
+      "title": "Letzte Messung und Überschreitungen",
+      "description": "Die Einzelmessung neben p50/p99 oben, und wie oft das Budget gerissen wurde.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "nightcrawler-prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 85,
+        "w": 16,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "nightcrawler-prometheus"
+          },
+          "expr": "nightcrawler_loop_lag_letzt_ms",
+          "legendFormat": "letzte Verzögerung (ms)"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "nightcrawler-prometheus"
+          },
+          "expr": "increase(nightcrawler_loop_lag_ueber_budget[15m])",
+          "legendFormat": "über Budget / 15 min"
+        },
+        {
+          "refId": "C",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "nightcrawler-prometheus"
+          },
+          "expr": "increase(nightcrawler_loop_lag_stockungen[15m])",
+          "legendFormat": "Stockungen / 15 min"
+        }
+      ],
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max",
+            "mean"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "never"
+          },
+          "min": 0
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 52,
+      "type": "stat",
+      "title": "Messung aktiv",
+      "description": "„aus\" heißt: es wird nicht gemessen — NICHT, dass es keine Verzögerung gibt.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "nightcrawler-prometheus"
+      },
+      "gridPos": {
+        "x": 16,
+        "y": 85,
+        "w": 4,
+        "h": 4
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "nightcrawler-prometheus"
+          },
+          "expr": "max(nightcrawler_loop_lag_aktiv)",
+          "instant": true
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "1": {
+                  "text": "misst",
+                  "color": "green",
+                  "index": 0
+                },
+                "0": {
+                  "text": "aus",
+                  "color": "red",
+                  "index": 1
+                }
+              }
+            }
+          ]
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 53,
+      "type": "stat",
+      "title": "Messfenster",
+      "description": "Zeitraum, über den p50/p99/max gebildet werden.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "nightcrawler-prometheus"
+      },
+      "gridPos": {
+        "x": 20,
+        "y": 85,
+        "w": 4,
+        "h": 4
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "nightcrawler-prometheus"
+          },
+          "expr": "max(nightcrawler_loop_lag_fenster_s)",
+          "instant": true
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "mappings": []
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 54,
+      "type": "row",
+      "title": "Live-Status-Cache im Detail",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 93,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "id": 55,
+      "type": "timeseries",
+      "title": "Einträge und laufende Auflösungen",
+      "description": "Laufende Auflösungen über 2 heißen: die Semaphore staut.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "nightcrawler-prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 94,
+        "w": 8,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "nightcrawler-prometheus"
+          },
+          "expr": "nightcrawler_livecache_eintraege",
+          "legendFormat": "Einträge"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "nightcrawler-prometheus"
+          },
+          "expr": "nightcrawler_livecache_laufend",
+          "legendFormat": "laufend"
+        }
+      ],
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max",
+            "mean"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "never"
+          },
+          "min": 0
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 56,
+      "type": "timeseries",
+      "title": "Auflösungen je Minute",
+      "description": "Echte Auflösungen (Cache-Fehlschläge, die ins Netz gingen).",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "nightcrawler-prometheus"
+      },
+      "gridPos": {
+        "x": 8,
+        "y": 94,
+        "w": 8,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "nightcrawler-prometheus"
+          },
+          "expr": "rate(nightcrawler_livecache_laeufe[5m]) * 60",
+          "legendFormat": "Läufe/min"
+        }
+      ],
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max",
+            "mean"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "never"
+          },
+          "min": 0
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 57,
+      "type": "timeseries",
+      "title": "Längste Auflösung",
+      "description": "Dauer der längsten Auflösung — mit yt-dlp-Nachschlag bis 20 s.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "nightcrawler-prometheus"
+      },
+      "gridPos": {
+        "x": 16,
+        "y": 94,
+        "w": 8,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "nightcrawler-prometheus"
+          },
+          "expr": "nightcrawler_livecache_dauer_max_ms",
+          "legendFormat": "max"
+        }
+      ],
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max",
+            "mean"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "never"
+          },
+          "min": 0
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 58,
+      "type": "row",
+      "title": "Kindprozesse und Deskriptoren",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 102,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "id": 59,
+      "type": "timeseries",
+      "title": "Gestartet und abgebrochen (1 h)",
+      "description": "ffmpeg, streamlink, yt-dlp. Viele Abbrüche bei wenigen Starts zeigen eine Quelle, die nicht trägt.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "nightcrawler-prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 103,
+        "w": 8,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "nightcrawler-prometheus"
+          },
+          "expr": "increase(nightcrawler_kinder_gestartet[1h])",
+          "legendFormat": "gestartet"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "nightcrawler-prometheus"
+          },
+          "expr": "increase(nightcrawler_kinder_abgebrochen[1h])",
+          "legendFormat": "abgebrochen"
+        }
+      ],
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max",
+            "mean"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "never"
+          },
+          "min": 0
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 60,
+      "type": "timeseries",
+      "title": "Ältester Kindprozess",
+      "description": "Steigt das über die längste Aufnahme hinaus, hängt ein Prozess.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "nightcrawler-prometheus"
+      },
+      "gridPos": {
+        "x": 8,
+        "y": 103,
+        "w": 8,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "nightcrawler-prometheus"
+          },
+          "expr": "nightcrawler_kinder_aeltester_s",
+          "legendFormat": "Alter"
+        }
+      ],
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max",
+            "mean"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "never"
+          },
+          "min": 0
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 61,
+      "type": "timeseries",
+      "title": "Deskriptoren gegen Grenze",
+      "description": "Offene Dateien und Sockets gegen das Limit — nahe der Grenze scheitert jede neue Verbindung.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "nightcrawler-prometheus"
+      },
+      "gridPos": {
+        "x": 16,
+        "y": 103,
+        "w": 8,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "nightcrawler-prometheus"
+          },
+          "expr": "nightcrawler_gegendruck_fd_offen",
+          "legendFormat": "offen"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "nightcrawler-prometheus"
+          },
+          "expr": "nightcrawler_gegendruck_fd_grenze",
+          "legendFormat": "Grenze (ulimit)"
+        }
+      ],
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max",
+            "mean"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "never"
+          },
+          "min": 0
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 62,
+      "type": "row",
+      "title": "Langlebige Maps (Speicher)",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 111,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "id": 63,
+      "type": "timeseries",
+      "title": "Einträge je Map",
+      "description": "Steigt eine Linie über Tage ohne Plateau, ist es ein Leck — die Pflege beschneidet stündlich.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "nightcrawler-prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 112,
+        "w": 24,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "nightcrawler-prometheus"
+          },
+          "expr": "nightcrawler_speicher_live_status_cache",
+          "legendFormat": "live_status_cache"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "nightcrawler-prometheus"
+          },
+          "expr": "nightcrawler_speicher_rate_backoff",
+          "legendFormat": "rate_backoff"
+        },
+        {
+          "refId": "C",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "nightcrawler-prometheus"
+          },
+          "expr": "nightcrawler_speicher_rate_penalty",
+          "legendFormat": "rate_penalty"
+        },
+        {
+          "refId": "D",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "nightcrawler-prometheus"
+          },
+          "expr": "nightcrawler_speicher_ytdlp_ruhe",
+          "legendFormat": "ytdlp_ruhe"
+        },
+        {
+          "refId": "E",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "nightcrawler-prometheus"
+          },
+          "expr": "nightcrawler_speicher_clip_cooldown",
+          "legendFormat": "clip_cooldown"
+        },
+        {
+          "refId": "F",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "nightcrawler-prometheus"
+          },
+          "expr": "nightcrawler_speicher_hype_cooldown",
+          "legendFormat": "hype_cooldown"
+        },
+        {
+          "refId": "G",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "nightcrawler-prometheus"
+          },
+          "expr": "nightcrawler_speicher_abo_probe",
+          "legendFormat": "abo_probe"
+        },
+        {
+          "refId": "H",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "nightcrawler-prometheus"
+          },
+          "expr": "nightcrawler_speicher_abo_live",
+          "legendFormat": "abo_live"
+        },
+        {
+          "refId": "I",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "nightcrawler-prometheus"
+          },
+          "expr": "nightcrawler_speicher_next_check",
+          "legendFormat": "next_check"
+        },
+        {
+          "refId": "J",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "nightcrawler-prometheus"
+          },
+          "expr": "nightcrawler_speicher_chat_stats",
+          "legendFormat": "chat_stats"
+        }
+      ],
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max",
+            "mean"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "never"
+          },
+          "min": 0
+        },
+        "overrides": []
+      }
     }
   ],
   "templating": {
@@ -1316,5 +3544,5 @@
   "annotations": {
     "list": []
   },
-  "description": "Erzeugt fuer tools/observability.sh (v4.2-W127). Aenderungen hier gehen beim naechsten Lauf verloren — die Vorlage liegt in deploy/observability/grafana/dashboards/."
+  "description": "Erzeugt fuer tools/observability.sh (v4.2-W127, erweitert in W144: jeder Messwert aus /metrics hat ein Panel). Aenderungen hier gehen beim naechsten Lauf verloren — die Vorlage liegt in deploy/observability/grafana/dashboards/."
 }

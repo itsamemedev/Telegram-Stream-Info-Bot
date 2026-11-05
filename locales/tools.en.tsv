@@ -763,7 +763,6 @@ Der Dienst des Pakets lauscht auf *:9090 ohne Anmeldung — er wird abgeschaltet
 Entfernen	Remove
 Entfernt werden nur die Dateien und Dienste dieses Werkzeugs. Die Pakete prometheus und grafana bleiben installiert, die gesammelten Daten unter /var/lib/nightcrawler-prometheus ebenfalls (systemd raeumt sie mit dem Dienst nicht weg).	Only this tool's files and services are removed. The prometheus and grafana packages stay installed, as does the collected data under /var/lib/nightcrawler-prometheus (systemd does not clean it up with the service).
 Entfernt.	Removed.
-Erste Anmeldung admin/admin; Grafana verlangt dabei ein neues Passwort. Das Dashboard liegt im Ordner NIGHTCRAWLER.	First login admin/admin; Grafana then asks for a new password. The dashboard is in the NIGHTCRAWLER folder.
 Exitcodes: 0 eingerichtet · 1 es fehlt etwas · 2 Aufruffehler	Exit codes: 0 set up · 1 something is missing · 2 usage error
 Fertig.	Done.
 Fuer %s ist kein Grafana-Paket bekannt — bitte selbst installieren und erneut aufrufen.	No Grafana package known for %s — please install it yourself and run again.
@@ -881,3 +880,15 @@ Umzug abgeschlossen — der Bot laeuft jetzt auf MariaDB.	Move complete — the 
 Umzug uebersprungen — der Bot laeuft weiter auf SQLite.	Move skipped — the bot keeps running on SQLite.
 Zusatzfunktionen	Additional features
 PyMySQL liess sich nicht installieren — Umzug abgebrochen, nichts veraendert.	Could not install PyMySQL — migration aborted, nothing changed.
+# v4.2-W144 — Prometheus/Grafana in der .env, Grafana-Passwort
+%s fehlt in der .env.	%s is missing from .env.
+.env fehlt unter %s — Eintraege uebersprungen: %s	.env missing under %s — entries skipped: %s
+Anmeldung: admin, Passwort in der .env unter GRAFANA_ADMIN_PASSWORD. Das Dashboard liegt im Ordner NIGHTCRAWLER.	Login: admin, password in .env as GRAFANA_ADMIN_PASSWORD. The dashboard is in the NIGHTCRAWLER folder.
+Grafana lehnt das Passwort aus der .env ab — von Hand setzen: grafana cli admin reset-admin-password	Grafana rejects the password from .env — set it by hand: grafana cli admin reset-admin-password
+Grafana nimmt das Passwort aus der .env an.	Grafana accepts the password from .env.
+Grafana-Admin-Passwort gesetzt (steht in der .env unter GRAFANA_ADMIN_PASSWORD).	Grafana admin password set (stored in .env as GRAFANA_ADMIN_PASSWORD).
+Grafana-Eintraege liessen sich nicht in die .env schreiben.	Could not write the Grafana entries to .env.
+Grafana-Passwort liess sich nicht setzen — es bleibt beim bisherigen. Von Hand: grafana cli admin reset-admin-password	Could not set the Grafana password — the previous one stays. By hand: grafana cli admin reset-admin-password
+PROMETHEUS_URL fehlt in der .env.	PROMETHEUS_URL is missing from .env.
+PROMETHEUS_URL liess sich nicht in die .env schreiben.	Could not write PROMETHEUS_URL to .env.
+Passwortdatei %s nicht schreibbar.	Password file %s is not writable.

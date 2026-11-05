@@ -33,11 +33,11 @@ Import aus bot.py.
 
 import logging
 import os
-import shutil
 import sqlite3
 import time
 
 from nc import dbexport as _dbexport
+from nc import envdatei as _envdatei
 from nc import dbwrap as _dbwrap
 from nc import schema as _schema
 from nc import schemastand as _schemastand
@@ -277,53 +277,12 @@ def _verbindungsrat(e, mariadb):
 # ── .env ─────────────────────────────────────────────────────────────────────
 
 def env_setzen(pfad, werte, jetzt=None):
-    """Schluessel in der .env setzen, alles andere unveraendert lassen.
+    """Die MariaDB-Schluessel in die .env — Sicherung `.env.vor-mariadb-<zeit>`.
 
-    Vorher eine Kopie `.env.vor-mariadb-<zeit>` — mit denselben Rechten, denn
-    die Datei traegt Geheimnisse. Ersetzt wird die LETZTE unkommentierte Zeile
-    eines Schluessels (so liest auch python-dotenv: der letzte gewinnt);
-    fehlt er, kommt er ans Ende. Geschrieben wird atomar (os.replace), damit
-    ein Abbruch mittendrin keine halbe .env hinterlaesst. Rueckgabe: Pfad der
-    Sicherung."""
-    stempel = time.strftime("%Y%m%d-%H%M%S", time.localtime(jetzt))
-    sicherung = "%s.vor-mariadb-%s" % (pfad, stempel)
-    alt = os.stat(pfad)
-    shutil.copy2(pfad, sicherung)
-    _eigentum(sicherung, alt)
-    with open(pfad, encoding="utf-8") as fh:
-        zeilen = fh.read().splitlines()
-    for schluessel in ENV_SCHLUESSEL:
-        if schluessel not in werte:
-            continue
-        neu = "%s=%s" % (schluessel, werte[schluessel])
-        treffer = [i for i, z in enumerate(zeilen)
-                   if z.lstrip().startswith(schluessel + "=")
-                   or z.lstrip().startswith(schluessel + " =")]
-        if treffer:
-            zeilen[treffer[-1]] = neu
-        else:
-            zeilen.append(neu)
-    tmp = pfad + ".tmp-umzug"
-    with open(tmp, "w", encoding="utf-8") as fh:
-        fh.write("\n".join(zeilen) + "\n")
-    shutil.copymode(pfad, tmp)
-    _eigentum(tmp, alt)
-    os.replace(tmp, pfad)
-    return sicherung
-
-
-def _eigentum(pfad, alt):
-    """Besitzer und Gruppe der alten .env uebernehmen.
-
-    update.sh laeuft als root; os.replace legte die neue .env sonst als root
-    an — mit 600 kann der Bot-Nutzer sie dann nicht mehr lesen, und der
-    Dienst startet nach dem Umzug nicht. Ohne Recht dazu (kein root) gehoert
-    die Datei ohnehin schon dem Aufrufer."""
-    if hasattr(os, "chown") and (alt.st_uid, alt.st_gid) != (os.stat(pfad).st_uid,
-                                                            os.stat(pfad).st_gid):
-        try:
-            os.chown(pfad, alt.st_uid, alt.st_gid)
-        except PermissionError as e:
-            raise UmzugAbgebrochen(
-                "Besitz der .env laesst sich nicht uebernehmen (%s) — als root oder als "
-                "Besitzer der .env ausfuehren." % e) from e
+    Die Regeln (letzte Zeile gewinnt, atomar, Rechte und Besitzer der alten
+    Datei) stehen seit W144 in nc/envdatei.py, fuer alle Schreiber gleich."""
+    try:
+        return _envdatei.setzen(pfad, {k: werte[k] for k in ENV_SCHLUESSEL if k in werte},
+                                "vor-mariadb", jetzt)
+    except _envdatei.EnvdateiFehler as e:
+        raise UmzugAbgebrochen(str(e)) from e

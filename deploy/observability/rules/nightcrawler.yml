@@ -110,3 +110,66 @@ groups:
         annotations:
           summary: "{{ $value }} Kindprozesse in einer Stunde getoetet"
           description: "journalctl -u tiktok-bot | grep -i getoetet — welcher Befehl haengt?"
+
+      # ── v4.2-W144: die Zustaende, die /healthz kannte und Prometheus nicht.
+      - alert: NightcrawlerTrackingsUeberfaellig
+        # Dieselbe Aussage wie die Selbstmeldung des Bots (W142): ein Nutzer
+        # faellt aus der Abfrage, seine Online/Offline-Anzeige ist veraltet.
+        # 15 Minuten, damit der Initial-Burst nach dem Start nicht feuert.
+        expr: max(nightcrawler_pruefung_ueberfaellig) > 0
+        for: 15m
+        labels: {severity: warning}
+        annotations:
+          summary: "{{ $value }} Trackings werden nicht mehr abgefragt"
+          description: "Die Namen stehen im Bot-Log (ERROR) und im Deck unter Trackings. journalctl -u tiktok-bot | grep -i ueberfaellig"
+
+      - alert: NightcrawlerOhneStreamAdresse
+        # 50 % ist die rote Stufe im Deck (W142). Ab fuenf Aufloesungen je
+        # Stunde, damit ein einzelner Fehlversuch kein Alarm ist.
+        # Der Anteil steht LINKS: `and` liefert den Wert der linken Seite, und
+        # die Meldung soll Prozent nennen, nicht die Zahl der Aufloesungen.
+        expr: max(100 * nightcrawler_quellen_keiner / clamp_min(nightcrawler_quellen_gesamt, 1)) >= 50 and max(nightcrawler_quellen_gesamt) >= 5
+        for: 30m
+        labels: {severity: warning}
+        annotations:
+          summary: "Live, aber ohne Stream-Adresse: {{ $value }} %"
+          description: "Die Haelfte der Lives laesst sich nicht abgreifen — kein Restream. Messen: /quelle <name> in Telegram oder tools/quellprobe.py <name>."
+
+      - alert: NightcrawlerTunnelFehler
+        # Die Tunnelwacht prueft alle 10 Minuten (W105); zwei Runden in Folge.
+        expr: max(nightcrawler_zustand_tunnel_fehler) == 1
+        for: 15m
+        labels: {severity: warning}
+        annotations:
+          summary: "Proxy-Tunnel antwortet nicht"
+          description: "Aufnahme und Resolver laufen ueber RECORD_PROXY und kommen nicht durch. Deck → Tunnel → Testen; auf dem VPS: systemctl status privoxy."
+
+      - alert: NightcrawlerUpdateNichtWirksam
+        # W104: das Update liegt auf der Platte, der Prozess laeuft alt.
+        expr: max(nightcrawler_zustand_laufstand_veraltet) == 1
+        for: 30m
+        labels: {severity: warning}
+        annotations:
+          summary: "Update eingespielt, aber nicht wirksam"
+          description: "Der Dienst laeuft noch mit dem alten Code. Neu starten: Deck → Update → Dienst neu starten, oder systemctl restart tiktok-bot."
+
+      - alert: NightcrawlerSchemaNeuerAlsCode
+        # W85: die Datenbank traegt einen hoeheren Schema-Stand als der Code —
+        # nach einem Rollback. Neue Spalten stoeren nicht, geaenderte
+        # Bedeutungen schon; das sieht man sonst erst an falschen Zahlen.
+        expr: max(nightcrawler_zustand_schema_stand) > max(nightcrawler_zustand_schema_erwartet)
+        for: 5m
+        labels: {severity: critical}
+        annotations:
+          summary: "Datenbank ist neuer als der laufende Code"
+          description: "Rollback auf eine aeltere Fassung? Zahlen koennen falsch sein. Passende Fassung einspielen oder docs/CHANGELOG.md zum Schema-Stand lesen."
+
+      - alert: NightcrawlerLogSynchron
+        # W117: ein Handler an der Log-Schleuse vorbei — der Event-Loop kann
+        # wieder an der Plattensperre stehen (Befund 18.09., bis 176 s).
+        expr: max(nightcrawler_zustand_log_synchron) > 0
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: "{{ $value }} Log-Handler schreiben am Loop vorbei"
+          description: "Welcher, zeigt /api/debug/threads (log_synchron). Meist ein Bibliotheks-Logger mit eigenem Handler."

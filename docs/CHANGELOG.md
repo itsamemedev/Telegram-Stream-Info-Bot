@@ -11,6 +11,42 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Neu — Prometheus und Grafana vollständig (v4.2 W144)
+
+- **Jeder Messwert hat ein Panel.** Das Dashboard zeigte 32 von 52 Werten;
+  jetzt 63 Panels in neun Reihen (Bot und Abläufe, Quellen der
+  Stream-Adressen, Prüfstand der Trackings, Zustand, Event-Loop, Live-Cache,
+  Kindprozesse und Deskriptoren, langlebige Maps), jedes mit einer
+  Beschreibung, ab wann es ein Befund ist. Ein Vertrag fällt, sobald ein neuer
+  Messwert ohne Panel bleibt.
+- **`/metrics` kennt, was `/healthz` wusste:** woher die Stream-Adressen kamen
+  (API/HTML/yt-dlp/keine), der Prüfstand der Trackings, Tunnel- und
+  Update-Lage, Schema-Stand, Datenbank-Backend, Watchdog-Stockungen und
+  synchrone Log-Handler. Zustände als 0/1 je Wert — Grafana zeigt sie als
+  Zustandsverlauf.
+- **Sechs neue Alarmregeln** (16 statt 10), jede mit promtool-Test feuernd und
+  still: Trackings überfällig, Live ohne Stream-Adresse, Tunnel-Fehler, Update
+  nicht wirksam, Schema neuer als Code, Log-Handler am Loop vorbei.
+- **Die `.env` trägt Prometheus und Grafana:** `PROMETHEUS_URL`,
+  `GRAFANA_URL`, `GRAFANA_ADMIN_USER`, `GRAFANA_ADMIN_PASSWORD`.
+  `tools/observability.sh` schreibt sie über `nc/envdatei.py` (Sicherung,
+  Rechte, atomar) und prüft sie mit `--check`.
+- **Grafana nicht mehr auf admin/admin:** ein erzeugtes Passwort, für eine
+  frische Grafana per root-only `EnvironmentFile` vor dem ersten Start, für
+  eine bestehende per `grafana cli … --password-from-stdin`. Ein vorhandenes
+  Passwort wird nie überschrieben, Selbstanmeldung und anonymer Zugang sind aus.
+- **Das Deck fragt nach:** System → „Prometheus & Grafana" zeigt, ob
+  Prometheus den Bot wirklich abfragt (`up`), ob Grafana antwortet und ob ein
+  Passwort hinterlegt ist — mit Abhilfe je Lage.
+
+### Behoben
+
+- `nc_mariadb_sql` legte das Datenbank-Konto nur für `localhost` an; mit
+  `skip-name-resolve` scheiterte der Umzug an 1130. Jetzt auch `127.0.0.1` und
+  `::1`, und ein Backslash im Passwort kommt unverändert an (Codex, PR #191).
+- `update.sh --mariadb --system` installierte PyMySQL nie; der Umzug holt es
+  jetzt selbst, vor dem Stopp.
+
 ## [4.5.3] — 2026-11-05 · „Vielstimmig"
 
 ### Neu — update.sh fragt nach, was fehlt (v4.2 W143)

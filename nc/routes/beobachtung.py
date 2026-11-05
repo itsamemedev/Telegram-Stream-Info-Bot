@@ -27,6 +27,7 @@ from typing import Optional
 from flask import Blueprint, jsonify, request
 
 from nc import azraelstate as _nc_azrael
+from nc import beobachtungslage as _nc_beoblage  # v4.2-W144
 from nc import fehlertext as _nc_fehlertext
 from nc import kennzahlen as _nc_kz  # v4.2-W122
 from nc import schnappschuss as _nc_schnappschuss  # v4.2-W122b
@@ -517,6 +518,13 @@ def api_prometheus_metrics():
     _alter, _daten = _nc_kz.stand()
     body += _nc_kz.prometheus(_daten, alter_s=_alter)
     return (body, 200, {"Content-Type": "text/plain; version=0.0.4; charset=utf-8"})
+
+
+@bp.route("/api/beobachtung/lage")
+def api_beobachtung_lage():
+    """v4.2-W144: liest Prometheus den Bot, ist Grafana da? Misst auf Abruf —
+       der Knopf im Deck, nie /healthz. Ohne Passwort in der Antwort."""
+    return jsonify(ok=True, **_nc_beoblage.lage(_t=_t))
 
 
 @bp.route("/api/profile/snapshots/<username>")

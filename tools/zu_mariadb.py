@@ -30,22 +30,13 @@ import sys
 WURZEL = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, WURZEL)
 
+from nc import envdatei as _envdatei  # noqa: E402
 from nc import mariadbumzug as U  # noqa: E402
 
 
 def _env_lesen(pfad):
     """Die .env LESEN, nicht ausfuehren — sie traegt beliebige Werte."""
-    werte = {}
-    if not os.path.isfile(pfad):
-        return werte
-    with open(pfad, encoding="utf-8") as fh:
-        for z in fh:
-            z = z.strip()
-            if not z or z.startswith("#") or "=" not in z:
-                continue
-            k, v = z.split("=", 1)
-            werte[k.strip()] = v.split(" #", 1)[0].strip().strip('"').strip("'")
-    return werte
+    return _envdatei.lesen(pfad)
 
 
 def main(argv=None):

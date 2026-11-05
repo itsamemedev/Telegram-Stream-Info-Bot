@@ -6213,6 +6213,11 @@ VIEW_LOADERS.system = async function(){
         <div class="body"><div id="eg_body" class="faint" style="font-size:12px;line-height:1.9">…</div></div>
       </div>
       <div class="panel mt">
+        <div class="head"><h3>▚ Prometheus &amp; Grafana</h3><span class="tag">/metrics · alerts</span>
+          <div class="spacer"></div><span class="btn" id="bo_pruefen" onclick="loadBeobachtung()">↻ Prüfen</span></div>
+        <div class="body"><div id="bo_body" class="faint" style="font-size:12px;line-height:1.9">…</div></div>
+      </div>
+      <div class="panel mt">
         <div class="head"><h3>▚ Live-Log</h3><span class="tag" id="lg_file">debug.log</span>
           <div class="spacer"></div>
           <select class="field" id="lg_level" onchange="loadLogtail()" style="font-size:11px"><option value="debug">debug</option><option value="error">error</option></select>
@@ -6541,7 +6546,7 @@ VIEW_LOADERS.system = async function(){
       </div>`;
     root.dataset.built='1';
   }
-  loadSystem(); loadEgress(); loadLogtail(); loadPreflight(); loadErrors(); loadMetrics(); loadConfigSnapshot();
+  loadSystem(); loadEgress(); loadBeobachtung(); loadLogtail(); loadPreflight(); loadErrors(); loadMetrics(); loadConfigSnapshot();
   loadResources(); loadAudit(); loadPfHistory(); loadNotify(); loadScheduler(); loadBackup();
   loadListeners(); loadLlmLatency(); loadPreflightStats();
   labLoadVersion(); labLoadDbStats(); labLoadDisk(); dbxLoad(); discLoad(); driftLoad(); twoauthLoad(); ytoauthLoad(); donLoad(); commLoad();
@@ -6768,6 +6773,39 @@ async function loadEgress(){
     +`Effektiver Egress: <b style="color:var(--cyan)">${esc(d.effective||'direkt')}</b><br>`
     +`Konfiguriert (.env): <b>${esc(d.configured||'—')}</b>`
     +(d.last_test?`<br>Letzter TikTok-Test: <b style="color:${d.last_test.ok?'var(--neon)':'var(--magenta)'}">HTTP ${esc(String(d.last_test.http_code))}</b> · ${d.last_test.ms}ms · ${esc(d.last_test.at||'')}`:'');
+}
+/* v4.2-W144: liest Prometheus den Bot wirklich, und ist Grafana da? Die
+   Gruende kommen uebersetzt vom Server (nc/beobachtungslage.py). */
+async function loadBeobachtung(){
+  const el=$('#bo_body'); if(!el) return;
+  const d=await apiGet('/api/beobachtung/lage');
+  if(!d||d.__neterr||!d.ok){ el.textContent='Beobachtung nicht abrufbar'; return; }
+  const farbe=(gut)=>gut===true?'var(--neon)':(gut===false?'var(--magenta)':'var(--amber)');
+  const p=d.prometheus||{}, g=d.grafana||{};
+  let ps, pg;
+  if(!p.konfiguriert){ ps='nicht eingerichtet'; pg=null; }
+  else if(!p.erreichbar){ ps='nicht erreichbar'; pg=false; }
+  else if(p.liest_bot===true){ ps='liest den Bot'; pg=true; }
+  else if(p.liest_bot===false){ ps='erreicht den Bot nicht'; pg=false; }
+  else { ps='noch kein Abruf'; pg=null; }
+  let gs, gg;
+  if(!g.konfiguriert){ gs='nicht eingerichtet'; gg=null; }
+  else if(!g.erreichbar){ gs='nicht erreichbar'; gg=false; }
+  else { gs='ist bereit'; gg=true; }
+  const teile=[];
+  teile.push('<b>Prometheus</b> · <b style="color:'+farbe(pg)+'">'+esc(ps)+'</b>'
+    +(p.url?' · <span style="font-family:var(--mono)">'+esc(p.url)+'</span>':''));
+  if(p.grund) teile.push('<span class="muted">'+esc(p.grund)+'</span>');
+  teile.push('<b>Grafana</b> · <b style="color:'+farbe(gg)+'">'+esc(gs)+'</b>'
+    +(g.url?' · <span style="font-family:var(--mono)">'+esc(g.url)+'</span>':''));
+  if(g.konfiguriert){
+    teile.push('<span style="color:'+farbe(g.passwort_hinterlegt)+'">'
+      +esc(g.passwort_hinterlegt?'Passwort ist hinterlegt':'kein Passwort hinterlegt')+'</span>'
+      +' · <span>'+esc('Zugang nur per SSH-Tunnel')+'</span>');
+    teile.push('<span style="font-family:var(--mono)">'+esc(g.tunnel||'')+'</span>');
+  }
+  if(g.grund) teile.push('<span class="muted">'+esc(g.grund)+'</span>');
+  el.innerHTML=teile.join('<br>');
 }
 async function loadLogtail(){
   const lv=($('#lg_level')&&$('#lg_level').value)||'debug';
