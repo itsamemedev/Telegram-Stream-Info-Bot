@@ -26,7 +26,7 @@ benutzt, berät an der Lage vorbei.**
 
 ## Die eine Regel
 
-`bot.py` hat **26.275 Zeilen / 1,2 MB ≈ 295.000 Token**. Diese Datei wird
+`bot.py` hat **26.313 Zeilen / 1,2 MB ≈ 295.000 Token**. Diese Datei wird
 **nie** ganz gelesen und **nie** blind durchsucht. Erst fragen wo etwas steht,
 dann den Ausschnitt holen:
 
@@ -41,8 +41,8 @@ dann den Ausschnitt holen:
     python tools/ncpatch.py check                          # Templates: doppelte IDs, CSS-Bilanz
     python tools/ncpatch.py docs                           # Doku-Zahlen gegen den Quelltext
 
-`find` antwortet aus `.claude/INDEX.md` — 373 Routen (34 in `bot.py`, 338 in
-`nc/routes/`), 66 Slash-Commands, 587 Funktionen mit Zeilennummern. Nach Änderungen an Routen, Commands oder
+`find` antwortet aus `.claude/INDEX.md` — 377 Routen (34 in `bot.py`, 338 in
+`nc/routes/`), 66 Slash-Commands, 589 Funktionen mit Zeilennummern. Nach Änderungen an Routen, Commands oder
 Top-Level-Funktionen `map` neu laufen lassen. Details: Skill `nc-navigation`.
 
 Für „wer ruft das auf?" und „was ist der Typ?" ist der Sprachserver billiger als
@@ -71,9 +71,9 @@ Auf diesem Windows-Rechner heißt der Interpreter **`python`** (3.13.12);
     brain_bridge.py      Adapter Bot ↔ brain/ (M2)
     brain/               KI-Kern: state, rules, router, agents, memory,
                          semantic, knowledge, scheduler, llm, report
-    nc/                  174 Fachmodule: db, scraping, restream, oauth, ledger,
+    nc/                  176 Fachmodule: db, scraping, restream, oauth, ledger,
                          i18n, …
-    nc/routes/           38 Flask-Blueprints mit 339 weiteren API-Routen
+    nc/routes/           39 Flask-Blueprints mit 343 weiteren API-Routen
     locales/             de.json, en.json, es.json — der Übersetzungskatalog
     templates/           dashboard.html, brain.html, overlay.html, PWA
     website/             lafap_index.html (öffentliche Seite)
@@ -1167,6 +1167,19 @@ Seither schneidet ein Vertrag das MariaDB-Schema ohne Server mit, Upserts
 gehen durch `nc/sqldialekt.py`, und umgezogen wird nur mit Nachzählen
 (`nc/mariadbumzug.py`): die `.env` wird erst umgestellt, wenn jede Tabelle
 stimmt.
+
+**„Alles im Deck einstellbar" hat eine Grenze, und die steht im Code.** Seit
+v4.2-W145 setzt das Deck Umgebungsvariablen über die Tabelle `einstellungen`
+(`nc/einstellungen.py`), geladen direkt nach `load_dotenv()` — Deck › `.env` ›
+Vorgabe. Nicht setzbar ist, was Code, Befehle, Pfade, den Deck-Zugang oder die
+Datenbank-Verbindung bestimmt: `UPDATE_REPO` aus dem Deck hiesse fremden Code
+einspielen, `TRUSTED_PROXIES` jede Anfrage als Loopback ohne Anmeldung. Ein
+solcher Eintrag in der Tabelle wird ignoriert und gemeldet. **Wer eine neue
+Variable dieser Art einführt, benennt sie nach den Schutzregeln** (`*_CMD`,
+`*_BIN`, `*_DIR`, `*_PATH`, `UPDATE_*`) oder trägt sie in `SCHUTZ_EXAKT` ein.
+Geheimes erkennt `geheim()` an Namensteilen, nicht an Teilzeichenketten — die
+erste Fassung übersah `KICK_STREAM_KEY_BACKUP` und versteckte den Schalter
+`COOKIE_AUTO_FETCH`.
 
 **Eingerichtet ist nicht gelesen.** Bis v4.2-W144 richtete
 `tools/observability.sh` Prometheus und Grafana ein — und dann sah niemand

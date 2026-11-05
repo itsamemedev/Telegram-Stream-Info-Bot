@@ -729,6 +729,17 @@ def create_schema(conn, *, pk, txt_idx, txt_long, txt_big, iv, tbl_opts, is_my,
         impact {txt_idx},
         status {txt_idx} DEFAULT 'proposed'
     ){tbl_opts}""")
+    # v4.2-W145: Einstellungen, die im Deck gesetzt werden (nc/einstellungen.py).
+    # Sie ueberstimmen die .env beim Start; der Schluessel ist der Name der
+    # Umgebungsvariablen. Neue Tabelle, keine Bedeutungsaenderung — der
+    # Schema-Zaehler bleibt (CLAUDE.md, W85).
+    conn.execute(f"""
+    CREATE TABLE IF NOT EXISTS einstellungen (
+        schluessel {txt_idx} PRIMARY KEY,
+        wert {txt_long},
+        geaendert_um {ts},
+        geaendert_von {txt_long}
+    ){tbl_opts}""")
 
     conn.commit()
 

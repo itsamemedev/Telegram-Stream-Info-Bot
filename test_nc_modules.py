@@ -18754,6 +18754,11 @@ def _test_v42_w97_logging_blockiert_den_loop_nicht_mehr():
             "verworfene Zeilen werden nicht gemeldet: %s" % blocker.raus[:3]
         assert "verworfen" in verlustzeilen[0] and "Platte" in verlustzeilen[0], \
             "die Verlustmeldung nennt keine Abhilfe: %s" % verlustzeilen[0]
+        # v4.2-W146: und der Zaehler bleibt NACH der Meldezeile stehen. Bis
+        # hierher nullte der Horcher ihn beim Melden — /healthz und /metrics
+        # zeigten Millisekunden nach dem Verlust wieder 0, und die Regel
+        # NightcrawlerLogVerluste konnte nie feuern.
+        assert S.verloren() > 0, "Verlust nach der Meldezeile wieder auf 0 — fuer Prometheus unsichtbar"
 
         # ── (7) ZWEIMAL ENTKOPPELN HAENGT NICHT ZWEIMAL UM. Sonst stuenden
         # zwei Horcher auf denselben Handlern und jede Zeile stuende doppelt
@@ -21030,7 +21035,8 @@ def _test_v42_w112_lagebild():
             for z in k.body:
                 if isinstance(z, _ast.Assign) and getattr(z.targets[0], "id", "") == "name":
                     registriert.add(z.value.value)
-    assert len(registriert) == 13, registriert
+    # ANKER GEWANDERT (v4.2-W146): der Datenbank-Waechter, vierzehn.
+    assert len(registriert) == 14, registriert
     assert registriert == set(L.ORT), (registriert ^ set(L.ORT))
     for ort in L.ORT.values():
         assert ort.startswith("ziel:") or ort in L.STATIONEN, ort
@@ -27015,6 +27021,385 @@ def _test_v42_w144_envdatei_und_grafana():
     ok("W144: .env traegt Prometheus und Grafana, Passwort erzeugt, nie in argv oder Ausgabe")
 
 
+def _test_v42_w145_einstellungen_regeln():
+    """v4.2-W145: was das Deck setzen darf, was es nie sieht — und wo geladen wird.
+
+    Der Betreiber wollte „alles im Dashboard einstellen". Alles geht nicht:
+    UPDATE_REPO auf ein fremdes Repo, und die Update-Funktion spielt fremden
+    Code ein; *_BIN auf ein beliebiges Programm; TRUSTED_PROXIES so, dass jede
+    Anfrage als Loopback ohne Anmeldung gilt. Diese Grenze ist hier
+    festgehalten — und abgeleitet, nicht nur aufgezaehlt: was die Vorlage
+    selbst als Geheimnis fuehrt, muss das Deck verbergen."""
+    import ast as _ast
+    import re as _re
+    from nc import einstellungen as E
+
+    kat = {k["name"]: k for k in E.katalog(".env.example")}
+    assert len(kat) >= 500, len(kat)
+    assert kat["AI_PROVIDER"]["vorgabe"] == "auto" and kat["AI_PROVIDER"]["beschreibung"]
+    assert not any("<" in n for n in kat), "Muster-Namen im Katalog"
+
+    # (1) Geschuetzt — mit dem Grund, der im Deck steht.
+    for n in ("UPDATE_REPO", "UPDATE_BRANCH", "UPDATE_RESTART_CMD", "UPDATE_ENABLED",
+              "TRUSTED_PROXIES", "WEB_HOST", "DASHBOARD_TOKEN", "DASHBOARD_PIN",
+              "DASHBOARD_OFFEN_ERLAUBEN", "DASHBOARD_PORT", "DASHBOARD_TLS_CERT",
+              "DB_BACKEND", "DB_PATH", "MARIADB_PASSWORD", "MARIADB_HOST", "PIPER_BIN",
+              "SWAP_CLEAR_CMD", "RECORDINGS_DIR", "ARCHIVE_DIR", "SERVICE_NAME"):
+        assert E.schutzgrund(n), "%s ist aus dem Deck setzbar" % n
+        assert E.SCHUTZ_TEXT[E.schutzgrund(n)]
+    for n in ("ALERT_DISK_PCT", "AI_PROVIDER", "BOT_TOKEN", "KICK_STREAM_KEY", "RECORD_PROXY"):
+        assert not E.schutzgrund(n), "%s waere ohne Grund gesperrt" % n
+    # Jeder Name, der nach Befehl, Programm oder Pfad aussieht, ist geschuetzt.
+    offen = sorted(n for n in kat if _re.search(r"(_CMD|_BIN|_DIR|_PATH|_EXE)$", n)
+                   and not E.schutzgrund(n))
+    assert not offen, "Befehle/Pfade aus dem Deck setzbar: %s" % offen
+
+    # (2) Geheim — abgeleitet aus der Vorlage. Drei Namen trifft deren Muster
+    # nur zufaellig (MAX_TOKENS ist eine Zahl, PING ist kein PIN).
+    gen = _re.compile(r'(TOKEN|KEY|SECRET|PASSWORD|_PIN|WEBHOOK|CLIENT_SECRET|ACCESS)')
+    zufall = {"BRAIN_LLM_MAX_TOKENS", "COMMUNITY_LIVE_PING_ENABLED", "COMMUNITY_LIVE_PING_MIN_GAP_S"}
+    sichtbar = sorted(n for n in kat if gen.search(n) and n not in zufall
+                      and not E.geheim(n) and not E.schutzgrund(n))
+    assert not sichtbar, "Geheimnis mit Wert im Deck: %s" % sichtbar
+    for n in ("KICK_STREAM_KEY_BACKUP", "BOT_TOKEN", "RECORD_PROXY", "PROXY_LIST", "REDIS_URL",
+              "DISCORD_WEBHOOK_URL", "GRAFANA_ADMIN_PASSWORD", "ANTHROPIC_API_KEY"):
+        assert E.geheim(n), n
+    # Die Namensteile einzeln — im Katalog traegt kaum ein Name jeden davon.
+    for n in ("X_PIN", "X_PASS", "X_KEY_2", "X_SID", "X_SECRET", "X_PRIVATE_KEY", "X_APIKEY"):
+        assert E.geheim(n), n
+    for n in ("COOKIE_AUTO_FETCH", "COMMUNITY_LIVE_PING_ENABLED", "BRAIN_LLM_MAX_TOKENS",
+              "X_KEYWORDS", "X_PINNED", "X_PASSES"):
+        assert not E.geheim(n), "%s ist kein Geheimnis, nur ein Schalter" % n
+
+    # (3) Pruefung eines Werts.
+    for name, wert in (("kleingeschrieben", "1"), ("A B", "1"), ("1A", "1"), ("X", 5),
+                       ("X", "a\nB=1"), ("X", "a\r"), ("X", "a\0"), ("X", "x" * 4097),
+                       ("UPDATE_REPO", "boese/repo")):
+        try:
+            E.pruefen(name, wert)
+            raise AssertionError("angenommen: %r=%r" % (name, wert))
+        except E.Abgelehnt:
+            pass
+    E.pruefen("ALERT_DISK_PCT", "95")
+
+    # (4) bot.py laedt DIREKT nach load_dotenv() — vor der ersten Lesung auf
+    # Modul-Ebene. Eine Zeile spaeter waere jede Konstante schon eingefroren.
+    baum = _ast.parse(open("bot.py", encoding="utf-8").read())
+    zeilen = {"dotenv": None, "einst": None, "getenv": None}
+    for n in baum.body:
+        q = _ast.unparse(n)
+        if zeilen["dotenv"] is None and q.startswith("load_dotenv("):
+            zeilen["dotenv"] = n.lineno
+        elif zeilen["einst"] is None and "_nc_einst.in_umgebung_laden(" in q:
+            zeilen["einst"] = n.lineno
+        elif zeilen["getenv"] is None and "os.getenv(" in q and zeilen["dotenv"]:
+            zeilen["getenv"] = n.lineno
+    assert zeilen["dotenv"] < zeilen["einst"] < zeilen["getenv"], zeilen
+    # Der Start-Leser oeffnet SQLite nur lesend: er darf weder eine Datei
+    # anlegen noch ein Journal auf eine fremde Datei schreiben (W92).
+    eb = _ast.parse(open("nc/einstellungen.py", encoding="utf-8").read())
+    fn = next(n for n in eb.body if isinstance(n, _ast.FunctionDef) and n.name == "_start_lesen")
+    aufrufe = [c for c in _ast.walk(fn) if isinstance(c, _ast.Call)
+               and _ast.unparse(c.func) == "sqlite3.connect"]
+    assert aufrufe and all("mode=ro" in _ast.unparse(c.args[0]) and
+                           any(k.arg == "uri" for k in c.keywords) for c in aufrufe), \
+        "Start-Leser oeffnet SQLite schreibend"
+    ok("W145: Deck setzt nur Erlaubtes, Geheimnisse bleiben verborgen, Laden vor der ersten Konstante")
+
+
+def _test_v42_w145_einstellungen_ablauf():
+    """v4.2-W145: der Weg einer Einstellung — Deck → Datenbank → naechster Start.
+
+    Mit einer eigenen SQLite-Datei, dem echten Schema und der echten Route."""
+    import io as _io
+    import json as _json
+    import logging as _lg
+    import os as _os
+    import sys as _sys
+    import types as _types
+    from flask import Flask
+    from nc import dbwrap as W
+    from nc import einstellungen as E
+    from nc import schema as S
+    import nc.routes.einstellungen as R
+
+    alt = (W.DB_PATH, W.DB_BACKEND)
+    alt_zustand = dict(E._ZUSTAND)
+    d = _ph.verzeichnis()
+    db, envp = _os.path.join(d, "t.db"), _os.path.join(d, ".env")
+    with open(envp, "w") as f:
+        f.write("ALERT_DISK_PCT=80\nBOT_TOKEN=tok_w145_geheim\nUPDATE_REPO=x/y\nLEER=\n")
+    puffer = _io.StringIO()
+    h = _lg.StreamHandler(puffer)
+    lg = _lg.getLogger("TikTokBot")
+    lg.addHandler(h)
+    alt_stufe = lg.level
+    lg.setLevel(_lg.INFO)
+    try:
+        # (1) Erster Start ohne Datei: nichts angelegt, kein Fehler.
+        env = {"DB_PATH": db}
+        b = E.in_umgebung_laden(env, envp, ".env.example")
+        assert b["geladen"] == 0 and not b["fehler"] and not _os.path.exists(db), b
+        W.configure_db(db_path=db, backend="sqlite")
+        with W.db_conn() as c:
+            S.anlegen(c, backend="sqlite", mariadb_db="", log=_lg.getLogger("w145"))
+        assert "Tabelle" not in E.in_umgebung_laden(env, envp, ".env.example")["quelle"]
+
+        # (2) Uebernehmen: geschuetzte bleiben, leere nicht, nichts doppelt.
+        u = E.uebernehmen()
+        assert u == {"uebernommen": 2, "vorhanden": 0, "geschuetzt": 1}, u
+        assert E.uebernehmen()["vorhanden"] == 2, "zweiter Lauf hat ueberschrieben"
+        assert set(E.db_werte()) == {"ALERT_DISK_PCT", "BOT_TOKEN"}
+
+        # (3) Setzen: in Tabelle und laufender Umgebung; Geheimnis nie im Log.
+        E.setzen("ALERT_DISK_PCT", "95", env=env)
+        E.setzen("BOT_TOKEN", "tok_neu_w145", env=env)
+        assert env["ALERT_DISK_PCT"] == "95" and E.db_werte()["ALERT_DISK_PCT"]["wert"] == "95"
+        assert "tok_neu_w145" not in puffer.getvalue() and "'95'" in puffer.getvalue()
+
+        # (4) Naechster Start: die Datenbank ueberstimmt die .env; ein am
+        # Deck vorbei eingetragener geschuetzter Schluessel wird ignoriert.
+        with W.db_conn() as c:
+            c.execute("INSERT INTO einstellungen (schluessel, wert) VALUES ('UPDATE_REPO','boese/r')")
+        env2 = {"DB_PATH": db, "ALERT_DISK_PCT": "80", "UPDATE_REPO": "x/y"}
+        b = E.in_umgebung_laden(env2, envp, ".env.example")
+        assert env2["ALERT_DISK_PCT"] == "95" and env2["UPDATE_REPO"] == "x/y", env2
+        assert b["ignoriert"] == ["UPDATE_REPO"] and "ALERT_DISK_PCT" in b["ueberstimmt"], b
+        assert "geschuetzte Schluessel in der Datenbank ignoriert (UPDATE_REPO)" in puffer.getvalue()
+
+        # (5) Die Uebersicht: Quelle stimmt, kein Geheimnis im JSON.
+        ue = E.uebersicht(env2)
+        x = {e["name"]: e for e in ue["eintraege"]}
+        assert x["ALERT_DISK_PCT"]["quelle"] == "datenbank" and x["ALERT_DISK_PCT"]["wert"] == "95"
+        assert x["UPDATE_REPO"]["quelle"] == "env" and x["UPDATE_REPO"]["geschuetzt"]
+        assert "wert" not in x["BOT_TOKEN"] and x["BOT_TOKEN"]["gesetzt"]
+        assert x["LEER"]["gruppe"] == "SONSTIGE", "Name aus der .env ohne Vorlage fehlt"
+        blob = _json.dumps(ue)
+        assert "tok_neu_w145" not in blob and "tok_w145_geheim" not in blob, "Geheimnis in der Uebersicht"
+        assert "ALERT_DISK_PCT" in ue["neustart"]
+
+        # (6) Zuruecksetzen: wieder .env, und ohne .env-Zeile die Vorgabe.
+        E.zuruecksetzen("ALERT_DISK_PCT", env=env2)
+        assert env2["ALERT_DISK_PCT"] == "80" and "ALERT_DISK_PCT" not in E.db_werte()
+        E.setzen("AI_PROVIDER", "cloud", env=env2)
+        E.zuruecksetzen("AI_PROVIDER", env=env2)
+        assert "AI_PROVIDER" not in env2
+        for name in ("UPDATE_REPO", "kaputt"):
+            try:
+                E.zuruecksetzen(name, env=env2)
+                raise AssertionError(name)
+            except E.Abgelehnt:
+                pass
+
+        # (7) Eine kaputte Datenbank beim Start: nicht fatal, aber laut.
+        kaputt = _os.path.join(d, "kaputt.db")
+        with open(kaputt, "wb") as f:
+            f.write(b"\x16\x03\x01" + b"x" * 4096)
+        b = E.in_umgebung_laden({"DB_PATH": kaputt}, envp, ".env.example")
+        assert b["fehler"] and "NICHT geladen" in puffer.getvalue(), b
+
+        # (8) MariaDB-Zweig mit einer pymysql-Attrappe: dieselben Regeln.
+        class _Cur:
+            def __init__(self):
+                self.q = None
+
+            def execute(self, q, a=None):
+                self.q = q
+
+            def fetchone(self):
+                return (1,)
+
+            def fetchall(self):
+                return [("ALERT_DISK_PCT", "70"), ("DB_BACKEND", "sqlite")]
+
+        class _Con:
+            def cursor(self):
+                return _Cur()
+
+            def close(self):
+                pass
+        gefragt = {}
+        attrappe = _types.SimpleNamespace(connect=lambda **kw: gefragt.update(kw) or _Con())
+        alt_mod = _sys.modules.get("pymysql")
+        _sys.modules["pymysql"] = attrappe
+        try:
+            env3 = {"DB_BACKEND": "mariadb", "MARIADB_PASSWORD": "pw", "MARIADB_DB": "ncdb"}
+            b = E.in_umgebung_laden(env3, envp, ".env.example")
+        finally:
+            if alt_mod is None:
+                _sys.modules.pop("pymysql", None)
+            else:
+                _sys.modules["pymysql"] = alt_mod
+        assert env3["ALERT_DISK_PCT"] == "70" and env3["DB_BACKEND"] == "mariadb", env3
+        assert b["ignoriert"] == ["DB_BACKEND"] and gefragt["database"] == "ncdb", (b, gefragt)
+
+        # (9) Die Route: nur JSON, Schutz als Antwort, kein Geheimnis.
+        E._ZUSTAND.update(env_pfad=envp, beispiel_pfad=".env.example")
+        app = Flask(__name__)
+        app.register_blueprint(R.bp)
+        with app.test_client() as cl:
+            r = cl.get("/api/einstellungen")
+            assert r.status_code == 200 and "tok_neu_w145" not in r.get_data(as_text=True)
+            r = cl.post("/api/einstellungen", data="name=ALERT_DISK_PCT&wert=1",
+                        content_type="application/x-www-form-urlencoded")
+            assert r.status_code == 415, "Formular einer fremden Seite angenommen"
+            # Gueltiges JSON, aber als text/plain — so sendet eine fremde
+            # Seite ohne CORS-Vorabfrage. Der Rumpf darf nicht gelesen werden.
+            roh = _json.dumps({"name": "ALERT_DISK_PCT", "wert": "1"})
+            for pfad in ("/api/einstellungen", "/api/einstellungen/zuruecksetzen",
+                         "/api/einstellungen/uebernehmen"):
+                assert cl.post(pfad, data=roh, content_type="text/plain").status_code == 415, pfad
+            r = cl.post("/api/einstellungen", json={"name": "TRUSTED_PROXIES", "wert": "0.0.0.0/0"})
+            assert r.status_code == 400 and "Deck erreicht" in r.get_json()["error"], r.get_json()
+            r = cl.post("/api/einstellungen", json={"name": "ALERT_DISK_PCT", "wert": "91"})
+            assert r.status_code == 200 and r.get_json()["neustart"], r.get_json()
+            assert cl.post("/api/einstellungen/zuruecksetzen",
+                           json={"name": "ALERT_DISK_PCT"}).status_code == 200
+            assert cl.post("/api/einstellungen/zuruecksetzen",
+                           json={"name": "WEB_HOST"}).status_code == 400
+            r = cl.post("/api/einstellungen/uebernehmen", json={})
+            assert r.status_code == 200 and r.get_json()["ok"], r.get_json()
+    finally:
+        lg.removeHandler(h)
+        lg.setLevel(alt_stufe)
+        E._ZUSTAND.clear()
+        E._ZUSTAND.update(alt_zustand)
+        W.configure_db(db_path=alt[0], backend=alt[1])
+    ok("W145: Deck → Datenbank → naechster Start; Schutz haelt, nichts Geheimes im Log oder JSON")
+
+
+def _test_v42_w145_einstellungen_deck():
+    """v4.2-W145: der Reiter im Deck baut mit DOM-Knoten, nie mit innerHTML —
+    Namen, Beschreibungen und Werte kommen aus Datenbank und .env."""
+    import re as _re
+    src = open("templates/dashboard.html", encoding="utf-8").read()
+    assert 'data-view="einstellungen"' in src and 'id="view-einstellungen"' in src
+    assert "VIEW_LOADERS['einstellungen']=einstLoad" in src
+    i = src.index("var _ES={")
+    j = src.index("VIEW_LOADERS['einstellungen']", i)
+    block = src[i:j]
+    assert "innerHTML" not in block, "Einstellungen bauen HTML aus Fremdtext"
+    for fn in ("einstLoad", "einstZeigen", "einstSetzen", "einstZurueck", "einstUebernehmen"):
+        assert _re.search(r"function %s\(" % fn, block), fn
+    # Ein leeres Geheimnis-Feld heisst „unveraendert" — es darf nie als
+    # leerer Wert gespeichert werden.
+    assert "if(e.geheim&&!wert)" in block
+    assert "apiPost('/api/einstellungen'" in block
+    ok("W145: Einstellungs-Reiter ohne innerHTML, leeres Geheimnis bleibt unveraendert")
+
+
+def _test_v42_w146_datenbank_waechter():
+    """v4.2-W146: der vierzehnte Waechter — die Datenbank.
+
+    Seit W143 kann sie MariaDB sein, seit W145 traegt sie die Einstellungen
+    des Decks. /healthz fragt `SELECT 1` und sagt ja oder nein; der Waechter
+    misst, was vorher schiefgeht."""
+    import logging as _lg
+    import os as _os
+    from brain.agents import DatabaseAgent
+    from nc import dbgesundheit as G
+    from nc import dbwrap as W
+    from nc import schema as S
+
+    # (1) Die Messung gegen eine echte SQLite-Datei mit echtem Schema.
+    alt = (W.DB_PATH, W.DB_BACKEND)
+    d = _ph.verzeichnis()
+    db = _os.path.join(d, "t.db")
+    try:
+        W.configure_db(db_path=db, backend="sqlite")
+        with W.db_conn() as c:
+            S.anlegen(c, backend="sqlite", mariadb_db="", log=_lg.getLogger("w146"))
+            c.execute("INSERT INTO einstellungen (schluessel, wert) VALUES ('A','1')")
+        m = G.messen(W.db_conn, "sqlite", db, 3, 3, {"fehler": None})
+        assert m["ok"] and m["latenz_ms"] is not None and m["tabellen"] >= 40, m
+        assert m["einstellungen"] == 1 and m["groesse_b"] > 0 and m["wal_b"] is not None, m
+        # Ohne Verbindung: nicht ok, mit Grund — und die Dateigroesse trotzdem.
+
+        def _tot():
+            raise RuntimeError("database is locked")
+        m2 = G.messen(_tot, "sqlite", db)
+        assert not m2["ok"] and "locked" in m2["fehler"] and m2["groesse_b"] > 0, m2
+    finally:
+        W.configure_db(db_path=alt[0], backend=alt[1])
+
+    # (2) Der Waechter: jede Lage mit eigenem Befund, gesund ist still.
+    class _Mem:
+        def __init__(self):
+            self.m = {}
+
+        def record_metric(self, k, v):
+            self.m[k] = v
+
+    class _B:
+        memory = _Mem()
+
+    def _ag(**mess):
+        basis = {"ok": True, "backend": "sqlite", "latenz_ms": 2.0, "groesse_b": 10_000_000,
+                 "wal_b": 1_000_000, "schema_stand": 3, "schema_erwartet": 3, "einst_fehler": None}
+        basis.update(mess)
+        return DatabaseAgent(_B(), db_health=lambda: basis)
+
+    assert _ag().run({}) == [], "gesunde Datenbank meldet etwas"
+    assert _B.memory.m["db_latency_ms"] == 2.0 and _B.memory.m["db_size_mb"] == 10.0
+    b = _ag(ok=False, fehler="OperationalError: x").run({})
+    assert b[0]["level"] == "crit" and "antwortet nicht" in b[0]["text"], b
+    assert _ag(latenz_ms=800.0).run({})[0]["level"] == "warn"
+    assert _ag(latenz_ms=5000.0).run({})[0]["level"] == "crit"
+    w = _ag(wal_b=300_000_000).run({})
+    assert w[0]["level"] == "warn" and "Checkpoint" in w[0]["text"], w
+    assert _ag(wal_b=2_000_000_000).run({})[0]["level"] == "crit"
+    assert _ag(schema_stand=5).run({})[0]["level"] == "crit"
+    assert "Einstellungen" in _ag(einst_fehler="x").run({})[0]["text"]
+    assert _ag(backend="mariadb", wal_b=None).run({}) == []
+    # Zuwachs: zwei Runden, die zweite deutlich groesser.
+    a = _ag()
+    a.run({})
+    a._last = (a._last[0] - 3600, a._last[1])
+    a._mess = lambda: {"ok": True, "backend": "sqlite", "latenz_ms": 1.0,
+                       "groesse_b": 10_000_000 + 300_000_000, "wal_b": 0}
+    assert any("waechst" in f["text"] for f in a.run({}))
+    assert DatabaseAgent(_B()).run({}) == [], "ohne Accessor etwas erfunden"
+    k = DatabaseAgent(_B(), db_health=lambda: 1 / 0).run({})
+    assert k[0]["level"] == "warn" and "ZeroDivisionError" in k[0]["text"]
+
+    # (3) Verdrahtet: im Bot uebergeben, in der Bruecke registriert, im
+    # Lagebild an einer eigenen Station.
+    src = open("bot.py", encoding="utf-8").read()
+    assert "db_health=_brain_db_health" in src
+    br = open("brain_bridge.py", encoding="utf-8").read()
+    assert 'DatabaseAgent(b, db_health=_ctx.get("db_health"))' in br
+    from nc import lagebild as L
+    assert L.ORT["datenbank"] == "datenbank" and "datenbank" in L.STATIONEN
+    ok("W146: Datenbank-Waechter misst Latenz, Journal, Zuwachs, Schema und Einstellungen")
+
+
+def _test_v42_w146_lagebild_profi():
+    """v4.2-W146: „sieht aus als hätte es ein Kind gezeichnet" — die Spinne
+    in der Mitte ist weg, die Farben kommen aus dem Thema, und das Bild
+    entsteht auch, bevor der Uebersetzer geladen ist."""
+    import re as _re
+    h = open("templates/dashboard.html", encoding="utf-8").read()
+    i = h.index("var ncLagebild=(function(){")
+    js = _re.sub(r"/\*.*?\*/", "", h[i:h.index("\n})();", i)], flags=_re.S)
+    # Keine Beine, keine Augen: die alte Figur zeichnete acht Linien je Seite
+    # und zwei Kreise mit F.red/F.neon im Kern.
+    assert "for(var i=0;i<8;i++)" not in js, "die Spinne ist zurueck"
+    assert "quadraticCurveTo" not in js, "schwingende Kurven statt Leitungen"
+    # Farben aus dem Thema, nicht fest dunkel — sonst ist Blaupause unlesbar.
+    assert not _re.search(r"rgba\((?:6,9,11|8,12,14)", js), "feste Dunkelflaeche"
+    assert "flaeche:C('--panel-solid'" in js and "function hilfe(" in js
+    # Ausgenommen ist nur der Rueckfall in hilfe() selbst (Thema ohne --text).
+    ohne_hilfe = js[:js.index("function hilfe(a)")] + js[js.index("var F={};"):]
+    assert not _re.search(r"'rgba\(255,255,255,", ohne_hilfe), "weisse Hilfslinie auf hellem Thema"
+    # T() existiert vor dem ersten Skript, das es braucht (Uebersetzer: defer).
+    kopf = h[:h.index("var ncLagebild=")]
+    j = kopf.index("if(typeof window.T!=='function') window.T=function(s){return s;};")
+    assert j < kopf.index("<script>", kopf.index("<script>") + 1) or j < kopf.index("ncThemaKnopf"), \
+        "T-Ersatz steht nicht vor den Skripten"
+    assert "datenbank:{a:" in js and "datenbank:T('Datenbankwache')" in js
+    ok("W146: Lagebild ohne Figur, Themenfarben, T() vor dem ersten Gebrauch")
+
+
 def main():
     tmp, rid = richte_testdatenbank_ein()
     ok("db_conn aus nc.dbwrap: echtes Schema angelegt, Commit durchgelaufen")
@@ -27362,6 +27747,11 @@ def main():
     _test_v42_w143_update_mariadb()
     _test_v42_w144_jeder_messwert_ein_panel()
     _test_v42_w144_envdatei_und_grafana()
+    _test_v42_w145_einstellungen_regeln()
+    _test_v42_w145_einstellungen_ablauf()
+    _test_v42_w145_einstellungen_deck()
+    _test_v42_w146_datenbank_waechter()
+    _test_v42_w146_lagebild_profi()
     _test_v42_w60_azrael_cooldown_je_plattform()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)

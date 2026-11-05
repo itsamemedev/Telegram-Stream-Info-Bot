@@ -35,7 +35,7 @@ from typing import Optional
 from nc.envnum import env_int  # v4.0-W81: leer-gesetzte .env-Ints robust (float war W78)
 
 from .semantic import SemanticMemory
-from .agents import (Agent, AgentManager, AnalyticsAgent, DiskAgent,
+from .agents import (Agent, AgentManager, AnalyticsAgent, DatabaseAgent, DiskAgent,
                      HealthAgent, LearningAgent, ProxyHealthAgent, RecoveryAgent,
                      RecordingAgent, RestreamSentinelAgent, ScoutAgent,
                      SentinelAgent, SwapAgent, ToxicityAgent, UptimeAgent)
@@ -51,7 +51,7 @@ from .state import StateMachine
 # sonst als 'imported but unused' — und die Bridge importiert Unhandled/
 # BudgetExhausted bewusst von hier statt aus den Submodulen (ein Import-
 # punkt, siehe M1-Vertrag).
-__all__ = ["Agent", "AgentManager", "AnalyticsAgent", "Brain",
+__all__ = ["Agent", "AgentManager", "AnalyticsAgent", "Brain", "DatabaseAgent",
            "DiskAgent",
            "BudgetExhausted",
            "HealthAgent", "KnowledgeGraph", "LearningAgent", "ProxyHealthAgent",

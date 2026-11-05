@@ -673,6 +673,7 @@ from nc.routes import audio as _nc_routes_audio              # v4.1-W20: Signalt
 from nc.routes import brain as _nc_routes_brain              # v4.1-W21: Brain-Panel
 from nc.routes import restream as _nc_routes_restream        # v4.1-W22: Sendeleiste
 from nc.routes import beobachtung as _nc_routes_beobachtung        # v4.1-W23: Beobachtung
+from nc.routes import einstellungen as _nc_routes_einstellungen    # v4.2-W145: Einstellungen im Deck
 from nc.routes import wartung as _nc_routes_wartung            # v4.1-W24: Wartung
 from nc.routes import abwehr as _nc_routes_abwehr              # v4.1-W25: Abwehr
 from nc.routes import auskunft as _nc_routes_auskunft          # v4.1-W26: Auskunft
@@ -700,6 +701,9 @@ from TikTokLive import TikTokLiveClient
 
 import aiohttp
 from dotenv import load_dotenv
+# v4.2-W145: VOR load_dotenv() gebraucht — siehe dort. Liest beim Import keine
+# Umgebung (tools/importzeit.py haelt das fest).
+from nc import einstellungen as _nc_einst
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.constants import ParseMode
 from telegram.error import (
@@ -720,6 +724,13 @@ import decimal as _decimal   # V37-PERF: orjson-Provider braucht Decimal
 # Konfiguration
 # -----------------------------
 load_dotenv()
+# v4.2-W145: im Deck gesetzte Einstellungen ueberstimmen die .env — und zwar
+# HIER, vor der ersten Modul-Konstante. Eine Zeile spaeter waere jeder Wert,
+# den bot.py beim Import liest, schon eingefroren (CLAUDE.md: „Modul-
+# Konstanten frieren .env ein"). Ein Fehler ist nicht fatal, aber laut.
+_EINST_DIR = os.path.dirname(os.path.abspath(__file__))
+_nc_einst.in_umgebung_laden(os.environ, env_pfad=os.path.join(_EINST_DIR, ".env"),
+                            beispiel_pfad=os.path.join(_EINST_DIR, ".env.example"))
 
 BOT_TOKEN          = os.getenv("BOT_TOKEN", "").strip()
 WEB_HOST           = os.getenv("WEB_HOST", "127.0.0.1")          # C8
@@ -847,6 +858,7 @@ from nc.textmore import (  # noqa: F401
 from nc.scoring import build_report  # noqa: F401
 from nc import prueflage as _nc_prueflage    # v4.2-W138: Pruefstand je Tracking
 from nc import quellstat as _nc_quellstat    # v4.2-W141: Herkunft der Stream-Adressen
+from nc import dbgesundheit as _nc_dbgesund  # v4.2-W146: Datenbank-Waechter
 from nc import quellprobe as _nc_quellprobe  # v4.2-W142: /quelle ‹name›
 from nc import sicherungspruefung as _nc_sicherung  # v4.2-W142: Backup brauchbar?
 from nc import sqldialekt as _nc_sqldialekt   # v4.2-W143: Upsert in beiden Dialekten
@@ -23640,6 +23652,7 @@ async def run_bot():
     # beim naechsten Deploy wortlos ueberschrieben, samt der Stoerung, die er
     # behoben hatte.
     log.info("%s", _nc_auslieferung.text())
+    _einstellungen_startzeile()     # v4.2-W145
     # v4.2-W104: und gleich dazu, ob der Code von der Platte auch LAEUFT. Beim
     # Start ist das per Definition so; die Zeile nennt den Stand, gegen den
     # spaeter verglichen wird, damit im Log nachlesbar ist, wovon der
@@ -24085,6 +24098,23 @@ def _betrieb():
     return {"restreams": len(_RESTREAM_MGR._procs),
             "chat_clients": len(_CHAT_FEED_USERS),
             "aufnahmen": len(active_processes)}
+
+
+def _einstellungen_startzeile():
+    """Was aus der Datenbank geladen wurde — im Log nachlesbar (v4.2-W145).
+
+    Ohne diese Zeile waere ein Wert, der die .env ueberstimmt, unsichtbar:
+    wer die .env aendert und nichts sieht, sucht den Fehler am falschen Ort."""
+    b = _nc_einst.startbericht() or {}
+    if b.get("fehler"):
+        return                      # schon beim Laden als ERROR gemeldet
+    if b.get("geladen"):
+        log.info("Einstellungen: %d aus der Datenbank (%s), %d davon ueberstimmen die "
+                 ".env: %s", b["geladen"], b.get("quelle"), len(b["ueberstimmt"]),
+                 ", ".join(sorted(b["ueberstimmt"])[:12]) or "—")
+    else:
+        log.info("Einstellungen: keine aus der Datenbank (%s) — es gilt die .env.",
+                 b.get("quelle") or "?")
 
 
 def _zustand_kennzahlen():
@@ -24908,6 +24938,12 @@ def _brain_moderation_snap():
         erlaubt=_nc_modstats.quellen(os.getenv("MOD_TREND_PLATTFORMEN") or None))
 
 
+def _brain_db_health():
+    """v4.2-W146: Messung fuer den Datenbank-Waechter (nc/dbgesundheit.py)."""
+    return _nc_dbgesund.messen(db_conn, DB_BACKEND, DB_PATH, _SCHEMA_STAND,
+                               _nc_schemastand.ERWARTET, _nc_einst.startbericht())
+
+
 def _brain_recording_snap():
     # M8: aktuelle Groesse+alive je laufender Aufnahme fuer den RecordingAgent.
     out = {}
@@ -25340,7 +25376,8 @@ async def main():
             moderation=_brain_moderation_snap,       # M8: ToxicityAgent
             recording_health=_brain_recording_snap,   # M8: RecordingAgent
             tiktok_status=_brain_tiktok_status_snap,   # B152: ProxyHealthAgent
-            agent_notify=_brain_notify)   # B153: Sentinel-Alarme -> Telegram
+            agent_notify=_brain_notify,   # B153: Sentinel-Alarme -> Telegram
+            db_health=_brain_db_health)   # v4.2-W146: Datenbank-Waechter
         _BRIDGE_STATUS.update(ok=True, phase="active", error=None)
         log.info("Brain-Bridge aktiv — Dashboard: /brain")
     except Exception as e:
@@ -26263,6 +26300,7 @@ dashboard_app.register_blueprint(_nc_routes_audio.bp)      # v4.1-W20
 dashboard_app.register_blueprint(_nc_routes_brain.bp)      # v4.1-W21
 dashboard_app.register_blueprint(_nc_routes_restream.bp)   # v4.1-W22
 dashboard_app.register_blueprint(_nc_routes_beobachtung.bp)       # v4.1-W23
+dashboard_app.register_blueprint(_nc_routes_einstellungen.bp)     # v4.2-W145
 dashboard_app.register_blueprint(_nc_routes_wartung.bp)           # v4.1-W24
 dashboard_app.register_blueprint(_nc_routes_abwehr.bp)            # v4.1-W25
 dashboard_app.register_blueprint(_nc_routes_auskunft.bp)          # v4.1-W26

@@ -805,7 +805,7 @@ def _record_metrics(telemetry: dict) -> None:
 def _register_agents() -> None:
     """M7: AZRAEL-Betriebsflotte. Recovery bekommt bot-DB + Aktions-Gate;
     der Rest arbeitet rein auf Brain-Daten."""
-    from brain import (AnalyticsAgent, DiskAgent, HealthAgent, LearningAgent,
+    from brain import (AnalyticsAgent, DatabaseAgent, DiskAgent, HealthAgent, LearningAgent,
                        ProxyHealthAgent,
                        RecordingAgent, RecoveryAgent, RestreamSentinelAgent,
                        ScoutAgent, SentinelAgent, SwapAgent, ToxicityAgent, UptimeAgent)
@@ -831,6 +831,9 @@ def _register_agents() -> None:
         b, tiktok_status=_ctx.get("tiktok_status")))
     # v4.0-W86: Swap-Wächter (13.) — hält den Swap sauber, mit OOM-Schutz.
     b.agents.register(SwapAgent(b))
+    # v4.2-W146: Datenbank-Wächter (14.) — Latenz, Zuwachs, -wal, Schema,
+    # Einstellungen (nc/dbgesundheit.py ueber den injizierten Accessor).
+    b.agents.register(DatabaseAgent(b, db_health=_ctx.get("db_health")))
 
 
 _last_sem_ts = 0.0
@@ -1028,6 +1031,7 @@ def init_bridge(db_conn: Callable, flask_app=None,
                 recording_health: Optional[Callable] = None,
                 tiktok_status: Optional[Callable] = None,
                 agent_notify: Optional[Callable] = None,
+                db_health: Optional[Callable] = None,
                 start_tick: bool = True) -> None:
     """Einziger Aufruf aus bot_v36.main(), VOR dem Flask-Thread-Start.
 
@@ -1044,7 +1048,8 @@ def init_bridge(db_conn: Callable, flask_app=None,
                 pause_source=pause_source, unpause_source=unpause_source,
                 crowdsec=crowdsec, restream_health=restream_health,
                 moderation=moderation, recording_health=recording_health,
-                tiktok_status=tiktok_status, agent_notify=agent_notify)
+                tiktok_status=tiktok_status, agent_notify=agent_notify,
+                db_health=db_health)
     # BH-11: Idempotenz-Guard. Ein zweiter Aufruf (Restart-Pfad, Tests)
     # würde Flask-Routen doppelt registrieren → AssertionError → der Shim
     # fängt sie → Bot liefe still OHNE Brain weiter. Zweiter Aufruf

@@ -4,8 +4,8 @@ Eine einzige Wahrheit für die Versionsanzeige (Dashboard-Footer, /api/version,
 „Was ist neu"-Panel). Reine Daten + kleine Helfer, voll testbar.
 """
 
-VERSION = "4.5.3"
-CODENAME = "Vielstimmig"
+VERSION = "4.6"
+CODENAME = "Leitstand"
 RELEASE = "2026.11"
 
 
@@ -23,6 +23,21 @@ def build_stamp():
 # Meilenstein-Changelog, neueste Version zuerst. highlights = kurze, ehrliche
 # Stichpunkte dessen, was die Version bringt.
 CHANGELOG = [
+    {
+        "version": "4.6",
+        "date": "2026-11",
+        "title": "Leitstand",
+        # v4.6 traegt W144 bis W146: alles im Deck einstellbar, alles
+        # beobachtet — Einstellungen in der Datenbank, Prometheus/Grafana
+        # vollstaendig, der Datenbank-Waechter und das neue Lagebild.
+        "highlights": [
+            "Einstellungen im Deck: alle rund 571 Variablen durchsuchbar, gespeichert in der Datenbank und vor der .env geladen — Zugang, Befehle, Pfade und die Datenbank-Verbindung bleiben geschützt in der .env",
+            "Prometheus und Grafana vollständig: jeder Messwert hat ein Panel, 16 Alarmregeln mit Tests, die .env trägt PROMETHEUS_URL und GRAFANA_*, und Grafana bekommt ein erzeugtes Passwort statt admin/admin",
+            "Der vierzehnte Wächter beobachtet die Datenbank — Antwortzeit, Zuwachs, Journal, Schema und ob die Einstellungen geladen wurden",
+            "Das Lagebild der Übersicht neu gezeichnet: Kern, sieben Stationen mit Status-LED, Wächter an festen Plätzen — in jedem Thema lesbar und ab dem ersten Laden sichtbar",
+            "Log-Verluste sind für /healthz und Prometheus sichtbar; vorher stand der Zähler Millisekunden nach dem Verlust wieder auf 0",
+        ],
+    },
     {
         "version": "4.5.3",
         "date": "2026-11",

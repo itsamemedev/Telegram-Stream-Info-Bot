@@ -2500,6 +2500,16 @@ tbody tr:hover td{ background: color-mix(in srgb, var(--neon) 4%, transparent); 
      bei jedem Seitenaufruf durch die komplette Navigation arbeiten. -->
 <a href="#hauptinhalt" class="skiplink">Zum Hauptinhalt springen</a>
 <script>
+/* v4.2-W146: ein T(), BEVOR irgendein Skript es braucht. Der Uebersetzer
+   kommt per defer ganz am Ende (/api/i18n/uebersetzer.js) und setzt
+   window.T erst nach dem Parsen — die Uebersicht baut ihr Lagebild aber
+   schon waehrend des Parsens auf, ein T('…') warf dort ReferenceError, und
+   das Bild blieb leer, bis die Uebersicht zufaellig neu lud. Bis der Katalog
+   da ist, gilt der deutsche Text; der Uebersetzer ersetzt diese Fassung und
+   uebersetzt das DOM danach ohnehin. */
+if(typeof window.T!=='function') window.T=function(s){return s;};
+</script>
+<script>
 /* B130: Thema VOR dem ersten Frame setzen, sonst blitzt beim Laden das
    falsche auf ("flash of wrong theme"). Deshalb inline und ganz oben,
    nicht im grossen Script-Block weiter unten. */
@@ -2668,6 +2678,7 @@ document.addEventListener("DOMContentLoaded",function(){
     <div class="tab" data-view="brain"><span class="num">05</span>AZRAEL BRAIN</div>
     <div class="tab" data-view="betrieb"><span class="num">06</span>Betrieb</div>
     <div class="tab" data-view="insights"><span class="num">07</span>Insights</div>
+    <div class="tab" data-view="einstellungen"><span class="num">08</span>Einstellungen</div>
   </div>
 
 
@@ -3322,6 +3333,26 @@ document.addEventListener("DOMContentLoaded",function(){
       </div>
     </div>
 
+  </div>
+  <!-- v4.2-W145: Einstellungen aus der Datenbank, im Deck setzbar (nc/einstellungen.py). -->
+  <div class="view" id="view-einstellungen">
+    <div class="panel mb">
+      <div class="head"><h3 id="es_titel">▚ Einstellungen</h3><span class="tag" id="es_tag">Deck › .env › Vorgabe</span>
+        <div class="spacer"></div>
+        <button class="btn sm" onclick="einstLoad()" aria-label="Aktualisieren" title="Aktualisieren">↻</button></div>
+      <div class="body">
+        <div class="faint" id="es_erkl" style="font-size:12px;line-height:1.6;margin-bottom:10px"></div>
+        <div id="es_lage" class="faint" style="font-size:12px;margin-bottom:10px">…</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:12px">
+          <input class="field" id="es_suche" type="search" oninput="einstZeigen()" style="flex:1;min-width:200px" aria-label="Suche">
+          <select class="field" id="es_gruppe" onchange="einstZeigen()" aria-label="Gruppe"></select>
+          <select class="field" id="es_quelle" onchange="einstZeigen()" aria-label="Quelle"></select>
+          <button class="btn" type="button" id="es_uebernehmen" onclick="einstUebernehmen()"></button>
+          <button class="btn" type="button" id="es_neustart" hidden onclick="updRestart()"></button>
+        </div>
+        <div id="es_liste"></div>
+      </div>
+    </div>
   </div>
   <div class="view" id="view-brain">
     <div class="panel mb">
@@ -6774,6 +6805,137 @@ async function loadEgress(){
     +`Konfiguriert (.env): <b>${esc(d.configured||'—')}</b>`
     +(d.last_test?`<br>Letzter TikTok-Test: <b style="color:${d.last_test.ok?'var(--neon)':'var(--magenta)'}">HTTP ${esc(String(d.last_test.http_code))}</b> · ${d.last_test.ms}ms · ${esc(d.last_test.at||'')}`:'');
 }
+/* v4.2-W145: Einstellungen. Was das Deck setzen darf und was nicht, entscheidet
+   der Server (nc/einstellungen.py) — hier wird nur gezeigt. Gebaut mit
+   DOM-Knoten statt innerHTML: Namen, Beschreibungen und Werte kommen aus der
+   Datenbank und der .env, und dort kann alles stehen. Geheime Werte schickt
+   der Server nie; das Feld bleibt leer, und leer gespeichert heisst
+   „unveraendert", nicht „loeschen". */
+var _ES={d:null, max:120};
+function _esEl(tag, text, css){ var e=document.createElement(tag); if(text!=null) e.textContent=text; if(css) e.style.cssText=css; return e; }
+function _esFiltern(){
+  var sel=$('#es_quelle');
+  if(sel&&!sel.options.length){
+    [['',T('jede Quelle')],['datenbank',T('vom Deck gesetzt')],['env',T('aus der .env')],['vorgabe',T('nur Vorgabe')]]
+      .forEach(function(p){ var o=_esEl('option',p[1]); o.value=p[0]; sel.appendChild(o); });
+  }
+  var g=$('#es_gruppe');
+  if(g&&!g.options.length&&_ES.d){
+    var o=_esEl('option',T('alle Gruppen')); o.value=''; g.appendChild(o);
+    Array.from(new Set(_ES.d.eintraege.map(function(e){return e.gruppe;}))).sort()
+      .forEach(function(x){ var o2=_esEl('option',x); o2.value=x; g.appendChild(o2); });
+  }
+}
+async function einstLoad(){
+  var el=$('#es_liste'); if(!el) return;
+  var erkl=$('#es_erkl');
+  if(erkl&&!erkl.textContent) erkl.textContent=T('Hier gesetzte Werte liegen in der Datenbank und gehen der .env vor. Zurücksetzen gibt wieder den Wert aus der .env. Viele Werte liest der Bot nur beim Start — nach dem Speichern neu starten.');
+  var s=$('#es_suche'); if(s&&!s.placeholder) s.placeholder=T('Name oder Beschreibung suchen');
+  var ub=$('#es_uebernehmen'); if(ub&&!ub.textContent) ub.textContent=T('⇪ Aus der .env übernehmen');
+  var nb=$('#es_neustart'); if(nb&&!nb.textContent) nb.textContent=T('⟳ Dienst neu starten');
+  var d=await apiGet('/api/einstellungen');
+  if(!d||d.__neterr||!d.ok){ el.textContent=T('Einstellungen sind nicht abrufbar.'); return; }
+  _ES.d=d; _esFiltern();
+  var lage=$('#es_lage');
+  if(lage){
+    lage.textContent='';
+    var z=d.zahl||{};
+    [[z.datenbank,T('vom Deck gesetzt')],[z.env,T('aus der .env')],[z.vorgabe,T('nur Vorgabe')],[d.geschuetzt,T('nur in der .env (geschützt)')]]
+      .forEach(function(p,i){
+        var sp=_esEl('span',null,i?'margin-left:14px':''); sp.appendChild(_esEl('b',String(p[0]||0)));
+        sp.appendChild(_esEl('span',p[1],'margin-left:5px')); lage.appendChild(sp);
+      });
+    lage.appendChild(_esEl('span',d.backend==='mariadb'?'MariaDB':'SQLite','margin-left:14px;font-family:var(--mono)'));
+    if(d.start&&d.start.fehler){
+      lage.appendChild(_esEl('div',T('Beim Start nicht aus der Datenbank geladen — es gilt die .env.'),'color:var(--magenta);margin-top:6px'));
+      lage.appendChild(_esEl('div',d.start.fehler,'font-family:var(--mono)'));
+    }
+    if(d.neustart&&d.neustart.length){
+      lage.appendChild(_esEl('div',T('Seit dem Start im Deck geändert — wirkt sicher erst nach einem Neustart.'),'color:var(--amber);margin-top:6px'));
+      lage.appendChild(_esEl('div',d.neustart.join(', '),'font-family:var(--mono)'));
+    }
+  }
+  if(nb) nb.hidden=!(d.neustart&&d.neustart.length);
+  einstZeigen();
+}
+function _esZeile(e){
+  var z=_esEl('div',null,'display:grid;grid-template-columns:minmax(0,1fr) minmax(220px,340px);gap:10px;padding:9px 0;border-top:1px solid var(--border)');
+  var links=_esEl('div');
+  var kopf=_esEl('div'); kopf.appendChild(_esEl('b',e.name,'font-family:var(--mono)'));
+  var farbe={datenbank:'var(--neon)',env:'var(--cyan)',vorgabe:'var(--text-faint)'}[e.quelle];
+  var qtext={datenbank:T('vom Deck gesetzt'),env:T('aus der .env'),vorgabe:T('nur Vorgabe')}[e.quelle];
+  kopf.appendChild(_esEl('span',qtext,'margin-left:8px;font-size:10px;padding:1px 6px;border:1px solid '+farbe+';color:'+farbe));
+  if(e.geheim) kopf.appendChild(_esEl('span',T('geheim'),'margin-left:6px;font-size:10px;color:var(--amber)'));
+  links.appendChild(kopf);
+  if(e.beschreibung) links.appendChild(_esEl('div',e.beschreibung,'font-size:11px;color:var(--text-faint);margin-top:3px'));
+  if(e.vorgabe) links.appendChild(_esEl('div','= '+e.vorgabe,'font-size:11px;color:var(--text-faint);font-family:var(--mono)'));
+  if(e.geschuetzt) links.appendChild(_esEl('div','🔒 '+e.schutz,'font-size:11px;color:var(--amber);margin-top:3px'));
+  z.appendChild(links);
+  var rechts=_esEl('div',null,'display:flex;gap:6px;align-items:flex-start;flex-wrap:wrap');
+  var inp=document.createElement('input'); inp.className='field'; inp.style.cssText='flex:1;min-width:140px';
+  inp.setAttribute('aria-label',e.name);
+  if(e.geheim){ inp.type='password'; inp.autocomplete='new-password';
+    inp.placeholder=e.gesetzt?T('gesetzt — leer lassen heißt unverändert'):T('nicht gesetzt'); }
+  else { inp.type='text'; inp.value=e.wert||''; inp.placeholder=e.vorgabe||''; }
+  if(e.geschuetzt) inp.disabled=true;
+  rechts.appendChild(inp);
+  if(!e.geschuetzt){
+    var sp=_esEl('button',T('Speichern')); sp.className='btn sm'; sp.type='button';
+    sp.onclick=function(){ einstSetzen(e, inp.value); };
+    rechts.appendChild(sp);
+    if(e.quelle==='datenbank'){
+      var zr=_esEl('button',T('↺ Zur .env zurück')); zr.className='btn sm'; zr.type='button';
+      zr.onclick=function(){ einstZurueck(e.name); };
+      rechts.appendChild(zr);
+    }
+  }
+  z.appendChild(rechts);
+  return z;
+}
+function einstZeigen(){
+  var el=$('#es_liste'); if(!el||!_ES.d) return;
+  var q=(($('#es_suche')||{}).value||'').trim().toLowerCase();
+  var g=($('#es_gruppe')||{}).value||'', qu=($('#es_quelle')||{}).value||'';
+  var treffer=_ES.d.eintraege.filter(function(e){
+    return (!g||e.gruppe===g) && (!qu||e.quelle===qu) &&
+      (!q||e.name.toLowerCase().indexOf(q)>=0||(e.beschreibung||'').toLowerCase().indexOf(q)>=0);
+  });
+  el.textContent='';
+  var gruppe=null;
+  treffer.slice(0,_ES.max).forEach(function(e){
+    if(e.gruppe!==gruppe){ gruppe=e.gruppe; el.appendChild(_esEl('div',gruppe,'margin-top:14px;font-size:10px;letter-spacing:.12em;color:var(--text-faint)')); }
+    el.appendChild(_esZeile(e));
+  });
+  if(!treffer.length) el.appendChild(_esEl('div',T('Keine Einstellung passt zur Suche.'),'color:var(--text-faint)'));
+  if(treffer.length>_ES.max){
+    var mehr=_esEl('div',null,'margin-top:10px;color:var(--text-faint)');
+    mehr.appendChild(_esEl('b',String(treffer.length-_ES.max)));
+    mehr.appendChild(_esEl('span',T('weitere Einträge — die Suche eingrenzen'),'margin-left:5px'));
+    el.appendChild(mehr);
+  }
+}
+async function einstSetzen(e, wert){
+  if(e.geheim&&!wert){ toast(T('Kein neuer Wert eingegeben — nichts geändert.'),'warn'); return; }
+  var d=await apiPost('/api/einstellungen',{name:e.name, wert:wert});
+  toast(d&&d.ok?(d.hinweis||T('Gespeichert')):((d&&d.error)||T('Speichern fehlgeschlagen')), d&&d.ok?'ok':'err');
+  if(d&&d.ok) einstLoad();
+}
+async function einstZurueck(name){
+  var d=await apiPost('/api/einstellungen/zuruecksetzen',{name:name});
+  toast(d&&d.ok?T('Zurückgesetzt — es gilt wieder die .env bzw. die Vorgabe.'):((d&&d.error)||T('Zurücksetzen fehlgeschlagen')), d&&d.ok?'ok':'err');
+  if(d&&d.ok) einstLoad();
+}
+async function einstUebernehmen(){
+  if(!confirm(T('Alle Werte der .env, die das Deck verwalten darf, in die Datenbank übernehmen?')+'\n\n'
+      +T('Danach gehen sie der .env vor. Geschützte Schlüssel bleiben in der .env, vorhandene Einträge werden nicht überschrieben.'))) return;
+  var d=await apiPost('/api/einstellungen/uebernehmen',{});
+  if(!d||!d.ok){ toast((d&&d.error)||T('Übernehmen fehlgeschlagen'),'err'); return; }
+  toast(T('Übernommen')+' '+d.uebernommen+' · '+T('schon im Deck')+' '+d.vorhanden+' · '+T('geschützt')+' '+d.geschuetzt,'ok');
+  einstLoad();
+}
+VIEW_LOADERS['einstellungen']=einstLoad;
+T('Einstellungen');   /* der Reiter steht als HTML da — so kommt das Wort in den Katalog */
+
 /* v4.2-W144: liest Prometheus den Bot wirklich, und ist Grafana da? Die
    Gruende kommen uebersetzt vom Server (nc/beobachtungslage.py). */
 async function loadBeobachtung(){
@@ -12245,8 +12407,11 @@ var ncLagebild=(function(){
       reduce=!!(mq&&mq.matches), daten=null, fehlt=false, maus=null, gebunden=false,
       versatz=0, einsaetze=[], zeilen={};
   var AG={}, ZI={};
-  var STAT={kern:{a:0,r:0},platte:{a:-2.36,r:0.52},tunnel:{a:-0.79,r:0.52},
-    chat:{a:0.79,r:0.52},archiv:{a:2.36,r:0.52},abwehr:{a:-1.5708,r:0.52}};
+  /* v4.2-W146: sieben Stationen im gleichmaessigen Sechseck um den Kern —
+     die Datenbank (vierzehnter Waechter) unten, gegenueber der Abwehr. */
+  var STAT={kern:{a:0,r:0},abwehr:{a:-1.5708,r:0.56},tunnel:{a:-0.5236,r:0.56},
+    chat:{a:0.5236,r:0.56},datenbank:{a:1.5708,r:0.56},archiv:{a:2.618,r:0.56},
+    platte:{a:-2.618,r:0.56}};
   /* Texte als wörtliche T('…')-Aufrufe (CLAUDE.md, W101); je Datenstand neu
      gebaut, weil der Katalog erst nach diesem Skript lädt. */
   var NAMEN={},LAGE={},STL={},RSL={};
@@ -12255,18 +12420,28 @@ var ncLagebild=(function(){
       swap:T('Auslagerung'),disk:T('Plattenplatz'),proxy:T('Tunnelwache'),
       toxicity:T('Toxizität'),analytics:T('Auswertung'),learning:T('Lernende'),
       scout:T('Späher'),sentinel:T('Abwehrwache'),recording:T('Aufnahmewache'),
-      restream_sentinel:T('Restream-Wache')};
+      restream_sentinel:T('Restream-Wache'),datenbank:T('Datenbankwache')};
     LAGE={ruht:T('bereit'),taetig:T('im Einsatz'),fehler:T('Fehler'),aus:T('abgeschaltet'),
       ueber:T('überfällig')};
     RSL={gesund:T('Restream gesund'),langsam:T('Restream langsam'),gestoert:T('Restream gestört')};
-    STL={kern:T('KERN'),platte:T('PLATTE'),tunnel:'TUNNEL',chat:'CHAT',archiv:T('ARCHIV'),abwehr:T('ABWEHR')};
+    STL={kern:T('KERN'),platte:T('PLATTE'),tunnel:'TUNNEL',chat:'CHAT',archiv:T('ARCHIV'),abwehr:T('ABWEHR'),
+      datenbank:T('DATENBANK')};
   }
   function C(v,f){return ncCssVar(v)||f;}
+  /* Hilfslinie in der Textfarbe des Themas mit Deckkraft a — auf Dunkel wie
+     auf Hell sichtbar, ohne eine zweite Farbtabelle je Thema. */
+  function hilfe(a){var c=F.hilf||'#ffffff',m=c.match(/^#([0-9a-f]{6})$/i);
+    if(m){var v=parseInt(m[1],16);return 'rgba('+(v>>16&255)+','+(v>>8&255)+','+(v&255)+','+a+')';}
+    var r=c.match(/rgba?\(([^)]+)\)/);if(r){var t=r[1].split(',');return 'rgba('+t[0]+','+t[1]+','+t[2]+','+a+')';}
+    return 'rgba(255,255,255,'+a+')';}
   var F={};
   function farben(){F={neon:C('--neon','#00ff9c'),cyan:C('--cyan','#22d3ee'),
     red:C('--red','#ff5d73'),amber:C('--amber','#e8c86a'),
     text:C('--text','#e8f6ff'),faint:C('--text-faint','#7a9aa6'),line:C('--border','#1d2a30'),
-    mono:(C('--mono','')||'monospace')};}
+    mono:(C('--mono','')||'monospace'),
+    /* v4.2-W146: Flaeche und Hilfslinien aus dem Thema — vorher fest dunkel,
+       und in Blaupause (hell) waren Kern, Kapseln und Namen unlesbar. */
+    flaeche:C('--panel-solid','')||C('--bg','#080c0e'),hilf:C('--text','#e8f6ff')};}
   function jetzt(){return Date.now()/1000+versatz;}
   /* ── Geometrie: Ränder für Beschriftungen ABZIEHEN, nicht hoffen ─────── */
   function geo(){var rand=Math.min(110,W*0.18),rx=Math.max(80,W/2-rand),ry=Math.max(70,H/2-34);
@@ -12283,27 +12458,35 @@ var ncLagebild=(function(){
     cv.width=W*dpr;cv.height=H*dpr;cv.style.width=W+'px';cv.style.height=H+'px';
     farben();texte();hintergrund();
   }
+  /* v4.2-W146: Hintergrund als ruhige Leitstand-Flaeche — Punktraster statt
+     Liniengitter, zwei feine Ringe, die Stationen als Kapseln mit Leitung zum
+     Kern. Gemeldet: „sieht aus als hätte es ein Kind gezeichnet" — die Spinne
+     in der Mitte und die schwingenden Kurven sind weg. */
+  /* Abgerundetes Rechteck; r wird auf die halbe Hoehe begrenzt (Kapsel). */
+  function kapsel(b,x,y,w,h,r){r=Math.min(r,h/2,w/2);var l=x-w/2,o=y-h/2,re=x+w/2,u=y+h/2;
+    b.beginPath();b.moveTo(l+r,o);b.lineTo(re-r,o);b.arcTo(re,o,re,o+r,r);b.lineTo(re,u-r);
+    b.arcTo(re,u,re-r,u,r);b.lineTo(l+r,u);b.arcTo(l,u,l,u-r,r);b.lineTo(l,o+r);b.arcTo(l,o,l+r,o,r);b.closePath();}
   function hintergrund(){
     bg=document.createElement('canvas');bg.width=W*dpr;bg.height=H*dpr;
     var b=bg.getContext('2d'),g=geo();b.setTransform(dpr,0,0,dpr,0,0);
-    var v=b.createRadialGradient(g.cx,g.cy,10,g.cx,g.cy,Math.max(W,H)*0.7);
-    v.addColorStop(0,'rgba(255,255,255,0.025)');v.addColorStop(1,'rgba(0,0,0,0)');
+    var v=b.createRadialGradient(g.cx,g.cy,10,g.cx,g.cy,Math.max(W,H)*0.75);
+    v.addColorStop(0,hilfe(0.035));v.addColorStop(1,'rgba(0,0,0,0)');
     b.fillStyle=v;b.fillRect(0,0,W,H);
-    b.lineWidth=1;b.strokeStyle='rgba(255,255,255,0.035)';
-    for(var x=0;x<W;x+=32){b.beginPath();b.moveTo(x+0.5,0);b.lineTo(x+0.5,H);b.stroke();}
-    for(var y=0;y<H;y+=32){b.beginPath();b.moveTo(0,y+0.5);b.lineTo(W,y+0.5);b.stroke();}
-    b.strokeStyle='rgba(255,255,255,0.09)';
+    b.fillStyle=hilfe(0.05);
+    for(var x=12;x<W;x+=24)for(var y=12;y<H;y+=24){b.fillRect(x,y,1,1);}
+    b.lineWidth=1;b.strokeStyle=hilfe(0.07);
     b.beginPath();b.ellipse(g.cx,g.cy,g.rx,g.ry,0,0,Math.PI*2);b.stroke();
-    b.setLineDash([2,5]);b.strokeStyle='rgba(255,255,255,0.07)';
-    b.beginPath();b.ellipse(g.cx,g.cy,g.rx*0.52,g.ry*0.52,0,0,Math.PI*2);b.stroke();b.setLineDash([]);
+    b.strokeStyle=hilfe(0.045);
+    b.beginPath();b.ellipse(g.cx,g.cy,g.rx*0.56,g.ry*0.56,0,0,Math.PI*2);b.stroke();
+    /* Leitungen Kern → Station, dann die Kapseln darueber */
     Object.keys(STAT).forEach(function(k){if(k==='kern')return;var p=stationXY(k);
-      b.beginPath();b.arc(p.x,p.y,7,0,Math.PI*2);b.fillStyle='rgba(8,12,14,0.95)';b.fill();
-      b.strokeStyle=F.faint;b.globalAlpha=0.7;b.stroke();b.globalAlpha=1;
-      /* Beschriftung nach AUSSEN, weg von der Kreisbahn der Wächter */
-      var ox=Math.cos(p.a),oy=Math.sin(p.a);
-      b.fillStyle=F.faint;b.font='600 9px '+F.mono;
-      b.textAlign=ox>0.3?'left':(ox<-0.3?'right':'center');b.textBaseline=oy>0.3?'top':(oy<-0.3?'bottom':'middle');
-      b.fillText(STL[k]||k,p.x+ox*30,p.y+oy*30);});
+      b.strokeStyle=hilfe(0.10);b.lineWidth=1;b.beginPath();b.moveTo(g.cx,g.cy);b.lineTo(p.x,p.y);b.stroke();});
+    b.font='600 9px '+F.mono;
+    Object.keys(STAT).forEach(function(k){if(k==='kern')return;var p=stationXY(k),txt=STL[k]||k,
+        w=Math.max(64,b.measureText(txt).width+30);
+      kapsel(b,p.x,p.y,w,20,10);b.fillStyle=F.flaeche;b.fill();
+      b.strokeStyle=hilfe(0.16);b.lineWidth=1;b.stroke();
+      b.fillStyle=F.faint;b.textAlign='center';b.textBaseline='middle';b.fillText(txt,p.x+5,p.y+0.5);});
   }
   /* ── Datenstand ───────────────────────────────────────────────────── */
   function setze(d){
@@ -12334,11 +12517,17 @@ var ncLagebild=(function(){
     if(a.ort==='ziel'&&a.ziel&&ZI[a.ziel])return {x:ZI[a.ziel].x,y:ZI[a.ziel].y};
     return stationXY(a.ort);}
   function zielVon(s,t){
-    var a=s.a||{},p=ortXY(s),n=Math.max(1,s.nPlatz||1),
-        r=(a.ort==='kern'?44:20)+(n>2?6:0),
-        w=s.platz/n*Math.PI*2+(reduce||a.lage==='aus'?0:t*(a.lage==='taetig'?0.9:0.32));
-    if(a.lage==='fehler'&&!reduce){r+=Math.sin(t*20+s.phase)*1.5;}
-    return {x:p.x+Math.cos(w)*r,y:p.y+Math.sin(w)*r*0.85,w:w};
+    /* v4.2-W146: feste Plaetze statt Kreisbahn — eine Reihe unter (bzw. ueber)
+       der Kapsel, nach aussen versetzt. Am Kern ein Kreis um den Knoten. */
+    var a=s.a||{},p=ortXY(s),n=Math.max(1,s.nPlatz||1),i=s.platz||0,g=geo();
+    if(a.ort==='kern'){var w=(i+0.5)/n*Math.PI*2;
+      return {x:p.x+Math.cos(w)*88,y:p.y+Math.sin(w)*40,w:w};}
+    /* Station: Reihe nach aussen. Ziel: Reihe nach INNEN, zum Kern hin — nach
+       aussen steht dort der Name des Nutzers. */
+    var aussen=p.y>=g.cy?1:-1;if(a.ort==='ziel')aussen=-aussen;
+    var abst=a.ort==='ziel'?21:24,dx=(i-(n-1)/2)*17;
+    var wack=(reduce||a.lage!=='taetig')?0:Math.sin(t*3+s.phase)*1.2;
+    return {x:p.x+dx,y:p.y+aussen*abst+wack,w:0};
   }
   function fortschritt(s){var a=s.a||{};
     if(!a.takt_s||s.faellig_at==null)return 0;
@@ -12354,67 +12543,74 @@ var ncLagebild=(function(){
   function kreis(x,y,r){ctx.beginPath();ctx.arc(x,y,r,0,Math.PI*2);}
   function farbe(a){return a.lage==='fehler'?F.red:(a.ueberfaellig?F.amber:(a.lage==='aus'?F.faint:(a.lage==='taetig'?F.neon:F.cyan)));}
   function koerper(t){
-    var g=geo(),atem=reduce?0:Math.sin(t*1.3)*0.05,ziele=Object.keys(ZI).map(function(k){return ZI[k];}),
-        live=ziele.length>0,r=Math.min(g.rx,g.ry)*0.13*(1+atem);
+    /* v4.2-W146: der Kern als Knoten mit drei Zahlen, die Ziele ueber gerade,
+       feine Leitungen. Gestoerter Restream: rot gestrichelt; langsam: gelb. */
+    var g=geo(),ziele=Object.keys(ZI).map(function(k){return ZI[k];});
     ziele.forEach(function(z){var rs=z.z.restream;
-      ctx.strokeStyle=rs==='gestoert'?F.red:(rs==='langsam'?F.amber:'rgba(255,255,255,0.14)');
-      ctx.globalAlpha=rs?0.6:1;ctx.setLineDash(rs==='gestoert'?[4,5]:[]);ctx.lineWidth=1;
-      ctx.beginPath();ctx.moveTo(g.cx,g.cy);
-      ctx.quadraticCurveTo((g.cx+z.x)/2+(z.y-g.cy)*0.06,(g.cy+z.y)/2-(z.x-g.cx)*0.06,z.x,z.y);ctx.stroke();});
+      ctx.strokeStyle=rs==='gestoert'?F.red:(rs==='langsam'?F.amber:(rs?F.cyan:hilfe(0.09)));
+      ctx.globalAlpha=rs?0.55:1;ctx.setLineDash(rs==='gestoert'?[4,5]:[]);ctx.lineWidth=1;
+      ctx.beginPath();ctx.moveTo(g.cx,g.cy);ctx.lineTo(z.x,z.y);ctx.stroke();});
     ctx.setLineDash([]);ctx.globalAlpha=1;
-    for(var i=0;i<8;i++){
-      var seite=i<4?-1:1,k=i%4,ba=(seite<0?Math.PI:0)+seite*(-0.9+k*0.6),
-          sw=reduce?0:Math.sin(t*1.8+i*0.8)*0.1,len=r*2.6;
-      var kx=g.cx+Math.cos(ba+sw)*len*0.55,ky=g.cy+Math.sin(ba+sw)*len*0.55-len*0.16,
-          fx=g.cx+Math.cos(ba+sw*1.5)*len,fy=g.cy+Math.sin(ba+sw*1.5)*len+len*0.1;
-      ctx.strokeStyle=F.neon;ctx.globalAlpha=0.55;ctx.lineWidth=1.4;
-      ctx.beginPath();ctx.moveTo(g.cx,g.cy);ctx.lineTo(kx,ky);ctx.lineTo(fx,fy);ctx.stroke();ctx.globalAlpha=1;}
-    ctx.beginPath();ctx.ellipse(g.cx,g.cy,r*1.25,r,0,0,Math.PI*2);ctx.fillStyle='rgba(6,9,11,0.96)';ctx.fill();
-    ctx.strokeStyle=F.neon;ctx.lineWidth=1.6;ctx.stroke();
-    [-1,1].forEach(function(s){kreis(g.cx+s*r*0.38,g.cy-r*0.12,r*0.15);ctx.fillStyle=live?F.red:F.neon;ctx.fill();});
+    var d=daten||{},zz=d.ziele||[],rec=zz.filter(function(x){return x.aufnahme;}).length,
+        rs=zz.filter(function(x){return x.restream;}).length,
+        stoer=zz.some(function(x){return x.restream==='gestoert';}),
+        puls=reduce?0:(Math.sin(t*1.6)+1)/2;
+    kapsel(ctx,g.cx,g.cy,132,46,10);
+    ctx.fillStyle=F.flaeche;ctx.fill();
+    ctx.strokeStyle=stoer?F.red:F.neon;ctx.lineWidth=1.4;ctx.globalAlpha=0.75+0.25*puls;ctx.stroke();ctx.globalAlpha=1;
+    ctx.textAlign='center';ctx.textBaseline='middle';
+    ctx.fillStyle=F.text;ctx.font='700 10px '+F.mono;ctx.fillText('NIGHTCRAWLER',g.cx,g.cy-9);
+    ctx.font='9px '+F.mono;ctx.fillStyle=F.faint;
+    ctx.fillText(zz.length+' LIVE · '+rec+' REC · '+rs+' RS',g.cx,g.cy+9);
   }
   function beschrift(txt,x,y,unten){
     ctx.font='600 10px '+F.mono;var w=ctx.measureText(txt).width;
     var lx=Math.max(4,Math.min(W-4-w,x-w/2));
     ctx.textAlign='left';ctx.textBaseline=unten?'top':'bottom';
-    ctx.fillStyle='rgba(6,9,11,0.72)';ctx.fillRect(lx-3,unten?y-1:y-13,w+6,14);
+    ctx.fillStyle=F.flaeche;ctx.fillRect(lx-3,unten?y-1:y-13,w+6,14);
     ctx.fillStyle=F.text;ctx.fillText(txt,lx,y);
   }
   function ziele(t){
     var schmal=W<520;
-    Object.keys(ZI).forEach(function(k){var z=ZI[k],d=z.z,puls=reduce?0.5:0.5+0.5*Math.sin(t*2.6+z.a*2);
+    Object.keys(ZI).forEach(function(k){var z=ZI[k],d=z.z;
       if(d.restream){var col=d.restream==='gestoert'?F.red:(d.restream==='langsam'?F.amber:F.cyan),
-          an=d.restream!=='gestoert'||reduce||Math.sin(t*6)>-0.3;
-        if(an){kreis(z.x,z.y,14);ctx.strokeStyle=col;ctx.lineWidth=1.5;ctx.stroke();}}
-      if(d.aufnahme){ctx.save();ctx.translate(z.x,z.y);ctx.rotate(reduce?0:t*0.8);
-        ctx.setLineDash([3,3]);kreis(0,0,9.5);ctx.strokeStyle=F.neon;ctx.lineWidth=1.8;ctx.stroke();ctx.restore();ctx.setLineDash([]);}
-      kreis(z.x,z.y,5.5);ctx.fillStyle=d.pausiert?F.faint:F.red;ctx.globalAlpha=d.pausiert?0.6:0.75+0.25*puls;ctx.fill();ctx.globalAlpha=1;
+          an=d.restream!=='gestoert'||reduce||Math.sin(t*4)>-0.5;
+        if(an){kreis(z.x,z.y,13);ctx.strokeStyle=col;ctx.lineWidth=1.4;ctx.stroke();}}
+      if(d.aufnahme){ctx.beginPath();ctx.arc(z.x,z.y,9,-Math.PI/2,
+          -Math.PI/2+Math.PI*2*(reduce?1:((t*0.25)%1)));ctx.strokeStyle=F.neon;ctx.lineWidth=1.6;ctx.stroke();}
+      kreis(z.x,z.y,5);ctx.fillStyle=d.pausiert?F.faint:F.red;ctx.globalAlpha=d.pausiert?0.6:0.95;ctx.fill();ctx.globalAlpha=1;
       var max=schmal?11:16,nm='@'+(d.name.length>max?d.name.slice(0,max-1)+'…':d.name),unten=Math.sin(z.a)>-0.2;
-      beschrift(nm,z.x,z.y+(unten?19:-19),unten);});
+      beschrift(nm,z.x,z.y+(unten?18:-18),unten);});
   }
   function waechter(now){
-    var t=now/1000;
-    /* Einsätze: Impuls am Arbeitsplatz + Meldung zum Kern, 1,4 s */
+    var t=now/1000,g=geo();
+    /* Einsatz (echter Lauf): ein Lichtpunkt laeuft die Leitung zum Kern, 1,4 s */
     einsaetze=einsaetze.filter(function(e){return now-e.t0<1400;});
-    einsaetze.forEach(function(e){var s=AG[e.name];if(!s)return;var k=(now-e.t0)/1400,g=geo();
-      ctx.globalAlpha=1-k;ctx.strokeStyle=F.neon;ctx.lineWidth=1.4;kreis(s.x,s.y,6+k*26);ctx.stroke();
-      ctx.beginPath();ctx.moveTo(s.x,s.y);ctx.lineTo(s.x+(g.cx-s.x)*Math.min(1,k*1.6),s.y+(g.cy-s.y)*Math.min(1,k*1.6));ctx.stroke();
+    einsaetze.forEach(function(e){var s=AG[e.name];if(!s)return;var k=(now-e.t0)/1400,
+        px=s.x+(g.cx-s.x)*k,py=s.y+(g.cy-s.y)*k;
+      ctx.globalAlpha=1-k*0.6;kreis(px,py,2.4);ctx.fillStyle=F.neon;ctx.fill();
+      ctx.strokeStyle=F.neon;ctx.lineWidth=1;kreis(s.x,s.y,8+k*12);ctx.globalAlpha=(1-k)*0.5;ctx.stroke();
       ctx.globalAlpha=1;});
+    /* Status-LED je Station: der schlimmste Zustand ihrer Waechter. */
+    var schlimm={};Object.keys(AG).forEach(function(k){var a=AG[k].a||{},o=a.ort;
+      if(!STAT[o]||o==='kern')return;var r=a.lage==='fehler'?3:(a.ueberfaellig?2:(a.lage==='aus'?0:1));
+      if(!(o in schlimm)||schlimm[o].r<r)schlimm[o]={r:r,a:a};});
+    ctx.font='600 9px '+F.mono;
+    Object.keys(schlimm).forEach(function(o){var p=stationXY(o),w=Math.max(64,ctx.measureText(STL[o]||o).width+30);
+      kreis(p.x-w/2+11,p.y,3);ctx.fillStyle=farbe(schlimm[o].a);ctx.fill();});
     Object.keys(AG).forEach(function(k){var s=AG[k],a=s.a||{},col=farbe(a),f=fortschritt(s);
-      if(s.spur.length>3&&a.lage!=='aus'){ctx.beginPath();ctx.moveTo(s.spur[0],s.spur[1]);
-        for(var i=2;i<s.spur.length;i+=2)ctx.lineTo(s.spur[i],s.spur[i+1]);
-        ctx.strokeStyle=col;ctx.globalAlpha=0.18;ctx.lineWidth=1;ctx.stroke();ctx.globalAlpha=1;}
-      /* Fortschrittsring: läuft bis zum nächsten Lauf voll — in Echtzeit */
-      kreis(s.x,s.y,7.5);ctx.strokeStyle='rgba(255,255,255,0.10)';ctx.lineWidth=2;ctx.stroke();
-      if(a.lage!=='aus'&&f>0){ctx.beginPath();ctx.arc(s.x,s.y,7.5,-Math.PI/2,-Math.PI/2+f*Math.PI*2);
-        ctx.strokeStyle=col;ctx.lineWidth=2;ctx.stroke();}
-      kreis(s.x,s.y,3.6);ctx.fillStyle=col;ctx.globalAlpha=a.lage==='aus'?0.5:1;ctx.fill();ctx.globalAlpha=1;
-      if(a.lage==='taetig'||a.lage==='fehler'||a.ueberfaellig){
+      if(a.lage==='taetig'&&!reduce){kreis(s.x,s.y,10);ctx.fillStyle=col;ctx.globalAlpha=0.10+0.06*Math.sin(t*4+s.phase);ctx.fill();ctx.globalAlpha=1;}
+      kreis(s.x,s.y,7);ctx.strokeStyle=hilfe(0.10);ctx.lineWidth=1.5;ctx.stroke();
+      if(a.lage!=='aus'&&f>0){ctx.beginPath();ctx.arc(s.x,s.y,7,-Math.PI/2,-Math.PI/2+f*Math.PI*2);
+        ctx.strokeStyle=col;ctx.lineWidth=1.5;ctx.stroke();}
+      kreis(s.x,s.y,3.4);ctx.fillStyle=col;
+      ctx.globalAlpha=a.lage==='aus'?0.45:(a.lage==='fehler'&&!reduce&&Math.sin(t*8)<0?0.4:1);ctx.fill();ctx.globalAlpha=1;
+      if(a.lage==='fehler'||a.ueberfaellig){
         ctx.font='9px '+F.mono;ctx.fillStyle=col;var tx=NAMEN[a.name]||a.name,tw=ctx.measureText(tx).width;
         var lx=s.x+11+tw>W-4?s.x-11-tw:s.x+11;ctx.textAlign='left';ctx.textBaseline='middle';ctx.fillText(tx,lx,s.y);}});
     if(maus){var tr=treffer(maus.x,maus.y);if(tr){ctx.font='11px '+F.mono;
       var bw=ctx.measureText(tr).width+14,bx=Math.max(4,Math.min(W-bw-4,maus.x+12)),by=Math.max(4,maus.y-28);
-      ctx.fillStyle='rgba(6,9,11,0.95)';ctx.fillRect(bx,by,bw,20);ctx.strokeStyle=F.cyan;ctx.lineWidth=1;ctx.strokeRect(bx+0.5,by+0.5,bw-1,19);
+      ctx.fillStyle=F.flaeche;ctx.fillRect(bx,by,bw,20);ctx.strokeStyle=F.cyan;ctx.lineWidth=1;ctx.strokeRect(bx+0.5,by+0.5,bw-1,19);
       ctx.fillStyle=F.text;ctx.textAlign='left';ctx.textBaseline='middle';ctx.fillText(tr,bx+7,by+10);}}
   }
   function zustand(a){return a.ueberfaellig?LAGE.ueber:(LAGE[a.lage]||a.lage);}

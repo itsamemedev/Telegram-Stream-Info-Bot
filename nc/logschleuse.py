@@ -86,6 +86,14 @@ MAX_WARTEND = 20000
 # loggende Thread erhoeht und der Horcher ihn abraeumt.
 _SPERRE = threading.Lock()
 _VERLOREN = [0]
+# v4.2-W146: der GESAMTzaehler, der nur waechst. `_VERLOREN` oben ist „noch
+# nicht gemeldet" und wird vom Horcher nach der Meldezeile genullt — und
+# genau den lasen /healthz (`log_verloren`) und /metrics. Millisekunden nach
+# einem Verlust stand dort wieder 0: Prometheus fragt alle 30 s und sah den
+# Verlust praktisch nie, die Regel NightcrawlerLogVerluste feuerte nie, und
+# der W97-Vertrag fiel je nach Thread-Takt (3 von 8 Laeufen). Ein Zaehler,
+# der beim Melden verschwindet, meldet nichts.
+_VERLOREN_GESAMT = [0]
 
 # Der laufende Horcher, damit `entkoppeln` zweimal aufgerufen werden kann,
 # ohne zwei Threads auf dieselben Handler zu setzen (Import-Reihenfolge,
@@ -133,6 +141,7 @@ class Schleuse(QueueHandler):
         except queue.Full:
             with _SPERRE:
                 _VERLOREN[0] += 1
+                _VERLOREN_GESAMT[0] += 1
 
 
 class _Horcher(QueueListener):
@@ -257,9 +266,10 @@ def wartend() -> int:
 
 
 def verloren() -> int:
-    """Bisher verworfene Datensaetze, ohne den Zaehler abzuraeumen."""
+    """Seit dem Start verworfene Datensaetze — waechst nur (ein Zaehler fuer
+    Prometheus: increase() ueber 15 min ist der Alarm)."""
     with _SPERRE:
-        return _VERLOREN[0]
+        return _VERLOREN_GESAMT[0]
 
 
 def zuruecksetzen() -> None:
@@ -267,6 +277,7 @@ def zuruecksetzen() -> None:
     stoppen(zeitlimit=2.0)
     with _SPERRE:
         _VERLOREN[0] = 0
+        _VERLOREN_GESAMT[0] = 0
 
 
 # ═════════════════════════════════════════════════════════════════════════

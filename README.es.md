@@ -1,0 +1,351 @@
+<div align="center">
+
+<img src="docs/assets/banner.svg" alt="NIGHTCRAWLER — v4.6 Centro de control" width="100%">
+
+### La sala de control para streaming en directo
+#### Vigilancia · Grabación · Restream multidestino · Moderación con IA
+
+🌐 **Español** · [Deutsch](README.md) · [English](README.en.md)
+
+[![Licencia: GPL v3](https://img.shields.io/badge/Licencia-GPLv3-blue.svg?style=for-the-badge&logo=gnu)](LICENSE)
+[![Python 3.12+](https://img.shields.io/badge/Python-3.12%2B-3776AB.svg?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
+[![CI](https://img.shields.io/github/actions/workflow/status/itsamemedev/Telegram-Stream-Info-Bot/ci.yml?branch=main&style=for-the-badge&label=CI&logo=githubactions&logoColor=white)](../../actions/workflows/ci.yml)
+[![CodeQL](https://img.shields.io/github/actions/workflow/status/itsamemedev/Telegram-Stream-Info-Bot/codeql.yml?branch=main&style=for-the-badge&label=CodeQL&logo=github&logoColor=white)](../../actions/workflows/codeql.yml)
+[![Release](https://img.shields.io/github/v/release/itsamemedev/Telegram-Stream-Info-Bot?style=for-the-badge&label=Release&logo=github&color=E8C86A&labelColor=0C0B09)](https://github.com/itsamemedev/Telegram-Stream-Info-Bot/releases/latest)
+
+[![Telegram](https://img.shields.io/badge/Telegram-Bot-26A5E4?style=flat-square&logo=telegram&logoColor=white)](#️-manejo)
+[![Discord](https://img.shields.io/badge/Discord-66%20comandos-5865F2?style=flat-square&logo=discord&logoColor=white)](#️-manejo)
+[![Kick · Twitch · YouTube](https://img.shields.io/badge/Restream-Kick%20%C2%B7%20Twitch%20%C2%B7%20YouTube-53FC18?style=flat-square)](#-restream)
+[![SQLite · MariaDB](https://img.shields.io/badge/Base%20de%20datos-SQLite%20%C2%B7%20MariaDB-003545?style=flat-square&logo=mariadb&logoColor=white)](#️-base-de-datos)
+[![Prometheus · Grafana](https://img.shields.io/badge/Monitorizaci%C3%B3n-Prometheus%20%C2%B7%20Grafana-E6522C?style=flat-square&logo=prometheus&logoColor=white)](#-monitorización)
+
+[![Web: lafap.de](https://img.shields.io/badge/Web-lafap.de-E8C86A?style=for-the-badge&logo=firefoxbrowser&logoColor=0C0B09&labelColor=0C0B09)](https://lafap.de)
+[![Discord](https://img.shields.io/badge/Discord-Unirse%20a%20la%20comunidad-5865F2?style=for-the-badge&logo=discord&logoColor=white&labelColor=0C0B09)](https://discord.gg/psvnxm7tSV)
+
+<br>
+
+> **Un stream de TikTok sale en directo → se detecta, se graba, se retransmite a
+> Kick, Twitch y YouTube, se modera y se comenta en los tres chats — de forma
+> totalmente automática, en un solo servidor, sin suscripción en la nube.**
+
+</div>
+
+### De un vistazo
+
+| | |
+|---|---|
+| **Para qué** | Vigilancia en directo, grabación y restream multidestino de streams de TikTok, con moderación por IA en Kick, Twitch y YouTube |
+| **Para quién** | Operadores que lo quieren en hardware **propio** — un servidor Linux, sin SaaS, sin plataforma ajena entre el stream y los destinos |
+| **Funciona en** | Ubuntu/Debian con systemd, Python 3.12–3.14, ffmpeg, streamlink, yt-dlp — base de datos SQLite o MariaDB |
+| **Manejo** | Telegram, Discord (66 comandos) y un panel web con cuatro temas en alemán, inglés y español — los ajustes, directamente en el panel |
+| **Monitorización** | 14 agentes vigilantes, mapa de situación en tiempo real, Prometheus y Grafana con reglas de alerta |
+| **Calidad** | más de mil contratos, CI en tres versiones de Python y contra el estado de producción congelado, `pip-audit`, CodeQL |
+| **Licencia** | GPL-3.0-or-later |
+
+---
+
+## 📋 Contenido
+
+- [✨ Qué hace NIGHTCRAWLER](#-qué-hace-nightcrawler) · [📦 Instalación](#-instalación) · [🔄 Actualizar y ampliar](#-actualizar-y-ampliar)
+- [⚙️ Ajustes](#️-ajustes) · [🗄️ Base de datos](#️-base-de-datos) · [🕹️ Manejo](#️-manejo)
+- [📡 Restream](#-restream) · [🧠 AZRAEL y los vigilantes](#-azrael-y-los-vigilantes) · [🖥️ Panel](#️-panel)
+- [📈 Monitorización](#-monitorización) · [🚀 Operación](#-operación) · [🛡️ Seguridad](#️-seguridad)
+- [🩺 Diagnóstico](#-diagnóstico) · [🆕 Novedades en v4.6](#-novedades-en-v46) · [📊 Estado del proyecto](#-estado-del-proyecto) · [📄 Licencia](#-licencia)
+
+---
+
+## ✨ Qué hace NIGHTCRAWLER
+
+| | | |
+|---|---|---|
+| **🔍 Detectar** — sondeo adaptativo con histéresis anti-parpadeo; cada fila del panel dice cuándo se comprobó por última vez | **⏺️ Grabar** — grabador en tres etapas (ffmpeg → streamlink → yt-dlp) con comprobación previa, control de la pista de audio y detección de bloqueos | **📡 Retransmitir** — Kick, Twitch y YouTube a la vez, verificación de destinos contra las API de las plataformas |
+| **🛡️ Moderar** — SENTINEL-SHIELD contra doxxing y odio, determinista y **antes** de cualquier IA | **🤖 Participar** — AZRAEL responde en tres chats, reacciona a la emisión y aparece en la imagen | **📊 Evaluar** — panel con 377 rutas de API, grafo de conocimiento, diario de ingresos con cadena de hashes, PWA |
+
+```mermaid
+flowchart TB
+    TG["📨 Telegram"]:::ein --> BOT
+    DC["🎮 Discord<br/>66 comandos"]:::ein --> BOT
+    TT["🎥 TikTok<br/>detección en directo + chat"]:::ein --> BOT
+    BOT["bot.py<br/>monolito · 26.313 líneas"]:::core
+    BOT -->|configure| NC["nc/ — 176 módulos<br/>39 blueprints"]:::lib
+    BOT --> BRAIN["brain/ — 14 agentes vigilantes"]:::brain
+    BOT --> DB[("SQLite o MariaDB<br/>+ ajustes")]:::db
+    BOT --> PROM["/metrics → Prometheus → Grafana"]:::lib
+    BOT --> OUT["🟢 Kick · 🟣 Twitch · 🔴 YouTube"]:::out
+    classDef ein fill:#1c2b3a,stroke:#2de1c2,color:#e6edf3
+    classDef core fill:#3a2415,stroke:#ff8c42,stroke-width:2px,color:#ffd9a0
+    classDef lib fill:#1a2430,stroke:#7fe7d4,color:#e6edf3
+    classDef brain fill:#241c3a,stroke:#a78bfa,color:#e6edf3
+    classDef db fill:#14202c,stroke:#8fd3f4,color:#e6edf3
+    classDef out fill:#1c2b1e,stroke:#53fc18,color:#e6edf3
+```
+
+---
+
+## 📦 Instalación
+
+```bash
+git clone https://github.com/itsamemedev/Telegram-Stream-Info-Bot.git ~/nightcrawler
+bash ~/nightcrawler/tools/installer.sh        # --express = menos preguntas, --unattended = ninguna
+```
+
+En Windows: `tools\install.bat`. El script explica cada paso, pregunta antes de
+cada cambio, crea el venv y el `.env`, instala los paquetes del sistema, lo
+comprueba con `bot.py --selfcheck` y, si se desea, configura el arranque
+automático. Una segunda ejecución actualiza una instalación existente en lugar
+de sobrescribirla.
+
+**A mano:**
+
+```bash
+python3 -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+sudo apt install -y ffmpeg streamlink yt-dlp
+cp .env.example .env && nano .env      # como mínimo BOT_TOKEN
+python3 bot.py
+```
+
+Requisitos: Linux con systemd, **Python 3.12 como mínimo** (con 3.11 `bot.py`
+no se puede analizar), 4 núcleos y 4 GB de RAM (recomendado 8 núcleos, 16 GB).
+
+---
+
+## 🔄 Actualizar y ampliar
+
+**El código nuevo** se instala con la función de actualización — en el panel
+(Resumen → estado del software) o con `/update` en Telegram. Trae el estado de
+este repositorio archivo por archivo; después hay que reiniciar el servicio
+(botón en el panel).
+
+**Lo que falta** lo instala `tools/update.sh`:
+
+```bash
+bash tools/update.sh                 # guiado: comprueba, muestra el plan y pregunta por complementos
+bash tools/update.sh --check         # solo comprobar, código de salida 1 si falta algo
+bash tools/update.sh --mariadb       # mudar la base de datos de SQLite a MariaDB
+```
+
+En modo guiado pregunta por todo lo que falta: **Prometheus** (con **Grafana**),
+paquetes opcionales de Python y — si la base de datos sigue en SQLite — la
+mudanza a **MariaDB**. En modo desatendido y con `--check` no pregunta ni
+dispara nada.
+
+---
+
+## ⚙️ Ajustes
+
+**En el panel, pestaña “Ajustes”.** Las unas 571 variables de `.env.example`
+con grupo, valor por defecto y descripción, con búsqueda. Cada fila indica de
+dónde viene el valor — *fijado en el panel*, *desde .env* o *por defecto*. Se
+guarda en la base de datos y, en el siguiente arranque, tiene prioridad sobre
+`.env`:
+
+```
+panel (base de datos)   ›   .env   ›   valor por defecto del código
+```
+
+- **“Importar desde .env”** copia `.env` una vez a la base de datos.
+- **“Volver a .env”** borra una entrada; vuelve a valer el archivo.
+- Muchos valores solo se leen al arrancar — reinicia el servicio tras guardar.
+- **Los secretos** (tokens, claves, contraseñas) solo se pueden escribir; el
+  panel muestra *si* están fijados, nunca el valor.
+
+> [!IMPORTANT]
+> **Solo en `.env`** — desde el panel serían un botón de control remoto del
+> servidor: la conexión a la base de datos (`DB_*`, `MARIADB_*`), el acceso al
+> panel (`DASHBOARD_TOKEN`, `DASHBOARD_PIN`, `WEB_HOST`, puerto, TLS,
+> `TRUSTED_PROXIES`) y todo lo que decide código, programas o rutas
+> (`UPDATE_*`, `*_CMD`, `*_BIN`, `*_DIR`, `*_PATH`).
+
+> [!WARNING]
+> **`.env` nunca va al repositorio.** Contiene cookies, tokens OAuth y claves de
+> stream.
+
+---
+
+## 🗄️ Base de datos
+
+SQLite es el valor por defecto (un archivo, sin servicio). MariaDB conviene con
+muchos datos o varias máquinas: `bash tools/update.sh --mariadb` instala el
+servidor, crea la base de datos y el usuario, detiene el bot un momento, muda
+**cada tabla**, **vuelve a contar** y solo entonces fija `DB_BACKEND=mariadb`
+en `.env` (antes guarda `.env.vor-mariadb-<hora>`). Un destino con datos no se
+sobrescribe nunca.
+
+> [!TIP]
+> **Vuelta atrás:** el archivo SQLite queda intacto. `DB_BACKEND=sqlite` en
+> `.env` y reiniciar.
+
+El **vigilante de la base de datos** mide cada cinco minutos el tiempo de
+respuesta, el tamaño, el crecimiento, el diario de SQLite (`-wal`) y si el
+esquema coincide con el código.
+
+---
+
+## 🕹️ Manejo
+
+### Telegram
+
+| Comando | Efecto |
+|---|---|
+| `/tiktok` `‹nombre›` | Análisis del perfil de una cuenta de TikTok |
+| `/live` `@usuario` | Comprobar ahora si está en directo |
+| `/quelle` `‹nombre›` | Medir las fuentes del stream de un usuario en directo, con la solución |
+| `/track` `‹nombre›` · `/untrack` · `/track_exact` · `/bulkadd` | Seguir usuarios de TikTok |
+| `/pause` · `/resume` · `/unpause` | Pausar y reanudar el seguimiento |
+| `/tracklist` · `/recstatus` · `/stoprec` | Cuentas seguidas, grabaciones en curso, detener una grabación |
+| `/cleanup` · `/quota` · `/teststream` | Limpiar grabaciones antiguas, cuota de almacenamiento, autoprueba del grabador |
+| `/stats` · `/topusers` · `/summary` · `/einnahmen` | Estadísticas, top de streamers, resumen diario, ingresos y donaciones |
+| `/ai` · `/aireset` · `/brain` · `/report` | Preguntar a AZRAEL, reiniciar el contexto de IA, estado del cerebro, informe semanal |
+| `/cookies` · `/sysres` · `/logs` · `/diag` | Cookies, recursos del sistema, últimos errores, diagnóstico completo |
+| `/about` · `/help` · `/start` · `/update` | Acerca de, ayuda, inicio, instalar actualización (solo Telegram) |
+
+**Discord — 66 comandos:** los comunes llevan el mismo nombre que en Telegram;
+además análisis (`/status`, `/streaminfo`), seguimiento (`/livenow`,
+`/restream_status`, `/follow`), clips (`/clips`, `/clip`, `/clipoftheweek`),
+comunidad (`/rank`, `/leaderboard`, `/daily`, `/profile`, `/event`), moderación
+(`/warn`, `/purge`, `/kick`, `/ban`, `/timeout`) y administración del servidor
+(`/setup_community`, `/setup_targets`, `/create_channel`, …). Lista completa en
+el [README en inglés](README.en.md#️-operating-it).
+
+---
+
+## 📡 Restream
+
+Kick, Twitch y YouTube a la vez mediante `tee` de ffmpeg. En cuanto hay un
+destino adicional se transcodifica (fotogramas clave cada 2 s), porque las tres
+plataformas exigen GOP distintos. Un destino solo cuenta como en línea cuando la
+propia plataforma lo confirma: 90 s de gracia, tres fallos seguidos, “desconocido”
+no es “sin conexión”. Activar: `KICK_STREAM_KEY`, `TWITCH_ENABLED` +
+`TWITCH_STREAM_KEY`, `YOUTUBE_ENABLED` + `YOUTUBE_STREAM_KEY` — en el panel o en
+`.env`.
+
+---
+
+## 🧠 AZRAEL y los vigilantes
+
+`brain/` es un núcleo de IA independiente con base de datos propia; sin él, el
+bot arranca igual. AZRAEL responde con Anthropic (con clave), en local con
+llama.cpp o mediante API gratuitas, con control de presupuesto.
+
+| Agente | Vigila | Agente | Vigila |
+|---|---|---|---|
+| `health` | estado general | `restream_sentinel` | destinos de restream que fallan en silencio |
+| `recovery` | grabaciones atascadas | `toxicity` | oleadas de toxicidad en el chat |
+| `scout` | nuevas fuentes en directo | `uptime` | conexiones de chat |
+| `analytics` | cifras y tendencias | `recording` | grabaciones cuyo archivo no crece |
+| `learning` | grafo de conocimiento | `proxy` | éxito de las peticiones a TikTok, bloqueos 403 |
+| `sentinel` | CrowdSec | `swap` | uso del swap |
+| `disk` | espacio en disco | `datenbank` | tiempo de respuesta, crecimiento, diario, esquema |
+
+**SENTINEL-SHIELD** detecta doxxing, odio y amenazas de forma determinista,
+antes de cualquier IA, con normalización de leetspeak, homoglifos y caracteres
+invisibles — afinado para **cero falsos positivos**.
+
+---
+
+## 🖥️ Panel
+
+En `127.0.0.1:8050` — desde fuera **solo** con un túnel SSH:
+`ssh -L 3000:localhost:8050 ubuntu@<ip-del-servidor>` y luego
+`http://localhost:3000`.
+
+Pestañas: **Resumen** (cifras, estado del software, **mapa de situación** con
+núcleo, siete estaciones, los vigilantes en su puesto y los usuarios en
+directo) · Control · Streams · Comunidad · **Sistema** (recursos, túnel,
+Prometheus y Grafana, registro en vivo) · AZRAEL Brain · Operación · Insights ·
+**Ajustes**. Temas: Latón (oscuro) · Plano (claro) · Contraste (WCAG AAA) ·
+Fósforo (noche). Instalable como **PWA** en el móvil.
+
+---
+
+## 📈 Monitorización
+
+```bash
+sudo bash tools/observability.sh --grafana     # o guiado: bash tools/update.sh
+```
+
+Prometheus como servicio propio solo en `127.0.0.1` lee `/metrics`; Grafana
+trae un panel en el que **cada** métrica tiene su gráfico. Sin admin/admin: la
+contraseña se genera y queda en `.env` como `GRAFANA_ADMIN_PASSWORD`. **16
+reglas de alerta** probadas con `promtool`. El panel (Sistema → “Prometheus &
+Grafana”) comprueba si Prometheus lee de verdad el bot.
+
+---
+
+## 🚀 Operación
+
+```bash
+sudo systemctl enable --now nightcrawler
+journalctl -u nightcrawler -f
+curl -s localhost:8050/healthz | python3 -m json.tool
+```
+
+La vía normal es la función de actualización (panel o `/update`) seguida de un
+reinicio. Alternativa: `tools/deploy.sh <build.zip>` comprueba en un directorio
+aparte y restaura la copia si algo falla. Detalles en
+**[`docs/en/DEPLOY.md`](docs/en/DEPLOY.md)**.
+
+---
+
+## 🛡️ Seguridad
+
+- El panel escucha solo en `127.0.0.1` (impuesto si no hay token ni PIN).
+- `.env` nunca está en el repositorio ni en el archivo de entrega.
+- Acceso, comandos, rutas y conexión a la base de datos solo desde `.env`.
+- Cookies, claves y tokens se ocultan antes de escribir el registro.
+- **No mezclar dinero:** la telemetría de donaciones son **estimaciones**; el
+  diario de ingresos son **pagos** contabilizados. Los regalos de TikTok van al
+  streamer seguido y no entran en ninguna suma.
+
+¿Una vulnerabilidad? → **[`docs/en/SECURITY.md`](docs/en/SECURITY.md)**, por favor sin issue público.
+
+---
+
+## 🩺 Diagnóstico
+
+```bash
+curl -s localhost:8050/api/selftest | python3 -m json.tool
+```
+
+Cada hallazgo con el comando que lo soluciona. ¿En directo pero sin restream?
+En Telegram, `/quelle ‹nombre›` mide cada vía hacia la dirección del stream.
+Más en **[`docs/en/TROUBLESHOOTING.md`](docs/en/TROUBLESHOOTING.md)**.
+
+---
+
+## 🆕 Novedades en v4.6
+
+**“Centro de control”** — todo configurable, todo vigilado: ajustes en el panel
+guardados en la base de datos, mudanza de SQLite a MariaDB en un paso con
+recuento, Prometheus y Grafana completos con 16 reglas de alerta, el 14.º
+vigilante para la base de datos, un mapa de situación redibujado y `update.sh`
+que pregunta por lo que falta. Todas las oleadas en
+**[`docs/CHANGELOG.md`](docs/CHANGELOG.md)**.
+
+---
+
+## 📊 Estado del proyecto
+
+| | |
+|---|---|
+| Versión actual | **4.6** — “Centro de control” (2026.11) |
+| Rutas Flask | 377 (34 en `bot.py` · 343 en `nc/routes/`) |
+| Comandos de Discord | 66 |
+| Agentes vigilantes | 14 |
+| Variables de configuración | ~571 |
+| Idiomas | alemán (origen), inglés, español |
+
+---
+
+## 📄 Licencia
+
+**GNU General Public License v3.0 o posterior** — texto completo en
+**[`LICENSE`](LICENSE)**. Contribuciones: **[`docs/en/CONTRIBUTING.md`](docs/en/CONTRIBUTING.md)** ·
+comunidad en **[Discord](https://discord.gg/psvnxm7tSV)** · **[lafap.de](https://lafap.de)**.
+
+<div align="center">
+
+**NIGHTCRAWLER v4.6 · “Centro de control”**
+
+</div>

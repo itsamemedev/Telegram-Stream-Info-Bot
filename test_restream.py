@@ -3059,30 +3059,31 @@ def test_v40_version():
        BUILD_STAMP und nc.version NICHT auseinanderlaufen (schon dreimal
        passiert: Modul auf neu, Footer blieb auf alt)."""
     from nc import version as v
-    # ANKER GEWANDERT (v4.5.3, nicht der Vertrag): 4.5.2 -> 4.5.3. Dieser Test
+    # ANKER GEWANDERT (v4.6, nicht der Vertrag): 4.5.3 -> 4.6. Dieser Test
     # wandert absichtlich mit jeder Fassung mit — er ist die Stelle, an der
     # ein halber Versionssprung auffliegt (Modul hochgezaehlt, Footer nicht).
-    assert v.VERSION == "4.5.3" and v.current()["version"] == "4.5.3"
-    assert v.summary_line().startswith("NIGHTCRAWLER v4.5.3")
+    assert v.VERSION == "4.6" and v.current()["version"] == "4.6"
+    assert v.summary_line().startswith("NIGHTCRAWLER v4.6")
     top = v.latest()
-    assert top["version"] == "4.5.3" and len(top["highlights"]) >= 3
-    assert [c["version"] for c in v.changelog()][:4] == ["4.5.3", "4.5.2", "4.5.1", "4.5"]
+    assert top["version"] == "4.6" and len(top["highlights"]) >= 3
+    assert [c["version"] for c in v.changelog()][:4] == ["4.6", "4.5.3", "4.5.2", "4.5.1"]
     assert v.changelog()[-1]["version"] == "3.7"   # Historie erhalten
     # Der Sprung darf die Vorgaengerfassung nicht ausraeumen. Beim
     # Umhaengen der Highlights ist genau das die Gefahr — man verschiebt
     # versehentlich ALLE statt der neuen, und 4.4 steht danach leer im
     # "Was ist neu"-Panel.
     vor = v.changelog()[1]
-    assert vor["version"] == "4.5.2" and len(vor["highlights"]) >= 5, \
-        f"4.5.2 hat nur noch {len(vor['highlights'])} Highlights — beim Sprung " \
-        f"auf 4.5.3 ist die Vorgaengerfassung ausgeraeumt worden"
-    assert len(v.changelog()[2]["highlights"]) >= 5, "4.5.1 ausgeraeumt"
-    assert len(v.changelog()[3]["highlights"]) >= 5, "4.5 ausgeraeumt"
-    assert len(v.changelog()[5]["highlights"]) >= 10, "4.4 ausgeraeumt"
+    assert vor["version"] == "4.5.3" and len(vor["highlights"]) >= 5, \
+        f"4.5.3 hat nur noch {len(vor['highlights'])} Highlights — beim Sprung " \
+        f"auf 4.6 ist die Vorgaengerfassung ausgeraeumt worden"
+    assert len(v.changelog()[2]["highlights"]) >= 5, "4.5.2 ausgeraeumt"
+    assert len(v.changelog()[3]["highlights"]) >= 5, "4.5.1 ausgeraeumt"
+    assert len(v.changelog()[4]["highlights"]) >= 5, "4.5 ausgeraeumt"
+    assert len(v.changelog()[6]["highlights"]) >= 10, "4.4 ausgeraeumt"
     # Und keine Zeile darf in ZWEI Fassungen stehen.
     doppelt = set(top["highlights"]) & set(vor["highlights"])
-    assert not doppelt, f"in 4.5.3 und 4.5.2 gleichzeitig: {list(doppelt)[:1]}"
-    ok("v4.5.3: nc.version — 4.5.3 + Changelog mit Historie, 4.5.2, 4.5.1, 4.5 und 4.4 unversehrt")
+    assert not doppelt, f"in 4.6 und 4.5.3 gleichzeitig: {list(doppelt)[:1]}"
+    ok("v4.6: nc.version — 4.6 + Changelog mit Historie, 4.5.3 bis 4.5 und 4.4 unversehrt")
 
     src = open("bot.py").read()
     assert 'BOT_VERSION = _nc_version.VERSION' in src, "BOT_VERSION nicht zentralisiert"
@@ -3094,7 +3095,7 @@ def test_v40_version():
         "BUILD_STAMP haengt nicht an nc.version"
     # ANKER GEWANDERT (v4.3, nicht der Vertrag): der Stempel folgt RELEASE
     # und VERSION, beide aus nc/version.py.
-    assert v.build_stamp() == "2026.11 · v4.5.3", v.build_stamp()
+    assert v.build_stamp() == "2026.11 · v4.6", v.build_stamp()
     # v4.1-W26: Anker mitgewandert. Die Route liegt jetzt in
     # nc/routes/auskunft.py — der VERTRAG ist unveraendert (es gibt sie, und
     # sie meldet die Version), nur ihre Fundstelle nicht.
@@ -3271,12 +3272,13 @@ def test_v40_w4_website():
     assert "b.agents.status()" in src or "_b.agents.status()" in src, "Agentenliste nicht aus dem Brain"
 
     web = open("website/lafap_index.html", encoding="utf-8").read()
-    # ALLE 13 Sentinel-Agenten gelistet + für Live-Status attribuiert (W86: +swap).
+    # ALLE Sentinel-Agenten gelistet + für Live-Status attribuiert (W86: +swap;
+    # ANKER GEWANDERT v4.2-W146: +datenbank, vierzehn).
     for name in ("health", "recovery", "scout", "analytics", "learning", "sentinel",
                  "toxicity", "uptime", "restream_sentinel", "disk", "recording", "proxy",
-                 "swap"):
+                 "swap", "datenbank"):
         assert 'data-agent="' + name + '"' in web, "Agent fehlt auf der Website: " + name
-    assert web.count('class="agent" data-agent') == 13, "Flotte nicht vollständig (13)"
+    assert web.count('class="agent" data-agent') == 14, "Flotte nicht vollständig (14)"
     assert 'id="agents-status"' in web and "von " in web, "kein Live-Zähler der Flotte"
     assert ".inactive" in web, "kein Inaktiv-Zustand für Agenten"
     # zweiter Chart + Verdrahtung.
