@@ -26115,6 +26115,139 @@ def _test_v42_w142_zehn_punkte():
        "Quellen im Deck, geprueftes Backup, SHA256SUMS, Schnappschuss-Drossel, Doku")
 
 
+def _test_v42_w142_quellprobe_wege():
+    """v4.2-W142: die Probe-Wege selbst — yt-dlp, Live-Seite, ffprobe,
+    Durchreicher — mit Attrappen statt Netz. Seit der Kern in nc/ liegt, zaehlt
+    er zur Ueberdeckung; ungeprueft waeren genau die Fehlerpfade, an denen der
+    Betreiber die Abhilfe abliest."""
+    import contextlib as _cl
+    import io as _io
+    import json as _json
+    import os as _os
+    import subprocess as _sp
+    from nc import quellprobe as QP
+
+    alt = (QP.shutil.which, QP.subprocess.run, QP.subprocess.Popen,
+           QP.urllib.request.build_opener, QP.time.sleep)
+
+    class _Lauf:
+        def __init__(self, rc, out="", err=""):
+            self.returncode, self.stdout, self.stderr = rc, out, err
+
+    def _run_mit(*antworten):
+        it = iter(antworten)
+        def _run(cmd, **kw):
+            a = next(it)
+            if isinstance(a, BaseException):
+                raise a
+            return a
+        return _run
+    try:
+        # yt-dlp fehlt: ehrliche Auskunft statt leerer Liste ohne Grund.
+        QP.shutil.which = lambda n: None
+        assert QP.probe_ytdlp("x", "", None) == ([], "yt-dlp nicht installiert")
+        assert QP.probe_ffprobe("https://h/x.flv", "")[1] == "ffprobe nicht installiert"
+        assert QP.probe_durchreicher("x", "", None) == 0
+        QP.shutil.which = lambda n: "/usr/bin/" + n
+        # yt-dlp: Formate gelesen, Proxy und Cookies weitergereicht.
+        gesehen = []
+        def _run_fmt(cmd, **kw):
+            gesehen.append(cmd)
+            return _Lauf(0, _json.dumps({"formats": [
+                {"url": "https://h/a.flv?expire=1", "ext": "flv", "format_id": "f"},
+                {"manifest_url": "https://h/a.mpd", "protocol": "http_dash_segments"}]}))
+        QP.subprocess.run = _run_fmt
+        f, fehler = QP.probe_ytdlp("x", "http://u:p@1.2.3.4:8", "/c.txt")
+        assert fehler is None and [k["form"] for k in f] == ["flv", "dash"], f
+        assert "--proxy" in gesehen[0] and "--cookies" in gesehen[0]
+        # Fehlermeldung von yt-dlp: Zugangsdaten maskiert.
+        QP.subprocess.run = _run_mit(_Lauf(1, "", "x\nERROR: proxy http://u:geheim@h:8 refused"))
+        f, fehler = QP.probe_ytdlp("x", "", None)
+        assert f == [] and "geheim" not in fehler and "***@" in fehler, fehler
+        QP.subprocess.run = _run_mit(_sp.TimeoutExpired("yt-dlp", 40))
+        assert QP.probe_ytdlp("x", "", None)[1].startswith("Zeitüberschreitung")
+        # ffprobe: Spuren, Fehler, Zeitueberschreitung.
+        QP.subprocess.run = _run_mit(_Lauf(0, _json.dumps({"streams": [
+            {"codec_type": "video", "codec_name": "h264"},
+            {"codec_type": "audio", "codec_name": "aac"}]})))
+        assert QP.probe_ffprobe("https://h/x.flv", "http://p:8") == (True, "audio=aac, video=h264")
+        QP.subprocess.run = _run_mit(_Lauf(1, "", "HTTP error 403 Forbidden"))
+        assert QP.probe_ffprobe("https://h/x.flv", "") == (False, "HTTP error 403 Forbidden")
+        QP.subprocess.run = _run_mit(_sp.TimeoutExpired("ffprobe", 30))
+        assert QP.probe_ffprobe("https://h/x.flv", "") == (False, "Zeitüberschreitung")
+
+        # Live-Seite: SOCKS ehrlich abgelehnt, Netzfehler mit Grund,
+        # eingebettete Adresse gefunden, Captcha erkannt.
+        assert "SOCKS" in QP.probe_html("x", "socks5://h:1")[1]
+
+        class _Opener:
+            def __init__(self, inhalt=None, fehler=None):
+                self.inhalt, self.fehler = inhalt, fehler
+            def open(self, req, timeout=0):
+                if self.fehler:
+                    raise self.fehler
+                return _io.BytesIO(self.inhalt.encode())
+        QP.urllib.request.build_opener = lambda *h: _Opener(fehler=OSError("verbindung weg"))
+        assert QP.probe_html("x", "http://p:8") == ([], "OSError: verbindung weg")
+        seite = ('<script type="application/json">kein json</script>'
+                 '<script id="SIGI" type="application/json">%s</script>' % _json.dumps(
+                     {"LiveRoom": {"streamUrl": {"hls_pull_url": "https://h/l.m3u8"}}}))
+        QP.urllib.request.build_opener = lambda *h: _Opener(seite)
+        f, fehler = QP.probe_html("x", "")
+        assert fehler is None and f[0]["form"] == "hls", (f, fehler)
+        QP.urllib.request.build_opener = lambda *h: _Opener("<div>captcha</div>")
+        assert "Captcha" in QP.probe_html("x", "")[1]
+        QP.urllib.request.build_opener = lambda *h: _Opener("<html></html>")
+        assert QP.probe_html("x", "")[1] == "keine Stream-Adresse im HTML"
+
+        # Durchreicher: zaehlt Bytes, raeumt den Prozess immer ab.
+        lesefd, schreibfd = _os.pipe()
+        _os.write(schreibfd, b"x" * 3000)
+        _os.close(schreibfd)
+
+        class _P:
+            stdout = _os.fdopen(lesefd, "rb")
+            beendet = []
+            def poll(self):
+                return None
+            def kill(self):
+                self.beendet.append("kill")
+            def wait(self, timeout=0):
+                self.stdout.close()
+        QP.subprocess.Popen = lambda *a, **k: _P()
+        QP.time.sleep = lambda s: None
+        assert QP.probe_durchreicher("x", "http://p:8", "/c.txt", grenze=2000, frist=5) >= 2000
+        assert _P.beendet == ["kill"], "yt-dlp-Prozess nicht beendet"
+    finally:
+        (QP.shutil.which, QP.subprocess.run, QP.subprocess.Popen,
+         QP.urllib.request.build_opener, QP.time.sleep) = alt
+
+    # Kommandozeile: --json gibt das Ergebnis aus, --ohne-proxy wirkt.
+    alt_m, alt_e = QP.messen, QP._env
+    try:
+        aufrufe = []
+        QP._env = lambda: ("http://p:8", None)
+        QP.messen = lambda n, p, c, ausgabe=print: aufrufe.append((n, p)) or {"empfehlung": "e"}
+        puffer = _io.StringIO()
+        with _cl.redirect_stdout(puffer):
+            assert QP.main(["@probe", "--ohne-proxy", "--json"]) == 0
+        assert aufrufe == [("probe", "")] and '"empfehlung": "e"' in puffer.getvalue()
+    finally:
+        QP.messen, QP._env = alt_m, alt_e
+    p, c = QP._env()
+    assert isinstance(p, str) and (c is None or c.endswith("tiktok_cookies.txt"))
+
+    # Sicherungspruefung: fehlender und leerer Dump.
+    from nc import sicherungspruefung as S
+    d = _ph.verzeichnis("nc-pruef-w142b-")
+    leer = _os.path.join(d, "leer.sql")
+    open(leer, "w").close()
+    assert S.dump_vollstaendig(_os.path.join(d, "fehlt.sql")) == (False, "Dump fehlt")
+    assert S.dump_vollstaendig(leer) == (False, "Dump ist leer")
+    ok("W142: Quellprobe-Wege mit Attrappen — Fehlerpfade mit Grund, Zugangsdaten "
+       "maskiert, Prozess immer beendet; Kommandozeile und Sicherungs-Randfaelle")
+
+
 def main():
     tmp, rid = richte_testdatenbank_ein()
     ok("db_conn aus nc.dbwrap: echtes Schema angelegt, Commit durchgelaufen")
@@ -26456,6 +26589,7 @@ def main():
     _test_v42_w141_dritte_form()
     _test_v42_w141_quellprobe()
     _test_v42_w142_zehn_punkte()
+    _test_v42_w142_quellprobe_wege()
     _test_v42_w60_azrael_cooldown_je_plattform()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)
