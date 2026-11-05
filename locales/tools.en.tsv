@@ -880,3 +880,4 @@ Umzug abgebrochen (siehe Grund oben) — der Bot laeuft unveraendert auf SQLite.
 Umzug abgeschlossen — der Bot laeuft jetzt auf MariaDB.	Move complete — the bot now runs on MariaDB.
 Umzug uebersprungen — der Bot laeuft weiter auf SQLite.	Move skipped — the bot keeps running on SQLite.
 Zusatzfunktionen	Additional features
+PyMySQL liess sich nicht installieren — Umzug abgebrochen, nichts veraendert.	Could not install PyMySQL — migration aborted, nothing changed.

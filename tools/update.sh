@@ -197,6 +197,14 @@ mariadb_umzug(){
     warn "Datenbank/Nutzer liessen sich nicht anlegen — Umzug abgebrochen, nichts veraendert."
     return 1
   fi
+  # PyMySQL VOR dem Stopp: scheitert es, laeuft der Bot unveraendert weiter.
+  if [ "$TROCKEN" = 1 ]; then
+    { [ -x "$VPY" ] && "$VPY" -c 'import pymysql' 2>/dev/null; } \
+      || printf '    %s$%s %s -m pip install PyMySQL>=1.1.1\n' "$FNT" "$R" "$VPY"
+  elif ! "$VPY" -c 'import pymysql' 2>/dev/null; then
+    lauf "$VPY" -m pip install "PyMySQL>=1.1.1" \
+      || { warn "PyMySQL liess sich nicht installieren — Umzug abgebrochen, nichts veraendert."; return 1; }
+  fi
   nc_dienst_finden
   if [ -n "$NC_DIENST" ] && systemctl is-active --quiet "$NC_DIENST" 2>/dev/null; then
     if [ "$NC_MODUS" = "gefuehrt" ] && [ "$TROCKEN" = 0 ] && ! frage_ja "Bot-Dienst fuer den Umzug kurz stoppen?" J; then
@@ -465,10 +473,10 @@ else
     frage_ja "Datenbank nach MariaDB umziehen?" N && Z_MARIA=1
   fi
 fi
-# Der Umzug braucht PyMySQL im venv — sonst scheiterte er erst nach dem Stopp.
-if [ "$Z_MARIA" = 1 ] && [ -x "$VPY" ] && ! "$VPY" -c 'import pymysql' 2>/dev/null; then
-  PY_FEHLT="$PY_FEHLT PyMySQL>=1.1.1"
-fi
+# Der Umzug braucht PyMySQL im venv. Installiert wird es IN mariadb_umzug,
+# vor dem Stopp — nicht ueber PY_FEHLT: dieser Weg laeuft nur mit
+# --python-deps, und `--mariadb --system` haette die Zeile in den Plan
+# geschrieben und nie ausgefuehrt (Codex, PR #191).
 
 # ═══════════════════════════════════════════════════════════════════════════
 kopf "Plan"

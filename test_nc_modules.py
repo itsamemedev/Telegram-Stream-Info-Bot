@@ -26670,6 +26670,39 @@ def _test_v42_w143_update_mariadb():
     assert "NC_MARIADB_PASSWORD=***" in aus and "zu_mariadb.py --dir %s" % ziel in aus, aus
     assert "PW_GEHEIM_W143" not in aus, "Passwort in der Ausgabe des Trockenlaufs"
     assert open(proto).read() == "", "Trockenlauf hat etwas ausgefuehrt: %r" % open(proto).read()
+    # PyMySQL kommt im Umzug selbst, VOR dem Stopp — nicht ueber PY_FEHLT, das
+    # nur mit --python-deps laeuft (Codex, PR #191).
+    # Das venv der Attrappe kennt pymysql bewusst NICHT — sonst hinge die
+    # Aussage davon ab, ob die pruefende Maschine es zufaellig hat.
+    vpy = os.path.join(ziel, ".venv", "bin", "python")
+    roh = open(vpy).read()
+    with open(vpy, "w") as f:
+        f.write(roh.replace('exec "', 'case "$*" in *"import pymysql"*) exit 1;; esac\nexec "', 1))
+    for schalter in (("--mariadb",), ("--mariadb", "--system")):
+        rc2, aus2 = _w123_update(ziel, umg, "--dry-run", *schalter)
+        assert rc2 == 0, (schalter, aus2)
+        i = aus2.find("-m pip install PyMySQL>=1.1.1")
+        assert 0 <= i < aus2.index("zu_mariadb.py --dir"), \
+            "%s: PyMySQL fehlt im Plan oder kommt erst nach dem Umzug" % (schalter,)
+    # Und echt, nicht nur im Plan: pip laeuft VOR dem Umzug. Die Attrappe
+    # protokolliert pip und kennt pymysql danach immer noch nicht — also
+    # muss der Umzug mit Grund abbrechen und die .env auf sqlite lassen.
+    with open(proto, "w"):
+        pass
+    cli = os.path.join(umg["PATH"], "mariadb")
+    with open(cli, "w") as f:
+        f.write("#!/bin/sh\ncat >/dev/null\nexit 0\n")
+    os.chmod(cli, 0o755)
+    rc3, aus3 = _w123_update(ziel, umg, "-y", "--mariadb")
+    p3 = open(proto).read()
+    assert "pip -m pip install PyMySQL>=1.1.1" in p3, (p3, aus3)
+    # Welcher Riegel greift, haengt an der Maschine (ohne lesbares /proc
+    # zuerst die Zeitregel, sonst das fehlende PyMySQL) — abgebrochen wird so
+    # oder so, und zwar mit Grund.
+    assert rc3 == 1 and "Umzug abgebrochen" in aus3 and "ABGEBROCHEN:" in aus3, (rc3, aus3)
+    assert "DB_BACKEND=sqlite" in open(os.path.join(ziel, ".env")).read(), "Abbruch stellte trotzdem um"
+    with open(vpy, "w") as f:
+        f.write(roh)
 
     with open(os.path.join(ziel, ".env"), "w") as f:
         f.write("DB_BACKEND=mariadb\n")
@@ -26678,11 +26711,16 @@ def _test_v42_w143_update_mariadb():
 
     # Das SQL fuer Datenbank und Nutzer: Anfuehrungszeichen verdoppelt, ein
     # zweiter Lauf gleicht nur an.
-    r = _sp.run(["bash", "-c", '. tools/lib/system.sh; nc_mariadb_sql ncdb ncnu "a\'b"'],
+    r = _sp.run(["bash", "-c", '. tools/lib/system.sh; nc_mariadb_sql ncdb ncnu "a\'b\\\\c"'],
                 capture_output=True, text=True, timeout=30)
     assert r.returncode == 0, r.stderr
-    assert "IDENTIFIED BY 'a''b'" in r.stdout and "CREATE DATABASE IF NOT EXISTS `ncdb`" in r.stdout
-    assert "ALTER USER 'ncnu'@'localhost'" in r.stdout and "TO 'ncnu'@'localhost'" in r.stdout
+    # Anfuehrungszeichen verdoppelt, Backslash verdoppelt (sonst ein Escape).
+    assert "IDENTIFIED BY 'a''b\\\\c'" in r.stdout, r.stdout
+    assert "CREATE DATABASE IF NOT EXISTS `ncdb`" in r.stdout
+    # Drei Hosts (Codex, PR #191): mit skip-name-resolve passt eine
+    # TCP-Verbindung von 127.0.0.1 nicht auf @'localhost' (1130).
+    for h in ("localhost", "127.0.0.1", "::1"):
+        assert "ALTER USER 'ncnu'@'%s'" % h in r.stdout and "TO 'ncnu'@'%s'" % h in r.stdout, h
 
     # Der Installer schaltet nicht auf eine leere MariaDB um, wenn in SQLite
     # schon Daten liegen — er verweist auf den Umzug.

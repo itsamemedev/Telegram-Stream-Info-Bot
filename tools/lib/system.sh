@@ -284,13 +284,25 @@ nc_firewall_hinweis(){
 # abgeschrieben, und zwei Fassungen laufen auseinander (W100). Gedacht fuer
 # eine Pipe in den Client — das Passwort ueber die Standardeingabe, nie in
 # argv (dort stuende es in der Prozessliste). IF NOT EXISTS + ALTER USER: ein
-# zweiter Lauf gleicht nur an. Einfache Anfuehrungszeichen werden verdoppelt.
+# zweiter Lauf gleicht nur an.
+#
+# DREI Hosts, nicht einer (Codex, PR #191): der Bot verbindet per TCP auf
+# MARIADB_HOST=127.0.0.1. MariaDB ordnet 127.0.0.1 dem Konto @'localhost' nur
+# zu, wenn es den Namen aufloest — mit skip-name-resolve (auf Servern und in
+# Containern ueblich) kommt "Host '127.0.0.1' is not allowed" (1130), gemessen
+# gegen MariaDB 10.11. @'localhost' bleibt fuer den Socket, ::1 fuer IPv6.
+#
+# Maskiert werden Backslash UND Anfuehrungszeichen: ohne NO_BACKSLASH_ESCAPES
+# liest MariaDB '\' in einem Literal als Escape — ein Passwort mit Backslash
+# kaeme veraendert an, und der Bot stuende mit dem Wert aus der .env vor 1045.
 nc_mariadb_sql(){
-  _db="$1"; _nu="$2"; _pw="$(printf '%s' "$3" | sed "s/'/''/g")"
+  _db="$1"; _nu="$2"; _pw="$(printf '%s' "$3" | sed -e 's/\\/\\\\/g' -e "s/'/''/g")"
   printf 'CREATE DATABASE IF NOT EXISTS `%s` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;\n' "$_db"
-  printf "CREATE USER IF NOT EXISTS '%s'@'localhost' IDENTIFIED BY '%s';\n" "$_nu" "$_pw"
-  printf "ALTER USER '%s'@'localhost' IDENTIFIED BY '%s';\n" "$_nu" "$_pw"
-  printf "GRANT ALL PRIVILEGES ON \`%s\`.* TO '%s'@'localhost';\n" "$_db" "$_nu"
+  for _h in localhost 127.0.0.1 ::1; do
+    printf "CREATE USER IF NOT EXISTS '%s'@'%s' IDENTIFIED BY '%s';\n" "$_nu" "$_h" "$_pw"
+    printf "ALTER USER '%s'@'%s' IDENTIFIED BY '%s';\n" "$_nu" "$_h" "$_pw"
+    printf "GRANT ALL PRIVILEGES ON \`%s\`.* TO '%s'@'%s';\n" "$_db" "$_nu" "$_h"
+  done
   printf 'FLUSH PRIVILEGES;\n'
 }
 
