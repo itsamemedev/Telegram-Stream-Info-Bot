@@ -589,6 +589,95 @@ class DiskAgent(Agent):
         return []
 
 
+class DatabaseAgent(Agent):
+    """Datenbank-Waechter (v4.2-W146, der vierzehnte). Seit W143 kann die
+    Datenbank MariaDB sein, seit W145 traegt sie die Einstellungen des Decks —
+    ohne sie weiss der Bot weder, wen er verfolgt, noch wie er eingestellt
+    ist. /healthz fragt `SELECT 1` und sagt ja oder nein; dieser Waechter
+    misst, was VORHER schiefgeht: Latenz, Zuwachs, eine -wal-Datei ohne
+    Checkpoint (SQLite), ein Schema neuer als der Code, Einstellungen, die
+    beim Start nicht geladen wurden. Die Messung liefert nc/dbgesundheit.py
+    ueber das injizierte `db_health` — kein Zugriff auf bot.py."""
+
+    name = "datenbank"
+    interval_s = 300.0
+    warn_latenz_ms = 500.0       # SELECT 1 langsamer: jede Deck-Abfrage wartet mit
+    crit_latenz_ms = 3000.0
+    warn_wal_mb = 256.0          # -wal ohne Checkpoint waechst unbegrenzt
+    crit_wal_mb = 1024.0
+    warn_zuwachs_mb_h = 200.0    # so viel je Stunde ist kein Betrieb mehr, sondern ein Leck
+
+    def __init__(self, brain, db_health: Optional[Callable] = None):
+        self._brain = brain
+        self._mess = db_health
+        self._last = None            # (ts, groesse_b) der Vorrunde
+        self._ohne_gesagt = False
+
+    def run(self, ctx: dict) -> list[dict]:
+        if not self._mess:
+            # Einmal sagen, dass dieser Waechter nichts misst — sonst saehe ein
+            # nicht verdrahteter Waechter im Deck aus wie eine gesunde Datenbank.
+            if not self._ohne_gesagt:
+                log.info("Datenbank-Waechter ohne Messung (db_health nicht uebergeben) — "
+                         "er bleibt still.")
+            self._ohne_gesagt = True
+            return []
+        try:
+            m = self._mess() or {}
+        except Exception as e:
+            log.warning("Datenbank-Messung fehlgeschlagen: %s: %s", type(e).__name__, e)
+            return [{"level": "warn", "text": f"Datenbank-Messung fehlgeschlagen: {type(e).__name__}: {e}"}]
+        be = "MariaDB" if m.get("backend") == "mariadb" else "SQLite"
+        if not m.get("ok"):
+            return [{"level": "crit", "backend": m.get("backend"),
+                     "text": f"{be} antwortet nicht: {m.get('fehler') or 'unbekannt'} — "
+                             "Trackings, Aufnahmen und Einstellungen sind nicht lesbar."}]
+        out = []
+        lat = m.get("latenz_ms")
+        groesse, wal = m.get("groesse_b"), m.get("wal_b")
+        werte = {"db_latency_ms": lat}
+        if groesse is not None:
+            werte["db_size_mb"] = round(groesse / 1e6, 2)
+        if wal is not None:
+            werte["db_wal_mb"] = round(wal / 1e6, 2)
+        # Ohne try: scheitert das Ablegen, meldet AgentManager.run_one das laut
+        # als Waechter-Fehler (state "error") — besser als eine stille Luecke.
+        for k, v in werte.items():
+            if v is not None:
+                self._brain.memory.record_metric(k, v)
+        if lat is not None and lat >= self.warn_latenz_ms:
+            out.append({"level": "crit" if lat >= self.crit_latenz_ms else "warn",
+                        "latenz_ms": lat,
+                        "text": f"{be} langsam: SELECT 1 braucht {lat:.0f} ms — gesperrt oder "
+                                "ueberlastet; jede Abfrage des Decks wartet mit."})
+        if wal is not None and wal / 1e6 >= self.warn_wal_mb:
+            out.append({"level": "crit" if wal / 1e6 >= self.crit_wal_mb else "warn",
+                        "wal_mb": round(wal / 1e6, 1),
+                        "text": f"SQLite-Journal (-wal) {wal / 1e6:.0f} MB — der Checkpoint laeuft "
+                                "nicht, ein Leser haelt eine Transaktion offen. Neustart raeumt es; "
+                                "auf Dauer: bash tools/update.sh --mariadb."})
+        now = time.time()
+        if groesse is not None and self._last and now > self._last[0]:
+            zuwachs = (groesse - self._last[1]) / 1e6 / ((now - self._last[0]) / 3600.0)
+            if zuwachs >= self.warn_zuwachs_mb_h:
+                out.append({"level": "warn", "zuwachs_mb_h": round(zuwachs, 1),
+                            "text": f"Datenbank waechst um {zuwachs:.0f} MB je Stunde — "
+                                    "welche Tabelle? Deck → System → Datenbank."})
+        if groesse is not None:
+            self._last = (now, groesse)
+        st, erw = m.get("schema_stand"), m.get("schema_erwartet")
+        if st is not None and erw is not None and st > erw:
+            out.append({"level": "crit", "schema_stand": st, "schema_erwartet": erw,
+                        "text": f"Schema-Stand {st} ist neuer als der Code ({erw}) — Rollback? "
+                                "Zahlen koennen falsch sein."})
+        if m.get("einst_fehler"):
+            out.append({"level": "warn",
+                        "text": "Einstellungen beim Start nicht aus der Datenbank geladen ("
+                                f"{m['einst_fehler']}) — es gilt die .env, im Deck gesetzte "
+                                "Werte wirken nicht."})
+        return out
+
+
 class SwapAgent(Agent):
     """v4.0-W86: hält den Swap sauber. Auf einem 24/7-Recorder wandern mit der
     Zeit inaktive Seiten in den Swap und bleiben dort liegen, auch wenn wieder

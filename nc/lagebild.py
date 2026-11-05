@@ -7,7 +7,7 @@ Das Gegenteil von dem, was eine Leitstelle braucht.
 
 Das Lagebild zeigt stattdessen, WAS GERADE PASSIERT: welche Nutzer live sind,
 an welchem eine Aufnahme haengt, welcher Restream gesund, langsam oder
-gestoert ist — und was die dreizehn Waechter (brain/agents.py) tun. Ein
+gestoert ist — und was die vierzehn Waechter (brain/agents.py) tun. Ein
 Waechter, der eben gelaufen ist, steht an seinem Arbeitsort: der
 Platten-Waechter an der Platte, der Aufnahme-Waechter an einer laufenden
 Aufnahme, der Restream-Waechter an einem Restream, bevorzugt an einem, der
@@ -63,9 +63,10 @@ ORT = {
     "recording": "ziel:aufnahme",
     "recovery": "ziel:aufnahme",
     "restream_sentinel": "ziel:restream",
+    "datenbank": "datenbank",        # v4.2-W146: der vierzehnte
 }
 
-STATIONEN = ("kern", "platte", "tunnel", "abwehr", "chat", "archiv")
+STATIONEN = ("kern", "datenbank", "platte", "tunnel", "abwehr", "chat", "archiv")
 
 
 def restream_lage(st: dict) -> str:

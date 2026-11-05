@@ -60,7 +60,9 @@ BP_GLOB = "nc/routes/*.py"
 # der englischen Oberflaeche still deutsch geblieben.
 MARKIERT = ["nc/befehle.py",
             # v4.2-W144: die Gruende der Beobachtungs-Lage im Deck.
-            "nc/beobachtungslage.py"]
+            "nc/beobachtungslage.py",
+            # v4.2-W145: Schutz- und Ablehnungsgruende der Einstellungen.
+            "nc/einstellungen.py"]
 
 # Ein Text ist uebersetzbar, wenn er ueberhaupt Sprache enthaelt. Reine Zahlen,
 # Symbole, CSS-Werte und Platzhalter fliegen raus.

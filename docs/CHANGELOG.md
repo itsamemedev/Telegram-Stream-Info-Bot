@@ -11,6 +11,16 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+## [4.6] — 2026-11-05 · „Leitstand"
+
+### Dokumentation (v4.2 W147)
+
+- **README neu gegliedert, auf Deutsch, Englisch und — neu — Spanisch.** Halb
+  so lang, ohne die Versionsgeschichte (die steht hier), mit den neuen Wegen:
+  Einstellungen im Deck, Datenbank-Umzug, `update.sh`, Prometheus und Grafana,
+  die 14 Wächter. Veraltetes korrigiert: das englische README nannte noch 13
+  Wächter und 361 Routen, das deutsche `DB_HOST`/`DB_PASS` statt `MARIADB_*`.
+
 ### Neu — Prometheus und Grafana vollständig (v4.2 W144)
 
 - **Jeder Messwert hat ein Panel.** Das Dashboard zeigte 32 von 52 Werten;
@@ -38,6 +48,57 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 - **Das Deck fragt nach:** System → „Prometheus & Grafana" zeigt, ob
   Prometheus den Bot wirklich abfragt (`up`), ob Grafana antwortet und ob ein
   Passwort hinterlegt ist — mit Abhilfe je Lage.
+
+### Neu — Datenbank-Wächter und ein Lagebild, das nach Leitstand aussieht (v4.2 W146)
+
+- **Der vierzehnte Wächter: `datenbank`** (`brain/agents.py`, Messung in
+  `nc/dbgesundheit.py`). Misst Antwortzeit (`SELECT 1` ab 500 ms warn, ab 3 s
+  kritisch), Größe und Zuwachs je Stunde, bei SQLite die `-wal`-Datei (ab
+  256 MB: der Checkpoint läuft nicht), Schema-Stand gegen den Code und ob die
+  Einstellungen beim Start aus der Datenbank geladen wurden. Kennzahlen
+  `db_latency_ms`, `db_size_mb`, `db_wal_mb` im Brain. Im Lagebild hat er eine
+  eigene Station „Datenbank", auf der öffentlichen Seite eine Karte.
+- **Lagebild neu gezeichnet:** die Figur in der Mitte (acht Beine, zwei Augen)
+  und die schwingenden Kurven sind weg. Jetzt ein Kern-Knoten mit Live-,
+  Aufnahme- und Restream-Zahl, sieben Stationen als Kapseln mit Status-LED auf
+  einem Ring, Wächter in fester Reihe an ihrer Station mit Fortschrittsring bis
+  zum nächsten Lauf, Ziele mit geraden Leitungen; ein Lauf schickt einen
+  Lichtpunkt zum Kern. Farben aus dem Thema — in Blaupause war der Kern vorher
+  unlesbar.
+
+### Behoben
+
+- **Log-Verluste waren für Prometheus unsichtbar.** Der Zähler der Log-Schleuse
+  wurde genullt, sobald die Meldezeile „n Zeilen verworfen“ geschrieben war —
+  Millisekunden nach dem Verlust zeigten `/healthz` (`log_verloren`) und
+  `/metrics` wieder 0, die Regel `NightcrawlerLogVerluste` konnte nie feuern,
+  und der W97-Vertrag fiel je nach Thread-Takt (3 von 8 Läufen). Jetzt ein
+  Gesamtzähler, der nur wächst.
+- **Das Lagebild blieb nach dem Laden leer**, bis die Übersicht zufällig neu
+  lud: es rief `T('…')`, bevor der Übersetzer (per `defer` am Seitenende)
+  geladen war — `ReferenceError`, still gefangen. Ein Ersatz für `T()` steht
+  jetzt vor dem ersten Skript.
+
+### Neu — Einstellungen im Deck, gespeichert in der Datenbank (v4.2 W145)
+
+- **Reiter „Einstellungen"** (08): alle 571 Variablen aus `.env.example` mit
+  Gruppe, Vorgabe und Beschreibung, durchsuchbar, je Zeile die Quelle (vom
+  Deck gesetzt / aus der .env / Vorgabe). Speichern legt den Wert in die
+  Tabelle `einstellungen` — in SQLite oder MariaDB, wie der Rest.
+- **Vorrang:** Deck (Datenbank) › `.env` › Vorgabe im Code. Geladen wird direkt
+  nach `load_dotenv()`, vor der ersten Modul-Konstante; die Startzeile sagt,
+  wie viele Werte die `.env` überstimmen. „Zur .env zurück" löscht den Eintrag.
+- **„Aus der .env übernehmen"** kopiert die `.env` einmal in die Datenbank —
+  ein Knopf, kein stiller Automat: liefe er beim Start, wirkte danach keine
+  Änderung an der `.env` mehr.
+- **Geschützt, nur in der `.env`:** Datenbank-Verbindung, Deck-Zugang (Token,
+  PIN, Port, TLS, `WEB_HOST`, `TRUSTED_PROXIES`) und alles, was Code, Befehle
+  oder Pfade bestimmt (`UPDATE_*`, `*_CMD`, `*_BIN`, `*_DIR`, `*_PATH`). Aus dem
+  Deck wäre jeder davon ein Fernsteuer-Knopf auf den Server; ein solcher
+  Eintrag in der Tabelle wird beim Laden ignoriert und als ERROR gemeldet.
+- **Geheimnisse** (Tokens, Schlüssel, Passwörter, Proxy-Adressen mit
+  Zugangsdaten) sind nur schreibbar — das Deck erfährt, ob ein Wert gesetzt
+  ist, nie welcher. Schreiben nur als JSON.
 
 ### Behoben
 

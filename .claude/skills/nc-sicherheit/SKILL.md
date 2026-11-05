@@ -92,6 +92,24 @@ PIN-geschütztes Deck löste sie fälschlich aus — und ein Fehlalarm erzieht d
 die Meldung zu überlesen. Das ist schlimmer als keine Meldung. Dieselbe
 Überlegung gilt für jede neue Warnung, die hier eingebaut wird.
 
+## Einstellungen aus dem Deck (v4.2-W145)
+
+Das Deck setzt Umgebungsvariablen über die Tabelle `einstellungen`
+(`nc/einstellungen.py`, Reiter „Einstellungen"); sie überstimmen die `.env`
+beim Start. **Was nicht aus dem Deck kommen darf**, steht dort in
+`SCHUTZ_EXAKT`/`SCHUTZ_PRAEFIX`/`SCHUTZ_ENDUNG`: Datenbank-Bootstrap
+(`DB_*`, `MARIADB_*`), Deck-Zugang (`DASHBOARD_TOKEN`/`_PIN`/`_PORT`/`_TLS_*`,
+`WEB_HOST`, **`TRUSTED_PROXIES`** — sonst gilt jede Anfrage als Loopback),
+Code und Befehle (`UPDATE_*`, `*_CMD`, `*_BIN`, `*_PATH`, `*_DIR`). Ein
+solcher Eintrag in der Tabelle wird beim Laden ignoriert und als ERROR
+gemeldet. **Wer eine Variable einführt, die einen Befehl, ein Programm, einen
+Pfad oder den Zugang bestimmt, benennt sie so, dass eine dieser Regeln
+greift** — oder trägt sie in `SCHUTZ_EXAKT` ein.
+
+Geheimnisse erkennt `geheim()` an Namensteilen (`KEY`, `TOKEN`, `PIN`, …);
+die Route liefert für sie nie einen Wert, das Log nennt nur den Namen.
+Schreibrouten lesen nur `application/json` (kein Formular einer fremden Seite).
+
 ## Geld — die Hash-Kette ist kein Schmuck
 
 `nc/ledger.py` sind gebuchte **Auszahlungen** für die Steuer, append-only mit

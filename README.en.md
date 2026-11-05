@@ -1,45 +1,32 @@
 <div align="center">
 
-<img src="docs/assets/banner.svg" alt="NIGHTCRAWLER — v4.5.3 Many-Voiced" width="100%">
+<img src="docs/assets/banner.svg" alt="NIGHTCRAWLER — v4.6 Control Room" width="100%">
 
 ### The control room for live streaming
 #### Monitoring · Recording · Multi-target restream · AI moderation
 
-🌐 **English** · [Deutsch](README.md)
-
-[![AZRAEL SENTINEL — the world's first streaming AI](https://img.shields.io/badge/%F0%9F%A4%96%20AZRAEL%20SENTINEL-World's%20first%20streaming%20AI-E8C86A?style=for-the-badge&labelColor=0C0B09)](https://lafap.de)
+🌐 **English** · [Deutsch](README.md) · [Español](README.es.md)
 
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg?style=for-the-badge&logo=gnu)](LICENSE)
 [![Python 3.12+](https://img.shields.io/badge/Python-3.12%2B-3776AB.svg?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
-[![Platform: Linux](https://img.shields.io/badge/Platform-Ubuntu%20%2F%20systemd-E95420.svg?style=for-the-badge&logo=ubuntu&logoColor=white)](#-installation)
-[![Status: production](https://img.shields.io/badge/Status-production-success.svg?style=for-the-badge)](#-project-status)
 [![CI](https://img.shields.io/github/actions/workflow/status/itsamemedev/Telegram-Stream-Info-Bot/ci.yml?branch=main&style=for-the-badge&label=CI&logo=githubactions&logoColor=white)](../../actions/workflows/ci.yml)
-
-[![Release](https://img.shields.io/github/v/release/itsamemedev/Telegram-Stream-Info-Bot?style=for-the-badge&label=Release&logo=github&color=E8C86A&labelColor=0C0B09)](https://github.com/itsamemedev/Telegram-Stream-Info-Bot/releases/latest)
-[![Version 4.5.3 Many-Voiced](https://img.shields.io/badge/Version-4.5.3%20%C2%B7%20Many--Voiced-C9A227?style=for-the-badge&labelColor=0C0B09)](docs/CHANGELOG.md)
 [![CodeQL](https://img.shields.io/github/actions/workflow/status/itsamemedev/Telegram-Stream-Info-Bot/codeql.yml?branch=main&style=for-the-badge&label=CodeQL&logo=github&logoColor=white)](../../actions/workflows/codeql.yml)
-[![Contracts](https://img.shields.io/badge/Contracts-1031%20passing-success?style=for-the-badge&logo=pytest&logoColor=white)](#-tests--verification-chain)
-[![Coverage](https://img.shields.io/badge/Coverage-58%20%25%20nc%2F%20%2B%20brain%2F-yellowgreen?style=for-the-badge&logo=codecov&logoColor=white)](#-tests--verification-chain)
+[![Release](https://img.shields.io/github/v/release/itsamemedev/Telegram-Stream-Info-Bot?style=for-the-badge&label=Release&logo=github&color=E8C86A&labelColor=0C0B09)](https://github.com/itsamemedev/Telegram-Stream-Info-Bot/releases/latest)
 
 [![Telegram](https://img.shields.io/badge/Telegram-Bot-26A5E4?style=flat-square&logo=telegram&logoColor=white)](#️-operating-it)
-[![Discord](https://img.shields.io/badge/Discord-65%20slash%20commands-5865F2?style=flat-square&logo=discord&logoColor=white)](#️-operating-it)
-[![TikTok](https://img.shields.io/badge/TikTok-live%20detection-000000?style=flat-square&logo=tiktok&logoColor=white)](#-what-nightcrawler-does)
-[![Kick](https://img.shields.io/badge/Kick-restream%20%2B%20chat-53FC18?style=flat-square&logo=kick&logoColor=black)](#-restream)
-[![Twitch](https://img.shields.io/badge/Twitch-restream%20%2B%20chat-9146FF?style=flat-square&logo=twitch&logoColor=white)](#-restream)
-[![YouTube](https://img.shields.io/badge/YouTube-restream%20%2B%20chat-FF0000?style=flat-square&logo=youtube&logoColor=white)](#-restream)
-[![Changelog](https://img.shields.io/badge/Changelog-all%20changes-C9A227?style=flat-square&logo=markdown&logoColor=white)](docs/CHANGELOG.md)
-[![Prometheus](https://img.shields.io/badge/Prometheus-%2Fmetrics-E6522C?style=flat-square&logo=prometheus&logoColor=white)](#-project-status)
-[![Grafana](https://img.shields.io/badge/Grafana-dashboard-F46800?style=flat-square&logo=grafana&logoColor=white)](#-project-status)
-[![Languages](https://img.shields.io/badge/Languages-Deutsch%20%C2%B7%20English%20%C2%B7%20Espa%C3%B1ol-4B8BBE?style=flat-square&logo=googletranslate&logoColor=white)](README.md)
-[![Last commit](https://img.shields.io/github/last-commit/itsamemedev/Telegram-Stream-Info-Bot?style=flat-square&logo=git&logoColor=white&label=Last%20commit)](https://github.com/itsamemedev/Telegram-Stream-Info-Bot/commits/main)
+[![Discord](https://img.shields.io/badge/Discord-66%20slash%20commands-5865F2?style=flat-square&logo=discord&logoColor=white)](#️-operating-it)
+[![Kick · Twitch · YouTube](https://img.shields.io/badge/Restream-Kick%20%C2%B7%20Twitch%20%C2%B7%20YouTube-53FC18?style=flat-square)](#-restream)
+[![SQLite · MariaDB](https://img.shields.io/badge/Database-SQLite%20%C2%B7%20MariaDB-003545?style=flat-square&logo=mariadb&logoColor=white)](#️-database)
+[![Prometheus · Grafana](https://img.shields.io/badge/Monitoring-Prometheus%20%C2%B7%20Grafana-E6522C?style=flat-square&logo=prometheus&logoColor=white)](#-monitoring)
+[![Languages](https://img.shields.io/badge/Languages-DE%20%C2%B7%20EN%20%C2%B7%20ES-4B8BBE?style=flat-square&logo=googletranslate&logoColor=white)](#️-dashboard)
 
 [![Website: lafap.de](https://img.shields.io/badge/Website-lafap.de-E8C86A?style=for-the-badge&logo=firefoxbrowser&logoColor=0C0B09&labelColor=0C0B09)](https://lafap.de)
-[![Join Discord](https://img.shields.io/badge/Discord-join%20the%20community-5865F2?style=for-the-badge&logo=discord&logoColor=white&labelColor=0C0B09)](https://discord.gg/psvnxm7tSV)
+[![Join Discord](https://img.shields.io/badge/Discord-Join%20the%20community-5865F2?style=for-the-badge&logo=discord&logoColor=white&labelColor=0C0B09)](https://discord.gg/psvnxm7tSV)
 
 <br>
 
-> **A TikTok stream goes live → it is detected, recorded, forwarded to
-> Kick/Twitch/YouTube, moderated and commented on in all three chats — fully
+> **A TikTok stream goes live → it is detected, recorded, restreamed to Kick,
+> Twitch and YouTube, moderated and commented on in all three chats — fully
 > automatic, on a single server, without a cloud subscription.**
 
 </div>
@@ -48,120 +35,37 @@
 
 | | |
 |---|---|
-| **What** | Live monitoring, recording and multi-destination restreaming of TikTok streams, with AI moderation in Kick, Twitch and YouTube |
-| **For whom** | Operators who want this on **their own** hardware — one Linux server, no SaaS, no third-party platform between the stream and its destinations |
-| **Runs on** | Ubuntu/Debian with systemd, **Python 3.12–3.14** (production: 3.14), ffmpeg, streamlink, yt-dlp |
-| **Operated via** | Telegram, Discord (66 slash commands) and a web deck with four themes, including a **high-contrast theme meeting WCAG AAA**, in German, English and Spanish |
-| **Quality** | over a thousand contracts in three suites, CI on three Python versions **and** against the frozen production state, `pip-audit`, CodeQL, Dependabot |
-| **Licence** | GPL-3.0-or-later |
-
-```mermaid
-flowchart LR
-    A["🎥 TikTok goes live"] --> B["🔍 detected<br/>anti-flap"]
-    B --> C["⏺️ recorded<br/>3-stage fallback"]
-    C --> D["📡 restreamed<br/>Kick · Twitch · YouTube"]
-    D --> E["🛡️ moderated<br/>SENTINEL-SHIELD"]
-    E --> F["🤖 commented on<br/>AZRAEL"]
-    F --> G["📊 analysed<br/>dashboard"]
-```
+| **What for** | Live monitoring, recording and multi-target restreaming of TikTok streams, with AI moderation on Kick, Twitch and YouTube |
+| **For whom** | Operators who want this on **their own** hardware — one Linux server, no SaaS, no third-party platform between stream and targets |
+| **Runs on** | Ubuntu/Debian with systemd, Python 3.12–3.14, ffmpeg, streamlink, yt-dlp — database SQLite or MariaDB |
+| **Operated through** | Telegram, Discord (66 slash commands) and a web deck with four themes in German, English and Spanish — settings right in the deck |
+| **Monitoring** | 14 watchdog agents, real-time situation map, Prometheus and Grafana with alert rules |
+| **Quality** | over a thousand contracts, CI on three Python versions and against the frozen production state, `pip-audit`, CodeQL |
+| **License** | GPL-3.0-or-later |
 
 ---
 
-## 📋 Table of contents
+## 📋 Contents
 
-<table>
-<tr><td>
-
-- [✨ What NIGHTCRAWLER does](#-what-nightcrawler-does)
-- [🏗️ Architecture](#️-architecture)
-- [⚡ Quick start](#-quick-start)
-- [📦 Installation](#-installation)
-- [⚙️ Configuration](#️-configuration)
-- [🕹️ Operating it](#️-operating-it)
-
-</td><td>
-
-- [📡 Restream](#-restream)
-- [🧠 The brain (AZRAEL)](#-the-brain-azrael)
-- [🖥️ Dashboard](#️-dashboard)
-- [🚀 Deployment](#-deployment)
-- [🧪 Tests & verification chain](#-tests--verification-chain)
-- [🛡️ Security](#️-security)
-
-</td><td>
-
-- [🗺️ Project layout](#️-project-layout)
-- [🩺 Troubleshooting](#-troubleshooting)
-- [🆕 New in v4.5](#-new-in-v45)
-- [🆕 New in v4.4](#-new-in-v44)
-- [📈 Project status](#-project-status)
-- [🧭 Roadmap](#-roadmap)
-- [🤝 Contributing](#-contributing)
-- [📄 Licence](#-licence)
-
-</td></tr>
-</table>
+- [✨ What NIGHTCRAWLER does](#-what-nightcrawler-does) · [🏗️ Architecture](#️-architecture)
+- [📦 Installation](#-installation) · [🔄 Updating and extending](#-updating-and-extending)
+- [⚙️ Settings](#️-settings) · [🗄️ Database](#️-database)
+- [🕹️ Operating it](#️-operating-it) · [📡 Restream](#-restream) · [🧠 AZRAEL and the watchdogs](#-azrael-and-the-watchdogs)
+- [🖥️ Dashboard](#️-dashboard) · [📈 Monitoring](#-monitoring) · [🚀 Operations](#-operations)
+- [🛡️ Security](#️-security) · [🩺 Troubleshooting](#-troubleshooting) · [🧪 Development](#-development)
+- [🆕 New in v4.6](#-new-in-v46) · [📊 Project status](#-project-status) · [🤝 Contributing](#-contributing) · [📄 License](#-license)
 
 ---
 
 ## ✨ What NIGHTCRAWLER does
 
-<table>
-<tr>
-<td width="33%" valign="top">
-
-### 🔍 Detect
-Adaptive polling of tracked TikTok channels with **anti-flap hysteresis** — no
-false alarm on short dropouts. Subscriber streams are detected and reported
-separately.
-
-</td>
-<td width="33%" valign="top">
-
-### ⏺️ Record
-**Three-stage recorder fallback**: native (ffmpeg) → streamlink → yt-dlp. A
-preflight check before every spawn, so no ffmpeg spends minutes running against
-a 404.
-
-</td>
-<td width="33%" valign="top">
-
-### 📡 Forward
-Multi-target **restream** to Kick, Twitch and YouTube simultaneously — with
-`tee` fan-out, automatic transcoding and target verification against the
-platform APIs.
-
-</td>
-</tr>
-<tr>
-<td valign="top">
-
-### 🛡️ Moderate
-**SENTINEL-SHIELD**: deterministic anti-doxxing and hate detection with
-leetspeak, homoglyph and zero-width normalisation. Runs **before** any AI and
-costs no budget.
-
-</td>
-<td valign="top">
-
-### 🤖 Join in
-**AZRAEL**, the AI co-host, answers in the Kick, Twitch and YouTube chats,
-reacts live to the outgoing stream and overlays itself on the broadcast.
-
-</td>
-<td valign="top">
-
-### 📊 Analyse
-Flask dashboard with **361 API routes**, knowledge-graph visualisation, a
-revenue journal (tax-office ready, append-only with a hash chain) and a PWA for
-your phone.
-
-</td>
-</tr>
-</table>
+| | | |
+|---|---|---|
+| **🔍 Detect** — adaptive polling with anti-flap hysteresis; every row in the deck says when it was last checked | **⏺️ Record** — three-stage recorder (ffmpeg → streamlink → yt-dlp) with preflight, audio-track check and stall detection | **📡 Restream** — Kick, Twitch and YouTube at once, target verification against the platform APIs |
+| **🛡️ Moderate** — SENTINEL-SHIELD against doxxing and hate, deterministic and **before** any AI | **🤖 Talk along** — AZRAEL answers in three chats, reacts to the broadcast and appears in the picture | **📊 Evaluate** — deck with 377 API routes, knowledge graph, revenue journal with a hash chain, PWA |
 
 <details>
-<summary><b>🔎 Expand the full feature list</b></summary>
+<summary><b>🔎 Full feature list</b></summary>
 
 <br>
 
@@ -173,13 +77,15 @@ your phone.
 | **Chat & moderation** | SENTINEL-SHIELD (doxxing / hate / threats) · shared moderation heuristic across Kick, Twitch, YouTube · foreign-advertising detection with an own-channel allowlist · banned words · timeout escalation |
 | **AI (AZRAEL)** | Chat answers when addressed · live reactions to the broadcast · speech output (Piper) · persona system · multi-backend: Anthropic (with key) → local llama.cpp (preferred as soon as it runs) → free APIs · budget and tier control |
 | **Brain (`brain/`)** | State machine · rule-based tier-1 decisions with a why-log · long-term memory · knowledge graph (triple store) · semantic search · forecasts · weekly report |
-| **Sentinel fleet** | 13 watchdog agents (health, recovery, scout, analytics, learning, sentinel, disk, swap, restream, toxicity, uptime, recording, proxy) with Telegram alarms, individually switchable |
+| **Sentinel fleet** | 14 watchdog agents (health, recovery, scout, analytics, learning, sentinel, disk, swap, restream, toxicity, uptime, recording, proxy, datenbank) with Telegram alarms, individually switchable |
 | **Community** | Recognition of regular viewers · loyalty points & ranks · Discord XP, levels, daily streak · live ping · highlight share · community events |
 | **Money** | Donation telemetry (estimates) · separate revenue journal (`nc/ledger.py`) with a hash chain and CSV export for the tax office |
-| **Dashboard** | 361 Flask routes · live panels · brain visualisation with a learning curve · overlay for OBS · installable PWA (Android) · QR login |
+| **Dashboard** | 377 Flask routes · live panels · brain visualisation with a learning curve · overlay for OBS · installable PWA (Android) · QR login |
 | **Operations** | systemd service · deploy script with pre-check and auto-rollback · self-test route · dead-man's report on process death · CrowdSec integration · log redaction for cookies and stream keys |
 | **Multilingual** | German, English and Spanish, switchable in the dashboard · `UI_LANG` for the bot · browser language detection · translation catalogue in `locales/` |
-| **Database** | SQLite **or** MariaDB · central schema module · export tool · SQL guard |
+| **Database** | SQLite **or** MariaDB · move with `update.sh --mariadb`, counted again · central schema module · export tool · database watchdog |
+| **Settings** | “Settings” tab in the deck: all ~571 variables searchable, stored in the database, protected keys only from `.env` |
+| **Monitoring** | `/metrics` for Prometheus · Grafana dashboard with every metric · 16 alert rules with tests · set up with `tools/observability.sh` |
 
 </details>
 
@@ -212,27 +118,16 @@ flowchart TD
 
 ```mermaid
 flowchart TB
-    TG["📨 Telegram<br/>29 commands"]:::ein
-    DC["🎮 Discord<br/>66 slash commands"]:::ein
-    TT["🎥 TikTok<br/>live detection + chat"]:::ein
-
-    TG --> BOT
-    DC --> BOT
-    TT --> BOT
-
-    BOT["bot.py<br/>monolith · 26,124 lines<br/>scraper · recorder · restream<br/>Flask dashboard · 34 own routes"]:::core
-
-    BOT -->|configure| NC["nc/ — 120 domain modules<br/>schema · OAuth · restream<br/>ledger · moderation · intel"]:::lib
-    NC --> RT["nc/routes/ — 36 blueprints<br/>327 further API routes"]:::lib
-    BOT --> TPL["templates/<br/>dashboard · overlay · PWA"]:::lib
+    TG["📨 Telegram"]:::ein --> BOT
+    DC["🎮 Discord<br/>66 slash commands"]:::ein --> BOT
+    TT["🎥 TikTok<br/>live detection + chat"]:::ein --> BOT
+    BOT["bot.py<br/>monolith · 26,313 lines<br/>scraper · recorder · restream<br/>Flask deck · 34 own routes"]:::core
+    BOT -->|configure| NC["nc/ — 176 domain modules<br/>39 blueprints"]:::lib
     BOT --> BR["brain_bridge.py"]:::lib
-    BR --> BRAIN["brain/ — its own brain.db<br/>state · rules · router · memory<br/>knowledge · semantic · scheduler<br/>llm · agents · report"]:::brain
-    BOT --> DB[("SQLite<br/>or MariaDB")]:::db
-
-    BOT --> KICK["🟢 Kick"]:::out
-    BOT --> TW["🟣 Twitch"]:::out
-    BOT --> YT["🔴 YouTube"]:::out
-
+    BR --> BRAIN["brain/ — own brain.db<br/>rules · memory · knowledge graph<br/>14 watchdog agents"]:::brain
+    BOT --> DB[("SQLite or MariaDB<br/>+ settings")]:::db
+    BOT --> PROM["/metrics → Prometheus → Grafana"]:::lib
+    BOT --> OUT["🟢 Kick · 🟣 Twitch · 🔴 YouTube"]:::out
     classDef ein fill:#1c2b3a,stroke:#2de1c2,color:#e6edf3
     classDef core fill:#3a2415,stroke:#ff8c42,stroke-width:2px,color:#ffd9a0
     classDef lib fill:#1a2430,stroke:#7fe7d4,color:#e6edf3
@@ -242,123 +137,137 @@ flowchart TB
 ```
 
 > [!IMPORTANT]
-> **The architectural boundary that holds:** `nc/*` and `brain/*` **never**
-> import from `bot.py`. Configuration comes exclusively through
-> `configure(...)` injection. That keeps both libraries testable in isolation
-> and prevents circular imports. `brain/` is thread-based and stdlib-only.
-
----
-
-## ⚡ Quick start
-
-```bash
-git clone https://github.com/itsamemedev/Telegram-Stream-Info-Bot.git
-cd Telegram-Stream-Info-Bot
-
-python3 -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
-sudo apt install -y ffmpeg streamlink yt-dlp
-
-cp .env.example .env && nano .env      # at least set BOT_TOKEN
-python3 bot.py
-```
-
-The dashboard is then at <http://127.0.0.1:8050> — from outside only through an
-SSH tunnel, see [Security](#️-security).
-
-Want the interface in English? Set `UI_LANG=en` in the `.env`, or switch it in
-the dashboard's top bar — the choice is stored per browser.
+> `nc/*`, `brain/*` and `discordbot.py` **never** import from `bot.py`.
+> Configuration comes in through `configure(...)` injection — this keeps the
+> libraries testable in isolation and prevents circular imports.
 
 ---
 
 ## 📦 Installation
 
-### Fast route — guided installer
-
-If you do not want to walk every step yourself: the scripts set everything up,
-**explain each step as they go** and ask before every intervention. Optional
-building blocks (Discord, restream targets, transcription, MariaDB, CrowdSec,
-local LLM) are offered individually; where a password can be chosen freely they
-offer to generate one.
+### Guided — one command
 
 ```bash
-# Ubuntu · Debian · Raspberry Pi OS · macOS
 git clone https://github.com/itsamemedev/Telegram-Stream-Info-Bot.git ~/nightcrawler
-bash ~/nightcrawler/tools/installer.sh          # --express = fewer questions, --unattended = none
+bash ~/nightcrawler/tools/installer.sh        # --express = fewer questions, --unattended = none
 ```
 
-```bat
-rem Windows
-tools\install.bat
-```
-
-Both create the venv and the `.env`, install the system packages, verify with
-`bot.py --selfcheck` and, on request, set up autostart — on Linux systemd
-including the dead-man's report and the status MOTD (`tools/motd.sh`), on macOS
-launchd, on Windows the task scheduler. A second run updates an existing
-installation instead of steamrolling it.
-
-### Requirements
-
-| | Minimum | Recommended |
-|---|---|---|
-| **Operating system** | Linux with systemd | Ubuntu 22.04 / 24.04 LTS |
-| **Python** | 3.12 | 3.13 |
-| **CPU** | 4 cores | 8 cores (transcoding without a GPU) |
-| **RAM** | 4 GB | 16 GB (with a local LLM) |
-| **Disk** | 20 GB | 200 GB+ (recordings) |
-| **Network** | 10 Mbit upload | 50 Mbit+ (multi-restream) |
-
-> [!IMPORTANT]
-> **Python 3.12 is a hard minimum.** `bot.py` uses f-strings containing
-> backslashes (PEP 701) — on 3.11 even parsing the file fails. Debian 12 and
-> Raspberry Pi OS bookworm ship 3.11; the installer detects that and offers a
-> route to a newer interpreter.
+On Windows: `tools\install.bat`. The script explains every step, asks before
+each change, creates the venv and `.env`, installs the system packages, checks
+the result with `bot.py --selfcheck` and, if you want, sets up autostart
+(systemd with a dead-man's report, launchd, Task Scheduler). A second run brings
+an existing installation up to date instead of overwriting it.
 
 ### By hand
 
-System packages, venv, `.env`, database, first start, local LLM and the OAuth
-flows — step by step in **[`docs/en/INSTALL.md`](docs/en/INSTALL.md)**.
+```bash
+git clone https://github.com/itsamemedev/Telegram-Stream-Info-Bot.git && cd Telegram-Stream-Info-Bot
+python3 -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+sudo apt install -y ffmpeg streamlink yt-dlp
+cp .env.example .env && nano .env      # at least BOT_TOKEN
+python3 bot.py
+```
+
+Step by step, with OAuth and a local LLM: **[`docs/en/INSTALL.md`](docs/en/INSTALL.md)**.
+
+| | Minimum | Recommended |
+|---|---|---|
+| **System** | Linux with systemd | Ubuntu 22.04 / 24.04 LTS |
+| **Python** | 3.12 (PEP 701 — `bot.py` does not parse on 3.11) | 3.13 / 3.14 |
+| **CPU · RAM** | 4 cores · 4 GB | 8 cores · 16 GB (transcode, local LLM) |
+| **Disk · upload** | 20 GB · 10 Mbit | 200 GB+ · 50 Mbit+ |
 
 ---
 
-## ⚙️ Configuration
+## 🔄 Updating and extending
 
-Every setting lives in the `.env`. The template `.env.example` knows **around
-503 variables** — the minimum is small:
+**Installing new code** goes through the update function — in the deck
+(Overview → software state) or with Telegram `/update`. It fetches the state
+from this repository and installs it file by file; then restart the service
+(button in the deck). Until then `/healthz` reports the state as `veraltet`
+(outdated).
 
-### 🔑 Mandatory
+**Installing what is missing** is the job of `tools/update.sh`:
+
+```bash
+bash tools/update.sh                 # guided: checks, shows the plan, asks about add-ons
+bash tools/update.sh --check         # check only, exit code 1 if something is missing
+bash tools/update.sh --dry-run       # show what would run
+bash tools/update.sh --mariadb       # move the database from SQLite to MariaDB
+```
+
+In guided mode it asks about everything that is still missing: **Prometheus**
+(with **Grafana**), optional Python packages and — if the database still lives
+in SQLite — the move to **MariaDB**. Unattended and with `--check` it asks
+nothing and triggers nothing; a schedule never silently moves a database.
+
+---
+
+## ⚙️ Settings
+
+**In the deck, tab “Settings”.** All of the roughly 571 variables from
+`.env.example` with group, default and description, searchable. Every row says
+where the value comes from — *set in the deck*, *from .env* or *default*. Values
+are stored in the database (SQLite or MariaDB) and take precedence over `.env`
+at the next start:
+
+```
+deck (database)   ›   .env   ›   default in the code
+```
+
+- **“Import from .env”** copies `.env` into the database once — a button, not
+  an automatism: if it ran silently at start, no later change to `.env` would
+  ever take effect.
+- **“Back to .env”** deletes an entry; the file applies again.
+- The bot reads many values only at start — restart the service after saving
+  (button in the tab).
+- **Secrets** (tokens, keys, passwords) are write-only; the deck shows *whether*
+  they are set, never the value.
+
+> [!IMPORTANT]
+> **`.env` only** — from the deck they would be a remote-control button for the
+> server: the database connection (`DB_*`, `MARIADB_*`), deck access
+> (`DASHBOARD_TOKEN`, `DASHBOARD_PIN`, `WEB_HOST`, port, TLS, `TRUSTED_PROXIES`)
+> and anything that decides code, programs or paths (`UPDATE_*`, `*_CMD`,
+> `*_BIN`, `*_DIR`, `*_PATH`). Such an entry in the database is ignored at
+> start and reported.
+
+**The minimum in `.env`:**
 
 ```ini
 BOT_TOKEN=123456:ABC-DEF…            # Telegram bot from @BotFather
 ADMIN_CHAT_ID=123456789              # your Telegram ID (alarms, admin commands)
 ```
 
-### 🎛️ Frequently set
-
-<table>
-<tr><th>Area</th><th>Variables</th></tr>
-<tr><td><b>Discord</b></td><td><code>DISCORD_TOKEN</code>, <code>DISCORD_GUILD_ID</code>, <code>DISCORD_ADMIN_ROLE</code></td></tr>
-<tr><td><b>Restream</b></td><td><code>KICK_STREAM_KEY</code>, <code>TWITCH_ENABLED</code>, <code>TWITCH_STREAM_KEY</code>, <code>YOUTUBE_ENABLED</code>, <code>YOUTUBE_STREAM_KEY</code>, <code>RESTREAM_SINGLE</code>, <code>RESTREAM_MAX_CONCURRENT</code>, <code>RESTREAM_BITRATE_K</code>, <code>RESTREAM_FPS</code></td></tr>
-<tr><td><b>AI</b></td><td><code>AI_PROVIDER</code>, <code>REACTION_AI_PROVIDER</code>, <code>BRAIN_LLM_TIMEOUT_S</code>, <code>BRAIN_LLM_MAX_TOKENS</code>, <code>OPENAI_API_KEY</code>, <code>ANTHROPIC_API_KEY</code>, <code>POLLINATIONS_API_KEY</code></td></tr>
-<tr><td><b>Moderation</b></td><td><code>SENTINEL_SHIELD</code>, <code>MOD_BLOCK_ADS</code>, <code>AZRAEL_CHAT_REPLY</code>, <code>AZRAEL_REACT_ONLY_LIVE</code></td></tr>
-<tr><td><b>Dashboard</b></td><td><code>DASHBOARD_HOST</code>, <code>DASHBOARD_PORT</code>, <code>DASHBOARD_TOKEN</code></td></tr>
-<tr><td><b>Language</b></td><td><code>UI_LANG</code> — <code>de</code> (default) or <code>en</code>; per visitor the dashboard switch and the browser's Accept-Language override it</td></tr>
-<tr><td><b>Database</b></td><td><code>DB_BACKEND</code>, <code>DB_HOST</code>, <code>DB_NAME</code>, <code>DB_USER</code>, <code>DB_PASS</code></td></tr>
-</table>
-
-### 🔐 Setting up OAuth
-
-| Platform | Guide |
-|---|---|
-| Twitch | **[`docs/en/SETUP_TWITCH_OAUTH.md`](docs/en/SETUP_TWITCH_OAUTH.md)** |
-| YouTube | **[`docs/en/SETUP_YT_OAUTH.md`](docs/en/SETUP_YT_OAUTH.md)** |
-| Kick | user OAuth directly in the dashboard panel (set title & category) |
+OAuth: **[Twitch](docs/en/SETUP_TWITCH_OAUTH.md)** · **[YouTube](docs/en/SETUP_YT_OAUTH.md)** · Kick right in the deck.
 
 > [!WARNING]
-> **The `.env` never belongs in the repository.** It contains cookies, OAuth
-> tokens and stream keys. `.gitignore` already blocks it — a secret that has
-> been committed once is still in the history after you delete it.
+> **`.env` never belongs in the repository.** It contains cookies, OAuth tokens
+> and stream keys; a secret committed once stays in the history forever.
+
+---
+
+## 🗄️ Database
+
+| | SQLite (default) | MariaDB |
+|---|---|---|
+| **What for** | one file, no service, fast well into six-figure row counts | large datasets, several machines, separate backups |
+| **Setup** | nothing | `bash tools/update.sh --mariadb` |
+
+**The move** (`--mariadb`, `tools/zu_mariadb.py`) installs the server, creates
+the database and user (the password never appears on a command line), stops the
+bot briefly, moves **every table**, **counts again** and only then sets
+`DB_BACKEND=mariadb` in `.env` — first it writes `.env.vor-mariadb-<time>`. A
+non-empty target is never overwritten, and the bot starts again in any case.
+Check beforehand: `venv/bin/python tools/zu_mariadb.py --dry-run`.
+
+> [!TIP]
+> **Way back:** the SQLite file stays untouched. Set `DB_BACKEND=sqlite` in
+> `.env` and restart — done.
+
+The **database watchdog** measures response time, size, growth, the SQLite
+journal (`-wal`) and whether the schema matches the code, every five minutes.
 
 ---
 
@@ -477,152 +386,41 @@ flowchart LR
     class V guard
 ```
 
-**Arming it** — in the `.env`:
+Enable targets in the deck under Settings or in `.env`: `KICK_STREAM_KEY`,
+`TWITCH_ENABLED` + `TWITCH_STREAM_KEY`, `YOUTUBE_ENABLED` + `YOUTUBE_STREAM_KEY`,
+cap `RESTREAM_MAX_CONCURRENT`. As soon as an extra target is active, the stream
+is transcoded (fixed 2 s keyframes) — the three platforms require different
+GOPs. A target only counts as online once the platform itself confirms it:
+90 s start-up grace, three misses in a row, “unknown” is not “offline”.
 
-```ini
-KICK_STREAM_KEY=…
-TWITCH_ENABLED=1
-TWITCH_STREAM_KEY=…
-YOUTUBE_ENABLED=1
-YOUTUBE_STREAM_KEY=…
-RESTREAM_MAX_CONCURRENT=2
-```
-
-<details>
-<summary><b>Why multi-target does not work without transcoding</b></summary>
-
-<br>
-
-In copy mode the `tee` hands the same H.264 bitstream to every target — but
-Kick, Twitch and YouTube have different keyframe/GOP requirements. At least one
-target then rejects the stream or stutters. That is why NIGHTCRAWLER forces
-transcoding as soon as a second target is active, producing a
-platform-conformant GOP that all three accept at once.
-
-The cost: transcoding needs CPU. On a server without a GPU, lower
-`RESTREAM_BITRATE_K` / `RESTREAM_FPS` if you must.
-
-</details>
-
-<details>
-<summary><b>Why “online” does not mean “the process is running”</b></summary>
-
-<br>
-
-Twitch and YouTube carry `onfail=ignore` in the `tee` muxer — so that a stuck
-Twitch does not drag Kick down with it. That is exactly why ffmpeg keeps running
-when they drop out: the panel showed three green targets while nothing arrived
-on two platforms.
-
-`_restream_verify_loop` therefore polls **the platforms themselves**
-periodically (Kick keyless, Twitch Helix, YouTube Data API) and rebuilds the
-restream when a target is demonstrably dead. Four rules in
-`nc/restream_guard.py` prevent restart loops:
-
-1. **90 s startup grace** — RTMP can take up to a minute to report “live”.
-2. **Hysteresis** — three consecutive negatives, not one.
-3. **UNKNOWN ≠ OFFLINE** — an API timeout is no proof of a dead stream.
-4. **Cap** — `RESTREAM_MAX_CONCURRENT` limits parallel encodes.
-
-</details>
-
-<details>
-<summary><b>Test push: check a target without broadcast risk</b></summary>
-
-<br>
-
-`nc/restream_testpush.py` sends a short synthetic push to a configured target
-and reports whether the ingest accepts it — before you go live and a viewer
-notices instead.
-
-</details>
-
-### 🎭 The burned-in overlay — AZRAEL on screen
-
-Not to be confused with `/overlay`: **that** one is a browser source for OBS and
-assumes somebody is operating OBS. The burned-in overlay is baked straight into
-the outgoing picture by ffmpeg — it shows on every platform, including a
-restream nobody is watching over.
-
-```ini
-RESTREAM_OVERLAY=1
-RESTREAM_OVERLAY_MODE=text     # text = ffmpeg draws it itself · html = dashboard page
-```
-
-In the **studio layout** the video sits on the left, the info panel on the
-right — and AZRAEL himself in the bottom-right corner, as an animated 2D
-figure. He is the on-screen host: jaw, sword arm and aura move, and the mouth
-runs exactly when he actually says something.
-
-**Speaking means speaking, on both channels.** The persona talks through the
-live reaction to the outgoing picture *and* through real chat replies (answers
-to viewers, thanks for gifts, greetings, warnings). Both move the mouth, both
-for the same span as the on-screen text — otherwise the figure falls silent
-while its own sentence is still on screen.
-
-**Three-stage fallback chain:** feeder → fixed loop → still image. If the
-animation fails, AZRAEL keeps moving, just without responding to chat. An avatar
-is no reason not to start a restream.
-
-| Variable | Default | What for |
-|---|---|---|
-| `RESTREAM_AVATAR_H` | `420` | Height of the figure in the outgoing picture |
-| `RESTREAM_AVATAR_FPS` | `10` | **Must** match the rate `tools/azrael_frames.py` built the loops at — otherwise the figure runs too fast or too slow |
-| `RESTREAM_AVATAR_LOOP` · `_TALK` | `assets/azrael/ruhe.webm` · `sprich.webm` | Idle and talking loop |
-| `RESTREAM_AVATAR_ALPHA` | `assets/azrael/alpha.png` | Coverage mask — kept separate because VP9 silently discards the alpha channel |
-| `RESTREAM_AVATAR` | `azrael_avatar.png` | Still image, last fallback |
-
-The loops ship as artifacts in the repo (117 KB for both) and are generated from
-the reference image by `tools/azrael_frames.py` — as a PNG sequence they would be
-11 MB. The feeder loads them into memory once at startup as raw RGBA; after that
-each frame costs nothing but a memory read.
-
-> **Why the mask is separate:** `libvpx-vp9` throws the alpha channel away
-> without a word — `ffprobe` afterwards reports `yuv420p` instead of `yuva420p`,
-> and no warning appears anywhere. Colour and coverage therefore travel
-> separately and are merged back together at load time.
+On request **AZRAEL appears as a figure** in the broadcast
+(`RESTREAM_OVERLAY=1`) — his mouth moves exactly when he answers in the chat or
+reacts to the stream.
 
 ---
 
-## 🧠 The brain (AZRAEL)
+## 🧠 AZRAEL and the watchdogs
 
-`brain/` is a self-contained, bot-free AI core with its own database. **If the
-directory is missing the bot starts exactly as it does without it** — every
-building block is additive, fail-open and individually switchable.
+`brain/` is a self-contained AI core with its own database. Without it the bot
+starts as if it were not there — every building block is additive and can be
+switched off individually. AZRAEL answers through Anthropic (with a key),
+locally through llama.cpp as soon as it runs, otherwise through free APIs —
+with budget and tier control.
 
-| Module | Job |
-|---|---|
-| `state.py` | State machine — system mirror, transitions |
-| `rules.py` | Rule engine (tier 1) — LLM-free, with a why-log |
-| `router.py` | Task router: `rules → db → knowledge → llm` |
-| `memory.py` | Long-term memory (sessions, metrics) |
-| `knowledge.py` | Knowledge graph (triple store, explainable) |
-| `semantic.py` | Semantic search |
-| `scheduler.py` | Forecasts and poll hints |
-| `llm.py` | LLM runtime: llama.cpp → keyless cloud as reserve |
-| `agents.py` | Sentinel fleet (13 watchdogs, individually switchable) |
-| `report.py` | Weekly report in Markdown |
+### 🛰️ The 14 watchdogs
 
-### 🛰️ The sentinel fleet
+| Agent | Watches | Agent | Watches |
+|---|---|---|---|
+| `health` | overall state | `restream_sentinel` | silently failing restream targets |
+| `recovery` | stuck recordings, self-healing | `toxicity` | toxicity waves in chat (raids) |
+| `scout` | new live sources | `uptime` | chat connections, reconnect flapping |
+| `analytics` | figures and trends | `recording` | recordings whose file does not grow |
+| `learning` | learning progress of the knowledge graph | `proxy` | TikTok fetch success, 403 blocks |
+| `sentinel` | CrowdSec, blind defence | `swap` | swap usage, with OOM protection |
+| `disk` | disk space, hours until full | `datenbank` | response time, growth, journal, schema |
 
-| Agent | Watches over |
-|---|---|
-| `health` | Overall state, health score |
-| `recovery` | Self-healing: restarts, gates |
-| `scout` | New sources and opportunities |
-| `analytics` | Metrics and trends |
-| `learning` | Learning progress of the knowledge graph |
-| `sentinel` | CrowdSec — attack spikes, blind defence |
-| `disk` | Free space + an estimate of “hours until full” |
-| `swap` | Swap usage — clears it itself when RAM allows (`SWAP_CLEAR_CMD`) |
-| `restream_sentinel` | **Silently** failing restream targets, shared keys |
-| `toxicity` | A **wave** of chat toxicity (a possible raid) |
-| `uptime` | Chat connections per platform, reconnect flapping |
-| `recording` | Recordings with a live PID but a file that is not growing |
-| `proxy` | Success and 403 rate of the TikTok fetches (server IP / proxy block) |
-
-Every agent is isolated — a dead agent can never kill the tick. Switch one off
-with `BRAIN_AGENT_<NAME>=0`.
+Every agent runs isolated — a dead one can never stop the tick. Switch off:
+`BRAIN_AGENT_<NAME>=0`.
 
 ### 🛡️ SENTINEL-SHIELD
 
@@ -642,223 +440,70 @@ Deterministic detection **before** banned words and **before** any AI:
 
 ## 🖥️ Dashboard
 
-A Flask dashboard with **373 routes** on `127.0.0.1:8050`.
+The deck runs on `127.0.0.1:8050` — from outside **only** through an SSH tunnel:
 
 ```bash
-# From your laptop — never open the port:
-ssh -L 3000:localhost:8050 ubuntu@<server-ip>
-# Then in the browser:  http://localhost:3000
+ssh -L 3000:localhost:8050 ubuntu@<server-ip>      # then http://localhost:3000
 ```
 
-| Page | Content |
+| Tab | Contents |
 |---|---|
-| `/` | Main control room: live, recordings, restream, community, money, defence |
-| `/brain` | Brain: knowledge graph, learning curve, sentinel fleet, agent log |
-| `/overlay` | OBS overlay: AZRAEL speech bubble, donation box, title |
-| `/api/selftest` | **“What is broken right now?”** — every finding with the command that fixes it |
+| **Overview** | key figures, software state with update, **situation map**: core, seven stations, the watchdogs at their workplace with progress to the next run, the live users with recording and restream state |
+| **Control · Streams** | restream control room, targets, live wall, transcript |
+| **Community** | Discord, loyalty, events |
+| **System** | resources, tunnel, **Prometheus & Grafana**, live log, errors |
+| **AZRAEL Brain · Operations · Insights** | brain, target verification, analyses |
+| **Settings** | every variable, set in the deck and stored in the database |
 
-**Themes** — the button at the top right cycles through them:
+**Themes:** Brass (dark, default) · Blueprint (light) · Contrast (WCAG AAA,
+automatic with “more contrast”) · Phosphor (night). **Languages:** German,
+English, Spanish — from the browser or chosen. As a **PWA** on the phone:
+Chrome → “Add to home screen” (needs HTTPS).
 
-| Theme | Purpose |
-|---|---|
-| **Messing** (dark) | default; warm brass instead of neon, for long evenings at the deck |
-| **Blaupause** (light) | daylight and office |
-| **Kontrast** | bright surroundings, weak displays, low vision — every colour WCAG AAA (≥ 7:1), no glows, no motion, wide borders and a clear focus ring. Picked automatically without a stored choice when the system asks for more contrast |
-| **Phosphor** (dark) | green screen phosphor for the control room at night — a slight glow, stronger scanlines, every colour at least WCAG AA; red and amber stay warning colours |
-
-The language switcher sits in the top bar next to the theme toggle. The choice
-is stored in a cookie and survives a browser restart; without a choice the
-browser's `Accept-Language` decides, and `UI_LANG` is the fallback.
-
-### 📸 Screenshots
-
-> [!NOTE]
-> Screenshots to follow. The dashboard shows live operational data — the images
-> have to be cleared of stream keys, tokens and viewer names before
-> publication. The instructions for that sit as a comment in the source of this
-> section in [`README.md`](README.md).
-
-### 📱 As an app on your phone (PWA)
-
-The dashboard is a **progressive web app** — open Chrome → menu → “Add to home
-screen”. It then starts full-screen with its own icon, without the Play Store
-and without an APK. It needs HTTPS, so use your domain rather than the local IP.
-
-> [!IMPORTANT]
-> The service worker **never** caches `/api/` responses. This is a live control
-> panel — cached API data would show a stale bot state (“live” while offline).
-> Only the static shell is cached.
+More pages: `/brain` (knowledge graph, fleet), `/overlay` (browser source for
+OBS), `/api/selftest` (“what is broken right now?” — with the command that
+fixes it).
 
 ---
 
-## 🚀 Deployment
-
-### systemd service
-
-```ini
-# /etc/systemd/system/nightcrawler.service
-[Unit]
-Description=NIGHTCRAWLER
-After=network-online.target
-
-[Service]
-Type=simple
-User=ubuntu
-WorkingDirectory=/home/ubuntu/nightcrawler
-ExecStart=/home/ubuntu/nightcrawler/.venv/bin/python3 bot.py
-Restart=always
-RestartSec=10
-
-[Install]
-WantedBy=multi-user.target
-```
+## 📈 Monitoring
 
 ```bash
-sudo systemctl daemon-reload
+sudo bash tools/observability.sh --grafana     # or guided: bash tools/update.sh
+```
+
+- **Prometheus** as its own service, only on `127.0.0.1`, reads `/metrics`:
+  event loop, back-pressure, recordings, restreams, check state of the
+  trackings, sources of the stream addresses, tunnel and update state, schema,
+  log gate.
+- **Grafana** with a ready-made dashboard — **every** metric has a panel, every
+  panel says when it is a finding. No admin/admin: the password is generated
+  and stored in `.env` as `GRAFANA_ADMIN_PASSWORD`. Access through a tunnel:
+  `ssh -L 3001:127.0.0.1:3000 <server>`.
+- **16 alert rules** with `promtool` tests: bot gone, restart loop, database,
+  disk, event loop, descriptors, overdue trackings, live without a stream
+  address, tunnel, update without restart, schema newer than the code, …
+- `.env` receives `PROMETHEUS_URL` and `GRAFANA_*`; the deck (System →
+  “Prometheus & Grafana”) uses them to ask whether Prometheus really reads the
+  bot.
+
+---
+
+## 🚀 Operations
+
+```bash
 sudo systemctl enable --now nightcrawler
-journalctl -u nightcrawler -f          # Ctrl+C only ends the tailing
+journalctl -u nightcrawler -f
+curl -s localhost:8050/healthz | python3 -m json.tool
 ```
 
-### Building the archive — `tools/build_release.py`
-
-```bash
-python tools/build_release.py B142
-```
-
-What belongs in the archive is a project decision, so it lives versioned in the
-script rather than in a throwaway command. `.env`, the database, recordings and
-logs stay out on principle; `.env.example` ships as a template (different
-filename, never overwrites an existing `.env`).
-
-Three counter-checks run before an archive leaves the machine:
-
-1. **Nothing secret** — no hit on `.env`, `.sqlite`, `.pem`, `.key`.
-2. **No import into the void** — every module name imported by a shipped file
-   that also exists as a root-level module **must** itself be in the archive.
-   `bot.py` imports `discordbot` and `telegramversand` at runtime, inside the
-   function; if they are missing the import dies in a broad `except` and Discord
-   and the recording dispatch are silently dead. That is exactly what happened —
-   a hand-maintained list went stale without anyone noticing.
-3. **It really compiles** — every `.py` is recompiled from the *extracted*
-   archive. An archive that does not compile gets deleted instead of shipped.
-
-### Safe rollout — `tools/deploy.sh`
-
-```bash
-bash tools/deploy.sh <build.zip>
-```
-
-The script first unpacks the new build into a **side directory** and checks it
-there completely — `py_compile`, `pyflakes`, `ruff`, all test runs,
-`ncpatch check`, `node --check` on the dashboard scripts. The running bot is
-**not touched** while this happens.
-
-Only when everything is green does it stop, switch over and start. Afterwards it
-verifies for itself: is the service running, does the dashboard answer, what
-does the self-test say. If anything goes wrong it **restores the backup
-automatically**. If the pre-check fails, nothing happens at all.
-
-```bash
-BOT_DIR=~/my-bot SERVICE=mybot bash tools/deploy.sh <build.zip>
-```
-
-### Dead-man's report *(strongly recommended)*
-
-If the process dies completely, **nobody else** will tell you:
-
-```bash
-chmod +x tools/notify_failure.sh
-sudo systemctl edit nightcrawler     # → [Unit] OnFailure=nightcrawler-notify@%n.service
-```
-
-After that every outage produces a Telegram/Discord message with the last log
-lines.
-
-In detail: **[`docs/en/DEPLOY.md`](docs/en/DEPLOY.md)** and
-**[`docs/START_HIER.txt`](docs/START_HIER.txt)** (German).
-
----
-
-## 🧪 Tests & verification chain
-
-> [!CAUTION]
-> **This chain runs before every release — in full, not in part.**
-
-```bash
-python3 -m py_compile <changed .py>
-python3 -m pyflakes   <changed .py>                        # 0 findings
-python3 -m ruff check --select F,E9,B --ignore B905 <changed .py>
-python3 tools/ncpatch.py check                             # check templates
-python3 tools/ncpatch.py docs                              # numbers in the docs
-python3 tools/i18n_extract.py --check en                   # translation catalogue
-python3 test_smoke.py
-python3 test_nc_modules.py
-python3 test_restream.py
-```
-
-| Test | Covers |
+| Route | When |
 |---|---|
-| `test_smoke.py` | **Actually** executes `bot.py` — NameError, ordering traps, a 500 on first call. Needs `pip install -r requirements-smoke.txt` (5 packages); runs in CI since v4.1-W31. |
-| `test_nc_modules.py` | The domain modules in `nc/` in isolation, without network and without a database |
-| `test_restream.py` | Static contracts against the restream path |
-| `test_m2_bridge.py` | Adapter bot ↔ `brain/` |
-| `brain/test_m*.py` | The brain modules individually |
-| `nc/intel/test_intel.py` | Archive index, transcripts, reels |
+| **Update function** (deck, `/update`) | the normal route — fetches the state from GitHub, then restart |
+| **`tools/deploy.sh <build.zip>`** | archive from `tools/build_release.py`; checks in a side directory, switches over only when green and restores the backup on failure |
+| **Dead-man's report** | `OnFailure=nightcrawler-notify@%n.service` — if the process dies, a message with the last log lines arrives |
 
-The module tests in `brain/` and `nc/intel/` need the project root on the search
-path:
-
-```bash
-PYTHONPATH=. python3 brain/test_m1.py
-PYTHONPATH=. python3 nc/intel/test_intel.py
-```
-
-Whatever can be checked without the full runtime stack runs automatically on
-every push: **[`.github/workflows/ci.yml`](.github/workflows/ci.yml)** — lint,
-templates, documentation numbers, contracts and a secret scan on Python 3.12, 3.13
-and 3.14, plus `pip-audit` against the frozen production state.
-
-> [!NOTE]
-> `ncpatch docs` compares the figures in the README and `CLAUDE.md` — routes,
-> lines, modules, agents, `.env` variables — against the source and checks every
-> internal anchor. Those numbers went silently stale twice; nobody keeps them up
-> by hand.
-
-<details>
-<summary><b>When a contract in <code>test_restream.py</code> breaks</b></summary>
-
-<br>
-
-The static contracts anchor themselves to the **literal source text** of
-`bot.py`. If a signature changes, the contract breaks even though the code is
-right. The same goes for windows of the form `src[i:i + 3000]`: if a function
-grows past them, the test reports something as missing that sits two lines
-further down.
-
-**Before fixing the code, check whether the contract or only its anchor is
-broken.**
-
-</details>
-
-### 🧭 Navigating the monolith
-
-`bot.py` has 26,124 lines. It is **never** read in full and **never** searched
-blindly — first ask where something is, then fetch the excerpt:
-
-```bash
-python3 tools/ncpatch.py find "donations"          # where is X?
-python3 tools/ncpatch.py sym  bot.py api_brain     # line range of a symbol
-python3 tools/ncpatch.py show bot.py 24750 24810   # only this excerpt
-python3 tools/ncpatch.py grep "tree.command" bot.py -C 3
-python3 tools/ncpatch.py map                       # rebuild the navigation map
-python3 tools/ncpatch.py verify patches/x.json     # dry run
-python3 tools/ncpatch.py apply  patches/x.json     # all-or-nothing, writes a .bak
-python3 tools/ncpatch.py docs                      # documentation numbers vs. the code
-```
-
-`find` answers from **[`.claude/INDEX.md`](.claude/INDEX.md)** — 361 routes
-(34 in `bot.py`, 327 in `nc/routes/`), 66 slash commands, 479 functions, each
-with a line number.
+In detail: **[`docs/en/DEPLOY.md`](docs/en/DEPLOY.md)**.
 
 ---
 
@@ -866,244 +511,112 @@ with a line number.
 
 | Rule | Why |
 |---|---|
-| **The `.env` is never in the repository and never in the archive** | ~503 variables including cookies, OAuth tokens and stream keys |
-| **The dashboard binds to `127.0.0.1`** | Access runs through an SSH tunnel, not through an open port |
-| **Cookie and key redaction when logging** | `streamlink`/`ffmpeg` command lines are cleaned before they are logged |
-| **The ledger is append-only with a hash chain** | A correction is a counter-entry, not an overwrite |
-| **CrowdSec integration** | Attack spikes visible in the dashboard, a watchdog reports blind defence |
-| **PWA icon routes with a whitelist** | Protection against path traversal |
+| **Deck only on `127.0.0.1`** | enforced without token and PIN; access through an SSH tunnel |
+| **`.env` never in the repo or the archive** | cookies, OAuth tokens, stream keys |
+| **Protected settings** | access, commands, paths and the database connection only from `.env` |
+| **Redaction when logging** | cookies, keys and tokens are blacked out before logging |
+| **Ledger with a hash chain** | append-only; a correction is a counter-entry |
 
 > [!WARNING]
-> **Do not mix up money.** `/api/donations/summary` is live telemetry built from
-> **estimates**. `nc/ledger.py` holds booked **payouts** for the tax office.
-> Never derive one from the other — displayed value ≠ payout ≠ time of receipt.
-> TikTok gifts go to the tracked streamer, not to our own channels: they are
-> stored as `kind="gift"`, never as `donation`, and never enter **any** monetary
-> total.
+> **Do not mix money.** Donation telemetry is **estimates**, the revenue journal
+> (`nc/ledger.py`) is booked **payouts**. TikTok gifts go to the tracked
+> streamer and flow into **no** money total.
 
-Found a security hole? → **[`docs/en/SECURITY.md`](docs/en/SECURITY.md)**.
-Please **no** public issue.
-
----
-
-## 🗺️ Project layout
-
-```
-NIGHTCRAWLER/
-├── bot.py                    monolith: Telegram + Discord + Flask + scraper +
-│                             recorder + restream + schema
-├── brain_bridge.py           adapter  bot ↔ brain/
-│
-├── brain/                    AI core (bot-free, own database, stdlib-only)
-│   ├── state.py  rules.py  router.py  memory.py  knowledge.py
-│   ├── semantic.py  scheduler.py  llm.py  agents.py  report.py
-│   └── test_m*.py            module tests
-│
-├── nc/                       120 domain modules (bot-free, configure() injection)
-│   ├── schema.py             central database schema
-│   ├── i18n.py               translation catalogue and language detection
-│   ├── restream_*.py         targets, guard, test push, utils
-│   ├── ledger.py             revenue journal (hash chain)
-│   ├── twitchoauth.py  ytoauth.py  kick_oauth.py
-│   ├── modheuristics.py  shield.py  replygate.py
-│   ├── freeai.py  claude.py  piper_voices.py
-│   ├── routes/               36 Flask blueprints (327 API routes)
-│   ├── intel/                archive index, transcripts, reels
-│   └── _vendor/segno/        vendored QR encoder (BSD)
-│
-├── locales/                  de.json · en.json — the translation catalogue
-├── templates/                dashboard.html · brain.html · overlay.html
-│                             manifest.webmanifest · sw.js · PWA icons
-├── website/                  public site, imprint, privacy policy
-├── tools/                    ncpatch.py · deploy.sh · build_release.py
-│                             gen_env_example.py · i18n_extract.py · notify_failure.sh
-├── docs/                     DEPLOY · CONTRIBUTING · CHANGELOG · SETUP_* · en/
-├── .claude/                  INDEX.md (navigation map) + skills
-│
-├── .env.example              auto-generated configuration template
-├── requirements.txt          runtime dependencies
-├── llama-server.service      systemd unit for the local LLM
-└── test_*.py                 smoke, module and contract tests
-```
-
-### 📚 Further documents
-
-| File | Content |
-|---|---|
-| **[`docs/en/INSTALL.md`](docs/en/INSTALL.md)** | Manual installation, step by step |
-| **[`docs/en/DEPLOY.md`](docs/en/DEPLOY.md)** | Complete deployment and verification guide |
-| **[`docs/en/TROUBLESHOOTING.md`](docs/en/TROUBLESHOOTING.md)** | Failure patterns and their real causes |
-| **[`docs/en/ROADMAP.md`](docs/en/ROADMAP.md)** | The six waves of the decomposition, in short |
-| **[`docs/en/CONTRIBUTING.md`](docs/en/CONTRIBUTING.md)** | Verification chain, style, what a contribution has to look like |
-| **[`docs/en/SECURITY.md`](docs/en/SECURITY.md)** | Reporting security holes, operational pitfalls |
-| **[`docs/en/CODE_OF_CONDUCT.md`](docs/en/CODE_OF_CONDUCT.md)** | Code of conduct |
-| **[`docs/CHANGELOG.md`](docs/CHANGELOG.md)** | Version overview (German) |
-| **[`docs/README_V37.md`](docs/README_V37.md)** | Detailed release history of every wave (German) |
-| **[`docs/MODULARISIERUNG.md`](docs/MODULARISIERUNG.md)** | Plan for taking the monolith apart — measured, in waves (German) |
-| **[`docs/en/SETUP_LLAMACPP.md`](docs/en/SETUP_LLAMACPP.md)** | Set up the local LLM |
-| **[`docs/en/CROWDSEC.md`](docs/en/CROWDSEC.md)** | Defence panel |
-| **[`CLAUDE.md`](CLAUDE.md)** | Working brief for AI-assisted development (German) |
+Found a vulnerability? → **[`docs/en/SECURITY.md`](docs/en/SECURITY.md)** — please no public issue.
 
 ---
 
 ## 🩺 Troubleshooting
 
-Always ask the bot itself first:
-
 ```bash
 curl -s localhost:8050/api/selftest | python3 -m json.tool
 ```
 
-It summarises what would otherwise be five separate log greps: dead broadcast
-targets, the YouTube reason, defence permissions, disturbed background loops,
-silent core loops, disk fill level — **every finding with the command that fixes
-it**.
-
-The common failure patterns and where their cause really sits are in
-**[`docs/en/TROUBLESHOOTING.md`](docs/en/TROUBLESHOOTING.md)**: silent `except`
-blocks (the main enemy), failing recordings, a silent AI, `.env` values that do
-not take effect, broken contracts in `test_restream.py`.
+Every finding with the command that fixes it. Live but no restream? In
+Telegram, `/quelle ‹name›` measures every route to the stream address. Failure
+patterns and their real causes: **[`docs/en/TROUBLESHOOTING.md`](docs/en/TROUBLESHOOTING.md)**.
 
 ---
 
-## 🆕 New in v4.5
+## 🧪 Development
 
-**“Many-Voiced”** — three languages, four themes, and profiles that actually
-say something. Waves W134 to W140, each in detail in the
-[changelog](docs/CHANGELOG.md) (German):
+```bash
+python3 test_smoke.py ; python3 test_nc_modules.py ; python3 test_restream.py
+python3 -m pytest -k w145          # one wave on its own
+python3 tools/ncpatch.py find "donations"      # where is something in bot.py?
+```
 
-- **Spanish** as the third language — all 1557 texts in the deck, brain page,
-  overlay, Telegram and Discord; a browser set to `es-*` gets it automatically.
-- **Two new themes:** “Kontrast” (every colour WCAG AAA, picked automatically
-  when the system asks for more contrast) and “Phosphor” (green screen phosphor
-  for the night) — both verified from the colour values.
-- **The TikTok profile in the deck loads again** and shows, in the deck,
-  Telegram and Discord, ratios, the follower trend over 24 h/7 days, account
-  type, language and bio link — or, if TikTok refuses, the reason and the fix.
-- **Honest online/offline:** “? unknown”, “pending” and “overdue” instead of a
-  silently stale value; every row says “checked … ago”.
-- **Discord** shows tables as code blocks instead of bold text.
-- **Supply chain:** raised lower bounds (69 known vulnerabilities fewer),
-  `requirements.lock.txt` checked with `pip-audit` in every CI run, Python 3.14
-  in CI, Dependabot; the Kick chat now waits 15 minutes after a Pusher refusal
-  instead of ten seconds.
-**Patch 4.5.1** — seven users live and no restream, “neither FLV nor HLS”:
-the chain now also reads CMAF, DASH and MP4, `tools/quellprobe.py` measures
-every route on the server, and the reason shows up in the deck and in
-`/healthz`.
-**Patch 4.5.2** — ten improvements across the project: `/quelle` from your
-phone, honest check status in `/tracklist` and `/healthz`, a self-report when
-trackings fall overdue, a verified system backup, and `SHA256SUMS` on releases.
-**Patch 4.5.3** — `bash tools/update.sh` asks about what is missing
-(Prometheus, Grafana, optional packages) and on request moves the database from
-SQLite to MariaDB: counted again, only then is `.env` switched, and SQLite stays
-as the way back. Along the way the MariaDB schema was made to work — it never had.
+`bot.py` has 26,313 lines and is never read in full — the navigation map
+`.claude/INDEX.md` knows 377 routes and 589 functions with line numbers. Before
+every pull request the full verification chain from
+**[`docs/en/CONTRIBUTING.md`](docs/en/CONTRIBUTING.md)** runs: lint, templates,
+documentation figures, locks against silent failure paths and giant functions,
+translation catalogue, coverage — every new claim cross-checked by a mutation
+probe.
 
-## 🆕 New in v4.4
-
-**“Watchful”** — whatever goes wrong says so. Waves W60 to W132 at a glance;
-every wave in detail in the [changelog](docs/CHANGELOG.md) (German):
-
-- **The event loop no longer waits on the log file.** Up to 176 s of frozen bot
-  came from the log handlers under disk load; a dedicated thread now writes,
-  and wherever the loop still stalls, the bot names the file and line.
-- **Restreams survive a source switch** (send bridge), and **each target starts
-  only once** — no more double sender on the same Kick/Twitch key.
-- **Recordings lose fewer minutes:** hangs are caught after 25 s instead of up
-  to 105 s, the lock is released as soon as ffmpeg ends; silent sources no
-  longer break the stream.
-- **Data is safer:** “clean up leftovers” can no longer delete the running or
-  all recordings, a damaged database is explained instead of replaced, and
-  restore works from the deck and without the bot.
-- **The deck is locked down:** loopback without token/PIN, waitress instead of
-  the development server, token removed from the address bar; bot token and
-  Redis password are redacted in the log.
-- **Observable:** live situation map, Prometheus/Grafana, tunnel watchdog,
-  “update needs a restart” in `/healthz`.
-- **The installer asks first, then acts** — six package managers, usage
-  profiles, Windows service.
-- **The verification tools are guarded themselves:** silent error paths, giant
-  functions and event-loop blockers may not grow, coverage is measured, and
-  every new claim is cross-checked by a mutation probe.
-
-**Patch 4.4.1** — findings from the first run on 4.4: the Kick chat
-reconnected almost every second, a restart hung for nine minutes on an AI
-call, and a damaged `brain.db` was silently missing from the backup.
+```
+bot.py · discordbot.py · telegramversand.py · brain_bridge.py
+nc/          domain modules, nc/routes/ blueprints
+brain/       AI core and watchdogs
+templates/   deck, brain page, overlay, PWA        website/   public site
+locales/     de · en · es                          tools/     installer, update.sh, checks
+deploy/      Prometheus, Grafana, alert rules      docs/      guides, changelog
+```
 
 ---
 
-## 📈 Project status
+## 🆕 New in v4.6
 
-**In production around the clock** on an 8-core Ubuntu server as a systemd
-service.
+**“Control Room”** — everything configurable, everything watched:
+
+- **Settings in the deck**, stored in the database — with protected keys that
+  only come from `.env`.
+- **SQLite → MariaDB in one step**, counted again, with a way back; the MariaDB
+  schema never worked before and does now.
+- **Prometheus and Grafana complete:** every metric a panel, 16 alert rules,
+  a generated password instead of admin/admin, entries in `.env`.
+- **The 14th watchdog** watches the database.
+- **The situation map redrawn** — a control room instead of a figure, readable
+  in every theme.
+- **`update.sh` asks** about what is missing.
+
+Every wave on its own: **[`docs/CHANGELOG.md`](docs/CHANGELOG.md)**.
+
+---
+
+## 📊 Project status
+
+**In continuous production use** on an 8-core Ubuntu server.
 
 | | |
 |---|---|
-| Current version | **4.5.3** — “Many-Voiced” (2026.11) |
-| Flask routes | 361 (34 in `bot.py` · 327 in `nc/routes/`) |
-| Discord slash commands | 45 |
-| Domain modules | 92 in `nc/` (+18 in `nc/routes/`, +3 in `nc/intel/`), 10 in `brain/` |
-| Sentinel agents | 13 |
-| Configuration variables | ~503 |
+| Current version | **4.6** — “Control Room” (2026.11) |
+| Flask routes | 377 (34 in `bot.py` · 343 in `nc/routes/`) |
+| Discord slash commands | 66 |
+| Domain modules | 176 in `nc/` (+39 in `nc/routes/`, +3 in `nc/intel/`), 10 in `brain/` |
+| Sentinel agents | 14 |
+| Configuration variables | ~571 |
 | Languages | German (source), English, Spanish |
 
-Full history: **[`docs/CHANGELOG.md`](docs/CHANGELOG.md)** ·
-**[`docs/README_V37.md`](docs/README_V37.md)** (both German)
-
----
-
-## 🧭 Roadmap
-
-The next big step is not a feature, it is cleaning up: **`bot.py` has 26,124
-lines**. That file is the project's bottleneck. The bar for it is not a line
-count though:
-
-> **Adding a new API route without opening `bot.py`.**
-
-The route there in six waves — measured, not estimated:
-**[`docs/en/ROADMAP.md`](docs/en/ROADMAP.md)**. Wave 2 is done, wave 3 is
-running: `nc/routes/` carries 36 blueprints with 327 API routes today that no
-longer sit in the monolith.
+Next big step: keep taking `bot.py` apart — **[`docs/en/ROADMAP.md`](docs/en/ROADMAP.md)**.
 
 ---
 
 ## 🤝 Contributing
 
-Contributions are welcome. **Please read
-[`docs/en/CONTRIBUTING.md`](docs/en/CONTRIBUTING.md) first** — there are a few
-hard rules that grew out of real outages:
-
-1. The **mandatory verification chain** runs before every pull request.
-2. `nc/*` and `brain/*` **never** import from `bot.py`.
-3. Comments and source strings are written in **German**, and they explain
-   **why**, not what. English lives in `locales/en.json`.
-4. No `except: pass` in long-running loops — that is what `_loop_fehler` is for.
-
-```bash
-git checkout -b feature/my-feature
-# … change things, run the verification chain …
-git commit -m "Short and in the imperative, what changes"
-git push -u origin feature/my-feature
-```
-
-Also helpful without code: bug reports with a log excerpt, documentation fixes,
-translations.
-
-Questions that are not an issue belong on the
-**[Discord server](https://discord.gg/psvnxm7tSV)**. See the project in
-operation: **[lafap.de](https://lafap.de)**.
-
-Please observe the **[code of conduct](docs/en/CODE_OF_CONDUCT.md)**.
+Contributions are welcome — please read **[`docs/en/CONTRIBUTING.md`](docs/en/CONTRIBUTING.md)**
+first. The hard rules came out of real outages: the verification chain before
+every pull request, `nc/*` and `brain/*` never import from `bot.py`, comments in
+German and explaining why, no `except: pass` in long-running loops. Questions go
+to the **[Discord server](https://discord.gg/psvnxm7tSV)**; the
+**[code of conduct](docs/en/CODE_OF_CONDUCT.md)** applies.
 
 ---
 
-## 📄 Licence
+## 📄 License
 
-<div align="center">
-
-**GNU General Public License v3.0 or later**
-
-</div>
+**GNU General Public License v3.0 or later** — full text in **[`LICENSE`](LICENSE)**,
+third-party code in **[`docs/en/THIRD_PARTY_LICENSES.md`](docs/en/THIRD_PARTY_LICENSES.md)**.
 
 ```
 NIGHTCRAWLER — control room for live streaming
@@ -1123,26 +636,12 @@ You should have received a copy of the GNU General Public License along
 with this program.  If not, see <https://www.gnu.org/licenses/>.
 ```
 
-Full text: **[`LICENSE`](LICENSE)** · what that means in practice:
-
-| ✅ Permitted | ⚠️ Condition | ❌ Not granted |
-|---|---|---|
-| Commercial use | Disclose the source | Liability |
-| Modification | Same licence (GPLv3) | Warranty |
-| Distribution | State the changes | |
-| Private use | Include the licence and copyright notice | |
-
-Third-party code and its licences:
-**[`docs/en/THIRD_PARTY_LICENSES.md`](docs/en/THIRD_PARTY_LICENSES.md)**
-
 ---
 
 <div align="center">
 
-**NIGHTCRAWLER v4.5.3 · “Many-Voiced”**
+**NIGHTCRAWLER v4.6 · “Control Room”**
 
 **[🌐 lafap.de](https://lafap.de)** · **[💬 Discord](https://discord.gg/psvnxm7tSV)** · **[📓 Changelog](docs/CHANGELOG.md)**
-
-If the project helps you, leave a ⭐.
 
 </div>
