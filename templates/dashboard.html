@@ -2087,6 +2087,68 @@ html[data-theme="kontrast"] :focus-visible{outline:3px solid #FFD400;outline-off
 /* Bewegung lenkt ab und kostet Lesbarkeit — in diesem Thema immer aus. */
 html[data-theme="kontrast"] *{animation:none!important;transition:none!important}
 
+/* PHOSPHOR (v4.2-W140) — gruener Bildschirmphosphor, fuer den Leitstand bei
+   Nacht. Dunkel wie Messing, aber kalt statt warm, und mit Leuchten: der
+   Primaerakzent glimmt leicht, die Scanlines sind deutlicher als in den
+   anderen Themen. Jede Text- und Signalfarbe erreicht auf dem Panel
+   mindestens WCAG AA (4,5:1) — nachgerechnet im Vertrag, nicht geschaetzt.
+   Rot bleibt Rot und Bernstein Bernstein: ein Fehler darf in einem gruenen
+   Thema nicht gruen aussehen. */
+html[data-theme="phosphor"]{
+  color-scheme: dark;
+
+  --bg:            #030D07;
+  --bg2:           #05140B;
+  --panel:         rgba(6,22,13,.88);
+  --panel-solid:   #06160D;
+  --sunken:        #041009;
+  --sunken-2:      #030C07;
+  --sunken-3:      #020905;
+  --grid-line:     rgba(57,255,140,.06);
+
+  --neon:          #39FF8C;   /* Phosphor — Primaerakzent */
+  --neon-dim:      #2BC46C;   /* nachleuchtend — Rahmen, Zweitrang */
+  --brass-deep:    #1B6B3D;   /* Trennlinien */
+  --cyan:          #5CE1E6;   /* Information */
+  --magenta:       #D59BFF;
+  --amber:         #FFC24D;   /* Warnung */
+  --red:           #FF7070;   /* Fehler */
+  --ok:            #9DFF6E;
+
+  --text:          #D2FFE0;
+  --text-dim:      #94D9AE;
+  --text-faint:    #6FB98B;
+
+  --border:        rgba(57,255,140,.20);
+  --border-bright: rgba(57,255,140,.48);
+
+  --glow:          0 0 10px rgba(57,255,140,.28);
+  --glow-cyan:     0 0 10px rgba(92,225,230,.24);
+  --glow-mag:      0 0 10px rgba(213,155,255,.22);
+  --glow-soft:     0 0 6px rgba(57,255,140,.35);
+  --shadow-card:   0 0 0 1px rgba(57,255,140,.08) inset,
+                   0 12px 32px -20px rgba(0,0,0,.95);
+  --bezel:         linear-gradient(90deg,
+                     transparent, rgba(57,255,140,.40) 18%,
+                     rgba(57,255,140,.70) 50%,
+                     rgba(57,255,140,.40) 82%, transparent);
+}
+html[data-theme="phosphor"] body{
+  background:radial-gradient(ellipse 120% 80% at 50% 0%, #07200F 0%, var(--bg) 70%)}
+html[data-theme="phosphor"] body::after{
+  background:repeating-linear-gradient(0deg, transparent 0 2px,
+             rgba(0,0,0,.16) 2px 3px)}
+html[data-theme="phosphor"] .panel{border-color:var(--border)}
+/* Werte und Kopfzeilen glimmen — Fliesstext nicht, der bliebe sonst unscharf. */
+html[data-theme="phosphor"] .stat .v,
+html[data-theme="phosphor"] .pf-stat .v,
+html[data-theme="phosphor"] h1,
+html[data-theme="phosphor"] .tab.active{text-shadow:0 0 6px rgba(57,255,140,.45)}
+html[data-theme="phosphor"] :focus-visible{outline:2px solid var(--neon);outline-offset:2px}
+@media (prefers-reduced-motion: reduce){
+  html[data-theme="phosphor"] body::after{display:none}
+}
+
 /* ── Flaeche ───────────────────────────────────────────────────────── */
 body{
   background:
@@ -2444,9 +2506,9 @@ tbody tr:hover td{ background: color-mix(in srgb, var(--neon) 4%, transparent); 
 /* v4.2-W137: drei Themen im Kreis — Messing, Blaupause, Kontrast. Ohne
    gespeicherte Wahl entscheidet das System: erhoehter Kontrast schlaegt
    hell/dunkel, weil er eine Beduerfnis-Angabe ist und keine Geschmacksfrage. */
-var NC_THEMEN=["messing","blaupause","kontrast"];
-var NC_THEMA_NAME={"messing":"Messing","blaupause":"Blaupause","kontrast":"Kontrast"};
-var NC_THEMA_ZEICHEN={"messing":"◐","blaupause":"◑","kontrast":"◒"};
+var NC_THEMEN=["messing","blaupause","kontrast","phosphor"];
+var NC_THEMA_NAME={"messing":"Messing","blaupause":"Blaupause","kontrast":"Kontrast","phosphor":"Phosphor"};
+var NC_THEMA_ZEICHEN={"messing":"◐","blaupause":"◑","kontrast":"◒","phosphor":"◓"};
 (function(){try{var t=localStorage.getItem("nc-theme");if(NC_THEMEN.indexOf(t)<0){t=matchMedia("(prefers-contrast: more)").matches?"kontrast":(matchMedia("(prefers-color-scheme: light)").matches?"blaupause":"messing");}document.documentElement.setAttribute("data-theme",t);}catch(e){}})();
 function ncNaechstesThema(cur){
   var i=NC_THEMEN.indexOf(cur); return NC_THEMEN[(i+1)%NC_THEMEN.length];

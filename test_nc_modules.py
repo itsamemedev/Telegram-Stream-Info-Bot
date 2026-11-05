@@ -25511,7 +25511,11 @@ def _test_v42_w137_kontrast_thema():
             name, tok[name], r)
     assert "--glow:          none" in blk.group(1), "Glow kostet Kontrast"
     # Erreichbar ueber den Knopf, und das System darf es anfordern.
-    assert 'var NC_THEMEN=["messing","blaupause","kontrast"];' in h
+    # v4.2-W140: geprueft wird die MITGLIEDSCHAFT, nicht die woertliche
+    # Liste — sonst faellt dieser Vertrag bei jedem neuen Thema, obwohl
+    # Kontrast weiter erreichbar ist.
+    _liste = _re.search(r"var NC_THEMEN=(\[[^\]]*\]);", h)
+    assert _liste and "kontrast" in __import__("json").loads(_liste.group(1))
     assert 'matchMedia("(prefers-contrast: more)")' in h
     assert 'html[data-theme="kontrast"] :focus-visible' in h, "Fokus nicht sichtbar"
     ok("W137: Kontrast-Thema — alle Farben WCAG AAA aus dem CSS nachgerechnet, "
@@ -25798,6 +25802,49 @@ def _test_v42_w139_spanisch():
     assert r.stdout.strip() == "en", (r.stdout, r.stderr)
     ok("W139: Spanisch — 1557 Eintraege, Platzhalter und Naehte wie im Englischen, "
        "Browsererkennung, Shell faellt auf Englisch")
+
+
+def _test_v42_w140_phosphor_thema():
+    """v4.2-W140: das vierte Thema. Dunkel und gruen — und gerade deshalb
+    nachgerechnet: jede Text- und Signalfarbe mindestens WCAG AA (4,5:1) auf
+    dem Panel, und Rot muss rot bleiben (ein Fehler darf in einem gruenen
+    Thema nicht gruen aussehen)."""
+    import json as _json
+    import re as _re
+    h = open("templates/dashboard.html", encoding="utf-8").read()
+    blk = _re.search(r'html\[data-theme="phosphor"\]\{(.*?)\n\}', h, _re.S)
+    assert blk, "Phosphor-Thema fehlt"
+    tok = dict(_re.findall(r"--([a-z0-9-]+):\s*(#[0-9A-Fa-f]{6})\s*;", blk.group(1)))
+
+    def _lum(x):
+        x = x.lstrip("#")
+        c = [int(x[i:i + 2], 16) / 255 for i in (0, 2, 4)]
+        c = [v / 12.92 if v <= 0.03928 else ((v + 0.055) / 1.055) ** 2.4 for v in c]
+        return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]
+
+    def _ratio(a, b):
+        la, lb = _lum(a), _lum(b)
+        return (max(la, lb) + 0.05) / (min(la, lb) + 0.05)
+    for name in ("text", "text-dim", "text-faint", "neon", "neon-dim", "cyan",
+                 "magenta", "amber", "red", "ok"):
+        assert name in tok, "--%s fehlt im Phosphor-Thema" % name
+        r = _ratio(tok[name], tok["panel-solid"])
+        assert r >= 4.5, "--%s %s auf dem Panel nur %.1f:1 (AA verlangt 4,5:1)" % (
+            name, tok[name], r)
+    rot = [int(tok["red"].lstrip("#")[i:i + 2], 16) for i in (0, 2, 4)]
+    assert rot[0] > rot[1] * 1.5, "--red %s ist im Phosphor-Thema nicht mehr rot" % tok["red"]
+    themen = _json.loads(_re.search(r"var NC_THEMEN=(\[[^\]]*\]);", h).group(1))
+    namen = _json.loads(_re.search(r"var NC_THEMA_NAME=(\{[^}]*\});", h).group(1))
+    zeichen = _json.loads(_re.search(r"var NC_THEMA_ZEICHEN=(\{[^}]*\});", h).group(1))
+    assert "phosphor" in themen, "per Knopf nicht erreichbar"
+    assert set(themen) == set(namen) == set(zeichen), "Thema ohne Name oder Zeichen"
+    assert len(set(zeichen.values())) == len(zeichen), "zwei Themen mit demselben Zeichen"
+    # Jedes Thema der Liste hat einen Token-Block — sonst waehlte der Knopf
+    # ein Thema, das aussieht wie die Vorgabe.
+    for t in themen:
+        assert ('html[data-theme="%s"]{' % t) in h, "Thema %s ohne Token-Block" % t
+    ok("W140: Phosphor-Thema — alle Farben ≥ AA aus dem CSS nachgerechnet, Rot "
+       "bleibt rot, alle Themen mit Name, Zeichen und Token-Block")
 
 
 def main():
@@ -26137,6 +26184,7 @@ def main():
     _test_v42_w138_profil_und_prueflage()
     _test_v42_w138_profil_route()
     _test_v42_w139_spanisch()
+    _test_v42_w140_phosphor_thema()
     _test_v42_w60_azrael_cooldown_je_plattform()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)

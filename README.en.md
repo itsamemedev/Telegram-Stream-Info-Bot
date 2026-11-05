@@ -51,7 +51,7 @@
 | **What** | Live monitoring, recording and multi-destination restreaming of TikTok streams, with AI moderation in Kick, Twitch and YouTube |
 | **For whom** | Operators who want this on **their own** hardware — one Linux server, no SaaS, no third-party platform between the stream and its destinations |
 | **Runs on** | Ubuntu/Debian with systemd, **Python 3.12–3.14** (production: 3.14), ffmpeg, streamlink, yt-dlp |
-| **Operated via** | Telegram, Discord (65 slash commands) and a web deck with three themes, including a **high-contrast theme meeting WCAG AAA** |
+| **Operated via** | Telegram, Discord (65 slash commands) and a web deck with four themes, including a **high-contrast theme meeting WCAG AAA**, in German, English and Spanish |
 | **Quality** | over a thousand contracts in three suites, CI on three Python versions **and** against the frozen production state, `pip-audit`, CodeQL, Dependabot |
 | **Licence** | GPL-3.0-or-later |
 
@@ -662,6 +662,7 @@ ssh -L 3000:localhost:8050 ubuntu@<server-ip>
 | **Messing** (dark) | default; warm brass instead of neon, for long evenings at the deck |
 | **Blaupause** (light) | daylight and office |
 | **Kontrast** | bright surroundings, weak displays, low vision — every colour WCAG AAA (≥ 7:1), no glows, no motion, wide borders and a clear focus ring. Picked automatically without a stored choice when the system asks for more contrast |
+| **Phosphor** (dark) | green screen phosphor for the control room at night — a slight glow, stronger scanlines, every colour at least WCAG AA; red and amber stay warning colours |
 
 The language switcher sits in the top bar next to the theme toggle. The choice
 is stored in a cookie and survives a browser restart; without a choice the

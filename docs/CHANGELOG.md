@@ -11,6 +11,20 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Neu — viertes Deck-Thema „Phosphor" (v4.2 W140)
+
+- Grüner Bildschirmphosphor für den Leitstand bei Nacht: kalt statt warm wie
+  Messing, Werte und Kopfzeilen glimmen leicht, die Scanlines sind deutlicher.
+  Fließtext glimmt bewusst nicht — er bliebe sonst unscharf.
+- Jede Text- und Signalfarbe erreicht auf dem Panel mindestens **WCAG AA
+  (4,5:1)**, die meisten AAA; die schwächste ist Rot mit 6,9:1. Ein Vertrag
+  rechnet das aus den Tokens nach und prüft außerdem, dass Rot rot bleibt —
+  ein Fehler darf in einem grünen Thema nicht grün aussehen.
+- Der Knopf wechselt jetzt durch vier Themen. Der W137-Vertrag prüfte die
+  Themenliste wörtlich und wäre bei jedem neuen Thema gefallen; er prüft jetzt
+  die Mitgliedschaft. Neu: jedes Thema der Liste braucht Name, eigenes Zeichen
+  und einen Token-Block. Mutationsproben: 4 von 4 gefangen.
+
 ### Neu — Spanisch als dritte Sprache (v4.2 W139)
 
 - `locales/es.json` mit allen **1557** Einträgen — Deck, Brain-Seite, Overlay,

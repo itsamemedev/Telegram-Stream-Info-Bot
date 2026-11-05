@@ -51,7 +51,7 @@
 | **Wofür** | Live-Überwachung, Aufnahme und Multi-Ziel-Restream von TikTok-Streams, mit KI-Moderation in Kick, Twitch und YouTube |
 | **Für wen** | Betreiber, die das auf **eigener** Hardware wollen — ein Linux-Server, kein SaaS, keine Fremdplattform zwischen Stream und Zielen |
 | **Läuft auf** | Ubuntu/Debian mit systemd, **Python 3.12–3.14** (Produktion: 3.14), ffmpeg, streamlink, yt-dlp |
-| **Bedienung** | Telegram, Discord (65 Slash-Commands) und ein Web-Deck mit drei Themen, darunter ein **Kontrast-Thema nach WCAG AAA** |
+| **Bedienung** | Telegram, Discord (65 Slash-Commands) und ein Web-Deck mit vier Themen, darunter ein **Kontrast-Thema nach WCAG AAA**, auf Deutsch, Englisch und Spanisch |
 | **Qualität** | über tausend Verträge in drei Suiten, CI auf drei Python-Fassungen **und** gegen den eingefrorenen Produktionsstand, `pip-audit`, CodeQL, Dependabot |
 | **Lizenz** | GPL-3.0-or-later |
 
@@ -660,6 +660,7 @@ ssh -L 3000:localhost:8050 ubuntu@<server-ip>
 | **Messing** (dunkel) | Vorgabe; warmes Metall statt Neon, für lange Abende am Deck |
 | **Blaupause** (hell) | Tageslicht und Büro |
 | **Kontrast** | helle Umgebung, schwache Displays, eingeschränktes Sehen — jede Farbe WCAG AAA (≥ 7:1), keine Glows, keine Bewegung, breite Rahmen und deutlicher Fokus. Wählt sich ohne gespeicherte Wahl von selbst, wenn das System „mehr Kontrast" verlangt |
+| **Phosphor** (dunkel) | grüner Bildschirmphosphor für den Leitstand bei Nacht — leichtes Glimmen, deutlichere Scanlines, jede Farbe mindestens WCAG AA; Rot und Bernstein bleiben Warnfarben |
 
 ### 📸 Screenshots
 
