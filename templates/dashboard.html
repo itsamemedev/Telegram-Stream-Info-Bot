@@ -5490,7 +5490,13 @@ async function loadSurveil(){
     if(!q){ el.textContent=T('Adressen: keine Auskunft'); return; }
     if(!q.gesamt){ el.textContent=T('Adressen: noch nichts gezählt'); return; }
     const pz=Math.round((q.ohne_url_anteil||0)*100);
-    el.textContent=T('Adressen 1 h')+': API '+q.api+' · HTML '+q.html+' · yt-dlp '+q.ytdlp+' · '+T('ohne')+' '+q.keiner+' ('+pz+' %)';
+    /* Die Wegnamen (API, HTML, yt-dlp) sind Eigennamen und bleiben, wie sie
+       sind; uebersetzt wird nur, was Sprache ist. Als Liste gebaut, damit
+       kein Fliesstext-Literal in der Zuweisung haengt (i18n-Vertrag W28). */
+    const teile=[['API',q.api],['HTML',q.html],['yt-dlp',q.ytdlp]].map(w=>w[0]+' '+w[1]);
+    teile.push(T('ohne')+' '+q.keiner+' ('+pz+' %)');
+    const zeile=T('Adressen 1 h')+': '+teile.join(' · ');
+    el.textContent=zeile;
     el.style.color = pz>=50 ? 'var(--red)' : (pz>=20 ? 'var(--amber)' : '');
   }).catch(()=>{ const el=$('#sv_quellen'); if(el) el.textContent=T('Adressen: keine Auskunft'); });
   if(stats && !stats.__neterr){

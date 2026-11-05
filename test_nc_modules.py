@@ -25968,7 +25968,6 @@ def _test_v42_w142_zehn_punkte():
     import io as _io
     import os as _os
     import tarfile as _tar
-    import tempfile as _tmp
     import shutil as _sh
     src = open("bot.py", encoding="utf-8").read()
     baum = _ast.parse(src)
@@ -26033,7 +26032,7 @@ def _test_v42_w142_zehn_punkte():
 
     # (7) Sicherung: Platzhalter, Abbruch und fehlender Dump fallen auf.
     from nc import sicherungspruefung as S
-    d = _tmp.mkdtemp(prefix="w142_")
+    d = _ph.verzeichnis("nc-pruef-w142-")
     try:
         gut = _os.path.join(d, "gut.sql")
         open(gut, "w").write("BEGIN TRANSACTION;\nCREATE TABLE t(x);\nCOMMIT;\n")
