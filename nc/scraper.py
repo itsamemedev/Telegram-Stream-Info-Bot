@@ -55,6 +55,19 @@ class TikTokScraper:
             timeout=aiohttp.ClientTimeout(total=20, connect=8, sock_read=15),
         )
 
+    @classmethod
+    def mit_session(cls, session):
+        """v4.2-W138: ein Scraper auf einer BESTEHENDEN Session — fuer die
+        Blueprints, die ueber nc.ctx nur `scraper_session` bekommen. Das
+        Profil-Popup rief fetch_profile direkt auf dieser Session auf, und
+        die hat die Methode nicht: seit B60 endete jeder Klick in einem
+        AttributeError. Ein eigener Kontext-Slot fuer den Scraper waere
+        der 25. gewesen; nc.ctx ist bewusst gedeckelt.
+        Kein close(): die Session gehoert dem Bot."""
+        sc = cls.__new__(cls)
+        sc.session = session
+        return sc
+
     async def close(self):
         await self.session.close()
 
@@ -103,10 +116,44 @@ class TikTokScraper:
         return (None, None)
 
     def _user_from_universal(self, scope: dict):
-        info = (scope or {}).get("webapp.user-detail", {}).get("userInfo")
-        if not info:
+        detail = (scope or {}).get("webapp.user-detail") or {}
+        info = detail.get("userInfo")
+        user = (info or {}).get("user") or {}
+        # v4.2-W138: ein leeres `user` galt als Treffer. TikTok liefert den
+        # Block auch dann, wenn es den Nutzer nicht herausgibt — dann steht
+        # `statusCode` != 0 daneben und `user` ist {}. Ergebnis war ein
+        # „ok"-Profil, in dem jedes Feld None ist: das Popup zeigte lauter
+        # Striche, und niemand sah, dass TikTok abgelehnt hatte.
+        if not (user.get("uniqueId") or user.get("id")):
             return None
-        return {"user": info.get("user") or {}, "stats": info.get("stats") or {}}
+        stats = dict(info.get("stats") or {})
+        # statsV2 traegt dieselben Zaehler als Zeichenkette; bei grossen
+        # Konten sind sie dort genauer (kein Runden auf Ganzzahl-Grenzen).
+        for k, v in (info.get("statsV2") or {}).items():
+            if isinstance(v, (int, str)) and str(v).strip().isdigit():
+                stats[k] = int(str(v).strip())
+        return {"user": user, "stats": stats}
+
+    @staticmethod
+    def _ablehnung(kind, parsed, html_text, vorgabe):
+        """Warum stand kein Nutzer im HTML? Ein Satz mit Abhilfe statt
+        „Benutzerdaten nicht gefunden", das seit B60 alle Faelle gleich
+        aussehen liess."""
+        if kind == "universal":
+            detail = (parsed or {}).get("webapp.user-detail") or {}
+            code = detail.get("statusCode")
+            msg = str(detail.get("statusMsg") or "").strip()
+            if code not in (None, 0):
+                return (f"TikTok meldet statusCode {code}"
+                        + (f" ({msg})" if msg else "")
+                        + " — Konto gesperrt, umbenannt oder für diese IP "
+                          "gesperrt; im Browser gegenprüfen")
+        low = (html_text or "")[:200000].lower()
+        if "captcha" in low or "verify-page" in low or "tiktok-verify" in low:
+            return ("TikTok zeigt eine Prüfseite (Captcha) statt des Profils "
+                    "— die Server-IP ist gedrosselt; Proxy (RECORD_PROXY) "
+                    "oder frische Cookies helfen")
+        return vorgabe
 
     def _user_from_sigi(self, data: dict, username: str):
         ul = username.lower()
@@ -149,7 +196,10 @@ class TikTokScraper:
 
         kind, parsed = self._extract_json(text)
         if not parsed:
-            result["error"] = "JSON nicht gefunden (TikTok-HTML hat sich evtl. geändert)"
+            result["error"] = self._ablehnung(
+                None, None, text,
+                "JSON nicht gefunden (TikTok-HTML hat sich evtl. geändert)")
+            log.warning("Profil @%s: %s", username, result["error"])
             return result
 
         if kind == "universal":
@@ -159,7 +209,9 @@ class TikTokScraper:
             result["recent_videos"] = self._recent_videos_sigi(parsed)
 
         if not found:
-            result["error"] = "Benutzerdaten nicht gefunden"
+            result["error"] = self._ablehnung(
+                kind, parsed, text, "Benutzerdaten nicht gefunden")
+            log.warning("Profil @%s: %s", username, result["error"])
             return result
 
         user, stats = found["user"], found["stats"]
@@ -181,5 +233,21 @@ class TikTokScraper:
             "digg_count":      stats.get("diggCount"),
             "create_time":     user.get("createTime"),
             "modify_time":     user.get("modifyTime"),
+            # v4.2-W138: was TikTok im selben JSON ohnehin mitliefert und
+            # bisher verworfen wurde. Alles optional — fehlt ein Feld, bleibt
+            # es None, und die Anzeige laesst die Zeile weg.
+            "language":        user.get("language") or None,
+            "region":          user.get("region") or None,
+            "bio_link":        ((user.get("bioLink") or {}).get("link") or None)
+                               if isinstance(user.get("bioLink"), dict) else None,
+            "commerce":        bool((user.get("commerceUserInfo") or {}).get("commerceUser"))
+                               if isinstance(user.get("commerceUserInfo"), dict) else False,
+            "category":        ((user.get("commerceUserInfo") or {}).get("category") or None)
+                               if isinstance(user.get("commerceUserInfo"), dict) else None,
+            "seller":          bool(user.get("ttSeller")),
+            "organization":    bool(user.get("isOrganization")),
+            "room_id":         str(user.get("roomId") or "") or None,
+            "nickname_modify_time": user.get("nickNameModifyTime"),
+            "unique_id_modify_time": user.get("uniqueIdModifyTime"),
         })
         return result

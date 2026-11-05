@@ -11,6 +11,35 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Behoben — das Profil-Popup lud nie, und das Deck kannte kein „unbekannt" (v4.2 W138)
+
+- **TikTok-Profil im Deck:** die Route rief `fetch_profile` auf
+  `scraper_session()` auf — einer aiohttp-Session, die diese Methode nicht
+  hat. Seit B60 endete **jeder** Klick im AttributeError, gefangen als
+  „TikTok-Profil nicht geladen". Jetzt baut die Route mit
+  `TikTokScraper.mit_session()` einen Scraper auf der geteilten Session —
+  ohne neuen Kontext-Slot (`nc.ctx` bleibt bei 24).
+- **Ablehnung mit Grund:** ein leeres `user`-Objekt galt als Treffer und
+  ergab ein „ok"-Profil voller Striche. Jetzt nennt der Scraper TikToks
+  `statusCode`/`statusMsg` bzw. erkennt die Captcha-Prüfseite und sagt, was
+  hilft (Proxy, Cookies).
+- **Mehr Details** in Deck, Telegram-`/tiktok` und Discord: Freunde, selbst
+  gelikte Videos, Likes pro Video und pro Follower, Follower pro Gefolgtem,
+  Follower-Veränderung über 24 h und 7 Tage aus den Schnappschüssen, Kontoart
+  (Business/Shop/Organisation), Sprache, Bio-Link, Live-Raum,
+  Namensänderungen. `statsV2` wird bevorzugt (genauer bei großen Konten).
+  Gerechnet wird einmal in `nc/profildetail.py` für alle drei Oberflächen.
+- **Discord:** `<pre>` wurde zu Fettdruck, Links und Entitäten standen roh im
+  Kanal. `nc/tgmarkdown.py` übersetzt in Codeblöcke, Links und Zitate und
+  schneidet an Absatzgrenzen statt mitten im Codeblock.
+- **Online/Offline:** `last_live` ändert sich nur bei einer sicheren Antwort.
+  Wer seit über 10 Minuten nur „unbekannt" liefert, steht jetzt als
+  **? unbekannt** da statt mit seinem alten Wert (oft LIVE); noch nie
+  geprüfte Trackings als „ausstehend", über 15 Minuten nicht geprüfte als
+  „überfällig". Jede Zeile nennt „geprüft vor …", die Kopfzeile zählt
+  unbekannt/ausstehend/überfällig zusammen (`nc/prueflage.py`).
+- Blindstellen-Grundlinie 473 → 478, begründet (Feld fehlt ≠ Fehler).
+
 ### Neu — drittes Deck-Thema „Kontrast" (v4.2 W137)
 
 - **Kontrast** neben Messing und Blaupause: Schwarz, reines Weiß, Gelb als

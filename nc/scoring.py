@@ -5,6 +5,7 @@ Extrahiert aus bot.py: compute_quality_score bewertet ein TikTok-Profil
 
 from datetime import datetime
 
+from nc import profildetail as _profil
 from nc.fmt import pre_table
 from nc.textutil import fmt_number, safe, short
 
@@ -109,6 +110,39 @@ def compute_quality_score(inspect_data: dict, file_size: int,
     score = max(0, min(100, score))
     return {"score": score, "components": components, "notes": notes}
 
+def _report_details(data: dict) -> list:
+    """v4.2-W138: Verhaeltnisse, Kontoart, Bio-Link. „Nicht detailliert
+    genug" hiess vor allem: sechs nackte Zahlen, aus denen man selbst
+    rechnen musste. Eigener Schritt, damit build_report unter 100 Zeilen
+    bleibt."""
+    kz = _profil.kennzahlen(data)
+
+    def _r(v, zahl=False):
+        if v is None:
+            return "—"
+        return fmt_number(v) if zahl else str(v)
+    ratios = pre_table([
+        ("Likes/Video",    _r(kz["likes_pro_video"], zahl=True)),
+        ("Likes/Follower", _r(kz["likes_pro_follower"])),
+        ("Fol./Folgt",     _r(kz["follower_pro_folgt"])),
+    ], align='right')
+    parts = ["", "🧮 <b>Verhältnisse</b>", f"<pre>{ratios}</pre>"]
+    konto = [(k, safe(str(v))) for k, v in (
+        ("Kontoart", _profil.kontotyp(data)),
+        ("Sprache",  data.get("language")),
+        ("Region",   data.get("region")),
+    ) if v]
+    if konto:
+        parts += ["", "🏷️ <b>Konto</b>", f"<pre>{pre_table(konto, align='left')}</pre>"]
+    link = str(data.get("bio_link") or "").strip()
+    # Nur http(s): was kein Schema traegt, bekommt https:// davor — aus
+    # "javascript:…" wird so ein harmloser, toter Link statt eines Skripts.
+    if link and not any(c.isspace() for c in link):
+        href = link if link.lower().startswith(("http://", "https://")) else "https://" + link
+        parts += ["", f"🔗 <a href=\"{safe(href)}\">{safe(short(link, 60))}</a>"]
+    return parts
+
+
 def build_report(data: dict, live: dict) -> str:
     def _ts(v):
         try: return datetime.fromtimestamp(int(v)).strftime("%Y-%m-%d %H:%M")
@@ -144,7 +178,11 @@ def build_report(data: dict, live: dict) -> str:
     timeline = pre_table([
         ("Erstellt", _ts(data.get("create_time"))),
         ("Geändert", _ts(data.get("modify_time"))),
-    ], align='left')
+    ] + ([("Name neu", _ts(data.get("nickname_modify_time")))]
+         if data.get("nickname_modify_time") else [])
+      + ([("Handle neu", _ts(data.get("unique_id_modify_time")))]
+         if data.get("unique_id_modify_time") else []), align='left')
+
 
     parts = [
         f"📊 <b>PROFIL · @{handle}</b>",
@@ -157,7 +195,7 @@ def build_report(data: dict, live: dict) -> str:
         "",
         "📅 <b>Zeitleiste</b>",
         f"<pre>{timeline}</pre>",
-    ]
+    ] + _report_details(data)
 
     bio = data.get("signature")
     if bio and str(bio).strip():

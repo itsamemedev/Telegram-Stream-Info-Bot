@@ -25518,6 +25518,244 @@ def _test_v42_w137_kontrast_thema():
        "per Knopf und prefers-contrast erreichbar")
 
 
+def _test_v42_w138_profil_und_prueflage():
+    """v4.2-W138: das Profil-Popup laedt, das Profil sagt mehr, Discord zeigt
+    es lesbar, und das Deck unterscheidet „unbekannt" von „offline"."""
+    import ast as _ast
+    import asyncio as _aio
+    import json as _json
+    import html as _html
+
+    # (1) Der eigentliche Bug: fetch_profile auf der SESSION. Gemessen im
+    # Syntaxbaum — kein Aufruf von .fetch_profile darf auf scraper_session()
+    # haengen, und er muss auf get_scraper() haengen.
+    baum = _ast.parse(open("nc/routes/beobachtung.py", encoding="utf-8").read())
+    for n in _ast.walk(baum):
+        if isinstance(n, _ast.Attribute) and n.attr == "fetch_profile":
+            assert "scraper_session" not in _ast.unparse(n.value), \
+                "fetch_profile auf der aiohttp-Session — die hat die Methode nicht"
+    assert any(isinstance(n, _ast.Attribute) and n.attr == "mit_session"
+               for n in _ast.walk(baum)), "Popup baut keinen Scraper"
+    from nc.scraper import TikTokScraper as _TS
+    _s = object()
+    assert _TS.mit_session(_s).session is _s
+
+    # (2) Scraper: Ablehnung mit Grund statt leerem „ok"-Profil.
+    from nc.scraper import TikTokScraper
+
+    def _seite(scope):
+        roh = _json.dumps({"__DEFAULT_SCOPE__": scope})
+        return ('<html><script id="__UNIVERSAL_DATA_FOR_REHYDRATION__" '
+                'type="application/json">%s</script></html>' % _html.escape(roh))
+
+    class _Resp:
+        def __init__(self, text):
+            self.status, self._t = 200, text
+        async def text(self):
+            return self._t
+        def release(self):
+            pass
+
+    def _hole(text):
+        sc = TikTokScraper.__new__(TikTokScraper)
+        async def _req(url, **kw):
+            return _Resp(text)
+        sc._request = _req
+        return _aio.run(sc.fetch_profile("probe"))
+
+    r = _hole(_seite({"webapp.user-detail": {
+        "statusCode": 10221, "statusMsg": "user banned",
+        "userInfo": {"user": {}, "stats": {}}}}))
+    assert not r["ok"], "leeres user-Objekt galt als Treffer"
+    assert "statusCode 10221" in r["error"] and "user banned" in r["error"], r["error"]
+
+    r = _hole('<html><div id="tiktok-verify-page">captcha</div></html>')
+    assert not r["ok"] and "Captcha" in r["error"], r["error"]
+
+    r = _hole(_seite({"webapp.user-detail": {"statusCode": 0, "userInfo": {
+        "user": {"id": "7", "uniqueId": "probe", "nickname": "P",
+                 "language": "de", "bioLink": {"link": "example.org"},
+                 "commerceUserInfo": {"commerceUser": True, "category": "Gaming"},
+                 "roomId": "7300", "createTime": 1600000000},
+        "stats": {"followerCount": 1000, "followingCount": 10,
+                  "heartCount": 2147483647, "videoCount": 100},
+        "statsV2": {"heartCount": "5000000000"}}}}))
+    assert r["ok"], r
+    assert r["heart_count"] == 5000000000, "statsV2 nicht bevorzugt"
+    assert (r["language"], r["bio_link"], r["commerce"], r["category"], r["room_id"]) \
+        == ("de", "example.org", True, "Gaming", "7300"), r
+
+    # (3) Kennzahlen und Verlauf.
+    from nc import profildetail as P
+    kz = P.kennzahlen(r)
+    assert kz["likes_pro_video"] == 50000000 and kz["follower_pro_folgt"] == 100.0
+    assert P.kennzahlen({"follower_count": 5, "video_count": 0})["likes_pro_video"] is None
+    assert P.kontotyp(r) == "Business · Gaming"
+    jetzt = 1_800_000_000
+    iso = lambda s: __import__("datetime").datetime.fromtimestamp(
+        jetzt - s, __import__("datetime").timezone.utc).isoformat()
+    # Ein Schnappschuss von vor zehn Minuten ist KEIN Tageswert.
+    v = P.verlauf([{"follower_count": 990, "captured_at": iso(600)}],
+                  {"follower_count": 1000}, jetzt)
+    assert v["tag"] is None and v["woche"] is None, v
+    v = P.verlauf([{"follower_count": 900, "captured_at": iso(2 * 86400)},
+                   {"follower_count": 500, "captured_at": iso(8 * 86400)}],
+                  {"follower_count": 1000}, jetzt)
+    assert (v["tag"], v["woche"]) == (100, 500), v
+
+    # (4) Pruefstand: unbekannt ist nicht offline, und nicht live.
+    from nc import prueflage as L
+    L._STAND.clear()
+    t0 = 1_000_000.0
+    assert L.lage(1, True, jetzt=t0)["zustand"] == "ausstehend"
+    L.merken(1, "live", jetzt=t0)
+    L.merken(1, "unknown", jetzt=t0 + 60)
+    assert L.lage(1, True, jetzt=t0 + 120)["zustand"] == "live", \
+        "ein einzelnes unknown darf den Punkt nicht flackern lassen"
+    L.merken(1, "unknown", jetzt=t0 + L.UNSICHER_AB_S + 30)
+    la = L.lage(1, True, jetzt=t0 + L.UNSICHER_AB_S + 40)
+    assert la["zustand"] == "unbekannt", "seit >10 min nur unknown, steht aber als LIVE da"
+    assert la["sicher_vor_s"] == L.UNSICHER_AB_S + 40
+    L.merken(1, "offline", jetzt=t0 + 2000)
+    assert L.lage(1, False, jetzt=t0 + 2010)["zustand"] == "offline"
+    assert L.lage(1, False, jetzt=t0 + 2000 + L.UEBERFAELLIG_AB_S + 1)["ueberfaellig"]
+    assert not L.lage(1, False, paused=True,
+                      jetzt=t0 + 2000 + L.UEBERFAELLIG_AB_S + 1)["ueberfaellig"]
+    assert L.lage(1, False, recording=True, jetzt=t0 + 2010)["zustand"] == "rec"
+    L._STAND.clear()
+    src = open("bot.py", encoding="utf-8").read()
+    assert "_nc_prueflage.merken(tracking_id, last_status)" in src
+    assert '"pruefung": _nc_prueflage.lage(' in open(
+        "nc/routes/trackings.py", encoding="utf-8").read()
+
+    # (5) Discord: <pre> wird Codeblock, nicht Fettdruck; Entitaeten weg.
+    from nc import tgmarkdown as M
+    md = M.html_zu_md('<b>PROFIL · @a&amp;b</b>\n<pre>Follower   1.2K\nLikes *  9</pre>'
+                      '\n<a href="https://x.y/">Link &lt;1&gt;</a>'
+                      '\n<blockquote expandable>Bio\nZeile</blockquote>')
+    assert "**PROFIL · @a&b**" in md, md
+    assert "```\nFollower   1.2K\nLikes *  9\n```" in md, md
+    assert "[Link <1>](https://x.y/)" in md and "> Bio\n> Zeile" in md, md
+    assert "<" not in md.replace("<1>", ""), md
+    tabelle = "```\n" + "\n".join("Zeile %02d   %s" % (i, "x" * 40) for i in range(20)) + "\n```"
+    stuecke = M.teilen(("Kopf\n\n" + tabelle + "\n\n") * 4, 1900)
+    assert all(len(x) <= 1900 for x in stuecke)
+    assert all(x.count("```") % 2 == 0 for x in stuecke), "Codeblock zerschnitten"
+    assert "_nc_tgmd.html_zu_md(out)" in open("discordbot.py", encoding="utf-8").read()
+
+    # (6) Telegram-Report: Verhaeltnisse da, Bio-Link nur mit http(s).
+    from nc.scoring import build_report
+    rep = build_report(dict(r, bio_link="javascript:alert(1)"), {"is_live": False})
+    assert "Verhältnisse" in rep and "Business · Gaming" in rep
+    assert 'href="https://javascript:alert(1)"' in rep, "fremdes Schema im Link"
+    ok("W138: Popup holt den Scraper, Profil mit Grund/Details/Verlauf, Discord "
+       "als Markdown, unbekannt ≠ offline im Deck")
+
+
+def _test_v42_w138_profil_route():
+    """v4.2-W138: der Popup-Pfad selbst — Scraper auf der geteilten Session,
+    Verlauf aus der Datenbank, Fehler mit Grund. Und die Randfaelle der
+    reinen Helfer, damit die Ueberdeckung nicht nur den Erfolgspfad kennt."""
+    import asyncio as _aio
+    from datetime import datetime as _dt, timedelta as _td, timezone as _tz
+    import nc.ctx as _ncctx
+    import nc.scraper as _sc
+    from nc import restreamstate as _rs
+    import nc.routes.beobachtung as R
+    from nc.dbwrap import db_conn as _db
+
+    class _Log:
+        def __init__(self): self.zeilen = []
+        def _s(self, *a, **k): self.zeilen.append(a[0] % a[1:] if len(a) > 1 else str(a[0]))
+        warning = info = error = debug = _s
+    protokoll = _Log()
+    sitzung = object()
+    alt_ctx = _ncctx._CTX
+    alt_fp = _sc.TikTokScraper.fetch_profile
+    alt_rg, alt_rs = _rs.REDIS_GET["fn"], _rs.REDIS_SET["fn"]
+    gesehen = []
+
+    async def _fp(self, username):
+        gesehen.append(self.session)
+        return {"ok": True, "username": username, "follower_count": 1500,
+                "following_count": 30, "heart_count": 9000, "video_count": 90,
+                "commerce": True, "create_time": 1600000000}
+
+    async def _rget(key):
+        return None
+
+    async def _rset(key, wert, ttl=0):
+        return None
+    try:
+        _ncctx.configure(log=protokoll, scraper_session=lambda: sitzung,
+                         run_async=lambda coro, timeout=0: _aio.run(coro))
+        _sc.TikTokScraper.fetch_profile = _fp
+        _rs.REDIS_GET["fn"], _rs.REDIS_SET["fn"] = _rget, _rset
+        alt = (_dt.now(_tz.utc) - _td(days=2)).isoformat()
+        with _db() as c:
+            # Die Testdatenbank kennt nicht jede Tabelle; Spalten wie in
+            # nc/schema.py (profile_snapshots).
+            c.execute("CREATE TABLE IF NOT EXISTS profile_snapshots ("
+                      "id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT NOT NULL,"
+                      " payload TEXT NOT NULL, follower_count INT, heart_count BIGINT,"
+                      " video_count INT, captured_at TEXT NOT NULL)")
+            c.execute("DELETE FROM profile_snapshots WHERE username='w138probe'")
+            c.execute("INSERT INTO profile_snapshots (username, payload, follower_count,"
+                      " heart_count, video_count, captured_at) VALUES (?,?,?,?,?,?)",
+                      ("w138probe", "{}", 1200, 0, 0, alt))
+            c.commit()
+        p = R._tiktok_profil("w138probe")
+        assert gesehen == [sitzung], "Scraper nicht auf der geteilten Session gebaut"
+        assert p["follower_count"] == 1500 and p["kontotyp"] == "Business", p
+        assert p["verlauf"]["tag"] == 300 and p["verlauf"]["woche"] is None, p["verlauf"]
+        assert p["erstellt"] == "2020-09-13" and p["kennzahlen"]["likes_pro_video"] == 100
+
+        async def _fp_nein(self, username):
+            return {"ok": False, "error": "TikTok meldet statusCode 10221"}
+        _sc.TikTokScraper.fetch_profile = _fp_nein
+        assert R._tiktok_profil("w138probe") == {"error": "TikTok meldet statusCode 10221"}
+        _ncctx.configure(log=protokoll, scraper_session=lambda: None,
+                         run_async=lambda coro, timeout=0: _aio.run(coro))
+        assert "error" in R._tiktok_profil("w138probe")
+    finally:
+        _ncctx._CTX = alt_ctx
+        _sc.TikTokScraper.fetch_profile = alt_fp
+        _rs.REDIS_GET["fn"], _rs.REDIS_SET["fn"] = alt_rg, alt_rs
+        with _db() as c:
+            c.execute("DELETE FROM profile_snapshots WHERE username='w138probe'")
+            c.commit()
+
+    # Randfaelle der reinen Helfer.
+    from nc import profildetail as P
+    assert [P._zahl(v) for v in (True, 3.7, " 42 ", "1.2K", None)] == [None, 3, 42, None, None]
+    assert P.datum(0) is None and P.datum(1700000000000) is None
+    assert P.datum("1600000000") == "2020-09-13"
+    assert P.kontotyp({"organization": True}) == "Organisation"
+    assert P.kontotyp({"seller": True}) == "Shop" and P.kontotyp({}) is None
+    f = P.felder({"verified": 1, "nickname": "N", "geheim": "x"})
+    assert f["verified"] is True and f["nickname"] == "N" and "geheim" not in f
+    assert P.verlauf([], {"follower_count": None})["messpunkte"] == 0
+    import logging as _lg
+    zeilen = []
+    class _H(_lg.Handler):
+        def emit(self, r): zeilen.append(r.getMessage())
+    h = _H(); P.log.addHandler(h)
+    try:
+        assert P._ts("kein-datum") is None and P._ts("") is None
+    finally:
+        P.log.removeHandler(h)
+    assert any("unlesbar" in z for z in zeilen), "kaputter Zeitstempel fiel still durch"
+
+    from nc import prueflage as L
+    L.merken(99, "live", jetzt=1.0); L.vergessen(99)
+    assert L.lage(99, True, jetzt=2.0)["zustand"] == "ausstehend"
+    from nc import tgmarkdown as M
+    assert M.teilen("x" * 5000, 1900) == ["x" * 1900, "x" * 1900, "x" * 1200]
+    assert M.html_zu_md(None) == ""
+    ok("W138: Popup-Pfad mit Scraper auf geteilter Session, Verlauf aus der DB, "
+       "Ablehnung mit Grund; Randfaelle der Helfer gedeckt")
+
+
 def main():
     tmp, rid = richte_testdatenbank_ein()
     ok("db_conn aus nc.dbwrap: echtes Schema angelegt, Commit durchgelaufen")
@@ -25852,6 +26090,8 @@ def main():
     _test_v42_w135_lockfile_gegen_untergrenzen()
     _test_v42_w136_pusher_protokoll()
     _test_v42_w137_kontrast_thema()
+    _test_v42_w138_profil_und_prueflage()
+    _test_v42_w138_profil_route()
     _test_v42_w60_azrael_cooldown_je_plattform()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)

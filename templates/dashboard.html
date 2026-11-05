@@ -404,6 +404,8 @@ tr:hover td{background:rgba(0,255,156,0.03)}
 .pill.ok{color:var(--neon);border-color:var(--border)}
 .pill.off{color:var(--text-faint)}
 .pill.paused{color:var(--amber);border-color:rgba(255,176,0,0.4)}
+.pill.unk{color:var(--amber);border-style:dashed}
+.pr-vor{font-size:10px;color:var(--text-faint);margin-top:2px}
 .pill.vip{color:var(--magenta);border-color:color-mix(in srgb,var(--magenta) 50%,transparent);text-shadow:var(--glow-mag)}
 
 .tagchip{display:inline-block;padding:1px 7px;font-size:var(--fs-2xs);border:1px solid var(--border);color:var(--cyan);margin:1px 2px;letter-spacing:0.05em;cursor:pointer}
@@ -5459,15 +5461,33 @@ function renderTargetGrid(){
   if(sort==='status') rows.sort((a,b)=>rank(a)-rank(b)|| (a.username||'').localeCompare(b.username||''));
   else if(sort==='name') rows.sort((a,b)=>(a.username||'').localeCompare(b.username||''));
   else if(sort==='vip') rows.sort((a,b)=>(_tagsMap[String(b.id)]||[]).includes('vip')-(_tagsMap[String(a.id)]||[]).includes('vip'));
-  $('#sv_gridmeta').textContent=rows.length+' / '+_trackingsCache.length;
+  /* v4.2-W138: die Zusammenfassung beantwortet die Frage „werden alle
+     abgefragt?" — vorher stand hier nur die Anzahl. */
+  const _pz={unbekannt:0,ausstehend:0,ueber:0};
+  _trackingsCache.forEach(t=>{ const p=t.pruefung||{};
+    if(p.zustand==='unbekannt') _pz.unbekannt++;
+    if(p.zustand==='ausstehend') _pz.ausstehend++;
+    if(p.ueberfaellig) _pz.ueber++; });
+  let _meta=rows.length+' / '+_trackingsCache.length;
+  if(_pz.unbekannt) _meta+=' · '+_pz.unbekannt+' unbekannt';
+  if(_pz.ausstehend) _meta+=' · '+_pz.ausstehend+' noch nicht geprüft';
+  if(_pz.ueber) _meta+=' · '+_pz.ueber+' überfällig';
+  $('#sv_gridmeta').textContent=_meta;
   if(!rows.length){ $('#sv_grid').innerHTML='<div class="empty">Kein Tracking passt zum Filter.</div>'; return; }
   let h='<div class="tbl-wrap"><table><thead><tr><th>Streamer</th><th>Status</th><th>Tags</th><th>Notiz</th><th class="right">Aktionen</th></tr></thead><tbody>';
   rows.forEach(t=>{
     let badge='';
+    const pr=t.pruefung||{};
     if(t.recording) badge='<span class="pill rec">● REC</span>';
-    else if(t.last_live) badge='<span class="pill live"><span class="dot"></span>LIVE</span>';
     else if(t.paused) badge='<span class="pill paused">❚❚ PAUSE</span>';
+    /* v4.2-W138: „unbekannt" VOR live/offline. last_live aendert sich nur bei
+       einer sicheren Antwort; ein Nutzer, der seit Stunden nur „unknown"
+       liefert, stand sonst mit seinem alten Wert da — oft als LIVE. */
+    else if(pr.zustand==='unbekannt') badge='<span class="pill unk" title="Der Resolver liefert seit über 10 Minuten keine sichere Antwort. Zuletzt sicher: '+(pr.sicher_vor_s!=null?humanDur(pr.sicher_vor_s):'nie')+'">? unbekannt</span>';
+    else if(pr.zustand==='ausstehend') badge='<span class="pill off" title="Seit dem Start noch nicht geprüft">… ausstehend</span>';
+    else if(t.last_live) badge='<span class="pill live"><span class="dot"></span>LIVE</span>';
     else badge='<span class="pill off">offline</span>';
+    if(pr.geprueft_vor_s!=null) badge+='<div class="pr-vor'+(pr.ueberfaellig?' amber':'')+'">'+(pr.ueberfaellig?'⏱ überfällig · ':'')+'geprüft vor '+humanDur(pr.geprueft_vor_s)+'</div>';
     // BUG-FIX (Perf): Tags aus dem gecachten Map lesen — kein Per-Row-Fetch mehr
     const tags=_tagsMap[String(t.id)]||[];
     const tagHtml = tags.length? tags.map(x=>`<span class="tagchip">#${esc(x)}</span>`).join('') : '<span class="faint">—</span>';
@@ -5519,8 +5539,29 @@ async function showProfile(username){
       <div class="pf-stat"><div class="v cyan">${fmtK(tk.follower_count)}</div><div class="l">Follower</div></div>
       <div class="pf-stat"><div class="v mag">${fmtK(tk.heart_count)}</div><div class="l">Likes</div></div>
       <div class="pf-stat"><div class="v amber">${fmtK(tk.video_count)}</div><div class="l">Videos</div></div></div>`;
-    if(tk.following_count!=null) h+=`<div class="pf-row"><span>Folgt</span><b>${fmtK(tk.following_count)}</b></div>`;
     if(tk.signature) h+=`<div class="pf-bio">${esc(tk.signature)}</div>`;
+    /* v4.2-W138: was TikTok im selben JSON mitliefert — Verhaeltnisse,
+       Verlauf, Kontoart. Jede Zeile nur, wenn der Wert da ist. */
+    const kz=tk.kennzahlen||{}, vl=tk.verlauf||{};
+    const _z=(l,v)=>{ if(v!=null && v!=='') h+=`<div class="pf-row"><span>${l}</span><b>${v}</b></div>`; };
+    const _d=n=> n==null?null:((n>0?'+':'')+fmtK(n));
+    h+='<div class="pf-sec">▚ TikTok-Details</div>';
+    _z('Folgt', tk.following_count!=null?fmtK(tk.following_count):null);
+    _z('Freunde', tk.friend_count!=null?fmtK(tk.friend_count):null);
+    _z('Selbst geliked', tk.digg_count!=null?fmtK(tk.digg_count):null);
+    _z('Likes pro Video', kz.likes_pro_video!=null?fmtK(kz.likes_pro_video):null);
+    _z('Likes pro Follower', kz.likes_pro_follower);
+    _z('Follower pro Gefolgtem', kz.follower_pro_folgt);
+    _z('Follower 24 h', _d(vl.tag));
+    _z('Follower 7 Tage', _d(vl.woche));
+    if(vl.tag==null && vl.woche==null) _z('Verlauf', 'noch kein Messpunkt älter als 1 Tag');
+    _z('Kontoart', tk.kontotyp?esc(tk.kontotyp):null);
+    _z('Sprache', tk.language?esc(tk.language):null);
+    _z('Region', tk.region?esc(tk.region):null);
+    _z('Konto seit', tk.erstellt?esc(tk.erstellt):null);
+    _z('TikTok-ID', tk.user_id?esc(String(tk.user_id)):null);
+    if(tk.room_id) _z('Live-Raum', esc(String(tk.room_id)));
+    if(tk.bio_link) h+=`<div class="pf-row"><span>Link</span><b><a href="${esc(/^https?:\/\//i.test(tk.bio_link)?tk.bio_link:'https://'+tk.bio_link)}" target="_blank" rel="noopener nofollow">${esc(tk.bio_link)}</a></b></div>`;
   } else if(tk && tk.error){
     h+=`<div class="pf-tk-err">⚠ TikTok-Profil nicht geladen: ${esc(tk.error)}</div>`;
   }

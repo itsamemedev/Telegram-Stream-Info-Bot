@@ -44,6 +44,7 @@ from nc import discordrang as _nc_rang
 from nc import befehle as _nc_befehle
 from nc import discordstate as _nc_discordstate
 from nc import i18n as _nc_i18n
+from nc import tgmarkdown as _nc_tgmd   # v4.2-W138: HTML -> Discord-Markdown
 from nc import modheuristics as _nc_mod
 from nc import trackingdb as _nc_trackingdb
 from nc.dbwrap import db_async, db_conn
@@ -666,9 +667,11 @@ async def _run_tg_handler(inter, fn, args_str=""):
     except Exception as e:
         chunks.append(f"❌ Handler-Fehler: {type(e).__name__}: {e}")
     out = "\n\n".join(c for c in chunks if c) or "✅ Ausgeführt (keine Ausgabe)."
-    out = re.sub(r"</?(?:b|i|code|pre|u|s)>", "**", out)     # grobes HTML→MD
-    for i in range(0, len(out), 1900):
-        await inter.followup.send(_nc_i18n.t(out[i:i + 1900]))
+    # v4.2-W138: hier stand ein Einzeiler, der JEDEN Tag zu "**" machte —
+    # auch <pre>, womit jede Tabelle aus /tiktok ihre Spalten verlor.
+    out = _nc_tgmd.html_zu_md(out)
+    for stueck in _nc_tgmd.teilen(out, 1900):
+        await inter.followup.send(_nc_i18n.t(stueck))
 
 
 async def _ensure_team_roles(guild):

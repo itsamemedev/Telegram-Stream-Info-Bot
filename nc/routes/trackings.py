@@ -11,6 +11,7 @@ import json
 import re
 from flask import Blueprint, jsonify, request
 
+from nc import prueflage as _nc_prueflage  # v4.2-W138
 from nc import fehlertext as _nc_fehlertext
 
 from nc import i18n as _nc_i18n
@@ -255,7 +256,13 @@ def api_trackings():
             if "auto_disabled_at" in t.keys() else None) or "",            # B54
         "auto_disabled_reason": (t["auto_disabled_reason"]
             if "auto_disabled_reason" in t.keys() else None) or "",        # B54
-        "created_at": t["created_at"][:19] if t["created_at"] else ""
+        "created_at": t["created_at"][:19] if t["created_at"] else "",
+        # v4.2-W138: WANN zuletzt geprueft und mit welchem Ergebnis. last_live
+        # allein kann "seit Stunden nur noch unbekannt" nicht ausdruecken.
+        "pruefung": _nc_prueflage.lage(
+            t["id"], bool(t["last_live"]),
+            paused=bool(t["paused"]) if "paused" in t.keys() else False,
+            recording=bool(t["recording"])),
     } for t in rows])
 
 
