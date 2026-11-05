@@ -11,6 +11,36 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Neu — zehn Verbesserungen quer durch das Projekt (v4.2 W142)
+
+1. **`/quelle ‹name›`** in Telegram und Discord: die Quellprobe aus W141 vom
+   Handy aus, ohne SSH. Läuft in einem Thread und höchstens einmal
+   gleichzeitig; der Kern liegt dafür jetzt in `nc/quellprobe.py`.
+2. **`/tracklist` zeigt den Prüfstand** wie das Deck: ❔ unbekannt,
+   ⏳ ausstehend, ⏱ überfällig — statt eines stillen alten LIVE.
+3. **`/tracklist` liest die Datenbank neben dem Event-Loop.**
+4. **`/healthz` → `pruefung`:** aktiv, unbekannt, ausstehend, überfällig —
+   ohne Nutzernamen, der Endpunkt ist öffentlich erreichbar.
+5. **Der Bot meldet selbst, wenn Nutzer aus der Abfrage fallen:** alle fünf
+   Minuten geprüft, überfällige Trackings als gedrosselter ERROR mit Namen und
+   Abhilfe; „nie geprüft" erst 15 Minuten nach dem Start (Initial-Burst).
+6. **Das Deck zeigt, woher die Stream-Adressen kamen** (API/HTML/yt-dlp/ohne)
+   und färbt den Anteil ohne Adresse ab 20 % bzw. 50 %.
+7. **Die Sicherung wird geprüft:** Dump mit Abschluss (`COMMIT;` bzw.
+   `-- Dump completed`), Archiv neu lesbar, Datenbank darin. Ohne `mysqldump`
+   meldete das Backup bisher Erfolg mit einer Platzhalterzeile statt Dump.
+   Nicht gesicherte Dateien werden gezählt statt verschluckt.
+8. **`SHA256SUMS` am Release**, gegengeprüft mit `sha256sum -c`; der Build
+   zeigt die volle Summe statt 16 Zeichen.
+9. **Profil-Schnappschüsse höchstens einmal je Stunde und Nutzer** — seit W138
+   legte jeder Popup-Klick eine Zeile mit bis zu 50 KB an.
+10. **Doku und Skill** kennen vier Themen und drei Sprachen, samt dem, was ein
+    neues Thema braucht.
+
+Mutationsproben: 11 von 11 gefangen — eine erst im zweiten Anlauf: der
+SHA256SUMS-Vertrag las den Namen in der Ausschlussliste statt der
+Schreibstelle und prüft jetzt im Syntaxbaum.
+
 ## [4.5.1] — 2026-11-05 · „Vielstimmig"
 
 ### Behoben — „keiner wird restreamt, angeblich weder FLV noch HLS" (v4.2 W141)

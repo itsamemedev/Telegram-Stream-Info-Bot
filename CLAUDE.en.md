@@ -32,7 +32,7 @@ fetch the excerpt:
     python tools/ncpatch.py docs                       # documentation numbers vs. the source
 
 `find` answers from `.claude/INDEX.md` — 361 routes (34 in `bot.py`, 327 in
-`nc/routes/`), 65 slash commands, 475 functions with line numbers. After changes
+`nc/routes/`), 66 slash commands, 475 functions with line numbers. After changes
 to routes, commands or top-level functions, run `map` again. Details: skill
 `nc-navigation`.
 
@@ -48,7 +48,7 @@ On the author's Windows machine the interpreter is called **`python`**
                          routes), scraper, recorder, restream, schema (init_db).
                          Was called bot_v37.py until v4.0-W119 — keep that in
                          mind when searching old notes and patch files.
-    discordbot.py        the Discord part (65 slash commands), lifted out in
+    discordbot.py        the Discord part (66 slash commands), lifted out in
                          v4.2-W15. It lives bot-side because it imports
                          discord.py and opens a gateway — not under nc/, which
                          stays bot-free. Everything reaches it via starte(ctx);
@@ -63,7 +63,7 @@ On the author's Windows machine the interpreter is called **`python`**
                          semantic, knowledge, scheduler, llm, report
     nc/                  132 domain modules: db, scraping, restream, oauth, ledger, i18n, …
     nc/routes/           36 Flask blueprints with 327 further API routes
-    locales/             de.json, en.json — the translation catalogue
+    locales/             de.json, en.json, es.json — the translation catalogue
     templates/           dashboard.html, brain.html, overlay.html, PWA
     website/             lafap_index.html (the public site)
     tools/ncpatch.py     patch and verification tool
@@ -282,7 +282,7 @@ individually verifiable and roll-back-able.
 |---|---|
 | `nc-navigation` | **First.** Find something without searching the monolith |
 | `nightcrawler` | Changes to `bot.py`, `nc/`, `brain/` — anchor patching, validation |
-| `html-templates` | `templates/*.html`, `website/*.html` — the Messing/Blaupause themes, verification chain |
+| `html-templates` | `templates/*.html`, `website/*.html` — four deck themes (Messing, Blaupause, Kontrast, Phosphor), verification chain |
 | `nc-betrieb` | Deployment, systemd, reading logs, rollback, CrowdSec, Kick outages |
 | `nc-datenbank` | SQL and schema under SQLite **and** MariaDB |
 | `nc-ki-backends` | `nc/freeai`, `brain/llm`, AZRAEL, the tier model, budget |

@@ -51,7 +51,7 @@
 | **What** | Live monitoring, recording and multi-destination restreaming of TikTok streams, with AI moderation in Kick, Twitch and YouTube |
 | **For whom** | Operators who want this on **their own** hardware — one Linux server, no SaaS, no third-party platform between the stream and its destinations |
 | **Runs on** | Ubuntu/Debian with systemd, **Python 3.12–3.14** (production: 3.14), ffmpeg, streamlink, yt-dlp |
-| **Operated via** | Telegram, Discord (65 slash commands) and a web deck with four themes, including a **high-contrast theme meeting WCAG AAA**, in German, English and Spanish |
+| **Operated via** | Telegram, Discord (66 slash commands) and a web deck with four themes, including a **high-contrast theme meeting WCAG AAA**, in German, English and Spanish |
 | **Quality** | over a thousand contracts in three suites, CI on three Python versions **and** against the frozen production state, `pip-audit`, CodeQL, Dependabot |
 | **Licence** | GPL-3.0-or-later |
 
@@ -213,7 +213,7 @@ flowchart TD
 ```mermaid
 flowchart TB
     TG["📨 Telegram<br/>29 commands"]:::ein
-    DC["🎮 Discord<br/>65 slash commands"]:::ein
+    DC["🎮 Discord<br/>66 slash commands"]:::ein
     TT["🎥 TikTok<br/>live detection + chat"]:::ein
 
     TG --> BOT
@@ -375,6 +375,7 @@ Since v4.2-W109 every command lives in **one** registry
 |---|---|
 | `/tiktok` `‹name›` | Profile analysis of a TikTok account |
 | `/live` `@user` | Check live status now |
+| `/quelle` `‹name›` | Measure a live user's stream sources — every route, ffprobe, with the fix |
 | `/track_exact` `‹name›` | Track the exact username (no correction) |
 | `/pause` `@user` | Pause tracking |
 | `/resume` `@user` | Resume tracking |
@@ -406,12 +407,12 @@ Since v4.2-W109 every command lives in **one** registry
 | `/update` | Install update from the repo (Telegram only) |
 
 <details>
-<summary><h3>Discord — 65 slash commands</h3></summary>
+<summary><h3>Discord — 66 slash commands</h3></summary>
 
 <br>
 
 **Shared with Telegram** *(same name, same effect)*
-`/tiktok` · `/live` · `/track_exact` · `/pause` · `/resume` · `/unpause` · `/bulkadd` · `/stoprec` · `/cleanup` · `/quota` · `/teststream` · `/topusers` · `/summary` · `/aireset` · `/brain` · `/report` · `/cookies` · `/sysres` · `/logs` · `/diag` · `/einnahmen` · `/about` · `/tracklist` · `/track` · `/untrack` · `/recstatus` · `/stats` · `/ai` · `/help`
+`/tiktok` · `/live` · `/quelle` · `/track_exact` · `/pause` · `/resume` · `/unpause` · `/bulkadd` · `/stoprec` · `/cleanup` · `/quota` · `/teststream` · `/topusers` · `/summary` · `/aireset` · `/brain` · `/report` · `/cookies` · `/sysres` · `/logs` · `/diag` · `/einnahmen` · `/about` · `/tracklist` · `/track` · `/untrack` · `/recstatus` · `/stats` · `/ai` · `/help`
 
 **Analysis**
 `/status` · `/streaminfo`
@@ -856,7 +857,7 @@ python3 tools/ncpatch.py docs                      # documentation numbers vs. t
 ```
 
 `find` answers from **[`.claude/INDEX.md`](.claude/INDEX.md)** — 361 routes
-(34 in `bot.py`, 327 in `nc/routes/`), 65 slash commands, 479 functions, each
+(34 in `bot.py`, 327 in `nc/routes/`), 66 slash commands, 479 functions, each
 with a line number.
 
 ---

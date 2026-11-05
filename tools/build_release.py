@@ -84,7 +84,8 @@ ORDNER = ["brain", "nc", "templates", "website", "tools", ".claude", "docs",
 # Falle wie AUSLIEFERUNG.json in W91, nur eine Ebene weiter draussen.
 #
 # news.json faehrt bewusst MIT: die ist Inhalt, keine Messung.
-AUS = {".env", "stats.json"}
+# v4.2-W142: SHA256SUMS beschreibt EIN Archiv; im naechsten waere es falsch.
+AUS = {".env", "stats.json", "SHA256SUMS"}
 AUS_ENDUNG = (".pyc", ".pyo", ".bak", ".tmp", ".log", ".sqlite", ".sqlite3",
               ".db", ".zip", ".tgz", ".pem", ".key")
 AUS_ORDNER = {"__pycache__", ".ruff_cache", ".git", "recordings", "build",
@@ -233,7 +234,13 @@ def main():
 
     gr = os.path.getsize(ZIEL)
     with open(ZIEL, "rb") as _fh:
-        h = hashlib.sha256(_fh.read()).hexdigest()[:16]
+        h = hashlib.sha256(_fh.read()).hexdigest()
+    # v4.2-W142: die VOLLE Pruefsumme, und als Datei neben dem Archiv. Bis
+    # hierher standen 16 Zeichen in der Konsole des CI-Laufs — wer das ZIP
+    # von der Release-Seite laedt, hatte nichts, wogegen er pruefen konnte.
+    # Format wie `sha256sum`, damit `sha256sum -c SHA256SUMS` es direkt liest.
+    with open(os.path.join(os.path.dirname(ZIEL), "SHA256SUMS"), "w", encoding="utf-8") as _fh:
+        _fh.write("%s  %s\n" % (h, os.path.basename(ZIEL)))
     print(f"{len(drin)} Dateien · {n} .py aus dem Archiv compiliert · 0 Fehler")
     print("Geheimnis-Gegenprobe: SAUBER")
     print(f"{os.path.basename(ZIEL)}  {gr/1024/1024:.2f} MB  sha256:{h}")

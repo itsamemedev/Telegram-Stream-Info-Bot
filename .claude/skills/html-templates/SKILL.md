@@ -1,6 +1,6 @@
 ---
 name: html-templates
-description: Eigenstaendige HTML-Oberflaechen fuer NIGHTCRAWLER und LAFAP bauen — Token-System, die beiden Themen Messing (dunkel) und Blaupause (hell), Pruefkette vor jeder Auslieferung. Nutze dies bei jeder Aenderung an templates/*.html oder website/*.html.
+description: Eigenstaendige HTML-Oberflaechen fuer NIGHTCRAWLER und LAFAP bauen — Token-System, die vier Deck-Themen Messing (dunkel, Vorgabe), Blaupause (hell), Kontrast (WCAG AAA) und Phosphor (Nacht), Pruefkette vor jeder Auslieferung. Nutze dies bei jeder Aenderung an templates/*.html oder website/*.html.
 ---
 
 # HTML-Oberflaechen fuer NIGHTCRAWLER
@@ -34,6 +34,22 @@ Dasselbe Instrument bei Tageslicht — nicht ein anderes Produkt.
 
     --bg #F4F7FB   --neon #1E5EFF   --neon-dim #4A6FA5
     --text #0F2544 (Tuscheblau, kein Schwarz)
+
+**Kontrast** (v4.2-W137, nur Deck). Fuer helle Umgebung und eingeschraenktes
+Sehen: jede Text- und Signalfarbe >= 7:1 auf dem Panel (WCAG AAA), keine
+Glows, keine Bewegung, 2-px-Rahmen, 3-px-Fokusring. Waehlt sich bei
+`prefers-contrast: more` von selbst. Der Vertrag rechnet die Kontraste aus
+den Tokens nach — **wer hier eine Farbe aendert, faellt dort, nicht erst beim
+Nutzer.**
+
+**Phosphor** (v4.2-W140, nur Deck). Gruener Bildschirmphosphor fuer die
+Nacht: Werte und Kopfzeilen glimmen, Fliesstext nicht; jede Farbe >= 4,5:1
+(AA). Rot und Bernstein bleiben Warnfarben — ein Fehler darf in einem gruenen
+Thema nicht gruen aussehen; auch das prueft der Vertrag.
+
+**Ein neues Thema** braucht drei Dinge, sonst faellt `_test_v42_w140_phosphor_thema`:
+einen Token-Block `html[data-theme="name"]{…}`, einen Eintrag in `NC_THEMEN`,
+`NC_THEMA_NAME` und `NC_THEMA_ZEICHEN` (eigenes Zeichen), und die Kontraste.
 
 ## Die Signatur
 

@@ -51,7 +51,7 @@
 | **Wofür** | Live-Überwachung, Aufnahme und Multi-Ziel-Restream von TikTok-Streams, mit KI-Moderation in Kick, Twitch und YouTube |
 | **Für wen** | Betreiber, die das auf **eigener** Hardware wollen — ein Linux-Server, kein SaaS, keine Fremdplattform zwischen Stream und Zielen |
 | **Läuft auf** | Ubuntu/Debian mit systemd, **Python 3.12–3.14** (Produktion: 3.14), ffmpeg, streamlink, yt-dlp |
-| **Bedienung** | Telegram, Discord (65 Slash-Commands) und ein Web-Deck mit vier Themen, darunter ein **Kontrast-Thema nach WCAG AAA**, auf Deutsch, Englisch und Spanisch |
+| **Bedienung** | Telegram, Discord (66 Slash-Commands) und ein Web-Deck mit vier Themen, darunter ein **Kontrast-Thema nach WCAG AAA**, auf Deutsch, Englisch und Spanisch |
 | **Qualität** | über tausend Verträge in drei Suiten, CI auf drei Python-Fassungen **und** gegen den eingefrorenen Produktionsstand, `pip-audit`, CodeQL, Dependabot |
 | **Lizenz** | GPL-3.0-or-later |
 
@@ -211,17 +211,17 @@ flowchart TD
 
 ```mermaid
 flowchart TB
-    TG["📨 Telegram<br/>31 Befehle"]:::ein
-    DC["🎮 Discord<br/>65 Slash-Commands"]:::ein
+    TG["📨 Telegram<br/>32 Befehle"]:::ein
+    DC["🎮 Discord<br/>66 Slash-Commands"]:::ein
     TT["🎥 TikTok<br/>Live-Erkennung + Chat"]:::ein
 
     TG --> BOT
     DC --> BOT
     TT --> BOT
 
-    BOT["bot.py<br/>Monolith · 26.138 Zeilen<br/>Scraper · Recorder · Restream<br/>Flask-Dashboard · 34 eigene Routen"]:::core
+    BOT["bot.py<br/>Monolith · 26.273 Zeilen<br/>Scraper · Recorder · Restream<br/>Flask-Dashboard · 34 eigene Routen"]:::core
 
-    BOT -->|configure| NC["nc/ — 168 Fachmodule<br/>Schema · OAuth · Restream<br/>Ledger · Moderation · Intel"]:::lib
+    BOT -->|configure| NC["nc/ — 170 Fachmodule<br/>Schema · OAuth · Restream<br/>Ledger · Moderation · Intel"]:::lib
     NC --> RT["nc/routes/ — 38 Blueprints<br/>327 weitere API-Routen"]:::lib
     BOT --> TPL["templates/<br/>Dashboard · Overlay · PWA"]:::lib
     BOT --> BR["brain_bridge.py"]:::lib
@@ -371,6 +371,7 @@ Befehle heißen **auf beiden Plattformen gleich**; die früheren
 |---|---|
 | `/tiktok` `‹name›` | Profil-Analyse eines TikTok-Accounts |
 | `/live` `@user` | Live-Status sofort pruefen |
+| `/quelle` `‹name›` | Stream-Quellen eines Live-Nutzers messen — jeder Weg, ffprobe, mit Abhilfe |
 | `/track_exact` `‹name›` | Exakten Usernamen tracken (ohne Korrektur) |
 | `/pause` `@user` | Tracking pausieren |
 | `/resume` `@user` | Tracking fortsetzen |
@@ -402,12 +403,12 @@ Befehle heißen **auf beiden Plattformen gleich**; die früheren
 | `/update` | Update vom Repo einspielen (nur Telegram) |
 
 <details>
-<summary><h3>Discord — 65 Slash-Commands</h3></summary>
+<summary><h3>Discord — 66 Slash-Commands</h3></summary>
 
 <br>
 
 **Gemeinsam mit Telegram** *(gleicher Name, gleiche Wirkung)*
-`/tiktok` · `/live` · `/track_exact` · `/pause` · `/resume` · `/unpause` · `/bulkadd` · `/stoprec` · `/cleanup` · `/quota` · `/teststream` · `/topusers` · `/summary` · `/aireset` · `/brain` · `/report` · `/cookies` · `/sysres` · `/logs` · `/diag` · `/einnahmen` · `/about` · `/tracklist` · `/track` · `/untrack` · `/recstatus` · `/stats` · `/ai` · `/help`
+`/tiktok` · `/live` · `/quelle` · `/track_exact` · `/pause` · `/resume` · `/unpause` · `/bulkadd` · `/stoprec` · `/cleanup` · `/quota` · `/teststream` · `/topusers` · `/summary` · `/aireset` · `/brain` · `/report` · `/cookies` · `/sysres` · `/logs` · `/diag` · `/einnahmen` · `/about` · `/tracklist` · `/track` · `/untrack` · `/recstatus` · `/stats` · `/ai` · `/help`
 
 **Analyse**
 `/status` · `/streaminfo`
@@ -854,7 +855,7 @@ gebrochen ist.**
 
 ### 🧭 Navigation im Monolithen
 
-`bot.py` hat 26.138 Zeilen. Es wird **nie** ganz gelesen und **nie**
+`bot.py` hat 26.273 Zeilen. Es wird **nie** ganz gelesen und **nie**
 blind durchsucht — erst fragen wo etwas steht, dann den Ausschnitt holen:
 
 ```bash
@@ -869,7 +870,7 @@ python3 tools/ncpatch.py docs                          # Doku-Zahlen gegen den C
 ```
 
 `find` antwortet aus **[`.claude/INDEX.md`](.claude/INDEX.md)** — 372 Routen
-(34 in `bot.py`, 335 in `nc/routes/`), 65 Slash-Commands, 584 Funktionen,
+(34 in `bot.py`, 335 in `nc/routes/`), 66 Slash-Commands, 586 Funktionen,
 jeweils mit Zeilennummer.
 
 ---
@@ -1038,8 +1039,8 @@ KI-Aufruf, eine beschädigte `brain.db` fehlte still in der Sicherung.
 |---|---|
 | Aktuelle Version | **4.5.1** — „Vielstimmig" (2026.11) |
 | Flask-Routen | 372 (34 in `bot.py` · 338 in `nc/routes/`) |
-| Discord-Slash-Commands | 65 |
-| Fachmodule | 168 in `nc/` (+38 in `nc/routes/`, +3 in `nc/intel/`), 10 in `brain/` |
+| Discord-Slash-Commands | 66 |
+| Fachmodule | 170 in `nc/` (+38 in `nc/routes/`, +3 in `nc/intel/`), 10 in `brain/` |
 | Sentinel-Agenten | 13 |
 | Konfigurationsvariablen | ~568 |
 | Sprachen | Deutsch (Quelle), Englisch, Spanisch |
@@ -1052,7 +1053,7 @@ Vollständige Historie: **[`docs/CHANGELOG.md`](docs/CHANGELOG.md)** ·
 ## 🧭 Roadmap
 
 Der nächste grosse Schritt ist kein Feature, sondern Aufräumen: **`bot.py` hat
-26.138 Zeilen**. Die Datei ist der Engpass des Projekts. Die Messlatte dafür ist
+26.273 Zeilen**. Die Datei ist der Engpass des Projekts. Die Messlatte dafür ist
 aber keine Zeilenzahl:
 
 > **Eine neue API-Route anlegen, ohne `bot.py` zu öffnen.**

@@ -89,6 +89,9 @@ jobs:
           ZIP=$(ls -1 NIGHTCRAWLER_v37_*.zip | head -1)
           echo "zip=$ZIP" >> "$GITHUB_OUTPUT"
           ls -lh "$ZIP"
+          # v4.2-W142: die Pruefsumme gegen das Archiv gegenpruefen, bevor sie
+          # veroeffentlicht wird — eine falsche Summe ist schlimmer als keine.
+          sha256sum -c SHA256SUMS
 
       - name: Release veröffentlichen
         env:
@@ -104,10 +107,10 @@ jobs:
           if gh release view "$TAG" >/dev/null 2>&1; then
             # Erneuter Lauf: Text und Archiv aktualisieren statt zu scheitern.
             gh release edit "$TAG" --notes-file release_notes.md
-            gh release upload "$TAG" "${{ steps.archiv.outputs.zip }}" --clobber
+            gh release upload "$TAG" "${{ steps.archiv.outputs.zip }}" SHA256SUMS --clobber
             echo "Release $TAG aktualisiert"
           else
-            gh release create "$TAG" "${{ steps.archiv.outputs.zip }}" \
+            gh release create "$TAG" "${{ steps.archiv.outputs.zip }}" SHA256SUMS \
               --title "NIGHTCRAWLER $TAG" \
               --notes-file release_notes.md \
               --target "${{ github.sha }}" \

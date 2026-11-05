@@ -5480,6 +5480,19 @@ async function loadSurveil(){
     apiGet('/api/stats'), apiGet('/api/trackings'), apiGet('/api/bandwidth/live'),
     apiGet('/api/trackings/tags-map')
   ]);
+  /* v4.2-W142: woher die Stream-Adressen der letzten Stunde kamen — bis
+     hierher nur in /healthz. „7 live, keiner restreamt" war im Deck nicht
+     von „alles normal" zu unterscheiden. Eigener Abruf, damit ein Ausfall
+     von /healthz die Tracking-Tabelle nicht mitnimmt. */
+  apiGet('/healthz').then(h=>{
+    const el=$('#sv_quellen'); if(!el) return;
+    const q=h&&h.quellen;
+    if(!q){ el.textContent=T('Adressen: keine Auskunft'); return; }
+    if(!q.gesamt){ el.textContent=T('Adressen: noch nichts gezählt'); return; }
+    const pz=Math.round((q.ohne_url_anteil||0)*100);
+    el.textContent=T('Adressen 1 h')+': API '+q.api+' · HTML '+q.html+' · yt-dlp '+q.ytdlp+' · '+T('ohne')+' '+q.keiner+' ('+pz+' %)';
+    el.style.color = pz>=50 ? 'var(--red)' : (pz>=20 ? 'var(--amber)' : '');
+  }).catch(()=>{ const el=$('#sv_quellen'); if(el) el.textContent=T('Adressen: keine Auskunft'); });
   if(stats && !stats.__neterr){
     $('#sv_track').textContent=stats.active_trackings??'--';
     $('#sv_live').textContent=stats.live_now??'--';
@@ -9718,6 +9731,7 @@ VIEW_LOADERS.wall = async function(){
       <div class="panel" style="margin-top:16px" id="pnl_targets">
         <div class="head"><h3>▚ Trackings</h3>
           <span class="tag" id="sv_gridmeta">—</span>
+          <span class="tag" id="sv_quellen" title="Woher die Stream-Adressen der letzten Stunde kamen (/healthz → quellen)">—</span>
           <div class="spacer"></div>
           <span class="faint mono" id="sv_last_refresh" style="font-size:10px"></span>
           <button class="btn sm" onclick="loadSurveil()" aria-label="Aktualisieren" title="Aktualisieren">↻</button>

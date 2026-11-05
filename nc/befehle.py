@@ -95,6 +95,10 @@ BEFEHLE = (
     # ── auf beiden Plattformen, EINE Logik (Telegram-Handler) ──────────────
     _b("tiktok", "analyse", _t("Profil-Analyse eines TikTok-Accounts"), "tiktok", "‹name›"),
     _b("live", "analyse", _t("Live-Status sofort pruefen"), "live", "@user"),
+    # v4.2-W142: die Quellprobe aus W141 ohne SSH — „warum wird @x nicht
+    # restreamt?" ist eine Frage, die man vom Handy aus stellt.
+    _b("quelle", "analyse", _t("Stream-Quellen eines Live-Nutzers messen (alle Wege, ffprobe)"),
+       "quelle", "‹name›"),
     _b("track_exact", "tracking", _t("Exakten Usernamen tracken (ohne Korrektur)"),
        "track_exact", "‹name›"),
     _b("pause", "tracking", _t("Tracking pausieren"), "pause_tracking", "@user"),
