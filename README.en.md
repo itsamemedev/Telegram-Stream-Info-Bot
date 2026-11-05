@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="docs/assets/banner.svg" alt="NIGHTCRAWLER — v4.4.1 Watchful" width="100%">
+<img src="docs/assets/banner.svg" alt="NIGHTCRAWLER — v4.5 Many-Voiced" width="100%">
 
 ### The control room for live streaming
 #### Monitoring · Recording · Multi-target restream · AI moderation
@@ -16,10 +16,10 @@
 [![CI](https://img.shields.io/github/actions/workflow/status/itsamemedev/Telegram-Stream-Info-Bot/ci.yml?branch=main&style=for-the-badge&label=CI&logo=githubactions&logoColor=white)](../../actions/workflows/ci.yml)
 
 [![Release](https://img.shields.io/github/v/release/itsamemedev/Telegram-Stream-Info-Bot?style=for-the-badge&label=Release&logo=github&color=E8C86A&labelColor=0C0B09)](https://github.com/itsamemedev/Telegram-Stream-Info-Bot/releases/latest)
-[![Version 4.4.1 Watchful](https://img.shields.io/badge/Version-4.4.1%20%C2%B7%20Watchful-C9A227?style=for-the-badge&labelColor=0C0B09)](docs/CHANGELOG.md)
+[![Version 4.5 Many-Voiced](https://img.shields.io/badge/Version-4.5%20%C2%B7%20Many--Voiced-C9A227?style=for-the-badge&labelColor=0C0B09)](docs/CHANGELOG.md)
 [![CodeQL](https://img.shields.io/github/actions/workflow/status/itsamemedev/Telegram-Stream-Info-Bot/codeql.yml?branch=main&style=for-the-badge&label=CodeQL&logo=github&logoColor=white)](../../actions/workflows/codeql.yml)
-[![Contracts](https://img.shields.io/badge/Contracts-1020%20passing-success?style=for-the-badge&logo=pytest&logoColor=white)](#-tests--verification-chain)
-[![Coverage](https://img.shields.io/badge/Coverage-56%20%25%20nc%2F%20%2B%20brain%2F-yellowgreen?style=for-the-badge&logo=codecov&logoColor=white)](#-tests--verification-chain)
+[![Contracts](https://img.shields.io/badge/Contracts-1027%20passing-success?style=for-the-badge&logo=pytest&logoColor=white)](#-tests--verification-chain)
+[![Coverage](https://img.shields.io/badge/Coverage-57%20%25%20nc%2F%20%2B%20brain%2F-yellowgreen?style=for-the-badge&logo=codecov&logoColor=white)](#-tests--verification-chain)
 
 [![Telegram](https://img.shields.io/badge/Telegram-Bot-26A5E4?style=flat-square&logo=telegram&logoColor=white)](#️-operating-it)
 [![Discord](https://img.shields.io/badge/Discord-65%20slash%20commands-5865F2?style=flat-square&logo=discord&logoColor=white)](#️-operating-it)
@@ -92,6 +92,7 @@ flowchart LR
 
 - [🗺️ Project layout](#️-project-layout)
 - [🩺 Troubleshooting](#-troubleshooting)
+- [🆕 New in v4.5](#-new-in-v45)
 - [🆕 New in v4.4](#-new-in-v44)
 - [📈 Project status](#-project-status)
 - [🧭 Roadmap](#-roadmap)
@@ -964,6 +965,28 @@ not take effect, broken contracts in `test_restream.py`.
 
 ---
 
+## 🆕 New in v4.5
+
+**“Many-Voiced”** — three languages, four themes, and profiles that actually
+say something. Waves W134 to W140, each in detail in the
+[changelog](docs/CHANGELOG.md) (German):
+
+- **Spanish** as the third language — all 1557 texts in the deck, brain page,
+  overlay, Telegram and Discord; a browser set to `es-*` gets it automatically.
+- **Two new themes:** “Kontrast” (every colour WCAG AAA, picked automatically
+  when the system asks for more contrast) and “Phosphor” (green screen phosphor
+  for the night) — both verified from the colour values.
+- **The TikTok profile in the deck loads again** and shows, in the deck,
+  Telegram and Discord, ratios, the follower trend over 24 h/7 days, account
+  type, language and bio link — or, if TikTok refuses, the reason and the fix.
+- **Honest online/offline:** “? unknown”, “pending” and “overdue” instead of a
+  silently stale value; every row says “checked … ago”.
+- **Discord** shows tables as code blocks instead of bold text.
+- **Supply chain:** raised lower bounds (69 known vulnerabilities fewer),
+  `requirements.lock.txt` checked with `pip-audit` in every CI run, Python 3.14
+  in CI, Dependabot; the Kick chat now waits 15 minutes after a Pusher refusal
+  instead of ten seconds.
+
 ## 🆕 New in v4.4
 
 **“Watchful”** — whatever goes wrong says so. Waves W60 to W132 at a glance;
@@ -1004,7 +1027,7 @@ service.
 
 | | |
 |---|---|
-| Current version | **4.4.1** — “Watchful” (2026.10) |
+| Current version | **4.5** — “Many-Voiced” (2026.11) |
 | Flask routes | 361 (34 in `bot.py` · 327 in `nc/routes/`) |
 | Discord slash commands | 45 |
 | Domain modules | 92 in `nc/` (+18 in `nc/routes/`, +3 in `nc/intel/`), 10 in `brain/` |
@@ -1104,7 +1127,7 @@ Third-party code and its licences:
 
 <div align="center">
 
-**NIGHTCRAWLER v4.4.1 · “Watchful”**
+**NIGHTCRAWLER v4.5 · “Many-Voiced”**
 
 **[🌐 lafap.de](https://lafap.de)** · **[💬 Discord](https://discord.gg/psvnxm7tSV)** · **[📓 Changelog](docs/CHANGELOG.md)**
 

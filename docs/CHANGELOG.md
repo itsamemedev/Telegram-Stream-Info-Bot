@@ -11,6 +11,11 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+## [4.5] — 2026-11-05 · „Vielstimmig"
+
+Drei Sprachen, vier Themen, Profile, die etwas sagen — und das Technologie-Audit
+mit Lieferkette, Lockfile und Python 3.14 in der CI. Wellen W134 bis W140.
+
 ### Neu — viertes Deck-Thema „Phosphor" (v4.2 W140)
 
 - Grüner Bildschirmphosphor für den Leitstand bei Nacht: kalt statt warm wie

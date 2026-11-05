@@ -4,9 +4,9 @@ Eine einzige Wahrheit für die Versionsanzeige (Dashboard-Footer, /api/version,
 „Was ist neu"-Panel). Reine Daten + kleine Helfer, voll testbar.
 """
 
-VERSION = "4.4.1"
-CODENAME = "Wachsam"
-RELEASE = "2026.10"
+VERSION = "4.5"
+CODENAME = "Vielstimmig"
+RELEASE = "2026.11"
 
 
 def build_stamp():
@@ -23,6 +23,24 @@ def build_stamp():
 # Meilenstein-Changelog, neueste Version zuerst. highlights = kurze, ehrliche
 # Stichpunkte dessen, was die Version bringt.
 CHANGELOG = [
+    {
+        "version": "4.5",
+        "date": "2026-11",
+        "title": "Vielstimmig",
+        # v4.5 traegt W134 bis W140: das Technologie-Audit (Lieferkette,
+        # Lockfile, Python 3.14 in der CI), den Kick-Chat, der nie lief, und
+        # die Oberflaeche — drei Sprachen, vier Themen, Profile, die etwas
+        # sagen, und ein Deck, das „unbekannt" nicht mehr als „live" zeigt.
+        "highlights": [
+            "Spanisch als dritte Sprache: alle 1557 Texte in Deck, Brain-Seite, Overlay, Telegram und Discord; ein Browser mit es-* bekommt sie von selbst, und ein Vertrag hält Platzhalter und Nähte auf dem Stand des Englischen",
+            "Zwei neue Deck-Themen: „Kontrast“ erreicht für jede Farbe WCAG AAA und wählt sich bei „mehr Kontrast“ im System von selbst, „Phosphor“ ist grüner Bildschirmphosphor für den Leitstand bei Nacht — beide aus den Farbwerten nachgerechnet",
+            "Das TikTok-Profil im Deck lud nie: die Route rief die Profilabfrage auf der HTTP-Session statt auf dem Scraper auf. Jetzt lädt es, und Deck, Telegram und Discord zeigen Verhältnisse, Follower-Verlauf über 24 h und 7 Tage, Kontoart, Sprache und Bio-Link — oder, wenn TikTok ablehnt, den Grund mit Abhilfe",
+            "Online/Offline ehrlich: wer seit über zehn Minuten nur „unbekannt“ liefert, steht als „? unbekannt“ da statt mit seinem alten Wert; nie geprüfte und überfällige Trackings sind sichtbar, jede Zeile nennt „geprüft vor …“",
+            "Discord zeigt die Telegram-Auswertungen lesbar: Tabellen als Codeblöcke statt Fettdruck, Links und Zitate übersetzt, geschnitten an Absatzgrenzen",
+            "Der Kick-Chat lief nie — Pusher lehnte den App-Key ab und der Bot versuchte es alle zehn Sekunden wieder. Schließcodes 4000–4099 warten jetzt 15 Minuten, und tools/kickpusher.py klärt Key und Cluster am Server",
+            "Lieferkette: Untergrenzen, die 69 bekannte Schwachstellen erlaubten, sind angehoben; der Produktionsstand liegt als requirements.lock.txt im Repo und wird in jedem CI-Lauf mit pip-audit geprüft, Python 3.14 läuft in der CI mit, Dependabot ist eingerichtet",
+        ],
+    },
     {
         "version": "4.4.1",
         "date": "2026-10",
