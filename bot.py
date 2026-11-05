@@ -849,6 +849,7 @@ from nc import prueflage as _nc_prueflage    # v4.2-W138: Pruefstand je Tracking
 from nc import quellstat as _nc_quellstat    # v4.2-W141: Herkunft der Stream-Adressen
 from nc import quellprobe as _nc_quellprobe  # v4.2-W142: /quelle ‹name›
 from nc import sicherungspruefung as _nc_sicherung  # v4.2-W142: Backup brauchbar?
+from nc import sqldialekt as _nc_sqldialekt   # v4.2-W143: Upsert in beiden Dialekten
 from nc.persona import (  # noqa: F401
     _persona_intensity_hint, _azrael_emotion)
 from nc.util import _webhook_event_match, _loop_not_ready  # noqa: F401
@@ -4053,50 +4054,20 @@ async def ai_history_clear(chat_id: int, user_id: int):
 
 def _migrate_columns(conn, table: str, expected: dict):
     """F26: ALTER TABLE für fehlende Spalten. expected = {col_name: 'TYPE DEFAULT ...'}.
-       Schützt Upgrades von älteren Bot-Versionen: CREATE TABLE IF NOT EXISTS
-       überspringt existierende Tabellen, neue Spalten würden sonst fehlen
-       und Queries crashen mit 'no such column'.
-       F46: MariaDB-kompatibel — INFORMATION_SCHEMA statt PRAGMA."""
-    try:
-        if DB_BACKEND == "mariadb":
-            rows = conn.execute(
-                "SELECT COLUMN_NAME FROM information_schema.COLUMNS "
-                "WHERE TABLE_SCHEMA=? AND TABLE_NAME=?",
-                (MARIADB_DB, table)).fetchall()
-            existing = {r["COLUMN_NAME"] for r in rows}
-        else:
-            existing = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
-    except Exception:
-        return
-    for col, type_spec in expected.items():
-        if col not in existing:
-            try:
-                conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {type_spec}")
-                log.info(f"DB-Migration: {table}.{col} ergänzt")
-            except Exception as e:
-                log.warning(f"DB-Migration {table}.{col} fehlgeschlagen: {e}")
+       v4.2-W143: die Logik liegt in nc/schema.py — der Umzug nach MariaDB
+       (nc/mariadbumzug.py) braucht dieselbe, ohne den Bot zu starten."""
+    _nc_schema.spalten_nachziehen(conn, table, expected, backend=DB_BACKEND,
+                                  mariadb_db=MARIADB_DB, log=log)
 
 
 def _schema_pk():
-    """F46: AUTO-INCREMENT-PK in jeweils nativer Form."""
-    if DB_BACKEND == "mariadb":
-        return "INT AUTO_INCREMENT PRIMARY KEY"
-    return "INTEGER PRIMARY KEY AUTOINCREMENT"
+    """F46: AUTO-INCREMENT-PK in jeweils nativer Form (v4.2-W143: nc/schema.py)."""
+    return _nc_schema.parameter(DB_BACKEND)["pk"]
 
 
 def _create_index_safe(conn, sql_sqlite, sql_mariadb=None):
-    """F46: Index-Create. SQLite: CREATE INDEX IF NOT EXISTS funktioniert.
-       MariaDB: kein 'IF NOT EXISTS' für Indexe in allen Versionen — try/except."""
-    if DB_BACKEND == "mariadb":
-        sql = sql_mariadb or sql_sqlite.replace("IF NOT EXISTS ", "")
-        try:
-            conn.execute(sql)
-        except Exception as e:
-            # Index existiert schon — MariaDB-typischer Fehler 1061 (duplicate key name)
-            if "1061" not in str(e) and "exist" not in str(e).lower():
-                log.warning(f"index create failed: {sql} → {e}")
-    else:
-        conn.execute(sql_sqlite)
+    """F46: Index-Create in beiden Dialekten (v4.2-W143: nc/schema.py)."""
+    _nc_schema.index_sicher(conn, sql_sqlite, sql_mariadb, backend=DB_BACKEND, log=log)
 
 
 # v4.2-W85: der beim Start gelesene Schema-Stand, damit /healthz ihn nennen
@@ -4107,8 +4078,9 @@ _SCHEMA_STAND = 0
 def init_db():
     """F46: backend-aware Schema. TEXT-Spalten in MariaDB werden bei UNIQUE/Index
        zu VARCHAR(255) — sonst meckert MariaDB. Datums-Werte bleiben als ISO-
-       Strings (TEXT/VARCHAR), das war in SQLite schon so. Migrate to-mariadb
-       Script siehe sqlite2mariadb.py."""
+       Strings (TEXT/VARCHAR), das war in SQLite schon so. Den Umzug einer
+       bestehenden SQLite-Datenbank nach MariaDB macht tools/zu_mariadb.py
+       (v4.2-W143; hier stand bis dahin ein sqlite2mariadb.py, das es nie gab)."""
     pk = _schema_pk()
     # Bei MariaDB brauchen wir VARCHAR(N) für indexed/unique TEXT-Spalten.
     is_my = DB_BACKEND == "mariadb"
@@ -16833,7 +16805,10 @@ def _loyalty_add(key, delta, name):
         with db_conn() as conn:
             conn.execute(
                 "INSERT INTO loyalty_points (k, name, points, updated) VALUES (?,?,?,?) "
-                "ON CONFLICT(k) DO UPDATE SET points=points+?, name=?, updated=?",
+                # v4.2-W143: ON CONFLICT ist SQLite; auf MariaDB wurden die
+                # Punkte sonst still nie gebucht (nc/sqldialekt.py).
+                + _nc_sqldialekt.bei_konflikt(DB_BACKEND, "k",
+                                              ["points=points+?", "name=?", "updated=?"]),
                 (key, name, delta, now, delta, name, now))
             conn.commit()
             r = conn.execute("SELECT points FROM loyalty_points WHERE k=?", (key,)).fetchone()
@@ -17267,7 +17242,7 @@ async def _oracle_memorize(username):
 
         def _ins():
             with db_conn() as conn:
-                conn.execute("INSERT INTO stream_memories (username, summary, lines, created_at) "
+                conn.execute("INSERT INTO stream_memories (username, summary, `lines`, created_at) "
                              "VALUES (?,?,?,?)",
                              (u, summary, len(text.splitlines()),
                               datetime.now(timezone.utc).isoformat()))

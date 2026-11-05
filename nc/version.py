@@ -4,7 +4,7 @@ Eine einzige Wahrheit für die Versionsanzeige (Dashboard-Footer, /api/version,
 „Was ist neu"-Panel). Reine Daten + kleine Helfer, voll testbar.
 """
 
-VERSION = "4.5.2"
+VERSION = "4.5.3"
 CODENAME = "Vielstimmig"
 RELEASE = "2026.11"
 
@@ -23,6 +23,20 @@ def build_stamp():
 # Meilenstein-Changelog, neueste Version zuerst. highlights = kurze, ehrliche
 # Stichpunkte dessen, was die Version bringt.
 CHANGELOG = [
+    {
+        "version": "4.5.3",
+        "date": "2026-11",
+        "title": "Vielstimmig",
+        # Dritte Patch-Fassung von 4.5: update.sh fragt nach, was fehlt, und
+        # zieht die Datenbank auf Wunsch nach MariaDB um (W143).
+        "highlights": [
+            "bash tools/update.sh fragt im geführten Modus nach allem, was fehlt: Prometheus, Grafana, optionale Pakete und den Umzug nach MariaDB — ein Zeitplan löst davon nie etwas aus",
+            "SQLite → MariaDB in einem Schritt: Server, Datenbank und Nutzer anlegen, Bot kurz stoppen, jede Tabelle umziehen, nachzählen und erst dann DB_BACKEND=mariadb in die .env schreiben — die SQLite-Datei bleibt als Rückweg liegen",
+            "Das MariaDB-Schema war nie lauffähig: zwei reservierte Spaltennamen (lines, trigger) und neun indizierte TEXT-Spalten brachen jeden Start; gegen einen echten MariaDB-Server gemessen und behoben",
+            "Treuepunkte und der Discord-Tagesbonus buchten auf MariaDB still nie — ON CONFLICT ist SQLite; beide Upserts sprechen jetzt beide Dialekte",
+            "Der Installer schaltete auf eine leere MariaDB um, obwohl die Daten in SQLite lagen; jetzt bleibt er auf SQLite und verweist auf den Umzug",
+        ],
+    },
     {
         "version": "4.5.2",
         "date": "2026-11",

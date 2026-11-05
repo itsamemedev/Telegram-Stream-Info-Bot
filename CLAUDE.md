@@ -26,7 +26,7 @@ benutzt, berät an der Lage vorbei.**
 
 ## Die eine Regel
 
-`bot.py` hat **26.273 Zeilen / 1,2 MB ≈ 295.000 Token**. Diese Datei wird
+`bot.py` hat **26.248 Zeilen / 1,2 MB ≈ 295.000 Token**. Diese Datei wird
 **nie** ganz gelesen und **nie** blind durchsucht. Erst fragen wo etwas steht,
 dann den Ausschnitt holen:
 
@@ -71,7 +71,7 @@ Auf diesem Windows-Rechner heißt der Interpreter **`python`** (3.13.12);
     brain_bridge.py      Adapter Bot ↔ brain/ (M2)
     brain/               KI-Kern: state, rules, router, agents, memory,
                          semantic, knowledge, scheduler, llm, report
-    nc/                  170 Fachmodule: db, scraping, restream, oauth, ledger,
+    nc/                  172 Fachmodule: db, scraping, restream, oauth, ledger,
                          i18n, …
     nc/routes/           38 Flask-Blueprints mit 338 weiteren API-Routen
     locales/             de.json, en.json, es.json — der Übersetzungskatalog
@@ -1155,6 +1155,18 @@ Konsolenzeile, nur leere Diagramme. Gefunden hat es das Messen im Browser
 (`getBoundingClientRect`), nicht das Lesen. Gemeinsame Regeln deshalb immer
 mit Kontext (`header .bar`), und nach einem Umbau die Seite **mit echten
 Daten** rendern — ohne `stats.json` war der Fehler unsichtbar.
+
+**Ein Schema, das nur SQLite gesehen hat, ist für MariaDB ungeprüft.**
+`DB_BACKEND=mariadb` stand seit v4.0 in der Doku, und kein Start hätte es
+überstanden: `lines` und `trigger` sind in MariaDB reserviert (1064), neun
+indizierte Spalten waren TEXT (1071), zwei Upserts sprachen `ON CONFLICT`.
+Aufgefallen ist es erst in v4.2-W143, beim ersten Umzug gegen einen echten
+Server — der Installer hatte bis dahin auf eine **leere** MariaDB
+umgeschaltet, und das sah aus wie verlorene Daten, nicht wie ein Fehler.
+Seither schneidet ein Vertrag das MariaDB-Schema ohne Server mit, Upserts
+gehen durch `nc/sqldialekt.py`, und umgezogen wird nur mit Nachzählen
+(`nc/mariadbumzug.py`): die `.env` wird erst umgestellt, wenn jede Tabelle
+stimmt.
 
 **Einmal-`await` ohne Supervisor.** Jeder Long-Running-Client braucht Reconnect
 mit Backoff **und** ein Abbruchkriterium für deterministische Fehler.

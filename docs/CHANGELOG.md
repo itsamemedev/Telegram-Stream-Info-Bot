@@ -11,6 +11,38 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+## [4.5.3] — 2026-11-05 · „Vielstimmig"
+
+### Neu — update.sh fragt nach, was fehlt (v4.2 W143)
+
+- **Zusatzfunktionen im geführten Modus:** `bash tools/update.sh` fragt nach
+  Prometheus (samt Grafana), nach optionalen Python-Paketen und — wenn die
+  Datenbank auf SQLite steht und Daten hat — nach dem Umzug zu MariaDB.
+  Unbeaufsichtigt, mit `--express` und bei `--check` wird nichts gefragt und
+  nichts ausgelöst: ein Zeitplan darf nie still eine Datenbank umziehen.
+- **SQLite → MariaDB** (`--mariadb`, `tools/zu_mariadb.py`,
+  `nc/mariadbumzug.py`): Server installieren, Datenbank und Nutzer anlegen
+  (Passwort über die Standardeingabe, nie in argv), Bot stoppen, umziehen,
+  **jede Tabelle nachzählen**, erst dann `DB_BACKEND=mariadb` und die
+  `MARIADB_*`-Werte in die `.env` (vorher `.env.vor-mariadb-<zeit>`, gleiche
+  Rechte und gleicher Besitzer), Bot wieder starten — auch nach einem Abbruch.
+  Ein nicht leeres Ziel wird nicht überschrieben; die SQLite-Datei wird nur
+  gelesen und bleibt als Rückweg (`DB_BACKEND=sqlite`).
+
+### Behoben
+
+- **Das MariaDB-Schema war nie lauffähig.** Gemessen gegen MariaDB 10.11:
+  `stream_memories.lines` und `evolution_log.trigger` sind reservierte Wörter
+  (1064), neun indizierte Spalten waren TEXT (1071). Jetzt gequotet bzw.
+  `VARCHAR`; auf SQLite ändert sich nichts.
+- **Treuepunkte und Discord-Tagesbonus** buchten auf MariaDB still nie:
+  `ON CONFLICT … DO UPDATE` ist SQLite. Ein Baustein (`nc/sqldialekt.py`)
+  schreibt beide Formen.
+- **Der Installer** setzte `DB_BACKEND=mariadb`, ohne eine Zeile umzuziehen —
+  der Bot startete gegen eine leere Datenbank. Liegen Daten in SQLite, bleibt
+  er jetzt dort und verweist auf `update.sh --mariadb`.
+- `init_db` verwies auf ein `tools/sqlite2mariadb.py`, das es nie gab.
+
 ## [4.5.2] — 2026-11-05 · „Vielstimmig"
 
 ### Neu — zehn Verbesserungen quer durch das Projekt (v4.2 W142)

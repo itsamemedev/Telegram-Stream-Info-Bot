@@ -6,6 +6,7 @@
 #     bash tools/update.sh --check          nur pruefen; Exit 1, wenn etwas fehlt
 #     bash tools/update.sh --dry-run        zeigen, was liefe — nichts ausfuehren
 #     bash tools/update.sh --python-deps --optional --unattended
+#     bash tools/update.sh --mariadb        SQLite -> MariaDB umziehen (v4.2-W143)
 #     bash tools/update.sh --help           alle Schalter
 #
 # WARUM ES DAS GIBT
@@ -57,7 +58,7 @@ NC_MODUS="gefuehrt"
 NUR_PRUEFEN=0
 TROCKEN=0
 UPGRADE=0
-W_SYSTEM=0; W_PYTHON=0; W_OPTIONAL=0; W_BEOBACHTUNG=""
+W_SYSTEM=0; W_PYTHON=0; W_OPTIONAL=0; W_BEOBACHTUNG=""; W_MARIADB=0
 ZIEL="$(cd "$SKRIPT/.." && pwd)"
 
 while [ $# -gt 0 ]; do
@@ -73,6 +74,7 @@ while [ $# -gt 0 ]; do
     --all)            W_SYSTEM=1; W_PYTHON=1; W_OPTIONAL=1;;
     --observability)  W_BEOBACHTUNG="--no-grafana";;
     --observability=grafana) W_BEOBACHTUNG="--grafana";;
+    --mariadb)        W_MARIADB=1;;
     --dir)            ZIEL="${2:-}"; shift;;
     --dir=*)          ZIEL="${1#*=}";;
     --pkg)            NC_PKG="${2:-}"; shift;;
@@ -93,6 +95,7 @@ Was (ohne Auswahl: --system und --python-deps):
   --optional       zusaetzlich die als [optional] markierten Pakete
   --all            alles oben
   --observability  Prometheus einrichten bzw. abgleichen (=grafana: mit Grafana)
+  --mariadb        Datenbank von SQLite nach MariaDB umziehen und .env umstellen
 
 Wie:
   --check          nur pruefen und berichten; Exitcode 1, wenn etwas fehlt
@@ -154,6 +157,81 @@ lauf(){
 }
 
 BEFUND=0     # 1, sobald nach allem noch etwas fehlt
+
+# mariadb_umzug -> 0 umgezogen; sonst 1 und der Bot laeuft weiter auf SQLite.
+#
+# v4.2-W143. Die Reihenfolge ist die Sicherung: erst Server, Datenbank und
+# Nutzer, dann den Bot stoppen (was er nach dem Export schriebe, fehlte
+# sonst), dann tools/zu_mariadb.py — das zaehlt nach und stellt die .env nur
+# bei Gleichstand um. Gestartet wird der Dienst danach IMMER wieder, auch
+# nach einem Abbruch: dann eben auf SQLite, unveraendert. Ein Umzug, der den
+# Bot gestoppt zuruecklaesst, waere schlimmer als keiner.
+mariadb_umzug(){
+  local db nu host port pw cli rc=0 gestoppt=""
+  db="$(env_wert MARIADB_DB)"; db="${db:-nightcrawler}"
+  nu="$(env_wert MARIADB_USER)"; nu="${nu:-nightcrawler}"
+  host="$(env_wert MARIADB_HOST)"; host="${host:-127.0.0.1}"
+  port="$(env_wert MARIADB_PORT)"; port="${port:-3306}"
+  pw="$(env_wert MARIADB_PASSWORD)"
+  if [ -z "$pw" ]; then
+    pw="$("${VPY:-python3}" -c 'import secrets;print(secrets.token_urlsafe(24))' 2>/dev/null \
+          || python3 -c 'import secrets;print(secrets.token_urlsafe(24))')"
+  fi
+  local _s=(); [ -n "$SUDO" ] && [ "$SUDO" != "-" ] && _s=("$SUDO")
+  abschnitt "MariaDB"
+  if ! have mariadb && ! have mysql; then
+    # shellcheck disable=SC2046  # Paketliste aus lib/system.sh, feste Woerter
+    lauf ${_s[@]+"${_s[@]}"} $(nc_installbefehl "$(nc_paketname mariadb)") \
+      || { warn "MariaDB-Server liess sich nicht installieren — Umzug abgebrochen, nichts veraendert."; return 1; }
+    if [ "$TROCKEN" = 0 ] && have systemctl; then
+      lauf ${_s[@]+"${_s[@]}"} systemctl enable --now mariadb || true
+    fi
+  fi
+  cli="$(command -v mariadb || command -v mysql || printf 'mariadb')"
+  if [ "$TROCKEN" = 1 ]; then
+    # Das Passwort steht nie in einer Befehlszeile, auch nicht im Trockenlauf.
+    printf '    %s$%s nc_mariadb_sql %s %s *** | %s\n' "$FNT" "$R" "$db" "$nu" "$cli"
+  elif nc_mariadb_sql "$db" "$nu" "$pw" | ${_s[@]+"${_s[@]}"} "$cli"; then
+    gut "Datenbank %s und Nutzer %s angelegt bzw. abgeglichen." "$db" "$nu"
+  else
+    warn "Datenbank/Nutzer liessen sich nicht anlegen — Umzug abgebrochen, nichts veraendert."
+    return 1
+  fi
+  nc_dienst_finden
+  if [ -n "$NC_DIENST" ] && systemctl is-active --quiet "$NC_DIENST" 2>/dev/null; then
+    if [ "$NC_MODUS" = "gefuehrt" ] && [ "$TROCKEN" = 0 ] && ! frage_ja "Bot-Dienst fuer den Umzug kurz stoppen?" J; then
+      info "Umzug uebersprungen — der Bot laeuft weiter auf SQLite."
+      return 1
+    fi
+    lauf ${_s[@]+"${_s[@]}"} systemctl stop "$NC_DIENST" && gestoppt="$NC_DIENST"
+  fi
+  # Hat dieses Skript den Dienst selbst gestoppt und systemd bestaetigt das,
+  # ist das die staerkere Aussage als jede Handle-Suche: mit eingeschraenktem
+  # /proc (LXC, hidepid) entschiede zu_mariadb.py sonst nach der
+  # Aenderungszeit — und die ist direkt nach dem Stopp frisch (Checkpoint
+  # beim Schliessen), der Umzug verweigerte genau den sicheren Fall.
+  local _tz=()
+  if [ -n "$gestoppt" ] && ! systemctl is-active --quiet "$gestoppt" 2>/dev/null; then
+    _tz=(--trotzdem)
+  fi
+  if [ "$TROCKEN" = 1 ]; then
+    printf '    %s$%s NC_MARIADB_PASSWORD=*** %s %s --dir %s\n' "$FNT" "$R" "$VPY" "$SKRIPT/zu_mariadb.py" "$ZIEL"
+  else
+    printf '    %s$ NC_MARIADB_PASSWORD=*** %s %s --dir %s%s%s\n' "$FNT" "$VPY" "$SKRIPT/zu_mariadb.py" "$ZIEL" "${_tz[*]:+ ${_tz[*]}}" "$R"
+    NC_MARIADB_PASSWORD="$pw" "$VPY" "$SKRIPT/zu_mariadb.py" --dir "$ZIEL" \
+      --host "$host" --port "$port" --db "$db" --user "$nu" ${_tz[@]+"${_tz[@]}"} || rc=$?
+  fi
+  if [ -n "$gestoppt" ]; then
+    lauf ${_s[@]+"${_s[@]}"} systemctl start "$gestoppt" \
+      || warn "Dienst %s liess sich nicht wieder starten — bitte von Hand: systemctl start %s" "$gestoppt" "$gestoppt"
+  fi
+  if [ "$rc" = 0 ] && [ "$TROCKEN" = 0 ]; then
+    gut "Umzug abgeschlossen — der Bot laeuft jetzt auf MariaDB."
+  elif [ "$rc" != 0 ]; then
+    warn "Umzug abgebrochen (siehe Grund oben) — der Bot laeuft unveraendert auf SQLite."
+  fi
+  return "$rc"
+}
 
 # ═══════════════════════════════════════════════════════════════════════════
 kopf "Erkennung"
@@ -330,6 +408,69 @@ if [ "$W_PYTHON" = 1 ]; then
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════
+# Zusatzfunktionen (v4.2-W143)
+# ═══════════════════════════════════════════════════════════════════════════
+# Der Betreiber am 05.11.: „update.sh sollte interaktiv alle fehlenden
+# Funktionen, plugins, Software nach installieren. Also Prometheus grafana und
+# Co." Alles hier war schon da — nur nie GEFRAGT: Prometheus/Grafana hingen an
+# --observability, die optionalen Pakete an --optional, und wer die Schalter
+# nicht kannte, bekam „Nichts zu tun". Gefragt wird nur im gefuehrten Modus;
+# unbeaufsichtigt und mit --express gilt weiter nur, was per Schalter gewaehlt
+# ist — ein Zeitplan darf nie still einen Datenbank-Umzug ausloesen.
+#
+# Nichts davon ist ein Befund fuer --check: ein Bot ohne Prometheus oder auf
+# SQLite ist vollstaendig. Gemeldet wird es trotzdem, damit man es weiss.
+Z_PROM=0; Z_GRAF=0; Z_MARIA=0
+_fragen(){ [ "$NC_MODUS" = "gefuehrt" ] && [ "$NUR_PRUEFEN" = 0 ] && [ -n "$NC_TTY" ]; }
+kopf "Zusatzfunktionen"
+if [ -z "$W_BEOBACHTUNG" ]; then
+  if have prometheus || { have systemctl && systemctl list-unit-files --no-legend \
+       nightcrawler-prometheus.service 2>/dev/null | grep -q .; }; then
+    gut "Prometheus: eingerichtet"
+  else
+    info "Prometheus: nicht eingerichtet — Kennzahlen unter /metrics und Alarme bleiben ungelesen."
+    if _fragen && frage_ja "Prometheus jetzt einrichten?" N; then
+      Z_PROM=1
+      frage_ja "Grafana dazu (Diagramme im Browser, nur ueber SSH-Tunnel)?" N && Z_GRAF=1
+    fi
+  fi
+fi
+# Nur wenn gefragt wird: ohne Rueckfrage nennt der Abgleich die optionalen
+# Pakete bewusst nicht (W129 — wer die Sprachreaktion ausgeschaltet hat, soll
+# nicht von faster-whisper lesen).
+if _fragen && [ "$W_PYTHON" = 1 ] && [ "$W_OPTIONAL" = 0 ] && [ -n "${_tab:-}" ]; then
+  _opt="$(printf '%s\n' "$_tab" | awk -F '\t' '$5=="optional" && ($1=="fehlt" || $1=="alt") {printf " %s", $2}')"
+  if [ -n "$_opt" ]; then
+    info "Optionale Pakete nicht installiert:%s" "$_opt"
+    if frage_ja "Optionale Pakete mitinstallieren?" N; then
+      W_OPTIONAL=1
+      abgleich_lesen <<< "$_tab" >/dev/null
+    fi
+  fi
+fi
+DB_JETZT="$(env_wert DB_BACKEND | tr 'A-Z' 'a-z')"
+SQ_PFAD="$(env_wert DB_PATH)"; SQ_PFAD="${SQ_PFAD:-tiktok_bot.db}"
+case "$SQ_PFAD" in /*) ;; *) SQ_PFAD="$ZIEL/$SQ_PFAD";; esac
+if [ "$DB_JETZT" = "mariadb" ]; then
+  gut "Datenbank: MariaDB"
+  [ "$W_MARIADB" = 1 ] && info "DB_BACKEND steht schon auf mariadb — kein Umzug noetig."
+elif [ ! -s "$SQ_PFAD" ]; then
+  info "Datenbank: SQLite, noch ohne Datei — ein Umzug lohnt erst mit Daten."
+else
+  info "Datenbank: SQLite (%s)" "$SQ_PFAD"
+  if [ "$W_MARIADB" = 1 ]; then
+    Z_MARIA=1
+  elif _fragen; then
+    erklaere "MariaDB lohnt, wenn die Datenbank gross wird oder mehrere Rechner darauf sollen. Der Umzug stoppt den Bot kurz, legt Server, Datenbank und Nutzer an, zieht jede Tabelle um, zaehlt nach und stellt erst dann die .env um. Die SQLite-Datei bleibt liegen — Rueckweg: DB_BACKEND=sqlite."
+    frage_ja "Datenbank nach MariaDB umziehen?" N && Z_MARIA=1
+  fi
+fi
+# Der Umzug braucht PyMySQL im venv — sonst scheiterte er erst nach dem Stopp.
+if [ "$Z_MARIA" = 1 ] && [ -x "$VPY" ] && ! "$VPY" -c 'import pymysql' 2>/dev/null; then
+  PY_FEHLT="$PY_FEHLT PyMySQL>=1.1.1"
+fi
+
+# ═══════════════════════════════════════════════════════════════════════════
 kopf "Plan"
 PLAN=0
 if [ -n "$SYS_PAKETE" ]; then
@@ -351,6 +492,8 @@ elif [ -n "$PY_FEHLT" ]; then
 fi
 [ -n "$PIP_STATT" ] && { PLAN=1; info "Per pip in .venv:%s" "$PIP_STATT"; }
 [ "$UPGRADE" = 1 ] && [ "$W_PYTHON" = 1 ] && { PLAN=1; info "Python-Pakete auf neueste zulaessige Fassung heben (--upgrade)"; }
+[ "$Z_PROM" = 1 ] && { PLAN=1; if [ "$Z_GRAF" = 1 ]; then info "Prometheus und Grafana einrichten"; else info "Prometheus einrichten"; fi; }
+[ "$Z_MARIA" = 1 ] && { PLAN=1; info "Datenbank umziehen: SQLite -> MariaDB (Server, Nutzer, Umzug, Nachzaehlen, .env)"; }
 
 if [ "$PLAN" = 0 ]; then
   if [ "$BEFUND" = 0 ]; then gut "Nichts zu tun — alles vorhanden."
@@ -418,6 +561,16 @@ if [ "$W_PYTHON" = 1 ] || [ -n "$PIP_STATT" ]; then
     fi
   fi
 fi
+
+if [ "$Z_PROM" = 1 ]; then
+  _w=(--no-grafana); [ "$Z_GRAF" = 1 ] && _w=(--grafana)
+  _w+=(--dir "$ZIEL"); [ "$TROCKEN" = 1 ] && _w+=(--dry-run)
+  [ "$NC_MODUS" = "unattended" ] && _w+=(--unattended)
+  _sudo=(); [ -n "$SUDO" ] && [ "$SUDO" != "-" ] && _sudo=("$SUDO")
+  lauf ${_sudo[@]+"${_sudo[@]}"} bash "$SKRIPT/observability.sh" "${_w[@]}" \
+    || { warn "Prometheus/Grafana: Einrichtung unvollstaendig (siehe oben)."; BEFUND=1; }
+fi
+[ "$Z_MARIA" = 1 ] && { mariadb_umzug || BEFUND=1; }
 
 if [ "$TROCKEN" = 1 ]; then
   info "Trockenlauf beendet — nichts wurde veraendert."

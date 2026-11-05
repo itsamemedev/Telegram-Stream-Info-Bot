@@ -291,7 +291,7 @@ def create_schema(conn, *, pk, txt_idx, txt_long, txt_big, iv, tbl_opts, is_my,
     conn.execute(f"""
     CREATE TABLE IF NOT EXISTS event_log (
         id {pk},
-        ts {txt_long} NOT NULL,
+        ts {ts} NOT NULL,
         kind {txt_idx} NOT NULL,
         severity {txt_long} DEFAULT 'info',
         summary {txt_long},
@@ -335,7 +335,7 @@ def create_schema(conn, *, pk, txt_idx, txt_long, txt_big, iv, tbl_opts, is_my,
         follower_count INT,
         heart_count BIGINT,
         video_count INT,
-        captured_at {txt_long} NOT NULL
+        captured_at {ts} NOT NULL
     ){tbl_opts}""")
     _create_index_safe(conn,
         "CREATE INDEX IF NOT EXISTS idx_prof_snap_user ON profile_snapshots(username, captured_at DESC)",
@@ -351,7 +351,7 @@ def create_schema(conn, *, pk, txt_idx, txt_long, txt_big, iv, tbl_opts, is_my,
         ended_at {ts},
         recorder_pid INT,
         output_file {txt_long},
-        status {txt_long} DEFAULT 'running',
+        status {txt_idx} DEFAULT 'running',
         file_size BIGINT,
         triggered_by {txt_long} DEFAULT 'dashboard'
     ){tbl_opts}""")
@@ -382,7 +382,7 @@ def create_schema(conn, *, pk, txt_idx, txt_long, txt_big, iv, tbl_opts, is_my,
     conn.execute(f"""
     CREATE TABLE IF NOT EXISTS kick_mod_log (
         id {pk},
-        ts {txt_long} NOT NULL,
+        ts {ts} NOT NULL,
         kind {txt_long},
         actor {txt_long},
         content {txt_big},
@@ -396,7 +396,7 @@ def create_schema(conn, *, pk, txt_idx, txt_long, txt_big, iv, tbl_opts, is_my,
     conn.execute(f"""
     CREATE TABLE IF NOT EXISTS overlay_events (
         id {pk},
-        ts {txt_long} NOT NULL,
+        ts {ts} NOT NULL,
         kind {txt_long},
         name {txt_long},
         amount {txt_long},
@@ -440,7 +440,7 @@ def create_schema(conn, *, pk, txt_idx, txt_long, txt_big, iv, tbl_opts, is_my,
     # Zeit) — fuer die Lern-/Wachstumskurve im Dashboard. Ein Snapshot je Stunde.
     conn.execute(f"""
     CREATE TABLE IF NOT EXISTS brain_growth (
-        ts {txt_long} NOT NULL,
+        ts {ts} NOT NULL,
         triples INT DEFAULT 0,
         vectors INT DEFAULT 0,
         users INT DEFAULT 0,
@@ -524,9 +524,9 @@ def create_schema(conn, *, pk, txt_idx, txt_long, txt_big, iv, tbl_opts, is_my,
     conn.execute(f"""
     CREATE TABLE IF NOT EXISTS stream_memories (
         id {pk},
-        username {txt_long},
+        username {txt_idx},
         summary {txt_big},
-        lines INTEGER,
+        `lines` INTEGER,
         created_at {ts} NOT NULL
     ){tbl_opts}""")
     conn.execute(
@@ -535,7 +535,7 @@ def create_schema(conn, *, pk, txt_idx, txt_long, txt_big, iv, tbl_opts, is_my,
     conn.execute(f"""
     CREATE TABLE IF NOT EXISTS stream_chapters (
         id {pk},
-        username {txt_long},
+        username {txt_idx},
         recfile {txt_long},
         offset_secs REAL,
         reason {txt_long},
@@ -713,7 +713,7 @@ def create_schema(conn, *, pk, txt_idx, txt_long, txt_big, iv, tbl_opts, is_my,
         insights INT DEFAULT 0,
         proposals INT DEFAULT 0,
         files INT DEFAULT 0,
-        trigger {txt_idx}
+        `trigger` {txt_idx}
     ){tbl_opts}""")
     # Generierte Weiterentwicklungs-Vorschläge (zum Review).
     conn.execute(f"""
@@ -731,3 +731,88 @@ def create_schema(conn, *, pk, txt_idx, txt_long, txt_big, iv, tbl_opts, is_my,
     ){tbl_opts}""")
 
     conn.commit()
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# v4.2-W143: die Helfer, die create_schema hereingereicht bekommt, liegen ab
+# hier im Modul und nicht mehr nur in bot.py. Grund ist der Umzug SQLite ->
+# MariaDB (nc/mariadbumzug.py): er muss das Schema auf dem ZIEL anlegen, ohne
+# den Bot zu starten — und zwei Fassungen derselben Typtabelle laufen ueber
+# die Monate auseinander (die Lehre aus W100, "zwei Listen fuer denselben
+# Zweck"). bot.py ruft jetzt hierher durch; create_schema selbst bleibt
+# unveraendert (siehe CLAUDE.md, "Sie wird nicht zerlegt").
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+def parameter(backend):
+    """Die Platzhalter fuer create_schema — dieselbe Tabelle wie bot.init_db().
+
+    MariaDB braucht VARCHAR fuer indizierte Text- und Zeitspalten: eine
+    indizierte TEXT-Spalte sprengt unter utf8mb4 die 3072-Byte-Grenze
+    (Fehler 1071, v4.0-W79)."""
+    is_my = backend == "mariadb"
+    return {
+        "pk": "INT AUTO_INCREMENT PRIMARY KEY" if is_my else "INTEGER PRIMARY KEY AUTOINCREMENT",
+        "txt_idx": "VARCHAR(255)" if is_my else "TEXT",
+        "txt_long": "TEXT",
+        "txt_big": "MEDIUMTEXT" if is_my else "TEXT",
+        "ts": "VARCHAR(64)" if is_my else "TEXT",
+        "iv": "INTEGER",
+        "tbl_opts": (" ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci"
+                     if is_my else ""),
+        "is_my": is_my,
+    }
+
+
+def index_sicher(conn, sql_sqlite, sql_mariadb=None, *, backend, log):
+    """CREATE INDEX in beiden Dialekten. MariaDB kennt 'IF NOT EXISTS' fuer
+    Indexe nicht in jeder Fassung; ein vorhandener Index (1061) ist dort kein
+    Fehler, sondern der zweite Lauf."""
+    if backend == "mariadb":
+        sql = sql_mariadb or sql_sqlite.replace("IF NOT EXISTS ", "")
+        try:
+            conn.execute(sql)
+        except Exception as e:
+            if "1061" not in str(e) and "exist" not in str(e).lower():
+                log.warning(f"index create failed: {sql} → {e}")
+    else:
+        conn.execute(sql_sqlite)
+
+
+def spalten_nachziehen(conn, table, expected, *, backend, mariadb_db, log):
+    """ALTER TABLE fuer fehlende Spalten (F26/F46). expected = {name: 'TYP …'}."""
+    try:
+        if backend == "mariadb":
+            rows = conn.execute(
+                "SELECT COLUMN_NAME FROM information_schema.COLUMNS "
+                "WHERE TABLE_SCHEMA=? AND TABLE_NAME=?",
+                (mariadb_db, table)).fetchall()
+            existing = {r["COLUMN_NAME"] for r in rows}
+        else:
+            existing = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+    except Exception as e:
+        # Ohne Spaltenliste kein sicheres ALTER — lieber gar keins als eins,
+        # das eine vorhandene Spalte doppelt anlegt.
+        log.warning("DB-Migration: Spalten von %s nicht lesbar (%s) — uebersprungen", table, e)
+        return
+    for col, type_spec in expected.items():
+        if col not in existing:
+            try:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {type_spec}")
+                log.info(f"DB-Migration: {table}.{col} ergänzt")
+            except Exception as e:
+                log.warning(f"DB-Migration {table}.{col} fehlgeschlagen: {e}")
+
+
+def anlegen(conn, *, backend, mariadb_db, log):
+    """Das vollstaendige Schema auf `conn` — ohne den Bot (nc/mariadbumzug)."""
+    p = parameter(backend)
+    create_schema(
+        conn, pk=p["pk"], txt_idx=p["txt_idx"], txt_long=p["txt_long"],
+        txt_big=p["txt_big"], iv=p["iv"], tbl_opts=p["tbl_opts"], is_my=p["is_my"],
+        ts=p["ts"],
+        _create_index_safe=lambda c, a, b=None: index_sicher(c, a, b, backend=backend, log=log),
+        _migrate_columns=lambda c, t, e: spalten_nachziehen(
+            c, t, e, backend=backend, mariadb_db=mariadb_db, log=log),
+        log=log)
+    return p

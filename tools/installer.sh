@@ -866,7 +866,20 @@ f_datenbank(){
     local pw
     frage_geheimnis pw "Passwort fuer den Datenbank-Nutzer 'nightcrawler'" 1 24 0 "$(env_get MARIADB_PASSWORD)"
     [ -z "$pw" ] && pw="$(erzeuge_passwort 24)"
-    env_set DB_BACKEND mariadb
+    # v4.2-W143: liegen schon Daten in SQLite, wird NICHT umgeschaltet. Bis
+    # hierher setzte der Installer DB_BACKEND=mariadb und zog keine einzige
+    # Zeile um — der Bot startete gegen eine leere Datenbank, Trackings und
+    # Ledger schienen weg, und nichts meldete einen Fehler. Eingerichtet wird
+    # MariaDB trotzdem; den Umzug samt Nachzaehlen und Umschalten macht
+    # update.sh --mariadb (tools/zu_mariadb.py).
+    local _sq; _sq="$(env_get DB_PATH 2>/dev/null || true)"; _sq="${_sq:-tiktok_bot.db}"
+    case "$_sq" in /*) ;; *) _sq="$ZIEL/$_sq";; esac
+    if [ "$vor" != "mariadb" ] && [ -s "$_sq" ]; then
+      warn "In %s liegen schon Daten — DB_BACKEND bleibt vorerst auf sqlite." "$_sq"
+      merke "MariaDB eingerichtet, Daten noch in SQLite. Umzug: bash tools/update.sh --mariadb"
+    else
+      env_set DB_BACKEND mariadb
+    fi
     env_set MARIADB_HOST 127.0.0.1
     env_set MARIADB_DB nightcrawler
     env_set MARIADB_USER nightcrawler
@@ -1446,10 +1459,9 @@ if [ "$P_DB" = "mariadb" ]; then
     # Passwort ueber die Standardeingabe statt auf der Kommandozeile: ein
     # Passwort in argv steht in der Prozessliste und damit fuer JEDEN Nutzer
     # sichtbar. IF NOT EXISTS + ALTER USER: ein zweiter Lauf gleicht nur an.
-    if printf 'CREATE DATABASE IF NOT EXISTS nightcrawler CHARACTER SET utf8mb4;\n%s\n%s\n%s\nFLUSH PRIVILEGES;\n' \
-         "CREATE USER IF NOT EXISTS 'nightcrawler'@'localhost' IDENTIFIED BY '$(printf '%s' "$DBPW" | sed "s/'/''/g")';" \
-         "ALTER USER 'nightcrawler'@'localhost' IDENTIFIED BY '$(printf '%s' "$DBPW" | sed "s/'/''/g")';" \
-         "GRANT ALL PRIVILEGES ON nightcrawler.* TO 'nightcrawler'@'localhost';" \
+    # v4.2-W143: das SQL kommt aus lib/system.sh — dieselbe Quelle wie der
+    # Umzug in update.sh.
+    if nc_mariadb_sql nightcrawler nightcrawler "$DBPW" \
        | ${SUDO:+$SUDO} "$MYSQL_CLI" 2>/dev/null; then
       gut "MariaDB eingerichtet (Datenbank und Nutzer 'nightcrawler')."
       merke "MariaDB: Nutzer nightcrawler, Passwort in .env (MARIADB_PASSWORD)"

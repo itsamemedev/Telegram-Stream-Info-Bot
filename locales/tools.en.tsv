@@ -850,3 +850,33 @@ voller Restream	full restream
 voller Restream — Kick, Twitch, YouTube, mit Overlay	full restream — Kick, Twitch, YouTube, with overlay
 --profile braucht deploy/profile/ — den Installer aus einem Checkout starten: git clone …, dann bash tools/installer.sh --profile %s	--profile needs deploy/profile/ — start the installer from a checkout: git clone …, then bash tools/installer.sh --profile %s
 --set und --expert brauchen .env.example — den Installer aus einem Checkout starten (git clone …, dann bash tools/installer.sh).	--set and --expert need .env.example — start the installer from a checkout (git clone …, then bash tools/installer.sh).
+# v4.2-W143: update.sh Zusatzfunktionen, MariaDB-Umzug, Installer-Riegel
+--mariadb        Datenbank von SQLite nach MariaDB umziehen und .env umstellen	--mariadb        move the database from SQLite to MariaDB and switch the .env
+Bot-Dienst fuer den Umzug kurz stoppen?	Stop the bot service briefly for the move?
+DB_BACKEND steht schon auf mariadb — kein Umzug noetig.	DB_BACKEND is already mariadb — no move needed.
+Datenbank %s und Nutzer %s angelegt bzw. abgeglichen.	Database %s and user %s created or reconciled.
+Datenbank nach MariaDB umziehen?	Move the database to MariaDB?
+Datenbank umziehen: SQLite -> MariaDB (Server, Nutzer, Umzug, Nachzaehlen, .env)	Move database: SQLite -> MariaDB (server, user, move, recount, .env)
+Datenbank/Nutzer liessen sich nicht anlegen — Umzug abgebrochen, nichts veraendert.	Could not create database/user — move aborted, nothing changed.
+Datenbank: MariaDB	Database: MariaDB
+Datenbank: SQLite (%s)	Database: SQLite (%s)
+Datenbank: SQLite, noch ohne Datei — ein Umzug lohnt erst mit Daten.	Database: SQLite, no file yet — a move only makes sense once there is data.
+Dienst %s liess sich nicht wieder starten — bitte von Hand: systemctl start %s	Service %s could not be started again — please do it by hand: systemctl start %s
+Grafana dazu (Diagramme im Browser, nur ueber SSH-Tunnel)?	Add Grafana (charts in the browser, only via SSH tunnel)?
+In %s liegen schon Daten — DB_BACKEND bleibt vorerst auf sqlite.	%s already holds data — DB_BACKEND stays on sqlite for now.
+MariaDB	MariaDB
+MariaDB eingerichtet, Daten noch in SQLite. Umzug: bash tools/update.sh --mariadb	MariaDB set up, data still in SQLite. Move: bash tools/update.sh --mariadb
+MariaDB lohnt, wenn die Datenbank gross wird oder mehrere Rechner darauf sollen. Der Umzug stoppt den Bot kurz, legt Server, Datenbank und Nutzer an, zieht jede Tabelle um, zaehlt nach und stellt erst dann die .env um. Die SQLite-Datei bleibt liegen — Rueckweg: DB_BACKEND=sqlite.	MariaDB pays off when the database grows large or several machines need it. The move stops the bot briefly, creates the server, database and user, moves every table, recounts and only then switches the .env. The SQLite file stays where it is — the way back is DB_BACKEND=sqlite.
+MariaDB-Server liess sich nicht installieren — Umzug abgebrochen, nichts veraendert.	Could not install the MariaDB server — move aborted, nothing changed.
+Optionale Pakete mitinstallieren?	Install the optional packages as well?
+Optionale Pakete nicht installiert:%s	Optional packages not installed:%s
+Prometheus einrichten	Set up Prometheus
+Prometheus jetzt einrichten?	Set up Prometheus now?
+Prometheus und Grafana einrichten	Set up Prometheus and Grafana
+Prometheus/Grafana: Einrichtung unvollstaendig (siehe oben).	Prometheus/Grafana: setup incomplete (see above).
+Prometheus: eingerichtet	Prometheus: set up
+Prometheus: nicht eingerichtet — Kennzahlen unter /metrics und Alarme bleiben ungelesen.	Prometheus: not set up — the metrics under /metrics and the alerts go unread.
+Umzug abgebrochen (siehe Grund oben) — der Bot laeuft unveraendert auf SQLite.	Move aborted (see the reason above) — the bot keeps running on SQLite, unchanged.
+Umzug abgeschlossen — der Bot laeuft jetzt auf MariaDB.	Move complete — the bot now runs on MariaDB.
+Umzug uebersprungen — der Bot laeuft weiter auf SQLite.	Move skipped — the bot keeps running on SQLite.
+Zusatzfunktionen	Additional features

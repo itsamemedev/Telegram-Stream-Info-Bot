@@ -276,3 +276,34 @@ nc_firewall_hinweis(){
     *)          printf 'ufw allow from <DEINE-IP> to any port %s' "$1";;
   esac
 }
+
+# nc_mariadb_sql DB NUTZER PASSWORT -> das SQL fuer Datenbank und Nutzer
+#
+# v4.2-W143: EINE Stelle fuer Installer und update.sh. Vorher stand der Block
+# nur im Installer; ein zweiter Weg (der Umzug in update.sh) haette ihn
+# abgeschrieben, und zwei Fassungen laufen auseinander (W100). Gedacht fuer
+# eine Pipe in den Client — das Passwort ueber die Standardeingabe, nie in
+# argv (dort stuende es in der Prozessliste). IF NOT EXISTS + ALTER USER: ein
+# zweiter Lauf gleicht nur an. Einfache Anfuehrungszeichen werden verdoppelt.
+nc_mariadb_sql(){
+  _db="$1"; _nu="$2"; _pw="$(printf '%s' "$3" | sed "s/'/''/g")"
+  printf 'CREATE DATABASE IF NOT EXISTS `%s` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;\n' "$_db"
+  printf "CREATE USER IF NOT EXISTS '%s'@'localhost' IDENTIFIED BY '%s';\n" "$_nu" "$_pw"
+  printf "ALTER USER '%s'@'localhost' IDENTIFIED BY '%s';\n" "$_nu" "$_pw"
+  printf "GRANT ALL PRIVILEGES ON \`%s\`.* TO '%s'@'localhost';\n" "$_db" "$_nu"
+  printf 'FLUSH PRIVILEGES;\n'
+}
+
+# nc_dienst_finden -> NC_DIENST: Name der Bot-Unit (nightcrawler | tiktok-bot) oder leer
+# Dieselben zwei Namen wie im Installer; die Doku nennt tiktok-bot, der
+# Installer legt nightcrawler an.
+nc_dienst_finden(){
+  NC_DIENST=""
+  command -v systemctl >/dev/null 2>&1 || return 0
+  for _u in nightcrawler tiktok-bot; do
+    if systemctl list-unit-files --no-legend "${_u}.service" 2>/dev/null | grep -q .; then
+      NC_DIENST="$_u"; return 0
+    fi
+  done
+  return 0
+}
