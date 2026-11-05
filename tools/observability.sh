@@ -510,10 +510,21 @@ if [ "$GRAFANA" = "ja" ]; then
     # Datenbank gibt es schon), also das Passwort direkt setzen.
     _gcli="$(command -v grafana || true)"; _gargs=(cli)
     [ -z "$_gcli" ] && { _gcli="$(command -v grafana-cli || true)"; _gargs=(); }
+    # Der Datenpfad des DIENSTES (Codex, PR #192): die Debian-Unit startet
+    # Grafana mit cfg:default.paths.data=$DATA_DIR (/var/lib/grafana). Ohne
+    # dieselbe Angabe setzt die CLI das Passwort in einer ANDEREN Datenbank
+    # unter /usr/share/grafana/data — der laufende Server behielte sein altes,
+    # und die .env truege eins, das er nicht kennt.
+    _gdata="/var/lib/grafana"
+    if [ -f "$W/etc/default/grafana-server" ]; then
+      _gd="$(sed -n 's/^DATA_DIR=//p' "$W/etc/default/grafana-server" | tail -1 | tr -d '"'"'"'')"
+      [ -n "$_gd" ] && _gdata="$_gd"
+    fi
     if [ "$TROCKEN" = 1 ]; then
       printf '    %s$%s grafana cli admin reset-admin-password --password-from-stdin  (***)\n' "$FNT" "$R"
     elif [ -n "$_gcli" ] && printf '%s\n' "$GF_PW" | ${SUDO:+$SUDO} "$_gcli" ${_gargs[@]+"${_gargs[@]}"} \
            --homepath /usr/share/grafana --config /etc/grafana/grafana.ini \
+           --configOverrides "cfg:default.paths.data=$_gdata" \
            admin reset-admin-password --password-from-stdin >/dev/null 2>&1; then
       gut "Grafana-Admin-Passwort gesetzt (steht in der .env unter GRAFANA_ADMIN_PASSWORD)."
     else

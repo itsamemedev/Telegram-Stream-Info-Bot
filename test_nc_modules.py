@@ -26933,6 +26933,11 @@ def _test_v42_w144_envdatei_und_grafana():
     assert ".env: PROMETHEUS_URL" in aus and "GF_SECURITY_ADMIN_PASSWORD=***" in aus, aus
     assert E.lesen(ienv) == {"BOT_TOKEN": "x"}, "Trockenlauf schrieb die .env"
 
+    # Der Dienst liest seinen Datenpfad aus /etc/default/grafana-server —
+    # bewusst NICHT die Vorgabe, damit die Probe sieht, dass er gelesen wird.
+    _os.makedirs(_os.path.join(wurzel, "etc", "default"), exist_ok=True)
+    with open(_os.path.join(wurzel, "etc", "default", "grafana-server"), "w") as f:
+        f.write('GRAFANA_USER=grafana\nDATA_DIR="/srv/grafana-daten"\n')
     rc, aus = lauf("--unattended", "--grafana")
     e = E.lesen(ienv)
     assert e.get("PROMETHEUS_URL") == "http://127.0.0.1:9099", (e, aus)
@@ -26942,6 +26947,9 @@ def _test_v42_w144_envdatei_und_grafana():
     assert open(gpw).read().strip() == pw, "grafana cli bekam ein anderes Passwort"
     assert "--password-from-stdin" in open(gargv).read() and pw not in open(gargv).read(), \
         "Passwort in der Befehlszeile"
+    # Dieselbe Datenbank wie der Dienst (Codex, PR #192) — sonst setzt die
+    # CLI das Passwort in einer Grafana-Datenbank, die niemand benutzt.
+    assert "cfg:default.paths.data=/srv/grafana-daten" in open(gargv).read(), open(gargv).read()
     assert pw not in aus, "Passwort in der Ausgabe"
     pd = _os.path.join(wurzel, "etc", "nightcrawler", "grafana.env")
     assert _st.S_IMODE(_os.stat(pd).st_mode) == 0o600 and pw in open(pd).read()
