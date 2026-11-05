@@ -1839,10 +1839,7 @@ def _test_w23_beobachtung_und_toasts():
     # Blueprint nie wahr, gemessen wurde also immer "/".
     assert genutzt <= {"run_async", "log", "log_event", "arg_int",
                        "scraper_session", "get_bot_start_time",
-                       "recordings_dir",
-                       # v4.2-W138: der Scraper selbst — fetch_profile auf der
-                       # Session war der Fehler, der das Popup nie laden liess.
-                       "get_scraper"}, \
+                       "recordings_dir"}, \
         "der Blueprint braucht neue Kontext-Eintraege: %r" % genutzt
     for zeile in quelle.split("\n"):
         z = zeile.strip()
@@ -25537,10 +25534,11 @@ def _test_v42_w138_profil_und_prueflage():
         if isinstance(n, _ast.Attribute) and n.attr == "fetch_profile":
             assert "scraper_session" not in _ast.unparse(n.value), \
                 "fetch_profile auf der aiohttp-Session — die hat die Methode nicht"
-    assert any(isinstance(n, _ast.Attribute) and n.attr == "get_scraper"
-               for n in _ast.walk(baum)), "Popup holt den Scraper nicht"
-    import nc.ctx as _ctx
-    assert "get_scraper" in _ctx.Ctx.__slots__
+    assert any(isinstance(n, _ast.Attribute) and n.attr == "mit_session"
+               for n in _ast.walk(baum)), "Popup baut keinen Scraper"
+    from nc.scraper import TikTokScraper as _TS
+    _s = object()
+    assert _TS.mit_session(_s).session is _s
 
     # (2) Scraper: Ablehnung mit Grund statt leerem „ok"-Profil.
     from nc.scraper import TikTokScraper

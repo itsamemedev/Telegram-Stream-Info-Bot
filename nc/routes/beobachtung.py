@@ -209,9 +209,12 @@ def _tiktok_profil(username: str) -> dict:
             # v4.2-W138: hier stand scraper_session().fetch_profile — die
             # aiohttp-Session hat diese Methode nicht. Seit B60 endete
             # JEDER Popup-Aufruf im AttributeError unten.
-            scraper = _c().get_scraper()
-            if data is None and scraper is not None:
-                data = await scraper.fetch_profile(username)
+            session = _c().scraper_session()
+            if data is None and session is not None:
+                # Erst hier: nc.scraper zieht aiohttp, und nc/* muss ohne den
+                # vollen Laufzeitstack importierbar bleiben (inspect_stream_url).
+                from nc.scraper import TikTokScraper
+                data = await TikTokScraper.mit_session(session).fetch_profile(username)
                 if data and data.get("ok"):
                     await _nc_rsstate.haken("redis_set")(cache_key, data, ttl=_env_int("PROFILE_CACHE_TTL", 60))
             return data

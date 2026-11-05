@@ -33,13 +33,6 @@ class Ctx:
         "ffmpeg_nice_bg",
         "proc_is_recorder",         # PID gehört zu einem Recorder?
         "scraper_session",          # geteilte HTTP-Session des Scrapers
-        # v4.2-W138: der Scraper selbst, als GETTER (entsteht erst in
-        # run_bot). Das Profil-Popup rief fetch_profile auf der SESSION auf —
-        # die hat die Methode nicht, und jeder Aufruf scheiterte still.
-        # Bisher nur beobachtung (Popup). Trotzdem hier und nicht im
-        # Blueprint: es ist dasselbe Objekt wie hinter scraper_session, das
-        # drei Blueprints nutzen — zwei Wege dorthin gehoeren nebeneinander.
-        "get_scraper",
         "trigger_manual_recording",  # haengt am Recorder-Kern, bleibt im Bot
         "stop_manual_recording",    # teilt _MANUAL_RECORDINGS mit trigger_
         # get_tags_for_tracking ist mit den uebrigen Tracking-Zugriffen nach

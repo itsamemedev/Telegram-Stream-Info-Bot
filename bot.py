@@ -12052,14 +12052,6 @@ def _scraper_session():
         return None
 
 
-def _scraper_holen():
-    """v4.2-W138: der Scraper selbst. Das Profil-Popup rief `fetch_profile`
-    auf `_scraper_session()` auf — einer aiohttp-Session, die diese Methode
-    nicht hat. Jeder Klick endete in einem AttributeError, gefangen als
-    „TikTok-Profil nicht geladen", und zwar seit B60."""
-    return _GLOBAL_SCRAPER
-
-
 
 
 # ---------- X20: Universal Search ----------
@@ -25804,7 +25796,6 @@ _nc_ctx.configure(
     ffmpeg_nice_bg=FFMPEG_NICE_BG,
     proc_is_recorder=_proc_is_recorder,
     scraper_session=_scraper_session,
-    get_scraper=_scraper_holen,
     trigger_manual_recording=trigger_manual_recording,
     stop_manual_recording=stop_manual_recording,
     # --- Archiv-Domaene (v4.0-W107) ---

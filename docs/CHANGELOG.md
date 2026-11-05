@@ -16,8 +16,9 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 - **TikTok-Profil im Deck:** die Route rief `fetch_profile` auf
   `scraper_session()` auf — einer aiohttp-Session, die diese Methode nicht
   hat. Seit B60 endete **jeder** Klick im AttributeError, gefangen als
-  „TikTok-Profil nicht geladen". Der Kontext reicht jetzt den Scraper selbst
-  (`get_scraper`, als Getter).
+  „TikTok-Profil nicht geladen". Jetzt baut die Route mit
+  `TikTokScraper.mit_session()` einen Scraper auf der geteilten Session —
+  ohne neuen Kontext-Slot (`nc.ctx` bleibt bei 24).
 - **Ablehnung mit Grund:** ein leeres `user`-Objekt galt als Treffer und
   ergab ein „ok"-Profil voller Striche. Jetzt nennt der Scraper TikToks
   `statusCode`/`statusMsg` bzw. erkennt die Captcha-Prüfseite und sagt, was

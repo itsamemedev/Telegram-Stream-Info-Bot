@@ -55,6 +55,19 @@ class TikTokScraper:
             timeout=aiohttp.ClientTimeout(total=20, connect=8, sock_read=15),
         )
 
+    @classmethod
+    def mit_session(cls, session):
+        """v4.2-W138: ein Scraper auf einer BESTEHENDEN Session — fuer die
+        Blueprints, die ueber nc.ctx nur `scraper_session` bekommen. Das
+        Profil-Popup rief fetch_profile direkt auf dieser Session auf, und
+        die hat die Methode nicht: seit B60 endete jeder Klick in einem
+        AttributeError. Ein eigener Kontext-Slot fuer den Scraper waere
+        der 25. gewesen; nc.ctx ist bewusst gedeckelt.
+        Kein close(): die Session gehoert dem Bot."""
+        sc = cls.__new__(cls)
+        sc.session = session
+        return sc
+
     async def close(self):
         await self.session.close()
 
