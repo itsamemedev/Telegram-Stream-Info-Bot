@@ -94,6 +94,7 @@ thread-based and stdlib-only (`urllib`, no `aiohttp`).
     python tools/ncpatch.py docs
     python tools/ncpatch.py map --check
     python tools/i18n_extract.py --check en
+    python tools/i18n_extract.py --check es
     python test_smoke.py ; python test_nc_modules.py ; python test_restream.py
 
 **On the author's Windows machine, set `$env:PYTHONUTF8="1"` first.** The tests

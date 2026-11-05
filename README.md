@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="docs/assets/banner.svg" alt="NIGHTCRAWLER — v4.4.1 Wachsam" width="100%">
+<img src="docs/assets/banner.svg" alt="NIGHTCRAWLER — v4.5 Vielstimmig" width="100%">
 
 ### Der Kontrollraum für Live-Streaming
 #### Überwachung · Aufnahme · Multi-Ziel-Restream · KI-Moderation
@@ -16,10 +16,10 @@
 [![CI](https://img.shields.io/github/actions/workflow/status/itsamemedev/Telegram-Stream-Info-Bot/ci.yml?branch=main&style=for-the-badge&label=CI&logo=githubactions&logoColor=white)](../../actions/workflows/ci.yml)
 
 [![Release](https://img.shields.io/github/v/release/itsamemedev/Telegram-Stream-Info-Bot?style=for-the-badge&label=Release&logo=github&color=E8C86A&labelColor=0C0B09)](https://github.com/itsamemedev/Telegram-Stream-Info-Bot/releases/latest)
-[![Version 4.4.1 Wachsam](https://img.shields.io/badge/Version-4.4.1%20%C2%B7%20Wachsam-C9A227?style=for-the-badge&labelColor=0C0B09)](docs/CHANGELOG.md)
+[![Version 4.5 Vielstimmig](https://img.shields.io/badge/Version-4.5%20%C2%B7%20Vielstimmig-C9A227?style=for-the-badge&labelColor=0C0B09)](docs/CHANGELOG.md)
 [![CodeQL](https://img.shields.io/github/actions/workflow/status/itsamemedev/Telegram-Stream-Info-Bot/codeql.yml?branch=main&style=for-the-badge&label=CodeQL&logo=github&logoColor=white)](../../actions/workflows/codeql.yml)
-[![Verträge](https://img.shields.io/badge/Vertr%C3%A4ge-1020%20gr%C3%BCn-success?style=for-the-badge&logo=pytest&logoColor=white)](#-tests--prüfkette)
-[![Überdeckung](https://img.shields.io/badge/%C3%9Cberdeckung-56%20%25%20nc%2F%20%2B%20brain%2F-yellowgreen?style=for-the-badge&logo=codecov&logoColor=white)](#-tests--prüfkette)
+[![Verträge](https://img.shields.io/badge/Vertr%C3%A4ge-1027%20gr%C3%BCn-success?style=for-the-badge&logo=pytest&logoColor=white)](#-tests--prüfkette)
+[![Überdeckung](https://img.shields.io/badge/%C3%9Cberdeckung-57%20%25%20nc%2F%20%2B%20brain%2F-yellowgreen?style=for-the-badge&logo=codecov&logoColor=white)](#-tests--prüfkette)
 
 [![Telegram](https://img.shields.io/badge/Telegram-Bot-26A5E4?style=flat-square&logo=telegram&logoColor=white)](#️-bedienung)
 [![Discord](https://img.shields.io/badge/Discord-65%20Slash--Commands-5865F2?style=flat-square&logo=discord&logoColor=white)](#️-bedienung)
@@ -30,7 +30,7 @@
 [![Changelog](https://img.shields.io/badge/Changelog-alle%20%C3%84nderungen-C9A227?style=flat-square&logo=markdown&logoColor=white)](docs/CHANGELOG.md)
 [![Prometheus](https://img.shields.io/badge/Prometheus-%2Fmetrics-E6522C?style=flat-square&logo=prometheus&logoColor=white)](#-projektstatus)
 [![Grafana](https://img.shields.io/badge/Grafana-Dashboard-F46800?style=flat-square&logo=grafana&logoColor=white)](#-projektstatus)
-[![Sprachen](https://img.shields.io/badge/Sprachen-Deutsch%20%C2%B7%20English-4B8BBE?style=flat-square&logo=googletranslate&logoColor=white)](README.en.md)
+[![Sprachen](https://img.shields.io/badge/Sprachen-Deutsch%20%C2%B7%20English%20%C2%B7%20Espa%C3%B1ol-4B8BBE?style=flat-square&logo=googletranslate&logoColor=white)](README.en.md)
 [![Letzter Commit](https://img.shields.io/github/last-commit/itsamemedev/Telegram-Stream-Info-Bot?style=flat-square&logo=git&logoColor=white&label=Letzter%20Commit)](https://github.com/itsamemedev/Telegram-Stream-Info-Bot/commits/main)
 
 [![Website: lafap.de](https://img.shields.io/badge/Website-lafap.de-E8C86A?style=for-the-badge&logo=firefoxbrowser&logoColor=0C0B09&labelColor=0C0B09)](https://lafap.de)
@@ -51,7 +51,7 @@
 | **Wofür** | Live-Überwachung, Aufnahme und Multi-Ziel-Restream von TikTok-Streams, mit KI-Moderation in Kick, Twitch und YouTube |
 | **Für wen** | Betreiber, die das auf **eigener** Hardware wollen — ein Linux-Server, kein SaaS, keine Fremdplattform zwischen Stream und Zielen |
 | **Läuft auf** | Ubuntu/Debian mit systemd, **Python 3.12–3.14** (Produktion: 3.14), ffmpeg, streamlink, yt-dlp |
-| **Bedienung** | Telegram, Discord (65 Slash-Commands) und ein Web-Deck mit drei Themen, darunter ein **Kontrast-Thema nach WCAG AAA** |
+| **Bedienung** | Telegram, Discord (65 Slash-Commands) und ein Web-Deck mit vier Themen, darunter ein **Kontrast-Thema nach WCAG AAA**, auf Deutsch, Englisch und Spanisch |
 | **Qualität** | über tausend Verträge in drei Suiten, CI auf drei Python-Fassungen **und** gegen den eingefrorenen Produktionsstand, `pip-audit`, CodeQL, Dependabot |
 | **Lizenz** | GPL-3.0-or-later |
 
@@ -92,6 +92,7 @@ flowchart LR
 
 - [🗺️ Projektstruktur](#️-projektstruktur)
 - [🩺 Fehlersuche](#-fehlersuche)
+- [🆕 Neu in v4.5](#-neu-in-v45)
 - [🆕 Neu in v4.4](#-neu-in-v44)
 - [📈 Projektstatus](#-projektstatus)
 - [🧭 Roadmap](#-roadmap)
@@ -660,6 +661,7 @@ ssh -L 3000:localhost:8050 ubuntu@<server-ip>
 | **Messing** (dunkel) | Vorgabe; warmes Metall statt Neon, für lange Abende am Deck |
 | **Blaupause** (hell) | Tageslicht und Büro |
 | **Kontrast** | helle Umgebung, schwache Displays, eingeschränktes Sehen — jede Farbe WCAG AAA (≥ 7:1), keine Glows, keine Bewegung, breite Rahmen und deutlicher Fokus. Wählt sich ohne gespeicherte Wahl von selbst, wenn das System „mehr Kontrast" verlangt |
+| **Phosphor** (dunkel) | grüner Bildschirmphosphor für den Leitstand bei Nacht — leichtes Glimmen, deutlichere Scanlines, jede Farbe mindestens WCAG AA; Rot und Bernstein bleiben Warnfarben |
 
 ### 📸 Screenshots
 
@@ -972,6 +974,27 @@ nicht greifen, gekippte Verträge in `test_restream.py`.
 
 ---
 
+## 🆕 Neu in v4.5
+
+**„Vielstimmig"** — drei Sprachen, vier Themen, und Profile, die etwas sagen.
+Die Wellen W134 bis W140, jede einzeln im [Changelog](docs/CHANGELOG.md):
+
+- **Spanisch** als dritte Sprache — alle 1557 Texte in Deck, Brain-Seite,
+  Overlay, Telegram und Discord; ein Browser mit `es-*` bekommt sie von selbst.
+- **Zwei neue Themen:** „Kontrast" (jede Farbe WCAG AAA, automatisch bei
+  „mehr Kontrast" im System) und „Phosphor" (grüner Bildschirmphosphor für
+  die Nacht) — beide aus den Farbwerten nachgerechnet.
+- **Das TikTok-Profil im Deck lädt wieder** und zeigt in Deck, Telegram und
+  Discord Verhältnisse, Follower-Verlauf über 24 h/7 Tage, Kontoart, Sprache
+  und Bio-Link — oder, wenn TikTok ablehnt, den Grund mit Abhilfe.
+- **Online/Offline ehrlich:** „? unbekannt", „ausstehend" und „überfällig"
+  statt eines stillen Altwerts; jede Zeile nennt „geprüft vor …".
+- **Discord** zeigt Tabellen als Codeblöcke statt Fettdruck.
+- **Lieferkette:** angehobene Untergrenzen (69 bekannte Schwachstellen weniger),
+  `requirements.lock.txt` mit `pip-audit` in jedem CI-Lauf, Python 3.14 in
+  der CI, Dependabot; der Kick-Chat wartet bei Pusher-Ablehnung 15 Minuten statt
+  zehn Sekunden.
+
 ## 🆕 Neu in v4.4
 
 **„Wachsam"** — was schiefgeht, sagt es. Die Wellen W60 bis W132 im Überblick,
@@ -1010,13 +1033,13 @@ KI-Aufruf, eine beschädigte `brain.db` fehlte still in der Sicherung.
 
 | | |
 |---|---|
-| Aktuelle Version | **4.4.1** — „Wachsam" (2026.10) |
+| Aktuelle Version | **4.5** — „Vielstimmig" (2026.11) |
 | Flask-Routen | 372 (34 in `bot.py` · 338 in `nc/routes/`) |
 | Discord-Slash-Commands | 65 |
 | Fachmodule | 167 in `nc/` (+38 in `nc/routes/`, +3 in `nc/intel/`), 10 in `brain/` |
 | Sentinel-Agenten | 13 |
 | Konfigurationsvariablen | ~568 |
-| Sprachen | Deutsch (Quelle), Englisch |
+| Sprachen | Deutsch (Quelle), Englisch, Spanisch |
 
 Vollständige Historie: **[`docs/CHANGELOG.md`](docs/CHANGELOG.md)** ·
 **[`docs/README_V37.md`](docs/README_V37.md)**
@@ -1106,7 +1129,7 @@ Fremdcode und dessen Lizenzen: **[`docs/THIRD_PARTY_LICENSES.md`](docs/THIRD_PAR
 
 <div align="center">
 
-**NIGHTCRAWLER v4.4.1 · „Wachsam"**
+**NIGHTCRAWLER v4.5 · „Vielstimmig"**
 
 **[🌐 lafap.de](https://lafap.de)** · **[💬 Discord](https://discord.gg/psvnxm7tSV)** · **[📓 Changelog](docs/CHANGELOG.md)**
 

@@ -25511,7 +25511,11 @@ def _test_v42_w137_kontrast_thema():
             name, tok[name], r)
     assert "--glow:          none" in blk.group(1), "Glow kostet Kontrast"
     # Erreichbar ueber den Knopf, und das System darf es anfordern.
-    assert 'var NC_THEMEN=["messing","blaupause","kontrast"];' in h
+    # v4.2-W140: geprueft wird die MITGLIEDSCHAFT, nicht die woertliche
+    # Liste — sonst faellt dieser Vertrag bei jedem neuen Thema, obwohl
+    # Kontrast weiter erreichbar ist.
+    _liste = _re.search(r"var NC_THEMEN=(\[[^\]]*\]);", h)
+    assert _liste and "kontrast" in __import__("json").loads(_liste.group(1))
     assert 'matchMedia("(prefers-contrast: more)")' in h
     assert 'html[data-theme="kontrast"] :focus-visible' in h, "Fokus nicht sichtbar"
     ok("W137: Kontrast-Thema — alle Farben WCAG AAA aus dem CSS nachgerechnet, "
@@ -25754,6 +25758,93 @@ def _test_v42_w138_profil_route():
     assert M.html_zu_md(None) == ""
     ok("W138: Popup-Pfad mit Scraper auf geteilter Session, Verlauf aus der DB, "
        "Ablehnung mit Grund; Randfaelle der Helfer gedeckt")
+
+
+def _test_v42_w139_spanisch():
+    """v4.2-W139: Spanisch ist eine volle Sprache, kein halber Katalog.
+    Gleiche Schluessel wie Englisch, und jeder Platzhalter, den der Code
+    einsetzt ({0}, %s, **…**), steht auch im spanischen Text — sonst
+    verschwindet zur Laufzeit ein Name oder eine Zahl, ohne Fehlermeldung."""
+    import json as _json
+    import re as _re
+    import subprocess as _sp
+    from nc import i18n as I
+    assert "es" in I.SPRACHEN and I.KATALOGDATEI["es"] == "es.json"
+    assert I.SPRACHNAMEN["es"] == "Español"
+    en = _json.load(open("locales/en.json", encoding="utf-8"))["strings"]
+    es = _json.load(open("locales/es.json", encoding="utf-8"))["strings"]
+    assert set(en) == set(es), "es und en haben verschiedene Schluessel"
+    marke = _re.compile(r"\{\d+\}|%[sd]|&mdash;|\*\*")
+    for k in en:
+        assert sorted(marke.findall(en[k])) == sorted(marke.findall(es[k])), \
+            "Platzhalter weichen ab: %r -> %r" % (en[k], es[k])
+        assert es[k].strip(), "leere Uebersetzung fuer %r" % k
+        # Ein Bruchstueck, das mit "@" oder "·" endet, wird zur Laufzeit
+        # zusammengesetzt — das Spanische muss an derselben Naht enden.
+        for z in "@·(":
+            assert en[k].endswith(z) == es[k].endswith(z), (k, en[k], es[k])
+    # Wirklich uebersetzt, nicht kopiert: hoechstens Marken und Namen gleich.
+    gleich = [k for k in en if en[k] == es[k] and _re.search(r"[a-z]{4}", en[k])]
+    assert len(gleich) < 40, "zu viele unveraenderte Eintraege: %r" % gleich[:10]
+    assert I.aus_accept_language("es-ES,es;q=0.9") == "es"
+    assert I.normalisieren("es-MX") == "es"
+    # In einem eigenen Kontext: sprache_setzen schreibt eine ContextVar, und
+    # die soll nicht in die folgenden Vertraege durchsickern.
+    import contextvars as _cv
+
+    def _auf_spanisch():
+        I.sprache_setzen("es")
+        return I.t("Profil-Analyse eines TikTok-Accounts")
+    assert _cv.copy_context().run(_auf_spanisch) == "Análisis del perfil de una cuenta de TikTok"
+    # Shell-Werkzeuge: kein tools.es.tsv, also Englisch statt Deutsch.
+    r = _sp.run(["bash", "-c", "NC_LANG=es; . tools/lib/i18n.sh; printf %s \"$NC_LANG_EFF\""],
+                capture_output=True, text=True, timeout=20)
+    assert r.stdout.strip() == "en", (r.stdout, r.stderr)
+    ok("W139: Spanisch — 1557 Eintraege, Platzhalter und Naehte wie im Englischen, "
+       "Browsererkennung, Shell faellt auf Englisch")
+
+
+def _test_v42_w140_phosphor_thema():
+    """v4.2-W140: das vierte Thema. Dunkel und gruen — und gerade deshalb
+    nachgerechnet: jede Text- und Signalfarbe mindestens WCAG AA (4,5:1) auf
+    dem Panel, und Rot muss rot bleiben (ein Fehler darf in einem gruenen
+    Thema nicht gruen aussehen)."""
+    import json as _json
+    import re as _re
+    h = open("templates/dashboard.html", encoding="utf-8").read()
+    blk = _re.search(r'html\[data-theme="phosphor"\]\{(.*?)\n\}', h, _re.S)
+    assert blk, "Phosphor-Thema fehlt"
+    tok = dict(_re.findall(r"--([a-z0-9-]+):\s*(#[0-9A-Fa-f]{6})\s*;", blk.group(1)))
+
+    def _lum(x):
+        x = x.lstrip("#")
+        c = [int(x[i:i + 2], 16) / 255 for i in (0, 2, 4)]
+        c = [v / 12.92 if v <= 0.03928 else ((v + 0.055) / 1.055) ** 2.4 for v in c]
+        return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]
+
+    def _ratio(a, b):
+        la, lb = _lum(a), _lum(b)
+        return (max(la, lb) + 0.05) / (min(la, lb) + 0.05)
+    for name in ("text", "text-dim", "text-faint", "neon", "neon-dim", "cyan",
+                 "magenta", "amber", "red", "ok"):
+        assert name in tok, "--%s fehlt im Phosphor-Thema" % name
+        r = _ratio(tok[name], tok["panel-solid"])
+        assert r >= 4.5, "--%s %s auf dem Panel nur %.1f:1 (AA verlangt 4,5:1)" % (
+            name, tok[name], r)
+    rot = [int(tok["red"].lstrip("#")[i:i + 2], 16) for i in (0, 2, 4)]
+    assert rot[0] > rot[1] * 1.5, "--red %s ist im Phosphor-Thema nicht mehr rot" % tok["red"]
+    themen = _json.loads(_re.search(r"var NC_THEMEN=(\[[^\]]*\]);", h).group(1))
+    namen = _json.loads(_re.search(r"var NC_THEMA_NAME=(\{[^}]*\});", h).group(1))
+    zeichen = _json.loads(_re.search(r"var NC_THEMA_ZEICHEN=(\{[^}]*\});", h).group(1))
+    assert "phosphor" in themen, "per Knopf nicht erreichbar"
+    assert set(themen) == set(namen) == set(zeichen), "Thema ohne Name oder Zeichen"
+    assert len(set(zeichen.values())) == len(zeichen), "zwei Themen mit demselben Zeichen"
+    # Jedes Thema der Liste hat einen Token-Block — sonst waehlte der Knopf
+    # ein Thema, das aussieht wie die Vorgabe.
+    for t in themen:
+        assert ('html[data-theme="%s"]{' % t) in h, "Thema %s ohne Token-Block" % t
+    ok("W140: Phosphor-Thema — alle Farben ≥ AA aus dem CSS nachgerechnet, Rot "
+       "bleibt rot, alle Themen mit Name, Zeichen und Token-Block")
 
 
 def main():
@@ -26092,6 +26183,8 @@ def main():
     _test_v42_w137_kontrast_thema()
     _test_v42_w138_profil_und_prueflage()
     _test_v42_w138_profil_route()
+    _test_v42_w139_spanisch()
+    _test_v42_w140_phosphor_thema()
     _test_v42_w60_azrael_cooldown_je_plattform()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)

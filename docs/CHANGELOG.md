@@ -11,6 +11,39 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+## [4.5] — 2026-11-05 · „Vielstimmig"
+
+Drei Sprachen, vier Themen, Profile, die etwas sagen — und das Technologie-Audit
+mit Lieferkette, Lockfile und Python 3.14 in der CI. Wellen W134 bis W140.
+
+### Neu — viertes Deck-Thema „Phosphor" (v4.2 W140)
+
+- Grüner Bildschirmphosphor für den Leitstand bei Nacht: kalt statt warm wie
+  Messing, Werte und Kopfzeilen glimmen leicht, die Scanlines sind deutlicher.
+  Fließtext glimmt bewusst nicht — er bliebe sonst unscharf.
+- Jede Text- und Signalfarbe erreicht auf dem Panel mindestens **WCAG AA
+  (4,5:1)**, die meisten AAA; die schwächste ist Rot mit 6,9:1. Ein Vertrag
+  rechnet das aus den Tokens nach und prüft außerdem, dass Rot rot bleibt —
+  ein Fehler darf in einem grünen Thema nicht grün aussehen.
+- Der Knopf wechselt jetzt durch vier Themen. Der W137-Vertrag prüfte die
+  Themenliste wörtlich und wäre bei jedem neuen Thema gefallen; er prüft jetzt
+  die Mitgliedschaft. Neu: jedes Thema der Liste braucht Name, eigenes Zeichen
+  und einen Token-Block. Mutationsproben: 4 von 4 gefangen.
+
+### Neu — Spanisch als dritte Sprache (v4.2 W139)
+
+- `locales/es.json` mit allen **1557** Einträgen — Deck, Brain-Seite, Overlay,
+  Telegram und Discord. Der Umschalter liest die Sprachen aus
+  `nc.i18n.SPRACHEN` und zeigt „Español" ohne weitere Änderung; der Browser
+  mit `es-*` bekommt Spanisch von selbst.
+- Ein Vertrag hält Spanisch auf dem Stand des Englischen: gleiche Schlüssel,
+  gleiche Platzhalter (`{0}`, `%s`, `**`), gleiche Nähte an Bruchstücken
+  (`@`, `·`, `(`) — ein verlorener Platzhalter ließe zur Laufzeit still einen
+  Namen oder eine Zahl verschwinden. Mutationsproben: 4 von 4 gefangen.
+- CI und Prüfkette fahren `i18n_extract.py --check es` mit.
+- Die Shell-Werkzeuge (Installer, MOTD, Update) haben keinen spanischen
+  Katalog und fallen bei `UI_LANG=es` auf **Englisch** statt auf Deutsch.
+
 ### Behoben — das Profil-Popup lud nie, und das Deck kannte kein „unbekannt" (v4.2 W138)
 
 - **TikTok-Profil im Deck:** die Route rief `fetch_profile` auf

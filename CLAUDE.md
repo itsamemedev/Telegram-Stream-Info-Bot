@@ -112,6 +112,7 @@ stdlib-only (`urllib`, kein `aiohttp`).
     python tools/testmuell.py     --sperre   # die Suiten lassen nichts liegen
     python tools/ueberdeckung.py  --sperre   # braucht coverage + die Suiten
     python tools/i18n_extract.py --check en
+    python tools/i18n_extract.py --check es
     python test_smoke.py ; python test_nc_modules.py ; python test_restream.py
 
 **Auf diesem Windows-Rechner gilt vorher `$env:PYTHONUTF8="1"`.** Die Tests
@@ -1204,7 +1205,7 @@ Antworten an den Betreiber: knapp, entscheidungsfreudig, ohne Weichspüler.
 **Benutzertexte sind seit v4.1-W6 mehrsprachig.** Der deutsche String ist der
 Schlüssel, `locales/en.json` trägt das Englische. Ein fehlender Eintrag fällt
 auf Deutsch zurück statt auf einen nackten Schlüsselnamen. Nach Änderungen an
-Benutzertext `tools/i18n_extract.py --check en` laufen lassen — es meldet
+Benutzertext `tools/i18n_extract.py --check en` **und** `--check es` laufen lassen — es meldet
 fehlende **und** verwaiste Einträge. Logzeilen bleiben absichtlich deutsch: sie
 sind für den Betreiber und laufen nie durch die Übersetzungsschicht.
 

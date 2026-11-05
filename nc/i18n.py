@@ -33,7 +33,7 @@ import threading
 QUELLSPRACHE = "de"
 
 # Was ausgeliefert wird. Reihenfolge = Reihenfolge im Umschalter.
-SPRACHEN = ("de", "en")
+SPRACHEN = ("de", "en", "es")
 
 # v4.2-W2: Sprache -> Katalogdatei. Eine Erlaubnisliste, kein Namensmuster.
 # Vorher stand im open() ein "%s.json" % sprache; die Pruefung dagegen lag
@@ -41,11 +41,11 @@ SPRACHEN = ("de", "en")
 # sah eine zusammengesetzte Zeichenkette und musste hoffen. Jetzt steht die
 # Erlaubnis dort, wo sie wirkt — und eine neue Sprache OHNE Eintrag faellt
 # mit KeyError auf, statt still eine Datei danebenzugreifen.
-KATALOGDATEI = {"de": "de.json", "en": "en.json"}
+KATALOGDATEI = {"de": "de.json", "en": "en.json", "es": "es.json"}
 
 # Anzeigenamen, jeweils in der eigenen Sprache — so findet sich auch jemand
 # zurecht, der die aktuelle Oberflaechensprache nicht liest.
-SPRACHNAMEN = {"de": "Deutsch", "en": "English"}
+SPRACHNAMEN = {"de": "Deutsch", "en": "English", "es": "Español"}
 
 _kataloge = {}
 _lock = threading.Lock()
