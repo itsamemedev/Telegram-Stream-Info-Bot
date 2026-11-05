@@ -30,7 +30,7 @@
 [![Changelog](https://img.shields.io/badge/Changelog-all%20changes-C9A227?style=flat-square&logo=markdown&logoColor=white)](docs/CHANGELOG.md)
 [![Prometheus](https://img.shields.io/badge/Prometheus-%2Fmetrics-E6522C?style=flat-square&logo=prometheus&logoColor=white)](#-project-status)
 [![Grafana](https://img.shields.io/badge/Grafana-dashboard-F46800?style=flat-square&logo=grafana&logoColor=white)](#-project-status)
-[![Languages](https://img.shields.io/badge/Languages-Deutsch%20%C2%B7%20English-4B8BBE?style=flat-square&logo=googletranslate&logoColor=white)](README.md)
+[![Languages](https://img.shields.io/badge/Languages-Deutsch%20%C2%B7%20English%20%C2%B7%20Espa%C3%B1ol-4B8BBE?style=flat-square&logo=googletranslate&logoColor=white)](README.md)
 [![Last commit](https://img.shields.io/github/last-commit/itsamemedev/Telegram-Stream-Info-Bot?style=flat-square&logo=git&logoColor=white&label=Last%20commit)](https://github.com/itsamemedev/Telegram-Stream-Info-Bot/commits/main)
 
 [![Website: lafap.de](https://img.shields.io/badge/Website-lafap.de-E8C86A?style=for-the-badge&logo=firefoxbrowser&logoColor=0C0B09&labelColor=0C0B09)](https://lafap.de)
@@ -177,7 +177,7 @@ your phone.
 | **Money** | Donation telemetry (estimates) · separate revenue journal (`nc/ledger.py`) with a hash chain and CSV export for the tax office |
 | **Dashboard** | 361 Flask routes · live panels · brain visualisation with a learning curve · overlay for OBS · installable PWA (Android) · QR login |
 | **Operations** | systemd service · deploy script with pre-check and auto-rollback · self-test route · dead-man's report on process death · CrowdSec integration · log redaction for cookies and stream keys |
-| **Multilingual** | German and English, switchable in the dashboard · `UI_LANG` for the bot · browser language detection · translation catalogue in `locales/` |
+| **Multilingual** | German, English and Spanish, switchable in the dashboard · `UI_LANG` for the bot · browser language detection · translation catalogue in `locales/` |
 | **Database** | SQLite **or** MariaDB · central schema module · export tool · SQL guard |
 
 </details>
@@ -1009,7 +1009,7 @@ service.
 | Domain modules | 92 in `nc/` (+18 in `nc/routes/`, +3 in `nc/intel/`), 10 in `brain/` |
 | Sentinel agents | 13 |
 | Configuration variables | ~503 |
-| Languages | German (source), English |
+| Languages | German (source), English, Spanish |
 
 Full history: **[`docs/CHANGELOG.md`](docs/CHANGELOG.md)** ·
 **[`docs/README_V37.md`](docs/README_V37.md)** (both German)

@@ -25756,6 +25756,50 @@ def _test_v42_w138_profil_route():
        "Ablehnung mit Grund; Randfaelle der Helfer gedeckt")
 
 
+def _test_v42_w139_spanisch():
+    """v4.2-W139: Spanisch ist eine volle Sprache, kein halber Katalog.
+    Gleiche Schluessel wie Englisch, und jeder Platzhalter, den der Code
+    einsetzt ({0}, %s, **…**), steht auch im spanischen Text — sonst
+    verschwindet zur Laufzeit ein Name oder eine Zahl, ohne Fehlermeldung."""
+    import json as _json
+    import re as _re
+    import subprocess as _sp
+    from nc import i18n as I
+    assert "es" in I.SPRACHEN and I.KATALOGDATEI["es"] == "es.json"
+    assert I.SPRACHNAMEN["es"] == "Español"
+    en = _json.load(open("locales/en.json", encoding="utf-8"))["strings"]
+    es = _json.load(open("locales/es.json", encoding="utf-8"))["strings"]
+    assert set(en) == set(es), "es und en haben verschiedene Schluessel"
+    marke = _re.compile(r"\{\d+\}|%[sd]|&mdash;|\*\*")
+    for k in en:
+        assert sorted(marke.findall(en[k])) == sorted(marke.findall(es[k])), \
+            "Platzhalter weichen ab: %r -> %r" % (en[k], es[k])
+        assert es[k].strip(), "leere Uebersetzung fuer %r" % k
+        # Ein Bruchstueck, das mit "@" oder "·" endet, wird zur Laufzeit
+        # zusammengesetzt — das Spanische muss an derselben Naht enden.
+        for z in "@·(":
+            assert en[k].endswith(z) == es[k].endswith(z), (k, en[k], es[k])
+    # Wirklich uebersetzt, nicht kopiert: hoechstens Marken und Namen gleich.
+    gleich = [k for k in en if en[k] == es[k] and _re.search(r"[a-z]{4}", en[k])]
+    assert len(gleich) < 40, "zu viele unveraenderte Eintraege: %r" % gleich[:10]
+    assert I.aus_accept_language("es-ES,es;q=0.9") == "es"
+    assert I.normalisieren("es-MX") == "es"
+    # In einem eigenen Kontext: sprache_setzen schreibt eine ContextVar, und
+    # die soll nicht in die folgenden Vertraege durchsickern.
+    import contextvars as _cv
+
+    def _auf_spanisch():
+        I.sprache_setzen("es")
+        return I.t("Profil-Analyse eines TikTok-Accounts")
+    assert _cv.copy_context().run(_auf_spanisch) == "Análisis del perfil de una cuenta de TikTok"
+    # Shell-Werkzeuge: kein tools.es.tsv, also Englisch statt Deutsch.
+    r = _sp.run(["bash", "-c", "NC_LANG=es; . tools/lib/i18n.sh; printf %s \"$NC_LANG_EFF\""],
+                capture_output=True, text=True, timeout=20)
+    assert r.stdout.strip() == "en", (r.stdout, r.stderr)
+    ok("W139: Spanisch — 1557 Eintraege, Platzhalter und Naehte wie im Englischen, "
+       "Browsererkennung, Shell faellt auf Englisch")
+
+
 def main():
     tmp, rid = richte_testdatenbank_ein()
     ok("db_conn aus nc.dbwrap: echtes Schema angelegt, Commit durchgelaufen")
@@ -26092,6 +26136,7 @@ def main():
     _test_v42_w137_kontrast_thema()
     _test_v42_w138_profil_und_prueflage()
     _test_v42_w138_profil_route()
+    _test_v42_w139_spanisch()
     _test_v42_w60_azrael_cooldown_je_plattform()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)

@@ -11,6 +11,20 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Neu — Spanisch als dritte Sprache (v4.2 W139)
+
+- `locales/es.json` mit allen **1557** Einträgen — Deck, Brain-Seite, Overlay,
+  Telegram und Discord. Der Umschalter liest die Sprachen aus
+  `nc.i18n.SPRACHEN` und zeigt „Español" ohne weitere Änderung; der Browser
+  mit `es-*` bekommt Spanisch von selbst.
+- Ein Vertrag hält Spanisch auf dem Stand des Englischen: gleiche Schlüssel,
+  gleiche Platzhalter (`{0}`, `%s`, `**`), gleiche Nähte an Bruchstücken
+  (`@`, `·`, `(`) — ein verlorener Platzhalter ließe zur Laufzeit still einen
+  Namen oder eine Zahl verschwinden. Mutationsproben: 4 von 4 gefangen.
+- CI und Prüfkette fahren `i18n_extract.py --check es` mit.
+- Die Shell-Werkzeuge (Installer, MOTD, Update) haben keinen spanischen
+  Katalog und fallen bei `UI_LANG=es` auf **Englisch** statt auf Deutsch.
+
 ### Behoben — das Profil-Popup lud nie, und das Deck kannte kein „unbekannt" (v4.2 W138)
 
 - **TikTok-Profil im Deck:** die Route rief `fetch_profile` auf

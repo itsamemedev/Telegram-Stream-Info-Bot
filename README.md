@@ -30,7 +30,7 @@
 [![Changelog](https://img.shields.io/badge/Changelog-alle%20%C3%84nderungen-C9A227?style=flat-square&logo=markdown&logoColor=white)](docs/CHANGELOG.md)
 [![Prometheus](https://img.shields.io/badge/Prometheus-%2Fmetrics-E6522C?style=flat-square&logo=prometheus&logoColor=white)](#-projektstatus)
 [![Grafana](https://img.shields.io/badge/Grafana-Dashboard-F46800?style=flat-square&logo=grafana&logoColor=white)](#-projektstatus)
-[![Sprachen](https://img.shields.io/badge/Sprachen-Deutsch%20%C2%B7%20English-4B8BBE?style=flat-square&logo=googletranslate&logoColor=white)](README.en.md)
+[![Sprachen](https://img.shields.io/badge/Sprachen-Deutsch%20%C2%B7%20English%20%C2%B7%20Espa%C3%B1ol-4B8BBE?style=flat-square&logo=googletranslate&logoColor=white)](README.en.md)
 [![Letzter Commit](https://img.shields.io/github/last-commit/itsamemedev/Telegram-Stream-Info-Bot?style=flat-square&logo=git&logoColor=white&label=Letzter%20Commit)](https://github.com/itsamemedev/Telegram-Stream-Info-Bot/commits/main)
 
 [![Website: lafap.de](https://img.shields.io/badge/Website-lafap.de-E8C86A?style=for-the-badge&logo=firefoxbrowser&logoColor=0C0B09&labelColor=0C0B09)](https://lafap.de)
@@ -1016,7 +1016,7 @@ KI-Aufruf, eine beschädigte `brain.db` fehlte still in der Sicherung.
 | Fachmodule | 167 in `nc/` (+38 in `nc/routes/`, +3 in `nc/intel/`), 10 in `brain/` |
 | Sentinel-Agenten | 13 |
 | Konfigurationsvariablen | ~568 |
-| Sprachen | Deutsch (Quelle), Englisch |
+| Sprachen | Deutsch (Quelle), Englisch, Spanisch |
 
 Vollständige Historie: **[`docs/CHANGELOG.md`](docs/CHANGELOG.md)** ·
 **[`docs/README_V37.md`](docs/README_V37.md)**

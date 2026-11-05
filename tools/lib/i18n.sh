@@ -32,6 +32,10 @@ nc_i18n_sprache(){
   _l="$(printf '%s' "$_l" | cut -c1-2 | tr 'A-Z' 'a-z')"
   case "$_l" in
     en) printf 'en' ;;
+    # v4.2-W139: die Oberflaeche kann Spanisch, die Shell-Werkzeuge nicht
+    # (kein tools.es.tsv). Wer UI_LANG=es setzt, liest Englisch eher als
+    # Deutsch — der Rueckfall auf die Quellsprache waere hier der schlechtere.
+    es) printf 'en' ;;
     *)  printf 'de' ;;          # alles Unbekannte faellt auf die Quellsprache
   esac
 }

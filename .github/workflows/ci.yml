@@ -91,6 +91,7 @@ jobs:
         run: |
           python tools/i18n_wrap.py --check
           python tools/i18n_extract.py --check en
+          python tools/i18n_extract.py --check es
           python tools/i18n_tools.py --check en
 
   templates:
