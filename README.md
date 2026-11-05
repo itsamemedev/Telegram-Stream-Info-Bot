@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="docs/assets/banner.svg" alt="NIGHTCRAWLER — v4.5.1 Vielstimmig" width="100%">
+<img src="docs/assets/banner.svg" alt="NIGHTCRAWLER — v4.5.2 Vielstimmig" width="100%">
 
 ### Der Kontrollraum für Live-Streaming
 #### Überwachung · Aufnahme · Multi-Ziel-Restream · KI-Moderation
@@ -16,9 +16,9 @@
 [![CI](https://img.shields.io/github/actions/workflow/status/itsamemedev/Telegram-Stream-Info-Bot/ci.yml?branch=main&style=for-the-badge&label=CI&logo=githubactions&logoColor=white)](../../actions/workflows/ci.yml)
 
 [![Release](https://img.shields.io/github/v/release/itsamemedev/Telegram-Stream-Info-Bot?style=for-the-badge&label=Release&logo=github&color=E8C86A&labelColor=0C0B09)](https://github.com/itsamemedev/Telegram-Stream-Info-Bot/releases/latest)
-[![Version 4.5.1 Vielstimmig](https://img.shields.io/badge/Version-4.5.1%20%C2%B7%20Vielstimmig-C9A227?style=for-the-badge&labelColor=0C0B09)](docs/CHANGELOG.md)
+[![Version 4.5.2 Vielstimmig](https://img.shields.io/badge/Version-4.5.2%20%C2%B7%20Vielstimmig-C9A227?style=for-the-badge&labelColor=0C0B09)](docs/CHANGELOG.md)
 [![CodeQL](https://img.shields.io/github/actions/workflow/status/itsamemedev/Telegram-Stream-Info-Bot/codeql.yml?branch=main&style=for-the-badge&label=CodeQL&logo=github&logoColor=white)](../../actions/workflows/codeql.yml)
-[![Verträge](https://img.shields.io/badge/Vertr%C3%A4ge-1029%20gr%C3%BCn-success?style=for-the-badge&logo=pytest&logoColor=white)](#-tests--prüfkette)
+[![Verträge](https://img.shields.io/badge/Vertr%C3%A4ge-1030%20gr%C3%BCn-success?style=for-the-badge&logo=pytest&logoColor=white)](#-tests--prüfkette)
 [![Überdeckung](https://img.shields.io/badge/%C3%9Cberdeckung-57%20%25%20nc%2F%20%2B%20brain%2F-yellowgreen?style=for-the-badge&logo=codecov&logoColor=white)](#-tests--prüfkette)
 
 [![Telegram](https://img.shields.io/badge/Telegram-Bot-26A5E4?style=flat-square&logo=telegram&logoColor=white)](#️-bedienung)
@@ -998,6 +998,9 @@ Die Wellen W134 bis W140, jede einzeln im [Changelog](docs/CHANGELOG.md):
 **Patch 4.5.1** — sieben Nutzer live und kein Restream, „weder FLV noch HLS":
 die Kette liest jetzt auch CMAF, DASH und MP4, `tools/quellprobe.py` misst auf
 dem Server jeden Weg, und der Grund steht im Deck und in `/healthz`.
+**Patch 4.5.2** — zehn Verbesserungen quer durch das Projekt: `/quelle` vom
+Handy, ehrlicher Prüfstand in `/tracklist` und `/healthz`, Selbstmeldung bei
+überfälligen Trackings, geprüfte Systemsicherung, `SHA256SUMS` am Release.
 
 ## 🆕 Neu in v4.4
 
@@ -1037,7 +1040,7 @@ KI-Aufruf, eine beschädigte `brain.db` fehlte still in der Sicherung.
 
 | | |
 |---|---|
-| Aktuelle Version | **4.5.1** — „Vielstimmig" (2026.11) |
+| Aktuelle Version | **4.5.2** — „Vielstimmig" (2026.11) |
 | Flask-Routen | 372 (34 in `bot.py` · 338 in `nc/routes/`) |
 | Discord-Slash-Commands | 66 |
 | Fachmodule | 170 in `nc/` (+38 in `nc/routes/`, +3 in `nc/intel/`), 10 in `brain/` |
@@ -1133,7 +1136,7 @@ Fremdcode und dessen Lizenzen: **[`docs/THIRD_PARTY_LICENSES.md`](docs/THIRD_PAR
 
 <div align="center">
 
-**NIGHTCRAWLER v4.5.1 · „Vielstimmig"**
+**NIGHTCRAWLER v4.5.2 · „Vielstimmig"**
 
 **[🌐 lafap.de](https://lafap.de)** · **[💬 Discord](https://discord.gg/psvnxm7tSV)** · **[📓 Changelog](docs/CHANGELOG.md)**
 

@@ -11,6 +11,8 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+## [4.5.2] — 2026-11-05 · „Vielstimmig"
+
 ### Neu — zehn Verbesserungen quer durch das Projekt (v4.2 W142)
 
 1. **`/quelle ‹name›`** in Telegram und Discord: die Quellprobe aus W141 vom

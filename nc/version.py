@@ -4,7 +4,7 @@ Eine einzige Wahrheit für die Versionsanzeige (Dashboard-Footer, /api/version,
 „Was ist neu"-Panel). Reine Daten + kleine Helfer, voll testbar.
 """
 
-VERSION = "4.5.1"
+VERSION = "4.5.2"
 CODENAME = "Vielstimmig"
 RELEASE = "2026.11"
 
@@ -23,6 +23,20 @@ def build_stamp():
 # Meilenstein-Changelog, neueste Version zuerst. highlights = kurze, ehrliche
 # Stichpunkte dessen, was die Version bringt.
 CHANGELOG = [
+    {
+        "version": "4.5.2",
+        "date": "2026-11",
+        "title": "Vielstimmig",
+        # Zweite Patch-Fassung von 4.5: zehn Verbesserungen quer durch das
+        # Projekt (W142).
+        "highlights": [
+            "/quelle ‹name› in Telegram und Discord: die Quellprobe misst vom Handy aus jeden Weg zu einem Live-Stream und nennt die Abhilfe — ohne SSH",
+            "/tracklist zeigt wie das Deck „unbekannt“, „ausstehend“ und „überfällig“ statt eines alten LIVE, und /healthz zählt dasselbe ohne Nutzernamen",
+            "Fällt ein Tracking aus der Abfrage, meldet der Bot das selbst als Fehler mit den Namen — vorher sah man es nur, wenn man im Deck hinsah",
+            "Die Systemsicherung wird beim Sichern geprüft: ohne mysqldump meldete sie bisher Erfolg mit einer Platzhalterzeile statt der Datenbank",
+            "Releases tragen SHA256SUMS, das Deck zeigt die Herkunft der Stream-Adressen, und Profil-Schnappschüsse wachsen nicht mehr mit jedem Klick",
+        ],
+    },
     {
         "version": "4.5.1",
         "date": "2026-11",
