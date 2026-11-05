@@ -25938,10 +25938,10 @@ def _test_v42_w141_dritte_form():
 def _test_v42_w141_quellprobe():
     """v4.2-W141: das Messwerkzeug fuer den Server — es darf nichts Geheimes
     ausgeben und muss aus den Befunden die richtige Abhilfe ableiten."""
-    import importlib.util as _iu
-    spec = _iu.spec_from_file_location("quellprobe", "tools/quellprobe.py")
-    QP = _iu.module_from_spec(spec)
-    spec.loader.exec_module(QP)
+    # v4.2-W142: der Kern liegt in nc/ (fuer /quelle), tools/ ruft ihn nur auf.
+    from nc import quellprobe as QP
+    assert "from nc.quellprobe import main" in open(
+        "tools/quellprobe.py", encoding="utf-8").read()
     assert QP.maske("http://nutzer:geheim@1.2.3.4:8118") == "http://***@1.2.3.4:8118"
     assert QP.maske("nutzer:geheim@1.2.3.4:8118") == "***@1.2.3.4:8118", "schemalos unmaskiert"
     assert QP.maske("socks5://1.2.3.4:1080") == "socks5://1.2.3.4:1080"
@@ -25959,6 +25959,293 @@ def _test_v42_w141_quellprobe():
     assert "Kein Weg" in E({})
     ok("W141: tools/quellprobe.py — Zugangsdaten maskiert, Signaturen gekuerzt, "
        "Abhilfe aus den Befunden")
+
+
+def _test_v42_w142_zehn_punkte():
+    """v4.2-W142: zehn Verbesserungen quer durch das Projekt, jede mit einer
+    Zusicherung, die faellt, wenn sie zurueckgedreht wird."""
+    import ast as _ast
+    import io as _io
+    import os as _os
+    import tarfile as _tar
+    import shutil as _sh
+    src = open("bot.py", encoding="utf-8").read()
+    baum = _ast.parse(src)
+
+    def _fn(name):
+        return next(n for n in _ast.walk(baum)
+                    if isinstance(n, (_ast.FunctionDef, _ast.AsyncFunctionDef)) and n.name == name)
+
+    # (1) /quelle — in beiden Plattformen, im Thread, hoechstens eine.
+    from nc import befehle as B
+    b = next(x for x in B.BEFEHLE if x.name == "quelle")
+    assert B.TG in b.plattformen and B.DC in b.plattformen and b.tg_handler == "quelle"
+    q = _ast.unparse(_fn("quelle"))
+    assert "asyncio.to_thread(_nc_quellprobe.messen" in q, "Quellprobe auf dem Loop"
+    assert "_QUELLPROBE['laeuft']" in q or '_QUELLPROBE["laeuft"]' in q
+    from nc import quellprobe as QP
+    alt = (QP.probe_ytdlp, QP.probe_html, QP.probe_ffprobe, QP.probe_durchreicher)
+    try:
+        QP.probe_ytdlp = lambda n, p, c: ([{"weg": "yt-dlp", "id": "x", "form": "hls",
+                                            "url": "https://cdn.x/a.m3u8?sign=GEHEIM"}], None)
+        QP.probe_html = lambda n, p: ([], "keine Stream-Adresse im HTML")
+        QP.probe_ffprobe = lambda u, p: (True, "video=h264")
+        QP.probe_durchreicher = lambda n, p, c: 0
+        zeilen = []
+        bef = QP.messen("probe", "", None, zeilen.append)
+    finally:
+        QP.probe_ytdlp, QP.probe_html, QP.probe_ffprobe, QP.probe_durchreicher = alt
+    assert "FLV/HLS" in bef["empfehlung"] and zeilen[-1].startswith("EMPFEHLUNG:")
+    assert "GEHEIM" not in repr(bef) and "GEHEIM" not in "\n".join(zeilen), "Signatur im Ergebnis"
+
+    # (2)+(3) /tracklist: Pruefstand und neben dem Loop.
+    t = _ast.unparse(_fn("tracklist"))
+    assert "asyncio.to_thread(get_trackings_for_group" in t
+    assert "_nc_prueflage.lage(" in t and "'unbekannt'" in t
+
+    # (4)+(5) Uebersicht, /healthz ohne Namen, Selbstmeldung in der Pruefschleife.
+    from nc import prueflage as L
+    L._STAND.clear()
+    L.LETZTE["uebersicht"] = None
+    assert L.fuer_healthz() is None, "vor der ersten Runde ist das keine 0"
+    L.merken(1, "live", jetzt=1000.0)
+    L.merken(2, "unknown", jetzt=1000.0)
+    u = L.uebersicht([(1, "a"), (2, "b"), (3, "c")], laeuft_seit_s=60, jetzt=1000.0 + 30)
+    assert (u["aktiv"], u["unbekannt"], u["ausstehend"], u["ueberfaellig"]) == (3, 1, 1, 0), u
+    assert not u["ausstehend_befund"], "kurz nach dem Start ist 'nie geprueft' normal"
+    u = L.uebersicht([(1, "a"), (3, "c")], laeuft_seit_s=L.AUSSTEHEND_NORMAL_S + 1,
+                     jetzt=1000.0 + L.UEBERFAELLIG_AB_S + 5)
+    assert u["ueberfaellig"] == 1 and u["auffaellig"]["ueberfaellig"] == ["a"] and u["ausstehend_befund"]
+    L.LETZTE["uebersicht"] = u
+    assert "auffaellig" not in L.fuer_healthz(), "Nutzernamen in /healthz"
+    L._STAND.clear()
+    L.LETZTE["uebersicht"] = None
+    assert "pruefung=_nc_prueflage.fuer_healthz()" in src
+    pm = _ast.unparse(_fn("_pruefstand_melden"))
+    assert "log.error" in pm and "_nc_meldetakt.melden('pruefstand'" in pm
+    schleife = _ast.unparse(_fn("check_all_trackings"))
+    assert "_pruefstand_melden(trackings)" in schleife
+
+    # (6) Deck zeigt die Quellen-Statistik.
+    h = open("templates/dashboard.html", encoding="utf-8").read()
+    assert 'id="sv_quellen"' in h and "apiGet('/healthz')" in h and "q.ohne_url_anteil" in h
+
+    # (7) Sicherung: Platzhalter, Abbruch und fehlender Dump fallen auf.
+    from nc import sicherungspruefung as S
+    d = _ph.verzeichnis("nc-pruef-w142-")
+    try:
+        gut = _os.path.join(d, "gut.sql")
+        open(gut, "w").write("BEGIN TRANSACTION;\nCREATE TABLE t(x);\nCOMMIT;\n")
+        platz = _os.path.join(d, "platz.sql")
+        open(platz, "w").write("-- mysqldump nicht installiert — kein Dump möglich\n")
+        halb = _os.path.join(d, "halb.sql")
+        open(halb, "w").write("BEGIN TRANSACTION;\nINSERT INTO t VALUES('abgeschn")
+        assert S.dump_vollstaendig(gut)[0]
+        assert not S.dump_vollstaendig(platz, "mariadb")[0], "mysqldump-Platzhalter galt als Dump"
+        assert not S.dump_vollstaendig(halb)[0], "abgebrochener Dump galt als vollstaendig"
+        arch = _os.path.join(d, "a.tar.gz")
+        with _tar.open(arch, "w:gz") as tf:
+            tf.add(gut, arcname="db/gut.sql")
+        assert S.pruefen(arch, gut)["ok"]
+        ohne = _os.path.join(d, "o.tar.gz")
+        with _tar.open(ohne, "w:gz") as tf:
+            info = _tar.TarInfo("README"); daten = b"x"; info.size = len(daten)
+            tf.addfile(info, _io.BytesIO(daten))
+        r = S.pruefen(ohne, halb)
+        assert not r["ok"] and len(r["gruende"]) == 2, r
+        kaputt = _os.path.join(d, "k.tar.gz")
+        open(kaputt, "wb").write(open(arch, "rb").read()[:20])
+        assert not S.archiv_lesbar(kaputt)[0], "abgeschnittenes Archiv galt als lesbar"
+    finally:
+        _sh.rmtree(d, ignore_errors=True)
+    sb = _ast.unparse(_fn("_system_backup"))
+    assert "_nc_sicherung.pruefen(tar_tmp, dump_path, DB_BACKEND)" in sb
+    assert "'ok': pruefung['ok']" in sb, "ok haengt nicht an der Pruefung"
+    # Kein `try: tar.add(...) except: pass` mehr — die Datei fehlte sonst still.
+    for n in _ast.walk(_fn("_system_backup")):
+        if isinstance(n, _ast.Try) and any(
+                "tar.add(fp" in _ast.unparse(x) for x in n.body):
+            assert not any(all(isinstance(y, _ast.Pass) for y in h.body)
+                           for h in n.handlers), "tar.add mit stillem pass"
+    assert "nicht_gesichert.append(" in sb
+
+    # (8) Pruefsummen am Release.
+    br = open("tools/build_release.py", encoding="utf-8").read()
+    assert ".hexdigest()[:16]" not in br
+    # Im Syntaxbaum: ein open(..., "SHA256SUMS" ..., "w") muss es geben — der
+    # Name allein steht auch in der Ausschlussliste (die erste Fassung dieses
+    # Vertrags las genau die und liess eine entfernte Schreibstelle durch).
+    _br = _ast.parse(br)
+    assert any(isinstance(n, _ast.Call) and getattr(n.func, "id", "") == "open" and n.args
+               and "'SHA256SUMS'" in _ast.unparse(n.args[0])
+               and any(isinstance(x, _ast.Constant) and x.value == "w" for x in n.args[1:])
+               for n in _ast.walk(_br)), "SHA256SUMS wird nicht geschrieben"
+    assert 'AUS = {".env", "stats.json", "SHA256SUMS"}' in br
+    rel = open(".github/workflows/release.yml", encoding="utf-8").read()
+    assert rel.count("SHA256SUMS") >= 3 and "sha256sum -c SHA256SUMS" in rel
+
+    # (9) Profil-Schnappschuesse: hoechstens einer je Stunde und Nutzer.
+    import nc.routes.beobachtung as R
+    from nc.dbwrap import db_conn as _db
+    with _db() as c:
+        c.execute("CREATE TABLE IF NOT EXISTS profile_snapshots ("
+                  "id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT NOT NULL,"
+                  " payload TEXT NOT NULL, follower_count INT, heart_count BIGINT,"
+                  " video_count INT, captured_at TEXT NOT NULL)")
+        c.execute("DELETE FROM profile_snapshots WHERE username='w142probe'")
+        c.commit()
+    try:
+        a = R.save_profile_snapshot("w142probe", {"follower_count": 1})
+        b = R.save_profile_snapshot("w142probe", {"follower_count": 2})
+        assert a and a == b, "zweiter Klick legte einen zweiten Schnappschuss an"
+        with _db() as c:
+            n = c.execute("SELECT COUNT(*) FROM profile_snapshots WHERE username='w142probe'"
+                          ).fetchone()[0]
+        assert n == 1, n
+    finally:
+        with _db() as c:
+            c.execute("DELETE FROM profile_snapshots WHERE username='w142probe'")
+            c.commit()
+
+    # (10) Doku und Skill kennen vier Themen und drei Sprachen.
+    sk = open(".claude/skills/html-templates/SKILL.md", encoding="utf-8").read()
+    assert "Kontrast" in sk and "Phosphor" in sk and "_test_v42_w140_phosphor_thema" in sk
+    assert "de.json, en.json, es.json" in open("CLAUDE.md", encoding="utf-8").read()
+    ok("W142: /quelle, Pruefstand in /tracklist und /healthz, Selbstmeldung, "
+       "Quellen im Deck, geprueftes Backup, SHA256SUMS, Schnappschuss-Drossel, Doku")
+
+
+def _test_v42_w142_quellprobe_wege():
+    """v4.2-W142: die Probe-Wege selbst — yt-dlp, Live-Seite, ffprobe,
+    Durchreicher — mit Attrappen statt Netz. Seit der Kern in nc/ liegt, zaehlt
+    er zur Ueberdeckung; ungeprueft waeren genau die Fehlerpfade, an denen der
+    Betreiber die Abhilfe abliest."""
+    import contextlib as _cl
+    import io as _io
+    import json as _json
+    import os as _os
+    import subprocess as _sp
+    from nc import quellprobe as QP
+
+    alt = (QP.shutil.which, QP.subprocess.run, QP.subprocess.Popen,
+           QP.urllib.request.build_opener, QP.time.sleep)
+
+    class _Lauf:
+        def __init__(self, rc, out="", err=""):
+            self.returncode, self.stdout, self.stderr = rc, out, err
+
+    def _run_mit(*antworten):
+        it = iter(antworten)
+        def _run(cmd, **kw):
+            a = next(it)
+            if isinstance(a, BaseException):
+                raise a
+            return a
+        return _run
+    try:
+        # yt-dlp fehlt: ehrliche Auskunft statt leerer Liste ohne Grund.
+        QP.shutil.which = lambda n: None
+        assert QP.probe_ytdlp("x", "", None) == ([], "yt-dlp nicht installiert")
+        assert QP.probe_ffprobe("https://h/x.flv", "")[1] == "ffprobe nicht installiert"
+        assert QP.probe_durchreicher("x", "", None) == 0
+        QP.shutil.which = lambda n: "/usr/bin/" + n
+        # yt-dlp: Formate gelesen, Proxy und Cookies weitergereicht.
+        gesehen = []
+        def _run_fmt(cmd, **kw):
+            gesehen.append(cmd)
+            return _Lauf(0, _json.dumps({"formats": [
+                {"url": "https://h/a.flv?expire=1", "ext": "flv", "format_id": "f"},
+                {"manifest_url": "https://h/a.mpd", "protocol": "http_dash_segments"}]}))
+        QP.subprocess.run = _run_fmt
+        f, fehler = QP.probe_ytdlp("x", "http://u:p@1.2.3.4:8", "/c.txt")
+        assert fehler is None and [k["form"] for k in f] == ["flv", "dash"], f
+        assert "--proxy" in gesehen[0] and "--cookies" in gesehen[0]
+        # Fehlermeldung von yt-dlp: Zugangsdaten maskiert.
+        QP.subprocess.run = _run_mit(_Lauf(1, "", "x\nERROR: proxy http://u:geheim@h:8 refused"))
+        f, fehler = QP.probe_ytdlp("x", "", None)
+        assert f == [] and "geheim" not in fehler and "***@" in fehler, fehler
+        QP.subprocess.run = _run_mit(_sp.TimeoutExpired("yt-dlp", 40))
+        assert QP.probe_ytdlp("x", "", None)[1].startswith("Zeitüberschreitung")
+        # ffprobe: Spuren, Fehler, Zeitueberschreitung.
+        QP.subprocess.run = _run_mit(_Lauf(0, _json.dumps({"streams": [
+            {"codec_type": "video", "codec_name": "h264"},
+            {"codec_type": "audio", "codec_name": "aac"}]})))
+        assert QP.probe_ffprobe("https://h/x.flv", "http://p:8") == (True, "audio=aac, video=h264")
+        QP.subprocess.run = _run_mit(_Lauf(1, "", "HTTP error 403 Forbidden"))
+        assert QP.probe_ffprobe("https://h/x.flv", "") == (False, "HTTP error 403 Forbidden")
+        QP.subprocess.run = _run_mit(_sp.TimeoutExpired("ffprobe", 30))
+        assert QP.probe_ffprobe("https://h/x.flv", "") == (False, "Zeitüberschreitung")
+
+        # Live-Seite: SOCKS ehrlich abgelehnt, Netzfehler mit Grund,
+        # eingebettete Adresse gefunden, Captcha erkannt.
+        assert "SOCKS" in QP.probe_html("x", "socks5://h:1")[1]
+
+        class _Opener:
+            def __init__(self, inhalt=None, fehler=None):
+                self.inhalt, self.fehler = inhalt, fehler
+            def open(self, req, timeout=0):
+                if self.fehler:
+                    raise self.fehler
+                return _io.BytesIO(self.inhalt.encode())
+        QP.urllib.request.build_opener = lambda *h: _Opener(fehler=OSError("verbindung weg"))
+        assert QP.probe_html("x", "http://p:8") == ([], "OSError: verbindung weg")
+        seite = ('<script type="application/json">kein json</script>'
+                 '<script id="SIGI" type="application/json">%s</script>' % _json.dumps(
+                     {"LiveRoom": {"streamUrl": {"hls_pull_url": "https://h/l.m3u8"}}}))
+        QP.urllib.request.build_opener = lambda *h: _Opener(seite)
+        f, fehler = QP.probe_html("x", "")
+        assert fehler is None and f[0]["form"] == "hls", (f, fehler)
+        QP.urllib.request.build_opener = lambda *h: _Opener("<div>captcha</div>")
+        assert "Captcha" in QP.probe_html("x", "")[1]
+        QP.urllib.request.build_opener = lambda *h: _Opener("<html></html>")
+        assert QP.probe_html("x", "")[1] == "keine Stream-Adresse im HTML"
+
+        # Durchreicher: zaehlt Bytes, raeumt den Prozess immer ab.
+        lesefd, schreibfd = _os.pipe()
+        _os.write(schreibfd, b"x" * 3000)
+        _os.close(schreibfd)
+
+        class _P:
+            stdout = _os.fdopen(lesefd, "rb")
+            beendet = []
+            def poll(self):
+                return None
+            def kill(self):
+                self.beendet.append("kill")
+            def wait(self, timeout=0):
+                self.stdout.close()
+        QP.subprocess.Popen = lambda *a, **k: _P()
+        QP.time.sleep = lambda s: None
+        assert QP.probe_durchreicher("x", "http://p:8", "/c.txt", grenze=2000, frist=5) >= 2000
+        assert _P.beendet == ["kill"], "yt-dlp-Prozess nicht beendet"
+    finally:
+        (QP.shutil.which, QP.subprocess.run, QP.subprocess.Popen,
+         QP.urllib.request.build_opener, QP.time.sleep) = alt
+
+    # Kommandozeile: --json gibt das Ergebnis aus, --ohne-proxy wirkt.
+    alt_m, alt_e = QP.messen, QP._env
+    try:
+        aufrufe = []
+        QP._env = lambda: ("http://p:8", None)
+        QP.messen = lambda n, p, c, ausgabe=print: aufrufe.append((n, p)) or {"empfehlung": "e"}
+        puffer = _io.StringIO()
+        with _cl.redirect_stdout(puffer):
+            assert QP.main(["@probe", "--ohne-proxy", "--json"]) == 0
+        assert aufrufe == [("probe", "")] and '"empfehlung": "e"' in puffer.getvalue()
+    finally:
+        QP.messen, QP._env = alt_m, alt_e
+    p, c = QP._env()
+    assert isinstance(p, str) and (c is None or c.endswith("tiktok_cookies.txt"))
+
+    # Sicherungspruefung: fehlender und leerer Dump.
+    from nc import sicherungspruefung as S
+    d = _ph.verzeichnis("nc-pruef-w142b-")
+    leer = _os.path.join(d, "leer.sql")
+    open(leer, "w").close()
+    assert S.dump_vollstaendig(_os.path.join(d, "fehlt.sql")) == (False, "Dump fehlt")
+    assert S.dump_vollstaendig(leer) == (False, "Dump ist leer")
+    ok("W142: Quellprobe-Wege mit Attrappen — Fehlerpfade mit Grund, Zugangsdaten "
+       "maskiert, Prozess immer beendet; Kommandozeile und Sicherungs-Randfaelle")
 
 
 def main():
@@ -26301,6 +26588,8 @@ def main():
     _test_v42_w140_phosphor_thema()
     _test_v42_w141_dritte_form()
     _test_v42_w141_quellprobe()
+    _test_v42_w142_zehn_punkte()
+    _test_v42_w142_quellprobe_wege()
     _test_v42_w60_azrael_cooldown_je_plattform()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)

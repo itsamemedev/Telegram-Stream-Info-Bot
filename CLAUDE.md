@@ -26,7 +26,7 @@ benutzt, berät an der Lage vorbei.**
 
 ## Die eine Regel
 
-`bot.py` hat **26.138 Zeilen / 1,2 MB ≈ 295.000 Token**. Diese Datei wird
+`bot.py` hat **26.273 Zeilen / 1,2 MB ≈ 295.000 Token**. Diese Datei wird
 **nie** ganz gelesen und **nie** blind durchsucht. Erst fragen wo etwas steht,
 dann den Ausschnitt holen:
 
@@ -42,7 +42,7 @@ dann den Ausschnitt holen:
     python tools/ncpatch.py docs                           # Doku-Zahlen gegen den Quelltext
 
 `find` antwortet aus `.claude/INDEX.md` — 372 Routen (34 in `bot.py`, 338 in
-`nc/routes/`), 65 Slash-Commands, 584 Funktionen mit Zeilennummern. Nach Änderungen an Routen, Commands oder
+`nc/routes/`), 66 Slash-Commands, 586 Funktionen mit Zeilennummern. Nach Änderungen an Routen, Commands oder
 Top-Level-Funktionen `map` neu laufen lassen. Details: Skill `nc-navigation`.
 
 Für „wer ruft das auf?" und „was ist der Typ?" ist der Sprachserver billiger als
@@ -57,7 +57,7 @@ Auf diesem Windows-Rechner heißt der Interpreter **`python`** (3.13.12);
                          Routen), Scraper, Recorder, Restream, Schema (init_db).
                          Hiess bis v4.0-W119 bot_v37.py — beim Suchen in
                          alten Notizen und Patch-Dateien daran denken.
-    discordbot.py        Der Discord-Teil (65 Slash-Commands, davon 22 aus
+    discordbot.py        Der Discord-Teil (66 Slash-Commands, davon 23 aus
                          dem Verzeichnis nc/befehle.py), seit v4.2-W15
                          heraus. Bot-seitig, weil er discord.py importiert und
                          ein Gateway aufmacht — nicht nach nc/, das bot-frei
@@ -71,10 +71,10 @@ Auf diesem Windows-Rechner heißt der Interpreter **`python`** (3.13.12);
     brain_bridge.py      Adapter Bot ↔ brain/ (M2)
     brain/               KI-Kern: state, rules, router, agents, memory,
                          semantic, knowledge, scheduler, llm, report
-    nc/                  168 Fachmodule: db, scraping, restream, oauth, ledger,
+    nc/                  170 Fachmodule: db, scraping, restream, oauth, ledger,
                          i18n, …
     nc/routes/           38 Flask-Blueprints mit 338 weiteren API-Routen
-    locales/             de.json, en.json — der Übersetzungskatalog
+    locales/             de.json, en.json, es.json — der Übersetzungskatalog
     templates/           dashboard.html, brain.html, overlay.html, PWA
     website/             lafap_index.html (öffentliche Seite)
     tools/ncpatch.py     Patch- und Prüfwerkzeug
@@ -1222,7 +1222,7 @@ müssen deshalb einzeln verifizierbar und rückrollbar sein.
 |---|---|
 | `nc-navigation` | **Zuerst.** Etwas finden, ohne den Monolithen zu durchsuchen |
 | `nightcrawler` | Änderungen an `bot.py`, `nc/`, `brain/` — Anker-Patching, Validierung |
-| `html-templates` | `templates/*.html`, `website/*.html` — Themen Messing/Blaupause, Prüfkette |
+| `html-templates` | `templates/*.html`, `website/*.html` — vier Deck-Themen (Messing, Blaupause, Kontrast, Phosphor), Prüfkette |
 | `nc-betrieb` | Deploy, systemd, Log-Lesen, Rollback, CrowdSec, Kick-Störungen |
 | `nc-datenbank` | SQL und Schema unter SQLite **und** MariaDB |
 | `nc-ki-backends` | `nc/freeai`, `brain/llm`, AZRAEL, Tier-Modell, Budget |

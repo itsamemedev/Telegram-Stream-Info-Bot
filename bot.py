@@ -847,6 +847,8 @@ from nc.textmore import (  # noqa: F401
 from nc.scoring import build_report  # noqa: F401
 from nc import prueflage as _nc_prueflage    # v4.2-W138: Pruefstand je Tracking
 from nc import quellstat as _nc_quellstat    # v4.2-W141: Herkunft der Stream-Adressen
+from nc import quellprobe as _nc_quellprobe  # v4.2-W142: /quelle ‹name›
+from nc import sicherungspruefung as _nc_sicherung  # v4.2-W142: Backup brauchbar?
 from nc.persona import (  # noqa: F401
     _persona_intensity_hint, _azrael_emotion)
 from nc.util import _webhook_event_match, _loop_not_ready  # noqa: F401
@@ -5371,6 +5373,56 @@ async def tiktok(update: Update, context: ContextTypes.DEFAULT_TYPE):
             _nc_i18n.t(f"⚠️ <b>FEHLER · @{safe(username)}</b>\n<i>{safe(str(e))}</i>"),
             parse_mode=ParseMode.HTML)
 
+_QUELLPROBE = {"laeuft": None}     # v4.2-W142: Nutzer der laufenden Probe, sonst None
+
+
+async def quelle(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """v4.2-W142: /quelle ‹name› — nc/quellprobe.py vom Handy aus.
+
+    Die Probe startet yt-dlp zweimal und ffprobe je Adresse, rund zwei
+    Minuten. Deshalb: in einem Thread (nie auf dem Loop) und hoechstens EINE
+    gleichzeitig — modul-global geriegelt, nicht am Objekt (CLAUDE.md:
+    Guards als Objekt-Attribut brechen beim Neuerzeugen)."""
+    if not _is_authorized(update): return
+    if not context.args:
+        # Markup AUSSERHALB des uebersetzten Literals: tools/i18n_extract.py
+        # sammelt Literale mit Markup nicht ein (CLAUDE.md, W101) — der Satz
+        # bliebe in der englischen und spanischen Oberflaeche still deutsch.
+        await update.message.reply_text(
+            _nc_i18n.t("Aufruf mit dem TikTok-Namen eines Live-Nutzers:")
+            + "\n<code>/quelle username</code>", parse_mode=ParseMode.HTML); return
+    username = clean_username(context.args[0])
+    if not username:
+        await update.message.reply_text(_nc_i18n.t("⚠️ Ungültiger Username.")); return
+    if _QUELLPROBE["laeuft"]:
+        await update.message.reply_text(
+            _nc_i18n.t("⏳ Es läuft schon eine Quellprobe für") + f" @{safe(_QUELLPROBE['laeuft'])}.")
+        return
+    _QUELLPROBE["laeuft"] = username
+    msg = await update.message.reply_text(
+        "⏳ <i>" + _nc_i18n.t("Quellprobe läuft — bis zu zwei Minuten …") + "</i>",
+        parse_mode=ParseMode.HTML)
+    zeilen = []
+    try:
+        proxy, cookies = _nc_quellprobe._env()
+        befunde = await asyncio.to_thread(_nc_quellprobe.messen, username, proxy,
+                                          cookies, zeilen.append)
+    except Exception as e:
+        log.exception("/quelle @%s fehlgeschlagen", username)
+        await msg.edit_text("⚠️ " + _nc_i18n.t("Die Quellprobe ist fehlgeschlagen.") + f"\n<i>{safe(str(e))}</i>",
+                            parse_mode=ParseMode.HTML)
+        return
+    finally:
+        _QUELLPROBE["laeuft"] = None
+    # Die Zeilen selbst bleiben deutsch wie das Log: sie sind Diagnose fuer
+    # den Betreiber. Kopf und Empfehlungs-Etikett laufen durch i18n.
+    koerper = safe("\n".join(z for z in zeilen if not z.startswith("EMPFEHLUNG:")))[:3300]
+    await msg.edit_text(
+        f"🔎 <b>QUELLE · @{safe(username)}</b>\n<pre>{koerper}</pre>\n"
+        + "<b>" + _nc_i18n.t("Was jetzt zu tun ist") + ":</b> " + safe(befunde.get("empfehlung", "")),
+        parse_mode=ParseMode.HTML, disable_web_page_preview=True)
+
+
 async def live(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not _is_authorized(update): return
     if not context.args:
@@ -5519,7 +5571,9 @@ async def untrack(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def tracklist(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not _is_authorized(update): return
-    trackings = get_trackings_for_group(update.effective_chat.id)
+    # v4.2-W142: neben dem Loop — eine SQLite-Abfrage unter Plattenlast haelt
+    # sonst JEDEN Telegram-, Discord- und Restream-Vorgang mit an (W97, W118).
+    trackings = await asyncio.to_thread(get_trackings_for_group, update.effective_chat.id)
     if not trackings:
         await update.message.reply_text(
             "📋 <b>TRACKINGS</b>\n"
@@ -5537,15 +5591,28 @@ async def tracklist(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # F65: Build pre-table: status icon + handle (left-padded) + flags + notes
     handle_w = max(len(t["username"]) for t in trackings) + 1  # for the @
     rows = []
+    unbekannt_n = ueber_n = 0
     for t in trackings:
         is_paused = ("paused" in t.keys() and t["paused"])
+        # v4.2-W142: derselbe Pruefstand wie im Deck (W138). last_live allein
+        # zeigte hier einen Nutzer, der seit Stunden nur "unbekannt" liefert,
+        # weiter als LIVE — die Frage des Betreibers war genau diese.
+        pr = _nc_prueflage.lage(t["id"], bool(t["last_live"]), paused=bool(is_paused),
+                                recording=bool(t["recording"]))
         # F65: Pause-Icon hat Vorrang über Live (User hat manuell gestoppt)
-        icon = "⏸" if is_paused else ("🔴" if t["last_live"] else "⚫")
+        icon = {"pause": "⏸", "unbekannt": "❔", "ausstehend": "⏳"}.get(
+            pr["zustand"], "🔴" if t["last_live"] else "⚫")
         handle = ("@" + t["username"]).ljust(handle_w + 1)
         flags = []
-        if t["last_live"] and not is_paused: flags.append("LIVE")
+        if pr["zustand"] in ("live", "rec") and t["last_live"]: flags.append("LIVE")
         if t["recording"]: flags.append("•REC")
         if is_paused: flags.append("PAUSED")
+        if pr["zustand"] == "unbekannt":
+            unbekannt_n += 1
+            flags.append("?")
+        if pr["ueberfaellig"]:
+            ueber_n += 1
+            flags.append("⏱%dm" % (pr["geprueft_vor_s"] // 60))
         # F65: Notes inline anzeigen wenn vorhanden — limited width damit
         # die pre-Tabelle nicht zu breit wird
         note = (t["notes"] if "notes" in t.keys() else None) or ""
@@ -5557,6 +5624,10 @@ async def tracklist(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     body = "\n".join(rows)
     status_extra = f", {paused_n} paused" if paused_n else ""
+    if unbekannt_n:
+        status_extra += f", {unbekannt_n} ?"
+    if ueber_n:
+        status_extra += f", {ueber_n} ⏱"
     text = (
         f"📋 <b>TRACKINGS · {len(trackings)} aktiv "
         f"({live_n} live, {rec_n} rec{status_extra})</b>\n"
@@ -8469,6 +8540,47 @@ async def _storage_cleanup_loop():
         await asyncio.sleep(86400)   # täglich
 
 
+def _pruefstand_melden(trackings):
+    """v4.2-W142: faellt jemand durch die Abfrage? — selbst gemeldet.
+
+    Der Betreiber am 05.11.: „bin ich mir nicht sicher ob überhaupt alle User
+    vernünftig abgefragt werden". Seit W138 sieht man es im Deck — wenn man
+    hinsieht. Ein Tracking, das seit 15 Minuten nicht geprueft wurde, ist aber
+    ein Befund, der ins Fehlerlog gehoert: es verpasst sonst still jeden
+    Live-Start. Gedrosselt am Paar (Kanal, Art), wie seit W97; die Namen
+    stehen dabei, sonst muesste man sie wieder suchen.
+
+    Unbekannt allein bleibt eine INFO: es ist der bekannte Resolver-Befund
+    (Audit W134 Nr. 9) und hat mit /healthz → quellen schon eine Zahl."""
+    u = _nc_prueflage.uebersicht([(t["id"], t["username"]) for t in trackings],
+                                 laeuft_seit_s=_uptime_s())
+    _nc_prueflage.LETZTE["uebersicht"] = u
+    jetzt = _time_mod.monotonic()
+    if u["ueberfaellig"] or u["ausstehend_befund"]:
+        art = "ueberfaellig" if u["ueberfaellig"] else "ausstehend"
+        laut, unterdr = _nc_meldetakt.melden("pruefstand", art, jetzt)
+        if laut:
+            log.error("Pruefstand: %d von %d Trackings %s (%s) — sie verpassen "
+                      "Live-Starts. Abhilfe: Schlange voll? /healthz → procs und "
+                      "loop_stalls ansehen; WORKER_COUNT erhoehen oder "
+                      "CHECK_INTERVAL dehnen.%s",
+                      u[art], u["aktiv"],
+                      "seit über 15 Minuten nicht geprüft" if art == "ueberfaellig"
+                      else "seit dem Start nie geprüft",
+                      ", ".join("@" + n for n in u["auffaellig"][art]),
+                      _nc_meldetakt.zusatz(unterdr))
+    else:
+        _nc_meldetakt.zuruecksetzen("pruefstand")
+    if u["unbekannt"]:
+        laut, unterdr = _nc_meldetakt.melden("pruefstand-unbekannt", "unbekannt", jetzt)
+        if laut:
+            log.info("Pruefstand: %d von %d Trackings seit über 10 Minuten ohne sichere "
+                     "Antwort (%s) — das Deck zeigt sie als „? unbekannt“.%s",
+                     u["unbekannt"], u["aktiv"],
+                     ", ".join("@" + n for n in u["auffaellig"]["unbekannt"]),
+                     _nc_meldetakt.zusatz(unterdr))
+
+
 async def check_all_trackings(bot_app):
     """F35: Adaptive Polling-Loop. Statt alle Trackings im starren CHECK_INTERVAL
        zu prüfen, hat jedes Tracking ein individuelles next_check_at:
@@ -8626,6 +8738,8 @@ async def check_all_trackings(bot_app):
         _pflege_runde += 1
         if _pflege_runde % 120 == 0:
             _speicher_pflegen()
+        if _pflege_runde % 60 == 0:        # v4.2-W142: alle 5 Minuten
+            _pruefstand_melden(trackings)
 
         await asyncio.sleep(LOOP_TICK)
 
@@ -19077,6 +19191,9 @@ def healthz():
                    # v4.2-W141: woher die Stream-Adressen der letzten Stunde
                    # kamen, und wie oft „live" ohne Adresse blieb.
                    quellen=_nc_quellstat.lage(),
+                   # v4.2-W142: wie viele Trackings unbekannt/ueberfaellig/
+                   # ausstehend sind — ohne Namen, /healthz ist oeffentlich.
+                   pruefung=_nc_prueflage.fuer_healthz(),
                    schema=_SCHEMA_STAND,                 # v4.2-W85
                    schema_erwartet=_nc_schemastand.ERWARTET,
                    uptime_s=_uptime_s(),                 # v4.0-W88
@@ -21227,6 +21344,7 @@ def _system_backup():
                 log.warning("Backup: brain.db-Dump fehlgeschlagen: %s", _e)
         # 2) tar.gz bauen
         nfiles, skipped_big = 0, 0
+        nicht_gesichert = []
         backup_root = os.path.abspath(LOCAL_BACKUP_DIR) if LOCAL_BACKUP_DIR else None
         tar_tmp = os.path.join(tmpdir, name)
         with tarfile.open(tar_tmp, "w:gz") as tar:
@@ -21254,9 +21372,23 @@ def _system_backup():
                             continue
                         tar.add(fp, arcname=os.path.relpath(fp, base_dir))
                         nfiles += 1
-                    except Exception:
-                        pass
+                    except Exception as _e_add:
+                        # v4.2-W142: war `pass`. Eine Datei, die nicht ins
+                        # Archiv kam, fehlt beim Wiederherstellen — gezaehlt
+                        # und mit der ersten Ursache gemeldet, nicht verschluckt.
+                        nicht_gesichert.append("%s (%s)" % (
+                            os.path.relpath(fp, base_dir), type(_e_add).__name__))
         size_mb = round(os.path.getsize(tar_tmp) / 1048576, 1)
+        # v4.2-W142: das Archiv pruefen, BEVOR es verteilt wird — ein Dump
+        # ohne Abschluss (oder der mysqldump-Platzhalter) meldete sonst ok.
+        pruefung = _nc_sicherung.pruefen(tar_tmp, dump_path, DB_BACKEND)
+        if not pruefung["ok"]:
+            log.error("Systembackup %s ist NICHT brauchbar: %s — es wird trotzdem "
+                      "abgelegt (besser als nichts), zählt aber nicht als Erfolg.",
+                      name, "; ".join(pruefung["gruende"]))
+        if nicht_gesichert:
+            log.warning("Systembackup %s: %d Datei(en) nicht gesichert, z. B. %s",
+                        name, len(nicht_gesichert), ", ".join(nicht_gesichert[:3]))
         # 3) an Ziele verteilen
         targets = []
         if LOCAL_BACKUP and LOCAL_BACKUP_DIR:
@@ -21279,10 +21411,13 @@ def _system_backup():
             if cli is not None:
                 cli.upload_file(tar_tmp, S3_BUCKET, "system/" + name)
                 targets.append("S3")
+        _fehler = "; ".join(pruefung["gruende"]) or None
         _SYS_BACKUP_STATE.update({"last_ts": _time_mod.time(), "last_file": name,
-                                  "size_mb": size_mb, "files": nfiles, "error": None})
-        return {"ok": True, "file": name, "files": nfiles, "size_mb": size_mb,
-                "skipped_big": skipped_big, "targets": targets}
+                                  "size_mb": size_mb, "files": nfiles, "error": _fehler})
+        return {"ok": pruefung["ok"], "file": name, "files": nfiles, "size_mb": size_mb,
+                "skipped_big": skipped_big, "targets": targets,
+                "geprueft": pruefung["ok"], "error": _fehler,
+                "nicht_gesichert": len(nicht_gesichert)}
     except Exception as e:
         _SYS_BACKUP_STATE["error"] = str(e)
         return {"ok": False, "error": str(e)}

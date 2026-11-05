@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="docs/assets/banner.svg" alt="NIGHTCRAWLER — v4.5.1 Vielstimmig" width="100%">
+<img src="docs/assets/banner.svg" alt="NIGHTCRAWLER — v4.5.2 Vielstimmig" width="100%">
 
 ### Der Kontrollraum für Live-Streaming
 #### Überwachung · Aufnahme · Multi-Ziel-Restream · KI-Moderation
@@ -16,10 +16,10 @@
 [![CI](https://img.shields.io/github/actions/workflow/status/itsamemedev/Telegram-Stream-Info-Bot/ci.yml?branch=main&style=for-the-badge&label=CI&logo=githubactions&logoColor=white)](../../actions/workflows/ci.yml)
 
 [![Release](https://img.shields.io/github/v/release/itsamemedev/Telegram-Stream-Info-Bot?style=for-the-badge&label=Release&logo=github&color=E8C86A&labelColor=0C0B09)](https://github.com/itsamemedev/Telegram-Stream-Info-Bot/releases/latest)
-[![Version 4.5.1 Vielstimmig](https://img.shields.io/badge/Version-4.5.1%20%C2%B7%20Vielstimmig-C9A227?style=for-the-badge&labelColor=0C0B09)](docs/CHANGELOG.md)
+[![Version 4.5.2 Vielstimmig](https://img.shields.io/badge/Version-4.5.2%20%C2%B7%20Vielstimmig-C9A227?style=for-the-badge&labelColor=0C0B09)](docs/CHANGELOG.md)
 [![CodeQL](https://img.shields.io/github/actions/workflow/status/itsamemedev/Telegram-Stream-Info-Bot/codeql.yml?branch=main&style=for-the-badge&label=CodeQL&logo=github&logoColor=white)](../../actions/workflows/codeql.yml)
-[![Verträge](https://img.shields.io/badge/Vertr%C3%A4ge-1029%20gr%C3%BCn-success?style=for-the-badge&logo=pytest&logoColor=white)](#-tests--prüfkette)
-[![Überdeckung](https://img.shields.io/badge/%C3%9Cberdeckung-57%20%25%20nc%2F%20%2B%20brain%2F-yellowgreen?style=for-the-badge&logo=codecov&logoColor=white)](#-tests--prüfkette)
+[![Verträge](https://img.shields.io/badge/Vertr%C3%A4ge-1031%20gr%C3%BCn-success?style=for-the-badge&logo=pytest&logoColor=white)](#-tests--prüfkette)
+[![Überdeckung](https://img.shields.io/badge/%C3%9Cberdeckung-58%20%25%20nc%2F%20%2B%20brain%2F-yellowgreen?style=for-the-badge&logo=codecov&logoColor=white)](#-tests--prüfkette)
 
 [![Telegram](https://img.shields.io/badge/Telegram-Bot-26A5E4?style=flat-square&logo=telegram&logoColor=white)](#️-bedienung)
 [![Discord](https://img.shields.io/badge/Discord-65%20Slash--Commands-5865F2?style=flat-square&logo=discord&logoColor=white)](#️-bedienung)
@@ -51,7 +51,7 @@
 | **Wofür** | Live-Überwachung, Aufnahme und Multi-Ziel-Restream von TikTok-Streams, mit KI-Moderation in Kick, Twitch und YouTube |
 | **Für wen** | Betreiber, die das auf **eigener** Hardware wollen — ein Linux-Server, kein SaaS, keine Fremdplattform zwischen Stream und Zielen |
 | **Läuft auf** | Ubuntu/Debian mit systemd, **Python 3.12–3.14** (Produktion: 3.14), ffmpeg, streamlink, yt-dlp |
-| **Bedienung** | Telegram, Discord (65 Slash-Commands) und ein Web-Deck mit vier Themen, darunter ein **Kontrast-Thema nach WCAG AAA**, auf Deutsch, Englisch und Spanisch |
+| **Bedienung** | Telegram, Discord (66 Slash-Commands) und ein Web-Deck mit vier Themen, darunter ein **Kontrast-Thema nach WCAG AAA**, auf Deutsch, Englisch und Spanisch |
 | **Qualität** | über tausend Verträge in drei Suiten, CI auf drei Python-Fassungen **und** gegen den eingefrorenen Produktionsstand, `pip-audit`, CodeQL, Dependabot |
 | **Lizenz** | GPL-3.0-or-later |
 
@@ -211,17 +211,17 @@ flowchart TD
 
 ```mermaid
 flowchart TB
-    TG["📨 Telegram<br/>31 Befehle"]:::ein
-    DC["🎮 Discord<br/>65 Slash-Commands"]:::ein
+    TG["📨 Telegram<br/>32 Befehle"]:::ein
+    DC["🎮 Discord<br/>66 Slash-Commands"]:::ein
     TT["🎥 TikTok<br/>Live-Erkennung + Chat"]:::ein
 
     TG --> BOT
     DC --> BOT
     TT --> BOT
 
-    BOT["bot.py<br/>Monolith · 26.138 Zeilen<br/>Scraper · Recorder · Restream<br/>Flask-Dashboard · 34 eigene Routen"]:::core
+    BOT["bot.py<br/>Monolith · 26.273 Zeilen<br/>Scraper · Recorder · Restream<br/>Flask-Dashboard · 34 eigene Routen"]:::core
 
-    BOT -->|configure| NC["nc/ — 168 Fachmodule<br/>Schema · OAuth · Restream<br/>Ledger · Moderation · Intel"]:::lib
+    BOT -->|configure| NC["nc/ — 170 Fachmodule<br/>Schema · OAuth · Restream<br/>Ledger · Moderation · Intel"]:::lib
     NC --> RT["nc/routes/ — 38 Blueprints<br/>327 weitere API-Routen"]:::lib
     BOT --> TPL["templates/<br/>Dashboard · Overlay · PWA"]:::lib
     BOT --> BR["brain_bridge.py"]:::lib
@@ -371,6 +371,7 @@ Befehle heißen **auf beiden Plattformen gleich**; die früheren
 |---|---|
 | `/tiktok` `‹name›` | Profil-Analyse eines TikTok-Accounts |
 | `/live` `@user` | Live-Status sofort pruefen |
+| `/quelle` `‹name›` | Stream-Quellen eines Live-Nutzers messen — jeder Weg, ffprobe, mit Abhilfe |
 | `/track_exact` `‹name›` | Exakten Usernamen tracken (ohne Korrektur) |
 | `/pause` `@user` | Tracking pausieren |
 | `/resume` `@user` | Tracking fortsetzen |
@@ -402,12 +403,12 @@ Befehle heißen **auf beiden Plattformen gleich**; die früheren
 | `/update` | Update vom Repo einspielen (nur Telegram) |
 
 <details>
-<summary><h3>Discord — 65 Slash-Commands</h3></summary>
+<summary><h3>Discord — 66 Slash-Commands</h3></summary>
 
 <br>
 
 **Gemeinsam mit Telegram** *(gleicher Name, gleiche Wirkung)*
-`/tiktok` · `/live` · `/track_exact` · `/pause` · `/resume` · `/unpause` · `/bulkadd` · `/stoprec` · `/cleanup` · `/quota` · `/teststream` · `/topusers` · `/summary` · `/aireset` · `/brain` · `/report` · `/cookies` · `/sysres` · `/logs` · `/diag` · `/einnahmen` · `/about` · `/tracklist` · `/track` · `/untrack` · `/recstatus` · `/stats` · `/ai` · `/help`
+`/tiktok` · `/live` · `/quelle` · `/track_exact` · `/pause` · `/resume` · `/unpause` · `/bulkadd` · `/stoprec` · `/cleanup` · `/quota` · `/teststream` · `/topusers` · `/summary` · `/aireset` · `/brain` · `/report` · `/cookies` · `/sysres` · `/logs` · `/diag` · `/einnahmen` · `/about` · `/tracklist` · `/track` · `/untrack` · `/recstatus` · `/stats` · `/ai` · `/help`
 
 **Analyse**
 `/status` · `/streaminfo`
@@ -854,7 +855,7 @@ gebrochen ist.**
 
 ### 🧭 Navigation im Monolithen
 
-`bot.py` hat 26.138 Zeilen. Es wird **nie** ganz gelesen und **nie**
+`bot.py` hat 26.273 Zeilen. Es wird **nie** ganz gelesen und **nie**
 blind durchsucht — erst fragen wo etwas steht, dann den Ausschnitt holen:
 
 ```bash
@@ -869,7 +870,7 @@ python3 tools/ncpatch.py docs                          # Doku-Zahlen gegen den C
 ```
 
 `find` antwortet aus **[`.claude/INDEX.md`](.claude/INDEX.md)** — 372 Routen
-(34 in `bot.py`, 335 in `nc/routes/`), 65 Slash-Commands, 584 Funktionen,
+(34 in `bot.py`, 335 in `nc/routes/`), 66 Slash-Commands, 586 Funktionen,
 jeweils mit Zeilennummer.
 
 ---
@@ -997,6 +998,9 @@ Die Wellen W134 bis W140, jede einzeln im [Changelog](docs/CHANGELOG.md):
 **Patch 4.5.1** — sieben Nutzer live und kein Restream, „weder FLV noch HLS":
 die Kette liest jetzt auch CMAF, DASH und MP4, `tools/quellprobe.py` misst auf
 dem Server jeden Weg, und der Grund steht im Deck und in `/healthz`.
+**Patch 4.5.2** — zehn Verbesserungen quer durch das Projekt: `/quelle` vom
+Handy, ehrlicher Prüfstand in `/tracklist` und `/healthz`, Selbstmeldung bei
+überfälligen Trackings, geprüfte Systemsicherung, `SHA256SUMS` am Release.
 
 ## 🆕 Neu in v4.4
 
@@ -1036,10 +1040,10 @@ KI-Aufruf, eine beschädigte `brain.db` fehlte still in der Sicherung.
 
 | | |
 |---|---|
-| Aktuelle Version | **4.5.1** — „Vielstimmig" (2026.11) |
+| Aktuelle Version | **4.5.2** — „Vielstimmig" (2026.11) |
 | Flask-Routen | 372 (34 in `bot.py` · 338 in `nc/routes/`) |
-| Discord-Slash-Commands | 65 |
-| Fachmodule | 168 in `nc/` (+38 in `nc/routes/`, +3 in `nc/intel/`), 10 in `brain/` |
+| Discord-Slash-Commands | 66 |
+| Fachmodule | 170 in `nc/` (+38 in `nc/routes/`, +3 in `nc/intel/`), 10 in `brain/` |
 | Sentinel-Agenten | 13 |
 | Konfigurationsvariablen | ~568 |
 | Sprachen | Deutsch (Quelle), Englisch, Spanisch |
@@ -1052,7 +1056,7 @@ Vollständige Historie: **[`docs/CHANGELOG.md`](docs/CHANGELOG.md)** ·
 ## 🧭 Roadmap
 
 Der nächste grosse Schritt ist kein Feature, sondern Aufräumen: **`bot.py` hat
-26.138 Zeilen**. Die Datei ist der Engpass des Projekts. Die Messlatte dafür ist
+26.273 Zeilen**. Die Datei ist der Engpass des Projekts. Die Messlatte dafür ist
 aber keine Zeilenzahl:
 
 > **Eine neue API-Route anlegen, ohne `bot.py` zu öffnen.**
@@ -1132,7 +1136,7 @@ Fremdcode und dessen Lizenzen: **[`docs/THIRD_PARTY_LICENSES.md`](docs/THIRD_PAR
 
 <div align="center">
 
-**NIGHTCRAWLER v4.5.1 · „Vielstimmig"**
+**NIGHTCRAWLER v4.5.2 · „Vielstimmig"**
 
 **[🌐 lafap.de](https://lafap.de)** · **[💬 Discord](https://discord.gg/psvnxm7tSV)** · **[📓 Changelog](docs/CHANGELOG.md)**
 

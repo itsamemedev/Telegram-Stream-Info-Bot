@@ -69,11 +69,30 @@ def _t(s):
 
 
 
+# v4.2-W142: hoechstens ein Schnappschuss je Nutzer und Abstand. Seit W138
+# laedt das Popup das Profil wirklich, und JEDER Klick legte eine Zeile mit
+# bis zu 50 KB Nutzlast an — ein Abend mit einem offenen Popup sind hunderte
+# Zeilen, die nichts Neues sagen. Der Verlauf (nc.profildetail.verlauf)
+# braucht Tages- und Wochenwerte, keine Minutenwerte.
+SCHNAPPSCHUSS_ABSTAND_S = 3600
+
+
 def save_profile_snapshot(username: str, payload: dict) -> Optional[int]:
     """Persistiert einen Profile-Snapshot. follower_count etc. werden in
-       eigene Spalten extrahiert für schnelle Diff-Queries."""
+       eigene Spalten extrahiert für schnelle Diff-Queries.
+       v4.2-W142: ist der juengste keine SCHNAPPSCHUSS_ABSTAND_S alt, wird
+       nichts geschrieben und SEINE id zurueckgegeben — er ist der gueltige
+       Stand. None heisst hier seit jeher „Fehler" und bleibt dabei."""
     try:
         with db_conn() as conn:
+            grenze = (datetime.now(timezone.utc)
+                      - timedelta(seconds=SCHNAPPSCHUSS_ABSTAND_S)).isoformat()
+            frisch = conn.execute(
+                "SELECT id FROM profile_snapshots WHERE username=? AND captured_at>? "
+                "ORDER BY captured_at DESC LIMIT 1",
+                (username, grenze)).fetchone()
+            if frisch:
+                return frisch["id"]
             cur = conn.execute(
                 "INSERT INTO profile_snapshots "
                 "(username, payload, follower_count, heart_count, video_count, captured_at) "

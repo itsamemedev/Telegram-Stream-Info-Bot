@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="docs/assets/banner.svg" alt="NIGHTCRAWLER — v4.5.1 Many-Voiced" width="100%">
+<img src="docs/assets/banner.svg" alt="NIGHTCRAWLER — v4.5.2 Many-Voiced" width="100%">
 
 ### The control room for live streaming
 #### Monitoring · Recording · Multi-target restream · AI moderation
@@ -16,10 +16,10 @@
 [![CI](https://img.shields.io/github/actions/workflow/status/itsamemedev/Telegram-Stream-Info-Bot/ci.yml?branch=main&style=for-the-badge&label=CI&logo=githubactions&logoColor=white)](../../actions/workflows/ci.yml)
 
 [![Release](https://img.shields.io/github/v/release/itsamemedev/Telegram-Stream-Info-Bot?style=for-the-badge&label=Release&logo=github&color=E8C86A&labelColor=0C0B09)](https://github.com/itsamemedev/Telegram-Stream-Info-Bot/releases/latest)
-[![Version 4.5.1 Many-Voiced](https://img.shields.io/badge/Version-4.5.1%20%C2%B7%20Many--Voiced-C9A227?style=for-the-badge&labelColor=0C0B09)](docs/CHANGELOG.md)
+[![Version 4.5.2 Many-Voiced](https://img.shields.io/badge/Version-4.5.2%20%C2%B7%20Many--Voiced-C9A227?style=for-the-badge&labelColor=0C0B09)](docs/CHANGELOG.md)
 [![CodeQL](https://img.shields.io/github/actions/workflow/status/itsamemedev/Telegram-Stream-Info-Bot/codeql.yml?branch=main&style=for-the-badge&label=CodeQL&logo=github&logoColor=white)](../../actions/workflows/codeql.yml)
-[![Contracts](https://img.shields.io/badge/Contracts-1029%20passing-success?style=for-the-badge&logo=pytest&logoColor=white)](#-tests--verification-chain)
-[![Coverage](https://img.shields.io/badge/Coverage-57%20%25%20nc%2F%20%2B%20brain%2F-yellowgreen?style=for-the-badge&logo=codecov&logoColor=white)](#-tests--verification-chain)
+[![Contracts](https://img.shields.io/badge/Contracts-1031%20passing-success?style=for-the-badge&logo=pytest&logoColor=white)](#-tests--verification-chain)
+[![Coverage](https://img.shields.io/badge/Coverage-58%20%25%20nc%2F%20%2B%20brain%2F-yellowgreen?style=for-the-badge&logo=codecov&logoColor=white)](#-tests--verification-chain)
 
 [![Telegram](https://img.shields.io/badge/Telegram-Bot-26A5E4?style=flat-square&logo=telegram&logoColor=white)](#️-operating-it)
 [![Discord](https://img.shields.io/badge/Discord-65%20slash%20commands-5865F2?style=flat-square&logo=discord&logoColor=white)](#️-operating-it)
@@ -51,7 +51,7 @@
 | **What** | Live monitoring, recording and multi-destination restreaming of TikTok streams, with AI moderation in Kick, Twitch and YouTube |
 | **For whom** | Operators who want this on **their own** hardware — one Linux server, no SaaS, no third-party platform between the stream and its destinations |
 | **Runs on** | Ubuntu/Debian with systemd, **Python 3.12–3.14** (production: 3.14), ffmpeg, streamlink, yt-dlp |
-| **Operated via** | Telegram, Discord (65 slash commands) and a web deck with four themes, including a **high-contrast theme meeting WCAG AAA**, in German, English and Spanish |
+| **Operated via** | Telegram, Discord (66 slash commands) and a web deck with four themes, including a **high-contrast theme meeting WCAG AAA**, in German, English and Spanish |
 | **Quality** | over a thousand contracts in three suites, CI on three Python versions **and** against the frozen production state, `pip-audit`, CodeQL, Dependabot |
 | **Licence** | GPL-3.0-or-later |
 
@@ -213,7 +213,7 @@ flowchart TD
 ```mermaid
 flowchart TB
     TG["📨 Telegram<br/>29 commands"]:::ein
-    DC["🎮 Discord<br/>65 slash commands"]:::ein
+    DC["🎮 Discord<br/>66 slash commands"]:::ein
     TT["🎥 TikTok<br/>live detection + chat"]:::ein
 
     TG --> BOT
@@ -375,6 +375,7 @@ Since v4.2-W109 every command lives in **one** registry
 |---|---|
 | `/tiktok` `‹name›` | Profile analysis of a TikTok account |
 | `/live` `@user` | Check live status now |
+| `/quelle` `‹name›` | Measure a live user's stream sources — every route, ffprobe, with the fix |
 | `/track_exact` `‹name›` | Track the exact username (no correction) |
 | `/pause` `@user` | Pause tracking |
 | `/resume` `@user` | Resume tracking |
@@ -406,12 +407,12 @@ Since v4.2-W109 every command lives in **one** registry
 | `/update` | Install update from the repo (Telegram only) |
 
 <details>
-<summary><h3>Discord — 65 slash commands</h3></summary>
+<summary><h3>Discord — 66 slash commands</h3></summary>
 
 <br>
 
 **Shared with Telegram** *(same name, same effect)*
-`/tiktok` · `/live` · `/track_exact` · `/pause` · `/resume` · `/unpause` · `/bulkadd` · `/stoprec` · `/cleanup` · `/quota` · `/teststream` · `/topusers` · `/summary` · `/aireset` · `/brain` · `/report` · `/cookies` · `/sysres` · `/logs` · `/diag` · `/einnahmen` · `/about` · `/tracklist` · `/track` · `/untrack` · `/recstatus` · `/stats` · `/ai` · `/help`
+`/tiktok` · `/live` · `/quelle` · `/track_exact` · `/pause` · `/resume` · `/unpause` · `/bulkadd` · `/stoprec` · `/cleanup` · `/quota` · `/teststream` · `/topusers` · `/summary` · `/aireset` · `/brain` · `/report` · `/cookies` · `/sysres` · `/logs` · `/diag` · `/einnahmen` · `/about` · `/tracklist` · `/track` · `/untrack` · `/recstatus` · `/stats` · `/ai` · `/help`
 
 **Analysis**
 `/status` · `/streaminfo`
@@ -856,7 +857,7 @@ python3 tools/ncpatch.py docs                      # documentation numbers vs. t
 ```
 
 `find` answers from **[`.claude/INDEX.md`](.claude/INDEX.md)** — 361 routes
-(34 in `bot.py`, 327 in `nc/routes/`), 65 slash commands, 479 functions, each
+(34 in `bot.py`, 327 in `nc/routes/`), 66 slash commands, 479 functions, each
 with a line number.
 
 ---
@@ -990,6 +991,9 @@ say something. Waves W134 to W140, each in detail in the
 the chain now also reads CMAF, DASH and MP4, `tools/quellprobe.py` measures
 every route on the server, and the reason shows up in the deck and in
 `/healthz`.
+**Patch 4.5.2** — ten improvements across the project: `/quelle` from your
+phone, honest check status in `/tracklist` and `/healthz`, a self-report when
+trackings fall overdue, a verified system backup, and `SHA256SUMS` on releases.
 
 ## 🆕 New in v4.4
 
@@ -1031,7 +1035,7 @@ service.
 
 | | |
 |---|---|
-| Current version | **4.5.1** — “Many-Voiced” (2026.11) |
+| Current version | **4.5.2** — “Many-Voiced” (2026.11) |
 | Flask routes | 361 (34 in `bot.py` · 327 in `nc/routes/`) |
 | Discord slash commands | 45 |
 | Domain modules | 92 in `nc/` (+18 in `nc/routes/`, +3 in `nc/intel/`), 10 in `brain/` |
@@ -1131,7 +1135,7 @@ Third-party code and its licences:
 
 <div align="center">
 
-**NIGHTCRAWLER v4.5.1 · “Many-Voiced”**
+**NIGHTCRAWLER v4.5.2 · “Many-Voiced”**
 
 **[🌐 lafap.de](https://lafap.de)** · **[💬 Discord](https://discord.gg/psvnxm7tSV)** · **[📓 Changelog](docs/CHANGELOG.md)**
 

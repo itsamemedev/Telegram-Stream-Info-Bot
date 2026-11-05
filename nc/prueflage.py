@@ -89,3 +89,61 @@ def lage(tid, last_live, paused=False, recording=False, jetzt=None):
     else:
         aus["zustand"] = "live" if last_live else "offline"
     return aus
+
+
+# v4.2-W142: die Zusammenfassung fuer /healthz und den Waechter. /healthz
+# misst nicht (W97/W105) — es liest, was die Pruefschleife zuletzt hier
+# abgelegt hat. Vor der ersten Runde steht hier None, nicht lauter Nullen:
+# eine 0 liest sich wie „alles geprueft".
+LETZTE = {"uebersicht": None}
+
+# Wie lange nach dem Start ein noch nie geprueftes Tracking normal ist. Der
+# Initial-Burst reiht alle sofort ein, die Worker brauchen fuer 40 Nutzer
+# und je bis zu 20 s yt-dlp aber Minuten (W119: Schlange unter Last).
+AUSSTEHEND_NORMAL_S = 900
+
+
+def uebersicht(tids, laeuft_seit_s=None, jetzt=None):
+    """Zaehlt fuer die aktiven (nicht pausierten) Trackings `tids`:
+
+        ueberfaellig  geprueft, aber seit UEBERFAELLIG_AB_S nicht mehr
+        unbekannt     seit UNSICHER_AB_S keine sichere Antwort
+        ausstehend    seit dem Start nie geprueft
+        auffaellig    die Namen dazu (hoechstens 5 je Art) — fuers Log
+
+    `laeuft_seit_s`: Prozess-Laufzeit. Ausstehend zaehlt erst als Befund, wenn
+    der Start laenger als AUSSTEHEND_NORMAL_S her ist (`ausstehend_befund`).
+    """
+    jetzt = time.time() if jetzt is None else jetzt
+    aus = {"aktiv": 0, "ueberfaellig": 0, "unbekannt": 0, "ausstehend": 0,
+           "ausstehend_befund": False, "auffaellig": {"ueberfaellig": [], "unbekannt": [],
+                                                       "ausstehend": []}}
+    with _LOCK:
+        stand = {t: dict(v) for t, v in _STAND.items()}
+    for tid, name in tids:
+        aus["aktiv"] += 1
+        st = stand.get(tid)
+        if not st:
+            art = "ausstehend"
+        elif jetzt - st["at"] > UEBERFAELLIG_AB_S:
+            art = "ueberfaellig"
+        elif st.get("status") not in SICHER and (
+                not st.get("sicher_at") or jetzt - st["sicher_at"] > UNSICHER_AB_S):
+            art = "unbekannt"
+        else:
+            continue
+        aus[art] += 1
+        if len(aus["auffaellig"][art]) < 5:
+            aus["auffaellig"][art].append(name)
+    aus["ausstehend_befund"] = bool(
+        aus["ausstehend"] and laeuft_seit_s is not None
+        and laeuft_seit_s > AUSSTEHEND_NORMAL_S)
+    return aus
+
+
+def fuer_healthz():
+    """Die zuletzt abgelegte Uebersicht ohne Namen — /healthz ist oeffentlich
+    erreichbar (UptimeRobot), Nutzernamen gehoeren nicht hinein."""
+    u = LETZTE["uebersicht"]
+    return (None if u is None else
+            {k: u[k] for k in ("aktiv", "ueberfaellig", "unbekannt", "ausstehend")})

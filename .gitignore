@@ -39,6 +39,7 @@ __pycache__/
 # Der Build ist reproduzierbar (tools/build_release.py) — das ZIP selbst
 # gehoert nicht in die Historie, es blaeht sie nur auf.
 NIGHTCRAWLER_v37_*.zip
+SHA256SUMS
 *.tgz
 *.tar.gz
 
