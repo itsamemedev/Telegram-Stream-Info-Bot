@@ -642,7 +642,7 @@ Deterministic detection **before** banned words and **before** any AI:
 
 ## 🖥️ Dashboard
 
-A Flask dashboard with **372 routes** on `127.0.0.1:8050`.
+A Flask dashboard with **373 routes** on `127.0.0.1:8050`.
 
 ```bash
 # From your laptop — never open the port:

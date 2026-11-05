@@ -42,6 +42,22 @@ tests:
         values: '0x40'
       - series: 'nightcrawler_kinder_getoetet{job="nightcrawler"}'
         values: '0x40'
+      - series: 'nightcrawler_pruefung_ueberfaellig{job="nightcrawler"}'
+        values: '0x40'
+      - series: 'nightcrawler_quellen_gesamt{job="nightcrawler"}'
+        values: '20x40'
+      - series: 'nightcrawler_quellen_keiner{job="nightcrawler"}'
+        values: '3x40'
+      - series: 'nightcrawler_zustand_tunnel_fehler{job="nightcrawler"}'
+        values: '0x40'
+      - series: 'nightcrawler_zustand_laufstand_veraltet{job="nightcrawler"}'
+        values: '0x40'
+      - series: 'nightcrawler_zustand_schema_stand{job="nightcrawler"}'
+        values: '3x40'
+      - series: 'nightcrawler_zustand_schema_erwartet{job="nightcrawler"}'
+        values: '3x40'
+      - series: 'nightcrawler_zustand_log_synchron{job="nightcrawler"}'
+        values: '0x40'
     alert_rule_test:
       - {eval_time: 20m, alertname: NightcrawlerNichtErreichbar, exp_alerts: []}
       - {eval_time: 20m, alertname: NightcrawlerNeustartSchleife, exp_alerts: []}
@@ -53,6 +69,12 @@ tests:
       - {eval_time: 20m, alertname: NightcrawlerAufnahmeDeckel, exp_alerts: []}
       - {eval_time: 20m, alertname: NightcrawlerLogVerluste, exp_alerts: []}
       - {eval_time: 20m, alertname: NightcrawlerKindprozesseGetoetet, exp_alerts: []}
+      - {eval_time: 20m, alertname: NightcrawlerTrackingsUeberfaellig, exp_alerts: []}
+      - {eval_time: 20m, alertname: NightcrawlerOhneStreamAdresse, exp_alerts: []}
+      - {eval_time: 20m, alertname: NightcrawlerTunnelFehler, exp_alerts: []}
+      - {eval_time: 20m, alertname: NightcrawlerUpdateNichtWirksam, exp_alerts: []}
+      - {eval_time: 20m, alertname: NightcrawlerSchemaNeuerAlsCode, exp_alerts: []}
+      - {eval_time: 20m, alertname: NightcrawlerLogSynchron, exp_alerts: []}
 
   # ── Bot weg: feuert erst nach 2 Minuten, nicht beim ersten Aussetzer.
   - interval: 30s
@@ -211,3 +233,69 @@ tests:
             exp_annotations:
               summary: "Datenbank nicht erreichbar"
               description: "Seit 3 Minuten keine erfolgreiche Zaehlung. Gesperrt, voll oder kaputt — /healthz zeigt die frische Probe."
+
+  # ── v4.2-W144: die Zustaende. Jede Regel feuert nach ihrer Frist — und
+  # nicht vorher (ein kurzer Ausreisser ist kein Alarm).
+  - interval: 1m
+    input_series:
+      - series: 'nightcrawler_pruefung_ueberfaellig{job="nightcrawler"}'
+        values: '2x40'
+      - series: 'nightcrawler_quellen_gesamt{job="nightcrawler"}'
+        values: '10x40'
+      - series: 'nightcrawler_quellen_keiner{job="nightcrawler"}'
+        values: '6x40'
+      - series: 'nightcrawler_zustand_tunnel_fehler{job="nightcrawler"}'
+        values: '1x40'
+      - series: 'nightcrawler_zustand_laufstand_veraltet{job="nightcrawler"}'
+        values: '1x40'
+      - series: 'nightcrawler_zustand_schema_stand{job="nightcrawler"}'
+        values: '4x40'
+      - series: 'nightcrawler_zustand_schema_erwartet{job="nightcrawler"}'
+        values: '3x40'
+      - series: 'nightcrawler_zustand_log_synchron{job="nightcrawler"}'
+        values: '1x40'
+    alert_rule_test:
+      - {eval_time: 10m, alertname: NightcrawlerTrackingsUeberfaellig, exp_alerts: []}
+      - eval_time: 16m
+        alertname: NightcrawlerTrackingsUeberfaellig
+        exp_alerts:
+          - exp_labels: {severity: warning}
+            exp_annotations:
+              summary: "2 Trackings werden nicht mehr abgefragt"
+              description: "Die Namen stehen im Bot-Log (ERROR) und im Deck unter Trackings. journalctl -u tiktok-bot | grep -i ueberfaellig"
+      - {eval_time: 20m, alertname: NightcrawlerOhneStreamAdresse, exp_alerts: []}
+      - eval_time: 31m
+        alertname: NightcrawlerOhneStreamAdresse
+        exp_alerts:
+          - exp_labels: {severity: warning}
+            exp_annotations:
+              summary: "Live, aber ohne Stream-Adresse: 60 %"
+              description: "Die Haelfte der Lives laesst sich nicht abgreifen — kein Restream. Messen: /quelle <name> in Telegram oder tools/quellprobe.py <name>."
+      - eval_time: 16m
+        alertname: NightcrawlerTunnelFehler
+        exp_alerts:
+          - exp_labels: {severity: warning}
+            exp_annotations:
+              summary: "Proxy-Tunnel antwortet nicht"
+              description: "Aufnahme und Resolver laufen ueber RECORD_PROXY und kommen nicht durch. Deck → Tunnel → Testen; auf dem VPS: systemctl status privoxy."
+      - eval_time: 31m
+        alertname: NightcrawlerUpdateNichtWirksam
+        exp_alerts:
+          - exp_labels: {severity: warning}
+            exp_annotations:
+              summary: "Update eingespielt, aber nicht wirksam"
+              description: "Der Dienst laeuft noch mit dem alten Code. Neu starten: Deck → Update → Dienst neu starten, oder systemctl restart tiktok-bot."
+      - eval_time: 6m
+        alertname: NightcrawlerSchemaNeuerAlsCode
+        exp_alerts:
+          - exp_labels: {severity: critical}
+            exp_annotations:
+              summary: "Datenbank ist neuer als der laufende Code"
+              description: "Rollback auf eine aeltere Fassung? Zahlen koennen falsch sein. Passende Fassung einspielen oder docs/CHANGELOG.md zum Schema-Stand lesen."
+      - eval_time: 11m
+        alertname: NightcrawlerLogSynchron
+        exp_alerts:
+          - exp_labels: {severity: warning}
+            exp_annotations:
+              summary: "1 Log-Handler schreiben am Loop vorbei"
+              description: "Welcher, zeigt /api/debug/threads (log_synchron). Meist ein Bibliotheks-Logger mit eigenem Handler."

@@ -58,7 +58,9 @@ BP_GLOB = "nc/routes/*.py"
 # markiert ist. nc/befehle.py traegt die Beschreibungen aller Befehle — die
 # zeigen Telegram-Menue, Discord und /help. Ohne diesen Eintrag waeren sie in
 # der englischen Oberflaeche still deutsch geblieben.
-MARKIERT = ["nc/befehle.py"]
+MARKIERT = ["nc/befehle.py",
+            # v4.2-W144: die Gruende der Beobachtungs-Lage im Deck.
+            "nc/beobachtungslage.py"]
 
 # Ein Text ist uebersetzbar, wenn er ueberhaupt Sprache enthaelt. Reine Zahlen,
 # Symbole, CSS-Werte und Platzhalter fliegen raus.

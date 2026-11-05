@@ -1721,6 +1721,7 @@ _nc_updater.configure(
 # den Vergleich spaeter moeglich: `local_head()` liest die Platte und aendert
 # sich mit jedem Update, dieser Wert nicht.
 _LAUFSTAND_START = _nc_updater.local_head()[0]
+_LAUFSTAND_LETZT = {"lage": "unbekannt"}   # v4.2-W144: letzte Antwort von _laufstand_loop
 
 
 def _laufstand():
@@ -24086,6 +24087,22 @@ def _betrieb():
             "aufnahmen": len(active_processes)}
 
 
+def _zustand_kennzahlen():
+    """Zustaende als Zahlen fuer /metrics (v4.2-W144, nc/kennzahlen.einwertig)."""
+    return {
+        "tunnel": _nc_kz.einwertig(_tunnel_lage(), (
+            _nc_tunnelwacht.LAGE_OK, _nc_tunnelwacht.LAGE_DIREKT,
+            _nc_tunnelwacht.LAGE_AUS, _nc_tunnelwacht.LAGE_FEHLER, "unbekannt")),
+        "laufstand": _nc_kz.einwertig(_LAUFSTAND_LETZT["lage"], (
+            _nc_laufstand.AKTUELL, _nc_laufstand.VERALTET, _nc_laufstand.UNBEKANNT)),
+        "schema_stand": _SCHEMA_STAND,
+        "schema_erwartet": _nc_schemastand.ERWARTET,
+        "db_mariadb": 1 if DB_BACKEND == "mariadb" else 0,
+        "loop_stalls": _nc_brainstate.STALLS["n"],
+        "log_synchron": len(_nc_logschleuse.synchrone_handler()),
+    }
+
+
 def _leistung_erheben():
     """Den Schnappschuss bauen und ablegen. Laeuft auf dem Loop, alle 10 s —
        deshalb nur Speicherlesungen und ein /proc-Zugriff, nie die Datenbank."""
@@ -24105,6 +24122,13 @@ def _leistung_erheben():
             "prozess": _nc_kz.prozess(),
             "betrieb": _betrieb(),
             "start_s": _nc_lage.ZUSTAND["bereit_s"],
+            # v4.2-W144: was /healthz schon wusste und Prometheus nie sah —
+            # woher die Stream-Adressen kamen (W141), der Pruefstand der
+            # Trackings (W142), Tunnel, Update-Lage und Schema. Alles aus dem
+            # Speicher: keine Datenbank, keine Datei, kein Netz.
+            "quellen": _nc_quellstat.lage(),
+            "pruefung": _nc_prueflage.fuer_healthz() or {},
+            "zustand": _zustand_kennzahlen(),
         }
         _nc_kz.veroeffentlichen(daten)
     except Exception as e:
@@ -24539,6 +24563,9 @@ async def _laufstand_loop():
         _hb("laufstand")
         try:
             lage = _laufstand()
+            # v4.2-W144: fuer /metrics gemerkt — der 10-s-Schnappschuss darf
+            # keine Datei lesen, die Antwort von hier ist hoechstens 5 min alt.
+            _LAUFSTAND_LETZT["lage"] = lage["lage"]
             if lage["lage"] == _nc_laufstand.VERALTET:
                 laut, unterdrueckt = _nc_meldetakt.melden(
                     "laufstand", lage["lage"], _time_mod.monotonic())

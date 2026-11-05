@@ -80,6 +80,22 @@ def _flach(praefix: str, wert, aus: list) -> None:
     # Pfade tragen, und eine Liste hat keine eindeutige Zahl.
 
 
+def einwertig(wert, moeglich) -> dict:
+    """Ein Zustand als 0/1 je moeglichem Wert — {"ok": 1, "fehler": 0, …}.
+
+    v4.2-W144. Text gibt `_flach` bewusst nicht aus (er kann Namen tragen),
+    und damit fehlten Tunnel- und Update-Lage in Prometheus ganz. Als eine
+    Zahl je Zustand laesst sich daraus in Grafana ein Zustandsverlauf und in
+    einer Regel ein Alarm bauen. ALLE Zustaende stehen immer da, auch die
+    mit 0 — eine Reihe, die nur im Fehlerfall existiert, sieht in Grafana
+    genauso aus wie ein Bot, der nichts meldet.
+    Ein unbekannter Wert landet unter "sonstig", statt zu verschwinden."""
+    moeglich = tuple(moeglich)
+    aus = {m: (1 if wert == m else 0) for m in moeglich}
+    aus["sonstig"] = 0 if wert in moeglich else 1
+    return aus
+
+
 def prometheus(daten: dict, praefix: str = "nightcrawler",
                alter_s: Optional[float] = None) -> str:
     """Alle Zahlen-Blaetter als Gauges im Prometheus-Textformat."""

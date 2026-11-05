@@ -1826,7 +1826,9 @@ def _test_w23_beobachtung_und_toasts():
     app = Flask(__name__)
     app.register_blueprint(R.bp)
     regeln = [r for r in app.url_map.iter_rules() if r.endpoint != "static"]
-    assert len(regeln) == 8, sorted(str(r.rule) for r in regeln)
+    # ANKER GEWANDERT (v4.2-W144, nicht der Vertrag): /api/beobachtung/lage
+    # kam dazu — neun Routen.
+    assert len(regeln) == 9, sorted(str(r.rule) for r in regeln)
     assert any(str(r.rule) == "/metrics" for r in regeln)
     quelle = open("nc/routes/beobachtung.py", encoding="utf-8").read()
     baum = _ast.parse(quelle)
@@ -23519,6 +23521,34 @@ def _test_v42_w126_motd_konfigurieren():
     ok("W126: motd.sh --configure prueft jeden Wert, zeigt ihn sofort und schreibt nur Aenderungen")
 
 
+# Die langlebigen Maps aus bot._speicher_maps — ein Vertrag haelt beide gleich.
+_W144_MAPS = ("live_status_cache", "rate_backoff", "rate_penalty", "ytdlp_ruhe",
+              "clip_cooldown", "hype_cooldown", "abo_probe", "abo_live",
+              "next_check", "chat_stats")
+
+
+def _w144_schnappschuss_zusatz():
+    """Die W144-Schluessel des Schnappschusses, wie bot._leistung_erheben sie
+    baut — mit einem gefuellten Pruefstand, damit jeder Name entsteht (vor
+    der ersten Pruefrunde ist er leer)."""
+    from nc import kennzahlen as kz
+    from nc import laufstand as LS
+    from nc import quellstat as QS
+    from nc import tunnelwacht as TW
+    return {
+        "speicher": {k: 0 for k in _W144_MAPS},
+        "quellen": QS.lage(),
+        "pruefung": {"aktiv": 1, "ueberfaellig": 0, "unbekannt": 0, "ausstehend": 0},
+        "zustand": {
+            "tunnel": kz.einwertig("ok", (TW.LAGE_OK, TW.LAGE_DIREKT, TW.LAGE_AUS,
+                                          TW.LAGE_FEHLER, "unbekannt")),
+            "laufstand": kz.einwertig("aktuell", (LS.AKTUELL, LS.VERALTET, LS.UNBEKANNT)),
+            "schema_stand": 1, "schema_erwartet": 1, "db_mariadb": 0,
+            "loop_stalls": 0, "log_synchron": 0,
+        },
+    }
+
+
 def _test_v42_w127_observability():
     """v4.2-W127: Prometheus und Grafana — jede Abfrage trifft einen echten Namen.
 
@@ -23550,6 +23580,11 @@ def _test_v42_w127_observability():
              "speicher": speicherpflege.groessen({}), "log": {"wartend": 0, "verloren": 0},
              "prozess": kz.prozess(), "betrieb": {"restreams": 0, "chat_clients": 0, "aufnahmen": 0},
              "start_s": 1.0}
+    # ANKER GEWANDERT (v4.2-W144, nicht der Vertrag): der Schnappschuss traegt
+    # seither auch Quellen, Pruefstand und Zustaende. _w144_schnappschuss baut
+    # dieselben Schluessel wie bot._leistung_erheben, und ein Vertrag haelt
+    # beide gegeneinander.
+    daten.update(_w144_schnappschuss_zusatz())
     namen |= set(_re.findall(r"^(nightcrawler_\w+) ", kz.prometheus(daten, alter_s=1), _re.M))
     namen.add("up")
 
@@ -23558,7 +23593,9 @@ def _test_v42_w127_observability():
 
     regeln = _yaml.safe_load(open("deploy/observability/rules/nightcrawler.yml", encoding="utf-8"))
     ausdruecke = [r["expr"] for g in regeln["groups"] for r in g["rules"]]
-    assert len(ausdruecke) == 10, len(ausdruecke)
+    # ANKER GEWANDERT (v4.2-W144): sechs Regeln fuer Pruefstand, Quellen,
+    # Tunnel, Update, Schema und Log-Schleuse dazu.
+    assert len(ausdruecke) == 16, len(ausdruecke)
     dash = _json.load(open("deploy/observability/grafana/dashboards/nightcrawler.json", encoding="utf-8"))
     ausdruecke += [t["expr"] for p in dash["panels"] for t in p.get("targets", [])]
     for e in ausdruecke:
@@ -26734,6 +26771,250 @@ def _test_v42_w143_update_mariadb():
     ok("W143: update.sh zieht nur auf Wunsch um, nie mit Passwort in der Zeile")
 
 
+def _test_v42_w144_jeder_messwert_ein_panel():
+    """v4.2-W144: „alles maximal detailliert" — als Zusage, nicht als Eindruck.
+
+    Das Dashboard aus W127 zeigte 32 der 52 Messwerte, und /metrics selbst
+    kannte die Haelfte dessen nicht, was /healthz wusste: Pruefstand der
+    Trackings, woher die Stream-Adressen kamen, Tunnel, Update-Lage, Schema.
+    Jetzt traegt der Schnappschuss diese Werte, und dieser Vertrag faellt,
+    sobald ein Messwert ohne Panel bleibt — ein neuer Wert, den niemand
+    anzeigt, ist derselbe Fall wie vorher, nur eine Welle spaeter."""
+    import ast as _ast
+    import json as _json
+    import re as _re
+    from nc import (gegendruck, kennzahlen as kz, kindprozess, livecache, looplag,
+                    speicherpflege)
+
+    # (1) Die Schluessel des Schnappschusses sind die, mit denen gemessen wird.
+    baum = _ast.parse(open("bot.py", encoding="utf-8").read())
+
+    def _schluessel(fn, ziel_name=None):
+        f = next(n for n in baum.body if isinstance(n, _ast.FunctionDef) and n.name == fn)
+        for n in _ast.walk(f):
+            if isinstance(n, _ast.Dict) and n.keys and all(isinstance(k, _ast.Constant) for k in n.keys):
+                if ziel_name is None or ziel_name in [k.value for k in n.keys]:
+                    return [k.value for k in n.keys]
+        raise AssertionError("kein Woerterbuch in %s" % fn)
+
+    zusatz = _w144_schnappschuss_zusatz()
+    basis = ["loop_lag", "gegendruck", "livecache", "kinder", "speicher", "log", "prozess",
+             "betrieb", "start_s"]
+    assert _schluessel("_leistung_erheben", "loop_lag") == basis + ["quellen", "pruefung", "zustand"]
+    assert set(_schluessel("_zustand_kennzahlen")) == set(zusatz["zustand"]), \
+        "Vertrag und bot._zustand_kennzahlen laufen auseinander"
+    assert tuple(_schluessel("_speicher_maps")) == _W144_MAPS
+
+    # (2) Alle Namen, die /metrics liefert …
+    rb = _ast.parse(open("nc/routes/beobachtung.py", encoding="utf-8").read())
+    namen = {n.args[0].value for n in _ast.walk(rb)
+             if isinstance(n, _ast.Call) and getattr(n.func, "id", "") == "metric"
+             and n.args and isinstance(n.args[0], _ast.Constant)}
+    daten = {"loop_lag": looplag.lage(), "gegendruck": gegendruck.lage(1, 4, 0, 10),
+             "livecache": livecache.statistik(0, 0), "kinder": kindprozess.lage(),
+             "speicher": speicherpflege.groessen({}), "log": {"wartend": 0, "verloren": 0},
+             "prozess": kz.prozess(), "betrieb": {"restreams": 0, "chat_clients": 0, "aufnahmen": 0},
+             "start_s": 1.0}
+    daten.update(zusatz)
+    namen |= set(_re.findall(r"^(nightcrawler_\w+) ", kz.prometheus(daten, alter_s=1), _re.M))
+    assert len(namen) >= 70, len(namen)
+
+    # … stehen in mindestens einem Panel.
+    dash = _json.load(open("deploy/observability/grafana/dashboards/nightcrawler.json", encoding="utf-8"))
+    ausdruecke = " ".join(t["expr"] for p in dash["panels"] for t in p.get("targets", []))
+    benutzt = set(_re.findall(r"nightcrawler_\w+", ausdruecke))
+    ohne = sorted(namen - benutzt)
+    assert not ohne, "Messwerte ohne Panel: %s" % ohne
+    # Jedes Panel ausser den Reihen hat eine Erklaerung — ein Diagramm ohne
+    # Satz dazu sagt dem Betreiber nicht, ab wann es ein Befund ist.
+    stumm = [p["title"] for p in dash["panels"] if p["type"] != "row"
+             and p["id"] > 24 and not p.get("description")]
+    assert not stumm, "Panels ohne Beschreibung: %s" % stumm
+    gp = [(p["gridPos"]["x"], p["gridPos"]["y"]) for p in dash["panels"]]
+    assert len(gp) == len(set(gp)), "zwei Panels auf demselben Platz"
+    assert all(p["gridPos"]["x"] + p["gridPos"]["w"] <= 24 for p in dash["panels"])
+
+    # (3) Zustaende als 0/1 — immer alle, Unbekanntes unter "sonstig".
+    assert kz.einwertig("ok", ("ok", "fehler")) == {"ok": 1, "fehler": 0, "sonstig": 0}
+    assert kz.einwertig("neu", ("ok", "fehler")) == {"ok": 0, "fehler": 0, "sonstig": 1}
+    t = kz.prometheus({"zustand": {"tunnel": kz.einwertig("fehler", ("ok", "fehler"))}})
+    assert "nightcrawler_zustand_tunnel_fehler 1" in t and "nightcrawler_zustand_tunnel_ok 0" in t
+
+    # (4) Die Regeln fuer die neuen Zustaende gibt es — und sie fragen nur
+    # Namen, die /metrics liefert (das prueft W127 fuer alle).
+    import yaml as _yaml
+    regeln = {r["alert"]: r for g in _yaml.safe_load(open(
+        "deploy/observability/rules/nightcrawler.yml", encoding="utf-8"))["groups"] for r in g["rules"]}
+    for n in ("NightcrawlerTrackingsUeberfaellig", "NightcrawlerOhneStreamAdresse",
+              "NightcrawlerTunnelFehler", "NightcrawlerUpdateNichtWirksam",
+              "NightcrawlerSchemaNeuerAlsCode", "NightcrawlerLogSynchron"):
+        assert n in regeln, n
+    assert regeln["NightcrawlerOhneStreamAdresse"]["expr"].startswith("max(100 *"), \
+        "der Anteil muss links stehen — `and` liefert den linken Wert"
+    ok("W144: jeder Messwert aus /metrics hat ein Panel, Zustaende als Zahlen, sechs neue Regeln")
+
+
+def _test_v42_w144_envdatei_und_grafana():
+    """v4.2-W144: Prometheus und Grafana stehen in der .env, Grafana nicht
+    mehr auf admin/admin — und das Passwort taucht nirgends in einer Ausgabe
+    oder Befehlszeile auf."""
+    import io as _io
+    import os as _os
+    import stat as _st
+    import subprocess as _sp
+    from nc import envdatei as E
+
+    # (1) nc/envdatei: dieselben Regeln wie beim Umzug, plus Riegel gegen
+    # eingeschleuste Zeilen.
+    d = _ph.verzeichnis()
+    env = _os.path.join(d, ".env")
+    with open(env, "w") as f:
+        f.write("A=1\n# B=kommentar\nB=2\nB = 3\n")
+    _os.chmod(env, 0o600)
+    s = E.setzen(env, {"B": "neu", "C": "x y"}, "probe")
+    assert open(env).read() == "A=1\n# B=kommentar\nB=2\nB=neu\nC=x y\n", open(env).read()
+    assert ".probe-" in s and _st.S_IMODE(_os.stat(env).st_mode) == 0o600
+    assert E.lesen(env) == {"A": "1", "B": "neu", "C": "x y"}
+    for boese in ({"D": "1\nBOT_TOKEN=gekapert"}, {"D": "1\r"}, {"D E": "1"}, {"": "1"}):
+        try:
+            E.setzen(env, boese, "probe")
+            raise AssertionError("angenommen: %r" % boese)
+        except E.EnvdateiFehler:
+            pass
+    assert "gekapert" not in open(env).read()
+    aus = _io.StringIO()
+    import contextlib as _cl
+    with _cl.redirect_stdout(aus):
+        assert E.main([env, "probe"], stdin=_io.StringIO("C=x y\nGEHEIM=pw_w144\n")) == 0
+        assert E.main([env, "probe"], stdin=_io.StringIO("GEHEIM=pw_w144\n")) == 0
+    assert "pw_w144" not in aus.getvalue() and "gesetzt: GEHEIM" in aus.getvalue()
+    assert "unveraendert" in aus.getvalue(), "zweiter Lauf schrieb trotzdem"
+    with _cl.redirect_stderr(_io.StringIO()):
+        assert E.main([_os.path.join(d, "fehlt"), "x"], stdin=_io.StringIO("")) == 2
+        assert E.main([env, "probe"], stdin=_io.StringIO("D E=1\n")) == 1
+        assert E.main(["nur-eins"]) == 2
+
+    # (2) observability.sh in einer Attrappe: Prometheus-URL, und eine
+    # bestehende Grafana bekommt ein erzeugtes Passwort ueber stdin.
+    heim = _ph.verzeichnis()
+    ziel = _os.path.join(heim, "bot")
+    _os.makedirs(ziel)
+    _os.symlink(_os.path.abspath("deploy"), _os.path.join(ziel, "deploy"))
+    wurzel = _os.path.join(heim, "w")
+    fake = _os.path.join(heim, "bin")
+    _os.makedirs(fake)
+    gpw = _os.path.join(heim, "grafana_pw")
+    gargv = _os.path.join(heim, "grafana_argv")
+    for name, rumpf in (
+            ("systemctl", 'eval "u=\\${$#}"\ncase "$1" in\n'
+                          '  list-unit-files) case "$*" in *grafana-server*) echo "grafana-server.service enabled";; esac; exit 0;;\n'
+                          '  enable) touch "%s/aktiv.$u";;\n  is-active) [ -f "%s/aktiv.$u" ]; exit $?;;\n'
+                          '  is-enabled) exit 1;;\nesac\nexit 0' % (heim, heim)),
+            ("prometheus", "exit 0"),
+            ("grafana", 'echo "$*" > "%s"\ncat > "%s"\nexit 0' % (gargv, gpw)),
+            ("curl", "exit 7")):
+        p = _os.path.join(fake, name)
+        with open(p, "w") as f:
+            f.write("#!/bin/sh\n" + rumpf + "\n")
+        _os.chmod(p, 0o755)
+    umg = dict(_os.environ, PATH=fake + ":" + _os.environ["PATH"], NC_OBS_WURZEL=wurzel,
+               NC_INIT="systemd", NC_PKG="apt", NC_OBS_WARTEN="0", NC_LANG="de", NC_OBS_SUDO="")
+    ienv = _os.path.join(ziel, ".env")
+    with open(ienv, "w") as f:
+        f.write("BOT_TOKEN=x\n")
+    _os.chmod(ienv, 0o600)
+
+    def lauf(*a):
+        r = _sp.run(["bash", "tools/observability.sh", "--dir", ziel, "--no-color", *a],
+                    capture_output=True, text=True, env=umg, timeout=120)
+        return r.returncode, r.stdout + r.stderr
+
+    rc, aus = lauf("--unattended", "--grafana", "--dry-run")
+    assert ".env: PROMETHEUS_URL" in aus and "GF_SECURITY_ADMIN_PASSWORD=***" in aus, aus
+    assert E.lesen(ienv) == {"BOT_TOKEN": "x"}, "Trockenlauf schrieb die .env"
+
+    # Der Dienst liest seinen Datenpfad aus /etc/default/grafana-server —
+    # bewusst NICHT die Vorgabe, damit die Probe sieht, dass er gelesen wird.
+    _os.makedirs(_os.path.join(wurzel, "etc", "default"), exist_ok=True)
+    with open(_os.path.join(wurzel, "etc", "default", "grafana-server"), "w") as f:
+        f.write('GRAFANA_USER=grafana\nDATA_DIR="/srv/grafana-daten"\n')
+    rc, aus = lauf("--unattended", "--grafana")
+    e = E.lesen(ienv)
+    assert e.get("PROMETHEUS_URL") == "http://127.0.0.1:9099", (e, aus)
+    pw = e.get("GRAFANA_ADMIN_PASSWORD", "")
+    assert len(pw) >= 20 and e.get("GRAFANA_URL") == "http://127.0.0.1:3000" \
+        and e.get("GRAFANA_ADMIN_USER") == "admin", (e, aus)
+    assert open(gpw).read().strip() == pw, "grafana cli bekam ein anderes Passwort"
+    assert "--password-from-stdin" in open(gargv).read() and pw not in open(gargv).read(), \
+        "Passwort in der Befehlszeile"
+    # Dieselbe Datenbank wie der Dienst (Codex, PR #192) — sonst setzt die
+    # CLI das Passwort in einer Grafana-Datenbank, die niemand benutzt.
+    assert "cfg:default.paths.data=/srv/grafana-daten" in open(gargv).read(), open(gargv).read()
+    assert pw not in aus, "Passwort in der Ausgabe"
+    pd = _os.path.join(wurzel, "etc", "nightcrawler", "grafana.env")
+    assert _st.S_IMODE(_os.stat(pd).st_mode) == 0o600 and pw in open(pd).read()
+    assert _st.S_IMODE(_os.stat(ienv).st_mode) == 0o600, "Rechte der .env veraendert"
+    assert "BOT_TOKEN=x" in open(ienv).read()
+    assert "EnvironmentFile=-/etc/nightcrawler/grafana.env" in open(_os.path.join(
+        wurzel, "etc", "systemd", "system", "grafana-server.service.d", "nightcrawler.conf")).read()
+
+    # Zweiter Lauf: ein vorhandenes Passwort wird nie ueberschrieben.
+    _os.remove(gpw)
+    rc, aus = lauf("--unattended", "--grafana")
+    assert E.lesen(ienv)["GRAFANA_ADMIN_PASSWORD"] == pw and not _os.path.exists(gpw), aus
+    rc, aus = lauf("--check", "--grafana")
+    assert "PROMETHEUS_URL fehlt" not in aus and "GRAFANA_ADMIN_PASSWORD fehlt" not in aus, aus
+    with open(ienv, "w") as f:
+        f.write("BOT_TOKEN=x\n")
+    rc, aus = lauf("--check", "--no-grafana")
+    assert rc == 1 and "PROMETHEUS_URL fehlt in der .env" in aus, aus
+
+    # (3) Das Deck liest die Eintraege: fragt Prometheus nach up fuer den
+    # Bot, Grafana nach /api/health — jede Lage mit eigenem Satz.
+    from nc import beobachtungslage as BL
+    import json as _json
+
+    def _antwort(*werte):
+        return lambda url: (200, _json.dumps({"data": {"result": [
+            {"value": [0, w]} for w in werte]}}))
+
+    def _tot(url):
+        raise OSError("refused")
+    assert BL.prometheus("", _antwort("1"))["grund"].startswith("PROMETHEUS_URL fehlt")
+    r = BL.prometheus("http://p:9099/", _antwort("1"))
+    assert r["liest_bot"] is True and r["erreichbar"] and not r["grund"], r
+    gefragt = []
+    BL.prometheus("http://p:9099/", lambda u: gefragt.append(u) or (200, '{"data":{"result":[]}}'))
+    assert gefragt[0].startswith("http://p:9099/api/v1/query?query=up%7Bjob") and "//api" not in gefragt[0]
+    assert BL.prometheus("http://p", _antwort("0"))["liest_bot"] is False
+    assert "up=0" in BL.prometheus("http://p", _antwort("0"))["grund"]
+    assert BL.prometheus("http://p", _antwort())["liest_bot"] is None
+    assert "nicht lesbar" in BL.prometheus("http://p", lambda u: (200, "kaputt"))["grund"]
+    assert "antwortet nicht" in BL.prometheus("http://p", _tot)["grund"]
+    # Uebersetzt wird die VORLAGE, dann werden die Werte eingesetzt.
+    r = BL.prometheus("http://p", _tot, _t=lambda s: "EN<" + s.split(" (")[0] + " (%s: %s)>")
+    assert r["grund"] == "EN<Prometheus antwortet nicht (OSError: refused)>", r["grund"]
+    g = BL.grafana("http://g:3000", False, lambda u: (200, "{}"))
+    assert g["erreichbar"] and "GRAFANA_ADMIN_PASSWORD fehlt" in g["grund"], g
+    assert not BL.grafana("http://g:3000", True, lambda u: (200, "{}"))["grund"]
+    assert "antwortet nicht" in BL.grafana("http://g", True, _tot)["grund"]
+    assert "nicht eingerichtet" in BL.grafana("", False)["grund"]
+    alt = {k: _os.environ.get(k) for k in ("PROMETHEUS_URL", "GRAFANA_URL", "GRAFANA_ADMIN_PASSWORD")}
+    try:
+        _os.environ.update(PROMETHEUS_URL="http://p", GRAFANA_URL="http://g",
+                           GRAFANA_ADMIN_PASSWORD="pw_nie_im_deck")
+        l = BL.lage(holen=lambda u: (200, '{"data":{"result":[{"value":[0,"1"]}]}}'))
+        assert l["prometheus"]["liest_bot"] and l["grafana"]["passwort_hinterlegt"], l
+        assert "pw_nie_im_deck" not in _json.dumps(l), "Passwort in der Antwort ans Deck"
+    finally:
+        for k, v in alt.items():
+            if v is None:
+                _os.environ.pop(k, None)
+            else:
+                _os.environ[k] = v
+    ok("W144: .env traegt Prometheus und Grafana, Passwort erzeugt, nie in argv oder Ausgabe")
+
+
 def main():
     tmp, rid = richte_testdatenbank_ein()
     ok("db_conn aus nc.dbwrap: echtes Schema angelegt, Commit durchgelaufen")
@@ -27079,6 +27360,8 @@ def main():
     _test_v42_w143_mariadb_schema_und_dialekt()
     _test_v42_w143_umzug_kette()
     _test_v42_w143_update_mariadb()
+    _test_v42_w144_jeder_messwert_ein_panel()
+    _test_v42_w144_envdatei_und_grafana()
     _test_v42_w60_azrael_cooldown_je_plattform()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)
