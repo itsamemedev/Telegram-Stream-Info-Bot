@@ -27948,6 +27948,172 @@ def _test_v42_w148_codex_193():
         assert dict(dotenv_values(f)) == w, (dict(dotenv_values(f)), w)
     ok("W148: Codex #193 — MariaDB-Vorgaben wie der Bot, .env-Werte wie python-dotenv")
 
+
+def _test_v42_w148_beobachtung_fehlerpfade():
+    """v4.2-W148: die Fehlerpfade der beiden Waechter und des Durchreichers.
+
+    Die Ueberdeckungssperre fiel mit +15 — und alle 15 waren Fehlerpfade,
+    genau die Klasse aus W89 („alle fuenf waren die neuen Fehlerpfade").
+    Gedeckt statt die Grundlinie zu heben."""
+    import http.server as _hs
+    import os as _os
+    import subprocess as _sp
+    import threading as _th
+    from brain.agents import GrafanaAgent, PrometheusAgent
+    from nc import beobachtungsdienst as B
+    from nc import durchreicher as D
+
+    # (1) Der echte Abruf gegen einen lokalen Server: 200 mit Text, 404 als
+    # Antwort (kein Ausfall), Kopf geht mit, JSON-Fehler -> None.
+    gesehen = []
+
+    class _H(_hs.BaseHTTPRequestHandler):
+        def do_GET(self):
+            gesehen.append(self.headers.get("Authorization"))
+            code = 200 if self.path.startswith("/ok") else 404
+            self.send_response(code)
+            self.end_headers()
+            self.wfile.write(b"kein json" if code == 200 else b"weg")
+
+        def log_message(self, *a):
+            pass
+    srv = _hs.HTTPServer(("127.0.0.1", 0), _H)
+    _th.Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+        basis = "http://127.0.0.1:%d" % srv.server_address[1]
+        assert B._holen(basis + "/ok") == (200, "kein json")
+        assert B._holen(basis + "/fehlt", {"Authorization": "Basic x"})[0] == 404
+        assert gesehen[-1] == "Basic x"
+        assert B._json(B._holen, basis + "/ok") == (200, None)
+        # /-/ready mit 404: der Dienst lebt, ist aber nicht bereit.
+        nb = B.prometheus_lage(basis)
+        assert not nb["erreichbar"] and "HTTP 404" in nb["fehler"], nb
+        gn = B.grafana_lage(basis, "admin", "x")
+        assert not gn["erreichbar"] and "HTTP 404" in gn["fehler"], gn
+    finally:
+        srv.shutdown()
+        srv.server_close()
+
+    # (2) Eine Teilabfrage scheitert: der Rest bleibt, der Grund steht da.
+    def _halb(url, kopf=None):
+        if url.endswith("/-/ready") or url.endswith("/api/health"):
+            return 200, '{"database":"ok"}'
+        raise TimeoutError("zu langsam")
+    t = B.prometheus_lage("http://p", holen=_halb)
+    assert t["erreichbar"] and "TimeoutError" in t["fehler"], t
+    g = B.grafana_lage("http://g", "admin", "pw", holen=_halb)
+    assert g["erreichbar"] and g["db_ok"] and "TimeoutError" in g["fehler"], g
+    assert B.grafana_lage("", holen=_halb)["fehler"] == "GRAFANA_URL fehlt"
+
+    def _tot(url, kopf=None):
+        raise ConnectionRefusedError("aus")
+    assert "ConnectionRefusedError" in B.grafana_lage("http://g", holen=_tot)["fehler"]
+    # Abgelehnte Anmeldung: keine weiteren Fragen mit falschem Passwort.
+    fragen = []
+
+    def _abgelehnt(url, kopf=None):
+        fragen.append(url)
+        return (200, '{"database":"ok"}') if url.endswith("/api/health") else (401, "")
+    a = B.grafana_lage("http://g", "admin", "falsch", holen=_abgelehnt)
+    assert a["anmeldung_ok"] is False and a["quelle_ok"] is None and len(fragen) == 2, (a, fragen)
+
+    # (3) Steuern: OSError und Timeout sind Antworten mit Grund, kein Absturz.
+    def _oserr(cmd, **kw):
+        raise FileNotFoundError("sudo")
+
+    def _zeit(cmd, **kw):
+        raise _sp.TimeoutExpired(cmd, 60)
+    assert not B.steuern("prometheus", "neu_starten", run=_oserr)["ok"]
+    r = B.steuern("prometheus", "neu_starten", run=_zeit)
+    assert not r["ok"] and "TimeoutExpired" in r["text"], r
+
+    class _R:
+        returncode, stderr, stdout = 5, "", ""
+    assert "rc=5" in B.steuern("prometheus", "neu_laden", run=lambda c, **k: _R())["text"]
+
+    # (4) Die Werte von JETZT: ohne URL kein Netz, mit Grund.
+    alt = {k: _os.environ.get(k) for k in ("PROMETHEUS_URL", "GRAFANA_URL")}
+    try:
+        for k in alt:
+            _os.environ.pop(k, None)
+        assert B.prometheus_jetzt()["fehler"] == "PROMETHEUS_URL fehlt"
+        assert B.grafana_jetzt()["fehler"] == "GRAFANA_URL fehlt"
+    finally:
+        for k, v in alt.items():
+            if v is not None:
+                _os.environ[k] = v
+
+    # (5) Die Waechter: gescheiterter Neustart ist crit, Grafana-Ausfall heilt,
+    # defekte Grafana-Datenbank ist crit, ohne Accessor still.
+    class _Mem:
+        def record_metric(self, k, v):
+            pass
+
+    class _Hirn:
+        memory = _Mem()
+    p = PrometheusAgent(_Hirn(), lage=lambda: {"erreichbar": True, "liest_bot": False})
+    assert "up=0" in p.run({})[0]["text"]
+    w = PrometheusAgent(_Hirn(), lage=lambda: {"erreichbar": False},
+                        steuern=lambda d, a: {"ok": False, "text": "sudo verlangt ein Passwort"},
+                        act_check=lambda n: True)
+    w.run({})
+    f = w.run({})
+    assert f[-1]["level"] == "crit" and "Passwort" in f[-1]["text"], f
+    gst = []
+    gw = GrafanaAgent(_Hirn(), lage=lambda: {"erreichbar": False},
+                      steuern=lambda d, a: gst.append(d) or {"ok": True, "befehl": "x"},
+                      act_check=lambda n: n == "grafana")
+    gw.run({})
+    assert "neu gestartet" in gw.run({})[-1]["text"] and gst == ["grafana"]
+    assert GrafanaAgent(_Hirn(), lage=lambda: {"erreichbar": True, "db_ok": False}).run({})[0]["level"] == "crit"
+    assert GrafanaAgent(_Hirn()).run({}) == []
+    assert GrafanaAgent(_Hirn(), lage=lambda: 1 / 0).run({})[0]["level"] == "warn"
+
+    # (6) Durchreicher: Cookie-Datei geht mit, ffmpeg startet nicht -> der
+    # Zieher wird beendet; ein Zieher, der nicht endet, wird getoetet.
+    d = _ph.verzeichnis()
+    keks = _os.path.join(d, "c.txt")
+    open(keks, "w").close()
+    y = D.zieher_cmd("yt-dlp", "/x/yt-dlp", "anna", cookies=keks)
+    assert y[y.index("--cookies") + 1] == keks
+    env = D.zieher_umgebung({"RECORD_PROXY": "http://h:1"})
+    assert env["HTTPS_PROXY"] == "http://h:1", "Schema doppelt vorangestellt"
+
+    class _Stur:
+        def __init__(self):
+            self.getoetet = False
+            self.stdout = None
+
+        def poll(self):
+            return None
+
+        def terminate(self):
+            pass
+
+        def wait(self, timeout=None):
+            if timeout is not None and not self.getoetet:
+                raise _sp.TimeoutExpired("x", timeout)
+            return 0
+
+        def kill(self):
+            self.getoetet = True
+    stur = _Stur()
+    D._beende(stur)
+    assert stur.getoetet, "ein Zieher, der SIGTERM ignoriert, laeuft weiter"
+    D._beende(None)
+    gestartet = []
+
+    def _popen(cmd, **kw):
+        if gestartet:
+            raise OSError("ffmpeg fehlt")
+        z = _Stur()
+        gestartet.append(z)
+        return z
+    assert D.main(["anna", "-", "--", "ffmpeg"], popen=_popen,
+                  which=lambda n: "/x/yt-dlp" if n == "yt-dlp" else None) == 2
+    assert gestartet[0].getoetet, "Zieher nach gescheitertem ffmpeg nicht beendet"
+    ok("W148: Fehlerpfade — echter Abruf, Teilabfragen, Steuerfehler, gescheiterter Neustart, sturer Zieher")
+
 def main():
     tmp, rid = richte_testdatenbank_ein()
     ok("db_conn aus nc.dbwrap: echtes Schema angelegt, Commit durchgelaufen")
@@ -28304,6 +28470,7 @@ def main():
     _test_v42_w148_durchreicher()
     _test_v42_w148_beobachtungs_waechter()
     _test_v42_w148_codex_193()
+    _test_v42_w148_beobachtung_fehlerpfade()
     _test_v42_w60_azrael_cooldown_je_plattform()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)
