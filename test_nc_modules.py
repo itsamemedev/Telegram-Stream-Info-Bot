@@ -12269,8 +12269,18 @@ def _test_v42_w102_ytdlp_traegt_die_stream_url():
 
     # ── (3) KEINE BRAUCHBARE FORM -> LEER, UND DAS IST EINE AUSSAGE. yt-dlp
     # kann "live" sagen und nur Formate liefern, die wir nicht pullen koennen.
+    #
+    # AUSSAGE GEAENDERT (v4.2-W141, bewusst): hier stand, dass ein reines
+    # MP4-Format "nicht pullbar" ist und verworfen wird. Genau das liess den
+    # Restream am 05.11. bei 7 Live-Nutzern mit "weder FLV noch HLS" stehen.
+    # MP4/DASH/CMAF sind seither die dritte Form — als LETZTE Quelle, ohne
+    # FLV/HLS zu verdraengen. Leer bleibt, was wirklich nicht ziehbar ist.
+    _mp4 = Y.urls_aus_json({"is_live": True, "formats": [
+        {"url": "https://cdn/a.mp4", "protocol": "https", "ext": "mp4"}]})
+    assert _mp4.get("other_url") == "https://cdn/a.mp4" and not (
+        _mp4.get("hls_url") or _mp4.get("flv_url")), _mp4
     assert Y.urls_aus_json({"is_live": True, "formats": [
-        {"url": "https://cdn/a.mp4", "protocol": "https", "ext": "mp4"}]}) == {}
+        {"url": "rtmp://cdn/a", "protocol": "rtmp", "ext": "unknown_video"}]}) == {}
     assert Y.urls_aus_json(None) == {} and Y.urls_aus_json({}) == {}
     assert "via" not in Y.urls_aus_json({}), \
         "`via` ohne Adresse behauptet einen Treffer, den es nicht gab"

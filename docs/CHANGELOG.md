@@ -11,6 +11,8 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+## [4.5.1] — 2026-11-05 · „Vielstimmig"
+
 ### Behoben — „keiner wird restreamt, angeblich weder FLV noch HLS" (v4.2 W141)
 
 Der Betreiber am 05.11.: 7 Nutzer live, kein Restream. Die Kette kannte genau
