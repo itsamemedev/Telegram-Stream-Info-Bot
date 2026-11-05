@@ -41,8 +41,37 @@ def lesen(pfad):
             if not z or z.startswith("#") or "=" not in z:
                 continue
             k, v = z.split("=", 1)
-            werte[k.strip()] = v.split(" #", 1)[0].strip().strip('"').strip("'")
+            k = k.strip()
+            if k.startswith("export "):
+                k = k[len("export "):].strip()
+            werte[k] = wert_lesen(v)
     return werte
+
+
+def wert_lesen(roh: str) -> str:
+    """Ein Wert, wie python-dotenv ihn liest (v4.2-W148, Codex #193).
+
+    Bis hierher schnitt `split(" #")` auch INNERHALB von Anfuehrungszeichen
+    ab: aus `PROMPT="answer #1"` wurde `answer` — und `uebernehmen()` schrieb
+    das gekuerzte in die Datenbank, wo es die richtige .env bei jedem Start
+    ueberstimmte. Gequotet gilt der Inhalt bis zum schliessenden Zeichen
+    (in "…" mit \\" und \\\\ als Escape); ungequotet ist ` #` ein Kommentar."""
+    v = roh.strip()
+    if v[:1] in ('"', "'"):
+        q, aus, i = v[0], [], 1
+        while i < len(v):
+            c = v[i]
+            if q == '"' and c == "\\" and i + 1 < len(v) and v[i + 1] in ('"', "\\"):
+                aus.append(v[i + 1])
+                i += 2
+                continue
+            if c == q:
+                return "".join(aus)
+            aus.append(c)
+            i += 1
+        # Kein schliessendes Zeichen: wie bisher, nur das oeffnende weg.
+        return v[1:].strip()
+    return v.split(" #", 1)[0].strip()
 
 
 def setzen(pfad, werte, kennung="aenderung", jetzt=None):

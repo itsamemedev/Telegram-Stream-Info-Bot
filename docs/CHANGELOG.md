@@ -25,6 +25,19 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
   „Alles aktuell" die Rechte unveränderter Dateien an — ein Update genügt.
   Bis dahin: `sudo bash tools/update.sh`.
 
+### Behoben — zwei Befunde aus dem Review von W145 (v4.2 W148)
+
+- **Unter MariaDB wirkten die Deck-Einstellungen mit Vorgabewerten nie.** Der
+  Start las sie mit `nightcrawler`/`nightcrawler`, der Bot benutzt
+  `tiktok_bot`/`tiktok_bot` — die Verbindung scheiterte, und es galt still die
+  `.env`. Jetzt dieselben Vorgaben wie `bot.py`, ein Vertrag liest sie aus
+  dessen Syntaxbaum.
+- **Ein `#` in Anführungszeichen kürzte den Wert.** `PROMPT="answer #1"` wurde
+  zu `answer` gelesen und per „Aus der .env übernehmen" gekürzt in die
+  Datenbank geschrieben, wo es die richtige `.env` bei jedem Start
+  überstimmte. `nc/envdatei.lesen()` liest jetzt wie python-dotenv
+  (gegengeprüft gegen python-dotenv selbst).
+
 ### Neu — Restream ohne ziehbare Adresse: der Durchreicher (v4.2 W148)
 
 - **Gibt TikTok weder FLV noch HLS noch CMAF/DASH heraus, die ein fremdes

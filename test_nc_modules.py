@@ -25998,8 +25998,11 @@ def _test_v42_w141_quellprobe():
     E = QP.empfehlung
     assert "FLV/HLS-Adresse ist ziehbar" in E({"kandidaten": [{"form": "hls", "ffprobe_ok": True}]})
     assert "dritte Form (dash)" in E({"kandidaten": [{"form": "dash", "ffprobe_ok": True}]})
-    assert "Zubringer" in E({"kandidaten": [{"form": "flv", "ffprobe_ok": False}],
-                             "durchreicher_bytes": 5})
+    # ANKER GEWANDERT (v4.2-W148): die Empfehlung nennt nicht mehr einen
+    # Zubringer, den man bauen muesste, sondern den Durchreicher, den der
+    # Restream seither von selbst nimmt — und den Schalter dazu.
+    _dr = E({"kandidaten": [{"form": "flv", "ffprobe_ok": False}], "durchreicher_bytes": 5})
+    assert "Durchreicher" in _dr and "RESTREAM_DURCHREICHER" in _dr, _dr
     assert "RECORD_PROXY" in E({"kandidaten": [{"form": "flv", "ffprobe_ok": False}]})
     assert "Kein Weg" in E({})
     ok("W141: tools/quellprobe.py — Zugangsdaten maskiert, Signaturen gekuerzt, "
@@ -27877,6 +27880,74 @@ def _test_v42_w148_beobachtungs_waechter():
     ok("W148: Prometheus- und Grafana-Waechter messen, heilen hinter dem Gate, Deck steuert nur feste Befehle")
 
 
+
+def _test_v42_w148_codex_193():
+    """v4.2-W148: zwei Befunde aus dem Codex-Review von #193, beide nachgestellt.
+
+    (1) Die Einstellungen beim Start verbanden sich unter MariaDB mit den
+    Vorgaben "nightcrawler" — der Bot nimmt "tiktok_bot". Mit Vorgabewerten
+    wirkten die Deck-Einstellungen damit nie, still auf die .env zurueck.
+    (2) envdatei.lesen() schnitt ` #` auch in Anfuehrungszeichen ab; der
+    gekuerzte Wert landete per uebernehmen() in der Datenbank."""
+    import ast as _ast
+    import os as _os
+    import sys as _sys
+    import types as _types
+    from nc import einstellungen as E
+    from nc import envdatei as V
+
+    # (1) Gemessen am Aufruf, nicht am Text: eine pymysql-Attrappe faengt die
+    # Verbindungsdaten, und die Vorgaben des Bots stehen im Baum von bot.py.
+    baum = _ast.parse(open("bot.py", encoding="utf-8").read())
+    vorgabe = {}
+    for n in baum.body:
+        if isinstance(n, _ast.Assign) and isinstance(n.value, _ast.Call) \
+                and getattr(n.value.func, "attr", "") == "getenv" and len(n.value.args) == 2 \
+                and isinstance(n.value.args[0], _ast.Constant) \
+                and str(n.value.args[0].value).startswith("MARIADB_"):
+            vorgabe[n.value.args[0].value] = n.value.args[1].value
+    assert vorgabe.get("MARIADB_USER") and vorgabe.get("MARIADB_DB"), vorgabe
+    gefangen = {}
+
+    class _Halt(Exception):
+        pass
+
+    def _connect(**kw):
+        gefangen.update(kw)
+        raise _Halt()
+    alt = _sys.modules.get("pymysql")
+    _sys.modules["pymysql"] = _types.SimpleNamespace(connect=_connect)
+    try:
+        try:
+            E._start_lesen({"DB_BACKEND": "mariadb"})
+        except _Halt:
+            pass
+    finally:
+        if alt is None:
+            _sys.modules.pop("pymysql", None)
+        else:
+            _sys.modules["pymysql"] = alt
+    assert gefangen["user"] == vorgabe["MARIADB_USER"], gefangen
+    assert gefangen["database"] == vorgabe["MARIADB_DB"], gefangen
+    assert gefangen["host"] == vorgabe["MARIADB_HOST"], gefangen
+
+    # (2) Werte wie python-dotenv — gegengeprueft mit dotenv selbst, wenn da.
+    d = _ph.verzeichnis()
+    f = _os.path.join(d, ".env")
+    with open(f, "w", encoding="utf-8") as fh:
+        fh.write('PROMPT="answer #1"\nB=x # kommentar\nC=\'a # b\' # k\n'
+                 'D="a\\"b"\nexport E=frei\nG="mit #hash" # dahinter\n')
+    w = V.lesen(f)
+    assert w == {"PROMPT": "answer #1", "B": "x", "C": "a # b", "D": 'a"b',
+                 "E": "frei", "G": "mit #hash"}, w
+    try:
+        from dotenv import dotenv_values
+    except ImportError:
+        dotenv_values = None
+    if dotenv_values is not None:
+        assert dict(dotenv_values(f)) == w, (dict(dotenv_values(f)), w)
+    ok("W148: Codex #193 — MariaDB-Vorgaben wie der Bot, .env-Werte wie python-dotenv")
+
 def main():
     tmp, rid = richte_testdatenbank_ein()
     ok("db_conn aus nc.dbwrap: echtes Schema angelegt, Commit durchgelaufen")
@@ -28232,6 +28303,7 @@ def main():
     _test_v42_w148_ausfuehrungsrecht()
     _test_v42_w148_durchreicher()
     _test_v42_w148_beobachtungs_waechter()
+    _test_v42_w148_codex_193()
     _test_v42_w60_azrael_cooldown_je_plattform()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)

@@ -1141,7 +1141,7 @@ donations.py           configure, fmt_eur, parse_number, source_allowed, to_eur,
 donationsdb.py         manual_rows, manual_total, parse_eur
 durchreicher.py        adresse, ist, main, nutzer_aus, werkzeug, zieher_cmd, zieher_umgebung, zubringer_cmd
 einstellungen.py       class Abgelehnt, db_werte, geheim, gueltiger_name, in_umgebung_laden, katalog, pruefen, schutzgrund, setzen, startbericht, uebernehmen, uebersicht, zuruecksetzen
-envdatei.py            class EnvdateiFehler, lesen, main, setzen
+envdatei.py            class EnvdateiFehler, lesen, main, setzen, wert_lesen
 envnum.py              clamp_float, clamp_int, env_float, env_int, env_int_range
 eventlog.py            leeren, schreibe, stand
 eventquery.py          build_query

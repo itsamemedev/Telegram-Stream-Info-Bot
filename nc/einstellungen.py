@@ -203,11 +203,14 @@ def _start_lesen(env):
     if (env.get("DB_BACKEND") or "sqlite").strip().lower() == "mariadb":
         import pymysql                      # optional — nur mit MariaDB
         con = pymysql.connect(
-            host=env.get("MARIADB_HOST") or "127.0.0.1",
+            # Dieselben Vorgaben wie bot.py (MARIADB_*): mit "nightcrawler"
+            # verband sich der Start bei Vorgabewerten mit einem Konto, das
+            # es nicht gibt, und die Deck-Einstellungen wirkten nie (Codex #193).
+            host=env.get("MARIADB_HOST") or "localhost",
             port=int(env.get("MARIADB_PORT") or 3306),
-            user=env.get("MARIADB_USER") or "nightcrawler",
+            user=env.get("MARIADB_USER") or "tiktok_bot",
             password=env.get("MARIADB_PASSWORD") or "",
-            database=env.get("MARIADB_DB") or "nightcrawler",
+            database=env.get("MARIADB_DB") or "tiktok_bot",
             connect_timeout=5, charset="utf8mb4")
         try:
             cur = con.cursor()
