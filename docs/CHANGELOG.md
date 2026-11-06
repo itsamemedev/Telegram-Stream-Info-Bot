@@ -11,6 +11,30 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+## [4.6.8] — 2026-11-06 · „Leitstand"
+
+### Behoben — Befunde aus debug.log/error.log vom 06.11. mittags (v4.2 W157)
+
+- **Kick-Chat hing an einem Cluster, den es nicht gibt.** Die W154-Suche
+  probierte nach `us3` den Cluster `us1` — `ws-us1.pusher.com` hat keinen
+  DNS-Eintrag. Weil die Suche nur bei 4001 weiterging, blieb sie dort und
+  flatterte (15 Trennungen in sechs Minuten). Die Liste ist jetzt die von
+  Pusher, und ein probierter, noch nie bestätigter Cluster wird bei jedem
+  Fehler verlassen; der konfigurierte und ein bestätigter nicht.
+- **Event-Loop 1010 ms an `_set_status`.** Unter MariaDB ist der Commit ein
+  Netz-Rundlauf. Statuswechsel laufen jetzt über einen Ein-Thread-Schreiber
+  (Reihenfolge bleibt), und ein Schreibfehler ist eine gedrosselte Warnung
+  statt `except: pass`.
+- **290 „Stream-Auflösung ergebnislos" in 36 Minuten.** Jeder Erfolg leerte
+  die Drossel des ganzen Kanals — bei drei gesunden und vier kranken
+  Nutzern war jede Runde wieder laut. Geleert wird jetzt erst, wenn der
+  letzte gestörte Nutzer wieder Erfolg hat (`meldetakt.gestoert/erfolg`).
+- **Räume ohne Stream-Adresse.** Die W154-Meldung behauptete „typisch für
+  Abo/18+", die Abo-Erkennung hatte aber keinen der drei Räume als Abo
+  gemeldet; @tavorbeerchen war eine Stunde vorher normal aufgenommen worden.
+  Der Text nennt jetzt beide Ursachen und das Ergebnis der Abo-Erkennung,
+  die Ruhezeit ist 2 bis 10 statt 5 bis 30 Minuten.
+
 ## [4.6.7] — 2026-11-06 · „Leitstand"
 
 ### Geändert — das Lagebild als Radarschirm (v4.2 W156)

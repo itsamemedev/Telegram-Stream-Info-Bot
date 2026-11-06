@@ -27,13 +27,22 @@ zurueck — ein Abo-Live kann jederzeit wieder ein offenes werden.
 # Ab so vielen Fehlversuchen in Folge gilt der Raum als verschlossen.
 SCHWELLE = 3
 # Ruhezeiten danach: erst kurz, dann laenger — ein Raum kann aufgehen.
-RUHE_S = (300, 600, 1200, 1800)
+# v4.2-W157: von 5-30 min auf 2-10 min. Beim Betreiber am 06.11. stand
+# @tavorbeerchen auf der Liste, der eine Stunde vorher normal aufgenommen
+# wurde: eine lange Ruhe kostet dann bis zu einer halben Stunde Aufnahme.
+RUHE_S = (120, 300, 600)
 
+# v4.2-W157: die erste Fassung sagte „typisch fuer Abo-Lives und 18+" — eine
+# Ursache, die der Bot gar nicht kennt. Am 06.11. traf es drei Raeume, und die
+# Abo-Erkennung (nc/abo.py) hatte keinen davon als Abo gemeldet. Der Text
+# nennt jetzt beide Moeglichkeiten; was nc/abo.py sagt, haengt der Aufrufer an.
 ABHILFE = ("TikTok meldet den Raum als live, gibt die Stream-Adresse aber nicht heraus "
-           "— typisch fuer Abo-Lives und 18+-Streams, die nur angemeldete, berechtigte "
-           "Konten sehen. Der Proxy ist es nicht, wenn andere Nutzer ueber denselben Weg "
-           "aufgenommen werden. Abhilfe: in COOKIE_FILE die Cookies eines angemeldeten "
-           "TikTok-Kontos (mit sessionid) hinterlegen, das den Stream sehen darf.")
+           "(Webcast ohne stream_data, Live-Seite ohne Daten, yt-dlp: „not currently "
+           "live\"). Zwei Ursachen sehen gleich aus: ein Abo-/18+-Live, das nur "
+           "berechtigte Konten sehen, oder TikTok verweigert die Adresse dieser "
+           "Sitzung/IP fuer diesen Raum. Laufen andere Raeume ueber denselben Weg, liegt "
+           "es am Raum. Abhilfe in beiden Faellen: in COOKIE_FILE die Cookies eines "
+           "angemeldeten TikTok-Kontos (mit sessionid) hinterlegen, das den Stream sehen darf.")
 
 import logging
 

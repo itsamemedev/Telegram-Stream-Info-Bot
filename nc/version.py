@@ -4,7 +4,7 @@ Eine einzige Wahrheit für die Versionsanzeige (Dashboard-Footer, /api/version,
 „Was ist neu"-Panel). Reine Daten + kleine Helfer, voll testbar.
 """
 
-VERSION = "4.6.7"
+VERSION = "4.6.8"
 CODENAME = "Leitstand"
 RELEASE = "2026.11"
 
@@ -23,6 +23,19 @@ def build_stamp():
 # Meilenstein-Changelog, neueste Version zuerst. highlights = kurze, ehrliche
 # Stichpunkte dessen, was die Version bringt.
 CHANGELOG = [
+    {
+        "version": "4.6.8",
+        "date": "2026-11",
+        "title": "Leitstand",
+        # Patch-Fassung von 4.6: Befunde aus dem Log vom 06.11. mittags (W157).
+        "highlights": [
+            "Kick-Chat: die Cluster-Suche probierte „us1\", das es bei Pusher nicht gibt, und blieb dort am DNS-Fehler hängen — jetzt nur echte Cluster, und ein unerreichbarer Kandidat wird verlassen",
+            "Restream-Statuswechsel schreiben neben dem Event-Loop: ein MariaDB-Commit hielt den Loop eine Sekunde an",
+            "Die Warnung „Stream-Auflösung ergebnislos\" flutete das Log (290 Zeilen in 36 Minuten): jeder gesunde Nutzer leerte die Drossel für die kranken",
+            "Räume ohne Stream-Adresse: die Meldung behauptet nicht mehr „Abo/18+\", sondern nennt beide möglichen Ursachen und was die Abo-Erkennung sagt",
+            "Kürzere Ruhezeit für solche Räume (2 bis 10 statt 5 bis 30 Minuten) — ein wieder offener Raum wird schneller aufgenommen",
+        ],
+    },
     {
         "version": "4.6.7",
         "date": "2026-11",

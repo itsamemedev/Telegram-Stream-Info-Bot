@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="docs/assets/banner.svg" alt="NIGHTCRAWLER — v4.6.7 Centro de control" width="100%">
+<img src="docs/assets/banner.svg" alt="NIGHTCRAWLER — v4.6.8 Centro de control" width="100%">
 
 ### La sala de control para streaming en directo
 #### Vigilancia · Grabación · Restream multidestino · Moderación con IA
@@ -66,7 +66,7 @@ flowchart TB
     TG["📨 Telegram"]:::ein --> BOT
     DC["🎮 Discord<br/>66 comandos"]:::ein --> BOT
     TT["🎥 TikTok<br/>detección en directo + chat"]:::ein --> BOT
-    BOT["bot.py<br/>monolito · 26.503 líneas"]:::core
+    BOT["bot.py<br/>monolito · 26.572 líneas"]:::core
     BOT -->|configure| NC["nc/ — 181 módulos<br/>39 blueprints"]:::lib
     BOT --> BRAIN["brain/ — 16 agentes vigilantes"]:::brain
     BOT --> DB[("SQLite o MariaDB<br/>+ ajustes")]:::db
@@ -322,7 +322,7 @@ guardados en la base de datos, mudanza de SQLite a MariaDB en un paso con
 recuento, Prometheus y Grafana completos con 16 reglas de alerta, el 14.º
 vigilante para la base de datos, un mapa de situación redibujado y `update.sh`
 que pregunta por lo que falta. **Parche 4.6.1:** detrás del nginx del
-instalador el panel estaba abierto sin inicio de sesión; once fallos corregidos. **Parche 4.6.2:** la mudanza a MariaDB lleva el diario fiscal y el archivo. **Parche 4.6.3:** MariaDB compara byte a byte como SQLite. **Parche 4.6.4:** cookies seguras tras el proxy HTTPS. **Parche 4.6.5:** los directos de suscriptores/18+ se reconocen, un restream oscuro se notifica y Kick busca su clúster Pusher. **Parche 4.6.6:** un restream cuya fuente envía datos sin imagen conmutable ya no se queda en silencio en la pantalla de pausa. **Parche 4.6.7:** el mapa de situación es una pantalla de radar con barrido, persistencia, módulos de cristal y paquetes de datos.
+instalador el panel estaba abierto sin inicio de sesión; once fallos corregidos. **Parche 4.6.2:** la mudanza a MariaDB lleva el diario fiscal y el archivo. **Parche 4.6.3:** MariaDB compara byte a byte como SQLite. **Parche 4.6.4:** cookies seguras tras el proxy HTTPS. **Parche 4.6.5:** los directos de suscriptores/18+ se reconocen, un restream oscuro se notifica y Kick busca su clúster Pusher. **Parche 4.6.6:** un restream cuya fuente envía datos sin imagen conmutable ya no se queda en silencio en la pantalla de pausa. **Parche 4.6.7:** el mapa de situación es una pantalla de radar con barrido, persistencia, módulos de cristal y paquetes de datos. **Parche 4.6.8:** Kick solo prueba clústeres Pusher reales, el estado del restream ya no bloquea el bucle y sin avalancha de registros del resolvedor.
 Todas las oleadas en
 **[`docs/CHANGELOG.md`](docs/CHANGELOG.md)**.
 
@@ -332,7 +332,7 @@ Todas las oleadas en
 
 | | |
 |---|---|
-| Versión actual | **4.6.7** — “Centro de control” (2026.11) |
+| Versión actual | **4.6.8** — “Centro de control” (2026.11) |
 | Rutas Flask | 379 (34 en `bot.py` · 345 en `nc/routes/`) |
 | Comandos de Discord | 66 |
 | Agentes vigilantes | 14 |
@@ -349,6 +349,6 @@ comunidad en **[Discord](https://discord.gg/psvnxm7tSV)** · **[lafap.de](https:
 
 <div align="center">
 
-**NIGHTCRAWLER v4.6.7 · “Centro de control”**
+**NIGHTCRAWLER v4.6.8 · “Centro de control”**
 
 </div>

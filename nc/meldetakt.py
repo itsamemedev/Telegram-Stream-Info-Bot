@@ -185,3 +185,39 @@ def zuruecksetzen(schluessel: str = None) -> None:
         ZUSTAND.clear()
     else:
         ZUSTAND.pop(schluessel, None)
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# v4.2-W157: Zuruecksetzen erst, wenn der KANAL wieder gesund ist
+# ══════════════════════════════════════════════════════════════════════════
+#
+# W81 liess jeden Erfolg die Drossel leeren. Bei einem Kanal mit vielen
+# Nutzern heisst ein Erfolg aber nur: DIESER Nutzer geht. Beim Betreiber am
+# 06.11. liefen drei Aufnahmen, vier Nutzer gaben keine Adresse heraus — jeder
+# Poll eines gesunden Nutzers leerte die Drossel, und der naechste kranke
+# meldete wieder laut: 290 Warnungen in 36 Minuten, dieselbe Flut wie vor W97.
+# Jetzt merkt sich der Kanal, WER gestoert ist; geleert wird erst, wenn der
+# letzte davon wieder Erfolg hat.
+
+STOERER: Dict[str, set] = {}
+MAX_STOERER = 500
+
+
+def gestoert(schluessel: str, wer: str) -> None:
+    """`wer` hat in diesem Kanal gerade einen Fehler gemeldet."""
+    s = STOERER.setdefault(schluessel, set())
+    if len(s) < MAX_STOERER:
+        s.add(wer)
+
+
+def erfolg(schluessel: str, wer: str) -> bool:
+    """`wer` hatte Erfolg. -> True, wenn der Kanal damit wieder ganz gesund
+    ist und die Drossel geleert wurde."""
+    s = STOERER.get(schluessel)
+    if s:
+        s.discard(wer)
+    ganz = not s
+    if ganz:
+        STOERER.pop(schluessel, None)
+        zuruecksetzen(schluessel)
+    return ganz
