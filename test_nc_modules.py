@@ -28855,6 +28855,38 @@ def _test_v42_w157_cluster_status_meldung():
     assert s.bestaetigt and _aio.run(s.weiter(dns)) is False and s.cluster == "us3", \
         "ein bestaetigter Cluster wird bei einem Netzwackler aufgegeben"
 
+    # Review #202: „Key veraltet" nur, wenn ALLE Cluster 4001 sagten.
+    zeilen = []
+
+    class _H(_lg.Handler):
+        def emit(self, r):
+            zeilen.append(r.getMessage())
+    lg = _lg.getLogger("w157"); hd = _H(); lg.addHandler(hd)
+    try:
+        s = ns["_KickClusterSuche"]()
+        _aio.run(s.weiter(_E4001()))
+        while _aio.run(s.weiter(dns)):
+            pass
+        assert any("nicht erreichbar" in z for z in zeilen) and \
+            not any("veraltet" in z for z in zeilen), zeilen
+        del zeilen[:]
+        s = ns["_KickClusterSuche"]()
+        while _aio.run(s.weiter(_E4001())):
+            pass
+        assert any("veraltet" in z for z in zeilen), zeilen
+        assert s.abgewiesen == [], "die Zaehlung ueberlebt die Runde"
+    finally:
+        lg.removeHandler(hd)
+
+    # Review #202: offline ist kein Ausfall — die Markierung faellt auch dort.
+    fn = next(n for n in baum.body if getattr(n, "name", "") == "_resolve_via_webcast_api_v2")
+    rueck = [_ast.unparse(r.value) for r in _ast.walk(fn)
+             if isinstance(r, _ast.Return) and r.value is not None]
+    assert "_offline_ergebnis(username)" in rueck and \
+        not any("'offline'" in r and "_offline_ergebnis" not in r for r in rueck), rueck
+    oe = next(n for n in baum.body if getattr(n, "name", "") == "_offline_ergebnis")
+    assert "_nc_meldetakt.erfolg('resolver', username)" in _ast.unparse(oe)
+
     # (3) _set_status schreibt ueber den Ein-Thread-Schreiber, nicht im Loop,
     # und ein Fehler beim Schreiben ist laut.
     k = next(n for n in baum.body if isinstance(n, _ast.ClassDef) and n.name == "RestreamManager")
@@ -28863,7 +28895,7 @@ def _test_v42_w157_cluster_status_meldung():
     assert "_RS_STATUS_EXEC.submit" in rufe and "db_conn" not in rufe, rufe
     sch = next(n for n in baum.body if getattr(n, "name", "") == "_restream_status_schreiben")
     hd = [h for h in _ast.walk(sch) if isinstance(h, _ast.ExceptHandler)]
-    assert hd and all(any(isinstance(x, _ast.Call) and "log.warning" in _ast.unparse(x)
+    assert hd and all(any(isinstance(x, _ast.Call) and "log.error" in _ast.unparse(x)
                           for x in _ast.walk(h)) for h in hd), "Statusfehler wieder still"
     assert "max_workers=1" in _ast.unparse(next(
         n for n in baum.body if isinstance(n, _ast.Assign)

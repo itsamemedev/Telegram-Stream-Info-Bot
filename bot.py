@@ -2708,6 +2708,15 @@ def _abo_probe_dump(username, payload, reason=""):
 # Rotationsliste unterscheidbar sein.
 _DIREKT = "\x00direkt"
 
+def _offline_ergebnis(username):
+    """v4.2-W157 (Review #202): ein endgueltiges „offline" ist kein Ausfall —
+    der Nutzer verliert seine Stoer-Markierung im Resolver-Kanal. Sonst hielte
+    er die Drossel fest, und der naechste echte Ausfall eines anderen Nutzers
+    bliebe bis zu 15 Minuten stumm."""
+    _nc_meldetakt.erfolg("resolver", username)
+    return "offline", None
+
+
 async def _resolve_via_webcast_api_v2(username, session):
     """Returns (status, info_dict) — 'live'/'offline'/'unknown'.
        Erweiterte Version von _resolve_via_webcast_api die 'offline' explizit
@@ -2769,7 +2778,7 @@ async def _resolve_via_webcast_api_v2(username, session):
                 try: record_tiktok_status(resp.status)
                 except Exception: pass
                 if resp.status == 404:
-                    return "offline", None     # User nicht gefunden → wie offline
+                    return _offline_ergebnis(username)     # User nicht gefunden → wie offline
                 if resp.status == 429:
                     return "ratelimited", None
                 if resp.status in (500, 502, 503, 504):
@@ -2818,7 +2827,7 @@ async def _resolve_via_webcast_api_v2(username, session):
         # statusCode != 0 — könnte "user not found" oder rate-limit sein
         msg = (data.get("message") or "").lower()
         if "not found" in msg or "user not" in msg or sc in (10202, 10222):
-            return "offline", None
+            return _offline_ergebnis(username)
         _resolver_stumm(username, "status_code")
         log.debug(f"webcast-api @{username}: statusCode={sc} msg={msg[:80]}")
         return "unknown", None
@@ -2835,7 +2844,7 @@ async def _resolve_via_webcast_api_v2(username, session):
     status = live_room.get("status")
     # status 4 = offline (laut streamlink-Plugin), 2 = live
     if status == 4:
-        return "offline", None
+        return _offline_ergebnis(username)
     if status not in (2, None):
         # BUG-FIX: Vorher wurden ALLE unbekannten Status-Werte (1, 3, 5, 6, ...)
         # als "offline" behandelt. TikTok verwendet aber z.B. status=1 für
@@ -7881,7 +7890,7 @@ def _kick_ws_pause(exc, folge):
     return pause
 
 
-def _kick_cluster_weiter(exc, versucht, probe=False) -> str:
+def _kick_cluster_weiter(exc, versucht, probe=False, abgewiesen=None) -> str:
     """v4.2-W154: nach 4001 der naechste Pusher-Cluster, "" wenn keiner mehr.
 
     `versucht` (Menge) wird fortgeschrieben. Sind alle durch, beginnt die
@@ -7893,6 +7902,8 @@ def _kick_cluster_weiter(exc, versucht, probe=False) -> str:
     taugt er genauso wenig wie bei 4001: weiter. Bis hierher blieb die Suche
     an einem unerreichbaren Cluster haengen und flatterte dort endlos."""
     neu = ""
+    if abgewiesen is not None and getattr(exc, "code", None) == _nc_kickapi.PUSHER_FALSCHER_CLUSTER:
+        abgewiesen.append(1)
     if getattr(exc, "code", None) != _nc_kickapi.PUSHER_FALSCHER_CLUSTER and not probe:
         pass                # kein Cluster-Befund — _kick_ws_pause entscheidet
     elif _nc_kickapi.naechster_cluster(versucht):
@@ -7901,10 +7912,23 @@ def _kick_cluster_weiter(exc, versucht, probe=False) -> str:
         log.info("Kick-Chat: Cluster taugt nicht (%s) — versuche Cluster %s.",
                  str(exc)[:160], neu)
     else:
-        log.error("Kick-Chat: kein Pusher-Cluster (%s) nimmt KICK_PUSHER_KEY an — "
-                  "der Key selbst ist veraltet. Abhilfe: den aktuellen Key aus dem "
-                  "Web-Client von kick.com in KICK_PUSHER_KEY eintragen.",
-                  ", ".join(_nc_kickapi.PUSHER_CLUSTER))
+        # Review #202: „Key veraltet" nur, wenn JEDER Cluster ihn mit 4001
+        # abgewiesen hat. Scheiterten Kandidaten am Netz (DNS, Verbindung),
+        # ist das unbewiesen — dann zeigt der Rat aufs Netz, nicht auf den Key.
+        alle = abgewiesen is None or len(abgewiesen) >= len(_nc_kickapi.PUSHER_CLUSTER)
+        if alle:
+            log.error("Kick-Chat: kein Pusher-Cluster (%s) nimmt KICK_PUSHER_KEY an — "
+                      "der Key selbst ist veraltet. Abhilfe: den aktuellen Key aus dem "
+                      "Web-Client von kick.com in KICK_PUSHER_KEY eintragen.",
+                      ", ".join(_nc_kickapi.PUSHER_CLUSTER))
+        else:
+            log.error("Kick-Chat: kein Pusher-Cluster nahm die Verbindung an — %d von %d "
+                      "haben den Key abgewiesen, die uebrigen waren nicht erreichbar "
+                      "(zuletzt: %s). Zuerst Netz/DNS/Proxy zum Host ws-<cluster>.pusher.com "
+                      "pruefen; `venv/bin/python tools/kickpusher.py` probiert alle durch.",
+                      len(abgewiesen), len(_nc_kickapi.PUSHER_CLUSTER), str(exc)[:160])
+        if abgewiesen is not None:
+            del abgewiesen[:]
         versucht.clear()
         versucht.add((KICK_PUSHER_CLUSTER or "us2").strip().lower())
     return neu
@@ -7930,6 +7954,7 @@ class _KickClusterSuche:
         self.cluster = (KICK_PUSHER_CLUSTER or "us2").strip().lower()
         self.versucht = {self.cluster}
         self.bestaetigt = False     # v4.2-W157: hat hier je ein Abo gestanden?
+        self.abgewiesen = []        # Review #202: 4001 in dieser Suchrunde
 
     def url(self) -> str:
         return _nc_kickapi.pusher_url(KICK_PUSHER_KEY, self.cluster)
@@ -7937,7 +7962,7 @@ class _KickClusterSuche:
     async def weiter(self, exc) -> bool:
         """True: ein anderer Cluster ist dran, gleich neu verbinden."""
         probe = not self.bestaetigt and self.cluster != (KICK_PUSHER_CLUSTER or "us2").strip().lower()
-        neu = _kick_cluster_weiter(exc, self.versucht, probe=probe)
+        neu = _kick_cluster_weiter(exc, self.versucht, probe=probe, abgewiesen=self.abgewiesen)
         if neu:
             self.cluster = neu
             await asyncio.sleep(2)
@@ -13257,9 +13282,11 @@ def _restream_status_schreiben(rid, status, pid, err, zeit):
         laut, weg = _nc_meldetakt.melden("restream-status", type(e).__name__,
                                          _time_mod.monotonic())
         if laut:
-            log.warning("Restream #%s: Status %r nicht gespeichert (%s: %s) — das Deck "
-                        "zeigt bis zum naechsten Wechsel den alten.%s", rid, status,
-                        type(e).__name__, e, _nc_meldetakt.zusatz(weg))
+            # Review #202: error, nicht warning — ein warning erscheint im
+            # ERROR-Log nie (CLAUDE.md), und genau dort sieht der Betreiber hin.
+            log.error("Restream #%s: Status %r nicht gespeichert (%s: %s) — das Deck "
+                      "zeigt bis zum naechsten Wechsel den alten.%s", rid, status,
+                      type(e).__name__, e, _nc_meldetakt.zusatz(weg))
 
 
 async def _restream_chat_push_async(src, who, text, origin=None):
