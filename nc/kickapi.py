@@ -591,7 +591,11 @@ def pusher_url(app_key: str, cluster: str) -> str:
 # oeffentlich, also probiert die Schleife sie selbst durch, bevor sie in die
 # lange Pause geht. tools/kickpusher.py nimmt dieselbe Liste.
 
-PUSHER_CLUSTER = ("us2", "us3", "us1", "mt1", "eu", "ap1", "ap2", "ap3", "ap4", "sa1")
+# v4.2-W157: "us1" stand hier und ist kein Pusher-Cluster — ws-us1.pusher.com
+# hat keinen DNS-Eintrag. Beim Betreiber am 06.11. blieb die Suche genau dort
+# haengen („Name or service not known", 15 Trennungen in sechs Minuten).
+# Die Liste ist die von Pusher veroeffentlichte.
+PUSHER_CLUSTER = ("us2", "mt1", "us3", "eu", "ap1", "ap2", "ap3", "ap4", "sa1")
 PUSHER_FALSCHER_CLUSTER = 4001
 
 

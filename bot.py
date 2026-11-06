@@ -2326,6 +2326,7 @@ def _resolver_stumm(username, grund):
        geworden ist, ist die eigentliche Nachricht."""
     if grund in _nc_cookiebezug.RESOLVER_ANSTOSS:
         _nc_cookiebezug.anstossen("resolver-" + grund)     # v4.2-W107
+    _nc_meldetakt.gestoert("resolver", username)       # v4.2-W157
     laut, unterdrueckt = _nc_meldetakt.melden(
         "resolver", grund, _time_mod.monotonic())
     if laut:
@@ -2469,7 +2470,7 @@ async def resolve_tiktok_live_stream(username: str,
         # erklaerbar.
         _resolver_stumm(username, "beide_wege_leer")
     else:
-        _nc_meldetakt.zuruecksetzen("resolver")
+        _nc_meldetakt.erfolg("resolver", username)      # v4.2-W157: erst wenn keiner mehr gestoert ist
     return treffer
 _nc_rsstate.RESOLVE_LIVE["fn"] = resolve_tiktok_live_stream   # v4.1-W23: Haken fuer die Blueprints
 
@@ -2898,7 +2899,8 @@ async def _resolve_via_webcast_api_v2(username, session):
              f"flv={'yes' if flv else 'no'}, codec={vcodec or '?'}, q={quality or '?'})")
     # v4.2-W81: Erfolg loescht die Drossel. Ohne das bliebe ein Ausfall, der
     # zwischendurch einmal geklappt hat, bis zu 15 Minuten stumm.
-    _nc_meldetakt.zuruecksetzen("resolver")
+    # v4.2-W157: aber nur, wenn damit kein Nutzer des Kanals mehr gestoert ist.
+    _nc_meldetakt.erfolg("resolver", username)
     info = {"hls_url": hls, "flv_url": flv, "via": "webcast_api"}
     if vcodec:
         info["vcodec"] = vcodec
@@ -7879,20 +7881,25 @@ def _kick_ws_pause(exc, folge):
     return pause
 
 
-def _kick_cluster_weiter(exc, versucht) -> str:
+def _kick_cluster_weiter(exc, versucht, probe=False) -> str:
     """v4.2-W154: nach 4001 der naechste Pusher-Cluster, "" wenn keiner mehr.
 
     `versucht` (Menge) wird fortgeschrieben. Sind alle durch, beginnt die
     naechste Runde nach der langen Pause wieder beim konfigurierten Cluster —
-    Kick kann den Key jederzeit umziehen."""
+    Kick kann den Key jederzeit umziehen.
+
+    v4.2-W157: `probe` — der laufende Cluster ist ein PROBIERTER, noch nie
+    bestaetigter. Scheitert er mit irgendeinem Fehler (DNS, Verbindung),
+    taugt er genauso wenig wie bei 4001: weiter. Bis hierher blieb die Suche
+    an einem unerreichbaren Cluster haengen und flatterte dort endlos."""
     neu = ""
-    if getattr(exc, "code", None) != _nc_kickapi.PUSHER_FALSCHER_CLUSTER:
+    if getattr(exc, "code", None) != _nc_kickapi.PUSHER_FALSCHER_CLUSTER and not probe:
         pass                # kein Cluster-Befund — _kick_ws_pause entscheidet
     elif _nc_kickapi.naechster_cluster(versucht):
         neu = _nc_kickapi.naechster_cluster(versucht)
         versucht.add(neu)
-        log.info("Kick-Chat: Pusher kennt den Key in diesem Cluster nicht — "
-                 "versuche Cluster %s.", neu)
+        log.info("Kick-Chat: Cluster taugt nicht (%s) — versuche Cluster %s.",
+                 str(exc)[:160], neu)
     else:
         log.error("Kick-Chat: kein Pusher-Cluster (%s) nimmt KICK_PUSHER_KEY an — "
                   "der Key selbst ist veraltet. Abhilfe: den aktuellen Key aus dem "
@@ -7922,13 +7929,15 @@ class _KickClusterSuche:
     def __init__(self):
         self.cluster = (KICK_PUSHER_CLUSTER or "us2").strip().lower()
         self.versucht = {self.cluster}
+        self.bestaetigt = False     # v4.2-W157: hat hier je ein Abo gestanden?
 
     def url(self) -> str:
         return _nc_kickapi.pusher_url(KICK_PUSHER_KEY, self.cluster)
 
     async def weiter(self, exc) -> bool:
         """True: ein anderer Cluster ist dran, gleich neu verbinden."""
-        neu = _kick_cluster_weiter(exc, self.versucht)
+        probe = not self.bestaetigt and self.cluster != (KICK_PUSHER_CLUSTER or "us2").strip().lower()
+        neu = _kick_cluster_weiter(exc, self.versucht, probe=probe)
         if neu:
             self.cluster = neu
             await asyncio.sleep(2)
@@ -7938,7 +7947,9 @@ class _KickClusterSuche:
         return bool(neu)
 
     def gefunden(self):
-        _kick_cluster_gefunden(self.cluster)
+        if not self.bestaetigt:
+            _kick_cluster_gefunden(self.cluster)
+        self.bestaetigt = True
 
 
 def _verbindung_verloren(kanal, exc, backoff_s, seit=0.0):
@@ -8997,10 +9008,12 @@ def _rec_kategorie_melden(category, username):
         # trotzdem mit „nicht live", ist der Raum fuer uns verschlossen.
         _g = _nc_geschuetzt.vermerken(username, _time_mod.monotonic())
         if _g["neu"]:
-            log.error("@%s ist live, aber verschlossen (%d Versuche in Folge ohne "
-                      "Stream-Adresse) — Aufnahme und Restream pausieren %d min und "
-                      "versuchen es dann wieder. %s", username, _g["folge"],
-                      _g["ruhe_s"] // 60, _nc_geschuetzt.ABHILFE)
+            log.error("@%s ist live, aber ohne Stream-Adresse (%d Versuche in Folge) — "
+                      "Aufnahme und Restream pausieren %d min und versuchen es dann "
+                      "wieder. Abo-Erkennung: %s. %s", username, _g["folge"],
+                      _g["ruhe_s"] // 60,
+                      "Abo-Live" if _ABO_LIVE.get(_abo_key(username)) else "kein Abo erkannt",
+                      _nc_geschuetzt.ABHILFE)
     elif category == "forbidden_403":
         # v4.2-W107: abgelaufene Anti-Bot-Tokens sind eine der beiden
         # Ursachen eines 403 — frische kosten einen Gast-Aufruf. Der Zeitplan
@@ -13219,6 +13232,36 @@ _CHAT_PUSH_EXEC = _cf_thread.ThreadPoolExecutor(max_workers=1,
                                                 thread_name_prefix="chatpush")
 
 
+# v4.2-W157: Statuswechsel der Restreams — ein Arbeiter, Reihenfolge erhalten
+# (Begruendung an RestreamManager._set_status).
+_RS_STATUS_EXEC = _cf_thread.ThreadPoolExecutor(max_workers=1,
+                                                thread_name_prefix="rs-status")
+
+
+def _restream_status_schreiben(rid, status, pid, err, zeit):
+    """Schreibt einen Statuswechsel. Ein Fehler ist laut, nicht `pass`: das
+    Deck liest den Status aus dieser Tabelle, und ein stilles Scheitern liess
+    einen beendeten Restream dort als „live" stehen."""
+    try:
+        with db_conn() as conn:
+            if err is not None:
+                conn.execute("UPDATE restreams SET status=?, pid=?, last_error=? WHERE id=?",
+                             (status, pid, err[:2000], rid))
+            else:
+                conn.execute("UPDATE restreams SET status=?, pid=? WHERE id=?",
+                             (status, pid, rid))
+            if status in ("live", "starting"):
+                conn.execute("UPDATE restreams SET started_at=? WHERE id=?", (zeit, rid))
+            conn.commit()
+    except Exception as e:
+        laut, weg = _nc_meldetakt.melden("restream-status", type(e).__name__,
+                                         _time_mod.monotonic())
+        if laut:
+            log.warning("Restream #%s: Status %r nicht gespeichert (%s: %s) — das Deck "
+                        "zeigt bis zum naechsten Wechsel den alten.%s", rid, status,
+                        type(e).__name__, e, _nc_meldetakt.zusatz(weg))
+
+
 async def _restream_chat_push_async(src, who, text, origin=None):
     """_restream_chat_push neben dem Loop, Reihenfolge erhalten."""
     try:
@@ -14276,20 +14319,18 @@ class RestreamManager:
                          "rid": _nxt.get("rid")} if _nxt else {})
         except Exception:
             pass
+        # v4.2-W157: der Schreibvorgang laeuft beim Ein-Thread-Schreiber.
+        # Gemessen beim Betreiber am 06.11.: „Event-Loop 1010 ms gestanden an
+        # _set_status > dbwrap.commit <- ssl.read" — unter MariaDB ist jeder
+        # Commit ein Netz-Rundlauf, und _set_status wird aus dem Loop gerufen.
+        # Ein Arbeiter haelt die Reihenfolge der Statuswechsel; vom Loop aus
+        # wartet niemand, aus einem Thread wird gewartet wie bisher.
+        zeit = datetime.now(timezone.utc).isoformat()
+        fut = _RS_STATUS_EXEC.submit(_restream_status_schreiben, rid, status, pid, err, zeit)
         try:
-            with db_conn() as conn:
-                if err is not None:
-                    conn.execute("UPDATE restreams SET status=?, pid=?, last_error=? WHERE id=?",
-                                 (status, pid, err[:2000], rid))
-                else:
-                    conn.execute("UPDATE restreams SET status=?, pid=? WHERE id=?",
-                                 (status, pid, rid))
-                if status in ("live", "starting"):
-                    conn.execute("UPDATE restreams SET started_at=? WHERE id=?",
-                                 (datetime.now(timezone.utc).isoformat(), rid))
-                conn.commit()
-        except Exception:
-            pass
+            asyncio.get_running_loop()
+        except RuntimeError:
+            fut.result(timeout=30)       # kein Loop in diesem Thread: warten
 
     def _set_desired(self, rid, on: bool):
         """B123: Soll-Zustand persistieren — ueberlebt Absturz und Neustart."""
@@ -25105,8 +25146,9 @@ def _restream_durchreicher(username):
         # v4.2-W154: der Durchreicher fragt mit denselben Cookies — er sieht
         # denselben verschlossenen Raum, und die Sendebruecke zeigte dann
         # dauerhaft das Pausenbild ohne Ton.
-        grund = ("der Raum ist live, aber verschlossen (Abo/18+) — "
-                 "COOKIE_FILE mit einem berechtigten, angemeldeten Konto")
+        grund = ("TikTok gibt fuer diesen Raum keine Stream-Adresse heraus (Abo/18+ "
+                 "oder fuer diese Sitzung gesperrt) — COOKIE_FILE mit einem "
+                 "berechtigten, angemeldeten Konto")
     else:
         try:
             adr = _nc_durch.adresse(username)

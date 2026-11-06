@@ -9598,7 +9598,10 @@ def _test_v42_w81_fehlerpfade_sprechen():
         resets = [n for n in _ast.walk(fn)
                   if isinstance(n, _ast.Call)
                   and isinstance(n.func, _ast.Attribute)
-                  and n.func.attr == "zuruecksetzen"
+                  # ANKER GEWANDERT (v4.2-W157): der Resolver-Kanal ruft
+                  # `erfolg(kanal, wer)`, das erst leert, wenn kein Nutzer
+                  # mehr gestoert ist — die Aussage „Erfolg leert" bleibt.
+                  and n.func.attr in ("zuruecksetzen", "erfolg")
                   and n.args and isinstance(n.args[0], _ast.Constant)
                   and n.args[0].value == kanal]
         assert resets, \
@@ -28763,9 +28766,10 @@ def _test_v42_w154_verschlossen_cluster_decimal():
         B.log.removeHandler(hd)
 
     # (4) Kick: 4001 sucht den naechsten Cluster, alle durch -> "".
-    assert K.naechster_cluster({"us2"}) == "us3"
+    # ANKER GEWANDERT (v4.2-W157): "us1" ist kein Cluster und flog raus.
+    assert K.naechster_cluster({"us2"}) == "mt1"
     assert K.naechster_cluster(set(K.PUSHER_CLUSTER)) == ""
-    assert K.naechster_cluster({"US2", "us3"}) == "us1"
+    assert K.naechster_cluster({"US2", "mt1"}) == "us3"
     w = rumpf_ab(src, src.index("def _kick_cluster_weiter("))
     assert "PUSHER_FALSCHER_CLUSTER" in w and "versucht.add(neu)" in w
     lp = rumpf_ab(src, src.index("    async def _ws_loop(self):"))
@@ -28805,6 +28809,91 @@ def _test_v42_w154_verschlossen_cluster_decimal():
     assert r["b"] == 3 and isinstance(r["b"], int) and r[2] == "x" and r["d"] is None
     _json.dumps(dict(r))
     ok("W154: verschlossene Raeume ruhen, toter Zubringer laut, Kick-Cluster, Decimal")
+
+
+def _test_v42_w157_cluster_status_meldung():
+    """v4.2-W157: aus debug.log/error.log vom 06.11. — die Cluster-Suche blieb
+    an „us1" haengen (kein Pusher-Cluster, DNS-Fehler), ein probierter Cluster
+    mit Netzfehler wurde nie verlassen, _set_status hielt den Event-Loop 1 s
+    an einem MariaDB-Commit, und die Meldung zu Raeumen ohne Stream-Adresse
+    behauptete eine Ursache (Abo/18+), die der Bot nicht kannte."""
+    import ast as _ast
+    import asyncio as _aio
+    import logging as _lg
+    import types as _ty
+    from nc import geschuetzt as G
+    from nc import kickapi as K
+
+    # (1) Nur echte Pusher-Cluster.
+    assert "us1" not in K.PUSHER_CLUSTER and K.PUSHER_CLUSTER[0] == "us2"
+    assert len(set(K.PUSHER_CLUSTER)) == len(K.PUSHER_CLUSTER)
+
+    # (2) Ein probierter Cluster, der mit einem NETZfehler scheitert, wird
+    # verlassen; der konfigurierte und ein bestaetigter nicht.
+    src = open("bot.py", encoding="utf-8").read()
+    baum = _ast.parse(src)
+    teile = [n for n in baum.body if getattr(n, "name", "") in
+             ("_kick_cluster_weiter", "_kick_cluster_gefunden", "_KickClusterSuche")]
+    assert len(teile) == 3
+
+    async def _kein_schlaf(_s):
+        return None
+    ns = {"_nc_kickapi": K, "KICK_PUSHER_CLUSTER": "us2", "KICK_PUSHER_KEY": "k",
+          "log": _lg.getLogger("w157"), "asyncio": _ty.SimpleNamespace(sleep=_kein_schlaf)}
+    exec(compile(_ast.Module(body=teile, type_ignores=[]), "bot.py", "exec"), ns)
+
+    class _E4001(Exception):
+        code = K.PUSHER_FALSCHER_CLUSTER
+    dns = OSError("Cannot connect to host ws-mt1.pusher.com:443 [Name or service not known]")
+    s = ns["_KickClusterSuche"]()
+    assert _aio.run(s.weiter(dns)) is False and s.cluster == "us2", \
+        "der konfigurierte Cluster wird bei einem Netzfehler verlassen"
+    assert _aio.run(s.weiter(_E4001())) is True and s.cluster == "mt1"
+    assert _aio.run(s.weiter(dns)) is True and s.cluster == "us3", \
+        "die Suche bleibt an einem unerreichbaren Cluster haengen"
+    s.gefunden()
+    assert s.bestaetigt and _aio.run(s.weiter(dns)) is False and s.cluster == "us3", \
+        "ein bestaetigter Cluster wird bei einem Netzwackler aufgegeben"
+
+    # (3) _set_status schreibt ueber den Ein-Thread-Schreiber, nicht im Loop,
+    # und ein Fehler beim Schreiben ist laut.
+    k = next(n for n in baum.body if isinstance(n, _ast.ClassDef) and n.name == "RestreamManager")
+    ss = next(n for n in k.body if getattr(n, "name", "") == "_set_status")
+    rufe = {_ast.unparse(c.func) for c in _ast.walk(ss) if isinstance(c, _ast.Call)}
+    assert "_RS_STATUS_EXEC.submit" in rufe and "db_conn" not in rufe, rufe
+    sch = next(n for n in baum.body if getattr(n, "name", "") == "_restream_status_schreiben")
+    hd = [h for h in _ast.walk(sch) if isinstance(h, _ast.ExceptHandler)]
+    assert hd and all(any(isinstance(x, _ast.Call) and "log.warning" in _ast.unparse(x)
+                          for x in _ast.walk(h)) for h in hd), "Statusfehler wieder still"
+    assert "max_workers=1" in _ast.unparse(next(
+        n for n in baum.body if isinstance(n, _ast.Assign)
+        and _ast.unparse(n.targets[0]) == "_RS_STATUS_EXEC"))
+
+    # (4) Die Meldung behauptet keine Ursache, die der Bot nicht kennt.
+    assert "typisch fuer Abo" not in G.ABHILFE and "Zwei Ursachen" in G.ABHILFE
+    # (5) Die Resolver-Drossel: ein gesunder Nutzer leert sie nicht, solange
+    # ein anderer gestoert ist — gemessen: 290 Warnungen in 36 Minuten.
+    from nc import meldetakt as M
+    M.ZUSTAND.clear(); M.STOERER.clear()
+    laut = 0
+    for runde in range(20):
+        for wer in ("a", "b", "c"):
+            M.gestoert("w157", wer)
+            laut += M.melden("w157", "html_kein_tag", float(runde))[0]
+        M.erfolg("w157", "gesund")
+    assert laut == 1, "die Drossel wird vom Erfolg anderer Nutzer geleert (%d laut)" % laut
+    for wer in ("a", "b"):
+        assert M.erfolg("w157", wer) is False
+    assert M.erfolg("w157", "c") is True and "w157" not in M.ZUSTAND
+    assert M.melden("w157", "html_kein_tag", 30.0)[0], "nach der Erholung nicht wieder sofort laut"
+    M.ZUSTAND.clear(); M.STOERER.clear()
+    assert "_nc_meldetakt.gestoert(\"resolver\", username)" in src
+
+    m = rumpf_ab(src, src.index("def _rec_kategorie_melden("))
+    assert "Abo-Erkennung: %s" in m and "_ABO_LIVE.get(_abo_key(username))" in m
+    assert max(G.RUHE_S) <= 600, "eine lange Ruhe kostet Aufnahme, wenn der Raum aufgeht"
+    ok("W157: Cluster-Suche verlaesst unerreichbare Cluster, Status neben dem Loop, "
+       "ehrliche Meldung ohne Adresse")
 
 
 def _test_v42_w155_weiche_steckt():
@@ -29313,6 +29402,7 @@ def main():
     _test_v42_w154_verschlossen_cluster_decimal()
     _test_v42_w155_weiche_steckt()
     _test_v42_w156_lagebild_radar()
+    _test_v42_w157_cluster_status_meldung()
     _test_v42_w60_azrael_cooldown_je_plattform()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)
