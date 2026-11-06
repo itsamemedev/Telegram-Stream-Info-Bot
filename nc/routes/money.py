@@ -169,7 +169,9 @@ def api_donations_summary():
             counts = {r["platform"] or "?": r["n"] for r in rows}
             # V37-DON: TikTok bewusst NICHT im Panel — auf Wunsch entfernt.
             # (Die Erfassung läuft weiter, nur die Anzeige zeigt TikTok nicht.)
-            for p in ("kick", "twitch", "youtube"):
+            # v4.2-W164 (Codex #208): "manual" zaehlt mit — sonst stuende eine
+            # im Deck erfasste Spende in der Liste darunter, aber in keinem Zaehler.
+            for p in ("kick", "twitch", "youtube", "manual"):
                 out["by_platform"].append({"platform": p, "count": counts.get(p, 0)})
                 out["total_count"] += counts.get(p, 0)
             # Letzte 15 Donations (ohne TikTok — auf Wunsch aus dem Panel)

@@ -11,6 +11,46 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+## [4.6.15] — 2026-11-06 · „Leitstand"
+
+### Behoben — alte Beilagen, manuelle Spenden (v4.2 W164)
+
+- **Alte `.ass`-Beilagen sammelt der Bot selbst ein.** Beim Start liest der
+  Chat-Nachtrag jede Beilage, die `nc.aufnahmechat.ass()` geschrieben hat
+  (W158), merkt ihren Chat für die Aufnahme daneben vor und entfernt sie —
+  danach wird er eingearbeitet wie jeder andere. Eine Beilage ohne Aufnahme
+  wird entfernt; fremde Untertiteldateien erkennt `ist_beilage()` und lässt
+  sie liegen. Kein `find … -delete` von Hand mehr.
+- **Manuelle Spenden zählen als Einnahme.** `nc/revenue.PLATFORMS` nannte
+  `"manuell"`, das Deck speichert seit W102 `platform='manual'` — der
+  Eintrag traf keine einzige Zeile. Eine im Deck erfasste PayPal- oder
+  Krypto-Spende fehlte dadurch im Overlay-Spendenziel, in den Listen und in
+  der Gegenprobe des Steuer-Journals. Die Website-Summe rechnet weiterhin
+  getrennt (`DONATION_CURRENT_EUR` + manuelle Summe), es wird nichts doppelt
+  gezählt. Im Overlay tragen sie das Abzeichen DIREKT.
+
+- Review #208 (Codex): der Einsammler lässt `<aufnahme>.chat.ass` liegen —
+  das ist die Arbeitsdatei eines laufenden Einarbeitens, gleiches Format;
+  und die Spenden-Übersicht im Deck zählt „direkt" (manual) in den Zählern
+  mit, nicht nur in der Liste.
+
+Vertrag `_test_v42_w164_alles_auf_einmal`, 8 von 8 Mutationsproben gefangen
+(plus zwei für die Review-Befunde).
+
+### Behoben — Restream zeigte nur AZRAEL und Chat (v4.2 W165)
+
+- Gemeldet am 06.11. mit Screenshot (@caro94erlafamilia, Text-Modus): „Die
+  Quelle ist aber live auf TikTok." Overlay, Chat und AZRAEL liefen, das
+  Videofeld blieb dunkel, kein Quellton.
+- Eigener Anteil: hatte die Aufnahme dreimal in Folge „nicht live"
+  bekommen, sperrte `_restream_durchreicher` den Durchreicher (yt-dlp/
+  streamlink ziehen den Stream selbst) für das **ganze restliche Live** —
+  gelöst nur durch eine gelungene Aufnahme oder Offline. Der letzte Weg, der
+  ohne Stream-Adresse noch ein Bild bringen kann, wurde nie wieder versucht.
+- Jetzt gilt die Sperre nur für die Ruhezeit (2–10 min, dieselbe wie bei der
+  Aufnahme); danach versucht der Durchreicher es wieder. Vertrag
+  `_test_v42_w165_durchreicher_nach_ruhezeit`, beide Mutationsproben gefangen.
+
 ## [4.6.14] — 2026-11-06 · „Leitstand"
 
 ### Geändert — Chat-Nachtrag statt `.ass`-Beilage (v4.2 W163)

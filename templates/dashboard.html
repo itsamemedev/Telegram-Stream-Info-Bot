@@ -8526,8 +8526,10 @@ async function commLoad(){
 }
 
 /* ═══ V37-DON: Donations ═══ */
-const DON_ICON={kick:'●',twitch:'▸',youtube:'►'};
-const DON_COL={kick:'var(--neon)',twitch:'var(--magenta)',youtube:'var(--red)'};
+const DON_ICON={kick:'●',twitch:'▸',youtube:'►',manual:'◆'};
+const DON_COL={kick:'var(--neon)',twitch:'var(--magenta)',youtube:'var(--red)',manual:'var(--amber)'};
+/* v4.2-W164: im Deck erfasste Spenden heissen in der Datenbank "manual". */
+const DON_NAME={manual:'direkt'};
 
 /* v4.0-W102: manuelle Spenden — erfassen, listen, löschen. Betreiber-gepflegt,
    fließt in den Website-Fortschritt (current_eur). */
@@ -8610,7 +8612,7 @@ async function donLoad(){
                    +`(der Kanal ist deswegen nicht abgeschaltet)`;
     return `<div class="metric" style="opacity:${on?1:.75}" title="${esc(titel)}">
       <span class="v${(p.count===0)?' iszero':''}" style="color:${on?DON_COL[p.platform]:'var(--text-dim)'}">${p.count}</span>
-      <span class="l">${DON_ICON[p.platform]||''} ${esc(p.platform)}${on?'':' · keine'}</span></div>`;
+      <span class="l">${DON_ICON[p.platform]||''} ${esc(DON_NAME[p.platform]||p.platform)}${on?'':' · keine'}</span></div>`;
   }).join('');
   if(!d.recent||!d.recent.length){
     box.innerHTML='<div class="faint" style="font-size:11px">noch keine Donations im Zeitraum</div>';

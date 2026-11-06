@@ -29,13 +29,21 @@ auf und blaehten die Summe auf. Jetzt steht dort schlicht `platform IN (…)`:
 
 Nicht zu verwechseln mit `nc.ledger.PLATFORMS`: das sind BUCHUNGS-Kategorien
 fuer die Steuer (dort heisst der Sammelposten "sonstige"), hier stehen
-EINNAHME-Quellen (dort "manuell"). Die beiden Listen sehen aehnlich aus und
+EINNAHME-Quellen (dort "manual"). Die beiden Listen sehen aehnlich aus und
 sind es nicht — der Kommentar in nc/ledger.py, sie seien deckungsgleich, ist
 falsch. Anzeigewert ≠ Auszahlung, siehe CLAUDE.md.
 """
 
 # Plattformen, deren Geld auf UNSERE Kanaele einzahlt.
-PLATFORMS = ("kick", "twitch", "youtube", "manuell")
+# v4.2-W164: "manual" statt "manuell". Gespeichert werden manuell erfasste
+# Spenden seit W102 als platform='manual' (nc/routes/money.py) — "manuell"
+# kam in keiner einzigen Zeile vor. Der Eintrag war damit tot, und eine
+# PayPal- oder Krypto-Spende, die der Betreiber im Deck eintrug, fehlte im
+# Spendenziel des Overlays, in den Spendenlisten und in der Gegenprobe des
+# Steuer-Journals. Doppelt gezaehlt wird dadurch nichts: der Fortschritt der
+# Website rechnet getrennt (DONATION_CURRENT_EUR + nc.donationsdb.manual_total)
+# und benutzt diese Liste nicht.
+PLATFORMS = ("kick", "twitch", "youtube", "manual")
 
 # Woher ein Overlay-Ereignis kommen kann. TikTok steht hier sehr wohl drin:
 # Follows von dort sind Reichweite und duerfen ins Sendebild — nur Geld nicht.

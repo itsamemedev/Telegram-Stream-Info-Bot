@@ -18497,6 +18497,66 @@ def _aufnahme_chat_vormerken(output_file, username):
     return vorgemerkt
 
 
+def _alte_beilagen_einsammeln(verz=None):
+    """v4.2-W164: die `.ass`-Beilagen aus W158 in den Nachtrag ueberfuehren.
+
+    Bis W163 lag der Chat einer beim Stopp gesicherten Aufnahme als
+    `<aufnahme>.ass` daneben. Jede solche Beilage wird hier gelesen, ihr Chat
+    fuer die Aufnahme vorgemerkt und die Beilage entfernt — der Nachtrag
+    arbeitet ihn danach ein wie jeden anderen. Gibt es die Aufnahme nicht mehr
+    (geloescht, ins Archiv verschoben), ist die Beilage ein Rest und geht weg.
+    Angefasst wird nur das Format, das der Bot selbst geschrieben hat
+    (nc.chatnachtrag.ist_beilage). -> (uebernommen, entfernt)"""
+    verz = verz or RECORDINGS_DIR
+    uebernommen = entfernt = 0
+    try:
+        # Codex #208: `<aufnahme>.chat.ass` ist die ARBEITSDATEI eines laufenden
+        # Einarbeitens (_aufnahme_chat_einarbeiten) — gleiches Format, aber
+        # keine Beilage. Liefe der Scan in diesem Moment, loeschte er sie, und
+        # ffmpeg faende seine Untertitel nicht mehr.
+        namen = sorted(n for n in os.listdir(verz) if n.lower().endswith(".ass")
+                       and not n.lower().endswith(".chat.ass"))
+    except OSError as e:
+        log.warning("Aufnahme-Chat: Beilagen in %s nicht lesbar (%s).", verz, e)
+        namen = []
+    for n in namen:
+        ass_pfad = os.path.join(verz, n)
+        try:
+            with open(ass_pfad, encoding="utf-8") as f:
+                text = f.read()
+        except (OSError, UnicodeDecodeError) as e:
+            log.warning("Aufnahme-Chat: Beilage %s nicht lesbar (%s) — bleibt liegen.", n, e)
+            continue
+        if not _nc_chatnachtrag.ist_beilage(text):
+            continue                     # fremde Untertiteldatei — nicht unsere
+        video = _nc_chatnachtrag.beilage_zu(ass_pfad)
+        chat = _nc_chatnachtrag.beilage_lesen(text)
+        if chat and os.path.isfile(video):
+            try:
+                with db_conn() as conn:
+                    row = conn.execute("SELECT username FROM recordings WHERE filepath=?",
+                                       (video,)).fetchone()
+                    _nc_chatnachtrag.vormerken(conn, video, (row["username"] if row else "?"),
+                                               chat)
+                    conn.commit()
+            except Exception as e:
+                log.error("Aufnahme-Chat: Beilage %s nicht uebernommen (%s: %s) — bleibt "
+                          "liegen, naechster Versuch beim naechsten Start.", n,
+                          type(e).__name__, e)
+                continue
+            uebernommen += 1
+        else:
+            entfernt += 1
+        try:
+            os.remove(ass_pfad)
+        except OSError as e:
+            log.warning("Aufnahme-Chat: Beilage %s nicht entfernt (%s).", n, e)
+    if uebernommen or entfernt:
+        log.info("Aufnahme-Chat: %d alte .ass-Beilagen uebernommen (werden jetzt "
+                 "eingearbeitet), %d ohne Aufnahme oder ohne Chat entfernt.", uebernommen, entfernt)
+    return uebernommen, entfernt
+
+
 async def _aufnahme_chat_nachtrag(warte_s=120):
     """v4.2-W163: beim Stopp vorgemerkten Chat in seine Aufnahme einarbeiten.
 
@@ -18504,6 +18564,7 @@ async def _aufnahme_chat_nachtrag(warte_s=120):
     die teuerste Minute) und Eintrag fuer Eintrag mit niedrigster Prioritaet
     (nice 19 im ffmpeg-Bauer) — Aufnahmen und Restreams gehen vor."""
     await asyncio.sleep(warte_s)
+    await asyncio.to_thread(_alte_beilagen_einsammeln)      # v4.2-W164
     try:
         offen = await db_async(_nc_chatnachtrag.offene)
     except Exception as e:
@@ -25593,13 +25654,20 @@ def _restream_durchreicher(username):
         grund = "die Sendebruecke ist aus (RESTREAM_BRUECKE=0) — der Durchreicher braucht sie"
     elif not _nc_durch.werkzeug():
         grund = "weder yt-dlp noch streamlink installiert — sudo bash tools/update.sh"
-    elif _nc_geschuetzt.verschlossen(username):
+    elif _nc_geschuetzt.ruhend(username, _time_mod.monotonic()):
         # v4.2-W154: der Durchreicher fragt mit denselben Cookies — er sieht
-        # denselben verschlossenen Raum, und die Sendebruecke zeigte dann
-        # dauerhaft das Pausenbild ohne Ton.
-        grund = ("TikTok gibt fuer diesen Raum keine Stream-Adresse heraus (Abo/18+ "
-                 "oder fuer diese Sitzung gesperrt) — COOKIE_FILE mit einem "
-                 "berechtigten, angemeldeten Konto")
+        # denselben verschlossenen Raum. v4.2-W165: aber nur fuer die RUHEZEIT
+        # (2–10 min, dieselbe wie die Aufnahme), nicht fuer das ganze Live.
+        # Hier stand `verschlossen()`: drei gescheiterte Aufnahmeversuche
+        # sperrten den Durchreicher bis zum Ende der Sendung, geloest nur von
+        # einer gelungenen Aufnahme. Gemeldet am 06.11.: „Die Quelle ist aber
+        # live auf TikTok" — und der Restream zeigte nur AZRAEL und Chat. Der
+        # letzte Weg, der ohne Adresse noch ein Bild bringen kann, wurde nie
+        # wieder versucht.
+        grund = ("TikTok gab fuer diesen Raum zuletzt keine Stream-Adresse heraus "
+                 "(Abo/18+ oder fuer diese Sitzung gesperrt) — neuer Versuch nach der "
+                 "Ruhezeit; dauerhaft hilft COOKIE_FILE mit einem berechtigten, "
+                 "angemeldeten Konto")
     else:
         try:
             adr = _nc_durch.adresse(username)
