@@ -8520,7 +8520,7 @@ def test_v40_w118_sicherheitsaudit():
         # jeder state genau einmal.
         assert 'if not erwartet or not _hmac.compare_digest(str(state or ""), erwartet):' in code, \
             datei + ": state wird nicht erzwungen"
-        assert 'erwartet, _state["csrf"] = _state["csrf"], ""' in code, \
+        assert '\n    _state["csrf"] = ""\n' in code, \
             datei + ": state ist wiederverwendbar"
 
     # ── S4 ────────────────────────────────────────────────────────────────

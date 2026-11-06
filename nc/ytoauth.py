@@ -237,9 +237,13 @@ async def exchange_code(code, state, aiohttp):
     # fuer SEIN Konto und ruft den Rueckruf damit auf; der Bot bindet sich an
     # das fremde Konto. Ausserdem war der state wiederverwendbar. Jetzt: ohne
     # ausgegebenen state kein Tausch, und jeder state gilt genau einmal.
-    erwartet, _state["csrf"] = _state["csrf"], ""
+    # Verbraucht wird er erst NACH dem Treffer (Codex #195): ein falscher
+    # Aufruf des oeffentlichen Rueckrufs darf den laufenden Flow des
+    # Betreibers nicht ungueltig machen.
+    erwartet = _state["csrf"]
     if not erwartet or not _hmac.compare_digest(str(state or ""), erwartet):
         return False, "state fehlt oder stimmt nicht (CSRF) — Flow neu starten"
+    _state["csrf"] = ""
     cid, csec = _client()
     if not (cid and csec):
         return False, "YOUTUBE_CLIENT_ID + YOUTUBE_CLIENT_SECRET fehlen in der .env"

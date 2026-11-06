@@ -28409,9 +28409,12 @@ def _test_v42_w149_tiefengrund():
             assert okk is False and "CSRF" in txt, "%s tauscht ohne laufenden Flow" % M.__name__
             M._state["csrf"] = "s1"
             okk, _ = _aio.run(M.exchange_code("c", "falsch", None))
-            assert okk is False and M._state["csrf"] == "", "%s: state nicht verbraucht" % M.__name__
-            okk, _ = _aio.run(M.exchange_code("c", "s1", None))
-            assert okk is False, "%s: verbrauchter state gilt erneut" % M.__name__
+            assert okk is False and M._state["csrf"] == "s1", \
+                "%s: ein falscher Rueckruf bricht den laufenden Flow ab (Codex #195)" % M.__name__
+            _aio.run(M.exchange_code("c", "s1", None))      # Treffer verbraucht ihn
+            assert M._state["csrf"] == "", "%s: state nach Treffer nicht verbraucht" % M.__name__
+            okk, txt = _aio.run(M.exchange_code("c", "s1", None))
+            assert okk is False and "CSRF" in txt, "%s: verbrauchter state gilt erneut" % M.__name__
         finally:
             M._state["csrf"] = alt
     ok("W149: OAuth-Rueckruf ohne laufenden Flow abgelehnt, state nur einmal gueltig")
