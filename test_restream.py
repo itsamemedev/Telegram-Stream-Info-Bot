@@ -3063,31 +3063,32 @@ def test_v40_version():
        BUILD_STAMP und nc.version NICHT auseinanderlaufen (schon dreimal
        passiert: Modul auf neu, Footer blieb auf alt)."""
     from nc import version as v
-    # ANKER GEWANDERT (v4.6, nicht der Vertrag): 4.5.3 -> 4.6. Dieser Test
+    # ANKER GEWANDERT (v4.6.1, nicht der Vertrag): 4.6 -> 4.6.1. Dieser Test
     # wandert absichtlich mit jeder Fassung mit — er ist die Stelle, an der
     # ein halber Versionssprung auffliegt (Modul hochgezaehlt, Footer nicht).
-    assert v.VERSION == "4.6" and v.current()["version"] == "4.6"
-    assert v.summary_line().startswith("NIGHTCRAWLER v4.6")
+    assert v.VERSION == "4.6.1" and v.current()["version"] == "4.6.1"
+    assert v.summary_line().startswith("NIGHTCRAWLER v4.6.1")
     top = v.latest()
-    assert top["version"] == "4.6" and len(top["highlights"]) >= 3
-    assert [c["version"] for c in v.changelog()][:4] == ["4.6", "4.5.3", "4.5.2", "4.5.1"]
+    assert top["version"] == "4.6.1" and len(top["highlights"]) >= 3
+    assert [c["version"] for c in v.changelog()][:4] == ["4.6.1", "4.6", "4.5.3", "4.5.2"]
     assert v.changelog()[-1]["version"] == "3.7"   # Historie erhalten
     # Der Sprung darf die Vorgaengerfassung nicht ausraeumen. Beim
     # Umhaengen der Highlights ist genau das die Gefahr — man verschiebt
     # versehentlich ALLE statt der neuen, und 4.4 steht danach leer im
     # "Was ist neu"-Panel.
     vor = v.changelog()[1]
-    assert vor["version"] == "4.5.3" and len(vor["highlights"]) >= 5, \
-        f"4.5.3 hat nur noch {len(vor['highlights'])} Highlights — beim Sprung " \
-        f"auf 4.6 ist die Vorgaengerfassung ausgeraeumt worden"
-    assert len(v.changelog()[2]["highlights"]) >= 5, "4.5.2 ausgeraeumt"
-    assert len(v.changelog()[3]["highlights"]) >= 5, "4.5.1 ausgeraeumt"
-    assert len(v.changelog()[4]["highlights"]) >= 5, "4.5 ausgeraeumt"
-    assert len(v.changelog()[6]["highlights"]) >= 10, "4.4 ausgeraeumt"
+    assert vor["version"] == "4.6" and len(vor["highlights"]) >= 5, \
+        f"4.6 hat nur noch {len(vor['highlights'])} Highlights — beim Sprung " \
+        f"auf 4.6.1 ist die Vorgaengerfassung ausgeraeumt worden"
+    assert len(v.changelog()[2]["highlights"]) >= 5, "4.5.3 ausgeraeumt"
+    assert len(v.changelog()[3]["highlights"]) >= 5, "4.5.2 ausgeraeumt"
+    assert len(v.changelog()[4]["highlights"]) >= 5, "4.5.1 ausgeraeumt"
+    assert len(v.changelog()[5]["highlights"]) >= 5, "4.5 ausgeraeumt"
+    assert len(v.changelog()[7]["highlights"]) >= 10, "4.4 ausgeraeumt"
     # Und keine Zeile darf in ZWEI Fassungen stehen.
     doppelt = set(top["highlights"]) & set(vor["highlights"])
-    assert not doppelt, f"in 4.6 und 4.5.3 gleichzeitig: {list(doppelt)[:1]}"
-    ok("v4.6: nc.version — 4.6 + Changelog mit Historie, 4.5.3 bis 4.5 und 4.4 unversehrt")
+    assert not doppelt, f"in 4.6.1 und 4.6 gleichzeitig: {list(doppelt)[:1]}"
+    ok("v4.6.1: nc.version — 4.6.1 + Changelog mit Historie, 4.6 bis 4.5 und 4.4 unversehrt")
 
     src = open("bot.py").read()
     assert 'BOT_VERSION = _nc_version.VERSION' in src, "BOT_VERSION nicht zentralisiert"
@@ -3099,7 +3100,7 @@ def test_v40_version():
         "BUILD_STAMP haengt nicht an nc.version"
     # ANKER GEWANDERT (v4.3, nicht der Vertrag): der Stempel folgt RELEASE
     # und VERSION, beide aus nc/version.py.
-    assert v.build_stamp() == "2026.11 · v4.6", v.build_stamp()
+    assert v.build_stamp() == "2026.11 · v4.6.1", v.build_stamp()
     # v4.1-W26: Anker mitgewandert. Die Route liegt jetzt in
     # nc/routes/auskunft.py — der VERTRAG ist unveraendert (es gibt sie, und
     # sie meldet die Version), nur ihre Fundstelle nicht.
@@ -3641,15 +3642,21 @@ def test_v40_w13_security():
         "Rate-Limiter vertraut weiter blind dem X-Forwarded-For-Header"
     i = src.find("def _client_ip(")
     body = src[i:i + 500]
-    assert "remote in TRUSTED_PROXIES" in body, "XFF wird nicht an vertraute Proxies gebunden"
+    # v4.2-W149: der Kern liegt in nc/clientip.py und liest XFF von RECHTS.
+    assert "_nc_clientip.echte_ip(" in body and "TRUSTED_PROXIES" in body, \
+        "XFF wird nicht an vertraute Proxies gebunden"
+    from nc import clientip as _CI
+    assert _CI.echte_ip("9.9.9.9", "127.0.0.1", set()) == "9.9.9.9", \
+        "XFF von einem nicht vertrauten Absender wird geglaubt"
 
     # (2) Token/PIN wird wirklich geprueft, mit zeitkonstantem Vergleich.
     #     (W52: Gate akzeptiert jetzt Token ODER PIN; ohne beides bleibt es offen.)
-    g = src[src.find("def _auth_guard("):src.find("def _auth_guard(") + 1600]
+    g = rumpf_ab(src, src.find("def _auth_guard("))
     assert "if not DASHBOARD_TOKEN and not DASHBOARD_PIN:" in g and "401" in g, "Auth wird nicht erzwungen"
     assert "compare_digest" in src, "Token-Vergleich nicht zeitkonstant"
     # Operator + OAuth bleiben erreichbar (sonst Aussperrung/kaputte Flows).
-    assert "_LOOPBACK" in g, "Loopback nicht ausgenommen — Aussperr-Gefahr"
+    # v4.2-W149: lokal heisst Loopback OHNE Weiterleitungskopf (nc/clientip.py).
+    assert "_ist_lokal()" in g, "Loopback nicht ausgenommen — Aussperr-Gefahr"
     for cb in ("/api/kick/oauth/callback", "/api/twitch/oauth/callback",
                "/api/youtube/oauth/callback"):
         assert cb in src, "OAuth-Rueckruf nicht ausgenommen: " + cb
@@ -6071,7 +6078,7 @@ def test_v40_w52_pin_login():
     assert src.count("_sicheres_ziel(request.") == 2, \
         "nicht beide Login-Pfade (GET + POST) gehen ueber die Pruefung"
     # Loopback bleibt frei.
-    assert 'if (request.remote_addr or "") in _LOOPBACK:' in src, "Loopback-Ausnahme verloren"
+    assert "    if _ist_lokal():\n        return None" in src, "Loopback-Ausnahme verloren"
     # SW-Version gebumpt (PWA-Update).
     sw = open("templates/sw.js").read()
     import re as _re
@@ -8509,8 +8516,12 @@ def test_v40_w118_sicherheitsaudit():
         code = "\n".join(z for z in o.splitlines() if not z.lstrip().startswith("#"))
         assert 'if state and _state["csrf"]' not in code, \
             datei + ": state-Pruefung weiterhin ueberspringbar"
-        assert 'if _state["csrf"] and state != _state["csrf"]:' in code, \
+        # v4.2-W149: strenger — ohne ausgegebenen state gilt kein Code, und
+        # jeder state genau einmal.
+        assert 'if not erwartet or not _hmac.compare_digest(str(state or ""), erwartet):' in code, \
             datei + ": state wird nicht erzwungen"
+        assert '\n    _state["csrf"] = ""\n' in code, \
+            datei + ": state ist wiederverwendbar"
 
     # ── S4 ────────────────────────────────────────────────────────────────
     assert "def _sicheres_ziel(roh):" in src, "Redirect-Pruefung fehlt"

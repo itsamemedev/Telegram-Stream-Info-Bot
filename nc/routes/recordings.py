@@ -46,6 +46,7 @@ from nc import ffbuild as _nc_ffbuild
 from nc import meldetakt as _takt            # v4.2-W91: laut werden, ohne zu fluten
 from nc import aufnahmesitzung as _sitzung   # v4.2-W44: die Sitzungs-Rechnung, bot-frei
 from nc.dbwrap import db_conn
+from nc import sicherpfad as _nc_sicherpfad   # v4.2-W149: Loeschen nur im Aufnahmeordner
 from nc import trackingdb as _nc_trackingdb   # v4.0-W117: Tags direkt statt ueber nc.ctx
 from nc.archive import compute_recording_fingerprint, _retention_match
 from nc.ffdiag import _rec_quality
@@ -1031,8 +1032,21 @@ def api_rec_retention_apply():
         deleted, freed = 0, 0
         gescheitert, wortlaut = [], []
         with db_conn() as conn:
+            rec_root = os.path.realpath(_c().recordings_dir)
             for m in matched:
                 fp = m.get("filepath")
+                if fp and os.path.exists(fp) and not (
+                        _nc_sicherpfad.unter(rec_root, fp)
+                        and os.path.realpath(fp) != rec_root):
+                    # v4.2-W149: dieselbe Haertung wie nc/retention.py. Der Pfad
+                    # kommt aus der Datenbank; ein `filepath`, der dort mit
+                    # `../` oder als Systempfad steht, wurde hier bis jetzt
+                    # geloescht — die Regel-Retention war damit das einzige
+                    # Loeschwerkzeug ohne Riegel. Datei UND Zeile bleiben.
+                    gescheitert.append({"id": m["id"], "name": os.path.basename(fp),
+                                        "grund": _t("liegt ausserhalb des Aufnahmeordners")})
+                    wortlaut.append("%s (ausserhalb von %s)" % (fp, rec_root))
+                    continue
                 if fp and os.path.exists(fp):
                     try:
                         groesse = os.path.getsize(fp)

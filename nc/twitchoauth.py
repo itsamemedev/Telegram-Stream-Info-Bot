@@ -25,6 +25,7 @@ Access-Token — die sind kurzlebig und werden nie gespeichert.
 """
 import json
 import logging
+import hmac as _hmac
 import os
 import time
 import urllib.parse
@@ -189,8 +190,20 @@ async def exchange_code(code, state, aiohttp):
     # das kann ein Angreifer: er baut den Callback-Aufruf selbst und laesst den
     # Parameter einfach weg. Damit war der CSRF-Schutz mit einem Handgriff
     # abschaltbar. Jetzt gilt: wurde ein state ausgegeben, MUSS er passen.
-    if _state["csrf"] and state != _state["csrf"]:
+    # v4.2-W149: die W118-Fassung `if _state["csrf"] and state != …` liess
+    # den Fall offen, dass GAR KEIN Flow laeuft (frischer Start, csrf leer):
+    # dann galt jeder Code. Der Rueckruf ist ohne Anmeldung erreichbar —
+    # ein Angreifer holt sich mit unserer oeffentlichen client_id einen Code
+    # fuer SEIN Konto und ruft den Rueckruf damit auf; der Bot bindet sich an
+    # das fremde Konto. Ausserdem war der state wiederverwendbar. Jetzt: ohne
+    # ausgegebenen state kein Tausch, und jeder state gilt genau einmal.
+    # Verbraucht wird er erst NACH dem Treffer (Codex #195): ein falscher
+    # Aufruf des oeffentlichen Rueckrufs darf den laufenden Flow des
+    # Betreibers nicht ungueltig machen.
+    erwartet = _state["csrf"]
+    if not erwartet or not _hmac.compare_digest(str(state or ""), erwartet):
         return False, "state fehlt oder stimmt nicht (CSRF) — Flow neu starten"
+    _state["csrf"] = ""
     cid, csec = _client()
     if not (cid and csec):
         return False, "TWITCH_CLIENT_ID + TWITCH_CLIENT_SECRET fehlen"

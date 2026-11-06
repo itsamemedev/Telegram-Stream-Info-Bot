@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="docs/assets/banner.svg" alt="NIGHTCRAWLER — v4.6 Centro de control" width="100%">
+<img src="docs/assets/banner.svg" alt="NIGHTCRAWLER — v4.6.1 Centro de control" width="100%">
 
 ### La sala de control para streaming en directo
 #### Vigilancia · Grabación · Restream multidestino · Moderación con IA
@@ -66,8 +66,8 @@ flowchart TB
     TG["📨 Telegram"]:::ein --> BOT
     DC["🎮 Discord<br/>66 comandos"]:::ein --> BOT
     TT["🎥 TikTok<br/>detección en directo + chat"]:::ein --> BOT
-    BOT["bot.py<br/>monolito · 26.372 líneas"]:::core
-    BOT -->|configure| NC["nc/ — 178 módulos<br/>39 blueprints"]:::lib
+    BOT["bot.py<br/>monolito · 26.390 líneas"]:::core
+    BOT -->|configure| NC["nc/ — 179 módulos<br/>39 blueprints"]:::lib
     BOT --> BRAIN["brain/ — 16 agentes vigilantes"]:::brain
     BOT --> DB[("SQLite o MariaDB<br/>+ ajustes")]:::db
     BOT --> PROM["/metrics → Prometheus → Grafana"]:::lib
@@ -321,7 +321,9 @@ Más en **[`docs/en/TROUBLESHOOTING.md`](docs/en/TROUBLESHOOTING.md)**.
 guardados en la base de datos, mudanza de SQLite a MariaDB en un paso con
 recuento, Prometheus y Grafana completos con 16 reglas de alerta, el 14.º
 vigilante para la base de datos, un mapa de situación redibujado y `update.sh`
-que pregunta por lo que falta. Todas las oleadas en
+que pregunta por lo que falta. **Parche 4.6.1:** detrás del nginx del
+instalador el panel estaba abierto sin inicio de sesión; once fallos corregidos.
+Todas las oleadas en
 **[`docs/CHANGELOG.md`](docs/CHANGELOG.md)**.
 
 ---
@@ -330,7 +332,7 @@ que pregunta por lo que falta. Todas las oleadas en
 
 | | |
 |---|---|
-| Versión actual | **4.6** — “Centro de control” (2026.11) |
+| Versión actual | **4.6.1** — “Centro de control” (2026.11) |
 | Rutas Flask | 379 (34 en `bot.py` · 345 en `nc/routes/`) |
 | Comandos de Discord | 66 |
 | Agentes vigilantes | 14 |
@@ -347,6 +349,6 @@ comunidad en **[Discord](https://discord.gg/psvnxm7tSV)** · **[lafap.de](https:
 
 <div align="center">
 
-**NIGHTCRAWLER v4.6 · “Centro de control”**
+**NIGHTCRAWLER v4.6.1 · “Centro de control”**
 
 </div>

@@ -4,7 +4,7 @@ Eine einzige Wahrheit für die Versionsanzeige (Dashboard-Footer, /api/version,
 „Was ist neu"-Panel). Reine Daten + kleine Helfer, voll testbar.
 """
 
-VERSION = "4.6"
+VERSION = "4.6.1"
 CODENAME = "Leitstand"
 RELEASE = "2026.11"
 
@@ -23,6 +23,20 @@ def build_stamp():
 # Meilenstein-Changelog, neueste Version zuerst. highlights = kurze, ehrliche
 # Stichpunkte dessen, was die Version bringt.
 CHANGELOG = [
+    {
+        "version": "4.6.1",
+        "date": "2026-11",
+        "title": "Leitstand",
+        # Patch-Fassung von 4.6: Tiefengrund-Bughunt (W149), elf Befunde,
+        # drei davon Sicherheit.
+        "highlights": [
+            "Hinter dem nginx des Installers war das Deck ohne Anmeldung offen: jede Anfrage kam als 127.0.0.1 an und galt als SSH-Tunnel — jetzt zählt nur Loopback ohne Weiterleitungskopf, und X-Forwarded-For wird von rechts gelesen",
+            "Der OAuth-Rückruf von Twitch und YouTube tauschte ohne laufende Anmeldung jeden Code — ein Fremder konnte sein Konto an den Bot binden; der state ist jetzt Pflicht und gilt einmal",
+            "Steuer-Journal: jede Storno-Buchung aus dem Deck meldete die Hash-Kette als gebrochen; nan, inf, ungültige Daten und Storno auf fehlende Buchungen werden abgelehnt",
+            "Retention und stündliches Aufräumen lassen markierte Aufnahmen stehen, days=0 löscht nicht mehr mit 30 Tagen, und kein Löschweg greift mehr außerhalb seines Ordners",
+            "Die .env wird so geschrieben, wie dotenv sie liest, und das Update spielt genau den Commit ein, den es meldet",
+        ],
+    },
     {
         "version": "4.6",
         "date": "2026-11",

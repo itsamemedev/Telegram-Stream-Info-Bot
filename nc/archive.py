@@ -552,8 +552,14 @@ def delete_archive_entry(eid):
                 log.warning(f"archive delete: path-traversal-Blockade für {filepath}")
                 return False, "path safety check failed"
         except Exception as e:
+            # v4.2-W149: hier stand "DB row trotzdem entfernen damit kein
+            # orphan" — genau der W91-Befund andersherum: die Datei bleibt
+            # liegen, belegt Platz, und ohne Zeile kennt sie kein Werkzeug
+            # mehr. Wer die Datei nicht loeschen kann, darf auch ihre Spur
+            # nicht loeschen.
             log.warning(f"archive delete file failed: {e}")
-            # DB row trotzdem entfernen damit kein orphan
+            # Nach aussen ohne Pfad (str(OSError) traegt ihn), im Log voll.
+            return False, f"Datei nicht loeschbar ({type(e).__name__})"
     try:
         with db_conn() as conn:
             conn.execute("DELETE FROM archive WHERE id=?", (eid,))

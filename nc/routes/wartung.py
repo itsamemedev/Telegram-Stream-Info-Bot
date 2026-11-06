@@ -130,10 +130,26 @@ def api_storage_cleanup():
     return jsonify(ok=True, **result)
 
 
+def _tage_aus(roh, auto):
+    """-> (tage, keine_zahl). Fehlt der Wert: die Vorgabe. Ist er keine
+    ganze Zahl, ist `keine_zahl` wahr — der Aufrufer lehnt ab, statt still auf
+    die Vorgabe zu fallen (siehe api_retention_run). "0" und "-3" kommen als
+    Zahl zurueck und scheitern am Riegel `days < 1` des Aufrufers."""
+    if roh is None or (isinstance(roh, str) and not roh.strip()):
+        return (auto if auto > 0 else 30), False
+    if isinstance(roh, int) and not isinstance(roh, bool):
+        return roh, False
+    t = str(roh).strip()
+    zahl = t.lstrip("-").isdigit() and not isinstance(roh, bool)
+    return (int(t) if zahl else 0), not zahl
+
+
 @bp.route("/api/retention/preview")
 def api_retention_preview():
     auto = _nc_backup.retention_days()
-    days = request.args.get("days", type=int) or (auto if auto > 0 else 30)
+    days, keine_zahl = _tage_aus(request.args.get("days"), auto)
+    if keine_zahl:
+        return jsonify(ok=False, error=_t("days muss eine Zahl sein")), 400
     if days < 1:
         return jsonify(ok=False, error=_t("days muss mindestens 1 sein")), 400
     res = _nc_retention_scan(days, delete=False)
@@ -144,7 +160,13 @@ def api_retention_preview():
 def api_retention_run():
     d = request.get_json(silent=True) or {}
     auto = _nc_backup.retention_days()
-    days = int(d.get("days") or (auto if auto > 0 else 30))
+    # Nicht `d.get("days") or …`: ein ausdrueckliches days=0 fiel damit auf die
+    # Vorgabe (30 Tage) zurueck, statt am Riegel darunter abgelehnt zu werden —
+    # wer "0" schickte, bekam keinen Fehler, sondern eine LOESCHUNG mit einem
+    # Zeitraum, den er nie genannt hat.
+    days, keine_zahl = _tage_aus(d.get("days"), auto)
+    if keine_zahl:
+        return jsonify(ok=False, error=_t("days muss eine Zahl sein")), 400
     if days < 1:
         return jsonify(ok=False, error=_t("days muss mindestens 1 sein")), 400
     res = _nc_retention_scan(days, delete=True)

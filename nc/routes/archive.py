@@ -475,12 +475,17 @@ def api_archive_duplicates_delete():
        Body: {"path": "...", "scan_root": "..."}"""
     payload = request.get_json(silent=True) or {}
     target = payload.get("path", "")
-    scan_root = payload.get("scan_root", "")
-    if not target or not scan_root:
+    if not target or not isinstance(target, str):
         return jsonify(ok=False, error=_t("path und scan_root erforderlich")), 400
-    abs_target = os.path.abspath(target)
-    abs_root = os.path.abspath(scan_root)
-    # SECURITY: target MUSS unter scan_root liegen
+    # v4.2-W149: die Wurzel kommt vom SERVER, nicht aus der Anfrage. Bis
+    # hierher war `scan_root` ein Feld im Rumpf — der Riegel "muss unter
+    # scan_root liegen" pruefte also gegen eine Wurzel, die der Aufrufer
+    # selbst nannte: scan_root="/" machte daraus ein Loeschwerkzeug fuer jede
+    # Datei, die der Dienst schreiben darf. Das Deck schickt weiter den Wert
+    # aus seinem letzten Scan; er wird nicht mehr gebraucht. Und realpath
+    # statt abspath: ein Symlink im Archiv zeigt sonst nach draussen.
+    abs_root = os.path.realpath(_scan_wurzel())
+    abs_target = os.path.realpath(target)
     if not abs_target.startswith(abs_root + os.sep):
         return jsonify(ok=False,
                        error=_t("Pfad liegt nicht in scan_root (Sicherheitsprüfung fehlgeschlagen)")), 403

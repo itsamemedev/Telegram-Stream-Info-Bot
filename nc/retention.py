@@ -48,8 +48,15 @@ def scan(days, recordings_dir, delete=False):
     removed = []
     try:
         with db_conn() as conn:
+            # Markierte Aufnahmen (starred) bleiben. Das Deck nennt den Stern
+            # "behalten" — die Regel-Retention (nc/archive.py) hielt sich seit
+            # jeher daran, `keep_starred` ist dort Vorgabe. Diese Schleife
+            # loeschte sie bis v4.2-W149 nach RETENTION_DAYS trotzdem, ohne
+            # Rueckfrage und ohne Spur: gerade die Aufnahme, die jemand
+            # ausdruecklich aufheben wollte, war nach 30 Tagen weg.
             rows = conn.execute(
-                "SELECT id, filepath FROM recordings WHERE created_at < ?",
+                "SELECT id, filepath FROM recordings WHERE created_at < ? "
+                "AND COALESCE(starred, 0) = 0",
                 (cutoff,)).fetchall()
             for r in rows:
                 fp = r["filepath"] or ""

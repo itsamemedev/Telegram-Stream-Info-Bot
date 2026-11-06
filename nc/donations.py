@@ -101,10 +101,14 @@ def to_eur(amount, platform="", message="") -> float:
     msg = (message or "").strip().lower()
     blob = f"{s} {msg}".lower()
 
-    # 1) Twitch-Bits ("100 Bits", "bits: 500")
-    m = re.search(r"(\d[\d.,]*)\s*bits?\b", blob)
+    # Beide Schreibweisen aus dem Docstring: "100 Bits" und "bits: 500".
+    # Die zweite stand dort seit jeher und passte auf kein Muster.
+    bits_re = r"(\d[\d.,]*)\s*bits?\b|\bbits?\s*:\s*(\d[\d.,]*)"
+
+    # 1) Twitch-Bits im Betrag selbst ("100 Bits")
+    m = re.search(bits_re, s.lower())
     if m:
-        n = parse_number(m.group(1))
+        n = parse_number(m.group(1) or m.group(2))
         return round((n or 0) * _BITS_EUR, 2)
 
     # 2) Expliziter Geldbetrag mit Währung ("€5,00", "$5.00", "R$ 10")
@@ -114,6 +118,15 @@ def to_eur(amount, platform="", message="") -> float:
             n = parse_number(s)
             if n is not None:
                 return round(n * f, 2)
+
+    # 1b) Bits nur in der Nachricht ("bits: 500"). Steht NACH der Waehrung:
+    # bis v4.2-W149 lief die Suche ueber Betrag UND Nachricht zuerst, und ein
+    # Superchat "$50.00" mit dem Text "fuer 100 bits Spass" zaehlte 1 € statt
+    # 46 € — die Nachricht schreibt der Zuschauer, den Betrag die Plattform.
+    m = re.search(bits_re, msg)
+    if m:
+        n = parse_number(m.group(1) or m.group(2))
+        return round((n or 0) * _BITS_EUR, 2)
 
     # 3) Pauschalen für betragslose Events (Subs/Gifts/Memberships)
     has_digit = bool(re.search(r"\d", s))

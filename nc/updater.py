@@ -396,9 +396,22 @@ def repo_url() -> str:
     return f"https://github.com/{_CFG.repo}"
 
 
-def download_zip(progress=None) -> bytes:
-    """Das Branch-Archiv holen. `progress(gelesen, gesamt_oder_None)` optional."""
-    with _open(zip_url(), "application/zip") as r:
+def commit_zip_url(sha: str) -> str:
+    """Archiv GENAU dieses Commits. Siehe download_zip()."""
+    return f"https://codeload.github.com/{_CFG.repo}/zip/{sha}"
+
+
+def download_zip(progress=None, sha: str = "") -> bytes:
+    """Das Archiv holen. `progress(gelesen, gesamt_oder_None)` optional.
+
+    v4.2-W149: mit `sha` das Archiv GENAU des Commits, den remote_head()
+    gemeldet hat. Vorher kam immer der Branch-Kopf: ein Push zwischen
+    Abfrage und Download spielte den neueren Stand ein und schrieb den
+    aelteren SHA nach .nc_update.json — /healthz, /api/version und
+    nc/laufstand.py meldeten danach einen Stand, der nicht auf der Platte
+    lag."""
+    url = commit_zip_url(sha) if sha else zip_url()
+    with _open(url, "application/zip") as r:
         total = int(r.headers.get("Content-Length") or 0) or None
         buf = io.BytesIO()
         read = 0
@@ -645,7 +658,7 @@ def run_update(dry_run: bool = False, progress=None) -> dict:
     try:
         data = download_zip(lambda got, tot: note(
             "download", 8 + (52 * got / tot if tot else 20),
-            f"{got // 1024} KB geladen"))
+            f"{got // 1024} KB geladen"), sha=rem.get("sha") or "")
     except Exception as e:
         return {"ok": False, "error": f"Download fehlgeschlagen: {e}"}
 
