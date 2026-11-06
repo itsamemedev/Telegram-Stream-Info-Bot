@@ -3063,35 +3063,36 @@ def test_v40_version():
        BUILD_STAMP und nc.version NICHT auseinanderlaufen (schon dreimal
        passiert: Modul auf neu, Footer blieb auf alt)."""
     from nc import version as v
-    # ANKER GEWANDERT (v4.6.4, nicht der Vertrag): 4.6.3 -> 4.6.4. Dieser Test
+    # ANKER GEWANDERT (v4.6.5, nicht der Vertrag): 4.6.4 -> 4.6.5. Dieser Test
     # wandert absichtlich mit jeder Fassung mit — er ist die Stelle, an der
     # ein halber Versionssprung auffliegt (Modul hochgezaehlt, Footer nicht).
-    assert v.VERSION == "4.6.4" and v.current()["version"] == "4.6.4"
-    assert v.summary_line().startswith("NIGHTCRAWLER v4.6.4")
+    assert v.VERSION == "4.6.5" and v.current()["version"] == "4.6.5"
+    assert v.summary_line().startswith("NIGHTCRAWLER v4.6.5")
     top = v.latest()
-    assert top["version"] == "4.6.4" and len(top["highlights"]) >= 3
-    assert [c["version"] for c in v.changelog()][:4] == ["4.6.4", "4.6.3", "4.6.2", "4.6.1"]
+    assert top["version"] == "4.6.5" and len(top["highlights"]) >= 3
+    assert [c["version"] for c in v.changelog()][:4] == ["4.6.5", "4.6.4", "4.6.3", "4.6.2"]
     assert v.changelog()[-1]["version"] == "3.7"   # Historie erhalten
     # Der Sprung darf die Vorgaengerfassung nicht ausraeumen. Beim
     # Umhaengen der Highlights ist genau das die Gefahr — man verschiebt
     # versehentlich ALLE statt der neuen, und 4.4 steht danach leer im
     # "Was ist neu"-Panel.
     vor = v.changelog()[1]
-    assert vor["version"] == "4.6.3" and len(vor["highlights"]) >= 5, \
-        f"4.6.3 hat nur noch {len(vor['highlights'])} Highlights — beim Sprung " \
-        f"auf 4.6.4 ist die Vorgaengerfassung ausgeraeumt worden"
-    assert len(v.changelog()[2]["highlights"]) >= 5, "4.6.2 ausgeraeumt"
-    assert len(v.changelog()[3]["highlights"]) >= 5, "4.6.1 ausgeraeumt"
-    assert len(v.changelog()[4]["highlights"]) >= 5, "4.6 ausgeraeumt"
-    assert len(v.changelog()[5]["highlights"]) >= 5, "4.5.3 ausgeraeumt"
-    assert len(v.changelog()[6]["highlights"]) >= 5, "4.5.2 ausgeraeumt"
-    assert len(v.changelog()[7]["highlights"]) >= 5, "4.5.1 ausgeraeumt"
-    assert len(v.changelog()[8]["highlights"]) >= 5, "4.5 ausgeraeumt"
-    assert len(v.changelog()[10]["highlights"]) >= 10, "4.4 ausgeraeumt"
+    assert vor["version"] == "4.6.4" and len(vor["highlights"]) >= 5, \
+        f"4.6.4 hat nur noch {len(vor['highlights'])} Highlights — beim Sprung " \
+        f"auf 4.6.5 ist die Vorgaengerfassung ausgeraeumt worden"
+    assert len(v.changelog()[2]["highlights"]) >= 5, "4.6.3 ausgeraeumt"
+    assert len(v.changelog()[3]["highlights"]) >= 5, "4.6.2 ausgeraeumt"
+    assert len(v.changelog()[4]["highlights"]) >= 5, "4.6.1 ausgeraeumt"
+    assert len(v.changelog()[5]["highlights"]) >= 5, "4.6 ausgeraeumt"
+    assert len(v.changelog()[6]["highlights"]) >= 5, "4.5.3 ausgeraeumt"
+    assert len(v.changelog()[7]["highlights"]) >= 5, "4.5.2 ausgeraeumt"
+    assert len(v.changelog()[8]["highlights"]) >= 5, "4.5.1 ausgeraeumt"
+    assert len(v.changelog()[9]["highlights"]) >= 5, "4.5 ausgeraeumt"
+    assert len(v.changelog()[11]["highlights"]) >= 10, "4.4 ausgeraeumt"
     # Und keine Zeile darf in ZWEI Fassungen stehen.
     doppelt = set(top["highlights"]) & set(vor["highlights"])
-    assert not doppelt, f"in 4.6.4 und 4.6.3 gleichzeitig: {list(doppelt)[:1]}"
-    ok("v4.6.4: nc.version — 4.6.4 + Changelog mit Historie, 4.6.3 bis 4.5 und 4.4 unversehrt")
+    assert not doppelt, f"in 4.6.5 und 4.6.4 gleichzeitig: {list(doppelt)[:1]}"
+    ok("v4.6.5: nc.version — 4.6.5 + Changelog mit Historie, 4.6.4 bis 4.5 und 4.4 unversehrt")
 
     src = open("bot.py").read()
     assert 'BOT_VERSION = _nc_version.VERSION' in src, "BOT_VERSION nicht zentralisiert"
@@ -3103,7 +3104,7 @@ def test_v40_version():
         "BUILD_STAMP haengt nicht an nc.version"
     # ANKER GEWANDERT (v4.3, nicht der Vertrag): der Stempel folgt RELEASE
     # und VERSION, beide aus nc/version.py.
-    assert v.build_stamp() == "2026.11 · v4.6.4", v.build_stamp()
+    assert v.build_stamp() == "2026.11 · v4.6.5", v.build_stamp()
     # v4.1-W26: Anker mitgewandert. Die Route liegt jetzt in
     # nc/routes/auskunft.py — der VERTRAG ist unveraendert (es gibt sie, und
     # sie meldet die Version), nur ihre Fundstelle nicht.

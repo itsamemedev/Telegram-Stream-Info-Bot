@@ -11,6 +11,28 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+## [4.6.5] — 2026-11-06 · „Leitstand"
+
+### Behoben — Befunde aus dem Log des Betreibers (v4.2 W154)
+
+- **Abo- und 18+-Lives liefen in eine Endlosschleife.** TikTok meldet den Raum
+  als live, gibt die Stream-Adresse aber nur angemeldeten, berechtigten Konten
+  heraus. Der Recorder startete alle 20 s einen yt-dlp, der mit „The channel is
+  not currently live" starb (55-mal in 20 Minuten), der Restream zeigte dunkles
+  Pausenbild, und der Rat im Log zeigte auf den Proxy. `nc/geschuetzt.py`
+  erkennt den Raum nach drei Fehlversuchen, ruht 5 bis 30 Minuten und nennt
+  einmal laut die Abhilfe: Cookies eines berechtigten Kontos in `COOKIE_FILE`.
+- **Ein toter Zubringer der Sendebrücke stand nirgends im Log.** Starb er,
+  bevor er ein Bild lieferte, startete die Wache den nächsten, und das Publikum
+  sah zwanzig Minuten das Pausenbild. Jetzt eine gedrosselte Warnung mit der
+  letzten stderr-Zeile und nach `unklar_s` ein Ende mit ERROR.
+- **Kick-Pusher 4001 „not in this cluster".** Statt alle 15 Minuten denselben
+  Fehler zu loggen, probiert der Chat die bekannten Cluster selbst durch und
+  nennt den Wert für `KICK_PUSHER_CLUSTER`.
+- **MariaDB lieferte `Decimal`.** `json.dumps` kennt das nicht —
+  „learned_params persist failed". Die MariaDB-Zeile wandelt jetzt in
+  `int`/`float` wie SQLite.
+
 ## [4.6.4] — 2026-11-06 · „Leitstand"
 
 ### Behoben — zweite Runde des Bughunts (v4.2 W152)

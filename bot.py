@@ -565,6 +565,7 @@ from typing import Optional, List, Tuple
 # nc-Importblock weiter unten. Beide hängen nur an stdlib (kein Bot-Import).
 from nc import envnum as _nc_envnum          # env/Zahl-Parser (gebündelt)
 from nc import clientip as _nc_clientip     # v4.2-W149: echte Client-IP, lokal vs. Proxy
+from nc import geschuetzt as _nc_geschuetzt  # v4.2-W154: live, aber verschlossen (Abo/18+)
 from nc import procdiag as _nc_procdiag       # Phase-1-Zerlegung: Prozess-/Thread-Diagnose
 from nc.loginpage import login_page as _login_page  # noqa: F401  # Phase-1-Zerlegung: Login-Seite
 from nc.intel import transcripts as _intel_tx  # v4.0-W90: Transkript-Substrat
@@ -7878,6 +7879,68 @@ def _kick_ws_pause(exc, folge):
     return pause
 
 
+def _kick_cluster_weiter(exc, versucht) -> str:
+    """v4.2-W154: nach 4001 der naechste Pusher-Cluster, "" wenn keiner mehr.
+
+    `versucht` (Menge) wird fortgeschrieben. Sind alle durch, beginnt die
+    naechste Runde nach der langen Pause wieder beim konfigurierten Cluster —
+    Kick kann den Key jederzeit umziehen."""
+    neu = ""
+    if getattr(exc, "code", None) != _nc_kickapi.PUSHER_FALSCHER_CLUSTER:
+        pass                # kein Cluster-Befund — _kick_ws_pause entscheidet
+    elif _nc_kickapi.naechster_cluster(versucht):
+        neu = _nc_kickapi.naechster_cluster(versucht)
+        versucht.add(neu)
+        log.info("Kick-Chat: Pusher kennt den Key in diesem Cluster nicht — "
+                 "versuche Cluster %s.", neu)
+    else:
+        log.error("Kick-Chat: kein Pusher-Cluster (%s) nimmt KICK_PUSHER_KEY an — "
+                  "der Key selbst ist veraltet. Abhilfe: den aktuellen Key aus dem "
+                  "Web-Client von kick.com in KICK_PUSHER_KEY eintragen.",
+                  ", ".join(_nc_kickapi.PUSHER_CLUSTER))
+        versucht.clear()
+        versucht.add((KICK_PUSHER_CLUSTER or "us2").strip().lower())
+    return neu
+
+
+def _kick_cluster_gefunden(cluster):
+    """v4.2-W154: das Abo steht. Lief es auf einem anderen Cluster als dem
+    konfigurierten, gehoert der Wert in die .env — sonst sucht jeder Start neu."""
+    if cluster != (KICK_PUSHER_CLUSTER or "us2").strip().lower():
+        log.warning("Kick-Chat: verbunden ueber Pusher-Cluster %s statt %s. "
+                    "Dauerhaft: KICK_PUSHER_CLUSTER=%s in die .env (oder im Deck "
+                    "unter Einstellungen) eintragen.", cluster, KICK_PUSHER_CLUSTER,
+                    cluster)
+
+
+class _KickClusterSuche:
+    """v4.2-W154: welcher Pusher-Cluster gerade versucht wird.
+
+    Eigene Klasse, damit die Chat-Schleife nicht ueber die 100er-Stufe waechst
+    (tools/monolith.py) — und weil der Zustand (Cluster, Runde) zusammengehoert."""
+
+    def __init__(self):
+        self.cluster = (KICK_PUSHER_CLUSTER or "us2").strip().lower()
+        self.versucht = {self.cluster}
+
+    def url(self) -> str:
+        return _nc_kickapi.pusher_url(KICK_PUSHER_KEY, self.cluster)
+
+    async def weiter(self, exc) -> bool:
+        """True: ein anderer Cluster ist dran, gleich neu verbinden."""
+        neu = _kick_cluster_weiter(exc, self.versucht)
+        if neu:
+            self.cluster = neu
+            await asyncio.sleep(2)
+        elif self.cluster not in self.versucht:
+            # Runde ohne Treffer: nach der langen Pause wieder vorn.
+            self.cluster = next(iter(self.versucht))
+        return bool(neu)
+
+    def gefunden(self):
+        _kick_cluster_gefunden(self.cluster)
+
+
 def _verbindung_verloren(kanal, exc, backoff_s, seit=0.0):
     """v4.0-W116: eine Dauerverbindung ist weggebrochen — richtig melden.
 
@@ -8301,6 +8364,10 @@ async def _handle_single_tracking(t, bot_app):
         # Pruefen und reservieren stehen ohne await dazwischen: atomar im
         # Loop. Freigegeben wird an jedem Ausgang bis zum Eintrag unten.
         _jetzt_r = _time_mod.monotonic()
+        # v4.2-W154: verschlossener Raum (Abo/18+) — kein yt-dlp alle 20 s,
+        # das gemeldet ist einmal laut beim Uebergang (_rec_kategorie_melden).
+        if _nc_geschuetzt.ruhend(username, _jetzt_r):
+            return
         if _start_gesperrt("aufnahme", "@" + username,
                            len(active_processes) + _nc_gegendruck.reserviert(_jetzt_r),
                            _aufnahme_deckel()):
@@ -8926,6 +8993,14 @@ def _rec_kategorie_melden(category, username):
                     "user=@%s", username)
     elif category == "offline_or_protected":
         log.warning("Stream-Kategorie: offline/protected | user=@%s", username)
+        # v4.2-W154: aufgenommen wird nur nach „live" — endet der Versuch
+        # trotzdem mit „nicht live", ist der Raum fuer uns verschlossen.
+        _g = _nc_geschuetzt.vermerken(username, _time_mod.monotonic())
+        if _g["neu"]:
+            log.error("@%s ist live, aber verschlossen (%d Versuche in Folge ohne "
+                      "Stream-Adresse) — Aufnahme und Restream pausieren %d min und "
+                      "versuchen es dann wieder. %s", username, _g["folge"],
+                      _g["ruhe_s"] // 60, _nc_geschuetzt.ABHILFE)
     elif category == "forbidden_403":
         # v4.2-W107: abgelaufene Anti-Bot-Tokens sind eine der beiden
         # Ursachen eines 403 — frische kosten einen Gast-Aufruf. Der Zeitplan
@@ -8960,6 +9035,10 @@ def _rec_kategorie_melden(category, username):
                         "auf einen Residential-/Mobile-Proxy setzen.", username)
     elif category == "timeout":
         log.warning("Stream-Kategorie: timeout | user=@%s", username)
+    # v4.2-W154: jeder andere Ausgang heisst, der Raum gab etwas her —
+    # dann gilt er nicht mehr als verschlossen.
+    if category != "offline_or_protected" and _nc_geschuetzt.zuruecksetzen(username):
+        log.info("@%s: der Raum ist wieder offen — Aufnahme laeuft normal weiter.", username)
 
 
 def _rec_totstreak_fortschreiben(data_dead, tid, username, file_size,
@@ -16617,13 +16696,13 @@ class KickModerator:
         if not KICK_CHATROOM_ID:
             log.warning("Kick-Moderator: KICK_CHATROOM_ID fehlt — Chat-Lesen deaktiviert")
             return
-        url = _nc_kickapi.pusher_url(KICK_PUSHER_KEY, KICK_PUSHER_CLUSTER)
+        _suche = _KickClusterSuche()    # v4.2-W154: 4001 -> naechster Cluster
         _folge = [None, 0]          # v4.2-W136: (Lage, wie oft hintereinander)
         session = aiohttp.ClientSession()
         try:
             while self.running:
                 try:
-                    async with session.ws_connect(url, heartbeat=30,
+                    async with session.ws_connect(_suche.url(), heartbeat=30,
                                                   timeout=aiohttp.ClientTimeout(total=20)) as ws:
                         await ws.send_json({"event": "pusher:subscribe",
                                             "data": {"channel": f"chatrooms.{KICK_CHATROOM_ID}.v2"}})
@@ -16686,6 +16765,7 @@ class KickModerator:
                                     # v4.2-W136: das Abo steht — erst das ist
                                     # Erfolg; der naechste Backoff beginnt klein.
                                     _folge[0], _folge[1] = None, 0
+                                    _suche.gefunden()
                             except Exception:
                                 continue
                         # v4.2-W133: ein ordentliches Ende ist auch eine
@@ -16699,6 +16779,8 @@ class KickModerator:
                 except Exception as e:
                     self.stats["connected"] = False
                     if self.running:
+                        if await _suche.weiter(e):
+                            continue
                         # v4.0-W116: war log.warning — im ERROR-Log stand nie
                         # etwas, auch wenn die Verbindung die ganze Nacht
                         # flatterte. Jetzt entscheidet der Verlauf.
@@ -25018,6 +25100,12 @@ def _restream_durchreicher(username):
         grund = "die Sendebruecke ist aus (RESTREAM_BRUECKE=0) — der Durchreicher braucht sie"
     elif not _nc_durch.werkzeug():
         grund = "weder yt-dlp noch streamlink installiert — sudo bash tools/update.sh"
+    elif _nc_geschuetzt.verschlossen(username):
+        # v4.2-W154: der Durchreicher fragt mit denselben Cookies — er sieht
+        # denselben verschlossenen Raum, und die Sendebruecke zeigte dann
+        # dauerhaft das Pausenbild ohne Ton.
+        grund = ("der Raum ist live, aber verschlossen (Abo/18+) — "
+                 "COOKIE_FILE mit einem berechtigten, angemeldeten Konto")
     else:
         try:
             adr = _nc_durch.adresse(username)
