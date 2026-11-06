@@ -29062,6 +29062,138 @@ def _test_v42_w158_chat_in_der_aufnahme():
     ok("W158: der Chat kommt in die Aufnahme — eingebrannt oder als Spur, Original bei Fehler")
 
 
+def _test_v42_w159_ausweichen_memes_clipchat():
+    """v4.2-W159: „Video und Audio kommen nicht im Restream an, nur AZRAEL und
+    Chat" und „der Hype-Director schneidet gar keine Memes zusammen". Der
+    Failover kannte nur „offline", einen Zusammenschnitt gab es nicht, und die
+    Clips trugen keinen Chat."""
+    import ast as _ast
+    import asyncio as _aio
+    import logging as _lg
+    import os as _os
+    import shutil as _sh
+    import subprocess as _sp
+    import pruefhilfen as P
+    from nc import aufnahmechat as A
+    from nc import durchreicher as D
+    from nc import meldetakt as M
+    from nc import sendebruecke as B
+
+    # (1) Chat-Ausschnitt fuer den Clip: verschoben auf den Clipanfang.
+    A.SITZUNGEN.clear(); A.CLIPS.clear(); A._ZULETZT.clear()
+    A.beginnen("u", "/rec/u.mp4", 0.0)
+    for t in (5.0, 12.0, 40.0):
+        A.notieren("u", "w", "t%d" % t, t)
+    assert A.ausschnitt("/rec/u.mp4", 10.0, 41.0) == [(2.0, "w", "t12"), (30.0, "w", "t40")]
+    assert A.ausschnitt("/rec/weg.mp4", 0, 99) == []
+    # (2) Clips je Aufnahme, gedeckelt; concat-Liste mit ABSOLUTEN Pfaden.
+    for i in range(A.MAX_CLIPS + 5):
+        A.clip_merken("/rec/u.mp4", "c%d.mp4" % i, "Meme")
+    cl = A.clips_nehmen("/rec/u.mp4")
+    assert len(cl) == A.MAX_CLIPS and cl[0] == ("c0.mp4", "Meme") and A.clips_nehmen("/rec/u.mp4") == []
+    li = A.concat_liste(["clips/a.mp4", "/x/b'c.mp4"])
+    assert li.splitlines()[0] == "file '%s'" % _os.path.abspath("clips/a.mp4"), li
+    assert "b'\\''c.mp4" in li, li
+    k = A.zusammenschnitt_cmd("l.txt", "z.mp4")
+    assert "-threads" in k and k[k.index("-c") + 1] == "copy" and "-safe" in k
+    assert "libx264" in A.zusammenschnitt_cmd("l.txt", "z.mp4", neu=True)
+    A.SITZUNGEN.clear()
+
+    # (3) Die Bruecke sagt, wie lange kein Quellbild auf Sendung ist.
+    t = [100.0]
+    br = B.Bruecke(None, ["x"], lambda *a: ["x"], lambda: (None, "offline"), uhr=lambda: t[0])
+    t[0] += 200
+    assert br.ohne_bild_s() == 200.0
+
+    # (4) Ausweichen: aus bot.py ausfuehren, gegen Attrappen.
+    src = open("bot.py", encoding="utf-8").read()
+    baum = _ast.parse(src)
+    rm = next(n for n in baum.body if isinstance(n, _ast.ClassDef) and n.name == "RestreamManager")
+    fn = next(n for n in rm.body if getattr(n, "name", "") == "_ohne_bild_ausweichen")
+    sw = next(n for n in rm.body if getattr(n, "name", "") == "_source_watch")
+    assert "self._ohne_bild_ausweichen" in _ast.unparse(sw)
+    uhr = [10000.0]
+
+    async def _db(f):
+        return [{"id": 3, "source_username": "kaputt"}, {"id": 4, "source_username": "gated"},
+                {"id": 5, "source_username": "laeuft"}, {"id": 6, "source_username": "gut"}]
+    ns = {"_env_int": lambda n, d: d, "_time_mod": _ty_uhr(uhr), "db_async": _db,
+          "clean_username": lambda u: (u or "").lower(), "_nc_durch": D,
+          "log": _lg.getLogger("w159"), "_nc_meldetakt": M}
+    exec(compile(_ast.Module(body=[fn], type_ignores=[]), "bot.py", "exec"), ns)
+
+    class _Mgr:
+        def __init__(s, aufl):
+            s._procs = {3: {"bruecke": br}, 5: {}}
+            s._ohne_bild_geprueft, s._srcwatch, s.log = {}, {3: "w"}, []
+            s.aufl, s.gefragt = aufl, 0
+        async def _resolve_source(s, u):
+            s.gefragt += 1
+            return s.aufl[u]
+        async def stop(s, rid, _keep_desired=False):
+            s.log.append(("stop", rid, _keep_desired))
+        async def start(s, rid, _src_watch=False):
+            s.log.append(("start", rid))
+        def _set_desired(s, rid, an):
+            s.log.append(("soll", rid, an))
+    f = ns["_ohne_bild_ausweichen"]
+    m = _Mgr({"gated": (D.adresse("gated"), None), "gut": ("https://pull/x.flv", None),
+              "laeuft": ("https://pull/y.flv", None)})
+    t[0] = 100.0 + 100                               # erst 100 s ohne Bild
+    assert _aio.run(f(m, 3, "kaputt")) is False and m.log == []
+    t[0] = 100.0 + 200
+    assert _aio.run(f(m, 3, "kaputt")) is True
+    assert m.log == [("stop", 3, True), ("soll", 3, False), ("start", 6)], m.log
+    # Ohne Ersatz mit echter Adresse: bleiben, nicht stoppen.
+    m = _Mgr({"gated": (D.adresse("gated"), None), "gut": (None, "offline"),
+              "laeuft": ("https://pull/y.flv", None)})
+    M.ZUSTAND.clear()
+    assert _aio.run(f(m, 3, "kaputt")) is False and m.log == []
+    # Und nicht bei jedem Poll neu auflösen — jede Auflösung ist eine TikTok-Anfrage.
+    vorher = m.gefragt
+    assert vorher > 0 and _aio.run(f(m, 3, "kaputt")) is False and m.gefragt == vorher, \
+        "die Suche nach einer Quelle mit Bild laeuft bei jedem Poll"
+
+    # (5) Verdrahtung: Clip mit Chat, Clip gemerkt, Zusammenschnitt nach dem Ende.
+    cm = rumpf_ab(src, src.index("async def clip_moment("))
+    assert "_clip_chat_ass, recfile, start, start + real, out" in cm
+    assert cm.index("_nc_aufnahmechat.clip_merken(recfile, out, reason)") > cm.index("if _rc == 0")
+    fm = rumpf_ab(src, src.index("async def _aufnahme_fertigmachen("))
+    assert fm.index("clips_nehmen(output_file)") < fm.index("beenden(output_file)")
+    assert "_spawn(_meme_zusammenschnitt(username, clips)" in fm
+    mz = rumpf_ab(src, src.index("async def _meme_zusammenschnitt("))
+    assert "_clip_to_discord(username, ziel" in mz and "split_and_send_video(" in mz
+
+    # (6) Echter Zusammenschnitt: zwei Clips hintereinander.
+    if _sh.which("ffmpeg") and _sh.which("ffprobe"):
+        heim = P.verzeichnis()
+        try:
+            cl = []
+            for i in range(2):
+                c = _os.path.join(heim, "c%d.mp4" % i)
+                _sp.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc2=s=160x284:r=15",
+                         "-f", "lavfi", "-i", "sine=r=44100", "-t", "2", "-c:v", "libx264",
+                         "-preset", "ultrafast", "-c:a", "aac", c], check=True, timeout=60)
+                cl.append(c)
+            li = _os.path.join(heim, "l.txt")
+            with open(li, "w", encoding="utf-8") as fh:
+                fh.write(A.concat_liste(cl))
+            z = _os.path.join(heim, "z.mp4")
+            r = _sp.run(A.zusammenschnitt_cmd(li, z), capture_output=True, timeout=60)
+            assert r.returncode == 0, r.stderr[-300:]
+            d = float(_sp.run(["ffprobe", "-v", "error", "-show_entries", "format=duration",
+                               "-of", "csv=p=0", z], capture_output=True, text=True).stdout)
+            assert 3.5 < d < 4.6, d
+        finally:
+            _sh.rmtree(heim, ignore_errors=True)
+    ok("W159: Restream weicht ohne Bild aus, Clips tragen Chat, Memes werden zusammengeschnitten")
+
+
+def _ty_uhr(uhr):
+    import types as _ty
+    return _ty.SimpleNamespace(monotonic=lambda: uhr[0])
+
+
 def _test_v42_w155_weiche_steckt():
     """v4.2-W155: gemeldet „Wir haben in den Restreams immer noch kein Bild" —
     Overlay und Chat liefen, das Videofeld zeigte das Pausenbild. Ein
@@ -29570,6 +29702,7 @@ def main():
     _test_v42_w156_lagebild_radar()
     _test_v42_w157_cluster_status_meldung()
     _test_v42_w158_chat_in_der_aufnahme()
+    _test_v42_w159_ausweichen_memes_clipchat()
     _test_v42_w60_azrael_cooldown_je_plattform()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)

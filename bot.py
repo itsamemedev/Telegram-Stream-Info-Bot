@@ -14307,6 +14307,7 @@ class RestreamManager:
         self._failover = set()      # v37 W3b: rids, die gerade aufs Backup-Ingest umgeschaltet sind
         self._chatguards = {}       # F92b: rid -> Chat-Guardian-Task (Studio-Panel-Feed)
         self._srcwatch = {}         # V37-SRCFAIL: rid -> Quellen-Online-Watcher-Task
+        self._ohne_bild_geprueft = {}   # v4.2-W159: rid -> letzte Suche nach einer Quelle mit Bild
         # B138: rid -> wie oft die TikTok-Quell-URL in dieser Sitzung ablief.
         # Reine Telemetrie (Selbsttest/Log): ein hoher Wert ist NORMAL — er
         # zeigt nur, wie kurzlebig TikToks Signaturen gerade sind.
@@ -15375,6 +15376,8 @@ class RestreamManager:
                     else:
                         offline_hits = 0               # wieder live gesehen → Zähler zurück
                         _poll = min(_cap, _poll + _base // 2)   # stabil live → sanft langsamer
+                        if await self._ohne_bild_ausweichen(rid, username):
+                            return    # v4.2-W159: der neue Start bekommt einen eigenen Waechter
                 except asyncio.CancelledError:
                     raise
                 except Exception as e:
@@ -15387,6 +15390,50 @@ class RestreamManager:
             pass
         except Exception as e:
             _loop_fehler(f"restream-srcwatch#{rid}", e)
+
+    async def _ohne_bild_ausweichen(self, rid, username) -> bool:
+        """v4.2-W159: die Quelle ist live, liefert aber kein Bild — ausweichen.
+
+        Gemeldet: „Video und Audio kommen immer noch nicht im Restream an, nur
+        AZRAEL und Chat." Im Log vom 06.11. waren die beiden live geschalteten
+        Ziele genau die Raeume, fuer die TikTok keine Adresse herausgibt; die
+        Sendebruecke zeigte das Pausenbild mit Overlay, und der Failover griff
+        nie — er kannte nur „offline". Jetzt: nach RESTREAM_OHNE_BILD_S ohne
+        Quellbild wechselt der Restream auf ein Ziel der Auto-Liste, das eine
+        echte Stream-Adresse hat. Gibt es keins, bleibt er (AZRAEL und Chat
+        laufen weiter) und sagt es, gedrosselt. -> True, wenn gewechselt."""
+        br = (self._procs.get(rid) or {}).get("bruecke")
+        grenze = _env_int("RESTREAM_OHNE_BILD_S", 180)
+        jetzt = _time_mod.monotonic()
+        if br is None or grenze <= 0 or br.ohne_bild_s() < grenze \
+                or jetzt - self._ohne_bild_geprueft.get(rid, 0.0) < 120:
+            return False
+        self._ohne_bild_geprueft[rid] = jetzt      # Aufloesungen kosten TikTok-Anfragen
+        rows = await db_async(lambda c: c.execute(
+            "SELECT id, source_username FROM restreams "
+            "WHERE enabled=1 AND auto_restream=1 ORDER BY id").fetchall())
+        for r in rows:
+            if r["id"] == rid or r["id"] in self._procs \
+                    or clean_username(r["source_username"]) == clean_username(username):
+                continue
+            src, err = await self._resolve_source(r["source_username"])
+            if err or not src or _nc_durch.ist(src):
+                continue        # nur eine echte Adresse — der Durchreicher ist hier ja gescheitert
+            log.warning("Restream #%d: @%s liefert seit %.0f s kein Bild (nur Pausenbild, "
+                        "AZRAEL und Chat) — wechsle auf #%d @%s, das eine Stream-Adresse hat.",
+                        rid, username, br.ohne_bild_s(), r["id"], r["source_username"])
+            self._srcwatch.pop(rid, None)
+            await self.stop(rid, _keep_desired=True)
+            self._set_desired(rid, False)
+            await self.start(r["id"], _src_watch=True)
+            return True
+        laut, weg = _nc_meldetakt.melden("restream-ohne-bild", "kein-ersatz", jetzt)
+        if laut:
+            log.warning("Restream #%d: @%s liefert seit %.0f s kein Bild, und kein anderes "
+                        "Ziel der Auto-Liste hat gerade eine Stream-Adresse — der Restream "
+                        "zeigt weiter Pausenbild, AZRAEL und Chat.%s", rid, username,
+                        br.ohne_bild_s(), _nc_meldetakt.zusatz(weg))
+        return False
 
     async def _switch_to_next_live(self, rid, current_user):
         """V37-SRCFAIL: aktuellen Restream stoppen und den NÄCHSTEN live Ziel
@@ -18408,6 +18455,9 @@ async def _aufnahme_fertigmachen(output_file, username):
     Tonspur sichern (W106), dann den Chat einarbeiten (W158).
     -> {"groesse": int|None, ...} wie _nc_tonspur.sichern."""
     erg = await _nc_tonspur.sichern(output_file, wer=f"@{username}")
+    clips = _nc_aufnahmechat.clips_nehmen(output_file)
+    if len(clips) >= _env_int("MEME_REEL_MIN", 2) and os.getenv("MEME_REEL", "1") != "0":
+        _spawn(_meme_zusammenschnitt(username, clips), name=f"meme-reel-{username}")
     chat = _nc_aufnahmechat.beenden(output_file)
     modus = _aufnahme_chat_modus()
     if chat and modus != "aus":
@@ -18416,6 +18466,58 @@ async def _aufnahme_fertigmachen(output_file, username):
         if neu:
             erg = dict(erg, groesse=neu)
     return erg
+
+
+async def _meme_zusammenschnitt(username, clips):
+    """v4.2-W159: die Clips einer Aufnahme als EIN Video, mit Chat.
+
+    Gemeldet: „der Hype-Director schneidet gar keine Memes zusammen". Jeder
+    Clip trägt seit dieser Welle den Chat seines Fensters; hier werden sie
+    hintereinandergesetzt und an dieselben Ziele geschickt wie die Clips
+    (Discord {user}-clips) und an die Telegram-Gruppen des Trackings."""
+    pfade = [c for c, _g in clips if os.path.isfile(c)][:_env_int("MEME_REEL_MAX", 12)]
+    if len(pfade) < 2:
+        log.info("Meme-Zusammenschnitt @%s: nur %d der %d Clips liegen noch vor — "
+                 "kein Zusammenschnitt (Clip-Aufraeumen?).", username, len(pfade), len(clips))
+        return None
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    ziel = os.path.join(CLIP_DIR, f"memes_{re.sub(r'[^A-Za-z0-9_]', '_', username)}_{ts}.mp4")
+    liste = ziel + ".txt"
+    gruende = ", ".join(dict.fromkeys(g for _c, g in clips if g))[:300]
+    try:
+        await asyncio.to_thread(_text_schreiben, liste, _nc_aufnahmechat.concat_liste(pfade))
+        rc, err = 1, b""
+        for neu in (False, True):
+            rc, _o, err = await _nc_kind.ausfuehren(
+                _nc_aufnahmechat.zusammenschnitt_cmd(liste, ziel, neu=neu,
+                                                     threads=FFMPEG_THREADS_BG),
+                600, art="ffmpeg-memes", stdout=_nc_kind.DEVNULL)
+            if rc == 0 and os.path.isfile(ziel) and os.path.getsize(ziel) > 1024:
+                break
+        if rc != 0:
+            log.error("Meme-Zusammenschnitt @%s scheiterte (rc=%s): %s", username, rc,
+                      (err or b"")[-300:].decode("utf-8", "ignore"))
+            return None
+    finally:
+        await asyncio.to_thread(_datei_weg, liste)
+    log.info("🎬 Meme-Zusammenschnitt @%s: %d Clips → %s", username, len(pfade),
+             os.path.basename(ziel))
+    titel = f"🎬 Highlights & Memes @{username} — {len(pfade)} Momente" + \
+        (f" ({gruende})" if gruende else "")
+    await _clip_to_discord(username, ziel, titel)
+    if os.getenv("MEME_REEL_TELEGRAM", "1") != "0":
+        app = globals().get("bot_app")
+        rows = await db_async(lambda c: c.execute(
+            "SELECT DISTINCT group_id FROM trackings WHERE username=?", (username,)).fetchall())
+        for r in rows:
+            if app is not None and r["group_id"]:
+                await split_and_send_video(r["group_id"], ziel, app, username)
+    return ziel
+
+
+def _text_schreiben(pfad, text):
+    with open(pfad, "w", encoding="utf-8") as f:
+        f.write(text)
 
 
 def _ffprobe_masse(pfad):
@@ -22375,6 +22477,10 @@ async def clip_moment(username, reason="", caption=""):
         fontesc = RESTREAM_FONT.replace(":", "\\:")
         vf.append(f"drawtext=fontfile='{fontesc}':text='{cap}':x=(w-text_w)/2:"
                   f"y=h-200:fontsize=46:fontcolor=white:box=1:boxcolor=0x000000AA:boxborderw=16")
+    # v4.2-W159: der Chat des Clip-Fensters, eingebrannt wie in der Aufnahme.
+    _chat_ass = await asyncio.to_thread(_clip_chat_ass, recfile, start, start + real, out)
+    if _chat_ass:
+        vf.append("subtitles='%s'" % _nc_aufnahmechat._filterpfad(_chat_ass))
     cmd = ["ffmpeg", "-y", "-ss", f"{start:.2f}", "-i", recfile, "-t", f"{real:.2f}"]
     if vf:
         cmd += ["-vf", ",".join(vf)]
@@ -22388,8 +22494,11 @@ async def clip_moment(username, reason="", caption=""):
         _rc, _, err = await _nc_kind.ausfuehren(cmd, 120 + 10 * float(real),
                                                 art="ffmpeg-clip",
                                                 stdout=_nc_kind.DEVNULL)
+        if _chat_ass:
+            await asyncio.to_thread(_datei_weg, _chat_ass)
         if _rc == 0 and os.path.exists(out) and os.path.getsize(out) > 1024:
             log.info("✂ Clip erstellt @%s (%s): %s", username, reason, os.path.basename(out))
+            _nc_aufnahmechat.clip_merken(recfile, out, reason)   # v4.2-W159: fuer den Zusammenschnitt
             try:
                 if DISCORD_WEBHOOK_URL:
                     _spawn(_discord_notify(f"✂ Neuer Highlight-Clip @{username} — {reason}", "clipper"),
@@ -22412,6 +22521,32 @@ async def clip_moment(username, reason="", caption=""):
     except Exception as e:
         log.warning("Clip @%s fehlgeschlagen: %s", username, e)
     return None
+
+
+def _datei_weg(pfad):
+    """Eine Hilfsdatei entfernen; scheitert es, steht es im Log."""
+    try:
+        if pfad and os.path.exists(pfad):
+            os.remove(pfad)
+    except OSError as e:
+        log.warning("Hilfsdatei %s bleibt liegen (%s).", pfad, e)
+
+
+def _clip_chat_ass(recfile, von, bis, clip_out):
+    """v4.2-W159: die Chat-Untertitel fuer einen Clip, oder "" ohne Chat.
+    Die Clips sind 1080x1920 (CLIP_VERTICAL) — libass skaliert PlayRes auf
+    die Bildgroesse, die Masse hier bestimmen nur die Proportionen."""
+    chat = [] if _aufnahme_chat_modus() == "aus" else \
+        _nc_aufnahmechat.ausschnitt(recfile, von, bis)
+    pfad = clip_out + ".chat.ass" if chat else ""     # kein Chat im Fenster: Clip ohne
+    if pfad:
+        try:
+            with open(pfad, "w", encoding="utf-8") as f:
+                f.write(_nc_aufnahmechat.ass(chat, 1080, 1920))
+        except OSError as e:
+            log.warning("Clip-Chat: %s nicht geschrieben (%s) — Clip ohne Chat.", pfad, e)
+            pfad = ""
+    return pfad
 
 
 def _clip_should_velocity(times):

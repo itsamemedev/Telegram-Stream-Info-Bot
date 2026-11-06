@@ -26,7 +26,7 @@ benutzt, berät an der Lage vorbei.**
 
 ## Die eine Regel
 
-`bot.py` hat **26.719 Zeilen / 1,2 MB ≈ 295.000 Token**. Diese Datei wird
+`bot.py` hat **26.854 Zeilen / 1,2 MB ≈ 295.000 Token**. Diese Datei wird
 **nie** ganz gelesen und **nie** blind durchsucht. Erst fragen wo etwas steht,
 dann den Ausschnitt holen:
 
@@ -42,7 +42,7 @@ dann den Ausschnitt holen:
     python tools/ncpatch.py docs                           # Doku-Zahlen gegen den Quelltext
 
 `find` antwortet aus `.claude/INDEX.md` — 379 Routen (34 in `bot.py`, 345 in
-`nc/routes/`), 66 Slash-Commands, 607 Funktionen mit Zeilennummern. Nach Änderungen an Routen, Commands oder
+`nc/routes/`), 66 Slash-Commands, 611 Funktionen mit Zeilennummern. Nach Änderungen an Routen, Commands oder
 Top-Level-Funktionen `map` neu laufen lassen. Details: Skill `nc-navigation`.
 
 Für „wer ruft das auf?" und „was ist der Typ?" ist der Sprachserver billiger als
@@ -1221,7 +1221,7 @@ Ledger-Einträge sind append-only mit Hash-Kette; Korrektur = Gegenbuchung.
 
 ## Sicherheit
 
-`.env` hat rund 581 Variablen und enthält Cookies, OAuth-Tokens und Stream-Keys — sie
+`.env` hat rund 586 Variablen und enthält Cookies, OAuth-Tokens und Stream-Keys — sie
 liegt nie im Archiv und wird nie ausgegeben. Beim Logging von
 `streamlink`/`ffmpeg`-Kommandos werden Cookie-Header redacted (F4); dieser
 Redact-Pfad darf bei Änderungen an der Kommandozeile nicht umgangen werden. Das

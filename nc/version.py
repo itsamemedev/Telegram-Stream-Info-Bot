@@ -4,7 +4,7 @@ Eine einzige Wahrheit für die Versionsanzeige (Dashboard-Footer, /api/version,
 „Was ist neu"-Panel). Reine Daten + kleine Helfer, voll testbar.
 """
 
-VERSION = "4.6.9"
+VERSION = "4.6.10"
 CODENAME = "Leitstand"
 RELEASE = "2026.11"
 
@@ -23,6 +23,19 @@ def build_stamp():
 # Meilenstein-Changelog, neueste Version zuerst. highlights = kurze, ehrliche
 # Stichpunkte dessen, was die Version bringt.
 CHANGELOG = [
+    {
+        "version": "4.6.10",
+        "date": "2026-11",
+        "title": "Leitstand",
+        # Patch-Fassung von 4.6: Restream weicht aus, Memes, Chat im Clip (W159).
+        "highlights": [
+            "Restream ohne Quellbild: liefert die Quelle drei Minuten lang kein Bild, wechselt der Restream auf ein Ziel der Auto-Liste, das eine echte Stream-Adresse hat — bisher gab es den Wechsel nur bei „offline\"",
+            "Gibt es kein solches Ziel, bleibt der Restream mit AZRAEL und Chat stehen und sagt das im Log, statt stumm Pausenbild zu senden",
+            "Der Hype-Director schneidet die Clips einer Aufnahme nach dem Ende zu einem Highlights-&-Memes-Video zusammen und schickt es an Discord und die Telegram-Gruppen",
+            "Jeder Highlight-Clip trägt jetzt den Chat seines Zeitfensters, eingebrannt wie in der Aufnahme",
+            "Neue Stellschrauben: RESTREAM_OHNE_BILD_S, MEME_REEL, MEME_REEL_MIN, MEME_REEL_MAX, MEME_REEL_TELEGRAM",
+        ],
+    },
     {
         "version": "4.6.9",
         "date": "2026-11",

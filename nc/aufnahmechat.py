@@ -186,3 +186,60 @@ def untertitel_cmd(video, ass_pfad, ziel) -> list:
                    "-c:v", "copy", "-c:a", "copy", "-c:s", "mov_text",
                    "-metadata:s:s:0", "language=deu", "-metadata:s:s:0", "title=Chat",
                    "-movflags", "+faststart", ziel], threads=1, nice=NICE)
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# v4.2-W159: Chat im Clip, Clips einer Aufnahme, der Zusammenschnitt
+# ══════════════════════════════════════════════════════════════════════════
+#
+# Gemeldet: „der Hype-Director schneidet gar keine Memes zusammen … die
+# Dateien muss er vor dem Upload in Discord oder Telegram wieder
+# zusammensetzen, dass er Video mit Chat uploaded." Einen Zusammenschnitt gab
+# es im Code nicht, und die Clips trugen keinen Chat.
+
+CLIPS = collections.OrderedDict()     # video_pfad -> [(clip_pfad, grund)]
+MAX_CLIPS = 40
+
+
+def ausschnitt(video_pfad, von, bis) -> list:
+    """Der Chat der laufenden Aufnahme zwischen `von` und `bis` (Sekunden der
+    Datei), auf den Clip verschoben: t=0 ist der Clipanfang."""
+    s = SITZUNGEN.get(video_pfad) or {"eintraege": ()}    # keine Sitzung: kein Chat
+    return [(t - von, w, x) for t, w, x in s["eintraege"] if von <= t <= bis]
+
+
+def clip_merken(video_pfad, clip_pfad, grund="") -> None:
+    liste = CLIPS.setdefault(video_pfad, [])
+    if len(liste) < MAX_CLIPS:
+        liste.append((clip_pfad, grund or ""))
+    while len(CLIPS) > MAX_SITZUNGEN:
+        CLIPS.popitem(last=False)
+
+
+def clips_nehmen(video_pfad) -> list:
+    """Die Clips einer fertigen Aufnahme, in Entstehungsreihenfolge."""
+    return list(CLIPS.pop(video_pfad, []))
+
+
+def concat_liste(pfade) -> str:
+    """Inhalt einer concat-Liste mit ABSOLUTEN Pfaden.
+
+    Ein relativer Eintrag wird gegen das Verzeichnis der LISTE aufgeloest,
+    nicht gegen das Arbeitsverzeichnis — genau daran ist das Zusammenfuegen
+    der Sitzungen gescheitert („recordings/recordings/…", CLAUDE.md W44)."""
+    import os
+    return "".join("file '%s'\n" % os.path.abspath(p).replace("'", "'\\''") for p in pfade)
+
+
+def zusammenschnitt_cmd(liste_pfad, ziel, neu=False, threads=1) -> list:
+    """Clips hintereinander. Erst als Kopie — die Clips einer Aufnahme tragen
+    dasselbe Format —, bei `neu` neu kodiert, falls die Kopie scheitert."""
+    cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-nostats", "-y",
+           "-f", "concat", "-safe", "0", "-i", liste_pfad]
+    if neu:
+        cmd += ["-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
+                "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "160k"]
+    else:
+        cmd += ["-c", "copy"]
+    cmd += ["-movflags", "+faststart", ziel]
+    return ff_cmd(cmd, threads=max(1, int(threads)), nice=NICE)
