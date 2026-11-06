@@ -4,7 +4,7 @@ Eine einzige Wahrheit für die Versionsanzeige (Dashboard-Footer, /api/version,
 „Was ist neu"-Panel). Reine Daten + kleine Helfer, voll testbar.
 """
 
-VERSION = "4.6.15"
+VERSION = "4.6.16"
 CODENAME = "Leitstand"
 RELEASE = "2026.11"
 
@@ -23,6 +23,19 @@ def build_stamp():
 # Meilenstein-Changelog, neueste Version zuerst. highlights = kurze, ehrliche
 # Stichpunkte dessen, was die Version bringt.
 CHANGELOG = [
+    {
+        "version": "4.6.16",
+        "date": "2026-11",
+        "title": "Leitstand",
+        # Patch-Fassung von 4.6: der Grund steht im Panel (W166).
+        "highlights": [
+            "Restream-Ziel „keine spielbare Quell-URL\": das Deck sagt jetzt auch, warum der Durchreicher ebenfalls nichts brachte",
+            "Bisher stand dieser Grund nur gedrosselt im Log — im Panel blieb die halbe Auskunft",
+            "Mögliche Gründe mit Abhilfe: Ruhezeit nach gescheiterten Aufnahmen, kein yt-dlp/streamlink, Sendebrücke aus, Multi-Modus independent",
+            "Die Fehlermeldung eines Ziels wird bis 600 statt 300 Zeichen gespeichert, damit die Abhilfe nicht abgeschnitten wird",
+            "Die Einordnung des Wächters bleibt dieselbe: „live, aber ohne Adresse\" wird weiter von „offline\" unterschieden",
+        ],
+    },
     {
         "version": "4.6.15",
         "date": "2026-11",

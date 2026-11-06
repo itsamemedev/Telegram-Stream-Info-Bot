@@ -29980,6 +29980,64 @@ def _test_v42_w165_durchreicher_nach_ruhezeit():
     ok("W165: der Durchreicher wartet die Ruhezeit ab, nicht das ganze Live")
 
 
+def _test_v42_w166_grund_im_panel():
+    """v4.2-W166: das Deck zeigte „keine spielbare Quell-URL (weder FLV noch
+    HLS noch CMAF/DASH)" — und nicht, warum der Durchreicher, der genau fuer
+    diesen Fall da ist, ebenfalls nichts brachte. Der Grund stand gedrosselt
+    im Log. Jetzt steht er in der Meldung selbst."""
+    import ast as _ast
+    import logging as _lg
+    from nc import geschuetzt as G
+    from nc import meldetakt as M
+    from nc import resolvergrund as R
+
+    src = open("bot.py", encoding="utf-8").read()
+    baum = _ast.parse(src)
+    fn = next(n for n in baum.body if getattr(n, "name", "") == "_restream_durchreicher")
+    uhr = [1000.0]
+    werkzeug = [None]
+
+    class _Durch:
+        @staticmethod
+        def werkzeug():
+            return werkzeug[0]
+
+        @staticmethod
+        def adresse(u):
+            return "durchreicher://" + u
+
+    class _Cfg:
+        @staticmethod
+        def bruecke(_x):
+            return (True, "")
+    ns = {"os": __import__("os"), "RESTREAM_MULTI_MODE": "tee", "_nc_rscfg": _Cfg,
+          "_nc_durch": _Durch, "_nc_geschuetzt": G, "_nc_meldetakt": M,
+          "_time_mod": type("U", (), {"monotonic": staticmethod(lambda: uhr[0])}),
+          "log": _lg.getLogger("w166")}
+    exec(compile(_ast.Module(body=[fn], type_ignores=[]), "bot.py", "exec"), ns)
+    f = ns["_restream_durchreicher"]
+    G._STAND.clear(); M.ZUSTAND.clear()
+    try:
+        warum = []
+        assert f("caro", warum) is None and len(warum) == 1 and "yt-dlp" in warum[0], warum
+        werkzeug[0] = ("yt-dlp", "/x")
+        warum = []
+        assert f("caro", warum) == "durchreicher://caro" and warum == []
+        assert f("caro") == "durchreicher://caro", "der alte Aufruf ohne Grund-Liste bricht"
+    finally:
+        G._STAND.clear(); M.ZUSTAND.clear()
+    rs = rumpf_ab(src, src.index("    async def _resolve_source("))
+    assert "_restream_durchreicher(username, warum)" in rs
+    assert '" — Durchreicher: " + warum[0]' in rs, "der Grund kommt nicht in die Meldung"
+    # Die Lage bleibt „ohne URL" — der Waechter unterscheidet weiter richtig.
+    assert R.quelle_lage("keine spielbare Quell-URL (weder FLV noch HLS noch CMAF/DASH)"
+                         " — Durchreicher: weder yt-dlp noch streamlink installiert") \
+        == R.LAGE_OHNE_URL
+    rf = rumpf_ab(src, src.index("    def _reflect_source_status("))
+    assert "str(err)[:600]" in rf, "der Grund wird beim Speichern wieder abgeschnitten"
+    ok("W166: der Grund des Durchreichers steht im Panel, nicht nur gedrosselt im Log")
+
+
 def _test_v42_w155_weiche_steckt():
     """v4.2-W155: gemeldet „Wir haben in den Restreams immer noch kein Bild" —
     Overlay und Chat liefen, das Videofeld zeigte das Pausenbild. Ein
@@ -30495,6 +30553,7 @@ def main():
     _test_v42_w163_chat_nachtrag_statt_beilage()
     _test_v42_w164_alles_auf_einmal()
     _test_v42_w165_durchreicher_nach_ruhezeit()
+    _test_v42_w166_grund_im_panel()
     _test_v42_w60_azrael_cooldown_je_plattform()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)

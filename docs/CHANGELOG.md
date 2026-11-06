@@ -11,6 +11,22 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+## [4.6.16] — 2026-11-06 · „Leitstand"
+
+### Behoben — der Grund steht im Panel (v4.2 W166)
+
+- Gemeldet: „keine spielbare Quell-URL (weder FLV noch HLS noch CMAF/DASH)".
+  Die Meldung sagte, dass TikTok keine Adresse gab — nicht, warum der
+  Durchreicher, der genau für diesen Fall da ist, ebenfalls nichts brachte.
+  Der Grund stand nur gedrosselt im Log.
+- `_restream_durchreicher` reicht seinen Grund jetzt an `_resolve_source`
+  weiter; die Meldung im Deck endet auf „— Durchreicher: <Grund mit
+  Abhilfe>". `last_error` speichert 600 statt 300 Zeichen, damit gerade die
+  Abhilfe nicht abgeschnitten wird. Die Lage-Erkennung (`quelle_lage`)
+  bleibt unverändert „live, aber ohne Adresse".
+
+Vertrag `_test_v42_w166_grund_im_panel`, 3 von 3 Mutationsproben gefangen.
+
 ## [4.6.15] — 2026-11-06 · „Leitstand"
 
 ### Behoben — alte Beilagen, manuelle Spenden (v4.2 W164)

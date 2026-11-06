@@ -14446,7 +14446,9 @@ class RestreamManager:
         # Ziel und musste im Log suchen, dass es "live, aber keine Adresse"
         # war. Bei offline/unknown bleibt last_error stehen: das ist der
         # letzte echte Fehler, kein Zustand.
-        grund = str(err)[:300] if new == "error" else None
+        # v4.2-W166: 600 statt 300 — der Grund des Durchreichers haengt seither
+        # an, und abgeschnitten waere genau der Teil, der die Abhilfe nennt.
+        grund = str(err)[:600] if new == "error" else None
         try:
             with db_conn() as conn:
                 cur = conn.execute("SELECT status, last_error FROM restreams WHERE id=?",
@@ -14530,10 +14532,16 @@ class RestreamManager:
             # zieht den Stream selbst, auch wenn TikTok keine Adresse
             # herausgibt, die ein fremdes ffmpeg ziehen darf. Nur ueber die
             # Sendebruecke: dort ist der Zubringer ein eigener Prozess.
-            durch = _restream_durchreicher(username)
+            warum = []
+            durch = _restream_durchreicher(username, warum)
             if durch:
                 return durch, None
-            return None, "keine spielbare Quell-URL (weder FLV noch HLS noch CMAF/DASH)"
+            # v4.2-W166: gemeldet wurde nur der erste Halbsatz. Er sagt, dass
+            # TikTok keine Adresse gab — nicht, warum der Durchreicher, der
+            # genau fuer diesen Fall da ist, ebenfalls nichts brachte.
+            # nc.resolvergrund.quelle_lage erkennt die Lage am Satzanfang.
+            return None, ("keine spielbare Quell-URL (weder FLV noch HLS noch CMAF/DASH)"
+                          + (" — Durchreicher: " + warum[0] if warum else ""))
         if not flv and hls:
             log.info("Restream @%s: kein FLV verfügbar → HLS+Transcode. Für FLV ggf. "
                      "RECORD_PROXY setzen (Datacenter-IP wird von TikTok oft geblockt).", username)
@@ -25636,7 +25644,7 @@ def _brain_moderation_snap():
         erlaubt=_nc_modstats.quellen(os.getenv("MOD_TREND_PLATTFORMEN") or None))
 
 
-def _restream_durchreicher(username):
+def _restream_durchreicher(username, warum=None):
     """v4.2-W148: die Durchreicher-Adresse fuer @username — oder None, wenn
     der Weg hier nicht geht (abgeschaltet, keine Bruecke, kein Zieher).
     Jeder Grund steht gedrosselt im Log: ein Restream, der ohne Adresse
@@ -25686,6 +25694,11 @@ def _restream_durchreicher(username):
     if laut:
         log.warning("Restream @%s: auch der Durchreicher geht nicht — %s.%s",
                     username, grund, _nc_meldetakt.zusatz(unterdr))
+    # v4.2-W166: der Grund geht auch an den Aufrufer — sonst stand im Deck nur
+    # „keine spielbare Quell-URL", und WARUM der letzte Weg ausfiel, stand
+    # gedrosselt im Log, wo der Betreiber beim Blick aufs Panel nicht ist.
+    if warum is not None:
+        warum.append(grund)
     return None
 
 
