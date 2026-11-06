@@ -11,6 +11,27 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+## [4.6.10] — 2026-11-06 · „Leitstand"
+
+### Behoben — Restream ohne Bild, Memes, Chat im Clip (v4.2 W159)
+
+- **„Video und Audio kommen nicht im Restream an, nur AZRAEL und Chat."**
+  Im Log vom 06.11. waren die beiden live geschalteten Ziele (#3, #7) genau
+  die Räume, für die TikTok keine Adresse herausgibt. Der Quellen-Wechsel
+  griff nur bei „offline" — ein Raum, der live ist, aber kein Bild liefert,
+  blieb für immer auf dem Pausenbild. Jetzt wechselt der Restream nach
+  `RESTREAM_OHNE_BILD_S` (180 s) ohne Quellbild auf ein Ziel der Auto-Liste
+  mit echter Adresse; gibt es keins, bleibt er und meldet es gedrosselt.
+  Gesucht wird höchstens alle 120 s (jede Auflösung ist eine TikTok-Anfrage).
+- **„Der Hype-Director schneidet gar keine Memes zusammen."** Einen
+  Zusammenschnitt gab es im Code nicht. Die Clips einer Aufnahme werden jetzt
+  gemerkt und nach dem Ende zu einem Highlights-&-Memes-Video gesetzt (erst
+  als Kopie, sonst neu kodiert), das an Discord `{user}-clips` und die
+  Telegram-Gruppen des Trackings geht (`MEME_REEL`, `MEME_REEL_MIN`,
+  `MEME_REEL_MAX`, `MEME_REEL_TELEGRAM`).
+- **Clips mit Chat.** Jeder Clip bekommt den Chat seines Fensters eingebrannt
+  — der Clip wird ohnehin neu kodiert, es kostet nichts zusätzlich.
+
 ## [4.6.9] — 2026-11-06 · „Leitstand"
 
 ### Behoben — der Chat fehlte in den Aufnahmen (v4.2 W158)

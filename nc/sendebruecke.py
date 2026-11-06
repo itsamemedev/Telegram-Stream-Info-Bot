@@ -775,6 +775,12 @@ class Bruecke:
         self._beende(zub)
         return True
 
+    def ohne_bild_s(self) -> float:
+        """v4.2-W159: seit wie vielen Sekunden kein Quellbild auf Sendung ist
+        (ab Start der Bruecke, wenn nie eines kam). Der Manager entscheidet
+        daran, ob er auf eine Quelle mit Bild ausweicht."""
+        return max(0.0, self._uhr() - self._quelle_zuletzt)
+
     def _steckt(self, zub, jetzt) -> bool:
         """v4.2-W155: liefert der Zubringer Daten, die die Weiche nie
         durchlaesst? Dann True, und er ist beendet.
