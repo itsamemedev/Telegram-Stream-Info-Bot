@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="docs/assets/banner.svg" alt="NIGHTCRAWLER — v4.6.1 Leitstand" width="100%">
+<img src="docs/assets/banner.svg" alt="NIGHTCRAWLER — v4.6.2 Leitstand" width="100%">
 
 ### Der Kontrollraum für Live-Streaming
 #### Überwachung · Aufnahme · Multi-Ziel-Restream · KI-Moderation
@@ -120,7 +120,7 @@ flowchart TB
     TG["📨 Telegram"]:::ein --> BOT
     DC["🎮 Discord<br/>66 Slash-Commands"]:::ein --> BOT
     TT["🎥 TikTok<br/>Live-Erkennung + Chat"]:::ein --> BOT
-    BOT["bot.py<br/>Monolith · 26.390 Zeilen<br/>Scraper · Recorder · Restream<br/>Flask-Deck · 34 eigene Routen"]:::core
+    BOT["bot.py<br/>Monolith · 26.396 Zeilen<br/>Scraper · Recorder · Restream<br/>Flask-Deck · 34 eigene Routen"]:::core
     BOT -->|configure| NC["nc/ — 179 Fachmodule<br/>39 Blueprints"]:::lib
     BOT --> BR["brain_bridge.py"]:::lib
     BR --> BRAIN["brain/ — eigene brain.db<br/>Regeln · Gedächtnis · Wissensgraph<br/>16 Wächter-Agenten"]:::brain
@@ -550,7 +550,7 @@ python3 -m pytest -k w145          # eine Welle einzeln
 python3 tools/ncpatch.py find "donations"      # wo steht etwas in bot.py?
 ```
 
-`bot.py` hat 26.390 Zeilen und wird nie ganz gelesen — die Navigationskarte
+`bot.py` hat 26.396 Zeilen und wird nie ganz gelesen — die Navigationskarte
 `.claude/INDEX.md` kennt 379 Routen und 591 Funktionen mit Zeilennummer. Vor
 jedem Pull Request läuft die vollständige Prüfkette aus
 **[`docs/CONTRIBUTING.md`](docs/CONTRIBUTING.md)**: Lint, Templates, Doku-Zahlen,
@@ -589,6 +589,8 @@ deploy/      Prometheus, Grafana, Alarmregeln      docs/      Anleitungen, Chang
 Deck ohne Anmeldung offen, der OAuth-Rückruf band fremde Konten, Storno-Buchungen
 brachen die Hash-Kette, und die Retention löschte markierte Aufnahmen. Elf
 Befunde, jeder mit Vertrag und Mutationsprobe.
+**Patch 4.6.2** — der Umzug nach MariaDB nimmt Steuer-Journal und Stream-Archiv
+mit; `%` in Daten und `.recover`-Reste brechen ihn nicht mehr.
 
 Alle Wellen einzeln: **[`docs/CHANGELOG.md`](docs/CHANGELOG.md)**.
 
@@ -600,7 +602,7 @@ Alle Wellen einzeln: **[`docs/CHANGELOG.md`](docs/CHANGELOG.md)**.
 
 | | |
 |---|---|
-| Aktuelle Version | **4.6.1** — „Leitstand“ (2026.11) |
+| Aktuelle Version | **4.6.2** — „Leitstand“ (2026.11) |
 | Flask-Routen | 379 (34 in `bot.py` · 345 in `nc/routes/`) |
 | Discord-Slash-Commands | 66 |
 | Fachmodule | 179 in `nc/` (+39 in `nc/routes/`, +3 in `nc/intel/`), 10 in `brain/` |
@@ -650,7 +652,7 @@ Programm erhalten haben. Falls nicht: <https://www.gnu.org/licenses/>.
 
 <div align="center">
 
-**NIGHTCRAWLER v4.6.1 · „Leitstand“**
+**NIGHTCRAWLER v4.6.2 · „Leitstand“**
 
 **[🌐 lafap.de](https://lafap.de)** · **[💬 Discord](https://discord.gg/psvnxm7tSV)** · **[📓 Changelog](docs/CHANGELOG.md)**
 

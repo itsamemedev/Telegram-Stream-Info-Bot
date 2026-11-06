@@ -4117,6 +4117,7 @@ def init_db():
             conn, pk=pk, txt_idx=txt_idx, txt_long=txt_long, txt_big=txt_big,
             iv=iv, tbl_opts=tbl_opts, is_my=is_my, ts=ts,
             _create_index_safe=_create_index_safe, _migrate_columns=_migrate_columns, log=log)
+        _nc_schema.modultabellen(conn, backend=DB_BACKEND, log=log)   # v4.2-W150
 
         # v4.2-W85: der Schema-Zaehler. Das Schema wird oben idempotent
         # nachgezogen — das geht VORWAERTS und beantwortet die eine Frage
@@ -19076,7 +19077,12 @@ async def _auto_restream_loop():
 # Schwerlogik liegt in nc/intel/{transcripts,library}.py; hier nur Adapter,
 # Hintergrund-Indexer und Routen. Paramstyle folgt dem DB-Backend.
 # ─────────────────────────────────────────────────────────────────────────────
-_INTEL_PS = "format" if DB_BACKEND == "mariadb" else "qmark"
+# v4.2-W150: immer "qmark". db_conn() uebersetzt `?` selbst nach `%s` — und
+# macht dabei aus jedem `%` ein `%%`. Mit "format" kam aus `%s` also `%%s`,
+# pymysql sah keinen Platzhalter mehr und warf "not all arguments converted":
+# unter MariaDB lief keine einzige Archiv-Abfrage. Das DDL waehlt seinen
+# Primaerschluessel getrennt davon (nc.schema.modultabellen).
+_INTEL_PS = "qmark"
 _INTEL_SCHEMA_READY = False
 
 
@@ -19086,7 +19092,7 @@ def _intel_ensure_schema():
         return
     try:
         with db_conn() as c:
-            _intel_tx.ensure_schema(c, _INTEL_PS)
+            _intel_tx.ensure_schema(c, "format" if DB_BACKEND == "mariadb" else "qmark")
         _INTEL_SCHEMA_READY = True
     except Exception as e:
         log.warning("Archiv-Schema konnte nicht angelegt werden: %s", e)

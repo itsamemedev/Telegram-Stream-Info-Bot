@@ -98,6 +98,35 @@ CREATE TABLE IF NOT EXISTS revenue_entries (
     row_hash      TEXT    NOT NULL DEFAULT ''
 )
 """
+# v4.2-W150: dieselbe Tabelle fuer MariaDB. Die SQLite-Fassung oben kann dort
+# nicht laufen — `INTEGER PRIMARY KEY AUTOINCREMENT` ist MariaDB-Fehler 1064,
+# und ein Index auf `booked_on TEXT` waere 1170. db_conn() uebersetzt nur die
+# Platzhalter, kein DDL: das Steuer-Journal liess sich unter DB_BACKEND=mariadb
+# deshalb nie anlegen, und der Umzug brach an genau dieser Tabelle ab.
+# Typen so gewaehlt, dass der Hash gleich bleibt: Datum als Zeichenkette,
+# Betraege als DOUBLE (MariaDB-REAL ist DOUBLE).
+_SCHEMA_MARIADB = """
+CREATE TABLE IF NOT EXISTS revenue_entries (
+    id            INT AUTO_INCREMENT PRIMARY KEY,
+    seq_year      INTEGER NOT NULL,
+    seq_no        INTEGER NOT NULL,
+    booked_on     VARCHAR(10) NOT NULL,
+    platform      VARCHAR(32) NOT NULL,
+    kind          VARCHAR(32) NOT NULL,
+    gross_eur     DOUBLE  NOT NULL,
+    fee_eur       DOUBLE  NOT NULL DEFAULT 0,
+    net_eur       DOUBLE  NOT NULL,
+    currency      VARCHAR(8) NOT NULL DEFAULT 'EUR',
+    fx_rate       DOUBLE,
+    original_amount DOUBLE,
+    doc_ref       TEXT    NOT NULL,
+    note          TEXT    NOT NULL,
+    storno_of     INTEGER,
+    created_at    VARCHAR(64) NOT NULL,
+    prev_hash     VARCHAR(64) NOT NULL DEFAULT '',
+    row_hash      VARCHAR(64) NOT NULL DEFAULT ''
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+"""
 _IDX = (
     "CREATE INDEX IF NOT EXISTS idx_rev_booked ON revenue_entries(booked_on)",
     "CREATE INDEX IF NOT EXISTS idx_rev_year   ON revenue_entries(seq_year, seq_no)",
@@ -113,7 +142,7 @@ class LedgerError(ValueError):
 
 # ───────────────────────────────────────────────────────────── Setup
 
-def ensure_schema(conn, melden=None):
+def ensure_schema(conn, melden=None, backend=None):
     """Tabelle und Indizes anlegen. Idempotent.
 
     v4.2-W65: die Indizes liefen bis hierher durch `except Exception: pass`.
@@ -127,8 +156,20 @@ def ensure_schema(conn, melden=None):
     genau richtig fuer ein Modul ohne Logger. Wer das ueberleben will, reicht
     einen Melder herein.
     """
-    conn.execute(_SCHEMA)
-    for stmt in _IDX:
+    if backend is None:
+        # Ohne Angabe das Backend, auf das db_conn() gerade zeigt — so
+        # brauchen die drei Aufrufer in diesem Modul nichts zu wissen.
+        from nc import dbwrap as _dbwrap
+        backend = _dbwrap.DB_BACKEND
+    if backend == "mariadb":
+        conn.execute(_SCHEMA_MARIADB)
+        # MariaDB kennt IF NOT EXISTS fuer Indizes nicht in jeder Fassung;
+        # ein vorhandener Index (1061) schluckt ddlsafe.
+        idx = tuple(s.replace("IF NOT EXISTS ", "") for s in _IDX)
+    else:
+        conn.execute(_SCHEMA)
+        idx = _IDX
+    for stmt in idx:
         _ddlsafe.ddl(conn, stmt, melden)
 
 

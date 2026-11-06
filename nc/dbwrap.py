@@ -382,12 +382,18 @@ class _MariaDBCursorWrap:
         self.rowcount = 0
 
     def execute(self, sql, params=()):
-        translated = _translate_sql(sql)
+        # v4.2-W150: ohne Parameter None statt () — pymysql formatiert dann
+        # nicht, und ein '%' in einem Literal bleibt, was es ist. Bewusst
+        # dieselben zwei Aufrufe wie vorher: CodeQL fuehrt hier zwei bekannte
+        # Fehlalarme (py/sql-injection, gebundene Parameter, W3).
+        if params is None or (isinstance(params, (list, tuple)) and len(params) == 0):
+            params = None
+        translated = _translate_sql(sql, mit_parametern=params is not None)
         # PyMySQL erwartet tuple oder list
         if isinstance(params, dict):
             self._c.execute(translated, params)
         else:
-            if not isinstance(params, (list, tuple)):
+            if params is not None and not isinstance(params, (list, tuple)):
                 params = (params,)
             self._c.execute(translated, params)
         self.lastrowid = self._c.lastrowid
