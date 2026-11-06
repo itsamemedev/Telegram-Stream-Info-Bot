@@ -1291,9 +1291,11 @@ def test_donations_summary():
     # Panel zeigt Kick/Twitch/YouTube — TikTok wurde auf Wunsch entfernt
     i = money.find("def api_donations_summary")
     body = money[i:i + 3000]
-    for p in ("kick", "twitch", "youtube"):
+    for p in ("kick", "twitch", "youtube", "manual"):
         assert f'"{p}"' in body, f"Plattform {p} fehlt in der Aggregation"
-    assert 'for p in ("kick", "twitch", "youtube")' in body, \
+    # ANKER GEWANDERT (v4.2-W164): "manual" zaehlt mit (Codex #208); TikTok
+    # bleibt draussen.
+    assert 'for p in ("kick", "twitch", "youtube", "manual")' in body, \
         "TikTok muss aus der Panel-Aggregation raus sein"
     # Der Ausschluss läuft nicht mehr über die Blacklist "platform != 'tiktok'",
     # sondern über die Positivliste. Das ist der schärfere Vertrag: eine neu

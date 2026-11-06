@@ -29,7 +29,13 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
   getrennt (`DONATION_CURRENT_EUR` + manuelle Summe), es wird nichts doppelt
   gezählt. Im Overlay tragen sie das Abzeichen DIREKT.
 
-Vertrag `_test_v42_w164_alles_auf_einmal`, 8 von 8 Mutationsproben gefangen.
+- Review #208 (Codex): der Einsammler lässt `<aufnahme>.chat.ass` liegen —
+  das ist die Arbeitsdatei eines laufenden Einarbeitens, gleiches Format;
+  und die Spenden-Übersicht im Deck zählt „direkt" (manual) in den Zählern
+  mit, nicht nur in der Liste.
+
+Vertrag `_test_v42_w164_alles_auf_einmal`, 8 von 8 Mutationsproben gefangen
+(plus zwei für die Review-Befunde).
 
 ### Behoben — Restream zeigte nur AZRAEL und Chat (v4.2 W165)
 

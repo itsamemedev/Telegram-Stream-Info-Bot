@@ -18510,7 +18510,12 @@ def _alte_beilagen_einsammeln(verz=None):
     verz = verz or RECORDINGS_DIR
     uebernommen = entfernt = 0
     try:
-        namen = sorted(n for n in os.listdir(verz) if n.lower().endswith(".ass"))
+        # Codex #208: `<aufnahme>.chat.ass` ist die ARBEITSDATEI eines laufenden
+        # Einarbeitens (_aufnahme_chat_einarbeiten) — gleiches Format, aber
+        # keine Beilage. Liefe der Scan in diesem Moment, loeschte er sie, und
+        # ffmpeg faende seine Untertitel nicht mehr.
+        namen = sorted(n for n in os.listdir(verz) if n.lower().endswith(".ass")
+                       and not n.lower().endswith(".chat.ass"))
     except OSError as e:
         log.warning("Aufnahme-Chat: Beilagen in %s nicht lesbar (%s).", verz, e)
         namen = []

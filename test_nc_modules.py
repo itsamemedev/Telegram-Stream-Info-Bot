@@ -29907,13 +29907,14 @@ def _test_v42_w164_alles_auf_einmal():
             N.ensure_schema(cc)
             cc.execute("CREATE TABLE recordings (username TEXT, filepath TEXT, file_size INTEGER)")
             cc.execute("INSERT INTO recordings VALUES ('anna', ?, 100)", (v,))
-        for name, inhalt in (("rec.ass", roh), ("weg.ass", roh),
+        for name, inhalt in (("rec.ass", roh), ("weg.ass", roh), ("rec.mp4.chat.ass", roh),
                              ("film.ass", "[Script Info]\nTitle: Film\n[Events]\n")):
             with open(_os.path.join(heim, name), "w", encoding="utf-8") as fh:
                 fh.write(inhalt)
         assert ns["_alte_beilagen_einsammeln"]() == (1, 1)
-        assert sorted(_os.listdir(heim)) == ["film.ass", "n.db", "rec.mp4"], \
-            "eine Beilage bleibt liegen — oder eine fremde Untertiteldatei wurde geloescht"
+        assert sorted(_os.listdir(heim)) == ["film.ass", "n.db", "rec.mp4", "rec.mp4.chat.ass"], \
+            "eine Beilage bleibt liegen — oder eine fremde Untertiteldatei bzw. die " \
+            "Arbeitsdatei eines laufenden Einarbeitens wurde geloescht"
         with _Ctx() as cc:
             e = N.offene(cc)
         assert [(x["pfad"], x["nutzer"]) for x in e] == [(v, "anna")], e
@@ -29921,6 +29922,10 @@ def _test_v42_w164_alles_auf_einmal():
         assert ns["_alte_beilagen_einsammeln"]() == (0, 0), "zweiter Lauf tut wieder etwas"
     finally:
         _sh.rmtree(heim, ignore_errors=True)
+    # Codex #208: die Deck-Uebersicht zaehlt manuelle Spenden mit.
+    assert 'for p in ("kick", "twitch", "youtube", "manual"):' in money
+    dh = open("templates/dashboard.html", encoding="utf-8").read()
+    assert "manual:'◆'" in dh and "DON_NAME[p.platform]" in dh
     ok("W164: alte .ass-Beilagen gehen in den Nachtrag, manuelle Spenden zaehlen als Einnahme")
 
 
