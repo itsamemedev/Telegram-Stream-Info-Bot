@@ -12479,9 +12479,14 @@ var ncLagebild=(function(){
   function C(v,f){return ncCssVar(v)||f;}
   /* Hilfslinie in der Textfarbe des Themas mit Deckkraft a — auf Dunkel wie
      auf Hell sichtbar, ohne eine zweite Farbtabelle je Thema. */
-  function hilfe(a){var c=F.hilf||'#ffffff',m=c.match(/^#([0-9a-f]{6})$/i);
+  function hilfe(a){return mitA(F.hilf||'#ffffff',a);}
+  /* v4.2-W156: jede Themenfarbe mit Deckkraft — fuer Nachleuchten, Glas und
+     Lichtpunkte; eine zweite Farbtabelle je Thema braucht es so nicht. */
+  function mitA(c,a){var m=String(c||'').trim().match(/^#([0-9a-f]{6})$/i);
     if(m){var v=parseInt(m[1],16);return 'rgba('+(v>>16&255)+','+(v>>8&255)+','+(v&255)+','+a+')';}
-    var r=c.match(/rgba?\(([^)]+)\)/);if(r){var t=r[1].split(',');return 'rgba('+t[0]+','+t[1]+','+t[2]+','+a+')';}
+    var k=String(c||'').trim().match(/^#([0-9a-f]{3})$/i);
+    if(k){var q=k[1];return mitA('#'+q[0]+q[0]+q[1]+q[1]+q[2]+q[2],a);}
+    var r=String(c||'').match(/rgba?\(([^)]+)\)/);if(r){var t=r[1].split(',');return 'rgba('+t[0]+','+t[1]+','+t[2]+','+a+')';}
     return 'rgba(255,255,255,'+a+')';}
   var F={};
   function farben(){F={neon:C('--neon','#00ff9c'),cyan:C('--cyan','#22d3ee'),
@@ -12493,16 +12498,16 @@ var ncLagebild=(function(){
     flaeche:C('--panel-solid','')||C('--bg','#080c0e'),hilf:C('--text','#e8f6ff')};}
   function jetzt(){return Date.now()/1000+versatz;}
   /* ── Geometrie: Ränder für Beschriftungen ABZIEHEN, nicht hoffen ─────── */
-  function geo(){var rand=Math.min(110,W*0.18),rx=Math.max(80,W/2-rand),ry=Math.max(70,H/2-34);
+  function geo(){var rand=Math.min(110,W*0.18),rx=Math.max(80,W/2-rand),ry=Math.max(70,H/2-50);
     return {cx:W/2,cy:H/2,rx:rx,ry:ry};}
-  function stationXY(k){var s=STAT[k]||STAT.kern,g=geo();
-    return {x:g.cx+Math.cos(s.a)*s.r*g.rx,y:g.cy+Math.sin(s.a)*s.r*g.ry,a:s.a};}
+  function stationXY(k){var s=STAT[k]||STAT.kern,g=geo(),f=W<520?1.12:1;
+    return {x:g.cx+Math.cos(s.a)*s.r*f*g.rx,y:g.cy+Math.sin(s.a)*s.r*f*g.ry,a:s.a};}
   function zielXY(i,n){var g=geo(),a=-Math.PI/2+i/Math.max(1,n)*Math.PI*2;
     return {x:g.cx+Math.cos(a)*g.rx,y:g.cy+Math.sin(a)*g.ry,a:a};}
   function fit(){
     if(!cv||!cv.parentElement)return;
     var w=cv.parentElement.getBoundingClientRect().width;
-    W=Math.max(300,w||360);H=Math.round(Math.min(540,Math.max(340,W*(W<640?0.95:0.62))));
+    W=Math.max(300,w||360);H=Math.round(Math.min(560,Math.max(360,W*(W<640?1.2:0.62))));
     dpr=Math.min(2,window.devicePixelRatio||1);
     cv.width=W*dpr;cv.height=H*dpr;cv.style.width=W+'px';cv.style.height=H+'px';
     farben();texte();hintergrund();
@@ -12515,27 +12520,61 @@ var ncLagebild=(function(){
   function kapsel(b,x,y,w,h,r){r=Math.min(r,h/2,w/2);var l=x-w/2,o=y-h/2,re=x+w/2,u=y+h/2;
     b.beginPath();b.moveTo(l+r,o);b.lineTo(re-r,o);b.arcTo(re,o,re,o+r,r);b.lineTo(re,u-r);
     b.arcTo(re,u,re-r,u,r);b.lineTo(l+r,u);b.arcTo(l,u,l,u-r,r);b.lineTo(l,o+r);b.arcTo(l,o,l+r,o,r);b.closePath();}
+  /* v4.2-W156: „realistisch, mit Wow-Effekt" — der Hintergrund ist jetzt ein
+     Radarschirm: Raster in zwei Stufen, Entfernungsringe, Gradskala am
+     Aussenring, Fadenkreuz, Vignette. Die Stationen sind Glasmodule mit
+     Blendenkante (die Signatur des Decks, --bezel) und Schlagschatten, die
+     Leitungen doppelt gezogene Kabelkanaele. Alles aus den Themenfarben —
+     in Blaupause eine technische Zeichnung, in Messing ein Schirm. */
+  /* Breite eines Stationsmoduls — Hintergrund und Status-LED rechnen mit
+     derselben Zahl, sonst sitzt die LED neben dem Modul. Setzt die Schrift. */
+  function modulBreite(c,txt){var eng=W<520;c.font='600 '+(eng?7:9)+'px '+F.mono;
+    return Math.max(eng?44:78,c.measureText(txt).width+(eng?14:34));}
+  function kontrast(){return document.documentElement.getAttribute('data-theme')==='kontrast';}
   function hintergrund(){
     bg=document.createElement('canvas');bg.width=W*dpr;bg.height=H*dpr;
-    var b=bg.getContext('2d'),g=geo();b.setTransform(dpr,0,0,dpr,0,0);
-    var v=b.createRadialGradient(g.cx,g.cy,10,g.cx,g.cy,Math.max(W,H)*0.75);
-    v.addColorStop(0,hilfe(0.035));v.addColorStop(1,'rgba(0,0,0,0)');
+    var b=bg.getContext('2d'),g=geo(),x,y,i;b.setTransform(dpr,0,0,dpr,0,0);
+    var v=b.createRadialGradient(g.cx,g.cy,10,g.cx,g.cy,Math.max(W,H)*0.72);
+    v.addColorStop(0,hilfe(0.055));v.addColorStop(0.55,hilfe(0.018));v.addColorStop(1,'rgba(0,0,0,0)');
     b.fillStyle=v;b.fillRect(0,0,W,H);
-    b.fillStyle=hilfe(0.05);
-    for(var x=12;x<W;x+=24)for(var y=12;y<H;y+=24){b.fillRect(x,y,1,1);}
-    b.lineWidth=1;b.strokeStyle=hilfe(0.07);
-    b.beginPath();b.ellipse(g.cx,g.cy,g.rx,g.ry,0,0,Math.PI*2);b.stroke();
-    b.strokeStyle=hilfe(0.045);
-    b.beginPath();b.ellipse(g.cx,g.cy,g.rx*0.56,g.ry*0.56,0,0,Math.PI*2);b.stroke();
-    /* Leitungen Kern → Station, dann die Kapseln darueber */
+    /* Raster: fein alle 24 px, kraeftig alle 120 px — wie ein Plotterbogen */
+    b.lineWidth=1;
+    for(x=0.5;x<W;x+=24){b.strokeStyle=hilfe(Math.round(x-0.5)%120===0?0.055:0.022);b.beginPath();b.moveTo(x,0);b.lineTo(x,H);b.stroke();}
+    for(y=0.5;y<H;y+=24){b.strokeStyle=hilfe(Math.round(y-0.5)%120===0?0.055:0.022);b.beginPath();b.moveTo(0,y);b.lineTo(W,y);b.stroke();}
+    /* Entfernungsringe, der aeusserste mit Gradskala */
+    [1,0.75,0.5,0.25].forEach(function(f,n){b.strokeStyle=hilfe(n===0?0.16:0.07);b.lineWidth=n===0?1.2:1;
+      b.setLineDash(n===0?[]:[2,4]);b.beginPath();b.ellipse(g.cx,g.cy,g.rx*f,g.ry*f,0,0,Math.PI*2);b.stroke();});
+    b.setLineDash([]);
+    b.font='8px '+F.mono;b.fillStyle=hilfe(0.30);b.textAlign='center';b.textBaseline='middle';
+    for(i=0;i<72;i++){var w=i/72*Math.PI*2-Math.PI/2,lang=i%6===0,c=Math.cos(w),sn=Math.sin(w),
+        l=lang?9:4;
+      b.strokeStyle=hilfe(lang?0.28:0.13);b.beginPath();
+      b.moveTo(g.cx+c*g.rx,g.cy+sn*g.ry);b.lineTo(g.cx+c*(g.rx+l),g.cy+sn*(g.ry+l));b.stroke();
+      if(lang&&W>=520)b.fillText(('00'+i*5).slice(-3),g.cx+c*(g.rx+19),g.cy+sn*(g.ry+15));}
+    /* Fadenkreuz */
+    b.strokeStyle=hilfe(0.06);b.beginPath();b.moveTo(g.cx-g.rx,g.cy);b.lineTo(g.cx+g.rx,g.cy);
+    b.moveTo(g.cx,g.cy-g.ry);b.lineTo(g.cx,g.cy+g.ry);b.stroke();
+    /* Kabelkanaele Kern → Station: aussen breit und blass, innen fein */
     Object.keys(STAT).forEach(function(k){if(k==='kern')return;var p=stationXY(k);
-      b.strokeStyle=hilfe(0.10);b.lineWidth=1;b.beginPath();b.moveTo(g.cx,g.cy);b.lineTo(p.x,p.y);b.stroke();});
-    b.font='600 9px '+F.mono;
+      b.lineCap='round';b.strokeStyle=hilfe(0.05);b.lineWidth=5;b.beginPath();b.moveTo(g.cx,g.cy);b.lineTo(p.x,p.y);b.stroke();
+      b.strokeStyle=hilfe(0.14);b.lineWidth=1;b.beginPath();b.moveTo(g.cx,g.cy);b.lineTo(p.x,p.y);b.stroke();});
+    b.lineCap='butt';
+    /* Glasmodule */
+    var eng=W<520;
     Object.keys(STAT).forEach(function(k){if(k==='kern')return;var p=stationXY(k),txt=STL[k]||k,
-        w=Math.max(64,b.measureText(txt).width+30);
-      kapsel(b,p.x,p.y,w,20,10);b.fillStyle=F.flaeche;b.fill();
-      b.strokeStyle=hilfe(0.16);b.lineWidth=1;b.stroke();
-      b.fillStyle=F.faint;b.textAlign='center';b.textBaseline='middle';b.fillText(txt,p.x+5,p.y+0.5);});
+        w=modulBreite(b,txt),h=eng?18:24;
+      b.save();if(!kontrast()){b.shadowColor='rgba(0,0,0,0.45)';b.shadowBlur=14;b.shadowOffsetY=4;}
+      kapsel(b,p.x,p.y,w,h,6);b.fillStyle=F.flaeche;b.fill();b.restore();
+      var gl=b.createLinearGradient(0,p.y-h/2,0,p.y+h/2);
+      gl.addColorStop(0,hilfe(0.13));gl.addColorStop(0.5,hilfe(0.04));gl.addColorStop(1,hilfe(0.07));
+      kapsel(b,p.x,p.y,w,h,6);b.fillStyle=gl;b.fill();
+      b.strokeStyle=hilfe(0.22);b.lineWidth=1;b.stroke();
+      /* Blendenkante oben — dieselbe Signatur wie jedes .panel im Deck */
+      var bz=b.createLinearGradient(p.x-w/2,0,p.x+w/2,0);
+      bz.addColorStop(0,mitA(F.neon,0));bz.addColorStop(0.5,mitA(F.neon,0.75));bz.addColorStop(1,mitA(F.neon,0));
+      b.fillStyle=bz;b.fillRect(p.x-w/2+6,p.y-h/2,w-12,1);
+      b.fillStyle=F.text;b.globalAlpha=0.82;b.textAlign='center';b.textBaseline='middle';
+      b.fillText(txt,p.x+(eng?2:6),p.y+0.5);b.globalAlpha=1;});
   }
   /* ── Datenstand ───────────────────────────────────────────────────── */
   function setze(d){
@@ -12591,45 +12630,113 @@ var ncLagebild=(function(){
   }
   function kreis(x,y,r){ctx.beginPath();ctx.arc(x,y,r,0,Math.PI*2);}
   function farbe(a){return a.lage==='fehler'?F.red:(a.ueberfaellig?F.amber:(a.lage==='aus'?F.faint:(a.lage==='taetig'?F.neon:F.cyan)));}
+  /* v4.2-W156: Radarstrahl mit Nachleuchten. Er streicht einmal in zehn
+     Sekunden ueber den Schirm; wo er ein Ziel trifft, leuchtet es auf und
+     klingt ab (ziele()). Die einzige Bewegung, die nichts bedeutet — sie
+     zeigt, dass das Bild lebt. Bei reduzierter Bewegung und im
+     Kontrast-Thema steht sie. */
+  var SWEEP=0.63;
+  function strahlwinkel(t){return (t*SWEEP)%(Math.PI*2)-Math.PI/2;}
+  function strahl(t){
+    if(reduce||kontrast())return;
+    var g=geo(),a=strahlwinkel(t),spur=1.15;
+    ctx.save();ctx.translate(g.cx,g.cy);ctx.scale(1,g.ry/g.rx);
+    ctx.beginPath();ctx.arc(0,0,g.rx,0,Math.PI*2);ctx.clip();
+    if(ctx.createConicGradient){
+      var k=ctx.createConicGradient(a-spur,0,0),e=spur/(Math.PI*2);
+      k.addColorStop(0,mitA(F.neon,0));k.addColorStop(e*0.7,mitA(F.neon,0.05));
+      k.addColorStop(e,mitA(F.neon,0.22));k.addColorStop(Math.min(1,e+0.002),mitA(F.neon,0));k.addColorStop(1,mitA(F.neon,0));
+      ctx.fillStyle=k;ctx.fillRect(-g.rx,-g.rx,g.rx*2,g.rx*2);
+    }else{
+      for(var n=0;n<24;n++){var w0=a-spur*(n+1)/24,w1=a-spur*n/24;
+        ctx.beginPath();ctx.moveTo(0,0);ctx.arc(0,0,g.rx,w0,w1);ctx.closePath();
+        ctx.fillStyle=mitA(F.neon,0.2*Math.pow(1-n/24,2));ctx.fill();}
+    }
+    ctx.strokeStyle=mitA(F.neon,0.55);ctx.lineWidth=1.2;ctx.beginPath();ctx.moveTo(0,0);
+    ctx.lineTo(Math.cos(a)*g.rx,Math.sin(a)*g.rx);ctx.stroke();
+    ctx.restore();
+  }
+  /* Wie frisch hat der Strahl diesen Punkt ueberstrichen? 1 = gerade eben. */
+  function nachleuchten(x,y,t){
+    if(reduce||kontrast())return 0;
+    var g=geo(),w=Math.atan2((y-g.cy)*g.rx/g.ry,x-g.cx),d=strahlwinkel(t)-w;
+    d=((d%(Math.PI*2))+Math.PI*2)%(Math.PI*2);return Math.exp(-d*1.6);
+  }
   function koerper(t){
-    /* v4.2-W146: der Kern als Knoten mit drei Zahlen, die Ziele ueber gerade,
-       feine Leitungen. Gestoerter Restream: rot gestrichelt; langsam: gelb. */
+    /* v4.2-W146/W156: gerade Leitungen Kern → Ziel; auf einer Leitung mit
+       Restream laufen Datenpakete zum Ziel hinaus — schnell, wenn gesund,
+       zaeh, wenn langsam, keine, wenn gestoert (dann rot gestrichelt). */
     var g=geo(),ziele=Object.keys(ZI).map(function(k){return ZI[k];});
-    ziele.forEach(function(z){var rs=z.z.restream;
-      ctx.strokeStyle=rs==='gestoert'?F.red:(rs==='langsam'?F.amber:(rs?F.cyan:hilfe(0.09)));
-      ctx.globalAlpha=rs?0.55:1;ctx.setLineDash(rs==='gestoert'?[4,5]:[]);ctx.lineWidth=1;
-      ctx.beginPath();ctx.moveTo(g.cx,g.cy);ctx.lineTo(z.x,z.y);ctx.stroke();});
-    ctx.setLineDash([]);ctx.globalAlpha=1;
+    ziele.forEach(function(z){var rs=z.z.restream,col=rs==='gestoert'?F.red:(rs==='langsam'?F.amber:(rs?F.cyan:null));
+      ctx.strokeStyle=col?mitA(col,0.5):hilfe(0.10);ctx.setLineDash(rs==='gestoert'?[4,5]:[]);ctx.lineWidth=1;
+      ctx.beginPath();ctx.moveTo(g.cx,g.cy);ctx.lineTo(z.x,z.y);ctx.stroke();
+      if(col&&rs!=='gestoert'&&!reduce&&!kontrast()){var tempo=rs==='langsam'?0.18:0.55;
+        for(var n=0;n<3;n++){var f=((t*tempo)+n/3)%1;
+          kreis(g.cx+(z.x-g.cx)*f,g.cy+(z.y-g.cy)*f,1.8);ctx.fillStyle=mitA(col,0.35+0.65*Math.sin(f*Math.PI));ctx.fill();}}});
+    ctx.setLineDash([]);
     var d=daten||{},zz=d.ziele||[],rec=zz.filter(function(x){return x.aufnahme;}).length,
         rs=zz.filter(function(x){return x.restream;}).length,
         stoer=zz.some(function(x){return x.restream==='gestoert';}),
-        puls=reduce?0:(Math.sin(t*1.6)+1)/2;
-    kapsel(ctx,g.cx,g.cy,132,46,10);
-    ctx.fillStyle=F.flaeche;ctx.fill();
-    ctx.strokeStyle=stoer?F.red:F.neon;ctx.lineWidth=1.4;ctx.globalAlpha=0.75+0.25*puls;ctx.stroke();ctx.globalAlpha=1;
+        puls=reduce?0:(Math.sin(t*1.6)+1)/2,ring=stoer?F.red:F.neon,R=W<520?24:34;
+    /* Kern: Aussenring mit drehender Skala, Metallscheibe, Statusring */
+    ctx.save();
+    if(!reduce&&!kontrast()){ctx.translate(g.cx,g.cy);ctx.rotate(t*0.12);ctx.translate(-g.cx,-g.cy);}
+    for(var i=0;i<48;i++){var w=i/48*Math.PI*2,l=i%4===0?6:3;
+      ctx.strokeStyle=mitA(ring,i%4===0?0.55:0.25);ctx.lineWidth=1;ctx.beginPath();
+      ctx.moveTo(g.cx+Math.cos(w)*(R+8),g.cy+Math.sin(w)*(R+8));
+      ctx.lineTo(g.cx+Math.cos(w)*(R+8+l),g.cy+Math.sin(w)*(R+8+l));ctx.stroke();}
+    ctx.restore();
+    if(!reduce&&!kontrast()){var hof=ctx.createRadialGradient(g.cx,g.cy,R*0.6,g.cx,g.cy,R*2.2);
+      hof.addColorStop(0,mitA(ring,0.10+0.08*puls));hof.addColorStop(1,mitA(ring,0));
+      ctx.fillStyle=hof;kreis(g.cx,g.cy,R*2.2);ctx.fill();}
+    var sch=ctx.createRadialGradient(g.cx-R*0.35,g.cy-R*0.45,2,g.cx,g.cy,R);
+    sch.addColorStop(0,hilfe(0.22));sch.addColorStop(0.6,hilfe(0.06));sch.addColorStop(1,hilfe(0.02));
+    kreis(g.cx,g.cy,R);ctx.fillStyle=F.flaeche;ctx.fill();ctx.fillStyle=sch;ctx.fill();
+    ctx.strokeStyle=hilfe(0.25);ctx.lineWidth=1;ctx.stroke();
+    kreis(g.cx,g.cy,R+4);ctx.strokeStyle=ring;ctx.lineWidth=1.6;ctx.globalAlpha=0.6+0.4*puls;ctx.stroke();ctx.globalAlpha=1;
     ctx.textAlign='center';ctx.textBaseline='middle';
-    ctx.fillStyle=F.text;ctx.font='700 10px '+F.mono;ctx.fillText('NIGHTCRAWLER',g.cx,g.cy-9);
-    ctx.font='9px '+F.mono;ctx.fillStyle=F.faint;
-    ctx.fillText(zz.length+' LIVE · '+rec+' REC · '+rs+' RS',g.cx,g.cy+9);
+    ctx.fillStyle=F.text;ctx.font='700 '+(R<30?6.5:8)+'px '+F.mono;ctx.fillText('NIGHT',g.cx,g.cy-5);ctx.fillText('CRAWLER',g.cx,g.cy+5);
+    /* Zahlen auf einem Schild unter dem Kern */
+    var zl=zz.length+' LIVE · '+rec+' REC · '+rs+' RS';ctx.font='600 9px '+F.mono;
+    var zw=ctx.measureText(zl).width+18,zy=g.cy+R+26;
+    kapsel(ctx,g.cx,zy,zw,18,4);ctx.fillStyle=F.flaeche;ctx.fill();ctx.strokeStyle=mitA(ring,0.45);ctx.lineWidth=1;ctx.stroke();
+    ctx.fillStyle=F.text;ctx.fillText(zl,g.cx,zy+0.5);
   }
-  function beschrift(txt,x,y,unten){
+  function beschrift(txt,x,y,unten,col){
     ctx.font='600 10px '+F.mono;var w=ctx.measureText(txt).width;
-    var lx=Math.max(4,Math.min(W-4-w,x-w/2));
+    var lx=Math.max(4,Math.min(W-4-w,x-w/2)),oy=unten?y-2:y-15;
     ctx.textAlign='left';ctx.textBaseline=unten?'top':'bottom';
-    ctx.fillStyle=F.flaeche;ctx.fillRect(lx-3,unten?y-1:y-13,w+6,14);
+    kapsel(ctx,lx+w/2,oy+8,w+12,17,3);ctx.fillStyle=F.flaeche;ctx.fill();
+    ctx.strokeStyle=mitA(col||F.text,0.35);ctx.lineWidth=1;ctx.stroke();
+    ctx.fillStyle=mitA(col||F.text,0.9);ctx.fillRect(lx-6,oy+2,2,12);
     ctx.fillStyle=F.text;ctx.fillText(txt,lx,y);
   }
   function ziele(t){
-    var schmal=W<520;
-    Object.keys(ZI).forEach(function(k){var z=ZI[k],d=z.z;
+    /* v4.2-W156: ein Live-Ziel ist ein Radarkontakt — Kern, Hof, und alle
+       zwei Sekunden eine Welle nach aussen. Der Strahl laesst es aufleuchten. */
+    var schmal=W<520,ruhe=reduce||kontrast();
+    Object.keys(ZI).forEach(function(k){var z=ZI[k],d=z.z,live=d.pausiert?F.faint:F.red,
+        glanz=nachleuchten(z.x,z.y,t);
+      if(!d.pausiert&&!ruhe){var wf=(((t*0.5)+(z.a||0))%1+1)%1;
+        kreis(z.x,z.y,6+wf*22);ctx.strokeStyle=mitA(live,0.45*(1-wf));ctx.lineWidth=1.2;ctx.stroke();
+        var hof=ctx.createRadialGradient(z.x,z.y,0,z.x,z.y,16+glanz*10);
+        hof.addColorStop(0,mitA(live,0.35+0.4*glanz));hof.addColorStop(1,mitA(live,0));
+        ctx.fillStyle=hof;kreis(z.x,z.y,16+glanz*10);ctx.fill();}
       if(d.restream){var col=d.restream==='gestoert'?F.red:(d.restream==='langsam'?F.amber:F.cyan),
           an=d.restream!=='gestoert'||reduce||Math.sin(t*4)>-0.5;
-        if(an){kreis(z.x,z.y,13);ctx.strokeStyle=col;ctx.lineWidth=1.4;ctx.stroke();}}
-      if(d.aufnahme){ctx.beginPath();ctx.arc(z.x,z.y,9,-Math.PI/2,
-          -Math.PI/2+Math.PI*2*(reduce?1:((t*0.25)%1)));ctx.strokeStyle=F.neon;ctx.lineWidth=1.6;ctx.stroke();}
-      kreis(z.x,z.y,5);ctx.fillStyle=d.pausiert?F.faint:F.red;ctx.globalAlpha=d.pausiert?0.6:0.95;ctx.fill();ctx.globalAlpha=1;
-      var max=schmal?11:16,nm='@'+(d.name.length>max?d.name.slice(0,max-1)+'…':d.name),unten=Math.sin(z.a)>-0.2;
-      beschrift(nm,z.x,z.y+(unten?18:-18),unten);});
+        if(an){kreis(z.x,z.y,14);ctx.strokeStyle=col;ctx.lineWidth=1.4;ctx.stroke();
+          ctx.save();ctx.translate(z.x,z.y);if(!ruhe)ctx.rotate(t*0.8);
+          for(var q=0;q<4;q++){ctx.rotate(Math.PI/2);ctx.beginPath();ctx.moveTo(15,0);ctx.lineTo(19,0);ctx.stroke();}
+          ctx.restore();}}
+      if(d.aufnahme){ctx.beginPath();ctx.arc(z.x,z.y,9.5,-Math.PI/2,
+          -Math.PI/2+Math.PI*2*(reduce?1:((t*0.25)%1)));ctx.strokeStyle=F.neon;ctx.lineWidth=1.8;ctx.stroke();
+        kreis(z.x+7,z.y-7,2.2);ctx.fillStyle=F.red;ctx.globalAlpha=reduce||Math.sin(t*3)>0?1:0.35;ctx.fill();ctx.globalAlpha=1;}
+      kreis(z.x,z.y,4.6);ctx.fillStyle=live;ctx.globalAlpha=d.pausiert?0.6:1;ctx.fill();ctx.globalAlpha=1;
+      kreis(z.x-1.3,z.y-1.3,1.4);ctx.fillStyle=mitA(F.text,0.7);ctx.fill();
+      var max=schmal?11:16,nm='@'+(d.name.length>max?d.name.slice(0,max-1)+'…':d.name),unten=Math.sin(z.a)>-0.2,
+          ly=z.y+(unten?24:-24);
+      ctx.strokeStyle=hilfe(0.25);ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(z.x,z.y+(unten?8:-8));ctx.lineTo(z.x,ly+(unten?-2:2));ctx.stroke();
+      beschrift(nm,z.x,ly,unten,d.restream==='gestoert'?F.red:(d.restream?F.cyan:live));});
   }
   function waechter(now){
     var t=now/1000,g=geo();
@@ -12644,9 +12751,8 @@ var ncLagebild=(function(){
     var schlimm={};Object.keys(AG).forEach(function(k){var a=AG[k].a||{},o=a.ort;
       if(!STAT[o]||o==='kern')return;var r=a.lage==='fehler'?3:(a.ueberfaellig?2:(a.lage==='aus'?0:1));
       if(!(o in schlimm)||schlimm[o].r<r)schlimm[o]={r:r,a:a};});
-    ctx.font='600 9px '+F.mono;
-    Object.keys(schlimm).forEach(function(o){var p=stationXY(o),w=Math.max(64,ctx.measureText(STL[o]||o).width+30);
-      kreis(p.x-w/2+11,p.y,3);ctx.fillStyle=farbe(schlimm[o].a);ctx.fill();});
+    Object.keys(schlimm).forEach(function(o){var p=stationXY(o),w=modulBreite(ctx,STL[o]||o);
+      kreis(p.x-w/2+(W<520?5:11),p.y,W<520?2:3);ctx.fillStyle=farbe(schlimm[o].a);ctx.fill();});
     Object.keys(AG).forEach(function(k){var s=AG[k],a=s.a||{},col=farbe(a),f=fortschritt(s);
       if(a.lage==='taetig'&&!reduce){kreis(s.x,s.y,10);ctx.fillStyle=col;ctx.globalAlpha=0.10+0.06*Math.sin(t*4+s.phase);ctx.fill();ctx.globalAlpha=1;}
       kreis(s.x,s.y,7);ctx.strokeStyle=hilfe(0.10);ctx.lineWidth=1.5;ctx.stroke();
@@ -12674,7 +12780,7 @@ var ncLagebild=(function(){
   function bild(now){
     var t=now/1000;ctx.setTransform(dpr,0,0,dpr,0,0);ctx.clearRect(0,0,W,H);
     if(bg)ctx.drawImage(bg,0,0,W,H);
-    koerper(t);ziele(t);waechter(now);
+    strahl(t);koerper(t);ziele(t);waechter(now);
   }
   function takt(now){
     if(CURRENT_VIEW!==OWNVIEW||document.hidden||!cv||reduce){raf=null;return;}

@@ -4,7 +4,7 @@ Eine einzige Wahrheit für die Versionsanzeige (Dashboard-Footer, /api/version,
 „Was ist neu"-Panel). Reine Daten + kleine Helfer, voll testbar.
 """
 
-VERSION = "4.6.6"
+VERSION = "4.6.7"
 CODENAME = "Leitstand"
 RELEASE = "2026.11"
 
@@ -23,6 +23,19 @@ def build_stamp():
 # Meilenstein-Changelog, neueste Version zuerst. highlights = kurze, ehrliche
 # Stichpunkte dessen, was die Version bringt.
 CHANGELOG = [
+    {
+        "version": "4.6.7",
+        "date": "2026-11",
+        "title": "Leitstand",
+        # Patch-Fassung von 4.6: das Lagebild als Radarschirm (W156).
+        "highlights": [
+            "Das Lagebild der Übersicht ist ein Radarschirm: Entfernungsringe, Gradskala, Plotterraster und ein Strahl, der die Live-Ziele beim Überstreichen aufleuchten lässt",
+            "Stationen als Glasmodule mit Blendenkante und Schatten, der Kern als Metallscheibe mit drehender Skala und Statusring",
+            "Auf Leitungen mit Restream laufen Datenpakete — schnell, wenn gesund, zäh, wenn langsam, keine, wenn gestört",
+            "Live-Ziele als Radarkontakte mit Welle und Hof, Aufnahme mit blinkendem REC-Punkt, Namen auf Schildern mit Führungslinie",
+            "Bei reduzierter Bewegung und im Kontrast-Thema steht alles still und leuchtet nichts — auf dem Handy skaliert das Bild mit",
+        ],
+    },
     {
         "version": "4.6.6",
         "date": "2026-11",
