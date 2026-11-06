@@ -564,6 +564,7 @@ from typing import Optional, List, Tuple
 # schon bei den Modul-Konstanten (ab ~Z. 631) gebraucht, also VOR dem großen
 # nc-Importblock weiter unten. Beide hängen nur an stdlib (kein Bot-Import).
 from nc import envnum as _nc_envnum          # env/Zahl-Parser (gebündelt)
+from nc import clientip as _nc_clientip     # v4.2-W149: echte Client-IP, lokal vs. Proxy
 from nc import procdiag as _nc_procdiag       # Phase-1-Zerlegung: Prozess-/Thread-Diagnose
 from nc.loginpage import login_page as _login_page  # noqa: F401  # Phase-1-Zerlegung: Login-Seite
 from nc.intel import transcripts as _intel_tx  # v4.0-W90: Transkript-Substrat
@@ -9816,13 +9817,21 @@ _AUTH_EXEMPT_EXACT = ("/healthz",
 
 
 def _client_ip():
-    """Die IP, auf die wir uns verlassen duerfen (siehe TRUSTED_PROXIES)."""
-    remote = (request.remote_addr or "").strip()
-    if remote in TRUSTED_PROXIES:
-        fwd = (request.headers.get("X-Forwarded-For", "") or "").split(",")[0].strip()
-        if fwd:
-            return fwd
-    return remote or "?"
+    """Die IP, auf die wir uns verlassen duerfen (siehe TRUSTED_PROXIES).
+    v4.2-W149: X-Forwarded-For von RECHTS gelesen — der linke Eintrag stammt
+    vom Client und machte die PIN-Sperre umgehbar. Siehe nc/clientip.py."""
+    return _nc_clientip.echte_ip(request.remote_addr,
+                                 request.headers.get("X-Forwarded-For", ""),
+                                 TRUSTED_PROXIES)
+
+
+def _ist_lokal():
+    """Anfrage vom Rechner selbst (SSH-Tunnel) — NICHT ueber einen Proxy auf
+    diesem Rechner. v4.2-W149: vorher genuegte remote_addr == 127.0.0.1, und
+    hinter dem nginx des Installers war damit das ganze Deck ohne Anmeldung
+    offen. Siehe nc/clientip.py."""
+    return _nc_clientip.ist_lokal(request.remote_addr, request.headers,
+                                  TRUSTED_PROXIES, _LOOPBACK)
 
 
 def _token_ok():
@@ -9930,17 +9939,26 @@ def _auth_guard():                                                    # C9 → F
     #   - Loopback (SSH-Tunnel) -> immer frei
     #   - sonst                -> Token noetig (Header, ?token=... oder Cookie)
     # Ein ?token=... setzt ein Cookie, damit das Browser-UI danach normal laeuft.
-    if not DASHBOARD_TOKEN and not DASHBOARD_PIN:
-        return None
     if request.method == "OPTIONS":
         return None
-    if (request.remote_addr or "") in _LOOPBACK:
+    if _ist_lokal():
         return None
     p = request.path or "/"
     if p in _AUTH_EXEMPT_EXACT or p.startswith(_AUTH_EXEMPT_PREFIXES):
         return None
     if request.method == "GET" and p in _AUTH_EXEMPT_READ:   # OBS-Browserquelle
         return None
+    if not DASHBOARD_TOKEN and not DASHBOARD_PIN:
+        # v4.2-W149: ohne Geheimnis ist das Deck NUR lokal gedacht — dafuer
+        # zieht nc/webserver.bindung() seit W84 die Adresse auf Loopback. Ein
+        # Reverse-Proxy auf demselben Rechner hebelt genau das aus: er spricht
+        # Loopback an und reicht das Internet durch. Ausser der Betreiber hat
+        # das offene Deck ausdruecklich gewollt (DASHBOARD_OFFEN_ERLAUBEN=1).
+        if _nc_dashauth.erlaubt_offen():
+            return None
+        return jsonify(ok=False, error=("Deck ohne DASHBOARD_TOKEN/DASHBOARD_PIN ist nur "
+                                        "lokal erreichbar — ueber einen Proxy braucht es "
+                                        "ein Geheimnis in der .env")), 403
     # v4.0-W52: Login-Seite selbst + ihr POST müssen erreichbar sein.
     if p in ("/login", "/logout") or p == "/api/login":
         return None
@@ -10041,7 +10059,7 @@ def _rate_guard():
     # SEC-AUDIT: echte IP (X-Forwarded-For nur von vertrauten Proxies), sonst
     # konnte jeder das Limit mit einem gefaelschten Header umgehen.
     ip = _client_ip()
-    if (request.remote_addr or "") in _LOOPBACK:        # Operator/lokal nie limitieren
+    if _ist_lokal():                                    # Operator/lokal nie limitieren
         return None
     if not ip or ip == "?":
         return None
@@ -12125,7 +12143,7 @@ def _start_loop_watchdog():
     _LOOP_HEARTBEAT_TS = _time_mod.monotonic()
     _install_faulthandler()          # v4.0-W88: Crash-Tracebacks + SIGUSR1-Dump
     try:
-        asyncio.ensure_future(_loop_heartbeat())
+        _spawn(_loop_heartbeat(), name="loop-heartbeat")   # Referenz halten (F24-R3)
     except Exception as _e:
         log.warning("Loop-Heartbeat konnte nicht starten: %s", _e)
         return
@@ -23764,7 +23782,7 @@ async def run_bot():
 
     # v4.0-W90: Stream-Archiv-Indexer (opt-in via ARCHIVE_INDEX_ENABLED=1).
     try:
-        asyncio.ensure_future(_intel_index_loop())
+        _spawn(_intel_index_loop(), name="intel-index")   # Referenz halten (F24-R3)
     except Exception as _e:
         log.debug("Archiv-Indexer Start: %s", _e)
 

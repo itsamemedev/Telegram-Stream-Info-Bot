@@ -11,6 +11,48 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Behoben — Tiefengrund-Bughunt: elf Befunde, drei davon Sicherheit (v4.2 W149)
+
+- **Hinter dem Proxy des Installers war das Deck ohne Anmeldung offen.**
+  `_auth_guard` liess jede Anfrage von `127.0.0.1` frei — gedacht für den
+  SSH-Tunnel. Der Zugang „proxy" richtet aber nginx auf demselben Rechner ein
+  (`proxy_pass http://127.0.0.1:8050`); jede Anfrage aus dem Internet kam damit
+  als Loopback an, Token und PIN griffen nie, die Ratenbegrenzung auch nicht.
+  `nc/clientip.py` unterscheidet jetzt Tunnel und Proxy am
+  Weiterleitungskopf. Ohne `DASHBOARD_TOKEN`/`DASHBOARD_PIN` ist das Deck über
+  einen Proxy gesperrt (403), ausser `DASHBOARD_OFFEN_ERLAUBEN=1`.
+- **`X-Forwarded-For` wurde von links gelesen.** Der linke Eintrag stammt vom
+  Client; mit jeder Anfrage eine erfundene Adresse hebelte die
+  PIN-Fehlversuchssperre aus. Jetzt von rechts, vertraute Proxys übersprungen.
+- **OAuth-Rückruf (Twitch, YouTube) ohne laufenden Flow.** Die Prüfung
+  `if _state["csrf"] and …` galt nur, wenn ein Flow gestartet war — sonst
+  tauschte der (anmeldefreie) Rückruf jeden Code, und ein Fremder konnte sein
+  Konto an den Bot binden. Jetzt: ohne ausgegebenen `state` kein Tausch, jeder
+  `state` genau einmal.
+- **Steuer-Journal: jede Storno-Buchung aus dem Deck brach die Hash-Kette.**
+  `storno_of` wurde als Zeichenkette gehasht und als Ganzzahl gespeichert.
+  Altbestand wird weiter anerkannt; dazu lehnt das Journal `nan`/`inf`, ein
+  ungültiges Datum (`2026-13-45`), negative Gebühren und Storno auf nicht
+  existierende Buchungen ab. Die Gegenprobe zählt Zeilen ohne Plattform nicht
+  mehr als Kick (B138-GELD war dort nie nachgezogen).
+- **Retention und stündliches Aufräumen löschten markierte Aufnahmen.** Der
+  Stern heisst im Deck „behalten" und galt nur für die Regel-Retention. Ohne
+  lesbare Datenbank setzt das Aufräumen aus, statt zu raten.
+- **`/api/retention/run` mit `days=0`** fiel still auf 30 Tage zurück — und
+  löschte. Jetzt 400.
+- **Regel-Retention und Dubletten-Löschen ohne Pfad-Riegel.** Die Regel-
+  Retention löschte, was in der Datenbank stand, auch ausserhalb des
+  Aufnahmeordners; das Dubletten-Löschen prüfte gegen ein `scan_root` aus der
+  Anfrage (`"/"` genügte). Beide prüfen jetzt gegen den serverseitigen Ordner.
+- **Archiv-Eintrag löschen** entfernte die Zeile auch, wenn die Datei liegen
+  blieb (W91 andersherum).
+- **`.env`-Schreiber** schrieb Werte roh: `abc #12` kam als `abc` zurück.
+  Jetzt gequotet, wo dotenv sonst anders liest; `${` wird abgelehnt.
+- **Update** lud den Branch-Kopf statt des gemeldeten Commits.
+- **Spenden:** „100 bits" im Text eines Superchats schlug den Betrag in Dollar.
+- Zwei Hintergrund-Tasks ohne gehaltene Referenz (Loop-Heartbeat,
+  Archiv-Indexer) laufen jetzt über `_spawn`.
+
 ## [4.6] — 2026-11-05 · „Leitstand"
 
 ### Behoben — `sudo ./update.sh`: „Permission denied (os error 13)" (v4.2 W148)

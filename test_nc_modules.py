@@ -28192,6 +28192,220 @@ def _test_v42_w148_beobachtung_fehlerpfade():
     assert gestartet[0].getoetet, "Zieher nach gescheitertem ffmpeg nicht beendet"
     ok("W148: Fehlerpfade — echter Abruf, Teilabfragen, Steuerfehler, gescheiterter Neustart, sturer Zieher")
 
+def _test_v42_w149_tiefengrund():
+    """v4.2-W149: Tiefengrund-Bughunt — elf Befunde, jeder mit Gegenprobe.
+
+    Der teuerste: hinter dem nginx, den der Installer im Zugang "proxy"
+    selbst einrichtet, kam jede Anfrage aus dem Internet als 127.0.0.1 an,
+    und `_auth_guard` liess Loopback ohne PIN und Token durch. Das ganze Deck
+    war offen — genau in der Betriebsart, die fuer den Zugriff von aussen
+    gebaut ist.
+    """
+    import io as _io
+    import os as _os
+    import sqlite3 as _sq
+    from nc import clientip as CI
+    from nc import ledger as L
+    from nc import donations as DN
+    from nc import envdatei as EV
+    from nc import retention as RET
+    from nc import storage as ST
+    from nc import updater as UP
+    from nc import dbwrap as _dbw
+    from nc.routes import wartung as WA
+
+    # (1) Lokal ist nur, wer KEINEN Weiterleitungskopf traegt.
+    LB = ("127.0.0.1", "localhost", "::1")
+    assert CI.ist_lokal("127.0.0.1", {}, set(), LB) is True, "SSH-Tunnel ausgesperrt"
+    assert CI.ist_lokal("127.0.0.1", {"X-Forwarded-For": "203.0.113.9"}, set(), LB) is False, \
+        "Anfrage ueber den lokalen Proxy gilt als Loopback — Deck ohne Anmeldung offen"
+    assert CI.ist_lokal("127.0.0.1", {"X-Forwarded-For": "203.0.113.9"},
+                        {"127.0.0.1"}, LB) is False
+    assert CI.ist_lokal("127.0.0.1", {"X-Forwarded-For": "127.0.0.1, 203.0.113.9"},
+                        {"127.0.0.1"}, LB) is False, \
+        "ein vom Client vorangestelltes 127.0.0.1 oeffnet das Deck"
+    assert CI.ist_lokal("127.0.0.1", {"X-Forwarded-For": "127.0.0.1"},
+                        {"127.0.0.1"}, LB) is True, "curl auf dem Rechner durch den Proxy"
+    assert CI.ist_lokal("127.0.0.1", {"X-Real-IP": "203.0.113.9"}, {"127.0.0.1"}, LB) is False
+    assert CI.ist_lokal("198.51.100.1", {}, set(), LB) is False
+    # (2) XFF von rechts: der linke Eintrag gehoert dem Client.
+    assert CI.echte_ip("127.0.0.1", "1.2.3.4, 203.0.113.9", {"127.0.0.1"}) == "203.0.113.9", \
+        "PIN-Sperre per gefaelschtem X-Forwarded-For umgehbar"
+    assert CI.echte_ip("198.51.100.1", "1.2.3.4", {"127.0.0.1"}) == "198.51.100.1"
+    assert CI.echte_ip("127.0.0.1", "203.0.113.9, 10.0.0.2", {"127.0.0.1", "10.0.0.2"}) \
+        == "203.0.113.9", "zweistufiger Proxy"
+    src = open("bot.py", encoding="utf-8").read()
+    g = src[src.index("def _auth_guard("):src.index("def _auth_cookie(")]
+    assert "_ist_lokal()" in g and "remote_addr" not in g, "Guard prueft wieder remote_addr"
+    assert g.index("_AUTH_EXEMPT_EXACT") < g.index("if not DASHBOARD_TOKEN and not DASHBOARD_PIN:"), \
+        "ohne Geheimnis muessen die Ausnahmen (OAuth, /healthz) weiter frei sein"
+    assert "erlaubt_offen()" in g, "ohne Geheimnis ist ueber den Proxy wieder alles offen"
+    r = src[src.index("def _rate_guard("):src.index("def _pwa_dir(")]
+    assert "_ist_lokal()" in r and "remote_addr or \"\") in _LOOPBACK" not in r
+    ok("W149: hinter dem lokalen Proxy gilt keine Anfrage mehr als Loopback, XFF von rechts")
+
+    # (3) Steuer-Journal: eine Storno-Buchung aus dem Deck (storno_of als
+    # Zeichenkette) brach die Hash-Kette.
+    c = _sq.connect(":memory:")
+    c.row_factory = _sq.Row
+    L.add_entry(c, "2026-01-05", "kick", "100")
+    L.add_entry(c, "2026-01-06", "kick", "-100", kind="correction", storno_of="1")
+    assert L.verify_chain(c)["ok"] is True, "Storno aus dem Deck meldet die Kette als gebrochen"
+    # Neue Buchungen haengen NICHT am Altbestand-Ausweg: ihr Hash stimmt mit
+    # der Ganzzahl, so wie sie in der Tabelle steht (Mutationsprobe W149).
+    z = c.execute("SELECT * FROM revenue_entries WHERE id=2").fetchone()
+    assert L._hash_row(z["prev_hash"], L._payload_of(z)) == z["row_hash"], \
+        "storno_of wird weiter als Zeichenkette gehasht"
+    for args, kw in ((("2026-13-45", "kick", "1"), {}), (("2026-01-01", "kick", "nan"), {}),
+                     (("2026-01-01", "kick", "inf"), {}),
+                     (("2026-01-01", "kick", "10"), {"fee_eur": "-5"}),
+                     (("2026-01-01", "kick", "-1"), {"kind": "correction", "storno_of": "99"}),
+                     (("2026-01-01", "kick", "-1"), {"kind": "correction", "storno_of": "x"})):
+        try:
+            L.add_entry(c, *args, **kw)
+            raise AssertionError("gebucht: %r %r" % (args, kw))
+        except L.LedgerError:
+            pass
+    # Altbestand: Hash ueber die Zeichenkette gilt weiter, eine Betrags-
+    # aenderung faellt trotzdem auf.
+    c.execute("DELETE FROM revenue_entries WHERE id=2")
+    prev = c.execute("SELECT row_hash FROM revenue_entries WHERE id=1").fetchone()[0]
+    alt = {"seq_year": 2026, "seq_no": 2, "booked_on": "2026-01-06", "platform": "kick",
+           "kind": "correction", "gross_eur": -100.0, "fee_eur": 0.0, "net_eur": -100.0,
+           "currency": "EUR", "doc_ref": "", "storno_of": "1"}
+    c.execute("INSERT INTO revenue_entries (seq_year,seq_no,booked_on,platform,kind,gross_eur,"
+              "fee_eur,net_eur,currency,storno_of,created_at,prev_hash,row_hash) VALUES "
+              "(2026,2,'2026-01-06','kick','correction',-100,0,-100,'EUR','1','x',?,?)",
+              (prev, L._hash_row(prev, alt)))
+    assert L.verify_chain(c)["ok"] is True, "Altbestand-Storno als Manipulation gemeldet"
+    c.execute("UPDATE revenue_entries SET gross_eur=-50 WHERE id=3")
+    assert L.verify_chain(c)["ok"] is False, "Manipulation am Altbestand bleibt unentdeckt"
+    # (4) Die Gegenprobe zaehlt keine Zeilen ohne Plattform (B138-GELD).
+    c2 = _sq.connect(":memory:")
+    c2.row_factory = _sq.Row
+    c2.execute("CREATE TABLE overlay_events (kind TEXT, platform TEXT, amount TEXT, ts TEXT)")
+    c2.executemany("INSERT INTO overlay_events VALUES ('donation',?,?,?)",
+                   [(None, "500", "2026-03-01"), ("kick", "20", "2026-03-01")])
+    cc = L.crosscheck(c2, 2026, "('kick','twitch','youtube','manuell')")
+    assert cc["overlay_estimate_eur"] == 20.0, "TikTok-Altbestand ohne Plattform zaehlt als Kick: %r" % cc
+    ok("W149: Storno haelt die Hash-Kette, nan/inf/13. Monat/Phantom-Storno abgelehnt")
+
+    # (5) Spenden: die Waehrung des Betrags schlaegt "bits" in der Nachricht.
+    assert DN.to_eur("$50.00", "youtube", "fuer 100 bits Spass") == 46.0
+    assert DN.to_eur("100 Bits", "twitch") == 1.0
+    assert DN.to_eur("", "twitch", "bits: 500") == 5.0, "Docstring-Form 'bits: 500' greift nicht"
+    ok("W149: Superchat mit 'bits' im Text zaehlt in seiner Waehrung")
+
+    # (6) Retention und stuendliches Aufraeumen lassen markierte Aufnahmen stehen.
+    heim = _ph.verzeichnis()
+    rec = _os.path.join(heim, "rec")
+    _os.makedirs(rec)
+    dbp = _os.path.join(heim, "w149.sqlite")
+    k = _sq.connect(dbp)
+    k.execute("CREATE TABLE recordings (id INTEGER PRIMARY KEY, filepath TEXT, created_at TEXT, "
+              "starred INT DEFAULT 0, file_size INT, deleted_at TEXT)")
+    stern = _ph.attrappe(_os.path.join(rec, "stern.mp4"), 1000)
+    weg = _ph.attrappe(_os.path.join(rec, "weg.mp4"), 2000)
+    k.executemany("INSERT INTO recordings (filepath, created_at, starred) VALUES (?,?,?)",
+                  [(stern, "2020-01-01T00:00:00+00:00", 1), (weg, "2020-01-01T00:00:00+00:00", 0)])
+    k.commit()
+    k.close()
+    for f in (stern, weg):
+        _os.utime(f, (1_500_000_000, 1_500_000_000))
+    alt_pfad, alt_backend = _dbw.DB_PATH, _dbw.DB_BACKEND
+    try:
+        configure_db(db_path=dbp, backend="sqlite")
+        e = ST.cleanup(rec, days=30, dry_run=True)
+        assert e["would_delete"] == 1, "stuendliches Aufraeumen trifft die markierte: %r" % e
+        r = RET.scan(30, rec, delete=True)
+        assert r["count"] == 1 and _os.path.isfile(stern) and not _os.path.exists(weg), \
+            "Retention loescht die markierte Aufnahme: %r" % r
+        configure_db(db_path=_os.path.join(heim, "fehlt", "x.db"), backend="sqlite")
+        e = ST.cleanup(rec, days=30)
+        assert e["deleted"] == 0 and e.get("error") and _os.path.isfile(stern), \
+            "ohne Datenbank wird geraten statt abgebrochen: %r" % e
+    finally:
+        configure_db(db_path=alt_pfad, backend=alt_backend)
+    ok("W149: markierte Aufnahmen ueberleben Retention und Aufraeumen; ohne DB kein Raten")
+
+    # (7) days=0 faellt nicht still auf 30 Tage Loeschung zurueck.
+    assert WA._tage_aus(None, 0) == (30, False) and WA._tage_aus("", 7) == (7, False)
+    assert WA._tage_aus("0", 7) == (0, False) and WA._tage_aus(0, 7) == (0, False), \
+        "days=0 wird zur Vorgabe"
+    assert WA._tage_aus("abc", 7)[1] is True and WA._tage_aus(True, 7)[1] is True
+    ok("W149: Retention-Lauf mit days=0 wird abgelehnt statt mit 30 Tagen ausgefuehrt")
+
+    # (8) .env: geschrieben wird, was dotenv genauso zurueckliest.
+    from dotenv import dotenv_values
+    for v in ("abc #12", "'q", "a\\b'c", " rand", "x y", "http://127.0.0.1:3000", "#x"):
+        zeile = "K=" + EV.wert_schreiben(v)
+        assert dotenv_values(stream=_io.StringIO(zeile))["K"] == v, (v, zeile)
+        assert EV.wert_lesen(EV.wert_schreiben(v)) == v, v
+    env = _os.path.join(heim, ".env")
+    with open(env, "w") as f:
+        f.write("A=1\n")
+    try:
+        EV.setzen(env, {"P": "x${HOME}"}, "probe")
+        raise AssertionError("${ geschrieben — load_dotenv wertet es aus")
+    except EV.EnvdateiFehler:
+        pass
+    ok("W149: .env-Werte mit ' #', Anfuehrungszeichen und Rand-Leerzeichen kommen heil zurueck")
+
+    # (9) Das Update laedt genau den gemeldeten Commit.
+    alt_open = UP._open
+    gesehen = []
+
+    class _Antwort:
+        headers = {}
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def read(self, n=-1): return b""
+    try:
+        UP._open = lambda url, accept: (gesehen.append(url), _Antwort())[1]
+        UP.download_zip(sha="abc123")
+    finally:
+        UP._open = alt_open
+    assert gesehen and gesehen[0].endswith("/zip/abc123"), gesehen
+    assert 'sha=rem.get("sha")' in open("nc/updater.py", encoding="utf-8").read()
+    ok("W149: das Update spielt den Commit ein, dessen SHA es sich merkt")
+
+    # (10) Archiv: wer die Datei nicht loeschen kann, loescht die Zeile nicht.
+    q = open("nc/archive.py", encoding="utf-8").read()
+    rumpf = q[q.index("def delete_archive_entry("):]
+    rumpf = rumpf[:rumpf.index('return True, ""')]
+    # Gemessen an der Rueckgabe, nicht am Kommentar: der zitiert den alten Satz.
+    assert 'return False, f"Datei nicht' in rumpf, "Zeile faellt trotz liegengebliebener Datei"
+    # (11) Dubletten-Loeschen: die Wurzel kommt vom Server.
+    a = open("nc/routes/archive.py", encoding="utf-8").read()
+    d = a[a.index("def api_archive_duplicates_delete("):a.index("def api_archive():")]
+    assert 'payload.get("scan_root"' not in d and "_scan_wurzel()" in d and "realpath" in d, \
+        "scan_root aus der Anfrage — Loeschwerkzeug fuer das ganze Dateisystem"
+    r = open("nc/routes/recordings.py", encoding="utf-8").read()
+    r = r[r.index("def api_rec_retention_apply("):]
+    assert "_nc_sicherpfad.unter(rec_root, fp)" in r[:3000], "Regel-Retention ohne Pfad-Riegel"
+    ok("W149: Archiv- und Regel-Loeschung nur im eigenen Ordner, Spur bleibt bei Fehlschlag")
+
+    # (12) OAuth-Rueckruf: ohne ausgegebenen state kein Tausch, jeder state
+    # genau einmal. Der Rueckruf ist ohne Anmeldung erreichbar.
+    import asyncio as _aio
+    from nc import twitchoauth as TW
+    from nc import ytoauth as YT
+    for M in (TW, YT):
+        alt = M._state["csrf"]
+        try:
+            M._state["csrf"] = ""
+            okk, txt = _aio.run(M.exchange_code("fremder-code", "", None))
+            assert okk is False and "CSRF" in txt, "%s tauscht ohne laufenden Flow" % M.__name__
+            M._state["csrf"] = "s1"
+            okk, _ = _aio.run(M.exchange_code("c", "falsch", None))
+            assert okk is False and M._state["csrf"] == "", "%s: state nicht verbraucht" % M.__name__
+            okk, _ = _aio.run(M.exchange_code("c", "s1", None))
+            assert okk is False, "%s: verbrauchter state gilt erneut" % M.__name__
+        finally:
+            M._state["csrf"] = alt
+    ok("W149: OAuth-Rueckruf ohne laufenden Flow abgelehnt, state nur einmal gueltig")
+
+
 def main():
     tmp, rid = richte_testdatenbank_ein()
     ok("db_conn aus nc.dbwrap: echtes Schema angelegt, Commit durchgelaufen")
@@ -28549,6 +28763,7 @@ def main():
     _test_v42_w148_beobachtungs_waechter()
     _test_v42_w148_codex_193()
     _test_v42_w148_beobachtung_fehlerpfade()
+    _test_v42_w149_tiefengrund()
     _test_v42_w60_azrael_cooldown_je_plattform()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)

@@ -83,6 +83,34 @@ def wert_lesen(roh: str) -> str:
     return v.split(" #", 1)[0].strip()
 
 
+_KOMMENTAR = re.compile(r"\s#")
+
+
+def wert_schreiben(wert) -> str:
+    """Ein Wert so, dass python-dotenv ihn GENAU so zurueckliest (v4.2-W149).
+
+    Bis hierher stand der Wert roh hinter dem `=`. Ein Passwort `abc #12`
+    kam als `abc` zurueck (ungequotet ist ` #` ein Kommentar), eines mit
+    `${X}` wurde von load_dotenv() interpoliert (die Vorgabe ist
+    interpolate=True), eines mit fuehrendem `'` verlor sein Zeichen. Der Bot
+    las damit etwas anderes, als geschrieben wurde — und weil `main()` nur
+    schreibt, was sich laut `lesen()` unterscheidet, stand dieselbe falsche
+    Zeile beim naechsten Lauf als "unveraendert" da.
+
+    Einfache Anfuehrungszeichen: dotenv kennt darin nur zwei Escapes, \\ und
+    \'. Alle anderen Werte bleiben ungequotet — so sieht
+    die .env aus wie von Hand gepflegt. `${` laesst sich gar nicht schreiben:
+    python-dotenv 1.2 interpoliert auch in '…' und kennt dafuer kein Escape
+    (nachgemessen) — setzen() lehnt solche Werte ab."""
+    v = str(wert)
+    # Ungequotet liest dotenv alles bis zum Zeilenende, schneidet aber ein
+    # " #" samt Rest ab, entfernt Rand-Leerzeichen und deutet ein fuehrendes
+    # Anfuehrungszeichen. Nur dann wird gequotet.
+    if v == v.strip() and not _KOMMENTAR.search(v) and v[:1] not in ("'", '"'):
+        return v
+    return "'" + v.replace("\\", "\\\\").replace("'", "\\'") + "'"
+
+
 def setzen(pfad, werte, kennung="aenderung", jetzt=None):
     """Schluessel setzen, alles andere unveraendert. -> Pfad der Sicherung.
 
@@ -94,6 +122,9 @@ def setzen(pfad, werte, kennung="aenderung", jetzt=None):
             raise EnvdateiFehler("Kein gueltiger Variablenname: %r" % k)
         if "\n" in str(v) or "\r" in str(v):
             raise EnvdateiFehler("Wert fuer %s enthaelt einen Zeilenumbruch." % k)
+        if "${" in str(v):
+            raise EnvdateiFehler("Wert fuer %s enthaelt '${' — load_dotenv() wuerde ihn "
+                                 "als Variable auswerten, ein Escape gibt es nicht." % k)
     stempel = time.strftime("%Y%m%d-%H%M%S", time.localtime(jetzt))
     sicherung = "%s.%s-%s" % (pfad, kennung, stempel)
     alt = os.stat(pfad)
@@ -102,7 +133,7 @@ def setzen(pfad, werte, kennung="aenderung", jetzt=None):
     with open(pfad, encoding="utf-8") as fh:
         zeilen = fh.read().splitlines()
     for schluessel, wert in werte.items():
-        neu = "%s=%s" % (schluessel, wert)
+        neu = "%s=%s" % (schluessel, wert_schreiben(wert))
         treffer = [i for i, z in enumerate(zeilen)
                    if z.lstrip().startswith(schluessel + "=")
                    or z.lstrip().startswith(schluessel + " =")]

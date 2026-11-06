@@ -113,6 +113,16 @@ def stats(recordings_dir: str, archive_dir: str = "",
         "retention_days": retain_days,
     }
 
+def _markierte_pfade() -> set:
+    """Absolute Pfade aller markierten (starred) Aufnahmen. Wirft bei
+    Datenbankfehler — der Aufrufer bricht dann ab, statt zu raten."""
+    with db_conn() as conn:
+        rows = conn.execute(
+            "SELECT filepath FROM recordings WHERE COALESCE(starred, 0) = 1"
+        ).fetchall()
+    return {os.path.abspath(r["filepath"]) for r in rows if r["filepath"]}
+
+
 def cleanup(recordings_dir: str, days: int = 0,
             dry_run: bool = False) -> dict:
     """Löscht Recordings-Files älter als `days` Tage von Disk. DB-Einträge
@@ -135,6 +145,19 @@ def cleanup(recordings_dir: str, days: int = 0,
                 "would_delete": 0, "would_free_bytes": 0,
                 "reason": f"{recordings_dir} does not exist"}
     cutoff = time.time() - (days * 86400)
+    # v4.2-W149: markierte Aufnahmen bleiben (siehe nc/retention.py). Ohne die
+    # Liste laesst sich nicht entscheiden, was markiert ist — dann wird nicht
+    # geraten, sondern abgebrochen (dieselbe Regel wie BestandUnbekannt, W91):
+    # Raten hiesse hier, im Zweifel genau die Aufnahme zu loeschen, die
+    # jemand ausdruecklich behalten wollte.
+    try:
+        geschuetzt = _markierte_pfade()
+    except Exception as e:
+        log.warning("cleanup_old_recordings: markierte Aufnahmen nicht lesbar "
+                    "— Aufraeumen ausgesetzt: %s", e)
+        return {"deleted": 0, "freed_bytes": 0, "skipped": 0, "errors": 1,
+                "would_delete": 0, "would_free_bytes": 0,
+                "error": "Datenbank nicht lesbar — markierte Aufnahmen unbekannt"}
     # v4.2-W89: der Probelauf zaehlt in EIGENE Felder. Vorher lief er in
     # `deleted`/`freed_bytes` mit, und ein Aufrufer, der nur `deleted` liest,
     # konnte nicht unterscheiden, ob gerade 40 Aufnahmen geloescht wurden oder
@@ -153,7 +176,7 @@ def cleanup(recordings_dir: str, days: int = 0,
                 st = entry.stat(follow_symlinks=False)
             except OSError:
                 errors += 1; continue
-            if st.st_mtime >= cutoff:
+            if st.st_mtime >= cutoff or os.path.abspath(entry.path) in geschuetzt:
                 skipped += 1; continue
             if dry_run:
                 wuerde += 1; wuerde_frei += st.st_size

@@ -1376,6 +1376,7 @@
     "letzten Zuwachs an Bild oder Bytes — Grenze": "last growth in picture or bytes — limit",
     "level muss 0,1,2 sein": "level must be 0, 1 or 2",
     "liegen keine Daten vor.": "there is no data.",
+    "liegt ausserhalb des Aufnahmeordners": "is outside the recordings folder",
     "liest den Bot": "is scraping the bot",
     "live": "live",
     "live ·": "live ·",

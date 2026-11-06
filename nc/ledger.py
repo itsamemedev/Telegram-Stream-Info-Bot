@@ -61,6 +61,7 @@ import csv
 import hashlib
 import io
 import json
+import math
 import re
 from datetime import datetime, timezone
 
@@ -155,11 +156,27 @@ def verify_chain(conn) -> dict:
         "SELECT * FROM revenue_entries ORDER BY id ASC").fetchall()
     prev = ""
     for r in rows:
-        expect = _hash_row(prev, _payload_of(r))
-        if expect != (r["row_hash"] or ""):
+        ist = r["row_hash"] or ""
+        payload = _payload_of(r)
+        if _hash_row(prev, payload) != ist and not _altbestand_storno(prev, payload, ist):
             return {"ok": False, "checked": len(rows), "broken_at": r["id"]}
         prev = r["row_hash"]
     return {"ok": True, "checked": len(rows), "broken_at": None}
+
+
+def _altbestand_storno(prev, payload, ist) -> bool:
+    """Bis v4.2-W149 wurde storno_of so gehasht, wie es hereinkam — aus dem
+    Deck (JSON) also als Zeichenkette "5". In der Tabelle steht es als
+    INTEGER 5 (SQLite-Typaffinitaet), und die Pruefung rechnete mit der 5:
+    JEDE ueber das Deck gebuchte Storno-Buchung meldete die Kette als
+    gebrochen. Ein Steuer-Journal, das sich selbst als manipuliert ausweist,
+    ist schlimmer als keine Pruefung. Fuer den Altbestand gilt deshalb auch
+    der Hash ueber die Zeichenkette — Betraege, Datum und Plattform bleiben
+    voll gedeckt, nur die Schreibweise der Storno-ID darf abweichen."""
+    if payload.get("storno_of") is None:
+        return False
+    alt = dict(payload, storno_of=str(payload["storno_of"]))
+    return _hash_row(prev, alt) == ist
 
 
 def _payload_of(r) -> dict:
@@ -179,7 +196,26 @@ def _norm_amount(v, field) -> float:
         f = float(str(v).replace("\u20ac", "").replace(",", ".").strip())
     except (TypeError, ValueError):
         raise LedgerError(f"{field}: '{v}' ist keine Zahl") from None
+    # float("nan") und float("inf") sind fuer Python Zahlen. "nan" lief bis
+    # W149 am Negativ-Riegel vorbei (nan < 0 ist falsch) und starb erst am
+    # NOT NULL der Tabelle — "inf" wurde gebucht und machte jede Jahressumme
+    # unendlich.
+    if not math.isfinite(f):
+        raise LedgerError(f"{field}: '{v}' ist kein endlicher Betrag")
     return round(f, 2)
+
+
+def _norm_storno(v):
+    """storno_of als Ganzzahl — so steht es in der Tabelle, so muss es in
+    den Hash. Siehe _altbestand_storno(). Nur fuer gesetzte Werte; "keine
+    Storno-Buchung" entscheidet der Aufrufer."""
+    try:
+        n = int(str(v).strip())
+    except (TypeError, ValueError):
+        raise LedgerError(f"storno_of: '{v}' ist keine Buchungs-ID") from None
+    if n <= 0:
+        raise LedgerError(f"storno_of: '{v}' ist keine Buchungs-ID")
+    return n
 
 
 def add_entry(conn, booked_on, platform, gross_eur, *, kind="payout",
@@ -196,6 +232,12 @@ def add_entry(conn, booked_on, platform, gross_eur, *, kind="payout",
     """
     if not _DATE_RE.match(str(booked_on or "")):
         raise LedgerError("booked_on muss YYYY-MM-DD sein (Datum der Gutschrift)")
+    # Das Muster allein liess "2026-13-45" durch — gebucht, im Quartal "Q5"
+    # summiert und von keiner Monatsauswertung je gefunden.
+    try:
+        datetime.strptime(str(booked_on), "%Y-%m-%d")
+    except ValueError:
+        raise LedgerError(f"booked_on: '{booked_on}' ist kein gueltiges Datum") from None
     p = (platform or "").strip().lower()
     if p not in PLATFORMS:
         raise LedgerError(f"platform muss eine von {PLATFORMS} sein — "
@@ -206,6 +248,11 @@ def add_entry(conn, booked_on, platform, gross_eur, *, kind="payout",
 
     gross = _norm_amount(gross_eur, "gross_eur")
     fee = _norm_amount(fee_eur or 0, "fee_eur")
+    storno_of = None if storno_of in (None, "") else _norm_storno(storno_of)
+    if k != "correction" and fee < 0:
+        raise LedgerError("Eine negative Gebuehr wuerde den Nettobetrag ueber "
+                          "den Bruttobetrag heben — Korrekturen als "
+                          "kind='correction' buchen.")
     if k != "correction" and gross < 0:
         raise LedgerError("Negative Betraege nur als kind='correction' "
                           "(Storno) — eine Einnahme wird nie nachtraeglich "
@@ -215,6 +262,9 @@ def add_entry(conn, booked_on, platform, gross_eur, *, kind="payout",
     net = round(gross - fee, 2)
 
     ensure_schema(conn)
+    if storno_of is not None and conn.execute(
+            "SELECT 1 FROM revenue_entries WHERE id=?", (storno_of,)).fetchone() is None:
+        raise LedgerError(f"storno_of: Buchung {storno_of} existiert nicht")
     year = int(str(booked_on)[:4])
     row = conn.execute(
         "SELECT COALESCE(MAX(seq_no), 0) AS m FROM revenue_entries "
@@ -335,7 +385,13 @@ def crosscheck(conn, year: int, revenue_sql_in: str) -> dict:
     try:
         rows = conn.execute(
             "SELECT amount FROM overlay_events WHERE kind='donation' "
-            "AND COALESCE(platform,'kick') IN " + revenue_sql_in +
+            # Kein COALESCE(platform,'kick'): eine Zeile ohne Plattform ist
+            # Altbestand aus der Zeit, als TikTok-Gifts als 'donation' mit
+            # leerer Plattform geschrieben wurden (B138-GELD). Ueberall sonst
+            # war das seit B138 behoben — hier blaehte es die Gegenprobe auf
+            # und liess eine fehlende Abrechnung wie eine zu viel gebuchte
+            # aussehen.
+            "AND platform IN " + revenue_sql_in +
             " AND ts >= ? AND ts <= ?",
             (f"{year}-01-01", f"{year}-12-31T23:59:59")).fetchall()
         for r in rows:

@@ -3641,15 +3641,21 @@ def test_v40_w13_security():
         "Rate-Limiter vertraut weiter blind dem X-Forwarded-For-Header"
     i = src.find("def _client_ip(")
     body = src[i:i + 500]
-    assert "remote in TRUSTED_PROXIES" in body, "XFF wird nicht an vertraute Proxies gebunden"
+    # v4.2-W149: der Kern liegt in nc/clientip.py und liest XFF von RECHTS.
+    assert "_nc_clientip.echte_ip(" in body and "TRUSTED_PROXIES" in body, \
+        "XFF wird nicht an vertraute Proxies gebunden"
+    from nc import clientip as _CI
+    assert _CI.echte_ip("9.9.9.9", "127.0.0.1", set()) == "9.9.9.9", \
+        "XFF von einem nicht vertrauten Absender wird geglaubt"
 
     # (2) Token/PIN wird wirklich geprueft, mit zeitkonstantem Vergleich.
     #     (W52: Gate akzeptiert jetzt Token ODER PIN; ohne beides bleibt es offen.)
-    g = src[src.find("def _auth_guard("):src.find("def _auth_guard(") + 1600]
+    g = rumpf_ab(src, src.find("def _auth_guard("))
     assert "if not DASHBOARD_TOKEN and not DASHBOARD_PIN:" in g and "401" in g, "Auth wird nicht erzwungen"
     assert "compare_digest" in src, "Token-Vergleich nicht zeitkonstant"
     # Operator + OAuth bleiben erreichbar (sonst Aussperrung/kaputte Flows).
-    assert "_LOOPBACK" in g, "Loopback nicht ausgenommen — Aussperr-Gefahr"
+    # v4.2-W149: lokal heisst Loopback OHNE Weiterleitungskopf (nc/clientip.py).
+    assert "_ist_lokal()" in g, "Loopback nicht ausgenommen — Aussperr-Gefahr"
     for cb in ("/api/kick/oauth/callback", "/api/twitch/oauth/callback",
                "/api/youtube/oauth/callback"):
         assert cb in src, "OAuth-Rueckruf nicht ausgenommen: " + cb
@@ -6071,7 +6077,7 @@ def test_v40_w52_pin_login():
     assert src.count("_sicheres_ziel(request.") == 2, \
         "nicht beide Login-Pfade (GET + POST) gehen ueber die Pruefung"
     # Loopback bleibt frei.
-    assert 'if (request.remote_addr or "") in _LOOPBACK:' in src, "Loopback-Ausnahme verloren"
+    assert "    if _ist_lokal():\n        return None" in src, "Loopback-Ausnahme verloren"
     # SW-Version gebumpt (PWA-Update).
     sw = open("templates/sw.js").read()
     import re as _re
@@ -8509,8 +8515,12 @@ def test_v40_w118_sicherheitsaudit():
         code = "\n".join(z for z in o.splitlines() if not z.lstrip().startswith("#"))
         assert 'if state and _state["csrf"]' not in code, \
             datei + ": state-Pruefung weiterhin ueberspringbar"
-        assert 'if _state["csrf"] and state != _state["csrf"]:' in code, \
+        # v4.2-W149: strenger — ohne ausgegebenen state gilt kein Code, und
+        # jeder state genau einmal.
+        assert 'if not erwartet or not _hmac.compare_digest(str(state or ""), erwartet):' in code, \
             datei + ": state wird nicht erzwungen"
+        assert 'erwartet, _state["csrf"] = _state["csrf"], ""' in code, \
+            datei + ": state ist wiederverwendbar"
 
     # ── S4 ────────────────────────────────────────────────────────────────
     assert "def _sicheres_ziel(roh):" in src, "Redirect-Pruefung fehlt"

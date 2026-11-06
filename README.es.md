@@ -66,8 +66,8 @@ flowchart TB
     TG["📨 Telegram"]:::ein --> BOT
     DC["🎮 Discord<br/>66 comandos"]:::ein --> BOT
     TT["🎥 TikTok<br/>detección en directo + chat"]:::ein --> BOT
-    BOT["bot.py<br/>monolito · 26.372 líneas"]:::core
-    BOT -->|configure| NC["nc/ — 178 módulos<br/>39 blueprints"]:::lib
+    BOT["bot.py<br/>monolito · 26.390 líneas"]:::core
+    BOT -->|configure| NC["nc/ — 179 módulos<br/>39 blueprints"]:::lib
     BOT --> BRAIN["brain/ — 16 agentes vigilantes"]:::brain
     BOT --> DB[("SQLite o MariaDB<br/>+ ajustes")]:::db
     BOT --> PROM["/metrics → Prometheus → Grafana"]:::lib
