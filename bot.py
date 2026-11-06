@@ -18497,6 +18497,61 @@ def _aufnahme_chat_vormerken(output_file, username):
     return vorgemerkt
 
 
+def _alte_beilagen_einsammeln(verz=None):
+    """v4.2-W164: die `.ass`-Beilagen aus W158 in den Nachtrag ueberfuehren.
+
+    Bis W163 lag der Chat einer beim Stopp gesicherten Aufnahme als
+    `<aufnahme>.ass` daneben. Jede solche Beilage wird hier gelesen, ihr Chat
+    fuer die Aufnahme vorgemerkt und die Beilage entfernt — der Nachtrag
+    arbeitet ihn danach ein wie jeden anderen. Gibt es die Aufnahme nicht mehr
+    (geloescht, ins Archiv verschoben), ist die Beilage ein Rest und geht weg.
+    Angefasst wird nur das Format, das der Bot selbst geschrieben hat
+    (nc.chatnachtrag.ist_beilage). -> (uebernommen, entfernt)"""
+    verz = verz or RECORDINGS_DIR
+    uebernommen = entfernt = 0
+    try:
+        namen = sorted(n for n in os.listdir(verz) if n.lower().endswith(".ass"))
+    except OSError as e:
+        log.warning("Aufnahme-Chat: Beilagen in %s nicht lesbar (%s).", verz, e)
+        namen = []
+    for n in namen:
+        ass_pfad = os.path.join(verz, n)
+        try:
+            with open(ass_pfad, encoding="utf-8") as f:
+                text = f.read()
+        except (OSError, UnicodeDecodeError) as e:
+            log.warning("Aufnahme-Chat: Beilage %s nicht lesbar (%s) — bleibt liegen.", n, e)
+            continue
+        if not _nc_chatnachtrag.ist_beilage(text):
+            continue                     # fremde Untertiteldatei — nicht unsere
+        video = _nc_chatnachtrag.beilage_zu(ass_pfad)
+        chat = _nc_chatnachtrag.beilage_lesen(text)
+        if chat and os.path.isfile(video):
+            try:
+                with db_conn() as conn:
+                    row = conn.execute("SELECT username FROM recordings WHERE filepath=?",
+                                       (video,)).fetchone()
+                    _nc_chatnachtrag.vormerken(conn, video, (row["username"] if row else "?"),
+                                               chat)
+                    conn.commit()
+            except Exception as e:
+                log.error("Aufnahme-Chat: Beilage %s nicht uebernommen (%s: %s) — bleibt "
+                          "liegen, naechster Versuch beim naechsten Start.", n,
+                          type(e).__name__, e)
+                continue
+            uebernommen += 1
+        else:
+            entfernt += 1
+        try:
+            os.remove(ass_pfad)
+        except OSError as e:
+            log.warning("Aufnahme-Chat: Beilage %s nicht entfernt (%s).", n, e)
+    if uebernommen or entfernt:
+        log.info("Aufnahme-Chat: %d alte .ass-Beilagen uebernommen (werden jetzt "
+                 "eingearbeitet), %d ohne Aufnahme oder ohne Chat entfernt.", uebernommen, entfernt)
+    return uebernommen, entfernt
+
+
 async def _aufnahme_chat_nachtrag(warte_s=120):
     """v4.2-W163: beim Stopp vorgemerkten Chat in seine Aufnahme einarbeiten.
 
@@ -18504,6 +18559,7 @@ async def _aufnahme_chat_nachtrag(warte_s=120):
     die teuerste Minute) und Eintrag fuer Eintrag mit niedrigster Prioritaet
     (nice 19 im ffmpeg-Bauer) — Aufnahmen und Restreams gehen vor."""
     await asyncio.sleep(warte_s)
+    await asyncio.to_thread(_alte_beilagen_einsammeln)      # v4.2-W164
     try:
         offen = await db_async(_nc_chatnachtrag.offene)
     except Exception as e:

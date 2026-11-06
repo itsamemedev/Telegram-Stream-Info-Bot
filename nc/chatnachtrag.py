@@ -135,3 +135,54 @@ def fehlversuch(conn, eintrag) -> bool:
     conn.execute("UPDATE " + TABELLE + " SET versuche=versuche+1 WHERE id=?",
                  (eintrag["id"],))
     return False
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# v4.2-W164: die Beilagen aus W158 einsammeln
+# ══════════════════════════════════════════════════════════════════════════
+#
+# Bis W163 legte der Stopp-Pfad `<aufnahme>.ass` neben die Datei. Die liegen
+# beim Betreiber noch herum. Statt sie von Hand zu loeschen (und den Chat
+# darin zu verlieren), liest der Nachtrag sie beim Start: Chat vormerken,
+# Beilage entfernen — danach geht er denselben Weg wie jeder andere.
+#
+# Erkannt wird NUR das Format, das nc.aufnahmechat.ass() schreibt: eine
+# fremde Untertiteldatei, die zufaellig neben einer Aufnahme liegt (von Hand
+# hingelegt, aus einem anderen Werkzeug), wird nie angefasst.
+
+import re as _re
+
+_KENNUNG = ("[Script Info]", "Style: Chat,", "[Events]")
+_DIALOG = _re.compile(r"^Dialogue: 0,(\d+):(\d\d):(\d\d(?:\.\d+)?),[^,]*,Chat,,0,0,0,,(.*)$")
+_ZEILE = _re.compile(r"^\{\\c&H[0-9A-Fa-f]+&\}(.*?)\{\\c&H[0-9A-Fa-f]+&\}: (.*)$")
+
+
+def ist_beilage(text) -> bool:
+    """Stammt diese .ass vom Bot (nc.aufnahmechat.ass, W158)?"""
+    kopf = (text or "")[:4000]
+    return all(k in kopf for k in _KENNUNG)
+
+
+def beilage_lesen(text) -> list:
+    """Den Chat aus einer Bot-Beilage zurueckholen -> [(t, wer, text)].
+
+    Jedes Ereignis beginnt mit einer neuen Nachricht und zeigt darunter die
+    noch sichtbaren — die NEUESTE steht unten. Also gehoert zu jedem
+    Ereignis genau seine letzte Zeile. Was nicht in diese Form passt, wird
+    uebersprungen, nicht geraten."""
+    chat = []
+    for zeile in (text or "").splitlines():
+        m = _DIALOG.match(zeile.strip())
+        if not m:
+            continue
+        h, mi, s, inhalt = m.groups()
+        z = _ZEILE.match(inhalt.split("\\N")[-1])
+        if z:
+            chat.append((int(h) * 3600 + int(mi) * 60 + float(s), z.group(1), z.group(2)))
+    return chat
+
+
+def beilage_zu(ass_pfad) -> str:
+    """Der Pfad der Aufnahme, neben der die Beilage liegt (W158: gleicher
+    Stamm, Endung .mp4)."""
+    return os.path.splitext(ass_pfad)[0] + ".mp4"

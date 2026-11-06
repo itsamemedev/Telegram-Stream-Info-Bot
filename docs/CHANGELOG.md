@@ -11,6 +11,26 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+## [4.6.15] — 2026-11-06 · „Leitstand"
+
+### Behoben — alte Beilagen, manuelle Spenden (v4.2 W164)
+
+- **Alte `.ass`-Beilagen sammelt der Bot selbst ein.** Beim Start liest der
+  Chat-Nachtrag jede Beilage, die `nc.aufnahmechat.ass()` geschrieben hat
+  (W158), merkt ihren Chat für die Aufnahme daneben vor und entfernt sie —
+  danach wird er eingearbeitet wie jeder andere. Eine Beilage ohne Aufnahme
+  wird entfernt; fremde Untertiteldateien erkennt `ist_beilage()` und lässt
+  sie liegen. Kein `find … -delete` von Hand mehr.
+- **Manuelle Spenden zählen als Einnahme.** `nc/revenue.PLATFORMS` nannte
+  `"manuell"`, das Deck speichert seit W102 `platform='manual'` — der
+  Eintrag traf keine einzige Zeile. Eine im Deck erfasste PayPal- oder
+  Krypto-Spende fehlte dadurch im Overlay-Spendenziel, in den Listen und in
+  der Gegenprobe des Steuer-Journals. Die Website-Summe rechnet weiterhin
+  getrennt (`DONATION_CURRENT_EUR` + manuelle Summe), es wird nichts doppelt
+  gezählt. Im Overlay tragen sie das Abzeichen DIREKT.
+
+Vertrag `_test_v42_w164_alles_auf_einmal`, 8 von 8 Mutationsproben gefangen.
+
 ## [4.6.14] — 2026-11-06 · „Leitstand"
 
 ### Geändert — Chat-Nachtrag statt `.ass`-Beilage (v4.2 W163)

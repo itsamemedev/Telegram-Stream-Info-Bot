@@ -1513,12 +1513,14 @@ def _test_w20_overlay_audio_und_geld():
     # (1) Das Einnahmen-Gate hat jetzt EINE Quelle. Vorher stand es als
     # Konstantenpaar im Monolithen und money.py spiegelte es ueber ctx.cfg —
     # zwei Orte fuer eine Wahrheit, aus der ein Drift wird.
-    assert R.PLATFORMS == ("kick", "twitch", "youtube", "manuell")
+    # ANKER GEWANDERT (v4.2-W164, nicht der Vertrag): "manual" ist der Wert,
+    # den nc/routes/money.py speichert — "manuell" kam nie vor.
+    assert R.PLATFORMS == ("kick", "twitch", "youtube", "manual")
     assert "tiktok" not in R.PLATFORMS, "fremdes Geld waere Einnahme"
-    assert R.is_revenue_platform("KICK ") and R.is_revenue_platform("manuell")
+    assert R.is_revenue_platform("KICK ") and R.is_revenue_platform("manual")
     assert not R.is_revenue_platform("tiktok") and not R.is_revenue_platform("")
     assert not R.is_revenue_platform(None)
-    assert R.sql_in() == "('kick','twitch','youtube','manuell')"
+    assert R.sql_in() == "('kick','twitch','youtube','manual')"
     # TikTok darf sehr wohl ins Sendebild — Follows sind Reichweite, kein Geld.
     assert "tiktok" in R.OV_PLATFORMS
     assert R.normalisieren("TikTok") == "tiktok"
@@ -29697,7 +29699,11 @@ def _test_v42_w163_chat_nachtrag_statt_beilage():
     src = open("bot.py", encoding="utf-8").read()
     baum = _ast.parse(src)
     assert not any(getattr(n, "name", "") == "_aufnahme_chat_beilegen" for n in baum.body)
-    assert not any(isinstance(k, _ast.Constant) and k.value == ".ass" for k in _ast.walk(baum)), \
+    # ANKER GEWANDERT (v4.2-W164): _alte_beilagen_einsammeln LIEST die alten
+    # Beilagen (und entfernt sie) — geschrieben wird nirgends eine.
+    assert not any(isinstance(k, _ast.Constant) and k.value == ".ass"
+                   for n in baum.body if getattr(n, "name", "") != "_alte_beilagen_einsammeln"
+                   for k in _ast.walk(n)), \
         "eine Aufnahme bekommt wieder eine .ass-Beilage"
     st = rumpf_ab(src, src.index("async def _aufnahme_beim_stopp_sichern("))
     assert "_aufnahme_chat_vormerken, output_file, username" in st
@@ -29738,6 +29744,7 @@ def _test_v42_w163_chat_nachtrag_statt_beilage():
     ns = {"_nc_aufnahmechat": A, "_nc_chatnachtrag": N, "os": _os, "log": _lg.getLogger("w163"),
           "db_conn": _Ctx, "db_async": _db_async, "clean_username": lambda u: u.lstrip("@").lower(),
           "_aufnahme_chat_modus": lambda: modus[0], "_aufnahme_chat_einarbeiten": _einarbeiten,
+          "_alte_beilagen_einsammeln": lambda: (0, 0),     # W164, eigener Vertrag
           "asyncio": type("A", (), {"sleep": staticmethod(_schlaf),
                                     "to_thread": staticmethod(_thread)})}
     exec(compile(_ast.Module(body=teile, type_ignores=[]), "bot.py", "exec"), ns)
@@ -29828,6 +29835,91 @@ def _test_v42_w163_chat_nachtrag_statt_beilage():
         _sh.rmtree(heim, ignore_errors=True)
     ok("W163: Chat aus dem Stopp in der Datenbank vorgemerkt und beim Start eingearbeitet — "
        "keine .ass-Beilage mehr")
+
+
+def _test_v42_w164_alles_auf_einmal():
+    """v4.2-W164: die alten .ass-Beilagen gehen in den Nachtrag statt auf
+    die Halde, und manuell erfasste Spenden zaehlen als Einnahme — die
+    Positivliste nannte "manuell", gespeichert wird "manual"."""
+    import ast as _ast
+    import logging as _lg
+    import os as _os
+    import shutil as _sh
+    import sqlite3 as _sq
+    import pruefhilfen as P
+    from nc import aufnahmechat as A
+    from nc import chatnachtrag as N
+    from nc import revenue as R
+
+    # (1) Spenden: die Liste nennt den Wert, den das Deck speichert.
+    money = open("nc/routes/money.py", encoding="utf-8").read()
+    assert "'manual')" in money and "manual" in R.PLATFORMS and "manuell" not in R.PLATFORMS
+    assert "tiktok" not in R.PLATFORMS, "fremdes Geld waere Einnahme"
+    c = _sq.connect(":memory:"); c.row_factory = _sq.Row
+    c.execute("CREATE TABLE overlay_events (kind TEXT, amount TEXT, platform TEXT)")
+    c.executemany("INSERT INTO overlay_events VALUES ('donation', ?, ?)",
+                  [("10", "kick"), ("25,50", "manual"), ("99", "tiktok"), ("7", None)])
+    summe = sum(float(r[0].replace(",", ".")) for r in c.execute(
+        "SELECT amount FROM overlay_events WHERE kind='donation' AND platform IN " + R.sql_in()))
+    assert summe == 35.5, "eine manuelle Spende fehlt im Spendenziel (oder TikTok zaehlt)"
+    # Die Website-Summe rechnet manuell getrennt — sie darf die Liste NICHT
+    # benutzen, sonst zaehlte jede manuelle Spende doppelt.
+    src = open("bot.py", encoding="utf-8").read()
+    st = src[src.index('goal = _nc_envnum.env_float("DONATION_GOAL_EUR"'):]
+    st = st[:st.index("_pp = os.getenv")]
+    assert "cur += _manual_donations_total()" in st and "sql_in" not in st
+    ov = open("templates/overlay.html", encoding="utf-8").read()
+    assert "manual:'DIREKT'" in ov
+
+    # (2) Alte Beilagen: nur das Bot-Format, Rundlauf aus nc.aufnahmechat.ass.
+    chat = [(0.5, "Sash", "Echt {nervt} ihn"), (1.0, "Love", "chill: ja"), (9.75, "Ä", "drei")]
+    roh = A.ass(chat)
+    assert N.ist_beilage(roh) and not N.ist_beilage("[Script Info]\nTitle: Film\n[Events]")
+    zurueck = N.beilage_lesen(roh)
+    assert [(t, w) for t, w, _x in zurueck] == [(0.5, "Sash"), (1.0, "Love"), (9.75, "Ä")]
+    assert zurueck[1][2] == "chill: ja" and zurueck[0][2] == "Echt (nervt) ihn", zurueck
+
+    # (3) Einsammeln aus bot.py, gegen echte Dateien und eine echte SQLite.
+    baum = _ast.parse(src)
+    fn = next(n for n in baum.body if getattr(n, "name", "") == "_alte_beilagen_einsammeln")
+    na = rumpf_ab(src, src.index("async def _aufnahme_chat_nachtrag("))
+    assert na.index("_alte_beilagen_einsammeln") < na.index("_nc_chatnachtrag.offene"), \
+        "die Beilagen werden erst NACH dem Lesen der offenen Eintraege eingesammelt"
+    heim = P.verzeichnis()
+    db = _os.path.join(heim, "n.db")
+
+    class _Ctx:
+        def __enter__(self):
+            self.c = _sq.connect(db); self.c.row_factory = _sq.Row
+            return self.c
+        def __exit__(self, t, *a):
+            if t is None:
+                self.c.commit()
+            self.c.close()
+    ns = {"os": _os, "log": _lg.getLogger("w164"), "db_conn": _Ctx, "RECORDINGS_DIR": heim,
+          "_nc_chatnachtrag": N}
+    exec(compile(_ast.Module(body=[fn], type_ignores=[]), "bot.py", "exec"), ns)
+    try:
+        v = _os.path.join(heim, "rec.mp4"); P.attrappe(v, 100)
+        with _Ctx() as cc:
+            N.ensure_schema(cc)
+            cc.execute("CREATE TABLE recordings (username TEXT, filepath TEXT, file_size INTEGER)")
+            cc.execute("INSERT INTO recordings VALUES ('anna', ?, 100)", (v,))
+        for name, inhalt in (("rec.ass", roh), ("weg.ass", roh),
+                             ("film.ass", "[Script Info]\nTitle: Film\n[Events]\n")):
+            with open(_os.path.join(heim, name), "w", encoding="utf-8") as fh:
+                fh.write(inhalt)
+        assert ns["_alte_beilagen_einsammeln"]() == (1, 1)
+        assert sorted(_os.listdir(heim)) == ["film.ass", "n.db", "rec.mp4"], \
+            "eine Beilage bleibt liegen — oder eine fremde Untertiteldatei wurde geloescht"
+        with _Ctx() as cc:
+            e = N.offene(cc)
+        assert [(x["pfad"], x["nutzer"]) for x in e] == [(v, "anna")], e
+        assert N.lesen(e[0]["chat_roh"]) == zurueck and N.unveraendert(e[0])
+        assert ns["_alte_beilagen_einsammeln"]() == (0, 0), "zweiter Lauf tut wieder etwas"
+    finally:
+        _sh.rmtree(heim, ignore_errors=True)
+    ok("W164: alte .ass-Beilagen gehen in den Nachtrag, manuelle Spenden zaehlen als Einnahme")
 
 
 def _test_v42_w155_weiche_steckt():
@@ -30343,6 +30435,7 @@ def main():
     _test_v42_w161_tiefengrund()
     _test_v42_w162_zweiter_durchgang()
     _test_v42_w163_chat_nachtrag_statt_beilage()
+    _test_v42_w164_alles_auf_einmal()
     _test_v42_w60_azrael_cooldown_je_plattform()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)

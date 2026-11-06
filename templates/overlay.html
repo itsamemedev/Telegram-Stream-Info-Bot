@@ -462,7 +462,7 @@ function showBubble(text){
 }
 
 /* V37-OVMP: Plattform-Badge (kick|twitch|youtube|tiktok) */
-const _PLBL={kick:'KICK',twitch:'TWITCH',youtube:'YT',tiktok:'TIKTOK'};
+const _PLBL={kick:'KICK',twitch:'TWITCH',youtube:'YT',tiktok:'TIKTOK',manual:'DIREKT'};
 function pBadge(p){
   const k=String(p||'kick').toLowerCase();
   const lbl=_PLBL[k]||k.toUpperCase().slice(0,6);

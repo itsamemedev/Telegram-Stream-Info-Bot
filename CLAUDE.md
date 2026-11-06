@@ -26,7 +26,7 @@ benutzt, berät an der Lage vorbei.**
 
 ## Die eine Regel
 
-`bot.py` hat **26.996 Zeilen / 1,2 MB ≈ 295.000 Token**. Diese Datei wird
+`bot.py` hat **27.052 Zeilen / 1,2 MB ≈ 295.000 Token**. Diese Datei wird
 **nie** ganz gelesen und **nie** blind durchsucht. Erst fragen wo etwas steht,
 dann den Ausschnitt holen:
 
@@ -42,7 +42,7 @@ dann den Ausschnitt holen:
     python tools/ncpatch.py docs                           # Doku-Zahlen gegen den Quelltext
 
 `find` antwortet aus `.claude/INDEX.md` — 379 Routen (34 in `bot.py`, 345 in
-`nc/routes/`), 66 Slash-Commands, 615 Funktionen mit Zeilennummern. Nach Änderungen an Routen, Commands oder
+`nc/routes/`), 66 Slash-Commands, 616 Funktionen mit Zeilennummern. Nach Änderungen an Routen, Commands oder
 Top-Level-Funktionen `map` neu laufen lassen. Details: Skill `nc-navigation`.
 
 Für „wer ruft das auf?" und „was ist der Typ?" ist der Sprachserver billiger als
@@ -1209,7 +1209,7 @@ Key benutzte.
 
 ## Geld — nicht vermischen
 
-`REVENUE_PLATFORMS = ("kick","twitch","youtube","manuell")`. **TikTok gehört nie
+`REVENUE_PLATFORMS = ("kick","twitch","youtube","manual")`. **TikTok gehört nie
 dazu**: TikTok-Gifts gehen an den getrackten Streamer, nicht an eigene Kanäle.
 Sie werden als `kind="gift"` gespeichert, nie als `donation`, und laufen in keine
 Geldsumme.

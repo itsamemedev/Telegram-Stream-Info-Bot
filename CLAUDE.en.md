@@ -231,7 +231,7 @@ only on the Telegram path, because the Flask route used the right key.
 
 ## Money — do not mix it up
 
-`REVENUE_PLATFORMS = ("kick","twitch","youtube","manuell")`. **TikTok never
+`REVENUE_PLATFORMS = ("kick","twitch","youtube","manual")`. **TikTok never
 belongs there**: TikTok gifts go to the tracked streamer, not to our own
 channels. They are stored as `kind="gift"`, never as `donation`, and never enter
 a monetary total.
