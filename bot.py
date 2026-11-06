@@ -9269,6 +9269,9 @@ async def _aufnahme_beim_stopp_sichern(proc, tid, username, output_file,
     beendet = await _nc_kind.beenden(proc, term_s=_env_int("STALL_KILL_GRACE_SECS", 8))
     ende = datetime.now(timezone.utc)
     groesse = None
+    # v4.2-W158 (Review #203): auch eine beim Stopp gesicherte Aufnahme
+    # behaelt ihren Chat — als Beilage, nicht eingebrannt.
+    await asyncio.to_thread(_aufnahme_chat_beilegen, output_file, username)
     if _nc_lage.sichern_beim_stopp(output_file):
         try:
             groesse = os.path.getsize(output_file)
@@ -18377,6 +18380,27 @@ def _aufnahme_chat_beginnen(username, output_file, proc):
         _AUFNAHME_CHAT_WAECHTER[u] = _spawn(_restream_chat_guardian(
             None, u, solange=lambda: _nc_aufnahmechat.laeuft(u),
             etikett="Aufnahme @%s" % u), name=f"aufnahme-chat-{u}")
+
+
+def _aufnahme_chat_beilegen(output_file, username):
+    """v4.2-W158 (Review #203): der Chat einer beim Stopp abgebrochenen
+    Aufnahme. Einbrennen wuerde das Herunterfahren um Minuten verzoegern —
+    deshalb liegt er als `<aufnahme>.ass` daneben; VLC und mpv laden eine
+    gleichnamige Untertiteldatei von selbst. -> Pfad oder ""."""
+    chat = _nc_aufnahmechat.beenden(output_file)
+    ziel = ""
+    if chat and _aufnahme_chat_modus() != "aus" and os.path.isfile(output_file):
+        ziel = os.path.splitext(output_file)[0] + ".ass"
+        try:
+            with open(ziel, "w", encoding="utf-8") as f:
+                f.write(_nc_aufnahmechat.ass(chat))
+            log.info("Aufnahme-Chat @%s: %d Nachrichten beim Stopp als %s beigelegt.",
+                     username, len(chat), os.path.basename(ziel))
+        except OSError as e:
+            log.error("Aufnahme-Chat @%s: Beilage %s nicht geschrieben (%s) — der Chat "
+                      "dieser Aufnahme ist verloren.", username, ziel, e)
+            ziel = ""
+    return ziel
 
 
 async def _aufnahme_fertigmachen(output_file, username):

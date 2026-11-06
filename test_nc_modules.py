@@ -29009,11 +29009,14 @@ def _test_v42_w158_chat_in_der_aufnahme():
     # (4) Die Nachbearbeitung aus bot.py ausfuehren: Erfolg ersetzt die Datei,
     # ein Fehlschlag laesst das Original stehen, Reste bleiben nie liegen.
     teile = [n for n in baum.body if getattr(n, "name", "") in
-             ("_aufnahme_chat_einarbeiten", "_ffprobe_masse")]
-    assert len(teile) == 2
+             ("_aufnahme_chat_einarbeiten", "_ffprobe_masse", "_aufnahme_chat_beilegen")]
+    assert len(teile) == 3
     ns = {"log": _lg.getLogger("w158"), "os": _os, "subprocess": _sp, "shutil": _sh,
           "json": _json, "_time_mod": _t, "_nc_aufnahmechat": A,
-          "_env_int": lambda n, d: d}
+          "_env_int": lambda n, d: d, "_aufnahme_chat_modus": lambda: "einbrennen"}
+    # Review #203: der Stopp-Pfad legt den Chat bei, statt ihn zu verlieren.
+    st = rumpf_ab(src, src.index("async def _aufnahme_beim_stopp_sichern("))
+    assert "_aufnahme_chat_beilegen, output_file, username" in st
     exec(compile(_ast.Module(body=teile, type_ignores=[]), "bot.py", "exec"), ns)
     heim = P.verzeichnis()
     try:
@@ -29040,6 +29043,13 @@ def _test_v42_w158_chat_in_der_aufnahme():
         typen = _sp.run(["ffprobe", "-v", "error", "-show_entries", "stream=codec_name",
                          "-of", "csv=p=0", v], capture_output=True, text=True).stdout.split()
         assert neu and "mov_text" in typen, typen
+        # Stopp-Pfad: Beilage neben der Datei, Sitzung danach weg.
+        A.beginnen("w158", v, 0.0)
+        A.notieren("w158", "Sash", "beim Stopp", 1.0)
+        bl = ns["_aufnahme_chat_beilegen"](v, "w158")
+        assert bl == _os.path.join(heim, "rec.ass") and "beim Stopp" in open(bl, encoding="utf-8").read()
+        assert ns["_aufnahme_chat_beilegen"](v, "w158") == "" and v not in A.SITZUNGEN
+        _os.remove(bl)
         # Kaputte Eingabe: Original bleibt, nichts liegt herum.
         k = _os.path.join(heim, "kaputt.mp4")
         with open(k, "wb") as f:
