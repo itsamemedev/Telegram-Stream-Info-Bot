@@ -28749,7 +28749,9 @@ def _test_v42_w154_verschlossen_cluster_decimal():
     e = rumpf_ab(src, src.index("        if file_exists and file_size > 0:"))
     assert "_nc_geschuetzt.zuruecksetzen(username)" in e[:600], e[:600]
     d = rumpf_ab(src, src.index("def _restream_durchreicher("))
-    assert d.index("_nc_geschuetzt.verschlossen(username)") < d.index("_nc_durch.adresse(username)")
+    # ANKER GEWANDERT (v4.2-W165): ruhend statt verschlossen — die Sperre gilt
+    # fuer die Ruhezeit, nicht fuer das ganze Live (eigener Vertrag W165).
+    assert d.index("_nc_geschuetzt.ruhend(username,") < d.index("_nc_durch.adresse(username)")
 
     # (3) Die Sendebruecke meldet einen Zubringer, der ohne Bild stirbt, und
     # beendet nach unklar_s — statt ewig Pausenbild ohne eine Logzeile.
@@ -29922,6 +29924,57 @@ def _test_v42_w164_alles_auf_einmal():
     ok("W164: alte .ass-Beilagen gehen in den Nachtrag, manuelle Spenden zaehlen als Einnahme")
 
 
+def _test_v42_w165_durchreicher_nach_ruhezeit():
+    """v4.2-W165: „Die Quelle ist aber live auf TikTok" — und der Restream
+    zeigte nur AZRAEL und Chat. Drei gescheiterte Aufnahmeversuche sperrten
+    den Durchreicher fuer das ganze Live; jetzt nur fuer die Ruhezeit."""
+    import ast as _ast
+    import logging as _lg
+    from nc import geschuetzt as G
+    from nc import meldetakt as M
+
+    src = open("bot.py", encoding="utf-8").read()
+    baum = _ast.parse(src)
+    fn = next(n for n in baum.body if getattr(n, "name", "") == "_restream_durchreicher")
+    assert "verschlossen" not in _ast.unparse(fn), \
+        "der Durchreicher bleibt wieder fuer das ganze Live gesperrt"
+    uhr = [1000.0]
+
+    class _Durch:
+        @staticmethod
+        def werkzeug():
+            return ("yt-dlp", "/usr/bin/yt-dlp")
+
+        @staticmethod
+        def adresse(u):
+            return "durchreicher://" + u
+
+    class _Cfg:
+        @staticmethod
+        def bruecke(_x):
+            return (True, "")
+    ns = {"os": __import__("os"), "RESTREAM_MULTI_MODE": "tee", "_nc_rscfg": _Cfg,
+          "_nc_durch": _Durch, "_nc_geschuetzt": G, "_nc_meldetakt": M,
+          "_time_mod": type("U", (), {"monotonic": staticmethod(lambda: uhr[0])}),
+          "log": _lg.getLogger("w165")}
+    exec(compile(_ast.Module(body=[fn], type_ignores=[]), "bot.py", "exec"), ns)
+    f = ns["_restream_durchreicher"]
+    G._STAND.clear(); M.ZUSTAND.clear()
+    try:
+        for _i in range(G.SCHWELLE):
+            G.vermerken("caro", uhr[0])
+        assert G.verschlossen("caro") and G.ruhend("caro", uhr[0])
+        assert f("caro") is None, "in der Ruhezeit laeuft der Durchreicher trotzdem"
+        uhr[0] += max(G.RUHE_S) + 1
+        assert G.verschlossen("caro"), "Vorbedingung: der Raum gilt weiter als verschlossen"
+        assert f("caro") == "durchreicher://caro", \
+            "nach der Ruhezeit bleibt der Durchreicher fuer das ganze Live gesperrt"
+        assert f("anderer") == "durchreicher://anderer"
+    finally:
+        G._STAND.clear(); M.ZUSTAND.clear()
+    ok("W165: der Durchreicher wartet die Ruhezeit ab, nicht das ganze Live")
+
+
 def _test_v42_w155_weiche_steckt():
     """v4.2-W155: gemeldet „Wir haben in den Restreams immer noch kein Bild" —
     Overlay und Chat liefen, das Videofeld zeigte das Pausenbild. Ein
@@ -30436,6 +30489,7 @@ def main():
     _test_v42_w162_zweiter_durchgang()
     _test_v42_w163_chat_nachtrag_statt_beilage()
     _test_v42_w164_alles_auf_einmal()
+    _test_v42_w165_durchreicher_nach_ruhezeit()
     _test_v42_w60_azrael_cooldown_je_plattform()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)

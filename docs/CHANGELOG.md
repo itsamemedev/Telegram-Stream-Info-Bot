@@ -31,6 +31,20 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 Vertrag `_test_v42_w164_alles_auf_einmal`, 8 von 8 Mutationsproben gefangen.
 
+### Behoben — Restream zeigte nur AZRAEL und Chat (v4.2 W165)
+
+- Gemeldet am 06.11. mit Screenshot (@caro94erlafamilia, Text-Modus): „Die
+  Quelle ist aber live auf TikTok." Overlay, Chat und AZRAEL liefen, das
+  Videofeld blieb dunkel, kein Quellton.
+- Eigener Anteil: hatte die Aufnahme dreimal in Folge „nicht live"
+  bekommen, sperrte `_restream_durchreicher` den Durchreicher (yt-dlp/
+  streamlink ziehen den Stream selbst) für das **ganze restliche Live** —
+  gelöst nur durch eine gelungene Aufnahme oder Offline. Der letzte Weg, der
+  ohne Stream-Adresse noch ein Bild bringen kann, wurde nie wieder versucht.
+- Jetzt gilt die Sperre nur für die Ruhezeit (2–10 min, dieselbe wie bei der
+  Aufnahme); danach versucht der Durchreicher es wieder. Vertrag
+  `_test_v42_w165_durchreicher_nach_ruhezeit`, beide Mutationsproben gefangen.
+
 ## [4.6.14] — 2026-11-06 · „Leitstand"
 
 ### Geändert — Chat-Nachtrag statt `.ass`-Beilage (v4.2 W163)

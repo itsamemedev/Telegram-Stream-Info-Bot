@@ -27,13 +27,15 @@ CHANGELOG = [
         "version": "4.6.15",
         "date": "2026-11",
         "title": "Leitstand",
-        # Patch-Fassung von 4.6: alte Beilagen einsammeln, manuelle Spenden (W164).
+        # Patch-Fassung von 4.6: alte Beilagen einsammeln, manuelle Spenden (W164),
+        # Durchreicher nach der Ruhezeit (W165).
         "highlights": [
             "Alte .ass-Beilagen neben Aufnahmen sammelt der Bot beim Start selbst ein: der Chat darin wird in die Aufnahme eingearbeitet, die Datei verschwindet",
             "Eine Beilage ohne zugehörige Aufnahme wird entfernt; fremde Untertiteldateien bleiben unangetastet",
             "Im Deck eingetragene Spenden (PayPal, Krypto) zählen jetzt im Spendenziel des Overlays, in den Spendenlisten und in der Gegenprobe des Steuer-Journals",
             "Ursache: die Einnahmenliste nannte „manuell\", gespeichert wurde „manual\" — der Eintrag traf nie eine Zeile",
             "Die Website-Summe rechnet manuelle Spenden weiterhin getrennt — nichts wird doppelt gezählt; im Overlay tragen sie das Abzeichen DIREKT",
+            "Restream ohne Bild bei laufendem TikTok-Live: nach drei gescheiterten Aufnahmeversuchen blieb der Durchreicher für das ganze Live gesperrt — jetzt nur für die Ruhezeit von 2 bis 10 Minuten",
         ],
     },
     {

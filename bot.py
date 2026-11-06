@@ -25649,13 +25649,20 @@ def _restream_durchreicher(username):
         grund = "die Sendebruecke ist aus (RESTREAM_BRUECKE=0) — der Durchreicher braucht sie"
     elif not _nc_durch.werkzeug():
         grund = "weder yt-dlp noch streamlink installiert — sudo bash tools/update.sh"
-    elif _nc_geschuetzt.verschlossen(username):
+    elif _nc_geschuetzt.ruhend(username, _time_mod.monotonic()):
         # v4.2-W154: der Durchreicher fragt mit denselben Cookies — er sieht
-        # denselben verschlossenen Raum, und die Sendebruecke zeigte dann
-        # dauerhaft das Pausenbild ohne Ton.
-        grund = ("TikTok gibt fuer diesen Raum keine Stream-Adresse heraus (Abo/18+ "
-                 "oder fuer diese Sitzung gesperrt) — COOKIE_FILE mit einem "
-                 "berechtigten, angemeldeten Konto")
+        # denselben verschlossenen Raum. v4.2-W165: aber nur fuer die RUHEZEIT
+        # (2–10 min, dieselbe wie die Aufnahme), nicht fuer das ganze Live.
+        # Hier stand `verschlossen()`: drei gescheiterte Aufnahmeversuche
+        # sperrten den Durchreicher bis zum Ende der Sendung, geloest nur von
+        # einer gelungenen Aufnahme. Gemeldet am 06.11.: „Die Quelle ist aber
+        # live auf TikTok" — und der Restream zeigte nur AZRAEL und Chat. Der
+        # letzte Weg, der ohne Adresse noch ein Bild bringen kann, wurde nie
+        # wieder versucht.
+        grund = ("TikTok gab fuer diesen Raum zuletzt keine Stream-Adresse heraus "
+                 "(Abo/18+ oder fuer diese Sitzung gesperrt) — neuer Versuch nach der "
+                 "Ruhezeit; dauerhaft hilft COOKIE_FILE mit einem berechtigten, "
+                 "angemeldeten Konto")
     else:
         try:
             adr = _nc_durch.adresse(username)

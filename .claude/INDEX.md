@@ -539,11 +539,11 @@ Zahlen sind Zeilennummern für `ncpatch show` / `ncpatch sym`.
 ## Top-Level-Symbole in bot.py (563 Funktionen, 3 Klassen)
 
 ```
- 25753-25775  _abbruch_datenbank_unlesbar
+ 25760-25782  _abbruch_datenbank_unlesbar
   2667-2668   _abo_key
   2688-2706   _abo_probe_dump
- 25871-25887  _abschied_wachen
- 25890-25908  _abschluss
+ 25878-25894  _abschied_wachen
+ 25897-25915  _abschluss
  16297-16304  _ad_allowlist
  17299-17305  _agent_for
  17308-17324  _ai_telemetry
@@ -569,8 +569,8 @@ Zahlen sind Zeilennummern für `ncpatch show` / `ncpatch sym`.
  24700-24702  _aufnahme_deckel
  18604-18623  _aufnahme_fertigmachen
   9307-9325   _aufnahme_platz_frei
- 25835-25855  _aufnahmen_abschliessen
- 25778-25832  _aufraeumen
+ 25842-25862  _aufnahmen_abschliessen
+ 25785-25839  _aufraeumen
  10122-10191  _auth_cookie
  10080-10118  _auth_guard
   1908-1913   _auto_on
@@ -594,15 +594,15 @@ Zahlen sind Zeilennummern für `ncpatch show` / `ncpatch sym`.
  21882-21895  _backup_loop
  24789-24793  _betrieb
  25524-25533  _brain_crowdsec_snap
- 25680-25683  _brain_db_health
+ 25687-25690  _brain_db_health
  21588-21597  _brain_growth_loop
  10517-10544  _brain_growth_snapshot
   2592-2612   _brain_hint_delay
  25596-25631  _brain_moderation_snap
   6509-6537   _brain_notify
- 25686-25708  _brain_recording_snap
+ 25693-25715  _brain_recording_snap
  25536-25593  _brain_restream_health
- 25711-25724  _brain_tiktok_status_snap
+ 25718-25731  _brain_tiktok_status_snap
  11816-11833  _browser_push
   6549-6636   _build_daily_summary
  14278-14282  _build_restream_cmd
@@ -693,7 +693,7 @@ Zahlen sind Zeilennummern für `ncpatch show` / `ncpatch sym`.
   5951-5985   _extract_file_payload
   2300-2302   _extract_urls_from_streamurl_node
  21024-21031  _f2b_sudo_hint
- 25911-25974  _fatal_vom_botteil
+ 25918-25981  _fatal_vom_botteil
  24705-24720  _fd_grenze_anheben
   4726-4736   _fehler_text
  10626-10644  _fetch_proxy_list
@@ -718,8 +718,8 @@ Zahlen sind Zeilennummern für `ncpatch show` / `ncpatch sym`.
  13703-13721  _htmlov_screenshot_cmd
  18064-18074  _httpx_proxy
  12585-12597  _in_quiet_hours
- 25739-25750  _init_db_oder_abbruch
- 26558-26589  _install_fast_eventloop
+ 25746-25757  _init_db_oder_abbruch
+ 26565-26596  _install_fast_eventloop
   9818-9872   _install_fast_json
  12179-12195  _install_faulthandler
  19686-19695  _intel_ensure_schema
@@ -743,7 +743,7 @@ Zahlen sind Zeilennummern für `ncpatch show` / `ncpatch sym`.
   6657-6660   _kick_slug
  11629-11636  _kick_user_token
   7867-7892   _kick_ws_pause
- 25727-25736  _kickmod_boot
+ 25734-25743  _kickmod_boot
   4181-4184   _kind_from_filename
  12614-12616  _latest_popularity
   1744-1753   _laufstand
@@ -854,7 +854,7 @@ Zahlen sind Zeilennummern für `ncpatch show` / `ncpatch sym`.
  18771-18902  _restream_chat_guardian
  13177-13249  _restream_chat_push
  13306-13315  _restream_chat_push_async
- 25634-25677  _restream_durchreicher
+ 25634-25684  _restream_durchreicher
  13724-13833  _restream_html_overlay_start
  13836-13849  _restream_html_overlay_stop
  12962-12985  _restream_overlay_files
@@ -873,7 +873,7 @@ Zahlen sind Zeilennummern für `ncpatch show` / `ncpatch sym`.
   5989-6106   _run_ai_call
  12307-12320  _run_async_from_flask
  21064-21067  _run_priv
- 26546-26554  _run_selfcheck_and_exit
+ 26553-26561  _run_selfcheck_and_exit
  21787-21798  _s3_client
   8089-8140   _safe_send
   4859-4875   _sample_net_throughput
@@ -884,7 +884,7 @@ Zahlen sind Zeilennummern für `ncpatch show` / `ncpatch sym`.
  23487-23526  _screen_full
  11680-11717  _sec_headers
   2295-2297   _select_stream_from_data_section
- 26266-26543  _selfcheck
+ 26273-26550  _selfcheck
   8961-8995   _send_live_notice
   1404-1408   _should_defer_upload
  22295-22331  _shrink_for_discord
@@ -894,7 +894,7 @@ Zahlen sind Zeilennummern für `ncpatch show` / `ncpatch sym`.
  25346-25365  _sign_health_loop
   4609-4634   _sitzung_bestimmen
   7764-7775   _spawn
- 26971-27001  _spawn_from_flask
+ 26978-27008  _spawn_from_flask
  24754-24760  _speicher_maps
  24763-24778  _speicher_pflegen
  18076-18356  _start_chat_listener
@@ -1056,7 +1056,7 @@ Zahlen sind Zeilennummern für `ncpatch show` / `ncpatch sym`.
   4739-4772   log_event
   1769-1802   log_recording_failure
   7317-7366   logs_cmd
- 25977-26256  main
+ 25984-26263  main
   6145-6168   on_ai_media
   7443-7469   on_ai_reply
   7472-7501   on_azrael_mention
