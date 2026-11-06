@@ -393,6 +393,11 @@ class Bruecke:
         # die er auf seiner Bild-PID gebracht hat — fuer die Weichen-Wache.
         self._quelle_erste = None
         self._kf_gesehen = 0
+        # v4.2-W160: Rueckstau beim Sender ist keine stumme Quelle. Seit wann
+        # haengt ein Schreibvorgang (None = keiner), und wann endete zuletzt
+        # einer, der laenger hing.
+        self._schreibt_seit = None
+        self._gestaut_bis = 0.0
         # Zustand der Wache — hier gesetzt, nicht erst in _wache, damit jeder
         # Schritt auch einzeln (im Vertrag) einen definierten Anfang hat.
         self._naechste = erste_url
@@ -489,7 +494,15 @@ class Bruecke:
             # verwirft ein Paket. Ein langsamer Sender blockiert so nur die
             # Zubringer, und die laufen mit -re ohnehin im Takt.
             try:
-                os.write(self._fd, raus)
+                t_w = self._uhr()
+                self._schreibt_seit = t_w
+                try:
+                    os.write(self._fd, raus)
+                finally:
+                    self._schreibt_seit = None
+                fertig = self._uhr()
+                if fertig - t_w > 0.5:
+                    self._gestaut_bis = fertig
             except OSError as e:
                 # Laut genug: das Ende des Senders meldet der Manager mit
                 # seinem stderr. Hier nur der Zusammenhang, auf info.
@@ -754,12 +767,23 @@ class Bruecke:
         if self._steckt(zub, jetzt):
             return True
         zl = self._zuletzt.get(QUELLE)
+        # v4.2-W160: haengt gerade ein Schreibvorgang, liest der SENDER nicht —
+        # die Quelle liefert womoeglich einwandfrei. Gemessen im HTML-Modus:
+        # der Sender tastet beim Start die Overlay-FIFO ab (1 Bild/s, Sekunden
+        # lang), die Bruecke hing im os.write, meldete „Quelle schweigt seit
+        # 3 s", schoss den gesunden Zubringer ab, und danach stand das
+        # Quellbild im Sender eingefroren — gesendet wurden nur noch Overlay,
+        # Chat und AZRAEL. Genau das gemeldete „nur AZRAEL und Chat".
+        if self._schreibt_seit is not None:
+            return False
         # Vor dem ersten Byte gilt die Anlaufzeit, nicht die Luecke:
         # ffmpeg probt die Quelle (-analyzeduration bis 10 s), und
         # ein Zubringer, der nach luecke_s abgeschossen wird, kaeme
         # bei einer zaehen HLS-Quelle nie ueber das Proben hinaus.
         grenze = self.luecke_s if zl is not None else self.anlauf_s
-        seit = zl or self._gestartet or jetzt
+        # Nach einem Stau zaehlt die Luecke ab dessen Ende: das naechste Paket
+        # war bis dahin gar nicht abholbar.
+        seit = max(zl or self._gestartet or jetzt, self._gestaut_bis)
         if jetzt - seit <= grenze:
             return False
         # Schweigt sie, kommt der Füller — und der Zubringer wird

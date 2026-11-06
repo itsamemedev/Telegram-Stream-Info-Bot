@@ -4,7 +4,7 @@ Eine einzige Wahrheit für die Versionsanzeige (Dashboard-Footer, /api/version,
 „Was ist neu"-Panel). Reine Daten + kleine Helfer, voll testbar.
 """
 
-VERSION = "4.6.10"
+VERSION = "4.6.11"
 CODENAME = "Leitstand"
 RELEASE = "2026.11"
 
@@ -23,6 +23,19 @@ def build_stamp():
 # Meilenstein-Changelog, neueste Version zuerst. highlights = kurze, ehrliche
 # Stichpunkte dessen, was die Version bringt.
 CHANGELOG = [
+    {
+        "version": "4.6.11",
+        "date": "2026-11",
+        "title": "Leitstand",
+        # Patch-Fassung von 4.6: HTML-Modus traegt die Quelle (W160).
+        "highlights": [
+            "Restream im HTML-Modus: Quellbild und Quellton kamen nicht an, gesendet wurden nur Overlay, Chat und AZRAEL — gemessen und behoben",
+            "Ursache: der Sender tastete beim Start die Overlay-FIFO sekundenlang ab, die Sendebrücke hielt den Rückstau für eine stumme Quelle und schoss den gesunden Zubringer ab; danach stand das Quellbild eingefroren",
+            "Die Sendebrücke unterscheidet jetzt Rückstau beim Sender von einer stummen Quelle",
+            "Die Overlay-FIFO öffnet ohne Abtastpause — jede der beiden Korrekturen behebt den Fehler für sich",
+            "Neuer Vertrag: ein echter Lauf im HTML-Modus mit Overlay, Stimme und Avatar misst Quellbild, Bewegung und Quellton im Ausgang",
+        ],
+    },
     {
         "version": "4.6.10",
         "date": "2026-11",

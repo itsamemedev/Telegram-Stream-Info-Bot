@@ -679,7 +679,12 @@ def build(source_url, ingest_url, stream_key, transcode=False, tts_fifo=None, ri
     if html_ov_fifo and transcode:
         # V37-HTMLOV: PNG-Frames aus der Feeder-FIFO. thread_queue großzügig,
         # der Writer taktet fest — ffmpeg hungert nie.
-        cmd += ["-thread_queue_size", "512", "-f", "image2pipe",
+        # v4.2-W160: ohne Abtastpause oeffnen. Mit den Vorgaben las ffmpeg bis
+        # zu analyzeduration (5 s) PNG-Bilder bei 1 Bild/s, bevor es irgendeinen
+        # anderen Eingang las — die Sendebruecke hing so lange im Schreiben.
+        # Das Format steht fest (PNG), es gibt nichts zu erraten.
+        cmd += ["-thread_queue_size", "512", "-f", "image2pipe", "-c:v", "png",
+                "-probesize", "32", "-analyzeduration", "0",
                 "-framerate", str(RESTREAM_OVERLAY_HTML_FPS), "-i", html_ov_fifo]
         htmlov_idx = _idx; _idx += 1
     # v4.2-W106: Stille als LETZTER Eingang, damit sie keinen der Indizes

@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="docs/assets/banner.svg" alt="NIGHTCRAWLER — v4.6.10 Leitstand" width="100%">
+<img src="docs/assets/banner.svg" alt="NIGHTCRAWLER — v4.6.11 Leitstand" width="100%">
 
 ### Der Kontrollraum für Live-Streaming
 #### Überwachung · Aufnahme · Multi-Ziel-Restream · KI-Moderation
@@ -607,6 +607,8 @@ blockiert den Loop nicht mehr, keine Resolver-Log-Flut.
 (eingebrannt oder als Untertitelspur, `AUFNAHME_CHAT`).
 **Patch 4.6.10** — ein Restream ohne Quellbild weicht auf ein Ziel mit Bild
 aus, der Hype-Director schneidet Memes zusammen, Clips tragen den Chat.
+**Patch 4.6.11** — im HTML-Modus kommen Quellbild und Quellton wieder an
+(Rückstau beim Sender galt als stumme Quelle).
 
 Alle Wellen einzeln: **[`docs/CHANGELOG.md`](docs/CHANGELOG.md)**.
 
@@ -618,7 +620,7 @@ Alle Wellen einzeln: **[`docs/CHANGELOG.md`](docs/CHANGELOG.md)**.
 
 | | |
 |---|---|
-| Aktuelle Version | **4.6.10** — „Leitstand“ (2026.11) |
+| Aktuelle Version | **4.6.11** — „Leitstand“ (2026.11) |
 | Flask-Routen | 379 (34 in `bot.py` · 345 in `nc/routes/`) |
 | Discord-Slash-Commands | 66 |
 | Fachmodule | 182 in `nc/` (+39 in `nc/routes/`, +3 in `nc/intel/`), 10 in `brain/` |
@@ -668,7 +670,7 @@ Programm erhalten haben. Falls nicht: <https://www.gnu.org/licenses/>.
 
 <div align="center">
 
-**NIGHTCRAWLER v4.6.10 · „Leitstand“**
+**NIGHTCRAWLER v4.6.11 · „Leitstand“**
 
 **[🌐 lafap.de](https://lafap.de)** · **[💬 Discord](https://discord.gg/psvnxm7tSV)** · **[📓 Changelog](docs/CHANGELOG.md)**
 
