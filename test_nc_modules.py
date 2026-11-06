@@ -20193,7 +20193,12 @@ def _test_v42_w106_jede_ausgabe_traegt_ton():
     hrf = [n for n in baum.body if isinstance(n, _ast.AsyncFunctionDef)
            and n.name == "handle_recording_finished"]
     assert len(hrf) == 1
-    assert "_nc_tonspur.sichern" in _aufrufe(hrf[0]), \
+    # ANKER GEWANDERT (v4.2-W158, nicht der Vertrag): die Nachbearbeitung ist
+    # EIN benannter Schritt (_aufnahme_fertigmachen) — Tonspur, dann Chat.
+    fm = [n for n in baum.body if isinstance(n, _ast.AsyncFunctionDef)
+          and n.name == "_aufnahme_fertigmachen"]
+    assert "_aufnahme_fertigmachen" in _aufrufe(hrf[0]) and fm and \
+        "_nc_tonspur.sichern" in _aufrufe(fm[0]), \
         "die fertige Aufnahme wird nicht mehr auf Ton geprueft"
     rm = [n for n in baum.body if isinstance(n, _ast.ClassDef)
           and n.name == "RestreamManager"]
@@ -24954,7 +24959,10 @@ def _test_v42_w131_aufnahme_luecken():
                       and _ast.unparse(c.func).split(".")[-1] == name)
     frei = zeilen("_aufnahme_platz_frei")
     assert frei, "die Sperre wird erst im finally frei — nach dem Upload"
-    for spaeter in ("sichern", "add_recording", "split_and_send_video"):
+    # ANKER GEWANDERT (v4.2-W158): `sichern` laeuft im benannten Schritt
+    # _aufnahme_fertigmachen (Tonspur, dann Chat einbrennen). Gerade das
+    # Einbrennen dauert — der Platz muss davor frei sein.
+    for spaeter in ("_aufnahme_fertigmachen", "add_recording", "split_and_send_video"):
         assert zeilen(spaeter) and frei[0] < zeilen(spaeter)[0], \
             "Sperre wird erst nach %s frei" % spaeter
     kommunikation = zeilen("communicate")
@@ -28928,6 +28936,132 @@ def _test_v42_w157_cluster_status_meldung():
        "ehrliche Meldung ohne Adresse")
 
 
+def _test_v42_w158_chat_in_der_aufnahme():
+    """v4.2-W158: „In den Aufnahmen fehlt der Chat. In den Restreams ist alles
+    korrekt." Die Aufnahme war eine Kopie des TikTok-Stroms, der Chat ging nur
+    in einen Puffer ohne Zeitstempel — und ein Chat-Listener lief nur fuer
+    Live-React-Nutzer und Restreams."""
+    import ast as _ast
+    import json as _json
+    import logging as _lg
+    import os as _os
+    import shutil as _sh
+    import subprocess as _sp
+    import time as _t
+    import pruefhilfen as P
+    from nc import aufnahmechat as A
+
+    # (1) Mitschnitt: Zeit relativ zum Aufnahmestart, nur fuer diesen Nutzer,
+    # nur solange der Prozess lebt, Doppel von zwei Listenern faellt weg.
+    A.SITZUNGEN.clear(); A._ZULETZT.clear()
+
+    class _Proc:
+        returncode = None
+    pr = _Proc()
+    A.beginnen("@Anna", "/rec/a.mp4", 100.0, pr)
+    assert A.laeuft("anna") and not A.laeuft("ben")
+    assert A.notieren("ANNA", "Sash", "hallo", 105.0) == 1
+    assert A.notieren("anna", "Sash", "hallo", 106.0) == 0, "Doppel zweier Listener"
+    assert A.notieren("anna", "Sash", "hallo", 110.0) == 1, "echte Wiederholung verschluckt"
+    assert A.notieren("ben", "X", "fremd", 107.0) == 0
+    assert A.notieren("anna", "Y", "   ", 108.0) == 0
+    pr.returncode = 0
+    assert not A.laeuft("anna") and A.notieren("anna", "Z", "nach dem Ende", 111.0) == 0
+    e = A.beenden("/rec/a.mp4")
+    assert [x[0] for x in e] == [5.0, 10.0] and e[0][1:] == ("Sash", "hallo"), e
+    assert A.beenden("/rec/a.mp4") == []
+    assert A.modus("EINBRENNEN") == "einbrennen" and A.modus("quatsch") == A.VORGABE == "einbrennen"
+    for i in range(A.MAX_SITZUNGEN + 3):
+        A.beginnen("u", "/rec/%d.mp4" % i, 0.0)
+    assert len(A.SITZUNGEN) == A.MAX_SITZUNGEN, "Sitzungen wachsen ohne Deckel"
+    A.SITZUNGEN.clear(); A._ZULETZT.clear()
+
+    # (2) Untertitel: neueste Nachricht unten, Nutzertext ist nie Formatierung.
+    ass = A.ass([(1.0, "a", "eins"), (2.0, "b", "{\\b1}zwei\\N"), (20.0, "c", "drei")], 720, 1280)
+    zeilen = [z for z in ass.splitlines() if z.startswith("Dialogue:")]
+    assert len(zeilen) == 3
+    assert zeilen[1].index(": eins") < zeilen[1].index("zwei"), "neueste nicht unten"
+    assert "{\\b1}" not in zeilen[1] and "\\N" not in zeilen[1].split(": ", 1)[1].split("zwei")[1]
+    assert ",0:00:01.00,0:00:02.00," in zeilen[0], "Ende nicht an der naechsten Nachricht"
+    assert ",0:00:20.00,0:00:28.00," in zeilen[2] and "eins" not in zeilen[2], \
+        "abgelaufene Nachrichten bleiben stehen"
+    assert "PlayResX: 720" in ass and "PlayResY: 1280" in ass
+
+    # (3) Verdrahtung im Bot.
+    src = open("bot.py", encoding="utf-8").read()
+    baum = _ast.parse(src)
+    lc = rumpf_ab(src, src.index("async def _start_chat_listener("))
+    assert "_nc_aufnahmechat.notieren(username, who, txt)" in lc
+    hs = rumpf_ab(src, src.index("async def _handle_single_tracking("))
+    assert hs.index("set_recording_file(tid, output_file, proc.pid)") < \
+        hs.index("_aufnahme_chat_beginnen(username, output_file, proc)")
+    hrf = next(n for n in baum.body if getattr(n, "name", "") == "handle_recording_finished")
+    assert "_aufnahme_fertigmachen" in {_ast.unparse(c.func) for c in _ast.walk(hrf)
+                                       if isinstance(c, _ast.Call)}
+    beg = rumpf_ab(src, src.index("def _aufnahme_chat_beginnen("))
+    assert "_restream_chat_guardian(" in beg and "solange=lambda: _nc_aufnahmechat.laeuft(u)" in beg
+    gd = rumpf_ab(src, src.index("async def _restream_chat_guardian("))
+    assert "while weiter():" in gd and "if not weiter():" in gd
+
+    if not (_sh.which("ffmpeg") and _sh.which("ffprobe")):
+        ok("W158: Chat in der Aufnahme (rein); ffmpeg fehlt — Lauf uebersprungen")
+        return
+    # (4) Die Nachbearbeitung aus bot.py ausfuehren: Erfolg ersetzt die Datei,
+    # ein Fehlschlag laesst das Original stehen, Reste bleiben nie liegen.
+    teile = [n for n in baum.body if getattr(n, "name", "") in
+             ("_aufnahme_chat_einarbeiten", "_ffprobe_masse", "_aufnahme_chat_beilegen")]
+    assert len(teile) == 3
+    ns = {"log": _lg.getLogger("w158"), "os": _os, "subprocess": _sp, "shutil": _sh,
+          "json": _json, "_time_mod": _t, "_nc_aufnahmechat": A,
+          "_env_int": lambda n, d: d, "_aufnahme_chat_modus": lambda: "einbrennen"}
+    # Review #203: der Stopp-Pfad legt den Chat bei, statt ihn zu verlieren.
+    st = rumpf_ab(src, src.index("async def _aufnahme_beim_stopp_sichern("))
+    assert "_aufnahme_chat_beilegen, output_file, username" in st
+    exec(compile(_ast.Module(body=teile, type_ignores=[]), "bot.py", "exec"), ns)
+    heim = P.verzeichnis()
+    try:
+        v = _os.path.join(heim, "rec.mp4")
+        _sp.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "color=c=0x101010:s=320x568:r=15",
+                 "-f", "lavfi", "-i", "sine=r=44100", "-t", "4", "-c:v", "libx264", "-preset",
+                 "ultrafast", "-c:a", "aac", v], check=True, timeout=60)
+        chat = [(0.5, "Sash", "Echt nervt ihn doch nicht"), (1.0, "Love", "chill")]
+        vorher = _os.path.getsize(v)
+        _os.environ["AUFNAHME_CHAT_PRESET"] = "ultrafast"
+        try:
+            neu = ns["_aufnahme_chat_einarbeiten"](v, chat, "einbrennen", "w158")
+        finally:
+            _os.environ.pop("AUFNAHME_CHAT_PRESET", None)
+        assert neu and neu == _os.path.getsize(v) and neu != vorher, (neu, vorher)
+        assert sorted(_os.listdir(heim)) == ["rec.mp4"], _os.listdir(heim)
+        # Eingebrannt heisst: unten links ist es nicht mehr die Grundfarbe.
+        px = _sp.run(["ffmpeg", "-v", "error", "-ss", "1.2", "-i", v, "-frames:v", "1",
+                      "-vf", "crop=200:120:0:400", "-f", "rawvideo", "-pix_fmt", "gray", "-"],
+                     capture_output=True, timeout=60).stdout
+        assert px and max(px) > 100, "kein Chat im Bild"
+        # Untertitelspur: ohne Neukodieren, Spur vorhanden.
+        neu = ns["_aufnahme_chat_einarbeiten"](v, chat, "untertitel", "w158")
+        typen = _sp.run(["ffprobe", "-v", "error", "-show_entries", "stream=codec_name",
+                         "-of", "csv=p=0", v], capture_output=True, text=True).stdout.split()
+        assert neu and "mov_text" in typen, typen
+        # Stopp-Pfad: Beilage neben der Datei, Sitzung danach weg.
+        A.beginnen("w158", v, 0.0)
+        A.notieren("w158", "Sash", "beim Stopp", 1.0)
+        bl = ns["_aufnahme_chat_beilegen"](v, "w158")
+        assert bl == _os.path.join(heim, "rec.ass") and "beim Stopp" in open(bl, encoding="utf-8").read()
+        assert ns["_aufnahme_chat_beilegen"](v, "w158") == "" and v not in A.SITZUNGEN
+        _os.remove(bl)
+        # Kaputte Eingabe: Original bleibt, nichts liegt herum.
+        k = _os.path.join(heim, "kaputt.mp4")
+        with open(k, "wb") as f:
+            f.write(b"kein video" * 100)
+        assert ns["_aufnahme_chat_einarbeiten"](k, chat, "einbrennen", "w158") is None
+        assert open(k, "rb").read() == b"kein video" * 100
+        assert sorted(_os.listdir(heim)) == ["kaputt.mp4", "rec.mp4"], _os.listdir(heim)
+    finally:
+        _sh.rmtree(heim, ignore_errors=True)
+    ok("W158: der Chat kommt in die Aufnahme — eingebrannt oder als Spur, Original bei Fehler")
+
+
 def _test_v42_w155_weiche_steckt():
     """v4.2-W155: gemeldet „Wir haben in den Restreams immer noch kein Bild" —
     Overlay und Chat liefen, das Videofeld zeigte das Pausenbild. Ein
@@ -29435,6 +29569,7 @@ def main():
     _test_v42_w155_weiche_steckt()
     _test_v42_w156_lagebild_radar()
     _test_v42_w157_cluster_status_meldung()
+    _test_v42_w158_chat_in_der_aufnahme()
     _test_v42_w60_azrael_cooldown_je_plattform()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)

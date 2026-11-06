@@ -11,6 +11,27 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+## [4.6.9] — 2026-11-06 · „Leitstand"
+
+### Behoben — der Chat fehlte in den Aufnahmen (v4.2 W158)
+
+- Gemeldet: „In den Aufnahmen fehlt der Chat. In den Restreams ist alles
+  korrekt." Die Aufnahme ist eine Kopie des TikTok-Stroms; im Restream steht
+  der Chat nur, weil der Sender ihn ins Bild brennt. `on_comment` schrieb in
+  einen Puffer ohne Zeitstempel, ohne Bezug zu einer Datei — und ein
+  Chat-Empfang lief nur für Restreams und Live-React-Nutzer (im Log vom
+  06.11. wurden @tbwpueppi und @tatjana335 ohne jeden Chat aufgenommen).
+- `nc/aufnahmechat.py` schneidet den Chat je laufender Aufnahme mit
+  (Wanduhr relativ zum Prozessstart, im Speicher, Doppel zweier Empfänger
+  entfallen), jede Aufnahme bekommt über den verallgemeinerten Chat-Wächter
+  einen eigenen Empfang, und nach dem Ende brennt `_aufnahme_fertigmachen`
+  den Chat als ASS-Untertitel ein (`nice -n 19`, libx264 `veryfast`).
+  `AUFNAHME_CHAT=untertitel` legt ihn stattdessen als abschaltbare Spur ab
+  (kein Neukodieren, Telegram zeigt ihn dann aber nicht), `aus` wie bisher.
+  Länger als `AUFNAHME_CHAT_MAX_MIN` (240): Spur statt Einbrennen.
+- Scheitert das Einarbeiten, bleibt die Aufnahme ohne Chat erhalten, und
+  nichts bleibt liegen. Vertrag mit echtem ffmpeg, 13 Mutationsproben.
+
 ## [4.6.8] — 2026-11-06 · „Leitstand"
 
 ### Behoben — Befunde aus debug.log/error.log vom 06.11. mittags (v4.2 W157)
