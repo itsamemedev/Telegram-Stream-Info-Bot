@@ -4,7 +4,7 @@ Eine einzige Wahrheit für die Versionsanzeige (Dashboard-Footer, /api/version,
 „Was ist neu"-Panel). Reine Daten + kleine Helfer, voll testbar.
 """
 
-VERSION = "4.6.5"
+VERSION = "4.6.6"
 CODENAME = "Leitstand"
 RELEASE = "2026.11"
 
@@ -23,6 +23,19 @@ def build_stamp():
 # Meilenstein-Changelog, neueste Version zuerst. highlights = kurze, ehrliche
 # Stichpunkte dessen, was die Version bringt.
 CHANGELOG = [
+    {
+        "version": "4.6.6",
+        "date": "2026-11",
+        "title": "Leitstand",
+        # Patch-Fassung von 4.6: Restream zeigte dauerhaft das Pausenbild (W155).
+        "highlights": [
+            "Restream ohne Bild: lieferte der Zubringer Daten, an denen die Weiche nicht umschalten konnte, blieb das Pausenbild für immer stehen — ohne eine einzige Logzeile",
+            "Die Sendebrücke erkennt diese Lage jetzt nach der Anlaufzeit, nennt den Grund (keine PMT, kein Bildstrom, kein Keyframe-Merker) und startet den Zubringer neu kodierend",
+            "Bleibt das Bild auch neu kodiert aus, endet die Brücke nach der Grenze mit einer ERROR-Zeile statt still weiterzusenden",
+            "Der Vertrag speist dafür einen echten ffmpeg-Strom ein — einmal gesund, einmal ohne Keyframe-Merker",
+            "Vertrag geschärft: eine Zusicherung prüfte nur ein Wort, das auch der falsche Satz enthielt — die Mutationsprobe hat es gefangen",
+        ],
+    },
     {
         "version": "4.6.5",
         "date": "2026-11",

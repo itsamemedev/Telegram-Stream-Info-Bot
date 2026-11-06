@@ -28807,6 +28807,94 @@ def _test_v42_w154_verschlossen_cluster_decimal():
     ok("W154: verschlossene Raeume ruhen, toter Zubringer laut, Kick-Cluster, Decimal")
 
 
+def _test_v42_w155_weiche_steckt():
+    """v4.2-W155: gemeldet „Wir haben in den Restreams immer noch kein Bild" —
+    Overlay und Chat liefen, das Videofeld zeigte das Pausenbild. Ein
+    Zubringer, der Daten liefert, an denen die Weiche nie umschalten kann,
+    galt als gesund und erzeugte keine Logzeile."""
+    import logging as _lg
+    import shutil as _sh
+    import subprocess as _sp
+    from nc import sendebruecke as B
+
+    # (1) Jeder Grund hat seinen Satz.
+    assert "PMT" in B.weiche_grund(None, None, 0)
+    assert "Bildstrom" in B.weiche_grund("ok", None, 0)
+    assert "neukodieren" in B.weiche_grund("neukodieren", 256, 0)
+    assert "kein Keyframe-Merker" in B.weiche_grund("ok", 256, 0)
+    assert "3 Keyframes" in B.weiche_grund("ok", 256, 3)
+
+    if not _sh.which("ffmpeg"):
+        ok("W155: Weichen-Wache (rein); ffmpeg fehlt — TS-Probe uebersprungen")
+        return
+    ts = _sp.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "testsrc2=s=160x284:r=30",
+                  "-f", "lavfi", "-i", "sine=r=44100", "-t", "3", "-c:v", "libx264",
+                  "-preset", "ultrafast", "-g", "30", "-c:a", "aac", "-f", "mpegts", "-"],
+                 capture_output=True, timeout=60, check=True).stdout
+    pakete = [ts[i:i + B.TS] for i in range(0, len(ts) - B.TS + 1, B.TS)]
+
+    def ohne_merker(p):
+        # Der Keyframe-Merker (random_access_indicator) geloescht — alles
+        # andere bleibt: PMT, PIDs, Zeitstempel.
+        if (p[3] & 0x20) and p[4] > 0 and (p[5] & 0x40):
+            p = p[:5] + bytes([p[5] & ~0x40]) + p[6:]
+        return p
+
+    class _Zub:
+        returncode = None
+        beendet = False
+
+        def poll(self):
+            return None if not self.beendet else 0
+
+        def terminate(self):
+            self.beendet = True
+
+        def wait(self, timeout=None):
+            return 0
+
+    zeilen = []
+
+    class _H(_lg.Handler):
+        def emit(self, r):
+            zeilen.append((r.levelno, r.getMessage()))
+    hd = _H(); B.log.addHandler(hd)
+    try:
+        for name, strom, soll_steckt in (("gesund", pakete, False),
+                                         ("ohne Merker", [ohne_merker(p) for p in pakete], True)):
+            t = [1000.0]
+            br = B.Bruecke(None, ["x"], lambda *a: ["x"], lambda: (None, "offline"),
+                           uhr=lambda _t=t: _t[0], name="#w155", anlauf_s=20, unklar_s=600)
+            br._fd = -1           # nie geschrieben: os.write wird nicht erreicht
+            br._wuensche(B.QUELLE, "Zubringer gestartet")
+            br._um.paket = lambda p: None     # nichts schreiben, nur entscheiden
+            for p in strom:
+                br.daten(B.QUELLE, p)
+            assert br._quelle_erste == 1000.0
+            if not soll_steckt:
+                assert br.aktiv == B.QUELLE and br._kf_gesehen >= 3, (name, br.aktiv)
+                continue
+            assert br.aktiv != B.QUELLE and br._kf_gesehen == 0, name
+            z = _Zub()
+            t[0] += 19
+            assert br._steckt(z, t[0]) is False, "vor der Anlaufzeit schon abgeschossen"
+            t[0] += 2
+            assert br._steckt(z, t[0]) is True and z.beendet
+            assert br._neukodieren and br._ersetzt and br.ende is None
+            assert any("kein Keyframe-Merker" in m and "Neukodierung" in m
+                       for _l, m in zeilen), zeilen
+            # Neu kodiert immer noch nichts -> nach unklar_s ein lautes Ende.
+            t[0] += 600
+            assert br._steckt(_Zub(), t[0]) is True and br.ende and "umschaltbares" in br.ende
+    finally:
+        B.log.removeHandler(hd)
+    # Verdrahtung: die Luecken-Wache fragt zuerst.
+    src = open("nc/sendebruecke.py", encoding="utf-8").read()
+    pl = rumpf_ab(src, src.index("    def _pruefe_laufenden("))
+    assert "self._steckt(zub, jetzt)" in pl
+    ok("W155: ein Zubringer, an dem die Weiche nicht umschalten kann, wird laut ersetzt")
+
+
 def main():
     tmp, rid = richte_testdatenbank_ein()
     ok("db_conn aus nc.dbwrap: echtes Schema angelegt, Commit durchgelaufen")
@@ -29170,6 +29258,7 @@ def main():
     _test_v42_w152_cookies_pin_rollback()
     _test_v42_w153_discord_bereiche_folgen_den_trackings()
     _test_v42_w154_verschlossen_cluster_decimal()
+    _test_v42_w155_weiche_steckt()
     _test_v42_w60_azrael_cooldown_je_plattform()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)

@@ -286,6 +286,24 @@ def video_pid(stroeme):
     return None
 
 
+def weiche_grund(urteil, vpid, keyframes) -> str:
+    """v4.2-W155: warum die Weiche einen Zubringer, der Daten liefert, nicht
+    durchlaesst — in Worten fuer das Log. Jede Bedingung aus `daten()` hat
+    hier ihren eigenen Satz; ein „haengt" ohne Grund hat schon einmal
+    niemandem geholfen (CLAUDE.md, „HTTP 403")."""
+    if urteil is None:
+        grund = "keine Programmtabelle (PMT) im Strom"
+    elif vpid is None:
+        grund = "die PMT nennt keinen Bildstrom"
+    elif urteil != "ok":
+        grund = "PMT-Urteil „%s\"" % urteil
+    elif not keyframes:
+        grund = "kein Keyframe-Merker auf der Bild-PID"
+    else:
+        grund = "%d Keyframes gesehen, Umschalten trotzdem ausgeblieben" % keyframes
+    return grund
+
+
 def pmt_urteil(stroeme):
     """Passt dieser Zubringer hinter den Sender?
 
@@ -371,6 +389,10 @@ class Bruecke:
         self._neukodieren = False
         self._url = erste_url
         self._ersetzt = False
+        # v4.2-W155: erste Daten des laufenden Zubringers und die Keyframes,
+        # die er auf seiner Bild-PID gebracht hat — fuer die Weichen-Wache.
+        self._quelle_erste = None
+        self._kf_gesehen = 0
         # Zustand der Wache — hier gesetzt, nicht erst in _wache, damit jeder
         # Schritt auch einzeln (im Vertrag) einen definierten Anfang hat.
         self._naechste = erste_url
@@ -429,6 +451,11 @@ class Bruecke:
                 if st is not None:
                     self._urteil[wer] = pmt_urteil(st)
                     self._vpid[wer] = video_pid(st)
+            if wer == QUELLE:
+                if self._quelle_erste is None:
+                    self._quelle_erste = self._zuletzt[wer]
+                if k == self._vpid.get(wer) and ist_keyframe(paket):
+                    self._kf_gesehen += 1
             if wer == FUELLER and not self._fueller_frei:
                 # Wer zuerst beim Sender ankommt, legt dessen Bildgroesse fest:
                 # der Encoder ist danach eingerichtet, und ffmpeg skaliert alles
@@ -627,6 +654,7 @@ class Bruecke:
             # zurueckkehrt — danach gesetzt, verfiele er, und die Quelle
             # kaeme erst mit dem naechsten GOP (Vertrag W130 hat es gefangen).
             self._zuletzt[QUELLE] = None
+            self._quelle_erste, self._kf_gesehen = None, 0
             self._wuensche(QUELLE, "Zubringer gestartet")
             try:
                 self._zub = self._starte(QUELLE, self._zubringer_cmd(
@@ -723,6 +751,8 @@ class Bruecke:
             self._beende(zub)
             return True
         jetzt = self._uhr()
+        if self._steckt(zub, jetzt):
+            return True
         zl = self._zuletzt.get(QUELLE)
         # Vor dem ersten Byte gilt die Anlaufzeit, nicht die Luecke:
         # ffmpeg probt die Quelle (-analyzeduration bis 10 s), und
@@ -742,6 +772,42 @@ class Bruecke:
         if self.aktiv == QUELLE:
             self._fallback("Quelle schweigt seit %.0f s" % (jetzt - seit))
         self._ersetzt = True
+        self._beende(zub)
+        return True
+
+    def _steckt(self, zub, jetzt) -> bool:
+        """v4.2-W155: liefert der Zubringer Daten, die die Weiche nie
+        durchlaesst? Dann True, und er ist beendet.
+
+        Gemeldet am 06.11.: „Wir haben in den Restreams immer noch kein
+        Bild" — Overlay und Chat liefen, das Videofeld zeigte das Pausenbild.
+        Ein Zubringer, der Pakete schickt, an denen die Weiche nicht
+        umschalten kann (keine PMT, kein Keyframe-Merker auf der Bild-PID),
+        sah fuer die Luecken-Wache gesund aus: es kamen ja Daten. Er wurde
+        nie ersetzt, und es entstand keine einzige Logzeile — Pausenbild fuer
+        immer. Jetzt: nach der Anlaufzeit laut, mit Grund, und einmal neu
+        kodierend versuchen (x264 setzt den Keyframe-Merker sicher). Bleibt
+        es so, endet die Bruecke nach unklar_s wie bei jeder Quelle ohne Bild.
+        """
+        erste = self._quelle_erste
+        if (self._wunsch != QUELLE or self.aktiv == QUELLE or erste is None
+                or jetzt - erste <= self.anlauf_s):
+            return False
+        grund = weiche_grund(self._urteil.get(QUELLE), self._vpid.get(QUELLE),
+                             self._kf_gesehen)
+        neu = not self._neukodieren
+        laut, unterdr = _meldetakt.melden("sendebruecke-weiche", grund, jetzt)
+        if laut:
+            log.warning("Sendebrücke %s: der Zubringer liefert seit %.0f s Daten, die "
+                        "Weiche kann aber nicht umschalten (%s) — das Publikum sieht das "
+                        "Pausenbild. %s%s", self.name, jetzt - erste, grund,
+                        "Neuer Versuch mit Neukodierung." if neu else
+                        "Auch neu kodiert keine Besserung.", _meldetakt.zusatz(unterdr))
+        self._neukodieren = True
+        self._ersetzt = True        # dieselbe Adresse, sie liefert ja
+        if not neu and jetzt - self._quelle_zuletzt >= self.unklar_s:
+            self._abbruch("seit %.0f s kein umschaltbares Bild von der Quelle (%s)"
+                          % (jetzt - self._quelle_zuletzt, grund), laut=True)
         self._beende(zub)
         return True
 

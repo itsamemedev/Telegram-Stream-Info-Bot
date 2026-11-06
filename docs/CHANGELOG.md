@@ -11,6 +11,21 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+## [4.6.6] — 2026-11-06 · „Leitstand"
+
+### Behoben — Restream zeigte dauerhaft das Pausenbild (v4.2 W155)
+
+- **Die Weiche blieb still auf dem Pausenbild.** Gemeldet: „Wir haben in den
+  Restreams immer noch kein Bild" — Overlay und Chat liefen, das Videofeld
+  zeigte die Füllfläche. Liefert ein Zubringer Pakete, an denen die Weiche
+  nicht umschalten kann (keine PMT, kein Bildstrom, kein Keyframe-Merker auf
+  der Bild-PID), sah er für die Lücken-Wache gesund aus — es kamen ja Daten.
+  Er wurde nie ersetzt, und es entstand keine Logzeile. `Bruecke._steckt()`
+  erkennt das nach der Anlaufzeit, meldet den Grund gedrosselt und startet
+  denselben Zubringer neu kodierend; bleibt es so, endet die Brücke nach
+  `unklar_s` mit ERROR. Vertrag mit echtem ffmpeg-Strom, einmal ohne
+  Keyframe-Merker; zehn Mutationsproben gefangen.
+
 ## [4.6.5] — 2026-11-06 · „Leitstand"
 
 ### Behoben — Befunde aus dem Log des Betreibers (v4.2 W154)
