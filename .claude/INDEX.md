@@ -1238,7 +1238,7 @@ schemastand.py         lege_an, lies, pruefe, schreibe, streng
 schnappschuss.py       class Schnappschuss
 scoring.py             build_report, compute_quality_score
 scraper.py             class TikTokScraper, configure_scraper
-sendebruecke.py        class Bruecke, class TsUmschreiber, ist_keyframe, pat_pmt_pid, pes_zeit, pid, pmt_stroeme, pmt_urteil, video_pid
+sendebruecke.py        class Bruecke, class TsUmschreiber, ist_keyframe, pat_pmt_pid, pes_zeit, pid, pmt_stroeme, pmt_urteil, video_pid, weiche_grund
 sendrate.py            allow, default_config, new_state, snapshot
 shield.py              —
 sicherpfad.py          pruefe_unter, sicher_join, sicherer_name, unter
