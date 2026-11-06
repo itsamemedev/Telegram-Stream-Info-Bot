@@ -4,7 +4,7 @@ Eine einzige Wahrheit für die Versionsanzeige (Dashboard-Footer, /api/version,
 „Was ist neu"-Panel). Reine Daten + kleine Helfer, voll testbar.
 """
 
-VERSION = "4.6.2"
+VERSION = "4.6.3"
 CODENAME = "Leitstand"
 RELEASE = "2026.11"
 
@@ -23,6 +23,19 @@ def build_stamp():
 # Meilenstein-Changelog, neueste Version zuerst. highlights = kurze, ehrliche
 # Stichpunkte dessen, was die Version bringt.
 CHANGELOG = [
+    {
+        "version": "4.6.3",
+        "date": "2026-11",
+        "title": "Leitstand",
+        # Patch-Fassung von 4.6: MariaDB vergleicht bytegenau wie SQLite (W151).
+        "highlights": [
+            "Der Umzug nach MariaDB brach an doppelten Treuepunkte-Schlüsseln ab: MariaDB hielt Nora und nora, ängie und angie oder ｊａｎａ und jana für denselben Zuschauer — SQLite nicht",
+            "Alle Tabellen vergleichen jetzt bytegenau wie SQLite (utf8mb4_nopad_bin); auch Leerzeichen am Ende zählen, wie in SQLite",
+            "Schon angelegte Tabellen — etwa aus dem abgebrochenen Umzug — werden beim Umzug und beim Start angeglichen",
+            "Im laufenden Betrieb auf MariaDB hätte dieselbe Regel die Punkte zweier Zuschauer still zusammengelegt",
+            "Die Suche bleibt unverändert: sie vergleicht ohnehin in Kleinbuchstaben",
+        ],
+    },
     {
         "version": "4.6.2",
         "date": "2026-11",

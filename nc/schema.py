@@ -755,6 +755,45 @@ def create_schema(conn, *, pk, txt_idx, txt_long, txt_big, iv, tbl_opts, is_my,
 # ═══════════════════════════════════════════════════════════════════════════
 
 
+# v4.2-W151: die Sortierfolge, mit der MariaDB Zeichenketten VERGLEICHT. Sie
+# muss SQLite gleichen — dort ist jeder Vergleich bytegenau. Bis hierher stand
+# utf8mb4_unicode_ci: gross/klein, Akzente und Schmuckschrift gelten dort als
+# gleich. Der Umzug beim Betreiber brach daran ab, 1062 auf loyalty_points:
+# `tiktok:Nora` und `tiktok:nora`, `tiktok:ängie` und `tiktok:angie`,
+# `ｊａｎａ` und `jana` sind in SQLite drei Paare verschiedener Nutzer und in
+# unicode_ci je EIN Schluessel. Im laufenden Betrieb haette dieselbe Regel
+# Punkte zweier Zuschauer still zusammengelegt.
+# `nopad`, weil utf8mb4_bin PAD SPACE vergleicht: 'a' = 'a ' (gemessen gegen
+# MariaDB 10.11). Die Suche bleibt unberuehrt — jede LIKE-Stelle vergleicht
+# LOWER(spalte), unabhaengig von der Sortierfolge.
+KOLLATION = "utf8mb4_nopad_bin"
+
+
+def kollation_angleichen(conn, *, log):
+    """Tabellen der Bot-Datenbank auf KOLLATION bringen (nur MariaDB).
+
+    CREATE TABLE IF NOT EXISTS aendert eine bestehende Tabelle nicht — eine
+    Datenbank, die mit der alten Sortierfolge angelegt wurde (oder der
+    abgebrochene Umzug, der sein Schema schon angelegt hatte), behielte sie
+    fuer immer. Die Umstellung ist nach dieser Richtung sicher: bytegenau ist
+    strenger als unicode_ci, es entsteht kein neues Duplikat. Gemeldet wird
+    jede umgestellte Tabelle, auf info — es passiert einmal."""
+    rows = conn.execute(
+        "SELECT TABLE_NAME AS t, TABLE_COLLATION AS k FROM information_schema.TABLES "
+        "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_TYPE = 'BASE TABLE'").fetchall()
+    umgestellt = []
+    for r in rows:
+        if (r["k"] or "") == KOLLATION:
+            continue
+        conn.execute("ALTER TABLE `%s` CONVERT TO CHARACTER SET utf8mb4 COLLATE %s"
+                     % (r["t"], KOLLATION))
+        umgestellt.append(r["t"])
+    if umgestellt:
+        log.info("MariaDB: %d Tabellen auf %s umgestellt (bytegenauer Vergleich wie "
+                 "SQLite): %s", len(umgestellt), KOLLATION, ", ".join(sorted(umgestellt)))
+    return umgestellt
+
+
 def parameter(backend):
     """Die Platzhalter fuer create_schema — dieselbe Tabelle wie bot.init_db().
 
@@ -769,7 +808,7 @@ def parameter(backend):
         "txt_big": "MEDIUMTEXT" if is_my else "TEXT",
         "ts": "VARCHAR(64)" if is_my else "TEXT",
         "iv": "INTEGER",
-        "tbl_opts": (" ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci"
+        "tbl_opts": (" ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=" + KOLLATION
                      if is_my else ""),
         "is_my": is_my,
     }
@@ -827,6 +866,8 @@ def anlegen(conn, *, backend, mariadb_db, log):
             c, t, e, backend=backend, mariadb_db=mariadb_db, log=log),
         log=log)
     modultabellen(conn, backend=backend, log=log)
+    if backend == "mariadb":
+        kollation_angleichen(conn, log=log)
     return p
 
 
@@ -848,5 +889,7 @@ def modultabellen(conn, *, backend, log):
         log.error("%s: %s", text, exc)
 
     _ledger.ensure_schema(conn, melden=_melden, backend=backend)
+    # Das Archiv legt seine Tabellen ohne Tabellenoptionen an, also mit der
+    # Vorgabe der Datenbank — kollation_angleichen() zieht sie nach.
     # Nur das DDL haengt am Stil (Primaerschluessel); Platzhalter enthaelt es keine.
     _transcripts.ensure_schema(conn, "format" if backend == "mariadb" else "qmark")

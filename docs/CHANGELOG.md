@@ -11,6 +11,33 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+## [4.6.3] — 2026-11-06 · „Leitstand"
+
+### Behoben — MariaDB legte verschiedene Zuschauer zusammen (v4.2 W151)
+
+Gemeldet aus `tools/update.sh`, nach v4.6.2:
+
+    WARNING DB-Import: Statement abgelehnt (INSERT INTO loyalty_points …):
+    (1062, "Duplicate entry 'tiktok:nora' for key 'PRIMARY'")
+    … 'tiktok:ängie' … 'tiktok:ｊａｎａ' … 'tiktok:ℍ'
+    ERROR DB-Import abgebrochen: mehr als 25 Statements abgelehnt.
+
+- **SQLite vergleicht bytegenau, MariaDB mit `utf8mb4_unicode_ci` nicht.**
+  Groß/klein, Akzente und Schmuckschrift gelten dort als gleich — `Nora`
+  und `nora` waren in SQLite zwei Zuschauer und in MariaDB ein Schlüssel.
+  Im laufenden Betrieb hätte dieselbe Regel Treuepunkte still
+  zusammengelegt.
+- **Jetzt `utf8mb4_nopad_bin`** (`nc.schema.KOLLATION`). Gemessen gegen
+  MariaDB 10.11: `utf8mb4_bin` allein reicht nicht, es vergleicht `'a' =
+  'a '` (PAD SPACE); `nopad_bin` trennt alles, was SQLite trennt.
+- **Bestehende Tabellen werden angeglichen** (`kollation_angleichen`) —
+  beim Umzug und bei jedem Start auf MariaDB. Der abgebrochene Umzug hatte
+  sein Schema schon angelegt, und `CREATE TABLE IF NOT EXISTS` fasst eine
+  bestehende Tabelle nie an. Die Richtung ist sicher: bytegenau ist strenger,
+  es entsteht kein neues Duplikat.
+- **Die Suche bleibt gleich:** jede `LIKE`-Stelle vergleicht `LOWER(spalte)`.
+- Der Installer legt die Datenbank mit derselben Sortierfolge an.
+
 ## [4.6.2] — 2026-11-06 · „Leitstand"
 
 ### Behoben — Umzug nach MariaDB brach ab (v4.2 W150)
