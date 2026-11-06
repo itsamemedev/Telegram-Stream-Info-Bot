@@ -232,7 +232,8 @@ def _payload_of(r) -> dict:
 
 # ────────────────────────────────────────────────────────── Buchen
 
-def _norm_amount(v, field) -> float:
+def _endliche_zahl(v, field) -> float:
+    """Eine endliche Zahl aus Deck-/Telegram-Eingabe, UNGERUNDET."""
     try:
         f = float(str(v).replace("\u20ac", "").replace(",", ".").strip())
     except (TypeError, ValueError):
@@ -243,7 +244,28 @@ def _norm_amount(v, field) -> float:
     # unendlich.
     if not math.isfinite(f):
         raise LedgerError(f"{field}: '{v}' ist kein endlicher Betrag")
-    return round(f, 2)
+    return f
+
+
+def _norm_amount(v, field) -> float:
+    """Ein EUR-Betrag — auf Cent gerundet."""
+    return round(_endliche_zahl(v, field), 2)
+
+
+def _norm_optional(v, field):
+    """Kurs und Originalbetrag: leer oder 0 -> None, sonst eine endliche Zahl > 0.
+
+    v4.2-W162: beide gingen roh durch float(). "abc" wurde ein ValueError,
+    den die Route als HTTP 500 meldete statt als Eingabefehler; "nan" und
+    "inf" wurden gebucht und standen als "nan" in der CSV fuer das
+    Steuerbuero. Sie stehen nicht im Hash — gerade deshalb faellt ein
+    unsinniger Wert spaeter niemandem auf."""
+    # Review #207: NICHT auf Cent runden — ein Kurs 1,2345 ist nicht 1,23, und
+    # der Originalbetrag steht in seiner eigenen Waehrung.
+    f = 0.0 if v in (None, "") else _endliche_zahl(v, field)
+    if f < 0:
+        raise LedgerError(f"{field}: '{v}' muss groesser als 0 sein")
+    return f or None                # leer und 0 heissen „kein Kurs", wie bisher
 
 
 def _norm_storno(v):
@@ -290,6 +312,8 @@ def add_entry(conn, booked_on, platform, gross_eur, *, kind="payout",
     gross = _norm_amount(gross_eur, "gross_eur")
     fee = _norm_amount(fee_eur or 0, "fee_eur")
     storno_of = None if storno_of in (None, "") else _norm_storno(storno_of)
+    fx_rate = _norm_optional(fx_rate, "fx_rate")
+    original_amount = _norm_optional(original_amount, "original_amount")
     if k != "correction" and fee < 0:
         raise LedgerError("Eine negative Gebuehr wuerde den Nettobetrag ueber "
                           "den Bruttobetrag heben — Korrekturen als "
@@ -327,8 +351,7 @@ def add_entry(conn, booked_on, platform, gross_eur, *, kind="payout",
         "row_hash) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         (year, seq_no, booked_on, p, k, gross, fee, net,
          (currency or "EUR").upper(),
-         (float(fx_rate) if fx_rate else None),
-         (float(original_amount) if original_amount else None),
+         fx_rate, original_amount,
          doc_ref or "", note or "", storno_of,
          datetime.now(timezone.utc).isoformat(), prev_hash, row_hash))
     return {"seq_year": year, "seq_no": seq_no, "net_eur": net,

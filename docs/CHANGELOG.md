@@ -11,6 +11,51 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+## [4.6.14] — 2026-11-06 · „Leitstand"
+
+### Geändert — Chat-Nachtrag statt `.ass`-Beilage (v4.2 W163)
+
+- Der Chat einer beim Stopp gesicherten Aufnahme lag seit W158 als
+  `<aufnahme>.ass` neben der Datei. Telegram und das Deck zeigten ihn nie,
+  keiner der sieben Löschwege (Retention, Papierkorb, Dubletten, Archiv …)
+  kannte die Beilage, und das Archiv kopierte nur die Videodatei — eine
+  Halde, die mit jedem Neustart wuchs.
+- Jetzt merkt der Stopp den Chat in der Tabelle `aufnahme_chat_nachtrag` vor
+  (ein INSERT, kein Warten beim Herunterfahren), und zwei Minuten nach dem
+  nächsten Start arbeitet der Bot ihn über dieselbe Funktion ein wie bei
+  jeder normal beendeten Aufnahme (`AUFNAHME_CHAT`). Die Größe im Deck folgt
+  der Datei; eine verschwundene Aufnahme oder `AUFNAHME_CHAT=aus` verwirft
+  den Eintrag, nach drei gescheiterten Starts wird er laut aufgegeben.
+- Die Tabelle steht in `nc.schema.modultabellen` und zieht beim Umzug nach
+  MariaDB mit.
+
+- Review #207 (Codex): Kurs und Originalbetrag im Steuer-Journal werden
+  nicht mehr auf Cent gerundet (1,2345 blieb 1,23); ein aufgeschobener
+  Meme-Zusammenschnitt ist vor der Clip-Retention geschützt, solange er in
+  der Upload-Warteschlange steht; und der Nachtrag merkt sich Größe und
+  mtime der Datei — fiel das Abtragen nach dem Einarbeiten aus, brennt der
+  nächste Start den Chat nicht ein zweites Mal ein.
+
+Vertrag `_test_v42_w163_chat_nachtrag_statt_beilage`, 10 von 10
+Mutationsproben gefangen (eine entwischte zuerst — die Attrappe fehlte, der
+Vertrag ist nachgeschärft).
+
+## [4.6.13] — 2026-11-06 · „Leitstand"
+
+### Behoben — zweiter Bughunt-Durchgang (v4.2 W162)
+
+- **Meme-Zusammenschnitt am Upload-Fenster vorbei.** Die Aufnahme derselben
+  Sitzung wird außerhalb von `UPLOAD_WINDOW_START`–`UPLOAD_WINDOW_END`
+  aufgeschoben; der Zusammenschnitt (W159) ging sofort an jede Telegram-Gruppe
+  — oft nachts und vor der Aufnahme selbst. Jetzt dieselbe Warteschlange.
+- **Steuer-Journal: Kurs und Originalbetrag ungeprüft.** Beide liefen roh
+  durch `float()`: „abc" endete als HTTP 500 statt als Eingabefehler, „nan"
+  und „inf" wurden gebucht und standen so in der CSV fürs Steuerbüro. Sie
+  stehen nicht im Hash — ein unsinniger Wert fiel damit niemandem auf. Jetzt
+  endlich und größer null; 0 bleibt „kein Kurs".
+
+Vertrag `_test_v42_w162_zweiter_durchgang`, 6 von 6 Mutationsproben gefangen.
+
 ## [4.6.12] — 2026-11-06 · „Leitstand"
 
 ### Behoben — Tiefengrund-Bughunt über W150–W160 (v4.2 W161)

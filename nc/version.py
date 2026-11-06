@@ -4,7 +4,7 @@ Eine einzige Wahrheit für die Versionsanzeige (Dashboard-Footer, /api/version,
 „Was ist neu"-Panel). Reine Daten + kleine Helfer, voll testbar.
 """
 
-VERSION = "4.6.12"
+VERSION = "4.6.14"
 CODENAME = "Leitstand"
 RELEASE = "2026.11"
 
@@ -23,6 +23,32 @@ def build_stamp():
 # Meilenstein-Changelog, neueste Version zuerst. highlights = kurze, ehrliche
 # Stichpunkte dessen, was die Version bringt.
 CHANGELOG = [
+    {
+        "version": "4.6.14",
+        "date": "2026-11",
+        "title": "Leitstand",
+        # Patch-Fassung von 4.6: Chat-Nachtrag statt Beilage (W163).
+        "highlights": [
+            "Eine beim Stopp gesicherte Aufnahme bekommt ihren Chat jetzt wie jede andere: eingebrannt oder als Untertitelspur, beim nächsten Start nachgetragen",
+            "Bisher lag er als .ass-Datei daneben — Telegram und das Deck sahen ihn nie, kein Löschweg kannte die Datei, und das Archiv ließ sie zurück",
+            "Beim Stopp kostet das einen Datenbankeintrag statt Minuten Einbrennen — das Herunterfahren bleibt schnell",
+            "Die Größe im Deck folgt der Datei nach dem Einarbeiten; ein Eintrag, der dreimal scheitert, wird aufgegeben statt jeden Start zu belasten",
+            "Die neue Tabelle steht im Schema und zieht beim Umzug nach MariaDB mit",
+        ],
+    },
+    {
+        "version": "4.6.13",
+        "date": "2026-11",
+        "title": "Leitstand",
+        # Patch-Fassung von 4.6: zweiter Bughunt-Durchgang (W162).
+        "highlights": [
+            "Der Highlights-&-Memes-Zusammenschnitt ging sofort an Telegram, auch außerhalb des Upload-Fensters — oft mitten in der Nacht und vor der Aufnahme selbst",
+            "Außerhalb des Fensters wandert er jetzt in dieselbe Warteschlange wie die Aufnahmen",
+            "Steuer-Journal: ein unlesbarer Kurs oder Originalbetrag brach die Buchung mit HTTP 500 ab statt mit einer Meldung",
+            "„nan\" und „inf\" als Kurs oder Originalbetrag wurden gebucht und standen so in der CSV fürs Steuerbüro — jetzt abgelehnt",
+            "Ein Kurs von 0 bleibt „kein Kurs\", wie bisher",
+        ],
+    },
     {
         "version": "4.6.12",
         "date": "2026-11",

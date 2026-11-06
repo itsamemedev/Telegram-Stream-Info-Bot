@@ -873,7 +873,8 @@ def anlegen(conn, *, backend, mariadb_db, log):
 
 def modultabellen(conn, *, backend, log):
     """Die Tabellen, die ein Fachmodul selbst anlegt — Steuer-Journal
-    (nc/ledger.py) und Stream-Archiv (nc/intel/transcripts.py).
+    (nc/ledger.py), Stream-Archiv (nc/intel/transcripts.py) und der
+    Aufnahme-Chat-Nachtrag (nc/chatnachtrag.py).
 
     v4.2-W150: beide entstanden bisher erst beim ersten Gebrauch und standen
     damit in keinem Schema, das der Umzug nach MariaDB anlegt. Der brach
@@ -893,3 +894,6 @@ def modultabellen(conn, *, backend, log):
     # Vorgabe der Datenbank — kollation_angleichen() zieht sie nach.
     # Nur das DDL haengt am Stil (Primaerschluessel); Platzhalter enthaelt es keine.
     _transcripts.ensure_schema(conn, "format" if backend == "mariadb" else "qmark")
+    # v4.2-W163: der beim Stopp vorgemerkte Aufnahme-Chat (nc/chatnachtrag.py).
+    from nc import chatnachtrag as _chatnachtrag
+    _chatnachtrag.ensure_schema(conn, backend)

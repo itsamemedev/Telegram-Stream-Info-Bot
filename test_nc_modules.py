@@ -29011,14 +29011,15 @@ def _test_v42_w158_chat_in_der_aufnahme():
     # (4) Die Nachbearbeitung aus bot.py ausfuehren: Erfolg ersetzt die Datei,
     # ein Fehlschlag laesst das Original stehen, Reste bleiben nie liegen.
     teile = [n for n in baum.body if getattr(n, "name", "") in
-             ("_aufnahme_chat_einarbeiten", "_ffprobe_masse", "_aufnahme_chat_beilegen")]
-    assert len(teile) == 3
+             ("_aufnahme_chat_einarbeiten", "_ffprobe_masse")]
+    assert len(teile) == 2
     ns = {"log": _lg.getLogger("w158"), "os": _os, "subprocess": _sp, "shutil": _sh,
           "json": _json, "_time_mod": _t, "_nc_aufnahmechat": A,
           "_env_int": lambda n, d: d, "_aufnahme_chat_modus": lambda: "einbrennen"}
-    # Review #203: der Stopp-Pfad legt den Chat bei, statt ihn zu verlieren.
+    # Review #203: der Stopp-Pfad behaelt den Chat. ANKER GEWANDERT
+    # (v4.2-W163, nicht der Vertrag): vorgemerkt statt beigelegt.
     st = rumpf_ab(src, src.index("async def _aufnahme_beim_stopp_sichern("))
-    assert "_aufnahme_chat_beilegen, output_file, username" in st
+    assert "_aufnahme_chat_vormerken, output_file, username" in st
     exec(compile(_ast.Module(body=teile, type_ignores=[]), "bot.py", "exec"), ns)
     heim = P.verzeichnis()
     try:
@@ -29045,13 +29046,6 @@ def _test_v42_w158_chat_in_der_aufnahme():
         typen = _sp.run(["ffprobe", "-v", "error", "-show_entries", "stream=codec_name",
                          "-of", "csv=p=0", v], capture_output=True, text=True).stdout.split()
         assert neu and "mov_text" in typen, typen
-        # Stopp-Pfad: Beilage neben der Datei, Sitzung danach weg.
-        A.beginnen("w158", v, 0.0)
-        A.notieren("w158", "Sash", "beim Stopp", 1.0)
-        bl = ns["_aufnahme_chat_beilegen"](v, "w158")
-        assert bl == _os.path.join(heim, "rec.ass") and "beim Stopp" in open(bl, encoding="utf-8").read()
-        assert ns["_aufnahme_chat_beilegen"](v, "w158") == "" and v not in A.SITZUNGEN
-        _os.remove(bl)
         # Kaputte Eingabe: Original bleibt, nichts liegt herum.
         k = _os.path.join(heim, "kaputt.mp4")
         with open(k, "wb") as f:
@@ -29573,6 +29567,269 @@ def _test_v42_w161_tiefengrund():
        "Chat-Waechter mit der Aufnahme, Clips vor dem Einarbeiten, fremde 🎯-Bereiche tabu")
 
 
+def _test_v42_w162_zweiter_durchgang():
+    """v4.2-W162: zweiter Durchgang. Der Meme-Zusammenschnitt ging am
+    Upload-Fenster vorbei, und Kurs/Originalbetrag liefen ungeprueft ins
+    Steuer-Journal."""
+    import ast as _ast
+    import asyncio as _aio
+    import sqlite3 as _sq
+    from nc import ledger as L
+
+    # (1) Upload-Fenster: ausserhalb wird der Zusammenschnitt aufgeschoben.
+    src = open("bot.py", encoding="utf-8").read()
+    baum = _ast.parse(src)
+    fn = next(n for n in baum.body if getattr(n, "name", "") == "_meme_zusammenschnitt")
+    tg = next(n for n in _ast.walk(fn) if isinstance(n, _ast.If)
+              and "MEME_REEL_TELEGRAM" in _ast.unparse(n.test))
+    rumpf = _ast.Module(body=tg.body, type_ignores=[])
+    gesendet, vorgemerkt = [], []
+
+    async def _db(f):
+        return [{"group_id": -100}, {"group_id": 0}, {"group_id": -200}]
+
+    async def _senden(chat, ziel, app, user):
+        gesendet.append(chat)
+
+    async def _thread(f, *a):
+        return f(*a)
+
+    def _lauf(spaeter):
+        del gesendet[:], vorgemerkt[:]
+        ns = {"globals": lambda: {"bot_app": object()}, "db_async": _db,
+              "split_and_send_video": _senden, "_should_defer_upload": lambda: spaeter,
+              "_upload_queue_add": lambda *a: vorgemerkt.append(a[0]),
+              "asyncio": type("A", (), {"to_thread": staticmethod(_thread)}),
+              "username": "u", "ziel": "/clips/memes_u.mp4"}
+        code = "async def _f():\n" + "\n".join(
+            "    " + z for z in _ast.unparse(rumpf).splitlines())
+        exec(compile(code, "bot.py", "exec"), ns)
+        _aio.run(ns["_f"]())
+    _lauf(spaeter=True)
+    assert gesendet == [] and vorgemerkt == [-100, -200], \
+        "der Zusammenschnitt geht ausserhalb des Upload-Fensters sofort hinaus"
+    _lauf(spaeter=False)
+    assert gesendet == [-100, -200] and vorgemerkt == []
+
+    # (2) Kurs und Originalbetrag: Eingabefehler statt 500, nie nan/inf.
+    c = _sq.connect(":memory:"); c.row_factory = _sq.Row
+    for kaputt in ("abc", "nan", "inf", "-1,5"):
+        for feld in ("fx_rate", "original_amount"):
+            try:
+                L.add_entry(c, "2026-11-06", "kick", "10", **{feld: kaputt})
+            except L.LedgerError:
+                continue
+            raise AssertionError("%s=%r wurde gebucht" % (feld, kaputt))
+    L.add_entry(c, "2026-11-06", "kick", "10", fx_rate="1,08", original_amount="0")
+    r = c.execute("SELECT fx_rate, original_amount FROM revenue_entries").fetchone()
+    assert (r["fx_rate"], r["original_amount"]) == (1.08, None), tuple(r)
+    # Review #207: ein Kurs ist kein Cent-Betrag — keine Rundung auf zwei Stellen.
+    L.add_entry(c, "2026-11-07", "kick", "10", fx_rate="1,2345", original_amount="12.3456")
+    r = c.execute("SELECT fx_rate, original_amount FROM revenue_entries ORDER BY id DESC").fetchone()
+    assert (r["fx_rate"], r["original_amount"]) == (1.2345, 12.3456), tuple(r)
+    assert L._norm_amount("1,2345", "x") == 1.23, "der EUR-Betrag rundet nicht mehr auf Cent"
+    assert L.verify_chain(c)["ok"]
+    ok("W162: Meme-Zusammenschnitt haelt das Upload-Fenster, Steuer-Journal prueft Kurs "
+       "und Originalbetrag")
+
+
+def _test_v42_w163_chat_nachtrag_statt_beilage():
+    """v4.2-W163: der Chat einer beim Stopp gesicherten Aufnahme lag als
+    `<aufnahme>.ass` neben der Datei — unsichtbar fuer Telegram und Deck, von
+    keinem Loeschweg erfasst, vom Archiv zurueckgelassen. Jetzt vorgemerkt in
+    der Datenbank und beim naechsten Start eingearbeitet wie jeder andere."""
+    import ast as _ast
+    import asyncio as _aio
+    import logging as _lg
+    import os as _os
+    import shutil as _sh
+    import sqlite3 as _sq
+    import pruefhilfen as P
+    from nc import aufnahmechat as A
+    from nc import chatnachtrag as N
+    from nc import schema as S
+
+    # (1) Das Modul: vormerken, lesen, eingearbeitet, aufgeben.
+    modheim = P.verzeichnis()
+    ra, rb = _os.path.join(modheim, "a.mp4"), _os.path.join(modheim, "b.mp4")
+    P.attrappe(ra, 100); P.attrappe(rb, 100)
+    c = _sq.connect(":memory:"); c.row_factory = _sq.Row
+    N.ensure_schema(c); N.ensure_schema(c)              # idempotent
+    c.execute("CREATE TABLE recordings (filepath TEXT, file_size INTEGER)")
+    c.execute("INSERT INTO recordings VALUES (?, 100)", (ra,))
+    N.vormerken(c, ra, "anna", [(1.25, "Sash", "hallo {\\b1}"), (3, "Love", "ä")])
+    e = N.offene(c)[0]
+    assert N.lesen(e["chat_roh"]) == [(1.25, "Sash", "hallo {\\b1}"), (3.0, "Love", "ä")]
+    assert e["groesse"] == 100 and N.unveraendert(e)
+    _os.utime(ra, ns=(1, 1))
+    assert not N.unveraendert(e), "eine veraenderte Datei gilt als unveraendert"
+    N.eingearbeitet(c, e["id"], ra, 250)
+    assert N.offene(c) == [] and c.execute("SELECT file_size FROM recordings").fetchone()[0] == 250
+    N.vormerken(c, rb, "b", [(1, "x", "y")])
+    e = N.offene(c)[0]
+    for i in range(N.MAX_VERSUCHE - 1):
+        assert N.fehlversuch(c, dict(e, versuche=i)) is False
+    assert N.offene(c)[0]["versuche"] == N.MAX_VERSUCHE - 1
+    assert N.fehlversuch(c, N.offene(c)[0]) is True and N.offene(c) == [], \
+        "ein unverarbeitbarer Eintrag kostet bei jedem Start einen ffmpeg-Lauf"
+    for kaputt in ("", "{}", "[[1]]", "nicht json"):
+        try:
+            N.lesen(kaputt)
+        except (ValueError, TypeError, IndexError):
+            continue
+        raise AssertionError("unlesbarer Eintrag %r gilt als Chat" % kaputt)
+    _sh.rmtree(modheim, ignore_errors=True)
+
+    # (2) Im Schema, damit der Umzug nach MariaDB sie kennt (Lehre aus W150).
+    modt = _ast.unparse(next(n for n in _ast.parse(open("nc/schema.py", encoding="utf-8").read()).body
+                             if getattr(n, "name", "") == "modultabellen"))
+    assert "_chatnachtrag.ensure_schema(conn, backend)" in modt
+    sq = []
+
+    class _C:
+        def execute(self, q, *a):
+            sq.append(q)
+    N.ensure_schema(_C(), "mariadb")
+    assert "AUTO_INCREMENT" in sq[0] and S.KOLLATION in sq[0] and "AUTOINCREMENT" not in sq[0]
+
+    # (3) Keine Beilage mehr: im ganzen bot.py entsteht keine `.ass` neben einer
+    # Aufnahme, und der Stopp-Pfad merkt vor.
+    src = open("bot.py", encoding="utf-8").read()
+    baum = _ast.parse(src)
+    assert not any(getattr(n, "name", "") == "_aufnahme_chat_beilegen" for n in baum.body)
+    assert not any(isinstance(k, _ast.Constant) and k.value == ".ass" for k in _ast.walk(baum)), \
+        "eine Aufnahme bekommt wieder eine .ass-Beilage"
+    st = rumpf_ab(src, src.index("async def _aufnahme_beim_stopp_sichern("))
+    assert "_aufnahme_chat_vormerken, output_file, username" in st
+    assert '_spawn(_aufnahme_chat_nachtrag(), name="chat-nachtrag")' in src
+
+    # (4) Vormerken und Nachtrag aus bot.py ausfuehren, gegen eine echte
+    # SQLite und eine echte Datei.
+    teile = [n for n in baum.body if getattr(n, "name", "") in
+             ("_aufnahme_chat_vormerken", "_aufnahme_chat_nachtrag")]
+    assert len(teile) == 2
+    heim = P.verzeichnis()
+    db = _os.path.join(heim, "n.db")
+
+    class _Ctx:
+        def __enter__(self):
+            self.c = _sq.connect(db); self.c.row_factory = _sq.Row
+            return self.c
+        def __exit__(self, t, *a):
+            if t is None:
+                self.c.commit()
+            self.c.close()
+
+    async def _db_async(fn, *a):
+        with _Ctx() as cc:
+            return fn(cc, *a)
+    eingearbeitet = []
+
+    def _einarbeiten(pfad, chat, modus, wer):
+        eingearbeitet.append((pfad, chat, modus, wer))
+        return None if "kaputt" in pfad else 4242
+
+    async def _thread(f, *a):
+        return f(*a)
+
+    async def _schlaf(_s):
+        return None
+    modus = ["einbrennen"]
+    ns = {"_nc_aufnahmechat": A, "_nc_chatnachtrag": N, "os": _os, "log": _lg.getLogger("w163"),
+          "db_conn": _Ctx, "db_async": _db_async, "clean_username": lambda u: u.lstrip("@").lower(),
+          "_aufnahme_chat_modus": lambda: modus[0], "_aufnahme_chat_einarbeiten": _einarbeiten,
+          "asyncio": type("A", (), {"sleep": staticmethod(_schlaf),
+                                    "to_thread": staticmethod(_thread)})}
+    exec(compile(_ast.Module(body=teile, type_ignores=[]), "bot.py", "exec"), ns)
+    try:
+        with _Ctx() as cc:
+            N.ensure_schema(cc)
+            cc.execute("CREATE TABLE recordings (filepath TEXT, file_size INTEGER)")
+        v = _os.path.join(heim, "rec.mp4"); k = _os.path.join(heim, "kaputt.mp4")
+        for p in (v, k):
+            P.attrappe(p, 1000)
+        with _Ctx() as cc:
+            cc.execute("INSERT INTO recordings VALUES (?, 1000)", (v,))
+        A.SITZUNGEN.clear()
+        for p in (v, k):
+            A.beginnen("@Anna", p, 0.0)
+            A.notieren("@Anna", "Sash", "beim Stopp " + p[-8:], 1.0)
+            assert ns["_aufnahme_chat_vormerken"](p, "@Anna") is True
+        assert sorted(_os.listdir(heim)) == ["kaputt.mp4", "n.db", "rec.mp4"], _os.listdir(heim)
+        assert ns["_aufnahme_chat_vormerken"](v, "@Anna") is False, "ohne Sitzung kein Chat"
+        # Die Attrappe muss es GEBEN — sonst faellt sie an isfile heraus und
+        # nicht am MP4-Riegel (die Probe ist genau so entwischt, W89).
+        f = _os.path.join(heim, "rec.flv"); P.attrappe(f, 1000)
+        A.beginnen("@Anna", f, 0.0); A.notieren("@Anna", "x", "y", 2.0)
+        assert ns["_aufnahme_chat_vormerken"](f, "@Anna") is False, \
+            "ein FLV wird vorgemerkt, das der Nachtrag nie verarbeiten kann"
+        _os.remove(f)
+        # Ein Eintrag, dessen Datei es nicht mehr gibt, faellt still heraus.
+        weg = _os.path.join(heim, "weg.mp4"); P.attrappe(weg, 10)
+        with _Ctx() as cc:
+            N.vormerken(cc, weg, "anna", [(1, "a", "b")])
+        _os.remove(weg)
+        _aio.run(ns["_aufnahme_chat_nachtrag"](0))
+        assert [(p, m, w) for p, _c, m, w in eingearbeitet] == \
+            [(v, "einbrennen", "anna"), (k, "einbrennen", "anna")], eingearbeitet
+        assert eingearbeitet[0][1] == [(1.0, "Sash", "beim Stopp " + v[-8:])]
+        with _Ctx() as cc:
+            assert cc.execute("SELECT file_size FROM recordings").fetchone()[0] == 4242, \
+                "das Deck zeigt nach dem Einarbeiten die alte Groesse"
+            rest = N.offene(cc)
+        assert [r["pfad"] for r in rest] == [k] and rest[0]["versuche"] == 1, rest
+        for _ in range(N.MAX_VERSUCHE):
+            _aio.run(ns["_aufnahme_chat_nachtrag"](0))
+        with _Ctx() as cc:
+            assert N.offene(cc) == [], "ein unverarbeitbarer Eintrag bleibt fuer immer"
+        # Review #207: die Datei hat sich seit dem Stopp veraendert (das
+        # Einarbeiten lief, nur das Abtragen fiel aus) — kein zweites Einbrennen,
+        # aber die Groesse im Deck wird nachgezogen.
+        with _Ctx() as cc:
+            N.vormerken(cc, v, "anna", [(1, "a", "b")])
+        with open(v, "r+b") as fh:
+            fh.truncate(3000)
+        del eingearbeitet[:]
+        _aio.run(ns["_aufnahme_chat_nachtrag"](0))
+        with _Ctx() as cc:
+            assert eingearbeitet == [], "der Chat wird ein zweites Mal eingebrannt"
+            assert N.offene(cc) == []
+            assert cc.execute("SELECT file_size FROM recordings").fetchone()[0] == 3000
+        # AUFNAHME_CHAT=aus: vorgemerktes wird verworfen, nicht eingearbeitet.
+        with _Ctx() as cc:
+            N.vormerken(cc, v, "anna", [(1, "a", "b")])
+        modus[0] = "aus"; del eingearbeitet[:]
+        _aio.run(ns["_aufnahme_chat_nachtrag"](0))
+        with _Ctx() as cc:
+            assert eingearbeitet == [] and N.offene(cc) == []
+    finally:
+        A.SITZUNGEN.clear()
+        _sh.rmtree(heim, ignore_errors=True)
+    # (5) Review #207: die Clip-Retention schont, was in der Upload-
+    # Warteschlange steht (ein aufgeschobener Meme-Zusammenschnitt).
+    import threading as _th
+    import time as _tm
+    pr = next(n for n in baum.body if getattr(n, "name", "") == "_clip_prune")
+    heim = P.verzeichnis()
+    try:
+        namen = ["clip_a.mp4", "memes_u.mp4", "clip_b.mp4", "clip_c.mp4"]
+        for i, n in enumerate(namen):
+            P.attrappe(_os.path.join(heim, n), 10)
+            _os.utime(_os.path.join(heim, n), (1000 + i, 1000 + i))
+        wq = [{"file": _os.path.join(heim, "memes_u.mp4")}]
+        ns2 = {"os": _os, "CLIP_DIR": heim, "CLIP_MAX_AGE_DAYS": 0, "CLIP_MAX_COUNT": 1,
+               "_time_mod": _tm, "log": _lg.getLogger("w163"),
+               "_UPLOAD_QUEUE_LOCK": _th.Lock(), "_upload_queue_load": lambda: wq}
+        exec(compile(_ast.Module(body=[pr], type_ignores=[]), "bot.py", "exec"), ns2)
+        ns2["_clip_prune"]()
+        assert sorted(_os.listdir(heim)) == ["clip_c.mp4", "memes_u.mp4"], \
+            "die Retention loescht einen Zusammenschnitt, der noch auf sein Upload-Fenster wartet"
+    finally:
+        _sh.rmtree(heim, ignore_errors=True)
+    ok("W163: Chat aus dem Stopp in der Datenbank vorgemerkt und beim Start eingearbeitet — "
+       "keine .ass-Beilage mehr")
+
+
 def _test_v42_w155_weiche_steckt():
     """v4.2-W155: gemeldet „Wir haben in den Restreams immer noch kein Bild" —
     Overlay und Chat liefen, das Videofeld zeigte das Pausenbild. Ein
@@ -30084,6 +30341,8 @@ def main():
     _test_v42_w159_ausweichen_memes_clipchat()
     _test_v42_w160_html_modus_traegt_quelle()
     _test_v42_w161_tiefengrund()
+    _test_v42_w162_zweiter_durchgang()
+    _test_v42_w163_chat_nachtrag_statt_beilage()
     _test_v42_w60_azrael_cooldown_je_plattform()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)
