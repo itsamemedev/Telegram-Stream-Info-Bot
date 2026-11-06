@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="docs/assets/banner.svg" alt="NIGHTCRAWLER — v4.6.3 Centro de control" width="100%">
+<img src="docs/assets/banner.svg" alt="NIGHTCRAWLER — v4.6.4 Centro de control" width="100%">
 
 ### La sala de control para streaming en directo
 #### Vigilancia · Grabación · Restream multidestino · Moderación con IA
@@ -66,8 +66,8 @@ flowchart TB
     TG["📨 Telegram"]:::ein --> BOT
     DC["🎮 Discord<br/>66 comandos"]:::ein --> BOT
     TT["🎥 TikTok<br/>detección en directo + chat"]:::ein --> BOT
-    BOT["bot.py<br/>monolito · 26.399 líneas"]:::core
-    BOT -->|configure| NC["nc/ — 179 módulos<br/>39 blueprints"]:::lib
+    BOT["bot.py<br/>monolito · 26.414 líneas"]:::core
+    BOT -->|configure| NC["nc/ — 180 módulos<br/>39 blueprints"]:::lib
     BOT --> BRAIN["brain/ — 16 agentes vigilantes"]:::brain
     BOT --> DB[("SQLite o MariaDB<br/>+ ajustes")]:::db
     BOT --> PROM["/metrics → Prometheus → Grafana"]:::lib
@@ -134,7 +134,7 @@ dispara nada.
 
 ## ⚙️ Ajustes
 
-**En el panel, pestaña “Ajustes”.** Las unas 576 variables de `.env.example`
+**En el panel, pestaña “Ajustes”.** Las unas 577 variables de `.env.example`
 con grupo, valor por defecto y descripción, con búsqueda. Cada fila indica de
 dónde viene el valor — *fijado en el panel*, *desde .env* o *por defecto*. Se
 guarda en la base de datos y, en el siguiente arranque, tiene prioridad sobre
@@ -322,7 +322,7 @@ guardados en la base de datos, mudanza de SQLite a MariaDB en un paso con
 recuento, Prometheus y Grafana completos con 16 reglas de alerta, el 14.º
 vigilante para la base de datos, un mapa de situación redibujado y `update.sh`
 que pregunta por lo que falta. **Parche 4.6.1:** detrás del nginx del
-instalador el panel estaba abierto sin inicio de sesión; once fallos corregidos. **Parche 4.6.2:** la mudanza a MariaDB lleva el diario fiscal y el archivo. **Parche 4.6.3:** MariaDB compara byte a byte como SQLite.
+instalador el panel estaba abierto sin inicio de sesión; once fallos corregidos. **Parche 4.6.2:** la mudanza a MariaDB lleva el diario fiscal y el archivo. **Parche 4.6.3:** MariaDB compara byte a byte como SQLite. **Parche 4.6.4:** cookies seguras tras el proxy HTTPS.
 Todas las oleadas en
 **[`docs/CHANGELOG.md`](docs/CHANGELOG.md)**.
 
@@ -332,11 +332,11 @@ Todas las oleadas en
 
 | | |
 |---|---|
-| Versión actual | **4.6.3** — “Centro de control” (2026.11) |
+| Versión actual | **4.6.4** — “Centro de control” (2026.11) |
 | Rutas Flask | 379 (34 en `bot.py` · 345 en `nc/routes/`) |
 | Comandos de Discord | 66 |
 | Agentes vigilantes | 14 |
-| Variables de configuración | ~576 |
+| Variables de configuración | ~577 |
 | Idiomas | alemán (origen), inglés, español |
 
 ---
@@ -349,6 +349,6 @@ comunidad en **[Discord](https://discord.gg/psvnxm7tSV)** · **[lafap.de](https:
 
 <div align="center">
 
-**NIGHTCRAWLER v4.6.3 · “Centro de control”**
+**NIGHTCRAWLER v4.6.4 · “Centro de control”**
 
 </div>

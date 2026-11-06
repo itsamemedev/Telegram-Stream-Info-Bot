@@ -173,14 +173,16 @@ def api_donations_summary():
                 out["by_platform"].append({"platform": p, "count": counts.get(p, 0)})
                 out["total_count"] += counts.get(p, 0)
             # Letzte 15 Donations (ohne TikTok — auf Wunsch aus dem Panel)
-            try:
-                cur.execute(
-                    "SELECT ts, name, amount, message, platform FROM overlay_events "
-                    "WHERE kind='donation' AND platform IN"
-                    + _nc_revenue.sql_in() +
-                    " ORDER BY id DESC LIMIT 15")
-            except Exception:
-                pass
+            # v4.2-W152: hier stand `except Exception: pass` — und danach las
+            # fetchall() das Ergebnis der VORIGEN Abfrage (Plattform/Anzahl).
+            # Die Liste zeigte dann Zeilen ohne ts/name, oder die Route starb
+            # mit KeyError. Diese Abfrage ist in beiden Dialekten gleich; ein
+            # Fehler hier ist echt und geht an den Auffang der Route.
+            cur.execute(
+                "SELECT ts, name, amount, message, platform FROM overlay_events "
+                "WHERE kind='donation' AND platform IN"
+                + _nc_revenue.sql_in() +
+                " ORDER BY id DESC LIMIT 15")
             for r in cur.fetchall():
                 out["recent"].append({
                     "ts": r["ts"], "name": r["name"] or "?",

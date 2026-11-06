@@ -759,9 +759,31 @@ def _remember(rem: dict, written, backup):
 
 
 def rollback(name: str) -> dict:
-    """Ein Backup zurueckspielen. Nur Dateien aus genau diesem ZIP."""
+    """Ein Backup zurueckspielen. Nur Dateien aus genau diesem ZIP.
+
+    v4.2-W152: nie neben einem laufenden Update. Beide schreiben Datei fuer
+    Datei in denselben Baum; nebeneinander entsteht ein Stand, der weder der
+    alte noch der neue ist — und das Backup des Updates enthielte schon
+    halb zurueckgespielte Dateien. Der Job-Merker gilt fuer beide."""
     if not _CFG.enabled:
         return {"ok": False, "error": "Update-Schreiben ist abgeschaltet."}
+    with _JOB_LOCK:
+        if _JOB["running"]:
+            _log("warning", "Rollback %s abgelehnt: es laeuft gerade ein Update", name)
+            return {"ok": False, "error": "Es laeuft gerade ein Update — erst danach "
+                                          "zurueckspielen."}
+        vorher = dict(_JOB)
+        _JOB.update(running=True, phase="rollback", text="Backup wird zurueckgespielt …")
+    try:
+        return _zurueckspielen(name)
+    finally:
+        with _JOB_LOCK:
+            # Der Stand des letzten Updates bleibt fuer das Deck lesbar.
+            _JOB.update(vorher)
+
+
+def _zurueckspielen(name: str) -> dict:
+    """Der eigentliche Rueckspiel-Lauf — nur ueber rollback() aufrufen."""
     # v4.2-W2: derselbe Riegel wie ueberall. Die Praefix-/Suffix-Pruefung
     # bleibt — sie sagt "nur ein Backup, kein beliebiges ZIP" und ist damit
     # eine fachliche Regel, keine Pfad-Pruefung. Die Pfad-Pruefung macht

@@ -11,6 +11,40 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+## [4.6.4] — 2026-11-06 · „Leitstand"
+
+### Behoben — zweite Runde des Bughunts (v4.2 W152)
+
+- **Sitzungs-Cookies ohne `Secure` hinter dem HTTPS-Proxy.** `Secure` hing
+  allein an `DASHBOARD_TLS_CERT`, also daran, dass das Deck selbst TLS
+  spricht. Im Zugang „proxy" terminiert nginx — das Deck sah http, und PIN-
+  wie Token-Cookie gingen ohne `Secure` hinaus; ein Aufruf über `http://`
+  (die Vorlage lauscht auch auf Port 80) trug sie im Klartext.
+  `nc.clientip.ist_https` liest `X-Forwarded-Proto`, aber nur von einem
+  vertrauten Proxy.
+- **Nicht-ASCII im PIN-Feld gab HTTP 500.** `hmac.compare_digest` wirft auf
+  `str` mit Nicht-ASCII `TypeError`; der Fehlversuch wurde nicht gezählt.
+  Verglichen wird jetzt als Bytes — PIN, Token und PIN-Cookie.
+- **Rollback neben einem laufenden Update.** Beide schreiben Datei für Datei
+  in denselben Baum. Der Job-Merker gilt jetzt für beide.
+- **Spendenliste:** nach einem Fehler las sie das Ergebnis der vorigen Abfrage
+  (`except Exception: pass` vor `fetchall()`).
+- **Discord-Bereiche folgen den Trackings** (gemeldet: „alle getrackten User
+  sollten einen Channel bekommen, die nicht mehr getrackten gelöscht
+  werden"). Bisher gab es nur `/setup_targets` — von Hand, nur anlegend,
+  gedeckelt und ohne pausierte Trackings. Jetzt gleicht eine eigene Schleife
+  alle `DISCORD_ZIELE_SYNC_MIN` Minuten ab (Vorgabe 10, `0` schaltet ab).
+  Die Entscheidung steht in `nc/discordziele.py`, mit drei Riegeln:
+  gelöscht wird nur eine Kategorie mit unserem Präfix `🎯 `; ohne gelesene
+  Trackings wird nichts gelöscht (eine leere Liste ist eher eine leere
+  Datenbank); und mehr als die Hälfte der Bereiche löscht nur
+  `/setup_targets` ausdrücklich — gelöschte Kanäle nehmen ihren Verlauf mit.
+  Die Server-Grenze von 500 Kanälen wird beachtet und gemeldet.
+- **Einstellungen auf dem Handy unlesbar** (gemeldet mit Bildschirmfoto): das
+  starre Zwei-Spalten-Raster gab der Eingabe mindestens 220 px, das Feld lag
+  über dem Variablennamen, und die Namen waren auf zwei Buchstaben gekappt.
+  Jetzt bricht die Zeile um, lange Namen umbrechen statt abzuschneiden.
+
 ## [4.6.3] — 2026-11-06 · „Leitstand"
 
 ### Behoben — MariaDB legte verschiedene Zuschauer zusammen (v4.2 W151)

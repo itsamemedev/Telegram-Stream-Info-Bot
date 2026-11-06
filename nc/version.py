@@ -4,7 +4,7 @@ Eine einzige Wahrheit für die Versionsanzeige (Dashboard-Footer, /api/version,
 „Was ist neu"-Panel). Reine Daten + kleine Helfer, voll testbar.
 """
 
-VERSION = "4.6.3"
+VERSION = "4.6.4"
 CODENAME = "Leitstand"
 RELEASE = "2026.11"
 
@@ -23,6 +23,19 @@ def build_stamp():
 # Meilenstein-Changelog, neueste Version zuerst. highlights = kurze, ehrliche
 # Stichpunkte dessen, was die Version bringt.
 CHANGELOG = [
+    {
+        "version": "4.6.4",
+        "date": "2026-11",
+        "title": "Leitstand",
+        # Patch-Fassung von 4.6: zweite Runde des Bughunts (W152).
+        "highlights": [
+            "PIN- und Token-Cookie tragen hinter dem HTTPS-Proxy des Installers jetzt Secure — vorher reichte ein Aufruf über http://, und sie gingen im Klartext über die Leitung",
+            "Ein Umlaut im PIN-Feld brachte den Login mit HTTP 500 zum Absturz und zählte nicht als Fehlversuch",
+            "Ein Rollback kann nicht mehr neben einem laufenden Update schreiben — beide zusammen hinterließen einen Stand, der weder alt noch neu war",
+            "Die Spendenliste im Deck las nach einem Fehler das Ergebnis der vorigen Abfrage",
+            "Discord: jeder getrackte User bekommt seinen Bereich von selbst, und der eines nicht mehr getrackten wird gelöscht — alle zehn Minuten, ohne /setup_targets",
+        ],
+    },
     {
         "version": "4.6.3",
         "date": "2026-11",

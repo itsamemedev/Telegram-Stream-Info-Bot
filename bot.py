@@ -9829,6 +9829,14 @@ def _client_ip():
                                  TRUSTED_PROXIES)
 
 
+def _cookie_sicher():
+    """Secure-Flag fuer Sitzungs-Cookies — auch hinter einem HTTPS-Proxy.
+    v4.2-W152, siehe nc/clientip.ist_https."""
+    return _nc_clientip.ist_https(request.remote_addr, request.headers, TRUSTED_PROXIES,
+                                  tls_direkt=bool(os.getenv("DASHBOARD_TLS_CERT", "").strip()),
+                                  schema=request.scheme)
+
+
 def _ist_lokal():
     """Anfrage vom Rechner selbst (SSH-Tunnel) — NICHT ueber einen Proxy auf
     diesem Rechner. v4.2-W149: vorher genuegte remote_addr == 127.0.0.1, und
@@ -9846,7 +9854,9 @@ def _token_ok():
                  if request.headers.get("Authorization", "").startswith("Bearer ") else "")
              or request.args.get("token")
              or request.cookies.get("nc_token") or "")
-    return bool(given) and _hmac.compare_digest(str(given), DASHBOARD_TOKEN)
+    # Bytes: compare_digest wirft bei Nicht-ASCII-str TypeError (v4.2-W152).
+    return bool(given) and _hmac.compare_digest(str(given).encode("utf-8"),
+                                                DASHBOARD_TOKEN.encode("utf-8"))
 
 
 # ---- v4.0-W52: PIN-Login ----------------------------------------------------
@@ -9900,7 +9910,8 @@ def _pin_ok():
     alter = _time_mod.time() - int(t_roh)
     if alter < -300 or (DASHBOARD_PIN_MAX_AGE_S > 0 and alter > DASHBOARD_PIN_MAX_AGE_S):
         return False                      # abgelaufen oder aus der Zukunft
-    return _hmac.compare_digest(given, _pin_auth_value(int(t_roh)))
+    return _hmac.compare_digest(given.encode("utf-8"),                # Bytes (W152)
+                                _pin_auth_value(int(t_roh)).encode("utf-8"))
 
 
 def _pin_locked():
@@ -10002,7 +10013,7 @@ def _auth_cookie(resp):
             if request.cookies.get("nc_token") != DASHBOARD_TOKEN:
                 resp.set_cookie("nc_token", DASHBOARD_TOKEN, max_age=30 * 86400,
                                 httponly=True, samesite="Lax",
-                                secure=bool(os.getenv("DASHBOARD_TLS_CERT", "").strip()))
+                                secure=_cookie_sicher())
             if request.method in ("GET", "HEAD"):
                 rest = [(k, v) for k, v in request.args.items(multi=True)
                         if k != "token"]
@@ -10131,12 +10142,16 @@ def dashboard_login_submit():
                         mimetype="text/html", status=429)
     import hmac as _hmac
     given = (request.form.get("pin") or "").strip()
-    if given and _hmac.compare_digest(given, DASHBOARD_PIN):
+    # v4.2-W152: als Bytes vergleichen. compare_digest auf str wirft
+    # TypeError, sobald eine Seite Nicht-ASCII enthaelt — ein "ä" im
+    # Eingabefeld brachte den Login mit HTTP 500 zum Absturz, und der
+    # Fehlversuch wurde dabei nicht einmal gezaehlt.
+    if given and _hmac.compare_digest(given.encode("utf-8"), DASHBOARD_PIN.encode("utf-8")):
         _pin_clear_fail()
         resp = redirect(nxt)
         resp.set_cookie("nc_auth", _pin_auth_value(), max_age=30 * 86400,
                         httponly=True, samesite="Lax",
-                        secure=bool(os.getenv("DASHBOARD_TLS_CERT", "").strip()))
+                        secure=_cookie_sicher())
         return resp
     _pin_note_fail()
     return Response(_login_page("Falsches PIN.", nxt), mimetype="text/html", status=401)

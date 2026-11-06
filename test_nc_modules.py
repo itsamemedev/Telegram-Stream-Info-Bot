@@ -28585,6 +28585,109 @@ def _test_v42_w151_mariadb_vergleicht_bytegenau():
     ok("W151: MariaDB vergleicht bytegenau wie SQLite, alte Tabellen werden angeglichen")
 
 
+def _test_v42_w152_cookies_pin_rollback():
+    """v4.2-W152: drei kleine Befunde aus der zweiten Runde.
+
+    (1) Die Sitzungs-Cookies trugen `Secure` nur bei DASHBOARD_TLS_CERT. Hinter
+    dem nginx des Installers terminiert der Proxy das TLS — das Deck sah http
+    und schickte PIN- und Token-Cookie ohne `Secure`. (2) compare_digest auf
+    str wirft TypeError bei Nicht-ASCII: ein "ä" im PIN-Feld gab HTTP 500 und
+    zaehlte nicht als Fehlversuch. (3) Ein Rollback konnte neben einem
+    laufenden Update schreiben."""
+    from nc import clientip as CI
+    from nc import updater as UP
+    import hmac as _hm
+
+    T = {"127.0.0.1"}
+    assert CI.ist_https("127.0.0.1", {"X-Forwarded-Proto": "https"}, T) is True
+    assert CI.ist_https("127.0.0.1", {"X-Forwarded-Proto": "http"}, T) is False
+    assert CI.ist_https("203.0.113.9", {"X-Forwarded-Proto": "https"}, T) is False, \
+        "X-Forwarded-Proto von einem Fremden geglaubt"
+    assert CI.ist_https("127.0.0.1", {}, set(), tls_direkt=True) is True
+    assert CI.ist_https("127.0.0.1", {}, set(), schema="https") is True
+    src = open("bot.py", encoding="utf-8").read()
+    assert src.count("secure=_cookie_sicher())") == 2, "ein Sitzungs-Cookie ohne Proxy-Erkennung"
+    assert 'secure=bool(os.getenv("DASHBOARD_TLS_CERT"' not in src
+
+    try:
+        _hm.compare_digest("ä", "1234")
+        raise AssertionError("compare_digest nimmt Nicht-ASCII-str — der Befund ist hinfaellig")
+    except TypeError:
+        pass
+    assert 'compare_digest(given.encode("utf-8"), DASHBOARD_PIN.encode("utf-8"))' in src
+    assert 'compare_digest(str(given).encode("utf-8"),' in src
+
+    alt = (dict(UP._JOB), UP._CFG.enabled)
+    try:
+        UP._CFG.enabled = True
+        UP._JOB["running"] = True
+        r = UP.rollback("nc_update_x.zip")
+        assert r["ok"] is False and "Update" in r["error"], r
+        UP._JOB["running"] = False
+        UP._JOB["phase"] = "done"
+        r = UP.rollback("kein_backup.zip")
+        assert r["ok"] is False and UP._JOB["running"] is False and UP._JOB["phase"] == "done", \
+            "der Rollback hinterlaesst den Job-Merker"
+    finally:
+        UP._JOB.clear()
+        UP._JOB.update(alt[0])
+        UP._CFG.enabled = alt[1]
+
+    m = open("nc/routes/money.py", encoding="utf-8").read()
+    rumpf = m[m.index("def api_donations_summary("):m.index("def api_finanzamt_entries(")]
+    assert "except Exception:\n                pass" not in rumpf, \
+        "die Liste liest nach einem Fehler das Ergebnis der vorigen Abfrage"
+    # (4) Einstellungen auf dem Handy: das starre Raster gab der Eingabe
+    # mindestens 220px, und das Feld lag ueber dem Variablennamen.
+    h = open("templates/dashboard.html", encoding="utf-8").read()
+    z = h[h.index("function _esZeile(e)"):h.index("function einstZeigen()")]
+    assert "grid-template-columns" not in z and "flex-wrap:wrap" in z, "starres Raster zurueck"
+    assert z.count("min-width:0") >= 3 and "overflow-wrap:anywhere" in z
+    ok("W152: Secure-Cookies hinter dem Proxy, Nicht-ASCII-PIN ohne 500, kein Rollback neben dem Update")
+
+
+def _test_v42_w153_discord_bereiche_folgen_den_trackings():
+    """v4.2-W153: gemeldet „discord, wo alle getrackten User einen Channel
+    bekommen sollten und die, die nicht mehr getrackt sind, die Channel
+    sollten gelöscht werden". Bis hierher nur /setup_targets: von Hand, nur
+    anlegend, gedeckelt, ohne pausierte Trackings."""
+    import ast as _ast
+    from nc import discordziele as Z
+
+    k = Z.kategorie
+    # (1) Anlegen, was fehlt; loeschen, was wir angelegt haben und nicht mehr gilt.
+    p = Z.plan(["anna", "Ben", "carl"], [k("anna"), k("alt"), "📢 Info"], belegt=40)
+    assert p["anlegen"] == ["Ben", "carl"] and p["loeschen"] == [k("alt")], p
+    assert "📢 Info" not in p["loeschen"], "fremde Kategorie geloescht"
+    # (2) Ohne Bestand kein Loeschen — eine leere Liste ist eher eine leere DB.
+    p = Z.plan([], [k("anna"), k("ben")], belegt=40)
+    assert p["loeschen"] == [] and p["grund"], p
+    # (3) Kein Massenloeschen im Automaten — wohl aber ausdruecklich.
+    alle = [k("u%d" % i) for i in range(10)]
+    p = Z.plan(["u0"], alle, belegt=60)
+    assert p["loeschen"] == [] and "zu viele" in p["grund"], p
+    p = Z.plan(["u0"], alle, belegt=60, erzwingen=True)
+    assert len(p["loeschen"]) == 9
+    # (4) Die Server-Grenze: was nicht passt, wird zurueckgestellt, nicht verschluckt.
+    p = Z.plan(["a", "b", "c"], [], belegt=Z.SERVER_GRENZE - 5)
+    assert p["anlegen"] == ["a"] and p["zurueckgestellt"] == ["b", "c"], p
+    # (5) Gleicher Slug, ein Bereich.
+    assert Z.plan(["Anna", "anna"], [], belegt=0)["anlegen"] == ["Anna"]
+
+    # (6) Verdrahtung: eigene Schleife, /setup_targets nutzt denselben Abgleich,
+    # pausierte Trackings zaehlen mit.
+    d = open("discordbot.py", encoding="utf-8").read()
+    baum = _ast.parse(d)
+    oben = {n.name for n in baum.body if isinstance(n, (_ast.FunctionDef, _ast.AsyncFunctionDef))}
+    assert {"_ziele_abgleichen", "_ziele_sync_loop", "_alle_getrackten"} <= oben
+    assert '_spawn(_ziele_sync_loop(), name="discord-ziele")' in d
+    assert "await _ziele_abgleichen(inter.guild, erzwingen=True)" in d
+    q = d[d.index("def _alle_getrackten("):d.index("def _ziel_guild(")]
+    assert "paused" not in q, "pausierte Trackings verlieren ihren Bereich"
+    assert "DISCORD_ZIELE_SYNC_MIN=10" in open(".env.example", encoding="utf-8").read()
+    ok("W153: Discord-Bereiche folgen den Trackings — anlegen, loeschen, mit Riegeln")
+
+
 def main():
     tmp, rid = richte_testdatenbank_ein()
     ok("db_conn aus nc.dbwrap: echtes Schema angelegt, Commit durchgelaufen")
@@ -28945,6 +29048,8 @@ def main():
     _test_v42_w149_tiefengrund()
     _test_v42_w150_umzug_mit_journal_und_archiv()
     _test_v42_w151_mariadb_vergleicht_bytegenau()
+    _test_v42_w152_cookies_pin_rollback()
+    _test_v42_w153_discord_bereiche_folgen_den_trackings()
     _test_v42_w60_azrael_cooldown_je_plattform()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)

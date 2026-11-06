@@ -6860,20 +6860,24 @@ async function einstLoad(){
   einstZeigen();
 }
 function _esZeile(e){
-  var z=_esEl('div',null,'display:grid;grid-template-columns:minmax(0,1fr) minmax(220px,340px);gap:10px;padding:9px 0;border-top:1px solid var(--border)');
-  var links=_esEl('div');
-  var kopf=_esEl('div'); kopf.appendChild(_esEl('b',e.name,'font-family:var(--mono)'));
+  // v4.2-W152: Flex mit Umbruch statt starrem Zwei-Spalten-Raster. Das Raster
+  // gab der rechten Spalte mindestens 220px, Eingabe (min. 140px) und Knopf
+  // brauchten mehr — auf dem Handy schob sich das Feld ueber den Namen, und
+  // die langen Variablennamen waren auf zwei Buchstaben abgeschnitten.
+  var z=_esEl('div',null,'display:flex;flex-wrap:wrap;gap:8px 12px;align-items:flex-start;padding:9px 0;border-top:1px solid var(--border)');
+  var links=_esEl('div',null,'flex:1 1 280px;min-width:0');
+  var kopf=_esEl('div'); kopf.appendChild(_esEl('b',e.name,'font-family:var(--mono);overflow-wrap:anywhere'));
   var farbe={datenbank:'var(--neon)',env:'var(--cyan)',vorgabe:'var(--text-faint)'}[e.quelle];
   var qtext={datenbank:T('vom Deck gesetzt'),env:T('aus der .env'),vorgabe:T('nur Vorgabe')}[e.quelle];
   kopf.appendChild(_esEl('span',qtext,'margin-left:8px;font-size:10px;padding:1px 6px;border:1px solid '+farbe+';color:'+farbe));
   if(e.geheim) kopf.appendChild(_esEl('span',T('geheim'),'margin-left:6px;font-size:10px;color:var(--amber)'));
   links.appendChild(kopf);
-  if(e.beschreibung) links.appendChild(_esEl('div',e.beschreibung,'font-size:11px;color:var(--text-faint);margin-top:3px'));
-  if(e.vorgabe) links.appendChild(_esEl('div','= '+e.vorgabe,'font-size:11px;color:var(--text-faint);font-family:var(--mono)'));
+  if(e.beschreibung) links.appendChild(_esEl('div',e.beschreibung,'font-size:11px;color:var(--text-faint);margin-top:3px;overflow-wrap:anywhere'));
+  if(e.vorgabe) links.appendChild(_esEl('div','= '+e.vorgabe,'font-size:11px;color:var(--text-faint);font-family:var(--mono);overflow-wrap:anywhere'));
   if(e.geschuetzt) links.appendChild(_esEl('div','🔒 '+e.schutz,'font-size:11px;color:var(--amber);margin-top:3px'));
   z.appendChild(links);
-  var rechts=_esEl('div',null,'display:flex;gap:6px;align-items:flex-start;flex-wrap:wrap');
-  var inp=document.createElement('input'); inp.className='field'; inp.style.cssText='flex:1;min-width:140px';
+  var rechts=_esEl('div',null,'flex:1 1 260px;min-width:0;max-width:100%;display:flex;gap:6px;align-items:flex-start;flex-wrap:wrap');
+  var inp=document.createElement('input'); inp.className='field'; inp.style.cssText='flex:1 1 140px;min-width:0;max-width:100%';
   inp.setAttribute('aria-label',e.name);
   if(e.geheim){ inp.type='password'; inp.autocomplete='new-password';
     inp.placeholder=e.gesetzt?T('gesetzt — leer lassen heißt unverändert'):T('nicht gesetzt'); }

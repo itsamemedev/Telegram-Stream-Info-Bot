@@ -64,6 +64,24 @@ def echte_ip(remote, xff, vertraut) -> str:
     return remote or "?"
 
 
+def ist_https(remote, koepfe, vertraut, tls_direkt=False, schema="") -> bool:
+    """Kam die Anfrage beim Browser ueber HTTPS an? (v4.2-W152)
+
+    Die Sitzungs-Cookies trugen `Secure` nur bei DASHBOARD_TLS_CERT — also
+    nur, wenn das Deck selbst TLS spricht. Im Zugang "proxy" terminiert nginx
+    das TLS, das Deck sieht http, und PIN- wie Token-Cookie gingen ohne
+    `Secure` hinaus: ein einziger Aufruf ueber http:// (Lesezeichen, Tippfehler,
+    Port 80 der Vorlage) traegt sie im Klartext ueber die Leitung.
+    `X-Forwarded-Proto` zaehlt nur von einem vertrauten Proxy — sonst koennte
+    ihn jeder setzen (dann allerdings nur zu seinem eigenen Nachteil)."""
+    if tls_direkt or (schema or "").lower() == "https":
+        return True
+    if (remote or "").strip() not in vertraut:
+        return False
+    proto = (koepfe.get("X-Forwarded-Proto") or "").split(",")[-1].strip().lower()
+    return proto == "https"
+
+
 def ist_lokal(remote, koepfe, vertraut, loopback) -> bool:
     """Kommt die Anfrage wirklich vom Rechner selbst (SSH-Tunnel, curl)?
 
