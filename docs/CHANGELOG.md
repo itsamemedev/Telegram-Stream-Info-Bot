@@ -11,6 +11,28 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+## [4.6.14] — 2026-11-06 · „Leitstand"
+
+### Geändert — Chat-Nachtrag statt `.ass`-Beilage (v4.2 W163)
+
+- Der Chat einer beim Stopp gesicherten Aufnahme lag seit W158 als
+  `<aufnahme>.ass` neben der Datei. Telegram und das Deck zeigten ihn nie,
+  keiner der sieben Löschwege (Retention, Papierkorb, Dubletten, Archiv …)
+  kannte die Beilage, und das Archiv kopierte nur die Videodatei — eine
+  Halde, die mit jedem Neustart wuchs.
+- Jetzt merkt der Stopp den Chat in der Tabelle `aufnahme_chat_nachtrag` vor
+  (ein INSERT, kein Warten beim Herunterfahren), und zwei Minuten nach dem
+  nächsten Start arbeitet der Bot ihn über dieselbe Funktion ein wie bei
+  jeder normal beendeten Aufnahme (`AUFNAHME_CHAT`). Die Größe im Deck folgt
+  der Datei; eine verschwundene Aufnahme oder `AUFNAHME_CHAT=aus` verwirft
+  den Eintrag, nach drei gescheiterten Starts wird er laut aufgegeben.
+- Die Tabelle steht in `nc.schema.modultabellen` und zieht beim Umzug nach
+  MariaDB mit.
+
+Vertrag `_test_v42_w163_chat_nachtrag_statt_beilage`, 10 von 10
+Mutationsproben gefangen (eine entwischte zuerst — die Attrappe fehlte, der
+Vertrag ist nachgeschärft).
+
 ## [4.6.13] — 2026-11-06 · „Leitstand"
 
 ### Behoben — zweiter Bughunt-Durchgang (v4.2 W162)

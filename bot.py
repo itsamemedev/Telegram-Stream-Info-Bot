@@ -567,6 +567,7 @@ from nc import envnum as _nc_envnum          # env/Zahl-Parser (gebündelt)
 from nc import clientip as _nc_clientip     # v4.2-W149: echte Client-IP, lokal vs. Proxy
 from nc import geschuetzt as _nc_geschuetzt  # v4.2-W154: live, aber verschlossen (Abo/18+)
 from nc import aufnahmechat as _nc_aufnahmechat  # v4.2-W158: Chat in die Aufnahme
+from nc import chatnachtrag as _nc_chatnachtrag  # v4.2-W163: Chat aus dem Stopp nachtragen
 from nc import procdiag as _nc_procdiag       # Phase-1-Zerlegung: Prozess-/Thread-Diagnose
 from nc.loginpage import login_page as _login_page  # noqa: F401  # Phase-1-Zerlegung: Login-Seite
 from nc.intel import transcripts as _intel_tx  # v4.0-W90: Transkript-Substrat
@@ -9277,8 +9278,9 @@ async def _aufnahme_beim_stopp_sichern(proc, tid, username, output_file,
     ende = datetime.now(timezone.utc)
     groesse = None
     # v4.2-W158 (Review #203): auch eine beim Stopp gesicherte Aufnahme
-    # behaelt ihren Chat — als Beilage, nicht eingebrannt.
-    await asyncio.to_thread(_aufnahme_chat_beilegen, output_file, username)
+    # behaelt ihren Chat. v4.2-W163: vorgemerkt in der Datenbank und beim
+    # naechsten Start eingearbeitet — nicht als Beilage neben der Datei.
+    await asyncio.to_thread(_aufnahme_chat_vormerken, output_file, username)
     if _nc_lage.sichern_beim_stopp(output_file):
         try:
             groesse = os.path.getsize(output_file)
@@ -18461,25 +18463,78 @@ def _aufnahme_chat_ausklang(username, warte_s=90):
     _spawn(_nachsehen(), name=f"aufnahme-chat-ausklang-{u}")
 
 
-def _aufnahme_chat_beilegen(output_file, username):
-    """v4.2-W158 (Review #203): der Chat einer beim Stopp abgebrochenen
-    Aufnahme. Einbrennen wuerde das Herunterfahren um Minuten verzoegern —
-    deshalb liegt er als `<aufnahme>.ass` daneben; VLC und mpv laden eine
-    gleichnamige Untertiteldatei von selbst. -> Pfad oder ""."""
+def _aufnahme_chat_vormerken(output_file, username):
+    """v4.2-W163: der Chat einer beim Stopp abgebrochenen Aufnahme geht in die
+    Datenbank, nicht neben die Datei. -> True, wenn vorgemerkt.
+
+    Einbrennen wuerde das Herunterfahren um Minuten verzoegern; ein INSERT
+    nicht. Eingearbeitet wird beim naechsten Start (_aufnahme_chat_nachtrag),
+    ueber dieselbe Funktion wie bei jeder normal beendeten Aufnahme. Die
+    Vorgaengerin (W158) legte eine `<aufnahme>.ass` daneben: kein Player
+    ausser VLC/mpv sah sie, kein Loeschweg kannte sie, das Archiv liess sie
+    zurueck — siehe nc/chatnachtrag.py."""
     chat = _nc_aufnahmechat.beenden(output_file)
-    ziel = ""
+    # Ohne Chat, mit AUFNAHME_CHAT=aus oder ohne Datei gibt es nichts nachzutragen
+    # — das ist der Normalfall, keine Stoerung.
+    vorgemerkt = False
     if chat and _aufnahme_chat_modus() != "aus" and os.path.isfile(output_file):
-        ziel = os.path.splitext(output_file)[0] + ".ass"
+        if not output_file.lower().endswith((".mp4", ".m4v", ".mov")):
+            log.info("Aufnahme-Chat @%s: %s ist kein MP4 — Chat bleibt draussen.",
+                     username, os.path.basename(output_file))
+        else:
+            try:
+                with db_conn() as conn:
+                    _nc_chatnachtrag.vormerken(conn, output_file, clean_username(username), chat)
+                    conn.commit()
+                vorgemerkt = True
+                log.info("Aufnahme-Chat @%s: %d Nachrichten beim Stopp vorgemerkt — werden "
+                         "beim naechsten Start in %s eingearbeitet.", username, len(chat),
+                         os.path.basename(output_file))
+            except Exception as e:
+                log.error("Aufnahme-Chat @%s: %d Nachrichten beim Stopp nicht vorgemerkt "
+                          "(%s: %s) — der Chat dieser Aufnahme ist verloren.", username,
+                          len(chat), type(e).__name__, e)
+    return vorgemerkt
+
+
+async def _aufnahme_chat_nachtrag(warte_s=120):
+    """v4.2-W163: beim Stopp vorgemerkten Chat in seine Aufnahme einarbeiten.
+
+    Laeuft einmal nach dem Start, nach einer Atempause (der Start selbst ist
+    die teuerste Minute) und Eintrag fuer Eintrag mit niedrigster Prioritaet
+    (nice 19 im ffmpeg-Bauer) — Aufnahmen und Restreams gehen vor."""
+    await asyncio.sleep(warte_s)
+    try:
+        offen = await db_async(_nc_chatnachtrag.offene)
+    except Exception as e:
+        log.error("Aufnahme-Chat-Nachtrag: offene Eintraege nicht lesbar (%s: %s) — "
+                  "naechster Versuch beim naechsten Start.", type(e).__name__, e)
+        return
+    modus = _aufnahme_chat_modus()
+    for e in offen:
+        pfad, wer = e["pfad"], e["nutzer"]
         try:
-            with open(ziel, "w", encoding="utf-8") as f:
-                f.write(_nc_aufnahmechat.ass(chat))
-            log.info("Aufnahme-Chat @%s: %d Nachrichten beim Stopp als %s beigelegt.",
-                     username, len(chat), os.path.basename(ziel))
-        except OSError as e:
-            log.error("Aufnahme-Chat @%s: Beilage %s nicht geschrieben (%s) — der Chat "
-                      "dieser Aufnahme ist verloren.", username, ziel, e)
-            ziel = ""
-    return ziel
+            chat = _nc_chatnachtrag.lesen(e["chat_roh"])
+        except (ValueError, TypeError, IndexError) as fehler:
+            log.error("Aufnahme-Chat-Nachtrag @%s: Eintrag #%s unlesbar (%s) — verworfen.",
+                      wer, e["id"], fehler)
+            await db_async(_nc_chatnachtrag.erledigt, e["id"])
+            continue
+        if modus == "aus" or not os.path.isfile(pfad):
+            log.info("Aufnahme-Chat-Nachtrag @%s: %s — %d Nachrichten verworfen.", wer,
+                     "AUFNAHME_CHAT=aus" if modus == "aus" else
+                     "%s gibt es nicht mehr" % os.path.basename(pfad), len(chat))
+            await db_async(_nc_chatnachtrag.erledigt, e["id"])
+            continue
+        neu = await asyncio.to_thread(_aufnahme_chat_einarbeiten, pfad, chat, modus, wer)
+        if neu:
+            await db_async(_nc_chatnachtrag.eingearbeitet, e["id"], pfad, neu)
+            continue
+        aufgegeben = await db_async(_nc_chatnachtrag.fehlversuch, e)
+        if aufgegeben:
+            log.error("Aufnahme-Chat-Nachtrag @%s: %s nach %d Starts nicht verarbeitbar — "
+                      "Chat aufgegeben, die Aufnahme bleibt unveraendert.", wer,
+                      os.path.basename(pfad), _nc_chatnachtrag.MAX_VERSUCHE)
 
 
 async def _aufnahme_fertigmachen(output_file, username):
@@ -24382,6 +24437,7 @@ async def run_bot():
     _spawn(_laufstand_loop(), name="laufstand")           # v4.2-W104: Update eingespielt, aber nicht wirksam?
     _spawn(_cookie_bezug_loop(), name="cookie-bezug")    # v4.2-W107: Cookies holen, ohne Telegram-Chat
     _spawn(_tunnel_wacht_loop(), name="tunnel-wacht")     # v4.2-W105: traegt der Egress (Polen-VPS)?
+    _spawn(_aufnahme_chat_nachtrag(), name="chat-nachtrag")   # v4.2-W163: Chat aus dem Stopp einarbeiten
     _spawn(_sign_health_loop(), name="sign-health")       # F103: EulerStream-Sign-Key-Health
     _spawn(_marketing_loop(), name="marketing")           # B162: Cross-Promo (self-gated, Default aus)
     _spawn(_news_loop(), name="news")                     # B163: oeffentliche Website-News (self-gated, Default aus)

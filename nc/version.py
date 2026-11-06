@@ -4,7 +4,7 @@ Eine einzige Wahrheit für die Versionsanzeige (Dashboard-Footer, /api/version,
 „Was ist neu"-Panel). Reine Daten + kleine Helfer, voll testbar.
 """
 
-VERSION = "4.6.13"
+VERSION = "4.6.14"
 CODENAME = "Leitstand"
 RELEASE = "2026.11"
 
@@ -23,6 +23,19 @@ def build_stamp():
 # Meilenstein-Changelog, neueste Version zuerst. highlights = kurze, ehrliche
 # Stichpunkte dessen, was die Version bringt.
 CHANGELOG = [
+    {
+        "version": "4.6.14",
+        "date": "2026-11",
+        "title": "Leitstand",
+        # Patch-Fassung von 4.6: Chat-Nachtrag statt Beilage (W163).
+        "highlights": [
+            "Eine beim Stopp gesicherte Aufnahme bekommt ihren Chat jetzt wie jede andere: eingebrannt oder als Untertitelspur, beim nächsten Start nachgetragen",
+            "Bisher lag er als .ass-Datei daneben — Telegram und das Deck sahen ihn nie, kein Löschweg kannte die Datei, und das Archiv ließ sie zurück",
+            "Beim Stopp kostet das einen Datenbankeintrag statt Minuten Einbrennen — das Herunterfahren bleibt schnell",
+            "Die Größe im Deck folgt der Datei nach dem Einarbeiten; ein Eintrag, der dreimal scheitert, wird aufgegeben statt jeden Start zu belasten",
+            "Die neue Tabelle steht im Schema und zieht beim Umzug nach MariaDB mit",
+        ],
+    },
     {
         "version": "4.6.13",
         "date": "2026-11",
