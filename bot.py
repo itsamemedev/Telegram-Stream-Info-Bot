@@ -14878,6 +14878,17 @@ class RestreamManager:
         # Sie verlangt Neukodieren im Sender — deshalb VOR Drossel und Feeder.
         _bruecke_an, transcode = _nc_rscfg.bruecke(
             transcode, unabhaengig=(RESTREAM_MULTI_MODE == "independent" and _multi))
+        if _nc_durch.ist(src) and not _bruecke_an:
+            # v4.2-W148 (Codex #194): ohne Bruecke ginge die Pseudo-Adresse an
+            # ein gewoehnliches ffmpeg, und KEINES der Ziele liefe an — ohne
+            # verstaendlichen Grund. _restream_durchreicher sagt im
+            # unabhaengigen Modus schon nein; das hier ist der Riegel fuer
+            # jeden anderen Weg dorthin (RESTREAM_BRUECKE=0 zur Laufzeit).
+            _grund = ("keine ziehbare Quell-URL, und der Durchreicher braucht die "
+                      "Sendebruecke — RESTREAM_BRUECKE=auto und RESTREAM_MULTI_MODE=tee")
+            log.warning("Restream #%d: %s", rid, _grund)
+            self._set_status(rid, "error", err=_grund)
+            return {"ok": False, "error": _grund}
         if _multi_forces_tc and not (bool(row["transcode"]) or RESTREAM_OVERLAY):
             log.info("Restream #%d: Multi-Target aktiv → transcode erzwungen "
                      "(plattformkonformes GOP für %s). "
@@ -14902,8 +14913,9 @@ class RestreamManager:
         # und das Dashboard gleich mit an.
         _html_ov = None
         if RESTREAM_OVERLAY:
+            # Eine Durchreicher-Adresse ist fuer ffprobe keine Adresse (W148).
             _html_ov = await asyncio.to_thread(_restream_html_overlay_start,
-                                               rid, source_url=src)
+                                               rid, source_url=None if _nc_durch.ist(src) else src)
         # v4.2-W34: AZRAELs Frames-Feeder. Scheitert er, bleibt _av_feed None
         # und der Bauer nimmt die feste Schleife aus W32 — der Restream
         # startet in jedem Fall.
@@ -24953,6 +24965,13 @@ def _restream_durchreicher(username):
     nicht anlaeuft, soll sagen, warum auch dieser Weg ausfiel."""
     if (os.getenv("RESTREAM_DURCHREICHER", "1") or "1").strip().lower() in ("0", "false", "no", "off"):
         grund = "abgeschaltet (RESTREAM_DURCHREICHER=0)"
+    elif RESTREAM_MULTI_MODE == "independent":
+        # Codex #194: dort zieht jedes Ziel seine Quelle selbst, ohne Bruecke —
+        # die Pseudo-Adresse ginge an ein gewoehnliches ffmpeg. Hier ist nicht
+        # bekannt, wie viele Ziele der Restream hat; mit einem einzigen liefe
+        # die Bruecke zwar, aber ein Nein mit Abhilfe ist ehrlicher als ein
+        # Ja, das bei zwei Zielen keines starten laesst.
+        grund = "RESTREAM_MULTI_MODE=independent zieht je Ziel selbst — der Durchreicher braucht RESTREAM_MULTI_MODE=tee"
     elif not _nc_rscfg.bruecke(False)[0]:
         grund = "die Sendebruecke ist aus (RESTREAM_BRUECKE=0) — der Durchreicher braucht sie"
     elif not _nc_durch.werkzeug():

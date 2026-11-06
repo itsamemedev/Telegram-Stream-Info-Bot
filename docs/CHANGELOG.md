@@ -35,8 +35,19 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 - **Ein `#` in Anführungszeichen kürzte den Wert.** `PROMPT="answer #1"` wurde
   zu `answer` gelesen und per „Aus der .env übernehmen" gekürzt in die
   Datenbank geschrieben, wo es die richtige `.env` bei jedem Start
-  überstimmte. `nc/envdatei.lesen()` liest jetzt wie python-dotenv
-  (gegengeprüft gegen python-dotenv selbst).
+  überstimmte. `nc/envdatei.lesen()` liest jetzt nach den Regeln von
+  python-dotenv — Escapes in `'…'` (`\'`, `\\`) und `"…"` (`\n`, `\t`, …)
+  eingeschlossen — und ein Vertrag hält beide gegen python-dotenv selbst.
+- **Durchreicher und unabhängiger Modus.** Mit
+  `RESTREAM_MULTI_MODE=independent` und mehreren Zielen läuft keine
+  Sendebrücke; die Pseudo-Adresse wäre an ein gewöhnliches ffmpeg gegangen,
+  und kein Ziel wäre angelaufen. Der Durchreicher sagt dort jetzt mit Abhilfe
+  nein, und der Start bricht ab, wenn eine Durchreicher-Adresse ohne Brücke
+  ankommt.
+- **CodeQL:** die Antworten der neuen Beobachtungs-Routen trugen den Text
+  einer Ausnahme; jetzt feste, übersetzte Gründe, die Einzelheiten stehen im
+  Log. Der Updater prüft den Zielpfad zusätzlich direkt an der Stelle, an der
+  er Rechte liest und setzt.
 
 ### Neu — Restream ohne ziehbare Adresse: der Durchreicher (v4.2 W148)
 

@@ -38,6 +38,31 @@ GRAFANA_DIENST = "grafana-server.service"
 DATENQUELLE_UID = "nightcrawler-prometheus"
 DASHBOARD_UID = "nightcrawler"
 
+# Feste Gruende fuer das Deck. Der Ausnahmetext bleibt im Log und in
+# `fehler` (fuer die Waechter): eine API-Antwort traegt nie str(e) — CodeQL
+# „Information exposure through an exception", und es ist auch der richtige
+# Schnitt: das Deck braucht WAS los ist, das Log WARUM.
+#
+# Die Gruende sind Benutzertext: `_t` markiert sie fuer tools/i18n_extract.py
+# (MARKIERT), uebersetzt wird beim Ausliefern — die VORLAGE, bevor Werte
+# eingesetzt werden (siehe nc/beobachtungslage.py).
+
+
+def _t(s):
+    return s
+
+
+GRUND_NETZ = _t("nicht erreichbar — Details im Log")
+GRUND_TEIL = _t("eine Teilabfrage ist gescheitert — Details im Log")
+GRUND_HTTP = _t("antwortet mit HTTP %d")
+GRUND_RC = _t("systemctl endete mit rc=%d — Details im Log")
+GRUND_ZEIT = _t("Zeitüberschreitung nach 60 s")
+GRUND_START = _t("sudo/systemctl nicht ausführbar — Details im Log")
+GRUND_UNBEKANNT = _t("Unbekannte Steuerung")
+GRUND_SUDOREGEL = _t("sudo verlangt ein Passwort — die Steuerregel fehlt. Einmal ausführen: "
+                     "sudo bash tools/observability.sh (legt /etc/sudoers.d/nightcrawler-beobachtung "
+                     "für genau diese drei Befehle an).")
+
 # Die einzigen Befehle, die dieses Modul ausfuehrt. Die sudoers-Regel aus
 # tools/observability.sh erlaubt genau diese — eine Zeile mehr hier wirkt
 # ohne passende Regel nicht, und das ist Absicht.
@@ -92,7 +117,7 @@ def prometheus_lage(url, holen=_holen) -> dict:
     serien       Kopfserien der TSDB (Groesse)"""
     aus = {"url": url, "erreichbar": False, "liest_bot": None, "ziele_aus": [],
            "regeln_aus": [], "config_ok": None, "alarme": [], "serien": None,
-           "fehler": None}
+           "fehler": None, "grund": None}
     if not url:
         aus["fehler"] = "PROMETHEUS_URL fehlt"
         return aus
@@ -104,10 +129,12 @@ def prometheus_lage(url, holen=_holen) -> dict:
         # (Entscheidungslog + Alarm) — eine zweite Zeile je Runde waere Laerm.
         log.debug("Prometheus %s nicht erreichbar: %s", basis, e)
         aus["fehler"] = "%s: %s" % (type(e).__name__, e)
+        aus["grund"] = GRUND_NETZ
         return aus
     aus["erreichbar"] = status == 200
     if not aus["erreichbar"]:
-        aus["fehler"] = "HTTP %s auf /-/ready" % status
+        aus["fehler"] = "HTTP %d auf /-/ready" % int(status)
+        aus["grund"], aus["grund_wert"] = GRUND_HTTP, int(status)
         return aus
     # Ab hier ist er da; einzelne Abfragen duerfen scheitern, ohne dass der
     # Rest verloren geht — jede Teilantwort fuer sich.
@@ -145,6 +172,7 @@ def prometheus_lage(url, holen=_holen) -> dict:
     except Exception as e:
         log.info("Prometheus-Lage: Teilabfrage fehlgeschlagen: %s: %s", type(e).__name__, e)
         aus["fehler"] = "Teilabfrage: %s: %s" % (type(e).__name__, e)
+        aus["grund"] = GRUND_TEIL
     return aus
 
 
@@ -159,7 +187,7 @@ def grafana_lage(url, nutzer="admin", passwort="", holen=_holen) -> dict:
     """erreichbar · db_ok · anmeldung_ok · quelle_ok · dashboard_da.
     Das Passwort verlaesst diese Funktion nie — nur, ob es passt."""
     aus = {"url": url, "erreichbar": False, "db_ok": None, "anmeldung_ok": None,
-           "quelle_ok": None, "dashboard_da": None, "fehler": None}
+           "quelle_ok": None, "dashboard_da": None, "fehler": None, "grund": None}
     if not url:
         aus["fehler"] = "GRAFANA_URL fehlt"
         return aus
@@ -169,10 +197,12 @@ def grafana_lage(url, nutzer="admin", passwort="", holen=_holen) -> dict:
     except Exception as e:
         log.debug("Grafana %s nicht erreichbar: %s", basis, e)
         aus["fehler"] = "%s: %s" % (type(e).__name__, e)
+        aus["grund"] = GRUND_NETZ
         return aus
     aus["erreichbar"] = status == 200
     if not aus["erreichbar"]:
-        aus["fehler"] = "HTTP %s auf /api/health" % status
+        aus["fehler"] = "HTTP %d auf /api/health" % int(status)
+        aus["grund"], aus["grund_wert"] = GRUND_HTTP, int(status)
         return aus
     aus["db_ok"] = (d or {}).get("database") == "ok"
     if not passwort:
@@ -189,6 +219,7 @@ def grafana_lage(url, nutzer="admin", passwort="", holen=_holen) -> dict:
     except Exception as e:
         log.info("Grafana-Lage: Teilabfrage fehlgeschlagen: %s: %s", type(e).__name__, e)
         aus["fehler"] = "Teilabfrage: %s: %s" % (type(e).__name__, e)
+        aus["grund"] = GRUND_TEIL
     return aus
 
 
@@ -211,7 +242,7 @@ def steuern(dienst, aktion, run=subprocess.run, wurzel="") -> dict:
     if befehl is not None and dienst == "grafana":
         befehl = befehl[:2] + [grafana_unit(wurzel)]
     if befehl is None:
-        return {"ok": False, "befehl": None,
+        return {"ok": False, "befehl": None, "grund": GRUND_UNBEKANNT,
                 "text": "Unbekannte Steuerung %s/%s — erlaubt: %s" % (
                     dienst, aktion, ", ".join("%s/%s" % k for k in STEUERUNG))}
     voll = ["sudo", "-n"] + befehl
@@ -219,19 +250,21 @@ def steuern(dienst, aktion, run=subprocess.run, wurzel="") -> dict:
         r = run(voll, capture_output=True, text=True, timeout=60)
     except (OSError, subprocess.TimeoutExpired) as e:
         log.warning("Beobachtung: %s scheiterte: %s", " ".join(befehl), e)
-        return {"ok": False, "befehl": " ".join(befehl), "text": "%s: %s" % (type(e).__name__, e)}
+        grund = GRUND_ZEIT if isinstance(e, subprocess.TimeoutExpired) else GRUND_START
+        return {"ok": False, "befehl": " ".join(befehl), "grund": grund,
+                "text": "%s: %s" % (type(e).__name__, e)}
     if r.returncode == 0:
         log.info("Beobachtung: %s ausgefuehrt", " ".join(befehl))
-        return {"ok": True, "befehl": " ".join(befehl), "text": "ausgefuehrt"}
+        return {"ok": True, "befehl": " ".join(befehl), "grund": None, "text": "ausgefuehrt"}
     fehler = (r.stderr or r.stdout or "").strip()[:300]
     if "password is required" in fehler or "a terminal is required" in fehler:
-        text = ("sudo verlangt ein Passwort — die Steuerregel fehlt. Einmal ausfuehren: "
-                "sudo bash tools/observability.sh (legt /etc/sudoers.d/nightcrawler-beobachtung "
-                "fuer genau diese drei Befehle an).")
+        text = grund = GRUND_SUDOREGEL
     else:
         text = "rc=%s: %s" % (r.returncode, fehler or "keine Ausgabe")
+        grund = GRUND_RC
     log.warning("Beobachtung: %s nicht ausgefuehrt — %s", " ".join(befehl), text)
-    return {"ok": False, "befehl": " ".join(befehl), "text": text}
+    return {"ok": False, "befehl": " ".join(befehl), "grund": grund,
+            "grund_wert": int(r.returncode), "text": text}
 
 
 # ── Fuer Waechter und Deck: mit den Werten von JETZT ────────────────────────
@@ -264,3 +297,32 @@ def selbstheilung_erlaubt(dienst: str) -> bool:
     else:
         return False
     return (wert or "1").strip().lower() in ("1", "true", "ja", "on")
+
+
+_DECK_FELDER = {
+    "prometheus": ("url", "erreichbar", "liest_bot", "ziele_aus", "regeln_aus",
+                   "config_ok", "alarme", "serien", "grund"),
+    "grafana": ("url", "erreichbar", "db_ok", "anmeldung_ok", "quelle_ok",
+                "dashboard_da", "grund"),
+}
+
+
+def grund_text(befund: dict, _t=_t):
+    """Der Grund als Satz in der Sprache des Decks — Vorlage uebersetzt,
+    dann der Wert eingesetzt. None ohne Grund."""
+    v, w = befund.get("grund"), befund.get("grund_wert")
+    # Ein fehlender Grund ist kein Fehlerpfad (Erfolg oder noch nichts
+    # gemessen): dann eben kein Satz.
+    text = None
+    if v:
+        text = _t(v) % w if w is not None and "%d" in v else _t(v)
+    return text
+
+
+def fuer_deck(dienst: str, lage: dict, _t=_t) -> dict:
+    """Nur die benannten Felder — `fehler` (mit Ausnahmetext) bleibt draussen.
+    Eine Liste erlaubter Felder statt „alles ausser fehler": ein spaeter
+    dazugekommenes Feld mit Ausnahmetext wanderte sonst still mit."""
+    aus = {k: lage.get(k) for k in _DECK_FELDER[dienst] if k != "grund"}
+    aus["grund"] = grund_text(lage, _t)
+    return aus

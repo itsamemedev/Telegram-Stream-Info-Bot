@@ -20,7 +20,9 @@ Standardeingabe, damit kein Passwort in der Prozessliste steht:
     printf 'GRAFANA_URL=http://127.0.0.1:3000\\n' | python3 -m nc.envdatei /pfad/.env grafana
 """
 
+import codecs
 import os
+import re
 import shutil
 import sys
 import time
@@ -48,27 +50,34 @@ def lesen(pfad):
     return werte
 
 
+_EINFACH = re.compile(r"'((?:\\'|[^'])*)'")
+_DOPPELT = re.compile(r'"((?:\\"|[^"])*)"')
+_ESC_EINFACH = re.compile(r"\\[\\']")
+_ESC_DOPPELT = re.compile(r"\\[\\'\"abfnrtv]")
+
+
+def _entschaerfen(muster, s):
+    return muster.sub(lambda m: codecs.decode(m.group(0), "unicode-escape"), s)
+
+
 def wert_lesen(roh: str) -> str:
-    """Ein Wert, wie python-dotenv ihn liest (v4.2-W148, Codex #193).
+    """Ein Wert, wie python-dotenv ihn liest (v4.2-W148, Codex #193/#194).
 
     Bis hierher schnitt `split(" #")` auch INNERHALB von Anfuehrungszeichen
     ab: aus `PROMPT="answer #1"` wurde `answer` — und `uebernehmen()` schrieb
     das gekuerzte in die Datenbank, wo es die richtige .env bei jedem Start
-    ueberstimmte. Gequotet gilt der Inhalt bis zum schliessenden Zeichen
-    (in "…" mit \\" und \\\\ als Escape); ungequotet ist ` #` ein Kommentar."""
+    ueberstimmte. Die Regeln sind abgeschrieben, nicht erfunden
+    (dotenv/parser.py): in '…' gelten \\' und \\\\, in "…" zusaetzlich
+    \\n, \\t und Verwandte; ungequotet ist ` #` ein Kommentar. Die erste
+    Fassung kannte in '…' kein Escape und las `'It\\'s'` als `It\\`."""
     v = roh.strip()
+    m = _EINFACH.match(v)
+    if m:
+        return _entschaerfen(_ESC_EINFACH, m.group(1))
+    m = _DOPPELT.match(v)
+    if m:
+        return _entschaerfen(_ESC_DOPPELT, m.group(1))
     if v[:1] in ('"', "'"):
-        q, aus, i = v[0], [], 1
-        while i < len(v):
-            c = v[i]
-            if q == '"' and c == "\\" and i + 1 < len(v) and v[i + 1] in ('"', "\\"):
-                aus.append(v[i + 1])
-                i += 2
-                continue
-            if c == q:
-                return "".join(aus)
-            aus.append(c)
-            i += 1
         # Kein schliessendes Zeichen: wie bisher, nur das oeffnende weg.
         return v[1:].strip()
     return v.split(" #", 1)[0].strip()

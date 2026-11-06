@@ -6991,6 +6991,7 @@ async function loadBeobDienste(){
       +esc(a.name)+'</span> <span class="muted">'+esc(a.text||'')+'</span>'));
     (p.ziele_aus||[]).forEach(z=>t.push('<span style="color:var(--amber)">'+esc(T('Abrufziel aus'))+': '+esc(z.job)+'</span> <span class="muted">'+esc(z.fehler||'')+'</span>'));
     (p.regeln_aus||[]).forEach(r=>t.push('<span style="color:var(--amber)">'+esc(T('Regel scheitert'))+': '+esc(r.regel)+'</span> <span class="muted">'+esc(r.fehler||'')+'</span>'));
+    if(p.grund) t.push('<span style="color:var(--amber)">'+esc(p.grund)+'</span>');
     if(p.erreichbar && !(p.alarme||[]).length) t.push('<span class="muted">'+esc(T('Kein Alarm feuert.'))+'</span>');
     t.push(knopf('prometheus','neu_laden',T('Konfiguration neu laden'))+' '+knopf('prometheus','neu_starten',T('Prometheus neu starten')));
   }
@@ -6999,6 +7000,7 @@ async function loadBeobDienste(){
     t.push('<b>'+esc(T('Grafana-Wache'))+'</b> · '+esc(T('erreichbar'))+' '+ja(g.erreichbar)
       +' · '+esc(T('Datenbank'))+' '+ja(g.db_ok)+' · '+esc(T('Anmeldung'))+' '+ja(g.anmeldung_ok)
       +' · '+esc(T('Datenquelle'))+' '+ja(g.quelle_ok)+' · '+esc(T('Dashboard'))+' '+ja(g.dashboard_da));
+    if(g.grund) t.push('<span style="color:var(--amber)">'+esc(g.grund)+'</span>');
     t.push(knopf('grafana','neu_starten',T('Grafana neu starten')));
   }
   if(!p && !g) t.push('<span class="muted">'+esc(T('Keiner der beiden ist eingerichtet — die Wächter bleiben aus. Einrichten: sudo bash tools/observability.sh'))+'</span>');

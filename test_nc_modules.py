@@ -27482,6 +27482,28 @@ def _test_v42_w148_ausfuehrungsrecht():
         ze.external_attr = (0o100755 << 16)
         assert U.rechte_angleichen([(".env", 4, "h", ze)]) == []
         assert _stat.S_IMODE(_os.stat(e).st_mode) == 0o600
+        # (4b) Der zweite Riegel in _write_file (normpath + startswith, fuer
+        # CodeQL sichtbar) haelt auch allein: der erste wird abgeschaltet.
+        alt_unter = U._nc_sicherpfad.unter
+        U._nc_sicherpfad.unter = lambda wurzel, pfad: True
+        try:
+            # Name je Lauf eindeutig: ein Rest aus einem frueheren (mutierten)
+            # Lauf duerfte das Ergebnis nicht vorwegnehmen.
+            raus = "draussen-%s.txt" % _os.path.basename(d)
+            ziel = _os.path.join(_os.path.dirname(d), raus)
+            for boese in ("../" + raus, "tools/../../" + raus):
+                try:
+                    U._write_file(boese, b"x", False)
+                except ValueError:
+                    pass
+                else:
+                    for rest in (ziel, ziel + ".ncnew"):
+                        if _os.path.exists(rest):
+                            _os.remove(rest)
+                    raise AssertionError("ausserhalb der Wurzel geschrieben: " + boese)
+            assert not _os.path.exists(ziel)
+        finally:
+            U._nc_sicherpfad.unter = alt_unter
     finally:
         U.configure(root=alt)
     # (5) Verdrahtet: run_update gleicht an, BEVOR „Alles aktuell" zurueckkehrt
@@ -27643,8 +27665,23 @@ def _test_v42_w148_durchreicher():
     baum = _ast.parse(src)
     fn = next(n for n in baum.body if isinstance(n, _ast.FunctionDef) and n.name == "_restream_durchreicher")
     texte = [n.value for n in _ast.walk(fn) if isinstance(n, _ast.Constant) and isinstance(n.value, str)]
-    for teil in ("RESTREAM_DURCHREICHER=0", "RESTREAM_BRUECKE=0", "yt-dlp noch streamlink"):
+    for teil in ("RESTREAM_DURCHREICHER=0", "RESTREAM_BRUECKE=0", "yt-dlp noch streamlink",
+                 "RESTREAM_MULTI_MODE=independent"):
         assert any(teil in t for t in texte), teil
+    # Codex #194: der unabhaengige Modus sagt nein, BEVOR eine Adresse entsteht
+    # — die Pruefung steht vor dem Aufruf von adresse().
+    _ind = next(n.lineno for n in _ast.walk(fn) if isinstance(n, _ast.Compare)
+                and any(isinstance(c, _ast.Constant) and c.value == "independent" for c in n.comparators))
+    _adr = next(n.lineno for n in _ast.walk(fn) if isinstance(n, _ast.Call)
+                and getattr(n.func, "attr", "") == "adresse")
+    assert _ind < _adr, (_ind, _adr)
+    # Und der Start selbst: eine Durchreicher-Adresse ohne Bruecke bricht ab,
+    # statt an ein gewoehnliches ffmpeg zu gehen.
+    _riegel = [n for n in _ast.walk(baum) if isinstance(n, _ast.If)
+               and "_nc_durch.ist(src)" in _ast.unparse(n.test)
+               and "not _bruecke_an" in _ast.unparse(n.test)]
+    assert _riegel and any(isinstance(z, _ast.Return) for z in _riegel[0].body), \
+        "Start ohne Riegel gegen Durchreicher ohne Bruecke"
     assert sum(1 for n in _ast.walk(fn) if isinstance(n, _ast.Attribute) and n.attr == "melden") == 2
     rs = next(n for n in _ast.walk(baum) if isinstance(n, _ast.AsyncFunctionDef) and n.name == "_resolve_source") \
         if any(isinstance(n, _ast.AsyncFunctionDef) and n.name == "_resolve_source" for n in _ast.walk(baum)) \
@@ -27856,6 +27893,15 @@ def _test_v42_w148_beobachtungs_waechter():
             _os.environ["PROMETHEUS_URL"] = "http://127.0.0.1:1"
             assert cl.post("/api/beobachtung/steuern", json={"dienst": "prometheus", "aktion": "neu_laden"}).status_code == 200
             j = cl.get("/api/beobachtung/dienste").get_json()
+        # CodeQL #194: die Antwort traegt nie `fehler` (Ausnahmetext), nur den
+        # festen Grund — und eine gescheiterte Steuerung nur ihren Grund.
+        assert "fehler" not in j["prometheus"] and j["prometheus"]["grund"], j["prometheus"]
+        B.steuern = lambda d, a: {"ok": False, "befehl": "x", "grund": B.GRUND_RC,
+                                  "grund_wert": 7, "text": "rc=7: /etc/geheim: Permission denied"}
+        with app.test_client() as cl:
+            e = cl.post("/api/beobachtung/steuern", json={"dienst": "prometheus", "aktion": "neu_laden"})
+        assert e.status_code == 502 and "geheim" not in e.get_data(as_text=True), e.get_json()
+        assert "rc=7" in e.get_json()["error"], e.get_json()
         assert aufgerufen == [("prometheus", "neu_laden")], aufgerufen
         assert j["ok"] and j["installiert"]["prometheus"] and j["grafana"] is None
         assert not j["prometheus"]["erreichbar"] and "prometheus/neu_laden" in j["steuerung"]
@@ -27940,12 +27986,20 @@ def _test_v42_w148_codex_193():
     w = V.lesen(f)
     assert w == {"PROMPT": "answer #1", "B": "x", "C": "a # b", "D": 'a"b',
                  "E": "frei", "G": "mit #hash"}, w
+    # Codex #194: in '…' gelten \\' und \\\\, in "…" auch \\n/\\t;
+    # \\n in '…' bleibt woertlich.
+    f2 = _os.path.join(d, "q.env")
+    with open(f2, "w", encoding="utf-8") as fh:
+        fh.write("A='It\\'s # live'\nB='a\\\\b'\nC='x\\ny'\nD=\"x\\ny\"\nE=\"t\\tz\"\n")
+    w2 = V.lesen(f2)
+    assert w2 == {"A": "It's # live", "B": "a\\b", "C": "x\\ny", "D": "x\ny", "E": "t\tz"}, w2
     try:
         from dotenv import dotenv_values
     except ImportError:
         dotenv_values = None
     if dotenv_values is not None:
         assert dict(dotenv_values(f)) == w, (dict(dotenv_values(f)), w)
+        assert dict(dotenv_values(f2)) == w2, (dict(dotenv_values(f2)), w2)
     ok("W148: Codex #193 — MariaDB-Vorgaben wie der Bot, .env-Werte wie python-dotenv")
 
 

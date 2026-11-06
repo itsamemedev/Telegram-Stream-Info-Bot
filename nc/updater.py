@@ -567,7 +567,13 @@ def _write_file(rel: str, data: bytes, ausfuehrbar=None):
     observability.sh nicht mehr ausfuehrbar, und `sudo ./update.sh` endete in
     „Permission denied (os error 13)" — gemeldet auf Ubuntu 26.04.
     `ausfuehrbar`: True/False aus dem Archiv; None = wie die bisherige Datei."""
-    p = _abs(rel)
+    p = os.path.normpath(_abs(rel))
+    # Zweiter Riegel, sichtbar fuer CodeQL (W98: `sicherpfad.unter()` ist
+    # dicht, aber die Datenflussanalyse sieht ihn nicht). Hier ist er nicht
+    # redundant: os.stat/os.chmod sind neue Senken, und ein Riegel, den die
+    # Analyse nicht sieht, laesst jede kuenftige Senke unbemerkt durch.
+    if not p.startswith(_root() + os.sep):
+        raise ValueError("Pfad verlaesst die Wurzel: %s" % rel)
     os.makedirs(os.path.dirname(p) or ".", exist_ok=True)
     alt = os.stat(p).st_mode if os.path.exists(p) else None
     tmp = p + ".ncnew"
@@ -598,7 +604,9 @@ def rechte_angleichen(raw) -> list:
         if not n or is_protected(n) or not ausfuehrbar_im_archiv(info):
             continue
         try:
-            p = _abs(n)
+            p = os.path.normpath(_abs(n))
+            if not p.startswith(_root() + os.sep):
+                raise ValueError("ausserhalb von %s" % _root())
         except ValueError as e:
             # Ein Archivname, der aus der Wurzel fuehrt — der Plan verwirft ihn
             # genauso; hier nur sagen, dass er auch kein Recht bekommt.

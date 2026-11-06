@@ -536,8 +536,10 @@ def api_beobachtung_dienste():
     da = _nc_beobdienst.installiert()
     return jsonify(
         ok=True, installiert=da,
-        prometheus=_nc_beobdienst.prometheus_jetzt() if da["prometheus"] else None,
-        grafana=_nc_beobdienst.grafana_jetzt() if da["grafana"] else None,
+        prometheus=_nc_beobdienst.fuer_deck("prometheus", _nc_beobdienst.prometheus_jetzt(), _t)
+        if da["prometheus"] else None,
+        grafana=_nc_beobdienst.fuer_deck("grafana", _nc_beobdienst.grafana_jetzt(), _t)
+        if da["grafana"] else None,
         steuerung=["%s/%s" % k for k in _nc_beobdienst.STEUERUNG])
 
 
@@ -554,7 +556,9 @@ def api_beobachtung_steuern():
         return jsonify(ok=False, error=_t("Dienst ist nicht eingerichtet")), 409
     r = _nc_beobdienst.steuern(dienst, aktion)
     return jsonify(ok=bool(r.get("ok")), befehl=r.get("befehl"),
-                   error=None if r.get("ok") else r.get("text")), (200 if r.get("ok") else 502)
+                   error=None if r.get("ok") else (_nc_beobdienst.grund_text(r, _t)
+                                                    or _t("Steuerung fehlgeschlagen"))), \
+        (200 if r.get("ok") else 502)
 
 
 @bp.route("/api/profile/snapshots/<username>")
