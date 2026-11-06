@@ -4,7 +4,7 @@ Eine einzige Wahrheit für die Versionsanzeige (Dashboard-Footer, /api/version,
 „Was ist neu"-Panel). Reine Daten + kleine Helfer, voll testbar.
 """
 
-VERSION = "4.6.8"
+VERSION = "4.6.9"
 CODENAME = "Leitstand"
 RELEASE = "2026.11"
 
@@ -23,6 +23,19 @@ def build_stamp():
 # Meilenstein-Changelog, neueste Version zuerst. highlights = kurze, ehrliche
 # Stichpunkte dessen, was die Version bringt.
 CHANGELOG = [
+    {
+        "version": "4.6.9",
+        "date": "2026-11",
+        "title": "Leitstand",
+        # Patch-Fassung von 4.6: der Chat kommt in die Aufnahme (W158).
+        "highlights": [
+            "Aufnahmen tragen jetzt den TikTok-Chat — eingebrannt unten links wie im Restream, sichtbar auch im Telegram-Player",
+            "Für jede laufende Aufnahme läuft ein Chat-Empfang; bisher gab es ihn nur für Restreams und Live-React-Nutzer, und viele Aufnahmen hatten gar keinen Chat",
+            "AUFNAHME_CHAT=einbrennen|untertitel|aus — „untertitel\" legt den Chat als abschaltbare Spur ab, ohne neu zu kodieren",
+            "Das Einbrennen läuft mit niedrigster Priorität nach der Aufnahme; scheitert es, bleibt die Aufnahme ohne Chat erhalten statt verloren",
+            "Chattext kann keine Untertitel-Formatierung einschleusen, und doppelte Nachrichten zweier Empfänger erscheinen nur einmal",
+        ],
+    },
     {
         "version": "4.6.8",
         "date": "2026-11",

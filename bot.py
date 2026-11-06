@@ -566,6 +566,7 @@ from typing import Optional, List, Tuple
 from nc import envnum as _nc_envnum          # env/Zahl-Parser (gebündelt)
 from nc import clientip as _nc_clientip     # v4.2-W149: echte Client-IP, lokal vs. Proxy
 from nc import geschuetzt as _nc_geschuetzt  # v4.2-W154: live, aber verschlossen (Abo/18+)
+from nc import aufnahmechat as _nc_aufnahmechat  # v4.2-W158: Chat in die Aufnahme
 from nc import procdiag as _nc_procdiag       # Phase-1-Zerlegung: Prozess-/Thread-Diagnose
 from nc.loginpage import login_page as _login_page  # noqa: F401  # Phase-1-Zerlegung: Login-Seite
 from nc.intel import transcripts as _intel_tx  # v4.0-W90: Transkript-Substrat
@@ -8495,6 +8496,7 @@ async def _handle_single_tracking(t, bot_app):
             active_processes.append(proc)
             _nc_gegendruck.freigeben()      # v4.2-W121b: Reservierung -> Prozess
             set_recording_file(tid, output_file, proc.pid)
+            _aufnahme_chat_beginnen(username, output_file, proc)   # v4.2-W158
             # F27 + B7-Fix: last_live wurde schon via claim_live_transition gesetzt,
             # recording=1 wurde von try_acquire_recording_lock gesetzt. Der vorherige
             # update_tracking_state(tid, True, True)-Aufruf war NICHT idempotent (wie
@@ -9520,8 +9522,7 @@ async def handle_recording_finished(proc, tid, chat_id, username, output_file,
             # sich das nicht wissen (das Probe-Fenster entscheidet), also wird
             # die FERTIGE Datei geprueft und Stille nachgeruestet — vor dem
             # Verbuchen, weil sich die Groesse dabei aendert.
-            file_size = (await _nc_tonspur.sichern(
-                output_file, wer=f"@{username}"))["groesse"] or file_size
+            file_size = (await _aufnahme_fertigmachen(output_file, username))["groesse"] or file_size
             # v4.2-W18: EIN Einstiegspunkt fuer alle Fehlerzaehler dieses
             # Users. Vorher standen die pop()-Zeilen dreimal im Monolithen
             # verteilt, und zweimal fehlte einer der Zaehler.
@@ -18110,6 +18111,7 @@ async def _start_chat_listener(username, chat_buf, flags=None):
             txt = (getattr(ev, "comment", None) or "").strip()
             if txt:
                 chat_buf.append(f"{who}: {txt}"); _cap()
+                _nc_aufnahmechat.notieren(username, who, txt)   # v4.2-W158: fuer die Aufnahme
                 await _restream_chat_push_async("tiktok", who, txt, origin=username)   # F92/F97: Sendebild, herkunftsmarkiert
                 _CHAT_DIAG["events"] += 1                 # F92d: Lebenszeichen
                 _msg_times.append(_time_mod.monotonic())
@@ -18353,7 +18355,115 @@ async def _chat_listener_abbauen(client, task):
         log.debug("chat-listener abbauen: %s", e)
 
 
-async def _restream_chat_guardian(rid, username):
+_AUFNAHME_CHAT_WAECHTER = {}      # v4.2-W158: user -> Task
+
+
+def _aufnahme_chat_modus():
+    """AUFNAHME_CHAT als Funktion gelesen (CLAUDE.md: .env wird spaet geladen)."""
+    return _nc_aufnahmechat.modus(os.getenv("AUFNAHME_CHAT", "einbrennen"))  # einbrennen|untertitel|aus
+
+
+def _aufnahme_chat_beginnen(username, output_file, proc):
+    """v4.2-W158: eine Aufnahme beginnt — Chat mitschneiden und dafuer sorgen,
+    dass ueberhaupt ein Chat-Listener laeuft. Bis hierher lief einer nur fuer
+    Live-React-Nutzer und Restreams; @tbwpueppi wurde am 06.11. ohne jeden
+    Chat-Empfang aufgenommen."""
+    if _aufnahme_chat_modus() == "aus":
+        return
+    _nc_aufnahmechat.beginnen(username, output_file, _time_mod.time(), proc)
+    u = clean_username(username)
+    t = _AUFNAHME_CHAT_WAECHTER.get(u)
+    if t is None or t.done():
+        _AUFNAHME_CHAT_WAECHTER[u] = _spawn(_restream_chat_guardian(
+            None, u, solange=lambda: _nc_aufnahmechat.laeuft(u),
+            etikett="Aufnahme @%s" % u), name=f"aufnahme-chat-{u}")
+
+
+async def _aufnahme_fertigmachen(output_file, username):
+    """Nachbearbeitung einer fertigen Aufnahme, als EIN Schritt:
+    Tonspur sichern (W106), dann den Chat einarbeiten (W158).
+    -> {"groesse": int|None, ...} wie _nc_tonspur.sichern."""
+    erg = await _nc_tonspur.sichern(output_file, wer=f"@{username}")
+    chat = _nc_aufnahmechat.beenden(output_file)
+    modus = _aufnahme_chat_modus()
+    if chat and modus != "aus":
+        neu = await asyncio.to_thread(_aufnahme_chat_einarbeiten, output_file, chat,
+                                      modus, username)
+        if neu:
+            erg = dict(erg, groesse=neu)
+    return erg
+
+
+def _ffprobe_masse(pfad):
+    """(breite, hoehe, dauer_s) einer Videodatei, (0, 0, 0.0) wenn unlesbar."""
+    try:
+        r = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0",
+                            "-show_entries", "stream=width,height:format=duration",
+                            "-of", "json", pfad], capture_output=True, text=True, timeout=60)
+        d = json.loads(r.stdout or "{}")
+        st = (d.get("streams") or [{}])[0]
+        return (int(st.get("width") or 0), int(st.get("height") or 0),
+                float((d.get("format") or {}).get("duration") or 0.0))
+    except (OSError, ValueError, subprocess.SubprocessError) as e:
+        log.warning("Aufnahme-Chat: ffprobe auf %s scheiterte (%s) — Masse unbekannt.",
+                    os.path.basename(pfad), e)
+        return 0, 0, 0.0
+
+
+def _aufnahme_chat_einarbeiten(video, chat, modus, username):
+    """Laeuft in einem Thread. -> neue Groesse oder None (Original bleibt).
+
+    Wer die Datei nicht ersetzen kann, laesst das Original stehen: lieber
+    eine Aufnahme ohne Chat als gar keine (W91, „wer die Datei nicht loeschen
+    kann ...")."""
+    if not video.lower().endswith((".mp4", ".m4v", ".mov")):
+        log.info("Aufnahme-Chat @%s: %s ist kein MP4 — Chat bleibt draussen.",
+                 username, os.path.basename(video))
+        return None
+    breite, hoehe, dauer = _ffprobe_masse(video)
+    max_min = _env_int("AUFNAHME_CHAT_MAX_MIN", 240)
+    if modus == "einbrennen" and dauer > max_min * 60:
+        log.info("Aufnahme-Chat @%s: %.0f min laenger als AUFNAHME_CHAT_MAX_MIN=%d — "
+                 "Chat als Untertitelspur statt eingebrannt.", username, dauer / 60, max_min)
+        modus = "untertitel"
+    ass_pfad, tmp = video + ".chat.ass", video + ".chat.tmp.mp4"
+    t0 = _time_mod.monotonic()
+    try:
+        with open(ass_pfad, "w", encoding="utf-8") as f:
+            f.write(_nc_aufnahmechat.ass(chat, breite or 720, hoehe or 1280))
+        for versuch in ((modus, "untertitel") if modus == "einbrennen" else (modus,)):
+            if versuch == "einbrennen":
+                cmd = _nc_aufnahmechat.einbrennen_cmd(
+                    video, ass_pfad, tmp, preset=os.getenv("AUFNAHME_CHAT_PRESET", "veryfast"),
+                    threads=_env_int("AUFNAHME_CHAT_THREADS", 2))
+            else:
+                cmd = _nc_aufnahmechat.untertitel_cmd(video, ass_pfad, tmp)
+            r = subprocess.run(cmd, capture_output=True, text=True,
+                               timeout=max(900, int(dauer * 4)))
+            if r.returncode == 0 and os.path.isfile(tmp) and os.path.getsize(tmp) > 0:
+                os.replace(tmp, video)
+                log.info("Aufnahme-Chat @%s: %d Nachrichten %s (%.0f s).", username, len(chat),
+                         "eingebrannt" if versuch == "einbrennen" else "als Untertitelspur",
+                         _time_mod.monotonic() - t0)
+                return os.path.getsize(video)
+            log.error("Aufnahme-Chat @%s: %s scheiterte (rc=%s): %s — %s", username, versuch,
+                      r.returncode, (r.stderr or "").strip()[-300:] or "kein stderr",
+                      "versuche Untertitelspur." if versuch == "einbrennen"
+                      else "Aufnahme bleibt ohne Chat.")
+    except (OSError, subprocess.SubprocessError) as e:
+        log.error("Aufnahme-Chat @%s: Einarbeiten scheiterte (%s: %s) — Aufnahme bleibt "
+                  "ohne Chat.", username, type(e).__name__, e)
+    finally:
+        for rest in (ass_pfad, tmp):
+            if os.path.exists(rest):
+                try:
+                    os.remove(rest)
+                except OSError as e:
+                    log.warning("Aufnahme-Chat: Rest %s bleibt liegen (%s).", rest, e)
+    return None
+
+
+async def _restream_chat_guardian(rid, username, solange=None, etikett=None):
     """F92b/V37-CHAT: Der Restream garantiert seinen EIGENEN TikTok-Chat-Feed.
 
     V37-CHAT — was hier vorher falsch lief: die Schleife pollte stur alle 30s.
@@ -18369,17 +18479,30 @@ async def _restream_chat_guardian(rid, username):
     0. Faellt sie frueher (oder kommt gar nicht zustande), waechst der Backoff
     exponentiell bis CHAT_BACKOFF_MAX_S.
     """
+    # v4.2-W158: derselbe Waechter haelt auch den Chat einer AUFNAHME am
+    # Leben — `solange` ersetzt dann die Frage nach dem Restream-Prozess,
+    # `etikett` den Namen im Log. Zwei Kopien dieser Schleife waeren der
+    # naechste Fehler (Begruendung wie bei nc/chatfolge.py, W47).
     username = clean_username(username)   # B76: heilt URL-Altlasten aus der DB
+    wer = etikett or ("Restream #%s" % rid)
+
+    def weiter():
+        return solange() if solange else rid in getattr(_RESTREAM_MGR, "_procs", {})
     if not username or not _chat_src_ok("tiktok"):
         return
     client = task = None
     backoff = 0
     _reconnects = []          # monotone Zeitstempel der letzten Neuaufbauten
     try:
-        while rid in getattr(_RESTREAM_MGR, "_procs", {}):
+        while weiter():
             # Ein anderer Listener bedient den User bereits (Push-Dedup)
             if username in _CHAT_FEED_USERS and task is not None and not task.done():
                 await asyncio.sleep(5)
+                continue
+            if solange and task is None and username in _CHAT_FEED_USERS:
+                # Aufnahme: ein anderer Listener (Live-React, Restream) liefert
+                # den Chat schon — jeder schreibt in den Mitschnitt.
+                await asyncio.sleep(10)
                 continue
             # Sign-Cooldown: jeder Versuch waere reine Quota-Verschwendung
             cd = _SIGN_COOLDOWN["until"] - _time_mod.time()
@@ -18399,15 +18522,15 @@ async def _restream_chat_guardian(rid, username):
                 s["failed"] += 1
                 backoff = min(max(5, backoff * 2), CHAT_BACKOFF_MAX_S)
                 s["backoff_s"] = backoff
-                log.debug("Restream #%s: Chat @%s kam nicht zustande — "
-                          "naechster Versuch in %ds", rid, username, backoff)
+                log.debug("%s: Chat @%s kam nicht zustande — "
+                          "naechster Versuch in %ds", wer, username, backoff)
                 await asyncio.sleep(backoff)
                 continue
 
             _chat_connected(username)
             _chat_stat(username)["backoff_s"] = 0
-            log.info("Restream #%s: eigener TikTok-Chat-Listener für @%s gestartet "
-                     "(Studio-Panel-Feed)", rid, username)
+            log.info("%s: eigener TikTok-Chat-Listener für @%s gestartet "
+                     "(Studio-Panel-Feed)", wer, username)
 
             # HIER ist der Unterschied: wir warten auf das Ende der Verbindung,
             # statt in 30s-Schritten nachzusehen. Reconnect ohne Totzeit.
@@ -18426,8 +18549,8 @@ async def _restream_chat_guardian(rid, username):
                 _CHAT_DIAG.get("user") == username else ""
             dur = _chat_disconnected(username, why or "verbindung beendet")
 
-            if rid not in getattr(_RESTREAM_MGR, "_procs", {}):
-                break            # Restream ist weg — kein Reconnect mehr
+            if not weiter():
+                break            # Restream/Aufnahme ist weg — kein Reconnect mehr
 
             # Churn-Wache: auch eine "gesunde" Session darf nicht beliebig oft
             # neu aufgebaut werden. Am 10.09. hielt jede Session 13-17s, lag
@@ -18448,23 +18571,23 @@ async def _restream_chat_guardian(rid, username):
             _chat_stat(username)["backoff_s"] = backoff
 
             if _grund == "flattert":
-                log.warning("Restream #%s: Chat @%s — %d Neuaufbauten in %d min "
+                log.warning("%s: Chat @%s — %d Neuaufbauten in %d min "
                             "(letzte Session %.0fs). Das ist Flattern und "
                             "verbrennt Sign-Quota, deshalb Backoff %ds. Haelt "
                             "es an: TIKTOK_SIGN_API_KEY setzen "
                             "(eulerstream.com) oder Tunnel/Proxy pruefen.",
-                            rid, username, len(_reconnects),
+                            wer, username, len(_reconnects),
                             CHAT_CHURN_WINDOW_S // 60, dur, backoff)
                 await asyncio.sleep(backoff)
             elif _grund == "gesund":
                 # Gesunde Session (TikTok rotiert seine WS-Verbindungen regelmaessig)
-                log.info("Restream #%s: Chat @%s nach %.0fs getrennt — "
-                         "reconnect sofort", rid, username, dur)
+                log.info("%s: Chat @%s nach %.0fs getrennt — "
+                         "reconnect sofort", wer, username, dur)
             else:
-                log.warning("Restream #%s: Chat @%s brach nach nur %.0fs ab (%s) — "
+                log.warning("%s: Chat @%s brach nach nur %.0fs ab (%s) — "
                             "Backoff %ds. Haeufig heisst das: Tunnel instabil, "
                             "Sign-Quota knapp, oder der User ist nicht mehr live.",
-                            rid, username, dur, why or "kein Grund gemeldet", backoff)
+                            wer, username, dur, why or "kein Grund gemeldet", backoff)
                 await asyncio.sleep(backoff)
     except asyncio.CancelledError:
         pass
