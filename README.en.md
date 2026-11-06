@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="docs/assets/banner.svg" alt="NIGHTCRAWLER — v4.6 Control Room" width="100%">
+<img src="docs/assets/banner.svg" alt="NIGHTCRAWLER — v4.6.1 Control Room" width="100%">
 
 ### The control room for live streaming
 #### Monitoring · Recording · Multi-target restream · AI moderation
@@ -584,6 +584,11 @@ deploy/      Prometheus, Grafana, alert rules      docs/      guides, changelog
   in every theme.
 - **`update.sh` asks** about what is missing.
 
+**Patch 4.6.1** — deep bug hunt: behind the installer's nginx the deck was open
+without login, the OAuth callback bound foreign accounts, reversal entries broke
+the hash chain, and retention deleted starred recordings. Eleven findings, each
+with a contract and a mutation probe.
+
 Every wave on its own: **[`docs/CHANGELOG.md`](docs/CHANGELOG.md)**.
 
 ---
@@ -594,7 +599,7 @@ Every wave on its own: **[`docs/CHANGELOG.md`](docs/CHANGELOG.md)**.
 
 | | |
 |---|---|
-| Current version | **4.6** — “Control Room” (2026.11) |
+| Current version | **4.6.1** — “Control Room” (2026.11) |
 | Flask routes | 379 (34 in `bot.py` · 345 in `nc/routes/`) |
 | Discord slash commands | 66 |
 | Domain modules | 179 in `nc/` (+39 in `nc/routes/`, +3 in `nc/intel/`), 10 in `brain/` |
@@ -644,7 +649,7 @@ with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 <div align="center">
 
-**NIGHTCRAWLER v4.6 · “Control Room”**
+**NIGHTCRAWLER v4.6.1 · “Control Room”**
 
 **[🌐 lafap.de](https://lafap.de)** · **[💬 Discord](https://discord.gg/psvnxm7tSV)** · **[📓 Changelog](docs/CHANGELOG.md)**
 

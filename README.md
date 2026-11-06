@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="docs/assets/banner.svg" alt="NIGHTCRAWLER — v4.6 Leitstand" width="100%">
+<img src="docs/assets/banner.svg" alt="NIGHTCRAWLER — v4.6.1 Leitstand" width="100%">
 
 ### Der Kontrollraum für Live-Streaming
 #### Überwachung · Aufnahme · Multi-Ziel-Restream · KI-Moderation
@@ -585,6 +585,11 @@ deploy/      Prometheus, Grafana, Alarmregeln      docs/      Anleitungen, Chang
 - **Das Lagebild neu gezeichnet** — Leitstand statt Figur, in jedem Thema lesbar.
 - **`update.sh` fragt nach**, was fehlt.
 
+**Patch 4.6.1** — Tiefengrund-Bughunt: hinter dem nginx des Installers war das
+Deck ohne Anmeldung offen, der OAuth-Rückruf band fremde Konten, Storno-Buchungen
+brachen die Hash-Kette, und die Retention löschte markierte Aufnahmen. Elf
+Befunde, jeder mit Vertrag und Mutationsprobe.
+
 Alle Wellen einzeln: **[`docs/CHANGELOG.md`](docs/CHANGELOG.md)**.
 
 ---
@@ -595,7 +600,7 @@ Alle Wellen einzeln: **[`docs/CHANGELOG.md`](docs/CHANGELOG.md)**.
 
 | | |
 |---|---|
-| Aktuelle Version | **4.6** — „Leitstand“ (2026.11) |
+| Aktuelle Version | **4.6.1** — „Leitstand“ (2026.11) |
 | Flask-Routen | 379 (34 in `bot.py` · 345 in `nc/routes/`) |
 | Discord-Slash-Commands | 66 |
 | Fachmodule | 179 in `nc/` (+39 in `nc/routes/`, +3 in `nc/intel/`), 10 in `brain/` |
@@ -645,7 +650,7 @@ Programm erhalten haben. Falls nicht: <https://www.gnu.org/licenses/>.
 
 <div align="center">
 
-**NIGHTCRAWLER v4.6 · „Leitstand“**
+**NIGHTCRAWLER v4.6.1 · „Leitstand“**
 
 **[🌐 lafap.de](https://lafap.de)** · **[💬 Discord](https://discord.gg/psvnxm7tSV)** · **[📓 Changelog](docs/CHANGELOG.md)**
 

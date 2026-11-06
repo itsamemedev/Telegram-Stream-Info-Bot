@@ -11,6 +11,8 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+## [4.6.1] — 2026-11-06 · „Leitstand"
+
 ### Behoben — Tiefengrund-Bughunt: elf Befunde, drei davon Sicherheit (v4.2 W149)
 
 - **Hinter dem Proxy des Installers war das Deck ohne Anmeldung offen.**
