@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="docs/assets/banner.svg" alt="NIGHTCRAWLER — v4.6.4 Control Room" width="100%">
+<img src="docs/assets/banner.svg" alt="NIGHTCRAWLER — v4.6.5 Control Room" width="100%">
 
 ### The control room for live streaming
 #### Monitoring · Recording · Multi-target restream · AI moderation
@@ -121,8 +121,8 @@ flowchart TB
     TG["📨 Telegram"]:::ein --> BOT
     DC["🎮 Discord<br/>66 slash commands"]:::ein --> BOT
     TT["🎥 TikTok<br/>live detection + chat"]:::ein --> BOT
-    BOT["bot.py<br/>monolith · 26,414 lines<br/>scraper · recorder · restream<br/>Flask deck · 34 own routes"]:::core
-    BOT -->|configure| NC["nc/ — 180 domain modules<br/>39 blueprints"]:::lib
+    BOT["bot.py<br/>monolith · 26,503 lines<br/>scraper · recorder · restream<br/>Flask deck · 34 own routes"]:::core
+    BOT -->|configure| NC["nc/ — 181 domain modules<br/>39 blueprints"]:::lib
     BOT --> BR["brain_bridge.py"]:::lib
     BR --> BRAIN["brain/ — own brain.db<br/>rules · memory · knowledge graph<br/>16 watchdog agents"]:::brain
     BOT --> DB[("SQLite or MariaDB<br/>+ settings")]:::db
@@ -547,8 +547,8 @@ python3 -m pytest -k w145          # one wave on its own
 python3 tools/ncpatch.py find "donations"      # where is something in bot.py?
 ```
 
-`bot.py` has 26,414 lines and is never read in full — the navigation map
-`.claude/INDEX.md` knows 379 routes and 597 functions with line numbers. Before
+`bot.py` has 26,503 lines and is never read in full — the navigation map
+`.claude/INDEX.md` knows 379 routes and 599 functions with line numbers. Before
 every pull request the full verification chain from
 **[`docs/en/CONTRIBUTING.md`](docs/en/CONTRIBUTING.md)** runs: lint, templates,
 documentation figures, locks against silent failure paths and giant functions,
@@ -594,6 +594,8 @@ archive along; `%` in data and `.recover` leftovers no longer break it.
 `nora` stay two viewers.
 **Patch 4.6.4** — secure cookies behind the HTTPS proxy, no login crash on
 umlauts, no rollback next to a running update.
+**Patch 4.6.5** — subscriber/18+ lives are recognised instead of polled every
+20 seconds, a dark restream reports itself, Kick finds its Pusher cluster.
 
 Every wave on its own: **[`docs/CHANGELOG.md`](docs/CHANGELOG.md)**.
 
@@ -605,10 +607,10 @@ Every wave on its own: **[`docs/CHANGELOG.md`](docs/CHANGELOG.md)**.
 
 | | |
 |---|---|
-| Current version | **4.6.4** — “Control Room” (2026.11) |
+| Current version | **4.6.5** — “Control Room” (2026.11) |
 | Flask routes | 379 (34 in `bot.py` · 345 in `nc/routes/`) |
 | Discord slash commands | 66 |
-| Domain modules | 180 in `nc/` (+39 in `nc/routes/`, +3 in `nc/intel/`), 10 in `brain/` |
+| Domain modules | 181 in `nc/` (+39 in `nc/routes/`, +3 in `nc/intel/`), 10 in `brain/` |
 | Sentinel agents | 14 |
 | Configuration variables | ~577 |
 | Languages | German (source), English, Spanish |
@@ -655,7 +657,7 @@ with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 <div align="center">
 
-**NIGHTCRAWLER v4.6.4 · “Control Room”**
+**NIGHTCRAWLER v4.6.5 · “Control Room”**
 
 **[🌐 lafap.de](https://lafap.de)** · **[💬 Discord](https://discord.gg/psvnxm7tSV)** · **[📓 Changelog](docs/CHANGELOG.md)**
 

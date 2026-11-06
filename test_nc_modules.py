@@ -25490,9 +25490,15 @@ def _test_v42_w136_pusher_protokoll():
               and n.name == "KickModerator")
     ws = next(n for n in km.body if isinstance(n, _ast.AsyncFunctionDef)
               and n.name == "_ws_loop")
+    # ANKER GEWANDERT (v4.2-W154, nicht der Vertrag): die Adresse baut jetzt
+    # _KickClusterSuche, weil sie nach 4001 den Cluster weiterschaltet. Der
+    # Vertrag bleibt: Ausgangspunkt ist KICK_PUSHER_CLUSTER, nichts Festes.
     rufe = {_ast.unparse(c.func): c for c in _ast.walk(ws) if isinstance(c, _ast.Call)}
-    assert "_nc_kickapi.pusher_url" in rufe and \
-        "KICK_PUSHER_CLUSTER" in _ast.unparse(rufe["_nc_kickapi.pusher_url"]), \
+    assert "_suche.url" in rufe, "der Cluster ist wieder fest verdrahtet"
+    ks = next(n for n in baum.body if isinstance(n, _ast.ClassDef)
+              and n.name == "_KickClusterSuche")
+    ks_rufe = {_ast.unparse(c.func) for c in _ast.walk(ks) if isinstance(c, _ast.Call)}
+    assert "_nc_kickapi.pusher_url" in ks_rufe and "KICK_PUSHER_CLUSTER" in _ast.unparse(ks), \
         "der Cluster ist wieder fest verdrahtet"
     assert any(isinstance(r, _ast.Raise) and "PusherGeschlossen" in _ast.unparse(r)
                for r in _ast.walk(ws)), "der Schliesscode geht verloren"
@@ -28688,6 +28694,119 @@ def _test_v42_w153_discord_bereiche_folgen_den_trackings():
     ok("W153: Discord-Bereiche folgen den Trackings — anlegen, loeschen, mit Riegeln")
 
 
+def _test_v42_w154_verschlossen_cluster_decimal():
+    """v4.2-W154: aus dem Log des Betreibers vom 06.11. — verschlossene Raeume
+    (Abo/18+) liessen alle 20 s einen yt-dlp sterben und den Restream dunkel,
+    ein toter Zubringer stand nirgends im Log, Kick-Pusher wartete auf 4001
+    15 min statt den Cluster zu suchen, und MariaDB-Decimal brach json.dumps."""
+    import json as _json
+    import logging as _lg
+    from decimal import Decimal as _D
+    from nc import geschuetzt as G
+    from nc import kickapi as K
+    from nc import sendebruecke as B
+    from nc.dbwrap import _MariaDBRowProxy as R
+
+    # (1) Verschlossen erst ab der Schwelle, laut genau einmal, Ruhe waechst.
+    G._STAND.clear()
+    f = [G.vermerken("@Caro", 100.0) for _ in range(G.SCHWELLE)]
+    assert [x["verschlossen"] for x in f] == [False] * (G.SCHWELLE - 1) + [True], f
+    assert f[-1]["neu"] and G.ruhend("caro", 100.0 + G.RUHE_S[0] - 1)
+    assert not G.ruhend("caro", 100.0 + G.RUHE_S[0] + 1)
+    z = G.vermerken("caro", 1000.0)
+    assert not z["neu"] and z["ruhe_s"] == G.RUHE_S[1], z
+    assert G.verschlossen("CARO") and G.lage() == {"caro": G.SCHWELLE + 1}
+    # Ein gelungener Versuch setzt alles zurueck — ein Abo-Live kann aufgehen.
+    assert G.zuruecksetzen("caro") is True and not G.verschlossen("caro")
+    assert G.zuruecksetzen("caro") is False
+    assert "COOKIE_FILE" in G.ABHILFE and "sessionid" in G.ABHILFE
+
+    # (2) Verdrahtung im Bot: Ruhe vor dem Start, Durchreicher fragt nicht,
+    # jeder andere Ausgang setzt zurueck.
+    src = open("bot.py", encoding="utf-8").read()
+    h = rumpf_ab(src, src.index("async def _handle_single_tracking("))
+    assert h.index("_nc_geschuetzt.ruhend(username") < h.index("_start_gesperrt(\"aufnahme\"")
+    m = rumpf_ab(src, src.index("def _rec_kategorie_melden("))
+    assert "_nc_geschuetzt.vermerken(username" in m
+    assert 'if category != "offline_or_protected":\n        _nc_geschuetzt.zuruecksetzen(username)' in m
+    # Review #199: der Erfolgspfad (Datei da) setzt ebenfalls zurueck —
+    # _rec_kategorie_melden laeuft nur im Fehlerpfad.
+    e = rumpf_ab(src, src.index("        if file_exists and file_size > 0:"))
+    assert "_nc_geschuetzt.zuruecksetzen(username)" in e[:600], e[:600]
+    d = rumpf_ab(src, src.index("def _restream_durchreicher("))
+    assert d.index("_nc_geschuetzt.verschlossen(username)") < d.index("_nc_durch.adresse(username)")
+
+    # (3) Die Sendebruecke meldet einen Zubringer, der ohne Bild stirbt, und
+    # beendet nach unklar_s — statt ewig Pausenbild ohne eine Logzeile.
+    t = [1000.0]
+    br = B.Bruecke(None, ["x"], lambda *a: ["x"], lambda: (None, "offline"),
+                   uhr=lambda: t[0], name="#w154", unklar_s=60)
+
+    class _Z:
+        returncode = 1
+    zeilen = []
+
+    class _H(_lg.Handler):
+        def emit(self, r):
+            zeilen.append((r.levelno, r.getMessage()))
+    hd = _H(); B.log.addHandler(hd)
+    try:
+        br.stderr[B.QUELLE].append("ERROR: [tiktok:live] w154: The channel is not currently live")
+        br._nach_ende(_Z())
+        assert br.ende is None and any("ohne Bild" in z[1] and "not currently live" in z[1]
+                                       for z in zeilen), zeilen
+        t[0] += 61
+        br._nach_ende(_Z())
+        assert br.ende and "kein Zubringer" in br.ende and br._halt.is_set(), br.ende
+        assert any(z[0] >= _lg.ERROR for z in zeilen), zeilen
+    finally:
+        B.log.removeHandler(hd)
+
+    # (4) Kick: 4001 sucht den naechsten Cluster, alle durch -> "".
+    assert K.naechster_cluster({"us2"}) == "us3"
+    assert K.naechster_cluster(set(K.PUSHER_CLUSTER)) == ""
+    assert K.naechster_cluster({"US2", "us3"}) == "us1"
+    w = rumpf_ab(src, src.index("def _kick_cluster_weiter("))
+    assert "PUSHER_FALSCHER_CLUSTER" in w and "versucht.add(neu)" in w
+    lp = rumpf_ab(src, src.index("    async def _ws_loop(self):"))
+    assert lp.index("await _suche.weiter(e)") < lp.index("_kick_ws_pause(e, _folge)")
+    assert "_suche.gefunden()" in lp and "_suche.url()" in lp
+    # Ausfuehren statt nur lesen: die drei Definitionen aus bot.py mit
+    # Attrappen fuer Log, Schlaf und Konfiguration.
+    import ast as _ast
+    import asyncio as _aio
+    import types as _ty
+    baum = _ast.parse(src)
+    teile = [n for n in baum.body if getattr(n, "name", "") in
+             ("_kick_cluster_weiter", "_kick_cluster_gefunden", "_KickClusterSuche")]
+    assert len(teile) == 3
+
+    async def _kein_schlaf(_s):
+        return None
+    ns = {"_nc_kickapi": K, "KICK_PUSHER_CLUSTER": "us2", "KICK_PUSHER_KEY": "k",
+          "log": _lg.getLogger("w154"), "asyncio": _ty.SimpleNamespace(sleep=_kein_schlaf)}
+    exec(compile(_ast.Module(body=teile, type_ignores=[]), "bot.py", "exec"), ns)
+
+    class _E(Exception):
+        code = K.PUSHER_FALSCHER_CLUSTER
+    s = ns["_KickClusterSuche"]()
+    gesehen = [s.cluster]
+    while _aio.run(s.weiter(_E())):
+        gesehen.append(s.cluster)
+    assert sorted(gesehen) == sorted(K.PUSHER_CLUSTER), gesehen
+    assert s.cluster == "us2", "nach erfolgloser Runde nicht wieder vorn"
+    assert "/ws-us2.pusher.com/app/k" in s.url()
+    assert _aio.run(s.weiter(ValueError("x"))) is False and s.cluster == "us2"
+    assert "from nc.kickapi import PUSHER_CLUSTER" in open("tools/kickpusher.py", encoding="utf-8").read()
+
+    # (5) MariaDB-Decimal wird Zahl wie unter SQLite — json.dumps muss gehen.
+    r = R({"a": _D("2.50"), "b": _D("3"), "c": "x", "d": None})
+    assert r["a"] == 2.5 and isinstance(r["a"], float)
+    assert r["b"] == 3 and isinstance(r["b"], int) and r[2] == "x" and r["d"] is None
+    _json.dumps(dict(r))
+    ok("W154: verschlossene Raeume ruhen, toter Zubringer laut, Kick-Cluster, Decimal")
+
+
 def main():
     tmp, rid = richte_testdatenbank_ein()
     ok("db_conn aus nc.dbwrap: echtes Schema angelegt, Commit durchgelaufen")
@@ -29050,6 +29169,7 @@ def main():
     _test_v42_w151_mariadb_vergleicht_bytegenau()
     _test_v42_w152_cookies_pin_rollback()
     _test_v42_w153_discord_bereiche_folgen_den_trackings()
+    _test_v42_w154_verschlossen_cluster_decimal()
     _test_v42_w60_azrael_cooldown_je_plattform()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)

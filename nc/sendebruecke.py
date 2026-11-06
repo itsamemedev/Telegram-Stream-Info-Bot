@@ -61,6 +61,7 @@ import subprocess
 import threading
 import time
 
+from nc import meldetakt as _meldetakt
 from nc import tonspur as _tonspur
 
 log = logging.getLogger("nc.sendebruecke")
@@ -661,8 +662,30 @@ class Bruecke:
             # Neustarts, und das Pausenbild blieb stehen.
             urteil = "tonlos"
         ersetzt, self._ersetzt = self._ersetzt, False
+        geliefert = self._zuletzt.get(QUELLE) is not None
         self._zub = None
         self._fallback("Zubringer beendet (rc=%s)" % zub.returncode)
+        if not geliefert and urteil is None:
+            # v4.2-W154: ein Zubringer, der stirbt, bevor er ein Bild liefert,
+            # war bisher nirgends zu sehen. Die Wache startete den naechsten,
+            # die Weiche blieb beim Pausenbild — gemessen beim Betreiber am
+            # 06.11.: zwanzig Minuten dunkles Bild ohne Ton auf Kick, und im
+            # Log keine einzige Zeile der Bruecke. Gedrosselt nach Grund.
+            zeile = next((z for z in reversed(self.stderr[QUELLE]) if z.strip()),
+                         "kein stderr")
+            laut, unterdr = _meldetakt.melden("sendebruecke-zubringer",
+                                              zeile[:60], self._uhr())
+            if laut:
+                log.warning("Sendebrücke %s: Zubringer endete ohne Bild (rc=%s) — %s — "
+                            "das Publikum sieht solange das Pausenbild.%s", self.name,
+                            zub.returncode, zeile[:300], _meldetakt.zusatz(unterdr))
+            ohne = self._uhr() - self._quelle_zuletzt
+            if ohne >= self.unklar_s:
+                # Dieselbe Grenze wie fuer eine Quelle, die sich nicht aufloesen
+                # laesst: ein Pausenbild ohne Ende ist fuer den Zuschauer ein
+                # toter Stream, nur ohne dass es jemand erfaehrt.
+                self._abbruch("seit %.0f s liefert kein Zubringer ein Bild (zuletzt: %s)"
+                              % (ohne, zeile[:200]), laut=True)
         with self._sperre:
             self._urteil.pop(QUELLE, None)
             self._pmt_pid.pop(QUELLE, None)

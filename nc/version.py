@@ -4,7 +4,7 @@ Eine einzige Wahrheit für die Versionsanzeige (Dashboard-Footer, /api/version,
 „Was ist neu"-Panel). Reine Daten + kleine Helfer, voll testbar.
 """
 
-VERSION = "4.6.4"
+VERSION = "4.6.5"
 CODENAME = "Leitstand"
 RELEASE = "2026.11"
 
@@ -23,6 +23,19 @@ def build_stamp():
 # Meilenstein-Changelog, neueste Version zuerst. highlights = kurze, ehrliche
 # Stichpunkte dessen, was die Version bringt.
 CHANGELOG = [
+    {
+        "version": "4.6.5",
+        "date": "2026-11",
+        "title": "Leitstand",
+        # Patch-Fassung von 4.6: Befunde aus dem Log des Betreibers (W154).
+        "highlights": [
+            "Abo- und 18+-Lives werden erkannt: statt alle 20 Sekunden einen sterbenden yt-dlp zu starten, ruht der Bot und sagt einmal laut, dass Cookies eines berechtigten Kontos fehlen — nicht der Proxy",
+            "Ein Restream, dessen Quelle nie ein Bild liefert, stand bisher stumm auf dem Pausenbild; jetzt meldet die Sendebrücke den Grund und beendet nach der Grenze, statt ewig dunkel zu senden",
+            "Kick-Chat: lehnt Pusher den Key mit 4001 ab, probiert der Bot die Cluster selbst durch, statt 15 Minuten zu warten — und sagt, welcher Wert in die .env gehört",
+            "MariaDB: Summen und Mittelwerte kommen als Zahl wie unter SQLite — „Object of type Decimal is not JSON serializable\" brach das Lernen der Evolution ab",
+            "tools/kickpusher.py und der Bot probieren dieselbe Cluster-Liste",
+        ],
+    },
     {
         "version": "4.6.4",
         "date": "2026-11",

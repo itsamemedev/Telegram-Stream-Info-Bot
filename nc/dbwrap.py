@@ -355,12 +355,29 @@ class _SQLiteConnWrap:
         return False    # Exception nicht unterdrücken
 
 
+from decimal import Decimal as _Decimal
+
+
+def _zahl(v):
+    """Decimal -> int, wenn ganzzahlig, sonst float (wie SQLite liefert)."""
+    return int(v) if v == v.to_integral_value() else float(v)
+
+
 class _MariaDBRowProxy:
     """Macht ein DictCursor-Result (dict) zugriffsfähig sowohl per Key (row['x'])
        als auch per Index (row[0]). Damit ist es drop-in-kompatibel zu
        sqlite3.Row im bestehenden Code."""
     __slots__ = ('_d', '_keys')
     def __init__(self, d):
+        # v4.2-W154: Decimal wie SQLite als Zahl. MariaDB liefert AVG/SUM und
+        # DECIMAL-Spalten als decimal.Decimal; SQLite gibt float/int. Gemessen
+        # beim Betreiber nach dem Umzug: "learned_params persist failed: Object
+        # of type Decimal is not JSON serializable" — json.dumps kennt Decimal
+        # nicht, und jede Stelle, die eine Summe ins Deck oder in die Datenbank
+        # schreibt, stuerzte genauso. Umgewandelt wird hier, an der einen
+        # Stelle, durch die jede MariaDB-Zeile geht.
+        if d:
+            d = {k: (_zahl(v) if isinstance(v, _Decimal) else v) for k, v in d.items()}
         self._d = d
         self._keys = list(d.keys()) if d else []
     def __getitem__(self, k):

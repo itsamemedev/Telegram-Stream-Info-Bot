@@ -21,7 +21,8 @@ import json
 import os
 import sys
 
-CLUSTER = ("us2", "us3", "us1", "mt1", "eu", "ap1", "ap2", "ap3", "ap4", "sa1")
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from nc.kickapi import PUSHER_CLUSTER as CLUSTER  # noqa: E402  v4.2-W154: eine Liste fuer Bot und Werkzeug
 
 
 def _key_aus_env():

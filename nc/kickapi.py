@@ -577,3 +577,25 @@ def pusher_url(app_key: str, cluster: str) -> str:
     cl = (cluster or "us2").strip().lower()
     return ("wss://ws-%s.pusher.com/app/%s"
             "?protocol=7&client=js&version=8.4.0&flash=false" % (cl, app_key))
+
+
+# ═════════════════════════════════════════════════════════════════════════
+# v4.2-W154: 4001 "not in this cluster" — selbst weitersuchen
+# ═════════════════════════════════════════════════════════════════════════
+#
+# W136 hat 4001 richtig als Konfigurationsfehler erkannt und auf eine Pause
+# von 15 Minuten gesetzt. Beim Betreiber am 06.11. stand die Zeile dann alle
+# 15 Minuten im Fehlerlog, und der Kick-Chat lief nie — die Abhilfe war ein
+# Werkzeug, das jemand von Hand starten muss. Pusher sagt mit genau diesem
+# Code aber, WAS falsch ist: der Cluster. Die Liste der Cluster ist kurz und
+# oeffentlich, also probiert die Schleife sie selbst durch, bevor sie in die
+# lange Pause geht. tools/kickpusher.py nimmt dieselbe Liste.
+
+PUSHER_CLUSTER = ("us2", "us3", "us1", "mt1", "eu", "ap1", "ap2", "ap3", "ap4", "sa1")
+PUSHER_FALSCHER_CLUSTER = 4001
+
+
+def naechster_cluster(versucht) -> str:
+    """Der naechste noch nicht versuchte Cluster, "" wenn alle durch sind."""
+    gesehen = {(c or "").strip().lower() for c in (versucht or ())}
+    return next((c for c in PUSHER_CLUSTER if c not in gesehen), "")
