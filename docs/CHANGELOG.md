@@ -29,6 +29,13 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 - Die Tabelle steht in `nc.schema.modultabellen` und zieht beim Umzug nach
   MariaDB mit.
 
+- Review #207 (Codex): Kurs und Originalbetrag im Steuer-Journal werden
+  nicht mehr auf Cent gerundet (1,2345 blieb 1,23); ein aufgeschobener
+  Meme-Zusammenschnitt ist vor der Clip-Retention geschützt, solange er in
+  der Upload-Warteschlange steht; und der Nachtrag merkt sich Größe und
+  mtime der Datei — fiel das Abtragen nach dem Einarbeiten aus, brennt der
+  nächste Start den Chat nicht ein zweites Mal ein.
+
 Vertrag `_test_v42_w163_chat_nachtrag_statt_beilage`, 10 von 10
 Mutationsproben gefangen (eine entwischte zuerst — die Attrappe fehlte, der
 Vertrag ist nachgeschärft).

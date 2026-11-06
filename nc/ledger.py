@@ -232,7 +232,8 @@ def _payload_of(r) -> dict:
 
 # ────────────────────────────────────────────────────────── Buchen
 
-def _norm_amount(v, field) -> float:
+def _endliche_zahl(v, field) -> float:
+    """Eine endliche Zahl aus Deck-/Telegram-Eingabe, UNGERUNDET."""
     try:
         f = float(str(v).replace("\u20ac", "").replace(",", ".").strip())
     except (TypeError, ValueError):
@@ -243,7 +244,12 @@ def _norm_amount(v, field) -> float:
     # unendlich.
     if not math.isfinite(f):
         raise LedgerError(f"{field}: '{v}' ist kein endlicher Betrag")
-    return round(f, 2)
+    return f
+
+
+def _norm_amount(v, field) -> float:
+    """Ein EUR-Betrag — auf Cent gerundet."""
+    return round(_endliche_zahl(v, field), 2)
 
 
 def _norm_optional(v, field):
@@ -254,7 +260,9 @@ def _norm_optional(v, field):
     "inf" wurden gebucht und standen als "nan" in der CSV fuer das
     Steuerbuero. Sie stehen nicht im Hash — gerade deshalb faellt ein
     unsinniger Wert spaeter niemandem auf."""
-    f = 0.0 if v in (None, "") else _norm_amount(v, field)
+    # Review #207: NICHT auf Cent runden — ein Kurs 1,2345 ist nicht 1,23, und
+    # der Originalbetrag steht in seiner eigenen Waehrung.
+    f = 0.0 if v in (None, "") else _endliche_zahl(v, field)
     if f < 0:
         raise LedgerError(f"{field}: '{v}' muss groesser als 0 sein")
     return f or None                # leer und 0 heissen „kein Kurs", wie bisher

@@ -18526,6 +18526,14 @@ async def _aufnahme_chat_nachtrag(warte_s=120):
                      "%s gibt es nicht mehr" % os.path.basename(pfad), len(chat))
             await db_async(_nc_chatnachtrag.erledigt, e["id"])
             continue
+        if not await asyncio.to_thread(_nc_chatnachtrag.unveraendert, e):
+            # Review #207: schon eingearbeitet, nur das Abtragen fiel aus (oder
+            # die Datei wurde von Hand bearbeitet). Kein zweites Einbrennen.
+            log.info("Aufnahme-Chat-Nachtrag @%s: %s hat sich seit dem Stopp veraendert — "
+                     "gilt als eingearbeitet.", wer, os.path.basename(pfad))
+            await db_async(_nc_chatnachtrag.eingearbeitet, e["id"], pfad,
+                           await asyncio.to_thread(os.path.getsize, pfad))
+            continue
         neu = await asyncio.to_thread(_aufnahme_chat_einarbeiten, pfad, chat, modus, wer)
         if neu:
             await db_async(_nc_chatnachtrag.eingearbeitet, e["id"], pfad, neu)
@@ -22184,7 +22192,14 @@ def _clip_prune():
     try:
         if not os.path.isdir(CLIP_DIR):
             return
-        files = [os.path.join(CLIP_DIR, f) for f in os.listdir(CLIP_DIR) if f.endswith(".mp4")]
+        # Review #207: was in der Upload-Warteschlange steht (ein aufgeschobener
+        # Meme-Zusammenschnitt), ist noch nicht gesendet — die Retention
+        # loeschte ihn sonst vor dem Fenster, und die Warteschlange verwarf den
+        # Eintrag danach still als „Datei weg".
+        with _UPLOAD_QUEUE_LOCK:
+            wartend = {os.path.abspath(e.get("file") or "") for e in _upload_queue_load()}
+        files = [os.path.join(CLIP_DIR, f) for f in os.listdir(CLIP_DIR) if f.endswith(".mp4")
+                 and os.path.abspath(os.path.join(CLIP_DIR, f)) not in wartend]
         files.sort(key=os.path.getmtime)        # ältester zuerst
         removed = 0
         if CLIP_MAX_AGE_DAYS > 0:

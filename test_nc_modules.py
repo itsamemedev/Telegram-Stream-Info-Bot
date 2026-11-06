@@ -29623,6 +29623,11 @@ def _test_v42_w162_zweiter_durchgang():
     L.add_entry(c, "2026-11-06", "kick", "10", fx_rate="1,08", original_amount="0")
     r = c.execute("SELECT fx_rate, original_amount FROM revenue_entries").fetchone()
     assert (r["fx_rate"], r["original_amount"]) == (1.08, None), tuple(r)
+    # Review #207: ein Kurs ist kein Cent-Betrag — keine Rundung auf zwei Stellen.
+    L.add_entry(c, "2026-11-07", "kick", "10", fx_rate="1,2345", original_amount="12.3456")
+    r = c.execute("SELECT fx_rate, original_amount FROM revenue_entries ORDER BY id DESC").fetchone()
+    assert (r["fx_rate"], r["original_amount"]) == (1.2345, 12.3456), tuple(r)
+    assert L._norm_amount("1,2345", "x") == 1.23, "der EUR-Betrag rundet nicht mehr auf Cent"
     assert L.verify_chain(c)["ok"]
     ok("W162: Meme-Zusammenschnitt haelt das Upload-Fenster, Steuer-Journal prueft Kurs "
        "und Originalbetrag")
@@ -29645,16 +29650,22 @@ def _test_v42_w163_chat_nachtrag_statt_beilage():
     from nc import schema as S
 
     # (1) Das Modul: vormerken, lesen, eingearbeitet, aufgeben.
+    modheim = P.verzeichnis()
+    ra, rb = _os.path.join(modheim, "a.mp4"), _os.path.join(modheim, "b.mp4")
+    P.attrappe(ra, 100); P.attrappe(rb, 100)
     c = _sq.connect(":memory:"); c.row_factory = _sq.Row
     N.ensure_schema(c); N.ensure_schema(c)              # idempotent
     c.execute("CREATE TABLE recordings (filepath TEXT, file_size INTEGER)")
-    c.execute("INSERT INTO recordings VALUES ('/rec/a.mp4', 100)")
-    N.vormerken(c, "/rec/a.mp4", "anna", [(1.25, "Sash", "hallo {\\b1}"), (3, "Love", "ä")])
+    c.execute("INSERT INTO recordings VALUES (?, 100)", (ra,))
+    N.vormerken(c, ra, "anna", [(1.25, "Sash", "hallo {\\b1}"), (3, "Love", "ä")])
     e = N.offene(c)[0]
     assert N.lesen(e["chat_roh"]) == [(1.25, "Sash", "hallo {\\b1}"), (3.0, "Love", "ä")]
-    N.eingearbeitet(c, e["id"], "/rec/a.mp4", 250)
+    assert e["groesse"] == 100 and N.unveraendert(e)
+    _os.utime(ra, ns=(1, 1))
+    assert not N.unveraendert(e), "eine veraenderte Datei gilt als unveraendert"
+    N.eingearbeitet(c, e["id"], ra, 250)
     assert N.offene(c) == [] and c.execute("SELECT file_size FROM recordings").fetchone()[0] == 250
-    N.vormerken(c, "/rec/b.mp4", "b", [(1, "x", "y")])
+    N.vormerken(c, rb, "b", [(1, "x", "y")])
     e = N.offene(c)[0]
     for i in range(N.MAX_VERSUCHE - 1):
         assert N.fehlversuch(c, dict(e, versuche=i)) is False
@@ -29667,6 +29678,7 @@ def _test_v42_w163_chat_nachtrag_statt_beilage():
         except (ValueError, TypeError, IndexError):
             continue
         raise AssertionError("unlesbarer Eintrag %r gilt als Chat" % kaputt)
+    _sh.rmtree(modheim, ignore_errors=True)
 
     # (2) Im Schema, damit der Umzug nach MariaDB sie kennt (Lehre aus W150).
     modt = _ast.unparse(next(n for n in _ast.parse(open("nc/schema.py", encoding="utf-8").read()).body
@@ -29753,8 +29765,10 @@ def _test_v42_w163_chat_nachtrag_statt_beilage():
             "ein FLV wird vorgemerkt, das der Nachtrag nie verarbeiten kann"
         _os.remove(f)
         # Ein Eintrag, dessen Datei es nicht mehr gibt, faellt still heraus.
+        weg = _os.path.join(heim, "weg.mp4"); P.attrappe(weg, 10)
         with _Ctx() as cc:
-            N.vormerken(cc, _os.path.join(heim, "weg.mp4"), "anna", [(1, "a", "b")])
+            N.vormerken(cc, weg, "anna", [(1, "a", "b")])
+        _os.remove(weg)
         _aio.run(ns["_aufnahme_chat_nachtrag"](0))
         assert [(p, m, w) for p, _c, m, w in eingearbeitet] == \
             [(v, "einbrennen", "anna"), (k, "einbrennen", "anna")], eingearbeitet
@@ -29768,6 +29782,19 @@ def _test_v42_w163_chat_nachtrag_statt_beilage():
             _aio.run(ns["_aufnahme_chat_nachtrag"](0))
         with _Ctx() as cc:
             assert N.offene(cc) == [], "ein unverarbeitbarer Eintrag bleibt fuer immer"
+        # Review #207: die Datei hat sich seit dem Stopp veraendert (das
+        # Einarbeiten lief, nur das Abtragen fiel aus) — kein zweites Einbrennen,
+        # aber die Groesse im Deck wird nachgezogen.
+        with _Ctx() as cc:
+            N.vormerken(cc, v, "anna", [(1, "a", "b")])
+        with open(v, "r+b") as fh:
+            fh.truncate(3000)
+        del eingearbeitet[:]
+        _aio.run(ns["_aufnahme_chat_nachtrag"](0))
+        with _Ctx() as cc:
+            assert eingearbeitet == [], "der Chat wird ein zweites Mal eingebrannt"
+            assert N.offene(cc) == []
+            assert cc.execute("SELECT file_size FROM recordings").fetchone()[0] == 3000
         # AUFNAHME_CHAT=aus: vorgemerktes wird verworfen, nicht eingearbeitet.
         with _Ctx() as cc:
             N.vormerken(cc, v, "anna", [(1, "a", "b")])
@@ -29777,6 +29804,27 @@ def _test_v42_w163_chat_nachtrag_statt_beilage():
             assert eingearbeitet == [] and N.offene(cc) == []
     finally:
         A.SITZUNGEN.clear()
+        _sh.rmtree(heim, ignore_errors=True)
+    # (5) Review #207: die Clip-Retention schont, was in der Upload-
+    # Warteschlange steht (ein aufgeschobener Meme-Zusammenschnitt).
+    import threading as _th
+    import time as _tm
+    pr = next(n for n in baum.body if getattr(n, "name", "") == "_clip_prune")
+    heim = P.verzeichnis()
+    try:
+        namen = ["clip_a.mp4", "memes_u.mp4", "clip_b.mp4", "clip_c.mp4"]
+        for i, n in enumerate(namen):
+            P.attrappe(_os.path.join(heim, n), 10)
+            _os.utime(_os.path.join(heim, n), (1000 + i, 1000 + i))
+        wq = [{"file": _os.path.join(heim, "memes_u.mp4")}]
+        ns2 = {"os": _os, "CLIP_DIR": heim, "CLIP_MAX_AGE_DAYS": 0, "CLIP_MAX_COUNT": 1,
+               "_time_mod": _tm, "log": _lg.getLogger("w163"),
+               "_UPLOAD_QUEUE_LOCK": _th.Lock(), "_upload_queue_load": lambda: wq}
+        exec(compile(_ast.Module(body=[pr], type_ignores=[]), "bot.py", "exec"), ns2)
+        ns2["_clip_prune"]()
+        assert sorted(_os.listdir(heim)) == ["clip_c.mp4", "memes_u.mp4"], \
+            "die Retention loescht einen Zusammenschnitt, der noch auf sein Upload-Fenster wartet"
+    finally:
         _sh.rmtree(heim, ignore_errors=True)
     ok("W163: Chat aus dem Stopp in der Datenbank vorgemerkt und beim Start eingearbeitet — "
        "keine .ass-Beilage mehr")

@@ -24,6 +24,7 @@ Gebrauch entstehen) soll sich nicht wiederholen.
 """
 
 import json
+import os
 from datetime import datetime, timezone
 
 TABELLE = "aufnahme_chat_nachtrag"
@@ -44,7 +45,9 @@ def ensure_schema(conn, backend="sqlite"):
             " nutzer VARCHAR(191) NOT NULL,"
             " chat MEDIUMTEXT NOT NULL,"
             " erstellt VARCHAR(64) NOT NULL,"
-            " versuche INTEGER NOT NULL DEFAULT 0"
+            " versuche INTEGER NOT NULL DEFAULT 0,"
+            " groesse BIGINT,"
+            " mtime_ns BIGINT"
             ")" + _schema.parameter("mariadb")["tbl_opts"])
     else:
         conn.execute(
@@ -54,16 +57,43 @@ def ensure_schema(conn, backend="sqlite"):
             " nutzer TEXT NOT NULL,"
             " chat TEXT NOT NULL,"
             " erstellt TEXT NOT NULL,"
-            " versuche INTEGER NOT NULL DEFAULT 0)")
+            " versuche INTEGER NOT NULL DEFAULT 0,"
+            " groesse INTEGER,"
+            " mtime_ns INTEGER)")
+
+
+def stempel(pfad):
+    """(Groesse, mtime_ns) der Datei — woran der Nachtrag erkennt, dass sie
+    noch die ist, die beim Stopp vorlag."""
+    st = os.stat(pfad)
+    return int(st.st_size), int(st.st_mtime_ns)
 
 
 def vormerken(conn, pfad, nutzer, chat) -> None:
-    """Den Chat einer Aufnahme fuer den naechsten Start ablegen."""
+    """Den Chat einer Aufnahme fuer den naechsten Start ablegen — mit dem
+    Stempel der Datei, wie sie JETZT ist."""
     roh = json.dumps([[round(float(t), 3), str(w), str(x)] for t, w, x in chat],
                      ensure_ascii=False, separators=(",", ":"))
-    conn.execute("INSERT INTO " + TABELLE + " (pfad, nutzer, chat, erstellt, versuche) "
-                 "VALUES (?,?,?,?,0)",
-                 (pfad, nutzer, roh, datetime.now(timezone.utc).isoformat()))
+    groesse, mtime_ns = stempel(pfad)
+    conn.execute("INSERT INTO " + TABELLE + " (pfad, nutzer, chat, erstellt, versuche, "
+                 "groesse, mtime_ns) VALUES (?,?,?,?,0,?,?)",
+                 (pfad, nutzer, roh, datetime.now(timezone.utc).isoformat(),
+                  groesse, mtime_ns))
+
+
+def unveraendert(eintrag) -> bool:
+    """Ist die Datei noch die vom Stopp? (Review #207)
+
+    Das Einarbeiten ERSETZT die Datei und traegt erst danach in der Datenbank
+    ab. Scheitert dieser zweite Schritt (gesperrte Datenbank, Absturz,
+    Neustart mittendrin), steht der Eintrag beim naechsten Start noch da —
+    und ohne diese Pruefung braennte der Nachtrag den Chat ein zweites Mal in
+    eine Datei, die ihn schon traegt. Eine Datei, die sich seit dem Stopp
+    veraendert hat, ist bearbeitet (von uns oder von Hand) — sie wird nicht
+    noch einmal angefasst."""
+    if eintrag.get("groesse") is None or eintrag.get("mtime_ns") is None:
+        return True                 # ohne Stempel: nichts zu vergleichen
+    return stempel(eintrag["pfad"]) == (int(eintrag["groesse"]), int(eintrag["mtime_ns"]))
 
 
 def lesen(roh) -> list:
@@ -78,10 +108,11 @@ def lesen(roh) -> list:
 
 def offene(conn) -> list:
     """[{id, pfad, nutzer, chat_roh, versuche}] in Entstehungsreihenfolge."""
-    rows = conn.execute("SELECT id, pfad, nutzer, chat, versuche FROM " + TABELLE +
-                        " ORDER BY id").fetchall()
+    rows = conn.execute("SELECT id, pfad, nutzer, chat, versuche, groesse, mtime_ns FROM " +
+                        TABELLE + " ORDER BY id").fetchall()
     return [{"id": r["id"], "pfad": r["pfad"], "nutzer": r["nutzer"],
-             "chat_roh": r["chat"], "versuche": int(r["versuche"] or 0)} for r in rows]
+             "chat_roh": r["chat"], "versuche": int(r["versuche"] or 0),
+             "groesse": r["groesse"], "mtime_ns": r["mtime_ns"]} for r in rows]
 
 
 def erledigt(conn, eintrag_id) -> None:
