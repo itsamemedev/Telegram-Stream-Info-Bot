@@ -67,6 +67,7 @@ import logging
 import time as _time_mod
 
 from nc import meldetakt as _meldetakt
+from nc import durchreicher as _nc_durch  # v4.2-W148
 
 log = logging.getLogger("nc.preflight")
 RECORD_PROXY = ""
@@ -148,6 +149,10 @@ async def _preflight_url(u, who="?"):
     Modul-Docstring.
     """
     if not u:
+        return u
+    if _nc_durch.ist(u):
+        # v4.2-W148: eine Durchreicher-Adresse ist keine URL — es gibt nichts
+        # per HTTP zu proben; yt-dlp holt den Stream selbst.
         return u
     try:
         import aiohttp as _ah

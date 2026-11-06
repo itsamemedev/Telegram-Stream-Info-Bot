@@ -104,8 +104,8 @@ def empfehlung(befunde):
                 % ", ".join(sorted({k["form"] for k in gut})))
     if befunde.get("durchreicher_bytes", 0) > 0:
         return ("Keine Adresse ist direkt ziehbar, aber yt-dlp reicht den Stream "
-                "durch. Damit ist ein yt-dlp-Zubringer für den Restream der Weg "
-                "— das ist die nächste Welle; bitte diese Ausgabe mitschicken.")
+                "durch. Seit W148 nimmt der Restream genau diesen Weg von selbst "
+                "(Durchreicher, RESTREAM_DURCHREICHER=1) — ein Update genügt.")
     if kand:
         return ("Adressen kommen, aber keine antwortet ffprobe (meist 403 für die "
                 "Server-IP). Abhilfe: RECORD_PROXY auf einen Residential-/Mobil-"

@@ -38,7 +38,7 @@
 | **Para quién** | Operadores que lo quieren en hardware **propio** — un servidor Linux, sin SaaS, sin plataforma ajena entre el stream y los destinos |
 | **Funciona en** | Ubuntu/Debian con systemd, Python 3.12–3.14, ffmpeg, streamlink, yt-dlp — base de datos SQLite o MariaDB |
 | **Manejo** | Telegram, Discord (66 comandos) y un panel web con cuatro temas en alemán, inglés y español — los ajustes, directamente en el panel |
-| **Monitorización** | 14 agentes vigilantes, mapa de situación en tiempo real, Prometheus y Grafana con reglas de alerta |
+| **Monitorización** | 16 agentes vigilantes, mapa de situación en tiempo real, Prometheus y Grafana con reglas de alerta |
 | **Calidad** | más de mil contratos, CI en tres versiones de Python y contra el estado de producción congelado, `pip-audit`, CodeQL |
 | **Licencia** | GPL-3.0-or-later |
 
@@ -59,16 +59,16 @@
 | | | |
 |---|---|---|
 | **🔍 Detectar** — sondeo adaptativo con histéresis anti-parpadeo; cada fila del panel dice cuándo se comprobó por última vez | **⏺️ Grabar** — grabador en tres etapas (ffmpeg → streamlink → yt-dlp) con comprobación previa, control de la pista de audio y detección de bloqueos | **📡 Retransmitir** — Kick, Twitch y YouTube a la vez, verificación de destinos contra las API de las plataformas |
-| **🛡️ Moderar** — SENTINEL-SHIELD contra doxxing y odio, determinista y **antes** de cualquier IA | **🤖 Participar** — AZRAEL responde en tres chats, reacciona a la emisión y aparece en la imagen | **📊 Evaluar** — panel con 377 rutas de API, grafo de conocimiento, diario de ingresos con cadena de hashes, PWA |
+| **🛡️ Moderar** — SENTINEL-SHIELD contra doxxing y odio, determinista y **antes** de cualquier IA | **🤖 Participar** — AZRAEL responde en tres chats, reacciona a la emisión y aparece en la imagen | **📊 Evaluar** — panel con 379 rutas de API, grafo de conocimiento, diario de ingresos con cadena de hashes, PWA |
 
 ```mermaid
 flowchart TB
     TG["📨 Telegram"]:::ein --> BOT
     DC["🎮 Discord<br/>66 comandos"]:::ein --> BOT
     TT["🎥 TikTok<br/>detección en directo + chat"]:::ein --> BOT
-    BOT["bot.py<br/>monolito · 26.313 líneas"]:::core
-    BOT -->|configure| NC["nc/ — 176 módulos<br/>39 blueprints"]:::lib
-    BOT --> BRAIN["brain/ — 14 agentes vigilantes"]:::brain
+    BOT["bot.py<br/>monolito · 26.372 líneas"]:::core
+    BOT -->|configure| NC["nc/ — 178 módulos<br/>39 blueprints"]:::lib
+    BOT --> BRAIN["brain/ — 16 agentes vigilantes"]:::brain
     BOT --> DB[("SQLite o MariaDB<br/>+ ajustes")]:::db
     BOT --> PROM["/metrics → Prometheus → Grafana"]:::lib
     BOT --> OUT["🟢 Kick · 🟣 Twitch · 🔴 YouTube"]:::out
@@ -134,7 +134,7 @@ dispara nada.
 
 ## ⚙️ Ajustes
 
-**En el panel, pestaña “Ajustes”.** Las unas 571 variables de `.env.example`
+**En el panel, pestaña “Ajustes”.** Las unas 576 variables de `.env.example`
 con grupo, valor por defecto y descripción, con búsqueda. Cada fila indica de
 dónde viene el valor — *fijado en el panel*, *desde .env* o *por defecto*. Se
 guarda en la base de datos y, en el siguiente arranque, tiene prioridad sobre
@@ -237,6 +237,7 @@ llama.cpp o mediante API gratuitas, con control de presupuesto.
 | `learning` | grafo de conocimiento | `proxy` | éxito de las peticiones a TikTok, bloqueos 403 |
 | `sentinel` | CrowdSec | `swap` | uso del swap |
 | `disk` | espacio en disco | `datenbank` | tiempo de respuesta, crecimiento, diario, esquema |
+| `prometheus` | la central de alertas: accesible, lee el bot, reglas, alertas activas — la reinicia | `grafana` | acceso, fuente de datos, panel — lo reinicia |
 
 **SENTINEL-SHIELD** detecta doxxing, odio y amenazas de forma determinista,
 antes de cualquier IA, con normalización de leetspeak, homoglifos y caracteres
@@ -330,10 +331,10 @@ que pregunta por lo que falta. Todas las oleadas en
 | | |
 |---|---|
 | Versión actual | **4.6** — “Centro de control” (2026.11) |
-| Rutas Flask | 377 (34 en `bot.py` · 343 en `nc/routes/`) |
+| Rutas Flask | 379 (34 en `bot.py` · 345 en `nc/routes/`) |
 | Comandos de Discord | 66 |
 | Agentes vigilantes | 14 |
-| Variables de configuración | ~571 |
+| Variables de configuración | ~576 |
 | Idiomas | alemán (origen), inglés, español |
 
 ---

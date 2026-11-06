@@ -834,6 +834,27 @@ def _register_agents() -> None:
     # v4.2-W146: Datenbank-Wächter (14.) — Latenz, Zuwachs, -wal, Schema,
     # Einstellungen (nc/dbgesundheit.py ueber den injizierten Accessor).
     b.agents.register(DatabaseAgent(b, db_health=_ctx.get("db_health")))
+    _register_beobachtung(b)
+
+
+def _register_beobachtung(b) -> None:
+    """v4.2-W148: Prometheus- und Grafana-Waechter (15./16.) — nur, wenn
+    der Dienst eingerichtet ist (PROMETHEUS_URL / GRAFANA_URL, von
+    tools/observability.sh eingetragen). Ein Waechter fuer einen Dienst,
+    den es nicht gibt, waere auf jeder zweiten Installation dauerrot — und
+    eine Meldung, die immer rot ist, erzieht zum Wegsehen (W85)."""
+    from brain import GrafanaAgent, PrometheusAgent
+    from nc import beobachtungsdienst as bd
+    da = bd.installiert()
+    if da["prometheus"]:
+        b.agents.register(PrometheusAgent(b, lage=bd.prometheus_jetzt, steuern=bd.steuern,
+                                          act_check=bd.selbstheilung_erlaubt))
+    if da["grafana"]:
+        b.agents.register(GrafanaAgent(b, lage=bd.grafana_jetzt, steuern=bd.steuern,
+                                       act_check=bd.selbstheilung_erlaubt))
+    if da["prometheus"] or da["grafana"]:
+        log.info("Beobachtungs-Waechter aktiv: %s",
+                 ", ".join(k for k, v in da.items() if v))
 
 
 _last_sem_ts = 0.0

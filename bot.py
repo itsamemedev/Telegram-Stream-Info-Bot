@@ -859,6 +859,7 @@ from nc.scoring import build_report  # noqa: F401
 from nc import prueflage as _nc_prueflage    # v4.2-W138: Pruefstand je Tracking
 from nc import quellstat as _nc_quellstat    # v4.2-W141: Herkunft der Stream-Adressen
 from nc import dbgesundheit as _nc_dbgesund  # v4.2-W146: Datenbank-Waechter
+from nc import durchreicher as _nc_durch     # v4.2-W148: Restream ohne eigene Adresse
 from nc import quellprobe as _nc_quellprobe  # v4.2-W142: /quelle ‹name›
 from nc import sicherungspruefung as _nc_sicherung  # v4.2-W142: Backup brauchbar?
 from nc import sqldialekt as _nc_sqldialekt   # v4.2-W143: Upsert in beiden Dialekten
@@ -14325,6 +14326,13 @@ class RestreamManager:
                 andere = andere or fresh.get("other_url")
         url = _nc_live.beste_url({"flv_url": flv, "hls_url": hls, "other_url": andere})
         if not url:
+            # v4.2-W148: der Durchreicher — yt-dlp (ersatzweise streamlink)
+            # zieht den Stream selbst, auch wenn TikTok keine Adresse
+            # herausgibt, die ein fremdes ffmpeg ziehen darf. Nur ueber die
+            # Sendebruecke: dort ist der Zubringer ein eigener Prozess.
+            durch = _restream_durchreicher(username)
+            if durch:
+                return durch, None
             return None, "keine spielbare Quell-URL (weder FLV noch HLS noch CMAF/DASH)"
         if not flv and hls:
             log.info("Restream @%s: kein FLV verfügbar → HLS+Transcode. Für FLV ggf. "
@@ -14870,6 +14878,17 @@ class RestreamManager:
         # Sie verlangt Neukodieren im Sender — deshalb VOR Drossel und Feeder.
         _bruecke_an, transcode = _nc_rscfg.bruecke(
             transcode, unabhaengig=(RESTREAM_MULTI_MODE == "independent" and _multi))
+        if _nc_durch.ist(src) and not _bruecke_an:
+            # v4.2-W148 (Codex #194): ohne Bruecke ginge die Pseudo-Adresse an
+            # ein gewoehnliches ffmpeg, und KEINES der Ziele liefe an — ohne
+            # verstaendlichen Grund. _restream_durchreicher sagt im
+            # unabhaengigen Modus schon nein; das hier ist der Riegel fuer
+            # jeden anderen Weg dorthin (RESTREAM_BRUECKE=0 zur Laufzeit).
+            _grund = ("keine ziehbare Quell-URL, und der Durchreicher braucht die "
+                      "Sendebruecke — RESTREAM_BRUECKE=auto und RESTREAM_MULTI_MODE=tee")
+            log.warning("Restream #%d: %s", rid, _grund)
+            self._set_status(rid, "error", err=_grund)
+            return {"ok": False, "error": _grund}
         if _multi_forces_tc and not (bool(row["transcode"]) or RESTREAM_OVERLAY):
             log.info("Restream #%d: Multi-Target aktiv → transcode erzwungen "
                      "(plattformkonformes GOP für %s). "
@@ -14894,8 +14913,9 @@ class RestreamManager:
         # und das Dashboard gleich mit an.
         _html_ov = None
         if RESTREAM_OVERLAY:
+            # Eine Durchreicher-Adresse ist fuer ffprobe keine Adresse (W148).
             _html_ov = await asyncio.to_thread(_restream_html_overlay_start,
-                                               rid, source_url=src)
+                                               rid, source_url=None if _nc_durch.ist(src) else src)
         # v4.2-W34: AZRAELs Frames-Feeder. Scheitert er, bleibt _av_feed None
         # und der Bauer nimmt die feste Schleife aus W32 — der Restream
         # startet in jedem Fall.
@@ -24936,6 +24956,45 @@ def _brain_moderation_snap():
     return _nc_modstats.verdichte(
         list(_tripel(rows1)), list(_tripel(rows0)),
         erlaubt=_nc_modstats.quellen(os.getenv("MOD_TREND_PLATTFORMEN") or None))
+
+
+def _restream_durchreicher(username):
+    """v4.2-W148: die Durchreicher-Adresse fuer @username — oder None, wenn
+    der Weg hier nicht geht (abgeschaltet, keine Bruecke, kein Zieher).
+    Jeder Grund steht gedrosselt im Log: ein Restream, der ohne Adresse
+    nicht anlaeuft, soll sagen, warum auch dieser Weg ausfiel."""
+    if (os.getenv("RESTREAM_DURCHREICHER", "1") or "1").strip().lower() in ("0", "false", "no", "off"):
+        grund = "abgeschaltet (RESTREAM_DURCHREICHER=0)"
+    elif RESTREAM_MULTI_MODE == "independent":
+        # Codex #194: dort zieht jedes Ziel seine Quelle selbst, ohne Bruecke —
+        # die Pseudo-Adresse ginge an ein gewoehnliches ffmpeg. Hier ist nicht
+        # bekannt, wie viele Ziele der Restream hat; mit einem einzigen liefe
+        # die Bruecke zwar, aber ein Nein mit Abhilfe ist ehrlicher als ein
+        # Ja, das bei zwei Zielen keines starten laesst.
+        grund = "RESTREAM_MULTI_MODE=independent zieht je Ziel selbst — der Durchreicher braucht RESTREAM_MULTI_MODE=tee"
+    elif not _nc_rscfg.bruecke(False)[0]:
+        grund = "die Sendebruecke ist aus (RESTREAM_BRUECKE=0) — der Durchreicher braucht sie"
+    elif not _nc_durch.werkzeug():
+        grund = "weder yt-dlp noch streamlink installiert — sudo bash tools/update.sh"
+    else:
+        try:
+            adr = _nc_durch.adresse(username)
+        except ValueError as e:
+            grund = str(e)
+        else:
+            laut, unterdr = _nc_meldetakt.melden("restream-durchreicher", "benutzt",
+                                                 _time_mod.monotonic())
+            if laut:
+                log.warning("Restream @%s: keine ziehbare Adresse (FLV/HLS/CMAF/DASH) — "
+                            "%s reicht den Stream durch (Durchreicher). Bricht er ab, "
+                            "misst /quelle %s, welcher Weg traegt.%s", username,
+                            _nc_durch.werkzeug()[0], username, _nc_meldetakt.zusatz(unterdr))
+            return adr
+    laut, unterdr = _nc_meldetakt.melden("restream-durchreicher", grund, _time_mod.monotonic())
+    if laut:
+        log.warning("Restream @%s: auch der Durchreicher geht nicht — %s.%s",
+                    username, grund, _nc_meldetakt.zusatz(unterdr))
+    return None
 
 
 def _brain_db_health():

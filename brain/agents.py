@@ -1044,3 +1044,155 @@ class ProxyHealthAgent(Agent):
                      "block_pct": round(block_rate * 100, 1), "samples": total,
                      "text": base + " — Fetch-Erfolg gesunken, Proxy koennte degradieren."}]
         return []
+
+
+class _BeobachtungsAgent(Agent):
+    """Gemeinsamer Teil der beiden Beobachtungs-Waechter (v4.2-W148).
+
+    Die Messung (`lage`) und die Steuerung (`steuern`) kommen injiziert aus
+    nc/beobachtungsdienst.py — hier steht nur die Bewertung und, hinter dem
+    Aktions-Gate, die Selbstheilung: liegt der Dienst zweimal in Folge
+    nicht erreichbar, wird er neu gestartet, hoechstens einmal je
+    `heil_ruhe_s`. Zwei Runden statt einer: ein Neustart von Hand oder
+    durch observability.sh dauert ein paar Sekunden, und genau da soll der
+    Waechter nicht zusaetzlich zugreifen."""
+
+    dienst = "?"
+    titel = "?"
+    heil_ruhe_s = 1800.0
+
+    def __init__(self, brain, lage: Optional[Callable] = None,
+                 steuern: Optional[Callable] = None,
+                 act_check: Optional[Callable] = None):
+        self._brain = brain
+        self._lage = lage
+        self._steuern = steuern
+        self._act = act_check or (lambda n: False)
+        self._aus_in_folge = 0
+        self._letzte_heilung = 0.0
+        self.letzte_lage: dict = {}
+
+    def _ohne_messung(self) -> list[dict]:
+        # Einmal sagen, dass dieser Waechter nichts misst — wie beim
+        # Datenbank-Waechter: sonst saehe er im Deck aus wie ein gesunder Dienst.
+        if not getattr(self, "_ohne_gesagt", False):
+            log.info("%s-Waechter ohne Messung (lage nicht uebergeben) — er bleibt still.", self.titel)
+            self._ohne_gesagt = True
+        return []
+
+    def _messen(self):
+        try:
+            m = self._lage() or {}
+        except Exception as e:
+            log.warning("%s-Messung fehlgeschlagen: %s: %s", self.titel, type(e).__name__, e)
+            return None, [{"level": "warn",
+                           "text": f"{self.titel}-Messung fehlgeschlagen: {type(e).__name__}: {e}"}]
+        self.letzte_lage = m
+        return m, []
+
+    def _heilen(self, aktion: str) -> list[dict]:
+        """Hinter dem Gate BRAIN_ACT_<DIENST>; Ergebnis als Befund, damit es
+        im Entscheidungslog steht — auch wenn es scheitert."""
+        self._aus_in_folge += 1
+        jetzt = time.time()
+        # Kein Fehlerpfad, sondern drei Gruende, NICHT einzugreifen: erste
+        # Runde, kein Gate/keine Steuerung, Ruhezeit. Der Ausfall selbst steht
+        # schon als crit-Befund in run().
+        darf = (self._aus_in_folge >= 2 and self._steuern is not None and self._act(self.dienst)
+                and jetzt - self._letzte_heilung >= self.heil_ruhe_s)
+        befund = []
+        if darf:
+            self._letzte_heilung = jetzt
+            r = self._steuern(self.dienst, aktion) or {}
+            if r.get("ok"):
+                befund.append({"level": "warn", "aktion": aktion,
+                               "text": f"{self.titel} war nicht erreichbar — neu gestartet ({r.get('befehl')})."})
+            else:
+                befund.append({"level": "crit", "aktion": aktion,
+                               "text": f"{self.titel}: Neustart gescheitert — {r.get('text') or 'unbekannt'}"})
+        return befund
+
+
+class PrometheusAgent(_BeobachtungsAgent):
+    """Prometheus-Waechter (v4.2-W148, der fuenfzehnte). Registriert nur,
+    wenn PROMETHEUS_URL gesetzt ist. Faellt Prometheus aus, kommt kein
+    einziger seiner Alarme mehr — der Ausfall, der sich selbst verschweigt.
+    Daneben: erreicht er den Bot (up), scheitern Abrufziele oder Regeln,
+    hat der letzte Reload die Konfiguration angenommen, und welche Alarme
+    feuern gerade."""
+
+    name = "prometheus"
+    dienst = "prometheus"
+    titel = "Prometheus"
+    interval_s = 120.0
+
+    def run(self, ctx: dict) -> list[dict]:
+        if not self._lage:
+            return self._ohne_messung()
+        m, out = self._messen()
+        if m is None:
+            return out
+        if not m.get("erreichbar"):
+            return [{"level": "crit",
+                     "text": f"Prometheus antwortet nicht ({m.get('fehler') or 'unbekannt'}) — "
+                             "kein Alarm kommt mehr durch. journalctl -u nightcrawler-prometheus -n 40"}
+                    ] + self._heilen("neu_starten")
+        self._aus_in_folge = 0
+        if m.get("serien") is not None:
+            self._brain.memory.record_metric("prometheus_series", m["serien"])
+        if m.get("liest_bot") is False:
+            out.append({"level": "crit",
+                        "text": "Prometheus erreicht den Bot nicht (up=0) — stimmt DASHBOARD_PORT, "
+                                "laeuft das Deck? bash tools/observability.sh --check"})
+        if m.get("config_ok") is False:
+            out.append({"level": "crit",
+                        "text": "Prometheus hat die letzte Konfiguration abgelehnt und laeuft mit "
+                                "der alten weiter — promtool check config /etc/nightcrawler/observability/prometheus.yml"})
+        for z in m.get("ziele_aus") or []:
+            out.append({"level": "warn",
+                        "text": f"Abrufziel {z.get('job')} nicht erreichbar: {z.get('fehler') or '—'}"})
+        for r in m.get("regeln_aus") or []:
+            out.append({"level": "warn",
+                        "text": f"Alarmregel {r.get('regel')} scheitert: {r.get('fehler') or '—'}"})
+        for a in m.get("alarme") or []:
+            out.append({"level": "crit" if a.get("schwere") == "critical" else "warn",
+                        "alarm": a.get("name"),
+                        "text": f"Alarm {a.get('name')}: {a.get('text') or 'feuert'}"})
+        return out
+
+
+class GrafanaAgent(_BeobachtungsAgent):
+    """Grafana-Waechter (v4.2-W148, der sechzehnte). Registriert nur, wenn
+    GRAFANA_URL gesetzt ist. Prueft, was zwischen „der Dienst laeuft" und
+    „man sieht etwas" liegt: Datenbank, das Passwort aus der .env, die
+    Datenquelle zu Prometheus und das NIGHTCRAWLER-Dashboard."""
+
+    name = "grafana"
+    dienst = "grafana"
+    titel = "Grafana"
+    interval_s = 300.0
+
+    def run(self, ctx: dict) -> list[dict]:
+        if not self._lage:
+            return self._ohne_messung()
+        m, out = self._messen()
+        if m is None:
+            return out
+        if not m.get("erreichbar"):
+            return [{"level": "crit",
+                     "text": f"Grafana antwortet nicht ({m.get('fehler') or 'unbekannt'}) — "
+                             "journalctl -u grafana-server -n 40"}] + self._heilen("neu_starten")
+        self._aus_in_folge = 0
+        if m.get("db_ok") is False:
+            out.append({"level": "crit", "text": "Grafana meldet seine Datenbank als defekt (/api/health)."})
+        if m.get("anmeldung_ok") is False:
+            out.append({"level": "warn",
+                        "text": "Grafana lehnt GRAFANA_ADMIN_PASSWORD aus der .env ab — "
+                                "sudo bash tools/observability.sh setzt es neu."})
+        if m.get("quelle_ok") is False:
+            out.append({"level": "warn",
+                        "text": "Grafana erreicht seine Datenquelle Prometheus nicht — die Diagramme bleiben leer."})
+        if m.get("dashboard_da") is False:
+            out.append({"level": "warn",
+                        "text": "Das NIGHTCRAWLER-Dashboard fehlt in Grafana — sudo bash tools/observability.sh legt es an."})
+        return out

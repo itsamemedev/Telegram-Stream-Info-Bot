@@ -157,6 +157,8 @@ GF_DROPIN="$W/etc/systemd/system/grafana-server.service.d/nightcrawler.conf"
 # wenn es seine Datenbank neu anlegt — fuer eine bestehende setzt
 # `grafana cli admin reset-admin-password` es.
 GF_PWDATEI="$W/etc/nightcrawler/grafana.env"
+# v4.2-W148: die Steuerregel der beiden Waechter (siehe Abschnitt "Steuerregel").
+SUDOERS="$W/etc/sudoers.d/nightcrawler-beobachtung"
 
 SUDO=""
 if [ -n "${NC_OBS_SUDO+gesetzt}" ]; then
@@ -275,7 +277,7 @@ if [ "$ENTFERNEN" = 1 ]; then
            "$GF_PROV/dashboards/nightcrawler.yml" "$GF_DASH/nightcrawler.json"; do
     [ -e "$f" ] && { lauf rm -f "$f"; _gf=1; }
   done
-  for f in "$UNIT" "$REGELN/nightcrawler.yml" "$ETC/prometheus.yml" "$GF_PWDATEI"; do
+  for f in "$UNIT" "$REGELN/nightcrawler.yml" "$ETC/prometheus.yml" "$GF_PWDATEI" "$SUDOERS"; do
     [ -e "$f" ] && lauf rm -f "$f"
   done
   dienst daemon-reload
@@ -536,6 +538,45 @@ if [ "$GRAFANA" = "ja" ]; then
     printf 'GRAFANA_URL=http://127.0.0.1:3000\nGRAFANA_ADMIN_USER=admin\nGRAFANA_ADMIN_PASSWORD=%s\n' "$GF_PW" \
       | env_eintragen observability || { warn "Grafana-Eintraege liessen sich nicht in die .env schreiben."; BEFUND=1; }
   fi
+fi
+
+# ═══════════════════════════════════════════════════════════════════════════
+# v4.2-W148: Steuerregel fuer die beiden Waechter (nc/beobachtungsdienst.py).
+# Der Bot laeuft nicht als root; um Prometheus neu zu laden oder Grafana neu
+# zu starten, braucht er sudo — und zwar fuer GENAU diese Befehle, mit
+# vollem Pfad und vollem Unit-Namen. sudoers vergleicht die Argumente
+# woertlich: "systemctl restart grafana-server.service" erlaubt kein
+# "systemctl restart tiktok-bot" und kein "systemctl edit". Geprueft mit
+# visudo, bevor die Datei an ihren Platz kommt — eine kaputte Datei unter
+# /etc/sudoers.d sperrt sonst sudo fuer ALLE.
+kopf "Steuerregel"
+BOT_NUTZER="$(stat -c %U "$ZIEL/bot.py" 2>/dev/null || true)"
+SYSTEMCTL="$(command -v systemctl || echo /usr/bin/systemctl)"
+if [ -z "$BOT_NUTZER" ] || [ "$BOT_NUTZER" = "root" ]; then
+  info "Der Bot laeuft als root (oder der Besitzer ist unbekannt) — keine Steuerregel noetig."
+else
+  _regel="$(mktemp)"
+  {
+    # Dateiinhalt, keine Ausgabe an den Betreiber — deshalb nicht uebersetzt.
+    printf '# NIGHTCRAWLER v4.2-W148 (tools/observability.sh): watchdogs for\n'
+    printf '# Prometheus and Grafana, NOPASSWD for exactly these commands.\n'
+    printf '%s ALL=(root) NOPASSWD: %s reload nightcrawler-prometheus.service, %s restart nightcrawler-prometheus.service' \
+      "$BOT_NUTZER" "$SYSTEMCTL" "$SYSTEMCTL"
+    if [ "$GRAFANA" = "ja" ]; then
+      printf ', %s restart %s' "$SYSTEMCTL" "${GF_DIENST:-grafana-server.service}"
+    fi
+    printf '\n'
+  } > "$_regel"
+  if [ -f "$SUDOERS" ] && cmp -s "$_regel" "$SUDOERS"; then
+    gut "Steuerregel unveraendert: %s" "${SUDOERS#"$W"}"
+  elif have visudo && ! visudo -cqf "$_regel" >/dev/null 2>&1; then
+    fehler "visudo lehnt die Steuerregel ab — nicht eingetragen (sudo bleibt unberuehrt)."
+    BEFUND=1
+  else
+    info "Steuerregel fuer %s: %s" "$BOT_NUTZER" "${SUDOERS#"$W"}"
+    lauf mkdir -p "$(dirname "$SUDOERS")" && lauf install -m 440 "$_regel" "$SUDOERS" || BEFUND=1
+  fi
+  rm -f "$_regel"
 fi
 
 if [ "$TROCKEN" = 1 ]; then
