@@ -28923,6 +28923,10 @@ def _test_v42_w156_lagebild_radar():
     # Die Welle rechnet mit einem nichtnegativen Rest: ein negativer Winkel
     # gab einen negativen Radius, und arc() warf (im Browser gemessen).
     assert "%1+1)%1" in z
+    # Review #201: auch REC-Bogen, REC-Punkt und das Blinken eines gestoerten
+    # Restreams stehen im Kontrast-Thema — dort haengt alles an `ruhe`.
+    assert "Math.PI*2*(ruhe?1:" in z and "ctx.globalAlpha=ruhe||" in z
+    assert "||ruhe||Math.sin(t*4)" in z and "reduce?1:" not in z
     # (3) Farben nur aus dem Thema: mitA steht im erlaubten Bereich neben
     # hilfe(), und kein fester Farbwert ausser dem Schlagschatten.
     # Ausgenommen: hilfe()/mitA() und die Rueckfallwerte in farben() — die
