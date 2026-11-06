@@ -28728,7 +28728,11 @@ def _test_v42_w154_verschlossen_cluster_decimal():
     assert h.index("_nc_geschuetzt.ruhend(username") < h.index("_start_gesperrt(\"aufnahme\"")
     m = rumpf_ab(src, src.index("def _rec_kategorie_melden("))
     assert "_nc_geschuetzt.vermerken(username" in m
-    assert 'category != "offline_or_protected" and _nc_geschuetzt.zuruecksetzen' in m
+    assert 'if category != "offline_or_protected":\n        _nc_geschuetzt.zuruecksetzen(username)' in m
+    # Review #199: der Erfolgspfad (Datei da) setzt ebenfalls zurueck —
+    # _rec_kategorie_melden laeuft nur im Fehlerpfad.
+    e = rumpf_ab(src, src.index("        if file_exists and file_size > 0:"))
+    assert "_nc_geschuetzt.zuruecksetzen(username)" in e[:600], e[:600]
     d = rumpf_ab(src, src.index("def _restream_durchreicher("))
     assert d.index("_nc_geschuetzt.verschlossen(username)") < d.index("_nc_durch.adresse(username)")
 

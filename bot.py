@@ -9037,8 +9037,8 @@ def _rec_kategorie_melden(category, username):
         log.warning("Stream-Kategorie: timeout | user=@%s", username)
     # v4.2-W154: jeder andere Ausgang heisst, der Raum gab etwas her —
     # dann gilt er nicht mehr als verschlossen.
-    if category != "offline_or_protected" and _nc_geschuetzt.zuruecksetzen(username):
-        log.info("@%s: der Raum ist wieder offen — Aufnahme laeuft normal weiter.", username)
+    if category != "offline_or_protected":
+        _nc_geschuetzt.zuruecksetzen(username)
 
 
 def _rec_totstreak_fortschreiben(data_dead, tid, username, file_size,
@@ -9477,6 +9477,7 @@ async def handle_recording_finished(proc, tid, chat_id, username, output_file,
         file_size = os.path.getsize(output_file) if file_exists else 0
 
         if file_exists and file_size > 0:
+            _nc_geschuetzt.zuruecksetzen(username)  # v4.2-W154: Datei = Raum offen (Review #199)
             # v4.2-W106: eine Datei ohne Tonspur ist kein Erfolg. Vorab laesst
             # sich das nicht wissen (das Probe-Fenster entscheidet), also wird
             # die FERTIGE Datei geprueft und Stille nachgeruestet — vor dem

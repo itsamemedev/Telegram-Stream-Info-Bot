@@ -35,6 +35,10 @@ ABHILFE = ("TikTok meldet den Raum als live, gibt die Stream-Adresse aber nicht 
            "aufgenommen werden. Abhilfe: in COOKIE_FILE die Cookies eines angemeldeten "
            "TikTok-Kontos (mit sessionid) hinterlegen, das den Stream sehen darf.")
 
+import logging
+
+log = logging.getLogger(__name__)
+
 _STAND = {}     # name -> {"folge": int, "ruhe_bis": float, "runde": int}
 
 
@@ -72,9 +76,17 @@ def verschlossen(name) -> bool:
 
 
 def zuruecksetzen(name) -> bool:
-    """Ein Versuch ist gelungen. -> True, wenn der Raum vorher verschlossen war."""
+    """Ein Versuch ist gelungen. -> True, wenn der Raum vorher verschlossen war.
+
+    Meldet den Uebergang selbst: beide Aufrufer (Fehlerpfad mit anderer
+    Kategorie, Erfolgspfad mit Datei) sagen sonst dasselbe zweimal, und der
+    Erfolgspfad steht in einer Funktion unter Laengen-Sperre (W78)."""
     s = _STAND.pop(_schluessel(name), None)
-    return bool(s) and s["folge"] >= SCHWELLE
+    war = bool(s) and s["folge"] >= SCHWELLE
+    if war:
+        log.info("@%s: der Raum ist wieder offen — Aufnahme und Restream laufen "
+                 "normal weiter.", _schluessel(name))
+    return war
 
 
 def lage() -> dict:
