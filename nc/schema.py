@@ -826,4 +826,27 @@ def anlegen(conn, *, backend, mariadb_db, log):
         _migrate_columns=lambda c, t, e: spalten_nachziehen(
             c, t, e, backend=backend, mariadb_db=mariadb_db, log=log),
         log=log)
+    modultabellen(conn, backend=backend, log=log)
     return p
+
+
+def modultabellen(conn, *, backend, log):
+    """Die Tabellen, die ein Fachmodul selbst anlegt — Steuer-Journal
+    (nc/ledger.py) und Stream-Archiv (nc/intel/transcripts.py).
+
+    v4.2-W150: beide entstanden bisher erst beim ersten Gebrauch und standen
+    damit in keinem Schema, das der Umzug nach MariaDB anlegt. Der brach
+    folgerichtig ab („Diese Tabellen der Quelle kennt das Schema nicht:
+    intel_transcript_meta, intel_transcript_seg, revenue_entries") und bot als
+    Ausweg an, sie wegzulassen — beim Steuer-Journal hiesse das, die gebuchten
+    Auszahlungen samt Hash-Kette in der alten Datei zurueckzulassen. Jetzt
+    gehoeren sie zum Schema, in beiden Dialekten."""
+    from nc import ledger as _ledger
+    from nc.intel import transcripts as _transcripts
+
+    def _melden(text, exc):
+        log.error("%s: %s", text, exc)
+
+    _ledger.ensure_schema(conn, melden=_melden, backend=backend)
+    # Nur das DDL haengt am Stil (Primaerschluessel); Platzhalter enthaelt es keine.
+    _transcripts.ensure_schema(conn, "format" if backend == "mariadb" else "qmark")

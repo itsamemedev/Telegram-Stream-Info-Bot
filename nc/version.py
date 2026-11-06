@@ -4,7 +4,7 @@ Eine einzige Wahrheit für die Versionsanzeige (Dashboard-Footer, /api/version,
 „Was ist neu"-Panel). Reine Daten + kleine Helfer, voll testbar.
 """
 
-VERSION = "4.6.1"
+VERSION = "4.6.2"
 CODENAME = "Leitstand"
 RELEASE = "2026.11"
 
@@ -23,6 +23,20 @@ def build_stamp():
 # Meilenstein-Changelog, neueste Version zuerst. highlights = kurze, ehrliche
 # Stichpunkte dessen, was die Version bringt.
 CHANGELOG = [
+    {
+        "version": "4.6.2",
+        "date": "2026-11",
+        "title": "Leitstand",
+        # Patch-Fassung von 4.6: der Umzug nach MariaDB (W150), gegen eine
+        # echte MariaDB 10.11 nachgefahren.
+        "highlights": [
+            "Der Umzug nach MariaDB brach an „unbekannten Tabellen“ ab: Steuer-Journal und Stream-Archiv stehen jetzt im Schema und ziehen mit — die Hash-Kette bleibt intakt",
+            "Das Steuer-Journal ließ sich unter MariaDB gar nicht anlegen; es hat jetzt eine eigene MariaDB-Fassung",
+            "Ein Prozentzeichen in einem Datensatz ließ den MariaDB-Import scheitern, und das Stream-Archiv schickte unter MariaDB keine gültige Abfrage — beides behoben",
+            "Reste einer Rettung mit sqlite3 .recover blockieren den Umzug nicht mehr: sie bleiben mit Hinweis in der SQLite-Datei",
+            "Gegen eine echte MariaDB 10.11 nachgefahren: Umzug, Buchen, Storno, Kettenprüfung und Archivsuche",
+        ],
+    },
     {
         "version": "4.6.1",
         "date": "2026-11",

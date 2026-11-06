@@ -5,8 +5,17 @@ regelbasierter SQL-Bau, sichere ORDER-BY-Klauseln."""
 
 
 
-def _translate_sql(sql: str) -> str:
-    """Convert SQLite '?' placeholders to MariaDB '%s'. Schont Strings."""
+def _translate_sql(sql: str, mit_parametern: bool = True) -> str:
+    """Convert SQLite '?' placeholders to MariaDB '%s'. Schont Strings.
+
+    v4.2-W150: pymysql formatiert den GANZEN Text mit `query % args` — auch
+    das Innere von Zeichenketten. Ein `%` in einem Literal (`'100% welt'`)
+    blieb hier bisher stehen und warf "not enough arguments for format
+    string"; der Umzug nach MariaDB scheiterte damit an jedem Datensatz, der
+    ein Prozentzeichen traegt. Mit Parametern wird deshalb JEDES `%`
+    verdoppelt. Ohne Parameter formatiert pymysql gar nicht (der Aufrufer
+    reicht dann None durch) — dann darf auch nichts verdoppelt werden, sonst
+    stuende `%%` woertlich in der Datenbank."""
     out = []
     in_string = False
     str_char = None
@@ -15,10 +24,13 @@ def _translate_sql(sql: str) -> str:
         c = sql[i]
         if in_string:
             if c == '\\' and i + 1 < len(sql):
-                out.append(c); out.append(sql[i+1]); i += 2; continue
+                nxt = sql[i + 1]
+                out.append(c)
+                out.append('%%' if (nxt == '%' and mit_parametern) else nxt)
+                i += 2; continue
             if c == str_char:
                 in_string = False
-            out.append(c)
+            out.append('%%' if (c == '%' and mit_parametern) else c)
         elif c in ("'", '"'):
             in_string = True
             str_char = c
@@ -27,7 +39,7 @@ def _translate_sql(sql: str) -> str:
             out.append('%s')
         elif c == '%':
             # PyMySQL behandelt '%' als format-char — escape zu '%%'
-            out.append('%%')
+            out.append('%%' if mit_parametern else '%')
         else:
             out.append(c)
         i += 1

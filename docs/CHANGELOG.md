@@ -11,6 +11,36 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+## [4.6.2] — 2026-11-06 · „Leitstand"
+
+### Behoben — Umzug nach MariaDB brach ab (v4.2 W150)
+
+Gemeldet aus `tools/update.sh`:
+
+    ABGEBROCHEN: Diese Tabellen der Quelle kennt das Schema nicht:
+    intel_transcript_meta, intel_transcript_seg, lost_and_found, revenue_entries
+
+- **Keine davon war Altbestand.** Steuer-Journal (`nc/ledger.py`) und
+  Stream-Archiv (`nc/intel/transcripts.py`) legen ihre Tabellen beim ersten
+  Gebrauch selbst an und standen in keinem Schema, das der Umzug kennt. Der
+  angebotene Ausweg `--auslassen` hätte die gebuchten Auszahlungen samt
+  Hash-Kette zurückgelassen. Beide gehören jetzt zum Schema
+  (`nc.schema.modultabellen`), beim Start und beim Umzug.
+- **Das Journal war unter MariaDB nie lauffähig:** `INTEGER PRIMARY KEY
+  AUTOINCREMENT` ist dort ein Syntaxfehler, `db_conn()` übersetzt kein DDL.
+  Jetzt eine eigene MariaDB-Fassung mit denselben Werten im Hash.
+- **`lost_and_found`** ist der Rest von `sqlite3 .recover` — dem Rettungsweg,
+  den der Bot selbst empfiehlt. Er zieht mit Hinweis nicht mit und bleibt in
+  der SQLite-Datei.
+- **Ein `%` in einem Datensatz** ließ den MariaDB-Import scheitern („not
+  enough arguments for format string"): pymysql formatiert auch das Innere
+  von Zeichenketten. Ohne Parameter wird jetzt gar nicht formatiert, mit
+  Parametern jedes `%` verdoppelt — auch in `LIKE '%…%'`.
+- **Das Stream-Archiv lief unter MariaDB nie:** es schickte `%s` durch eine
+  Übersetzung, die daraus `%%s` machte.
+- Gegen eine echte **MariaDB 10.11** nachgefahren: Umzug, Buchen, Storno,
+  Kettenprüfung, Archivsuche mit `%` in Daten und in `LIKE`.
+
 ## [4.6.1] — 2026-11-06 · „Leitstand"
 
 ### Behoben — Tiefengrund-Bughunt: elf Befunde, drei davon Sicherheit (v4.2 W149)

@@ -120,6 +120,14 @@ def in_benutzung(sqlite_pfad, ruhe_s=RUHE_S, jetzt=None, proc="/proc"):
     return bool(juengst) and (jetzt - juengst) < ruhe_s
 
 
+# Tabellen, die `sqlite3 <datei> .recover` anlegt — der Rettungsweg, den
+# nc/dbwrap.py und tools/dbkopf.py selbst empfehlen. `lost_and_found` traegt
+# Seitenfragmente, die keiner Tabelle mehr zuzuordnen waren; der Bot liest sie
+# nie. Sie blockierten den Umzug als „Altbestand" (v4.2-W150). Sie ziehen
+# nicht mit, bleiben aber in der SQLite-Datei — und die wird nie angefasst.
+RETTUNGSRESTE = ("lost_and_found",)
+
+
 def quelle_zaehlen(sqlite_pfad, auslassen=()):
     """{tabelle: zeilen} der Quelle — nach `integrity_check`.
 
@@ -192,6 +200,12 @@ def umziehen(*, sqlite_pfad, ziel_backend="mariadb", mariadb=None, log,
             "Erst den Dienst stoppen (systemctl stop <dienst>), sonst fehlt im Ziel, "
             "was er nach dem Export schreibt.")
     quelle = quelle_zaehlen(sqlite_pfad, auslassen)
+    reste = {t: quelle.pop(t) for t in RETTUNGSRESTE if t in quelle}
+    for t, n in sorted(reste.items()):
+        ausgabe("Hinweis: %s (%d Zeilen) ist ein Rest von `sqlite3 .recover` — "
+                "Fragmente ohne Tabelle, die der Bot nie liest. Zieht nicht mit, "
+                "bleibt in %s." % (t, n, sqlite_pfad))
+    auslassen = tuple(auslassen or ()) + tuple(reste)
     gesamt = sum(quelle.values())
     ausgabe("Quelle: %d Tabellen, %d Zeilen (%s)" % (len(quelle), gesamt, sqlite_pfad))
 

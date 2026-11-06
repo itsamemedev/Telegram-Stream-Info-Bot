@@ -28420,6 +28420,108 @@ def _test_v42_w149_tiefengrund():
     ok("W149: OAuth-Rueckruf ohne laufenden Flow abgelehnt, state nur einmal gueltig")
 
 
+def _test_v42_w150_umzug_mit_journal_und_archiv():
+    """v4.2-W150: der Umzug nach MariaDB brach beim Betreiber ab.
+
+        ABGEBROCHEN: Diese Tabellen der Quelle kennt das Schema nicht:
+        intel_transcript_meta, intel_transcript_seg, lost_and_found,
+        revenue_entries — Altbestand einer frueheren Fassung.
+
+    Keine davon war Altbestand. Steuer-Journal und Stream-Archiv legen ihre
+    Tabellen selbst an, beim ersten Gebrauch — sie standen in keinem Schema,
+    das der Umzug kennt. Der angebotene Ausweg `--auslassen` haette die
+    gebuchten Auszahlungen samt Hash-Kette zurueckgelassen. `lost_and_found`
+    ist der Rest von `sqlite3 .recover`, dem Rettungsweg, den der Bot selbst
+    empfiehlt.
+
+    Gegen eine echte MariaDB 10.11 nachgefahren, drei weitere Befunde
+    dahinter: das Journal-DDL war auf MariaDB nie lauffaehig
+    (AUTOINCREMENT), jedes `%` in einem Datensatz liess den Import scheitern,
+    und das Archiv schickte `%%s` an pymysql — keine Abfrage lief."""
+    import logging as _lg
+    import os as _os
+    import sqlite3 as _sq
+    from nc import dbwrap as W
+    from nc import ledger as L
+    from nc import mariadbumzug as U
+    from nc.intel import transcripts as T
+    from nc.sqlutil import _translate_sql
+
+    # (1) Das MariaDB-Schema traegt Journal und Archiv — lauffaehig.
+    sqls = _w143_schema_mariadb()
+    spalten, _ = _w143_tabellen(sqls)
+    for t in ("revenue_entries", "intel_transcript_meta", "intel_transcript_seg"):
+        assert t in spalten, "%s fehlt im MariaDB-Schema" % t
+    roh = [q for q in sqls if "revenue_entries" in q or "intel_transcript" in q]
+    assert not [q for q in roh if "AUTOINCREMENT" in q], "SQLite-DDL fuer MariaDB (1064)"
+    for c in ("booked_on", "platform", "kind", "currency", "created_at"):
+        assert spalten["revenue_entries"][c][0].startswith("VARCHAR"), c
+    ok("W150: Steuer-Journal und Archiv stehen im Schema, das MariaDB-DDL ist lauffaehig")
+
+    # (2) Die Kette mit einer Quelle wie beim Betreiber.
+    alt = (W.DB_PATH, W.DB_BACKEND)
+    log = _lg.getLogger("w150")
+    d = _ph.verzeichnis()
+    try:
+        src, dst = _os.path.join(d, "quelle.db"), _os.path.join(d, "ziel.db")
+        _w143_quelle(src)
+        W.configure_db(db_path=src, backend="sqlite")
+        with W.db_conn() as c:
+            L.add_entry(c, "2026-03-01", "kick", "120,50", fee_eur="2", note="100% Anteil")
+            L.add_entry(c, "2026-03-02", "kick", "-120.50", kind="correction", storno_of="1")
+            T.save_segments(c, 7, [{"start": 0, "end": 1, "text": "50% mehr"}],
+                            lang="de", paramstyle="qmark")
+        r = _sq.connect(src)
+        r.execute("CREATE TABLE lost_and_found(rootpgno INTEGER, pgno INTEGER, "
+                  "nfield INTEGER, id INTEGER, c0, c1)")
+        r.execute("INSERT INTO lost_and_found VALUES (3, 7, 2, NULL, 'frag', x'00ff')")
+        r.commit()
+        r.close()
+        aus = []
+        b = U.umziehen(sqlite_pfad=src, ziel_backend="sqlite", mariadb={"db_path": dst},
+                       log=log, ausgabe=aus.append, trotzdem_aktiv=True)
+        assert b["trocken"] is False, b
+        assert any("lost_and_found" in z and ".recover" in z for z in aus), aus
+        W.configure_db(db_path=dst, backend="sqlite")
+        with W.db_conn() as c:
+            assert c.execute("SELECT COUNT(*) AS n FROM revenue_entries").fetchone()["n"] == 2
+            assert L.verify_chain(c)["ok"] is True, "Hash-Kette nach dem Umzug gebrochen"
+            assert c.execute("SELECT text FROM intel_transcript_seg").fetchone()["text"] == "50% mehr"
+            da = {x["name"] for x in c.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        assert "lost_and_found" not in da, "der .recover-Rest ist mitgezogen"
+        r = _sq.connect(src)
+        assert r.execute("SELECT COUNT(*) FROM lost_and_found").fetchone()[0] == 1, \
+            "der .recover-Rest ist aus der Quelle verschwunden"
+        r.close()
+    finally:
+        W.configure_db(db_path=alt[0], backend=alt[1])
+    ok("W150: Umzug nimmt Journal (Kette intakt) und Archiv mit, .recover-Rest bleibt in der Quelle")
+
+    # (3) '%' unter pymysql: mit Parametern ueberall verdoppelt, ohne gar nicht.
+    assert _translate_sql("INSERT INTO x VALUES ('100% w', ?)") == \
+        "INSERT INTO x VALUES ('100%% w', %s)"
+    assert _translate_sql("INSERT INTO x VALUES ('100% w')", mit_parametern=False) == \
+        "INSERT INTO x VALUES ('100% w')"
+    assert _translate_sql("SELECT 1 WHERE a LIKE '%b%' AND c=?") == \
+        "SELECT 1 WHERE a LIKE '%%b%%' AND c=%s"
+
+    class _Cur:
+        lastrowid = rowcount = 0
+
+        def execute(self, q, a):
+            self.q, self.a = q, a
+    k = W._MariaDBCursorWrap(_Cur())
+    k.execute("INSERT INTO x VALUES ('100% w')")
+    assert k._c.a is None and k._c.q == "INSERT INTO x VALUES ('100% w')", (k._c.q, k._c.a)
+    k.execute("SELECT ? AS v", (1,))
+    assert k._c.a == (1,) and k._c.q == "SELECT %s AS v"
+    # (4) Das Archiv spricht qmark — db_conn uebersetzt selbst.
+    src_bot = open("bot.py", encoding="utf-8").read()
+    assert '\n_INTEL_PS = "qmark"\n' in src_bot, "Archiv schickt %s durch die Uebersetzung (%%s)"
+    assert "_nc_schema.modultabellen(conn, backend=DB_BACKEND, log=log)" in src_bot
+    ok("W150: Prozentzeichen in Daten und LIKE ueberleben pymysql, das Archiv laeuft auf MariaDB")
+
+
 def main():
     tmp, rid = richte_testdatenbank_ein()
     ok("db_conn aus nc.dbwrap: echtes Schema angelegt, Commit durchgelaufen")
@@ -28778,6 +28880,7 @@ def main():
     _test_v42_w148_codex_193()
     _test_v42_w148_beobachtung_fehlerpfade()
     _test_v42_w149_tiefengrund()
+    _test_v42_w150_umzug_mit_journal_und_archiv()
     _test_v42_w60_azrael_cooldown_je_plattform()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)
