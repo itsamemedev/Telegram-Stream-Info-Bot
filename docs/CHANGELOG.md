@@ -29,6 +29,10 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
   in denselben Baum. Der Job-Merker gilt jetzt für beide.
 - **Spendenliste:** nach einem Fehler las sie das Ergebnis der vorigen Abfrage
   (`except Exception: pass` vor `fetchall()`).
+- **Einstellungen auf dem Handy unlesbar** (gemeldet mit Bildschirmfoto): das
+  starre Zwei-Spalten-Raster gab der Eingabe mindestens 220 px, das Feld lag
+  über dem Variablennamen, und die Namen waren auf zwei Buchstaben gekappt.
+  Jetzt bricht die Zeile um, lange Namen umbrechen statt abzuschneiden.
 
 ## [4.6.3] — 2026-11-06 · „Leitstand"
 

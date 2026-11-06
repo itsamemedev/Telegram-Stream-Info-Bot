@@ -28637,6 +28637,12 @@ def _test_v42_w152_cookies_pin_rollback():
     rumpf = m[m.index("def api_donations_summary("):m.index("def api_finanzamt_entries(")]
     assert "except Exception:\n                pass" not in rumpf, \
         "die Liste liest nach einem Fehler das Ergebnis der vorigen Abfrage"
+    # (4) Einstellungen auf dem Handy: das starre Raster gab der Eingabe
+    # mindestens 220px, und das Feld lag ueber dem Variablennamen.
+    h = open("templates/dashboard.html", encoding="utf-8").read()
+    z = h[h.index("function _esZeile(e)"):h.index("function einstZeigen()")]
+    assert "grid-template-columns" not in z and "flex-wrap:wrap" in z, "starres Raster zurueck"
+    assert z.count("min-width:0") >= 3 and "overflow-wrap:anywhere" in z
     ok("W152: Secure-Cookies hinter dem Proxy, Nicht-ASCII-PIN ohne 500, kein Rollback neben dem Update")
 
 
