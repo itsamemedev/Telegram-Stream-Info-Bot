@@ -28585,6 +28585,61 @@ def _test_v42_w151_mariadb_vergleicht_bytegenau():
     ok("W151: MariaDB vergleicht bytegenau wie SQLite, alte Tabellen werden angeglichen")
 
 
+def _test_v42_w152_cookies_pin_rollback():
+    """v4.2-W152: drei kleine Befunde aus der zweiten Runde.
+
+    (1) Die Sitzungs-Cookies trugen `Secure` nur bei DASHBOARD_TLS_CERT. Hinter
+    dem nginx des Installers terminiert der Proxy das TLS — das Deck sah http
+    und schickte PIN- und Token-Cookie ohne `Secure`. (2) compare_digest auf
+    str wirft TypeError bei Nicht-ASCII: ein "ä" im PIN-Feld gab HTTP 500 und
+    zaehlte nicht als Fehlversuch. (3) Ein Rollback konnte neben einem
+    laufenden Update schreiben."""
+    from nc import clientip as CI
+    from nc import updater as UP
+    import hmac as _hm
+
+    T = {"127.0.0.1"}
+    assert CI.ist_https("127.0.0.1", {"X-Forwarded-Proto": "https"}, T) is True
+    assert CI.ist_https("127.0.0.1", {"X-Forwarded-Proto": "http"}, T) is False
+    assert CI.ist_https("203.0.113.9", {"X-Forwarded-Proto": "https"}, T) is False, \
+        "X-Forwarded-Proto von einem Fremden geglaubt"
+    assert CI.ist_https("127.0.0.1", {}, set(), tls_direkt=True) is True
+    assert CI.ist_https("127.0.0.1", {}, set(), schema="https") is True
+    src = open("bot.py", encoding="utf-8").read()
+    assert src.count("secure=_cookie_sicher())") == 2, "ein Sitzungs-Cookie ohne Proxy-Erkennung"
+    assert 'secure=bool(os.getenv("DASHBOARD_TLS_CERT"' not in src
+
+    try:
+        _hm.compare_digest("ä", "1234")
+        raise AssertionError("compare_digest nimmt Nicht-ASCII-str — der Befund ist hinfaellig")
+    except TypeError:
+        pass
+    assert 'compare_digest(given.encode("utf-8"), DASHBOARD_PIN.encode("utf-8"))' in src
+    assert 'compare_digest(str(given).encode("utf-8"),' in src
+
+    alt = (dict(UP._JOB), UP._CFG.enabled)
+    try:
+        UP._CFG.enabled = True
+        UP._JOB["running"] = True
+        r = UP.rollback("nc_update_x.zip")
+        assert r["ok"] is False and "Update" in r["error"], r
+        UP._JOB["running"] = False
+        UP._JOB["phase"] = "done"
+        r = UP.rollback("kein_backup.zip")
+        assert r["ok"] is False and UP._JOB["running"] is False and UP._JOB["phase"] == "done", \
+            "der Rollback hinterlaesst den Job-Merker"
+    finally:
+        UP._JOB.clear()
+        UP._JOB.update(alt[0])
+        UP._CFG.enabled = alt[1]
+
+    m = open("nc/routes/money.py", encoding="utf-8").read()
+    rumpf = m[m.index("def api_donations_summary("):m.index("def api_finanzamt_entries(")]
+    assert "except Exception:\n                pass" not in rumpf, \
+        "die Liste liest nach einem Fehler das Ergebnis der vorigen Abfrage"
+    ok("W152: Secure-Cookies hinter dem Proxy, Nicht-ASCII-PIN ohne 500, kein Rollback neben dem Update")
+
+
 def main():
     tmp, rid = richte_testdatenbank_ein()
     ok("db_conn aus nc.dbwrap: echtes Schema angelegt, Commit durchgelaufen")
@@ -28945,6 +29000,7 @@ def main():
     _test_v42_w149_tiefengrund()
     _test_v42_w150_umzug_mit_journal_und_archiv()
     _test_v42_w151_mariadb_vergleicht_bytegenau()
+    _test_v42_w152_cookies_pin_rollback()
     _test_v42_w60_azrael_cooldown_je_plattform()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)
