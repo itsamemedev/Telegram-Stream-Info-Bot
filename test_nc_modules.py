@@ -27630,11 +27630,28 @@ def _test_v42_w148_durchreicher():
     try:
         rc = D.main(["anna", "-", "--", "ffmpeg", "-i", "pipe:0"], popen=_P,
                     which=lambda n: "/x/yt-dlp" if n == "yt-dlp" else None)
+        # Der Kern des Versprechens: SIGTERM von der Bruecke beendet BEIDE.
+        # Der Griff, den main() eingehaengt hat, wird hier direkt ausgeloest.
+        _griff = _signal.getsignal(_signal.SIGTERM)
+        _w_alt = _griff.__closure__
+        assert _w_alt, "kein eigener SIGTERM-Griff"
+        _zellen = {c.cell_contents for c in _w_alt if isinstance(c.cell_contents, _P)}
+        assert len(_zellen) == 2, "Griff haelt nicht Zieher UND ffmpeg"
+        for q in _zellen:
+            q.beendet = False
+        try:
+            _griff(_signal.SIGTERM, None)
+        except SystemExit as _e:
+            assert _e.code == 0
+        else:
+            raise AssertionError("SIGTERM-Griff beendet das Programm nicht")
+        assert all(q.beendet for q in _zellen), "SIGTERM liess ein Kind weiterlaufen"
     finally:
         _signal.signal(_signal.SIGTERM, alt[0])
         _signal.signal(_signal.SIGINT, alt[1])
     assert rc == 7, "Exitcode nicht der des ffmpeg"
-    zieher, wandler = gestartet
+    zieher, wandler = [q for q in _zellen if q.kw.get("stdout") is _sp.PIPE] + \
+        [q for q in _zellen if q.kw.get("stdout") is not _sp.PIPE]
     assert zieher.cmd[0] == "/x/yt-dlp" and wandler.cmd[:2] == ["ffmpeg", "-i"]
     assert wandler.kw["stdin"] is zieher.stdout and zieher.stdout.zu, "Leitung nicht verkettet/geschlossen"
     assert zieher.beendet, "Zieher laeuft nach dem Ende des ffmpeg weiter"
@@ -27993,6 +28010,8 @@ def _test_v42_w148_codex_193():
         fh.write("A='It\\'s # live'\nB='a\\\\b'\nC='x\\ny'\nD=\"x\\ny\"\nE=\"t\\tz\"\n")
     w2 = V.lesen(f2)
     assert w2 == {"A": "It's # live", "B": "a\\b", "C": "x\\ny", "D": "x\ny", "E": "t\tz"}, w2
+    # Ohne schliessendes Zeichen: nur das oeffnende weg, wie bisher.
+    assert V.wert_lesen('"offen') == "offen" and V.wert_lesen("'offen ") == "offen"
     try:
         from dotenv import dotenv_values
     except ImportError:
@@ -28155,6 +28174,11 @@ def _test_v42_w148_beobachtung_fehlerpfade():
     D._beende(stur)
     assert stur.getoetet, "ein Zieher, der SIGTERM ignoriert, laeuft weiter"
     D._beende(None)
+
+    class _Weg(_Stur):
+        def terminate(self):
+            raise ProcessLookupError("schon weg")
+    D._beende(_Weg())          # schon beendet: kein Fehler, nichts zu tun
     gestartet = []
 
     def _popen(cmd, **kw):
