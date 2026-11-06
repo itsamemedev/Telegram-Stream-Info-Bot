@@ -22207,7 +22207,9 @@ def _test_v42_w120_kein_warten_ohne_ende():
         assert "create_subprocess_exec" not in src and "_kind.ausfuehren(" in src, d
     baum = _ast.parse(io.open("bot.py", encoding="utf-8").read())
     fn = {n.name: n for n in _ast.walk(baum) if isinstance(n, (_ast.FunctionDef, _ast.AsyncFunctionDef))}
-    for f in ("_resolve_via_ytdlp", "_shrink_for_discord", "clip_moment", "_restream_tts_enqueue_wav"):
+    # ANKER GEWANDERT (v4.2-W159): der Schnitt steht in _clip_schneiden,
+    # clip_moment zaehlt nur noch den offenen Clip (Review #204).
+    for f in ("_resolve_via_ytdlp", "_shrink_for_discord", "_clip_schneiden", "_restream_tts_enqueue_wav"):
         u = _ast.unparse(fn[f])
         assert "create_subprocess_exec" not in u and "_nc_kind.ausfuehren(" in u, f
     ok("W120: kein communicate() ohne Zeitlimit; videoteil, tonspur, yt-dlp, Clip, "
@@ -29086,6 +29088,14 @@ def _test_v42_w159_ausweichen_memes_clipchat():
         A.notieren("u", "w", "t%d" % t, t)
     assert A.ausschnitt("/rec/u.mp4", 10.0, 41.0) == [(2.0, "w", "t12"), (30.0, "w", "t40")]
     assert A.ausschnitt("/rec/weg.mp4", 0, 99) == []
+    # Review #204: ein Clip, der nach dem Ende schneidet, findet seinen Chat noch.
+    A.beenden("/rec/u.mp4")
+    assert A.ausschnitt("/rec/u.mp4", 10.0, 41.0) == [(2.0, "w", "t12"), (30.0, "w", "t40")]
+    A.clip_beginnt("/rec/u.mp4"); A.clip_beginnt("/rec/u.mp4")
+    A.clip_fertig("/rec/u.mp4")
+    assert A.clips_offen("/rec/u.mp4") == 1
+    A.clip_fertig("/rec/u.mp4")
+    assert A.clips_offen("/rec/u.mp4") == 0 and "/rec/u.mp4" not in A.OFFEN
     # (2) Clips je Aufnahme, gedeckelt; concat-Liste mit ABSOLUTEN Pfaden.
     for i in range(A.MAX_CLIPS + 5):
         A.clip_merken("/rec/u.mp4", "c%d.mp4" % i, "Meme")
@@ -29156,12 +29166,17 @@ def _test_v42_w159_ausweichen_memes_clipchat():
 
     # (5) Verdrahtung: Clip mit Chat, Clip gemerkt, Zusammenschnitt nach dem Ende.
     cm = rumpf_ab(src, src.index("async def clip_moment("))
-    assert "_clip_chat_ass, recfile, start, start + real, out" in cm
-    assert cm.index("_nc_aufnahmechat.clip_merken(recfile, out, reason)") > cm.index("if _rc == 0")
+    sc = rumpf_ab(src, src.index("async def _clip_schneiden("))
+    assert "_clip_chat_ass, recfile, start, start + real, out" in sc
+    assert sc.index("_nc_aufnahmechat.clip_merken(recfile, out, reason)") > sc.index("if _rc == 0")
     fm = rumpf_ab(src, src.index("async def _aufnahme_fertigmachen("))
-    assert fm.index("clips_nehmen(output_file)") < fm.index("beenden(output_file)")
-    assert "_spawn(_meme_zusammenschnitt(username, clips)" in fm
+    assert "_spawn(_meme_zusammenschnitt(username, output_file)" in fm
     mz = rumpf_ab(src, src.index("async def _meme_zusammenschnitt("))
+    # Review #204: erst warten, bis kein Clip mehr geschnitten wird, dann nehmen.
+    assert mz.index("_nc_aufnahmechat.clips_offen(output_file)") < \
+        mz.index("_nc_aufnahmechat.clips_nehmen(output_file)")
+    assert "_nc_aufnahmechat.clip_beginnt(recfile)" in cm and \
+        "finally:\n        _nc_aufnahmechat.clip_fertig(recfile)" in cm
     assert "_clip_to_discord(username, ziel" in mz and "split_and_send_video(" in mz
 
     # (6) Echter Zusammenschnitt: zwei Clips hintereinander.

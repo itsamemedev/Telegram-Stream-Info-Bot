@@ -96,9 +96,19 @@ def notieren(user, wer, text, jetzt=None) -> int:
     return n
 
 
+# v4.2-W159 (Review #204): beendete Sitzungen bleiben fuer Nachzuegler lesbar
+# — ein Clip, der kurz vor dem Ende ausgeloest wurde, schneidet erst nach
+# CLIP_POST_SECS und braucht seinen Chat dann noch.
+BEENDET = collections.OrderedDict()
+
+
 def beenden(video_pfad) -> list:
     """Die Aufnahme ist fertig. -> [(t_rel, wer, text)], die Sitzung ist weg."""
     s = SITZUNGEN.pop(video_pfad, None)
+    if s:
+        BEENDET[video_pfad] = s
+        while len(BEENDET) > MAX_SITZUNGEN:
+            BEENDET.popitem(last=False)
     return list(s["eintraege"]) if s else []
 
 
@@ -204,8 +214,26 @@ MAX_CLIPS = 40
 def ausschnitt(video_pfad, von, bis) -> list:
     """Der Chat der laufenden Aufnahme zwischen `von` und `bis` (Sekunden der
     Datei), auf den Clip verschoben: t=0 ist der Clipanfang."""
-    s = SITZUNGEN.get(video_pfad) or {"eintraege": ()}    # keine Sitzung: kein Chat
+    s = SITZUNGEN.get(video_pfad) or BEENDET.get(video_pfad) or {"eintraege": ()}
     return [(t - von, w, x) for t, w, x in s["eintraege"] if von <= t <= bis]
+
+
+OFFEN = collections.Counter()        # video_pfad -> Clips, die gerade geschnitten werden
+
+
+def clip_beginnt(video_pfad) -> None:
+    OFFEN[video_pfad] += 1
+
+
+def clip_fertig(video_pfad) -> None:
+    OFFEN[video_pfad] -= 1
+    if OFFEN[video_pfad] <= 0:
+        del OFFEN[video_pfad]
+
+
+def clips_offen(video_pfad) -> int:
+    """Wie viele Clips dieser Aufnahme noch geschnitten werden (Review #204)."""
+    return OFFEN.get(video_pfad, 0)
 
 
 def clip_merken(video_pfad, clip_pfad, grund="") -> None:

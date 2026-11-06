@@ -18455,9 +18455,8 @@ async def _aufnahme_fertigmachen(output_file, username):
     Tonspur sichern (W106), dann den Chat einarbeiten (W158).
     -> {"groesse": int|None, ...} wie _nc_tonspur.sichern."""
     erg = await _nc_tonspur.sichern(output_file, wer=f"@{username}")
-    clips = _nc_aufnahmechat.clips_nehmen(output_file)
-    if len(clips) >= _env_int("MEME_REEL_MIN", 2) and os.getenv("MEME_REEL", "1") != "0":
-        _spawn(_meme_zusammenschnitt(username, clips), name=f"meme-reel-{username}")
+    if os.getenv("MEME_REEL", "1") != "0":
+        _spawn(_meme_zusammenschnitt(username, output_file), name=f"meme-reel-{username}")
     chat = _nc_aufnahmechat.beenden(output_file)
     modus = _aufnahme_chat_modus()
     if chat and modus != "aus":
@@ -18468,17 +18467,25 @@ async def _aufnahme_fertigmachen(output_file, username):
     return erg
 
 
-async def _meme_zusammenschnitt(username, clips):
+async def _meme_zusammenschnitt(username, output_file):
     """v4.2-W159: die Clips einer Aufnahme als EIN Video, mit Chat.
 
     Gemeldet: „der Hype-Director schneidet gar keine Memes zusammen". Jeder
     Clip trägt seit dieser Welle den Chat seines Fensters; hier werden sie
     hintereinandergesetzt und an dieselben Ziele geschickt wie die Clips
     (Discord {user}-clips) und an die Telegram-Gruppen des Trackings."""
+    # Review #204: erst warten, bis kein Clip dieser Aufnahme mehr geschnitten
+    # wird — sonst fehlt der letzte Hype-Moment, oder die Mindestzahl faellt.
+    frist = _time_mod.monotonic() + max(60, CLIP_POST_SECS * 3 + 120)
+    while _nc_aufnahmechat.clips_offen(output_file) and _time_mod.monotonic() < frist:
+        await asyncio.sleep(2)
+    clips = _nc_aufnahmechat.clips_nehmen(output_file)
     pfade = [c for c, _g in clips if os.path.isfile(c)][:_env_int("MEME_REEL_MAX", 12)]
-    if len(pfade) < 2:
-        log.info("Meme-Zusammenschnitt @%s: nur %d der %d Clips liegen noch vor — "
-                 "kein Zusammenschnitt (Clip-Aufraeumen?).", username, len(pfade), len(clips))
+    # Zu wenige Momente (der Normalfall) oder die Clips sind schon weg.
+    if len(clips) < _env_int("MEME_REEL_MIN", 2) or len(pfade) < 2:
+        if len(clips) >= _env_int("MEME_REEL_MIN", 2):
+            log.info("Meme-Zusammenschnitt @%s: nur %d der %d Clips liegen noch vor — "
+                     "kein Zusammenschnitt (Clip-Aufraeumen?).", username, len(pfade), len(clips))
         return None
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     ziel = os.path.join(CLIP_DIR, f"memes_{re.sub(r'[^A-Za-z0-9_]', '_', username)}_{ts}.mp4")
@@ -22457,6 +22464,17 @@ async def clip_moment(username, reason="", caption=""):
     if not recfile:
         log.info("Clip @%s übersprungen — keine laufende Aufnahme gefunden.", username)
         return None
+    # v4.2-W159 (Review #204): der Zusammenschnitt wartet auf offene Clips —
+    # ein Clip kurz vor dem Ende ist erst nach CLIP_POST_SECS fertig.
+    _nc_aufnahmechat.clip_beginnt(recfile)
+    try:
+        return await _clip_schneiden(username, reason, caption, recfile)
+    finally:
+        _nc_aufnahmechat.clip_fertig(recfile)
+
+
+async def _clip_schneiden(username, reason, caption, recfile):
+    """Der Schnitt selbst (aus clip_moment herausgeloest, W159)."""
     await asyncio.sleep(max(1, CLIP_POST_SECS))
     dur = await asyncio.to_thread(_ffprobe_duration, recfile)
     win = CLIP_PRE_SECS + CLIP_POST_SECS
