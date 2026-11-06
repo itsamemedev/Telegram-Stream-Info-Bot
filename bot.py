@@ -7954,7 +7954,12 @@ class _KickClusterSuche:
     def __init__(self):
         self.cluster = (KICK_PUSHER_CLUSTER or "us2").strip().lower()
         self.versucht = {self.cluster}
-        self.bestaetigt = False     # v4.2-W157: hat hier je ein Abo gestanden?
+        # v4.2-W157: hat hier je ein Abo gestanden? v4.2-W161: der NAME des
+        # Clusters, nicht Ja/Nein. Als Ja/Nein galt nach dem ersten Treffer
+        # JEDER spaetere Kandidat als bestaetigt: zog Kick den Key danach um
+        # (4001 auf dem bestaetigten), blieb die Suche am ersten Kandidaten
+        # mit DNS-Fehler haengen — der Fehler aus W157, eine Runde spaeter.
+        self.bestaetigt = ""
         self.abgewiesen = []        # Review #202: 4001 in dieser Suchrunde
 
     def url(self) -> str:
@@ -7962,7 +7967,8 @@ class _KickClusterSuche:
 
     async def weiter(self, exc) -> bool:
         """True: ein anderer Cluster ist dran, gleich neu verbinden."""
-        probe = not self.bestaetigt and self.cluster != (KICK_PUSHER_CLUSTER or "us2").strip().lower()
+        probe = self.cluster not in (self.bestaetigt,
+                                     (KICK_PUSHER_CLUSTER or "us2").strip().lower())
         neu = _kick_cluster_weiter(exc, self.versucht, probe=probe, abgewiesen=self.abgewiesen)
         if neu:
             self.cluster = neu
@@ -7973,9 +7979,9 @@ class _KickClusterSuche:
         return bool(neu)
 
     def gefunden(self):
-        if not self.bestaetigt:
+        if self.bestaetigt != self.cluster:
             _kick_cluster_gefunden(self.cluster)
-        self.bestaetigt = True
+        self.bestaetigt = self.cluster
 
 
 def _verbindung_verloren(kanal, exc, backoff_s, seit=0.0):
@@ -8328,6 +8334,7 @@ async def _handle_single_tracking(t, bot_app):
             # F84: Session-Bilanz (Dauer/Aufnahmen/Größe) fürs Offline-Embed
             _sess_start = _LIVE_SESSION_START.pop(username, None)
             _ACTIVE_TIER.pop(username, None)   # v37 W3: Tier-Sichtbarkeit aufräumen
+            _nc_geschuetzt.zuruecksetzen(username, laut=False)   # v4.2-W161: neues Live, neuer Raum
             _sess = await asyncio.to_thread(_collect_session_stats, username, _sess_start)
             _spawn(_discord_post_user(username, f"⏹ **@{username}** ist offline — Stream beendet.",
                                       kind="offline", stats=_sess), name="disc-off")
@@ -9785,6 +9792,7 @@ async def handle_recording_finished(proc, tid, chat_id, username, output_file,
         except ValueError: pass
         if not platz_frei[0]:      # sonst naehme es der Folgeaufnahme die Sperre
             clear_recording(tid)
+        _aufnahme_chat_ausklang(username)      # v4.2-W161
 
 # -----------------------------
 # Flask Dashboard
@@ -18429,6 +18437,30 @@ def _aufnahme_chat_beginnen(username, output_file, proc):
             etikett="Aufnahme @%s" % u), name=f"aufnahme-chat-{u}")
 
 
+def _aufnahme_chat_ausklang(username, warte_s=90):
+    """v4.2-W161: der Chat-Waechter einer Aufnahme endet mit ihr.
+
+    Der Waechter wartet auf das Ende der TikTok-Verbindung (`await task`),
+    nicht auf das der Aufnahme — und anders als beim Restream (stop() bricht
+    ihn ab) brach ihn hier niemand ab. Endete die Aufnahme, waehrend der Raum
+    weiter sendete (Tracking pausiert oder entfernt, Plattendeckel, Abbruch),
+    hielt er die Verbindung bis zum Ende des Lives: Stunden Sign-Quota fuer
+    einen Mitschnitt, in den nichts mehr ging. Die Gnadenfrist ueberbrueckt
+    den Segmentwechsel (B58), der sofort die naechste Datei beginnt."""
+    u = clean_username(username)
+    t = _AUFNAHME_CHAT_WAECHTER.get(u)
+    if t is None or t.done():
+        return
+
+    async def _nachsehen():
+        await asyncio.sleep(warte_s)
+        if not _nc_aufnahmechat.laeuft(u) and _AUFNAHME_CHAT_WAECHTER.get(u) is t \
+                and not t.done():
+            log.info("Aufnahme-Chat @%s: keine Aufnahme mehr — Chat-Empfang beendet.", u)
+            t.cancel()
+    _spawn(_nachsehen(), name=f"aufnahme-chat-ausklang-{u}")
+
+
 def _aufnahme_chat_beilegen(output_file, username):
     """v4.2-W158 (Review #203): der Chat einer beim Stopp abgebrochenen
     Aufnahme. Einbrennen wuerde das Herunterfahren um Minuten verzoegern —
@@ -18460,6 +18492,11 @@ async def _aufnahme_fertigmachen(output_file, username):
     chat = _nc_aufnahmechat.beenden(output_file)
     modus = _aufnahme_chat_modus()
     if chat and modus != "aus":
+        # v4.2-W161: ein Clip, der kurz vor dem Ende ausgeloest wurde, liest
+        # die Aufnahme erst nach CLIP_POST_SECS. Ersetzt das Einarbeiten die
+        # Datei vorher, schneidet er aus der Fassung MIT eingebranntem Chat
+        # und brennt seinen eigenen darueber — zwei Chat-Panels uebereinander.
+        await _clips_abwarten(output_file)
         neu = await asyncio.to_thread(_aufnahme_chat_einarbeiten, output_file, chat,
                                       modus, username)
         if neu:
@@ -18476,9 +18513,7 @@ async def _meme_zusammenschnitt(username, output_file):
     (Discord {user}-clips) und an die Telegram-Gruppen des Trackings."""
     # Review #204: erst warten, bis kein Clip dieser Aufnahme mehr geschnitten
     # wird — sonst fehlt der letzte Hype-Moment, oder die Mindestzahl faellt.
-    frist = _time_mod.monotonic() + max(60, CLIP_POST_SECS * 3 + 120)
-    while _nc_aufnahmechat.clips_offen(output_file) and _time_mod.monotonic() < frist:
-        await asyncio.sleep(2)
+    await _clips_abwarten(output_file)
     clips = _nc_aufnahmechat.clips_nehmen(output_file)
     pfade = [c for c, _g in clips if os.path.isfile(c)][:_env_int("MEME_REEL_MAX", 12)]
     # Zu wenige Momente (der Normalfall) oder die Clips sind schon weg.
@@ -18520,6 +18555,14 @@ async def _meme_zusammenschnitt(username, output_file):
             if app is not None and r["group_id"]:
                 await split_and_send_video(r["group_id"], ziel, app, username)
     return ziel
+
+
+async def _clips_abwarten(output_file):
+    """Bis kein Clip dieser Aufnahme mehr geschnitten wird — hoechstens so
+    lange, wie ein Clip brauchen darf (Review #204, v4.2-W161)."""
+    frist = _time_mod.monotonic() + max(60, CLIP_POST_SECS * 3 + 120)
+    while _nc_aufnahmechat.clips_offen(output_file) and _time_mod.monotonic() < frist:
+        await asyncio.sleep(2)
 
 
 def _text_schreiben(pfad, text):

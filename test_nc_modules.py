@@ -29173,8 +29173,12 @@ def _test_v42_w159_ausweichen_memes_clipchat():
     assert "_spawn(_meme_zusammenschnitt(username, output_file)" in fm
     mz = rumpf_ab(src, src.index("async def _meme_zusammenschnitt("))
     # Review #204: erst warten, bis kein Clip mehr geschnitten wird, dann nehmen.
-    assert mz.index("_nc_aufnahmechat.clips_offen(output_file)") < \
+    # ANKER GEWANDERT (v4.2-W161, nicht der Vertrag): das Warten steht in
+    # _clips_abwarten, weil auch das Chat-Einarbeiten darauf wartet.
+    assert mz.index("await _clips_abwarten(output_file)") < \
         mz.index("_nc_aufnahmechat.clips_nehmen(output_file)")
+    assert "_nc_aufnahmechat.clips_offen(output_file)" in \
+        rumpf_ab(src, src.index("async def _clips_abwarten("))
     assert "_nc_aufnahmechat.clip_beginnt(recfile)" in cm and \
         "finally:\n        _nc_aufnahmechat.clip_fertig(recfile)" in cm
     assert "_clip_to_discord(username, ziel" in mz and "split_and_send_video(" in mz
@@ -29409,6 +29413,164 @@ def _sh_rm(pfad):
 def _ty_uhr(uhr):
     import types as _ty
     return _ty.SimpleNamespace(monotonic=lambda: uhr[0])
+
+
+def _test_v42_w161_tiefengrund():
+    """v4.2-W161: Tiefengrund-Bughunt ueber die Wellen W150-W160. Fuenf
+    Befunde, jeder davon ein Zustand, der nach einem Ereignis stehen blieb,
+    das ihn haette loesen muessen."""
+    import ast as _ast
+    import asyncio as _aio
+    import logging as _lg
+    import types as _ty
+    from nc import aufnahmechat as A
+    from nc import discordziele as Z
+    from nc import geschuetzt as G
+    from nc import kickapi as K
+
+    src = open("bot.py", encoding="utf-8").read()
+    baum = _ast.parse(src)
+
+    def _teile(*namen):
+        t = [n for n in baum.body if getattr(n, "name", "") in namen]
+        assert len(t) == len(namen), [getattr(n, "name", "") for n in t]
+        return t
+
+    # (1) Kick: „bestaetigt" gilt fuer EINEN Cluster. Zog Kick den Key nach
+    # dem ersten Treffer um, blieb die Suche am naechsten Kandidaten mit
+    # DNS-Fehler haengen — W157, eine Runde spaeter.
+    async def _kein_schlaf(_s):
+        return None
+    ns = {"_nc_kickapi": K, "KICK_PUSHER_CLUSTER": "us2", "KICK_PUSHER_KEY": "k",
+          "log": _lg.getLogger("w161"), "asyncio": _ty.SimpleNamespace(sleep=_kein_schlaf)}
+    exec(compile(_ast.Module(body=_teile("_kick_cluster_weiter", "_kick_cluster_gefunden",
+                                         "_KickClusterSuche"), type_ignores=[]),
+                 "bot.py", "exec"), ns)
+
+    class _E4001(Exception):
+        code = K.PUSHER_FALSCHER_CLUSTER
+    dns = OSError("Cannot connect to host ws-us3.pusher.com:443 [Name or service not known]")
+    s = ns["_KickClusterSuche"]()
+    assert _aio.run(s.weiter(_E4001())) is True and s.cluster == "mt1"
+    s.gefunden()
+    assert s.bestaetigt == "mt1"
+    assert _aio.run(s.weiter(dns)) is False and s.cluster == "mt1", \
+        "ein bestaetigter Cluster wird bei einem Netzwackler aufgegeben"
+    assert _aio.run(s.weiter(_E4001())) is True and s.cluster == "us3"
+    assert _aio.run(s.weiter(dns)) is True and s.cluster == "eu", \
+        "nach einem Umzug des Keys bleibt die Suche an einem unerreichbaren Cluster haengen"
+    s.gefunden()
+    assert s.bestaetigt == "eu"
+
+    # (2) Ein Live, das endet, nimmt seinen verschlossenen Raum mit — still.
+    zeilen = []
+
+    class _H(_lg.Handler):
+        def emit(self, r):
+            zeilen.append(r.getMessage())
+    G._STAND.clear()
+    for i in range(G.SCHWELLE):
+        G.vermerken("@Raum", 100.0 + i)
+    assert G.verschlossen("raum")
+    hd = _H(); G.log.addHandler(hd)
+    pegel = G.log.level; G.log.setLevel(_lg.INFO)
+    try:
+        assert G.zuruecksetzen("raum", laut=False) is True
+        assert not G.verschlossen("raum") and zeilen == [], zeilen
+        for i in range(G.SCHWELLE):
+            G.vermerken("raum", 200.0 + i)
+        assert G.zuruecksetzen("raum") is True and any("wieder offen" in z for z in zeilen)
+    finally:
+        G.log.removeHandler(hd); G.log.setLevel(pegel); G._STAND.clear()
+    hst = next(n for n in baum.body if getattr(n, "name", "") == "_handle_single_tracking")
+    offline = [c for c in _ast.walk(hst) if isinstance(c, _ast.Call)
+               and _ast.unparse(c.func) == "_nc_geschuetzt.zuruecksetzen"
+               and any(k.arg == "laut" for k in c.keywords)]
+    assert offline, "der Offline-Uebergang laesst den verschlossenen Raum stehen"
+    hz = rumpf_ab(src, src.index("async def _handle_single_tracking("))
+    assert hz.index("_LIVE_SESSION_START.pop(username, None)") < \
+        hz.index("_nc_geschuetzt.zuruecksetzen(username, laut=False)") < \
+        hz.index("# Aufnahme starten"), "die Zuruecksetzung steht nicht im Offline-Zweig"
+
+    # (3) Der Chat-Waechter einer Aufnahme endet mit ihr (nach Gnadenfrist).
+    class _Proc:
+        returncode = None
+    ns = {"clean_username": lambda u: (u or "").lstrip("@").lower(),
+          "_AUFNAHME_CHAT_WAECHTER": {}, "_nc_aufnahmechat": A, "log": _lg.getLogger("w161"),
+          "asyncio": _aio}
+    exec(compile(_ast.Module(body=_teile("_aufnahme_chat_ausklang"), type_ignores=[]),
+                 "bot.py", "exec"), ns)
+
+    async def _lauf(laeuft):
+        A.SITZUNGEN.clear()
+        p = _Proc()
+        A.beginnen("@Nutzer", "/rec/n.mp4", 0.0, p)
+        if not laeuft:
+            p.returncode = 0
+        ns["_spawn"] = lambda coro, name=None: _aio.ensure_future(coro)
+        waechter = _aio.ensure_future(_aio.sleep(3600))
+        ns["_AUFNAHME_CHAT_WAECHTER"]["nutzer"] = waechter
+        ns["_aufnahme_chat_ausklang"]("@Nutzer", warte_s=0)
+        for _ in range(5):
+            await _aio.sleep(0)
+        weg = waechter.cancelled() or waechter.done()
+        waechter.cancel()
+        A.SITZUNGEN.clear()
+        return weg
+    assert _aio.run(_lauf(laeuft=False)) is True, \
+        "der Chat-Empfang laeuft nach dem Ende der Aufnahme bis zum Ende des Lives weiter"
+    assert _aio.run(_lauf(laeuft=True)) is False, "ein Segmentwechsel bricht den Chat ab"
+    hrf = rumpf_ab(src, src.index("async def handle_recording_finished("))
+    fin = hrf[hrf.rindex("finally:"):]
+    assert "_aufnahme_chat_ausklang(username)" in fin, \
+        "der Ausklang haengt nicht im finally — ein Fehlerpfad liesse den Waechter stehen"
+
+    # (4) Erst die offenen Clips, dann das Einarbeiten: sonst schneidet ein
+    # spaeter Clip aus der Fassung mit Chat und brennt seinen eigenen darueber.
+    fm = rumpf_ab(src, src.index("async def _aufnahme_fertigmachen("))
+    assert "await _clips_abwarten(output_file)" in fm and \
+        fm.index("await _clips_abwarten(output_file)") < fm.index("_aufnahme_chat_einarbeiten"), \
+        "das Einarbeiten ersetzt die Aufnahme, waehrend noch ein Clip daraus schneidet"
+    uhr = [0.0]
+    ns = {"_nc_aufnahmechat": A, "CLIP_POST_SECS": 20}
+
+    async def _schlaf(sek):
+        uhr[0] += sek
+        if uhr[0] >= 6:
+            A.clip_fertig("/rec/c.mp4")
+    ns["asyncio"] = _ty.SimpleNamespace(sleep=_schlaf)
+    ns["_time_mod"] = _ty.SimpleNamespace(monotonic=lambda: uhr[0])
+    exec(compile(_ast.Module(body=_teile("_clips_abwarten"), type_ignores=[]),
+                 "bot.py", "exec"), ns)
+    A.OFFEN.clear(); A.clip_beginnt("/rec/c.mp4")
+    _aio.run(ns["_clips_abwarten"]("/rec/c.mp4"))
+    assert A.clips_offen("/rec/c.mp4") == 0 and 6 <= uhr[0] < 10, uhr
+    A.OFFEN.clear(); A.clip_beginnt("/rec/haengt.mp4"); uhr[0] = -1e9
+    ns["asyncio"] = _ty.SimpleNamespace(sleep=lambda s: _aio.sleep(0))
+
+    async def _haengt():
+        uhr[0] = 0.0
+        t = _aio.ensure_future(ns["_clips_abwarten"]("/rec/haengt.mp4"))
+        for _ in range(3):
+            await _aio.sleep(0)
+        uhr[0] = 10 ** 6                       # Frist vorbei
+        await _aio.wait_for(t, 1)
+    _aio.run(_haengt())
+    A.OFFEN.clear()
+
+    # (5) Discord: Praefix allein ist kein Beweis der Herkunft.
+    eigen = Z.eigene_kanaele("anna")
+    assert Z.loeschbar("🎯 anna", sorted(eigen)) and Z.loeschbar("🎯 anna", [])
+    assert not Z.loeschbar("🎯 anna", ["anna-clips", "allgemein"]), \
+        "ein von Hand dazugelegter Kanal wird mitgeloescht"
+    assert not Z.loeschbar("🎯 Ziele", ["planung"]), "eine fremde 🎯-Kategorie wird geloescht"
+    assert not Z.loeschbar("Anna", [])
+    db = open("discordbot.py", encoding="utf-8").read()
+    za = rumpf_ab(db, db.index("async def _ziele_abgleichen("))
+    assert za.index("_nc_ziele.loeschbar(") < za.index("await ch.delete("), \
+        "geloescht wird ohne Blick auf den Inhalt"
+    ok("W161: Tiefengrund — Cluster-Bestaetigung je Cluster, Raum endet mit dem Live, "
+       "Chat-Waechter mit der Aufnahme, Clips vor dem Einarbeiten, fremde 🎯-Bereiche tabu")
 
 
 def _test_v42_w155_weiche_steckt():
@@ -29921,6 +30083,7 @@ def main():
     _test_v42_w158_chat_in_der_aufnahme()
     _test_v42_w159_ausweichen_memes_clipchat()
     _test_v42_w160_html_modus_traegt_quelle()
+    _test_v42_w161_tiefengrund()
     _test_v42_w60_azrael_cooldown_je_plattform()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)

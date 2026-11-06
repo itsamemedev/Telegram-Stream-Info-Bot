@@ -4,7 +4,7 @@ Eine einzige Wahrheit für die Versionsanzeige (Dashboard-Footer, /api/version,
 „Was ist neu"-Panel). Reine Daten + kleine Helfer, voll testbar.
 """
 
-VERSION = "4.6.11"
+VERSION = "4.6.12"
 CODENAME = "Leitstand"
 RELEASE = "2026.11"
 
@@ -23,6 +23,19 @@ def build_stamp():
 # Meilenstein-Changelog, neueste Version zuerst. highlights = kurze, ehrliche
 # Stichpunkte dessen, was die Version bringt.
 CHANGELOG = [
+    {
+        "version": "4.6.12",
+        "date": "2026-11",
+        "title": "Leitstand",
+        # Patch-Fassung von 4.6: Tiefengrund-Bughunt ueber W150-W160 (W161).
+        "highlights": [
+            "Kick-Chat: zog Kick den Key nach einem gefundenen Cluster erneut um, blieb die Suche am nächsten unerreichbaren Kandidaten hängen — „bestätigt\" gilt jetzt je Cluster",
+            "Ein verschlossener Raum (live ohne Stream-Adresse) blieb über das Ende des Lives hinaus markiert und sperrte beim nächsten, öffentlichen Live den Durchreicher des Restreams",
+            "Der Chat-Empfang einer Aufnahme lief nach deren Ende bis zum Ende des Lives weiter und verbrauchte Sign-Quota — jetzt endet er mit der Aufnahme, ein Segmentwechsel bleibt überbrückt",
+            "Ein Clip kurz vor dem Aufnahmeende konnte aus der Fassung mit eingebranntem Chat schneiden und einen zweiten Chat darüberlegen — das Einarbeiten wartet jetzt auf offene Clips",
+            "Discord: der automatische Abgleich löscht eine 🎯-Kategorie nur noch, wenn sie ausschließlich die Kanäle trägt, die der Bot selbst anlegt — eine von Hand angelegte bleibt samt Verlauf stehen",
+        ],
+    },
     {
         "version": "4.6.11",
         "date": "2026-11",

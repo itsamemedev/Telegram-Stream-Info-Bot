@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="docs/assets/banner.svg" alt="NIGHTCRAWLER — v4.6.11 Control Room" width="100%">
+<img src="docs/assets/banner.svg" alt="NIGHTCRAWLER — v4.6.12 Control Room" width="100%">
 
 ### The control room for live streaming
 #### Monitoring · Recording · Multi-target restream · AI moderation
@@ -121,7 +121,7 @@ flowchart TB
     TG["📨 Telegram"]:::ein --> BOT
     DC["🎮 Discord<br/>66 slash commands"]:::ein --> BOT
     TT["🎥 TikTok<br/>live detection + chat"]:::ein --> BOT
-    BOT["bot.py<br/>monolith · 26,872 lines<br/>scraper · recorder · restream<br/>Flask deck · 34 own routes"]:::core
+    BOT["bot.py<br/>monolith · 26,915 lines<br/>scraper · recorder · restream<br/>Flask deck · 34 own routes"]:::core
     BOT -->|configure| NC["nc/ — 182 domain modules<br/>39 blueprints"]:::lib
     BOT --> BR["brain_bridge.py"]:::lib
     BR --> BRAIN["brain/ — own brain.db<br/>rules · memory · knowledge graph<br/>16 watchdog agents"]:::brain
@@ -547,8 +547,8 @@ python3 -m pytest -k w145          # one wave on its own
 python3 tools/ncpatch.py find "donations"      # where is something in bot.py?
 ```
 
-`bot.py` has 26,872 lines and is never read in full — the navigation map
-`.claude/INDEX.md` knows 379 routes and 612 functions with line numbers. Before
+`bot.py` has 26,915 lines and is never read in full — the navigation map
+`.claude/INDEX.md` knows 379 routes and 614 functions with line numbers. Before
 every pull request the full verification chain from
 **[`docs/en/CONTRIBUTING.md`](docs/en/CONTRIBUTING.md)** runs: lint, templates,
 documentation figures, locks against silent failure paths and giant functions,
@@ -608,6 +608,9 @@ as a subtitle track, `AUFNAHME_CHAT`).
 with one, the hype director compiles memes, clips carry the chat.
 **Patch 4.6.11** — in HTML mode the source picture and sound arrive again
 (back-pressure at the sender was taken for a silent source).
+**Patch 4.6.12** — deep bug hunt: Kick cluster search after a key move, a
+locked room ends with the live, recording chat ends with the recording, no
+double chat in clips, foreign 🎯 categories on Discord are left alone.
 
 Every wave on its own: **[`docs/CHANGELOG.md`](docs/CHANGELOG.md)**.
 
@@ -619,7 +622,7 @@ Every wave on its own: **[`docs/CHANGELOG.md`](docs/CHANGELOG.md)**.
 
 | | |
 |---|---|
-| Current version | **4.6.11** — “Control Room” (2026.11) |
+| Current version | **4.6.12** — “Control Room” (2026.11) |
 | Flask routes | 379 (34 in `bot.py` · 345 in `nc/routes/`) |
 | Discord slash commands | 66 |
 | Domain modules | 182 in `nc/` (+39 in `nc/routes/`, +3 in `nc/intel/`), 10 in `brain/` |
@@ -669,7 +672,7 @@ with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 <div align="center">
 
-**NIGHTCRAWLER v4.6.11 · “Control Room”**
+**NIGHTCRAWLER v4.6.12 · “Control Room”**
 
 **[🌐 lafap.de](https://lafap.de)** · **[💬 Discord](https://discord.gg/psvnxm7tSV)** · **[📓 Changelog](docs/CHANGELOG.md)**
 

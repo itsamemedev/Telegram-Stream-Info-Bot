@@ -84,15 +84,23 @@ def verschlossen(name) -> bool:
     return bool(s) and s["folge"] >= SCHWELLE
 
 
-def zuruecksetzen(name) -> bool:
+def zuruecksetzen(name, laut=True) -> bool:
     """Ein Versuch ist gelungen. -> True, wenn der Raum vorher verschlossen war.
 
     Meldet den Uebergang selbst: beide Aufrufer (Fehlerpfad mit anderer
     Kategorie, Erfolgspfad mit Datei) sagen sonst dasselbe zweimal, und der
-    Erfolgspfad steht in einer Funktion unter Laengen-Sperre (W78)."""
+    Erfolgspfad steht in einer Funktion unter Laengen-Sperre (W78).
+
+    v4.2-W161: `laut=False` fuer das Ende der Sendung. Ein Live, das endet,
+    nimmt seinen Raum mit — das naechste ist ein neuer, der offen sein kann.
+    Bis hierher blieb die Markierung ueber das Offline hinaus stehen, und
+    `verschlossen()` sperrte den Durchreicher des Restreams beim naechsten,
+    oeffentlichen Live; geloest wurde sie nur von einer gelungenen Aufnahme —
+    fuer ein reines Restream-Ziel also nie. „Wieder offen" waere dort die
+    falsche Meldung: der Raum ist zu, nicht offen."""
     s = _STAND.pop(_schluessel(name), None)
     war = bool(s) and s["folge"] >= SCHWELLE
-    if war:
+    if war and laut:
         log.info("@%s: der Raum ist wieder offen — Aufnahme und Restream laufen "
                  "normal weiter.", _schluessel(name))
     return war
