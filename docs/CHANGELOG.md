@@ -11,6 +11,23 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+## [4.6.7] — 2026-11-06 · „Leitstand"
+
+### Geändert — das Lagebild als Radarschirm (v4.2 W156)
+
+- Gewünscht: „grafisch professioneller, realistisch, mit Wow-Effekt". Der
+  Hintergrund ist ein Radarschirm (Plotterraster, Entfernungsringe,
+  Gradskala, Fadenkreuz, Vignette), ein Strahl streicht in zehn Sekunden
+  einmal herum und lässt Live-Ziele nachleuchten. Stationen sind
+  Glasmodule mit Blendenkante, der Kern eine Metallscheibe mit drehender
+  Skala; auf Restream-Leitungen laufen Datenpakete im Tempo der Lage.
+- Was gezeigt wird, entscheidet weiter `nc/lagebild.py`; geändert ist nur
+  die Zeichnung. Farben kommen aus dem Thema (`mitA()`), bei reduzierter
+  Bewegung und im Kontrast-Thema steht alles still. Auf schmalen Schirmen
+  skalieren Kern und Module mit. Dabei gefunden: ein negativer Winkel gab
+  der Welle einen negativen Radius, `arc()` warf — im Browser gemessen,
+  im Vertrag gesichert.
+
 ## [4.6.6] — 2026-11-06 · „Leitstand"
 
 ### Behoben — Restream zeigte dauerhaft das Pausenbild (v4.2 W155)

@@ -28895,6 +28895,55 @@ def _test_v42_w155_weiche_steckt():
     ok("W155: ein Zubringer, an dem die Weiche nicht umschalten kann, wird laut ersetzt")
 
 
+def _test_v42_w156_lagebild_radar():
+    """v4.2-W156: „grafisch professioneller, realistisch, mit Wow-Effekt" —
+    Radarschirm mit Strahl und Nachleuchten, Glasmodule, Datenpakete. Die
+    Regeln des Decks gelten weiter: Bewegung und Leuchten stehen bei
+    reduzierter Bewegung UND im Kontrast-Thema (W137: keine Glows, keine
+    Bewegung), Farben nur aus dem Thema."""
+    import re as _re
+    import shutil as _sh
+    import subprocess as _sp
+    h = open("templates/dashboard.html", encoding="utf-8").read()
+    i = h.index("var ncLagebild=(function(){")
+    js = _re.sub(r"/\*.*?\*/", "", h[i:h.index("\n})();", i)], flags=_re.S)
+
+    def rumpf(name, bis):
+        return js[js.index("function %s(" % name):js.index("function %s(" % bis)]
+    # (1) Strahl und Nachleuchten: erste Zeile bricht bei reduce ODER Kontrast ab.
+    for name, bis in (("strahl", "nachleuchten"), ("nachleuchten", "koerper")):
+        erste = rumpf(name, bis).splitlines()[1].strip()
+        assert erste.startswith("if(reduce||kontrast())return"), (name, erste)
+    assert "strahl(t);koerper(t);ziele(t);waechter(now);" in js
+    # (2) Datenpakete und Wellen laufen im Kontrast-Thema nicht.
+    k = rumpf("koerper", "beschrift")
+    assert "&&!reduce&&!kontrast()){var tempo=" in k
+    z = rumpf("ziele", "waechter")
+    assert "ruhe=reduce||kontrast()" in z and "if(!d.pausiert&&!ruhe)" in z
+    # Die Welle rechnet mit einem nichtnegativen Rest: ein negativer Winkel
+    # gab einen negativen Radius, und arc() warf (im Browser gemessen).
+    assert "%1+1)%1" in z
+    # (3) Farben nur aus dem Thema: mitA steht im erlaubten Bereich neben
+    # hilfe(), und kein fester Farbwert ausser dem Schlagschatten.
+    # Ausgenommen: hilfe()/mitA() und die Rueckfallwerte in farben() — die
+    # greifen nur, wenn das Thema eine Variable nicht setzt.
+    ohne = js[:js.index("function hilfe(a)")] + js[js.index("function jetzt("):]
+    assert not _re.search(r"#[0-9a-fA-F]{6}'", ohne), "feste Farbe in der Zeichnung"
+    assert "rgba(255,255,255," not in ohne
+    # (4) Modul und Status-LED rechnen mit derselben Breite.
+    assert js.count("modulBreite(") == 3, "Hintergrund und LED rechnen getrennt"
+    # (5) mitA wirklich ausfuehren: #rrggbb, #rgb, rgb(...).
+    if _sh.which("node"):
+        f = js[js.index("function hilfe(a)"):js.index("var F={};")]
+        prog = ("var F={};" + f + "console.log(JSON.stringify([mitA('#0a0b0c',0.5),"
+                "mitA('#abc',1),mitA('rgb(1, 2, 3)',0.2)]));")
+        out = _sp.run(["node", "-e", prog], capture_output=True, text=True, timeout=30)
+        assert out.stdout.strip() == '["rgba(10,11,12,0.5)","rgba(170,187,204,1)","rgba(1, 2, 3,0.2)"]', \
+            (out.stdout, out.stderr)
+    ok("W156: Lagebild als Radarschirm — Strahl, Nachleuchten, Glasmodule; still bei "
+       "reduzierter Bewegung und im Kontrast-Thema")
+
+
 def main():
     tmp, rid = richte_testdatenbank_ein()
     ok("db_conn aus nc.dbwrap: echtes Schema angelegt, Commit durchgelaufen")
@@ -29259,6 +29308,7 @@ def main():
     _test_v42_w153_discord_bereiche_folgen_den_trackings()
     _test_v42_w154_verschlossen_cluster_decimal()
     _test_v42_w155_weiche_steckt()
+    _test_v42_w156_lagebild_radar()
     _test_v42_w60_azrael_cooldown_je_plattform()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)
