@@ -18551,8 +18551,18 @@ async def _meme_zusammenschnitt(username, output_file):
         app = globals().get("bot_app")
         rows = await db_async(lambda c: c.execute(
             "SELECT DISTINCT group_id FROM trackings WHERE username=?", (username,)).fetchall())
+        # v4.2-W162: das Upload-Fenster gilt auch hier. Die Aufnahme derselben
+        # Sitzung wird ausserhalb des Fensters aufgeschoben (UPLOAD_WINDOW_*,
+        # „ohne dass grosse Videos den Chat fluten") — der Zusammenschnitt ging
+        # sofort hinaus, oft mitten in der Nacht und vor der Aufnahme selbst.
+        _spaeter = _should_defer_upload()
         for r in rows:
-            if app is not None and r["group_id"]:
+            if app is None or not r["group_id"]:
+                continue
+            if _spaeter:
+                await asyncio.to_thread(_upload_queue_add, r["group_id"], ziel,
+                                        username, None, None)
+            else:
                 await split_and_send_video(r["group_id"], ziel, app, username)
     return ziel
 

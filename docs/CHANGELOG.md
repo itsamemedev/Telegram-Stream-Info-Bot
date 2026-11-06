@@ -11,6 +11,22 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+## [4.6.13] — 2026-11-06 · „Leitstand"
+
+### Behoben — zweiter Bughunt-Durchgang (v4.2 W162)
+
+- **Meme-Zusammenschnitt am Upload-Fenster vorbei.** Die Aufnahme derselben
+  Sitzung wird außerhalb von `UPLOAD_WINDOW_START`–`UPLOAD_WINDOW_END`
+  aufgeschoben; der Zusammenschnitt (W159) ging sofort an jede Telegram-Gruppe
+  — oft nachts und vor der Aufnahme selbst. Jetzt dieselbe Warteschlange.
+- **Steuer-Journal: Kurs und Originalbetrag ungeprüft.** Beide liefen roh
+  durch `float()`: „abc" endete als HTTP 500 statt als Eingabefehler, „nan"
+  und „inf" wurden gebucht und standen so in der CSV fürs Steuerbüro. Sie
+  stehen nicht im Hash — ein unsinniger Wert fiel damit niemandem auf. Jetzt
+  endlich und größer null; 0 bleibt „kein Kurs".
+
+Vertrag `_test_v42_w162_zweiter_durchgang`, 6 von 6 Mutationsproben gefangen.
+
 ## [4.6.12] — 2026-11-06 · „Leitstand"
 
 ### Behoben — Tiefengrund-Bughunt über W150–W160 (v4.2 W161)

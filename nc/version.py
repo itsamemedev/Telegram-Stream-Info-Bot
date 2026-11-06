@@ -4,7 +4,7 @@ Eine einzige Wahrheit für die Versionsanzeige (Dashboard-Footer, /api/version,
 „Was ist neu"-Panel). Reine Daten + kleine Helfer, voll testbar.
 """
 
-VERSION = "4.6.12"
+VERSION = "4.6.13"
 CODENAME = "Leitstand"
 RELEASE = "2026.11"
 
@@ -23,6 +23,19 @@ def build_stamp():
 # Meilenstein-Changelog, neueste Version zuerst. highlights = kurze, ehrliche
 # Stichpunkte dessen, was die Version bringt.
 CHANGELOG = [
+    {
+        "version": "4.6.13",
+        "date": "2026-11",
+        "title": "Leitstand",
+        # Patch-Fassung von 4.6: zweiter Bughunt-Durchgang (W162).
+        "highlights": [
+            "Der Highlights-&-Memes-Zusammenschnitt ging sofort an Telegram, auch außerhalb des Upload-Fensters — oft mitten in der Nacht und vor der Aufnahme selbst",
+            "Außerhalb des Fensters wandert er jetzt in dieselbe Warteschlange wie die Aufnahmen",
+            "Steuer-Journal: ein unlesbarer Kurs oder Originalbetrag brach die Buchung mit HTTP 500 ab statt mit einer Meldung",
+            "„nan\" und „inf\" als Kurs oder Originalbetrag wurden gebucht und standen so in der CSV fürs Steuerbüro — jetzt abgelehnt",
+            "Ein Kurs von 0 bleibt „kein Kurs\", wie bisher",
+        ],
+    },
     {
         "version": "4.6.12",
         "date": "2026-11",

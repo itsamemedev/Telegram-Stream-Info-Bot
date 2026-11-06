@@ -29573,6 +29573,67 @@ def _test_v42_w161_tiefengrund():
        "Chat-Waechter mit der Aufnahme, Clips vor dem Einarbeiten, fremde 🎯-Bereiche tabu")
 
 
+def _test_v42_w162_zweiter_durchgang():
+    """v4.2-W162: zweiter Durchgang. Der Meme-Zusammenschnitt ging am
+    Upload-Fenster vorbei, und Kurs/Originalbetrag liefen ungeprueft ins
+    Steuer-Journal."""
+    import ast as _ast
+    import asyncio as _aio
+    import sqlite3 as _sq
+    from nc import ledger as L
+
+    # (1) Upload-Fenster: ausserhalb wird der Zusammenschnitt aufgeschoben.
+    src = open("bot.py", encoding="utf-8").read()
+    baum = _ast.parse(src)
+    fn = next(n for n in baum.body if getattr(n, "name", "") == "_meme_zusammenschnitt")
+    tg = next(n for n in _ast.walk(fn) if isinstance(n, _ast.If)
+              and "MEME_REEL_TELEGRAM" in _ast.unparse(n.test))
+    rumpf = _ast.Module(body=tg.body, type_ignores=[])
+    gesendet, vorgemerkt = [], []
+
+    async def _db(f):
+        return [{"group_id": -100}, {"group_id": 0}, {"group_id": -200}]
+
+    async def _senden(chat, ziel, app, user):
+        gesendet.append(chat)
+
+    async def _thread(f, *a):
+        return f(*a)
+
+    def _lauf(spaeter):
+        del gesendet[:], vorgemerkt[:]
+        ns = {"globals": lambda: {"bot_app": object()}, "db_async": _db,
+              "split_and_send_video": _senden, "_should_defer_upload": lambda: spaeter,
+              "_upload_queue_add": lambda *a: vorgemerkt.append(a[0]),
+              "asyncio": type("A", (), {"to_thread": staticmethod(_thread)}),
+              "username": "u", "ziel": "/clips/memes_u.mp4"}
+        code = "async def _f():\n" + "\n".join(
+            "    " + z for z in _ast.unparse(rumpf).splitlines())
+        exec(compile(code, "bot.py", "exec"), ns)
+        _aio.run(ns["_f"]())
+    _lauf(spaeter=True)
+    assert gesendet == [] and vorgemerkt == [-100, -200], \
+        "der Zusammenschnitt geht ausserhalb des Upload-Fensters sofort hinaus"
+    _lauf(spaeter=False)
+    assert gesendet == [-100, -200] and vorgemerkt == []
+
+    # (2) Kurs und Originalbetrag: Eingabefehler statt 500, nie nan/inf.
+    c = _sq.connect(":memory:"); c.row_factory = _sq.Row
+    for kaputt in ("abc", "nan", "inf", "-1,5"):
+        for feld in ("fx_rate", "original_amount"):
+            try:
+                L.add_entry(c, "2026-11-06", "kick", "10", **{feld: kaputt})
+            except L.LedgerError:
+                continue
+            raise AssertionError("%s=%r wurde gebucht" % (feld, kaputt))
+    L.add_entry(c, "2026-11-06", "kick", "10", fx_rate="1,08", original_amount="0")
+    r = c.execute("SELECT fx_rate, original_amount FROM revenue_entries").fetchone()
+    assert (r["fx_rate"], r["original_amount"]) == (1.08, None), tuple(r)
+    assert L.verify_chain(c)["ok"]
+    ok("W162: Meme-Zusammenschnitt haelt das Upload-Fenster, Steuer-Journal prueft Kurs "
+       "und Originalbetrag")
+
+
 def _test_v42_w155_weiche_steckt():
     """v4.2-W155: gemeldet „Wir haben in den Restreams immer noch kein Bild" —
     Overlay und Chat liefen, das Videofeld zeigte das Pausenbild. Ein
@@ -30084,6 +30145,7 @@ def main():
     _test_v42_w159_ausweichen_memes_clipchat()
     _test_v42_w160_html_modus_traegt_quelle()
     _test_v42_w161_tiefengrund()
+    _test_v42_w162_zweiter_durchgang()
     _test_v42_w60_azrael_cooldown_je_plattform()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)
