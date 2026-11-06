@@ -29204,6 +29204,208 @@ def _test_v42_w159_ausweichen_memes_clipchat():
     ok("W159: Restream weicht ohne Bild aus, Clips tragen Chat, Memes werden zusammengeschnitten")
 
 
+def _test_v42_w160_html_modus_traegt_quelle():
+    """v4.2-W160: „Sind wir uns sicher, dass Video und Audio im Restream
+    ankommen, egal ob HTML- oder Text-Modus?" — nein, waren wir nicht. Der
+    End-zu-End-Vertrag (W130) lief ohne Overlay. Im HTML-Modus tastete der
+    Sender beim Start die Overlay-FIFO ab, die Bruecke hing im Schreiben,
+    hielt das fuer eine stumme Quelle und schoss den Zubringer ab; danach stand
+    das Quellbild eingefroren, gesendet wurden nur Overlay, Chat und AZRAEL."""
+    import os as _os
+    import shutil as _sh
+    from nc import restreamcmd as R
+    from nc import sendebruecke as B
+
+    # (1) Rueckstau beim Sender ist keine stumme Quelle.
+    t = [1000.0]
+    br = B.Bruecke(None, ["x"], lambda *a: ["x"], lambda: (None, "offline"),
+                   uhr=lambda: t[0], luecke_s=3.0, anlauf_s=20.0)
+
+    class _Zub:
+        beendet = False
+        def poll(self):
+            return None
+        def terminate(self):
+            self.beendet = True
+        def wait(self, timeout=None):
+            return 0
+    z = _Zub()
+    br._gestartet = 1000.0
+    br._zuletzt[B.QUELLE] = 1000.0
+    br._schreibt_seit = 1000.5
+    t[0] = 1010.0
+    assert br._pruefe_laufenden(z) is False and not z.beendet, \
+        "ein haengender Schreibvorgang wird als stumme Quelle gewertet"
+    br._schreibt_seit, br._gestaut_bis = None, 1009.0
+    assert br._pruefe_laufenden(z) is False and not z.beendet, \
+        "die Luecke zaehlt nicht ab dem Ende des Staus"
+    t[0] = 1013.0
+    assert br._pruefe_laufenden(z) is True and z.beendet, "eine echte Luecke wird nicht erkannt"
+
+    # Ein langsamer Schreibvorgang merkt sich sein Ende — echt durch daten().
+    import os as _os2
+    t2 = [5000.0]
+    br2 = B.Bruecke(None, ["x"], lambda *a: ["x"], lambda: (None, "offline"), uhr=lambda: t2[0])
+    lese, schreib = _os2.pipe()
+    br2._fd, br2.aktiv, br2._wunsch = schreib, B.QUELLE, B.QUELLE
+    br2._um.paket = lambda p: p
+    _echt = _os2.write
+
+    def _langsam(fd, d):
+        t2[0] += 2.0          # der Sender liest zwei Sekunden lang nicht
+        return _echt(fd, d)
+    B.os.write = _langsam
+    try:
+        assert br2.daten(B.QUELLE, b"\x47\x01\x00\x10" + b"\xff" * 184)
+    finally:
+        B.os.write = _echt
+        _os2.close(lese); _os2.close(schreib)
+    assert br2._gestaut_bis == 5002.0 and br2._schreibt_seit is None, \
+        (br2._gestaut_bis, br2._schreibt_seit)
+
+    # (2) Die Overlay-FIFO wird ohne Abtastpause geoeffnet.
+    _rs_konfig(R)
+    cmd = R.build("pipe:0", "", "", transcode=True, rid=1, targets=[("kick", "rtmp://x/k")],
+                  bruecke=True, html_ov_fifo="/tmp/ov.fifo")
+    i = cmd.index("/tmp/ov.fifo")
+    vor = cmd[cmd.index("image2pipe"):i]
+    assert "-c:v" in vor and vor[vor.index("-c:v") + 1] == "png" and "-analyzeduration" in vor \
+        and vor[vor.index("-analyzeduration") + 1] == "0", vor
+
+    # (3) Der echte Lauf: Bruecke + HTML-Overlay + Stimme + Avatar, alles
+    # gleichzeitig wie im Betrieb. Im Ausgang muss Quellbild UND Quellton sein.
+    if not (hasattr(_os, "mkfifo") and _sh.which("ffmpeg") and _sh.which("ffprobe")):
+        ok("W160: Rueckstau ist keine stumme Quelle (rein); FIFO/ffmpeg fehlt — Lauf uebersprungen")
+        return
+    erg = _w160_echter_lauf(R, B)
+    assert erg["ton_db"] > -35, ("Quellton fehlt im HTML-Modus", erg)
+    assert erg["bunt"] and erg["bewegt"], ("Quellbild fehlt oder steht im HTML-Modus", erg)
+    ok("W160: HTML-Modus traegt Quellbild und Quellton — Rueckstau beim Sender ist "
+       "keine stumme Quelle, Overlay-FIFO ohne Abtastpause")
+
+
+def _rs_konfig(R, overlay=True):
+    R.configure(
+        cookie_header=lambda: "", pick_pull_proxy=lambda: "",
+        restream_overlay_files=lambda rid=None: {}, FFMPEG_THREADS_LIVE=3,
+        FFMPEG_THREADS_RELAY=2, RESTREAM_AVATAR="", RESTREAM_BITRATE_K=2500,
+        RESTREAM_AVATAR_ALPHA="", RESTREAM_AVATAR_H=170, RESTREAM_AVATAR_LOOP="",
+        RESTREAM_CANVAS_H=720, RESTREAM_CANVAS_W=1280, RESTREAM_FONT="",
+        RESTREAM_FPS=30, RESTREAM_LOW_LATENCY=True, RESTREAM_OVERLAY=overlay,
+        RESTREAM_OVERLAY_HTML_FPS=1, RESTREAM_RELAY_BITRATE_K=2500,
+        RESTREAM_RELAY_PRESET="ultrafast", RESTREAM_X264_PRESET="ultrafast",
+        RESTREAM_UA="UA/1.0", TTS_CH=2, TTS_SR=44100, TTS_VOICE_GAIN="1.8")
+
+
+def _w160_echter_lauf(R, B):
+    import functools as _ft
+    import http.server as _hs
+    import os as _os
+    import socket as _so
+    import subprocess as _sp
+    import threading as _th
+    import time as _t
+    import pruefhilfen as P
+
+    def frei():
+        s = _so.socket(); s.bind(("127.0.0.1", 0)); p = s.getsockname()[1]; s.close()
+        return p
+    heim = P.verzeichnis()
+    stop = _th.Event()
+    prozesse, srv = [], None
+    try:
+        q = _os.path.join(heim, "q.flv")
+        _sp.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc2=s=540x960:r=30",
+                 "-f", "lavfi", "-i", "sine=r=44100:f=440", "-t", "40", "-c:v", "libx264",
+                 "-preset", "ultrafast", "-g", "60", "-c:a", "aac", "-f", "flv", q],
+                check=True, timeout=120)
+        # Eine Quelle, die beliebig viele Verbindungen annimmt — wie ein CDN.
+        class _Leise(_hs.SimpleHTTPRequestHandler):
+            def log_message(self, *a):
+                return None
+        srv = _hs.ThreadingHTTPServer(("127.0.0.1", 0), _ft.partial(_Leise, directory=heim))
+        _th.Thread(target=srv.serve_forever, daemon=True).start()
+        url = "http://127.0.0.1:%d/q.flv" % srv.server_address[1]
+        fifos = {}
+        for n in ("tts", "av", "html"):
+            fifos[n] = _os.path.join(heim, n + ".fifo")
+            _os.mkfifo(fifos[n])
+        png = _os.path.join(heim, "ov.png")
+        _sp.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi",
+                 "-i", "color=c=black@0.0:s=540x960,format=rgba", "-frames:v", "1", png],
+                check=True, timeout=60)
+        bild = open(png, "rb").read()
+
+        def schreiber(pfad, stueck, takt):
+            def lauf():
+                try:
+                    with open(pfad, "wb") as f:
+                        while not stop.is_set():
+                            f.write(stueck); f.flush(); _t.sleep(takt)
+                except OSError:
+                    return          # der Sender hat seine Seite geschlossen
+            _th.Thread(target=lauf, daemon=True).start()
+        schreiber(fifos["tts"], b"\0" * 4 * 4410, 0.1)
+        schreiber(fifos["av"], bytes([200, 50, 50, 255]) * (64 * 64), 0.1)
+        schreiber(fifos["html"], bild, 1.0)
+        _rs_konfig(R)
+        aus = _os.path.join(heim, "senke.flv")
+        senke_url = "rtmp://127.0.0.1:%d/live/k" % frei()
+        senke = _sp.Popen(["ffmpeg", "-v", "error", "-y", "-listen", "1", "-i", senke_url,
+                           "-c", "copy", "-f", "flv", aus], stdin=_sp.DEVNULL)
+        prozesse.append(senke)
+        _t.sleep(0.8)
+        lese, schreib = _os.pipe()
+        sender = _sp.Popen(R.build("pipe:0", "", "", transcode=True, rid=1,
+                                   targets=[("kick", senke_url)], bruecke=True,
+                                   tts_fifo=fifos["tts"], html_ov_fifo=fifos["html"],
+                                   avatar_feed=(fifos["av"], 64, 64, 10)),
+                           stdin=lese, stdout=_sp.DEVNULL, stderr=_sp.DEVNULL)
+        prozesse.append(sender)
+        _os.close(lese)
+        br = B.Bruecke(schreib, R.fueller(), R.zubringer, lambda: (None, "offline"),
+                       erste_url=url, luecke_s=3.0, name="#w160")
+        br.start()
+        _t.sleep(16)
+        lage = br.lage()
+        br.stop()
+        stop.set()
+        for p in prozesse:
+            try:
+                p.wait(timeout=20)
+            except _sp.TimeoutExpired:
+                p.kill(); p.wait()
+        vd = _sp.run(["ffmpeg", "-hide_banner", "-ss", "6", "-t", "7", "-i", aus, "-af",
+                      "bandpass=f=440:width_type=h:w=60,volumedetect", "-f", "null", "-"],
+                     capture_output=True, text=True, timeout=60).stderr
+        db = [float(z.split("mean_volume:")[1].split("dB")[0]) for z in vd.splitlines()
+              if "mean_volume:" in z]
+        def frame(sek):
+            return _sp.run(["ffmpeg", "-v", "error", "-ss", str(sek), "-i", aus, "-frames:v", "1",
+                            "-vf", "scale=64:64", "-f", "rawvideo", "-pix_fmt", "rgb24", "-"],
+                           capture_output=True, timeout=60).stdout
+        a, b = frame(8), frame(12)
+        # testsrc2 ist bunt UND bewegt sich; das Pausenbild ist eine dunkle
+        # Flaeche, und ein eingefrorener Quell-Frame bleibt stehen — der
+        # gemeldete Fehler war genau so ein stehendes Bild.
+        bunt = bool(a) and max(a) > 150
+        bewegt = bool(a) and len(a) == len(b) and sum(abs(x - y) for x, y in zip(a, b)) > len(a) * 4
+        return {"ton_db": db[0] if db else -99.0, "bunt": bunt, "bewegt": bewegt, "lage": lage}
+    finally:
+        stop.set()
+        for p in prozesse:
+            if p.poll() is None:
+                p.kill()
+        if srv is not None:
+            srv.shutdown()
+        _sh_rm(heim)
+
+
+def _sh_rm(pfad):
+    import shutil as _sh
+    _sh.rmtree(pfad, ignore_errors=True)
+
+
 def _ty_uhr(uhr):
     import types as _ty
     return _ty.SimpleNamespace(monotonic=lambda: uhr[0])
@@ -29718,6 +29920,7 @@ def main():
     _test_v42_w157_cluster_status_meldung()
     _test_v42_w158_chat_in_der_aufnahme()
     _test_v42_w159_ausweichen_memes_clipchat()
+    _test_v42_w160_html_modus_traegt_quelle()
     _test_v42_w60_azrael_cooldown_je_plattform()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)

@@ -11,6 +11,27 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+## [4.6.11] — 2026-11-06 · „Leitstand"
+
+### Behoben — im HTML-Modus kam die Quelle nicht an (v4.2 W160)
+
+- Frage des Betreibers: „Sind wir uns sicher, dass Video und Audio jetzt im
+  Restream ankommen, egal ob HTML- oder Text-Modus?" — Nein. Der
+  End-zu-End-Vertrag (W130) lief ohne Overlay. Nachgebaut mit Sendebrücke,
+  HTML-Overlay-FIFO, Stimme und Avatar gleichzeitig: Text-Modus trug Bild und
+  Ton (440 Hz bei −23,8 dB), der HTML-Modus ein eingefrorenes Bild und Stille
+  (−52 dB) — das gemeldete „nur AZRAEL und Chat".
+- Ursache: der Sender tastet beim Start die Overlay-FIFO ab (`image2pipe`,
+  bis `analyzeduration` 5 s bei 1 Bild/s) und liest so lange seinen Eingang
+  nicht. Die Sendebrücke hing im Schreiben, wertete das als „Quelle schweigt
+  seit 3 s", schoss den gesunden Zubringer ab, und danach stand das
+  Quellbild eingefroren. Ohne Sendebrücke lief derselbe Befehl einwandfrei.
+- Zwei Korrekturen, jede für sich gemessen wirksam: die Brücke wertet einen
+  hängenden Schreibvorgang nicht als stumme Quelle und zählt eine Lücke erst
+  ab dem Stau-Ende; die Overlay-FIFO öffnet mit `-c:v png -probesize 32
+  -analyzeduration 0`. Neuer Vertrag mit echtem Lauf im HTML-Modus, der
+  Quellbild, Bewegung und Quellton im Ausgang misst.
+
 ## [4.6.10] — 2026-11-06 · „Leitstand"
 
 ### Behoben — Restream ohne Bild, Memes, Chat im Clip (v4.2 W159)
