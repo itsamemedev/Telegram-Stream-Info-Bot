@@ -125,7 +125,7 @@ CREATE TABLE IF NOT EXISTS revenue_entries (
     created_at    VARCHAR(64) NOT NULL,
     prev_hash     VARCHAR(64) NOT NULL DEFAULT '',
     row_hash      VARCHAR(64) NOT NULL DEFAULT ''
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_nopad_bin
 """
 _IDX = (
     "CREATE INDEX IF NOT EXISTS idx_rev_booked ON revenue_entries(booked_on)",

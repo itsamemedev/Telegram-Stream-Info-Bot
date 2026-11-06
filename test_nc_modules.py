@@ -28522,6 +28522,69 @@ def _test_v42_w150_umzug_mit_journal_und_archiv():
     ok("W150: Prozentzeichen in Daten und LIKE ueberleben pymysql, das Archiv laeuft auf MariaDB")
 
 
+def _test_v42_w151_mariadb_vergleicht_bytegenau():
+    """v4.2-W151: der Umzug brach an 1062 auf loyalty_points ab.
+
+        Duplicate entry 'tiktok:nora' for key 'PRIMARY'
+        Duplicate entry 'tiktok:ängie' … 'tiktok:ｊａｎａ' … 'tiktok:ℍ'
+
+    SQLite vergleicht bytegenau, MariaDB mit utf8mb4_unicode_ci nicht:
+    gross/klein, Akzente und Schmuckschrift gelten dort als gleich. Gegen eine
+    echte MariaDB 10.11 gemessen: 'ängie' = 'angie' unter unicode_ci, und
+    utf8mb4_bin vergleicht 'a' = 'a ' (PAD SPACE). Nur utf8mb4_nopad_bin
+    trennt alles, was SQLite trennt."""
+    import logging as _lg
+    from nc import schema as S
+    from nc import ledger as L
+
+    assert S.KOLLATION == "utf8mb4_nopad_bin"
+    assert S.KOLLATION in S.parameter("mariadb")["tbl_opts"]
+    assert "COLLATE=" + S.KOLLATION in L._SCHEMA_MARIADB
+    ddl = [q for q in _w143_schema_mariadb() if "CREATE TABLE" in q]
+    assert ddl and not [q for q in ddl if "unicode_ci" in q or "general_ci" in q], \
+        "eine Tabelle vergleicht nicht bytegenau"
+    sh = open("tools/lib/system.sh", encoding="utf-8").read()
+    assert "unicode_ci" not in sh and "COLLATE utf8mb4_nopad_bin" in sh
+
+    # Schon angelegte Tabellen (abgebrochener Umzug, aeltere Fassung) werden
+    # angeglichen — CREATE TABLE IF NOT EXISTS allein fasst sie nie an.
+    class _R:
+        def __init__(self, rows):
+            self.rows = rows
+
+        def fetchall(self):
+            return self.rows
+
+    class _C:
+        def __init__(self):
+            self.sql = []
+
+        def execute(self, q, p=()):
+            self.sql.append(q)
+            if "information_schema.TABLES" in q:
+                return _R([{"t": "loyalty_points", "k": "utf8mb4_unicode_ci"},
+                           {"t": "trackings", "k": S.KOLLATION}])
+            return _R([])
+
+        def commit(self):
+            pass
+
+        def cursor(self):
+            return self
+    c = _C()
+    assert S.kollation_angleichen(c, log=_lg.getLogger("w151")) == ["loyalty_points"]
+    assert any("ALTER TABLE `loyalty_points` CONVERT TO CHARACTER SET utf8mb4 COLLATE "
+               "utf8mb4_nopad_bin" in q for q in c.sql), c.sql
+    assert not any("`trackings`" in q for q in c.sql), "eine passende Tabelle wird umgebaut"
+    c = _C()
+    S.anlegen(c, backend="mariadb", mariadb_db="x", log=_lg.getLogger("w151"))
+    assert any("CONVERT TO CHARACTER SET" in q for q in c.sql), "der Umzug gleicht nicht an"
+    b = open("bot.py", encoding="utf-8").read()
+    assert "_nc_schema.kollation_angleichen(conn, log=log)" in b
+    assert '_nc_schema.parameter("mariadb")["tbl_opts"]' in b
+    ok("W151: MariaDB vergleicht bytegenau wie SQLite, alte Tabellen werden angeglichen")
+
+
 def main():
     tmp, rid = richte_testdatenbank_ein()
     ok("db_conn aus nc.dbwrap: echtes Schema angelegt, Commit durchgelaufen")
@@ -28881,6 +28944,7 @@ def main():
     _test_v42_w148_beobachtung_fehlerpfade()
     _test_v42_w149_tiefengrund()
     _test_v42_w150_umzug_mit_journal_und_archiv()
+    _test_v42_w151_mariadb_vergleicht_bytegenau()
     _test_v42_w60_azrael_cooldown_je_plattform()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)

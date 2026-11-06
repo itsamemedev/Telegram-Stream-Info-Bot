@@ -297,7 +297,10 @@ nc_firewall_hinweis(){
 # kaeme veraendert an, und der Bot stuende mit dem Wert aus der .env vor 1045.
 nc_mariadb_sql(){
   _db="$1"; _nu="$2"; _pw="$(printf '%s' "$3" | sed -e 's/\\/\\\\/g' -e "s/'/''/g")"
-  printf 'CREATE DATABASE IF NOT EXISTS `%s` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;\n' "$_db"
+  printf 'CREATE DATABASE IF NOT EXISTS `%s` CHARACTER SET utf8mb4 COLLATE utf8mb4_nopad_bin;\n' "$_db"
+  # v4.2-W151: bytegenau wie SQLite (siehe nc/schema.py KOLLATION). Eine schon
+  # bestehende Datenbank behaelt ihre Vorgabe — die Tabellen gleicht der Bot an.
+  printf 'ALTER DATABASE `%s` CHARACTER SET utf8mb4 COLLATE utf8mb4_nopad_bin;\n' "$_db"
   for _h in localhost 127.0.0.1 ::1; do
     printf "CREATE USER IF NOT EXISTS '%s'@'%s' IDENTIFIED BY '%s';\n" "$_nu" "$_h" "$_pw"
     printf "ALTER USER '%s'@'%s' IDENTIFIED BY '%s';\n" "$_nu" "$_h" "$_pw"

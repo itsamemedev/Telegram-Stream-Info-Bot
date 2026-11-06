@@ -4110,7 +4110,8 @@ def init_db():
     ts        = "VARCHAR(64)" if is_my else "TEXT"       # indexed ISO timestamp
     iv        = "INTEGER"                                 # integer column (beide Backends)
     # MariaDB-Tabellen-Optionen für UTF-8 + InnoDB
-    tbl_opts  = " ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci" if is_my else ""
+    # v4.2-W151: dieselbe Sortierfolge wie nc.schema (bytegenau wie SQLite).
+    tbl_opts  = _nc_schema.parameter("mariadb")["tbl_opts"] if is_my else ""
 
     with db_conn() as conn:
         _nc_schema.create_schema(
@@ -4118,6 +4119,8 @@ def init_db():
             iv=iv, tbl_opts=tbl_opts, is_my=is_my, ts=ts,
             _create_index_safe=_create_index_safe, _migrate_columns=_migrate_columns, log=log)
         _nc_schema.modultabellen(conn, backend=DB_BACKEND, log=log)   # v4.2-W150
+        if is_my:
+            _nc_schema.kollation_angleichen(conn, log=log)               # v4.2-W151
 
         # v4.2-W85: der Schema-Zaehler. Das Schema wird oben idempotent
         # nachgezogen — das geht VORWAERTS und beantwortet die eine Frage
