@@ -470,7 +470,11 @@ def test_overlay_size_contract():
     # nach Formatierung, und ein Anker, der an der Einrueckung haengt, meldet
     # sonst einen Fehler, wo nur der Zeilenumbruch gewandert ist.
     _flach = " ".join(src.split())
-    assert "_restream_html_overlay_start, rid, source_url=src" in _flach
+    # ANKER GEWANDERT (v4.2-W148, nicht der Vertrag): eine Durchreicher-
+    # Adresse ist fuer ffprobe keine Adresse und geht als None durch; jede
+    # echte Quell-URL kommt weiter beim Overlay an.
+    assert ("_restream_html_overlay_start, rid, source_url=None if _nc_durch.ist(src) else src"
+            in _flach)
     # Filter verzerrt nicht mehr.
     # ANKER GEWANDERT (v4.2-W16, nicht der Vertrag): der Filtergraph wird in
     # nc/restreamcmd.py gebaut. Die VERBIETENDE Zusicherung liest weiter beide
