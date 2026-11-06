@@ -42,6 +42,7 @@ from nc import brainstate as _nc_brainstate
 from nc import channels as _nc_channels
 from nc import discordrang as _nc_rang
 from nc import discordziele as _nc_ziele      # v4.2-W153: User-Bereiche abgleichen
+from nc import meldetakt as _nc_meldetakt     # v4.2-W161: fremde Bereiche gedrosselt melden
 from nc import befehle as _nc_befehle
 from nc import discordstate as _nc_discordstate
 from nc import i18n as _nc_i18n
@@ -513,6 +514,17 @@ async def _ziele_abgleichen(guild, erzwingen=False):
     for name in plan["loeschen"]:
         cat = discord.utils.get(guild.categories, name=name)
         if cat is None:
+            continue
+        if not _nc_ziele.loeschbar(cat.name, [ch.name for ch in cat.channels]):
+            # v4.2-W161: Praefix ja, Inhalt fremd — von Hand angelegt oder
+            # ergaenzt. Nicht unser Bereich, also nicht unser Loeschen.
+            laut, weg = _nc_meldetakt.melden("discord-fremdbereich", name,
+                                             _time_mod.monotonic())
+            if laut:
+                log.warning("Discord: Kategorie %s nicht geloescht — sie traegt Kanaele, "
+                            "die der Bot nicht angelegt hat (%s). Von Hand pruefen.%s", name,
+                            ", ".join(sorted(ch.name for ch in cat.channels))[:200],
+                            _nc_meldetakt.zusatz(weg))
             continue
         try:
             for ch in list(cat.channels):

@@ -11,6 +11,39 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+## [4.6.12] — 2026-11-06 · „Leitstand"
+
+### Behoben — Tiefengrund-Bughunt über W150–W160 (v4.2 W161)
+
+Fünf Befunde, alle derselben Klasse: ein Zustand, der nach dem Ereignis
+stehen blieb, das ihn hätte lösen müssen.
+
+- **Kick-Cluster-Suche nach einem Umzug des Keys.** „Bestätigt" war ein
+  Ja/Nein für die ganze Suche. Nach dem ersten gefundenen Cluster galt damit
+  jeder spätere Kandidat als bestätigt; lehnte Kick den Key später mit 4001
+  ab, blieb die Suche am nächsten Kandidaten mit DNS-Fehler hängen — der
+  Fehler aus W157, eine Runde später. Jetzt merkt sie sich den Namen.
+- **Verschlossener Raum über das Live hinaus.** `nc/geschuetzt` wurde nur
+  von einer gelungenen Aufnahme zurückgesetzt. Ein Raum, der in einem Live
+  keine Adresse herausgab, sperrte beim nächsten, öffentlichen Live den
+  Durchreicher des Restreams — für ein reines Restream-Ziel für immer. Der
+  Offline-Übergang setzt die Markierung jetzt still zurück.
+- **Aufnahme-Chat lief nach der Aufnahme weiter.** Der Chat-Wächter wartet
+  auf das Ende der TikTok-Verbindung, nicht der Aufnahme, und niemand brach
+  ihn ab. Endete die Aufnahme bei laufendem Live (pausiert, entfernt,
+  Abbruch), hielt er die Verbindung samt Sign-Quota bis zum Ende des Lives.
+  Jetzt endet er nach 90 s Gnadenfrist (Segmentwechsel bleibt überbrückt).
+- **Doppelter Chat im Clip.** Ein Clip kurz vor dem Aufnahmeende liest die
+  Datei erst nach `CLIP_POST_SECS`. Hatte das Chat-Einbrennen sie bis dahin
+  ersetzt, schnitt er aus der Fassung mit Chat und brannte seinen eigenen
+  darüber. Das Einarbeiten wartet jetzt auf offene Clips.
+- **Discord löschte fremde 🎯-Kategorien.** Der Abgleich erkannte „unsere"
+  Bereiche allein am Präfix `🎯 ` — eine von Hand so benannte Kategorie wäre
+  mitsamt Kanälen und Verlauf gelöscht worden. Jetzt nur, wenn sie
+  ausschließlich die Kanäle trägt, die der Bot selbst anlegt.
+
+Vertrag `_test_v42_w161_tiefengrund`, 12 von 12 Mutationsproben gefangen.
+
 ## [4.6.11] — 2026-11-06 · „Leitstand"
 
 ### Behoben — im HTML-Modus kam die Quelle nicht an (v4.2 W160)
