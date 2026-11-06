@@ -28336,10 +28336,21 @@ def _test_v42_w149_tiefengrund():
     ok("W149: Retention-Lauf mit days=0 wird abgelehnt statt mit 30 Tagen ausgefuehrt")
 
     # (8) .env: geschrieben wird, was dotenv genauso zurueckliest.
-    from dotenv import dotenv_values
+    # python-dotenv steht nicht in jedem CI-Job; wo es fehlt, halten die
+    # festen Schreibweisen und der eigene Leser die Aussage, wo es da ist,
+    # liest der Bot-Leser selbst gegen.
+    try:
+        from dotenv import dotenv_values
+    except ImportError:
+        dotenv_values = None
+    fest = {"abc #12": "'abc #12'", "'q": "'\\'q'", " rand": "' rand'",
+            "x y": "x y", "http://127.0.0.1:3000": "http://127.0.0.1:3000", "#x": "#x"}
+    for v, erwartet in fest.items():
+        assert EV.wert_schreiben(v) == erwartet, (v, EV.wert_schreiben(v))
     for v in ("abc #12", "'q", "a\\b'c", " rand", "x y", "http://127.0.0.1:3000", "#x"):
         zeile = "K=" + EV.wert_schreiben(v)
-        assert dotenv_values(stream=_io.StringIO(zeile))["K"] == v, (v, zeile)
+        if dotenv_values is not None:
+            assert dotenv_values(stream=_io.StringIO(zeile))["K"] == v, (v, zeile)
         assert EV.wert_lesen(EV.wert_schreiben(v)) == v, v
     env = _os.path.join(heim, ".env")
     with open(env, "w") as f:
