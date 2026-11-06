@@ -29,6 +29,17 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
   in denselben Baum. Der Job-Merker gilt jetzt für beide.
 - **Spendenliste:** nach einem Fehler las sie das Ergebnis der vorigen Abfrage
   (`except Exception: pass` vor `fetchall()`).
+- **Discord-Bereiche folgen den Trackings** (gemeldet: „alle getrackten User
+  sollten einen Channel bekommen, die nicht mehr getrackten gelöscht
+  werden"). Bisher gab es nur `/setup_targets` — von Hand, nur anlegend,
+  gedeckelt und ohne pausierte Trackings. Jetzt gleicht eine eigene Schleife
+  alle `DISCORD_ZIELE_SYNC_MIN` Minuten ab (Vorgabe 10, `0` schaltet ab).
+  Die Entscheidung steht in `nc/discordziele.py`, mit drei Riegeln:
+  gelöscht wird nur eine Kategorie mit unserem Präfix `🎯 `; ohne gelesene
+  Trackings wird nichts gelöscht (eine leere Liste ist eher eine leere
+  Datenbank); und mehr als die Hälfte der Bereiche löscht nur
+  `/setup_targets` ausdrücklich — gelöschte Kanäle nehmen ihren Verlauf mit.
+  Die Server-Grenze von 500 Kanälen wird beachtet und gemeldet.
 - **Einstellungen auf dem Handy unlesbar** (gemeldet mit Bildschirmfoto): das
   starre Zwei-Spalten-Raster gab der Eingabe mindestens 220 px, das Feld lag
   über dem Variablennamen, und die Namen waren auf zwei Buchstaben gekappt.

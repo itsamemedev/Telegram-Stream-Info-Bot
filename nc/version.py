@@ -33,7 +33,7 @@ CHANGELOG = [
             "Ein Umlaut im PIN-Feld brachte den Login mit HTTP 500 zum Absturz und zählte nicht als Fehlversuch",
             "Ein Rollback kann nicht mehr neben einem laufenden Update schreiben — beide zusammen hinterließen einen Stand, der weder alt noch neu war",
             "Die Spendenliste im Deck las nach einem Fehler das Ergebnis der vorigen Abfrage",
-            "Jeder Befund mit Vertrag und Mutationsprobe",
+            "Discord: jeder getrackte User bekommt seinen Bereich von selbst, und der eines nicht mehr getrackten wird gelöscht — alle zehn Minuten, ohne /setup_targets",
         ],
     },
     {

@@ -41,6 +41,7 @@ from nc import badwords as _nc_badwords
 from nc import brainstate as _nc_brainstate
 from nc import channels as _nc_channels
 from nc import discordrang as _nc_rang
+from nc import discordziele as _nc_ziele      # v4.2-W153: User-Bereiche abgleichen
 from nc import befehle as _nc_befehle
 from nc import discordstate as _nc_discordstate
 from nc import i18n as _nc_i18n
@@ -483,6 +484,82 @@ async def _provision_user_channels(guild, usernames):
         except Exception as e:
             log.warning("Discord: User-Channels für %s fehlgeschlagen: %s", u, e)
     return made
+
+
+def _alle_getrackten():
+    """Alle getrackten Namen, pausierte eingeschlossen. Wirft bei
+    Datenbankfehler — der Abgleich darf dann nichts loeschen (W153)."""
+    with db_conn() as conn:
+        rows = conn.execute("SELECT DISTINCT username FROM trackings").fetchall()
+    return [r["username"] for r in rows if r["username"]]
+
+
+def _ziel_guild():
+    """Der Server fuer die User-Bereiche: DISCORD_GUILD_ID, sonst der erste.
+    Ohne Verbindung keiner — die Schleife wartet dann auf den naechsten Takt."""
+    _c = _dc_client()
+    g = _c.get_guild(DISCORD_GUILD_ID) if (_c is not None and DISCORD_GUILD_ID) else None
+    return g or (_c.guilds[0] if (_c is not None and _c.guilds) else g)
+
+
+async def _ziele_abgleichen(guild, erzwingen=False):
+    """v4.2-W153: jeder getrackte User hat einen Bereich, kein entfernter
+    behaelt einen. Die Entscheidung trifft nc/discordziele.py; hier wird nur
+    ausgefuehrt. -> {"angelegt", "geloescht", "zurueckgestellt", "grund"}"""
+    getrackt = await asyncio.to_thread(_alle_getrackten)
+    plan = _nc_ziele.plan(getrackt, [c.name for c in guild.categories],
+                          len(guild.channels), erzwingen=erzwingen)
+    geloescht = []
+    for name in plan["loeschen"]:
+        cat = discord.utils.get(guild.categories, name=name)
+        if cat is None:
+            continue
+        try:
+            for ch in list(cat.channels):
+                await ch.delete(reason="nicht mehr getrackt")
+            await cat.delete(reason="nicht mehr getrackt")
+            geloescht.append(name[len(_nc_ziele.PRAEFIX):])
+        except Exception as e:
+            log.error("Discord: Bereich %s nicht geloescht: %s", name, e)
+    angelegt = await _provision_user_channels(guild, plan["anlegen"])
+    if angelegt or geloescht:
+        log.info("Discord-Bereiche abgeglichen: %d angelegt (%s), %d geloescht (%s)",
+                 len(angelegt), ", ".join(angelegt[:10]), len(geloescht),
+                 ", ".join(geloescht[:10]))
+    if plan["zurueckgestellt"]:
+        log.error("Discord: %d getrackte User ohne Bereich — der Server erreicht die "
+                  "Grenze von %d Kanaelen (%s …)", len(plan["zurueckgestellt"]),
+                  _nc_ziele.SERVER_GRENZE, ", ".join(plan["zurueckgestellt"][:5]))
+    if plan["grund"]:
+        log.warning("Discord-Abgleich: %s", plan["grund"])
+    return {"angelegt": angelegt, "geloescht": geloescht,
+            "zurueckgestellt": plan["zurueckgestellt"], "grund": plan["grund"]}
+
+
+def _ziele_takt_min():
+    """DISCORD_ZIELE_SYNC_MIN — als Funktion gelesen (.env kommt spaeter)."""
+    roh = (os.getenv("DISCORD_ZIELE_SYNC_MIN", "10") or "").strip()
+    return float(roh) if roh.replace(".", "", 1).isdigit() else 10.0
+
+
+async def _ziele_sync_loop():
+    """v4.2-W153: der Abgleich laeuft von selbst — vorher nur per /setup_targets."""
+    _c = _dc_client()
+    if _c is None:
+        return
+    await _c.wait_until_ready()
+    while _dc_offen():
+        takt = _ziele_takt_min()
+        if takt <= 0:
+            log.info("Discord-Bereiche: automatischer Abgleich aus (DISCORD_ZIELE_SYNC_MIN=0)")
+            return
+        try:
+            guild = _ziel_guild()
+            if guild is not None:
+                await _ziele_abgleichen(guild)
+        except Exception as e:
+            _loop_fehler("_ziele_sync_loop", e)
+        await asyncio.sleep(takt * 60)
 
 
 def _tracked_usernames(limit):
@@ -1048,13 +1125,16 @@ def _reg_community_setup(tree):
             return
         await inter.response.defer(ephemeral=True)
         try:
-            users = _tracked_usernames(DISCORD_TARGET_CAP)
-            if not users:
-                await inter.followup.send(_nc_i18n.t("Keine getrackten User gefunden."), ephemeral=True); return
-            made = await _provision_user_channels(inter.guild, users)
+            # v4.2-W153: derselbe Abgleich wie der Automat — anlegen UND
+            # loeschen, ausdruecklich auch ueber dem Massen-Riegel.
+            r = await _ziele_abgleichen(inter.guild, erzwingen=True)
             await inter.followup.send(
-                f"✅ {len(made)} neue User-Bereiche angelegt (von {len(users)} getrackten · Cap {DISCORD_TARGET_CAP}).\n"
-                + (", ".join(made) if made else "alle bereits vorhanden."),
+                f"✅ {len(r['angelegt'])} User-Bereiche angelegt, {len(r['geloescht'])} geloescht."
+                + (f"\nAngelegt: {', '.join(r['angelegt'][:20])}" if r['angelegt'] else "")
+                + (f"\nGeloescht: {', '.join(r['geloescht'][:20])}" if r['geloescht'] else "")
+                + (f"\n⚠ {len(r['zurueckgestellt'])} ohne Bereich — Server-Grenze von 500 Kanaelen."
+                   if r['zurueckgestellt'] else "")
+                + (f"\n{r['grund']}" if r['grund'] else ""),
                 ephemeral=True)
         except Exception as e:
             await inter.followup.send(_nc_i18n.t(f"Fehler: {e}"), ephemeral=True)
@@ -2325,6 +2405,7 @@ async def _discord_run_once():
             if DISCORD_ERROR_PUSH:
                 _spawn(_error_channel_loop(), name="discord-errorfeed")
             _spawn(_community_events_loop(), name="discord-community-events")
+            _spawn(_ziele_sync_loop(), name="discord-ziele")        # v4.2-W153
             # v4.0-W35: nie ablaufenden Community-Invite EINMALIG erzeugen (nur
             # wenn noch keiner in .env/app_config steht) — für Website + Announcer.
             _spawn(_ensure_discord_invite(client), name="discord-invite-once")

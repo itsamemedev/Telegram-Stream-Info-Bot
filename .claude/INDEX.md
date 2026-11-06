@@ -396,81 +396,81 @@ Zahlen sind Zeilennummern für `ncpatch show` / `ncpatch sym`.
 ## Discord-Slash-Commands in discordbot.py (66)
 
 ```
-  2091  /about                  Ueber diesen Bot
-   813  /ai                     
-  2091  /aireset                KI-Kontext zuruecksetzen
-  1222  /ask                    
-   914  /assign_role            
-   964  /ban                    
-  2046  /botstats               
-  2091  /brain                  Brain-Lage: Regeln, Agenten, Empfehlungen
-  2091  /bulkadd                Mehrere User auf einmal tracken · a b c
-  2091  /cleanup                Alte Aufnahmen aufraeumen
-  1477  /clearwarns             
-  2010  /clip                   
-  1995  /clipoftheweek          
-  1348  /clips                  
-  2091  /cookies                Cookie-Status — mit 'holen' selbst beziehen · [holen]
-   869  /create_category        
-   840  /create_channel         
-   904  /create_group           
-   879  /create_role            
-   855  /create_voice           
-  1100  /daily                  
-  2091  /diag                   Vollstaendige Diagnose
-  2091  /einnahmen              Einnahmen und Spenden
-  1251  /event                  
-  1293  /events                 
-  1387  /follow                 
-  1376  /help                   
-   954  /kick                   
-  1075  /leaderboard            
-  2091  /live                   Live-Status sofort pruefen · @user
-  1335  /livenow                
-  2091  /logs                   Letzte Fehler aus dem Log
-  2091  /pause                  Tracking pausieren · @user
-  1363  /post_test              
-  1183  /profile                
-   986  /purge                  
-  2091  /quelle                 Stream-Quellen eines Live-Nutzers messen (alle Wege, ffprobe
-  2091  /quota                  Speicher-Quota
-  1062  /rank                   
-  1323  /recstatus              
-   924  /remove_role            
-  2091  /report                 Azrael-Sentinel-Wochenreport
-   826  /restream_status        
-  2091  /resume                 Tracking fortsetzen · @user
-   934  /set_channel_perms      
-  1029  /setup_community        
-  1046  /setup_targets          
-  1419  /stats                  
-   785  /status                 
-  2091  /stoprec                Laufende Aufnahme sauber beenden · @user
-  1515  /streaminfo             
-  2091  /summary                Tageszusammenfassung
-  2091  /sysres                 System-Ressourcen
-  2091  /teststream             Recorder-Selbsttest · @user
-  2091  /tiktok                 Profil-Analyse eines TikTok-Accounts · ‹name›
-   974  /timeout                
-  1487  /topstreamers           
-  2091  /topusers               Top-Streamer nach Aufnahmen
-   715  /track                  
-  2091  /track_exact            Exakten Usernamen tracken (ohne Korrektur) · ‹name›
-   798  /tracklist              
-  1401  /unfollow               
-  2091  /unpause                Auto-pausierte Quelle wieder aktivieren · @user
-   747  /untrack                
-  1440  /warn                   
-  1463  /warnings               
+  2171  /about                  Ueber diesen Bot
+   890  /ai                     
+  2171  /aireset                KI-Kontext zuruecksetzen
+  1302  /ask                    
+   991  /assign_role            
+  1041  /ban                    
+  2126  /botstats               
+  2171  /brain                  Brain-Lage: Regeln, Agenten, Empfehlungen
+  2171  /bulkadd                Mehrere User auf einmal tracken · a b c
+  2171  /cleanup                Alte Aufnahmen aufraeumen
+  1557  /clearwarns             
+  2090  /clip                   
+  2075  /clipoftheweek          
+  1428  /clips                  
+  2171  /cookies                Cookie-Status — mit 'holen' selbst beziehen · [holen]
+   946  /create_category        
+   917  /create_channel         
+   981  /create_group           
+   956  /create_role            
+   932  /create_voice           
+  1180  /daily                  
+  2171  /diag                   Vollstaendige Diagnose
+  2171  /einnahmen              Einnahmen und Spenden
+  1331  /event                  
+  1373  /events                 
+  1467  /follow                 
+  1456  /help                   
+  1031  /kick                   
+  1155  /leaderboard            
+  2171  /live                   Live-Status sofort pruefen · @user
+  1415  /livenow                
+  2171  /logs                   Letzte Fehler aus dem Log
+  2171  /pause                  Tracking pausieren · @user
+  1443  /post_test              
+  1263  /profile                
+  1063  /purge                  
+  2171  /quelle                 Stream-Quellen eines Live-Nutzers messen (alle Wege, ffprobe
+  2171  /quota                  Speicher-Quota
+  1142  /rank                   
+  1403  /recstatus              
+  1001  /remove_role            
+  2171  /report                 Azrael-Sentinel-Wochenreport
+   903  /restream_status        
+  2171  /resume                 Tracking fortsetzen · @user
+  1011  /set_channel_perms      
+  1106  /setup_community        
+  1123  /setup_targets          
+  1499  /stats                  
+   862  /status                 
+  2171  /stoprec                Laufende Aufnahme sauber beenden · @user
+  1595  /streaminfo             
+  2171  /summary                Tageszusammenfassung
+  2171  /sysres                 System-Ressourcen
+  2171  /teststream             Recorder-Selbsttest · @user
+  2171  /tiktok                 Profil-Analyse eines TikTok-Accounts · ‹name›
+  1051  /timeout                
+  1567  /topstreamers           
+  2171  /topusers               Top-Streamer nach Aufnahmen
+   792  /track                  
+  2171  /track_exact            Exakten Usernamen tracken (ohne Korrektur) · ‹name›
+   875  /tracklist              
+  1481  /unfollow               
+  2171  /unpause                Auto-pausierte Quelle wieder aktivieren · @user
+   824  /untrack                
+  1520  /warn                   
+  1543  /warnings               
 ```
 
 ## Discord-Events in discordbot.py (4)
 
 ```
-  2249  on_member_join
-  2211  on_message
-  2112  on_raw_reaction_add
-  2284  on_ready
+  2329  on_member_join
+  2291  on_message
+  2192  on_raw_reaction_add
+  2364  on_ready
 ```
 
 ## Top-Level-Symbole in telegramversand.py (2 Funktionen)
@@ -480,55 +480,60 @@ Zahlen sind Zeilennummern für `ncpatch show` / `ncpatch sym`.
     76-476    split_and_send_video
 ```
 
-## Top-Level-Symbole in discordbot.py (46 Funktionen)
+## Top-Level-Symbole in discordbot.py (51 Funktionen)
 
 ```
-  1592-1643   _award_xp
-  1814-1843   _clip_week_leader
-  1867-1881   _clipoftheweek_loop
-  2400-2462   _community_events_loop
-  1549-1571   _dc_client
-  1574-1583   _dc_offen
-  2502-2537   _disc_automod_check
-   403-408    _disc_sprache_setzen
-  1646-1694   _discord_ai_automod
-   536-575    _discord_automod
-  1697-1717   _discord_azrael_reply
-  1884-2359   _discord_run_once
-   238-296    _discord_start
-   299-353    _ensure_discord_invite
-  2365-2397   _ensure_error_channel
-   424-437    _ensure_rank_roles
-   678-692    _ensure_team_roles
-  2465-2495   _error_channel_loop
-   585-589    _guard
-   505-533    _handle_voice_ai
-   411-421    _is_admin
-  1762-1773   _liveboard_loop
-   592-610    _on_level_up
-   501-502    _par_chat_id
-  1846-1864   _post_clip_of_week
-  1776-1794   _post_weekly_digest
-   440-466    _provision_base_channels
-   469-485    _provision_user_channels
-  1315-1408   _reg_betrieb
-  1000-1089   _reg_community_setup
-  1092-1172   _reg_daily_profil
-  1215-1312   _reg_frage_events
-   772-828    _reg_info
-   946-997    _reg_moderation
-  1175-1212   _reg_profil
-   895-943    _reg_rollen
-   831-892    _reg_server
-  1411-1498   _reg_streamer
-  1501-1546   _reg_system
-   706-769    _reg_tracking
-   645-675    _run_tg_handler
-   488-498    _tracked_usernames
-   155-217    _uebernehmen
-  1726-1759   _update_liveboard
-  1797-1811   _weekly_digest_loop
-   220-223    starte
+   489-494    _alle_getrackten
+  1672-1723   _award_xp
+  1894-1923   _clip_week_leader
+  1947-1961   _clipoftheweek_loop
+  2481-2543   _community_events_loop
+  1629-1651   _dc_client
+  1654-1663   _dc_offen
+  2583-2618   _disc_automod_check
+   404-409    _disc_sprache_setzen
+  1726-1774   _discord_ai_automod
+   613-652    _discord_automod
+  1777-1797   _discord_azrael_reply
+  1964-2440   _discord_run_once
+   239-297    _discord_start
+   300-354    _ensure_discord_invite
+  2446-2478   _ensure_error_channel
+   425-438    _ensure_rank_roles
+   755-769    _ensure_team_roles
+  2546-2576   _error_channel_loop
+   662-666    _guard
+   582-610    _handle_voice_ai
+   412-422    _is_admin
+  1842-1853   _liveboard_loop
+   669-687    _on_level_up
+   578-579    _par_chat_id
+  1926-1944   _post_clip_of_week
+  1856-1874   _post_weekly_digest
+   441-467    _provision_base_channels
+   470-486    _provision_user_channels
+  1395-1488   _reg_betrieb
+  1077-1169   _reg_community_setup
+  1172-1252   _reg_daily_profil
+  1295-1392   _reg_frage_events
+   849-905    _reg_info
+  1023-1074   _reg_moderation
+  1255-1292   _reg_profil
+   972-1020   _reg_rollen
+   908-969    _reg_server
+  1491-1578   _reg_streamer
+  1581-1626   _reg_system
+   783-846    _reg_tracking
+   722-752    _run_tg_handler
+   565-575    _tracked_usernames
+   156-218    _uebernehmen
+  1806-1839   _update_liveboard
+  1877-1891   _weekly_digest_loop
+   497-502    _ziel_guild
+   505-536    _ziele_abgleichen
+   545-562    _ziele_sync_loop
+   539-542    _ziele_takt_min
+   221-224    starte
 ```
 
 ## Top-Level-Symbole in bot.py (544 Funktionen, 2 Klassen)
@@ -1140,6 +1145,7 @@ director.py            class LiveDirector, configure
 discordlimits.py       aktuell_label, aktuell_mb, configure, describe, effective_upload_mb, gate_mb, guild_filesize_bytes, guild_limit_mb
 discordrang.py         rang_fuer_level, slug, xp_fuer_level, xp_zu_level
 discordstate.py        invite, state_get
+discordziele.py        kategorie, plan
 donations.py           configure, fmt_eur, parse_number, source_allowed, to_eur, unknown_count
 donationsdb.py         manual_rows, manual_total, parse_eur
 durchreicher.py        adresse, ist, main, nutzer_aus, werkzeug, zieher_cmd, zieher_umgebung, zubringer_cmd

@@ -28646,6 +28646,48 @@ def _test_v42_w152_cookies_pin_rollback():
     ok("W152: Secure-Cookies hinter dem Proxy, Nicht-ASCII-PIN ohne 500, kein Rollback neben dem Update")
 
 
+def _test_v42_w153_discord_bereiche_folgen_den_trackings():
+    """v4.2-W153: gemeldet „discord, wo alle getrackten User einen Channel
+    bekommen sollten und die, die nicht mehr getrackt sind, die Channel
+    sollten gelöscht werden". Bis hierher nur /setup_targets: von Hand, nur
+    anlegend, gedeckelt, ohne pausierte Trackings."""
+    import ast as _ast
+    from nc import discordziele as Z
+
+    k = Z.kategorie
+    # (1) Anlegen, was fehlt; loeschen, was wir angelegt haben und nicht mehr gilt.
+    p = Z.plan(["anna", "Ben", "carl"], [k("anna"), k("alt"), "📢 Info"], belegt=40)
+    assert p["anlegen"] == ["Ben", "carl"] and p["loeschen"] == [k("alt")], p
+    assert "📢 Info" not in p["loeschen"], "fremde Kategorie geloescht"
+    # (2) Ohne Bestand kein Loeschen — eine leere Liste ist eher eine leere DB.
+    p = Z.plan([], [k("anna"), k("ben")], belegt=40)
+    assert p["loeschen"] == [] and p["grund"], p
+    # (3) Kein Massenloeschen im Automaten — wohl aber ausdruecklich.
+    alle = [k("u%d" % i) for i in range(10)]
+    p = Z.plan(["u0"], alle, belegt=60)
+    assert p["loeschen"] == [] and "zu viele" in p["grund"], p
+    p = Z.plan(["u0"], alle, belegt=60, erzwingen=True)
+    assert len(p["loeschen"]) == 9
+    # (4) Die Server-Grenze: was nicht passt, wird zurueckgestellt, nicht verschluckt.
+    p = Z.plan(["a", "b", "c"], [], belegt=Z.SERVER_GRENZE - 5)
+    assert p["anlegen"] == ["a"] and p["zurueckgestellt"] == ["b", "c"], p
+    # (5) Gleicher Slug, ein Bereich.
+    assert Z.plan(["Anna", "anna"], [], belegt=0)["anlegen"] == ["Anna"]
+
+    # (6) Verdrahtung: eigene Schleife, /setup_targets nutzt denselben Abgleich,
+    # pausierte Trackings zaehlen mit.
+    d = open("discordbot.py", encoding="utf-8").read()
+    baum = _ast.parse(d)
+    oben = {n.name for n in baum.body if isinstance(n, (_ast.FunctionDef, _ast.AsyncFunctionDef))}
+    assert {"_ziele_abgleichen", "_ziele_sync_loop", "_alle_getrackten"} <= oben
+    assert '_spawn(_ziele_sync_loop(), name="discord-ziele")' in d
+    assert "await _ziele_abgleichen(inter.guild, erzwingen=True)" in d
+    q = d[d.index("def _alle_getrackten("):d.index("def _ziel_guild(")]
+    assert "paused" not in q, "pausierte Trackings verlieren ihren Bereich"
+    assert "DISCORD_ZIELE_SYNC_MIN=10" in open(".env.example", encoding="utf-8").read()
+    ok("W153: Discord-Bereiche folgen den Trackings — anlegen, loeschen, mit Riegeln")
+
+
 def main():
     tmp, rid = richte_testdatenbank_ein()
     ok("db_conn aus nc.dbwrap: echtes Schema angelegt, Commit durchgelaufen")
@@ -29007,6 +29049,7 @@ def main():
     _test_v42_w150_umzug_mit_journal_und_archiv()
     _test_v42_w151_mariadb_vergleicht_bytegenau()
     _test_v42_w152_cookies_pin_rollback()
+    _test_v42_w153_discord_bereiche_folgen_den_trackings()
     _test_v42_w60_azrael_cooldown_je_plattform()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)

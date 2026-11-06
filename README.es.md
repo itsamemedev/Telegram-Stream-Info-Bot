@@ -67,7 +67,7 @@ flowchart TB
     DC["🎮 Discord<br/>66 comandos"]:::ein --> BOT
     TT["🎥 TikTok<br/>detección en directo + chat"]:::ein --> BOT
     BOT["bot.py<br/>monolito · 26.414 líneas"]:::core
-    BOT -->|configure| NC["nc/ — 179 módulos<br/>39 blueprints"]:::lib
+    BOT -->|configure| NC["nc/ — 180 módulos<br/>39 blueprints"]:::lib
     BOT --> BRAIN["brain/ — 16 agentes vigilantes"]:::brain
     BOT --> DB[("SQLite o MariaDB<br/>+ ajustes")]:::db
     BOT --> PROM["/metrics → Prometheus → Grafana"]:::lib
@@ -134,7 +134,7 @@ dispara nada.
 
 ## ⚙️ Ajustes
 
-**En el panel, pestaña “Ajustes”.** Las unas 576 variables de `.env.example`
+**En el panel, pestaña “Ajustes”.** Las unas 577 variables de `.env.example`
 con grupo, valor por defecto y descripción, con búsqueda. Cada fila indica de
 dónde viene el valor — *fijado en el panel*, *desde .env* o *por defecto*. Se
 guarda en la base de datos y, en el siguiente arranque, tiene prioridad sobre
@@ -336,7 +336,7 @@ Todas las oleadas en
 | Rutas Flask | 379 (34 en `bot.py` · 345 en `nc/routes/`) |
 | Comandos de Discord | 66 |
 | Agentes vigilantes | 14 |
-| Variables de configuración | ~576 |
+| Variables de configuración | ~577 |
 | Idiomas | alemán (origen), inglés, español |
 
 ---
