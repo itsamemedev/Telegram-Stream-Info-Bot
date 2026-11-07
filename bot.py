@@ -1439,6 +1439,27 @@ def _upload_queue_add(chat_id, filepath, username, started_at, ended_at):
     log.info(f"Upload aufgeschoben (außerhalb Fenster {UPLOAD_WINDOW_START:02d}–"
              f"{UPLOAD_WINDOW_END:02d} Uhr): @{username} → chat {chat_id}")
 
+def _telegram_ziele(roh, username=""):
+    """v4.2-W167: Fan-out-Ziele einer Aufnahme als Telegram-Chats.
+
+    Ein per Discord-/track angelegtes Tracking traegt die GUILD als group_id.
+    Der Upload ging bisher an diese ID und wurde im Versand als „keine
+    Telegram-Chat-ID" verworfen — gemeldet am 07.11. als „Telegram uploads
+    funktionieren nicht mehr". Jetzt geht er an DISCORD_TRACK_GROUP_ID, sonst
+    an die erste freigeschaltete Telegram-Gruppe (nc/telegramfehler.ersatz)."""
+    ziel = _nc_tgfehler.ersatz(DISCORD_TRACK_GROUP_ID, ALLOWED_CHAT_IDS)
+    aus, umgeleitet = _nc_tgfehler.ziele(roh, ziel)
+    if umgeleitet:
+        laut, weg = _nc_meldetakt.melden("tg-umgeleitet", str(ziel), _time_mod.monotonic(),
+                                         abstand_s=6 * 3600)
+        if laut:
+            log.info("Upload @%s: Ziel %s ist eine Discord-Guild (Tracking per /track) — "
+                     "geht an die Telegram-Gruppe %s. Andere Gruppe: DISCORD_TRACK_GROUP_ID "
+                     "setzen.%s", username or "?", ", ".join(map(str, umgeleitet)), ziel,
+                     _nc_meldetakt.zusatz(weg))
+    return aus
+
+
 def _upload_queue_remove(entry):
     with _UPLOAD_QUEUE_LOCK:
         items = _upload_queue_load()
@@ -1472,7 +1493,9 @@ async def _upload_window_loop(bot_app):
                     if not _is_upload_window(datetime.now()):
                         break                   # Fenster zu → Rest beim nächsten Lauf
                     fpath = entry.get("file")
-                    chat_id = entry.get("chat_id")
+                    # v4.2-W167: auch die schon aufgeschobenen Discord-Ziele
+                    # aus der Nacht davor bekommen ihre Telegram-Gruppe.
+                    chat_id = _telegram_ziele([entry.get("chat_id")], entry.get("username"))[0]
                     username = entry.get("username") or "?"
                     if not fpath or not os.path.exists(fpath):
                         _upload_queue_remove(entry)   # Datei weg → Eintrag verwerfen
@@ -7879,8 +7902,10 @@ def _kick_ws_pause(exc, folge):
         folge[0], folge[1] = lage, 1
     pause = _nc_kickapi.pusher_pause(code, folge[1])
     if lage == "konfig":
+        # v4.2-W167: 6 h — die Pause bis zum naechsten Versuch ist 15 min, mit
+        # der Vorgabe-Ruhe war jede Runde wieder „laut" (40 Zeilen je Nacht).
         laut, weg = _nc_meldetakt.melden("kick-pusher", str(code),
-                                         _time_mod.monotonic())
+                                         _time_mod.monotonic(), abstand_s=6 * 3600)
         if laut:
             log.error("Kick-Chat: Pusher lehnt die Verbindung ab (%s). Nach dem "
                       "Pusher-Protokoll hilft ein unveraenderter Versuch nicht — "
@@ -7892,7 +7917,8 @@ def _kick_ws_pause(exc, folge):
     return pause
 
 
-def _kick_cluster_weiter(exc, versucht, probe=False, abgewiesen=None) -> str:
+def _kick_cluster_weiter(exc, versucht, probe=False, abgewiesen=None, befund=None,
+                         weitere_keys=False) -> str:
     """v4.2-W154: nach 4001 der naechste Pusher-Cluster, "" wenn keiner mehr.
 
     `versucht` (Menge) wird fortgeschrieben. Sind alle durch, beginnt die
@@ -7918,17 +7944,37 @@ def _kick_cluster_weiter(exc, versucht, probe=False, abgewiesen=None) -> str:
         # abgewiesen hat. Scheiterten Kandidaten am Netz (DNS, Verbindung),
         # ist das unbewiesen — dann zeigt der Rat aufs Netz, nicht auf den Key.
         alle = abgewiesen is None or len(abgewiesen) >= len(_nc_kickapi.PUSHER_CLUSTER)
-        if alle:
-            log.error("Kick-Chat: kein Pusher-Cluster (%s) nimmt KICK_PUSHER_KEY an — "
-                      "der Key selbst ist veraltet. Abhilfe: den aktuellen Key aus dem "
-                      "Web-Client von kick.com in KICK_PUSHER_KEY eintragen.",
-                      ", ".join(_nc_kickapi.PUSHER_CLUSTER))
+        if befund is not None:
+            befund["alle"] = alle
+        # v4.2-W167: 6 h Ruhe statt 15 min. Die naechste Runde kommt nach
+        # genau 15 min — mit der Vorgabe-Ruhe war damit JEDE Runde „laut", und
+        # das Fehlerlog trug die ganze Nacht alle 15 min dieselben zwei Zeilen.
+        # Gestempelt wird die Drossel erst, wenn wirklich ein FEHLER ansteht —
+        # sonst verbraucht die Info-Zeile „naechster Key" den Platz, und die
+        # Meldung, dass gar kein Key mehr geht, bliebe 6 h stumm.
+        laut, weg = False, 0
+        if alle and weitere_keys:
+            log.info("Kick-Chat: kein Pusher-Cluster nimmt diesen Key an — versuche den "
+                     "naechsten bekannten Key.")
         else:
+            laut, weg = _nc_meldetakt.melden("kick-pusher-runde", "alle" if alle else "netz",
+                                             _time_mod.monotonic(), abstand_s=6 * 3600)
+        if alle and weitere_keys:
+            pass
+        elif alle and laut:
+            log.error("Kick-Chat: kein Pusher-Cluster (%s) nimmt KICK_PUSHER_KEY an, auch "
+                      "keiner der bekannten Keys — der Key ist veraltet. Abhilfe: den "
+                      "aktuellen Key aus dem Web-Client von kick.com in KICK_PUSHER_KEY "
+                      "eintragen; `venv/bin/python tools/kickpusher.py --key <key>` prueft "
+                      "ihn.%s", ", ".join(_nc_kickapi.PUSHER_CLUSTER),
+                      _nc_meldetakt.zusatz(weg))
+        elif not alle and laut:
             log.error("Kick-Chat: kein Pusher-Cluster nahm die Verbindung an — %d von %d "
                       "haben den Key abgewiesen, die uebrigen waren nicht erreichbar "
                       "(zuletzt: %s). Zuerst Netz/DNS/Proxy zum Host ws-<cluster>.pusher.com "
-                      "pruefen; `venv/bin/python tools/kickpusher.py` probiert alle durch.",
-                      len(abgewiesen), len(_nc_kickapi.PUSHER_CLUSTER), str(exc)[:160])
+                      "pruefen; `venv/bin/python tools/kickpusher.py` probiert alle durch.%s",
+                      len(abgewiesen), len(_nc_kickapi.PUSHER_CLUSTER), str(exc)[:160],
+                      _nc_meldetakt.zusatz(weg))
         if abgewiesen is not None:
             del abgewiesen[:]
         versucht.clear()
@@ -7955,6 +8001,10 @@ class _KickClusterSuche:
     def __init__(self):
         self.cluster = (KICK_PUSHER_CLUSTER or "us2").strip().lower()
         self.versucht = {self.cluster}
+        # v4.2-W167: der Key wandert mit, wenn KEIN Cluster den eingestellten
+        # annimmt (nc/kickapi.BEKANNTE_KEYS).
+        self.key = (KICK_PUSHER_KEY or "").strip()
+        self.keys_versucht = {self.key}
         # v4.2-W157: hat hier je ein Abo gestanden? v4.2-W161: der NAME des
         # Clusters, nicht Ja/Nein. Als Ja/Nein galt nach dem ersten Treffer
         # JEDER spaetere Kandidat als bestaetigt: zog Kick den Key danach um
@@ -7964,13 +8014,29 @@ class _KickClusterSuche:
         self.abgewiesen = []        # Review #202: 4001 in dieser Suchrunde
 
     def url(self) -> str:
-        return _nc_kickapi.pusher_url(KICK_PUSHER_KEY, self.cluster)
+        return _nc_kickapi.pusher_url(self.key, self.cluster)
 
     async def weiter(self, exc) -> bool:
         """True: ein anderer Cluster ist dran, gleich neu verbinden."""
         probe = self.cluster not in (self.bestaetigt,
                                      (KICK_PUSHER_CLUSTER or "us2").strip().lower())
-        neu = _kick_cluster_weiter(exc, self.versucht, probe=probe, abgewiesen=self.abgewiesen)
+        befund = {}
+        naechster = _nc_kickapi.naechster_key(self.keys_versucht, KICK_PUSHER_KEY)
+        neu = _kick_cluster_weiter(exc, self.versucht, probe=probe, abgewiesen=self.abgewiesen,
+                                   befund=befund, weitere_keys=bool(naechster))
+        if not neu and befund.get("alle"):
+            if naechster:
+                # Kein Cluster kennt diesen Key: der naechste bekannte, wieder
+                # ab dem eingestellten Cluster.
+                self.keys_versucht.add(naechster)
+                self.key = naechster
+                self.cluster = next(iter(self.versucht))
+                await asyncio.sleep(2)
+                return True
+            # Alle Keys durch: die naechste lange Runde beginnt wieder beim
+            # eingestellten — Kick kann ihn jederzeit wieder freischalten.
+            self.key = (KICK_PUSHER_KEY or "").strip()
+            self.keys_versucht = {self.key}
         if neu:
             self.cluster = neu
             await asyncio.sleep(2)
@@ -7982,6 +8048,11 @@ class _KickClusterSuche:
     def gefunden(self):
         if self.bestaetigt != self.cluster:
             _kick_cluster_gefunden(self.cluster)
+            if self.key != (KICK_PUSHER_KEY or "").strip():
+                log.warning("Kick-Chat: verbunden mit Pusher-Key %s statt des eingestellten "
+                            "%s — der eingestellte ist veraltet. Dauerhaft: "
+                            "KICK_PUSHER_KEY=%s in die .env (oder im Deck unter "
+                            "Einstellungen).", self.key, KICK_PUSHER_KEY, self.key)
         self.bestaetigt = self.cluster
 
 
@@ -9607,7 +9678,7 @@ async def handle_recording_finished(proc, tid, chat_id, username, output_file,
             fan_rows = await db_async(lambda c: c.execute(
                 "SELECT id, group_id FROM trackings WHERE username=?",
                 (username,)).fetchall())
-            target_chats = [r["group_id"] for r in fan_rows] or [chat_id]
+            target_chats = _telegram_ziele([r["group_id"] for r in fan_rows] or [chat_id], username)  # W167
             target_tids  = [r["id"] for r in fan_rows] or [tid]
             log.info(f"@{username} fan-out: {len(target_chats)} chat(s) bekommen Upload")
 
@@ -14446,7 +14517,9 @@ class RestreamManager:
         # Ziel und musste im Log suchen, dass es "live, aber keine Adresse"
         # war. Bei offline/unknown bleibt last_error stehen: das ist der
         # letzte echte Fehler, kein Zustand.
-        grund = str(err)[:300] if new == "error" else None
+        # v4.2-W166: 600 statt 300 — der Grund des Durchreichers haengt seither
+        # an, und abgeschnitten waere genau der Teil, der die Abhilfe nennt.
+        grund = str(err)[:600] if new == "error" else None
         try:
             with db_conn() as conn:
                 cur = conn.execute("SELECT status, last_error FROM restreams WHERE id=?",
@@ -14530,10 +14603,16 @@ class RestreamManager:
             # zieht den Stream selbst, auch wenn TikTok keine Adresse
             # herausgibt, die ein fremdes ffmpeg ziehen darf. Nur ueber die
             # Sendebruecke: dort ist der Zubringer ein eigener Prozess.
-            durch = _restream_durchreicher(username)
+            warum = []
+            durch = _restream_durchreicher(username, warum)
             if durch:
                 return durch, None
-            return None, "keine spielbare Quell-URL (weder FLV noch HLS noch CMAF/DASH)"
+            # v4.2-W166: gemeldet wurde nur der erste Halbsatz. Er sagt, dass
+            # TikTok keine Adresse gab — nicht, warum der Durchreicher, der
+            # genau fuer diesen Fall da ist, ebenfalls nichts brachte.
+            # nc.resolvergrund.quelle_lage erkennt die Lage am Satzanfang.
+            return None, ("keine spielbare Quell-URL (weder FLV noch HLS noch CMAF/DASH)"
+                          + (" — Durchreicher: " + warum[0] if warum else ""))
         if not flv and hls:
             log.info("Restream @%s: kein FLV verfügbar → HLS+Transcode. Für FLV ggf. "
                      "RECORD_PROXY setzen (Datacenter-IP wird von TikTok oft geblockt).", username)
@@ -18463,7 +18542,7 @@ def _aufnahme_chat_ausklang(username, warte_s=90):
     _spawn(_nachsehen(), name=f"aufnahme-chat-ausklang-{u}")
 
 
-def _aufnahme_chat_vormerken(output_file, username):
+def _aufnahme_chat_vormerken(output_file, username, wann="beim Stopp"):
     """v4.2-W163: der Chat einer beim Stopp abgebrochenen Aufnahme geht in die
     Datenbank, nicht neben die Datei. -> True, wenn vorgemerkt.
 
@@ -18487,13 +18566,13 @@ def _aufnahme_chat_vormerken(output_file, username):
                     _nc_chatnachtrag.vormerken(conn, output_file, clean_username(username), chat)
                     conn.commit()
                 vorgemerkt = True
-                log.info("Aufnahme-Chat @%s: %d Nachrichten beim Stopp vorgemerkt — werden "
-                         "beim naechsten Start in %s eingearbeitet.", username, len(chat),
+                log.info("Aufnahme-Chat @%s: %d Nachrichten %s vorgemerkt — werden im "
+                         "Hintergrund in %s eingearbeitet.", username, len(chat), wann,
                          os.path.basename(output_file))
             except Exception as e:
-                log.error("Aufnahme-Chat @%s: %d Nachrichten beim Stopp nicht vorgemerkt "
+                log.error("Aufnahme-Chat @%s: %d Nachrichten %s nicht vorgemerkt "
                           "(%s: %s) — der Chat dieser Aufnahme ist verloren.", username,
-                          len(chat), type(e).__name__, e)
+                          len(chat), wann, type(e).__name__, e)
     return vorgemerkt
 
 
@@ -18557,6 +18636,55 @@ def _alte_beilagen_einsammeln(verz=None):
     return uebernommen, entfernt
 
 
+# v4.2-W167: das Einarbeiten hat EINEN eigenen Arbeiter. Es haelt einen Thread
+# fuer die Dauer eines libx264-Durchgangs — Minuten bis Stunden. Im
+# Default-Pool teilte es sich die Threads mit DNS und Datenbank (W47); und
+# einer nach dem anderen ist ohnehin richtig: zwei gleichzeitige Durchgaenge
+# ziehen sich auf einer ausgelasteten Box nur gegenseitig herunter.
+_CHAT_EINARBEITEN_POOL = _cf_thread.ThreadPoolExecutor(max_workers=1,
+                                                       thread_name_prefix="chat-einarbeiten")
+_CHAT_WECKER = {"ev": None}
+
+
+async def _chat_einarbeiten_async(pfad, chat, modus, wer):
+    """_aufnahme_chat_einarbeiten auf dem eigenen Arbeiter."""
+    return await asyncio.get_running_loop().run_in_executor(
+        _CHAT_EINARBEITEN_POOL, _aufnahme_chat_einarbeiten, pfad, chat, modus, wer)
+
+
+def _aufnahme_chat_wecken():
+    """Dem Nachtrag-Dienst sagen, dass etwas vorgemerkt ist. Laeuft er noch
+    nicht (die ersten zwei Minuten nach dem Start), holt sein erster Durchgang
+    den Eintrag aus der Datenbank — verloren geht nichts."""
+    ev = _CHAT_WECKER["ev"]
+    if ev is not None:
+        ev.set()
+
+
+async def _aufnahme_chat_dienst(warte_s=120, runde_s=1800):
+    """v4.2-W167: der Nachtrag laeuft nicht mehr nur beim Start, sondern
+    nach jeder Aufnahme — geweckt von _aufnahme_chat_wecken, zur Sicherheit
+    auch alle `runde_s`."""
+    _CHAT_WECKER["ev"] = ev = asyncio.Event()
+    warte = warte_s
+    while True:
+        # Codex #209: auch der ERSTE Durchgang steht im Auffang. Warf er
+        # (gesperrte Datenbank beim Start), endete der Dienst — und jede
+        # spaetere Aufnahme weckte ein Event, das niemand mehr las.
+        try:
+            await _aufnahme_chat_nachtrag(warte)
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            _loop_fehler("aufnahme-chat-dienst", e)
+        warte = 0
+        try:
+            await asyncio.wait_for(ev.wait(), timeout=runde_s)
+        except asyncio.TimeoutError:
+            pass                       # Sicherheitsrunde — kein Fehler
+        ev.clear()
+
+
 async def _aufnahme_chat_nachtrag(warte_s=120):
     """v4.2-W163: beim Stopp vorgemerkten Chat in seine Aufnahme einarbeiten.
 
@@ -18595,7 +18723,10 @@ async def _aufnahme_chat_nachtrag(warte_s=120):
             await db_async(_nc_chatnachtrag.eingearbeitet, e["id"], pfad,
                            await asyncio.to_thread(os.path.getsize, pfad))
             continue
-        neu = await asyncio.to_thread(_aufnahme_chat_einarbeiten, pfad, chat, modus, wer)
+        # v4.2-W161: ein Clip kurz vor dem Ende liest die Aufnahme erst nach
+        # CLIP_POST_SECS — vorher ersetzt, braennte er einen zweiten Chat ein.
+        await _clips_abwarten(pfad)
+        neu = await _chat_einarbeiten_async(pfad, chat, modus, wer)
         if neu:
             await db_async(_nc_chatnachtrag.eingearbeitet, e["id"], pfad, neu)
             continue
@@ -18607,24 +18738,26 @@ async def _aufnahme_chat_nachtrag(warte_s=120):
 
 
 async def _aufnahme_fertigmachen(output_file, username):
-    """Nachbearbeitung einer fertigen Aufnahme, als EIN Schritt:
-    Tonspur sichern (W106), dann den Chat einarbeiten (W158).
-    -> {"groesse": int|None, ...} wie _nc_tonspur.sichern."""
+    """Nachbearbeitung einer fertigen Aufnahme VOR dem Upload: Tonspur
+    sichern (W106). Der Chat (W158) wird nur vorgemerkt und danach im
+    Hintergrund eingearbeitet. -> {"groesse": int|None, ...} wie
+    _nc_tonspur.sichern.
+
+    v4.2-W167: gemeldet am 07.11. „Telegram uploads funktionieren nicht mehr".
+    Seit W158 lief hier VOR dem Upload ein kompletter libx264-Durchgang ueber
+    die ganze Aufnahme — nice 19 auf einer ausgelasteten Box, Zeitlimit
+    viermal die Aufnahmedauer. Eine zweistuendige Aufnahme durfte damit bis zu
+    acht Stunden vor dem Upload haengen, und weil W158 fuer JEDE Aufnahme einen
+    Chat-Empfang startet, traf das praktisch jede. Jetzt geht der Upload sofort;
+    der Chat landet ueber den Nachtrag (nc/chatnachtrag.py, W163) in der
+    gespeicherten Aufnahme — dauerhaft vorgemerkt, also auch nach einem
+    Neustart mittendrin."""
     erg = await _nc_tonspur.sichern(output_file, wer=f"@{username}")
     if os.getenv("MEME_REEL", "1") != "0":
         _spawn(_meme_zusammenschnitt(username, output_file), name=f"meme-reel-{username}")
-    chat = _nc_aufnahmechat.beenden(output_file)
-    modus = _aufnahme_chat_modus()
-    if chat and modus != "aus":
-        # v4.2-W161: ein Clip, der kurz vor dem Ende ausgeloest wurde, liest
-        # die Aufnahme erst nach CLIP_POST_SECS. Ersetzt das Einarbeiten die
-        # Datei vorher, schneidet er aus der Fassung MIT eingebranntem Chat
-        # und brennt seinen eigenen darueber — zwei Chat-Panels uebereinander.
-        await _clips_abwarten(output_file)
-        neu = await asyncio.to_thread(_aufnahme_chat_einarbeiten, output_file, chat,
-                                      modus, username)
-        if neu:
-            erg = dict(erg, groesse=neu)
+    if await asyncio.to_thread(_aufnahme_chat_vormerken, output_file, username,
+                               "nach dem Ende"):
+        _aufnahme_chat_wecken()
     return erg
 
 
@@ -18680,14 +18813,14 @@ async def _meme_zusammenschnitt(username, output_file):
         # „ohne dass grosse Videos den Chat fluten") — der Zusammenschnitt ging
         # sofort hinaus, oft mitten in der Nacht und vor der Aufnahme selbst.
         _spaeter = _should_defer_upload()
-        for r in rows:
-            if app is None or not r["group_id"]:
+        # v4.2-W167: Discord-/track-Ziele gehen an ihre Telegram-Gruppe.
+        for gid in _telegram_ziele([r["group_id"] for r in rows if r["group_id"]], username):
+            if app is None:
                 continue
             if _spaeter:
-                await asyncio.to_thread(_upload_queue_add, r["group_id"], ziel,
-                                        username, None, None)
+                await asyncio.to_thread(_upload_queue_add, gid, ziel, username, None, None)
             else:
-                await split_and_send_video(r["group_id"], ziel, app, username)
+                await split_and_send_video(gid, ziel, app, username)
     return ziel
 
 
@@ -24513,7 +24646,7 @@ async def run_bot():
     _spawn(_laufstand_loop(), name="laufstand")           # v4.2-W104: Update eingespielt, aber nicht wirksam?
     _spawn(_cookie_bezug_loop(), name="cookie-bezug")    # v4.2-W107: Cookies holen, ohne Telegram-Chat
     _spawn(_tunnel_wacht_loop(), name="tunnel-wacht")     # v4.2-W105: traegt der Egress (Polen-VPS)?
-    _spawn(_aufnahme_chat_nachtrag(), name="chat-nachtrag")   # v4.2-W163: Chat aus dem Stopp einarbeiten
+    _spawn(_aufnahme_chat_dienst(), name="chat-nachtrag")   # v4.2-W163/W167: Chat in die Aufnahme, nach dem Upload
     _spawn(_sign_health_loop(), name="sign-health")       # F103: EulerStream-Sign-Key-Health
     _spawn(_marketing_loop(), name="marketing")           # B162: Cross-Promo (self-gated, Default aus)
     _spawn(_news_loop(), name="news")                     # B163: oeffentliche Website-News (self-gated, Default aus)
@@ -25636,7 +25769,7 @@ def _brain_moderation_snap():
         erlaubt=_nc_modstats.quellen(os.getenv("MOD_TREND_PLATTFORMEN") or None))
 
 
-def _restream_durchreicher(username):
+def _restream_durchreicher(username, warum=None):
     """v4.2-W148: die Durchreicher-Adresse fuer @username — oder None, wenn
     der Weg hier nicht geht (abgeschaltet, keine Bruecke, kein Zieher).
     Jeder Grund steht gedrosselt im Log: ein Restream, der ohne Adresse
@@ -25686,6 +25819,11 @@ def _restream_durchreicher(username):
     if laut:
         log.warning("Restream @%s: auch der Durchreicher geht nicht — %s.%s",
                     username, grund, _nc_meldetakt.zusatz(unterdr))
+    # v4.2-W166: der Grund geht auch an den Aufrufer — sonst stand im Deck nur
+    # „keine spielbare Quell-URL", und WARUM der letzte Weg ausfiel, stand
+    # gedrosselt im Log, wo der Betreiber beim Blick aufs Panel nicht ist.
+    if warum is not None:
+        warum.append(grund)
     return None
 
 
