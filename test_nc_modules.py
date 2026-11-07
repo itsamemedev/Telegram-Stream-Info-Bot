@@ -30936,6 +30936,172 @@ def _test_v42_w169_link_video():
     ok("W169: YouTube-/TikTok-Link -> Video als Antwort in Telegram und Discord, "
        "mit Limit, Verkleinern, Grund bei Fehlschlag und Aufraeumen")
 
+def _test_v42_w170_overlay_ein_browser():
+    """v4.2-W170: „durch die hohe CPU-Last bricht der ganze Stream zusammen."
+    Der HTML-Overlay startete fuer JEDES Bild einen frischen Chromium
+    (gemessen 0,86 CPU-s je Bild, bei 1 Bild/s je Restream), gleichrangig mit
+    dem Transcode. Jetzt ein dauerhafter Browser je Restream ueber
+    --remote-debugging-pipe (gemessen 0,08 CPU-s), mit nice."""
+    import ast as _ast
+    import http.server as _hs
+    import os as _os
+    import shutil as _sh
+    import signal as _sig
+    import socketserver as _ss
+    import threading as _th
+    import time as _t
+    from nc import overlaybrowser as _ob
+
+    src = open("bot.py", encoding="utf-8").read()
+    baum = _ast.parse(src)
+
+    def _fn(name):
+        return next(n for n in baum.body if getattr(n, "name", "") == name)
+
+    # (1) Die Schleife nimmt den dauerhaften Browser, der Stopp beendet ihn.
+    start = _ast.unparse(_fn("_restream_html_overlay_start"))
+    assert "_htmlov_dauerbrowser(" in start, "der Overlay startet wieder je Bild einen Chromium"
+    assert "asyncio.to_thread(_htmlov_bild_schreiben, browser" in start, \
+        "das Bild muss aus dem dauerhaften Browser kommen, ausserhalb des Loops"
+    assert "'browser': browser" in start, "ohne Eintrag kann der Stopp ihn nicht beenden"
+    stopp = _ast.unparse(_fn("_restream_html_overlay_stop"))
+    assert ".beenden()" in stopp, "ein beendeter Restream liesse seinen Chromium laufen"
+    db = _ast.unparse(_fn("_htmlov_dauerbrowser"))
+    assert "nice=FFMPEG_NICE_BG" in db, "der Browser muss hinter den Transcode zuruecktreten"
+    assert "log.error" in db, "der teure Rueckfall auf den Einzelschuss muss laut sein"
+
+    # (2) Kommandozeile: Pipe statt Port, nice davor, nichts aus der .env.
+    cmd = _ob.browser_cmd("/x/chrome", nice=12)
+    assert "--remote-debugging-pipe" in cmd
+    assert not any(a.startswith("--remote-debugging-port") for a in cmd), \
+        "ein Debug-Port waere eine Fernsteuerung fuer jeden lokalen Prozess"
+    if _sh.which("nice"):
+        assert cmd[:3] == ["nice", "-n", "12"], cmd
+    assert _ob.browser_cmd("/x/chrome", nice=0)[0] == "/x/chrome"
+
+    binpath = next((p for p in (_sh.which("google-chrome"), _sh.which("chromium"),
+                                _sh.which("chromium-browser")) if p), None)
+    if not binpath:
+        print("  w170: kein Chromium — echter Lauf uebersprungen")
+        return
+
+    # (3) Echter Lauf gegen eine Seite mit transparentem Hintergrund.
+    seite = (b"<html><body style='background:transparent;color:#fff'>"
+             b"<div style='font:40px sans-serif'>AZRAEL</div></body></html>")
+
+    class _H(_hs.BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html")
+            self.end_headers()
+            self.wfile.write(seite)
+
+        def log_message(self, *_a):
+            return None
+
+    # Mit Threads: ein angehaltener Chromium (4b) kann eine vorab geoeffnete
+    # Verbindung festhalten, und ein Server mit EINEM Faden haengt dann an
+    # ihr — der naechste Seitenaufbau bekam nie eine Antwort (1 von 3 Laeufen).
+    srv = _ss.ThreadingTCPServer(("127.0.0.1", 0), _H)
+    srv.daemon_threads = True
+    _th.Thread(target=srv.serve_forever, daemon=True).start()
+    url = "http://127.0.0.1:%d/overlay" % srv.server_address[1]
+
+    def _cpu(sid):
+        tick, s = _os.sysconf("SC_CLK_TCK"), 0
+        for d in _os.listdir("/proc"):
+            if not d.isdigit():
+                continue
+            try:
+                f = open("/proc/%s/stat" % d).read().rsplit(")", 1)[1].split()
+            except OSError:
+                continue
+            if int(f[3]) == sid:            # Feld 6: Sitzung
+                s += int(f[11]) + int(f[12])  # utime + stime
+        return s / tick
+
+    def _reste(sid):
+        return [d for d in _os.listdir("/proc") if d.isdigit()
+                and _ist_in(d, sid)]
+
+    def _ist_in(d, sid):
+        try:
+            f = open("/proc/%s/stat" % d).read().rsplit(")", 1)[1].split()
+        except OSError:
+            return False
+        return int(f[3]) == sid and f[0] != "Z"
+
+    b = _ob.Dauerbrowser(binpath, url, "320,240", nice=12)
+    alt_ruhe = _ob.NEUSTART_RUHE_S
+    try:
+        b.starten(timeout=30)
+        png = b.schuss()
+        assert png[:8] == b"\x89PNG\r\n\x1a\n", png[:8]
+        # IHDR: Breite/Hoehe wie bestellt, Farbtyp 6 (RGBA) — ohne Alpha
+        # deckte das Overlay das Quellbild ab.
+        assert int.from_bytes(png[16:20], "big") == 320
+        assert int.from_bytes(png[20:24], "big") == 240
+        assert png[25] == 6, "Overlay-Bild ohne Alphakanal"
+        sid = b._proc.pid
+        c0 = _cpu(sid)
+        for _ in range(5):
+            b.schuss()
+        je_bild = (_cpu(sid) - c0) / 5
+        # Gemessen 0,08 gegen 0,86 beim Kaltstart; die Grenze laesst einer
+        # langsamen CI-Maschine das Dreifache und faengt den Kaltstart.
+        assert je_bild < 0.3, "dauerhafter Browser kostet %.2f CPU-s je Bild" % je_bild
+
+        # (4) Absturz: kein Neustart in jedem Takt, nach der Ruhezeit schon.
+        _os.killpg(sid, _sig.SIGKILL)
+        _t.sleep(0.3)
+        try:
+            b.schuss()
+            raise AssertionError("ein toter Browser lieferte ein Bild")
+        except _ob.OverlayBrowserFehler as e:
+            assert "Neustart in" in str(e), e
+        assert b.starts == 1, "Neustart vor Ablauf der Ruhezeit"
+        _ob.NEUSTART_RUHE_S = 0
+        assert b.schuss()[:4] == b"\x89PNG", "kein Bild nach dem Neustart"
+        assert b.starts == 2
+
+        # (4b) Haengt der Browser (SIGSTOP = ueberlastete Maschine), endet der
+        # Schuss mit Fehler UND der Browser wird beendet — sonst gilt er als
+        # lebend, und jeder weitere Takt wartet wieder 15 s auf nichts.
+        _os.kill(b._proc.pid, _sig.SIGSTOP)
+        try:
+            b.schuss(timeout=1)
+            raise AssertionError("ein haengender Browser lieferte ein Bild")
+        except _ob.OverlayBrowserFehler:
+            pass
+        assert not b.lebt(), "haengender Browser nach Zeitueberschreitung nicht beendet"
+        assert b.schuss()[:4] == b"\x89PNG" and b.starts == 3
+    finally:
+        _ob.NEUSTART_RUHE_S = alt_ruhe
+        b.beenden()
+        srv.shutdown()
+        srv.server_close()
+    # (5) beenden() raeumt die ganze Gruppe ab, nicht nur den Hauptprozess —
+    # und zwar SOFORT. Ohne killpg verschwinden Zygote und Renderer erst, wenn
+    # sie den toten Hauptprozess bemerken (gemessen ~50 ms); ein Renderer, der
+    # unter Last haengt, bemerkt es gar nicht und rechnet weiter. Deshalb
+    # ohne Wartezeit geprueft: mit killpg 12 von 12 Laeufen sauber.
+    # Damit das nicht vom Zufall abhaengt, werden die Helfer vorher
+    # angehalten: ein angehaltener Prozess bemerkt nichts, nur SIGKILL an die
+    # Gruppe raeumt ihn ab.
+    b = _ob.Dauerbrowser(binpath, "about:blank", "100,100")
+    b.starten(timeout=30)
+    sid = b._proc.pid
+    for d in _reste(sid):
+        if int(d) != sid:
+            _os.kill(int(d), _sig.SIGSTOP)
+    b.beenden()
+    rest = _reste(sid)
+    for d in rest:                      # nicht als Waisen liegen lassen
+        _os.kill(int(d), _sig.SIGKILL)
+    assert not rest, "Chromium-Reste nach beenden(): %s" % rest
+    ok("v4.2-W170: Overlay mit einem Chromium je Restream statt je Bild")
+
+
 def _test_v42_w155_weiche_steckt():
     """v4.2-W155: gemeldet „Wir haben in den Restreams immer noch kein Bild" —
     Overlay und Chat liefen, das Videofeld zeigte das Pausenbild. Ein
@@ -31455,6 +31621,7 @@ def main():
     _test_v42_w167_upload_wartet_nicht_auf_chat()
     _test_v42_w168_ein_thema_ein_kanal()
     _test_v42_w169_link_video()
+    _test_v42_w170_overlay_ein_browser()
     _test_v42_w60_azrael_cooldown_je_plattform()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)

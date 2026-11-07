@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="docs/assets/banner.svg" alt="NIGHTCRAWLER — v4.6.19 Control Room" width="100%">
+<img src="docs/assets/banner.svg" alt="NIGHTCRAWLER — v4.6.20 Control Room" width="100%">
 
 ### The control room for live streaming
 #### Monitoring · Recording · Multi-target restream · AI moderation
@@ -626,6 +626,8 @@ re-uploaded, then deleted), one Discord clip channel instead of 🎯 areas,
 dashboard trackings land in Telegram.
 **Patch 4.6.19** — post a YouTube/TikTok link in Telegram or Discord and the bot
 replies with the video.
+**Patch 4.6.20** — the HTML overlay keeps one Chromium per restream open
+instead of starting a new one for every frame: about eleven times less CPU.
 
 Every wave on its own: **[`docs/CHANGELOG.md`](docs/CHANGELOG.md)**.
 
@@ -637,7 +639,7 @@ Every wave on its own: **[`docs/CHANGELOG.md`](docs/CHANGELOG.md)**.
 
 | | |
 |---|---|
-| Current version | **4.6.19** — “Control Room” (2026.11) |
+| Current version | **4.6.20** — “Control Room” (2026.11) |
 | Flask routes | 379 (34 in `bot.py` · 345 in `nc/routes/`) |
 | Discord slash commands | 66 |
 | Domain modules | 185 in `nc/` (+39 in `nc/routes/`, +3 in `nc/intel/`), 10 in `brain/` |
@@ -687,7 +689,7 @@ with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 <div align="center">
 
-**NIGHTCRAWLER v4.6.19 · “Control Room”**
+**NIGHTCRAWLER v4.6.20 · “Control Room”**
 
 **[🌐 lafap.de](https://lafap.de)** · **[💬 Discord](https://discord.gg/psvnxm7tSV)** · **[📓 Changelog](docs/CHANGELOG.md)**
 

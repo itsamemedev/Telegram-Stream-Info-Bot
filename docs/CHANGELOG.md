@@ -11,6 +11,36 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+## [4.6.20] — 2026-11-07 · „Leitstand"
+
+### Behoben — ein Chromium je Restream statt je Bild (v4.2 W170)
+
+Gemeldet am 07.11.: „Problem nur durch die hohe CPU-Last bricht der ganze
+Stream zusammen."
+
+- Der HTML-Overlay-Modus (Vorgabe) startete für **jedes** Overlay-Bild einen
+  frischen headless Chromium (`--screenshot`, Kaltstart, Seitenaufbau,
+  Ende) — bei 1 Bild/s je Restream, ohne `nice`, gleichrangig mit dem
+  Transcode. Nachgemessen: **0,86 CPU-s je Bild**, fast ein ganzer Kern je
+  Restream, in Spitzen aus einem Dutzend Prozessen. Der Transcode fällt
+  darunter unter Echtzeit, liest die Quelle zu langsam, das CDN verwirft
+  Pakete (die Kette aus W108) — und die Drossel hilft nicht, sie senkt nur
+  die Encoder-Last.
+- `nc/overlaybrowser.py`: ein dauerhafter Chromium je Restream, gesteuert
+  über `--remote-debugging-pipe` (kein Port, kein Fremdpaket). Gemessen
+  **0,08 CPU-s je Bild** — rund elfmal weniger. Läuft mit `FFMPEG_NICE_BG`.
+- Die Overlay-Seite bleibt offen: Sprechblasen und Alerts mit ihren Timern
+  erscheinen jetzt im Sendebild, statt mit jedem Neuladen zu verschwinden.
+- Stirbt der Browser, startet er nach 30 s neu (nicht in jedem Takt); hängt
+  er, wird er nach 15 s beendet. Beendet wird die ganze Prozessgruppe —
+  ein angehaltener Renderer bliebe sonst liegen. Startet er gar nicht,
+  bleibt der Einzelschuss, und das Log sagt es auf `error`.
+
+Vertrag `_test_v42_w170_overlay_ein_browser` mit echtem Chromium, 8 von 8
+Mutationsproben gefangen (zwei entwischten zuerst: Gruppen-Kill und das
+Beenden eines hängenden Browsers waren ungedeckt — jetzt per `SIGSTOP`
+nachgestellt).
+
 ## [4.6.19] — 2026-11-07 · „Leitstand"
 
 ### Neu — Link gepostet, Video als Antwort (v4.2 W169)
