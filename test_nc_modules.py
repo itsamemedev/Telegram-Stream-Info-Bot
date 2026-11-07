@@ -30143,6 +30143,18 @@ def _test_v42_w167_upload_wartet_nicht_auf_chat():
         t.cancel()
         return list(durch)
     assert _aio.run(_lauf()) == [0, 0], "das Wecken loest keinen Durchgang aus"
+    # Codex #209: wirft der ERSTE Durchgang, lebt der Dienst weiter.
+    del durch[:]
+    fehler = []
+    ns["_loop_fehler"] = lambda n, e: fehler.append(n)
+
+    async def _erst_kaputt(w):
+        durch.append(w)
+        if len(durch) == 1:
+            raise RuntimeError("database is locked")
+    ns["_aufnahme_chat_nachtrag"] = _erst_kaputt
+    assert _aio.run(_lauf()) == [0, 0] and fehler == ["aufnahme-chat-dienst"], \
+        ("ein Fehler im ersten Durchgang beendet den Chat-Dienst", durch, fehler)
     ns["_CHAT_WECKER"]["ev"] = None
     ns["_aufnahme_chat_wecken"]()        # vor dem Start: kein Absturz
 

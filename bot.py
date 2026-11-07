@@ -18666,19 +18666,23 @@ async def _aufnahme_chat_dienst(warte_s=120, runde_s=1800):
     nach jeder Aufnahme — geweckt von _aufnahme_chat_wecken, zur Sicherheit
     auch alle `runde_s`."""
     _CHAT_WECKER["ev"] = ev = asyncio.Event()
-    await _aufnahme_chat_nachtrag(warte_s)
+    warte = warte_s
     while True:
+        # Codex #209: auch der ERSTE Durchgang steht im Auffang. Warf er
+        # (gesperrte Datenbank beim Start), endete der Dienst — und jede
+        # spaetere Aufnahme weckte ein Event, das niemand mehr las.
+        try:
+            await _aufnahme_chat_nachtrag(warte)
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            _loop_fehler("aufnahme-chat-dienst", e)
+        warte = 0
         try:
             await asyncio.wait_for(ev.wait(), timeout=runde_s)
         except asyncio.TimeoutError:
             pass                       # Sicherheitsrunde — kein Fehler
         ev.clear()
-        try:
-            await _aufnahme_chat_nachtrag(0)
-        except asyncio.CancelledError:
-            raise
-        except Exception as e:
-            _loop_fehler("aufnahme-chat-dienst", e)
 
 
 async def _aufnahme_chat_nachtrag(warte_s=120):
