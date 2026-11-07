@@ -3,7 +3,7 @@
 > 🌐 **Deutsch** · [English](en/ROADMAP.md)
 
 Der nächste grosse Schritt ist kein Feature, sondern Aufräumen: **`bot.py` hat
-27.441 Zeilen**. Die Datei ist der Engpass des Projekts — sie lässt sich nicht
+27.492 Zeilen**. Die Datei ist der Engpass des Projekts — sie lässt sich nicht
 überblicken und nur mit Werkzeug bearbeiten.
 
 Der vollständige, gemessene Plan steht in

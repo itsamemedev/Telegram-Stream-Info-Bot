@@ -1060,6 +1060,7 @@ from nc import replygate as _nc_replygate  # v4.0-W20: Bremse fuer Chat-Antworte
 from nc import sendrate as _nc_sendrate    # v4.0-W23: YT-Sende-Bremse (Anti-Flood)
 from nc import cohost as _nc_cohost        # v4.0-W24: proaktiver Live-Co-Host
 from nc import restream_util as _nc_rutil  # v4.0-W25: reine Restream-Helfer (extrahiert)
+from nc import overlaybrowser as _nc_ovbrowser  # v4.2-W170: ein Chromium je Restream statt je Bild
 from nc import restream_stability as _nc_rstab  # v4.0-W113: Wiederanlauf-Regeln (rein)
 from nc import flapguard as _nc_flap  # v4.0-W116: flatternde Verbindungen (rein)
 from nc import recdiag as _nc_recdiag  # v4.0-W116: Raten-Einbruch (rein)
@@ -14018,6 +14019,39 @@ def _htmlov_screenshot_cmd(binpath, png_tmp, size=None):
             _url]
 
 
+def _htmlov_dauerbrowser(binpath, size, png):
+    """v4.2-W170: dauerhaften Overlay-Browser starten und das erste Bild
+       schreiben (= Preflight). None → Aufrufer nimmt den Einzelschuss."""
+    _url = _nc_rutil.http_url(RESTREAM_OVERLAY_HTML_URL,
+                              f"http://127.0.0.1:{DASHBOARD_PORT}/overlay")
+    browser = _nc_ovbrowser.Dauerbrowser(binpath, _url, size, nice=FFMPEG_NICE_BG)
+    try:
+        browser.starten(timeout=20)
+        # Die Seite holt ihren Zustand per fetch — vor dem ersten Bild kurz
+        # Zeit lassen, sonst ist das Preflight-Bild ein leeres Overlay.
+        _time_mod.sleep(1.5)
+        _htmlov_bild_schreiben(browser, png)
+        return browser
+    except Exception as e:
+        browser.beenden()
+        log.error("OVERLAY html: dauerhafter Chromium scheitert (%s) → Einzelschuss "
+                  "je Bild. Das kostet rund 0,9 CPU-s je Overlay-Bild und kann den "
+                  "Transcode unter Echtzeit druecken; Abhilfe: RESTREAM_OVERLAY_MODE"
+                  "=text oder Chromium aktualisieren.", e)
+        return None
+
+
+def _htmlov_bild_schreiben(browser, png):
+    """Ein Bild holen und atomar ersetzen — der Writer liest png jederzeit."""
+    daten = browser.schuss(timeout=15)
+    if len(daten) < 100:
+        raise _nc_ovbrowser.OverlayBrowserFehler("leeres Bild (%d Bytes)" % len(daten))
+    tmp = png + ".dtmp"
+    with open(tmp, "wb") as f:
+        f.write(daten)
+    os.replace(tmp, png)
+
+
 def _restream_html_overlay_start(rid, source_url=None):
     """Startet Screenshot-Loop + FIFO-Writer für den html-Overlay-Modus.
        Returns fifo_path oder None (→ Aufrufer fällt auf text zurück).
@@ -14035,12 +14069,17 @@ def _restream_html_overlay_start(rid, source_url=None):
     d = os.path.join(RECORDINGS_DIR, "overlay_live")
     os.makedirs(d, exist_ok=True)
     png = os.path.join(d, f"htmlov_{rid}.png")
+    # v4.2-W170: ein dauerhafter Chromium statt eines Kaltstarts je Bild
+    # (0,08 statt 0,86 CPU-s je Bild, nc/overlaybrowser.py). Startet er
+    # nicht, bleibt der alte Einzelschuss — teuer, aber das Overlay steht.
+    browser = _htmlov_dauerbrowser(binpath, _size, png)
     # Preflight: EIN synchroner Screenshot — scheitert er, kein html-Modus.
     try:
-        _r = subprocess.run(_htmlov_screenshot_cmd(binpath, png, _size),
-                            capture_output=True, timeout=20)
-        if _r.returncode != 0 or not os.path.isfile(png) or os.path.getsize(png) < 100:
-            raise RuntimeError((_r.stderr or b"")[-160:])
+        if browser is None:
+            _r = subprocess.run(_htmlov_screenshot_cmd(binpath, png, _size),
+                                capture_output=True, timeout=20)
+            if _r.returncode != 0 or not os.path.isfile(png) or os.path.getsize(png) < 100:
+                raise RuntimeError((_r.stderr or b"")[-160:])
     except Exception as e:
         log.warning("OVERLAY html: Preflight-Screenshot scheitert (%s) "
                     "→ Fallback drawtext.", e)
@@ -14061,6 +14100,10 @@ def _restream_html_overlay_start(rid, source_url=None):
         tmp = png + ".tmp"
         while not stop.is_set():
             try:
+                if browser is not None:
+                    await asyncio.to_thread(_htmlov_bild_schreiben, browser, png)
+                    await asyncio.sleep(1.0 / RESTREAM_OVERLAY_HTML_FPS)
+                    continue
                 p = await asyncio.create_subprocess_exec(
                     *_htmlov_screenshot_cmd(binpath, tmp, _size),
                     stdout=asyncio.subprocess.DEVNULL,
@@ -14117,6 +14160,8 @@ def _restream_html_overlay_start(rid, source_url=None):
     except Exception as e:
         log.warning("OVERLAY html: Screenshot-Schleife nicht planbar (%s) "
                     "→ Fallback drawtext.", e)
+        if browser is not None:
+            browser.beenden()
         try:
             os.unlink(fifo)
         except Exception:
@@ -14124,9 +14169,11 @@ def _restream_html_overlay_start(rid, source_url=None):
         return None
     th = threading.Thread(target=_writer, daemon=True)
     th.start()
-    _HTMLOV[rid] = {"fifo": fifo, "png": png, "stop": stop, "task": task, "thread": th}
-    log.info("OVERLAY html aktiv für #%s: %s @%sfps, %s px (%s)", rid,
-             RESTREAM_OVERLAY_HTML_URL, RESTREAM_OVERLAY_HTML_FPS, _size, binpath)
+    _HTMLOV[rid] = {"fifo": fifo, "png": png, "stop": stop, "task": task, "thread": th,
+                    "browser": browser}
+    log.info("OVERLAY html aktiv für #%s: %s @%sfps, %s px (%s, %s)", rid,
+             RESTREAM_OVERLAY_HTML_URL, RESTREAM_OVERLAY_HTML_FPS, _size, binpath,
+             "dauerhaft" if browser is not None else "Einzelschuss je Bild")
     return fifo
 
 
@@ -14138,6 +14185,10 @@ def _restream_html_overlay_stop(rid):
     t = st.get("task")
     if t and not t.done():
         t.cancel()
+    if st.get("browser") is not None:
+        # Ohne das liefe der Chromium nach jedem Restream weiter — ein
+        # Kern-Bruchteil je beendetem Restream, bis zum Neustart des Bots.
+        st["browser"].beenden()
     for p in (st.get("fifo"), st.get("png")):
         try:
             if p and os.path.exists(p):

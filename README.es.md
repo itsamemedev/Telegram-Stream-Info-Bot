@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="docs/assets/banner.svg" alt="NIGHTCRAWLER — v4.6.19 Centro de control" width="100%">
+<img src="docs/assets/banner.svg" alt="NIGHTCRAWLER — v4.6.20 Centro de control" width="100%">
 
 ### La sala de control para streaming en directo
 #### Vigilancia · Grabación · Restream multidestino · Moderación con IA
@@ -322,7 +322,7 @@ guardados en la base de datos, mudanza de SQLite a MariaDB en un paso con
 recuento, Prometheus y Grafana completos con 16 reglas de alerta, el 14.º
 vigilante para la base de datos, un mapa de situación redibujado y `update.sh`
 que pregunta por lo que falta. **Parche 4.6.1:** detrás del nginx del
-instalador el panel estaba abierto sin inicio de sesión; once fallos corregidos. **Parche 4.6.2:** la mudanza a MariaDB lleva el diario fiscal y el archivo. **Parche 4.6.3:** MariaDB compara byte a byte como SQLite. **Parche 4.6.4:** cookies seguras tras el proxy HTTPS. **Parche 4.6.5:** los directos de suscriptores/18+ se reconocen, un restream oscuro se notifica y Kick busca su clúster Pusher. **Parche 4.6.6:** un restream cuya fuente envía datos sin imagen conmutable ya no se queda en silencio en la pantalla de pausa. **Parche 4.6.7:** el mapa de situación es una pantalla de radar con barrido, persistencia, módulos de cristal y paquetes de datos. **Parche 4.6.8:** Kick solo prueba clústeres Pusher reales, el estado del restream ya no bloquea el bucle y sin avalancha de registros del resolvedor. **Parche 4.6.9:** el chat de TikTok aparece ahora también en las grabaciones (incrustado o como pista de subtítulos, `AUFNAHME_CHAT`). **Parche 4.6.10:** un restream sin imagen de origen cambia a un destino con imagen, el director de hype monta los memes y los clips llevan el chat. **Parche 4.6.11:** en modo HTML vuelven a llegar la imagen y el sonido de la fuente. **Parche 4.6.12:** caza profunda de errores — la búsqueda de clúster de Kick tras un cambio de clave, una sala cerrada termina con el directo, el chat de la grabación termina con ella, sin chat doble en los clips y las categorías 🎯 ajenas en Discord no se tocan. **Parche 4.6.13:** el montaje de memes respeta la ventana de subida y el diario fiscal comprueba tipo de cambio e importe original. **Parche 4.6.14:** el chat de una grabación guardada al detener se incorpora al archivo en el siguiente arranque en lugar de quedar al lado como `.ass`. **Parche 4.6.15:** los `.ass` antiguos se recogen e incorporan al arrancar; las donaciones registradas en el panel cuentan para la meta del overlay. **Parche 4.6.16:** «sin URL de origen reproducible» indica en el panel también por qué no funcionó el paso directo. **Parche 4.6.17:** subidas a Telegram para seguimientos de Discord, la subida ya no espera al chat, el paso directo prueba streamlink y Kick prueba claves conocidas. **Parche 4.6.18:** un solo tema de subidas en Telegram en lugar de temas @nombre (los antiguos se vuelven a subir y luego se borran), un solo canal de clips en Discord en lugar de áreas 🎯, y los seguimientos del panel van a Telegram. **Parche 4.6.19:** al publicar un enlace de YouTube o TikTok en Telegram o Discord, el bot responde con el vídeo.
+instalador el panel estaba abierto sin inicio de sesión; once fallos corregidos. **Parche 4.6.2:** la mudanza a MariaDB lleva el diario fiscal y el archivo. **Parche 4.6.3:** MariaDB compara byte a byte como SQLite. **Parche 4.6.4:** cookies seguras tras el proxy HTTPS. **Parche 4.6.5:** los directos de suscriptores/18+ se reconocen, un restream oscuro se notifica y Kick busca su clúster Pusher. **Parche 4.6.6:** un restream cuya fuente envía datos sin imagen conmutable ya no se queda en silencio en la pantalla de pausa. **Parche 4.6.7:** el mapa de situación es una pantalla de radar con barrido, persistencia, módulos de cristal y paquetes de datos. **Parche 4.6.8:** Kick solo prueba clústeres Pusher reales, el estado del restream ya no bloquea el bucle y sin avalancha de registros del resolvedor. **Parche 4.6.9:** el chat de TikTok aparece ahora también en las grabaciones (incrustado o como pista de subtítulos, `AUFNAHME_CHAT`). **Parche 4.6.10:** un restream sin imagen de origen cambia a un destino con imagen, el director de hype monta los memes y los clips llevan el chat. **Parche 4.6.11:** en modo HTML vuelven a llegar la imagen y el sonido de la fuente. **Parche 4.6.12:** caza profunda de errores — la búsqueda de clúster de Kick tras un cambio de clave, una sala cerrada termina con el directo, el chat de la grabación termina con ella, sin chat doble en los clips y las categorías 🎯 ajenas en Discord no se tocan. **Parche 4.6.13:** el montaje de memes respeta la ventana de subida y el diario fiscal comprueba tipo de cambio e importe original. **Parche 4.6.14:** el chat de una grabación guardada al detener se incorpora al archivo en el siguiente arranque en lugar de quedar al lado como `.ass`. **Parche 4.6.15:** los `.ass` antiguos se recogen e incorporan al arrancar; las donaciones registradas en el panel cuentan para la meta del overlay. **Parche 4.6.16:** «sin URL de origen reproducible» indica en el panel también por qué no funcionó el paso directo. **Parche 4.6.17:** subidas a Telegram para seguimientos de Discord, la subida ya no espera al chat, el paso directo prueba streamlink y Kick prueba claves conocidas. **Parche 4.6.18:** un solo tema de subidas en Telegram en lugar de temas @nombre (los antiguos se vuelven a subir y luego se borran), un solo canal de clips en Discord en lugar de áreas 🎯, y los seguimientos del panel van a Telegram. **Parche 4.6.19:** al publicar un enlace de YouTube o TikTok en Telegram o Discord, el bot responde con el vídeo. **Parche 4.6.20:** el overlay HTML mantiene abierto un Chromium por restream en lugar de arrancar uno nuevo por imagen: unas once veces menos CPU.
 Todas las oleadas en
 **[`docs/CHANGELOG.md`](docs/CHANGELOG.md)**.
 
@@ -332,7 +332,7 @@ Todas las oleadas en
 
 | | |
 |---|---|
-| Versión actual | **4.6.19** — “Centro de control” (2026.11) |
+| Versión actual | **4.6.20** — “Centro de control” (2026.11) |
 | Rutas Flask | 379 (34 en `bot.py` · 345 en `nc/routes/`) |
 | Comandos de Discord | 66 |
 | Agentes vigilantes | 14 |
@@ -349,6 +349,6 @@ comunidad en **[Discord](https://discord.gg/psvnxm7tSV)** · **[lafap.de](https:
 
 <div align="center">
 
-**NIGHTCRAWLER v4.6.19 · “Centro de control”**
+**NIGHTCRAWLER v4.6.20 · “Centro de control”**
 
 </div>

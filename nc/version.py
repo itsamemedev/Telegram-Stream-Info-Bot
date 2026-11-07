@@ -4,7 +4,7 @@ Eine einzige Wahrheit für die Versionsanzeige (Dashboard-Footer, /api/version,
 „Was ist neu"-Panel). Reine Daten + kleine Helfer, voll testbar.
 """
 
-VERSION = "4.6.19"
+VERSION = "4.6.20"
 CODENAME = "Leitstand"
 RELEASE = "2026.11"
 
@@ -23,6 +23,18 @@ def build_stamp():
 # Meilenstein-Changelog, neueste Version zuerst. highlights = kurze, ehrliche
 # Stichpunkte dessen, was die Version bringt.
 CHANGELOG = [
+    {
+        "version": "4.6.20",
+        "date": "2026-11",
+        "title": "Leitstand",
+        # Patch-Fassung von 4.6: ein Chromium je Restream statt je Bild (W170).
+        "highlights": [
+            "HTML-Overlay: ein dauerhaft laufender Chromium je Restream statt eines Kaltstarts für jedes Overlay-Bild — gemessen 0,08 statt 0,86 CPU-Sekunden je Bild",
+            "Der Overlay-Browser läuft mit nice (FFMPEG_NICE_BG) und tritt hinter den Transcode zurück; ein verspätetes Overlay-Bild wiederholt nur das letzte",
+            "Sprechblasen und Alerts im Overlay laufen jetzt wirklich: die Seite bleibt offen, statt für jedes Bild neu geladen zu werden",
+            "Stirbt oder hängt der Browser, wird er beendet und nach 30 s neu gestartet; startet er gar nicht, bleibt der alte Einzelschuss und das Log sagt es auf error",
+        ],
+    },
     {
         "version": "4.6.19",
         "date": "2026-11",
