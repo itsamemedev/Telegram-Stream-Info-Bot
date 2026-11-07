@@ -30713,6 +30713,224 @@ def _test_v42_w168_ein_thema_ein_kanal():
     ok("W168: ein Upload-Thema statt @name-Themen (alte nachgezogen, dann geloescht), "
        "Discord-/track nur Discord, Dashboard-Standard Telegram samt Bestand, ein Clip-Kanal")
 
+def _test_v42_w169_link_video():
+    """v4.2-W169: gemeldet am 07.11. — „Wenn ich in Discord oder Telegram einen
+    YouTube- oder TikTok-Link poste, sollte der Bot das Video downloaden und
+    direkt uploaden als Antwort auf den gesendeten Link." Gab es nicht."""
+    import ast as _ast
+    import asyncio as _aio
+    import logging as _lg
+    import os as _os
+    import types as _ty
+    import pruefhilfen as P
+    from nc import linkvideo as L
+    from nc import meldetakt as M
+
+    # (1) Welche Links zaehlen — und welche nicht.
+    t = ("schau https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=3s, und "
+         "https://youtu.be/dQw4w9WgXcQ. dann https://vm.tiktok.com/ZMabc123/ !")
+    assert L.links(t) == ["https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=3s",
+                          "https://youtu.be/dQw4w9WgXcQ", "https://vm.tiktok.com/ZMabc123/"], L.links(t)
+    assert L.links("https://www.tiktok.com/@anna.b/video/7311223344556677889?lang=de") == \
+        ["https://www.tiktok.com/@anna.b/video/7311223344556677889?lang=de"]
+    assert L.links("https://youtube.com/shorts/abcdefghijk") == ["https://youtube.com/shorts/abcdefghijk"]
+    assert L.links("https://www.youtube.com/watch?feature=share&v=dQw4w9WgXcQ")
+    assert L.links("https://vt.tiktok.com/ZSx/ https://www.tiktok.com/t/ZT8abc/")
+    for kein in ("https://www.tiktok.com/@anna/live", "https://www.youtube.com/@kanal",
+                 "https://example.com/watch?v=dQw4w9WgXcQ", "tiktok.com/@a/video/1"):
+        assert L.links(kein) == [], ("ein Live-/Kanal-/Fremdlink loest einen Download aus", kein)
+    assert L.links("https://youtu.be/dQw4w9WgXcQ " * 2) == ["https://youtu.be/dQw4w9WgXcQ"]
+    viele = " ".join("https://youtu.be/%011d" % i for i in range(6))
+    assert len(L.links(viele)) == L.MAX_LINKS, "eine Linkliste loest beliebig viele Downloads aus"
+
+    # (2) Der Aufruf.
+    d = P.verzeichnis()
+    try:
+        keks = _os.path.join(d, "c.txt")
+        P.attrappe(keks, 10)
+        c = L.befehl("yt-dlp", "U", "/x/%(id)s.%(ext)s", 48, 1200, keks, "http://p:1")
+        assert c[0] == "yt-dlp" and c[-1] == "U" and "--no-playlist" in c
+        assert "!is_live & duration <=? 1200" in c, "ein Livestream laeuft bis zum Zeitlimit"
+        assert "[filesize<48M]" in c[c.index("-f") + 1]
+        assert c[c.index("--cookies") + 1] == keks and c[c.index("--proxy") + 1] == "http://p:1"
+        assert "--cookies" not in L.befehl("y", "U", "o", 48, 60, _os.path.join(d, "fehlt"))
+        assert L.ausgabe_lesen("[info] x\n/a/b.mp4\tMein Titel\n") == ("/a/b.mp4", "Mein Titel")
+        assert L.ausgabe_lesen("nichts") == ("", "")
+        assert L.ausgabe_lesen("/a.f1.mp4\tA\n/a.mp4\tA2\n") == ("/a.mp4", "A2"), \
+            "die Zwischendatei vor dem Zusammenfuegen wird gesendet"
+
+        # (3) Jeder Fehlschlag hat einen Grund.
+        assert "Anmeldung" in L.grund("ERROR: [youtube] x: Sign in to confirm you're not a bot")
+        assert "privat" in L.grund("ERROR: Private video")
+        assert "zu lang" in L.grund("[download] x does not pass filter (duration <= 1200), skipping")
+        assert L.grund("WARNING: a\nERROR: [x] kaputt hier\n") == "[x] kaputt hier"
+        assert L.grund("") == "unbekannt" and L.grund("Seite page usage") != "", \
+            "„page“ gilt als altersbeschraenkt"
+        assert "alters" not in L.grund("ERROR: page not loaded")
+
+        # (4) holen(): laden, einpassen, aufraeumen — ausgefuehrt.
+        rufe, klein = [], []
+        alt_kind, alt_wz, alt_konf = L._kind, L.werkzeug, dict(L._KONF)
+        groesse = [10]
+
+        async def _aus(cmd, zeit, art="?"):
+            rufe.append(cmd)
+            if lauf["rc"]:
+                return lauf["rc"], b"", b"ERROR: Private video"
+            if lauf["timeout"]:
+                raise _aio.TimeoutError()
+            ziel = cmd[cmd.index("-o") + 1].replace("%(id)s.%(ext)s", "v.mp4")
+            P.attrappe(ziel, groesse[0])
+            return lauf["rc_mit_datei"], ("%s\tTitel\n" % ziel).encode(), b"ERROR: Postprocessing"
+
+        async def _verkleinern(pfad, mb):
+            klein.append(mb)
+            neu = pfad + "_dc.mp4"
+            P.attrappe(neu, 5)
+            return neu
+        lauf = {"rc": 0, "timeout": False, "rc_mit_datei": 0}
+        try:
+            L._kind = _ty.SimpleNamespace(ausfuehren=_aus)
+            L.werkzeug = lambda: "yt-dlp"
+            L.configure(verkleinern=_verkleinern, tiktok_cookies=keks, proxy=lambda: "http://p:1",
+                        arbeitsdir=_os.path.join(d, "lv"))
+            e = _aio.run(L.holen("https://youtu.be/dQw4w9WgXcQ", 48))
+            assert e["pfad"].endswith("v.mp4") and e["titel"] == "Titel" and not klein
+            assert "--proxy" not in rufe[-1] and "--cookies" not in rufe[-1], \
+                "TikTok-Cookies und -Proxy gehen an YouTube"
+            L.aufraeumen(e)
+            assert not _os.path.exists(e["ordner"]), "der Download bleibt liegen"
+            L.aufraeumen(_aio.run(L.holen("https://vm.tiktok.com/ZMabc/", 48)))
+            assert "--proxy" in rufe[-1] and "--cookies" in rufe[-1]
+            groesse[0] = 60 * 1024 * 1024
+            e = _aio.run(L.holen("https://youtu.be/dQw4w9WgXcQ", 48))
+            assert klein == [48] and e["pfad"].endswith("_dc.mp4"), "zu gross, nicht verkleinert"
+            L.aufraeumen(e)
+            L.configure(verkleinern=None)
+            e = _aio.run(L.holen("https://youtu.be/dQw4w9WgXcQ", 48))
+            assert not e["pfad"] and "48 MB" in e["grund"], e
+            L.aufraeumen(e)
+            lauf["rc"] = 1
+            e = _aio.run(L.holen("https://youtu.be/dQw4w9WgXcQ", 48))
+            assert not e["pfad"] and "privat" in e["grund"]
+            L.aufraeumen(e)
+            lauf.update(rc=0, rc_mit_datei=1)
+            groesse[0] = 10                 # passt ins Limit — nur der rc entscheidet
+            e = _aio.run(L.holen("https://youtu.be/dQw4w9WgXcQ", 48))
+            assert not e["pfad"], "yt-dlp scheiterte nach dem Download — die halbe Datei geht raus"
+            L.aufraeumen(e)
+            lauf.update(rc=0, rc_mit_datei=0, timeout=True)
+            e = _aio.run(L.holen("https://youtu.be/dQw4w9WgXcQ", 48))
+            assert "Zeitlimit" in e["grund"]
+            L.aufraeumen(e)
+            L.werkzeug = lambda: ""
+            assert "nicht installiert" in _aio.run(L.holen("https://youtu.be/x", 48))["grund"]
+            assert not [n for n in _os.listdir(_os.path.join(d, "lv"))], "Arbeitsordner bleiben liegen"
+        finally:
+            L._kind, L.werkzeug = alt_kind, alt_wz
+            L._KONF.clear(); L._KONF.update(alt_konf)
+
+        # (5) Abklingzeit je Absender.
+        L._ZULETZT.clear()
+        assert L.darf("a", 100.0) and not L.darf("a", 105.0) and L.darf("b", 105.0)
+        assert L.darf("a", 100.0 + L.abklingzeit_s())
+        L._ZULETZT.clear()
+
+        # (6) Telegram: eigene Handler-Gruppe, Antwort auf die Nachricht, Grund
+        # bei Fehlschlag, Aufraeumen immer.
+        src = open("bot.py", encoding="utf-8").read()
+        baum = _ast.parse(src)
+        assert "on_link_video), group=1)" in src, \
+            "der Link-Handler steht in Gruppe 0 und schluckt die AZRAEL-Ansprache"
+        olv = next(n for n in baum.body if getattr(n, "name", "") == "on_link_video")
+        assert "_is_authorized(update)" in _ast.unparse(olv), "jeder Chat darf Downloads ausloesen"
+        fn = next(n for n in baum.body if getattr(n, "name", "") == "_link_video_senden")
+        antworten, weg, handles = [], [], []
+
+        class _Msg:
+            chat_id, message_thread_id = -100, 7
+
+            async def reply_video(self, fh, caption=None, **kw):
+                handles.append(fh)
+                antworten.append(("video", caption, fh.read(3)))
+
+            async def reply_text(self, text):
+                antworten.append(("text", text))
+
+        class _Bot:
+            async def send_chat_action(self, *a, **k):
+                return None
+        ergebnisse = []
+
+        async def _holen(url, mb):
+            assert mb == 48
+            return ergebnisse.pop(0)
+        vid = _os.path.join(d, "x.mp4")
+        with open(vid, "wb") as fh:
+            fh.write(b"abc")
+        fake_lv = _ty.SimpleNamespace(holen=_holen, sperre=lambda: _aio.Lock(),
+                                      bildunterschrift=L.bildunterschrift,
+                                      aufraeumen=lambda e: weg.append(e))
+        ns = {"_nc_linkvideo": fake_lv, "_TG_LINKVIDEO_MB": 48, "log": _lg.getLogger("w169"),
+              "_nc_i18n": _ty.SimpleNamespace(t=lambda s: s), "_nc_meldetakt": M,
+              "_time_mod": __import__("time"), "asyncio": _aio, "open": open}
+        exec(compile(_ast.Module(body=[fn], type_ignores=[]), "bot.py", "exec"), ns)
+        ergebnisse += [{"pfad": vid, "titel": "T", "grund": ""},
+                       {"pfad": "", "titel": "", "grund": "das Video ist privat"}]
+        _aio.run(ns["_link_video_senden"](_Msg(), "https://youtu.be/x", _Bot()))
+        _aio.run(ns["_link_video_senden"](_Msg(), "https://youtu.be/y", _Bot()))
+        assert antworten[0][0] == "video" and antworten[0][2] == b"abc"
+        assert handles and all(h.closed for h in handles), "der Dateigriff bleibt offen"
+        assert antworten[1] == ("text", "⚠ Video nicht geladen: das Video ist privat"), \
+            ("ein Fehlschlag bleibt still", antworten)
+        assert len(weg) == 2, "Aufraeumen nur im Erfolgsfall"
+
+        # (7) Discord: on_message stoesst es an, Antwort mit Datei, Grund sonst.
+        dsrc = open("discordbot.py", encoding="utf-8").read()
+        om = rumpf_ab(dsrc, dsrc.index("    async def on_message(message):"))
+        assert "_spawn(_link_video(message, _urls)" in om and "_nc_linkvideo.darf(" in om
+        dbaum = _ast.parse(dsrc)
+        dfn = next(n for n in dbaum.body if getattr(n, "name", "") == "_link_video")
+        dantw, weg2 = [], []
+
+        class _Typing:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *a):
+                return False
+
+        class _DMsg:
+            guild = _ty.SimpleNamespace(filesize_limit=50 * 1024 * 1024)
+            channel = _ty.SimpleNamespace(name="general", typing=lambda: _Typing())
+
+            async def reply(self, text, file=None, mention_author=True):
+                dantw.append((text, file, mention_author))
+        limits = []
+
+        async def _dholen(url, mb):
+            limits.append(mb)
+            return ergebnisse.pop(0)
+        from nc import discordlimits as DL
+        ns2 = {"_nc_linkvideo": _ty.SimpleNamespace(holen=_dholen, sperre=lambda: _aio.Lock(),
+                                                   bildunterschrift=L.bildunterschrift,
+                                                   aufraeumen=lambda e: weg2.append(e)),
+               "_nc_dclimits": DL, "discord": _ty.SimpleNamespace(File=lambda p: ("F", p)),
+               "log": _lg.getLogger("w169"), "_nc_i18n": _ty.SimpleNamespace(t=lambda s: s),
+               "_nc_meldetakt": M, "_time_mod": __import__("time"), "asyncio": _aio}
+        exec(compile(_ast.Module(body=[dfn], type_ignores=[]), "discordbot.py", "exec"), ns2)
+        ergebnisse += [{"pfad": vid, "titel": "T", "grund": ""},
+                       {"pfad": "", "titel": "", "grund": "nicht gefunden (404)"}]
+        _aio.run(ns2["_link_video"](_DMsg(), ["https://youtu.be/a", "https://youtu.be/b"]))
+        assert dantw[0][1] == ("F", vid) and dantw[0][2] is False
+        assert dantw[1][0] == "⚠ Video nicht geladen: nicht gefunden (404)" and len(weg2) == 2
+        assert limits[0] == DL.gate_mb(50), ("das Guild-Limit wird nicht genutzt", limits)
+    finally:
+        import shutil as _sh
+        _sh.rmtree(d, ignore_errors=True)
+    ok("W169: YouTube-/TikTok-Link -> Video als Antwort in Telegram und Discord, "
+       "mit Limit, Verkleinern, Grund bei Fehlschlag und Aufraeumen")
+
 def _test_v42_w155_weiche_steckt():
     """v4.2-W155: gemeldet „Wir haben in den Restreams immer noch kein Bild" —
     Overlay und Chat liefen, das Videofeld zeigte das Pausenbild. Ein
@@ -31231,6 +31449,7 @@ def main():
     _test_v42_w166_grund_im_panel()
     _test_v42_w167_upload_wartet_nicht_auf_chat()
     _test_v42_w168_ein_thema_ein_kanal()
+    _test_v42_w169_link_video()
     _test_v42_w60_azrael_cooldown_je_plattform()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)

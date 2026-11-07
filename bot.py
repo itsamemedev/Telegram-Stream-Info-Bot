@@ -627,6 +627,7 @@ from nc import kennzahlen as _nc_kz  # v4.2-W122: Leistungs-Schnappschuss fuer /
 from nc import resolvergrund as _nc_rgrund  # v4.2-W81: warum die Aufloesung leer blieb
 from nc import telegramfehler as _nc_tgfehler  # v4.2-W93: warum das Telegram-Polling klemmt
 from nc import discordziele as _nc_discordziele  # v4.2-W168: ein Clip-Kanal
+from nc import linkvideo as _nc_linkvideo  # v4.2-W169: Link gepostet -> Video als Antwort
 from nc import topicumzug as _nc_topicumzug  # v4.2-W168: @name-Themen -> ein Upload-Thema
 from nc import aufnahmesitzung as _nc_sitzung  # v4.2-W44: die Klammer um die Segmente EINES Streams
 from nc import chatfolge as _nc_chatfolge  # v4.2-W47: wie oft der TikTok-Chat neu darf
@@ -7539,6 +7540,58 @@ async def on_ai_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     await _run_ai_call(update, context, msg.text)
+
+
+# Telegram nimmt von Bots hoechstens 50 MB je Datei an; 48 laesst Platz fuer
+# den Multipart-Rahmen — knapp darunter scheitert sonst genau die Datei, die
+# eben noch passte.
+_TG_LINKVIDEO_MB = 48
+
+
+async def on_link_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """v4.2-W169: ein YouTube-/TikTok-Link in einer Nachricht -> das Video als
+    Antwort darauf. Laeuft in einer EIGENEN Handler-Gruppe: in derselben
+    Gruppe ruft python-telegram-bot nur den ersten passenden Handler, und
+    die Ansprache an AZRAEL oder das KI-Follow-up sollen weiter laufen."""
+    msg = update.message
+    if not (_nc_linkvideo.an() and msg and (msg.text or msg.caption)) or not _is_authorized(update):
+        return
+    urls = _nc_linkvideo.links(msg.text or msg.caption)
+    absender = "tg:%s" % (update.effective_user.id if update.effective_user else msg.chat_id)
+    if not urls or not _nc_linkvideo.darf(absender, _time_mod.monotonic()):
+        return
+    for url in urls:
+        await _link_video_senden(msg, url, context.bot)
+
+
+async def _link_video_senden(msg, url, bot):
+    """Ein Link: laden, als Antwort senden, aufraeumen — und bei einem
+    Fehlschlag mit Grund antworten, statt still nichts zu tun."""
+    erg = {}
+    try:
+        async with _nc_linkvideo.sperre():
+            await bot.send_chat_action(msg.chat_id, "upload_video",
+                                       message_thread_id=msg.message_thread_id)
+            erg = await _nc_linkvideo.holen(url, _TG_LINKVIDEO_MB)
+            if erg["pfad"]:
+                fh = await asyncio.to_thread(open, erg["pfad"], "rb")
+                try:
+                    await msg.reply_video(fh, caption=_nc_linkvideo.bildunterschrift(erg["titel"], url),
+                                          supports_streaming=True, read_timeout=120,
+                                          write_timeout=600, connect_timeout=30)
+                finally:
+                    fh.close()
+                log.info("Link-Video → Telegram chat %s: %s", msg.chat_id, url)
+        if not erg.get("pfad"):
+            log.info("Link-Video nicht geladen (%s): %s", url, erg.get("grund"))
+            await msg.reply_text(_nc_i18n.t("⚠ Video nicht geladen: {grund}").format(
+                grund=erg.get("grund") or "?"))
+    except Exception as e:
+        laut, weg = _nc_meldetakt.melden("linkvideo-tg", type(e).__name__, _time_mod.monotonic())
+        if laut:
+            log.error("Link-Video Telegram (%s): %s%s", url, e, _nc_meldetakt.zusatz(weg))
+    finally:
+        await asyncio.to_thread(_nc_linkvideo.aufraeumen, erg)
 
 
 async def on_azrael_mention(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -24799,6 +24852,12 @@ async def run_bot():
     app.add_handler(MessageHandler(
         filters.TEXT & ~filters.COMMAND & ~filters.REPLY,
         on_azrael_mention))
+    # v4.2-W169: Link -> Video. Gruppe 1: laeuft NEBEN den Handlern oben,
+    # nicht statt ihrer (in Gruppe 0 gewinnt nur der erste Treffer).
+    app.add_handler(MessageHandler(
+        (filters.Entity("url") | filters.Entity("text_link")
+         | filters.CaptionEntity("url")) & ~filters.COMMAND,
+        on_link_video), group=1)
 
     _spawn(check_all_trackings(app), name="check-all-trackings")
     _spawn(_discord_bot_starten(), name="discord-bot")  # optional, env-gated (no-op ohne Token)
@@ -27079,6 +27138,12 @@ _nc_cookiebezug.configure(
     intervall_h=COOKIE_AUTO_FETCH_INTERVAL_H,
     timeout=_nc_envnum.env_int("COOKIE_FETCH_TIMEOUT", 15),
     nach_erfolg=lambda: _COOKIES_CACHE.pop("v", None), log=log)
+
+# v4.2-W169: Link-Videos — dieselbe Verkleinerung wie die Discord-Clips,
+# TikTok mit den Bot-Cookies und (falls gesetzt) ueber RECORD_PROXY.
+_nc_linkvideo.configure(verkleinern=_shrink_for_discord, tiktok_cookies=COOKIE_FILE,
+                        proxy=lambda: RECORD_PROXY or None,
+                        arbeitsdir=os.path.join(RECORDINGS_DIR, "linkvideo"))
 
 _nc_ctx.configure(
     log=log,
