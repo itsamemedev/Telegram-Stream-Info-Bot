@@ -293,17 +293,68 @@ def ersatz(track_gruppe, erlaubte):
     return liste[0] if liste else None
 
 
-def ziele(roh, ersatz_id):
-    """Fan-out-Ziele -> (Telegram-Ziele ohne Doppel, umgeleitete Discord-IDs).
+def nur_telegram(roh):
+    """Fan-out-Ziele -> (Telegram-Ziele ohne Doppel, ausgelassene Discord-IDs).
 
-    Jede ID, die keine Telegram-Chat-ID sein kann, wird durch `ersatz_id`
-    ersetzt. Ohne Ersatz bleibt sie stehen — der Versand ueberspringt sie
-    dann laut (W132), statt sie still zu verlieren."""
-    aus, umgeleitet = [], []
+    v4.2-W168: ersetzt `ziele()` aus W167. Dort bekam ein Discord-/track-
+    Tracking ersatzweise eine Telegram-Gruppe — entschieden am 07.11.: diese
+    Nutzer sind NUR Discord. Ihre Aufnahmen gehen in den Clip-Kanal, nicht
+    nach Telegram. Ausgelassen wird laut (der Aufrufer meldet die IDs)."""
+    aus, discord = [], []
     for z in roh or ():
-        if not ist_telegram_chat(z) and ersatz_id is not None:
-            umgeleitet.append(z)
-            z = ersatz_id
+        if not ist_telegram_chat(z):
+            if z not in discord:
+                discord.append(z)
+            continue
         if z not in aus:
             aus.append(z)
-    return aus, umgeleitet
+    return aus, discord
+
+
+# ═════════════════════════════════════════════════════════════════════════
+# v4.2-W168: die Standardgruppe des Dashboards ist eine TELEGRAM-Gruppe
+# ═════════════════════════════════════════════════════════════════════════
+#
+# Gemeldet am 07.11.: „User die per Dashboard hinzugefuegt werden, werden als
+# Default im Discord angelegt und auch so behandelt." Die Aufloesung nahm die
+# meistgenutzte group_id — bei vielen Discord-/track-Eintraegen die Guild —
+# und als Rueckfall ausdruecklich DISCORD_GUILD_ID. Ein Dashboard-Nutzer bekam
+# damit die Guild als Ziel, und seine Aufnahmen gingen nie nach Telegram.
+
+
+def standardgruppe(dashboard_gid=0, tages_gid=0, meistgenutzt=(), discord_track_gid=0,
+                   erlaubte=()):
+    """Die Telegram-Gruppe fuer Trackings aus dem Dashboard — oder 0.
+
+    Reihenfolge: DASHBOARD_TRACK_GROUP_ID, DAILY_SUMMARY_CHAT_ID, die
+    meistgenutzte TELEGRAM-Gruppe der Trackings (`meistgenutzt` absteigend),
+    DISCORD_TRACK_GROUP_ID, dann die freigeschalteten Chats (Gruppen zuerst).
+    Eine Discord-Guild ist nie eine Antwort."""
+    for k in (dashboard_gid, tages_gid, *(meistgenutzt or ()), discord_track_gid):
+        if ist_telegram_chat(k):
+            return int(k)
+    return int(ersatz(0, erlaubte) or 0)
+
+
+def dashboard_umzug(zeilen, ziel, vorhanden_im_ziel):
+    """Plan fuer Dashboard-Trackings (added_by=0), die noch an einer
+    Discord-Guild haengen. -> (umziehen: [id], doppelt: [id])
+
+    `zeilen`: [(id, username, group_id)]; `vorhanden_im_ziel`: Namen, die in
+    der Zielgruppe schon getrackt werden — die Guild-Zeile ist dann eine
+    Dublette und wird entfernt statt umgezogen (sonst UNIQUE-Bruch oder zwei
+    Aufnahmen desselben Nutzers)."""
+    umziehen, doppelt = [], []
+    if not ist_telegram_chat(ziel):
+        return umziehen, doppelt
+    gesehen = {(u or "").lower() for u in vorhanden_im_ziel or ()}
+    for tid, username, gid in zeilen or ():
+        if ist_telegram_chat(gid):
+            continue
+        key = (username or "").lower()
+        if key in gesehen:
+            doppelt.append(tid)
+        else:
+            gesehen.add(key)
+            umziehen.append(tid)
+    return umziehen, doppelt

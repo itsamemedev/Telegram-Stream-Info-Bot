@@ -11,6 +11,52 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+## [4.6.18] — 2026-11-07 · „Leitstand"
+
+### Geändert — ein Thema, ein Kanal (v4.2 W168)
+
+Gemeldet am 07.11.: „Dann erstellt der Bot in Telegram mehrere Topics …, in
+Discord ist es das selbe, das sollte unterbunden werden. Uploads die schon
+vorhanden sind in einem Topic nachziehen und alle anderen Channel löschen."
+
+- **Telegram: ein Upload-Thema je Gruppe** (`TELEGRAM_UPLOAD_TOPIC_NAME`,
+  Vorgabe „🎬 Aufnahmen") statt eines `@name`-Themas je Nutzer. Das
+  Melde-Thema „📡 Live & Offline" bleibt.
+- **Umzug der alten Themen** (`nc/topicumzug.py`, einmal je Start): jede
+  noch vorhandene Aufnahme des Nutzers wird ins Upload-Thema nachgeladen;
+  erst wenn alle angekommen sind, wird das alte Thema gelöscht — Löschen
+  löscht in Telegram auch die Videos darin. Fortschritt in
+  `recordings/tg_topic_umzug.json`, nach einem Neustart nichts doppelt.
+  Fehlt das Recht „Themen verwalten", sagt das Log es auf `error`.
+- **Discord: ein Clip-Kanal** (`DISCORD_CLIP_CHANNEL`, Vorgabe `#clips`,
+  wird bei Bedarf angelegt). Die alten 🎯-Bereiche werden umgezogen: jede
+  Nachricht mit Anhang wird kopiert, erst danach im alten Kanal gelöscht,
+  `discord_clips` folgt der Kopie (Clip-of-the-Week). Danach wird der
+  Bereich gelöscht. Es werden keine Nutzer-Bereiche mehr angelegt; von Hand
+  angelegte 🎯-Kategorien bleiben tabu (W161).
+- **Discord-`/track`-Nutzer sind nur Discord** — die Ersatz-Telegram-Gruppe
+  aus W167 ist zurückgenommen.
+
+### Behoben
+
+- **„User die per Dashboard hinzugefügt werden, werden als Default im
+  Discord angelegt."** Die Standardgruppe nahm die meistgenutzte `group_id`
+  (oft die Guild) und als Rückfall `DISCORD_GUILD_ID`. Jetzt
+  `nc.telegramfehler.standardgruppe()` — nur Telegram. Bestehende
+  Dashboard-Trackings (`added_by=0`) an einer Guild werden beim Start in die
+  Telegram-Gruppe geholt, Dubletten entfernt.
+- Offline-Meldung: `zip(tracking_ids, chats)` lief über eine deduplizierte
+  Chat-Liste — bei zwei Trackings in derselben Gruppe verrutschte die
+  Zuordnung. Jetzt ein Paar je Tracking (`_fanout_ziele`).
+- Ein gelöschtes Upload-Thema wurde nie vergessen: `_topic_forget` nimmt
+  dieselbe Abbildung wie `_ensure_topic`.
+- Review #210: ein altes Thema, dessen Aufnahmen nicht alle nachgezogen
+  werden konnten (Datei weg, oder gar keine Zeile mehr), wird nur
+  **geschlossen**, nicht gelöscht — dort liegt die einzige Kopie. Das
+  Upload-Thema wird je Gruppe unter einer Sperre angelegt (zwei
+  gleichzeitige Uploads legten zwei an). Der Discord-Umzug markiert jede
+  Kopie mit der Quell-ID und kopiert nach einem Abbruch nichts doppelt.
+
 ## [4.6.17] — 2026-11-07 · „Leitstand"
 
 ### Behoben — Befunde aus den Logs vom 06./07.11. (v4.2 W167)

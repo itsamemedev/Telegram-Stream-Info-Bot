@@ -13,6 +13,7 @@ from flask import Blueprint, jsonify, request
 
 from nc import prueflage as _nc_prueflage  # v4.2-W138
 from nc import fehlertext as _nc_fehlertext
+from nc import telegramfehler as _tgf  # v4.2-W168: Standardgruppe nur Telegram
 
 from nc import i18n as _nc_i18n
 from nc.dbwrap import db_conn
@@ -102,34 +103,30 @@ def quick_restart_tracking(tracking_id: int) -> dict:
 
 
 def _dashboard_track_group() -> int:
-    """Standardgruppe für Trackings ohne explizite group_id.
-       Reihenfolge: DASHBOARD_TRACK_GROUP_ID → DAILY_SUMMARY_CHAT_ID →
-       die meistgenutzte group_id aus trackings (dort läuft der Betrieb
-       nachweislich) → DISCORD_TRACK_GROUP_ID → DISCORD_GUILD_ID →
-       ALLOWED_CHAT_IDS, falls es genau einen gibt. 0 = nicht auflösbar,
-       der Aufrufer meldet das mit Klartext statt still zu schlucken.
+    """Standardgruppe für Trackings ohne explizite group_id — eine
+       TELEGRAM-Gruppe, nie eine Discord-Guild.
+       Reihenfolge (nc.telegramfehler.standardgruppe): DASHBOARD_TRACK_GROUP_ID
+       → DAILY_SUMMARY_CHAT_ID → die meistgenutzte Telegram-Gruppe der
+       Trackings → DISCORD_TRACK_GROUP_ID → ALLOWED_CHAT_IDS (Gruppen zuerst).
+       0 = nicht auflösbar, der Aufrufer meldet das mit Klartext.
+       v4.2-W168: bis hier stand DISCORD_GUILD_ID in der Kette, und die
+       meistgenutzte group_id war bei vielen Discord-/track-Einträgen die
+       Guild — gemeldet am 07.11.: „User die per Dashboard hinzugefügt werden,
+       werden als Default im Discord angelegt und auch so behandelt."
        Als Funktion gelesen, nicht als Modul-Konstante: .env ist zum
        Import-Zeitpunkt teils noch nicht geladen."""
-    gid = _env_int("DASHBOARD_TRACK_GROUP_ID", 0)
-    if gid:
-        return gid
-    if _c().cfg["DAILY_SUMMARY_CHAT_ID"]:
-        return _c().cfg["DAILY_SUMMARY_CHAT_ID"]
+    meist = []
     try:
         with db_conn() as conn:
-            row = conn.execute(
+            meist = [r["group_id"] for r in conn.execute(
                 "SELECT group_id, COUNT(*) AS n FROM trackings "
-                "GROUP BY group_id ORDER BY n DESC LIMIT 1").fetchone()
-        if row and row["group_id"]:
-            return int(row["group_id"])
+                "GROUP BY group_id ORDER BY n DESC").fetchall()]
     except Exception as e:
         log.warning("Standardgruppe fürs Dashboard: DB-Abfrage fehlgeschlagen: %s", e)
-    for cand in (_c().cfg["DISCORD_TRACK_GROUP_ID"], _c().cfg["DISCORD_GUILD_ID"]):
-        if cand:
-            return int(cand)
-    if len(_c().cfg["ALLOWED_CHAT_IDS"]) == 1:
-        return int(next(iter(_c().cfg["ALLOWED_CHAT_IDS"])))
-    return 0
+    return _tgf.standardgruppe(_env_int("DASHBOARD_TRACK_GROUP_ID", 0),
+                               _c().cfg["DAILY_SUMMARY_CHAT_ID"], meist,
+                               _c().cfg["DISCORD_TRACK_GROUP_ID"],
+                               _c().cfg["ALLOWED_CHAT_IDS"])
 
 
 @bp.route("/api/trackings/groups")
@@ -140,7 +137,8 @@ def api_trackings_groups():
     default_gid = _dashboard_track_group()
 
     def _src(gid: int) -> str:
-        return "discord" if (_c().cfg["DISCORD_GUILD_ID"] and gid == _c().cfg["DISCORD_GUILD_ID"]) else "telegram"
+        # v4.2-W168: jede Guild ist Discord, nicht nur DISCORD_GUILD_ID.
+        return "telegram" if _tgf.ist_telegram_chat(gid) else "discord"
 
     groups = []
     try:
@@ -248,7 +246,7 @@ def api_trackings():
     # (DISCORD_TRACK_GROUP_ID=Telegram-ID) ist die Heimat Telegram → kein DC-Badge.
     return jsonify([{
         "id": t["id"], "username": t["username"], "group_id": t["group_id"],
-        "source": ("discord" if (_c().cfg["DISCORD_GUILD_ID"] and t["group_id"] == _c().cfg["DISCORD_GUILD_ID"]) else "telegram"),
+        "source": ("telegram" if _tgf.ist_telegram_chat(t["group_id"]) else "discord"),
         "last_live": bool(t["last_live"]), "recording": bool(t["recording"]),
         "paused": bool(t["paused"]) if "paused" in t.keys() else False,    # F53
         "notes": (t["notes"] if "notes" in t.keys() else None) or "",      # F60

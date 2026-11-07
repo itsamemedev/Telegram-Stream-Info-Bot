@@ -468,84 +468,112 @@ async def _provision_base_channels(guild):
     return created
 
 
-async def _provision_user_channels(guild, usernames):
-    made = []
-    for u in usernames:
-        slug = _nc_rang.slug(u)
-        catname = f"🎯 {slug}"
-        if discord.utils.get(guild.categories, name=catname):
-            continue   # idempotent: schon vorhanden
-        try:
-            cat = await guild.create_category(catname)
-            await guild.create_text_channel(f"{slug}-clips", category=cat,
-                                             topic=f"Highlight-Clips von @{u}")
-            await guild.create_text_channel(f"{slug}-chat", category=cat)
-            await guild.create_voice_channel(f"{slug} 🔊", category=cat)
-            made.append(slug)
-        except Exception as e:
-            log.warning("Discord: User-Channels für %s fehlgeschlagen: %s", u, e)
-    return made
-
-
-def _alle_getrackten():
-    """Alle getrackten Namen, pausierte eingeschlossen. Wirft bei
-    Datenbankfehler — der Abgleich darf dann nichts loeschen (W153)."""
-    with db_conn() as conn:
-        rows = conn.execute("SELECT DISTINCT username FROM trackings").fetchall()
-    return [r["username"] for r in rows if r["username"]]
-
-
 def _ziel_guild():
-    """Der Server fuer die User-Bereiche: DISCORD_GUILD_ID, sonst der erste.
+    """Der Server fuer den Clip-Kanal: DISCORD_GUILD_ID, sonst der erste.
     Ohne Verbindung keiner — die Schleife wartet dann auf den naechsten Takt."""
     _c = _dc_client()
     g = _c.get_guild(DISCORD_GUILD_ID) if (_c is not None and DISCORD_GUILD_ID) else None
     return g or (_c.guilds[0] if (_c is not None and _c.guilds) else g)
 
 
+async def _clip_kopieren(msg, ziel):
+    """Eine Nachricht samt Anhaengen in den Clip-Kanal kopieren, mit Marke."""
+    von = "" if msg.author.bot else f"(von {msg.author.display_name}) "
+    dateien = [await a.to_file() for a in msg.attachments]
+    text = (von + (msg.content or ""))[:1850] + _nc_ziele.umzugsmarke(msg.id)
+    neu = await ziel.send(content=text, files=dateien)
+    try:
+        await neu.add_reaction("⭐")
+    except discord.HTTPException as e:
+        log.info("Clip-Umzug: ⭐ an %s nicht gesetzt: %s", neu.id, e)
+    return neu
+
+
+async def _umzugsmarken(ziel):
+    """{Quell-ID: Kopie} aller schon umgezogenen Clips im Ziel (Review #210).
+    Einmal je Abgleich gelesen, nicht je Bereich — bei 40 Bereichen waere es
+    sonst 40-mal der ganze Kanalverlauf."""
+    schon = {}
+    async for alt in ziel.history(limit=None):
+        qid = _nc_ziele.umzugsmarke_lesen(alt.content)
+        if qid:
+            schon.setdefault(qid, alt)
+    return schon
+
+
+async def _bereich_umziehen(cat, ziel, schon):
+    """Einen alten 🎯-Bereich in den Clip-Kanal ziehen. -> Zahl der Clips.
+
+    Jede Nachricht mit Anhang wird ins Ziel kopiert und ERST DANACH im alten
+    Kanal geloescht — ein Abbruch mittendrin (Neustart, Ratenlimit) kopiert
+    beim naechsten Lauf nichts doppelt, und nichts geht verloren, was nicht
+    schon drueben steht. discord_clips folgt der Kopie, sonst zaehlt der
+    Clip-of-the-Week die Sterne an einer Nachricht, die es nicht mehr gibt."""
+    quelle = discord.utils.get(cat.channels, name=_nc_ziele.clip_kanal_des_bereichs(cat.name))
+    kopiert = 0
+    if quelle is not None:
+        # Review #210: scheitert das Loeschen nach der Kopie (Neustart,
+        # fehlendes Recht), bliebe die Quelle stehen — und jeder Abgleich alle
+        # zehn Minuten postete eine weitere Kopie. Jede Kopie traegt deshalb
+        # die Quell-ID als Marke; vorhandene Kopien werden wiedererkannt.
+        async for msg in quelle.history(limit=None, oldest_first=True):
+            if not msg.attachments:
+                continue
+            neu = schon.get(msg.id) or await _clip_kopieren(msg, ziel)
+            await db_async(lambda c, a=msg.id, n=neu: c.execute(
+                "UPDATE discord_clips SET guild_id=?, channel_id=?, message_id=? WHERE message_id=?",
+                (n.guild.id, n.channel.id, n.id, a)))
+            await msg.delete()
+            kopiert += 1
+    for ch in list(cat.channels):
+        await ch.delete(reason="v4.2-W168: Clips liegen jetzt im gemeinsamen Kanal")
+    await cat.delete(reason="v4.2-W168: Clips liegen jetzt im gemeinsamen Kanal")
+    return kopiert
+
+
 async def _ziele_abgleichen(guild, erzwingen=False):
-    """v4.2-W153: jeder getrackte User hat einen Bereich, kein entfernter
-    behaelt einen. Die Entscheidung trifft nc/discordziele.py; hier wird nur
-    ausgefuehrt. -> {"angelegt", "geloescht", "zurueckgestellt", "grund"}"""
-    getrackt = await asyncio.to_thread(_alle_getrackten)
-    plan = _nc_ziele.plan(getrackt, [c.name for c in guild.categories],
-                          len(guild.channels), erzwingen=erzwingen)
-    geloescht = []
-    for name in plan["loeschen"]:
-        cat = discord.utils.get(guild.categories, name=name)
-        if cat is None:
-            continue
+    """v4.2-W168: die alten Nutzer-Bereiche (🎯 name, W153) in EINEN
+    Clip-Kanal umziehen und loeschen. Entschieden am 07.11.: „das sollte
+    unterbunden werden … alle anderen Channel loeschen". Angelegt wird kein
+    Bereich mehr. Geloescht wird weiter nur, was nachweislich vom Bot stammt
+    (`loeschbar`, W161). `erzwingen` bleibt fuer /setup_targets: dort wird
+    das Ergebnis auch dann gemeldet, wenn nichts zu tun war.
+    -> {"umgezogen": [name], "clips": n, "fremd": [name], "fehler": [name]}"""
+    r = {"umgezogen": [], "clips": 0, "fremd": [], "fehler": []}
+    alte = [c for c in guild.categories if c.name.startswith(_nc_ziele.PRAEFIX)]
+    if not alte:
+        return r
+    ziel = await _nc_ziele.clip_kanal_holen([guild], guild.id)
+    schon = await _umzugsmarken(ziel)
+    for cat in alte:
         if not _nc_ziele.loeschbar(cat.name, [ch.name for ch in cat.channels]):
             # v4.2-W161: Praefix ja, Inhalt fremd — von Hand angelegt oder
             # ergaenzt. Nicht unser Bereich, also nicht unser Loeschen.
-            laut, weg = _nc_meldetakt.melden("discord-fremdbereich", name,
+            r["fremd"].append(cat.name)
+            laut, weg = _nc_meldetakt.melden("discord-fremdbereich", cat.name,
                                              _time_mod.monotonic())
             if laut:
-                log.warning("Discord: Kategorie %s nicht geloescht — sie traegt Kanaele, "
-                            "die der Bot nicht angelegt hat (%s). Von Hand pruefen.%s", name,
+                log.warning("Discord: Kategorie %s nicht umgezogen — sie traegt Kanaele, "
+                            "die der Bot nicht angelegt hat (%s). Von Hand pruefen.%s", cat.name,
                             ", ".join(sorted(ch.name for ch in cat.channels))[:200],
                             _nc_meldetakt.zusatz(weg))
             continue
         try:
-            for ch in list(cat.channels):
-                await ch.delete(reason="nicht mehr getrackt")
-            await cat.delete(reason="nicht mehr getrackt")
-            geloescht.append(name[len(_nc_ziele.PRAEFIX):])
+            r["clips"] += await _bereich_umziehen(cat, ziel, schon)
+            r["umgezogen"].append(cat.name[len(_nc_ziele.PRAEFIX):])
         except Exception as e:
-            log.error("Discord: Bereich %s nicht geloescht: %s", name, e)
-    angelegt = await _provision_user_channels(guild, plan["anlegen"])
-    if angelegt or geloescht:
-        log.info("Discord-Bereiche abgeglichen: %d angelegt (%s), %d geloescht (%s)",
-                 len(angelegt), ", ".join(angelegt[:10]), len(geloescht),
-                 ", ".join(geloescht[:10]))
-    if plan["zurueckgestellt"]:
-        log.error("Discord: %d getrackte User ohne Bereich — der Server erreicht die "
-                  "Grenze von %d Kanaelen (%s …)", len(plan["zurueckgestellt"]),
-                  _nc_ziele.SERVER_GRENZE, ", ".join(plan["zurueckgestellt"][:5]))
-    if plan["grund"]:
-        log.warning("Discord-Abgleich: %s", plan["grund"])
-    return {"angelegt": angelegt, "geloescht": geloescht,
-            "zurueckgestellt": plan["zurueckgestellt"], "grund": plan["grund"]}
+            # Kein Loeschen nach einem Kopierfehler: _bereich_umziehen loescht
+            # den Bereich erst nach der letzten Kopie.
+            r["fehler"].append(cat.name)
+            laut, weg = _nc_meldetakt.melden("discord-umzug", cat.name, _time_mod.monotonic())
+            if laut:
+                log.error("Discord: Bereich %s nicht nach #%s umgezogen: %s — der Bereich "
+                          "bleibt, der naechste Abgleich versucht es erneut.%s", cat.name,
+                          ziel.name, e, _nc_meldetakt.zusatz(weg))
+    if r["umgezogen"]:
+        log.info("Discord: %d Nutzer-Bereiche nach #%s umgezogen (%d Clips) und geloescht: %s",
+                 len(r["umgezogen"]), ziel.name, r["clips"], ", ".join(r["umgezogen"][:10]))
+    return r
 
 
 def _ziele_takt_min():
@@ -1108,8 +1136,8 @@ def _reg_community_setup(tree):
     # v4.2-W71: _provision_base_channels steht jetzt auf Modulebene (brauchte keine
     # einzige Closure-Variable).
 
-    # v4.2-W71: _provision_user_channels steht jetzt auf Modulebene (brauchte keine
-    # einzige Closure-Variable).
+    # v4.2-W168: _provision_user_channels ist entfallen — es gibt keine
+    # Nutzer-Bereiche mehr, nur den gemeinsamen Clip-Kanal.
 
     # v4.2-W71: _tracked_usernames steht jetzt auf Modulebene (brauchte keine
     # einzige Closure-Variable).
@@ -1127,26 +1155,28 @@ def _reg_community_setup(tree):
                 f"✅ Community eingerichtet.\n• Team-Rollen: {', '.join(team.keys()) or '—'}\n"
                 f"• Rang-Rollen: {', '.join(roles.keys()) or '—'}\n"
                 f"• Channels: {', '.join(chans) or 'alle bereits vorhanden'}\n"
-                f"Nächster Schritt: `/setup_targets` legt pro getracktem User eigene Channels an.",
+                + _nc_i18n.t("Clips aller Streamer landen im gemeinsamen Clip-Kanal (wird beim ersten Clip angelegt)."),
                 ephemeral=True)
         except Exception as e:
             await inter.followup.send(_nc_i18n.t(f"Fehler: {e}"), ephemeral=True)
-    @tree.command(name="setup_targets", description=_nc_i18n.t("Pro getracktem User: Clips-, Chat- und Voice-Channel anlegen"))
+    @tree.command(name="setup_targets", description=_nc_i18n.t("Alte Nutzer-Bereiche in den gemeinsamen Clip-Kanal umziehen"))
     async def _c_setup_targets(inter):
         if not await _guard(inter):
             return
         await inter.response.defer(ephemeral=True)
         try:
-            # v4.2-W153: derselbe Abgleich wie der Automat — anlegen UND
-            # loeschen, ausdruecklich auch ueber dem Massen-Riegel.
+            # v4.2-W168: derselbe Umzug wie der Automat. Pro Nutzer wird
+            # nichts mehr angelegt — alle Clips gehen in EINEN Kanal.
+            ziel = await _nc_ziele.clip_kanal_holen([inter.guild], inter.guild.id)
             r = await _ziele_abgleichen(inter.guild, erzwingen=True)
             await inter.followup.send(
-                f"✅ {len(r['angelegt'])} User-Bereiche angelegt, {len(r['geloescht'])} geloescht."
-                + (f"\nAngelegt: {', '.join(r['angelegt'][:20])}" if r['angelegt'] else "")
-                + (f"\nGeloescht: {', '.join(r['geloescht'][:20])}" if r['geloescht'] else "")
-                + (f"\n⚠ {len(r['zurueckgestellt'])} ohne Bereich — Server-Grenze von 500 Kanaelen."
-                   if r['zurueckgestellt'] else "")
-                + (f"\n{r['grund']}" if r['grund'] else ""),
+                _nc_i18n.t("✅ Clip-Kanal: #{kanal} · {n} Bereiche umgezogen ({c} Clips).").format(
+                    kanal=ziel.name, n=len(r["umgezogen"]), c=r["clips"])
+                + (f"\n{', '.join(r['umgezogen'][:20])}" if r["umgezogen"] else "")
+                + (("\n⚠ " + _nc_i18n.t("Nicht angefasst (fremde Kanäle darin):") + " "
+                    + ", ".join(r["fremd"][:10])) if r["fremd"] else "")
+                + (("\n⚠ " + _nc_i18n.t("Umzug gescheitert, siehe Log:") + " "
+                    + ", ".join(r["fehler"][:10])) if r["fehler"] else ""),
                 ephemeral=True)
         except Exception as e:
             await inter.followup.send(_nc_i18n.t(f"Fehler: {e}"), ephemeral=True)
@@ -1458,9 +1488,10 @@ def _reg_betrieb(tree):
         await inter.response.defer(ephemeral=True)
         try:
             u = username.lstrip("@")
-            await _discord_post_user(u, f"✅ Test-Post für **@{u}** — der Upload-Channel funktioniert.", feed=None)
+            # v4.2-W168: es gibt keinen #{slug}-clips mehr — der Test geht in #live-feed.
+            await _discord_post_user(u, f"✅ Test-Post für **@{u}** — der Feed funktioniert.", feed="live-feed")
             await inter.followup.send(
-                _nc_i18n.t(f"Test-Nachricht an `#{_nc_rang.slug(u)}-clips` gesendet (falls Channel existiert — sonst erst `/setup_targets`)."),
+                _nc_i18n.t("Test-Nachricht an `#live-feed` gesendet (falls der Kanal existiert — sonst erst `/setup_community`)."),
                 ephemeral=True)
         except Exception as e:
             await inter.followup.send(_nc_i18n.t(f"Fehler: {e}"), ephemeral=True)
@@ -2124,7 +2155,7 @@ async def _discord_run_once():
             out = await clip_moment(u, reason=f"/clip von {inter.user.display_name}",
                                     caption=f"Clip by {inter.user.display_name}")
             if out:
-                await inter.followup.send(_nc_i18n.t(f"✂ Clip von **@{u}** erstellt — landet gleich in **#{u}-clips**. ⭐ nicht vergessen!"))
+                await inter.followup.send(_nc_i18n.t("✂ Clip von **@{u}** erstellt — landet gleich in **#{kanal}**. ⭐ nicht vergessen!").format(u=u, kanal=_nc_ziele.clip_kanal()))
             else:
                 await inter.followup.send(f"Kein Clip möglich für @{u} — keine laufende Aufnahme, "
                                           f"Aufnahme zu frisch oder Clip-Cooldown des Streamers aktiv.")
