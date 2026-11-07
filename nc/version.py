@@ -4,7 +4,7 @@ Eine einzige Wahrheit für die Versionsanzeige (Dashboard-Footer, /api/version,
 „Was ist neu"-Panel). Reine Daten + kleine Helfer, voll testbar.
 """
 
-VERSION = "4.6.20"
+VERSION = "4.6.21"
 CODENAME = "Leitstand"
 RELEASE = "2026.11"
 
@@ -23,6 +23,19 @@ def build_stamp():
 # Meilenstein-Changelog, neueste Version zuerst. highlights = kurze, ehrliche
 # Stichpunkte dessen, was die Version bringt.
 CHANGELOG = [
+    {
+        "version": "4.6.21",
+        "date": "2026-11",
+        "title": "Leitstand",
+        # Patch-Fassung von 4.6: Kick-Chat ueber Centrifugo (W171).
+        "highlights": [
+            "Kick-Chat läuft wieder: Kick hat den Chat im Oktober von Pusher auf Centrifugo umgestellt, jeder Pusher-Key wurde mit 4001 abgewiesen",
+            "Neuer Weg wie im Web-Client von kick.com: Gast-Token ohne Login, Websocket-Adresse von Kick erfragt statt fest verdrahtet, Token wird vor Ablauf erneuert",
+            "Moderation, AZRAEL, Overlay und Sub-/Gift-Dank laufen unverändert — Kick liefert in beide Wege dieselben Ereignisse",
+            "Prüfen auf dem Server: venv/bin/python tools/kickchat.py zeigt Anmeldung, Abo und eingehende Nachrichten",
+            "Schalter KICK_CHAT_WEG (centrifugo, Vorgabe; pusher als Rückweg, falls Kick zurückwechselt)",
+        ],
+    },
     {
         "version": "4.6.20",
         "date": "2026-11",

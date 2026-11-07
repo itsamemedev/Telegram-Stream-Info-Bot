@@ -11,6 +11,40 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+## [4.6.21] — 2026-11-07 · „Leitstand"
+
+### Behoben — Kick-Chat über Centrifugo (v4.2 W171)
+
+Gemeldet am 07.11.: „woher krieg ich den Kick-Key, der alle paar Sekunden
+abgelehnt wird". Der Betreiber hat im Firefox nachgesehen: der Web-Client
+von kick.com verbindet gar nicht mehr zu `pusher.com`, sondern zu
+`realtime.us-west-2.platform.kick.com` und `websockets.kick.com`.
+
+- Kick hat den Chat Mitte Oktober 2026 von Pusher auf **Centrifugo**
+  umgestellt und den Pusher-Key zurückgezogen. Jeder Key wurde von jedem
+  Cluster mit `4001 … not in this cluster` abgewiesen — die Suche aus W154
+  (Cluster) und W167 (bekannte Keys) lief damit an der falschen Stelle.
+- `nc/kickzentrifugo.py`: derselbe Weg wie der Web-Client — Websocket-
+  Adresse bei `web.kick.com/api/v1/realtime/connection` erfragt (Region aus
+  der Antwort, nicht fest verdrahtet), Gast-Token ohne Login, Centrifugo-
+  JSON-Protokoll, Ping beantwortet, gebündelte Rahmen zerlegt, Token bei
+  drei Vierteln der Laufzeit auf derselben Verbindung erneuert. 60 s ohne
+  Rahmen gilt als tot.
+- Die Verarbeitung (Moderation, AZRAEL, Overlay, Sub-/Gift-Dank) steht
+  jetzt in `KickModerator._kick_ereignis` und ist für beide Wege dieselbe —
+  Kick legt in Centrifugo denselben `{event, data}` wie früher in Pusher.
+- Wachsender Backoff (5 s bis 2 min); Codes, die Centrifugo als endgültig
+  einstuft, warten 15 min statt im Sekundentakt neu anzufragen.
+- `KICK_CHAT_WEG` (Vorgabe `centrifugo`, `pusher` als Rückweg).
+- **Prüfen auf dem Server:** `venv/bin/python tools/kickchat.py` geht den
+  Weg des Bots und druckt Anmeldung, Abo und eingehende Nachrichten.
+
+Das Protokoll ist nicht dokumentiert, sondern aus den Umbauten anderer
+Chat-Clients nachgelesen; von der Entwicklungsumgebung aus war `web.kick.com`
+nicht erreichbar. Vertrag `_test_v42_w171_kick_centrifugo` fährt die echte
+Schleife gegen einen nachgebauten Kick-Server, 10 von 10 Mutationsproben
+gefangen.
+
 ## [4.6.20] — 2026-11-07 · „Leitstand"
 
 ### Behoben — ein Chromium je Restream statt je Bild (v4.2 W170)
