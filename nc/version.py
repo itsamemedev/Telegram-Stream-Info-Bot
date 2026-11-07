@@ -4,7 +4,7 @@ Eine einzige Wahrheit für die Versionsanzeige (Dashboard-Footer, /api/version,
 „Was ist neu"-Panel). Reine Daten + kleine Helfer, voll testbar.
 """
 
-VERSION = "4.6.18"
+VERSION = "4.6.19"
 CODENAME = "Leitstand"
 RELEASE = "2026.11"
 
@@ -23,6 +23,19 @@ def build_stamp():
 # Meilenstein-Changelog, neueste Version zuerst. highlights = kurze, ehrliche
 # Stichpunkte dessen, was die Version bringt.
 CHANGELOG = [
+    {
+        "version": "4.6.19",
+        "date": "2026-11",
+        "title": "Leitstand",
+        # Patch-Fassung von 4.6: Link gepostet, Video als Antwort (W169).
+        "highlights": [
+            "YouTube- oder TikTok-Link in Telegram oder Discord gepostet: der Bot lädt das Video und antwortet direkt darauf mit der Datei",
+            "Passt das Video nicht ins Upload-Limit (Telegram 48 MB, Discord je nach Boost-Stufe), wird erst eine kleinere Fassung gewählt und sonst neu kodiert",
+            "Scheitert der Download, antwortet der Bot mit dem Grund — privat, zu lang, YouTube-Anmeldesperre, 403 — statt still nichts zu tun",
+            "Live-Links bleiben außen vor; höchstens drei Links je Nachricht, Abklingzeit je Absender, ein Download zur Zeit (LINK_VIDEO_PARALLEL)",
+            "Schalter: LINK_VIDEO (an), LINK_VIDEO_MAX_MIN (20), LINK_VIDEO_COOLDOWN_S (15), LINK_VIDEO_YT_COOKIES_PATH für YouTube-Cookies",
+        ],
+    },
     {
         "version": "4.6.18",
         "date": "2026-11",

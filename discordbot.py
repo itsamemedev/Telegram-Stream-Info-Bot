@@ -41,6 +41,8 @@ from nc import badwords as _nc_badwords
 from nc import brainstate as _nc_brainstate
 from nc import channels as _nc_channels
 from nc import discordrang as _nc_rang
+from nc import discordlimits as _nc_dclimits  # v4.2-W169: Upload-Limit je Guild
+from nc import linkvideo as _nc_linkvideo     # v4.2-W169: Link gepostet -> Video als Antwort
 from nc import discordziele as _nc_ziele      # v4.2-W153: User-Bereiche abgleichen
 from nc import meldetakt as _nc_meldetakt     # v4.2-W161: fremde Bereiche gedrosselt melden
 from nc import befehle as _nc_befehle
@@ -499,6 +501,34 @@ async def _umzugsmarken(ziel):
         if qid:
             schon.setdefault(qid, alt)
     return schon
+
+
+async def _link_video(message, urls):
+    """v4.2-W169: YouTube-/TikTok-Links einer Nachricht -> Videos als Antwort.
+    Das Limit ist das der Guild (Boost-Stufe); in einer DM gilt das freie."""
+    gilde = getattr(message.guild, "filesize_limit", 0) if message.guild else 0
+    limit = _nc_dclimits.gate_mb(_nc_dclimits.effective_upload_mb(gilde))
+    for url in urls:
+        erg = {}
+        try:
+            async with _nc_linkvideo.sperre():
+                async with message.channel.typing():
+                    erg = await _nc_linkvideo.holen(url, limit)
+                    if erg["pfad"]:
+                        await message.reply(
+                            _nc_linkvideo.bildunterschrift(erg["titel"], url)[:1900],
+                            file=discord.File(erg["pfad"]), mention_author=False)
+                        log.info("Link-Video → Discord #%s: %s", getattr(message.channel, "name", "DM"), url)
+            if not erg.get("pfad"):
+                log.info("Link-Video nicht geladen (%s): %s", url, erg.get("grund"))
+                await message.reply(_nc_i18n.t("⚠ Video nicht geladen: {grund}").format(
+                    grund=erg.get("grund") or "?"), mention_author=False)
+        except Exception as e:
+            laut, weg = _nc_meldetakt.melden("linkvideo-dc", type(e).__name__, _time_mod.monotonic())
+            if laut:
+                log.error("Link-Video Discord (%s): %s%s", url, e, _nc_meldetakt.zusatz(weg))
+        finally:
+            await asyncio.to_thread(_nc_linkvideo.aufraeumen, erg)
 
 
 async def _bereich_umziehen(cat, ziel, schon):
@@ -2357,6 +2387,11 @@ async def _discord_run_once():
                 and not message.mention_everyone))
         if DISCORD_AZRAEL_REPLY and _angesprochen:
             _spawn(_discord_azrael_reply(message), name="dc-azrael-reply")
+        # v4.2-W169: Link gepostet -> Video als Antwort. Eigener Task: ein
+        # Download dauert, und on_message darf den Gateway nicht aufhalten.
+        _urls = _nc_linkvideo.links(message.content) if _nc_linkvideo.an() else []
+        if _urls and _nc_linkvideo.darf("dc:%s" % message.author.id, _time_mod.monotonic()):
+            _spawn(_link_video(message, _urls), name="dc-linkvideo")
         # Sprachnachricht → Whisper → KI-Antwort
         if DISCORD_VOICE_AI and message.attachments:
             for att in message.attachments:

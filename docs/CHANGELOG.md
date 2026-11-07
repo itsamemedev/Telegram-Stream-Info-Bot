@@ -11,6 +11,27 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+## [4.6.19] — 2026-11-07 · „Leitstand"
+
+### Neu — Link gepostet, Video als Antwort (v4.2 W169)
+
+Gemeldet am 07.11.: „Wenn ich in Discord oder Telegram einen YouTube- oder
+TikTok-Link poste, sollte der Bot das Video downloaden und direkt uploaden
+als Antwort auf den gesendeten Link."
+
+- `nc/linkvideo.py`: erkennt YouTube (`watch`, `youtu.be`, `shorts`) und
+  TikTok (`/video/`, `vm.`/`vt.`, `/t/`); Live-Links nicht. yt-dlp wählt
+  zuerst eine Fassung unter dem Limit, sonst wird mit derselben Funktion
+  wie bei den Discord-Clips verkleinert. Zeitlimit, Größen- und
+  Dauerdeckel, Arbeitsordner wird immer entfernt.
+- Telegram: eigene Handler-Gruppe (die AZRAEL-Ansprache läuft weiter),
+  Antwort per `reply_video` auf die Nachricht, Limit 48 MB.
+- Discord: aus `on_message` als eigener Task, Antwort mit Datei, Limit der
+  Guild (Boost-Stufe).
+- Jeder Fehlschlag bekommt eine Antwort mit Grund.
+- Schalter: `LINK_VIDEO`, `LINK_VIDEO_MAX_MIN`, `LINK_VIDEO_COOLDOWN_S`,
+  `LINK_VIDEO_PARALLEL`, `LINK_VIDEO_YT_COOKIES_PATH`.
+
 ## [4.6.18] — 2026-11-07 · „Leitstand"
 
 ### Geändert — ein Thema, ein Kanal (v4.2 W168)
