@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="docs/assets/banner.svg" alt="NIGHTCRAWLER — v4.6.17 Control Room" width="100%">
+<img src="docs/assets/banner.svg" alt="NIGHTCRAWLER — v4.6.18 Control Room" width="100%">
 
 ### The control room for live streaming
 #### Monitoring · Recording · Multi-target restream · AI moderation
@@ -84,7 +84,7 @@
 | **Operations** | systemd service · deploy script with pre-check and auto-rollback · self-test route · dead-man's report on process death · CrowdSec integration · log redaction for cookies and stream keys |
 | **Multilingual** | German, English and Spanish, switchable in the dashboard · `UI_LANG` for the bot · browser language detection · translation catalogue in `locales/` |
 | **Database** | SQLite **or** MariaDB · move with `update.sh --mariadb`, counted again · central schema module · export tool · database watchdog |
-| **Settings** | “Settings” tab in the deck: all ~586 variables searchable, stored in the database, protected keys only from `.env` |
+| **Settings** | “Settings” tab in the deck: all ~588 variables searchable, stored in the database, protected keys only from `.env` |
 | **Monitoring** | `/metrics` for Prometheus · Grafana dashboard with every metric · 16 alert rules with tests · set up with `tools/observability.sh` |
 
 </details>
@@ -121,8 +121,8 @@ flowchart TB
     TG["📨 Telegram"]:::ein --> BOT
     DC["🎮 Discord<br/>66 slash commands"]:::ein --> BOT
     TT["🎥 TikTok<br/>live detection + chat"]:::ein --> BOT
-    BOT["bot.py<br/>monolith · 27,202 lines<br/>scraper · recorder · restream<br/>Flask deck · 34 own routes"]:::core
-    BOT -->|configure| NC["nc/ — 183 domain modules<br/>39 blueprints"]:::lib
+    BOT["bot.py<br/>monolith · 27,352 lines<br/>scraper · recorder · restream<br/>Flask deck · 34 own routes"]:::core
+    BOT -->|configure| NC["nc/ — 184 domain modules<br/>39 blueprints"]:::lib
     BOT --> BR["brain_bridge.py"]:::lib
     BR --> BRAIN["brain/ — own brain.db<br/>rules · memory · knowledge graph<br/>16 watchdog agents"]:::brain
     BOT --> DB[("SQLite or MariaDB<br/>+ settings")]:::db
@@ -206,7 +206,7 @@ nothing and triggers nothing; a schedule never silently moves a database.
 
 ## ⚙️ Settings
 
-**In the deck, tab “Settings”.** All of the roughly 586 variables from
+**In the deck, tab “Settings”.** All of the roughly 588 variables from
 `.env.example` with group, default and description, searchable. Every row says
 where the value comes from — *set in the deck*, *from .env* or *default*. Values
 are stored in the database (SQLite or MariaDB) and take precedence over `.env`
@@ -547,8 +547,8 @@ python3 -m pytest -k w145          # one wave on its own
 python3 tools/ncpatch.py find "donations"      # where is something in bot.py?
 ```
 
-`bot.py` has 27,202 lines and is never read in full — the navigation map
-`.claude/INDEX.md` knows 379 routes and 620 functions with line numbers. Before
+`bot.py` has 27,352 lines and is never read in full — the navigation map
+`.claude/INDEX.md` knows 379 routes and 624 functions with line numbers. Before
 every pull request the full verification chain from
 **[`docs/en/CONTRIBUTING.md`](docs/en/CONTRIBUTING.md)** runs: lint, templates,
 documentation figures, locks against silent failure paths and giant functions,
@@ -621,6 +621,9 @@ donations entered in the deck count towards the overlay donation goal.
 pass-through did not run.
 **Patch 4.6.17** — Telegram uploads for Discord trackings, uploads no longer
 wait for the chat, pass-through falls back to streamlink, Kick tries known keys.
+**Patch 4.6.18** — one Telegram upload topic instead of @name topics (old ones
+re-uploaded, then deleted), one Discord clip channel instead of 🎯 areas,
+dashboard trackings land in Telegram.
 
 Every wave on its own: **[`docs/CHANGELOG.md`](docs/CHANGELOG.md)**.
 
@@ -632,12 +635,12 @@ Every wave on its own: **[`docs/CHANGELOG.md`](docs/CHANGELOG.md)**.
 
 | | |
 |---|---|
-| Current version | **4.6.17** — “Control Room” (2026.11) |
+| Current version | **4.6.18** — “Control Room” (2026.11) |
 | Flask routes | 379 (34 in `bot.py` · 345 in `nc/routes/`) |
 | Discord slash commands | 66 |
-| Domain modules | 183 in `nc/` (+39 in `nc/routes/`, +3 in `nc/intel/`), 10 in `brain/` |
+| Domain modules | 184 in `nc/` (+39 in `nc/routes/`, +3 in `nc/intel/`), 10 in `brain/` |
 | Sentinel agents | 14 |
-| Configuration variables | ~586 |
+| Configuration variables | ~588 |
 | Languages | German (source), English, Spanish |
 
 Next big step: keep taking `bot.py` apart — **[`docs/en/ROADMAP.md`](docs/en/ROADMAP.md)**.
@@ -682,7 +685,7 @@ with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 <div align="center">
 
-**NIGHTCRAWLER v4.6.17 · “Control Room”**
+**NIGHTCRAWLER v4.6.18 · “Control Room”**
 
 **[🌐 lafap.de](https://lafap.de)** · **[💬 Discord](https://discord.gg/psvnxm7tSV)** · **[📓 Changelog](docs/CHANGELOG.md)**
 

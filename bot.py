@@ -626,6 +626,8 @@ from nc import betriebslage as _nc_lage  # v4.2-W121: Start-/Stoppzeit, degradie
 from nc import kennzahlen as _nc_kz  # v4.2-W122: Leistungs-Schnappschuss fuer /metrics und Log
 from nc import resolvergrund as _nc_rgrund  # v4.2-W81: warum die Aufloesung leer blieb
 from nc import telegramfehler as _nc_tgfehler  # v4.2-W93: warum das Telegram-Polling klemmt
+from nc import discordziele as _nc_discordziele  # v4.2-W168: ein Clip-Kanal
+from nc import topicumzug as _nc_topicumzug  # v4.2-W168: @name-Themen -> ein Upload-Thema
 from nc import aufnahmesitzung as _nc_sitzung  # v4.2-W44: die Klammer um die Segmente EINES Streams
 from nc import chatfolge as _nc_chatfolge  # v4.2-W47: wie oft der TikTok-Chat neu darf
 from nc import memeklip as _nc_memeklip  # v4.2-W24: erkennt meme-wuerdige Chat-Momente
@@ -1440,24 +1442,70 @@ def _upload_queue_add(chat_id, filepath, username, started_at, ended_at):
              f"{UPLOAD_WINDOW_END:02d} Uhr): @{username} → chat {chat_id}")
 
 def _telegram_ziele(roh, username=""):
-    """v4.2-W167: Fan-out-Ziele einer Aufnahme als Telegram-Chats.
+    """Fan-out-Ziele einer Aufnahme — nur Telegram-Chats.
 
-    Ein per Discord-/track angelegtes Tracking traegt die GUILD als group_id.
-    Der Upload ging bisher an diese ID und wurde im Versand als „keine
-    Telegram-Chat-ID" verworfen — gemeldet am 07.11. als „Telegram uploads
-    funktionieren nicht mehr". Jetzt geht er an DISCORD_TRACK_GROUP_ID, sonst
-    an die erste freigeschaltete Telegram-Gruppe (nc/telegramfehler.ersatz)."""
-    ziel = _nc_tgfehler.ersatz(DISCORD_TRACK_GROUP_ID, ALLOWED_CHAT_IDS)
-    aus, umgeleitet = _nc_tgfehler.ziele(roh, ziel)
-    if umgeleitet:
-        laut, weg = _nc_meldetakt.melden("tg-umgeleitet", str(ziel), _time_mod.monotonic(),
+    v4.2-W167 leitete ein Discord-/track-Tracking (group_id = Guild) an eine
+    Telegram-Gruppe um. v4.2-W168, entschieden am 07.11.: diese Nutzer sind
+    NUR Discord — ihre Aufnahme geht in den Clip-Kanal (_clip_to_discord),
+    nicht nach Telegram. Ausgelassen wird gedrosselt auf info, damit niemand
+    ein fehlendes Telegram-Video fuer einen Fehler haelt."""
+    aus, discord = _nc_tgfehler.nur_telegram(roh)
+    if discord:
+        laut, weg = _nc_meldetakt.melden("tg-nur-discord", "discord", _time_mod.monotonic(),
                                          abstand_s=6 * 3600)
         if laut:
             log.info("Upload @%s: Ziel %s ist eine Discord-Guild (Tracking per /track) — "
-                     "geht an die Telegram-Gruppe %s. Andere Gruppe: DISCORD_TRACK_GROUP_ID "
-                     "setzen.%s", username or "?", ", ".join(map(str, umgeleitet)), ziel,
-                     _nc_meldetakt.zusatz(weg))
+                     "geht nur nach Discord, nicht nach Telegram. Fuer Telegram das "
+                     "Tracking in der Gruppe anlegen.%s", username or "?",
+                     ", ".join(map(str, discord)), _nc_meldetakt.zusatz(weg))
     return aus
+
+
+def _fanout_ziele(fan_rows, tid, chat_id, username):
+    """v4.2-W168: -> ([(tracking_id, Telegram-Chat oder None)], Upload-Chats).
+
+    Bis hier lief die Offline-Meldung ueber `zip(tracking_ids, chats)` — die
+    Chat-Liste war aber dedupliziert (W167), die ID-Liste nicht: bei zwei
+    Trackings in derselben Gruppe rutschte jede ID um eins. Jetzt ein Paar je
+    Tracking. Ein Discord-Tracking behaelt sein Paar (der Live-Uebergang wird
+    weiter beansprucht, sonst meldet der Live-Check-Worker ihn ein zweites
+    Mal), bekommt aber keinen Telegram-Chat."""
+    zeilen = [(r["id"], r["group_id"]) for r in fan_rows] or [(tid, chat_id)]
+    paare = [(t, g if _nc_tgfehler.ist_telegram_chat(g) else None) for t, g in zeilen]
+    return paare, _telegram_ziele([g for _t, g in zeilen], username)
+
+
+def _dashboard_trackings_umziehen():
+    """v4.2-W168: Dashboard-Trackings, die an einer Discord-Guild haengen, in
+    die Telegram-Standardgruppe holen — einmal je Start, idempotent.
+
+    Gemeldet am 07.11.: „Bei vorhandenen Nutzern und Daten muss das
+    nachgezogen werden." Bis W168 setzte das Deck als Standard die
+    meistgenutzte group_id oder DISCORD_GUILD_ID; diese Zeilen (added_by=0,
+    der Dashboard-Marker) stehen noch in der Datenbank. Discord-/track-Zeilen
+    tragen die ID des Discord-Nutzers in added_by und bleiben unberuehrt.
+    Gibt es den Nutzer in der Zielgruppe schon, ist die Guild-Zeile eine
+    Dublette (UNIQUE group_id+username) und wird entfernt."""
+    ziel = _nc_routes_trackings._dashboard_track_group()
+    with db_conn() as conn:
+        zeilen = [(r["id"], r["username"], r["group_id"]) for r in conn.execute(
+            "SELECT id, username, group_id FROM trackings WHERE added_by=0").fetchall()]
+        im_ziel = [r["username"] for r in conn.execute(
+            "SELECT username FROM trackings WHERE group_id=?", (ziel,)).fetchall()] if ziel else []
+        umziehen, doppelt = _nc_tgfehler.dashboard_umzug(zeilen, ziel, im_ziel)
+        for tid in umziehen:
+            conn.execute("UPDATE trackings SET group_id=? WHERE id=?", (ziel, tid))
+        for tid in doppelt:
+            conn.execute("DELETE FROM tracking_tags WHERE tracking_id=?", (tid,))
+            conn.execute("DELETE FROM trackings WHERE id=?", (tid,))
+    offen = [z for z in zeilen if not _nc_tgfehler.ist_telegram_chat(z[2])]
+    if umziehen or doppelt:
+        log.info("Dashboard-Trackings: %d von der Discord-Guild in die Telegram-Gruppe %s "
+                 "geholt, %d Dubletten entfernt.", len(umziehen), ziel, len(doppelt))
+    elif offen:
+        log.error("Dashboard-Trackings: %d haengen an einer Discord-Guild, aber keine "
+                  "Telegram-Gruppe ist aufloesbar — DASHBOARD_TRACK_GROUP_ID in .env setzen.",
+                  len(offen))
 
 
 def _upload_queue_remove(entry):
@@ -1493,11 +1541,12 @@ async def _upload_window_loop(bot_app):
                     if not _is_upload_window(datetime.now()):
                         break                   # Fenster zu → Rest beim nächsten Lauf
                     fpath = entry.get("file")
-                    # v4.2-W167: auch die schon aufgeschobenen Discord-Ziele
-                    # aus der Nacht davor bekommen ihre Telegram-Gruppe.
-                    chat_id = _telegram_ziele([entry.get("chat_id")], entry.get("username"))[0]
+                    # v4.2-W168: ein Discord-Ziel (Guild) ist kein Telegram-Ziel
+                    # mehr — der Eintrag wird verworfen statt umgeleitet.
+                    _tg = _telegram_ziele([entry.get("chat_id")], entry.get("username"))
+                    chat_id = _tg[0] if _tg else None
                     username = entry.get("username") or "?"
-                    if not fpath or not os.path.exists(fpath):
+                    if not chat_id or not fpath or not os.path.exists(fpath):
                         _upload_queue_remove(entry)   # Datei weg → Eintrag verwerfen
                         continue
                     try:
@@ -8829,6 +8878,12 @@ async def check_all_trackings(bot_app):
         log.info(f"⏫ Upload-Fenster aktiv: {UPLOAD_WINDOW_START:02d}:00–"
                  f"{UPLOAD_WINDOW_END:02d}:00 Uhr (Uploads außerhalb werden aufgeschoben"
                  + (f", {_pend} in Warteschlange" if _pend else "") + ").")
+    # v4.2-W168: alte @name-Themen ins Upload-Thema, Dashboard-Trackings nach Telegram.
+    _spawn(_tg_topic_umzug(bot_app), name="tg-topic-umzug")
+    try:
+        await asyncio.to_thread(_dashboard_trackings_umziehen)
+    except Exception as e:
+        _loop_fehler("dashboard-trackings-umzug", e)   # der Start laeuft weiter
     # F35: Initial-Burst — beim Start einmal alle Trackings prüfen
     for t in await asyncio.to_thread(get_all_active_trackings):   # v4.2-W118
         _NEXT_CHECK_AT[t["id"]] = 0   # 0 = "sofort fällig"
@@ -8959,7 +9014,12 @@ def _tg_topics_save():
 
 
 def _topic_forget(chat_id, username):
-    """Mapping verwerfen (z.B. Topic wurde gelöscht) → wird neu erstellt."""
+    """Mapping verwerfen (z.B. Topic wurde gelöscht) → wird neu erstellt.
+       v4.2-W168: ein Nutzername meint das Upload-Thema — dieselbe Abbildung
+       wie in _ensure_topic, sonst verwirft der Versand den alten @name-
+       Schluessel und schickt weiter in ein geloeschtes Upload-Thema."""
+    if username and not str(username).startswith("#"):
+        username = _TG_UPLOAD_TOPIC_KEY
     with _TG_TOPICS_LOCK:
         if _TG_TOPICS.pop(_topic_key(chat_id, username), None) is not None:
             _tg_topics_save()
@@ -8977,13 +9037,30 @@ async def _chat_is_forum(chat_id, bot) -> bool:
     _TG_FORUM_CACHE[chat_id] = (is_forum, now)
     return is_forum
 
+# v4.2-W168: EIN Upload-Thema je Gruppe statt eines je Nutzer. Entschieden
+# vom Betreiber am 07.11. („erstellt der Bot mehrere Topics … das sollte
+# unterbunden werden"). Jede getrackte Person bekam ein eigenes @name-Thema —
+# bei 40 Trackings 40 Themen, und die Gruppe war nur noch Seitenleiste. Der
+# Schluessel traegt ein '#' wie das Melde-Thema: kein Handle kollidiert damit.
+_TG_UPLOAD_TOPIC_KEY = "#uploads"
+
+
+def _upload_topic_name() -> str:
+    """Titel des Upload-Themas — als Funktion gelesen (.env kommt spaeter)."""
+    return (os.getenv("TELEGRAM_UPLOAD_TOPIC_NAME", "") or "").strip() or "🎬 Aufnahmen"
+
+
 async def _ensure_topic(chat_id, username, bot, name=None):
-    """Stellt ein Forum-Topic für @username im Chat sicher. Returns thread_id
-       oder None (kein Forum / keine Rechte / Fehler → Aufrufer sendet normal).
+    """Stellt ein Forum-Topic im Chat sicher. Returns thread_id oder None
+       (kein Forum / keine Rechte / Fehler → Aufrufer sendet normal).
        'name' übersteuert den Topic-Titel — dafür gibt es das Melde-Thema
-       (siehe _ensure_notify_topic), das keinem Nutzer gehört."""
+       (siehe _ensure_notify_topic), das keinem Nutzer gehört.
+       v4.2-W168: ein Nutzername ohne 'name' (der Upload-Fall) landet im
+       EINEN Upload-Thema der Gruppe, nicht mehr in einem @name-Thema."""
     if not TELEGRAM_USE_TOPICS or not username:
         return None
+    if name is None and not str(username).startswith("#"):
+        username, name = _TG_UPLOAD_TOPIC_KEY, _upload_topic_name()
     key = _topic_key(chat_id, username)
     tid = _TG_TOPICS.get(key)
     if tid:
@@ -9005,6 +9082,79 @@ async def _ensure_topic(chat_id, username, bot, name=None):
         log.debug(f"Topic-Erstellung übersprungen ({name or '@' + str(username)}, "
                   f"chat {chat_id}): {e}")
         return None
+
+
+async def _tg_topic_umzug(bot_app):
+    """v4.2-W168: die alten @name-Themen in das Upload-Thema umziehen.
+
+    Je Thema: jede noch vorhandene Aufnahme dieses Nutzers neu hochladen (sie
+    landet ueber _ensure_topic im Upload-Thema), und NUR wenn alle angekommen
+    sind, das alte Thema loeschen. Loeschen loescht in Telegram die Videos
+    darin — ohne diese Reihenfolge waeren sie weg. Laeuft einmal je Start;
+    was scheitert, wiederholt der naechste Start ohne Doppel (nc/topicumzug)."""
+    await asyncio.sleep(90)                 # Start-Burst und Polling zuerst
+    if not TELEGRAM_USE_TOPICS:
+        return
+    pfad = os.path.join(RECORDINGS_DIR, "tg_topic_umzug.json")
+    try:
+        zustand = await asyncio.to_thread(_nc_topicumzug.lade, pfad)
+    except (OSError, ValueError) as e:
+        log.error("Topic-Umzug: Fortschritt %s unlesbar (%s) — Umzug ausgesetzt, damit "
+                  "nichts doppelt hochgeladen wird. Datei pruefen oder loeschen.", pfad, e)
+        return
+    with _TG_TOPICS_LOCK:
+        themen = _nc_topicumzug.alte_themen(dict(_TG_TOPICS))
+    if themen:
+        log.info("Topic-Umzug: %d alte @name-Themen werden ins Upload-Thema „%s“ umgezogen.",
+                 len(themen), _upload_topic_name())
+    for chat_id, nutzer, tid in themen:
+        try:
+            await _tg_topic_umziehen(bot_app, chat_id, nutzer, tid, zustand, pfad)
+        except Exception as e:
+            _loop_fehler("tg-topic-umzug", e)
+
+
+async def _tg_topic_umziehen(bot_app, chat_id, nutzer, tid, zustand, pfad):
+    """Ein altes Thema: nachziehen, dann loeschen (siehe _tg_topic_umzug)."""
+    bot = bot_app.bot
+    while _should_defer_upload():           # das Upload-Fenster gilt auch hier
+        await asyncio.sleep(300)
+    rows = await db_async(lambda c: c.execute(
+        "SELECT filepath FROM recordings WHERE username=? ORDER BY id", (nutzer,)).fetchall())
+    alle = [r["filepath"] for r in rows if r["filepath"]]
+    da = await asyncio.to_thread(lambda: [f for f in alle if os.path.isfile(f)])
+    if len(da) < len(alle):
+        log.info("Topic-Umzug @%s: %d von %d Aufnahmen liegen nicht mehr auf der Platte "
+                 "und koennen nicht nachgezogen werden.", nutzer, len(alle) - len(da), len(alle))
+    for datei in _nc_topicumzug.offen(da, zustand, chat_id, nutzer):
+        ergebnis = {}
+        await split_and_send_video(chat_id, datei, bot_app, nutzer, ergebnis=ergebnis)
+        if not _nc_topicumzug.angekommen(ergebnis):
+            log.error("Topic-Umzug @%s: %s kam nicht an (%s) — das alte Thema bleibt "
+                      "stehen, der naechste Start versucht es erneut.", nutzer,
+                      os.path.basename(datei), ergebnis or "nichts gesendet")
+            return
+        _nc_topicumzug.gesendet(zustand, chat_id, nutzer, datei)
+        await asyncio.to_thread(_nc_topicumzug.speichere, pfad, zustand)
+        await asyncio.sleep(5)              # sanft zu Telegram
+    try:
+        await bot.delete_forum_topic(chat_id=chat_id, message_thread_id=tid)
+    except Exception as e:
+        # Schon von Hand geloescht ist das Ziel, kein Fehler. Nur genau das —
+        # „chat not found" heisst etwas anderes.
+        _m = str(e).lower()
+        if "thread not found" not in _m and "topic_id_invalid" not in _m:
+            log.error("Topic-Umzug @%s: altes Thema %s in chat %s nicht loeschbar: %s — "
+                      "dem Bot das Recht „Themen verwalten“ geben; der naechste Start "
+                      "versucht es erneut (ohne neu hochzuladen).", nutzer, tid, chat_id, e)
+            return
+    with _TG_TOPICS_LOCK:
+        _TG_TOPICS.pop(_topic_key(chat_id, nutzer), None)
+        _tg_topics_save()
+    _nc_topicumzug.erledigt(zustand, chat_id, nutzer)
+    await asyncio.to_thread(_nc_topicumzug.speichere, pfad, zustand)
+    log.info("Topic-Umzug @%s: %d Aufnahme(n) nachgezogen, altes Thema in chat %s geloescht.",
+             nutzer, len(da), chat_id)
 
 
 # ── Melde-Thema: Live/Offline gehört NIE in den Hauptchannel ────────────
@@ -9678,8 +9828,7 @@ async def handle_recording_finished(proc, tid, chat_id, username, output_file,
             fan_rows = await db_async(lambda c: c.execute(
                 "SELECT id, group_id FROM trackings WHERE username=?",
                 (username,)).fetchall())
-            target_chats = _telegram_ziele([r["group_id"] for r in fan_rows] or [chat_id], username)  # W167
-            target_tids  = [r["id"] for r in fan_rows] or [tid]
+            target_paare, target_chats = _fanout_ziele(fan_rows, tid, chat_id, username)  # W168
             log.info(f"@{username} fan-out: {len(target_chats)} chat(s) bekommen Upload")
 
             # F30: OFFLINE-Notification BEVOR Upload startet — an alle Fan-Out Chats
@@ -9714,8 +9863,8 @@ async def handle_recording_finished(proc, tid, chat_id, username, output_file,
             # Anspruch wird trotzdem geltend gemacht (er setzt last_live), nur die
             # Meldung entfällt.
             _quiet = _is_quiet_hours()
-            for ftid, fchat in zip(target_tids, target_chats):
-                if claim_live_transition(ftid, going_live=False):
+            for ftid, fchat in target_paare:
+                if claim_live_transition(ftid, going_live=False) and fchat is not None:
                     if _quiet:
                         log.info("@%s OFFLINE — Notification unterdrückt "
                                  "(Quiet Hours, chat %s).", username, fchat)
@@ -18767,7 +18916,7 @@ async def _meme_zusammenschnitt(username, output_file):
     Gemeldet: „der Hype-Director schneidet gar keine Memes zusammen". Jeder
     Clip trägt seit dieser Welle den Chat seines Fensters; hier werden sie
     hintereinandergesetzt und an dieselben Ziele geschickt wie die Clips
-    (Discord {user}-clips) und an die Telegram-Gruppen des Trackings."""
+    (Discord-Clip-Kanal, W168) und an die Telegram-Gruppen des Trackings."""
     # Review #204: erst warten, bis kein Clip dieser Aufnahme mehr geschnitten
     # wird — sonst fehlt der letzte Hype-Moment, oder die Mindestzahl faellt.
     await _clips_abwarten(output_file)
@@ -18813,7 +18962,7 @@ async def _meme_zusammenschnitt(username, output_file):
         # „ohne dass grosse Videos den Chat fluten") — der Zusammenschnitt ging
         # sofort hinaus, oft mitten in der Nacht und vor der Aufnahme selbst.
         _spaeter = _should_defer_upload()
-        # v4.2-W167: Discord-/track-Ziele gehen an ihre Telegram-Gruppe.
+        # v4.2-W168: Discord-/track-Ziele sind nur Discord (oben _clip_to_discord).
         for gid in _telegram_ziele([r["group_id"] for r in rows if r["group_id"]], username):
             if app is None:
                 continue
@@ -22470,8 +22619,8 @@ async def _shrink_for_discord(path, limit_mb):
 
 
 async def _clip_to_discord(username, path, caption=""):
-    """Postet einen Highlight-Clip in den {slug}-clips Channel des Users (Discord).
-       No-op wenn CLIP_DISCORD_UPLOAD aus, Client nicht da oder Channel fehlt."""
+    """Postet einen Highlight-Clip in den gemeinsamen Clip-Kanal (Discord).
+       No-op wenn CLIP_DISCORD_UPLOAD aus oder Client nicht da."""
     if not CLIP_DISCORD_UPLOAD or not _nc_discordstate.CLIENT["obj"]:
         return
     try:
@@ -22487,17 +22636,14 @@ async def _clip_to_discord(username, path, caption=""):
         # guild-genaue Pruefung steht unten nach dem Channel-Fund — erst dort
         # ist ch.guild.filesize_limit bekannt (Boost-Stufen!). Der tote Zweig
         # las sich wie ein Fehler und war nur ein Ueberbleibsel.
-        slug = re.sub(r"[^a-z0-9]+", "-", (username or "").lstrip("@").lower()).strip("-") or "user"
-        ch = None
-        for g in _nc_discordstate.CLIENT["obj"].guilds:
-            ch = discord.utils.get(g.text_channels, name=f"{slug}-clips")
-            if ch:
-                break
+        # v4.2-W168: EIN Clip-Kanal fuer alle (DISCORD_CLIP_CHANNEL, Vorgabe
+        # #clips) statt {slug}-clips je Nutzer — entschieden am 07.11. Fehlt
+        # er, wird er angelegt; fehlt das Recht dazu, sagt das Log es laut.
+        ch = await _nc_discordziele.clip_kanal_holen(
+            _nc_discordstate.CLIENT["obj"].guilds, DISCORD_GUILD_ID)
         if ch is None:
-            log.debug("Clip-Discord: Channel %s-clips nicht gefunden (erst /setup_targets ausführen)", slug)
-            if _tmp:
-                try: os.remove(_tmp)
-                except Exception: pass
+            log.error("Clip-Discord: der Bot ist in keiner Guild — Clip @%s nicht gepostet.",
+                      username)
             return
         # v4.0-W80: Guild-Limit ist AUTORITATIV (kennt Boost-Level + Discord-
         # Policy); der env-Wert deckelt nur, wenn explizit gesetzt. Vorher
@@ -22549,9 +22695,15 @@ async def _clip_to_discord(username, path, caption=""):
         if _tmp:
             try: os.remove(_tmp)      # komprimierte Kopie nach Upload weg, Original bleibt
             except Exception: pass
-        log.info("Clip → Discord (#%s-clips): %s", slug, os.path.basename(path))
+        log.info("Clip → Discord (#%s): %s", ch.name, os.path.basename(path))
     except Exception as e:
-        log.warning("Clip-Discord-Upload fehlgeschlagen: %s", e)
+        # v4.2-W168: laut statt warning — ein fehlendes Recht („Kanaele
+        # verwalten" fuer #clips) haette sonst jeden Clip still gekostet.
+        laut, weg = _nc_meldetakt.melden("clip-discord", type(e).__name__, _time_mod.monotonic())
+        if laut:
+            log.error("Clip-Discord-Upload fehlgeschlagen: %s — fehlt dem Bot das Recht, "
+                      "#%s anzulegen oder darin zu posten?%s", e,
+                      _nc_discordziele.clip_kanal(), _nc_meldetakt.zusatz(weg))
 
 
 # ═══ F96: Admin-Error-Channel — ERROR-Logs → Discord (nur Owner/Moderator) ═══
@@ -22564,7 +22716,7 @@ _nc_logfilters.configure_logfilters(dc_err_queue=_DC_ERR_QUEUE)   # V37: Handler
 
 async def _discord_post_user(username, text, feed="live-feed", ping_notify=False, kind=None, stats=None,
                              stream_url=None):
-    """Notification in den {slug}-clips Channel des Users + optional in #feed (global).
+    """Notification in #feed (global). v4.2-W168: der {slug}-clips-Kanal je Nutzer ist entfallen.
        ping_notify=True pingt zusätzlich die 🔔-{slug}-Rolle im Feed (Live-Gang).
        F83: kind="live"/"offline" → Rich-Embed (Farbe, Titel-Link, Timestamp) mit
        Link-Buttons (TikTok Live + Kick-Restream wenn KICK_CHANNEL_URL). Der Rollen-
@@ -22645,10 +22797,8 @@ async def _discord_post_user(username, text, feed="live-feed", ping_notify=False
             pass
     try:
         posted_feed = False
+        # v4.2-W168: kein {slug}-clips mehr je Nutzer — der Feed traegt die Meldung.
         for g in _nc_discordstate.CLIENT["obj"].guilds:
-            uc = discord.utils.get(g.text_channels, name=f"{slug}-clips")
-            if uc:
-                await _send(uc)
             if feed and not posted_feed:
                 fc = discord.utils.get(g.text_channels, name=feed)
                 if fc:

@@ -4,7 +4,7 @@ Eine einzige Wahrheit für die Versionsanzeige (Dashboard-Footer, /api/version,
 „Was ist neu"-Panel). Reine Daten + kleine Helfer, voll testbar.
 """
 
-VERSION = "4.6.17"
+VERSION = "4.6.18"
 CODENAME = "Leitstand"
 RELEASE = "2026.11"
 
@@ -23,6 +23,20 @@ def build_stamp():
 # Meilenstein-Changelog, neueste Version zuerst. highlights = kurze, ehrliche
 # Stichpunkte dessen, was die Version bringt.
 CHANGELOG = [
+    {
+        "version": "4.6.18",
+        "date": "2026-11",
+        "title": "Leitstand",
+        # Patch-Fassung von 4.6: ein Thema, ein Kanal (W168).
+        "highlights": [
+            "Telegram: EIN Upload-Thema je Gruppe („🎬 Aufnahmen“, TELEGRAM_UPLOAD_TOPIC_NAME) statt eines @name-Themas je getracktem Nutzer",
+            "Die alten @name-Themen werden umgezogen: jede noch vorhandene Aufnahme wird ins Upload-Thema nachgeladen, erst danach wird das alte Thema gelöscht — mit gemerktem Fortschritt, ohne Doppel nach einem Neustart",
+            "Discord: EIN Clip-Kanal (#clips, DISCORD_CLIP_CHANNEL) statt einer Kategorie mit drei Kanälen je Nutzer; die alten 🎯-Bereiche werden umkopiert und gelöscht, von Hand angelegte bleiben tabu",
+            "Per Discord-/track angelegte Nutzer sind nur Discord — ihre Aufnahmen gehen nicht mehr ersatzweise nach Telegram",
+            "Dashboard: neue Trackings landen in der Telegram-Gruppe statt in der Discord-Guild; bestehende Dashboard-Trackings an der Guild werden beim Start umgezogen (Dubletten entfernt)",
+            "Offline-Meldung: die Zuordnung Tracking ↔ Chat konnte bei zwei Trackings in derselben Gruppe verrutschen",
+        ],
+    },
     {
         "version": "4.6.17",
         "date": "2026-11",

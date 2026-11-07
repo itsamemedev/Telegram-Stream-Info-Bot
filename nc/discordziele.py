@@ -1,49 +1,25 @@
-"""nc.discordziele — welche User-Bereiche auf Discord anzulegen und zu loeschen sind (rein).
+"""nc.discordziele — die Nutzer-Bereiche auf Discord und der gemeinsame Clip-Kanal (rein).
 
-v4.2-W153. Gemeldet: „discord, wo alle getrackten User einen Channel bekommen
-sollten und die, die nicht mehr getrackt sind, die Channel sollten gelöscht
-werden." Bis hierher gab es dafuer nur `/setup_targets` — von Hand, nur
-anlegend, gedeckelt auf DISCORD_TARGET_CAP und nur fuer NICHT pausierte
-Trackings. Ein neu getrackter User bekam seinen Bereich erst, wenn jemand den
-Befehl tippte; ein entfernter behielt ihn fuer immer.
+v4.2-W153 legte je getracktem Nutzer einen Bereich an (Kategorie `🎯 name`
+mit Clips-, Chat- und Voice-Kanal) und loeschte ihn beim Entfernen wieder.
 
-Hier steht die Entscheidung, bot-frei und pruefbar; das Anlegen und Loeschen
-selbst macht discordbot.py. Drei Regeln tragen die Sicherheit:
+v4.2-W168, entschieden vom Betreiber am 07.11.: das wird unterbunden. Alle
+Clips gehen in EINEN Kanal (`clip_kanal()`), die alten Bereiche werden
+umgezogen (Clips umkopiert) und danach geloescht. Angelegt wird kein Bereich
+mehr. Die Loeschregel aus W161 gilt unveraendert: geloescht wird nur, was
+nach Name UND Inhalt vom Bot stammt (`loeschbar()`) — eine von Hand angelegte
+`🎯 `-Kategorie bleibt tabu, ihr Verlauf ist nicht rueckholbar.
 
-1. **Geloescht wird nur, was wir erkennbar selbst angelegt haben** — eine
-   Kategorie mit dem Praefix `🎯 `, die nur unsere Kanaele traegt
-   (`loeschbar()`, v4.2-W161). Alles andere auf dem Server ist tabu.
-2. **Ohne Bestand kein Loeschen.** Eine leere Tracking-Liste heisst
-   wahrscheinlicher „Datenbank nicht da" (frisch umgezogen, falsch
-   konfiguriert — W143 hat genau so eine leere MariaDB gezeigt) als „der
-   Betreiber hat alle entfernt". Dasselbe Prinzip wie BestandUnbekannt (W91).
-3. **Kein Massenloeschen im Automaten.** Wuerde ein Lauf mehr als die Haelfte
-   der Bereiche (und mehr als drei) loeschen, loescht er nichts und meldet
-   es; `/setup_targets` darf es dann ausdruecklich. Geloeschte Kanaele nehmen
-   ihren Verlauf mit — das ist nicht rueckholbar.
-
-Pausierte Trackings zaehlen als getrackt: pausieren heisst „gerade nicht
-aufnehmen", nicht „Kanal weg".
+Hier steht die Entscheidung, bot-frei und pruefbar; das Umziehen und Loeschen
+selbst macht discordbot.py.
 """
 
-from nc import discordrang as _rang
-
 PRAEFIX = "🎯 "
-# Eine Kategorie plus Clips-, Chat- und Voice-Kanal.
-KANAELE_JE_USER = 4
-# Discord-Grenze: 500 Kanaele je Server, Kategorien eingeschlossen.
-SERVER_GRENZE = 500
-MASSEN_ANTEIL = 0.5
-MASSEN_MINDEST = 3
-
-
-def kategorie(username) -> str:
-    return PRAEFIX + _rang.slug(username)
 
 
 def eigene_kanaele(slug) -> set:
-    """Die Kanaele, die discordbot._provision_user_channels in einem Bereich
-    anlegt. Discord schreibt Textkanaele klein und ohne Leerzeichen; der Slug
+    """Die Kanaele, die discordbot._provision_user_channels (bis W168) in einem
+    Bereich anlegte. Discord schreibt Textkanaele klein und ohne Leerzeichen; der Slug
     ist das schon."""
     return {"%s-clips" % slug, "%s-chat" % slug, "%s 🔊" % slug}
 
@@ -64,32 +40,53 @@ def loeschbar(kategoriename, kanalnamen) -> bool:
     return set(kanalnamen or ()) <= eigene_kanaele(slug)
 
 
-def plan(getrackt, vorhanden, belegt, erzwingen=False) -> dict:
-    """-> {"anlegen": [username], "loeschen": [kategoriename],
-            "zurueckgestellt": [username], "grund": str}
+# ══════════════════════════════════════════════════════════════════════════
+# v4.2-W168: EIN Clip-Kanal statt eines Bereichs je Nutzer
+# ══════════════════════════════════════════════════════════════════════════
+#
+# Entschieden vom Betreiber am 07.11.: „das sollte unterbunden werden …
+# alle anderen Channel loeschen" — gewaehlt: „Ein Clip-Kanal, Rest loeschen".
+# Je getracktem Nutzer eine Kategorie mit drei Kanaelen (W153) wuchs mit jedem
+# Tracking und streute die Clips ueber den ganzen Server. Ab jetzt gehen alle
+# Clips in EINEN Kanal; die Bereiche werden umgezogen (Clips umkopiert) und
+# danach geloescht — weiterhin nur, was nachweislich vom Bot stammt
+# (`loeschbar`, W161).
 
-    getrackt:  Benutzernamen aller Trackings (auch pausierte)
-    vorhanden: Namen ALLER Kategorien auf dem Server
-    belegt:    Zahl der Kanaele auf dem Server (Kategorien eingeschlossen)
-    erzwingen: True nur aus /setup_targets — hebt den Massen-Riegel auf,
-               nie den Riegel „ohne Bestand kein Loeschen"
-    """
-    soll = {}
-    for u in getrackt or ():
-        if u:
-            soll.setdefault(kategorie(u), u)          # gleiche Slugs: einer genuegt
-    unsere = {k for k in (vorhanden or ()) if k.startswith(PRAEFIX)}
-    loeschen = sorted(unsere - set(soll))
-    grund = ""
-    if not soll:
-        loeschen, grund = [], "keine Trackings gelesen — es wird nichts geloescht"
-    elif not erzwingen and len(loeschen) > MASSEN_MINDEST \
-            and len(loeschen) > MASSEN_ANTEIL * max(1, len(unsere)):
-        grund = ("%d von %d Bereichen waeren zu loeschen — zu viele fuer den Automaten; "
-                 "/setup_targets loescht sie ausdruecklich" % (len(loeschen), len(unsere)))
-        loeschen = []
-    fehlt = [soll[k] for k in sorted(soll) if k not in unsere]
-    frei = SERVER_GRENZE - int(belegt) + KANAELE_JE_USER * len(loeschen)
-    passt = max(0, frei // KANAELE_JE_USER)
-    return {"anlegen": fehlt[:passt], "loeschen": loeschen,
-            "zurueckgestellt": fehlt[passt:], "grund": grund}
+CLIP_KANAL_VORGABE = "clips"
+
+
+def clip_kanal(env=None) -> str:
+    """Name des gemeinsamen Clip-Kanals (DISCORD_CLIP_CHANNEL, Vorgabe „clips").
+    Discord schreibt Textkanaele klein und ohne Leerzeichen — der Name wird
+    deshalb genauso geformt, sonst faende die Suche den angelegten Kanal nie."""
+    import os
+    import re
+    roh = (env.get("DISCORD_CLIP_CHANNEL") if env is not None
+           else os.getenv("DISCORD_CLIP_CHANNEL", "clips")) or ""
+    roh = roh.strip()
+    name = re.sub(r"[^a-z0-9_-]+", "-", roh.lower()).strip("-")
+    return name or CLIP_KANAL_VORGABE
+
+
+def clip_kanal_des_bereichs(kategoriename) -> str:
+    """Der Clip-Kanal eines alten Nutzer-Bereichs („🎯 anna" -> „anna-clips")."""
+    return "%s-clips" % (kategoriename or "")[len(PRAEFIX):]
+
+
+async def clip_kanal_holen(gilden, bevorzugt=0, name=None, anlegen=True):
+    """Den gemeinsamen Clip-Kanal finden — und, wenn er fehlt, anlegen.
+
+    Gesucht wird zuerst in der Guild `bevorzugt` (DISCORD_GUILD_ID), dann in
+    jeder anderen. Angelegt wird in der ersten Guild der Reihe; ein fehlendes
+    Recht wirft (discord.Forbidden) und der Aufrufer meldet es — bis W168
+    endete ein fehlender Kanal auf log.debug, und ein Clip verschwand still.
+    -> Kanal oder None (keine Guild, oder anlegen=False und nichts gefunden).
+    Bot-frei: arbeitet mit dem, was discord.py an Guild-Objekten liefert."""
+    name = name or clip_kanal()
+    reihe = sorted(gilden or (), key=lambda g: getattr(g, "id", 0) != bevorzugt)
+    treffer = next((ch for g in reihe for ch in getattr(g, "text_channels", ())
+                    if ch.name == name), None)
+    if treffer is None and anlegen and reihe:
+        treffer = await reihe[0].create_text_channel(
+            name, topic="Highlights aller getrackten Streamer · ⭐ = Vote für Clip-of-the-Week")
+    return treffer

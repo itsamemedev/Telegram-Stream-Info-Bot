@@ -10603,7 +10603,7 @@ def _test_v42_w71_discord_run_once_geschrumpft():
     oben = {n.name for n in baum.body
             if isinstance(n, (_ast.FunctionDef, _ast.AsyncFunctionDef))}
     for name in ("_disc_sprache_setzen", "_is_admin", "_ensure_rank_roles",
-                 "_provision_base_channels", "_provision_user_channels",
+                 "_provision_base_channels",   # _provision_user_channels: entfallen in W168
                  "_tracked_usernames", "_par_chat_id", "_handle_voice_ai",
                  "_discord_automod"):
         assert name in oben, \
@@ -28679,38 +28679,20 @@ def _test_v42_w153_discord_bereiche_folgen_den_trackings():
     import ast as _ast
     from nc import discordziele as Z
 
-    k = Z.kategorie
-    # (1) Anlegen, was fehlt; loeschen, was wir angelegt haben und nicht mehr gilt.
-    p = Z.plan(["anna", "Ben", "carl"], [k("anna"), k("alt"), "📢 Info"], belegt=40)
-    assert p["anlegen"] == ["Ben", "carl"] and p["loeschen"] == [k("alt")], p
-    assert "📢 Info" not in p["loeschen"], "fremde Kategorie geloescht"
-    # (2) Ohne Bestand kein Loeschen — eine leere Liste ist eher eine leere DB.
-    p = Z.plan([], [k("anna"), k("ben")], belegt=40)
-    assert p["loeschen"] == [] and p["grund"], p
-    # (3) Kein Massenloeschen im Automaten — wohl aber ausdruecklich.
-    alle = [k("u%d" % i) for i in range(10)]
-    p = Z.plan(["u0"], alle, belegt=60)
-    assert p["loeschen"] == [] and "zu viele" in p["grund"], p
-    p = Z.plan(["u0"], alle, belegt=60, erzwingen=True)
-    assert len(p["loeschen"]) == 9
-    # (4) Die Server-Grenze: was nicht passt, wird zurueckgestellt, nicht verschluckt.
-    p = Z.plan(["a", "b", "c"], [], belegt=Z.SERVER_GRENZE - 5)
-    assert p["anlegen"] == ["a"] and p["zurueckgestellt"] == ["b", "c"], p
-    # (5) Gleicher Slug, ein Bereich.
-    assert Z.plan(["Anna", "anna"], [], belegt=0)["anlegen"] == ["Anna"]
+    # (1)–(5) Anlegen/Loeschen je Nutzer: abgeloest durch W168 (ein Clip-Kanal,
+    # Bereiche werden umgezogen statt angelegt) — dort geprueft.
+    assert not hasattr(Z, "plan"), "W168: es werden wieder Nutzer-Bereiche geplant"
 
     # (6) Verdrahtung: eigene Schleife, /setup_targets nutzt denselben Abgleich,
     # pausierte Trackings zaehlen mit.
     d = open("discordbot.py", encoding="utf-8").read()
     baum = _ast.parse(d)
     oben = {n.name for n in baum.body if isinstance(n, (_ast.FunctionDef, _ast.AsyncFunctionDef))}
-    assert {"_ziele_abgleichen", "_ziele_sync_loop", "_alle_getrackten"} <= oben
+    assert {"_ziele_abgleichen", "_ziele_sync_loop"} <= oben
     assert '_spawn(_ziele_sync_loop(), name="discord-ziele")' in d
     assert "await _ziele_abgleichen(inter.guild, erzwingen=True)" in d
-    q = d[d.index("def _alle_getrackten("):d.index("def _ziel_guild(")]
-    assert "paused" not in q, "pausierte Trackings verlieren ihren Bereich"
     assert "DISCORD_ZIELE_SYNC_MIN=10" in open(".env.example", encoding="utf-8").read()
-    ok("W153: Discord-Bereiche folgen den Trackings — anlegen, loeschen, mit Riegeln")
+    ok("W153: Discord-Abgleich laeuft von selbst und per /setup_targets (Inhalt seit W168: Umzug)")
 
 
 def _test_v42_w154_verschlossen_cluster_decimal():
@@ -29587,7 +29569,7 @@ def _test_v42_w161_tiefengrund():
     assert not Z.loeschbar("Anna", [])
     db = open("discordbot.py", encoding="utf-8").read()
     za = rumpf_ab(db, db.index("async def _ziele_abgleichen("))
-    assert za.index("_nc_ziele.loeschbar(") < za.index("await ch.delete("), \
+    assert za.index("_nc_ziele.loeschbar(") < za.index("await _bereich_umziehen("), \
         "geloescht wird ohne Blick auf den Inhalt"
     ok("W161: Tiefengrund — Cluster-Bestaetigung je Cluster, Raum endet mit dem Live, "
        "Chat-Waechter mit der Aufnahme, Clips vor dem Einarbeiten, fremde 🎯-Bereiche tabu")
@@ -30254,23 +30236,14 @@ def _test_v42_w167_upload_wartet_nicht_auf_chat():
     kp = rumpf_ab(src, src.index("def _kick_ws_pause("))
     assert "abstand_s=6 * 3600" in kp, "die Pausen-Meldung kommt wieder jede Runde"
 
-    # (6) Telegram: ein Discord-/track-Ziel bekommt eine Telegram-Gruppe.
+    # (6) Telegram: die Ersatzgruppe (W167). Die Umleitung selbst ist seit
+    # W168 abgeloest — Discord-/track-Nutzer sind nur Discord (dort geprueft).
     from nc import telegramfehler as T
-    gilde = 1521964594653036677
-    assert not T.ist_telegram_chat(gilde)
+    assert not T.ist_telegram_chat(1521964594653036677)
     assert T.ersatz(0, {5, -100, -1003950247108}) == -1003950247108
     assert T.ersatz(-42, {-1}) == -42 and T.ersatz(0, set()) is None
-    assert T.ziele([gilde, -100, -100], -100) == ([-100], [gilde])
-    assert T.ziele([gilde], None) == ([gilde], []), "ohne Ersatz still verloren statt laut"
-    tz = next(n for n in baum.body if getattr(n, "name", "") == "_telegram_ziele")
-    ns = {"_nc_tgfehler": T, "DISCORD_TRACK_GROUP_ID": 0, "ALLOWED_CHAT_IDS": {-555},
-          "_nc_meldetakt": M, "_time_mod": _tm, "log": _lg.getLogger("w167")}
-    exec(compile(_ast.Module(body=[tz], type_ignores=[]), "bot.py", "exec"), ns)
-    assert ns["_telegram_ziele"]([gilde, -7]) == [-555, -7]
     hz = rumpf_ab(src, src.index("async def handle_recording_finished("))
-    assert "target_chats = _telegram_ziele(" in hz, "der Fan-out geht wieder an die Guild"
-    assert "_telegram_ziele([entry.get(\"chat_id\")]" in src, \
-        "die aufgeschobenen Uploads der Nacht davor bleiben verloren"
+    assert "_fanout_ziele(" in hz, "der Fan-out geht wieder ungefiltert an die Guild"
     mz = rumpf_ab(src, src.index("async def _meme_zusammenschnitt("))
     assert "_telegram_ziele(" in mz
 
@@ -30323,6 +30296,368 @@ def _test_v42_w167_upload_wartet_nicht_auf_chat():
        "Durchreicher versucht streamlink; Kick probiert bekannte Keys; Discord-Uploads nach "
        "Telegram; Cookies nicht auf dem Loop")
 
+
+def _test_v42_w168_ein_thema_ein_kanal():
+    """v4.2-W168: gemeldet am 07.11. — „erstellt der Bot in Telegram mehrere
+    Topics … in Discord ist es das selbe, das sollte unterbunden werden",
+    „Uploads die schon vorhanden sind in einem Topic nachziehen und alle
+    anderen Channel loeschen", und „User die per Dashboard hinzugefuegt
+    werden, werden als Default im Discord angelegt"."""
+    import ast as _ast
+    import asyncio as _aio
+    import logging as _lg
+    import os as _os
+    import shutil as _sh
+    import sqlite3 as _sq
+    import threading as _th
+    import time as _tm
+    import types as _ty
+    import pruefhilfen as P
+    from contextlib import contextmanager as _cm
+    from nc import discordziele as Z
+    from nc import meldetakt as M
+    from nc import telegramfehler as T
+    from nc import topicumzug as U
+
+    src = open("bot.py", encoding="utf-8").read()
+    baum = _ast.parse(src)
+    dsrc = open("discordbot.py", encoding="utf-8").read()
+    dbaum = _ast.parse(dsrc)
+
+    def _fn(b, name):
+        return next(n for n in b.body if getattr(n, "name", "") == name)
+
+    def _exec(b, namen, ns):
+        teile = [_fn(b, n) for n in namen]
+        exec(compile(_ast.Module(body=teile, type_ignores=[]), "x.py", "exec"), ns)
+        return ns
+
+    gilde = 1521964594653036677
+    zeilen = []
+
+    class _H(_lg.Handler):
+        def emit(self, r):
+            zeilen.append((r.levelno, r.getMessage()))
+    lg = _lg.getLogger("w168")
+    lg.addHandler(_H()); lg.setLevel(_lg.DEBUG); lg.propagate = False
+
+    # (1) Discord-/track-Nutzer sind NUR Discord: kein Ersatz-Telegram mehr.
+    assert T.nur_telegram([gilde, -100, -100, "x", gilde]) == ([-100], [gilde, "x"])
+    M.ZUSTAND.clear()
+    ns = _exec(baum, ["_telegram_ziele", "_fanout_ziele"],
+               {"_nc_tgfehler": T, "_nc_meldetakt": M, "_time_mod": _tm, "log": lg})
+    assert ns["_telegram_ziele"]([gilde, -7], "anna") == [-7], \
+        "eine Discord-Aufnahme geht wieder nach Telegram"
+    ns["_telegram_ziele"]([gilde], "ben")
+    hinweis = [z for _l, z in zeilen if "nur nach Discord" in z]
+    assert len(hinweis) == 1, ("der Hinweis kommt bei jeder Aufnahme", hinweis)
+    paare, chats = ns["_fanout_ziele"](
+        [{"id": 1, "group_id": gilde}, {"id": 2, "group_id": -100},
+         {"id": 3, "group_id": -100}], 9, -5, "anna")
+    assert paare == [(1, None), (2, -100), (3, -100)], \
+        ("je Tracking ein Paar — zip ueber eine deduplizierte Liste verschiebt die IDs", paare)
+    assert chats == [-100]
+    assert ns["_fanout_ziele"]([], 9, -5, "anna") == ([(9, -5)], [-5])
+    hrf = rumpf_ab(src, src.index("async def handle_recording_finished("))
+    assert "for ftid, fchat in target_paare:" in hrf and "zip(target_tids" not in hrf
+    assert "fchat is not None" in hrf, "die Offline-Meldung geht an die Guild"
+    uw = rumpf_ab(src, src.index("async def _upload_window_loop("))
+    assert "if not chat_id or not fpath" in uw, \
+        "ein aufgeschobener Discord-Eintrag wirft IndexError statt verworfen zu werden"
+
+    # (2) Telegram: EIN Upload-Thema je Gruppe — egal wie viele Nutzer.
+    erstellt = []
+
+    class _Bot:
+        async def create_forum_topic(self, chat_id, name):
+            erstellt.append((chat_id, name))
+            return _ty.SimpleNamespace(message_thread_id=100 + len(erstellt))
+
+    themen = {}
+    ns2 = {"TELEGRAM_USE_TOPICS": True, "_TG_TOPICS": themen, "_TG_TOPICS_LOCK": _th.Lock(),
+           "_tg_topics_save": lambda: None, "log": lg, "os": _os,
+           "_TG_UPLOAD_TOPIC_KEY": "#uploads"}
+    from nc.util import _topic_key
+    ns2["_topic_key"] = _topic_key
+
+    async def _forum(_c, _b):
+        return True
+    ns2["_chat_is_forum"] = _forum
+    _exec(baum, ["_upload_topic_name", "_ensure_topic", "_topic_forget"], ns2)
+    a = _aio.run(ns2["_ensure_topic"](-100, "anna", _Bot()))
+    b = _aio.run(ns2["_ensure_topic"](-100, "ben", _Bot()))
+    assert a == b and len(erstellt) == 1, ("je Nutzer wieder ein Thema", erstellt)
+    assert erstellt[0][1] == "🎬 Aufnahmen"
+    _aio.run(ns2["_ensure_topic"](-100, "#live-notices", _Bot(), name="📡"))
+    assert len(erstellt) == 2, "das Melde-Thema ist im Upload-Thema aufgegangen"
+    ns2["_topic_forget"](-100, "anna")
+    assert "-100:#uploads" not in themen and "-100:#live-notices" in themen, \
+        "ein geloeschtes Upload-Thema wird nie vergessen — jeder Upload geht ins Leere"
+    tv = open("telegramversand.py", encoding="utf-8").read()
+    assert 'ergebnis["gesendet" if ok else "fehler"] += 1' in tv
+
+    # (3) Topic-Umzug: rein.
+    alt = {"-100:anna": 7, "-100:#live-notices": 8, "-100:#uploads": 9, "x:anna": 3,
+           "-200:Ben": 4}
+    assert U.alte_themen(alt) == [(-100, "anna", 7), (-200, "Ben", 4)]
+    z = {"gesendet": {}}
+    assert U.offen(["a", "b", "a"], z, -100, "anna") == ["a", "b"]
+    U.gesendet(z, -100, "Anna", "a")
+    assert U.offen(["a", "b"], z, -100, "anna") == ["b"], "Neustart laedt doppelt hoch"
+    assert not U.angekommen({}) and not U.angekommen({"gesendet": 0, "fehler": 0})
+    assert not U.angekommen({"gesendet": 2, "fehler": 1})
+    assert U.angekommen({"gesendet": 1, "fehler": 0})
+    d = P.verzeichnis()
+    try:
+        pfad = _os.path.join(d, "u.json")
+        assert U.lade(pfad) == {"gesendet": {}}
+        U.speichere(pfad, z)
+        assert U.lade(pfad) == z
+        with open(pfad, "w") as fh:
+            fh.write("[1]")
+        try:
+            U.lade(pfad)
+            raise AssertionError("ein kaputter Stand laedt alles noch einmal hoch")
+        except ValueError:
+            pass
+
+        # (4) Topic-Umzug ausgefuehrt: geloescht wird NUR nach vollem Nachziehen.
+        aufnahmen = []
+        for i in range(2):
+            f = _os.path.join(d, "a%d.mp4" % i)
+            P.attrappe(f, 10)
+            aufnahmen.append(f)
+        weg = _os.path.join(d, "weg.mp4")
+        gesendet, geloescht, scheitern = [], [], [False]
+
+        async def _send(chat, datei, app, nutzer, ergebnis=None):
+            gesendet.append(datei)
+            kaputt = scheitern[0] is True or scheitern[0] == datei
+            ergebnis["gesendet"] = 0 if kaputt else 1
+            ergebnis["fehler"] = 1 if kaputt else 0
+
+        async def _db_async(fn):
+            return [{"filepath": f} for f in aufnahmen + [weg]]
+
+        class _TBot:
+            async def delete_forum_topic(self, chat_id, message_thread_id):
+                geloescht.append(message_thread_id)
+
+        async def _schlaf(_s):
+            return None
+        themen.clear(); themen["-100:anna"] = 7
+        ns3 = {"asyncio": _ty.SimpleNamespace(sleep=_schlaf, to_thread=_aio.to_thread),
+               "_should_defer_upload": lambda: False, "db_async": _db_async, "os": _os,
+               "_nc_topicumzug": U, "split_and_send_video": _send, "log": lg,
+               "_TG_TOPICS_LOCK": _th.Lock(), "_TG_TOPICS": themen, "_topic_key": _topic_key,
+               "_tg_topics_save": lambda: None}
+        _exec(baum, ["_tg_topic_umziehen"], ns3)
+        app = _ty.SimpleNamespace(bot=_TBot())
+        stand = _os.path.join(d, "stand.json")
+        z = {"gesendet": {}}
+        scheitern[0] = True
+        _aio.run(ns3["_tg_topic_umziehen"](app, -100, "anna", 7, z, stand))
+        assert geloescht == [], "das alte Thema ist weg, obwohl das Video nicht ankam"
+        assert themen == {"-100:anna": 7}
+        scheitern[0] = False
+        del gesendet[:]
+        _aio.run(ns3["_tg_topic_umziehen"](app, -100, "anna", 7, z, stand))
+        assert gesendet == aufnahmen, ("nachgezogen wird, was auf der Platte liegt", gesendet)
+        assert geloescht == [7] and themen == {}, (geloescht, themen)
+        assert U.lade(stand) == {"gesendet": {}}
+        assert any("nicht mehr auf der Platte" in z for _l, z in zeilen)
+        # Erste Datei durch, zweite scheitert: der Stand kennt die erste — auf
+        # der Platte, nicht nur im Speicher.
+        themen["-100:anna"] = 7
+        del gesendet[:], geloescht[:]
+        scheitern[0] = aufnahmen[1]
+        z = {"gesendet": {}}
+        _aio.run(ns3["_tg_topic_umziehen"](app, -100, "anna", 7, z, stand))
+        assert geloescht == [] and U.offen(aufnahmen, U.lade(stand), -100, "anna") == \
+            [aufnahmen[1]], "der Fortschritt wird nicht gemerkt — der Neustart laedt doppelt"
+        scheitern[0] = False
+        # Teilweise durch, dann Neustart: nichts doppelt.
+        themen["-100:anna"] = 7
+        del gesendet[:], geloescht[:]
+        z = {"gesendet": {}}
+        U.gesendet(z, -100, "anna", aufnahmen[0])
+        _aio.run(ns3["_tg_topic_umziehen"](app, -100, "anna", 7, z, stand))
+        assert gesendet == [aufnahmen[1]], ("nach dem Neustart doppelt hochgeladen", gesendet)
+        # Fehlendes Recht zum Loeschen: laut, Thema bleibt gemerkt.
+        class _Verbot:
+            async def delete_forum_topic(self, chat_id, message_thread_id):
+                raise RuntimeError("Not enough rights to manage topics")
+        themen["-100:anna"] = 7
+        _aio.run(ns3["_tg_topic_umziehen"](_ty.SimpleNamespace(bot=_Verbot()),
+                                           -100, "anna", 7, {"gesendet": {}}, stand))
+        assert themen == {"-100:anna": 7}
+        assert any(l >= _lg.ERROR and "Themen verwalten" in z for l, z in zeilen)
+    finally:
+        _sh.rmtree(d, ignore_errors=True)
+    um = rumpf_ab(src, src.index("async def _tg_topic_umzug("))
+    assert "_tg_topic_umziehen(" in um
+    assert '_spawn(_tg_topic_umzug(bot_app), name="tg-topic-umzug")' in src
+
+    # (5) Dashboard: die Standardgruppe ist Telegram, nie eine Guild.
+    assert T.standardgruppe(0, 0, [gilde, -100], 0, ()) == -100
+    assert T.standardgruppe(gilde, 0, [gilde], 0, {5, -7}) == -7
+    assert T.standardgruppe(0, 0, [gilde], gilde, ()) == 0
+    assert T.standardgruppe(-3, -4, [-100], 0, ()) == -3
+    tr = _ast.parse(open("nc/routes/trackings.py", encoding="utf-8").read())
+    dg = _fn(tr, "_dashboard_track_group")
+    texte = {n.value for n in _ast.walk(dg) if isinstance(n, _ast.Constant)}
+    assert "DISCORD_GUILD_ID" not in texte, "die Guild ist wieder Dashboard-Standard"
+    assert "standardgruppe" in _ast.unparse(dg)
+
+    # (6) …und der Bestand wird nachgezogen.
+    assert T.dashboard_umzug([(1, "anna", gilde), (2, "Ben", gilde), (3, "carl", -100)],
+                             -100, ["ben", "carl"]) == ([1], [2])
+    assert T.dashboard_umzug([(1, "anna", gilde)], 0, []) == ([], [])
+    assert T.dashboard_umzug([(1, "a", gilde), (2, "A", gilde)], -1, []) == ([1], [2])
+    con = _sq.connect(":memory:")
+    con.row_factory = _sq.Row
+    con.executescript(
+        "CREATE TABLE trackings (id INTEGER PRIMARY KEY, username TEXT, group_id INTEGER,"
+        " added_by INTEGER, UNIQUE(group_id, username));"
+        "CREATE TABLE tracking_tags (tracking_id INTEGER, tag TEXT);"
+        "INSERT INTO trackings VALUES (1,'anna',%d,0),(2,'ben',%d,0),(3,'ben',-100,0),"
+        "(4,'carl',%d,4711);"
+        "INSERT INTO tracking_tags VALUES (2,'x');" % (gilde, gilde, gilde))
+
+    @_cm
+    def _dbc():
+        yield con
+        con.commit()
+    ns4 = _exec(baum, ["_dashboard_trackings_umziehen"],
+                {"_nc_routes_trackings": _ty.SimpleNamespace(_dashboard_track_group=lambda: -100),
+                 "db_conn": _dbc, "_nc_tgfehler": T, "log": lg})
+    ns4["_dashboard_trackings_umziehen"]()
+    rest = {(r["id"], r["group_id"]) for r in con.execute("SELECT id, group_id FROM trackings")}
+    assert rest == {(1, -100), (3, -100), (4, gilde)}, \
+        ("Dashboard-Zeilen an der Guild, oder ein Discord-/track-Tracking wurde verschoben", rest)
+    assert con.execute("SELECT COUNT(*) FROM tracking_tags").fetchone()[0] == 0
+    ns4["_dashboard_trackings_umziehen"]()                 # idempotent
+    assert {(r["id"], r["group_id"]) for r in con.execute("SELECT id, group_id FROM trackings")} == rest
+    assert "await asyncio.to_thread(_dashboard_trackings_umziehen)" in src
+
+    # (7) Discord: ein Clip-Kanal.
+    assert Z.clip_kanal({}) == "clips" and Z.clip_kanal({"DISCORD_CLIP_CHANNEL": "Meine Clips!"}) \
+        == "meine-clips"
+    assert Z.clip_kanal_des_bereichs("🎯 anna") == "anna-clips"
+    assert not hasattr(Z, "plan") and "_provision_user_channels" not in {
+        getattr(n, "name", "") for n in dbaum.body}, "es werden wieder Nutzer-Bereiche angelegt"
+
+    class _Ch:
+        def __init__(self, name):
+            self.name = name
+
+    class _G:
+        def __init__(self, gid, namen):
+            self.id, self.text_channels, self.neu = gid, [_Ch(n) for n in namen], []
+
+        async def create_text_channel(self, name, topic=None):
+            self.neu.append(name)
+            return _Ch(name)
+    g1, g2 = _G(1, ["clips"]), _G(2, ["clips"])
+    assert _aio.run(Z.clip_kanal_holen([g1, g2], 2, "clips")) is g2.text_channels[0]
+    g3 = _G(3, ["general"])
+    assert _aio.run(Z.clip_kanal_holen([_G(4, []), g3], 3, "clips")).name == "clips"
+    assert g3.neu == ["clips"], "der Kanal wird nicht in der bevorzugten Guild angelegt"
+    assert _aio.run(Z.clip_kanal_holen([_G(5, [])], 5, "clips", anlegen=False)) is None
+    cd = rumpf_ab(src, src.index("async def _clip_to_discord("))
+    assert "clip_kanal_holen(" in cd and '-clips"' not in cd
+
+    # (8) Umzug eines Bereichs: erst kopieren, dann loeschen — nie umgekehrt.
+    ablauf = []
+
+    class _Att:
+        async def to_file(self):
+            return "datei"
+
+    class _Msg:
+        def __init__(self, mid, anh=True, bot=True):
+            self.id, self.content = mid, "Clip %d" % mid
+            self.attachments = [_Att()] if anh else []
+            self.author = _ty.SimpleNamespace(bot=bot, display_name="Eve")
+
+        async def delete(self):
+            ablauf.append(("weg", self.id))
+
+    class _Quelle(_Ch):
+        def __init__(self, name, msgs):
+            super().__init__(name)
+            self.msgs = msgs
+
+        def history(self, limit=None, oldest_first=True):
+            async def _gen():
+                for m in self.msgs:
+                    yield m
+            return _gen()
+
+        async def delete(self, reason=None):
+            ablauf.append(("kanal", self.name))
+
+    class _Ziel:
+        name = "clips"
+        guild = _ty.SimpleNamespace(id=1)
+
+        def __init__(self, fehler_bei=None):
+            self.fehler_bei = fehler_bei
+
+        async def send(self, content=None, files=None):
+            if content and self.fehler_bei and str(self.fehler_bei) in content:
+                raise RuntimeError("413")
+            ablauf.append(("kopie", content))
+            neu = _ty.SimpleNamespace(id=900 + len(ablauf), guild=self.guild,
+                                      channel=_ty.SimpleNamespace(id=55))
+
+            async def _r(_e):
+                return None
+            neu.add_reaction = _r
+            return neu
+
+    class _Cat:
+        name = "🎯 anna"
+
+        def __init__(self, chans):
+            self.channels = chans
+
+        async def delete(self, reason=None):
+            ablauf.append(("kategorie", self.name))
+
+    db_rufe = []
+
+    async def _dba(fn):
+        class _C:
+            def execute(self, sql, args):
+                db_rufe.append(args)
+        return fn(_C())
+    fake_discord = _ty.SimpleNamespace(
+        utils=_ty.SimpleNamespace(get=lambda it, name: next((x for x in it if x.name == name), None)),
+        HTTPException=Exception)
+    ns5 = _exec(dbaum, ["_bereich_umziehen"],
+                {"discord": fake_discord, "_nc_ziele": Z, "log": lg, "db_async": _dba})
+    quelle = _Quelle("anna-clips", [_Msg(1), _Msg(2, anh=False), _Msg(3, bot=False)])
+    cat = _Cat([quelle, _Quelle("anna-chat", [])])
+    assert _aio.run(ns5["_bereich_umziehen"](cat, _Ziel())) == 2
+    assert ablauf.index(("weg", 1)) > ablauf.index(("kopie", "Clip 1")), "geloescht vor der Kopie"
+    assert ("kopie", "(von Eve) Clip 3") in ablauf
+    assert ablauf[-1] == ("kategorie", "🎯 anna") and ("weg", 2) not in ablauf
+    assert db_rufe and db_rufe[0][3] == 1, "discord_clips zeigt weiter auf die alte Nachricht"
+    del ablauf[:]
+    quelle = _Quelle("anna-clips", [_Msg(1), _Msg(3)])
+    try:
+        _aio.run(ns5["_bereich_umziehen"](_Cat([quelle]), _Ziel(fehler_bei=3)))
+        raise AssertionError("ein Kopierfehler wird verschluckt")
+    except RuntimeError:
+        pass
+    assert ("weg", 3) not in ablauf and not any(a[0] in ("kanal", "kategorie") for a in ablauf), \
+        ("nach einem Kopierfehler wird geloescht", ablauf)
+    za = rumpf_ab(dsrc, dsrc.index("async def _ziele_abgleichen("))
+    assert za.index("_nc_ziele.loeschbar(") < za.index("await _bereich_umziehen(")
+    lg.handlers.clear()
+    ok("W168: ein Upload-Thema statt @name-Themen (alte nachgezogen, dann geloescht), "
+       "Discord-/track nur Discord, Dashboard-Standard Telegram samt Bestand, ein Clip-Kanal")
 
 def _test_v42_w155_weiche_steckt():
     """v4.2-W155: gemeldet „Wir haben in den Restreams immer noch kein Bild" —
@@ -30841,6 +31176,7 @@ def main():
     _test_v42_w165_durchreicher_nach_ruhezeit()
     _test_v42_w166_grund_im_panel()
     _test_v42_w167_upload_wartet_nicht_auf_chat()
+    _test_v42_w168_ein_thema_ein_kanal()
     _test_v42_w60_azrael_cooldown_je_plattform()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)

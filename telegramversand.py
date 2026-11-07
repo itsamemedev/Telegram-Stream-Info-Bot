@@ -74,7 +74,7 @@ def konfiguriere(**kw):
 
 
 async def split_and_send_video(chat_id, filepath, bot_app, username,
-                               started_at=None, ended_at=None):
+                               started_at=None, ended_at=None, ergebnis=None):
     """F28: Upload mit großzügigen Timeouts + Telegram-spezifischer Error-Behandlung.
        PTB v21 default write_timeout=20s ist zu kurz für 50 MB Files auf
        normalen DSL-Uplinks (würde TimedOut werfen). Wir setzen ausreichend
@@ -115,7 +115,21 @@ async def split_and_send_video(chat_id, filepath, bot_app, username,
     if _topic_tid:
         UPLOAD_TIMEOUTS["message_thread_id"] = _topic_tid
 
+    # v4.2-W168: `ergebnis` (dict) zaehlt gesendete und gescheiterte Teile.
+    # Der Topic-Umzug loescht ein altes Topic nur, wenn das Neu-Hochladen
+    # nachweislich durchging — und diese Funktion sagte das bisher niemandem.
+    # Gezaehlt wird an der EINEN Stelle, durch die jeder Teil geht.
+    if ergebnis is not None:
+        ergebnis.setdefault("gesendet", 0)
+        ergebnis.setdefault("fehler", 0)
+
     async def _send_one(fh_or_path, caption):
+        ok, err = await _send_one_roh(fh_or_path, caption)
+        if ergebnis is not None:
+            ergebnis["gesendet" if ok else "fehler"] += 1
+        return ok, err
+
+    async def _send_one_roh(fh_or_path, caption):
         # V37-B97: _mark_dead() setzt bei 'chat not found' längst eine Sperre,
         # aber nur _safe_send() (Textnachrichten) hat sie je gelesen. Der
         # Video-Upload rannte für JEDEN Part jeder Aufnahme erneut hinein —
