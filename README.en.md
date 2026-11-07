@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="docs/assets/banner.svg" alt="NIGHTCRAWLER — v4.6.20 Control Room" width="100%">
+<img src="docs/assets/banner.svg" alt="NIGHTCRAWLER — v4.6.21 Control Room" width="100%">
 
 ### The control room for live streaming
 #### Monitoring · Recording · Multi-target restream · AI moderation
@@ -84,7 +84,7 @@
 | **Operations** | systemd service · deploy script with pre-check and auto-rollback · self-test route · dead-man's report on process death · CrowdSec integration · log redaction for cookies and stream keys |
 | **Multilingual** | German, English and Spanish, switchable in the dashboard · `UI_LANG` for the bot · browser language detection · translation catalogue in `locales/` |
 | **Database** | SQLite **or** MariaDB · move with `update.sh --mariadb`, counted again · central schema module · export tool · database watchdog |
-| **Settings** | “Settings” tab in the deck: all ~593 variables searchable, stored in the database, protected keys only from `.env` |
+| **Settings** | “Settings” tab in the deck: all ~594 variables searchable, stored in the database, protected keys only from `.env` |
 | **Monitoring** | `/metrics` for Prometheus · Grafana dashboard with every metric · 16 alert rules with tests · set up with `tools/observability.sh` |
 
 </details>
@@ -206,7 +206,7 @@ nothing and triggers nothing; a schedule never silently moves a database.
 
 ## ⚙️ Settings
 
-**In the deck, tab “Settings”.** All of the roughly 593 variables from
+**In the deck, tab “Settings”.** All of the roughly 594 variables from
 `.env.example` with group, default and description, searchable. Every row says
 where the value comes from — *set in the deck*, *from .env* or *default*. Values
 are stored in the database (SQLite or MariaDB) and take precedence over `.env`
@@ -628,6 +628,8 @@ dashboard trackings land in Telegram.
 replies with the video.
 **Patch 4.6.20** — the HTML overlay keeps one Chromium per restream open
 instead of starting a new one for every frame: about eleven times less CPU.
+**Patch 4.6.21** — Kick chat works again: Kick moved from Pusher to Centrifugo
+and the bot follows (check on the server: `tools/kickchat.py`).
 
 Every wave on its own: **[`docs/CHANGELOG.md`](docs/CHANGELOG.md)**.
 
@@ -639,12 +641,12 @@ Every wave on its own: **[`docs/CHANGELOG.md`](docs/CHANGELOG.md)**.
 
 | | |
 |---|---|
-| Current version | **4.6.20** — “Control Room” (2026.11) |
+| Current version | **4.6.21** — “Control Room” (2026.11) |
 | Flask routes | 379 (34 in `bot.py` · 345 in `nc/routes/`) |
 | Discord slash commands | 66 |
 | Domain modules | 185 in `nc/` (+39 in `nc/routes/`, +3 in `nc/intel/`), 10 in `brain/` |
 | Sentinel agents | 14 |
-| Configuration variables | ~593 |
+| Configuration variables | ~594 |
 | Languages | German (source), English, Spanish |
 
 Next big step: keep taking `bot.py` apart — **[`docs/en/ROADMAP.md`](docs/en/ROADMAP.md)**.
@@ -689,7 +691,7 @@ with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 <div align="center">
 
-**NIGHTCRAWLER v4.6.20 · “Control Room”**
+**NIGHTCRAWLER v4.6.21 · “Control Room”**
 
 **[🌐 lafap.de](https://lafap.de)** · **[💬 Discord](https://discord.gg/psvnxm7tSV)** · **[📓 Changelog](docs/CHANGELOG.md)**
 

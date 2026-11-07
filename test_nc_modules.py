@@ -31102,6 +31102,179 @@ def _test_v42_w170_overlay_ein_browser():
     ok("v4.2-W170: Overlay mit einem Chromium je Restream statt je Bild")
 
 
+def _test_v42_w171_kick_centrifugo():
+    """v4.2-W171: der Kick-Chat lief nie mehr — Kick hat ihn im Oktober 2026
+    von Pusher auf Centrifugo umgestellt, jeder Pusher-Key wird mit 4001
+    abgewiesen. Geprueft wird das Protokollmodul und die ECHTE Schleife aus
+    bot.py gegen einen nachgebauten Kick-Server: Anmeldung, Token, Abo,
+    Ping, gebuendelte Rahmen, doppelt kodierte Nutzdaten, Token-Erneuerung."""
+    import ast as _ast
+    import asyncio as _aio
+    import json as _js
+    import logging as _lg
+    import time as _tm
+    import aiohttp as _ah
+    from aiohttp import web as _web
+    from nc import kickzentrifugo as KZ
+    from nc import kickapi as _ka
+
+    # (1) Modul: die Antwortformen, die andere Clients mitgeschnitten haben.
+    url = KZ.ws_url_aus({"data": {"connections": [
+        {"provider": "centrifugo",
+         "credentials": {"url": "wss://realtime.us-east-1.platform.kick.com/connection/websocket"}}],
+        "mode": "websocket"}, "message": "success"})
+    assert url.endswith("/connection/websocket")
+    try:
+        KZ.ws_url_aus({"data": {"connections": [{"provider": "pusher",
+                                                 "credentials": {"app_key": "x"}}]}})
+        raise AssertionError("ohne Centrifugo-Angebot darf es keine Adresse geben")
+    except KZ.KickZentrifugoFehler as e:
+        assert "pusher" in str(e) and "F12" in str(e), e
+    assert KZ.token_aus({"data": {"token": "jwt"}}) == "jwt"
+    body = KZ.verbindung_body("cid")
+    assert body["capabilities"]["accepted_providers"] == [{"provider": "centrifugo"}], \
+        "Pusher anzubieten heisst, den toten Weg mit anzubieten"
+    assert _js.loads(KZ.subscribe_cmd(42))["subscribe"]["channel"] == "chatrooms.42.v2"
+    # gebuendelt: zwei Nachrichten in einem Rahmen
+    assert KZ.zerlegen('{"id":2,"subscribe":{}}\n{}\n') == [{"id": 2, "subscribe": {}}, {}]
+    assert KZ.ist_ping({}) and not KZ.ist_ping({"id": 1})
+    inner = _js.dumps({"content": "hallo", "sender": {"username": "anna"}})
+    f = KZ.als_frame({"push": {"channel": "chatrooms.42.v2", "pub": {"data": {
+        "event": "App\\Events\\ChatMessageEvent", "data": inner}}}})
+    assert f == {"event": "App\\Events\\ChatMessageEvent", "data": inner}, f
+    assert _js.loads(KZ.als_frame({"push": {"pub": {"data": {
+        "event": "E", "data": {"a": 1}}}}})["data"]) == {"a": 1}, \
+        "ein schon zerlegtes data muss wieder Text werden — der Bot liest es mit json.loads"
+    assert KZ.als_frame({"id": 2, "subscribe": {}}) is None
+    assert KZ.antwort_fehler({"id": 1, "error": {"code": 109, "message": "token expired"}}) \
+        == "109 token expired"
+    assert KZ.ttl_aus({"connect": {"ttl": 2696}}) == 2696 and KZ.ttl_aus({}) == KZ.TTL_VORGABE_S
+    assert KZ.lage(3501) == KZ.lage(4501) == "endgueltig" and KZ.lage(3012) == "gewoehnlich"
+    assert KZ.pause(3501, 1) == KZ.ENDGUELTIG_PAUSE_S
+    assert KZ.pause(None, 1) < KZ.pause(None, 3) <= KZ.BACKOFF_MAX_S, \
+        "der Backoff waechst nicht — eine Kick-Stoerung hiesse Neuverbindung im Sekundentakt"
+
+    # (2) Verdrahtung: Centrifugo ist der Vorgabeweg.
+    src = open("bot.py", encoding="utf-8").read()
+    baum = _ast.parse(src)
+    km = next(n for n in baum.body if isinstance(n, _ast.ClassDef) and n.name == "KickModerator")
+    meth = {n.name: n for n in km.body if isinstance(n, _ast.AsyncFunctionDef)}
+    st = _ast.unparse(meth["start"])
+    assert "'KICK_CHAT_WEG', 'centrifugo'" in st and "self._ws_loop_centrifugo()" in st, \
+        "der Kick-Chat startet wieder ueber den toten Pusher-Weg"
+    assert "self._kick_ereignis(frame, session)" in _ast.unparse(meth["_ws_loop"]), \
+        "Pusher und Centrifugo verarbeiten Ereignisse wieder getrennt"
+
+    # (3) Die echte Schleife gegen einen nachgebauten Kick-Server.
+    gesehen = {"kopf": None, "befehle": [], "pong": 0, "token_abrufe": 0, "client_ids": set()}
+
+    async def _verbindung(req):
+        b = await req.json()
+        gesehen["client_ids"].add(b["client"]["id"])
+        return _web.json_response({"data": {"connections": [{"provider": "centrifugo",
+            "credentials": {"url": "ws://127.0.0.1:%d/connection/websocket" % port}}]},
+            "message": "success"})
+
+    async def _token(req):
+        b = await req.json()
+        assert b["client_id"] in gesehen["client_ids"], "Token fuer eine fremde Client-ID"
+        gesehen["token_abrufe"] += 1
+        return _web.json_response({"data": {"token": "jwt%d" % gesehen["token_abrufe"]}})
+
+    async def _ws(req):
+        gesehen["kopf"] = req.headers.get("Origin")
+        ws = _web.WebSocketResponse()
+        await ws.prepare(req)
+        nachricht = _js.dumps({"push": {"channel": "chatrooms.42.v2", "pub": {"data": {
+            "event": "App\\Events\\ChatMessageEvent",
+            "data": _js.dumps({"content": "hallo", "sender": {"username": "anna", "id": 7}})}}}})
+        async for m in ws:
+            d = _js.loads(m.data)
+            gesehen["befehle"].append(d)
+            if "connect" in d:
+                # ttl 1 s: die Erneuerung muss waehrend des Tests faellig werden
+                await ws.send_str(_js.dumps({"id": 1, "connect": {"ttl": 1, "ping": 25}}))
+            elif "subscribe" in d:
+                # Abo-Bestaetigung, Ping und Nachricht in EINEM Rahmen
+                await ws.send_str('{"id":2,"subscribe":{}}\n{}\n' + nachricht)
+            elif d == {}:
+                gesehen["pong"] += 1
+            elif "refresh" in d:
+                await ws.send_str(_js.dumps({"id": d["id"], "refresh": {"ttl": 2700}}))
+                await ws.send_str("{}")
+        return ws
+
+    app = _web.Application()
+    app.router.add_post("/verbindung", _verbindung)
+    app.router.add_post("/token", _token)
+    app.router.add_get("/connection/websocket", _ws)
+
+    teile = _ast.Module(body=[meth["_ws_loop_centrifugo"], meth["_kick_zentrifugo_lesen"],
+                              meth["_kick_zentrifugo_rahmen"]], type_ignores=[])
+    ereignisse = []
+    fehler = []
+    ns = {"aiohttp": _ah, "asyncio": _aio, "_time_mod": _tm, "KICK_CHATROOM_ID": 42,
+          "_nc_kickzentrifugo": KZ, "_nc_kickapi": _ka, "log": _lg.getLogger("w171"),
+          "_loop_fehler": lambda n, e: fehler.append((n, e)),
+          "_verbindung_verloren": lambda *a, **k: fehler.append(a)}
+    exec(compile(teile, "bot.py", "exec"), ns)
+
+    class _Self:
+        running = True
+        stats = {"connected": False}
+        _ws_loop_centrifugo = ns["_ws_loop_centrifugo"]
+        _kick_zentrifugo_lesen = ns["_kick_zentrifugo_lesen"]
+        _kick_zentrifugo_rahmen = ns["_kick_zentrifugo_rahmen"]
+
+        async def _kick_ereignis(self, frame, session):
+            ereignisse.append(frame)
+
+    me = _Self()
+    alt = (KZ.VERBINDUNG_URL, KZ.TOKEN_URL)
+
+    async def _lauf():
+        nonlocal port
+        runner = _web.AppRunner(app)
+        await runner.setup()
+        site = _web.TCPSite(runner, "127.0.0.1", 0)
+        await site.start()
+        port = site._server.sockets[0].getsockname()[1]
+        KZ.VERBINDUNG_URL = "http://127.0.0.1:%d/verbindung" % port
+        KZ.TOKEN_URL = "http://127.0.0.1:%d/token" % port
+        task = _aio.ensure_future(me._ws_loop_centrifugo())
+        frist = _tm.monotonic() + 15
+        while _tm.monotonic() < frist and not any("refresh" in b for b in gesehen["befehle"]):
+            await _aio.sleep(0.05)
+        await _aio.sleep(0.2)
+        me.running = False
+        task.cancel()
+        try:
+            await task
+        except _aio.CancelledError:
+            pass
+        await runner.cleanup()
+
+    port = 0
+    try:
+        _aio.run(_lauf())
+    finally:
+        KZ.VERBINDUNG_URL, KZ.TOKEN_URL = alt
+    assert not fehler, "Schleife meldete Fehler: %r" % fehler[:2]
+    assert gesehen["kopf"] == "https://kick.com", \
+        "ohne Origin von kick.com weist der Websocket mit 403 ab"
+    b = gesehen["befehle"]
+    assert b[0] == {"connect": {"token": "jwt1", "name": "js"}, "id": 1}, b[:1]
+    assert b[1] == {"subscribe": {"channel": "chatrooms.42.v2"}, "id": 2}, b[1:2]
+    assert gesehen["pong"] >= 1, "kein Pong — der Server schliesst nach 25 s mit 3012"
+    assert ereignisse and _js.loads(ereignisse[0]["data"])["content"] == "hallo", \
+        "die Nachricht aus dem gebuendelten Rahmen kam nicht an"
+    ref = [x for x in b if "refresh" in x]
+    assert ref and ref[0]["refresh"]["token"] == "jwt2" and ref[0]["id"] >= 3, \
+        "das Token wird nicht erneuert — nach 45 Minuten waere der Chat weg"
+    assert me.stats["connected"] is True or me.running is False
+    ok("v4.2-W171: Kick-Chat ueber Centrifugo — Anmeldung, Abo, Ping, Buendel, Erneuerung")
+
+
 def _test_v42_w155_weiche_steckt():
     """v4.2-W155: gemeldet „Wir haben in den Restreams immer noch kein Bild" —
     Overlay und Chat liefen, das Videofeld zeigte das Pausenbild. Ein
@@ -31622,6 +31795,7 @@ def main():
     _test_v42_w168_ein_thema_ein_kanal()
     _test_v42_w169_link_video()
     _test_v42_w170_overlay_ein_browser()
+    _test_v42_w171_kick_centrifugo()
     _test_v42_w60_azrael_cooldown_je_plattform()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)

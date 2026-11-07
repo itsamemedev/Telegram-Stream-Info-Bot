@@ -1060,7 +1060,8 @@ from nc import replygate as _nc_replygate  # v4.0-W20: Bremse fuer Chat-Antworte
 from nc import sendrate as _nc_sendrate    # v4.0-W23: YT-Sende-Bremse (Anti-Flood)
 from nc import cohost as _nc_cohost        # v4.0-W24: proaktiver Live-Co-Host
 from nc import restream_util as _nc_rutil  # v4.0-W25: reine Restream-Helfer (extrahiert)
-from nc import overlaybrowser as _nc_ovbrowser  # v4.2-W170: ein Chromium je Restream statt je Bild
+from nc import overlaybrowser as _nc_ovbrowser
+from nc import kickzentrifugo as _nc_kickzentrifugo  # v4.2-W171: Kick-Chat ueber Centrifugo  # v4.2-W170: ein Chromium je Restream statt je Bild
 from nc import restream_stability as _nc_rstab  # v4.0-W113: Wiederanlauf-Regeln (rein)
 from nc import flapguard as _nc_flap  # v4.0-W116: flatternde Verbindungen (rein)
 from nc import recdiag as _nc_recdiag  # v4.0-W116: Raten-Einbruch (rein)
@@ -17177,8 +17178,55 @@ class KickModerator:
                 if _r:
                     await _azrael_broadcast_reply("kick", sender, _r, session)
 
+    async def _kick_ereignis(self, frame, session):
+        """v4.2-W171: ein Kick-Ereignis ({event, data}) verarbeiten — egal ob es
+        ueber Pusher oder Centrifugo kam. Kick legt in beide denselben Inhalt;
+        bis W170 stand diese Verarbeitung mitten in der Pusher-Schleife, und
+        ein zweiter Transport haette sie verdoppelt."""
+        ev = frame.get("event") or ""
+        if "ChatMessage" in ev:
+            data = json.loads(frame.get("data") or "{}")
+            content = data.get("content") or ""
+            sender_obj = data.get("sender") or {}
+            sender = sender_obj.get("username") or "?"
+            uid = sender_obj.get("id")
+            if content:
+                await _restream_chat_push_async("kick", sender, content)   # F92: Sendebild-Panel
+                _roles = _nc_mod.kick_roles(sender_obj)
+                _spawn(self._handle(sender, content, uid, session,
+                                    roles=_roles), name="mod-handle")
+        elif "Follow" in ev:
+            if _overlay_src_ok("kick"):
+                try:
+                    data = json.loads(frame.get("data") or "{}")
+                    u = (data.get("user") or {}).get("username") or data.get("username")
+                    if u: _overlay_push("follow", u, platform="kick")
+                except Exception as e:
+                    _loop_fehler("_ws_loop", e)
+        elif "Subscription" in ev or "Gift" in ev:
+            # V37-P4b: Eigene Kanal-Events wurden bisher NUR aufs
+            # Overlay gelegt — für Subs/Gifts im EIGENEN Kick-Chat
+            # gab es nie ein Dankeschön (während AZRAEL sich für
+            # fremde TikTok-Gifts bedankte — genau verkehrt herum).
+            try:
+                data = json.loads(frame.get("data") or "{}")
+                u = (data.get("gifter_username") or data.get("username")
+                     or (data.get("user") or {}).get("username") or "jemand")
+                cnt = len(data.get("gifted_usernames") or []) or data.get("months") or 1
+                if _overlay_src_ok("kick"):
+                    _overlay_push("donation", u, platform="kick",
+                                  message=("Sub/Gift x%d" % cnt if cnt and cnt > 1 else "Sub/Gift"))
+                if os.getenv("AZRAEL_THANK_OWN_GIFTS", "1") in ("1", "true"):
+                    _spawn(self._thank_own_gift(u, cnt, session),
+                           name="kick-thank")
+            except Exception as e:
+                _loop_fehler("_ws_loop", e)
+
     async def _ws_loop(self):
-        """Liest den Kick-Chat über den öffentlichen Pusher-Websocket."""
+        """Liest den Kick-Chat über den öffentlichen Pusher-Websocket.
+
+        v4.2-W171: nur noch mit KICK_CHAT_WEG=pusher. Kick hat den Chat im
+        Oktober 2026 auf Centrifugo umgestellt (_ws_loop_centrifugo)."""
         if not KICK_CHATROOM_ID:
             log.warning("Kick-Moderator: KICK_CHATROOM_ID fehlt — Chat-Lesen deaktiviert")
             return
@@ -17208,43 +17256,8 @@ class KickModerator:
                             try:
                                 frame = json.loads(msg.data)
                                 ev = frame.get("event") or ""
-                                if "ChatMessage" in ev:
-                                    data = json.loads(frame.get("data") or "{}")
-                                    content = data.get("content") or ""
-                                    sender_obj = data.get("sender") or {}
-                                    sender = sender_obj.get("username") or "?"
-                                    uid = sender_obj.get("id")
-                                    if content:
-                                        await _restream_chat_push_async("kick", sender, content)   # F92: Sendebild-Panel
-                                        _roles = _nc_mod.kick_roles(sender_obj)
-                                        _spawn(self._handle(sender, content, uid, session,
-                                                            roles=_roles), name="mod-handle")
-                                elif "Follow" in ev:
-                                    if _overlay_src_ok("kick"):
-                                        try:
-                                            data = json.loads(frame.get("data") or "{}")
-                                            u = (data.get("user") or {}).get("username") or data.get("username")
-                                            if u: _overlay_push("follow", u, platform="kick")
-                                        except Exception as e:
-                                            _loop_fehler("_ws_loop", e)
-                                elif "Subscription" in ev or "Gift" in ev:
-                                    # V37-P4b: Eigene Kanal-Events wurden bisher NUR aufs
-                                    # Overlay gelegt — für Subs/Gifts im EIGENEN Kick-Chat
-                                    # gab es nie ein Dankeschön (während AZRAEL sich für
-                                    # fremde TikTok-Gifts bedankte — genau verkehrt herum).
-                                    try:
-                                        data = json.loads(frame.get("data") or "{}")
-                                        u = (data.get("gifter_username") or data.get("username")
-                                             or (data.get("user") or {}).get("username") or "jemand")
-                                        cnt = len(data.get("gifted_usernames") or []) or data.get("months") or 1
-                                        if _overlay_src_ok("kick"):
-                                            _overlay_push("donation", u, platform="kick",
-                                                          message=("Sub/Gift x%d" % cnt if cnt and cnt > 1 else "Sub/Gift"))
-                                        if os.getenv("AZRAEL_THANK_OWN_GIFTS", "1") in ("1", "true"):
-                                            _spawn(self._thank_own_gift(u, cnt, session),
-                                                   name="kick-thank")
-                                    except Exception as e:
-                                        _loop_fehler("_ws_loop", e)
+                                if not ev.startswith("pusher"):
+                                    await self._kick_ereignis(frame, session)
                                 elif ev == "pusher:error":
                                     _pfehler = _nc_kickapi.pusher_fehler(frame)
                                 elif ev == "pusher_internal:subscription_succeeded":
@@ -17278,6 +17291,122 @@ class KickModerator:
             self.stats["connected"] = False
             await session.close()
 
+    async def _ws_loop_centrifugo(self):
+        """v4.2-W171: liest den Kick-Chat ueber Centrifugo (nc/kickzentrifugo.py).
+
+        Je Verbindung eine frische Client-ID und ein frisches Gast-Token; das
+        Token wird bei drei Vierteln seiner Laufzeit auf derselben Verbindung
+        erneuert. Der Server pingt mit `{}` alle 25 s — bleibt er STILLE_S
+        stumm, ist die Verbindung tot, auch wenn TCP das noch nicht weiss.
+        """
+        if not KICK_CHATROOM_ID:
+            log.warning("Kick-Moderator: KICK_CHATROOM_ID fehlt — Chat-Lesen deaktiviert")
+            return
+        _kz = _nc_kickzentrifugo
+        _folge = [None, 0]
+        session = aiohttp.ClientSession()
+        try:
+            while self.running:
+                cid = _kz.neue_client_id()
+                try:
+                    url, token = await _kz.zugang(session, cid)
+                    async with session.ws_connect(url, headers=_kz.KOPF,
+                                                  timeout=aiohttp.ClientTimeout(total=20)) as ws:
+                        await ws.send_str(_kz.connect_cmd(token))
+                        await ws.send_str(_kz.subscribe_cmd(KICK_CHATROOM_ID))
+                        stand = {"erneuern_um": None, "naechste_id": _kz.ID_SUBSCRIBE + 1,
+                                 "zuletzt": _time_mod.monotonic(), "host": url.split("/")[2]}
+                        while self.running:
+                            msg = await self._kick_zentrifugo_lesen(ws, stand)
+                            if msg is not None and msg.type != aiohttp.WSMsgType.TEXT:
+                                break
+                            if msg is not None:
+                                await self._kick_zentrifugo_rahmen(ws, msg.data, _folge, stand,
+                                                                   session)
+                            if stand["erneuern_um"] and _time_mod.monotonic() >= stand["erneuern_um"]:
+                                stand["erneuern_um"] = None   # neu gesetzt durch die refresh-Antwort
+                                token = await _kz.neues_token(session, cid)
+                                await ws.send_str(_kz.refresh_cmd(token, stand["naechste_id"]))
+                                stand["naechste_id"] += 1
+                        if self.running:
+                            raise _nc_kickapi.PusherGeschlossen(
+                                ws.close_code,
+                                "Kick-Chat: Server schloss die Verbindung (Code %s)" % ws.close_code)
+                except Exception as e:
+                    self.stats["connected"] = False
+                    if self.running:
+                        code = getattr(e, "code", None)
+                        lage = _kz.lage(code)
+                        if _folge[0] == lage:
+                            _folge[1] += 1
+                        else:
+                            _folge[0], _folge[1] = lage, 1
+                        _pause = _kz.pause(code, _folge[1])
+                        if isinstance(e, asyncio.TimeoutError):
+                            e = ConnectionError("Kick-Chat: %d s ohne Lebenszeichen vom Server"
+                                                % _kz.STILLE_S)
+                        _verbindung_verloren("Kick-WebSocket", e, _pause,
+                                             seit=self.stats.get("since", 0.0))
+                        await asyncio.sleep(_pause)
+        finally:
+            self.stats["connected"] = False
+            await session.close()
+
+    async def _kick_zentrifugo_lesen(self, ws, stand):
+        """Naechster Rahmen — oder None, wenn nur die Token-Erneuerung faellig ist.
+
+        Gewartet wird hoechstens bis zur Erneuerung: hinge sie am naechsten
+        eingehenden Rahmen, kaeme sie in einem stillen Moment zu spaet, und das
+        Token liefe ab. Stille ueber STILLE_S wirft TimeoutError (= tot)."""
+        _kz = _nc_kickzentrifugo
+        jetzt = _time_mod.monotonic()
+        warte = _kz.STILLE_S - (jetzt - stand["zuletzt"])
+        if stand["erneuern_um"]:
+            warte = min(warte, stand["erneuern_um"] - jetzt)
+        msg = None     # None: nur die Erneuerung ist faellig, kein Fehler
+        try:
+            msg = await ws.receive(timeout=max(0.05, warte))
+            stand["zuletzt"] = _time_mod.monotonic()
+        except asyncio.TimeoutError:
+            if _time_mod.monotonic() - stand["zuletzt"] >= _kz.STILLE_S:
+                raise
+        return msg
+
+    async def _kick_zentrifugo_rahmen(self, ws, text, _folge, stand, session):
+        """Ein Centrifugo-Rahmen: Ping beantworten, Fehler werfen, Abo und
+        Token-Laufzeit merken, Ereignisse an _kick_ereignis geben."""
+        _kz = _nc_kickzentrifugo
+        try:
+            nachrichten = _kz.zerlegen(text)
+        except ValueError as e:
+            _loop_fehler("kick-centrifugo-rahmen", e)
+            return
+        for n in nachrichten:
+            if _kz.ist_ping(n):
+                await ws.send_str("{}")   # sonst schliesst der Server mit 3012 „no pong"
+                continue
+            grund = _kz.antwort_fehler(n)
+            if grund:
+                raise _kz.KickZentrifugoFehler("Kick lehnte Befehl %s ab: %s" % (n.get("id"), grund),
+                                               code=_kz.fehler_code(n))
+            if "connect" in n or "refresh" in n:
+                stand["erneuern_um"] = (_time_mod.monotonic()
+                                        + _kz.ttl_aus(n) * _kz.ERNEUERN_ANTEIL)
+            if n.get("id") == _kz.ID_SUBSCRIBE:
+                # Erst das Abo ist Erfolg — der naechste Backoff beginnt klein (W136).
+                _folge[0], _folge[1] = None, 0
+                self.stats["connected"] = True
+                self.stats["since"] = _time_mod.time()
+                log.info("Kick-Chat: verbunden ueber Centrifugo (%s), Raum %s",
+                         stand["host"], KICK_CHATROOM_ID)
+                continue
+            frame = _kz.als_frame(n)
+            if frame:
+                try:
+                    await self._kick_ereignis(frame, session)
+                except Exception as e:
+                    _loop_fehler("kick-chat-ereignis", e)
+
     async def _engage_loop(self):
         while self.running and self.cfg["engage_min"] > 0:
             await asyncio.sleep(self.cfg["engage_min"] * 60)
@@ -17299,7 +17428,11 @@ class KickModerator:
         if not (KICK_CLIENT_ID and KICK_CLIENT_SECRET):
             return {"ok": False, "error": "KICK_CLIENT_ID/SECRET fehlen (Developer-App)"}
         self.running = True
-        self._task = asyncio.create_task(self._ws_loop())
+        # v4.2-W171: Kick liefert den Chat seit Oktober 2026 ueber Centrifugo;
+        # Pusher bleibt per KICK_CHAT_WEG=pusher erreichbar, falls Kick zurueckwechselt.
+        _weg = (os.getenv("KICK_CHAT_WEG", "centrifugo") or "centrifugo").strip().lower()
+        self._task = asyncio.create_task(
+            self._ws_loop() if _weg == "pusher" else self._ws_loop_centrifugo())
         self._engage_task = asyncio.create_task(self._engage_loop())
         log_event("kickmod.start", "info", "KI-Moderator gestartet", {})
         # Begrüßung in den Chat (optional)
