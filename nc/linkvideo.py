@@ -29,6 +29,7 @@ import os
 import re
 import shutil
 import tempfile
+from urllib.parse import urlsplit
 
 from nc import kindprozess as _kind
 
@@ -96,7 +97,11 @@ def links(text) -> list:
 
 
 def ist_tiktok(url) -> bool:
-    return "tiktok.com" in (url or "").lower()
+    """Gehoert der Link zu TikTok? Am HOSTNAMEN entschieden, nicht am Text —
+    `https://youtu.be/x?ref=tiktok.com` ist YouTube, und TikTok-Cookies und
+    -Proxy haben dort nichts zu suchen (CodeQL, PR #211)."""
+    host = (urlsplit(url or "").hostname or "").lower()
+    return host == "tiktok.com" or host.endswith(".tiktok.com")
 
 
 def befehl(ytdlp, url, vorlage, limit_mb, max_dauer, cookies=None, proxy=None) -> list:

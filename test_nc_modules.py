@@ -30743,6 +30743,11 @@ def _test_v42_w169_link_video():
     viele = " ".join("https://youtu.be/%011d" % i for i in range(6))
     assert len(L.links(viele)) == L.MAX_LINKS, "eine Linkliste loest beliebig viele Downloads aus"
 
+    assert L.ist_tiktok("https://vm.tiktok.com/x") and L.ist_tiktok("https://tiktok.com/t/x")
+    for kein in ("https://youtu.be/x?ref=tiktok.com", "https://evil-tiktok.com/x",
+                 "https://tiktok.com.evil.net/x", ""):
+        assert not L.ist_tiktok(kein), ("TikTok-Cookies an fremden Host", kein)
+
     # (2) Der Aufruf.
     d = P.verzeichnis()
     try:
