@@ -476,7 +476,32 @@ def _ziel_guild():
     return g or (_c.guilds[0] if (_c is not None and _c.guilds) else g)
 
 
-async def _bereich_umziehen(cat, ziel):
+async def _clip_kopieren(msg, ziel):
+    """Eine Nachricht samt Anhaengen in den Clip-Kanal kopieren, mit Marke."""
+    von = "" if msg.author.bot else f"(von {msg.author.display_name}) "
+    dateien = [await a.to_file() for a in msg.attachments]
+    text = (von + (msg.content or ""))[:1850] + _nc_ziele.umzugsmarke(msg.id)
+    neu = await ziel.send(content=text, files=dateien)
+    try:
+        await neu.add_reaction("⭐")
+    except discord.HTTPException as e:
+        log.info("Clip-Umzug: ⭐ an %s nicht gesetzt: %s", neu.id, e)
+    return neu
+
+
+async def _umzugsmarken(ziel):
+    """{Quell-ID: Kopie} aller schon umgezogenen Clips im Ziel (Review #210).
+    Einmal je Abgleich gelesen, nicht je Bereich — bei 40 Bereichen waere es
+    sonst 40-mal der ganze Kanalverlauf."""
+    schon = {}
+    async for alt in ziel.history(limit=None):
+        qid = _nc_ziele.umzugsmarke_lesen(alt.content)
+        if qid:
+            schon.setdefault(qid, alt)
+    return schon
+
+
+async def _bereich_umziehen(cat, ziel, schon):
     """Einen alten 🎯-Bereich in den Clip-Kanal ziehen. -> Zahl der Clips.
 
     Jede Nachricht mit Anhang wird ins Ziel kopiert und ERST DANACH im alten
@@ -487,16 +512,14 @@ async def _bereich_umziehen(cat, ziel):
     quelle = discord.utils.get(cat.channels, name=_nc_ziele.clip_kanal_des_bereichs(cat.name))
     kopiert = 0
     if quelle is not None:
+        # Review #210: scheitert das Loeschen nach der Kopie (Neustart,
+        # fehlendes Recht), bliebe die Quelle stehen — und jeder Abgleich alle
+        # zehn Minuten postete eine weitere Kopie. Jede Kopie traegt deshalb
+        # die Quell-ID als Marke; vorhandene Kopien werden wiedererkannt.
         async for msg in quelle.history(limit=None, oldest_first=True):
             if not msg.attachments:
                 continue
-            von = "" if msg.author.bot else f"(von {msg.author.display_name}) "
-            dateien = [await a.to_file() for a in msg.attachments]
-            neu = await ziel.send(content=(von + (msg.content or ""))[:1900] or None, files=dateien)
-            try:
-                await neu.add_reaction("⭐")
-            except discord.HTTPException as e:
-                log.info("Clip-Umzug: ⭐ an %s nicht gesetzt: %s", neu.id, e)
+            neu = schon.get(msg.id) or await _clip_kopieren(msg, ziel)
             await db_async(lambda c, a=msg.id, n=neu: c.execute(
                 "UPDATE discord_clips SET guild_id=?, channel_id=?, message_id=? WHERE message_id=?",
                 (n.guild.id, n.channel.id, n.id, a)))
@@ -521,6 +544,7 @@ async def _ziele_abgleichen(guild, erzwingen=False):
     if not alte:
         return r
     ziel = await _nc_ziele.clip_kanal_holen([guild], guild.id)
+    schon = await _umzugsmarken(ziel)
     for cat in alte:
         if not _nc_ziele.loeschbar(cat.name, [ch.name for ch in cat.channels]):
             # v4.2-W161: Praefix ja, Inhalt fremd — von Hand angelegt oder
@@ -535,7 +559,7 @@ async def _ziele_abgleichen(guild, erzwingen=False):
                             _nc_meldetakt.zusatz(weg))
             continue
         try:
-            r["clips"] += await _bereich_umziehen(cat, ziel)
+            r["clips"] += await _bereich_umziehen(cat, ziel, schon)
             r["umgezogen"].append(cat.name[len(_nc_ziele.PRAEFIX):])
         except Exception as e:
             # Kein Loeschen nach einem Kopierfehler: _bereich_umziehen loescht

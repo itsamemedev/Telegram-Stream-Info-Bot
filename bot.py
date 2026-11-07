@@ -9043,6 +9043,7 @@ async def _chat_is_forum(chat_id, bot) -> bool:
 # bei 40 Trackings 40 Themen, und die Gruppe war nur noch Seitenleiste. Der
 # Schluessel traegt ein '#' wie das Melde-Thema: kein Handle kollidiert damit.
 _TG_UPLOAD_TOPIC_KEY = "#uploads"
+_TG_TOPIC_ANLEGEN = {}               # Schluessel -> asyncio.Lock (Review #210)
 
 
 def _upload_topic_name() -> str:
@@ -9067,6 +9068,16 @@ async def _ensure_topic(chat_id, username, bot, name=None):
         return tid
     if not await _chat_is_forum(chat_id, bot):
         return None                  # normale Gruppe/Channel/DM → keine Topics
+    # Review #210: seit W168 teilen sich ALLE Uploads einer Gruppe einen
+    # Schluessel. Zwei gleichzeitige Uploads sahen beide „kein Thema" und
+    # legten zwei an — eines blieb verwaist. Nachsehen und Anlegen sind jetzt
+    # EIN Schritt je Schluessel (modulglobal, nicht am Objekt: W-Regel).
+    async with _TG_TOPIC_ANLEGEN.setdefault(key, asyncio.Lock()):
+        return _TG_TOPICS.get(key) or await _topic_anlegen(chat_id, username, bot, name, key)
+
+
+async def _topic_anlegen(chat_id, username, bot, name, key):
+    """Das Forum-Thema wirklich anlegen (nur unter _TG_TOPIC_ANLEGEN[key])."""
     try:
         _titel = (name or f"@{username}")[:128]
         topic = await bot.create_forum_topic(chat_id=chat_id, name=_titel)
@@ -9137,14 +9148,25 @@ async def _tg_topic_umziehen(bot_app, chat_id, nutzer, tid, zustand, pfad):
         _nc_topicumzug.gesendet(zustand, chat_id, nutzer, datei)
         await asyncio.to_thread(_nc_topicumzug.speichere, pfad, zustand)
         await asyncio.sleep(5)              # sanft zu Telegram
+    # Review #210: was die Retention schon geloescht hat, kann nicht
+    # nachgezogen werden — im alten Thema liegt dann die EINZIGE Kopie.
+    # Erkennbar ist das an Zeilen ohne Datei und an einem Nutzer ganz ohne
+    # Zeilen (Retention loescht Datei und Zeile). Dann wird das Thema nur
+    # GESCHLOSSEN: die Videos bleiben, neue Uploads gehen ins Upload-Thema.
+    # Eine Zeile, die samt Datei weg ist, waehrend andere noch da sind, sieht
+    # niemand — das bleibt die Grenze dieses Umzugs.
+    behalten = not alle or len(da) < len(alle)
     try:
-        await bot.delete_forum_topic(chat_id=chat_id, message_thread_id=tid)
+        if behalten:
+            await bot.close_forum_topic(chat_id=chat_id, message_thread_id=tid)
+        else:
+            await bot.delete_forum_topic(chat_id=chat_id, message_thread_id=tid)
     except Exception as e:
         # Schon von Hand geloescht ist das Ziel, kein Fehler. Nur genau das —
         # „chat not found" heisst etwas anderes.
         _m = str(e).lower()
         if "thread not found" not in _m and "topic_id_invalid" not in _m:
-            log.error("Topic-Umzug @%s: altes Thema %s in chat %s nicht loeschbar: %s — "
+            log.error("Topic-Umzug @%s: altes Thema %s in chat %s nicht loesch-/schliessbar: %s — "
                       "dem Bot das Recht „Themen verwalten“ geben; der naechste Start "
                       "versucht es erneut (ohne neu hochzuladen).", nutzer, tid, chat_id, e)
             return
@@ -9153,8 +9175,10 @@ async def _tg_topic_umziehen(bot_app, chat_id, nutzer, tid, zustand, pfad):
         _tg_topics_save()
     _nc_topicumzug.erledigt(zustand, chat_id, nutzer)
     await asyncio.to_thread(_nc_topicumzug.speichere, pfad, zustand)
-    log.info("Topic-Umzug @%s: %d Aufnahme(n) nachgezogen, altes Thema in chat %s geloescht.",
-             nutzer, len(da), chat_id)
+    log.info("Topic-Umzug @%s: %d Aufnahme(n) nachgezogen, altes Thema in chat %s %s.",
+             nutzer, len(da), chat_id,
+             "nur geschlossen (darin liegen Videos ohne Datei auf der Platte)" if behalten
+             else "geloescht")
 
 
 # ── Melde-Thema: Live/Offline gehört NIE in den Hauptchannel ────────────

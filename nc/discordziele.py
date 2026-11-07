@@ -68,6 +68,21 @@ def clip_kanal(env=None) -> str:
     return name or CLIP_KANAL_VORGABE
 
 
+_MARKE = "\n-# ↪ umgezogen · "
+
+
+def umzugsmarke(quell_id) -> str:
+    """Die Zeile, an der eine umgezogene Kopie ihre Quelle erkennt (Review
+    #210). `-#` ist Discords Kleintext — sichtbar, aber unauffaellig."""
+    return "%s%d" % (_MARKE, int(quell_id))
+
+
+def umzugsmarke_lesen(text):
+    """Quell-ID aus einer Kopie — oder 0, wenn der Text keine Marke traegt."""
+    _, gefunden, rest = (text or "").rpartition(_MARKE)
+    return int(rest) if gefunden and rest.isdigit() else 0
+
+
 def clip_kanal_des_bereichs(kategoriename) -> str:
     """Der Clip-Kanal eines alten Nutzer-Bereichs („🎯 anna" -> „anna-clips")."""
     return "%s-clips" % (kategoriename or "")[len(PRAEFIX):]

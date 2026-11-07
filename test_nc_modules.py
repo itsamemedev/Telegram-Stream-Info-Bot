@@ -30375,15 +30375,15 @@ def _test_v42_w168_ein_thema_ein_kanal():
 
     themen = {}
     ns2 = {"TELEGRAM_USE_TOPICS": True, "_TG_TOPICS": themen, "_TG_TOPICS_LOCK": _th.Lock(),
-           "_tg_topics_save": lambda: None, "log": lg, "os": _os,
-           "_TG_UPLOAD_TOPIC_KEY": "#uploads"}
+           "_tg_topics_save": lambda: None, "log": lg, "os": _os, "asyncio": _aio,
+           "_TG_UPLOAD_TOPIC_KEY": "#uploads", "_TG_TOPIC_ANLEGEN": {}}
     from nc.util import _topic_key
     ns2["_topic_key"] = _topic_key
 
     async def _forum(_c, _b):
         return True
     ns2["_chat_is_forum"] = _forum
-    _exec(baum, ["_upload_topic_name", "_ensure_topic", "_topic_forget"], ns2)
+    _exec(baum, ["_upload_topic_name", "_ensure_topic", "_topic_anlegen", "_topic_forget"], ns2)
     a = _aio.run(ns2["_ensure_topic"](-100, "anna", _Bot()))
     b = _aio.run(ns2["_ensure_topic"](-100, "ben", _Bot()))
     assert a == b and len(erstellt) == 1, ("je Nutzer wieder ein Thema", erstellt)
@@ -30393,6 +30393,19 @@ def _test_v42_w168_ein_thema_ein_kanal():
     ns2["_topic_forget"](-100, "anna")
     assert "-100:#uploads" not in themen and "-100:#live-notices" in themen, \
         "ein geloeschtes Upload-Thema wird nie vergessen — jeder Upload geht ins Leere"
+    # Review #210: zwei gleichzeitige Uploads legen EIN Thema an, nicht zwei.
+    themen.clear(); del erstellt[:]; ns2["_TG_TOPIC_ANLEGEN"].clear()
+
+    class _LahmerBot(_Bot):
+        async def create_forum_topic(self, chat_id, name):
+            await _aio.sleep(0.05)
+            return await _Bot.create_forum_topic(self, chat_id, name)
+
+    async def _zwei():
+        return await _aio.gather(ns2["_ensure_topic"](-300, "anna", _LahmerBot()),
+                                 ns2["_ensure_topic"](-300, "ben", _LahmerBot()))
+    t1, t2 = _aio.run(_zwei())
+    assert len(erstellt) == 1 and t1 == t2, ("parallele Uploads, zwei Upload-Themen", erstellt)
     tv = open("telegramversand.py", encoding="utf-8").read()
     assert 'ergebnis["gesendet" if ok else "fehler"] += 1' in tv
 
@@ -30436,12 +30449,17 @@ def _test_v42_w168_ein_thema_ein_kanal():
             ergebnis["gesendet"] = 0 if kaputt else 1
             ergebnis["fehler"] = 1 if kaputt else 0
 
+        db_zeilen = list(aufnahmen) + [weg]
+
         async def _db_async(fn):
-            return [{"filepath": f} for f in aufnahmen + [weg]]
+            return [{"filepath": f} for f in db_zeilen]
 
         class _TBot:
             async def delete_forum_topic(self, chat_id, message_thread_id):
                 geloescht.append(message_thread_id)
+
+            async def close_forum_topic(self, chat_id, message_thread_id):
+                geloescht.append(("zu", message_thread_id))
 
         async def _schlaf(_s):
             return None
@@ -30463,9 +30481,21 @@ def _test_v42_w168_ein_thema_ein_kanal():
         del gesendet[:]
         _aio.run(ns3["_tg_topic_umziehen"](app, -100, "anna", 7, z, stand))
         assert gesendet == aufnahmen, ("nachgezogen wird, was auf der Platte liegt", gesendet)
-        assert geloescht == [7] and themen == {}, (geloescht, themen)
+        assert geloescht == [("zu", 7)] and themen == {}, \
+            ("Review #210: eine Aufnahme ohne Datei liegt NUR noch im alten Thema — "
+             "geschlossen, nicht geloescht", geloescht, themen)
         assert U.lade(stand) == {"gesendet": {}}
         assert any("nicht mehr auf der Platte" in z for _l, z in zeilen)
+        # Alles da: geloescht. Keine einzige Zeile: geschlossen (die Retention
+        # hat Datei UND Zeile entfernt — das Thema traegt die einzige Kopie).
+        db_zeilen[:] = aufnahmen
+        for erwartet, zeilen_db in ((7, aufnahmen), (("zu", 7), [])):
+            db_zeilen[:] = zeilen_db
+            themen["-100:anna"] = 7
+            del geloescht[:]
+            _aio.run(ns3["_tg_topic_umziehen"](app, -100, "anna", 7, {"gesendet": {}}, stand))
+            assert geloescht == [erwartet], (zeilen_db, geloescht)
+        db_zeilen[:] = aufnahmen
         # Erste Datei durch, zweite scheitert: der Stand kennt die erste — auf
         # der Platte, nicht nur im Speicher.
         themen["-100:anna"] = 7
@@ -30635,26 +30665,50 @@ def _test_v42_w168_ein_thema_ein_kanal():
     fake_discord = _ty.SimpleNamespace(
         utils=_ty.SimpleNamespace(get=lambda it, name: next((x for x in it if x.name == name), None)),
         HTTPException=Exception)
-    ns5 = _exec(dbaum, ["_bereich_umziehen"],
+    assert Z.umzugsmarke_lesen("Clip" + Z.umzugsmarke(42)) == 42
+    assert Z.umzugsmarke_lesen("Clip ↪ 42") == 0 and Z.umzugsmarke_lesen(None) == 0
+    assert Z.umzugsmarke_lesen("1234") == 0, "eine Nachricht „1234“ gilt als Kopie von Clip 1234"
+    ns5 = _exec(dbaum, ["_clip_kopieren", "_bereich_umziehen", "_umzugsmarken"],
                 {"discord": fake_discord, "_nc_ziele": Z, "log": lg, "db_async": _dba})
     quelle = _Quelle("anna-clips", [_Msg(1), _Msg(2, anh=False), _Msg(3, bot=False)])
     cat = _Cat([quelle, _Quelle("anna-chat", [])])
-    assert _aio.run(ns5["_bereich_umziehen"](cat, _Ziel())) == 2
-    assert ablauf.index(("weg", 1)) > ablauf.index(("kopie", "Clip 1")), "geloescht vor der Kopie"
-    assert ("kopie", "(von Eve) Clip 3") in ablauf
+    assert _aio.run(ns5["_bereich_umziehen"](cat, _Ziel(), {})) == 2
+    k1 = ("kopie", "Clip 1" + Z.umzugsmarke(1))
+    assert ablauf.index(("weg", 1)) > ablauf.index(k1), "geloescht vor der Kopie"
+    assert ("kopie", "(von Eve) Clip 3" + Z.umzugsmarke(3)) in ablauf
     assert ablauf[-1] == ("kategorie", "🎯 anna") and ("weg", 2) not in ablauf
     assert db_rufe and db_rufe[0][3] == 1, "discord_clips zeigt weiter auf die alte Nachricht"
     del ablauf[:]
     quelle = _Quelle("anna-clips", [_Msg(1), _Msg(3)])
     try:
-        _aio.run(ns5["_bereich_umziehen"](_Cat([quelle]), _Ziel(fehler_bei=3)))
+        _aio.run(ns5["_bereich_umziehen"](_Cat([quelle]), _Ziel(fehler_bei="Clip 3"), {}))
         raise AssertionError("ein Kopierfehler wird verschluckt")
     except RuntimeError:
         pass
     assert ("weg", 3) not in ablauf and not any(a[0] in ("kanal", "kategorie") for a in ablauf), \
         ("nach einem Kopierfehler wird geloescht", ablauf)
+    # Review #210: schon kopiert (Loeschen der Quelle scheiterte) -> keine
+    # zweite Kopie, nur die Quelle weg und discord_clips auf die alte Kopie.
+    del ablauf[:], db_rufe[:]
+    vorhanden = _ty.SimpleNamespace(id=777, content="Clip 1" + Z.umzugsmarke(1),
+                                    guild=_ty.SimpleNamespace(id=1),
+                                    channel=_ty.SimpleNamespace(id=55))
+
+    class _ZielMitVerlauf(_Ziel):
+        def history(self, limit=None):
+            async def _gen():
+                for m in (vorhanden, _ty.SimpleNamespace(content="Hallo")):
+                    yield m
+            return _gen()
+    zv = _ZielMitVerlauf()
+    schon = _aio.run(ns5["_umzugsmarken"](zv))
+    assert set(schon) == {1}
+    _aio.run(ns5["_bereich_umziehen"](_Cat([_Quelle("anna-clips", [_Msg(1)])]), zv, schon))
+    assert not [a for a in ablauf if a[0] == "kopie"], ("jeder Abgleich postet eine Kopie mehr", ablauf)
+    assert ("weg", 1) in ablauf and db_rufe[0][2] == 777
     za = rumpf_ab(dsrc, dsrc.index("async def _ziele_abgleichen("))
     assert za.index("_nc_ziele.loeschbar(") < za.index("await _bereich_umziehen(")
+    assert za.count("_umzugsmarken(") == 1 and za.index("_umzugsmarken(") < za.index("for cat in alte")
     lg.handlers.clear()
     ok("W168: ein Upload-Thema statt @name-Themen (alte nachgezogen, dann geloescht), "
        "Discord-/track nur Discord, Dashboard-Standard Telegram samt Bestand, ein Clip-Kanal")

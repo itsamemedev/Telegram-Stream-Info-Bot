@@ -50,6 +50,12 @@ vorhanden sind in einem Topic nachziehen und alle anderen Channel löschen."
   Zuordnung. Jetzt ein Paar je Tracking (`_fanout_ziele`).
 - Ein gelöschtes Upload-Thema wurde nie vergessen: `_topic_forget` nimmt
   dieselbe Abbildung wie `_ensure_topic`.
+- Review #210: ein altes Thema, dessen Aufnahmen nicht alle nachgezogen
+  werden konnten (Datei weg, oder gar keine Zeile mehr), wird nur
+  **geschlossen**, nicht gelöscht — dort liegt die einzige Kopie. Das
+  Upload-Thema wird je Gruppe unter einer Sperre angelegt (zwei
+  gleichzeitige Uploads legten zwei an). Der Discord-Umzug markiert jede
+  Kopie mit der Quell-ID und kopiert nach einem Abbruch nichts doppelt.
 
 ## [4.6.17] — 2026-11-07 · „Leitstand"
 
