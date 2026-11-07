@@ -27656,7 +27656,11 @@ def _test_v42_w148_durchreicher():
         _griff = _signal.getsignal(_signal.SIGTERM)
         _w_alt = _griff.__closure__
         assert _w_alt, "kein eigener SIGTERM-Griff"
-        _zellen = {c.cell_contents for c in _w_alt if isinstance(c.cell_contents, _P)}
+        # ANKER GEWANDERT (v4.2-W167, nicht der Vertrag): der Griff haelt das
+        # LAUFENDE Paar in einem Merker, weil main() seit W167 ein zweites
+        # Werkzeug versuchen kann.
+        _zellen = {v for c in _w_alt if isinstance(c.cell_contents, dict)
+                   for v in c.cell_contents.values() if isinstance(v, _P)}
         assert len(_zellen) == 2, "Griff haelt nicht Zieher UND ffmpeg"
         for q in _zellen:
             q.beendet = False
@@ -28801,7 +28805,11 @@ def _test_v42_w154_verschlossen_cluster_decimal():
 
     async def _kein_schlaf(_s):
         return None
+    import nc.meldetakt as _mt_w167
+    import time as _tm_w167
+    _mt_w167.ZUSTAND.clear()
     ns = {"_nc_kickapi": K, "KICK_PUSHER_CLUSTER": "us2", "KICK_PUSHER_KEY": "k",
+          "_nc_meldetakt": _mt_w167, "_time_mod": _tm_w167,
           "log": _lg.getLogger("w154"), "asyncio": _ty.SimpleNamespace(sleep=_kein_schlaf)}
     exec(compile(_ast.Module(body=teile, type_ignores=[]), "bot.py", "exec"), ns)
 
@@ -28811,8 +28819,12 @@ def _test_v42_w154_verschlossen_cluster_decimal():
     gesehen = [s.cluster]
     while _aio.run(s.weiter(_E())):
         gesehen.append(s.cluster)
-    assert sorted(gesehen) == sorted(K.PUSHER_CLUSTER), gesehen
-    assert s.cluster == "us2", "nach erfolgloser Runde nicht wieder vorn"
+    # ANKER GEWANDERT (v4.2-W167, nicht der Vertrag): nach dem eingestellten
+    # Key kommen die bekannten (nc/kickapi.BEKANNTE_KEYS) — je eine volle
+    # Runde ueber alle Cluster.
+    runden = 1 + len([k for k in K.BEKANNTE_KEYS if k != "k"])
+    assert sorted(gesehen) == sorted(list(K.PUSHER_CLUSTER) * runden), gesehen
+    assert s.cluster == "us2" and s.key == "k", "nach erfolgloser Runde nicht wieder vorn"
     assert "/ws-us2.pusher.com/app/k" in s.url()
     assert _aio.run(s.weiter(ValueError("x"))) is False and s.cluster == "us2"
     assert "from nc.kickapi import PUSHER_CLUSTER" in open("tools/kickpusher.py", encoding="utf-8").read()
@@ -28852,7 +28864,11 @@ def _test_v42_w157_cluster_status_meldung():
 
     async def _kein_schlaf(_s):
         return None
+    import nc.meldetakt as _mt_w167
+    import time as _tm_w167
+    _mt_w167.ZUSTAND.clear()
     ns = {"_nc_kickapi": K, "KICK_PUSHER_CLUSTER": "us2", "KICK_PUSHER_KEY": "k",
+          "_nc_meldetakt": _mt_w167, "_time_mod": _tm_w167,
           "log": _lg.getLogger("w157"), "asyncio": _ty.SimpleNamespace(sleep=_kein_schlaf)}
     exec(compile(_ast.Module(body=teile, type_ignores=[]), "bot.py", "exec"), ns)
 
@@ -29439,7 +29455,11 @@ def _test_v42_w161_tiefengrund():
     # DNS-Fehler haengen — W157, eine Runde spaeter.
     async def _kein_schlaf(_s):
         return None
+    import nc.meldetakt as _mt_w167
+    import time as _tm_w167
+    _mt_w167.ZUSTAND.clear()
     ns = {"_nc_kickapi": K, "KICK_PUSHER_CLUSTER": "us2", "KICK_PUSHER_KEY": "k",
+          "_nc_meldetakt": _mt_w167, "_time_mod": _tm_w167,
           "log": _lg.getLogger("w161"), "asyncio": _ty.SimpleNamespace(sleep=_kein_schlaf)}
     exec(compile(_ast.Module(body=_teile("_kick_cluster_weiter", "_kick_cluster_gefunden",
                                          "_KickClusterSuche"), type_ignores=[]),
@@ -29525,9 +29545,11 @@ def _test_v42_w161_tiefengrund():
 
     # (4) Erst die offenen Clips, dann das Einarbeiten: sonst schneidet ein
     # spaeter Clip aus der Fassung mit Chat und brennt seinen eigenen darueber.
-    fm = rumpf_ab(src, src.index("async def _aufnahme_fertigmachen("))
-    assert "await _clips_abwarten(output_file)" in fm and \
-        fm.index("await _clips_abwarten(output_file)") < fm.index("_aufnahme_chat_einarbeiten"), \
+    # ANKER GEWANDERT (v4.2-W167, nicht der Vertrag): eingearbeitet wird im
+    # Nachtrag nach dem Upload — dort steht das Warten jetzt.
+    na = rumpf_ab(src, src.index("async def _aufnahme_chat_nachtrag("))
+    assert "await _clips_abwarten(pfad)" in na and \
+        na.index("await _clips_abwarten(pfad)") < na.index("_chat_einarbeiten_async("), \
         "das Einarbeiten ersetzt die Aufnahme, waehrend noch ein Clip daraus schneidet"
     uhr = [0.0]
     ns = {"_nc_aufnahmechat": A, "CLIP_POST_SECS": 20}
@@ -29603,6 +29625,7 @@ def _test_v42_w162_zweiter_durchgang():
         ns = {"globals": lambda: {"bot_app": object()}, "db_async": _db,
               "split_and_send_video": _senden, "_should_defer_upload": lambda: spaeter,
               "_upload_queue_add": lambda *a: vorgemerkt.append(a[0]),
+              "_telegram_ziele": lambda roh, u="": list(roh),       # W167, eigener Vertrag
               "asyncio": type("A", (), {"to_thread": staticmethod(_thread)}),
               "username": "u", "ziel": "/clips/memes_u.mp4"}
         code = "async def _f():\n" + "\n".join(
@@ -29709,7 +29732,9 @@ def _test_v42_w163_chat_nachtrag_statt_beilage():
         "eine Aufnahme bekommt wieder eine .ass-Beilage"
     st = rumpf_ab(src, src.index("async def _aufnahme_beim_stopp_sichern("))
     assert "_aufnahme_chat_vormerken, output_file, username" in st
-    assert '_spawn(_aufnahme_chat_nachtrag(), name="chat-nachtrag")' in src
+    # ANKER GEWANDERT (v4.2-W167): der Dienst ruft den Nachtrag beim Start
+    # und danach nach jeder Aufnahme.
+    assert '_spawn(_aufnahme_chat_dienst(), name="chat-nachtrag")' in src
 
     # (4) Vormerken und Nachtrag aus bot.py ausfuehren, gegen eine echte
     # SQLite und eine echte Datei.
@@ -29740,12 +29765,19 @@ def _test_v42_w163_chat_nachtrag_statt_beilage():
     async def _thread(f, *a):
         return f(*a)
 
+    async def _einarbeiten_async(*a):
+        return _einarbeiten(*a)
+
+    async def _kein_clip(_p):
+        return None
+
     async def _schlaf(_s):
         return None
     modus = ["einbrennen"]
     ns = {"_nc_aufnahmechat": A, "_nc_chatnachtrag": N, "os": _os, "log": _lg.getLogger("w163"),
           "db_conn": _Ctx, "db_async": _db_async, "clean_username": lambda u: u.lstrip("@").lower(),
-          "_aufnahme_chat_modus": lambda: modus[0], "_aufnahme_chat_einarbeiten": _einarbeiten,
+          "_aufnahme_chat_modus": lambda: modus[0],
+          "_chat_einarbeiten_async": _einarbeiten_async, "_clips_abwarten": _kein_clip,
           "_alte_beilagen_einsammeln": lambda: (0, 0),     # W164, eigener Vertrag
           "asyncio": type("A", (), {"sleep": staticmethod(_schlaf),
                                     "to_thread": staticmethod(_thread)})}
@@ -30036,6 +30068,248 @@ def _test_v42_w166_grund_im_panel():
     rf = rumpf_ab(src, src.index("    def _reflect_source_status("))
     assert "str(err)[:600]" in rf, "der Grund wird beim Speichern wieder abgeschnitten"
     ok("W166: der Grund des Durchreichers steht im Panel, nicht nur gedrosselt im Log")
+
+
+def _test_v42_w167_upload_wartet_nicht_auf_chat():
+    """v4.2-W167: „Telegram uploads funktionieren nicht mehr". Seit W158 lief
+    VOR dem Upload ein libx264-Durchgang ueber die ganze Aufnahme (Zeitlimit
+    viermal die Dauer). Jetzt: Tonspur, vormerken, Upload — eingearbeitet
+    wird danach im Hintergrund, auf einem eigenen Arbeiter."""
+    import ast as _ast
+    import asyncio as _aio
+    import logging as _lg
+
+    src = open("bot.py", encoding="utf-8").read()
+    baum = _ast.parse(src)
+
+    def _fn(name):
+        return next(n for n in baum.body if getattr(n, "name", "") == name)
+
+    # (1) Vor dem Upload wird nichts eingebrannt.
+    fm = _fn("_aufnahme_fertigmachen")
+    rufe = {_ast.unparse(c.func) for c in _ast.walk(fm) if isinstance(c, _ast.Call)}
+    assert not rufe & {"_aufnahme_chat_einarbeiten", "_chat_einarbeiten_async",
+                       "_clips_abwarten"}, \
+        "der Upload wartet wieder auf das Einbrennen des Chats"
+    namen = {n.id for n in _ast.walk(fm) if isinstance(n, _ast.Name)}
+    assert "_aufnahme_chat_einarbeiten" not in namen, "auch nicht ueber to_thread"
+    hrf = rumpf_ab(src, src.index("async def handle_recording_finished("))
+    assert hrf.index("_aufnahme_fertigmachen(output_file, username)") < \
+        hrf.index("split_and_send_video("), "Reihenfolge: fertigmachen, dann Upload"
+
+    # Ausgefuehrt: das Einarbeiten haengt ewig — fertigmachen kehrt trotzdem zurueck.
+    gemerkt, geweckt = [], []
+
+    class _Ton:
+        @staticmethod
+        async def sichern(pfad, wer=""):
+            return {"groesse": 123}
+
+    async def _thread(f, *a):
+        return f(*a)
+
+    async def _ewig(*_a):
+        await _aio.sleep(3600)
+    ns = {"_nc_tonspur": _Ton, "os": __import__("os"), "_spawn": lambda c, name=None: c.close(),
+          "_meme_zusammenschnitt": _ewig,
+          "_aufnahme_chat_vormerken": lambda p, u, w: gemerkt.append((p, u, w)) or True,
+          "_aufnahme_chat_wecken": lambda: geweckt.append(1),
+          "_aufnahme_chat_einarbeiten": _ewig, "_chat_einarbeiten_async": _ewig,
+          "asyncio": type("A", (), {"to_thread": staticmethod(_thread)})}
+    exec(compile(_ast.Module(body=[fm], type_ignores=[]), "bot.py", "exec"), ns)
+    erg = _aio.run(_aio.wait_for(ns["_aufnahme_fertigmachen"]("/rec/a.mp4", "anna"), 2))
+    assert erg == {"groesse": 123} and gemerkt == [("/rec/a.mp4", "anna", "nach dem Ende")]
+    assert geweckt == [1], "der Nachtrag-Dienst erfaehrt nichts von der neuen Aufnahme"
+
+    # (2) Der Dienst: erster Durchgang beim Start, danach auf Wecken.
+    durch = []
+    ns = {"asyncio": _aio, "_CHAT_WECKER": {"ev": None}, "log": _lg.getLogger("w167"),
+          "_loop_fehler": lambda n, e: None}
+
+    async def _nachtrag(w):
+        durch.append(w)
+    ns["_aufnahme_chat_nachtrag"] = _nachtrag
+    exec(compile(_ast.Module(body=[_fn("_aufnahme_chat_dienst"), _fn("_aufnahme_chat_wecken")],
+                             type_ignores=[]), "bot.py", "exec"), ns)
+
+    async def _lauf():
+        t = _aio.ensure_future(ns["_aufnahme_chat_dienst"](0, 3600))
+        for _ in range(5):
+            await _aio.sleep(0)
+        assert durch == [0], durch
+        ns["_aufnahme_chat_wecken"]()
+        for _ in range(5):
+            await _aio.sleep(0)
+        t.cancel()
+        return list(durch)
+    assert _aio.run(_lauf()) == [0, 0], "das Wecken loest keinen Durchgang aus"
+    ns["_CHAT_WECKER"]["ev"] = None
+    ns["_aufnahme_chat_wecken"]()        # vor dem Start: kein Absturz
+
+    # (3) Eigener Arbeiter, einer zur Zeit — nicht der Default-Pool.
+    zuw = next(n for n in baum.body if isinstance(n, _ast.Assign)
+               and _ast.unparse(n.targets[0]) == "_CHAT_EINARBEITEN_POOL")
+    assert "max_workers=1" in _ast.unparse(zuw)
+    ea = _ast.unparse(_fn("_chat_einarbeiten_async"))
+    assert "run_in_executor(_CHAT_EINARBEITEN_POOL" in ea and "to_thread" not in ea
+    assert '_spawn(_aufnahme_chat_dienst(), name="chat-nachtrag")' in src
+
+    # (4) Durchreicher: scheitert der erste Zieher, kommt der naechste dran.
+    import os as _os
+    import shutil as _sh
+    import subprocess as _sp
+    import sys as _sys
+    import pruefhilfen as P
+    from nc import durchreicher as D
+    beide = lambda n: "/x/" + n if n in ("yt-dlp", "streamlink") else None   # noqa: E731
+    assert D.werkzeuge(beide) == [("yt-dlp", "/x/yt-dlp"), ("streamlink", "/x/streamlink")]
+    assert D.werkzeuge(lambda n: "/x/" + n if n in ("yt-dlp", "yt_dlp") else None) == \
+        [("yt-dlp", "/x/yt-dlp")], "yt-dlp doppelt gezaehlt"
+    assert D.werkzeug(beide) == ("yt-dlp", "/x/yt-dlp") and D.werkzeug(lambda n: None) is None
+    if _os.name == "posix":
+        d = P.verzeichnis()
+        try:
+            def _programm(name, rumpf):
+                pfad = _os.path.join(d, name)
+                with open(pfad, "w") as f:
+                    f.write("#!%s\nimport sys\n%s\n" % (_sys.executable, rumpf))
+                _os.chmod(pfad, 0o755)
+            _programm("yt-dlp", "sys.stderr.write('ERROR: The channel is not currently live\\n'); "
+                                "sys.exit(1)")
+            _programm("streamlink", "sys.stdout.buffer.write(b'S' * 4096)")
+            zaehler = [_sys.executable, "-c",
+                       "import sys; n = len(sys.stdin.buffer.read()); print(n); "
+                       "sys.exit(0 if n else 1)"]
+            env = dict(_os.environ, PATH=d + _os.pathsep + _os.environ.get("PATH", ""))
+            r = _sp.run([_sys.executable, D.__file__, "anna", "-", "--"] + zaehler,
+                        capture_output=True, text=True, timeout=60, env=env)
+            assert r.returncode == 0 and r.stdout.strip().splitlines()[-1] == "4096", \
+                ("streamlink wurde nach dem Scheitern von yt-dlp nicht versucht",
+                 r.returncode, r.stdout, r.stderr)
+            assert "yt-dlp scheiterte (rc=1) — versuche streamlink" in r.stderr, r.stderr
+            # Gegenfall: der Zieher liefert, ffmpeg scheitert selbst — kein
+            # zweiter Versuch, ein anderer Zieher aenderte daran nichts.
+            _programm("yt-dlp", "sys.stdout.buffer.write(b'Y' * 4096)")
+            kaputt = [_sys.executable, "-c", "import sys; sys.stdin.buffer.read(); sys.exit(5)"]
+            r = _sp.run([_sys.executable, D.__file__, "anna", "-", "--"] + kaputt,
+                        capture_output=True, text=True, timeout=60, env=env)
+            assert r.returncode == 5 and "versuche" not in r.stderr, (r.returncode, r.stderr)
+        finally:
+            _sh.rmtree(d, ignore_errors=True)
+    # (5) Kick: lehnt JEDER Cluster den Key ab, kommt der naechste bekannte
+    # dran; und die Fehlermeldung steht einmal, nicht alle 15 min.
+    import time as _tm
+    from nc import kickapi as K
+    from nc import meldetakt as M
+    assert K.naechster_key({"alt"}, "alt") == K.BEKANNTE_KEYS[0]
+    assert K.naechster_key(set(K.BEKANNTE_KEYS) | {"alt"}, "alt") == ""
+    teile = [n for n in baum.body if getattr(n, "name", "") in
+             ("_kick_cluster_weiter", "_kick_cluster_gefunden", "_KickClusterSuche")]
+    zeilen = []
+
+    class _H(_lg.Handler):
+        def emit(self, r):
+            zeilen.append((r.levelno, r.getMessage()))
+    lg = _lg.getLogger("w167-kick"); hd = _H(); lg.addHandler(hd); lg.setLevel(_lg.INFO)
+
+    async def _kein_schlaf(_s):
+        return None
+    M.ZUSTAND.clear()
+    ns = {"_nc_kickapi": K, "KICK_PUSHER_CLUSTER": "us2", "KICK_PUSHER_KEY": "alt",
+          "_nc_meldetakt": M, "_time_mod": _tm, "log": lg,
+          "asyncio": type("A", (), {"sleep": staticmethod(_kein_schlaf)})}
+    exec(compile(_ast.Module(body=teile, type_ignores=[]), "bot.py", "exec"), ns)
+
+    class _E4001(Exception):
+        code = K.PUSHER_FALSCHER_CLUSTER
+    try:
+        s = ns["_KickClusterSuche"]()
+        for _ in range(len(K.PUSHER_CLUSTER)):
+            _aio.run(s.weiter(_E4001()))
+        assert s.key == K.BEKANNTE_KEYS[0] and K.BEKANNTE_KEYS[0] in s.url(), \
+            "nach einer Runde ohne Treffer bleibt der veraltete Key stehen"
+        s.gefunden()
+        assert any("KICK_PUSHER_KEY=%s" % K.BEKANNTE_KEYS[0] in z for _l, z in zeilen), zeilen
+        for _runde in range(3):
+            s = ns["_KickClusterSuche"]()
+            while _aio.run(s.weiter(_E4001())):
+                pass
+        fehler = [z for l, z in zeilen if l >= _lg.ERROR and "veraltet" in z]
+        assert len(fehler) == 1, ("dieselbe Fehlermeldung jede Runde (15 min) — die Nacht "
+                                  "lang 40-mal im Fehlerlog", fehler)
+    finally:
+        lg.removeHandler(hd); M.ZUSTAND.clear()
+    kp = rumpf_ab(src, src.index("def _kick_ws_pause("))
+    assert "abstand_s=6 * 3600" in kp, "die Pausen-Meldung kommt wieder jede Runde"
+
+    # (6) Telegram: ein Discord-/track-Ziel bekommt eine Telegram-Gruppe.
+    from nc import telegramfehler as T
+    gilde = 1521964594653036677
+    assert not T.ist_telegram_chat(gilde)
+    assert T.ersatz(0, {5, -100, -1003950247108}) == -1003950247108
+    assert T.ersatz(-42, {-1}) == -42 and T.ersatz(0, set()) is None
+    assert T.ziele([gilde, -100, -100], -100) == ([-100], [gilde])
+    assert T.ziele([gilde], None) == ([gilde], []), "ohne Ersatz still verloren statt laut"
+    tz = next(n for n in baum.body if getattr(n, "name", "") == "_telegram_ziele")
+    ns = {"_nc_tgfehler": T, "DISCORD_TRACK_GROUP_ID": 0, "ALLOWED_CHAT_IDS": {-555},
+          "_nc_meldetakt": M, "_time_mod": _tm, "log": _lg.getLogger("w167")}
+    exec(compile(_ast.Module(body=[tz], type_ignores=[]), "bot.py", "exec"), ns)
+    assert ns["_telegram_ziele"]([gilde, -7]) == [-555, -7]
+    hz = rumpf_ab(src, src.index("async def handle_recording_finished("))
+    assert "target_chats = _telegram_ziele(" in hz, "der Fan-out geht wieder an die Guild"
+    assert "_telegram_ziele([entry.get(\"chat_id\")]" in src, \
+        "die aufgeschobenen Uploads der Nacht davor bleiben verloren"
+    mz = rumpf_ab(src, src.index("async def _meme_zusammenschnitt("))
+    assert "_telegram_ziele(" in mz
+
+    # (7) Cookies: auf dem Loop wird mit vorhandenem Stand NIE geparst.
+    import nc.cookies as C
+    alt_lade, alt_datei = C.lade_jar, C._KONF.get("datei")
+    d = P.verzeichnis()
+    try:
+        datei = _os.path.join(d, "c.txt")
+        with open(datei, "w") as fh:
+            fh.write("# Netscape HTTP Cookie File\n.tiktok.com\tTRUE\t/\tTRUE\t0\tsessionid\tA\n")
+        C._KONF["datei"] = datei
+        C._COOKIES_CACHE.clear()
+        assert C.load_dict() == {"sessionid": "A"}          # ohne Loop: liest
+        geparst = []
+
+        import threading as _th
+
+        def _zaehlend(pfad):
+            geparst.append(_th.current_thread().name)
+            _tm.sleep(0.3)                                  # langsam wie unter Last
+            return alt_lade(pfad)
+        C.lade_jar = _zaehlend
+        _os.utime(datei, (1, 1))                            # mtime anders: veraltet
+
+        async def _im_loop():
+            return [C.load_dict() for _ in range(5)][0]
+        assert _aio.run(_im_loop()) == {"sessionid": "A"}
+        for _ in range(200):                                # Hintergrund-Leser abwarten
+            if geparst:
+                break
+            _tm.sleep(0.01)
+        assert geparst, "der frische Stand wird nie gelesen"
+        assert all(n == "cookies-neu-lesen" for n in geparst), \
+            ("die Cookie-Datei wird auf dem Event-Loop geparst", geparst)
+        _tm.sleep(0.5)
+        assert len(geparst) == 1, ("fuenf Aufrufe, fuenf Leser — die Sperre fehlt", geparst)
+        assert C._NEU_LESEN.acquire(timeout=2)
+        C._NEU_LESEN.release()
+        lv = rumpf_ab(open("nc/cookies.py", encoding="utf-8").read(),
+                      open("nc/cookies.py", encoding="utf-8").read().index("def load_dict("))
+        assert lv.index("_im_event_loop()") < lv.index("return _lesen(mtime, now)"), \
+            "auf dem Loop wird wieder synchron geparst"
+    finally:
+        C.lade_jar = alt_lade
+        C._KONF["datei"] = alt_datei
+        C._COOKIES_CACHE.clear()
+        _sh.rmtree(d, ignore_errors=True)
+    ok("W167: der Upload wartet nicht mehr auf das Einbrennen — Chat danach, eigener Arbeiter; "
+       "Durchreicher versucht streamlink; Kick probiert bekannte Keys; Discord-Uploads nach "
+       "Telegram; Cookies nicht auf dem Loop")
 
 
 def _test_v42_w155_weiche_steckt():
@@ -30554,6 +30828,7 @@ def main():
     _test_v42_w164_alles_auf_einmal()
     _test_v42_w165_durchreicher_nach_ruhezeit()
     _test_v42_w166_grund_im_panel()
+    _test_v42_w167_upload_wartet_nicht_auf_chat()
     _test_v42_w60_azrael_cooldown_je_plattform()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)

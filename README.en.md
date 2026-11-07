@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="docs/assets/banner.svg" alt="NIGHTCRAWLER — v4.6.16 Control Room" width="100%">
+<img src="docs/assets/banner.svg" alt="NIGHTCRAWLER — v4.6.17 Control Room" width="100%">
 
 ### The control room for live streaming
 #### Monitoring · Recording · Multi-target restream · AI moderation
@@ -121,7 +121,7 @@ flowchart TB
     TG["📨 Telegram"]:::ein --> BOT
     DC["🎮 Discord<br/>66 slash commands"]:::ein --> BOT
     TT["🎥 TikTok<br/>live detection + chat"]:::ein --> BOT
-    BOT["bot.py<br/>monolith · 27,077 lines<br/>scraper · recorder · restream<br/>Flask deck · 34 own routes"]:::core
+    BOT["bot.py<br/>monolith · 27,198 lines<br/>scraper · recorder · restream<br/>Flask deck · 34 own routes"]:::core
     BOT -->|configure| NC["nc/ — 183 domain modules<br/>39 blueprints"]:::lib
     BOT --> BR["brain_bridge.py"]:::lib
     BR --> BRAIN["brain/ — own brain.db<br/>rules · memory · knowledge graph<br/>16 watchdog agents"]:::brain
@@ -547,8 +547,8 @@ python3 -m pytest -k w145          # one wave on its own
 python3 tools/ncpatch.py find "donations"      # where is something in bot.py?
 ```
 
-`bot.py` has 27,077 lines and is never read in full — the navigation map
-`.claude/INDEX.md` knows 379 routes and 616 functions with line numbers. Before
+`bot.py` has 27,198 lines and is never read in full — the navigation map
+`.claude/INDEX.md` knows 379 routes and 620 functions with line numbers. Before
 every pull request the full verification chain from
 **[`docs/en/CONTRIBUTING.md`](docs/en/CONTRIBUTING.md)** runs: lint, templates,
 documentation figures, locks against silent failure paths and giant functions,
@@ -619,6 +619,8 @@ file on the next start instead of lying next to it as an `.ass` file.
 donations entered in the deck count towards the overlay donation goal.
 **Patch 4.6.16** — "no playable source URL" now also tells in the deck why the
 pass-through did not run.
+**Patch 4.6.17** — Telegram uploads for Discord trackings, uploads no longer
+wait for the chat, pass-through falls back to streamlink, Kick tries known keys.
 
 Every wave on its own: **[`docs/CHANGELOG.md`](docs/CHANGELOG.md)**.
 
@@ -630,7 +632,7 @@ Every wave on its own: **[`docs/CHANGELOG.md`](docs/CHANGELOG.md)**.
 
 | | |
 |---|---|
-| Current version | **4.6.16** — “Control Room” (2026.11) |
+| Current version | **4.6.17** — “Control Room” (2026.11) |
 | Flask routes | 379 (34 in `bot.py` · 345 in `nc/routes/`) |
 | Discord slash commands | 66 |
 | Domain modules | 183 in `nc/` (+39 in `nc/routes/`, +3 in `nc/intel/`), 10 in `brain/` |
@@ -680,7 +682,7 @@ with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 <div align="center">
 
-**NIGHTCRAWLER v4.6.16 · “Control Room”**
+**NIGHTCRAWLER v4.6.17 · “Control Room”**
 
 **[🌐 lafap.de](https://lafap.de)** · **[💬 Discord](https://discord.gg/psvnxm7tSV)** · **[📓 Changelog](docs/CHANGELOG.md)**
 

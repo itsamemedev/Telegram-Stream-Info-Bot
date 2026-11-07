@@ -58,13 +58,29 @@ def nutzer_aus(url: str) -> str:
     return n
 
 
-def werkzeug(which=shutil.which):
-    """(name, pfad) des Ziehers — yt-dlp bevorzugt, dann streamlink — oder None."""
+def werkzeuge(which=shutil.which) -> list:
+    """[(name, pfad)] ALLER installierten Zieher, yt-dlp vor streamlink.
+
+    v4.2-W167: bis hierher nahm der Durchreicher nur den ersten. Sagte yt-dlp
+    „The channel is not currently live" — so im Log vom 06.11. fuer einen Raum,
+    der auf TikTok sichtbar sendete —, starb der Zubringer, und streamlink
+    wurde nie versucht, auch wenn es installiert war. streamlink fragt TikTok
+    ueber sein eigenes Plugin und eine andere Raum-Abfrage."""
+    out, gesehen = [], set()
     for name in ("yt-dlp", "yt_dlp", "streamlink"):
         p = which(name)
-        if p:
-            return ("streamlink" if name == "streamlink" else "yt-dlp"), p
-    return None
+        art = "streamlink" if name == "streamlink" else "yt-dlp"
+        if p and art not in gesehen:
+            gesehen.add(art)
+            out.append((art, p))
+    return out
+
+
+def werkzeug(which=shutil.which):
+    """(name, pfad) des ersten Ziehers — yt-dlp bevorzugt, dann streamlink —
+    oder None, wenn keiner installiert ist."""
+    alle = werkzeuge(which)
+    return alle[0] if alle else None
 
 
 def zieher_cmd(name: str, exe: str, nutzer: str, cookies=None) -> list:
@@ -124,36 +140,65 @@ def main(argv=None, popen=subprocess.Popen, which=shutil.which) -> int:
     if not _NUTZER.match(nutzer) or not ff:
         sys.stderr.write("Durchreicher: ungültiger Aufruf (%r)\n" % nutzer)
         return 2
-    wz = werkzeug(which)
-    if not wz:
+    alle = werkzeuge(which)
+    if not alle:
         sys.stderr.write("Durchreicher: weder yt-dlp noch streamlink installiert — "
                          "sudo bash tools/update.sh\n")
         return 3
-    zieher = popen(zieher_cmd(wz[0], wz[1], nutzer, None if cookies == "-" else cookies),
+    laufend = {"zieher": None, "wandler": None}
+
+    def _halt(_sig, _frame):
+        _beende(laufend["wandler"])
+        _beende(laufend["zieher"])
+        sys.exit(0)
+
+    signal.signal(signal.SIGTERM, _halt)
+    signal.signal(signal.SIGINT, _halt)
+    rc = 1
+    for i, (name, exe) in enumerate(alle):
+        rc, zieher_rc = _ein_paar(name, exe, nutzer, cookies, ff, popen, laufend)
+        if rc is None:
+            return 2                       # ffmpeg startet nicht — kein Werkzeug hilft
+        # Weiter nur, wenn der ZIEHER gescheitert ist: dann hat ffmpeg keine
+        # Eingabe gesehen und nichts geschrieben, die Bruecke bekommt nur die
+        # Bytes des naechsten Versuchs. Endete ffmpeg selbst, liegt es nicht
+        # am Zieher — ein anderer wuerde dasselbe erleben.
+        if zieher_rc in (0, None) or i + 1 >= len(alle):
+            break
+        print("Durchreicher: %s scheiterte (rc=%s) — versuche %s."
+              % (name, zieher_rc, alle[i + 1][0]), file=sys.stderr)
+    return rc
+
+
+def _ein_paar(name, exe, nutzer, cookies, ff, popen, laufend):
+    """Zieher und ffmpeg, direkt verkettet. -> (rc ffmpeg, rc Zieher);
+    (None, None), wenn ffmpeg nicht startet."""
+    zieher = popen(zieher_cmd(name, exe, nutzer, None if cookies == "-" else cookies),
                    stdout=subprocess.PIPE, stderr=sys.stderr, stdin=subprocess.DEVNULL,
                    env=zieher_umgebung())
+    laufend["zieher"] = zieher
     try:
         wandler = popen(ff, stdin=zieher.stdout, stdout=sys.stdout, stderr=sys.stderr)
     except OSError as e:
         # stderr ist hier der Kanal: die Bruecke liest ihn ins Bot-Log.
         print("Durchreicher: ffmpeg startet nicht (%s)" % e, file=sys.stderr)
         _beende(zieher)
-        return 2
+        return None, None
+    laufend["wandler"] = wandler
     # Unser Ende der Leitung schliessen: endet ffmpeg, bekommt der Zieher
     # SIGPIPE und haelt nicht ewig einen toten Stream offen.
     if zieher.stdout is not None:
         zieher.stdout.close()
-
-    def _halt(_sig, _frame):
-        _beende(wandler)
-        _beende(zieher)
-        sys.exit(0)
-
-    signal.signal(signal.SIGTERM, _halt)
-    signal.signal(signal.SIGINT, _halt)
     rc = wandler.wait()
+    # Kurz warten statt nur poll(): ein yt-dlp, der seine Leitung schon
+    # geschlossen hat (ffmpeg sieht EOF), ist Millisekunden spaeter erst
+    # beendet — poll() gaebe dann None, und der Rueckfall bliebe aus.
+    try:
+        zieher_rc = zieher.wait(timeout=3)
+    except subprocess.TimeoutExpired:
+        zieher_rc = None               # laeuft noch: nicht er ist gescheitert
     _beende(zieher)
-    return rc
+    return rc, zieher_rc
 
 
 if __name__ == "__main__":

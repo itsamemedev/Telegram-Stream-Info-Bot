@@ -380,6 +380,48 @@ def load_dict() -> dict:
     cached = _COOKIES_CACHE.get("v")
     if cached and cached[0] == mtime and (now - cached[1]) < 5.0:
         return cached[2]
+    if cached and cached[2] and _im_event_loop():
+        # v4.2-W167: auf dem Event-Loop NIE parsen, wenn ein Stand da ist.
+        # Gemessen im Fehlerlog vom 06.11. 23:13: „Event-Loop 1832 ms
+        # gestanden an nc/cookies.py:load_dict > lade_jar <- cookiejar.load"
+        # — rund 20 Aufrufstellen lesen synchron, auch aus Resolvern und
+        # Befehlsbauern im Loop. Der vorhandene Stand ist Sekunden alt; der
+        # frische kommt aus einem Hintergrund-Thread.
+        _im_hintergrund_neu_lesen()
+        return cached[2]
+    return _lesen(mtime, now)
+
+
+_NEU_LESEN = threading.Lock()
+
+
+def _im_event_loop() -> bool:
+    """Laeuft dieser Aufruf im Thread eines laufenden asyncio-Loops?
+    `_get_running_loop()` gibt None statt zu werfen — „kein Loop" ist hier
+    die Antwort, kein Fehler."""
+    import asyncio
+    return asyncio._get_running_loop() is not None
+
+
+def _im_hintergrund_neu_lesen():
+    """Einmal neu lesen, in einem Thread — ein zweiter Aufruf, waehrend der
+    erste noch liest, tut nichts (sonst stapeln sich Leser bei jeder Anfrage)."""
+    if not _NEU_LESEN.acquire(blocking=False):
+        return
+
+    def _lauf():
+        try:
+            if os.path.exists(_KONF["datei"]):
+                _lesen(os.path.getmtime(_KONF["datei"]), _time.monotonic())
+        except OSError as e:
+            _warnen(f"Cookies im Hintergrund nicht neu gelesen: {e}")
+        finally:
+            _NEU_LESEN.release()
+    threading.Thread(target=_lauf, name="cookies-neu-lesen", daemon=True).start()
+
+
+def _lesen(mtime, now) -> dict:
+    """Die Datei parsen und den Cache setzen (der eigentliche Lesevorgang)."""
     try:
         cj, normalisiert = lade_jar(_KONF["datei"])
         if normalisiert:

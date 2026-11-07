@@ -11,6 +11,40 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+## [4.6.17] — 2026-11-07 · „Leitstand"
+
+### Behoben — Befunde aus den Logs vom 06./07.11. (v4.2 W167)
+
+- **„Telegram uploads funktionieren nicht mehr."** Zwei Ursachen. Erstens:
+  per Discord-`/track` angelegte Trackings tragen die Guild als Ziel
+  (`1521964594653036677`); der Upload wurde verworfen. Jetzt geht er an
+  `DISCORD_TRACK_GROUP_ID`, sonst an die erste freigeschaltete Telegram-
+  Gruppe — auch für Uploads, die schon in der Warteschlange lagen, und für
+  den Meme-Zusammenschnitt. Zweitens: seit W158 lief **vor** dem Upload ein
+  libx264-Durchgang über die ganze Aufnahme (Zeitlimit viermal die Dauer).
+  Jetzt geht der Upload sofort; der Chat wird über den Nachtrag (W163) im
+  Hintergrund eingearbeitet, auf einem eigenen Arbeiter. Die Telegram-Kopie
+  trägt den Chat damit nicht mehr eingebrannt — die gespeicherte Aufnahme
+  und die Clips schon.
+- **Restream ohne Bild:** der Durchreicher nahm nur das erste Werkzeug.
+  Scheitert yt-dlp („The channel is not currently live" — so im Log für
+  Räume, die auf TikTok sendeten), wird jetzt streamlink versucht.
+- **Kick-Chat:** `KICK_PUSHER_KEY=32cbd69e4b950bf97679` (die Vorgabe) wurde
+  die ganze Nacht von allen Clustern abgewiesen, und das Fehlerlog trug alle
+  15 Minuten dieselben zwei Zeilen. Jetzt probiert die Suche die bekannten
+  Keys (`nc/kickapi.BEKANNTE_KEYS`) und nennt nach einem gelungenen Abo den
+  Wert für die `.env`; die Meldung steht einmal je 6 Stunden.
+- **Event-Loop 1,8 s gestanden** in `nc/cookies.load_dict`: auf dem Loop
+  wird mit vorhandenem Stand nicht mehr geparst, neu gelesen wird in einem
+  Hintergrund-Thread (immer nur einer).
+
+Nicht im Code, aber im Log: Pollinations verlangt einen Schlüssel
+(`POLLINATIONS_API_KEY`), llm7 hat `gpt-4.1-nano` abgeschaltet, der
+CrowdSec-Schlüssel wurde abgelehnt, Redis verlangt ein Passwort.
+
+Vertrag `_test_v42_w167_upload_wartet_nicht_auf_chat`, alle Mutationsproben
+gefangen (eine entwischte zuerst — die Ein-Leser-Sperre war ungedeckt).
+
 ## [4.6.16] — 2026-11-06 · „Leitstand"
 
 ### Behoben — der Grund steht im Panel (v4.2 W166)

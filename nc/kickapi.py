@@ -603,3 +603,25 @@ def naechster_cluster(versucht) -> str:
     """Der naechste noch nicht versuchte Cluster, "" wenn alle durch sind."""
     gesehen = {(c or "").strip().lower() for c in (versucht or ())}
     return next((c for c in PUSHER_CLUSTER if c not in gesehen), "")
+
+
+# ═════════════════════════════════════════════════════════════════════════
+# v4.2-W167: der Key selbst kann veraltet sein
+# ═════════════════════════════════════════════════════════════════════════
+#
+# Das Log vom 06./07.11. zeigt die ganze Nacht 4001 auf JEDEM Cluster fuer
+# 32cbd69e4b950bf97679 — die Vorgabe dieses Bestands. Lehnen alle Cluster
+# einen Key ab, existiert er bei Pusher nicht mehr; Kick hat ihn getauscht.
+# Statt alle 15 Minuten dieselbe Fehlermeldung zu schreiben, probiert die
+# Suche die bekannten Keys durch. Bestaetigt ist ein Key erst, wenn ein Abo
+# steht — eine Annahme ueber Kick wird hier also gemessen, nicht geglaubt.
+# Die Liste ist nur ein Vorrat an Kandidaten, ohne Rangfolge-Behauptung.
+BEKANNTE_KEYS = ("eb1d5f283081a78b932c", "32cbd69e4b950bf97679")
+
+
+def naechster_key(versucht, eigener="") -> str:
+    """Der naechste noch nicht versuchte Key — der eingestellte zuerst, dann
+    die bekannten. "" wenn alle durch sind."""
+    gesehen = {(k or "").strip() for k in (versucht or ())}
+    offen = [k for k in ((eigener or "").strip(),) + BEKANNTE_KEYS if k and k not in gesehen]
+    return offen[0] if offen else ""

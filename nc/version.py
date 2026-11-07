@@ -4,7 +4,7 @@ Eine einzige Wahrheit für die Versionsanzeige (Dashboard-Footer, /api/version,
 „Was ist neu"-Panel). Reine Daten + kleine Helfer, voll testbar.
 """
 
-VERSION = "4.6.16"
+VERSION = "4.6.17"
 CODENAME = "Leitstand"
 RELEASE = "2026.11"
 
@@ -23,6 +23,19 @@ def build_stamp():
 # Meilenstein-Changelog, neueste Version zuerst. highlights = kurze, ehrliche
 # Stichpunkte dessen, was die Version bringt.
 CHANGELOG = [
+    {
+        "version": "4.6.17",
+        "date": "2026-11",
+        "title": "Leitstand",
+        # Patch-Fassung von 4.6: Befunde aus den Logs vom 06./07.11. (W167).
+        "highlights": [
+            "Telegram-Uploads: Aufnahmen von Nutzern, die per Discord-/track angelegt wurden, gingen an die Discord-Guild und wurden verworfen — jetzt an DISCORD_TRACK_GROUP_ID, sonst an die erste freigeschaltete Telegram-Gruppe",
+            "Der Upload wartet nicht mehr auf das Einbrennen des Chats (bis zu viermal die Aufnahmedauer) — der Chat kommt danach im Hintergrund in die gespeicherte Aufnahme",
+            "Restream-Durchreicher: scheitert yt-dlp mit „not currently live\", wird jetzt auch streamlink versucht",
+            "Kick-Chat: lehnt jeder Cluster den eingestellten Pusher-Key ab, probiert der Bot die bekannten Keys und sagt, welcher in die .env gehört — und meldet das einmal statt die ganze Nacht alle 15 Minuten",
+            "Cookie-Datei wird nicht mehr auf dem Event-Loop geparst (gemessen: 1,8 s Stillstand)",
+        ],
+    },
     {
         "version": "4.6.16",
         "date": "2026-11",

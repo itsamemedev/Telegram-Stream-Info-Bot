@@ -266,3 +266,44 @@ def ist_telegram_chat(chat_id) -> bool:
         return False
     n = chat_id
     return n != 0 and abs(n) < (1 << TELEGRAM_ID_BITS)
+
+
+# ═════════════════════════════════════════════════════════════════════════
+# v4.2-W167: wohin der Upload einer Discord-Aufnahme geht
+# ═════════════════════════════════════════════════════════════════════════
+#
+# Gemeldet am 07.11.: „Telegram uploads funktionieren nicht mehr". Im Log
+# derselben Nacht: @jazzlegrande_ — per Discord-/track angelegt — hatte als
+# einziges Ziel die Guild 1521964594653036677. Der Upload wurde aufgeschoben,
+# im Fenster als „keine Telegram-Chat-ID" verworfen, und die Aufnahme kam
+# nie in Telegram an. W132 hat das laut gemacht, aber nicht geloest: die
+# Abhilfe war, jedes Tracking von Hand neu anzulegen.
+
+
+def ersatz(track_gruppe, erlaubte):
+    """Die Telegram-Gruppe, die eine Discord-Aufnahme bekommt — oder None.
+
+    Zuerst DISCORD_TRACK_GROUP_ID (`track_gruppe`), dann die freigeschalteten
+    Chats (ALLOWED_CHAT_IDS), Gruppen (negative IDs) vor Einzelchats und
+    sortiert — damit es bei jedem Start dieselbe ist."""
+    if ist_telegram_chat(track_gruppe):
+        return track_gruppe
+    liste = sorted((k for k in (erlaubte or ()) if ist_telegram_chat(k)),
+                   key=lambda k: (int(k) >= 0, int(k)))
+    return liste[0] if liste else None
+
+
+def ziele(roh, ersatz_id):
+    """Fan-out-Ziele -> (Telegram-Ziele ohne Doppel, umgeleitete Discord-IDs).
+
+    Jede ID, die keine Telegram-Chat-ID sein kann, wird durch `ersatz_id`
+    ersetzt. Ohne Ersatz bleibt sie stehen — der Versand ueberspringt sie
+    dann laut (W132), statt sie still zu verlieren."""
+    aus, umgeleitet = [], []
+    for z in roh or ():
+        if not ist_telegram_chat(z) and ersatz_id is not None:
+            umgeleitet.append(z)
+            z = ersatz_id
+        if z not in aus:
+            aus.append(z)
+    return aus, umgeleitet
