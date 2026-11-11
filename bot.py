@@ -565,6 +565,7 @@ from typing import Optional, List, Tuple
 # nc-Importblock weiter unten. Beide hängen nur an stdlib (kein Bot-Import).
 from nc import envnum as _nc_envnum          # env/Zahl-Parser (gebündelt)
 from nc import clientip as _nc_clientip     # v4.2-W149: echte Client-IP, lokal vs. Proxy
+from nc import herkunft as _nc_herkunft     # v4.2-W178: schreibende Anfragen nur von der eigenen Seite
 from nc import geschuetzt as _nc_geschuetzt  # v4.2-W154: live, aber verschlossen (Abo/18+)
 from nc import aufnahmechat as _nc_aufnahmechat  # v4.2-W158: Chat in die Aufnahme
 from nc import chatnachtrag as _nc_chatnachtrag  # v4.2-W163: Chat aus dem Stopp nachtragen
@@ -10651,6 +10652,28 @@ def _auth_cookie(resp):
     except Exception:
         pass
     return resp
+
+
+@dashboard_app.before_request
+def _herkunft_guard():
+    """v4.2-W178: schreibende Anfragen fremder Seiten abweisen (CSRF).
+
+    _auth_guard laesst den SSH-Tunnel ohne Token durch — und damit auch das
+    versteckte Formular jeder anderen Seite im selben Browser, die an
+    localhost:3000 schickt. Die Regel und ihre Begruendung: nc/herkunft.py."""
+    grund = _nc_herkunft.entscheiden(request.method, request.path, request.headers,
+                                     request.remote_addr, TRUSTED_PROXIES)
+    if grund is _nc_herkunft.ERLAUBT:
+        return _nc_herkunft.ERLAUBT          # None: Flask macht weiter
+    laut, weg = _nc_meldetakt.melden("deck-herkunft", "fremd", _time_mod.monotonic())
+    if laut:
+        log.error("Deck: %s %s von fremder Seite abgewiesen (%s) — kam das nicht aus "
+                  "dem Deck selbst, hat eine andere Seite im Browser versucht, hier zu "
+                  "schreiben.%s", request.method, request.path, grund,
+                  _nc_meldetakt.zusatz(weg))
+    return jsonify(ok=False, error=_nc_i18n.t(
+        "Abgewiesen: Die Anfrage kam nicht vom Deck selbst (fremde Seite im Browser)."),
+                   grund=grund), 403
 
 
 # v37 Sicherheit: HTTP-Rate-Limiting gegen Flutung teurer Routen.

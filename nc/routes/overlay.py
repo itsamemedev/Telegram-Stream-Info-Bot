@@ -36,7 +36,7 @@ from nc import einstellungen as _nc_einst
 from nc import fehlertext as _nc_fehlertext
 from nc import spendenziel as _nc_spendenziel  # v4.2-W173: ein Ziel fuer alle Anzeigen
 from nc.dbwrap import db_conn
-from nc.donationsdb import parse_eur as _parse_eur
+from nc import donations as _nc_donations
 
 _log = logging.getLogger("TikTokBot")
 
@@ -101,14 +101,16 @@ def _bilanz(zeilen, by_platform):
     """Spenden und Follows je Plattform ab Sende-Start (V37-OVMP).
 
     v4.2-W173 herausgeloest: api_overlay_state lag mit dem gemeinsamen
-    Spendenziel ueber 100 Zeilen. Betraege liest nc.donationsdb.parse_eur —
-    dieselbe Lesart wie das Spendenziel, statt einer zweiten eigenen."""
+    Spendenziel ueber 100 Zeilen. Betraege liest nc.donations.zeile_eur —
+    dieselbe Lesart wie das Spendenziel, statt einer zweiten eigenen (bis
+    v4.2-W178 parse_eur: Bits, Dollar und Subs zaehlten dort 0 €)."""
+    _nc_donations.kurse_aus_env()
     for r in zeilen:
         p = (r["platform"] or "kick")
         if p not in by_platform:
             by_platform[p] = {"donations": 0, "amount": 0.0, "follows": 0}
         if r["kind"] == "donation":
-            a = _parse_eur(r["amount"]) or 0.0
+            a = _nc_donations.zeile_eur(r)
             by_platform[p]["donations"] += 1
             by_platform[p]["amount"] = round(by_platform[p]["amount"] + a, 2)
         else:
@@ -155,7 +157,7 @@ def api_overlay_state():
                           "platform": r["platform"] or "kick"} for r in drows]
             # Ziel-Fortschritt + Plattform-Bilanz über ALLE Session-Events
             # (nicht nur die letzten 10) — ab Sende-Start.
-            allrows = conn.execute("SELECT kind, amount, platform FROM overlay_events "
+            allrows = conn.execute("SELECT kind, amount, platform, message FROM overlay_events "
                                    "WHERE (kind='follow' OR (kind='donation' AND "
                                    "platform IN" + _nc_revenue.sql_in() + ")) " + _and_sess,
                                    _sp).fetchall()

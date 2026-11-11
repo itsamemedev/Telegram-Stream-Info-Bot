@@ -41,7 +41,7 @@ from datetime import datetime, timezone
 
 from nc import envnum as _envnum
 from nc import revenue as _revenue
-from nc.donationsdb import parse_eur as _parse_eur
+from nc import donations as _donations
 
 
 def ziel_eur() -> float:
@@ -74,17 +74,16 @@ def fenster_start(jetzt=None, zr=None):
 
 
 def summe(zeilen) -> float:
-    """Betraege aus overlay_events-Zeilen addieren; Unlesbares zaehlt 0."""
-    s = 0.0
-    for r in zeilen:
-        v = _parse_eur(r[0] if not hasattr(r, "keys") else r["amount"])
-        s += v if v is not None and v > 0 else 0.0
-    return round(s, 2)
+    """Betraege aus overlay_events-Zeilen (amount, platform, message) in EUR.
+
+    v4.2-W178: ueber nc.donations.to_eur statt parse_eur — sonst zaehlen
+    Bits, Dollar-Superchats und betragslose Subs/Mitgliedschaften 0 €."""
+    return _donations.summe_eur(zeilen)
 
 
 def eingang(conn, seit) -> float:
     """Spenden auf eigenen Kanaelen im Fenster — aus EINER Abfrage."""
-    sql = ("SELECT amount FROM overlay_events WHERE kind='donation' AND platform IN"
+    sql = ("SELECT amount, platform, message FROM overlay_events WHERE kind='donation' AND platform IN"
            + _revenue.sql_in() + (" AND ts >= ?" if seit else ""))
     return summe(conn.execute(sql, ((seit,) if seit else ())).fetchall())
 

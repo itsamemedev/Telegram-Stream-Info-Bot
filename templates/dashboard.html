@@ -8355,7 +8355,7 @@ async function rsStartAll(){ toast('starte alle live Quellen…'); const d=await
 async function rsStopAll(){ if(!confirm(T('Alle Restreams stoppen?')))return; const d=await apiPost('/api/restream/stop_all',{}); if(d&&d.ok)toast('Alle gestoppt'); rsLoad(); }
 async function rsStart(id){ toast('starte…'); const d=await apiPost('/api/restream/'+id+'/start',{}); if(d&&d.ok)toast('Restream läuft'); else toast((d&&d.error)||'Start fehlgeschlagen','err'); rsLoad(); }
 async function rsStop(id){ const d=await apiPost('/api/restream/'+id+'/stop',{}); if(d&&d.ok)toast('Gestoppt'); rsLoad(); }
-async function rsDelete(id){ if(!confirm(T('Ziel löschen?')))return; const d=await apiPost('/api/restream/'+id+'/delete',{}); if(d&&d.ok){toast('Gelöscht');rsLoad();} }
+async function rsDelete(id){ if(!confirm(T('Ziel löschen?')))return; const d=await apiPost('/api/restream/'+id+'/delete',{}); if(d&&d.ok){toast('Gelöscht');rsLoad();} else { /* v4.2-W178: Stop gescheitert → Eintrag bleibt, das sagen */ toast((d&&d.error)||T('Fehler'),'err'); rsLoad(); } }
 
 let _kmRunning=false;
 async function kmLoad(){
@@ -8535,8 +8535,15 @@ const DON_NAME={manual:'direkt'};
    fließt in den Website-Fortschritt (current_eur). */
 async function donManualLoad(){
   const box=$('#don_m_list'), tot=$('#don_manual_total'); if(!box) return;
-  let d; try{ d=await apiGet('/api/donations/manual?limit=100'); }catch(e){ return; }
-  if(!d||!d.ok){ return; }
+  let d; try{ d=await apiGet('/api/donations/manual?limit=100'); }catch(e){ d=null; }
+  /* v4.2-W178: bei !ok stand hier ein stilles return — die alte Liste blieb
+     stehen oder die Box leer; ein Lesefehler sah aus wie eine leere Liste. */
+  if(!d||!d.ok){
+    if(tot) tot.textContent='Σ ?';
+    box.innerHTML='<div class="faint" style="font-size:10px;color:var(--red)">'
+      +esc(T('Manuelle Spenden gerade nicht lesbar:')+' '+((d&&d.error)||'?'))+'</div>';
+    return;
+  }
   if(tot) tot.textContent='Σ '+(d.total_eur||0).toFixed(2)+' €';
   const it=d.items||[];
   if(!it.length){ box.innerHTML='<div class="faint" style="font-size:10px">Noch keine manuellen Einträge.</div>'; return; }
