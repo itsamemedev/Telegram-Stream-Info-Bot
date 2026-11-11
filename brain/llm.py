@@ -86,22 +86,50 @@ class LLMRuntime:
     # ------------------------------------------------------------- API
 
     def chat(self, messages: list[dict], timeout: Optional[float] = None,
-             max_tokens: Optional[int] = None) -> dict:
+             max_tokens: Optional[int] = None,
+             backends: Optional[list] = None) -> dict:
         """Eine Chat-Vervollständigung über die Backend-Kette.
 
         Rückgabe: {ok, text|error, backend, ms}. Wirft BudgetExhausted
         bei verbrauchtem Budget (bewusst Exception statt ok=False: der
         Unterschied 'LLM kaputt' vs. 'LLM gedeckelt' muss im Router-Trace
-        unterscheidbar sein)."""
-        self._check_budget()
+        unterscheidbar sein).
+
+        v4.2-W177 `backends`: schraenkt die konfigurierte Kette ein (nie
+        erweitern — BRAIN_LLM_BACKEND=off bleibt aus). bot.py hat fuer Chat,
+        AZRAEL und Reaction-Engine einen EIGENEN Cloud-Rueckfall; ohne die
+        Einschraenkung fuhr chat() llamacpp UND freeai (bis 2x Timeout), und
+        bei ok=False fragte der Aufrufer freeai ein zweites Mal.
+
+        Das Stundenbudget gilt nur fuer llama.cpp: es schuetzt die Kerne
+        der Box vor der lokalen Inferenz. Ein Cloud-Aufruf kostet die Box
+        nichts — bis W177 zaehlte er trotzdem mit, und nach 30 Cloud-
+        Antworten meldete der Router "Budget verbraucht", ohne dass ein
+        einziges Mal lokal gerechnet worden war. Ist das Budget weg, faellt
+        nur der llamacpp-Schritt aus; BudgetExhausted kommt erst, wenn
+        danach nichts mehr in der Kette steht."""
+        kette = self._chain()
+        if backends is not None:
+            kette = [x for x in kette if x in backends]
+        budget_grund = None
+        if "llamacpp" in kette:
+            b = self.budget()
+            if b["remaining"] <= 0:
+                with self._stats_lock:
+                    self._stats["budget_denied"] += 1
+                budget_grund = (f"LLM-Stundenbudget verbraucht "
+                                f"({b['used_h']}/{b['max_h']})")
+                kette = [x for x in kette if x != "llamacpp"]
+                if not kette:
+                    raise BudgetExhausted(budget_grund)
         if not self._slot.acquire(blocking=False):
             with self._stats_lock:
                 self._stats["busy_denied"] += 1
             raise BudgetExhausted("Inferenz-Slot belegt (Concurrency 1)")
         try:
             t0 = time.time()
-            last_err = "kein Backend konfiguriert"
-            for backend in self._chain():
+            last_err = budget_grund or "kein Backend konfiguriert"
+            for backend in kette:
                 try:
                     text = self._call(backend, messages,
                                       timeout or _timeout_s(),
@@ -111,7 +139,8 @@ class LLMRuntime:
                         self._stats["ok"] += 1
                         bb = self._stats["by_backend"]
                         bb[backend] = bb.get(backend, 0) + 1
-                        self._calls.append(time.time())
+                        if backend == "llamacpp":     # nur lokal ins Budget
+                            self._calls.append(time.time())
                         # V37: Latenz-Historie für stats()/Metrik/Dashboard
                         self._durs.append(ms)
                         if len(self._durs) > 50:
@@ -133,6 +162,10 @@ class LLMRuntime:
                     self._letzter_fehler[backend] = last_err
             with self._stats_lock:
                 self._stats["errors"] += 1
+            if budget_grund and last_err != budget_grund:
+                # Beide Gruende nennen: "Cloud scheiterte" allein verschwiege,
+                # dass lokal gar nicht erst gefragt wurde.
+                last_err = f"{budget_grund} — {last_err}"
             return {"ok": False, "error": last_err, "backend": None,
                     "ms": round((time.time() - t0) * 1000, 1)}
         finally:
@@ -304,12 +337,4 @@ class LLMRuntime:
                 detail = ""
             raise RuntimeError(f"HTTP {e.code}: {detail}") from None
 
-    # ---------------------------------------------------------- Budget
-
-    def _check_budget(self) -> None:
-        b = self.budget()
-        if b["remaining"] <= 0:
-            with self._stats_lock:
-                self._stats["budget_denied"] += 1
-            raise BudgetExhausted(
-                f"LLM-Stundenbudget verbraucht ({b['used_h']}/{b['max_h']})")
+    # Budget: Pruefung steht seit v4.2-W177 in chat() vor dem llamacpp-Schritt.

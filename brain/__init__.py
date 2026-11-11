@@ -174,10 +174,26 @@ class Brain:
     # -------------------------------------------------- Dashboard-Sicht
 
     def overview(self) -> dict:
-        """Ein Call für den künftigen 'AI Brain'-Tab (M8)."""
-        return {
+        """Ein Call für den künftigen 'AI Brain'-Tab (M8).
+
+        v4.2-W177: `rules_enabled` und `decisions_24h` — Telegram /brain las
+        beide Schluessel seit jeher, es gab sie nie, und die Statuszeile
+        zeigte zweimal "?". decisions_24h kommt aus der DB (persistent),
+        nicht aus dem Ringpuffer der Rules-Engine, der einen Neustart nicht
+        ueberlebt."""
+        rules = self.rules.rules_status()
+        try:
+            with self._db_lock, self._conn() as c:
+                dec24 = c.execute("SELECT COUNT(*) FROM decisions WHERE ts >= ?",
+                                  (time.time() - 86400,)).fetchone()[0]
+        except Exception as e:
+            log.warning("overview: Entscheidungen 24h nicht zaehlbar: %s: %s",
+                        type(e).__name__, e)
+            dec24 = None
+        out = {
+            "rules_enabled": sum(1 for r in rules if r.get("enabled")),
             "state": self.state.snapshot(),
-            "rules": self.rules.rules_status(),
+            "rules": rules,
             "decisions": self.rules.decisions(50),
             "router": {"stats": self.router.stats(),
                        "log": self.router.log(50)},
@@ -187,6 +203,9 @@ class Brain:
                 (self._tick_thread and self._tick_thread.is_alive())
                 or (time.time() - self.last_tick_ts < 60)),
         }
+        if dec24 is not None:       # fehlt bei DB-Fehler: Anzeige "?" statt "None"
+            out["decisions_24h"] = dec24
+        return out
 
     def why(self, limit: int = 20) -> list[dict]:
         """Letzte Entscheidungen inkl. Begründung aus der DB (persistent,

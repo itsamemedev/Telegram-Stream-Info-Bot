@@ -129,6 +129,34 @@ def _pid_alive(pid) -> bool:
 
 # ---------------------------------------------------------------- DB-Sync
 
+def _trackings_je_nutzer(recs) -> dict:
+    """v4.2-W177: trackings-Zeilen je Nutzer zu EINEM Zustand zusammenfassen.
+
+    Ein Nutzer kann mehrere trackings-Zeilen haben (je Chat eine). Vorher
+    schrieb der Sync je ZEILE `state.set("stream", u, ...)` — bei einer
+    pausierten Zeile, die ihr altes `last_live` behaelt, und einer aktiven,
+    die offline meldet, kippte der Zustand jeden Tick online→offline→online.
+    Jede Kippe ist fuer `Memory.observe_transition` eine neue Session:
+    Phantom-Sessions im Gedaechtnis, im Wissensgraphen (sessions_per_week,
+    duration_class) und in `go_live_prob`.
+
+    online = irgendeine NICHT pausierte Zeile ist live (eine pausierte Zeile
+    wird nicht mehr geprueft, ihr last_live ist ein eingefrorener Altstand);
+    paused = ALLE Zeilen pausiert. Die Aufnahme-PIDs werden gesammelt."""
+    out: dict = {}
+    for r in recs:
+        u = r["username"]
+        z = out.setdefault(u, {"online": False, "paused": True, "pids": []})
+        pausiert = bool(r["paused"])
+        if not pausiert:
+            z["paused"] = False
+            if r["last_live"]:
+                z["online"] = True
+        if r["recording"] and r["pid"] not in z["pids"]:
+            z["pids"].append(r["pid"])
+    return out
+
+
 def _sync_db_state() -> None:
     """trackings + restreams → StateMachine spiegeln.
 
@@ -157,18 +185,17 @@ def _sync_db_state() -> None:
         return
 
     seen_rec, seen_stream, seen_rest = set(), set(), set()
-    for r in recs:
-        u = r["username"]
+    for u, z in _trackings_je_nutzer(recs).items():
         seen_stream.add(u)
         brain.state.set("stream", u,
-                        "online" if r["last_live"] else "offline",
-                        paused=bool(r["paused"]))
-        if r["recording"]:
+                        "online" if z["online"] else "offline",
+                        paused=z["paused"])
+        if z["pids"]:
             seen_rec.add(u)
-            alive = _pid_alive(r["pid"])
+            lebend = [p for p in z["pids"] if _pid_alive(p)]
             brain.state.set("recorder", u,
-                            "running" if alive else "pid_dead",
-                            pid=r["pid"])
+                            "running" if lebend else "pid_dead",
+                            pid=(lebend or z["pids"])[0])
     for rs in rests:
         key = f"restream:{rs['id']}"
         seen_rest.add(key)
@@ -911,6 +938,8 @@ def _ingest_stream_memories():
     if not db:
         return
     b = get_brain()
+    if not b.semantic.aktiv():
+        return          # BRAIN_EMBED_BACKEND=off: gewollt, also still
     try:
         last = b.semantic.cursor("stream_memories")
         with db() as conn:
@@ -922,11 +951,20 @@ def _ingest_stream_memories():
                                      r["summary"] or "", ref=str(r["id"])):
                 last = r["id"]
             else:
-                break              # Backend down → nächste Runde erneut
+                # Backend down → naechste Runde erneut. Gemeldet hat es
+                # brain/semantic._embed (gedrosselt, mit Abhilfe) — hier
+                # nicht ein zweites Mal.
+                break
         if rows:
             b.semantic.cursor("stream_memories", last)
     except Exception as e:
-        log.debug("Semantik-Ingest übersprungen: %s", e)
+        # v4.2-W177: war log.debug — ein Ingest, der jede Runde an derselben
+        # Stelle stirbt, war im Log unsichtbar.
+        from nc import meldetakt as _mt
+        laut, unterdrueckt = _mt.melden("brain-ingest", type(e).__name__, time.time())
+        if laut:
+            log.warning("Semantik-Ingest der stream_memories fehlgeschlagen: "
+                        "%s: %s%s", type(e).__name__, e, _mt.zusatz(unterdrueckt))
 
 
 _last_shield_ts = 0.0

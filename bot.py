@@ -789,6 +789,8 @@ import nc.videoteil as _nc_videoteil  # noqa: E402
 # Sprachmodell — und sind deshalb ohne laufenden Stream nachpruefbar.
 import nc.restreamgesundheit as _nc_rgesund  # noqa: E402
 import nc.modki as _nc_modki  # noqa: E402
+# v4.2-W177: Brain-Wissen (Fakten + letzte Sendung) in AZRAELs Antworten.
+import nc.azraelkontext as _nc_azraelkontext  # noqa: E402
 
 FFMPEG_THREADS_LIVE   = _env_int("FFMPEG_THREADS_LIVE", 3)    # Restream-Transcode: muss fluessig bleiben
 FFMPEG_THREADS_RELAY  = _env_int("FFMPEG_THREADS_RELAY", 2)   # Relay: leichter als der Transcode
@@ -2674,14 +2676,28 @@ def _brain_hint_delay(tracking_id: int, delay: float) -> float:
             _bdb = os.getenv("BRAIN_DB", "brain.db")
             _con = sqlite3.connect(_bdb, timeout=2)
             try:
-                c["by_user"] = dict(_con.execute(
-                    "SELECT username, interval_s FROM sched_hints"))
+                # v4.2-W177: nur FRISCHE Hinweise (brain/scheduler.py) — ein
+                # stehender Bridge-Tick liess sonst die Empfehlung einer
+                # laengst vergangenen Stunde weiter wirken.
+                from brain.scheduler import frische_intervalle
+                c["by_user"] = frische_intervalle(_con.execute(
+                    "SELECT username, interval_s, ts FROM sched_hints"),
+                    _time_mod.time())
             finally:
                 _con.close()
             with db_conn() as _bc:
                 c["id2user"] = dict(_bc.execute(
                     "SELECT id, username FROM trackings"))
-        except Exception:
+        except Exception as e:
+            # v4.2-W177: war still — wer BRAIN_HINTS_POLL=1 setzt und nichts
+            # merkt, soll den Grund lesen koennen. Fail-open bleibt.
+            c["by_user"] = {}
+            laut, weg = _nc_meldetakt.melden("brain-hints", type(e).__name__,
+                                             _time_mod.monotonic())
+            if laut:
+                log.warning("Brain-Scheduler-Hinweise nicht lesbar (%s: %s) — "
+                            "Polling laeuft ohne Feinsteuerung weiter.%s",
+                            type(e).__name__, e, _nc_meldetakt.zusatz(weg))
             return delay
     user = c["id2user"].get(tracking_id)
     hint = c["by_user"].get(user)
@@ -3882,9 +3898,13 @@ async def llm_chat(messages: List[dict],
                                         await asyncio.to_thread(_nc_kiwahl.lokal_stand, True))):
         try:
             from brain import get_brain
+            # v4.2-W177: nur die lokale Stufe — der Cloud-Rueckfall steht
+            # unten. Ohne backends= fuhr brain.llm.chat selbst noch freeai,
+            # und bei ok=False fragte diese Funktion freeai ein zweites Mal.
             _res = await asyncio.to_thread(
                 get_brain().llm.chat, messages,
-                timeout if (timeout and timeout > 0) else 3600)
+                timeout if (timeout and timeout > 0) else 3600,
+                None, ["llamacpp"])
             if _res.get("ok"):
                 return (_res["text"], None)
             log.debug("Brain-LLM ohne Antwort (%s) — freeai-Fallback",
@@ -3932,7 +3952,8 @@ def llm_chat_sync(messages, model=None, timeout=None):
         try:
             from brain import get_brain
             _res = get_brain().llm.chat(
-                messages, timeout if (timeout and timeout > 0) else 3600)
+                messages, timeout if (timeout and timeout > 0) else 3600,
+                backends=["llamacpp"])     # v4.2-W177: Cloud folgt unten
             if _res.get("ok"):
                 # v4.0-W93: Brain-LLM (llama.cpp) liefert keine Tokens → schätzen.
                 try:
@@ -4045,8 +4066,13 @@ async def ai_chat(messages, model=None, timeout=None):
                                         await asyncio.to_thread(_nc_kiwahl.lokal_stand, True))):
         try:
             from brain import get_brain
+            # v4.2-W177: backends=["llamacpp"] — vorher fuhr chat() nach
+            # llamacpp noch freeai (bis 2x timeout), wait_for brach nach
+            # timeout+10 ab, und der Thread hielt den Inferenz-Slot weiter,
+            # waehrend unten freeai ein zweites Mal gefragt wurde.
             _res = await asyncio.wait_for(
-                asyncio.to_thread(get_brain().llm.chat, messages, timeout),
+                asyncio.to_thread(get_brain().llm.chat, messages, timeout,
+                                  None, ["llamacpp"]),
                 timeout=timeout + 10)
             if _res.get("ok"):
                 return (_res["text"], None)
@@ -10825,13 +10851,13 @@ def _brain_growth_snapshot():
         triples = int(ks.get("triples", 0))
         vectors = int(ss.get("vectors", 0))
         users = int(ss.get("users", 0))
-        sessions = 0
+        # v4.2-W177: aus brain.db (stream_sessions) statt chat_log.session_id
+        # — die Tabelle gibt es nicht, der Wert stand still auf 0.
         try:
-            with db_conn() as conn:
-                r = conn.execute("SELECT COUNT(DISTINCT session_id) AS c FROM chat_log").fetchone()
-                sessions = int(r["c"]) if r and r["c"] else 0
-        except Exception:
-            pass
+            sessions = b.memory.session_count()
+        except Exception as e:
+            log.warning("brain growth snapshot: Sessions nicht zaehlbar: %s", e)
+            sessions = 0
         with db_conn() as conn:
             conn.execute(
                 "INSERT INTO brain_growth (ts, triples, vectors, users, sessions) "
@@ -16695,6 +16721,22 @@ def _detect_foreign_ad(text):
     return None
 
 
+async def _azrael_brain_kontext(source=None):
+    """v4.2-W177: kurzer Brain-Kontextblock fuer AZRAEL (nc/azraelkontext.py)
+       oder None. Neben dem Loop (sqlite) und hart begrenzt — ein haengendes
+       brain.db darf die Antwort nur um 3 s verzoegern, nie verhindern."""
+    def _brain():
+        from brain import get_brain
+        return get_brain()
+    try:
+        return await asyncio.wait_for(
+            asyncio.to_thread(_nc_azraelkontext.sicher, _brain, db_conn, source),
+            timeout=3)
+    except asyncio.TimeoutError:
+        _nc_azraelkontext.ausfall("timeout", "brain.db antwortet nicht in 3 s")
+        return None
+
+
 class KickModerator:
     """KI-Chat-Moderator für den EIGENEN Kick-Kanal. Liest den Chat (Websocket),
        beantwortet optional Fragen (das LLM) und moderiert optional Spam/Toxizität.
@@ -16885,10 +16927,13 @@ class KickModerator:
         if tone and tone != "freundlich, locker, hilfsbereit":
             sys += f" Zusätzlicher Ton-Wunsch: {tone}."
         sys += f" Zuschauer '{sender}' schrieb:"
+        _msgs = [{"role": "system", "content": sys}]
+        _wissen = await _azrael_brain_kontext()       # v4.2-W177
+        if _wissen:
+            _msgs.append(_wissen)
+        _msgs.append({"role": "user", "content": content[:400]})
         _t0 = _time_mod.monotonic()
-        text, err = await ai_chat(
-            [{"role": "system", "content": sys}, {"role": "user", "content": content[:400]}],
-            timeout=30)
+        text, err = await ai_chat(_msgs, timeout=30)
         _ai_telemetry("Kick-Reply", len(content or ""), len(text or ""),
                       int((_time_mod.monotonic() - _t0) * 1000), bool(text), err)
         if err or not text:
@@ -16920,6 +16965,9 @@ class KickModerator:
         if ctx:
             msgs.append({"role": "system",
                          "content": f"Aktueller Kontext/Stimmung im Stream gerade: {ctx[:400]}"})
+        _wissen = await _azrael_brain_kontext(source)   # v4.2-W177: Brain-Fakten
+        if _wissen:
+            msgs.append(_wissen)
         msgs.append({"role": "user", "content": statement[:800]})
         async with self._sema:                        # Backoff (parallele AI-Calls deckeln)
             try:      # V37-B92: absolute Obergrenze — Loop darf NIE hängen

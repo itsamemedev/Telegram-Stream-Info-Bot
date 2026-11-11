@@ -235,6 +235,16 @@ class Memory:
                  "duration_s": r[3], "recorded": bool(r[4]),
                  "abandoned": bool(r[5])} for r in rows]
 
+    def session_count(self) -> int:
+        """v4.2-W177: abgeschlossene, echte Sessions (ohne abandoned) —
+        Messwert fuer die Wachstumskurve. bot._brain_growth_snapshot zaehlte
+        vorher chat_log.session_id: diese Tabelle gibt es nicht, der Fehler
+        ging in ein stilles `except`, und die Kurve stand immer auf 0."""
+        with self._lock, self._conn() as c:
+            return int(c.execute(
+                "SELECT COUNT(*) FROM stream_sessions "
+                "WHERE abandoned=0 AND ended IS NOT NULL").fetchone()[0])
+
     # ------------------------------------------------------- Wartung
 
     def gc(self, retain_days: int) -> None:

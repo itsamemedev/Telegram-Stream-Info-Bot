@@ -29024,6 +29024,10 @@ def _test_v42_w158_chat_in_der_aufnahme():
     ns = {"log": _lg.getLogger("w158"), "os": _os, "subprocess": _sp, "shutil": _sh,
           "json": _json, "_time_mod": _t, "_nc_aufnahmechat": A,
           "_env_int": lambda n, d: d, "_aufnahme_chat_modus": lambda: "einbrennen"}
+    # ANKER GEWANDERT (v4.2-W177, nicht der Vertrag): seit W174 geht die
+    # Kodierung durch die Encode-Warteschlange — der Namensraum braucht sie.
+    import nc.encodeschlange as _enc
+    ns["_nc_encode"] = _enc
     # Review #203: der Stopp-Pfad behaelt den Chat. ANKER GEWANDERT
     # (v4.2-W163, nicht der Vertrag): vorgemerkt statt beigelegt.
     st = rumpf_ab(src, src.index("async def _aufnahme_beim_stopp_sichern("))
@@ -31593,6 +31597,341 @@ def _test_v42_w174_encode_warteschlange():
     ok("v4.2-W174: Hintergrund-Kodierungen nacheinander — Grenze, Reihenfolge, Last, Abbruch")
 
 
+def _test_v42_w177_brain_verwoben():
+    """v4.2-W177: „die Gehirn-Strukturen sind nicht miteinander verwoben."
+    Zwoelf Befunde aus brain/ und seinen Raendern, fast alle derselben Klasse:
+    zwei Teile, die einander nie erreichten — ein falscher Parametername, ein
+    Metrikname, den niemand schreibt, eine Route mit doppeltem Praefix, eine
+    Tabelle, die es nicht gibt —, und jedes Mal schluckte ein `except` oder
+    ein `log.debug` den Grund."""
+    import ast as _ast
+    import contextlib as _cl
+    import logging as _lg
+    import os as _os
+    import shutil as _sh
+    import sqlite3 as _sq
+    import tempfile as _tf
+    import time as _tm
+
+    from nc import meldetakt as _mt
+
+    class _Fang(_lg.Handler):
+        def __init__(self):
+            super().__init__(_lg.DEBUG)
+            self.zeilen = []
+
+        def emit(self, rec):
+            self.zeilen.append((rec.levelno, rec.getMessage()))
+
+    def _fangen(name):
+        h = _Fang()
+        lg = _lg.getLogger(name)
+        lg.addHandler(h)
+        return h, lg
+
+    env_alt = {k: _os.environ.get(k) for k in (
+        "BRAIN_ACT_PAUSE_DEAD_SOURCE", "BRAIN_DEAD_STREAK_ALERT",
+        "BRAIN_DEAD_RETRY_HOURS", "BRAIN_LLM_BACKEND", "BRAIN_LLM_MAX_CALLS_H",
+        "BRAIN_EMBED_BACKEND", "BRAIN_EMBED_URL")}
+    tmp = _tf.mkdtemp(prefix="w177_")
+    try:
+        from brain import Brain
+        hirn = Brain(_os.path.join(tmp, "brain.db"))
+
+        # (1) Mehrere trackings-Zeilen je Nutzer: EIN Zustand, keine Kippe.
+        # Vorher: pausierte Zeile mit altem last_live + aktive Zeile offline
+        # -> online/offline im Wechsel -> je Tick eine Phantom-Session.
+        import brain_bridge as BB
+        z = BB._trackings_je_nutzer([
+            {"username": "anna", "recording": 0, "pid": None, "last_live": 1, "paused": 1},
+            {"username": "anna", "recording": 0, "pid": None, "last_live": 0, "paused": 0},
+            {"username": "bert", "recording": 1, "pid": 4711, "last_live": 1, "paused": 0},
+            {"username": "bert", "recording": 0, "pid": None, "last_live": 0, "paused": 0},
+            {"username": "cleo", "recording": 0, "pid": None, "last_live": 1, "paused": 1},
+        ])
+        assert z["anna"] == {"online": False, "paused": False, "pids": []}, z["anna"]
+        assert z["bert"]["online"] and z["bert"]["pids"] == [4711], z["bert"]
+        assert z["cleo"]["paused"] and not z["cleo"]["online"], z["cleo"]
+
+        bot_db = _os.path.join(tmp, "bot.db")
+        c = _sq.connect(bot_db)
+        c.executescript(
+            "CREATE TABLE trackings(id INTEGER PRIMARY KEY, username TEXT, last_live INT,"
+            " recording INT, pid INT, paused INT DEFAULT 0);"
+            "CREATE TABLE restreams(id INTEGER PRIMARY KEY, label TEXT, status TEXT, pid INT,"
+            " source_username TEXT, started_at TEXT, enabled INT DEFAULT 1);"
+            "CREATE TABLE stream_memories(id INTEGER PRIMARY KEY, username TEXT, summary TEXT,"
+            " lines INT, created_at TEXT);"
+            "INSERT INTO trackings(username,last_live,recording,pid,paused) VALUES"
+            " ('anna',1,0,NULL,1),('anna',0,0,NULL,0);")
+        c.commit()
+        c.close()
+
+        @_cl.contextmanager
+        def _bdb():
+            k = _sq.connect(bot_db)
+            k.row_factory = _sq.Row
+            try:
+                yield k
+                k.commit()
+            finally:
+                k.close()
+
+        alt_get, alt_ctx = BB.get_brain, dict(BB._ctx)
+        try:
+            BB.get_brain = lambda: hirn
+            BB._ctx["db_conn"] = _bdb
+            for _ in range(4):
+                BB._sync_db_state()
+            with hirn._db_lock, hirn._conn() as k:
+                n_tr = k.execute("SELECT COUNT(*) FROM transitions WHERE kind='stream'"
+                                 " AND key='anna'").fetchone()[0]
+                n_se = k.execute("SELECT COUNT(*) FROM stream_sessions").fetchone()[0]
+            assert hirn.state.get("stream", "anna")["state"] == "offline"
+            assert n_se == 0, "Phantom-Sessions aus kippendem Zustand: %d" % n_se
+            assert n_tr <= 1, "Zustand kippt je Tick: %d Uebergaenge" % n_tr
+
+            # (9b) Ingest bei BRAIN_EMBED_BACKEND=off: gewollt still, kein Aufruf.
+            _os.environ["BRAIN_EMBED_BACKEND"] = "off"
+            aufrufe = []
+            alt_ix = hirn.semantic.index_text
+            hirn.semantic.index_text = lambda *a, **k: aufrufe.append(a) or False
+            with _bdb() as k:
+                k.execute("INSERT INTO stream_memories(username,summary,created_at)"
+                          " VALUES('anna','x','t')")
+            BB._ingest_stream_memories()
+            hirn.semantic.index_text = alt_ix
+            assert aufrufe == [], "Ingest trotz BRAIN_EMBED_BACKEND=off"
+        finally:
+            BB.get_brain = alt_get
+            BB._ctx.clear()
+            BB._ctx.update(alt_ctx)
+
+        # (2) Auto-Pause: die zweite Chance haelt, bis die Straehne waechst.
+        from brain.agents import RecoveryAgent
+        _os.environ.update(BRAIN_ACT_PAUSE_DEAD_SOURCE="1", BRAIN_DEAD_STREAK_ALERT="2",
+                           BRAIN_DEAD_RETRY_HOURS="1")
+        straehne = {"tot": 5}
+        pausiert, reakt = [], []
+        ctx = {"pause_source": lambda w: pausiert.append(w) or True,
+               "unpause_source": lambda w: reakt.append(w) or True,
+               "dead_streak": lambda: dict(straehne)}
+        ag = RecoveryAgent(hirn)
+        t0 = _tm.time()
+        ag._pause_dead_sources(ctx, t0)
+        assert pausiert == ["tot"], pausiert
+        ag._pause_dead_sources(ctx, t0 + 7200)          # Karenz um: reaktivieren
+        assert reakt == ["tot"] and pausiert == ["tot"], \
+            "im selben Lauf wieder pausiert: %s" % pausiert
+        ag._pause_dead_sources(ctx, t0 + 7380)          # naechste Runde, Straehne gleich
+        assert pausiert == ["tot"], "zweite Chance hielt keine Runde: %s" % pausiert
+        straehne["tot"] = 6                              # weiter tot geprueft
+        ag._pause_dead_sources(ctx, t0 + 7560)
+        assert pausiert == ["tot", "tot"], pausiert
+        # Ein werfender Reaktivierungs-Hook ist ein Befund, kein `pass`.
+        ctx["unpause_source"] = lambda w: 1 / 0
+        with hirn._db_lock, hirn._conn() as k:
+            k.execute("INSERT OR REPLACE INTO paused_sources(who,ts) VALUES('tot',?)", (t0,))
+        fs = ag._pause_dead_sources(ctx, t0 + 60000)
+        assert any("Reaktivierungs-Hook" in f["text"] for f in fs), fs
+
+        # (3)+(4) Wochenreport: Systemlast und Empfehlungen aus echten Namen.
+        from brain import report as R
+        jetzt = _tm.time()
+        hirn.memory.record_metrics({"load_ratio15": 0.75, "disk_max_pct": 63.0}, ts=jetzt - 60)
+        for f in (("dora", "sessions_per_week", 3.5), ("dora", "duration_class", "long"),
+                  ("dora", "active_hour", _tm.gmtime().tm_hour)):
+            hirn.knowledge.assert_fact(f[0], f[1], f[2], 1.0, source="test", reason="t")
+        md = R.weekly(hirn)
+        assert "Last je Kern (15 min): Ø 0.75" in md and "Disk-Peak: 63%" in md, md
+        assert "## Empfehlungen" in md and "**@dora**" in md and "/Woche aktiv" in md, md
+        h, lg = _fangen("brain.report")
+        alt_rec = hirn.knowledge.recommend
+        try:
+            hirn.knowledge.recommend = lambda **k: 1 / 0
+            md = R.weekly(hirn)
+        finally:
+            hirn.knowledge.recommend = alt_rec
+            lg.removeHandler(h)
+        assert "Empfehlungen nicht lesbar: ZeroDivisionError" in md, md
+        assert any(lv >= _lg.WARNING and "Empfehlungen" in m for lv, m in h.zeilen), h.zeilen
+
+        # (5) Stundenbudget zaehlt nur llama.cpp; Cloud-Aufrufe sind frei.
+        from brain.llm import BudgetExhausted, LLMRuntime
+        _os.environ.update(BRAIN_LLM_BACKEND="auto", BRAIN_LLM_MAX_CALLS_H="2")
+        llm = LLMRuntime()
+        lokal_tot, gerufen = [True], []
+
+        def _call(backend, messages, timeout, max_tokens):
+            gerufen.append(backend)
+            if backend == "llamacpp" and lokal_tot[0]:
+                raise RuntimeError("weg")
+            return "antwort-" + backend
+        llm._call = _call
+        for _ in range(3):
+            assert llm.chat([{"role": "user", "content": "x"}])["backend"] == "freeai"
+        assert llm.budget()["used_h"] == 0, "Cloud-Aufrufe fressen das lokale Budget"
+        lokal_tot[0] = False
+        for _ in range(2):
+            assert llm.chat([{"role": "user", "content": "x"}])["backend"] == "llamacpp"
+        assert llm.budget()["remaining"] == 0
+        gerufen.clear()
+        r = llm.chat([{"role": "user", "content": "x"}])
+        assert r["ok"] and r["backend"] == "freeai" and gerufen == ["freeai"], (r, gerufen)
+        try:
+            llm.chat([{"role": "user", "content": "x"}], backends=["llamacpp"])
+            raise AssertionError("BudgetExhausted fehlt bei reiner Lokal-Kette")
+        except BudgetExhausted:
+            pass
+
+        # (6) backends= schraenkt ein: bei lokalem Fehler kein zweiter Cloud-Weg.
+        llm2 = LLMRuntime()
+        lokal_tot[0] = True
+        gerufen.clear()
+        llm2._call = _call
+        r = llm2.chat([{"role": "user", "content": "x"}], backends=["llamacpp"])
+        assert not r["ok"] and gerufen == ["llamacpp"], (r, gerufen)
+        _os.environ["BRAIN_LLM_BACKEND"] = "off"
+        assert not LLMRuntime().chat([{"role": "u", "content": "x"}],
+                                     backends=["llamacpp"])["ok"], "backends= hebelt off aus"
+        baum = _ast.parse(open("bot.py", encoding="utf-8").read())
+        stellen = [n for n in _ast.walk(baum) if isinstance(n, _ast.Call)
+                   and ((_ast.unparse(n.func).endswith("llm.chat"))
+                        or (_ast.unparse(n.func).endswith("to_thread") and n.args
+                            and _ast.unparse(n.args[0]).endswith("llm.chat")))]
+        assert len(stellen) == 3, [_ast.unparse(s)[:80] for s in stellen]
+        for s in stellen:
+            assert "['llamacpp']" in _ast.unparse(s), _ast.unparse(s)[:160]
+
+        # (7) Wachstumskurve: richtige Route, Fehler sichtbar.
+        html = open("templates/brain.html", encoding="utf-8").read()
+        assert 'api("/growth?days=30")' in html and '"/brain/growth' not in html
+        grow = html[html.index("async function loadGrowth"):]
+        grow = grow[:grow.index("const pts")]
+        assert "catch (e) { return; }" not in grow and '$("#gr-stats")' in grow, grow
+        assert '@bp.route("/api/brain/growth")' in open("nc/routes/brain.py", encoding="utf-8").read()
+
+        # (8) Archiv-Index: indexed=1 nur, wenn etwas angenommen wurde.
+        from nc.intel import library as L
+        from nc.intel import transcripts as T
+        kon = _sq.connect(":memory:")
+        T.ensure_schema(kon)
+        T.save_segments(kon, 9, [{"start": 0, "end": 4, "text": "Ein langes Segment mit Inhalt."}])
+
+        class _Tot:
+            def index_text(self, *a, **k):
+                raise OSError("Connection refused")
+
+        class _Aus(_Tot):
+            def aktiv(self):
+                return False
+        _mt.zuruecksetzen(L._KANAL)
+        h, lg = _fangen("nc.intel.library")
+        try:
+            r = L.index_recording(kon, _Tot(), 9)
+            assert not r["ok"] and "OSError" in r["error"], r
+            assert not T.get_meta(kon, 9)["indexed"], "tote Indizierung als erledigt markiert"
+            assert L.unindexed_ids(kon, [9]) == [9]
+            assert any(lv >= _lg.WARNING and "BRAIN_EMBED_BACKEND=off" in m
+                       for lv, m in h.zeilen), h.zeilen
+            n = len(h.zeilen)
+            L.index_recording(kon, _Tot(), 9)
+            assert len(h.zeilen) == n, "Index-Ausfall ungedrosselt"
+            r = L.index_recording(kon, _Aus(), 9)
+            assert not r["ok"] and len(h.zeilen) == n, "off ist kein Ausfall"
+        finally:
+            lg.removeHandler(h)
+            kon.close()
+
+        # (9) Embedding: Ausfall laut, gedrosselt, mit Abhilfe; off still.
+        _os.environ["BRAIN_EMBED_BACKEND"] = "llamacpp"
+        _os.environ["BRAIN_EMBED_URL"] = "http://127.0.0.1:1"
+        from brain import semantic as S
+        _mt.zuruecksetzen(S._KANAL)
+        h, lg = _fangen("brain.semantic")
+        try:
+            assert hirn.semantic.aktiv()
+            assert hirn.semantic.index_text("stream_memory", "anna", "hallo welt") is False
+            assert hirn.semantic.index_text("stream_memory", "anna", "hallo welt") is False
+            laut = [m for lv, m in h.zeilen if lv >= _lg.WARNING]
+            assert len(laut) == 1 and "BRAIN_EMBED_BACKEND=off" in laut[0] \
+                and "8089" in laut[0], laut
+            assert hirn.semantic.stats()["letzter_fehler"], hirn.semantic.stats()
+            _os.environ["BRAIN_EMBED_BACKEND"] = "off"
+            n = len(h.zeilen)
+            assert not hirn.semantic.aktiv() and hirn.semantic._embed("x") is None
+            assert len(h.zeilen) == n
+        finally:
+            lg.removeHandler(h)
+
+        # (10) /brain-Statuszeile: beide Felder existieren.
+        hirn.rules._log_decision(type("R", (), {"name": "w177", "priority": 1,
+                                                "tags": ()})(), "probe", "ok", {})
+        o = hirn.overview()
+        assert isinstance(o["rules_enabled"], int) and o["decisions_24h"] >= 1, o.keys()
+
+        # (11) Wachstum zaehlt Sessions aus brain.db, nicht chat_log.
+        with hirn._db_lock, hirn._conn() as k:
+            k.execute("INSERT INTO stream_sessions(username,started,ended,duration_s)"
+                      " VALUES('eva',1,2,1),('eva',3,NULL,NULL)")
+            k.execute("INSERT INTO stream_sessions(username,started,ended,duration_s,abandoned)"
+                      " VALUES('eva',5,6,1,1)")
+        assert hirn.memory.session_count() == 1
+        gs = _ast.unparse(next(n for n in baum.body
+                               if getattr(n, "name", "") == "_brain_growth_snapshot"))
+        assert "session_count()" in gs and "chat_log" not in gs, gs
+
+        # (12a) AZRAEL bekommt Brain-Wissen — kurz, und nie auf Kosten der Antwort.
+        from nc import azraelkontext as AK
+        assert AK.streamer_waehlen("kick:zuschauer", ["@quelle"]) == "quelle"
+        assert AK.streamer_waehlen("dora", ["quelle"]) == "dora"
+        assert AK.streamer_waehlen("cohost", []) is None
+        with _bdb() as k:
+            k.execute("INSERT INTO stream_memories(username,summary,created_at) VALUES"
+                      " ('dora','alt','t'),('dora',?,'t')", ("Neu: " + "Kochen " * 80,))
+        hirn.knowledge.assert_fact("dora", "peak_hour_utc", 20, 0.5, source="t", reason="t")
+        m = AK.nachricht(hirn, _bdb, "dora")
+        assert m["role"] == "system" and len(m["content"]) <= AK.MAX_ZEICHEN, m
+        for teil in ("@dora", "20 Uhr UTC", "3.5 Sendungen", "lang", "Letzte Sendung: Neu:"):
+            assert teil in m["content"], (teil, m["content"])
+        assert AK.nachricht(hirn, _bdb, "niemand") is None
+        hirn.state.set("restream", "restream:1", "live", source="dora")
+        assert "@dora" in AK.nachricht(hirn, _bdb, "twitch:fan")["content"]
+        _mt.zuruecksetzen(AK.KANAL)
+        h, lg = _fangen("nc.azraelkontext")
+        try:
+            assert AK.sicher(lambda: 1 / 0, _bdb, "dora") is None
+            assert AK.sicher(lambda: 1 / 0, _bdb, "dora") is None
+            laut = [m for lv, m in h.zeilen if lv >= _lg.WARNING]
+            assert len(laut) == 1 and "ZeroDivisionError" in laut[0], laut
+        finally:
+            lg.removeHandler(h)
+        km = next(n for n in baum.body if getattr(n, "name", "") == "KickModerator")
+        for meth in ("react", "_reply"):
+            f = _ast.unparse(next(n for n in km.body if getattr(n, "name", "") == meth))
+            assert "_azrael_brain_kontext(" in f, meth
+            assert f.index("_azrael_brain_kontext(") < f.index("ai_chat("), meth
+
+        # (12b) Scheduler-Hinweise wirken nur frisch und nie unter 60 s.
+        from brain.scheduler import MIN_INTERVAL_S, frische_intervalle
+        jetzt = _tm.time()
+        fr = frische_intervalle([("a", 120, jetzt - 10), ("b", 30, jetzt),
+                                 ("c", 120, jetzt - 7200), ("d", "x", jetzt),
+                                 ("e", 0, jetzt)], jetzt)
+        assert fr == {"a": 120, "b": MIN_INTERVAL_S}, fr
+        hd = _ast.unparse(next(n for n in baum.body if getattr(n, "name", "") == "_brain_hint_delay"))
+        assert "frische_intervalle(" in hd and "_nc_meldetakt.melden" in hd, hd
+    finally:
+        for k, v in env_alt.items():
+            if v is None:
+                _os.environ.pop(k, None)
+            else:
+                _os.environ[k] = v
+        _sh.rmtree(tmp, ignore_errors=True)
+    ok("v4.2-W177: Brain verwoben — Sync je Nutzer, Pause-Straehne, Report, Budget, "
+       "Lokal-Kette, Wachstum, Archiv-Index, Embedding laut, AZRAEL-Kontext, frische Hints")
+
+
 def _test_v42_w155_weiche_steckt():
     """v4.2-W155: gemeldet „Wir haben in den Restreams immer noch kein Bild" —
     Overlay und Chat liefen, das Videofeld zeigte das Pausenbild. Ein
@@ -32117,6 +32456,7 @@ def main():
     _test_v42_w172_spenden()
     _test_v42_w173_ein_spendenziel()
     _test_v42_w174_encode_warteschlange()
+    _test_v42_w177_brain_verwoben()
     _test_v42_w60_azrael_cooldown_je_plattform()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)
