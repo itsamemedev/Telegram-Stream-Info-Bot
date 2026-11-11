@@ -1061,7 +1061,8 @@ from nc import restream_util as _nc_rutil  # v4.0-W25: reine Restream-Helfer (ex
 from nc import overlaybrowser as _nc_ovbrowser
 from nc import kickzentrifugo as _nc_kickzentrifugo  # v4.2-W171: Kick-Chat ueber Centrifugo
 from nc import spendeninfo as _nc_spendeninfo  # v4.2-W172: /spenden, eine Quelle fuer alle
-from nc import spendenziel as _nc_spendenziel  # v4.2-W173: ein Spendenziel fuer alle Anzeigen  # v4.2-W170: ein Chromium je Restream statt je Bild
+from nc import spendenziel as _nc_spendenziel  # v4.2-W173: ein Spendenziel fuer alle Anzeigen
+from nc import encodeschlange as _nc_encode     # v4.2-W174: Hintergrund-Kodierungen nacheinander  # v4.2-W170: ein Chromium je Restream statt je Bild
 from nc import restream_stability as _nc_rstab  # v4.0-W113: Wiederanlauf-Regeln (rein)
 from nc import flapguard as _nc_flap  # v4.0-W116: flatternde Verbindungen (rein)
 from nc import recdiag as _nc_recdiag  # v4.0-W116: Raten-Einbruch (rein)
@@ -19190,10 +19191,12 @@ async def _meme_zusammenschnitt(username, output_file):
         await asyncio.to_thread(_text_schreiben, liste, _nc_aufnahmechat.concat_liste(pfade))
         rc, err = 1, b""
         for neu in (False, True):
-            rc, _o, err = await _nc_kind.ausfuehren(
-                _nc_aufnahmechat.zusammenschnitt_cmd(liste, ziel, neu=neu,
-                                                     threads=FFMPEG_THREADS_BG),
-                600, art="ffmpeg-memes", stdout=_nc_kind.DEVNULL)
+            # v4.2-W174: durch die Encode-Warteschlange (der zweite Versuch kodiert neu).
+            async with _nc_encode.platz("meme-zusammenschnitt", username):
+                rc, _o, err = await _nc_kind.ausfuehren(
+                    _nc_aufnahmechat.zusammenschnitt_cmd(liste, ziel, neu=neu,
+                                                         threads=FFMPEG_THREADS_BG),
+                    600, art="ffmpeg-memes", stdout=_nc_kind.DEVNULL)
             if rc == 0 and os.path.isfile(ziel) and os.path.getsize(ziel) > 1024:
                 break
         if rc != 0:
@@ -19284,8 +19287,11 @@ def _aufnahme_chat_einarbeiten(video, chat, modus, username):
                     threads=_env_int("AUFNAHME_CHAT_THREADS", 2))
             else:
                 cmd = _nc_aufnahmechat.untertitel_cmd(video, ass_pfad, tmp)
-            r = subprocess.run(cmd, capture_output=True, text=True,
-                               timeout=max(900, int(dauer * 4)))
+            # v4.2-W174: durch die Encode-Warteschlange — das ist der laengste
+            # Durchgang von allen (die ganze Aufnahme), Minuten bis Stunden.
+            with _nc_encode.platz_sync("chat-" + versuch, username):
+                r = subprocess.run(cmd, capture_output=True, text=True,
+                                   timeout=max(900, int(dauer * 4)))
             if r.returncode == 0 and os.path.isfile(tmp) and os.path.getsize(tmp) > 0:
                 os.replace(tmp, video)
                 log.info("Aufnahme-Chat @%s: %d Nachrichten %s (%.0f s).", username, len(chat),
@@ -20358,6 +20364,8 @@ def healthz():
                    # NICHT, weil niemand neu gestartet hat.
                    laufstand=_laufstand()["lage"],
                    tunnel=_tunnel_lage(),
+                   # v4.2-W174: was in der Encode-Warteschlange laeuft und wartet.
+                   encode=_nc_encode.lage(),
                    # v4.2-W141: woher die Stream-Adressen der letzten Stunde
                    # kamen, und wie oft „live" ohne Adresse blieb.
                    quellen=_nc_quellstat.lage(),
@@ -22856,9 +22864,11 @@ async def _shrink_for_discord(path, limit_mb):
                "-maxrate", f"{int(v_kbps * 1.3)}k", "-bufsize", f"{v_kbps * 2}k",
                "-c:a", "aac", "-b:a", f"{a_kbps}k", "-movflags", "+faststart", out],
                threads=FFMPEG_THREADS_BG, nice=FFMPEG_NICE_BG)
-        _rc, _, _ = await _nc_kind.ausfuehren(cmd, max(300, int(dur * 6)),
-                                              art="ffmpeg-discord",
-                                              stdout=_nc_kind.DEVNULL)
+        # v4.2-W174: durch die Encode-Warteschlange (nc/encodeschlange.py).
+        async with _nc_encode.platz("discord-verkleinern"):
+            _rc, _, _ = await _nc_kind.ausfuehren(cmd, max(300, int(dur * 6)),
+                                                  art="ffmpeg-discord",
+                                                  stdout=_nc_kind.DEVNULL)
         if _rc == 0 and os.path.exists(out) and os.path.getsize(out) < limit_mb * 1024 * 1024:
             return out
         if os.path.exists(out):
@@ -23227,9 +23237,12 @@ async def _clip_schneiden(username, reason, caption, recfile):
     try:
         # v4.2-W120: mit Zeitlimit (nc.kindprozess) — Clips sind Sekunden
         # lang, zehnfache Laenge plus zwei Minuten ist grosszuegig.
-        _rc, _, err = await _nc_kind.ausfuehren(cmd, 120 + 10 * float(real),
-                                                art="ffmpeg-clip",
-                                                stdout=_nc_kind.DEVNULL)
+        # v4.2-W174: durch die Encode-Warteschlange. Der Ausschnitt ist ueber
+        # -ss/-t fest — Warten aendert nicht, welcher Moment geschnitten wird.
+        async with _nc_encode.platz("clip", username):
+            _rc, _, err = await _nc_kind.ausfuehren(cmd, 120 + 10 * float(real),
+                                                    art="ffmpeg-clip",
+                                                    stdout=_nc_kind.DEVNULL)
         if _chat_ass:
             await asyncio.to_thread(_datei_weg, _chat_ass)
         if _rc == 0 and os.path.exists(out) and os.path.getsize(out) > 1024:

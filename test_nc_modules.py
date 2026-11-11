@@ -31483,6 +31483,116 @@ def _test_v42_w173_ein_spendenziel():
     ok("v4.2-W173: ein Spendenziel fuer Website, Overlay, Sendebild und /spenden")
 
 
+def _test_v42_w174_encode_warteschlange():
+    """v4.2-W174: „Aufnahmen mit Pixelsalat und/oder fehlendem Ton — wenn er die
+    Videos nicht alle gleichzeitig encoden kann, eine Warteschlange." Sechs
+    Hintergrund-Kodierungen starteten sofort, egal wie viele schon liefen; jede
+    nahm einer laufenden Aufnahme Rechenzeit, bis sie ihre Quelle zu langsam
+    las (Kette aus W108)."""
+    import ast as _ast
+    import asyncio as _aio
+    import os as _os
+    import threading as _th
+    import time as _tm
+    from nc import encodeschlange as E
+
+    alt = {n: _os.environ.get(n) for n in ("ENCODE_PARALLEL", "ENCODE_LAST_ANTEIL",
+                                           "ENCODE_WARTEN_MAX_S")}
+    alt_frei, alt_pruef = E.last_frei, E.PRUEF_S
+    E.PRUEF_S = 0.01
+    try:
+        _os.environ["ENCODE_PARALLEL"] = "1"
+        E.last_frei = lambda *a, **k: True
+        # (1) Hoechstens eine gleichzeitig, in Ankunftsreihenfolge.
+        gleichzeitig, maximal, reihe = [0], [0], []
+        sp = _th.Lock()
+
+        def _job(i):
+            with E.platz_sync("test", str(i)):
+                with sp:
+                    gleichzeitig[0] += 1
+                    maximal[0] = max(maximal[0], gleichzeitig[0])
+                    reihe.append(i)
+                _tm.sleep(0.03)
+                with sp:
+                    gleichzeitig[0] -= 1
+        faeden = []
+        for i in range(5):
+            t = _th.Thread(target=_job, args=(i,))
+            t.start()
+            faeden.append(t)
+            _tm.sleep(0.005)       # Ankunftsreihenfolge festlegen
+        for t in faeden:
+            t.join(5)
+        assert maximal[0] == 1, "zwei Kodierungen liefen gleichzeitig (%d)" % maximal[0]
+        assert reihe == [0, 1, 2, 3, 4], "nicht in Ankunftsreihenfolge: %r" % reihe
+        lg = E.lage()
+        assert lg["laeuft"] == [] and lg["wartet"] == [] and lg["erledigt"] >= 5
+
+        # (2) Volle Maschine: wartet; nach der Obergrenze laeuft sie trotzdem.
+        E.last_frei = lambda *a, **k: False
+        _os.environ["ENCODE_WARTEN_MAX_S"] = "0.15"
+        zw = E.lage()["zwangsstart"]
+        t0 = _tm.monotonic()
+        with E.platz_sync("test-last"):
+            gewartet = _tm.monotonic() - t0
+        assert gewartet >= 0.14, "startete trotz voller Maschine sofort (%.2f s)" % gewartet
+        assert E.lage()["zwangsstart"] == zw + 1, "ein verhungerter Job wird nicht gezaehlt"
+        # Lastgrenze selbst: 8 Kerne, Anteil 0,7 → frei unter 5,6.
+        E.last_frei = alt_frei
+        _os.environ["ENCODE_LAST_ANTEIL"] = "0.7"
+        assert E.last_frei(5.5, 8) and not E.last_frei(5.7, 8)
+
+        # (3) Abbruch im Loop gibt den Platz frei — sonst stuende die Schlange fuer immer.
+        E.last_frei = lambda *a, **k: True
+        _os.environ["ENCODE_WARTEN_MAX_S"] = "1800"
+
+        async def _abbruch():
+            async def _lang():
+                async with E.platz("abbruch"):
+                    await _aio.sleep(30)
+            t = _aio.ensure_future(_lang())
+            await _aio.sleep(0.05)
+            assert len(E.lage()["laeuft"]) == 1
+            t.cancel()
+            try:
+                await t
+            except _aio.CancelledError:
+                pass
+            async with E.platz("danach"):
+                return True
+        assert _aio.run(_aio.wait_for(_abbruch(), 3)), "Platz nach Abbruch nicht frei"
+        assert E.lage()["laeuft"] == []
+        _os.environ["ENCODE_PARALLEL"] = "kaputt"
+        assert E.parallel() == 1
+    finally:
+        E.last_frei, E.PRUEF_S = alt_frei, alt_pruef
+        for n, v in alt.items():
+            if v is None:
+                _os.environ.pop(n, None)
+            else:
+                _os.environ[n] = v
+
+    # (4) Verdrahtung: jede Hintergrund-Kodierung geht durch das Tor.
+    src = open("bot.py", encoding="utf-8").read()
+    baum = _ast.parse(src)
+
+    def _fn(name):
+        return _ast.unparse(next(n for n in baum.body if getattr(n, "name", "") == name))
+    for name, marke in (("_shrink_for_discord", "_nc_encode.platz('discord-verkleinern')"),
+                        ("_clip_schneiden", "_nc_encode.platz('clip', username)"),
+                        ("_aufnahme_chat_einarbeiten", "_nc_encode.platz_sync('chat-' + versuch"),
+                        ):
+        assert marke in _fn(name), "%s kodiert wieder an der Schlange vorbei" % name
+    meme = next(n for n in baum.body if "zusammenschnitt_cmd" in _ast.unparse(n)
+                and isinstance(n, _ast.AsyncFunctionDef))
+    assert "_nc_encode.platz('meme-zusammenschnitt'" in _ast.unparse(meme)
+    vt = open("nc/videoteil.py", encoding="utf-8").read()
+    assert 'async with _encodeschlange.platz("zerlegen-neu-kodieren")' in vt
+    assert "encode=_nc_encode.lage()" in src, "/healthz zeigt die Schlange nicht"
+    ok("v4.2-W174: Hintergrund-Kodierungen nacheinander — Grenze, Reihenfolge, Last, Abbruch")
+
+
 def _test_v42_w155_weiche_steckt():
     """v4.2-W155: gemeldet „Wir haben in den Restreams immer noch kein Bild" —
     Overlay und Chat liefen, das Videofeld zeigte das Pausenbild. Ein
@@ -32006,6 +32116,7 @@ def main():
     _test_v42_w171_kick_centrifugo()
     _test_v42_w172_spenden()
     _test_v42_w173_ein_spendenziel()
+    _test_v42_w174_encode_warteschlange()
     _test_v42_w60_azrael_cooldown_je_plattform()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)
