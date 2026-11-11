@@ -75,7 +75,7 @@
 | **Recording** | Three-stage recorder fallback · preflight GET before spawn · suffix fallback for CDN quirks · recording watchdog against frozen captures · S3 backup (optional) |
 | **Restream** | Kick / Twitch / YouTube in parallel · `tee` with `onfail=ignore` · forced transcode with multiple targets · target verification through the platform APIs · resume after restart · safe test push without broadcast risk · cap on concurrent restreams |
 | **Chat & moderation** | SENTINEL-SHIELD (doxxing / hate / threats) · shared moderation heuristic across Kick, Twitch, YouTube · foreign-advertising detection with an own-channel allowlist · banned words · timeout escalation |
-| **AI (AZRAEL)** | Chat answers when addressed · live reactions to the broadcast · speech output (Piper) · persona system · multi-backend: Anthropic (with key) → local llama.cpp (preferred as soon as it runs) → free APIs · budget and tier control |
+| **AI (AZRAEL)** | Chat answers when addressed · live reactions to the broadcast · speech output (Piper) · persona system · multi-backend: Anthropic (with key) → local ik_llama.cpp with Qwen3-14B-Uncensored (preferred as soon as it runs) → free APIs · budget and tier control |
 | **Brain (`brain/`)** | State machine · rule-based tier-1 decisions with a why-log · long-term memory · knowledge graph (triple store) · semantic search · forecasts · weekly report |
 | **Sentinel fleet** | 16 watchdog agents (health, recovery, scout, analytics, learning, sentinel, disk, swap, restream, toxicity, uptime, recording, proxy, datenbank, prometheus, grafana) with Telegram alarms, individually switchable |
 | **Community** | Recognition of regular viewers · loyalty points & ranks · Discord XP, levels, daily streak · live ping · highlight share · community events |
@@ -84,7 +84,7 @@
 | **Operations** | systemd service · deploy script with pre-check and auto-rollback · self-test route · dead-man's report on process death · CrowdSec integration · log redaction for cookies and stream keys |
 | **Multilingual** | German, English and Spanish, switchable in the dashboard · `UI_LANG` for the bot · browser language detection · translation catalogue in `locales/` |
 | **Database** | SQLite **or** MariaDB · move with `update.sh --mariadb`, counted again · central schema module · export tool · database watchdog |
-| **Settings** | “Settings” tab in the deck: all ~599 variables searchable, stored in the database, protected keys only from `.env` |
+| **Settings** | “Settings” tab in the deck: all ~600 variables searchable, stored in the database, protected keys only from `.env` |
 | **Monitoring** | `/metrics` for Prometheus · Grafana dashboard with every metric · 16 alert rules with tests · set up with `tools/observability.sh` |
 
 </details>
@@ -206,7 +206,7 @@ nothing and triggers nothing; a schedule never silently moves a database.
 
 ## ⚙️ Settings
 
-**In the deck, tab “Settings”.** All of the roughly 599 variables from
+**In the deck, tab “Settings”.** All of the roughly 600 variables from
 `.env.example` with group, default and description, searchable. Every row says
 where the value comes from — *set in the deck*, *from .env* or *default*. Values
 are stored in the database (SQLite or MariaDB) and take precedence over `.env`
@@ -405,7 +405,7 @@ reacts to the stream.
 `brain/` is a self-contained AI core with its own database. Without it the bot
 starts as if it were not there — every building block is additive and can be
 switched off individually. AZRAEL answers through Anthropic (with a key),
-locally through llama.cpp as soon as it runs, otherwise through free APIs —
+locally through ik_llama.cpp (Qwen3-14B-Uncensored, `sudo bash tools/ikllama.sh`) as soon as it runs, otherwise through free APIs —
 with budget and tier control.
 
 ### 🛰️ The 16 watchdogs
@@ -670,7 +670,7 @@ Every wave on its own: **[`docs/CHANGELOG.md`](docs/CHANGELOG.md)**.
 | Discord slash commands | 67 |
 | Domain modules | 185 in `nc/` (+39 in `nc/routes/`, +3 in `nc/intel/`), 10 in `brain/` |
 | Sentinel agents | 14 |
-| Configuration variables | ~599 |
+| Configuration variables | ~600 |
 | Languages | German (source), English, Spanish |
 
 Next big step: keep taking `bot.py` apart — **[`docs/en/ROADMAP.md`](docs/en/ROADMAP.md)**.

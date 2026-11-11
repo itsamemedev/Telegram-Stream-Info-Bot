@@ -6172,7 +6172,7 @@ VIEW_LOADERS.system = async function(){
           <div class="body"><div id="sy_listeners"><div class="skel" aria-busy="true"><i></i><i></i><i></i></div></div></div>
         </div>
         <div class="panel">
-          <div class="head"><h3>▚ LLM-Latenz</h3><span class="tag" id="llm_lat_tag">llama.cpp · Ø ms</span>
+          <div class="head"><h3>▚ LLM-Latenz</h3><span class="tag" id="llm_lat_tag">ik_llama.cpp · Ø ms</span>
             <div class="spacer"></div><button class="btn sm" onclick="loadLlmLatency()" aria-label="Aktualisieren" title="Aktualisieren">↻</button></div>
           <div class="body"><div id="sy_llm" class="skel" aria-busy="true"><i></i><i></i><i></i></div>
             <div id="llm_spark" style="display:flex;gap:2px;margin-top:10px;align-items:flex-end;height:46px"></div></div>
@@ -7073,8 +7073,12 @@ async function loadLlmLatency(){
   try{ health=await apiGet('/api/brain/llm/health'); }catch(e){}
   try{ series=await apiGet('/api/brain/memory/metrics?name=llm_avg_ms&hours=6&buckets=48'); }catch(e){}
   if(!health){ box.textContent='Brain nicht erreichbar'; return; }
-  const be=health.llamacpp&&health.llamacpp.up?'llama.cpp'
-    :'freeai (keyless Cloud)';   // llama.cpp down → Cloud-Pfad übernimmt
+  /* v5.1-W181: lokal ist ik_llama.cpp; der Modellname kommt aus der Probe
+     (brain/llm.py health → llamacpp.modell), sonst bliebe unsichtbar, ob der
+     neue Server oder noch ein alter antwortet. */
+  const be=health.llamacpp&&health.llamacpp.up
+    ?'ik_llama.cpp'+(health.llamacpp.modell?' · '+health.llamacpp.modell:'')
+    :'freeai (keyless Cloud)';   // lokal down → Cloud-Pfad übernimmt
   const ms=health.avg_ms;
   box.innerHTML='<span class="v" style="font-size:26px">'+(ms!=null?Math.round(ms):'—')+
     '<span style="font-size:12px"> ms</span></span> <span class="l">'+be+'</span>';
@@ -7531,7 +7535,7 @@ function aiShowEmpty(){
   if(!$('#ai_thread')) return;
   $('#ai_title').textContent='AI Chat';
   $('#ai_thread').innerHTML=`<div class="ai-empty"><div class="big">▚ NEURAL LINK</div>
-    <div>Wähle links eine Konversation oder starte eine neue.<br>Brain-Runtime (llama.cpp) oder keyless Cloud (freeai) · volle History · Modell-Auswahl oben.</div></div>`;
+    <div>Wähle links eine Konversation oder starte eine neue.<br>Brain-Runtime (ik_llama.cpp) oder keyless Cloud (freeai) · volle History · Modell-Auswahl oben.</div></div>`;
 }
 
 async function aiOpenConv(id){
@@ -8443,7 +8447,7 @@ async function loadResilience(){
     if(live) bits.push(`<span style="color:var(--neon)">${cp.restream_live}× Restream</span>`);
     if(wh.throttled) bits.push(`<span style="color:var(--amber)" title="Sendebild hat Vorrang">Whisper gedrosselt 3→1</span>`);
     else if(wh.max_conc) bits.push(`Whisper ${wh.max_conc}×${wh.threads_each}T`);
-    if(cp.brain_llm) bits.push('llama.cpp');
+    if(cp.brain_llm) bits.push('ik_llama.cpp');
     if(wh.dropped_segments>0) bits.push(`<span style="color:var(--amber)" title="Whisper kam nicht nach — veraltete Audio-Segmente verworfen">${wh.dropped_segments} Segm. verworfen</span>`);
     cpuRow=`<div class="rrow"><span class="rk">CPU-Last</span><span class="rv">${bits.join(' · ')}</span></div>`;
     /* Wer frisst gerade? Nur zeigen, wenn es eng wird — sonst Rauschen. */

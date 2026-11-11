@@ -15,7 +15,7 @@ Auslieferung mit Rettungsanker davor, Beobachtung im Log danach.
     Dienst      tiktok-bot            (systemd, Restart=always)
     Pfad        ~/tiktok-bot          (prüfen: systemctl list-units | grep -i tiktok)
     Dashboard   127.0.0.1:8050        (nie öffentlich binden)
-    Brain-LLM   127.0.0.1:8080        (eigener Dienst llama-server, Nice=10)
+    Brain-LLM   127.0.0.1:8080        (eigener Dienst llama-server = ik_llama.cpp, Nice=10)
 
 **Nicht im Archiv und niemals überschreiben:** `.env`, `tiktok_cookies.txt`,
 `recordings/`, die Datenbank. `.env.example` ist nur Vorlage.
@@ -115,6 +115,20 @@ Puffer und damit Robustheit bei Netz-Jitter. Die inhärente TikTok-Quell-Latenz
 **Brain-LLM tot.** Eigener Dienst: `systemctl status llama-server`. Läuft mit
 `-t 4` auf 4 von 8 Kernen und `Nice=10`, weil Restream-ffmpeg Vorrang hat. Wer
 dort mehr Threads gibt, nimmt sie den Aufnahmen weg.
+
+Seit v5.1-W181 ist das **ik_llama.cpp mit Qwen3-14B-Uncensored** (rund 9 GB,
+`-rtr` legt es ganz in den RAM, `MemoryMax` = Modell + 4 GB). Einrichten,
+Umstieg vom alten llama.cpp und Prüfen laufen über **ein** Werkzeug:
+
+    bash tools/ikllama.sh --check        # fertig? (Exit 1, wenn nicht)
+    bash tools/ikllama.sh --zustand      # ein Wort: fertig | alt | teilweise | fehlt
+    sudo bash tools/ikllama.sh           # einrichten bzw. Umstieg
+    bash tools/update.sh --ik-llama      # dasselbe aus dem Abgleich heraus
+
+`/health` antwortet nach einem Neustart minutenlang **503** („loading model")
+— das ist das Laden, kein Ausfall; der Bot nimmt so lange die Cloud. Ein
+Absturz beim Laden mit `Killed` im Journal heisst: `MemoryMax` oder der RAM
+reicht nicht — kleinere Quantisierung über `LLM_MODELL_DATEI`.
 
 ## Was beim Deploy nicht passiert
 

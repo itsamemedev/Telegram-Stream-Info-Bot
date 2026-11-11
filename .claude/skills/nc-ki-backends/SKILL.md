@@ -8,7 +8,22 @@ description: KI-Pfade in NIGHTCRAWLER ändern oder debuggen — die Tier-Kaskade
 ## Zwei getrennte Wege — nicht verwechseln
 
 **`brain/`** ist die Entscheidungs-Maschine des Bots. Ihr LLM-Tier ist
-**lokal**: `llama-server` (llama.cpp, GGUF INT4) auf `127.0.0.1:8080`.
+**lokal**: `llama-server` auf `127.0.0.1:8080` — seit v5.1-W181
+**ik_llama.cpp** mit **Qwen3-14B-Uncensored** (GGUF Q4_K_M, rund 9 GB),
+eingerichtet von `tools/ikllama.sh` (Installer und `update.sh --ik-llama`
+rufen es; ein altes llama.cpp wird zuerst entfernt). Der Bot spricht nur HTTP
+mit dem Server — `/health`, `/v1/chat/completions`, `/v1/models` —, also
+aendert der Umstieg an `brain/llm.py` nur eines:
+
+**Qwen3 denkt.** Ab Werk steht vor jeder Antwort ein `<think>…</think>`-Block,
+auf der CPU hunderte Token. `brain/llm.py` schickt deshalb
+`chat_template_kwargs={"enable_thinking": false}` (wirkt mit `--jinja` in der
+Unit) **und** `/no_think` an der letzten Nutzernachricht (auf einer Kopie —
+der Verlauf des Aufrufers bleibt sauber), und `ohne_denkblock()` nimmt jeden
+Denkblock aus der Antwort. Bleibt nur Denken uebrig, ist das ein Fehler fuer
+die Kette, kein leerer Erfolg. Schalter: `BRAIN_LLM_DENKEN` (Vorgabe 0). Wer
+einen neuen lokalen Aufrufer baut, geht durch `LLMRuntime.chat()` — sonst
+landet der Denkblock im Chat, im Overlay und in der Sprachausgabe.
 Thread-basiert, stdlib-`urllib`, kein `aiohttp`. Kein Cloud-Zugriff.
 
 **`nc/freeai.py`** ist der **einzige** Cloud-Pfad des Bots — OpenAI-kompatible
@@ -19,6 +34,9 @@ Endpunkte, bevorzugt keyless.
 lokales llama.cpp, sobald `/health` antwortet. **Nie wieder
 `os.getenv("AI_PROVIDER")` selbst lesen** — das stand siebenmal verstreut, und
 jede Anzeige rechnete anders. Reihenfolge: Claude (mit Key) → lokal → Cloud.
+„Ist lokal installiert?" beantwortet `lokal_installiert()` (Units und
+`/opt/ik_llama.cpp`), nicht `shutil.which("llama-server")` — ik_llama.cpp liegt
+nicht im PATH.
 
 Ollama existiert nicht mehr. Neue Cloud-Aufrufe gehören nach `nc.freeai`, nicht
 direkt in Aufrufercode — sonst gibt es Rotation und Fehlerklassifikation nicht.
@@ -50,7 +68,9 @@ benutzte — und niemand testet den Pfad, der noch geht.
 Hartes **Stundenbudget** plus **Concurrency 1**. Der Grund ist die Hardware: die
 Box hat 8 Kerne und nimmt gleichzeitig auf und restreamt. Zwei parallele
 Inferenzen stehlen ffmpeg die Kerne — Aufnahmen brechen, damit die KI schneller
-plaudert. Deshalb läuft `llama-server` mit `-t 4` und `Nice=10`.
+plaudert. Deshalb läuft `llama-server` mit `-t 4` und `Nice=10`. Mit 14B ist
+das langsam (grob einige Token je Sekunde) — das ist der Preis, nicht ein
+Grund, `-t` zu heben.
 
 `BudgetExhausted` ist kein Fehler, sondern ein Ergebnis: der Router reicht es als
 `Unhandled` weiter. Es wird nie stumm geschluckt und nie in eine Wiederholung

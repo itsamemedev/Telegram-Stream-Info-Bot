@@ -40,7 +40,8 @@ import shlex
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-QUELLEN = ("tools/installer.sh", "tools/motd.sh", "tools/update.sh", "tools/observability.sh")
+QUELLEN = ("tools/installer.sh", "tools/motd.sh", "tools/update.sh", "tools/observability.sh",
+           "tools/ikllama.sh")   # v5.1-W181
 # v4.2-W123: tools/lib/ mit. Die Bibliotheken werden von allen Werkzeugen
 # gesourct und geben selbst aus (Paketwahl, i18n-Status) — eine deutsche
 # Zeile dort erscheint in JEDEM Werkzeug.

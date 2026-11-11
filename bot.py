@@ -27637,11 +27637,14 @@ async def _selfcheck(verbose=True):
             add("ok", "Lokales LLM", "llama-server antwortet (%s) — %s" % (
                 ", ".join(_mods[:2]) or "Modell unbekannt",
                 "bevorzugt" if _wahl != _nc_kiwahl.CLOUD else "AI_PROVIDER=cloud: ungenutzt"))
-        elif _wahl == _nc_kiwahl.LOKAL or shutil.which("llama-server"):
+        elif _wahl == _nc_kiwahl.LOKAL or _nc_kiwahl.lokal_installiert():
+            # v5.1-W181: lokal_installiert() statt which("llama-server") —
+            # ik_llama.cpp liegt unter /opt/ik_llama.cpp, nicht im PATH.
             add("warn", "Lokales LLM",
                 "llama-server antwortet nicht unter %s — die KI laeuft ueber die "
-                "Cloud. Pruefen: systemctl status llama-server; Einrichtung: "
-                "docs/SETUP_LLAMACPP.md" % _url)
+                "Cloud. Pruefen: systemctl status llama-server und "
+                "bash tools/ikllama.sh --check; Einrichtung: "
+                "sudo bash tools/ikllama.sh" % _url)
         else:
             add("ok", "Lokales LLM", "nicht installiert — KI ueber die Cloud-Kette")
     except Exception as e:

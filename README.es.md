@@ -134,7 +134,7 @@ dispara nada.
 
 ## ⚙️ Ajustes
 
-**En el panel, pestaña “Ajustes”.** Las unas 599 variables de `.env.example`
+**En el panel, pestaña “Ajustes”.** Las unas 600 variables de `.env.example`
 con grupo, valor por defecto y descripción, con búsqueda. Cada fila indica de
 dónde viene el valor — *fijado en el panel*, *desde .env* o *por defecto*. Se
 guarda en la base de datos y, en el siguiente arranque, tiene prioridad sobre
@@ -227,7 +227,7 @@ no es “sin conexión”. Activar: `KICK_STREAM_KEY`, `TWITCH_ENABLED` +
 
 `brain/` es un núcleo de IA independiente con base de datos propia; sin él, el
 bot arranca igual. AZRAEL responde con Anthropic (con clave), en local con
-llama.cpp o mediante API gratuitas, con control de presupuesto.
+ik_llama.cpp (Qwen3-14B-Uncensored, `sudo bash tools/ikllama.sh`) o mediante API gratuitas, con control de presupuesto.
 
 | Agente | Vigila | Agente | Vigila |
 |---|---|---|---|

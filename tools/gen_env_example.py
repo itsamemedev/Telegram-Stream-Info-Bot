@@ -479,6 +479,11 @@ def _umbruch(text, breite):
 # Quelltext nicht mehr liest, bricht den Generator ab (siehe main): sonst
 # erklaert die Vorlage still einen Schalter, den es nicht gibt.
 ERKLAERUNG = {
+    "BRAIN_LLM_DENKEN":
+        "v5.1-W181: darf das lokale Modell (Qwen3) vor der Antwort denken? "
+        "0 (Vorgabe) schickt enable_thinking=false und /no_think mit — auf "
+        "8 CPU-Kernen kostet ein Denkblock hunderte Token vor dem ersten Wort. "
+        "Ein <think>-Block wird in jedem Fall aus der Antwort entfernt.",
     "KENNZAHLEN_LOG_MIN":
         "Alle so viele Minuten eine Lagezeile im Log (W122): Loop-p99, "
         "Aufnahmen gegen Deckel, Restreams, Chats, fds, RSS, Cache-Quote, "
@@ -502,7 +507,7 @@ ERKLAERUNG = {
         "an der er steht, und meldet sie gedrosselt (ab 1 s auf ERROR). "
         "Liste: /api/debug/threads -> loop_bremser. 0 = aus.",
     "AI_PROVIDER":
-        "Wer antwortet: auto (Vorgabe) = lokales llama.cpp, sobald es auf "
+        "Wer antwortet: auto (Vorgabe) = lokales ik_llama.cpp, sobald es auf "
         "BRAIN_LLAMACPP_URL antwortet, sonst die keyless Cloud; lokal = immer "
         "zuerst lokal; cloud = nie lokal. Ein Anthropic-Key geht immer vor.",
     "REACTION_AI_PROVIDER":
