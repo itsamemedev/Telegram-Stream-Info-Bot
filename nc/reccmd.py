@@ -46,6 +46,7 @@ if TYPE_CHECKING:            # nur fuer die Signatur-Annotation
 from nc.ffbuild import ff_cmd as _ff_cmd_roh
 from nc.preflight import _preflight_url
 from nc.proxyutil import _pick_pull_proxy
+from nc import zeitglaetter as _zeitglaetter
 
 log = logging.getLogger("TikTokBot")
 
@@ -245,7 +246,13 @@ def _build_native_cmd(stream_url: str, output_file: str, duration_secs: int,
         # B60+: +igndts ergaenzt — ignoriert die kaputten Input-DTS direkt (gleiche
         # Kombi wie der bewaehrte Remux unten). Behebt "Non-monotonic DTS" an der Quelle,
         # +genpts fuellt fehlende PTS, +flush_packets schreibt sofort raus.
-        cmd += ["-fflags", "+genpts+igndts+flush_packets"]
+        # v4.2-W179: +igndts wieder RAUS. Gemessen (nc/zeitglaetter.py): bei
+        # einem CDN-Sprung um ±12 s gab die Kombination aus weggeworfenen DTS
+        # und der Diskontinuitaets-Korrektur des HLS-Demuxers den B-Frames eine
+        # falsche Dekodierreihenfolge — 129 bzw. 199 kaputte Bilder in 16 s,
+        # bei PES ohne PTS 96. +genpts allein fuellt die fehlenden PTS genauso;
+        # die nicht monotonen DTS glaettet jetzt setts (unten).
+        cmd += ["-fflags", "+genpts+flush_packets"]
     cmd += [
         "-user_agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                        "AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -270,8 +277,10 @@ def _build_native_cmd(stream_url: str, output_file: str, duration_secs: int,
         "-map", "0:v:0?", "-map", "0:a:0?",
         "-c", "copy",                                # Kein Re-Encoding
     ]
-    if is_hls:
-        cmd += ["-bsf:a", "aac_adtstoasc"]           # nur für HLS/TS nötig
+    # v4.2-W179: Zeitstempel-Spruenge der Quelle glaetten (Messung und
+    # Begruendung in nc/zeitglaetter.py). aac_adtstoasc gehoert in DIESELBE
+    # Kette: ein zweites -bsf:a ersetzt das erste still.
+    cmd += _zeitglaetter.bsf_args(ton_vorher="aac_adtstoasc" if is_hls else None)
 
     # B56: Mux-Flags je nach Input-Format wählen
     if is_flv:

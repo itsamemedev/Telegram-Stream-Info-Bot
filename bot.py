@@ -13759,6 +13759,26 @@ _RS_STATUS_EXEC = _cf_thread.ThreadPoolExecutor(max_workers=1,
                                                 thread_name_prefix="rs-status")
 
 
+def _restream_soll_schreiben(rid, on, zeit):
+    """v4.2-W179: Soll-Zustand eines Restreams (B123) — laeuft im Status-
+    Schreiber. Laut statt log.debug: ein nicht gespeichertes desired=0 laesst
+    den Restream nach dem naechsten Neustart wieder aufstehen."""
+    try:
+        with db_conn() as conn:
+            conn.execute(
+                "UPDATE restreams SET desired=?, desired_since=? WHERE id=?",
+                (1 if on else 0, zeit if on else None, rid))
+            conn.commit()
+    except Exception as e:
+        laut, weg = _nc_meldetakt.melden("restream-soll", type(e).__name__,
+                                         _time_mod.monotonic())
+        if laut:
+            log.error("Restream #%s: Soll-Zustand %s nicht gespeichert (%s: %s) — "
+                      "der Wiederanlauf nach einem Neustart folgt dem alten.%s",
+                      rid, "an" if on else "aus", type(e).__name__, e,
+                      _nc_meldetakt.zusatz(weg))
+
+
 def _restream_status_schreiben(rid, status, pid, err, zeit):
     """Schreibt einen Statuswechsel. Ein Fehler ist laut, nicht `pass`: das
     Deck liest den Status aus dieser Tabelle, und ein stilles Scheitern liess
@@ -13816,6 +13836,21 @@ def _ov_atomic_write(path, text):
 # Ohne ihn stapeln sich bei langsamer Platte die Schreib-Threads: der Takt
 # kommt jede Sekunde, ein Schreibvorgang dauerte im Störfall über 60.
 _OVERLAY_SCHREIBT = {"an": False}
+
+
+def _overlay_takt():
+    """v4.2-W179: den Sekundentakt des Overlays FEUERN, nicht abwarten.
+
+    Bis hierher stand im -progress-Leser `await _write_restream_overlay_async()`.
+    Das hielt den Loop frei (W26), aber nicht den Leser: unter Plattenlast
+    dauerte ein Schreibvorgang bis 68 s, und so lange las niemand die
+    Fortschrittsmarken. _stall_watch sah dann keinen Zuwachs und erklaerte den
+    GESUNDEN tee-Sender nach RESTREAM_STALL_TIMEOUT_S (75 s) fuer haengend —
+    und erntete ihn. Gemeldet als „alle drei Ziele brechen gleichzeitig weg":
+    es war ein Prozess, also fielen alle Ziele zusammen. Die Sperre
+    _OVERLAY_SCHREIBT haelt einen Stau weiterhin auf genau einen Thread."""
+    if not _OVERLAY_SCHREIBT["an"]:     # schreibt schon einer: diesen Takt auslassen
+        _spawn(_write_restream_overlay_async(), name="overlay-takt")
 
 
 async def _write_restream_overlay_async(reaction_fresh_secs=None):
@@ -14237,6 +14272,9 @@ def _restream_html_overlay_start(rid, source_url=None):
        Design gegen den gefährlichsten Fehlerfall (stallender Overlay-Input
        stallt den GANZEN ffmpeg): der Writer pusht mit FESTEM Takt und
        wiederholt notfalls das letzte Bild — ffmpeg hungert nie."""
+    # v4.2-W179: Reste eines frueheren Laufs zuerst beenden — sonst je
+    # Reconnect ein weiterer Schuss-Task und ein weiterer Dauer-Chromium.
+    _restream_html_overlay_stop(rid)
     if RESTREAM_OVERLAY_MODE != "html":
         return None
     binpath = _find_chromium()
@@ -14356,14 +14394,36 @@ def _restream_html_overlay_start(rid, source_url=None):
     return fifo
 
 
+def _fifo_schreiber_wecken(fifo):
+    """v4.2-W179: einen Schreiber wecken, der in open(fifo, "wb") haengt.
+
+    Ein Feeder-Thread oeffnet seine FIFO blockierend und wartet dort auf den
+    Leser (ffmpeg). Startet ffmpeg nie oder ist er schon weg, steht der Thread
+    fuer immer — das Stop-Ereignis sieht er erst NACH dem open. Gemessen beim
+    Avatar-Feeder: jeder Fehlstart liess einen Thread liegen. Eine
+    nicht-blockierende Leseoeffnung laesst sein open zurueckkehren; danach
+    sieht er das gesetzte Ereignis und endet. Dasselbe Mittel wie
+    _restream_tts_stop seit jeher."""
+    if not fifo:
+        return
+    try:
+        fd = os.open(fifo, os.O_RDONLY | os.O_NONBLOCK)
+        os.close(fd)
+    except OSError:
+        pass   # Aufraeumen: FIFO schon weg, dann wartet auch niemand darauf
+
+
 def _restream_html_overlay_stop(rid):
+    """v4.2-W179: laeuft auch in einem Worker-Thread (Browser-Ende bis 5 s) —
+    deshalb wird der Schuss-Task per call_soon_threadsafe beendet."""
     st = _HTMLOV.pop(rid, None)
     if not st:
         return
     st["stop"].set()
+    _fifo_schreiber_wecken(st.get("fifo"))
     t = st.get("task")
     if t and not t.done():
-        t.cancel()
+        t.get_loop().call_soon_threadsafe(t.cancel)
     if st.get("browser") is not None:
         # Ohne das liefe der Chromium nach jedem Restream weiter — ein
         # Kern-Bruchteil je beendetem Restream, bis zum Neustart des Bots.
@@ -14510,6 +14570,9 @@ def _restream_avatar_feeder_start(rid):
        deshalb fest und schreibt in jeder Periode ein Bild — notfalls dasselbe
        nochmal. open() blockt, bis ffmpeg liest, darum ein eigener Thread.
     """
+    # v4.2-W179: ein Start ueberschrieb _AVATARFEED[rid], ohne den alten
+    # Feeder zu beenden — der lief weiter, je Reconnect einer mehr.
+    _restream_avatar_feeder_stop(rid)
     ruhe = _avatar_frames_laden(RESTREAM_AVATAR_LOOP, RESTREAM_AVATAR_ALPHA)
     if not ruhe:
         return None
@@ -14628,6 +14691,7 @@ def _restream_avatar_feeder_stop(rid):
     if not st:
         return
     st["stop"].set()
+    _fifo_schreiber_wecken(st.get("fifo"))    # v4.2-W179: haengt sonst in open()
     try:
         if os.path.exists(st["fifo"]):
             os.unlink(st["fifo"])
@@ -14858,6 +14922,13 @@ class RestreamManager:
         # Ueberlebt den Reconnect (self._procs[rid] wird dabei neu angelegt),
         # damit im Panel sichtbar bleibt, dass hier etwas grundsaetzlich klemmt.
         self._stallkills = {}
+        # v4.2-W179: der Monitor gehoert NICHT in den _procs-Eintrag allein.
+        # Im Reconnect-Backoff hat _monitor den Eintrag schon entfernt und
+        # schlaeft; stop() fand dann nichts, und der Monitor startete danach
+        # trotzdem neu — mit desired=1, also auch ueber jeden Neustart hinweg.
+        self._monitors = {}         # rid -> Monitor-Task, solange er laeuft
+        self._sitzung = {}          # rid -> Zaehler, den jedes stop() erhoeht
+        self._im_wiederanlauf = set()   # rids, deren Monitor gerade start() ruft
 
     def _set_status(self, rid, status, pid=None, err=None):
         # V37-P5 (BH3-Fix): Registry-Pflege. Der Laufstatus heißt im Manager
@@ -14902,16 +14973,19 @@ class RestreamManager:
             fut.result(timeout=30)       # kein Loop in diesem Thread: warten
 
     def _set_desired(self, rid, on: bool):
-        """B123: Soll-Zustand persistieren — ueberlebt Absturz und Neustart."""
+        """B123: Soll-Zustand persistieren — ueberlebt Absturz und Neustart.
+
+        v4.2-W179: ueber den Status-Schreiber (_RS_STATUS_EXEC), nicht im Loop.
+        Ein Commit unter MariaDB ist ein Netz-Rundlauf (W157), und start()/
+        stop() riefen das mitten im Loop. Derselbe Ein-Thread-Schreiber haelt
+        zugleich die Reihenfolge zu den Statuswechseln — _soll_lesen liest
+        dort und sieht damit jedes vorher abgesetzte stop()."""
+        fut = _RS_STATUS_EXEC.submit(_restream_soll_schreiben, rid, on,
+                                     datetime.now(timezone.utc).isoformat())
         try:
-            with db_conn() as conn:
-                conn.execute(
-                    "UPDATE restreams SET desired=?, desired_since=? WHERE id=?",
-                    (1 if on else 0,
-                     datetime.now(timezone.utc).isoformat() if on else None, rid))
-                conn.commit()
-        except Exception as e:
-            log.debug("Soll-Zustand #%s nicht speicherbar: %s", rid, e)
+            asyncio.get_running_loop()
+        except RuntimeError:
+            fut.result(timeout=30)       # kein Loop in diesem Thread: warten
         if not on:
             _RESTREAM_GUARD.forget(rid)
             # v4.2-W43: Die Drossel gehoert zur Sende-Sitzung, nicht zum
@@ -15214,8 +15288,9 @@ class RestreamManager:
                         # Datei drei Mal pro Sekunde neu zu erzeugen.
                         if RESTREAM_OVERLAY and pname is None:
                             # ~1×/Sek. NEBEN dem Loop: synchron hat dieser
-                            # Aufruf den Bot bis zu 68s eingefroren (W26).
-                            await _write_restream_overlay_async()
+                            # Aufruf den Bot bis zu 68s eingefroren (W26);
+                            # abgewartet hielt er den Leser an (W179).
+                            _overlay_takt()
         except asyncio.CancelledError:
             # Der Normalfall beim Prozessende: _monitor cancelt beide Leser,
             # nachdem ffmpeg gewartet wurde. Das ist KEINE Blindheit — hier
@@ -15668,6 +15743,11 @@ class RestreamManager:
             _av_feed = await asyncio.to_thread(_restream_avatar_feeder_start,
                                                rid)
         _independent = (RESTREAM_MULTI_MODE == "independent" and _multi)
+        # v4.2-W179: VOR dem try. Stand `_kw = {}` erst hinter Kommandobau und
+        # Overlay-Schreiben, endete jeder Fehler dort im except mit
+        # UnboundLocalError (`if _kw:`) — der Status blieb auf „starting", und
+        # der Monitor, der start() rief, starb mit.
+        _kw, _br_fds = {}, None
         try:
             if _independent:
                 # V37-INDEP / W77: Hauptprozess = ERSTE konfigurierte Plattform
@@ -15689,8 +15769,10 @@ class RestreamManager:
                                           tonlos=rid in self._tonlos,
                                           bruecke=_bruecke_an)
             if RESTREAM_OVERLAY:
-                _write_restream_overlay()      # Textdateien anlegen, BEVOR drawtext sie öffnet
-            _kw = {}
+                # Textdateien anlegen, BEVOR drawtext sie öffnet — abgewartet,
+                # aber im Thread (W179): os.replace stand unter Plattenlast bis
+                # 68 s, und hier hielt das den Loop (W26) beim Sendestart an.
+                await asyncio.to_thread(_write_restream_overlay)
             if _bruecke_an:
                 # Leseende als stdin des Senders, Schreibende fuer die Bruecke.
                 # Eine os.pipe statt stdin=PIPE: die Bruecke schreibt aus
@@ -15703,13 +15785,14 @@ class RestreamManager:
             if _bruecke_an:
                 os.close(_br_fds[0])
         except Exception as e:
-            if _kw:
-                for _fd in _br_fds:
-                    try:
-                        os.close(_fd)
-                    except OSError:
-                        pass           # das Leseende ist nach dem Spawn schon zu
-            _restream_tts_stop(rid)            # B73: Feeder/FIFO bei Fehlstart nicht leaken
+            for _fd in (_br_fds or ()):
+                try:
+                    os.close(_fd)
+                except OSError:
+                    pass           # das Leseende ist nach dem Spawn schon zu
+            # B73 / W179: alle drei Feeder, nicht nur die Stimme — Overlay-
+            # Schuss, Dauer-Chromium und Avatar-Thread blieben sonst liegen.
+            await self._nebenlaeufer_abraeumen(rid)
             self._set_status(rid, "error", err=f"ffmpeg-Start: {e}")
             return {"ok": False, "error": str(e)}
         # B141: echte Kick-URL + tee-Ziel-Reihenfolge dieses Prozesses festhalten.
@@ -15724,6 +15807,7 @@ class RestreamManager:
                             "attempts": _attempts, "transcode": transcode,
                             "kick_url": _kick_url, "base_url": _base_url,
                             "tee_targets": _tee_targets,
+                            "src_watch": _src_watch,     # v4.2-W179: ueber Reconnects
                             "health": {"bitrate": None, "fps": None, "frame": 0, "drop": 0,
                                        "speed": None, "out_time": "00:00:00", "size_mb": 0}}
         _nc_rutil.freigeben(self, rid)   # ab hier greift `rid in self._procs`
@@ -15796,7 +15880,7 @@ class RestreamManager:
                 _spawn(_discord_notify(_msg), name="comm-liveping")
             except Exception as _e:
                 log.debug("community live-ping: %s", _e)
-        self._procs[rid]["monitor"] = asyncio.create_task(self._monitor(rid))
+        self._monitor_eintragen(rid)
         # v4.0-W113: Stillstands-Waechter. _monitor haengt an proc.wait() und
         # sieht deshalb nur den TOTEN ffmpeg — nicht den, der lebt und nichts
         # mehr sendet. Genau der war bisher unsichtbar.
@@ -16043,10 +16127,16 @@ class RestreamManager:
            Hauptprozess: fällt dieser Relay aus, läuft Kick (und die anderen
            Zusatz-Relays) ungestört weiter. Ein simpler Reconnect-Loop hält
            ihn am Leben, solange der rid aktiv ist."""
+        # v4.2-W179: an DIESEN Eintrag gebunden, nicht an die rid. Nach einem
+        # Reconnect steht unter derselben rid ein neuer Eintrag mit eigenen
+        # Relays; `rid in self._procs` hielt den alten Relay dann am Leben —
+        # zwei Publisher auf einem Key, die sich gegenseitig rauswerfen.
+        mein = self._procs.get(rid)
+
         async def _relay_loop():
             attempt = 0
             cur_url = source_url
-            while rid in self._procs:
+            while mein is not None and self._procs.get(rid) is mein:
                 try:
                     _started = _time_mod.monotonic()
                     cmd = _build_restream_cmd(cur_url, "", "", transcode,
@@ -16064,7 +16154,7 @@ class RestreamManager:
                     p = await asyncio.create_subprocess_exec(
                         *cmd, stdout=asyncio.subprocess.PIPE,
                         stderr=asyncio.subprocess.PIPE)
-                    slot = self._procs.get(rid, {}).get("indep", {})
+                    slot = mein.setdefault("indep", {})
                     _eintrag = {"proc": p, "started": _time_mod.monotonic(),
                                 "health": {"bitrate": None, "fps": None,
                                            "frame": 0, "drop": 0, "speed": None,
@@ -16097,8 +16187,8 @@ class RestreamManager:
                     if rc and _tail:
                         log.error("Restream #%d [%s]: Relay rc=%s — stderr: %s",
                                   rid, pname, rc, _tail)
-                    if rid not in self._procs:
-                        break            # sauber gestoppt
+                    if self._procs.get(rid) is not mein:
+                        break            # sauber gestoppt oder neu aufgebaut
                     # v4.0-W87: lief der Relay eine Weile, war er gesund — der Tod
                     # ist ein FRISCHES Ereignis, also volles Reconnect-Budget zurück.
                     # v4.0-W115: derselbe Vertrag, jetzt aus dem Regelsatz und mit
@@ -16154,7 +16244,7 @@ class RestreamManager:
                     await asyncio.sleep(5)
             # Beim Verlassen: eigenen Prozess best-effort beenden UND reapen
             # (v4.0-W75: vorher nur terminate() → Zombie je aufgegebenem Relay).
-            slot = self._procs.get(rid, {}).get("indep", {})
+            slot = (mein or {}).get("indep", {})
             _e = slot.pop(pname, None)
             if _e and _e.get("proc"):
                 await _reap_proc(_e["proc"])
@@ -16199,7 +16289,7 @@ class RestreamManager:
                                              RESTREAM_CANVAS_H, stufe),
                     grund.rstrip("."))   # der Grund endet selbst auf Punkt
 
-    async def _ton_folge(self, rid, ran, tail, attempts):
+    async def _ton_folge(self, rid, ran, tail, attempts, sitz=None):
         """v4.2-W106: Ende des Prozesses auf eine tonlose Quelle pruefen. -> bool
 
         ffmpeg stirbt am Ton-Map in unter einer Sekunde, und JEDER weitere
@@ -16222,7 +16312,7 @@ class RestreamManager:
                         "teils ab). Gilt bis zum naechsten Neuaufbau.", rid)
             self._set_status(rid, "starting", err="Quelle ohne Ton → Stille-Spur")
             await asyncio.sleep(1)
-            await self.start(rid, _attempts=attempts)
+            await self._wiederanlauf(rid, sitz, _attempts=attempts)
             return True
         self._tonlos.discard(rid)
         return False
@@ -16231,6 +16321,9 @@ class RestreamManager:
         info = self._procs.get(rid)
         if not info:
             return
+        # v4.2-W179: Sitzung und Quellen-Waechter beim Anlauf festhalten —
+        # jeder Wiederanlauf unten prueft, ob stop() inzwischen kam.
+        sitz = (self._sitzung.get(rid, 0), bool(info.get("src_watch")))
         proc = info["proc"]
         sink = []
         prog_task = asyncio.create_task(self._read_progress(rid, proc))
@@ -16245,46 +16338,7 @@ class RestreamManager:
         tail = "".join(sink)[-800:]
         ran = _time_mod.monotonic() - info["started"]
         transcode_used = info.get("transcode")
-        # V37-DIAG2: bei Multi-Target erkennen, WELCHES Ziel den Abbruch
-        # verursacht hat. rtmps-Handshake-Fehler (Kick/IVS) sehen anders aus
-        # als rtmp-Fehler (Twitch). Das beendet das Raten bei "nur ein Ziel".
-        _tl = tail.lower()
-        # B138: Diagnose NICHT mehr an _multistream_targets() haengen — bei
-        # genau einem Ziel (nur Kick) lief der Abbruch bisher kommentarlos
-        # durch. Und log.error statt log.warning: 'Input/output error' auf
-        # rtmps://…live-video.net ist die Meldung, die der Betreiber im
-        # error.log sucht; auf warning erschien sie dort nie.
-        if ("tls" in _tl or "ssl" in _tl or "handshake" in _tl
-                or "end of file" in _tl or "input/output error" in _tl
-                or "i/o error" in _tl):
-            # v4.1-W10: WELCHES Ziel steht wirklich im Auszug? Bis hierher
-            # nannte diese Zeile kategorisch Kick — auch wenn im stderr
-            # ausschliesslich der Twitch-Slave stand. Der Betreiber prueft
-            # danach Kick-Key, Kick-App und IP-Block bei Kick, waehrend Twitch
-            # das Problem ist. Eine Diagnose, die auf die falsche Plattform
-            # zeigt, ist schlimmer als gar keine. Verglichen wird auf den
-            # INGEST-HOST, nie auf den Plattformnamen: Kick und Twitch liegen
-            # beide auf live-video.net, und 'twitch' kommt in Twitchs eigener
-            # URL nicht vor.
-            _zl = ((info or {}).get("tee_targets") or _nc_rst.active_targets())
-            _betroffen = _nc_rutil.betroffene_ziele(tail, _zl)
-            _wen = ", ".join(_betroffen) if _betroffen else "unbekannt (kein Ziel-Host im Auszug)"
-            log.error("Restream #%d: Ingest nimmt die Verbindung nicht an — "
-                      "betroffen: %s. Reihenfolge: 1) welcher Key laeuft "
-                      "wirklich — Startzeile '%s-Ziel:' im Log, DB schlaegt "
-                      ".env; 2) laeuft derselbe Key schon woanders; "
-                      "3) IP-Block. stderr: %s",
-                      rid, _wen,
-                      (_betroffen[0].capitalize() if _betroffen else "Kick"),
-                      tail[-300:])
-        elif "rtmp" in _tl and ("refused" in _tl or "unable" in _tl
-                                or "failed" in _tl):
-            _zl = ((info or {}).get("tee_targets") or _nc_rst.active_targets())
-            _betroffen = _nc_rutil.betroffene_ziele(tail, _zl)
-            log.error("Restream #%d: rtmp-Ziel-Fehler — betroffen: %s. "
-                      "stderr: %s", rid,
-                      (", ".join(_betroffen) if _betroffen else "unbekannt"),
-                      tail[-300:])
+        self._abbruch_diagnose(rid, info, tail)
         _attempts_raw = info.get("attempts", 0)
         # v4.0-W113: hat dieser Lauf ueberhaupt gesendet? Der Stillstands-
         # Waechter beendet einen Prozess, der zwar LANG lief, aber kein Bild
@@ -16310,7 +16364,10 @@ class RestreamManager:
         if _sw3 and not _sw3.done():
             _sw3.cancel()
         self._procs.pop(rid, None)
-        _restream_tts_stop(rid)                # Feeder/FIFO dieses Procs beenden
+        # v4.2-W179: alle Feeder und die unabhaengigen Relays dieses Laufs —
+        # bisher nur die Stimme; Overlay-Schuss, Chromium, Avatar-Thread und
+        # Relays liefen weiter, und der Neuaufbau legte je einen dazu.
+        await self._nebenlaeufer_abraeumen(rid, info)
         try:
             # v4.2-W117: neben dem Loop — dieser Pfad laeuft bei JEDEM
             # Prozessende, also genau dann, wenn die Platte unter Last steht.
@@ -16326,7 +16383,7 @@ class RestreamManager:
             self._set_status(rid, "stopped", pid=None, err="Quelle beendet (EOF)")
             return
         # v4.2-W106: tonlose Quelle → mit Stille neu (Begruendung dort).
-        if await self._ton_folge(rid, ran, tail, attempts):
+        if await self._ton_folge(rid, ran, tail, attempts, sitz):
             return
         # copy→transcode-Fallback: copy-Modus früh gestorben mit Codec-Fehler
         if (not transcode_used) and ran < 25 and _looks_like_codec_err(tail):
@@ -16334,7 +16391,7 @@ class RestreamManager:
             log.warning(f"Restream #{rid}: copy fehlgeschlagen ({tail[:120]}…) → Auto-Transcode")
             self._set_status(rid, "starting", err="copy → transcode (Codec-Fallback)")
             await asyncio.sleep(3)
-            await self.start(rid, _attempts=attempts)
+            await self._wiederanlauf(rid, sitz, _attempts=attempts)
             return
         # Failover: ist die Quelle überhaupt noch live? Wenn offline → Slot SOFORT
         # freigeben (kein sinnloser Reconnect am toten Stream). Single-Modus schaltet
@@ -16389,7 +16446,7 @@ class RestreamManager:
                          "Normalfall.", rid, self._srcexpired[rid], ran, _wait)
             self._set_status(rid, "starting", err="Quell-URL erneuert")
             await asyncio.sleep(_wait)
-            await self.start(rid, _attempts=(attempts + 1 if _spin else attempts))
+            await self._wiederanlauf(rid, sitz, _attempts=(attempts + 1 if _spin else attempts))
             return
         self._srcspin.pop(rid, None)   # v4.0-W113: kein Ablauf → Serie endet
         if _nc_rstab.budget_exhausted(attempts, _RESTREAM_POLICY):
@@ -16402,7 +16459,7 @@ class RestreamManager:
                           f"Restream #{rid} → Backup-Ingest", {"id": rid})
                 self._set_status(rid, "starting", err="Failover → Backup-Ingest")
                 await asyncio.sleep(3)
-                await self.start(rid, _attempts=0)
+                await self._wiederanlauf(rid, sitz, _attempts=0)
                 return
             self._set_status(rid, "error", pid=None,
                              err=f"Aufgegeben nach {attempts} Reconnects. {tail[:280]}")
@@ -16420,9 +16477,154 @@ class RestreamManager:
         log.warning("Restream #%d rc=%s; reconnect#%d in %.0fs",
                     rid, rc, attempts + 1, delay)
         await asyncio.sleep(delay)
-        again = await self.start(rid, _attempts=attempts + 1)
+        again = await self._wiederanlauf(rid, sitz, _attempts=attempts + 1)
         if not again.get("ok"):
             log.warning(f"Restream #{rid} reconnect fehlgeschlagen: {again.get('error')}")
+
+    def _abbruch_diagnose(self, rid, info, tail):
+        """V37-DIAG2 / B138 / v4.1-W10: WELCHES Ziel den Abbruch verursacht hat.
+
+        v4.2-W179 aus _monitor herausgeloest, unveraendert — der Monitor
+        brauchte Platz fuer den Sitzungs-Riegel und stand an der 200er-Stufe."""
+        # V37-DIAG2: bei Multi-Target erkennen, WELCHES Ziel den Abbruch
+        # verursacht hat. rtmps-Handshake-Fehler (Kick/IVS) sehen anders aus
+        # als rtmp-Fehler (Twitch). Das beendet das Raten bei "nur ein Ziel".
+        _tl = tail.lower()
+        # B138: Diagnose NICHT mehr an _multistream_targets() haengen — bei
+        # genau einem Ziel (nur Kick) lief der Abbruch bisher kommentarlos
+        # durch. Und log.error statt log.warning: 'Input/output error' auf
+        # rtmps://…live-video.net ist die Meldung, die der Betreiber im
+        # error.log sucht; auf warning erschien sie dort nie.
+        if ("tls" in _tl or "ssl" in _tl or "handshake" in _tl
+                or "end of file" in _tl or "input/output error" in _tl
+                or "i/o error" in _tl):
+            # v4.1-W10: WELCHES Ziel steht wirklich im Auszug? Bis hierher
+            # nannte diese Zeile kategorisch Kick — auch wenn im stderr
+            # ausschliesslich der Twitch-Slave stand. Der Betreiber prueft
+            # danach Kick-Key, Kick-App und IP-Block bei Kick, waehrend Twitch
+            # das Problem ist. Eine Diagnose, die auf die falsche Plattform
+            # zeigt, ist schlimmer als gar keine. Verglichen wird auf den
+            # INGEST-HOST, nie auf den Plattformnamen: Kick und Twitch liegen
+            # beide auf live-video.net, und 'twitch' kommt in Twitchs eigener
+            # URL nicht vor.
+            _zl = ((info or {}).get("tee_targets") or _nc_rst.active_targets())
+            _betroffen = _nc_rutil.betroffene_ziele(tail, _zl)
+            _wen = ", ".join(_betroffen) if _betroffen else "unbekannt (kein Ziel-Host im Auszug)"
+            log.error("Restream #%d: Ingest nimmt die Verbindung nicht an — "
+                      "betroffen: %s. Reihenfolge: 1) welcher Key laeuft "
+                      "wirklich — Startzeile '%s-Ziel:' im Log, DB schlaegt "
+                      ".env; 2) laeuft derselbe Key schon woanders; "
+                      "3) IP-Block. stderr: %s",
+                      rid, _wen,
+                      (_betroffen[0].capitalize() if _betroffen else "Kick"),
+                      tail[-300:])
+        elif "rtmp" in _tl and ("refused" in _tl or "unable" in _tl
+                                or "failed" in _tl):
+            _zl = ((info or {}).get("tee_targets") or _nc_rst.active_targets())
+            _betroffen = _nc_rutil.betroffene_ziele(tail, _zl)
+            log.error("Restream #%d: rtmp-Ziel-Fehler — betroffen: %s. "
+                      "stderr: %s", rid,
+                      (", ".join(_betroffen) if _betroffen else "unbekannt"),
+                      tail[-300:])
+
+    def _monitor_eintragen(self, rid):
+        """v4.2-W179: den Monitor im eigenen Register fuehren, das stop() IMMER
+        erreicht — auch im Backoff, wenn der _procs-Eintrag schon weg ist.
+
+        Ein noch laufender alter Monitor wird beendet, ausser er ist es selbst,
+        der gerade start() ruft (dann endet er ohnehin nach dem Aufruf)."""
+        alt = self._monitors.get(rid)
+        if alt is not None and not alt.done() and alt is not asyncio.current_task():
+            alt.cancel()
+        t = asyncio.create_task(self._monitor(rid))
+        self._procs[rid]["monitor"] = self._monitors[rid] = t
+
+        def _fertig(task, rid=rid):
+            if self._monitors.get(rid) is task:
+                del self._monitors[rid]
+        t.add_done_callback(_fertig)
+
+    async def _soll_lesen(self, rid):
+        """v4.2-W179: will den Restream noch jemand? -> True/False, None = unbekannt.
+
+        Gelesen im Status-Schreiber, damit jedes vorher abgesetzte stop()
+        (desired=0, status=stopped) schon in der Tabelle steht — db_async
+        liefe in einem anderen Thread und koennte den alten Stand sehen."""
+        def _lesen():
+            with db_conn() as conn:
+                r = conn.execute("SELECT enabled, desired FROM restreams WHERE id=?",
+                                 (rid,)).fetchone()
+            return bool(r and r["enabled"] and r["desired"])
+        try:
+            return await asyncio.get_running_loop().run_in_executor(_RS_STATUS_EXEC, _lesen)
+        except Exception as e:
+            log.warning("Restream #%s: Soll-Zustand nicht lesbar (%s: %s) — der "
+                        "Wiederanlauf laeuft wie bisher.", rid, type(e).__name__, e)
+            return None
+
+    async def _wiederanlauf(self, rid, sitz, **kw):
+        """v4.2-W179: der EINE Weg, auf dem _monitor neu startet.
+
+        Bis hierher rief _monitor nach dem Backoff bedingungslos start(). Kam
+        in dieser Zeit ein stop() des Betreibers, fand es keinen Eintrag mehr
+        (der Monitor hatte ihn schon entfernt), kehrte zurueck — und der
+        Monitor stand danach mit desired=1 wieder auf, ueber jeden Neustart
+        hinweg. Jetzt: stop() zaehlt die Sitzung hoch, und hier wird vorher
+        UND nachher verglichen. `sitz` = (Sitzung beim Anlauf, Quellen-Waechter):
+        der Waechter wird durchgereicht, sonst fehlten nach dem ersten
+        Reconnect Quellen-Failover und das W159-Ausweichen."""
+        gen, src_watch = sitz if sitz else (self._sitzung.get(rid, 0), False)
+        if self._sitzung.get(rid, 0) != gen:
+            log.info("Restream #%s: inzwischen gestoppt — kein Wiederanlauf.", rid)
+            return {"ok": False, "error": "gestoppt"}
+        soll = await self._soll_lesen(rid)
+        if soll is False or self._sitzung.get(rid, 0) != gen:
+            log.info("Restream #%s: abgeschaltet oder gestoppt — kein Wiederanlauf.", rid)
+            self._set_status(rid, "stopped", pid=None)
+            return {"ok": False, "error": "gestoppt"}
+        kw.setdefault("_src_watch", src_watch)
+        self._im_wiederanlauf.add(rid)
+        try:
+            erg = await self.start(rid, **kw)
+        finally:
+            self._im_wiederanlauf.discard(rid)
+        if self._sitzung.get(rid, 0) != gen and erg.get("ok") and not erg.get("already"):
+            # stop() kam WAEHREND des Starts — der neue Sender wird wieder
+            # beendet; desired=0, wie der Betreiber es wollte (start() hatte
+            # am Ende desired=1 geschrieben).
+            log.warning("Restream #%s: waehrend des Wiederanlaufs gestoppt — der "
+                        "gerade gestartete Sender wird wieder beendet.", rid)
+            await self.stop(rid)
+            return {"ok": False, "error": "gestoppt"}
+        return erg
+
+    async def _nebenlaeufer_abraeumen(self, rid, info=None):
+        """v4.2-W179: alles, was neben dem Sender eines Laufs laeuft.
+
+        Stimme, HTML-Overlay (Schuss-Task, Dauer-Chromium — dessen Ende
+        wartet bis 5 s, deshalb im Thread), Avatar-Feeder und, mit `info`,
+        die unabhaengigen Relays. Aufgerufen vom Prozessende (_monitor), vom
+        Fehlstart (start) und vom Stop — vorher raeumte jeder Pfad nur einen
+        Teil ab."""
+        _restream_tts_stop(rid)
+        await asyncio.to_thread(_restream_html_overlay_stop, rid)
+        _restream_avatar_feeder_stop(rid)
+        if info is not None:
+            await self._relays_abraeumen(info)
+
+    async def _relays_abraeumen(self, info):
+        """V37-INDEP: Relay-Tasks canceln und ihre ffmpeg-Prozesse ernten.
+
+        v4.2-W179: auch vom Prozessende des Hauptsenders, nicht nur von stop().
+        Sonst liefen die Relays des toten Laufs weiter, und der Neuaufbau
+        startete daneben neue — zwei Publisher auf demselben Key."""
+        for _pn, _t in (info.get("indep_tasks") or {}).items():
+            if _t and not _t.done() and _t is not asyncio.current_task():
+                _t.cancel()
+        for _pn, _e in list((info.get("indep") or {}).items()):
+            _p = _e.get("proc")
+            if _p:
+                await _reap_proc(_p)   # v4.0-W75: terminate+wait → kein Zombie
 
     async def stop(self, rid, _keep_desired=False):
         """_keep_desired=True: interner Neustart durch den Guard — der
@@ -16444,11 +16646,21 @@ class RestreamManager:
             # diese Zeile ohne Bedingung hier und war die Quelle des Ping-Spams.
             # Die Zeitsperre an der Aufrufstelle greift trotzdem noch.
             _COMMUNITY_PINGED.pop(rid, None)
-        _restream_tts_stop(rid)
+        # v4.2-W179: Sitzung beenden und den Monitor aus SEINEM Register
+        # canceln — auch wenn kein _procs-Eintrag mehr da ist (Backoff). Steckt
+        # er gerade in start(), nicht mitten hinein canceln (der Sender waere
+        # gestartet und verwaist); _wiederanlauf sieht die neue Sitzung und
+        # beendet ihn selbst.
+        self._sitzung[rid] = self._sitzung.get(rid, 0) + 1
+        _mon = self._monitors.get(rid)
+        if (_mon is not None and not _mon.done() and rid not in self._im_wiederanlauf
+                and _mon is not asyncio.current_task()):
+            _mon.cancel()
         info = self._procs.pop(rid, None)
         if not info:
+            await self._nebenlaeufer_abraeumen(rid)
             return {"ok": True, "running": False}
-        if info.get("monitor"):
+        if info.get("monitor") and info["monitor"] is not asyncio.current_task():
             info["monitor"].cancel()
         _sw_stall = info.get("stallwatch")     # v4.0-W113
         if _sw_stall and not _sw_stall.done():
@@ -16459,19 +16671,17 @@ class RestreamManager:
         _sw = self._srcwatch.pop(rid, None)   # V37-SRCFAIL: Quellen-Watcher mit abräumen
         if _sw and not _sw.done():
             _sw.cancel()
-        _restream_html_overlay_stop(rid)      # V37-HTMLOV: Feeder + FIFO abräumen
-        _restream_avatar_feeder_stop(rid)     # v4.2-W34: Avatar-Feeder ebenso
-        # V37-INDEP: unabhängige Relay-Tasks + deren ffmpeg-Prozesse abräumen.
-        for _pn, _t in (info.get("indep_tasks") or {}).items():
-            if _t and not _t.done():
-                _t.cancel()
-        for _pn, _e in (info.get("indep") or {}).items():
-            _p = _e.get("proc")
-            if _p:
-                await _reap_proc(_p)   # v4.0-W75: terminate+wait → kein Zombie
-        await self._bruecke_abraeumen(rid, info)        # v4.2-W130
+        # Stimme, HTML-Overlay, Avatar-Feeder und die unabhaengigen Relays
+        # (indep_tasks) — W179: Chromium-Ende im Thread, nicht im Loop.
+        await self._nebenlaeufer_abraeumen(rid, info)
+        # v4.2-W179: ERST den Sender, DANN die Bruecke. Umgekehrt (bis W178)
+        # wartete der Bruecken-Abbau auf die Datensperre, die ein os.write in
+        # den nicht lesenden Sender haelt — stop() hing gemessen ueber 20 s,
+        # und der Sender kam nie an die Reihe. Ist der Sender weg, kehrt das
+        # write mit EPIPE zurueck. Dieselbe Reihenfolge wie in _monitor.
         proc = info["proc"]
         await _reap_proc(proc)         # v4.0-W75: SIGTERM→(SIGKILL)→wait, immer geerntet
+        await self._bruecke_abraeumen(rid, info)        # v4.2-W130
         log_event("restream.stop", "info", f"Restream #{rid} gestoppt", {"id": rid})
         return {"ok": True, "running": False}
 
