@@ -11,6 +11,45 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+### Lokales LLM: ik_llama.cpp mit Qwen3-14B-Uncensored (v5.1 W181)
+
+Gemeldet vom Betreiber: „Dann steigen wir um von llama.cpp auf ik_llama.cpp mit
+Qwen3-14B-Uncensored … Wenn llama.cpp vorhanden, erst deinstallieren, bevor
+ik_llama.cpp mit Qwen3-14B-Uncensored installiert wird."
+
+- **Ein Werkzeug statt einer Kopie im Installer:** `tools/ikllama.sh`
+  (`--check`, `--dry-run`, `--zustand`, `--neu-bauen`,
+  `--altes-modell-loeschen`). Reihenfolge: Vorprüfung (RAM, Platte,
+  Bauwerkzeuge, Modellangaben — scheitert sie, bleibt alles, wie es war) →
+  altes llama.cpp stoppen und entfernen (Dienste `llamacpp`/`llama-server`,
+  `/opt/llamacpp`, `/opt/llama.cpp`, `/usr/local/bin/llama-server`; alte GGUF
+  bleiben als Rückweg) → ik_llama.cpp bauen (`GGML_NATIVE=ON`, nur
+  `llama-server`, `nice`, halbe Kernzahl) → Modell laden mit Wiederaufnahme,
+  Größe und SHA-256 gegen die Hugging-Face-API → `llama-server.service` auf
+  demselben Port, `/health` abwarten, Chat-Probe. Ein zweiter Lauf tut nichts.
+- **Modell:** `mradermacher/Qwen3-14B-Uncensored-GGUF`,
+  `Qwen3-14B-Uncensored.Q4_K_M.gguf` (rund 9 GB), überschreibbar über
+  `LLM_MODELL_REPO`/`LLM_MODELL_DATEI`; heißt die Datei anders, wird die
+  gleiche Quantisierung genommen oder die Liste gezeigt.
+- **Unit:** `-t 4 -c 8192 -ngl 0 -rtr --jinja --no-warmup`, `Nice=10`,
+  `CPUWeight=50`, `MemoryMax` = Modell + 4 GB (der alte Deckel von 3 GB hätte
+  den 14B-Server beim Laden beendet). Kennung `# NIGHTCRAWLER-IK-LLAMA`
+  unterscheidet den eigenen Dienst vom alten gleichen Namens.
+- **Installer** fragt nur noch und ruft das Werkzeug (ab 12 GB RAM, nur mit
+  systemd); bei vorhandenem llama.cpp ist „umsteigen" die Vorgabe.
+  **`update.sh`** erkennt den Zustand, fragt im geführten Modus, nimmt den
+  Umstieg mit `--express` in den Plan und unbeaufsichtigt nur mit
+  `--ik-llama` (`--ik-llama-neu`: neu bauen).
+- **Qwen3 denkt nicht mehr laut:** `brain/llm.py` schickt
+  `enable_thinking=false` und `/no_think` (auf einer Kopie des Verlaufs) und
+  entfernt jeden `<think>`-Block; bleibt nur Denken übrig, geht die Anfrage an
+  die Cloud statt als leere Antwort an Telegram und TTS. Schalter
+  `BRAIN_LLM_DENKEN` (Vorgabe 0).
+- Deck und KI-Konfiguration nennen ik_llama.cpp und den geladenen Modellnamen
+  (`/v1/models` → Probe); der Selbsttest erkennt ein installiertes
+  ik_llama.cpp auch außerhalb des PATH (`nc.kiwahl.lokal_installiert`).
+- Drei Verträge (`_test_v51_w181_*`), 18 Mutationsproben.
+
 ## [5.0.0] — 2026-11-11 · „Gleichtakt"
 
 Hauptversion. Tiefengrund-Bughunt über alle Bereiche: fünf Analysen

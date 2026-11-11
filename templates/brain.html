@@ -634,7 +634,7 @@ async function loadLLM() {
     const _ms = (h.budget && h.budget.avg_ms) || h.avg_ms || null;
     pill($("#p-llm"),
          _lok.up ? "ok" : (_cloud.up ? "warn" : "bad"),
-         (_lok.up ? "LLAMA.CPP" : (_cloud.up ? "CLOUD (RESERVE)"
+         (_lok.up ? "IK_LLAMA.CPP" : (_cloud.up ? "CLOUD (RESERVE)"
                                              : "LLM OFFLINE"))
          + (_ms ? " · " + Math.round(_ms) + "ms" : ""));
   }
@@ -644,8 +644,8 @@ async function loadLLM() {
   const s = await api("/llm/stats");
   $("#llm-tbl tbody").innerHTML = `
     <tr><td>Backend-Kette</td><td class="num">${esc(h.backend_conf)}</td></tr>
-    <tr><td>llama.cpp</td><td class="${_lok.up ? "okc" : "err"}">
-      ${_lok.up ? "UP · " + _lok.ms + " ms"
+    <tr><td>ik_llama.cpp</td><td class="${_lok.up ? "okc" : "err"}">
+      ${_lok.up ? "UP · " + _lok.ms + " ms" + (_lok.modell ? " · " + esc(_lok.modell) : "")
                 : "DOWN (" + esc(_lok.error || "?") + ")"}</td></tr>
     <tr><td>${"Reserve in der Cloud"}</td><td class="${_cloud.up ? "okc" : "err"}">
       ${_cloud.up ? "UP" : (h.freeai ? "DOWN" : "nicht in der Kette")}</td></tr>

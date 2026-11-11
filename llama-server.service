@@ -1,30 +1,40 @@
-# V37-W-PLUS: systemd-Unit für llama.cpp (Brain-LLM-Backend Tier 4)
-# Install:  cp llama-server.service /etc/systemd/system/
-#           systemctl daemon-reload && systemctl enable --now llama-server
-# Modell:   siehe docs/SETUP_LLAMACPP.md (Qwen2.5-1.5B-Instruct Q4_K_M empfohlen)
+# NIGHTCRAWLER-IK-LLAMA — Vorlage; eingerichtet wird sie von tools/ikllama.sh (v5.1-W181).
+# Brain-LLM-Backend (Tier 4): ik_llama.cpp mit Qwen3-14B-Uncensored (Q4_K_M, rund 9 GB).
+#
+# Einrichten:  sudo bash tools/ikllama.sh   (entfernt ein altes llama.cpp ZUERST,
+#              baut ik_llama.cpp, laedt und prueft das Modell, schreibt diese
+#              Unit nach /etc/systemd/system/ und wartet auf /health)
+# Pruefen:     bash tools/ikllama.sh --check
+#
+# Die Zeile oben ist die Kennung, an der das Werkzeug den EIGENEN Dienst vom
+# alten llama.cpp unterscheidet — beide heissen llama-server.service. Wer diese
+# Datei von Hand kopiert, behaelt sie.
+#
+#   -t 4        4 der 8 Kerne — ffmpeg und Whisper brauchen den Rest; Nice=10
+#               und CPUWeight=50: Restreams haben immer Vorrang vor der KI.
+#   -c 8192     4096 reicht nicht fuer Verlauf + Frage + 1024-Token-Antwort (W110).
+#   -ngl 0      reiner CPU-Betrieb; die Vorgabe von ik_llama.cpp ist 999.
+#   -rtr        Gewichte beim Laden verschraenkt umpacken — schneller auf der CPU,
+#               legt das Modell dafuer ganz in den RAM (daher MemoryMax).
+#   --jinja     Chat-Vorlage aus dem Modell; nur damit wirkt enable_thinking=false,
+#               das brain/llm.py mitschickt (Qwen3 denkt sonst vor jeder Antwort).
+#   KEIN --embeddings: laut Server-Doku beschraenkt der Schalter den Server auf
+#               Embeddings; /health waere gruen, der Chat nicht (W110).
+#               Embeddings kommen von einem EIGENEN Server (BRAIN_EMBED_URL).
+#   Flash-Attention ist bei ik_llama.cpp ab Werk an (-fa), -fmoe betrifft nur
+#   MoE-Modelle — Qwen3-14B ist dicht. Beides steht deshalb nicht hier.
 [Unit]
-Description=llama.cpp Server (NIGHTCRAWLER Brain-LLM)
+Description=ik_llama.cpp Server (NIGHTCRAWLER Brain-LLM, Qwen3-14B-Uncensored.Q4_K_M)
 After=network.target
 
 [Service]
 Type=simple
-# -t 4: 4 der 8 Kerne — ffmpeg/Whisper brauchen den Rest. Nice=10: Restreams
-# haben immer Vorrang vor der KI.
-# v4.2-W110: -c 8192 statt 4096 (wie Installer und SETUP_LLAMACPP.md — 4096
-# reicht nicht fuer Verlauf + Frage + eine 1024-Token-Antwort), und KEIN
-# --embeddings mehr. Laut llama.cpp-Server-Doku beschraenkt der Schalter den
-# Server auf Embeddings; /v1/chat/completions antwortet dann mit einem Fehler,
-# waehrend /health gruen ist — der Bot haette jede Anfrage still in die Cloud
-# geschickt. Embeddings holt brain/semantic.py von einem EIGENEN Server
-# (BRAIN_EMBED_URL, Vorgabe Port 8089), hier wurden sie nie gebraucht.
-ExecStart=/opt/llama.cpp/llama-server \
-  -m /opt/models/qwen2.5-1.5b-instruct-q4_k_m.gguf \
-  --host 127.0.0.1 --port 8080 -t 4 -c 8192 --no-warmup
+ExecStart=/opt/ik_llama.cpp/build/bin/llama-server -m /opt/models/Qwen3-14B-Uncensored.Q4_K_M.gguf -a qwen3-14b-uncensored.q4_k_m --host 127.0.0.1 --port 8080 -t 4 -c 8192 -ngl 0 -rtr --jinja --no-warmup
 Nice=10
 CPUWeight=50
+MemoryMax=13G
 Restart=always
 RestartSec=5
-MemoryMax=3G
 
 [Install]
 WantedBy=multi-user.target

@@ -1,107 +1,144 @@
-# SETUP_LLAMACPP.md — M6: llama-server on ns3068954 (replacing Ollama)
+# SETUP_LLAMACPP.md — local LLM: ik_llama.cpp with Qwen3-14B-Uncensored
 
 > 🌐 **English** · [Deutsch](../SETUP_LLAMACPP.md)
 
-## 1. Get the binary (static, no build needed)
+Since v5.1-W181 the brain's local LLM (tier 4) runs on
+**[ik_llama.cpp](https://github.com/ikawrakow/ik_llama.cpp)** — a llama.cpp
+fork with faster CPU kernels — and the model **Qwen3-14B-Uncensored** (GGUF,
+Q4_K_M, about 9 GB). The file name `SETUP_LLAMACPP.md` stays because the
+self-check, the installer and older notes refer to it.
+
+## 1. Setup — one command
 
 ```bash
-mkdir -p /opt/llamacpp && cd /opt/llamacpp
-# Current release, Linux x64 (AVX2 — the OVH Xeon/EPYC can do that):
-curl -sL https://github.com/ggml-org/llama.cpp/releases/latest/download/llama-b*-bin-ubuntu-x64.zip -o llama.zip \
-  || echo "check the release asset names on github.com/ggml-org/llama.cpp/releases"
-unzip llama.zip && chmod +x build/bin/llama-server
+sudo bash tools/ikllama.sh            # guided
+bash tools/ikllama.sh --dry-run       # show what would run
+bash tools/ikllama.sh --check         # check only (exit 1 if something is missing)
 ```
 
-## 2. Model (GGUF, INT4) — recommendation for 8 cores / no GPU
+The installer (question "local LLM") and `bash tools/update.sh --ik-llama`
+call the same tool. In this order it:
 
-| Model | Size Q4_K_M | RAM | Suitability |
-|---|---|---|---|
-| Qwen2.5-0.5B-Instruct | ~0.4 GB | <1 GB | fastest answers, enough for explain/ask |
-| Qwen2.5-1.5B-Instruct | ~1.0 GB | ~2 GB | noticeably better German, recommended |
-| Llama-3.2-1B-Instruct | ~0.8 GB | ~1.5 GB | alternative |
+1. **Pre-checks** memory, disk, build tools and the model details on Hugging
+   Face. If anything fails here, **nothing** has changed; an existing llama.cpp
+   keeps running.
+2. **Removes the old llama.cpp** (operator's request: uninstall first): stops
+   and disables the `llamacpp` and `llama-server` services, removes the unit
+   files, `/opt/llamacpp`, `/opt/llama.cpp` and `/usr/local/bin/llama-server`.
+   **Old GGUF files are kept** — they also run under ik_llama.cpp and are the
+   way back if 14B is too large. Delete them with `--altes-modell-loeschen`.
+   A llama-server in any other place is only reported, never deleted.
+3. **Builds ik_llama.cpp** — `git clone` to `/opt/ik_llama.cpp`, then
+   `cmake -DCMAKE_BUILD_TYPE=Release -DGGML_NATIVE=ON` and
+   `cmake --build … --target llama-server` with `nice -n 15` and half the
+   cores (10–20 minutes; the box keeps recording meanwhile).
+4. **Downloads the model** to `/opt/models/`, resuming after an interruption
+   (`.teil`), checking size and SHA-256 against the Hugging Face API and the
+   GGUF magic. Only then the marker `….gguf.sha256` is written.
+5. **Writes the service** `llama-server.service`, starts it, waits for
+   `/health` (503 = model loading, a few minutes with `-rtr`) and sends one
+   chat probe.
 
-```bash
-cd /opt/llamacpp
-curl -sL -o model.gguf \
-  "https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/main/qwen2.5-1.5b-instruct-q4_k_m.gguf"
-```
+A second run on a finished setup does nothing. Rebuild:
+`sudo bash tools/ikllama.sh --neu-bauen`.
 
-## 3. systemd unit
+## 2. Model and values
+
+| Variable (environment or `.env`) | Default | Purpose |
+|---|---|---|
+| `LLM_MODELL_REPO` | `mradermacher/Qwen3-14B-Uncensored-GGUF` | Hugging Face repo (static quants of `nicoboss/Qwen3-14B-Uncensored`) |
+| `LLM_MODELL_DATEI` | `Qwen3-14B-Uncensored.Q4_K_M.gguf` | about 9 GB |
+| `LLM_MODELL_QUANT` | `Q4_K_M` | fallback if the file is named differently — exactly one match is taken |
+| `LLM_MODELL_SHA256` | empty | empty = from Hugging Face; set = checked against this value |
+| `LLM_MODELL_VERZ` | `/opt/models` | |
+| `LLM_THREADS` | `4` | recordings have priority |
+| `LLM_KONTEXT` | `8192` | |
+| `IK_LLAMA_DIR` / `IK_LLAMA_REF` | `/opt/ik_llama.cpp` / `main` | |
+| `BRAIN_LLAMACPP_URL` | `http://127.0.0.1:8080` | the port comes from here — same as before |
+
+Smaller quantisations of the same model if memory is short: `Q3_K_M` (about
+7 GB), `Q2_K` (about 6 GB) — set `LLM_MODELL_DATEI` accordingly. The old
+Qwen2.5-1.5B (about 1 GB) runs as well.
+
+## 3. The unit — what the switches do
 
 ```ini
-# /etc/systemd/system/llamacpp.service
-[Unit]
-Description=llama.cpp Server (NIGHTCRAWLER Brain Tier 4)
-After=network.target
-
-[Service]
-ExecStart=/opt/llamacpp/build/bin/llama-server \
-  -m /opt/llamacpp/model.gguf \
-  --host 127.0.0.1 --port 8080 \
-  -t 4 -c 8192 --no-warmup
-# -t 4: ONLY 4 of the 8 cores — ffmpeg recordings take precedence.
-# -c 8192: V37-LLMBUDGET raised to 8192 (was 4096). 4096 was too small as soon
-#   as chat history + question + a 1024-token answer came together — the server
-#   then truncated or refused. 8192 gives room. RAM cost: the KV cache grows
-#   roughly linearly with the context, so about twice as much as at 4096.
-#   IMPORTANT TRADE-OFF (no GPU, 8 cores, ffmpeg has priority):
-#     - RAM barely sufficient? Then stay at -c 6144.
-#     - Recordings stutter under AI load? Then do NOT raise -t to 6 —
-#       the 4-core limit protects the recordings on purpose.
-#     - Answers still too short? Raise BRAIN_LLM_MAX_TOKENS in the .env,
-#       but together with -c (the context has to hold prompt + answer).
-Restart=always
-RestartSec=5
+ExecStart=/opt/ik_llama.cpp/build/bin/llama-server \
+  -m /opt/models/Qwen3-14B-Uncensored.Q4_K_M.gguf -a qwen3-14b-uncensored.q4_k_m \
+  --host 127.0.0.1 --port 8080 -t 4 -c 8192 -ngl 0 -rtr --jinja --no-warmup
 Nice=10
 CPUWeight=50
-
-[Install]
-WantedBy=multi-user.target
+MemoryMax=13G        # model size + 4 GB, computed by the tool
 ```
 
-```bash
-systemctl daemon-reload && systemctl enable --now llamacpp
-curl -s localhost:8080/health
-```
+| Switch | Why |
+|---|---|
+| `-t 4` | 4 of 8 cores — ffmpeg recordings and restreams have priority |
+| `-c 8192` | 4096 was too small for history + question + a 1024-token answer |
+| `-ngl 0` | CPU only; the ik_llama.cpp default is 999 |
+| `-rtr` | repack weights to the interleaved form while loading ("may improve performance"); keeps the whole model in RAM, hence `MemoryMax` |
+| `--jinja` | chat template from the model — only then `enable_thinking=false` works |
+| `-a` | name `/v1/models` reports (deck, self-check) |
+| no `-fa` | flash attention is on by default in ik_llama.cpp |
+| no `-fmoe` | only affects MoE models; Qwen3-14B is dense |
 
-## 4. What the bot expects from the server
+**TRADE-OFF** (no GPU, 8 cores, ffmpeg has priority):
+
+- 14B on the CPU is **slow** — roughly a few tokens per second. The hourly
+  budget (`BRAIN_LLM_MAX_CALLS_H`) and the timeout (`BRAIN_LLM_TIMEOUT_S=300`)
+  therefore stay as they are.
+- Memory tight? A smaller quantisation (see above) or `-c 6144` via
+  `LLM_KONTEXT`.
+- Recordings stutter under AI load? Do **not** raise to `-t 6` — the 4-core
+  limit protects the recordings on purpose.
+
+**Do not start with `--embeddings`.** It restricts the server to embeddings —
+`/health` would be green, chat would not. Embeddings for the brain come from a
+separate server (`BRAIN_EMBED_URL`, default port 8089).
+
+## 4. Qwen3 thinks — and the bot does not let it
+
+Qwen3 first writes a `<think>…</think>` block, then the answer. On the CPU that
+costs hundreds of tokens before the first word, and with `max_tokens` 1024
+often nothing was left for the answer. So `brain/llm.py` sends (default
+`BRAIN_LLM_DENKEN=0`):
+
+- `chat_template_kwargs: {"enable_thinking": false}` — works with `--jinja`,
+- `/no_think` on the last user message — Qwen3's own switch, works without the
+  template too,
+
+and strips **every** thinking block from the answer (`ohne_denkblock`). If
+nothing is left (thinking cut off by `max_tokens`), that is an error for the
+chain, not an empty success — the request goes to the cloud.
+
+## 5. What the bot expects from the server
 
 | Expectation | Why |
 |---|---|
-| `--host 127.0.0.1 --port 8080` (or set `BRAIN_LLAMACPP_URL`) | local only — the server has no authentication |
-| `GET /health` returns 200 | this decides "local or cloud" (15 s cache, 3 s timeout) |
+| `--host 127.0.0.1 --port 8080` (or matching `BRAIN_LLAMACPP_URL`) | local only — the server has no login |
+| `GET /health` answers 200 | the bot decides "local or cloud" on it (15 s cache, 3 s timeout) |
 | `POST /v1/chat/completions` (OpenAI-compatible) | the actual chat |
-| `GET /v1/models` | model list in the dashboard and the self-check |
-| `-t 4`, `Nice=10`, `CPUWeight=50` | broadcast and recordings come first |
+| `GET /v1/models` | model name in the deck and the self-check |
+| `-t 4`, `Nice=10`, `CPUWeight=50` | output picture and recordings have priority |
 
-**Do not start it with `--embeddings`.** According to the llama.cpp server docs
-that switch restricts the server to embeddings — `/health` stays green, chat
-fails, and every request would go to the cloud. The bundled
-`llama-server.service` had it until v4.2-W110. Brain embeddings come from a
-separate server (`BRAIN_EMBED_URL`, default port 8089).
-
-## 5. NIGHTCRAWLER (.env) — nothing needed since v4.2-W110
-
-Since v4.2-W110 the local llama.cpp is **preferred automatically** as soon as
-`/health` answers. Before, the bot only asked it with `AI_PROVIDER=brain`.
+Check:
 
 ```bash
-# all defaults — only set what you want to change
-AI_PROVIDER=auto                # auto = local if reachable | lokal = always first | cloud = never local
-REACTION_AI_PROVIDER=auto       # same rule for AZRAEL's live reactions
-BRAIN_LLM_BACKEND=auto          # in brain/: llama.cpp first, keyless cloud as reserve
-BRAIN_LLAMACPP_URL=http://127.0.0.1:8080
-BRAIN_LLM_MAX_CALLS_H=30
-BRAIN_LLM_TIMEOUT_S=300
+bash tools/ikllama.sh --check
+systemctl status llama-server
+curl -s localhost:8080/health
+python3 bot.py --selfcheck
 ```
 
-Order of every request: **Claude** (only with an Anthropic key) → **local
-llama.cpp** → **keyless cloud**. Images (vision) still go to the cloud.
+## 6. NIGHTCRAWLER (.env) — nothing needed
 
-## 6. Ollama is gone
+The local LLM is **preferred automatically** as soon as `/health` answers
+(since v4.2-W110). No bot restart needed. `BRAIN_LLM_DENKEN=0` (default) keeps
+Qwen3's thinking mode off. Order of every request: **Claude** (only with an
+Anthropic key) → **local ik_llama.cpp** → **keyless cloud** (`nc/freeai`).
+**Images (vision) still go to the cloud.**
 
-```bash
-systemctl disable --now ollama
-```
+## 7. Ollama is gone
 
-`OLLAMA_URL`, `OLLAMA_MODEL` and friends are no longer read.
+Since V37 the bot no longer speaks Ollama. If the service still runs:
+`systemctl disable --now ollama`.

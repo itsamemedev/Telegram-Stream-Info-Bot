@@ -34052,6 +34052,445 @@ def _test_v42_w175_kleinbefunde():
        "Fehlschlag und kuerzt vor dem Escapen, Forum-Fehler gilt 60 s und ist laut")
 
 
+def _w181_attrappen(heim):
+    """Attrappen fuer tools/ikllama.sh: systemctl, curl, git, cmake mit Zustand.
+
+    Jede schreibt in EIN gemeinsames Protokoll — nur so laesst sich die
+    Reihenfolge pruefen (erst deinstallieren, dann bauen)."""
+    import os as _os
+    fake = _os.path.join(heim, "bin")
+    _os.makedirs(fake)
+    log = _os.path.join(heim, "ablauf.log")
+    dateien = {
+        "systemctl": (
+            '#!/bin/sh\n'
+            'echo "systemctl $*" >> "%(log)s"\n'
+            'eval "u=\\${$#}"\n'
+            'case "$1" in\n'
+            '  enable) [ "$2" = "--now" ] && touch "%(h)s/aktiv.$u"; exit 0;;\n'
+            '  restart|start) touch "%(h)s/aktiv.$u"; exit 0;;\n'
+            '  disable) rm -f "%(h)s/aktiv.$u"; exit 0;;\n'
+            '  is-active) [ -f "%(h)s/aktiv.$u" ]; exit $?;;\n'
+            '  is-failed) exit 1;;\n'
+            'esac\nexit 0\n'),
+        "curl": (
+            '#!/bin/sh\n'
+            'echo "curl $*" >> "%(log)s"\n'
+            'case "$*" in\n'
+            '  *api/models*) cat "%(h)s/api.json"; exit 0;;\n'
+            '  */health*) if [ -f "%(h)s/aktiv.llama-server.service" ] || [ -f "%(h)s/aktiv.llamacpp.service" ];'
+            ' then case "$*" in *%%*) printf 200;; esac; exit 0; else exit 7; fi;;\n'
+            '  *chat/completions*) printf \'{"choices":[{"message":{"content":"ok"}}]}\'; exit 0;;\n'
+            '  *resolve/main*) o=""; while [ $# -gt 0 ]; do [ "$1" = "-o" ] && o="$2"; shift; done;'
+            ' cat "%(h)s/inhalt" > "$o"; exit 0;;\n'
+            'esac\nexit 0\n'),
+        "git": (
+            '#!/bin/sh\n'
+            'echo "git $*" >> "%(log)s"\n'
+            'case "$1" in clone) eval "d=\\${$#}"; mkdir -p "$d/.git";;'
+            ' -C) [ "$3" = rev-parse ] && echo abc1234;; esac\nexit 0\n'),
+        "cmake": (
+            '#!/bin/sh\n'
+            'echo "cmake $*" >> "%(log)s"\n'
+            'case "$*" in *--build*) d="$2"; mkdir -p "$d/bin";'
+            ' printf "#!/bin/sh\\n" > "$d/bin/llama-server"; chmod +x "$d/bin/llama-server";; esac\nexit 0\n'),
+        "make": "#!/bin/sh\nexit 0\n",
+        "c++": "#!/bin/sh\nexit 0\n",
+    }
+    for name, text in dateien.items():
+        with open(_os.path.join(fake, name), "w") as f:
+            f.write(text % {"log": log, "h": heim} if "%(" in text else text)
+        _os.chmod(_os.path.join(fake, name), 0o755)
+    return fake, log
+
+
+def _w181_alter_bestand(w, heim):
+    """Ein Server mit dem, was die bisherigen Wege angelegt haben."""
+    import os as _os
+    for d in ("etc/systemd/system", "opt/llamacpp/build/bin", "usr/local/bin", "opt/models", "root/eigen"):
+        _os.makedirs(_os.path.join(w, d), exist_ok=True)
+    for f in ("opt/llamacpp/build/bin/llama-server", "usr/local/bin/llama-server",
+              "root/eigen/llama-server"):
+        with open(_os.path.join(w, f), "w") as h:
+            h.write("#!/bin/sh\n")
+    with open(_os.path.join(w, "opt/llamacpp/model.gguf"), "wb") as h:
+        h.write(b"GGUFalt")
+    with open(_os.path.join(w, "opt/models/qwen2.5-1.5b-instruct-q4_k_m.gguf"), "wb") as h:
+        h.write(b"GGUFalt2")
+    # Der Installer bis v5.0: Dienst llamacpp.
+    with open(_os.path.join(w, "etc/systemd/system/llamacpp.service"), "w") as h:
+        h.write("[Service]\n# -m /opt/kommentar/nicht.gguf ist kein Modell\n"
+                "ExecStart=/opt/llamacpp/build/bin/llama-server -m /opt/llamacpp/model.gguf "
+                "--host 127.0.0.1 --port 8080 -t 4\n")
+    # Die mitgelieferte Unit bis v5.0, von Hand kopiert — gleicher NAME wie
+    # der neue Dienst, aber ohne Kennung, und mit einem Programm an einem Ort,
+    # den das Werkzeug nicht kennt.
+    with open(_os.path.join(w, "etc/systemd/system/llama-server.service"), "w") as h:
+        h.write("[Service]\nExecStart=/root/eigen/llama-server \\\n"
+                "  -m /opt/models/qwen2.5-1.5b-instruct-q4_k_m.gguf \\\n  --port 8080\n")
+    open(_os.path.join(heim, "aktiv.llamacpp.service"), "w").close()
+
+
+def _test_v51_w181_ikllama_umstieg():
+    """v5.1-W181: der Betreiber am 11.11. — „Dann steigen wir um von llama.cpp
+    auf ik_llama.cpp mit Qwen3-14B-Uncensored ... Wenn llama.cpp vorhanden,
+    erst deinstallieren, bevor ik_llama.cpp mit Qwen3-14B-Uncensored
+    installiert wird."
+
+    Gemessen wird das Werkzeug, nicht sein Text: es laeuft gegen eine
+    Attrappen-Wurzel mit dem alten Bestand, und das gemeinsame Protokoll von
+    systemctl, git, cmake und curl zeigt die Reihenfolge."""
+    import hashlib as _hl
+    import json as _json
+    import os as _os
+    import subprocess as _sp
+    import pruefhilfen as P
+
+    heim = P.verzeichnis("nc-w181-")
+    w = _os.path.join(heim, "w")
+    ziel = _os.path.join(heim, "bot")
+    _os.makedirs(ziel)
+    fake, log = _w181_attrappen(heim)
+    _w181_alter_bestand(w, heim)
+    inhalt = b"GGUF" + b"\0" * 60
+    with open(_os.path.join(heim, "inhalt"), "wb") as f:
+        f.write(inhalt)
+    datei = "Qwen3-14B-Uncensored.Q4_K_M.gguf"
+
+    def api(sha=None, groesse=None, name=datei):
+        with open(_os.path.join(heim, "api.json"), "w") as f:
+            _json.dump([{"type": "file", "path": name, "size": 99,
+                         "lfs": {"oid": sha or _hl.sha256(inhalt).hexdigest(),
+                                 "size": groesse or len(inhalt)}},
+                        {"type": "file", "path": "README.md", "size": 3}], f)
+    api()
+    umg = dict(_os.environ, PATH=fake + ":" + _os.environ["PATH"], NC_IK_WURZEL=w,
+               NC_IK_SUDO="", NC_INIT="systemd", NC_PKG="apt", NC_IK_RAM_MB="32000",
+               NC_IK_WARTEN="5", NC_LANG="de")
+    for k in ("LLM_MODELL_REPO", "LLM_MODELL_DATEI", "LLM_MODELL_SHA256", "BRAIN_LLAMACPP_URL",
+              "LLM_THREADS", "LLM_KONTEXT", "IK_LLAMA_DIR", "LLM_MODELL_VERZ"):
+        umg.pop(k, None)
+
+    def lauf(*args, **extra):
+        return _sp.run(["bash", "tools/ikllama.sh", "--dir", ziel, "--no-color", *args],
+                       capture_output=True, text=True, env=dict(umg, **extra), timeout=120)
+
+    def protokoll():
+        return open(log).read() if _os.path.exists(log) else ""
+
+    def baum():
+        raus = set()
+        for r, ds, fs in _os.walk(w):
+            for x in ds + fs:
+                raus.add(_os.path.relpath(_os.path.join(r, x), w))
+        return raus
+    unit = _os.path.join(w, "etc/systemd/system/llama-server.service")
+    try:
+        # ── (1) Ungueltiges bricht ab, bevor irgendetwas angefasst wird.
+        vorher = baum()
+        for extra in ({"LLM_MODELL_REPO": "a/b/c"}, {"LLM_MODELL_REPO": "kein-repo"},
+                      {"LLM_MODELL_DATEI": "modell.bin"}, {"LLM_MODELL_DATEI": "../x.gguf"},
+                      {"BRAIN_LLAMACPP_URL": "http://10.0.0.5:8080"}, {"LLM_THREADS": "vier"},
+                      {"IK_LLAMA_DIR": "relativ/pfad"}, {"LLM_MODELL_SHA256": "abc"}):
+            r = lauf("--unattended", **extra)
+            assert r.returncode == 2, (extra, r.returncode, r.stdout + r.stderr)
+        assert baum() == vorher and protokoll() == "", "ein Aufruffehler hat etwas veraendert"
+
+        # ── (2) Die Erkennung: beide alten Dienste, auch der gleichnamige ohne
+        # Kennung; ein Programm an fremdem Ort wird GENANNT, nicht geloescht.
+        r = lauf("--zustand")
+        assert r.returncode == 0 and r.stdout.strip() == "alt", r.stdout + r.stderr
+        r = lauf("--check")
+        assert r.returncode == 1 and "Umstieg steht aus" in r.stdout, r.stdout
+        assert "/root/eigen/llama-server" in r.stdout and "nicht angefasst" in r.stdout, r.stdout
+        assert "/opt/kommentar/nicht.gguf" not in r.stdout, "ein Kommentar in der Unit galt als Modell"
+
+        # ── (3) Zu wenig RAM: Abbruch VOR dem Deinstallieren. Ein Umstieg, der
+        # das Alte abbaut und dann scheitert, liesse den Bot ohne lokales LLM.
+        r = lauf("--unattended", NC_IK_RAM_MB="1000")
+        assert r.returncode == 1 and "Zu wenig Arbeitsspeicher" in r.stderr, r.stdout + r.stderr
+        assert baum() == vorher, "nach gescheiterter Vorpruefung fehlt etwas vom alten Bestand"
+        assert "systemctl" not in protokoll() and "git" not in protokoll(), protokoll()
+
+        # ── (4) Trockenlauf: zeigt, aendert nichts.
+        r = lauf("--unattended", "--dry-run")
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert "systemctl disable --now llamacpp.service" in r.stdout, r.stdout
+        assert baum() == vorher and "disable" not in protokoll(), "Trockenlauf hat veraendert"
+        _os.remove(log)
+
+        # ── (5) Der echte Lauf.
+        r = lauf("--unattended")
+        assert r.returncode == 0, r.stdout + r.stderr
+        p = protokoll().splitlines()
+        zeile = lambda praefix: next(i for i, z in enumerate(p) if z.startswith(praefix))  # noqa: E731
+        assert zeile("systemctl disable --now llamacpp.service") < zeile("git clone"), p
+        assert zeile("systemctl disable --now llama-server.service") < zeile("git clone"), p
+        assert zeile("git clone") < zeile("cmake -S") < zeile("cmake --build"), p
+        assert zeile("cmake --build") < zeile("curl -fL -C -") < zeile("systemctl restart llama-server"), p
+        bau = [z for z in p if z.startswith("cmake")]
+        assert "-DGGML_NATIVE=ON" in bau[0] and "-DCMAKE_BUILD_TYPE=Release" in bau[0], bau
+        assert "--target llama-server" in bau[1] and "--config Release" in bau[1], bau
+        nach = baum()
+        assert not _os.path.exists(_os.path.join(w, "etc/systemd/system/llamacpp.service"))
+        assert not _os.path.exists(_os.path.join(w, "opt/llamacpp/build"))
+        assert not _os.path.exists(_os.path.join(w, "usr/local/bin/llama-server"))
+        # Die alten Modelle bleiben (Rueckweg), das fremde Programm auch.
+        assert {"opt/llamacpp/model.gguf", "opt/models/qwen2.5-1.5b-instruct-q4_k_m.gguf",
+                "root/eigen/llama-server"} <= nach, nach
+        modell = _os.path.join(w, "opt/models", datei)
+        assert open(modell, "rb").read() == inhalt and not _os.path.exists(modell + ".teil")
+        assert open(modell + ".sha256").read().split()[0] == _hl.sha256(inhalt).hexdigest()
+        text = open(unit).read()
+        assert text.startswith("# NIGHTCRAWLER-IK-LLAMA"), "ohne Kennung haelt der naechste Lauf die eigene Unit fuer alt"
+        befehl = [z for z in text.splitlines() if z.startswith("ExecStart=")]
+        assert len(befehl) == 1, befehl
+        teile = befehl[0][len("ExecStart="):].split()
+        assert teile[0] == "/opt/ik_llama.cpp/build/bin/llama-server", "Pfad in der Unit traegt die Testwurzel"
+        flags = " ".join(teile[1:])
+        for soll in ("-m /opt/models/" + datei, "--host 127.0.0.1", "--port 8080", "-t 4",
+                     "-c 8192", "-ngl 0", "-rtr", "--jinja", "--no-warmup"):
+            assert (" " + soll + " ") in (" " + flags + " "), (soll, flags)
+        assert "--embedding" not in flags, "W110: --embeddings macht den Chat tot"
+        assert "MemoryMax=5G" in text, "Speicherdeckel folgt nicht der Modellgroesse"
+        assert "Nice=10" in text and "CPUWeight=50" in text
+        assert "Chat-Probe beantwortet" in r.stdout, r.stdout
+
+        # Die mitgelieferte Vorlage traegt dieselben Schalter wie das Werkzeug.
+        vorlage = [z for z in open("llama-server.service", encoding="utf-8").read().splitlines()
+                   if z.startswith("ExecStart=")]
+        assert len(vorlage) == 1 and vorlage[0] == befehl[0], (vorlage, befehl)
+
+        # ── (6) Zweiter Lauf: erkennt fertig, baut nicht, laedt nicht, startet nicht neu.
+        _os.remove(log)
+        r = lauf("--zustand")
+        assert r.stdout.strip() == "fertig", r.stdout + r.stderr
+        r = lauf("--unattended")
+        assert r.returncode == 0 and "nichts zu tun" in r.stdout, r.stdout + r.stderr
+        p = protokoll()
+        for verboten in ("git clone", "cmake", "curl -fL", "systemctl restart", "systemctl disable"):
+            assert verboten not in p, (verboten, p)
+        r = lauf("--check")
+        assert r.returncode == 0, r.stdout
+
+        # ── (7) --neu-bauen holt die Quellen und baut, laedt aber nicht neu.
+        _os.remove(log)
+        r = lauf("--unattended", "--neu-bauen")
+        assert r.returncode == 0, r.stdout + r.stderr
+        p = protokoll()
+        assert "fetch --depth 1 origin main" in p and "cmake --build" in p, p
+        assert "curl -fL" not in p, "ein Neubau hat das Modell neu geladen"
+
+        # ── (8) Pruefsumme falsch: Datei weg, kein Pruefvermerk, Exit 1.
+        _os.remove(modell)
+        _os.remove(modell + ".sha256")
+        api(sha="0" * 64)
+        r = lauf("--unattended")
+        assert r.returncode == 1 and "SHA-256 stimmt nicht" in r.stderr, r.stdout + r.stderr
+        assert not _os.path.exists(modell) and not _os.path.exists(modell + ".teil")
+        assert not _os.path.exists(modell + ".sha256"), "Pruefvermerk ohne bestandene Pruefung"
+
+        # ── (9) Abbruch mitten im Download: der naechste Lauf setzt fort.
+        api()
+        with open(modell + ".teil", "wb") as f:
+            f.write(inhalt[:10])
+        r = lauf("--check")
+        assert "Teil-Download liegt vor" in r.stdout and r.returncode == 1, r.stdout
+        _os.remove(log)
+        r = lauf("--unattended")
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert "-C -" in [z for z in protokoll().splitlines() if "resolve/main" in z][0]
+        # Vollstaendig geladen, aber nie geprueft: pruefen, nicht neu laden.
+        _os.remove(modell + ".sha256")
+        _os.rename(modell, modell + ".teil")
+        _os.remove(log)
+        r = lauf("--unattended")
+        assert r.returncode == 0 and "resolve/main" not in protokoll(), protokoll()
+        assert _os.path.exists(modell + ".sha256")
+
+        # ── (10) Ein Dateiname, den es im Repo nicht gibt: dieselbe
+        # Quantisierung wird genommen — oder es wird abgebrochen und gelistet.
+        api(name="Qwen3-14B-Uncensored.i1-Q4_K_M.gguf")
+        r = lauf("--unattended", "--dry-run", LLM_MODELL_DATEI="Qwen3-14B-Uncensored.Q4_K_M.gguf",
+                 LLM_MODELL_VERZ="/opt/anders")
+        assert r.returncode == 0 and "nehme Qwen3-14B-Uncensored.i1-Q4_K_M.gguf" in r.stdout, r.stdout
+        r = lauf("--unattended", "--dry-run", LLM_MODELL_QUANT="Q8_0", LLM_MODELL_VERZ="/opt/anders")
+        assert r.returncode == 1 and "Vorhanden sind" in r.stdout + r.stderr, r.stdout + r.stderr
+
+        # ── (11) Hugging Face antwortet unlesbar: die Warnung ist SICHTBAR (die
+        # Abfrage laeuft in $(…) — auf stdout waere sie als Dateiliste
+        # verschluckt worden), und geprueft wird, was ohne Angaben geht.
+        _os.remove(_os.path.join(heim, "api.json"))
+        r = lauf("--unattended", LLM_MODELL_VERZ="/opt/ohne-api")
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert "Hugging Face nicht lesbar" in r.stderr, r.stderr
+        assert "Keine Pruefsumme von Hugging Face" in r.stdout, r.stdout
+        assert _os.path.exists(_os.path.join(w, "opt/ohne-api", datei + ".sha256"))
+    finally:
+        P.aufraeumen()
+    ok("W181: ikllama.sh — Vorpruefung vor dem Abbau, altes llama.cpp zuerst weg (Modelle "
+       "bleiben), Bau/Modell/Unit, Pruefsumme, Wiederaufnahme, zweiter Lauf ruhig")
+
+
+def _test_v51_w181_aufrufer_und_selbsttest():
+    """Installer und update.sh rufen DASSELBE Werkzeug — keine eigene Kopie
+    mehr (W100). Gemessen an Code-Zeilen, nicht am Dateitext: ein Kommentar,
+    der den alten Weg erklaert, ist kein Befund (W102–W104)."""
+    import os as _os
+    import pruefhilfen as P
+    from nc import kiwahl as K
+
+    def code(pfad):
+        raus = []
+        for z in open(pfad, encoding="utf-8").read().splitlines():
+            s = z.strip()
+            if s and not s.startswith("#"):
+                raus.append(s)
+        return raus
+    inst, upd = code("tools/installer.sh"), code("tools/update.sh")
+    assert any(z.startswith('if bash "$ZIEL/tools/ikllama.sh"') for z in inst), "Installer ruft ikllama.sh nicht"
+    assert any(z.startswith('local _ik="${QUELLE:-$ZIEL}/tools/ikllama.sh"') for z in inst)
+    assert any('bash "$_ik"' in z and "--zustand" in z for z in inst), "Installer erkennt das alte llama.cpp nicht"
+    for alt in ("ggml-org/llama.cpp/releases", "llamacpp.service", "Qwen2.5-1.5B"):
+        assert not any(alt in z for z in inst), ("eigene Kopie der alten Einrichtung im Installer", alt)
+    assert any(z.startswith('bash "$SKRIPT/ikllama.sh" "${_w[@]}"') for z in upd), "update.sh ruft ikllama.sh nicht"
+    assert any(z.startswith('IK_ZUSTAND="$(bash "$SKRIPT/ikllama.sh"') for z in upd)
+    assert any(z.startswith("--ik-llama)") for z in upd), "update.sh kennt --ik-llama nicht"
+    # Unbeaufsichtigt ohne Schalter: kein Umstieg (ein Zeitplan laedt nie still 9 GB).
+    k = next(n for n, z in enumerate(upd) if z.startswith('IK_ZUSTAND="$('))
+    i = next(n for n, z in enumerate(upd) if n > k and z.startswith("alt)"))
+    # Bis zum naechsten Zweig, nicht eine geratene Zeilenzahl (W66).
+    zweig = upd[i:next(n for n, z in enumerate(upd) if n > i and z.startswith("teilweise)"))]
+    assert any(z.startswith('if [ "$W_IKLLAMA" != 0 ]; then Z_IK=1') for z in zweig), zweig
+    assert not any(z.startswith('elif [ "$NC_MODUS" = "unattended" ]') for z in zweig), zweig
+    # i18n_tools sammelt das neue Werkzeug ein — sonst bliebe es im englischen
+    # Lauf deutsch, waehrend die Abdeckung 100 % meldet.
+    import sys as _sys
+    _sys.path.insert(0, "tools")
+    try:
+        import i18n_tools as _it
+        assert "tools/ikllama.sh" in _it.shell_quellen()
+    finally:
+        _sys.path.remove("tools")
+
+    # Selbsttest: ik_llama.cpp liegt nicht im PATH.
+    heim = P.verzeichnis("nc-w181k-")
+    try:
+        assert K.lokal_installiert(heim) is False
+        _os.makedirs(_os.path.join(heim, "opt/ik_llama.cpp/build/bin"))
+        open(_os.path.join(heim, "opt/ik_llama.cpp/build/bin/llama-server"), "w").close()
+        assert K.lokal_installiert(heim) is True
+        _os.remove(_os.path.join(heim, "opt/ik_llama.cpp/build/bin/llama-server"))
+        _os.makedirs(_os.path.join(heim, "etc/systemd/system"))
+        open(_os.path.join(heim, "etc/systemd/system/llama-server.service"), "w").close()
+        assert K.lokal_installiert(heim) is True
+    finally:
+        P.aufraeumen()
+    src = open("bot.py", encoding="utf-8").read()
+    i = src.index("# 8a) Lokales LLM")
+    block = "\n".join(z for z in src[i:src.index("# 8) Reaction-AI", i)].splitlines()
+                      if not z.strip().startswith("#"))
+    assert "_nc_kiwahl.lokal_installiert()" in block and 'shutil.which("llama-server")' not in block
+    ok("W181: Installer und update.sh rufen ikllama.sh, kein Umstieg unbeaufsichtigt ohne "
+       "Schalter, Selbsttest kennt ik_llama.cpp ausserhalb des PATH")
+
+
+def _test_v51_w181_qwen3_denkt_nicht():
+    """Qwen3 schreibt ab Werk erst <think>…</think>, dann die Antwort. Ohne
+    Riegel landete der Denkblock in Telegram, im Overlay und in der
+    Sprachausgabe — und bei max_tokens 1024 oft nur er."""
+    import json as _json
+    import os as _os
+    import threading as _th
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+    from brain import llm as L
+
+    # ── (1) Die Entfernung, alle drei Formen.
+    for roh, soll in (("<think>\nueberlege\n</think>\n\nHallo Welt", "Hallo Welt"),
+                      ("<THINK>a</THINK>Antwort", "Antwort"),
+                      ("vorne gedacht</think> Antwort", "Antwort"),
+                      ("<think>a</think><think>b</think> zwei", "zwei"),
+                      ("<think>abgerissen mitten im", ""),
+                      ("Ohne Denken.", "Ohne Denken."),
+                      (None, "")):
+        assert L.ohne_denkblock(roh) == soll, (roh, L.ohne_denkblock(roh))
+
+    # ── (2) Der Aufruf: was an den Server geht, was zurueckkommt.
+    gesehen = []
+    antwort = ["<think>lange Gedanken</think>\n\nKurze Antwort."]
+
+    class _Srv(BaseHTTPRequestHandler):
+        def do_GET(self):
+            body = (b'{"status":"ok"}' if self.path == "/health" else
+                    _json.dumps({"data": [{"id": "qwen3-14b-uncensored.q4_k_m"}]}).encode())
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def do_POST(self):
+            n = int(self.headers.get("Content-Length") or 0)
+            gesehen.append(_json.loads(self.rfile.read(n)))
+            body = _json.dumps({"choices": [{"message": {"content": antwort[0]}}]}).encode()
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *a):
+            pass
+    srv = HTTPServer(("127.0.0.1", 0), _Srv)
+    _th.Thread(target=srv.serve_forever, daemon=True).start()
+    alt = {k: _os.environ.get(k) for k in ("BRAIN_LLAMACPP_URL", "BRAIN_LLM_BACKEND", "BRAIN_LLM_DENKEN")}
+    _os.environ["BRAIN_LLAMACPP_URL"] = "http://127.0.0.1:%d" % srv.server_port
+    _os.environ["BRAIN_LLM_BACKEND"] = "llamacpp"
+    _os.environ.pop("BRAIN_LLM_DENKEN", None)
+    try:
+        rt = L.LLMRuntime()
+        verlauf = [{"role": "system", "content": "Du bist AZRAEL."},
+                   {"role": "user", "content": "erste"},
+                   {"role": "assistant", "content": "a"},
+                   {"role": "user", "content": "Wie geht es?"}]
+        kopie = [dict(m) for m in verlauf]
+        res = rt.chat(verlauf, timeout=5)
+        assert res["ok"] and res["text"] == "Kurze Antwort.", res
+        body = gesehen[-1]
+        assert body.get("chat_template_kwargs") == {"enable_thinking": False}, body
+        assert body["messages"][-1]["content"].endswith("/no_think"), body["messages"]
+        assert body["messages"][1]["content"] == "erste", "nur die LETZTE Nutzernachricht bekommt den Schalter"
+        assert verlauf == kopie, "der Verlauf des Aufrufers wurde veraendert"
+        # Nur Denken, keine Antwort: kein leerer Erfolg.
+        antwort[0] = "<think>endlos und abgeschnitten"
+        res = rt.chat([{"role": "user", "content": "x"}], timeout=5)
+        assert res["ok"] is False and "nur Denkblock" in res["error"], res
+        # Ausdruecklich erlaubt: kein Schalter mehr — der Block wird trotzdem entfernt.
+        _os.environ["BRAIN_LLM_DENKEN"] = "1"
+        antwort[0] = "<think>x</think>Antwort mit Denken"
+        res = rt.chat([{"role": "user", "content": "y"}], timeout=5)
+        assert res["ok"] and res["text"] == "Antwort mit Denken", res
+        assert "chat_template_kwargs" not in gesehen[-1], gesehen[-1]
+        assert gesehen[-1]["messages"][-1]["content"] == "y"
+        # Der Modellname kommt in die Probe — das Deck zeigt ihn.
+        h = rt.health()
+        assert h["llamacpp"].get("modell") == "qwen3-14b-uncensored.q4_k_m", h
+        assert rt.zuletzt_modell() == "qwen3-14b-uncensored.q4_k_m"
+    finally:
+        srv.shutdown()
+        srv.server_close()
+        for k, v in alt.items():
+            if v is None:
+                _os.environ.pop(k, None)
+            else:
+                _os.environ[k] = v
+    # Deck: brain.html und das Dashboard nennen den Modellnamen aus der Probe.
+    bh = open("templates/brain.html", encoding="utf-8").read()
+    assert "_lok.modell" in bh and '"IK_LLAMA.CPP"' in bh
+    dh = open("templates/dashboard.html", encoding="utf-8").read()
+    assert "health.llamacpp.modell" in dh
+    ok("W181: Qwen3-Denkblock entfernt (drei Formen), enable_thinking=false + /no_think auf "
+       "einer Kopie, nur-Denken ist ein Fehler, Modellname in der Probe")
+
+
 def _test_v42_w155_weiche_steckt():
     """v4.2-W155: gemeldet „Wir haben in den Restreams immer noch kein Bild" —
     Overlay und Chat liefen, das Videofeld zeigte das Pausenbild. Ein
@@ -34599,6 +35038,9 @@ def main():
     _test_v42_w178_restream_loeschen_erst_nach_stop()
     _test_v42_w178_ledger_parallel()
     _test_v42_w60_azrael_cooldown_je_plattform()
+    _test_v51_w181_ikllama_umstieg()
+    _test_v51_w181_aufrufer_und_selbsttest()
+    _test_v51_w181_qwen3_denkt_nicht()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)
 

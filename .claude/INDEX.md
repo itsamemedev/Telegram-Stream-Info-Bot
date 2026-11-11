@@ -50,11 +50,11 @@ Zahlen sind Zeilennummern für `ncpatch show` / `ncpatch sym`.
    422  GET              /api/activity-pulse                              api_activity_pulse   [nc/routes/auskunft.py]
    195  GET              /api/ai-log                                      api_ai_log   [nc/routes/stats.py]
    165  GET              /api/ai-log/<int:entry_id>                       api_ai_log_detail   [nc/routes/stats.py]
-   993  GET              /api/ai/anomalies                                api_ai_anomalies   [nc/routes/ai.py]
+   997  GET              /api/ai/anomalies                                api_ai_anomalies   [nc/routes/ai.py]
    738  POST             /api/ai/ask                                      api_ai_ask   [nc/routes/ai.py]
-   864  POST             /api/ai/claude/save                              api_claude_save   [nc/routes/ai.py]
-   844  GET              /api/ai/claude/status                            api_claude_status   [nc/routes/ai.py]
-   882  POST             /api/ai/claude/test                              api_claude_test   [nc/routes/ai.py]
+   868  POST             /api/ai/claude/save                              api_claude_save   [nc/routes/ai.py]
+   848  GET              /api/ai/claude/status                            api_claude_status   [nc/routes/ai.py]
+   886  POST             /api/ai/claude/test                              api_claude_test   [nc/routes/ai.py]
    806  GET              /api/ai/config                                   api_ai_config   [nc/routes/ai.py]
    356  GET              /api/ai/conversations                            api_ai_conversations_list   [nc/routes/ai.py]
    367  POST             /api/ai/conversations                            api_ai_conversations_create   [nc/routes/ai.py]
@@ -64,16 +64,16 @@ Zahlen sind Zeilennummern für `ncpatch show` / `ncpatch sym`.
    418  POST             /api/ai/conversations/<int:conv_id>/messages     api_ai_conversation_send   [nc/routes/ai.py]
    546  POST             /api/ai/conversations/<int:conv_id>/stream       api_ai_conversation_stream   [nc/routes/ai.py]
    644  POST             /api/ai/diagnose                                 api_ai_diagnose   [nc/routes/ai.py]
-  1231  GET              /api/ai/forecast-storage                         api_ai_forecast_storage   [nc/routes/ai.py]
-  1263  GET              /api/ai/health-score/<username>                  api_ai_health_score   [nc/routes/ai.py]
+  1235  GET              /api/ai/forecast-storage                         api_ai_forecast_storage   [nc/routes/ai.py]
+  1267  GET              /api/ai/health-score/<username>                  api_ai_health_score   [nc/routes/ai.py]
    341  GET              /api/ai/models                                   api_ai_models   [nc/routes/ai.py]
-   946  GET              /api/ai/predict-golive/<username>                api_ai_predict_golive   [nc/routes/ai.py]
-   926  POST             /api/ai/query                                    api_ai_query   [nc/routes/ai.py]
-  1099  GET              /api/ai/recommendations                          api_ai_recommendations   [nc/routes/ai.py]
-  1147  GET              /api/ai/report                                   api_ai_report   [nc/routes/ai.py]
-  1198  GET              /api/ai/retry-advice/<username>                  api_ai_retry_advice   [nc/routes/ai.py]
-  1057  GET              /api/ai/segments                                 api_ai_segments   [nc/routes/ai.py]
-   901  GET              /api/ai/skills                                   api_ai_skills   [nc/routes/ai.py]
+   950  GET              /api/ai/predict-golive/<username>                api_ai_predict_golive   [nc/routes/ai.py]
+   930  POST             /api/ai/query                                    api_ai_query   [nc/routes/ai.py]
+  1103  GET              /api/ai/recommendations                          api_ai_recommendations   [nc/routes/ai.py]
+  1151  GET              /api/ai/report                                   api_ai_report   [nc/routes/ai.py]
+  1202  GET              /api/ai/retry-advice/<username>                  api_ai_retry_advice   [nc/routes/ai.py]
+  1061  GET              /api/ai/segments                                 api_ai_segments   [nc/routes/ai.py]
+   905  GET              /api/ai/skills                                   api_ai_skills   [nc/routes/ai.py]
    504  GET              /api/archive                                     api_archive   [nc/routes/archive.py]
    768  DELETE           /api/archive/<int:eid>                           api_archive_delete   [nc/routes/archive.py]
    650  POST             /api/archive/<int:eid>/rename                    api_archive_rename   [nc/routes/archive.py]
@@ -737,7 +737,7 @@ Zahlen sind Zeilennummern für `ncpatch show` / `ncpatch sym`.
  19126-19136  _httpx_proxy
  13228-13240  _in_quiet_hours
  26976-26987  _init_db_oder_abbruch
- 27795-27826  _install_fast_eventloop
+ 27798-27829  _install_fast_eventloop
  10438-10492  _install_fast_json
  12822-12838  _install_faulthandler
  20812-20821  _intel_ensure_schema
@@ -895,7 +895,7 @@ Zahlen sind Zeilennummern für `ncpatch show` / `ncpatch sym`.
   6211-6328   _run_ai_call
  12950-12963  _run_async_from_flask
  22189-22192  _run_priv
- 27783-27791  _run_selfcheck_and_exit
+ 27786-27794  _run_selfcheck_and_exit
  22912-22923  _s3_client
   8437-8507   _safe_send
   5077-5093   _sample_net_throughput
@@ -906,7 +906,7 @@ Zahlen sind Zeilennummern für `ncpatch show` / `ncpatch sym`.
  24677-24716  _screen_full
  12323-12360  _sec_headers
   2440-2442   _select_stream_from_data_section
- 27503-27780  _selfcheck
+ 27503-27783  _selfcheck
   9434-9468   _send_live_notice
   1416-1420   _should_defer_upload
  23420-23458  _shrink_for_discord
@@ -916,7 +916,7 @@ Zahlen sind Zeilennummern für `ncpatch show` / `ncpatch sym`.
  26571-26590  _sign_health_loop
   4827-4852   _sitzung_bestimmen
   8064-8075   _spawn
- 28214-28244  _spawn_from_flask
+ 28217-28247  _spawn_from_flask
  25977-25983  _speicher_maps
  25986-26001  _speicher_pflegen
  19138-19418  _start_chat_listener
@@ -1238,7 +1238,7 @@ kick_oauth.py          build_authorize_url, gen_pkce, gen_state, has_scope, is_e
 kickapi.py             app_token, broadcaster_id, channel_info, class PusherGeschlossen, configure, naechster_cluster, naechster_key, oauth_exchange, pusher_fehler, pusher_lage, pusher_pause, pusher_url, schliessgrund, search_category, send_message, slug, timeout_user, update_channel, user_token
 kickzentrifugo.py      als_frame, antwort_fehler, class KickZentrifugoFehler, connect_cmd, fehler_code, ist_ping, kanal, lage, neue_client_id, neues_token, pause, refresh_cmd, subscribe_cmd, token_aus, ttl_aus, verbindung_body, ws_url_aus, zerlegen, zugang
 kindprozess.py         alle_beenden, ausfuehren, beenden, lage, zuruecksetzen
-kiwahl.py              backend, lokal_stand, lokal_zuerst, normal, provider
+kiwahl.py              backend, lokal_installiert, lokal_stand, lokal_zuerst, lokales_modell, normal, provider
 lagebild.py            bauen, restream_lage
 lastvorsorge.py        freie_kerne, jung, startstufe
 laufstand.py           befehl, veraltet, vergleich
@@ -1349,7 +1349,7 @@ zeitglaetter.py        ausdruck, bsf_args, filter_text, verfuegbar
 __init__.py            class Brain, get_brain
 agents.py              class Agent, class AgentManager, class AnalyticsAgent, class DatabaseAgent, class DiskAgent, class GrafanaAgent, class HealthAgent, class LearningAgent, class PrometheusAgent, class ProxyHealthAgent, class RecordingAgent, class RecoveryAgent, class RestreamSentinelAgent, class ScoutAgent, class SentinelAgent, class SwapAgent, class ToxicityAgent, class UptimeAgent
 knowledge.py           class KnowledgeGraph
-llm.py                 class BudgetExhausted, class LLMRuntime
+llm.py                 class BudgetExhausted, class LLMRuntime, ohne_denkblock
 memory.py              class Memory
 report.py              weekly
 router.py              class Task, class TaskRouter, class Unhandled

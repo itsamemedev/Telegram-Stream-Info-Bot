@@ -25,6 +25,12 @@ zuerst, wenn die letzte Probe tot war — ``brain/llm.py`` faellt dann selbst au
 die Cloud zurueck. ``cloud`` (auch ``freeai``/``pollinations``) laesst lokal aus.
 Fuer die Reaktions-Engine gilt dieselbe Regel mit ``REACTION_AI_PROVIDER``.
 
+Seit v5.1-W181 ist „lokal" ik_llama.cpp mit Qwen3-14B-Uncensored, eingerichtet
+von ``tools/ikllama.sh`` als ``llama-server.service`` auf demselben Port wie
+vorher. Fuer diese Datei aendert das nichts: sie spricht nur HTTP mit dem
+Server, und ik_llama.cpp hat dieselbe Schnittstelle (``/health``,
+``/v1/chat/completions``).
+
 Was lokal NICHT kann und deshalb weiter in die Cloud geht: Bilder (Vision).
 llama-server kann das nur mit einem multimodalen Modell plus ``--mmproj``,
 und der Chat-Pfad hier reicht Bilder nicht im OpenAI-Format durch.
@@ -32,6 +38,7 @@ und der Chat-Pfad hier reicht Bilder nicht im OpenAI-Format durch.
 
 import logging
 import os
+import shutil
 import time
 
 from nc import meldetakt as _takt
@@ -104,6 +111,47 @@ def lokal_stand(messen=False):
             log.warning("KI-Wahl: Brain nicht erreichbar (%s: %s) — der lokale "
                         "Weg bleibt ungeprueft.%s", type(e).__name__, e,
                         _takt.zusatz(weg))
+        return None
+
+
+# v5.1-W181: wo ein lokaler Server liegen kann. ik_llama.cpp landet NICHT im
+# PATH (/opt/ik_llama.cpp/build/bin), und der Selbsttest fragte bis hierher nur
+# shutil.which("llama-server") — ein installierter, aber gestorbener Server
+# galt damit als „nicht installiert", und die Zeile blieb gruen.
+UNIT_ORTE = ("/etc/systemd/system", "/lib/systemd/system", "/usr/lib/systemd/system")
+UNIT_NAMEN = ("llama-server.service", "llamacpp.service")
+PROGRAMME = ("/opt/ik_llama.cpp/build/bin/llama-server",)
+
+
+def lokal_installiert(wurzel="") -> bool:
+    """Ist auf dieser Maschine ein lokaler LLM-Server eingerichtet?
+
+    Ja, wenn `llama-server` im PATH liegt, eine der Units existiert oder das
+    Programm von ``tools/ikllama.sh`` da ist. `wurzel` ist fuer die Vertraege.
+    Liest nur das Dateisystem — kein HTTP, keine Probe."""
+    if not wurzel and shutil.which("llama-server"):
+        return True
+    for ort in UNIT_ORTE:
+        for name in UNIT_NAMEN:
+            if os.path.isfile(wurzel + ort + "/" + name):
+                return True
+    return any(os.path.isfile(wurzel + p) for p in PROGRAMME)
+
+
+def lokales_modell():
+    """Name des lokal geladenen Modells laut letzter Probe, sonst None.
+
+    v5.1-W181. Liest nur den Zwischenstand (brain/llm.py: zuletzt_modell) —
+    Anzeigen duerfen fragen, ohne zu messen."""
+    try:
+        from brain import get_brain
+        return get_brain().llm.zuletzt_modell()
+    except Exception as e:
+        laut, weg = _takt.melden("kiwahl", type(e).__name__, time.time())
+        if laut:
+            log.warning("KI-Wahl: Modellname des lokalen Servers nicht lesbar "
+                        "(%s: %s) — die Anzeige nennt das Cloud-Modell.%s",
+                        type(e).__name__, e, _takt.zusatz(weg))
         return None
 
 

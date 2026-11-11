@@ -1,4 +1,5 @@
-# brain/llm.py — M6: Eigene LLM-Runtime (llama.cpp; V37: ollama-frei)
+# brain/llm.py — M6: Eigene LLM-Runtime (llama.cpp; V37: ollama-frei;
+#                 v5.1-W181: ik_llama.cpp mit Qwen3-14B-Uncensored)
 #
 # ARCHITEKTUR-ENTSCHEIDUNG (ehrlich begründet): Die "eigene Runtime"
 # ist llama.cpp (llama-server, GGUF INT4) statt einer Python-Eigenbau-
@@ -57,10 +58,61 @@ def _timeout_s() -> float:
     return env_float("BRAIN_LLM_TIMEOUT_S", 300)
 
 
+def _denken() -> bool:
+    """v5.1-W181: darf das lokale Modell vor der Antwort „denken"?
+
+    Qwen3 schreibt ab Werk erst einen <think>…</think>-Block und dann die
+    Antwort. Auf 8 CPU-Kernen sind das hunderte Token, bevor das erste Wort
+    der Antwort kommt — bei max_tokens 1024 bleibt fuer die Antwort oft
+    nichts, und der Chat sah leer aus. Vorgabe deshalb AUS."""
+    return os.getenv("BRAIN_LLM_DENKEN", "0").strip().lower() in ("1", "true", "ja", "yes", "on")
+
+
+_DENK_AUF, _DENK_ZU = "<think>", "</think>"
+
+
+def ohne_denkblock(text) -> str:
+    """Den Denkblock eines Reasoning-Modells (Qwen3) aus der Antwort nehmen.
+
+    v5.1-W181. Drei Formen kommen vor, und jede landete sonst woertlich im
+    Telegram-Chat, im Overlay und in der Sprachausgabe:
+      * ``<think>…</think>Antwort`` — der Normalfall ohne --jinja,
+      * ``…</think>Antwort`` — die Vorlage hat ``<think>`` selbst gesetzt
+        (thinking_forced_open), nur das Ende steht in der Ausgabe,
+      * ``<think>…`` ohne Ende — max_tokens riss mitten im Denken ab. Dann
+        gibt es KEINE Antwort, und ``""`` sagt das; der Aufrufer faellt auf das
+        naechste Backend, statt halbe Gedanken als Antwort auszugeben.
+    Gross-/Kleinschreibung egal; mehrere Bloecke werden alle entfernt."""
+    t = str(text or "")
+    klein = t.lower()
+    if _DENK_ZU in klein:
+        # Alles bis zum LETZTEN Ende ist Denken — auch ein zweiter Block, der
+        # vor der Antwort steht. Was danach kommt, ist die Antwort.
+        t = t[klein.rindex(_DENK_ZU) + len(_DENK_ZU):]
+    elif _DENK_AUF in klein:
+        t = t[:klein.index(_DENK_AUF)]
+    return t.strip()
+
+
 def _max_tokens() -> int:
     # V37-LLMBUDGET: 512 schnitt längere Antworten ab. Auf 1024 verdoppelt —
     # genug für ausführliche Antworten, ohne den CPU-Aufwand zu sprengen.
     return env_int("BRAIN_LLM_MAX_TOKENS", 1024)
+
+
+def _ohne_denken_bitten(messages: list) -> list:
+    """Qwen3s Schalter ``/no_think`` an die LETZTE Nutzernachricht haengen.
+
+    Eine Kopie — die Liste des Aufrufers bleibt unveraendert (bot.py haelt
+    damit den Verlauf, und dort darf der Schalter nicht landen). Nur
+    Text-Inhalte: ein Bild-Inhalt (Liste) bleibt, wie er ist."""
+    raus = [dict(m) if isinstance(m, dict) else m for m in (messages or [])]
+    for m in reversed(raus):
+        if isinstance(m, dict) and m.get("role") == "user":
+            if isinstance(m.get("content"), str) and "/no_think" not in m["content"]:
+                m["content"] = m["content"].rstrip() + " /no_think"
+            break
+    return raus
 
 
 class BudgetExhausted(Exception):
@@ -184,6 +236,15 @@ class LLMRuntime:
             out = dict(cache[1])
         else:
             out = {"llamacpp": self._probe("llamacpp")}
+            if out["llamacpp"].get("up"):
+                # v5.1-W181: welches Modell lokal antwortet — das Deck nannte
+                # bisher nur "llama.cpp", und nach dem Umstieg auf Qwen3-14B
+                # war nicht zu sehen, ob der neue Server oder ein alter laeuft.
+                # models() ist 60 s gecacht und kostet bei laufendem Server
+                # Millisekunden.
+                mods = self.models()
+                if mods:
+                    out["llamacpp"]["modell"] = mods[0]
             # B120: Cloud-Reserve im Health sichtbar machen. Ohne den
             # Eintrag meldete das Dashboard 'offline', obwohl freeai
             # antwortet — der Operator suchte dann am falschen Ende.
@@ -209,6 +270,15 @@ class LLMRuntime:
         eine 3-s-Probe auszuloesen. Die Probe selbst laeuft in health()."""
         cache = getattr(self, "_health_cache", None)
         return bool((cache[1].get("llamacpp") or {}).get("up")) if cache else None
+
+    def zuletzt_modell(self):
+        """Modell des lokalen Servers laut LETZTER Probe, sonst None.
+
+        v5.1-W181. Misst NICHT (wie zuletzt_oben): die KI-Konfiguration im
+        Deck nennt damit "qwen3-14b-uncensored.q4_k_m" statt des Cloud-
+        Modellnamens, ohne selbst eine Anfrage auszuloesen."""
+        cache = getattr(self, "_health_cache", None)
+        return ((cache[1].get("llamacpp") or {}).get("modell") or None) if cache else None
 
     _MODELS_TTL = 60.0
 
@@ -302,9 +372,25 @@ class LLMRuntime:
             # funktioniert ohne Codeänderung über BRAIN_LLAMACPP_URL.
             body = {"messages": messages, "max_tokens": max_tokens,
                     "temperature": 0.3, "stream": False}
+            if not _denken():
+                # v5.1-W181: zwei Riegel gegen den Qwen3-Denkmodus. Der erste
+                # wirkt ueber die Chat-Vorlage (ik_llama.cpp/llama.cpp mit
+                # --jinja), der zweite ist Qwen3s eigener Schalter im Text —
+                # er wirkt auch, wo die Vorlage den Parameter nicht kennt.
+                body["chat_template_kwargs"] = {"enable_thinking": False}
+                body["messages"] = _ohne_denken_bitten(messages)
             j = self._post(f"{_llamacpp_url()}/v1/chat/completions",
                            body, timeout)
-            return j["choices"][0]["message"]["content"]
+            roh = j["choices"][0]["message"].get("content")
+            text = ohne_denkblock(roh)
+            if not text:
+                # Nur Denken, keine Antwort (max_tokens im Denkblock
+                # verbraucht): ein Fehler fuer die Kette, kein leerer Erfolg —
+                # sonst ginge "" als Antwort an Telegram und an die TTS.
+                raise RuntimeError("Antwort leer (nur Denkblock oder nichts) — "
+                                   "BRAIN_LLM_MAX_TOKENS heben oder "
+                                   "BRAIN_LLM_DENKEN=0 lassen")
+            return text
         raise ValueError(f"unbekanntes Backend: {backend}")
 
     def _probe(self, backend: str) -> dict:

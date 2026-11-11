@@ -144,6 +144,22 @@ nc_paketname(){
   esac
 }
 
+# ── v5.1-W181: Bauwerkzeuge fuer ik_llama.cpp ────────────────
+# nc_baupakete [PKG] -> ALLE Pakete, die ein C++-Bau mit cmake braucht.
+# Bewusst NICHT ueber nc_paketname: dort sind mehrere Namen KANDIDATEN
+# ("ffmpeg ffmpeg-free" = das erste, das es gibt), hier gehoeren alle
+# zusammen — ein Compiler ohne make baut genauso wenig wie keiner. Leer heisst:
+# fuer diesen Paketmanager nicht nachgesehen; dann selbst bereitstellen.
+nc_baupakete(){
+  case "${1:-$NC_PKG}" in
+    apt)           printf 'build-essential cmake git';;
+    dnf|zypper)    printf 'gcc-c++ make cmake git';;
+    pacman)        printf 'base-devel cmake git';;
+    apk)           printf 'build-base cmake git';;
+    *)             printf '';;
+  esac
+}
+
 # ── Paket verfuegbar? ────────────────────────────────────────
 # nc_paket_verfuegbar PAKET -> 0, wenn der Paketmanager es kennt. Ohne diese
 # Frage wuerde "ffmpeg ffmpeg-free" auf Fedora ohne RPM Fusion am ersten

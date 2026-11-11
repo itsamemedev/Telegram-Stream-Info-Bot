@@ -75,7 +75,7 @@
 | **Aufnahme** | Dreistufiger Recorder-Fallback · Preflight-GET vor Spawn · Suffix-Fallback für CDN-Quirks · Recording-Wächter gegen eingefrorene Mitschnitte · S3-Backup (optional) |
 | **Restream** | Kick / Twitch / YouTube parallel · `tee` mit `onfail=ignore` · erzwungener Transcode bei Multi-Ziel · Ziel-Verifikation über Plattform-APIs · Wiederanlauf nach Neustart · sicherer Test-Push ohne Broadcast-Risiko · Deckel für gleichzeitige Restreams |
 | **Chat & Moderation** | SENTINEL-SHIELD (Doxxing / Hate / Drohung) · geteilte Moderations-Heuristik über Kick, Twitch, YouTube · Fremdwerbungs-Erkennung mit Eigen-Allowlist · Banned-Words · Timeout-Eskalation |
-| **KI (AZRAEL)** | Chat-Antworten auf Ansprache · Live-Reaktionen aufs Sendebild · Sprachausgabe (Piper) · Persona-System · Multi-Backend: Anthropic (mit Key) → lokales llama.cpp (bevorzugt, sobald es läuft) → freie APIs · Budget- und Tier-Steuerung |
+| **KI (AZRAEL)** | Chat-Antworten auf Ansprache · Live-Reaktionen aufs Sendebild · Sprachausgabe (Piper) · Persona-System · Multi-Backend: Anthropic (mit Key) → lokales ik_llama.cpp mit Qwen3-14B-Uncensored (bevorzugt, sobald es läuft) → freie APIs · Budget- und Tier-Steuerung |
 | **Gehirn (`brain/`)** | Zustandsmaschine · regelbasierte Tier-1-Entscheidungen mit Warum-Log · Langzeitgedächtnis · Wissensgraph (Triple-Store) · semantische Suche · Prognosen · Wochenreport |
 | **Sentinel-Flotte** | 16 Wächter-Agenten (health, recovery, scout, analytics, learning, sentinel, disk, swap, restream, toxicity, uptime, recording, proxy, datenbank, prometheus, grafana) mit Telegram-Alarm, einzeln abschaltbar |
 | **Community** | Wiedererkennung von Stammzuschauern · Loyalty-Punkte & Ränge · Discord-XP, Level, Daily-Streak · Live-Ping · Highlight-Share · Community-Events |
@@ -83,7 +83,7 @@
 | **Dashboard** | 379 Flask-Routen · Live-Panels · Gehirn-Visualisierung mit Lernkurve · Overlay für OBS · installierbare PWA (Android) · QR-Login |
 | **Betrieb** | systemd-Dienst · Deploy-Skript mit Vorabprüfung und Auto-Rollback · Selbsttest-Route · Totmann-Meldung bei Prozesstod · CrowdSec-Anbindung · Log-Redaction für Cookies und Stream-Keys |
 | **Datenbank** | SQLite **oder** MariaDB · Umzug per `update.sh --mariadb` mit Nachzählen · zentrales Schema-Modul · Export-Werkzeug · Datenbank-Wächter |
-| **Einstellungen** | Reiter „Einstellungen“ im Deck: alle ~599 Variablen durchsuchbar, gespeichert in der Datenbank, geschützte Schlüssel nur aus der `.env` |
+| **Einstellungen** | Reiter „Einstellungen“ im Deck: alle ~600 Variablen durchsuchbar, gespeichert in der Datenbank, geschützte Schlüssel nur aus der `.env` |
 | **Beobachtung** | `/metrics` für Prometheus · Grafana-Dashboard mit jedem Messwert · 16 Alarmregeln mit Tests · Einrichtung per `tools/observability.sh` |
 
 </details>
@@ -120,7 +120,7 @@ flowchart TB
     TG["📨 Telegram"]:::ein --> BOT
     DC["🎮 Discord<br/>67 Slash-Commands"]:::ein --> BOT
     TT["🎥 TikTok<br/>Live-Erkennung + Chat"]:::ein --> BOT
-    BOT["bot.py<br/>Monolith · 28.295 Zeilen<br/>Scraper · Recorder · Restream<br/>Flask-Deck · 34 eigene Routen"]:::core
+    BOT["bot.py<br/>Monolith · 28.298 Zeilen<br/>Scraper · Recorder · Restream<br/>Flask-Deck · 34 eigene Routen"]:::core
     BOT -->|configure| NC["nc/ — 196 Fachmodule<br/>39 Blueprints"]:::lib
     BOT --> BR["brain_bridge.py"]:::lib
     BR --> BRAIN["brain/ — eigene brain.db<br/>Regeln · Gedächtnis · Wissensgraph<br/>16 Wächter-Agenten"]:::brain
@@ -204,7 +204,7 @@ löst nichts aus; ein Zeitplan zieht nie still eine Datenbank um.
 
 ## ⚙️ Einstellungen
 
-**Im Deck, Reiter „Einstellungen“.** Alle rund 599 Variablen aus `.env.example`
+**Im Deck, Reiter „Einstellungen“.** Alle rund 600 Variablen aus `.env.example`
 mit Gruppe, Vorgabe und Beschreibung, durchsuchbar. Je Zeile steht, woher der
 Wert kommt — *vom Deck gesetzt*, *aus der .env* oder *Vorgabe*. Gespeichert wird
 in der Datenbank (SQLite oder MariaDB); die Werte gelten beim nächsten Start
@@ -405,7 +405,7 @@ der Mund geht genau dann, wenn er im Chat oder auf den Stream antwortet.
 
 `brain/` ist ein eigenständiger KI-Kern mit eigener Datenbank. Fehlt er, startet
 der Bot wie ohne — jeder Baustein ist additiv und einzeln abschaltbar.
-AZRAEL antwortet mit Anthropic (mit Key), lokal mit llama.cpp, sobald es läuft,
+AZRAEL antwortet mit Anthropic (mit Key), lokal mit ik_llama.cpp (Qwen3-14B-Uncensored, `sudo bash tools/ikllama.sh`), sobald es läuft,
 sonst über freie APIs — mit Budget und Tier-Steuerung.
 
 ### 🛰️ Die 16 Wächter
@@ -551,7 +551,7 @@ python3 -m pytest -k w145          # eine Welle einzeln
 python3 tools/ncpatch.py find "donations"      # wo steht etwas in bot.py?
 ```
 
-`bot.py` hat 28.295 Zeilen und wird nie ganz gelesen — die Navigationskarte
+`bot.py` hat 28.298 Zeilen und wird nie ganz gelesen — die Navigationskarte
 `.claude/INDEX.md` kennt 379 Routen und 648 Funktionen mit Zeilennummer. Vor
 jedem Pull Request läuft die vollständige Prüfkette aus
 **[`docs/CONTRIBUTING.md`](docs/CONTRIBUTING.md)**: Lint, Templates, Doku-Zahlen,
@@ -670,7 +670,7 @@ Alle Wellen einzeln: **[`docs/CHANGELOG.md`](docs/CHANGELOG.md)**.
 | Discord-Slash-Commands | 67 |
 | Fachmodule | 196 in `nc/` (+39 in `nc/routes/`, +3 in `nc/intel/`), 10 in `brain/` |
 | Sentinel-Agenten | 16 |
-| Konfigurationsvariablen | ~599 |
+| Konfigurationsvariablen | ~600 |
 | Sprachen | Deutsch (Quelle), Englisch, Spanisch |
 
 Nächster großer Schritt: `bot.py` weiter zerlegen — **[`docs/ROADMAP.md`](docs/ROADMAP.md)**.
