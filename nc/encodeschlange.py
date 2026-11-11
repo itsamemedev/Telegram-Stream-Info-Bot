@@ -73,24 +73,23 @@ def _zahl(name, vorgabe):
 
 def last_frei(load1=None, kerne=None) -> bool:
     """Ist die Maschine frei genug fuer eine Hintergrund-Kodierung?"""
+    # Ohne Load-Mittel (Windows) begrenzt nur die Zahl — kein Fehler, also
+    # ohne Ausnahme: hasattr statt try/except.
+    if load1 is None and not hasattr(os, "getloadavg"):
+        return True
     if load1 is None:
-        try:
-            load1 = os.getloadavg()[0]
-        except OSError:
-            return True        # kein Load-Mittel (z. B. Windows): nur die Zahl begrenzt
+        load1 = os.getloadavg()[0]
     kerne = kerne or os.cpu_count() or 1
     return load1 < kerne * _zahl("ENCODE_LAST_ANTEIL", 0.7)
 
 
 def _darf_starten(seit, jetzt):
-    """(darf, zwang) — zwang heisst: nur wegen Wartezeit-Obergrenze."""
-    if len(_ZUSTAND["laeuft"]) >= parallel():
-        return False, False
-    if last_frei():
-        return True, False
-    if jetzt - seit >= _zahl("ENCODE_WARTEN_MAX_S", 1800):
-        return True, True
-    return False, False
+    """(darf, zwang) — zwang heisst: nur wegen Wartezeit-Obergrenze.
+    „Darf nicht" ist hier der Normalfall einer Warteschlange, kein Fehler."""
+    voll = len(_ZUSTAND["laeuft"]) >= parallel()
+    frei = not voll and last_frei()
+    zwang = not voll and not frei and jetzt - seit >= _zahl("ENCODE_WARTEN_MAX_S", 1800)
+    return (frei or zwang), zwang
 
 
 def _anmelden(art, wer):
@@ -111,22 +110,20 @@ def _versuchen(jid, seit):
     jedem freien Platz zufaellig, wer gerade nachsieht, und ein Job kann
     beliebig oft ueberholt werden."""
     with _SPERRE:
-        if min(_ZUSTAND["wartet"]) != jid:
-            return False
-        darf, zwang = _darf_starten(seit, time.monotonic())
-        if not darf:
-            return False
-        eintrag = _ZUSTAND["wartet"].pop(jid)
-        eintrag["start"] = time.time()
-        _ZUSTAND["laeuft"][jid] = eintrag
-        if zwang:
-            _ZUSTAND["zwangsstart"] += 1
+        # Nicht dran oder kein Platz: weiter warten — der Normalfall, kein Fehler.
+        darf, zwang = (_darf_starten(seit, time.monotonic())
+                       if min(_ZUSTAND["wartet"]) == jid else (False, False))
+        if darf:
+            eintrag = _ZUSTAND["wartet"].pop(jid)
+            eintrag["start"] = time.time()
+            _ZUSTAND["laeuft"][jid] = eintrag
+            _ZUSTAND["zwangsstart"] += 1 if zwang else 0
     if zwang:
         log.warning("Kodierung %s startet trotz hoher Last — sie wartete schon %.0f min. "
                     "Abhilfe: weniger gleichzeitige Restreams/Aufnahmen oder "
                     "ENCODE_WARTEN_MAX_S hoeher.", eintrag["art"],
                     (time.monotonic() - seit) / 60)
-    return True
+    return darf
 
 
 def _abmelden(jid):
