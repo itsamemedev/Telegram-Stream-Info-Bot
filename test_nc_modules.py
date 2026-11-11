@@ -31610,7 +31610,6 @@ def _test_v42_w177_brain_verwoben():
     import os as _os
     import shutil as _sh
     import sqlite3 as _sq
-    import tempfile as _tf
     import time as _tm
 
     from nc import meldetakt as _mt
@@ -31633,7 +31632,7 @@ def _test_v42_w177_brain_verwoben():
         "BRAIN_ACT_PAUSE_DEAD_SOURCE", "BRAIN_DEAD_STREAK_ALERT",
         "BRAIN_DEAD_RETRY_HOURS", "BRAIN_LLM_BACKEND", "BRAIN_LLM_MAX_CALLS_H",
         "BRAIN_EMBED_BACKEND", "BRAIN_EMBED_URL")}
-    tmp = _tf.mkdtemp(prefix="w177_")
+    tmp = _ph.verzeichnis("w177-")
     try:
         from brain import Brain
         hirn = Brain(_os.path.join(tmp, "brain.db"))
@@ -31728,6 +31727,15 @@ def _test_v42_w177_brain_verwoben():
         straehne["tot"] = 6                              # weiter tot geprueft
         ag._pause_dead_sources(ctx, t0 + 7560)
         assert pausiert == ["tot", "tot"], pausiert
+        # Altbestand: eine Pause aus der Zeit VOR der Straehnen-Tabelle hat
+        # keinen gemerkten Wert — dann haelt der Lauf-Riegel die zweite Chance.
+        with hirn._db_lock, hirn._conn() as k:
+            k.execute("INSERT INTO paused_sources(who,ts) VALUES('altbestand',?)", (t0,))
+        straehne["altbestand"] = 9
+        pausiert.clear()
+        ag._pause_dead_sources(ctx, t0 + 9000)
+        assert "altbestand" not in pausiert, "Altbestand im selben Lauf wieder pausiert"
+        del straehne["altbestand"]
         # Ein werfender Reaktivierungs-Hook ist ein Befund, kein `pass`.
         ctx["unpause_source"] = lambda w: 1 / 0
         with hirn._db_lock, hirn._conn() as k:
@@ -31837,6 +31845,7 @@ def _test_v42_w177_brain_verwoben():
             n = len(h.zeilen)
             L.index_recording(kon, _Tot(), 9)
             assert len(h.zeilen) == n, "Index-Ausfall ungedrosselt"
+            _mt.zuruecksetzen(L._KANAL)          # sonst schweigt die Drossel ohnehin
             r = L.index_recording(kon, _Aus(), 9)
             assert not r["ok"] and len(h.zeilen) == n, "off ist kein Ausfall"
         finally:
@@ -31858,6 +31867,7 @@ def _test_v42_w177_brain_verwoben():
                 and "8089" in laut[0], laut
             assert hirn.semantic.stats()["letzter_fehler"], hirn.semantic.stats()
             _os.environ["BRAIN_EMBED_BACKEND"] = "off"
+            _mt.zuruecksetzen(S._KANAL)          # sonst schweigt die Drossel ohnehin
             n = len(h.zeilen)
             assert not hirn.semantic.aktiv() and hirn.semantic._embed("x") is None
             assert len(h.zeilen) == n
@@ -31895,6 +31905,7 @@ def _test_v42_w177_brain_verwoben():
         for teil in ("@dora", "20 Uhr UTC", "3.5 Sendungen", "lang", "Letzte Sendung: Neu:"):
             assert teil in m["content"], (teil, m["content"])
         assert AK.nachricht(hirn, _bdb, "niemand") is None
+        assert len(AK.block("x" * 400, {"duration_class": "long"})) == AK.MAX_ZEICHEN
         hirn.state.set("restream", "restream:1", "live", source="dora")
         assert "@dora" in AK.nachricht(hirn, _bdb, "twitch:fan")["content"]
         _mt.zuruecksetzen(AK.KANAL)
