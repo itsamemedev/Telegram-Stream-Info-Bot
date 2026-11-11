@@ -6424,9 +6424,8 @@ async def cleanup(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # output = f"{prefix}_%03d.mp4").
     cleaned_orphan_parts = 0
     try:
-        # v4.2-W175: dazu die Teile des Discord-Versands (nc/discordaufnahme).
-        for f in (glob.glob(os.path.join(RECORDINGS_DIR, "*_part_*.mp4"))
-                  + glob.glob(os.path.join(RECORDINGS_DIR, "*_dcpart_*.mp4"))):
+        for f in (g for m in ("*_part_*.mp4", "*_dcpart_*.mp4")  # W175: + Discord-Teile
+                  for g in glob.glob(os.path.join(RECORDINGS_DIR, m))):
             try:
                 # Defensiv: nur löschen wenn > 1h alt damit wir keine
                 # gerade-laufende Split-Operation killen.
@@ -9338,6 +9337,8 @@ def _chat_migriert(alt, neu) -> int:
     """Trackings von `alt` auf `neu` umschreiben, Abbildung merken, laut melden.
     -> Zahl der umgeschriebenen Trackings. Sync — Aufrufer im Loop per to_thread."""
     if not neu or alt == neu:
+        log.error("Telegram: Umwandlung %s → %s ohne brauchbare neue Chat-ID — nichts "
+                  "umgeschrieben.", alt, neu)
         return 0
     _TG_MIGRIERT[alt] = neu
     try:
@@ -9698,7 +9699,11 @@ async def _aufnahme_verteilen(bot_app, offen, output_file, username, started_at,
 async def _upload_rest_sichern(nachlauf, output_file, username, started_at):
     """v4.2-W175: beim Stopp die noch offenen Upload-Ziele einreihen.
 
-    Das laufende Ziel zaehlt mit: ob sein Upload durchkam, weiss niemand —
+    Der Abbruch kam NACH dem Eintragen, mitten im Upload
+    (_aufnahmen_abschliessen bricht jeden finish-Task ab); ffmpeg ist dann
+    laengst fertig. Bis hier lief trotzdem der Stopp-Pfad und trug die Datei
+    ein zweites Mal ein — doppelte Zeile im Deck, und der Upload an die
+    restlichen Chats war verloren. Das laufende Ziel zaehlt mit: ob sein Upload durchkam, weiss niemand —
     lieber ein Video doppelt im Chat als keins."""
     offen = list(nachlauf.get("offen") or ())
     for ziel in offen:
@@ -9918,10 +9923,7 @@ async def handle_recording_finished(proc, tid, chat_id, username, output_file,
 
     watchdog_task = asyncio.create_task(_stall_watchdog())
     refresh_task = asyncio.create_task(_url_refresh_watchdog())   # B58
-    # v4.2-W175: was nach dem Eintragen noch aussteht — der Abbruchzweig
-    # unten braucht es, um bei einem Neustart mitten im Upload nicht ein
-    # zweites Mal einzutragen und die offenen Ziele in die Warteschlange zu legen.
-    nachlauf = {"eingetragen": False, "offen": [], "ende": None}
+    nachlauf = {"eingetragen": False, "offen": [], "ende": None}   # W175, s. _upload_rest_sichern
     try:
         try:
             stdout_bytes, stderr_bytes = await asyncio.wait_for(
@@ -10117,8 +10119,7 @@ async def handle_recording_finished(proc, tid, chat_id, username, output_file,
                     except Exception as e:
                         log.warning(f"OFFLINE-Notif chat={fchat} @{username}: {e}")
 
-            # Upload an alle Fan-Out Chats und (v4.2-W175) die ganze Aufnahme
-            # nach Discord — siehe _aufnahme_verteilen.
+            # Upload an alle Fan-Out Chats und (W175) nach Discord.
             nachlauf["offen"] = list(target_chats) + (
                 ["discord"] if _nc_dcaufnahme.an() else [])
             await _aufnahme_verteilen(bot_app, nachlauf["offen"], output_file, username,
@@ -10220,11 +10221,8 @@ async def handle_recording_finished(proc, tid, chat_id, username, output_file,
         # F25: Bei Shutdown (SIGTERM) wird der Task gecancelt. Der Subprocess
         # läuft sonst orphan weiter — proc.kill() vor propagieren.
         cancelled = True
-        # v4.2-W175: der Abbruch kam NACH dem Eintragen, mitten im Upload
-        # (_aufnahmen_abschliessen bricht jeden finish-Task ab). ffmpeg ist
-        # dann laengst fertig. Bis hier lief trotzdem der Stopp-Pfad und trug
-        # die Datei ein zweites Mal ein — doppelte Zeile im Deck, und der
-        # Upload an die restlichen Chats war verloren.
+        # v4.2-W175: Abbruch NACH dem Eintragen (mitten im Upload) — nicht
+        # zweimal eintragen, Rest einreihen (Begruendung: _upload_rest_sichern).
         if nachlauf["eingetragen"]:
             await _upload_rest_sichern(nachlauf, output_file, username, started_at)
             raise

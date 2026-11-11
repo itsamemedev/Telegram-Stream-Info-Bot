@@ -31,11 +31,13 @@ def angekommen(ergebnis) -> bool:
 
 
 def faellig(eintrag, jetzt: float) -> bool:
-    """Ist der Eintrag jetzt dran? Ohne Zeitstempel (Bestand vor W175): ja."""
-    try:
-        return float(eintrag.get("naechster_versuch") or 0) <= jetzt
-    except (TypeError, ValueError):
+    """Ist der Eintrag jetzt dran? Ohne Zeitstempel (Bestand vor W175) oder
+    mit einem, der keine Zahl ist: ja — ein kaputtes Feld darf den Upload
+    nicht fuer immer zurueckhalten."""
+    wann = eintrag.get("naechster_versuch")
+    if isinstance(wann, bool) or not isinstance(wann, (int, float)):
         return True
+    return wann <= jetzt
 
 
 def pause_s(versuche: int) -> float:

@@ -271,6 +271,8 @@ async def split_and_send_video(chat_id, filepath, bot_app, username,
                     **UPLOAD_TIMEOUTS)
                 return True, None
             except Exception as e2:
+                log.error("Upload @%s: Versand nach Umwandlung %s → %s gescheitert: %s",
+                          username, alt, neu, e2)
                 return False, f"Chat migriert ({alt} → {neu}), erneuter Versand gescheitert: {e2}"
         except TelegramError as e:
             return False, f"Telegram: {e}"

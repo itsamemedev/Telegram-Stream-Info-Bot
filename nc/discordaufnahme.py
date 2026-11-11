@@ -35,7 +35,7 @@ ABBRUCH_IN_FOLGE = 3       # so viele Teile in Folge gescheitert -> Rest lassen
 
 def an(env=None) -> bool:
     """Schalter, als Funktion gelesen (.env kommt spaeter). Vorgabe: an."""
-    wert = (env if env is not None else os.getenv(SCHALTER, "1")) or "1"
+    wert = (env if env is not None else os.getenv("DISCORD_AUFNAHME_UPLOAD", "1")) or "1"
     return str(wert).strip().lower() not in ("0", "false", "no", "off", "aus", "nein")
 
 
@@ -96,6 +96,7 @@ async def hochladen(pfad, grenze_mb, senden, nutzer, beginn=None, ergebnis=None,
     try:
         groesse = os.path.getsize(pfad)
     except OSError as e:
+        log.error("Discord-Aufnahme: %s nicht lesbar: %s", pfad, e)
         ergebnis["fehler"] += 1
         ergebnis["grund"] = "Datei nicht lesbar: %s" % e
         return ergebnis
@@ -133,6 +134,9 @@ async def hochladen(pfad, grenze_mb, senden, nutzer, beginn=None, ergebnis=None,
             except asyncio.CancelledError:
                 raise
             except Exception as e:
+                # Je Teil eine Zeile; die Zusammenfassung meldet der Aufrufer
+                # gedrosselt auf error (bot._aufnahme_nach_discord).
+                log.warning("Discord-Aufnahme @%s Teil %d/%d gescheitert: %s", nutzer, i, n, e)
                 ergebnis["fehler"] += 1
                 ergebnis["grund"] = "Teil %d/%d: %s: %s" % (i, n, type(e).__name__, e)
                 in_folge += 1
