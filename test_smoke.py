@@ -98,7 +98,8 @@ def _install_stubs():
     sys.modules["telegram.constants"].ChatAction = type(
         "ChatAction", (), {"TYPING": "typing", "UPLOAD_VIDEO": "upload_video"})
     for e in ["TelegramError", "BadRequest", "TimedOut", "NetworkError",
-              "RetryAfter", "Forbidden", "Conflict", "InvalidToken"]:
+              "RetryAfter", "Forbidden", "Conflict", "InvalidToken",
+              "ChatMigrated"]:   # ANKER GEWANDERT (v4.2-W175)
         setattr(sys.modules["telegram.error"], e, type(e, (Exception,), {}))
     sys.modules["telegram.request"].HTTPXRequest = _Any
 

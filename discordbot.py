@@ -749,13 +749,28 @@ async def _on_level_up(message, newlvl):
                 try:
                     if old: await message.author.remove_roles(*old, reason="Rang-Upgrade")
                     await message.author.add_roles(role, reason=f"Level {newlvl}")
-                except Exception:
-                    pass
+                except Exception as e:
+                    # v4.2-W175: bisher `pass` — ohne „Rollen verwalten" (oder
+                    # mit der Bot-Rolle UNTER den Rang-Rollen) bekam niemand je
+                    # einen Rang, und nichts sagte warum.
+                    laut, weg = _nc_meldetakt.melden("discord-rangrolle", type(e).__name__,
+                                                     _time_mod.monotonic())
+                    if laut:
+                        log.error("Discord: Rang-Rolle %s nicht vergeben (%s) — braucht der "
+                                  "Bot „Rollen verwalten“ und steht seine Rolle ueber den "
+                                  "Rang-Rollen?%s", rkname, e, _nc_meldetakt.zusatz(weg))
         txt = f"🎉 {message.author.mention} ist jetzt **Level {newlvl}**" + (f" — Rang **{rkname}**!" if rkname else "!")
         ch = discord.utils.get(message.guild.text_channels, name=DISCORD_LEVELUP_CHANNEL) if DISCORD_LEVELUP_CHANNEL else None
         await (ch or message.channel).send(_nc_i18n.t(txt))
     except Exception as e:
-        log.debug("Discord Level-Up: %s", e)
+        # v4.2-W175: stand auf debug. /daily reichte hier eine Interaction
+        # herein, die kein `.author` hat — jeder Level-Aufstieg ueber /daily
+        # endete in einem AttributeError, den kein Log je zeigte.
+        laut, weg = _nc_meldetakt.melden("discord-levelup", type(e).__name__,
+                                         _time_mod.monotonic())
+        if laut:
+            log.error("Discord Level-Up (Level %s) nicht gemeldet: %s: %s%s", newlvl,
+                      type(e).__name__, e, _nc_meldetakt.zusatz(weg))
 
 
 class _ParBot:
@@ -1317,10 +1332,11 @@ def _reg_daily_profil(tree):
                 f"Streak: **{streak} Tage** (Bonus +{bonus}) · Bestwert {best} · insgesamt {total}× abgeholt",
                 ephemeral=True)
             if newlvl > oldlvl:
-                try:
-                    await _on_level_up(inter, newlvl)
-                except Exception:
-                    pass
+                # v4.2-W175: _on_level_up erwartet eine Nachricht (author,
+                # guild, channel) — eine Interaction hat `user`, nicht
+                # `author`. _on_level_up faengt selbst und meldet laut.
+                await _on_level_up(types.SimpleNamespace(
+                    author=inter.user, guild=inter.guild, channel=inter.channel), newlvl)
         except Exception as e:
             await inter.response.send_message(_nc_i18n.t(f"Fehler: {e}"), ephemeral=True)
 

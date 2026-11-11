@@ -358,3 +358,54 @@ def dashboard_umzug(zeilen, ziel, vorhanden_im_ziel):
             gesehen.add(key)
             umziehen.append(tid)
     return umziehen, doppelt
+
+
+# ═════════════════════════════════════════════════════════════════════════
+# v4.2-W175: einfache Gruppe -> Supergruppe (ChatMigrated)
+# ═════════════════════════════════════════════════════════════════════════
+#
+# Wandelt Telegram eine Gruppe in eine Supergruppe um (Forum einschalten,
+# oeffentlicher Link, >200 Mitglieder, Admin-Rechte geaendert), bekommt sie
+# eine NEUE Chat-ID. Die alte antwortet auf jeden Versand mit `ChatMigrated`
+# — und das fing bis hier niemand: `_safe_send` landete im allgemeinen
+# `TelegramError`-Zweig auf warning, der Video-Versand meldete „Telegram: …"
+# je Teil, und `_is_authorized` liess Befehle aus der neuen Gruppe still
+# fallen, weil ALLOWED_CHAT_IDS die alte ID traegt. Nichts stuerzte ab — es
+# kam bloss nichts mehr an.
+
+
+def migration_plan(zeilen, alt, neu):
+    """Plan fuer die Trackings einer migrierten Gruppe. -> (umziehen, doppelt)
+
+    `zeilen`: [(id, username, group_id)] — alle Trackings mit group_id alt
+    ODER neu. Steht ein Nutzer schon unter der neuen ID (jemand hat ihn dort
+    nach der Umwandlung neu angelegt), ist die alte Zeile eine Dublette:
+    UNIQUE(group_id, username) verbietet das Umschreiben, und zwei Zeilen
+    hiessen zwei Aufnahmen desselben Nutzers. Dieselbe Regel wie
+    `dashboard_umzug`."""
+    umziehen, doppelt = [], []
+    if not ist_telegram_chat(alt) or not ist_telegram_chat(neu) or alt == neu:
+        return umziehen, doppelt
+    gesehen = {(u or "").lower() for _t, u, g in zeilen or () if g == neu}
+    for tid, username, gid in zeilen or ():
+        if gid != alt:
+            continue
+        key = (username or "").lower()
+        if key in gesehen:
+            doppelt.append(tid)
+        else:
+            gesehen.add(key)
+            umziehen.append(tid)
+    return umziehen, doppelt
+
+
+def migriert_erlaubt(chat_id, erlaubte, abbildung) -> bool:
+    """Ist `chat_id` die neue ID eines freigeschalteten Chats?
+
+    ALLOWED_CHAT_IDS steht in der .env und kann sich zur Laufzeit nicht
+    selbst nachziehen. Bis der Betreiber sie anpasst, gilt die neue ID einer
+    freigeschalteten alten — sonst sperrt eine Umwandlung, die Telegram
+    ausloest, die eigene Gruppe aus."""
+    if chat_id is None:
+        return False
+    return any(abbildung.get(alt) == chat_id for alt in (erlaubte or ()))

@@ -512,7 +512,9 @@ def test_dead_chat_contract():
     # send_video-Aufruf mehr kostet. Diese Textpruefung bleibt als billiger
     # Frueherkenner daneben stehen.
     src = open("telegramversand.py", encoding="utf-8").read()
-    i = src.find("async def _send_one(fh_or_path, caption):")
+    # ANKER GEWANDERT (v4.2-W175): zwischen _send_one und der Sperre steht
+    # jetzt _fehlschlag — gezaehlt wird ab dem eigentlichen Versand.
+    i = src.find("async def _send_one_roh(fh_or_path, caption):")
     body = src[i:i + 900]
     assert "if _is_dead(chat_id):" in body, "_send_one prüft die Sperre nicht"
     # Part-Schleife bricht ab statt jeden Part scheitern zu lassen

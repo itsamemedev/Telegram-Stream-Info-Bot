@@ -6069,7 +6069,8 @@ def _test_v42_w19_versandweg():
         _con = _ty.ModuleType("telegram.constants")
         for _n in ("TelegramError",):
             setattr(_err, _n, type(_n, (Exception,), {}))
-        for _n in ("BadRequest", "Forbidden", "NetworkError", "RetryAfter"):
+        # ANKER GEWANDERT (v4.2-W175): telegramversand faengt ChatMigrated.
+        for _n in ("BadRequest", "ChatMigrated", "Forbidden", "NetworkError", "RetryAfter"):
             setattr(_err, _n, type(_n, (_err.TelegramError,), {}))
         _con.ParseMode = _ty.SimpleNamespace(HTML="HTML")
         _sys.modules.update({"telegram": _tg, "telegram.error": _err,
@@ -6105,7 +6106,11 @@ def _test_v42_w19_versandweg():
 
         async def _safe_send(bot, chat_id, text, **kw):
             PROT["texte"].append(text)
+        # ANKER GEWANDERT (v4.2-W175): sechster Pflicht-Helfer chat_migriert.
+        async def _chat_migriert(alt, neu):
+            PROT.setdefault("migriert", []).append((alt, neu))
         _tv.konfiguriere(
+            chat_migriert=_chat_migriert,
             ensure_topic=_ensure_topic,
             is_dead=lambda c: tot,
             mark_dead=lambda c: PROT["tot"].append(c),
@@ -24994,7 +24999,8 @@ def _test_v42_w131_aufnahme_luecken():
     # ANKER GEWANDERT (v4.2-W158): `sichern` laeuft im benannten Schritt
     # _aufnahme_fertigmachen (Tonspur, dann Chat einbrennen). Gerade das
     # Einbrennen dauert — der Platz muss davor frei sein.
-    for spaeter in ("_aufnahme_fertigmachen", "add_recording", "split_and_send_video"):
+    # ANKER GEWANDERT (v4.2-W175): der Upload laeuft in _aufnahme_verteilen.
+    for spaeter in ("_aufnahme_fertigmachen", "add_recording", "_aufnahme_verteilen"):
         assert zeilen(spaeter) and frei[0] < zeilen(spaeter)[0], \
             "Sperre wird erst nach %s frei" % spaeter
     kommunikation = zeilen("communicate")
@@ -25106,7 +25112,8 @@ def _test_v42_w132_versandziel_und_doppelstart():
         _con = _ty.ModuleType("telegram.constants")
         for _n in ("TelegramError",):
             setattr(_err, _n, type(_n, (Exception,), {}))
-        for _n in ("BadRequest", "Forbidden", "NetworkError", "RetryAfter"):
+        # ANKER GEWANDERT (v4.2-W175): telegramversand faengt ChatMigrated.
+        for _n in ("BadRequest", "ChatMigrated", "Forbidden", "NetworkError", "RetryAfter"):
             setattr(_err, _n, type(_n, (_err.TelegramError,), {}))
         _con.ParseMode = _ty.SimpleNamespace(HTML="HTML")
         _sys.modules.update({"telegram": _tg, "telegram.error": _err,
@@ -25127,7 +25134,11 @@ def _test_v42_w132_versandziel_und_doppelstart():
         raise AssertionError("Forum-Thema fuer einen gesperrten Chat angelegt")
 
     alt_vt = _tv._nc_videoteil
-    _tv.konfiguriere(ensure_topic=_ensure_topic, is_dead=lambda c: True,
+    # ANKER GEWANDERT (v4.2-W175): sechster Pflicht-Helfer chat_migriert.
+    async def _chat_migriert(alt, neu):
+        raise AssertionError("ein gesperrter Chat wurde migriert")
+    _tv.konfiguriere(chat_migriert=_chat_migriert,
+                     ensure_topic=_ensure_topic, is_dead=lambda c: True,
                      mark_dead=lambda c: None, safe_send=_safe_send,
                      topic_forget=lambda c, u: None)
     _tv._nc_videoteil = _Verboten()
@@ -25435,7 +25446,10 @@ def _test_v42_w133_drossel_und_loop():
     for fn, ziel in (("_piper_say", "_piper_pick_model"),
                      ("_stats_loop", "_nc_usage.flush"),
                      ("_stats_loop", "_nc_usage.configure"),
-                     ("handle_recording_finished", "_upload_queue_add")):
+                     # ANKER GEWANDERT (v4.2-W175): das Einreihen steht in den
+                     # benannten Schritten des Uploads.
+                     ("_aufnahme_verteilen", "_upload_queue_add"),
+                     ("_upload_rest_sichern", "_upload_queue_add")):
         rufe = [c for c in _ast.walk(_fn(fn)) if isinstance(c, _ast.Call)]
         im_thread = [c for c in rufe if _ast.unparse(c.func) == "asyncio.to_thread"
                      and c.args and _ast.unparse(c.args[0]) == ziel]
@@ -30119,8 +30133,9 @@ def _test_v42_w167_upload_wartet_nicht_auf_chat():
     namen = {n.id for n in _ast.walk(fm) if isinstance(n, _ast.Name)}
     assert "_aufnahme_chat_einarbeiten" not in namen, "auch nicht ueber to_thread"
     hrf = rumpf_ab(src, src.index("async def handle_recording_finished("))
+    # ANKER GEWANDERT (v4.2-W175): der Upload laeuft in _aufnahme_verteilen.
     assert hrf.index("_aufnahme_fertigmachen(output_file, username)") < \
-        hrf.index("split_and_send_video("), "Reihenfolge: fertigmachen, dann Upload"
+        hrf.index("_aufnahme_verteilen("), "Reihenfolge: fertigmachen, dann Upload"
 
     # Ausgefuehrt: das Einarbeiten haengt ewig — fertigmachen kehrt trotzdem zurueck.
     gemerkt, geweckt = [], []
@@ -30349,18 +30364,14 @@ def _test_v42_w168_ein_thema_ein_kanal():
     import ast as _ast
     import asyncio as _aio
     import logging as _lg
-    import os as _os
-    import shutil as _sh
     import sqlite3 as _sq
-    import threading as _th
     import time as _tm
     import types as _ty
-    import pruefhilfen as P
     from contextlib import contextmanager as _cm
     from nc import discordziele as Z
     from nc import meldetakt as M
     from nc import telegramfehler as T
-    from nc import topicumzug as U
+    from nc import discordaufnahme as DA
 
     src = open("bot.py", encoding="utf-8").read()
     baum = _ast.parse(src)
@@ -30387,13 +30398,17 @@ def _test_v42_w168_ein_thema_ein_kanal():
     # (1) Discord-/track-Nutzer sind NUR Discord: kein Ersatz-Telegram mehr.
     assert T.nur_telegram([gilde, -100, -100, "x", gilde]) == ([-100], [gilde, "x"])
     M.ZUSTAND.clear()
+    # ANKER GEWANDERT (v4.2-W175): der Hinweis nennt den Clip-Kanal und den Schalter.
     ns = _exec(baum, ["_telegram_ziele", "_fanout_ziele"],
-               {"_nc_tgfehler": T, "_nc_meldetakt": M, "_time_mod": _tm, "log": lg})
+               {"_nc_tgfehler": T, "_nc_meldetakt": M, "_time_mod": _tm, "log": lg,
+                "_nc_discordziele": Z, "_nc_dcaufnahme": DA})
     assert ns["_telegram_ziele"]([gilde, -7], "anna") == [-7], \
         "eine Discord-Aufnahme geht wieder nach Telegram"
     ns["_telegram_ziele"]([gilde], "ben")
+    ns["_telegram_ziele"]([gilde], "ben")
     hinweis = [z for _l, z in zeilen if "nur nach Discord" in z]
-    assert len(hinweis) == 1, ("der Hinweis kommt bei jeder Aufnahme", hinweis)
+    # v4.2-W175: gedrosselt JE NUTZER (anna, ben) — nicht einmal fuer alle.
+    assert len(hinweis) == 2, ("der Hinweis kommt bei jeder Aufnahme", hinweis)
     paare, chats = ns["_fanout_ziele"](
         [{"id": 1, "group_id": gilde}, {"id": 2, "group_id": -100},
          {"id": 3, "group_id": -100}], 9, -5, "anna")
@@ -30404,172 +30419,17 @@ def _test_v42_w168_ein_thema_ein_kanal():
     hrf = rumpf_ab(src, src.index("async def handle_recording_finished("))
     assert "for ftid, fchat in target_paare:" in hrf and "zip(target_tids" not in hrf
     assert "fchat is not None" in hrf, "die Offline-Meldung geht an die Guild"
-    uw = rumpf_ab(src, src.index("async def _upload_window_loop("))
+    # ANKER GEWANDERT (v4.2-W175): der Durchgang steht in _upload_queue_abarbeiten.
+    uw = rumpf_ab(src, src.index("async def _upload_queue_abarbeiten("))
     assert "if not chat_id or not fpath" in uw, \
         "ein aufgeschobener Discord-Eintrag wirft IndexError statt verworfen zu werden"
 
-    # (2) Telegram: EIN Upload-Thema je Gruppe — egal wie viele Nutzer.
-    erstellt = []
-
-    class _Bot:
-        async def create_forum_topic(self, chat_id, name):
-            erstellt.append((chat_id, name))
-            return _ty.SimpleNamespace(message_thread_id=100 + len(erstellt))
-
-    themen = {}
-    ns2 = {"TELEGRAM_USE_TOPICS": True, "_TG_TOPICS": themen, "_TG_TOPICS_LOCK": _th.Lock(),
-           "_tg_topics_save": lambda: None, "log": lg, "os": _os, "asyncio": _aio,
-           "_TG_UPLOAD_TOPIC_KEY": "#uploads", "_TG_TOPIC_ANLEGEN": {}}
-    from nc.util import _topic_key
-    ns2["_topic_key"] = _topic_key
-
-    async def _forum(_c, _b):
-        return True
-    ns2["_chat_is_forum"] = _forum
-    _exec(baum, ["_upload_topic_name", "_ensure_topic", "_topic_anlegen", "_topic_forget"], ns2)
-    a = _aio.run(ns2["_ensure_topic"](-100, "anna", _Bot()))
-    b = _aio.run(ns2["_ensure_topic"](-100, "ben", _Bot()))
-    assert a == b and len(erstellt) == 1, ("je Nutzer wieder ein Thema", erstellt)
-    assert erstellt[0][1] == "🎬 Aufnahmen"
-    _aio.run(ns2["_ensure_topic"](-100, "#live-notices", _Bot(), name="📡"))
-    assert len(erstellt) == 2, "das Melde-Thema ist im Upload-Thema aufgegangen"
-    ns2["_topic_forget"](-100, "anna")
-    assert "-100:#uploads" not in themen and "-100:#live-notices" in themen, \
-        "ein geloeschtes Upload-Thema wird nie vergessen — jeder Upload geht ins Leere"
-    # Review #210: zwei gleichzeitige Uploads legen EIN Thema an, nicht zwei.
-    themen.clear(); del erstellt[:]; ns2["_TG_TOPIC_ANLEGEN"].clear()
-
-    class _LahmerBot(_Bot):
-        async def create_forum_topic(self, chat_id, name):
-            await _aio.sleep(0.05)
-            return await _Bot.create_forum_topic(self, chat_id, name)
-
-    async def _zwei():
-        return await _aio.gather(ns2["_ensure_topic"](-300, "anna", _LahmerBot()),
-                                 ns2["_ensure_topic"](-300, "ben", _LahmerBot()))
-    t1, t2 = _aio.run(_zwei())
-    assert len(erstellt) == 1 and t1 == t2, ("parallele Uploads, zwei Upload-Themen", erstellt)
+    # (2)–(4) v4.2-W175: das gemeinsame Upload-Thema und der Topic-Umzug sind
+    # auf Wunsch des Betreibers zurueckgenommen — geprueft wird das Gegenteil
+    # in _test_v42_w175_telegram_discord. Uebrig bleibt der Zaehler, an dem
+    # seit W175 die Upload-Warteschlange haengt.
     tv = open("telegramversand.py", encoding="utf-8").read()
     assert 'ergebnis["gesendet" if ok else "fehler"] += 1' in tv
-
-    # (3) Topic-Umzug: rein.
-    alt = {"-100:anna": 7, "-100:#live-notices": 8, "-100:#uploads": 9, "x:anna": 3,
-           "-200:Ben": 4}
-    assert U.alte_themen(alt) == [(-100, "anna", 7), (-200, "Ben", 4)]
-    z = {"gesendet": {}}
-    assert U.offen(["a", "b", "a"], z, -100, "anna") == ["a", "b"]
-    U.gesendet(z, -100, "Anna", "a")
-    assert U.offen(["a", "b"], z, -100, "anna") == ["b"], "Neustart laedt doppelt hoch"
-    assert not U.angekommen({}) and not U.angekommen({"gesendet": 0, "fehler": 0})
-    assert not U.angekommen({"gesendet": 2, "fehler": 1})
-    assert U.angekommen({"gesendet": 1, "fehler": 0})
-    d = P.verzeichnis()
-    try:
-        pfad = _os.path.join(d, "u.json")
-        assert U.lade(pfad) == {"gesendet": {}}
-        U.speichere(pfad, z)
-        assert U.lade(pfad) == z
-        with open(pfad, "w") as fh:
-            fh.write("[1]")
-        try:
-            U.lade(pfad)
-            raise AssertionError("ein kaputter Stand laedt alles noch einmal hoch")
-        except ValueError:
-            pass
-
-        # (4) Topic-Umzug ausgefuehrt: geloescht wird NUR nach vollem Nachziehen.
-        aufnahmen = []
-        for i in range(2):
-            f = _os.path.join(d, "a%d.mp4" % i)
-            P.attrappe(f, 10)
-            aufnahmen.append(f)
-        weg = _os.path.join(d, "weg.mp4")
-        gesendet, geloescht, scheitern = [], [], [False]
-
-        async def _send(chat, datei, app, nutzer, ergebnis=None):
-            gesendet.append(datei)
-            kaputt = scheitern[0] is True or scheitern[0] == datei
-            ergebnis["gesendet"] = 0 if kaputt else 1
-            ergebnis["fehler"] = 1 if kaputt else 0
-
-        db_zeilen = list(aufnahmen) + [weg]
-
-        async def _db_async(fn):
-            return [{"filepath": f} for f in db_zeilen]
-
-        class _TBot:
-            async def delete_forum_topic(self, chat_id, message_thread_id):
-                geloescht.append(message_thread_id)
-
-            async def close_forum_topic(self, chat_id, message_thread_id):
-                geloescht.append(("zu", message_thread_id))
-
-        async def _schlaf(_s):
-            return None
-        themen.clear(); themen["-100:anna"] = 7
-        ns3 = {"asyncio": _ty.SimpleNamespace(sleep=_schlaf, to_thread=_aio.to_thread),
-               "_should_defer_upload": lambda: False, "db_async": _db_async, "os": _os,
-               "_nc_topicumzug": U, "split_and_send_video": _send, "log": lg,
-               "_TG_TOPICS_LOCK": _th.Lock(), "_TG_TOPICS": themen, "_topic_key": _topic_key,
-               "_tg_topics_save": lambda: None}
-        _exec(baum, ["_tg_topic_umziehen"], ns3)
-        app = _ty.SimpleNamespace(bot=_TBot())
-        stand = _os.path.join(d, "stand.json")
-        z = {"gesendet": {}}
-        scheitern[0] = True
-        _aio.run(ns3["_tg_topic_umziehen"](app, -100, "anna", 7, z, stand))
-        assert geloescht == [], "das alte Thema ist weg, obwohl das Video nicht ankam"
-        assert themen == {"-100:anna": 7}
-        scheitern[0] = False
-        del gesendet[:]
-        _aio.run(ns3["_tg_topic_umziehen"](app, -100, "anna", 7, z, stand))
-        assert gesendet == aufnahmen, ("nachgezogen wird, was auf der Platte liegt", gesendet)
-        assert geloescht == [("zu", 7)] and themen == {}, \
-            ("Review #210: eine Aufnahme ohne Datei liegt NUR noch im alten Thema — "
-             "geschlossen, nicht geloescht", geloescht, themen)
-        assert U.lade(stand) == {"gesendet": {}}
-        assert any("nicht mehr auf der Platte" in z for _l, z in zeilen)
-        # Alles da: geloescht. Keine einzige Zeile: geschlossen (die Retention
-        # hat Datei UND Zeile entfernt — das Thema traegt die einzige Kopie).
-        db_zeilen[:] = aufnahmen
-        for erwartet, zeilen_db in ((7, aufnahmen), (("zu", 7), [])):
-            db_zeilen[:] = zeilen_db
-            themen["-100:anna"] = 7
-            del geloescht[:]
-            _aio.run(ns3["_tg_topic_umziehen"](app, -100, "anna", 7, {"gesendet": {}}, stand))
-            assert geloescht == [erwartet], (zeilen_db, geloescht)
-        db_zeilen[:] = aufnahmen
-        # Erste Datei durch, zweite scheitert: der Stand kennt die erste — auf
-        # der Platte, nicht nur im Speicher.
-        themen["-100:anna"] = 7
-        del gesendet[:], geloescht[:]
-        scheitern[0] = aufnahmen[1]
-        z = {"gesendet": {}}
-        _aio.run(ns3["_tg_topic_umziehen"](app, -100, "anna", 7, z, stand))
-        assert geloescht == [] and U.offen(aufnahmen, U.lade(stand), -100, "anna") == \
-            [aufnahmen[1]], "der Fortschritt wird nicht gemerkt — der Neustart laedt doppelt"
-        scheitern[0] = False
-        # Teilweise durch, dann Neustart: nichts doppelt.
-        themen["-100:anna"] = 7
-        del gesendet[:], geloescht[:]
-        z = {"gesendet": {}}
-        U.gesendet(z, -100, "anna", aufnahmen[0])
-        _aio.run(ns3["_tg_topic_umziehen"](app, -100, "anna", 7, z, stand))
-        assert gesendet == [aufnahmen[1]], ("nach dem Neustart doppelt hochgeladen", gesendet)
-        # Fehlendes Recht zum Loeschen: laut, Thema bleibt gemerkt.
-        class _Verbot:
-            async def delete_forum_topic(self, chat_id, message_thread_id):
-                raise RuntimeError("Not enough rights to manage topics")
-        themen["-100:anna"] = 7
-        _aio.run(ns3["_tg_topic_umziehen"](_ty.SimpleNamespace(bot=_Verbot()),
-                                           -100, "anna", 7, {"gesendet": {}}, stand))
-        assert themen == {"-100:anna": 7}
-        assert any(l >= _lg.ERROR and "Themen verwalten" in z for l, z in zeilen)
-    finally:
-        _sh.rmtree(d, ignore_errors=True)
-    um = rumpf_ab(src, src.index("async def _tg_topic_umzug("))
-    assert "_tg_topic_umziehen(" in um
-    assert '_spawn(_tg_topic_umzug(bot_app), name="tg-topic-umzug")' in src
 
     # (5) Dashboard: die Standardgruppe ist Telegram, nie eine Guild.
     assert T.standardgruppe(0, 0, [gilde, -100], 0, ()) == -100
@@ -30753,8 +30613,7 @@ def _test_v42_w168_ein_thema_ein_kanal():
     assert za.index("_nc_ziele.loeschbar(") < za.index("await _bereich_umziehen(")
     assert za.count("_umzugsmarken(") == 1 and za.index("_umzugsmarken(") < za.index("for cat in alte")
     lg.handlers.clear()
-    ok("W168: ein Upload-Thema statt @name-Themen (alte nachgezogen, dann geloescht), "
-       "Discord-/track nur Discord, Dashboard-Standard Telegram samt Bestand, ein Clip-Kanal")
+    ok("W168: Discord-/track nur Discord, Dashboard-Standard Telegram samt Bestand, ein Clip-Kanal")
 
 def _test_v42_w169_link_video():
     """v4.2-W169: gemeldet am 07.11. — „Wenn ich in Discord oder Telegram einen
@@ -33338,6 +33197,861 @@ def _test_v42_w179_zeitstempel_spruenge():
        "Zubringer dekodierbar, mit Ton, ohne Standbild")
 
 
+def _w175_hilfen():
+    """Gemeinsames Werkzeug der W175-Vertraege: Quelltext, Funktionen einzeln
+    ausfuehren, Logzeilen mitschneiden."""
+    import ast as _ast
+    import logging as _lg
+
+    src = open("bot.py", encoding="utf-8").read()
+    baum = _ast.parse(src)
+
+    def _fn(b, name):
+        return next(n for n in b.body if getattr(n, "name", "") == name)
+
+    def _exec(b, namen, ns):
+        teile = [_fn(b, n) for n in namen]
+        exec(compile(_ast.Module(body=teile, type_ignores=[]), "x.py", "exec"), ns)
+        return ns
+
+    zeilen = []
+
+    class _H(_lg.Handler):
+        def emit(self, r):
+            zeilen.append((r.levelno, r.getMessage()))
+    lg = _lg.getLogger("w175")
+    lg.handlers[:] = [_H()]
+    lg.setLevel(_lg.DEBUG)
+    lg.propagate = False
+    return src, baum, _fn, _exec, zeilen, lg
+
+
+def _w175_telegram_stub():
+    """telegram.error wie in W19 stubben, falls kein echtes Paket da ist —
+    pytest faehrt diesen Vertrag auch allein."""
+    import sys as _sys
+    import types as _ty
+    if "telegram" not in _sys.modules:
+        _tg = _ty.ModuleType("telegram")
+        _err = _ty.ModuleType("telegram.error")
+        _con = _ty.ModuleType("telegram.constants")
+        _err.TelegramError = type("TelegramError", (Exception,), {})
+        for _n in ("BadRequest", "ChatMigrated", "Forbidden", "NetworkError", "RetryAfter"):
+            setattr(_err, _n, type(_n, (_err.TelegramError,), {}))
+        _con.ParseMode = _ty.SimpleNamespace(HTML="HTML")
+        _sys.modules.update({"telegram": _tg, "telegram.error": _err,
+                             "telegram.constants": _con})
+    import telegramversand as _tv
+    return _tv
+
+
+def _test_v42_w175_themen_je_nutzer():
+    """v4.2-W175 (A): „wieder ein Forum-Thema je getracktem Nutzer". W168 hatte
+    alle Uploads einer Gruppe in ein Thema „🎬 Aufnahmen" gelegt und beim Start
+    die @name-Themen dorthin umgezogen und GELOESCHT. Liefe dieser Umzug weiter,
+    loeschte er jedes neue @name-Thema samt Videos beim naechsten Neustart."""
+    import ast as _ast
+    import asyncio as _aio
+    import os as _os
+    import threading as _th
+    import types as _ty
+    from nc.util import _topic_key
+
+    src, baum, _fn, _exec, zeilen, lg = _w175_hilfen()
+    erstellt = []
+
+    class _Bot:
+        async def create_forum_topic(self, chat_id, name):
+            await _aio.sleep(0.01)
+            erstellt.append((chat_id, name))
+            return _ty.SimpleNamespace(message_thread_id=100 + len(erstellt))
+
+    themen = {"-100:#uploads": 9}            # das gemeinsame Thema aus W168
+    ns = {"TELEGRAM_USE_TOPICS": True, "_TG_TOPICS": themen, "_TG_TOPICS_LOCK": _th.Lock(),
+          "_tg_topics_save": lambda: None, "log": lg, "os": _os, "asyncio": _aio,
+          "_TG_TOPIC_ANLEGEN": {}, "_topic_key": _topic_key}
+
+    async def _forum(_c, _b):
+        return True
+    ns["_chat_is_forum"] = _forum
+    _exec(baum, ["_ensure_topic", "_topic_anlegen", "_topic_forget"], ns)
+    a = _aio.run(ns["_ensure_topic"](-100, "anna", _Bot()))
+    b = _aio.run(ns["_ensure_topic"](-100, "ben", _Bot()))
+    assert a != b and [n for _c, n in erstellt] == ["@anna", "@ben"], \
+        ("die Uploads landen wieder in EINEM gemeinsamen Thema", erstellt)
+    assert a not in (9,) and b not in (9,), "Uploads gehen ins alte gemeinsame Thema"
+    assert _aio.run(ns["_ensure_topic"](-100, "anna", _Bot())) == a and len(erstellt) == 2
+    _aio.run(ns["_ensure_topic"](-100, "#live-notices", _Bot(), name="📡 Live & Offline"))
+    assert erstellt[-1][1] == "📡 Live & Offline", "das Melde-Thema hat seinen Namen verloren"
+    ns["_topic_forget"](-100, "anna")
+    assert "-100:anna" not in themen and "-100:ben" in themen and "-100:#uploads" in themen, \
+        ("ein geloeschtes @anna-Thema vergisst den falschen Schluessel", themen)
+    # Zwei gleichzeitige Uploads DESSELBEN Nutzers: ein Thema, nicht zwei.
+    del erstellt[:]
+
+    async def _zwei():
+        return await _aio.gather(ns["_ensure_topic"](-300, "carl", _Bot()),
+                                 ns["_ensure_topic"](-300, "carl", _Bot()))
+    t1, t2 = _aio.run(_zwei())
+    assert t1 == t2 and len(erstellt) == 1, ("parallele Uploads, zwei @carl-Themen", erstellt)
+    # Das gemeinsame Thema bleibt stehen — nichts im Bot loescht noch Themen.
+    namen = {getattr(n, "name", "") for n in baum.body}
+    assert not {"_tg_topic_umzug", "_tg_topic_umziehen", "_upload_topic_name"} & namen, \
+        "der Topic-Umzug ist zurueck — er loescht die neuen @name-Themen beim Start"
+    loescher = [n.attr for n in _ast.walk(baum) if isinstance(n, _ast.Attribute)
+                and n.attr in ("delete_forum_topic", "close_forum_topic")]
+    assert not loescher, ("bot.py loescht/schliesst wieder Forum-Themen", loescher)
+    assert not _os.path.exists(_os.path.join("nc", "topicumzug.py"))
+    assert "_TG_UPLOAD_TOPIC_KEY" not in {n.id for n in _ast.walk(baum)
+                                          if isinstance(n, _ast.Name)}
+    ok("W175: ein Forum-Thema je Nutzer („@name“), Melde-Thema unveraendert, kein Umzug, "
+       "das gemeinsame Thema bleibt unangetastet")
+
+
+def _test_v42_w175_discord_ganze_aufnahme():
+    """v4.2-W175 (B): „die GESAMTE Aufnahme soll nach Discord, in hochladbaren
+    Teilen" — bisher gingen nur Highlights/Memes in den Clip-Kanal, und ein
+    Discord-/track-Nutzer bekam ohne Highlight gar nichts."""
+    import asyncio as _aio
+    import logging as _lg
+    import os as _os
+    import shutil as _sh
+    import types as _ty
+    import pruefhilfen as P
+    from nc import discordaufnahme as DA
+    from nc import discordlimits as DL
+    from nc import discordziele as Z
+    from nc import meldetakt as M
+    from nc import uploadschlange as U
+    from nc import videoteil as V
+
+    src, baum, _fn, _exec, zeilen, lg = _w175_hilfen()
+    MB = 1024 * 1024
+    assert DA.an("") and DA.an("1") and DA.an("ja") and not DA.an("0") and not DA.an("aus")
+    alt_env = _os.environ.pop("DISCORD_AUFNAHME_UPLOAD", None)
+    try:
+        assert DA.an(), "Vorgabe muss AN sein"
+        _os.environ["DISCORD_AUFNAHME_UPLOAD"] = "0"
+        assert not DA.an(), "der Schalter wird nicht gelesen (Modul-Konstante?)"
+    finally:
+        _os.environ.pop("DISCORD_AUFNAHME_UPLOAD", None)
+        if alt_env is not None:
+            _os.environ["DISCORD_AUFNAHME_UPLOAD"] = alt_env
+
+    d = P.verzeichnis()
+    alt = {k: getattr(V, k) for k in ("kopier_teilen", "neu_kodieren", "platz_reicht")}
+    aufrufe = []
+    try:
+        klein = _os.path.join(d, "klein.mp4")
+        gross = _os.path.join(d, "gross.mp4")
+        P.attrappe(klein, 5 * MB)
+        P.attrappe(gross, 100 * MB)
+        teilgroessen = [[9, 9, 9]]
+
+        async def _kopier(pfad, praefix, ziel):
+            aufrufe.append(("kopier", praefix, ziel))
+            groessen = teilgroessen.pop(0) if teilgroessen else [9]
+            aus = []
+            for i, g in enumerate(groessen):
+                t = "%s_%03d.mp4" % (praefix, i)
+                P.attrappe(t, g * MB)
+                aus.append(t)
+            return aus, None
+
+        async def _neu(pfad, praefix, ziel):
+            aufrufe.append(("neu", praefix, ziel))
+            t = "%s_re_000.mp4" % praefix
+            P.attrappe(t, 8 * MB)
+            return [t], None
+        V.kopier_teilen, V.neu_kodieren = _kopier, _neu
+        V.platz_reicht = lambda p, faktor=1.2: (True, "")
+        gesendet = []
+        scheitern = [0]
+
+        async def _senden(teil, text):
+            if scheitern[0]:
+                scheitern[0] -= 1
+                raise RuntimeError("403 Missing Permissions")
+            gesendet.append((teil, _os.path.getsize(teil) // MB, text))
+
+        # (1) Passt die Datei, geht sie unzerlegt raus.
+        e = _aio.run(DA.hochladen(klein, 9, _senden, "an_na", pause_s=0))
+        assert U.angekommen(e) and gesendet[0][0] == klein and not aufrufe, (e, aufrufe)
+        assert "an\\_na" in gesendet[0][2], "Discord-Markdown aus dem Handle nicht entschaerft"
+        # (2) Zu gross: geteilt mit dem Ziel = Limit, jeder Teil in Reihenfolge,
+        # danach aufgeraeumt; die Aufnahme selbst bleibt.
+        del gesendet[:]
+        e = _aio.run(DA.hochladen(gross, 9, _senden, "anna", pause_s=0))
+        assert aufrufe == [("kopier", gross + "_dcpart", 9)], aufrufe
+        assert [g for _t, g, _x in gesendet] == [9, 9, 9] and U.angekommen(e), (gesendet, e)
+        assert "Teil 2/3" in gesendet[1][2]
+        assert not [f for f in _os.listdir(d) if "_dcpart" in f], "Teile bleiben liegen"
+        assert _os.path.exists(gross)
+        # Der Telegram-Versand sammelt "<datei>_part_*.mp4" ein — die
+        # Discord-Teile duerfen dort nie auftauchen.
+        assert not (gross + "_dcpart_000.mp4").startswith(gross + "_part_")
+        # (3) Ohne Neukodieren zu grob (lange GOPs): halbes Ziel, dann neu kodiert.
+        del gesendet[:], aufrufe[:]
+        teilgroessen[:] = [[30, 9], [20, 9]]
+        e = _aio.run(DA.hochladen(gross, 9, _senden, "anna", pause_s=0))
+        assert [a[0] for a in aufrufe] == ["kopier", "kopier", "neu"] and aufrufe[1][2] == 4, \
+            aufrufe
+        assert U.angekommen(e) and len(gesendet) == 1
+        # (4) Fehlendes Recht: nach drei Fehlschlaegen in Folge Schluss, alles gezaehlt.
+        del gesendet[:], aufrufe[:]
+        teilgroessen[:] = [[9] * 6]
+        scheitern[0] = 99
+        e = _aio.run(DA.hochladen(gross, 9, _senden, "anna", pause_s=0))
+        scheitern[0] = 0
+        assert e["fehler"] == 6 and e["gesendet"] == 0 and not U.angekommen(e), e
+        assert "Missing Permissions" in e["grund"] and "nicht versucht" in e["grund"]
+        # (5) Ein Teil bleibt zu gross: gezaehlt, nicht still gesendet.
+        teilgroessen[:] = [[9, 30], [9, 30]]
+        V.neu_kodieren = lambda *a: _aio.sleep(0, result=(None, "kaputt"))
+        e = _aio.run(DA.hochladen(gross, 9, _senden, "anna", pause_s=0))
+        assert e == {"gesendet": 0, "fehler": 1, "grund": "Teilen gescheitert: kaputt"}, e
+        # …und ein neu kodierter Teil, der trotzdem zu gross ist, zaehlt als Fehler.
+        teilgroessen[:] = [[30], [30]]
+
+        async def _neu_zu_gross(pfad, praefix, ziel):
+            t = "%s_re_000.mp4" % praefix
+            P.attrappe(t, 30 * MB)
+            return [t], None
+        V.neu_kodieren = _neu_zu_gross
+        e = _aio.run(DA.hochladen(gross, 9, _senden, "anna", pause_s=0))
+        assert e["gesendet"] == 0 and e["fehler"] == 1 and "bleibt 30.0 MB" in e["grund"], e
+    finally:
+        for k, v in alt.items():
+            setattr(V, k, v)
+        _sh.rmtree(d, ignore_errors=True)
+    nk = open("nc/videoteil.py", encoding="utf-8").read()
+    assert "async with _encodeschlange.platz(" in rumpf_ab(nk, nk.index("async def neu_kodieren(")), \
+        "Neu-Kodieren laeuft an der Encode-Warteschlange vorbei"
+
+    # (6) bot._aufnahme_nach_discord: Guild-Limit mit Reserve, Clip-Kanal, laut.
+    class _Kanal:
+        name = "clips"
+
+        def __init__(self, limit_mb, kaputt=False):
+            self.guild = _ty.SimpleNamespace(filesize_limit=limit_mb * MB)
+            self.kaputt, self.posts = kaputt, []
+
+        async def send(self, content=None, file=None):
+            if self.kaputt:
+                raise RuntimeError("Missing Access")
+            self.posts.append((content, file))
+    gemerkt = {}
+
+    async def _hoch(pfad, grenze, senden, nutzer, beginn=None, ergebnis=None):
+        gemerkt["grenze"] = grenze
+        await senden(pfad, "t")
+        ergebnis.update(gesendet=1, fehler=0)
+        return ergebnis
+    kanal = [_Kanal(50)]
+
+    async def _holen(gilden, bevorzugt=0, name=None, anlegen=True):
+        return kanal[0]
+    client = _ty.SimpleNamespace(guilds=[1])
+    fake_dc = _ty.ModuleType("discord")
+    fake_dc.File = lambda p: ("datei", p)
+    import sys as _sys
+    alt_dc = _sys.modules.get("discord")
+    _sys.modules["discord"] = fake_dc
+    M.zuruecksetzen()
+    try:
+        ns = _exec(baum, ["_aufnahme_nach_discord"], {
+            "_nc_dcaufnahme": _ty.SimpleNamespace(an=lambda: True, SCHALTER=DA.SCHALTER,
+                                                  hochladen=_hoch),
+            "os": _ty.SimpleNamespace(getenv=lambda k, v="": "tok", path=_os.path),
+            "_nc_discordstate": _ty.SimpleNamespace(CLIENT={"obj": client}),
+            "_nc_discordziele": _ty.SimpleNamespace(clip_kanal_holen=_holen,
+                                                    clip_kanal=Z.clip_kanal),
+            "DISCORD_GUILD_ID": 0, "_nc_dclimits": DL, "_DISCORD_UPLOAD_OVERRIDE": None,
+            "_nc_uschlange": U, "_nc_meldetakt": M, "_time_mod": __import__("time"),
+            "log": lg, "asyncio": _aio})
+        e = _aio.run(ns["_aufnahme_nach_discord"]("anna", "/x/a.mp4"))
+        assert U.angekommen(e) and gemerkt["grenze"] == DL.gate_mb(50) == 49, (e, gemerkt)
+        assert kanal[0].posts == [("t", ("datei", "/x/a.mp4"))]
+        kanal[0] = _Kanal(10, kaputt=True)
+        del zeilen[:]
+
+        async def _hoch2(pfad, grenze, senden, nutzer, beginn=None, ergebnis=None):
+            return await DA.hochladen(pfad, grenze, senden, nutzer, beginn, ergebnis, pause_s=0)
+        ns["_nc_dcaufnahme"].hochladen = _hoch2
+        d2 = P.verzeichnis()
+        try:
+            f = _os.path.join(d2, "a.mp4")
+            P.attrappe(f, MB)
+            e = _aio.run(ns["_aufnahme_nach_discord"]("anna", f))
+        finally:
+            _sh.rmtree(d2, ignore_errors=True)
+        assert not U.angekommen(e) and e["fehler"] == 1
+        assert any(l >= _lg.ERROR and "Missing Access" in z and "#clips" in z
+                   for l, z in zeilen), ("Discord-Fehler nicht laut", zeilen)
+        ns["_nc_dcaufnahme"].an = lambda: False
+        assert _aio.run(ns["_aufnahme_nach_discord"]("anna", f)).get("aus")
+    finally:
+        if alt_dc is None:
+            _sys.modules.pop("discord", None)
+        else:
+            _sys.modules["discord"] = alt_dc
+
+    # (7) Jede fertige Aufnahme: Telegram-Chats UND "discord", auch ohne
+    # Telegram-Ziel (reines Discord-/track-Tracking).
+    tg, dc, schlange = [], [], []
+
+    async def _split(chat, datei, app, nutzer, started_at=None, ended_at=None):
+        tg.append(chat)
+
+    async def _nach_dc(nutzer, datei, beginn=None):
+        dc.append(datei)
+
+    async def _schlaf(_s):
+        return None
+    nsv = _exec(baum, ["_aufnahme_verteilen"], {
+        "asyncio": _ty.SimpleNamespace(sleep=_schlaf, to_thread=_aio.to_thread),
+        "split_and_send_video": _split, "_aufnahme_nach_discord": _nach_dc,
+        "_upload_queue_add": lambda *a, **k: schlange.append((a, k))})
+    offen = ["discord"]
+    _aio.run(nsv["_aufnahme_verteilen"](None, offen, "/r/a.mp4", "anna", None, None, False))
+    assert dc == ["/r/a.mp4"] and tg == [] and offen == [], (dc, tg, offen)
+    offen = [-100, "discord"]
+    _aio.run(nsv["_aufnahme_verteilen"](None, offen, "/r/a.mp4", "anna", None, None, True))
+    assert [k.get("ziel") for _a, k in schlange] == [None, "discord"] and tg == [], schlange
+    assert schlange[1][0][0] is None, "der Discord-Eintrag traegt eine Chat-ID"
+    hrf = rumpf_ab(src, src.index("async def handle_recording_finished("))
+    assert '["discord"] if _nc_dcaufnahme.an() else []' in hrf and "_aufnahme_verteilen(" in hrf
+    ok("W175: ganze Aufnahme in Teilen <= Guild-Limit in den Clip-Kanal, auch fuer "
+       "Discord-/track, Schalter DISCORD_AUFNAHME_UPLOAD, Fehler laut")
+
+
+def _test_v42_w175_upload_schlange():
+    """v4.2-W175 (Befunde 2–5): die Warteschlange wiederholte nie, lief ohne
+    Fenster gar nicht, und ein Neustart mitten im Upload trug die Aufnahme
+    doppelt ein und verlor den Rest."""
+    import ast as _ast
+    import asyncio as _aio
+    import json as _json
+    import logging as _lg
+    import os as _os
+    import shutil as _sh
+    import threading as _th
+    import time as _tm
+    import types as _ty
+    import pruefhilfen as P
+    from datetime import datetime as _dt
+    from nc import discordaufnahme as DA
+    from nc import discordziele as Z
+    from nc import meldetakt as M
+    from nc import telegramfehler as T
+    from nc import uploadschlange as U
+
+    src, baum, _fn, _exec, zeilen, lg = _w175_hilfen()
+
+    # (1) rein
+    assert not U.angekommen({}) and not U.angekommen({"gesendet": 2, "fehler": 1})
+    assert U.angekommen({"gesendet": 1, "fehler": 0})
+    lage, neu = U.nach_versuch({"file": "a"}, {"gesendet": 0, "fehler": 1, "grund": "Timeout"}, 100.0)
+    assert lage == "wieder" and neu["versuche"] == 1 and neu["naechster_versuch"] == 700.0
+    assert neu["letzter_fehler"] == "Timeout"
+    assert U.nach_versuch(neu, {}, 0)[1]["naechster_versuch"] == 1200.0     # verdoppelt
+    assert U.nach_versuch({"versuche": 4}, {}, 0)[0] == "aufgeben"
+    assert U.nach_versuch({"versuche": 4}, {"gesendet": 1}, 0)[0] == "fertig"
+    assert U.faellig({}, 0) and U.faellig({"naechster_versuch": "x"}, 0)
+    assert not U.faellig({"naechster_versuch": 50.0}, 10.0)
+
+    # (2) Der Durchgang: Fehlschlag bleibt liegen, Erfolg geht, nach
+    # MAX_VERSUCHE laut aufgegeben; Discord-Eintraege gehen nach Discord.
+    d = P.verzeichnis()
+    try:
+        qpfad = _os.path.join(d, "pending.json")
+        datei = _os.path.join(d, "a.mp4")
+        P.attrappe(datei, 10)
+        jetzt = [1000.0]
+        ergebnisse, gesendet = [], []
+
+        async def _split(chat, f, app, nutzer, started_at=None, ended_at=None, ergebnis=None):
+            gesendet.append(("tg", chat))
+            ergebnis.update(ergebnisse.pop(0) if ergebnisse else {"gesendet": 1, "fehler": 0})
+
+        async def _nach_dc(nutzer, f, beginn=None, ergebnis=None):
+            gesendet.append(("dc", f))
+            ergebnis.update(ergebnisse.pop(0) if ergebnisse else {"gesendet": 1, "fehler": 0})
+
+        async def _schlaf(_s):
+            return None
+        M.zuruecksetzen()
+        ns = {"_UPLOAD_QUEUE_LOCK": _th.Lock(), "_upload_queue_path": lambda: qpfad,
+              "json": _json, "os": _os, "log": lg, "_nc_uschlange": U, "datetime": _dt,
+              "_time_mod": _ty.SimpleNamespace(time=lambda: jetzt[0], monotonic=_tm.monotonic),
+              "_is_upload_window": lambda _d: True, "split_and_send_video": _split,
+              "_aufnahme_nach_discord": _nach_dc, "_parse_iso": lambda s: None,
+              "asyncio": _ty.SimpleNamespace(sleep=_schlaf, to_thread=_aio.to_thread),
+              "_nc_tgfehler": T, "_nc_meldetakt": M, "_nc_discordziele": Z,
+              "_nc_dcaufnahme": DA}
+        _exec(baum, ["_upload_queue_load", "_upload_queue_save", "_upload_queue_remove",
+                     "_upload_queue_update", "_upload_queue_abarbeiten", "_upload_queue_nachher",
+                     "_telegram_ziele"], ns)
+
+        def _stand():
+            return ns["_upload_queue_load"]()
+        ns["_upload_queue_save"]([{"chat_id": -100, "file": datei, "username": "anna",
+                                   "queued_at": "q1"},
+                                  {"chat_id": None, "ziel": "discord", "file": datei,
+                                   "username": "anna", "queued_at": "q1"}])
+        ergebnisse[:] = [{"gesendet": 0, "fehler": 1, "grund": "Timeout"},
+                         {"gesendet": 3, "fehler": 0}]
+        _aio.run(ns["_upload_queue_abarbeiten"](None))
+        assert gesendet == [("tg", -100), ("dc", datei)], gesendet
+        st = _stand()
+        assert len(st) == 1 and st[0]["versuche"] == 1 and st[0]["chat_id"] == -100, \
+            ("ein gescheiterter Upload verschwindet nach dem ersten Versuch", st)
+        assert any(l >= _lg.ERROR and "Versuch 1 von 5" in z and "Timeout" in z
+                   for l, z in zeilen), zeilen
+        del gesendet[:]
+        _aio.run(ns["_upload_queue_abarbeiten"](None))
+        assert gesendet == [], "die Pause nach dem Fehlschlag wird nicht eingehalten"
+        for _i in range(4):
+            jetzt[0] += 7 * 3600
+            ergebnisse[:] = [{}]                       # nichts gesendet (toter Chat)
+            _aio.run(ns["_upload_queue_abarbeiten"](None))
+        assert _stand() == [], "nach MAX_VERSUCHE bleibt der Eintrag fuer immer liegen"
+        assert any(l >= _lg.ERROR and "AUFGEGEBEN" in z and datei in z for l, z in zeilen)
+        # Erfolg beim zweiten Versuch: weg.
+        ns["_upload_queue_save"]([{"chat_id": -100, "file": datei, "username": "b",
+                                   "queued_at": "q2", "versuche": 1}])
+        _aio.run(ns["_upload_queue_abarbeiten"](None))
+        assert _stand() == []
+        # Datei weg: verworfen, aber laut.
+        ns["_upload_queue_save"]([{"chat_id": -100, "file": datei + "x", "username": "c",
+                                   "queued_at": "q3"}])
+        _aio.run(ns["_upload_queue_abarbeiten"](None))
+        assert _stand() == [] and any(l >= _lg.ERROR and "nicht mehr auf der Platte" in z
+                                      for l, z in zeilen)
+        # Discord abgeschaltet: verworfen statt fuenfmal versucht.
+        ns["_upload_queue_save"]([{"chat_id": None, "ziel": "discord", "file": datei,
+                                   "username": "d", "queued_at": "q4"}])
+        ergebnisse[:] = [{"aus": True, "grund": "DISCORD_AUFNAHME_UPLOAD=0"}]
+        _aio.run(ns["_upload_queue_abarbeiten"](None))
+        assert _stand() == []
+
+        # (3) Neustart mitten im Upload: der Rest landet in der Schlange.
+        schlange = []
+
+        async def _split_bricht(chat, f, app, nutzer, started_at=None, ended_at=None):
+            if chat == -2:
+                raise _aio.CancelledError()
+            gesendet.append(("tg", chat))
+        nsv = _exec(baum, ["_aufnahme_verteilen", "_upload_rest_sichern"], {
+            "asyncio": _ty.SimpleNamespace(sleep=_schlaf, to_thread=_aio.to_thread),
+            "split_and_send_video": _split_bricht, "_aufnahme_nach_discord": _nach_dc,
+            "_upload_queue_add": lambda *a, **k: schlange.append((a, k)), "log": lg})
+        nachlauf = {"eingetragen": True, "offen": [-1, -2, -3, "discord"], "ende": "E"}
+        try:
+            _aio.run(nsv["_aufnahme_verteilen"](None, nachlauf["offen"], datei, "anna",
+                                                None, "E", False))
+            raise AssertionError("der Abbruch kam nicht an")
+        except _aio.CancelledError:
+            pass
+        assert nachlauf["offen"] == [-2, -3, "discord"], \
+            ("was noch fehlt, ist nicht mehr bekannt", nachlauf["offen"])
+        _aio.run(nsv["_upload_rest_sichern"](nachlauf, datei, "anna", None))
+        assert [(a[0], k.get("ziel")) for a, k in schlange] == \
+            [(-2, None), (-3, None), (None, "discord")], schlange
+        assert all(k.get("grund") == "Neustart mitten im Upload" for _a, k in schlange)
+    finally:
+        _sh.rmtree(d, ignore_errors=True)
+    # …und der Abbruchzweig traegt nach dem Eintragen nicht ein zweites Mal ein.
+    hrf = _fn(baum, "handle_recording_finished")
+    zweig = next(h for n in _ast.walk(hrf) if isinstance(n, _ast.Try) for h in n.handlers
+                 if h.type is not None and "CancelledError" in _ast.unparse(h.type))
+    wenn = next(s for s in zweig.body if isinstance(s, _ast.If))
+    assert "nachlauf" in _ast.unparse(wenn.test) and \
+        "_upload_rest_sichern" in _ast.unparse(wenn.body) and \
+        isinstance(wenn.body[-1], _ast.Raise), "der Stopp-Pfad traegt wieder doppelt ein"
+    assert zweig.body.index(wenn) < next(
+        i for i, s in enumerate(zweig.body) if "_aufnahme_beim_stopp_sichern" in _ast.unparse(s))
+    gesetzt = [n for n in _ast.walk(hrf) if isinstance(n, _ast.Call)
+               and _ast.unparse(n.func) == "nachlauf.update"
+               and any(k.arg == "eingetragen" for k in n.keywords)]
+    assert gesetzt, "das Eintragen wird nicht vermerkt"
+
+    # (4) Die Schleife laeuft auch ohne Fenster.
+    uw = _fn(baum, "_upload_window_loop")
+    assert not [n for n in _ast.walk(uw) if isinstance(n, _ast.Return)], \
+        "die Schleife steigt ohne Fenster wieder aus"
+    rb = _fn(baum, "check_all_trackings")
+    for wenn in (n for n in _ast.walk(rb) if isinstance(n, _ast.If)):
+        assert "_upload_window_loop" not in _ast.unparse(wenn), \
+            "der Start der Schleife haengt wieder am Fenster"
+    assert "_upload_window_loop(bot_app)" in _ast.unparse(rb)
+    laeufe = []
+
+    class _Stopp(Exception):
+        pass
+
+    async def _schlaf2(_s):
+        if len(laeufe) >= 2:
+            raise _Stopp()
+
+    async def _durchgang(_app):
+        laeufe.append(1)
+    nsl = _exec(baum, ["_upload_window_loop"], {
+        "UPLOAD_WINDOW_START": 0, "UPLOAD_WINDOW_END": 0, "log": lg, "datetime": _dt,
+        "_is_upload_window": lambda _d: True, "_upload_queue_abarbeiten": _durchgang,
+        "_loop_fehler": lambda *a: None,
+        "asyncio": _ty.SimpleNamespace(sleep=_schlaf2)})
+    try:
+        _aio.run(nsl["_upload_window_loop"](None))
+    except _Stopp:
+        pass
+    assert len(laeufe) == 2, "ohne Fenster wird die Schlange nie abgearbeitet"
+
+    # (5) Hinweis „nur Discord" je Nutzer gedrosselt und mit Schalter.
+    M.zuruecksetzen()
+    del zeilen[:]
+    gilde = 1521964594653036677
+    nsz = _exec(baum, ["_telegram_ziele"], {
+        "_nc_tgfehler": T, "_nc_meldetakt": M, "_time_mod": _tm, "log": lg,
+        "_nc_discordziele": Z, "_nc_dcaufnahme": _ty.SimpleNamespace(
+            an=lambda: True, SCHALTER=DA.SCHALTER)})
+    for nutzer in ("anna", "ben", "anna"):
+        nsz["_telegram_ziele"]([gilde], nutzer)
+    hinweise = [z for _l, z in zeilen if "Discord-Guild" in z]
+    assert len(hinweise) == 2 and "@ben" in hinweise[1], \
+        ("ein fester Drossel-Schluessel verschluckt jeden weiteren Nutzer", hinweise)
+    assert "nur nach Discord (#clips)" in hinweise[0]
+    nsz["_nc_dcaufnahme"].an = lambda: False
+    nsz["_telegram_ziele"]([gilde], "carl")
+    assert "NIRGENDWOHIN" in zeilen[-1][1] and DA.SCHALTER in zeilen[-1][1]
+    ok("W175: Warteschlange wiederholt mit Pause und gibt laut auf, laeuft ohne Fenster, "
+       "Neustart mitten im Upload reiht den Rest ein statt doppelt einzutragen")
+
+
+def _test_v42_w175_chat_migriert():
+    """v4.2-W175 (Befund 1): einfache Gruppe → Supergruppe aendert die Chat-ID.
+    `ChatMigrated` fing niemand — danach scheiterte jeder Versand still, und
+    Befehle aus der neuen Gruppe fielen an ALLOWED_CHAT_IDS weg."""
+    import ast as _ast
+    import asyncio as _aio
+    import json as _json
+    import logging as _lg
+    import os as _os
+    import shutil as _sh
+    import sqlite3 as _sq
+    import time as _tm
+    import types as _ty
+    import pruefhilfen as P
+    from contextlib import contextmanager as _cm
+    from nc import meldetakt as M
+    from nc import telegramfehler as T
+
+    src, baum, _fn, _exec, zeilen, lg = _w175_hilfen()
+    # (1) rein
+    zl = [(1, "anna", -5), (2, "Ben", -5), (3, "ben", -1009), (4, "carl", -7)]
+    assert T.migration_plan(zl, -5, -1009) == ([1], [2])
+    assert T.migration_plan(zl, -5, -5) == ([], []) and T.migration_plan(zl, -5, 0) == ([], [])
+    assert T.migriert_erlaubt(-1009, {-5}, {-5: -1009})
+    assert not T.migriert_erlaubt(-1009, {-6}, {-5: -1009})
+    assert not T.migriert_erlaubt(None, {-5}, {-5: None})
+
+    # (2) _chat_migriert: Datenbank, Abbildung auf der Platte, laute Zeile.
+    d = P.verzeichnis()
+    con = _sq.connect(":memory:")
+    con.row_factory = _sq.Row
+    con.executescript(
+        "CREATE TABLE trackings (id INTEGER PRIMARY KEY, username TEXT, group_id INTEGER,"
+        " UNIQUE(group_id, username));"
+        "CREATE TABLE tracking_tags (tracking_id INTEGER, tag TEXT);"
+        "INSERT INTO trackings VALUES (1,'anna',-5),(2,'ben',-5),(3,'ben',-1009),(4,'carl',-7);"
+        "INSERT INTO tracking_tags VALUES (2,'x');")
+
+    @_cm
+    def _dbc():
+        yield con
+        con.commit()
+    abbildung = {}
+    M.zuruecksetzen()
+    try:
+        ns = _exec(baum, ["_tg_migriert_pfad", "_tg_migriert_laden", "_chat_migriert"], {
+            "_TG_MIGRIERT": abbildung, "RECORDINGS_DIR": d, "os": _os, "json": _json,
+            "db_conn": _dbc, "_nc_tgfehler": T, "_TG_FORUM_CACHE": {-5: (False, 0)},
+            "_nc_meldetakt": M, "_time_mod": _tm, "log": lg})
+        assert ns["_chat_migriert"](-5, -1009) == 1
+        rest = {(r["id"], r["group_id"]) for r in con.execute("SELECT id, group_id FROM trackings")}
+        assert rest == {(1, -1009), (3, -1009), (4, -7)}, rest
+        assert con.execute("SELECT COUNT(*) FROM tracking_tags").fetchone()[0] == 0
+        assert abbildung == {-5: -1009} and ns["_TG_FORUM_CACHE"] == {}
+        assert any(l >= _lg.ERROR and "ALLOWED_CHAT_IDS" in z and "-1009" in z
+                   for l, z in zeilen), zeilen
+        abbildung.clear()
+        ns["_tg_migriert_laden"]()
+        assert abbildung == {-5: -1009}, "die Abbildung ueberlebt keinen Neustart"
+    finally:
+        _sh.rmtree(d, ignore_errors=True)
+
+    # (3) _is_authorized: die neue ID einer freigeschalteten Gruppe gilt.
+    def _upd(cid, uid=1):
+        return _ty.SimpleNamespace(effective_user=_ty.SimpleNamespace(id=uid),
+                                   effective_chat=_ty.SimpleNamespace(id=cid))
+    nsa = _exec(baum, ["_is_authorized"], {"Update": object,
+                                           "ALLOWED_USER_IDS": set(), "ALLOWED_CHAT_IDS": {-5},
+                                           "_nc_tgfehler": T, "_TG_MIGRIERT": {-5: -1009}})
+    assert nsa["_is_authorized"](_upd(-1009)) and not nsa["_is_authorized"](_upd(-1010))
+
+    # (4) _safe_send: ChatMigrated → umschreiben, einmal an die neue ID.
+    class _TE(Exception):
+        pass
+
+    class _CM(_TE):
+        def __init__(self, neu):
+            super().__init__("Group migrated to supergroup")
+            self.new_chat_id = neu
+    fehler_ns = {n: type(n, (_TE,), {}) for n in ("RetryAfter", "Forbidden", "BadRequest",
+                                                  "NetworkError")}
+    umgeschrieben, gesendet = [], []
+
+    class _Bot:
+        async def send_message(self, chat_id, text, **kw):
+            gesendet.append((chat_id, kw.get("message_thread_id")))
+            if chat_id == -5:
+                raise _CM(-1009)
+    nss = _exec(baum, ["_safe_send"], dict(
+        fehler_ns, ChatMigrated=_CM, TelegramError=_TE, _TG_MIGRIERT={},
+        _is_dead=lambda c: False, _nc_i18n=_ty.SimpleNamespace(t=lambda t, l=None: t),
+        _chat_migriert=lambda a, n: umgeschrieben.append((a, n)), asyncio=_aio, log=lg,
+        _mark_dead=lambda c: None))
+    assert _aio.run(nss["_safe_send"](_Bot(), -5, "hallo", message_thread_id=7)) is True
+    assert umgeschrieben == [(-5, -1009)] and gesendet == [(-5, 7), (-1009, None)], gesendet
+    del gesendet[:]
+    nss["_TG_MIGRIERT"][-5] = -1009
+    assert _aio.run(nss["_safe_send"](_Bot(), -5, "hallo")) and gesendet == [(-1009, None)]
+
+    # (5) Video-Versand: ab dem migrierten Teil geht alles an die neue ID.
+    _tv = _w175_telegram_stub()
+    CM = _tv.ChatMigrated
+    mig, sends = [], []
+
+    class _VBot:
+        async def send_video(self, chat_id, datei, **kw):
+            sends.append((chat_id, kw.get("message_thread_id")))
+            if chat_id == -5:
+                e = CM("migrated")
+                e.new_chat_id = -1009
+                raise e
+
+    async def _mig(alt, neu):
+        mig.append((alt, neu))
+
+    async def _topic(c, u, b):
+        return 4711
+
+    async def _safe(*a, **k):
+        return True
+    _tv.konfiguriere(chat_migriert=_mig, ensure_topic=_topic, is_dead=lambda c: False,
+                     mark_dead=lambda c: None, safe_send=_safe, topic_forget=lambda c, u: None)
+    d = P.verzeichnis()
+    try:
+        f = _os.path.join(d, "a.mp4")
+        P.attrappe(f, 1024)
+        erg = {}
+        _aio.run(_tv.split_and_send_video(-5, f, _ty.SimpleNamespace(bot=_VBot()), "anna",
+                                          ergebnis=erg))
+    finally:
+        _sh.rmtree(d, ignore_errors=True)
+    assert mig == [(-5, -1009)] and sends == [(-5, 4711), (-1009, None)], sends
+    assert erg == {"gesendet": 1, "fehler": 0}, erg
+
+    # (6) Die Dienstnachricht wird verarbeitet — beide Richtungen.
+    aufrufe = []
+    nsm = _exec(baum, ["on_chat_migration"], {
+        "Update": object, "ContextTypes": _ty.SimpleNamespace(DEFAULT_TYPE=object),
+        "asyncio": _aio, "_chat_migriert": lambda a, n: aufrufe.append((a, n)), "log": lg})
+    for m in (_ty.SimpleNamespace(chat_id=-5, migrate_to_chat_id=-1009, migrate_from_chat_id=None),
+              _ty.SimpleNamespace(chat_id=-1009, migrate_to_chat_id=None, migrate_from_chat_id=-5)):
+        _aio.run(nsm["on_chat_migration"](_ty.SimpleNamespace(effective_message=m), None))
+    assert aufrufe == [(-5, -1009), (-5, -1009)], aufrufe
+    rb = _fn(baum, "run_bot")
+    assert any("StatusUpdate.MIGRATE" in _ast.unparse(n) and "on_chat_migration" in _ast.unparse(n)
+               for n in _ast.walk(rb) if isinstance(n, _ast.Call)
+               and _ast.unparse(n.func) == "app.add_handler"), "kein Handler fuer die Umwandlung"
+    ok("W175: ChatMigrated — Trackings umgeschrieben (Dubletten weg), neu gesendet, "
+       "Befehle aus der neuen Gruppe erlaubt, ALLOWED_CHAT_IDS laut gemeldet")
+
+
+def _test_v42_w175_kleinbefunde():
+    """v4.2-W175 (Befunde 6–10): /tracklist, Level-Up aus /daily, Zaehlung und
+    Kuerzung im Telegram-Versand, Forum-Pruefung."""
+    import ast as _ast
+    import asyncio as _aio
+    import logging as _lg
+    import os as _os
+    import re as _re
+    import shutil as _sh
+    import types as _ty
+    import pruefhilfen as P
+    from nc import meldetakt as M
+    from nc.textmore import pre_nachrichten
+    from nc.textutil import safe
+
+    src, baum, _fn, _exec, zeilen, lg = _w175_hilfen()
+
+    # (6) /tracklist: Notiz escaped, geteilt unter 4096.
+    zeilen_t = ["%02d · @nutzer_mit_langem_namen_%03d  LIVE" % (i, i) for i in range(300)]
+    msgs = pre_nachrichten("KOPF\n", zeilen_t, "\nFUSS")
+    assert len(msgs) > 1 and all(len(m) <= 4000 for m in msgs), [len(m) for m in msgs]
+    assert msgs[0].startswith("KOPF\n") and msgs[-1].endswith("\nFUSS")
+    assert all(m.count("<pre>") == 1 and m.count("</pre>") == 1 for m in msgs)
+    wieder = [z for m in msgs for z in m.split("<pre>")[1].split("</pre>")[0].split("\n")]
+    assert wieder == zeilen_t, "Zeilen gehen beim Teilen verloren"
+    antworten = []
+
+    class _Msg:
+        async def reply_text(self, text, **kw):
+            antworten.append(text)
+    tr = [{"id": i, "username": "nutzer_mit_langem_namen_%03d" % i, "last_live": 0, "recording": 0, "paused": 0,
+           "notes": "<b>&" if i == 0 else ""} for i in range(150)]
+    nst = _exec(baum, ["tracklist"], {
+        "Update": object, "ContextTypes": _ty.SimpleNamespace(DEFAULT_TYPE=object),
+        "_is_authorized": lambda u: True, "asyncio": _aio,
+        "get_trackings_for_group": lambda gid: tr, "safe": safe,
+        "_nc_prueflage": _ty.SimpleNamespace(lage=lambda *a, **k: {
+            "zustand": "offline", "ueberfaellig": False, "geprueft_vor_s": 0}),
+        "pre_nachrichten": pre_nachrichten, "utc_clock": lambda: "12:00",
+        "_nc_i18n": _ty.SimpleNamespace(t=lambda t: t),
+        "ParseMode": _ty.SimpleNamespace(HTML="HTML")})
+    _aio.run(nst["tracklist"](_ty.SimpleNamespace(
+        message=_Msg(), effective_chat=_ty.SimpleNamespace(id=-5)), None))
+    assert len(antworten) > 1 and all(len(a) <= 4096 for a in antworten), \
+        [len(a) for a in antworten]
+    assert "// &lt;b&gt;&amp;" in antworten[0], "die Notiz geht roh ins HTML"
+
+    # (7) Level-Up aus /daily: Interaction hat kein .author.
+    dsrc = open("discordbot.py", encoding="utf-8").read()
+    dbaum = _ast.parse(dsrc)
+    aufrufe = [n for n in _ast.walk(dbaum) if isinstance(n, _ast.Call)
+               and getattr(n.func, "id", "") == "_on_level_up"]
+    assert len(aufrufe) == 2
+    daily = [n for n in aufrufe if "inter" in _ast.unparse(n.args[0])]
+    assert daily and all(isinstance(n.args[0], _ast.Call) and
+                         {k.arg for k in n.args[0].keywords} >= {"author", "guild", "channel"}
+                         for n in daily), "/daily reicht wieder die Interaction durch"
+    gepostet = []
+
+    class _Kanal:
+        async def send(self, t):
+            gepostet.append(t)
+    M.zuruecksetzen()
+    nsl = _exec(dbaum, ["_on_level_up"], {
+        "_nc_rang": _ty.SimpleNamespace(rang_fuer_level=lambda l: None, RANG_STUFEN=()),
+        "DISCORD_LEVELUP_CHANNEL": "", "_nc_i18n": _ty.SimpleNamespace(t=lambda t: t),
+        "discord": _ty.SimpleNamespace(utils=_ty.SimpleNamespace(get=lambda *a, **k: None)),
+        "log": lg, "_nc_meldetakt": M, "_time_mod": __import__("time")})
+    nutzer = _ty.SimpleNamespace(mention="<@1>")
+    _aio.run(nsl["_on_level_up"](_ty.SimpleNamespace(author=nutzer, guild=None,
+                                                     channel=_Kanal()), 5))
+    assert gepostet and "<@1>" in gepostet[0] and "Level 5" in gepostet[0]
+    del zeilen[:]
+    _aio.run(nsl["_on_level_up"](_ty.SimpleNamespace(user=nutzer, guild=None,
+                                                     channel=_Kanal()), 6))
+    assert any(l >= _lg.ERROR and "AttributeError" in z for l, z in zeilen), \
+        ("ein gescheiterter Level-Up steht wieder nur auf debug", zeilen)
+
+    # (8)/(9) Telegram-Versand: uebersprungener Teil zaehlt, Fehlertext erst
+    # kuerzen, dann escapen.
+    _tv = _w175_telegram_stub()
+    texte, sends = [], []
+    BR = _tv.BadRequest
+
+    class _VBot:
+        def __init__(self, fehler=None):
+            self.fehler = fehler
+
+        async def send_video(self, chat_id, datei, **kw):
+            sends.append(chat_id)
+            if self.fehler:
+                raise self.fehler
+
+    async def _safe(bot, chat, text, **kw):
+        texte.append(text)
+
+    async def _topic(c, u, b):
+        return None
+
+    async def _mig(a, n):
+        return None
+    _tv.konfiguriere(chat_migriert=_mig, ensure_topic=_topic, is_dead=lambda c: False,
+                     mark_dead=lambda c: None, safe_send=_safe, topic_forget=lambda c, u: None)
+    d = P.verzeichnis()
+    alt_vt, alt_sleep = _tv._nc_videoteil, _tv.asyncio.sleep
+
+    async def _kein_schlaf(_s):
+        return None
+    try:
+        f = _os.path.join(d, "a.mp4")
+        P.attrappe(f, 1024)
+        erg = {}
+        _aio.run(_tv.split_and_send_video(-5, f, _ty.SimpleNamespace(
+            bot=_VBot(BR("x" * 186 + "<" * 10))), "anna", ergebnis=erg))
+        fehlerzeile = [t for t in texte if "UPLOAD FEHLGESCHLAGEN" in t][0]
+        code = fehlerzeile.split("<code>")[1].split("</code>")[0]
+        assert not _re.search(r"&(?!lt;|gt;|amp;|quot;|#x27;|#39;)", code), \
+            ("der Fehlertext wird nach dem Escapen gekuerzt — kaputtes HTML", code[-12:])
+        assert erg["fehler"] == 1 and "BadRequest" in erg["grund"]
+        teile = []
+        for i, mb in enumerate((10, 60)):
+            t = _os.path.join(d, "a.mp4_part_%03d.mp4" % i)
+            P.attrappe(t, mb * 1024 * 1024)
+            teile.append(t)
+        P.attrappe(f, 200 * 1024 * 1024)
+
+        async def _kopier(*a):
+            return list(teile), None
+        _tv._nc_videoteil = _ty.SimpleNamespace(
+            ZIEL_TEIL_MB=45, TELEGRAM_HARD_MB=50, platz_reicht=lambda p: (True, ""),
+            kopier_teilen=_kopier, zu_gross=lambda t, g=None: [], wegwerfen=lambda t: None)
+        _tv.asyncio.sleep = _kein_schlaf
+        erg = {}
+        del sends[:]
+        _aio.run(_tv.split_and_send_video(-5, f, _ty.SimpleNamespace(bot=_VBot()), "anna",
+                                          ergebnis=erg))
+        assert len(sends) == 1 and erg["gesendet"] == 1 and erg["fehler"] == 1, \
+            ("ein uebersprungener Teil zaehlt nicht — die Schlange hielte das fuer Erfolg", erg)
+    finally:
+        _tv._nc_videoteil, _tv.asyncio.sleep = alt_vt, alt_sleep
+        _sh.rmtree(d, ignore_errors=True)
+
+    # (10) Forum-Pruefung: ein Fehler gilt nur kurz und wird gemeldet.
+    uhr = [1000.0]
+    fragen = []
+
+    class _FBot:
+        kaputt = True
+
+        async def get_chat(self, cid):
+            fragen.append(cid)
+            if self.kaputt:
+                raise TimeoutError("Timed out")
+            return _ty.SimpleNamespace(is_forum=True)
+    M.zuruecksetzen()
+    del zeilen[:]
+    nsf = _exec(baum, ["_chat_is_forum"], {
+        "_time_mod": _ty.SimpleNamespace(monotonic=lambda: uhr[0]), "_TG_FORUM_CACHE": {},
+        "_TG_FORUM_TTL": 3600, "_TG_FORUM_FEHLER_TTL": 60, "_nc_meldetakt": M, "log": lg})
+    bot = _FBot()
+    assert _aio.run(nsf["_chat_is_forum"](-5, bot)) is False
+    assert any(l >= _lg.ERROR and "Timed out" in z for l, z in zeilen), zeilen
+    uhr[0] += 30
+    _aio.run(nsf["_chat_is_forum"](-5, bot))
+    assert fragen == [-5], "innerhalb der kurzen Frist wird jede Sekunde neu gefragt"
+    uhr[0] += 31
+    bot.kaputt = False
+    assert _aio.run(nsf["_chat_is_forum"](-5, bot)) is True and len(fragen) == 2, \
+        "ein Fehler wird wieder eine Stunde lang als „kein Forum“ gemerkt"
+    ok("W175: /tracklist escaped und geteilt, Level-Up aus /daily, Versand zaehlt jeden "
+       "Fehlschlag und kuerzt vor dem Escapen, Forum-Fehler gilt 60 s und ist laut")
+
+
 def _test_v42_w155_weiche_steckt():
     """v4.2-W155: gemeldet „Wir haben in den Restreams immer noch kein Bild" —
     Overlay und Chat liefen, das Videofeld zeigte das Pausenbild. Ein
@@ -33862,6 +34576,11 @@ def main():
     _test_v42_w172_spenden()
     _test_v42_w173_ein_spendenziel()
     _test_v42_w174_encode_warteschlange()
+    _test_v42_w175_themen_je_nutzer()
+    _test_v42_w175_discord_ganze_aufnahme()
+    _test_v42_w175_upload_schlange()
+    _test_v42_w175_chat_migriert()
+    _test_v42_w175_kleinbefunde()
     _test_v42_w179_restream_lebenszyklus()
     _test_v42_w179_zeitstempel_spruenge()
     _test_v42_w177_brain_verwoben()
