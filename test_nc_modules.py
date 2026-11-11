@@ -6094,7 +6094,11 @@ def _test_v42_w19_versandweg():
 
         async def _safe_send(bot, chat_id, text, **kw):
             PROT["texte"].append(text)
+        # ANKER GEWANDERT (v4.2-W175): sechster Pflicht-Helfer chat_migriert.
+        async def _chat_migriert(alt, neu):
+            PROT.setdefault("migriert", []).append((alt, neu))
         _tv.konfiguriere(
+            chat_migriert=_chat_migriert,
             ensure_topic=_ensure_topic,
             is_dead=lambda c: tot,
             mark_dead=lambda c: PROT["tot"].append(c),
@@ -25105,7 +25109,11 @@ def _test_v42_w132_versandziel_und_doppelstart():
         raise AssertionError("Forum-Thema fuer einen gesperrten Chat angelegt")
 
     alt_vt = _tv._nc_videoteil
-    _tv.konfiguriere(ensure_topic=_ensure_topic, is_dead=lambda c: True,
+    # ANKER GEWANDERT (v4.2-W175): sechster Pflicht-Helfer chat_migriert.
+    async def _chat_migriert(alt, neu):
+        raise AssertionError("ein gesperrter Chat wurde migriert")
+    _tv.konfiguriere(chat_migriert=_chat_migriert,
+                     ensure_topic=_ensure_topic, is_dead=lambda c: True,
                      mark_dead=lambda c: None, safe_send=_safe_send,
                      topic_forget=lambda c, u: None)
     _tv._nc_videoteil = _Verboten()

@@ -714,7 +714,7 @@ from nc import einstellungen as _nc_einst
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.constants import ParseMode
 from telegram.error import (
-    BadRequest, Forbidden, NetworkError, RetryAfter, TelegramError,
+    BadRequest, ChatMigrated, Forbidden, NetworkError, RetryAfter, TelegramError,
 )
 from telegram.ext import (
     Application, CommandHandler, ContextTypes, CallbackQueryHandler,
@@ -5397,6 +5397,10 @@ def _is_authorized(update: Update) -> bool:
         return True
     if ALLOWED_CHAT_IDS and cid in ALLOWED_CHAT_IDS:
         return True
+    # v4.2-W175: nach einer Umwandlung in eine Supergruppe traegt die eigene
+    # Gruppe eine neue ID — ohne das hier fiele jeder Befehl daraus still weg.
+    if ALLOWED_CHAT_IDS and _nc_tgfehler.migriert_erlaubt(cid, ALLOWED_CHAT_IDS, _TG_MIGRIERT):
+        return True
     return False
 
 def _can_stop_tracking(update: Update, chat_id: int, username: str) -> tuple:
@@ -8339,12 +8343,31 @@ async def _safe_send(bot, chat_id: int, text: str, lang: str = None, **kwargs) -
        v4.1-W6: hier laeuft ALLES zusammen, was der Bot nach Telegram schickt —
        deshalb steht die Uebersetzung genau hier und nicht an 90 Aufrufstellen.
        Was nicht im Katalog steht, bleibt deutsch (nc.i18n.t reicht durch)."""
+    # v4.2-W175: eine bekannte Umwandlung gleich beruecksichtigen — sonst
+    # laeuft JEDE Zeile an TELEGRAM_CHAT_ID erst in ChatMigrated.
+    chat_id = _TG_MIGRIERT.get(chat_id, chat_id)
     if _is_dead(chat_id):
         return False
     text = _nc_i18n.t(text, lang)
     try:
         await bot.send_message(chat_id, _nc_i18n.t(text), **kwargs)
         return True
+    except ChatMigrated as e:
+        # v4.2-W175: stand bisher im allgemeinen TelegramError-Zweig auf
+        # warning — die Gruppe war zur Supergruppe geworden, und jede Meldung
+        # ging still ins Leere. Umschreiben, einmal neu senden, laut melden.
+        neu = getattr(e, "new_chat_id", None)
+        if not neu:
+            log.error("ChatMigrated ohne neue Chat-ID | chat=%s | err=%s", chat_id, e)
+            return False
+        await asyncio.to_thread(_chat_migriert, chat_id, neu)
+        kwargs.pop("message_thread_id", None)       # Themen gehoeren zur alten Gruppe
+        try:
+            await bot.send_message(neu, _nc_i18n.t(text), **kwargs)
+            return True
+        except Exception as e2:
+            log.error("Send nach Umwandlung %s → %s fehlgeschlagen: %s", chat_id, neu, e2)
+            return False
     except RetryAfter as e:
         wait = float(getattr(e, "retry_after", 5)) + 1
         log.warning(f"Telegram rate-limit, warte {wait:.0f}s | chat={chat_id}")
@@ -9286,6 +9309,95 @@ async def _send_live_notice(bot, chat_id: int, text: str, **kwargs) -> bool:
 _tg_topics_load_into_mem()           # gespeicherte Topic-Zuordnungen laden
 
 
+# ── v4.2-W175: einfache Gruppe → Supergruppe (ChatMigrated) ─────────────
+# Plan und Begruendung in nc/telegramfehler.migration_plan. Die Abbildung
+# alt → neu wird gemerkt (Datei neben tg_topics.json): ALLOWED_CHAT_IDS und
+# TELEGRAM_CHAT_ID stehen in der .env, und bis der Betreiber sie anpasst,
+# muessen beide nach einem Neustart weiter auf die neue Gruppe zeigen.
+_TG_MIGRIERT = {}                    # alte Chat-ID -> neue Chat-ID
+
+
+def _tg_migriert_pfad() -> str:
+    return os.path.join(RECORDINGS_DIR, "tg_migriert.json")
+
+
+def _tg_migriert_laden():
+    try:
+        with open(_tg_migriert_pfad(), encoding="utf-8") as f:
+            daten = json.load(f)
+        _TG_MIGRIERT.update({int(k): int(v) for k, v in daten.items()})
+    except FileNotFoundError:
+        pass
+    except (OSError, ValueError, TypeError, AttributeError) as e:
+        log.error("Telegram: %s unlesbar (%s) — bekannte Umwandlungen in Supergruppen "
+                  "gelten erst wieder nach der naechsten ChatMigrated-Antwort.",
+                  _tg_migriert_pfad(), e)
+
+
+def _chat_migriert(alt, neu) -> int:
+    """Trackings von `alt` auf `neu` umschreiben, Abbildung merken, laut melden.
+    -> Zahl der umgeschriebenen Trackings. Sync — Aufrufer im Loop per to_thread."""
+    if not neu or alt == neu:
+        return 0
+    _TG_MIGRIERT[alt] = neu
+    try:
+        tmp = _tg_migriert_pfad() + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump({str(k): v for k, v in _TG_MIGRIERT.items()}, f)
+        os.replace(tmp, _tg_migriert_pfad())
+    except OSError as e:
+        log.error("Telegram: Umwandlung %s → %s nicht gespeichert (%s) — nach einem "
+                  "Neustart gilt wieder die alte ID.", alt, neu, e)
+    with db_conn() as conn:
+        zeilen = [(r["id"], r["username"], r["group_id"]) for r in conn.execute(
+            "SELECT id, username, group_id FROM trackings WHERE group_id IN (?, ?)",
+            (alt, neu)).fetchall()]
+        umziehen, doppelt = _nc_tgfehler.migration_plan(zeilen, alt, neu)
+        for tid in umziehen:
+            conn.execute("UPDATE trackings SET group_id=? WHERE id=?", (neu, tid))
+        for tid in doppelt:
+            conn.execute("DELETE FROM tracking_tags WHERE tracking_id=?", (tid,))
+            conn.execute("DELETE FROM trackings WHERE id=?", (tid,))
+    _TG_FORUM_CACHE.pop(alt, None)
+    laut, weg = _nc_meldetakt.melden("tg-migration", str(alt), _time_mod.monotonic())
+    if laut:
+        log.error("Telegram: Gruppe %s ist jetzt die Supergruppe %s (neue Chat-ID) — %d "
+                  "Tracking(s) umgeschrieben, %d Dublette(n) entfernt. In der .env "
+                  "ALLOWED_CHAT_IDS%s von %s auf %s aendern; bis dahin gilt die neue ID "
+                  "als freigeschaltet.%s", alt, neu, len(umziehen), len(doppelt),
+                  " und TELEGRAM_CHAT_ID" if str(alt) == os.getenv("TELEGRAM_CHAT_ID", "").strip()
+                  else "", alt, neu, _nc_meldetakt.zusatz(weg))
+    return len(umziehen)
+
+
+async def _chat_migriert_async(alt, neu) -> int:
+    return await asyncio.to_thread(_chat_migriert, alt, neu)
+
+
+async def on_chat_migration(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Telegram meldet die Umwandlung als Dienstnachricht — in der alten
+    Gruppe mit `migrate_to_chat_id`, in der neuen mit `migrate_from_chat_id`.
+    Dieselbe Umschreibung wie bei ChatMigrated, nur ohne auf den naechsten
+    gescheiterten Versand zu warten."""
+    msg = update.effective_message
+    if msg is None:
+        return
+    if getattr(msg, "migrate_to_chat_id", None):
+        alt, neu = msg.chat_id, msg.migrate_to_chat_id
+    elif getattr(msg, "migrate_from_chat_id", None):
+        alt, neu = msg.migrate_from_chat_id, msg.chat_id
+    else:
+        return
+    try:
+        await asyncio.to_thread(_chat_migriert, alt, neu)
+    except Exception as e:
+        log.error("Telegram: Umwandlung %s → %s nicht nachgezogen: %s — Trackings "
+                  "dieser Gruppe von Hand pruefen.", alt, neu, e, exc_info=True)
+
+
+_tg_migriert_laden()
+
+
 async def split_and_send_video(*a, **kw):
     # v4.2-W19: verbatim nach telegramversand.py extrahiert (bitgenau geprueft).
     # Bot-seitig und nicht unter nc/, weil die Datei telegram.error-Ausnahmen
@@ -9293,7 +9405,8 @@ async def split_and_send_video(*a, **kw):
     # Der Import steht ABSICHTLICH hier drin: telegramversand haengt an
     # telegram, und das soll erst geladen werden, wenn wirklich versendet wird.
     import telegramversand as _tv
-    _tv.konfiguriere(ensure_topic=_ensure_topic, is_dead=_is_dead,
+    _tv.konfiguriere(chat_migriert=_chat_migriert_async,
+                     ensure_topic=_ensure_topic, is_dead=_is_dead,
                      mark_dead=_mark_dead, safe_send=_safe_send,
                      topic_forget=_topic_forget)
     return await _tv.split_and_send_video(*a, **kw)
@@ -25162,6 +25275,9 @@ async def run_bot():
         (filters.Entity("url") | filters.Entity("text_link")
          | filters.CaptionEntity("url")) & ~filters.COMMAND,
         on_link_video), group=1)
+    # v4.2-W175: Gruppe -> Supergruppe. Eigene Gruppe, damit kein Handler in
+    # Gruppe 0/1 die Dienstnachricht vorher abgreift.
+    app.add_handler(MessageHandler(filters.StatusUpdate.MIGRATE, on_chat_migration), group=2)
 
     _spawn(check_all_trackings(app), name="check-all-trackings")
     _spawn(_discord_bot_starten(), name="discord-bot")  # optional, env-gated (no-op ohne Token)
