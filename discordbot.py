@@ -45,6 +45,7 @@ from nc import discordlimits as _nc_dclimits  # v4.2-W169: Upload-Limit je Guild
 from nc import linkvideo as _nc_linkvideo     # v4.2-W169: Link gepostet -> Video als Antwort
 from nc import discordziele as _nc_ziele      # v4.2-W153: User-Bereiche abgleichen
 from nc import meldetakt as _nc_meldetakt     # v4.2-W161: fremde Bereiche gedrosselt melden
+from nc import telegramfehler as _nc_tgfehler  # v5.1-W182: Discord-ID ist kein Telegram-Ziel
 from nc import befehle as _nc_befehle
 from nc import spendeninfo as _nc_spendeninfo  # v4.2-W172: /spenden
 from nc import discordstate as _nc_discordstate
@@ -2335,7 +2336,11 @@ async def _discord_run_once():
                 (row["username"],)).fetchall()])
             cap = f"⭐ Community-Highlight: @{row['username']} — {votes}× gevotet im Discord"
             for gid in gids:
-                if DISCORD_GUILD_ID and gid == DISCORD_GUILD_ID:
+                # v5.1-W182: nicht nur DIESE Guild — jede Discord-ID (ueber 52 Bit,
+                # nc/telegramfehler) ist kein Telegram-Ziel. Der Vergleich mit
+                # DISCORD_GUILD_ID liess die Trackings einer zweiten Guild durch,
+                # und send_video lief gegen „chat not found" (still auf debug).
+                if not _nc_tgfehler.ist_telegram_chat(gid):
                     continue    # Discord-eigene Liste → kein Telegram-Ziel
                 try:
                     with open(fp, "rb") as f:

@@ -231,6 +231,12 @@ def api_cookies_fetch():
     # nc.fehlertext.nach_aussen gegangen, dort wo die Ausnahme wirklich
     # anfaellt (nc/cookieholen.aktualisiere). Eine zweite Saeuberung an der
     # Senke waere die zweite Wahrheit ueber dieselbe Meldung.
+    # v5.1-W187: „kein Desktop" ist eine Lage dieser Maschine, kein
+    # Ausfall eines Gegenuebers — 409 statt 502, damit _log_5xx sie nicht
+    # als Serverfehler ins Fehlerlog schreibt (11.11.: KeyError
+    # 'DBUS_SESSION_BUS_ADDRESS' als HTTP 502).
+    if bericht.get("grund") == "kein_desktop":
+        return jsonify(bericht), 409
     return jsonify(bericht), 502
 
 

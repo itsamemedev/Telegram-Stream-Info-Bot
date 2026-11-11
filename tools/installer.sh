@@ -910,20 +910,41 @@ z_crowdsec(){
 }
 
 P_LLM="N"
-llm_moeglich(){ [ "${RAM_MB:-0}" -ge 3000 ] && [ "$ARCH" = "x86_64" ] && [ "$OS" = "Linux" ] && [ "$PKG" != "apk" ]; }
+# v5.1-W181: ik_llama.cpp mit Qwen3-14B-Uncensored (Q4_K_M, rund 9 GB). Mit
+# -rtr liegt das Modell ganz im RAM, daneben Kontext, ffmpeg und der Bot:
+# unter 12 GB wird gar nicht erst gefragt — ein LLM, das die Aufnahmen in den
+# OOM-Killer schiebt, ist schlimmer als keines. Gebaut wird aus den Quellen,
+# also nur unter Linux mit systemd (der Dienst haelt es am Leben).
+llm_moeglich(){ [ "${RAM_MB:-0}" -ge 12000 ] && [ "$OS" = "Linux" ] && [ "$PKG" != "apk" ] && [ "$NC_INIT" = "systemd" ]; }
+LLM_ZUSTAND=""
 f_llm(){
   P_LLM="N"
+  local _ik="${QUELLE:-$ZIEL}/tools/ikllama.sh"
+  [ -f "$_ik" ] || _ik="$ZIEL/tools/ikllama.sh"
+  [ -f "$_ik" ] || return 0
+  LLM_ZUSTAND="$(bash "$_ik" --dir "${QUELLE:-$ZIEL}" --zustand 2>/dev/null | tail -1)"
   [ "$MODUS" = "gefuehrt" ] || return 0
-  erklaere "KI (AZRAEL): ohne jede Einrichtung laeuft sie ueber keylose freie Backends — das kostet nichts und braucht keinen Schluessel, ist aber langsamer und nicht immer erreichbar. Ein lokales llama.cpp antwortet in Millisekunden, kostet nichts und verlaesst die Maschine nie; es braucht rund 1 GB Platte und 2 GB RAM."
+  if [ "$LLM_ZUSTAND" = "fertig" ]; then
+    gut "Lokales LLM: ik_llama.cpp ist schon eingerichtet."
+    return 0
+  fi
+  erklaere "KI (AZRAEL): ohne jede Einrichtung laeuft sie ueber keylose freie Backends — das kostet nichts und braucht keinen Schluessel, ist aber langsamer und nicht immer erreichbar. Lokal laeuft ik_llama.cpp mit Qwen3-14B-Uncensored: kostet nichts und verlaesst die Maschine nie, braucht aber rund 9 GB Platte, 12 GB RAM und einen Bau von 10 bis 20 Minuten."
+  if [ "$LLM_ZUSTAND" = "alt" ]; then
+    warn "Auf dieser Maschine laeuft noch das alte llama.cpp — es wird vorher entfernt (alte Modelldateien bleiben)."
+  fi
   if llm_moeglich; then
-    frage_ja "llama.cpp lokal einrichten (Download ca. 1 GB)?" N && P_LLM="J"
+    if [ "$LLM_ZUSTAND" = "alt" ] || [ "$LLM_ZUSTAND" = "teilweise" ]; then
+      frage_ja "Auf ik_llama.cpp mit Qwen3-14B-Uncensored umsteigen?" J && P_LLM="J"
+    else
+      frage_ja "ik_llama.cpp mit Qwen3-14B-Uncensored lokal einrichten (Download rund 9 GB)?" N && P_LLM="J"
+    fi
   else
-    info "Lokales LLM ausgelassen (nur fuer x86_64-Linux mit >= 3 GB RAM vorbereitet)."
-    erklaere "Auf allen anderen Maschinen bleibt es bei den keylosen Backends. Ein Schluessel von enter.pollinations.ai (POLLINATIONS_API_KEY) macht sie spuerbar zuverlaessiger — eintragen laesst er sich jederzeit in der .env."
+    info "Lokales LLM ausgelassen (vorbereitet fuer Linux mit systemd und mindestens 12 GB RAM)."
+    erklaere "Auf allen anderen Maschinen bleibt es bei den keylosen Backends. Ein Schluessel von enter.pollinations.ai (POLLINATIONS_API_KEY) macht sie spuerbar zuverlaessiger — eintragen laesst er sich jederzeit in der .env. Ein kleineres Modell geht von Hand: LLM_MODELL_DATEI in der .env, dann sudo bash tools/ikllama.sh --trotz-ram."
   fi
   return 0
 }
-z_llm(){ if [ "$P_LLM" = "J" ]; then t 'llama.cpp einrichten'; else t 'keylose Backends'; fi; }
+z_llm(){ if [ "$P_LLM" = "J" ]; then t 'ik_llama.cpp mit Qwen3-14B-Uncensored einrichten'; else t 'keylose Backends'; fi; }
 
 P_AUTOSTART="keiner"; DIENST=""
 f_autostart(){
@@ -1569,74 +1590,27 @@ NGXEOF
   fi
 fi
 
-# ── Lokales LLM ──────────────────────────────────────────────
-if [ "$P_LLM" = "J" ]; then
+# ── Lokales LLM (v5.1-W181) ──────────────────────────────────
+# Dasselbe Werkzeug wie spaeter von update.sh: es entfernt ein vorhandenes
+# llama.cpp ZUERST (Wunsch des Betreibers), baut ik_llama.cpp, laedt und prueft
+# das Modell und richtet llama-server.service ein. Bis v5.0 stand hier eine
+# eigene Kopie (Release-ZIP, Qwen2.5-1.5B, Dienst llamacpp) — zwei Wege zur
+# selben Einrichtung laufen auseinander (W100).
+if [ "$P_LLM" = "J" ] && [ -f "$ZIEL/tools/ikllama.sh" ]; then
   abschnitt "Lokales LLM"
-  LLDIR="${LLDIR:-/opt/llamacpp}"
-  als_root mkdir -p "$LLDIR"
-  LLBIN="$(find "$LLDIR" -name llama-server -type f 2>/dev/null | head -1)"
-  if [ -z "$LLBIN" ]; then
-    info "Suche das aktuelle Release-Paket …"
-    ASSET="$("$VPY" - <<'PYEOF'
-import json, sys, urllib.request
-try:
-    d = json.load(urllib.request.urlopen(
-        "https://api.github.com/repos/ggml-org/llama.cpp/releases/latest", timeout=20))
-    for a in d.get("assets", []):
-        n = a["name"]
-        if "ubuntu" in n and "x64" in n and n.endswith(".zip"):
-            print(a["browser_download_url"]); break
-except Exception as e:
-    # Auf stderr, damit der Installer den Grund zeigt statt nur "nichts gefunden".
-    print("Release-Abfrage fehlgeschlagen: %s" % e, file=sys.stderr)
-PYEOF
-)"
-    if [ -n "$ASSET" ]; then
-      als_root curl -Lf --progress-bar -o "$LLDIR/llama.zip" "$ASSET" && als_root unzip -oq "$LLDIR/llama.zip" -d "$LLDIR"
-      LLBIN="$(find "$LLDIR" -name llama-server -type f 2>/dev/null | head -1)"
-      [ -n "$LLBIN" ] && als_root chmod +x "$LLBIN"
-    else
-      warn "Kein passendes Release gefunden — Handanleitung: docs/SETUP_LLAMACPP.md"
-    fi
-  fi
-  if [ -n "$LLBIN" ] && [ ! -f "$LLDIR/model.gguf" ]; then
-    info "Lade das Modell (Qwen2.5-1.5B-Instruct, Q4_K_M, ca. 1 GB) …"
-    als_root curl -Lf --progress-bar -o "$LLDIR/model.gguf" \
-      "https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/main/qwen2.5-1.5b-instruct-q4_k_m.gguf" \
-      || warn "Modell-Download fehlgeschlagen — Anleitung: docs/SETUP_LLAMACPP.md"
-  fi
-  if [ -n "$LLBIN" ] && [ -f "$LLDIR/model.gguf" ] && [ "$NC_INIT" = "systemd" ]; then
-    # -t 4 ist Absicht, keine Sparsamkeit: Aufnahmen haben Vorrang vor
-    # der KI. Nice=10 und CPUWeight=50 verankern das noch einmal.
-    cat > "$ARBEIT/llamacpp.service" <<UNIT
-[Unit]
-Description=llama.cpp Server (NIGHTCRAWLER Brain Tier 4)
-After=network.target
-
-[Service]
-ExecStart=${LLBIN} -m ${LLDIR}/model.gguf --host 127.0.0.1 --port 8080 -t 4 -c 8192 --no-warmup
-Restart=always
-RestartSec=5
-Nice=10
-CPUWeight=50
-
-[Install]
-WantedBy=multi-user.target
-UNIT
-    if schreibe_systemdatei /etc/systemd/system/llamacpp.service "$ARBEIT/llamacpp.service"; then
-      als_root systemctl daemon-reload
-    fi
-    als_root systemctl enable --now llamacpp || warn "llamacpp-Dienst startete nicht — journalctl -u llamacpp -n 50"
-    gut "llama.cpp laeuft auf 127.0.0.1:8080."
-    merke "Lokales LLM: llamacpp-Dienst, Modell %s/model.gguf" "$LLDIR"
-  fi
-  # Nachtragen, nicht im Plan: die Werte haengen am Erfolg dieses Schritts.
-  if [ -n "$LLBIN" ] && [ -f "$LLDIR/model.gguf" ]; then
+  _ik=(--unattended --dir "$ZIEL")
+  [ "$TROCKEN" = 1 ] && _ik+=(--dry-run)
+  if bash "$ZIEL/tools/ikllama.sh" "${_ik[@]}"; then
+    merke "Lokales LLM: ik_llama.cpp (llama-server.service) mit Qwen3-14B-Uncensored auf 127.0.0.1:8080 — pruefen: bash tools/ikllama.sh --check"
+    # Nachtragen, nicht im Plan: die Werte haengen am Erfolg dieses Schritts.
     : > "$PLAN_ENV"
     env_set BRAIN_LLM_BACKEND auto
     env_set BRAIN_LLAMACPP_URL "http://127.0.0.1:8080"
     ENV_BASIS="$ENVF"; env_bauen "$ENV_BASIS" "$ARBEIT/env.neu"
     cmp -s "$ENVF" "$ARBEIT/env.neu" || { cat "$ARBEIT/env.neu" > "$ENVF"; chmod 600 "$ENVF"; }
+  else
+    warn "Lokales LLM unvollstaendig — Grund oben; erneut: sudo bash %s/tools/ikllama.sh" "$ZIEL"
+    merke "OFFEN: lokales LLM einrichten (sudo bash tools/ikllama.sh) — bis dahin antwortet die Cloud"
   fi
 fi
 
@@ -1905,7 +1879,7 @@ nz(){ printf '%s\n' "$(tf "$@")"; }
   nz "  docs/START_HIER.txt   Einstieg und Alltag"
   nz "  docs/DEPLOY.md        Ausliefern, Rollback, Pruefschritte"
   nz "  docs/CROWDSEC.md      Abwehr"
-  nz "  docs/SETUP_*.md       OAuth fuer Twitch und YouTube, llama.cpp"
+  nz "  docs/SETUP_*.md       OAuth fuer Twitch und YouTube, ik_llama.cpp"
 } > "$NOTIZ"
 
 printf '\n'

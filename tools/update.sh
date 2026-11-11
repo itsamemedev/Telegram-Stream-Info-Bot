@@ -7,6 +7,7 @@
 #     bash tools/update.sh --dry-run        zeigen, was liefe — nichts ausfuehren
 #     bash tools/update.sh --python-deps --optional --unattended
 #     bash tools/update.sh --mariadb        SQLite -> MariaDB umziehen (v4.2-W143)
+#     bash tools/update.sh --ik-llama       lokales LLM: llama.cpp -> ik_llama.cpp (v5.1-W181)
 #     bash tools/update.sh --help           alle Schalter
 #
 # WARUM ES DAS GIBT
@@ -58,7 +59,7 @@ NC_MODUS="gefuehrt"
 NUR_PRUEFEN=0
 TROCKEN=0
 UPGRADE=0
-W_SYSTEM=0; W_PYTHON=0; W_OPTIONAL=0; W_BEOBACHTUNG=""; W_MARIADB=0
+W_SYSTEM=0; W_PYTHON=0; W_OPTIONAL=0; W_BEOBACHTUNG=""; W_MARIADB=0; W_IKLLAMA=0
 ZIEL="$(cd "$SKRIPT/.." && pwd)"
 
 while [ $# -gt 0 ]; do
@@ -75,6 +76,8 @@ while [ $# -gt 0 ]; do
     --observability)  W_BEOBACHTUNG="--no-grafana";;
     --observability=grafana) W_BEOBACHTUNG="--grafana";;
     --mariadb)        W_MARIADB=1;;
+    --ik-llama)       W_IKLLAMA=1;;
+    --ik-llama-neu)   W_IKLLAMA=2;;
     --dir)            ZIEL="${2:-}"; shift;;
     --dir=*)          ZIEL="${1#*=}";;
     --pkg)            NC_PKG="${2:-}"; shift;;
@@ -96,6 +99,8 @@ Was (ohne Auswahl: --system und --python-deps):
   --all            alles oben
   --observability  Prometheus einrichten bzw. abgleichen (=grafana: mit Grafana)
   --mariadb        Datenbank von SQLite nach MariaDB umziehen und .env umstellen
+  --ik-llama       lokales LLM: altes llama.cpp entfernen, ik_llama.cpp mit Qwen3-14B-Uncensored
+  --ik-llama-neu   wie --ik-llama, und ik_llama.cpp neu bauen
 
 Wie:
   --check          nur pruefen und berichten; Exitcode 1, wenn etwas fehlt
@@ -473,6 +478,43 @@ else
     frage_ja "Datenbank nach MariaDB umziehen?" N && Z_MARIA=1
   fi
 fi
+# ── Lokales LLM (v5.1-W181) ──────────────────────────────────
+# Der Betreiber am 11.11.: Umstieg auf ik_llama.cpp mit Qwen3-14B-Uncensored,
+# und ein vorhandenes llama.cpp ERST deinstallieren. Die Arbeit macht
+# tools/ikllama.sh — dasselbe Werkzeug wie im Installer, gefragt wird hier nur.
+# Gefragt wird im gefuehrten Modus; unbeaufsichtigt nur mit --ik-llama: ein
+# Zeitplan darf nie still 9 GB laden und eine Viertelstunde bauen (dieselbe
+# Regel wie fuer den Datenbank-Umzug). Kein Befund fuer --check — ein Bot mit
+# altem llama.cpp oder ganz ohne lokales LLM laeuft (Cloud-Reserve).
+Z_IK=0
+IK_ZUSTAND="$(bash "$SKRIPT/ikllama.sh" --dir "$ZIEL" --zustand 2>/dev/null | tail -1)"
+case "$IK_ZUSTAND" in
+  fertig)
+    gut "Lokales LLM: ik_llama.cpp eingerichtet"
+    [ "$W_IKLLAMA" = 2 ] && Z_IK=1;;
+  alt)
+    warn "Lokales LLM: altes llama.cpp — Umstieg auf ik_llama.cpp mit Qwen3-14B-Uncensored steht aus."
+    if [ "$W_IKLLAMA" != 0 ]; then Z_IK=1
+    elif [ "$NC_MODUS" = "express" ] && [ "$NUR_PRUEFEN" = 0 ]; then Z_IK=1
+    elif _fragen; then
+      erklaere "Das alte llama.cpp wird gestoppt und entfernt (Dienst, Programm, Bau; alte Modelldateien bleiben als Rueckweg), dann ik_llama.cpp gebaut (10 bis 20 Minuten) und Qwen3-14B-Uncensored geladen (rund 9 GB, braucht rund 12 GB RAM). Der Bot bleibt dabei an — die KI laeuft so lange ueber die Cloud."
+      frage_ja "Jetzt auf ik_llama.cpp umsteigen?" J && Z_IK=1
+    else
+      info "Umstieg: bash tools/update.sh --ik-llama  (oder sudo bash tools/ikllama.sh)"
+    fi;;
+  teilweise)
+    warn "Lokales LLM: ik_llama.cpp nur teilweise eingerichtet (abgebrochener Lauf?)."
+    if [ "$W_IKLLAMA" != 0 ]; then Z_IK=1
+    elif _fragen; then frage_ja "Einrichtung fortsetzen?" J && Z_IK=1
+    else info "Fortsetzen: bash tools/update.sh --ik-llama"; fi;;
+  fehlt)
+    info "Lokales LLM: nicht eingerichtet — die KI laeuft ueber die Cloud."
+    if [ "$W_IKLLAMA" != 0 ]; then Z_IK=1
+    elif _fragen; then frage_ja "ik_llama.cpp mit Qwen3-14B-Uncensored einrichten (rund 9 GB)?" N && Z_IK=1; fi;;
+  *)
+    warn "Lokales LLM: Zustand nicht ermittelbar — bash tools/ikllama.sh --check zeigt den Grund."
+    [ "$W_IKLLAMA" != 0 ] && Z_IK=1;;
+esac
 # Der Umzug braucht PyMySQL im venv. Installiert wird es IN mariadb_umzug,
 # vor dem Stopp — nicht ueber PY_FEHLT: dieser Weg laeuft nur mit
 # --python-deps, und `--mariadb --system` haette die Zeile in den Plan
@@ -502,6 +544,7 @@ fi
 [ "$UPGRADE" = 1 ] && [ "$W_PYTHON" = 1 ] && { PLAN=1; info "Python-Pakete auf neueste zulaessige Fassung heben (--upgrade)"; }
 [ "$Z_PROM" = 1 ] && { PLAN=1; if [ "$Z_GRAF" = 1 ]; then info "Prometheus und Grafana einrichten"; else info "Prometheus einrichten"; fi; }
 [ "$Z_MARIA" = 1 ] && { PLAN=1; info "Datenbank umziehen: SQLite -> MariaDB (Server, Nutzer, Umzug, Nachzaehlen, .env)"; }
+[ "$Z_IK" = 1 ] && { PLAN=1; info "Lokales LLM: altes llama.cpp entfernen, ik_llama.cpp bauen, Qwen3-14B-Uncensored laden"; }
 
 if [ "$PLAN" = 0 ]; then
   if [ "$BEFUND" = 0 ]; then gut "Nichts zu tun — alles vorhanden."
@@ -579,6 +622,19 @@ if [ "$Z_PROM" = 1 ]; then
     || { warn "Prometheus/Grafana: Einrichtung unvollstaendig (siehe oben)."; BEFUND=1; }
 fi
 [ "$Z_MARIA" = 1 ] && { mariadb_umzug || BEFUND=1; }
+if [ "$Z_IK" = 1 ]; then
+  # Die Rueckfrage ist oben gestellt (bzw. per Schalter beantwortet) — das
+  # Werkzeug laeuft deshalb unbeaufsichtigt und fragt nicht ein zweites Mal.
+  _w=(--unattended --dir "$ZIEL"); [ "$TROCKEN" = 1 ] && _w+=(--dry-run)
+  [ "$W_IKLLAMA" = 2 ] && _w+=(--neu-bauen)
+  [ "${NC_FARBE:-1}" = 0 ] && _w+=(--no-color)
+  # Ohne sudo davor: ikllama.sh holt sich root selbst, Schritt fuer Schritt —
+  # sudo setzt den PATH zurueck, und die Werkzeuge kaemen aus secure_path.
+  # Und ohne lauf(): im Trockenlauf soll es seine Schritte ZEIGEN, nicht
+  # selbst nur als eine Zeile erscheinen.
+  bash "$SKRIPT/ikllama.sh" "${_w[@]}" \
+    || { warn "Lokales LLM: Einrichtung unvollstaendig (Grund oben) — erneut: bash tools/update.sh --ik-llama"; BEFUND=1; }
+fi
 
 if [ "$TROCKEN" = 1 ]; then
   info "Trockenlauf beendet — nichts wurde veraendert."

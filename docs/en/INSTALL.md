@@ -121,13 +121,15 @@ If everything runs, set up the systemd service: **[`DEPLOY.md`](DEPLOY.md)**.
 
 ---
 
-## Optional — local LLM (llama.cpp)
+## Optional — local LLM (ik_llama.cpp with Qwen3-14B-Uncensored)
 
-For AI answers without cloud and without cost: see
-**[`SETUP_LLAMACPP.md`](../SETUP_LLAMACPP.md)** (German) and the bundled unit
+For AI answers without cloud and without cost: `sudo bash tools/ikllama.sh`
+(removes an existing llama.cpp first, builds ik_llama.cpp, downloads the model
+— about 9 GB, needs about 12 GB RAM). Details:
+**[`SETUP_LLAMACPP.md`](SETUP_LLAMACPP.md)**, unit template:
 **[`llama-server.service`](../../llama-server.service)**.
 
-If llama.cpp runs, it is **preferred automatically** since v4.2-W110 (no
+If the local server runs, it is **preferred automatically** since v4.2-W110 (no
 `AI_PROVIDER` needed any more). If it is unreachable, the keyless free backends
 take over — the bot **never** refuses to start because of this.
 

@@ -829,11 +829,15 @@ def api_ai_config():
                        model_upgraded=(_eff != _raw),    # v4.0-W88: W73-Auto-Heal sichtbar
                        configured_model=_raw)
     _brain = _nc_kiwahl.backend() == "brain"         # v4.2-W110
+    # v5.1-W181: lokal antwortet Qwen3-14B-Uncensored, nicht AI_MODEL — das
+    # ist der Wunsch an die Cloud. Bis hierher nannte das Panel lokal den
+    # Cloud-Namen.
+    _lok_modell = _nc_kiwahl.lokales_modell() if _brain else None
     return jsonify(ok=True,
-                   model=_c().cfg["AI_MODEL"],
+                   model=_lok_modell or _c().cfg["AI_MODEL"],
                    url=(os.getenv("BRAIN_LLAMACPP_URL", "http://127.0.0.1:8080")
                         if _brain else "nc.freeai (keyless)"),
-                   provider=("brain (llama.cpp)" if _brain else "freeai (keyless)"),
+                   provider=("brain (ik_llama.cpp)" if _brain else "freeai (keyless)"),
                    style=_c().cfg["AZRAEL_STYLE"],
                    budget_max=_c().cfg["AZRAEL_MAX_CALLS_MIN"],
                    budget_used=len(_c().cfg["_AI_CALL_TS"]),

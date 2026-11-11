@@ -4,8 +4,8 @@ Eine einzige Wahrheit für die Versionsanzeige (Dashboard-Footer, /api/version,
 „Was ist neu"-Panel). Reine Daten + kleine Helfer, voll testbar.
 """
 
-VERSION = "5.0.0"
-CODENAME = "Gleichtakt"
+VERSION = "5.1.0"
+CODENAME = "Hellhörig"
 RELEASE = "2026.11"
 
 
@@ -23,6 +23,21 @@ def build_stamp():
 # Meilenstein-Changelog, neueste Version zuerst. highlights = kurze, ehrliche
 # Stichpunkte dessen, was die Version bringt.
 CHANGELOG = [
+    {
+        "version": "5.1.0",
+        "date": "2026-11",
+        "title": "Hellhörig",
+        # Nebenversion: lokales LLM auf ik_llama.cpp (W181), Befunde aus dem
+        # Produktionslog vom 11.11. (W180, W182–W187).
+        "highlights": [
+            "Lokales LLM jetzt ik_llama.cpp mit Qwen3-14B-Uncensored: tools/ikllama.sh entfernt ein vorhandenes llama.cpp zuerst, baut, laedt mit Pruefsumme und richtet den Dienst ein — Installer und update.sh (--ik-llama) rufen dasselbe Werkzeug",
+            "Qwen3 denkt nicht laut: Denkmodus aus, <think>-Bloecke werden entfernt, eine reine Denk-Antwort geht an die Cloud statt leer in den Chat",
+            "Live-Pruefung staut nicht mehr: jedes Tracking hoechstens einmal in der Schlange, jede Pruefung mit Frist, Prozessstart hat Vorrang vor Whisper",
+            "Whisper-Modellwechsel prueft den freien Speicher — der Sprung auf 4,5 GB RSS kam vom Umschalten auf medium, nicht von einem Leck",
+            "Cookie-Bezug ohne Desktop sagt den Grund statt HTTP 502; keine Telegram-Aufrufe mehr fuer Discord-Server-IDs; leere TikTok-Room-ID wird erklaert statt int('')",
+            "Lagebild im Deck zeigt Encode- und Upload-Schlange, Discord-Aufnahme, Overlay-Browser, Tunnelwache, Kick-Chat und Spendenziel",
+        ],
+    },
     {
         "version": "5.0.0",
         "date": "2026-11",
