@@ -31912,6 +31912,154 @@ def _test_v42_w179_restream_lebenszyklus():
        "Bruecke ohne Haenger, keine Zombies, Feeder geweckt, Relays/Feeder je Lauf abgeraeumt")
 
 
+def _test_v42_w179_zeitstempel_spruenge():
+    """v4.2-W179: „Aufnahmen mit Pixelsalat und/oder fehlendem Ton" und „der
+    TikTok-Stream wurde nicht entgegengenommen". Im Server-Log: „pts has no
+    value", „Non-monotonic DTS … changing to", „timestamp discontinuity
+    -11989666". Nachgestellt mit echtem ffmpeg: CDN-Spruenge um ±12 s, PES
+    ohne PTS. Aufnahme und Zubringer der Sendebruecke muessen eine Datei bzw.
+    einen Strom liefern, der dekodierbar ist, Bild UND Ton traegt und die
+    Inhaltsdauer behaelt (nc/zeitglaetter.py)."""
+    import functools as _ft
+    import http.server as _hs
+    import json as _json
+    import os as _os
+    import shutil as _sh
+    import subprocess as _sp
+    import threading as _th
+    import pruefhilfen as P
+    from nc import reccmd as RC
+    from nc import restreamcmd as R
+    from nc import tonspur as T
+    from nc import zeitglaetter as Z
+
+    # (1) Der Ausdruck selbst: Kommata maskiert (sonst zerlegt -bsf die Kette),
+    # aac_adtstoasc in DERSELBEN Kette (ein zweites -bsf:a ersetzt das erste).
+    assert "," not in Z.ausdruck().replace("\\,", ""), "unmaskiertes Komma im setts-Ausdruck"
+    alt_v = Z.verfuegbar
+    try:
+        Z.verfuegbar = lambda ffmpeg="ffmpeg": True
+        a = Z.bsf_args(ton_vorher="aac_adtstoasc")
+        assert a.count("-bsf:a") == 1 and a[a.index("-bsf:a") + 1].startswith("aac_adtstoasc,setts=")
+        Z.verfuegbar = lambda ffmpeg="ffmpeg": False
+        assert Z.bsf_args(ton_vorher="aac_adtstoasc") == ["-bsf:a", "aac_adtstoasc"], \
+            "ohne setts muss die Aufnahme trotzdem starten — und aac_adtstoasc behalten"
+        assert Z.bsf_args() == []
+    finally:
+        Z.verfuegbar = alt_v
+
+    if not (_sh.which("ffmpeg") and _sh.which("ffprobe")):
+        ok("W179: Zeitstempel-Glaettung (rein); ffmpeg fehlt — Lauf uebersprungen")
+        return
+    assert Z.verfuegbar(), "dieses ffmpeg kennt setts nicht — Vertrag nicht pruefbar"
+    heim = P.verzeichnis()
+
+    def _stueck(name, versatz, fmt):
+        p = _os.path.join(heim, name)
+        _sp.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc2=s=320x568:r=25",
+                 "-f", "lavfi", "-i", "sine=f=440:sample_rate=44100", "-t", "4",
+                 "-c:v", "libx264", "-preset", "ultrafast", "-g", "50", "-bf", "2",
+                 "-c:a", "aac", "-output_ts_offset", str(versatz), "-f", fmt, p],
+                check=True, timeout=60)
+        return p
+
+    def _ohne_pts(pfad):
+        b = bytearray(open(pfad, "rb").read())
+        n = 0
+        ts = 188                                    # Paketlaenge, kein Quelltext-Fenster
+        for i in range(0, len(b) - ts + 1, ts):
+            q = b[i:i + ts]
+            if not (q[1] & 0x40) or (((q[1] & 0x1F) << 8) | q[2]) != 0x100:
+                continue
+            o = 4 + ((q[4] + 1) if (q[3] & 0x20) else 0)
+            if q[o:o + 3] == b"\0\0\1" and not ((q[3] & 0x20) and q[4] and (q[5] & 0x40)):
+                n += 1
+                if n % 4 == 0:
+                    b[i + o + 7] &= 0x3F            # PES ohne PTS/DTS
+        open(pfad, "wb").write(bytes(b))
+
+    # FLV: ein Live-CDN schickt beim Wiederverbinden einen frischen Strom samt
+    # Kopf — zweiter Teil 12 s VOR dem ersten.
+    with open(_os.path.join(heim, "r.flv"), "wb") as f:
+        for i, v in enumerate((100, 92)):
+            b = open(_stueck("t%d.flv" % i, v, "flv"), "rb").read()
+            f.write(b if i == 0 else b[13:])
+    # HLS: +12 s Sprung, und PES ohne PTS.
+    segs = [_stueck("h0.ts", 100, "mpegts"), _stueck("h1.ts", 116, "mpegts")]
+    _ohne_pts(segs[1])
+    with open(_os.path.join(heim, "s.m3u8"), "w") as f:
+        f.write("#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:4\n#EXT-X-MEDIA-SEQUENCE:0\n")
+        for s in segs:
+            f.write("#EXTINF:4.0,\n%s\n" % _os.path.basename(s))
+        f.write("#EXT-X-ENDLIST\n")
+    h = _ft.partial(_hs.SimpleHTTPRequestHandler, directory=heim)
+    h.log_message = lambda *a: None
+    srv = _hs.ThreadingHTTPServer(("127.0.0.1", 0), h)
+    _th.Thread(target=srv.serve_forever, daemon=True).start()
+    basis = "http://127.0.0.1:%d/" % srv.server_address[1]
+
+    def _befund(datei):
+        j = _json.loads(_sp.run(["ffprobe", "-v", "error", "-show_entries",
+                                 "stream=codec_type,duration", "-of", "json", datei],
+                                capture_output=True, text=True, timeout=30).stdout or "{}")
+        dauer = {s["codec_type"]: float(s.get("duration") or 0) for s in j.get("streams", [])}
+        dek = _sp.run(["ffmpeg", "-v", "error", "-i", datei, "-f", "null", "-"],
+                      capture_output=True, text=True, timeout=60).stderr
+        vts = [float(x.strip(",")) for x in _sp.run(
+            ["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries",
+             "packet=dts_time", "-of", "csv=p=0", datei], capture_output=True, text=True,
+            timeout=30).stdout.split() if x.strip(",") not in ("", "N/A")]
+        luecke = max((b - a for a, b in zip(vts, vts[1:])), default=99)
+        return dauer, len([z for z in dek.splitlines() if z.strip()]), len(vts), luecke
+
+    RC.configure(cookie_header=lambda: "", ensure_cookie_file_netscape=lambda: None,
+                 pick_checked_pull_proxy=lambda: "", stream_url_ttl=lambda u: 999,
+                 log_event=lambda *a, **k: None, resolve_tiktok_live_stream=None,
+                 REC_403_UNTIL={}, REC_PROXY={}, REC_PROXY_FAILED={},
+                 REC_PROXY_LOCK=_th.Lock(), COOKIE_FILE="", FFMPEG_NICE_RECORD=0,
+                 FFMPEG_THREADS_RECORD=1, RECORDER_PREF="native", RECORD_403_YTDLP=False,
+                 STREAM_URL_MIN_TTL=0)
+    try:
+        # (2) DIE AUFNAHME.
+        for quelle in ("r.flv", "s.m3u8"):
+            aus = _os.path.join(heim, quelle + ".mp4")
+            cmd = RC._build_native_cmd(basis + quelle, aus, 60, pull_proxy="")
+            assert T.hat_tonspur(cmd, optional_ok=True), cmd   # Recorder: sichern() prueft nach
+            assert "+igndts" not in " ".join(cmd), "igndts zerlegt bei Spruengen die B-Frame-Reihenfolge"
+            r = _sp.run(cmd, capture_output=True, text=True, timeout=120)
+            assert r.returncode == 0, r.stderr[-400:]
+            dauer, fehler, n, luecke = _befund(aus)
+            assert fehler == 0, "%s: %d Dekodierfehler (Pixelsalat)" % (quelle, fehler)
+            assert n == 200 and luecke < 0.1, "%s: Bild mit Luecke/Standbild (%d, %.2f s)" % (
+                quelle, n, luecke)
+            assert dauer.get("audio", 0) > 7.5 and abs(dauer["audio"] - dauer["video"]) < 0.5, \
+                "%s: Ton fehlt oder laeuft weg %r" % (quelle, dauer)
+        # (3) DER ZUBRINGER DER SENDEBRUECKE: derselbe FLV-Sprung, der Strom an
+        # den Sender bleibt lueckenlos und monoton (alt: 8 s Ton und Bild auf
+        # einen Zeitpunkt geschoben, der Sender verlor rund 11 s Ausgabe).
+        R.configure(
+            cookie_header=lambda: "", pick_pull_proxy=lambda: "",
+            restream_overlay_files=lambda rid=None: {}, FFMPEG_THREADS_LIVE=3,
+            FFMPEG_THREADS_RELAY=2, RESTREAM_AVATAR="", RESTREAM_BITRATE_K=4500,
+            RESTREAM_AVATAR_ALPHA="", RESTREAM_AVATAR_H=170, RESTREAM_AVATAR_LOOP="",
+            RESTREAM_CANVAS_H=720, RESTREAM_CANVAS_W=1280, RESTREAM_FONT="",
+            RESTREAM_FPS=25, RESTREAM_LOW_LATENCY=True, RESTREAM_OVERLAY=False,
+            RESTREAM_OVERLAY_HTML_FPS=1, RESTREAM_RELAY_BITRATE_K=3500,
+            RESTREAM_RELAY_PRESET="ultrafast", RESTREAM_X264_PRESET="veryfast",
+            RESTREAM_UA="UA/1.0", TTS_CH=2, TTS_SR=44100, TTS_VOICE_GAIN="1.8")
+        z = R.zubringer(basis + "r.flv")
+        assert T.hat_tonspur(z) and z[-1] == "pipe:1"
+        aus = _os.path.join(heim, "zub.ts")
+        r = _sp.run(z[:-1] + [aus], capture_output=True, text=True, timeout=120)
+        assert r.returncode == 0, r.stderr[-400:]
+        dauer, fehler, n, luecke = _befund(aus)
+        assert fehler == 0 and n == 200 and luecke < 0.1, (fehler, n, luecke)
+    finally:
+        srv.shutdown()
+    ok("W179: Zeitstempel-Spruenge (FLV -12 s, HLS +12 s, PES ohne PTS) — Aufnahme und "
+       "Zubringer dekodierbar, mit Ton, ohne Standbild")
+
+
 def _test_v42_w155_weiche_steckt():
     """v4.2-W155: gemeldet „Wir haben in den Restreams immer noch kein Bild" —
     Overlay und Chat liefen, das Videofeld zeigte das Pausenbild. Ein
@@ -32437,6 +32585,7 @@ def main():
     _test_v42_w173_ein_spendenziel()
     _test_v42_w174_encode_warteschlange()
     _test_v42_w179_restream_lebenszyklus()
+    _test_v42_w179_zeitstempel_spruenge()
     _test_v42_w60_azrael_cooldown_je_plattform()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)

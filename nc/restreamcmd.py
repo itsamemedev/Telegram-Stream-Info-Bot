@@ -38,6 +38,7 @@ from nc import restream_targets as _nc_rst
 from nc import restream_util as _nc_rutil
 from nc import restreamstate as _nc_rsstate
 from nc import tonspur as _nc_tonspur
+from nc import zeitglaetter as _nc_zeitglaetter
 
 log = logging.getLogger("TikTokBot")
 
@@ -422,6 +423,11 @@ def zubringer(source_url, tonlos=False, neukodieren=False):
     else:
         cmd += ["-c:v", "copy"]
     cmd += list(_nc_tonspur.AAC_ARGS)
+    # v4.2-W179: Spruenge der Quell-Zeitstempel (CDN-Reconnect, ±12 s) glaetten,
+    # bevor die Bruecke sie sieht. Der Umschreiber legt seinen Versatz EINMAL
+    # je Abschnitt fest; ein Sprung mitten im Abschnitt ging bis hierher
+    # unveraendert an den Sender (Messung in nc/zeitglaetter.py).
+    cmd += _nc_zeitglaetter.bsf_args()
     cmd += ["-muxdelay", "0", "-muxpreload", "0", "-f", "mpegts", "pipe:1"]
     cmd = _ff_cmd(cmd, threads=FFMPEG_THREADS_RELAY)
     if durch:
