@@ -634,6 +634,8 @@ from nc import chatfolge as _nc_chatfolge  # v4.2-W47: wie oft der TikTok-Chat n
 from nc import memeklip as _nc_memeklip  # v4.2-W24: erkennt meme-wuerdige Chat-Momente
 from nc import avatarloop as _nc_avloop  # v4.2-W62: welche Avatar-Schleife jetzt
 from nc import livefolge as _nc_live  # v4.2-W20: was aus einem Live-Signal folgt
+from nc import livemeldung as _nc_livemeldung   # v4.2-W176: globale Aktionen einmal je Nutzer
+from nc import dbwartung as _nc_dbwartung       # v4.2-W176: VACUUM nach Faelligkeit
 from nc import azraelstate as _nc_azrael  # v4.1-W19: AZRAELs Laufzeitzustand (geteilt)
 from nc import whispercfg as _nc_whisper  # v4.1-W19: Whisper-Modell als Register
 from nc import eventquery as _nc_eventquery  # v4.0-W51: Event-Log-Query-Bauer (rein)
@@ -3249,6 +3251,9 @@ def _ohne_url_melden(username, grund, text, *args):
     NUTZER waere hier falsch: bei 40 Trackings in derselben Lage drosselt er
     nichts (CLAUDE.md, W81).
     """
+    # v4.2-W176: merken, WER in dieser Lage steckt — geleert wird die Drossel
+    # erst, wenn genau diese Nutzer wieder eine Adresse haben (W157-Muster).
+    _nc_meldetakt.gestoert("live-ohne-url", username)
     laut, unterdrueckt = _nc_meldetakt.melden(
         "live-ohne-url", grund, _time_mod.monotonic())
     if laut:
@@ -3290,11 +3295,10 @@ async def _url_nachschlag(username, session, status, info):
     # auch HTML leer ausging. Ausgerechnet dieser Weg kommt durch, wo die
     # Datacenter-IP 403 bekommt — er signiert selbst.
     if not _nc_live.braucht_url_nachschlag(status, info):
-        # v4.2-W103: die Adresse war von Anfang an da — die Lage ist
-        # vorbei. Ohne das Zuruecksetzen bliebe eine WIEDERKEHRENDE
-        # Stoerung bis zu 15 Minuten unsichtbar, weil die Ruhezeit noch
-        # von der vorigen laeuft (Lehre aus W81).
-        _nc_meldetakt.zuruecksetzen("live-ohne-url")
+        # v4.2-W103: Lage vorbei — ohne Zuruecksetzen bliebe eine wiederkehrende
+        # Stoerung bis 15 min unsichtbar (W81). v4.2-W176: erfolg() statt zuruecksetzen()
+        # — hierher kommt JEDER Nutzer offline (60 statt 2 Zeilen/30 min, W157).
+        _nc_meldetakt.erfolg("live-ohne-url", username)
         if status == "live":
             _nc_quellstat.zaehlen("api")        # v4.2-W141
     else:
@@ -3470,7 +3474,9 @@ async def _live_status_aufloesen(username: str, session, force_fresh: bool) -> t
             penalty = _RATE_LIMIT_PENALTY.get(username, 0)
             penalty = min(120, penalty * 2 if penalty else 15)   # max 2min, Start 15s
             _RATE_LIMIT_PENALTY[username] = penalty
-            _RATE_LIMIT_BACKOFF[username] = now + penalty
+            # v4.2-W176: Uhr beim SCHREIBEN — `now` stammt von vor Semaphore und
+            # Aufloesung; eine 15-s-Strafe war beim Setzen sonst schon abgelaufen.
+            _RATE_LIMIT_BACKOFF[username] = _time_mod.monotonic() + penalty
             status = "unknown"   # intern als unknown behandeln
             if penalty >= 60:
                 log.info(f"@{username}: 429 Backoff +{penalty}s (rate-limited von TikTok)")
@@ -4543,6 +4549,9 @@ def get_tracking_state(tracking_id: int):
 # der Reaper räumt Locks die länger als _RECORDING_SPAWN_TIMEOUT pid-NULL sind auf.
 # B4: import time as _time_mod wurde an den Anfang verschoben.
 _RECORDING_SPAWN_AT = {}            # tracking_id -> monotonic timestamp
+# v4.2-W176: try_acquire_recording_lock laeuft in Worker-Threads; Lesen,
+# Setzen und Zuruecklegen des Markers muessen zusammen geschehen.
+_RECORDING_SPAWN_LOCK = threading.Lock()
 
 # F50: Auto-Retry nach Early-Disconnect. ffmpeg dies < 30s mit non-zero rc =
 # TikTok-CDN-Kick. Statt auf den nächsten regulären Live-Check (30-60s) zu
@@ -4620,6 +4629,34 @@ def try_acquire_recording_lock(tracking_id: int, username: str = None) -> bool:
        Race: Worker hat get_all_active_trackings() abgerufen BEVOR der User
        paused hat, würde dann trotzdem noch versuchen aufzunehmen.
        COALESCE schützt vor alten DB-Rows wo paused-Spalte NULL ist."""
+    # v4.2-W176: der Spawn-Marker steht VOR dem UPDATE. Gesetzt wurde er erst
+    # nach dem Commit — dazwischen sah reaper_loop (im Thread, jede Minute)
+    # recording=1, pid NULL und KEINEN Marker, hielt das fuer einen Rest aus
+    # einem frueheren Lauf und gab den Lock frei. Der naechste Poll startete
+    # dann eine zweite Aufnahme desselben Streams. Bei Misserfolg wird der
+    # vorige Stand zurueckgelegt — aber nur, wenn noch UNSER Marker dort
+    # steht: ein anderer Worker kann denselben Eintrag inzwischen gewonnen
+    # haben, und dessen Marker zu loeschen oeffnete dieselbe Luecke.
+    with _RECORDING_SPAWN_LOCK:
+        _vorher = _RECORDING_SPAWN_AT.get(tracking_id)
+        _mein = _time_mod.monotonic()
+        _RECORDING_SPAWN_AT[tracking_id] = _mein
+    got_lock = False
+    try:
+        got_lock = _lock_update(tracking_id, username)
+    finally:
+        if not got_lock:
+            with _RECORDING_SPAWN_LOCK:
+                if _RECORDING_SPAWN_AT.get(tracking_id) is _mein:
+                    if _vorher is None:
+                        _RECORDING_SPAWN_AT.pop(tracking_id, None)
+                    else:
+                        _RECORDING_SPAWN_AT[tracking_id] = _vorher
+    return got_lock
+
+
+def _lock_update(tracking_id: int, username: str = None) -> bool:
+    """Das eine atomare UPDATE hinter try_acquire_recording_lock."""
     with db_conn() as conn:
         if username:
             # Single atomic statement: claim nur wenn weder dieses noch ein
@@ -4641,19 +4678,33 @@ def try_acquire_recording_lock(tracking_id: int, username: str = None) -> bool:
                 "WHERE id=? AND recording=0 AND COALESCE(paused, 0) = 0",
                 (tracking_id,))
         conn.commit()
-        got_lock = cur.rowcount == 1
-    if got_lock:
-        # F40: Markieren wann der Lock geholt wurde — Reaper räumt stuck-locks auf
-        _RECORDING_SPAWN_AT[tracking_id] = _time_mod.monotonic()
-    return got_lock
+        return cur.rowcount == 1
 
-def set_recording_file(tracking_id: int, output_file: str, pid: int):
+
+class _AufnahmeLockVerloren(RuntimeError):
+    """v4.2-W176: set_recording_file fand recording=1 nicht mehr vor."""
+
+
+def set_recording_file(tracking_id: int, output_file: str, pid: int) -> bool:
+    """Schliesst das Spawn-Fenster. -> False, wenn der Lock inzwischen weg ist.
+
+    v4.2-W176: `WHERE recording=1`. Vorher schrieb das UPDATE pid und Datei
+    auch auf einen Eintrag, dessen Lock der Reaper schon freigegeben hatte —
+    die Aufnahme lief dann ohne Lock, und ein zweiter Worker durfte daneben
+    eine zweite starten. Der Aufrufer bricht bei False ab."""
     with db_conn() as conn:
-        conn.execute("UPDATE trackings SET output_file=?, pid=? WHERE id=?",
-                     (output_file, pid, tracking_id))
+        cur = conn.execute("UPDATE trackings SET output_file=?, pid=? "
+                           "WHERE id=? AND recording=1",
+                           (output_file, pid, tracking_id))
         conn.commit()
+        ok = cur.rowcount == 1
     # F40: Spawn-Fenster geschlossen — aus der Map nehmen
     _RECORDING_SPAWN_AT.pop(tracking_id, None)
+    if not ok:
+        log.error("Aufnahme-Lock fuer tracking#%s verloren, bevor der Prozess "
+                  "eingetragen war — die Aufnahme wird abgebrochen, statt ohne "
+                  "Lock neben einer zweiten zu laufen.", tracking_id)
+    return ok
 
 def clear_recording(tracking_id: int):
     with db_conn() as conn:
@@ -6844,13 +6895,24 @@ async def _db_vacuum_loop():
     """V37: wöchentliches VACUUM+ANALYZE — ERGÄNZT die F82-Loop (die macht
        alle 6h wal_checkpoint+optimize, aber bewusst kein VACUUM). VACUUM
        kompaktiert die Datei nach Monaten von Inserts/Deletes wirklich.
-       Nur SQLite; MariaDB-Backend ist ein No-op."""
+       Nur SQLite; MariaDB-Backend ist ein No-op.
+
+       v4.2-W176: nach Faelligkeit, nicht nach Laufzeit — vorher schlief die
+       Schleife vor dem ersten Lauf sieben Tage, und jeder Neustart setzte
+       das zurueck (nc/dbwartung.py)."""
     if DB_BACKEND == "mariadb":
         return
+    stand = _nc_dbwartung.stand_datei(DB_PATH)
+    await asyncio.sleep(600)    # nicht ins Startgedraenge
     while True:
         try:
-            await asyncio.sleep(7 * 24 * 3600)
+            rest = _nc_dbwartung.faellig_in(_nc_dbwartung.letzter_lauf(stand),
+                                            _time_mod.time())
+            if rest > 0:
+                await asyncio.sleep(min(rest, 6 * 3600))
+                continue
             def _run():
+                ok = True
                 with db_conn() as conn:
                     # Nicht still: schlaegt das woechentlich fehl, waechst die
                     # Datenbank unbegrenzt weiter und der Planer arbeitet mit
@@ -6862,13 +6924,21 @@ async def _db_vacuum_loop():
                     try:
                         conn.execute("VACUUM")
                     except Exception as e:
+                        ok = False
                         _loop_fehler("_db_vacuum_loop/VACUUM", e)
-            await asyncio.to_thread(_run)
-            log.info("DB-Wartung: ANALYZE+VACUUM durchgelaufen.")
+                return ok
+            if await asyncio.to_thread(_run):
+                _nc_dbwartung.merken(stand, _time_mod.time())
+                log.info("DB-Wartung: ANALYZE+VACUUM durchgelaufen.")
+            else:
+                # Erst nach einem gelungenen VACUUM gilt die Woche als
+                # erledigt; bis dahin alle 6 h ein neuer Versuch.
+                await asyncio.sleep(6 * 3600)
         except asyncio.CancelledError:
             return
         except Exception as e:
-            log.warning("DB-Wartung: %s", e)
+            _loop_fehler("_db_vacuum_loop", e)
+            await asyncio.sleep(3600)
 
 
 async def _daily_summary_loop(bot_app):
@@ -6885,7 +6955,9 @@ async def _daily_summary_loop(bot_app):
             log.info(f"Daily-Summary nächster Run: {target} (in {wait_secs/3600:.1f}h)")
             await asyncio.sleep(wait_secs)
             try:
-                text = _build_daily_summary()
+                # v4.2-W176: neben dem Loop — die Zusammenfassung liest
+                # mehrere Tabellen und hielt sonst den ganzen Bot an.
+                text = await asyncio.to_thread(_build_daily_summary)
                 await bot_app.bot.send_message(
                     chat_id=DAILY_SUMMARY_CHAT_ID,
                     text=text, parse_mode=ParseMode.HTML)
@@ -6911,7 +6983,11 @@ async def _disk_alarm_loop(bot_app):
     while True:
         try:
             try:
-                storage = get_storage_stats()
+                # v4.2-W176: neben dem Loop — get_storage_stats laeuft ueber
+                # den ganzen Aufnahmeordner und fragt die Datenbank; auf einer
+                # vollen, langsamen Platte (genau der Fall dieses Alarms)
+                # hielt es den Bot an.
+                storage = await asyncio.to_thread(get_storage_stats)
                 disk = storage.get("disk") or {}
                 total = disk.get("total_bytes")
                 used = disk.get("used_bytes")
@@ -8316,13 +8392,27 @@ async def _safe_send(bot, chat_id: int, text: str, lang: str = None, **kwargs) -
         return False
 
 
-async def live_check_worker(bot_app):
+async def live_check_worker(bot_app, nr=0):
+    """Arbeitet die Pruefschlange ab.
+
+    v4.2-W176: mit Lebenszeichen je Worker. Ein Worker, der in einem Tracking
+    haengen bleibt, fiel bisher niemandem auf — die anderen arbeiteten weiter,
+    nur langsamer, und die Schlange lief voll. Gewartet wird in Scheiben von
+    60 s, damit eine leere Schlange (keine Trackings) kein Stillstand ist;
+    ein einzelnes Tracking ueber WATCHDOG_STALL_S (420 s) ist dagegen einer.
+    Fehler gehen durch _loop_fehler: mit Traceback und gedrosselt — vorher
+    stand hier ein ungedrosseltes log.error ohne Traceback."""
+    name = f"live-worker-{nr}"
     while True:
-        tracking = await live_check_queue.get()
+        _hb(name)
+        try:
+            tracking = await asyncio.wait_for(live_check_queue.get(), timeout=60)
+        except asyncio.TimeoutError:
+            continue
         try:
             await _handle_single_tracking(tracking, bot_app)
         except Exception as e:
-            log.error(f"Worker-Fehler: {e}")
+            _loop_fehler("live_check_worker", e)
         finally:
             live_check_queue.task_done()
 
@@ -8339,7 +8429,11 @@ async def _handle_single_tracking(t, bot_app):
     # gepausen wurde, würde es sonst trotzdem die Live-Check + Notification
     # auslösen. try_acquire_recording_lock (B10) blockt zwar dann die Aufnahme,
     # aber die Notification ist schon raus.
-    fresh_live, fresh_rec, fresh_paused = get_tracking_state(tid)
+    # v4.2-W176: alle Datenbankaufrufe dieses Pfads NEBEN dem Loop. Er laeuft
+    # je Tracking alle 30-60 s; synchron hielt jeder `db_conn().__exit__` unter
+    # Plattenlast den ganzen Bot an (dieselbe Lage wie W26/W118). Die
+    # Reihenfolge bleibt, weil jeder Aufruf hier awaited wird.
+    fresh_live, fresh_rec, fresh_paused = await asyncio.to_thread(get_tracking_state, tid)
     if fresh_live is None:
         log.debug(f"Tracking #{tid} (@{username}) wurde während Queue gelöscht – skip.")
         return
@@ -8430,21 +8524,28 @@ async def _handle_single_tracking(t, bot_app):
 
     # F27: Atomare Transition-Claims.
     if is_live and not old_last_live:
-        if claim_live_transition(tid, going_live=True):
-            _LIVE_SESSION_START[username] = _time_mod.time()   # F84: Session-Start für Offline-Bilanz
+        if await asyncio.to_thread(claim_live_transition, tid, going_live=True):
+            # v4.2-W176: derselbe Nutzer aus zwei Chats sind zwei Trackings —
+            # Discord-Embed, Live-Thread und Sitzungsstart gehoeren aber dem
+            # NUTZER und laufen nur beim ersten (nc/livemeldung.py). Kein
+            # await zwischen dem Pruefen dort und dem Setzen.
+            _erst = _nc_livemeldung.live_an(username)
+            if _erst:
+                _LIVE_SESSION_START[username] = _time_mod.time()   # F84: Session-Start für Offline-Bilanz
             _is_abo = bool(ABO_STREAM_MODE and _ABO_LIVE.get(_abo_key(username)))   # B159
             # F95: Direkt-Stream-URL (HLS bevorzugt) — wie in Telegram (B61) jetzt
             # auch fürs Discord-Embed (VLC: Medien → Netzwerkstream öffnen).
             stream_url = None
             if detected_info and ENABLE_LIVE_STREAM_LINK:
                 stream_url = detected_info.get("hls_url") or detected_info.get("flv_url")
-            _spawn(_discord_post_user(username,
-                   ((f"🔑 **@{username}** — ABO-LIVE (Sub-only)! Restream gesperrt.\n"
-                     if _is_abo else f"🔴 **@{username}** ist LIVE — Aufnahme läuft!\n")
-                    + f"https://www.tiktok.com/@{username}/live"),
-                   ping_notify=True, kind=("abo" if _is_abo else "live"),
-                   stream_url=stream_url), name="disc-live")
-            _spawn(_discord_live_thread(username, opening=True), name="disc-thread")
+            if _erst:
+                _spawn(_discord_post_user(username,
+                       ((f"🔑 **@{username}** — ABO-LIVE (Sub-only)! Restream gesperrt.\n"
+                         if _is_abo else f"🔴 **@{username}** ist LIVE — Aufnahme läuft!\n")
+                        + f"https://www.tiktok.com/@{username}/live"),
+                       ping_notify=True, kind=("abo" if _is_abo else "live"),
+                       stream_url=stream_url), name="disc-live")
+                _spawn(_discord_live_thread(username, opening=True), name="disc-thread")
             # F63: Quiet Hours — Live-Notification während konfigurierter
             # Stunden unterdrücken. Aufnahme läuft trotzdem (unten), aber kein
             # "@user is LIVE!"-Posting. Spart Nacht-Notifications.
@@ -8499,7 +8600,7 @@ async def _handle_single_tracking(t, bot_app):
         else:
             log.debug(f"@{username} LIVE-Transition schon von anderem Worker behandelt – kein Notif.")
     elif not is_live and old_last_live:
-        if claim_live_transition(tid, going_live=False):
+        if await asyncio.to_thread(claim_live_transition, tid, going_live=False):
             # v4.0-W55: Offline = Session-Ende → Fehler-Backoff/Streak zurücksetzen,
             # damit eine neue Live-Session einen sauberen Aufnahmeversuch bekommt.
             # v4.2-W18: siehe nc/aufnahmefolge.sitzung_zuende — bewusst OHNE
@@ -8508,16 +8609,19 @@ async def _handle_single_tracking(t, bot_app):
             _tot_stand = _nc_folge.sitzung_zuende(
                 _REC_403_STREAK, _REC_BACKOFF_UNTIL, _REC_BACKOFF_LOGGED,
                 _STREAM_DEAD_STREAK, _STREAM_DEAD_BACKOFF_UNTIL, username, tid)
-            # F84: Session-Bilanz (Dauer/Aufnahmen/Größe) fürs Offline-Embed
-            _sess_start = _LIVE_SESSION_START.pop(username, None)
-            _ACTIVE_TIER.pop(username, None)   # v37 W3: Tier-Sichtbarkeit aufräumen
-            _nc_geschuetzt.zuruecksetzen(username, laut=False)   # v4.2-W161: neues Live, neuer Raum
-            _sess = await asyncio.to_thread(_collect_session_stats, username, _sess_start)
-            _spawn(_discord_post_user(username, f"⏹ **@{username}** ist offline — Stream beendet.",
-                                      kind="offline", stats=_sess), name="disc-off")
-            _spawn(_oracle_memorize(username), name="oracle-mem")   # F86: Gedächtnis destillieren
-            _spawn(_director_finalize(username), name="director-final")  # F87: Momente betiteln
-            _spawn(_discord_live_thread(username, opening=False), name="disc-thread-off")
+            # F84: Session-Bilanz (Dauer/Aufnahmen/Größe) fürs Offline-Embed.
+            # v4.2-W176: einmal je NUTZER — der zweite Chat bekam sonst ein
+            # zweites Embed mit leerer Bilanz (der Start war schon weg).
+            if _nc_livemeldung.live_aus(username):
+                _sess_start = _LIVE_SESSION_START.pop(username, None)
+                _ACTIVE_TIER.pop(username, None)   # v37 W3: Tier-Sichtbarkeit aufräumen
+                _nc_geschuetzt.zuruecksetzen(username, laut=False)   # v4.2-W161: neues Live, neuer Raum
+                _sess = await asyncio.to_thread(_collect_session_stats, username, _sess_start)
+                _spawn(_discord_post_user(username, f"⏹ **@{username}** ist offline — Stream beendet.",
+                                          kind="offline", stats=_sess), name="disc-off")
+                _spawn(_oracle_memorize(username), name="oracle-mem")   # F86: Gedächtnis destillieren
+                _spawn(_director_finalize(username), name="director-final")  # F87: Momente betiteln
+                _spawn(_discord_live_thread(username, opening=False), name="disc-thread-off")
             # B45: Echter Stream-Tod (TikTok meldet offline) → Stream-Dead-
             # Tracking resetten. Sonst würde der nächste Live-Start sofort wieder
             # mit aktivem Backoff blockiert sein.
@@ -8618,12 +8722,13 @@ async def _handle_single_tracking(t, bot_app):
         # gerade gescheitert ist, fällt's wieder auf auto zurück.
         scraper = bot_app.bot_data.get("scraper")
         session = scraper.session if scraper else None
-        preferred = decide_preferred_recorder(tid)
+        preferred = await asyncio.to_thread(decide_preferred_recorder, tid)
         if preferred:
             log.info(f"@{username}: letzter Versuch fehlgeschlagen → "
                      f"forciere preferred={preferred}")
+        _max_dauer = await asyncio.to_thread(_tracking_max_duration, tid)
         cmd, recorder_name = await build_recording_cmd(
-            username, output_file, (_tracking_max_duration(tid) or MAX_RECORD_SECS),
+            username, output_file, (_max_dauer or MAX_RECORD_SECS),
             session=session, preferred=preferred,
             prefetched_info=detected_info)   # F35: HLS-URL aus Detection
         if recorder_name:
@@ -8648,10 +8753,12 @@ async def _handle_single_tracking(t, bot_app):
             failed_recorder_label = preferred or "auto"
             if failed_recorder_label == "native_api":
                 failed_recorder_label = "native+api"
-            attempt_id = start_recording_attempt(tid, username, failed_recorder_label)
-            finish_recording_attempt(attempt_id, outcome="resolve_failed",
-                                     error=f"alle Kandidaten gescheitert (preferred={preferred})")
-            clear_recording(tid)
+            attempt_id = await asyncio.to_thread(
+                start_recording_attempt, tid, username, failed_recorder_label)
+            await asyncio.to_thread(
+                finish_recording_attempt, attempt_id, outcome="resolve_failed",
+                error=f"alle Kandidaten gescheitert (preferred={preferred})")
+            await asyncio.to_thread(clear_recording, tid)
             _nc_gegendruck.freigeben()
             return
 
@@ -8659,7 +8766,7 @@ async def _handle_single_tracking(t, bot_app):
                  f"{' '.join(redact_cmd_for_log(cmd))}")
         # F19: Attempt-Eintrag öffnen — wird in handle_recording_finished
         # mit Outcome/RC/Filesize/Stderr abgeschlossen
-        attempt_id = start_recording_attempt(tid, username, recorder_name)
+        attempt_id = await asyncio.to_thread(start_recording_attempt, tid, username, recorder_name)
         try:
             proc = await asyncio.create_subprocess_exec(
                 *cmd,
@@ -8667,8 +8774,9 @@ async def _handle_single_tracking(t, bot_app):
                 stderr=asyncio.subprocess.PIPE)                    # C12
         except Exception as e:
             log.error(f"{recorder_name} Start fehlgeschlagen: {e}")
-            finish_recording_attempt(attempt_id, outcome="start_failed", error=str(e))
-            clear_recording(tid)
+            await asyncio.to_thread(finish_recording_attempt, attempt_id,
+                                    outcome="start_failed", error=str(e))
+            await asyncio.to_thread(clear_recording, tid)
             _nc_gegendruck.freigeben()
             return
 
@@ -8679,7 +8787,8 @@ async def _handle_single_tracking(t, bot_app):
         try:
             active_processes.append(proc)
             _nc_gegendruck.freigeben()      # v4.2-W121b: Reservierung -> Prozess
-            set_recording_file(tid, output_file, proc.pid)
+            if not await asyncio.to_thread(set_recording_file, tid, output_file, proc.pid):
+                raise _AufnahmeLockVerloren(tid)    # v4.2-W176
             _aufnahme_chat_beginnen(username, output_file, proc)   # v4.2-W158
             # F27 + B7-Fix: last_live wurde schon via claim_live_transition gesetzt,
             # recording=1 wurde von try_acquire_recording_lock gesetzt. Der vorherige
@@ -8715,8 +8824,13 @@ async def _handle_single_tracking(t, bot_app):
             await _reap_proc(proc)   # v4.0-W75: kill+wait statt nur kill() → kein Zombie
             try: active_processes.remove(proc)
             except ValueError: pass
-            finish_recording_attempt(attempt_id, outcome="post_spawn_fail", error=str(e))
-            clear_recording(tid)
+            await asyncio.to_thread(finish_recording_attempt, attempt_id,
+                                    outcome="post_spawn_fail", error=str(e))
+            # v4.2-W176: ein verlorener Lock gehoert nicht mehr uns — ihn
+            # freizugeben hiesse, die Aufnahme freizugeben, die ihn inzwischen
+            # haelt.
+            if not isinstance(e, _AufnahmeLockVerloren):
+                await asyncio.to_thread(clear_recording, tid)
             return
     else:
         # F27: Wenn keine Transition stattfand (is_live unverändert) — nichts
@@ -8861,6 +8975,82 @@ def _pruefstand_melden(trackings):
                      _nc_meldetakt.zusatz(unterdr))
 
 
+def _pruef_runde(trackings, now, _pflege_runde):
+    """Eine Runde der Pruefschleife ohne await: faellige Trackings einreihen,
+    Karten pflegen, Pruefstand melden.
+
+    v4.2-W176: eigene Funktion, damit check_all_trackings sie als GANZES
+    absichern kann. Vorher war nur die Datenbankabfrage gekapselt (B83); eine
+    Ausnahme in irgendeinem Nebenschritt — Aufraeumen, _speicher_pflegen,
+    _pruefstand_melden — beendete die Schleife still, und ab da erkannte der
+    Bot keinen Live-Start mehr, ohne dass etwas im Fehlerlog stand."""
+    queued = 0
+    for t in trackings:
+        tid = t["id"]
+        next_at = _NEXT_CHECK_AT.get(tid, 0)
+        if now < next_at:
+            continue
+        # Fällig — queuen
+        try:
+            live_check_queue.put_nowait(t)
+            queued += 1
+            # In-Flight-Guard: NICHT erneut queuen solange der Worker dran
+            # ist (echter next_check kommt nach _handle via _schedule_next_check).
+            _NEXT_CHECK_AT[tid] = now + _INFLIGHT_GUARD_SECS
+        except asyncio.QueueFull:
+            # Worker zu langsam — ältesten Eintrag verwerfen, neuen rein.
+            # v4.2-W118: nicht mehr still. Der verworfene Nutzer wird
+            # erst nach dem In-Flight-Riegel wieder geprueft — ein
+            # Live-Start kommt dann Minuten zu spaet an.
+            try:
+                _weg = live_check_queue.get_nowait()
+                live_check_queue.task_done()
+                _pruefung_verworfen(_weg["username"])
+            except Exception: pass
+            try:
+                live_check_queue.put_nowait(t)
+                queued += 1
+            except Exception:
+                log.warning("Queue voll – Tracking übersprungen.")
+    if queued > 0:
+        log.debug(f"check-loop: {queued}/{len(trackings)} trackings queued")
+    # v4.2-W121: einmalig — ab hier erkennt der Bot Live-Starts wieder.
+    _bereit = _nc_lage.bereit()
+    if _bereit is not None:
+        log.info("Betriebsbereit nach %.1f s — erste Pruefrunde eingereiht "
+                 "(%d Trackings).", _bereit, len(trackings))
+
+    # F35: Cleanup verschwundener Trackings aus next-check-Map
+    # F41-Fix F2: rate-limit-Maps gleich mit aufräumen. Diese sind
+    # username-keyed (nicht tid-keyed), also brauchen wir ein Set von
+    # aktuellen Usernames. Bei vielen add/remove-Zyklen sammeln sich
+    # sonst stale Einträge bis zum Restart.
+    # F46-Bug-Fix B30: list(dict) statt direkter Iteration. Flask-Threads
+    # (z.B. /api/trackings/<id>/recheck) schreiben concurrent in
+    # _NEXT_CHECK_AT — eine reine Comprehension `[k for k in _NEXT_CHECK_AT ...]`
+    # könnte einen RuntimeError 'dictionary changed size during iteration'
+    # werfen wenn parallel ein Key dazukommt. list() ist ein atomarer
+    # Snapshot unter GIL → race-frei.
+    if len(_NEXT_CHECK_AT) > len(trackings) * 2:
+        valid_tids = {t["id"] for t in trackings}
+        stale_keys = [k for k in list(_NEXT_CHECK_AT) if k not in valid_tids]
+        for k in stale_keys:
+            _NEXT_CHECK_AT.pop(k, None)
+            _LAST_CHECK_RESULT.pop(k, None)
+            _nc_prueflage.vergessen(k)
+        # Rate-limit-Maps sind per-username — schon mit list() geschützt
+        valid_users = {t["username"] for t in trackings}
+        for m in (_RATE_LIMIT_BACKOFF, _RATE_LIMIT_PENALTY, _LIVE_STATUS_CACHE, _ABO_LIVE):
+            stale = [u for u in list(m.keys()) if u not in valid_users]
+            for u in stale: m.pop(u, None)
+    # v4.2-W120: unbedingt, alle 10 Minuten — der Riegel oben greift nur
+    # nach vielen Untracks, nie fuer /check- oder Restream-Namen.
+    if _pflege_runde % 120 == 0:
+        _speicher_pflegen()
+    if _pflege_runde % 60 == 0:        # v4.2-W142: alle 5 Minuten
+        _pruefstand_melden(trackings)
+
+
 async def check_all_trackings(bot_app):
     """F35: Adaptive Polling-Loop. Statt alle Trackings im starren CHECK_INTERVAL
        zu prüfen, hat jedes Tracking ein individuelles next_check_at:
@@ -8871,7 +9061,7 @@ async def check_all_trackings(bot_app):
        Loop-Tick ist 5s — granular genug für die Live-Intervalle.
        Beim Start aller Trackings sofort einmal in die Queue."""
     for i in range(WORKER_COUNT):
-        _spawn(live_check_worker(bot_app), name=f"worker-{i}")
+        _spawn(live_check_worker(bot_app, i), name=f"worker-{i}")
     _spawn(reaper_loop(), name="reaper")
     # Live-Reaction-Engine (Whisper-Sprach-Quelle) — nur wenn aktiviert.
     if LIVE_REACT_ENABLED:
@@ -8882,10 +9072,13 @@ async def check_all_trackings(bot_app):
         log.info(f"Storage Auto-Cleanup aktiv: Recordings älter als "
                  f"{RECORDINGS_RETAIN_DAYS} Tage werden täglich gelöscht.")
     # F55: Daily-Summary-Loop. Nur aktiv wenn Ziel-Chat konfiguriert.
+    # v4.2-W176: Zuschauer-Stichprobe und DB-Wartung brauchen keinen Chat und
+    # starten deshalb unbedingt. Sie hingen am Daily-Summary-Chat — ohne den
+    # blieb die Zuschauerkurve leer und das VACUUM lief nie.
+    _spawn(_viewer_sample_loop(), name="viewer-sampler")           # V37
+    _spawn(_db_vacuum_loop(), name="db-vacuum")                    # V37 (F82 bleibt separat)
     if DAILY_SUMMARY_CHAT_ID:
         _spawn(_daily_summary_loop(bot_app), name="daily-summary")
-        _spawn(_viewer_sample_loop(), name="viewer-sampler")       # V37
-        _spawn(_db_vacuum_loop(), name="db-vacuum")                # V37 (F82 bleibt separat)
         log.info(f"Daily-Summary aktiv: täglich {DAILY_SUMMARY_HOUR:02d}:00 "
                  f"in Chat {DAILY_SUMMARY_CHAT_ID}.")
     # F61: Disk-Alarm-Loop. Nutzt DISK_ALARM_CHAT_ID oder DAILY_SUMMARY_CHAT_ID.
@@ -8960,73 +9153,16 @@ async def check_all_trackings(bot_app):
             log.error("check-loop: Trackings-Abruf fehlgeschlagen (%s) — retry in 5s", _e)
             await asyncio.sleep(5)
             continue
-        queued = 0
-        for t in trackings:
-            tid = t["id"]
-            next_at = _NEXT_CHECK_AT.get(tid, 0)
-            if now < next_at:
-                continue
-            # Fällig — queuen
-            try:
-                live_check_queue.put_nowait(t)
-                queued += 1
-                # In-Flight-Guard: NICHT erneut queuen solange der Worker dran
-                # ist (echter next_check kommt nach _handle via _schedule_next_check).
-                _NEXT_CHECK_AT[tid] = now + _INFLIGHT_GUARD_SECS
-            except asyncio.QueueFull:
-                # Worker zu langsam — ältesten Eintrag verwerfen, neuen rein.
-                # v4.2-W118: nicht mehr still. Der verworfene Nutzer wird
-                # erst nach dem In-Flight-Riegel wieder geprueft — ein
-                # Live-Start kommt dann Minuten zu spaet an.
-                try:
-                    _weg = live_check_queue.get_nowait()
-                    live_check_queue.task_done()
-                    _pruefung_verworfen(_weg["username"])
-                except Exception: pass
-                try:
-                    live_check_queue.put_nowait(t)
-                    queued += 1
-                except Exception:
-                    log.warning("Queue voll – Tracking übersprungen.")
-        if queued > 0:
-            log.debug(f"check-loop: {queued}/{len(trackings)} trackings queued")
-        # v4.2-W121: einmalig — ab hier erkennt der Bot Live-Starts wieder.
-        _bereit = _nc_lage.bereit()
-        if _bereit is not None:
-            log.info("Betriebsbereit nach %.1f s — erste Pruefrunde eingereiht "
-                     "(%d Trackings).", _bereit, len(trackings))
-
-        # F35: Cleanup verschwundener Trackings aus next-check-Map
-        # F41-Fix F2: rate-limit-Maps gleich mit aufräumen. Diese sind
-        # username-keyed (nicht tid-keyed), also brauchen wir ein Set von
-        # aktuellen Usernames. Bei vielen add/remove-Zyklen sammeln sich
-        # sonst stale Einträge bis zum Restart.
-        # F46-Bug-Fix B30: list(dict) statt direkter Iteration. Flask-Threads
-        # (z.B. /api/trackings/<id>/recheck) schreiben concurrent in
-        # _NEXT_CHECK_AT — eine reine Comprehension `[k for k in _NEXT_CHECK_AT ...]`
-        # könnte einen RuntimeError 'dictionary changed size during iteration'
-        # werfen wenn parallel ein Key dazukommt. list() ist ein atomarer
-        # Snapshot unter GIL → race-frei.
-        if len(_NEXT_CHECK_AT) > len(trackings) * 2:
-            valid_tids = {t["id"] for t in trackings}
-            stale_keys = [k for k in list(_NEXT_CHECK_AT) if k not in valid_tids]
-            for k in stale_keys:
-                _NEXT_CHECK_AT.pop(k, None)
-                _LAST_CHECK_RESULT.pop(k, None)
-                _nc_prueflage.vergessen(k)
-            # Rate-limit-Maps sind per-username — schon mit list() geschützt
-            valid_users = {t["username"] for t in trackings}
-            for m in (_RATE_LIMIT_BACKOFF, _RATE_LIMIT_PENALTY, _LIVE_STATUS_CACHE, _ABO_LIVE):
-                stale = [u for u in list(m.keys()) if u not in valid_users]
-                for u in stale: m.pop(u, None)
-        # v4.2-W120: unbedingt, alle 10 Minuten — der Riegel oben greift nur
-        # nach vielen Untracks, nie fuer /check- oder Restream-Namen.
         _pflege_runde += 1
-        if _pflege_runde % 120 == 0:
-            _speicher_pflegen()
-        if _pflege_runde % 60 == 0:        # v4.2-W142: alle 5 Minuten
-            _pruefstand_melden(trackings)
-
+        try:
+            _pruef_runde(trackings, now, _pflege_runde)
+            # v4.2-W176: Lebenszeichen erst nach einer GELUNGENEN Runde — eine
+            # Schleife, die jede Runde scheitert, ist fuer den Waechter so tot
+            # wie eine, die steht. Der Zeitstempel geht nach /healthz.
+            _hb("check-loop")
+            _nc_prueflage.runde_gelaufen()
+        except Exception as e:
+            _loop_fehler("check_all_trackings", e)
         await asyncio.sleep(LOOP_TICK)
 
 
@@ -17280,6 +17416,9 @@ class KickModerator:
                         _pause = _kick_ws_pause(e, _folge)   # v4.2-W136
                         _verbindung_verloren("Kick-WebSocket", e, _pause,
                                              seit=self.stats.get("since", 0.0))
+                        # v4.2-W176: Marke zuruecksetzen — sonst galt jeder Fehlversuch als „hielt
+                        # seit Stunden", und eine Dauerstoerung eskalierte nie (nc/flapguard).
+                        self.stats["since"] = 0.0
                         await asyncio.sleep(_pause)
         finally:
             self.stats["connected"] = False
@@ -17341,6 +17480,9 @@ class KickModerator:
                                                 % _kz.STILLE_S)
                         _verbindung_verloren("Kick-WebSocket", e, _pause,
                                              seit=self.stats.get("since", 0.0))
+                        # v4.2-W176: Marke zuruecksetzen — sonst galt jeder Fehlversuch als „hielt
+                        # seit Stunden", und eine Dauerstoerung eskalierte nie (nc/flapguard).
+                        self.stats["since"] = 0.0
                         await asyncio.sleep(_pause)
         finally:
             self.stats["connected"] = False
@@ -23993,6 +24135,9 @@ async def _twitch_eventsub_loop():
             raise
         except Exception as e:
             _verbindung_verloren("Twitch-EventSub", e, backoff, seit=_es_seit)   # v4.0-W116
+            # v4.2-W176: Marke zuruecksetzen — sonst galt jeder Fehlversuch als „hielt
+            # seit Stunden", und eine Dauerstoerung eskalierte nie (nc/flapguard).
+            _es_seit = 0.0
         await asyncio.sleep(backoff)
         backoff = min(300, int(backoff * 1.6))
         ws_url = "wss://eventsub.wss.twitch.tv/ws"
@@ -24214,6 +24359,9 @@ async def _twitch_chat_loop():
         except Exception as e:
             _verbindung_verloren("Twitch-Chat", e, backoff,                     # v4.0-W116
                                  seit=_WCHAT_STATUS["twitch"].get("since", 0.0))
+            # v4.2-W176: Marke zuruecksetzen — sonst galt jeder Fehlversuch als „hielt
+            # seit Stunden", und eine Dauerstoerung eskalierte nie (nc/flapguard).
+            _WCHAT_STATUS["twitch"]["since"] = 0.0
             _WCHAT_STATUS["twitch"]["reconnects"] += 1
             _WCHAT_STATUS["twitch"].update(connected=False, error=str(e)[:120])
             _TWITCH_SEND["fn"] = None
@@ -24341,6 +24489,9 @@ async def _youtube_api_chat_loop():
             # Muster, das den Discord-Gateway-Tod monatelang verdeckt hat.
             _verbindung_verloren("YouTube-Chat (Data-API)", e, backoff,
                                  seit=_WCHAT_STATUS["youtube"].get("since", 0.0))
+            # v4.2-W176: Marke zuruecksetzen — sonst galt jeder Fehlversuch als „hielt
+            # seit Stunden", und eine Dauerstoerung eskalierte nie (nc/flapguard).
+            _WCHAT_STATUS["youtube"]["since"] = 0.0
             _WCHAT_STATUS["youtube"]["reconnects"] += 1
             _WCHAT_STATUS["youtube"].update(connected=False, error=str(e)[:120])
             await asyncio.sleep(backoff); backoff = min(backoff * 2, 120)
@@ -24503,6 +24654,9 @@ async def _youtube_chat_loop():
             # wert ist, nicht jede einzelne Trennung (nc/flapguard.py).
             _verbindung_verloren("YouTube-Chat", e, backoff,
                                  seit=_WCHAT_STATUS["youtube"].get("since", 0.0))
+            # v4.2-W176: Marke zuruecksetzen — sonst galt jeder Fehlversuch als „hielt
+            # seit Stunden", und eine Dauerstoerung eskalierte nie (nc/flapguard).
+            _WCHAT_STATUS["youtube"]["since"] = 0.0
             _WCHAT_STATUS["youtube"]["reconnects"] += 1
             _WCHAT_STATUS["youtube"].update(connected=False, error=str(e)[:120])
             _YT_SEND["fn"] = None; _YT_SEND["live_chat_id"] = ""
@@ -25655,52 +25809,54 @@ _disk_pct = _nc_probe.disk_pct
 
 def _disk_autoclean():
     """Löscht die ÄLTESTEN Aufnahmen bis DISK_AUTOCLEAN_TARGET erreicht ist —
-       aber nur bereits gesicherte (backed_up) bzw. abgeschlossene Dateien, nie
-       die gerade laufende. Gibt Bilanz zurück."""
+       aber nur gesicherte (backed_up) und nicht markierte, nie die gerade
+       laufende (v4.2-W176, Regeln in nc/storage.notfall_raeumen). Gibt Bilanz
+       zurück."""
     pct, st = _disk_pct()
     if not st or pct < DISK_AUTOCLEAN_PCT:
+        _nc_meldetakt.zuruecksetzen("disk-guard")
         return {"ran": False, "pct": pct}
     _DISK_GUARD_STATE["active"] = True
-    freed, deleted = 0, 0
     try:
-        # aktuell offene Dateien nie anfassen
-        active_files = set()
         try:
-            with db_conn() as conn:
-                for r in conn.execute("SELECT output_file FROM trackings WHERE recording=1").fetchall():
-                    if r["output_file"]:
-                        active_files.add(os.path.abspath(r["output_file"]))
-        except Exception:
-            pass
-        vids = []
-        for root, _dirs, files in os.walk(RECORDINGS_DIR):
-            for f in files:
-                if os.path.splitext(f)[1].lower() in _VIDEO_EXTS:
-                    fp = os.path.join(root, f)
-                    if os.path.abspath(fp) in active_files:
-                        continue
-                    try:
-                        vids.append((os.path.getmtime(fp), os.path.getsize(fp), fp))
-                    except OSError:
-                        pass
-        vids.sort()   # ältester zuerst
-        for _mt, sz, fp in vids:
-            cur, _ = _disk_pct()
-            if cur <= DISK_AUTOCLEAN_TARGET:
-                break
-            try:
-                os.remove(fp); freed += sz; deleted += 1
-                log.info("DISK-GUARD: gelöscht %s (%.0f MB)", os.path.basename(fp), sz / 1048576)
-            except OSError:
-                pass
+            res = _nc_storage.notfall_raeumen(RECORDINGS_DIR, _VIDEO_EXTS,
+                                              _disk_pct, DISK_AUTOCLEAN_TARGET)
+        except _nc_storage.BestandUnbekannt as e:
+            # Nicht raten: ohne Datenbank ist unbekannt, was gesichert,
+            # markiert oder gerade offen ist (W91/W149). Laut, weil die
+            # Platte trotzdem weiter vollaeuft.
+            laut, unterdr = _nc_meldetakt.melden("disk-guard", "bestand",
+                                                  _time_mod.monotonic())
+            if laut:
+                log.error("DISK-GUARD: Platte bei %d%%, Aufraeumen AUSGESETZT — "
+                          "Datenbank nicht lesbar (%s), gesicherte/markierte "
+                          "Aufnahmen unbekannt. Abhilfe: Datenbank pruefen "
+                          "(/healthz, journalctl), Platz von Hand schaffen.%s",
+                          pct, e, _nc_meldetakt.zusatz(unterdr))
+            return {"ran": False, "pct": pct, "error": "bestand-unbekannt"}
+        freed, deleted = res["freed_bytes"], res["deleted"]
         _DISK_GUARD_STATE.update(last_run=_time_mod.time(),
                                  freed_mb=round(freed / 1048576, 1), deleted=deleted)
+        pct_nach = _disk_pct()[0]
         if deleted:
             log_event("disk.autoclean", "warning",
                       f"Disk-Guard: {deleted} alte Aufnahmen gelöscht ({freed/1048576:.0f} MB frei)",
                       {"deleted": deleted, "freed_mb": round(freed / 1048576, 1)})
+        if pct_nach > DISK_AUTOCLEAN_TARGET:
+            # Vorher loeschte der Waechter in dieser Lage einfach weiter —
+            # notfalls jede ungesicherte Aufnahme. Jetzt bleibt sie stehen,
+            # und das muss der Betreiber erfahren, bevor die Platte voll ist.
+            laut, unterdr = _nc_meldetakt.melden("disk-guard", "zu-wenig",
+                                                  _time_mod.monotonic())
+            if laut:
+                log.error("DISK-GUARD: Platte noch bei %d%% (Ziel %d%%) — %d "
+                          "Aufnahmen sind ungesichert oder markiert und werden "
+                          "NICHT automatisch geloescht. Abhilfe: Sicherung "
+                          "einrichten, RECORDINGS_RETAIN_DAYS setzen oder im Deck "
+                          "aufraeumen.%s", pct_nach, DISK_AUTOCLEAN_TARGET,
+                          res["geschont"], _nc_meldetakt.zusatz(unterdr))
         return {"ran": True, "deleted": deleted, "freed_mb": round(freed / 1048576, 1),
-                "pct_before": pct, "pct_after": _disk_pct()[0]}
+                "geschont": res["geschont"], "pct_before": pct, "pct_after": pct_nach}
     finally:
         _DISK_GUARD_STATE["active"] = False
 
