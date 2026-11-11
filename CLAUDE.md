@@ -26,7 +26,7 @@ benutzt, berät an der Lage vorbei.**
 
 ## Die eine Regel
 
-`bot.py` hat **27.625 Zeilen / 1,2 MB ≈ 295.000 Token**. Diese Datei wird
+`bot.py` hat **27.637 Zeilen / 1,2 MB ≈ 295.000 Token**. Diese Datei wird
 **nie** ganz gelesen und **nie** blind durchsucht. Erst fragen wo etwas steht,
 dann den Ausschnitt holen:
 
@@ -42,7 +42,7 @@ dann den Ausschnitt holen:
     python tools/ncpatch.py docs                           # Doku-Zahlen gegen den Quelltext
 
 `find` antwortet aus `.claude/INDEX.md` — 379 Routen (34 in `bot.py`, 345 in
-`nc/routes/`), 66 Slash-Commands, 632 Funktionen mit Zeilennummern. Nach Änderungen an Routen, Commands oder
+`nc/routes/`), 67 Slash-Commands, 634 Funktionen mit Zeilennummern. Nach Änderungen an Routen, Commands oder
 Top-Level-Funktionen `map` neu laufen lassen. Details: Skill `nc-navigation`.
 
 Für „wer ruft das auf?" und „was ist der Typ?" ist der Sprachserver billiger als
@@ -57,7 +57,7 @@ Auf diesem Windows-Rechner heißt der Interpreter **`python`** (3.13.12);
                          Routen), Scraper, Recorder, Restream, Schema (init_db).
                          Hiess bis v4.0-W119 bot_v37.py — beim Suchen in
                          alten Notizen und Patch-Dateien daran denken.
-    discordbot.py        Der Discord-Teil (66 Slash-Commands, davon 23 aus
+    discordbot.py        Der Discord-Teil (67 Slash-Commands, davon 23 aus
                          dem Verzeichnis nc/befehle.py), seit v4.2-W15
                          heraus. Bot-seitig, weil er discord.py importiert und
                          ein Gateway aufmacht — nicht nach nc/, das bot-frei
@@ -71,7 +71,7 @@ Auf diesem Windows-Rechner heißt der Interpreter **`python`** (3.13.12);
     brain_bridge.py      Adapter Bot ↔ brain/ (M2)
     brain/               KI-Kern: state, rules, router, agents, memory,
                          semantic, knowledge, scheduler, llm, report
-    nc/                  187 Fachmodule: db, scraping, restream, oauth, ledger,
+    nc/                  188 Fachmodule: db, scraping, restream, oauth, ledger,
                          i18n, …
     nc/routes/           39 Flask-Blueprints mit 345 weiteren API-Routen
     locales/             de.json, en.json, es.json — der Übersetzungskatalog
@@ -1221,7 +1221,7 @@ Ledger-Einträge sind append-only mit Hash-Kette; Korrektur = Gegenbuchung.
 
 ## Sicherheit
 
-`.env` hat rund 594 Variablen und enthält Cookies, OAuth-Tokens und Stream-Keys — sie
+`.env` hat rund 595 Variablen und enthält Cookies, OAuth-Tokens und Stream-Keys — sie
 liegt nie im Archiv und wird nie ausgegeben. Beim Logging von
 `streamlink`/`ffmpeg`-Kommandos werden Cookie-Header redacted (F4); dieser
 Redact-Pfad darf bei Änderungen an der Kommandozeile nicht umgangen werden. Das

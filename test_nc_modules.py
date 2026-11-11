@@ -20585,10 +20585,16 @@ def _test_v42_w109_ein_befehlsverzeichnis():
     alte = [n for n in _ast.walk(baum) if isinstance(n, _ast.For)
             and isinstance(n.iter, _ast.Tuple) and "CommandHandler" in _ast.unparse(n)]
     assert not alte, "eine zweite, handgeschriebene Telegram-Liste ist zurueck"
+    # v4.2-W172: die eine ausdrueckliche Ausnahme. Jede weitere muss HIER
+    # eingetragen werden — eine Liste, die still waechst, oeffnet Telegram.
+    assert B.OEFFENTLICH <= {"spenden"}, \
+        "neue oeffentliche Telegram-Befehle: %r" % sorted(B.OEFFENTLICH - {"spenden"})
     for name, handler in B.telegram_handler():
         fn = oben.get(handler)
         assert isinstance(fn, _ast.AsyncFunctionDef), \
             "/%s: Handler %s fehlt in bot.py" % (name, handler)
+        if name in B.OEFFENTLICH:
+            continue
         def _erste(f):
             return f.body[1] if _ast.get_docstring(f) else f.body[0]
         erste = _erste(fn)
@@ -29882,7 +29888,8 @@ def _test_v42_w164_alles_auf_einmal():
     # benutzen, sonst zaehlte jede manuelle Spende doppelt.
     src = open("bot.py", encoding="utf-8").read()
     st = src[src.index('goal = _nc_envnum.env_float("DONATION_GOAL_EUR"'):]
-    st = st[:st.index("_pp = os.getenv")]
+    # ANKER GEWANDERT (v4.2-W172): PayPal liest jetzt nc.spendeninfo.
+    st = st[:st.index("_pp = _nc_spendeninfo.paypal()")]
     assert "cur += _manual_donations_total()" in st and "sql_in" not in st
     ov = open("templates/overlay.html", encoding="utf-8").read()
     assert "manual:'DIREKT'" in ov
@@ -31275,6 +31282,88 @@ def _test_v42_w171_kick_centrifugo():
     ok("v4.2-W171: Kick-Chat ueber Centrifugo — Anmeldung, Abo, Ping, Buendel, Erneuerung")
 
 
+def _test_v42_w172_spenden():
+    """v4.2-W172: „Der Bot hat weder in Discord noch in Telegram die Donation-
+    Funktion." /spenden nennt PayPal, Krypto und Ziel — aus derselben Quelle
+    wie Website und Deck, fuer JEDEN (nur Oeffentliches), und sagt laut, wenn
+    nichts eingetragen ist."""
+    import ast as _ast
+    import os as _os
+    from nc import spendeninfo as SP
+    from nc import befehle as BF
+
+    namen = ["DONATION_PAYPAL", "DONATION_GOAL_PURPOSE", "DONATION_GOAL_EUR",
+             "DONATION_PERIOD", "DONATION_LINK", "DONATION_BTC_ADDRESS",
+             "DONATION_ETH_ADDRESS", "DONATION_BCH_ADDRESS", "DONATION_LTC_ADDRESS",
+             "DONATION_XMR_ADDRESS", "DONATION_SOL_ADDRESS"]
+    alt = {n: _os.environ.get(n) for n in namen}
+    try:
+        for n in namen:
+            _os.environ.pop(n, None)
+        # (1) Vorgabe: PayPal wie im Website-Panel, Ziel 500 € monatlich.
+        t = SP.text("md")
+        assert "paypal@voice4you.org" in t and "500" in t and "monatlich" in t, t
+        assert "paypal.com/donate/?business=paypal%40voice4you.org" in t
+        # (2) Zur LAUFZEIT gelesen: eine im Deck gesetzte Adresse gilt sofort.
+        _os.environ["DONATION_BTC_ADDRESS"] = "bc1qw172"
+        _os.environ["DONATION_SOL_ADDRESS"] = "So1w172"
+        _os.environ["DONATION_GOAL_PURPOSE"] = "Server <am> Laufen & mehr"
+        t = SP.text("md")
+        assert "Bitcoin: `bc1qw172`" in t and "Solana: `So1w172`" in t, t
+        assert t.index("Bitcoin") < t.index("Solana"), "Reihenfolge wie die Website"
+        h = SP.text("html")
+        assert "<code>bc1qw172</code>" in h
+        assert "Server &lt;am&gt; Laufen &amp; mehr" in h and "<am>" not in h, \
+            "Text aus der .env ungeschuetzt in Telegram-HTML — eine spitze Klammer " \
+            "liesse die ganze Antwort mit 'can't parse entities' scheitern"
+        assert "&amp;currency_code=EUR" in h, "der PayPal-Link muss in HTML maskiert sein"
+        # (3) Nichts eingetragen: laut, mit den Variablennamen — kein leerer Block.
+        _os.environ["DONATION_PAYPAL"] = ""
+        for n in namen[5:]:
+            _os.environ.pop(n, None)
+        leer = SP.text("md")
+        assert "DONATION_PAYPAL" in leer and "DONATION_<COIN>_ADDRESS" in leer, leer
+        assert "Danke" not in leer
+        # (4) Uebersetzung wirkt auf jeden Text.
+        en = SP.text("md", lambda x: "EN[" + x + "]")
+        assert "EN[Projekt unterstützen]" in en
+        # Unlesbar: dieselbe Vorgabe wie das Website-Panel (nc.envnum) — Chat
+        # und Seite duerfen nicht zwei verschiedene Ziele nennen.
+        _os.environ["DONATION_GOAL_EUR"] = "kaputt"
+        assert SP.stand()["ziel_eur"] == 500.0
+        _os.environ["DONATION_GOAL_EUR"] = "0"
+        assert "Ziel" not in SP.text("md"), "ein Ziel 0 gehoert nicht in den Text"
+    finally:
+        for n, v in alt.items():
+            if v is None:
+                _os.environ.pop(n, None)
+            else:
+                _os.environ[n] = v
+
+    # (5) Verzeichnis: auf beiden Plattformen, fuer jeden, Discord nativ
+    # (ein offener Shim-Befehl gaebe Discord-Mitgliedern Betreiberrechte).
+    b = BF.NACH_NAME["spenden"]
+    assert b.plattformen == BF._BEIDE and b.recht == "jeder" and b.discord == "nativ", b
+    assert not BF.pruefen() and "spenden" in BF.OEFFENTLICH
+    assert "/spenden" in BF.hilfe_text(BF.DC, ist_betreiber=False), \
+        "Zuschauer sehen /spenden nicht in der Hilfe"
+
+    # (6) Telegram-Handler: ohne Freischaltung, mit HTML; Discord-Befehl vorhanden.
+    src = open("bot.py", encoding="utf-8").read()
+    fn = next(n for n in _ast.parse(src).body
+              if isinstance(n, _ast.AsyncFunctionDef) and n.name == "spenden_cmd")
+    rufe = {_ast.unparse(c.func) for c in _ast.walk(fn) if isinstance(c, _ast.Call)}
+    assert "_is_authorized" not in rufe, \
+        "Zuschauer stehen in keiner Freischaltliste — der Bot schwiege auf /spenden"
+    assert "_nc_spendeninfo.text" in rufe and "ParseMode.HTML" in _ast.unparse(fn)
+    dsrc = open("discordbot.py", encoding="utf-8").read()
+    assert 'name="spenden"' in dsrc and '_nc_spendeninfo.text("md"' in dsrc
+    # Website und /spenden lesen PayPal an EINER Stelle.
+    assert "_nc_spendeninfo.paypal()" in src and \
+        'os.getenv("DONATION_PAYPAL"' not in src, "zweite PayPal-Lesestelle in bot.py"
+    ok("v4.2-W172: /spenden auf Telegram und Discord — PayPal, Krypto, Ziel, leer laut")
+
+
 def _test_v42_w155_weiche_steckt():
     """v4.2-W155: gemeldet „Wir haben in den Restreams immer noch kein Bild" —
     Overlay und Chat liefen, das Videofeld zeigte das Pausenbild. Ein
@@ -31796,6 +31885,7 @@ def main():
     _test_v42_w169_link_video()
     _test_v42_w170_overlay_ein_browser()
     _test_v42_w171_kick_centrifugo()
+    _test_v42_w172_spenden()
     _test_v42_w60_azrael_cooldown_je_plattform()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)

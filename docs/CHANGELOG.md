@@ -11,6 +11,27 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+## [4.6.22] — 2026-11-11 · „Leitstand"
+
+### Neu — /spenden auf Telegram und Discord (v4.2 W172)
+
+Gemeldet am 11.11.: „Der Bot hat weder in Discord noch in Telegram die
+Donation-Funktion. Spendenadressen kann er ja aus der env laden, wobei die
+Adressen auch in die README sollten."
+
+- `nc/spendeninfo.py`: PayPal (mit Spenden-Link), alle gesetzten
+  Krypto-Adressen, Zweck und Ziel — dieselben Quellen wie Website und Deck
+  (`DONATION_PAYPAL`, `DONATION_<COIN>_ADDRESS`, `DONATION_GOAL_*`), bei
+  jedem Aufruf gelesen. Die Website liest PayPal jetzt auch von dort.
+- `/spenden` steht in `nc/befehle.py`, also auch in Hilfe und Telegram-Menü.
+  **Für jeden**: auf Telegram ohne Freischaltung (Zuschauer stehen in keiner
+  Liste, die Antwort ist öffentlich), auf Discord als eigener Befehl.
+- Ist nichts eingetragen, nennt der Bot die Variablen statt einer leeren
+  Antwort. Text aus der `.env` wird für Telegram-HTML maskiert.
+- Neu: `DONATION_LINK` (optional). README: Abschnitt „Unterstützen".
+
+Vertrag `_test_v42_w172_spenden`, 7 von 7 Mutationsproben gefangen.
+
 ## [4.6.21] — 2026-11-07 · „Leitstand"
 
 ### Behoben — Kick-Chat über Centrifugo (v4.2 W171)

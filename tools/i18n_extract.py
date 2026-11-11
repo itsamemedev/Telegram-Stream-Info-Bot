@@ -64,7 +64,9 @@ MARKIERT = ["nc/befehle.py",
             # v4.2-W145: Schutz- und Ablehnungsgruende der Einstellungen.
             "nc/einstellungen.py",
             # v4.2-W148: die Gruende der beiden Beobachtungs-Waechter.
-            "nc/beobachtungsdienst.py"]
+            "nc/beobachtungsdienst.py",
+            # v4.2-W172: die Antwort auf /spenden.
+            "nc/spendeninfo.py"]
 
 # Ein Text ist uebersetzbar, wenn er ueberhaupt Sprache enthaelt. Reine Zahlen,
 # Symbole, CSS-Werte und Platzhalter fliegen raus.

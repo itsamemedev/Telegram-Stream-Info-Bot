@@ -4,7 +4,7 @@ Eine einzige Wahrheit für die Versionsanzeige (Dashboard-Footer, /api/version,
 „Was ist neu"-Panel). Reine Daten + kleine Helfer, voll testbar.
 """
 
-VERSION = "4.6.21"
+VERSION = "4.6.22"
 CODENAME = "Leitstand"
 RELEASE = "2026.11"
 
@@ -23,6 +23,19 @@ def build_stamp():
 # Meilenstein-Changelog, neueste Version zuerst. highlights = kurze, ehrliche
 # Stichpunkte dessen, was die Version bringt.
 CHANGELOG = [
+    {
+        "version": "4.6.22",
+        "date": "2026-11",
+        "title": "Leitstand",
+        # Patch-Fassung von 4.6: /spenden (W172).
+        "highlights": [
+            "Neuer Befehl /spenden auf Telegram und Discord: PayPal mit Spenden-Link, alle eingetragenen Krypto-Adressen und das Spendenziel",
+            "Für jeden: Zuschauer stehen in keiner Freischaltliste, die Antwort enthält nur, was auch die Website zeigt",
+            "Eine Quelle für Website, Deck und Chat — eine im Deck geänderte Adresse gilt sofort, ohne Neustart",
+            "Ist nichts eingetragen, sagt der Bot das mit den Variablennamen, statt still zu schweigen",
+            "Neu: DONATION_LINK für einen zusätzlichen Link (z. B. die Spendenseite); README mit Abschnitt „Unterstützen\"",
+        ],
+    },
     {
         "version": "4.6.21",
         "date": "2026-11",

@@ -141,6 +141,9 @@ BEFEHLE = (
        discord="nativ"),
     _b("help", "system", _t("Alle Befehle anzeigen"), "hilfe_cmd",
        recht="jeder", discord="nativ"),
+    # v4.2-W172: oeffentliche Angaben wie auf der Website — fuer jeden.
+    _b("spenden", "community", _t("Projekt unterstützen: PayPal und Krypto-Adressen"),
+       "spenden_cmd", recht="jeder", discord="nativ"),
 
     # ── nur Telegram ───────────────────────────────────────────────────────
     _b("start", "system", _t("Einstieg und Kurzuebersicht"), "start",
@@ -171,6 +174,14 @@ BEFEHLE = (
 )
 
 NACH_NAME = OrderedDict((b.name, b) for b in BEFEHLE)
+
+# v4.2-W172: Telegram-Befehle, die OHNE Freischaltung antworten. Die Regel aus
+# W109 („auf Telegram ist jeder Befehl ein Betreiberbefehl") gilt weiter; hier
+# steht nur, was ausschliesslich Oeffentliches liefert und von Zuschauern
+# gefragt wird, die in keiner Freischaltliste stehen. /spenden zeigt dasselbe
+# wie die Website — ein Bot, der darauf schweigt, war das gemeldete Fehlerbild.
+# Der W109-Vertrag laesst nur diese Namen durch und haelt die Liste klein.
+OEFFENTLICH = frozenset({"spenden"})
 
 
 def fuer(plattform):
@@ -239,6 +250,9 @@ def pruefen():
             # freigeschalteter Telegram-Nutzer an — ein offener Shim-Befehl
             # gaebe jedem Discord-Mitglied die Telegram-Rechte des Betreibers.
             befunde.append("%s: Shim-Befehl muss Betreiberbefehl sein" % b.name)
+        if b.name in OEFFENTLICH and b.recht != "jeder":
+            befunde.append("%s: oeffentlich auf Telegram, aber Betreiberbefehl "
+                           "auf Discord" % b.name)
         if b.name.startswith("sys_"):
             befunde.append("%s: sys_-Praefix — der Name ist auf beiden "
                            "Plattformen derselbe" % b.name)

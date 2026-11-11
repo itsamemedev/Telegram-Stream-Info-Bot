@@ -884,7 +884,6 @@ import nc.claude as _nc_claude  # v4.0-W64: Anthropic-Claude-Provider (primär, 
 import nc.usage as _nc_usage    # v4.0-W92: LLM-Token-/Kostenzähler
 import nc.crypto as _nc_crypto  # v4.0-W94: Krypto-Spendenadressen + BTC-Live-Empfang
 import nc.qrsvg as _nc_qrsvg    # v4.0-W95: QR-Codes (Inline-SVG)
-import urllib.parse as _urllib_parse
 
 # v4.0-W92/W93: chat_sync zentral mit Token-Zählung umhüllen — ALLE Claude-Calls
 # (mehrere Aufrufstellen) verbuchen so ihre Tokens/Kosten, ohne jede Stelle zu
@@ -1061,7 +1060,8 @@ from nc import sendrate as _nc_sendrate    # v4.0-W23: YT-Sende-Bremse (Anti-Flo
 from nc import cohost as _nc_cohost        # v4.0-W24: proaktiver Live-Co-Host
 from nc import restream_util as _nc_rutil  # v4.0-W25: reine Restream-Helfer (extrahiert)
 from nc import overlaybrowser as _nc_ovbrowser
-from nc import kickzentrifugo as _nc_kickzentrifugo  # v4.2-W171: Kick-Chat ueber Centrifugo  # v4.2-W170: ein Chromium je Restream statt je Bild
+from nc import kickzentrifugo as _nc_kickzentrifugo  # v4.2-W171: Kick-Chat ueber Centrifugo
+from nc import spendeninfo as _nc_spendeninfo  # v4.2-W172: /spenden, eine Quelle fuer alle  # v4.2-W170: ein Chromium je Restream statt je Bild
 from nc import restream_stability as _nc_rstab  # v4.0-W113: Wiederanlauf-Regeln (rein)
 from nc import flapguard as _nc_flap  # v4.0-W116: flatternde Verbindungen (rein)
 from nc import recdiag as _nc_recdiag  # v4.0-W116: Raten-Einbruch (rein)
@@ -11709,11 +11709,9 @@ def _public_stats() -> dict:
             cur += _manual_donations_total()
         except Exception:
             pass
-        _pp = os.getenv("DONATION_PAYPAL", "paypal@voice4you.org").strip()
-        _pp_url = ("https://www.paypal.com/donate/?business="
-                   + _urllib_parse.quote(_pp)
-                   + "&currency_code=EUR&item_name="
-                   + _urllib_parse.quote("Azrael Sentinel - Betrieb")) if _pp else ""
+        # v4.2-W172: eine Quelle fuer Website, Deck und /spenden.
+        _pp = _nc_spendeninfo.paypal()
+        _pp_url = _nc_spendeninfo.paypal_url(_pp)
         stats["donation"] = {
             "goal_eur": round(goal, 2),
             "current_eur": round(cur, 2),
@@ -24836,6 +24834,20 @@ async def unpause_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     "Quelle kann erneut pausiert werden.", u, e)
     await update.message.reply_text(
         _nc_i18n.t(f"✅ @{u} reaktiviert.") if n else _nc_i18n.t(f"@{u} war nicht pausiert."))
+
+
+async def spenden_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """v4.2-W172: /spenden — PayPal, Krypto und Spendenziel, aus der .env.
+
+    Bewusst OHNE _is_authorized: die Antwort enthaelt nur, was die oeffentliche
+    Website ohnehin zeigt, und gefragt wird sie von Zuschauern — die stehen
+    in keiner Freischaltliste. Eine Spendenfrage, auf die der Bot schweigt,
+    ist genau das gemeldete Fehlerbild."""
+    if not update.message:
+        return
+    await update.message.reply_text(
+        _nc_spendeninfo.text("html", _nc_i18n.t), parse_mode=ParseMode.HTML,
+        disable_web_page_preview=True)
 
 
 async def hilfe_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):

@@ -48,7 +48,7 @@ On the author's Windows machine the interpreter is called **`python`**
                          routes), scraper, recorder, restream, schema (init_db).
                          Was called bot_v37.py until v4.0-W119 — keep that in
                          mind when searching old notes and patch files.
-    discordbot.py        the Discord part (66 slash commands), lifted out in
+    discordbot.py        the Discord part (67 slash commands), lifted out in
                          v4.2-W15. It lives bot-side because it imports
                          discord.py and opens a gateway — not under nc/, which
                          stays bot-free. Everything reaches it via starte(ctx);

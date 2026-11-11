@@ -46,6 +46,7 @@ from nc import linkvideo as _nc_linkvideo     # v4.2-W169: Link gepostet -> Vide
 from nc import discordziele as _nc_ziele      # v4.2-W153: User-Bereiche abgleichen
 from nc import meldetakt as _nc_meldetakt     # v4.2-W161: fremde Bereiche gedrosselt melden
 from nc import befehle as _nc_befehle
+from nc import spendeninfo as _nc_spendeninfo  # v4.2-W172: /spenden
 from nc import discordstate as _nc_discordstate
 from nc import i18n as _nc_i18n
 from nc import tgmarkdown as _nc_tgmd   # v4.2-W138: HTML -> Discord-Markdown
@@ -1464,6 +1465,15 @@ def _reg_frage_events(tree):
             await inter.response.send_message(_nc_i18n.t(f"Fehler: {e}"), ephemeral=True)
 
 
+def _reg_spenden(tree):
+    """v4.2-W172: /spenden — fuer jedes Servermitglied, nur Oeffentliches wie
+    auf der Website. Eigene Funktion: _reg_betrieb stand an der 100er-Grenze."""
+    @tree.command(name="spenden", description=_nc_i18n.t("Projekt unterstützen: PayPal und Krypto-Adressen"))
+    async def _c_spenden(inter):
+        await inter.response.send_message(
+            _nc_spendeninfo.text("md", _nc_i18n.t), suppress_embeds=True)
+
+
 def _reg_betrieb(tree):
     """Betriebsauskunft und Benachrichtigungen.
 
@@ -2103,6 +2113,7 @@ async def _discord_run_once():
     _reg_profil(tree)
     _reg_frage_events(tree)
     _reg_betrieb(tree)
+    _reg_spenden(tree)
     _reg_streamer(tree)
     _reg_system(tree)
 
