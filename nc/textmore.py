@@ -27,6 +27,38 @@ def split_for_telegram(text: str, limit: int = 4000) -> List[str]:
         text = text[cut:].lstrip()
     return chunks
 
+def pre_nachrichten(kopf: str, zeilen, fuss: str = "", limit: int = 4000) -> List[str]:
+    """v4.2-W175: Tabellenzeilen auf Nachrichten <= limit verteilen, jede mit
+    eigenem, geschlossenem <pre>-Block. Kopf nur in der ersten, Fuss nur in
+    der letzten Nachricht.
+
+    Bis hier ging /tracklist als EINE Nachricht raus — ab rund 80 Trackings
+    ueber 4096 Zeichen, und Telegram lehnte sie mit BadRequest „message is too
+    long" ab: der Befehl antwortete gar nicht. split_for_telegram taugt dafuer
+    nicht, es schneidet mitten durch <pre>…</pre> und hinterlaesst kaputtes
+    HTML. Die Zeilen muessen bereits HTML-sicher sein (safe())."""
+    rahmen = len("<pre></pre>\n") + 2
+    aus, block = [], []
+    erste = True
+
+    def _raus(letzte):
+        teile = [kopf] if erste else []
+        teile.append("<pre>" + "\n".join(block) + "</pre>")
+        if letzte and fuss:
+            teile.append(fuss)
+        aus.append("\n".join(teile))
+
+    for z in zeilen:
+        z = z if len(z) <= limit // 2 else z[:limit // 2]
+        rest = limit - rahmen - len(fuss) - (len(kopf) if erste else 0)
+        if block and len("\n".join(block + [z])) > rest:
+            _raus(False)
+            block, erste = [], False
+        block.append(z)
+    _raus(True)
+    return aus
+
+
 def _compact_text(t, max_chars=3000):
     """V6: Whisper-Transkripte deduplizieren (aufeinanderfolgende Wiederholungen
        raus) und kappen — schärfere Prompts, weniger Rauschen/Token."""

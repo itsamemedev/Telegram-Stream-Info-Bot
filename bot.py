@@ -859,7 +859,7 @@ from nc import streamsel as _nc_ss          # v4.0-W29: TikTok-Stream-Auswahl (R
 from nc.cookies import (  # noqa: F401
     _cookies_input_to_netscape, _cookie_alarm_level)
 from nc.textmore import (  # noqa: F401
-    split_for_telegram, _compact_text, _parse_iso, _ov_wrap)
+    split_for_telegram, _compact_text, _parse_iso, _ov_wrap, pre_nachrichten)
 # _video_caption ist mit split_and_send_video nach telegramversand.py gewandert
 # (v4.2-W19) — es hatte hier nur diesen einen Nutzer.
 from nc.scoring import build_report  # noqa: F401
@@ -5751,7 +5751,7 @@ async def tracklist(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # F65: Pause-Icon hat Vorrang über Live (User hat manuell gestoppt)
         icon = {"pause": "⏸", "unbekannt": "❔", "ausstehend": "⏳"}.get(
             pr["zustand"], "🔴" if t["last_live"] else "⚫")
-        handle = ("@" + t["username"]).ljust(handle_w + 1)
+        handle = safe(("@" + t["username"]).ljust(handle_w + 1))
         flags = []
         if pr["zustand"] in ("live", "rec") and t["last_live"]: flags.append("LIVE")
         if t["recording"]: flags.append("•REC")
@@ -5768,24 +5768,24 @@ async def tracklist(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if note:
             if len(note) > 30:
                 note = note[:27] + "..."
-            flags.append(f"// {note}")
+            # v4.2-W175: die Notiz ist Freitext (/note, Deck). Ein „<" darin
+            # liess Telegram die ganze Antwort mit BadRequest „can't parse
+            # entities" ablehnen — /tracklist antwortete dann gar nicht.
+            flags.append(f"// {safe(note)}")
         rows.append(f"{icon} {handle}  {' '.join(flags)}")
 
-    body = "\n".join(rows)
     status_extra = f", {paused_n} paused" if paused_n else ""
     if unbekannt_n:
         status_extra += f", {unbekannt_n} ?"
     if ueber_n:
         status_extra += f", {ueber_n} ⏱"
-    text = (
-        f"📋 <b>TRACKINGS · {len(trackings)} aktiv "
-        f"({live_n} live, {rec_n} rec{status_extra})</b>\n"
-        f"\n"
-        f"<pre>{body}</pre>\n"
-        f"\n"
-        f"<code>Aktualisiert: {utc_clock()} UTC</code>"
-    )
-    await update.message.reply_text(_nc_i18n.t(text), parse_mode=ParseMode.HTML)
+    kopf = (f"📋 <b>TRACKINGS · {len(trackings)} aktiv "
+            f"({live_n} live, {rec_n} rec{status_extra})</b>\n")
+    fuss = f"\n<code>Aktualisiert: {utc_clock()} UTC</code>"
+    # v4.2-W175: geteilt — ab rund 80 Trackings war die eine Nachricht ueber
+    # 4096 Zeichen lang (nc.textmore.pre_nachrichten).
+    for text in pre_nachrichten(kopf, rows, fuss):
+        await update.message.reply_text(_nc_i18n.t(text), parse_mode=ParseMode.HTML)
 
 async def diag(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """F11: Selbst-Diagnose direkt aus Telegram. Zeigt was im Stack
