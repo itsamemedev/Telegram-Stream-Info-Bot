@@ -154,6 +154,47 @@ def to_eur(amount, platform="", message="") -> float:
     return round(n, 2)
 
 
+# v4.2-W178: die Kurse standen als OVERLAY_*-Variablen in der .env-Vorlage und
+# in bot.py — gelesen wurden sie dort, an configure() gingen sie nie. Wer
+# OVERLAY_USD_EUR setzte, aenderte damit nichts. Jetzt bei jeder Summe frisch
+# aus der Umgebung (Funktion statt Modul-Konstante: .env und Deck-Einstellungen
+# kommen erst nach den Importen).
+def kurse_aus_env() -> None:
+    from nc import envnum as _envnum
+    f = _envnum.env_float
+    # Woertlich je Name: tools/gen_env_example.py findet nur Literale.
+    configure(usd_eur=max(0.0, f("OVERLAY_USD_EUR", 0.92)),
+              bits_eur=max(0.0, f("OVERLAY_TWITCH_BITS_EUR", 0.01)),
+              twitch_sub_eur=max(0.0, f("OVERLAY_TWITCH_SUB_EUR", 2.50)),
+              kick_sub_eur=max(0.0, f("OVERLAY_KICK_SUB_EUR", 2.50)),
+              yt_member_eur=max(0.0, f("OVERLAY_YT_MEMBER_EUR", 2.50)),
+              tiktok_coin_eur=max(0.0, f("OVERLAY_TIKTOK_COIN_EUR", 0.01)))
+
+
+def zeile_eur(r) -> float:
+    """Eine overlay_events-Zeile (amount, platform, message) in EUR, nie negativ.
+
+    v4.2-W178: Spendenziel, Overlay-Bilanz und Steuer-Gegenprobe lasen den
+    Betrag mit parse_eur/float. Der kennt nur nackte Zahlen — „100 Bits",
+    „$5.00" und „R$ 10,00" ergaben None, eine Twitch-Sub oder YouTube-
+    Mitgliedschaft hat gar keinen Betrag (amount NULL). Alles zaehlte 0 €,
+    waehrend to_eur() genau dafuer existierte und keinen Aufrufer hatte."""
+    if hasattr(r, "keys"):
+        ks = r.keys()
+        amount = r["amount"]
+        plat = r["platform"] if "platform" in ks else ""
+        msg = r["message"] if "message" in ks else ""
+    else:
+        amount, plat, msg = (tuple(r) + (None, None, None))[:3]
+    v = to_eur(amount, plat or "", msg or "")
+    return v if v > 0 else 0.0
+
+
+def summe_eur(zeilen) -> float:
+    kurse_aus_env()
+    return round(sum(zeile_eur(r) for r in zeilen), 2)
+
+
 def fmt_eur(v) -> str:
     try:
         return f"{float(v):.2f} €".replace(".", ",")

@@ -101,17 +101,36 @@ def api_donations_add():
                          (ts, "donation", note, ("%.2f" % amount), msg))
             conn.commit()
         log.info("Manuelle Spende erfasst: %.2f EUR (%s)", amount, note)
-        return jsonify(ok=True, amount_eur=round(amount, 2),
-                       total_eur=_manual_donations_total())
     except Exception as e:
         log.error("Manuelle Spende fehlgeschlagen: %s", e)
         return jsonify(ok=False, error=_fehler_text(e, "api_donations_add")), 500
+    # v4.2-W178: die Summe ausserhalb des Fehlerzweigs. Die Spende ist da schon
+    # gebucht; fiele das Nachlesen in den 500er, meldete das Deck
+    # „fehlgeschlagen" — und ein zweiter Klick buchte sie doppelt.
+    return jsonify(ok=True, amount_eur=round(amount, 2), total_eur=_summe_oder_none())
+
+
+def _summe_oder_none():
+    """Summe der manuellen Spenden; None, wenn sie gerade nicht lesbar ist
+    (seit W178 wirft manual_rows, statt 0 zu behaupten)."""
+    try:
+        return _manual_donations_total()
+    except Exception as e:
+        log.error("Summe der manuellen Spenden nicht lesbar (%s: %s)",
+                  type(e).__name__, e)
+        return None
 
 
 @bp.route("/api/donations/manual")
 def api_donations_manual():
     """v4.0-W102: Liste + Summe der manuell erfassten Spenden fürs Dashboard."""
-    rows = _manual_donations_rows(limit=_c().arg_int("limit", 100, 1, 1000))
+    try:
+        rows = _manual_donations_rows(limit=_c().arg_int("limit", 100, 1, 1000))
+    except Exception as e:
+        # v4.2-W178: bis hier ok:true mit leerer Liste — das Deck schrieb dann
+        # „Noch keine manuellen Einträge", obwohl nur die Datenbank klemmte.
+        log.error("Manuelle Spenden nicht lesbar (%s: %s)", type(e).__name__, e)
+        return jsonify(ok=False, error=_fehler_text(e, "api_donations_manual")), 503
     return jsonify(ok=True, total_eur=round(sum(r["amount_eur"] for r in rows), 2),
                    count=len(rows), items=rows)
 
@@ -126,10 +145,9 @@ def api_donations_manual_delete(rid):
                         "AND platform='manual'", (int(rid),))
             removed = cur.rowcount if (cur.rowcount and cur.rowcount > 0) else 0
             conn.commit()
-        return jsonify(ok=bool(removed), removed=int(removed),
-                       total_eur=_manual_donations_total())
     except Exception as e:
         return jsonify(ok=False, error=_fehler_text(e, "api_donations_manual_delete")), 500
+    return jsonify(ok=bool(removed), removed=int(removed), total_eur=_summe_oder_none())
 
 
 @bp.route("/api/donations/summary")

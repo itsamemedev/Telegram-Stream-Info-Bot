@@ -28314,8 +28314,12 @@ def _test_v42_w149_tiefengrund():
     # (4) Die Gegenprobe zaehlt keine Zeilen ohne Plattform (B138-GELD).
     c2 = _sq.connect(":memory:")
     c2.row_factory = _sq.Row
-    c2.execute("CREATE TABLE overlay_events (kind TEXT, platform TEXT, amount TEXT, ts TEXT)")
-    c2.executemany("INSERT INTO overlay_events VALUES ('donation',?,?,?)",
+    # ANKER GEWANDERT (v4.2-W178): die Gegenprobe rechnet ueber to_eur und
+    # liest dafuer auch `message` (Sub ohne Betrag) — die Spalte hat die echte
+    # Tabelle seit jeher, nur diese Attrappe nicht.
+    c2.execute("CREATE TABLE overlay_events (kind TEXT, platform TEXT, amount TEXT, ts TEXT, "
+               "message TEXT)")
+    c2.executemany("INSERT INTO overlay_events VALUES ('donation',?,?,?,'')",
                    [(None, "500", "2026-03-01"), ("kick", "20", "2026-03-01")])
     cc = L.crosscheck(c2, 2026, "('kick','twitch','youtube','manuell')")
     assert cc["overlay_estimate_eur"] == 20.0, "TikTok-Altbestand ohne Plattform zaehlt als Kick: %r" % cc
@@ -31593,6 +31597,457 @@ def _test_v42_w174_encode_warteschlange():
     ok("v4.2-W174: Hintergrund-Kodierungen nacheinander — Grenze, Reihenfolge, Last, Abbruch")
 
 
+def _test_v42_w178_spenden_in_eur():
+    """v4.2-W178: Spendenziel, Overlay-Bilanz und Steuer-Gegenprobe lasen den
+    Betrag mit parse_eur/float. overlay_events.amount traegt aber „100 Bits",
+    „$5.00" oder NULL (Twitch-Sub, YouTube-Mitgliedschaft) — alles zaehlte 0 €,
+    waehrend nc.donations.to_eur genau dafuer existierte und keinen Aufrufer
+    hatte. Gemessen an echten Zeilen, nicht an nackten Zahlen."""
+    import os as _os
+    import sqlite3 as _sq
+    from nc import spendenziel as Z
+    from nc import ledger as L
+    import nc.routes.overlay as OV
+
+    c = _sq.connect(":memory:")
+    c.row_factory = _sq.Row
+    c.execute("CREATE TABLE overlay_events (id INTEGER PRIMARY KEY, ts TEXT, kind TEXT, "
+              "name TEXT, amount TEXT, message TEXT, platform TEXT)")
+    c.executemany("INSERT INTO overlay_events (ts, kind, name, amount, message, platform) "
+                  "VALUES (?, 'donation', 'x', ?, ?, ?)", [
+                      ("2026-11-02T10:00:00+00:00", "100 Bits", "", "twitch"),         # 1,00 €
+                      ("2026-11-03T10:00:00+00:00", "$5.00", "Superchat", "youtube"),  # 4,60 €
+                      ("2026-11-04T10:00:00+00:00", None, "Twitch Sub", "twitch"),     # 2,50 €
+                      ("2026-11-05T10:00:00+00:00", "25,50", "", "manual"),           # 25,50 €
+                      ("2026-11-06T10:00:00+00:00", "99", "", "tiktok"),              # fremdes Geld
+                  ])
+    namen = ("OVERLAY_USD_EUR", "OVERLAY_TWITCH_BITS_EUR", "OVERLAY_TWITCH_SUB_EUR",
+             "OVERLAY_KICK_SUB_EUR", "OVERLAY_YT_MEMBER_EUR", "OVERLAY_TIKTOK_COIN_EUR")
+    alt = {n: _os.environ.get(n) for n in namen}
+    try:
+        for n in namen:
+            _os.environ.pop(n, None)
+        # (1) Spendenziel: alle vier eigenen Kanaele, TikTok bleibt draussen.
+        assert Z.eingang(c, None) == 33.6, \
+            "Bits/Dollar/Sub zaehlen nicht (oder TikTok zaehlt): %r" % Z.eingang(c, None)
+        assert Z.eingang(c, "2026-11-04") == 28.0
+        # Die Kurse aus der .env wirken — bis hier las sie niemand.
+        _os.environ["OVERLAY_USD_EUR"] = "1.0"
+        assert Z.eingang(c, None) == 34.0, "OVERLAY_USD_EUR wirkt nicht"
+        _os.environ.pop("OVERLAY_USD_EUR")
+
+        # (2) Overlay-Bilanz je Plattform liest dieselbe Rechnung.
+        bp = {}
+        OV._bilanz(c.execute("SELECT kind, amount, platform, message FROM overlay_events "
+                             "WHERE platform != 'tiktok'").fetchall(), bp)
+        assert bp["twitch"] == {"donations": 2, "amount": 3.5, "follows": 0}, bp
+        assert bp["youtube"]["amount"] == 4.6 and bp["manual"]["amount"] == 25.5, bp
+        ov = open("nc/routes/overlay.py", encoding="utf-8").read()
+        assert "SELECT kind, amount, platform, message FROM overlay_events" in ov, \
+            "die Overlay-Abfrage liefert der Umrechnung die Nachricht nicht mit"
+
+        # (3) Steuer-Gegenprobe: dieselben Zeilen, TikTok ausdruecklich nicht.
+        L.ensure_schema(c, backend="sqlite")
+        cc = L.crosscheck(c, 2026, "('kick','twitch','youtube','manual')")
+        assert cc["available"] and cc["overlay_estimate_eur"] == 33.6, cc
+    finally:
+        for n, v in alt.items():
+            if v is None:
+                _os.environ.pop(n, None)
+            else:
+                _os.environ[n] = v
+    ok("v4.2-W178: Bits, Dollar-Superchats und Subs zaehlen im Spendenziel in EUR")
+
+
+def _test_v42_w178_herkunft_csrf():
+    """v4.2-W178: _auth_guard laesst den SSH-Tunnel ohne Token durch — damit
+    auch das versteckte Formular jeder fremden Seite im selben Browser, das an
+    localhost:3000/api/donations/reset schickt. Gemessen an der echten
+    Hook-Funktion aus bot.py in einer Flask-App."""
+    import ast as _ast
+    import time as _time
+    import logging as _lg
+    from flask import Flask, jsonify, request
+    from nc import herkunft as H
+    from nc import i18n as _i18n
+    from nc import meldetakt as M
+
+    baum = _ast.parse(open("bot.py", encoding="utf-8").read())
+    fn = next(n for n in baum.body if isinstance(n, _ast.FunctionDef)
+              and n.name == "_herkunft_guard")
+    assert any(_ast.unparse(d) == "dashboard_app.before_request" for d in fn.decorator_list), \
+        "der Herkunfts-Riegel haengt nicht an der App"
+    fn.decorator_list = []
+    vertraut = set()
+    ns = {"request": request, "jsonify": jsonify, "_nc_herkunft": H, "_nc_meldetakt": M,
+          "_time_mod": _time, "log": _lg.getLogger("w178"), "TRUSTED_PROXIES": vertraut,
+          "_nc_i18n": _i18n}
+    exec(compile(_ast.Module(body=[fn], type_ignores=[]), "bot.py", "exec"), ns)
+
+    app = Flask(__name__)
+    app.before_request(ns["_herkunft_guard"])
+    gelaufen = []
+
+    @app.route("/api/donations/reset", methods=["GET", "POST"])
+    def _reset():
+        gelaufen.append(request.method)
+        return jsonify(ok=True)
+
+    @app.route("/api/kick/oauth/callback", methods=["POST"])
+    def _cb():
+        return jsonify(ok=True)
+
+    k = app.test_client()
+    lok = {"REMOTE_ADDR": "127.0.0.1"}
+
+    def post(koepfe, pfad="/api/donations/reset"):
+        return k.post(pfad, headers=koepfe, environ_base=lok,
+                      base_url="http://localhost:3000")
+
+    M.zuruecksetzen("deck-herkunft")
+    # (1) Fremde Seite: abgewiesen, und die Route laeuft NICHT.
+    r = post({"Sec-Fetch-Site": "cross-site", "Origin": "https://boese.example"})
+    assert r.status_code == 403 and not gelaufen, (r.status_code, gelaufen)
+    assert r.get_json()["ok"] is False and "Sec-Fetch-Site" in r.get_json()["grund"]
+    # same-site ist NICHT genug: ein anderer Port auf demselben Rechner.
+    assert post({"Sec-Fetch-Site": "same-site"}).status_code == 403
+    # Alter Browser ohne Sec-Fetch-*: Origin entscheidet.
+    assert post({"Origin": "https://boese.example"}).status_code == 403
+    assert post({"Origin": "http://localhost:4000"}).status_code == 403, "anderer Port"
+    assert post({"Origin": "null"}).status_code == 403, "Sandbox-iframe"
+    assert not gelaufen, gelaufen
+
+    # (2) Das Deck selbst und Werkzeuge ohne Browser laufen weiter.
+    assert post({"Sec-Fetch-Site": "same-origin",
+                 "Origin": "http://localhost:3000"}).status_code == 200
+    assert post({"Origin": "http://localhost:3000"}).status_code == 200
+    assert post({}).status_code == 200, "curl/tools ohne Kopfzeilen abgewiesen"
+    assert post({"Sec-Fetch-Site": "none"}).status_code == 200
+    assert k.get("/api/donations/reset",
+                 headers={"Sec-Fetch-Site": "cross-site"}).status_code == 200, \
+        "Lesen ist nicht betroffen"
+    assert post({"Sec-Fetch-Site": "cross-site"}, "/api/kick/oauth/callback").status_code == 200
+
+    # (3) Hinter nginx: Host ohne Port, Origin mit — und X-Forwarded-Host
+    # zaehlt nur vom vertrauten Proxy.
+    assert k.post("/api/donations/reset", base_url="https://deck.example",
+                  headers={"Origin": "https://deck.example:8443"},
+                  environ_base={"REMOTE_ADDR": "10.0.0.5"}).status_code == 200
+    proxy = {"Origin": "https://deck.example", "X-Forwarded-Host": "deck.example"}
+    assert post(proxy).status_code == 403, "X-Forwarded-Host von einem Unbekannten zaehlt"
+    vertraut.add("127.0.0.1")
+    assert post(proxy).status_code == 200, "vertrauter Proxy: X-Forwarded-Host gilt nicht"
+    vertraut.clear()
+    M.zuruecksetzen("deck-herkunft")
+
+    # (4) Die reine Entscheidung, ohne Flask.
+    assert H.entscheiden("PUT", "/x", {"Sec-Fetch-Site": "cross-site"})
+    assert H.entscheiden("DELETE", "/x", {"Origin": "https://a.b", "Host": "c.d"})
+    assert H.entscheiden("PATCH", "/x", {"Origin": "https://h:99999999", "Host": "h"})
+    assert H.entscheiden("OPTIONS", "/x", {"Sec-Fetch-Site": "cross-site"}) is None
+    ok("v4.2-W178: schreibende Deck-Anfragen nur von der eigenen Seite (CSRF)")
+
+
+def _test_v42_w178_einstellungen_umgebung():
+    """v4.2-W178: setzen() legt den Wert sofort in os.environ, und jeder
+    Subprozess erbt ihn. PATH traf die Endung "_PATH" nicht; LD_PRELOAD,
+    PYTHONPATH, HOME, HTTPS_PROXY + REQUESTS_CA_BUNDLE waren aus dem Deck
+    setzbar — jeder davon eine Codeausfuehrung. Dazu: nur Namen, die der Bot
+    kennt (Vorlage, .env, Tabelle)."""
+    import os as _os
+    import logging as _lg
+    from nc import dbwrap as W
+    from nc import einstellungen as E
+    from nc import schema as S
+
+    for n in ("PATH", "LD_PRELOAD", "LD_LIBRARY_PATH", "DYLD_INSERT_LIBRARIES",
+              "PYTHONPATH", "PYTHONHOME", "PYTHONSTARTUP", "HOME", "BROWSER", "SHELL",
+              "BASH_ENV", "REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE", "SSL_CERT_FILE",
+              "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY", "XDG_CONFIG_HOME",
+              "GIT_SSH", "GIT_CONFIG_COUNT", "NODE_OPTIONS", "PERL5OPT", "TMPDIR",
+              "CDPATH", "GNUPGHOME", "OPENSSL_CONF"):
+        assert E.schutzgrund(n), "%s ist aus dem Deck setzbar" % n
+        try:
+            E.pruefen(n, "/tmp/x")
+            raise AssertionError("angenommen: %s" % n)
+        except E.Abgelehnt:
+            pass
+    # Was der Reiter braucht, bleibt setzbar.
+    for n in ("RECORD_PROXY", "ALERT_DISK_PCT", "AI_PROVIDER", "DONATION_GOAL_EUR"):
+        assert not E.schutzgrund(n), "%s waere ohne Grund gesperrt" % n
+
+    alt = (W.DB_PATH, W.DB_BACKEND)
+    alt_zustand = dict(E._ZUSTAND)
+    alt_geaendert = set(E._GEAENDERT)
+    d = _ph.verzeichnis()
+    db, envp = _os.path.join(d, "t.db"), _os.path.join(d, ".env")
+    with open(envp, "w") as f:
+        f.write("NUR_IN_DER_ENV_W178=1\n")
+    try:
+        W.configure_db(db_path=db, backend="sqlite")
+        with W.db_conn() as c:
+            S.anlegen(c, backend="sqlite", mariadb_db="", log=_lg.getLogger("w178"))
+        E._ZUSTAND.update(env_pfad=envp, beispiel_pfad=".env.example")
+        env = {}
+        # (1) Erlaubnisliste: ein unbekannter Name kommt nur am Deck vorbei.
+        try:
+            E.setzen("W178_ERFUNDEN", "1", env=env)
+            raise AssertionError("ein Name, den der Bot nicht liest, wurde gesetzt")
+        except E.Abgelehnt as e:
+            assert "liest der Bot nicht" in e.grund, e.grund
+        assert "W178_ERFUNDEN" not in env and "W178_ERFUNDEN" not in E.db_werte()
+        E.setzen("ALERT_DISK_PCT", "91", env=env)            # aus der Vorlage
+        E.setzen("NUR_IN_DER_ENV_W178", "2", env=env)        # aus der .env
+        assert env == {"ALERT_DISK_PCT": "91", "NUR_IN_DER_ENV_W178": "2"}, env
+        # (2) Am Deck vorbei eingetragen: beim Start ignoriert und gemeldet,
+        # nicht in die Umgebung gelegt.
+        with W.db_conn() as c:
+            c.execute("INSERT INTO einstellungen (schluessel, wert) VALUES ('LD_PRELOAD','/tmp/x.so')")
+            c.execute("INSERT INTO einstellungen (schluessel, wert) VALUES ('PATH','/tmp/boese')")
+        env2 = {"DB_PATH": db, "PATH": "/usr/bin"}
+        b = E.in_umgebung_laden(env2, envp, ".env.example")
+        assert "LD_PRELOAD" not in env2 and env2["PATH"] == "/usr/bin", env2
+        assert sorted(b["ignoriert"]) == ["LD_PRELOAD", "PATH"], b
+    finally:
+        W.configure_db(db_path=alt[0], backend=alt[1])
+        E._ZUSTAND.clear()
+        E._ZUSTAND.update(alt_zustand)
+        E._GEAENDERT.clear()
+        E._GEAENDERT.update(alt_geaendert)
+    ok("v4.2-W178: Prozess-Umgebung (PATH, LD_*, PYTHON*, Proxy, CA) nicht aus dem Deck setzbar")
+
+
+def _test_v42_w178_manuelle_spenden_nicht_lesbar():
+    """v4.2-W178: manual_rows fing jeden Fehler auf log.debug und gab [] —
+    die Route antwortete ok:true mit Summe 0, und das Deck schrieb „Noch keine
+    manuellen Einträge", waehrend die Datenbank nur klemmte."""
+    import os as _os
+    import sqlite3 as _sq
+    from flask import Flask
+    from nc import ctx as _ncctx
+    from nc import dbwrap as W
+    import nc.routes.money as MO
+
+    class _Log:
+        def __init__(self): self.zeilen = []
+        def _s(self, *a, **k): self.zeilen.append(a[0] % a[1:] if len(a) > 1 else str(a[0]))
+        warning = info = error = debug = _s
+    lg = _Log()
+    alt_ctx = _ncctx._CTX
+    alt = (W.DB_PATH, W.DB_BACKEND)
+    leer = _os.path.join(_ph.verzeichnis(), "ohne_tabelle.db")
+    _sq.connect(leer).close()
+    try:
+        _ncctx.configure(log=lg, arg_int=lambda n, dflt, lo=None, hi=None: dflt)
+        app = Flask(__name__)
+        app.register_blueprint(MO.bp)
+        k = app.test_client()
+        W.configure_db(db_path=leer, backend="sqlite")
+        r = k.get("/api/donations/manual")
+        assert r.status_code == 503 and r.get_json()["ok"] is False, (r.status_code, r.get_json())
+        assert "total_eur" not in r.get_json(), "ein Ausfall behauptet wieder eine Summe"
+        assert any("nicht lesbar" in z for z in lg.zeilen), lg.zeilen
+        with W.db_conn() as c:
+            c.execute("CREATE TABLE overlay_events (id INTEGER PRIMARY KEY, ts TEXT, kind TEXT, "
+                      "name TEXT, amount TEXT, message TEXT, platform TEXT)")
+        r = k.get("/api/donations/manual")
+        assert r.status_code == 200 and r.get_json()["count"] == 0, r.get_json()
+        r = k.post("/api/donations/add", json={"amount": "12,50"})
+        assert r.status_code == 200 and r.get_json()["total_eur"] == 12.5, r.get_json()
+    finally:
+        W.configure_db(db_path=alt[0], backend=alt[1])
+        _ncctx._CTX = alt_ctx
+    dh = open("templates/dashboard.html", encoding="utf-8").read()
+    fn = dh[dh.index("async function donManualLoad(){"):dh.index("async function donAddManual(")]
+    assert "if(!d||!d.ok){ return; }" not in fn and "Manuelle Spenden gerade nicht lesbar:" in fn, \
+        "das Deck verschweigt den Ausfall wieder"
+    ok("v4.2-W178: manuelle Spenden — ein Ausfall ist 503, nicht „keine Einträge“")
+
+
+def _test_v42_w178_restream_loeschen_erst_nach_stop():
+    """v4.2-W178: api_restream_delete stoppte in `except: pass` und loeschte
+    immer. Lief der Stop in den Timeout, sendete ffmpeg weiter — ohne Zeile,
+    also ohne Knopf im Deck, der ihn haette anhalten koennen."""
+    import os as _os
+    from flask import Flask
+    from nc import ctx as _ncctx
+    from nc import dbwrap as W
+    from nc import restreamstate as RS
+    import nc.routes.restream as RR
+
+    class _Log:
+        def __init__(self): self.zeilen = []
+        def _s(self, *a, **k): self.zeilen.append(a[0] % a[1:] if len(a) > 1 else str(a[0]))
+        warning = info = error = debug = _s
+    lg = _Log()
+
+    class _Mgr:
+        def stop(self, rid):
+            return ("stop", rid)       # kein Coroutine-Objekt: run_async ist Attrappe
+
+    verhalten = {"art": "timeout"}
+
+    def _run_async(arbeit, timeout=None):
+        if verhalten["art"] == "timeout":
+            raise TimeoutError("15 s")
+        if verhalten["art"] == "loop":
+            raise RuntimeError("event loop not ready")
+        return verhalten["art"]
+
+    alt_ctx, alt_mgr = _ncctx._CTX, RS.MGR["obj"]
+    alt = (W.DB_PATH, W.DB_BACKEND)
+    db = _os.path.join(_ph.verzeichnis(), "rs.db")
+    try:
+        W.configure_db(db_path=db, backend="sqlite")
+        with W.db_conn() as c:
+            c.execute("CREATE TABLE restreams (id INTEGER PRIMARY KEY, name TEXT)")
+            c.execute("INSERT INTO restreams (id, name) VALUES (7, 'ziel')")
+        _ncctx.configure(log=lg, run_async=_run_async, arg_int=lambda *a, **k: 0)
+        RS.MGR["obj"] = _Mgr()
+        app = Flask(__name__)
+        app.register_blueprint(RR.bp)
+        k = app.test_client()
+
+        def zeile():
+            with W.db_conn() as c:
+                return c.execute("SELECT COUNT(*) AS n FROM restreams WHERE id=7").fetchone()["n"]
+
+        r = k.post("/api/restream/7/delete")
+        assert r.status_code == 503 and zeile() == 1, \
+            "Stop gescheitert, Zeile trotzdem weg (%s, %s)" % (r.status_code, zeile())
+        assert "nicht stoppen" in r.get_json()["error"], r.get_json()
+        assert any("Eintrag bleibt" in z for z in lg.zeilen), lg.zeilen
+        verhalten["art"] = "loop"
+        r = k.post("/api/restream/7/delete")
+        assert r.status_code == 503 and r.get_json().get("transient") and zeile() == 1
+        verhalten["art"] = {"ok": False, "error": "x"}
+        assert k.post("/api/restream/7/delete").status_code == 503 and zeile() == 1
+        verhalten["art"] = {"ok": True, "running": False}
+        r = k.post("/api/restream/7/delete")
+        assert r.status_code == 200 and zeile() == 0, (r.status_code, zeile())
+    finally:
+        W.configure_db(db_path=alt[0], backend=alt[1])
+        _ncctx._CTX = alt_ctx
+        RS.MGR["obj"] = alt_mgr
+    dh = open("templates/dashboard.html", encoding="utf-8").read()
+    i = dh.index("async function rsDelete(id)")
+    assert "(d&&d.error)" in dh[i:dh.index("\n", i)], "das Deck verschweigt einen gescheiterten Stop"
+    ok("v4.2-W178: Restream-Eintrag bleibt, wenn der Stop scheitert")
+
+
+def _test_v42_w178_ledger_parallel():
+    """v4.2-W178: add_entry las MAX(seq_no) und den letzten row_hash ohne
+    Sperre. Zwei Buchungen gleichzeitig: UNIQUE-Fehler (HTTP 500) oder — bei
+    verschiedenen Jahren — zwei Zeilen am selben Vorgaenger, und verify_chain
+    meldet die Kette ab da fuer immer als gebrochen."""
+    import contextlib as _cl
+    import os as _os
+    import sqlite3 as _sq
+    import threading as _th
+    import time as _tm
+    from nc import dbwrap as W
+    from nc import ledger as L
+
+    echt_last, echt_lock = L._last_row, L._BUCHUNG_LOCK
+
+    def langsam(conn):
+        r = echt_last(conn)
+        _tm.sleep(0.02)                # das Fenster, in dem ein zweiter liest
+        return r
+
+    def lauf(datei, je=6, faeden=3):
+        fehler = []
+        start = _th.Barrier(faeden)
+
+        def arbeit(nr):
+            start.wait()
+            for i in range(je):
+                con = _sq.connect(datei, timeout=30)
+                con.row_factory = _sq.Row
+                try:
+                    L.add_entry(con, "%d-03-%02d" % (2025 + (i + nr) % 2, i + 1), "kick", 10 + i)
+                except Exception as e:
+                    fehler.append("%s: %s" % (type(e).__name__, e))
+                finally:
+                    con.close()
+        tt = [_th.Thread(target=arbeit, args=(n,)) for n in range(faeden)]
+        for t in tt:
+            t.start()
+        for t in tt:
+            t.join(60)
+        con = _sq.connect(datei)
+        con.row_factory = _sq.Row
+        try:
+            kette = L.verify_chain(con)
+            n = con.execute("SELECT COUNT(*) AS n FROM revenue_entries").fetchone()["n"]
+        finally:
+            con.close()
+        return fehler, kette, n
+
+    d = _ph.verzeichnis()
+    try:
+        L._last_row = langsam
+        for nr, (name, sperre) in enumerate((
+                ("mit Prozess-Sperre", echt_lock),
+                # Zwei Prozesse (Bot und tools/) teilen keine Python-Sperre —
+                # dann muss die Datenbank allein halten.
+                ("ohne Prozess-Sperre", _cl.nullcontext()))):
+            datei = _os.path.join(d, "ledger_%d.db" % nr)
+            con = _sq.connect(datei)
+            L.ensure_schema(con, backend="sqlite")
+            con.commit()
+            con.close()
+            L._BUCHUNG_LOCK = sperre
+            fehler, kette, n = lauf(datei)
+            assert not fehler and n == 18, "%s: %d Buchungen, Fehler %s" % (name, n, fehler[:2])
+            assert kette["ok"], "%s: Kette gebrochen bei %s" % (name, kette)
+    finally:
+        L._last_row, L._BUCHUNG_LOCK = echt_last, echt_lock
+
+    # MariaDB: benannte Sperre VOR dem Lesen, Freigabe auch nach einem Fehler.
+    class _Cur:
+        def __init__(self, z): self.z = z
+        def fetchone(self): return self.z
+        def fetchall(self): return []
+
+    class _Fake:
+        def __init__(self, insert_wirft=False):
+            self.sql, self.insert_wirft = [], insert_wirft
+
+        def execute(self, sql, params=()):
+            self.sql.append(" ".join(sql.split()[:2]))
+            if "GET_LOCK" in sql:
+                return _Cur({"ok": 1})
+            if "MAX(seq_no)" in sql:
+                return _Cur({"m": 0})
+            if sql.startswith("INSERT") and self.insert_wirft:
+                raise RuntimeError("Attrappe: INSERT faellt")
+            return _Cur(None)
+
+        def commit(self): self.sql.append("COMMIT")
+        def rollback(self): self.sql.append("ROLLBACK")
+
+    alt_backend = W.DB_BACKEND
+    try:
+        W.DB_BACKEND = "mariadb"
+        f = _Fake()
+        L.add_entry(f, "2026-01-02", "kick", 5)
+        s = [x for x in f.sql if not x.startswith(("CREATE", "ALTER"))]
+        assert s[0] == "SELECT GET_LOCK(?," and s[-1] == "SELECT RELEASE_LOCK(?)", s
+        assert s.index("SELECT GET_LOCK(?,") < s.index("SELECT COALESCE(MAX(seq_no),") \
+            < s.index("COMMIT") < s.index("SELECT RELEASE_LOCK(?)"), s
+        f = _Fake(insert_wirft=True)
+        try:
+            L.add_entry(f, "2026-01-02", "kick", 5)
+            raise AssertionError("INSERT-Fehler verschluckt")
+        except RuntimeError:
+            pass
+        assert f.sql[-2:] == ["ROLLBACK", "SELECT RELEASE_LOCK(?)"], f.sql[-3:]
+    finally:
+        W.DB_BACKEND = alt_backend
+    ok("v4.2-W178: Ledger-Buchungen gleichzeitig — Folgenummer und Kette bleiben heil")
+
+
 def _test_v42_w155_weiche_steckt():
     """v4.2-W155: gemeldet „Wir haben in den Restreams immer noch kein Bild" —
     Overlay und Chat liefen, das Videofeld zeigte das Pausenbild. Ein
@@ -32117,6 +32572,12 @@ def main():
     _test_v42_w172_spenden()
     _test_v42_w173_ein_spendenziel()
     _test_v42_w174_encode_warteschlange()
+    _test_v42_w178_spenden_in_eur()
+    _test_v42_w178_herkunft_csrf()
+    _test_v42_w178_einstellungen_umgebung()
+    _test_v42_w178_manuelle_spenden_nicht_lesbar()
+    _test_v42_w178_restream_loeschen_erst_nach_stop()
+    _test_v42_w178_ledger_parallel()
     _test_v42_w60_azrael_cooldown_je_plattform()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)
