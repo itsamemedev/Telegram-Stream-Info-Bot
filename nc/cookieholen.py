@@ -152,6 +152,44 @@ def hole_gastcookies(urls=None, timeout=15, proxy=None, domains=None) -> dict:
     return gefunden
 
 
+class KeinDesktop(RuntimeError):
+    """v5.1-W187: der Browser-Weg ist auf dieser Maschine nicht gangbar.
+
+    Kein Fehler im Bezug, sondern eine Lage: es gibt keine Desktop-Sitzung,
+    also auch keinen Schluesselbund, mit dem Chromium seine Cookies
+    verschluesselt. Die Route antwortet darauf 409 statt 502 — ein 502 sagt
+    „TikTok antwortet nicht", und genau das war es nicht."""
+
+
+# Chromium-Familie: Cookies liegen verschluesselt, der Schluessel im
+# Schluesselbund der Desktop-Sitzung (Secret Service ueber D-Bus). Firefox
+# braucht das nicht und bleibt deshalb erlaubt.
+_SCHLUESSELBUND = ("chrome", "chromium", "edge", "brave", "opera", "vivaldi")
+
+
+def desktop_pruefen(browser, env=None, plattform=None):
+    """Wirft KeinDesktop, wenn der Browser-Weg hier nicht gehen KANN.
+
+    Gemessen am 11.11.: POST /api/cookies/fetch mit Quelle „browser" endete
+    auf dem Server mit HTTP 502 und `KeyError: 'DBUS_SESSION_BUS_ADDRESS'`
+    — browser_cookie3 greift ueber jeepney direkt in os.environ, und ohne
+    Desktop-Sitzung gibt es diese Variable nicht. Die Abhilfe stand zwar
+    daneben, aber als Folge eines Tracebacks im Fehlerlog. Gefragt wird
+    jetzt VORHER, ohne den Versuch: ohne D-Bus-Sitzung kein Schluesselbund,
+    ohne Schluesselbund keine lesbaren Chromium-Cookies."""
+    import sys as _sys
+    env = os.environ if env is None else env
+    plattform = _sys.platform if plattform is None else plattform
+    name = (browser or "").strip().lower()
+    if plattform.startswith("linux") and name in _SCHLUESSELBUND \
+            and not env.get("DBUS_SESSION_BUS_ADDRESS"):
+        raise KeinDesktop(
+            "Browser-Import aus '%s' ist auf dieser Maschine nicht moeglich: "
+            "keine Desktop-Sitzung (DBUS_SESSION_BUS_ADDRESS fehlt), also kein "
+            "Schluesselbund, mit dem %s seine Cookies entschluesselt — auf einem "
+            "Server der Normalfall." % (name, name))
+
+
 def aus_browser(browser: str, timeout=120) -> dict:
     """Liest die TikTok-Cookies aus einem lokal installierten Browser.
        Returns dasselbe Format wie hole_gastcookies(). Wirft mit klarem Text,
@@ -164,6 +202,7 @@ def aus_browser(browser: str, timeout=120) -> dict:
     name = (browser or "").strip().lower()
     if not name:
         raise ValueError("Kein Browser angegeben")
+    desktop_pruefen(name)
 
     # Weg A: browser_cookie3, falls installiert. Kein Unterprozess, filtert
     # selbst nach Domain. Bewusst ein Import IN der Funktion — auf dem Server
@@ -176,7 +215,15 @@ def aus_browser(browser: str, timeout=120) -> dict:
         holen = getattr(browser_cookie3, name, None)
         if holen is None:
             raise ValueError(f"browser_cookie3 kennt '{name}' nicht")
-        jar = holen(domain_name="tiktok.com")
+        try:
+            jar = holen(domain_name="tiktok.com")
+        except KeyError as e:
+            # Eine fehlende Umgebungsvariable (D-Bus, XDG_RUNTIME_DIR, …) ist
+            # die Lage „kein Desktop", kein Programmfehler — auch dann, wenn
+            # die Vorabpruefung sie nicht kannte (anderer Browser, andere
+            # Fassung von browser_cookie3).
+            raise KeinDesktop("Browser-Import aus '%s' braucht die Umgebungsvariable %s "
+                              "einer Desktop-Sitzung — hier nicht gesetzt." % (name, e)) from e
         gefunden = {c.name: (c.value, c.domain or ".tiktok.com", int(c.expires or 0))
                     for c in jar if c.value and _gehoert_zu_tiktok(c.domain)}
         if gefunden:
@@ -396,6 +443,16 @@ def aktualisiere(datei: str, quelle="gast", browser=None, timeout=15,
         if log:
             log.warning("Cookies automatisch bezogen (%s): %d neu, %d erneuert, "
                         "%d in der Datei", quelle, len(ergaenzt), len(ersetzt), anzahl)
+    except KeinDesktop as e:
+        # v5.1-W187: eine Lage, kein Absturz — eigener Grund, eigener Code
+        # in der Route (409). Der Text ist zwar unser eigener, geht aber
+        # trotzdem durch dieselbe Barriere (W30, CodeQL sieht nur sie).
+        bericht["grund"] = "kein_desktop"
+        bericht["error"] = _nc_fehlertext.nach_aussen(e, "cookieholen.aktualisiere")
+        bericht["abhilfe"] = ABHILFE["browser"]
+        if log:
+            log.warning("Cookie-Bezug (browser) nicht moeglich: %s — %s", e,
+                        bericht["abhilfe"])
     except Exception as e:
         # nach_aussen() und NICHT str(e): der Wortlaut kommt aus urllib, aus
         # yt-dlp oder aus einem Browser-Profil und traegt Pfade — und dieser

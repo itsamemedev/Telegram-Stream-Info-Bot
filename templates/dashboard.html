@@ -336,6 +336,12 @@ body{
 .lk-chip.live{color:var(--red);border-color:color-mix(in srgb,var(--red) 45%,transparent)}
 .lk-chip.warn{color:var(--amber);border-color:color-mix(in srgb,var(--amber) 45%,transparent)}
 .lk-chip.bad{color:var(--red);border-color:var(--red)}
+/* v5.1-W186: Betriebsteile (Schlangen, Browser, Verbindungen) — eine Zeile Chips */
+.lage-dienste{display:flex;flex-wrap:wrap;gap:6px;padding:8px 12px;border-bottom:1px solid var(--border)}
+.lk-chip.ok{color:var(--neon);border-color:color-mix(in srgb,var(--neon) 40%,transparent)}
+.lk-chip.aktiv{color:var(--cyan);border-color:color-mix(in srgb,var(--cyan) 45%,transparent)}
+.lk-chip.aus{opacity:.65}
+.lk-chip b{font-weight:700;color:var(--text);margin-right:5px}
 .lage-grid{display:grid;grid-template-columns:minmax(0,1fr) 300px}
 .lage-tafel{border-left:1px solid var(--border);max-height:540px;overflow-y:auto;padding:4px 0}
 .lt-zeile{padding:8px 12px;border-bottom:1px solid color-mix(in srgb,var(--border) 60%,transparent)}
@@ -2756,6 +2762,8 @@ document.addEventListener("DOMContentLoaded",function(){
         <!-- v4.2-W116: Status und Wächter im DOM, nicht im Bild — im Bild
              überlagerten sie die Namen. Die Tafel zählt in Echtzeit. -->
         <div class="lage-kopf" id="ov_lage_kopf" aria-live="polite"></div>
+        <!-- v5.1-W186: die Teile seit v5.0 — Lage und Grund aus nc/lagebild.py -->
+        <div class="lage-dienste" id="ov_lage_dienste" aria-label="Betriebsteile"></div>
         <div class="lage-grid">
           <div class="nc-cc-wrap" style="position:relative;overflow:hidden">
             <canvas id="ov_cc" role="img" style="display:block;width:100%" aria-label="Lagebild"></canvas>
@@ -5147,7 +5155,9 @@ async function loadAzWhisper(){
 async function azSetWhisper(){
   const sel=$('#al_whisper'); if(!sel) return;
   const d=await apiPost('/api/azrael/whisper_model',{model:sel.value});
-  if(typeof toast==='function') toast(d&&d.ok?(T('Whisper → ')+sel.value):T('Fehler'), d&&d.ok?'ok':'err');
+  /* v5.1-W180: eine Ablehnung (zu wenig Speicher) nennt ihren Grund — ein
+     blankes „Fehler" liess offen, ob der Wechsel überhaupt geprüft wurde. */
+  if(typeof toast==='function') toast(d&&d.ok?(T('Whisper → ')+sel.value):((d&&d.error)||T('Fehler')), d&&d.ok?'ok':'err');
   loadAzWhisper();
 }
 async function loadAzVoiceTag(){
@@ -12474,7 +12484,7 @@ var ncLagebild=(function(){
     archiv:{a:2.9172,r:0.56},platte:{a:-2.4684,r:0.56}};
   /* Texte als wörtliche T('…')-Aufrufe (CLAUDE.md, W101); je Datenstand neu
      gebaut, weil der Katalog erst nach diesem Skript lädt. */
-  var NAMEN={},LAGE={},STL={},RSL={};
+  var NAMEN={},LAGE={},STL={},RSL={},DNAME={},DGRUND={};
   function texte(){
     NAMEN={health:T('Gesundheit'),recovery:T('Bergung'),uptime:T('Chat-Verbindung'),
       swap:T('Auslagerung'),disk:T('Plattenplatz'),proxy:T('Tunnelwache'),
@@ -12487,6 +12497,15 @@ var ncLagebild=(function(){
     RSL={gesund:T('Restream gesund'),langsam:T('Restream langsam'),gestoert:T('Restream gestört')};
     STL={kern:T('KERN'),platte:T('PLATTE'),tunnel:'TUNNEL',chat:'CHAT',archiv:T('ARCHIV'),abwehr:T('ABWEHR'),
       datenbank:T('DATENBANK'),beobachtung:T('BEOBACHTUNG')};
+    DNAME={encode:T('Encode-Schlange'),upload:T('Upload-Schlange'),discord_aufnahme:T('Discord-Aufnahme'),
+      overlay:T('Overlay-Browser'),tunnel:T('Tunnelwache'),kick_chat:T('Kick-Chat'),spendenziel:T('Spendenziel')};
+    DGRUND={nicht_geladen:T('nicht geladen'),rohdaten_unlesbar:T('Daten unlesbar'),leer:T('leer'),
+      abgeschaltet:T('abgeschaltet'),nicht_verbunden:T('nicht verbunden'),bereit:T('bereit'),
+      anderer_modus:T('Text-Overlay'),browser_tot:T('Browser tot — Overlay friert ein'),
+      einzelschuss:T('Einzelschuss je Bild (teuer)'),kein_proxy:T('direkt, kein Proxy'),
+      fehler:T('Egress gestört'),noch_nicht_geprueft:T('noch nicht geprüft'),ok:T('steht'),
+      nicht_konfiguriert:T('nicht eingerichtet'),verbunden:T('verbunden'),kein_ziel:T('kein Ziel gesetzt'),
+      erreicht:T('erreicht')};
   }
   function C(v,f){return ncCssVar(v)||f;}
   /* Hilfslinie in der Textfarbe des Themas mit Deckkraft a — auf Dunkel wie
@@ -12803,7 +12822,26 @@ var ncLagebild=(function(){
     if(!raf&&cv&&CURRENT_VIEW===OWNVIEW&&!document.hidden){last=0;raf=requestAnimationFrame(takt);}}
   /* ── DOM: Statusleiste und Wächter-Tafel (textContent, nie innerHTML) ── */
   function el(tag,cls,txt){var e=document.createElement(tag);if(cls)e.className=cls;if(txt!=null)e.textContent=txt;return e;}
+  /* v5.1-W186: Betriebsteile. Lage und Grund entscheidet nc/lagebild.py
+     (Vertrag dort) — hier nur Farbe und Satz dazu. */
+  function dienstSatz(x){var w=x.werte||{},g=x.grund;
+    if(x.name==='encode'&&g!=='leer')return w.laeuft+T(' läuft, ')+w.wartet+T(' wartet')+(g==='stau'?T(' · Stau seit ')+dauer(w.laengste_s):'');
+    if(x.name==='upload'&&g!=='leer')return w.wartend+T(' aufgeschoben')+(g==='fehlversuch'?' · '+w.fehlversuche+T(' mit Fehlversuch'):
+      (g==='sendet'?T(' · wird gesendet'):(w.fenster?T(' · Fenster ')+w.fenster+T(' Uhr'):'')));
+    if(x.name==='overlay'&&g==='laeuft')return w.lebend+T(' Browser aktiv');
+    if(x.name==='spendenziel'&&(g==='laeuft'||g==='erreicht'))return Math.round(w.prozent)+' % ('+w.aktuell_eur+' / '+w.ziel_eur+' €)';
+    return DGRUND[g]||g||'';
+  }
+  function dienstLeiste(){
+    var box=document.getElementById('ov_lage_dienste');if(!box)return;box.textContent='';
+    if(fehlt)return;
+    var KL={ok:'ok',aktiv:'aktiv',warn:'warn',fehler:'bad',aus:'aus',unbekannt:''};
+    ((daten&&daten.dienste)||[]).forEach(function(x){
+      var c=el('span','lk-chip '+(KL[x.lage]||''));c.appendChild(el('b',null,DNAME[x.name]||x.name));
+      c.appendChild(document.createTextNode(dienstSatz(x)));box.appendChild(c);});
+  }
   function kopf(){
+    dienstLeiste();
     var box=document.getElementById('ov_lage_kopf');if(!box)return;
     var d=daten||{},z=d.ziele||[],ag=d.agenten||[],q=d.quellen||{};box.textContent='';
     if(fehlt){box.appendChild(el('span','lk-chip warn',T('Lagebild nicht erreichbar')));return;}

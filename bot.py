@@ -1068,6 +1068,10 @@ from nc import overlaybrowser as _nc_ovbrowser
 from nc import kickzentrifugo as _nc_kickzentrifugo  # v4.2-W171: Kick-Chat ueber Centrifugo
 from nc import spendeninfo as _nc_spendeninfo  # v4.2-W172: /spenden, eine Quelle fuer alle
 from nc import spendenziel as _nc_spendenziel  # v4.2-W173: ein Spendenziel fuer alle Anzeigen
+from nc import forkriegel as _nc_forkriegel     # v5.1-W183: Fork vor Whisper
+from nc import lagebild as _nc_lagebild         # v5.1-W186: Betriebsteile im Lagebild
+from nc import raumkennung as _nc_raumkennung   # v5.1-W184: Room-ID pruefen, Grund nennen
+from nc import pruefschlange as _nc_pruefschlange  # v5.1-W183: ein Live-Check je Tracking, mit Frist
 from nc import encodeschlange as _nc_encode     # v4.2-W174: Hintergrund-Kodierungen nacheinander  # v4.2-W170: ein Chromium je Restream statt je Bild
 from nc import restream_stability as _nc_rstab  # v4.0-W113: Wiederanlauf-Regeln (rein)
 from nc import flapguard as _nc_flap  # v4.0-W116: flatternde Verbindungen (rein)
@@ -8017,6 +8021,10 @@ async def _reap_proc(proc, term_timeout: float = 5.0, kill_timeout: float = 3.0)
 # (GIL freigegeben), der Fork läuft sauber.
 # ─────────────────────────────────────────────────────────────────────────────
 _FORK_NATIVE_LOCK = threading.Lock()
+# v5.1-W183: der Fork bekommt Vortritt. Ohne ihn ging das Lock bei mehreren
+# Transkriptionen von Whisper-Thread zu Whisper-Thread, und der 20-ms-Poll
+# unten sah es nie frei — am 11.11. standen so Live-Worker 450 s (nc/forkriegel.py).
+_FORK_VORTRITT = _nc_forkriegel.Vortritt(max_warten_s=5.0)
 _orig_create_subprocess_exec = asyncio.create_subprocess_exec
 _orig_create_subprocess_shell = asyncio.create_subprocess_shell
 
@@ -8025,6 +8033,7 @@ _orig_create_subprocess_shell = asyncio.create_subprocess_shell
 def _whisper_native_section():
     """Um jeden nativen CTranslate2-Aufruf (Worker-Thread) legen — so weiß der
        Spawn-Pfad, wann er NICHT forken darf."""
+    _FORK_VORTRITT.abwarten()            # v5.1-W183: ein wartender Fork zuerst
     _FORK_NATIVE_LOCK.acquire()
     try:
         yield
@@ -8036,8 +8045,9 @@ async def _fork_safe(orig, *args, **kwargs):
     """Wartet loop-schonend, bis keine native Whisper-Arbeit läuft, forkt dann.
        Poll statt blockierendem acquire, damit der Loop andere Callbacks weiter
        bedient, während ein Transkriptions-Chunk zu Ende läuft (Bruchteil–~2s)."""
-    while not _FORK_NATIVE_LOCK.acquire(blocking=False):
-        await asyncio.sleep(0.02)
+    with _FORK_VORTRITT.anmelden():      # v5.1-W183: Whisper laesst uns vor
+        while not _FORK_NATIVE_LOCK.acquire(blocking=False):
+            await asyncio.sleep(0.02)
     try:
         return await orig(*args, **kwargs)
     finally:
@@ -8525,11 +8535,38 @@ async def live_check_worker(bot_app, nr=0):
         except asyncio.TimeoutError:
             continue
         try:
-            await _handle_single_tracking(tracking, bot_app)
+            # v5.1-W183: mit Frist und Lebenszeichen WAEHREND der Pruefung.
+            # Am 11.11. standen live-worker-0 und -3 450 s in einer Pruefung,
+            # und nichts brach sie ab (nc/pruefschlange.py).
+            fertig = await _nc_pruefschlange.mit_frist(
+                _handle_single_tracking(tracking, bot_app), LIVE_CHECK_FRIST_S, 30.0,
+                lambda: _hb(name))
+            if not fertig:
+                _live_check_frist_melden(tracking)
         except Exception as e:
             _loop_fehler("live_check_worker", e)
         finally:
+            _nc_pruefschlange.erledigt(tracking["id"])
             live_check_queue.task_done()
+
+
+# v5.1-W183: unter WATCHDOG_STALL_S (420 s), damit ein haengender Worker
+# abgebrochen und gemeldet wird, bevor der Watchdog ihn als tot fuehrt.
+LIVE_CHECK_FRIST_S = float(max(30, _env_int("LIVE_CHECK_FRIST_S", 240)))
+
+
+def _live_check_frist_melden(tracking):
+    """Eine Pruefung lief ueber die Frist und ist abgebrochen — gedrosselt
+    laut, mit dem Nutzer (der Grund wechselt mit ihm nicht: Schluessel ist
+    der Kanal, W97)."""
+    laut, weg = _nc_meldetakt.melden("live-check-frist", "frist", _time_mod.monotonic())
+    if laut:
+        log.error("Live-Check @%s nach %.0f s abgebrochen — die Pruefung kam nicht "
+                  "zurueck (haengender Kindprozess-Start oder Netzaufruf ohne Zeitgrenze). "
+                  "Das Tracking wird in der naechsten Runde neu geprueft. Haelt das an: "
+                  "/api/debug/threads ansehen; ein grosses Whisper-Modell (RTF > 1) "
+                  "bremst jeden Prozessstart.%s", tracking["username"],
+                  LIVE_CHECK_FRIST_S, _nc_meldetakt.zusatz(weg))
 
 async def _handle_single_tracking(t, bot_app):
     username = t["username"]
@@ -9105,6 +9142,12 @@ def _pruef_runde(trackings, now, _pflege_runde):
         next_at = _NEXT_CHECK_AT.get(tid, 0)
         if now < next_at:
             continue
+        # v5.1-W183: steht es schon in der Schlange oder wird gerade geprueft,
+        # NICHT noch einmal einreihen. Der Zeit-Riegel unten (90 s) allein
+        # liess ein gestautes Tracking alle 90 s erneut hinein — der Stau
+        # erzeugte Doppel, die Doppel den Stau (11.11.: 4809 verworfen).
+        if not _nc_pruefschlange.vormerken(tid):
+            continue
         # Fällig — queuen
         try:
             live_check_queue.put_nowait(t)
@@ -9120,12 +9163,14 @@ def _pruef_runde(trackings, now, _pflege_runde):
             try:
                 _weg = live_check_queue.get_nowait()
                 live_check_queue.task_done()
+                _nc_pruefschlange.erledigt(_weg["id"])   # v5.1-W183: darf wieder hinein
                 _pruefung_verworfen(_weg["username"])
             except Exception: pass
             try:
                 live_check_queue.put_nowait(t)
                 queued += 1
             except Exception:
+                _nc_pruefschlange.erledigt(tid)          # nicht drin, also nicht vorgemerkt
                 log.warning("Queue voll – Tracking übersprungen.")
     if queued > 0:
         log.debug(f"check-loop: {queued}/{len(trackings)} trackings queued")
@@ -9335,6 +9380,14 @@ def _topic_forget(chat_id, username):
             _tg_topics_save()
 
 async def _chat_is_forum(chat_id, bot) -> bool:
+    # v5.1-W182: eine Discord-Guild (Tracking per /track) ist kein Telegram-
+    # Chat. Am 11.11. fragte der Bot viermal Telegram nach „chat
+    # 1521964594653036677" und schrieb jedesmal „Chat not found" ins
+    # Fehlerlog — vor dem _is_dead()-Riegel in _safe_send, weil die
+    # Live-Meldung zuerst das Melde-Thema sucht. Hier sitzt die Frage fuer
+    # ALLE Wege, die ein Thema wollen (Upload, Live-/Offline-Meldung).
+    if not _nc_tgfehler.ist_telegram_chat(chat_id):
+        return False
     now = _time_mod.monotonic()
     c = _TG_FORUM_CACHE.get(chat_id)
     if c and (now - c[1]) < _TG_FORUM_TTL:
@@ -9373,7 +9426,9 @@ async def _ensure_topic(chat_id, username, bot, name=None):
        (siehe _ensure_notify_topic), das keinem Nutzer gehört.
        v4.2-W175: ein Nutzername ohne 'name' (der Upload-Fall) bekommt sein
        eigenes Thema „@name“ — wie vor W168."""
-    if not TELEGRAM_USE_TOPICS or not username:
+    # v5.1-W182: auch vor dem Thema-Gedaechtnis — eine Guild-ID darf dort
+    # kein Thema finden (tg_topics.json aus der Zeit vor W132).
+    if not TELEGRAM_USE_TOPICS or not username or not _nc_tgfehler.ist_telegram_chat(chat_id):
         return None
     key = _topic_key(chat_id, username)
     tid = _TG_TOPICS.get(key)
@@ -18919,6 +18974,13 @@ async def _whisper_get_model():
     async with _whisper_lock:
         if _nc_whisper.MODELL["obj"] is not None:
             return _nc_whisper.MODELL["obj"]
+        # v5.1-W180: auch beim Laden aus der .env (oder per force) fragen —
+        # geladen wird trotzdem, das war eine bewusste Wahl; aber der Grund
+        # fuer den RSS-Sprung steht dann VOR ihm im Log, nicht danach.
+        _erlaubt, _grund = _nc_whisper.wechsel_pruefen(_nc_whisper.MODELL["name"],
+                                                        _nc_whisper.frei_mb())
+        if not _erlaubt:
+            log.error("faster-whisper: %s", _grund)
         def _load():
             from faster_whisper import WhisperModel
             # v4.0-W76: auch das Laden spinnt native CTranslate2-Threads hoch —
@@ -19349,11 +19411,17 @@ async def _start_chat_listener(username, chat_buf, flags=None):
             # optionalen Info-Fetches aus, weniger geblockte Endpunkte, weniger
             # Sign-Quota. Live-Check ist redundant — der Restream läuft ja nur,
             # WEIL der Bot den User als live erkannt hat.
-            _rid = await _fetch_tiktok_room_id(username)
+            _rid_roh = await _fetch_tiktok_room_id(username)
+            # v5.1-W184: nur eine echte Kennung injizieren — int() auf ''
+            # oder 'None' waere hier derselbe Absturz wie in der Bibliothek.
+            _rid = _nc_raumkennung.gueltig(_rid_roh)
+            if _rid_roh and _rid is None:
+                log.info("TikTok-Chat-Listener @%s: Room-ID %r ist keine Kennung — "
+                         "nicht injiziert.", username, _rid_roh)
             _kw = {}
             if _rid:
                 _CHAT_DIAG["room_id"] = _rid
-                _kw = dict(room_id=int(_rid), fetch_room_info=False,
+                _kw = dict(room_id=_rid, fetch_room_info=False,
                            fetch_gift_info=False, fetch_live_check=False)
                 log.info("TikTok-Chat-Listener @%s: Room-ID %s injiziert (WAF-Bypass).",
                          username, _rid)
@@ -19374,7 +19442,9 @@ async def _start_chat_listener(username, chat_buf, flags=None):
         except Exception as e:
             # B75: vorher nur log.debug — Chat-Verbindungsfehler waren UNSICHTBAR,
             # das Studio-Panel blieb kommentarlos leer. Einmal pro User warnen.
-            es = str(e)
+            # v5.1-W184: bekannte Lagen (leere roomId aus der Bibliothek) als
+            # Grund statt als Python-Wortlaut — der Guardian liest last_error.
+            es = _nc_raumkennung.grund(e)
             if "rate_limit" in es.lower():
                 # F92e: Sign-Server-Rate-Limit — Retry-Sperre setzen statt weiter
                 # Quota zu verbrennen. account_day = Tagesbudget leer → bis zum
@@ -19402,11 +19472,11 @@ async def _start_chat_listener(username, chat_buf, flags=None):
                                 "typische Ursachen: Sign-Server, Tunnel/Proxy down, oder User "
                                 "nicht (mehr) live. Guardian wiederholt mit wachsendem "
                                 "Backoff (ab 5s, hoechstens %ds).",
-                                username, e, CHAT_BACKOFF_MAX_S)
+                                username, es, CHAT_BACKOFF_MAX_S)
                     _live_react_warned[_k] = True
                 else:
                     log.debug("chat connect %s: %s", username, e)
-                _CHAT_DIAG.update({"phase": "failed", "last_error": es[:200]})
+                _CHAT_DIAG.update({"phase": "failed", "last_error": es[:400]})
         finally:
             _CHAT_FEED_USERS.discard(username)
             if _CHAT_DIAG.get("phase") == "connected":
@@ -19976,7 +20046,9 @@ async def _restream_chat_guardian(rid, username, solange=None, etikett=None):
                 await asyncio.sleep(backoff)
                 continue
 
-            why = (_CHAT_DIAG.get("last_error") or "")[:160] if \
+            # v5.1-W184: 400 statt 160 Zeichen — ein uebersetzter Grund
+            # (nc/raumkennung) traegt seine Abhilfe, und die stand hinten.
+            why = (_CHAT_DIAG.get("last_error") or "")[:400] if \
                 _CHAT_DIAG.get("user") == username else ""
             dur = _chat_disconnected(username, why or "verbindung beendet")
 
@@ -20015,10 +20087,15 @@ async def _restream_chat_guardian(rid, username, solange=None, etikett=None):
                 log.info("%s: Chat @%s nach %.0fs getrennt — "
                          "reconnect sofort", wer, username, dur)
             else:
+                # v5.1-W184: die allgemeine Vermutung nur, wenn der Grund
+                # keine eigene Erklaerung traegt — „Tunnel instabil" neben
+                # „TikTok gibt keine Room-ID heraus" schickt auf die falsche Spur.
                 log.warning("%s: Chat @%s brach nach nur %.0fs ab (%s) — "
-                            "Backoff %ds. Haeufig heisst das: Tunnel instabil, "
-                            "Sign-Quota knapp, oder der User ist nicht mehr live.",
-                            wer, username, dur, why or "kein Grund gemeldet", backoff)
+                            "Backoff %ds.%s", wer, username, dur,
+                            why or "kein Grund gemeldet", backoff,
+                            "" if why == _nc_raumkennung.GRUND_LEER else
+                            " Haeufig heisst das: Tunnel instabil, Sign-Quota knapp, "
+                            "oder der User ist nicht mehr live.")
                 await asyncio.sleep(backoff)
     except asyncio.CancelledError:
         pass
@@ -26248,7 +26325,8 @@ async def _watchdog_loop():
                         ("fd", _fds, WATCHDOG_FD_WARN,
                          f"{_fds} offene File-Deskriptoren (>{WATCHDOG_FD_WARN}) — möglicher Socket/File-Leak"),
                         ("rss", _rss, WATCHDOG_RSS_WARN_MB,
-                         f"RSS {_rss} MB (>{WATCHDOG_RSS_WARN_MB}) — Speicher-Wachstum, OOM-Killer-Gefahr")):
+                         f"RSS {_rss} MB (>{WATCHDOG_RSS_WARN_MB}) — Speicher-Wachstum, OOM-Killer-Gefahr"
+                         + _nc_whisper.rss_hinweis())):   # v5.1-W180
                     _bad = _val is not None and _val > _lim
                     _was = _WATCHDOG_STATE["res"].get(_what, False)
                     if _bad and not _was:
@@ -26378,6 +26456,58 @@ def _tunnel_lage():
         return "unbekannt"
     return _nc_tunnelwacht.lage(letzte or {}, hat_proxy,
                                 bool(z.get("forced_off")))
+
+
+# ── v5.1-W186: Rohdaten der Betriebsteile fuer das Lagebild ─────────────
+# Die Bewertung steht in nc/lagebild.py; hier wird nur gelesen. Jede
+# Funktion laeuft im Request-Thread der Route — kein await, keine Probe,
+# nur der Stand, den der Bot ohnehin fuehrt (Regel aus W105 fuer /healthz).
+
+def _lagebild_upload():
+    with _UPLOAD_QUEUE_LOCK:
+        items = _upload_queue_load()
+    jetzt = _time_mod.time()
+    fenster = (None if UPLOAD_WINDOW_START == UPLOAD_WINDOW_END else
+               "%02d–%02d" % (UPLOAD_WINDOW_START, UPLOAD_WINDOW_END))
+    return {"wartend": len(items),
+            "faellig": sum(1 for e in items if _nc_uschlange.faellig(e, jetzt)),
+            "fehlversuche": sum(1 for e in items if int(e.get("versuche") or 0) > 0),
+            "discord": sum(1 for e in items if e.get("ziel") == "discord"),
+            "fenster": fenster, "fenster_offen": _is_upload_window(datetime.now())}
+
+
+def _lagebild_discord_aufnahme():
+    c = _nc_discordstate.CLIENT["obj"]
+    return {"an": _nc_dcaufnahme.an(),
+            "verbunden": bool(c is not None and getattr(c, "is_ready", lambda: False)())}
+
+
+def _lagebild_overlay():
+    eintraege = list(_HTMLOV.values())
+    browser = [e.get("browser") for e in eintraege if e.get("browser") is not None]
+    return {"modus": RESTREAM_OVERLAY_MODE, "restreams": len(eintraege),
+            "dauer": len(browser), "lebend": sum(1 for b in browser if b.lebt())}
+
+
+def _lagebild_kick_chat():
+    st = getattr(_KICK_MOD, "stats", None) or {}
+    return {"konfiguriert": bool(KICK_CHATROOM_ID),
+            "laeuft": bool(getattr(_KICK_MOD, "running", False)),
+            "verbunden": bool(st.get("connected")), "gesehen": st.get("seen", 0)}
+
+
+def _lagebild_spendenziel():
+    with db_conn() as conn:
+        return _nc_spendenziel.stand(conn)
+
+
+for _n, _f in (("encode", _nc_encode.lage), ("upload", _lagebild_upload),
+               ("discord_aufnahme", _lagebild_discord_aufnahme),
+               ("overlay", _lagebild_overlay),
+               ("tunnel", lambda: {"lage": _tunnel_lage()}),
+               ("kick_chat", _lagebild_kick_chat), ("spendenziel", _lagebild_spendenziel)):
+    _nc_lagebild.dienst_quelle(_n, _f)
+del _n, _f
 
 
 async def _cookie_bezug_loop():

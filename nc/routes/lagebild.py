@@ -84,5 +84,10 @@ def api_lagebild():
     except Exception as e:
         quellen["brain"] = False
         _ausfall("brain", e)
+    # v5.1-W186: die Betriebsteile. Jede Quelle einzeln — ein Ausfall kostet
+    # nur ihre Zeile und steht gedrosselt im Log.
+    roh, gelesen = _nc_lagebild.dienste_lesen(
+        lambda name, e: _ausfall("dienst:" + name, e))
     return jsonify(_nc_lagebild.bauen(trackings, restreams, agenten, zustand,
-                                      time.time(), quellen=quellen))
+                                      time.time(), quellen=quellen,
+                                      dienste_roh=roh, dienste_gelesen=gelesen))

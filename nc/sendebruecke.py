@@ -330,6 +330,22 @@ FUELLER = "fueller"
 QUELLE = "quelle"
 
 
+def ausnahme_text(e) -> str:
+    """„Typ: Text" — und wenn der Text leer ist, was das heisst.
+
+    v5.1-W185: am 11.11. endete die Sendebruecke #7 mit „seit 691 s keine
+    abspielbare Quelle (zuletzt: TimeoutError: )". Ein TimeoutError aus
+    `future.result(timeout=…)` oder `asyncio.wait_for` traegt keinen Text;
+    der Doppelpunkt danach las sich wie eine abgeschnittene Meldung."""
+    text = str(e).strip()
+    if text:
+        return "%s: %s" % (type(e).__name__, text)
+    if isinstance(e, TimeoutError):     # asyncio- und futures-Timeout erben davon
+        return ("%s (ohne Text — die Aufloesung kam innerhalb ihrer Zeitgrenze "
+                "nicht zurueck)" % type(e).__name__)
+    return "%s (ohne Text)" % type(e).__name__
+
+
 class Bruecke:
     """Hält den Sender gefüttert, egal was die Quelle tut.
 
@@ -512,6 +528,14 @@ class Bruecke:
             except OSError as e:
                 # Laut genug: das Ende des Senders meldet der Manager mit
                 # seinem stderr. Hier nur der Zusammenhang, auf info.
+                # v5.1-W185: EINMAL. Bis hier schrieb jedes weitere Paket der
+                # Zubringer dieselbe Zeile — am 11.11. 250 Zeilen „Broken
+                # pipe" in derselben Millisekunde je Abbruch. Der Eingang wird
+                # geschlossen, dann endet jedes weitere Paket still an
+                # `self._fd is None` oben. (Ein zusaetzlicher „nur beim ersten
+                # Mal"-Schalter war wirkungslos — die Mutationsprobe entwischte;
+                # der eine Riegel ist das Schliessen.)
+                self._fd_schliessen()
                 log.info("Sendebrücke %s: Sender nimmt nichts mehr an (%s)",
                          self.name, e)
                 self._abbruch("Sender nimmt nichts mehr an (%s)" % e)
@@ -898,9 +922,9 @@ class Bruecke:
         try:
             url, fehler = self._quelle()
         except Exception as e:     # Auflösung selbst gestorben
+            url, fehler = None, ausnahme_text(e)
             log.warning("Sendebrücke %s: Auflösung der Quelle ist abgestürzt "
-                        "(%s: %s).", self.name, type(e).__name__, e)
-            url, fehler = None, "%s: %s" % (type(e).__name__, e)
+                        "(%s).", self.name, fehler)
         if url:
             self._offline_seit = None
             # Eine NEUE Adresse kann ein anderer Strom sein: der Streamer

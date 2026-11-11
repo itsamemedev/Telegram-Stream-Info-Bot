@@ -11,6 +11,60 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+Befunde aus den Produktionslogs vom 11.11.2026 (nach dem Deploy von 5.0.0),
+jeder mit Vertrag (`test_nc_modules.py`, W180, W182–W187) und Mutationsprobe.
+
+### Behoben
+
+- **RSS-Sprung von 973 auf 4535 MB (W180):** Auslöser war kein Leck und keine
+  Aufnahme im RAM, sondern der Wechsel des Whisper-Modells im Deck (18:08:20,
+  `base` → `medium`); 14 s später meldete der Watchdog 3321 MB. Die Route
+  `/api/azrael/whisper_model` prüft jetzt den freien Speicher
+  (`nc/whispercfg.wechsel_pruefen`) und lehnt mit HTTP 409, Zahlen und Rat ab;
+  `force=true` bleibt der Ausweg. Die RSS-Meldung des Watchdogs nennt ein
+  geladenes großes Modell samt Abhilfe.
+- **Live-Check-Stau (W183):** „Schlange voll … 4809 verworfen" und
+  „live-worker-0 seit 450 s ohne Lebenszeichen". Drei Ursachen: der
+  90-s-Zeitriegel reihte gestaute Trackings erneut ein (Doppel erzeugten den
+  Stau), eine Prüfung hatte keine Frist, und der Fork-Poll verhungerte hinter
+  Whisper — das Lock ging bei `medium` (RTF 2,74) von Thread zu Thread.
+  Jetzt: ein Tracking höchstens einmal vorgemerkt (`nc/pruefschlange.py`),
+  jede Prüfung mit Frist `LIVE_CHECK_FRIST_S` (240 s) und Lebenszeichen
+  währenddessen, und ein wartender Fork hat Vortritt vor dem nächsten
+  Whisper-Lauf (`nc/forkriegel.py`).
+- **Cookie-Bezug „browser" auf dem Server (W187):** `KeyError:
+  'DBUS_SESSION_BUS_ADDRESS'` als HTTP 502 im Fehlerlog. Ohne Desktop-Sitzung
+  wird der Weg für Chromium-Browser gar nicht erst versucht; die Antwort ist
+  HTTP 409 mit Grund `kein_desktop` und Abhilfe.
+- **Telegram nach einer Discord-Guild gefragt (W182):** „Forum-Prüfung für
+  chat 1521964594653036677 fehlgeschlagen (Chat not found)". Forum-Prüfung
+  und Thema fragen jetzt vorher `ist_telegram_chat`; der Highlight-Push im
+  Discord-Teil nimmt dieselbe Grenze statt nur der eigenen Guild.
+- **Chat-Listener „invalid literal for int() with base 10: ''" (W184):**
+  TikTok gab für den Raum ein leeres `roomId` heraus. Eine Room-ID wird nur
+  noch als Ziffernfolge injiziert, und die Lage steht als Grund im Log statt
+  des Python-Wortlauts samt falscher Spur („Tunnel instabil").
+- **Sendebrücke (W185):** „Sender nimmt nichts mehr an (Broken pipe)" stand
+  je Abbruch rund 25-mal in derselben Millisekunde — jetzt einmal, der
+  Eingang wird geschlossen. „Auflösung abgestürzt (TimeoutError: )" nennt bei
+  leerem Text, was er bedeutet.
+
+### Neu
+
+- **Lagebild zeigt die Teile seit 5.0 (W186):** Encode-Warteschlange,
+  Upload-Schlange, Discord-Aufnahme-Upload, Overlay-Dauerbrowser, Tunnelwache,
+  Kick-Chat (Centrifugo) und Spendenziel als Chip-Zeile unter dem Kopf. Die
+  Bewertung (ok, aktiv, Warnung, Fehler, aus, unbekannt) steht in
+  `nc/lagebild.dienste()`; eine nicht lesbare Quelle ist „unbekannt", nie „ok".
+
+### Offen
+
+- `_reflect_source_status`: MariaDB-Fehler 1020 („Record has changed since
+  last read") einmal im Log — Snapshot-Isolation der MariaDB, ein
+  Wiederholungsversuch fehlt; nicht nachgestellt.
+- `_clip_schneiden` meldet bei ffmpeg rc=69 nur die Encoder-Statistik am Ende
+  von stderr; die eigentliche Ursache steht davor.
+
 ## [5.0.0] — 2026-11-11 · „Gleichtakt"
 
 Hauptversion. Tiefengrund-Bughunt über alle Bereiche: fünf Analysen

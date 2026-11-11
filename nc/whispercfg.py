@@ -24,6 +24,9 @@ Objekt stehen laesst, benutzt weiter das alte Modell und sieht den neuen Namen
 im Dashboard. Das waere schlimmer als gar kein Umschalten.
 """
 
+import logging
+import re
+
 # Register: Name UND geladenes Objekt. Beide werden neu gebunden.
 MODELL = {"name": "base", "obj": None}
 
@@ -66,3 +69,112 @@ def verfuegbar() -> bool:
         return importlib.util.find_spec("faster_whisper") is not None
     except Exception:
         return False
+
+
+# ═════════════════════════════════════════════════════════════════════════
+# v5.1-W180: Speicherbedarf — ein Modellwechsel, den die Box nicht traegt
+# ═════════════════════════════════════════════════════════════════════════
+#
+# Gemessen am 11.11. (Produktionslog): um 18:08:20 wurde im Deck von `base`
+# auf `medium` umgeschaltet. 14 s spaeter meldete der Watchdog RSS 3321 MB,
+# eine Viertelstunde danach 4535 MB — vorher 973 MB. Das Laden von `base`
+# am selben Nachmittag hatte den Prozess von 391 auf 890 MB gehoben. Dazu
+# lief `medium` mit RTF 2,74, also fast dreimal langsamer als das Audio:
+# jeder Transkriptionslauf hielt den Fork-Riegel entsprechend lange, und
+# die Live-Pruefung verhungerte daran (W183, nc/forkriegel.py).
+#
+# Die Route schaltete bis hier blind um. Jetzt wird vorher gefragt, ob der
+# freie Speicher das neue Modell traegt — und wenn nicht, mit Zahlen und
+# Abhilfe abgelehnt. Die Werte sind der RSS-Zuwachs im Betrieb (CPU, int8,
+# Gewichte plus Arbeitsspeicher eines Laufs), nicht die Dateigroesse: die
+# ist bei `medium` 1,5 GB, im Prozess wurden es ueber 3 GB.
+BEDARF_MB = {
+    "tiny": 300,
+    "base": 500,
+    "small": 1200,
+    "medium": 3000,
+    "large": 6000,
+    "turbo": 3500,
+}
+RESERVE_MB = 512     # Rest fuer Aufnahmen, Restreams und den Bot selbst
+
+
+def bedarf_mb(modell):
+    """Geschaetzter RSS-Zuwachs eines Modells in MB — None, wenn unbekannt.
+
+    `.en`-Varianten und `distil-`-Fassungen gehoeren zur Groessenklasse ihres
+    Grundmodells; `large-v2`/`large-v3` sind `large`. Ein eigener Name, den
+    die Tabelle nicht kennt, ist keine Ablehnung wert — nur nicht pruefbar."""
+    n = str(modell or "").strip().lower()
+    for vorsilbe in ("faster-distil-whisper-", "faster-whisper-", "distil-"):
+        if n.startswith(vorsilbe):
+            n = n[len(vorsilbe):]
+    n = n.split(".")[0]
+    if n.startswith("large-v3-turbo") or n == "turbo":
+        return BEDARF_MB["turbo"]
+    if n.startswith("large"):
+        return BEDARF_MB["large"]
+    return BEDARF_MB.get(n)
+
+
+def frei_mb(meminfo_text=None):
+    """MemAvailable aus /proc/meminfo in MB — None, wenn nicht lesbar.
+
+    None heisst „unbekannt" (kein Linux, kein procfs) und ist KEINE Null:
+    eine Null wuerde jeden Wechsel ablehnen."""
+    if meminfo_text is None:
+        try:
+            with open("/proc/meminfo", encoding="ascii", errors="replace") as f:
+                meminfo_text = f.read()
+        except OSError as e:
+            # Nicht stumm: ohne diese Zahl prueft der Modellwechsel nicht vor,
+            # und genau das soll im Log stehen, wenn danach der RSS springt.
+            logging.getLogger("TikTokBot").warning(
+                "Whisper: /proc/meminfo nicht lesbar (%s) — Speicherbedarf wird "
+                "vor dem Modellwechsel nicht geprueft.", e)
+            return None
+    m = re.search(r"^MemAvailable:\s*(\d+)", str(meminfo_text), re.M)
+    return int(m.group(1)) // 1024 if m else None
+
+
+def wechsel_pruefen(neu, frei=None):
+    """Traegt der Speicher den Wechsel auf `neu`? -> (erlaubt, grund)
+
+    `frei` ist MemAvailable in MB (None = unbekannt). Gezaehlt wird der VOLLE
+    Bedarf des neuen Modells, nicht die Differenz zum alten: das alte Objekt
+    haengt an laufenden Transkriptionen und wird erst nach dem Laden des
+    neuen frei — eine Differenz rechnete mit Speicher, der im entscheidenden
+    Moment noch belegt ist.
+
+    `grund` ist bei Erlaubnis ein Hinweis (oder ""), bei Ablehnung der
+    Klartext mit Zahlen und Abhilfe."""
+    bedarf = bedarf_mb(neu)
+    if bedarf is None:
+        return True, "Speicherbedarf von '%s' unbekannt — nicht vorab geprueft." % neu
+    if frei is None:
+        return True, "freier Speicher nicht lesbar — nicht vorab geprueft."
+    if bedarf + RESERVE_MB <= frei:
+        return True, ""
+    rat = [m for m in ("small", "base", "tiny")
+           if BEDARF_MB[m] + RESERVE_MB <= frei and BEDARF_MB[m] < bedarf]
+    return False, (
+        "Whisper-Modell '%s' braucht im Betrieb rund %d MB, frei sind %d MB "
+        "(dazu %d MB Reserve fuer Aufnahmen und Restreams) — der Wechsel triebe "
+        "den Bot in den OOM-Killer. Abhilfe: %s; erzwingen mit force=true."
+        % (neu, bedarf, frei, RESERVE_MB,
+           ("ein kleineres Modell (%s)" % ", ".join(rat)) if rat
+           else "mehr RAM oder weniger gleichzeitige Restreams"))
+
+
+def rss_hinweis():
+    """Zusatz fuer die RSS-Meldung des Watchdogs: haelt Whisper den Speicher?
+
+    Die Meldung vom 11.11. lautete nur „RSS 3321 MB (>1800) — Speicher-
+    Wachstum, OOM-Killer-Gefahr" und klang nach einem Leck. Es war das eben
+    geladene `medium`. Ein geladenes Modell ab 1 GB Bedarf wird deshalb
+    genannt — mit dem Schalter, der es zuruecknimmt."""
+    bedarf = bedarf_mb(MODELL["name"]) if MODELL["obj"] is not None else None
+    gross = bool(bedarf and bedarf >= 1000)
+    return (" Davon belegt das geladene Whisper-Modell '%s' rund %d MB — Abhilfe: "
+            "im Deck (AZRAEL › Whisper) auf base/small zurueck oder WHISPER_MODEL in "
+            "der .env." % (MODELL["name"], bedarf)) if gross else ""

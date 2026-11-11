@@ -28,6 +28,10 @@ nicht antwortet, ist kein Lagebild ohne Waechter.
 # dauern Millisekunden; ohne Nachlauf saehe ein 8-s-Poll sie fast nie. 20 s
 # sind zwei Polls Luft und kurz genug, dass „steht an der Platte" noch
 # „hat gerade nach der Platte gesehen" heisst.
+import logging
+
+log = logging.getLogger("TikTokBot")
+
 TAETIG_S = 20.0
 
 # Ab hier sendet ein Restream nicht mehr, obwohl der Prozess lebt (W113:
@@ -210,8 +214,189 @@ def _agent(a, zustand, ziele, jetzt):
             "fehler": int(a.get("errors") or 0)}
 
 
+# ═════════════════════════════════════════════════════════════════════════
+# v5.1-W186: die Betriebsteile seit v5.0 — Schlangen, Browser, Verbindungen
+# ═════════════════════════════════════════════════════════════════════════
+#
+# Bis v5.0 zeigte das Lagebild Nutzer, Restreams und Waechter. Seither sind
+# Teile dazugekommen, die eigene Stoerbilder haben und im Deck nirgends
+# zusammen stehen: die Encode-Warteschlange (W174), die Upload-Schlange
+# (W175), der Discord-Versand ganzer Aufnahmen (W175), der dauerhafte
+# Overlay-Browser (W170), die Tunnelwache (W105), der Kick-Chat ueber
+# Centrifugo (W171) und das Spendenziel (W173). Am 11.11. stand die
+# Encode-Schlange mit drei wartenden Kodierungen und die Upload-Schlange mit
+# einer aufgeschobenen Aufnahme — beides nur im Log.
+#
+# Wie oben: WAS eine Lage ist, entscheidet diese Datei; das JS waehlt nur
+# Farbe und Text zu `lage` und `grund`. Der Bot meldet seine Rohdaten ueber
+# `dienst_quelle()` an (nc/ importiert nie aus bot.py); eine Quelle, die
+# nicht antwortet oder nie angemeldet wurde, ist „unbekannt" — nie „ok"
+# (W99: nichts geladen ist nicht dasselbe wie nichts da).
+
+DIENSTE = ("encode", "upload", "discord_aufnahme", "overlay", "tunnel",
+           "kick_chat", "spendenziel")
+
+# Ab so langem Warten gilt eine Kodierung als Stau, nicht als Reihenfolge:
+# ein Chat-Einbrennen dauert Minuten (11.11.: 539 s), der Zusammenschnitt
+# danach wartet zu Recht. Eine Viertelstunde ist mehr als ein Durchgang.
+ENCODE_STAU_S = 900
+
+LAGEN = ("ok", "aktiv", "warn", "fehler", "aus", "unbekannt")
+
+_QUELLEN = {}
+
+
+def dienst_quelle(name, fn):
+    """Der Bot meldet je Dienst eine Funktion an, die Rohdaten liefert."""
+    if name not in DIENSTE:
+        raise ValueError("unbekannter Dienst: %s" % name)
+    _QUELLEN[name] = fn
+
+
+def dienste_lesen(melden):
+    """-> (roh, gelesen): Rohdaten je Dienst und je Dienst, ob lesbar.
+
+    Jede Quelle einzeln abgesichert: eine Ausnahme kostet nur ihren Dienst,
+    steht in `gelesen` als False und geht an `melden(name, exc)` — die Route
+    meldet gedrosselt (nc.meldetakt), dieses Modul kennt keine Drossel."""
+    roh, gelesen = {}, {}
+    for name in DIENSTE:
+        fn = _QUELLEN.get(name)
+        if fn is None:
+            gelesen[name] = False
+            continue
+        try:
+            roh[name] = fn()
+            gelesen[name] = True
+        except Exception as e:
+            gelesen[name] = False
+            melden(name, e)
+    return roh, gelesen
+
+
+def _eintrag(name, lage, grund, **werte):
+    return {"name": name, "lage": lage, "grund": grund, "werte": werte}
+
+
+def _encode(r):
+    laeuft, wartet = r.get("laeuft") or [], r.get("wartet") or []
+    laengste = max((int(w.get("s") or 0) for w in wartet), default=0)
+    w = dict(laeuft=len(laeuft), wartet=len(wartet), laengste_s=laengste,
+             parallel=r.get("parallel"), arten=sorted({e.get("art", "?") for e in laeuft}))
+    if wartet and laengste >= ENCODE_STAU_S:
+        return "warn", "stau", w
+    if laeuft or wartet:
+        return "aktiv", "laeuft", w
+    return "ok", "leer", w
+
+
+def _upload(r):
+    w = dict(wartend=int(r.get("wartend") or 0), faellig=int(r.get("faellig") or 0),
+             fehlversuche=int(r.get("fehlversuche") or 0), discord=int(r.get("discord") or 0),
+             fenster=r.get("fenster"))
+    if w["fehlversuche"]:
+        return "warn", "fehlversuch", w
+    if not w["wartend"]:
+        return "ok", "leer", w
+    if r.get("fenster_offen"):
+        return "aktiv", "sendet", w
+    return "ok", "fenster_zu", w
+
+
+def _discord_aufnahme(r):
+    w = dict(verbunden=bool(r.get("verbunden")))
+    if not r.get("an"):
+        return "aus", "abgeschaltet", w
+    if not r.get("verbunden"):
+        # Angeschaltet, aber ohne Discord-Verbindung geht jede fertige
+        # Aufnahme nur in die Schlange — das ist eine Stoerung, keine Ruhe.
+        return "warn", "nicht_verbunden", w
+    return "ok", "bereit", w
+
+
+def _overlay(r):
+    soll, dauer, lebend = (int(r.get(k) or 0) for k in ("restreams", "dauer", "lebend"))
+    w = dict(restreams=soll, dauer=dauer, lebend=lebend, modus=r.get("modus"))
+    if r.get("modus") != "html":
+        return "aus", "anderer_modus", w
+    if not soll:
+        return "ok", "bereit", w
+    if lebend < dauer:
+        # Ein toter Dauer-Chromium heisst: das Overlay friert ein (der Writer
+        # wiederholt das letzte Bild), waehrend der Restream weiterlaeuft.
+        return "fehler", "browser_tot", w
+    if dauer < soll:
+        # Einzelschuss je Bild: das Overlay steht, kostet aber rund 0,9
+        # CPU-s je Bild (W170) — der Grund, warum der Transcode lahmt.
+        return "warn", "einzelschuss", w
+    return "aktiv", "laeuft", w
+
+
+_TUNNEL = {"ok": ("ok", "ok"), "direkt": ("aus", "kein_proxy"),
+           "aus": ("aus", "abgeschaltet"), "fehler": ("fehler", "fehler")}
+
+
+def _tunnel(r):
+    lage, grund = _TUNNEL.get(r.get("lage"), ("unbekannt", "noch_nicht_geprueft"))
+    return lage, grund, {}
+
+
+def _kick_chat(r):
+    w = dict(nachrichten=int(r.get("gesehen") or 0))
+    if not r.get("konfiguriert"):
+        return "aus", "nicht_konfiguriert", w
+    if not r.get("laeuft"):
+        return "aus", "abgeschaltet", w
+    if not r.get("verbunden"):
+        return "warn", "nicht_verbunden", w
+    return "ok", "verbunden", w
+
+
+def _spendenziel(r):
+    ziel = float(r.get("ziel_eur") or 0)
+    w = dict(ziel_eur=round(ziel, 2), aktuell_eur=round(float(r.get("aktuell_eur") or 0), 2),
+             prozent=float(r.get("prozent") or 0), zeitraum=r.get("zeitraum"))
+    if ziel <= 0:
+        return "aus", "kein_ziel", w
+    if w["prozent"] >= 100:
+        return "ok", "erreicht", w
+    return "ok", "laeuft", w
+
+
+_BEWERTER = {"encode": _encode, "upload": _upload, "discord_aufnahme": _discord_aufnahme,
+             "overlay": _overlay, "tunnel": _tunnel, "kick_chat": _kick_chat,
+             "spendenziel": _spendenziel}
+
+
+def dienste(roh, gelesen=None) -> list:
+    """Rohdaten je Dienst -> Liste in fester Reihenfolge (DIENSTE).
+
+    Ein Dienst ohne Rohdaten oder mit `gelesen[name] is False` ist
+    „unbekannt" — nie „ok". Eine Ausnahme beim Bewerten (Rohdaten in
+    unerwarteter Form) ebenso, und zwar mit eigenem Grund: sie ist ein
+    Programmfehler, kein Betriebszustand."""
+    roh, gelesen = roh or {}, gelesen or {}
+    out = []
+    for name in DIENSTE:
+        r = roh.get(name)
+        if gelesen.get(name) is False or not isinstance(r, dict):
+            out.append(_eintrag(name, "unbekannt", "nicht_geladen"))
+            continue
+        try:
+            lage, grund, werte = _BEWERTER[name](r)
+        except (TypeError, ValueError, AttributeError) as e:
+            # Rohdaten in unerwarteter Form: ein Programmfehler zwischen Bot
+            # und diesem Modul — laut, denn die Zeile zeigt dann „unbekannt".
+            log.error("Lagebild: Rohdaten fuer %s unlesbar (%s: %s) — der Dienst "
+                      "steht als unbekannt.", name, type(e).__name__, e)
+            out.append(_eintrag(name, "unbekannt", "rohdaten_unlesbar"))
+            continue
+        out.append(_eintrag(name, lage, grund, **werte))
+    return out
+
+
 def bauen(trackings, restreams, agenten, agentenzustand, jetzt,
-          quellen=None) -> dict:
+          quellen=None, dienste_roh=None, dienste_gelesen=None) -> dict:
     """Das Lagebild aus den Rohdaten. Rein — kein Netz, keine Datenbank.
 
     trackings       Zeilen wie /api/trackings (username, last_live, recording, paused)
@@ -232,6 +417,8 @@ def bauen(trackings, restreams, agenten, agentenzustand, jetzt,
         "agenten": ags,
         "stationen": list(STATIONEN),
         "quellen": dict(quellen or {}),
+        # v5.1-W186: die Betriebsteile seit v5.0 (siehe dienste()).
+        "dienste": dienste(dienste_roh, dienste_gelesen),
         # Serverzeit: die Uebersicht zaehlt die Countdowns zwischen zwei
         # Abrufen selbst herunter und braucht dafuer den Bezugspunkt.
         "jetzt": round(jetzt, 1),
