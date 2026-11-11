@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="docs/assets/banner.svg" alt="NIGHTCRAWLER — v4.6.22 Control Room" width="100%">
+<img src="docs/assets/banner.svg" alt="NIGHTCRAWLER — v4.6.23 Control Room" width="100%">
 
 ### The control room for live streaming
 #### Monitoring · Recording · Multi-target restream · AI moderation
@@ -633,6 +633,8 @@ instead of starting a new one for every frame: about eleven times less CPU.
 and the bot follows (check on the server: `tools/kickchat.py`).
 **Patch 4.6.22** — `/spenden` on Telegram and Discord: PayPal, crypto addresses and
 the donation goal from the `.env`, for everyone.
+**Patch 4.6.23** — one donation goal for website, overlay, stream picture and
+`/spenden`: same goal, same progress, same period.
 
 Every wave on its own: **[`docs/CHANGELOG.md`](docs/CHANGELOG.md)**.
 
@@ -644,7 +646,7 @@ Every wave on its own: **[`docs/CHANGELOG.md`](docs/CHANGELOG.md)**.
 
 | | |
 |---|---|
-| Current version | **4.6.22** — “Control Room” (2026.11) |
+| Current version | **4.6.23** — “Control Room” (2026.11) |
 | Flask routes | 379 (34 in `bot.py` · 345 in `nc/routes/`) |
 | Discord slash commands | 67 |
 | Domain modules | 185 in `nc/` (+39 in `nc/routes/`, +3 in `nc/intel/`), 10 in `brain/` |
@@ -710,7 +712,7 @@ with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 <div align="center">
 
-**NIGHTCRAWLER v4.6.22 · “Control Room”**
+**NIGHTCRAWLER v4.6.23 · “Control Room”**
 
 **[🌐 lafap.de](https://lafap.de)** · **[💬 Discord](https://discord.gg/psvnxm7tSV)** · **[📓 Changelog](docs/CHANGELOG.md)**
 

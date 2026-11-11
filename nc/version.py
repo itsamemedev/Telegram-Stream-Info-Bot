@@ -4,7 +4,7 @@ Eine einzige Wahrheit für die Versionsanzeige (Dashboard-Footer, /api/version,
 „Was ist neu"-Panel). Reine Daten + kleine Helfer, voll testbar.
 """
 
-VERSION = "4.6.22"
+VERSION = "4.6.23"
 CODENAME = "Leitstand"
 RELEASE = "2026.11"
 
@@ -23,6 +23,19 @@ def build_stamp():
 # Meilenstein-Changelog, neueste Version zuerst. highlights = kurze, ehrliche
 # Stichpunkte dessen, was die Version bringt.
 CHANGELOG = [
+    {
+        "version": "4.6.23",
+        "date": "2026-11",
+        "title": "Leitstand",
+        # Patch-Fassung von 4.6: ein Spendenziel (W173).
+        "highlights": [
+            "Ein Spendenziel für Website, Stream-Overlay, Sendebild und /spenden — dasselbe Ziel, derselbe Stand, derselbe Zeitraum",
+            "Der Stand zählt jede Spende auf eigenen Kanälen (Kick, Twitch, YouTube, im Deck erfasst) im laufenden Monat; TikTok-Gifts nie",
+            "Vorher zählte die Website nur manuell erfasste Spenden, das Overlay nur ab Stream-Start und gegen ein eigenes Ziel (Vorgabe: aus)",
+            "/spenden zeigt jetzt auch den Stand: „120 € von 500 € (24 %) · monatlich\"",
+            "Das Ziel im Overlay-Formular gilt überall und überlebt einen Neustart; leere Felder lassen es unverändert",
+        ],
+    },
     {
         "version": "4.6.22",
         "date": "2026-11",

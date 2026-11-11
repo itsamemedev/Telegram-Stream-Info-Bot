@@ -22,6 +22,7 @@ Die Textkuerzung fuers Sendebild (`_ov_clip_text`) ist mit umgezogen: sie hat
 ausserhalb dieser Routen keinen Aufrufer mehr.
 """
 
+import logging
 import os
 import time
 
@@ -31,7 +32,13 @@ from nc import azraelstate as _nc_azrael
 from nc import channels as _nc_channels
 from nc import i18n as _nc_i18n
 from nc import revenue as _nc_revenue
+from nc import einstellungen as _nc_einst
+from nc import fehlertext as _nc_fehlertext
+from nc import spendenziel as _nc_spendenziel  # v4.2-W173: ein Ziel fuer alle Anzeigen
 from nc.dbwrap import db_conn
+from nc.donationsdb import parse_eur as _parse_eur
+
+_log = logging.getLogger("TikTokBot")
 
 bp = Blueprint("overlay", __name__)
 
@@ -90,13 +97,31 @@ def _azrael_overlay_state():
             "source": r.get("source", "") if active else ""}
 
 
+def _bilanz(zeilen, by_platform):
+    """Spenden und Follows je Plattform ab Sende-Start (V37-OVMP).
+
+    v4.2-W173 herausgeloest: api_overlay_state lag mit dem gemeinsamen
+    Spendenziel ueber 100 Zeilen. Betraege liest nc.donationsdb.parse_eur —
+    dieselbe Lesart wie das Spendenziel, statt einer zweiten eigenen."""
+    for r in zeilen:
+        p = (r["platform"] or "kick")
+        if p not in by_platform:
+            by_platform[p] = {"donations": 0, "amount": 0.0, "follows": 0}
+        if r["kind"] == "donation":
+            a = _parse_eur(r["amount"]) or 0.0
+            by_platform[p]["donations"] += 1
+            by_platform[p]["amount"] = round(by_platform[p]["amount"] + a, 2)
+        else:
+            by_platform[p]["follows"] += 1
+
+
 @bp.route("/api/overlay/state")
 def api_overlay_state():
     """Live-Zustand fürs Overlay: Name, Ziel, letzter Follower, Donations, Moderator."""
     latest_follower = None
     followers = []
     donations = []
-    goal_current = 0.0
+    ziel = None
     by_platform = {p: {"donations": 0, "amount": 0.0, "follows": 0}
                    for p in _nc_revenue.OV_PLATFORMS}
     # V37-OVMP-FIX: Zaehler-Nullpunkt ist der Sende-Start. Ohne ihn summierte
@@ -105,12 +130,6 @@ def api_overlay_state():
     _sess = _nc_azrael.OVERLAY_SESSION.get("start")
     _and_sess = " AND ts >= ?" if _sess else ""
     _sp = (_sess,) if _sess else ()
-
-    def _amt(v):
-        try:
-            return float(str(v).replace(",", ".").replace("€", "").strip())
-        except (TypeError, ValueError):
-            return 0.0
 
     try:
         with db_conn() as conn:
@@ -140,19 +159,16 @@ def api_overlay_state():
                                    "WHERE (kind='follow' OR (kind='donation' AND "
                                    "platform IN" + _nc_revenue.sql_in() + ")) " + _and_sess,
                                    _sp).fetchall()
-            for r in allrows:
-                p = (r["platform"] or "kick")
-                if p not in by_platform:
-                    by_platform[p] = {"donations": 0, "amount": 0.0, "follows": 0}
-                if r["kind"] == "donation":
-                    a = _amt(r["amount"])
-                    goal_current += a
-                    by_platform[p]["donations"] += 1
-                    by_platform[p]["amount"] = round(by_platform[p]["amount"] + a, 2)
-                else:
-                    by_platform[p]["follows"] += 1
-    except Exception:
-        pass
+            _bilanz(allrows, by_platform)
+            # v4.2-W173: das Ziel kommt aus nc/spendenziel.py — dasselbe wie auf
+            # Website, Sendebild und /spenden. Die Bilanz je Plattform oben zaehlt
+            # weiter ab Sende-Start; das ist die Sendung, nicht das Ziel.
+            ziel = _nc_spendenziel.stand(conn)
+    except Exception as e:
+        # War `pass`: das Overlay zeigte dann 0 € und leere Ticker, als waere
+        # nichts passiert. Die Antwort bleibt (OBS darf nicht leer werden).
+        _log.error("overlay/state: Datenbank nicht lesbar (%s: %s) — das Overlay "
+                   "zeigt bis dahin kein Spendenziel.", type(e).__name__, e)
 
     ov = _nc_azrael.OVERLAY
     mod = _nc_channels.KICK_MOD["obj"]
@@ -161,8 +177,9 @@ def api_overlay_state():
     return jsonify(
         ok=True,
         title=ov.get("title", ""),
-        goal={"current": round(goal_current, 2), "target": ov.get("goal_target", 0),
-              "label": ov.get("goal_label", ""), "purpose": ov.get("goal_purpose", "")},
+        goal=({"current": ziel["aktuell_eur"], "target": ziel["ziel_eur"],
+               "label": ziel["label"], "purpose": ziel["zweck"],
+               "period": ziel["zeitraum"], "pct": ziel["prozent"]} if ziel else {}),
         latest_follower=latest_follower,
         followers=followers,             # V37-OVMP: Multi-Plattform-Ticker
         donations=donations,
@@ -212,8 +229,6 @@ def api_overlay_config():
     d = request.get_json(silent=True) or {}
     ov = _nc_azrael.OVERLAY
     if "title" in d: ov["title"] = (d["title"] or "Azrael Sentinel")[:60]
-    if "goal_label" in d: ov["goal_label"] = (d["goal_label"] or "")[:60]
-    if "goal_purpose" in d: ov["goal_purpose"] = (d["goal_purpose"] or "")[:160]
     if "azrael_show" in d: ov["azrael_show"] = bool(d["azrael_show"])
     if "voice_enabled" in d: ov["voice_enabled"] = bool(d["voice_enabled"])
     if "voice_engine" in d: ov["voice_engine"] = (d["voice_engine"] or "browser").strip().lower()
@@ -230,7 +245,35 @@ def api_overlay_config():
         if _k in d:
             try: ov[_k] = max(_lo, min(_hi, float(d[_k])))
             except (TypeError, ValueError): pass
-    if "goal_target" in d:
-        try: ov["goal_target"] = max(0, int(d["goal_target"]))
-        except (TypeError, ValueError): pass
+    try:
+        _ziel_speichern(d)
+    except _nc_einst.Abgelehnt as e:
+        _log.warning("Overlay: Spendenziel abgelehnt — %s", e)
+        return jsonify(ok=False, error=_nc_i18n.t(e.grund)), 400
+    except ValueError:
+        return jsonify(ok=False, error=_nc_i18n.t("Das Ziel muss eine Zahl sein.")), 400
+    except Exception as e:
+        return jsonify(ok=False, error=_nc_fehlertext.nach_aussen(e, "api_overlay_config")), 503
     return jsonify(ok=True, overlay=ov)
+
+
+# v4.2-W173: die Ziel-Felder des Overlay-Formulars schreiben das EINE Ziel —
+# ueber nc/einstellungen.py, also in dieselbe Tabelle wie der Reiter
+# „Einstellungen", und damit sofort fuer Website, Sendebild und /spenden.
+# Bis hier lag das Overlay-Ziel nur im Speicher und war nach einem Neustart weg.
+_ZIEL_FELDER = (("goal_target", "DONATION_GOAL_EUR", 12),
+                ("goal_label", "DONATION_GOAL_LABEL", 60),
+                ("goal_purpose", "DONATION_GOAL_PURPOSE", 160))
+
+
+def _ziel_speichern(d):
+    """Leere oder fehlende Felder bleiben unveraendert: das Formular wird nicht
+    vorbefuellt, und wer nur den Sendernamen aendert, schickte sonst Ziel 0
+    und ein leeres Label — fuer Website und Chat gleich mit."""
+    for feld, env, laenge in _ZIEL_FELDER:
+        wert = "" if d.get(feld) is None else str(d.get(feld)).strip()[:laenge]
+        if not wert:
+            continue
+        if feld == "goal_target":
+            wert = "%g" % max(0.0, float(wert.replace(",", ".")))   # 0 = kein Ziel
+        _nc_einst.setzen(env, wert, von="deck-overlay")

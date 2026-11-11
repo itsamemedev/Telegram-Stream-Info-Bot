@@ -29884,13 +29884,18 @@ def _test_v42_w164_alles_auf_einmal():
     summe = sum(float(r[0].replace(",", ".")) for r in c.execute(
         "SELECT amount FROM overlay_events WHERE kind='donation' AND platform IN " + R.sql_in()))
     assert summe == 35.5, "eine manuelle Spende fehlt im Spendenziel (oder TikTok zaehlt)"
-    # Die Website-Summe rechnet manuell getrennt — sie darf die Liste NICHT
-    # benutzen, sonst zaehlte jede manuelle Spende doppelt.
+    # Keine manuelle Spende darf doppelt zaehlen. ANKER GEWANDERT (v4.2-W173):
+    # bis W172 addierte die Website manual_total() getrennt und durfte die
+    # Liste deshalb NICHT benutzen. Seit W173 laeuft jede Anzeige ueber EINE
+    # Abfrage in nc/spendenziel.py, die 'manual' ueber die Liste einschliesst —
+    # also darf dort und auf der Website nichts zusaetzlich addiert werden.
     src = open("bot.py", encoding="utf-8").read()
-    st = src[src.index('goal = _nc_envnum.env_float("DONATION_GOAL_EUR"'):]
-    # ANKER GEWANDERT (v4.2-W172): PayPal liest jetzt nc.spendeninfo.
+    st = src[src.index("_ziel = _nc_spendenziel.stand(_conn)") - 400:]
     st = st[:st.index("_pp = _nc_spendeninfo.paypal()")]
-    assert "cur += _manual_donations_total()" in st and "sql_in" not in st
+    assert "_manual_donations_total" not in st, "manuelle Spenden zaehlen auf der Website doppelt"
+    zq = open("nc/spendenziel.py", encoding="utf-8").read()
+    assert "manual_total" not in zq and "_revenue.sql_in()" in zq, \
+        "das Spendenziel addiert manuelle Spenden doppelt oder ohne die Liste"
     ov = open("templates/overlay.html", encoding="utf-8").read()
     assert "manual:'DIREKT'" in ov
 
@@ -31355,13 +31360,127 @@ def _test_v42_w172_spenden():
     rufe = {_ast.unparse(c.func) for c in _ast.walk(fn) if isinstance(c, _ast.Call)}
     assert "_is_authorized" not in rufe, \
         "Zuschauer stehen in keiner Freischaltliste — der Bot schwiege auf /spenden"
-    assert "_nc_spendeninfo.text" in rufe and "ParseMode.HTML" in _ast.unparse(fn)
+    # ANKER GEWANDERT (v4.2-W173): der Text liest den Stand aus der Datenbank
+    # und laeuft deshalb ueber asyncio.to_thread.
+    assert "asyncio.to_thread(_nc_spendeninfo.text, 'html'" in _ast.unparse(fn) \
+        and "ParseMode.HTML" in _ast.unparse(fn)
     dsrc = open("discordbot.py", encoding="utf-8").read()
-    assert 'name="spenden"' in dsrc and '_nc_spendeninfo.text("md"' in dsrc
+    assert 'name="spenden"' in dsrc and 'to_thread(_nc_spendeninfo.text, "md"' in dsrc
     # Website und /spenden lesen PayPal an EINER Stelle.
     assert "_nc_spendeninfo.paypal()" in src and \
         'os.getenv("DONATION_PAYPAL"' not in src, "zweite PayPal-Lesestelle in bot.py"
     ok("v4.2-W172: /spenden auf Telegram und Discord — PayPal, Krypto, Ziel, leer laut")
+
+
+def _test_v42_w173_ein_spendenziel():
+    """v4.2-W173: „Die Spendenziele sind nicht miteinander verknuepft — es ist
+    immer dasselbe, egal ob Website, Stream oder Telegram/Discord." Bis hier
+    drei Ziele: Website (500, nur manuelle Spenden, seit Installation),
+    Overlay/Sendebild (Vorgabe 0 = aus, nur ab Stream-Start), /spenden (kein
+    Stand). Jetzt eine Rechnung in nc/spendenziel.py, und jede Anzeige liest sie."""
+    import ast as _ast
+    import os as _os
+    import sqlite3 as _sq
+    from datetime import datetime as _dt, timezone as _tz
+    from nc import spendenziel as Z
+    from nc import spendeninfo as SP
+
+    namen = ["DONATION_GOAL_EUR", "DONATION_GOAL_TARGET", "DONATION_CURRENT_EUR",
+             "DONATION_PERIOD", "DONATION_GOAL_LABEL", "DONATION_GOAL_PURPOSE"]
+    alt = {n: _os.environ.get(n) for n in namen}
+    c = _sq.connect(":memory:")
+    c.row_factory = _sq.Row
+    c.execute("CREATE TABLE overlay_events (ts TEXT, kind TEXT, name TEXT, amount TEXT, "
+              "message TEXT, platform TEXT)")
+    c.executemany("INSERT INTO overlay_events VALUES (?, 'donation', 'x', ?, '', ?)", [
+        ("2026-11-03T10:00:00+00:00", "10", "kick"),
+        ("2026-11-04T10:00:00+00:00", "25,50", "manual"),     # im Deck erfasst
+        ("2026-11-05T10:00:00+00:00", "99", "tiktok"),        # NIE eigenes Geld
+        ("2026-11-06T10:00:00+00:00", "kaputt", "twitch"),    # zaehlt 0, wirft nicht
+        ("2026-10-31T23:59:00+00:00", "40", "youtube"),       # Vormonat
+        ("2026-11-01T00:00:00+00:00", "5", "youtube"),        # erster Moment des Monats
+    ])
+    c.execute("INSERT INTO overlay_events VALUES ('2026-11-07T10:00:00+00:00', 'follow', "
+              "'f', '1000', '', 'kick')")
+    jetzt = _dt(2026, 11, 11, 12, tzinfo=_tz.utc)
+    try:
+        for n in namen:
+            _os.environ.pop(n, None)
+        # (1) Vorgabe: 500 € monatlich — auch dort, wo bisher 0 = aus galt.
+        st = Z.stand(c, jetzt)
+        assert st["ziel_eur"] == 500.0 and st["zeitraum"] == "monatlich", st
+        assert st["aktuell_eur"] == 40.5, \
+            "Kick 10 + Deck 25,50 + YouTube 5 am Monatsersten; TikTok, Vormonat und " \
+            "Follows zaehlen nicht — gerechnet: %r" % st["aktuell_eur"]
+        assert st["prozent"] == 8.1
+        # (2) Sockel aus der .env kommt dazu; Gesamtzeitraum zaehlt den Vormonat.
+        _os.environ["DONATION_CURRENT_EUR"] = "100"
+        _os.environ["DONATION_PERIOD"] = "gesamt"
+        assert Z.stand(c, jetzt)["aktuell_eur"] == 180.5
+        assert Z.fenster_start(jetzt) is None
+        _os.environ["DONATION_PERIOD"] = "monatlich"
+        assert Z.fenster_start(jetzt) == "2026-11-01"
+        # (3) Alter Name bleibt lesbar, der neue gewinnt.
+        _os.environ["DONATION_GOAL_TARGET"] = "300"
+        assert Z.ziel_eur() == 300.0, "eine bestehende .env verliert ihr Overlay-Ziel"
+        _os.environ["DONATION_GOAL_EUR"] = "750"
+        assert Z.ziel_eur() == 750.0
+        _os.environ["DONATION_GOAL_EUR"] = "0"
+        assert Z.stand(c, jetzt)["prozent"] == 0.0, "Ziel 0 darf nicht durch 0 teilen"
+    finally:
+        for n, v in alt.items():
+            if v is None:
+                _os.environ.pop(n, None)
+            else:
+                _os.environ[n] = v
+
+    # (4) /spenden zeigt den Stand aus derselben Rechnung.
+    s = {"paypal": "p@x", "krypto": [], "zweck": "", "ziel_eur": 500.0,
+         "aktuell_eur": 40.5, "prozent": 8.1, "zeitraum": "monatlich", "link": ""}
+    t = SP.text("md", s=s)
+    assert "Stand: 40 € von 500 € (8 %) · monatlich" in t, t
+    t = SP.text("md", s=dict(s, aktuell_eur=None, prozent=None))
+    assert "Stand" not in t and "Ziel: 500 € monatlich" in t, \
+        "ohne lesbaren Stand darf /spenden keine 0 € behaupten"
+
+    # (5) Jede Anzeige liest dieselbe Rechnung — und keine rechnet mehr selbst.
+    src = open("bot.py", encoding="utf-8").read()
+    baum = _ast.parse(src)
+    ps = next(n for n in baum.body if isinstance(n, _ast.FunctionDef)
+              and "stats[\"donation\"]" in _ast.unparse(n).replace("'", '"'))
+    psq = _ast.unparse(ps)
+    assert "_nc_spendenziel.stand(" in psq and "_manual_donations_total()" not in psq, \
+        "die Website rechnet wieder ihr eigenes Ziel"
+    assert "_nc_spendenziel.stand(conn)" in src and "_OVERLAY.get(\"goal_target\")" not in src, \
+        "das Sendebild hat wieder ein eigenes Ziel"
+    assert '"goal_target": _env_int' not in src, "das Overlay-Ziel lebt wieder nur im Speicher"
+    ov = open("nc/routes/overlay.py", encoding="utf-8").read()
+    assert "_nc_spendenziel.stand(conn)" in ov and "goal_current +=" not in ov
+
+    # (6) Deck-Formular: leeres Feld = unveraendert; das Ziel landet in der
+    # Einstellungs-Tabelle (dieselbe wie im Reiter „Einstellungen").
+    import nc.routes.overlay as OV
+    gesetzt = []
+    echt = OV._nc_einst.setzen
+    OV._nc_einst.setzen = lambda n, w, von="": gesetzt.append((n, w))
+    try:
+        OV._ziel_speichern({"title": "x", "goal_target": "", "goal_label": "",
+                            "goal_purpose": None})
+        assert gesetzt == [], "ein leeres Feld setzte das gemeinsame Ziel: %r" % gesetzt
+        OV._ziel_speichern({"goal_target": "750,5", "goal_label": "Server",
+                            "goal_purpose": "Miete"})
+        assert gesetzt == [("DONATION_GOAL_EUR", "750.5"), ("DONATION_GOAL_LABEL", "Server"),
+                           ("DONATION_GOAL_PURPOSE", "Miete")], gesetzt
+        gesetzt.clear()
+        OV._ziel_speichern({"goal_target": "0"})
+        assert gesetzt == [("DONATION_GOAL_EUR", "0")], "0 = kein Ziel muss setzbar bleiben"
+    finally:
+        OV._nc_einst.setzen = echt
+    dh = open("templates/dashboard.html", encoding="utf-8").read()
+    oc = dh[dh.index("async function ovConfig(){"):dh.index("async function ovTest(")]
+    assert "parseInt($('#ov_goaltarget')?.value||'0'" not in oc and "if(gt) body.goal_target" in oc, \
+        "das Formular schickt leere Felder wieder als Ziel 0"
+    ok("v4.2-W173: ein Spendenziel fuer Website, Overlay, Sendebild und /spenden")
 
 
 def _test_v42_w155_weiche_steckt():
@@ -31886,6 +32005,7 @@ def main():
     _test_v42_w170_overlay_ein_browser()
     _test_v42_w171_kick_centrifugo()
     _test_v42_w172_spenden()
+    _test_v42_w173_ein_spendenziel()
     _test_v42_w60_azrael_cooldown_je_plattform()
 
     print("test_nc_modules OK \u2014 %d Vertraege gruen" % PASS)

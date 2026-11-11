@@ -685,7 +685,6 @@ from nc.routes import wartung as _nc_routes_wartung            # v4.1-W24: Wartu
 from nc.routes import abwehr as _nc_routes_abwehr              # v4.1-W25: Abwehr
 from nc.routes import auskunft as _nc_routes_auskunft          # v4.1-W26: Auskunft
 from nc import updater as _nc_updater                        # v4.0-W115: Selbst-Update aus dem GitHub-Repo
-from nc import donationsdb as _nc_donationsdb                # v4.0-W116: manuell erfasste Spenden lesen
 # Diese beiden Routen ruft der Bot auch INTERN auf (Telegram /sysres und die
 # Aggregat-Route /api/dashboard-bundle) — sie sind dort gewoehnliche
 # Funktionen, keine Endpunkte. Deshalb importiert statt kopiert.
@@ -1061,7 +1060,8 @@ from nc import cohost as _nc_cohost        # v4.0-W24: proaktiver Live-Co-Host
 from nc import restream_util as _nc_rutil  # v4.0-W25: reine Restream-Helfer (extrahiert)
 from nc import overlaybrowser as _nc_ovbrowser
 from nc import kickzentrifugo as _nc_kickzentrifugo  # v4.2-W171: Kick-Chat ueber Centrifugo
-from nc import spendeninfo as _nc_spendeninfo  # v4.2-W172: /spenden, eine Quelle fuer alle  # v4.2-W170: ein Chromium je Restream statt je Bild
+from nc import spendeninfo as _nc_spendeninfo  # v4.2-W172: /spenden, eine Quelle fuer alle
+from nc import spendenziel as _nc_spendenziel  # v4.2-W173: ein Spendenziel fuer alle Anzeigen  # v4.2-W170: ein Chromium je Restream statt je Bild
 from nc import restream_stability as _nc_rstab  # v4.0-W113: Wiederanlauf-Regeln (rein)
 from nc import flapguard as _nc_flap  # v4.0-W116: flatternde Verbindungen (rein)
 from nc import recdiag as _nc_recdiag  # v4.0-W116: Raten-Einbruch (rein)
@@ -11702,27 +11702,31 @@ def _public_stats() -> dict:
     # betreiber-gepflegt (DONATION_CURRENT_EUR): PayPal bietet keine öffentliche
     # Live-Summe ohne API/IPN. Ziel + Adresse sind per env übersteuerbar.
     try:
-        goal = _nc_envnum.env_float("DONATION_GOAL_EUR", 500.0)
-        # v4.0-W102: current = env-Basis + im Dashboard manuell erfasste Spenden.
-        cur = _nc_envnum.env_float("DONATION_CURRENT_EUR", 0.0)
-        try:
-            cur += _manual_donations_total()
-        except Exception:
-            pass
+        # v4.2-W173: Ziel und Stand aus nc/spendenziel.py — dieselben Zahlen wie
+        # Overlay, Sendebild und /spenden. Bis W172 zaehlte die Website nur
+        # manuell erfasste Spenden, seit Installation; eine Kick-Spende kam
+        # hier nie an.
+        with db_conn() as _conn:
+            _ziel = _nc_spendenziel.stand(_conn)
         # v4.2-W172: eine Quelle fuer Website, Deck und /spenden.
         _pp = _nc_spendeninfo.paypal()
         _pp_url = _nc_spendeninfo.paypal_url(_pp)
         stats["donation"] = {
-            "goal_eur": round(goal, 2),
-            "current_eur": round(cur, 2),
-            "pct": round(max(0.0, min(100.0, (cur / goal * 100.0) if goal > 0 else 0.0)), 1),
+            "goal_eur": _ziel["ziel_eur"],
+            "current_eur": _ziel["aktuell_eur"],
+            "pct": _ziel["prozent"],
             "paypal": _pp,
             "paypal_url": _pp_url,
             "paypal_qr": _nc_qrsvg.qr_svg(_pp_url) if _pp_url else "",
-            "period": os.getenv("DONATION_PERIOD", "monatlich").strip(),
+            "period": _ziel["zeitraum"],
+            "label": _ziel["label"],
+            "purpose": _ziel["zweck"],
             "currency": "EUR",
         }
-    except Exception:
+    except Exception as e:
+        # War ein stiller Auffang: der Block verschwand von der Website, und
+        # „nichts konfiguriert" sah aus wie „Datenbank weg" (W99).
+        _loop_fehler("spendenziel-website", e)
         stats["donation"] = {}
 
     # v4.0-W94: Krypto-Spenden — Adressen aus env, BTC-Empfang best-effort live.
@@ -13014,13 +13018,9 @@ def api_quiet_hours():
 
 
 # v4.0-W116: _parse_eur/_manual_donations_rows/_manual_donations_total liegen
-# jetzt in nc/donationsdb.py. Die Delegation bleibt nur fuer _manual_donations_total
-# — die Statistik-Route braucht den Namen weiterhin; die beiden anderen hatten im
-# Bot ausser den /api/donations-Routen keinen Leser mehr und wuerden hier tot
-# liegenbleiben (genau der Zerfall, den docs/MODULARISIERUNG.md 3.1 verhindert).
-def _manual_donations_total():
-    """Summe aller manuell erfassten Spenden in EUR (backend-agnostisch)."""
-    return _nc_donationsdb.manual_total()
+# in nc/donationsdb.py. v4.2-W173: auch die letzte Delegation ist weg — die
+# Website rechnet ihr Spendenziel seither ueber nc/spendenziel.py, und eine
+# getrennt addierte manuelle Summe zaehlte dort jede Deck-Spende doppelt.
 
 
 
@@ -13732,20 +13732,15 @@ def _write_restream_overlay(reaction_fresh_secs=None):
     if (_time_mod.monotonic() - c.get("ts", 0.0)) > 5.0:
         goal_line = follow_line = ""
         try:
-            tgt = _OVERLAY.get("goal_target") or 0
             fr = None
             _fc = 0
             with db_conn() as conn:
-                if tgt and float(tgt) > 0:
-                    cur = 0.0
-                    _sess = _OVERLAY_SESSION.get("start")
-                    # B120: Spendenziel zaehlt nur Einnahmen eigener Kanaele.
-                    _dq = ("SELECT amount FROM overlay_events WHERE kind='donation'"
-                           " AND platform IN" + _nc_revenue.sql_in()
-                           + (" AND ts >= ?" if _sess else ""))
-                    for r in conn.execute(_dq, ((_sess,) if _sess else ())):
-                        try: cur += float(str(r["amount"]).replace(",", ".").replace("\u20ac", "").strip())
-                        except (TypeError, ValueError): pass
+                # v4.2-W173: dasselbe Ziel wie Website und /spenden
+                # (nc/spendenziel.py) — bis hier zaehlte das Sendebild nur
+                # ab Stream-Start und gegen ein eigenes Ziel.
+                _z = _nc_spendenziel.stand(conn)
+                if _z["ziel_eur"] > 0:
+                    cur, tgt = _z["aktuell_eur"], _z["ziel_eur"]
                     goal_line = f"[{_ov_bar(cur, tgt, 10)}]  {cur:.0f}/{float(tgt):.0f}"
                 fr = conn.execute("SELECT name FROM overlay_events WHERE kind='follow' "
                                   "ORDER BY id DESC LIMIT 1").fetchone()
@@ -21031,9 +21026,6 @@ def api_channel_set():
 _OVERLAY = _nc_azrael.OVERLAY   # v4.1-W19: geteilt; .env-Aufloesung bleibt hier
 _OVERLAY.update({
     "title": os.getenv("OVERLAY_TITLE", "Azrael Sentinel").strip(),
-    "goal_target": _env_int("DONATION_GOAL_TARGET", 0),
-    "goal_label": os.getenv("DONATION_GOAL_LABEL", "Spendenziel").strip(),
-    "goal_purpose": os.getenv("DONATION_GOAL_PURPOSE", "").strip(),  # Transparenz: wofür?
     "azrael_show": os.getenv("OVERLAY_AZRAEL", "1").strip().lower() in ("1", "true", "yes", "on"),
     # AZRAEL-Stimme (TTS via Web Speech API im Overlay → OBS Browser-Source-Audio).
     # voice_engine: "browser" = Web-Speech im Overlay-Browser (OS-Stimmen);
@@ -24845,9 +24837,10 @@ async def spenden_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ist genau das gemeldete Fehlerbild."""
     if not update.message:
         return
-    await update.message.reply_text(
-        _nc_spendeninfo.text("html", _nc_i18n.t), parse_mode=ParseMode.HTML,
-        disable_web_page_preview=True)
+    # v4.2-W173: der Text liest den Spendenstand aus der Datenbank — neben dem Loop.
+    _text = await asyncio.to_thread(_nc_spendeninfo.text, "html", _nc_i18n.t)
+    await update.message.reply_text(_text, parse_mode=ParseMode.HTML,
+                                    disable_web_page_preview=True)
 
 
 async def hilfe_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):

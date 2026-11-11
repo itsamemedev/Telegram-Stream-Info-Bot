@@ -11,6 +11,34 @@ Historie aller Entwicklungswellen steht in [`README_V37.md`](README_V37.md).
 
 ## [Unveröffentlicht]
 
+## [4.6.23] — 2026-11-11 · „Leitstand"
+
+### Geändert — ein Spendenziel für alle Anzeigen (v4.2 W173)
+
+Gemeldet am 11.11.: „Die Spendenziele sind noch nicht miteinander verknüpft.
+Es ist ja immer dasselbe, egal ob Website, Stream oder Telegram/Discord."
+
+Bis hier drei getrennte Rechnungen:
+
+| Anzeige | Ziel | Stand |
+|---|---|---|
+| Website | `DONATION_GOAL_EUR` (500) | Sockel + nur im Deck erfasste Spenden, seit Installation |
+| Overlay, Sendebild | `DONATION_GOAL_TARGET` (0 = aus), Deck-Feld nur im Speicher | Kick/Twitch/YouTube/Deck, nur ab Stream-Start |
+| `/spenden` | `DONATION_GOAL_EUR` | keiner |
+
+- `nc/spendenziel.py`: **ein** Ziel (`DONATION_GOAL_EUR`; `DONATION_GOAL_TARGET`
+  bleibt als alter Name lesbar), **ein** Stand (Sockel `DONATION_CURRENT_EUR`
+  plus jede Spende auf eigenen Kanälen im Zeitraum, TikTok nie), **ein**
+  Zeitraum (`DONATION_PERIOD`, Vorgabe monatlich ab dem Ersten).
+- Website, `/api/overlay/state`, Sendebild-Zeile und `/spenden` lesen diese
+  Rechnung. `/spenden` zeigt jetzt den Stand.
+- Das Ziel im Overlay-Formular schreibt über `nc/einstellungen.py` — gilt
+  überall und überlebt einen Neustart. Leere Felder bleiben unverändert;
+  vorher setzte ein nicht ausgefülltes Feld das Ziel auf 0.
+- Zwei stille Auffänge (Website-Block, Overlay-Zustand) melden jetzt.
+
+Vertrag `_test_v42_w173_ein_spendenziel`, 8 von 8 Mutationsproben gefangen.
+
 ## [4.6.22] — 2026-11-11 · „Leitstand"
 
 ### Neu — /spenden auf Telegram und Discord (v4.2 W172)

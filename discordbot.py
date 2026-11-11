@@ -1470,8 +1470,9 @@ def _reg_spenden(tree):
     auf der Website. Eigene Funktion: _reg_betrieb stand an der 100er-Grenze."""
     @tree.command(name="spenden", description=_nc_i18n.t("Projekt unterstützen: PayPal und Krypto-Adressen"))
     async def _c_spenden(inter):
-        await inter.response.send_message(
-            _nc_spendeninfo.text("md", _nc_i18n.t), suppress_embeds=True)
+        # v4.2-W173: der Text liest den Spendenstand aus der Datenbank — neben dem Loop.
+        _text = await asyncio.to_thread(_nc_spendeninfo.text, "md", _nc_i18n.t)
+        await inter.response.send_message(_text, suppress_embeds=True)
 
 
 def _reg_betrieb(tree):

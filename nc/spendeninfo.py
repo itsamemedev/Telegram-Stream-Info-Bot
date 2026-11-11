@@ -27,8 +27,13 @@ import html
 import os
 from urllib.parse import quote
 
+import logging
+
 from nc import crypto as _crypto
-from nc import envnum as _envnum
+from nc import dbwrap as _dbwrap
+from nc import spendenziel as _spendenziel
+
+_log = logging.getLogger("TikTokBot")
 
 def _t(text):
     """Markiert Benutzertext fuer tools/i18n_extract.py."""
@@ -56,16 +61,30 @@ def krypto():
 
 
 def stand():
-    """Alles, was der Text braucht, als ein Wert — fuer Vertrag und Aufrufer."""
-    # Dieselbe Lesart wie das Website-Panel: ein unlesbarer Wert faellt auf
-    # die Vorgabe und wird beim Lesen gemeldet — Chat und Seite zeigen dasselbe.
-    ziel = _envnum.env_float("DONATION_GOAL_EUR", 500.0)
+    """Alles, was der Text braucht, als ein Wert — fuer Vertrag und Aufrufer.
+
+    v4.2-W173: Ziel, Stand und Zeitraum aus nc/spendenziel.py — dieselben
+    Zahlen wie Website, Overlay und Sendebild. Liest die Datenbank, also vom
+    Bot aus nur neben dem Event-Loop aufrufen (asyncio.to_thread)."""
+    try:
+        with _dbwrap.db_conn() as conn:
+            z = _spendenziel.stand(conn)
+    except Exception as e:
+        # Ohne Datenbank bleiben Adressen und Ziel richtig; nur der Stand fehlt —
+        # und das wird gesagt, statt „0 €" zu behaupten.
+        _log.error("/spenden: Spendenstand nicht lesbar (%s: %s) — Antwort ohne Stand.",
+                   type(e).__name__, e)
+        z = {"ziel_eur": _spendenziel.ziel_eur(), "aktuell_eur": None, "prozent": None,
+             "zeitraum": _spendenziel.zeitraum(),
+             "zweck": (os.getenv("DONATION_GOAL_PURPOSE", "") or "").strip()}
     return {
         "paypal": paypal(),
         "krypto": krypto(),
-        "zweck": (os.getenv("DONATION_GOAL_PURPOSE", "") or "").strip(),
-        "ziel_eur": ziel,
-        "zeitraum": (os.getenv("DONATION_PERIOD", "monatlich") or "").strip(),
+        "zweck": z["zweck"],
+        "ziel_eur": z["ziel_eur"],
+        "aktuell_eur": z["aktuell_eur"],
+        "prozent": z["prozent"],
+        "zeitraum": z["zeitraum"],
         "link": (os.getenv("DONATION_LINK", "") or "").strip(),
     }
 
@@ -84,7 +103,11 @@ def text(fmt="html", uebersetzen=lambda s: s, s=None):
     z = ["💸 " + fett(u(_t("Projekt unterstützen")))]
     if s["zweck"]:
         z.append(esc(s["zweck"]))
-    if s["ziel_eur"] > 0:
+    if s["ziel_eur"] > 0 and s.get("aktuell_eur") is not None:
+        z.append(esc(u(_t("Stand: %s € von %s € (%s %%) · %s")) % (
+            "%.0f" % s["aktuell_eur"], "%.0f" % s["ziel_eur"],
+            "%.0f" % (s.get("prozent") or 0), s["zeitraum"])))
+    elif s["ziel_eur"] > 0:
         z.append(esc(u(_t("Ziel: %s € %s")) % (("%.0f" % s["ziel_eur"]), s["zeitraum"])).strip())
     if s["paypal"]:
         z += ["", fett("PayPal") + ": " + code(s["paypal"]), esc(paypal_url(s["paypal"]))]
